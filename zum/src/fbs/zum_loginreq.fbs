@@ -1,0 +1,21 @@
+namespace Zum.fbs;
+table Login {
+  user:string;
+}
+table Challenge {
+  origin:string;	// server previously registered user, issued a cred_id; user provides a public key of a cred dedicated to that origin, and remembers the cred_id
+  stamp:int64;
+  nonce:[ubyte];
+}
+table Response {
+  cred_i_d:string;	// from looking up origin, finding cred_id (and private key to sign the Challenge)
+  signature:[ubyte];	// server will use public key to validate this
+}
+union LoginReqData {
+  Access:Access,
+  Login:Login
+}
+table LoginReq {
+  data:LoginReqData;
+}
+root_type LoginReq;

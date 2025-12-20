@@ -1,0 +1,20 @@
+For multicast loopback testing:
+
+# set up loopback interface for multicast
+sudo ip link set dev lo multicast on
+sudo ip route add 224.0.0.0/28 dev lo 
+
+# -b bind to INADDR_ANY:27413
+# -M/-G subscribe to multicast group 239.255.90.105 (aka 239.255.Z.i)
+# -d/-D/-T send to multicast group 239.255.90.105 port 27412 with TTL 0
+./ZiMxUDPServer -b :27413 -M -G 239.255.90.105/127.0.0.1 -d 239.255.90.105:27412 -D 127.0.0.1 -T 0
+
+# -b bind to INADDR_ANY:27412
+# -M/-G subscribe to multicast group 239.255.90.105 (aka 239.255.Z.i)
+# -d/-D/-T send to multicast group 239.255.90.105 port 27413 with TTL 0
+./ZiMxUDPClient -b :27412 -M -G 239.255.90.105/127.0.0.1 -d 239.255.90.105:27413 -D 127.0.0.1 -T 0 -n 8
+
+# Note: bind just filters out incoming packets in the TCP/IP stack, whereas
+# multicast group memberships (keyed on IP address) cause upstream routers/
+# switches to redirect packet flows; however multicast receivers MUST
+# bind to a specific port to enable reception

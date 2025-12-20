@@ -1,0 +1,158 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2024 Psi Labs
+// This code is licensed by the MIT license (see LICENSE for details)
+
+#include <iostream>
+
+#include <zlib/ZuID.hh>
+#include <zlib/ZuUnroll.hh>
+
+#include <zlib/ZtStruct.hh>
+#include <zlib/ZtURI.hh>
+
+inline void out(bool ok, const char *s) {
+  std::cout << (ok ? "OK  " : "NOK ") << s << '\n' << std::flush;
+  // assert(ok);
+}
+
+#define CHECK(x) (out((x), #x))
+
+namespace Values {
+  ZtEnum(Values, int8_t, High, Low, Normal);
+}
+
+namespace Flags {
+  ZtFlags(Flags, uint8_t, Bit0, Bit1, Bit2);
+}
+
+struct Nested {
+  int i1 = 0, i2 = 1;
+
+  friend ZtStructPrint ZuPrintType(Nested *);
+};
+
+struct NestedJSON {
+  int i1 = 2, i2 = 3;
+
+  friend ZtURI::AsJSON ZtURI_Fmt(NestedJSON *);	// use JSON in URI
+
+  friend ZtStructPrint ZuPrintType(NestedJSON *);
+};
+
+ZuStructFacet(Bah);
+
+ZtStruct((Nested, Bah),
+  (((i1), (Ctor<0>)), (Int32)),
+  (((i2), (Ctor<1>)), (Int32)));
+
+ZtStruct((NestedJSON, Bah),
+  (((i1), (Ctor<0>)), (Int32)),
+  (((i2), (Ctor<1>)), (Int32)));
+
+// void debug_break() { }
+
+struct Blur : public ZtArray<ZtArray<uint8_t>> {
+  ZuDerive_(Blur, ZtArray<ZtArray<uint8_t>>)
+  template <typename T>
+  Blur(T &&v) {
+    // debug_break();
+    this->Base::~Base();
+    new (this) Base(ZuFwd<T>(v));
+    // debug_break();
+  }
+};
+
+struct Foo {
+  const char *string = nullptr;
+  ZtArray<uint8_t> bytes;
+  ZuID id = "goodbye";
+  int int_ = 0;
+  int int_ranged = 42;
+  unsigned hex = 0xdeadbeef;
+  int enum_ = Values::Normal;
+  uint128_t flags = Flags::Bit1();
+  double float_ = ZuCmp<double>::null();
+  double float_ranged = 0.42;
+  ZuFixed fixed;
+  ZuDecimal decimal;
+  ZuTime time_;
+  Nested nested;
+  NestedJSON nestedJSON;
+  // ZtArray<ZtArray<uint8_t>> bytesVec;
+  Blur bytesVec;
+
+  friend ZtStructPrint ZuPrintType(Foo *);
+};
+
+ZtStruct(Foo,
+  (((string, Rd),	(Ctor<0>)),	(CString, "hello \"world\"")),
+  (((bytes),		(Ctor<1>)),	(Bytes, ZuBSpan{"bytes"})),
+  (((id),		(Ctor<2>, Mutable)),	(String, "goodbye")),
+  (((int_),		(Ctor<3>)),	(Int32)),
+  (((int_ranged),	(Ctor<4>)),	(Int32, 42, 0, 100)),
+  (((hex),		(Ctor<5>, Hex)),
+    					(UInt32, 0xdeadbeef)),
+  (((enum_),		(Ctor<6>, Enum<Values::Map>)),
+    					(Int32, Values::Normal)),
+  (((flags),		(Ctor<7>, Flags<Flags::Map>)),
+    					(UInt128, Flags::Bit1())),
+  (((float_),		(Ctor<8>)),	(Float)),
+  (((float_ranged),	(Ctor<9>)),	(Float, 0.42, 0.0, 1)),
+  (((fixed),		(Ctor<10>)),	(Fixed)),
+  (((decimal),		(Ctor<11>)),	(Decimal)),
+  (((time_),		(Ctor<12>)),	(Time)),
+  (((nested),		(Ctor<13>)),	(UDT)),
+  (((nestedJSON),	(Ctor<14>)),	(UDT)),
+  (((bytesVec),		(Ctor<15>)),	(BytesVec)));
+
+ZtStructRender(Foo, Bah,
+  (enum_,	URI::ID<"enum-BAH">),
+  (int_,	URI::ID<"int-BAH">,	URI::Number<ZuFmt::Right<9>>),
+  (float_,	URI::ID<"float-BAH">,	URI::Number<ZuFmt::FP<4>>),
+  (bytes,	URI::ID<"bytes-BAH">,	URI::Escaped),
+  (string,	URI::PathIndex<0>),
+  (id,		URI::PathIndex<1>),
+  int_ranged, hex, flags, float_ranged, fixed, decimal,
+  time_, nested, nestedJSON, bytesVec);
+
+ZtURIConfig(Bah, (
+  ZtURI_ObjectFmt<ZtURI::Array,
+    ZtURI_ArrayFmt<ZtURI::Delimited,
+      ZtURI_Annotated<true,
+	ZtURI_Wrapped<true>>>>));
+
+int main()
+{
+  char empty[] = "";
+  auto scan = ZtURI::scan(empty);
+  Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+  foo.int_ = 42;
+  foo.float_ = 42.01;
+  foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
+  foo.time_ = Zm::now();
+  ZtString<> uri;
+  ZtURI::save<ZuFacet::Bah>(uri, foo);
+  std::cout << uri << '\n';
+  ZuUnroll::all<ZuFields<Foo>>([&foo]<typename T>() mutable {
+    std::cout
+      << T::id() << '='
+      << typename T::Type::template Print<ZtFmt::Default>{T::get(foo)} << '\n';
+  });
+  ZtString<> uri_ = uri;
+  scan = ZtURI::scan(uri);
+  CHECK(scan.p<0>() > 0);
+  if (!scan.p<1>()) { std::cerr << "scan() failed!\n"; ::exit(1); }
+  Foo bar = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+  ZuUnroll::all<ZuFields<Foo>>([&bar]<typename T>() mutable {
+    std::cout
+      << T::id() << '='
+      << typename T::Type::template Print<ZtFmt::Default>{T::get(bar)} << '\n';
+  });
+  ZtString<> uri2;
+  ZtURI::save<ZuFacet::Bah>(uri2, bar);
+  std::cout << uri2 << '\n';
+  CHECK(uri_ == uri2);
+  return 0;
+}

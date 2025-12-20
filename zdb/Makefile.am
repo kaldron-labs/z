@@ -1,0 +1,2 @@
+METASOURCES = AUTO
+SUBDIRS = src test

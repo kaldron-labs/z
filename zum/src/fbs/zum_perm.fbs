@@ -1,0 +1,24 @@
+namespace Zum.fbs;
+table PermID {
+  id:uint32;
+}
+table PermName {
+  name:string;
+}
+union PermKey {
+  ID:PermID,
+  Name:PermName
+}
+table PermQuery {
+  perm_key:PermKey;
+  inclusive:bool;
+  limit:uint16;
+}
+table Perm {
+  id:uint32;	// index in bitmap
+  name:string;
+}
+table PermList {
+  list:[Perm];
+}
+root_type Perm;

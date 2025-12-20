@@ -1,0 +1,22 @@
+LIBRARY libsframe
+EXPORTS
+    sframe_calc_fre_type
+    sframe_decode
+    sframe_decoder_free
+    sframe_decoder_get_abi_arch
+    sframe_decoder_get_fixed_fp_offset
+    sframe_decoder_get_fixed_ra_offset
+    sframe_decoder_get_fre
+    sframe_decoder_get_funcdesc_v2
+    sframe_decoder_get_hdr_size
+    sframe_decoder_get_num_fidx
+    sframe_decoder_get_version
+    sframe_encode
+    sframe_encoder_add_fre
+    sframe_encoder_add_funcdesc_v2
+    sframe_encoder_free
+    sframe_encoder_get_abi_arch
+    sframe_encoder_get_num_fidx
+    sframe_encoder_get_version
+    sframe_encoder_write
+    sframe_fde_create_func_info

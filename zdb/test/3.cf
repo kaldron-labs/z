@@ -1,0 +1,7 @@
+%include	mx.cf
+
+db {
+  %include		db.cf
+  envDir		3
+  hostID		3
+}

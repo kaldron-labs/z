@@ -1,0 +1,50 @@
+* netlink conditionally compiled under autotools (disabled by default)
+* ZmThread refactored; per-thread context classes unified into ZmThreadContext
+* threads now have (optional) names as well as platform numerical TID
+* threads can be iterated over for monitoring/instrumentation/telemetry
+* ZtFixString moved to Zu, renamed to ZuStringN, #define alias remains for now
+* ZtPlatform string functions moved to Zu
+
+z.config - added -N option to enable netlink (disabled by default)
+configure.ac - added --enable-netlink (and --disable-netlink)
+zi/src/Makefile.am - netlink conditional compilation
+ZiMultiplex - netlink conditional compilation
+
+ZtFixString - deprecated, moved to Zu, renamed to ZuStringN
+ZtPlatform - primitive platform-native string ops moved to Zu namespace
+
+ZmThreadContext - new per-thread named context, uses ZmSpecific, introspectable
+ZmThread - refactored, cleaned up, uses ZmThreadContext
+
+ZmSingleton - improved performance, reduced use of atomic ops
+ZmSpecific - support construction in one thread, (re-)binding in another
+
+ZmLock - added ZmMutex
+ZmMutex - C++ wrapper around platform-native primitive ZmLock
+
+ZmCleanup - added Thread level cleanup (between Heap and Final)
+ZmCleanup - replaced ZmLock with ZmMutex to resolve dependency loop
+
+ZmHeap - replaced ZmThreadBinding with new ZmThreadContext
+
+ZmPlatform - renamed self() to getTID() (consistent with getPID())
+ZmPlatform - removed GlobalLock, re-use revised ZmSingleton
+ZmTopology - moved to ZmThread.hpp
+ZmBitmap - moved to ZmThread.hpp
+
+ZmScheduler - named threads
+ZvSchedulerCf - added id, to name threads
+
+ZeLog - thread now named
+ZmBackTrace - fixed bfd backtraces under mingw-w64 on Windows
+
+Example of use of thread contexts to dump all thread TIDs and names:
+
+void dumpThread(ZmThreadContext *c)
+{
+  ZmThreadName name;
+  c->name(name);
+  printf("%u %.*s\n", (unsigned)c->tid(), name.length(), name.data());
+}
+puts("threads:");
+ZmSpecific<ZmThreadContext>::all(&dumpThread);

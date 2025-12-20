@@ -1,0 +1,38 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table UserID {
+  id:uint64;
+}
+table UserName {
+  name:string;
+}
+union UserKey {
+  ID:UserID,
+  Name:UserName
+}
+table UserQuery {
+  user_key:UserKey;
+  inclusive:bool;
+  limit:uint16;
+}
+table User {
+  id:uint64;
+  name:string;
+  hmac:[ubyte];		// HMAC-SHA256 of secret, password
+  secret:[ubyte];	// secret (random at user creation)
+  roles:[string];	// roles
+  failures:uint32;
+  flags:uint8;
+}
+table UserPass {	// ack for user add and reset
+  user:User;
+  passwd:string;	// plaintext new passwd (random)
+}
+table UserChPass {
+  oldpass:string;	// old password
+  newpass:string;	// new password
+}
+table UserList {
+  list:[User];
+}
+root_type User;

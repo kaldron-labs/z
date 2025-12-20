@@ -1,0 +1,15 @@
+{
+   atomicOps_cmpXch
+   Helgrind:Race
+   fun:_ZN11ZmAtomicOpsIjLi4EE12atomicCmpXchEPVjjj
+}
+{
+   atomicOps_store
+   Helgrind:Race
+   fun:_ZN11ZmAtomicOpsIjLi4EE5storeEPjj
+}
+{
+   ZmSpecific_Object
+   Helgrind:Race
+   fun:_ZN11ZmSpecific_3addEP17ZmSpecific_Object
+}

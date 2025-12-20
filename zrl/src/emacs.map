@@ -1,0 +1,215 @@
+map emacs {
+  # default insert/edit mode
+  mode 0 {
+    EndOfFile { EndOfFile; }
+    SigInt { SigInt; }
+    SigQuit { SigQuit; }
+    SigSusp { SigSusp; }
+    Any { Glyph; }
+    Erase { BackSpace; }
+    WErase { RevWord[Del|Unix]; }
+    Kill { Home[Del]; }
+    LNext { Glyph(, '^'); Left[Mv]; Push(1); }
+    Enter { Enter; }
+    Up { Up[Mv]; End[Mv]; }
+    Down { Down[Mv]; End[Mv]; }
+    Left { Left[Mv]; }
+    Right { Right[Mv]; }
+    Home { Home[Mv]; }
+    End { End[Mv]; }
+    PgUp { Prev; }
+    PgDn { Next; }
+    Insert { InsToggle; }
+    Delete { Right[Del|Copy]; }
+    Up[Shift] { Up[Mv|Vis]; Push(2); }
+    Down[Shift] { Down[Mv|Vis]; Push(2); }
+    Left[Shift] { Left[Mv|Vis]; Push(2); }
+    Right[Shift] { Right[Mv|Vis]; Push(2); }
+    Home[Shift] { Home[Mv|Vis]; Push(2); }
+    End[Shift] { End[Mv|Vis]; Push(2); }
+    Left[Ctrl] { RevWord[Mv]; }
+    Right[Ctrl] { FwdWord[Mv]; }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; Push(2); }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past]; Push(2); }
+    Left[Alt] { RevWord[Mv|Unix]; }
+    Right[Alt] { FwdWord[Mv|Unix]; }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; Push(2); }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; Push(2); }
+    ^P { Up[Mv]; End[Mv]; }
+    ^N { Down[Mv]; End[Mv]; }
+    ^B { Left[Mv]; }
+    ^F { Right[Mv]; }
+    ^A { Home[Mv]; }
+    ^E { End[Mv]; }
+    ^K { End[Del|Copy]; }
+    #^D { Right[Del|Copy]; }
+    ^D { ListComplete; }
+    Tab { Complete; }
+    Tab[Shift] { RevComplete; }
+    ^L { Clear; }
+    #Redraw { Redraw; } # deconflict with ^R
+    ^[ { Push(4); } # Meta
+    ^Y { Yank; }
+    ^@ { Push(3); }
+    ^X { Push(6); }
+    ^S { Push(8); }
+    ^R { Push(9); }
+    ^T { TransGlyph; }
+    ^G { EmacsAbort; }
+    ^_ { EmacsUndo; }
+  }
+  # literal next
+  mode 1 {
+    Any { OverGlyph; Pop; }
+    AnyFn { Pop; Syn; }
+    AnySys { OverGlyph; Pop; }
+  }
+  # highlight (visual) mode
+  mode 2 {
+    Any { Pop; ClrVis[Del|Vis]; Syn; }
+    AnyFn { Pop; ClrVis; Syn; }
+    AnySys { Pop; ClrVis; Syn; }
+    Erase { Pop; Syn(, Delete); }
+    Delete { Pop; ClrVis[Del]; }
+    Up[Shift] { Up[Mv|Vis]; }
+    Down[Shift] { Down[Mv|Vis]; }
+    Left[Shift] { Left[Mv|Vis]; }
+    Right[Shift] { Right[Mv|Vis]; }
+    Home[Shift] { Home[Mv|Vis]; }
+    End[Shift] { End[Mv|Vis]; }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past]; }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; }
+    ^G { Pop; ClrVis; }
+    ^W { Pop; ClrVis[Del|Copy]; }
+    ^[ { Push(5); }
+    ^X { Push(7); }
+  }
+  # mark highlight mode
+  mode 3 {
+    Any { Pop; ClrVis[Del|Vis]; Syn; }
+    AnyFn { Pop; ClrVis; Syn; }
+    AnySys { Pop; ClrVis; Syn; }
+    Erase { Pop; Syn(, Delete); }
+    Delete { Pop; ClrVis[Del]; }
+    Up { Up[Mv|Vis]; }
+    Down { Down[Mv|Vis]; }
+    Left { Left[Mv|Vis]; }
+    Right { Right[Mv|Vis]; }
+    Home { Home[Mv|Vis]; }
+    End { End[Mv|Vis]; }
+    Up[Shift] { Up[Mv|Vis]; }
+    Down[Shift] { Down[Mv|Vis]; }
+    Left[Shift] { Left[Mv|Vis]; }
+    Right[Shift] { Right[Mv|Vis]; }
+    Home[Shift] { Home[Mv|Vis]; }
+    End[Shift] { End[Mv|Vis]; }
+    Left[Ctrl] { RevWord[Mv|Vis]; }
+    Right[Ctrl] { FwdWordEnd[Mv|Vis|Past]; }
+    Left[Alt] { RevWord[Mv|Vis|Unix]; }
+    Right[Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past]; }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; }
+    ^G { Pop; ClrVis; }
+    ^W { Pop; ClrVis[Del|Copy]; }
+    ^[ { Push(5); }
+    ^X { Push(7); }
+  }
+  # Meta
+  mode 4 {
+    Any { Pop; }
+    AnySys { Pop; Syn; }
+    AnyFn { Pop; Syn; }
+    Erase { Pop; RevWord[Del|Copy]; }
+    ^G { Pop; }
+    'p' { Pop; Prev; }
+    'n' { Pop; Next; }
+    'b' { Pop; RevWord[Mv]; }
+    'f' { Pop; FwdWord[Mv]; }
+    'a' { Pop; Home[Mv]; }
+    'e' { Pop; End[Mv]; }
+    'd' { Pop; FwdWord[Del|Copy]; }
+    'y' { Pop; Rotate; }
+    'c' { Pop; CapWord; }
+    'u' { Pop; UpperWord; }
+    'l' { Pop; LowerWord; }
+    '0' { Push(10); }
+  }
+  # highlight Meta
+  mode 5 {
+    Any { Pop; }
+    AnySys { Pop; Syn; }
+    AnyFn { Pop; Syn; }
+    ^G { Pop; }
+    ^[ { Pop(2); ClrVis[Del|Vis]; Glyph; }
+    'w' { Pop; ClrVis[Copy]; }
+  }
+  # C-X
+  mode 6 {
+    Any { Register; Mode(11); }
+    AnySys { Pop; Syn; }
+    AnyFn { Pop; Syn; }
+    ^G { Pop; }
+    Erase { Pop; Home[Del|Copy]; }
+    ^X { Pop; XchMark; }
+  }
+  # highlight C-X
+  mode 7 {
+    Any { Register; Mode(12); }
+    AnyFn { Pop; }
+    AnySys { Pop; }
+    ^G { Pop; }
+    ^U { Pop; UpperVis; }
+    ^L { Pop; LowerVis; }
+    ^C { Pop; CapVis; }
+    ^X { Pop; XchMark; }
+  }
+  # incremental search fwd
+  mode 8 {
+    Any { FwdIncSrch; }
+    AnyFn { Pop; ClrIncSrch; Syn; }
+    AnySys { Pop; ClrIncSrch; Syn; }
+    ^R { Mode(9); Syn; }
+    ^S { FwdIncSrch(, Unset); }
+    ^G { Pop; ClrIncSrch; }
+    Enter { Pop; }
+  }
+  # incremental search rev
+  mode 9 {
+    Any { RevIncSrch; }
+    AnyFn { Pop; ClrIncSrch; Syn; }
+    AnySys { Pop; ClrIncSrch; Syn; }
+    ^R { RevIncSrch(, Unset); }
+    ^S { Mode(8); Syn; }
+    ^G { Pop; ClrIncSrch; }
+    Enter { Pop; }
+  }
+  # M-0
+  mode 10 {
+    Any { Pop(2); }
+    AnyFn { Pop(2); Syn; }
+    AnySys { Pop(2); Syn; }
+    ^G { Pop(2); }
+    ^K { Pop(2); Home[Del|Copy]; }
+  }
+  # C-X register
+  mode 11 {
+    Any { Pop; }
+    AnyFn { Pop; Syn; }
+    AnySys { Pop; Syn; }
+    ^G { Pop; }
+    'i' { Pop; Paste; }
+  }
+  # highlight C-X register
+  mode 12 {
+    Any { Pop; }
+    AnyFn { Pop; Syn; }
+    AnySys { Pop; Syn; }
+    ^G { Pop; }
+    'i' { Pop; ClrVis[Del|KeepReg]; Paste; }
+    's' { Pop; ClrVis[Copy]; }
+  }
+}

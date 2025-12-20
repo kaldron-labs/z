@@ -1,0 +1,5 @@
+namespace Zdb_.fbs;
+enum CacheMode:int8 {
+  Normal = 0,
+  All
+}

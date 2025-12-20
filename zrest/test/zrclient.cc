@@ -1,0 +1,227 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2024 Psi Labs
+// This code is licensed by the MIT license (see LICENSE for details)
+
+#include <zlib/ZmTrap.hh>
+
+#include <zlib/ZtStruct.hh>
+#include <zlib/ZtJSON.hh>
+
+#include <zlib/ZeLog.hh>
+
+#include <zlib/ZiMultiplex.hh>
+
+#include <zlib/Zrest.hh>
+
+// FIXME - ZtString<>
+struct Credentials {
+  ZtString<>	username;
+  ZtString<>	password;
+};
+ZtStruct(Credentials,
+  (((username),	(Ctor<0>)), (String)),
+  (((password),	(Ctor<1>)), (String)));
+
+struct AuthResponse {
+  ZtString<>	token;
+
+  friend ZtStructPrint ZuPrintType(AuthResponse *);
+};
+ZtStruct(AuthResponse,
+  (((token),	(Ctor<0>)), (String)));
+
+struct ProtectedResponse {
+  ZtString<>	message;
+  ZtString<>	data;
+
+  friend ZtStructPrint ZuPrintType(ProtectedResponse *);
+};
+ZtStruct(ProtectedResponse,
+  (((message),	(Ctor<0>)), (String)),
+  (((data),	(Ctor<1>)), (String)));
+
+class Client;
+
+/* using IOBufAlloc = Ztls::IOBufAlloc<Size, MaxSize, HeapID>; */
+
+class Link : public Zrest::CliLink<Client, Link /* , IOBufAlloc */> {
+public:
+  using Base = Zrest::CliLink<Client, Link>;
+  using Base::app;
+  using Base::state;
+  using Base::host;
+  using Base::header;
+  using Base::body;
+  using Base::up;
+
+  Link(Client *client, ZtString<> server, uint16_t port) :
+    Base{client, ZuMv(server), port} { }
+
+  void connected(const char *alpn, int tlsver);
+  void connectFailed(bool transient);
+  void disconnected();
+
+  bool rcvd();
+
+private:
+  ZtString<>		m_token;
+};
+
+class Client : public ZmPolymorph, public Zrest::Client<Client, Link> {
+public:
+  using Base = Zrest::Client<Client, Link>;
+  using Base::init;
+
+  void final() {
+    m_link = nullptr;
+    Base::final();
+  }
+
+  void login(ZtString<> server, uint16_t port) {
+    m_link = new Link{this, ZuMv(server), port};
+    m_link->connect();
+  }
+
+  void disconnect() { if (m_link) m_link->disconnect(); }
+
+  int state() const {
+    if (!m_link) return ZvLinkState::Down;
+    return m_link->state();
+  }
+
+  void wait() { m_done.wait(); }
+  void done() { m_done.post(); }
+
+  void sigint() { m_done.post(); }
+
+private:
+  ZmSemaphore		m_done;
+  // ZmSemaphore	m_executed;
+
+  ZmRef<Link>		m_link;
+};
+
+void Link::connected(const char *alpn, int tlsver)
+{
+  Base::connected(alpn, tlsver);
+  send_(request(Zhttp::Method::POST, "/api/auth", [](ZiIOBuf &buf) {
+    ZtJSON::save(buf, Credentials{"test", "test123"});
+  }));
+}
+
+void Link::connectFailed(bool transient)
+{
+  Base::connectFailed(transient);
+  if (!transient || !app()->reconnFreq()) app()->done();
+}
+
+void Link::disconnected()
+{
+  Base::disconnected();
+  app()->done();
+}
+
+bool Link::rcvd()
+{
+  auto scan = ZtJSON::scan(body().data);
+  if (scan.p<0>() < 0) {
+    ZeLOG(Error, "invalid response");
+    return false;
+  }
+  if (state() == ZvLinkState::Connecting) {
+    auto response = ZtJSON::handler<AuthResponse>(scan.p<1>()).ctor();
+    std::cout << response << '\n';
+    m_token = ZuMv(response.token);
+    up();
+    send(request_<"Authorization">(
+	Zhttp::Method::GET, "/api/protected", m_token));
+  } else {
+    std::cout << ZtJSON::handler<ProtectedResponse>(scan.p<1>()).ctor() << '\n';
+    app()->done();
+  }
+
+  return true;
+}
+
+ZmRef<Client> client;
+
+void sigint() { if (client) client->sigint(); }
+
+static void usage()
+{
+  static const char *usage =
+    "Usage: zrlclient\n";
+  std::cerr << usage << std::flush;
+  ZeLog::stop();
+  Zm::exit(1);
+}
+
+int main(int argc, char **argv)
+{
+  if (argc != 1) usage();
+
+  ZeLog::init("zrclient");
+  ZeLog::level(0);
+  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
+  ZeLog::start();
+
+  ZuPtr<ZiMultiplex> mx = new ZiMultiplex(
+    ZiMxParams()
+      .scheduler([](auto &s) {
+	s.nThreads(4)
+	  .thread(1, [](auto &t) { t.isolated(1); })
+	  .thread(2, [](auto &t) { t.isolated(1); })
+	  .thread(3, [](auto &t) { t.isolated(1); }); })
+      .rxThread(1).txThread(2));
+
+  mx->start();
+
+  client = new Client();
+
+  ZmTrap::sigintFn(sigint);
+  ZmTrap::trap();
+
+  {
+    ZmRef<ZvCf> cf = new ZvCf();
+    cf->set("timeout", "1");
+    cf->set("thread", "3");
+    if (auto caPath = ::getenv("ZREST_CAPATH"))
+      cf->set("caPath", caPath);
+    else
+      cf->set("caPath", "/etc/ssl/certs");
+    try {
+      client->init(mx, cf);
+    } catch (const ZeException &e) {
+      std::cerr << e << '\n' << std::flush;
+      ::exit(1);
+    } catch (const ZtString<> &e) {
+      std::cerr << e << '\n' << std::flush;
+      ::exit(1);
+    } catch (...) {
+      std::cerr << "unknown exception\n" << std::flush;
+      ::exit(1);
+    }
+  }
+
+  client->login("localhost", 8443);
+
+  client->wait();
+
+  if (client->state() == ZvLinkState::Up) {
+    client->disconnect();
+    client->wait();
+  }
+
+  mx->stop();
+
+  ZeLog::stop();
+
+  client->final();
+  client = {};
+
+  ZmTrap::sigintFn(nullptr);
+
+  return 0;
+}

@@ -1,0 +1,19 @@
+namespace ZDash.fbs;
+table LinkID {
+  id		: uint32;
+}
+table LinkQuery {
+				// intentionally empty
+}
+table LinkData {
+  server	: string;
+  port		: uint16;
+}
+table Link {
+  selected	: bool;
+  id		: uint32;
+  data		: LinkData;
+}
+table LinkList {
+  list		: [Link];
+}

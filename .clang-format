@@ -1,0 +1,85 @@
+Language: Cpp
+BasedOnStyle: LLVM
+# basic parameters
+ColumnLimit: 80
+IndentWidth: 2
+ContinuationIndentWidth: 2
+UseTab: ForContinuationAndIndentation # different than LLVM
+
+# various specific indents
+ConstructorInitializerIndentWidth: 2
+LambdaBodyIndentation: OuterScope
+IndentGotoLabels: false
+IndentExternBlock: Indent
+IndentRequiresClause: true
+PPIndentWidth: 0
+
+# penalty scoring
+PenaltyIndentedWhitespace: 0
+PenaltyBreakTemplateDeclaration: 1
+PenaltyBreakOpenParenthesis: 2
+PenaltyBreakAssignment: 3
+PenaltyBreakBeforeFirstCallParameter: 4
+PenaltyReturnTypeOnItsOwnLine: 5
+PenaltyBreakFirstLessLess: 10
+PenaltyBreakComment: 20
+PenaltyBreakString: 30
+PenaltyExcessCharacter: 1000000
+
+# everything below is different than LLVM
+AlignAfterOpenBracket: BlockIndent
+AlignArrayOfStructures: Right
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+AlignEscapedNewlines: DontAlign
+AlignOperands: DontAlign
+
+AllowShortBlocksOnASingleLine: Always
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+
+BitFieldColonSpacing: None
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+AlwaysBreakBeforeMultilineStrings: true
+BreakBeforeConceptDeclarations: Allowed
+BreakBeforeTernaryOperators: false
+BreakConstructorInitializers: AfterColon
+BreakInheritanceList: AfterColon
+# "Always" prefix is deprecated from clang-format v19
+AlwaysBreakAfterReturnType: None
+AlwaysBreakTemplateDeclarations: MultiLine
+
+
+CompactNamespaces: true
+ShortNamespaceLines: 10
+FixNamespaceComments: true
+
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+PackConstructorInitializers: BinPack
+DerivePointerAlignment: false
+
+PointerAlignment: Right
+ReferenceAlignment: Right
+
+QualifierAlignment: Custom
+QualifierOrder: ['friend', 'inline', 'static', 'constexpr', 'const', 'volatile', 'type', 'restrict']
+RemoveBracesLLVM: false
+RemoveParentheses: Leave
+RemoveSemicolon: false
+
+SortIncludes: Never
+SortUsingDeclarations: Never
+
+SpaceBeforeParens: Custom
+SpaceBeforeParensOptions:
+  BeforeNonEmptyParentheses: false
+SpaceInEmptyBlock: true
+SpacesInContainerLiterals: false

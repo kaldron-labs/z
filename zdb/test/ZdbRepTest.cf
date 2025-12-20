@@ -1,0 +1,50 @@
+mx {
+  minThreads	4
+  maxThreads	12
+  #stackSize
+  priority	Normal
+  nEvents	8		# epoll "quantum"
+  rcvBufSize	262144		# 256K
+  sndBufSize	262144		# 256K
+  requestHash {
+    bits		4
+    loadFactor		1.0
+    cBits		4
+  }
+  connectionHash {
+    bits		4
+    loadFactor		1.0
+    cBits		4
+  }
+}
+
+db {
+  cacheSize		16777216 # 16Mb
+  cacheRegions		1
+  mmapSize		67108864 # 64Mb
+  txnMax		64
+  envDir		1
+  dataDir		data
+  pageSize		32768 # 32k
+  logBufSize		16777216 # 16M
+  logFileSize		1048576 # 1M
+  logDir		RAM
+  noSync		1
+
+  nAccepts		8	# size of listen queue
+
+  connectTimeout	4
+  heartbeatFreq		1
+  heartbeatTimeout	4
+  reconnectFreq		1
+  masterTimeout		4
+  electionTimeout	8
+  ackTimeout		2
+
+  hostID		1
+
+  hosts {
+    1 { priority 200 IP 127.0.0.1 port 9421 }
+    2 { priority 100 IP 127.0.0.1 port 9422 }
+  }
+}

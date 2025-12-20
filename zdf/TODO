@@ -1,0 +1,89 @@
+1] define schema (like Zum) - based on fbs files
+2] define app-facing and feed-facing APIs
+ - CRUD DF, Series, etc.
+ - Note: we auto-populate DFs and series from fields
+ - Reader, Writer are API facets (Reader for apps, Writer for feeds) (normally)
+ - design composable reader interface that permits building indicators
+   - synthetic readers layered on readers
+   - readers can span multiple DFs?
+
+   Writer -> DF -> Reader \
+   Writer -> DF -> Reader -> Transformer -> Writer -> DF -> Reader -> App
+   Writer -> DF -> Reader /
+
+   E.g. Transformer can be order book aggregator
+
+   ... think about how to represent order book as time series
+   - make reference to book
+
+   ... ANYWAY FIRST GET THIS UP AND RUNNING AS IS
+
+FIXME - make ZdfSchema to define table schema for Zdf
+  (it will include the internal fbs files)
+  (ZdfSchema is internal / not distributed, only included by Zdf.cc, other .cc)
+
+FIXME - Zdb_PQ - use EXTERNAL toast storage strategy for all tables (disable LZ compression), and reduce the toast_tuple_threshold to 512 for all tables - make this a configuration option for zdb_pq
+
+FIXME - Zdf block size to 4K; blocks will be toasted in postgres
+
+DataFrame 1:N Series
+
+Blk = ZuUnion<Hdr, ZmRef<Buf>>
+
+Series 1:N Blk {
+  string name		// name
+
+  ID seriesID		// seriesID is 0-based within store
+
+    // series register buffer unloadFn with store, obtaining seriesID which
+    // indexes array of unloadFns; these are used to revert a Blk from a
+    // ZmRef<Buf> that is being unloaded back to just the header
+}
+
+Buf : Hdr
+
+Hdr { // in-memory
+  uint64 offset;	// offset of this block (in values)
+  int64 last		// last value in block
+  uint32 blkID;		// block ID (from 0)
+  uint16 count		// count of values in block
+  uint8 ndp		// NDP for this block
+}
+// 24 bytes
+
+assuming ~50% compression ratio, 4K block would be 512 values
+assuming 10K per second, 1 second is 10 blocks , or 240bytes in hdrs,
+or 19M for an entire day in memory, 570M for a month, this is about
+right
+
+// while appending
+Hdr {
+  uint28 length		// length in bytes of block (so far)
+}
+
+// loaded buffer (current implementation)
+Buf {
+  void *mgr;		// pointer to store
+  unsigned seriesID;	// seriesID that owns this block
+  unsigned blkIndex;	// block number in series
+  Hdr, data
+}
+
+// --------------
+
+DF: id, epoch
+Series: id (matches field)
+Hdr: <as above>, 
+Blk: |dfID, seriesID, blkID| data
+
+///
+
+essentially the series loads all blk headers into an in-memory array
+at startup and maintains that as it extends the series; it uses
+interpolation search (ZuInterSearch) to seek forward and backwards
+in the blk array, using seekFn() to score the distance to move to
+find the block containing the desired offset; intra-block searching
+is done forwards by the block decoder;
+
+offset and count are used for this purpose and must be in-memory;
+ndp and last are used by value find (see findFn); 

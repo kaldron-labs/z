@@ -1,0 +1,19 @@
+include "zfb_types.fbs";
+namespace zfbtest3.fbs;
+enum Side:int8 {
+  Buy = 0,
+  Sell
+}
+table Order {
+  symbol:string;
+  order_i_d:uint64;
+  link:string;
+  cl_ord_i_d:string;
+  seq_no:uint64;
+  side:Side;
+  price:int32;
+  quantity:int32;
+  bitmap:Zfb.Bitmap;
+  id:Zfb.ID;
+}
+root_type Order;
