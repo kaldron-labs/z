@@ -1,0 +1,20 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table RoleID {
+  name:string;
+}
+table RoleQuery {
+  role_key:string;
+  inclusive:bool;
+  limit:uint16;
+}
+table Role {
+  name:string;
+  perms:Zfb.Bitmap;	// bitmap
+  apiperms:Zfb.Bitmap;	// API permissions
+  flags:uint8;
+}
+table RoleList {
+  list:[Role];
+}
+root_type Role;

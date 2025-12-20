@@ -1,0 +1,13 @@
+db {
+  cacheSize		16777216 # 16Mb
+  cacheRegions		1
+  mmapSize		67108864 # 64Mb
+  txnMax		64
+  envDir		1
+  dataDir		data
+  pageSize		16384 # 16k
+  logBufSize		32768 # 32k
+  logFileSize		10485760 # 10M
+  logDir		log
+  noSync		0
+}

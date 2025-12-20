@@ -1,0 +1,38 @@
+namespace Zfb;
+table Bytes { // ZuBytes within a BytesVec
+  data:[ubyte];
+}
+table Bitmap { // ZuBitmap / ZmBitmap / ZtBitmap
+  data:[uint64];
+}
+struct UInt128 { // uint128_t
+  h:uint64;
+  l:uint64;
+}
+struct Int128 { // int128_t
+  h:uint64;
+  l:uint64;
+}
+struct Fixed { // ZuFixed
+  mantissa:int64;
+  ndp:uint8;
+}
+struct Decimal { // ZuDecimal
+  h:uint64;
+  l:uint64;
+}
+struct Time { // ZmTime
+  sec:int64;
+  nsec:int32;
+}
+struct DateTime { // ZtDate
+  julian:int32;
+  sec:int32;
+  nsec:int32;
+}
+struct IP { // ZiIP
+  addr:[uint8:4];
+}
+struct ID { //ZuID
+  data:[uint8:8];
+}

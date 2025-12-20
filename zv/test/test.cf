@@ -1,0 +1,17 @@
+#
+  #
+     key4 # kick kick
+
+
+     \#\ value4
+key2 ok\ 
+key3 ok2\\
+
+# grok this word
+
+	key1		
+			"ok \"this is val1\\"		# comment !!
+key6 { a b c d\} }
+
+key5 \#\ k51, "k5\\2", k\ 53\,,
+k54\ , k55

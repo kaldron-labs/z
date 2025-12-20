@@ -1,0 +1,10 @@
+include "zfb_types.fbs";
+namespace Zdf.DB.fbs;
+table BlkFloat {
+  blk_offset:uint64;	// block index within series (from 0)
+  offset:uint64;	// offset of this block (in values)
+  last:double;		// last value in block
+  series_i_d:uint32;	// series ID
+  count:uint16;		// count of values in block
+}
+root_type BlkFloat;

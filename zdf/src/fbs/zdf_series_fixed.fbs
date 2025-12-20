@@ -1,0 +1,11 @@
+include "zfb_types.fbs";
+namespace Zdf.DB.fbs;
+table SeriesFixed {
+  id:uint32;		// series ID (1-based, globally unique)
+  name:string;		// field name within DF
+  first:int64;		// first value in first block
+  ndp:uint8;		// NDP of first value
+  epoch:Zfb.DateTime;	// epoch (creation time)
+  blk_offset:uint64;	// first block (initially 0)
+}
+root_type SeriesFixed;

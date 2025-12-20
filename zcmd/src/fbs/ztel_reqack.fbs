@@ -1,0 +1,7 @@
+include "zfb_types.fbs";
+namespace Ztel.fbs;
+table ReqAck {
+  seq_no:uint64;
+  ok:bool;
+}
+root_type ReqAck;

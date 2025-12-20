@@ -1,0 +1,116 @@
+SELECT ''::zbitmap;
+ zbitmap 
+---------
+ 
+(1 row)
+
+SELECT zbitmap_length('');
+ zbitmap_length 
+----------------
+ 0
+(1 row)
+
+SELECT zbitmap_send('');
+    zbitmap_send    
+--------------------
+ \x0000000000000000
+(1 row)
+
+SELECT ','::zbitmap;
+ zbitmap 
+---------
+ 
+(1 row)
+
+SELECT '-'::zbitmap;
+ERROR:  invalid input syntax for zbitmap: "-"
+LINE 1: SELECT '-'::zbitmap;
+               ^
+SELECT '0'::zbitmap;
+ zbitmap 
+---------
+ 0
+(1 row)
+
+SELECT '0,'::zbitmap;
+ zbitmap 
+---------
+ 0
+(1 row)
+
+SELECT '0-'::zbitmap;
+ zbitmap 
+---------
+ 0-
+(1 row)
+
+SELECT ',0'::zbitmap;
+ zbitmap 
+---------
+ 0
+(1 row)
+
+SELECT zbitmap_get(',0', 0);
+ zbitmap_get 
+-------------
+ t
+(1 row)
+
+SELECT zbitmap_get(',0', 1);
+ zbitmap_get 
+-------------
+ f
+(1 row)
+
+SELECT '-0'::zbitmap;
+ERROR:  invalid input syntax for zbitmap: "-0"
+LINE 1: SELECT '-0'::zbitmap;
+               ^
+SELECT zbitmap_clr_range('', 0, 0);
+ zbitmap_clr_range 
+-------------------
+ 
+(1 row)
+
+SELECT zbitmap_set_range('', 0, 0);
+ zbitmap_set_range 
+-------------------
+ 
+(1 row)
+
+SELECT zbitmap_set_range('', 0, 1);
+ zbitmap_set_range 
+-------------------
+ 0
+(1 row)
+
+SELECT zbitmap_set_range('', 1, 2);
+ zbitmap_set_range 
+-------------------
+ 1
+(1 row)
+
+SELECT zbitmap_set_range('0-1,3-4,6,8-', 60, 68);
+ zbitmap_set_range 
+-------------------
+ 0-1,3-4,6,8-67
+(1 row)
+
+SELECT zbitmap_send(zbitmap_set_range('0-1,3-4,6,8-', 60, 68));
+                    zbitmap_send                    
+----------------------------------------------------
+ \x0000000000000002ffffffffffffff5b000000000000000f
+(1 row)
+
+SELECT zbitmap_xor(zbitmap_set_range('0-1,3-4,6,8-', 60, 68), '1-4');
+ zbitmap_xor 
+-------------
+ 0,2,6,8-67
+(1 row)
+
+SELECT ''::zbitmap = ''::zbitmap;
+ ?column? 
+----------
+ t
+(1 row)
+

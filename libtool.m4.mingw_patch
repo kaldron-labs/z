@@ -1,0 +1,14 @@
+--- m4/libtool.m4	2020-03-19 17:43:02.000000000 +0000
++++ m4/libtool.m4	2020-06-02 15:33:13.299345100 +0100
+@@ -6428,6 +6428,11 @@
+       # what "hidden" libraries, object files and flags are used when
+       # linking a shared library.
+       output_verbose_link_cmd='$CC -shared $CFLAGS -v conftest.$objext 2>&1 | $GREP -v "^Configured with:" | $GREP "\-L"'
++      case $host_os in
++	mingw*)
++	  output_verbose_link_cmd="$output_verbose_link_cmd | $SED '"'s/ "\([[^"]]*\)"/ \1/g; s/\\\\*/\//g;'"'"
++	  ;;
++      esac
+
+     else
+       GXX=no

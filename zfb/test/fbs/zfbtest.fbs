@@ -1,0 +1,7 @@
+namespace zfbtest.fbs;
+table Test {
+  foo:int32;
+  bar:string;
+  baz:[string];
+}
+root_type Test;

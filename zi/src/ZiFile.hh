@@ -1,0 +1,314 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2024 Psi Labs
+// This code is licensed by the MIT license (see LICENSE for details)
+
+// file I/O
+// - all ZiFile calls are unbuffered and direct to the operating system
+// - file operations are intrinsically less frequent and high-latency
+// - not a policy based template
+
+#ifndef ZiFile_HH
+#define ZiFile_HH
+
+#ifndef ZiLib_HH
+#include <zlib/ZiLib.hh>
+#endif
+
+#include <zlib/ZmAlloc.hh>
+
+#include <zlib/ZePlatform.hh>
+
+#include <zlib/ZiPlatform.hh>
+
+#ifndef _WIN32
+#include <sys/mman.h>
+#endif
+
+#ifndef _WIN32
+#include <alloca.h>
+#endif
+
+class ZiAPI ZiFile {
+public:
+  using Handle = Zi::Handle;
+  using Name = Zi::Name;
+  using Path = Zi::Path;
+  using Offset = Zi::Offset;
+
+  enum Flags {
+    ReadOnly	= 0x00001,
+    WriteOnly	= 0x00002,
+    Create	= 0x00004,
+    Exclusive	= 0x00008,
+    Truncate	= 0x00010,
+    Append_	= 0x00020,// append without create is little used in practice
+    Direct	= 0x00040,// O_DIRECT (Unix) / FILE_FLAG_NO_BUFFERING  (Win)
+    Sync	= 0x00080,// O_DSYNC  (Unix) / FILE_FLAG_WRITE_THROUGH (Win)
+    GC		= 0x00100,// close() handle in destructor
+    MMap	= 0x00200,// memory-mapped file (set internally by mmap())
+    Shm		= 0x00400,// global named shared memory, not a real file
+    ShmMirror	= 0x00800,// map two adjacent copies of the same memory
+    MMPopulate	= 0x01000,// MAP_POPULATE
+    Shadow	= 0x02000,// shadow already opened file
+    StdIn	= 0x04000,// standard input
+    StdOut	= 0x08000,// standard output
+    StdErr	= 0x10000,// standard error
+
+    // frequently used combinations
+    Write	= Create | WriteOnly | Truncate,
+    Append	= Create | WriteOnly | Append_
+  };
+
+  // Note: Direct requires caller align all reads/writes to blkSize()
+
+  ZiFile() = default;
+
+  ZiFile(const ZiFile &file) :
+    m_handle{file.m_handle},
+    m_flags{file.m_flags | Shadow},
+    m_offset{file.m_offset},
+    m_blkSize{file.m_blkSize},
+    m_error{file.m_error} { }
+  ZiFile &operator =(const ZiFile &file) {
+    if (this != &file) {
+      this->~ZiFile();
+      new (this) ZiFile{file};
+    }
+    return *this;
+  }
+  ZiFile(ZiFile &&file) :
+    m_handle{file.m_handle},
+    m_flags{file.m_flags},
+    m_offset{file.m_offset},
+    m_blkSize{file.m_blkSize},
+    m_error{file.m_error}
+  {
+    file.m_handle = Zi::nullHandle();
+  }
+  ZiFile &operator =(ZiFile &&file) {
+    this->~ZiFile();
+    new (this) ZiFile{ZuMv(file)};
+    return *this;
+  }
+
+  ~ZiFile() { final(); }
+
+  ZuInline Handle handle() const { return m_handle; }
+
+  ZuInline unsigned flags() { return m_flags; }
+  void setFlags(int f) { m_flags |= f; }
+  void clrFlags(int f) { m_flags &= ~f; }
+
+  ZuInline ZeError error() const { return m_error; }
+
+  int init(Handle handle, unsigned flags);
+
+  static ZiFile stdIn();
+  static ZiFile stdOut();
+  static ZiFile stdErr();
+
+protected:
+  void final_() {
+    m_handle = Zi::nullHandle();
+  }
+private:
+  void final() {
+    if (m_flags & GC)
+      close();
+    else
+      final_();
+  }
+
+public:
+  bool operator !() const { return Zi::nullHandle(m_handle); }
+  ZuOpBool
+
+  ZiFile(
+    const Path &name, unsigned flags, unsigned mode = 0666, Offset length = 0)
+  {
+    open(name, flags, mode, length);
+  }
+
+  int open(
+    const Path &name, unsigned flags, unsigned mode = 0666, Offset length = 0);
+  void openStdIn();
+  void openStdOut();
+  void openStdErr();
+
+  void close();
+
+  Offset size();
+  int blkSize() { return m_blkSize; }
+
+  Offset offset() { return m_offset; }
+  void seek(Offset offset) { m_offset = offset; }
+
+  int sync();
+
+  int read(void *ptr, unsigned len);
+  int readv(const ZiVec *vecs, unsigned nVecs);
+
+  int write(const void *ptr, unsigned len);
+  int writev(const ZiVec *vecs, unsigned nVecs);
+
+  int pread(Offset offset, void *ptr, unsigned len);
+  int preadv(Offset offset, const ZiVec *vecs, unsigned nVecs);
+
+  int pwrite(Offset offset, const void *ptr, unsigned len);
+  int pwritev(Offset offset, const ZiVec *vecs, unsigned nVecs);
+
+  int truncate(Offset offset);
+
+  // Note: unbuffered!
+  template <typename V> ZiFile &operator <<(V &&v) {
+    append_(ZuFwd<V>(v));
+    return *this;
+  }
+
+  static ZuTime mtime(const Path &name, ZeError *e = nullptr);
+  static bool exists(const Path &name, ZeError *e = nullptr);
+  static bool isdir(const Path &name, ZeError *e = nullptr);
+
+  static int remove(const Path &name, ZeError *e = nullptr);
+  static int rename(
+      const Path &oldName, const Path &newName, ZeError *e = nullptr);
+  static int copy(
+      const Path &oldName, const Path &newName, ZeError *e = nullptr);
+  static int mkdir(const Path &name, ZeError *e = nullptr);
+  static int rmdir(const Path &name, ZeError *e = nullptr);
+
+  static Path cwd();
+
+  static bool absolute(const Path &name);
+
+  static Path leafname(const Path &name);
+  static Path dirname(const Path &name);
+  static Path append(const Path &dir, const Path &name);
+
+  // age() takes a Name because Path is UCS2 on Windows
+  // and the implementation needs to append from ZuBox
+  static void age(const Name &name, unsigned max);
+
+protected:
+  int open_(const Path &name, unsigned flags, unsigned mode, Offset length);
+
+private:
+  void init_(Handle handle, unsigned flags, int blkSize);
+
+  template <typename U, typename R = void>
+  using MatchPDelegate =
+    ZuIfT<ZuPrint<U>::Delegate && !ZuTraits<U>::IsString, R>;
+  template <typename U, typename R = void>
+  using MatchPBuffer =
+    ZuIfT<ZuPrint<U>::Buffer && !ZuTraits<U>::IsString, R>;
+
+  template <typename S> ZuMatchString<S> append_(S &&s_) {
+    ZuCSpan s(s_);
+    if (ZuUnlikely(!s)) return;
+    if (ZuUnlikely(write(s.data(), s.length()) != Zi::OK))
+      throw m_error;
+  }
+  template <typename P> MatchPDelegate<P> append_(P &&p) {
+    ZuPrint<P>::print(*this, ZuFwd<P>(p));
+  }
+  template <typename P> MatchPBuffer<P> append_(const P &p) {
+    unsigned len = ZuPrint<P>::length(p);
+    auto buf = ZmAlloc(char, len);
+    if (!buf) throw ZeError{ZiENOMEM};
+    if (ZuUnlikely(write(buf, ZuPrint<P>::print(buf, len, p)) != Zi::OK))
+      throw m_error;
+  }
+
+protected:
+  Handle	m_handle = Zi::nullHandle();
+  unsigned	m_flags = 0;
+  Offset	m_offset = 0;
+  int		m_blkSize = 0;
+  ZeError	m_error;
+};
+
+class ZiAPI ZiMMapFile : public ZiFile {
+public:
+  using Path = Zi::Path;
+  using Offset = Zi::Offset;
+
+  ZiMMapFile() = default;
+
+  ZiMMapFile(const ZiMMapFile &file) :
+    ZiFile{file},
+    m_addr{file.m_addr},
+    m_mmapLength{file.m_mmapLength}
+#ifdef _WIN32
+    , m_mmapHandle{file.m_mmapHandle}
+#endif
+    { }
+  ZiMMapFile &operator =(const ZiMMapFile &file) {
+    if (this != &file) {
+      this->~ZiMMapFile();
+      new (this) ZiMMapFile{file};
+    }
+    return *this;
+  }
+  ZiMMapFile(ZiMMapFile &&file) :
+    ZiFile{static_cast<ZiFile &&>(file)},
+    m_addr{file.m_addr},
+    m_mmapLength{file.m_mmapLength}
+#ifdef _WIN32
+    , m_mmapHandle{ZuMv(file.m_mmapHandle)}
+#endif
+  {
+#ifdef _WIN32
+    file.m_mmapHandle = Zi::nullHandle();
+#endif
+  }
+  ZiMMapFile &operator =(ZiMMapFile &&file) {
+    this->~ZiMMapFile();
+    new (this) ZiMMapFile{ZuMv(file)};
+    return *this;
+  }
+
+  ZuInline void *addr() const { return m_addr; }
+  ZuInline Offset mmapLength() const { return m_mmapLength; }
+
+private:
+  void final() {
+    if (m_flags & GC)
+      close();
+    else {
+      ZiFile::final_();
+#ifdef _WIN32
+      m_mmapHandle = Zi::nullHandle();
+#endif
+    }
+  }
+
+public:
+  using ZiFile::operator !;
+  ZuOpBool
+
+  ZiMMapFile(
+    const Path &name, unsigned flags, Offset length,
+    bool shared = true, int mmapFlags = 0, unsigned mode = 0666)
+  {
+    mmap(name, flags, length, shared, mmapFlags, mode);
+  }
+
+  int mmap(
+    const Path &name, unsigned flags, Offset length,
+    bool shared = true, int mmapFlags = 0, unsigned mode = 0666);
+
+  int msync(void *addr = 0, Offset length = 0);
+
+  void close();
+
+private:
+  void	 	*m_addr = nullptr;
+  Offset	m_mmapLength = 0;
+#ifdef _WIN32
+  Handle	m_mmapHandle = Zi::nullHandle();
+#endif
+};
+
+#endif /* ZiFile_HH */

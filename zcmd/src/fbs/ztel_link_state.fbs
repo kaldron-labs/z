@@ -1,0 +1,14 @@
+namespace Ztel.fbs;
+enum LinkState:int8 {
+  Down = 0,		// down (engine not started)
+  Disabled,		// intentionally down (admin/ops disabled)
+  Deleted,		// deleted (transient state, used to remove links)
+  Connecting,		// connecting (being brought up)
+  Up,			// up/running
+  ReconnectPending,	// reconnect pending following transient failure
+  Reconnecting,		// reconnecting following transient failure
+  Failed,		// failed (non-transient)
+  Disconnecting,	// disconnecting (being brought down)
+  ConnectPending,	// brought up while disconnecting
+  DisconnectPending	// brought down while connecting
+}

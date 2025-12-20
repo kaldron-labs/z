@@ -1,0 +1,88 @@
+# test
+map foo
+# test
+{
+# test
+  mode 0 edit
+  # test
+  {
+  # test
+    Left[Ctrl] { RevWord[Mv]; }
+    Right[Ctrl]
+    # test
+    { FwdWord[Mv]; }
+    Up[] {
+    # test
+    Up[Mv]; }
+    Down[] { Down[Mv];
+    # test
+    }
+    # test
+    Left[Alt] { RevWord[Mv|Unix]; }
+    Right[Alt] { FwdWord[Mv|Unix]; }
+    Left[Shift] { Left[Mv|Vis]; Push[](3); }
+    Right[Shift] { Right[Mv|Vis]; Push[](3); }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; Push[](3); }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past];
+    # test
+    Push[](3); }
+    Home[] { Home[Mv]; }
+    End[] { End[Mv]; }
+    ^W { Null[]; }
+    ^Y { Paste[]; }
+    ^[ { Push[](2); }
+    Delete[] { Right[Del]; }
+    Insert[] { Insert[]; }
+    End[Shift] { End[Mv|Vis]; Push[](3); }
+    Home[Shift] { Home[Mv|Vis]; Push[](3); }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; Push[](3); }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; Push[](3); }
+    Down[Shift] { Down[Mv|Vis]; Push[](3); }
+    Up[Shift] { Up[Mv|Vis]; Push[](3); }
+    LNext[] { Glyph[](, '^'); Left[Mv]; Push[](1); }
+    Kill[] { Home[Del]; }
+    WErase[] { RevWord[Del|Unix]; }
+    Erase[] { Left[Del]; }
+    Enter[] { Enter[]; }
+    SigSusp[] { SigSusp[]; }
+    SigQuit[] { SigQuit[]; }
+    SigInt[] { SigInt[]; }
+    EndOfFile[] { EndOfFile[]; }
+    Left[] { Left[Mv]; }
+    Any[] { Glyph[]; }
+    Right[] { Right[Mv]; }
+  }
+  mode 1 edit {
+    AnyFn[] { Pop[Redir]; }
+    Any[] { OverGlyph[]; Pop[]; }
+  }
+  mode 2 edit {
+    ^[ { Glyph[]; Pop[]; }
+    'w' { Null[]; Pop[]; }
+    AnyFn[] { Pop[Redir]; }
+    Any[] { Pop[]; }
+  }
+  mode 3 edit {
+    ^W { ClrVis[Del|Copy]; Pop[]; }
+    ^[ { Push[](4); }
+    End[Shift] { End[Mv|Vis]; }
+    Home[Shift] { Home[Mv|Vis]; }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; }
+    Down[Shift] { Down[Mv|Vis]; }
+    Up[Shift] { Up[Mv|Vis]; }
+    Left[Shift] { Left[Mv|Vis]; }
+    Right[Shift] { Right[Mv|Vis]; }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past]; }
+    AnyFn[] { ClrVis[]; Pop[Redir]; }
+    Any[] { ClrVis[Del]; Pop[Redir]; }
+    "🐄" { Glyph(,'#'); }
+  }
+  mode 4 edit {
+    ^[ { ClrVis[Del]; Glyph[]; Pop[](2); }
+    'w' { ClrVis[Copy]; Pop[](2); }
+    AnyFn[] { Pop[Redir]; }
+    Any[] { Pop[]; }
+  }
+}

@@ -1,0 +1,8 @@
+include "zfb_types.fbs";
+namespace Zdf.DB.fbs;
+table BlkData {
+  blk_offset:uint64;	// block index within series (from 0)
+  series_i_d:uint32;	// series ID
+  buf:[uint8];		// 4K of compressed data
+}
+root_type BlkData;

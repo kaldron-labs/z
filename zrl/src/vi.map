@@ -1,0 +1,412 @@
+map vi {
+  # default insert/edit mode
+  mode 0 {
+    EndOfFile { EndOfFile; }
+    SigInt { SigInt; }
+    SigQuit { SigQuit; }
+    SigSusp { SigSusp; }
+    Any { Glyph; }
+    Erase { BackSpace; }
+    WErase { RevWord[Del|Unix]; }
+    Kill { Home[Del]; }
+    LNext { Glyph(, '^'); Left[Mv]; Push(1); }
+    Enter { Enter; }
+    Up { Up[Mv]; End[Mv]; }
+    Down { Down[Mv]; End[Mv]; }
+    Left { Left[Mv]; }
+    Right { Right[Mv]; }
+    Home { Home[Mv]; }
+    End { End[Mv]; }
+    PgUp { Prev; }
+    PgDn { Next; }
+    Insert { InsToggle; }
+    Delete { Right[Del|Copy]; }
+    Up[Shift] { Up[Mv|Vis]; Push(2); }
+    Down[Shift] { Down[Mv|Vis]; Push(2); }
+    Left[Shift] { Left[Mv|Vis]; Push(2); }
+    Right[Shift] { Right[Mv|Vis]; Push(2); }
+    Home[Shift] { Home[Mv|Vis]; Push(2); }
+    End[Shift] { End[Mv|Vis]; Push(2); }
+    Left[Ctrl] { RevWord[Mv]; }
+    Right[Ctrl] { FwdWord[Mv]; }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; Push(2); }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past]; Push(2); }
+    Left[Alt] { RevWord[Mv|Unix]; }
+    Right[Alt] { FwdWord[Mv|Unix]; }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; Push(2); }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; Push(2); }
+    Redraw { Redraw; }
+    ^D { ListComplete; }
+    Tab { Complete; }
+    Tab[Shift] { RevComplete; }
+    ^L { Clear; }
+    ^[ { EditRep; Left[Mv]; Mode(3); }
+  }
+  # literal next
+  mode 1 {
+    Any { OverGlyph; Pop; }
+    AnyFn { Pop; Syn; }
+    AnySys { OverGlyph; Pop; }
+  }
+  # highlight "visual" mode
+  mode 2 {
+    Any { ClrVis[Del|Vis]; Pop; Syn; }
+    AnyFn { ClrVis; Pop; Syn; }
+    AnySys { ClrVis; Pop; Syn; }
+    Erase { Syn(, Delete); }
+    Delete { ClrVis[Del]; Pop; }
+    Up[Shift] { Up[Mv|Vis]; }
+    Down[Shift] { Down[Mv|Vis]; }
+    Left[Shift] { Left[Mv|Vis]; }
+    Right[Shift] { Right[Mv|Vis]; }
+    Home[Shift] { Home[Mv|Vis]; }
+    End[Shift] { End[Mv|Vis]; }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past]; }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; }
+  }
+  # digits base mode
+  mode 16 base {
+    '0' { ArgDigit(0); }
+    '1' { ArgDigit(1); }
+    '2' { ArgDigit(2); }
+    '3' { ArgDigit(3); }
+    '4' { ArgDigit(4); }
+    '5' { ArgDigit(5); }
+    '6' { ArgDigit(6); }
+    '7' { ArgDigit(7); }
+    '8' { ArgDigit(8); }
+    '9' { ArgDigit(9); }
+  }
+  # command mode
+  mode 3 command : 16 {
+    AnySys { Mode(0); Syn; }
+    Erase { Left[Mv]; }
+    Enter { Mode(0); Enter; }
+    Up { Up[Mv]; End[Mv]; }
+    Down { Down[Mv]; End[Mv]; }
+    Left { Left[Mv]; }
+    Right { Right[Mv]; }
+    Home { Home[Mv]; }
+    End { End[Mv]; }
+    PgUp { Prev; }
+    PgDn { Next; }
+    Insert { InsToggle; }
+    Delete { Right[Del|Copy]; }
+    Up[Shift] { Up[Mv|Vis]; Push(4); }
+    Down[Shift] { Down[Mv|Vis]; Push(4); }
+    Left[Shift] { Left[Mv|Vis]; Push(4); }
+    Right[Shift] { Right[Mv|Vis]; Push(4); }
+    Home[Shift] { Home[Mv|Vis]; Push(4); }
+    End[Shift] { End[Mv|Vis]; Push(4); }
+    Left[Ctrl] { RevWord[Mv]; }
+    Right[Ctrl] { FwdWord[Mv]; }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; Push(4); }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past]; Push(4); }
+    Left[Alt] { RevWord[Mv|Unix]; }
+    Right[Alt] { FwdWord[Mv|Unix]; }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; Push(4); }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; Push(4); }
+    'w' { FwdWord[Mv]; }
+    'W' { FwdWord[Mv|Unix]; }
+    'e' { FwdWordEnd[Mv]; }
+    'E' { FwdWordEnd[Mv|Unix]; }
+    'r' { Edit; Mode(6); }
+    'R' { Edit; Over; Mode(0); }
+    ^R { Redo; }
+    'y' { Mode(7); }
+    'u' { Undo; }
+    'i' { Edit; Insert; Mode(0); }
+    'I' { Edit; Insert; Mode(0); Home[Mv]; }
+    'o' { Mode(0); End[Mv]; Home[Del]; }
+    'O' { Syn(, 'o'); }
+    'p' { Mode(0); Right[Mv|KeepReg](1); Mode(3); Paste; }
+    'P' { Paste; }
+    'a' { Edit; Mode(0); Right[Mv]; }
+    'A' { Edit; Mode(0); End[Mv]; }
+    's' { Mode(0); Right[Del|Vis]; }
+    'S' { Syn(, 'o'); }
+    'd' { Mode(8); }
+    'D' { End[Del|Copy]; }
+    'g' { Mode(9); }
+    'h' { Left[Mv]; }
+    'j' { Down[Mv]; End[Mv]; }
+    'k' { Up[Mv]; End[Mv]; }
+    'l' { Right[Mv]; }
+    'x' { Right[Del|Copy]; }
+    'c' { Mode(12); }
+    'C' { Mode(0); End[Del|Copy|Vis]; }
+    'b' { RevWord[Mv]; }
+    'B' { RevWord[Mv|Unix]; }
+    'n' { FwdSearch; }
+    'N' { RevSearch; }
+    '/' { PromptSrch(14); }
+    '?' { PromptSrch(15); }
+    '^' { Home[Mv]; }
+    '$' { End[Mv]; }
+    '"' { Push(5); }
+    '.' { Repeat; }
+    '+' { Down[Mv]; End[Mv]; }
+    '-' { Up[Mv]; End[Mv]; }
+    '~' { CapGlyph; }
+    ^L { Clear; }
+    #Redraw { Redraw; } # deconflict with ^R
+  }
+  # highlight "visual" command mode
+  mode 4 command {
+    AnyFn { ClrVis; Pop; Syn; }
+    AnySys { ClrVis; Pop; Syn; }
+    Erase { Syn(, Delete); }
+    Delete { ClrVis[Del]; Pop; }
+    Up[Shift] { Up[Mv|Vis]; }
+    Down[Shift] { Down[Mv|Vis]; }
+    Left[Shift] { Left[Mv|Vis]; }
+    Right[Shift] { Right[Mv|Vis]; }
+    Home[Shift] { Home[Mv|Vis]; }
+    End[Shift] { End[Mv|Vis]; }
+    Left[Shift|Ctrl] { RevWord[Mv|Vis]; }
+    Right[Shift|Ctrl] { FwdWordEnd[Mv|Vis|Past]; }
+    Left[Shift|Alt] { RevWord[Mv|Vis|Unix]; }
+    Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; }
+    'd' { ClrVis[Del|Copy]; Pop; }
+    'x' { Syn(, 'd'); }
+    'c' { Syn(, 'd'); }
+    's' { Syn(, 'd'); }
+    'y' { ClrVis[Copy]; Pop; }
+    'p' { ClrVis[Del|Vis]; Paste; Pop; }
+    'P' { Syn(, 'p'); }
+    '~' { CapVis; }
+    'U' { UpperVis; }
+    'u' { LowerVis; }
+  }
+  # '"' register mode
+  mode 5 {
+    Any { Register; Pop; }
+    AnyFn { Pop; Syn; }
+    AnySys { Pop; Syn; }
+  }
+  # 'r' single-character replace mode
+  mode 6 {
+    Any { OverGlyph; Mode(3); }
+    AnyFn { Mode(3); Syn; }
+    AnySys { Mode(0); Syn; }
+  }
+  # 'y' yank mode
+  mode 7 command : 16 {
+    Up { Up[Copy]; Mode(3); }
+    Down { Down[Copy]; Mode(3); }
+    Left { Left[Copy]; Mode(3); }
+    Right { Right[Copy]; Mode(3); }
+    Home { Home[Copy]; Mode(3); }
+    End { End[Copy]; Mode(3); }
+    Delete { Right[Copy]; Mode(3); }
+    Up[Shift] { Up[Copy]; Mode(3); }
+    Down[Shift] { Down[Copy]; Mode(3); }
+    Left[Shift] { Left[Copy]; Mode(3); }
+    Right[Shift] { Right[Copy]; Mode(3); }
+    Home[Shift] { Home[Copy]; Mode(3); }
+    End[Shift] { End[Copy]; Mode(3); }
+    Left[Ctrl] { RevWord[Copy]; Mode(3); }
+    Right[Ctrl] { FwdWord[Copy]; Mode(3); }
+    Left[Shift|Ctrl] { RevWord[Copy]; Mode(3); }
+    Right[Shift|Ctrl] { FwdWordEnd[Copy|Past]; Mode(3); }
+    Left[Alt] { RevWord[Copy|Unix]; Mode(3); }
+    Right[Alt] { FwdWord[Copy|Unix]; Mode(3); }
+    Left[Shift|Alt] { RevWord[Copy|Unix]; Mode(3); }
+    Right[Shift|Alt] { FwdWordEnd[Copy|Unix|Past]; Mode(3); }
+    'w' { FwdWord[Copy]; Mode(3); }
+    'W' { FwdWord[Copy|Unix]; Mode(3); }
+    'e' { FwdWordEnd[Copy]; Mode(3); }
+    'E' { FwdWordEnd[Copy|Unix]; Mode(3); }
+    'g' { Mode(9); }
+    'h' { Left[Copy]; Mode(3); }
+    'j' { Down[Copy]; Mode(3); }
+    'k' { Up[Copy]; Mode(3); }
+    'l' { Right[Copy]; Mode(3); }
+    'x' { Right[Copy]; Mode(3); }
+    'b' { RevWord[Copy]; Mode(3); }
+    'B' { RevWord[Copy|Unix]; Mode(3); }
+    '^' { Home[Copy]; Mode(3); }
+    '$' { End[Copy]; Mode(3); }
+    Any { Mode(3); }
+    AnyFn { Mode(3); }
+    AnySys { Mode(0); Syn; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+  # 'd' delete mode
+  mode 8 command : 16 {
+    Up { Up[Del|Copy]; Mode(3); }
+    Down { Down[Del|Copy]; Mode(3); }
+    Left { Left[Del|Copy]; Mode(3); }
+    Right { Right[Del|Copy]; Mode(3); }
+    Home { Home[Del|Copy]; Mode(3); }
+    End { End[Del|Copy]; Mode(3); }
+    Delete { Right[Del|Copy]; Mode(3); }
+    Up[Shift] { Up[Del|Copy]; Mode(3); }
+    Down[Shift] { Down[Del|Copy]; Mode(3); }
+    Left[Shift] { Left[Del|Copy]; Mode(3); }
+    Right[Shift] { Right[Del|Copy]; Mode(3); }
+    Home[Shift] { Home[Del|Copy]; Mode(3); }
+    End[Shift] { End[Del|Copy]; Mode(3); }
+    Left[Ctrl] { RevWord[Del|Copy]; Mode(3); }
+    Right[Ctrl] { FwdWord[Del|Copy]; Mode(3); }
+    Left[Shift|Ctrl] { RevWord[Del|Copy]; Mode(3); }
+    Right[Shift|Ctrl] { FwdWordEnd[Del|Copy|Past]; Mode(3); }
+    Left[Alt] { RevWord[Del|Copy|Unix]; Mode(3); }
+    Right[Alt] { FwdWord[Del|Copy|Unix]; Mode(3); }
+    Left[Shift|Alt] { RevWord[Del|Copy|Unix]; Mode(3); }
+    Right[Shift|Alt] { FwdWordEnd[Del|Copy|Unix|Past]; Mode(3); }
+    'w' { FwdWord[Del|Copy]; Mode(3); }
+    'W' { FwdWord[Del|Copy|Unix]; Mode(3); }
+    'e' { FwdWordEnd[Del|Copy]; Mode(3); }
+    'E' { FwdWordEnd[Del|Copy|Unix]; Mode(3); }
+    'g' { Mode(11); }
+    'h' { Left[Del|Copy]; Mode(3); }
+    'j' { Down[Del|Copy]; Mode(3); }
+    'k' { Up[Del|Copy]; Mode(3); }
+    'l' { Right[Del|Copy]; Mode(3); }
+    'x' { Right[Del|Copy]; Mode(3); }
+    'b' { RevWord[Del|Copy]; Mode(3); }
+    'B' { RevWord[Del|Copy|Unix]; Mode(3); }
+    '^' { Home[Del|Copy]; Mode(3); }
+    '$' { End[Del|Copy]; Mode(3); }
+    Any { Mode(3); }
+    AnyFn { Mode(3); }
+    AnySys { Mode(0); Syn; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+  # 'g' go mode
+  mode 9 command {
+    'e' { Mode(3); RevWordEnd[Mv]; }
+    'E' { Mode(3); RevWordEnd[Mv|Unix]; }
+    Any { Mode(3); }
+    AnyFn { Mode(3); Syn; }
+    AnySys { Mode(0); Syn; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+  # 'y' 'g' yank-go mode
+  mode 10 command {
+    'e' { Mode(3); RevWordEnd[Copy]; }
+    'E' { Mode(3); RevWordEnd[Copy|Unix]; }
+    Any { Mode(3); }
+    AnyFn { Mode(3); }
+    AnySys { Mode(0); Syn; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+  # 'd' 'g' delete-go mode
+  mode 11 command {
+    'e' { Mode(3); RevWordEnd[Del|Copy]; }
+    'E' { Mode(3); RevWordEnd[Del|Copy|Unix]; }
+    Any { Mode(3); }
+    AnyFn { Mode(3); }
+    AnySys { Mode(0); Syn; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+  # 'c' change mode
+  mode 12 command : 16 {
+    Up { Up[Del|Copy|Vis]; Mode(0); }
+    Down { Down[Del|Copy|Vis]; Mode(0); }
+    Left { Left[Del|Copy|Vis]; Mode(0); }
+    Right { Right[Del|Copy|Vis]; Mode(0); }
+    Home { Home[Del|Copy|Vis]; Mode(0); }
+    End { End[Del|Copy|Vis]; Mode(0); }
+    Delete { Right[Del]; Mode(0); }
+    Up[Shift] { Up[Del|Copy|Vis]; Mode(0); }
+    Down[Shift] { Down[Del|Copy|Vis]; Mode(0); }
+    Left[Shift] { Left[Del|Copy|Vis]; Mode(0); }
+    Right[Shift] { Right[Del|Copy|Vis]; Mode(0); }
+    Home[Shift] { Home[Del|Copy|Vis]; Mode(0); }
+    End[Shift] { End[Del|Copy|Vis]; Mode(0); }
+    Left[Ctrl] { RevWord[Del|Copy|Vis]; Mode(0); }
+    Right[Ctrl] { FwdWord[Del|Copy|Vis]; Mode(0); }
+    Left[Shift|Ctrl] { RevWord[Del|Copy|Vis]; Mode(0); }
+    Right[Shift|Ctrl] { FwdWordEnd[Del|Copy|Vis|Past]; Mode(0); }
+    Left[Alt] { RevWord[Del|Copy|Vis|Unix]; Mode(0); }
+    Right[Alt] { FwdWord[Del|Copy|Vis|Unix]; Mode(0); }
+    Left[Shift|Alt] { RevWord[Del|Copy|Vis|Unix]; Mode(0); }
+    Right[Shift|Alt] { FwdWordEnd[Del|Copy|Vis|Unix|Past]; Mode(0); }
+    'w' { Mode(0); FwdWord[Del|Copy|Vis]; Mode(0); }
+    'W' { Mode(0); FwdWord[Del|Copy|Vis|Unix]; Mode(0); }
+    'e' { Mode(0); FwdWordEnd[Del|Copy|Vis]; Mode(0); }
+    'E' { Mode(0); FwdWordEnd[Del|Copy|Vis|Unix]; Mode(0); }
+    'g' { Mode(13); }
+    'h' { Mode(0); Left[Del|Copy|Vis]; }
+    'j' { Mode(0); Down[Del|Copy|Vis]; }
+    'k' { Mode(0); Up[Del|Copy|Vis]; }
+    'l' { Mode(0); Right[Del|Copy|Vis]; }
+    'x' { Mode(0); Right[Del|Copy|Vis]; }
+    'b' { Mode(0); RevWord[Del|Copy|Vis]; }
+    'B' { Mode(0); RevWord[Del|Copy|Vis|Unix]; }
+    '^' { Mode(0); Home[Del|Copy|Vis]; }
+    '$' { Mode(0); End[Del|Copy|Vis]; }
+    Any { Mode(3); }
+    AnyFn { Mode(3); }
+    AnySys { Mode(0); Syn; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+  # 'c' 'g' change-go mode
+  mode 13 command {
+    'e' { Mode(3); RevWordEnd[Del|Copy|Vis]; }
+    'E' { Mode(3); RevWordEnd[Del|Copy|Vis|Unix]; }
+    Any { Mode(3); }
+    AnyFn { Mode(3); Syn; }
+    AnySys { Mode(0); Syn; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+  # '/' search fwd mode
+  mode 14 {
+    Any { Glyph; }
+    AnyFn { Nop; }
+    AnySys { AbortSrch; Syn; }
+    Erase { Left[Del]; }
+    WErase { RevWord[Del|Unix]; }
+    Kill { Home[Del]; }
+    LNext { Glyph(, '^'); Left[Mv]; Push(1); }
+    Enter { EnterSrchFwd; }
+    Left { Left[Mv]; }
+    Right { Right[Mv]; }
+    Home { Home[Mv]; }
+    End { End[Mv]; }
+    Insert { InsToggle; }
+    Delete { Right[Del]; }
+    Left[Ctrl] { RevWord[Mv]; }
+    Right[Ctrl] { FwdWord[Mv]; }
+    Left[Alt] { RevWord[Mv|Unix]; }
+    Right[Alt] { FwdWord[Mv|Unix]; }
+    ^[ { AbortSrch; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+  # '?' search rev mode
+  mode 15 {
+    Any { Glyph; }
+    AnyFn { Nop; }
+    AnySys { AbortSrch; Syn; }
+    Erase { Left[Del]; }
+    WErase { RevWord[Del|Unix]; }
+    Kill { Home[Del]; }
+    LNext { Glyph(, '^'); Left[Mv]; Push(1); }
+    Enter { EnterSrchRev; }
+    Left { Left[Mv]; }
+    Right { Right[Mv]; }
+    Home { Home[Mv]; }
+    End { End[Mv]; }
+    Insert { InsToggle; }
+    Delete { Right[Del]; }
+    Left[Ctrl] { RevWord[Mv]; }
+    Right[Ctrl] { FwdWord[Mv]; }
+    Left[Alt] { RevWord[Mv|Unix]; }
+    Right[Alt] { FwdWord[Mv|Unix]; }
+    ^[ { AbortSrch; }
+    ^L { Clear; }
+    Redraw { Redraw; }
+  }
+}

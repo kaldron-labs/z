@@ -1,0 +1,8 @@
+namespace Ztel.fbs;
+enum ThreadPriority:int8 {	// == ZmThreadPriority
+  RealTime = 0,
+  High = 1,
+  Normal = 2,
+  Low = 3
+}
+

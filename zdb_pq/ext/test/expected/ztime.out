@@ -1,0 +1,329 @@
+SELECT CAST(0::zdecimal AS ztime);
+        ztime        
+---------------------
+ 1970/01/01 00:00:00
+(1 row)
+
+SELECT CAST(-1::zdecimal AS ztime);
+        ztime        
+---------------------
+ 1969/12/31 23:59:59
+(1 row)
+
+SELECT CAST(0::zdecimal AS ztime) - 1::zdecimal;
+      ?column?       
+---------------------
+ 1969/12/31 23:59:59
+(1 row)
+
+SELECT CAST(0::int8 AS ztime);
+        ztime        
+---------------------
+ 1970/01/01 00:00:00
+(1 row)
+
+SELECT CAST(-1::int8 AS ztime);
+        ztime        
+---------------------
+ 1969/12/31 23:59:59
+(1 row)
+
+SELECT CAST(0::int8 AS ztime) - 1::zdecimal;
+      ?column?       
+---------------------
+ 1969/12/31 23:59:59
+(1 row)
+
+SELECT CAST(- CAST('0048/08/09 10:30:42'::ztime AS zdecimal) AS ztime);
+        ztime        
+---------------------
+ 3891/05/26 13:29:18
+(1 row)
+
+SELECT ''::ztime;
+ERROR:  invalid input syntax for ztime: ""
+LINE 1: SELECT ''::ztime;
+               ^
+SELECT 'x'::ztime;
+ERROR:  invalid input syntax for ztime: "x"
+LINE 1: SELECT 'x'::ztime;
+               ^
+SELECT '1969/11/01 21:19:54.01 x'::ztime;
+ERROR:  invalid input syntax for ztime: "1969/11/01 21:19:54.01 x"
+LINE 1: SELECT '1969/11/01 21:19:54.01 x'::ztime;
+               ^
+CREATE TABLE test_ztime (x ztime);
+CREATE UNIQUE INDEX test_ztime1_x_key ON test_ztime USING btree (x);
+INSERT INTO test_ztime VALUES (CAST(-1::zdecimal as ztime)), (CAST(0::zdecimal as ztime)), (CAST(1::zdecimal as ztime)), (CAST(2::zdecimal as ztime)), (CAST(3::zdecimal as ztime)), (CAST(4::zdecimal as ztime)), (CAST(5::zdecimal as ztime)), (CAST(null::zdecimal as ztime));
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+EXPLAIN (COSTS OFF) SELECT * FROM test_ztime WHERE x = CAST(3::zdecimal as ztime);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Index Only Scan using test_ztime1_x_key on test_ztime
+   Index Cond: (x = '1970/01/01 00:00:03'::ztime)
+(2 rows)
+
+SELECT * FROM test_ztime WHERE x = CAST(3::zdecimal as ztime);
+          x          
+---------------------
+ 1970/01/01 00:00:03
+(1 row)
+
+DROP TABLE test_ztime;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+SELECT CAST(1::zdecimal as ztime) < CAST(1::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) < CAST(2::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) < CAST(4::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(1::zdecimal as ztime) <= CAST(1::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) <= CAST(2::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) <= CAST(4::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(1::zdecimal as ztime) = CAST(1::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) = CAST(2::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) = CAST(4::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT CAST(1::zdecimal as ztime) <> CAST(1::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) <> CAST(2::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) <> CAST(4::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(1::zdecimal as ztime) >= CAST(1::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) >= CAST(2::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) >= CAST(4::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT CAST(1::zdecimal as ztime) > CAST(1::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) > CAST(2::zdecimal as ztime);
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) > CAST(4::zdecimal as ztime);
+ ?column? 
+----------
+ f
+(1 row)
+
+SELECT ztime_cmp(CAST(1::zdecimal as ztime), CAST(1::zdecimal as ztime));
+ ztime_cmp 
+-----------
+         0
+(1 row)
+
+SELECT ztime_cmp(CAST(5::zdecimal as ztime), CAST(2::zdecimal as ztime));
+ ztime_cmp 
+-----------
+         1
+(1 row)
+
+SELECT ztime_cmp(CAST(3::zdecimal as ztime), CAST(4::zdecimal as ztime));
+ ztime_cmp 
+-----------
+        -1
+(1 row)
+
+SELECT pg_typeof(CAST(1::zdecimal as ztime) + 1::zdecimal);
+ pg_typeof 
+-----------
+ ztime
+(1 row)
+
+SELECT CAST(1::zdecimal as ztime) + 1::zdecimal;
+      ?column?       
+---------------------
+ 1970/01/01 00:00:02
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) + 4::zdecimal;
+      ?column?       
+---------------------
+ 1970/01/01 00:00:07
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) + 2::zdecimal;
+      ?column?       
+---------------------
+ 1970/01/01 00:00:07
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) + '-4'::zdecimal;
+      ?column?       
+---------------------
+ 1969/12/31 23:59:59
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) + '-2'::zdecimal;
+      ?column?       
+---------------------
+ 1970/01/01 00:00:03
+(1 row)
+
+SELECT pg_typeof(CAST(1::zdecimal as ztime) - CAST(1::zdecimal as ztime));
+ pg_typeof 
+-----------
+ zdecimal
+(1 row)
+
+SELECT pg_typeof(CAST(1::zdecimal as ztime) - 1::zdecimal);
+ERROR:  value out of range: overflow
+SELECT CAST(1::zdecimal as ztime) - CAST(1::zdecimal as ztime);
+ ?column? 
+----------
+ 0
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) - 4::zdecimal;
+      ?column?       
+---------------------
+ 1969/12/31 23:59:59
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) - 2::zdecimal;
+      ?column?       
+---------------------
+ 1970/01/01 00:00:03
+(1 row)
+
+SELECT CAST(3::zdecimal as ztime) - '-4'::zdecimal;
+      ?column?       
+---------------------
+ 1970/01/01 00:00:07
+(1 row)
+
+SELECT CAST(5::zdecimal as ztime) - '-2'::zdecimal;
+      ?column?       
+---------------------
+ 1970/01/01 00:00:07
+(1 row)
+
+SELECT CAST(CAST('42.01'::zdecimal AS ztime) as int8);
+ int8 
+------
+   42
+(1 row)
+
+SELECT CAST(CAST('-42.01'::zdecimal AS ztime) as int8);
+ int8 
+------
+  -42
+(1 row)
+
+SELECT ztime_out_csv(CAST(0::int8 AS ztime));
+    ztime_out_csv    
+---------------------
+ 1970/01/01 00:00:00
+(1 row)
+
+SELECT ztime_out_iso(CAST(0::int8 AS ztime));
+    ztime_out_iso     
+----------------------
+ 1970-01-01T00:00:00Z
+(1 row)
+
+SELECT ztime_out_fix(CAST(0::int8 AS ztime));
+   ztime_out_fix   
+-------------------
+ 19700101-00:00:00
+(1 row)
+
+SELECT ztime_in_csv(ztime_out_csv(CAST('1.01'::zdecimal AS ztime)));
+      ztime_in_csv      
+------------------------
+ 1970/01/01 00:00:01.01
+(1 row)
+
+SELECT ztime_in_iso(ztime_out_iso(CAST('-1.01'::zdecimal AS ztime)));
+      ztime_in_iso      
+------------------------
+ 1969/12/31 23:59:58.99
+(1 row)
+
+SELECT ztime_in_fix(ztime_out_fix(CAST('42.42'::zdecimal AS ztime)));
+      ztime_in_fix      
+------------------------
+ 1970/01/01 00:00:42.42
+(1 row)
+
+SELECT ztime_hash(CAST(1::zdecimal as ztime));
+ ztime_hash 
+------------
+ 1640531526
+(1 row)
+
