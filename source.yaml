@@ -1,0 +1,2 @@
+files:
+  - ./**/*.{h,hh,c,cc,sql}

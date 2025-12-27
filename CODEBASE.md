@@ -1,0 +1,673 @@
+## Summary
+This repository is a multi-module C/C++ codebase organized by module prefix, with a foundational utility layer (Zu), a runtime/concurrency layer (Zm), system and I/O integration (Zi), text/serialization utilities (Zt), and higher-level subsystems for database, data frames, networking protocols, and tools. It includes module-specific test binaries and a PostgreSQL extension implementation in SQL/C.
+
+Research conducted on 2025-12-27 14:47:25 UTC.
+
+## Coding style and conventions
+- File headers consistently declare editor settings for C++ mode, tab indentation, tab width 8, and a 2-space logical offset, and use `//` comments for header metadata (e.g., `zu/src/ZuLib.hh:1`).
+- Include guards use module-prefixed, uppercase identifiers (e.g., `ZuLib_HH` in `zu/src/ZuLib.hh:10`).
+- Names are short and module-prefixed (Zu/Zm/Zi/Zt/Ze/Zdb/etc.), with internal namespaces or helper types frequently in `Zxx_` or module-local namespaces.
+- The code relies heavily on templates, CRTP, and custom meta-programming helpers such as `ZuDerive`, `ZuTypeList`, `ZuTuple`, and macro-based schema definitions (e.g., `ZtStruct`, `ZfbStruct`).
+- STL usage is minimized; custom containers and spans (`ZuArray`, `ZuSpan`, `ZmRef`, `ZtString`) are widely used in place of `std` types.
+
+## Detailed Findings
+
+### Zu (core utilities)
+- Core platform and type-traits foundation, including inline/branching macros, type utilities, and RAII helpers in `zu/src/ZuLib.hh:10`.
+- Data structures and utilities for strings, arrays, spans, time, and numeric types in `zu/src/ZuString.hh:14`, `zu/src/ZuArray.hh:21`, `zu/src/ZuSpan.hh:14`, `zu/src/ZuTime.hh:12`, `zu/src/ZuDateTime.hh:72`, `zu/src/ZuDecimal.hh:11`, and encoding helpers in `zu/src/ZuBase64.hh:10`.
+- C helpers for bitmap, decimal, and time functionality in `zu/src/zu_bitmap.c:10`, `zu/src/zu_decimal.c:12`, and `zu/src/zu_time.c:10`.
+- Connections: all other modules include Zu types and macros (for example, `zm/src/ZmLib.hh:10`, `zt/src/ZtLib.hh:10`, `zdb/src/Zdb.hh:57`).
+
+### Zm (runtime, memory, concurrency)
+- Export and configuration macros plus module-wide toggles in `zm/src/ZmLib.hh:10`.
+- Engine, scheduler, and thread management in `zm/src/ZmEngine.hh:10`, `zm/src/ZmScheduler.hh:17`, and `zm/src/ZmThread.hh:14`.
+- Memory management, locking, and caching utilities in `zm/src/ZmHeap.hh:25`, `zm/src/ZmLock.hh:10`, and `zm/src/ZmCache.hh:10`.
+- Connections: used by Zi for multiplexing and I/O, by Zt and Zfb for buffer allocation, and by higher-level modules such as Zdb and Zv (e.g., `zi/src/ZiMultiplex.hh:10`, `zdb/src/Zdb.hh:57`, `zv/src/ZvEngine.hh:10`).
+
+### Zi (system, I/O, network)
+- Multiplexing and I/O buffer abstractions in `zi/src/ZiMultiplex.hh:10` and `zi/src/ZiIOBuf.hh:22`.
+- Filesystem and path handling in `zi/src/ZiFile.hh:13` and directory/globbing support in `zi/src/ZiDir.hh:10` and `zi/src/ZiGlob.hh:13`.
+- Network-specific utilities for ring buffers and netlink in `zi/src/ZiRing.hh:22` and `zi/src/ZiNetlink.hh:8`.
+- Connections: provides I/O primitives used by Zfb, Zdb, Zhttp, Zrest, Zws, Zcmd, and Zv (for example, `zfb/src/Zfb.hh:10`, `zdb/src/Zdb.hh:57`, `zhttp/src/Zhttp.hh:14`).
+
+### Zt (text, data structures, serialization)
+- Core Zt module exports and text-oriented types in `zt/src/ZtLib.hh:10` and `zt/src/ZtString.hh:20`.
+- JSON parsing/formatting with structural metadata in `zt/src/ZtJSON.hh:14` and struct reflection helpers in `zt/src/ZtStruct.hh:116`.
+- Regex, URI, timezone, CLI, and other helpers in `zt/src/ZtRegex.hh:10`, `zt/src/ZtURI.hh:109`, `zt/src/ZtTimeZone.hh:20`, and `zt/src/ZtCLI.hh:40`.
+- Connections: Zt is a common dependency for higher-level modules such as Zdb, Zdf, Zrest, Zrl, Zv, and Zum (e.g., `zdb/src/Zdb.hh:57`, `zdf/src/Zdf.hh:28`, `zrest/src/Zrest.hh:10`).
+
+### Ze (platform and logging)
+- Platform abstractions and error/logging helpers in `ze/src/ZePlatform.hh:10`, `ze/src/ZeLog.hh:21`, and `ze/src/ZeAssert.hh:27`.
+- Connections: logging and platform helpers are used across modules, notably Zdb and Zi (e.g., `zdb/src/Zdb.hh:57`, `zi/src/ZiPlatform.hh:10`).
+
+### Zfb (FlatBuffers integration)
+- FlatBuffers builder integration and IO buffer-backed allocators in `zfb/src/Zfb.hh:10`.
+- Schema and enum bridging helpers for FlatBuffers in `zfb/src/ZfbStruct.hh:10`.
+- Connections: used by Zdb and Zum to serialize records and messages (e.g., `zdb/src/Zdb.hh:57`, `zum/src/Zum.hh:12`).
+
+### Ztls (crypto and TLS helpers)
+- Primary TLS and connection types in `ztls/src/Ztls.hh:10` with HMAC, PK, and RNG helpers in `ztls/src/ZtlsHMAC.hh:10`, `ztls/src/ZtlsPK.hh:18`, and `ztls/src/ZtlsRandom.hh:10`.
+- TOTP utilities in `ztls/src/ZtlsTOTP.hh:10` and related implementation in `ztls/src/ZtlsTOTP.cc:10`.
+- Ed25519/Curve25519 implementation and supporting headers in `ztls/src/ed25519/ed25519.c:10` and the `ztls/src/ed25519/` subtree.
+- Connections: used by Zum and potentially other network-facing modules (e.g., `zum/src/Zum.hh:12`).
+
+### Zhttp, Zrest, Zws (HTTP/REST/WebSocket)
+- HTTP parsing and header utilities in `zhttp/src/Zhttp.hh:14` and related library support in `zhttp/src/ZhttpLib.hh:10`.
+- REST request/build/link types in `zrest/src/Zrest.hh:10` and library glue in `zrest/src/ZrestLib.hh:10`.
+- WebSocket client link and state in `zws/src/Zws.hh:10` with module support in `zws/src/ZwsLib.hh:10`.
+- Entry points for CLI/test harnesses in `zhttp/src/zhttp.cc:1`, `zrest/src/zrest.cc:1`, and `zws/src/zws.cc:1`.
+- Connections: these modules depend on Zi for I/O buffers and Zt for parsing/string handling (e.g., `zhttp/src/Zhttp.hh:14`, `zrest/src/Zrest.hh:10`, `zws/src/Zws.hh:10`).
+
+### Zdb (database subsystem)
+- The main database interface, clustered host model, and table/object machinery in `zdb/src/Zdb.hh:57` (including inline documentation of the DB state and workflow).
+- Backing store interface and in-memory store implementation in `zdb/src/ZdbStore.hh:10` and `zdb/src/ZdbMemStore.hh:10`.
+- Replication messages and buffer formats in `zdb/src/ZdbMsg.hh:10` and `zdb/src/ZdbBuf.hh:10`, with telemetry and type definitions in `zdb/src/ZdbTelemetry.hh:10` and `zdb/src/ZdbTypes.hh:10`.
+- Connections: Zdb uses Zm for concurrency/engine control, Zi for networking, Zfb for serialization, Zt for structured field metadata, and Zv for configuration (e.g., `zdb/src/Zdb.hh:57`).
+
+### Zdb_pq (PostgreSQL integration)
+- Postgres store interface and adapter types in `zdb_pq/src/ZdbPQ.hh:8` and `zdb_pq/src/ZdbPQLib.hh:10`.
+- PostgreSQL extension C code for Zdb-specific data types and functions in `zdb_pq/ext/ztime.c:10`, `zdb_pq/ext/zdecimal.c:12`, and `zdb_pq/ext/zbitmap.c:11`.
+- SQL scripts defining extension objects and tests in `zdb_pq/ext/ztime.sql:1`, `zdb_pq/ext/zdecimal.sql:1`, `zdb_pq/ext/zbitmap.sql:1`, and `zdb_pq/ext/test/sql/init.sql:1`.
+- Connections: provides a Zdb backing store for Postgres and exposes SQL functions/types used by database-side tests.
+
+### Zdf (data frame subsystem)
+- DataFrame core types, writer logic, and series helpers in `zdf/src/Zdf.hh:28`.
+- Storage, schema, compression, and statistics helpers in `zdf/src/ZdfStore.hh:10`, `zdf/src/ZdfSchema.hh:10`, `zdf/src/ZdfCompress.hh:23`, and `zdf/src/ZdfStats.hh:13`.
+- Series and block structures in `zdf/src/ZdfSeries.hh:16` and `zdf/src/ZdfBlk.hh:10`.
+- Connections: relies on Zu/Zt/Zm primitives and is used by higher-level components that need time-series storage.
+
+### Zcmd (command framework)
+- Message dispatcher and command registry in `zcmd/src/ZcmdDispatcher.hh:10` and `zcmd/src/ZcmdHost.hh:10`.
+- Telnet/telemetry-oriented command protocol support in `zcmd/src/Ztel.hh:8` and related files in `zcmd/src/`.
+- Command-line entry point in `zcmd/src/zcmd.cc:64`.
+- Connections: uses Zi I/O buffers and Zrl for CLI/password handling, and integrates into Zv/Zdb-based services via configuration and handlers.
+
+### Zrl (readline-style terminal/CLI)
+- High-level API in `zrl/src/Zrl.hh:17` with editor, history, and terminal handling in `zrl/src/ZrlEditor.hh:10`, `zrl/src/ZrlHistory.hh:10`, and `zrl/src/ZrlTerminal.hh:10`.
+- Supporting CLI/terminfo/globbing components in `zrl/src/ZrlCLI.hh:27`, `zrl/src/ZrlTerminfo.hh:10`, and `zrl/src/ZrlGlobber.hh:10`.
+- Connections: consumed by Zcmd for local command processing and interactive prompts.
+
+### Zv (connectivity framework)
+- Core engine, link, and queue abstractions in `zv/src/ZvEngine.hh:10` and `zv/src/ZvIOQueue.hh:13`.
+- Configuration, CSV, and daemon helpers in `zv/src/ZvCf.hh:18`, `zv/src/ZvCSV.hh:12`, and `zv/src/ZvDaemon.hh:10`.
+- Connections: uses Zi multiplexing and Zm engine primitives; higher-level services (e.g., Zdb) reference Zv configuration structures.
+
+### Zgtk (GTK integration)
+- GTK application and model wrappers in `zgtk/src/ZGtkApp.hh:10` and `zgtk/src/ZGtkTreeModel.hh:10`.
+- Connections: integrates with Zu/Zm/Zt primitives for application and data flow.
+
+### Zum (user database/IAM)
+- User DB types with RBAC semantics and FlatBuffers-backed structs in `zum/src/Zum.hh:12`.
+- Server logic in `zum/src/ZumServer.hh:10` and entry point in `zum/src/zuserdb.cc:1`.
+- Connections: uses Zfb for serialization and Ztls for crypto/HMAC primitives (e.g., `zum/src/Zum.hh:12`).
+
+### Tools and single-binary modules
+- `zproxy` defines a proxy application with connection and buffer types in `zproxy/src/zproxy.cc:39`.
+- `zdash` defines a dashboard/watch model in `zdash/src/zdash.cc:72`.
+- These binaries build on core modules for I/O, scheduling, and data structures.
+
+## Code References
+- `zws/src/ZwsLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zws/src/ZwsLib.hh:10` - Top-level symbols: define ZwsLib_HH, define ZwsAPI, define ZwsExplicit, define ZwsAPI, define ZwsExplicit, define ZwsExtern
+- `zws/src/zws.cc:1` - Top-level contents (no regex-matched symbols)
+- `zws/src/Zws.hh:10` - Top-level symbols: define Zws_HH, class CliLink, using App, using Impl, using Base, using IOBufAlloc
+- `zws/test/zwstest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zws/test/zwstestd.cc:1` - Top-level contents (no regex-matched symbols)
+- `zdb/src/ZdbMsg.hh:10` - Top-level symbols: define ZdbMsg_HH, struct Hdr, function saveHdr, function saveHdr, function loadHdr, function verifyHdr
+- `zdb/src/ZdbMemStore.hh:10` - Top-level symbols: define ZdbMemStore_HH, struct VecHeapID, using ArrayVecHeapID, using Value_, function isVec, struct Value
+- `zdb/src/ZdbTypes.hh:10` - Top-level symbols: define ZdbTypes_HH, using Shard, function maxFields, function maxKeys, using KeyID, using UN
+- `zdb/src/Zdb.hh:57` - Top-level symbols: define Zdb_HH, define Zdb_DEBUG, define ZdbDEBUG, define ZdbDEBUG, struct Zdb_HeapID_, using Zdb_HeapID
+- `zdb/src/ZdbMemStore.cc:1` - Top-level contents (no regex-matched symbols)
+- `zdb/src/ZdbBuf.hh:10` - Top-level symbols: define ZdbBuf_HH, struct ZdbBuf_Size_, using ZdbBuf_Size, struct ZdbBuf_HeapID_, using ZdbBuf_HeapID, class AnyTable
+- `zdb/src/ZdbTelemetry.hh:10` - Top-level symbols: define ZdbTelemetry_HH, struct DBTable, using Name, struct DBHost, struct DB
+- `zdb/src/ZdbLib.hh:10` - Top-level symbols: define ZdbLib_HH, define ZdbAPI, define ZdbExplicit, define ZdbAPI, define ZdbExplicit, define ZdbExtern
+- `zdb/src/Zdb.cc:68` - Top-level symbols: function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT
+- `zdb/src/ZdbStore.hh:10` - Top-level symbols: define ZdbStore_HH, class Store, class StoreTbl, using Event, using FailFn, struct InitData
+- `zdb/src/ZdbLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zdb/test/zdbreptest.cc:188` - Top-level symbols: using Key
+- `zdb/test/zdbtest.hh:8` - Top-level symbols: define zdbtest_HH, struct Order
+- `zdb/test/ZdbMockStore.hh:13` - Top-level symbols: define ZdbMockStore_HH, class Store, class StoreTbl, function count, class Store, using Base
+- `zdb/test/zdbreptest2.cc:182` - Top-level symbols: using Key, using Key, using Key
+- `zdb/test/zdbsmoketest.cc:182` - Top-level symbols: using Key, using Key
+- `ze/src/ZeLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `ze/src/ZePlatform.cc:121` - Top-level symbols: class ZePlatform_WSAErrors, function lookup, struct ZePlatform_FMBuf, function isspace__
+- `ze/src/ZeAssert.hh:27` - Top-level symbols: define ZeAssert_HH, define ZeAssert, define ZeAssert
+- `ze/src/ZePlatform.hh:10` - Top-level symbols: define ZePlatform_HH, define ZeLog_BUFSIZ, using ErrNo, function OK, function errNo, function sockErrNo
+- `ze/src/ZeLib.hh:10` - Top-level symbols: define ZeLib_HH, define ZeAPI, define ZeExplicit, define ZeAPI, define ZeExplicit, define ZeExtern
+- `ze/src/ZeLog.cc:51` - Top-level symbols: struct ZePlatform_Syslogger, using Lock, using Guard, function init, function facility, function syslogger
+- `ze/src/ZeLog.hh:21` - Top-level symbols: define ZeLog_HH, class ZeLog, struct ZeSink, struct ZeSinkOptions, function path, function age
+- `ze/test/ZeTest.cc:14` - Top-level symbols: define TestError, define TestError
+- `zu/src/ZuAssert.hh:10` - Top-level symbols: define ZuAssert_HH, define ZuAssert, define ZuCAssert
+- `zu/src/Zu_ntoa.hh:54` - Top-level symbols: define Zu_ntoa_HH, using Is128Bit, using Is64Bit, struct Log16_MaxLog, struct LogN_MaxLog, struct LogN_MaxLog
+- `zu/src/ZuCmp.hh:64` - Top-level symbols: define ZuCmp_HH, function minimum, function maximum, function null, function minimum, function maximum
+- `zu/src/ZuObjectTraits.hh:10` - Top-level symbols: define ZuObjectTraits_HH, struct ZuObjectTraits, using T, struct ZuObjectTraits, using ZuIsObject, using ZuMatchObject
+- `zu/src/ZuString.hh:14` - Top-level symbols: define ZuString_HH, using Fn, using Cmp, function data, function span, using iterator
+- `zu/src/ZuObject.hh:14` - Top-level symbols: define ZuObject_HH, class ZuObject
+- `zu/src/ZuDecimalFn.hh:10` - Top-level symbols: define ZuDecimalFn_HH, function pow10_32, function pow10_64, function pow10_128, function ndp
+- `zu/src/ZuNormChar.hh:15` - Top-level symbols: define ZuNormChar_HH, struct ZuNormChar_, struct ZuNormChar_, struct ZuNormChar_, using ZuNormChar
+- `zu/src/ZuReserved.hh:13` - Top-level symbols: define ZuReserved_HH, define ZuReserved__alignas, define ZuReserved__alignof, define ZuReserved__and, define ZuReserved__and_eq, define ZuReserved__asm
+- `zu/src/ZuFmt.hh:10` - Top-level symbols: define ZuFmt_HH, struct Just, struct Default, struct Left, struct Right, struct Frac
+- `zu/src/ZuEquiv.hh:10` - Top-level symbols: define ZuEquiv_HH, struct ZuEquiv
+- `zu/src/ZuBase32.hh:10` - Top-level symbols: define ZuBase32_HH, function lookup, function is, function enclen, function encode, function declen
+- `zu/src/zu_lib.h:10` - Top-level symbols: define zu_lib_H, define WINVER, define _WIN32_WINNT, define _WIN32_DCOM, define _WIN32_WINDOWS, define _WIN32_IE
+- `zu/src/ZuInvoke.hh:15` - Top-level symbols: define ZuInvoke_HH, struct ZuInvoke_MemberFn_, struct ZuInvoke_MemberFn_, using T, using ZuInvoke_MemberFn, struct ZuInvoke_BoundFn_
+- `zu/src/ZuPrint.hh:15` - Top-level symbols: define ZuPrint_HH, struct ZuPrintable, struct ZuPrintCannot, struct ZuPrintFn, function print, struct ZuPrintLambda
+- `zu/src/ZuStream.hh:11` - Top-level symbols: define ZuStream_HH, class ZuStream_, function reset, using Char, using Char2, using MatchString
+- `zu/src/ZuDerive.hh:36` - Top-level symbols: define ZuDerive_HH, define ZuDerive_, using Base, define ZuDerive, struct Derived
+- `zu/src/ZuRef.hh:16` - Top-level symbols: define ZuRef_HH, using T, struct Acquire, struct MatchOtherRef_, struct MatchOtherRef_, using MatchOtherRef
+- `zu/src/ZuSort.hh:28` - Top-level symbols: define ZuSort_HH, struct ZuSort_Fn, using Fn, function isort_, function qsort_, function ZuSort
+- `zu/src/ZuLib.cc:24` - Top-level symbols: define va_copy, define va_copy, define va_copy
+- `zu/src/ZuDateTime.hh:72` - Top-level symbols: define ZuDateTime_HH, define ZuDateTime_MaxJulian, class ZuDateTime, struct CSV, struct FIX, struct ISO
+- `zu/src/ZuUTF.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/src/ZuIter.hh:12` - Top-level symbols: define ZuIter_HH, class ZuIter, using Container, using Elem, using iterator_category, using value_type
+- `zu/src/ZuBase64URL.hh:10` - Top-level symbols: define ZuBase64URL_HH, function lookup, function is, function enclen, function encode, function declen
+- `zu/src/ZuID.hh:11` - Top-level symbols: define ZuID_HH, class ZuID, struct IsUInt64, using MatchUInt64, function init, function data
+- `zu/src/ZuDateTime.cc:32` - Top-level symbols: struct tm
+- `zu/src/ZuTime.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/src/ZuFP.hh:10` - Top-level symbols: define ZuFP_HH, using U, using U, using U, using U, function constexpr
+- `zu/src/ZuStringFn.hh:10` - Top-level symbols: define ZuStringFn_HH, function strlen_, function strlen_, function strcmp_, function strcmp_, function strcmp_
+- `zu/src/ZuArrayFn.hh:13` - Top-level symbols: define ZuArrayFn_HH, struct ZuArrayFn_ElemOps_, function initElem, function initElem, function destroyElem, struct ZuArrayFn_ElemOps_
+- `zu/src/ZuDemangle.hh:12` - Top-level symbols: define ZuDemangle_HH, class ZuDemangle_, struct ZuDemangle, function print, struct ZuDemangle, function print
+- `zu/src/ZuTL.hh:10` - Top-level symbols: define ZuTL_HH, using T, using T, using Unshift, using T, using T
+- `zu/src/ZuSeq.hh:10` - Top-level symbols: define ZuSeq_HH, using T, struct ZuPushSeq_, using T, using T, struct ZuSeqBitmap_
+- `zu/src/ZuIOResult.hh:10` - Top-level symbols: define ZuIOResult_HH, function ioResult, struct IOResult
+- `zu/src/ZuHash.hh:27` - Top-level symbols: define ZuHash_HH, function ratio, function hash, function ratio, function hash, function ratio
+- `zu/src/zu_bitmap.h:10` - Top-level symbols: define zu_bitmap_H
+- `zu/src/ZuBitmap.hh:10` - Top-level symbols: define ZuBitmap_HH, class Bit, using Bitmap, struct Traits, using Elem, struct PrintScan
+- `zu/src/Zu_aton.hh:10` - Top-level symbols: define Zu_aton_HH, using T, struct Base10, function scan, struct Base10, function scan
+- `zu/src/ZuTraits.hh:56` - Top-level symbols: define ZuTraits_HH, struct ZuTraits_Composite, struct ZuTraits_Composite, struct ZuTraits_Empty, struct ZuTraits_Empty, struct ZuTraits_Enum
+- `zu/src/ZuArray.hh:21` - Top-level symbols: define ZuArray_HH, struct Array_CanAppend, struct Array_CanAppend, struct alignas, struct Array, using T
+- `zu/src/zu_time.h:10` - Top-level symbols: define zu_time_H
+- `zu/src/zu_decimal.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/src/ZuPP.hh:10` - Top-level symbols: define ZuPP_HH, define ZuPP_Q, define ZuPP_Eval, define ZuPP_Eval128, define ZuPP_Eval64, define ZuPP_Eval32
+- `zu/src/ZuSwitch.hh:28` - Top-level symbols: define ZuSwitch_HH, function fn, function fn, function fn, function decltype, using R
+- `zu/src/ZuByteSwap.hh:28` - Top-level symbols: define ZuByteSwap_HH, using T, using U, using I, struct Traits
+- `zu/src/ZuMArray.hh:14` - Top-level symbols: define ZuMArray_HH, class Elem, using Array, using T, using R, using Traits
+- `zu/src/ZuBitStream.hh:13` - Top-level symbols: define ZuBitStream_HH, class ZuIBitStream, function load, function avail, function avail, function in
+- `zu/src/ZuFP_.hh:10` - Top-level symbols: define ZuFP__HH, define INFINITY, define isnan, function floor_, function log10_, function frexp_
+- `zu/src/ZuFnName.hh:10` - Top-level symbols: define ZuFnName_HH, define ZuFnName, define ZuFnName, define ZuFnName
+- `zu/src/ZuMatcher.hh:31` - Top-level symbols: define ZuMatcher_HH, define ZuMatcher_Switch, struct AppendSeq_, struct AppendSeq_, using AppendSeq, struct MkSeq_
+- `zu/src/ZuPolymorph.hh:10` - Top-level symbols: define ZuPolymorph_HH, class ZuPolymorph, function ZuPolymorph
+- `zu/src/ZuBitfield.hh:11` - Top-level symbols: define ZuBitfield_HH, function word, function shift, function mask, function word, function shift
+- `zu/src/ZuDeduce.hh:16` - Top-level symbols: define ZuDeduce_HH, struct ZuDeduce, using O, using R, using Args, struct ZuDeduce
+- `zu/src/ZuMvArray.hh:14` - Top-level symbols: define ZuMvArray_HH, class ZuMvArray, using T, using Cmp, function data, function free
+- `zu/src/ZuUTF.hh:10` - Top-level symbols: define ZuUTF_HH, struct ZuUTF8, using Elem, function initial, function in, function in
+- `zu/src/ZuTokenizer.hh:14` - Top-level symbols: define ZuTokenizer_HH, struct Delimited, function next, function isspace__, function skip, function next
+- `zu/src/ZuTuple.hh:39` - Top-level symbols: define ZuTuple_HH, using TupleT, struct IsTuple_, struct IsTuple_, struct IsTuple_, struct IsTuple_
+- `zu/src/ZuLib.hh:10` - Top-level symbols: define ZuLib_HH, define Z_VERSION, define Z_VERNAME, define WINVER, define _WIN32_WINNT, define _WIN32_DCOM
+- `zu/src/ZuSpan.hh:14` - Top-level symbols: define ZuSpan_HH, class ZuSpan, using T, using Cmp, using Elem, using Ops
+- `zu/src/ZuPtr.hh:13` - Top-level symbols: define ZuPtr_HH, struct ZuPtr_, using T, struct MatchOtherPtr__, struct MatchOtherPtr__, struct MatchOtherPtr_
+- `zu/src/ZuInt.hh:10` - Top-level symbols: define ZuInt_HH, using int128_t, using uint128_t
+- `zu/src/ZuMostAligned.hh:13` - Top-level symbols: define ZuMostAligned_HH, struct ZuMostAligned_, using T, struct ZuMostAligned_, using T, struct ZuMostAligned_
+- `zu/src/ZuVArray.hh:12` - Top-level symbols: define ZuVArray_HH, class Elem, using Array, using T, using R, using Traits
+- `zu/src/ZuTime.hh:12` - Top-level symbols: define ZuTime_HH, define ZuTime_FT_Epoch, class ZuAPI, using ldouble, struct Nano, struct IsInt
+- `zu/src/ZuStdString.hh:10` - Top-level symbols: define ZuStdString_HH
+- `zu/src/ZuUnion.hh:46` - Top-level symbols: define ZuUnion_HH, struct Void, struct Data, struct Data, function star, struct OpStar
+- `zu/src/ZuJoin.hh:10` - Top-level symbols: define ZuJoin_HH, struct ZuJoin
+- `zu/src/ZuVStream.hh:12` - Top-level symbols: define ZuVStream_HH, class ZuVStreamBuf, struct PrintType, function length, function print, class ZuVStream
+- `zu/src/ZuSearch.hh:10` - Top-level symbols: define ZuSearch_HH, function ZuSearchFound, function ZuSearchPos, function ZuSearch, function ZuInterSearch, function constexpr
+- `zu/src/zu_decimal.h:10` - Top-level symbols: define zu_decimal_H, typedef int128_t, typedef uint128_t, define zu_decimal_scale, define zu_decimal_null
+- `zu/src/ZuFixed.hh:35` - Top-level symbols: define ZuFixed_HH, define ZuFixedMin, define ZuFixedMax, define ZuFixedReset, define ZuFixedNull, using ZuFixedVal
+- `zu/src/ZuBox.hh:10` - Top-level symbols: define ZuBox_HH, struct ZuIsBoxed, using ZuMatchBoxed, using ZuNotBoxed, function ZuBox_NullAsIs, function ZuBox_NullString
+- `zu/src/ZuDecimal.hh:11` - Top-level symbols: define ZuDecimal_HH, class ZuDecimalVFmt, struct ZuDecimal, using ldouble, function minimum, function maximum
+- `zu/src/ZuHex.hh:10` - Top-level symbols: define ZuHex_HH, function lookup, function is, function enclen, function encode, function declen
+- `zu/src/ZuLargest.hh:13` - Top-level symbols: define ZuLargest_HH, struct ZuLargest_, using T, struct ZuLargest_, using T, struct ZuLargest_
+- `zu/src/zu_bitmap.cc:16` - Top-level symbols: define BitShift, define ByteShift, struct Data, function copy, function combine, function length
+- `zu/src/ZuStruct.hh:105` - Top-level symbols: define ZuStruct_HH, struct GrepValue_, using GrepValue, struct Value__, struct Value__, struct Value_
+- `zu/src/ZuLambdaTraits.hh:13` - Top-level symbols: define ZuLambdaTraits_HH, struct ArgList__, struct ArgList__, struct ArgList__, struct Return_, using T
+- `zu/src/msvc_intrin.cc:14` - Top-level symbols: define CHECK
+- `zu/src/ZuUnroll.hh:23` - Top-level symbols: define ZuUnroll_HH, struct All, function fn, function fn, struct All, function fn
+- `zu/src/ZuICmp.hh:10` - Top-level symbols: define ZuICmp_HH, struct ZuICmp, function cmp, function less, function equals
+- `zu/src/zu_time.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/src/ZuIntrin.hh:10` - Top-level symbols: define ZuIntrin_HH, function Zu_popcnt8, function Zu_clz8_, function Zu_ctz8_, define Zu_clz8, define Zu_ctz8
+- `zu/src/ZuBase64.hh:10` - Top-level symbols: define ZuBase64_HH, function lookup, function is, function enclen, function encode, function declen
+- `zproxy/src/zproxy.cc:39` - Top-level symbols: class IOBuf, class Connection, class Proxy, class Listener, class App, define BufSize
+- `ztls/src/ZtlsTOTP.cc:1` - Top-level contents (no regex-matched symbols)
+- `ztls/src/ZtlsPK_Data.hh:13` - Top-level symbols: define ZtlsPK_Data_HH, struct SK_PKCS1, struct SK_SEC1, struct SK_PKCS8_HDR, struct SK_PKCS8_RSA, struct SK_PKCS8_EC
+- `ztls/src/ZtlsMPI.hh:10` - Top-level symbols: define ZtlsMPI_HH, struct MPI
+- `ztls/src/ZtlsTOTP.hh:10` - Top-level symbols: define ZtlsTOTP_HH
+- `ztls/src/ZtlsLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `ztls/src/ZtlsPK.hh:18` - Top-level symbols: define ZtlsPK_HH, function mwb_error_, define ZtlsPK_mwb_error, function mrb_error_, define ZtlsPK_mrb_error, struct AnyKey
+- `zv/src/ZvRingParams.hh:10` - Top-level symbols: define ZvRingParams_HH, struct ZvRingParams, function init
+- `zv/src/ZvMxParams.hh:10` - Top-level symbols: define ZvMxParams_HH, struct ZvCxnOptions, function init, struct ZvMxParams, function init
+- `zv/src/ZvCf.hh:18` - Top-level symbols: define ZvCf_HH, define ZvCfMaxFileSize, class Cf, using Cf, using String, function required
+- `zu/test/ZuMatchTest.cc:9` - Top-level symbols: function out, define CHECK, struct GetID_, using T, struct GetID_, using T
+- `zv/src/ZvLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/test/ZuTokenizerTest.cc:12` - Top-level symbols: function out, define CHECK
+- `zu/test/ZuBitStreamTest.cc:9` - Top-level symbols: function out, define CHECK
+- `zv/src/ZvEngine.hh:10` - Top-level symbols: define ZvEngine_HH, class ZvEngine, using T, class ZvAPI, using Mx, function IDAxor
+- `zu/test/ZuIntrinTest.cc:14` - Top-level symbols: function check, define TEST
+- `zu/test/ZuArrayTest.cc:20` - Top-level symbols: function out, define CHECK, class I, struct IsIterable_, struct IsIterable_, struct IsIterable
+- `zv/src/ZvHeapCSV.hh:10` - Top-level symbols: define ZvHeapCSV_HH, struct Data, class CSV, function read, function init
+- `zu/test/ZuBase64URLTest.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define TEST
+- `zv/src/ZvThreadParams.hh:10` - Top-level symbols: define ZvThreadParams_HH, using T, struct ZvThreadParams, function init
+- `zu/test/ZuNXTest.cc:17` - Top-level symbols: function out, define CHECK, struct A, struct B, function test1, function test2
+- `zv/src/ZvIOQueue.hh:13` - Top-level symbols: define ZvIOQueue_HH, struct ZvIOQueueRxTx, using ZvSeqNo, using ZvAtomicSeqNo, struct ZvIOMsg_, function length
+- `zu/test/ZuDecimalTest.cc:15` - Top-level symbols: function out, define CHECK
+- `zv/src/ZvDaemon.hh:10` - Top-level symbols: define ZvDaemon_HH, class ZvAPI
+- `zu/test/ZuUTFTest.cc:18` - Top-level symbols: function out, define CHECK
+- `zv/src/ZvLib.hh:10` - Top-level symbols: define ZvLib_HH, define ZvAPI, define ZvExplicit, define ZvAPI, define ZvExplicit, define ZvExtern
+- `zu/test/ZuMvArrayTest.cc:13` - Top-level symbols: function out, define CHECK, struct E, struct G, struct H
+- `zu/test/ZuEndianTest.cc:15` - Top-level symbols: function out, define CHECK
+- `zv/src/ZvQueue.hh:11` - Top-level symbols: define ZvQueue_HH, struct ZvQueueTelemetry, struct ZvQueue
+- `zu/test/ZuPercentTest.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define ENC, define DEC
+- `zv/src/ZvCSV.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/test/ZuFPTest.cc:14` - Top-level symbols: function out, define CHECK, function decode, using FP
+- `zv/src/ZvDaemon.cc:33` - Top-level symbols: struct passwd
+- `zu/test/Analyze.hh:1` - Top-level contents (no regex-matched symbols)
+- `zv/src/ZvCSV.hh:12` - Top-level symbols: define ZvCSV_HH, using Base64, using Base64URL, using Base32, using Hex, using Raw
+- `zu/test/ZuStructTest.cc:17` - Top-level symbols: function out, define CHECK, struct TimeFmt, using Props, using Base64, using Base32
+- `zv/src/ZvEngine.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/test/ZuStreamTest.cc:8` - Top-level symbols: struct A, function decltype, function foo
+- `zv/src/ZvStackParams.hh:10` - Top-level symbols: define ZvStackParams_HH, struct ZvStackParams, function init
+- `zu/test/ZuHashTest.cc:23` - Top-level symbols: struct HiBits, function hashBits, struct LoBits, function hashBits, function rand, function rand
+- `ztls/test/ZtlsPKTest.cc:31` - Top-level symbols: function out, define CHECK, function constexpr, using PK
+- `ztls/test/ZtlsClient.cc:24` - Top-level symbols: struct App, struct Link, using Base, function connected, function disconnected, function connectFailed
+- `ztls/test/ZtlsServer.cc:33` - Top-level symbols: struct App, struct Link, function connected, function disconnected, function process, using Cxn
+- `zv/src/ZvCf.cc:135` - Top-level symbols: function constexpr, function matchDot, using State
+- `zv/src/ZvHashCSV.hh:10` - Top-level symbols: define ZvHashCSV_HH, struct Data, class CSV, function read, function init
+- `zu/test/ZuTimeTest.cc:21` - Top-level symbols: function out, define CHECK
+- `zu/test/ZuBase64Test.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define TEST
+- `ztls/src/ZtlsLib.hh:10` - Top-level symbols: define ZtlsLib_HH, define ZtlsAPI, define ZtlsExplicit, define ZtlsAPI, define ZtlsExplicit, define ZtlsExtern
+- `zu/test/ZuTLTest.cc:15` - Top-level symbols: function out, define CHECK, define DEFINE, struct ID, using Sorted, struct X
+- `ztls/src/ztotp.cc:10` - Top-level symbols: function usage
+- `zu/test/ZuIDTest.cc:17` - Top-level symbols: function out, define CHECK
+- `ztls/src/Ztls.hh:10` - Top-level symbols: define Ztls_HH, define Ztls_VHEAP, class Cxn, using Link, using LinkRef, function connected
+- `zu/test/ZuSearchBench.cc:17` - Top-level symbols: function out, define CHECK, struct OutOfBounds
+- `ztls/src/ZtlsMD.hh:10` - Top-level symbols: define ZtlsMD_HH, function update, function finish, function reset, function update, function finish
+- `zu/test/ZuHexTest.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define TEST
+- `ztls/src/ZtlsHMAC.hh:10` - Top-level symbols: define ZtlsHMAC_HH, function start, function update, function finish, function reset
+- `zu/test/ZuBoxTest.cc:41` - Top-level symbols: define CHECK, define CHECK2, function _, function _, function _, function _
+- `ztls/src/ZtlsRandom.hh:10` - Top-level symbols: define ZtlsRandom_HH, class Random, function init, function random, function ctr_drbg
+- `zu/test/ZuBase32Test.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define TEST
+- `ztls/src/Ztls_ed25519.h:10` - Top-level symbols: define Ztls_ED25519_H, define ZtlsAPI, define ZtlsExplicit, define ZtlsAPI, define ZtlsExplicit, define ZtlsExtern
+- `zu/test/ZuAxorTest.cc:13` - Top-level symbols: function out, define CHECK, struct Defaults, struct Axor, struct Foo, function doit
+- `zu/test/ZuInspectTest.cc:17` - Top-level symbols: function out, define CHECK, struct A, struct B, struct C, struct D
+- `zu/test/ZuPtrTest.cc:7` - Top-level symbols: function out, define CHECK, struct A, function foo
+- `zu/test/ZuTupleTest.cc:20` - Top-level symbols: function out, define CHECK, using VPair, using RVPair, using LVPair, using MVPair
+- `ztls/src/ed25519/ed25519-donna-64bit-x86-32bit.h:3` - Top-level symbols: define HAVE_GE25519_SCALARMULT_BASE_CHOOSE_NIELS
+- `zu/test/ZuSearchTest.cc:19` - Top-level symbols: function out, define CHECK
+- `ztls/src/ed25519/ed25519-hash-custom.h:9` - Top-level symbols: typedef ed25519_hash_context
+- `zu/test/ZuCmpTest.cc:31` - Top-level symbols: function out, define CHECK, define TEST, struct S, using I, using R
+- `ztls/src/ed25519/ed25519-donna-32bit-tables.h:1` - Top-level contents (no regex-matched symbols)
+- `zu/test/ZuBoxBench.cc:33` - Top-level symbols: define CHECK2, function itoa, struct timespec
+- `ztls/src/ed25519/ed25519-donna-64bit-x86.h:3` - Top-level symbols: define HAVE_GE25519_SCALARMULT_BASE_CHOOSE_NIELS
+- `zu/test/ZuBitmapTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `ztls/src/ed25519/modm-donna-64bit.h:15` - Top-level symbols: define bignum256modm_bits_per_limb, define bignum256modm_limb_size, typedef bignum256modm_element_t
+- `ztls/src/ed25519/ed25519-donna-portable-identify.h:3` - Top-level symbols: define OS_WINDOWS, define OS_SOLARIS, define OS_NIX, define OS_LINUX, define OS_BSD, define OS_OSX
+- `ztls/src/ed25519/ed25519-donna-impl-base.h:246` - Top-level symbols: define S1_SWINDOWSIZE, define S1_TABLE_SIZE, define S2_SWINDOWSIZE, define S2_TABLE_SIZE
+- `ztls/src/ed25519/ed25519-donna-batchverify.h:5` - Top-level symbols: define max_batch_size, define heap_batch_size, typedef heap_index_t
+- `ztls/src/ed25519/ed25519-donna-impl-sse2.h:278` - Top-level symbols: define S1_SWINDOWSIZE, define S1_TABLE_SIZE, define S2_SWINDOWSIZE, define S2_TABLE_SIZE
+- `ztls/src/ed25519/ed25519-donna-32bit-sse2.h:3` - Top-level symbols: define HAVE_GE25519_SCALARMULT_BASE_CHOOSE_NIELS
+- `ztls/src/ed25519/curve25519-donna-32bit.h:152` - Top-level symbols: define curve25519_mul_noinline, define F, define carry_pass, define carry_pass_full, define carry_pass_final, define F
+- `ztls/src/ed25519/ed25519-randombytes.h:15` - Top-level symbols: define isaacp_step
+- `ztls/src/ed25519/ed25519-randombytes-custom.h:1` - Top-level contents (no regex-matched symbols)
+- `zm/src/ZmLocal.hh:13` - Top-level symbols: define ZmLocal_HH, struct ZmLocal_, define ZmLocal
+- `zm/src/ZmRBTree.hh:13` - Top-level symbols: define ZmRBTree_HH, struct ZmRBTree_Defaults, using Lock, using Node, struct HeapID, struct ZmRBTreeKey
+- `zm/src/ZmPLock.hh:11` - Top-level symbols: define ZmPLock_HH, using ZmPLock_, function ZmPLock_init_, define ZmPLock_init, function ZmPLock_final_, define ZmPLock_final
+- `zm/src/ZmEngine.hh:10` - Top-level symbols: define ZmEngine_HH, struct Impl, class ZmEngine, function impl, using Lock, using Guard
+- `zm/src/ZmHeap.hh:25` - Top-level symbols: define ZmHeap_HH, define ZmHeap_DEBUG, class ZmHeapMgr, class ZmHeapMgr_, class ZmHeapCache, class ZmHeapBase
+- `zm/src/ZmRing.hh:19` - Top-level symbols: define ZmRing_HH, define ZmRing_bp, define ZmRing_bp, define ZmRing_bp, function Defaults_SizeAxor, struct Defaults
+- `zm/src/ZmTime.hh:10` - Top-level symbols: define ZmTime_HH, function now, function now
+- `zm/src/ZmTopology.hh:10` - Top-level symbols: define ZmTopology_HH, class ZmAPI, function hwloc
+- `zm/src/ZmRingMirror.cc:1` - Top-level contents (no regex-matched symbols)
+- `zm/src/ZmPolyHash.hh:17` - Top-level symbols: define ZmPolyHash_HH, struct ZmPolyHash_Defaults, using Lock, struct HeapID, using ID, using ZmPolyHashLock
+- `zm/src/ZmRingMirror.hh:10` - Top-level symbols: define ZmRingMirror_HH, class ZmAPI, using Handle, function nullHandle, using Handle, function nullHandle
+- `zm/src/ZmGlobal.cc:26` - Top-level symbols: define lock, define unlock, using ZmGlobalPtr
+- `zm/src/ZmRWLock.hh:10` - Top-level symbols: define ZmRWLock_HH, define ZmRWLock_DEBUG, class ZmRWLock, function ZmRWLock, function lock, function trylock
+- `zm/src/ZmBackTrace.hh:22` - Top-level symbols: define ZmBackTrace_HH
+- `zm/src/ZmNodeFn.hh:10` - Top-level symbols: define ZmNodeFn_HH, struct ZmNodeFn_, function nodeRelease, struct ZmNodeFn_, struct ZmNodeFn_, using ZmNodeFn
+- `zm/src/ZmFn_.hh:10` - Top-level symbols: define ZmFn__HH, class ZmAnyFn, struct Pass, struct Traits, struct ZmFnPtr, using R
+- `zm/src/ZmLib.hh:10` - Top-level symbols: define ZmLib_HH, define ZmAPI, define ZmExplicit, define ZmAPI, define ZmExplicit, define ZmExtern
+- `zm/src/ZmTimeInterval.hh:10` - Top-level symbols: define ZmTimeInterval_HH, class ZmTimeInterval, using Guard, using ReadGuard, function add
+- `zm/src/ZmSpecific.cc:35` - Top-level symbols: struct Win32_Voodoo, using Allocator, using O, struct Cleanup, function head_, function tail_
+- `zm/src/ZmAllocator.hh:10` - Top-level symbols: define ZmAllocator_HH, define ZmAllocator_DefltMin, define ZmAllocator_DefltMax, struct ZmAllocator_, using size_type, using difference_type
+- `zm/src/ZmSpecific.hh:56` - Top-level symbols: define ZmSpecific_HH, class ZmSpecific_, struct ZmSpecific_Object, struct ZmAPI, function dtor, struct ZmSpecific_Allocator
+- `zm/src/ZmList.hh:11` - Top-level symbols: define ZmList_HH, struct ZmList_Defaults, using Lock, using Node, struct HeapID, struct ZmListKey
+- `zm/src/ZmStackAvail.hh:10` - Top-level symbols: define ZmStackAvail_HH
+- `zm/src/ZmPlatform.hh:10` - Top-level symbols: define ZmPlatform_HH, define ZmIDStrSize, using ZmIDString, define ZmCacheLineSize, define ZmCacheLineSize, define ZmCacheAlign
+- `zm/src/ZmBackTrace_print.hh:10` - Top-level symbols: define ZmBackTrace_print_HH, struct ZmBackTrace_Print, function print, function print
+- `zm/src/ZmTime.cc:16` - Top-level symbols: class Zm_WinTimer, class Zm_WinTimer, function calibrate, function now, function cpuFreq, function sleep
+- `zm/src/ZmTimeout.hh:10` - Top-level symbols: define ZmTimeout_HH, class ZmAPI, function start, function start_, function reset, function stop
+- `zm/src/ZmLockTraits.hh:10` - Top-level symbols: define ZmLockTraits_HH, using Lock, function lock, function trylock, function unlock, function readlock
+- `zm/src/ZmDemangle.hh:10` - Top-level symbols: define ZmDemangle_HH, define DMGL_PARAMS, define DMGL_ANSI, define DMGL_VERBOSE, define DMGL_TYPES, class ZmDemangle
+- `zm/src/ZmLock.cc:15` - Top-level symbols: class ZmLock_Debug_, function enable, function disable, function capture
+- `zm/src/ZmSpinLock.hh:10` - Top-level symbols: define ZmSpinLock_HH, using ZmSpinLock, class ZmSpinLock, function ZmSpinLock, function lock, function trylock
+- `zm/src/ZmThread.hh:14` - Top-level symbols: define ZmThread_HH, using ZmThreadID, using ZmThreadName, struct ZmThreadTelemetry, class ZmThreadContext, class ZmThreadParams
+- `zm/src/ZmHash.hh:18` - Top-level symbols: define ZmHash_HH, function ZmHashBits, using LockTraits, function init, function bits, function cBits
+- `zm/src/ZmLHash.hh:18` - Top-level symbols: define ZmLHash_HH, struct ZmLHash_Defaults, using Lock, function ID, struct ZmLHashKey, struct ZmLHashKeyVal
+- `zm/src/ZmGuard.hh:10` - Top-level symbols: define ZmGuard_HH, using Traits, struct Try, function ZmGuard, function ZmGuard, function unlock
+- `zm/src/ZmRing.cc:13` - Top-level symbols: function Blocker, function Blocker, function open, function close, struct Log, function logDump
+- `zm/src/ZmAtomic.hh:10` - Top-level symbols: define ZmAtomic_HH, define ZmAtomic_load, define ZmAtomic_store, define ZmAtomic_acquire, define ZmAtomic_release, define ZmAtomic_load
+- `zm/src/ZmSemaphore.hh:10` - Top-level symbols: define ZmSemaphore_HH, define ZmSemaphore_aligned, function wait, function trywait, function timedwait, function post
+- `zm/src/ZmSingleton.hh:25` - Top-level symbols: define ZmSingleton_HH, struct ZmSingleton_, function ref, function deref, function ref, function deref
+- `zm/src/ZmHashMgr.hh:10` - Top-level symbols: define ZmHashMgr_HH, class ZmHashParams, function bits, function loadFactor, function cBits, struct ZmHashTelemetry
+- `zm/src/ZmBackoff.hh:10` - Top-level symbols: define ZmBackoff_HH, class ZmAPI, function minimum, function maximum, function initial, function backoff
+- `zm/src/ZmCacheStats.hh:10` - Top-level symbols: define ZmCacheStats_HH, struct ZmCacheStats
+- `zm/src/ZmRef.hh:16` - Top-level symbols: define ZmRef_HH, struct ZmRef__, define ZmREF, define ZmDEREF, define ZmMVREF, struct ZmRef__
+- `zm/src/ZmNode.hh:10` - Top-level symbols: define ZmNode_HH, struct ZmNode__, struct ZmNode__, struct ZmNode__, struct ZmNode__, struct ZmNode__
+- `zm/src/ZmCache.hh:10` - Top-level symbols: define ZmCache_HH, struct ZmCache_Defaults, struct HeapID, using ID, using ZmCacheKey, using ZmCacheKeyVal
+- `zm/src/ZmBackTracer.hh:10` - Top-level symbols: define ZmBackTracer_HH, using Data, using Capture, using Lock, using Guard, using ReadGuard
+- `zm/src/ZmGlobal.hh:10` - Top-level symbols: define ZmGlobal_HH, class ZuVStream, class ZmAPI, function _
+- `zm/src/ZmObjectDebug.cc:1` - Top-level contents (no regex-matched symbols)
+- `zm/src/ZmPQueue.hh:26` - Top-level symbols: define ZmPQueue_HH, function ZmPQueueDefaultKeyAxor, function ZmPQueueDefaultLenAxor, class ZmPQueueDefaultFn, using Key, function clipHead
+- `zm/src/ZmVHeap.hh:15` - Top-level symbols: define ZmVHeap_HH, class ZmVHeap_, class ZmVHeap_Warmup, using VHeap, class ZmVHeap_, using Warmup
+- `zm/src/ZmLock.hh:10` - Top-level symbols: define ZmLock_HH, define ZmLock_DEBUG, class ZmLock, class ZmAPI, class ZmLock, function lock
+- `zgtk/src/ZGtkApp.hh:10` - Top-level symbols: define ZGtkApp_HH, class ZGtkAPI, function detach
+- `ztls/src/ed25519/ed25519-donna-basepoint-table.h:1` - Top-level contents (no regex-matched symbols)
+- `ztls/src/ed25519/curve25519-donna-helpers.h:1` - Top-level contents (no regex-matched symbols)
+- `ztls/src/ed25519/modm-donna-32bit.h:15` - Top-level symbols: define bignum256modm_bits_per_limb, define bignum256modm_limb_size, typedef bignum256modm_element_t
+- `ztls/src/ed25519/regression.h:1` - Top-level contents (no regex-matched symbols)
+- `ztls/src/ed25519/test-ticks.h:42` - Top-level symbols: define timeit, define maxticks
+- `ztls/src/ed25519/curve25519-donna-sse2.h:9` - Top-level symbols: typedef xmmi, define curve25519_add_after_basic, define curve25519_square, define carry_pass, define carry_pass_full, define carry_pass_final
+- `ztls/src/ed25519/ed25519-donna.h:17` - Top-level symbols: define ED25519_64BIT, define ED25519_32BIT, define ED25519_GCC_32BIT_SSE_CHOOSE, define ED25519_GCC_64BIT_SSE_CHOOSE, define ED25519_GCC_64BIT_X86_CHOOSE, define ED25519_GCC_64BIT_32BIT_CHOOSE
+- `ztls/src/ed25519/ed25519.c:10` - Top-level symbols: define ED25519_SUFFIX, define ED25519_FN3, define ED25519_FN2, define ED25519_FN
+- `ztls/src/ed25519/ed25519-donna-64bit-tables.h:1` - Top-level contents (no regex-matched symbols)
+- `ztls/src/ed25519/ed25519-donna-portable.h:3` - Top-level symbols: define mul32x32_64, define mul32x32_64, define inline, define DONNA_INLINE, define DONNA_NOINLINE, define ALIGN
+- `zm/src/ZmTrap.hh:10` - Top-level symbols: define ZmTrap_HH, class ZmAPI
+- `ztls/src/ed25519/ed25519-donna-64bit-sse2.h:3` - Top-level symbols: define HAVE_GE25519_SCALARMULT_BASE_CHOOSE_NIELS
+- `zm/src/ZmAssert.hh:13` - Top-level symbols: define ZmAssert_HH, define ZmAssert, define ZmAssert
+- `zm/src/ZmAlloc.hh:20` - Top-level symbols: define ZmAlloc_HH, struct ZmAlloc_, define ZmAlloc
+- `zm/src/ZmRandom.hh:70` - Top-level symbols: define ZmRandom_HH, class ZmAPI, function randInt, function randInt, function rand53, function randNorm
+- `zm/src/ZmQueue.hh:17` - Top-level symbols: define ZmQueue_HH, define ZmQueueMaxFrag, class ZmQueueParams, function initial, function maxFrag, struct ZmQueue_Defaults
+- `zm/src/ZmScheduler.cc:1` - Top-level contents (no regex-matched symbols)
+- `zm/src/ZmHeap.cc:22` - Top-level symbols: class ZmHeapMgr, class ZmHeapCache, class ZmHeapLookup, using Lock, using Guard, using ReadGuard
+- `zm/src/ZmCodec.hh:12` - Top-level symbols: define ZmCodec_HH, define ZmCodec_Fn, function decltype, function decltype
+- `zm/src/ZmSingleton.cc:1` - Top-level contents (no regex-matched symbols)
+- `zm/src/ZmScheduler.hh:17` - Top-level symbols: define ZmScheduler_HH, class ZmSchedTParams, struct ZmAPI, using Thread, using Threads, using ID
+- `zm/src/ZmCleanup.hh:10` - Top-level symbols: define ZmCleanup_HH
+- `zm/src/ZmLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zm/src/ZmContext.hh:19` - Top-level symbols: define ZmContext_HH, class ZmContext, function owned, function own, function disown, function ptr
+- `zm/src/ZmRingFn.hh:38` - Top-level symbols: define ZmRingFn_HH, struct ZmRingFn_Defaults, struct HeapID, struct ZmRingFnHeapID_, using HeapID, using ZmRingFnHeapID
+- `zm/src/ZmBlock.hh:12` - Top-level symbols: define ZmBlock_HH, function sem, using R, using R
+- `zm/src/ZmNoLock.hh:10` - Top-level symbols: define ZmNoLock_HH, class ZmNoLock, function ZmNoLock, function lock, function trylock, function unlock
+- `zm/src/ZmCondition.hh:10` - Top-level symbols: define ZmCondition_HH, using Wait, function wait_, function lock_, function unlock_, class ZmNoLock
+- `zm/src/ZmAssert.cc:22` - Top-level symbols: define snprintf, using Buf
+- `zm/src/ZmHashMgr.cc:16` - Top-level symbols: class ZmHashMgr_, function instance, function init, function params, function add, function del
+- `zm/src/ZmRandom.cc:1` - Top-level contents (no regex-matched symbols)
+- `zm/src/ZmObject.hh:14` - Top-level symbols: define ZmObject_HH, class ZmObject
+- `zm/src/ZmBackTrace.cc:27` - Top-level symbols: define ZmBackTrace_BFD, define ZmBackTrace_BFD, define PACKAGE, struct ZmBackTrace_MgrInit, class ZmBackTrace_Mgr, using NameBuf
+- `zm/src/ZmPolyCache.hh:10` - Top-level symbols: define ZmPolyCache_HH, struct ZmPolyCache_Defaults, struct HeapID, using ID, using ZmPolyCacheLock, using ZmPolyCacheShadow
+- `zm/src/ZmObjectDebug.hh:10` - Top-level symbols: define ZmObjectDebug_HH, class ZmObjectDebug, class ZmAPI
+- `zm/src/ZmFn.hh:82` - Top-level symbols: define ZmFn_HH, struct ZmLambda__, using ZmLambda_, using ZmLambda, using O, using O
+- `zm/src/ZmThread.cc:72` - Top-level symbols: struct HandleCloser, struct ZmThread_Main, function is_, function is, struct ZmThread_Priorities, function hwloc
+- `zm/src/ZmBackTrace_.hh:10` - Top-level symbols: define ZmBackTrace__HH, define ZmBackTrace_DEPTH, define ZmBackTrace_BUFSIZ, struct ZmBackTrace_Print, class ZmAPI, function capture
+- `zm/src/ZmPolymorph.hh:11` - Top-level symbols: define ZmPolymorph_HH, class ZmPolymorph
+- `zm/src/ZmTrap.cc:25` - Top-level symbols: function sigintFn, function sigintFn, function sighupFn, function sighupFn, struct sigaction, using Program
+- `zm/src/ZmBitmap.hh:10` - Top-level symbols: define ZmBitmap_HH, class Iter, using Bitmap, using Bit, using iterator_category, using value_type
+- `zgtk/src/ZGtkTreeModel.hh:10` - Top-level symbols: define ZGtkTreeModel_HH, struct Impl, struct TreeModelDragData, class TreeModel, function typeName, function rowsAtom
+- `zgtk/src/ZGtkLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zgtk/src/ZGtkValue.hh:10` - Top-level symbols: define ZGtkValue_HH, class Value, function init, function unset, function set_schar, function set_uchar
+- `zgtk/src/ZGtkCallback.hh:10` - Top-level symbols: define ZGtkCallback_HH, function callback
+- `zv/test/CSVTest.cc:21` - Top-level symbols: function out, define CHECK, struct Row_, struct RowNode, using Row, function ZeEXCEPT
+- `zgtk/src/ZGtkApp.cc:1` - Top-level contents (no regex-matched symbols)
+- `zv/test/DaemonTest.cc:18` - Top-level symbols: function usage, function notify, function sigint, struct Options
+- `zgtk/src/ZGtkLib.hh:10` - Top-level symbols: define ZGtkLib_HH, define ZGtkAPI, define ZGtkExplicit, define ZGtkAPI, define ZGtkExplicit, define ZGtkExtern
+- `zv/test/CfTest.cc:19` - Top-level symbols: function fail, function out_, define CHECK_, define CHECK
+- `zv/test/ZvEngineTest.cc:12` - Top-level symbols: class Mgr, function addEngine, function delEngine, function updEngine, function updLink, function addQueue
+- `zv/test/CfFlatten.cc:1` - Top-level contents (no regex-matched symbols)
+- `zcmd/src/zcmd.cc:64` - Top-level symbols: class Telcap, using Fn, function keyedFn, using Data, using FBType, using Tree_
+- `zcmd/src/ZcmdDispatcher.cc:1` - Top-level contents (no regex-matched symbols)
+- `zcmd/src/ZtelClient.hh:8` - Top-level symbols: define ZtelClient_HH, using ReqIOBufAlloc, define ZcmdClient_HH, using AckFn, using KeyData, struct Login
+- `zcmd/src/ZtelServer.hh:8` - Top-level symbols: define ZtelServer_HH, using AckIOBufAlloc, using QueueFn, class AlertFile, function error, struct Fmt
+- `zcmd/src/ZcmdHost.hh:10` - Top-level symbols: define ZcmdHost_HH, class Dispatcher, using OutBufAlloc, struct Usage, using Argv, class Host
+- `zcmd/src/ZcmdLib.hh:10` - Top-level symbols: define ZcmdLib_HH, define ZcmdAPI, define ZcmdExplicit, define ZcmdAPI, define ZcmdExplicit, define ZcmdExtern
+- `zcmd/src/ZcmdLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zcmd/src/Ztel.hh:8` - Top-level symbols: define Ztel_HH, function rag, function rag, function rag, using Heap_, struct Heap
+- `zcmd/src/ZcmdHost.cc:17` - Top-level symbols: struct Help, struct LoadMod, function hasCmd
+- `zcmd/src/ZcmdDispatcher.hh:10` - Top-level symbols: define ZcmdDispatcher_HH, class ZcmdAPI, using Fn, using DefltFn, using Lock, using Guard
+- `ztls/src/ed25519/fuzz/ed25519-donna.c:1` - Top-level contents (no regex-matched symbols)
+- `ztls/src/ed25519/fuzz/ed25519-donna-sse2.c:1` - Top-level symbols: define ED25519_SUFFIX, define ED25519_SSE2
+- `ztls/src/ed25519/fuzz/ed25519-ref10.h:2` - Top-level symbols: define ED25519_REF10_H
+- `ztls/src/ed25519/fuzz/fuzz-curve25519.c:4` - Top-level symbols: typedef uint32_t, typedef uint64_t, define rotl32, define quarter, function main
+- `ztls/src/ed25519/fuzz/ed25519-donna.h:2` - Top-level symbols: define ED25519_H
+- `ztls/src/ed25519/fuzz/curve25519-ref10.h:2` - Top-level symbols: define CURVE25519_REF10_H
+- `ztls/src/ed25519/fuzz/ed25519-ref10.c:8` - Top-level symbols: define F, define HASH_BLOCK_SIZE, define HASH_DIGEST_SIZE, typedef ed25519_hash_context, define Ch, define Maj
+- `ztls/src/ed25519/fuzz/fuzz-ed25519.c:4` - Top-level symbols: typedef uint32_t, define rotl32, define quarter, function main
+- `ztls/src/ed25519/fuzz/curve25519-ref10.c:3` - Top-level symbols: typedef crypto_int32, typedef crypto_int64, typedef crypto_uint64
+- `ztls/src/ed25519/test-internals.c:1` - Top-level contents (no regex-matched symbols)
+- `zum/src/zuserdb.cc:29` - Top-level symbols: struct Options, using Data
+- `ztls/src/ed25519/curve25519-donna-64bit.h:298` - Top-level symbols: define F, define curve25519_contract_carry, define curve25519_contract_carry_full, define curve25519_contract_carry_final, define write51full, define write51
+- `ztls/src/ed25519/test.c:110` - Top-level symbols: define test_batch_count, define test_batch_rounds
+- `ztls/src/ed25519/ed25519-hash.h:5` - Top-level symbols: define HASH_BLOCK_SIZE, define HASH_DIGEST_SIZE, typedef ed25519_hash_context, define Ch, define Maj, define S0
+- `zm/test/ZmTest.cc:21` - Top-level symbols: function fail, function out, define CHECK_, define CHECK, struct X, function inc
+- `zm/test/ZmFnTest.cc:16` - Top-level symbols: struct A, function operator, struct B, function operator, function C, function D
+- `zm/test/ZmPQueueTest.cc:22` - Top-level symbols: function out, define CHECK, using Msg_Data, struct Msg, function clipHead, function clipTail
+- `zum/src/ZumLib.hh:10` - Top-level symbols: define ZumLib_HH, define ZumAPI, define ZumExplicit, define ZumAPI, define ZumExplicit, define ZumExtern
+- `zum/src/ZumLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zum/src/Zum.hh:12` - Top-level symbols: define Zum_HH, using IOBufAlloc, struct IOBuilder, using SeqNo, using KeyData, using KeyIDData
+- `zum/src/ZumServer.hh:10` - Top-level symbols: define ZumServer_HH, class UserDB, using OpenFn, struct BootstrapData, using BootstrapResult, function bootstrapOK
+- `zgtk/test/zgtkdemo.cc:58` - Top-level symbols: struct TreeModel, struct Iter, function get_flags, function get_n_columns, function get_column_type, function get_iter
+- `zhttp/src/Zhttp.hh:14` - Top-level symbols: define Zhttp_HH, function islws, function eoh, function eol, function eok, function bov
+- `zhttp/src/ZhttpLib.hh:10` - Top-level symbols: define ZhttpLib_HH, define ZhttpAPI, define ZhttpExplicit, define ZhttpAPI, define ZhttpExplicit, define ZhttpExtern
+- `zhttp/src/ZhttpLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zhttp/src/zhttp.cc:1` - Top-level contents (no regex-matched symbols)
+- `zm/test/ZmHeapTest.cc:35` - Top-level symbols: function doit
+- `zm/test/ZmLockTest.cc:26` - Top-level symbols: struct NoLock, function NoLock, function lock, function unlock, struct PThread, function PThread
+- `zm/test/ZmLHTest.cc:34` - Top-level symbols: function out, function fail, define CHECK, function data, struct Traits, using Elem
+- `zm/test/ZmPQueueTest4.cc:26` - Top-level symbols: define CHECK, using Msg_Data, struct Msg, using QMsg
+- `zm/test/ZmTIDTest.cc:6` - Top-level symbols: function out, define CHECK
+- `zm/test/ZmPQueueTest2.cc:26` - Top-level symbols: function out, define CHECK, using Msg_Data, struct Msg_, function clipHead, function clipTail
+- `zm/test/ZmCacheTest.cc:15` - Top-level symbols: struct Z, struct Traits, struct ZCmp, function cmp, function less, function equals
+- `zm/test/ZmHashTest2.cc:22` - Top-level symbols: struct Order, function IDAccessor
+- `zm/test/ZmBTTest.cc:33` - Top-level symbols: function d, function c, function b, function a, struct A, function crash
+- `zm/test/ZmRingTest3.cc:27` - Top-level symbols: struct Msg, struct Params, class App, using Ring
+- `zm/test/libZmBTTest.cc:11` - Top-level symbols: function baz, function bar, function xfoo
+- `zm/test/ZmSchedTest.cc:20` - Top-level symbols: struct TLS, function ping, class Job, function operator, function timeout, class Timer
+- `zm/test/ZmHeapTest2.cc:19` - Top-level symbols: function doit
+- `zm/test/ZmPolyCacheTest.cc:9` - Top-level symbols: struct Foo_, using Foo
+- `zm/test/ZmHashCleanup.cc:11` - Top-level symbols: struct Object
+- `zm/test/ZmBench.cc:24` - Top-level symbols: define mb, struct X, function inc, function helloWorld, function semPost, function semWait
+- `zm/test/ZmRBTest.cc:24` - Top-level symbols: struct Z, struct Traits, struct ZCmp, function cmp, function delptr
+- `zm/test/ZmTimeTest.cc:14` - Top-level symbols: function fail, function out, define CHECK
+- `zm/test/ZmRWTest.cc:23` - Top-level symbols: struct C, struct T
+- `zm/test/ZmRWLockTest.cc:20` - Top-level symbols: class Thread, class Global, function stop, function started, function thread, function lock
+- `zm/test/ZmAssertTest.cc:8` - Top-level symbols: function foo, function bar
+- `zm/test/libZmBTTest2.cc:5` - Top-level symbols: function baz2, function bar2, function xfoo2
+- `zm/test/ZmAllocTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zm/test/ZmRingTest.cc:36` - Top-level symbols: struct alignas, struct Params, class App, using Ring
+- `zm/test/ZmPolyHashTest.cc:9` - Top-level symbols: struct Foo_, using Foo
+- `zm/test/ZmRingTest2.cc:17` - Top-level symbols: class ZmRing_Breakpoint, function enable, function disable, define ZmRing_FUNCTEST, define ensure, define check
+- `zm/test/ZmLockTest2.cc:21` - Top-level symbols: struct Lock, function incThreads, function decThreads, function lock, function unlock, struct C
+- `zm/test/ZmHashTest.cc:28` - Top-level symbols: struct X, function helloWorld, struct Y, struct Z, struct Traits, struct ZCmp
+- `zm/test/ZmHashThread.cc:14` - Top-level symbols: struct Connection, struct TestObject, function inserter, function remover, function finder, function stop
+- `zm/test/ZmPQueueTest3.cc:24` - Top-level symbols: function out, define CHECK, using Msg_Data, struct Msg_, function clipHead, function clipTail
+- `zm/test/ZmDemangleTest.cc:14` - Top-level symbols: struct Foo
+- `zcmd/test/cmdtest.cc:15` - Top-level symbols: class CmdTest, struct Link, using Base, class CmdTest, function init, function wait
+- `zum/src/ZumServer.cc:53` - Top-level symbols: using Node, using Key, using RowKey, using Row, using KeyID, using Row
+- `zhttp/test/zhttptest.cc:13` - Top-level symbols: function out, define CHECK, using IOBufAlloc, using RxMsg_
+- `zhttp/test/zhttptestd.cc:1` - Top-level contents (no regex-matched symbols)
+- `zhttp/test/zhttpclient.cc:24` - Top-level symbols: using IOBufAlloc, using RxMsg, struct Link, using Base, function connected, function disconnected
+- `zt/test/ZtRegexTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zt/test/ZtStringHash.cc:1` - Top-level contents (no regex-matched symbols)
+- `zt/test/ZtDateFixTest.cc:20` - Top-level symbols: define CHECK, struct Null
+- `zt/test/ZtStackTest.cc:25` - Top-level symbols: define CHECK, struct C
+- `zt/test/ZtArrayTest.cc:21` - Top-level symbols: function out, define CHECK, struct E, struct Foo, using Array
+- `zt/test/ZtURITest.cc:15` - Top-level symbols: function out, define CHECK, struct Nested, struct NestedJSON, struct Blur, struct Foo
+- `zt/test/vsntest.cc:16` - Top-level symbols: class S, function length, function grow, function vsnprintf, function sprintf
+- `zt/test/ZtDateTest.cc:23` - Top-level symbols: define CHECK, function isoPrint, struct LocalDT, struct GMTDT, function weekDate, function weekDateSun
+- `zt/test/ZtStructTest.cc:15` - Top-level symbols: function out_, define CHECK, struct Nested, struct Foo, struct MinMax, struct MinMax
+- `zt/test/ZtBitmapTest.cc:9` - Top-level symbols: function out, define CHECK_, define CHECK
+- `zt/test/ZtASN1Test.cc:20` - Top-level symbols: function out, define CHECK, struct Foo
+- `zt/test/ZtIconvTest.cc:19` - Top-level symbols: function main
+- `zt/test/ZtBitWindowTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zt/test/ZtCLITest.cc:17` - Top-level symbols: function output, define CHECK, struct Nested, struct NestedJSON, struct UBool, struct Foo
+- `zt/test/wchartest_win32.cc:8` - Top-level symbols: define WINVER, define _WIN32_WINNT, define _WIN32_DCOM, define _WIN32_WINDOWS, define _WIN32_IE, define UNICODE
+- `zt/test/ZtStringTest.cc:25` - Top-level symbols: function out, define CHECK_, define CHECK, using uint, using ldouble, using Queue
+- `zfb/src/ZfbStruct.hh:10` - Top-level symbols: define ZfbStruct_HH, using Zfb_Builder, using Zfb_Type, using Zfb_Schema, using ZfbBuilder, using ZfbType
+- `zfb/src/Zfb.cc:1` - Top-level contents (no regex-matched symbols)
+- `zfb/src/Zfb.hh:10` - Top-level symbols: define Zfb_HH, using Builder, class IOBuilder, function buf, function allocate, function deallocate
+- `zfb/src/ZfbLib.hh:10` - Top-level symbols: define ZfbLib_HH, define ZfbAPI, define ZfbExplicit, define ZfbAPI, define ZfbExplicit, define ZfbExtern
+- `zfb/src/ZfbLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zt/src/ZtBitWindow.hh:13` - Top-level symbols: define ZtBitWindow_HH, class ZtBitWindow, using ZtBitWindow_ID, class ZtBitWindow, function null, function debug
+- `zt/src/ZtStruct.cc:2` - Top-level contents (no regex-matched symbols)
+- `zt/src/ZtLib.hh:10` - Top-level symbols: define ZtLib_HH, define ZtAPI, define ZtExplicit, define ZtAPI, define ZtExplicit, define ZtExtern
+- `zt/src/ZtRegex.hh:10` - Top-level symbols: define ZtRegex_HH, struct ZtAPI, define ZtRegexOVector, define ZtRegexCaptures, class ZtAPI, using Capture
+- `zt/src/ZtURI.cc:12` - Top-level symbols: function skip
+- `zt/src/ZtCLI.hh:40` - Top-level symbols: define ZtCLI_HH, define ZtCLI_MutableArgv, struct ZtCLI_DefltConfig, struct ZtCLI_ArrayFmt, using ZtCLI_Delimiter, using Config
+- `zfb/test/zfbtest.cc:27` - Top-level symbols: struct Test, using IOBuilder, using IOBuf, function out, define CHECK, function constexpr
+- `zt/src/ZtHexDump.hh:22` - Top-level symbols: define ZtHexDump_HH, class ZtAPI, struct Print, function print, function print, class ZtHexDump
+- `zfb/test/zfbtest3.cc:30` - Top-level symbols: struct Order, function out, define CHECK, using IOBuilder, using IOBuf, using Key
+- `zfb/test/zfbtest2.cc:24` - Top-level symbols: struct Object, struct Test, using IOBuilder, using IOBuf, function constexpr
+- `zt/src/ZtQuote.hh:10` - Top-level symbols: define ZtQuote_HH, struct CString, function decltype, struct String, function decltype, struct Base32
+- `zt/src/ZtBuiltin.hh:13` - Top-level symbols: define ZtBuiltin_HH, class ZtBuiltin, using T
+- `zt/src/ZtHexDump.cc:1` - Top-level contents (no regex-matched symbols)
+- `zt/src/ZtStack.hh:16` - Top-level symbols: define ZtStack_HH, define ZtStackMaxFrag, struct ZtStackParams, function initial, function maxFrag, struct ZtStack_Defaults
+- `zt/src/ZtLocalString.hh:15` - Top-level symbols: define ZtLocalString_HH, struct ZtLocalString_, using Char, define ZtLocalString_1, define ZtLocalString_2, define ZtLocalString_N
+- `zt/src/ZtIconv.hh:10` - Top-level symbols: define ZtIconv_HH, function length, function data, class ZtIconv, function factor, class IconvTraits
+- `zt/src/ZtFmt.hh:11` - Top-level symbols: define ZtFmt_HH, struct Default, function DateScan_, function DatePrint_, function FlagsDelim, function VecPrefix
+- `zt/src/ZtStruct.hh:116` - Top-level symbols: define ZtStruct_HH, struct IsVec, struct Synthetic, struct Mutable, struct Hidden, struct Hex
+- `zt/src/ZtJSON.hh:14` - Top-level symbols: define ZtJSON_HH, struct NumberFmt, using Fmt, struct TimeFmt, using Base64, using Base64URL
+- `zt/src/ZtCLI.cc:94` - Top-level symbols: function eok
+- `zt/src/ZtURI.hh:109` - Top-level symbols: define ZtURI_HH, struct ZtURI_DefltConfig, struct ZtURI_ObjectFmt, struct ZtURI_ArrayFmt, struct ZtURI_Annotated, struct ZtURI_Wrapped
+- `zt/src/ZtBitmap.hh:11` - Top-level symbols: define ZtBitmap_HH, struct Data, function combine, function length, using ZtBitmap
+- `zt/src/ZtBytesFmt.hh:11` - Top-level symbols: define ZtBytesFmt_HH
+- `zt/src/ZtWindow.hh:10` - Top-level symbols: define ZtWindow_HH, class Elem, using Window, using T, using Traits, struct Window
+- `zt/src/ZtScanBool.hh:10` - Top-level symbols: define ZtScanBool_HH, struct ZtBadBool, using Cmp, function constexpr
+- `zt/src/ZtLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zt/src/ZtJSON.cc:11` - Top-level symbols: function bos, using Fmt, function is, function bok, function eok, function boc
+- `zt/src/ZtCase.hh:10` - Top-level symbols: define ZtCase_HH, function isupper__, function toupper__, function islower__, function tolower__, function snakeCamel
+- `zt/src/ZtEnum.hh:10` - Top-level symbols: define ZtEnum_HH, define ZtEnumMap_, struct Map, using Names, function id, function s2v
+- `zt/src/ZtLocalArray.hh:13` - Top-level symbols: define ZtLocalArray_HH, struct ZtLocalArray_, using T, define ZtLocalArray_1, define ZtLocalArray_2, define ZtLocalArray_N
+- `zt/src/ZtString.hh:20` - Top-level symbols: define ZtString_HH, define ZtString_Builtin, struct ZtString_Defaults, struct HeapID, struct ZtStringBuiltin, struct ZtStringHeapID_
+- `zt/src/ZtTimeZone.cc:19` - Top-level symbols: struct Zt_TzLock, function instance, class Zt_TzGuard, struct tm
+- `zt/src/ZtRegex.cc:9` - Top-level symbols: define ZtRegex_CC
+- `zt/src/ZtString.cc:1` - Top-level contents (no regex-matched symbols)
+- `zt/src/ZtPlatform.hh:10` - Top-level symbols: define ZtPlatform_HH, function putenv, function putenv
+- `zt/src/ZtArray.hh:20` - Top-level symbols: define ZtArray_HH, struct ZtArray_Defaults, struct HeapID, struct ZtArrayCmp, struct ZtArrayHeapID_, using HeapID
+- `zt/src/ZtTimeZone.hh:20` - Top-level symbols: define ZtTimeZone_HH, function tzset, function tzset
+- `zt/src/ZtASN1.hh:57` - Top-level symbols: define ZtASN1_HH, function tag, function tag, function tagI, function tagXA, function tagXA
+- `zrest/src/zrest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrest/src/ZrestLib.hh:10` - Top-level symbols: define ZrestLib_HH, define ZrestAPI, define ZrestExplicit, define ZrestAPI, define ZrestExplicit, define ZrestExtern
+- `zrest/src/ZrestLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrest/src/Zrest.hh:10` - Top-level symbols: define Zrest_HH, struct Request, struct Builder, using Base, struct AnyMsgType, class Link
+- `zdash/src/zdash.cc:72` - Top-level symbols: struct Watch, function Watch_Axor, function Watch_HeapID, struct Display_, using DispList, using Display
+- `zrest/test/zrserver.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrest/test/zrclient.cc:19` - Top-level symbols: struct Credentials, struct AuthResponse, struct ProtectedResponse, class Client, class Link, using Base
+- `zi/src/ZiPlatform.cc:17` - Top-level symbols: struct passwd, struct passwd
+- `zi/src/ZiRing.hh:22` - Top-level symbols: define ZiRing_HH, struct ParamData, function data, using Base, class Params_, using Base
+- `zi/src/ZiNetlinkMsg.hh:5` - Top-level symbols: define ZiNetlinkMsg_HH, class ZiConnection, class ZiNetlinkHdr, function hdr, struct nlmsghdr, class ZiGenericNetlinkHdr
+- `zi/src/ZiNetlink.hh:8` - Top-level symbols: define ZiNetlink_HH, class ZiNetlinkSockAddr, struct sockaddr_nl, function sa, class ZiNetlink, using Socket
+- `zi/src/ZiTx.hh:11` - Top-level symbols: define ZiTx_HH, using ZiTxBuf, using ZiTxBufAlloc, class ZiTx, using Impl, function impl
+- `zi/src/ZiLib.hh:10` - Top-level symbols: define ZiLib_HH, define ZiAPI, define ZiExplicit, define ZiAPI, define ZiExplicit, define ZiExtern
+- `zi/src/ZiIP.hh:10` - Top-level symbols: define ZiIP_HH, class ZiAPI, using Hostname, enum Result, function ZiIP, struct Traits
+- `zi/src/ZiNetlink.cc:34` - Top-level symbols: struct msghdr, struct nlattr, struct msghdr, struct nlmsghdr, struct nlmsgerr
+- `zi/src/ZiRingUtil.cc:20` - Top-level symbols: function open, function close, struct stat, struct stat
+- `zi/src/ZiDir.hh:10` - Top-level symbols: define ZiDir_HH, class ZiAPI, using Path, using Guard
+- `zi/src/ZiGlob.hh:13` - Top-level symbols: define ZiGlob_HH, class ZiAPI, struct Entry, function NameAxor, using Iter, using NodePtr
+- `zi/src/ZiGlob.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/src/ZiIOContext.hh:11` - Top-level symbols: define ZiIOContext_HH, class ZiConnection, struct ZiIOContext, function invalid_ptr, function init_, function init
+- `zi/src/ZiLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/src/ZiPlatform.hh:10` - Top-level symbols: define ZiPlatform_HH, using Name, using Handle, function nullHandle, function nullHandle, using Socket
+- `zi/src/ZiMultiplex.cc:34` - Top-level symbols: struct sockaddr, struct sockaddr, define WSAID_CONNECTEX, define WSAID_ACCEPTEX, define WSAID_GETACCEPTEXSOCKADDRS, define WSAID_DISCONNECTEX
+- `zi/src/ZiRingUtil.hh:12` - Top-level symbols: define ZiRingUtil_HH, class ParamData, function derived, struct ZiRingUtilParams, class ZiAPI, using ParamData
+- `zi/src/ZiIP.cc:25` - Top-level symbols: struct sockaddr, struct addrinfoW, class ZiIP_WSDLL, define GetAddrInfo, define FreeAddrInfo, define GetNameInfo
+- `zi/src/ZiRing.cc:26` - Top-level symbols: function Blocker, function Blocker, function open, function close, function Blocker, function Blocker
+- `zi/src/ZiMultiplex.hh:10` - Top-level symbols: define ZiMultiplex_HH, define ZiMultiplex_DEBUG, define ZiMultiplex_IOCP, define ZiMultiplex_EPoll, define ZiMultiplex_Netlink, define ZiDEBUG
+- `zi/src/zi_netlink.h:8` - Top-level symbols: define zi_netlink_H, define ZiGNLVersion, enum ZiGNLAttr, enum ZiGNLCmd
+- `zi/src/ZiIOBuf.hh:22` - Top-level symbols: define ZiIOBuf_HH, define ZiIOBuf_DefltSize, define ZiIOBuf_DefltMaxSize, struct ZiIOBuf_HeapID, struct IOBuf, function data_
+- `zi/src/ZiDir.cc:83` - Top-level symbols: struct dirent
+- `zi/src/ZiModule.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/src/ZiModule.hh:10` - Top-level symbols: define ZiModule_HH, class ZiAPI, using Handle, using Handle, using Path, using Lock
+- `zi/src/ZiFile.hh:13` - Top-level symbols: define ZiFile_HH, class ZiAPI, using Handle, using Name, using Path, using Offset
+- `zi/src/ZiFile.cc:17` - Top-level symbols: define ZiFile_CopyBufSize, function islower__, class ZiFile_WindowsDrives, function blkSize, function blkSize, function dump
+- `zi/src/ZiNetlinkMsg.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/src/ZiRx.hh:14` - Top-level symbols: define ZiRx_HH, class ZiRx, using Impl, using BufAlloc, function impl, function impl
+- `zdb_pq/ext/ztime.sql:1` - SQL objects: TYPE ztime;, FUNCTION ztime_in_csv, FUNCTION ztime_out_csv, FUNCTION ztime_in_iso, FUNCTION ztime_out_iso, FUNCTION ztime_in_fix (+24 more)
+- `zdb_pq/src/ZdbPQLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zdb_pq/src/ZdbPQ.hh:8` - Top-level symbols: define ZdbPQ_HH, class Store, class StoreTbl, struct XField, struct VecHdr, struct VecElem
+- `zdf/src/ZdfLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zdb_pq/ext/magic.c:1` - Top-level contents (no regex-matched symbols)
+- `zdf/src/ZdfCompress.hh:23` - Top-level symbols: define ZdfCompress_HH, class Decoder, using Value, function seek, function seek, function search
+- `zdb_pq/ext/ztime.c:10` - Top-level symbols: function isspace__, function isdigit__, define ztime_in_fn, define ztime_out_fn, function ztime_recv, function ztime_send
+- `zdf/src/stats_tree.hh:42` - Top-level symbols: define PB_DS_STATS_TREE_HH, class stats_tree_node_update, typedef base_type, using cmp_fn, using allocator_type, using size_type
+- `zdb_pq/src/ZdbPQ.cc:13` - Top-level symbols: define EPOLLRDHUP, function ZeEXCEPT, function ZeEXCEPT, function notice_, function notice, struct epoll_event
+- `zdf/src/ZdfStore.cc:27` - Top-level symbols: using Node, using Key, using Key
+- `zdb_pq/src/ZdbPQLib.hh:10` - Top-level symbols: define ZdbPQLib_HH, define ZdbPQAPI, define ZdbPQExplicit, define ZdbPQAPI, define ZdbPQExplicit, define ZdbPQExtern
+- `zdb_pq/ext/zbitmap.sql:1` - SQL objects: TYPE zbitmap;, FUNCTION zbitmap_in, FUNCTION zbitmap_out, FUNCTION zbitmap_recv, FUNCTION zbitmap_send, TYPE zbitmap (+23 more)
+- `zdf/src/ZdfLib.hh:10` - Top-level symbols: define ZdfLib_HH, define ZdfAPI, define ZdfExplicit, define ZdfAPI, define ZdfExplicit, define ZdfExtern
+- `zdf/src/ZdfTypes.hh:10` - Top-level symbols: define ZdfTypes_HH, using IDString, using Shard, using DFID, using SeriesID, using BlkOffset
+- `zdb_pq/ext/zdecimal.sql:1` - SQL objects: TYPE zdecimal;, FUNCTION zdecimal_in, FUNCTION zdecimal_out, FUNCTION zdecimal_recv, FUNCTION zdecimal_send, TYPE zdecimal (+31 more)
+- `zdf/src/ZdfStore.hh:10` - Top-level symbols: define ZdfStore_HH, using OpenFn, class ZdfAPI, using DataFrame, using DFRef, using W
+- `zdf/src/ZdfSeries.hh:16` - Top-level symbols: define ZdfSeries_HH, function stopped, function reading, function live, using ErrorFn, using StopFn
+- `zdf/src/ZdfSchema.hh:10` - Top-level symbols: define ZdfSchema_HH, struct SeriesFixed, struct SeriesFloat, struct BlkFixed, struct BlkFloat, using BlkDataBuf
+- `zdf/src/Zdf.hh:28` - Top-level symbols: define Zdf_HH, struct WrapType, using O, using TimeType, struct TimeField_, using O
+- `zdf/src/ZdfBlk.hh:10` - Top-level symbols: define ZdfBlk_HH, using BlkData, struct Blk, function init, function init, function offset
+- `zdf/src/ZdfStats.hh:13` - Top-level symbols: define ZdfStats_HH, class Stats, function add, function del, function clean, struct StatsTree_Defaults
+- `zdb_pq/ext/zbitmap.c:11` - Top-level symbols: define ZBITMAP_TOASTABLE, define ZBITMAP_MAX_LEN, function isspace__, define DATAVAR, define PG_GETARG_CZBITMAP_P, define PG_GETARG_ZBITMAP_P
+- `zi/test/Global.hh:11` - Top-level symbols: class Global, using TimeInterval, function wait, function post, function timeInterval, function sent
+- `zrl/test/ZrlTerminalTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/test/Signal.hh:34` - Top-level symbols: struct sigaction
+- `zrl/test/ZrlLineTest.cc:5` - Top-level symbols: define CHECK, function ascii
+- `zi/test/rump.hh:2` - Top-level symbols: define RUMP_HH
+- `zrl/test/ZrlCLITest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/test/ZiMxUDPServer.cc:32` - Top-level symbols: class Mx, class Connection, function mx, function disconnected, function connected, function recvEcho
+- `zrl/test/ZrlTerminfoTest.cc:2` - Top-level symbols: function main, define CHECK, function tigetstr_, function tigetflag_, function tigetnum_, function tiparm_
+- `zrl/test/ZrlEditorTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/test/ZrlTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/test/netmapserver.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/test/ZiRingTest2.cc:17` - Top-level symbols: class ZmRing_Breakpoint, function enable, function disable, define ZmRing_FUNCTEST, define ensure, define check
+- `zi/test/ZiMxClient.cc:25` - Top-level symbols: class Mx, class Connection, function mx, function connected, function sendRequest, function sendComplete
+- `zi/test/HttpHeader.hh:8` - Top-level symbols: function httpHeaderEnd
+- `zi/test/ZiRingTest.cc:43` - Top-level symbols: struct Msg, function magic, struct Params, class App, using Ring
+- `zi/test/ZiMxUDPClient.cc:32` - Top-level symbols: class Mx, class Connection, function mx, function disconnected, function connected, function recvEcho
+- `zi/test/ZiIOBufTest.cc:13` - Top-level symbols: function out, define CHECK
+- `zi/test/rump.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/test/ZiMxServer.cc:24` - Top-level symbols: class Mx, class Connection, function mx, function timeout, function connected, function recvRequest
+- `zi/test/ZiFileTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/test/netmapclient.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/test/ZiNetlinkTest.cc:34` - Top-level symbols: class Mx, class Message, class Connection, function mx, function connected, class Message
+- `zdb_pq/ext/zdecimal.c:12` - Top-level symbols: define pg_bswap128, define pg_bswap128, function pg_bswap128, function isspace__, function zdecimal_in, function zdecimal_out
+- `zi/test/ZiFileAgeTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zi/test/ZiGlobTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zdf/test/zdffptest.cc:25` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdf/test/zdfseriestest.cc:22` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdf/test/zdftest.cc:24` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdf/test/zdfstatstest.cc:11` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdf/test/zdfcompresstest.cc:15` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdb_pq/test/zdbpqtest.cc:26` - Top-level symbols: struct Options, using Key, using Key
+- `zdf/test/zdfstoretest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/src/ZrlLine.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/src/ZrlGlobber.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/src/ZrlCLI.hh:27` - Top-level symbols: define ZrlCLI_HH, class ZrlAPI, using Lock, using Guard
+- `zrl/src/Zrl.hh:17` - Top-level symbols: define Zrl_HH, function readline, function start, function stop, function running
+- `zrl/src/ZrlTerminfo.hh:10` - Top-level symbols: define ZrlTerminfo_HH, struct term, typedef TERMINAL
+- `zrl/src/ZrlConfig.hh:10` - Top-level symbols: define ZrlConfig_HH, struct Config
+- `zrl/src/ZrlHistory.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/src/ZrlTerminal.cc:30` - Top-level symbols: using ErrorStr, define ZrlError, function VKeyMatch_printIndentLevel, using TerminalPtr, function localTerminal, struct epoll_event
+- `zrl/src/ZrlEditor.cc:556` - Top-level symbols: function comment, function Map_printIndentLevel, function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT, function cmdError
+- `zrl/src/ZrlEditor.hh:10` - Top-level symbols: define ZrlEditor_HH, struct Print, function print, class ZrlAPI, enum Internal_, function nullArg
+- `zrl/src/ZrlApp.hh:10` - Top-level symbols: define ZrlApp_HH, define SIGQUIT, define SIGTSTP, using ErrorFn, using OpenFn, using CloseFn
+- `zrl/src/ZrlTypes.hh:10` - Top-level symbols: define ZrlTypes_HH
+- `zrl/src/ZrlLib.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/src/ZrlTerminal.hh:10` - Top-level symbols: define ZrlTerminal_HH, define isatty, define fileno, function interactive, function wildcard, struct Print
+- `zrl/src/ZrlGlobber.hh:10` - Top-level symbols: define ZrlGlobber_HH, class ZrlAPI, struct QState, struct QMode, function isspace__, function initFn
+- `zrl/src/ZrlCLI.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/src/ZrlHistory.hh:10` - Top-level symbols: define ZrlHistory_HH, struct ZrlAPI, using Base, function saveFn, function loadFn
+- `zrl/src/Zrl.cc:24` - Top-level symbols: class Context, using Lock, using Guard, function start, function start_, function stop_
+- `zrl/src/ZrlLine.hh:14` - Top-level symbols: define ZrlLine_HH, class ZrlAPI, class Index, function data, function iswspace__, function isword__
+- `zrl/src/ZrlLib.hh:10` - Top-level symbols: define ZrlLib_HH, define ZrlAPI, define ZrlExplicit, define ZrlAPI, define ZrlExplicit, define ZrlExtern
+- `zdb_pq/ext/test/sql/zbitmap.sql:1` - SQL script content (no CREATE matches found by heuristic)
+- `zdb_pq/ext/test/sql/zdecimal.sql:1` - SQL objects: TABLE test_zdecimal
+- `zdb_pq/ext/test/sql/drop.sql:1` - SQL script content (no CREATE matches found by heuristic)
+- `zdb_pq/ext/test/sql/ztime.sql:1` - SQL objects: TABLE test_ztime
+- `zdb_pq/ext/test/sql/init.sql:1` - SQL objects: EXTENSION uint;, EXTENSION libz;
+
+## Architecture Documentation
+The codebase is layered around a utility core (Zu) that supplies type traits, small containers, formatting, and low-level helpers. Zm builds on Zu to provide allocation, synchronization, scheduling, and engine lifecycle support. Zi uses Zu/Zm to expose OS and network primitives (files, multiplexing, buffers, netlink, ring buffers). Zt builds data-structure and serialization facilities (string handling, JSON, regex, URI, time zones) on top of Zu/Zm.
+
+Higher-level subsystems build on these foundations:
+- Zfb provides FlatBuffers serialization and I/O buffer integration, used by Zdb and Zum for structured persistence and messaging.
+- Zdb implements a clustered in-memory DB/ORM with backing store integration, replication messaging, and host coordination, combining Zm (engine and concurrency), Zi (networking), Zt (struct metadata), and Zfb (serialization).
+- Zdb_pq extends Zdb with a PostgreSQL backing store and SQL/C extensions for custom types and functions.
+- Zdf implements data frames and series readers/writers using Zt field metadata, Zm lifecycles, and Zu numeric/time types.
+- Zv provides a connectivity engine with links, queues, and configuration objects, tying into Zi multiplexing and Zm engine state.
+- Zhttp/Zrest/Zws provide protocol handling layers for HTTP, REST, and WebSocket respectively, using Zi buffers and Zt parsing.
+- Zcmd and Zrl provide command/terminal interfaces on top of Zi/Zt/Zm utilities.
+- Zgtk exposes GTK application integration for GUI scenarios.
+- Tools (zproxy, zdash) and Zum (user DB/IAM) are standalone binaries built atop these modules.
+
+## Open Questions
+- The build-time wiring (configure-time module enablement and binary composition) is not represented in the analyzed source files; additional context may live in build scripts outside `**/*.{h,hh,c,cc,sql}`.
+- The runtime deployment topology of binaries such as `zproxy`, `zdash`, and `zuserdb` is not described in code comments; only their implementation sources are present in the analyzed set.
+- Some module integration points (for example, how specific binaries are configured with Zv/Zdb settings) are implied by types but not explicitly documented in the analyzed sources.
