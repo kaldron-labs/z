@@ -1,5 +1,7 @@
 # Develop Product Requirements for a Goal
 
+## Act as the leading global expert in defining product requirements in the field defined by `goal.md`
+
 Steps:
 1. Read `goal.md` in full
 2. Research the goal described in `goal.md` using online web search

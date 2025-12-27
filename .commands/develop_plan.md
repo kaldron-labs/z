@@ -1,16 +1,23 @@
 # Plan the Design and Implementation of a Goal
 
+## Act as a principal software engineer who is the leading global expert in the field
+
 Steps:
-1. Read `requirements.md` in full
-2. Formulate a comprehensive design and implementation plan to achieve the goal and meet the requirements
-3. Save the plan in markdown as `plan.md`.
+1. Read `requirements.new.md` in full
+2. Formulate a comprehensive design and implementation plan to meet the requirements and achieve the goal
+3. Write the plan in markdown as `plan.md`:
+  - Break down the plan into detailed incremental phases
+  - Each phase should be a self-contained piece of work
+  - Each phase should build on the work of previous phases
+  - Each phase should focus on a particular subset of the requirements
+  - The plan should culminate with all requirements met
 
 ## CRITICAL: DO NO MORE THAN RESEARCH AND MAKE A PLAN
 
 IMPORTANT
 - MAKE A PLAN, DO NOT IMPLEMENT IT
-- Read `requirements.md` in full
-- Research the goal and the requirements and understand them
+- Read `requirements.new.md` in full
+- Use web search as required to research the goal and the requirements
 - Document how what IS will change to what WILL BE
 - Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
 - For each requirement, evaluate its complexity and feasibility, specifically:
@@ -22,6 +29,9 @@ IMPORTANT
 - Formulate a detailed design and implementation plan
   - Think deeply to formulate the plan
   - Identify overlapping requirements and factor out common code
+  - Review and SCRUTINIZE the planned use of all newly depended APIs
+    - Review the detailed behavior of each newly depended API and ensure that the actual behavior of the API aligns with the intended uses
+  - Break down the plan into a series of phases
 - Conform to existing naming conventions
   - PREFER succinct expressive names to verbose names
 - Conform to existing frameworks and libraries including test frameworks
@@ -35,6 +45,7 @@ IMPORTANT
   - Include any potential refactoring
   - Include any potential architectural changes
   - Include adding new tests to the test-suite
+  - Scrutinize all dependencies and ensure that actual API behavior aligns with intended uses
 - Identify technical constraints and opportunities
 - Be pragmatic - don't hold out for an ideal or perfect plan
 - When uncertain, describe the options for design and implementation
@@ -59,12 +70,13 @@ IMPORTANT
 
     ## Detailed Design and Implementation Plan
 
-    ### [Component/Area 1]
+    ### [Phase 1]
+    - Description of area of focus in this phase
     - Description of what will be added or modified
     - How it connects to other components
     - Design and implementation details
 
-    ### [Component/Area 2]
+    ### [Phase 2]
     ...
 
     ## Code References to Impacted Code
