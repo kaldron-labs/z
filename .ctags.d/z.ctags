@@ -1,0 +1,1 @@
+--regex-C++=/^\s*ZuDerive\(\s*([^,]+)/\1/s,struct/
