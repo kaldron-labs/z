@@ -1,3 +1,6 @@
+- rewrite all (c) Copyright lines
+  - assign to Huw Rogers
+
 - new TLS/HTTP/QUIC stack:
   - TLS - picotls
   - QUIC - ngtcp2

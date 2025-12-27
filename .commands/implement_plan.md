@@ -1,10 +1,11 @@
 # Implement New Feature
 
-Execute the design and implementation plan in `plan.md`.
+Execute the design and implementation plan in `plan.new.md`.
 
 IMPORTANT
-- READ `plan.md` FULLY
-- FOLLOW the "Detailed Design and Implementation Plan" section in `plan.md`
+- READ `plan.new.md` FULLY
+- FOLLOW the "Detailed Design and Implementation Plan" section in `plan.new.md`
+  - execute the plan phase by phase
 - Think deeply when executing the plan
 - Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
 - Conform to existing coding style, conventions and naming conventions
@@ -21,5 +22,5 @@ IMPORTANT
   - Prefer re-use and enhancement to duplicative new code and bloat
   - Enhancing and refactor existing code as described in the plan
 - IMPORTANT - include new tests as specified in the plan
-- CRITICAL - DO NOT deviate from the plan in `plan.md`
+- CRITICAL - DO NOT deviate from the plan in `plan.new.md`
 - If uncertain, stop and output open questions so the user can amend the plan with clarifications

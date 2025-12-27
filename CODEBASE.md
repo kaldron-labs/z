@@ -224,7 +224,6 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zproxy/src/zproxy.cc:39` - Top-level symbols: class IOBuf, class Connection, class Proxy, class Listener, class App, define BufSize
 - `ztls/src/ZtlsTOTP.cc:1` - Top-level contents (no regex-matched symbols)
 - `ztls/src/ZtlsPK_Data.hh:13` - Top-level symbols: define ZtlsPK_Data_HH, struct SK_PKCS1, struct SK_SEC1, struct SK_PKCS8_HDR, struct SK_PKCS8_RSA, struct SK_PKCS8_EC
-- `ztls/src/ZtlsMPI.hh:10` - Top-level symbols: define ZtlsMPI_HH, struct MPI
 - `ztls/src/ZtlsTOTP.hh:10` - Top-level symbols: define ZtlsTOTP_HH
 - `ztls/src/ZtlsLib.cc:1` - Top-level contents (no regex-matched symbols)
 - `ztls/src/ZtlsPK.hh:18` - Top-level symbols: define ZtlsPK_HH, function mwb_error_, define ZtlsPK_mwb_error, function mrb_error_, define ZtlsPK_mrb_error, struct AnyKey

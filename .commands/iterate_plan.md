@@ -1,24 +1,25 @@
-# Plan the Design and Implementation of a Goal
+# Iterate Design and Implementation Plan
 
 ## Act as a principal software engineer who is the leading global expert in the field
 
 Steps:
 1. Read `requirements.new.md` in full
-2. Formulate a comprehensive design and implementation plan to meet the requirements and achieve the goal
-3. Write the plan in markdown as `plan.md`:
-  - Break down the plan into detailed incremental phases
-  - Each phase should be a self-contained piece of work
-  - Each phase should build on the work of previous phases
-  - Each phase should focus on a particular subset of the requirements
-  - The plan should culminate with all requirements met
+2. Read `plan.md` in full, particularly the answers to open questions at the end
+3. Use online web search as needed to refine understanding of requirements and their implications
+4. Improve `plan.md`, writing a new version saved as `plan.new.md`:
+  - Read `plan.feedback.md` if it exists, incorporating this feedback into the revised plan
+  - Review and SCRUTINIZE the planned use of all newly depended APIs
+    - Review the detailed behavior of each newly depended API and ensure that the actual behavior of the API aligns with the intended uses
+  - Review `plan.md` phase by phase, one phase at a time, improving each phase and appending it to `plan.new.md`
+  - Carefully evaluate the dependencies of each phase on preceding phases
 
 ## CRITICAL: DO NO MORE THAN RESEARCH AND MAKE A PLAN
 
 IMPORTANT
 - MAKE A PLAN, DO NOT IMPLEMENT IT
-- Read `requirements.new.md` in full
-- Use web search as required to research the goal and the requirements
-- Document how what IS will change to what WILL BE
+- DO NOT RELY ON MEMORY - `requirements.new.md` and `plan.md` may have been edited outside this session
+- RETAIN ALL IMPORTANT DETAIL from `plan.md`
+- `plan.new.md` must be an improved and clarified version of `plan.md`, with no legacy open questions remaining and all details retained
 - Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
 - For each requirement, evaluate its complexity and feasibility, specifically:
   - Use web search to research how comparable features were designed and implemented in comparable open source software
@@ -26,11 +27,9 @@ IMPORTANT
   - Comprehensively research the implications of the requirement for the codebase
   - Evaluate the complexity of implementing the requirement with the codebase
   - If a requirement is highly complex or infeasible, ask for a resolution as an open question, including a description of the challenge
-- Formulate a detailed design and implementation plan
+- Re-formulate the design and implementation plan
   - Think deeply to formulate the plan
   - Identify overlapping requirements and factor out common code
-  - Review and SCRUTINIZE the planned use of all newly depended APIs
-    - Review the detailed behavior of each newly depended API and ensure that the actual behavior of the API aligns with the intended uses
   - Break down the plan into a series of phases
 - Conform to existing naming conventions
   - PREFER succinct expressive names to verbose names
@@ -40,12 +39,12 @@ IMPORTANT
   - Examine existing similar features and related code
   - Prefer re-use and enhancement to duplicative new code and bloat
   - Consider enhancing or refactoring existing code
-- When formulating the design and implementation:
+- When re-formulating the design and implementation:
   - Include any new code modules and files
   - Include any potential refactoring
   - Include any potential architectural changes
   - Include adding new tests to the test-suite
-  - Scrutinize all dependencies and ensure that actual API behavior aligns with intended uses
+  - Scrutinize all dependencies and ensure their actual API behavior aligns with intended uses
 - Identify technical constraints and opportunities
 - Be pragmatic - don't hold out for an ideal or perfect plan
 - When uncertain, describe the options for design and implementation

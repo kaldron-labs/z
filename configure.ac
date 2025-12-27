@@ -124,11 +124,20 @@ AC_SUBST(Z_ZT_LIBS)
 AC_SUBST(Z_IO_LIBS)
 AC_SUBST(Z_TERM_LIBS)
 
-# mbedtls
-AX_PATH_LIB_MBEDTLS(, [AC_MSG_ERROR([libmbedtls required])])
-AC_SUBST(MBEDTLS_LIBS)
-CPPFLAGS="$MBEDTLS_CPPFLAGS $CPPFLAGS"
-LDFLAGS="$MBEDTLS_LDFLAGS $LDFLAGS"
+# picotls
+PKG_CHECK_MODULES([PTLS_FUSION], [picotls-fusion >= 1.0], [], [dnl
+  AC_MSG_ERROR([picotls-fusion required])
+])
+PKG_CHECK_MODULES([PTLS_CORE], [picotls-core >= 1.0], [], [dnl
+  AC_MSG_ERROR([picotls-core required])
+])
+PKG_CHECK_MODULES([PTLS_OPENSSL], [picotls-openssl >= 1.0], [], [dnl
+  AC_MSG_ERROR([picotls-openssl required])
+])
+PTLS_LIBS="$PTLS_FUSION_LIBS $PTLS_OPENSSL_LIBS $PTLS_CORE_LIBS"
+PTLS_CFLAGS="$PTLS_CORE_CFLAGS"
+AC_SUBST(PTLS_LIBS)
+AC_SUBST(PTLS_CFLAGS)
 
 # flatbuffers
 PKG_CHECK_MODULES([FBS], [flatbuffers >= 24], [], [dnl
