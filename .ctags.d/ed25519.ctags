@@ -1,0 +1,2 @@
+--regex-C++=/^\s*ED25519_FN\(\s*(\w+)\s*\)\s*\(/\1/f,function/
+--regex-C=/^\s*ED25519_FN\(\s*(\w+)\s*\)\s*\(/\1/f,function/

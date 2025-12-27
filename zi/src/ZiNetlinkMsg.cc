@@ -4,11 +4,11 @@
 #include <zlib/ZiNetlinkMsg.hh>
 #include <zlib/ZiMultiplex.hh>
 
-ZiGenericNetlinkHdr::ZiGenericNetlinkHdr(
+ZiGNLHdr::ZiGNLHdr(
     ZiConnection *connection, uint32_t seqNo, uint32_t len) :
   ZiNetlinkHdr(GENL_HDRLEN + len, connection->info().familyID(), 
 	       NLM_F_REQUEST, seqNo, connection->info().portID()) {
-  m_g.cmd = ZiGenericNetlinkCmd_Forward;
-  m_g.version = ZiGenericNetlinkVersion;
+  m_g.cmd = ZiGNLCmd_Forward;
+  m_g.version = ZiGNLVersion;
   m_g.reserved = 0;
 }

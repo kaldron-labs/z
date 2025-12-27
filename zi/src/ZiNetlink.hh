@@ -25,7 +25,7 @@ public:
   ZiNetlinkSockAddr() {
     m_snl.nl_family = AF_NETLINK;
     memset(&m_snl.nl_pad, 0, sizeof(m_snl.nl_pad));
-    // LATER: we always let the kernel specify these...
+    // LATER: always let the kernel specify these...
     m_snl.nl_groups = 0;
     m_snl.nl_pid = 0;
   }

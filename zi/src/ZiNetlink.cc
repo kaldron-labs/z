@@ -13,7 +13,7 @@ int ZiNetlink::connect(Socket sock,
   {
     // this is our 'payload' coming after the nlmsghdr and genlmsghdr
     ZiNetlinkFamilyName fname(familyName);
-    ZiGenericNetlinkHdr hdr(fname.len(),
+    ZiGNLHdr hdr(fname.len(),
 	GENL_ID_CTRL, NLM_F_REQUEST, 0, 0, CTRL_CMD_GETFAMILY);
     ZiVec vecs[2] = {
       { (void *)&hdr, hdr.hdrSize() },
@@ -25,7 +25,7 @@ int ZiNetlink::connect(Socket sock,
   }
 
   {
-    ZiGenericNetlinkHdr hdr2;
+    ZiGNLHdr hdr2;
     ZuArray<char, 128> data;
     ZiVec vecs[2] = {
       { (void *)&hdr2, hdr2.hdrSize() },
@@ -61,7 +61,7 @@ int ZiNetlink::connect(Socket sock,
 int ZiNetlink::recv(Socket sock,
     unsigned int familyID, uint32_t portID, char *buf, int len) 
 {
-  ZiGenericNetlinkHdr hdr;
+  ZiGNLHdr hdr;
   ZiNetlinkSockAddr addr(portID);
   struct nlattr ignore;
       
@@ -88,8 +88,8 @@ int ZiNetlink::send(Socket sock,
   if (familyID == 0) { return errno = EINVAL, -1; }
 
   ZiNetlinkDataAttr attr(len);
-  ZiGenericNetlinkHdr hdr(attr.len(),
-      familyID, NLM_F_REQUEST, 0, portID, ZiGenericNetlinkCmd_Forward);
+  ZiGNLHdr hdr(attr.len(),
+    familyID, NLM_F_REQUEST, 0, portID, ZiGNLCmd_Forward);
   ZiVec vecs[3] = {
     { (void *)&hdr, (size_t)hdr.hdrSize() },
     { (void *)attr.data_(), (size_t)attr.hdrLen() },
@@ -114,8 +114,8 @@ retry:
     return -1;
   }
     
-  ZiGenericNetlinkHdr *hdr = 
-    (ZiGenericNetlinkHdr *)ZiVec_ptr(*(msg->msg_iov));
+  ZiGNLHdr *hdr = 
+    (ZiGNLHdr *)ZiVec_ptr(*(msg->msg_iov));
   struct nlmsghdr *nlhdr = (struct nlmsghdr *)hdr->hdr();
 
   /* Validate response message: make sure full message was read */
@@ -143,9 +143,10 @@ retry:
 
   // ack the received packet back to the kernel
   if (nlhdr->nlmsg_flags & NLM_F_ACK) {
-    ZiGenericNetlinkHdr ack(0, nlhdr->nlmsg_type, NLM_F_REQUEST, 
-			    nlhdr->nlmsg_seq, nlhdr->nlmsg_pid, 
-			    ZiGenericNetlinkCmd_Ack);
+    ZiGNLHdr ack(
+      0, nlhdr->nlmsg_type, NLM_F_REQUEST,
+      nlhdr->nlmsg_seq, nlhdr->nlmsg_pid, 
+      ZiGNLCmd_Ack);
     if (ack.hdrSize() != write(sock, &ack, ack.hdrSize())) {
       errno = EIO;
       return -1;

@@ -16,8 +16,9 @@
 #include <zlib/ZtASN1.hh>
 #include <zlib/ZtHexDump.hh>
 
-inline void out(bool ok, const char *s) {
-  std::cout << (ok ? "OK  " : "NOK ") << s << '\n' << std::flush;
+template <typename S>
+inline void out(bool ok, S &&s) {
+  std::cout << (ok ? "OK  " : "NOK ") << ZuFwd<S>(s) << '\n' << std::flush;
   // assert(ok);
 }
 
