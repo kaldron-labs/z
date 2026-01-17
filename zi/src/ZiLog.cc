@@ -389,8 +389,6 @@ void ZiCSVSink::pre(ZiLogBuf &, const ZeEventInfo &) { }
 void ZiCSVSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
 {
   ZiSinkEvent event(buf, info);
-  ZtJSON::save<ZuFacet::Core, ZtFieldFilter::All>(std::cerr, event);
-  std::cerr << '\n';
   m_writer.p<Writer>()(event);
 }
 

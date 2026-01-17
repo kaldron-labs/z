@@ -260,11 +260,12 @@ public:
   // from individual elem
   template <typename U, typename V = T>
   struct IsElem_ : public ZuBool<
-    !ZuIsSame<V, char>{} ? bool(ZuIsSame<ZuDecay<U>, V>{}) : bool(ZuEquiv<U, V>{})> { };
+    ZuIsSame<V, wchar_t>{} ? bool(ZuIsSame<ZuDecay<U>, V>{}) : bool(ZuEquiv<U, V>{})> { };
 
   // from real primitive types other than chars (if this is a char array)
   template <typename U, typename V = T>
   struct IsReal : public ZuBool<
+    (bool(ZuEquiv<V, char>{}) || bool(ZuIsSame<ZuDecay<V>, wchar_t>{})) &&
     !IsElem_<U>{} && !IsChar2<U>{} &&
     ZuTraits<U>::IsReal && ZuTraits<U>::IsPrimitive &&
     !ZuTraits<U>::IsArray> { };
@@ -272,8 +273,9 @@ public:
   using MatchReal = ZuIfT<IsReal<U>{}, R>;
 
   // from primitive pointer (not an array, string, or otherwise printable)
-  template <typename U>
+  template <typename U, typename V = T>
   struct IsPtr : public ZuBool<
+    (bool(ZuEquiv<V, char>{}) || bool(ZuIsSame<ZuDecay<V>, wchar_t>{})) &&
     ZuTraits<U>::IsPointer && ZuTraits<U>::IsPrimitive &&
     !ZuTraits<U>::IsArray && !ZuTraits<U>::IsString> { };
   template <typename U, typename R = void>

@@ -41,6 +41,7 @@ map vi {
     Tab[Shift] { RevComplete; }
     ^L { Clear; }
     ^[ { EditRep; Left[Mv]; Mode(3); }
+    ^R { Push(6); }
   }
   # literal next
   mode 1 {
@@ -67,7 +68,7 @@ map vi {
     Right[Shift|Alt] { FwdWordEnd[Mv|Vis|Unix|Past]; }
   }
   # digits base mode
-  mode 16 base {
+  mode 17 base {
     '0' { ArgDigit(0); }
     '1' { ArgDigit(1); }
     '2' { ArgDigit(2); }
@@ -112,10 +113,10 @@ map vi {
     'W' { FwdWord[Mv|Unix]; }
     'e' { FwdWordEnd[Mv]; }
     'E' { FwdWordEnd[Mv|Unix]; }
-    'r' { Edit; Mode(6); }
+    'r' { Edit; Mode(7); }
     'R' { Edit; Over; Mode(0); }
     ^R { Redo; }
-    'y' { Mode(7); }
+    'y' { Mode(8); }
     'u' { Undo; }
     'i' { Edit; Insert; Mode(0); }
     'I' { Edit; Insert; Mode(0); Home[Mv]; }
@@ -127,22 +128,22 @@ map vi {
     'A' { Edit; Mode(0); End[Mv]; }
     's' { Mode(0); Right[Del|Vis]; }
     'S' { Syn(, 'o'); }
-    'd' { Mode(8); }
+    'd' { Mode(9); }
     'D' { End[Del|Copy]; }
-    'g' { Mode(9); }
+    'g' { Mode(10); }
     'h' { Left[Mv]; }
     'j' { Down[Mv]; End[Mv]; }
     'k' { Up[Mv]; End[Mv]; }
     'l' { Right[Mv]; }
     'x' { Right[Del|Copy]; }
-    'c' { Mode(12); }
+    'c' { Mode(13); }
     'C' { Mode(0); End[Del|Copy|Vis]; }
     'b' { RevWord[Mv]; }
     'B' { RevWord[Mv|Unix]; }
     'n' { FwdSearch; }
     'N' { RevSearch; }
-    '/' { PromptSrch(14); }
-    '?' { PromptSrch(15); }
+    '/' { PromptSrch(15); }
+    '?' { PromptSrch(16); }
     '^' { Home[Mv]; }
     '$' { End[Mv]; }
     '"' { Push(5); }
@@ -186,14 +187,20 @@ map vi {
     AnyFn { Pop; Syn; }
     AnySys { Pop; Syn; }
   }
-  # 'r' single-character replace mode
+  # '^R' retrieve mode
   mode 6 {
+    Any { Register; Paste; Pop; }
+    AnyFn { Pop; Syn; }
+    AnySys { Pop; Syn; }
+  }
+  # 'r' single-character replace mode
+  mode 7 {
     Any { OverGlyph; Mode(3); }
     AnyFn { Mode(3); Syn; }
     AnySys { Mode(0); Syn; }
   }
   # 'y' yank mode
-  mode 7 command : 16 {
+  mode 8 command : 16 {
     Up { Up[Copy]; Mode(3); }
     Down { Down[Copy]; Mode(3); }
     Left { Left[Copy]; Mode(3); }
@@ -219,7 +226,7 @@ map vi {
     'W' { FwdWord[Copy|Unix]; Mode(3); }
     'e' { FwdWordEnd[Copy]; Mode(3); }
     'E' { FwdWordEnd[Copy|Unix]; Mode(3); }
-    'g' { Mode(9); }
+    'g' { Mode(10); }
     'h' { Left[Copy]; Mode(3); }
     'j' { Down[Copy]; Mode(3); }
     'k' { Up[Copy]; Mode(3); }
@@ -236,7 +243,7 @@ map vi {
     Redraw { Redraw; }
   }
   # 'd' delete mode
-  mode 8 command : 16 {
+  mode 9 command : 16 {
     Up { Up[Del|Copy]; Mode(3); }
     Down { Down[Del|Copy]; Mode(3); }
     Left { Left[Del|Copy]; Mode(3); }
@@ -262,7 +269,7 @@ map vi {
     'W' { FwdWord[Del|Copy|Unix]; Mode(3); }
     'e' { FwdWordEnd[Del|Copy]; Mode(3); }
     'E' { FwdWordEnd[Del|Copy|Unix]; Mode(3); }
-    'g' { Mode(11); }
+    'g' { Mode(12); }
     'h' { Left[Del|Copy]; Mode(3); }
     'j' { Down[Del|Copy]; Mode(3); }
     'k' { Up[Del|Copy]; Mode(3); }
@@ -279,7 +286,7 @@ map vi {
     Redraw { Redraw; }
   }
   # 'g' go mode
-  mode 9 command {
+  mode 10 command {
     'e' { Mode(3); RevWordEnd[Mv]; }
     'E' { Mode(3); RevWordEnd[Mv|Unix]; }
     Any { Mode(3); }
@@ -289,7 +296,7 @@ map vi {
     Redraw { Redraw; }
   }
   # 'y' 'g' yank-go mode
-  mode 10 command {
+  mode 11 command {
     'e' { Mode(3); RevWordEnd[Copy]; }
     'E' { Mode(3); RevWordEnd[Copy|Unix]; }
     Any { Mode(3); }
@@ -299,7 +306,7 @@ map vi {
     Redraw { Redraw; }
   }
   # 'd' 'g' delete-go mode
-  mode 11 command {
+  mode 12 command {
     'e' { Mode(3); RevWordEnd[Del|Copy]; }
     'E' { Mode(3); RevWordEnd[Del|Copy|Unix]; }
     Any { Mode(3); }
@@ -309,7 +316,7 @@ map vi {
     Redraw { Redraw; }
   }
   # 'c' change mode
-  mode 12 command : 16 {
+  mode 13 command : 16 {
     Up { Up[Del|Copy|Vis]; Mode(0); }
     Down { Down[Del|Copy|Vis]; Mode(0); }
     Left { Left[Del|Copy|Vis]; Mode(0); }
@@ -335,7 +342,7 @@ map vi {
     'W' { Mode(0); FwdWord[Del|Copy|Vis|Unix]; Mode(0); }
     'e' { Mode(0); FwdWordEnd[Del|Copy|Vis]; Mode(0); }
     'E' { Mode(0); FwdWordEnd[Del|Copy|Vis|Unix]; Mode(0); }
-    'g' { Mode(13); }
+    'g' { Mode(14); }
     'h' { Mode(0); Left[Del|Copy|Vis]; }
     'j' { Mode(0); Down[Del|Copy|Vis]; }
     'k' { Mode(0); Up[Del|Copy|Vis]; }
@@ -352,7 +359,7 @@ map vi {
     Redraw { Redraw; }
   }
   # 'c' 'g' change-go mode
-  mode 13 command {
+  mode 14 command {
     'e' { Mode(3); RevWordEnd[Del|Copy|Vis]; }
     'E' { Mode(3); RevWordEnd[Del|Copy|Vis|Unix]; }
     Any { Mode(3); }
@@ -362,7 +369,7 @@ map vi {
     Redraw { Redraw; }
   }
   # '/' search fwd mode
-  mode 14 {
+  mode 15 {
     Any { Glyph; }
     AnyFn { Nop; }
     AnySys { AbortSrch; Syn; }
@@ -386,7 +393,7 @@ map vi {
     Redraw { Redraw; }
   }
   # '?' search rev mode
-  mode 15 {
+  mode 16 {
     Any { Glyph; }
     AnyFn { Nop; }
     AnySys { AbortSrch; Syn; }
