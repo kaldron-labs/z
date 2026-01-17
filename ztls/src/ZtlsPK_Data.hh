@@ -1,10 +1,10 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// mbedtls C++ wrapper
+// key file formats
 // - public and private key file formats
 // - ASN.1 DER data structures
 // - PKCS#1, SEC1, PKCS#8 and X.509
@@ -18,16 +18,43 @@
 
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuMatcher.hh>
+#include <zlib/ZuString.hh>
 
 #include <zlib/ZtStruct.hh>
 #include <zlib/ZtASN1.hh>
 
-namespace Ztls::PK::Data {
+namespace Ztls::PK {
 
 enum { BufSize = 4<<10 };	// a 4096bit RSA key pem is under 4k
 enum { DERBufSize = 3<<10 };	// BufSize reduced by 3/4 for base64
 
 using namespace ZtASN1::Encoding;
+
+namespace OID {
+  constexpr auto PKCS1_RSA = "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"_Zu;
+  constexpr auto EC_ALG_UNRESTRICTED = "\x2a\x86\x48\xce\x3d\x02\x01"_Zu;
+  constexpr auto ED25519 = "\x2b\x65\x70"_Zu;
+  constexpr auto EC_GRP_SECP256R1 = "\x2a\x86\x48\xce\x3d\x03\x01\x07"_Zu;
+
+  inline ZuBSpan pkcs1_rsa() {
+    return {reinterpret_cast<const uint8_t *>(PKCS1_RSA.data()),
+      PKCS1_RSA.length()};
+  }
+  inline ZuBSpan ec_alg_unrestricted() {
+    return {reinterpret_cast<const uint8_t *>(EC_ALG_UNRESTRICTED.data()),
+      EC_ALG_UNRESTRICTED.length()};
+  }
+  inline ZuBSpan ed25519() {
+    return {reinterpret_cast<const uint8_t *>(ED25519.data()),
+      ED25519.length()};
+  }
+  inline ZuBSpan ec_grp_secp256r1() {
+    return {reinterpret_cast<const uint8_t *>(EC_GRP_SECP256R1.data()),
+      EC_GRP_SECP256R1.length()};
+  }
+} // OID
+
+namespace Data {
 
 // RSA PKCS#1 private key
 struct SK_PKCS1 {
@@ -56,7 +83,7 @@ ZtStruct((SK_PKCS1, ASN1),
 struct SK_SEC1 {
   uint8_t	version;
   ZuBSpan	key;
-  ZuBSpan	id;		// e.g. MBEDTLS_OID_EC_GRP_SECP256R1
+  ZuBSpan	id;		// e.g. OID::EC_GRP_SECP256R1
   ZuBSpan	pubKey;		// optional
 };
 ZtStruct((SK_SEC1, ASN1),
@@ -69,8 +96,8 @@ ZtStruct((SK_SEC1, ASN1),
 // PKCS#8 private key - header
 struct SK_PKCS8_HDR {
   uint8_t	version;	// 0
-  ZuBSpan	id;		// e.g. MBEDTLS_OID_EC_ALG_UNRESTRICTED for EC
-				//      MBEDTLS_OID_PKCS1_RSA for RSA
+  ZuBSpan	id;		// e.g. OID::EC_ALG_UNRESTRICTED for EC
+				//      OID::PKCS1_RSA for RSA
 				//      1.3.101.112 for ED25519
 };
 ZtStruct((SK_PKCS8_HDR, ASN1),
@@ -123,10 +150,10 @@ ZtStruct((PK_PKCS1, ASN1),
 
 // X509 public key - header (counterpart to both SEC1 and PKCS#8)
 struct PK_X509_HDR {
-  ZuBSpan	id;		// e.g. MBEDTLS_OID_EC_ALG_UNRESTRICTED for EC
-				//      MBEDTLS_OID_PKCS1_RSA for RSA
+  ZuBSpan	id;		// e.g. OID::EC_ALG_UNRESTRICTED for EC
+				//      OID::PKCS1_RSA for RSA
 				//      1.3.101.112 for ED25519
-  ZuBSpan	id2;		// e.g. MBEDTLS_OID_EC_GRP_SECP256R1 for EC
+  ZuBSpan	id2;		// e.g. OID::EC_GRP_SECP256R1 for EC
 				//      null for RSA and ED25519
 };
 ZtStruct((PK_X509_HDR, ASN1),
@@ -188,6 +215,8 @@ constexpr auto tailMatcher =
     "-----END PUBLIC KEY-----",
     "-----END RSA PUBLIC KEY-----">();
 
-} // Ztls:PK::Data
+} // Data
+
+} // Ztls::PK
 
 #endif /* ZtlsPK_Data_HH */

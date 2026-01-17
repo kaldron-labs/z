@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
@@ -10,7 +10,7 @@
 
 #include <zlib/ZtEnum.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiFile.hh>
 
@@ -56,10 +56,10 @@ namespace Values {
 
 int main()
 {
-  ZeLog::init("CfTest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-  ZeLog::start();
+  ZiLog::init("CfTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   try {
     {
@@ -206,6 +206,6 @@ int main()
     Zm::exit(1);
   }
 
-  ZeLog::stop();
+  ZiLog::stop();
   return 0;
 }

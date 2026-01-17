@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // user DB
@@ -53,7 +53,8 @@ struct IOBuilder : public Zfb::IOBuilder {
 
 using SeqNo = uint64_t;
 
-constexpr mbedtls_md_type_t KeyType = MBEDTLS_MD_SHA256;
+constexpr Ztls::MDType::T KeyType = Ztls::MD::SHA256;
+
 enum { KeySize = Ztls::HMAC<KeyType>::Size }; // 256 bit key
 using KeyData = ZuArray<uint8_t, KeySize>;
 enum { KeyIDSize = 16 };

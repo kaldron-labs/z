@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZmPlatform.hh>
@@ -9,7 +9,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZvDaemon.hh>
 #include <zlib/ZvCf.hh>
@@ -21,13 +21,13 @@ namespace {
   }
 
   void notify(const char *text) {
-    ZeLOG(Info, ZtSprintf("PID %d: %s", (int)Zm::getPID(), text));
+    ZiLOG(Info, "DaemonTest", ZtSprintf("PID %d: %s", (int)Zm::getPID(), text));
   }
 
   ZmSemaphore done;
 
   void sigint() {
-    ZeLOG(Info, "SIGINT");
+    ZiLOG(Info, "DaemonTest", "SIGINT");
     done.post();
   }
 } // namespace
@@ -52,9 +52,9 @@ int main(int argc_, char **argv)
   if (argc < 1 || argc > 3) usage();
   if (options.help) usage();
 
-  ZeLog::init("DaemonTest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::debugSink());
+  ZiLog::init("DaemonTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::debugSink());
 
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
@@ -63,7 +63,7 @@ int main(int argc_, char **argv)
     options.username, options.password,
     0, options.daemonize, "DaemonTest.pid");
 
-  ZeLog::start();
+  ZiLog::start();
 
   switch (r) {
     case ZvDaemon::OK:
@@ -71,18 +71,18 @@ int main(int argc_, char **argv)
       break;
     case ZvDaemon::Running:
       notify("already running");
-      ZeLog::stop();
+      ZiLog::stop();
       Zm::exit(1);
       break;
     case ZvDaemon::Error:
       notify("error");
-      ZeLog::stop();
+      ZiLog::stop();
       Zm::exit(1);
       break;
   }
 
   done.wait();
 
-  ZeLog::stop();
+  ZiLog::stop();
   return 0;
 }

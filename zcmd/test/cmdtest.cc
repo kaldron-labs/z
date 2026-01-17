@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuPrint.hh>
@@ -33,7 +33,7 @@ public:
 	  std::cout << cxn->info().remoteIP << ':'
 	    << ZuBoxed(cxn->info().remotePort) << ' ';
 	const auto &user = link->session()->user->data();
-	ZeLOG(Info, ([
+	ZiLOG(Info, "cmdtest", ([
 	  id = user.id, name = user.name, cmd = ctx->args->get("0")
 	](auto &s) {
 	  s << "user: " << id << ' ' << name << ' '
@@ -77,7 +77,7 @@ ZmRef<CmdTest> server;
 
 void gtfo() {
   if (mx) mx->stop();
-  ZeLog::stop();
+  ZiLog::stop();
   Zm::exit(1);
 };
 
@@ -191,10 +191,10 @@ int main(int argc, char **argv)
       srvCf->set("localPort", cf->get("4"));
     }
 
-    ZeLog::init("cmdtest");
-    ZeLog::level(0);
-    ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path(cf->get<true>("log"))));
-    ZeLog::start();
+    ZiLog::init("cmdtest");
+    ZiLog::level(0);
+    ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path(cf->get<true>("log"))));
+    ZiLog::start();
 
     mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
 
@@ -229,7 +229,7 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   if (!db->start()) {
-    ZeLOG(Fatal, "Zdb start failed");
+    ZiLOG(Fatal, "cmdtest", "Zdb start failed");
     gtfo();
   }
 
@@ -238,7 +238,7 @@ int main(int argc, char **argv)
       wake(ok);
     });
   })) {
-    ZeLOG(Fatal, "UserDB open failed");
+    ZiLOG(Fatal, "cmdtest", "UserDB open failed");
     db->stop();
     gtfo();
   }
@@ -259,7 +259,7 @@ int main(int argc, char **argv)
 
   delete mx;
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

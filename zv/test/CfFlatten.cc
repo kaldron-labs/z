@@ -1,4 +1,4 @@
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZvCf.hh>
 

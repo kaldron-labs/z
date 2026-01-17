@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
@@ -16,7 +16,7 @@
 #include <zlib/ZtRegex.hh>
 #include <zlib/ZtHexDump.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
 
@@ -268,10 +268,10 @@ int main(int argc, const char *argv[])
     }
   }
 
-  ZeLog::init("ZiMxUDPClient");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-  ZeLog::start();
+  ZiLog::init("ZiMxUDPClient");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   Mx mx(localIP, localPort, remoteIP, remotePort, connect, options,
       nMessages, ZuMv(params));
@@ -286,20 +286,20 @@ int main(int argc, const char *argv[])
   Global::wait();
   mx.stop();
   
-  ZeLog::stop();
+  ZiLog::stop();
   return 0;
 }
 
 bool Connection::recvComplete(ZiIOContext &io)
 {
   if (io.length < io.size) {
-    ZeLOG(Error, "recvEcho - short packet");
+    ZiLOG(Error, "ZiMxUDPClient", "recvEcho - short packet");
     io.disconnect();
     return true;
   }
 
   if (io.length != strlen(Messages[index()])) {
-    ZeLOG(Error, "recvEcho - bad packet size");
+    ZiLOG(Error, "ZiMxUDPClient", "recvEcho - bad packet size");
     io.disconnect();
     return true;
   }

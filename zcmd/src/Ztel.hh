@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #ifndef Ztel_HH
@@ -30,7 +30,7 @@
 namespace Ztel {
 
 namespace RAG {
-  ZfbEnumValues(RAG, Off, Red, Amber, Green);
+  ZfbEnumMatch(RAG, ZvRAG, Off, Red, Amber, Green);
 }
 
 namespace ThreadPriority {
@@ -97,7 +97,7 @@ namespace DBHostState {
   using namespace ZdbHostState;
 
   int rag(int i) {
-    using namespace RAG;
+    using namespace ZvRAG;
     enum { N = ZdbHostState::N };
     if (i < 0 || i >= N) return Off;
     static const int values[N] = {
@@ -343,41 +343,9 @@ ZfbStruct(Engine,
     (((txThread),	(Ctor<11>)),				(UInt16)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-using DBTable_ = Zdb_::Tel::DBTable;
-struct DBTable : public DBTable_ {
-  ZuDerive_(DBTable, DBTable_)
-
-  int8_t rag() const {
-    unsigned total = cacheLoads + cacheMisses;
-    if (!total) return RAG::Off;
-    if (cacheMisses * 10 > (total<<3)) return RAG::Red;
-    if ((cacheMisses<<1) > total) return RAG::Amber;
-    return RAG::Green;
-  }
-  void rag(int8_t) { } // unused
-};
-ZfbStructDerive(DBTable, DBTable_,
-    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
-
-using DBHost_ = Zdb_::Tel::DBHost;
-struct DBHost : public DBHost_ {
-  ZuDerive_(DBHost, DBHost_)
-
-  int8_t rag() const { return DBHostState::rag(state); }
-  void rag(int8_t) { } // unused
-};
-ZfbStructDerive(DBHost, DBHost_,
-    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
-
-using DB_ = Zdb_::Tel::DB;
-struct DB : public DB_ {
-  ZuDerive_(DB, DB_)
-
-  int8_t rag() const { return DBHostState::rag(state); }
-  void rag(int8_t) { } // unused
-};
-ZfbStructDerive(DB, DB_,
-    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+using DBTable = Zdb_::Tel::DBTable;
+using DBHost = Zdb_::Tel::DBHost;
+using DB = Zdb_::Tel::DB;
 
 // display sequence:
 //   id, role, RAG, uptime, version

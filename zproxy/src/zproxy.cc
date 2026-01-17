@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdio.h>
@@ -1230,7 +1230,7 @@ void Connection::recv(ZiIOContext *io)
 void Connection::recv_(ZmRef<IOBuf> ioBuf, ZiIOContext &io)
 {
   if (m_flags & Trace) {
-    ZeLOG(Info,
+    ZiLOG(Info, "zproxy",
 	(ZtHexDump{ZtString<>{} << *this, ioBuf->data(), ioBuf->length()}));
   }
 
@@ -1318,7 +1318,7 @@ void Connection::send(Guard &guard, ZiIOContext *io)
 void Connection::send_(IOBuf *ioBuf, ZiIOContext &io)
 {
   if (m_flags & Trace) {
-    ZeLOG(Info,
+    ZiLOG(Info, "zproxy",
 	(ZtHexDump{ZtString<>{} << *this, ioBuf->data(), ioBuf->length()}));
   }
 
@@ -1363,7 +1363,7 @@ void Proxy::connected(Connection *connection)
     m_out = connection;
     m_app->add(this);
     m_listener->del(this);
-    if (m_app->verbose()) { ZeLOG(Info, status()); }
+    if (m_app->verbose()) { ZiLOG(Info, "zproxy", status()); }
     m_in->peer(m_out);
     m_out->peer(m_in);
     m_in->recv();
@@ -1374,7 +1374,7 @@ void Proxy::connected(Connection *connection)
 void Proxy::connect2()
 {
   if (!m_listener) return;
-  if (m_app->verbose()) { ZeLOG(Info, status()); }
+  if (m_app->verbose()) { ZiLOG(Info, "zproxy", status()); }
   m_mx->connect(
       ZiConnectFn{this, ZmFnPtr<&Proxy::connected2>{}},
       ZiFailFn{this, ZmFnPtr<&Proxy::failed2>{}},
@@ -1388,7 +1388,7 @@ void Proxy::failed2(bool transient)
     m_mx->add([this]() { connect2(); },
 	Zm::now(m_listener->reconnectFreq()));
   } else {
-    if (m_app->verbose()) { ZeLOG(Info, status()); }
+    if (m_app->verbose()) { ZiLOG(Info, "zproxy", status()); }
     m_in->proxy(0);
     m_in->disconnect();
     m_listener->del(this);
@@ -1497,7 +1497,7 @@ void Listener::stop()
 ZiConnection *Listener::accepted(const ZiCxnInfo &ci)
 {
   ZmRef<Proxy> proxy = new Proxy(this);
-  if (m_app->verbose()) { ZeLOG(Info, status()); }
+  if (m_app->verbose()) { ZiLOG(Info, "zproxy", status()); }
   add(proxy);
   return new Connection(proxy, Connection::In | m_cxnFlags,
       m_cxnLatency, m_cxnFrag, m_cxnPack, m_cxnDelay, ci);
@@ -1551,8 +1551,8 @@ int main(int argc, char **argv)
 
   app->start();
 
-  ZeLog::init("zproxy");
-  ZeLog::level(0);
+  ZiLog::init("zproxy");
+  ZiLog::level(0);
 
   if (interactive) {
     Zrl::Globber globber;
@@ -1591,21 +1591,21 @@ int main(int argc, char **argv)
       .histLoad = history.loadFn()
     });
     if (cli.open()) {
-      ZeLog::sink(ZeLog::lambdaSink([&cli](ZeLogBuf &buf, const ZeEventInfo &) {
+      ZiLog::sink(ZiLog::lambdaSink([&cli](ZiLogBuf &buf, const ZeEventInfo &) {
 	buf << '\n';
 	cli.print([&buf]() { std::cout << buf << std::flush; });
       }));
-      ZeLog::start();
+      ZiLog::start();
       cli.start();
       cli.join();
-      ZeLog::stop();
+      ZiLog::stop();
       cli.stop();
       cli.close();
     }
     cli.final();
   } else {
-    ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-    ZeLog::start();
+    ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+    ZiLog::start();
     ZtString<> cmd(1024);
     while (fgets(cmd.data(), cmd.size() - 1, stdin)) {
       cmd.calcLength();
@@ -1613,7 +1613,7 @@ int main(int argc, char **argv)
       if (app->exec(cmd)) break;
     }
     app->wait();
-    ZeLog::stop();
+    ZiLog::stop();
   }
 
   app->stop();

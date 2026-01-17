@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZmTrap.hh>
@@ -9,7 +9,7 @@
 #include <zlib/ZtStruct.hh>
 #include <zlib/ZtJSON.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
 
@@ -127,7 +127,7 @@ bool Link::rcvd()
 {
   auto scan = ZtJSON::scan(body().data);
   if (scan.p<0>() < 0) {
-    ZeLOG(Error, "invalid response");
+    ZiLOG(Error, "zrclient", "invalid response");
     return false;
   }
   if (state() == ZvLinkState::Connecting) {
@@ -154,7 +154,7 @@ static void usage()
   static const char *usage =
     "Usage: zrlclient\n";
   std::cerr << usage << std::flush;
-  ZeLog::stop();
+  ZiLog::stop();
   Zm::exit(1);
 }
 
@@ -162,10 +162,10 @@ int main(int argc, char **argv)
 {
   if (argc != 1) usage();
 
-  ZeLog::init("zrclient");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-  ZeLog::start();
+  ZiLog::init("zrclient");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   ZuPtr<ZiMultiplex> mx = new ZiMultiplex(
     ZiMxParams()
@@ -216,7 +216,7 @@ int main(int argc, char **argv)
 
   mx->stop();
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   client->final();
   client = {};

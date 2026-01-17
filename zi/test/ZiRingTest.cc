@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuArray.hh>
@@ -11,7 +11,7 @@
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmTimeInterval.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiRing.hh>
 
@@ -166,10 +166,10 @@ int main(int argc, char **argv)
 
   if (!params.name) usage();
 
-  ZeLog::init("ZiRingTest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2"))); // log to stderr
-  ZeLog::start();
+  ZiLog::init("ZiRingTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2"))); // log to stderr
+  ZiLog::start();
 
   return ZuSwitch::dispatch<4>(
       (static_cast<unsigned>(params.mw)<<1) |

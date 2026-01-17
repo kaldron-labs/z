@@ -1,21 +1,11 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // structured object introspection - flatbuffers extensions
-
-#ifndef ZfbStruct_HH
-#define ZfbStruct_HH
-
-#ifndef ZfbLib_HH
-#include <zlib/ZfbLib.hh>
-#endif
-
-#include <assert.h>
-
-// ZtStruct extensions for flatbuffers, with extensible type support
+// - ZtStruct extensions for flatbuffers, with extensible type support
 
 // Syntax
 // ------
@@ -23,7 +13,7 @@
 // 
 // Example: (((id, Rd), (Ctor<0>, Keys<0>)), (String))
 
-// macro DSL syntax is identical to that for ZtField, with the Type
+// macro DSL syntax is identical to that for ZtStruct, with the Type
 // extended to specify an extensible flatbuffers <-> C++ mapping
 
 // ZfbStruct	ZtStruct	C++ Type
@@ -45,7 +35,7 @@
 // ID		UDT		ZuID
 // Object	UDT		<Any>
 
-// UDT example - ZiIP support is added as follows:
+// UDT transformer example - ZiIP support is added as follows:
 //   (network/host byte-order swapping is intentionally elided since
 //   IP addresses are in network byte order both on the wire and in memory)
 //
@@ -72,6 +62,15 @@
 // } // ZfbTransform
 // ZfbTransform::IP ZfbTransformer_(ZiIP *);
 // inline ZuID ZtVFieldTypeID(ZiIP *) { return "IP"; }
+
+#ifndef ZfbStruct_HH
+#define ZfbStruct_HH
+
+#ifndef ZfbLib_HH
+#include <zlib/ZfbLib.hh>
+#endif
+
+#include <assert.h>
 
 #include <zlib/Zfb.hh>
 
@@ -1091,14 +1090,8 @@ inline ZuID ZtVFieldTypeID(ZuID *) { return "ID"; }
   ZuFields_##O ZuFields_(O *, ZuFacet::Facet *);
 #define ZfbStruct_Render(O, ...) \
   ZuPP_Eval_(ZuPP_MapArg(ZfbStruct_Render_, O, __VA_ARGS__))
-#define ZfbStructDerive_Render_(O, Facet) \
-  using ZuFields_##O##_##Facet = \
-    typename ZuFields<Base, Facet>::template Push<ZuFields_##O##_>; \
-  ZuFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *);
-#define ZfbStructDerive_Render(O, ...) \
-  ZuPP_Eval_(ZuPP_MapArg(ZfbStructDerive_Render_, O, __VA_ARGS__))
 
-// main structure declaration macros ZfbStruct() and ZfbStructDerive()
+// main structure declaration macros ZfbStruct()
 #define ZfbStruct_(O, Facets, ...) \
   O ZuStructured_(O *); \
   ZfbStruct_Pre(O) \
@@ -1108,23 +1101,8 @@ inline ZuID ZtVFieldTypeID(ZuID *) { return "ID"; }
   ZfbStruct_Render(O, Core ZuPP_StripAppend(Facets)) \
   ZfbStruct_Post(O)
 
-#define ZfbStructDerive_(Base, O, Facets, ...) \
-  O ZuStructured_(O *); \
-  ZfbStruct_Pre(O) \
-  __VA_OPT__(ZuPP_MapArg(ZfbField_Decl, O, __VA_ARGS__)) \
-  using ZuFields_##O##_ = ZuTypeList< \
-    __VA_OPT__(ZuPP_MapArgComma(ZtField_Type, O, __VA_ARGS__))>; \
-  ZfbStructDerive_Render(O, Core ZuPP_StripAppend(Facets)) \
-  ZfbStruct_Post(O)
-
 #define ZfbStruct(O_Facets, ...) \
   ZuPP_Eval(ZuPP_Defer(ZfbStruct_)( \
-    ZuPP_Eval_(ZuStruct_Object(O_Facets)), \
-    ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
-    __VA_OPT__(, __VA_ARGS__)))
-
-#define ZfbStructDerive(O_Facets, Base, ...) \
-  ZuPP_Eval(ZuPP_Defer(ZfbStructDerive_)(Base, \
     ZuPP_Eval_(ZuStruct_Object(O_Facets)), \
     ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
     __VA_OPT__(, __VA_ARGS__)))

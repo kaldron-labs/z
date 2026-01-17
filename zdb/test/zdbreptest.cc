@@ -1,14 +1,14 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
 
 #include <zlib/ZmTrap.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZvCf.hh>
 #include <zlib/ZvMxParams.hh>
@@ -50,7 +50,7 @@ ZmRef<ZvCf> inlineCf(ZuCSpan s)
 void gtfo()
 {
   if (mx) mx->stop();
-  ZeLog::stop();
+  ZiLog::stop();
   Zm::exit(1);
 }
 
@@ -94,10 +94,10 @@ int main()
     Zm::exit(1);
   }
 
-  ZeLog::init("zdbreptest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2"))); // log to stderr
-  ZeLog::start();
+  ZiLog::init("zdbreptest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2"))); // log to stderr
+  ZiLog::start();
 
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
@@ -105,7 +105,7 @@ int main()
   try {
     mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
 
-    if (!mx->start()) throw ZeEXCEPT(Fatal, "multiplexer start failed");
+    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbreptest", "multiplexer start failed");
 
     ZmAtomic<unsigned> ok = 0;
 
@@ -119,11 +119,12 @@ int main()
 
       db[i]->init(ZuMv(dbCf), mx, ZdbHandler{
 	.upFn = [](Zdb *, ZdbHost *host) {
-	  ZeLOG(Info, ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
-	    s << "ACTIVE (was " << id << ')';
-	  }));
+	  ZiLOG(Info, "zdbreptest",
+	    ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	      s << "ACTIVE (was " << id << ')';
+	    }));
 	},
-	.downFn = [](Zdb *, bool) { ZeLOG(Info, "INACTIVE"); }
+	.downFn = [](Zdb *, bool) { ZiLOG(Info, "zdbreptest", "INACTIVE"); }
       }, store[i]);
 
       orders[i] = db[i]->initTable<Order>("order"); // might throw
@@ -146,9 +147,13 @@ int main()
 	  new (o->ptr())
 	    Order{"IBM", 0, "FIX0", "order0", 0, Side::Buy, {100}, {100}};
 	  ZmRef<ZdbBuf> buf = o->commit();
-	  ZeLOG(Info, ([buf](auto &s) { s << "inserted JSON: "; ZtJSON::save<ZuFacet::JSON, ZtFieldFilter::All>(s, *(buf->fbo_<Order>())); }));
+	  ZiLOG(Info, "zdbreptest",
+	    ([buf](auto &s) {
+	      s << "inserted JSON: ";
+	      ZtJSON::save<ZuFacet::JSON, ZtFieldFilter::All>(s, *(buf->fbo_<Order>()));
+	    }));
 	  id = o->data().orderID;
-	  ZeLOG(Info, ([id](auto &s) { s << "orderID=" << id; }));
+	  ZiLOG(Info, "zdbreptest", ([id](auto &s) { s << "orderID=" << id; }));
 	});
 	o = new ZdbObject<Order>{orders[0], 0};
 	orders[0]->insert(o, [](ZdbObject<Order> *o) {
@@ -172,11 +177,11 @@ int main()
 	orders[0]->find<0>(0, ZuFwdTuple("IBM", id),
 	  [&id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o)
-	      ZeLOG(Info, ([id](auto &s) {
+	      ZiLOG(Info, "zdbreptest", ([id](auto &s) {
 		s << "find(IBM, " << id << "): (null)";
 	      }));
 	    else
-	      ZeLOG(Info, ([id, o = ZuMv(o)](auto &s) {
+	      ZiLOG(Info, "zdbreptest", ([id, o = ZuMv(o)](auto &s) {
 		s << "find(IBM, " << id << "): " << o->data();
 	      }));
 	    done.post();
@@ -187,11 +192,11 @@ int main()
       orders[0]->selectKeys<2>(ZuFwdTuple("FIX0"), 1, [](auto max, unsigned) {
 	using Key = ZuStructKeyT<Order, 2>;
 	if (max.template is<Key>())
-	  ZeLOG(Info, ([max = ZuMv(max)](auto &s) {
+	  ZiLOG(Info, "zdbreptest", ([max = ZuMv(max)](auto &s) {
 	    s << "maximum(FIX0): " << max.template p<Key>();
 	  }));
 	else {
-	  ZeLOG(Info, ([max = ZuMv(max)](auto &s) {
+	  ZiLOG(Info, "zdbreptest", ([max = ZuMv(max)](auto &s) {
 	    s << "maximum(FIX0): EOR";
 	  }));
 	  done.post();
@@ -201,13 +206,13 @@ int main()
     }
 
     for (unsigned i = 0; i < 2; i++) {
-      ZeLOG(Debug, ([i](auto &s) { s << "STOP " << i; }));
+      ZiLOG(Debug, "zdbreptest", ([i](auto &s) { s << "STOP " << i; }));
       db[i]->stop();
     }
 
     mx->stop();
 
-    ZeLOG(Debug, (ZeString{} << '\n' << ZmHashMgr::csv()));
+    ZiLOG(Debug, "zdbreptest", (ZeString{} << '\n' << ZmHashMgr::csv()));
 
     for (unsigned i = 0; i < 2; i++) {
       orders[i] = {};
@@ -216,20 +221,20 @@ int main()
       store[i] = {};
     }
 
-  } catch (const ZeException &e) {
-    ZeLOG(Fatal, e);
+  } catch (ZeException &e) {
+    ZiLogEvent(ZuMv(e));
     gtfo();
   } catch (const ZeError &e) {
-    ZeLOG(Fatal, e.message());
+    ZiLOG(Fatal, "zdbreptest", e.message());
     gtfo();
   } catch (...) {
-    ZeLOG(Fatal, "unknown exception");
+    ZiLOG(Fatal, "zdbreptest", "unknown exception");
     gtfo();
   }
 
   mx = {};
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

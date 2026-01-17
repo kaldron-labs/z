@@ -1,5 +1,74 @@
-- rewrite all (c) Copyright lines
-  - assign to Huw Rogers
+- move ZvCSV down into Zt/Zi
+  - ZiFile -dependent code becomes ZiCSV
+  - core code becomes ZtCSV
+- add a CSV sink to ZiLog.cc
+- complete ZiIOStream
+
+parameters:
+- Alloc - allocate new buffer
+- Send - send buffer (includes captures for cxn, etc.)
+- MaxSize - maximum size of buffer (including headroom and tailroom), i.e. MTU
+- HeadRoom - headroom (skip)
+- TailRoom - required remaining size at Send
+- need a sustained Tx streaming API that:
+  s << x;
+  s emits buffers as needed;
+  s << flush() (or frame() or somesuch) flushes out the last buffer
+  - check STL conventions
+
+codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
+
+• Yes — the ciphertext pointer is not 64‑byte aligned if you have a 5‑byte TLS record header. But
+  the non‑temporal fusion implementation is designed to handle that.
+
+  Key points:
+
+  - align_bits is enforced on buf->base, not on buf->off (the current write pointer). So only the
+    buffer base is guaranteed to be 64‑byte aligned, not the ciphertext start. See ../picotls/
+    include/picotls.h (align_bits) and ../picotls/lib/picotls.c (ptls_buffer_reserve_aligned).
+  - The non‑temporal encrypt path explicitly handles unaligned output. It uses
+    load_preceding_unaligned to pull the bytes preceding the ciphertext pointer (up to 63 bytes)
+    into a staging buffer, then writes aligned 64‑byte chunks back with NT stores. That preserves
+    the record header while keeping the bulk output aligned for NT stores. See ../picotls/lib/
+    fusion.c (non_temporal_encrypt_v128/256, comments around “load unaligned data within same
+    cache line”).
+
+  So with a 5‑byte record header, the ciphertext itself is unaligned, but that’s expected and
+  handled. The alignment requirement is on the buffer base to make the aligned‑store strategy
+  safe.
+
+- fix preflush etc. in ztls
+  - TLS record header is 5 bytes
+  - TLS record length includes IV (TLS1.2 only), ciphertext, tail (AEAD tag or MAC + padding)
+  - headroom varies between 5 (TLS1.3) and 21 (TLS1.2 with AES-CBC)
+  - tailroom varies between 16 (TLS1.2 AEAD) and 304 (TLS1.2 AES-CBC HMAC-SHA384, max padding)
+  - maximum overhead is 325
+  - implies tx buffers should be initially allocated with skip = headroom;
+    filled by application; split if needed into 16K-325 fragments; for each fragment:
+    - each plaintext fragment will be offset into buffer by skip == headroom
+    - ptls_buf_init should be called with base and full buffer capacity (16K)
+      - then passed to ptls_buf_send with plaintext data: base+skip and length
+      - ptls_buf_send should be preceded by an independent KeyUpdate null send if needed
+  - ensures recs == 1 by capping plaintext
+
+- complete post-codex cleanup of ZtlsPico and Ztls
+  - unnecessary IOBufAlignBits constexpr calculation
+  - unnecessary PreservePrefix
+  - unnecessary origin_match
+  - send(data, len) can be removed in favor of send(buf)
+  - see above, caller should no longer use new IOBufAlloc...(cxn)
+    - need explicit per-thread (i.e. per-rx or per-tx) recycling to match future io_uring
+    - tx will have skip (headroom), rx will not
+    - m_rxBuf = new IOBufAlloc{...} needs to call allocator
+  - investigate use of tailroom
+  - investigate use of RxCursor - really necessary?
+
+- need a rx and tx buf allocator in Ztls (and ZiMultiplex)
+  - per-cxn
+  - tx will have headroom (skip) for in-place encryption
+  - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
+    - but not jumbo, in that case we fallback to non-registered buffers
+    - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
 
 - new TLS/HTTP/QUIC stack:
   - TLS - picotls

@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Data Series Block
@@ -88,7 +88,7 @@ struct Blk {
 
   template <typename Decoder>
   Decoder decoder() const {
-    ZeAssert(blkData, (), "blkData not loaded", return {});
+    ZeAssert(blkData, "Zdf", (), "blkData not loaded", return {});
     const auto &buf = blkData->data().buf;
     auto start = buf.data();
     return Decoder{start, start + buf.length()};
@@ -96,7 +96,7 @@ struct Blk {
 
   template <typename Decoder>
   Encoder<Decoder> encoder(Series<Decoder> *series) {
-    ZeAssert(blkData, (), "blkData not instantiated", return {});
+    ZeAssert(blkData, "Zdf", (), "blkData not instantiated", return {});
     auto &buf = blkData->data().buf;
     auto start = buf.data();
     return {start, start + BlkSize};
@@ -106,7 +106,7 @@ struct Blk {
   void sync(const Encoder &encoder, int64_t last_, NDP ndp) { // fixed
     count_ndp(encoder.offset(), ndp);
     last.fixed = last_;
-    ZeAssert(blkData, (), "blkData not loaded", return);
+    ZeAssert(blkData, "Zdf", (), "blkData not loaded", return);
     auto &buf = blkData->data().buf;
     buf.length(encoder.pos() - buf.data());
   }
@@ -114,13 +114,13 @@ struct Blk {
   void sync(const Encoder &encoder, double last_) { // floating
     count(encoder.offset());
     last.float_ = last_;
-    ZeAssert(blkData, (), "blkData not loaded", return);
+    ZeAssert(blkData, "Zdf", (), "blkData not loaded", return);
     auto &buf = blkData->data().buf;
     buf.length(encoder.pos() - buf.data());
   }
 
   unsigned space() const {
-    ZeAssert(blkData, (), "blkData not loaded", return 0);
+    ZeAssert(blkData, "Zdf", (), "blkData not loaded", return 0);
     const auto &buf = blkData->data().buf;
     return BlkSize - buf.length();
   }

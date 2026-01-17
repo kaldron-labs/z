@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // socket I/O multiplexing
@@ -34,7 +34,7 @@
 #include <zlib/ZtEnum.hh>
 
 #include <zlib/ZePlatform.hh>
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZiIP.hh>
@@ -61,7 +61,7 @@
 #endif
 
 #ifdef ZiMultiplex_DEBUG
-#define ZiDEBUG(mx, e) do { if ((mx)->debug()) ZeLOG(Debug, (e)); } while (0)
+#define ZiDEBUG(mx, e) do { if ((mx)->debug()) ZiLOG(Debug, "ZiMultiplex", (e)); } while (0)
 #else
 #define ZiDEBUG(mx, e) (void())
 #endif

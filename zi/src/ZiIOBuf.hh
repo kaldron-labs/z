@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // IO buffer (packet buffer)
@@ -39,16 +39,21 @@
 #define ZiIOBuf_DefltSize 980
 #endif
 
-// default hard-coded safe upper limit on an individual buffer size
+// default hard-coded sane upper limit on an individual buffer size
 #ifndef ZiIOBuf_DefltMaxSize
 #define ZiIOBuf_DefltMaxSize (100<<20) // 100Mb
+#endif
+
+// 64-byte aligned for SSE/AVX encryption, e.g. Fusion AES-GCM
+#ifndef ZiIOBuf_Align
+#define ZiIOBuf_Align 64
 #endif
 
 struct ZiIOBuf_HeapID : public ZuStringT<"ZiIOBuf"> { };
 
 namespace Zi {
 
-ZuDerive(VHeap, (ZmVHeap_<ZiIOBuf_HeapID>));
+ZuDerive(VHeap, (ZmVHeap_<ZiIOBuf_HeapID, ZmVHeap_DefltMin, ZmVHeap_DefltMax, ZiIOBuf_Align>));
 
 struct IOBuf : private VHeap, public ZmPolymorph {
   mutable void	*owner = nullptr;
@@ -58,6 +63,7 @@ struct IOBuf : private VHeap, public ZmPolymorph {
   uint32_t	skip = 0;
 
   // 64bit pointer-packing - uses bit 63
+  ZuAssert(sizeof(uintptr_t) == 8);
   static constexpr uintptr_t Jumbo = (uintptr_t(1)<<63);
 
 private:
@@ -186,17 +192,16 @@ public:
   // ensure at least newSize bytes in buffer, preserving any existing data
   template <auto Grow = ZmGrow>
   uint8_t *ensure(unsigned newSize) {
-    ZmAssert(!skip);
     if (ZuLikely(newSize <= size)) return data();
     newSize = Grow(size, newSize);
     auto old = data_();
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
     if (ZuUnlikely(!jumbo)) return nullptr;
-    if (length) memcpy(jumbo, old, length);
+    if (length) memcpy(jumbo + skip, old + skip, length);
     size = newSize;
     if (ZuUnlikely(data__ & Jumbo)) vfree(old);
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
-    return jumbo;
+    return jumbo + skip;
   }
 
   // prepend to buffer (e.g. for a protocol header)
@@ -258,12 +263,6 @@ private:
   using MatchChar = ZuSame<U, char, R>;
 
   template <typename U, typename R = void>
-  using MatchString = ZuIfT<
-    ZuTraits<U>::IsString &&
-    !ZuTraits<U>::IsWString &&
-    !ZuTraits<U>::IsPrimitive, R>;
-
-  template <typename U, typename R = void>
   using MatchReal = ZuIfT<
     ZuTraits<U>::IsPrimitive &&
     ZuTraits<U>::IsReal &&
@@ -274,6 +273,7 @@ private:
     ZuPrint<U>::OK && !ZuPrint<U>::String, R>;
 
 public:
+  // ZuBSpan will match any string/span type
   IOBuf &operator <<(ZuBSpan buf) {
     append(buf.data(), buf.length());
     return *this;
@@ -314,13 +314,13 @@ public:
 // buffer type into the hierarchy
 
 template <typename Base, unsigned Size_, unsigned MaxSize_, typename Heap>
-struct IOBufAlloc__ : public Heap, public Base {
+struct alignas(ZiIOBuf_Align) IOBufAlloc__ : public Heap, public Base {
   using Base::data;
 
   enum { Size = Size_ };
   enum { MaxSize = MaxSize_ };
 
-  uint8_t	data_[Size];
+  alignas(ZiIOBuf_Align) uint8_t	data_[Size];
 
   IOBufAlloc__() : Base(&data_[0], Size) { }
   template <typename ...Args,

@@ -1,13 +1,13 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // application configuration
 // - ZvCf is intended for infrequent loading/saving of
 //   configuration data from files, command lines, environments and
-//   other such origins, as typically performed at startup and perhaps
+//   other such origins, as typically performed at startup and
 //   during an occasional live reconfiguration
 // - it makes extensive use of pcre regular expressions to parse
 //   source data, and general-purpose dynamic memory allocation to
@@ -54,7 +54,7 @@ class Cf;
 // - ZvCf as a whole is presumed to be latency-insensitive
 ZuDerive(String, ZtString<ZtStringHeapID<"ZvCf">>);
 ZuDerive(StringVec, (ZtArray<String, ZtArrayHeapID<"ZvCf">>));
-ZuDerive(Bytes, ZtArray<uint8_t, ZtArrayHeapID<"ZvCf">>);
+ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"ZvCf">>));
 ZuDerive(CfVec, (ZtArray<ZmRef<Cf>, ZtArrayHeapID<"ZvCf">>));
 
 String fullKey(const Cf *cf, String key);
@@ -68,7 +68,7 @@ using Cf = ZvCf_::Cf;
 using String = ZvCf_::String;
 
 inline auto required(const Cf *cf, ZuCSpan key) {
-  return ZeEXCEPT(Error, ([
+  return ZeEXCEPT(Error, "ZvCf", ([
     key = ZeString{fullKey(cf, key)}, bt = ZmBackTrace{1}
   ](auto &s) {
     s << '"' << key << "\" missing at:\n" << bt;
@@ -76,7 +76,7 @@ inline auto required(const Cf *cf, ZuCSpan key) {
 }
 
 inline auto badBool(const Cf *cf, ZuCSpan key, ZuCSpan value) {
-  return ZeEXCEPT(Error, ([
+  return ZeEXCEPT(Error, "ZvCf", ([
     key = ZeString{fullKey(cf, key)}, value = ZeString{value}
   ](auto &s) {
     s << '"' << key << "\": invalid boolean \"" << value << '"';
@@ -85,7 +85,7 @@ inline auto badBool(const Cf *cf, ZuCSpan key, ZuCSpan value) {
 
 template <typename T>
 inline auto badRange(const Cf *cf, ZuCSpan key, T minimum, T maximum, T value) {
-  return ZeEXCEPT(Error, ([
+  return ZeEXCEPT(Error, "ZvCf", ([
     key = ZeString{fullKey(cf, key)}, minimum, maximum, value
   ](auto &s) {
     s << '"' << key << "\" out of range " <<
@@ -96,7 +96,7 @@ inline auto badRange(const Cf *cf, ZuCSpan key, T minimum, T maximum, T value) {
 
 template <typename Map>
 inline auto badEnum(const Cf *cf, ZuCSpan key, ZuCSpan value) {
-  return ZeEXCEPT(Error, ([
+  return ZeEXCEPT(Error, "ZvCf", ([
     key = ZeString{fullKey(cf, key)}, value = ZeString{value}
   ](auto &s) {
     s << '"' << key << "\" did not match { ";
@@ -111,7 +111,7 @@ inline auto badEnum(const Cf *cf, ZuCSpan key, ZuCSpan value) {
 }
 
 inline auto badSyntax(unsigned line, char ch, ZuCSpan fileName) {
-  return ZeEXCEPT(Error, ([
+  return ZeEXCEPT(Error, "ZvCf", ([
     line, ch, fileName = ZeString{fileName}
   ](auto &s) {
     if (fileName)
@@ -130,7 +130,7 @@ inline auto badSyntax(unsigned line, char ch, ZuCSpan fileName) {
 
 template <ZuString Op>
 inline auto fileError(ZuCSpan fileName, ZeError e) {
-  return ZeEXCEPT(Error, ([
+  return ZeEXCEPT(Error, "ZvCf", ([
     fileName = ZeString{fileName}, e
   ](auto &s) {
     s << Op.cspan() << "(\"" << fileName << "\"): " << e;
@@ -138,7 +138,7 @@ inline auto fileError(ZuCSpan fileName, ZeError e) {
 }
 
 inline auto file2Big(ZuCSpan fileName) {
-  return ZeEXCEPT(Error, ([
+  return ZeEXCEPT(Error, "ZvCf", ([
     fileName = ZeString{fileName}
   ](auto &s) {
     s << '"' << fileName << "\": file too big";
@@ -146,7 +146,7 @@ inline auto file2Big(ZuCSpan fileName) {
 }
 
 inline auto badDefine(ZuCSpan define, ZuCSpan fileName) {
-  return ZeEXCEPT(Error, ([
+  return ZeEXCEPT(Error, "ZvCf", ([
     define = ZeString{define}, fileName = ZeString{fileName}
   ](auto &s) {
     if (fileName) s << '"' << fileName << "\": ";

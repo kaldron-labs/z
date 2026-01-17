@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Z REST library
@@ -31,7 +31,7 @@ struct Request : public MsgID {
   bool		completed;	// client-side - ackd
 };
 
-ZfbStructDerive(MsgID, Request,
+ZfbStruct(Request,
   (((time)),						(Time)),
   (((type)),						(UInt16)),
   (((completed)),					(Bool)));
@@ -184,20 +184,27 @@ public:
 #endif
 
   // TLS callback
-  int process(ZuSpan<uint8_t> data) {
-    rxMsg->process(data, [this]() -> bool {
-      ZmRef<RxMsg> rxMsg = new RxMsg(new IOBufAlloc());
-      rxMsg.swap(this->rxMsg);
-      // -----
-      //   HTTP path -> message type parse (server side)
-      //   resolve msg type from header.path (header is Zhttp::Response)
-      // OR
-      //   pending request head -> message type parse (client side)
-      // -----
-      msgType->rcvd(ZuMv(this, ZuMv(rxMsg)); // virtual dispatch
-      return true; // false to disconnect
+  int process(Ztls::RxCursor &rx) {
+    while (!rx.empty()) {
+      auto span = rx.span();
+      int consumed = rxMsg->process(span, [this]() -> bool {
+	ZmRef<RxMsg> rxMsg = new RxMsg(new IOBufAlloc());
+	rxMsg.swap(this->rxMsg);
+	// -----
+	//   HTTP path -> message type parse (server side)
+	//   resolve msg type from header.path (header is Zhttp::Response)
+	// OR
+	//   pending request head -> message type parse (client side)
+	// -----
+	msgType->rcvd(ZuMv(this, ZuMv(rxMsg)); // virtual dispatch
+	return true; // false to disconnect
 
-    });
+      });
+      if (consumed < 0) return -1;
+      if (!consumed) return 0;
+      rx.advance(consumed);
+    }
+    return 1;
   }
 
 #if 0

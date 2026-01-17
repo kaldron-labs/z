@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Zdb in-memory data store
@@ -154,7 +154,7 @@ void StoreTbl::insert(
     auto key = extractKey(m_fields, m_keyFields, i, row->data);
     ZmAssert(key.length() == m_keyFields[i].length());
     if (!i && m_indices[i].findVal(key)) {
-      commitFn(ZuMv(buf), CommitResult{ZeEXCEPT(Error,
+      commitFn(ZuMv(buf), CommitResult{ZeEXCEPT(Error, "ZdbMem",
 	  ([id = this->id(), key = ZuMv(key)](auto &s, const auto &) {
 	    s << id << " insert(" << ZuJoin(key, ", ")
 	      << ") failed - record exists";
@@ -209,7 +209,7 @@ void StoreTbl::update(
     commitFn(ZuMv(buf), CommitResult{});
   } else {
     commitFn(ZuMv(buf), CommitResult{
-	ZeEXCEPT(Error, ([id = this->id(), key](auto &s, const auto &) {
+	ZeEXCEPT(Error, "ZdbMem", ([id = this->id(), key](auto &s, const auto &) {
 	  s << id << " update(" << ZuJoin(key, ", ")
 	    << ") failed - record missing";
 	}))});
@@ -233,7 +233,7 @@ void StoreTbl::del(
     commitFn(ZuMv(buf), CommitResult{});
   } else {
     commitFn(ZuMv(buf), CommitResult{
-	ZeEXCEPT(Error, ([id = this->id(), key](auto &s, const auto &) {
+	ZeEXCEPT(Error, "ZdbMem", ([id = this->id(), key](auto &s, const auto &) {
 	  s << id << " del(" << ZuJoin(key, ", ")
 	    << ") failed - record missing";
 	}))});

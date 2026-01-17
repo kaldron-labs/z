@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // server-side user DB with MFA, API keys, etc.
@@ -13,7 +13,7 @@
 
 #include <zlib/ZtQuote.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZeAssert.hh>
 
 #include <zlib/ZtlsTOTP.hh>
@@ -58,7 +58,7 @@ void UserDB::dbCf(const ZvCf *cf, ZdbCf &dbCf)
 
 void UserDB::init(ZvCf *cf, Zdb *db)
 {
-  ZeAssert(m_state == UserDBState::Uninitialized,
+  ZeAssert(m_state == UserDBState::Uninitialized, "Zum",
     (state = m_state), "invalid state=" << state, return);
 
   m_passLen = cf->getInt("passLen", 6, 60, m_passLen);
@@ -509,7 +509,7 @@ void UserDB::login(
     auto &user = session->user->data();
     if (!(user.flags & UserFlags::Enabled())) {
       if (++user.failures < 3) {
-	ZeLOG(Warning, ([name = user.name](auto &s) {
+	ZiLOG(Warning, "Zum", ([name = user.name](auto &s) {
 	  s << "authentication failure: disabled user "
 	    << ZtQuote::String{name} << " attempted login"; }));
       }
@@ -520,7 +520,7 @@ void UserDB::login(
 	!session->perms[m_perms[
 	  loginReqPerm(unsigned(fbs::LoginReqData::Login))]]) {
       if (++user.failures < 3) {
-	ZeLOG(Warning, ([name = user.name](auto &s) {
+	ZiLOG(Warning, "Zum", ([name = user.name](auto &s) {
 	  s << "authentication failure: user without login permission "
 	    << ZtQuote::String{name} << " attempted login"; }));
       }
@@ -536,7 +536,7 @@ void UserDB::login(
       hmac.finish(verify.data());
       if (verify != user.hmac) {
 	if (++user.failures < 3) {
-	  ZeLOG(Warning, ([name = user.name](auto &s) {
+	  ZiLOG(Warning, "Zum", ([name = user.name](auto &s) {
 	    s << "authentication failure: user "
 	      << ZtQuote::String{name} << " provided invalid password"; }));
 	}
@@ -546,7 +546,7 @@ void UserDB::login(
     }
     if (!Ztls::TOTP::verify(user.secret, totp, m_totpRange)) {
       if (++user.failures < 3) {
-	ZeLOG(Warning, ([name = user.name](auto &s) {
+	ZiLOG(Warning, "Zum", ([name = user.name](auto &s) {
 	  s << "authentication failure: user "
 	    << ZtQuote::String{name} << " provided invalid OTP"; }));
       }
@@ -569,7 +569,7 @@ void UserDB::access(
     auto &user = session->user->data();
     if (!(user.flags & UserFlags::Enabled())) {
       if (++user.failures < 3) {
-	ZeLOG(Warning, ([name = user.name](auto &s) {
+	ZiLOG(Warning, "Zum", ([name = user.name](auto &s) {
 	  s << "authentication failure: disabled user "
 	    << ZtQuote::String{name} << " attempted API key access"; }));
       }
@@ -580,7 +580,7 @@ void UserDB::access(
 	!session->perms[m_perms[
 	  loginReqPerm(unsigned(fbs::LoginReqData::Access))]]) {
       if (++user.failures < 3) {
-	ZeLOG(Warning, ([name = user.name](auto &s) {
+	ZiLOG(Warning, "Zum", ([name = user.name](auto &s) {
 	  s << "authentication failure: user without API access permission "
 	    << ZtQuote::String{name} << " attempted access"; }));
       }
@@ -607,7 +607,7 @@ void UserDB::access(
       hmac_.finish(verify.data());
       if (verify != hmac) {
 	if (++user.failures < 3) {
-	  ZeLOG(Warning, ([name = user.name](auto &s) {
+	  ZiLOG(Warning, "Zum", ([name = user.name](auto &s) {
 	    s << "authentication failure: user "
 	      << ZtQuote::String{name}
 	      << " provided invalid API key HMAC"; }));

@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // command line interface - line editor
@@ -746,25 +746,25 @@ void Editor::loadMap(ZuCSpan file, bool select)
     ZiFile f;
     int r;
     if ((r = f.open(file, ZiFile::ReadOnly | ZiFile::GC, 0666, 0)) != Zi::OK)
-      throw ZeEXCEPT(Error,
+      throw ZeEXCEPT(Error, "ZrlEditor",
 	([file = ZeString{file}, r, e = f.error()](auto &s) {
 	  s << "open(\"" << file << "\"): " << Zi::ioResult(r);
 	  if (r == Zi::IOError) s << " - " << e;
 	}));
     unsigned len = f.size();
     if (len >= m_config.maxFileSize)
-      throw ZeEXCEPT(Error, ([file = ZeString{file}](auto &s) {
+      throw ZeEXCEPT(Error, "ZrlEditor", ([file = ZeString{file}](auto &s) {
 	s << "open(\"" << file << "\"): file too large";
       }));
     s.length(len);
     if ((r = f.read(s.data(), len)) < 0)
-      throw ZeEXCEPT(Error,
+      throw ZeEXCEPT(Error, "ZrlEditor",
 	([file = ZeString{file}, r, e = f.error()](auto &s) {
 	  s << "read(\"" << file << "\"): " << Zi::ioResult(r);
 	  if (r == Zi::IOError) s << " - " << e;
 	}));
     if (r < len)
-      throw ZeEXCEPT(Error, ([file = ZeString{file}](auto &s) {
+      throw ZeEXCEPT(Error, "ZrlEditor", ([file = ZeString{file}](auto &s) {
 	s << "read(\"" << file << "\"): truncated read";
       }));
   }
@@ -782,14 +782,14 @@ void Editor::loadMap(ZuCSpan file, bool select)
     ZuCSpan region(s);
     region.offset(off - 8);
     region.trunc(16);
-    throw ZeEXCEPT(Error,
+    throw ZeEXCEPT(Error, "ZrlEditor",
       ([file = ZeString{file}, line, region = ZeString{region}](auto &s) {
 	s << '"' << file << "\":" << line
 	  << ": parsing failed near \"" << region << '"';
       }));
   }
   if (!map->modes.length())
-    throw ZeEXCEPT(Error, ([file = ZeString{file}](auto &s) {
+    throw ZeEXCEPT(Error, "ZrlEditor", ([file = ZeString{file}](auto &s) {
       s << '"' << file << "\": mode 0 not defined";
     }));
   if (select) m_map = map.ptr();

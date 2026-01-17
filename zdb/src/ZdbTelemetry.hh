@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Z database telemetry
@@ -49,6 +49,15 @@ struct DBTable {
   uint32_t		cacheSize = 0;
   int8_t		cacheMode = -1;			// CacheMode
 
+  ZvRAG::T rag() const {
+    unsigned total = cacheLoads + cacheMisses;
+    if (!total) return ZvRAG::Off;
+    if (cacheMisses * 10 > (total<<3)) return ZvRAG::Red;
+    if ((cacheMisses<<1) > total) return ZvRAG::Amber;
+    return ZvRAG::Green;
+  }
+  void rag(ZvRAG::T) { } // unused
+
   friend ZtStructPrint ZuPrintType(DBTable *);
 };
 ZfbStruct(DBTable,
@@ -60,7 +69,8 @@ ZfbStruct(DBTable,
     (((cacheMisses),	(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
     (((cacheEvictions),	(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
     (((nShards),	(Ctor<1>)),				(UInt32)),
-    (((threads),	(Ctor<2>)),				(StringVec)));
+    (((threads),	(Ctor<2>)),				(StringVec)),
+    (((rag, RdFn),	(Synthetic, Series, Enum<ZvRAG::Map>)),	(Int8)));
 
 // display sequence:
 //   id, priority, state, voted, ip, port
@@ -72,6 +82,9 @@ struct DBHost {
   int8_t	state = 0;// RAG: Instantiated - Red; Active - Green; * - Amber
   uint8_t	voted = 0;
 
+  ZvRAG::T rag() const { return DBHostState::rag(state); }
+  void rag(ZvRAG::T) { } // unused
+
   friend ZtStructPrint ZuPrintType(DBHost *);
 };
 ZfbStruct(DBHost,
@@ -80,7 +93,8 @@ ZfbStruct(DBHost,
     (((priority),	(Ctor<2>)),				(UInt32)),
     (((state),		(Ctor<4>, Mutable, Enum<DBHostState::Map>)), (Int8)),
     (((voted),		(Ctor<5>, Mutable, Series)),		(Bool)),
-    (((port),		(Ctor<3>)),				(UInt16)));
+    (((port),		(Ctor<3>)),				(UInt16)),
+    (((rag, RdFn),	(Synthetic, Series, Enum<ZvRAG::Map>)),	(Int8)));
 
 // display sequence: 
 //   self, leader, prev, next, state, active, recovering, replicating,
@@ -106,6 +120,9 @@ struct DB {
   uint8_t	recovering = 0;
   uint8_t	replicating = 0;
 
+  ZvRAG::T rag() const { return DBHostState::rag(state); }
+  void rag(ZvRAG::T) { } // unused
+
   friend ZtStructPrint ZuPrintType(DB *);
 };
 ZfbStruct(DB,
@@ -125,7 +142,8 @@ ZfbStruct(DB,
     (((heartbeatFreq),	(Ctor<7>)),				(UInt32)),
     (((heartbeatTimeout), (Ctor<8>)),				(UInt32)),
     (((reconnectFreq),	(Ctor<9>)),				(UInt32)),
-    (((electionTimeout), (Ctor<10>)),				(UInt32)));
+    (((electionTimeout), (Ctor<10>)),				(UInt32)),
+    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 } // Zdb_::Tel
 

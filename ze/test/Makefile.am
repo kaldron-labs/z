@@ -7,5 +7,5 @@ AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZeTest
-ZeTest_SOURCES = ZeTest.cc
+#noinst_PROGRAMS = ZeTest
+#ZeTest_SOURCES = ZeTest.cc

@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // ZvEngine connectivity framework unit smoke test
@@ -17,14 +17,14 @@ public:
   void addEngine(ZvEngine *) { }
   void delEngine(ZvEngine *) { }
   void updEngine(ZvEngine *engine) {
-    ZeLOG(Info,
+    ZiLOG(Info, "ZvEngineTest",
       ([id = engine->id(), next = engine->state()](auto &s) {
 	s << "engine " << id << ' ' << ZvEngineState::name(next); }));
   }
 
   // Link Management
   void updLink(ZvAnyLink *link) {
-    ZeLOG(Info, ([id = link->id(), next = link->state()](auto &s) {
+    ZiLOG(Info, "ZvEngineTest", ([id = link->id(), next = link->state()](auto &s) {
       s << "link " << id << ' ' << ZvLinkState::name(next); }));
   }
 
@@ -51,8 +51,8 @@ public:
 
   void init(Mgr *mgr, App *app, ZiMultiplex *mx, const ZvCf *cf);
 
-  void up() { ZeLOG(Info, "UP"); }
-  void down() { ZeLOG(Info, "DOWN"); }
+  void up() { ZiLOG(Info, "ZvEngineTest", "UP"); }
+  void down() { ZiLOG(Info, "ZvEngineTest", "DOWN"); }
 
   ZuTime reconnInterval() { return m_reconnInterval; }
   ZuTime reReqInterval() { return m_reReqInterval; }
@@ -79,7 +79,7 @@ private:
 };
 
 #define linkINFO(msg) \
-  ZeLOG(Info, ([=, id = id()](auto &s) { s << msg; }))
+  ZiLOG(Info, "ZvEngineTest", ([=, id = id()](auto &s) { s << msg; }))
 
 class Link : public ZvLink<Link, ZvTxPool<Link>> {
 public:
@@ -161,10 +161,10 @@ void Engine::init(Mgr *mgr, App *app, ZiMultiplex *mx, const ZvCf *cf)
 
 int main()
 {
-  ZeLog::init("ZvEngineTest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-  ZeLog::start();
+  ZiLog::init("ZvEngineTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   ZmRef<ZvCf> cf = new ZvCf();
   cf->fromString(
@@ -214,5 +214,5 @@ int main()
   app->final();
   app = nullptr;
 
-  ZeLog::stop();
+  ZiLog::stop();
 }

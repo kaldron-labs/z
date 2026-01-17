@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Z http library
@@ -385,7 +385,7 @@ struct Header : public Msg<Keys> {
       return -1;
     }
     // defensive sanity check on parse() return, n > o wreaks havoc
-    ZeAssert(n <= o, (o, n), "o=" << o << " n=" << n, n = o);
+    ZeAssert(n <= o, "Zhttp", (o, n), "o=" << o << " n=" << n, n = o);
     unsigned consumed = rcvd.length();
     if (n) {
       consumed -= (o - n);
@@ -520,7 +520,7 @@ struct Body {
     }
     unsigned o = offset, n = buf->length;
     // defensive sanity check on buffer length, n < o wreaks havoc
-    ZeAssert(n >= o, (o, n), "o=" << o << " n=" << n, o = n);
+    ZeAssert(n >= o, "Zhttp", (o, n), "o=" << o << " n=" << n, o = n);
     n -= o;
     if (n > contentLength) n = contentLength;
     buf->length = offset + n;
@@ -680,7 +680,7 @@ struct RxMsg {
 
     if (!header.complete) {
       o = header.process(buf, data);
-      if (o < 0) { ZeLOG(Error, "invalid HTTP response"); return -1; }
+      if (o < 0) { ZiLOG(Error, "Zhttp", "invalid HTTP response"); return -1; }
       if (!header.complete) return o;
       if (o) {
 	consumed += o;
@@ -688,7 +688,7 @@ struct RxMsg {
       }
       auto n = body.init(buf, header);
       if (n < 0) {
-	ZeLOG(Error, "invalid HTTP Transfer-Encoding / Content-Length");
+	ZiLOG(Error, "Zhttp", "invalid HTTP Transfer-Encoding / Content-Length");
 	return -1;
       }
       if (n) {
@@ -699,7 +699,7 @@ struct RxMsg {
     }
     if (!body.complete) {
       o = body.process(buf, data);
-      if (o < 0) { ZeLOG(Error, "invalid HTTP body"); return -1; }
+      if (o < 0) { ZiLOG(Error, "Zhttp", "invalid HTTP body"); return -1; }
       if (o) {
 	consumed += o;
 	data.offset(o);
@@ -708,7 +708,7 @@ struct RxMsg {
     if (!body.complete) return consumed;
     if (!body.valid) {
       // invalid body should have been caught by body.process() returning -1
-      ZeLOG(Error, "Zhttp internal error");
+      ZiLOG(Error, "Zhttp", "Zhttp internal error");
       return -1;
     }
 

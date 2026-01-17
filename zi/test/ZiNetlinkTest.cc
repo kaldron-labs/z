@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
@@ -15,7 +15,7 @@
 
 #include <zlib/ZtHexDump.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiNetlink.hh>
@@ -27,7 +27,7 @@ const char TestRequest[] = "netlink-ping";
 
 void error(const char *op, int result, ZeError e)
 {
-  ZeLOG(Error,
+  ZiLOG(Error, "ZiNetlinkTest",
       ZtSprintf("%s - %s - %s", op, Zi::ioResult(result), e.message().data()));
 }
 
@@ -45,7 +45,7 @@ public:
   void disconnected();
 
   void connected() { 
-    ZeLOG(Debug, ZtSprintf("CONNECTED: familyID: %u portID: %u",
+    ZiLOG(Debug, "ZiNetlinkTest", ZtSprintf("CONNECTED: familyID: %u portID: %u",
 			   this->info().familyID(), 
 			   this->info().portID()));
 
@@ -59,7 +59,7 @@ public:
       { ZiNelinkDataAttr2Vec(data) },
       { (void *)TestRequest, strlen(TestRequest) }
     };
-    ZeLOG(Debug, "sending netlink ping...");
+    ZiLOG(Debug, "ZiNetlinkTest", "sending netlink ping...");
     writev(ZiCompletion::Member<&Connection::sent>::fn(this),
 	   vecs, 4);
     // write(ZiCompletion::Member<&Connection::sent>::fn(this), 
@@ -187,14 +187,14 @@ void Connection::sent(ZiConnection *connection,
     disconnect();
     return;
   }
-  ZeLOG(Debug, "netlink ping sent.");
+  ZiLOG(Debug, "ZiNetlinkTest", "netlink ping sent.");
   mx()->add(ZmFn<>::Member<&Connection::readNetlink>::fn(this));
 }
 
 void Connection::readNetlink()
 {
   ZmRef<Message> msg = new Message(this);
-  ZeLOG(Debug, "reading netlink pong...");
+  ZiLOG(Debug, "ZiNetlinkTest", "reading netlink pong...");
   read(ZiCompletion::Member<&Message::read2>::fn(msg), msg->data(), 
        msg->hdrSize() + 100, 0,
        ZiFrameFn{msg, ZmFnPtr<&Message::frame>{}});
@@ -202,11 +202,11 @@ void Connection::readNetlink()
 
 bool Message::frame(void *&buffer, int &size, int offset, int length)
 {
-  ZeLOG(Debug, ZtSprintf("frame: size: %d offset: %d length: %d",
+  ZiLOG(Debug, "ZiNetlinkTest", ZtSprintf("frame: size: %d offset: %d length: %d",
 			 size, offset, length));
-  ZeLOG(Debug, ZtHexDump("frame", buffer, length));
+  ZiLOG(Debug, "ZiNetlinkTest", ZtHexDump("frame", buffer, length));
   if ((size_t)length < sizeof(ZiGenericNetlinkHdr)) {
-    ZeLOG(Debug, "frame: try again, didnt read header");
+    ZiLOG(Debug, "ZiNetlinkTest", "frame: try again, didnt read header");
     return false;
   }
   ZiGenericNetlinkHdr *hdr = (ZiGenericNetlinkHdr *)buffer;
@@ -222,14 +222,14 @@ void Message::read2(ZiConnection *connection,
 void Connection::read2(Message *msg, int flags, int status, 
 		       int len, ZeError e)
 {
-  ZeLOG(Debug, ZtSprintf("read %d bytes", len));
+  ZiLOG(Debug, "ZiNetlinkTest", ZtSprintf("read %d bytes", len));
   if (status != Zi::OK) {
     if (status == Zi::IOError) error("read2", status, e);
     return;
   }
-  ZeLOG(Debug, msg->hdr()->toString());
-  ZeLOG(Debug, msg->attr()->toString());
-  ZeLOG(Debug, ZtHexDump("data:", msg->info(), 100 - msg->hdrSize()));
+  ZiLOG(Debug, "ZiNetlinkTest", msg->hdr()->toString());
+  ZiLOG(Debug, "ZiNetlinkTest", msg->attr()->toString());
+  ZiLOG(Debug, "ZiNetlinkTest", ZtHexDump("data:", msg->info(), 100 - msg->hdrSize()));
 }
 
 void usage()
@@ -303,10 +303,10 @@ int main(int argc, char **argv)
     }
   }
 
-  ZeLog::init("ZiNetlinkTest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::debugSink());
-  ZeLog::start();
+  ZiLog::init("ZiNetlinkTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::debugSink());
+  ZiLog::start();
 
   Mx mx(nThreads, nConnections, nConcurrent, maxRecv, nFragments, yield, debug,
 	epollMaxFDs, epollQuantum);
@@ -315,13 +315,13 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   if (!mx.start()) {
-    ZeLOG(Fatal, "multiplexer failed to start");
+    ZiLOG(Fatal, "ZiNetlinkTest", "multiplexer failed to start");
     Zm::exit(1);
   }
   try {
     for (int i = 0; i < nConcurrent; i++) mx.connect();
   } catch (const ZeError &e) {
-    ZeLOG(Fatal, e);
+    ZiLOG(Fatal, "ZiNetlinkTest", e);
     Global::post();
   } catch (...) {
     Global::post();
@@ -331,6 +331,6 @@ int main(int argc, char **argv)
   mx.stop();
   Global::dumpStats();
 
-  ZeLog::stop();
+  ZiLog::stop();
   return 0;
 }

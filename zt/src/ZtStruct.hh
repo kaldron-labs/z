@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // object introspection / reflection
@@ -15,9 +15,8 @@
 // metadata macro DSL for identifying and using data fields and keys
 //
 // ZtStruct((Type[, Facets...]), Fields...)
-// ZtStructDerive((Type[, Facets...]), Base, Fields...)
 //
-// the parentheses around Type are optional if no extensions are specified
+// the parentheses around Type are optional if no facets are specified
 //
 // each field has compile-time properties, an extensible typelist of types
 // that are injected into the ZuFieldProp namespace
@@ -3668,7 +3667,7 @@ struct ZtField_DateTimeVec<Base, Def, false> :
 // get field index within fields
 #define ZtFieldIndex(O, ID) (ZuTypeIndex<ZtField(O, ID), ZuFields<O>>{})
 
-// main structure declaration macros ZtStruct() and ZtStructDerive()
+// main structure declaration macros ZtStruct()
 #define ZtField_Decl__(O, ID, Base, TypeName, Type) \
   ZuField_Decl(O, Base) \
   using ZtField(O, ID) = \
@@ -3690,21 +3689,8 @@ struct ZtField_DateTimeVec<Base, Def, false> :
   O ZuStructured_(O *); \
   ZuStruct_Render(O, Core ZuPP_StripAppend(Facets))
 
-#define ZtStructDerive_(Base, O, Facets, ...) \
-  __VA_OPT__(ZuPP_MapArg(ZtField_Decl, O, __VA_ARGS__)) \
-  using ZuFields_##O##_ = ZuTypeList< \
-    __VA_OPT__(ZuPP_MapArgComma(ZtField_Type, O, __VA_ARGS__))>; \
-  O ZuStructured_(O *); \
-  ZuStructDerive_Render(O, Core ZuPP_StripAppend(Facets))
-
 #define ZtStruct(O_Facets, ...) \
   ZuPP_Eval(ZuPP_Defer(ZtStruct_)( \
-    ZuPP_Eval_(ZuStruct_Object(O_Facets)), \
-    ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
-    __VA_OPT__(, __VA_ARGS__)))
-
-#define ZtStructDerive(O_Facets, Base, ...) \
-  ZuPP_Eval(ZuPP_Defer(ZtStructDerive_)(Base, \
     ZuPP_Eval_(ZuStruct_Object(O_Facets)), \
     ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
     __VA_OPT__(, __VA_ARGS__)))

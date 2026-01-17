@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #ifndef ZdbPQ_HH
@@ -144,9 +144,9 @@ inline const VecHdr *vecHdr(ZuBSpan &buf) {
 inline int validateVecHdr(const VecHdr *hdr)
 {
   if (!int32_t(hdr->ndim)) return 0; // empty
-  ZeAssert(int32_t(hdr->ndim) == 1,
+  ZeAssert(int32_t(hdr->ndim) == 1, "ZdbPQ",
     (i = int32_t(hdr->ndim)), "ndim=" << i, return -1);
-  ZeAssert(int32_t(hdr->lbound) == 1,
+  ZeAssert(int32_t(hdr->lbound) == 1, "ZdbPQ",
     (i = int32_t(hdr->lbound)), "lbound=" << i, return -1);
   return int32_t(hdr->length);
 }

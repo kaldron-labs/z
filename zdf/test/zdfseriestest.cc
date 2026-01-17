@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <iostream>
@@ -59,7 +59,7 @@ ZmRef<ZvCf> inlineCf(ZuCSpan s)
 void gtfo()
 {
   if (mx) mx->stop();
-  ZeLog::stop();
+  ZiLog::stop();
   Zm::exit(1);
 }
 
@@ -77,14 +77,14 @@ struct Test {
   }
   void run_opened() {
     if (!series) {
-      ZeLOG(Fatal, "open failed");
+      ZiLOG(Fatal, "zdfseriestest", "open failed");
       gtfo();
       return;
     }
     series->write([this](auto w) {
       run_write(ZuMv(w));
     }, []() {
-      ZeLOG(Fatal, "write1 failed");
+      ZiLOG(Fatal, "zdfseriestest", "write1 failed");
       gtfo();
     }, 0);
   }
@@ -95,7 +95,7 @@ struct Test {
     series->write([this](auto w) {
       run_write2(ZuMv(w));
     }, []() {
-      ZeLOG(Fatal, "write2 failed");
+      ZiLOG(Fatal, "zdfseriestest", "write2 failed");
       gtfo();
     }, 2);
   }
@@ -106,7 +106,7 @@ struct Test {
     series->write([this](auto w) {
       run_write3(ZuMv(w));
     }, []() {
-      ZeLOG(Fatal, "write3 failed");
+      ZiLOG(Fatal, "zdfseriestest", "write3 failed");
       gtfo();
     }, 3);
   }
@@ -117,7 +117,7 @@ struct Test {
     series->write([this](auto w) mutable {
       run_write4(ZuMv(w));
     }, []() {
-      ZeLOG(Fatal, "write4 failed");
+      ZiLOG(Fatal, "zdfseriestest", "write4 failed");
       gtfo();
     }, 4);
   }
@@ -169,7 +169,7 @@ struct Test {
       }
       return true;
     }, []() {
-      ZeLOG(Fatal, "read failed");
+      ZiLOG(Fatal, "zdfseriestest", "read failed");
       gtfo();
     });
   }
@@ -179,7 +179,7 @@ struct Test {
       rc.stop([this]() { run_read3(); });
       return false;
     }, []() {
-      ZeLOG(Fatal, "read2 failed");
+      ZiLOG(Fatal, "zdfseriestest", "read2 failed");
       gtfo();
     });
   }
@@ -190,7 +190,7 @@ struct Test {
       rc.stop([this]() { run_read4(); });
       return false;
     }, []() {
-      ZeLOG(Fatal, "read3 failed");
+      ZiLOG(Fatal, "zdfseriestest", "read3 failed");
       gtfo();
     });
   }
@@ -200,7 +200,7 @@ struct Test {
       rc.stop([this]() { run_read5(); });
       return false;
     }, []() {
-      ZeLOG(Fatal, "read4 failed");
+      ZiLOG(Fatal, "zdfseriestest", "read4 failed");
       gtfo();
     });
   }
@@ -279,10 +279,10 @@ int main()
     Zm::exit(1);
   }
 
-  ZeLog::init("zdfstoretest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2"))); // log to stderr
-  ZeLog::start();
+  ZiLog::init("zdfstoretest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2"))); // log to stderr
+  ZiLog::start();
 
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
@@ -290,7 +290,7 @@ int main()
   try {
     mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
 
-    if (!mx->start()) throw ZeEXCEPT(Fatal, "multiplexer start failed");
+    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdfseriestest", "multiplexer start failed");
 
     db = new Zdb();
 
@@ -300,13 +300,13 @@ int main()
 
     db->init(ZuMv(dbCf), mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
-	ZeLOG(Info, ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	ZiLOG(Info, "zdfseriestest", ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
 	  s << "ACTIVE (was " << id << ')';
 	}));
 	done.post();
       },
       .downFn = [](Zdb *, bool) {
-	ZeLOG(Info, "INACTIVE");
+	ZiLOG(Info, "zdfseriestest", "INACTIVE");
       }
     }, new ZdbMem::Store());
 
@@ -334,25 +334,25 @@ int main()
 
     mx->stop();
 
-    ZeLOG(Debug, (ZeString{} << '\n' << ZmHashMgr::csv()));
+    ZiLOG(Debug, "zdfseriestest", (ZeString{} << '\n' << ZmHashMgr::csv()));
 
     db = {};
     store = {};
 
-  } catch (const ZeException &e) {
-    ZeLOG(Fatal, e);
+  } catch (ZeException &e) {
+    ZiLogEvent(ZuMv(e));
     gtfo();
   } catch (const ZeError &e) {
-    ZeLOG(Fatal, e.message());
+    ZiLOG(Fatal, "zdfseriestest", e.message());
     gtfo();
   } catch (...) {
-    ZeLOG(Fatal, "unknown exception");
+    ZiLOG(Fatal, "zdfseriestest", "unknown exception");
     gtfo();
   }
 
   mx = {};
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

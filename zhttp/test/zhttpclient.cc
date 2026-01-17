@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // basic test HTTP client that retrieves index.html via TLS
@@ -61,17 +61,24 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
     app()->done();
   }
 
-  int process(ZuSpan<uint8_t> data) {
-    return rxMsg.process(data, [this]() -> bool {
-      const auto &header = rxMsg.header.span;
-      const auto &body = rxMsg.body.span;
-      if (auto file = ZiFile("index.hdr", ZiFile::Write | ZiFile::GC))
-	file.write(header.data(), header.length());
-      if (auto file = ZiFile("index.html", ZiFile::Write | ZiFile::GC))
-	file.write(body.data(), body.length());
-      // rxMsg.reset(); // to reuse rxMsg
-      return false; // disconnect
-    });
+  int process(Ztls::RxCursor &rx) {
+    while (!rx.empty()) {
+      auto span = rx.span();
+      int consumed = rxMsg.process(span, [this]() -> bool {
+	const auto &header = rxMsg.header.span;
+	const auto &body = rxMsg.body.span;
+	if (auto file = ZiFile("index.hdr", ZiFile::Write | ZiFile::GC))
+	  file.write(header.data(), header.length());
+	if (auto file = ZiFile("index.html", ZiFile::Write | ZiFile::GC))
+	  file.write(body.data(), body.length());
+	// rxMsg.reset(); // to reuse rxMsg
+	return false; // disconnect
+      });
+      if (consumed < 0) return -1;
+      if (!consumed) return 0;
+      rx.advance(consumed);
+    }
+    return 1;
   }
 
   RxMsg	rxMsg;
@@ -100,10 +107,10 @@ int main(int argc, char **argv)
 
   if (!port) usage();
 
-  ZeLog::init("zhttpclient");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-  ZeLog::start();
+  ZiLog::init("zhttpclient");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   static const char *alpn[] = { "http/1.1", 0 };
 
@@ -138,7 +145,7 @@ int main(int argc, char **argv)
 
   mx.stop();
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

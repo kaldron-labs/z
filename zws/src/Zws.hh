@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Z websockets library
@@ -130,7 +130,18 @@ public:
 // https://username:password@host:port/path/to/resource1;rkey1=rvalue1;rkey2=rvalue2/resource2;rkey3=rvalue3?qkey1=qvalue1&qkey2=qvalue2#section
 // host can be IPv6, e.g. [2001:db8::1]
 
-  int process(ZuSpan<uint8_t> rcvd) {
+  int process(Ztls::RxCursor &rx) {
+    while (!rx.empty()) {
+      auto span = rx.span();
+      int n = process_span_(span);
+      if (ZuUnlikely(n < 0)) return -1;
+      if (!n) return 0;
+      rx.advance(n);
+    }
+    return 1;
+  }
+
+  int process_span_(ZuSpan<uint8_t> rcvd) {
     auto state = m_state.load_();
     if (ZuUnlikely(state == State::Down))
       return -1; // disconnect
@@ -147,7 +158,7 @@ public:
       }
 
       ZtString<> s(24);
-      HMAC hmac(MBEDTLS_MD_SHA1);
+      HMAC hmac(Ztls::MD::SHA1);
       uint8_t sha1[20];
       s << ZtQuote::Base64{m_key};
       hmac.start(ZuCSpan(s));

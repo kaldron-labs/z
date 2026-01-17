@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdio.h>
@@ -57,7 +57,7 @@ static void usage()
     "  ZCMD_CAPATH\t\tCA for validating server TLS certificate\n"
     "  ZCMD_PLUGIN\t\tzcmd plugin module\n";
   std::cerr << usage << std::flush;
-  ZeLog::stop();
+  ZiLog::stop();
   Zm::exit(1);
 }
 
@@ -341,7 +341,7 @@ friend Link;
     auto ackType = ack->data_type();
     if (int(ackType) != ackType1 &&
 	ackType2 >= int(fbs::ReqAckData::MIN) && int(ackType) != ackType2) {
-      ZeLOG(Error, ([ackType](auto &s) {
+      ZiLOG(Error, "zcmd", ([ackType](auto &s) {
 	s << "mismatched ack from server: "
 	  << fbs::EnumNameReqAckData(ackType);
       }));
@@ -474,9 +474,10 @@ private:
       if (append) flags |= ZiFile::Append;
       ZiFile outFile(out, flags);
       if (!outFile) {
-	ZeLOG(Error, ([file = ZeString{out}, e = outFile.error()](auto &s) {
-	  s << "open(\"" << file << "\"): " << e;
-	}));
+	ZiLOG(Error, "zcmd",
+	  ([file = ZeString{out}, e = outFile.error()](auto &s) {
+	    s << "open(\"" << file << "\"): " << e;
+	  }));
 	return;
       } else
 	ctx->dest = ZuMv(outFile);
@@ -486,9 +487,10 @@ private:
     if (in) {
       ZiFile inFile(in, ZiFile::ReadOnly);
       if (!inFile) {
-	ZeLOG(Error, ([file = ZeString{in}, e = inFile.error()](auto &s) {
-	  s << "open(\"" << file << "\"): " << e;
-	}));
+	ZiLOG(Error, "zcmd",
+	  ([file = ZeString{in}, e = inFile.error()](auto &s) {
+	    s << "open(\"" << file << "\"): " << e;
+	  }));
 	return;
       }
     }
@@ -1742,13 +1744,13 @@ int main(int argc, char **argv)
 {
   if (argc < 2) usage();
 
-  ZeLog::init("zcmd");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::lambdaSink([](ZeLogBuf &buf, const ZeEventInfo &) {
+  ZiLog::init("zcmd");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::lambdaSink([](ZiLogBuf &buf, const ZeEventInfo &) {
     buf << '\n';
     std::cerr << buf << std::flush;
   }));
-  ZeLog::start();
+  ZiLog::start();
 
   bool interactive = Zrl::interactive();
   ZuCSpan keyID = ::getenv("ZCMD_KEY_ID");
@@ -1870,7 +1872,7 @@ int main(int argc, char **argv)
 
   mx->stop();
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   client->final();
 

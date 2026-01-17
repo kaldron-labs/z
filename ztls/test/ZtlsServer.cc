@@ -1,10 +1,13 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
+
+#include <stdlib.h>
+#include <string.h>
 
 #include <iostream>
 
@@ -45,17 +48,21 @@ struct App : public Ztls::Server<App> {
       app()->done();
     }
 
-    int process(ZuSpan<uint8_t> rcvd) {
-      ZtString<> response;
-      ZtString<> content = Content;
-      response << Response << content.length() << Response2;
-      send_(
-	reinterpret_cast<const uint8_t *>(response.data()),
-	response.length());
-      send_(
-	reinterpret_cast<const uint8_t *>(content.data()),
-	content.length());
-      return rcvd.length();
+    int process(Ztls::RxCursor &rx) {
+      while (!rx.empty()) {
+	auto span = rx.span();
+	ZtString<> response;
+	auto &content = app()->payload();
+	response << Response << content.length() << Response2;
+	send_(
+	  reinterpret_cast<const uint8_t *>(response.data()),
+	  response.length());
+	send_(
+	  reinterpret_cast<const uint8_t *>(content.data()),
+	  content.length());
+	rx.advance(span.length());
+      }
+      return 1;
     }
   };
 
@@ -64,44 +71,70 @@ struct App : public Ztls::Server<App> {
     return new Cxn(new Link(this), ci);
   }
 
-  App(ZiIP server, unsigned port) :
-    m_localIP(server), m_localPort(port) { }
+  App(ZiIP server, unsigned port, unsigned repeats) :
+    m_localIP(server), m_localPort(port), m_target(repeats) { }
+  App(ZiIP server, unsigned port, unsigned repeats, unsigned payload_len) :
+      m_localIP(server), m_localPort(port), m_target(repeats) {
+    if (payload_len) {
+      m_payload.length(payload_len);
+      memset(m_payload.data(), 'X', payload_len);
+    } else
+      m_payload = Content;
+  }
 
   ZiIP localIP() const { return m_localIP; }
   unsigned localPort() const { return m_localPort; }
+  ZtString<> &payload() { return m_payload; }
 
-  void done() { m_sem.post(); }
+  void done() { if (++m_done >= m_target) m_sem.post(); }
   void wait() { m_sem.wait(); }
 
 private:
   ZmSemaphore	m_sem;
+  ZmAtomic<unsigned> m_done{0};
   ZiIP		m_localIP;
   unsigned	m_localPort;
+  unsigned	m_target = 1;
+  ZtString<>	m_payload;
 };
 
 void usage()
 {
-  std::cerr << "Usage: ZtlsServer SERVER PORT CERT KEY\n" << std::flush;
+  std::cerr << "Usage: ZtlsServer SERVER PORT CERT KEY [REPEAT]\n"
+    << std::flush;
   ::exit(1);
 }
 
 int main(int argc, char **argv)
 {
-  if (argc != 5) usage();
+  if (argc != 5 && argc != 6) usage();
 
   ZuCSpan server = argv[1];
   unsigned port = ZuBox<unsigned>(argv[2]);
 
   if (!port) usage();
 
-  ZeLog::init("ZtlsServer");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-  ZeLog::start();
+  ZiLog::init("ZtlsServer");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   static const char *alpn[] = { "http/1.1", 0 };
 
-  App app(server, port);
+  unsigned repeats = 1;
+  unsigned payload_len = 0;
+  if (argc == 6) repeats = ZuBox<unsigned>(argv[5]);
+  if (!repeats) repeats = 1;
+  auto is_number = [](const char *s) {
+    if (!s || !*s) return false;
+    for (; *s; ++s) if (*s < '0' || *s > '9') return false;
+    return true;
+  };
+  if (const char *payload = getenv("ZTLS_PAYLOAD")) {
+    if (is_number(payload))
+      payload_len = ZuBox<unsigned>(payload);
+  }
+  App app(server, port, repeats, payload_len);
 
   ZiMultiplex mx(
       ZiMxParams()
@@ -128,7 +161,7 @@ int main(int argc, char **argv)
 
   mx.stop();
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

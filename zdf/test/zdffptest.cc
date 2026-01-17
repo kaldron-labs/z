@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <iostream>
@@ -62,7 +62,7 @@ ZmRef<ZvCf> inlineCf(ZuCSpan s)
 void gtfo()
 {
   if (mx) mx->stop();
-  ZeLog::stop();
+  ZiLog::stop();
   Zm::exit(1);
 }
 
@@ -112,7 +112,7 @@ struct Test {
   }
   void run_opened(ZmRef<DF> df_) {
     if (!df_) {
-      ZeLOG(Fatal, "data frame open failed");
+      ZiLOG(Fatal, "zdffptest", "data frame open failed");
       done.post();
       return;
     }
@@ -122,7 +122,7 @@ struct Test {
       df->run([this]() { run_read1(); });
     } else
       df->write({this, ZmFnPtr<&Test::run_write>{}}, []{
-	ZeLOG(Fatal, "data frame write failed");
+	ZiLOG(Fatal, "zdffptest", "data frame write failed");
 	done.post();
       });
   }
@@ -141,7 +141,7 @@ struct Test {
     using Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->find<Field>(
       ZuFixed{20, 0}, {this, ZmFnPtr<&Test::run_read2<Ctrl>>{}}, []{
-	ZeLOG(Fatal, "data frame read2 failed");
+	ZiLOG(Fatal, "zdffptest", "data frame read2 failed");
 	done.post();
       });
   }
@@ -151,7 +151,7 @@ struct Test {
     using V2Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->seek<Field>(
       rc.stop() - 1, {this, ZmFnPtr<&Test::run_read3<V2Ctrl>>{}}, []{
-	ZeLOG(Fatal, "data frame read3 failed");
+	ZiLOG(Fatal, "zdffptest", "data frame read3 failed");
 	done.post();
       });
     return false;
@@ -170,7 +170,7 @@ struct Test {
     using V1Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->seek<Field>(
       rc.stop() - 1, {this, ZmFnPtr<&Test::run_read5<V1Ctrl>>{}}, []{
-	ZeLOG(Fatal, "data frame read5 failed");
+	ZiLOG(Fatal, "zdffptest", "data frame read5 failed");
 	done.post();
       });
     return false;
@@ -187,7 +187,7 @@ struct Test {
     using V2Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->seek<Field>(
       rc.stop() - 1, {this, ZmFnPtr<&Test::run_read7<V2Ctrl>>{}}, []{
-	ZeLOG(Fatal, "data frame read7 failed");
+	ZiLOG(Fatal, "zdffptest", "data frame read7 failed");
 	done.post();
       });
     return false;
@@ -225,7 +225,7 @@ struct Test {
     df->seek<Field>(
       Zdf::MaxOffset,
       {this, ZmFnPtr<&Test::run_read10<Ctrl>>{}}, []{
-	ZeLOG(Fatal, "data frame read10 failed");
+	ZiLOG(Fatal, "zdffptest", "data frame read10 failed");
       });
   }
   template <typename Ctrl>
@@ -240,7 +240,7 @@ struct Test {
   }
   void run_live_write() {
     df->write({this, ZmFnPtr<&Test::run_live_write2>{}}, []{
-      ZeLOG(Fatal, "data frame live_write2 failed");
+      ZiLOG(Fatal, "zdffptest", "data frame live_write2 failed");
       done.post();
     });
   }
@@ -338,10 +338,10 @@ int main(int argc_, char **argv)
     Zm::exit(1);
   }
 
-  ZeLog::init("zdffptest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2"))); // log to stderr
-  ZeLog::start();
+  ZiLog::init("zdffptest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2"))); // log to stderr
+  ZiLog::start();
 
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
@@ -349,7 +349,7 @@ int main(int argc_, char **argv)
   try {
     mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
 
-    if (!mx->start()) throw ZeEXCEPT(Fatal, "multiplexer start failed");
+    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdffptest", "multiplexer start failed");
 
     db = new Zdb();
 
@@ -359,13 +359,13 @@ int main(int argc_, char **argv)
 
     db->init(ZuMv(dbCf), mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
-	ZeLOG(Info, ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	ZiLOG(Info, "zdffptest", ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
 	  s << "Zdb ACTIVE (was " << id << ')';
 	}));
 	done.post();
       },
       .downFn = [](Zdb *, bool) {
-	ZeLOG(Info, "Zdb INACTIVE");
+	ZiLOG(Info, "zdffptest", "Zdb INACTIVE");
       }
     });
 
@@ -377,7 +377,7 @@ int main(int argc_, char **argv)
 
     store->run(0, []() {
       store->open([](bool ok) {
-	ZeLOG(Info, ([ok](auto &s) {
+	ZiLOG(Info, "zdffptest", ([ok](auto &s) {
 	  s << "Zdf::Store open: " << (ok ? "OK" : "NOT OK");
 	}));
 	if (ok)
@@ -390,35 +390,35 @@ int main(int argc_, char **argv)
     done.wait();
 
     if (options.hashTel)
-      ZeLOG(Debug, (ZeString{} << '\n' << ZmHashMgr::csv()));
+      ZiLOG(Debug, "zdffptest", (ZeString{} << '\n' << ZmHashMgr::csv()));
 
     if (options.heapTel)
-      ZeLOG(Debug, (ZeString{} << '\n' << ZmHeapMgr::csv()));
+      ZiLOG(Debug, "zdffptest", (ZeString{} << '\n' << ZmHeapMgr::csv()));
 
     db->stop(); // closes all tables
 
     mx->stop();
 
-    // ZeLOG(Debug, (ZeString{} << '\n' << ZmHashMgr::csv()));
-    // ZeLOG(Debug, (ZeString{} << '\n' << ZmHeapMgr::csv()));
+    // ZiLOG(Debug, "zdffptest", (ZeString{} << '\n' << ZmHashMgr::csv()));
+    // ZiLOG(Debug, "zdffptest", (ZeString{} << '\n' << ZmHeapMgr::csv()));
 
     db->final();
     db = {};
 
-  } catch (const ZeException &e) {
-    ZeLOG(Fatal, e);
+  } catch (ZeException &e) {
+    ZiLogEvent(ZuMv(e));
     gtfo();
   } catch (const ZeError &e) {
-    ZeLOG(Fatal, e.message());
+    ZiLOG(Fatal, "zdffptest", e.message());
     gtfo();
   } catch (...) {
-    ZeLOG(Fatal, "unknown exception");
+    ZiLOG(Fatal, "zdffptest", "unknown exception");
     gtfo();
   }
 
   mx = {};
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

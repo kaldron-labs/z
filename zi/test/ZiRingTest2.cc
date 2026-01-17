@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdlib.h>
@@ -42,7 +42,7 @@ private:
 #define ZmRing_FUNCTEST
 #include <zlib/ZmRing.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiRing.hh>
 
@@ -638,10 +638,10 @@ int main(int argc, char **argv)
     if (size <= 0) usage();
   }
 
-  ZeLog::init("ZiRingTest2");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2"))); // log to stderr
-  ZeLog::start();
+  ZiLog::init("ZiRingTest2");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2"))); // log to stderr
+  ZiLog::start();
 
   if (!ZuUnroll::all<4>(true, [size](auto i, bool b) {
     return b ? (b && Test<(i>>1) & 1, i & 1>::run(size)) : false;

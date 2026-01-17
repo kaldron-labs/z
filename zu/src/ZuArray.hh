@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // fixed-size arrays for use in structs and passing by value
@@ -213,8 +213,7 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   // - except for character element types
   template <typename U, typename V = T>
   struct IsCtorLength : public ZuBool<
-    ZuTraits<U>::IsIntegral &&
-    (sizeof(U) > 2 || !ZuIsSame<ZuNormChar<V>, ZuNormChar<U>>{})> { };
+    ZuTraits<U>::IsIntegral && (sizeof(U) > 2 || !ZuEquiv<V, U>{})> { };
   template <typename U, typename R = void>
   using MatchCtorLength = ZuIfT<IsCtorLength<U>{}, R>;
 
@@ -491,7 +490,7 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   ZuInline auto cspan() const { return ZuSpan(data(), length_); }
 
   template <typename V = T>
-  ZuIfT<ZuIsSame<ZuNormChar<V>, char>{}, const char *>
+  ZuIfT<ZuIsSame<ZuNorm<V>, char>{}, const char *>
   terminate() {
     if (ZuUnlikely(length_ >= N)) length_ = N - 1;
     data()[length_] = 0;

@@ -12,7 +12,7 @@ noinst_PROGRAMS = \
 	ZiFileTest ZiFileAgeTest ZiGlobTest \
 	ZiRingTest ZiRingTest2 \
 	ZiMxClient ZiMxServer ZiMxUDPClient ZiMxUDPServer \
-	ZiIOBufTest
+	ZiIOBufTest ZiLogTest
 noinst_HEADERS = Global.hh HttpHeader.hh
 if NETLINK
 noinst_PROGRAMS += ZiNetlinkTest
@@ -27,6 +27,7 @@ ZiMxServer_SOURCES = ZiMxServer.cc
 ZiMxUDPClient_SOURCES = ZiMxUDPClient.cc
 ZiMxUDPServer_SOURCES = ZiMxUDPServer.cc
 ZiIOBufTest_SOURCES = ZiIOBufTest.cc
+ZiLogTest_SOURCES = ZiLogTest.cc
 if NETLINK
 ZiNetlinkTest_SOURCES = ZiNetlinkTest.cc
 endif

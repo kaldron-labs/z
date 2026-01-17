@@ -10,16 +10,16 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 pkginclude_HEADERS = ZvLib.hh \
-	ZvCf.hh ZvCSV.hh ZvHashCSV.hh \
+	ZvCf.hh ZvHashCSV.hh \
 	ZvHeapCSV.hh ZvDaemon.hh \
 	ZvRingParams.hh ZvThreadParams.hh \
 	ZvMxParams.hh ZvQueue.hh \
-	ZvIOQueue.hh ZvEngine.hh
+	ZvIOQueue.hh ZvEngine.hh ZvRAG.hh
 lib_LTLIBRARIES = libZv.la
 libZv_la_CPPFLAGS = $(AM_CPPFLAGS) -DZV_EXPORTS 
 libZv_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZv_la_SOURCES = ZvLib.cc \
-	ZvCf.cc ZvCSV.cc ZvDaemon.cc ZvEngine.cc
+	ZvCf.cc ZvDaemon.cc ZvEngine.cc
 libZv_la_LIBADD = \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \

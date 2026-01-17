@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // heap configuration
@@ -18,7 +18,8 @@
 #include <zlib/ZmHeap.hh>
 
 #include <zlib/ZtStruct.hh>
-#include <zlib/ZvCSV.hh>
+
+#include <zlib/ZiCSV.hh>
 
 namespace ZvHeapCSV {
 
@@ -37,10 +38,11 @@ ZtStruct(Data,
     (((cacheSize),	(Ctor<1>)),			(UInt64)),
     (((cpuset),		(Ctor<4>)),			(String)));
 
-class CSV : public ZvCSV<Data> {
+class CSV : public ZiCSV::Reader<Data> {
 public:
-  void read(ZuCSpan file) {
-    ZvCSV::readFile(file,
+  template <typename Path>
+  void read(const Path &file) {
+    this->readFile(file,
 	[this]() { return &m_data; },
 	[](Data *data) {
 	  ZmHeapMgr::init(data->id, data->partition, ZmHeapConfig{

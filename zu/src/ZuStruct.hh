@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // structure reflection framework
@@ -32,7 +32,6 @@
 // macro DSL for describing fields and keys:
 //
 // ZuStruct((Type[, Facet...]), Field, ...);
-// ZuStructDerive((Type[, Facet...]), Base, Field, ...);
 //
 // Field Syntax
 // ------------
@@ -298,10 +297,10 @@ namespace ZuFieldProp {
 
 #define ZuField_AliasRd_(O, Member) \
   using T = ZuDecay<decltype(ZuDeclVal<const O &>().Member)>; \
-  static const T &get(const O &o) { return o.Member; } \
-  static T &get(O &o) { return o.Member; } \
-  static T &&get(O &&o) { return ZuMv(o.Member); }
+  static const T &get(const O &o) { return o.Member; }
 #define ZuField_Alias_(O, Member) \
+  static T &get(O &o) { return o.Member; } \
+  static T &&get(O &&o) { return ZuMv(o.Member); } \
   template <typename P> \
   static void set(O &o, P &&v) { o.Member = ZuFwd<P>(v); }
 #define ZuField_AliasRd(O, ID, Member, Args) \
@@ -433,27 +432,13 @@ struct Core { }; // core facet
 #define ZuStruct_Render(O, ...) \
   ZuPP_Eval_(ZuPP_MapArg(ZuStruct_Render_, O, __VA_ARGS__))
 
-#define ZuStructDerive_Render_(O, Facet) \
-  using ZuFields_##O##_##Facet = \
-    typename ZuFields<Base, Facet>::template Push<ZuFields_##O##_>; \
-  ZuFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *);
-#define ZuStructDerive_Render(O, ...) \
-  ZuPP_Eval_(ZuPP_MapArg(ZuStructDerive_Render_, O, __VA_ARGS__))
-
-// main structure declaration macros ZuStruct() and ZuStructDerive()
+// main structure declaration macros ZuStruct()
 #define ZuStruct_(O, Facets, ...) \
   O ZuStructured_(O *); \
   __VA_OPT__(ZuPP_MapArg(ZuField_Decl, O, __VA_ARGS__)) \
   using ZuFields_##O = ZuTypeList< \
     __VA_OPT__(ZuPP_MapArgComma(ZuField_Type, O, __VA_ARGS__))>; \
   ZuStruct_Render(O, Core ZuPP_StripAppend(Facets))
-
-#define ZuStructDerive_(Base, O, Facets, ...) \
-  O ZuStructured_(O *); \
-  __VA_OPT__(ZuPP_MapArg(ZuField_Decl, O, __VA_ARGS__)) \
-  using ZuFields_##O##_ = ZuTypeList< \
-    __VA_OPT__(ZuPP_MapArgComma(ZuField_Type, O, __VA_ARGS__))>; \
-  ZuStructDerive_Render(O, Core ZuPP_StripAppend(Facets))
 
 #define ZuStruct_Object_(O, ...) O
 #define ZuStruct_Object(Args) ZuPP_Defer(ZuStruct_Object_)(ZuPP_Strip(Args))
@@ -464,12 +449,6 @@ struct Core { }; // core facet
 
 #define ZuStruct(O_Facets, ...) \
   ZuPP_Eval(ZuPP_Defer(ZuStruct_)( \
-    ZuPP_Eval_(ZuStruct_Object(O_Facets)), \
-    ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
-    __VA_OPT__(, __VA_ARGS__)))
-
-#define ZuStructDerive(O_Facets, Base, ...) \
-  ZuPP_Eval(ZuPP_Defer(ZuStructDerive_)(Base, \
     ZuPP_Eval_(ZuStruct_Object(O_Facets)), \
     ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
     __VA_OPT__(, __VA_ARGS__)))

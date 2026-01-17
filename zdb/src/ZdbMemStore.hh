@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Zdb in-memory data store
@@ -21,7 +21,7 @@
 
 #include <zlib/ZtCase.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
@@ -1362,14 +1362,14 @@ public:
 	  sid > mx->params().nThreads() ||
 	  sid == mx->rxThread() ||
 	  sid == mx->txThread())
-	return ZeEXCEPT(Fatal,
+	return ZeEXCEPT(Fatal, "ZdbMem",
 	  ([tid = ZeString{tid}](auto &s, const auto &) {
 	    s << "Store::init() failed: invalid thread configuration \""
 	      << tid << '"';
 	  }));
       Store__::init(mx, sid);
     } catch (const ZeException &e) {
-      return ZeEXCEPT(Fatal, ([e](auto &s, const auto &) {
+      return ZeEXCEPT(Fatal, "ZdbMem", ([e](auto &s, const auto &) {
 	s << "Store::init() failed: invalid configuration: " << e;
       }));
     }
@@ -1395,7 +1395,7 @@ public:
   {
     StoreTblNode *storeTbl = m_storeTbls->find(id);
     if (storeTbl && storeTbl->opened()) {
-      openFn(OpenResult{ZeEXCEPT(Error,
+      openFn(OpenResult{ZeEXCEPT(Error, "ZdbMem",
 	  ([id = ZuMv(id)](auto &s, const auto &) {
 	    s << "open(" << id << ") failed - already open";
 	  }))});
@@ -1403,7 +1403,7 @@ public:
     }
     if (storeTbl) {
       if (nShards != storeTbl->nShards()) {
-	openFn(OpenResult{ZeEXCEPT(Error,
+	openFn(OpenResult{ZeEXCEPT(Error, "ZdbMem",
 	    ([id = ZuMv(id)](auto &s, const auto &) {
 	      s << "open(" << id << ") failed - inconsistent nShards";
 	    }))});

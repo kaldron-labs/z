@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // shared memory IPC ring buffer
@@ -10,7 +10,7 @@
 
 #include <zlib/ZmTime.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #ifdef linux
 
@@ -103,7 +103,7 @@ bool Blocker::open(bool head, const Params &params)
   m_sem = CreateSemaphore(0, 0, LONG_MAX, path);
   if (m_sem == INVALID_HANDLE_VALUE) m_sem = 0;
   if (!m_sem) {
-    ZeLOG(Error, ([path, e = ZeLastError](auto &s) {
+    ZiLOG(Error, "ZiRing", ([path, e = ZeLastError](auto &s) {
       s << "ZiRing::Blocker::open() CreateSemaphore("
 	<< path << ") failed: " << e;
     }));
@@ -165,12 +165,12 @@ bool CtrlMem::open(unsigned size, const Params &params)
   if ((r = m_file.mmap(path,
 	  ZiFile::Create | ZiFile::Shm, size,
 	  true, mmapFlags, 0666)) != Zi::OK) {
-    ZeLOG(Error, ([path, e = m_file.error()](auto &s) {
+    ZiLOG(Error, "ZiRing", ([path, e = m_file.error()](auto &s) {
       s << "ZiRing::CtrlMem::open() mmap(" << path  << ") failed: " << e;
     }));
     return false;
   }
-  ZeLOG(Info, ([addr = m_file.addr()](auto &s) {
+  ZiLOG(Info, "ZiRing", ([addr = m_file.addr()](auto &s) {
     s << "CtrlMem::open() addr=" << ZuBoxPtr(addr).hex();
   }));
   if (params.cpuset)
@@ -181,7 +181,7 @@ bool CtrlMem::open(unsigned size, const Params &params)
 }
 
 void CtrlMem::close() {
-  ZeLOG(Info, ([addr = m_file.addr()](auto &s) {
+  ZiLOG(Info, "ZiRing", ([addr = m_file.addr()](auto &s) {
     s << "CtrlMem::close() addr=" << ZuBoxPtr(addr).hex();
   }));
   m_file.close();
@@ -202,12 +202,12 @@ bool DataMem::open(unsigned size, const Params &params)
   if ((r = m_file.mmap(path,
 	  ZiFile::Create | ZiFile::Shm, size,
 	  true, mmapFlags, 0666)) != Zi::OK) {
-    ZeLOG(Error, ([path, e = m_file.error()](auto &s) {
+    ZiLOG(Error, "ZiRing", ([path, e = m_file.error()](auto &s) {
       s << "ZiRing::DataMem::open() mmap(" << path  << ") failed: " << e;
     }));
     return false;
   }
-  ZeLOG(Info, ([addr = m_file.addr()](auto &s) {
+  ZiLOG(Info, "ZiRing", ([addr = m_file.addr()](auto &s) {
     s << "DataMem::open() addr=" << ZuBoxPtr(addr).hex();
   }));
   if (params.cpuset)
@@ -218,7 +218,7 @@ bool DataMem::open(unsigned size, const Params &params)
 }
 
 void DataMem::close() {
-  ZeLOG(Info, ([addr = m_file.addr()](auto &s) {
+  ZiLOG(Info, "ZiRing", ([addr = m_file.addr()](auto &s) {
     s << "DataMem::close() addr=" << ZuBoxPtr(addr).hex();
   }));
   m_file.close();
@@ -239,7 +239,7 @@ bool MirrorMem::open(unsigned size, const Params &params)
   if ((r = m_file.mmap(path,
 	  ZiFile::Create | ZiFile::Shm | ZiFile::ShmMirror, size,
 	  true, mmapFlags, 0666)) != Zi::OK) {
-    ZeLOG(Error, ([path, e = m_file.error()](auto &s) {
+    ZiLOG(Error, "ZiRing", ([path, e = m_file.error()](auto &s) {
       s << "ZiRing::MirrorMem::open() mmap(" << path  << ") failed: " << e;
     }));
     return false;
