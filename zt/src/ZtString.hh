@@ -222,7 +222,7 @@ private:
   // from individual char
   template <typename U, typename V = Char>
   struct IsChar : public ZuBool<
-    !ZuIsSame<V, char>{} ? bool(ZuIsSame<ZuDecay<U>, V>{}) : bool(ZuEquiv<U, V>{})> { };
+    ZuIsSame<V, wchar_t>{} ? bool(ZuIsSame<ZuDecay<U>, V>{}) : bool(ZuEquiv<U, V>{})> { };
   template <typename U, typename R = void>
   using MatchChar = ZuIfT<IsChar<U>{}, R>;
 
