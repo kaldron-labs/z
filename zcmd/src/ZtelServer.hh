@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #ifndef ZtelServer_HH
@@ -61,15 +61,15 @@ public:
   ~AlertFile() { close(); }
 
 private:
-  // do not call ZeLOG since that may well recurse back here, print to stderr
+  // do not call ZiLOG since that may well recurse back here, print to stderr
   template <typename Message>
   void error(bool index, const Message &message) {
     struct Fmt : public ZuDateTimeFmt::CSV { Fmt() { tzOffset(timezone); } };
     auto &dateFmt = ZmTLS<Fmt>();
-    auto buf = ZmLocal(ZeLogBuf);
+    auto buf = ZmLocal(ZiLogBuf);
     if (ZuUnlikely(!buf)) return; // paranoia
     *buf << ZuDateTime{Zm::now()}.fmt(dateFmt) <<
-      " FATAL " << m_path << (index ? ".idx" : "") <<
+      " FATAL [Ztel] " << m_path << (index ? ".idx" : "") <<
       ": " << message << '\n';
     std::cerr << *buf << std::flush;
   }
@@ -80,13 +80,13 @@ private:
     if (!prefix) return;
     m_path = prefix;
     m_path << '_' << m_date;
-    if (m_file.open(m_path, flags, 0666) != Zi::OK) {
+    if (m_file.open(m_path, flags) != Zi::OK) {
       auto e = m_file.error();
       if (e.errNo() != ZiENOENT || (flags & ZiFile::Create))
 	error(false, e);
       return;
     }
-    if (m_index.open(m_path + ".idx", flags, 0666) != Zi::OK) {
+    if (m_index.open(m_path + ".idx", flags) != Zi::OK) {
       m_file.close();
       auto e = m_index.error();
       error(true, e);

@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // mock data store for Zdb automated testing
@@ -71,7 +71,7 @@ public:
       fn();
   }
   void performWork() {
-    /* ZeLOG(Debug, ([n = m_work.count_()](auto &s) {
+    /* ZiLOG(Debug, "ZdbMock", ([n = m_work.count_()](auto &s) {
       s << "performWork() count=" << n;
     })); */
     while (auto fn = m_work.shift()) fn();
@@ -87,7 +87,7 @@ public:
       fn();
   }
   void performCallbacks() {
-    /* ZeLOG(Debug, ([n = m_callbacks.count_()](auto &s) {
+    /* ZiLOG(Debug, "ZdbMock", ([n = m_callbacks.count_()](auto &s) {
       s << "performCallbacks() count=" << n;
     })); */
     while (auto fn = m_callbacks.shift()) fn();
@@ -124,22 +124,22 @@ inline void StoreTbl::select(
   KeyID keyID, ZmRef<IOBuf> buf,
   unsigned limit, TupleFn tupleFn)
 {
-  // ZeLOG(Debug, "select() work enqueue");
+  // ZiLOG(Debug, "ZdbMock", "select() work enqueue");
   auto work_ = [
     this, selectRow, selectNext, inclusive,
     keyID, buf = ZuMv(buf), limit, tupleFn = ZuMv(tupleFn)
   ]() mutable {
-    // ZeLOG(Debug, "select() work dequeue");
+    // ZiLOG(Debug, "ZdbMock", "select() work dequeue");
     ZdbMem::StoreTbl::select(
       selectRow, selectNext, inclusive,
       keyID, ZuMv(buf), limit, [
 	this, tupleFn = ZuMv(tupleFn)
       ](TupleResult result) mutable {
-	// ZeLOG(Debug, "select() callback enqueue");
+	// ZiLOG(Debug, "ZdbMock", "select() callback enqueue");
 	auto callback = [
 	  tupleFn, result = ZuMv(result) // tupleFn is called repeatedly
 	]() mutable {
-	  // ZeLOG(Debug, "select() callback dequeue");
+	  // ZiLOG(Debug, "ZdbMock", "select() callback dequeue");
 	  tupleFn(ZuMv(result));
 	};
 	store()->addCallback(ZuMv(callback));
@@ -151,19 +151,19 @@ inline void StoreTbl::select(
 inline void StoreTbl::find(
   KeyID keyID, ZmRef<IOBuf> buf, RowFn rowFn)
 {
-  // ZeLOG(Debug, "find() work enqueue");
+  // ZiLOG(Debug, "ZdbMock", "find() work enqueue");
   auto work_ = [
     this, keyID, buf = ZuMv(buf), rowFn = ZuMv(rowFn)
   ]() mutable {
-    // ZeLOG(Debug, "find() work dequeue");
+    // ZiLOG(Debug, "ZdbMock", "find() work dequeue");
     ZdbMem::StoreTbl::find(keyID, ZuMv(buf), [
       this, rowFn = ZuMv(rowFn)
     ](RowResult result) mutable {
-      // ZeLOG(Debug, "find() callback enqueue");
+      // ZiLOG(Debug, "ZdbMock", "find() callback enqueue");
       auto callback = [
 	rowFn = ZuMv(rowFn), result = ZuMv(result)
       ]() mutable {
-	// ZeLOG(Debug, "find() callback dequeue");
+	// ZiLOG(Debug, "ZdbMock", "find() callback dequeue");
 	rowFn(ZuMv(result));
       };
       store()->addCallback(ZuMv(callback));
@@ -173,17 +173,17 @@ inline void StoreTbl::find(
 }
 
 inline void StoreTbl::recover(Shard shard, UN un, RowFn rowFn) {
-  // ZeLOG(Debug, "recover() work enqueue");
+  // ZiLOG(Debug, "ZdbMock", "recover() work enqueue");
   auto work_ = [this, shard, un, rowFn = ZuMv(rowFn)]() mutable {
-    // ZeLOG(Debug, "recover() work dequeue");
+    // ZiLOG(Debug, "ZdbMock", "recover() work dequeue");
     ZdbMem::StoreTbl::recover(shard, un, [
       this, rowFn = ZuMv(rowFn)
     ](RowResult result) mutable {
-      // ZeLOG(Debug, "recover() callback enqueue");
+      // ZiLOG(Debug, "ZdbMock", "recover() callback enqueue");
       auto callback = [
 	rowFn = ZuMv(rowFn), result = ZuMv(result)
       ]() mutable {
-	// ZeLOG(Debug, "recover() callback dequeue");
+	// ZiLOG(Debug, "ZdbMock", "recover() callback dequeue");
 	rowFn(ZuMv(result));
       };
       store()->addCallback(ZuMv(callback));
@@ -193,19 +193,19 @@ inline void StoreTbl::recover(Shard shard, UN un, RowFn rowFn) {
 }
 
 inline void StoreTbl::write(ZmRef<IOBuf> buf, CommitFn commitFn) {
-  // ZeLOG(Debug, "write() work enqueue");
+  // ZiLOG(Debug, "ZdbMock", "write() work enqueue");
   auto work_ = [
     this, buf = ZuMv(buf), commitFn = ZuMv(commitFn)
   ]() mutable {
-    // ZeLOG(Debug, "write() work dequeue");
+    // ZiLOG(Debug, "ZdbMock", "write() work dequeue");
     ZdbMem::StoreTbl::write(ZuMv(buf), [
       this, commitFn = ZuMv(commitFn)
     ](ZmRef<IOBuf> buf, CommitResult result) mutable {
-      // ZeLOG(Debug, "write() callback enqueue");
+      // ZiLOG(Debug, "ZdbMock", "write() callback enqueue");
       auto callback = [
 	commitFn = ZuMv(commitFn), buf = ZuMv(buf), result = ZuMv(result)
       ]() mutable {
-	// ZeLOG(Debug, "write() callback dequeue");
+	// ZiLOG(Debug, "ZdbMock", "write() callback dequeue");
 	commitFn(ZuMv(buf), ZuMv(result));
       };
       store()->addCallback(ZuMv(callback));

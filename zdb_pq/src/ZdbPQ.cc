@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #ifndef _WIN32
@@ -21,7 +21,7 @@
 #include <zlib/ZtCase.hh>
 #include <zlib/ZtLocalArray.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 namespace ZdbPQ {
 
@@ -87,14 +87,14 @@ InitResult Store::init(ZvCf *cf, ZiMultiplex *mx, FailFn failFn)
 	sid > m_mx->params().nThreads() ||
 	sid == m_mx->rxThread() ||
 	sid == m_mx->txThread())
-      return ZeEXCEPT(Fatal, ([tid = ZvCfString{tid}](auto &s, const auto &) {
+      return ZeEXCEPT(Fatal, "ZdbPQ", ([tid = ZvCfString{tid}](auto &s, const auto &) {
 	s << "Store::init() failed: invalid thread configuration \""
 	  << tid << '"';
       }));
     m_sid = sid;
     replicated = cf->getBool("replicated", false);
   } catch (const ZeException &e) {
-    return ZeEXCEPT(Fatal, ([e](auto &s) {
+    return ZeEXCEPT(Fatal, "ZdbPQ", ([e](auto &s) {
       s << "Store::init() failed: invalid configuration: " << e;
     }));
   }
@@ -113,7 +113,7 @@ void Store::final()
 
 void Store::start(StartFn fn)
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_mx->push(m_sid, [this, fn = ZuMv(fn)]() mutable {
     m_stopping = false;
@@ -121,7 +121,7 @@ void Store::start(StartFn fn)
     m_startFn = ZuMv(fn);
     m_stopFn = StopFn{};
     if (!start_()) {
-      start_failed(false, ZeEXCEPT(Fatal, "PostgreSQL start() failed"));
+      start_failed(false, ZeEXCEPT(Fatal, "ZdbPQ", "PostgreSQL start() failed"));
       return;
     }
     getOIDs();
@@ -149,25 +149,25 @@ void Store::notice(const PGresult *res) {
 
   if (PQstatus(m_conn) != CONNECTION_OK) {
     auto e = connError(m_conn);
-    auto event = ZeEXCEPT(Fatal, ([msg = ZuMv(msg), e](auto &s, const auto &) {
+    auto event = ZeEXCEPT(Fatal, "ZdbPQ", ([msg = ZuMv(msg), e](auto &s, const auto &) {
       s << msg << " (" << e << ')';
     }));
     m_failFn(ZuMv(event));
   }
 
-  ZeLOG(Info, ([msg = ZuMv(msg)](auto &s) { s << msg; }));
+  ZiLOG(Info, "ZdbPQ", ([msg = ZuMv(msg)](auto &s) { s << msg; }));
 }
 
 bool Store::start_()
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   const auto &connection = m_cf->get<true>("connection");
 
   m_conn = PQconnectdb(connection);
 
   if (!m_conn || PQstatus(m_conn) != CONNECTION_OK) {
-    ZeLOG(Fatal, ([e = connError(m_conn)](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
       s << "PQconnectdb() failed: " << e;
     }));
     return false;
@@ -178,14 +178,14 @@ bool Store::start_()
   m_connFD = PQsocket(m_conn);
 
   if (PQsetnonblocking(m_conn, 1) != 0) {
-    ZeLOG(Fatal, ([e = connError(m_conn)](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
       s << "PQsetnonblocking() failed: " << e;
     }));
     return false;
   }
 
   if (PQenterPipelineMode(m_conn) != 1) {
-    ZeLOG(Fatal, ([e = connError(m_conn)](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
       s << "PQenterPipelineMode() failed: " << e;
     }));
     return false;
@@ -197,19 +197,19 @@ bool Store::start_()
 
   // set up I/O multiplexer (epoll)
   if ((m_epollFD = epoll_create(2)) < 0) {
-    ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
       s << "epoll_create() failed: " << e;
     }));
     return false;
   }
   if (pipe(&m_wakeFD) < 0) {
-    ZeLOG(Fatal, ([e = errno](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = errno](auto &s) {
       s << "pipe() failed: " << e;
     }));
     return false;
   }
   if (fcntl(m_wakeFD, F_SETFL, O_NONBLOCK) < 0) {
-    ZeLOG(Fatal, ([e = errno](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = errno](auto &s) {
       s << "fcntl(F_SETFL, O_NONBLOCK) failed: " << e;
     }));
     return false;
@@ -220,14 +220,14 @@ bool Store::start_()
     ev.events = EPOLLIN;
     ev.data.u64 = 0;
     if (epoll_ctl(m_epollFD, EPOLL_CTL_ADD, m_wakeFD, &ev) < 0) {
-      ZeLOG(Fatal, ([e = errno](auto &s) {
+      ZiLOG(Fatal, "ZdbPQ", ([e = errno](auto &s) {
 	s << "epoll_ctl(EPOLL_CTL_ADD) failed: " << e;
       }));
       return false;
     }
   }
 
-  /* ZeLOG(Debug, ([this](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([this](auto &s) {
     s << "epoll_ctl(EPOLL_CTL_ADD) connFD=" << m_connFD;
   })); */
 
@@ -243,7 +243,7 @@ bool Store::start_()
 
   m_wakeSem = CreateSemaphore(nullptr, 0, 0x7fffffff, nullptr);
   if (m_wakeSem == NULL || m_wakeSem == INVALID_HANDLE_VALUE) {
-    ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
       s << "CreateEvent() failed: " << e;
     }));
     return false;
@@ -251,14 +251,14 @@ bool Store::start_()
 
   m_connEvent = WSACreateEvent();
   if (m_connEvent == NULL || m_connEvent == INVALID_HANDLE_VALUE) {
-    ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
       s << "CreateEvent() failed: " << e;
     }));
     return false;
   }
   if (WSAEventSelect(m_connFD, m_connEvent,
       FD_READ | FD_WRITE | FD_OOB | FD_CLOSE)) {
-    ZeLOG(Fatal, ([e = WSAGetLastError()](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = WSAGetLastError()](auto &s) {
       s << "WSAEventSelect() failed: " << e;
     }));
     return false;
@@ -271,7 +271,7 @@ bool Store::start_()
 
 void Store::stop(StopFn fn)
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_stopFn = ZuMv(fn);
   m_stopping = true; // inhibits further application requests
@@ -281,14 +281,14 @@ void Store::stop(StopFn fn)
 
 void Store::stop_()	// called after dequeuing Stop
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   if (!m_sent.count_()) { stop_1(); return; }
 }
 
 void Store::stop_1()
 {
-  // ZeLOG(Debug, ([](auto &s) { s << "pushing stop_2()"; }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing stop_2()"; }));
 
   m_mx->wakeFn(m_sid, ZmFn<>{});
   m_mx->push(m_sid, [this]() mutable {
@@ -302,7 +302,7 @@ void Store::stop_1()
 
 void Store::stop_2()
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
 #ifndef _WIN32
 
@@ -343,7 +343,7 @@ void Store::stop_2()
 
 void Store::wake()
 {
-  // ZeLOG(Debug, ([](auto &s) { s << "pushing run_()"; }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing run_()"; }));
 
   m_mx->push(m_sid, [this]{ run_(); });
   wake_();
@@ -351,20 +351,20 @@ void Store::wake()
 
 void Store::wake_()
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
 #ifndef _WIN32
   char c = 0;
   while (::write(m_wakeFD2, &c, 1) < 0) {
     ZeError e{errno};
     if (e.errNo() != EINTR && e.errNo() != EAGAIN) {
-      ZeLOG(Fatal, ([e](auto &s) { s << "write() failed: " << e; }));
+      ZiLOG(Fatal, "ZdbPQ", ([e](auto &s) { s << "write() failed: " << e; }));
       break;
     }
   }
 #else /* !_WIN32 */
   if (!ReleaseSemaphore(m_wakeSem, 1, 0)) {
-    ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+    ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
       s << "ReleaseSemaphore() failed: " << e;
     }));
   }
@@ -387,7 +387,7 @@ static bool isSRM(Work::Queue::Node *work)
 
 void Store::run_()
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   // "prime the pump" to ensure that read- and write-readiness is
   // correctly signalled via epoll / WFMO
@@ -400,17 +400,17 @@ void Store::run_()
 
     epoll_event ev[8];
 
-    // ZeLOG(Debug, ([](auto &s) { s << "epoll_wait()..."; }));
+    // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "epoll_wait()..."; }));
 
 again:
     int r = epoll_wait(m_epollFD, ev, 8, -1); // max events is 8
 
-    // ZeLOG(Debug, ([r](auto &s) { s << "epoll_wait(): " << r; }));
+    // ZiLOG(Debug, "ZdbPQ", ([r](auto &s) { s << "epoll_wait(): " << r; }));
 
     if (r < 0) {
       auto e = errno;
       if (e == EINTR || e == EAGAIN) goto again;
-      ZeLOG(Fatal, ([e](auto &s) {
+      ZiLOG(Fatal, "ZdbPQ", ([e](auto &s) {
 	s << "epoll_wait() failed: " << e;
       }));
       return;
@@ -419,7 +419,7 @@ again:
       uint32_t events = ev[i].events;
       auto v = ev[i].data.u64; // ID
 
-      /* ZeLOG(Debug, ([events, v](auto &s) {
+      /* ZiLOG(Debug, "ZdbPQ", ([events, v](auto &s) {
 	s << "epoll_wait() events=" << events << " v=" << v
 	  << " EPOLLIN=" << ZuBoxed(EPOLLIN).hex()
 	  << " EPOLLOUT=" << ZuBoxed(EPOLLOUT).hex();
@@ -446,7 +446,7 @@ again:
     HANDLE handles[2] = { m_wakeSem, m_connEvent };
     DWORD event = WaitForMultipleObjectsEx(2, handles, false, INFINITE, false);
     if (event == WAIT_FAILED) {
-      ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+      ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
 	s << "WaitForMultipleObjectsEx() failed: " << e;
       }));
       return;
@@ -464,7 +464,7 @@ again:
       WSANETWORKEVENTS events;
       auto i = WSAEnumNetworkEvents(m_connFD, m_connEvent, &events);
       if (i != 0) {
-	ZeLOG(Fatal, ([e = WSAGetLastError()](auto &s) {
+	ZiLOG(Fatal, "ZdbPQ", ([e = WSAGetLastError()](auto &s) {
 	  s << "WSAEnumNetworkEvents() failed: " << e;
 	}));
 	return;
@@ -495,7 +495,7 @@ void Store::disconnect()
 
 void Store::recv()
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   bool stop = false;
 
@@ -503,7 +503,7 @@ void Store::recv()
   do {
     consumed = false;
     if (!PQconsumeInput(m_conn)) {
-      ZeLOG(Fatal, ([e = connError(m_conn)](auto &s) {
+      ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
 	s << "PQconsumeInput() failed: " << e;
       }));
       return;
@@ -526,13 +526,13 @@ void Store::recv()
 	      if (m_syncSRM) { m_syncSRM = false; setSRM(); }
 	      break;
 	    case PGRES_NONFATAL_ERROR: // notice / warning
-	      failed(pending, ZeEXCEPT(Error,
+	      failed(pending, ZeEXCEPT(Error, "ZdbPQ",
 		  ([e = connError(m_conn)](auto &s, const auto &) {
 		    s << "PQgetResult() query: " << e;
 		  })));
 	      break;
 	    case PGRES_FATAL_ERROR: // query failed
-	      failed(pending, ZeEXCEPT(Fatal,
+	      failed(pending, ZeEXCEPT(Fatal, "ZdbPQ",
 		  ([e = connError(m_conn)](auto &s, const auto &) {
 		    s << "PQgetResult() query: " << e;
 		  })));
@@ -566,7 +566,7 @@ void Store::recv()
 
 void Store::rcvd(Work::Queue::Node *work, PGresult *res)
 {
-  /* ZeLOG(Debug, ([res, n = (res ? int(PQntuples(res)) : 0)](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([res, n = (res ? int(PQntuples(res)) : 0)](auto &s) {
     s << "res=" << ZuBoxPtr(res).hex() << " n=" << n;
   })); */
 
@@ -604,7 +604,7 @@ void Store::rcvd(Work::Queue::Node *work, PGresult *res)
 
 void Store::failed(Work::Queue::Node *work, ZeException e)
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   using namespace Work;
 
@@ -647,7 +647,7 @@ void Store::failed(Work::Queue::Node *work, ZeException e)
 
 void Store::send()
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   int sendState = SendState::Unsent;
 
@@ -700,7 +700,7 @@ void Store::send()
   switch (sendState) {
     case SendState::Flush:
       if (PQsendFlushRequest(m_conn) != 1) {
-	ZeLOG(Fatal, ([e = connError(m_conn)](auto &s) {
+	ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
 	  s << "PQsendFlushRequest() failed: " << e;
 	}));
 	return;
@@ -708,7 +708,7 @@ void Store::send()
       break;
     case SendState::Sync:
       if (PQpipelineSync(m_conn) != 1) {
-	ZeLOG(Fatal, ([e = connError(m_conn)](auto &s) {
+	ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
 	  s << "PQsendFlushRequest() failed: " << e;
 	}));
 	return;
@@ -721,7 +721,7 @@ void Store::send()
     // ... PQflush() regardless, to ensure client-side send buffer drainage
     // and correct signalling of write-readiness via epoll or WFMO
     if (PQflush(m_conn) < 0) {
-      ZeLOG(Fatal, ([e = connError(m_conn)](auto &s) {
+      ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
 	s << "PQflush() failed: " << e;
       }));
       return;
@@ -757,7 +757,7 @@ void Store::start_rcvd(PGresult *res)
 
 void Store::start_failed(bool running, ZeException e)
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_startState.phase(StartState::Started);
   m_startState.setFailed();
@@ -776,7 +776,7 @@ void Store::start_failed(bool running, ZeException e)
 
 void Store::started()
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_startState.phase(StartState::Started);
 
@@ -795,14 +795,14 @@ void Store::getOIDs()
 }
 int Store::getOIDs_send()
 {
-  // ZeLOG(Debug, ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   unsigned type = m_startState.type() + 1;
   // skip re-querying previously resolved OIDs
 skip:
   auto name = m_oids.name(type);
   if (!name) {
-    auto e = ZeEXCEPT(Fatal,
+    auto e = ZeEXCEPT(Fatal, "ZdbPQ",
       ([type](auto &s, const auto &) {
 	s << "OID name for type index " << type
 	  << " is null - check static names[] array in OIDs constructor";
@@ -832,14 +832,14 @@ void Store::getOIDs_rcvd(PGresult *res)
 {
   unsigned type = m_startState.type() + 1;
 
-  /* ZeLOG(Debug, ([type](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([type](auto &s) {
     s << "type=" << type << " Value::N=" << Value::N;
   })); */
 
   if (!res) {
     if (m_startState.failed()) {
       // OID resolution failed
-      auto e = ZeEXCEPT(Fatal,
+      auto e = ZeEXCEPT(Fatal, "ZdbPQ",
 	([type = ZeString{m_oids.name(type)}](auto &s, const auto &) {
 	  s << "failed to resolve OID for \"" << type << '"';
 	}));
@@ -865,7 +865,7 @@ void Store::getOIDs_rcvd(PGresult *res)
 
   auto oid = uint32_t(reinterpret_cast<UInt32 *>(PQgetvalue(res, 0, 0))->v);
 
-  /* ZeLOG(Debug, ([type, name = ZeString{m_oids.name(type)}, oid](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([type, name = ZeString{m_oids.name(type)}, oid](auto &s) {
     s << "type=" << type << " name=" << name << " oid=" << oid;
   })); */
 
@@ -879,14 +879,14 @@ void Store::mkSchema()
 }
 int Store::mkSchema_send()
 {
-  // ZeLOG(Debug, ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   return sendQuery<SendState::Sync>(
     "CREATE SCHEMA IF NOT EXISTS \"zdb\"", Tuple{});
 }
 void Store::mkSchema_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) mkTblMRD();
 }
@@ -898,7 +898,7 @@ void Store::mkTblMRD()
 }
 int Store::mkTblMRD_send()
 {
-  // ZeLOG(Debug, ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   // the MRD schema is unlikely to evolve, so use IF NOT EXISTS
   return sendQuery<SendState::Sync>(
@@ -912,7 +912,7 @@ int Store::mkTblMRD_send()
 }
 void Store::mkTblMRD_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) started();
 }
@@ -923,7 +923,7 @@ void Store::open(
   const reflection::Schema *schema,
   IOBufAllocFn bufAllocFn, OpenFn openFn)
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   run([
     this, id = ZuMv(id), nShards,
@@ -931,7 +931,7 @@ void Store::open(
     schema, bufAllocFn = ZuMv(bufAllocFn), openFn = ZuMv(openFn)
   ]() mutable {
     if (stopping()) {
-      openFn(OpenResult{ZeEXCEPT(Error,
+      openFn(OpenResult{ZeEXCEPT(Error, "ZdbPQ",
 	  ([id = ZuMv(id)](auto &s, const auto &) {
 	    s << "open(" << id << ") failed - DB shutdown in progress";
 	  }))});
@@ -947,7 +947,7 @@ void Store::open(
 
 void Store::enqueue(Work::Task task)
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_queue.push(ZuMv(task));
   wake();
@@ -1180,7 +1180,7 @@ StoreTbl::StoreTbl(
 	});
     }
     if (k > 0 && k < m)
-      ZeLOG(Warning, ([id, i](auto &s) {
+      ZiLOG(Warning, "ZdbPQ", ([id, i](auto &s) {
 	s << id << " key " << i << " has mixed ascending/descending fields";
       }));
   }
@@ -1194,7 +1194,7 @@ StoreTbl::~StoreTbl()
 
 void StoreTbl::open(OpenFn openFn)
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_openState.reset();
   m_openFn = ZuMv(openFn);
@@ -1219,7 +1219,7 @@ int Store::sendQuery(const SQLString &query, const Tuple &params)
       });
     paramFormats[i] = 1;
   }
-  /* ZeLOG(Debug, ([query = ZeString{query}, n](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([query = ZeString{query}, n](auto &s) {
     s << '"' << query << "\", n=" << n;
   })); */
 
@@ -1233,7 +1233,7 @@ int Store::sendQuery(const SQLString &query, const Tuple &params)
 void Store::setSRM()
 {
   if (PQsetSingleRowMode(m_conn) != 1)
-    ZeLOG(Error, ([e = connError(m_conn)](auto &s) {
+    ZiLOG(Error, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
       s << "PQsetSingleRowMode() failed: " << e;
     }));
 }
@@ -1241,7 +1241,7 @@ void Store::setSRM()
 int Store::sendPrepare(
   const IDString &id, const SQLString &query, ZuSpan<Oid> oids)
 {
-  /* ZeLOG(Debug, ([id = ZeString{id}, query = ZeString{query}](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([id = ZeString{id}, query = ZeString{query}](auto &s) {
     s << '"' << id << "\", \"" << query << '"';
   })); */
 
@@ -1256,7 +1256,7 @@ int Store::sendPrepared(const IDString &id, const Tuple &params)
 {
   auto n = params.length();
 
-  /* ZeLOG(Debug, ([id = ZeString{id}, params = params](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([id = ZeString{id}, params = params](auto &s) {
     s << '"' << id << "\" params=[";
     bool first = true;
     params.all([&s, &first](const auto &param) mutable {
@@ -1342,7 +1342,7 @@ void StoreTbl::open_rcvd(PGresult *res)
 
 void StoreTbl::open_failed(Event e)
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_openState.phase(OpenState::Opened);
   m_openState.setFailed();
@@ -1356,7 +1356,7 @@ void StoreTbl::open_failed(Event e)
 
 void StoreTbl::opened()
 {
-  // ZeLOG(Debug, ([](auto &s) { }));
+  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_openState.phase(OpenState::Opened);
 
@@ -1379,7 +1379,7 @@ void StoreTbl::mkTable()
 }
 int StoreTbl::mkTable_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!m_openState.create()) {
     Tuple params = { Value{String(m_id_)} };
@@ -1403,7 +1403,7 @@ int StoreTbl::mkTable_send()
     for (unsigned i = 0; i < n; i++) {
       auto name = m_store->oids().name(m_xFields[i].type);
       if (!name) {
-	ZeLOG(Fatal, ([type = m_xFields[i].type](auto &s) {
+	ZiLOG(Fatal, "ZdbPQ", ([type = m_xFields[i].type](auto &s) {
 	  s << "missing OID name for type=" << type;
 	}));
 	return SendState::Unsent;
@@ -1425,7 +1425,7 @@ int StoreTbl::mkTable_send()
 }
 void StoreTbl::mkTable_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (m_openState.create()) {
     if (!res) mkIndices();
@@ -1443,7 +1443,7 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
     } else {
       // table exists but not all fields matched
       auto i = m_openState.field();
-      auto e = ZeEXCEPT(Fatal, ([
+      auto e = ZeEXCEPT(Fatal, "ZdbPQ", ([
 	id = this->m_id_,
 	failed = m_openState.failed(),
 	i, field = m_fields[i],
@@ -1501,7 +1501,7 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
     if (!ZuCmp<unsigned>::null(type))
       match = m_store->oids().match(oid, type);
 
-    /* ZeLOG(Debug, ([
+    /* ZiLOG(Debug, "ZdbPQ", ([
       id = ZeString{id}, oid, field, match, state = m_openState.v
     ](auto &s) {
       int field_ = ZuCmp<unsigned>::null(field) ? -1 : int(field);
@@ -1524,7 +1524,7 @@ void StoreTbl::mkIndices()
 }
 int StoreTbl::mkIndices_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   KeyID keyID = m_openState.keyID();
   IDString name;
@@ -1577,7 +1577,7 @@ int StoreTbl::mkIndices_send()
 }
 void StoreTbl::mkIndices_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   auto nextKey = [this]() {
     m_openState.incKey();
@@ -1604,7 +1604,7 @@ void StoreTbl::mkIndices_rcvd(PGresult *res)
       open_enqueue(true, false);
     } else {
       // index exists but not all fields matched
-      open_failed(ZeEXCEPT(Fatal, ([id = m_id_](auto &s, const auto &) {
+      open_failed(ZeEXCEPT(Fatal, "ZdbPQ", ([id = m_id_](auto &s, const auto &) {
 	s << "inconsistent schema for table " << id;
       })));
     }
@@ -1633,7 +1633,7 @@ void StoreTbl::mkIndices_rcvd(PGresult *res)
     unsigned type = xKeyFields[field].type;
     bool match = m_store->oids().match(oid, type) && id == matchID;
 
-    /* ZeLOG(Debug, ([
+    /* ZiLOG(Debug, "ZdbPQ", ([
       id = ZeString{id}, oid, field, match, state = m_openState.v
     ](auto &s) {
       int field_ = ZuCmp<unsigned>::null(field) ? -1 : int(field);
@@ -1657,7 +1657,7 @@ void StoreTbl::prepCount()
 }
 int StoreTbl::prepCount_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   KeyID keyID = m_openState.keyID();
   // const auto &keyFields = m_keyFields[keyID];
@@ -1685,7 +1685,7 @@ int StoreTbl::prepCount_send()
 }
 void StoreTbl::prepCount_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) {
     m_openState.incKey();
@@ -1722,7 +1722,7 @@ void StoreTbl::prepSelect()
 }
 int StoreTbl::prepSelect_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   KeyID keyID = m_openState.keyID();
   const auto &keyFields = m_keyFields[keyID];
@@ -1814,7 +1814,7 @@ int StoreTbl::prepSelect_send()
 }
 void StoreTbl::prepSelect_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) {
     m_openState.incKey();
@@ -1835,7 +1835,7 @@ void StoreTbl::prepFind()
 }
 int StoreTbl::prepFind_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   KeyID keyID = m_openState.keyID();
   IDString id;
@@ -1875,7 +1875,7 @@ int StoreTbl::prepFind_send()
 }
 void StoreTbl::prepFind_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) {
     m_openState.incKey();
@@ -1893,7 +1893,7 @@ void StoreTbl::prepInsert()
 }
 int StoreTbl::prepInsert_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   IDString id;
   id << m_id_ << "_ins";
@@ -1922,7 +1922,7 @@ int StoreTbl::prepInsert_send()
 }
 void StoreTbl::prepInsert_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) prepUpdate();
 }
@@ -1934,7 +1934,7 @@ void StoreTbl::prepUpdate()
 }
 int StoreTbl::prepUpdate_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   IDString id;
   id << m_id_ << "_upd";
@@ -1973,7 +1973,7 @@ int StoreTbl::prepUpdate_send()
 }
 void StoreTbl::prepUpdate_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) prepDelete();
 }
@@ -1985,7 +1985,7 @@ void StoreTbl::prepDelete()
 }
 int StoreTbl::prepDelete_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   IDString id;
   id << m_id_ << "_del";
@@ -2007,7 +2007,7 @@ int StoreTbl::prepDelete_send()
 }
 void StoreTbl::prepDelete_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) prepMRD();
 }
@@ -2019,7 +2019,7 @@ void StoreTbl::prepMRD()
 }
 int StoreTbl::prepMRD_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   IDString id;
   id << m_id_ << "_mrd";
@@ -2036,7 +2036,7 @@ int StoreTbl::prepMRD_send()
 }
 void StoreTbl::prepMRD_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) openCount();
 }
@@ -2048,7 +2048,7 @@ void StoreTbl::openCount()
 }
 int StoreTbl::openCount_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   SQLString query;
   query << "SELECT CAST(COUNT(*) AS uint8) FROM \"" << m_id_ << '"';
@@ -2056,7 +2056,7 @@ int StoreTbl::openCount_send()
 }
 void StoreTbl::openCount_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) { maxUN(); return; }
 
@@ -2064,7 +2064,7 @@ void StoreTbl::openCount_rcvd(PGresult *res)
       PQnfields(res) != 1 ||
       PQgetlength(res, 0, 0) != sizeof(UInt64)) {
     // invalid query result
-    open_failed(ZeEXCEPT(Fatal, ([id = m_id_](auto &s, const auto &) {
+    open_failed(ZeEXCEPT(Fatal, "ZdbPQ", ([id = m_id_](auto &s, const auto &) {
       s << "inconsistent count() result for table " << id;
     })));
     return;
@@ -2080,7 +2080,7 @@ void StoreTbl::maxUN()
 }
 int StoreTbl::maxUN_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   Tuple params = { Value{UInt8{m_openState.shard()}} };
   SQLString query;
@@ -2091,7 +2091,7 @@ int StoreTbl::maxUN_send()
 }
 void StoreTbl::maxUN_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) {
     m_openState.incShard();
@@ -2114,7 +2114,7 @@ void StoreTbl::maxUN_rcvd(PGresult *res)
     auto sn = uint128_t(
       reinterpret_cast<const UInt128 *>(PQgetvalue(res, i, 1))->v);
 
-    /* ZeLOG(Debug, ([un, sn](auto &s) {
+    /* ZiLOG(Debug, "ZdbPQ", ([un, sn](auto &s) {
       s << "un=" << un << " sn=" << ZuBoxed(sn);
     })); */
 
@@ -2125,7 +2125,7 @@ void StoreTbl::maxUN_rcvd(PGresult *res)
   return;
 
 inconsistent:
-  open_failed(ZeEXCEPT(Fatal, ([id = m_id_](auto &s, const auto &) {
+  open_failed(ZeEXCEPT(Fatal, "ZdbPQ", ([id = m_id_](auto &s, const auto &) {
     s << "inconsistent MAX(_un) result for table " << id;
   })));
 }
@@ -2137,7 +2137,7 @@ void StoreTbl::ensureMRD()
 }
 int StoreTbl::ensureMRD_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   Tuple params = { Value{String(m_id_)}, Value{UInt8{m_openState.shard()}} };
   return m_store->sendQuery<SendState::Sync>(
@@ -2147,7 +2147,7 @@ int StoreTbl::ensureMRD_send()
 }
 void StoreTbl::ensureMRD_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) {
     m_openState.incShard();
@@ -2165,7 +2165,7 @@ void StoreTbl::mrd()
 }
 int StoreTbl::mrd_send()
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   Tuple params = { Value{String(m_id_)}, Value{UInt8{m_openState.shard()}} };
   return m_store->sendQuery<SendState::Sync>(
@@ -2174,7 +2174,7 @@ int StoreTbl::mrd_send()
 }
 void StoreTbl::mrd_rcvd(PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) {
     m_openState.incShard();
@@ -2197,7 +2197,7 @@ void StoreTbl::mrd_rcvd(PGresult *res)
     auto sn = uint128_t(
       reinterpret_cast<const UInt128 *>(PQgetvalue(res, i, 1))->v);
 
-    /* ZeLOG(Debug, ([un, sn](auto &s) {
+    /* ZiLOG(Debug, "ZdbPQ", ([un, sn](auto &s) {
       s << "un=" << un << " sn=" << ZuBoxed(sn);
     })); */
 
@@ -2208,7 +2208,7 @@ void StoreTbl::mrd_rcvd(PGresult *res)
   return;
 
 inconsistent:
-  open_failed(ZeEXCEPT(Fatal, ([id = m_id_](auto &s, const auto &) {
+  open_failed(ZeEXCEPT(Fatal, "ZdbPQ", ([id = m_id_](auto &s, const auto &) {
     s << "inconsistent SELECT FROM zdb.mrd result for table " << id;
   })));
 }
@@ -2233,7 +2233,7 @@ void StoreTbl::count(KeyID keyID, ZmRef<IOBuf> buf, CountFn countFn)
     this, keyID, buf = ZuMv(buf), countFn = ZuMv(countFn)
   ]() mutable {
     if (m_store->stopping()) {
-      countFn(CountResult{ZeEXCEPT(Error, ([id = m_id](auto &s, const auto &) {
+      countFn(CountResult{ZeEXCEPT(Error, "ZdbPQ", ([id = m_id](auto &s, const auto &) {
 	s << "count(" << id << ") failed - DB shutdown in progress";
       }))});
       return;
@@ -2261,7 +2261,7 @@ void StoreTbl::select(
     keyID, buf = ZuMv(buf), limit, tupleFn = ZuMv(tupleFn)
   ]() mutable {
     if (m_store->stopping()) {
-      tupleFn(TupleResult{ZeEXCEPT(Error, ([id = m_id](auto &s, const auto &) {
+      tupleFn(TupleResult{ZeEXCEPT(Error, "ZdbPQ", ([id = m_id](auto &s, const auto &) {
 	s << "select(" << id << ") failed - DB shutdown in progress";
       }))});
       return;
@@ -2308,7 +2308,7 @@ void StoreTbl::select(
 
 int StoreTbl::count_send(Work::Count &count)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   const auto &keyFields = m_keyFields[count.keyID];
   const auto &xKeyFields = m_xKeyFields[count.keyID];
@@ -2328,7 +2328,7 @@ int StoreTbl::count_send(Work::Count &count)
 }
 void StoreTbl::count_rcvd(Work::Count &count, PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) {
     count.countFn(CountResult{CountData{.count = 0}});
@@ -2339,7 +2339,7 @@ void StoreTbl::count_rcvd(Work::Count &count, PGresult *res)
       PQnfields(res) != 1 ||
       PQgetlength(res, 0, 0) != sizeof(UInt64)) {
     // invalid query result
-    count_failed(count, ZeEXCEPT(Fatal, ([id = m_id_](auto &s, const auto &) {
+    count_failed(count, ZeEXCEPT(Fatal, "ZdbPQ", ([id = m_id_](auto &s, const auto &) {
       s << "inconsistent count() result for table " << id;
     })));
     return;
@@ -2356,7 +2356,7 @@ void StoreTbl::count_failed(Work::Count &count, ZeException e)
 
 int StoreTbl::select_send(Work::Select &select)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   const auto &keyFields = m_keyFields[select.keyID];
   const auto &xKeyFields = m_xKeyFields[select.keyID];
@@ -2384,7 +2384,7 @@ int StoreTbl::select_send(Work::Select &select)
 }
 void StoreTbl::select_rcvd(Work::Select &select, PGresult *res)
 {
-  // ZeLOG(Debug, ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
+  // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!res) {
     select.tupleFn(TupleResult{});
@@ -2424,7 +2424,7 @@ void StoreTbl::select_rcvd(Work::Select &select, PGresult *res)
   return;
 
 inconsistent:
-  select_failed(select, ZeEXCEPT(Fatal, ([id = m_id_](auto &s, const auto &) {
+  select_failed(select, ZeEXCEPT(Fatal, "ZdbPQ", ([id = m_id_](auto &s, const auto &) {
     s << "inconsistent select() result for table " << id;
   })));
 }
@@ -2449,7 +2449,7 @@ void StoreTbl::find(KeyID keyID, ZmRef<IOBuf> buf, RowFn rowFn)
   m_store->run(
     [this, keyID, buf = ZuMv(buf), rowFn = ZuMv(rowFn)]() mutable {
       if (m_store->stopping()) {
-	rowFn(RowResult{ZeEXCEPT(Error, ([id = m_id](auto &s, const auto &) {
+	rowFn(RowResult{ZeEXCEPT(Error, "ZdbPQ", ([id = m_id](auto &s, const auto &) {
 	  s << "find(" << id << ") failed - DB shutdown in progress";
 	}))});
 	return;
@@ -2518,7 +2518,7 @@ void StoreTbl::find_rcvd_(RowFn &rowFn, bool &found, PGresult *res)
 	goto inconsistent;
     }
 
-    /* ZeLOG(Debug, ([tuple = Tuple(tuple)](auto &s) {
+    /* ZiLOG(Debug, "ZdbPQ", ([tuple = Tuple(tuple)](auto &s) {
       s << "row=[";
       bool first = true;
       tuple.all([&s, &first](const auto &value) mutable {
@@ -2530,7 +2530,7 @@ void StoreTbl::find_rcvd_(RowFn &rowFn, bool &found, PGresult *res)
 
     auto buf = find_save<Recovery>(tuple);
     if (found) {
-      ZeLOG(Error, ([id = m_id_](auto &s) {
+      ZiLOG(Error, "ZdbPQ", ([id = m_id_](auto &s) {
 	s << "multiple records found with same key in table " << id;
       }));
       return;
@@ -2545,12 +2545,12 @@ void StoreTbl::find_rcvd_(RowFn &rowFn, bool &found, PGresult *res)
 inconsistent:
   if constexpr (!Recovery)
     find_failed_(ZuMv(rowFn),
-      ZeEXCEPT(Error, ([id = m_id_](auto &s, const auto &) {
+      ZeEXCEPT(Error, "ZdbPQ", ([id = m_id_](auto &s, const auto &) {
 	s << "inconsistent find() result for table " << id;
       })));
   else
     find_failed_(ZuMv(rowFn),
-      ZeEXCEPT(Error, ([id = m_id_](auto &s, const auto &) {
+      ZeEXCEPT(Error, "ZdbPQ", ([id = m_id_](auto &s, const auto &) {
 	s << "inconsistent recover() result for table " << id;
       })));
 }
@@ -2593,7 +2593,7 @@ void StoreTbl::recover(Shard shard, UN un, RowFn rowFn)
 
   m_store->run([this, shard, un, rowFn = ZuMv(rowFn)]() mutable {
     if (m_store->stopping()) {
-      rowFn(RowResult{ZeEXCEPT(Error, ([id = m_id](auto &s, const auto &) {
+      rowFn(RowResult{ZeEXCEPT(Error, "ZdbPQ", ([id = m_id](auto &s, const auto &) {
 	s << "recover(" << id << ") failed - DB shutdown in progress";
       }))});
       return;
@@ -2622,7 +2622,7 @@ void StoreTbl::recover_failed(Work::Recover &recover, ZeException e)
 
 void StoreTbl::write(ZmRef<IOBuf> buf, CommitFn commitFn)
 {
-  /* ZeLOG(Debug, ([buf = buf.ptr()](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([buf = buf.ptr()](auto &s) {
     s << "buf=" << ZuBoxPtr(buf).hex();
   })); */
 
@@ -2631,7 +2631,7 @@ void StoreTbl::write(ZmRef<IOBuf> buf, CommitFn commitFn)
   m_store->run([this, buf = ZuMv(buf), commitFn = ZuMv(commitFn)]() mutable {
     if (m_store->stopping()) {
       commitFn(ZuMv(buf), CommitResult{
-	ZeEXCEPT(Error, ([id = m_id](auto &s, const auto &) {
+	ZeEXCEPT(Error, "ZdbPQ", ([id = m_id](auto &s, const auto &) {
 	  s << "write(" << id << ") failed - DB shutdown in progress";
 	}))});
       return;
@@ -2642,7 +2642,7 @@ void StoreTbl::write(ZmRef<IOBuf> buf, CommitFn commitFn)
 }
 int StoreTbl::write_send(Work::Write &write)
 {
-  /* ZeLOG(Debug, ([buf = write.buf.ptr()](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([buf = write.buf.ptr()](auto &s) {
     s << "buf=" << ZuBoxPtr(buf).hex();
   })); */
 
@@ -2659,7 +2659,7 @@ int StoreTbl::write_send(Work::Write &write)
     m_maxSN = sn;
   }
 
-  /* ZeLOG(Debug, ([un, sn, vn = record->vn()](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([un, sn, vn = record->vn()](auto &s) {
     s << "UN=" << un << " SN=" << ZuBoxed(sn) << " VN=" << vn;
   })); */
 
@@ -2715,7 +2715,7 @@ int StoreTbl::write_send(Work::Write &write)
 }
 void StoreTbl::write_rcvd(Work::Write &write, PGresult *res)
 {
-  /* ZeLOG(Debug, ([buf = write.buf.ptr(), res](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([buf = write.buf.ptr(), res](auto &s) {
     s << "buf=" << ZuBoxPtr(buf).hex() << " res=" << ZuBoxPtr(res).hex();
   })); */
 
@@ -2726,7 +2726,7 @@ void StoreTbl::write_rcvd(Work::Write &write, PGresult *res)
   auto record = record_(msg_(write.buf->hdr()));
   if (record->vn() < 0 && !write.mrd) { // delete completed, now update MRD
 
-    /* ZeLOG(Debug, ([vn = record->vn(), mrd = write.mrd](auto &s) {
+    /* ZiLOG(Debug, "ZdbPQ", ([vn = record->vn(), mrd = write.mrd](auto &s) {
       s << "VN=" << vn << " mrd=" << mrd;
     })); */
 
@@ -2739,7 +2739,7 @@ void StoreTbl::write_rcvd(Work::Write &write, PGresult *res)
 }
 void StoreTbl::write_failed(Work::Write &write, ZeException e)
 {
-  // ZeLOG(Debug, ([e = ZuMv(e)](auto &s) { s << e; }));
+  // ZiLOG(Debug, "ZdbPQ", ([e = ZuMv(e)](auto &s) { s << e; }));
 
   write.commitFn(ZuMv(write.buf), CommitResult{ZuMv(e)});
 }

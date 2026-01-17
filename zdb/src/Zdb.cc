@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Z Database
@@ -65,7 +65,7 @@ void DB::init(
 
     config.sid = mx->sid(config.thread);
     if (invalidSID(mx, config.sid))
-      throw ZeEXCEPT(Fatal, ([thread = config.thread](auto &s) {
+      throw ZeEXCEPT(Fatal, "Zdb", ([thread = config.thread](auto &s) {
 	s << "Zdb thread misconfigured: " << thread; }));
 
     {
@@ -79,7 +79,7 @@ void DB::init(
 	  tableCf.threads.all([mx, &tableCf](const ZvCfString &thread) {
 	    auto sid = mx->sid(thread);
 	    if (invalidSID(mx, sid))
-	      throw ZeEXCEPT(Fatal,
+	      throw ZeEXCEPT(Fatal, "Zdb",
 		  ([id = tableCf.id, thread = ZeString{thread}](auto &s) {
 		    s << "Zdb " << id
 		      << " thread misconfigured: " << thread; }));
@@ -94,7 +94,7 @@ void DB::init(
     m_handler = ZuMv(handler);
     {
       if (!m_cf.storeCf)
-	throw ZeEXCEPT(Fatal, ([](auto &s) {
+	throw ZeEXCEPT(Fatal, "Zdb", ([](auto &s) {
 	  s << "no data store configured"; }));
       if (store)
 	m_store = ZuMv(store);
@@ -104,20 +104,19 @@ void DB::init(
 	auto preload = m_cf.storeCf->getBool("preload", false);
 	ZeString e; // dlerror() returns a string
 	if (module_.load(path, preload ? ZiModule::Pre : 0, &e) < 0)
-	  throw ZeEXCEPT(Fatal, ([path = ZeString{path}, e](auto &s) {
+	  throw ZeEXCEPT(Fatal, "Zdb", ([path = ZeString{path}, e](auto &s) {
 	    s << "failed to load \"" << path << "\": " << e; }));
 	auto storeFn =
 	  reinterpret_cast<StoreFn>(module_.resolve(ZdbStoreFnSym, &e));
 	if (!storeFn) {
 	  module_.unload();
-	  throw ZeEXCEPT(Fatal, ([path = ZeString{path}, e](auto &s) {
+	  throw ZeEXCEPT(Fatal, "Zdb", ([path = ZeString{path}, e](auto &s) {
 	    s << "failed to resolve \"" ZdbStoreFnSym "\" in \""
 	      << path << "\": " << e; }));
 	}
 	m_store = (*storeFn)();
       }
-      if (!m_store)
-	throw ZeEXCEPT(Fatal, ([](auto &s) { s << "null data store"; }));
+      if (!m_store) throw ZeEXCEPT(Fatal, "Zdb", "null data store");
       InitResult result = m_store->init(
 	  m_cf.storeCf, m_mx,
 	  FailFn{this, ZmFnPtr<&DB::storeFailed>{}});
@@ -139,25 +138,25 @@ void DB::init(
       }
     }
     if (standalone && m_hosts->count_() > 1)
-      throw ZeEXCEPT(Fatal, ([id = m_cf.hostID](auto &s) {
+      throw ZeEXCEPT(Fatal, "Zdb", ([id = m_cf.hostID](auto &s) {
 	s << "Zdb multiple hosts defined but one or more is standalone"; }));
 
     m_self = m_hosts->findPtr(m_cf.hostID);
     if (!m_self)
-      throw ZeEXCEPT(Fatal, ([id = m_cf.hostID](auto &s) {
+      throw ZeEXCEPT(Fatal, "Zdb", ([id = m_cf.hostID](auto &s) {
 	s << "Zdb own host ID " << id << " not in hosts table"; }));
     state(HostState::Initialized);
 
     return true;
   }))
-    throw ZeEXCEPT(Fatal, "Zdb::init called out of order");
+    throw ZeEXCEPT(Fatal, "Zdb", "Zdb::init called out of order");
 }
 
 ZmRef<AnyTable> DB::initTable_(
   ZuCSpan id, ZmFn<AnyTable *(DB *, TableCf *)> ctorFn)
 {
   if (id.length() >= IDSize_)
-    throw ZeEXCEPT(Error, ([id](auto &s) {
+    throw ZeEXCEPT(Error, "Zdb", ([id](auto &s) {
       s << "Zdb::initTable(\"" << id << "\") - identifier too long (>"
 	<< IDSize_ << " bytes)"; }));
   ZmRef<AnyTable> table;
@@ -171,7 +170,7 @@ ZmRef<AnyTable> DB::initTable_(
     m_tables.add(table);
     return true;
   }))
-    throw ZeEXCEPT(Fatal, "Zdb::initTable called out of order");
+    throw ZeEXCEPT(Fatal, "Zdb", "Zdb::initTable called out of order");
   return table;
 }
 
@@ -202,7 +201,7 @@ void DB::final()
     }
     return true;
   }))
-    throw ZeEXCEPT(Fatal, "Zdb::final called out of order");
+    throw ZeEXCEPT(Fatal, "Zdb", "Zdb::final called out of order");
 }
 
 void DB::wake()
@@ -221,19 +220,19 @@ void DB::start_()
   using namespace HostState;
 
   if (state() != Initialized) {
-    ZeLOG(Fatal, "DB::start_ called out of order");
+    ZiLOG(Fatal, "Zdb", "DB::start_ called out of order");
     started(false);
     return;
   }
 
-  ZeLOG(Info, "Zdb starting");
+  ZiLOG(Info, "Zdb", "starting");
 
   // start backing data store
   m_store->start([this](StartResult result) {
     if (ZuUnlikely(result.is<Event>())) {
-      ZeLogEvent(ZuMv(result).p<Event>());
-      ZeLOG(Fatal, ([](auto &s) {
-	s << "Zdb data store start failed";
+      ZiLogEvent(ZuMv(result).p<Event>());
+      ZiLOG(Fatal, "Zdb", ([](auto &s) {
+	s << "data store start failed";
       }));
       run([this]() { started(false); });
       return;
@@ -304,12 +303,12 @@ void DB::stop_()
     case Electing:	// holdElection will resume stop_1() at completion
       return;
     default:
-      ZeLOG(Fatal, "DB::stop_ called out of order");
+      ZiLOG(Fatal, "Zdb", "DB::stop_ called out of order");
       stopped(false);
       return;
   }
 
-  ZeLOG(Info, "Zdb stopping");
+  ZiLOG(Info, "Zdb", "stopping");
 
   stop_1();
 }
@@ -380,10 +379,8 @@ void DB::stop_3()
   // stop backing data store
   m_store->stop([this](StopResult result) {
     if (ZuUnlikely(result.is<Event>())) {
-      ZeLogEvent(ZuMv(result).p<Event>());
-      ZeLOG(Fatal, ([](auto &s) {
-	s << "Zdb data store stop failed";
-      }));
+      ZiLogEvent(ZuMv(result).p<Event>());
+      ZiLOG(Fatal, "Zdb", "data store stop failed");
     }
     run([this]() { stopped(true); });
   });
@@ -418,8 +415,8 @@ void DB::listen()
 
 void DB::listening(const ZiListenInfo &)
 {
-  ZeLOG(Info, ([ip = m_self->ip(), port = m_self->port()](auto &s) {
-    s << "Zdb listening on (" << ip << ':' << port << ')';
+  ZiLOG(Info, "Zdb", ([ip = m_self->ip(), port = m_self->port()](auto &s) {
+    s << "listening on (" << ip << ':' << port << ')';
   }));
 }
 
@@ -427,8 +424,8 @@ void DB::listenFailed(bool transient)
 {
   bool retry = transient && running();
   if (retry) run([this]() { listen(); }, Zm::now((int)m_cf.reconnectFreq));
-  ZeLOG(Warning, ([ip = m_self->ip(), port = m_self->port(), retry](auto &s) {
-    s << "Zdb listen failed on (" << ip << ':' << port << ')';
+  ZiLOG(Warning, "Zdb", ([ip = m_self->ip(), port = m_self->port(), retry](auto &s) {
+    s << "listen failed on (" << ip << ':' << port << ')';
     if (retry) s << " - retrying...";
   }));
 }
@@ -436,7 +433,7 @@ void DB::listenFailed(bool transient)
 void DB::stopListening()
 {
   if (!m_self->standalone()) {
-    ZeLOG(Info, "Zdb stop listening");
+    ZiLOG(Info, "Zdb", "stop listening");
     m_mx->stopListening(m_self->ip(), m_self->port());
   }
 }
@@ -466,7 +463,7 @@ void DB::holdElection()
     m_appActive = true;
     m_prev = nullptr;
     if (!m_nPeers)
-      ZeLOG(Warning, "Zdb activating standalone");
+      ZiLOG(Warning, "Zdb", "activating standalone");
     else
       hbSend_(); // announce new leader
   } else {
@@ -499,7 +496,7 @@ void DB::fail()
   ZmAssert(invoked());
 
   if (!m_self) {
-    ZeLOG(Fatal, "DB::fail called out of order");
+    ZiLOG(Fatal, "Zdb", "DB::fail called out of order");
     return;
   }
 
@@ -512,7 +509,7 @@ void DB::deactivate(bool failed)
 
   if (!m_self) {
 badorder:
-    ZeLOG(Fatal, "DB::deactivate called out of order");
+    ZiLOG(Fatal, "Zdb", "DB::deactivate called out of order");
     return;
   }
 
@@ -559,13 +556,13 @@ void DB::reactivate(Host *host)
 
 void DB::up_(Host *oldMaster)
 {
-  ZeLOG(Info, "Zdb ACTIVE");
+  ZiLOG(Info, "Zdb", "ACTIVE");
   m_handler.upFn(this, oldMaster);
 }
 
 void DB::down_(bool failed)
 {
-  ZeLOG(Info, "Zdb INACTIVE");
+  ZiLOG(Info, "Zdb", "INACTIVE");
   m_handler.downFn(this, failed);
 }
 
@@ -574,8 +571,8 @@ void DB::all(AllFn fn, AllDoneFn doneFn)
   ZmAssert(invoked());
 
   if (ZuUnlikely(m_allCount)) {
-    ZeLOG(Fatal, ([](auto &s) {
-      s << "Zdb - multiple overlapping calls to all()";
+    ZiLOG(Fatal, "Zdb", ([](auto &s) {
+      s << "multiple overlapping calls to all()";
     }));
     doneFn(this, false);
     return;
@@ -583,7 +580,7 @@ void DB::all(AllFn fn, AllDoneFn doneFn)
   auto i = m_tables.citer();
   m_allCount = m_allNotOK = m_tables.count_();
   if (ZuUnlikely(!m_allCount)) {
-    ZeLOG(Fatal, ([](auto &s) { s << "Zdb - no tables"; }));
+    ZiLOG(Fatal, "Zdb", ([](auto &s) { s << "Zdb - no tables"; }));
     doneFn(this, false);
     return;
   }
@@ -684,7 +681,7 @@ void Host::connect()
 {
   if (m_cxn) return;
 
-  ZeLOG(Info,
+  ZiLOG(Info, "Zdb",
       ([id = this->id(), ip = config().ip, port = config().port](auto &s) {
 	s << "Zdb connecting to host " << id
 	  << " (" << ip << ':' << port << ')';
@@ -700,12 +697,12 @@ void Host::connectFailed(bool transient)
 {
   bool retry = transient && m_db->running();
   if (retry) reconnect();
-  ZeLOG(Warning,
+  ZiLOG(Warning, "Zdb",
       ([id = this->id(),
 	ip = config().ip,
 	port = config().port,
 	retry](auto &s) {
-    s << "Zdb failed to connect to host " << id
+    s << "failed to connect to host " << id
       << " (" << ip << ':' << port << ')';
     if (retry) s << " - retrying...";
   }));
@@ -713,11 +710,11 @@ void Host::connectFailed(bool transient)
 
 ZiConnection *Host::connected(const ZiCxnInfo &ci)
 {
-  ZeLOG(Info,
+  ZiLOG(Info, "Zdb",
       ([id = this->id(),
 	remoteIP = ci.remoteIP, remotePort = ci.remotePort,
 	localIP = ci.localIP, localPort = ci.localPort](auto &s) {
-    s << "Zdb connected to host " << id << " ("
+    s << "connected to host " << id << " ("
       << remoteIP << ':' << remotePort << "): "
       << localIP << ':' << localPort;
   }));
@@ -729,10 +726,10 @@ ZiConnection *Host::connected(const ZiCxnInfo &ci)
 
 ZiConnection *DB::accepted(const ZiCxnInfo &ci)
 {
-  ZeLOG(Info,
+  ZiLOG(Info, "Zdb",
       ([remoteIP = ci.remoteIP, remotePort = ci.remotePort,
 	localIP = ci.localIP, localPort = ci.localPort](auto &s) {
-    s << "Zdb accepted cxn on ("
+    s << "accepted cxn on ("
       << remoteIP << ':' << remotePort << "): "
       << localIP << ':' << localPort;
   }));
@@ -785,16 +782,16 @@ void DB::associate(Cxn *cxn, ZuID hostID)
   Host *host = m_hosts->find(hostID);
 
   if (!host) {
-    ZeLOG(Error, ([hostID](auto &s) {
-      s << "Zdb cannot associate incoming cxn: host ID "
+    ZiLOG(Error, "Zdb", ([hostID](auto &s) {
+      s << "cannot associate incoming cxn: host ID "
 	<< hostID << " not found";
     }));
     return;
   }
 
   if (host == m_self) {
-    ZeLOG(Error, ([hostID](auto &s) {
-      s << "Zdb cannot associate incoming cxn: host ID "
+    ZiLOG(Error, "Zdb", ([hostID](auto &s) {
+      s << "cannot associate incoming cxn: host ID "
 	<< hostID << " is same as self";
     }));
     return;
@@ -809,8 +806,8 @@ void DB::associate(Cxn *cxn, Host *host)
 {
   ZmAssert(invoked());
 
-  ZeLOG(Info, ([hostID = host->id()](auto &s) {
-    s << "Zdb host " << hostID << " CONNECTED";
+  ZiLOG(Info, "Zdb", ([hostID = host->id()](auto &s) {
+    s << "host " << hostID << " CONNECTED";
   }));
 
   cxn->host(host);
@@ -845,10 +842,10 @@ void Host::cancelConnect()
 
 void Cxn_::hbTimeout()
 {
-  ZeLOG(Info,
+  ZiLOG(Info, "Zdb",
       ([id = m_host ? m_host->id() : ZuID{"unknown"},
 	ip = info().remoteIP, port = info().remotePort](auto &s) {
-    s << "Zdb heartbeat timeout on host "
+    s << "heartbeat timeout on host "
       << id << " (" << ip << ':' << port << ')';
   }));
 
@@ -857,10 +854,10 @@ void Cxn_::hbTimeout()
 
 void Cxn_::disconnected()
 {
-  ZeLOG(Info,
+  ZiLOG(Info, "Zdb",
       ([id = m_host ? m_host->id() : ZuID{"unknown"},
 	ip = info().remoteIP, port = info().remotePort](auto &s) {
-    s << "Zdb disconnected from host "
+    s << "disconnected from host "
       << id << " (" << ip << ':' << port << ')';
   }));
 
@@ -882,8 +879,8 @@ void DB::disconnected(ZmRef<Cxn> cxn)
 
   if (!host || host->cxn() != cxn) return;
 
-  ZeLOG(Info, ([id = host->id()](auto &s) {
-    s << "Zdb host " << id << " DISCONNECTED";
+  ZiLOG(Info, "Zdb", ([id = host->id()](auto &s) {
+    s << "host " << id << " DISCONNECTED";
   }));
 
   host->disconnected();
@@ -972,11 +969,11 @@ Host *DB::setMaster()
   }
 
   if (m_leader) {
-    ZeLOG(Info, ([id = m_leader->id()](auto &s) {
-      s << "Zdb host " << id << " is leader";
+    ZiLOG(Info, "Zdb", ([id = m_leader->id()](auto &s) {
+      s << "host " << id << " is leader";
     }));
   } else
-    ZeLOG(Fatal, "Zdb leader election failed");
+    ZiLOG(Fatal, "Zdb", "leader election failed");
 
   return oldMaster;
 }
@@ -1031,8 +1028,8 @@ void DB::repStart()
 {
   ZmAssert(invoked());
 
-  ZeLOG(Info, ([id = m_next->id()](auto &s) {
-    s << "Zdb host " << id << " is next in line";
+  ZiLOG(Info, "Zdb", ([id = m_next->id()](auto &s) {
+    s << "host " << id << " is next in line";
   }));
 
   dbStateRefresh();
@@ -1050,7 +1047,7 @@ void DB::repStart()
       m_repStore)			// backing data store is replicated
     return;
 
-  // ZeLOG(Info, "repStart() initiating recovery");
+  // ZiLOG(Info, "Zdb", "repStart() initiating recovery");
 
   m_recover = m_next->dbState();
   m_recoverEnd = m_self->dbState();
@@ -1100,9 +1097,9 @@ void AnyTable::recSend(ZmRef<Cxn> cxn, Shard shard, UN un, UN endUN)
       return;
     }
     if (ZuUnlikely(result.is<Event>())) {
-      ZeLogEvent(ZuMv(result).p<Event>());
-      ZeLOG(Error, ([id = this->id(), shard, un](auto &s) {
-	s << "Zdb recovery of " << id << '/' << shard << '/' << un << " failed";
+      ZiLogEvent(ZuMv(result).p<Event>());
+      ZiLOG(Error, "Zdb", ([id = this->id(), shard, un](auto &s) {
+	s << "recovery of " << id << '/' << shard << '/' << un << " failed";
       }));
     }
     // missing is not an error, skip over updated/deleted records
@@ -1494,8 +1491,8 @@ void DB::replicated(Host *host, ZuCSpan tblID, Shard shard, UN un, SN sn)
   if ((active() || host == m_next) && !updated) return;
   if (!m_prev) {
     m_prev = host;
-    ZeLOG(Info, ([id = m_prev->id()](auto &s) {
-      s << "Zdb host " << id << " is previous in line";
+    ZiLOG(Info, "Zdb", ([id = m_prev->id()](auto &s) {
+      s << "host " << id << " is previous in line";
     }));
   }
 }
@@ -1639,9 +1636,9 @@ void AnyTable::committed(ZmRef<IOBuf> buf, CommitResult result)
   auto shard = record->shard();
   auto un = record->un();
   if (ZuUnlikely(result.is<Event>())) {
-    ZeLogEvent(ZuMv(result).p<Event>());
-    ZeLOG(Fatal, ([id = this->id(), shard, un](auto &s) {
-      s << "Zdb store of " << id << '/' << shard << '/' << un << " failed";
+    ZiLogEvent(ZuMv(result).p<Event>());
+    ZiLOG(Fatal, "Zdb", ([id = this->id(), shard, un](auto &s) {
+      s << "store of " << id << '/' << shard << '/' << un << " failed";
     }));
     auto db = this->db();
     db->run([db]() { db->fail(); }); // trigger failover
@@ -1673,7 +1670,7 @@ void AnyTable::evictBuf(Shard shard, UN un)
 template <typename L>
 void AnyTable::open(L l)
 {
-  /* ZeLOG(Debug,
+  /* ZiLOG(Debug, "Zdb",
     ([hostID = db()->config().hostID, open = unsigned(m_open)](auto &s) {
       s << hostID << " m_open=" << open;
     })); */
@@ -1711,7 +1708,7 @@ bool AnyTable::opened(OpenResult result)
 
   if (!result.is<OpenData>()) {
     if (result.is<Event>())
-      ZeLogEvent(ZuMv(result).p<Event>());
+      ZiLogEvent(ZuMv(result).p<Event>());
     return false;
   }
 
@@ -1729,7 +1726,7 @@ bool AnyTable::opened(OpenResult result)
 template <typename L>
 void AnyTable::close(L l)
 {
-  /* ZeLOG(Debug,
+  /* ZiLOG(Debug, "Zdb",
     ([hostID = db()->config().hostID, open = unsigned(m_open)](auto &s) {
       s << hostID << " m_open=" << open;
     })); */

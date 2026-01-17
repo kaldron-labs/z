@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // server-side user DB bootstrap tool
@@ -13,7 +13,7 @@
 
 #include <zlib/ZtCLI.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZvCf.hh>
 #include <zlib/ZvMxParams.hh>
@@ -128,17 +128,17 @@ int main(int argc_, char **argv)
   cf->set("zdb.debug", options.debug ? "1" : "0");
   cf->set("userDB.passLen", ZvCfString{} << options.passLen);
 
-  ZeLog::init("zuserdb");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path(cf->get<true>("log"))));
-  ZeLog::start();
+  ZiLog::init("zuserdb");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path(cf->get<true>("log"))));
+  ZiLog::start();
 
   ZiMultiplex *mx = nullptr;
   ZmRef<Zdb> db = new Zdb();
 
   auto gtfo = [&mx]() {
     if (mx) mx->stop();
-    ZeLog::stop();
+    ZiLog::stop();
     Zm::exit(1);
   };
 
@@ -159,16 +159,16 @@ int main(int argc_, char **argv)
     userDB.init(cf->getCf<true>("userdb"), db);
 
     mx->start();
-    if (!db->start()) throw ZeEXCEPT(Fatal, "Zdb start failed");
+    if (!db->start()) throw ZeEXCEPT(Fatal, "zuserdb", "Zdb start failed");
 
-  } catch (const ZeException &e) {
-    ZeLOG(Fatal, e);
+  } catch (ZeException &e) {
+    ZiLogEvent(ZuMv(e));
     gtfo();
   } catch (const ZeError &e) {
-    ZeLOG(Fatal, e.message());
+    ZiLOG(Fatal, "zuserdb", e.message());
     gtfo();
   } catch (...) {
-    ZeLOG(Fatal, "unknown exception");
+    ZiLOG(Fatal, "zuserdb", "unknown exception");
     gtfo();
   }
 
@@ -177,7 +177,7 @@ int main(int argc_, char **argv)
       wake = ZuMv(wake), &gtfo, &perms
     ](bool ok, ZtArray<unsigned> permIDs) mutable {
       if (!ok) {
-	ZeLOG(Fatal, "userDB open failed");
+	ZiLOG(Fatal, "zuserdb", "userDB open failed");
 	gtfo();
       } else {
 	for (unsigned i = 0, n = perms.length(); i < n; i++)
@@ -225,7 +225,7 @@ int main(int argc_, char **argv)
 
   delete mx;
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

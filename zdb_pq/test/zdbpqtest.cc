@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
@@ -10,7 +10,7 @@
 
 #include <zlib/ZtCLI.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZvCf.hh>
 #include <zlib/ZvMxParams.hh>
@@ -85,7 +85,7 @@ ZmRef<ZvCf> inlineCf(ZuCSpan s)
 void gtfo()
 {
   if (mx) mx->stop();
-  ZeLog::stop();
+  ZiLog::stop();
   Zm::exit(1);
 }
 
@@ -133,10 +133,10 @@ int main(int argc_, char **argv)
   cf->set("store.connection", options.connect);
   cf->set("debug", options.debug ? "1" : "0");
 
-  ZeLog::init("zdbpqtest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2"))); // log to stderr
-  ZeLog::start();
+  ZiLog::init("zdbpqtest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2"))); // log to stderr
+  ZiLog::start();
 
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
@@ -144,28 +144,28 @@ int main(int argc_, char **argv)
   try {
     mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
 
-    if (!mx->start()) throw ZeEXCEPT(Fatal, "multiplexer start failed");
+    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbpqtest", "multiplexer start failed");
 
     db = new Zdb();
 
     db->init(ZdbCf(cf), mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
-	ZeLOG(Info, ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	ZiLOG(Info, "zdbpqtest", ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
 	  s << "ACTIVE (was " << id << ')';
 	}));
       },
-      .downFn = [](Zdb *, bool) { ZeLOG(Info, "INACTIVE"); }
+      .downFn = [](Zdb *, bool) { ZiLOG(Info, "zdbpqtest", "INACTIVE"); }
     });
 
     orders = db->initTable<Order>("order"); // might throw
 
-    if (!db->start()) throw ZeEXCEPT(Fatal, "Zdb start failed");
+    if (!db->start()) throw ZeEXCEPT(Fatal, "zdbpqtest", "Zdb start failed");
 
     if (options.hashTel)
-      ZeLOG(Debug, (ZeString{} << '\n' << ZmHashMgr::csv()));
+      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHashMgr::csv()));
 
     if (options.heapTel)
-      ZeLOG(Debug, (ZeString{} << '\n' << ZmHeapMgr::csv()));
+      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHeapMgr::csv()));
 
     ZuNBox<uint64_t> seqNo;
 
@@ -174,11 +174,11 @@ int main(int argc_, char **argv)
 	using Key = ZuStructKeyT<Order, 2>;
 	if (max.template is<Key>()) {
 	  seqNo = max.template p<Key>().template p<1>();
-	  ZeLOG(Info, ([max = ZuMv(max)](auto &s) {
+	  ZiLOG(Info, "zdbpqtest", ([max = ZuMv(max)](auto &s) {
 	    s << "maximum(FIX0): " << max.template p<Key>();
 	  }));
 	} else {
-	  ZeLOG(Info, ([max = ZuMv(max)](auto &s) {
+	  ZiLOG(Info, "zdbpqtest", ([max = ZuMv(max)](auto &s) {
 	    s << "maximum(FIX0): EOR";
 	  }));
 	  done.post();
@@ -194,12 +194,12 @@ int main(int argc_, char **argv)
 	  [seqNo, &id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
 	      id = {};
-	      ZeLOG(Info, ([seqNo](auto &s) {
+	      ZiLOG(Info, "zdbpqtest", ([seqNo](auto &s) {
 		s << "find(FIX0, " << seqNo << "): (null)";
 	      }));
 	    } else {
 	      id = o->data().orderID;
-	      ZeLOG(Info, ([seqNo, o = ZuMv(o)](auto &s) {
+	      ZiLOG(Info, "zdbpqtest", ([seqNo, o = ZuMv(o)](auto &s) {
 		s << "find(FIX0, " << seqNo
 		  << "): refCount=" << o->refCount()
 		  << ' ' << *o;
@@ -231,7 +231,7 @@ int main(int argc_, char **argv)
 	o->commit();
 	id = o->data().orderID;
 	seqNo = o->data().seqNo;
-	ZeLOG(Info, ([id, seqNo](auto &s) {
+	ZiLOG(Info, "zdbpqtest", ([id, seqNo](auto &s) {
 	  s << "orderID=" << id << " seqNo=" << seqNo;
 	}));
 	done.post();
@@ -243,11 +243,11 @@ int main(int argc_, char **argv)
       orders->find<0>(0, ZuFwdTuple("IBM", id),
 	[&id](ZmRef<ZdbObject<Order>> o) {
 	  if (!o)
-	    ZeLOG(Info, ([id](auto &s) {
+	    ZiLOG(Info, "zdbpqtest", ([id](auto &s) {
 	      s << "find(IBM, " << id << "): (null)";
 	    }));
 	  else
-	    ZeLOG(Info, ([id, o = ZuMv(o)](auto &s) {
+	    ZiLOG(Info, "zdbpqtest", ([id, o = ZuMv(o)](auto &s) {
 	      s << "find(IBM, " << id << "): " << *o;
 	    }));
 	  done.post();
@@ -258,11 +258,11 @@ int main(int argc_, char **argv)
     orders->selectKeys<2>(ZuFwdTuple("FIX0"), 1, [](auto max, unsigned) {
       using Key = ZuStructKeyT<Order, 2>;
       if (max.template is<Key>()) {
-	ZeLOG(Info, ([max = ZuMv(max)](auto &s) {
+	ZiLOG(Info, "zdbpqtest", ([max = ZuMv(max)](auto &s) {
 	  s << "maximum(FIX0): " << max.template p<Key>();
 	}));
       } else {
-	ZeLOG(Info, ([max = ZuMv(max)](auto &s) {
+	ZiLOG(Info, "zdbpqtest", ([max = ZuMv(max)](auto &s) {
 	  s << "maximum(FIX0): EOR";
 	}));
 	done.post();
@@ -275,12 +275,12 @@ int main(int argc_, char **argv)
 	orders->findUpd<0, ZuSeq<1>>(0, ZuFwdTuple("IBM", id),
 	  [id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
-	      ZeLOG(Info, ([id](auto &s) {
+	      ZiLOG(Info, "zdbpqtest", ([id](auto &s) {
 		s << "findUpd(IBM, " << id << "): (null)";
 	      }));
 	      return;
 	    }
-	    ZeLOG(Info, ([id, data = o->data()](auto &s) {
+	    ZiLOG(Info, "zdbpqtest", ([id, data = o->data()](auto &s) {
 	      s << "findUpd(IBM, " << id << "): " << data;
 	    }));
 	    ZuCArray<32> clOrdID;
@@ -299,12 +299,12 @@ int main(int argc_, char **argv)
 	orders->findDel<0>(0, ZuFwdTuple("IBM", id),
 	  [id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
-	      ZeLOG(Info, ([id](auto &s) {
+	      ZiLOG(Info, "zdbpqtest", ([id](auto &s) {
 		s << "findDel(IBM, " << id << "): (null)";
 	      }));
 	      return;
 	    }
-	    ZeLOG(Info, ([id, o](auto &s) {
+	    ZiLOG(Info, "zdbpqtest", ([id, o](auto &s) {
 	      s << "findDel(IBM, " << id << "): " << *o;
 	    }));
 	    o->commit();
@@ -315,10 +315,10 @@ int main(int argc_, char **argv)
     }
 
     if (options.hashTel)
-      ZeLOG(Debug, (ZeString{} << '\n' << ZmHashMgr::csv()));
+      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHashMgr::csv()));
 
     if (options.heapTel)
-      ZeLOG(Debug, (ZeString{} << '\n' << ZmHeapMgr::csv()));
+      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHeapMgr::csv()));
 
     db->stop(); // closes all tables
 
@@ -328,20 +328,20 @@ int main(int argc_, char **argv)
     db->final(); // calls Store::final()
     db = {};
 
-  } catch (const ZeException &e) {
-    ZeLOG(Fatal, e);
+  } catch (ZeException &e) {
+    ZiLogEvent(ZuMv(e));
     gtfo();
   } catch (const ZeError &e) {
-    ZeLOG(Fatal, e.message());
+    ZiLOG(Fatal, "zdbpqtest", e.message());
     gtfo();
   } catch (...) {
-    ZeLOG(Fatal, "unknown exception");
+    ZiLOG(Fatal, "zdbpqtest", "unknown exception");
     gtfo();
   }
 
   mx = {};
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

@@ -1,14 +1,14 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // daemon-ization
 
 #include <zlib/ZvDaemon.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiFile.hh>
 
 #ifndef _WIN32
@@ -33,7 +33,7 @@ int ZvDaemon::init(
     struct passwd *p = getpwnam(username);
 
     if (!p) {
-      ZeLOG(Error, ([username](auto &s) {
+      ZiLOG(Error, "ZvDaemon", ([username](auto &s) {
 	s << "getpwnam(\"" << username << "\") failed";
       }));
     } else {
@@ -53,13 +53,13 @@ int ZvDaemon::init(
 
     switch (fork()) {
     case -1:
-      ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+      ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
 	s << "fork() failed: " << e.message() << "";
       }));
       return Error;
       break;
     case 0:
-      ZeLog::forked();
+      ZiLog::forked();
       setsid();
       break;
     default:
@@ -112,7 +112,7 @@ int ZvDaemon::init(
 	// re-invoke same program
 	if (!CreateProcess(
 	      path, commandLine, 0, 0, TRUE, flags, 0, 0, &si, &pi)) {
-	  ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
 	    s << "CreateProcess failed: " << e;
 	  }));
 	  return Error;
@@ -124,7 +124,7 @@ int ZvDaemon::init(
 	      ZtWString<>(username), 0, ZtWString<>(password),
 	      LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, &user
 	    )) {
-	  ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
 	    s << "LogonUser failed: " << e;
 	  }));
 	  return Error;
@@ -136,7 +136,7 @@ int ZvDaemon::init(
 	      SecurityImpersonation, TokenPrimary, &token
 	    )) {
 	  CloseHandle(user);
-	  ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
 	    s << "DuplicateTokenEx failed: " << e;
 	  }));
 	  return Error;
@@ -146,7 +146,7 @@ int ZvDaemon::init(
 
 	if (!ImpersonateLoggedOnUser(token)) {
 	  CloseHandle(token);
-	  ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
 	    s << "ImpersonateLoggedOnUser failed: " << e;
 	  }));
 	  return Error;
@@ -171,7 +171,7 @@ int ZvDaemon::init(
 	    &sa, 0, TRUE, flags, 0, 0, &si, &pi)) {
 	  RevertToSelf();
 	  CloseHandle(token);
-	  ZeLOG(Fatal, ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
 	    s << "CreateProcessAsUser failed: " << e;
 	  }));
 	  return Error;
@@ -199,7 +199,7 @@ int ZvDaemon::init(
     if (file.open(pidFile,
 	ZiFile::Create | ZiFile::Exclusive | ZiFile::GC, 0644) != Zi::OK) {
       if (file.open(pidFile, ZiFile::GC, 0) != Zi::OK) {
-	ZeLOG(Error, ([f = ZeString{pidFile}, e = file.error()](auto &s) {
+	ZiLOG(Error, "ZvDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
 	  s << "open(" << f << "): " << e;
 	}));
 	return Error;
@@ -208,7 +208,7 @@ int ZvDaemon::init(
       int n;
 
       if ((n = file.read(buf.data(), 15)) < 0) {
-	ZeLOG(Error, ([f = ZeString{pidFile}, e = file.error()](auto &s) {
+	ZiLOG(Error, "ZvDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
 	  s << "read(" << f << "): " << e;
 	}));
 	return Error;
@@ -223,7 +223,7 @@ int ZvDaemon::init(
 	int i = kill(pid, 0);
 
 	if (i >= 0 || (i < 0 && errno == EPERM)) {
-	  ZeLOG(Error, ([pid](auto &s) {
+	  ZiLOG(Error, "ZvDaemon", ([pid](auto &s) {
 	    s << "PID " << pid << " still running";
 	  }));
 	  return Running;
@@ -233,7 +233,7 @@ int ZvDaemon::init(
 
 	if (h) {
 	  CloseHandle(h);
-	  ZeLOG(Error, ([pid](auto &s) {
+	  ZiLOG(Error, "ZvDaemon", ([pid](auto &s) {
 	    s << "PID " << pid << " still running";
 	  }));
 	  return Running;
@@ -248,7 +248,7 @@ int ZvDaemon::init(
     buf << ZuBox<int>(Zm::getPID());
 
     if (file.write(buf.data(), buf.length()) != Zi::OK) {
-      ZeLOG(Error, ([f = ZeString{pidFile}, e = file.error()](auto &s) {
+      ZiLOG(Error, "ZvDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
 	s << "write(" << f << "): " << e;
       }));
       return Error;

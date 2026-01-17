@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
@@ -24,7 +24,7 @@ void usage()
 
 void gtfo()
 {
-  ZeLog::stop();
+  ZiLog::stop();
   exit(1);
 }
 
@@ -49,7 +49,7 @@ void check(Ztls::Random &rng, ZuCSpan type)
   if constexpr (ZuIsSame<T, SK_RSA>{}) {
     sk = new T{rng, 2048};
   } else if constexpr (ZuIsSame<T, SK_EC>{}) {
-    sk = new T{rng, MBEDTLS_OID_EC_GRP_SECP256R1};
+    sk = new T{rng, OID::ec_grp_secp256r1()};
   } else if constexpr (ZuIsSame<T, SK_ED25519>{}) {
     sk = new T{rng};
   }
@@ -58,7 +58,7 @@ void check(Ztls::Random &rng, ZuCSpan type)
   {
     auto r = sk->save(asn);
     if (r.template is<ZeException>()) {
-      ZeLog::log(ZuMv(r.template p<ZeException>()));
+      ZiLog::log(ZuMv(r.template p<ZeException>()));
       gtfo();
     }
   }
@@ -75,13 +75,13 @@ void check(Ztls::Random &rng, ZuCSpan type)
   {
     auto r = loader.load(asn);
     if (r.template is<ZeException>()) {
-      ZeLog::log(ZuMv(r.template p<ZeException>()));
+      ZiLog::log(ZuMv(r.template p<ZeException>()));
       gtfo();
     }
     sk2_ = ZuMv(r).template p<ZmRef<AnyKey>>();
   }
   if (!dynamic_cast<T *>(sk2_.ptr())) {
-    ZeLOG(Error, "wrong key type loaded");
+    ZiLOG(Error, "ZtlsPKTest", "wrong key type loaded");
     gtfo();
   }
   ZmRef<T> sk2{ZuMv(sk2_)};
@@ -89,7 +89,7 @@ void check(Ztls::Random &rng, ZuCSpan type)
   {
     auto r = sk2->save(asn2);
     if (r.template is<ZeException>()) {
-      ZeLog::log(ZuMv(r.template p<ZeException>()));
+      ZiLog::log(ZuMv(r.template p<ZeException>()));
       gtfo();
     }
   }
@@ -98,7 +98,7 @@ void check(Ztls::Random &rng, ZuCSpan type)
     using PK = typename T::PK;
     auto r = sk2->mkPK();
     if (r.template is<ZeException>()) {
-      ZeLog::log(ZuMv(r.template p<ZeException>()));
+      ZiLog::log(ZuMv(r.template p<ZeException>()));
       gtfo();
     }
     auto pk = ZuMv(r).template p<0>();
@@ -120,13 +120,13 @@ void check(Ztls::Random &rng, ZuCSpan type)
     {
       auto r = loader.load(asn3);
       if (r.template is<ZeException>()) {
-	ZeLog::log(ZuMv(r.template p<ZeException>()));
+	ZiLog::log(ZuMv(r.template p<ZeException>()));
 	gtfo();
       }
       pk2_ = ZuMv(r).template p<ZmRef<AnyKey>>();
     }
     if (!dynamic_cast<PK *>(pk2_.ptr())) {
-      ZeLOG(Error, "wrong key type loaded");
+      ZiLOG(Error, "ZtlsPKTest", "wrong key type loaded");
       gtfo();
     }
     ZmRef<PK> pk2{ZuMv(pk2_)};
@@ -134,7 +134,7 @@ void check(Ztls::Random &rng, ZuCSpan type)
     {
       auto r = pk2->save(asn4);
       if (r.template is<ZeException>()) {
-	ZeLog::log(ZuMv(r.template p<ZeException>()));
+	ZiLog::log(ZuMv(r.template p<ZeException>()));
 	gtfo();
       }
     }
@@ -147,13 +147,13 @@ void check(Ztls::Random &rng, ZuCSpan type)
       auto r = sk->sign(rng, digest, [&type, &pk, &digest](ZuBSpan signature) {
 	auto r = pk->verify(digest, signature);
 	if (r.template is<ZeException>()) {
-	  ZeLog::log(ZuMv(r.template p<ZeException>()));
+	  ZiLog::log(ZuMv(r.template p<ZeException>()));
 	  gtfo();
 	}
 	CHECK(type, "signature verification", r.template p<0>());
       });
       if (r.template is<ZeException>()) {
-	ZeLog::log(ZuMv(r.template p<ZeException>()));
+	ZiLog::log(ZuMv(r.template p<ZeException>()));
 	gtfo();
       }
     }
@@ -169,10 +169,10 @@ int main(int argc, char **argv)
     save = true;
   }
 
-  ZeLog::init("ZtlsPKTest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-  ZeLog::start();
+  ZiLog::init("ZtlsPKTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   Ztls::Random rng;
   rng.init();
@@ -183,7 +183,7 @@ int main(int argc, char **argv)
   check<SK_EC>(rng, "ec");
   check<SK_ED25519>(rng, "ed25519");
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }

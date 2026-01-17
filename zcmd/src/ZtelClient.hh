@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #ifndef ZtelClient_HH
@@ -36,7 +36,7 @@ using ReqIOBufAlloc = ZiIOBufAlloc<ReqIOBufSize>;
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #ifndef ZcmdClient_HH
@@ -56,7 +56,7 @@ using ReqIOBufAlloc = ZiIOBufAlloc<ReqIOBufSize>;
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiFile.hh>
@@ -283,6 +283,17 @@ private:
   }
 
 public:
+  int process(Ztls::RxCursor &rx) {
+    while (!rx.empty()) {
+      auto span = rx.span();
+      int n = process(span.data(), span.length());
+      if (ZuUnlikely(n < 0)) return -1;
+      if (!n) return 0;
+      rx.advance(n);
+    }
+    return 1;
+  }
+
   int process(const uint8_t *data, unsigned length) {
     if (ZuUnlikely(m_state.load_() == State::Down))
       return -1; // disconnect

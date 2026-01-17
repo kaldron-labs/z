@@ -1,10 +1,10 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// monomorphic (type-erased) meta-stream type
+// monomorphic (type-erased) meta-stream
 // - uses function pointers to wrap any stream type into a single
 //   realized type for compiled interfaces
 

@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // C/C++ pre-processor macros
@@ -91,10 +91,19 @@
   map(arg, first) __VA_OPT__(ZuPP_Defer(ZuPP_MapArg_)()(map, arg, __VA_ARGS__))
 #define ZuPP_MapArg_() ZuPP_MapArg
 
+#define ZuPP_MapArgPair(map, l, r, first, ...) \
+  map(l, r, first) __VA_OPT__(ZuPP_Defer(ZuPP_MapArgPair_)()(map, l, r, __VA_ARGS__))
+#define ZuPP_MapArgPair_() ZuPP_MapArgPair
+
 #define ZuPP_MapArgComma(map, arg, first, ...) \
   map(arg, first) \
   __VA_OPT__(, ZuPP_Defer(ZuPP_MapArgComma_)()(map, arg, __VA_ARGS__))
 #define ZuPP_MapArgComma_() ZuPP_MapArgComma
+
+#define ZuPP_MapArgPairComma(map, l, r, first, ...) \
+  map(l, r, first) \
+  __VA_OPT__(, ZuPP_Defer(ZuPP_MapArgPairComma_)()(map, l, r, __VA_ARGS__))
+#define ZuPP_MapArgPairComma_() ZuPP_MapArgPairComma
 
 #define ZuPP_MapIndex(map, i, first, ...) \
   map(i, first) \

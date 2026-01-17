@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // singleton logger
@@ -16,15 +16,16 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZtRegex.hh>
+#include <zlib/ZtJSON.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
-ZeLog::ZeLog() : m_level{1}
+ZiLog::ZiLog() : m_level{1}
 {
   init_();
 }
 
-ZeLog::~ZeLog()
+ZiLog::~ZiLog()
 {
   if (!m_ring.closed()) {
     if (m_thread) {
@@ -37,11 +38,11 @@ ZeLog::~ZeLog()
   }
 }
 
-ZeLog *ZeLog::instance()
+ZiLog *ZiLog::instance()
 {
-  static constexpr auto ctor = []() { return new ZeLog(); };
+  static constexpr auto ctor = []() { return new ZiLog(); };
   return
-    ZmSingleton<ZeLog,
+    ZmSingleton<ZiLog,
       ZmSingletonCtor<ctor,
 	ZmSingletonCleanup<ZmCleanup::Library>>>::instance();
 }
@@ -111,35 +112,35 @@ extern "C" {
 }
 #endif
 
-void ZeLog::init_()
+void ZiLog::init_()
 {
   Guard guard(m_lock);
   init__();
 }
 
-void ZeLog::init__()
+void ZiLog::init__()
 {
   if (m_program) return;
 #ifdef linux
   init__(program_invocation_short_name, "user");
 #else
-  init__("ZeLog", "user");
+  init__("ZiLog", "user");
 #endif
 }
 
-void ZeLog::init_(const char *program)
+void ZiLog::init_(const char *program)
 {
   Guard guard(m_lock);
   init__(program, "user");
 }
 
-void ZeLog::init_(const char *program, const char *facility)
+void ZiLog::init_(const char *program, const char *facility)
 {
   Guard guard(m_lock);
   init__(program, facility);
 }
 
-void ZeLog::init__(const char *program, const char *facility)
+void ZiLog::init__(const char *program, const char *facility)
 {
   // intentionally not idempotent - permit re-initialization
   m_program = program;
@@ -170,19 +171,19 @@ void ZeLog::init__(const char *program, const char *facility)
 #endif
 }
 
-void ZeLog::sink_(ZmRef<ZeSink> sink)
+void ZiLog::sink_(ZmRef<ZiSink> sink)
 {
   Guard guard(m_lock);
   m_sink = sink;
 }
 
-void ZeLog::start_()
+void ZiLog::start_()
 {
   Guard guard(m_lock);
   start__();
 }
 
-void ZeLog::start__()
+void ZiLog::start__()
 {
   if (m_thread) return;
   m_ring.init(ZmRingParams{m_bufSize});
@@ -195,15 +196,15 @@ void ZeLog::start__()
       ZmThreadParams().name("log").priority(ZmThreadPriority::Low)};
 }
 
-void ZeLog::forked_()
+void ZiLog::forked_()
 {
   Guard guard(m_lock);
   try { start__(); } catch (...) {
-    throw ZeString{"ZeLog::start failed!"};
+    throw ZeEXCEPT(Fatal, "ZiLog", "start failed!");
   }
 }
 
-void ZeLog::stop_()
+void ZiLog::stop_()
 {
   ZmThread thread;
   {
@@ -217,7 +218,7 @@ void ZeLog::stop_()
   m_ring.close();
 }
 
-void ZeLog::work_()
+void ZiLog::work_()
 {
   for (;;) {
     if (void *ptr = m_ring.shift()) {
@@ -228,7 +229,7 @@ void ZeLog::work_()
   }
 }
 
-ZmRef<ZeSink> ZeLog::sink_()
+ZmRef<ZiSink> ZiLog::sink_()
 {
   Guard guard(m_lock);
   if (ZuUnlikely(!m_sink)) {
@@ -241,13 +242,13 @@ ZmRef<ZeSink> ZeLog::sink_()
   return m_sink;
 }
 
-void ZeLog::log__(Fn &fn)
+void ZiLog::log__(Fn &fn)
 {
   if (ZuUnlikely(!m_ring.ctrl())) {
     Guard guard(m_lock);
     if (!m_program) init__();
     try { start__(); } catch (...) {
-      throw ZeString{"ZeLog::start failed!"};
+      throw ZeEXCEPT(Fatal, "ZiLog", "start failed!");
     }
   }
   unsigned size = fn.pushSize();
@@ -258,9 +259,9 @@ void ZeLog::log__(Fn &fn)
   }
 }
 
-void ZeLog::age_()
+void ZiLog::age_()
 {
-  ZmRef<ZeSink> sink;
+  ZmRef<ZiSink> sink;
   {
     Guard guard(m_lock);
     sink = m_sink;
@@ -268,23 +269,18 @@ void ZeLog::age_()
   if (sink) sink->age();
 }
 
-void ZeSysSink::pre(ZeLogBuf &buf, const ZeEventInfo &info)
+void ZiSysSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
 {
-#ifndef _WIN32
-  if (info.severity == Ze::Debug || info.severity == Ze::Fatal)
-    buf << '\"' << Ze::file(info.file) << "\":" <<
-      ZuBoxed(info.line) << ' ';
-  buf << Ze::function(info.function) << ' ';
-#else
+#ifdef _WIN32
   buf << ZuBoxed(info.tid) << " - ";
+#endif
   if (info.severity == Ze::Debug || info.severity == Ze::Fatal)
     buf << '\"' << Ze::file(info.file) << "\":" <<
       ZuBoxed(info.line) << ' ';
-  buf << Ze::function(info.function) << ' ';
-#endif
+  buf << '[' << info.component << "] " << Ze::function(info.function) << "() ";
 }
 
-void ZeSysSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
+void ZiSysSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
 {
   buf << '\n';
 
@@ -302,33 +298,49 @@ void ZeSysSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 #endif
 }
 
-// suppress security warnings about fopen()
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable:4996)
-#endif
-
-void ZeFileSink::init()
+static void ageFile(const Zi::Path &path, unsigned age)
 {
-  if (!m_path) m_path << ZeLog::program() << ".log";
+  unsigned size = path.length() + ZuBoxed(age).length() + 4;
+
+  Zi::Path prevName_(size), nextName_(size), sideName_(size);
+  Zi::Path *prevName = &prevName_;
+  Zi::Path *nextName = &nextName_;
+  Zi::Path *sideName = &sideName_;
+
+  *prevName << path;
+  bool last = false;
+  unsigned i;
+  for (i = 0; i < age && !last; i++) {
+    nextName->length(0);
+    *nextName << path << '.' << ZuBoxed(i + 1);
+    sideName->length(0);
+    *sideName << *nextName << '_';
+    last = (ZiFile::rename(*nextName, *sideName) != Zi::OK);
+    ZiFile::rename(*prevName, *nextName);
+    Zi::Path *oldName = prevName;
+    prevName = sideName;
+    sideName = oldName;
+  }
+  if (i == age) ZiFile::remove(*prevName);
+}
+
+void ZiFileSink::init()
+{
+  if (!m_path) m_path << ZiLog::program() << ".log";
 
   if (m_path != "&2") {
-    age_();
-    m_file = fopen(m_path, "w");
+    ageFile(m_path, m_age);
+    m_file.open(m_path, ZiFile::Write | ZiFile::GC);
   }
 
-  if (!m_file)
-    m_file = stderr;
-  else
-    setvbuf(m_file, 0, _IOLBF, ZeLog_BUFSIZ);
+  if (!m_file) m_file = ZiFile::stdErr();
 }
 
-ZeFileSink::~ZeFileSink()
+ZiFileSink::~ZiFileSink()
 {
-  if (m_file) fclose(m_file);
 }
 
-void ZeFileSink::pre(ZeLogBuf &buf, const ZeEventInfo &info)
+void ZiFileSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
 {
   ZuDateTime d{info.time};
 
@@ -338,10 +350,10 @@ void ZeFileSink::pre(ZeLogBuf &buf, const ZeEventInfo &info)
   if (info.severity == Ze::Debug || info.severity == Ze::Fatal)
     buf << '\"' << Ze::file(info.file) << "\":" <<
       ZuBoxed(info.line) << ' ';
-  buf << Ze::function(info.function) << "() ";
+  buf << '[' << info.component << "] " << Ze::function(info.function) << "() ";
 }
 
-void ZeFileSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
+void ZiFileSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
 {
   buf << '\n';
 
@@ -349,63 +361,61 @@ void ZeFileSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 
   if (buf[len - 1] != '\n') buf[len - 1] = '\n';
 
-  fwrite(buf.data(), 1, len, m_file);
-  if (info.severity > Ze::Debug) fflush(m_file);
+  m_file.write(buf.data(), len);
 }
 
-void ZeFileSink::age()
+void ZiFileSink::age()
 {
-  Guard guard(m_lock);
+  if (m_path == "&2") return;
 
-  fclose(m_file);
-  age_();
-  m_file = fopen(m_path, "w");
+  m_file.close();
+  ageFile(m_path, m_age);
+  m_file.open(m_path, ZiFile::Write | ZiFile::GC);
 }
 
-void ZeFileSink::age_()
+void ZiCSVSink::init()
 {
-  unsigned size = m_path.length() + ZuBoxed(m_age).length() + 4;
+  if (!m_path) m_path << ZiLog::program() << ".csv";
 
-  ZeFileName prevName_(size), nextName_(size), sideName_(size);
-  ZeFileName *prevName = &prevName_;
-  ZeFileName *nextName = &nextName_;
-  ZeFileName *sideName = &sideName_;
+  ageFile(m_path, m_age);
 
-  *prevName << m_path;
-  bool last = false;
-  unsigned i;
-  for (i = 0; i < m_age && !last; i++) {
-    nextName->length(0);
-    *nextName << m_path << '.' << ZuBoxed(i + 1);
-    sideName->length(0);
-    *sideName << *nextName << '_';
-    last = (::rename(*nextName, *sideName) < 0);
-    ::rename(*prevName, *nextName);
-    ZeFileName *oldName = prevName;
-    prevName = sideName;
-    sideName = oldName;
-  }
-  if (i == m_age) ::remove(*prevName);
+  new (m_writer.new_<Writer>()) Writer(m_path);
 }
 
-void ZeDebugSink::init()
+ZiCSVSink::~ZiCSVSink() { }
+
+void ZiCSVSink::pre(ZiLogBuf &, const ZeEventInfo &) { }
+
+void ZiCSVSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
 {
-  m_path << ZeLog::program() << ".log." << ZuBoxed(Zm::getPID());
-
-  if (m_path != "&2") m_file = fopen(m_path, "w");
-
-  if (!m_file)
-    m_file = stderr;
-  else
-    setvbuf(m_file, 0, _IOLBF, ZeLog_BUFSIZ);
+  ZiSinkEvent event(buf, info);
+  ZtJSON::save<ZuFacet::Core, ZtFieldFilter::All>(std::cerr, event);
+  std::cerr << '\n';
+  m_writer.p<Writer>()(event);
 }
 
-ZeDebugSink::~ZeDebugSink()
+void ZiCSVSink::age()
 {
-  if (m_file) fclose(m_file);
+  m_writer.new_<void>();
+  ageFile(m_path, m_age);
+  new (m_writer.new_<Writer>()) Writer(m_path);
 }
 
-void ZeDebugSink::pre(ZeLogBuf &buf, const ZeEventInfo &info)
+void ZiDebugSink::init()
+{
+  m_path << ZiLog::program() << ".log." << ZuBoxed(Zm::getPID());
+
+  if (m_path != "&2")
+    m_file.open(m_path, ZiFile::Write | ZiFile::GC);
+
+  if (!m_file) m_file = ZiFile::stdErr();
+}
+
+ZiDebugSink::~ZiDebugSink()
+{
+}
+
+void ZiDebugSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
 {
   ZuTime d = info.time - m_started;
 
@@ -415,10 +425,10 @@ void ZeDebugSink::pre(ZeLogBuf &buf, const ZeEventInfo &info)
   if (info.severity == Ze::Debug || info.severity == Ze::Fatal)
     buf << '\"' << Ze::file(info.file) << "\":" <<
       ZuBoxed(info.line) << ' ';
-  buf << Ze::function(info.function) << "() ";
+  buf << '[' << info.component << "] " << Ze::function(info.function) << "() ";
 }
 
-void ZeDebugSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
+void ZiDebugSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
 {
   buf << '\n';
 
@@ -426,11 +436,10 @@ void ZeDebugSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 
   if (buf[len - 1] != '\n') buf[len - 1] = '\n';
 
-  fwrite(buf.data(), 1, len, m_file);
-  fflush(m_file);
+  m_file.write(buf.data(), len);
 }
 
-void ZeLambdaSink_::pre(ZeLogBuf &buf, const ZeEventInfo &info)
+void ZiLambdaSink_::pre(ZiLogBuf &buf, const ZeEventInfo &info)
 {
   ZuDateTime d{info.time};
 
@@ -440,9 +449,5 @@ void ZeLambdaSink_::pre(ZeLogBuf &buf, const ZeEventInfo &info)
   if (info.severity == Ze::Debug || info.severity == Ze::Fatal)
     buf << '\"' << Ze::file(info.file) << "\":" <<
       ZuBoxed(info.line) << ' ';
-  buf << Ze::function(info.function) << "() ";
+  buf << '[' << info.component << "] " << Ze::function(info.function) << "() ";
 }
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif

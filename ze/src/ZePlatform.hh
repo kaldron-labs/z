@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // error handling - platform primitives
@@ -29,6 +29,7 @@
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuDateTime.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
@@ -53,7 +54,7 @@
 // strerror() on Unix will not work with EAI_ codes - on Unix we
 // need to check for < 0 explicitly and call gai_strerror()
 
-#define ZeLog_BUFSIZ (32<<10)	// caps individual log message size to 32k
+#define ZiLog_BUFSIZ (32<<10)	// caps individual log message size to 32k
 
 // normalized severity levels
 namespace Ze {
@@ -137,21 +138,32 @@ struct ZeEventInfo {
 
   ZuTime	time;
   ThreadID	tid = 0;
-  int		severity = -1;	// Ze:: Debug, Info, Warning, Error, Fatal
-  const char	*file = nullptr;
-  int		line = -1;
-  const char	*function = nullptr;
+  ZuCSpan	file;
+  int32_t	line = -1;
+  ZuCSpan	function;
+  ZuCSpan	component;
+  int8_t	severity = -1;	// Ze:: Debug, Info, Warning, Error, Fatal
 
   ZeEventInfo() = default;
 
   ZeEventInfo(
-      int severity_,
-      const char *file_, int line_,
-      const char *function_) :
+      int8_t severity_,
+      ZuCSpan file_, unsigned line_,
+      ZuCSpan function_, ZuCSpan component_) :
     time{Zm::now()}, tid{Zm::getTID()},
-    severity{severity_},
-    file{file_}, line{line_},
-    function{function_} { }
+    file{file_}, line{int32_t(line_)},
+    function{function_}, component{component_},
+    severity{severity_} { }
+
+  ZeEventInfo(
+      ZuTime time_, ThreadID tid_,
+      int8_t severity_,
+      ZuCSpan file_, unsigned line_,
+      ZuCSpan function_, ZuCSpan component_) :
+    time{time_}, tid{tid_},
+    file{file_}, line{int32_t(line_)},
+    function{function_}, component{component_},
+    severity{severity_} { }
 
   ZeEventInfo(const ZeEventInfo &) = default;
   ZeEventInfo &operator =(const ZeEventInfo &) = default;
@@ -170,19 +182,19 @@ struct ZeEventInfo {
 //   during concurrent fan-in
 // - the log buffer serves as both a consistent interface type and a
 //   mechanism to properly sequence interleaved output
-// - ZeLogBuf intentionally limits any single log entry to ZeLOG_BUFSIZ
-using ZeLogBuf = ZuCArray<ZeLog_BUFSIZ>;
+// - ZiLogBuf intentionally limits any single log entry to ZiLog_BUFSIZ
+using ZiLogBuf = ZuCArray<ZiLog_BUFSIZ>;
 
 // message as function delegate
-using ZeMsgFn = ZmFn<void(ZeLogBuf &, const ZeEventInfo &)>;
+using ZeMsgFn = ZmFn<void(ZiLogBuf &, const ZeEventInfo &)>;
 
 // event base class
 struct ZeAnyEvent : public ZeEventInfo {
   ZeAnyEvent(
-      int severity_,
-      const char *file_, int line_,
-      const char *function_) :
-    ZeEventInfo(severity_, file_, line_, function_) { }
+      int8_t severity,
+      ZuCSpan file, unsigned line,
+      ZuCSpan function, ZuCSpan component) :
+    ZeEventInfo(severity, file, line, function, component) { }
 
   virtual ZeMsgFn fn() const = 0;
 
@@ -199,7 +211,7 @@ protected:
 
 public:
   template <typename S> void print(S &s) const {
-    auto buf = ZmLocal(ZeLogBuf);
+    auto buf = ZmLocal(ZiLogBuf);
     fn()(*buf, *this);
     s << *buf;
   }
@@ -213,10 +225,11 @@ struct ZeEvent : public ZeAnyEvent {
 
   template <typename L_>
   ZeEvent(
-      int severity_,
-      const char *file_, int line_,
-      const char *function_, L_ &&l_) :
-    ZeAnyEvent(severity_, file_, line_, function_),
+      int8_t severity,
+      ZuCSpan file, unsigned line,
+      ZuCSpan function, ZuCSpan component,
+      L_ &&l_) :
+    ZeAnyEvent(severity, file, line, function, component),
     l{ZuFwd<L_>(l_)} { }
 
   template <typename S, typename L_ = L>
@@ -232,14 +245,14 @@ struct ZeEvent : public ZeAnyEvent {
 
   template <typename L_ = L>
   decltype(ZuDeclVal<L_ &>()(
-	ZuDeclVal<ZeLogBuf &>()),
+	ZuDeclVal<ZiLogBuf &>()),
       ZeMsgFn())
   fn_() const {
     return {[l_ = ZuMv(l)](auto &s, const auto &) mutable { l_(s); }};
   }
   template <typename L_ = L>
   decltype(ZuDeclVal<L_ &>()(
-	ZuDeclVal<ZeLogBuf &>(),
+	ZuDeclVal<ZiLogBuf &>(),
 	ZuDeclVal<const ZeEventInfo &>()),
       ZeMsgFn())
   fn_() const {
@@ -269,23 +282,23 @@ struct ZeEvent<ZeMsgFn> : public ZeAnyEvent {
 
   template <
     typename L_,
-    decltype(ZuDeclVal<L_ &>()(ZuDeclVal<ZeLogBuf &>()), int()) = 0>
+    decltype(ZuDeclVal<L_ &>()(ZuDeclVal<ZiLogBuf &>()), int()) = 0>
   ZeEvent(
-      int severity_,
-      const char *file_, int line_,
-      const char *function_, L_ l_) :
-    ZeAnyEvent(severity_, file_, line_, function_),
+      int8_t severity,
+      ZuCSpan file, unsigned line,
+      ZuCSpan function, ZuCSpan component, L_ l_) :
+    ZeAnyEvent(severity, file, line, function, component),
     l{Mk::fn([l_ = ZuMv(l_)](auto &s, const auto &) mutable { l_(s); })} { }
   template <
     typename L_,
     decltype(ZuDeclVal<L_ &>()(
-	ZuDeclVal<ZeLogBuf &>(),
+	ZuDeclVal<ZiLogBuf &>(),
 	ZuDeclVal<const ZeEventInfo &>()), int()) = 0>
   ZeEvent(
-      int severity_,
-      const char *file_, int line_,
-      const char *function_, L_ l_) :
-    ZeAnyEvent(severity_, file_, line_, function_),
+      int8_t severity,
+      ZuCSpan file, unsigned line,
+      ZuCSpan function, ZuCSpan component, L_ l_) :
+    ZeAnyEvent(severity, file, line, function, component),
     l{Mk::fn(ZuMv(l_))} { }
 
   ZeEvent() = default;
@@ -305,7 +318,7 @@ struct ZeEvent<ZeMsgFn> : public ZeAnyEvent {
 using ZeException = ZeEvent<ZeMsgFn>;
 
 template <typename L>
-ZeEvent(int, const char *, int, const char *, L) -> ZeEvent<ZuDecay<L>>;
+ZeEvent(int8_t, ZuCSpan, unsigned, ZuCSpan, ZuCSpan, L) -> ZeEvent<ZuDecay<L>>;
 
 // convert string/printable to lambda
 namespace ZeMsg_ {
@@ -345,33 +358,35 @@ inline auto fn(Msg &&msg) {
 } // ZeMsg_
 
 // make a polymorphic (typed) event
-template <typename File, typename Function, typename Msg>
+template <typename Msg>
 auto ZeMkEvent(
-    int severity,
-    File &&file, int line,
-    Function &&function, Msg &&msg) {
+    int8_t severity,
+    ZuCSpan file, unsigned line,
+    ZuCSpan function, ZuCSpan component,
+    Msg &&msg) {
   return ZeEvent(
-      severity, ZuFwd<File>(file), line, ZuFwd<Function>(function),
-      ZeMsg_::fn(ZuFwd<Msg>(msg)));
+    severity, file, line, function, component,
+    ZeMsg_::fn(ZuFwd<Msg>(msg)));
 }
-#define ZeEVENT_(sev, msg) \
-  ZeMkEvent(sev, __FILE__, __LINE__, ZuFnName, msg)
-#define ZeEVENT(sev, msg) ZeEVENT_(Ze:: sev, msg)
+#define ZeEVENT_(sev, component, msg) \
+  ZeMkEvent(sev, __FILE__, __LINE__, ZuFnName, component, msg)
+#define ZeEVENT(sev, component, msg) ZeEVENT_(Ze:: sev, component, msg)
 
 // make a monomorphic (type-erased) event
 // - unlike the regular typed event, ZeException can be copied and thrown
-template <typename File, typename Function, typename Msg>
+template <typename Msg>
 ZeException ZeMkException(
-    int severity,
-    File &&file, int line,
-    Function &&function, Msg &&msg) {
+    int8_t severity,
+    ZuCSpan file, unsigned line,
+    ZuCSpan function, ZuCSpan component,
+    Msg &&msg) {
   return ZeException(
-      severity, ZuFwd<File>(file), line, ZuFwd<Function>(function),
-      ZeMsg_::fn(ZuFwd<Msg>(msg)));
+    severity, file, line, function, component,
+    ZeMsg_::fn(ZuFwd<Msg>(msg)));
 }
-#define ZeEXCEPT_(sev, msg) \
-  ZeMkException(sev, __FILE__, __LINE__, ZuFnName, msg)
-#define ZeEXCEPT(sev, msg) ZeEXCEPT_(Ze:: sev, msg)
+#define ZeEXCEPT_(sev, component, msg) \
+  ZeMkException(sev, __FILE__, __LINE__, ZuFnName, component, msg)
+#define ZeEXCEPT(sev, component, msg) ZeEXCEPT_(Ze:: sev, component, msg)
 
 namespace Ze {
 

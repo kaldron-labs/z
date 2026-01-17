@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // heap-allocated C string class (i.e. null-terminated)
@@ -41,6 +41,7 @@
 
 #include <zlib/ZuVStream.hh>
 #include <zlib/ZmVHeap.hh>
+#include <zlib/ZmAlloc.hh>
 
 #include <zlib/ZtPlatform.hh>
 #include <zlib/ZtArray.hh>
@@ -187,59 +188,60 @@ private:
   // from char2 string (requires conversion)
   template <typename U, typename V = Char2>
   struct IsChar2String : public ZuBool<
-    (ZuTraits<U>::IsArray || ZuTraits<U>::IsString) &&
+    (ZuTraits<U>::IsSpan || ZuTraits<U>::IsString) &&
     bool(ZuEquiv<typename ZuTraits<U>::Elem, V>{})> { };
   template <typename U, typename R = void>
   using MatchChar2String = ZuIfT<IsChar2String<U>{}, R>;
 
   // from individual char2 (requires conversion, char->wchar_t only)
-  template <typename U, typename V = Char2> struct IsChar2 : public ZuBool<
-    bool(ZuEquiv<U, V>{}) &&
-    !bool(ZuEquiv<U, wchar_t>{})> { };
+  template <typename U, typename V = Char2>
+  struct IsChar2 : public ZuBool<
+    bool(ZuIsSame<ZuDecay<U>, V>{})/* &&
+    !ZuIsSame<ZuDecay<U>, wchar_t>{} */> { };
   template <typename U, typename R = void>
   using MatchChar2 = ZuIfT<IsChar2<U>{}, R>;
 
   // from printable type (if this is a char array)
-  template <typename U, typename V = Char> struct IsPrint : public ZuBool<
+  template <typename U>
+  struct IsPrint : public ZuBool<
     !IsString<U>{} &&
     !IsAnyCString<U>{} &&
     !IsChar2String<U>{} &&
-    bool(ZuEquiv<char, V>{}) &&
     ZuPrint<U>::OK && !ZuPrint<U>::String> { };
   template <typename U, typename R = void>
   using MatchPrint = ZuIfT<IsPrint<U>{}, R>;
-  template <typename U, typename V = Char>
-  struct IsPDelegate : public ZuBool<
-    bool(ZuEquiv<char, V>{}) &&
-    ZuPrint<U>::Delegate> { };
+  template <typename U>
+  struct IsPDelegate : public ZuBool<ZuPrint<U>::Delegate> { };
   template <typename U, typename R = void>
   using MatchPDelegate = ZuIfT<IsPDelegate<U>{}, R>;
-  template <typename U, typename V = Char> struct IsPBuffer :
-    public ZuBool<bool(ZuEquiv<char, V>{}) && ZuPrint<U>::Buffer> { };
+  template <typename U>
+  struct IsPBuffer : public ZuBool<ZuPrint<U>::Buffer> { };
   template <typename U, typename R = void>
   using MatchPBuffer = ZuIfT<IsPBuffer<U>{}, R>;
 
+  // from individual char
+  template <typename U, typename V = Char>
+  struct IsChar : public ZuBool<
+    !ZuIsSame<V, char>{} ? bool(ZuIsSame<ZuDecay<U>, V>{}) : bool(ZuEquiv<U, V>{})> { };
+  template <typename U, typename R = void>
+  using MatchChar = ZuIfT<IsChar<U>{}, R>;
+
   // from any other real and primitive type (integers, floating point, etc.)
-  template <typename U, typename V = Char> struct IsReal : public ZuBool<
-    bool(ZuEquiv<char, V>{}) && !bool(ZuEquiv<U, V>{}) &&
+  template <typename U>
+  struct IsReal : public ZuBool<
+    !IsChar<U>{} && !IsChar2<U>{} &&
     ZuTraits<U>::IsReal && ZuTraits<U>::IsPrimitive &&
     !ZuTraits<U>::IsArray> { };
   template <typename U, typename R = void>
   using MatchReal = ZuIfT<IsReal<U>{}, R>;
 
   // from primitive pointer (not an array, string, or otherwise printable)
-  template <typename U, typename V = Char> struct IsPtr : public ZuBool<
-    bool(ZuEquiv<char, V>{}) &&
+  template <typename U>
+  struct IsPtr : public ZuBool<
     ZuTraits<U>::IsPointer && ZuTraits<U>::IsPrimitive &&
     !ZuTraits<U>::IsArray && !ZuTraits<U>::IsString> { };
   template <typename U, typename R = void>
   using MatchPtr = ZuIfT<IsPtr<U>{}, R>;
-
-  // from individual char
-  template <typename U, typename V = Char> struct IsChar :
-    public ZuBool<bool(ZuEquiv<U, V>{})> { };
-  template <typename U, typename R = void>
-  using MatchChar = ZuIfT<IsChar<U>{}, R>;
 
   // limit member operator <<() overload resolution to supported types
   template <typename U> struct IsStreamable : public ZuBool<
@@ -260,8 +262,7 @@ private:
   // - except for integer types that are also character element types
   template <typename U, typename V = Char>
   struct IsCtorSize : public ZuBool<
-    ZuTraits<U>::IsIntegral &&
-    (sizeof(U) > 2 || !ZuIsSame<ZuNormChar<V>, ZuNormChar<U>>{})> { };
+    ZuTraits<U>::IsIntegral && (sizeof(U) > 2 || !ZuEquiv<V, U>{})> { };
   template <typename U, typename R = void>
   using MatchCtorSize = ZuIfT<IsCtorSize<U>{}, R>;
   // disambiguate ZuBox<int>, etc.
@@ -315,14 +316,14 @@ private:
     ZuSpan<const Char2> s(s_);
     uint64_t o = ZuUTF<Char, Char2>::len(s);
     if (!o) { null_(); return; }
-    length_(ZuUTF<Char, Char2>::cvt(ZuSpan<Char>(alloc_(o + 1, 0), o), s));
+    length_(ZuUTF<Char, Char2>::cvt({alloc_(o + 1, 0), o}, s));
   }
 
   template <typename C> MatchChar2<C> ctor(C c) {
     ZuSpan<const Char2> s(&c, 1);
     uint64_t o = ZuUTF<Char, Char2>::len(s);
     if (!o) { null_(); return; }
-    length_(ZuUTF<Char, Char2>::cvt(ZuSpan<Char>(alloc_(o + 1, 0), o), s));
+    length_(ZuUTF<Char, Char2>::cvt({alloc_(o + 1, 0), o}, s));
   }
 
   template <typename P> MatchCtorPDelegate<P> ctor(const P &p)
@@ -330,7 +331,15 @@ private:
   template <typename P> MatchCtorPBuffer<P> ctor(const P &p) {
     unsigned o = ZuPrint<P>::length(p);
     if (!o) { null_(); return; }
-    length_(ZuPrint<P>::print(alloc_(o + 1, 0), o, p));
+    if constexpr (ZuIsSame<Char, char>{}) {
+      length_(ZuPrint<P>::print(alloc_(o + 1, 0), o, p));
+    } else {
+      auto buf = ZmAlloc(char, o);
+      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      o = ZuUTF<Char, Char2>::len(s);
+      if (!o) { null_(); return; }
+      length_(ZuUTF<Char, Char2>::cvt({alloc_(o + 1, 0), o}, s));
+    }
   }
 
   template <typename V> MatchCtorSize<V> ctor(V size) {
@@ -361,27 +370,15 @@ public:
   template <typename S> MatchChar2String<S> copy(S &&s_) {
     ZuSpan<const Char2> s(s_);
     uint64_t o = ZuUTF<Char, Char2>::len(s);
-    if (ZuUnlikely(!o)) { length_(0); return; }
-    uint64_t z = size();
-    Char *data;
-    if (!owned() || o >= z)
-      data = size(o + 1);
-    else
-      data = data_();
-    length_(ZuUTF<Char, Char2>::cvt(ZuSpan<Char>(data, o), s));
+    if (!o) { length_(0); return; }
+    length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
   }
 	  
   template <typename C> MatchChar2<C> copy(C c) {
     ZuSpan<const Char2> s(&c, 1);
     uint64_t o = ZuUTF<Char, Char2>::len(s);
-    if (ZuUnlikely(!o)) { length_(0); return; }
-    uint64_t z = size();
-    Char *data;
-    if (!owned() || o >= z)
-      data = size(o + 1);
-    else
-      data = data_();
-    length_(ZuUTF<Char, Char2>::cvt(ZuSpan<Char>(data, o), s));
+    if (!o) { length_(0); return; }
+    length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
   }
 
 public:
@@ -439,26 +436,14 @@ private:
   template <typename S> MatchChar2String<S> assign(S &&s_) {
     ZuSpan<const Char2> s(s_);
     uint64_t o = ZuUTF<Char, Char2>::len(s);
-    uint64_t z = size();
-    if (ZuUnlikely(!o)) { length_(0); return; }
-    Char *data;
-    if (!owned() || o >= z)
-      data = size(o + 1);
-    else
-      data = data_();
-    length_(ZuUTF<Char, Char2>::cvt(ZuSpan<Char>(data, o), s));
+    if (!o) { length_(0); return; }
+    length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
   }
   template <typename C> MatchChar2<C> assign(C c) {
     ZuSpan<const Char2> s(&c, 1);
     uint64_t o = ZuUTF<Char, Char2>::len(s);
-    uint64_t z = size();
-    if (ZuUnlikely(!o)) { length_(0); return; }
-    Char *data;
-    if (!owned() || o >= z)
-      data = size(o + 1);
-    else
-      data = data_();
-    length_(ZuUTF<Char, Char2>::cvt(ZuSpan<Char>(data, o), s));
+    if (!o) { length_(0); return; }
+    length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
   }
 
   template <typename P> MatchPDelegate<P> assign(P &&p) {
@@ -466,14 +451,16 @@ private:
   }
   template <typename P> MatchPBuffer<P> assign(const P &p) {
     unsigned o = ZuPrint<P>::length(p);
-    if (ZuUnlikely(!o)) { length_(0); return; }
-    uint64_t z = size();
-    Char *data;
-    if (!owned() || o >= z)
-      data = size(o + 1);
-    else
-      data = data_();
-    length_(ZuPrint<P>::print(data, o, p));
+    if (!o) { length_(0); return; }
+    if constexpr (ZuIsSame<Char, char>{}) {
+      length_(ZuPrint<P>::print(ensure(o + 1), o, p));
+    } else {
+      auto buf = ZmAlloc(char, o);
+      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      o = ZuUTF<Char, Char2>::len(s);
+      if (!o) { null_(); return; }
+      length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
+    }
   }
 
   template <typename V> MatchReal<V> assign(V v) {
@@ -831,9 +818,10 @@ public:
   }
 
 // ensure size
-  Char *ensure(uint64_t z) {
-    if (ZuLikely(owned() && z <= size_())) return data_();
-    return size(z);
+  Char *ensure(uint64_t o) {
+    uint64_t z = size_();
+    if (ZuLikely(owned() && o <= z)) return data_();
+    return size(grow_(z, o));
   }
 
 // set size
@@ -926,48 +914,86 @@ public:
 private:
   template <typename S>
   MatchString<S, String>
-  add(const S &s) const { return add(s.data_(), s.length()); }
+  add(const S &s) const {
+    return add_([data = s.data_()](Char *ptr, uint64_t length) {
+      if (length) memcpy(ptr, data, length * sizeof(Char));
+      return length;
+    }, s.length());
+  }
   template <typename S>
   MatchAnyCString<S &&, String> add(S &&s_) const {
     ZuSpan<const Char> s(s_);
-    return add(s.data(), s.length());
+    return add_([data = s.data()](Char *ptr, uint64_t length) {
+      if (length) memcpy(ptr, data, length * sizeof(Char));
+      return length;
+    }, s.length());
   }
   template <typename S>
   MatchOtherString<S &&, String> add(S &&s_) const {
     ZuSpan<const Char> s(s_);
-    return add(s.data(), s.length());
+    return add_([data = s.data()](Char *ptr, uint64_t length) {
+      if (length) memcpy(ptr, data, length * sizeof(Char));
+      return length;
+    }, s.length());
   }
   template <typename C>
   MatchChar<C, String> add(C c) const {
-    return add(&c, 1);
+    return add_([c](Char *ptr, uint64_t) { *ptr = c; return 1; }, 1);
   }
 
   template <typename S>
   MatchChar2String<S, String>
-  add(const S &s) const { return add(String(s)); }
+  add(const S &s_) const {
+    ZuSpan<const Char2> s(s_);
+    return add_([s](Char *ptr, uint64_t length) -> uint64_t {
+      if (!length) return 0;
+      return ZuUTF<Char, Char2>::cvt({ptr, length}, s);
+    }, ZuUTF<Char, Char2>::len(s));
+  }
   template <typename C>
   MatchChar2<C, String>
-  add(C c) const { return add(String(c)); }
+  add(C c_) const {
+    Char2 c = c_;
+    return add_([c](Char *ptr, uint64_t length) {
+      return ZuUTF<Char, Char2>::cvt({ptr, length}, {&c, 1});
+    }, ZuUTF<Char, Char2>::len({&c, 1}));
+  }
 
   template <typename P>
   MatchPDelegate<P, String> add(P &&p) const {
-    return add(String(ZuFwd<P>(p)));
+    String s(*this);
+    s.append_(ZuFwd<P>(p));
+    return s;
   }
   template <typename P>
   MatchPBuffer<P, String> add(P &&p) const {
-    return add(String(ZuFwd<P>(p)));
+    unsigned o = ZuPrint<P>::length(p);
+    if (!o) return *this;
+    if constexpr (ZuIsSame<Char, char>{}) {
+      return add_([&p](Char *ptr, uint64_t length) {
+	return ZuPrint<P>::print(ptr, length, p);
+      }, ZuPrint<P>::length(p));
+    } else {
+      auto buf = ZmAlloc(char, o);
+      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      return add_([s](Char *ptr, uint64_t length) -> uint64_t {
+	if (!length) return 0;
+	return ZuUTF<Char, Char2>::cvt({ptr, length}, s);
+      }, ZuUTF<Char, Char2>::len(s));
+    }
   }
 
-  String add(const Char *data, uint64_t length) const {
+  template <typename Add>
+  String add_(Add add, uint64_t length) const {
     uint64_t n = this->length();
     uint64_t o = n + length;
-    if (ZuUnlikely(!o)) return String{};
-    Char *newData = static_cast<Char *>(valloc((o + 1) * sizeof(Char)));
-    if (!newData) throw std::bad_alloc{};
-    if (n) memcpy(newData, data_(), n * sizeof(Char));
-    if (length) memcpy(newData + n, data, length * sizeof(Char));
-    newData[o] = 0;
-    return String{newData, o, o + 1, true};
+    if (!o) return String{};
+    String s(o + 1);
+    auto data = s.data_();
+    if (n) memcpy(data, data_(), n * sizeof(Char));
+    length = add(data + n, length);
+    s.length_(n + length); // length may have been reduced
+    return s;
   }
 
 public:
@@ -983,67 +1009,105 @@ public:
 private:
   template <typename S>
   MatchString<S> append_(const S &s) {
+    if (ZuUnlikely(!s.length())) return;
     if constexpr (ZuIsSame<S, String>{})
       if (this == &s) {
-	String s_ = s;
-	splice__(0, length(), 0, s_.data_(), s_.length());
+	auto buf = ZmAlloc(Char, s.length());
+	memcpy(&buf[0], s.data_(), s.length() * sizeof(Char));
+	append__([data = &buf[0]](Char *ptr, uint64_t rlength) {
+	  memcpy(ptr, data, rlength * sizeof(Char));
+	  return rlength;
+	}, s.length());
 	return;
       }
-    splice__(0, length(), 0, s.data_(), s.length());
+    append__([data = s.data_()](Char *ptr, uint64_t rlength) {
+      memcpy(ptr, data, rlength * sizeof(Char));
+      return rlength;
+    }, s.length());
   }
   template <typename S>
   MatchAnyCString<S> append_(S &&s_) {
     ZuSpan<const Char> s(s_);
-    splice__(0, length(), 0, s.data(), s.length());
+    append__([data = s.data()](Char *ptr, uint64_t rlength) {
+      if (rlength) memcpy(ptr, data, rlength * sizeof(Char));
+      return rlength;
+    }, s.length());
   }
   template <typename S>
   MatchOtherString<S> append_(S &&s_) {
     ZuSpan<const Char> s(s_);
-    splice__(0, length(), 0, s.data(), s.length());
+    append__([data = s.data()](Char *ptr, uint64_t rlength) {
+      if (rlength) memcpy(ptr, data, rlength * sizeof(Char));
+      return rlength;
+    }, s.length());
   }
   template <typename C>
   MatchChar<C> append_(C c) {
     uint64_t n = length();
-    uint64_t z = size_();
-    Char *data;
-    if (!owned() || n + 2 >= z)
-      data = size(grow_(z, n + 2));
-    else
-      data = data_();
+    Char *data = ensure(n + 2);
     data[n++] = c;
     length_(n);
   }
 
   template <typename S>
-  MatchChar2String<S> append_(const S &s) { append_(String(s)); }
+  MatchChar2String<S> append_(const S &s_) {
+    ZuSpan<const Char2> s(s_);
+    append__([s](Char *ptr, uint64_t rlength) -> uint64_t {
+      if (!rlength) return 0;
+      return ZuUTF<Char, Char2>::cvt({ptr, rlength}, s);
+    }, ZuUTF<Char, Char2>::len(s));
+  }
   template <typename C>
-  MatchChar2<C> append_(C c) { append_(String(c)); }
+  MatchChar2<C> append_(C c_) {
+    Char2 c = c_;
+    append__([c](Char *ptr, uint64_t rlength) {
+      return ZuUTF<Char, Char2>::cvt({ptr, rlength}, {&c, 1});
+    }, ZuUTF<Char, Char2>::len({&c, 1}));
+  }
 
-  template <typename P> MatchPDelegate<P> append_(P &&p) {
+  template <typename P>
+  MatchPDelegate<P> append_(P &&p) {
     ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
-  template <typename P> MatchPBuffer<P> append_(const P &p) {
-    uint64_t n = length();
-    uint64_t z = size_();
+  template <typename P>
+  MatchPBuffer<P> append_(P &&p) {
     uint64_t o = ZuPrint<P>::length(p);
-    Char *data;
-    if (!owned() || z <= n + o)
-      data = size(grow_(z, n + o + 1));
-    else
-      data = data_();
-    length_(n + ZuPrint<P>::print(data + n, o, p));
+    if (!o) return;
+    if constexpr (ZuIsSame<Char, char>{}) {
+      append__([&p](Char *ptr, uint64_t length) {
+	return ZuPrint<P>::print(ptr, length, p);
+      }, o);
+    } else {
+      auto buf = ZmAlloc(char, o);
+      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      append__([s](Char *ptr, uint64_t length) {
+	return ZuUTF<Char, Char2>::cvt({ptr, length}, s);
+      }, ZuUTF<Char, Char2>::len(s));
+    }
   }
 
-  template <typename V> MatchReal<V> append_(V v) {
+  template <typename Append>
+  void append__(Append append, uint64_t length) {
+    uint64_t n = this->length();
+    length_(n + append(ensure(n + length + 1) + n, length));
+  }
+
+  template <typename V>
+  MatchReal<V> append_(V v) {
     append_(ZuBoxed(v));
   }
-  template <typename V> MatchPtr<V> append_(V v) {
+  template <typename V>
+  MatchPtr<V> append_(V v) {
     append_(ZuBoxPtr(v).hex<false, ZuFmt::Alt<>>());
   }
 
 public:
   void append(const Char *data, uint64_t length) {
-    if (data) splice__(0, this->length(), 0, data, length);
+    if (!data) return;
+    append__([data](Char *ptr, uint64_t rlength) {
+      if (rlength) memcpy(ptr, data, rlength * sizeof(Char));
+      return rlength;
+    }, length);
   }
 
 // splice()
@@ -1058,15 +1122,15 @@ public:
   }
 
   void splice(String &removed, int64_t offset, int64_t length) {
-    splice__(&removed, offset, length, 0, 0);
+    splice__(&removed, offset, length, [](Char *, uint64_t) -> uint64_t { return 0; }, 0);
   }
 
   void splice(int64_t offset) {
-    splice__(0, offset, INT_MAX, 0, 0);
+    splice__(nullptr, offset, LLONG_MAX, [](Char *, uint64_t) -> uint64_t { return 0; }, 0);
   }
 
   void splice(int64_t offset, int64_t length) {
-    splice__(0, offset, length, 0, 0);
+    splice__(nullptr, offset, length, [](Char *, uint64_t) -> uint64_t { return 0; }, 0);
   }
 
   template <typename S>
@@ -1084,52 +1148,84 @@ private:
   template <typename S>
   MatchString<S> splice_(
       String *removed, int64_t offset, int64_t length, const S &s) {
+    if (ZuUnlikely(!s.length())) {
+      splice__(removed, offset, length, [](Char *, uint64_t) -> uint64_t { return 0; }, 0);
+      return;
+    }
     if constexpr (ZuIsSame<S, String>{})
-      if (this == &s) {
-	String s_ = s;
-	splice__(removed, offset, length, s_.data_(), s_.length());
+      if (ZuUnlikely(this == &s)) {
+	auto buf = ZmAlloc(Char, s.length());
+	memcpy(&buf[0], s.data_(), s.length() * sizeof(Char));
+	splice__(removed, offset, length, [data = &buf[0]](Char *ptr, uint64_t rlength) {
+	  memcpy(ptr, data, rlength * sizeof(Char));
+	  return rlength;
+	}, s.length());
 	return;
       }
-    splice__(removed, offset, length, s.data_(), s.length());
+    splice__(removed, offset, length, [data = s.data_()](Char *ptr, uint64_t rlength) {
+      memcpy(ptr, data, rlength * sizeof(Char));
+      return rlength;
+    }, s.length());
   }
   template <typename S>
   MatchAnyCString<S> splice_(
       String *removed, int64_t offset, int64_t length, S &&s_) {
     ZuSpan<const Char> s(s_);
-    splice__(removed, offset, length, s.data(), s.length());
+    splice__(removed, offset, length, [data = s.data()](Char *ptr, uint64_t rlength) {
+      if (rlength) memcpy(ptr, data, rlength * sizeof(Char));
+      return rlength;
+    }, s.length());
   }
   template <typename S>
   MatchOtherString<S> splice_(
       String *removed, int64_t offset, int64_t length, S &&s_) {
     ZuSpan<const Char> s(s_);
-    splice__(removed, offset, length, s.data(), s.length());
+    splice__(removed, offset, length, [data = s.data()](Char *ptr, uint64_t rlength) {
+      if (rlength) memcpy(ptr, data, rlength * sizeof(Char));
+      return rlength;
+    }, s.length());
   }
   template <typename C>
   MatchChar<C> splice_(
       String *removed, int64_t offset, int64_t length, C c) {
-    splice__(removed, offset, length, &c, 1);
+    splice__(removed, offset, length, [c](Char *ptr, uint64_t) {
+      memcpy(ptr, &c, sizeof(Char));
+    }, 1);
   }
   template <typename S>
   MatchChar2String<S> splice_(
-      String *removed, int64_t offset, int64_t length, const S &s) {
-    splice_(removed, offset, length, String(s));
+      String *removed, int64_t offset, int64_t length, const S &s_) {
+    ZuSpan<const Char2> s(s_);
+    splice__(removed, offset, length, [s](Char *ptr, uint64_t rlength) -> uint64_t {
+      if (!rlength) return 0;
+      return ZuUTF<Char, Char2>::cvt({ptr, rlength}, s);
+    }, ZuUTF<Char, Char2>::len(s));
   }
   template <typename C>
   MatchChar2<C> splice_(
-      String *removed, int64_t offset, int64_t length, C c) {
-    splice_(removed, offset, length, String(c));
+      String *removed, int64_t offset, int64_t length, C c_) {
+    Char2 c = c_;
+    splice__(removed, offset, length, [c](Char *ptr, uint64_t rlength) {
+      return ZuUTF<Char, Char2>::cvt({ptr, rlength}, {&c, 1});
+    }, ZuUTF<Char, Char2>::len({&c, 1}));
   }
 
 public:
   void splice(
       String &removed, int64_t offset, int64_t length,
       const Char *replace, uint64_t rlength) {
-    splice__(&removed, offset, length, replace, rlength);
+    splice__(&removed, offset, length, [replace](Char *ptr, uint64_t rlength) {
+      if (rlength) memcpy(ptr, replace, rlength * sizeof(Char));
+      return rlength;
+    }, rlength);
   }
 
   void splice(
       int64_t offset, int64_t length, const Char *replace, uint64_t rlength) {
-    splice__(0, offset, length, replace, rlength);
+    splice__(nullptr, offset, length, [replace](Char *ptr, uint64_t rlength) {
+      if (rlength) memcpy(ptr, replace, rlength * sizeof(Char));
+      return rlength;
+    }, rlength);
   }
 
   // simple read-only cases
@@ -1160,12 +1256,12 @@ public:
   }
 
 private:
-  void splice__(
-      String *removed,
-      int64_t offset,
-      int64_t length,
-      const Char *replace,
-      uint64_t rlength) {
+  // intentionally forced inline
+  template <typename Replace>
+  ZuInline void splice__(
+    String *removed, int64_t offset, int64_t length,
+    Replace replace, uint64_t rlength)
+  {
     uint64_t n = this->length();
     uint64_t z = size_();
     if (offset < 0) { if ((offset += n) < 0) offset = 0; }
@@ -1180,12 +1276,12 @@ private:
       } else
 	data = data_();
       Zu::strpad(data + n, offset - n);
-      if (rlength) memcpy(data + offset, replace, rlength * sizeof(Char));
-      length_(offset + rlength);
+      rlength = replace(data + offset, rlength);
+      length_(offset + rlength); // rlength may have been reduced
       return;
     }
 
-    if (length == INT_MAX || offset + length > int64_t(n))
+    if (length == LLONG_MAX || offset + length > int64_t(n))
       length = n - offset;
 
     int64_t l = n + rlength - length;
@@ -1199,12 +1295,12 @@ private:
 	newData = data__();
       else {
 	newData = static_cast<Char *>(valloc(z * sizeof(Char)));
-      if (!newData) throw std::bad_alloc{};
+	if (!newData) throw std::bad_alloc{};
       }
       if (oldData != newData && offset)
 	memcpy(newData, oldData, offset * sizeof(Char));
-      if (rlength)
-	memcpy(newData + offset, replace, rlength * sizeof(Char));
+      rlength = replace(newData + offset, rlength);
+      l = n + rlength - length; // rlength may have been reduced
       if (offset + length < int64_t(n) &&
 	  (oldData != newData || int64_t(rlength) != length))
 	memmove(newData + offset + rlength,
@@ -1226,11 +1322,25 @@ private:
     Char *data = data_();
     if (removed) removed->init(data + offset, length);
     if (l > 0) {
-      if (int64_t(rlength) != length && offset + length < int64_t(n))
+      int64_t trailing = int64_t(n) - (offset + length);
+      if (trailing > 0 && int64_t(rlength) > length) {
 	memmove(data + offset + rlength,
 		data + offset + length,
-		(n - (offset + length)) * sizeof(Char));
-      if (rlength) memcpy(data + offset, replace, rlength * sizeof(Char));
+		trailing * sizeof(Char));
+      }
+      auto nrlength = replace(data + offset, rlength);
+      if (trailing > 0) {
+	if (int64_t(rlength) < length) {
+	  memmove(data + offset + nrlength, // NOT rlength
+		  data + offset + length,
+		  trailing * sizeof(Char));
+	} else if (nrlength < rlength) {
+	  memmove(data + offset + nrlength,
+		  data + offset + rlength,
+		  trailing * sizeof(Char));
+	}
+      }
+      l = n + nrlength - length;
     }
     length_(l);
   }

@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // generic I/O queue based on ZmPQueue skip lists, used by ZvEngine
@@ -37,7 +37,7 @@
 
 #include <zlib/ZvQueue.hh>
 
-#include <zlib/zv_msg_id_fbs.h>
+// #include <zlib/zv_msg_id_fbs.h>
 
 // specific protocols should:
 // - declare a message type that is derived from ZvIOMsg
@@ -73,7 +73,8 @@ struct ZvIOMsg_ : public ZmPolymorph {
 
   uint32_t length() const { return length_flags & ~Mask; }
   void length(uint32_t n) {
-    ZeAssert(n <= ~Mask, n, "length(" << n << ") max exceeded", return);
+    ZeAssert(n <= ~Mask, "ZvIOQ",
+      n, "length(" << n << ") max exceeded", return);
     length_flags = (length_flags & Mask) | (n & ~Mask);
   }
   bool skip() const { return length_flags & Skip; }

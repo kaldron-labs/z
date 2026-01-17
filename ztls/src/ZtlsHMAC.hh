@@ -1,10 +1,10 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// mbedtls C++ wrapper - HMAC message digest
+// HMAC wrapper (picotls/OpenSSL backend)
 
 #ifndef ZtlsHMAC_HH
 #define ZtlsHMAC_HH
@@ -13,47 +13,53 @@
 #include <zlib/ZtlsLib.hh>
 #endif
 
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZuSpan.hh>
 
 #include <zlib/ZtlsMD.hh>
 
 namespace Ztls {
 
-// we do not compile-time dispatch to mbedtls_sha* here due to
-// mbedtls HMAC API limitations
-
-template <mbedtls_md_type_t Type = MBEDTLS_MD_SHA256> class HMAC {
+template <MDType Type = SHA256> class HMAC {
 public:
   enum { Size = MD<Type>::Size };
 
-  HMAC() {
-    mbedtls_md_init(&m_ctx);
-    mbedtls_md_setup(&m_ctx,
-      mbedtls_md_info_from_type(mbedtls_md_type_t(Type)), 1);
-  }
-  ~HMAC() {
-    mbedtls_md_free(&m_ctx);
-  }
+  HMAC() { }
+  ~HMAC() { dispose_(); }
 
   ZuInline void start(ZuBSpan a) {
-    mbedtls_md_hmac_starts(&m_ctx, a.data(), a.length());
+    dispose_();
+    m_ctx = ptls_hmac_create(
+      Backend::hash_algorithm(Type), a.data(), a.length());
+    ZmAssert(m_ctx);
   }
 
   ZuInline void update(ZuBSpan a) {
-    mbedtls_md_hmac_update(&m_ctx, a.data(), a.length());
+    ZmAssert(m_ctx);
+    m_ctx->update(m_ctx, a.data(), a.length());
   }
 
   ZuInline void finish(ZuSpan<uint8_t> output) {
     ZmAssert(output.length() >= Size);
-    mbedtls_md_hmac_finish(&m_ctx, &output[0]);
+    ZmAssert(m_ctx);
+    m_ctx->final(m_ctx, &output[0], PTLS_HASH_FINAL_MODE_SNAPSHOT);
   }
 
   ZuInline void reset() {
-    mbedtls_md_hmac_reset(&m_ctx);
+    ZmAssert(m_ctx);
+    uint8_t tmp[Size];
+    m_ctx->final(m_ctx, tmp, PTLS_HASH_FINAL_MODE_RESET);
   }
 
 private:
-  mbedtls_md_context_t	m_ctx;
+  void dispose_() {
+    if (!m_ctx) return;
+    uint8_t tmp[Size];
+    m_ctx->final(m_ctx, tmp, PTLS_HASH_FINAL_MODE_FREE);
+    m_ctx = nullptr;
+  }
+
+  ptls_hash_context_t	*m_ctx = nullptr;
 };
 
 }

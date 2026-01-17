@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // multiplexer configuration
@@ -52,7 +52,7 @@ struct ZvCxnOptions : public ZiCxnOptions {
 	groups->all([this](const ZvCfNode *node) {
 	  ZiIP addr{node->key}, mif{node->get<true>()};
 	  if (!addr || !addr.multicast())
-	    throw ZeEXCEPT(Error, ([
+	    throw ZeEXCEPT(Error, "ZvMxParams", ([
 	      key = ZeString{fullKey(node->owner, node->key)}, addr
 	    ](auto &s) {
 	      s << '"' << key << "\" invalid multicast IP " << addr;

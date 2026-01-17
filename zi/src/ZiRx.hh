@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // IO Rx
@@ -21,7 +21,7 @@
 
 #include <zlib/ZmRef.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZiIOBuf.hh>
@@ -70,7 +70,7 @@ public:
 	return true;
       }
       if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
-	ZeLOG(Error, "TCP message too big / corrupt");
+	ZiLOG(Error, "ZiRx", "TCP message too big / corrupt");
 	io.disconnect();
 	return true;
       }
@@ -148,7 +148,7 @@ public:
 	return true;
       }
       if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
-	ZeLOG(Error, "ZiRx::recv TCP message too big / corrupt");
+	ZiLOG(Error, "ZiRx", "ZiRx::recv TCP message too big / corrupt");
 	io.disconnect();
 	return true;
       }
@@ -214,7 +214,7 @@ public:
       int frameLen = ZuInvoke<Hdr>(impl(buf), buf);
       if (ZuUnlikely(frameLen < 0)) return -1;
       if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
-	ZeLOG(Error, "message too big / corrupt");
+	ZiLOG(Error, "ZiRx", "message too big / corrupt");
 	return -1;
       }
       if (len < unsigned(frameLen)) {
@@ -276,7 +276,7 @@ public:
       int frameLen = ZuInvoke<Hdr>(impl(buf), buf);
       if (ZuUnlikely(frameLen < 0)) return -1;
       if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
-	ZeLOG(Error, "message too big / corrupt");
+	ZiLOG(Error, "ZiRx", "message too big / corrupt");
 	return -1;
       }
       if (len < unsigned(frameLen)) {

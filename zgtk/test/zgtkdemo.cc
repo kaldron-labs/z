@@ -4,7 +4,7 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmTrap.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZGtkApp.hh>
 #include <zlib/ZGtkCallback.hh>
@@ -17,10 +17,10 @@ void start();
 
 int main(int argc, char **argv)
 {
-  ZeLog::init("zgtkdemo");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("zgtkdemo.log")));
-  ZeLog::start();
+  ZiLog::init("zgtkdemo");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("zgtkdemo.log")));
+  ZiLog::start();
 
   ZmTrap::sigintFn([]{ done.post(); });
   ZmTrap::trap();
@@ -51,7 +51,7 @@ int main(int argc, char **argv)
 
   ZmTrap::sigintFn(nullptr);
 
-  ZeLog::stop();
+  ZiLog::stop();
   return 0;
 }
 
@@ -163,7 +163,7 @@ void start()
 
   if (!gtk_builder_add_from_file(builder, "zgtkdemo.glade", &e)) {
     if (e) {
-      ZeLOG(Error, e->message);
+      ZiLOG(Error, e->message);
       g_error_free(e);
     }
     done.post();

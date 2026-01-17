@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdio.h>
@@ -166,6 +166,17 @@ int main()
       // std::cout << "NOK \"" << w1 << "\" != \"" << w2 << "\"\n";
       std::cout << "NOK \"" << s2 << "\" != \"" << s1 << "\"\n";
     }
+  }
+
+  {
+    ZtWString<> w;
+    w << L"hello " << "world" << L'!' << ' ' << 42;
+    ZtString<> s = w;
+    CHECK_(s == "hello world! 42");
+    s = {};
+    s << L"hello " << "world" << L'!' << ' ' << 42;
+    w = s;
+    CHECK_(w == L"hello world! 42");
   }
 
   {

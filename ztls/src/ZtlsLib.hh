@@ -1,10 +1,10 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// mbedtls C++ wrapper
+// picotls/OpenSSL C++ wrapper
 
 #ifndef ZtlsLib_HH
 #define ZtlsLib_HH
@@ -30,7 +30,7 @@
 
 #endif
 
-#include <mbedtls/error.h>
+#include <zlib/ZtlsBackend.hh>
 
 #include <zlib/ZmSpecific.hh>
 
@@ -49,8 +49,7 @@ ZuInline static constexpr bool isspace__(char c) {
 inline ZuCSpan strerror_(int e) {
   char *buf = ZmTLS<StrError>().buf;
   constexpr unsigned N = sizeof(StrError{}.buf);
-  mbedtls_strerror(e, buf, N);
-  unsigned n = N;
+  unsigned n = Backend::format_error(e, buf, N);
   for (unsigned i = 0; i < N; i++) if (!buf[i]) { n = i; break; }
   while (n) if (!isspace__(buf[--n])) { ++n; break; }
   return {&buf[0], n};

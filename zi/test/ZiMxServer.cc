@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
@@ -15,7 +15,7 @@
 
 #include <zlib/ZtArray.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
 
@@ -312,10 +312,10 @@ int main(int argc, char **argv)
   }
   if (!ip || !port) usage();
 
-  ZeLog::init("ZiMxServer");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::debugSink());
-  ZeLog::start();
+  ZiLog::init("ZiMxServer");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::debugSink());
+  ZiLog::start();
 
   Mx mx(ip, port, nAccepts, options, nConnections, maxSend,
       reconnInterval, ZuMv(params));
@@ -332,6 +332,6 @@ int main(int argc, char **argv)
   dumpTimers();
   Global::dumpStats();
 
-  ZeLog::stop();
+  ZiLog::stop();
   return 0;
 }

@@ -14,7 +14,7 @@ pkginclude_HEADERS = \
 	ZuStringFn.hh ZuTraits.hh ZuTuple.hh ZuUnion.hh \
 	Zu_aton.hh Zu_ntoa.hh ZuDecimalFn.hh ZuUTF.hh \
 	ZuDecimal.hh ZuSwitch.hh ZuSort.hh ZuPtr.hh \
-	ZuNormChar.hh ZuEquiv.hh ZuStruct.hh ZuIOResult.hh ZuUnroll.hh \
+	ZuNorm.hh ZuEquiv.hh ZuStruct.hh ZuIOResult.hh ZuUnroll.hh \
 	ZuBitStream.hh ZuStream.hh ZuMostAligned.hh \
 	ZuVStream.hh ZuVArray.hh ZuMArray.hh ZuIter.hh ZuJoin.hh \
 	ZuBase32.hh ZuBase64.hh ZuBase64URL.hh ZuHex.hh \

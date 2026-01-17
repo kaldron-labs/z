@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // socket I/O multiplexing
@@ -12,7 +12,7 @@
 
 #include <zlib/ZtHexDump.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #ifndef _WIN32
 #include <alloca.h>
@@ -226,7 +226,7 @@ inline T *u64_ptr(uint64_t v) {
 #endif /* ZiMultiplex_EPoll */
 
 #define Log(severity, op, result, error) \
-  ZeLOG(severity, ([=](auto &s) { \
+  ZiLOG(severity, "ZiMultiplex", ([=](auto &s) { \
     s << op << ' ' << Zi::ioResult(result) << ' ' << error; \
   }))
 #define Error(op, result, error) Log(Error, op, result, error)
@@ -248,7 +248,7 @@ ZiConnection::~ZiConnection()
   // precautionary code to ensure no leaking of sockets
 
   if (!Zi::nullSocket(m_info.socket)) {
-    ZeLOG(Warning, "~ZiConnection() called with socket still open");
+    ZiLOG(Warning, "ZiMultiplex", "~ZiConnection() called with socket still open");
     Zi::closeSocket(m_info.socket);
   }
 }
@@ -2166,7 +2166,7 @@ void ZiMultiplex::rx()
 #ifdef ZiMultiplex_DEBUG
     now = Zm::now() - now;
     if (now.microsecs() > 1000) {
-      ZeLOG(Info, ZtSprintf<ZeString>("slow epoll_wait(): %lu us", now.microsecs()));
+      ZiLOG(Info, "ZiMultiplex", ZtSprintf<ZeString>("slow epoll_wait(): %lu us", now.microsecs()));
     }
 #endif
 #endif

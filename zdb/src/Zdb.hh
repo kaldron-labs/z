@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Z database
@@ -83,7 +83,7 @@
 #include <zlib/ZtEnum.hh>
 
 #include <zlib/ZePlatform.hh>
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZeAssert.hh>
 
 #include <zlib/ZiFile.hh>
@@ -108,7 +108,7 @@
 
 #if Zdb_DEBUG
 #define ZdbDEBUG(db, e) \
-  do { if ((db)->debug()) ZeLOG(Debug, (e)); } while (0)
+  do { if ((db)->debug()) ZiLOG(Debug, "Zdb", (e)); } while (0)
 #else
 #define ZdbDEBUG(db, e) (void())
 #endif
@@ -361,15 +361,15 @@ public:
   const void *ptr_() const { return const_cast<AnyObject *>(this)->ptr_(); }
 
   virtual void evict() {
-    ZeAssert(m_pinCount <= 0, (), "invalid evict()", return);
+    ZeAssert(m_pinCount <= 0, "Zdb", (), "invalid evict()", return);
     m_pinCount = -1;
   }
   void pin() {
-    ZeAssert(m_pinCount >= 0, (), "invalid pin()", return);
+    ZeAssert(m_pinCount >= 0, "Zdb", (), "invalid pin()", return);
     ++m_pinCount;
   }
   void unpin() {
-    ZeAssert(m_pinCount > 0, (), "invalid unpin()", return);
+    ZeAssert(m_pinCount > 0, "Zdb", (), "invalid unpin()", return);
     --m_pinCount;
   }
 
@@ -545,7 +545,7 @@ struct TableCf {
       unsigned nThreads = threads_.length();
       // ensure nThreads is a power of 2 and <= nShards
       if ((nThreads & (nThreads - 1)) || nThreads > nShards)
-	throw ZeEXCEPT(Error, ([
+	throw ZeEXCEPT(Error, "Zdb", ([
 	  key = ZeString{fullKey(cf, "threads")}, nThreads, nShards = nShards
 	](auto &s) {
 	  s << '"' << key << "\" invalid array size " << nThreads
@@ -942,10 +942,10 @@ private:
     auto record = record_(msg_(buf->hdr()));
     if (record->vn() < 0) return {}; // deleted
     auto data = Zfb::Load::bytes(record->data());
-    ZeAssert(data,
+    ZeAssert(data, "Zdb",
       (id = this->id()), "missing record data in table " << id, return {});
     auto fbo = ZfbStruct::root<T>(&data[0]);
-    ZeAssert(fbo,
+    ZeAssert(fbo, "Zdb",
       (id = this->id()), "bad record data in table " << id, return {});
     ZmRef<Object<T>> object = new Object<T>(this, shard);
     ZfbStruct::new_<T>(object->ptr(), fbo);
@@ -1723,7 +1723,7 @@ public:
 private:
   void state(int n) {
     if (ZuUnlikely(!m_self)) {
-      ZeLOG(Fatal, ([n](auto &s) {
+      ZiLOG(Fatal, "Zdb", ([n](auto &s) {
 	s << "Zdb::state(" << HostState::name(n) <<
 	  ") called out of order";
       }));
@@ -1764,7 +1764,7 @@ public:
 
 private:
   void storeFailed(ZeException e) {
-    ZeLOG(Fatal, ZuMv(e));
+    ZiLogEvent(ZuMv(e));
     run([this]() { fail(); });
   }
 
@@ -1942,7 +1942,7 @@ inline void Table<T>::count(GroupKey<KeyID> key, L l)
   auto countFn = CountFn{ZuMv(context),
     [](Context *context, CountResult result) {
       if (ZuUnlikely(result.is<Event>())) { // error
-	ZeLogEvent(ZuMv(result).p<Event>());
+	ZiLogEvent(ZuMv(result).p<Event>());
 	context->fn(typename Context::Result{});
 	return;
       }
@@ -1975,7 +1975,7 @@ inline void Table<T>::select_(
   auto tupleFn = TupleFn{ZuMv(context),
     [](Context *context, TupleResult result) {
       if (ZuUnlikely(result.is<Event>())) { // error
-	ZeLogEvent(ZuMv(result).p<Event>());
+	ZiLogEvent(ZuMv(result).p<Event>());
 	context->fn(typename Context::Result{}, 0);
 	return;
       }
@@ -2057,10 +2057,10 @@ inline void Table<T>::retrieve_(
     [](Context *context, RowResult result) {
       auto table = context->table;
       if (ZuUnlikely(result.is<Event>())) {
-	ZeLogEvent(ZuMv(result).p<Event>());
+	ZiLogEvent(ZuMv(result).p<Event>());
 	auto db = context->table->db();
-	ZeLOG(Fatal, ([context = ZuMv(context)](auto &s) {
-	  s << "Zdb find of " << context->table->id()
+	ZiLOG(Fatal, "Zdb", ([context = ZuMv(context)](auto &s) {
+	  s << "find of " << context->table->id()
 	    << '/' << context->key << " failed";
 	}));
 	db->run([db]() { db->fail(); }); // trigger failover
@@ -2080,10 +2080,10 @@ inline void Table<T>::retrieve_(
 	  if (object->shard() != shard) {
 	    auto fn = ZuMv(context->fn);
 	    // sharding inconsistency is fatal, the app is broken
-	    ZeLOG(Fatal, ([
+	    ZiLOG(Fatal, "Zdb", ([
 	      context = ZuMv(context), object = ZuMv(object)
 	    ](auto &s) {
-	      s << "Zdb find of " << context->table->id()
+	      s << "find of " << context->table->id()
 		<< '/' << context->key << " failed: object " << *object
 		<< " shard != find context shard " << context->shard;
 	    }));

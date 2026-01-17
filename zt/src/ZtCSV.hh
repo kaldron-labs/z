@@ -1,21 +1,19 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// CSV parser/generator
+// ZtStruct CSV parser/generator
 // - streaming functional-style API (can handle very large datasets)
 // - column binding with ZtStruct
 
-#ifndef ZvCSV_HH
-#define ZvCSV_HH
+#ifndef ZtCSV_HH
+#define ZtCSV_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZtLib_HH
+#include <zlib/ZtLib.hh>
 #endif
-
-#include <stdio.h>
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuBox.hh>
@@ -28,26 +26,19 @@
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
 
-#include <zlib/ZmObject.hh>
-#include <zlib/ZmRBTree.hh>
-#include <zlib/ZmFn.hh>
-
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
-#include <zlib/ZtRegex.hh>
 #include <zlib/ZtStruct.hh>
 #include <zlib/ZtBytesFmt.hh>
 
-#include <zlib/ZePlatform.hh>
+ZuStructFacet(CSV); // canonical CSV facet, others can be defined
 
-#include <zlib/ZiFile.hh>
-
-namespace ZvCSV {
+namespace ZtCSV {
 
 // bytes format
 using namespace ZtBytesFmt;
 
-} // ZvCSV
+} // ZtCSV
 
 namespace ZuFieldProp::CSV { // ZuStruct field properties
 
@@ -91,7 +82,7 @@ using GetIDs = typename GetIDs_<U>::T;
 // GetBytesFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BytesFmt>{}>
 struct GetBytesFmt_ {
-  using T = ZuConstant<uint8_t, ZvCSV::Base64>; // default
+  using T = ZuConstant<uint8_t, ZtCSV::Base64>; // default
 };
 template <typename Props>
 struct GetBytesFmt_<Props, true> {
@@ -102,7 +93,7 @@ using GetBytesFmt = typename GetBytesFmt_<Props>::T;
 
 } // ZuFieldProp::CSV
 
-namespace ZvCSV {
+namespace ZtCSV {
 
 // CSV-specific formatting
 struct Fmt : public ZtFmt::Default {
@@ -172,13 +163,13 @@ struct String {
 // };
 // class A {
 //   ...
-//   friend inline Fmt ZvCSV_StringFmt(A *); // bind Fmt to A
+//   friend inline Fmt ZtCSV_StringFmt(A *); // bind Fmt to A
 // };
 
 ZuDerive(QuoteBuf, // temporary on-stack string buffer for quoting
   (ZtString<
     ZtStringBuiltin<128,
-      ZtStringHeapID<"ZvCSV.Quote",
+      ZtStringHeapID<"ZtCSV.Quote",
 	ZtStringSharded<true>>>>));
 
 struct AsStringDeflt {	// default string formatter
@@ -196,11 +187,11 @@ struct AsStringDeflt {	// default string formatter
   };
 };
 
-} // ZvCSV
+} // ZtCSV
 
-ZvCSV::AsStringDeflt ZvCSV_StringFmt(...);
+ZtCSV::AsStringDeflt ZtCSV_StringFmt(...);
 
-namespace ZvCSV {
+namespace ZtCSV {
 
 // --- output functions
 
@@ -216,35 +207,35 @@ inline void saveValue_(S &s, const T_ &v_)
     s << Quote::String{v_};
   else if constexpr (TypeCode == ZtFieldTC::Bytes) {
     constexpr unsigned Fmt = ZuFieldProp::CSV::GetBytesFmt<Props>{};
-    if constexpr (Fmt == ZvCSV::Base64) {
+    if constexpr (Fmt == ZtCSV::Base64) {
       ZuBSpan v{v_};
       auto n = ZuBase64::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase64::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZvCSV::Base64URL) {
+    } else if constexpr (Fmt == ZtCSV::Base64URL) {
       ZuBSpan v{v_};
       auto n = ZuBase64URL::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase64URL::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZvCSV::Base32) {
+    } else if constexpr (Fmt == ZtCSV::Base32) {
       ZuBSpan v{v_};
       auto n = ZuBase32::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase32::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZvCSV::Hex) {
+    } else if constexpr (Fmt == ZtCSV::Hex) {
       ZuBSpan v{v_};
       auto n = ZuHex::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuHex::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZvCSV::Raw) {
+    } else if constexpr (Fmt == ZtCSV::Raw) {
       s << Quote::String{v_};
     }
   } else if constexpr (TypeCode == ZtFieldTC::Bool) {
@@ -307,7 +298,7 @@ inline void saveValue_(S &s, const T_ &v_)
     auto &fmt = ZmTLS<ZuDateTimeFmt::CSV, (int Fmt::*){}>();
     s << v.fmt(fmt);
   } else if constexpr (TypeCode == ZtFieldTC::UDT) {
-    using Fmt = decltype(ZvCSV_StringFmt(ZuDeclVal<T *>()));
+    using Fmt = decltype(ZtCSV_StringFmt(ZuDeclVal<T *>()));
     using Handler = typename Fmt::template Handler<T>;
     Handler::save(s, v_);
   }
@@ -349,16 +340,16 @@ ZuInline constexpr bool isspace__(char c) {
 
 // returns the number of columns in a CSV header line
 // - returns -1 if the line is incomplete
-ZvExtern int scan(ZuSpan<char> span);
+ZtExtern int scan(ZuSpan<char> span);
 
 // array of spans within a CSV header
-ZuDerive(Header, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZvCSV.Header">>));
+ZuDerive(Header, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZtCSV.Header">>));
 // array of spans within a single cell (yes, Excel has that capability)
-ZuDerive(ArrayCell, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZvCSV.ArrayCell">>));
+ZuDerive(ArrayCell, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZtCSV.ArrayCell">>));
 // individual cell (either a single value span, or an array value)
 ZuDerive(Cell, (ZuUnion<ZuSpan<char>, ArrayCell>));
 // array of spans within a CSV row (body line)
-ZuDerive(Row, (ZtArray<Cell, ZtArrayHeapID<"ZvCSV.Row">>));
+ZuDerive(Row, (ZtArray<Cell, ZtArrayHeapID<"ZtCSV.Row">>));
 // field ID -> column index (used for reading)
 // - each row is split into a Row
 // - each object is loaded from the Row as indexed by Lookup
@@ -385,18 +376,18 @@ struct Lookup : ZuArray<int, Fields::N> {
 // - fills header with scanned spans
 // - returns +ve offset to the next line if a full line was scanned
 // - returns -1 if the line is incomplete
-ZvExtern int split(ZuSpan<char> span, Header &header);
+ZtExtern int split(ZuSpan<char> span, Header &header);
 // splits a body line into comma-separated spans
 // - fills row with scanned spans
 // - splits array cells into elements
 // - returns +ve offset to the next row if a full line was scanned
 // - returns -1 if the line is incomplete
-ZvExtern int split(ZuSpan<char> span, Row &row);
+ZtExtern int split(ZuSpan<char> span, Row &row);
 // idempotently unquote a span
 // - un-quotes strings in-place, mutating the span
 // - uses the byte following the span (the , or \n delimiter) as
 //   a guaranteed null-terminator and an idempotence check
-ZvExtern void unquote(ZuSpan<char> &span);
+ZtExtern void unquote(ZuSpan<char> &span);
 
 template <unsigned TypeCode, typename Props, typename T>
 inline T loadValue_(ZuSpan<char> span)
@@ -415,7 +406,7 @@ inline T loadValue_(ZuSpan<char> span)
     // - zero-fill trailing bytes are used for idempotence
     // - the final trailing byte is used to stash the number of
     //   padding bytes from the original base32/64 encoding
-    if constexpr (Fmt == ZvCSV::Base64) {
+    if constexpr (Fmt == ZtCSV::Base64) {
       unsigned m = ZuBase64::declen(n), l;
       if (bytes[n - 1] >= 4) {
 	l = ZuBase64::decode({&bytes[0], m}, bytes);
@@ -426,7 +417,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZvCSV::Base64URL) {
+    } else if constexpr (Fmt == ZtCSV::Base64URL) {
       unsigned m = ZuBase64URL::declen(n), l;
       if (bytes[n - 1] >= 4) {
 	l = ZuBase64URL::decode({&bytes[0], m}, bytes);
@@ -437,7 +428,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZvCSV::Base32) {
+    } else if constexpr (Fmt == ZtCSV::Base32) {
       unsigned m = ZuBase32::declen(n), l;
       if (bytes[n - 1] >= 8) {
 	l = ZuBase32::decode({&bytes[0], m}, bytes);
@@ -448,7 +439,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZvCSV::Hex) {
+    } else if constexpr (Fmt == ZtCSV::Hex) {
       unsigned m = ZuHex::declen(n);
       if (bytes[n - 1]) {
 	m = ZuHex::decode({const_cast<uint8_t *>(&bytes[0]), m}, bytes);
@@ -456,7 +447,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(m);
       return T(bytes);
-    } else if constexpr (Fmt == ZvCSV::Raw) {
+    } else if constexpr (Fmt == ZtCSV::Raw) {
       return T(bytes);
     }
   } else if constexpr (TypeCode == ZtFieldTC::Bool) {
@@ -500,7 +491,7 @@ inline T loadValue_(ZuSpan<char> span)
     else
       return v;
   } else if constexpr (TypeCode == ZtFieldTC::UDT) {
-    using Fmt = decltype(ZvCSV_StringFmt(ZuDeclVal<T *>()));
+    using Fmt = decltype(ZtCSV_StringFmt(ZuDeclVal<T *>()));
     using Handler = typename Fmt::template Handler<T>;
     return Handler::load(span);
   }
@@ -589,24 +580,12 @@ struct Writer {
   }
 };
 
-using Path = Zi::Path;
-
-ZeException overflow() {
-  return ZeEXCEPT(Error, "maximum row length exceeded");
-}
-
-ZeException ioError(const Path &path, const ZiFile &file) {
-  return ZeEXCEPT(Error, ([path, e = file.error()](auto &s) {
-    s << '"' << path << "\" " << e;
-  }));
-}
-
 // there are two styles of write interface - push and pull
-// - push write(output) or writeFile(path) takes a single parameter
+// - push write(output) takes a single parameter
 //   and relies on the app repeatedly calling the returned writer;
 // - the returned writer evaluates as true in a bool context if ok;
-//   writer.error is the outstanding error event if not ok
-// - pull write(output, fn) or writeFile(path, fn) repeatedly calls
+//   writer.overflow is true if the maximum row length was exceeded
+// - pull write(output, fn) repeatedly calls
 //   fn(auto save) -> bool, where save is a void(const O &) lambda
 //   that should be called by the app at most once to write the next
 //   row; fn should return true to continue, false to stop
@@ -620,7 +599,7 @@ struct Push : public Writer<O, Facet> {
   using Base = Writer<O, Facet>;
 
   Out		&out;
-  ZeException	error;
+  bool		overflow = false;	// maximum row length exceeded
 
 private:
   void writeHeader() {
@@ -628,7 +607,7 @@ private:
     ZuStream buf{&buf_[0], MaxRowLen};
     this->saveHdr(buf);
     if (ZuUnlikely(buf.overflow())) {
-      error = overflow();
+      overflow = true;
       return;
     }
     auto n = &buf[0] - &buf_[0];
@@ -643,12 +622,12 @@ private:
   Push &operator =(Push &&) = default;
 
   bool operator ()(const O &o) {
-    if (ZuUnlikely(error)) return false;
+    if (ZuUnlikely(overflow)) return false;
     auto buf_ = ZmAlloc(char, MaxRowLen);
     ZuStream buf{&buf_[0], MaxRowLen};
     this->save(buf, o);
     if (ZuUnlikely(buf.overflow())) {
-      error = overflow();
+      overflow = true;
       return false;
     }
     auto n = &buf[0] - &buf_[0];
@@ -656,97 +635,25 @@ private:
     return true;
   }
 
-  bool operator !() { return error; }
+  bool operator !() { return overflow; }
   ZuOpBool
 };
 
 template <
   typename O,
-  typename Facet = ZuFacet::Core,
+  typename Facet = ZuFacet::CSV,
   unsigned MaxRowLen = 4096,
   typename Out>
-auto write(Out &out) {
+inline auto write(Out &out) {
   return Push<O, Facet, MaxRowLen, Out>{out};
 }
 template <
   typename O,
-  typename Facet = ZuFacet::Core,
+  typename Facet = ZuFacet::CSV,
   unsigned MaxRowLen = 4096,
   typename Out>
-auto write(Columns columns, Out &out) {
+inline auto write(Columns columns, Out &out) {
   return Push<O, Facet, MaxRowLen, Out>{columns, out};
-}
-
-template <
-  typename O,
-  typename Facet,
-  unsigned MaxRowLen>
-struct PushFile : Writer<O, Facet> {
-  using Base = Writer<O, Facet>;
-
-  Path		path;
-  ZiFile	file;
-  ZeException	error;
-
-private:
-  bool write(const char *data, unsigned n) {
-    if (ZuUnlikely(file.write(data, n) < 0)) {
-      error = ioError(path, file);
-      return false;
-    }
-    return true;
-  }
-  void writeHeader() {
-    if (file.open(path, ZiFile::Append | ZiFile::GC) != Zi::OK) {
-      error = ioError(path, file);
-      return;
-    }
-    auto buf_ = ZmAlloc(char, MaxRowLen);
-    ZuStream buf{&buf_[0], MaxRowLen};
-    this->saveHdr(buf);
-    if (ZuUnlikely(buf.overflow())) { error = overflow(); return; }
-    write(&buf_[0], &buf[0] - &buf_[0]);
-  }
-
-public:
-  PushFile(Path path_) : path{ZuMv(path_)} { writeHeader(); }
-  PushFile(Columns columns, Path path_) : Base{columns}, path{ZuMv(path_)} {
-    writeHeader();
-  }
-  PushFile(PushFile &&) = default;
-  PushFile &operator =(PushFile &&) = default;
-
-  ~PushFile() {
-    file.close();
-  }
-
-  bool operator ()(const O &o) {
-    if (ZuUnlikely(error)) return false;
-    auto buf_ = ZmAlloc(char, MaxRowLen);
-    ZuStream buf{&buf_[0], MaxRowLen};
-    this->save(buf, o);
-    if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
-    return write(&buf_[0], &buf[0] - &buf_[0]);
-  }
-
-  bool operator !() { return error; }
-  ZuOpBool
-};
-
-template <
-  typename O,
-  typename Facet = ZuFacet::Core,
-  unsigned MaxRowLen = 4096>
-auto writeFile(Path path) {
-  return PushFile<O, Facet, MaxRowLen>{ZuMv(path)};
-}
-
-template <
-  typename O,
-  typename Facet = ZuFacet::Core,
-  unsigned MaxRowLen = 4096>
-auto writeFile(Columns columns, Path path) {
-  return PushFile<O, Facet, MaxRowLen>{columns, ZuMv(path)};
 }
 
 template <
@@ -756,7 +663,7 @@ template <
 struct Pull : public Writer<O, Facet> {
   using Base = Writer<O, Facet>;
 
-  ZeException	error;
+  bool		overflow = false;
 
 private:
   template <typename Out, typename L>
@@ -764,13 +671,13 @@ private:
     {
       ZuStream buf{&buf_[0], MaxRowLen};
       this->saveHdr(buf);
-      if (ZuUnlikely(buf.overflow())) { error = overflow(); return; }
+      if (ZuUnlikely(buf.overflow())) { overflow = true; return; }
       out << ZuCSpan(&buf[0], &buf[0] - buf_);
     }
     for (;;) {
       ZuStream buf{&buf_[0], MaxRowLen};
       if (!l([this, &buf](const O &o) { this->save(buf, o); })) return;
-      if (ZuUnlikely(buf.overflow())) { error = overflow(); return; }
+      if (ZuUnlikely(buf.overflow())) { overflow = true; return; }
       out << ZuCSpan(&buf[0], &buf[0] - buf_);
     }
   }
@@ -783,10 +690,9 @@ public:
     write(out, buf_, ZuMv(l));
   }
 
-  bool operator !() { return error; }
+  bool operator !() { return overflow; }
   ZuOpBool
 };
-
 
 // lambda l is of the form:
 // [...](auto l) -> bool {
@@ -796,111 +702,29 @@ public:
 // }
 template <
   typename O,
-  typename Facet = ZuFacet::Core,
+  typename Facet = ZuFacet::CSV,
   unsigned MaxRowLen = 4096,
   typename Out, typename L>
-ZuUnion<void, ZeException> write(Out &out, L l) {
+inline ZuUnion<void, bool> write(Out &out, L l) {
   auto buf_ = ZmAlloc(char, MaxRowLen);
   Pull pull(out, &buf_[0], ZuMv(l));
   if (pull) return {};
-  return ZuMv(pull.error);
+  return pull.overflow;
 }
 
 template <
   typename O,
-  typename Facet = ZuFacet::Core,
+  typename Facet = ZuFacet::CSV,
   unsigned MaxRowLen = 4096,
   typename Out, typename L>
-ZuUnion<void, ZeException> write(Columns columns, Out &out, L l) {
+inline ZuUnion<void, bool> write(Columns columns, Out &out, L l) {
   auto buf_ = ZmAlloc(char, MaxRowLen);
   Pull pull(columns, out, &buf_[0], ZuMv(l));
   if (pull) return {};
-  return ZuMv(pull.error);
+  return pull.overflow;
 }
 
-template <
-  typename O,
-  typename Facet,
-  unsigned MaxRowLen>
-struct PullFile : public Writer<O, Facet> {
-  using Base = Writer<O, Facet>;
-
-  ZeException	error;
-
-private:
-  bool write_(const Path &path, ZiFile &file, const char *data, unsigned n) {
-    if (ZuUnlikely(file.write(data, n) < 0)) {
-      error = ioError(path, file);
-      return false;
-    }
-    return true;
-  }
-
-  template <typename L>
-  bool write(const Path &path, char *buf_, L l) {
-    ZiFile file;
-    if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
-      error = ioError(path, file);
-      return false;
-    }
-    {
-      ZuStream buf{buf_, MaxRowLen};
-      this->saveHdr(buf);
-      if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
-      if (!write_(path, file, buf_, &buf[0] - buf_)) return false;
-    }
-    for (;;) {
-      ZuStream buf{buf_, MaxRowLen};
-      if (!l([this, &buf](const O &o) { this->save(buf, o); })) return true;
-      if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
-      if (!write_(path, file, buf_, &buf[0] - buf_)) return false;
-    }
-    ZuUnreachable(); // unreachable
-  }
-
-public:
-  template <typename L>
-  PullFile(const Path &path, char *buf_, L l) { write(path, buf_, ZuMv(l)); }
-  template <typename L>
-  PullFile(Columns columns, const Path &path, char *buf_, L l) : Base{columns} {
-    write(path, buf_, ZuMv(l));
-  }
-
-  bool operator !() const { return error; }
-  ZuOpBool
-};
-
-// lambda l is of the form:
-// [...](auto l) -> bool {
-//   ...;			// next object
-//   if (!EOF) l(o);		// write object
-//   return EOF;		// return true if no more data
-// }
-template <
-  typename O,
-  typename Facet = ZuFacet::Core,
-  unsigned MaxRowLen = 4096,
-  typename L>
-ZuUnion<void, ZeException> writeFile(Path path, L l) {
-  auto buf_ = ZmAlloc(char, MaxRowLen);
-  PullFile<O, Facet, MaxRowLen> pull(ZuMv(path), &buf_[0], ZuMv(l));
-  if (pull) return {};
-  return ZuMv(pull.error);
-}
-
-template <
-  typename O,
-  typename Facet = ZuFacet::Core,
-  unsigned MaxRowLen = 4096,
-  typename L>
-ZuUnion<void, ZeException> writeFile(Columns columns, Path path, L l) {
-  auto buf_ = ZmAlloc(char, MaxRowLen);
-  PullFile<O, Facet, MaxRowLen> pull(columns, ZuMv(path), &buf_[0], ZuMv(l));
-  if (pull) return {};
-  return ZuMv(pull.error);
-}
-
-template <typename O_, typename Facet = ZuFacet::Core>
+template <typename O_, typename Facet = ZuFacet::CSV>
 struct Reader {
   using O = O_;
 
@@ -916,7 +740,7 @@ struct Reader {
   using UpdFields = ZuTypeGrep<ZtFieldFilter::Upd, AllFields>;
   using DelFields = ZuTypeGrep<ZtFieldFilter::Del, AllFields>;
 
-  using Lookup = ZvCSV::Lookup<SaveFields>;
+  using Lookup = ZtCSV::Lookup<SaveFields>;
 
   ZuUnion<void, Lookup>	lookup;
   mutable Row		row;
@@ -1027,43 +851,13 @@ struct Reader {
     }
     return n;
   }
-
-  template <unsigned MaxRowLen = 4096, typename Path, typename L>
-  ZuUnion<void, ZeException> readFile(const Path &path, L l) {
-    ZiFile file;
-    if (file.open(path, ZiFile::ReadOnly, 0666) != Zi::OK) goto error;
-    {
-      auto buf = ZmAlloc(char, MaxRowLen);
-      unsigned offset = 0;
-      do {
-	auto r = file.read(&buf[offset], MaxRowLen - offset);
-	if (r == Zi::IOError) goto error;
-	if (r <= 0) return {};
-	offset += r;
-	auto n = process(ZuSpan<char>(&buf[0], offset), l);
-	if (n > 0 && n < offset) {
-	  offset -= n;
-	  memmove(&buf[0], &buf[n], offset);
-	}
-      } while (offset < MaxRowLen);
-
-      return ZeEXCEPT(Error, ([path, e = file.error()](auto &s) {
-	s << '"' << path << "\" " << "maximum row length exceeded";
-      }));
-    }
-
-  error:
-    return ZeEXCEPT(Error, ([path, e = file.error()](auto &s) {
-      s << '"' << path << "\" " << e;
-    }));
-  }
 };
 
-template <typename O, typename Facet = ZuFacet::Core>
-auto reader() {
+template <typename O, typename Facet = ZuFacet::CSV>
+inline auto reader() {
   return Reader<O, Facet>{};
 }
 
-} // ZvCSV
+} // ZtCSV
 
-#endif /* ZvCSV_HH */
+#endif /* ZtCSV_HH */

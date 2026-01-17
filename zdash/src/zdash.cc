@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdio.h>
@@ -20,7 +20,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmScheduler.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiModule.hh>
@@ -60,7 +60,7 @@ static void usage()
   static const char *usage =
     "Usage: zdash\n";
   std::cerr << usage << std::flush;
-  ZeLog::stop();
+  ZiLog::stop();
   Zm::exit(1);
 }
 
@@ -159,7 +159,7 @@ namespace Telemetry {
 	  dataFrame->close(
 	      [wake = ZuMv(wake)](Zdf::CloseResult result) mutable {
 	    if (result.is<Zdf::Event>())
-	      ZeLogEvent(ZuMv(result).p<Zdf::Event>());
+	      ZiLogEvent(ZuMv(result).p<Zdf::Event>());
 	    wake();
 	  });
 	});
@@ -184,7 +184,7 @@ namespace Telemetry {
       if (!ZmBlock<bool>{}([this](auto wake) {
 	dataFrame->open([wake = ZuMv(wake)](Zdf::OpenResult result) mutable {
 	  if (result.is<Zdf::Event>()) {
-	    ZeLogEvent(ZuMv(result).p<Zdf::Event>());
+	    ZiLogEvent(ZuMv(result).p<Zdf::Event>());
 	    wake(false);
 	  }
 	  wake(true);
@@ -914,10 +914,10 @@ public:
       }
       auto i = writeStatus();
       if (i < 0)
-	ZeLOG(Error, ([i](auto &s) {
+	ZiLOG(Error, "zdash", ([i](auto &s) {
 	  s << "ZiRing::push() failed - " << Zi::ioResult(i); }));
       else
-	ZeLOG(Error, ([i](auto &s) {
+	ZiLOG(Error, "zdash", ([i](auto &s) {
 	  s << "ZiRing::push() failed - writeStatus=" << i; }));
       return false;
     }
@@ -951,12 +951,12 @@ public:
     m_telRing = new TelRing{m_telRingParams};
     {
       if (m_telRing->open(TelRing::Read | TelRing::Write) != Zu::OK)
-	throw ZeEXCEPT(Error,
+	throw ZeEXCEPT(Error, "zdash",
 	    ([name = m_telRingParams.data().name](auto &s) {
 	      s << name << ": open failed"; }));
       int r;
       if ((r = m_telRing->reset()) != Zu::OK)
-	throw ZeEXCEPT(Error,
+	throw ZeEXCEPT(Error, "zdash",
 	    ([name = m_telRingParams.data().name, r](auto &s) {
 	      s << name << ": reset failed - " << Zu::ioResult(r); }));
     }
@@ -1044,7 +1044,7 @@ public:
 
     if (!gtk_builder_add_from_file(builder, m_gladePath, &e)) {
       if (e) {
-	ZeLOG(Error, e->message);
+	ZiLOG(Error, "zdash", e->message);
 	g_error_free(e);
       }
       post();
@@ -1062,7 +1062,7 @@ public:
       g_signal_connect(G_OBJECT(provider), "parsing-error",
 	  ZGtk::callback([](
 	      GtkCssProvider *, GtkCssSection *,
-	      GError *e, gpointer) { ZeLOG(Error, e->message); }), 0);
+	      GError *e, gpointer) { ZiLOG(Error, "zdash", e->message); }), 0);
       gtk_css_provider_load_from_file(provider, file, nullptr);
       g_object_unref(G_OBJECT(file));
       m_styleContext = gtk_style_context_new();
@@ -1644,13 +1644,13 @@ int main(int argc, char **argv)
 {
   if (argc != 1) usage();
 
-  ZeLog::init("zcmd");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::lambdaSink([](ZeLogBuf &buf, const ZeEventInfo &) {
+  ZiLog::init("zcmd");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::lambdaSink([](ZiLogBuf &buf, const ZeEventInfo &) {
     buf << '\n';
     std::cerr << buf << std::flush;
   }));
-  ZeLog::start();
+  ZiLog::start();
 
   ZiMultiplex *mx = new ZiMultiplex(
       ZiMxParams{}
@@ -1693,7 +1693,7 @@ int main(int argc, char **argv)
 
   mx->stop();
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   delete mx;
 

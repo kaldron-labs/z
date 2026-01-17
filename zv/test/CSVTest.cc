@@ -1,7 +1,7 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Psi Labs
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuLib.hh>
@@ -12,11 +12,11 @@
 
 #include <zlib/ZtEnum.hh>
 
-#include <zlib/ZeLog.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZiFile.hh>
 
-#include <zlib/ZvCSV.hh>
+#include <zlib/ZiCSV.hh>
 
 inline void out(const char *s) { std::cout << s << '\n'; }
 
@@ -73,32 +73,32 @@ using Row = RowList::Node;
 
 void gtfo()
 {
-  ZeLog::stop();
+  ZiLog::stop();
   exit(1);
 }
 
 int main()
 {
-  ZeLog::init("CSVTest");
-  ZeLog::level(0);
-  ZeLog::sink(ZeLog::fileSink(ZeSinkOptions{}.path("&2")));
-  ZeLog::start();
+  ZiLog::init("CSVTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   try {
     {
       ZiFile file;
       if (file.open("in.csv", ZiFile::Write) != Zi::OK)
-	throw ZeEXCEPT(Error, ([e = file.error()](auto &s) {
+	throw ZeEXCEPT(Error, "CSVTest", ([e = file.error()](auto &s) {
 	  s << "open(\"in.csv\") " << e;
 	}));
       if (file.write(&testdata[0], sizeof(testdata) - 1) != Zi::OK)
-	throw ZeEXCEPT(Error, ([e = file.error()](auto &s) {
+	throw ZeEXCEPT(Error, "CSVTest", ([e = file.error()](auto &s) {
 	  s << "write(\"in.csv\") " << e;
 	}));
     }
     RowList rows;
     {
-      auto reader = ZvCSV::reader<Row>();
+      auto reader = ZiCSV::reader<Row>();
       auto r = reader.readFile("in.csv",
 	[&rows](const auto &reader) {
 	  rows.pushNode(new Row{reader.ctor()});
@@ -107,7 +107,7 @@ int main()
 	throw ZuMv(r).template p<ZeException>();
     }
     {
-      auto r = ZvCSV::writeFile<Row>("out.csv", [&rows](auto l) -> bool {
+      auto r = ZiCSV::writeFile<Row>("out.csv", [&rows](auto l) -> bool {
 	if (auto node = rows.shift()) { l(*node); return true; }
 	return false;
       });
@@ -115,7 +115,7 @@ int main()
 	throw ZuMv(r).template p<ZeException>();
     }
     {
-      auto reader = ZvCSV::reader<Row>();
+      auto reader = ZiCSV::reader<Row>();
       auto r = reader.readFile("out.csv",
 	[&rows](const auto &reader) {
 	  rows.pushNode(new Row{reader.ctor()});
@@ -125,7 +125,7 @@ int main()
     }
     {
       auto i = rows.citer();
-      auto r = ZvCSV::writeFile<Row>("out2.csv", [&i](auto l) {
+      auto r = ZiCSV::writeFile<Row>("out2.csv", [&i](auto l) {
 	if (auto node = i()) { l(*node); return true; }
 	return false;
       });
@@ -135,31 +135,31 @@ int main()
     {
       ZiFile file;
       if (file.open("out.csv", ZiFile::ReadOnly | ZiFile::GC) != Zi::OK)
-	throw ZeEXCEPT(Error, ([e = file.error()](auto &s) {
+	throw ZeEXCEPT(Error, "CSVTest", ([e = file.error()](auto &s) {
 	  s << "open(\"out.csv\") " << e;
 	}));
       auto size = file.size();
       auto buf = ZmAlloc(char, size);
       if (file.read(&buf[0], size) < size)
-	throw ZeEXCEPT(Error, ([e = file.error()](auto &s) {
+	throw ZeEXCEPT(Error, "CSVTest", ([e = file.error()](auto &s) {
 	  s << "read(\"out.csv\") " << e;
 	}));
       file.close();
       if (file.open("out2.csv", ZiFile::ReadOnly | ZiFile::GC) != Zi::OK)
-	throw ZeEXCEPT(Error, ([e = file.error()](auto &s) {
+	throw ZeEXCEPT(Error, "CSVTest", ([e = file.error()](auto &s) {
 	  s << "open(\"out2.csv\") " << e;
 	}));
       auto size2 = file.size();
       auto buf2 = ZmAlloc(char, size2);
       if (file.read(&buf2[0], size2) < size)
-	throw ZeEXCEPT(Error, ([e = file.error()](auto &s) {
+	throw ZeEXCEPT(Error, "CSVTest", ([e = file.error()](auto &s) {
 	  s << "read(\"out2.csv\") " << e;
 	}));
       CHECK(size == size2 && !memcmp(&buf[0], &buf2[0], size));
     }
     {
       auto i = rows.citer();
-      auto r = ZvCSV::writeFile<Row>({
+      auto r = ZiCSV::writeFile<Row>({
 	ZtFieldIndex(Row_, string),
 	ZtFieldIndex(Row_, flags)
       }, "filtered.csv", [&i](auto l) {
@@ -173,27 +173,27 @@ int main()
       ZiFile file;
       if (file.open(
 	  "filtered.csv", ZiFile::ReadOnly | ZiFile::GC) != Zi::OK)
-	throw ZeEXCEPT(Error, ([e = file.error()](auto &s) {
+	throw ZeEXCEPT(Error, "CSVTest", ([e = file.error()](auto &s) {
 	  s << "open(\"filtered.csv\") " << e;
 	}));
       auto size = file.size();
       auto buf = ZmAlloc(char, size);
       if (file.read(&buf[0], size) < size)
-	throw ZeEXCEPT(Error, ([e = file.error()](auto &s) {
+	throw ZeEXCEPT(Error, "CSVTest", ([e = file.error()](auto &s) {
 	  s << "read(\"filtered.csv\") " << e;
 	}));
       CHECK(
 	size == sizeof(filtered) - 1 && !memcmp(&buf[0], &filtered[0], size));
     }
   } catch (const ZeException &e) {
-    ZeLog::log(e);
+    ZiLog::log(e);
     gtfo();
   } catch (...) {
-    ZeLOG(Error, "unknown exception");
+    ZiLOG(Error, "CSVTest", "unknown exception");
     gtfo();
   }
 
-  ZeLog::stop();
+  ZiLog::stop();
 
   return 0;
 }
