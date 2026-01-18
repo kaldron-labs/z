@@ -34,7 +34,6 @@
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmSingleton.hh>
-#include <zlib/ZuVStream.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmLocal.hh>
 

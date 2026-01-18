@@ -35,9 +35,13 @@ struct Nested {
   friend ZtStructPrint ZuPrintType(Nested *);
 };
 
-ZtStruct((Nested, JSON, Bah),
-  (((i1), (Ctor<0>)), (Int32)),
-  (((i2), (Ctor<1>)), (Int32)));
+#define Nested_Fields(macro, ...) macro( \
+  (((i1), (Ctor<0>)), (Int32)), \
+  (((i2), (Ctor<1>)), (Int32)), __VA_OPT__(, __VA_ARGS__))
+
+#define Nested_Struct(...) ZtStruct((Nested, JSON, Bah), __VA_ARGS__)
+
+Nested_Fields(Nested_Struct);
 
 struct Foo {
   const char *string = nullptr;

@@ -35,6 +35,7 @@
 #include <zlib/ZuUTF.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuTL.hh>
+#include <zlib/ZuAlt.hh>
 
 namespace Zu_ {
 
@@ -53,10 +54,6 @@ template <typename> struct Array_ { };
 template <> struct Array_<char> {
   friend ZuPrintString ZuPrintType(Array_ *);
 };
-
-template <typename T_> struct Array_Char2 { using T = void; };
-template <> struct Array_Char2<char> { using T = wchar_t; };
-template <> struct Array_Char2<wchar_t> { using T = char; };
 
 // implementation notes
 // - structural implies POD (not in terms of C++ standards conformance,
@@ -84,7 +81,7 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
 
   using T = T_;
   static constexpr unsigned N = N_;
-  using Char2 = typename Array_Char2<T>::T;
+  using AltChar = ZuAlt<T>;
   using Cmp = ZuCmp<T>;
   using Fn = ZuArrayFn<T>;
   using Elem_ = Elem<T>;
@@ -105,54 +102,61 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   // from some string with same char (including string literals)
   template <typename U, typename V = T>
   struct IsString : public ZuBool<
-      (ZuTraits<U>::IsSpan || ZuTraits<U>::IsString) &&
-      bool(ZuEquiv<typename ZuTraits<U>::Elem, V>{})> { };
+    (ZuTraits<U>::IsSpan || ZuTraits<U>::IsString) &&
+    bool(ZuEquiv<typename ZuTraits<U>::Elem, V>{})> { };
   template <typename U, typename R = void>
   using MatchString = ZuIfT<IsString<U>{}, R>;
 
   // from char2 string (requires conversion)
-  template <typename U, typename V = Char2>
-  struct IsChar2String : public ZuBool<
-      !ZuIsSame<V, void>{} &&
-      (ZuTraits<U>::IsSpan || ZuTraits<U>::IsString) &&
-      bool(ZuEquiv<typename ZuTraits<U>::Elem, V>{})> { };
+  template <typename U, typename V = AltChar>
+  struct IsAltString : public ZuBool<
+    !ZuIsSame<V, void>{} && bool(IsString<U, V>{})> { };
   template <typename U, typename R = void>
-  using MatchChar2String = ZuIfT<IsChar2String<U>{}, R>;
+  using MatchAltString = ZuIfT<IsAltString<U>{}, R>;
 
   // from any array type with convertible element type (not a string)
   template <typename U, typename V = T>
   struct IsSpan : public ZuBool<
-      !IsString<U>{} &&
-      !IsChar2String<U>{} &&
-      !ZuIsSame<U, V>{} &&
-      ZuTraits<U>::IsSpan &&
-      ZuIsConvertible<typename ZuTraits<U>::Elem, V>{}> { };
+    !IsString<U>{} &&
+    !IsAltString<U>{} &&
+    !ZuIsSame<U, V>{} &&
+    ZuTraits<U>::IsSpan &&
+    ZuIsConvertible<typename ZuTraits<U>::Elem, V>{}> { };
   template <typename U, typename R = void>
   using MatchSpan = ZuIfT<IsSpan<U>{}, R>;
 
-  // from individual char2 (requires conversion, char->wchar_t only)
-  template <typename U, typename V = Char2>
-  struct IsChar2 :
-    public ZuBool<
-      !ZuIsSame<V, void>{} &&
-      bool(ZuIsSame<U, V>{}) &&
-      !ZuIsSame<U, wchar_t>{}> { };
+  // is this array a string?
+  template <typename V = T>
+  struct ThisIsString : public ZuBool<
+    (bool(ZuEquiv<V, char>{}) || bool(ZuIsSame<ZuDecay<V>, wchar_t>{}))> { };
+
+  // from individual elem
+  template <typename U, typename V = T>
+  struct IsElem_ : public ZuBool<
+    bool(ZuIsSame<V, wchar_t>{}) ?
+      bool(ZuIsSame<ZuDecay<U>, V>{}) :
+      bool(ZuEquiv<U, V>{})> { };
+
+  // from individual char2 (requires conversion)
+  template <typename U, typename V = AltChar>
+  struct IsAltChar : public ZuBool<
+    !ZuIsSame<V, void>{} && bool(IsElem_<U, V>{})> { };
   template <typename U, typename R = void>
-  using MatchChar2 = ZuIfT<IsChar2<U>{}, R>;
+  using MatchAltChar = ZuIfT<IsAltChar<U>{}, R>;
 
   // from printable type (if this is a char array)
   template <typename U, typename V = T>
   struct IsPrint : public ZuBool<
-      bool(ZuEquiv<char, V>{}) &&
-      ZuPrint<U>::OK && !ZuPrint<U>::String> { };
+    bool(ThisIsString<V>{}) &&
+    ZuPrint<U>::OK && !ZuPrint<U>::String> { };
   template <typename U, typename V = T>
-  struct IsPDelegate :
-    public ZuBool<bool(ZuEquiv<char, V>{}) && ZuPrint<U>::Delegate> { };
+  struct IsPDelegate : public ZuBool<
+    bool(ThisIsString<V>{}) && ZuPrint<U>::Delegate> { };
   template <typename U, typename R = void>
   using MatchPDelegate = ZuIfT<IsPDelegate<U>{}, R>;
   template <typename U, typename V = T>
-  struct IsPBuffer :
-    public ZuBool<bool(ZuEquiv<char, V>{}) && ZuPrint<U>::Buffer> { };
+  struct IsPBuffer : public ZuBool<
+    bool(ThisIsString<V>{}) && ZuPrint<U>::Buffer> { };
   template <typename U, typename R = void>
   using MatchPBuffer = ZuIfT<IsPBuffer<U>{}, R>;
 
@@ -165,29 +169,30 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
       public ZuTrue { };
   template <typename U, typename V = T>
   struct IsIterable : public ZuBool<
-      !IsString<U>{} &&
-      !IsChar2String<U>{} &&
-      !IsPrint<U>{} &&
-      !ZuIsSame<U, V>{} &&
-      !ZuTraits<U>::IsSpan &&
-      bool(IsIterable_<ZuDecay<U>>{}) &&
-      ZuIsConstructible<typename ZuTraits<U>::Elem, V>{}> { };
+    !IsString<U>{} &&
+    !IsAltString<U>{} &&
+    !IsPrint<U>{} &&
+    !ZuIsSame<U, V>{} &&
+    !ZuTraits<U>::IsSpan &&
+    bool(IsIterable_<ZuDecay<U>>{}) &&
+    ZuIsConstructible<typename ZuTraits<U>::Elem, V>{}> { };
   template <typename U, typename R = void>
   using MatchIterable = ZuIfT<IsIterable<U>{}, R>;
 
   // from real primitive types other than chars (if this is a char string)
   template <typename U, typename V = T>
   struct IsReal : public ZuBool<
-      bool(ZuEquiv<char, V>{}) && !bool(ZuEquiv<U, V>{}) &&
-      ZuTraits<U>::IsReal && ZuTraits<U>::IsPrimitive &&
-      !ZuTraits<U>::IsArray> { };
+    bool(ThisIsString<V>{}) &&
+    !IsElem_<U>{} && !IsAltChar<U>{} &&
+    ZuTraits<U>::IsReal && ZuTraits<U>::IsPrimitive &&
+    !ZuTraits<U>::IsArray> { };
   template <typename U, typename R = void>
   using MatchReal = ZuIfT<IsReal<U>{}, R>;
 
   // from primitive pointer (not an array, string, or otherwise printable)
   template <typename U, typename V = T>
   struct IsPtr : public ZuBool<
-    bool(ZuEquiv<char, V>{}) &&
+    bool(ThisIsString<V>{}) &&
     ZuTraits<U>::IsPointer && ZuTraits<U>::IsPrimitive &&
     !ZuTraits<U>::IsArray && !ZuTraits<U>::IsString> { };
   template <typename U, typename R = void>
@@ -196,16 +201,16 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   // from individual element
   template <typename U, typename V = T, unsigned M = N>
   struct IsElem : public ZuBool<
-      (M > 0) &&
-	(bool(ZuIsSame<U, V>{}) ||
-	(!IsString<U>{} &&
-	 !ZuTraits<U>::IsArray &&
-	 !IsChar2String<U>{} &&
-	 !IsChar2<U>{} &&
-	 !IsPDelegate<U>{} &&
-	 !IsPBuffer<U>{} &&
-	 !IsReal<U>{} &&
-	 ZuIsConvertible<U, V>{}))> { };
+    (M > 0) &&
+      (bool(ZuIsSame<U, V>{}) ||
+      (!IsString<U>{} &&
+       !ZuTraits<U>::IsArray &&
+       !IsAltString<U>{} &&
+       !IsAltChar<U>{} &&
+       !IsPDelegate<U>{} &&
+       !IsPBuffer<U>{} &&
+       !IsReal<U>{} &&
+       ZuIsConvertible<U, V>{}))> { };
   template <typename U, typename R = void>
   using MatchElem = ZuIfT<IsElem<U>{}, R>;
 
@@ -234,15 +239,15 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   // limit member operator <<() overload resolution to supported types
   template <typename U>
   struct IsStreamable : public ZuBool<
-      bool(IsString<U>{}) ||
-      bool(IsSpan<U>{}) ||
-      bool(IsChar2String<U>{}) ||
-      bool(IsChar2<U>{}) ||
-      bool(IsPDelegate<U>{}) ||
-      bool(IsPBuffer<U>{}) ||
-      bool(IsIterable<U>{}) ||
-      bool(IsReal<U>{}) ||
-      bool(IsElem<U>{})> { };
+    bool(IsString<U>{}) ||
+    bool(IsSpan<U>{}) ||
+    bool(IsAltString<U>{}) ||
+    bool(IsAltChar<U>{}) ||
+    bool(IsPDelegate<U>{}) ||
+    bool(IsPBuffer<U>{}) ||
+    bool(IsIterable<U>{}) ||
+    bool(IsReal<U>{}) ||
+    bool(IsElem<U>{})> { };
   template <typename U, typename R = void>
   using MatchStreamable = ZuIfT<IsStreamable<U>{}, R>;
 
@@ -401,13 +406,13 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
       initElem(data(), ZuFwd<E>(e));
   }
 
-  template <typename S, decltype(MatchChar2String<S>(), int()) = 0>
+  template <typename S, decltype(MatchAltString<S>(), int()) = 0>
   Array(S &&s) noexcept {
-    data()[length_ = ZuUTF<T, Char2>::cvt({data(), N}, s)] = 0;
+    data()[length_ = ZuUTF<T, AltChar>::cvt({data(), N}, s)] = 0;
   }
-  template <typename C, decltype(MatchChar2<C>(), int()) = 0>
+  template <typename C, decltype(MatchAltChar<C>(), int()) = 0>
   Array(C c) noexcept {
-    data()[length_ = ZuUTF<T, Char2>::cvt({data(), N}, {&c, 1})] = 0;
+    data()[length_ = ZuUTF<T, AltChar>::cvt({data(), N}, {&c, 1})] = 0;
   }
 
   template <typename P, decltype(MatchPDelegate<P>(), int()) = 0>
@@ -489,9 +494,7 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   ZuInline auto span() { return ZuSpan(data(), N); }
   ZuInline auto cspan() const { return ZuSpan(data(), length_); }
 
-  template <typename V = T>
-  ZuIfT<ZuIsSame<ZuNorm<V>, char>{}, const char *>
-  terminate() {
+  const T *terminate() {
     if (ZuUnlikely(length_ >= N)) length_ = N - 1;
     data()[length_] = 0;
     return data();
@@ -734,31 +737,45 @@ public:
   }
 
   template <typename S>
-  MatchChar2String<S> append(const S &s) {
-    if (length_ < N)
-      data()[length_ += ZuUTF<T, Char2>::cvt(
-	  {data() + length_, N - length_}, s)] = 0;
+  MatchAltString<S>
+  append(const S &s) {
+    if (length_ >= N) return;
+    length_ += ZuUTF<T, AltChar>::cvt(
+      {data() + length_, N - length_}, s);
   }
-  template <typename C> MatchChar2<C> append(C c) {
-    if (length_ < N)
-      data()[length_ += ZuUTF<T, Char2>::cvt(
-	  {data() + length_, N - length_}, {&c, 1})] = 0;
+  template <typename C>
+  MatchAltChar<C> append(C c) {
+    if (length_ >= N) return;
+    length_ += ZuUTF<T, AltChar>::cvt(
+      {data() + length_, N - length_}, {&c, 1});
   }
 
-  template <typename P> MatchPDelegate<P> append(P &&p) {
+  template <typename P>
+  MatchPDelegate<P> append(P &&p) {
     ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
-  template <typename P> MatchPBuffer<P> append(const P &p) {
+  template <typename P>
+  MatchPBuffer<P> append(const P &p) {
     unsigned length = ZuPrint<P>::length(p);
-    if (length_ + length > N) return;
-    length_ += ZuPrint<P>::print(
+    if (!length || length_ + length >= N) return;
+    if constexpr (ZuEquiv<T, char>{}) {
+      length_ += ZuPrint<P>::print(
 	reinterpret_cast<char *>(data()) + length_, length, p);
+    } else {
+      auto buf = static_cast<char *>(ZuAlloca(length, 1));
+      if (!buf) return;
+      ZuCSpan s(buf, ZuPrint<P>::print(buf, length, p));
+      length_ += ZuUTF<T, AltChar>::cvt(
+	{data() + length_, N - length_}, s);
+    }
   }
 
-  template <typename V> MatchReal<V> append(V v) {
+  template <typename V>
+  MatchReal<V> append(V v) {
     append(ZuBoxed(v));
   }
-  template <typename V> MatchPtr<V> append(V v) {
+  template <typename V>
+  MatchPtr<V> append(V v) {
     append(ZuBoxPtr(v).hex<false, ZuFmt::Alt<>>());
   }
 

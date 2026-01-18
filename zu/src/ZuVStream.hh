@@ -68,7 +68,7 @@ public:
   template <typename S>
   ZuVStream(S &s) noexcept :
     m_ptr{&s},
-    m_strFn{[](void *s, const ZuCSpan &v) {
+    m_strFn{[](void *s, ZuCSpan v) {
       *static_cast<S *>(s) << v;
     }},
     m_bufFn{[](void *s, const ZuVStreamBuf &v) {
@@ -85,19 +85,27 @@ public:
 
 private:
   template <typename U, typename R = void>
-  using MatchChar = ZuIfT<ZuIsSame<U, char>{}, R>;
+  using MatchChar = ZuIfT<ZuEquiv<U, char>{}, R>;
+
+  template <typename U, typename R = void>
+  using MatchWChar = ZuIfT<ZuIsSame<ZuDecay<U>, wchar_t>{}, R>;
 
   template <typename U, typename R = void>
   using MatchReal = ZuIfT<
     ZuTraits<U>::IsPrimitive &&
     ZuTraits<U>::IsReal &&
-    !ZuIsSame<U, char>{}, R>;
+    !ZuEquiv<U, char>{}, R>;
 
   template <typename U, typename R = void>
   using MatchString = ZuIfT<
     ZuTraits<U>::IsString &&
     !ZuTraits<U>::IsWString &&
     !ZuIs_<U, ZuCSpan>{}, R>;
+
+  template <typename U, typename R = void>
+  using MatchWString = ZuIfT<
+    ZuTraits<U>::IsString &&
+    ZuTraits<U>::IsWString, R>;
 
   template <typename U, typename R = void>
   using MatchPDelegate = ZuIfT<ZuPrint<U>::Delegate, R>;
@@ -108,7 +116,16 @@ private:
 public:
   template <typename C>
   MatchChar<C, ZuVStream &> operator <<(C c) {
-    (*m_strFn)(m_ptr, ZuCSpan(&c, 1));
+    (*m_strFn)(m_ptr, {&c, 1});
+    return *this;
+  }
+  template <typename C>
+  MatchWChar<C, ZuVStream &> operator <<(C c) {
+    char buf[8];
+    auto r = ZuUTF<char, wchar_t>::cvt_overflow(
+      {&buf[0], sizeof(buf)}, {&c, 1});
+    if (!r.template p<1>())
+      (*m_strFn)(m_ptr, {&buf[0], r.template p<0>()});
     return *this;
   }
   template <typename R>
@@ -121,8 +138,21 @@ public:
     return *this;
   }
   template <typename S>
-  MatchString<S &&, ZuVStream &> operator <<(S &&s_) {
-    (*m_strFn)(m_ptr, ZuCSpan(s_));
+  MatchString<S &&, ZuVStream &> operator <<(S &&s) {
+    (*m_strFn)(m_ptr, ZuCSpan(s));
+    return *this;
+  }
+  template <typename S>
+  MatchWString<S, ZuVStream &> operator <<(S &&s_) {
+    ZuWSpan s(s_);
+    if (!s.length()) return *this;
+    auto n = ZuUTF<char, wchar_t>::len(s);
+    if (!n) return *this;
+    auto buf = static_cast<char *>(ZuAlloca(n, 1));
+    if (!buf) return *this;
+    auto r = ZuUTF<char, wchar_t>::cvt_overflow({buf, n}, s);
+    if (!r.template p<1>())
+      (*m_strFn)(m_ptr, {buf, r.template p<0>()});
     return *this;
   }
   template <typename P>
@@ -137,7 +167,7 @@ public:
   }
 
 private:
-  typedef void (*StrFn)(void *, const ZuCSpan &);
+  typedef void (*StrFn)(void *, ZuCSpan);
   typedef void (*BufFn)(void *, const ZuVStreamBuf &);
 
   void		*m_ptr;
