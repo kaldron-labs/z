@@ -5,16 +5,18 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // heap-allocated C string class (i.e. null-terminated)
-// - explicitly contiguous
+// - explicitly a contiguous span
 // - lightweight
-// - provides direct read/write access to the buffer
+// - direct read/write access to the buffer
 // - no heap allocation for small strings below a built-in size
 // - total instance size set to 32 (i.e. 1/2 typical cache line size)
 // - very thin layer on C library string functions
 // - no C library locale or character set overhead (except when requested)
 // - minimal STL cruft
+// - policy-based control of builtin size, fallback heap, etc.
 
-// Note: use ZuCArray<> for fixed-size strings by value without heap overhead
+// Note: use ZuCArray<> for fixed-size strings, by value, without heap overhead
+// - ZuCArray<N> in an alias for ZuArray<char, N>
 
 #ifndef ZtString_HH
 #define ZtString_HH
@@ -38,6 +40,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuEquiv.hh>
+#include <zlib/ZuAlt.hh>
 
 #include <zlib/ZuVStream.hh>
 #include <zlib/ZmVHeap.hh>
@@ -109,10 +112,6 @@ template <typename Char> inline const Char *String_Null();
 template <> inline const char *String_Null() { return ""; }
 template <> inline const wchar_t *String_Null() { return Zu::nullWString(); }
 
-template <typename T_> struct String_Char2;
-template <> struct String_Char2<char> { using T = wchar_t; };
-template <> struct String_Char2<wchar_t> { using T = char; };
-
 template <typename> struct String_ { };
 template <> struct String_<char> {
   friend ZuPrintString ZuPrintType(String_ *);
@@ -129,7 +128,7 @@ class String :
   public String_<ZuStrip<Char_>> {
 public:
   using Char = Char_;
-  using Char2 = typename String_Char2<Char>::T;
+  using AltChar = ZuAlt<Char>;
   enum { IsWString = ZuIsSame<Char, wchar_t>{} };
   enum { BuiltinSize = NTP::Builtin / sizeof(Char) };
   using HeapID = typename NTP::HeapID;
@@ -140,8 +139,8 @@ public:
 
 private:
   // from same type String
-  template <typename U, typename V = Char> struct IsString :
-    public ZuIsBase<U, String_<V>> { };
+  template <typename U, typename V = Char>
+  struct IsString : public ZuIsBase<U, String_<V>> { };
   template <typename U, typename R = void>
   using MatchString = ZuIfT<IsString<U>{}, R>;
 
@@ -178,35 +177,30 @@ private:
   // from some other non-C string with same char (non-null-terminated)
   template <typename U, typename V = Char>
   struct IsOtherString : public ZuBool<
-    !IsString<U>{} &&
-    ZuTraits<U>::IsString &&
-    !ZuTraits<U>::IsCString &&
+    !IsString<U>{} && !ZuTraits<U>::IsCString &&
+    (ZuTraits<U>::IsSpan || ZuTraits<U>::IsString) &&
     bool(ZuEquiv<typename ZuTraits<U>::Elem, V>{})> { };
   template <typename U, typename R = void>
   using MatchOtherString = ZuIfT<IsOtherString<U>{}, R>;
 
   // from char2 string (requires conversion)
-  template <typename U, typename V = Char2>
-  struct IsChar2String : public ZuBool<
-    (ZuTraits<U>::IsSpan || ZuTraits<U>::IsString) &&
-    bool(ZuEquiv<typename ZuTraits<U>::Elem, V>{})> { };
+  template <typename U, typename V = AltChar>
+  struct IsAltString : public IsOtherString<U, V>{} { };
   template <typename U, typename R = void>
-  using MatchChar2String = ZuIfT<IsChar2String<U>{}, R>;
+  using MatchAltString = ZuIfT<IsAltString<U>{}, R>;
 
-  // from individual char2 (requires conversion, char->wchar_t only)
-  template <typename U, typename V = Char2>
-  struct IsChar2 : public ZuBool<
-    bool(ZuIsSame<ZuDecay<U>, V>{})/* &&
-    !ZuIsSame<ZuDecay<U>, wchar_t>{} */> { };
+  // from individual char2 (requires conversion)
+  template <typename U, typename V = AltChar>
+  struct IsAltChar : public IsChar<U, V> { };
   template <typename U, typename R = void>
-  using MatchChar2 = ZuIfT<IsChar2<U>{}, R>;
+  using MatchAltChar = ZuIfT<IsAltChar<U>{}, R>;
 
-  // from printable type (if this is a char array)
+  // from printable type
   template <typename U>
   struct IsPrint : public ZuBool<
     !IsString<U>{} &&
     !IsAnyCString<U>{} &&
-    !IsChar2String<U>{} &&
+    !IsAltString<U>{} &&
     ZuPrint<U>::OK && !ZuPrint<U>::String> { };
   template <typename U, typename R = void>
   using MatchPrint = ZuIfT<IsPrint<U>{}, R>;
@@ -222,14 +216,16 @@ private:
   // from individual char
   template <typename U, typename V = Char>
   struct IsChar : public ZuBool<
-    ZuIsSame<V, wchar_t>{} ? bool(ZuIsSame<ZuDecay<U>, V>{}) : bool(ZuEquiv<U, V>{})> { };
+    bool(ZuIsSame<V, wchar_t>{}) ?
+      bool(ZuIsSame<ZuDecay<U>, V>{}) :
+      bool(ZuEquiv<U, V>{})> { };
   template <typename U, typename R = void>
   using MatchChar = ZuIfT<IsChar<U>{}, R>;
 
   // from any other real and primitive type (integers, floating point, etc.)
   template <typename U>
   struct IsReal : public ZuBool<
-    !IsChar<U>{} && !IsChar2<U>{} &&
+    !IsChar<U>{} && !IsAltChar<U>{} &&
     ZuTraits<U>::IsReal && ZuTraits<U>::IsPrimitive &&
     !ZuTraits<U>::IsArray> { };
   template <typename U, typename R = void>
@@ -249,8 +245,8 @@ private:
     bool(IsAnyCString<U>{}) ||
     bool(IsOtherString<U>{}) ||
     bool(IsChar<U>{}) ||
-    bool(IsChar2String<U>{}) ||
-    bool(IsChar2<U>{}) ||
+    bool(IsAltString<U>{}) ||
+    bool(IsAltChar<U>{}) ||
     bool(IsPDelegate<U>{}) ||
     bool(IsPBuffer<U>{}) ||
     bool(IsReal<U>{}) ||
@@ -312,18 +308,18 @@ private:
   template <typename C> MatchChar<C> ctor(C c)
     { copy_(&c, 1); }
 
-  template <typename S> MatchChar2String<S> ctor(S &&s_) {
-    ZuSpan<const Char2> s(s_);
-    uint64_t o = ZuUTF<Char, Char2>::len(s);
+  template <typename S> MatchAltString<S> ctor(S &&s_) {
+    ZuSpan<const AltChar> s(s_);
+    uint64_t o = ZuUTF<Char, AltChar>::len(s);
     if (!o) { null_(); return; }
-    length_(ZuUTF<Char, Char2>::cvt({alloc_(o + 1, 0), o}, s));
+    length_(ZuUTF<Char, AltChar>::cvt({alloc_(o + 1, 0), o}, s));
   }
 
-  template <typename C> MatchChar2<C> ctor(C c) {
-    ZuSpan<const Char2> s(&c, 1);
-    uint64_t o = ZuUTF<Char, Char2>::len(s);
+  template <typename C> MatchAltChar<C> ctor(C c) {
+    ZuSpan<const AltChar> s(&c, 1);
+    uint64_t o = ZuUTF<Char, AltChar>::len(s);
     if (!o) { null_(); return; }
-    length_(ZuUTF<Char, Char2>::cvt({alloc_(o + 1, 0), o}, s));
+    length_(ZuUTF<Char, AltChar>::cvt({alloc_(o + 1, 0), o}, s));
   }
 
   template <typename P> MatchCtorPDelegate<P> ctor(const P &p)
@@ -331,14 +327,14 @@ private:
   template <typename P> MatchCtorPBuffer<P> ctor(const P &p) {
     unsigned o = ZuPrint<P>::length(p);
     if (!o) { null_(); return; }
-    if constexpr (ZuIsSame<Char, char>{}) {
+    if constexpr (ZuEquiv<Char, char>{}) {
       length_(ZuPrint<P>::print(alloc_(o + 1, 0), o, p));
     } else {
       auto buf = ZmAlloc(char, o);
       ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
-      o = ZuUTF<Char, Char2>::len(s);
+      o = ZuUTF<Char, AltChar>::len(s);
       if (!o) { null_(); return; }
-      length_(ZuUTF<Char, Char2>::cvt({alloc_(o + 1, 0), o}, s));
+      length_(ZuUTF<Char, AltChar>::cvt({alloc_(o + 1, 0), o}, s));
     }
   }
 
@@ -367,18 +363,18 @@ public:
     copy_(&c, 1);
   }
 
-  template <typename S> MatchChar2String<S> copy(S &&s_) {
-    ZuSpan<const Char2> s(s_);
-    uint64_t o = ZuUTF<Char, Char2>::len(s);
+  template <typename S> MatchAltString<S> copy(S &&s_) {
+    ZuSpan<const AltChar> s(s_);
+    uint64_t o = ZuUTF<Char, AltChar>::len(s);
     if (!o) { length_(0); return; }
-    length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
+    length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
   }
 	  
-  template <typename C> MatchChar2<C> copy(C c) {
-    ZuSpan<const Char2> s(&c, 1);
-    uint64_t o = ZuUTF<Char, Char2>::len(s);
+  template <typename C> MatchAltChar<C> copy(C c) {
+    ZuSpan<const AltChar> s(&c, 1);
+    uint64_t o = ZuUTF<Char, AltChar>::len(s);
     if (!o) { length_(0); return; }
-    length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
+    length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
   }
 
 public:
@@ -433,17 +429,17 @@ private:
     free_2(oldData);
   }
 
-  template <typename S> MatchChar2String<S> assign(S &&s_) {
-    ZuSpan<const Char2> s(s_);
-    uint64_t o = ZuUTF<Char, Char2>::len(s);
+  template <typename S> MatchAltString<S> assign(S &&s_) {
+    ZuSpan<const AltChar> s(s_);
+    uint64_t o = ZuUTF<Char, AltChar>::len(s);
     if (!o) { length_(0); return; }
-    length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
+    length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
   }
-  template <typename C> MatchChar2<C> assign(C c) {
-    ZuSpan<const Char2> s(&c, 1);
-    uint64_t o = ZuUTF<Char, Char2>::len(s);
+  template <typename C> MatchAltChar<C> assign(C c) {
+    ZuSpan<const AltChar> s(&c, 1);
+    uint64_t o = ZuUTF<Char, AltChar>::len(s);
     if (!o) { length_(0); return; }
-    length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
+    length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
   }
 
   template <typename P> MatchPDelegate<P> assign(P &&p) {
@@ -452,14 +448,14 @@ private:
   template <typename P> MatchPBuffer<P> assign(const P &p) {
     unsigned o = ZuPrint<P>::length(p);
     if (!o) { length_(0); return; }
-    if constexpr (ZuIsSame<Char, char>{}) {
+    if constexpr (ZuEquiv<Char, char>{}) {
       length_(ZuPrint<P>::print(ensure(o + 1), o, p));
     } else {
       auto buf = ZmAlloc(char, o);
       ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
-      o = ZuUTF<Char, Char2>::len(s);
+      o = ZuUTF<Char, AltChar>::len(s);
       if (!o) { null_(); return; }
-      length_(ZuUTF<Char, Char2>::cvt({ensure(o + 1), o}, s));
+      length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
     }
   }
 
@@ -507,8 +503,8 @@ public:
     ZuSpan<const Char> s(data, length);
     convert_(s, iconv);
   }
-  String(const Char2 *data, uint64_t length, ZtIconv *iconv) {
-    ZuSpan<const Char2> s(data, length);
+  String(const AltChar *data, uint64_t length, ZtIconv *iconv) {
+    ZuSpan<const AltChar> s(data, length);
     convert_(s, iconv);
   }
 
@@ -942,21 +938,21 @@ private:
   }
 
   template <typename S>
-  MatchChar2String<S, String>
+  MatchAltString<S, String>
   add(const S &s_) const {
-    ZuSpan<const Char2> s(s_);
+    ZuSpan<const AltChar> s(s_);
     return add_([s](Char *ptr, uint64_t length) -> uint64_t {
       if (!length) return 0;
-      return ZuUTF<Char, Char2>::cvt({ptr, length}, s);
-    }, ZuUTF<Char, Char2>::len(s));
+      return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+    }, ZuUTF<Char, AltChar>::len(s));
   }
   template <typename C>
-  MatchChar2<C, String>
+  MatchAltChar<C, String>
   add(C c_) const {
-    Char2 c = c_;
+    AltChar c = c_;
     return add_([c](Char *ptr, uint64_t length) {
-      return ZuUTF<Char, Char2>::cvt({ptr, length}, {&c, 1});
-    }, ZuUTF<Char, Char2>::len({&c, 1}));
+      return ZuUTF<Char, AltChar>::cvt({ptr, length}, {&c, 1});
+    }, ZuUTF<Char, AltChar>::len({&c, 1}));
   }
 
   template <typename P>
@@ -969,7 +965,7 @@ private:
   MatchPBuffer<P, String> add(P &&p) const {
     unsigned o = ZuPrint<P>::length(p);
     if (!o) return *this;
-    if constexpr (ZuIsSame<Char, char>{}) {
+    if constexpr (ZuEquiv<Char, char>{}) {
       return add_([&p](Char *ptr, uint64_t length) {
 	return ZuPrint<P>::print(ptr, length, p);
       }, ZuPrint<P>::length(p));
@@ -978,8 +974,8 @@ private:
       ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
       return add_([s](Char *ptr, uint64_t length) -> uint64_t {
 	if (!length) return 0;
-	return ZuUTF<Char, Char2>::cvt({ptr, length}, s);
-      }, ZuUTF<Char, Char2>::len(s));
+	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+      }, ZuUTF<Char, AltChar>::len(s));
     }
   }
 
@@ -1050,19 +1046,19 @@ private:
   }
 
   template <typename S>
-  MatchChar2String<S> append_(const S &s_) {
-    ZuSpan<const Char2> s(s_);
+  MatchAltString<S> append_(const S &s_) {
+    ZuSpan<const AltChar> s(s_);
     append__([s](Char *ptr, uint64_t rlength) -> uint64_t {
       if (!rlength) return 0;
-      return ZuUTF<Char, Char2>::cvt({ptr, rlength}, s);
-    }, ZuUTF<Char, Char2>::len(s));
+      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, s);
+    }, ZuUTF<Char, AltChar>::len(s));
   }
   template <typename C>
-  MatchChar2<C> append_(C c_) {
-    Char2 c = c_;
+  MatchAltChar<C> append_(C c_) {
+    AltChar c = c_;
     append__([c](Char *ptr, uint64_t rlength) {
-      return ZuUTF<Char, Char2>::cvt({ptr, rlength}, {&c, 1});
-    }, ZuUTF<Char, Char2>::len({&c, 1}));
+      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, {&c, 1});
+    }, ZuUTF<Char, AltChar>::len({&c, 1}));
   }
 
   template <typename P>
@@ -1073,7 +1069,7 @@ private:
   MatchPBuffer<P> append_(P &&p) {
     uint64_t o = ZuPrint<P>::length(p);
     if (!o) return;
-    if constexpr (ZuIsSame<Char, char>{}) {
+    if constexpr (ZuEquiv<Char, char>{}) {
       append__([&p](Char *ptr, uint64_t length) {
 	return ZuPrint<P>::print(ptr, length, p);
       }, o);
@@ -1081,8 +1077,8 @@ private:
       auto buf = ZmAlloc(char, o);
       ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
       append__([s](Char *ptr, uint64_t length) {
-	return ZuUTF<Char, Char2>::cvt({ptr, length}, s);
-      }, ZuUTF<Char, Char2>::len(s));
+	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+      }, ZuUTF<Char, AltChar>::len(s));
     }
   }
 
@@ -1193,21 +1189,21 @@ private:
     }, 1);
   }
   template <typename S>
-  MatchChar2String<S> splice_(
+  MatchAltString<S> splice_(
       String *removed, int64_t offset, int64_t length, const S &s_) {
-    ZuSpan<const Char2> s(s_);
+    ZuSpan<const AltChar> s(s_);
     splice__(removed, offset, length, [s](Char *ptr, uint64_t rlength) -> uint64_t {
       if (!rlength) return 0;
-      return ZuUTF<Char, Char2>::cvt({ptr, rlength}, s);
-    }, ZuUTF<Char, Char2>::len(s));
+      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, s);
+    }, ZuUTF<Char, AltChar>::len(s));
   }
   template <typename C>
-  MatchChar2<C> splice_(
+  MatchAltChar<C> splice_(
       String *removed, int64_t offset, int64_t length, C c_) {
-    Char2 c = c_;
+    AltChar c = c_;
     splice__(removed, offset, length, [c](Char *ptr, uint64_t rlength) {
-      return ZuUTF<Char, Char2>::cvt({ptr, rlength}, {&c, 1});
-    }, ZuUTF<Char, Char2>::len({&c, 1}));
+      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, {&c, 1});
+    }, ZuUTF<Char, AltChar>::len({&c, 1}));
   }
 
 public:

@@ -112,6 +112,16 @@ int main()
     testSplice(a, 1, 1, 44, 45);
     testSplice(a, -2, 4, 0, 44);
   }
+  {
+    ZuArray<wchar_t, 80> w;
+    w << L"hello " << "world" << L'!' << ' ' << 42;
+    ZuArray<char, 80> s = w;
+    CHECK(s == "hello world! 42");
+    s = {};
+    s << L"hello " << "world" << L'!' << ' ' << 42;
+    w = s;
+    CHECK(w == L"hello world! 42");
+  }
 
   {
     ZuVArray<ZuBSpan> a;

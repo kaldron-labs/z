@@ -160,6 +160,17 @@ int main()
   }
 
   {
+    ZtArray<wchar_t> w;
+    w << L"hello " << "world" << L'!' << ' ' << 42;
+    ZtArray<char> s = w;
+    CHECK(s == "hello world! 42");
+    s = {};
+    s << L"hello " << "world" << L'!' << ' ' << 42;
+    w = s;
+    CHECK(w == L"hello world! 42");
+  }
+
+  {
     ZtArray<ZtString<>> a = { "foo", "bar", "baz", "bah" };
     ZtString<> o;
     a.all([&o, first = true](const ZtString<> &s) mutable {

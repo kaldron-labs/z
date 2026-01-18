@@ -709,9 +709,9 @@ constexpr T *ZuAddr(T &v) noexcept {
 // it is effectively a kind of reserved word that should have been
 // implemented with a compiler intrinsic; regrettably there's
 // no good option except to #include <memory> (which drags in a bunch
-// of STL cruft), but with C++26 placement new becomes consteval
-// eligible and this misbegotten thing can be consigned to history
-#include <memory>
+// of STL cruft), but with C++26 placement new becomes eligible for
+// consteval and this misbegotten thing can be consigned to history
+#include <memory> // LATER - comment out for C++26
 template <
   typename T, typename ...Args,
   decltype(T(ZuDeclVal<Args &&>()...), int()) = 0,

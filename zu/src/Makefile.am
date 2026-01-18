@@ -18,7 +18,7 @@ pkginclude_HEADERS = \
 	ZuBitStream.hh ZuStream.hh ZuMostAligned.hh \
 	ZuVStream.hh ZuVArray.hh ZuMArray.hh ZuIter.hh ZuJoin.hh \
 	ZuBase32.hh ZuBase64.hh ZuBase64URL.hh ZuHex.hh \
-	ZuMatcher.hh ZuDerive.hh \
+	ZuMatcher.hh ZuDerive.hh ZuAlt.hh \
 	\
 	zu_lib.h zu_decimal.h zu_time.h zu_bitmap.h
 lib_LTLIBRARIES = libZu.la

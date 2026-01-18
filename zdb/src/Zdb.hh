@@ -2132,7 +2132,7 @@ struct Record_Print {
     if (data) {
       s << " data=";
       if (table) {
-	ZuVStream s_{s};
+	ZuVStream s_(s);
 	table->objPrintFB(s_, data);
       } else {
 	s << "{...}";

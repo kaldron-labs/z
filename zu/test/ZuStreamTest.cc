@@ -2,8 +2,13 @@
 #include <sstream>
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuStream.hh>
 #include <zlib/ZuVStream.hh>
 #include <zlib/ZuArray.hh>
+
+inline void out(const char *s) { std::cout << s << '\n'; }
+
+#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
 
 struct A {
   template <typename S>
@@ -13,19 +18,30 @@ struct A {
 };
 
 template <typename S>
-void foo(S &s_) {
+void test(S &s) {
+  s << 42 << ' ' << A{} << L" " << 42.42 << ' ' << ZuBoxed(42.0F) << "\n";
+}
+
+template <typename S>
+void vtest(S &s_) {
   ZuVStream s{s_};
-  s << 42 << ' ' << A{} << " " << 42.0 << ' ' << ZuBoxed(42.0F) << "\n";
+  test(s);
 }
 
 int main()
 {
-  ZuCArray<100> s1;
-  std::stringstream s2;
-  foo(s1);
-  std::cout << s1;
-  foo(s2);
-  std::cout << s2.str();
-  foo(std::cout);
-  foo(std::cerr);
+  {
+    ZuCArray<80> s1;
+    std::stringstream s2;
+    vtest(s1);
+    vtest(s2);
+    CHECK(s1 == s2.str());
+    ZuArray<wchar_t, 80> w1;
+    test(w1);
+    s1 = w1;
+    CHECK(s1 == s2.str());
+  }
+  vtest(std::cout);
+  {
+  }
 }
