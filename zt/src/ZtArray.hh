@@ -1272,7 +1272,6 @@ private:
   MatchPBuffer<P> append_(const P &p) {
     uint64_t o = ZuPrint<P>::length(p);
     if (!o) return;
-    uint64_t n = length();
     if constexpr (ZuEquiv<Char, char>{}) {
       append__([&p](Char *ptr, uint64_t length) {
 	return ZuPrint<P>::print(ptr, length, p);

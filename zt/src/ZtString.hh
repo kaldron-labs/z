@@ -185,9 +185,20 @@ private:
 
   // from char2 string (requires conversion)
   template <typename U, typename V = AltChar>
-  struct IsAltString : public IsOtherString<U, V>{} { };
+  struct IsAltString : public ZuBool<
+    (ZuTraits<U>::IsSpan || ZuTraits<U>::IsString) &&
+    bool(ZuEquiv<typename ZuTraits<U>::Elem, V>{})> { };
   template <typename U, typename R = void>
   using MatchAltString = ZuIfT<IsAltString<U>{}, R>;
+
+  // from individual char
+  template <typename U, typename V = Char>
+  struct IsChar : public ZuBool<
+    bool(ZuIsSame<V, wchar_t>{}) ?
+      bool(ZuIsSame<ZuDecay<U>, V>{}) :
+      bool(ZuEquiv<U, V>{})> { };
+  template <typename U, typename R = void>
+  using MatchChar = ZuIfT<IsChar<U>{}, R>;
 
   // from individual char2 (requires conversion)
   template <typename U, typename V = AltChar>
@@ -212,15 +223,6 @@ private:
   struct IsPBuffer : public ZuBool<ZuPrint<U>::Buffer> { };
   template <typename U, typename R = void>
   using MatchPBuffer = ZuIfT<IsPBuffer<U>{}, R>;
-
-  // from individual char
-  template <typename U, typename V = Char>
-  struct IsChar : public ZuBool<
-    bool(ZuIsSame<V, wchar_t>{}) ?
-      bool(ZuIsSame<ZuDecay<U>, V>{}) :
-      bool(ZuEquiv<U, V>{})> { };
-  template <typename U, typename R = void>
-  using MatchChar = ZuIfT<IsChar<U>{}, R>;
 
   // from any other real and primitive type (integers, floating point, etc.)
   template <typename U>
