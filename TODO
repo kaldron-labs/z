@@ -1,14 +1,3 @@
-- fix char <> wchar_t templates (there are 4 redundant copies of this)
-  - use ZuAlt
-  - rename Char2 everywhere to AltChar
-  - rename Char2String everywhere to AltString
-  - ZuAlt<char-like> -> wchar_t
-  - ZuAlt<wchar_t> -> char
-  - DRY
-  - <char> specialization -> Equiv<char> (or Norm)
-  - test ZuStream<uint8_t> (for example)
-  - ZuVStream << wchar_t and wchar_t[]
-
 check for consistency:
   ZuVStream (with AltChar and AltString added)
   ZuStream

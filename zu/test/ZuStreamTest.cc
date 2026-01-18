@@ -28,6 +28,20 @@ void vtest(S &s_) {
   test(s);
 }
 
+template <typename Char>
+void stest() {
+  Char buf[80];
+  ZuSpan<Char> s{&buf[0], sizeof(buf)};
+  ZuStream_<Char> s_(s);
+  s_ << L"hello " << "world" << L'!' << ' ' << 42.42;
+  s.trunc(s_.data() - s.data());
+  if constexpr (sizeof(Char) == 1) {
+    CHECK(s == "hello world! 42.42");
+  } else {
+    CHECK(s == L"hello world! 42.42");
+  }
+}
+
 int main()
 {
   {
@@ -43,5 +57,7 @@ int main()
   }
   vtest(std::cout);
   {
+    stest<char>();
+    stest<wchar_t>();
   }
 }

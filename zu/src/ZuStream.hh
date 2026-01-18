@@ -28,6 +28,7 @@
 
 template <typename Char_>
 class ZuStream_ : public ZuSpan<Char_> {
+  ZuAssert((ZuIsSame<Char_, ZuDecay<Char_>>{}));
   ZuAssert((ZuEquiv<Char_, char>{} || ZuIsSame<Char_, wchar_t>{}));
 
 public:
