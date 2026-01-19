@@ -1,11 +1,8 @@
-check for consistency:
-  ZuVStream (with AltChar and AltString added)
-  ZuStream
-  ZuArray<T, N>
-  ZtArray<T>
-  ZtString / ZtWString - null-terminated C-string interoperable
-
-- complete ZuStreamTest
+- investigate if attribute((section("x"), used)) can be used in ZmSpecific.cc instead of
+  the hack with _tls_used
+- use __attribute__((constructor)) and destructor in ZuTest.{hh,cc} to register sections
+  with singleton test manager, which can be in ZuTest.cc
+- codex resume 019bd1bb-0782-74f2-8a0f-fa1586811392
 
 - complete ZiIOStream
 

@@ -10,8 +10,8 @@
 // - iteration over all instances
 //   (the iterating thread gains access to other threads' instances)
 // - guaranteed safe destruction on both Linux and Windows (mingw64)
-// - instance consolidation on Windows with multiple modules (DLLs),
-//   including DLLs delay-loaded via LoadLibrary()
+// - instance consolidation on Windows with multiple modules
+//   (DLLs, DSOs), including DLLs delay-loaded via LoadLibrary()
 // - no false-positive memory leaks at exit
 
 // ZmSpecific overcomes the following challenges:
