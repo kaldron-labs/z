@@ -4,18 +4,30 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuTest.hh>
-
 #include <iostream>
 
-struct ZuTestMgr::Range_ {
-  const ZuTest	*begin;
-  const ZuTest	*end;
-  unsigned	base;
-  Range_	*next;
+#include <assert.h>
+
+#include <zlib/ZuTest.hh>
+#include <zlib/ZuSort.hh>
+#include <zlib/ZuSort.hh>
+
+struct ZuTestMgr::Section {
+  ZuTestStep	*begin;
+  ZuTestStep	*end;
+  Section	*next;
 };
 
 ZuTestMgr::ZuTestMgr() { }
+
+ZuTestMgr::~ZuTestMgr()
+{
+  Section *next;
+  for (Section *section = m_head; section; section = next) {
+    next = section->next;
+    delete section;
+  }
+}
 
 ZuTestMgr &ZuTestMgr::instance()
 {
@@ -23,68 +35,107 @@ ZuTestMgr &ZuTestMgr::instance()
   return _;
 }
 
-void ZuTestMgr::registerRange(const ZuTest *begin, const ZuTest *end)
+void ZuTestMgr::addSection(ZuTestStep *begin, ZuTestStep *end)
 {
   if (!begin || !end || begin == end) return;
-  for (Range_ *r = m_head; r; r = r->next)
-    if (r->begin == begin && r->end == end) return;
+  for (Section *section = m_head; section; section = section->next)
+    if (section->begin == begin && section->end == end) return;
 
-  auto *r = new Range_{begin, end, 0, nullptr};
-  if (m_tail) m_tail->next = r;
-  else m_head = r;
-  m_tail = r;
-
-  unsigned count = static_cast<unsigned>(end - begin);
-  if (m_finalized) r->base = m_total + 1;
-  m_total += count;
+  auto *section = new Section{begin, end, nullptr};
+  if (m_tail)
+    m_tail->next = section;
+  else
+    m_head = section;
+  m_tail = section;
 }
 
-void ZuTestMgr::finalize_()
+void ZuTestMgr::init()
 {
   if (m_finalized) return;
-  unsigned base = 1;
-  for (Range_ *r = m_head; r; r = r->next) {
-    r->base = base;
-    base += static_cast<unsigned>(r->end - r->begin);
+  // sort steps and establish IDs
+  for (Section *section = m_head; section; section = section->next) {
+    auto n = static_cast<unsigned>(section->end - section->begin);
+    ZuSort(section->begin, n, [](const ZuTestStep &l, const ZuTestStep &r) {
+      // pointer comparison is fine here
+      if (int cmp = ZuCompare(l.file, r.file)) return cmp;
+      return ZuCompare(l.line, r.line);
+    });
+    for (ZuTestStep *step = section->begin; step < section->end; step++) {
+      auto scope = step->scope;
+      step->id = ++scope->count;
+    }
   }
-  m_total = base - 1;
   m_finalized = true;
 }
 
-unsigned ZuTestMgr::count() const
+void ZuTestMgr::start_()
 {
-  const_cast<ZuTestMgr *>(this)->finalize_();
-  return m_total;
+  if (m_context) return;
+  init();
+  m_root = {};
+  m_context = &m_root;
+  m_indent = 0;
+  std::cout << "TAP version 14\n" << std::flush;
 }
 
-unsigned ZuTestMgr::idFor_(const ZuTest *d) const
+void ZuTestMgr::indent_()
 {
-  for (Range_ *r = m_head; r; r = r->next)
-    if (d >= r->begin && d < r->end)
-      return r->base + static_cast<unsigned>(d - r->begin);
-  return 0;
+  for (unsigned i = 0; i < m_indent; i++) std::cout << "    ";
 }
 
-unsigned ZuTestMgr::idFor(const ZuTest *d) const
+void ZuTestMgr::begin_(ZuTestScope *scope)
 {
-  const_cast<ZuTestMgr *>(this)->finalize_();
-  return idFor_(d);
+  start_();
+  unsigned n;
+  if (!scope->name) { // root
+    m_context->scope = scope;
+    n = scope->count;
+  } else {
+    unsigned loops = !m_context->step ? 1 : m_context->step->count;
+    m_context = new RunContext{m_context, scope};
+    n = scope->count * loops;
+    indent_(); std::cout << "# Subtest: " << scope->name << '\n';
+    ++m_indent;
+  }
+
+  indent_(); std::cout << "1.." << n << '\n' << std::flush;
 }
 
-void ZuTestMgr::begin()
+void ZuTestMgr::end_(ZuTestScope *scope)
 {
-  if (m_begun) return;
-  finalize_();
-  std::cout << "1.." << m_total << '\n';
-  m_begun = true;
+  start_();
+  assert(scope == m_context->scope);
+  if (RunContext *parent = static_cast<RunContext *>(m_context->parent)) {
+    bool ok = !m_context->failed;
+    delete m_context;
+    m_context = parent;
+    if (m_indent > 0) --m_indent;
+    check_(m_context->step, ok);
+  }
 }
 
-void ZuTestMgr::run(const ZuTest *d, bool ok, ZuCSpan desc)
+void ZuTestMgr::check_(ZuTestStep *step, bool ok)
 {
-  finalize_();
-  unsigned id = idFor_(d);
-  if (!ok) std::cout << "not ";
+  start_();
+  assert(m_context->scope);
+  m_context->step = step;
+  indent_();
+  if (!ok) {
+    ++m_context->failed;
+    std::cout << "not ";
+  }
+  unsigned id = step->id;
+  id += (m_context->iteration * m_context->scope->count);
   std::cout << "ok " << id;
-  if (desc) std::cout << " - " << desc;
-  std::cout << '\n';
+  if (step->name) std::cout << " - " << step->name;
+  std::cout << '\n' << std::flush;
+  if (step->id == m_context->scope->count) ++m_context->iteration;
 }
+
+void ZuTestMgr::call_(ZuTestStep *step)
+{
+  start_();
+  assert(m_context->scope);
+  m_context->step = step;
+}
+

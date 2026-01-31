@@ -1,14 +1,7 @@
 - investigate if attribute((section("x"), used)) can be used in ZmSpecific.cc instead of
   the hack with _tls_used
-- use __attribute__((constructor)) and destructor in ZuTest.{hh,cc} to register sections
-  with singleton test manager, which can be in ZuTest.cc
-- codex resume 019bd1bb-0782-74f2-8a0f-fa1586811392
 
 - complete ZiIOStream
-
-- adopt TAP, prove
-  - https://chatgpt.com/share/696b9a05-6158-8001-8335-5ff1f1395267
-  - https://testanything.org/tap-version-14-specification.html
 
 - factor out fbs codegen into shell script
   - used repeatedly in multiple Makefile.am

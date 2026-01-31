@@ -18,12 +18,12 @@ pkginclude_HEADERS = \
 	ZuBitStream.hh ZuStream.hh ZuMostAligned.hh \
 	ZuVStream.hh ZuVArray.hh ZuMArray.hh ZuIter.hh ZuJoin.hh \
 	ZuBase32.hh ZuBase64.hh ZuBase64URL.hh ZuHex.hh \
-	ZuMatcher.hh ZuDerive.hh ZuAlt.hh \
+	ZuMatcher.hh ZuDerive.hh ZuAlt.hh ZuTest.hh \
 	\
 	zu_lib.h zu_decimal.h zu_time.h zu_bitmap.h
 lib_LTLIBRARIES = libZu.la
 libZu_la_SOURCES = \
-	ZuLib.cc ZuUTF.cc ZuTime.cc ZuDateTime.cc \
+	ZuLib.cc ZuUTF.cc ZuTime.cc ZuDateTime.cc ZuTest.cc \
 	\
 	zu_decimal.cc zu_time.cc zu_bitmap.cc
 libZu_la_LIBADD = @Z_LIBS@
