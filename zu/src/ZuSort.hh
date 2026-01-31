@@ -137,8 +137,8 @@ struct ZuSort_Fn {
 
 template <unsigned N = 8, typename T>
 inline void ZuSort(T *data, unsigned n) {
-  auto cmp = [](const T &v1, const T &v2) {
-    return ZuCmp<T>::cmp(v1, v2);
+  auto cmp = [](const T &l, const T &r) {
+    return ZuCmp<T>::cmp(l, r);
   };
   using Cmp = decltype(cmp);
   using Fn = ZuSort_Fn<T, Cmp, N>;

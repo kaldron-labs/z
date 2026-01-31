@@ -4,8 +4,11 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// generic three-way and two-way comparison 
-// (including distinguished sentinel null values)
+// ZuCmp is the path not taken by the STL with operator <=>
+// - three-way comparison results as plain integers
+//   - consistent with historic C/C++ practice, strcmp, etc.
+// - generic three-way and two-way comparison 
+// - extensible distinguished sentinel null values
 
 // UDTs must implement the <, == and ! operators
 //
@@ -743,5 +746,15 @@ struct ZuNullRef_<T, Cmp, const T &> {
 };
 template <typename T, typename Cmp = ZuCmp<T>>
 ZuInline const T &ZuNullRef() noexcept { return ZuNullRef_<T, Cmp>::null(); }
+
+template <typename L, typename R>
+ZuInline int ZuCompare(L &&l, R &&r) {
+  return ZuCmp<ZuDecay<L>>::cmp(ZuFwd<L>(l), ZuFwd<R>(r));
+}
+
+template <typename L, typename R>
+ZuInline bool ZuEquals(L &&l, R &&r) {
+  return ZuCmp<ZuDecay<L>>::equals(ZuFwd<L>(l), ZuFwd<R>(r));
+}
 
 #endif /* ZuCmp_HH */

@@ -55,8 +55,9 @@
 #define ZuPP_Eval__2(...) ZuPP_Eval__1(ZuPP_Eval__1(__VA_ARGS__))
 #define ZuPP_Eval__1(...) __VA_ARGS__
 
-#define ZuPP_Empty()
+// use ZuPP_Defer(x) to defer evaluation of x
 
+#define ZuPP_Empty()
 #define ZuPP_Defer(x) x ZuPP_Empty ZuPP_Empty()()
 
 // use ZuPP_Strip(x) to strip x of any parentheses
