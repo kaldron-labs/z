@@ -6,7 +6,7 @@
 
 // TAP-emitting test framework
 // - https://testanything.org/tap-version-14-specification.html
-// - statically scans tests before main() runs to emit test counts early
+// - statically scans tests before main() runs to emit early test counts
 // - interactive harnesses can use early counts to track progress to 100%
 // - intentionally targeted at functional testing workloads that are
 //   predominantly static, i.e. established at compile-time
