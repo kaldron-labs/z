@@ -43,12 +43,12 @@ template <unsigned N_> struct ZuString {
     return ZuFwdLike<decltype(self)>(self.data_[i]);
   }
 
-  ZuInline char *data() { return &data_[0]; }
-  ZuInline const char *data() const { return &data_[0]; }
+  ZuInline constexpr char *data() { return &data_[0]; }
+  ZuInline constexpr const char *data() const { return &data_[0]; }
   ZuInline constexpr unsigned length() const { return N - 1; }
 
-  ZuInline auto span() { return ZuSpan(data(), length()); }
-  ZuInline auto cspan() const { return ZuSpan(data(), length()); }
+  ZuInline constexpr auto span() { return ZuSpan(data(), length()); }
+  ZuInline constexpr auto cspan() const { return ZuSpan(data(), length()); }
 
   ZuInline constexpr bool operator !() const { return !N; }
 

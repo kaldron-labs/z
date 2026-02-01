@@ -6,14 +6,12 @@
 
 // TAP-emitting test framework
 // - https://testanything.org/tap-version-14-specification.html
-// - statically scans tests before main() runs to emit early test counts
+// - statically scans tests before main() to permit early test counts
 // - interactive harnesses can use early counts to track progress to 100%
 // - intentionally targeted at functional testing workloads that are
 //   predominantly static, i.e. established at compile-time
 // - supports arbitrarily nested sub-tests
 // - tests can reside in dynamic shared libraries
-// - dynamic sub-tests that vary at runtime can use RT equivalents:
-//   ZuTestRT / ZuTestScopeRT / ZuCheckRT
 
 // usage:
 // - start TAP output and establish the top-level scope:
@@ -22,13 +20,15 @@
 //   ZuCheck(expr);
 // - an inline block sub-test named "sub":
 //   { ZuTest(sub); ... }
-// - a sub-test named "loop" with N fixed variations/iterations
+// - a sub-test named "loop" with N fixed variations/iterations:
 //   { ZuTestRepeat(loop, N); for (...) ... }
 //   - N must be a compile-time constant
-// - sub-test in a callable named "fn"
+// - sub-test in a callable named fn:
 //   void fn() { ZuTestScope(fn); ... }
-// - call a sub-test written in a callable fn()
+// - call a sub-test written in a callable named fn:
 //   ZuTestCall(fn);
+// - dynamic sub-tests that vary at runtime should use RT equivalents:
+//   ZuCheckRT / ZuTestRT / ZuTestScopeRT / ZuTestCallRT
 
 #ifndef ZuTest_HH
 #define ZuTest_HH
@@ -38,15 +38,16 @@
 #endif
 
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuString.hh>
 
-struct ZuTestScope {
+struct ZuTest_Scope {
   const char	*name;
   unsigned	count;
   bool		dynamic;
 };
 
-struct alignas(32) ZuTestStep {
-  ZuTestScope	*scope;
+struct alignas(32) ZuTest_Step {
+  ZuTest_Scope	*scope;
   const char	*file;
   unsigned	line;
   const char	*name;
@@ -68,16 +69,16 @@ public:
   static void start() { instance().start_(); }
   static void indent() { instance().indent_(); }
 
-  static void begin(ZuTestScope *scope) {
+  static void begin(ZuTest_Scope *scope) {
     instance().begin_(scope);
   }
-  static void end(ZuTestScope *scope) {
+  static void end(ZuTest_Scope *scope) {
     instance().end_(scope);
   }
-  static void check(ZuTestStep *step, bool ok, const char *name) {
+  static void check(ZuTest_Step *step, bool ok, const char *name) {
     instance().check_(step, ok, name);
   }
-  static void call(ZuTestStep *step) {
+  static void call(ZuTest_Step *step) {
     instance().call_(step);
   }
 
@@ -86,16 +87,16 @@ private:
 
 friend void ZuTest_::addImage_();
 
-  void addSection(ZuTestStep *begin, ZuTestStep *end);
+  void addSection(ZuTest_Step *begin, ZuTest_Step *end);
 
   struct Section;
 
   struct RunContext {
-    RunContext	*parent = nullptr;
-    ZuTestScope	*scope = nullptr;
-    ZuTestStep	*step = nullptr;
-    unsigned	iteration = 0;
-    unsigned	failed = 0;
+    RunContext		*parent = nullptr;
+    ZuTest_Scope	*scope = nullptr;
+    ZuTest_Step		*step = nullptr;
+    unsigned		iteration = 0;
+    unsigned		failed = 0;
   };
 
   void init();
@@ -104,10 +105,10 @@ friend void ZuTest_::addImage_();
 
   void indent_();
 
-  void begin_(ZuTestScope *scope);
-  void end_(ZuTestScope *scope);
-  void check_(ZuTestStep *step, bool ok, const char *name);
-  void call_(ZuTestStep *step);
+  void begin_(ZuTest_Scope *scope);
+  void end_(ZuTest_Scope *scope);
+  void check_(ZuTest_Step *step, bool ok, const char *name);
+  void call_(ZuTest_Step *step);
 
   Section	*m_head = nullptr;
   Section	*m_tail = nullptr;
@@ -134,8 +135,8 @@ friend void ZuTest_::addImage_();
   ZuTest_Retain
 
 extern "C" {
-  extern ZuTestStep __start_ZuTest[] __attribute__((weak));
-  extern ZuTestStep __stop_ZuTest[] __attribute__((weak));
+  extern ZuTest_Step __start_ZuTest[] __attribute__((weak));
+  extern ZuTest_Step __stop_ZuTest[] __attribute__((weak));
 }
 
 #else /* _WIN32 */
@@ -144,54 +145,75 @@ extern "C" {
 
 extern "C" {
   __attribute__((section(".ztest$A"), used))
-  inline ZuTestStep ZuTest_begin = { 0 };
+  inline ZuTest_Step ZuTest_begin = { 0 };
 
   __attribute__((section(".ztest$Z"), used))
-  inline ZuTestStep ZuTest_end = { 0 };
+  inline ZuTest_Step ZuTest_end = { 0 };
 }
 
 #endif /* _WIN32 */
 
-struct ZuTestContext {
-  ZuTestScope	*scope;
+namespace ZuTest_ {
+  // this is carefully written to ensure static initialization
+  // in the image without COMDAT or ODR conflicts
+  template <
+    ZuTest_Scope *Scope, ZuString File, unsigned Line,
+    ZuString Expr, unsigned Count>
+  ZuInline ZuTest_Step &step_() {
+    static constinit ZuTest_Step step ZuTest_Section = {
+      Scope, File.data_, Line, Expr.data_, 0, Count
+    };
+    return step;
+  }
+}
 
-  ZuTestContext(ZuTestScope *scope_) : scope{scope_} {
+struct ZuTest_Context {
+  ZuTest_Scope	*scope;
+
+  ZuTest_Context(ZuTest_Scope *scope_) : scope{scope_} {
     ZuTestMgr::begin(scope);
   }
-  ~ZuTestContext() {
+  ~ZuTest_Context() {
     ZuTestMgr::end(scope);
   }
 };
 
 #define ZuTestMain() \
-  static ZuTestScope ZuTest_scope = { nullptr, 0, false }; \
-  ZuTestContext ZuTest_context(&ZuTest_scope); \
+  static ZuTest_Scope ZuTest_scope = { nullptr, 0, false }; \
+  ZuTest_Context ZuTest_context(&ZuTest_scope); \
   ZuTestMgr::start()
 
 #define ZuTestScope(name) \
-  static ZuTestScope ZuTest_scope = { #name, 0, false }; \
-  ZuTestContext ZuTest_context(&ZuTest_scope)
+  static ZuTest_Scope ZuTest_scope = { #name, 0, false }; \
+  ZuTest_Context ZuTest_context(&ZuTest_scope)
 
 #define ZuCheck(x) \
   do { \
-    static ZuTestStep ZuTest_check ZuTest_Section = { \
-      &ZuTest_scope, __FILE__, __LINE__, #x, 0, 0 \
-    }; \
+    auto &ZuTest_check = ZuTest_::step_< \
+      &ZuTest_scope, __FILE__, __LINE__, #x, 0>(); \
     ZuTestMgr::check(&ZuTest_check, (x), nullptr); \
   } while (0)
 
+#define ZuCheck_(x) ZuTestMgr::check(&ZuTest_check, (x), #x)
+#define ZuCheckBlock(block) \
+  do { \
+    auto &ZuTest_check = ZuTest_::step_< \
+      &ZuTest_scope, __FILE__, __LINE__, "", 0>(); \
+    ZuPP_Strip(block) \
+  } while (0)
+
 #define ZuTestScopeRT(name) \
-  static ZuTestScope ZuTest_scope = { #name, 0, true }; \
-  ZuTestContext ZuTest_context(&ZuTest_scope)
+  static ZuTest_Scope ZuTest_scope = { #name, 0, true }; \
+  ZuTest_Context ZuTest_context(&ZuTest_scope)
 
 #define ZuCheckRT(x) ZuTestMgr::check(nullptr, (x), #x)
 
-#define ZuTestRepeat_(name, count) { \
-    static ZuTestStep ZuTest_call ZuTest_Section = { \
-      &ZuTest_scope, __FILE__, __LINE__, #name, 0, count \
-    }; \
+#define ZuTestRepeat_(name, count) \
+  do { \
+    auto &ZuTest_call = ZuTest_::step_< \
+      &ZuTest_scope, __FILE__, __LINE__, #name, count>(); \
     ZuTestMgr::call(&ZuTest_call); \
-  }
+  } while (0)
 
 #define ZuTestCall_(name) ZuTestRepeat_(name, 1)
 
@@ -215,23 +237,21 @@ struct ZuTestContext {
 
 #define ZuTestCallRT(name, ...) \
   do { \
-      { \
-      static ZuTestStep ZuTest_call = { \
-	&ZuTest_scope, __FILE__, __LINE__, #name, 0, 1 \
-      }; \
-      ZuTestMgr::call(&ZuTest_call); \
-    } \
+    static ZuTest_Step ZuTest_call = { \
+      &ZuTest_scope, __FILE__, __LINE__, #name, 0, 1 \
+    }; \
+    ZuTestMgr::call(&ZuTest_call); \
     name(__VA_ARGS__); \
   } while (0)
 
 namespace ZuTest_ {
   inline void addImage_() {
 #ifndef _WIN32
-    ZuTestStep *begin = __start_ZuTest;
-    ZuTestStep *end = __stop_ZuTest;
+    ZuTest_Step *begin = __start_ZuTest;
+    ZuTest_Step *end = __stop_ZuTest;
 #else
-    ZuTestStep *begin = &ZuTest_begin + 1;
-    ZuTestStep *end = &ZuTest_end;
+    ZuTest_Step *begin = &ZuTest_begin + 1;
+    ZuTest_Step *end = &ZuTest_end;
 #endif
     if (!begin || !end || begin == end) return;
     ZuTestMgr::instance().addSection(begin, end);

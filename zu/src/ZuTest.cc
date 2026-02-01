@@ -13,8 +13,8 @@
 #include <zlib/ZuSort.hh>
 
 struct ZuTestMgr::Section {
-  ZuTestStep	*begin;
-  ZuTestStep	*end;
+  ZuTest_Step	*begin;
+  ZuTest_Step	*end;
   Section	*next;
 };
 
@@ -35,7 +35,7 @@ ZuTestMgr &ZuTestMgr::instance()
   return _;
 }
 
-void ZuTestMgr::addSection(ZuTestStep *begin, ZuTestStep *end)
+void ZuTestMgr::addSection(ZuTest_Step *begin, ZuTest_Step *end)
 {
   if (!begin || !end || begin == end) return;
   for (Section *section = m_head; section; section = section->next)
@@ -52,19 +52,39 @@ void ZuTestMgr::addSection(ZuTestStep *begin, ZuTestStep *end)
 void ZuTestMgr::init()
 {
   if (m_finalized) return;
-  // sort steps and establish IDs
-  for (Section *section = m_head; section; section = section->next) {
-    auto n = static_cast<unsigned>(section->end - section->begin);
-    ZuSort(section->begin, n, [](const ZuTestStep &l, const ZuTestStep &r) {
-      // pointer comparison is fine here
-      if (int cmp = ZuCompare(l.file, r.file)) return cmp;
-      return ZuCompare(l.line, r.line);
-    });
-    for (ZuTestStep *step = section->begin; step < section->end; step++) {
-      auto scope = step->scope;
-      step->id = ++scope->count;
-    }
+  // count steps
+  unsigned n = 0;
+  for (Section *section = m_head; section; section = section->next)
+    n += static_cast<unsigned>(section->end - section->begin);
+  // allocate temporary steps[] on stack, falling back to heap
+  bool mallocd = false;
+  auto steps = static_cast<ZuTest_Step **>(
+    ZuAlloca(n * sizeof(ZuTest_Step *), alignof(ZuTest_Step *)));
+  if (!steps) {
+    mallocd = true;
+    steps = static_cast<ZuTest_Step **>(
+      ::malloc(n * sizeof(ZuTest_Step *)));
   }
+  memset(steps, 0, n * sizeof(ZuTest_Step *));
+  // fill steps[] with pointers to statically-allocated steps
+  {
+    unsigned i = 0;
+    for (Section *section = m_head; section; section = section->next)
+      for (auto step = section->begin; step < section->end; ++step)
+	steps[i++] = step;
+  }
+  // sort steps and establish IDs
+  ZuSort(steps, n, [](ZuTest_Step *&l, ZuTest_Step *&r) {
+    // pointer comparison is fine here, just segregating files
+    if (int cmp = ZuCompare(l->file, r->file)) return cmp;
+    return ZuCompare(l->line, r->line);
+  });
+  for (unsigned i = 0; i < n; i++) {
+    auto step = steps[i];
+    auto scope = step->scope;
+    step->id = ++scope->count;
+  }
+  if (mallocd) ::free(steps);
   m_finalized = true;
 }
 
@@ -83,7 +103,7 @@ void ZuTestMgr::indent_()
   for (unsigned i = 0; i < m_indent; i++) std::cout << "    ";
 }
 
-void ZuTestMgr::begin_(ZuTestScope *scope)
+void ZuTestMgr::begin_(ZuTest_Scope *scope)
 {
   start_();
   unsigned n;
@@ -103,7 +123,7 @@ void ZuTestMgr::begin_(ZuTestScope *scope)
   }
 }
 
-void ZuTestMgr::end_(ZuTestScope *scope)
+void ZuTestMgr::end_(ZuTest_Scope *scope)
 {
   start_();
   assert(scope);
@@ -122,13 +142,13 @@ void ZuTestMgr::end_(ZuTestScope *scope)
   }
 }
 
-void ZuTestMgr::check_(ZuTestStep *step, bool ok, const char *name)
+void ZuTestMgr::check_(ZuTest_Step *step, bool ok, const char *name)
 {
   start_();
   auto scope = m_context->scope;
   assert(scope);
   if (step) {
-    name = step->name;
+    if (!name) name = step->name;
     m_context->step = step;
   }
   indent_();
@@ -148,7 +168,7 @@ void ZuTestMgr::check_(ZuTestStep *step, bool ok, const char *name)
   if (!scope->dynamic && step->id == scope->count) ++m_context->iteration;
 }
 
-void ZuTestMgr::call_(ZuTestStep *step)
+void ZuTestMgr::call_(ZuTest_Step *step)
 {
   start_();
   assert(m_context->scope);
