@@ -12,14 +12,20 @@ void foo() {
   }
 }
 
+void bar() {
+  ZuTestScopeRT(bar);
+  for (unsigned i = 0; i < 3; i++) ZuCheckRT(true);
+}
+
 int main()
 {
   ZuTestMain();
   // bool harnessed = ::getenv("HARNESS_ACTIVE");
   ZuCheck(true);
   ZuCheck(true);
+  { ZuTest(empty); }
   ZuTestCall(foo);
-  { ZuTest(bar__); }
+  ZuTestCall(bar);
   {
     ZuTestRepeat(baz, 5);
     for (unsigned i = 0; i < 5; i++) {

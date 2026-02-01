@@ -12,6 +12,8 @@
 //   static at compile-time
 // - supports arbitrarily nested sub-tests
 // - tests can reside in dynamic shared libraries
+// - dynamic test workloads that vary the number of tests at runtime
+//   should use ZuTestRT / ZuTestScopeRT / ZuCheckRT
 
 // usage:
 // - start TAP output and establish the top-level scope:
@@ -40,6 +42,7 @@
 struct ZuTestScope {
   const char	*name;
   unsigned	count;
+  bool		dynamic;
 };
 
 struct alignas(32) ZuTestStep {
@@ -71,8 +74,8 @@ public:
   static void end(ZuTestScope *scope) {
     instance().end_(scope);
   }
-  static void check(ZuTestStep *step, bool ok) {
-    instance().check_(step, ok);
+  static void check(ZuTestStep *step, bool ok, const char *name) {
+    instance().check_(step, ok, name);
   }
   static void call(ZuTestStep *step) {
     instance().call_(step);
@@ -103,7 +106,7 @@ friend void ZuTest_::addImage_();
 
   void begin_(ZuTestScope *scope);
   void end_(ZuTestScope *scope);
-  void check_(ZuTestStep *step, bool ok);
+  void check_(ZuTestStep *step, bool ok, const char *name);
   void call_(ZuTestStep *step);
 
   Section	*m_head = nullptr;
@@ -161,12 +164,12 @@ struct ZuTestContext {
 };
 
 #define ZuTestMain() \
-  static ZuTestScope ZuTest_scope = { nullptr }; \
+  static ZuTestScope ZuTest_scope = { nullptr, 0, false }; \
   ZuTestContext ZuTest_context(&ZuTest_scope); \
   ZuTestMgr::start()
 
 #define ZuTestScope(name) \
-  static ZuTestScope ZuTest_scope = { #name }; \
+  static ZuTestScope ZuTest_scope = { #name, 0, false }; \
   ZuTestContext ZuTest_context(&ZuTest_scope)
 
 #define ZuCheck(x) \
@@ -174,28 +177,38 @@ struct ZuTestContext {
     static ZuTestStep ZuTest_check ZuTest_Section = { \
       &ZuTest_scope, __FILE__, __LINE__, #x, 0, 0 \
     }; \
-    ZuTestMgr::check(&ZuTest_check, (x)); \
+    ZuTestMgr::check(&ZuTest_check, (x), nullptr); \
   } while (0)
 
-#define ZuTestRepeat_(name, count) { \
+#define ZuTestScopeRT(name) \
+  static ZuTestScope ZuTest_scope = { #name, 0, true }; \
+  ZuTestContext ZuTest_context(&ZuTest_scope)
+
+#define ZuCheckRT(x) ZuTestMgr::check(nullptr, (x), #x)
+
+#define ZuTestRepeat_(count) { \
     static ZuTestStep ZuTest_call ZuTest_Section = { \
-      &ZuTest_scope, __FILE__, __LINE__, #name, 0, count \
+      &ZuTest_scope, __FILE__, __LINE__, nullptr, 0, count \
     }; \
     ZuTestMgr::call(&ZuTest_call); \
   }
 
-#define ZuTestCall_(name) ZuTestRepeat_(name, 1)
+#define ZuTestCall_() ZuTestRepeat_(1)
 
 #define ZuTest(name) \
-  ZuTestCall_(name); \
+  ZuTestCall_(); \
   ZuTestScope(name)
 
 #define ZuTestRepeat(name, count) \
-  ZuTestRepeat_(name, count); \
+  ZuTestRepeat_(count); \
   ZuTestScope(name)
 
+#define ZuTestRT(name) \
+  ZuTestCall_(); \
+  ZuTestScopeRT(name)
+
 #define ZuTestCall(name, ...) \
-  ZuTestCall_(name); \
+  ZuTestCall_(); \
   name(__VA_ARGS__)
 
 namespace ZuTest_ {

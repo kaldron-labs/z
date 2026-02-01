@@ -89,53 +89,65 @@ void ZuTestMgr::begin_(ZuTestScope *scope)
   unsigned n;
   if (!scope->name) { // root
     m_context->scope = scope;
-    n = scope->count;
+    if (!scope->dynamic) n = scope->count;
   } else {
     unsigned loops = !m_context->step ? 1 : m_context->step->count;
     m_context = new RunContext{m_context, scope};
-    n = scope->count * loops;
+    if (!scope->dynamic) n = scope->count * loops;
     indent_(); std::cout << "# Subtest: " << scope->name << '\n';
     ++m_indent;
   }
 
-  indent_(); std::cout << "1.." << n << '\n' << std::flush;
+  if (!scope->dynamic) {
+    indent_(); std::cout << "1.." << n << '\n' << std::flush;
+  }
 }
 
 void ZuTestMgr::end_(ZuTestScope *scope)
 {
   start_();
+  assert(scope);
   assert(scope == m_context->scope);
   if (RunContext *parent = static_cast<RunContext *>(m_context->parent)) {
+    if (scope->dynamic) {
+      indent_(); std::cout << "1.." << scope->count << '\n' << std::flush;
+    }
     bool ok = !m_context->failed;
     delete m_context;
     m_context = parent;
     if (m_indent > 0) --m_indent;
-    check_(m_context->step, ok);
+    check_(m_context->step, ok, m_context->step->name);
   }
 }
 
-void ZuTestMgr::check_(ZuTestStep *step, bool ok)
+void ZuTestMgr::check_(ZuTestStep *step, bool ok, const char *name)
 {
   start_();
-  assert(m_context->scope);
-  m_context->step = step;
+  auto scope = m_context->scope;
+  assert(scope);
+  if (step) {
+    name = step->name;
+    m_context->step = step;
+  }
   indent_();
   if (!ok) {
     ++m_context->failed;
     std::cout << "not ";
   }
-  unsigned id = step->id;
-  id += (m_context->iteration * m_context->scope->count);
+  unsigned id;
+  if (step)
+    id = (m_context->iteration * scope->count) + step->id;
+  else
+    id = ++scope->count;
   std::cout << "ok " << id;
-  if (step->name) std::cout << " - " << step->name;
+  if (name) std::cout << " - " << name;
   std::cout << '\n' << std::flush;
-  if (step->id == m_context->scope->count) ++m_context->iteration;
+  if (step && step->id == scope->count) ++m_context->iteration;
 }
 
 void ZuTestMgr::call_(ZuTestStep *step)
 {
   start_();
   assert(m_context->scope);
-  m_context->step = step;
+  if (step) m_context->step = step;
 }
-
