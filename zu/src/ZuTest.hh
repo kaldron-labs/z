@@ -4,16 +4,16 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// TAP-emitting static test framework
+// TAP-emitting test framework
 // - https://testanything.org/tap-version-14-specification.html
-// - statically scans tests before main() runs to emit accurate test counts
-//   so that interactive harnesses can accurately track progress to 100%
+// - statically scans tests before main() runs to emit test counts early
+// - interactive harnesses can use early counts to track progress to 100%
 // - intentionally targeted at functional testing workloads that are
-//   static at compile-time
+//   predominantly static, i.e. established at compile-time
 // - supports arbitrarily nested sub-tests
 // - tests can reside in dynamic shared libraries
-// - dynamic test workloads that vary the number of tests at runtime
-//   should use ZuTestRT / ZuTestScopeRT / ZuCheckRT
+// - dynamic sub-tests that vary tests at runtime can use RT equivalents:
+//   ZuTestRT / ZuTestScopeRT / ZuCheckRT
 
 // usage:
 // - start TAP output and establish the top-level scope:
@@ -27,7 +27,7 @@
 //   - N must be a compile-time constant
 // - sub-test in a function or lambda named "fn"
 //   void fn() { ZuTestScope(fn); ... }
-// - call a function-wrapped sub-test
+// - call a sub-test written in a different function fn()
 //   ZuTestCall(fn);
 
 #ifndef ZuTest_HH
