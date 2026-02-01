@@ -111,11 +111,13 @@ void ZuTestMgr::end_(ZuTestScope *scope)
   if (RunContext *parent = static_cast<RunContext *>(m_context->parent)) {
     if (scope->dynamic) {
       indent_(); std::cout << "1.." << scope->count << '\n' << std::flush;
+      scope->count = 0; // dyanmic scopes may be repeatedly entered
     }
     bool ok = !m_context->failed;
     delete m_context;
     m_context = parent;
     if (m_indent > 0) --m_indent;
+    assert(m_context->step);
     check_(m_context->step, ok, m_context->step->name);
   }
 }
@@ -135,19 +137,20 @@ void ZuTestMgr::check_(ZuTestStep *step, bool ok, const char *name)
     std::cout << "not ";
   }
   unsigned id;
-  if (step)
+  if (!scope->dynamic) {
+    assert(step);
     id = (m_context->iteration * scope->count) + step->id;
-  else
+  } else
     id = ++scope->count;
   std::cout << "ok " << id;
   if (name) std::cout << " - " << name;
   std::cout << '\n' << std::flush;
-  if (step && step->id == scope->count) ++m_context->iteration;
+  if (!scope->dynamic && step->id == scope->count) ++m_context->iteration;
 }
 
 void ZuTestMgr::call_(ZuTestStep *step)
 {
   start_();
   assert(m_context->scope);
-  if (step) m_context->step = step;
+  m_context->step = step;
 }

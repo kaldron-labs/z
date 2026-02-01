@@ -12,7 +12,7 @@
 //   predominantly static, i.e. established at compile-time
 // - supports arbitrarily nested sub-tests
 // - tests can reside in dynamic shared libraries
-// - dynamic sub-tests that vary tests at runtime can use RT equivalents:
+// - dynamic sub-tests that vary at runtime can use RT equivalents:
 //   ZuTestRT / ZuTestScopeRT / ZuCheckRT
 
 // usage:
@@ -25,9 +25,9 @@
 // - a sub-test named "loop" with N fixed variations/iterations
 //   { ZuTestRepeat(loop, N); for (...) ... }
 //   - N must be a compile-time constant
-// - sub-test in a function or lambda named "fn"
+// - sub-test in a callable named "fn"
 //   void fn() { ZuTestScope(fn); ... }
-// - call a sub-test written in a different function fn()
+// - call a sub-test written in a callable fn()
 //   ZuTestCall(fn);
 
 #ifndef ZuTest_HH
@@ -186,30 +186,43 @@ struct ZuTestContext {
 
 #define ZuCheckRT(x) ZuTestMgr::check(nullptr, (x), #x)
 
-#define ZuTestRepeat_(count) { \
+#define ZuTestRepeat_(name, count) { \
     static ZuTestStep ZuTest_call ZuTest_Section = { \
-      &ZuTest_scope, __FILE__, __LINE__, nullptr, 0, count \
+      &ZuTest_scope, __FILE__, __LINE__, #name, 0, count \
     }; \
     ZuTestMgr::call(&ZuTest_call); \
   }
 
-#define ZuTestCall_() ZuTestRepeat_(1)
+#define ZuTestCall_(name) ZuTestRepeat_(name, 1)
 
 #define ZuTest(name) \
-  ZuTestCall_(); \
+  ZuTestCall_(name); \
   ZuTestScope(name)
 
 #define ZuTestRepeat(name, count) \
-  ZuTestRepeat_(count); \
+  ZuTestRepeat_(name, count); \
   ZuTestScope(name)
 
 #define ZuTestRT(name) \
-  ZuTestCall_(); \
+  ZuTestCall_(name); \
   ZuTestScopeRT(name)
 
 #define ZuTestCall(name, ...) \
-  ZuTestCall_(); \
-  name(__VA_ARGS__)
+  do { \
+    ZuTestCall_(name); \
+    name(__VA_ARGS__); \
+  } while (0)
+
+#define ZuTestCallRT(name, ...) \
+  do { \
+      { \
+      static ZuTestStep ZuTest_call = { \
+	&ZuTest_scope, __FILE__, __LINE__, #name, 0, 1 \
+      }; \
+      ZuTestMgr::call(&ZuTest_call); \
+    } \
+    name(__VA_ARGS__); \
+  } while (0)
 
 namespace ZuTest_ {
   inline void addImage_() {
