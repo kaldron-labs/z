@@ -12,9 +12,9 @@ void foo() {
   }
 }
 
-void bar() {
+void bar(unsigned n) {
   ZuTestScopeRT(bar);
-  for (unsigned i = 0; i < 3; i++) ZuCheckRT(true);
+  for (unsigned i = 0; i < n; i++) ZuCheckRT(true);
 }
 
 int main()
@@ -25,7 +25,7 @@ int main()
   ZuCheck(true);
   { ZuTest(empty); }
   ZuTestCall(foo);
-  ZuTestCall(bar);
+  ZuTestCall(bar, 3);
   {
     ZuTestRepeat(baz, 5);
     for (unsigned i = 0; i < 5; i++) {
