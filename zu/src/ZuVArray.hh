@@ -164,7 +164,7 @@ friend Elem;
     uint64_t n = ln < rn ? ln : rn;
     for (uint64_t i = 0; i < n; i++)
       if (int j = ZuCmp<T>::cmp(R((*this)[i]), R(r[i]))) return j;
-    return ZuCmp<int>::cmp(ln, rn);
+    return ZuCompare(ln, rn);
   }
   friend inline bool
   operator ==(const Array &l, const Array &r) { return l.equals(r); }

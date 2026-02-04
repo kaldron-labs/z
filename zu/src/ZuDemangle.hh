@@ -19,8 +19,9 @@
 #include <cxxabi.h>
 
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuPrint.hh>
 
-class ZuDemangle_ {
+class ZuDemangle_ : public ZuPrintable {
   ZuDemangle_(const ZuDemangle_ &) = delete;
   ZuDemangle_ &operator =(const ZuDemangle_ &) = delete;
   ZuDemangle_(ZuDemangle_ &&) = delete;
@@ -42,16 +43,20 @@ public:
     m_buf = __cxxabiv1::__cxa_demangle(symbol, m_buf, &m_length, &status);
     if (status || !m_buf)
       m_output = symbol;
-    else
-      m_output = m_buf;
+    else {
+      ZuSpan<char> output{m_buf, m_length};
+      transform(output);
+      m_output = output;
+    }
   }
 
-  template <typename S> void print(S &s) const { s << m_output; }
+  template <typename S> void print(S &s) const {
+    if (m_output) s << m_output;
+  }
 
-  template <typename S>
-  friend inline S &operator <<(S &s, const ZuDemangle_ &d) {
-    d.print(s);
-    return s;
+  // post-process demangle output - in-place transformation
+  static void transform(ZuSpan<char> &output) {
+    // FIXME
   }
 
 private:

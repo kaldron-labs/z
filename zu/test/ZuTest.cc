@@ -47,4 +47,6 @@ int main()
       ZuCheck(true);
     }
   }
+
+  return 0;
 }

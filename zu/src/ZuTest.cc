@@ -139,6 +139,9 @@ void ZuTestMgr::end_(ZuTest_Scope *scope)
     if (m_indent > 0) --m_indent;
     assert(m_context->step);
     check_(m_context->step, ok, m_context->step->name);
+  } else {
+    if (int code = m_context->failed)
+      ::exit(code);
   }
 }
 

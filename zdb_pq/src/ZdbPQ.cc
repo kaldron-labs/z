@@ -1456,7 +1456,7 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
 	if (ftype->code == ZtFieldTC::UDT) {
 	  auto udtInfo = ftype->info.udt();
 	  s << " typeID=" << udtInfo->id
-	    << " typeName=" << ZmDemangle{udtInfo->info->name()};
+	    << " typeName=" << ZmDemangle_{udtInfo->info->name()};
 	}
 	s << "} nFields=" << nFields;
       }));

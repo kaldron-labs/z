@@ -1,3 +1,11 @@
+- fix ZuDemangle_::transform (see goal.md)
+  - implement ZuSpan::splice (see ZuArray::splice)
+
+- complete ZuDemangleTest
+  - output examples of ZuString, ZuArray, ZuTuple and ZuUnion
+
+--------
+
 - investigate if attribute((section("x"), used)) can be used in ZmSpecific.cc instead of
   the hack with _tls_used
 
