@@ -50,10 +50,10 @@ void test() {
 	CHECK(nw.write(-(j + k * k)));
       }
       std::cout
-	<< ZmDemangle{typeid(Encoder).name()}
+	<< ZmDemangle<Encoder>{}
 	<< " +ve: " << pw.offset() << ' ' << (pw.pos() - p) << '\n';
       std::cout
-	<< ZmDemangle{typeid(Encoder).name()}
+	<< ZmDemangle<Encoder>{}
 	<< " -ve: " << nw.offset() << ' ' << (nw.pos() - n) << '\n';
     }
     {

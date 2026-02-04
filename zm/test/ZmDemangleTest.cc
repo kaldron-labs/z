@@ -18,9 +18,10 @@ template <typename> struct Baz { };
 int main()
 {
   constexpr auto foo = ZuDefaultAxor();
-  std::cout << ZmDemangle{"Z1XvEUlTyOT_E_"} << '\n';
-  std::cout << ZmDemangle{"Z1XvEUlOT_E_"} << '\n';
+  using Foo_ = decltype(foo);
+  std::cout << ZmDemangle_{"Z1XvEUlTyOT_E_"} << '\n';
+  std::cout << ZmDemangle_{"Z1XvEUlOT_E_"} << '\n';
   std::cout << "raw: " << typeid(foo).name() << '\n';
-  std::cout << ZmDemangle{typeid(foo).name()} << '\n';
-  std::cout << ZmDemangle{typeid(Foo<Baz, Baz<int>>).name()} << '\n';
+  std::cout << ZmDemangle<Foo_>{} << '\n';
+  std::cout << ZmDemangle<Foo<Baz, Baz<int>>>{} << '\n';
 }

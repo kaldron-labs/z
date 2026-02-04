@@ -16,7 +16,7 @@ noinst_PROGRAMS = \
 	ZuStreamTest ZuBitStreamTest ZuSearchBench \
 	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest \
 	ZuMatchTest ZuNXTest ZuFPTest ZuIntrinTest ZuMvArrayTest \
-	ZuTokenizerTest ZuTest
+	ZuTokenizerTest ZuTest ZuDemangleTest
 ZuInspectTest_SOURCES = ZuInspectTest.cc
 ZuHashTest_SOURCES = ZuHashTest.cc Analyze.hh
 ZuCmpTest_SOURCES = ZuCmpTest.cc
@@ -52,3 +52,4 @@ ZuIntrinTest_SOURCES = ZuIntrinTest.cc
 ZuMvArrayTest_SOURCES = ZuMvArrayTest.cc
 ZuTokenizerTest_SOURCES = ZuTokenizerTest.cc
 ZuTest_SOURCES = ZuTest.cc
+ZuDemangleTest_SOURCES = ZuDemangleTest.cc

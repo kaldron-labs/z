@@ -11,12 +11,11 @@
 #include <assert.h>
 #include <stdlib.h>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuVArray.hh>
 #include <zlib/ZuSpan.hh>
-// #include <zlib/ZuDemangle.hh>
 #include <zlib/ZuString.hh>
-#include <zlib/ZuTest.hh>
 
 class I {
 public:
@@ -72,9 +71,6 @@ template <> struct A<ZuArray("")> { enum { IsNull = 1 }; };
 ZuAssert((A<"">::IsNull));
 ZuAssert((!A<"foo">::IsNull));
 
-template <auto L> struct B { };
-template <ZuString L> struct D { };
-
 int main()
 {
   ZuTestMain();
@@ -115,9 +111,9 @@ int main()
     ZuTestCall(testSplice, a, -2, 4, 0, 44);
   }
   {
-    ZuArray<wchar_t, 80> w;
+    ZuWArray<80> w;
     w << L"hello " << "world" << L'!' << ' ' << 42;
-    ZuArray<char, 80> s = w;
+    ZuCArray<80> s = w;
     ZuCheck(s == "hello world! 42");
     s = {};
     s << L"hello " << "world" << L'!' << ' ' << 42;
@@ -130,22 +126,11 @@ int main()
     ZuCheck(ZuTraits<decltype(a)>::IsArray);
     ZuCheck(!ZuTraits<decltype(a)>::IsSpan);
     ZuCheck(IsIterable_<decltype(a)>{});
-    // std::cerr << ZuDemangle<decltype(a)>{} << '\n';
-    // std::cerr << ZuDemangle<typename ZuTraits<decltype(a)>::Elem>{} << '\n';
     ZuCheck((IsIterable<decltype(a), ZuBSpan>()));
     ZuCheck((ZuIsConstructible<
 	typename ZuTraits<decltype(a)>::Elem,
 	ZuBSpan>()));
   }
 
-  {
-    using A_ = A<"foobar">;
-    using B_ = B<[]{ return "foobar"; }>;
-    using C_ = B<"foobar"_Zu>;
-    using D_ = D<"foobar">;
-    // std::cerr << ZuDemangle<A_>{} << '\n';
-    // std::cerr << ZuDemangle<B_>{} << '\n';
-    // std::cerr << ZuDemangle<C_>{} << '\n';
-    // std::cerr << ZuDemangle<D_>{} << '\n';
-  }
+  return 0;
 }

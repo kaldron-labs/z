@@ -6,6 +6,8 @@
 
 // C++ demangling (binutils BFD version)
 
+// s << ZmDemangle{typeid(T).name()}
+
 #ifndef ZmDemangle_HH
 #define ZmDemangle_HH
 
@@ -15,6 +17,7 @@
 
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuPrint.hh>
+#include <zlib/ZuDemangle.hh>
 
 // Note: __cxxabiv1::__cxa_demangle() doesn't correctly demangle
 // "Z1XvEUlTyOT_E_" to
@@ -29,31 +32,35 @@
 #define DMGL_TYPES	 (1<<4)	/* Also try to demangle type encodings */
 extern "C" { extern char *cplus_demangle(const char *mangled, int options); }
 
-class ZmDemangle : public ZuPrintable {
-  ZmDemangle(const ZmDemangle &) = delete;
-  ZmDemangle &operator =(const ZmDemangle &) = delete;
-  ZmDemangle(ZmDemangle &&) = delete;
-  ZmDemangle &operator =(ZmDemangle &&) = delete;
+class ZmDemangle_ : public ZuPrintable {
+  ZmDemangle_(const ZmDemangle_ &) = delete;
+  ZmDemangle_ &operator =(const ZmDemangle_ &) = delete;
+  ZmDemangle_(ZmDemangle_ &&) = delete;
+  ZmDemangle_ &operator =(ZmDemangle_ &&) = delete;
 
 public:
-  ZmDemangle() = default;
+  ZmDemangle_() = default;
 
-  ZmDemangle(const char *mangled) {
+  ZmDemangle_(const char *mangled) {
     m_output = cplus_demangle(mangled,
 	DMGL_TYPES | DMGL_PARAMS | DMGL_ANSI | DMGL_VERBOSE);
-    if (m_output)
-      m_free = true;
-    else
+    if (!m_output)
       m_output = mangled;
+    else {
+      ZuSpan<char> output{const_cast<char *>(m_output.data()), m_output.length()};
+      ZuDemangle_::transform(output);
+      m_output = output;
+      m_free = true;
+    }
   }
 
-  ~ZmDemangle() noexcept {
-    if (m_free && m_output) ::free(const_cast<char *>(m_output));
+  ~ZmDemangle_() noexcept {
+    if (m_free && m_output) ::free(const_cast<char *>(m_output.data()));
   }
 
-  ZmDemangle &operator =(const char *symbol) {
-    this->~ZmDemangle();
-    new (this) ZmDemangle{symbol};
+  ZmDemangle_ &operator =(const char *symbol) {
+    this->~ZmDemangle_();
+    new (this) ZmDemangle_{symbol};
     return *this;
   }
 
@@ -64,8 +71,51 @@ public:
   }
 
 private:
-  const char	*m_output = nullptr;
+  ZuCSpan	m_output;
   bool		m_free = false;
 };
+
+template <typename T>
+struct ZmDemangle {
+  template <typename S>
+  static void print(S &s) { s << ZmDemangle_{typeid(T).name()}; }
+};
+template <typename T>
+struct ZmDemangle<const T> {
+  template <typename S>
+  static void print(S &s) { s << "const "; ZmDemangle<T>::print(s); }
+};
+template <typename T>
+struct ZmDemangle<volatile T> {
+  template <typename S>
+  static void print(S &s) { s << "volatile "; ZmDemangle<T>::print(s); }
+};
+template <typename T>
+struct ZmDemangle<const volatile T> {
+  template <typename S>
+  static void print(S &s) { s << "const volatile "; ZmDemangle<T>::print(s); }
+};
+template <typename T>
+struct ZmDemangle<T &> {
+  template <typename S>
+  static void print(S &s) { ZmDemangle<T>::print(s); s << " &"; }
+};
+template <typename T>
+struct ZmDemangle<const T &> {
+  template <typename S>
+  static void print(S &s) {
+    s << "const ";
+    ZmDemangle<T>::print(s);
+    s << " &";
+  }
+};
+template <typename T>
+struct ZmDemangle<T &&> {
+  template <typename S>
+  static void print(S &s) { ZmDemangle<T>::print(s); s << " &&"; }
+};
+
+template <typename S, typename T>
+inline S &operator <<(S &s, const ZmDemangle<T> &d) { d.print(s); return s; }
 
 #endif /* ZmDemangle_HH */

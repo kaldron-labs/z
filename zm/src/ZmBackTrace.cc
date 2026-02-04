@@ -513,7 +513,7 @@ notfound:
 #endif
 
 #if defined(__GNUC__) || defined(linux)
-  ZmDemangle			m_demangle;
+  ZmDemangle_			m_demangle;
 #endif
 
 #ifdef ZmBackTrace_BFD

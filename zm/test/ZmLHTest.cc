@@ -165,7 +165,7 @@ void funcTest_(int bits, double loadFactor)
 {
   ZmRef<H> h_ = new H{ZmHashParams{}.bits(bits).loadFactor(loadFactor)};
   H &h = *h_;
-  std::cout << "funcTest_<" << ZmDemangle{typeid(H).name()} << ", " << ZmDemangle{typeid(A<H>).name()} << ">(" << bits << ", " << loadFactor << ")\n";
+  std::cout << "funcTest_<" << ZmDemangle<H>{} << ", " << ZmDemangle<A<H>>{} << ">(" << bits << ", " << loadFactor << ")\n";
 
   h.add("Goodbye", -42);
   CHECK(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -42);

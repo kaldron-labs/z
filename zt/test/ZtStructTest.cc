@@ -178,7 +178,7 @@ int main()
     auto type = fields[i]->type;
     std::cout << ' ' << ZtFieldTC::name(type->code);
     if (type->code == ZtFieldTC::UDT) {
-      std::cout << " udt=" << ZmDemangle{type->info.udt()->info->name()};
+      std::cout << " udt=" << ZmDemangle_{type->info.udt()->info->name()};
     } else if (type->props & ZtVFieldProp::Enum()) {
       std::cout << " enum=" << type->info.enum_()->id();
     } else if (type->props & ZtVFieldProp::Flags()) {
