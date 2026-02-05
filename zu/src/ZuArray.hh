@@ -779,7 +779,7 @@ public:
     append(ZuBoxPtr(v).hex<false, ZuFmt::Alt<>>());
   }
 
-// splice operations (not constexpr) // LATER - splice could be constexpr
+// splice operations
 
   template <typename U> struct IsVoid : public ZuIsSame<void, U> { };
   template <typename U, typename R = void>
@@ -795,16 +795,16 @@ public:
   template <typename U, typename R = void>
   using MatchSplice = ZuIfT<IsSplice<U>{}, R>;
 
-  void splice(int offset, int length) {
+  constexpr void splice(int offset, int length) {
     splice_(offset, length, (void *)0);
   }
   template <typename U>
-  void splice(int offset, int length, U &removed) {
+  constexpr void splice(int offset, int length, U &removed) {
     splice_(offset, length, &removed);
   }
 
   template <typename U>
-  void splice_(int offset, int length, U *removed) {
+  constexpr void splice_(int offset, int length, U *removed) {
     if (ZuUnlikely(!length)) return;
     if (offset < 0) { if ((offset += length_) < 0) offset = 0; }
     if (offset >= int(N)) return;
@@ -812,28 +812,60 @@ public:
     if (offset + length > int(N))
       if (!(length = N - offset)) return;
     if (offset > int(length_)) {
-      initElems(data() + length_, offset - length_);
+      if (ZuConstEval()) {
+	for (unsigned i = length_; i < unsigned(offset); i++)
+	  ZuNew<T>(ZuAddr((*this)[i]));
+      } else {
+	initElems(data() + length_, offset - length_);
+      }
       length_ = offset;
       return;
     }
     if (offset + length > int(length_))
       if (!(length = length_ - offset)) return;
-    if (removed) splice__(data() + offset, length, removed);
-    destroyElems(data() + offset, length);
-    moveElems(
-	data() + offset,
-	data() + offset + length,
-	length_ - (offset + length));
-    length_ -= length;
+    if (!ZuConstEval() || bool(IsAppend<U>{})) {
+      if (removed) splice__(data() + offset, length, removed);
+      destroyElems(data() + offset, length);
+      moveElems(
+	  data() + offset,
+	  data() + offset + length,
+	  length_ - (offset + length));
+      length_ -= length;
+      return;
+    }
+    // redundant at run-time but required at compile-time
+    if constexpr (!IsAppend<U>{}) {
+      // constant-evaluated from here
+      if constexpr (!IsVoid<U>{}) {
+	if (removed) {
+	  unsigned end = unsigned(offset) + unsigned(length);
+	  for (unsigned i = unsigned(offset); i < end; i++)
+	    *removed << (*this)[i];
+	}
+      }
+      {
+	unsigned end = unsigned(offset) + unsigned(length);
+	for (unsigned i = unsigned(offset); i < end; i++) (*this)[i].~T();
+      }
+      {
+	unsigned end = length_ - unsigned(length);
+	for (unsigned dst = unsigned(offset); dst < end; dst++) {
+	  unsigned src = dst + unsigned(length);
+	  ZuNew<T>(ZuAddr((*this)[dst]), ZuMv((*this)[src]));
+	  (*this)[src].~T();
+	}
+      }
+      length_ -= length;
+    }
   }
   template <typename U>
-  MatchVoid<U> splice__(const T *, unsigned, U *) { }
+  constexpr MatchVoid<U> splice__(const T *, unsigned, U *) { }
   template <typename U>
-  MatchAppend<U> splice__(const T *data, unsigned length, U *removed) {
+  constexpr MatchAppend<U> splice__(const T *data, unsigned length, U *removed) {
     removed->append(data, length);
   }
   template <typename U>
-  MatchSplice<U> splice__(const T *data, unsigned length, U *removed) {
+  constexpr MatchSplice<U> splice__(const T *data, unsigned length, U *removed) {
     for (unsigned i = 0; i < length; i++) *removed << data[i];
   }
 

@@ -37,6 +37,55 @@ private:
   int	m_i;
 };
 
+struct IntSink {
+  enum { Cap = 8 };
+  int		vals[Cap] = {};
+  unsigned	len = 0;
+
+  constexpr IntSink &operator <<(int v) {
+    if (len < Cap) vals[len++] = v;
+    return *this;
+  }
+};
+
+template <typename T, unsigned N>
+struct AppendSink {
+  T		vals[N] = {};
+  unsigned	len = 0;
+
+  void append(const T *data, unsigned length) {
+    unsigned n = length;
+    if (len + n > N) n = N - len;
+    for (unsigned i = 0; i < n; i++) vals[len++] = data[i];
+  }
+};
+
+constexpr bool spliceConstevalBasic()
+{
+  ZuArray<int, 6> a;
+  a << 10 << 20 << 30 << 40;
+  a.splice(1, 2);
+  return a.length() == 2 && a[0] == 10 && a[1] == 40;
+}
+
+constexpr bool spliceConstevalRemoved()
+{
+  ZuArray<int, 6> a;
+  a << 1 << 2 << 3 << 4;
+  IntSink removed;
+  a.splice(0, 2, removed);
+  return
+    a.length() == 2 &&
+    a[0] == 3 &&
+    a[1] == 4 &&
+    removed.len == 2 &&
+    removed.vals[0] == 1 &&
+    removed.vals[1] == 2;
+}
+
+static_assert(spliceConstevalBasic());
+static_assert(spliceConstevalRemoved());
+
 template <typename A>
 void testSplice(A &a, int offset, int length, int check1, int check2)
 {
@@ -50,6 +99,134 @@ void testSplice(A &a, int offset, int length, int check1, int check2)
     else
       ZuCheck_((!a.length() && !check2) || (int)a_[0] == check2);
   }));
+}
+
+void testSpliceRuntimePaths()
+{
+  ZuTestScope(splice_runtime);
+
+  // length == 0 early return
+  {
+    ZuArray<I, 3> a;
+    a << I(1) << I(2);
+    a.splice(0, 0);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 2);
+  }
+
+  // offset < 0 clamps to 0 (offset + length_ < 0)
+  {
+    ZuArray<I, 3> a;
+    a << I(9);
+    a.splice(-5, 1);
+    ZuCheck(!a.length());
+  }
+
+  // offset >= N early return
+  {
+    ZuArray<I, 2> a;
+    a << I(5);
+    a.splice(2, 1);
+    ZuCheck(a.length() == 1);
+    ZuCheck((int)a[0] == 5);
+  }
+
+  // offset == length_ returns via length_ - offset == 0
+  {
+    ZuArray<I, 3> a;
+    a << I(1) << I(2);
+    a.splice(2, 1);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 2);
+  }
+
+  // length < 0 with <= 0 result returns
+  {
+    ZuArray<I, 3> a;
+    a << I(1) << I(2);
+    a.splice(1, -5);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 2);
+  }
+
+  // length < 0 adjusted positive
+  {
+    ZuArray<I, 5> a;
+    a << I(1) << I(2) << I(3) << I(4);
+    a.splice(1, -1);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 4);
+  }
+
+  // offset > length_ init path
+  {
+    ZuArray<I, 5> a;
+    a << I(7);
+    a.splice(3, 1);
+    ZuCheck(a.length() == 3);
+    ZuCheck((int)a[0] == 7);
+    ZuCheck((int)a[1] == 0);
+    ZuCheck((int)a[2] == 0);
+  }
+
+  // offset + length > N
+  {
+    ZuArray<I, 4> a;
+    a << I(10) << I(11) << I(12);
+    a.splice(2, 5);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 10);
+    ZuCheck((int)a[1] == 11);
+  }
+
+  // offset + length > length_ without capacity adjust
+  {
+    ZuArray<I, 6> a;
+    a << I(1) << I(2) << I(3);
+    a.splice(1, 4);
+    ZuCheck(a.length() == 1);
+    ZuCheck((int)a[0] == 1);
+  }
+
+  // removed null path
+  {
+    ZuArray<I, 4> a;
+    a << I(1) << I(2) << I(3);
+    a.splice(1, 1);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 3);
+  }
+
+  // MatchSplice removed sink
+  {
+    ZuArray<I, 4> a;
+    a << I(5) << I(6) << I(7);
+    IntSink removed;
+    a.splice(1, 1, removed);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 5);
+    ZuCheck((int)a[1] == 7);
+    ZuCheck(removed.len == 1);
+    ZuCheck(removed.vals[0] == 6);
+  }
+
+  // MatchAppend removed sink
+  {
+    ZuArray<I, 4> a;
+    a << I(8) << I(9) << I(10);
+    AppendSink<I, 4> removed;
+    a.splice(1, 2, removed);
+    ZuCheck(a.length() == 1);
+    ZuCheck((int)a[0] == 8);
+    ZuCheck(removed.len == 2);
+    ZuCheck((int)removed.vals[0] == 9);
+    ZuCheck((int)removed.vals[1] == 10);
+  }
 }
 
 template <typename U, typename = void>
@@ -110,6 +287,7 @@ int main()
     ZuTestCall(testSplice, a, 1, 1, 44, 45);
     ZuTestCall(testSplice, a, -2, 4, 0, 44);
   }
+  ZuTestCall(testSpliceRuntimePaths);
   {
     ZuWArray<80> w;
     w << L"hello " << "world" << L'!' << ' ' << 42;
