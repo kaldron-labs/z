@@ -27,6 +27,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuArrayFn.hh>
 #include <zlib/ZuEquiv.hh>
+#include <zlib/ZuCanAppend.hh>
 
 template <typename T> struct ZuSpan_ { };
 template <> struct ZuSpan_<char> {
@@ -40,10 +41,9 @@ template <typename> friend class ZuSpan;
 public:
   using T = T_;
   using Cmp = ZuCmp<T>;
-  using Elem = T;
   using Ops = ZuArrayFn<T, Cmp>;
 
-  constexpr ZuSpan() noexcept : m_data{0}, m_length{0} { }
+  constexpr ZuSpan() noexcept : m_data{nullptr}, m_length{0} { }
   constexpr ZuSpan(const ZuSpan &a) noexcept :
     m_data{a.m_data}, m_length{a.m_length} { }
   constexpr ZuSpan &operator =(const ZuSpan &a) noexcept {
@@ -287,7 +287,91 @@ public:
     const_cast<ZuSpan *>(this)->m_data += offset;
   }
 
+// splice operations
+
+  template <typename U = T>
+  constexpr ZuMutable<U, void> splice(int64_t offset, int64_t length) {
+    splice_(offset, length, (void *)0);
+  }
+  template <typename U = T, typename V>
+  constexpr ZuMutable<U, void> splice(
+      int64_t offset, int64_t length, V &removed) {
+    splice_(offset, length, &removed);
+  }
+
 private:
+  template <typename U> struct IsVoid : public ZuIsSame<void, U> { };
+  template <typename U, typename R = void>
+  using MatchVoid = ZuIfT<IsVoid<U>{}, R>;
+
+  template <typename U, typename V = T> struct IsAppend :
+    public ZuBool<ZuCanAppend<U, V>{}> { };
+  template <typename U, typename R = void>
+  using MatchAppend = ZuIfT<IsAppend<U>{}, R>;
+
+  template <typename U> struct IsStream :
+    public ZuBool<!IsVoid<U>{} && !IsAppend<U>{}> { };
+  template <typename U, typename R = void>
+  using MatchStream = ZuIfT<IsStream<U>{}, R>;
+
+  // differs from ZuArray::splice
+  // - ZuSpan is initialized in [0, m_length)
+  // - splices are clamped to m_length
+  template <typename U>
+  constexpr void splice_(int64_t offset, int64_t length, U *removed) {
+    if (ZuUnlikely(!length)) return;
+    if (offset < 0) { if ((offset += int64_t(m_length)) < 0) offset = 0; }
+    if (offset >= int64_t(m_length)) return;
+    if (length < 0) { if ((length += (int64_t(m_length) - offset)) <= 0) return; }
+    if (offset + length > int64_t(m_length)) length = int64_t(m_length) - offset;
+    if (length <= 0) return;
+
+    if (!ZuConstEval() || bool(IsAppend<U>{})) {
+      auto ptr = m_data + offset;
+      if (removed) splice__(ptr, length, removed);
+      Ops::destroyElems(ptr, length);
+      Ops::moveElems(ptr, ptr + length, m_length - (offset + length));
+      m_length -= length;
+      return;
+    }
+
+    // redundant at run-time but required at compile-time
+    if constexpr (!IsAppend<U>{}) {
+      // constant-evaluated from here
+      if constexpr (!IsVoid<U>{}) {
+	if (removed) {
+	  uint64_t end = uint64_t(offset) + uint64_t(length);
+	  for (uint64_t i = uint64_t(offset); i < end; i++)
+	    *removed << (*this)[i];
+	}
+      }
+      {
+	uint64_t end = uint64_t(offset) + uint64_t(length);
+	for (uint64_t i = uint64_t(offset); i < end; i++)
+	  (*this)[i].~T();
+      }
+      {
+	uint64_t end = m_length - uint64_t(length);
+	for (uint64_t dst = uint64_t(offset); dst < end; dst++) {
+	  uint64_t src = dst + uint64_t(length);
+	  ZuNew<T>(ZuAddr((*this)[dst]), ZuMv((*this)[src]));
+	  (*this)[src].~T();
+	}
+      }
+      m_length -= length;
+    }
+  }
+  template <typename U, typename V>
+  constexpr MatchVoid<V> splice__(const U *, unsigned, V *) { }
+  template <typename U, typename V>
+  constexpr MatchAppend<V> splice__(const U *data, unsigned length, V *removed) {
+    removed->append(data, length);
+  }
+  template <typename U, typename V>
+  constexpr MatchStream<V> splice__(const U *data, unsigned length, V *removed) {
+    for (unsigned i = 0; i < length; i++) *removed << data[i];
+  }
+
   template <typename V>
   constexpr bool equals_(const V &v) const {
     uint64_t l = length();
