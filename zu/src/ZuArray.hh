@@ -36,6 +36,7 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuAlt.hh>
+#include <zlib/ZuElem.hh>
 
 namespace Zu_ {
 
@@ -67,13 +68,6 @@ template <> struct Array_<char> {
 //   - B is used at compile-time in a structural context
 //   - C is used at run-time
 
-template <typename T>
-struct alignas(T) Elem {
-  ZuInline constexpr Elem() noexcept { }
-  ZuInline constexpr ~Elem() noexcept { }
-  union { T v; };
-};
-
 template <typename T_, unsigned N_>
 struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   ZuAssert(N_ > 0);
@@ -84,7 +78,7 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   using AltChar = ZuAlt<T>;
   using Cmp = ZuCmp<T>;
   using Fn = ZuArrayFn<T>;
-  using Elem_ = Elem<T>;
+  using Elem_ = ZuElem<T>;
 
   // to be structural, all data members must be public
 
@@ -803,6 +797,8 @@ public:
     splice_(offset, length, &removed);
   }
 
+  // differs from ZuSpan::splice
+  // - ZuArray is uninitialized in [length_, N)
   template <typename U>
   constexpr void splice_(int offset, int length, U *removed) {
     if (ZuUnlikely(!length)) return;
@@ -811,6 +807,7 @@ public:
     if (length < 0) { if ((length += (length_ - offset)) <= 0) return; }
     if (offset + length > int(N))
       if (!(length = N - offset)) return;
+
     if (offset > int(length_)) {
       if (ZuConstEval()) {
 	for (unsigned i = length_; i < unsigned(offset); i++)
@@ -823,16 +820,16 @@ public:
     }
     if (offset + length > int(length_))
       if (!(length = length_ - offset)) return;
+
     if (!ZuConstEval() || bool(IsAppend<U>{})) {
-      if (removed) splice__(data() + offset, length, removed);
-      destroyElems(data() + offset, length);
-      moveElems(
-	  data() + offset,
-	  data() + offset + length,
-	  length_ - (offset + length));
+      auto ptr = data() + offset;
+      if (removed) splice__(ptr, length, removed);
+      destroyElems(ptr, length);
+      moveElems(ptr, ptr + length, length_ - (offset + length));
       length_ -= length;
       return;
     }
+
     // redundant at run-time but required at compile-time
     if constexpr (!IsAppend<U>{}) {
       // constant-evaluated from here

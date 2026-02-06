@@ -60,6 +60,19 @@ struct AppendSink {
   }
 };
 
+struct TrSpan {
+  static int dtor;
+  int v;
+
+  TrSpan(int v_ = 0) : v(v_) { }
+  TrSpan(const TrSpan &) = delete;
+  TrSpan &operator =(const TrSpan &) = delete;
+  TrSpan(TrSpan &&o) noexcept : v(o.v) { o.v = -1; }
+  TrSpan &operator =(TrSpan &&o) noexcept { v = o.v; o.v = -1; return *this; }
+  ~TrSpan() { ++dtor; }
+};
+int TrSpan::dtor = 0;
+
 constexpr bool spliceConstevalBasic()
 {
   ZuArray<int, 6> a;
@@ -229,6 +242,62 @@ void testSpliceRuntimePaths()
   }
 }
 
+void testSpanSplice()
+{
+  ZuTestScope(splice_span);
+
+  // basic splice + shift
+  {
+    int buf[5] = {1, 2, 3, 4, 5};
+    ZuSpan<int> s(buf, 5);
+    s.splice(1, 2);
+    ZuCheck(s.length() == 3);
+    ZuCheck(s[0] == 1);
+    ZuCheck(s[1] == 4);
+    ZuCheck(s[2] == 5);
+  }
+
+  // offset < 0 clamps (offset + length)
+  {
+    int buf[4] = {1, 2, 3, 4};
+    ZuSpan<int> s(buf, 4);
+    s.splice(-2, 3);
+    ZuCheck(s.length() == 2);
+    ZuCheck(s[0] == 1);
+    ZuCheck(s[1] == 2);
+  }
+
+  // length < 0 adjusted positive
+  {
+    int buf[4] = {1, 2, 3, 4};
+    ZuSpan<int> s(buf, 4);
+    s.splice(1, -1);
+    ZuCheck(s.length() == 2);
+    ZuCheck(s[0] == 1);
+    ZuCheck(s[1] == 4);
+  }
+
+  // offset > length no-op
+  {
+    int buf[2] = {1, 2};
+    ZuSpan<int> s(buf, 2);
+    s.splice(3, 1);
+    ZuCheck(s.length() == 2);
+    ZuCheck(s[0] == 1);
+    ZuCheck(s[1] == 2);
+  }
+
+  // length == 0 no-op
+  {
+    int buf[2] = {1, 2};
+    ZuSpan<int> s(buf, 2);
+    s.splice(0, 0);
+    ZuCheck(s.length() == 2);
+    ZuCheck(s[0] == 1);
+    ZuCheck(s[1] == 2);
+  }
+}
+
 template <typename U, typename = void>
 struct IsIterable_ : public ZuFalse { };
 template <typename U>
@@ -288,6 +357,7 @@ int main()
     ZuTestCall(testSplice, a, -2, 4, 0, 44);
   }
   ZuTestCall(testSpliceRuntimePaths);
+  ZuTestCall(testSpanSplice);
   {
     ZuWArray<80> w;
     w << L"hello " << "world" << L'!' << ' ' << 42;
