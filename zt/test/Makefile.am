@@ -14,7 +14,7 @@ noinst_PROGRAMS = \
 	ZtArrayTest ZtDateTest ZtDateFixTest ZtRegexTest \
 	ZtStringHash ZtStringTest vsntest ZtIconvTest ZtBitWindowTest \
 	ZtStructTest ZtBitmapTest ZtStackTest ZtURITest ZtCLITest \
-	ZtASN1Test
+	ZtASN1Test ZtDemangleTest
 ZtArrayTest_SOURCES = ZtArrayTest.cc
 ZtDateTest_SOURCES = ZtDateTest.cc
 ZtDateFixTest_SOURCES = ZtDateFixTest.cc
@@ -30,3 +30,4 @@ ZtStackTest_SOURCES = ZtStackTest.cc
 ZtURITest_SOURCES = ZtURITest.cc
 ZtCLITest_SOURCES = ZtCLITest.cc
 ZtASN1Test_SOURCES = ZtASN1Test.cc
+ZtDemangleTest_SOURCES = ZtDemangleTest.cc

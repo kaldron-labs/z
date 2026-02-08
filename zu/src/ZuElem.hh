@@ -20,11 +20,20 @@ struct alignas(T) ZuElem {
   union { T v; };
 };
 
-template <typename T> struct ZuIsElem : public ZuFalse { };
-template <typename T> struct ZuIsElem<ZuElem<T>> : public ZuTrue { };
+template <typename> struct ZuIsElem_ : public ZuFalse { };
+template <typename U> struct ZuIsElem_<ZuElem<U>> : public ZuTrue { };
+template <typename U> using ZuIsElem = ZuIsElem_<ZuDecay<U>>;
 
 template <typename U> struct ZuElemType_ { using T = U; };
 template <typename U> struct ZuElemType_<ZuElem<U>> { using T = U; };
-template <typename U> using ZuElemType = typename ZuElemType_<U>::T;
+template <typename U> using ZuElemType = typename ZuElemType_<ZuDecay<U>>::T;
+
+template <typename U>
+ZuInline constexpr decltype(auto) ZuElemVal(U &&u) {
+  if constexpr (ZuIsElem<U>{})
+    return ZuFwdLike<U>(u.v);
+  else
+    return ZuFwd<U>(u);
+}
 
 #endif /* ZuElem_HH */

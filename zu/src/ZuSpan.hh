@@ -27,7 +27,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuArrayFn.hh>
 #include <zlib/ZuEquiv.hh>
-#include <zlib/ZuCanAppend.hh>
+#include <zlib/ZuElem.hh>
 
 template <typename T> struct ZuSpan_ { };
 template <> struct ZuSpan_<char> {
@@ -260,8 +260,9 @@ public:
 
   ZuInline constexpr uint64_t length() const { return m_length; }
 
-  ZuInline constexpr const T &operator [](int64_t i) const { return m_data[i]; }
-  ZuInline constexpr T &operator [](int64_t i) { return m_data[i]; }
+  ZuInline constexpr decltype(auto) operator [](this auto &&self, int64_t i) {
+    return ZuFwdLike<decltype(self)>(ZuElemVal(self.m_data[i]));
+  }
 
   ZuInline constexpr bool operator !() const { return !length(); }
   ZuOpBool
@@ -289,87 +290,161 @@ public:
 
 // splice operations
 
-  template <typename U = T>
-  constexpr ZuMutable<U, void> splice(int64_t offset, int64_t length) {
-    splice_(offset, length, (void *)0);
-  }
-  template <typename U = T, typename V>
-  constexpr ZuMutable<U, void> splice(
-      int64_t offset, int64_t length, V &removed) {
-    splice_(offset, length, &removed);
-  }
+// splice():
+//   - a span S is assumed to contain exclusively initialized data
+//
+// conceptually, splice(O, N) replaces an old span O with a new span N
+//   - O is clamped to S
+//   - N is clamped to S
+//   - within S, the span to the left of O is the head H, and to the right is the tail T:
+//     | .. H .. | ....... O ....... | ......... T ......... |
+//   - O and N start at the same offset in A
+//
+// 3 cases need to be handled:
+//
+//   1. N > S - N is beyond the end of the span
+//     - this is a no-op
+//
+//   2. |N| > |O| - this is a shift up of T, and creates a temporary uninitialized gap
+//     - first O is destroyed (~) then T is truncated and moved up
+//     - N is placement new'd where O used to be
+//
+//     | .. H .. | ....... O ....... | ......... T ......... |
+//     | .. H .. | ------- ~ ------- | ......... T ......... |
+//     | .. H .. | ....... U ....... | .... T .... | -- ~ -- |
+//                                               \
+//     | .. H .. | ............ U ............ | ---- T ---- |
+//     | .. H .. | ------------ N ------------ | .... T .... |
+//
+//   3. |N| <= |O| - this is a shift down of T, and destroys the tail of O
+//     - O is destroyed
+//     - N is placement new'd where O used to be
+//     - T is moved down
+//     - length is reduced
+//
+//     | .. H .. | ....... O ....... | ......... T ......... |
+//     | .. H .. | ------- ~ ------- | ......... T ......... |
+//     | .. H .. | -- N -- | .. U .. | ......... T ......... |
+//                                          /
+//     | .. H .. | .. N .. | --------- T --------- |
 
-private:
-  template <typename U> struct IsVoid : public ZuIsSame<void, U> { };
-  template <typename U, typename R = void>
-  using MatchVoid = ZuIfT<IsVoid<U>{}, R>;
+  // - removed(ZuSpan<T> span)
+  //   - span length may be < length if it was clamped by span length
+  // - replace(ZuSpan<T> span) -> uint64_t
+  //   - span length may be < rlength if it was clamped by span length
+  // - ZuSpan::splice differs from ZuArray::splice
+  //   - ZuArray is uninitialized in [length_, N)
 
-  template <typename U, typename V = T> struct IsAppend :
-    public ZuBool<ZuCanAppend<U, V>{}> { };
-  template <typename U, typename R = void>
-  using MatchAppend = ZuIfT<IsAppend<U>{}, R>;
+  template <typename L, typename = void>
+  struct IsCallable : public ZuFalse { };
+  template <typename L>
+  struct IsCallable<L, decltype(ZuDeclVal<L &>()(ZuDeclVal<ZuSpan<T>>()))> :
+    public ZuTrue { };
 
-  template <typename U> struct IsStream :
-    public ZuBool<!IsVoid<U>{} && !IsAppend<U>{}> { };
-  template <typename U, typename R = void>
-  using MatchStream = ZuIfT<IsStream<U>{}, R>;
-
-  // differs from ZuArray::splice
-  // - ZuSpan is initialized in [0, m_length)
-  // - splices are clamped to m_length
-  template <typename U>
-  constexpr void splice_(int64_t offset, int64_t length, U *removed) {
+  template <typename Removed, typename Replace>
+  constexpr void splice(
+    Removed &&removed, int64_t offset, int64_t length,
+    Replace &&replace, uint64_t rlength)
+  {
     if (ZuUnlikely(!length)) return;
-    if (offset < 0) { if ((offset += int64_t(m_length)) < 0) offset = 0; }
-    if (offset >= int64_t(m_length)) return;
-    if (length < 0) { if ((length += (int64_t(m_length) - offset)) <= 0) return; }
-    if (offset + length > int64_t(m_length)) length = int64_t(m_length) - offset;
-    if (length <= 0) return;
+    if (offset < 0) { if ((offset += m_length) < 0) offset = 0; }
+    if (offset >= m_length) return;
+    if (length < 0) { if ((length += (m_length - offset)) <= 0) return; }
+    if (offset + rlength > m_length) {
+      rlength = m_length - offset;
+      if (rlength < 0) return;
+    }
+    if (offset + length > int64_t(m_length)) {
+      length = int64_t(m_length) - offset;
+      if (length < 0) length = 0;
+    }
 
-    if (!ZuConstEval() || bool(IsAppend<U>{})) {
-      auto ptr = m_data + offset;
-      if (removed) splice__(ptr, length, removed);
-      Ops::destroyElems(ptr, length);
-      Ops::moveElems(ptr, ptr + length, m_length - (offset + length));
-      m_length -= length;
+    // case 1 - no-op for ZuSpan
+    if (offset > int64_t(m_length)) {
+      if constexpr (IsCallable<Removed>{})
+	removed(ZuSpan<T>());
+      else
+	removed = {};
       return;
     }
 
-    // redundant at run-time but required at compile-time
-    if constexpr (!IsAppend<U>{}) {
-      // constant-evaluated from here
-      if constexpr (!IsVoid<U>{}) {
-	if (removed) {
-	  uint64_t end = uint64_t(offset) + uint64_t(length);
-	  for (uint64_t i = uint64_t(offset); i < end; i++)
-	    *removed << (*this)[i];
+    // shift up or down, depending on length <=> rlength
+    auto shift = int64_t(rlength) - length;
+    auto tail = int64_t(m_length) - (offset + length);
+    if (tail < 0)
+      tail = 0;
+    else if (tail > m_length - (offset + rlength)) {
+      // truncate tail to fit
+      auto tail_ = tail;
+      tail = m_length - (offset + rlength);
+      auto base = offset + length;
+      if (!ZuConstEval()) {
+	Ops::destroyElems(data() + base + tail, tail_ - tail);
+      } else {
+	auto end = base + tail_;
+	for (auto i = base + tail; i < end; i++) (*this)[i].~T();
+      }
+    }
+    if constexpr (IsCallable<Removed>{})
+      removed(ZuSpan(&m_data[offset], length));
+    else
+      removed = ZuSpan(&m_data[offset], length);
+    if (!ZuConstEval()) {
+      auto ptr = data() + offset;
+      if (length) Ops::destroyElems(ptr, length);
+      if (tail) Ops::moveElems(ptr + length + shift, ptr + length, tail);
+    } else {
+      {
+	auto end = offset + length;
+	for (auto i = offset; i < end; i++) (*this)[i].~T();
+      }
+      if (tail < 0) tail = 0;
+      if (tail) {
+	if (shift >= 0) {
+	  auto end = offset + length;
+	  for (auto src = end + tail; --src >= end; ) {
+	    auto dst = src + shift;
+	    ZuNew<T>(ZuAddr((*this)[dst]), ZuMv((*this)[src]));
+	    (*this)[src].~T();
+	  }
+	} else {
+	  auto end = offset + length + tail;
+	  for (auto src = end - tail; src < end; ++src) {
+	    auto dst = src + shift;
+	    ZuNew<T>(ZuAddr((*this)[dst]), ZuMv((*this)[src]));
+	    (*this)[src].~T();
+	  }
 	}
       }
-      {
-	uint64_t end = uint64_t(offset) + uint64_t(length);
-	for (uint64_t i = uint64_t(offset); i < end; i++)
-	  (*this)[i].~T();
-      }
-      {
-	uint64_t end = m_length - uint64_t(length);
-	for (uint64_t dst = uint64_t(offset); dst < end; dst++) {
-	  uint64_t src = dst + uint64_t(length);
+    }
+    auto nrlength = replace(ZuSpan(&m_data[offset], rlength));
+    if (nrlength < rlength && tail) {
+      // replace() didn't use all the space it reserved, shift tail down
+      auto rshift = nrlength - rlength;
+      if (!ZuConstEval()) {
+	auto ptr = data() + offset;
+	Ops::moveElems(ptr + nrlength, ptr + rlength, tail);
+      } else {
+	auto end = offset + rlength + tail;
+	for (auto src = end - tail; src < end; ++src) {
+	  auto dst = src + rshift;
 	  ZuNew<T>(ZuAddr((*this)[dst]), ZuMv((*this)[src]));
 	  (*this)[src].~T();
 	}
       }
-      m_length -= length;
+      shift += rshift;
     }
+    m_length += shift;
   }
-  template <typename U, typename V>
-  constexpr MatchVoid<V> splice__(const U *, unsigned, V *) { }
-  template <typename U, typename V>
-  constexpr MatchAppend<V> splice__(const U *data, unsigned length, V *removed) {
-    removed->append(data, length);
+  constexpr void splice(int64_t offset) {
+    splice([](ZuSpan<T>) { }, offset, LLONG_MAX, [](ZuSpan<T>) { return 0; }, 0);
   }
-  template <typename U, typename V>
-  constexpr MatchStream<V> splice__(const U *data, unsigned length, V *removed) {
-    for (unsigned i = 0; i < length; i++) *removed << data[i];
+  constexpr void splice(int64_t offset, int64_t length) {
+    splice([](ZuSpan<T>) { }, offset, length, [](ZuSpan<T>) { return 0; }, 0);
+  }
+  template <typename Removed>
+  constexpr void splice(Removed &&removed, int64_t offset, int64_t length) {
+    splice(ZuFwd<Removed>(removed), offset, length, [](ZuSpan<T>) { return 0; }, 0);
   }
 
   template <typename V>

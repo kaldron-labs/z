@@ -323,7 +323,7 @@ constexpr ZuDeref<T> &&ZuMv(T &&v) noexcept {
   return static_cast<ZuDeref<T> &&>(v);
 }
 // shorthand std::forward_like, extended for converting the passed parameter
-// - ZuFwdLike<decltype(self)>(self).member
+// - ZuFwdLike<decltype(self)>(self.member)
 // - ZuFwdLike<decltype(self), T>(self) // casts self to appropriate T
 template <typename T, typename V>
 constexpr auto &&ZuFwdLike(V &&v) noexcept {

@@ -32,11 +32,11 @@ int main()
 
   constexpr auto foo = ZuDefaultAxor();
   using Foo_ = decltype(foo);
-  std::cout << ZuDemangle_{"Z1XvEUlTyOT_E_"} << '\n';
-  std::cout << ZuDemangle_{"Z1XvEUlOT_E_"} << '\n';
-  std::cout << "raw: " << typeid(foo).name() << '\n';
-  std::cout << ZuDemangle<Foo_>{} << '\n';
-  std::cout << ZuDemangle<Foo<Baz, Baz<int>>>{} << '\n';
+  std::cerr << ZuDemangle_{"Z1XvEUlTyOT_E_"} << '\n';
+  std::cerr << ZuDemangle_{"Z1XvEUlOT_E_"} << '\n';
+  std::cerr << "raw: " << typeid(foo).name() << '\n';
+  std::cerr << ZuDemangle<Foo_>{} << '\n';
+  std::cerr << ZuDemangle<Foo<Baz, Baz<int>>>{} << '\n';
 
   {
     ZuVArray<ZuBSpan> a;
@@ -53,14 +53,23 @@ int main()
     using B_ = B<[]{ return "foobar"; }>;
     using C_ = B<"foobar"_Zu>;
     using D_ = D<"foobar">;
+    using E_ = A<"a\"b\\c\n">;
+    using F_ = ZuTuple<A<"foo">, A<"bar">>;
     ZuCArray<512> s;
     s << ZuDemangle<A_>{};
+    ZuCheck(s == "A<\"foobar\">");
+    s = {}; s << ZuDemangle<E_>{};
     std::cerr << s << '\n';
-    ZuCheck(ZuMatcher<"Zu_::Array">().find(s).p<1>() == 0);
+    ZuCheck(s == "A<\"a\\\"b\\\\c\\n\">");
+    s = {}; s << ZuDemangle<F_>{};
+    std::cerr << s << '\n';
+    ZuCheck(ZuMatcher<"A<\"foo\">">().find(s).p<1>() == 0);
+    ZuCheck(ZuMatcher<"A<\"bar\">">().find(s).p<1>() == 0);
     s = {}; s << ZuDemangle<B_>{};
     std::cerr << s << '\n';
     ZuCheck(ZuMatcher<"B<main">().find(s).p<1>() == 0);
     s = {}; s << ZuDemangle<C_>{};
+    std::cerr << typeid(C_).name() << '\n';
     std::cerr << s << '\n';
     ZuCheck(ZuMatcher<"B<ZuString">().find(s).p<1>() == 0);
     s = {}; s << ZuDemangle<D_>{};

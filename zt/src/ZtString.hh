@@ -1110,155 +1110,16 @@ public:
 
 // splice()
 
+  template <typename L, typename = void>
+  struct IsCallable : public ZuFalse { };
+  template <typename L>
+  struct IsCallable<L, decltype(ZuDeclVal<L &>()(ZuDeclVal<ZuSpan<Char>>()))> :
+    public ZuTrue { };
+
+  template <typename Removed, typename Replace>
   void splice(
-      String &removed, int64_t offset, int64_t length, const String &replace) {
-    splice_(&removed, offset, length, replace);
-  }
-
-  void splice(int64_t offset, int64_t length, const String &replace) {
-    splice_(0, offset, length, replace);
-  }
-
-  void splice(String &removed, int64_t offset, int64_t length) {
-    splice__(&removed, offset, length, [](Char *, uint64_t) -> uint64_t { return 0; }, 0);
-  }
-
-  void splice(int64_t offset) {
-    splice__(nullptr, offset, LLONG_MAX, [](Char *, uint64_t) -> uint64_t { return 0; }, 0);
-  }
-
-  void splice(int64_t offset, int64_t length) {
-    splice__(nullptr, offset, length, [](Char *, uint64_t) -> uint64_t { return 0; }, 0);
-  }
-
-  template <typename S>
-  void splice(
-      String &removed, int64_t offset, int64_t length, const S &replace) {
-    splice_(&removed, offset, length, replace);
-  }
-
-  template <typename S>
-  void splice(int64_t offset, int64_t length, const S &replace) {
-    splice_(0, offset, length, replace);
-  }
-
-private:
-  template <typename S>
-  MatchString<S> splice_(
-      String *removed, int64_t offset, int64_t length, const S &s) {
-    if (ZuUnlikely(!s.length())) {
-      splice__(removed, offset, length, [](Char *, uint64_t) -> uint64_t { return 0; }, 0);
-      return;
-    }
-    if constexpr (ZuIsSame<S, String>{})
-      if (ZuUnlikely(this == &s)) {
-	auto buf = ZmAlloc(Char, s.length());
-	memcpy(&buf[0], s.data_(), s.length() * sizeof(Char));
-	splice__(removed, offset, length, [data = &buf[0]](Char *ptr, uint64_t rlength) {
-	  memcpy(ptr, data, rlength * sizeof(Char));
-	  return rlength;
-	}, s.length());
-	return;
-      }
-    splice__(removed, offset, length, [data = s.data_()](Char *ptr, uint64_t rlength) {
-      memcpy(ptr, data, rlength * sizeof(Char));
-      return rlength;
-    }, s.length());
-  }
-  template <typename S>
-  MatchAnyCString<S> splice_(
-      String *removed, int64_t offset, int64_t length, S &&s_) {
-    ZuSpan<const Char> s(s_);
-    splice__(removed, offset, length, [data = s.data()](Char *ptr, uint64_t rlength) {
-      if (rlength) memcpy(ptr, data, rlength * sizeof(Char));
-      return rlength;
-    }, s.length());
-  }
-  template <typename S>
-  MatchOtherString<S> splice_(
-      String *removed, int64_t offset, int64_t length, S &&s_) {
-    ZuSpan<const Char> s(s_);
-    splice__(removed, offset, length, [data = s.data()](Char *ptr, uint64_t rlength) {
-      if (rlength) memcpy(ptr, data, rlength * sizeof(Char));
-      return rlength;
-    }, s.length());
-  }
-  template <typename C>
-  MatchChar<C> splice_(
-      String *removed, int64_t offset, int64_t length, C c) {
-    splice__(removed, offset, length, [c](Char *ptr, uint64_t) {
-      memcpy(ptr, &c, sizeof(Char));
-    }, 1);
-  }
-  template <typename S>
-  MatchAltString<S> splice_(
-      String *removed, int64_t offset, int64_t length, const S &s_) {
-    ZuSpan<const AltChar> s(s_);
-    splice__(removed, offset, length, [s](Char *ptr, uint64_t rlength) -> uint64_t {
-      if (!rlength) return 0;
-      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, s);
-    }, ZuUTF<Char, AltChar>::len(s));
-  }
-  template <typename C>
-  MatchAltChar<C> splice_(
-      String *removed, int64_t offset, int64_t length, C c_) {
-    AltChar c = c_;
-    splice__(removed, offset, length, [c](Char *ptr, uint64_t rlength) {
-      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, {&c, 1});
-    }, ZuUTF<Char, AltChar>::len({&c, 1}));
-  }
-
-public:
-  void splice(
-      String &removed, int64_t offset, int64_t length,
-      const Char *replace, uint64_t rlength) {
-    splice__(&removed, offset, length, [replace](Char *ptr, uint64_t rlength) {
-      if (rlength) memcpy(ptr, replace, rlength * sizeof(Char));
-      return rlength;
-    }, rlength);
-  }
-
-  void splice(
-      int64_t offset, int64_t length, const Char *replace, uint64_t rlength) {
-    splice__(nullptr, offset, length, [replace](Char *ptr, uint64_t rlength) {
-      if (rlength) memcpy(ptr, replace, rlength * sizeof(Char));
-      return rlength;
-    }, rlength);
-  }
-
-  // simple read-only cases
-
-  ZuSpan<const Char> splice(int64_t offset) const {
-    uint64_t n = length();
-    if (offset < 0) {
-      if ((offset += n) < 0) offset = 0;
-    } else {
-      if (offset > int64_t(n)) offset = n;
-    }
-    return ZuSpan<const Char>(data_() + offset, n - offset);
-  }
-
-  ZuSpan<const Char> splice(int64_t offset, int64_t length) const {
-    uint64_t n = this->length();
-    if (offset < 0) {
-      if ((offset += n) < 0) offset = 0;
-    } else {
-      if (offset > int64_t(n)) offset = n;
-    }
-    if (length < 0) {
-      if ((length += n - offset) < 0) length = 0;
-    } else {
-      if (offset + length > int64_t(n)) length = n - offset;
-    }
-    return ZuSpan<const Char>(data_() + offset, length);
-  }
-
-private:
-  // intentionally forced inline
-  template <typename Replace>
-  ZuInline void splice__(
-    String *removed, int64_t offset, int64_t length,
-    Replace replace, uint64_t rlength)
+    Removed &&removed, int64_t offset, int64_t length,
+    Replace &&replace, uint64_t rlength)
   {
     uint64_t n = this->length();
     uint64_t z = size_();
@@ -1266,7 +1127,10 @@ private:
     if (length < 0) { if ((length += (n - offset)) < 0) length = 0; }
 
     if (offset > int64_t(n)) {
-      if (removed) removed->clear();
+      if constexpr (IsCallable<Removed>{})
+	removed(ZuSpan<Char>());
+      else
+	removed = {};
       Char *data;
       if (!owned() || offset + rlength >= int64_t(z)) {
 	z = grow_(z, offset + rlength + 1);
@@ -1274,7 +1138,7 @@ private:
       } else
 	data = data_();
       Zu::strpad(data + n, offset - n);
-      rlength = replace(data + offset, rlength);
+      rlength = replace(ZuSpan(data + offset, rlength));
       length_(offset + rlength); // rlength may have been reduced
       return;
     }
@@ -1287,7 +1151,10 @@ private:
     if (l > 0 && (!owned() || l >= int64_t(z))) {
       z = grow_(z, l + 1);
       Char *oldData = data_();
-      if (removed) removed->init(oldData + offset, length);
+      if constexpr (IsCallable<Removed>{})
+	removed(ZuSpan(oldData + offset, length));
+      else
+	removed = ZuSpan(oldData + offset, length);
       Char *newData;
       if (z <= BuiltinSize)
 	newData = data__();
@@ -1297,7 +1164,7 @@ private:
       }
       if (oldData != newData && offset)
 	memcpy(newData, oldData, offset * sizeof(Char));
-      rlength = replace(newData + offset, rlength);
+      rlength = replace(ZuSpan(newData + offset, rlength));
       l = n + rlength - length; // rlength may have been reduced
       if (offset + length < int64_t(n) &&
 	  (oldData != newData || int64_t(rlength) != length))
@@ -1318,32 +1185,138 @@ private:
     }
 
     Char *data = data_();
-    if (removed) removed->init(data + offset, length);
+    if constexpr (IsCallable<Removed>{})
+      removed(ZuSpan(data + offset, length));
+    else
+      removed = ZuSpan(data + offset, length);
     if (l > 0) {
-      int64_t trailing = int64_t(n) - (offset + length);
-      if (trailing > 0 && int64_t(rlength) > length) {
+      int64_t tail = int64_t(n) - (offset + length);
+      if (tail > 0 && int64_t(rlength) > length) {
 	memmove(data + offset + rlength,
 		data + offset + length,
-		trailing * sizeof(Char));
+		tail * sizeof(Char));
       }
-      auto nrlength = replace(data + offset, rlength);
-      if (trailing > 0) {
+      auto nrlength = replace(ZuSpan(data + offset, rlength));
+      if (tail > 0) {
 	if (int64_t(rlength) < length) {
 	  memmove(data + offset + nrlength, // NOT rlength
 		  data + offset + length,
-		  trailing * sizeof(Char));
+		  tail * sizeof(Char));
 	} else if (nrlength < rlength) {
 	  memmove(data + offset + nrlength,
 		  data + offset + rlength,
-		  trailing * sizeof(Char));
+		  tail * sizeof(Char));
 	}
       }
       l = n + nrlength - length;
     }
     length_(l);
   }
-
-public:
+  void splice(int64_t offset) {
+    splice([](ZuSpan<Char>) { }, offset, LLONG_MAX, [](ZuSpan<Char>) { return 0; }, 0);
+  }
+  void splice(int64_t offset, int64_t length) {
+    splice([](ZuSpan<Char>) { }, offset, length, [](ZuSpan<Char>) { return 0; }, 0);
+  }
+  template <typename Removed>
+  void splice(Removed &&removed, int64_t offset, int64_t length) {
+    splice(ZuFwd<Removed>(removed), offset, length, [](ZuSpan<Char>) { return 0; }, 0);
+  }
+  template <typename S>
+  MatchString<S>
+  splice(int64_t offset, int64_t length, const S &s) {
+    splice([](ZuSpan<Char>) { }, offset, length, s);
+  }
+  template <typename Removed, typename S>
+  MatchString<S>
+  splice(Removed &&removed, int64_t offset, int64_t length, const S &s) {
+    auto n = s.length();
+    if (ZuUnlikely(!n)) {
+      splice(ZuFwd<Removed>(removed), offset, length,
+	[](ZuSpan<Char>) -> uint64_t { return 0; }, 0);
+      return;
+    }
+    if constexpr (ZuIsSame<S, String>{})
+      if (ZuUnlikely(this == &s)) {
+	auto buf = ZmAlloc(Char, n);
+	memcpy(&buf[0], s.data_(), n * sizeof(Char));
+	splice(ZuFwd<Removed>(removed), offset, length,
+	  [data = &buf[0]](ZuSpan<Char> span) -> uint64_t {
+	    auto n = span.length();
+	    memcpy(span.data(), data, n * sizeof(Char));
+	    return n;
+	  }, n);
+	return;
+      }
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [&s](ZuSpan<Char> span) -> uint64_t {
+	auto n = span.length();
+	if (n) memcpy(span.data(), s.data(), n * sizeof(Char));
+	return n;
+      }, n);
+  }
+  template <typename S>
+  MatchAnyCString<S>
+  splice(int64_t offset, int64_t length, const S &s) {
+    splice([](ZuSpan<Char>) { }, offset, length, s);
+  }
+  template <typename Removed, typename S>
+  MatchAnyCString<S>
+  splice(Removed &&removed, int64_t offset, int64_t length, const S &s_) {
+    ZuSpan<const Char> s(s_);
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [s](ZuSpan<Char> span) -> uint64_t {
+	auto n = span.length();
+	if (n) memcpy(span.data(), s.data(), n * sizeof(Char));
+	return n;
+      }, s.length());
+  }
+  template <typename S>
+  MatchOtherString<S>
+  splice(int64_t offset, int64_t length, const S &s) {
+    splice([](ZuSpan<Char>) { }, offset, length, s);
+  }
+  template <typename Removed, typename S>
+  MatchOtherString<S>
+  splice(Removed &&removed, int64_t offset, int64_t length, const S &s_) {
+    ZuSpan<const Char> s(s_);
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [s](ZuSpan<Char> span) -> uint64_t {
+	auto n = span.length();
+	if (n) memcpy(span.data(), s.data(), n * sizeof(Char));
+	return n;
+      }, s.length());
+  }
+  template <typename S>
+  MatchAltString<S>
+  splice(int64_t offset, int64_t length, const S &s) {
+    splice([](ZuSpan<Char>) { }, offset, length, s);
+  }
+  template <typename Removed, typename S>
+  MatchAltString<S>
+  splice(Removed &&removed, int64_t offset, int64_t length, const S &s_) {
+    ZuSpan<const AltChar> s(s_);
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [s](ZuSpan<Char> span) -> uint64_t {
+	if (!span.length()) return 0;
+	return ZuUTF<Char, AltChar>::cvt(span, s);
+      }, ZuUTF<Char, AltChar>::len(s));
+  }
+  template <typename S>
+  MatchAltChar<C>
+  splice(int64_t offset, int64_t length, C c) {
+    splice([](ZuSpan<Char>) { }, offset, length, c);
+  }
+  template <typename Removed, typename S>
+  MatchAltChar<C>
+  splice(Removed &&removed, int64_t offset, int64_t length, C c_) {
+    AltChar c = c_;
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [c](ZuSpan<Char> span) -> uint64_t {
+	if (!span.length()) return 0;
+	return ZuUTF<Char, AltChar>::cvt(span, {&c, 1});
+      }, ZuUTF<Char, AltChar>::len({&c, 1}));
+  }
 
 // shift() - simplified splice() for common use case
 
