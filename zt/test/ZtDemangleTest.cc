@@ -17,8 +17,6 @@
 #include <zlib/ZtRegex.hh>
 #include <zlib/ZtDemangle.hh>
 
-// FIXME - add String, Array, Tuple, Union transforms to ZtDemangle.cc
-
 #include <iostream>
 
 template <ZuArray> struct A { };
@@ -75,5 +73,7 @@ int main()
     ZuCheck(s == "B<\"foobar\">");
     s = {}; s << ZuDemangle<D_>{};
     ZuCheck(s == "D<\"foobar\">");
+    s = {}; s << ZuDemangle<A<ZuArray({1,2,3})>>{};
+    ZuCheck(s == "A<ZuArray<int>({1,2,3})>");
   }
 }
