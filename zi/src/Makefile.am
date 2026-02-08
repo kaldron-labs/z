@@ -11,7 +11,8 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
 	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh ZiLib.hh ZiModule.hh \
 	ZiMultiplex.hh ZiPlatform.hh ZiRing.hh \
-	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiCSV.hh
+	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiCSV.hh \
+	ZiTxStream.hh
 if NETLINK
 pkginclude_HEADERS += ZiNetlinkMsg.hh ZiNetlink.hh zi_netlink.h
 endif

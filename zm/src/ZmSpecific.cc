@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Meyers / Phoenix TLS Multiton
+// Meyers / Phoenix TLS "Multiton"
 
 #include <zlib/ZuLib.hh>
 
@@ -12,7 +12,7 @@
 
 // statically-initialized spinlock to guard initial singleton registration
 // and cleanup at exit; little if any contention is anticipated; access
-// intended to be exceptional, intermittent, almost exclusively during
+// intended to be exceptional, intermittent and almost exclusively during
 // application startup and shutdown
 static uint32_t ZmSpecific_lock_ = 0;
 ZmAPI void ZmSpecific_lock()
@@ -108,7 +108,7 @@ extern "C" {
 #else
 extern "C" {
   PIMAGE_TLS_CALLBACK __ZmSpecific_cleanup__
-    __attribute__((section(".CRT$XLC"))) =
+    __attribute__((section(".CRT$XLC"), used)) =
       (PIMAGE_TLS_CALLBACK)ZmSpecific_cleanup_;
 }
 #endif
