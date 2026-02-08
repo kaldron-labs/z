@@ -90,7 +90,7 @@ int main()
     ZtArray<E> b;
 
     validate(a, 8);
-    a.splice(0, 0, e, 4);
+    a.splice(0, 0, ZuSpan(e, 4));
     validate(a, 12);
     a.splice(b, 0, 4);
     validate(a, 8);

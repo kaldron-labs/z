@@ -181,7 +181,12 @@ public:
     while (offset < slength && exec(s, offset, options, ovector)) {
       capture(s, ovector, captures);
       r(captures, [&s, &ovector, &rlength](ZuCSpan r) {
-	s.splice(ovector[0], ovector[1] - ovector[0], r.data(), rlength = r.length());
+	rlength = r.length();
+	s.splice(
+	  [](auto span) { }, ovector[0], ovector[1] - ovector[0], [r](auto span) {
+	    memcpy(span.data(), r.data(), span.length());
+	    return span.length();
+	  }, rlength);
       });
       offset = ovector[0] + rlength;
       if (!captures[1] && !rlength) ++offset;
