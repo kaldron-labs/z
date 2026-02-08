@@ -8,7 +8,7 @@ pkginclude_HEADERS = \
 	ZuBitmap.hh ZuBitfield.hh ZuByteSwap.hh ZuCmp.hh ZuICmp.hh \
 	ZuFnName.hh ZuFmt.hh ZuFP.hh ZuFP_.hh ZuHash.hh ZuID.hh \
 	ZuInt.hh ZuLargest.hh ZuDemangle.hh ZuTime.hh ZuDateTime.hh \
-	ZuLambdaTraits.hh ZuMvArray.hh ZuReserved.hh \
+	ZuLambdaTraits.hh ZuReserved.hh \
 	ZuObjectTraits.hh ZuObject.hh ZuPolymorph.hh ZuPP.hh \
 	ZuPrint.hh ZuRef.hh ZuStdString.hh \
 	ZuStringFn.hh ZuTraits.hh ZuTuple.hh ZuUnion.hh \

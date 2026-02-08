@@ -16,7 +16,7 @@ noinst_PROGRAMS = \
 	ZuAxorTest ZuPtrTest ZuTimeTest ZuEndianTest \
 	ZuStreamTest ZuBitStreamTest ZuSearchBench \
 	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest \
-	ZuMatchTest ZuNXTest ZuFPTest ZuIntrinTest ZuMvArrayTest \
+	ZuMatchTest ZuNXTest ZuFPTest ZuIntrinTest \
 	ZuTokenizerTest ZuTest ZuDemangleTest
 ZuInspectTest_SOURCES = ZuInspectTest.cc
 ZuHashTest_SOURCES = ZuHashTest.cc Analyze.hh
@@ -51,7 +51,6 @@ ZuMatchTest_CXXFLAGS = $(AM_CXXFLAGS) -O3 -g1
 ZuNXTest_SOURCES = ZuNXTest.cc
 ZuFPTest_SOURCES = ZuFPTest.cc
 ZuIntrinTest_SOURCES = ZuIntrinTest.cc
-ZuMvArrayTest_SOURCES = ZuMvArrayTest.cc
 ZuTokenizerTest_SOURCES = ZuTokenizerTest.cc
 ZuTest_SOURCES = ZuTest.cc
 ZuDemangleTest_SOURCES = ZuDemangleTest.cc

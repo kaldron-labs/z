@@ -60,20 +60,21 @@ private:
 };
 
 struct ZmAPI ZmSchedParams {
-  ZmSchedParams() = default;
+  using Thread = ZmSchedTParams;
+
+  ZmSchedParams() { m_threads = new Thread[m_nThreads + 1]; }
   ZmSchedParams(const ZmSchedParams &) = default;
   ZmSchedParams &operator =(const ZmSchedParams &) = default;
   ZmSchedParams(ZmSchedParams &&) = default;
   ZmSchedParams &operator =(ZmSchedParams &&) = default;
-
-  using Thread = ZmSchedTParams;
-  using Threads = ZuMvArray<Thread>;
+  ~ZmSchedParams() { delete [] m_threads; }
 
   using ID = ZuID;
 
   ZmSchedParams &&id(ID id) { m_id = id; return ZuMv(*this); }
   ZmSchedParams &&nThreads(unsigned v) {
-    m_threads.length((m_nThreads = v) + 1);
+    delete [] m_threads;
+    m_threads = new Thread[(m_nThreads = v) + 1];
     return ZuMv(*this);
   }
   ZmSchedParams &&stackSize(unsigned v) { m_stackSize = v; return ZuMv(*this); }
@@ -132,7 +133,7 @@ private:
   unsigned	m_spin = 1000;
   unsigned	m_timeout = 1;
 
-  Threads	m_threads = Threads{m_nThreads + 1};
+  Thread	*m_threads = nullptr;
 
   bool		m_startTimer = false;
 
