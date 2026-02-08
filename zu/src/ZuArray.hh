@@ -839,19 +839,13 @@ public:
   {
     if (ZuUnlikely(!length)) return;
     if (offset < 0) { if ((offset += length_) < 0) offset = 0; }
-    if (offset >= int(N)) return;
     if (length < 0) { if ((length += (length_ - offset)) <= 0) return; }
-    if (offset + rlength > int(N)) {
-      rlength = N - offset;
-      if (rlength < 0) return;
-    }
-    if (offset + length > int(length_)) {
-      length = int(length_) - offset;
-      if (length < 0) length = 0;
-    }
 
     // case 1
     if (offset > int(length_)) {
+      length = 0;
+      if (offset > int(N)) offset = N;
+      if (offset + rlength > int(N)) rlength = N - offset;
       if constexpr (IsCallable<Removed>{})
 	removed(ZuSpan<Elem_>());
       else
@@ -866,6 +860,12 @@ public:
 	rlength = replace(ZuSpan(&data_[offset], rlength));
       length_ = offset + rlength;
       return;
+    }
+
+    if (offset + rlength > int(N)) rlength = N - offset;
+    if (offset + length > int(length_)) {
+      length = int(length_) - offset;
+      if (length < 0) length = 0;
     }
 
     // shift up or down, depending on length <=> rlength

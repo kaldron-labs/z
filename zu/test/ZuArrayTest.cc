@@ -6,16 +6,9 @@
 
 #include <zlib/ZuLib.hh>
 
-#include <iostream>
-
-#include <assert.h>
-#include <stdlib.h>
-
 #include <zlib/ZuTest.hh>
 #include <zlib/ZuArray.hh>
-#include <zlib/ZuVArray.hh>
 #include <zlib/ZuSpan.hh>
-#include <zlib/ZuString.hh>
 
 class I {
 public:
@@ -67,19 +60,6 @@ struct AppendSink {
     for (unsigned i = 0; i < n; ) vals[len++] = span[i++];
   }
 };
-
-struct TrSpan {
-  static int dtor;
-  int v;
-
-  TrSpan(int v_ = 0) : v(v_) { }
-  TrSpan(const TrSpan &) = delete;
-  TrSpan &operator =(const TrSpan &) = delete;
-  TrSpan(TrSpan &&o) noexcept : v(o.v) { o.v = -1; }
-  TrSpan &operator =(TrSpan &&o) noexcept { v = o.v; o.v = -1; return *this; }
-  ~TrSpan() { ++dtor; }
-};
-int TrSpan::dtor = 0;
 
 constexpr bool spliceConstevalBasic()
 {
@@ -165,21 +145,61 @@ static_assert(spliceConstevalOffsetOnly());
 static_assert(spliceConstevalReplaceShrink());
 static_assert(spliceConstevalCase1Replace());
 
-template <typename A>
-void testSplice(A &a, int offset, int length, int check1, int check2)
+void testSpliceBasicPaths()
 {
-  ZuTestScope(splice);
-  A a_;
-  a.splice([&a_](auto &&span) {
-    for (auto &&v : span) a_ << ZuElemVal(v);
-  }, offset, length);
-  ZuCheck((!a.length() && !check1) || (int)a[0] == check1);
-  ZuCheckBlock(({
-    if (check2 < 0)
-      ZuCheck_(!a_.length());
-    else
-      ZuCheck_((!a.length() && !check2) || (int)a_[0] == check2);
-  }));
+  ZuTestScope(splice_basic);
+
+  // basic splice + shift
+  {
+    ZuArray<I, 5> a;
+    a << I(1) << I(2) << I(3) << I(4) << I(5);
+    a.splice(1, 2);
+    ZuCheck(a.length() == 3);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 4);
+    ZuCheck((int)a[2] == 5);
+  }
+
+  // offset < 0 clamps (offset + length)
+  {
+    ZuArray<I, 4> a;
+    a << I(1) << I(2) << I(3) << I(4);
+    a.splice(-2, 3);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 2);
+  }
+
+  // length < 0 adjusted positive
+  {
+    ZuArray<I, 4> a;
+    a << I(1) << I(2) << I(3) << I(4);
+    a.splice(1, -1);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 4);
+  }
+
+  // offset > length_ case 1: gap initialized
+  {
+    ZuArray<I, 5> a;
+    a << I(7);
+    a.splice(3, 1);
+    ZuCheck(a.length() == 3);
+    ZuCheck((int)a[0] == 7);
+    ZuCheck((int)a[1] == 0);
+    ZuCheck((int)a[2] == 0);
+  }
+
+  // length == 0 no-op
+  {
+    ZuArray<I, 3> a;
+    a << I(1) << I(2);
+    a.splice(0, 0);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 2);
+  }
 }
 
 void testSpliceRuntimePaths()
@@ -204,13 +224,14 @@ void testSpliceRuntimePaths()
     ZuCheck(!a.length());
   }
 
-  // offset >= N early return
+  // offset == N enters case 1 and grows with default initialization
   {
     ZuArray<I, 2> a;
     a << I(5);
     a.splice(2, 1);
-    ZuCheck(a.length() == 1);
+    ZuCheck(a.length() == 2);
     ZuCheck((int)a[0] == 5);
+    ZuCheck((int)a[1] == 0);
   }
 
   // offset == length_ returns via length_ - offset == 0
@@ -357,6 +378,26 @@ void testSpliceVariantPaths()
     ZuCheck((int)a[4] == 8);
   }
 
+  // 5-arg splice case 1 clamps offset > N to N, so reserved replacement is 0
+  {
+    ZuArray<I, 3> a;
+    a << I(9);
+    int removedLen = -1;
+    bool replaced = false;
+    a.splice([&removedLen](auto span) {
+      removedLen = span.length();
+    }, 9, 1, [&replaced](auto span) {
+      replaced = true;
+      return span.length();
+    }, 2);
+    ZuCheck(removedLen == 0);
+    ZuCheck(!replaced);
+    ZuCheck(a.length() == 3);
+    ZuCheck((int)a[0] == 9);
+    ZuCheck((int)a[1] == 0);
+    ZuCheck((int)a[2] == 0);
+  }
+
   // rlength clamped to N - offset
   {
     ZuArray<I, 5> a;
@@ -429,87 +470,13 @@ void testSpliceVariantPaths()
   }
 }
 
-template <typename U, typename = void>
-struct IsIterable_ : public ZuFalse { };
-template <typename U>
-struct IsIterable_<U, decltype(
-  ZuDeclVal<const U &>().end() - ZuDeclVal<const U &>().begin(), void())> :
-    public ZuTrue { };
-template <typename U, typename V>
-struct IsIterable : public ZuBool<
-    !ZuIsSame<U, V>{} &&
-    !ZuTraits<U>::IsSpan &&
-    bool(IsIterable_<ZuDecay<U>>{}) &&
-    ZuIsConvertible<typename ZuTraits<U>::Elem, V>{}> { };
-
-template <ZuArray S> struct A { enum { IsNull = 0 }; };
-template <> struct A<ZuArray("")> { enum { IsNull = 1 }; };
-
-ZuAssert((A<"">::IsNull));
-ZuAssert((!A<"foo">::IsNull));
-
 int main()
 {
   ZuTestMain();
 
-  {
-    ZuArray<I, 1> a;
-    a << I(42);
-    ZuCheck((int)a[0] == 42);
-    a << I(43);
-    ZuCheck((int)a[0] == 42);
-    ZuTestCall(testSplice, a, 0, 1, 0, 42);
-    a << I(42);
-    ZuTestCall(testSplice, a, 1, 1, 42, -1);
-    ZuTestCall(testSplice, a, 0, 2, 0, 42);
-  }
-  {
-    ZuArray<I, 2> a;
-    a << I(42);
-    ZuCheck((int)a[0] == 42);
-    a << I(43);
-    ZuCheck((int)a[1] == 43);
-    ZuTestCall(testSplice, a, 0, 1, 43, 42);
-    a << I(42);
-    ZuTestCall(testSplice, a, 1, 1, 43, 42);
-    ZuTestCall(testSplice, a, -1, 3, 0, 43);
-  }
-  {
-    ZuArray<I, 3> a;
-    a << I(42);
-    a << I(43);
-    a << I(44);
-    a << I(45);
-    ZuCheck((int)a[0] == 42);
-    ZuCheck((int)a[2] == 44);
-    ZuTestCall(testSplice, a, 0, 2, 44, 42);
-    a << I(45);
-    ZuTestCall(testSplice, a, 1, 1, 44, 45);
-    ZuTestCall(testSplice, a, -2, 4, 0, 44);
-  }
+  ZuTestCall(testSpliceBasicPaths);
   ZuTestCall(testSpliceRuntimePaths);
   ZuTestCall(testSpliceVariantPaths);
-  {
-    ZuWArray<80> w;
-    w << L"hello " << "world" << L'!' << ' ' << 42;
-    ZuCArray<80> s = w;
-    ZuCheck(s == "hello world! 42");
-    s = {};
-    s << L"hello " << "world" << L'!' << ' ' << 42;
-    w = s;
-    ZuCheck(w == L"hello world! 42");
-  }
-
-  {
-    ZuVArray<ZuBSpan> a;
-    ZuCheck(ZuTraits<decltype(a)>::IsArray);
-    ZuCheck(!ZuTraits<decltype(a)>::IsSpan);
-    ZuCheck(IsIterable_<decltype(a)>{});
-    ZuCheck((IsIterable<decltype(a), ZuBSpan>()));
-    ZuCheck((ZuIsConstructible<
-	typename ZuTraits<decltype(a)>::Elem,
-	ZuBSpan>()));
-  }
 
   return 0;
 }

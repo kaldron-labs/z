@@ -9,6 +9,7 @@
 // unlike std::span, prioritizes:
 // - expressiveness over readability
 // - intrusive integration with ZuHash/ZuCmp
+// - mutability (if T is mutable)
 
 #ifndef ZuSpan_HH
 #define ZuSpan_HH
@@ -348,16 +349,7 @@ public:
   {
     if (ZuUnlikely(!length)) return;
     if (offset < 0) { if ((offset += m_length) < 0) offset = 0; }
-    if (offset >= m_length) return;
     if (length < 0) { if ((length += (m_length - offset)) <= 0) return; }
-    if (offset + rlength > m_length) {
-      rlength = m_length - offset;
-      if (rlength < 0) return;
-    }
-    if (offset + length > int64_t(m_length)) {
-      length = int64_t(m_length) - offset;
-      if (length < 0) length = 0;
-    }
 
     // case 1 - no-op for ZuSpan
     if (offset > int64_t(m_length)) {
@@ -366,6 +358,12 @@ public:
       else
 	removed = {};
       return;
+    }
+
+    if (offset + rlength > int64_t(m_length)) rlength = m_length - offset;
+    if (offset + length > int64_t(m_length)) {
+      length = int64_t(m_length) - offset;
+      if (length < 0) length = 0;
     }
 
     // shift up or down, depending on length <=> rlength
