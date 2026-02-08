@@ -126,7 +126,7 @@ class App {
   using Thread = ::Thread<Ring, Msg>;
 
 public:
-  App() : m_nThreads{0}, m_threads{0} { }
+  App() : m_nThreads{0}, m_threads{nullptr} { }
   ~App() { if (m_threads) delete [] m_threads; }
 
   const Thread *thread(unsigned i) const { return m_threads[i]; }
