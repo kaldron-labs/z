@@ -1458,7 +1458,8 @@ public:
 	size(z);
       }
       initElems(m_data + n, offset - n);
-      rlength = replace(ZuSpan(m_data + offset, rlength));
+      if (rlength)
+	rlength = replace(ZuSpan(m_data + offset, rlength));
       length_(offset + rlength); // rlength may have been reduced
       return;
     }
@@ -1468,16 +1469,18 @@ public:
 
     int64_t l = n + rlength - length;
 
-    if (l > 0 && (!owned() || l > int64_t(z))) {
-      z = grow_(z, l);
+    if (!owned() || l > int64_t(z)) {
+      z = l > 0 ? grow_(z, l) : 0;
       if constexpr (IsCallable<Removed>{})
 	removed(ZuSpan(m_data + offset, length));
       else
 	removed = ZuSpan(m_data + offset, length);
+      if (!z) { null(); return; }
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
       moveElems(newData, m_data, offset);
-      rlength = replace(ZuSpan(newData + offset, rlength));
+      if (rlength)
+	rlength = replace(ZuSpan(newData + offset, rlength));
       l = n + rlength - length; // rlength may have been reduced
       if (offset + length < int64_t(n))
 	moveElems(
@@ -1504,7 +1507,8 @@ public:
 	  m_data + offset + length,
 	  tail);
       }
-      auto nrlength = replace(ZuSpan(m_data + offset, rlength));
+      auto nrlength =
+	rlength ? replace(ZuSpan(m_data + offset, rlength)) : 0;
       if (tail > 0) {
 	if (int64_t(rlength) < length) {
 	  moveElems(m_data + offset + nrlength, // NOT rlength
