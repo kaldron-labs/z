@@ -280,7 +280,9 @@ public:
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
-// #pragma GCC diagnostic ignored "-Wnontrivial-memcall"
+#ifdef __llvm__
+#pragma GCC diagnostic ignored "-Wnontrivial-memcall"
+#endif
 #endif
       memmove(dst, src, length * sizeof(T));
 #ifdef __GNUC__

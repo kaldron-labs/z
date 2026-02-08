@@ -7,13 +7,16 @@
 #include <zlib/ZuLib.hh>
 
 #include <zlib/ZuTest.hh>
-#include <zlib/ZuDemangle.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuVArray.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuMatcher.hh>
+
+#include <zlib/ZtDemangle.hh>
+
+// FIXME - add String, Array, Tuple, Union transforms to ZtDemangle.cc
 
 #include <iostream>
 
@@ -29,6 +32,8 @@ template <typename> struct Baz { };
 int main()
 {
   ZuTestMain();
+
+  ZtDemangle::init();
 
   constexpr auto foo = ZuDefaultAxor();
   using Foo_ = decltype(foo);

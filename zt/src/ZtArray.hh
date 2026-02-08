@@ -414,31 +414,44 @@ private:
       return this_->add_mv(a.m_data, a.length());
     }
 
+    template <typename Removed>
     static void splice_(ZtArray *this_,
-	ZtArray *removed, int64_t offset, int64_t length, const A &a) {
+	Removed &&removed, int64_t offset, int64_t length, const A &a) {
+      auto n = a.length();
+      if (ZuUnlikely(!n)) {
+	this_->splice(ZuFwd<Removed>(removed), offset, length,
+	  [](ZuSpan<T>) -> uint64_t { return 0; }, 0);
+	return;
+      }
       if constexpr (ZuIsSame<A, ZtArray>{})
-	if (this_ == &a) {
-	  auto rlength = a.length();
-	  auto buf = ZmAlloc(T, rlength);
-	  copyElems(&buf[0], a.m_data, rlength);
-	  this_->splice__(removed, offset, length, [data = &buf[0]](T *ptr, uint64_t rlength) {
-	    if (rlength) moveElems(ptr, data, rlength);
-	    return rlength;
-	  }, rlength);
-	  destroyElems(&buf[0], rlength);
+	if (ZuUnlikely(this_ == &a)) {
+	  auto buf = ZmAlloc(T, n);
+	  copyElems(&buf[0], a.m_data, n);
+	  this_->splice(ZuFwd<Removed>(removed), offset, length,
+	    [data = &buf[0]](ZuSpan<T> span) -> uint64_t {
+	      auto n = span.length();
+	      if (n) moveElems(span.data(), data, n);
+	      return n;
+	    }, n);
+	  destroyElems(&buf[0], n);
 	  return;
 	}
-      this_->splice__(removed, offset, length, [data = a.m_data](T *ptr, uint64_t rlength) {
-	if (rlength) copyElems(ptr, data, rlength);
-	return rlength;
-      }, a.length());
+      this_->splice(ZuFwd<Removed>(removed), offset, length,
+	[data = a.m_data](ZuSpan<T> span) -> uint64_t {
+	  auto n = span.length();
+	  if (n) copyElems(span.data(), data, n);
+	  return n;
+	}, n);
     }
+    template <typename Removed>
     static void splice_(ZtArray *this_,
-	ZtArray *removed, int64_t offset, int64_t length, A &&a) {
-      this_->splice__(removed, offset, length, [data = a.m_data](T *ptr, uint64_t rlength) {
-	if (rlength) moveElems(ptr, data, rlength);
-	return rlength;
-      }, a.length());
+	Removed &&removed, int64_t offset, int64_t length, A &&a) {
+      this_->splice(ZuFwd<Removed>(removed), offset, length,
+	[data = a.m_data](ZuSpan<T> span) -> uint64_t {
+	  auto n = span.length();
+	  if (n) moveElems(span.data(), data, n);
+	  return n;
+	}, a.length());
     }
   };
   template <typename A_> struct Fwd_Array {
@@ -478,21 +491,27 @@ private:
       return this_->add_mv(a.data(), a.length());
     }
 
+    template <typename Removed>
     static void splice_(ZtArray *this_,
-	ZtArray *removed, int64_t offset, int64_t length, const A &a_) {
+	Removed &&removed, int64_t offset, int64_t length, const A &a) {
       ZuSpan<const Elem> a(a_);
-      this_->splice__(removed, offset, length, [data = a.data()](T *ptr, uint64_t rlength) {
-	if (rlength) copyElems(ptr, data, rlength);
-	return rlength;
-      }, a.length());
+      this_->splice(ZuFwd<Removed>(removed), offset, length,
+	[data = a.data()](ZuSpan<T> span) -> uint64_t {
+	  auto n = span.length();
+	  if (n) copyElems(span.data(), data, n);
+	  return n;
+	}, a.length());
     }
+    template <typename Removed>
     static void splice_(ZtArray *this_,
-	ZtArray *removed, int64_t offset, int64_t length, A &&a_) {
+	Removed &&removed, int64_t offset, int64_t length, A &&a_) {
       ZuSpan<Elem> a(a_);
-      this_->splice__(removed, offset, length, [data = a.data()](T *ptr, uint64_t rlength) {
-	if (rlength) moveElems(ptr, data, rlength);
-	return rlength;
-      }, a.length());
+      this_->splice(ZuFwd<Removed>(removed), offset, length,
+	[data = a.data()](ZuSpan<T> span) -> uint64_t {
+	  auto n = span.length();
+	  if (n) moveElems(span.data(), data, n);
+	  return n;
+	}, a.length());
     }
   };
 
@@ -1213,11 +1232,11 @@ public:
 private:
   template <typename A>
   MatchZtArray<A> append_(A &&a) {
-    Fwd_ZtArray<A &&>::splice_(this, 0, length(), 0, ZuFwd<A>(a));
+    Fwd_ZtArray<A &&>::splice_(this, [](ZuSpan<T>) { }, length(), 0, ZuFwd<A>(a));
   }
   template <typename A>
   MatchSpan<A> append_(A &&a) {
-    Fwd_Array<A>::splice_(this, 0, length(), 0, ZuFwd<A>(a));
+    Fwd_Array<A>::splice_(this, [](ZuSpan<T>) { }, length(), 0, ZuFwd<A>(a));
   }
   template <typename A>
   MatchIterable<A> append_(const A &a) {
@@ -1329,117 +1348,6 @@ public:
     length_(n);
   }
 
-// splice()
-public:
-  template <typename A>
-  void splice(
-      ZtArray &removed, int64_t offset, int64_t length, A &&replace) {
-    splice_(&removed, offset, length, ZuFwd<A>(replace));
-  }
-
-  template <typename A>
-  void splice(int64_t offset, int64_t length, A &&replace) {
-    splice_(nullptr, offset, length, ZuFwd<A>(replace));
-  }
-
-  void splice(ZtArray &removed, int64_t offset, int64_t length) {
-    splice__(&removed, offset, length, [](T *, uint64_t) -> uint64_t { return 0; }, 0);
-  }
-
-  void splice(int64_t offset) {
-    splice__(nullptr, offset, LLONG_MAX, [](T *, uint64_t) -> uint64_t { return 0; }, 0);
-  }
-
-  void splice(int64_t offset, int64_t length) {
-    splice__(nullptr, offset, length, [](T *, uint64_t) -> uint64_t { return 0; }, 0);
-  }
-
-private:
-  template <typename A>
-  MatchZtArray<A> splice_(
-      ZtArray *removed, int64_t offset, int64_t length, A &&a) {
-    Fwd_ZtArray<A &&>::splice_(this, removed, offset, length, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchSpan<A> splice_(
-      ZtArray *removed, int64_t offset, int64_t length, A &&a) {
-    Fwd_Array<A>::splice_(this, removed, offset, length, ZuFwd<A>(a));
-  }
-
-  template <typename S>
-  MatchAnyString<S> splice_(
-      ZtArray *removed, int64_t offset, int64_t length, const S &s_) {
-    ZuSpan<const typename ZuTraits<S>::Elem> s(s_);
-    splice__(removed, offset, length, [data = s.data()](Char *ptr, uint64_t rlength) {
-      if (rlength) copyElems(ptr, data, rlength);
-      return rlength;
-    }, s.length());
-  }
-
-  template <typename S>
-  MatchAltString<S> splice_(
-      ZtArray *removed, int64_t offset, int64_t length, const S &s_) {
-    ZuSpan<const AltChar> s(s_);
-    splice__(removed, offset, length, [s](Char *ptr, uint64_t rlength) -> uint64_t {
-      if (!rlength) return 0;
-      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, s);
-    }, ZuUTF<Char, AltChar>::len(s));
-  }
-  template <typename C>
-  MatchAltChar<C> splice_(
-      ZtArray *removed, int64_t offset, int64_t length, C c_) {
-    AltChar c = c_;
-    splice__(removed, offset, length, [c](Char *ptr, uint64_t rlength) {
-      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, {&c, 1});
-    }, ZuUTF<Char, AltChar>::len({&c, 1}));
-  }
-
-  template <typename R>
-  MatchElem<R> splice_(
-      ZtArray *removed, int64_t offset, int64_t length, R &&r_) {
-    T r{ZuFwd<R>(r_)};
-    splice__(removed, offset, length, [&r](T *ptr, uint64_t) {
-      moveElems(ptr, &r, 1);
-      return 1;
-    }, 1);
-  }
-
-public:
-  template <typename R>
-  void splice(
-      ZtArray &removed, int64_t offset, int64_t length,
-      const R *replace, uint64_t rlength) {
-    splice__(&removed, offset, length, [replace](T *ptr, uint64_t rlength) {
-      if (rlength) copyElems(ptr, replace, rlength);
-      return rlength;
-    }, rlength);
-  }
-  template <typename R>
-  void splice_mv(
-      ZtArray &removed, int64_t offset, int64_t length,
-      R *replace, uint64_t rlength) {
-    splice__(&removed, offset, length, [replace](T *ptr, uint64_t rlength) {
-      if (rlength) moveElems(ptr, replace, rlength);
-      return rlength;
-    }, rlength);
-  }
-
-  template <typename R>
-  void splice(
-      int64_t offset, int64_t length, const R *replace, uint64_t rlength) {
-    splice__(nullptr, offset, length, [replace](T *ptr, uint64_t rlength) {
-      if (rlength) copyElems(ptr, replace, rlength);
-      return rlength;
-    }, rlength);
-  }
-  template <typename R>
-  void splice_mv(int64_t offset, int64_t length, R *replace, uint64_t rlength) {
-    splice__(nullptr, offset, length, [replace](T *ptr, uint64_t rlength) {
-      if (rlength) moveElems(ptr, replace, rlength);
-      return rlength;
-    }, rlength);
-  }
-
   T *push() {
     uint64_t n = length();
     uint64_t z = size();
@@ -1493,11 +1401,11 @@ public:
 
   template <typename A>
   MatchZtArray<A> unshift(A &&a) {
-    Fwd_ZtArray<A &&>::splice_(this, nullptr, 0, 0, ZuFwd<A>(a));
+    Fwd_ZtArray<A &&>::splice_(this, [](ZuSpan<T>) { }, 0, 0, ZuFwd<A>(a));
   }
   template <typename A>
   MatchSpan<A> unshift(A &&a) {
-    Fwd_Array<A>::splice_(this, nullptr, 0, 0, ZuFwd<A>(a));
+    Fwd_Array<A>::splice_(this, [](ZuSpan<T>) { }, 0, 0, ZuFwd<A>(a));
   }
 
   T *unshift() {
@@ -1522,11 +1430,18 @@ public:
     initElem(unshift(), ZuFwd<V>(v));
   }
 
-private:
-  template <typename Replace>
-  ZuInline void splice__(
-    ZtArray *removed, int64_t offset, int64_t length,
-    Replace replace, uint64_t rlength)
+// splice()
+
+  template <typename L, typename = void>
+  struct IsCallable : public ZuFalse { };
+  template <typename L>
+  struct IsCallable<L, decltype(ZuDeclVal<L &>()(ZuDeclVal<ZuSpan<T>>()))> :
+    public ZuTrue { };
+
+  template <typename Removed, typename Replace>
+  void splice(
+    Removed &&removed, int64_t offset, int64_t length,
+    Replace &&replace, uint64_t rlength)
   {
     uint64_t n = this->length();
     uint64_t z = size();
@@ -1534,13 +1449,16 @@ private:
     if (length < 0) { if ((length += (n - offset)) < 0) length = 0; }
 
     if (offset > int64_t(n)) {
-      if (removed) removed->clear();
+      if constexpr (IsCallable<Removed>{})
+	removed(ZuSpan<T>());
+      else
+	removed = {};
       if (!owned() || offset + int64_t(rlength) > int64_t(z)) {
 	z = grow_(z, offset + rlength);
 	size(z);
       }
       initElems(m_data + n, offset - n);
-      rlength = replace(m_data + offset, rlength);
+      rlength = replace(ZuSpan(m_data + offset, rlength));
       length_(offset + rlength); // rlength may have been reduced
       return;
     }
@@ -1552,13 +1470,17 @@ private:
 
     if (l > 0 && (!owned() || l > int64_t(z))) {
       z = grow_(z, l);
-      if (removed) removed->move(m_data + offset, length);
+      if constexpr (IsCallable<Removed>{})
+	removed(ZuSpan(m_data + offset, length));
+      else
+	removed = ZuSpan(m_data + offset, length);
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
       moveElems(newData, m_data, offset);
-      rlength = replace(newData + offset, rlength);
+      rlength = replace(ZuSpan(newData + offset, rlength));
       l = n + rlength - length; // rlength may have been reduced
-      if (offset + length < int64_t(n))
+      if (offset + length < int64_t(n)
+	  (oldData != newData || int64_t(rlength) != length))
 	moveElems(
 	    newData + offset + rlength,
 	    m_data + offset + length,
@@ -1570,34 +1492,132 @@ private:
       return;
     }
 
-    if (removed) removed->move(m_data + offset, length);
+    if constexpr (IsCallable<Removed>{})
+      removed(ZuSpan(m_data + offset, length));
+    else
+      removed = ZuSpan(m_data + offset, length);
     destroyElems(m_data + offset, length);
     if (l > 0) {
-      int64_t trailing = int64_t(n) - (offset + length);
-      if (trailing > 0 && int64_t(rlength) > length) {
+      int64_t tail = int64_t(n) - (offset + length);
+      if (tail > 0 && int64_t(rlength) > length) {
 	moveElems(
 	  m_data + offset + rlength,
 	  m_data + offset + length,
-	  trailing);
+	  tail);
       }
       auto nrlength = replace(m_data + offset, rlength);
-      if (trailing > 0) {
+      if (tail > 0) {
 	if (int64_t(rlength) < length) {
 	  moveElems(m_data + offset + nrlength, // NOT rlength
 		    m_data + offset + length,
-		    trailing);
+		    tail);
 	} else if (nrlength < rlength) {
 	  moveElems(m_data + offset + nrlength,
 		    m_data + offset + rlength,
-		    trailing);
+		    tail);
 	}
       }
       l = n + nrlength - length;
     }
     length_(l);
   }
+  void splice(int64_t offset) {
+    splice([](ZuSpan<T>) { }, offset, LLONG_MAX, [](ZuSpan<T>) { return 0; }, 0);
+  }
+  void splice(int64_t offset, int64_t length) {
+    splice([](ZuSpan<T>) { }, offset, length, [](ZuSpan<T>) { return 0; }, 0);
+  }
+  template <typename Removed>
+  void splice(Removed &&removed, int64_t offset, int64_t length) {
+    splice(ZuFwd<Removed>(removed), offset, length, [](ZuSpan<T>) { return 0; }, 0);
+  }
+  template <typename A>
+  MatchZtArray<A>
+  splice(int64_t offset, int64_t length, A &&a) {
+    Fwd_ZtArray<A &&>::splice_(this,
+      [](ZuSpan<T>) { }, offset, length, ZuFwd<A>(a));
+  }
+  template <typename Removed, typename A>
+  MatchZtArray<A>
+  splice(Removed &&removed, int64_t offset, int64_t length, A &&a) {
+    Fwd_ZtArray<A &&>::splice_(this,
+      ZuFwd<Removed>(removed), offset, length, ZuFwd<A>(a));
+  }
+  template <typename A>
+  MatchSpan<A>
+  splice(int64_t offset, int64_t length, A &&a) {
+    Fwd_Array<A>::splice_(this,
+      [](ZuSpan<T>) { }, offset, length, ZuFwd<A>(a));
+  }
+  template <typename Removed, typename A>
+  MatchSpan<A>
+  splice(Removed &&removed, int64_t offset, int64_t length, A &&a) {
+    Fwd_Array<A>::splice_(this,
+      ZuFwd<Removed>(removed), offset, length, ZuFwd<A>(a));
+  }
+  template <typename S>
+  MatchAnyString<S>
+  splice(int64_t offset, int64_t length, const S &s) {
+    splice([](ZuSpan<T>) { }, offset, length, s);
+  }
+  template <typename Removed, typename S>
+  MatchAnyString<S>
+  splice(Removed &&removed, int64_t offset, int64_t length, const S &s_) {
+    ZuSpan<const typename ZuTraits<S>::Elem> s(s_);
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [data = s.data()](ZuSpan<T> span) -> uint64_t {
+	auto n = span.length();
+	if (n) copyElems(span.data(), data, n);
+	return n;
+      }, s.length());
+  }
+  template <typename S>
+  MatchAltString<S>
+  splice(int64_t offset, int64_t length, const S &s) {
+    splice([](ZuSpan<T>) { }, offset, length, s);
+  }
+  template <typename Removed, typename S>
+  MatchAltString<S>
+  splice(Removed &&removed, int64_t offset, int64_t length, const S &s_) {
+    ZuSpan<const AltChar> s(s_);
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [s](ZuSpan<T> span) -> uint64_t {
+	if (!span.length()) return 0;
+	return ZuUTF<Char, AltChar>::cvt(span, s);
+      }, ZuUTF<Char, AltChar>::len(s));
+  }
+  template <typename C>
+  MatchAltChar<C>
+  splice(int64_t offset, int64_t length, C c) {
+    splice([](ZuSpan<T>) { }, offset, length, c);
+  }
+  template <typename Removed, typename C>
+  MatchAltChar<C>
+  splice(Removed &&removed, int64_t offset, int64_t length, C c_) {
+    AltChar c = c_;
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [c](ZuSpan<T> span) -> uint64_t {
+	if (!span.length()) return 0;
+	return ZuUTF<Char, AltChar>::cvt(span, {&c, 1});
+      }, ZuUTF<Char, AltChar>::len({&c, 1}));
+  }
+  template <typename R>
+  MatchElem<R>
+  splice(int64_t offset, int64_t length, R &&r) {
+    splice([](ZuSpan<T>) { }, offset, length, ZuFwd<R>(r));
+  }
+  template <typename Removed, typename R>
+  MatchElem<R>
+  splice(Removed &&removed, int64_t offset, int64_t length, R &&r_) {
+    T r{ZuFwd<R>(r_)};
+    splice(ZuFwd<Removed>(removed), offset, length,
+      [&r](ZuSpan<T> span) -> uint64_t {
+	if (!span.length()) return 0;
+	moveElems(span.data(), &r, 1);
+	return 1;
+      }, 1);
+  }
 
-public:
 // iterate
   template <typename Fn> void iterate(Fn fn) {
     uint64_t n = length();

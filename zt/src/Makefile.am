@@ -13,11 +13,13 @@ pkginclude_HEADERS = \
 	ZtRegex.hh ZtString.hh ZtLocalString.hh ZtHexDump.hh \
 	ZtWindow.hh ZtBitmap.hh ZtFmt.hh \
 	ZtStruct.hh ZtScanBool.hh ZtCase.hh ZtTimeZone.hh \
-	ZtQuote.hh ZtJSON.hh ZtURI.hh ZtCLI.hh ZtASN1.hh ZtBytesFmt.hh ZtCSV.hh
+	ZtQuote.hh ZtJSON.hh ZtURI.hh ZtCLI.hh ZtASN1.hh \
+	ZtBytesFmt.hh ZtCSV.hh
 lib_LTLIBRARIES = libZt.la
 libZt_la_SOURCES = \
 	ZtLib.cc ZtRegex.cc ZtString.cc ZtHexDump.cc ZtTimeZone.cc \
-	ZtStruct.cc ZtJSON.cc ZtURI.cc ZtCLI.cc ZtCSV.cc
+	ZtStruct.cc ZtJSON.cc ZtURI.cc ZtCLI.cc ZtCSV.cc \
+	ZtDemangle.cc
 libZt_la_LIBADD = $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@

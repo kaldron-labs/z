@@ -21,7 +21,7 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuPrint.hh>
 
-class ZuDemangle_ : public ZuPrintable {
+class ZuAPI ZuDemangle_ : public ZuPrintable {
   ZuDemangle_(const ZuDemangle_ &) = delete;
   ZuDemangle_ &operator =(const ZuDemangle_ &) = delete;
   ZuDemangle_(ZuDemangle_ &&) = delete;
@@ -54,10 +54,15 @@ public:
     if (m_output) s << m_output;
   }
 
+  typedef void (*TransformFn)(void *, ZuSpan<char> &);
+  typedef void (*FinalizeFn)(void *, TransformFn);
+
   // post-process demangle output - in-place transformation
-  static void transform(ZuSpan<char> &output) {
-    // FIXME
-  }
+  static void transform(ZuSpan<char> &output);
+
+  // register/finalize transform
+  static void transformFn(
+    void *context, TransformFn fn, FinalizeFn finalFn);
 
 private:
   char		*m_buf = nullptr;

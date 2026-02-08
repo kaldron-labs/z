@@ -6,7 +6,7 @@
 
 // generic type-erased context pointer for callbacks
 // - effectively a discriminated union of a raw pointer and a ZmRef<ZmPolymorph>
-// - the discriminator is the top bit of a pointer-packed 64bit uintptr_t
+// - the discriminator is the high bit of a pointer-packed 64bit uintptr_t
 // - if constructed with a ZmRef<T> where T is ZmPolymorph-derived, will
 //   maintain a positive reference count during its lifetime, pinning the
 //   object in memory

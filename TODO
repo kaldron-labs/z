@@ -1,4 +1,7 @@
+- fix ZuArray/Span splice
+  - tail truncation
 - fix ZuDemangle_::transform (see goal.md)
+  - why is ZuDemangleTest outputting trailing residue implying memory corruption / overrun?
   - implement ZuSpan::splice (see ZuArray::splice)
 
 - complete ZuDemangleTest

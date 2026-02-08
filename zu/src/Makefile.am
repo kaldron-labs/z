@@ -25,6 +25,7 @@ pkginclude_HEADERS = \
 lib_LTLIBRARIES = libZu.la
 libZu_la_SOURCES = \
 	ZuLib.cc ZuUTF.cc ZuTime.cc ZuDateTime.cc ZuTest.cc \
+	ZuDemangle.cc \
 	\
 	zu_decimal.cc zu_time.cc zu_bitmap.cc
 libZu_la_LIBADD = @Z_LIBS@

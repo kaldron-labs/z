@@ -11,6 +11,7 @@ LDADD = $(top_builddir)/zu/src/libZu.la @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
 	ZuInspectTest ZuHashTest ZuCmpTest ZuBoxTest ZuBoxBench \
 	ZuArrayTest ZuTupleTest ZuIDTest ZuUTFTest ZuBitmapTest \
+	ZuSpanTest \
 	ZuDecimalTest ZuSearchTest ZuStructTest ZuTLTest \
 	ZuAxorTest ZuPtrTest ZuTimeTest ZuEndianTest \
 	ZuStreamTest ZuBitStreamTest ZuSearchBench \
@@ -26,6 +27,7 @@ ZuSearchBench_SOURCES = ZuSearchBench.cc
 ZuBoxTest_SOURCES = ZuBoxTest.cc
 ZuBoxBench_SOURCES = ZuBoxBench.cc
 ZuArrayTest_SOURCES = ZuArrayTest.cc
+ZuSpanTest_SOURCES = ZuSpanTest.cc
 ZuTupleTest_SOURCES = ZuTupleTest.cc
 ZuIDTest_SOURCES = ZuIDTest.cc
 ZuUTFTest_SOURCES = ZuUTFTest.cc

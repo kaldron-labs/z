@@ -37,14 +37,22 @@ private:
   int	m_i;
 };
 
+template <typename T>
 struct IntSink {
   enum { Cap = 8 };
+
   int		vals[Cap] = {};
   unsigned	len = 0;
 
-  constexpr IntSink &operator <<(int v) {
-    if (len < Cap) vals[len++] = v;
-    return *this;
+  constexpr void operator ()(ZuSpan<ZuElem<T>> span) {
+    unsigned n = span.length();
+    if (n > (Cap - len)) n = Cap - len;
+    if (!ZuConstEval() && ZuIsSame<T, int>{}) {
+      if constexpr (ZuIsSame<T, int>{})
+	memcpy(&vals[len], &span[0], n * sizeof(int));
+    } else {
+      for (unsigned i = 0; i < n; ) vals[len++] = span[i++];
+    }
   }
 };
 
@@ -53,10 +61,10 @@ struct AppendSink {
   T		vals[N] = {};
   unsigned	len = 0;
 
-  void append(const T *data, unsigned length) {
-    unsigned n = length;
-    if (len + n > N) n = N - len;
-    for (unsigned i = 0; i < n; i++) vals[len++] = data[i];
+  constexpr void operator ()(ZuSpan<ZuElem<T>> span) {
+    unsigned n = span.length();
+    if (n > (N - len)) n = N - len;
+    for (unsigned i = 0; i < n; ) vals[len++] = span[i++];
   }
 };
 
@@ -85,8 +93,8 @@ constexpr bool spliceConstevalRemoved()
 {
   ZuArray<int, 6> a;
   a << 1 << 2 << 3 << 4;
-  IntSink removed;
-  a.splice(0, 2, removed);
+  IntSink<int> removed;
+  a.splice(removed, 0, 2);
   return
     a.length() == 2 &&
     a[0] == 3 &&
@@ -96,15 +104,75 @@ constexpr bool spliceConstevalRemoved()
     removed.vals[1] == 2;
 }
 
+constexpr bool spliceConstevalOffsetOnly()
+{
+  ZuArray<int, 6> a;
+  a << 1 << 2 << 3;
+  a.splice(0);
+  return !a.length();
+}
+
+constexpr bool spliceConstevalReplaceShrink()
+{
+  ZuArray<int, 7> a;
+  a << 1 << 2 << 3 << 4 << 5;
+  int removed = 0;
+  a.splice([&removed](auto span) {
+    removed = span.length() ? span[0] : -1;
+  }, 1, 1, [](auto span) {
+    ZuNew<int>(ZuAddr(span[0]), 20);
+    ZuNew<int>(ZuAddr(span[1]), 21);
+    ZuNew<int>(ZuAddr(span[2]), 22);
+    return 2U;
+  }, 3);
+  return
+    removed == 2 &&
+    a.length() == 6 &&
+    a[0] == 1 &&
+    a[1] == 20 &&
+    a[2] == 21 &&
+    a[3] == 3 &&
+    a[4] == 4 &&
+    a[5] == 5;
+}
+
+constexpr bool spliceConstevalCase1Replace()
+{
+  ZuArray<int, 6> a;
+  a << 9;
+  ZuSpan<ZuElem<int>> removed;
+  unsigned replaced = 0;
+  a.splice(removed, 3, 2, [&replaced](auto span) {
+    replaced = span.length();
+    ZuNew<int>(ZuAddr(span[0]), 7);
+    ZuNew<int>(ZuAddr(span[1]), 8);
+    return 2U;
+  }, 2);
+  return
+    !removed.length() &&
+    replaced == 2 &&
+    a.length() == 5 &&
+    a[0] == 9 &&
+    a[1] == 0 &&
+    a[2] == 0 &&
+    a[3] == 7 &&
+    a[4] == 8;
+}
+
 static_assert(spliceConstevalBasic());
 static_assert(spliceConstevalRemoved());
+static_assert(spliceConstevalOffsetOnly());
+static_assert(spliceConstevalReplaceShrink());
+static_assert(spliceConstevalCase1Replace());
 
 template <typename A>
 void testSplice(A &a, int offset, int length, int check1, int check2)
 {
   ZuTestScope(splice);
   A a_;
-  a.splice(offset, length, a_);
+  a.splice([&a_](auto &&span) {
+    for (auto &&v : span) a_ << ZuElemVal(v);
+  }, offset, length);
   ZuCheck((!a.length() && !check1) || (int)a[0] == check1);
   ZuCheckBlock(({
     if (check2 < 0)
@@ -219,8 +287,8 @@ void testSpliceRuntimePaths()
   {
     ZuArray<I, 4> a;
     a << I(5) << I(6) << I(7);
-    IntSink removed;
-    a.splice(1, 1, removed);
+    IntSink<I> removed;
+    a.splice(removed, 1, 1);
     ZuCheck(a.length() == 2);
     ZuCheck((int)a[0] == 5);
     ZuCheck((int)a[1] == 7);
@@ -233,7 +301,7 @@ void testSpliceRuntimePaths()
     ZuArray<I, 4> a;
     a << I(8) << I(9) << I(10);
     AppendSink<I, 4> removed;
-    a.splice(1, 2, removed);
+    a.splice(removed, 1, 2);
     ZuCheck(a.length() == 1);
     ZuCheck((int)a[0] == 8);
     ZuCheck(removed.len == 2);
@@ -242,59 +310,122 @@ void testSpliceRuntimePaths()
   }
 }
 
-void testSpanSplice()
+void testSpliceVariantPaths()
 {
-  ZuTestScope(splice_span);
+  ZuTestScope(splice_variants);
 
-  // basic splice + shift
+  // splice(offset) overload
   {
-    int buf[5] = {1, 2, 3, 4, 5};
-    ZuSpan<int> s(buf, 5);
-    s.splice(1, 2);
-    ZuCheck(s.length() == 3);
-    ZuCheck(s[0] == 1);
-    ZuCheck(s[1] == 4);
-    ZuCheck(s[2] == 5);
+    ZuArray<I, 4> a;
+    a << I(1) << I(2) << I(3);
+    a.splice(0);
+    ZuCheck(!a.length());
   }
 
-  // offset < 0 clamps (offset + length)
+  // splice(removed, offset, length) overload with non-callable removed
   {
-    int buf[4] = {1, 2, 3, 4};
-    ZuSpan<int> s(buf, 4);
-    s.splice(-2, 3);
-    ZuCheck(s.length() == 2);
-    ZuCheck(s[0] == 1);
-    ZuCheck(s[1] == 2);
+    ZuArray<I, 4> a;
+    a << I(1) << I(2) << I(3);
+    ZuSpan<ZuElem<I>> removed;
+    a.splice(removed, 1, 1);
+    ZuCheck(a.length() == 2);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 3);
+    ZuCheck(removed.length() == 1);
+    ZuCheck((int)removed[0] == 3);
   }
 
-  // length < 0 adjusted positive
+  // 5-arg splice case 1 (offset > length_) with replacement
   {
-    int buf[4] = {1, 2, 3, 4};
-    ZuSpan<int> s(buf, 4);
-    s.splice(1, -1);
-    ZuCheck(s.length() == 2);
-    ZuCheck(s[0] == 1);
-    ZuCheck(s[1] == 4);
+    ZuArray<I, 6> a;
+    a << I(9);
+    ZuSpan<ZuElem<I>> removed;
+    unsigned replaced = 0;
+    a.splice(removed, 3, 2, [&replaced](auto span) {
+      replaced = span.length();
+      ZuNew<I>(ZuAddr(span[0]), 7);
+      ZuNew<I>(ZuAddr(span[1]), 8);
+      return span.length();
+    }, 2);
+    ZuCheck(!removed.length());
+    ZuCheck(replaced == 2);
+    ZuCheck(a.length() == 5);
+    ZuCheck((int)a[0] == 9);
+    ZuCheck((int)a[1] == 0);
+    ZuCheck((int)a[2] == 0);
+    ZuCheck((int)a[3] == 7);
+    ZuCheck((int)a[4] == 8);
   }
 
-  // offset > length no-op
+  // rlength clamped to N - offset
   {
-    int buf[2] = {1, 2};
-    ZuSpan<int> s(buf, 2);
-    s.splice(3, 1);
-    ZuCheck(s.length() == 2);
-    ZuCheck(s[0] == 1);
-    ZuCheck(s[1] == 2);
+    ZuArray<I, 5> a;
+    a << I(1) << I(2);
+    IntSink<I> removed;
+    unsigned replaced = 0;
+    a.splice(removed, 1, 1, [&replaced](auto span) {
+      replaced = span.length();
+      ZuNew<I>(ZuAddr(span[0]), 9);
+      ZuNew<I>(ZuAddr(span[1]), 8);
+      ZuNew<I>(ZuAddr(span[2]), 7);
+      ZuNew<I>(ZuAddr(span[3]), 6);
+      return span.length();
+    }, 10);
+    ZuCheck(removed.len == 1);
+    ZuCheck(removed.vals[0] == 2);
+    ZuCheck(replaced == 4);
+    ZuCheck(a.length() == 5);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 9);
+    ZuCheck((int)a[2] == 8);
+    ZuCheck((int)a[3] == 7);
+    ZuCheck((int)a[4] == 6);
   }
 
-  // length == 0 no-op
+  // replace() returns < rlength, tail shifts back down
   {
-    int buf[2] = {1, 2};
-    ZuSpan<int> s(buf, 2);
-    s.splice(0, 0);
-    ZuCheck(s.length() == 2);
-    ZuCheck(s[0] == 1);
-    ZuCheck(s[1] == 2);
+    ZuArray<I, 7> a;
+    a << I(1) << I(2) << I(3) << I(4) << I(5);
+    IntSink<I> removed;
+    a.splice(removed, 1, 1, [](auto span) {
+      ZuNew<I>(ZuAddr(span[0]), 20);
+      ZuNew<I>(ZuAddr(span[1]), 21);
+      ZuNew<I>(ZuAddr(span[2]), 22);
+      return 2U;
+    }, 3);
+    ZuCheck(removed.len == 1);
+    ZuCheck(removed.vals[0] == 2);
+    ZuCheck(a.length() == 6);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 20);
+    ZuCheck((int)a[2] == 21);
+    ZuCheck((int)a[3] == 3);
+    ZuCheck((int)a[4] == 4);
+    ZuCheck((int)a[5] == 5);
+  }
+
+  // tail truncation path when reserved replacement would overflow capacity
+  {
+    ZuArray<I, 6> a;
+    a << I(1) << I(2) << I(3) << I(4) << I(5) << I(6);
+    IntSink<I> removed;
+    a.splice(removed, 1, 3, [](auto span) {
+      ZuNew<I>(ZuAddr(span[0]), 20);
+      ZuNew<I>(ZuAddr(span[1]), 21);
+      ZuNew<I>(ZuAddr(span[2]), 22);
+      ZuNew<I>(ZuAddr(span[3]), 23);
+      return 2U;
+    }, 4);
+    ZuCheck(removed.len == 3);
+    ZuCheck(removed.vals[0] == 2);
+    ZuCheck(removed.vals[1] == 3);
+    ZuCheck(removed.vals[2] == 4);
+    ZuCheck(a.length() == 5);
+    ZuCheck((int)a[0] == 1);
+    ZuCheck((int)a[1] == 20);
+    ZuCheck((int)a[2] == 21);
+    ZuCheck((int)a[3] == 5);
+    ZuCheck((int)a[4] == 23);
   }
 }
 
@@ -357,7 +488,7 @@ int main()
     ZuTestCall(testSplice, a, -2, 4, 0, 44);
   }
   ZuTestCall(testSpliceRuntimePaths);
-  ZuTestCall(testSpanSplice);
+  ZuTestCall(testSpliceVariantPaths);
   {
     ZuWArray<80> w;
     w << L"hello " << "world" << L'!' << ' ' << 42;
