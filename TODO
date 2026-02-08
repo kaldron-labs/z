@@ -1,5 +1,3 @@
---------
-
 - investigate if attribute((section("x"), used)) can be used in ZmSpecific.cc instead of
   the hack with _tls_used
 
@@ -42,18 +40,19 @@ codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
   safe.
 
 - fix preflush etc. in ztls
+  - use ZiTxStream
   - TLS record header is 5 bytes
   - TLS record length includes IV (TLS1.2 only), ciphertext, tail (AEAD tag or MAC + padding)
-  - headroom varies between 5 (TLS1.3) and 21 (TLS1.2 with AES-CBC)
-  - tailroom varies between 16 (TLS1.2 AEAD) and 304 (TLS1.2 AES-CBC HMAC-SHA384, max padding)
+  - TLS headroom varies between 5 (TLS1.3) and 21 (TLS1.2 with AES-CBC)
+  - TLS tailroom varies between 16 (TLS1.2 AEAD) and 304 (TLS1.2 AES-CBC HMAC-SHA384, max padding)
   - maximum overhead is 325
-  - implies tx buffers should be initially allocated with skip = headroom;
-    filled by application; split if needed into 16K-325 fragments; for each fragment:
-    - each plaintext fragment will be offset into buffer by skip == headroom
-    - ptls_buf_init should be called with base and full buffer capacity (16K)
-      - then passed to ptls_buf_send with plaintext data: base+skip and length
-      - ptls_buf_send should be preceded by an independent KeyUpdate null send if needed
-  - ensures recs == 1 by capping plaintext
+  - implies tx buffers should be initially allocated with `skip` = headroom;
+    filled by application; split if needed into `(16K-325)` fragments; for each fragment:
+    - each plaintext fragment will be offset into buffer by `skip` (== headroom)
+    - `ptls_buf_init` should be called with base and full buffer capacity (16K)
+      - then passed to `ptls_buf_send` with plaintext data: base + skip, length
+      - `ptls_buf_send` should be preceded by an independent KeyUpdate null send() if needed
+  - ensures recs == 1 within `ptls_buf_send` because plaintext never exceeds `(16K-325)`
 
 - complete post-codex cleanup of ZtlsPico and Ztls
   - unnecessary IOBufAlignBits constexpr calculation

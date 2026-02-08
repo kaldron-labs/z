@@ -4,10 +4,22 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// IO streams
+// IO Transmit Stream
+// - streams output into a sequence of fixed-capacity buffers
+// - each buffer is assumed to be a single protocol frame, e.g. a TLS record
+// - applications define:
+//   - maxSize - overall capacity for each buffer
+//   - headRoom - how much space is reserved for a frame header
+//   - tailRoom - how much space is reserved for a frame trailer
+//   - how new buffers are allocated - the alloc callback:
+//     - ZmRef<IOBuf> alloc(unsigned headRoom)
+//     - return a new buffer with skip == headRoom
+//   - how buffers are sent - the send callback
+//     - void send(ZmRef<IOBuf> buf)
+//     - send buf to lower-level protocol
 
-#ifndef ZiIOStream_HH
-#define ZiIOStream_HH
+#ifndef ZiTxStream_HH
+#define ZiTxStream_HH
 
 #ifndef ZiLib_HH
 #include <zlib/ZiLib.hh>
@@ -19,6 +31,9 @@
 #include <zlib/ZiIOBuf.hh>
 
 namespace Zi {
+
+struct Flush { };
+inline Flush flush() { return {}; }
 
 template <typename Alloc, typename Send>
 class TxStream {
@@ -118,7 +133,11 @@ public:
     return *this;
   }
 
-  // FIXME - <<(Flush)
+  // flush output
+  IOStream &operator <<(Flush) {
+    m_send();
+    m_buf = m_alloc(m_headRoom);
+  }
 
 private:
   unsigned		m_maxSize;
@@ -129,11 +148,6 @@ private:
   ZmRef<ZiIOBuf>	m_buf;
 };
 
-// both alloc and send must be callable:
-// ZmRef<IOBuf> alloc(unsigned headRoom)
-// - return a new buffer with skip == headRoom
-// void send(ZmRef<IOBuf> buf)
-// - send buf
 template <typename Alloc, typename Send>
 auto txStream(unsigned maxSize, unsigned headRoom, unsigned tailRoom, Alloc alloc, Send send)
 {
@@ -142,6 +156,6 @@ auto txStream(unsigned maxSize, unsigned headRoom, unsigned tailRoom, Alloc allo
 
 } // Zi
 
-using ZiIOStream = Zi::IOStream;
+using ZiTxStream = Zi::TxStream;
 
-#endif /* ZiIOStream_HH */
+#endif /* ZiTxStream_HH */
