@@ -23,20 +23,38 @@
 #include <zlib/ZtString.hh>
 #include <zlib/ZtHexDump.hh>
 #include <zlib/ZtCase.hh>
+#include <zlib/ZtCLI.hh>
 
 #ifdef _MSC_VER
 #pragma warning(disable:4355)
 #endif
 
+static void usage()
+{
+  std::cerr << "usage: ZtArrayTest [-v|--verbose]\n";
+  ::exit(1);
+}
+
+struct Args {
+  bool verbose = false;
+};
+ZtStruct((Args, CLI),
+  (((verbose), (Ctor<0>, CLI::ID<"verbose">, CLI::Flag<'v'>)), (Bool)));
+
+static Args args;
+
 template <typename T>
 void out(T &&v) {
-  std::cerr << ZuFwd<T>(v) << '\n';
+  if (args.verbose)
+    std::cerr << ZuFwd<T>(v) << '\n';
 }
 
 void foo(const ZtString<> &s, ZtString<> t)
 {
-  std::cerr << s << '\n';
-  std::cerr << t << '\n';
+  if (args.verbose) {
+    std::cerr << s << '\n';
+    std::cerr << t << '\n';
+  }
 }
 
 void bar(bool b, ZtString<> &s)
@@ -46,7 +64,8 @@ void bar(bool b, ZtString<> &s)
     baz = s;
   else
     baz = "bah";
-  std::cerr << baz << '\n';
+  if (args.verbose)
+    std::cerr << baz << '\n';
 }
 
 template <auto &ZuTest_scope>
@@ -59,12 +78,16 @@ void testStringEquiv()
   s3 = "world";
   s4 = s3;
 
-  std::cerr << (s2 + s1) << '\n';
-  std::cerr << (s3 + s1) << '\n';
-  std::cerr << (s2 + " " + s3) << '\n';
+  if (args.verbose) {
+    std::cerr << (s2 + s1) << '\n';
+    std::cerr << (s3 + s1) << '\n';
+    std::cerr << (s2 + " " + s3) << '\n';
+  }
   s2 += ZtString<>(" ") + s3;
-  std::cerr << s2 << '\n';
-  std::cerr << s4 << '\n';
+  if (args.verbose) {
+    std::cerr << s2 << '\n';
+    std::cerr << s4 << '\n';
+  }
 
   ZuCheck((s3 == s4));
   ZuCheck((s3 == s3));
@@ -277,7 +300,8 @@ void testStringEquiv()
     s += ZuBox<int>(12345);
     ZuCheck(s == "Hello World");
     s << (ZuCArray<12>() << ZuBox<int>(1234));
-    std::cerr << s.terminate() << '\n';
+    if (args.verbose)
+      std::cerr << s.terminate() << '\n';
     ZuCheck(s == "Hello World1234");
     s = "";
     s << "Hello ";
@@ -311,14 +335,15 @@ void testStringEquiv()
     ZuCheck(!strcmp(buf, "foo bar"));
   }
 
-  std::cerr << (ZtString<>{} << "hello " << "world") << '\n';
+  if (args.verbose)
+    std::cerr << (ZtString<>{} << "hello " << "world") << '\n';
 
   {
     ZtString<> j = (ZtString<>{} << ZuJoin({ "x", "y" }, ","));
     ZuCheck(j == "x,y");
   }
 
-  {
+  if (args.verbose) {
     std::cerr << ZuCSpan("Hello World 2\n") << std::flush;
     std::cerr << ZtHexDump{"Whoot!", "This\x1cis\x09""a\x05test\x01of\x04the\x1ehexadecimal\x13""dumper!", 42};
   }
@@ -453,17 +478,19 @@ struct E {
 void validate(const ZtArray<E> &a, uint64_t length)
 {
   assert(a.length() == length);
-  uint64_t n = a.length();
-  for (uint64_t i = 0; i < n; i++) {
-    if (a[i].ptr() != (const void *)&a[i]) {
-      std::cerr
-	<< '\n' << unsigned(i) << ' ' << a[i].ptr() << " != "
-	<< static_cast<const void *>(&a[i]) << '\n';
+  if (args.verbose) {
+    uint64_t n = a.length();
+    for (uint64_t i = 0; i < n; i++) {
+      if (a[i].ptr() != (const void *)&a[i]) {
+	std::cerr
+	  << '\n' << unsigned(i) << ' ' << a[i].ptr() << " != "
+	  << static_cast<const void *>(&a[i]) << '\n';
+      }
+      std::cerr << unsigned(i) << ':' << a[i].copied() << ':' << a[i].moved()
+		<< ' ';
     }
-    std::cerr << unsigned(i) << ':' << a[i].copied() << ':' << a[i].moved()
-	      << ' ';
+    std::cerr << '\n';
   }
-  std::cerr << '\n';
 }
 
 struct Foo {
@@ -583,8 +610,11 @@ void testNonStringArrays()
   }
 }
 
-int main()
+int main(int argc_, char **argv)
 {
+  int argc = ZtCLI::load(args, argc_, argv);
+  if (argc != 1) usage();
+
   ZuTestMain();
 
   testStringEquiv<ZuTest_scope>();

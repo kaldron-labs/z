@@ -1123,6 +1123,7 @@ public:
   {
     uint64_t n = this->length();
     uint64_t z = size_();
+
     if (offset < 0) { if ((offset += n) < 0) offset = 0; }
     if (length < 0) { if ((length += (n - offset)) < 0) length = 0; }
 
@@ -1138,7 +1139,8 @@ public:
       } else
 	data = data_();
       Zu::strpad(data + n, offset - n);
-      rlength = replace(ZuSpan(data + offset, rlength));
+      if (rlength)
+	rlength = replace(ZuSpan(data + offset, rlength));
       length_(offset + rlength); // rlength may have been reduced
       return;
     }
@@ -1148,8 +1150,8 @@ public:
 
     int64_t l = n + rlength - length;
 
-    if (l > 0 && (!owned() || l >= int64_t(z))) {
-      z = grow_(z, l + 1);
+    if (!owned() || l >= int64_t(z)) {
+      z = l > 0 ? grow_(z, l + 1) : 1;
       Char *oldData = data_();
       if constexpr (IsCallable<Removed>{})
 	removed(ZuSpan(oldData + offset, length));
@@ -1164,7 +1166,8 @@ public:
       }
       if (oldData != newData && offset)
 	memcpy(newData, oldData, offset * sizeof(Char));
-      rlength = replace(ZuSpan(newData + offset, rlength));
+      if (rlength)
+	rlength = replace(ZuSpan(newData + offset, rlength));
       l = n + rlength - length; // rlength may have been reduced
       if (offset + length < int64_t(n) &&
 	  (oldData != newData || int64_t(rlength) != length))
@@ -1196,7 +1199,8 @@ public:
 		data + offset + length,
 		tail * sizeof(Char));
       }
-      auto nrlength = replace(ZuSpan(data + offset, rlength));
+      auto nrlength =
+	rlength ? replace(ZuSpan(data + offset, rlength)) : 0;
       if (tail > 0) {
 	if (int64_t(rlength) < length) {
 	  memmove(data + offset + nrlength, // NOT rlength
