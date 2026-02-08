@@ -493,7 +493,7 @@ private:
 
     template <typename Removed>
     static void splice_(ZtArray *this_,
-	Removed &&removed, int64_t offset, int64_t length, const A &a) {
+	Removed &&removed, int64_t offset, int64_t length, const A &a_) {
       ZuSpan<const Elem> a(a_);
       this_->splice(ZuFwd<Removed>(removed), offset, length,
 	[data = a.data()](ZuSpan<T> span) -> uint64_t {
@@ -1479,8 +1479,7 @@ public:
       moveElems(newData, m_data, offset);
       rlength = replace(ZuSpan(newData + offset, rlength));
       l = n + rlength - length; // rlength may have been reduced
-      if (offset + length < int64_t(n)
-	  (oldData != newData || int64_t(rlength) != length))
+      if (offset + length < int64_t(n))
 	moveElems(
 	    newData + offset + rlength,
 	    m_data + offset + length,
@@ -1505,7 +1504,7 @@ public:
 	  m_data + offset + length,
 	  tail);
       }
-      auto nrlength = replace(m_data + offset, rlength);
+      auto nrlength = replace(ZuSpan(m_data + offset, rlength));
       if (tail > 0) {
 	if (int64_t(rlength) < length) {
 	  moveElems(m_data + offset + nrlength, // NOT rlength

@@ -16,6 +16,7 @@
 #endif
 
 #include <typeinfo>
+#include <string.h>
 #include <cxxabi.h>
 
 #include <zlib/ZuSpan.hh>
@@ -44,7 +45,7 @@ public:
     if (status || !m_buf)
       m_output = symbol;
     else {
-      ZuSpan<char> output{m_buf, m_length};
+      ZuSpan<char> output{m_buf, ::strnlen(m_buf, m_length)};
       transform(output);
       m_output = output;
     }

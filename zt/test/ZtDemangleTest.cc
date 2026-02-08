@@ -14,6 +14,7 @@
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuMatcher.hh>
 
+#include <zlib/ZtRegex.hh>
 #include <zlib/ZtDemangle.hh>
 
 // FIXME - add String, Array, Tuple, Union transforms to ZtDemangle.cc
@@ -64,21 +65,15 @@ int main()
     s << ZuDemangle<A_>{};
     ZuCheck(s == "A<\"foobar\">");
     s = {}; s << ZuDemangle<E_>{};
-    std::cerr << s << '\n';
     ZuCheck(s == "A<\"a\\\"b\\\\c\\n\">");
     s = {}; s << ZuDemangle<F_>{};
-    std::cerr << s << '\n';
     ZuCheck(ZuMatcher<"A<\"foo\">">().find(s).p<1>() == 0);
     ZuCheck(ZuMatcher<"A<\"bar\">">().find(s).p<1>() == 0);
     s = {}; s << ZuDemangle<B_>{};
-    std::cerr << s << '\n';
     ZuCheck(ZuMatcher<"B<main">().find(s).p<1>() == 0);
     s = {}; s << ZuDemangle<C_>{};
-    std::cerr << typeid(C_).name() << '\n';
-    std::cerr << s << '\n';
-    ZuCheck(ZuMatcher<"B<ZuString">().find(s).p<1>() == 0);
+    ZuCheck(s == "B<\"foobar\">");
     s = {}; s << ZuDemangle<D_>{};
-    std::cerr << s << '\n';
-    ZuCheck(ZuMatcher<"D<ZuString">().find(s).p<1>() == 0);
+    ZuCheck(s == "D<\"foobar\">");
   }
 }

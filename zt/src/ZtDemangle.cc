@@ -10,17 +10,46 @@
 ZuDerive(Buf,
   (ZtArray<char, ZtArrayHeapID<"ZtDemangle.Buf", ZtArraySharded<true>>>));
 
+template <typename S>
+static void quote(S &s, ZuBox<uint8_t> c) {
+  if (c == '\n')
+    s << "\\n";
+  else if (c == '\r')
+    s << "\\r";
+  else if (c == '\t')
+    s << "\\t";
+  else if (c < 0x20)
+    s << "\\x" << c.hex<false, ZuFmt::Right<2, '0'>>();
+  else if (c == '"')
+    s << "\\\"";
+  else if (c == '\\')
+    s << "\\\\";
+  else
+    s << char(c);
+}
+
 static void transform(void *, ZuSpan<char> &output)
 {
-  ZtREGEX("Zu_::Array<char,\s*(\d+)[uUlL]*>{Zu_::Array_<char>{},\s*ZuArrayFn<char,\s*ZuCmp<char>\s*>{},\s*\d+[uUlL]*,\s*ZuElem<char>\s*\[\d+\]({(?:[^{}]++|(?-1))*+})}}").sg(
+  // clean up ZuString compile-time strings
+  ZtREGEX("ZuString<(\d+)[uUlL]*>{char \[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
       ZuBox<unsigned> n(c[2]);
-      auto buf = ZtLocalArray(Buf, n + 2);
+      auto buf = ZtLocalArray(Buf, n + 8);
+      buf << '"';
+      ZtREGEX("\(char\)(\d+)(?:,\s*)?").mg(
+	c[1], [&buf](const ZtRegex::Captures &c) { quote(buf, c[2]); });
+      buf << '"';
+      splice(buf);
+    });
+
+  // clean up ZuArray compile-time strings
+  ZtREGEX("Zu_::Array<char,\s*(\d+)[uUlL]*>{Zu_::Array_<char>{},\s*ZuArrayFn<char,\s*ZuCmp<char>\s*>{},\s*\d+[uUlL]*,\s*ZuElem<char>\s*\[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
+    output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
+      ZuBox<unsigned> n(c[2]);
+      auto buf = ZtLocalArray(Buf, n + 8);
       buf << '"';
       ZtREGEX("ZuElem<char>{(?:ZuElem<char>::)?{unnamed\s*type#\d+}{\.v=\(\(char\)(\d+)\)}}(?:,\s*)?").mg(
-	c[1], [&buf](const ZtRegex::Captures &c) {
-	  buf << char(ZuBox<unsigned>(c[2]).val());
-	});
+	c[1], [&buf](const ZtRegex::Captures &c) { quote(buf, c[2]); });
       buf << '"';
       splice(buf);
     });

@@ -1302,12 +1302,12 @@ public:
 	return ZuUTF<Char, AltChar>::cvt(span, s);
       }, ZuUTF<Char, AltChar>::len(s));
   }
-  template <typename S>
+  template <typename C>
   MatchAltChar<C>
   splice(int64_t offset, int64_t length, C c) {
     splice([](ZuSpan<Char>) { }, offset, length, c);
   }
-  template <typename Removed, typename S>
+  template <typename Removed, typename C>
   MatchAltChar<C>
   splice(Removed &&removed, int64_t offset, int64_t length, C c_) {
     AltChar c = c_;
