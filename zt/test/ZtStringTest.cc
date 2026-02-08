@@ -4,14 +4,13 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <stdio.h>
-
 #include <string>
 #include <sstream>
 #include <iostream>
 
 #include <zlib/ZuLib.hh>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuJoin.hh>
@@ -22,19 +21,10 @@
 #include <zlib/ZtHexDump.hh>
 #include <zlib/ZtCase.hh>
 
-void out(bool ok, ZuCSpan check, ZuCSpan diag) {
-  std::cout
-    << (ok ? "OK  " : "NOK ") << check << ' ' << diag
-    << '\n' << std::flush;
-}
-
-#define CHECK_(x) out((x), #x, "")
-#define CHECK(x, y) out((x), #x, y)
-
 void foo(const ZtString<> &s, ZtString<> t)
 {
-  puts(s);
-  puts(t);
+  std::cerr << s << '\n';
+  std::cerr << t << '\n';
 }
 
 void bar(bool b, ZtString<> &s)
@@ -44,10 +34,11 @@ void bar(bool b, ZtString<> &s)
     baz = s;
   else
     baz = "bah";
-  puts(baz);
+  std::cerr << baz << '\n';
 }
 
-int main()
+template <auto &ZuTest_scope>
+void testString()
 {
   ZtString<> s1, s2, s3, s4;
 
@@ -56,94 +47,94 @@ int main()
   s3 = "world";
   s4 = s3;
 
-  puts(s2 + s1);
-  puts(s3 + s1);
-  puts(s2 + " " + s3);
+  std::cerr << (s2 + s1) << '\n';
+  std::cerr << (s3 + s1) << '\n';
+  std::cerr << (s2 + " " + s3) << '\n';
   s2 += ZtString<>(" ") + s3;
-  puts(s2);
-  puts(s4);
+  std::cerr << s2 << '\n';
+  std::cerr << s4 << '\n';
 
-  CHECK_((s3 == s4));
-  CHECK_((s3 == s3));
-  CHECK_((s2 == s2));
-  CHECK_((s1 == s1));
-  CHECK_((s2 != s3));
-  CHECK_((s1 != s3));
-  CHECK_(!s1);
+  ZuCheck((s3 == s4));
+  ZuCheck((s3 == s3));
+  ZuCheck((s2 == s2));
+  ZuCheck((s1 == s1));
+  ZuCheck((s2 != s3));
+  ZuCheck((s1 != s3));
+  ZuCheck(!s1);
 
-  CHECK_((s3 > s2));
-  CHECK_((s3 > s1));
-  CHECK_((s3 >= s4));
-  CHECK_((s3 >= s3));
-  CHECK_((s3 >= s2));
-  CHECK_((s3 >= s1));
-  CHECK_((s2 < s3));
-  CHECK_((s1 < s3));
-  CHECK_((s3 <= s4));
-  CHECK_((s3 <= s3));
-  CHECK_((s2 <= s3));
-  CHECK_((s1 <= s3));
+  ZuCheck((s3 > s2));
+  ZuCheck((s3 > s1));
+  ZuCheck((s3 >= s4));
+  ZuCheck((s3 >= s3));
+  ZuCheck((s3 >= s2));
+  ZuCheck((s3 >= s1));
+  ZuCheck((s2 < s3));
+  ZuCheck((s1 < s3));
+  ZuCheck((s3 <= s4));
+  ZuCheck((s3 <= s3));
+  ZuCheck((s2 <= s3));
+  ZuCheck((s1 <= s3));
 
   s2.splice(0, 5, "'bye ");
 
-  CHECK_(s2 == "'bye  world");
+  ZuCheck(s2 == "'bye  world");
 
   s2.splice(16, 3, "!!!");
 
-  CHECK_(s2 == "'bye  world     !!!");
+  ZuCheck(s2 == "'bye  world     !!!");
 
   s1.splice(2, 17, "hello world again");
 
-  CHECK_(s1 == "  hello world again");
+  ZuCheck(s1 == "  hello world again");
 
   s1.splice(0, 0, ZtString<>(0));
 
-  CHECK_(s1 == "  hello world again");
+  ZuCheck(s1 == "  hello world again");
 
   s1.splice(14, 15, "again and again");
 
-  CHECK_(s1 == "  hello world again and again");
+  ZuCheck(s1 == "  hello world again and again");
 
   s1 = "this string";
-  CHECK_(s1 == "this string");
+  ZuCheck(s1 == "this string");
   s1.splice(0, 0, "beginning of ");
-  CHECK_(s1 == "beginning of this string");
+  ZuCheck(s1 == "beginning of this string");
   s1.splice(0, 0, "inserted at ");
-  CHECK_(s1 == "inserted at beginning of this string");
+  ZuCheck(s1 == "inserted at beginning of this string");
 
   s1 = "the string";
-  CHECK_(s1 == "the string");
+  ZuCheck(s1 == "the string");
   s1.splice(4, 0, "middle of this ");
-  CHECK_(s1 == "the middle of this string");
+  ZuCheck(s1 == "the middle of this string");
   s1.splice(s2, 0, 4, "inserted at the ");
-  CHECK_(s2 == "the ");
-  CHECK_(s1 == "inserted at the middle of this string");
+  ZuCheck(s2 == "the ");
+  ZuCheck(s1 == "inserted at the middle of this string");
 
   {
     ZtString<> s;
     s.sprintf("%s %.1d %.2d %.3d %s", "hello", 1, 2, 3, "world");
-    CHECK_(s == "hello 1 02 003 world");
+    ZuCheck(s == "hello 1 02 003 world");
   }
   {
     ZtString<> s =
       ZtString<>().sprintf("%s %.1d %.2d %.3d %s", "goodbye", 1, 2, 3, "world");
-    CHECK_(s == "goodbye 1 02 003 world");
+    ZuCheck(s == "goodbye 1 02 003 world");
   }
   {
     ZtWString<> w;
     w.sprintf(L"%ls %.1d %.2d %.3d %ls", L"hello", 1, 2, 3, L"world");
     ZtString<> s = w;
-    CHECK_(s == "hello 1 02 003 world");
+    ZuCheck(s == "hello 1 02 003 world");
   }
   {
     ZtWString<> w = ZtWString<>{}.sprintf(
       L"%ls %.1d %.2d %.3d %ls", L"goodbye", 1, 2, 3, L"world");
     ZtString<> s = ZtString<>{w};
-    CHECK_(s == "goodbye 1 02 003 world");
+    ZuCheck(s == "goodbye 1 02 003 world");
   }
 
   {
-    ZtString<> s1, s2, s3;
+    ZtString<> s1, s3;
     ZtWString<> w1, w2, w3;
 
     s1 += "Hello";
@@ -154,29 +145,19 @@ int main()
     w3 = L"World";
     s1 += s3;
     w1 += w3;
-    if (s1 != ZtString<>{w1}) {
-      s2 = w1;
-      // w2 = s1;
-      // std::cout << "NOK \"" << w2 << "\" != \"" << w1 << "\"\n";
-      std::cout << "NOK \"" << s1 << "\" != \"" << s2 << "\"\n";
-    }
-    if (w1 != ZtWString<>{s1}) {
-      s2 = w1;
-      // w2 = s1;
-      // std::cout << "NOK \"" << w1 << "\" != \"" << w2 << "\"\n";
-      std::cout << "NOK \"" << s2 << "\" != \"" << s1 << "\"\n";
-    }
+    ZuCheck(s1 == ZtString<>{w1});
+    ZuCheck(w1 == ZtWString<>{s1});
   }
 
   {
     ZtWString<> w;
     w << L"hello " << "world" << L'!' << ' ' << 42;
     ZtString<> s = w;
-    CHECK_(s == "hello world! 42");
+    ZuCheck(s == "hello world! 42");
     s = {};
     s << L"hello " << "world" << L'!' << ' ' << 42;
     w = s;
-    CHECK_(w == L"hello world! 42");
+    ZuCheck(w == L"hello world! 42");
   }
 
   {
@@ -225,7 +206,7 @@ int main()
     s += ' ';
     s += "(11 x 42)";
 
-    CHECK_(s == "42 42 42 42 42 42 42 42 42 42 42 Hello World! (11 x 42)");
+    ZuCheck(s == "42 42 42 42 42 42 42 42 42 42 42 Hello World! (11 x 42)");
   }
 
   {
@@ -236,96 +217,98 @@ int main()
     ZtString<> msg = "Hello World";
     q.push(msg);
     ZtString<> res = q.shiftVal();
-    CHECK_(res == "Hello World");
+    ZuCheck(res == "Hello World");
   }
 
   {
     ZtString<> s = "Hello World \r\n";
     s.chomp();
-    CHECK(s == "Hello World", "chomp() 1");
+    ZuCheck(s == "Hello World");
     s.null(); s.chomp();
-    CHECK(!s, "chomp() 2");
+    ZuCheck(!s);
     s = "\r\n-\r\n\r\n\r\n"; s.chomp();
-    CHECK(s == "\r\n-", "chomp() 3");
+    ZuCheck(s == "\r\n-");
     s = " \t \t \r\n\r\n Hello World";
     s.strip();
-    CHECK(s == "Hello World", "strip() 1");
+    ZuCheck(s == "Hello World");
     s = " \t \t \r\n\r\n Hello World \r\n";
     s.strip();
-    CHECK(s == "Hello World", "strip() 2");
+    ZuCheck(s == "Hello World");
     s.null(); s.strip();
-    CHECK(!s, "strip() 3");
+    ZuCheck(!s);
     s = " \t \t \r\n \r\n\r\n\r\n \t \t \r\n \r\n\r\n\r\n"; s.strip();
-    CHECK(!s, "strip() 4");
+    ZuCheck(!s);
   }
 
   {
     char buf[12];
     ZtString<> s(buf, 0, 12, false);
     s += "Hello World";
-    CHECK_(s == "Hello World");
-    CHECK(!s.vallocd(), "buffer 1");
-    CHECK(s.data() == buf, "buffer 2");
+    ZuCheck(s == "Hello World");
+    ZuCheck(!s.vallocd());
+    ZuCheck(s.data() == buf);
     s.splice(0, 5, "'Bye");
-    CHECK_(s == "'Bye World");
-    CHECK(!s.vallocd(), "buffer 3");
-    CHECK(s.data() == buf, "buffer 4");
+    ZuCheck(s == "'Bye World");
+    ZuCheck(!s.vallocd());
+    ZuCheck(s.data() == buf);
     s += " - and what a nice day";
-    CHECK_(s == "'Bye World - and what a nice day");
-    CHECK(s.length() < ZtString<>::BuiltinSize || s.vallocd(), "buffer 5");
-    CHECK(s.data() != buf, "buffer 6");
+    ZuCheck(s == "'Bye World - and what a nice day");
+    ZuCheck(s.length() < ZtString<>::BuiltinSize || s.vallocd());
+    ZuCheck(s.data() != buf);
   }
 
   {
     ZuCArray<16> s;
     s = "Hello World";
     s += ZuBox<int>(123456789);
-    CHECK(s == "Hello World", "ZuCArray append 1");
+    ZuCheck(s == "Hello World");
     s += ZuBox<int>(12345);
-    CHECK(s == "Hello World", "ZuCArray append 2");
+    ZuCheck(s == "Hello World");
     s << (ZuCArray<12>() << ZuBox<int>(1234));
-    puts(s.terminate());
-    CHECK(s == "Hello World1234", "ZuCArray append 3");
+    std::cerr << s.terminate() << '\n';
+    ZuCheck(s == "Hello World1234");
     s = "";
     s << "Hello ";
     s << "World";
-    CHECK(s == "Hello World", "ZuCArray append 4");
+    ZuCheck(s == "Hello World");
   }
 
   {
-    if (ZuCArray<2> s = "x") std::cout << "OK  ZuCArray as boolean true\n";
-    else std::cout << "NOK ZuCArray as boolean true\n";
-    if (ZuCArray<2> s = "") std::cout << "NOK ZuCArray as boolean false\n";
-    else std::cout << "OK  ZuCArray as boolean false\n";
+    ZuCArray<2> s = "x";
+    ZuCheck(s);
+  }
+  {
+    ZuCArray<2> s = "";
+    ZuCheck(!s);
   }
   {
     std::string s;
     s += ZuCArray<4>("foo");
-    CHECK(s == "foo", "ZuCArray appending to std::string");
+    ZuCheck(s == "foo");
     s += ZtString<>(" bar");
-    CHECK(s == "foo bar", "ZtString<> appending to std::string");
+    ZuCheck(s == "foo bar");
   }
   {
     std::stringstream s;
     s << ZuCArray<4>("foo");
     char buf[64];
     buf[s.rdbuf()->sgetn(buf, 63)] = 0;
-    CHECK(!strcmp(buf, "foo"), "ZuCArray writing to std::ostream");
+    ZuCheck(!strcmp(buf, "foo"));
     s << ZuCArray<4>("foo") << ' ' << ZtString<>("bar");
     buf[s.rdbuf()->sgetn(buf, 63)] = 0;
-    CHECK(!strcmp(buf, "foo bar"), "ZtString<> writing to std::ostream");
+    ZuCheck(!strcmp(buf, "foo bar"));
   }
 
-  std::cout << (ZtString<>{} << "hello " << "world") << '\n';
+  std::cerr << (ZtString<>{} << "hello " << "world") << '\n';
 
   {
     ZtString<> j = (ZtString<>{} << ZuJoin({ "x", "y" }, ","));
-    CHECK(j == "x,y", "ZuJoin");
+    ZuCheck(j == "x,y");
   }
 
   {
-    std::cout << ZuCSpan("Hello World 2\n") << std::flush;
-    std::cout << ZtHexDump{"Whoot!", "This\x1cis\x09""a\x05test\x01of\x04the\x1ehexadecimal\x13""dumper!", 42};
+    std::cerr << ZuCSpan("Hello World 2\n") << std::flush;
+    std::cerr << ZtHexDump{"Whoot!", "This\x1cis\x09""a\x05test\x01of\x04the\x1ehexadecimal\x13""dumper!", 42};
   }
 
   {
@@ -336,64 +319,64 @@ int main()
   {
     using namespace ZtCase;
     snakeCamel("", [](ZuCSpan s) {
-      CHECK(!s, "snakeCamel(\"\")");
+      ZuCheck(!s);
     });
     snakeCamel("a", [](ZuCSpan s) {
-      CHECK(s == "a", "snakeCamel(\"a\")");
+      ZuCheck(s == "a");
     });
     snakeCamel("aa", [](ZuCSpan s) {
-      CHECK(s == "aa", "snakeCamel(\"aa\")");
+      ZuCheck(s == "aa");
     });
     snakeCamel("aA0a", [](ZuCSpan s) {
-      CHECK(s == "aA0a", "snakeCamel(\"aA0a\")");
+      ZuCheck(s == "aA0a");
     });
     snakeCamel("_", [](ZuCSpan s) {
-      CHECK(s == "_", "snakeCamel(\"_\")");
+      ZuCheck(s == "_");
     });
     snakeCamel("__", [](ZuCSpan s) {
-      CHECK(s == "__", "snakeCamel(\"__\")");
+      ZuCheck(s == "__");
     });
     snakeCamel("___", [](ZuCSpan s) {
-      CHECK(s == "___", "snakeCamel(\"___\")");
+      ZuCheck(s == "___");
     });
     snakeCamel("_a_", [](ZuCSpan s) {
-      CHECK(s == "A_", "snakeCamel(\"_a_\")");
+      ZuCheck(s == "A_");
     });
     snakeCamel("_a", [](ZuCSpan s) {
-      CHECK(s == "A", "snakeCamel(\"_a\")");
+      ZuCheck(s == "A");
     });
     snakeCamel("_aa", [](ZuCSpan s) {
-      CHECK(s == "Aa", "snakeCamel(\"_aa\")");
+      ZuCheck(s == "Aa");
     });
     snakeCamel("a_a", [](ZuCSpan s) {
-      CHECK(s == "aA", "snakeCamel(\"a_a\")");
+      ZuCheck(s == "aA");
     });
     snakeCamel("a_a_a", [](ZuCSpan s) {
-      CHECK(s == "aAA", "snakeCamel(\"a_a_a\")");
+      ZuCheck(s == "aAA");
     });
     snakeCamel("a_a_a_", [](ZuCSpan s) {
-      CHECK(s == "aAA_", "snakeCamel(\"a_a_a_\")");
+      ZuCheck(s == "aAA_");
     });
     snakeCamel("a_a_a__", [](ZuCSpan s) {
-      CHECK(s == "aAA__", "snakeCamel(\"a_a_a__\")");
+      ZuCheck(s == "aAA__");
     });
     camelSnake("", [](ZuCSpan s) {
-      CHECK(!s, "camelSnake(\"\")");
+      ZuCheck(!s);
     });
     camelSnake("a", [](ZuCSpan s) {
-      CHECK(s == "a", "camelSnake(\"a\")");
+      ZuCheck(s == "a");
     });
     camelSnake("A", [](ZuCSpan s) {
-      CHECK(s == "_a", "camelSnake(\"a\")");
+      ZuCheck(s == "_a");
     });
     camelSnake("A_", [](ZuCSpan s) {
-      CHECK(s == "_a_", "camelSnake(\"a\")");
+      ZuCheck(s == "_a_");
     });
     camelSnake("_A", [](ZuCSpan s) {
-      CHECK(s == "__a", "camelSnake(\"a\")");
+      ZuCheck(s == "__a");
     });
     camelSnake("_A0_", [](ZuCSpan s) {
-      CHECK(s == "__a0_", "camelSnake(\"a\")");
+      ZuCheck(s == "__a0_");
     });
   }
   {
@@ -405,16 +388,25 @@ int main()
     {
       ZtString<> s;
       s << span;
-      CHECK(s == span, "appending BuiltinSize");
+      ZuCheck(s == span);
     }
     {
       ZtString<> s;
       s << under;
-      CHECK(s == under, "appending under BuiltinSize");
+      ZuCheck(s == under);
       s << 'x';
-      CHECK(s == span, "incrementally appending to BuiltinSize");
+      ZuCheck(s == span);
       s << 'x';
-      CHECK(s == over, "appending over BuiltinSize");
+      ZuCheck(s == over);
     }
   }
+}
+
+int main()
+{
+  ZuTestMain();
+
+  testString<ZuTest_scope>();
+
+  return 0;
 }

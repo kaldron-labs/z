@@ -1,12 +1,3 @@
-- fix ZuArray/Span splice
-  - tail truncation
-- fix ZuDemangle_::transform (see goal.md)
-  - why is ZuDemangleTest outputting trailing residue implying memory corruption / overrun?
-  - implement ZuSpan::splice (see ZuArray::splice)
-
-- complete ZuDemangleTest
-  - output examples of ZuString, ZuArray, ZuTuple and ZuUnion
-
 --------
 
 - investigate if attribute((section("x"), used)) can be used in ZmSpecific.cc instead of
