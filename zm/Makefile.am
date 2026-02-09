@@ -1,5 +1,5 @@
 METASOURCES = AUTO
-SUBDIRS = src test
+SUBDIRS = src test bench
 
 .PHONY: test
 test:

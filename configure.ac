@@ -196,7 +196,7 @@ for i in zu zm zt ze zi ztls zhttp zrest zws zfb zv zdb zdb_pq zum zdf zrl zcmd 
 
 AC_CONFIG_FILES([Makefile \
 	zu/Makefile zu/src/Makefile zu/test/Makefile zu/bench/Makefile \
-	zm/Makefile zm/src/Makefile zm/test/Makefile \
+	zm/Makefile zm/src/Makefile zm/test/Makefile zm/bench/Makefile \
 	zt/Makefile zt/src/Makefile zt/test/Makefile \
 	ze/Makefile ze/src/Makefile ze/test/Makefile \
 	zi/Makefile zi/src/Makefile zi/test/Makefile \

@@ -16,13 +16,13 @@ libZmBTTest_la_LIBADD = libZmBTTest2.la
 libZmBTTest2_la_SOURCES = libZmBTTest2.cc
 libZmBTTest2_la_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 TESTPROGS = \
-	ZmRingTest ZmRingTest2 ZmRingTest3 \
+	ZmRingTest2 ZmRingTest3 \
 	ZmFnTest ZmHeapTest ZmHeapTest2 ZmRBTest ZmRWTest \
 	ZmSchedTest ZmTest ZmHashTest ZmHashTest2 \
 	ZmLHTest ZmHashCleanup ZmHashThread \
 	ZmLockTest ZmTIDTest ZmAllocTest ZmCacheTest ZmDemangleTest \
 	ZmPQueueTest ZmPQueueTest2 ZmPQueueTest3 ZmPQueueTest4 \
-	ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest ZmBench
+	ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest
 if MINGW
 bin_PROGRAMS = ZmBTTest
 noinst_PROGRAMS = ${TESTPROGS}
@@ -47,7 +47,6 @@ ZmPQueueTest_SOURCES = ZmPQueueTest.cc
 ZmPQueueTest2_SOURCES = ZmPQueueTest2.cc
 ZmPQueueTest3_SOURCES = ZmPQueueTest3.cc
 ZmPQueueTest4_SOURCES = ZmPQueueTest4.cc
-ZmRingTest_SOURCES = ZmRingTest.cc
 ZmRingTest2_SOURCES = ZmRingTest2.cc
 ZmLockTest_SOURCES = ZmLockTest.cc
 ZmTIDTest_SOURCES = ZmTIDTest.cc
@@ -58,5 +57,4 @@ ZmTimeTest_SOURCES = ZmTimeTest.cc
 ZmAssertTest_SOURCES = ZmAssertTest.cc
 ZmPolyHashTest_SOURCES = ZmPolyHashTest.cc
 ZmPolyCacheTest_SOURCES = ZmPolyCacheTest.cc
-ZmBench_SOURCES = ZmBench.cc
 ZmRingTest3_SOURCES = ZmRingTest3.cc
