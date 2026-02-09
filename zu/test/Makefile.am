@@ -9,12 +9,12 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zu/src/libZu.la @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
-	ZuInspectTest ZuHashTest ZuCmpTest ZuBoxTest ZuBoxBench \
+	ZuInspectTest ZuHashTest ZuCmpTest ZuBoxTest \
 	ZuArrayTest ZuTupleTest ZuIDTest ZuUTFTest ZuBitmapTest \
 	ZuSpanTest \
 	ZuDecimalTest ZuSearchTest ZuStructTest ZuTLTest \
 	ZuAxorTest ZuPtrTest ZuTimeTest ZuEndianTest \
-	ZuStreamTest ZuBitStreamTest ZuSearchBench \
+	ZuStreamTest ZuBitStreamTest \
 	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest \
 	ZuMatchTest ZuNXTest ZuFPTest ZuIntrinTest \
 	ZuTokenizerTest ZuTest ZuDemangleTest
@@ -23,9 +23,7 @@ ZuHashTest_SOURCES = ZuHashTest.cc Analyze.hh
 ZuCmpTest_SOURCES = ZuCmpTest.cc
 #ZuCmpTest_CXXFLAGS = $(AM_CXXFLAGS) -fprofile-instr-generate -fcoverage-mapping
 ZuSearchTest_SOURCES = ZuSearchTest.cc
-ZuSearchBench_SOURCES = ZuSearchBench.cc
 ZuBoxTest_SOURCES = ZuBoxTest.cc
-ZuBoxBench_SOURCES = ZuBoxBench.cc
 ZuArrayTest_SOURCES = ZuArrayTest.cc
 ZuSpanTest_SOURCES = ZuSpanTest.cc
 ZuTupleTest_SOURCES = ZuTupleTest.cc
