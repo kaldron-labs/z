@@ -145,7 +145,7 @@ void ZuTestMgr::end_(ZuTest_Scope *scope)
   }
 }
 
-void ZuTestMgr::check_(ZuTest_Step *step, bool ok, const char *name)
+bool ZuTestMgr::check_(ZuTest_Step *step, bool ok, const char *name)
 {
   start_();
   auto scope = m_context->scope;
@@ -169,6 +169,7 @@ void ZuTestMgr::check_(ZuTest_Step *step, bool ok, const char *name)
   if (name) std::cout << " - " << name;
   std::cout << '\n' << std::flush;
   if (!scope->dynamic && step->id == scope->count) ++m_context->iteration;
+  return ok;
 }
 
 void ZuTestMgr::call_(ZuTest_Step *step)
