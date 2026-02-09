@@ -4,13 +4,13 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
 #include <time.h>
-#include <stdio.h>
 #include <unistd.h>
 
+#include <iostream>
+
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuCmp.hh>
 
@@ -81,18 +81,23 @@ template <typename T> struct Rand<T, 16> {
   }
 };
 
-template <typename Bits, typename T> struct IntegerTest {
+template <typename Bits, typename T> struct IntTest {
   static void run(const char *s) {
+    ZuTestScope(run);
     memset(count, 0, 256 * sizeof(int));
 
     for (int i = 0; i < (1<<16); i++)
       count[Bits::hashBits(ZuHash<T>::hash(Rand<T>::rand()))]++;
+    unsigned total = 0;
+    for (unsigned i = 0; i < 256; i++) total += count[i];
+    ZuCheck(total == (1U<<16));
     analyze(s, count, 256);
   }
 };
 
 template <typename Bits, typename T> struct FloatTest {
   static void run(const char *s) {
+    ZuTestScope(run);
     memset(count, 0, 256 * sizeof(int));
 
     T f = (T)RAND_MAX + 1;
@@ -100,6 +105,9 @@ template <typename Bits, typename T> struct FloatTest {
       T g = (T)rand() / f;
       count[Bits::hashBits(ZuHash<T>::hash(g))]++;
     }
+    unsigned total = 0;
+    for (unsigned i = 0; i < 256; i++) total += count[i];
+    ZuCheck(total == (1U<<16));
     analyze(s, count, 256);
   }
 };
@@ -110,8 +118,8 @@ static char *randomString()
     "abcdefghijklmnopqrstuvwxyz"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "0123456789";
-#define rand_62() (((rand() & 0xff00) * 62)>>16)
-#define rand_64() ((rand() & 0x3f00)>>8)
+#define rand_62() (((::rand() & 0xff00) * 62)>>16)
+#define rand_64() ((::rand() & 0x3f00)>>8)
   int l = 16 + rand_64();
   char *buf = static_cast<char *>(malloc(l + 1));
 
@@ -122,6 +130,7 @@ static char *randomString()
 
 template <typename Bits> struct StringTest {
   static void run(const char *s) {
+    ZuTestScope(run);
     memset(count, 0, 256 * sizeof(int));
 
     for (int i = 0; i < (1<<16); i++) {
@@ -129,6 +138,9 @@ template <typename Bits> struct StringTest {
       count[Bits::hashBits(ZuHash<char *>::hash(buf))]++;
       free(buf);
     }
+    unsigned total = 0;
+    for (unsigned i = 0; i < 256; i++) total += count[i];
+    ZuCheck(total == (1U<<16));
     analyze(s, count, 256);
   }
 };
@@ -139,66 +151,73 @@ template <typename Bits> struct StringTest {
 
 void testString(const char *s)
 {
+  ZuTestScope(testString);
   char buf[16];
 
   buf[0] = ' ';
   strcpy(buf + 1, s);
-  if (ZuHash<char *>::hash(s) != ZuHash<char *>::hash(buf + 1) ||
-      ZuHash<char *>::hash(s + 1) != ZuHash<char *>::hash(buf + 2)) {
-    printf("Failed to hash \"%s\" to identical values\n", s);
-#ifndef _WIN32
-    ::_exit(1);
-#else
-    ::ExitProcess(1);
-#endif
-  }
+  ZuCheck(
+    ZuHash<char *>::hash(s) == ZuHash<char *>::hash(buf + 1) &&
+    ZuHash<char *>::hash(s + 1) == ZuHash<char *>::hash(buf + 2),
+    std::cerr << "Failed to hash \"" << s << "\" to identical values\n");
 }
 
 int main()
 {
-  srand((unsigned int)time(0));
-  IntegerTest<HiBits, char>::run("Hi char");
-  IntegerTest<LoBits, char>::run("Lo char");
-  IntegerTest<HiBits, unsigned char>::run("Hi unsigned char");
-  IntegerTest<LoBits, unsigned char>::run("Lo unsigned char");
-  IntegerTest<HiBits, signed char>::run("Hi signed char");
-  IntegerTest<LoBits, signed char>::run("Lo signed char");
-  IntegerTest<HiBits, short>::run("Hi short");
-  IntegerTest<LoBits, short>::run("Lo short");
-  IntegerTest<HiBits, unsigned short>::run("Hi unsigned short");
-  IntegerTest<LoBits, unsigned short>::run("Lo unsigned short");
-  IntegerTest<HiBits, int>::run("Hi int");
-  IntegerTest<LoBits, int>::run("Lo int");
-  IntegerTest<HiBits, unsigned int>::run("Hi unsigned int");
-  IntegerTest<LoBits, unsigned int>::run("Lo unsigned int");
-  IntegerTest<HiBits, long>::run("Hi long");
-  IntegerTest<LoBits, long>::run("Lo long");
-  IntegerTest<HiBits, unsigned long>::run("Hi unsigned long");
-  IntegerTest<LoBits, unsigned long>::run("Lo unsigned long");
-  IntegerTest<HiBits, long long>::run("Hi long long");
-  IntegerTest<LoBits, long long>::run("Lo long long");
-  IntegerTest<HiBits, unsigned long long>::run("Hi unsigned long long");
-  IntegerTest<LoBits, unsigned long long>::run("Lo unsigned long long");
-  IntegerTest<HiBits, int128_t>::run("Hi int128_t");
-  IntegerTest<LoBits, int128_t>::run("Lo int128_t");
-  IntegerTest<HiBits, uint128_t>::run("Hi uint128_t");
-  IntegerTest<LoBits, uint128_t>::run("Lo uint128_t");
-  IntegerTest<HiBits, wchar_t>::run("Hi wchar_t");
-  IntegerTest<LoBits, wchar_t>::run("Lo wchar_t");
-  FloatTest<HiBits, float>::run("Hi float");
-  FloatTest<LoBits, float>::run("Lo float");
-  FloatTest<HiBits, double>::run("Hi double");
-  FloatTest<LoBits, double>::run("Lo double");
-  FloatTest<HiBits, long double>::run("Hi long double");
-  FloatTest<LoBits, long double>::run("Lo long double");
-  StringTest<HiBits>::run("Hi string");
-  StringTest<LoBits>::run("Lo string");
-  testString("f");
-  testString("fo");
-  testString("foo");
-  testString("foob");
-  testString("fooba");
-  testString("foobar");
-  testString("foobar!");
-  testString("foobar!!");
+  ZuTestMain();
+
+#define TestInt(bits, type, name) \
+  ZuTestCall_(name, (IntTest<bits, type>::run), name)
+#define TestFloat(bits, type, name) \
+  ZuTestCall_(name, (FloatTest<bits, type>::run), name)
+#define TestString(bits, name) \
+  ZuTestCall_(name, (StringTest<bits>::run), name)
+
+  ::srand(unsigned(time(0)));
+
+  TestInt(HiBits, char, "Hi char");
+  TestInt(LoBits, char, "Lo char");
+  TestInt(HiBits, unsigned char, "Hi unsigned char");
+  TestInt(LoBits, unsigned char, "Lo unsigned char");
+  TestInt(HiBits, signed char, "Hi signed char");
+  TestInt(LoBits, signed char, "Lo signed char");
+  TestInt(HiBits, short, "Hi short");
+  TestInt(LoBits, short, "Lo short");
+  TestInt(HiBits, unsigned short, "Hi unsigned short");
+  TestInt(LoBits, unsigned short, "Lo unsigned short");
+  TestInt(HiBits, int, "Hi int");
+  TestInt(LoBits, int, "Lo int");
+  TestInt(HiBits, unsigned int, "Hi unsigned int");
+  TestInt(LoBits, unsigned int, "Lo unsigned int");
+  TestInt(HiBits, long, "Hi long");
+  TestInt(LoBits, long, "Lo long");
+  TestInt(HiBits, unsigned long, "Hi unsigned long");
+  TestInt(LoBits, unsigned long, "Lo unsigned long");
+  TestInt(HiBits, long long, "Hi long long");
+  TestInt(LoBits, long long, "Lo long long");
+  TestInt(HiBits, unsigned long long, "Hi unsigned long long");
+  TestInt(LoBits, unsigned long long, "Lo unsigned long long");
+  TestInt(HiBits, int128_t, "Hi int128_t");
+  TestInt(LoBits, int128_t, "Lo int128_t");
+  TestInt(HiBits, uint128_t, "Hi uint128_t");
+  TestInt(LoBits, uint128_t, "Lo uint128_t");
+  TestInt(HiBits, wchar_t, "Hi wchar_t");
+  TestInt(LoBits, wchar_t, "Lo wchar_t");
+  TestFloat(HiBits, float, "Hi float");
+  TestFloat(LoBits, float, "Lo float");
+  TestFloat(HiBits, double, "Hi double");
+  TestFloat(LoBits, double, "Lo double");
+  TestFloat(HiBits, long double, "Hi long double");
+  TestFloat(LoBits, long double, "Lo long double");
+  TestString(HiBits, "Hi string");
+  TestString(LoBits, "Lo string");
+
+  ZuTestCall(testString, "f");
+  ZuTestCall(testString, "fo");
+  ZuTestCall(testString, "foo");
+  ZuTestCall(testString, "foob");
+  ZuTestCall(testString, "fooba");
+  ZuTestCall(testString, "foobar");
+  ZuTestCall(testString, "foobar!");
+  ZuTestCall(testString, "foobar!!");
 }

@@ -14,3 +14,9 @@ if GTK
 #SUBDIRS += zgtk
 endif
 SUBDIRS += zrest
+
+.PHONY: test
+test:
+	@for subdir in $(SUBDIRS); do \
+	  $(MAKE) $(AM_MAKEFLAGS) -C $$subdir test || exit $$?; \
+	done

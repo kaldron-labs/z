@@ -471,9 +471,9 @@ public:
   ZuOpBool
 
   constexpr bool operator *() const {
-    // return value != null(); // disabled due to compiler bug
-    int128_t v = value - null();
-    return bool(uint64_t(v>>64) | uint64_t(v));
+    return value != null(); // disabled due to compiler bug
+    // int128_t v = value - null();
+    // return bool(uint64_t(v>>64) | uint64_t(v));
   }
 
   // hash

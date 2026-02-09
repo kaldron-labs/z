@@ -4,23 +4,32 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
 #include <string.h>
 
 #include <iostream>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuArray.hh>
 
-inline void out(const char *s) { std::cout << s << '\n'; }
+bool verbose = false;
 
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
+template <typename ...Args>
+static void log_(Args &&...args) {
+  if constexpr (sizeof...(args))
+    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
+}
+template <typename ...Args>
+static void log(Args &&...args) {
+  if (verbose) log_(ZuFwd<Args>(args)...);
+}
+#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
 
 static void test(const char *s)
 {
-  out(s);
+  ZuTestScope(test);
+  log(s);
   unsigned n = strlen(s);
   if (n > 8) n = 8;
   ZuID a(s);
@@ -32,15 +41,29 @@ static void test(const char *s)
   CHECK(a.span() == b);
 }
 
-int main()
+static void usage()
 {
-  test("a");
-  test("ab");
-  test("abc");
-  test("abcd");
-  test("abcde");
-  test("abcdef");
-  test("abcdefg");
-  test("abcdefgh");
-  test("abcdefghi");
+  std::cerr << "usage: ZuBoxTest [-v]\n";
+  ::exit(1);
+}
+
+int main(int argc, char **argv)
+{
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
+  }
+
+  ZuTestMain();
+
+  ZuTestCall(test, "a");
+  ZuTestCall(test, "ab");
+  ZuTestCall(test, "abc");
+  ZuTestCall(test, "abcd");
+  ZuTestCall(test, "abcde");
+  ZuTestCall(test, "abcdef");
+  ZuTestCall(test, "abcdefg");
+  ZuTestCall(test, "abcdefgh");
+  ZuTestCall(test, "abcdefghi");
 }

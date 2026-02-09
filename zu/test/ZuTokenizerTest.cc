@@ -7,29 +7,28 @@
 #include <iostream>
 
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuTokenizer.hh>
-
-inline void out(const char *s) { std::cout << s << '\n'; }
-
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
 
 int main()
 {
   using namespace ZuTokenizer;
 
+  ZuTestMain();
+
   ZuCSpan span;
-  CHECK(Delimited<':'>::next(span = "") == "");
-  CHECK(Delimited<':'>::next(span = ":") == "");
-  CHECK(Delimited<':'>::next(span = "foo") == "foo");
-  CHECK(Delimited<':'>::next(span = "foo:") == "foo");
-  CHECK((WhiteSpace::skip(span = ""), span) == "");
-  CHECK((WhiteSpace::skip(span = " "), span) == "");
-  CHECK((WhiteSpace::skip(span = "  "), span) == "");
-  CHECK((WhiteSpace::skip(span = "  foo"), span) == "foo");
-  CHECK(WhiteSpace::next(span = "") == "");
-  CHECK(WhiteSpace::next(span = " ") == "");
-  CHECK(WhiteSpace::next(span = "foo  ") == "foo");
-  CHECK(span == "");
-  CHECK(WhiteSpace::next(span = "foo  bar ") == "foo");
-  CHECK(span == "bar ");
+  ZuCheck(Delimited<':'>::next(span = "") == "");
+  ZuCheck(Delimited<':'>::next(span = ":") == "");
+  ZuCheck(Delimited<':'>::next(span = "foo") == "foo");
+  ZuCheck(Delimited<':'>::next(span = "foo:") == "foo");
+  ZuCheck((WhiteSpace::skip(span = ""), span) == "");
+  ZuCheck((WhiteSpace::skip(span = " "), span) == "");
+  ZuCheck((WhiteSpace::skip(span = "  "), span) == "");
+  ZuCheck((WhiteSpace::skip(span = "  foo"), span) == "foo");
+  ZuCheck(WhiteSpace::next(span = "") == "");
+  ZuCheck(WhiteSpace::next(span = " ") == "");
+  ZuCheck(WhiteSpace::next(span = "foo  ") == "foo");
+  ZuCheck(span == "");
+  ZuCheck(WhiteSpace::next(span = "foo  bar ") == "foo");
+  ZuCheck(span == "bar ");
 }

@@ -1,22 +1,47 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2024 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
 #include <iostream>
 #include <sstream>
 
 #include <zlib/ZuBitStream.hh>
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuHex.hh>
 
-inline void out(const char *s) { std::cout << s << '\n'; }
+bool verbose = false;
 
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
+template <typename ...Args>
+static void log_(Args &&...args) {
+  if constexpr (sizeof...(args))
+    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
+}
+template <typename ...Args>
+static void log(Args &&...args) {
+  if (verbose) log_(ZuFwd<Args>(args)...);
+}
+#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
 
-void print(uint64_t i)
+static void usage()
 {
-  std::cout << ZuBoxed(i).hex() << '\n';
+  std::cerr << "usage: ZuBitStreamTest [-v]\n";
+  ::exit(1);
 }
 
-int main()
+int main(int argc, char **argv)
 {
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
+  }
+
+  ZuTestMain();
+
   ZuArray<uint8_t, 100> buf;
   ZuCArray<200> hex;
 
@@ -42,7 +67,7 @@ int main()
     buf.length(o.pos() - buf.data());
 
     hex.length(ZuHex::encode({hex.data(), hex.size()}, buf));
-    std::cout << hex << '\n';
+    log(hex);
 
     ZuIBitStream i{buf.data(), buf.data() + buf.length()};
 
@@ -70,7 +95,7 @@ int main()
     buf.length(o2.pos() - buf.data());
 
     hex.length(ZuHex::encode({hex.data(), hex.size()}, buf));
-    std::cout << hex << '\n';
+    log(hex);
 
     ZuIBitStream i2{buf.data(), buf.data() + buf.length()};
 
@@ -101,7 +126,7 @@ int main()
     buf.length(o.pos() - buf.data());
 
     hex.length(ZuHex::encode({hex.data(), hex.size()}, buf));
-    std::cout << hex << '\n';
+    log(hex);
 
     ZuIBitStream i{buf.data(), buf.data() + buf.length()};
 
@@ -121,7 +146,7 @@ int main()
     buf.length(o.pos() - buf.data());
 
     hex.length(ZuHex::encode({hex.data(), hex.size()}, buf));
-    std::cout << hex << '\n';
+    log(hex);
 
     ZuIBitStream i{buf.data(), buf.data() + buf.length()};
 

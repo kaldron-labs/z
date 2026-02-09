@@ -4,8 +4,6 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
 #include <time.h>
 
@@ -14,6 +12,7 @@
 #include <utility>
 #include <array>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuBox.hh>
@@ -28,19 +27,32 @@
 #include <zlib/ZuID.hh>
 #include <zlib/ZuDemangle.hh>
 
-inline void out(const char *s) {
-  std::cout << s << '\n' << std::flush;
+bool verbose = false;
+
+template <typename ...Args>
+static void log_(Args &&...args) {
+  if constexpr (sizeof...(args))
+    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
+}
+template <typename ...Args>
+static void log(Args &&...args) {
+  if (verbose) log_(ZuFwd<Args>(args)...);
+}
+#define CHECK(x) ZuCheck(x)
+
+template <typename T>
+void test() {
+  ZuTestScope(test);
+  CHECK(ZuCmp<T>::cmp(1, 0) > 0);
+  CHECK(ZuCmp<T>::cmp(0, 1) < 0);
+  CHECK(!ZuCmp<T>::cmp(0, 0));
+  CHECK(!ZuCmp<T>::cmp(1, 1));
+  CHECK(ZuCmp<T>::null(ZuCmp<T>::null()));
+  CHECK(!ZuCmp<T>::null(T(1)));
 }
 
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
-
-#define TEST(t) \
-  CHECK(ZuCmp<t>::cmp(1, 0) > 0), \
-  CHECK(ZuCmp<t>::cmp(0, 1) < 0), \
-  CHECK(!ZuCmp<t>::cmp(0, 0)), \
-  CHECK(!ZuCmp<t>::cmp(1, 1)), \
-  CHECK(ZuCmp<t>::null(ZuCmp<t>::null())), \
-  CHECK(!ZuCmp<t>::null((t)1))
+#define TEST_(T, name) ZuTestCall_("test<" name ">", test<T>)
+#define TEST(T) TEST_(T, ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(T)))
 
 struct S {
   S() { m_data[0] = 0; }
@@ -61,7 +73,9 @@ struct S {
   char m_data[32];
 };
 
-template <typename T1, typename T2> void checkNull() {
+template <typename T1, typename T2>
+void checkNull() {
+  ZuTestScope(checkNull);
   ZuBox<T1> t;
   ZuBox<T2> u = t;
   ZuBox<T2> v(t);
@@ -106,6 +120,7 @@ template <unsigned N> struct SortTest {
       s << (i ? " " : "") << a[i];
   }
   static void test() {
+    ZuTestScope(test);
     {
       ZuArray<int, 1> foo{};
       ZuCArray<80> s;
@@ -217,6 +232,7 @@ struct O : public ZuObject { };
 
 template <typename L>
 void foo(L l) {
+  ZuTestScope(foo);
   CHECK(ZuIsStatelessLambda<L>{});
 }
 
@@ -234,8 +250,22 @@ static decltype(auto) bar(T &&v) { return ZuFwd<T>(v).bar(); }
 template <typename, typename T>
 struct Narrow : public T { using T::T; using T::operator =; };
 
-int main()
+static void usage()
 {
+  std::cerr << "usage: ZuCmpTest [-v]\n";
+  ::exit(1);
+}
+
+int main(int argc, char **argv)
+{
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
+  }
+
+  ZuTestMain();
+
   {
     struct X { };
     CHECK(ZuTraits<X>::IsComposite);
@@ -249,12 +279,12 @@ int main()
   }
 
   TEST(bool);
-  CHECK(ZuCmp<char>::cmp(1, 0) > 0),
-  CHECK(ZuCmp<char>::cmp(0, 1) < 0),
-  CHECK(!ZuCmp<char>::cmp(0, 0)),
-  CHECK(!ZuCmp<char>::cmp(1, 1)),
-  CHECK(ZuCmp<char>::null(ZuCmp<char>::null())),
-  CHECK(!ZuCmp<char>::null((char)0x80)),
+  CHECK(ZuCmp<char>::cmp(1, 0) > 0);
+  CHECK(ZuCmp<char>::cmp(0, 1) < 0);
+  CHECK(!ZuCmp<char>::cmp(0, 0));
+  CHECK(!ZuCmp<char>::cmp(1, 1));
+  CHECK(ZuCmp<char>::null(ZuCmp<char>::null()));
+  CHECK(!ZuCmp<char>::null((char)0x80));
   CHECK(!ZuCmp<char>::null((char)1));
   TEST(signed char);
   TEST(unsigned char);
@@ -379,8 +409,8 @@ int main()
     CHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1, t3) < 0));
     S s4{"hello"};
     S s5{"world"};
-    std::cout << "t1=" << t1 << '\n' << std::flush;
-    std::cout << "t2=" << ZuFwdTuple(42, s4, s5) << '\n' << std::flush;
+    log("t1=", t1);
+    log("t2=", ZuFwdTuple(42, s4, s5));
     CHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1,
 	    ZuFwdTuple(42, s4, s5)) > 0));
     // ZuTuple<int, const S &, const S &> t4(42, "string1", "string2");
@@ -404,7 +434,7 @@ int main()
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wuninitialized"
 #endif
-    std::cout << int(t.p<1>()[1]) << '\n';
+    log(int(t.p<1>()[1]));
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
@@ -424,22 +454,22 @@ int main()
   }
 
   {
-    checkNull<int16_t, uint32_t>();
-    checkNull<uint32_t, int16_t>();
-    checkNull<int16_t, int32_t>();
-    checkNull<int32_t, int16_t>();
-    checkNull<int16_t, uint64_t>();
-    checkNull<int64_t, uint16_t>();
-    checkNull<double, uint16_t>();
-    checkNull<int32_t, double>();
+    ZuTestCall((checkNull<int16_t, uint32_t>));
+    ZuTestCall((checkNull<uint32_t, int16_t>));
+    ZuTestCall((checkNull<int16_t, int32_t>));
+    ZuTestCall((checkNull<int32_t, int16_t>));
+    ZuTestCall((checkNull<int16_t, uint64_t>));
+    ZuTestCall((checkNull<int64_t, uint16_t>));
+    ZuTestCall((checkNull<double, uint16_t>));
+    ZuTestCall((checkNull<int32_t, double>));
   }
 
   {
-    SortTest<0>::test();
-    SortTest<1>::test();
-    SortTest<2>::test();
-    SortTest<8>::test();
-    SortTest<20>::test();
+    ZuTestCall((SortTest<0>::test));
+    ZuTestCall((SortTest<1>::test));
+    ZuTestCall((SortTest<2>::test));
+    ZuTestCall((SortTest<8>::test));
+    ZuTestCall((SortTest<20>::test));
   }
 
   {
@@ -463,7 +493,7 @@ int main()
   {
     using U = ZuUnion<void, int>;
     U u;
-    std::cout << u.type() << '\n';
+    log(u.type());
   }
 
   // structured binding smoke tests
@@ -541,7 +571,7 @@ int main()
     CHECK(bool(ZuHash_Can_hash<T1::V>{}));
   }
 
-  foo([]{});
+  ZuTestCall(foo, []{});
 
   {
     struct A {
@@ -624,14 +654,10 @@ int main()
     CHECK(w.p<1>() == 0);
   }
 
-  {
-    std::cout
-      << "sizeof(ZuUnion<void, uintptr_t>)="
-      << sizeof(ZuUnion<void, uintptr_t>) << '\n';
-    std::cout
-      << "sizeof(std::optional<uintptr_t>)="
-      << sizeof(std::optional<uintptr_t>) << '\n';
-  }
+  log("sizeof(ZuUnion<void, uintptr_t>)=",
+    sizeof(ZuUnion<void, uintptr_t>));
+  log("sizeof(std::optional<uintptr_t>)=",
+    sizeof(std::optional<uintptr_t>));
 
   {
     using A = ZuSpan<ZuTuple<ZuCSpan, ZuCSpan>>;
