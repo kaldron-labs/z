@@ -6,33 +6,73 @@
 
 #include <iostream>
 
-#include <zlib/ZuLib.hh>
-
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuIntrin.hh>
 
-inline void check(ZuCSpan op, unsigned l, unsigned r, unsigned n, unsigned i) {
-  std::cout << (l == r ? "OK  " : "NOK ")
-    << op << n << "(1<<" << i << ")\n" << std::flush;
-  if (l != r) {
-    std::cout << "  l=" << l << " r=" << r << '\n';
-    ::exit(1);
+bool verbose = false;
+
+template <unsigned N, typename U>
+void test() {
+  ZuTestScopeRT(test);
+  for (unsigned i = 0; i < N; i++) {
+    auto v = U(1)<<i;
+    unsigned l, r;
+
+    if      constexpr (N ==   8) l = Zu_clz8(v);
+    else if constexpr (N ==  16) l = Zu_clz16(v);
+    else if constexpr (N ==  32) l = Zu_clz32(v);
+    else if constexpr (N ==  64) l = Zu_clz64(v);
+    else if constexpr (N == 128) l = Zu_clz128(v);
+
+    if      constexpr (N ==   8) r = Zu_clz8_(v);
+    else if constexpr (N ==  16) r = Zu_clz16_(v);
+    else if constexpr (N ==  32) r = Zu_clz32_(v);
+    else if constexpr (N ==  64) r = Zu_clz64_(v);
+    else if constexpr (N == 128) r = Zu_clz128_(v);
+
+    ZuCheckRT(l == r);
+    if (verbose || l != r)
+      std::cerr << "clz" << N << "(1<<" << i << ")"
+		<< " l=" << l << " r=" << r << '\n';
+
+    if      constexpr (N ==   8) l = Zu_ctz8(v);
+    else if constexpr (N ==  16) l = Zu_ctz16(v);
+    else if constexpr (N ==  32) l = Zu_ctz32(v);
+    else if constexpr (N ==  64) l = Zu_ctz64(v);
+    else if constexpr (N == 128) l = Zu_ctz128(v);
+
+    if      constexpr (N ==   8) r = Zu_ctz8_(v);
+    else if constexpr (N ==  16) r = Zu_ctz16_(v);
+    else if constexpr (N ==  32) r = Zu_ctz32_(v);
+    else if constexpr (N ==  64) r = Zu_ctz64_(v);
+    else if constexpr (N == 128) r = Zu_ctz128_(v);
+
+    ZuCheckRT(l == r);
+    if (verbose || l != r)
+      std::cerr << "ctz" << N << "(1<<" << i << ")"
+		<< " l=" << l << " r=" << r << '\n';
   }
 }
 
-#define TEST(n) \
-  for (unsigned i = 0; i < n; i++) { \
-    auto v = uint##n##_t(1)<<i; \
-    unsigned l = ZuPP_Eval(ZuPP_Defer(Zu_clz##n)(v)); \
-    unsigned r = ZuPP_Eval(ZuPP_Defer(Zu_clz##n##_)(v)); \
-    check("clz", l, r, n, i); \
-    l = ZuPP_Eval(ZuPP_Defer(Zu_ctz##n)(v)); \
-    r = ZuPP_Eval(ZuPP_Defer(Zu_ctz##n##_)(v)); \
-    check("ctz", l, r, n, i); \
+#define TEST(N) ZuTestCall_("test<" #N ">", (test<N, uint##N##_t>))
+
+static void usage()
+{
+  std::cerr << "usage: ZuIntrinTest [-v]\n";
+  ::exit(1);
+}
+
+int main(int argc, char **argv)
+{
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
   }
 
-int main()
-{
+  ZuTestMain();
+
   TEST(8);
   TEST(16);
   TEST(32);

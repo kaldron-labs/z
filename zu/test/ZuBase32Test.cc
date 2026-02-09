@@ -4,19 +4,19 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
+
 #include <zlib/ZuTest.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuBase32.hh>
 
-#include <iostream>
-
-bool verbose = false;
-
 inline void encOut_(const char *msg, ZuCSpan actual) {
+  std::cerr << msg << '\n';
   std::cerr << "  " << actual << '\n';
 }
 
 inline void decOut_(const char *msg, ZuBSpan actual) {
+  std::cerr << msg << '\n';
   std::cerr << "  ";
   unsigned n = actual.length();
   char *buf = static_cast<char *>(ZuAlloca(n * 3, 1));
@@ -33,8 +33,8 @@ inline void decOut_(const char *msg, ZuBSpan actual) {
   std::cerr << ZuCSpan(buf, ptr - buf) << '\n';
 }
 
-#define encOut(x, ...) ZuCheckFail(x, encOut_(__VA_ARGS__))
-#define decOut(x, ...) ZuCheckFail(x, decOut_(__VA_ARGS__))
+#define encOut(x, ...) ZuCheck(x, encOut_(__VA_ARGS__))
+#define decOut(x, ...) ZuCheck(x, decOut_(__VA_ARGS__))
 
 void enc(ZuBSpan src, ZuCSpan check, const char *msg) {
   ZuTestScope(enc);
@@ -69,22 +69,9 @@ void test(ZuBSpan src, ZuBSpan dst, const char *encMsg, const char *decMsg)
     ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(src))), \
     ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(dst))))
 
-static void usage()
+int main()
 {
-  std::cerr << "usage: ZuBase32Test [-v]\n";
-  ::exit(1);
-}
-
-int main(int argc, char **argv)
-{
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
-
   ZuTestMain();
-
   TEST((ZuBSpan{ }), "");
   TEST((ZuBSpan{ 2 }), "AI======");
   TEST((ZuBSpan{ 2, 4 }), "AICA====");

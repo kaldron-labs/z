@@ -4,24 +4,23 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuBitmap.hh>
 #include <zlib/ZuArray.hh>
 
 int main()
 {
+  ZuTestMain();
   ZuBitmap<256> a;
   a.set(2, 6);
   a.set(10, 15);
   a.set(100, 256);
   ZuCArray<100> s;
   s << a;
-  std::cout << s << '\n' << std::flush;
+  ZuCheck(s == "2-5,10-14,100-");
   ZuBitmap<256> b(s);
-  std::cout << b << '\n' << std::flush;
+  ZuCheck(a == b);
+  ZuCArray<100> t;
+  t << b;
+  ZuCheck(t == s);
 }

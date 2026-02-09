@@ -4,24 +4,22 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
 #include <time.h>
 
 #include <iostream>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuSort.hh>
 #include <zlib/ZuSearch.hh>
 #include <zlib/ZuJoin.hh>
 
-inline void out(const char *s) { std::cout << s << '\n'; }
-
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
+bool verbose = false;
 
 void search(ZuSpan<int> data, int value, unsigned pos_, unsigned nc_)
 {
+  ZuTestScope(search);
   unsigned pos, nc = 0;
 
   pos = ZuInterSearch<false>(data.length(), [&data, value, &nc](unsigned i) {
@@ -29,36 +27,51 @@ void search(ZuSpan<int> data, int value, unsigned pos_, unsigned nc_)
     return value - data[i];
   });
   pos = ZuSearchPos(pos);
-  std::cout << "value=" << value << " pos=" << pos << " nc=" << nc << '\n';
-  CHECK(pos == pos_);
-  CHECK(nc == nc_);
+  if (verbose)
+    std::cerr << "value=" << value << " pos=" << pos << " nc=" << nc << '\n';
+  ZuCheck(pos == pos_);
+  ZuCheck(nc == nc_);
+}
+
+static void usage()
+{
+  std::cerr << "usage: ZuBoxTest [-v]\n";
+  ::exit(1);
 }
 
 int main(int argc, char **argv)
 {
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
+  }
+
+  ZuTestMain();
+
   ZuArray<int, 10> foo{1, 9, 9, 9, 9, 9, 9, 9, 9, 9 };
   ZuArray<int, 10> bar{1, 1, 1, 1, 1, 1, 1, 1, 1, 9 };
 
-  search(foo, 0, 0, 2);
-  search(bar, 0, 0, 2);
-  search(foo, 1, 0, 2);
-  search(bar, 1, 0, 2);
-  search(foo, 2, 1, 3);
-  search(bar, 2, 9, 6);
-  search(foo, 3, 1, 4);
-  search(bar, 3, 9, 5);
-  search(foo, 4, 1, 5);
-  search(bar, 4, 9, 5);
-  search(foo, 5, 1, 5);
-  search(bar, 5, 9, 5);
-  search(foo, 6, 1, 5);
-  search(bar, 6, 9, 5);
-  search(foo, 7, 1, 6);
-  search(bar, 7, 9, 5);
-  search(foo, 8, 1, 6);
-  search(bar, 8, 9, 4);
-  search(foo, 9, 1, 6);
-  search(bar, 9, 9, 4);
-  search(foo, 10, 10, 2);
-  search(bar, 10, 10, 2);
+  ZuTestCall(search, foo, 0, 0, 2);
+  ZuTestCall(search, bar, 0, 0, 2);
+  ZuTestCall(search, foo, 1, 0, 2);
+  ZuTestCall(search, bar, 1, 0, 2);
+  ZuTestCall(search, foo, 2, 1, 3);
+  ZuTestCall(search, bar, 2, 9, 6);
+  ZuTestCall(search, foo, 3, 1, 4);
+  ZuTestCall(search, bar, 3, 9, 5);
+  ZuTestCall(search, foo, 4, 1, 5);
+  ZuTestCall(search, bar, 4, 9, 5);
+  ZuTestCall(search, foo, 5, 1, 5);
+  ZuTestCall(search, bar, 5, 9, 5);
+  ZuTestCall(search, foo, 6, 1, 5);
+  ZuTestCall(search, bar, 6, 9, 5);
+  ZuTestCall(search, foo, 7, 1, 6);
+  ZuTestCall(search, bar, 7, 9, 5);
+  ZuTestCall(search, foo, 8, 1, 6);
+  ZuTestCall(search, bar, 8, 9, 4);
+  ZuTestCall(search, foo, 9, 1, 6);
+  ZuTestCall(search, bar, 9, 9, 4);
+  ZuTestCall(search, foo, 10, 10, 2);
+  ZuTestCall(search, bar, 10, 10, 2);
 }

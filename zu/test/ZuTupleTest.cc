@@ -4,12 +4,11 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
 
 #include <iostream>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuCmp.hh>
@@ -17,9 +16,18 @@
 #include <zlib/ZuDemangle.hh>
 #include <zlib/ZuDerive.hh>
 
-inline void out(const char *s) { std::cout << s << '\n'; }
+bool verbose = false;
 
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
+template <typename ...Args>
+static void log_(Args &&...args) {
+  if constexpr (sizeof...(args))
+    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
+}
+template <typename ...Args>
+static void log(Args &&...args) {
+  if (verbose) log_(ZuFwd<Args>(args)...);
+}
+#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
 
 using VPair = ZuTuple<int, int>;
 using RVPair = ZuTuple<const int &, const int &>;
@@ -74,8 +82,22 @@ ZuDeclTuple(B, (A, foo), (A, foo2), (A, foo3));
 
 ZuDerive(D, ZuTuple<>);
 
-int main()
+static void usage()
 {
+  std::cerr << "usage: ZuBoxTest [-v]\n";
+  ::exit(1);
+}
+
+int main(int argc, char **argv)
+{
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
+  }
+
+  ZuTestMain();
+
   { VPair p = mkpair<VPair>(); CHECK(p.p<0>() == 42); }
   { RVPair p = mkpair<RVPair>(); CHECK(p.p<0>() == 42); }
   { LVPair p = mkpair<LVPair>(); CHECK(p.p<0>() == 42); }
@@ -134,12 +156,12 @@ int main()
     CHECK(b.p<0>() == 1 && b.p<1>() == 2 && b.p<2>() == 3);
     ZuCArray<60> s;
     s << a.fmt(":");
-    std::cout << s << '\n';
+    log(s);
     CHECK(s == "{1:2:3}");
     s.null();
     auto c = ZuFwdTuple(a);
     s << c.fmt(";");
-    std::cout << s << '\n';
+    log(s);
     CHECK(s == "{{1;2;3}}");
   }
 
@@ -152,26 +174,28 @@ int main()
 
   ZuTupleCall(ZuFwdTuple("the answer is", 42),
     []<typename Arg, typename ...Args>(Arg arg, Args... args) {
-      std::cout << arg;
-      ((std::cout << ' ' << args), ...) << '\n';
+      if (!verbose) return;
+      std::cerr << arg;
+      ((std::cerr << ' ' << args), ...) << '\n';
     });
 
   ZuTupleCall(ZuMvTuple("the answer is", 42, "not", 43),
     []<typename Arg, typename ...Args>(Arg arg, Args... args) {
-      std::cout << arg;
-      ((std::cout << ' ' << args), ...) << '\n';
+      if (!verbose) return;
+      std::cerr << arg;
+      ((std::cerr << ' ' << args), ...) << '\n';
     });
 
   ZuMvTuple("the answer is", 42, "not", 43).all(
     [i = 0]<typename Arg>(Arg arg) mutable {
-      if (i++) std::cout << ' ';
-      std::cout << arg;
+      if (i++) log(' ');
+      log(arg);
     });
 
   ZuTuple<uint64_t, uint64_t>(42).all(
     [i = 0]<typename Arg>(Arg arg) mutable {
-      if (i++) std::cout << ' ';
-      std::cout << arg;
+      if (i++) log(' ');
+      log(arg);
     });
 
   {
@@ -183,7 +207,7 @@ int main()
     foo(v);
   }
 
-  std::cout << '\n';
+  log("");
 
   {
     ZuTuple<int> t;
@@ -197,11 +221,11 @@ int main()
     int i = 42;
     ZuTuple<int &> r = { i };
     const auto &cr = r;
-    std::cout << ZuDemangle<decltype(r.p<int &>())>{} << '\n';
+    log(ZuDemangle<decltype(r.p<int &>())>{});
     CHECK((ZuIsSame<int &, decltype(r.p<int &>())>{}));
-    std::cout << ZuDemangle<decltype(cr.p<int &>())>{} << '\n';
+    log(ZuDemangle<decltype(cr.p<int &>())>{});
     CHECK((ZuIsSame<const int &, decltype(cr.p<int &>())>{}));
-    std::cout << ZuDemangle<decltype(ZuMv(r).p<int &>())>{} << '\n';
+    log(ZuDemangle<decltype(ZuMv(r).p<int &>())>{});
     CHECK((ZuIsSame<int &&, decltype(ZuMv(r).p<int &>())>{}));
     CHECK((ZuIsSame<int &, decltype(r.p<0>())>{}));
     CHECK((ZuIsSame<const int &, decltype(cr.p<0>())>{}));

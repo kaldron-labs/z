@@ -4,19 +4,27 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <iostream>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuFmt.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuStruct.hh>
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuDemangle.hh>
 
-inline void out(const char *s) { std::cout << s << '\n'; }
+bool verbose = false;
 
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
+template <typename ...Args>
+static void log_(Args &&...args) {
+  if constexpr (sizeof...(args))
+    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
+}
+template <typename ...Args>
+static void log(Args &&...args) {
+  if (verbose) log_(ZuFwd<Args>(args)...);
+}
+#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
 
 ZuStructFacet(JSON);
 ZuStructFacet(Foo);
@@ -140,37 +148,51 @@ namespace Foo {
     k);
 }
 
-int main()
+static void usage()
 {
+  std::cerr << "usage: ZuBoxTest [-v]\n";
+  ::exit(1);
+}
+
+int main(int argc, char **argv)
+{
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
+  }
+
+  ZuTestMain();
+
   using A = Foo::A;
   using B = Foo::B;
   A a;
   ZuType<1, ZuFields<A>>::set(a, "bye");
   ZuType<2, ZuFields<A>>::set(a, 43.0);
   ZuUnroll::all<ZuFields<A>>([&a]<typename T>() mutable {
-    std::cout << T::id() << '=' << T::get(a) << '\n';
+    log(T::id(), '=', T::get(a));
   });
   B b;
   ZuUnroll::all<ZuFields<B>>([&b]<typename T>() mutable {
-    std::cout << T::id() << '=' << T::get(b) << '\n';
+    log(T::id(), '=', T::get(b));
   });
-  std::cout << ZuFieldAxor<A>()(a) << '\n';
-  std::cout << ZuFieldAxor<A, 1>()(a) << '\n';
+  log(ZuFieldAxor<A>()(a));
+  log(ZuFieldAxor<A, 1>()(a));
 
   ZuUnroll::all<ZuFields_JSON<B>>([&b]<typename T>() mutable {
-    std::cout << T::id() << '=' << T::get(b) << '\n';
+    log(T::id(), '=', T::get(b));
   });
   ZuUnroll::all<ZuFields_Foo<B>>([&b]<typename T>() mutable {
-    std::cout << T::id() << '=' << T::get(b) << '\n';
+    log(T::id(), '=', T::get(b));
   });
   ZuUnroll::all<ZuFields_Bar<B>>([&b]<typename T>() mutable {
-    std::cout << T::id() << '=' << T::get(b) << '\n';
+    log(T::id(), '=', T::get(b));
   });
 
   using T1 = ZuTuple<int, const char *>;
   using T2 = ZuStructKeyT<B, 0>;
-  std::cout << "T1 = " << ZuDemangle<T1>{} << '\n';
-  std::cout << "T2 = " << ZuDemangle<T2>{} << '\n';
+  log("T1 = ", ZuDemangle<T1>{});
+  log("T2 = ", ZuDemangle<T2>{});
   CHECK((ZuIs_<T2, T1>{}));
   {
     using namespace ZuFieldProp::JSON;

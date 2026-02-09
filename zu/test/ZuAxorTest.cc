@@ -4,12 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
+#include <iostream>
 
 #include <zlib/ZuTest.hh>
 #include <zlib/ZuAssert.hh>
-
-#include <iostream>
 
 bool verbose = false;
 
@@ -22,7 +20,7 @@ template <typename ...Args>
 static void log(Args &&...args) {
   if (verbose) log_(ZuFwd<Args>(args)...);
 }
-#define CHECK(x, ...) ZuCheckFail(x, log_(__VA_ARGS__))
+#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
 
 struct Defaults {
   static constexpr auto Fn = ZuDefaultAxor();
@@ -39,7 +37,7 @@ struct Foo {
   template <typename T>
   static void doit(T &&v) {
     auto x = Fn(ZuFwd<T>(v));
-    std::cout << x.i << '\n';
+    if (verbose) std::cerr << x.i << '\n';
   }
 };
 

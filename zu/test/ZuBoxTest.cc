@@ -4,12 +4,15 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <assert.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+
+#include <string>
+#include <sstream>
+#include <iostream>
+#include <iomanip>
 
 #include <zlib/ZuTest.hh>
 #include <zlib/ZuInt.hh>
@@ -17,11 +20,6 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuDerive.hh>
-
-#include <string>
-#include <sstream>
-#include <iostream>
-#include <iomanip>
 
 bool verbose = false;
 
@@ -34,7 +32,7 @@ template <typename ...Args>
 static void log(Args &&...args) {
   if (verbose) log_(ZuFwd<Args>(args)...);
 }
-#define CHECK(x, ...) ZuCheckFail(x, log_(__VA_ARGS__))
+#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
 
 template <class Fmt, class Boxed>
 struct VFmt_ {

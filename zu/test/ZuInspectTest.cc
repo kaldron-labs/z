@@ -4,26 +4,34 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <iostream>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuDemangle.hh>
 
-inline void out(const char *s) { std::cout << s << '\n'; }
+bool verbose = false;
 
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
+template <typename ...Args>
+static void log_(Args &&...args) {
+  if constexpr (sizeof...(args))
+    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
+}
+template <typename ...Args>
+static void log(Args &&...args) {
+  if (verbose) log_(ZuFwd<Args>(args)...);
+}
+#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
 
 struct A { };
 struct B : public A { };
 struct C { operator A() { return A(); } };
-struct D : public C { ~D() { out("~D()"); } };
+struct D : public C { ~D() { log("~D()"); } };
 
-constexpr auto foo() { return []{ out("Hello World"); }; }
+constexpr auto foo() { return []{ log("Hello World"); }; }
 
 struct A_Print : public ZuPrintDelegate {
   template <typename S>
@@ -40,8 +48,22 @@ APtr_Print ZuPrintType(APtr *);
 
 template <typename T> struct E { T v; };
 
-int main()
+static void usage()
 {
+  std::cerr << "usage: ZuInspectTest [-v]\n";
+  ::exit(1);
+}
+
+int main(int argc, char **argv)
+{
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
+  }
+
+  ZuTestMain();
+
   CHECK((ZuIsConvertible<void, void>{}));
   CHECK((ZuIsSame<void, void>{}));
   CHECK((!ZuIsBase<void, void>{}));
@@ -97,7 +119,7 @@ int main()
   CHECK(!(ZuTraits<ZuTuple<int, void *, D>>::IsPOD));
 
   constexpr auto bar = foo();
-  constexpr auto baz = []{ out("Goodbye World"); };
+  constexpr auto baz = []{ log("Goodbye World"); };
   CHECK((ZuIsSame<const decltype(foo()), const decltype(bar)>{}));
   CHECK((!ZuIsSame<decltype(foo()), decltype(baz)>{}));
 
@@ -105,9 +127,9 @@ int main()
 
   {
     A a;
-    ZuAssert((ZuIsBase<decltype(std::cout), std::ios_base>{}));
-    std::cout << a << '\n';
-    std::cout << &a << '\n';
+    ZuAssert((ZuIsBase<decltype(std::cerr), std::ios_base>{}));
+    log(a);
+    log(&a);
   }
   {
     const int &foo(const int &);

@@ -4,8 +4,6 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <zlib/ZuTest.hh>
 #include <zlib/ZuSpan.hh>
 

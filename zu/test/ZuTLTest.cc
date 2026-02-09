@@ -4,17 +4,25 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
+#include <iostream>
 
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuDemangle.hh>
 
-#include <iostream>
+bool verbose = false;
 
-inline void out(const char *s) { std::cout << s << '\n'; }
-
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
+template <typename ...Args>
+void log_(Args &&...args) {
+  if constexpr (sizeof...(args))
+    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
+}
+template <typename ...Args>
+void log(Args &&...args) {
+  if (verbose) log_(ZuFwd<Args>(args)...);
+}
+#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
 
 #define DEFINE(ID, I_) \
 struct ID { enum { I = I_ }; static const char *id() { return #ID; } }
@@ -35,11 +43,25 @@ struct X {
   int i = 42, j = 43, k = 44;
 };
 
+static void usage()
+{
+  std::cerr << "usage: ZuBoxTest [-v]\n";
+  ::exit(1);
+}
+
 int main(int argc, char **argv)
 {
+  if (argc < 1 || argc > 2) usage();
+  if (argc == 2) {
+    if (strcmp(argv[1], "-v")) usage();
+    verbose = true;
+  }
+
+  ZuTestMain();
+
   {
     ZuUnroll::all<Sorted>([]<typename T>() {
-      std::cout << T::I << ' ' << T::id() << '\n';
+      log(T::I, ' ', T::id());
     });
     X x;
     // X y = x;
@@ -48,39 +70,40 @@ int main(int argc, char **argv)
     q = x;
   }
   {
-    std::cout << "--- 0 1 2 3\n";
-    ZuUnroll::all<4>([](auto i) { std::cout << i << '\n'; });
-    ZuAssert(ZuUnroll::all<4>(0, [](auto i, int j) {
+    log("--- 0 1 2 3");
+    ZuUnroll::all<4>([](auto i) { log(i); });
+    ZuCheck(ZuUnroll::all<4>(0, [](auto i, int j) {
       return j + 1;
     }) == 4);
     auto j = ZuUnroll::all<4>(0, [](auto i, int j) {
-      std::cout << i << '\n';
+      log(i);
       return j + 1;
     });
-    std::cout << "j=" << j << '\n';
+    ZuCheck(j == 4);
+    log("j=", j);
   }
   {
-    std::cout << "--- 3 2 1 0\n";
+    log("--- 3 2 1 0");
     ZuUnroll::all<ZuTypeRev<ZuSeqTL<ZuMkSeq<4>>>>([]<typename I>() {
-      std::cout << I{} << '\n';
+      log(I{});
     });
   }
   {
-    std::cout << "--- 1 2 3\n";
+    log("--- 1 2 3");
     ZuUnroll::all<ZuTypeTail<1, ZuSeqTL<ZuMkSeq<4>>>>([]<typename I>() {
-      std::cout << I{} << '\n';
+      log(I{});
     });
   }
   {
-    std::cout << "--- 0 1 2\n";
+    log("--- 0 1 2");
     ZuUnroll::all<ZuTypeHead<3, ZuSeqTL<ZuMkSeq<4>>>>([]<typename I>() {
-      std::cout << I{} << '\n';
+      log(I{});
     });
   }
   {
-    std::cout << "--- 42 42 42\n";
+    log("--- 42 42 42");
     ZuUnroll::all<ZuTypeRepeat<3, ZuInt<42>>>([]<typename I>() {
-      std::cout << I{} << '\n';
+      log(I{});
     });
   }
 }

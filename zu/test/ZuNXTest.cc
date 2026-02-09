@@ -6,21 +6,15 @@
 
 #include <iostream>
 
-#include <zlib/ZuLib.hh>
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuDemangle.hh>
 
-template <typename T, bool NX>
-inline void out(const char *s) {
-  std::cout
-    << s << ' ' << ZuDemangle<T>{}
-    << " NX=" << unsigned(NX) << '\n' << std::flush;
-}
-
-#define CHECK(T, NX, x) ((x) ? out<T, NX>("OK  " #x) : out<T, NX>("NOK " #x))
+#define CHECK(T, NX, x) ZuCheck(x, \
+  std::cerr << ZuDemangle<T>{} << " NX=" << unsigned(NX) << '\n')
 
 struct A { };
 
@@ -40,6 +34,7 @@ template <typename T> void rref(T &&v) {
 
 template <typename T, bool NX>
 void test1() {
+  ZuTestScope(test1);
   T a, b;
   CHECK(T, NX, noexcept(T(ZuMv(a))) == NX);
   CHECK(T, NX, noexcept(a = ZuMv(b)) == NX);
@@ -47,19 +42,21 @@ void test1() {
 
 template <typename T, bool NX>
 void test2() {
-  test1<T, NX>();
-  test1<ZuArray<T, 4>, NX>();
-  test1<ZuTuple<T, T>, NX>();
-  test1<ZuUnion<void, T>, NX>();
-  test1<ZuTuple<T, ZuUnion<void, T>>, NX>();
-  test1<ZuUnion<void, ZuTuple<T, T>>, NX>();
-  test1<ZuArray<ZuUnion<void, T>, 4>, NX>();
-  test1<ZuArray<ZuTuple<T, T>, 4>, NX>();
-  test1<ZuArray<ZuTuple<T, ZuUnion<void, T>>, 4>, NX>();
+  ZuTestScope(test2);
+  ZuTestCall((test1<T, NX>));
+  ZuTestCall((test1<ZuArray<T, 4>, NX>));
+  ZuTestCall((test1<ZuTuple<T, T>, NX>));
+  ZuTestCall((test1<ZuUnion<void, T>, NX>));
+  ZuTestCall((test1<ZuTuple<T, ZuUnion<void, T>>, NX>));
+  ZuTestCall((test1<ZuUnion<void, ZuTuple<T, T>>, NX>));
+  ZuTestCall((test1<ZuArray<ZuUnion<void, T>, 4>, NX>));
+  ZuTestCall((test1<ZuArray<ZuTuple<T, T>, 4>, NX>));
+  ZuTestCall((test1<ZuArray<ZuTuple<T, ZuUnion<void, T>>, 4>, NX>));
 }
 
 int main()
 {
+  ZuTestMain();
   {
     A a;
     const A &b = a;
@@ -68,6 +65,6 @@ int main()
     rref(A{});
   }
 
-  test2<int, true>();
-  test2<B, false>();
+  ZuTestCall((test2<int, true>));
+  ZuTestCall((test2<B, false>));
 }

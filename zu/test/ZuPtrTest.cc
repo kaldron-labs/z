@@ -1,12 +1,17 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2024 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
 #include <stdlib.h>
 
 #include <iostream>
 
 #include <zlib/ZuPtr.hh>
+#include <zlib/ZuTest.hh>
 
-inline void out(const char *s) { std::cout << s << '\n'; }
-
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
+#define CHECK(x) ZuCheck(x)
 
 struct A {
   int *x;
@@ -15,15 +20,17 @@ struct A {
 };
 
 void foo(A *a) {
+  ZuTestScope(foo);
   CHECK(*(a->x) == 1);
 }
 
 int main()
 {
+  ZuTestMain();
   int i = 0;
   {
     ZuPtr<A> a = new A{&i};
-    foo(ZuMv(a));
+    ZuTestCall(foo, ZuMv(a));
   }
   CHECK(i == 2);
 }

@@ -7,34 +7,40 @@
 #include <iostream>
 
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuBase64URL.hh>
 
-inline void encOut(bool ok, const char *msg, ZuCSpan actual) {
-  std::cout << (ok ? "OK  " : "NOK ") << msg << '\n';
-  if (!ok) std::cout << "  " << actual << '\n';
+inline void encOut_(const char *msg, ZuCSpan actual)
+{
+  std::cerr << msg << '\n';
+  std::cerr << "  " << actual << '\n';
 }
 
-inline void decOut(bool ok, const char *msg, ZuBSpan actual) {
-  std::cout << (ok ? "OK  " : "NOK ") << msg << '\n';
-  if (!ok) {
-    std::cout << "  ";
-    unsigned n = actual.length();
-    char *buf = static_cast<char *>(ZuAlloca(n * 3, 1));
-    char *ptr = buf;
-    for (unsigned i = 0; i < n; i++) {
-      if (i) *ptr++ = ' ';
-      auto c = actual[i];
-      static auto hex = [](uint8_t v) {
-	return v < 10 ? v + '0' : (v - 10) + 'A';
-      };
-      *ptr++ = hex(c>>4);
-      *ptr++ = hex(c & 0xf);
-    }
-    std::cout << ZuCSpan(buf, ptr - buf) << '\n';
+inline void decOut_(const char *msg, ZuBSpan actual)
+{
+  std::cerr << msg << '\n';
+  std::cerr << "  ";
+  unsigned n = actual.length();
+  char *buf = static_cast<char *>(ZuAlloca(n * 3, 1));
+  char *ptr = buf;
+  for (unsigned i = 0; i < n; i++) {
+    if (i) *ptr++ = ' ';
+    auto c = actual[i];
+    static auto hex = [](uint8_t v) {
+      return v < 10 ? v + '0' : (v - 10) + 'A';
+    };
+    *ptr++ = hex(c>>4);
+    *ptr++ = hex(c & 0xf);
   }
+  std::cerr << ZuCSpan(buf, ptr - buf) << '\n';
 }
 
-void enc(ZuBSpan src, ZuCSpan check, const char *msg) {
+#define encOut(x, ...) ZuCheck(x, encOut_(__VA_ARGS__))
+#define decOut(x, ...) ZuCheck(x, decOut_(__VA_ARGS__))
+
+void enc(ZuBSpan src, ZuCSpan check, const char *msg)
+{
+  ZuTestScope(enc);
   auto n = ZuBase64URL::enclen(src.length());
   char *buf = static_cast<char *>(ZuAlloca(n, 1));
   auto dst = ZuSpan<uint8_t>(buf, n);
@@ -42,7 +48,9 @@ void enc(ZuBSpan src, ZuCSpan check, const char *msg) {
   encOut(ZuCSpan(dst) == check && n == dst.length(), msg, ZuCSpan(dst));
 }
 
-void dec(ZuBSpan src, ZuBSpan check, const char *msg) {
+void dec(ZuBSpan src, ZuBSpan check, const char *msg)
+{
+  ZuTestScope(dec);
   auto n = ZuBase64URL::declen(src.length());
   char *buf = static_cast<char *>(ZuAlloca(n, 1));
   auto dst = ZuSpan<uint8_t>(buf, n);
@@ -50,12 +58,23 @@ void dec(ZuBSpan src, ZuBSpan check, const char *msg) {
   decOut(ZuBSpan(dst) == check && n == dst.length(), msg, dst);
 }
 
-#define TEST(src, dst) \
-  enc(src, dst, #src " -> " #dst); \
-  dec(dst, src, #dst " -> " #src);
+void test(ZuBSpan src, ZuBSpan dst, const char *encMsg, const char *decMsg)
+{
+  ZuTestScope(test);
+  ZuTestCall(enc, src, dst, encMsg);
+  ZuTestCall(dec, dst, src, decMsg);
+}
+
+#define TEST_(src, dst, src_q, dst_q) ZuTestCall_( \
+    src_q " -> " dst_q, test, \
+    src, dst, src_q " -> " dst_q, dst_q " -> " src_q)
+#define TEST(src, dst) TEST_(src, dst, \
+    ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(src))), \
+    ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(dst))))
 
 int main()
 {
+  ZuTestMain();
   TEST((ZuBSpan{ }), "");
   TEST((ZuBSpan{ 2 }), "Ag");
   TEST((ZuBSpan{ 2, 4 }), "AgQ");

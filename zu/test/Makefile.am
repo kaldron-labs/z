@@ -18,6 +18,9 @@ noinst_PROGRAMS = \
 	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest \
 	ZuMatchTest ZuNXTest ZuFPTest ZuIntrinTest \
 	ZuTokenizerTest ZuTest ZuDemangleTest
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)
 ZuInspectTest_SOURCES = ZuInspectTest.cc
 ZuHashTest_SOURCES = ZuHashTest.cc Analyze.hh
 ZuCmpTest_SOURCES = ZuCmpTest.cc

@@ -6,52 +6,42 @@
 
 #include <iostream>
 
-#include <zlib/ZuLib.hh>
+#include <zlib/ZuTest.hh>
 #include <zlib/ZuFP.hh>
 #include <zlib/ZuBox.hh>
-// #include <zlib/ZuHex.hh>
-
-inline void out(const char *s) {
-  std::cout << s << '\n' << std::flush;
-}
-
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
 
 template <typename F, typename I = typename ZuFP<F>::I>
-void decode(F d, ZuTuple<I, I> em) {
+void decode(F d, ZuTuple<I, I> em)
+{
+  ZuTestScope(decode);
   using FP = ZuFP<decltype(d)>;
   ZuTuple<I, I> em_ = FP::decode(d);
-  if (em == em_) {
-    std::cout << "OK  " << ZuBoxed(d) << " -> " << em << '\n';
-  } else {
-    std::cout << "NOK " << ZuBoxed(d) << " -> " << em_ << " != " << em << '\n';
-  }
+  ZuCheck(em == em_,
+    std::cerr << ZuBoxed(d) << " -> " << em_ << " != " << em << '\n');
   auto e = FP::encode(em_.template p<0>(), em_.template p<1>());
-  if (e == d || (FP::nan(e) && FP::nan(d))) {
-    std::cout << "OK  " << em << " -> " << ZuBoxed(e) << '\n';
-  } else {
-    std::cout << "NOK " << em << " -> " << ZuBoxed(e) << '\n';
-  }
+  ZuCheck(e == d || (FP::nan(e) && FP::nan(d)),
+    std::cerr << em << " -> " << ZuBoxed(e) << " expected " << ZuBoxed(d) << '\n');
 }
 
 int main()
 {
-  decode(1.0F, {0, 1});
-  decode(1.0, {0, 1});
-  decode(1.0L, {0, 1});
-  decode(2.0, {1, 1});
-  decode(8.0F, {3, 1});
-  decode(8.0, {3, 1});
-  decode(8.0L, {3, 1});
-  decode(0.5, {-1, 1});
-  decode(0.25, {-2, 1});
-  decode(0.0625F, {-4, 1});
-  decode(0.0625, {-4, 1});
-  decode(0.0625L, {-4, 1});
-  decode(ZuFP<double>::nan(), ZuFP<double>::decodeNaN());
-  decode(ZuFP<double>::inf(), ZuFP<double>::decodePosInf());
-  decode(-ZuFP<double>::inf(), ZuFP<double>::decodeNegInf());
-  decode(ZuFP<float>::epsilon(1), {-23, 5});
-  decode(ZuFP<double>::epsilon(1), {-52, 5});
-  decode(ZuFP<long double>::epsilon(1), {-63, 5});
+  ZuTestMain();
+  ZuTestCall(decode, 1.0F, (ZuTuple<int, int>{0, 1}));
+  ZuTestCall(decode, 1.0, (ZuTuple<int, int>{0, 1}));
+  ZuTestCall(decode, 1.0L, (ZuTuple<int, int>{0, 1}));
+  ZuTestCall(decode, 2.0, (ZuTuple<int, int>{1, 1}));
+  ZuTestCall(decode, 8.0F, (ZuTuple<int, int>{3, 1}));
+  ZuTestCall(decode, 8.0, (ZuTuple<int, int>{3, 1}));
+  ZuTestCall(decode, 8.0L, (ZuTuple<int, int>{3, 1}));
+  ZuTestCall(decode, 0.5, (ZuTuple<int, int>{-1, 1}));
+  ZuTestCall(decode, 0.25, (ZuTuple<int, int>{-2, 1}));
+  ZuTestCall(decode, 0.0625F, (ZuTuple<int, int>{-4, 1}));
+  ZuTestCall(decode, 0.0625, (ZuTuple<int, int>{-4, 1}));
+  ZuTestCall(decode, 0.0625L, (ZuTuple<int, int>{-4, 1}));
+  ZuTestCall(decode, ZuFP<double>::nan(), ZuFP<double>::decodeNaN());
+  ZuTestCall(decode, ZuFP<double>::inf(), ZuFP<double>::decodePosInf());
+  ZuTestCall(decode, -ZuFP<double>::inf(), ZuFP<double>::decodeNegInf());
+  ZuTestCall(decode, ZuFP<float>::epsilon(1), (ZuTuple<int, int>{-23, 5}));
+  ZuTestCall(decode, ZuFP<double>::epsilon(1), (ZuTuple<int, int>{-52, 5}));
+  ZuTestCall(decode, ZuFP<long double>::epsilon(1), (ZuTuple<int, int>{-63, 5}));
 }
