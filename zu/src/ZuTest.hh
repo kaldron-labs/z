@@ -183,26 +183,34 @@ struct ZuTest_Context {
   ZuTest_Context ZuTest_context(&ZuTest_scope); \
   ZuTestMgr::start()
 
-#define ZuTestScope(name) \
-  static ZuTest_Scope ZuTest_scope = { #name, 0, false }; \
+#define ZuTestScope_(name) \
+  static ZuTest_Scope ZuTest_scope = { name, 0, false }; \
   ZuTest_Context ZuTest_context(&ZuTest_scope)
+
+#define ZuTestScope(name) \
+  ZuTestScope_(ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))))
 
 #define ZuCheck(x) \
   do { \
     auto &ZuTest_check = ZuTest_::step_< \
-      &ZuTest_scope, __FILE__, __LINE__, #x, 0>(); \
+      &ZuTest_scope, __FILE__, __LINE__, \
+      ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))), 0>(); \
     ZuTestMgr::check(&ZuTest_check, (x), nullptr); \
   } while (0)
 
 #define ZuCheckFail(x, fail) \
   do { \
     auto &ZuTest_check = ZuTest_::step_< \
-      &ZuTest_scope, __FILE__, __LINE__, #x, 0>(); \
+      &ZuTest_scope, __FILE__, __LINE__, \
+      ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))), 0>(); \
     if (!ZuTestMgr::check(&ZuTest_check, (x), nullptr)) \
       ZuPP_Strip(fail); \
   } while (0)
 
-#define ZuCheck_(x) ZuTestMgr::check(&ZuTest_check, (x), #x)
+#define ZuCheck_(x) \
+  ZuTestMgr::check(&ZuTest_check, (x), \
+    ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))))
+
 #define ZuCheckBlock(block) \
   do { \
     auto &ZuTest_check = ZuTest_::step_< \
@@ -210,49 +218,73 @@ struct ZuTest_Context {
     ZuPP_Strip(block) \
   } while (0)
 
-#define ZuTestScopeRT(name) \
-  static ZuTest_Scope ZuTest_scope = { #name, 0, true }; \
+#define ZuTestScopeRT_(name) \
+  static ZuTest_Scope ZuTest_scope = { name, 0, true }; \
   ZuTest_Context ZuTest_context(&ZuTest_scope)
 
-#define ZuCheckRT(x) ZuTestMgr::check(nullptr, (x), #x)
+#define ZuTestScopeRT(name) \
+  ZuTestScopeRT_(ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))))
 
-#define ZuTestRepeat_(name, count) \
+#define ZuCheckRT(x) \
+  ZuTestMgr::check(nullptr, (x), \
+    ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))))
+
+#define ZuTestRepeat__(name, count) \
   do { \
     auto &ZuTest_call = ZuTest_::step_< \
       &ZuTest_scope, __FILE__, __LINE__, \
-      ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))), count>(); \
+      name, count>(); \
     ZuTestMgr::call(&ZuTest_call); \
   } while (0)
 
-#define ZuTestCall_(name) ZuTestRepeat_(name, 1)
+#define ZuTestCall__(name) ZuTestRepeat__(name, 1)
+
+#define ZuTest_(name) \
+  ZuTestCall__(name); \
+  ZuTestScope_(name)
 
 #define ZuTest(name) \
-  ZuTestCall_(name); \
-  ZuTestScope(name)
+  ZuTest_(ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))))
+
+#define ZuTestRepeat_(name, count) \
+  ZuTestRepeat__(name, count); \
+  ZuTestScope_(name)
 
 #define ZuTestRepeat(name, count) \
-  ZuTestRepeat_(name, count); \
-  ZuTestScope(name)
+  ZuTestRepeat_(ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))), count)
+
+#define ZuTestRT_(name) \
+  ZuTestCall__(name); \
+  ZuTestScopeRT_(name)
 
 #define ZuTestRT(name) \
-  ZuTestCall_(name); \
-  ZuTestScopeRT(name)
+  ZuTestRT_(ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))))
 
-#define ZuTestCall(name, ...) \
+#define ZuTestCall_(name, fn, ...) \
   do { \
-    ZuTestCall_(name); \
-    ZuPP_Strip(name)(__VA_ARGS__); \
+    ZuTestCall__(name); \
+    ZuPP_Strip(fn)(__VA_ARGS__); \
   } while (0)
 
-#define ZuTestCallRT(name, ...) \
+#define ZuTestCall(fn, ...) \
+  ZuTestCall_( \
+    ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(fn))), \
+    fn __VA_OPT__(, __VA_ARGS__))
+
+#define ZuTestCallRT_(name, fn, ...) \
   do { \
     static ZuTest_Step ZuTest_call = { \
       &ZuTest_scope, __FILE__, __LINE__, \
-      ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))), 0, 1 \
+      name, 0, 1 \
     }; \
     ZuTestMgr::call(&ZuTest_call); \
-    ZuPP_Strip(name)(__VA_ARGS__); \
+    ZuPP_Strip(fn)(__VA_ARGS__); \
   } while (0)
+
+#define ZuTestCallRT(fn, ...) \
+  ZuTestCallRT_( \
+    ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(fn))), \
+    fn __VA_OPT__(, __VA_ARGS__))
 
 namespace ZuTest_ {
   inline void addImage_() {
