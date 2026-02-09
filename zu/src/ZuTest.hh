@@ -75,8 +75,8 @@ public:
   static void end(ZuTest_Scope *scope) {
     instance().end_(scope);
   }
-  static void check(ZuTest_Step *step, bool ok, const char *name) {
-    instance().check_(step, ok, name);
+  static bool check(ZuTest_Step *step, bool ok, const char *name) {
+    return instance().check_(step, ok, name);
   }
   static void call(ZuTest_Step *step) {
     instance().call_(step);
@@ -107,7 +107,7 @@ friend void ZuTest_::addImage_();
 
   void begin_(ZuTest_Scope *scope);
   void end_(ZuTest_Scope *scope);
-  void check_(ZuTest_Step *step, bool ok, const char *name);
+  bool check_(ZuTest_Step *step, bool ok, const char *name);
   void call_(ZuTest_Step *step);
 
   Section	*m_head = nullptr;
@@ -194,6 +194,14 @@ struct ZuTest_Context {
     ZuTestMgr::check(&ZuTest_check, (x), nullptr); \
   } while (0)
 
+#define ZuCheckFail(x, fail) \
+  do { \
+    auto &ZuTest_check = ZuTest_::step_< \
+      &ZuTest_scope, __FILE__, __LINE__, #x, 0>(); \
+    if (!ZuTestMgr::check(&ZuTest_check, (x), nullptr)) \
+      ZuPP_Strip(fail); \
+  } while (0)
+
 #define ZuCheck_(x) ZuTestMgr::check(&ZuTest_check, (x), #x)
 #define ZuCheckBlock(block) \
   do { \
@@ -211,7 +219,8 @@ struct ZuTest_Context {
 #define ZuTestRepeat_(name, count) \
   do { \
     auto &ZuTest_call = ZuTest_::step_< \
-      &ZuTest_scope, __FILE__, __LINE__, #name, count>(); \
+      &ZuTest_scope, __FILE__, __LINE__, \
+      ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))), count>(); \
     ZuTestMgr::call(&ZuTest_call); \
   } while (0)
 
@@ -232,16 +241,17 @@ struct ZuTest_Context {
 #define ZuTestCall(name, ...) \
   do { \
     ZuTestCall_(name); \
-    name(__VA_ARGS__); \
+    ZuPP_Strip(name)(__VA_ARGS__); \
   } while (0)
 
 #define ZuTestCallRT(name, ...) \
   do { \
     static ZuTest_Step ZuTest_call = { \
-      &ZuTest_scope, __FILE__, __LINE__, #name, 0, 1 \
+      &ZuTest_scope, __FILE__, __LINE__, \
+      ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))), 0, 1 \
     }; \
     ZuTestMgr::call(&ZuTest_call); \
-    name(__VA_ARGS__); \
+    ZuPP_Strip(name)(__VA_ARGS__); \
   } while (0)
 
 namespace ZuTest_ {

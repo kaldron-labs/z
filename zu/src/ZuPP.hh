@@ -9,7 +9,7 @@
 #ifndef ZuPP_HH
 #define ZuPP_HH
 
-#define ZuPP_Q(s) #s
+#define ZuPP_Q(...) #__VA_ARGS__
 
 #define ZuPP_Eval(...) ZuPP_Eval128(__VA_ARGS__)
 // #define ZuPP_Eval(...) ZuPP_Eval1024(__VA_ARGS__)
