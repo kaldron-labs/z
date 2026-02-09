@@ -190,32 +190,13 @@ struct ZuTest_Context {
 #define ZuTestScope(name) \
   ZuTestScope_(ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))))
 
-#define ZuCheck(x) \
+#define ZuCheck(x, ...) \
   do { \
     auto &ZuTest_check = ZuTest_::step_< \
       &ZuTest_scope, __FILE__, __LINE__, \
       ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))), 0>(); \
-    ZuTestMgr::check(&ZuTest_check, (x), nullptr); \
-  } while (0)
-
-#define ZuCheckFail(x, fail) \
-  do { \
-    auto &ZuTest_check = ZuTest_::step_< \
-      &ZuTest_scope, __FILE__, __LINE__, \
-      ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))), 0>(); \
-    if (!ZuTestMgr::check(&ZuTest_check, (x), nullptr)) \
-      ZuPP_Strip(fail); \
-  } while (0)
-
-#define ZuCheck_(x) \
-  ZuTestMgr::check(&ZuTest_check, (x), \
-    ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))))
-
-#define ZuCheckBlock(block) \
-  do { \
-    auto &ZuTest_check = ZuTest_::step_< \
-      &ZuTest_scope, __FILE__, __LINE__, "", 0>(); \
-    ZuPP_Strip(block) \
+    __VA_OPT__(if) (!ZuTestMgr::check(&ZuTest_check, (x), nullptr)) \
+    __VA_OPT__(ZuPP_Strip(__VA_ARGS__)); \
   } while (0)
 
 #define ZuTestScopeRT_(name) \
@@ -225,9 +206,12 @@ struct ZuTest_Context {
 #define ZuTestScopeRT(name) \
   ZuTestScopeRT_(ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(name))))
 
-#define ZuCheckRT(x) \
-  ZuTestMgr::check(nullptr, (x), \
-    ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))))
+#define ZuCheckRT(x, ...) \
+  do { \
+    __VA_OPT__(if) (!ZuTestMgr::check(nullptr, (x), \
+      ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))))) \
+    __VA_OPT__(ZuPP_Strip(__VA_ARGS__)); \
+  } while (0)
 
 #define ZuTestRepeat__(name, count) \
   do { \
