@@ -8,37 +8,16 @@
 #include <sstream>
 
 #include <zlib/ZuBitStream.hh>
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuHex.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
-
-static void usage()
-{
-  std::cerr << "usage: ZuBitStreamTest [-v]\n";
-  ::exit(1);
-}
+using namespace ZuTestUtil;
 
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
@@ -71,21 +50,21 @@ int main(int argc, char **argv)
 
     ZuIBitStream i{buf.data(), buf.data() + buf.length()};
 
-    CHECK(i.in<3>() == 0x5);
-    CHECK(i.in<2>() == 0x1);
-    CHECK(i.in<3>() == 0x5);
-    CHECK(i.in(8) == 0x55);
-    CHECK(i.in(11) == 0x555);
-    CHECK(i.in(9) == 0x155);
-    CHECK(i.in(12) == 0x555);
-    CHECK(i.in(16) == 0x5555);
-    CHECK(i.in(19) == 0x15555);
-    CHECK(i.in(17) == 0x5555);
-    CHECK(i.in(20) == 0x55555);
-    CHECK(i.in<3>() == 0x5);
-    CHECK(i.in(26) == 0x1555555);
-    CHECK(i.in(1) == 1);
-    CHECK(!i.avail<8>());
+    ZuCHECK(i.in<3>() == 0x5);
+    ZuCHECK(i.in<2>() == 0x1);
+    ZuCHECK(i.in<3>() == 0x5);
+    ZuCHECK(i.in(8) == 0x55);
+    ZuCHECK(i.in(11) == 0x555);
+    ZuCHECK(i.in(9) == 0x155);
+    ZuCHECK(i.in(12) == 0x555);
+    ZuCHECK(i.in(16) == 0x5555);
+    ZuCHECK(i.in(19) == 0x15555);
+    ZuCHECK(i.in(17) == 0x5555);
+    ZuCHECK(i.in(20) == 0x55555);
+    ZuCHECK(i.in<3>() == 0x5);
+    ZuCHECK(i.in(26) == 0x1555555);
+    ZuCHECK(i.in(1) == 1);
+    ZuCHECK(!i.avail<8>());
 
     ZuOBitStream o2{i, buf.data() + buf.size()};
 
@@ -99,22 +78,22 @@ int main(int argc, char **argv)
 
     ZuIBitStream i2{buf.data(), buf.data() + buf.length()};
 
-    CHECK(i2.in<3>() == 0x5);
-    CHECK(i2.in<2>() == 0x1);
-    CHECK(i2.in<3>() == 0x5);
-    CHECK(i2.in(8) == 0x55);
-    CHECK(i2.in(11) == 0x555);
-    CHECK(i2.in(9) == 0x155);
-    CHECK(i2.in(12) == 0x555);
-    CHECK(i2.in(16) == 0x5555);
-    CHECK(i2.in(19) == 0x15555);
-    CHECK(i2.in(17) == 0x5555);
-    CHECK(i2.in(20) == 0x55555);
-    CHECK(i2.in<3>() == 0x5);
-    CHECK(i2.in(26) == 0x1555555);
-    CHECK(i2.in(1) == 1);
-    CHECK(i2.in<1>() == 1);
-    CHECK(!i2.avail<8>());
+    ZuCHECK(i2.in<3>() == 0x5);
+    ZuCHECK(i2.in<2>() == 0x1);
+    ZuCHECK(i2.in<3>() == 0x5);
+    ZuCHECK(i2.in(8) == 0x55);
+    ZuCHECK(i2.in(11) == 0x555);
+    ZuCHECK(i2.in(9) == 0x155);
+    ZuCHECK(i2.in(12) == 0x555);
+    ZuCHECK(i2.in(16) == 0x5555);
+    ZuCHECK(i2.in(19) == 0x15555);
+    ZuCHECK(i2.in(17) == 0x5555);
+    ZuCHECK(i2.in(20) == 0x55555);
+    ZuCHECK(i2.in<3>() == 0x5);
+    ZuCHECK(i2.in(26) == 0x1555555);
+    ZuCHECK(i2.in(1) == 1);
+    ZuCHECK(i2.in<1>() == 1);
+    ZuCHECK(!i2.avail<8>());
   }
   {
     ZuOBitStream o{buf.data(), buf.data() + buf.size()};
@@ -130,10 +109,10 @@ int main(int argc, char **argv)
 
     ZuIBitStream i{buf.data(), buf.data() + buf.length()};
 
-    CHECK(i.in<3>() == 0x5);
-    CHECK(i.in<4>() == 0x7);
-    CHECK(i.in(20) == 0x23456);
-    CHECK(i.in<4>() == 0x1);
+    ZuCHECK(i.in<3>() == 0x5);
+    ZuCHECK(i.in<4>() == 0x7);
+    ZuCHECK(i.in(20) == 0x23456);
+    ZuCHECK(i.in<4>() == 0x1);
   }
   {
     ZuOBitStream o{buf.data(), buf.data() + buf.size()};
@@ -150,8 +129,8 @@ int main(int argc, char **argv)
 
     ZuIBitStream i{buf.data(), buf.data() + buf.length()};
 
-    CHECK(i.in<2>() == 0);
-    CHECK(i.in<2>() == 2);
-    CHECK(i.in(64) == 0x3e668c6fa0b2f9a3);
+    ZuCHECK(i.in<2>() == 0);
+    ZuCHECK(i.in<2>() == 2);
+    ZuCHECK(i.in(64) == 0x3e668c6fa0b2f9a3);
   }
 }

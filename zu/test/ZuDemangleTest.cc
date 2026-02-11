@@ -6,27 +6,14 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuDemangle.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuVArray.hh>
-#include <zlib/ZuTuple.hh>
-#include <zlib/ZuUnion.hh>
 #include <zlib/ZuMatcher.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
+using namespace ZuTestUtil;
 
 template <ZuArray> struct A { };
 template <auto> struct B { };
@@ -37,19 +24,9 @@ struct Foo { template <unsigned> static int bar(const char *); };
 
 template <typename> struct Baz { };
 
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
@@ -66,9 +43,9 @@ int main(int argc, char **argv)
     ZuCArray<512> s;
     s << ZuDemangle<decltype(a)>{};
     log(s);
-    ZuCheck(ZuMatcher<"ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
+    ZuCHECK(ZuMatcher<"ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
     s = {}; s << ZuDemangle<typename ZuTraits<decltype(a)>::Elem>{};
     log(s);
-    ZuCheck(ZuMatcher<"ZuVArray_::Elem<ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
+    ZuCHECK(ZuMatcher<"ZuVArray_::Elem<ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
   }
 }

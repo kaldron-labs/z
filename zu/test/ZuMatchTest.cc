@@ -6,13 +6,13 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuStruct.hh>
 // #include <zlib/ZuDemangle.hh>
 
-bool verbose = false;
+using namespace ZuTestUtil;
 
 ZuStructFacet(JSON);
 
@@ -60,19 +60,9 @@ namespace Foo {
       ((k, LambdaRd, ([](const B &b) { return b.k; }))));
 }
 
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
@@ -88,41 +78,41 @@ int main(int argc, char **argv)
       std::cerr << "End='" << char(matcher.automaton.End) << "' "
 	<< ZuBox<unsigned>(matcher.automaton.End).hex() << "\n";
     }
-    ZuCheck((matcher.match("fo") < 0));
-    ZuCheck((matcher.match("foo") == 0));
-    ZuCheck((matcher.match("foo!") == 0));
-    ZuCheck((matcher.match("foh") == 1));
-    ZuCheck((matcher.match("bar") == 2));
-    ZuCheck((matcher.match("baz") == 3));
-    ZuCheck((matcher.match("xbaz") == -1));
-    ZuCheck((matcher.find("xbaz") == ZuTuple<int, int>{1, 3}));
-    ZuCheck((matcher.find("x_baz") == ZuTuple<int, int>{2, 3}));
+    ZuCHECK((matcher.match("fo") < 0));
+    ZuCHECK((matcher.match("foo") == 0));
+    ZuCHECK((matcher.match("foo!") == 0));
+    ZuCHECK((matcher.match("foh") == 1));
+    ZuCHECK((matcher.match("bar") == 2));
+    ZuCHECK((matcher.match("baz") == 3));
+    ZuCHECK((matcher.match("xbaz") == -1));
+    ZuCHECK((matcher.find("xbaz") == ZuTuple<int, int>{1, 3}));
+    ZuCHECK((matcher.find("x_baz") == ZuTuple<int, int>{2, 3}));
   }
   {
     constexpr auto matcher = ZuMatcher<"fooh", "oox">();
-    ZuCheck((matcher.match("foox") < 0));
-    ZuCheck((matcher.find("foox") == ZuTuple<int, int>{1, 1}));
+    ZuCHECK((matcher.match("foox") < 0));
+    ZuCHECK((matcher.find("foox") == ZuTuple<int, int>{1, 1}));
   }
   {
     constexpr auto &x = "x";
     constexpr auto matcher = ZuMatcher<x>();
-    ZuCheck((matcher.match("x") == 0));
+    ZuCHECK((matcher.match("x") == 0));
   }
   {
     constexpr auto matcher = ZuMatcher<ZuFieldProp::JSON::GetIDs<Foo::B>>();
     char buf[32];
     strcpy(buf, "i-JSON");
-    ZuCheck((matcher.match({&buf[0], unsigned(strlen(buf))}) == 0));
-    ZuCheck((matcher.match("i-JSON") == 0));
-    ZuCheck((matcher.match("j-JSON") == 1));
-    ZuCheck((matcher.match("k") == 2));
-    ZuCheck((matcher.match("baz") == -1));
+    ZuCHECK((matcher.match({&buf[0], unsigned(strlen(buf))}) == 0));
+    ZuCHECK((matcher.match("i-JSON") == 0));
+    ZuCHECK((matcher.match("j-JSON") == 1));
+    ZuCHECK((matcher.match("k") == 2));
+    ZuCHECK((matcher.match("baz") == -1));
   }
   {
     // this large automaton from ZrlEditor fails to build with clang's
     // default -fconstexpr-steps of 1,000,000
     constexpr auto matcher = ZuMatcher<"Null", "Nop", "Syn", "Mode", "Push", "Pop", "Error", "EndOfFile", "SigInt", "SigQuit", "SigSusp", "Enter", "Up", "Down", "Left", "Right", "Home", "End", "FwdWord", "RevWord", "FwdWordEnd", "RevWordEnd", "MvMark", "ClrVis", "InsToggle", "Insert", "Over", "Clear", "Redraw", "Paste", "Yank", "Rotate", "Glyph", "InsGlyph", "OverGlyph", "BackSpace", "Edit", "EditRep", "ArgDigit", "Register", "Undo", "Redo", "EmacsUndo", "EmacsAbort", "Repeat", "TransGlyph", "TransWord", "TransUnixWord", "CapGlyph", "LowerWord", "UpperWord", "CapWord", "LowerVis", "UpperVis", "CapVis", "XchMark", "FwdGlyphSrch", "RevGlyphSrch", "Complete", "RevComplete", "ListComplete", "Next", "Prev", "ClrIncSrch", "FwdIncSrch", "RevIncSrch", "PromptSrch", "EnterSrchFwd", "EnterSrchRev", "AbortSrch", "FwdSearch", "RevSearch">();
-    ZuCheck((matcher.match("Nop") == 1));
-    ZuCheck((matcher.match("Next") == 61));
+    ZuCHECK((matcher.match("Nop") == 1));
+    ZuCHECK((matcher.match("Next") == 61));
   }
 }

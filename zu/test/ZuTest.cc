@@ -6,7 +6,7 @@
 
 #include <stdlib.h>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 
 // static nested sub-test in a function
 void foo() {

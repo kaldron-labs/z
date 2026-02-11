@@ -6,21 +6,10 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuAssert.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
+using namespace ZuTestUtil;
 
 struct Defaults {
   static constexpr auto Fn = ZuDefaultAxor();
@@ -62,31 +51,29 @@ struct A {
 };
 A &&bar(A &&);
 
-static void usage()
-{
-  std::cerr << "usage: ZuAxorTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
   Foo<>::doit(A{});
-  CHECK(constructed_ == 1 && moved_ == 1 && destroyed_ == 2);
+  ZuCHECK(constructed_ == 1 && moved_ == 1 && destroyed_ == 2,
+    "constructed=", constructed_, " moved=", moved_,
+    " copied=", copied_, " destroyed=", destroyed_);
   Foo<Axor<[](A &&a) -> A && { return static_cast<A &&>(a); }>>::doit(A{});
-  CHECK(constructed_ == 2 && moved_ == 2 && destroyed_ == 4);
+  ZuCHECK(constructed_ == 2 && moved_ == 2 && destroyed_ == 4,
+    "constructed=", constructed_, " moved=", moved_,
+    " copied=", copied_, " destroyed=", destroyed_);
   Foo<Axor<bar>>::doit(A{});
-  CHECK(constructed_ == 3 && moved_ == 3 && destroyed_ == 6);
+  ZuCHECK(constructed_ == 3 && moved_ == 3 && destroyed_ == 6,
+    "constructed=", constructed_, " moved=", moved_,
+    " copied=", copied_, " destroyed=", destroyed_);
   A a;
   Foo<>::doit(a);
-  CHECK(constructed_ == 4 && moved_ == 3 && copied_ == 1 && destroyed_ == 7);
+  ZuCHECK(constructed_ == 4 && moved_ == 3 && copied_ == 1 && destroyed_ == 7,
+    "constructed=", constructed_, " moved=", moved_,
+    " copied=", copied_, " destroyed=", destroyed_);
 }
 
 inline A &&bar(A &&a) { return static_cast<A &&>(a); }

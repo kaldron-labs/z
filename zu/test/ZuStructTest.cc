@@ -6,25 +6,14 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuFmt.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuStruct.hh>
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuDemangle.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
+using namespace ZuTestUtil;
 
 ZuStructFacet(JSON);
 ZuStructFacet(Foo);
@@ -148,19 +137,9 @@ namespace Foo {
     k);
 }
 
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
@@ -193,10 +172,10 @@ int main(int argc, char **argv)
   using T2 = ZuStructKeyT<B, 0>;
   log("T1 = ", ZuDemangle<T1>{});
   log("T2 = ", ZuDemangle<T2>{});
-  CHECK((ZuIs_<T2, T1>{}));
+  ZuCHECK((ZuIs_<T2, T1>{}));
   {
     using namespace ZuFieldProp::JSON;
-    CHECK((GetBytesFmt<Foo::ZuField(B, j)>{} == ZtJSON::Base64));
+    ZuCHECK((GetBytesFmt<Foo::ZuField(B, j)>{} == ZtJSON::Base64));
   }
 
   return 0;

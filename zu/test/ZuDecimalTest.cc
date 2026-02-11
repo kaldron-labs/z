@@ -7,7 +7,7 @@
 #include <iostream>
 
 #include <zlib/ZuArray.hh>
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuFixed.hh>
 

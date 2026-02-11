@@ -6,23 +6,12 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuDemangle.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
+using namespace ZuTestUtil;
 
 #define DEFINE(ID, I_) \
 struct ID { enum { I = I_ }; static const char *id() { return #ID; } }
@@ -43,19 +32,9 @@ struct X {
   int i = 42, j = 43, k = 44;
 };
 
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
@@ -72,14 +51,14 @@ int main(int argc, char **argv)
   {
     log("--- 0 1 2 3");
     ZuUnroll::all<4>([](auto i) { log(i); });
-    ZuCheck(ZuUnroll::all<4>(0, [](auto i, int j) {
+    ZuCHECK(ZuUnroll::all<4>(0, [](auto i, int j) {
       return j + 1;
     }) == 4);
     auto j = ZuUnroll::all<4>(0, [](auto i, int j) {
       log(i);
       return j + 1;
     });
-    ZuCheck(j == 4);
+    ZuCHECK(j == 4);
     log("j=", j);
   }
   {

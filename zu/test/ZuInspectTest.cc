@@ -6,25 +6,14 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuDemangle.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
+using namespace ZuTestUtil;
 
 struct A { };
 struct B : public A { };
@@ -48,80 +37,70 @@ APtr_Print ZuPrintType(APtr *);
 
 template <typename T> struct E { T v; };
 
-static void usage()
-{
-  std::cerr << "usage: ZuInspectTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
-  CHECK((ZuIsConvertible<void, void>{}));
-  CHECK((ZuIsSame<void, void>{}));
-  CHECK((!ZuIsBase<void, void>{}));
-  CHECK((!ZuIsConvertible<void, A>{}));
-  CHECK((!ZuIsSame<void, A>{}));
-  CHECK((!ZuIsBase<A, void>{}));
-  CHECK((!ZuIsConvertible<A, void>{}));
-  CHECK((!ZuIsSame<A, void>{}));
-  CHECK((!ZuIsBase<void, A>{}));
-  CHECK((ZuIsConvertible<void *, void *>{}));
-  CHECK((ZuIsSame<void *, void *>{}));
-  CHECK((!ZuIsBase<void *, void *>{}));
-  CHECK((ZuIsConvertible<A *, void *>{}));
-  CHECK((!ZuIsSame<A *, void *>{}));
-  CHECK((!ZuIsBase<void *, A *>{}));
-  CHECK((!ZuIsConvertible<void *, A *>{}));
-  CHECK((!ZuIsSame<void *, A *>{}));
-  CHECK((!ZuIsBase<A *, void *>{}));
-  CHECK((ZuIsConvertible<A, A>{}));
-  CHECK((ZuIsSame<A, A>{}));
-  CHECK((!ZuIsBase<A, A>{}));
-  CHECK((!ZuIsConvertible<A, B>{}));
-  CHECK((!ZuIsSame<A, B>{}));
-  CHECK((ZuIsBase<B, A>{}));
-  CHECK((ZuIsConvertible<B, A>{}));
-  CHECK((!ZuIsSame<B, A>{}));
-  CHECK((!ZuIsBase<A, B>{}));
-  CHECK((!ZuIsConvertible<A, C>{}));
-  CHECK((!ZuIsSame<A, C>{}));
-  CHECK((!ZuIsBase<C, A>{}));
-  CHECK((ZuIsConvertible<C, A>{}));
-  CHECK((!ZuIsSame<C, A>{}));
-  CHECK((!ZuIsBase<A, C>{}));
-  CHECK((ZuIsConvertible<A *, A *>{}));
-  CHECK((ZuIsSame<A *, A *>{}));
-  CHECK((!ZuIsBase<A *, A *>{}));
-  CHECK((!ZuIsConvertible<A *, B *>{}));
-  CHECK((!ZuIsSame<A *, B *>{}));
-  CHECK((!ZuIsBase<B *, A *>{}));
-  CHECK((ZuIsConvertible<B *, A *>{}));
-  CHECK((!ZuIsSame<B *, A *>{}));
-  CHECK((!ZuIsBase<A *, B *>{}));
+  ZuCHECK((ZuIsConvertible<void, void>{}));
+  ZuCHECK((ZuIsSame<void, void>{}));
+  ZuCHECK((!ZuIsBase<void, void>{}));
+  ZuCHECK((!ZuIsConvertible<void, A>{}));
+  ZuCHECK((!ZuIsSame<void, A>{}));
+  ZuCHECK((!ZuIsBase<A, void>{}));
+  ZuCHECK((!ZuIsConvertible<A, void>{}));
+  ZuCHECK((!ZuIsSame<A, void>{}));
+  ZuCHECK((!ZuIsBase<void, A>{}));
+  ZuCHECK((ZuIsConvertible<void *, void *>{}));
+  ZuCHECK((ZuIsSame<void *, void *>{}));
+  ZuCHECK((!ZuIsBase<void *, void *>{}));
+  ZuCHECK((ZuIsConvertible<A *, void *>{}));
+  ZuCHECK((!ZuIsSame<A *, void *>{}));
+  ZuCHECK((!ZuIsBase<void *, A *>{}));
+  ZuCHECK((!ZuIsConvertible<void *, A *>{}));
+  ZuCHECK((!ZuIsSame<void *, A *>{}));
+  ZuCHECK((!ZuIsBase<A *, void *>{}));
+  ZuCHECK((ZuIsConvertible<A, A>{}));
+  ZuCHECK((ZuIsSame<A, A>{}));
+  ZuCHECK((!ZuIsBase<A, A>{}));
+  ZuCHECK((!ZuIsConvertible<A, B>{}));
+  ZuCHECK((!ZuIsSame<A, B>{}));
+  ZuCHECK((ZuIsBase<B, A>{}));
+  ZuCHECK((ZuIsConvertible<B, A>{}));
+  ZuCHECK((!ZuIsSame<B, A>{}));
+  ZuCHECK((!ZuIsBase<A, B>{}));
+  ZuCHECK((!ZuIsConvertible<A, C>{}));
+  ZuCHECK((!ZuIsSame<A, C>{}));
+  ZuCHECK((!ZuIsBase<C, A>{}));
+  ZuCHECK((ZuIsConvertible<C, A>{}));
+  ZuCHECK((!ZuIsSame<C, A>{}));
+  ZuCHECK((!ZuIsBase<A, C>{}));
+  ZuCHECK((ZuIsConvertible<A *, A *>{}));
+  ZuCHECK((ZuIsSame<A *, A *>{}));
+  ZuCHECK((!ZuIsBase<A *, A *>{}));
+  ZuCHECK((!ZuIsConvertible<A *, B *>{}));
+  ZuCHECK((!ZuIsSame<A *, B *>{}));
+  ZuCHECK((!ZuIsBase<B *, A *>{}));
+  ZuCHECK((ZuIsConvertible<B *, A *>{}));
+  ZuCHECK((!ZuIsSame<B *, A *>{}));
+  ZuCHECK((!ZuIsBase<A *, B *>{}));
 
-  CHECK(ZuTraits<int>::IsPOD);
-  CHECK(ZuTraits<void *>::IsPOD);
-  CHECK(ZuTraits<A>::IsPOD);
-  CHECK(!ZuTraits<D>::IsPOD);
-  CHECK((ZuTraits<ZuUnion<int, void *>>::IsPOD));
-  CHECK((ZuTraits<ZuUnion<int, void *, A>>::IsPOD));
-  CHECK(!(ZuTraits<ZuUnion<int, void *, D>>::IsPOD));
-  CHECK((ZuTraits<ZuTuple<int, void *>>::IsPOD));
-  CHECK((ZuTraits<ZuTuple<int, void *, A>>::IsPOD));
-  CHECK(!(ZuTraits<ZuTuple<int, void *, D>>::IsPOD));
+  ZuCHECK(ZuTraits<int>::IsPOD);
+  ZuCHECK(ZuTraits<void *>::IsPOD);
+  ZuCHECK(ZuTraits<A>::IsPOD);
+  ZuCHECK(!ZuTraits<D>::IsPOD);
+  ZuCHECK((ZuTraits<ZuUnion<int, void *>>::IsPOD));
+  ZuCHECK((ZuTraits<ZuUnion<int, void *, A>>::IsPOD));
+  ZuCHECK(!(ZuTraits<ZuUnion<int, void *, D>>::IsPOD));
+  ZuCHECK((ZuTraits<ZuTuple<int, void *>>::IsPOD));
+  ZuCHECK((ZuTraits<ZuTuple<int, void *, A>>::IsPOD));
+  ZuCHECK(!(ZuTraits<ZuTuple<int, void *, D>>::IsPOD));
 
   constexpr auto bar = foo();
   constexpr auto baz = []{ log("Goodbye World"); };
-  CHECK((ZuIsSame<const decltype(foo()), const decltype(bar)>{}));
-  CHECK((!ZuIsSame<decltype(foo()), decltype(baz)>{}));
+  ZuCHECK((ZuIsSame<const decltype(foo()), const decltype(bar)>{}));
+  ZuCHECK((!ZuIsSame<decltype(foo()), decltype(baz)>{}));
 
   bar(); baz();
 
@@ -134,21 +113,21 @@ int main(int argc, char **argv)
   {
     const int &foo(const int &);
     int &foo(int &);
-    CHECK((ZuIsSame<int &, decltype(foo(ZuDeclVal<int &>()))>{}));
-    CHECK((ZuIsSame<const int &, decltype(foo(ZuDeclVal<const int &>()))>{}));
-    CHECK((!ZuIsSame<int &, const int &>{}));
+    ZuCHECK((ZuIsSame<int &, decltype(foo(ZuDeclVal<int &>()))>{}));
+    ZuCHECK((ZuIsSame<const int &, decltype(foo(ZuDeclVal<const int &>()))>{}));
+    ZuCHECK((!ZuIsSame<int &, const int &>{}));
   }
 
   {
-    CHECK((ZuIsConstructible<int, unsigned>{}));
-    CHECK((ZuIsConstructible<unsigned, int>{}));
-    CHECK((ZuIsConstructible<short, int>{}));
+    ZuCHECK((ZuIsConstructible<int, unsigned>{}));
+    ZuCHECK((ZuIsConstructible<unsigned, int>{}));
+    ZuCHECK((ZuIsConstructible<short, int>{}));
   }
 
   {
     using R = int &;
     using T = ZuTuple<R, R>;
-    // CHECK((!ZuIsConstructible<int, T>{}));
-    CHECK((ZuIsConvertible<int, T>{}));
+    // ZuCHECK((!ZuIsConstructible<int, T>{}));
+    ZuCHECK((ZuIsConvertible<int, T>{}));
   }
 }

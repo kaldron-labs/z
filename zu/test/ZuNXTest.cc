@@ -6,15 +6,14 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuDemangle.hh>
 
-#define CHECK(T, NX, x) ZuCheck(x, \
-  std::cerr << ZuDemangle<T>{} << " NX=" << unsigned(NX) << '\n')
+using namespace ZuTestUtil;
 
 struct A { };
 
@@ -36,8 +35,10 @@ template <typename T, bool NX>
 void test1() {
   ZuTestScope(test1);
   T a, b;
-  CHECK(T, NX, noexcept(T(ZuMv(a))) == NX);
-  CHECK(T, NX, noexcept(a = ZuMv(b)) == NX);
+  ZuCHECK(noexcept(T(ZuMv(a))) == NX,
+    ZuDemangle<T>{}, " NX=", unsigned(NX));
+  ZuCHECK(noexcept(a = ZuMv(b)) == NX,
+    ZuDemangle<T>{}, " NX=", unsigned(NX));
 }
 
 template <typename T, bool NX>
