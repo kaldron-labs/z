@@ -1,6 +1,3 @@
-- investigate if attribute((section("x"), used)) can be used in ZmSpecific.cc instead of
-  the hack with _tls_used
-
 - complete ZiIOStream
 
 - factor out fbs codegen into shell script
