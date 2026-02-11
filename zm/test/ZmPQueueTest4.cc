@@ -6,9 +6,7 @@
 
 // ZmPQueue unit test
 
-#include <zlib/ZuLib.hh>
-
-#include <iostream>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuObject.hh>
@@ -17,13 +15,7 @@
 
 #include <zlib/ZmPQueue.hh>
 
-inline void out(bool ok, const char *s)
-{
-  std::cout << (ok ? "OK  " : "NOK ") << s << '\n' << std::flush;
-  ZmAssert(ok);
-}
-
-#define CHECK(x) (out((x), #x))
+using namespace ZuTestUtil;
 
 using Msg_Data = ZuTuple<uint32_t, unsigned>;
 struct Msg : public ZuObject, public Msg_Data {
@@ -47,31 +39,43 @@ using QMsg = PQueue::Node;
 
 void head(PQueue &q, uint32_t key)
 {
-  std::cout << "set head=" << key << '\n';
+  ZuTestScope(head);
+  log("set head=", key);
   q.head(key);
-  std::cout << "get head=" << q.head() << '\n';
+  ZuCheck(q.head() <= key);
+  log("get head=", q.head());
 }
+
 void find(const PQueue &q, uint32_t key)
 {
+  ZuTestScope(find);
   ZmRef<QMsg> msg = q.find(key);
-  std::cout << "find " << msg->Msg::key() << ", " << msg->length() << '\n';
+  ZuCheck(msg);
+  ZuCheck(msg->Msg::key() <= key);
+  ZuCheck(key < (msg->Msg::key() + msg->length()));
+  log("find ", msg->Msg::key(), ", ", msg->length());
 }
+
 void add(PQueue &q, uint32_t key, unsigned length)
 {
-  std::cout << "add " << key << ", " << length << '\n';
+  log("add ", key, ", ", length);
   q.add(new QMsg(ZuFwdTuple(key, length)));
 }
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+
+  ZuTestMain();
+
   PQueue q(1);
 
   add(q, 0, 2);
   add(q, 2, 2);
   add(q, 4, 2);
   add(q, 6, 2);
-  head(q, 3);
-  find(q, 4);
-  find(q, 7);
-  std::cout << q << '\n';
+  ZuTestCall(head, q, 3);
+  ZuTestCall(find, q, 4);
+  ZuTestCall(find, q, 7);
+  log(q);
 }

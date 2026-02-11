@@ -4,11 +4,8 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
-
-#include <iostream>
-
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuObject.hh>
 
@@ -19,6 +16,8 @@
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSpecific.hh>
 
+using namespace ZuTestUtil;
+
 struct Order : public ZuObject {
   static unsigned IDAccessor(const Order *o) { return o->id; }
   Order(unsigned id_) : id(id_) { }
@@ -27,8 +26,7 @@ struct Order : public ZuObject {
 
 void dump(Order *o)
 {
-  std::cout << "order ID: " << o->id << '\n';
-}
+  log("order ID: ", o->id);}
 
 ZuDerive(Orders,
   (ZmHash<ZmRef<Order>,
@@ -38,16 +36,23 @@ ZuDerive(Orders,
 
 int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZuTestMain();
   ZmHeapMgr::init("Orders", 0, ZmHeapConfig{100});
   ZmRef<Orders> orders = new Orders(ZmHashParams().bits(7).loadFactor(1.0));
 
-  std::cout << "node size: " << sizeof(Orders::Node) << '\n';
+  log("node size: ", sizeof(Orders::Node));
   for (unsigned i = 0; i < 100; i++) orders->add(new Order(i));
+  ZuCheck(orders->count_() == 100);
   ZmRef<Order> o = orders->findVal(0);
+  ZuCheck(o && o->id == 0);
   dump(o);
   ZuPtr<Orders::Node> n = orders->del(0);
+  ZuCheck(n && n->val() && n->val()->id == 0);
   dump(n->val());
   n = nullptr;
   o = orders->delVal(1);
+  ZuCheck(o && o->id == 1);
   dump(o);
+  ZuCheck(orders->count_() == 98);
 }

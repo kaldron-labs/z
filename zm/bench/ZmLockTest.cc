@@ -4,24 +4,26 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
-
-#include <zlib/ZuLib.hh>
-
-#include <stdio.h>
 #include <stdlib.h>
+#include <iostream>
 
 #ifndef _WIN32
 #include <pthread.h>
 #include <ck_spinlock.h>
 #endif
 
+#include <zlib/ZuTime.hh>
+
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmSpinLock.hh>
 #include <zlib/ZmSpecific.hh>
 #include <zlib/ZmThread.hh>
-#include <zlib/ZuTime.hh>
+
+template <typename... Ts>
+void out(const Ts &...values) {
+  (std::cout << ... << values) << '\n';
+}
 
 struct NoLock {
   ZuInline NoLock() { }
@@ -98,9 +100,9 @@ void *run(void *c)
   return 0;
 }
 
-void usage()
+void usage_()
 {
-  fputs("Usage: ZmLockTest nthreads [count]\n", stderr);
+  std::cerr << "Usage: ZmLockTest nthreads [count]\n";
   Zm::exit(1);
 }
 
@@ -129,15 +131,14 @@ void main_(const char *name, unsigned nthreads, unsigned count)
   }
   for (unsigned i = 0; i < nthreads; i++) pthread_join(c[i].tid, 0);
   ZuTime end = Zm::now(); end -= begin;
-  std::cout << name << ":\t" << end.interval() << "\n";
-}
+  out(name, ":\t", end.interval());}
 
 int main(int argc, char **argv)
 {
-  if (argc < 2 || argc > 3) usage();
+  if (argc < 2 || argc > 3) usage_();
   int nthreads = atoi(argv[1]);
   int count = (argc > 2 ? atoi(argv[2]) : 100000000);
-  if (nthreads <= 0 || count <= 0) usage();
+  if (nthreads <= 0 || count <= 0) usage_();
   main_<NoLock>("NoLock", nthreads, count);
   main_<ZmPLock>("ZmPLock", nthreads, count);
 #ifndef _WIN32

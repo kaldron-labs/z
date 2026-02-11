@@ -4,22 +4,20 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
-
-#include <new>
-
-#include <stdio.h>
 #include <stdlib.h>
 
 #ifndef _WIN32
 #include <alloca.h>
 #endif
 
+#include <new>
+#include <iostream>
 #include <vector>
 #include <list>
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTime.hh>
+
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmAllocator.hh>
 #include <zlib/ZmThread.hh>
@@ -27,13 +25,18 @@
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmAlloc.hh>
 
-static bool verbose = false;
+template <typename... Ts>
+void out(const Ts &...values) {
+  (std::cout << ... << values) << '\n';
+}
+
+static bool detailVerbose = false;
 
 template <typename Heap> struct S_ : public Heap {
   S_(int i) : m_i(i) { }
   ~S_() { m_i = -1; }
   void doit() {
-    if (verbose) { printf("hello world %d\n", m_i); fflush(stdout); }
+    if (detailVerbose) out("hello world ", m_i);
     if (m_i < 0) abort();
   }
   int m_i;
@@ -44,7 +47,7 @@ static unsigned count = 0;
 
 void doit()
 {
-  std::cerr << (ZuCArray<80>{} << *ZmSelf() << '\n') << std::flush;
+  out(*ZmSelf());
   for (unsigned i = 0; i < count; i++) {
     S *s = new S(i);
     s->doit();
@@ -60,36 +63,35 @@ void doit()
   }
 }
 
-void usage()
+void usage_()
 {
-  fputs(
-"Usage: ZmHeapTest COUNT SIZE NTHR [VERB]\n\n"
-"    COUNT\t- number of iterations\n"
-"    SIZE\t- size of heap\n"
-"    NTHR\t- number of threads\n"
-"    VERB\t- verbose (0 | 1 - defaults to 0)\n"
-, stderr);
+  std::cerr <<
+    "Usage: ZmHeapTest COUNT SIZE NTHR [VERB]\n\n"
+    "  COUNT\t- number of iterations\n"
+    "  SIZE\t- size of heap\n"
+    "  NTHR\t- number of threads\n"
+    "  VERB\t- verbose (0 | 1 - defaults to 0)\n";
   Zm::exit(1);
 }
 
 int main(int argc, char **argv)
 {
   ZuAssert((ZuIsSame<ZuStringT<"S">, ZmHeapID<S>>{}));
-  if (argc < 4 || argc > 5) usage();
+  if (argc < 4 || argc > 5) usage_();
   {
-    std::cout << "ZmGrow sizes:\n";
+    out("ZmGrow sizes:");
     unsigned n = 1;
     for (unsigned i = 0; i < 18; i++) {
       auto m = ZmGrow(n, n + 1);
-      std::cout <<  n << " -> " << m << '\n';
+      out(n, " -> ", m);
       n = m;
     }
   }
   count = atoi(argv[1]);
   int size = atoi(argv[2]);
   int nthr = atoi(argv[3]);
-  if (argc == 5) verbose = atoi(argv[4]);
-  if (!count || !nthr) usage();
+  if (argc == 5) detailVerbose = atoi(argv[4]);
+  if (!count || !nthr) usage_();
   for (int i = 0; i < nthr; i++) {
     ZmHeapMgr::init("S", i, ZmHeapConfig{uint64_t(size)});
     ZmHeapMgr::init("S_vector", i, ZmHeapConfig{uint64_t(size)});
@@ -97,7 +99,7 @@ int main(int argc, char **argv)
   }
   auto threads = ZmAlloc(ZmThread, nthr);
   if (!threads) {
-    fputs("ZmAlloc() failed\n", stderr);
+    std::cout << "ZmAlloc() failed" << '\n';
     Zm::exit(1);
   }
   ZuTime start = Zm::now();
@@ -109,6 +111,6 @@ int main(int argc, char **argv)
   }
   ZuTime end = Zm::now();
   end -= start;
-  printf("%u.%09u\n", (unsigned)end.sec(), (unsigned)end.nsec());
-  std::cout << ZmHeapMgr::csv();
+  out(end.sec(), '.', end.nsec());
+  out(ZmHeapMgr::csv());
 }

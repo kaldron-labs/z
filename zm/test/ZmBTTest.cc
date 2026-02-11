@@ -4,20 +4,22 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* backtrace test program */
+// backtrace test program
 
 // this call stacks program -> shared libary -> shared library -> program
 // (Windows: exe -> dll -> dll -> exe),  to test all 4 combinations of
 // calling across executable modules
 
-#include <zlib/ZuLib.hh>
-
-#include <stdio.h>
 #include <stdlib.h>
+
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmBackTrace.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
+
+using namespace ZuTestUtil;
+
 #ifdef ZDEBUG
 #include <zlib/ZmTrap.hh>
 #endif
@@ -63,7 +65,8 @@ ZmRef<A> s() { return r(); }
 
 void dump(void *, const void *referrer, const ZmBackTrace *bt)
 {
-  std::cout << ZuBoxPtr(referrer).hex() << ":\n" << *bt;
+  log(ZuBoxPtr(referrer).hex(), ':');
+  log(*bt);
 }
 #endif
 
@@ -75,16 +78,22 @@ void bar(int *x) { crash(x); }
 void foo() { bar(0); }
 #endif
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZuTestMain();
   {
     ZmBackTrace t;
     a(t);
-    std::cout << t;
+    ZuCheck(!!t);
+    ZmBackTrace u = t;
+    ZuCheck(u == t);
+    log(t);
   }
 
 #ifdef ZmObject_DEBUG
   ZmRef<A> a = s();
+  ZuCheck(!!a);
 
   a->ZmObject::dump(0, &dump);
 #endif

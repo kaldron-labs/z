@@ -4,24 +4,31 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmDemangle.hh>
 
-#include <iostream>
+using namespace ZuTestUtil;
 
 template <template <typename> class, typename>
 struct Foo { template <unsigned> static int bar(const char *); };
 
 template <typename> struct Baz { };
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZuTestMain();
   constexpr auto foo = ZuDefaultAxor();
   using Foo_ = decltype(foo);
-  std::cout << ZmDemangle_{"Z1XvEUlTyOT_E_"} << '\n';
-  std::cout << ZmDemangle_{"Z1XvEUlOT_E_"} << '\n';
-  std::cout << "raw: " << typeid(foo).name() << '\n';
-  std::cout << ZmDemangle<Foo_>{} << '\n';
-  std::cout << ZmDemangle<Foo<Baz, Baz<int>>>{} << '\n';
+  ZuCSpan d1 = ZmDemangle_{"Z1XvEUlTyOT_E_"};
+  ZuCSpan d2 = ZmDemangle_{"Z1XvEUlOT_E_"};
+  ZuCheck(!!d1 && !!d2);
+  ZuCheck(!d1.equals("Z1XvEUlTyOT_E_"));
+  ZuCheck(!d2.equals("Z1XvEUlOT_E_"));
+  log(d1);
+  log(d2);
+  log("raw: ", typeid(foo).name());
+  log(ZmDemangle<Foo_>{});
+  log(ZmDemangle<Foo<Baz, Baz<int>>>{});
 }

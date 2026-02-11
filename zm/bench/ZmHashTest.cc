@@ -6,10 +6,8 @@
 
 /* test program */
 
-#include <zlib/ZuLib.hh>
-
-#include <stdio.h>
 #include <stdlib.h>
+#include <iostream>
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTraits.hh>
@@ -25,11 +23,16 @@
 #include <zlib/ZmSpecific.hh>
 #include <zlib/ZmPolymorph.hh>
 
+template <typename... Ts>
+void out(const Ts &...values) {
+  (std::cout << ... << values) << '\n';
+}
+
 struct X : public ZmPolymorph {
   virtual void helloWorld();
 };
 
-void X::helloWorld() { puts("hello world"); }
+void X::helloWorld() { out("hello world"); }
 
 struct Y : public X {
   virtual void helloWorld();
@@ -55,7 +58,7 @@ struct ZCmp {
 
 ZuDerive(ZHash, (ZmHashKV<unsigned, ZmRef<Z>, ZmHashLock<ZmPLock>>));
 
-void Y::helloWorld() { puts("hello world [Y]"); }
+void Y::helloWorld() { out("hello world [Y]"); }
 
 ZmRef<X> foo(X *xPtr) { return(xPtr); }
 
@@ -158,9 +161,9 @@ int main(int argc, char **argv)
     ZmRef<ZHash> hash2 = new ZHash(
 	ZmHashParams().bits(2).loadFactor(1.0).cBits(1));
 
-    printf("hash count, bits, cbits: %d, %d, %d\n",
-      hash2->count_(), hash2->bits(), hash2->cBits());
-    printf("spawning %d threads...\n", n);
+    out("hash count, bits, cbits: ",
+      hash2->count_(), ", ", hash2->bits(), ", ", hash2->cBits());
+    out("spawning ", n, " threads...");
 
     ZuTime start, end;
 
@@ -172,19 +175,20 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("hash time: %d.%.3d\n", (int)end.sec(), (int)(end.nsec() / 1000000));
+    out("hash time: ", end.sec(), '.',
+	end.nsec() / 1000000);
 
-    printf("%d threads finished\n", n);
-    printf("hash count, bits: %d, %d\n", hash2->count_(), hash2->bits());
+    out(n, " threads finished");
+    out("hash count, bits: ", hash2->count_(), ", ", hash2->bits());
   }
 
   for (k = 0; k < 10; k++) {
     ZmRef<ZHash> hash2 = new ZHash(
 	ZmHashParams().bits(4).loadFactor(1.0).cBits(4));
 
-    printf("hash count, bits, cbits: %d, %d, %d\n",
-      hash2->count_(), hash2->bits(), hash2->cBits());
-    printf("spawning %d threads...\n", n);
+    out("hash count, bits, cbits: ",
+      hash2->count_(), ", ", hash2->bits(), ", ", hash2->cBits());
+    out("spawning ", n, " threads...");
 
     ZuTime start, end;
 
@@ -196,16 +200,17 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("hash time: %d.%.3d\n", (int)end.sec(), (int)(end.nsec() / 1000000));
+    out("hash time: ", end.sec(), '.',
+	end.nsec() / 1000000);
 
-    printf("%d threads finished\n", n);
-    printf("hash count, bits: %d, %d\n", hash2->count_(), hash2->bits());
+    out(n, " threads finished");
+    out("hash count, bits: ", hash2->count_(), ", ", hash2->bits());
   }
 
   overallEnd = Zm::now();
   overallEnd -= overallStart;
-  printf("overall time: %d.%.3d\n",
-    (int)overallEnd.sec(), (int)(overallEnd.nsec() / 1000000));
+  out("overall time: ", overallEnd.sec(), '.',
+    overallEnd.nsec() / 1000000);
 
   {
     using H = ZmHash<ZmRef<J>, ZmHashKey<J::IAxor>>;
@@ -215,17 +220,13 @@ int main(int argc, char **argv)
     for (int k = 0; k < 100; k++) {
       I i(k);
       ZmRef<J> j = h.findVal(i);
-      printf("%d ", k);
+      (void)j;
     }
-    puts("");
     for (int k = 0; k < 100; k++) h.add(ZmRef<J>(new J(42)));
     {
       auto i = h.citer(I{42});
       ZmRef<J> k;
-      while (k = i.val()) {
-	printf("%d ", k->m_i.m_i);
-      }
-      puts("");
+      while (k = i.val()) { }
     }
   }
 }

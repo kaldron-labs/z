@@ -4,12 +4,6 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
-
-#include <zlib/ZuLib.hh>
-
-#include <stdio.h>
-
 #include <iostream>
 
 #include <zlib/ZuTime.hh>
@@ -23,6 +17,11 @@
 
 #define mb() __asm__ __volatile__("":::"memory")
 
+template <typename... Ts>
+void out(const Ts &...values) {
+  (std::cout << ... << values) << '\n';
+}
+
 struct X : public ZmObject {
   X() : x(0) { }
   virtual ~X() { }
@@ -31,7 +30,7 @@ struct X : public ZmObject {
   unsigned x;
 };
 
-void X::helloWorld() { puts("hello world"); }
+void X::helloWorld() { out("hello world"); }
 
 void semPost(ZmSemaphore *sema) {
   int i;
@@ -95,9 +94,9 @@ struct W {
   void fn(const char *prefix, const ZmThreadContext *c) {
     const ZmThreadName &s = c->name();
     if (!s)
-      printf("%s: %d\n", prefix, (int)c->tid());
+      out(prefix, ": ", c->tid());
     else
-      printf("%s: %.*s\n", prefix, s.length(), s.data());
+      out(prefix, ": ", ZuCSpan(s.data(), s.length()));
   }
   void fn1(const ZmThreadContext *c) { fn("list1", c); }
   void fn2(const ZmThreadContext *c) { fn("list2", c); }
@@ -118,7 +117,7 @@ int main(int argc, char **argv)
   {
     ZmSemaphore *sema = new ZmSemaphore;
 
-    puts("spawning 80 threads...");
+    out("spawning 80 threads...");
 
     for (j = 0; j < 80; j++)
       r[j] = ZmThread{[sema]() { semPost(sema); }};
@@ -127,9 +126,9 @@ int main(int argc, char **argv)
 
     for (j = 0; j < 80; j++) r[j].join(0);
 
-    puts("80 threads finished");
+    out("80 threads finished");
 
-    puts("spawning 80 threads...");
+    out("spawning 80 threads...");
 
     for (j = 0; j < 40; j++)
       r[j] = ZmThread{[sema]() { semWait(sema); }};
@@ -139,7 +138,7 @@ int main(int argc, char **argv)
 
     for (j = 0; j < 80; j++) r[j].join(0);
 
-    puts("80 threads finished");
+    out("80 threads finished");
 
     ZuTime start, end;
 
@@ -152,15 +151,16 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("sem post/wait time: %s / 1000000 = %s\n",
+    out("sem post/wait time: ",
       (ZuCArray<32>{} << end.interval()).data(),
+      " / 1000000 = ",
       (ZuCArray<32>{} << (end.as_decimal() / ZuDecimal{1000000})).data());
 
     delete sema;
   }
 
   {
-    puts("starting ZmPLock lock/unlock time test");
+    out("starting ZmPLock lock/unlock time test");
 
     ZmPLock lock;
 
@@ -172,13 +172,14 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("lock/unlock time: %s / 1000000 = %s\n",
+    out("lock/unlock time: ",
       (ZuCArray<32>{} << end.interval()).data(),
+      " / 1000000 = ",
       (ZuCArray<32>{} << (end.as_decimal() / ZuDecimal{1000000})).data());
   }
 
   {
-    puts("starting ref/deref time test");
+    out("starting ref/deref time test");
 
     ZmRef<ZmObject> l = new ZmObject;
 
@@ -190,8 +191,9 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("ref time: %s / 1000000 = %s\n",
+    out("ref time: ",
       (ZuCArray<32>{} << end.interval()).data(),
+      " / 1000000 = ",
       (ZuCArray<32>{} << (end.as_decimal() / ZuDecimal{1000000})).data());
 
     start = Zm::now();
@@ -200,8 +202,9 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("deref time: %s / 1000000 = %s\n",
+    out("deref time: ",
       (ZuCArray<32>{} << end.interval()).data(),
+      " / 1000000 = ",
       (ZuCArray<32>{} << (end.as_decimal() / ZuDecimal{1000000})).data());
   }
 
@@ -220,10 +223,11 @@ int main(int argc, char **argv)
     end = Zm::now();
     end -= start;
 
-    printf("Meyers singleton time: %s / 1000000 = %s\n",
+    out("Meyers singleton time: ",
       (ZuCArray<32>{} << end.interval()).data(),
+      " / 1000000 = ",
       (ZuCArray<32>{} << (end.as_decimal() / ZuDecimal{1000000})).data());
-    printf("S() called %u times\n", S::m_j); S::m_j = 0;
+    out("S() called ", S::m_j, " times"); S::m_j = 0;
   }
 
   {
@@ -238,10 +242,11 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("ZmSingleton::instance() time: %s / 1000000 = %s\n",
+    out("ZmSingleton::instance() time: ",
       (ZuCArray<32>{} << end.interval()).data(),
+      " / 1000000 = ",
       (ZuCArray<32>{} << (end.as_decimal() / ZuDecimal{1000000})).data());
-    printf("S() called %u times\n", S::m_j); S::m_j = 0;
+    out("S() called ", S::m_j, " times"); S::m_j = 0;
   }
 
   {
@@ -256,10 +261,11 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("ZmSpecific::instance() time: %s / 1000000 = %s\n",
+    out("ZmSpecific::instance() time: ",
       (ZuCArray<32>{} << end.interval()).data(),
+      " / 1000000 = ",
       (ZuCArray<32>{} << (end.as_decimal() / ZuDecimal{1000000})).data());
-    printf("S() called %u times\n", S::m_j); S::m_j = 0;
+    out("S() called ", S::m_j, " times"); S::m_j = 0;
   }
 
   {
@@ -274,10 +280,11 @@ int main(int argc, char **argv)
 
     end = Zm::now();
     end -= start;
-    printf("thread_local time: %s / 1000000 = %s\n",
+    out("thread_local time: ",
       (ZuCArray<32>{} << end.interval()).data(),
+      " / 1000000 = ",
       (ZuCArray<32>{} << (end.as_decimal() / ZuDecimal{1000000})).data());
-    printf("S() called %u times\n", S::m_j); S::m_j = 0;
+    out("S() called ", S::m_j, " times"); S::m_j = 0;
   }
 
   {
@@ -295,6 +302,6 @@ int main(int argc, char **argv)
 
   overallEnd = Zm::now();
   overallEnd -= overallStart;
-  printf("overall time: %s\n",
+  out("overall time: ",
     (ZuCArray<32>{} << overallEnd.interval()).data());
 }

@@ -4,9 +4,11 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmHash.hh>
+
+using namespace ZuTestUtil;
 
 struct Object : public ZmObject {
   Object(int val) : m_val(val) { }
@@ -25,17 +27,24 @@ ZuDerive(ObjectHash, (ZmHash<ZmRef<Object>>));
 
 int main(int argc, char *argv[])
 {
+  parse(argc, argv);
+  ZuTestMain();
   ZmRef<ObjectHash> hash =
     new ObjectHash(ZmHashParams().bits(4).loadFactor(2));
 
   for (int i = 0; i < 32; ++i)
     hash->add(ZmRef<Object>(new Object(i)));
+  ZuCheck(hash->count_() == 32);
 
   ObjectHash::Iter it(*hash);
+  unsigned removed = 0;
 
-  while (it.key()) it.del();
+  while (it.key()) { it.del(); removed++; }
+  ZuCheck(removed == 32);
+  ZuCheck(hash->count_() == 0);
 
   hash = 0;
+  ZuCheck(!hash);
 
   return 0;
 }

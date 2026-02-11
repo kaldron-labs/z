@@ -6,11 +6,9 @@
 
 // ZmPQueueRx unit test
 
-#include <zlib/ZuLib.hh>
-
-#include <stdio.h>
 #include <stdlib.h>
 
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuTuple.hh>
@@ -23,12 +21,7 @@
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZmList.hh>
 
-void out(bool ok, const char *s) {
-  std::cout << (ok ? "OK  " : "NOK ") << s << '\n' << std::flush;
-  ZmAssert(ok);
-}
-
-#define CHECK(x) (out((x), #x))
+using namespace ZuTestUtil;
 
 using Msg_Data = ZuTuple<uint32_t, unsigned>;
 struct Msg_ : public ZmObject, public Msg_Data {
@@ -65,19 +58,22 @@ public:
   void send(uint32_t key, unsigned length) {
     unsigned precount = m_queue.count_();
     this->rcvd(new Msg(ZuFwdTuple(key, length)));
-    printf("send %u, %u (pre-count = %u, post-count = %u)\n",
-	(unsigned)key, length, precount, (unsigned)m_queue.count_());
+    log("send ", key, ", ", length,
+	" (pre-count = ", precount,
+	", post-count = ", m_queue.count_(), ')');
   }
 
   // respond to next queued resend request
   void respond(unsigned clipHead, unsigned clipTail) {
     if (ZmRef<Msg> msg = ZuMv(m_resend)) {
-      printf("respond resend request in(%u, %u) ",
-	  (unsigned)msg->Msg_::key(), msg->length());
+      uint32_t inKey = msg->Msg_::key();
+      unsigned inLength = msg->length();
       if (clipHead) msg->clipHead(clipHead);
       if (clipTail) msg->clipTail(clipTail);
-      printf("out(%u, %u)\n",
-	  (unsigned)msg->Msg_::key(), msg->length());
+      log("respond resend request in(",
+	  inKey, ", ", inLength, ") out(",
+	  msg->Msg_::key(),
+	  ", ", msg->length(), ')');
       this->rcvd(msg);
     }
   }
@@ -85,7 +81,7 @@ public:
   // run next queued (scheduled) dequeue job
   bool runDequeue() {
     if (!m_dequeues) return false;
-    puts("run dequeue");
+    log("run dequeue");
     --m_dequeues;
     this->dequeue();
     return true;
@@ -94,7 +90,7 @@ public:
   // run next queued (scheduled) reRequest job
   bool runReRequest() {
     if (!m_reRequests) return false;
-    puts("run re-request");
+    log("run re-request");
     --m_reRequests;
     Rx::reRequest();
     return true;
@@ -106,29 +102,32 @@ public:
 
   // process message
   void process(Msg *msg) {
-    printf("process %u, %u\n", (unsigned)msg->Msg_::key(), msg->length());
+    log("process ", msg->Msg_::key(), ", ", msg->length());
   }
 
   // request resend, as protocol requires it; if now is a subset of
   // prev, then a request may not need to be sent if the protocol
   // is TCP based since the previous request will still be outstanding
   void request(Gap prev, Gap now) {
-    printf("request resend prev(%u, %u) now(%u, %u)\n",
-      (unsigned)prev.key(), (unsigned)prev.length(),
-      (unsigned)now.key(), (unsigned)now.length());
+    log("request resend prev(",
+      prev.key(), ", ",
+      prev.length(), ") now(",
+      now.key(), ", ",
+      now.length(), ')');
     if (now.length()) m_resend = new Msg(now);
   }
 
   // re-request resend, as protocol requires it
   void reRequest(Gap now) {
-    printf("re-request now(%u, %u)\n",
-      (unsigned)now.key(), (unsigned)now.length());
+    log("re-request now(",
+      now.key(), ", ",
+      now.length(), ')');
     if (now.length()) m_resend = new Msg(now);
   }
 
   // schedule dequeue() to be called (possibly from different thread)
   void scheduleDequeue() {
-    puts("schedule dequeue");
+    log("schedule dequeue");
     ++m_dequeues;
   }
   void rescheduleDequeue() { scheduleDequeue(); }
@@ -136,14 +135,14 @@ public:
 
   // schedule reRequest() to be called (possibly from different thread)
   void scheduleReRequest() {
-    puts("schedule re-request");
+    log("schedule re-request");
     ++m_reRequests;
   }
   void rescheduleReRequest() { scheduleReRequest(); }
 
   // cancel scheduled reRequest()
   void cancelReRequest() {
-    puts("cancel re-request");
+    log("cancel re-request");
     m_reRequests = 0;
   }
 
@@ -154,11 +153,13 @@ public:
   }
 
 protected:
-  Queue						m_queue;
-  ZmList<ZmRef<Msg>, ZmListLock<ZmNoLock> >	m_msgs;
-  ZmRef<Msg>					m_resend;
-  unsigned					m_dequeues = 0;
-  unsigned					m_reRequests = 0;
+  using MsgList = ZmList<ZmRef<Msg>, ZmListLock<ZmNoLock>>;
+
+  Queue		m_queue;
+  MsgList	m_msgs;
+  ZmRef<Msg>	m_resend;
+  unsigned	m_dequeues = 0;
+  unsigned	m_reRequests = 0;
 };
 
 void send(App &a, uint32_t seqNo, unsigned length)
@@ -167,8 +168,10 @@ void send(App &a, uint32_t seqNo, unsigned length)
   while (a.runDequeue());
 }
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZuTestMain();
   App a(1);
 
   // a.send(key, length);
@@ -195,19 +198,19 @@ int main()
   send(a, 4, 3); // should be head- and tail-clipped
 
   send(a, 15, 0);
-  CHECK(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
   send(a, 15, 0);
-  CHECK(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
   send(a, 15, 1);
-  CHECK(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
   send(a, 17, 1);
   send(a, 17, 0);
   send(a, 18, 0);
   send(a, 19, 1);
   send(a, 21, 3);
-  CHECK(a.rxQueue()->tail() == 24);
+  ZuCheck(a.rxQueue()->tail() == 24);
   send(a, 27, 0);
-  CHECK(a.rxQueue()->tail() == 27);
+  ZuCheck(a.rxQueue()->tail() == 27);
   send(a, 14, 8); // should overwrite 15,17,19 and be clipped by 21
 
   send(a, 28, 1);
@@ -215,7 +218,7 @@ int main()
   send(a, 27, 0);
   send(a, 28, 0);
   send(a, 29, 0);
-  CHECK(a.rxQueue()->tail() == 30);
+  ZuCheck(a.rxQueue()->tail() == 30);
   send(a, 24, 10); // should overwrite 27,3
 
   a.reset(1);
@@ -228,25 +231,25 @@ int main()
   send(a, 8, 2);
   send(a, 10, 1);
   send(a, 11, 3);
-  CHECK(a.rxQueue()->tail() == 14);
+  ZuCheck(a.rxQueue()->tail() == 14);
 
   a.stopQueuing(12);
 
   send(a, 15, 1);
-  CHECK(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
 
-  CHECK(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(14, 1)));
   send(a, 14, 1);
 
   a.reset(1);
   a.startQueuing();
   send(a, 4, 1);
-  CHECK(a.rxQueue()->gap().equals(ZuFwdTuple(1, 3)));
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(1, 3)));
   a.stopQueuing(2);
   while (a.runDequeue());
-  CHECK(a.rxQueue()->gap().equals(ZuFwdTuple(2, 2)));
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(2, 2)));
   a.respond(0, 0);
   while (a.runDequeue());
-  CHECK(a.rxQueue()->gap().equals(ZuFwdTuple(0, 0)));
-  CHECK(a.rxQueue()->head() == 5 && a.rxQueue()->tail() == 5);
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(0, 0)));
+  ZuCheck(a.rxQueue()->head() == 5 && a.rxQueue()->tail() == 5);
 }
