@@ -6,18 +6,14 @@
 
 #include <zlib/ZuID.hh>
 #include <zlib/ZuUnroll.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmDemangle.hh>
 
 #include <zlib/ZtStruct.hh>
 #include <zlib/ZtJSON.hh>
 
-inline void out_(bool ok, const char *s) {
-  std::cout << (ok ? "OK  " : "NOK ") << s << '\n' << std::flush;
-  // assert(ok);
-}
-
-#define CHECK(x) (out_((x), #x))
+using namespace ZuTestUtil;
 
 namespace Values {
   ZtEnum(Values, int8_t, High, Low, Normal);
@@ -111,15 +107,7 @@ struct MinMax<T, decltype(T::minimum(), void())> {
 
 template <typename Fields, typename O>
 void print(const O &o) {
-  std::cout << o;
-#if 0
-  ZuUnroll::all<Fields>([&o]<typename Field>() mutable {
-    using Type = typename Field::Type;
-    using Fmt = ZtFmt::Default;
-    using Print = Type::template Print<Fmt>;
-    std::cout << Field::id() << '=' << Print{Field::get(o)} << '\n';
-  });
-#endif
+  if (verbose) std::cerr << o;
 }
 
 struct Baz {
@@ -147,22 +135,18 @@ ZtStruct(Bazz,
   (((baz), (Ctor<0>)), (UDT)),
   (((bazArray), (Ctor<1>)), (UDT)));
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZuTestMain();
+
   using Fields = ZuFields<Foo>;
 
-  std::cout << "Foo schema (compile-time)\n";
-  ZuUnroll::all<Fields>([]<typename Field>() {
-    std::cout << "  " << Field::id()
-      << ' ' << ZtFieldTC::name(Field::Type::Code)
-      << " deflt=" << typename Field::Type::template Print<>{Field::deflt()}
-      << MinMax<Field>{}
-      << (Field::Type::Code == ZtFieldTC::Bytes ? "" : "\n");
-  });
-  std::cout << '\n';
+  ZuCheck(Fields::N > 0);
 
   ZtVFmt fmt;
   ZtVFieldArray fields{ZtVFields<Foo>()};
+  ZuCheck(fields.length() > 0);
 
   auto vprint = [&fmt](auto &s, const ZtVField &field, int constant) {
     using namespace ZtFieldTC;
@@ -172,57 +156,70 @@ int main()
     });
   };
 
-  std::cout << "Foo schema (run-time)\n";
-  for (unsigned i = 0, n = fields.length(); i < n; i++) {
-    std::cout << "  " << fields[i]->id;
-    auto type = fields[i]->type;
-    std::cout << ' ' << ZtFieldTC::name(type->code);
-    if (type->code == ZtFieldTC::UDT) {
-      std::cout << " udt=" << ZmDemangle_{type->info.udt()->info->name()};
-    } else if (type->props & ZtVFieldProp::Enum()) {
-      std::cout << " enum=" << type->info.enum_()->id();
-    } else if (type->props & ZtVFieldProp::Flags()) {
-      std::cout << " flags=" << type->info.flags()->id();
+  if (verbose) {
+    std::cerr << "Foo schema (compile-time)\n";
+    ZuUnroll::all<Fields>([]<typename Field>() {
+      std::cerr << "  " << Field::id()
+	<< ' ' << ZtFieldTC::name(Field::Type::Code)
+	<< " deflt=" << typename Field::Type::template Print<>{Field::deflt()}
+	<< MinMax<Field>{}
+	<< (Field::Type::Code == ZtFieldTC::Bytes ? "" : "\n");
+    });
+    std::cerr << '\n';
+
+    std::cerr << "Foo schema (run-time)\n";
+    for (unsigned i = 0, n = fields.length(); i < n; i++) {
+      std::cerr << "  " << fields[i]->id;
+      auto type = fields[i]->type;
+      std::cerr << ' ' << ZtFieldTC::name(type->code);
+      if (type->code == ZtFieldTC::UDT) {
+	std::cerr << " udt=" << ZmDemangle_{type->info.udt()->info->name()};
+      } else if (type->props & ZtVFieldProp::Enum()) {
+	std::cerr << " enum=" << type->info.enum_()->id();
+      } else if (type->props & ZtVFieldProp::Flags()) {
+	std::cerr << " flags=" << type->info.flags()->id();
+      }
+      std::cerr << " deflt=";
+      vprint(std::cerr, *fields[i], ZtVFieldConstant::Deflt);
+      using namespace ZtFieldTC;
+      switch (type->code) {
+	case Int32:
+	case UInt32:
+	case Float:
+	case Fixed:
+	case Decimal:
+	  std::cerr << " minimum=";
+	  vprint(std::cerr, *fields[i], ZtVFieldConstant::Minimum);
+	  std::cerr << " maximum=";
+	  vprint(std::cerr, *fields[i], ZtVFieldConstant::Maximum);
+	  break;
+	case Bytes:
+	  continue;
+      }
+      std::cerr << '\n';
     }
-    std::cout << " deflt=";
-    vprint(std::cout, *fields[i], ZtVFieldConstant::Deflt);
-    using namespace ZtFieldTC;
-    switch (type->code) {
-      case Int32:
-      case UInt32:
-      case Float:
-      case Fixed:
-      case Decimal:
-	std::cout << " minimum=";
-	vprint(std::cout, *fields[i], ZtVFieldConstant::Minimum);
-	std::cout << " maximum=";
-	vprint(std::cout, *fields[i], ZtVFieldConstant::Maximum);
-	break;
-      case Bytes:
-	continue;
-    }
-    std::cout << '\n';
+    std::cerr << '\n';
   }
-  std::cout << '\n';
 
   {
     Foo foo;
 
     char cow[] = "{ id : \"\\ud83d\\uDC04\" }";
     auto scan = ZtJSON::scan(cow);
-    if (scan.template p<0>() < 0) { std::cout << "scan failed!\n"; return 1; }
+    ZuCheck(scan.template p<0>() >= 0);
+    if (scan.template p<0>() < 0) return 1;
     using Handler = ZtJSON::As<Foo>::template Handler<Foo, ZuFacet::JSON>;
-    ZuAssert((Handler::UpdFields::N));
+    ZuCheck((Handler::UpdFields::N));
     ZtJSON::handler<Foo, ZuFacet::JSON>(scan.template p<1>()).update(foo);
 
     foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
 
     print<ZuFields_JSON<Foo>>(foo);
-    std::cout << '\n';
+    if (verbose) std::cerr << '\n';
 
     ZtString<> out;
     out << foo;
-    CHECK(out == "{string:\"\",bytes:,id:\"\xf0\x9f\x90\x84\",int_:0,int_ranged:42,hex:deadbeef,enum_:Normal,daFlags:Bit1,float_:nan,float_ranged:0.42,fixed:nan,decimal:nan,time_:,nested:{i1:0,i2:0},bytesVec:[eHh4,eXl5eQ==,enp6eno=]}");
+    ZuCheck(out == "{string:\"\",bytes:,id:\"\xf0\x9f\x90\x84\",int_:0,int_ranged:42,hex:deadbeef,enum_:Normal,daFlags:Bit1,float_:nan,float_ranged:0.42,fixed:nan,decimal:nan,time_:,nested:{i1:0,i2:0},bytesVec:[eHh4,eXl5eQ==,enp6eno=]}");
   }
 
   {
@@ -238,37 +235,16 @@ int main()
     json2 = json;
 
     auto scan = ZtJSON::scan(json); // mutates json (unquotes strings, etc.)
-    if (scan.p<0>() < 0) {
-      std::cout << "scan failed!\n";
-      return 1;
-    }
+    ZuCheck(scan.p<0>() >= 0);
+    if (scan.p<0>() < 0) return 1;
 
     auto bar = ZtJSON::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
 
     ZtJSON::save<ZuFacet::Bah>(json3, bar);
 
-    std::cout << "JSON: " << json2 << '\n';
+    log("JSON: ", json2);
 
-    CHECK(json2 == json3);
+    ZuCheck(json2 == json3);
   }
-#if 0
-  {
-    Bazz bazz;
-    bazz.bazArray.push(Baz());
-    ZtString<> json, json2;
-    ZtJSON::save<>(json, bazz);
-    CHECK(json == "{\"baz\":\"baz!\",\"bazArray\":[\"baz!\"]}");
-    ZtString<> json_ = json;
-    auto scan = ZtJSON::scan(json_);
-    if (scan.p<0>() < 0) {
-      std::cout << "scan failed!\n";
-      return 1;
-    }
-    auto bazz2 = ZtJSON::handler<Bazz>(scan.p<1>()).ctor();
-    ZtJSON::save<>(json2, bazz2);
-    CHECK(json == json2);
-  }
-#endif
-
   return 0;
 }

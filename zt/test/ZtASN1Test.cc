@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <iostream>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZuID.hh>
 #include <zlib/ZuSpan.hh>
@@ -16,13 +16,7 @@
 #include <zlib/ZtASN1.hh>
 #include <zlib/ZtHexDump.hh>
 
-template <typename S>
-inline void out(bool ok, S &&s) {
-  std::cout << (ok ? "OK  " : "NOK ") << ZuFwd<S>(s) << '\n' << std::flush;
-  // assert(ok);
-}
-
-#define CHECK(x) (out((x), #x))
+using namespace ZuTestUtil;
 
 ZuStructFacet(Bah);
 
@@ -54,23 +48,34 @@ ZtStructRender(Foo, Bah,
   bytesVec, t,
   (iv,     ASN1::Type<OID>));
 
-int main()
+void roundTrip()
 {
+  ZuTestScope(roundTrip);
+
   Foo foo;
   foo.string = "hello world";
   foo.t = Zm::now();
   foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
+
   ZtString<> asn1;
   ZtASN1::save<ZuFacet::Bah>(asn1, foo);
-  std::cout << "asn1:" << ZtHexDump_{asn1.span()};
-  if (FILE *f = fopen("asn1.der", "w")) {
-    fwrite(&asn1[0], 1, asn1.length(), f);
-    fclose(f);
-  }
+  log("asn1:", ZtHexDump_{asn1.span()});
+
   Foo bar = ZtASN1::handler<Foo, ZuFacet::Bah>(asn1).ctor();
-  std::cout << bar << '\n';
+  log(bar);
+  ZuCheck(bar.string == foo.string);
+  ZuCheck(bar.bytesVec.length() == foo.bytesVec.length());
+
   ZtString<> asn2;
   ZtASN1::save<ZuFacet::Bah>(asn2, bar);
-  std::cout << "asn2:" << ZtHexDump_{asn2.span()};
-  CHECK(asn1 == asn2);
+  log("asn2:", ZtHexDump_{asn2.span()});
+  ZuCheck(asn1 == asn2);
+}
+
+int main(int argc, char **argv)
+{
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall(roundTrip);
+  return 0;
 }

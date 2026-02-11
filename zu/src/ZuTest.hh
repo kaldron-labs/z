@@ -196,7 +196,7 @@ struct ZuTest_Context {
       &ZuTest_scope, __FILE__, __LINE__, \
       ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))), 0>(); \
     __VA_OPT__(if) (!ZuTestMgr::check(&ZuTest_check, (x), nullptr)) \
-    __VA_OPT__(ZuPP_Strip(__VA_ARGS__)); \
+    __VA_OPT__(ZuPP_Eval(ZuPP_MapComma(ZuPP_Strip, __VA_ARGS__))); \
   } while (0)
 
 #define ZuTestScopeRT_(name) \
@@ -210,7 +210,7 @@ struct ZuTest_Context {
   do { \
     __VA_OPT__(if) (!ZuTestMgr::check(nullptr, (x), \
       ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(x))))) \
-    __VA_OPT__(ZuPP_Strip(__VA_ARGS__)); \
+    __VA_OPT__(ZuPP_Eval(ZuPP_MapComma(ZuPP_Strip, __VA_ARGS__))); \
   } while (0)
 
 #define ZuTestRepeat__(name, count) \

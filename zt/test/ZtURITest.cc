@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <iostream>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZuID.hh>
 #include <zlib/ZuUnroll.hh>
@@ -12,12 +12,7 @@
 #include <zlib/ZtStruct.hh>
 #include <zlib/ZtURI.hh>
 
-inline void out(bool ok, const char *s) {
-  std::cout << (ok ? "OK  " : "NOK ") << s << '\n' << std::flush;
-  // assert(ok);
-}
-
-#define CHECK(x) (out((x), #x))
+using namespace ZuTestUtil;
 
 namespace Values {
   ZtEnum(Values, int8_t, High, Low, Normal);
@@ -51,16 +46,12 @@ ZtStruct((NestedJSON, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
-// void debug_break() { }
-
 struct Blur : public ZtArray<ZtArray<uint8_t>> {
   ZuDerive_(Blur, ZtArray<ZtArray<uint8_t>>)
   template <typename T>
   Blur(T &&v) {
-    // debug_break();
     this->Base::~Base();
     new (this) Base(ZuFwd<T>(v));
-    // debug_break();
   }
 };
 
@@ -80,7 +71,6 @@ struct Foo {
   ZuTime time_;
   Nested nested;
   NestedJSON nestedJSON;
-  // ZtArray<ZtArray<uint8_t>> bytesVec;
   Blur bytesVec;
 
   friend ZtStructPrint ZuPrintType(Foo *);
@@ -93,11 +83,11 @@ ZtStruct(Foo,
   (((int_),		(Ctor<3>)),	(Int32)),
   (((int_ranged),	(Ctor<4>)),	(Int32, 42, 0, 100)),
   (((hex),		(Ctor<5>, Hex)),
-    					(UInt32, 0xdeadbeef)),
+					(UInt32, 0xdeadbeef)),
   (((enum_),		(Ctor<6>, Enum<Values::Map>)),
-    					(Int32, Values::Normal)),
+					(Int32, Values::Normal)),
   (((flags),		(Ctor<7>, Flags<Flags::Map>)),
-    					(UInt128, Flags::Bit1())),
+					(UInt128, Flags::Bit1())),
   (((float_),		(Ctor<8>)),	(Float)),
   (((float_ranged),	(Ctor<9>)),	(Float, 0.42, 0.0, 1)),
   (((fixed),		(Ctor<10>)),	(Fixed)),
@@ -123,8 +113,10 @@ ZtURIConfig(Bah, (
       ZtURI_Annotated<true,
 	ZtURI_Wrapped<true>>>>));
 
-int main()
+void roundTrip()
 {
+  ZuTestScope(roundTrip);
+
   char empty[] = "";
   auto scan = ZtURI::scan(empty);
   Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
@@ -132,27 +124,44 @@ int main()
   foo.float_ = 42.01;
   foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
   foo.time_ = Zm::now();
+
   ZtString<> uri;
   ZtURI::save<ZuFacet::Bah>(uri, foo);
-  std::cout << uri << '\n';
-  ZuUnroll::all<ZuFields<Foo>>([&foo]<typename T>() mutable {
-    std::cout
-      << T::id() << '='
-      << typename T::Type::template Print<ZtFmt::Default>{T::get(foo)} << '\n';
-  });
+  log("uri=", uri);
+
+  if (verbose) {
+    ZuUnroll::all<ZuFields<Foo>>([&foo]<typename T>() mutable {
+      std::cerr
+	<< T::id() << '='
+	<< typename T::Type::template Print<ZtFmt::Default>{T::get(foo)} << '\n';
+    });
+  }
+
   ZtString<> uri_ = uri;
   scan = ZtURI::scan(uri);
-  CHECK(scan.p<0>() > 0);
-  if (!scan.p<1>()) { std::cerr << "scan() failed!\n"; ::exit(1); }
+  ZuCheck(scan.p<0>() > 0);
+  ZuCheck(scan.p<1>());
+  if (!scan.p<1>()) return;
+
   Foo bar = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
-  ZuUnroll::all<ZuFields<Foo>>([&bar]<typename T>() mutable {
-    std::cout
-      << T::id() << '='
-      << typename T::Type::template Print<ZtFmt::Default>{T::get(bar)} << '\n';
-  });
+  if (verbose) {
+    ZuUnroll::all<ZuFields<Foo>>([&bar]<typename T>() mutable {
+      std::cerr
+	<< T::id() << '='
+	<< typename T::Type::template Print<ZtFmt::Default>{T::get(bar)} << '\n';
+    });
+  }
+
   ZtString<> uri2;
   ZtURI::save<ZuFacet::Bah>(uri2, bar);
-  std::cout << uri2 << '\n';
-  CHECK(uri_ == uri2);
+  log("uri2=", uri2);
+  ZuCheck(uri_ == uri2);
+}
+
+int main(int argc, char **argv)
+{
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall(roundTrip);
   return 0;
 }

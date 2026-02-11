@@ -4,50 +4,67 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <limits.h>
-#include <float.h>
-
 #include <string_view>
+
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmHash.hh>
 #include <zlib/ZtString.hh>
 
-#include "../../zu/test/Analyze.hh"
+using namespace ZuTestUtil;
 
-void doit(bool high)
+namespace {
+
+constexpr const char *Words[] = {
+  "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+  "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi", "rho",
+  "sigma", "tau", "upsilon", "phi", "chi", "psi", "omega"
+};
+
+void runCase(bool high)
 {
-  FILE *f = fopen("words", "r");
-  if (!f) { perror("words"); Zm::exit(1); }
-  char buf[512];
-  int count[1024]; memset(count, 0, sizeof(count));
-  int count2[1024]; memset(count2, 0, sizeof(count2));
-  memset(count, 0, sizeof(count));
-  while (fgets(buf, 512, f)) {
-    buf[511] = 0;
-    ZtString<> s; s -= buf;
-    int n = s.length();
-    if (n <= 1) continue;
-    s.length(n - 1);
+  ZuTestScope(runCase);
+
+  int count[1024] = { 0 };
+  int count2[1024] = { 0 };
+  unsigned total = 0;
+
+  for (auto word: Words) {
+    ZtString<> s = word;
     uint32_t hash = s.hash();
     hash = high ? ZmHashBits(hash, 10) : (hash & 1023);
+
     uint32_t hash2 = std::hash<std::basic_string_view<char>>{}(
       std::basic_string_view<char>(s.data(), s.length()));
-    hash2 = high ? ZmHashBits(hash, 10) : (hash2 & 1023);
+    hash2 = high ? ZmHashBits(hash2, 10) : (hash2 & 1023);
+
     count[hash]++;
     count2[hash2]++;
+    total++;
   }
-  fclose(f);
-  analyze("string ZuHash", count, 1024);
-  analyze("string std::hash", count2, 1024);
+
+  int sum1 = 0, sum2 = 0, used1 = 0, used2 = 0;
+  for (unsigned i = 0; i < 1024; i++) {
+    sum1 += count[i];
+    sum2 += count2[i];
+    if (count[i]) used1++;
+    if (count2[i]) used2++;
+  }
+
+  ZuCheck(sum1 == int(total));
+  ZuCheck(sum2 == int(total));
+  ZuCheck(used1 > 1);
+  ZuCheck(used2 > 1);
+  log("hash mode=", high ? "high" : "low", " used=", used1, '/', used2);
 }
 
-int main()
+} // namespace
+
+int main(int argc, char **argv)
 {
-  doit(true);
-  doit(false);
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall_("high-bit distribution", runCase, true);
+  ZuTestCall_("low-bit distribution", runCase, false);
+  return 0;
 }

@@ -46,10 +46,12 @@ struct ZtAPI ZtRegexError {
   friend ZuPrintFn ZuPrintType(ZtRegexError *);
 };
 
+// n should be the captureCount() (includes $& but not $` and $')
 #define ZtRegexOVector(o, n) \
   auto o##_size = unsigned(n) * 3; \
   auto o = ZtLocalArray(ZtRegex::OVector, o##_size)
 
+// n should be the captureCount() (includes $& but not $` and $')
 #define ZtRegexCaptures(c, n) \
   auto c##_size = unsigned(n) + 2; \
   auto c = ZtLocalArray(ZtRegex::Captures, c##_size)
@@ -90,6 +92,7 @@ public:
 
   void study();
 
+  // the capture count includes $& but not $` and $'
   unsigned captureCount() const { return m_captureCount; }
 
   // options below are pcre_exec() options

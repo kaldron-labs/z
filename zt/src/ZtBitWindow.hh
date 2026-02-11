@@ -252,6 +252,7 @@ public:
   unsigned size() const { return m_size<<IndexShift; }
 
   // l(unsigned index, unsigned value) -> bool
+  // - evaluating to false aborts iteration
   template <typename L>
   bool all(L &&l) {
     for (unsigned i = 0, n = m_size; i < n; i++) {
