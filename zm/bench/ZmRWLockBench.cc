@@ -4,55 +4,69 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// read/write lock stress test program
-
 #include <stdlib.h>
 
 #include <iostream>
 
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmGuard.hh>
-#include <zlib/ZmThread.hh>
 #include <zlib/ZmRWLock.hh>
+#include <zlib/ZmThread.hh>
 #include <zlib/ZuTime.hh>
 
 struct Shared {
-  unsigned	counter = 0;
-  unsigned	readerChecksum = 0;
-  ZmRWLock	rwLock;
+  unsigned		value = 0;
+  ZmRWLock		lock;
+  ZmAtomic<unsigned>	writeOps = 0;
+  ZmAtomic<unsigned>	readOps = 0;
+  ZmAtomic<unsigned>	tryReadMiss = 0;
+  ZmAtomic<unsigned>	tryWriteMiss = 0;
 };
+
+void writer(Shared *shared, unsigned iterations)
+{
+  for (unsigned i = 0; i < iterations; i++) {
+    ZmGuard<ZmRWLock> guard(shared->lock);
+    ++shared->value;
+    ++shared->writeOps;
+  }
+}
 
 void reader(Shared *shared, unsigned iterations)
 {
   unsigned checksum = 0;
   for (unsigned i = 0; i < iterations; i++) {
-    ZmReadGuard<ZmRWLock> guard(shared->rwLock);
-    checksum += shared->counter;
-  }
-  ZmGuard<ZmRWLock> guard(shared->rwLock);
-  shared->readerChecksum += checksum;
-}
+    if (shared->lock.readtrylock() == 0) {
+      checksum += shared->value;
+      ++shared->readOps;
+      shared->lock.readunlock();
+    } else
+      ++shared->tryReadMiss;
 
-void writer(Shared *shared, unsigned iterations)
-{
-  for (unsigned i = 0; i < iterations; i++) {
-    ZmGuard<ZmRWLock> guard(shared->rwLock);
-    ++shared->counter;
+    if (shared->lock.trylock() == 0) {
+      ++shared->value;
+      ++shared->writeOps;
+      shared->lock.unlock();
+    } else
+      ++shared->tryWriteMiss;
   }
+  if (checksum == 0xFFFFFFFFu)
+    std::cout << "checksum guard: " << checksum << '\n';
 }
 
 void usage_()
 {
   std::cout <<
-    "Usage: ZmRWTest [ITERATIONS [READERS [WRITERS]]]\n"
-    "  Defaults: ITERATIONS=100000 READERS=2 WRITERS=4\n";
+    "Usage: ZmRWLockBench [ITERATIONS [READERS [WRITERS]]]\n"
+    "  Defaults: ITERATIONS=100000 READERS=4 WRITERS=2\n";
   Zm::exit(1);
 }
 
 int main(int argc, char **argv)
 {
   unsigned iterations = 100000;
-  unsigned nReaders = 2;
-  unsigned nWriters = 4;
+  unsigned nReaders = 4;
+  unsigned nWriters = 2;
 
   if (argc > 4) usage_();
   if (argc > 1) iterations = atoi(argv[1]);
@@ -80,16 +94,22 @@ int main(int argc, char **argv)
 
   delete [] threads;
 
-  unsigned expected = iterations * nWriters;
+  unsigned writes = shared.writeOps;
+  unsigned reads = shared.readOps;
+  unsigned readMiss = shared.tryReadMiss;
+  unsigned writeMiss = shared.tryWriteMiss;
+
   std::cout << "iterations: " << iterations << '\n'
 	    << "readers: " << nReaders << '\n'
 	    << "writers: " << nWriters << '\n'
-	    << "counter: " << shared.counter << '\n'
-	    << "expected: " << expected << '\n'
-	    << "readerChecksum: " << shared.readerChecksum << '\n'
+	    << "value: " << shared.value << '\n'
+	    << "writeOps: " << writes << '\n'
+	    << "readOps: " << reads << '\n'
+	    << "tryReadMiss: " << readMiss << '\n'
+	    << "tryWriteMiss: " << writeMiss << '\n'
 	    << "elapsed: " << elapsed.interval() << '\n';
 
-  if (shared.counter != expected) {
+  if (shared.value != writes) {
     std::cout << "FAILED\n";
     return 1;
   }

@@ -616,8 +616,10 @@ struct Test {
 void usage_()
 {
   std::cerr <<
-    "Usage: ZmRingTest2 [SIZE]\n"
-    "\tSIZE - optional requested size of ring buffer\n"
+    "Usage: ZmRingTest2 [OPTION]... [SIZE]\n"
+    "  SIZE - optional requested size of ring buffer\n\n"
+    "Options:\n"
+    "  -q\tquiet output (default when test-harnessed)\n";
     << std::flush;
   Zm::exit(1);
 }
@@ -626,6 +628,7 @@ int main(int argc, char **argv)
 {
   int size = 8192;
   unsigned nargs = 0;
+  verbose = !::getenv("HARNESS_ACTIVE");
   for (int i = 1; i < argc; i++)
     if (argv[i][0] == '-') {
       if (argv[i][2]) usage_();
