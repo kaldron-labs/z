@@ -620,7 +620,6 @@ void usage_()
     "  SIZE - optional requested size of ring buffer\n\n"
     "Options:\n"
     "  -q\tquiet output (default when test-harnessed)\n";
-    << std::flush;
   Zm::exit(1);
 }
 
