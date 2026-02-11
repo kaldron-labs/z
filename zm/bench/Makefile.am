@@ -11,18 +11,18 @@ LDADD = $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
 	ZmBench ZmRingBench ZmFnBench \
-	ZmCacheTest ZmHashTest ZmHeapTest ZmHeapTest2 ZmLockTest ZmLHBench \
-	ZmRWTest ZmRWLockTest ZmHashThread ZmLockTest2
+	ZmCacheBench ZmHashBench ZmHeapBench ZmHeapTest2 ZmLockBench ZmLHBench \
+	ZmRWBench ZmRWLockBench ZmHashThread ZmLockTest2
 ZmBench_SOURCES = ZmBench.cc
 ZmRingBench_SOURCES = ZmRingBench.cc
 ZmFnBench_SOURCES = ZmFnBench.cc
-ZmCacheTest_SOURCES = ZmCacheTest.cc
-ZmHashTest_SOURCES = ZmHashTest.cc
-ZmHeapTest_SOURCES = ZmHeapTest.cc
+ZmCacheBench_SOURCES = ZmCacheBench.cc
+ZmHashBench_SOURCES = ZmHashBench.cc
+ZmHeapBench_SOURCES = ZmHeapBench.cc
 ZmHeapTest2_SOURCES = ZmHeapTest2.cc
-ZmLockTest_SOURCES = ZmLockTest.cc
+ZmLockBench_SOURCES = ZmLockBench.cc
 ZmLHBench_SOURCES = ZmLHBench.cc
-ZmRWTest_SOURCES = ZmRWTest.cc
-ZmRWLockTest_SOURCES = ZmRWLockTest.cc
+ZmRWBench_SOURCES = ZmRWBench.cc
+ZmRWLockBench_SOURCES = ZmRWLockBench.cc
 ZmHashThread_SOURCES = ZmHashThread.cc
 ZmLockTest2_SOURCES = ZmLockTest2.cc

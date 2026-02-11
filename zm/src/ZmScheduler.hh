@@ -61,11 +61,88 @@ private:
 struct ZmAPI ZmSchedParams {
   using Thread = ZmSchedTParams;
 
-  ZmSchedParams() { m_threads = new Thread[m_nThreads + 1]; }
-  ZmSchedParams(const ZmSchedParams &) = default;
-  ZmSchedParams &operator =(const ZmSchedParams &) = default;
-  ZmSchedParams(ZmSchedParams &&) = default;
-  ZmSchedParams &operator =(ZmSchedParams &&) = default;
+  ZmSchedParams() : m_threads{new Thread[m_nThreads + 1]} { }
+  ZmSchedParams(const ZmSchedParams &p) :
+    m_id{p.m_id},
+    m_nThreads{p.m_nThreads},
+    m_stackSize{p.m_stackSize},
+    m_priority{p.m_priority},
+    m_partition{p.m_partition},
+    m_quantum{p.m_quantum},
+    m_queueSize{p.m_queueSize},
+    m_spin{p.m_spin},
+    m_timeout{p.m_timeout},
+    m_threads{new Thread[p.m_nThreads + 1]},
+    m_startTimer{p.m_startTimer},
+    m_ll{p.m_ll}
+  {
+    if (p.m_threads)
+      for (unsigned sid = 0; sid <= m_nThreads; sid++)
+	m_threads[sid] = p.m_threads[sid];
+  }
+  ZmSchedParams &operator =(const ZmSchedParams &p) {
+    if (this == &p) return *this;
+
+    Thread *threads = new Thread[p.m_nThreads + 1];
+    if (p.m_threads)
+      for (unsigned sid = 0; sid <= p.m_nThreads; sid++)
+	threads[sid] = p.m_threads[sid];
+
+    delete [] m_threads;
+
+    m_id = p.m_id;
+    m_nThreads = p.m_nThreads;
+    m_stackSize = p.m_stackSize;
+    m_priority = p.m_priority;
+    m_partition = p.m_partition;
+    m_quantum = p.m_quantum;
+    m_queueSize = p.m_queueSize;
+    m_spin = p.m_spin;
+    m_timeout = p.m_timeout;
+    m_threads = threads;
+    m_startTimer = p.m_startTimer;
+    m_ll = p.m_ll;
+    return *this;
+  }
+  ZmSchedParams(ZmSchedParams &&p) noexcept :
+    m_id{ZuMv(p.m_id)},
+    m_nThreads{p.m_nThreads},
+    m_stackSize{p.m_stackSize},
+    m_priority{p.m_priority},
+    m_partition{p.m_partition},
+    m_quantum{p.m_quantum},
+    m_queueSize{p.m_queueSize},
+    m_spin{p.m_spin},
+    m_timeout{p.m_timeout},
+    m_threads{p.m_threads},
+    m_startTimer{p.m_startTimer},
+    m_ll{p.m_ll}
+  {
+    p.m_nThreads = 0;
+    p.m_threads = nullptr;
+  }
+  ZmSchedParams &operator =(ZmSchedParams &&p) noexcept {
+    if (this == &p) return *this;
+
+    delete [] m_threads;
+
+    m_id = ZuMv(p.m_id);
+    m_nThreads = p.m_nThreads;
+    m_stackSize = p.m_stackSize;
+    m_priority = p.m_priority;
+    m_partition = p.m_partition;
+    m_quantum = p.m_quantum;
+    m_queueSize = p.m_queueSize;
+    m_spin = p.m_spin;
+    m_timeout = p.m_timeout;
+    m_threads = p.m_threads;
+    m_startTimer = p.m_startTimer;
+    m_ll = p.m_ll;
+
+    p.m_nThreads = 0;
+    p.m_threads = nullptr;
+    return *this;
+  }
   ~ZmSchedParams() { delete [] m_threads; }
 
   using ID = ZuID;

@@ -100,6 +100,7 @@ void usage_()
   std::cerr <<
     "Usage: ZmSchedTest [OPTION]...\n\n"
     "Options:\n"
+    "  -q\tquiet output (default when test-harnessed)\n";
     "  -n N\tset number of threads to N\n"
     "  -c ID=CPUSET\tset thread ID affinity to CPUSET (e.g. 1=2,4)\n"
     "  -i BITMAP\tset isolation (e.g. 1,3-4)\n";
@@ -111,6 +112,7 @@ int main(int argc, char **argv)
   ZmSchedParams params = ZmSchedParams().id("sched");
   ZmBitmap isolation;
 
+  verbose = !::getenv("HARNESS_ACTIVE");
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] != '-') usage_();
     switch (argv[i][1]) {

@@ -102,7 +102,7 @@ void *run(void *c)
 
 void usage_()
 {
-  std::cerr << "Usage: ZmLockTest nthreads [count]\n";
+  std::cerr << "Usage: ZmLockBench nthreads [count]\n";
   Zm::exit(1);
 }
 

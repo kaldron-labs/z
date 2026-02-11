@@ -21,7 +21,7 @@ void usage_()
     "Usage: ZmRingTest3 [OPTION]...\n"
     "  test read/write ring buffer in shared memory\n\n"
     "Options:\n"
-    "  -q\t\t- suppress diagnostic output\n"
+    "  -q\t\tquiet output (default when test-harnessed)\n";
     "  -b BUFSIZE\t- set buffer size to BUFSIZE (default: 8192)\n"
     "  -n COUNT\t- set number of messages to COUNT (default: 1)\n"
     "  -m MSGSIZE\t- set message size to MSGSIZE (default: 128)\n";
@@ -62,6 +62,7 @@ int main(int argc, char **argv)
 {
   Params params;
 
+  verbose = !::getenv("HARNESS_ACTIVE");
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] != '-') usage_();
     if (argv[i][2]) usage_();

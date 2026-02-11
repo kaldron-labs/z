@@ -21,7 +21,8 @@ using namespace ZuTestUtil;
 
 void out(const char *s) { log(s); }
 
-template <int N> struct String {
+template <unsigned N>
+struct String {
   String() { }
   String(const String &s) { memcpy(m_data, s.m_data, N); }
   String &operator =(const String &s) {
@@ -117,6 +118,8 @@ template <typename H> void del(H &h, int i)
 
 template <typename H> void iter(H &h, int check, int del = -1)
 {
+  ZuTestScope("iter");
+
   auto i = h.iter("Hello");
   int j;
   int total = 0;
@@ -124,12 +127,14 @@ template <typename H> void iter(H &h, int check, int del = -1)
     total += j;
     if (j == del) i.del();
   }
-  log("total=", total, " check=", check);
-  ZuCheckRT(total == check);
+
+  ZuCHECK(total == check, "total=", total, " check=", check);
 }
 
 template <typename H> void iter2(H &h, int check, int del = -1)
 {
+  ZuTestScope("iter2");
+
   typename H::Iter i(h);
   int j;
   int total = 0;
@@ -137,113 +142,117 @@ template <typename H> void iter2(H &h, int check, int del = -1)
     if (j >= 0) total += j;
     if (j == del) i.del();
   }
-  log("total=", total, " check=", check);
-  ZuCheckRT(total == check);
+
+  ZuCHECK(total == check, "total=", total, " check=", check);
 }
 
 template <typename H, template <typename> class A>
 void funcTest_(int bits, double loadFactor)
 {
+  ZuTestScope(funcTest_);
+
   ZmRef<H> h_ = new H{ZmHashParams{}.bits(bits).loadFactor(loadFactor)};
   H &h = *h_;
   log("funcTest_<", ZmDemangle<H>{}, ", ", ZmDemangle<A<H>>{}, ">(", bits, ", ", loadFactor, ")");
   h.add("Goodbye", -42);
-  ZuCheckRT(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -42);
-  add(h), iter(h, 42+43+44);
+  ZuCheck(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -42);
+  add(h); ZuTestCall(iter, h, 42+43+44);
   out("DEL 42 43 44");
-  del(h, 42), iter(h, 43+44), del(h, 43), iter(h, 44), del(h, 44), iter(h, 0);
-  ZuCheckRT(h.count_() == 1);
-  add(h), iter(h, 42+43+44);
+  del(h, 42); ZuTestCall(iter, h, 43+44); del(h, 43); ZuTestCall(iter, h, 44); del(h, 44); ZuTestCall(iter, h, 0);
+  ZuCheck(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44);
   out("DEL 42 44 43");
-  del(h, 42), iter(h, 43+44), del(h, 44), iter(h, 43), del(h, 43), iter(h, 0);
-  ZuCheckRT(h.count_() == 1);
-  add(h), iter(h, 42+43+44);
+  del(h, 42); ZuTestCall(iter, h, 43+44); del(h, 44); ZuTestCall(iter, h, 43); del(h, 43); ZuTestCall(iter, h, 0);
+  ZuCheck(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44);
   out("DEL 43 42 44");
-  del(h, 43), iter(h, 42+44), del(h, 42), iter(h, 44), del(h, 44), iter(h, 0);
-  ZuCheckRT(h.count_() == 1);
-  add(h), iter(h, 42+43+44);
+  del(h, 43); ZuTestCall(iter, h, 42+44); del(h, 42); ZuTestCall(iter, h, 44); del(h, 44); ZuTestCall(iter, h, 0);
+  ZuCheck(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44);
   out("DEL 43 44 42");
-  del(h, 43), iter(h, 42+44), del(h, 44), iter(h, 42), del(h, 42), iter(h, 0);
-  ZuCheckRT(h.count_() == 1);
-  add(h), iter(h, 42+43+44);
+  del(h, 43); ZuTestCall(iter, h, 42+44); del(h, 44); ZuTestCall(iter, h, 42); del(h, 42); ZuTestCall(iter, h, 0);
+  ZuCheck(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44);
   out("DEL 44 42 43");
-  del(h, 44), iter(h, 42+43), del(h, 42), iter(h, 43), del(h, 43), iter(h, 0);
-  ZuCheckRT(h.count_() == 1);
-  add(h), iter(h, 42+43+44);
+  del(h, 44); ZuTestCall(iter, h, 42+43); del(h, 42); ZuTestCall(iter, h, 43); del(h, 43); ZuTestCall(iter, h, 0);
+  ZuCheck(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44);
   out("DEL 44 43 42");
-  del(h, 44), iter(h, 42+43), del(h, 43), iter(h, 42), del(h, 42), iter(h, 0);
-  ZuCheckRT(h.count_() == 1);
+  del(h, 44); ZuTestCall(iter, h, 42+43); del(h, 43); ZuTestCall(iter, h, 42); del(h, 42); ZuTestCall(iter, h, 0);
+  ZuCheck(h.count_() == 1);
   add5(h);
   out("DEL 44 43 45 [42->46]");
-  del(h, 44), iter(h, 42+43+45+46), del(h, 43), iter(h, 42+45+46),
-  del(h, 45), iter(h, 42+46), del(h, 42), del(h, 46);
-  ZuCheckRT(h.count_() == 1);
+  del(h, 44); ZuTestCall(iter, h, 42+43+45+46); del(h, 43); ZuTestCall(iter, h, 42+45+46);
+  del(h, 45); ZuTestCall(iter, h, 42+46); del(h, 42); del(h, 46);
+  ZuCheck(h.count_() == 1);
   add5(h);
   out("DEL 44 45 43 [42->46]");
-  del(h, 44), iter(h, 42+43+45+46), del(h, 45), iter(h, 42+43+46),
-  del(h, 43), iter(h, 42+46), del(h, 46), del(h, 42);
-  ZuCheckRT(h.count_() == 1);
+  del(h, 44); ZuTestCall(iter, h, 42+43+45+46); del(h, 45); ZuTestCall(iter, h, 42+43+46);
+  del(h, 43); ZuTestCall(iter, h, 42+46); del(h, 46); del(h, 42);
+  ZuCheck(h.count_() == 1);
   h.findAdd("Goodbye", -46);
   {
     auto v = A<H>::val(typename A<H>::T{h.find("Goodbye")});
-    ZuCheckRT(v == -42 || v == -46);
+    ZuCheck(v == -42 || v == -46);
   }
   h.del("Goodbye", -42);
   h.findAdd("Goodbye", -46);
-  ZuCheckRT(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -46);
+  ZuCheck(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -46);
   {
     auto v = A<H>::val(typename A<H>::T{h.find("Goodbye")});
-    ZuCheckRT(v == -42 || v == -46);
+    ZuCheck(v == -42 || v == -46);
   }
-  ZuCheckRT(h.count_() == 1);
+  ZuCheck(h.count_() == 1);
 
   out("ITERDEL 44 43 42");
   add(h);
-  iter(h, 42+43+44, 44);
-  iter(h, 42+43, 43);
-  iter(h, 42, 42);
-  ZuCheckRT(h.count_() == 1);
+  ZuTestCall(iter, h, 42+43+44, 44);
+  ZuTestCall(iter, h, 42+43, 43);
+  ZuTestCall(iter, h, 42, 42);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL 43 44 42");
-  add(h); iter(h, 42+43+44, 43); iter(h, 42+44, 44); iter(h, 42, 42);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44, 43); ZuTestCall(iter, h, 42+44, 44); ZuTestCall(iter, h, 42, 42);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL 42 44 43");
-  add(h); iter(h, 42+43+44, 42); iter(h, 43+44, 44); iter(h, 43, 43);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44, 42); ZuTestCall(iter, h, 43+44, 44); ZuTestCall(iter, h, 43, 43);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL 44 42 43");
-  add(h); iter(h, 42+43+44, 44); iter(h, 42+43, 42); iter(h, 43, 43);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44, 44); ZuTestCall(iter, h, 42+43, 42); ZuTestCall(iter, h, 43, 43);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL 43 42 44");
-  add(h); iter(h, 42+43+44, 43); iter(h, 42+44, 42); iter(h, 44, 44);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44, 43); ZuTestCall(iter, h, 42+44, 42); ZuTestCall(iter, h, 44, 44);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL 42 43 44");
-  add(h); iter(h, 42+43+44, 42); iter(h, 43+44, 43); iter(h, 44, 44);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter, h, 42+43+44, 42); ZuTestCall(iter, h, 43+44, 43); ZuTestCall(iter, h, 44, 44);
+  ZuCheck(h.count_() == 1);
 
   out("ITERDEL2 44 43 42");
-  add(h); iter2(h, 42+43+44, 44); iter2(h, 42+43, 43); iter2(h, 42, 42);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter2, h, 42+43+44, 44); ZuTestCall(iter2, h, 42+43, 43); ZuTestCall(iter2, h, 42, 42);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL2 43 44 42");
-  add(h); iter2(h, 42+43+44, 43); iter2(h, 42+44, 44); iter2(h, 42, 42);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter2, h, 42+43+44, 43); ZuTestCall(iter2, h, 42+44, 44); ZuTestCall(iter2, h, 42, 42);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL2 42 44 43");
-  add(h); iter2(h, 42+43+44, 42); iter2(h, 43+44, 44); iter2(h, 43, 43);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter2, h, 42+43+44, 42); ZuTestCall(iter2, h, 43+44, 44); ZuTestCall(iter2, h, 43, 43);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL2 44 42 43");
-  add(h); iter2(h, 42+43+44, 44); iter2(h, 42+43, 42); iter2(h, 43, 43);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter2, h, 42+43+44, 44); ZuTestCall(iter2, h, 42+43, 42); ZuTestCall(iter2, h, 43, 43);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL2 43 42 44");
-  add(h); iter2(h, 42+43+44, 43); iter2(h, 42+44, 42); iter2(h, 44, 44);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter2, h, 42+43+44, 43); ZuTestCall(iter2, h, 42+44, 42); ZuTestCall(iter2, h, 44, 44);
+  ZuCheck(h.count_() == 1);
   out("ITERDEL2 42 43 44");
-  add(h); iter2(h, 42+43+44, 42); iter2(h, 43+44, 43); iter2(h, 44, 44);
-  ZuCheckRT(h.count_() == 1);
+  add(h); ZuTestCall(iter2, h, 42+43+44, 42); ZuTestCall(iter2, h, 43+44, 43); ZuTestCall(iter2, h, 44, 44);
+  ZuCheck(h.count_() == 1);
 }
 
 template <typename H, template <typename> class A> void funcTest()
 {
+  ZuTestScopeRT(funcTest);
+
   for (unsigned bits = 1; bits < 8; bits++) {
-    funcTest_<H, A>(bits, 0.5);
-    funcTest_<H, A>(bits, 1.0);
+    ZuTestCallRT_("funcTest_(0.5)", (funcTest_<H, A>), bits, 0.5);
+    ZuTestCallRT_("funcTest_(1.0)", (funcTest_<H, A>), bits, 1.0);
   }
 }
 
@@ -252,6 +261,6 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
 
-  funcTest<Hash, HashAdapter>();
-  funcTest<LHash, LHashAdapter>();
+  ZuTestCall_("funcTest<Hash, HashAdapter>", (funcTest<Hash, HashAdapter>));
+  ZuTestCall_("funcTest<LHash, LHashAdapter>", (funcTest<LHash, LHashAdapter>));
 }

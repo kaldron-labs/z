@@ -66,7 +66,7 @@ void doit()
 void usage_()
 {
   std::cerr <<
-    "Usage: ZmHeapTest COUNT SIZE NTHR [VERB]\n\n"
+    "Usage: ZmHeapBench COUNT SIZE NTHR [VERB]\n\n"
     "  COUNT\t- number of iterations\n"
     "  SIZE\t- size of heap\n"
     "  NTHR\t- number of threads\n"
