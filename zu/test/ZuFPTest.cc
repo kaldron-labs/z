@@ -6,7 +6,7 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuFP.hh>
 #include <zlib/ZuBox.hh>
 

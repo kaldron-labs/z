@@ -12,7 +12,7 @@
 #include <utility>
 #include <array>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuBox.hh>
@@ -27,28 +27,17 @@
 #include <zlib/ZuID.hh>
 #include <zlib/ZuDemangle.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x) ZuCheck(x)
+using namespace ZuTestUtil;
 
 template <typename T>
 void test() {
   ZuTestScope(test);
-  CHECK(ZuCmp<T>::cmp(1, 0) > 0);
-  CHECK(ZuCmp<T>::cmp(0, 1) < 0);
-  CHECK(!ZuCmp<T>::cmp(0, 0));
-  CHECK(!ZuCmp<T>::cmp(1, 1));
-  CHECK(ZuCmp<T>::null(ZuCmp<T>::null()));
-  CHECK(!ZuCmp<T>::null(T(1)));
+  ZuCHECK(ZuCmp<T>::cmp(1, 0) > 0);
+  ZuCHECK(ZuCmp<T>::cmp(0, 1) < 0);
+  ZuCHECK(!ZuCmp<T>::cmp(0, 0));
+  ZuCHECK(!ZuCmp<T>::cmp(1, 1));
+  ZuCHECK(ZuCmp<T>::null(ZuCmp<T>::null()));
+  ZuCHECK(!ZuCmp<T>::null(T(1)));
 }
 
 #define TEST_(T, name) ZuTestCall_("test<" name ">", test<T>)
@@ -81,7 +70,7 @@ void checkNull() {
   ZuBox<T2> v(t);
   ZuBox<T2> w;
   w = t;
-  CHECK(!*u && !*v && !*w);
+  ZuCHECK(!*u && !*v && !*w);
 }
 
 namespace T1 {
@@ -125,87 +114,87 @@ template <unsigned N> struct SortTest {
       ZuArray<int, 1> foo{};
       ZuCArray<80> s;
       test_(foo, s);
-      CHECK(s == "");
-      CHECK(ZuSearch(&foo[0], 0, 0) == 0);
-      CHECK(ZuInterSearch(&foo[0], 0, 0) == 0);
+      ZuCHECK(s == "");
+      ZuCHECK(ZuSearch(&foo[0], 0, 0) == 0);
+      ZuCHECK(ZuInterSearch(&foo[0], 0, 0) == 0);
     }
     {
       ZuArray<int, 1> foo{1};
       ZuCArray<80> s;
       test_(foo, s);
-      CHECK(s == "1");
-      CHECK(ZuSearch(&foo[0], 1, 0) == 0);
-      CHECK(ZuInterSearch(&foo[0], 1, 0) == 0);
-      CHECK(ZuSearch(&foo[0], 1, 1) == 1);
-      CHECK(ZuInterSearch(&foo[0], 1, 1) == 1);
-      CHECK(ZuSearch<false>(&foo[0], 1, 1) == 0);
-      CHECK(ZuInterSearch<false>(&foo[0], 1, 1) == 0);
+      ZuCHECK(s == "1");
+      ZuCHECK(ZuSearch(&foo[0], 1, 0) == 0);
+      ZuCHECK(ZuInterSearch(&foo[0], 1, 0) == 0);
+      ZuCHECK(ZuSearch(&foo[0], 1, 1) == 1);
+      ZuCHECK(ZuInterSearch(&foo[0], 1, 1) == 1);
+      ZuCHECK(ZuSearch<false>(&foo[0], 1, 1) == 0);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 1, 1) == 0);
     }
     {
       ZuArray<int, 2> foo{0, 1};
       ZuCArray<80> s;
       test_(foo, s);
-      CHECK(s == "0 1");
-      CHECK(ZuSearch(&foo[0], 2, 0) == 1);
-      CHECK(ZuInterSearch(&foo[0], 2, 0) == 1);
-      CHECK(ZuSearch(&foo[0], 2, 1) == 3);
-      CHECK(ZuInterSearch(&foo[0], 2, 1) == 3);
-      CHECK(ZuSearch<false>(&foo[0], 2, 0) == 0);
-      CHECK(ZuInterSearch<false>(&foo[0], 2, 0) == 0);
-      CHECK(ZuSearch<false>(&foo[0], 2, 1) == 2);
-      CHECK(ZuInterSearch<false>(&foo[0], 2, 1) == 2);
+      ZuCHECK(s == "0 1");
+      ZuCHECK(ZuSearch(&foo[0], 2, 0) == 1);
+      ZuCHECK(ZuInterSearch(&foo[0], 2, 0) == 1);
+      ZuCHECK(ZuSearch(&foo[0], 2, 1) == 3);
+      ZuCHECK(ZuInterSearch(&foo[0], 2, 1) == 3);
+      ZuCHECK(ZuSearch<false>(&foo[0], 2, 0) == 0);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 2, 0) == 0);
+      ZuCHECK(ZuSearch<false>(&foo[0], 2, 1) == 2);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 2, 1) == 2);
     }
     {
       ZuArray<int, 2> foo{1, 0};
       ZuCArray<80> s;
       test_(foo, s);
-      CHECK(s == "0 1");
+      ZuCHECK(s == "0 1");
     }
     {
       ZuArray<int, 3> foo{3, 1, 2};
       ZuCArray<80> s;
       test_(foo, s);
-      CHECK(s == "1 2 3");
-      CHECK(ZuSearch(&foo[0], 3, 0) == 0);
-      CHECK(ZuInterSearch(&foo[0], 3, 0) == 0);
-      CHECK(ZuSearch(&foo[0], 3, 1) == 1);
-      CHECK(ZuInterSearch(&foo[0], 3, 1) == 1);
-      CHECK(ZuSearch(&foo[0], 3, 2) == 3);
-      CHECK(ZuInterSearch(&foo[0], 3, 2) == 3);
-      CHECK(ZuSearch<false>(&foo[0], 3, 2) == 2);
-      CHECK(ZuInterSearch<false>(&foo[0], 3, 2) == 2);
-      CHECK(ZuSearch<false>(&foo[0], 3, 3) == 4);
-      CHECK(ZuInterSearch<false>(&foo[0], 3, 3) == 4);
+      ZuCHECK(s == "1 2 3");
+      ZuCHECK(ZuSearch(&foo[0], 3, 0) == 0);
+      ZuCHECK(ZuInterSearch(&foo[0], 3, 0) == 0);
+      ZuCHECK(ZuSearch(&foo[0], 3, 1) == 1);
+      ZuCHECK(ZuInterSearch(&foo[0], 3, 1) == 1);
+      ZuCHECK(ZuSearch(&foo[0], 3, 2) == 3);
+      ZuCHECK(ZuInterSearch(&foo[0], 3, 2) == 3);
+      ZuCHECK(ZuSearch<false>(&foo[0], 3, 2) == 2);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 3, 2) == 2);
+      ZuCHECK(ZuSearch<false>(&foo[0], 3, 3) == 4);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 3, 3) == 4);
     }
     {
       ZuArray<int, 4> foo{4, 1, 3, 0};
       ZuCArray<80> s;
       test_(foo, s);
-      CHECK(s == "0 1 3 4");
-      CHECK(ZuSearch(&foo[0], 4, 0) == 1);
-      CHECK(ZuInterSearch(&foo[0], 4, 0) == 1);
-      CHECK(ZuSearch(&foo[0], 4, 1) == 3);
-      CHECK(ZuInterSearch(&foo[0], 4, 1) == 3);
-      CHECK(ZuSearch(&foo[0], 4, 2) == 4);
-      CHECK(ZuInterSearch(&foo[0], 4, 2) == 4);
-      CHECK(ZuSearch<false>(&foo[0], 4, 3) == 4);
-      CHECK(ZuInterSearch<false>(&foo[0], 4, 3) == 4);
-      CHECK(ZuSearch<false>(&foo[0], 4, 4) == 6);
-      CHECK(ZuInterSearch<false>(&foo[0], 4, 4) == 6);
+      ZuCHECK(s == "0 1 3 4");
+      ZuCHECK(ZuSearch(&foo[0], 4, 0) == 1);
+      ZuCHECK(ZuInterSearch(&foo[0], 4, 0) == 1);
+      ZuCHECK(ZuSearch(&foo[0], 4, 1) == 3);
+      ZuCHECK(ZuInterSearch(&foo[0], 4, 1) == 3);
+      ZuCHECK(ZuSearch(&foo[0], 4, 2) == 4);
+      ZuCHECK(ZuInterSearch(&foo[0], 4, 2) == 4);
+      ZuCHECK(ZuSearch<false>(&foo[0], 4, 3) == 4);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 4, 3) == 4);
+      ZuCHECK(ZuSearch<false>(&foo[0], 4, 4) == 6);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 4, 4) == 6);
     }
     {
       ZuArray<int, 13> foo{3, 1, 2, 9, 5, 3, 5, 1, 10, 4, 0, 7, 6};
       ZuCArray<80> s;
       test_(foo, s);
-      CHECK(s == "0 1 1 2 3 3 4 5 5 6 7 9 10");
-      CHECK(ZuSearch(&foo[0], 13, 0) == 1);
-      CHECK(ZuInterSearch(&foo[0], 13, 0) == 1);
-      CHECK(ZuSearch(&foo[0], 13, 2) == 7);
-      CHECK(ZuInterSearch(&foo[0], 13, 2) == 7);
-      CHECK(ZuSearch<false>(&foo[0], 13, 5) == 14);
-      CHECK(ZuInterSearch<false>(&foo[0], 13, 5) == 14);
-      CHECK(ZuSearch<false>(&foo[0], 13, 10) == 24);
-      CHECK(ZuInterSearch<false>(&foo[0], 13, 10) == 24);
+      ZuCHECK(s == "0 1 1 2 3 3 4 5 5 6 7 9 10");
+      ZuCHECK(ZuSearch(&foo[0], 13, 0) == 1);
+      ZuCHECK(ZuInterSearch(&foo[0], 13, 0) == 1);
+      ZuCHECK(ZuSearch(&foo[0], 13, 2) == 7);
+      ZuCHECK(ZuInterSearch(&foo[0], 13, 2) == 7);
+      ZuCHECK(ZuSearch<false>(&foo[0], 13, 5) == 14);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 13, 5) == 14);
+      ZuCHECK(ZuSearch<false>(&foo[0], 13, 10) == 24);
+      ZuCHECK(ZuInterSearch<false>(&foo[0], 13, 10) == 24);
     }
   }
 };
@@ -233,7 +222,7 @@ struct O : public ZuObject { };
 template <typename L>
 void foo(L l) {
   ZuTestScope(foo);
-  CHECK(ZuIsStatelessLambda<L>{});
+  ZuCHECK(ZuIsStatelessLambda<L>{});
 }
 
 struct RRef { };
@@ -250,42 +239,32 @@ static decltype(auto) bar(T &&v) { return ZuFwd<T>(v).bar(); }
 template <typename, typename T>
 struct Narrow : public T { using T::T; using T::operator =; };
 
-static void usage()
-{
-  std::cerr << "usage: ZuCmpTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
   {
     struct X { };
-    CHECK(ZuTraits<X>::IsComposite);
-    CHECK(!ZuTraits<int>::IsComposite);
+    ZuCHECK(ZuTraits<X>::IsComposite);
+    ZuCHECK(!ZuTraits<int>::IsComposite);
     enum { Foo = 42 };
     enum _ { Bar = 42 };
-    CHECK(ZuTraits<decltype(Foo)>::IsEnum);
-    CHECK(ZuTraits<_>::IsEnum);
-    CHECK(!ZuTraits<int>::IsEnum);
-    CHECK(!ZuTraits<X>::IsEnum);
+    ZuCHECK(ZuTraits<decltype(Foo)>::IsEnum);
+    ZuCHECK(ZuTraits<_>::IsEnum);
+    ZuCHECK(!ZuTraits<int>::IsEnum);
+    ZuCHECK(!ZuTraits<X>::IsEnum);
   }
 
   TEST(bool);
-  CHECK(ZuCmp<char>::cmp(1, 0) > 0);
-  CHECK(ZuCmp<char>::cmp(0, 1) < 0);
-  CHECK(!ZuCmp<char>::cmp(0, 0));
-  CHECK(!ZuCmp<char>::cmp(1, 1));
-  CHECK(ZuCmp<char>::null(ZuCmp<char>::null()));
-  CHECK(!ZuCmp<char>::null((char)0x80));
-  CHECK(!ZuCmp<char>::null((char)1));
+  ZuCHECK(ZuCmp<char>::cmp(1, 0) > 0);
+  ZuCHECK(ZuCmp<char>::cmp(0, 1) < 0);
+  ZuCHECK(!ZuCmp<char>::cmp(0, 0));
+  ZuCHECK(!ZuCmp<char>::cmp(1, 1));
+  ZuCHECK(ZuCmp<char>::null(ZuCmp<char>::null()));
+  ZuCHECK(!ZuCmp<char>::null((char)0x80));
+  ZuCHECK(!ZuCmp<char>::null((char)1));
   TEST(signed char);
   TEST(unsigned char);
   TEST(short);
@@ -309,17 +288,17 @@ int main(int argc, char **argv)
     V i = j;
     ZuBox<int> p = 1;
     ZuBox<int> q = 2;
-    CHECK(ZuCmp<V>::cmp(i, T(p, q)) == 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, T(p, q)) == 0);
     q = 3;
-    CHECK(ZuCmp<V>::cmp(i, T(p, q)) < 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, T(p, q)) < 0);
     q = 1;
-    CHECK(ZuCmp<V>::cmp(i, T(p, q)) > 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, T(p, q)) > 0);
     p = 1, q = 2;
-    CHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q)) == 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q)) == 0);
     q = 3;
-    CHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q)) < 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q)) < 0);
     q = 1;
-    CHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q)) > 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q)) > 0);
   }
 
   {
@@ -335,23 +314,23 @@ int main(int argc, char **argv)
     V j(1, 2, 3);
     V i;
     i = j;
-    CHECK(i.id() == 1);
-    CHECK(i.age() == 2);
-    CHECK(i.height() == 3);
+    ZuCHECK(i.id() == 1);
+    ZuCHECK(i.age() == 2);
+    ZuCHECK(i.height() == 3);
     ZuBox<int> p = 1;
     ZuBox<int> q = 2;
     ZuBox<int> r = 3;
-    CHECK(ZuCmp<V>::cmp(i, T(p, q, r)) == 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, T(p, q, r)) == 0);
     q = 3;
-    CHECK(ZuCmp<V>::cmp(i, T(p, q, r)) < 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, T(p, q, r)) < 0);
     q = r = 2;
-    CHECK(ZuCmp<V>::cmp(i, T(p, q, r)) > 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, T(p, q, r)) > 0);
     q = 2, r = 3;
-    CHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q, r)) == 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q, r)) == 0);
     q = 3;
-    CHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q, r)) < 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q, r)) < 0);
     q = r = 2;
-    CHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q, r)) > 0);
+    ZuCHECK(ZuCmp<V>::cmp(i, ZuFwdTuple(p, q, r)) > 0);
   }
 
   {
@@ -363,29 +342,29 @@ int main(int argc, char **argv)
       j.name("3");
       V i;
       i = j;
-      CHECK(i.name() == j.name());
-      CHECK(i == j);
-      CHECK(ZuCmp<V>::cmp(i, j) == 0);
+      ZuCHECK(i.name() == j.name());
+      ZuCHECK(i == j);
+      ZuCHECK(ZuCmp<V>::cmp(i, j) == 0);
       j.name("4");
-      CHECK(ZuCmp<V>::cmp(i, j) < 0);
+      ZuCHECK(ZuCmp<V>::cmp(i, j) < 0);
       i.income(200.0);
-      CHECK(ZuCmp<V>::cmp(i, j) < 0);
+      ZuCHECK(ZuCmp<V>::cmp(i, j) < 0);
       j.id(42);
-      CHECK(ZuCmp<V>::cmp(i, j) > 0);
+      ZuCHECK(ZuCmp<V>::cmp(i, j) > 0);
       i.dependents(ZuFwdTuple(1, 2));
       j = i;
-      CHECK(i == j);
-      CHECK(ZuCmp<V>::cmp(i, j) == 0);
-      CHECK(i.dependents() == j.dependents());
+      ZuCHECK(i == j);
+      ZuCHECK(ZuCmp<V>::cmp(i, j) == 0);
+      ZuCHECK(i.dependents() == j.dependents());
       j.dependents(ZuFwdTuple(1, 3));
-      CHECK(ZuCmp<V>::cmp(i, j) < 0);
+      ZuCHECK(ZuCmp<V>::cmp(i, j) < 0);
       i.dependents(ZuFwdTuple(1, 4));
-      CHECK(ZuCmp<V>::cmp(i, j) > 0);
+      ZuCHECK(ZuCmp<V>::cmp(i, j) > 0);
       i.foo(&c);
-      CHECK(*(i.foo()) == 42);
+      ZuCHECK(*(i.foo()) == 42);
       ++*(i.foo());
     }
-    CHECK(c == 43);
+    ZuCHECK(c == 43);
   }
 
   {
@@ -402,19 +381,19 @@ int main(int argc, char **argv)
     S s3("string3");
     ZuTuple<int, const S &, const S &> t1(42, s1, s2);
     ZuTuple<int, const S &, const S &> t2(42, s1, s3);
-    CHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1, t2) < 0));
-    CHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1, t1) == 0));
-    CHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t2, t1) > 0));
+    ZuCHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1, t2) < 0));
+    ZuCHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1, t1) == 0));
+    ZuCHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t2, t1) > 0));
     ZuTuple<int, const S &, const S &> t3 = ZuFwdTuple(42, s3, s3);
-    CHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1, t3) < 0));
+    ZuCHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1, t3) < 0));
     S s4{"hello"};
     S s5{"world"};
     log("t1=", t1);
     log("t2=", ZuFwdTuple(42, s4, s5));
-    CHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1,
+    ZuCHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t1,
 	    ZuFwdTuple(42, s4, s5)) > 0));
     // ZuTuple<int, const S &, const S &> t4(42, "string1", "string2");
-    // CHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t4, t2) < 0));
+    // ZuCHECK((ZuCmp<ZuTuple<int, const S &, const S &> >::cmp(t4, t2) < 0));
   }
 
   {
@@ -428,7 +407,7 @@ int main(int argc, char **argv)
     t.p<1>()[0] = 42;
     t.p<1>()[2] = 42;
     s = t;
-    CHECK((s.p<0>()[1] == s.p<0>()[0]));
+    ZuCHECK((s.p<0>()[1] == s.p<0>()[0]));
     // below deliberately triggers use of uninitialized memory
 #ifdef __GNUC__
 #pragma GCC diagnostic push
@@ -442,15 +421,15 @@ int main(int argc, char **argv)
 
   {
     ZuCArray<10> s = "hello world";
-    CHECK(s == "hello worl");
+    ZuCHECK(s == "hello worl");
     s = ZuArray<char, 10>("hello world");
-    CHECK(s == "hello worl");
+    ZuCHECK(s == "hello worl");
     s = 'h';
-    CHECK(s == "h");
+    ZuCHECK(s == "h");
     s << ZuArray<char, 2>("el");
     s += "lo ";
     s << ZuCArray<6>("world");
-    CHECK(s == "hello worl");
+    ZuCHECK(s == "hello worl");
   }
 
   {
@@ -478,16 +457,16 @@ int main(int argc, char **argv)
     *reinterpret_cast<double *>(c_) = 42.0;
     auto c = reinterpret_cast<U *>(c_);
     c->type_(U::Index<double>{});
-    CHECK(c->p<double>() == 42.0);
+    ZuCHECK(c->p<double>() == 42.0);
     auto d = get<double>(*c);
-    CHECK(d == 42.0);
+    ZuCHECK(d == 42.0);
     *c = 42.0;
     d = get<double>(*c);
-    CHECK(d == 42.0);
+    ZuCHECK(d == 42.0);
     c->~U();
     new (c) U{42.0};
     d = get<double>(*c);
-    CHECK(d == 42.0);
+    ZuCHECK(d == 42.0);
   }
 
   {
@@ -500,26 +479,26 @@ int main(int argc, char **argv)
   {
     ZuArray<int, 3> foo = { 1, 2, 3 };
     auto [a, b, c] = foo;
-    CHECK(a == 1 && b == 2 && c == 3);
+    ZuCHECK(a == 1 && b == 2 && c == 3);
   }
 
   {
     ZuTuple<uint64_t, uint32_t> foo = { 1U, 2U };
     auto [a, b] = foo;
-    CHECK(a == 1 && b == 2);
+    ZuCHECK(a == 1 && b == 2);
   }
 
   {
     ZuTuple<uint64_t, uint32_t, uint16_t> foo =
       { 1U, 2U, static_cast<uint16_t>(3U) };
     auto [a, b, c] = foo;
-    CHECK(a == 1 && b == 2 && c == 3);
+    ZuCHECK(a == 1 && b == 2 && c == 3);
   }
 
   {
     ZuUnsigned<1> i;
     ZuUnsigned<i> j;
-    CHECK(K<j>::k == 1);
+    ZuCHECK(K<j>::k == 1);
   }
 
   {
@@ -543,32 +522,32 @@ int main(int argc, char **argv)
       using A::cmp;
     };
     B a, b{1}, c{42};
-    CHECK(!a);
-    CHECK(!ZuCmp<A>::cmp(a, a));
-    CHECK(!ZuCmp<A>::cmp(c, c));
-    CHECK(a < b);
-    CHECK(ZuCmp<A>::cmp(a, b) < 0);
-    CHECK(ZuCmp<A>::cmp(c, b) > 0);
+    ZuCHECK(!a);
+    ZuCHECK(!ZuCmp<A>::cmp(a, a));
+    ZuCHECK(!ZuCmp<A>::cmp(c, c));
+    ZuCHECK(a < b);
+    ZuCHECK(ZuCmp<A>::cmp(a, b) < 0);
+    ZuCHECK(ZuCmp<A>::cmp(c, b) > 0);
   }
 
   {
-    CHECK(M{} == ZuCmp<M>::null());
+    ZuCHECK(M{} == ZuCmp<M>::null());
   }
 
   {
     ZuRef<O> o = new O{};
-    CHECK(ZuObjectTraits<O>::IsObject);
+    ZuCHECK(ZuObjectTraits<O>::IsObject);
   }
 
   {
     ZuUnion<void, bool> a, b = true;
-    CHECK(ZuCmp<unsigned>::cmp(a.type(), 0) == 0);
-    CHECK(ZuCmp<unsigned>::cmp(b.type(), 1) == 0);
-    CHECK(ZuCmp<bool>::cmp(b.p<bool>(), true) == 0);
+    ZuCHECK(ZuCmp<unsigned>::cmp(a.type(), 0) == 0);
+    ZuCHECK(ZuCmp<unsigned>::cmp(b.type(), 1) == 0);
+    ZuCHECK(ZuCmp<bool>::cmp(b.p<bool>(), true) == 0);
   }
 
   {
-    CHECK(bool(ZuHash_Can_hash<T1::V>{}));
+    ZuCHECK(bool(ZuHash_Can_hash<T1::V>{}));
   }
 
   ZuTestCall(foo, []{});
@@ -590,19 +569,19 @@ int main(int argc, char **argv)
     try {
       throw ZuMv(u).p<A>();
     } catch (A &a) {
-      CHECK(true);
+      ZuCHECK(true);
     }
     A b = B::foo(ZuMv(u));
     try {
       throw ZuMv(b);
     } catch (A &a) {
-      CHECK(true);
+      ZuCHECK(true);
     }
   }
   {
     ZuID id = "foobar";
     ZuCSpan s(id);
-    CHECK(s == "foobar");
+    ZuCHECK(s == "foobar");
   }
   {
     int x = 0;
@@ -610,26 +589,26 @@ int main(int argc, char **argv)
     auto c = [&x]() { return x; };
     using M = ZuDecay<decltype(m)>;
     using C = ZuDecay<decltype(c)>;
-    CHECK(ZuIsMutableLambda<M>{});
-    CHECK(ZuIsMutableLambda<M &>{});
-    CHECK(ZuIsMutableLambda<const M &>{});
-    CHECK(!ZuIsMutableLambda<C>{});
-    CHECK(!ZuIsMutableLambda<C &>{});
-    CHECK(!ZuIsMutableLambda<const C &>{});
+    ZuCHECK(ZuIsMutableLambda<M>{});
+    ZuCHECK(ZuIsMutableLambda<M &>{});
+    ZuCHECK(ZuIsMutableLambda<const M &>{});
+    ZuCHECK(!ZuIsMutableLambda<C>{});
+    ZuCHECK(!ZuIsMutableLambda<C &>{});
+    ZuCHECK(!ZuIsMutableLambda<const C &>{});
   }
   {
     Foo foo;
     const Foo &cfoo = foo;
-    CHECK((ZuIsSame<CRef, decltype(bar(cfoo))>{}));
-    CHECK((ZuIsSame<Ref, decltype(bar(foo))>{}));
-    CHECK((ZuIsSame<RRef, decltype(bar(ZuMv(foo)))>{}));
+    ZuCHECK((ZuIsSame<CRef, decltype(bar(cfoo))>{}));
+    ZuCHECK((ZuIsSame<Ref, decltype(bar(foo))>{}));
+    ZuCHECK((ZuIsSame<RRef, decltype(bar(ZuMv(foo)))>{}));
   }
   {
     struct _ { };
     using N = Narrow<_, ZuTuple<int>>;
     N n{42}, o(43);
     o = n = 44;
-    CHECK(o == n);
+    ZuCHECK(o == n);
   }
   {
     std::tuple<int, int> p{ 1, 2 };
@@ -637,21 +616,21 @@ int main(int argc, char **argv)
     std::array<int, 2> a = { -3, -4 };
     ZuTuple<int, int> r{ 5, 6 };
     ZuTuple<int, int> s = { 7, 8 };
-    CHECK(r.p<0>() == 5);
-    CHECK(s.p<0>() == 7);
+    ZuCHECK(r.p<0>() == 5);
+    ZuCHECK(s.p<0>() == 7);
     r = a;
     s = ZuTuple<int, int>{a};
-    CHECK(r.p<0>() == -3);
-    CHECK(s.p<1>() == -4);
+    ZuCHECK(r.p<0>() == -3);
+    ZuCHECK(s.p<1>() == -4);
     ZuTuple<int, int> t{p};
     ZuTuple<int, int> u = q;
     ZuTuple<int, int> v; v = q;
-    CHECK(t.p<1>() == 2);
-    CHECK(u.p<1>() == 4);
-    CHECK(v.p<1>() == 4);
+    ZuCHECK(t.p<1>() == 2);
+    ZuCHECK(u.p<1>() == 4);
+    ZuCHECK(v.p<1>() == 4);
     ZuTuple<int, int> w = { 42 };
-    CHECK(w.p<0>() == 42);
-    CHECK(w.p<1>() == 0);
+    ZuCHECK(w.p<0>() == 42);
+    ZuCHECK(w.p<1>() == 0);
   }
 
   log("sizeof(ZuUnion<void, uintptr_t>)=",
@@ -662,38 +641,38 @@ int main(int argc, char **argv)
   {
     using A = ZuSpan<ZuTuple<ZuCSpan, ZuCSpan>>;
     A a = { { "foo", "bar" }, { "baz", "bah" } };
-    CHECK(a[0].p<0>() == "foo");
-    CHECK(a[0].p<1>() == "bar");
-    CHECK(a[1].p<0>() == "baz");
-    CHECK(a[1].p<1>() == "bah");
+    ZuCHECK(a[0].p<0>() == "foo");
+    ZuCHECK(a[0].p<1>() == "bar");
+    ZuCHECK(a[1].p<0>() == "baz");
+    ZuCHECK(a[1].p<1>() == "bah");
   }
   {
     enum { I = (ZuSpan<ZuTuple<int>>( { 42 } ))[0].p<0>() };
-    CHECK(I == 42);
+    ZuCHECK(I == 42);
   }
   {
     const auto x = ZuTuple{42, 43};
-    CHECK(x.p<0>() == 42);
+    ZuCHECK(x.p<0>() == 42);
   }
 
   {
     struct A { int i = 42; };
 
     A a;
-    CHECK((ZuIsSame<int &, decltype(ZuFwdLike<A &>(a.i))>{}));
-    CHECK((ZuIsSame<const int &, decltype(ZuFwdLike<const A &>(a.i))>{}));
-    CHECK((ZuIsSame<int &&, decltype(ZuFwdLike<A &&>(a.i))>{}));
+    ZuCHECK((ZuIsSame<int &, decltype(ZuFwdLike<A &>(a.i))>{}));
+    ZuCHECK((ZuIsSame<const int &, decltype(ZuFwdLike<const A &>(a.i))>{}));
+    ZuCHECK((ZuIsSame<int &&, decltype(ZuFwdLike<A &&>(a.i))>{}));
   }
 
   {
     char buf[] = "foo bar baz";
     const char buf2[] = "foo bar baz";
-    CHECK((ZuCSpan::IsStrLiteral<decltype(buf)>{}));
-    CHECK((ZuCSpan::IsStrLiteral<decltype(buf2)>{}));
+    ZuCHECK((ZuCSpan::IsStrLiteral<decltype(buf)>{}));
+    ZuCHECK((ZuCSpan::IsStrLiteral<decltype(buf2)>{}));
   }
 
   {
     ZuTuple<int, int> i{42, 42};
-    CHECK((i == decltype(i){42, 42}));
+    ZuCHECK((i == decltype(i){42, 42}));
   }
 }

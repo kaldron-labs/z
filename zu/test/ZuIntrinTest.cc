@@ -6,11 +6,11 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuIntrin.hh>
 
-bool verbose = false;
+using namespace ZuTestUtil;
 
 template <unsigned N, typename U>
 void test() {
@@ -57,19 +57,9 @@ void test() {
 
 #define TEST(N) ZuTestCall_("test<" #N ">", (test<N, uint##N##_t>))
 
-static void usage()
-{
-  std::cerr << "usage: ZuIntrinTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 

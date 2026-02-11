@@ -8,14 +8,12 @@
 #include <sstream>
 
 #include <zlib/ZuBox.hh>
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuStream.hh>
 #include <zlib/ZuVStream.hh>
 #include <zlib/ZuArray.hh>
 
-bool verbose = false;
-
-#define CHECK(x) ZuCheck(x)
+using namespace ZuTestUtil;
 
 struct A {
   template <typename S>
@@ -44,25 +42,15 @@ void stest() {
   s_ << L"hello " << "world" << L'!' << ' ' << 42.42;
   s.trunc(s_.data() - s.data());
   if constexpr (sizeof(Char) == 1) {
-    CHECK(s == "hello world! 42.42");
+    ZuCHECK(s == "hello world! 42.42");
   } else {
-    CHECK(s == L"hello world! 42.42");
+    ZuCHECK(s == L"hello world! 42.42");
   }
-}
-
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
 }
 
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
   {
@@ -70,11 +58,11 @@ int main(int argc, char **argv)
     std::stringstream s2;
     vtest(s1);
     vtest(s2);
-    CHECK(s1 == s2.str());
+    ZuCHECK(s1 == s2.str());
     ZuArray<wchar_t, 80> w1;
     test(w1);
     s1 = w1;
-    CHECK(s1 == s2.str());
+    ZuCHECK(s1 == s2.str());
   }
   if (verbose) vtest(std::cerr);
   {

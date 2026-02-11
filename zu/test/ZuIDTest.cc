@@ -9,22 +9,11 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuArray.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
+using namespace ZuTestUtil;
 
 static void test(const char *s)
 {
@@ -34,26 +23,16 @@ static void test(const char *s)
   if (n > 8) n = 8;
   ZuID a(s);
   printf("%u %u\n", n, a.length());
-  CHECK(a.length() == n);
-  CHECK(!memcmp(a.data(), s, n));
-  CHECK(a.span() == ZuCSpan(s, n));
+  ZuCHECK(a.length() == n);
+  ZuCHECK(!memcmp(a.data(), s, n));
+  ZuCHECK(a.span() == ZuCSpan(s, n));
   ZuCArray<9> b; b << a;
-  CHECK(a.span() == b);
-}
-
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
+  ZuCHECK(a.span() == b);
 }
 
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 

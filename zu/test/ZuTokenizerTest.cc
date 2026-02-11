@@ -7,7 +7,7 @@
 #include <iostream>
 
 #include <zlib/ZuSpan.hh>
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuTokenizer.hh>
 
 int main()

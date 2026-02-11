@@ -9,13 +9,13 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuSort.hh>
 #include <zlib/ZuSearch.hh>
 #include <zlib/ZuJoin.hh>
 
-bool verbose = false;
+using namespace ZuTestUtil;
 
 void search(ZuSpan<int> data, int value, unsigned pos_, unsigned nc_)
 {
@@ -29,23 +29,13 @@ void search(ZuSpan<int> data, int value, unsigned pos_, unsigned nc_)
   pos = ZuSearchPos(pos);
   if (verbose)
     std::cerr << "value=" << value << " pos=" << pos << " nc=" << nc << '\n';
-  ZuCheck(pos == pos_);
-  ZuCheck(nc == nc_);
-}
-
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
+  ZuCHECK(pos == pos_);
+  ZuCHECK(nc == nc_);
 }
 
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 

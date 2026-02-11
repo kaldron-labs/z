@@ -9,9 +9,9 @@
 #include <iostream>
 
 #include <zlib/ZuPtr.hh>
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 
-#define CHECK(x) ZuCheck(x)
+using namespace ZuTestUtil;
 
 struct A {
   int *x;
@@ -21,7 +21,7 @@ struct A {
 
 void foo(A *a) {
   ZuTestScope(foo);
-  CHECK(*(a->x) == 1);
+  ZuCHECK(*(a->x) == 1);
 }
 
 int main()
@@ -32,5 +32,5 @@ int main()
     ZuPtr<A> a = new A{&i};
     ZuTestCall(foo, ZuMv(a));
   }
-  CHECK(i == 2);
+  ZuCHECK(i == 2);
 }

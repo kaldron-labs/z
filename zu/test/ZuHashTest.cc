@@ -10,7 +10,7 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuCmp.hh>
 

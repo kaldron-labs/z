@@ -8,7 +8,7 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuCmp.hh>
@@ -16,18 +16,7 @@
 #include <zlib/ZuDemangle.hh>
 #include <zlib/ZuDerive.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
+using namespace ZuTestUtil;
 
 using VPair = ZuTuple<int, int>;
 using RVPair = ZuTuple<const int &, const int &>;
@@ -82,69 +71,59 @@ ZuDeclTuple(B, (A, foo), (A, foo2), (A, foo3));
 
 ZuDerive(D, ZuTuple<>);
 
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
-  { VPair p = mkpair<VPair>(); CHECK(p.p<0>() == 42); }
-  { RVPair p = mkpair<RVPair>(); CHECK(p.p<0>() == 42); }
-  { LVPair p = mkpair<LVPair>(); CHECK(p.p<0>() == 42); }
-  { MVPair p = mvpair<MVPair>(); CHECK(p.p<0>() == 42); }
+  { VPair p = mkpair<VPair>(); ZuCHECK(p.p<0>() == 42); }
+  { RVPair p = mkpair<RVPair>(); ZuCHECK(p.p<0>() == 42); }
+  { LVPair p = mkpair<LVPair>(); ZuCHECK(p.p<0>() == 42); }
+  { MVPair p = mvpair<MVPair>(); ZuCHECK(p.p<0>() == 42); }
   {
     copied = moved = 0;
     ZuTuple<A, A> p = mkapair();
-    CHECK(!copied && moved == 2 && p.p<0>().i == 42);
+    ZuCHECK(!copied && moved == 2 && p.p<0>().i == 42);
   }
   {
     copied = moved = 0;
     ZuTuple<A, A> p(mkapair());
-    CHECK(!copied && moved == 2 && p.p<0>().i == 42);
+    ZuCHECK(!copied && moved == 2 && p.p<0>().i == 42);
   }
   {
     copied = moved = 0;
     ZuTuple<A, A> p(passapair(mkapair()));
-    CHECK(!copied && moved == 4 && p.p<0>().i == 42);
+    ZuCHECK(!copied && moved == 4 && p.p<0>().i == 42);
   }
   {
     copied = moved = 0;
     ZuTuple<A, A, A> p = mkatuple();
-    CHECK(!copied && moved == 3 && p.p<0>().i == 42);
+    ZuCHECK(!copied && moved == 3 && p.p<0>().i == 42);
   }
   {
     copied = moved = 0;
     ZuTuple<A, A, A> p(mkatuple());
-    CHECK(!copied && moved == 3 && p.p<0>().i == 42);
+    ZuCHECK(!copied && moved == 3 && p.p<0>().i == 42);
   }
   {
     copied = moved = 0;
     ZuTuple<A, A, A> p(passatuple(mkatuple()));
-    CHECK(!copied && moved == 6 && p.p<0>().i == 42);
+    ZuCHECK(!copied && moved == 6 && p.p<0>().i == 42);
   }
   {
     copied = moved = 0;
     ZuTuple<A, A, A> p(passatuple(mkatuple()));
     A a = ZuMv(p.p<0>()), b = ZuMv(p.p<1>()), c = ZuMv(p.p<2>());
-    CHECK(!copied && moved == 9);
-    CHECK(a.i == 42 && b.i == 42 && c.i == 42);
+    ZuCHECK(!copied && moved == 9);
+    ZuCHECK(a.i == 42 && b.i == 42 && c.i == 42);
   }
   {
     copied = moved = 0;
     B p(passatuple(mkatuple()));
     A a = ZuMv(p.foo()), b = ZuMv(p.p<1>()), c = ZuMv(p.p<2>());
-    CHECK(!copied && moved == 12);
-    CHECK(a.i == 42 && b.i == 42 && c.i == 42);
+    ZuCHECK(!copied && moved == 12);
+    ZuCHECK(a.i == 42 && b.i == 42 && c.i == 42);
     B q = B().foo(42), r{p};
     p = q;
     r = ZuMv(q);
@@ -153,23 +132,23 @@ int main(int argc, char **argv)
   {
     ZuTuple<int, int, int> a{1, 2, 3};
     ZuTuple<ZuBox<int>, int, int> b{a};
-    CHECK(b.p<0>() == 1 && b.p<1>() == 2 && b.p<2>() == 3);
+    ZuCHECK(b.p<0>() == 1 && b.p<1>() == 2 && b.p<2>() == 3);
     ZuCArray<60> s;
     s << a.fmt(":");
     log(s);
-    CHECK(s == "{1:2:3}");
+    ZuCHECK(s == "{1:2:3}");
     s.null();
     auto c = ZuFwdTuple(a);
     s << c.fmt(";");
     log(s);
-    CHECK(s == "{{1;2;3}}");
+    ZuCHECK(s == "{{1;2;3}}");
   }
 
   {
     using T = ZuTuple<int, float, double, int>;
     T a{1, 2.0F, 3.0, 4};
     auto b = a;
-    CHECK(b.p<int>() == 1 && b.p<float>() == 2 && b.p<double>() == 3);
+    ZuCHECK(b.p<int>() == 1 && b.p<float>() == 2 && b.p<double>() == 3);
   }
 
   ZuTupleCall(ZuFwdTuple("the answer is", 42),
@@ -212,23 +191,23 @@ int main(int argc, char **argv)
   {
     ZuTuple<int> t;
     const auto &c = t;
-    CHECK((ZuIsSame<int &, decltype(t.p<int>())>{}));
-    CHECK((ZuIsSame<const int &, decltype(c.p<int>())>{}));
-    CHECK((ZuIsSame<int &&, decltype(ZuMv(t).p<int>())>{}));
-    CHECK((ZuIsSame<int &, decltype(t.p<0>())>{}));
-    CHECK((ZuIsSame<const int &, decltype(c.p<0>())>{}));
-    CHECK((ZuIsSame<int &&, decltype(ZuMv(t).p<0>())>{}));
+    ZuCHECK((ZuIsSame<int &, decltype(t.p<int>())>{}));
+    ZuCHECK((ZuIsSame<const int &, decltype(c.p<int>())>{}));
+    ZuCHECK((ZuIsSame<int &&, decltype(ZuMv(t).p<int>())>{}));
+    ZuCHECK((ZuIsSame<int &, decltype(t.p<0>())>{}));
+    ZuCHECK((ZuIsSame<const int &, decltype(c.p<0>())>{}));
+    ZuCHECK((ZuIsSame<int &&, decltype(ZuMv(t).p<0>())>{}));
     int i = 42;
     ZuTuple<int &> r = { i };
     const auto &cr = r;
     log(ZuDemangle<decltype(r.p<int &>())>{});
-    CHECK((ZuIsSame<int &, decltype(r.p<int &>())>{}));
+    ZuCHECK((ZuIsSame<int &, decltype(r.p<int &>())>{}));
     log(ZuDemangle<decltype(cr.p<int &>())>{});
-    CHECK((ZuIsSame<const int &, decltype(cr.p<int &>())>{}));
+    ZuCHECK((ZuIsSame<const int &, decltype(cr.p<int &>())>{}));
     log(ZuDemangle<decltype(ZuMv(r).p<int &>())>{});
-    CHECK((ZuIsSame<int &&, decltype(ZuMv(r).p<int &>())>{}));
-    CHECK((ZuIsSame<int &, decltype(r.p<0>())>{}));
-    CHECK((ZuIsSame<const int &, decltype(cr.p<0>())>{}));
-    CHECK((ZuIsSame<int &&, decltype(ZuMv(r).p<0>())>{}));
+    ZuCHECK((ZuIsSame<int &&, decltype(ZuMv(r).p<int &>())>{}));
+    ZuCHECK((ZuIsSame<int &, decltype(r.p<0>())>{}));
+    ZuCHECK((ZuIsSame<const int &, decltype(cr.p<0>())>{}));
+    ZuCHECK((ZuIsSame<int &&, decltype(ZuMv(r).p<0>())>{}));
   }
 }

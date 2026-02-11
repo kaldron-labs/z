@@ -6,7 +6,7 @@
 
 #include <iostream>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuBase32.hh>
 
@@ -33,16 +33,13 @@ inline void decOut_(const char *msg, ZuBSpan actual) {
   std::cerr << ZuCSpan(buf, ptr - buf) << '\n';
 }
 
-#define encOut(x, ...) ZuCheck(x, encOut_(__VA_ARGS__))
-#define decOut(x, ...) ZuCheck(x, decOut_(__VA_ARGS__))
-
 void enc(ZuBSpan src, ZuCSpan check, const char *msg) {
   ZuTestScope(enc);
   auto n = ZuBase32::enclen(src.length());
   char *buf = static_cast<char *>(ZuAlloca(n, 1));
   auto dst = ZuSpan<uint8_t>(buf, n);
   dst.trunc(ZuBase32::encode(dst, src));
-  encOut(ZuCSpan(dst) == check, msg, ZuCSpan(dst));
+  ZuCheck(ZuCSpan(dst) == check, encOut_(msg, ZuCSpan(dst)));
 }
 
 void dec(ZuBSpan src, ZuBSpan check, const char *msg)
@@ -52,7 +49,7 @@ void dec(ZuBSpan src, ZuBSpan check, const char *msg)
   char *buf = static_cast<char *>(ZuAlloca(n, 1));
   auto dst = ZuSpan<uint8_t>(buf, n);
   dst.trunc(ZuBase32::decode(dst, src));
-  decOut(ZuBSpan(dst) == check, msg, dst);
+  ZuCheck(ZuBSpan(dst) == check, decOut_(msg, dst));
 }
 
 void test(ZuBSpan src, ZuBSpan dst, const char *encMsg, const char *decMsg)

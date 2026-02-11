@@ -14,25 +14,14 @@
 #include <iostream>
 #include <iomanip>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuInt.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuDerive.hh>
 
-bool verbose = false;
-
-template <typename ...Args>
-static void log_(Args &&...args) {
-  if constexpr (sizeof...(args))
-    (std::cerr << ...<< ZuFwd<Args>(args)) << '\n';
-}
-template <typename ...Args>
-static void log(Args &&...args) {
-  if (verbose) log_(ZuFwd<Args>(args)...);
-}
-#define CHECK(x, ...) ZuCheck(x, log_(__VA_ARGS__))
+using namespace ZuTestUtil;
 
 template <class Fmt, class Boxed>
 struct VFmt_ {
@@ -90,7 +79,7 @@ void test_std_string2(const char *type, const S &s, const char *s_)
 {
   ZuTestScope(test_std_string2);
   log("type=", type, " Width_=", unsigned(Fmt::Width_), " Comma_=", unsigned(Fmt::Comma_), " s=", ZuCSpan(ZuTraits<S>::data(s), ZuTraits<S>::length(s)), " s_=", s_);
-  CHECK(!strcmp(s.c_str(), s_), s.c_str(), s_);
+  ZuCHECK(!strcmp(s.c_str(), s_), s.c_str(), s_);
 }
 
 template <typename T, class Fmt, typename S>
@@ -110,7 +99,7 @@ void test_std_stream2(const char *type, S &s, const char *s_)
   char buf[64];
   buf[s.rdbuf()->sgetn(buf, 63)] = 0;
   log("type=", type, " Width_=", unsigned(Fmt::Width_), " Comma_=", unsigned(Fmt::Comma_), " buf=", buf, " s_=", s_);
-  CHECK(!strcmp(buf, s_), buf, s_);
+  ZuCHECK(!strcmp(buf, s_), buf, s_);
 }
 
 template <typename T, class Fmt, typename S>
@@ -140,25 +129,25 @@ void test(const char *type, T v, const char *s)
   ZuTestCall((test_std<T, Fmt>), v, s);
   ZuTestCall((test_std<T, Fmt>), v, s);
   ZuBox<T> i;
-  CHECK(!*i, i);
+  ZuCHECK(!*i, i);
   i = v;
-  CHECK(*i, i);
-  CHECK(i > ZuBox<T>{}, i);
-  CHECK(ZuBox<T>(static_cast<T>(-i)) > ZuBox<T>{}, i);
-  CHECK(i > (v - 1), i, v);
+  ZuCHECK(*i, i);
+  ZuCHECK(i > ZuBox<T>{}, i);
+  ZuCHECK(ZuBox<T>(static_cast<T>(-i)) > ZuBox<T>{}, i);
+  ZuCHECK(i > (v - 1), i, v);
   ZuVFmt vfmt = VFmt<Fmt, ZuBox<T> >::_();
   char buf[64], buf2[64];
   log("strlen(s)=", strlen(s), " i.fmt<Fmt>().length()=", i.template fmt<Fmt>().length(), " i.vfmt(vfmt).length()=", i.vfmt(vfmt).length());
-  CHECK(i.template fmt<Fmt>().length() >= strlen(s), i, s);
-  CHECK(i.vfmt(vfmt).length() >= strlen(s), i, s);
+  ZuCHECK(i.template fmt<Fmt>().length() >= strlen(s), i, s);
+  ZuCHECK(i.vfmt(vfmt).length() >= strlen(s), i, s);
   buf[i.template fmt<Fmt>().print(buf)] = 0;
   buf2[i.vfmt(vfmt).print(buf2)] = 0;
   log("s=", s, " buf=", buf, " buf2=", buf2);
-  CHECK(!strcmp(s, buf), s, buf);
-  CHECK(!strcmp(s, buf2), s, buf2);
+  ZuCHECK(!strcmp(s, buf), s, buf);
+  ZuCHECK(!strcmp(s, buf2), s, buf2);
   ZuBox<T> j(Fmt(), buf, strlen(buf));
   log("i=", int64_t(i), " j=", int64_t(j));
-  CHECK(i == j, i, j);
+  ZuCHECK(i == j, i, j);
 }
 
 template <typename T, class Fmt>
@@ -168,23 +157,23 @@ void testf(const char *type, T v, const char *s, T d = (T)0)
 
   ZuTestCall((test_std<T, ZuFmt::Comma<',', Fmt>>), v, s);
   ZuBox<T> f;
-  CHECK(!*f, f);
+  ZuCHECK(!*f, f);
   f = v;
-  CHECK(*f, f);
-  CHECK(f > ZuBox<T>(), f);
-  CHECK(ZuBox<T>(-f) > ZuBox<T>(), f);
-  CHECK(f > (v - 1), f, v);
+  ZuCHECK(*f, f);
+  ZuCHECK(f > ZuBox<T>(), f);
+  ZuCHECK(ZuBox<T>(-f) > ZuBox<T>(), f);
+  ZuCHECK(f > (v - 1), f, v);
   char buf[64], buf2[64];
   buf[f.template fmt<Fmt>().print(buf)] = 0;
   buf2[f.template fmt<ZuFmt::Comma<',', Fmt>>().print(buf2)] = 0;
   log("s=", s, " buf=", buf, " buf2=", buf2);
-  CHECK(!strcmp(s, buf2), s, buf2);
+  ZuCHECK(!strcmp(s, buf2), s, buf2);
   ZuBox<T> g, h;
   g.scan(buf, strlen(buf));
   h.scan(buf2, strlen(buf2));
   T i = (T)strtod(buf, 0);
   log(std::fixed, std::setprecision(12), "f=", double(f), " g=", double(g), " h=", double(h), " i=", double(i), " d=", double(d));
-  CHECK((f > g) ? ((f - g) <= d) : ((g - f) <= d), f, g);
+  ZuCHECK((f > g) ? ((f - g) <= d) : ((g - f) <= d), f, g);
 }
 
 int foo() { return 42; }
@@ -213,19 +202,9 @@ unsigned itoa(char *buf, int i) {
 ZuDerive(A, ZuBox<int>);
 ZuDerive(B, ZuBox<int>);
 
-static void usage()
-{
-  std::cerr << "usage: ZuBoxTest [-v]\n";
-  ::exit(1);
-}
-
 int main(int argc, char **argv)
 {
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    if (strcmp(argv[1], "-v")) usage();
-    verbose = true;
-  }
+  parse(argc, argv);
 
   ZuTestMain();
 
@@ -317,16 +296,16 @@ int main(int argc, char **argv)
 
   {
     ZuBox<int> i;
-    i.scan("-", 1); CHECK(!i, i);
-    i.scan("-0", 2); CHECK(!i, i);
-    i.scan("0", 1); CHECK(!i, i);
-    i.scan("420", 0); CHECK(!*i, i);
-    i.scan("420", 2); CHECK(i == 42, i);
-    i.scan("420", 2); CHECK(i == 42, i);
+    i.scan("-", 1); ZuCHECK(!i, i);
+    i.scan("-0", 2); ZuCHECK(!i, i);
+    i.scan("0", 1); ZuCHECK(!i, i);
+    i.scan("420", 0); ZuCHECK(!*i, i);
+    i.scan("420", 2); ZuCHECK(i == 42, i);
+    i.scan("420", 2); ZuCHECK(i == 42, i);
     char buf[256];
     i = 0;
     buf[i.print(buf)] = 0;
-    CHECK(!strcmp(buf, "0"), buf);
+    ZuCHECK(!strcmp(buf, "0"), buf);
   }
 
   // 7-8 SD
@@ -414,31 +393,31 @@ int main(int argc, char **argv)
 
   {
     ZuBox<double> f;
-    f.scan(".", 1); CHECK(!(int)f, f);
-    f.scan("-", 1); CHECK(!*f, f);
-    f.scan("-0", 2); CHECK(!(int)f, f);
-    f.scan("-.", 2); CHECK(!(int)f, f);
-    f.scan("0", 1); CHECK(!(int)f, f);
-    f.scan("42.001", 6); CHECK((int)(f * 1000) == 42001, f);
-    f.scan("42.001", 0); CHECK(ZuCmp<double>::null(f), f);
-    f.scan("42.001", 5); CHECK((int)(f * 1000) == 42000, f);
-    f.scan("42.001", 6); CHECK((int)(f * 1000) == 42001, f);
-    f.scan((const char *)0, -1); CHECK(ZuCmp<double>::null(f), f);
-    f.scan("", -1); CHECK(ZuCmp<double>::null(f), f);
-    f.scan("nan", -1); CHECK(ZuCmp<double>::null(f), f);
-    f.scan((const char *)0, 0); CHECK(ZuCmp<double>::null(f), f);
-    f.scan("", 0); CHECK(ZuCmp<double>::null(f), f);
-    f.scan("nan", 3); CHECK(ZuCmp<double>::null(f), f);
-    f.scan("inf", 3); CHECK(ZuCmp<double>::inf(f), f);
-    f.scan("-inf", 4); CHECK(ZuCmp<double>::inf(-f), f);
-    f.scan("inf", 3); CHECK(ZuCmp<double>::inf(f), f);
-    f.scan("-inf", 4); CHECK(ZuCmp<double>::inf(-f), f);
-    CHECK(!f.scan("inf", 2), f);
-    CHECK(!f.scan("nan", 2), f);
+    f.scan(".", 1); ZuCHECK(!(int)f, f);
+    f.scan("-", 1); ZuCHECK(!*f, f);
+    f.scan("-0", 2); ZuCHECK(!(int)f, f);
+    f.scan("-.", 2); ZuCHECK(!(int)f, f);
+    f.scan("0", 1); ZuCHECK(!(int)f, f);
+    f.scan("42.001", 6); ZuCHECK((int)(f * 1000) == 42001, f);
+    f.scan("42.001", 0); ZuCHECK(ZuCmp<double>::null(f), f);
+    f.scan("42.001", 5); ZuCHECK((int)(f * 1000) == 42000, f);
+    f.scan("42.001", 6); ZuCHECK((int)(f * 1000) == 42001, f);
+    f.scan((const char *)0, -1); ZuCHECK(ZuCmp<double>::null(f), f);
+    f.scan("", -1); ZuCHECK(ZuCmp<double>::null(f), f);
+    f.scan("nan", -1); ZuCHECK(ZuCmp<double>::null(f), f);
+    f.scan((const char *)0, 0); ZuCHECK(ZuCmp<double>::null(f), f);
+    f.scan("", 0); ZuCHECK(ZuCmp<double>::null(f), f);
+    f.scan("nan", 3); ZuCHECK(ZuCmp<double>::null(f), f);
+    f.scan("inf", 3); ZuCHECK(ZuCmp<double>::inf(f), f);
+    f.scan("-inf", 4); ZuCHECK(ZuCmp<double>::inf(-f), f);
+    f.scan("inf", 3); ZuCHECK(ZuCmp<double>::inf(f), f);
+    f.scan("-inf", 4); ZuCHECK(ZuCmp<double>::inf(-f), f);
+    ZuCHECK(!f.scan("inf", 2), f);
+    ZuCHECK(!f.scan("nan", 2), f);
     char buf[256];
     f = 0;
     buf[f.print(buf)] = 0;
-    CHECK(!strcmp(buf, "0"), buf);
+    ZuCHECK(!strcmp(buf, "0"), buf);
   }
 
   {
@@ -447,22 +426,22 @@ int main(int argc, char **argv)
     i = foo();
     log(i);
     j = i, i = j++, ++j;
-    CHECK(j == i + 2, i, j);
+    ZuCHECK(j == i + 2, i, j);
     j = i, i = j--, --j;
-    CHECK(j == i - 2, i, j);
+    ZuCHECK(j == i - 2, i, j);
   }
 
   {
     int x = 42;
     ZuCArray<8> s;
-    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Right<4> >>(); CHECK(s == "002A", s); s = {};
-    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Right<3> >>(); CHECK(s == "02A", s); s = {};
-    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Right<2> >>(); CHECK(s == "2A", s); s = {};
-    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Right<1> >>(); CHECK(s == "", s); s = {};
-    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Left<1> >>(); CHECK(s == "", s); s = {};
-    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Left<2> >>(); CHECK(s == "2A", s); s = {};
-    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Left<3> >>(); CHECK(s == "2A", s); s = {};
-    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Left<4> >>(); CHECK(s == "2A", s); s = {};
+    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Right<4> >>(); ZuCHECK(s == "002A", s); s = {};
+    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Right<3> >>(); ZuCHECK(s == "02A", s); s = {};
+    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Right<2> >>(); ZuCHECK(s == "2A", s); s = {};
+    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Right<1> >>(); ZuCHECK(s == "", s); s = {};
+    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Left<1> >>(); ZuCHECK(s == "", s); s = {};
+    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Left<2> >>(); ZuCHECK(s == "2A", s); s = {};
+    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Left<3> >>(); ZuCHECK(s == "2A", s); s = {};
+    s << ZuBoxed(x).fmt<ZuFmt::Hex<1, ZuFmt::Left<4> >>(); ZuCHECK(s == "2A", s); s = {};
   }
 
   {
@@ -470,10 +449,10 @@ int main(int argc, char **argv)
     ZuNBox<uint64_t> v;
     ZuBox<uint64_t> w;
     s << v;
-    CHECK(!s, v);
+    ZuCHECK(!s, v);
     s << w;
     log(s);
-    CHECK(!!s, w);
+    ZuCHECK(!!s, w);
   }
 
   {
@@ -483,6 +462,6 @@ int main(int argc, char **argv)
     b -= a; // -42
     b = -b; // 42
     log(b);
-    CHECK(b == 42, b);
+    ZuCHECK(b == 42, b);
   }
 }
