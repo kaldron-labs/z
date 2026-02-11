@@ -4,37 +4,68 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
-#include <iostream>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTraits.hh>
 
-#include <zlib/ZmAssert.hh>
-
 #include <zlib/ZtString.hh>
 #include <zlib/ZtIconv.hh>
 
+using namespace ZuTestUtil;
+
+void usage_()
+{
+  std::cerr << "Usage: ZtIconvTest [-q] [TO] [FROM]\n"
+    "  TO\ttarget encoding (default: UTF-8)\n"
+    "  FROM\tsource encoding (default: SHIFT_JIS)\n"
+    "Options:\n"
+    "  -q\tquiet output (default when test-harnessed)\n";
+  ::exit(1);
+}
+
 int main(int argc, char **argv) {
-  //"UTF-8", "SHIFT_JIS"
-  if (argc != 3) {
-    std::cerr <<
-      "Usage: ZtIconvTest TO FROM\n\n"
-      "Example: ZtIconvTest \"hello\" UTF8 SJIS\n"
-      << std::flush;
-    return 1;
-  }
+  verbose = !::getenv("HARNESS_ACTIVE");
 
-  static ZtIconv conv(argv[1], argv[2]);
+  const char *to = "UTF-8", *from = "SHIFT_JIS";
+  unsigned nargs = 0;
+  for (int i = 1; i < argc; i++)
+    if (argv[i][0] == '-') {
+      if (argv[i][2]) usage_();
+      switch (argv[i][1]) {
+	case 'q':
+	  verbose = false;
+	  break;
+	default:
+	  usage_();
+	  break;
+      }
+    } else {
+      if (++nargs > 2) usage_();
+      switch (++nargs) {
+	case 1:
+	  to = argv[i];
+	  break;
+	case 2:
+	  from = argv[i];
+	  break;
+	default:
+	  usage_();
+	  break;
+      }
+    }
 
-  unsigned char title_[] = {
+  ZuTestMain();
+
+  ZtIconv conv(to, from);
+
+  uint8_t title_[] = {
     0x81, 0x94, 0x88, 0xc0, 0x92, 0xe8, 0x91, 0x80, 0x8d,
     0xec, 0x93, 0xcd, 0x8f, 0x6f, 0x8f, 0x91, 0x81, 0x69,
     0x8e, 0xca, 0x81, 0x6a, 0x82, 0xcc, 0x8e, 0xf3, 0x97,
     0x9d, 0 };
 
-  unsigned char body_[] = {
+  uint8_t body_[] = {
     0x96, 0xc1, 0x95, 0xbf, 0x81, 0x40, 0x81, 0x40, 0x81, 0x40,
     0x81, 0x40, 0x83, 0x8a, 0x83, 0x93, 0x83, 0x4b, 0x81, 0x5b,
     0x83, 0x6e, 0x83, 0x62, 0x83, 0x67, 0x81, 0x69, 0x82, 0x57,
@@ -70,7 +101,11 @@ int main(int argc, char **argv) {
   ZtString<> title(ZuCSpan(title_, sizeof(title_)), &conv);
   ZtString<> body(ZuCSpan(body_, sizeof(body_)), &conv);
 
-  std::cout << "Title: (" << title << ")\nBody : (" << body << ")\n";
+  ZuCheck(title.length() > 0);
+  ZuCheck(body.length() > title.length());
+  log("Title: (", title, ')');
+  log("Body : (", body, ')');
+  ZuCheck(title == "＃安定操作届出書（写）の受理");
 
   return 0;
 }

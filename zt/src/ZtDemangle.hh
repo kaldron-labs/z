@@ -4,6 +4,13 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+// injects zlib-specific post-processing into ZuDemangle/ZmDemangle
+// - uses ZtRegex
+// - correctly and concisely demangles:
+//   - NTTP values that are ZuString/ZuArray
+//   - ZuStringT<>
+//   - ZuStringTL<> (as used with ZuMatcher)
+
 #ifndef ZtDemangle_HH
 #define ZtDemangle_HH
 

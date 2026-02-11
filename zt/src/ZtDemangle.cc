@@ -30,7 +30,7 @@ static void quote(S &s, ZuBox<uint8_t> c) {
 
 static void transform(void *, ZuSpan<char> &output)
 {
-  // clean up ZuString compile-time strings
+  // ZuString compile-time strings
   ZtREGEX("ZuString<(\d+)[uUlL]*>{char \[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
       ZuBox<unsigned> n(c[2]);
@@ -42,7 +42,7 @@ static void transform(void *, ZuSpan<char> &output)
       splice(buf);
     });
 
-  // clean up ZuArray compile-time strings
+  // ZuArray compile-time strings
   ZtREGEX("Zu_::Array<char,\s*(\d+)[uUlL]*>{Zu_::Array_<char>{},\s*ZuArrayFn<char,\s*ZuCmp<char>\s*>{},\s*\d+[uUlL]*,\s*ZuElem<char>\s*\[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
       ZuBox<unsigned> n(c[2]);
@@ -54,7 +54,7 @@ static void transform(void *, ZuSpan<char> &output)
       splice(buf);
     });
 
-  // clean up other ZuArray compile-time values
+  // ZuArray compile-time arrays (other than strings)
   ZtREGEX("Zu_::Array<(\w+),\s*(\d+)[uUlL]*>{Zu_::Array_<(?1)>{},\s*ZuArrayFn<(?1),\s*ZuCmp<(?1)>\s*>{},\s*\d+[uUlL]*,\s*ZuElem<(?1)>\s*\[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
       ZuBox<unsigned> n(c[3]);
@@ -69,6 +69,37 @@ static void transform(void *, ZuSpan<char> &output)
 	});
       buf << "})";
       splice(buf);
+    });
+  // ZuStringT<"x">
+  ZtREGEX("ZuConstant<ZuString<\d+[uUlL]*>, (\"(?:[^\"\\]|\\[\"\\])*\")>").sg(
+    output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
+      auto buf = ZtLocalArray(Buf, c[2].length() + 12);
+      buf << "ZuStringT<" << c[2] << ">";
+      splice(buf);
+    });
+  // ZuStringTL<"x", "y", ...>
+  ZtREGEX("ZuTypeList(<(?:[^<>]++|(?-1))*+>)").sg(
+    output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
+      auto types = c[2];
+      types.offset(1);
+      types.trunc(types.length() - 1);
+      auto buf = ZtLocalArray(Buf, types.length() + 12);
+      buf << "ZuStringTL<";
+      ZtRegexCaptures(d, 3);
+      int off = 0;
+      bool first = true;
+      while (ZtREGEX("\GZuStringT<(\"(?:[^\"\\]|\\[\"\\])*\")>\s*,?\s*").m(types, d, off)) {
+	off += d[1].length();
+	if (first)
+	  first = false;
+	else
+	  buf << ", ";
+	buf << d[2];
+      }
+      if (off == types.length()) {
+	buf << ">";
+	splice(buf);
+      }
     });
 }
 

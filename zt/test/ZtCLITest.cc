@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <iostream>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZuID.hh>
 #include <zlib/ZuUnroll.hh>
@@ -12,12 +12,7 @@
 #include <zlib/ZtStruct.hh>
 #include <zlib/ZtCLI.hh>
 
-inline void output(bool ok, const char *s) {
-  std::cout << (ok ? "OK  " : "NOK ") << s << '\n' << std::flush;
-  // assert(ok);
-}
-
-#define CHECK(x) (output((x), #x))
+using namespace ZuTestUtil;
 
 namespace Values {
   ZtEnum(Values, int8_t, High, Low, Normal);
@@ -102,78 +97,100 @@ ZtStruct((Foo, Bah),
 
 ZtCLIConfig(Bah, (ZtCLI_ArrayFmt<ZtCLI::Delimited>));
 
-int main(int argc, const char *const *argv)
+void roundTrip()
 {
-  {
-    char *argv1 = const_cast<char *>(argv[1]);
-    if (argv1 && argv1[0]) argv1[0] = 'x';
-  }
-  {
-    ZtCLI::Parser<Foo, ZuFacet::Bah> parser;
-    CHECK(parser.scanArgv(ZtCLI::SpanArgv{}));
-    Foo foo = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
-    foo.int_ = 42;
-    foo.float_ = 42.01;
-    foo.bytes = "-bytes";
-    foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
-    foo.time_ = Zm::now();
-    foo.bool_ = true;
-    ZtString<> cli;
-    cli << "'' "; // argv[0]
-    ZtCLI::save<ZuFacet::Bah>(cli, foo);
+  ZuTestScope(roundTrip);
+
+  ZtCLI::Parser<Foo, ZuFacet::Bah> parser;
+  ZuCheck(parser.scanArgv(ZtCLI::SpanArgv{}));
+  Foo foo = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  foo.int_ = 42;
+  foo.float_ = 42.01;
+  foo.bytes = "-bytes";
+  foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
+  foo.time_ = Zm::now();
+  foo.bool_ = true;
+
+  ZtString<> cli;
+  cli << "'' "; // argv[0]
+  ZtCLI::save<ZuFacet::Bah>(cli, foo);
+  log("cli=", cli);
+  if (verbose) {
     ZuUnroll::all<ZuFields<Foo>>([&foo]<typename T>() mutable {
-      std::cout
+      std::cerr
 	<< T::id() << '='
 	<< typename T::Type::template Print<ZtFmt::Default>{T::get(foo)}
 	<< '\n';
     });
-    std::cout << cli << '\n';
-    ZtString<> cli_ = cli;
-    parser.scanArgv(ZtCLI::InCLI{cli}.argv); 
-    Foo foo2 = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  }
+
+  ZtString<> cli_ = cli;
+  parser.scanArgv(ZtCLI::InCLI{cli}.argv);
+  Foo foo2 = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  if (verbose) {
     ZuUnroll::all<ZuFields<Foo>>([&foo2]<typename T>() mutable {
-      std::cout
+      std::cerr
 	<< T::id() << '='
 	<< typename T::Type::template Print<ZtFmt::Default>{T::get(foo2)}
 	<< '\n';
     });
-    ZtString<> cli2;
-    cli2 << "'' "; // argv[0]
-    ZtCLI::save<ZuFacet::Bah>(cli2, foo2);
-    std::cout << cli2 << '\n';
-    CHECK(cli_ == cli2);
-    ZtCLI::OutArgv out;
-    out.argv.push(""); // argv[0]
-    ZtCLI::saveArgv<ZuFacet::Bah>(out, foo2);
-    CHECK(!out.argv_c()[out.argc()]);
+  }
+
+  ZtString<> cli2;
+  cli2 << "'' "; // argv[0]
+  ZtCLI::save<ZuFacet::Bah>(cli2, foo2);
+  log("cli2=", cli2);
+  ZuCheck(cli_ == cli2);
+
+  ZtCLI::OutArgv out;
+  out.argv.push(""); // argv[0]
+  ZtCLI::saveArgv<ZuFacet::Bah>(out, foo2);
+  ZuCheck(!out.argv_c()[out.argc()]);
+  if (verbose) {
     for (unsigned i = 0, n = out.argc(); i < n; i++)
-      std::cout << i << ": " << out.argv_c()[i] << '\n';
-    parser.reset();
-    ZtCLI::InArgv<> in(out.argc(), out.argv_c());
-    parser.scanArgv(in.argv);
-    Foo foo3 = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
-    ZtString<> cli3;
-    cli3 << "'' "; // argv[0]
-    ZtCLI::save<ZuFacet::Bah>(cli3, foo3);
-    std::cout << cli3 << '\n';
-    CHECK(cli_ == cli3);
+      std::cerr << i << ": " << out.argv_c()[i] << '\n';
   }
-  {
-    ZtString s;
-    ZtCLI::CmdQuote::quote(s, "foo"); CHECK(s == "foo"); s.length_(0);
-    ZtCLI::CmdQuote::quote(s, "foo\\"); CHECK(s == "foo\\"); s.length_(0);
-    ZtCLI::CmdQuote::quote(s, "foo\\\"");
-      CHECK(s == "\"foo\\\\\\\"\""); s.length_(0);
-    ZtCLI::CmdQuote::quote(s, "foo\\\\\"");
-      CHECK(s == "\"foo\\\\\\\\\\\"\""); s.length_(0);
-    ZtCLI::CmdQuote::quote(s, "foo\"\\\\");
-      CHECK(s == "\"foo\\\"\\\\\\\\\""); s.length_(0);
-  }
-  {
-    static char cli[] = "'x \\'\"y'\\ \" z\" blurch";
-    ZtCLI::InCLI in(cli);
-    CHECK(in.argv[0] == "x '\"y  z");
-    CHECK(in.argv[1] == "blurch");
-  }
+
+  parser.reset();
+  ZtCLI::InArgv<> in(out.argc(), out.argv_c());
+  parser.scanArgv(in.argv);
+  Foo foo3 = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  ZtString<> cli3;
+  cli3 << "'' "; // argv[0]
+  ZtCLI::save<ZuFacet::Bah>(cli3, foo3);
+  log("cli3=", cli3);
+  ZuCheck(cli_ == cli3);
+}
+
+void cmdQuote()
+{
+  ZuTestScope(cmdQuote);
+  ZtString s;
+  ZtCLI::CmdQuote::quote(s, "foo"); ZuCheck(s == "foo"); s.length_(0);
+  ZtCLI::CmdQuote::quote(s, "foo\\"); ZuCheck(s == "foo\\"); s.length_(0);
+  ZtCLI::CmdQuote::quote(s, "foo\\\"");
+    ZuCheck(s == "\"foo\\\\\\\"\""); s.length_(0);
+  ZtCLI::CmdQuote::quote(s, "foo\\\\\"");
+    ZuCheck(s == "\"foo\\\\\\\\\\\"\""); s.length_(0);
+  ZtCLI::CmdQuote::quote(s, "foo\"\\\\");
+    ZuCheck(s == "\"foo\\\"\\\\\\\\\"");
+}
+
+void parseCLI()
+{
+  ZuTestScope(parseCLI);
+  static char cli[] = "'x \\'\"y'\\ \" z\" blurch";
+  ZtCLI::InCLI in(cli);
+  ZuCheck(in.argv[0] == "x '\"y  z");
+  ZuCheck(in.argv[1] == "blurch");
+}
+
+int main(int argc, char **argv)
+{
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall(roundTrip);
+  ZuTestCall(cmdQuote);
+  ZuTestCall(parseCLI);
   return 0;
 }

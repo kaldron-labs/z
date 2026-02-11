@@ -10,7 +10,7 @@
 
 #include <zlib/ZuLib.hh>
 
-#include <zlib/ZuTest.hh>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuJoin.hh>
@@ -20,25 +20,12 @@
 #include <zlib/ZtString.hh>
 #include <zlib/ZtHexDump.hh>
 #include <zlib/ZtCase.hh>
-#include <zlib/ZtCLI.hh>
 
-static void usage()
-{
-  std::cerr << "usage: ZtStringTest [-v|--verbose]\n";
-  ::exit(1);
-}
-
-struct Args {
-  bool verbose = false;
-};
-ZtStruct((Args, CLI),
-  (((verbose), (Ctor<0>, CLI::ID<"verbose">, CLI::Flag<'v'>)), (Bool)));
-
-static Args args;
+using namespace ZuTestUtil;
 
 void foo(const ZtString<> &s, ZtString<> t)
 {
-  if (args.verbose) {
+  if (verbose) {
     std::cerr << s << '\n';
     std::cerr << t << '\n';
   }
@@ -51,7 +38,7 @@ void bar(bool b, ZtString<> &s)
     baz = s;
   else
     baz = "bah";
-  if (args.verbose)
+  if (verbose)
     std::cerr << baz << '\n';
 }
 
@@ -312,13 +299,13 @@ void testString()
   s3 = "world";
   s4 = s3;
 
-  if (args.verbose) {
+  if (verbose) {
     std::cerr << (s2 + s1) << '\n';
     std::cerr << (s3 + s1) << '\n';
     std::cerr << (s2 + " " + s3) << '\n';
   }
   s2 += ZtString<>(" ") + s3;
-  if (args.verbose) {
+  if (verbose) {
     std::cerr << s2 << '\n';
     std::cerr << s4 << '\n';
   }
@@ -534,7 +521,7 @@ void testString()
     s += ZuBox<int>(12345);
     ZuCheck(s == "Hello World");
     s << (ZuCArray<12>() << ZuBox<int>(1234));
-    if (args.verbose)
+    if (verbose)
       std::cerr << s.terminate() << '\n';
     ZuCheck(s == "Hello World1234");
     s = "";
@@ -569,7 +556,7 @@ void testString()
     ZuCheck(!strcmp(buf, "foo bar"));
   }
 
-  if (args.verbose)
+  if (verbose)
     std::cerr << (ZtString<>{} << "hello " << "world") << '\n';
 
   {
@@ -577,7 +564,7 @@ void testString()
     ZuCheck(j == "x,y");
   }
 
-  if (args.verbose) {
+  if (verbose) {
     std::cerr << ZuCSpan("Hello World 2\n") << std::flush;
     std::cerr << ZtHexDump{"Whoot!", "This\x1cis\x09""a\x05test\x01of\x04the\x1ehexadecimal\x13""dumper!", 42};
   }
@@ -673,11 +660,9 @@ void testString()
   }
 }
 
-int main(int argc_, char **argv)
+int main(int argc, char **argv)
 {
-  int argc = ZtCLI::load(args, argc_, argv);
-  if (argc != 1) usage();
-
+  parse(argc, argv);
   ZuTestMain();
 
   testSpliceCoverage<ZuTest_scope>();

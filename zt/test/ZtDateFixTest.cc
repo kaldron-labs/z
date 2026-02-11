@@ -4,20 +4,13 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZtLib.hh>
-
-#include <stdio.h>
-#include <time.h>
-#include <stdlib.h>
-#include <limits.h>
-#include <math.h>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZuDateTime.hh>
 
-#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmTime.hh>
 
-#define CHECK(x) ((x) ? puts("OK  " #x) : puts("NOK " #x))
+using namespace ZuTestUtil;
 
 struct Null {
   template <typename S> void print(S &s) const { s << "null"; }
@@ -25,63 +18,30 @@ struct Null {
 };
 
 template <int NDP>
-void test(ZuDateTime d1)
+void roundTrip(ZuDateTime d1)
 {
+  ZuTestScope(roundTrip);
+
   ZuCArray<32> fix;
   ZuDateTimeFmt::FIX<NDP, Null> fmt;
   fix << d1.fmt(fmt);
-  puts(fix.terminate());
   ZuDateTime d2(ZuDateTimeScan::FIX{}, fix);
-  puts((ZuCArray<32>() << d2.fmt(fmt)).terminate());
-  CHECK(d1 == d2);
+  ZuCArray<32> fix2;
+  fix2 << d2.fmt(fmt);
+
+  log("fix=", fix);
+  log("fix2=", fix2);
+  ZuCheck(d1 == d2);
+  ZuCheck(fix == fix2);
 }
 
 int main(int argc, char **argv)
 {
-  test<0>(ZuDateTime{time_t(0)});
-  test<0>(ZuDateTime{1, 1, 1});
-  test<-9>(ZuDateTime{Zm::now()});
-  test<-3>(ZuDateTime{ZuTime{ZuDecimal{"0.01"}}});
-
-  if (argc < 2) { fputs("Usage: ZuDateTimeFixTest N\n", stderr); Zm::exit(1); }
-  unsigned n = atoi(argv[1]);
-  {
-    ZuDateTimeFmt::FIX<-9, Null> fmt;
-    ZuCArray<32> fix;
-    ZuTime start, end;
-    start = Zm::now();
-    for (unsigned i = 0; i < n; i++) {
-      ZuDateTime d1{Zm::now()};
-      fix << d1.fmt(fmt);
-      ZuDateTime d2{ZuDateTimeScan::FIX{}, fix};
-    }
-    end = Zm::now();
-    end -= start;
-    ZuDecimal d1 = end.as_decimal() / n;
-    printf("time per cycle 1: %s\n", (ZuCArray<32>{} << d1).data());
-
-    start = Zm::now();
-    for (unsigned i = 0; i < n; i++) {
-      ZuDateTime d1{Zm::now()};
-      fix << d1.fmt(fmt);
-    }
-    end = Zm::now();
-    end -= start;
-    ZuDecimal d2 = end.as_decimal() / n;
-    printf("time per cycle 2: %s\n", (ZuCArray<32>{} << d2).data());
-
-    start = Zm::now();
-    for (unsigned i = 0; i < n; i++) {
-      ZuDateTime d1{Zm::now()};
-    }
-    end = Zm::now();
-    end -= start;
-    ZuDecimal d3 = end.as_decimal() / n;
-    printf("time per cycle 3: %s\n", (ZuCArray<32>{} << d3).data());
-
-    printf("time per FIX format print: %s\n",
-      (ZuCArray<32>{} << (d2 - d3)).data());
-    printf("time per FIX format scan: %s\n",
-      (ZuCArray<32>{} << (d1 - d2)).data());
-  }
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall_("ndp0 epoch", (roundTrip<0>), ZuDateTime{time_t(0)});
+  ZuTestCall_("ndp0 day1", (roundTrip<0>), ZuDateTime{1, 1, 1});
+  ZuTestCall_("ndp-9 now", (roundTrip<-9>), ZuDateTime{Zm::now()});
+  ZuTestCall_("ndp-3 decimal", (roundTrip<-3>), ZuDateTime{ZuTime{ZuDecimal{"0.01"}}});
+  return 0;
 }

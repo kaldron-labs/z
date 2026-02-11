@@ -4,27 +4,28 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZtBitmap.hh>
 
-void out(bool ok, ZuCSpan check, ZuCSpan diag) {
-  std::cout
-    << (ok ? "OK  " : "NOK ") << check << ' ' << diag
-    << '\n' << std::flush;
-}
+using namespace ZuTestUtil;
 
-#define CHECK_(x) out((x), #x, "")
-#define CHECK(x, y) out((x), #x, y)
-
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+
+  ZuTestMain();
+
   ZtBitmap a{256U};
   a.set(2, 6);
   a.set(10, 15);
   a.set(100, 256);
   ZuCArray<100> s;
   s << a;
-  std::cout << s << '\n';
+  log(s);
+  ZuCheck(s == "2-5,10-14,100-", log_(s));
   ZuBitmap<256> b(s);
   s = {}; s << b;
-  CHECK_(s == "2-5,10-14,100-");
+  ZuCheck(s == "2-5,10-14,100-", log_(s));
+  return 0;
 }
