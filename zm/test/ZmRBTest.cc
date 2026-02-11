@@ -4,22 +4,22 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* red/black tree test program */
+// red/black tree test program
 
-#include <zlib/ZuLib.hh>
-
-#include <stdio.h>
 #include <stdlib.h>
-
 #include <time.h>
 
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuCmp.hh>
+
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZmAssert.hh>
+
+using namespace ZuTestUtil;
 
 struct Z : public ZmObject {
   Z(int z) : m_z(z) { }
@@ -55,264 +55,308 @@ static void delptr(Tree *tree, Z *z) {
 #endif
 }
 
-int main()
+static bool verify(Tree &tree)
 {
+  auto iter = tree.iter();
+  Tree::NodeRef node;
+  unsigned count = 0;
+  int prev = 0;
+  bool first = true;
+
+  while (node = iter()) {
+    int v = node->key()->m_z;
+    if (!first && prev > v) return false;
+    prev = v;
+    first = false;
+    ++count;
+  }
+
+  if (count != tree.count_()) return false;
+  if (!count) return true;
+
+  auto minNode = tree.minimum();
+  auto maxNode = tree.maximum();
+
+  return minNode && maxNode && minNode->key()->m_z <= maxNode->key()->m_z;
+}
+
+int main(int argc, char **argv)
+{
+  parse(argc, argv);
+  ZuTestMain();
   Tree tree;
-  printf("sizeof(Tree::Node)=%u\n", static_cast<unsigned>(sizeof(Tree::Node)));
+  log("sizeof(Tree::Node)=", sizeof(Tree::Node));
   ZmRef<Z> z;
   int i;
 
   for (i = 0; i < 20; i++) tree.add(ZmRef<Z>(new Z(i)));
+  ZuCheck(tree.count_() == 20);
+  ZuCheck(verify(tree));
 
-  fputs("0 to 19: ", stdout);
+  if (verbose) std::cerr << "0 to 19: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  printf("min: %d, max: %d\n", tree.minimum()->key()->m_z, tree.maximum()->key()->m_z);
+  log("min: ", tree.minimum()->key()->m_z, ", max: ", tree.maximum()->key()->m_z);
 
   for (i = 0; i < 20; i += 2) { ZmRef<Z> z = new Z(i); tree.del(z); }
+  ZuCheck(tree.count_() == 10);
+  ZuCheck(verify(tree));
 
-  fputs("17 to 1, odd: ", stdout);
+  if (verbose) std::cerr << "17 to 1, odd: ";
   {
     auto iter = tree.iter<ZmRBTreeLess>(tree.maximumKey());
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  printf("min: %d, max: %d\n", tree.minimum()->key()->m_z, tree.maximum()->key()->m_z);
+  log("min: ", tree.minimum()->key()->m_z, ", max: ", tree.maximum()->key()->m_z);
 
   i = 6;
 
-  fputs("7 to 19, odd: ", stdout);
+  if (verbose) std::cerr << "7 to 19, odd: ";
   {
     ZmRef<Z> iz = new Z(i);
     auto iter = tree.iter<ZmRBTreeGreater>(iz);
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  printf("min: %d, max: %d\n", tree.minimum()->key()->m_z, tree.maximum()->key()->m_z);
+  log("min: ", tree.minimum()->key()->m_z, ", max: ", tree.maximum()->key()->m_z);
 
   i = 7;
 
-  fputs("1 to 7, odd: ", stdout);
+  if (verbose) std::cerr << "1 to 7, odd: ";
   {
     ZmRef<Z> iz = new Z(i);
     auto iter = tree.iter<ZmRBTreeLessEqual>(iz);
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  printf("min: %d, max: %d\n", tree.minimum()->key()->m_z, tree.maximum()->key()->m_z);
+  log("min: ", tree.minimum()->key()->m_z, ", max: ", tree.maximum()->key()->m_z);
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 40; i++) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 0; i < 20; i++) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("20 to 39 #1: ", stdout);
+  if (verbose) std::cerr << "20 to 39 #1: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 40; i++) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 40; --i >= 20;) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("0 to 19 #1: ", stdout);
+  if (verbose) std::cerr << "0 to 19 #1: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 40; --i >= 0;) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 0; i < 20; i++) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("20 to 39 #2: ", stdout);
+  if (verbose) std::cerr << "20 to 39 #2: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 40; --i >= 0;) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 40; --i >= 20;) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("0 to 19 #2: ", stdout);
+  if (verbose) std::cerr << "0 to 19 #2: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 40; i++) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 0; i < 20; i += 2) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 1; i < 20; i += 2) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("20 to 39 #3: ", stdout);
+  if (verbose) std::cerr << "20 to 39 #3: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 40; i++) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 40; (i -= 2) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 41; (i -= 2) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("0 to 19 #3: ", stdout);
+  if (verbose) std::cerr << "0 to 19 #3: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 40; --i >= 0;) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 0; i < 20; i += 2) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 1; i < 20; i += 2) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("20 to 39 #4: ", stdout);
+  if (verbose) std::cerr << "20 to 39 #4: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 40; --i >= 0;) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 40; (i -= 2) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 41; (i -= 2) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("0 to 19 #4: ", stdout);
+  if (verbose) std::cerr << "0 to 19 #4: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 40; i++) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 0; i < 20; i += 3) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 1; i < 20; i += 3) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 2; i < 20; i += 3) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("20 to 39 #5: ", stdout);
+  if (verbose) std::cerr << "20 to 39 #5: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 40; i++) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 40; (i -= 3) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 41; (i -= 3) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 42; (i -= 3) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("0 to 19 #5: ", stdout);
+  if (verbose) std::cerr << "0 to 19 #5: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 40; --i >= 0;) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 0; i < 20; i += 3) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 1; i < 20; i += 3) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 2; i < 20; i += 3) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("20 to 39 #6: ", stdout);
+  if (verbose) std::cerr << "20 to 39 #6: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 40; --i >= 0;) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 40; (i -= 3) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 41; (i -= 3) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 42; (i -= 3) >= 20;) tree.del(ZmRef<Z>(new Z(i)));
 
-  fputs("0 to 19 #6: ", stdout);
+  if (verbose) std::cerr << "0 to 19 #6: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   {
     ZmRef<Z> zarray[40];
@@ -320,63 +364,63 @@ int main()
 
     for (i = 0; i < 40; i++) { j = i>>2; tree.add(zarray[i] = new Z(j)); }
 
-    fputs("0 to 9 with 4 duplicates: ", stdout);
+    if (verbose) std::cerr << "0 to 9 with 4 duplicates: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     for (i = 0; i < 10; i++) delptr(&tree, zarray[i<<2]);
 
-    fputs("0 to 9 with 3 duplicates: ", stdout);
+    if (verbose) std::cerr << "0 to 9 with 3 duplicates: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     for (i = 0; i < 10; i++) delptr(&tree, zarray[(i<<2) + 1]);
 
-    fputs("0 to 9 with 2 duplicates: ", stdout);
+    if (verbose) std::cerr << "0 to 9 with 2 duplicates: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     for (i = 0; i < 10; i++) delptr(&tree, zarray[(i<<2) + 2]);
 
-    fputs("0 to 9 with 1 duplicate: ", stdout);
+    if (verbose) std::cerr << "0 to 9 with 1 duplicate: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     for (i = 0; i < 10; i++) delptr(&tree, zarray[(i<<2) + 3]);
 
-    fputs("empty: ", stdout);
+    if (verbose) std::cerr << "empty: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
   }
 
   {
@@ -385,79 +429,79 @@ int main()
 
     for (i = 0; i < 40; i++) { j = i>>2; tree.add(zarray[i] = new Z(j)); }
 
-    fputs("0 to 9 with 4 duplicates: ", stdout);
+    if (verbose) std::cerr << "0 to 9 with 4 duplicates: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     for (i = 0; i < 10; i += 2)
       for (j = 0; j < 4; j++)
 	tree.del(ZmRef<Z>(new Z(i)));
     for (i = 1; i < 10; i += 2) delptr(&tree, zarray[(i<<2)]);
 
-    fputs("0 to 9, odd, with 3 duplicates: ", stdout);
+    if (verbose) std::cerr << "0 to 9, odd, with 3 duplicates: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     i = 4;
 
-    fputs("5 to 9, odd, with 3 duplicates: ", stdout);
+    if (verbose) std::cerr << "5 to 9, odd, with 3 duplicates: ";
     {
       ZmRef<Z> iz = new Z(i);
       auto iter = tree.iter<ZmRBTreeGreater>(iz);
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     for (i = 1; i < 10; i += 2) delptr(&tree, zarray[(i<<2) + 1]);
 
-    fputs("0 to 9, odd, with 2 duplicates: ", stdout);
+    if (verbose) std::cerr << "0 to 9, odd, with 2 duplicates: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     for (i = 1; i < 10; i += 2) delptr(&tree, zarray[(i<<2) + 2]);
 
-    fputs("0 to 9, odd, with 1 duplicate: ", stdout);
+    if (verbose) std::cerr << "0 to 9, odd, with 1 duplicate: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
 
     for (i = 1; i < 10; i += 2) delptr(&tree, zarray[(i<<2) + 3]);
 
-    fputs("empty: ", stdout);
+    if (verbose) std::cerr << "empty: ";
     {
       auto iter = tree.iter();
       Tree::NodeRef node;
 
       while (node = iter())
-	printf("%d ", node->key()->m_z);
+	if (verbose) std::cerr << node->key()->m_z << ' ';
     }
-    putchar('\n');
+    if (verbose) std::cerr << '\n';
   }
 
   int j;
@@ -476,7 +520,7 @@ int main()
 
     if (node) z = node->key(); else z = 0;
   }
-  if (!z || z->m_z != 1) puts("find() test failed");
+  ZuCheck(z && z->m_z == 1);
 
   for (i = 0, j = 1; i < 100; i += j, j++) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 2, j = 1; i < 100; i += j, j += 2) tree.del(ZmRef<Z>(new Z(i)));
@@ -484,7 +528,7 @@ int main()
   for (i = 6, j = 1; i < 100; i += j, j += 4) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 10, j = 1; i < 100; i += j, j += 5) tree.del(ZmRef<Z>(new Z(i)));
 
-  printf("zero object count: %d\n", tree.count_());
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0, j = 1; i < 100; i += j, j++) tree.add(ZmRef<Z>(new Z(i)));
   for (i = 2, j = 1; i < 100; i += j, j += 2) tree.add(ZmRef<Z>(new Z(i)));
@@ -498,90 +542,93 @@ int main()
   for (i = 2, j = 1; i < 100; i += j, j += 2) tree.del(ZmRef<Z>(new Z(i)));
   for (i = 0, j = 1; i < 100; i += j, j++) tree.del(ZmRef<Z>(new Z(i)));
 
-  printf("zero object count: %d\n", tree.count_());
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 20; i++) tree.add(ZmRef<Z>(new Z(i)));
 
-  fputs("0 to 19, deleting all elements: ", stdout);
+  if (verbose) std::cerr << "0 to 19, deleting all elements: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter()) {
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
       iter.del(node);
     }
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  printf("zero object count: %d\n", tree.count_());
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 20; i++) tree.add(ZmRef<Z>(new Z(i)));
 
-  fputs("0 to 19, deleting odd elements: ", stdout);
+  if (verbose) std::cerr << "0 to 19, deleting odd elements: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter()) {
-      printf("%d ", (z = node->key())->m_z);
+      z = node->key();
+      if (verbose) std::cerr << z->m_z << ' ';
       if (z->m_z & 1) iter.del(node);
     }
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  fputs("0 to 18, even: ", stdout);
+  if (verbose) std::cerr << "0 to 18, even: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  printf("min: %d, max: %d\n", tree.minimum()->key()->m_z, tree.maximum()->key()->m_z);
+  log("min: ", tree.minimum()->key()->m_z, ", max: ", tree.maximum()->key()->m_z);
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 60; i++) { int j = i / 3; tree.add(ZmRef<Z>(new Z(j))); }
 
-  fputs("0 to 19 with 3 duplicates, deleting every fourth element: ", stdout);
+  if (verbose) std::cerr << "0 to 19 with 3 duplicates, deleting every fourth element: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
     int j = 0;
 
     while (node = iter()) {
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
       if (!(j & 3)) iter.del(node);
       j++;
     }
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   i = 20;
 
-  fputs("0 to 19 reverse order, remaining duplicates: ", stdout);
+  if (verbose) std::cerr << "0 to 19 reverse order, remaining duplicates: ";
   {
     ZmRef<Z> iz = new Z(i);
     auto iter = tree.iter<ZmRBTreeLess>(iz);
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  printf("min: %d, max: %d\n", tree.minimum()->key()->m_z, tree.maximum()->key()->m_z);
+  log("min: ", tree.minimum()->key()->m_z, ", max: ", tree.maximum()->key()->m_z);
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
   for (i = 0; i < 60; i++) { int j = i / 3; tree.add(ZmRef<Z>(new Z(j))); }
 
   i = 20;
 
-  fputs("0 to 19 with 3 duplicates reverse order, deleting every fourth element: ", stdout);
+  if (verbose) std::cerr << "0 to 19 with 3 duplicates reverse order, deleting every fourth element: ";
   {
     ZmRef<Z> iz = new Z(i);
     auto iter = tree.iter<ZmRBTreeLess>(iz);
@@ -589,33 +636,34 @@ int main()
     int j = 0;
 
     while (node = iter()) {
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
       if (!(j & 3)) iter.del(node);
       j++;
     }
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  fputs("0 to 19, remaining duplicates: ", stdout);
+  if (verbose) std::cerr << "0 to 19, remaining duplicates: ";
   {
     auto iter = tree.iter();
     Tree::NodeRef node;
 
     while (node = iter())
-      printf("%d ", node->key()->m_z);
+      if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
-  printf("min: %d, max: %d\n", tree.minimum()->key()->m_z, tree.maximum()->key()->m_z);
+  log("min: ", tree.minimum()->key()->m_z, ", max: ", tree.maximum()->key()->m_z);
 
   tree.clean();
+  ZuCheck(tree.count_() == 0);
 
-  fputs("empty tree: ", stdout);
+  if (verbose) std::cerr << "empty tree: ";
   {
     auto i = tree.iter();
-    while (auto node = i()) printf("%d ", node->key()->m_z);
+    while (auto node = i()) if (verbose) std::cerr << node->key()->m_z << ' ';
   }
-  putchar('\n');
+  if (verbose) std::cerr << '\n';
 
   {
     ZmRBTree<uint64_t> tree2;
@@ -634,6 +682,6 @@ int main()
 #endif
     for (unsigned i = 0; i < 15; i++) tree2.add(add[i]);
     for (unsigned i = 0; i < 12; i++) ZmAssert(tree2.del(del[i]));
-    printf("tree2 count: %u\n", (unsigned)tree2.count_());
+    ZuCheck(tree2.count_() == 3);
   }
 }

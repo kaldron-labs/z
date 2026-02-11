@@ -4,13 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
-
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
 
-#include <iostream>
+#include <zlib/ZuLib.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmObject.hh>
@@ -18,16 +15,7 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZmAtomic.hh>
 
-void fail() { Zm::exit(1); }
-
-void out(bool ok, ZuCSpan check, ZuCSpan diag) {
-  std::cout
-    << (ok ? "OK  " : "NOK ") << check << ' ' << diag
-    << '\n' << std::flush;
-}
-
-#define CHECK_(x) out((x), #x, "")
-#define CHECK(x, y) out((x), #x, y)
+using namespace ZuTestUtil;
 
 struct X : public ZmObject {
   X() : x(0) { }
@@ -37,7 +25,7 @@ struct X : public ZmObject {
   unsigned x;
 };
 
-void X::helloWorld() { std::cout << "hello world\n" << std::flush; }
+void X::helloWorld() { log("hello world"); }
 
 struct Y : public X {
   virtual void helloWorld();
@@ -59,13 +47,13 @@ ZuDerive(ZHash, (ZmHashKV<int, ZmRef<Z> >));
 
 ZuDerive(ZList2, (ZmList<ZuCArray<20>, ZmListNode<ZuCArray<20>>>));
 
-void Y::helloWorld() { std::cout << "hello world [Y]\n" << std::flush; }
+void Y::helloWorld() { log("hello world [Y]"); }
 
 ZmRef<X> foo(X *xPtr) { return(xPtr); }
 
 struct O : public ZmObject {
   O() : referenced(0), dereferenced(0) { }
-  ~O() { std::cout << "~O()\n" << std::flush; }
+  ~O() { log("~O()"); }
 #ifdef ZmObject_DEBUG
   void ref(const void *referrer = 0) const {
     ++referenced;
@@ -87,42 +75,44 @@ struct O : public ZmObject {
 
 int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZuTestMain();
   ZmRef<X> x = new X;
 
   {
     ZmRef<X> nullPtr;
     ZmRef<X> nullPtr_;
 
-    CHECK(!nullPtr, "null test 1");
+    ZuCHECK(!nullPtr, "null test 1");
 
     nullPtr = x;
-    CHECK(nullPtr, "null test 2");
+    ZuCHECK(nullPtr, "null test 2");
 
     nullPtr = 0;
-    CHECK(!nullPtr, "null test 3");
+    ZuCHECK(!nullPtr, "null test 3");
 
     nullPtr_ = x;
-    CHECK(nullPtr_, "null test 5");
+    ZuCHECK(nullPtr_, "null test 5");
 
     nullPtr_ = nullPtr;
-    CHECK(!nullPtr_, "null test 6");
+    ZuCHECK(!nullPtr_, "null test 6");
 
     nullPtr = x;
-    CHECK(nullPtr, "null test 7");
+    ZuCHECK(nullPtr, "null test 7");
 
     nullPtr = nullPtr_;
-    CHECK(!nullPtr, "null test 8");
+    ZuCHECK(!nullPtr, "null test 8");
 
     nullPtr_ = (X *)0;
-    CHECK(!nullPtr_, "null test 9");
+    ZuCHECK(!nullPtr_, "null test 9");
   }
 
   {
     ZmRef<X> xPtr = foo(x);
     ZmRef<X> xPtr_ = foo(x);
 
-    CHECK((X *)xPtr == &(*xPtr), "cast test 1");
-    CHECK((X *)xPtr_ == &(*xPtr_), "cast test 2");
+    ZuCHECK((X *)xPtr == &(*xPtr), "cast test 1");
+    ZuCHECK((X *)xPtr_ == &(*xPtr_), "cast test 2");
   }
 
   {
@@ -136,8 +126,8 @@ int main(int argc, char **argv)
 
     xPtr = x;
 
-    CHECK(xPtr == xPtr2, "equality test 1");
-    CHECK(xPtr == (ZmRef<X>)xPtr2, "equality test 2");
+    ZuCHECK(xPtr == xPtr2, "equality test 1");
+    ZuCHECK(xPtr == (ZmRef<X>)xPtr2, "equality test 2");
 
     xPtr->helloWorld();
 
@@ -170,7 +160,7 @@ int main(int argc, char **argv)
   {
     ZHash::Iter i(*hash);
 
-    CHECK((Z *)i()->val() == (Z *)z, "collection test");
+    ZuCHECK((Z *)i()->val() == (Z *)z, "collection test");
   }
 
   {
@@ -189,14 +179,14 @@ int main(int argc, char **argv)
     list1.add(z);
     list2.add(z);
     z = list1.shiftVal();
-    CHECK(z->m_z == 1234, "list1 test 1");
+    ZuCHECK(z->m_z == 1234, "list1 test 1");
     z = list2.shiftVal();
-    CHECK(z->m_z == 1234, "list2 test 1");
+    ZuCHECK(z->m_z == 1234, "list2 test 1");
     list.del(z);
     z = list1.shiftVal();
-    CHECK(z->m_z == 1234, "list1 test 2");
+    ZuCHECK(z->m_z == 1234, "list1 test 2");
     z = list2.shiftVal();
-    CHECK(z->m_z == 1234, "list2 test 2");
+    ZuCHECK(z->m_z == 1234, "list2 test 2");
 
     ZList list3;
     ZmRef<Z> z2 = new Z, z3 = new Z;
@@ -213,51 +203,52 @@ int main(int argc, char **argv)
     list2.add(z3);
     list3.add(z3);
 #ifdef ZmRef_DEBUG
-    std::cout << "z: "; z->debug();
-    std::cout << "z2: "; z2->debug();
-    std::cout << "z3: "; z3->debug();
-    std::cout << std::flush;
+    log("z:");
+    z->debug();
+    log("z2:");
+    z2->debug();
+    log("z3:");
+    z3->debug();
 #endif
     z = list1.shiftVal();
-    CHECK(z->m_z == 1234, "list1 test 3");
+    ZuCHECK(z->m_z == 1234, "list1 test 3");
     z = list2.popVal();
-    CHECK(z->m_z == 3456, "list2 test 3");
+    ZuCHECK(z->m_z == 3456, "list2 test 3");
     z = list1.shiftVal();
-    CHECK(z->m_z == 2345, "list1 test 4");
+    ZuCHECK(z->m_z == 2345, "list1 test 4");
     z = list2.popVal();
-    CHECK(z->m_z == 2345, "list2 test 4");
+    ZuCHECK(z->m_z == 2345, "list2 test 4");
     z = list1.shiftVal();
-    CHECK(z->m_z == 3456, "list1 test 5");
+    ZuCHECK(z->m_z == 3456, "list1 test 5");
     z = list2.popVal();
-    CHECK(z->m_z == 1234, "list2 test 5");
+    ZuCHECK(z->m_z == 1234, "list2 test 5");
 
-    std::cout << "list3 iteration 1\n" << std::flush;
+    log("list3 iteration 1");
     {
       ZList::Iter iter(list3);
 
       while (z = iter.val())
-	std::cout << "" << z->m_z << "\n" << std::flush;
+	log("", z->m_z);
     }
 
-    std::cout << "list3 iteration 2\n" << std::flush;
+    log("list3 iteration 2");
     {
       ZList::Iter iter(list3);
 
       while (z = iter.val())
-	std::cout << "" << z->m_z << "\n" << std::flush;
+	log("", z->m_z);
     }
 
-    std::cout << "list3 iteration 3\n" << std::flush;
+    log("list3 iteration 3");
     {
       ZList::Iter iter(list3);
 
       while (z = iter.val())
-	std::cout << "" << z->m_z << "\n" << std::flush;
+	log("", z->m_z);
     }
 
-    std::cout << "list tests 1 ok\n" << std::flush;
-
-    std::cout << "list2 count: " << list2.count_() << "\n" << std::flush;
+    log("list tests 1 ok");
+    log("list2 count: ", list2.count_());
   }
 
   {
@@ -270,7 +261,7 @@ int main(int argc, char **argv)
       ZList2::NodeRef z;
 
       while (z = iter())
-	std::cout << z->data() << '\n' << std::flush;
+	log(z->data());
     }
   }
 
@@ -279,24 +270,24 @@ int main(int argc, char **argv)
     {
       ZmRef<O> o = new O();
 
-      CHECK_(o->referenced == 1 && !o->dereferenced);
+      ZuCheck(o->referenced == 1 && !o->dereferenced);
       p = o;
     }
-    CHECK_(p->referenced == 2 && p->dereferenced == 1);
+    ZuCheck(p->referenced == 2 && p->dereferenced == 1);
     ZmRef<O> q = ZuMv(p);
-    CHECK_(!p);
-    CHECK_(q->referenced == 2 && q->dereferenced == 1);
+    ZuCheck(!p);
+    ZuCheck(q->referenced == 2 && q->dereferenced == 1);
   }
 
   {
     ZmRef<O> p = new O();
-    CHECK_(p->referenced == 1 && !p->dereferenced);
+    ZuCheck(p->referenced == 1 && !p->dereferenced);
     static auto fn = [](O *o) {
-      CHECK_(o->referenced == 1);
+      ZuCheck(o->referenced == 1);
       ZmRef<O> p = o;
-      CHECK_(o->referenced == 2);
+      ZuCheck(o->referenced == 2);
     };
     fn(p);
-    CHECK_(p->referenced == 2 && p->dereferenced == 1);
+    ZuCheck(p->referenced == 2 && p->dereferenced == 1);
   }
 }

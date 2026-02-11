@@ -6,11 +6,9 @@
 
 // ZmPQueue unit test
 
-#include <zlib/ZuLib.hh>
-
-#include <stdio.h>
 #include <stdlib.h>
 
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuTraits.hh>
@@ -19,12 +17,7 @@
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmNoLock.hh>
 
-inline void out(bool ok, const char *s) {
-  std::cout << (ok ? "OK  " : "NOK ") << s << '\n' << std::flush;
-  ZmAssert(ok);
-}
-
-#define CHECK(x) (out((x), #x))
+using namespace ZuTestUtil;
 
 using Msg_Data = ZuTuple<uint32_t, unsigned>;
 struct Msg : public ZuObject, public Msg_Data {
@@ -56,28 +49,34 @@ using QMsg = PQueue::Node;
 
 void head(PQueue &q, uint32_t seqNo)
 {
-  printf("head %u\n", (unsigned)seqNo);
+  log("head ", seqNo);
   q.head(seqNo);
 }
 void dequeue(PQueue &q)
 {
   while (ZmRef<QMsg> msg = q.dequeue())
-    printf("process %u, %u\n", (unsigned)msg->Msg::key(), msg->length());
+    log("process ", msg->Msg::key(), ", ", msg->length());
 }
 void add(PQueue &q, uint32_t seqNo, unsigned length)
 {
-  printf("send %u, %u\n", (unsigned)seqNo, length);
+  log("send ", seqNo, ", ", length);
   ZmRef<QMsg> msg = q.rotate(ZmRef<QMsg>(new QMsg(ZuFwdTuple(seqNo, length))));
-  printf("send - head %u gap %u, %u\n", (unsigned)q.head(), (unsigned)q.gap().key(), (unsigned)q.gap().length());
+  log("send - head ", q.head(),
+      " gap ", q.gap().key(),
+      ", ", q.gap().length());
   while (msg) {
-    printf("send - process %u, %u\n", (unsigned)msg->Msg::key(), msg->length());
+    log("send - process ", msg->Msg::key(), ", ", msg->length());
     msg = q.dequeue();
-    printf("send - head %u gap %u, %u\n", (unsigned)q.head(), (unsigned)q.gap().key(), (unsigned)q.gap().length());
+    log("send - head ", q.head(),
+	" gap ", q.gap().key(),
+	", ", q.gap().length());
   }
 }
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZuTestMain();
   PQueue q(1);
 
   add(q, 1, 1);
@@ -95,7 +94,7 @@ int main()
   add(q, 4, 3); // should be head- and tail-clipped, trigger dequeue
 
   add(q, 15, 1);
-  CHECK(q.gap().equals(ZuFwdTuple(14, 1)));
+  ZuCheck(q.gap().equals(ZuFwdTuple(14, 1)));
   add(q, 17, 1);
   add(q, 19, 1);
   add(q, 21, 3);
@@ -117,8 +116,8 @@ int main()
 
   head(q, 12); // should leave 12+2 in place
   add(q, 15, 1);
-  CHECK(q.gap().equals(ZuFwdTuple(14, 1)));
+  ZuCheck(q.gap().equals(ZuFwdTuple(14, 1)));
   dequeue(q);
-  CHECK(q.gap().equals(ZuFwdTuple(14, 1)));
+  ZuCheck(q.gap().equals(ZuFwdTuple(14, 1)));
   add(q, 14, 1);
 }

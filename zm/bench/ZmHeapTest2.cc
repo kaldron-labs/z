@@ -4,35 +4,40 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
+#include <iostream>
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTime.hh>
+
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmScheduler.hh>
 
-static bool verbose = false;
+template <typename... Ts>
+void out(const Ts &...values) {
+  (std::cout << ... << values) << '\n';
+}
+
+static bool detailVerbose = false;
 
 template <typename Heap> struct S_ : public Heap {
   S_(int i) : m_i(i) { }
   ~S_() { m_i = -1; }
   void doit() {
-    if (verbose) { printf("hello world %d\n", m_i); fflush(stdout); }
+    if (detailVerbose) out("hello world ", m_i);
     if (m_i < 0) abort();
   }
   int m_i;
 };
 ZuDerive(S, (S_<ZmHeap<"S", S_<ZuEmpty>>>));
 
-void usage()
+void usage_()
 {
-  fputs(
-"Usage: ZmHeapTest COUNT SIZE NTHR [VERB]\n\n"
-"    COUNT\t- number of iterations\n"
-"    SIZE\t- size of heap\n"
-"    NTHR\t- number of threads\n"
-"    VERB\t- verbose (0 | 1 - defaults to 0)\n"
-, stderr);
+  std::cerr <<
+    "Usage: ZmHeapTest COUNT SIZE NTHR [VERB]\n\n"
+    "  COUNT\t- number of iterations\n"
+    "  SIZE\t- size of heap\n"
+    "  NTHR\t- number of threads\n"
+    "  VERB\t- verbose (0 | 1 - defaults to 0)\n";
   Zm::exit(1);
 }
 
@@ -44,12 +49,12 @@ ZmScheduler *sched;
 
 int main(int argc, char **argv)
 {
-  if (argc < 4 || argc > 5) usage();
+  if (argc < 4 || argc > 5) usage_();
   count = atoi(argv[1]);
   size = atoi(argv[2]);
   nthr = atoi(argv[3]);
-  if (argc == 5) verbose = atoi(argv[4]);
-  if (!count || !nthr) usage();
+  if (argc == 5) detailVerbose = atoi(argv[4]);
+  if (!count || !nthr) usage_();
   for (int i = 0; i < nthr; i++)
     ZmHeapMgr::init("S", i, ZmHeapConfig{uint64_t(size)});
   ZmSchedParams params;
@@ -73,6 +78,5 @@ int main(int argc, char **argv)
   sched->stop();
   ZuTime end = Zm::now();
   end -= start;
-  printf("%u.%09u\n", (unsigned)end.sec(), (unsigned)end.nsec());
-  std::cout << ZmHeapMgr::csv();
-}
+  out(end.sec(), '.', end.nsec());
+  out(ZmHeapMgr::csv());}

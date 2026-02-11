@@ -1,13 +1,19 @@
-#include <zlib/ZmPlatform.hh>
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2024 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuTime.hh>
 
-#include <iostream>
+#include <zlib/ZmPlatform.hh>
 
-inline void out(const char *s) { std::cout << s << '\n'; }
+using namespace ZuTestUtil;
 
-#define CHECK(x) ((x) ? out("OK  " #x) : out("NOK " #x))
-
-int main()
+int main(int argc, char **argv)
 {
-  CHECK(Zm::getTID() == ::getpid());
+  parse(argc, argv);
+  ZuTestMain();
+  ZuCheck(Zm::getTID() == ::getpid());
 }

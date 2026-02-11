@@ -4,32 +4,37 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
-
-#include <iostream>
-
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAlloc.hh>
 #include <zlib/ZmVHeap.hh>
 
+using namespace ZuTestUtil;
+
+template <auto &ZuTest_scope>
 void test()
 {
   auto self = ZmSelf();
-  std::cout << "stack: " << ZuBoxPtr(self->stackAddr()).hex() << " +" << ZuBoxed(self->stackSize()).hex() << '\n';
+  ZuCheck(self);
+  log("stack: ", ZuBoxPtr(self->stackAddr()).hex(), " +", ZuBoxed(self->stackSize()).hex());
   unsigned n = ZmStackAvail();
-  std::cout << "stack available: " << ZuBoxed(n).hex() << '\n';
+  log("stack available: ", ZuBoxed(n).hex());
   auto ptr = ZmAlloc(uint8_t, n/3);
-  std::cout << "ZmAlloc(" << ZuBoxed(n/3).hex() << "): " << ZuBoxPtr(ptr.ptr).hex() << '\n';
-  std::cout << "stack available: " << ZuBoxed(ZmStackAvail()).hex() << '\n';
+  ZuCheck(ptr.ptr);
+  log("ZmAlloc(", ZuBoxed(n/3).hex(), "): ", ZuBoxPtr(ptr.ptr).hex());
+  log("stack available: ", ZuBoxed(ZmStackAvail()).hex());
   auto ptr2 = ZmAlloc(uint8_t, n);
-  std::cout << "ZmAlloc(" << ZuBoxed(n).hex() << "): " << ZuBoxPtr(ptr2.ptr).hex() << '\n';
-  std::cout << "stack available: " << ZuBoxed(ZmStackAvail()).hex() << '\n';
+  ZuCheck(ptr2.ptr);
+  log("ZmAlloc(", ZuBoxed(n).hex(), "): ", ZuBoxPtr(ptr2.ptr).hex());
+  log("stack available: ", ZuBoxed(ZmStackAvail()).hex());
   // uint8_t *ptr = static_cast<uint8_t *>(ZmAlloc(n/3));
   // uint8_t *ptr2 = static_cast<uint8_t *>(ZmAlloc(n));
 }
 
 int main(int argc, char **argv)
 {
-  test();
+  parse(argc, argv);
+  ZuTestMain();
+  test<ZuTest_scope>();
 }

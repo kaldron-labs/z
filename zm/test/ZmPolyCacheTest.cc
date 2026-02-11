@@ -1,10 +1,17 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2024 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuDemangle.hh>
 #include <zlib/ZuPrint.hh>
 
 #include <zlib/ZmPolyCache.hh>
 
-#include <iostream>
+using namespace ZuTestUtil;
 
 struct Foo_ {
   int i, j, k, l;
@@ -24,8 +31,10 @@ ZuStruct(Foo_,
 ZuDerive(Cache, (ZmPolyCache<Foo_>));
 using Foo = Cache::Node;
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZuTestMain();
   Cache cache("test");
   cache.add(new Foo{1,2,3,4});
   cache.add(new Foo{2,3,4,5});
@@ -33,25 +42,38 @@ int main()
   cache.add(new Foo{5,5,5,5});
   {
     auto x = cache.del<0>(ZuFwdTuple(1,3));
-    std::cout << ZuDemangle<decltype(x)>{} << '\n';
-    std::cout << ZuBoxPtr(static_cast<Foo *>(x)).hex() << '\n';
-    std::cout << *x << '\n';
+    ZuCheck(x);
+    ZuCheck(x->i == 1 && x->j == 2 && x->k == 3 && x->l == 4);
+    log(ZuDemangle<decltype(x)>{});
+    log(ZuBoxPtr(static_cast<Foo *>(x)).hex());
+    log(*x);
   }
   {
-    std::cout << "iteration:\n";
-    cache.allSync([](auto node, auto wake) {
-      std::cout << *node << '\n';
+    log("iteration:");
+    unsigned n = 0;
+    cache.allSync([&](auto node, auto wake) {
+      ++n;
+      log(*node);
       wake();
     });
+    ZuCheck(n == 3);
   }
   {
     auto x = cache.find<0>(ZuFwdTuple(2,4));
-    std::cout << "find<0>({2,4}): " << *x << '\n';
+    ZuCheck(x);
+    ZuCheck(x->i == 2 && x->j == 3 && x->k == 4 && x->l == 5);
+    log("find<0>({2,4}): ", *x);
     x = cache.find<1>(ZuFwdTuple(3,4));
-    std::cout << "find<1>({3,4}): " << *x << '\n';
+    ZuCheck(x);
+    ZuCheck(x->i == 2 && x->j == 3 && x->k == 4 && x->l == 5);
+    log("find<1>({3,4}): ", *x);
     x = cache.find<2>(ZuFwdTuple(3));
-    std::cout << "find<2>({3}): " << *x << '\n';
+    ZuCheck(x);
+    ZuCheck(x->i == 2 && x->j == 3 && x->k == 4 && x->l == 5);
+    log("find<2>({3}): ", *x);
     x = cache.find<3>(ZuFwdTuple(5));
-    std::cout << "find<3>({5}): " << *x << '\n';
+    ZuCheck(x);
+    ZuCheck(x->i == 5 && x->j == 5 && x->k == 5 && x->l == 5);
+    log("find<3>({5}): ", *x);
   }
 }

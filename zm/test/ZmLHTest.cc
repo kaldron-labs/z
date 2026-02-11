@@ -4,14 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
-
-#include <zlib/ZuLib.hh>
-
-#include <iostream>
-
-#include <stdlib.h>
-
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuCmp.hh>
@@ -19,22 +12,14 @@
 
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
-#include <zlib/ZmLock.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmLHash.hh>
 #include <zlib/ZmNoLock.hh>
-#include <zlib/ZmRWLock.hh>
-#include <zlib/ZmTime.hh>
-#include <zlib/ZmSemaphore.hh>
-#include <zlib/ZmThread.hh>
-#include <zlib/ZmSingleton.hh>
-#include <zlib/ZmSpecific.hh>
 #include <zlib/ZmDemangle.hh>
 
-void out(const char *s) { std::cout << s << '\n' << std::flush; }
-void fail() { }
+using namespace ZuTestUtil;
 
-#define CHECK(x) ((x) ? out("OK  " #x) : (fail(), out("NOK " #x)))
+void out(const char *s) { log(s); }
 
 template <int N> struct String {
   String() { }
@@ -139,8 +124,8 @@ template <typename H> void iter(H &h, int check, int del = -1)
     total += j;
     if (j == del) i.del();
   }
-  std::cout << "total=" << total << " check=" << check << '\n' << std::flush;
-  CHECK(total == check);
+  log("total=", total, " check=", check);
+  ZuCheckRT(total == check);
 }
 
 template <typename H> void iter2(H &h, int check, int del = -1)
@@ -152,12 +137,8 @@ template <typename H> void iter2(H &h, int check, int del = -1)
     if (j >= 0) total += j;
     if (j == del) i.del();
   }
-  std::cout << "total=" << total << " check=" << check << '\n' << std::flush;
-  CHECK(total == check);
-}
-
-template <typename H> void iterDel(H &h)
-{
+  log("total=", total, " check=", check);
+  ZuCheckRT(total == check);
 }
 
 template <typename H, template <typename> class A>
@@ -165,98 +146,97 @@ void funcTest_(int bits, double loadFactor)
 {
   ZmRef<H> h_ = new H{ZmHashParams{}.bits(bits).loadFactor(loadFactor)};
   H &h = *h_;
-  std::cout << "funcTest_<" << ZmDemangle<H>{} << ", " << ZmDemangle<A<H>>{} << ">(" << bits << ", " << loadFactor << ")\n";
-
+  log("funcTest_<", ZmDemangle<H>{}, ", ", ZmDemangle<A<H>>{}, ">(", bits, ", ", loadFactor, ")");
   h.add("Goodbye", -42);
-  CHECK(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -42);
+  ZuCheckRT(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -42);
   add(h), iter(h, 42+43+44);
   out("DEL 42 43 44");
   del(h, 42), iter(h, 43+44), del(h, 43), iter(h, 44), del(h, 44), iter(h, 0);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   add(h), iter(h, 42+43+44);
   out("DEL 42 44 43");
   del(h, 42), iter(h, 43+44), del(h, 44), iter(h, 43), del(h, 43), iter(h, 0);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   add(h), iter(h, 42+43+44);
   out("DEL 43 42 44");
   del(h, 43), iter(h, 42+44), del(h, 42), iter(h, 44), del(h, 44), iter(h, 0);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   add(h), iter(h, 42+43+44);
   out("DEL 43 44 42");
   del(h, 43), iter(h, 42+44), del(h, 44), iter(h, 42), del(h, 42), iter(h, 0);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   add(h), iter(h, 42+43+44);
   out("DEL 44 42 43");
   del(h, 44), iter(h, 42+43), del(h, 42), iter(h, 43), del(h, 43), iter(h, 0);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   add(h), iter(h, 42+43+44);
   out("DEL 44 43 42");
   del(h, 44), iter(h, 42+43), del(h, 43), iter(h, 42), del(h, 42), iter(h, 0);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   add5(h);
   out("DEL 44 43 45 [42->46]");
   del(h, 44), iter(h, 42+43+45+46), del(h, 43), iter(h, 42+45+46),
   del(h, 45), iter(h, 42+46), del(h, 42), del(h, 46);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   add5(h);
   out("DEL 44 45 43 [42->46]");
   del(h, 44), iter(h, 42+43+45+46), del(h, 45), iter(h, 42+43+46),
   del(h, 43), iter(h, 42+46), del(h, 46), del(h, 42);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   h.findAdd("Goodbye", -46);
   {
     auto v = A<H>::val(typename A<H>::T{h.find("Goodbye")});
-    CHECK(v == -42 || v == -46);
+    ZuCheckRT(v == -42 || v == -46);
   }
   h.del("Goodbye", -42);
   h.findAdd("Goodbye", -46);
-  CHECK(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -46);
+  ZuCheckRT(A<H>::val(typename A<H>::T{h.find("Goodbye")}) == -46);
   {
     auto v = A<H>::val(typename A<H>::T{h.find("Goodbye")});
-    CHECK(v == -42 || v == -46);
+    ZuCheckRT(v == -42 || v == -46);
   }
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
 
   out("ITERDEL 44 43 42");
   add(h);
   iter(h, 42+43+44, 44);
   iter(h, 42+43, 43);
   iter(h, 42, 42);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL 43 44 42");
   add(h); iter(h, 42+43+44, 43); iter(h, 42+44, 44); iter(h, 42, 42);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL 42 44 43");
   add(h); iter(h, 42+43+44, 42); iter(h, 43+44, 44); iter(h, 43, 43);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL 44 42 43");
   add(h); iter(h, 42+43+44, 44); iter(h, 42+43, 42); iter(h, 43, 43);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL 43 42 44");
   add(h); iter(h, 42+43+44, 43); iter(h, 42+44, 42); iter(h, 44, 44);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL 42 43 44");
   add(h); iter(h, 42+43+44, 42); iter(h, 43+44, 43); iter(h, 44, 44);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
 
   out("ITERDEL2 44 43 42");
   add(h); iter2(h, 42+43+44, 44); iter2(h, 42+43, 43); iter2(h, 42, 42);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL2 43 44 42");
   add(h); iter2(h, 42+43+44, 43); iter2(h, 42+44, 44); iter2(h, 42, 42);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL2 42 44 43");
   add(h); iter2(h, 42+43+44, 42); iter2(h, 43+44, 44); iter2(h, 43, 43);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL2 44 42 43");
   add(h); iter2(h, 42+43+44, 44); iter2(h, 42+43, 42); iter2(h, 43, 43);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL2 43 42 44");
   add(h); iter2(h, 42+43+44, 43); iter2(h, 42+44, 42); iter2(h, 44, 44);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
   out("ITERDEL2 42 43 44");
   add(h); iter2(h, 42+43+44, 42); iter2(h, 43+44, 43); iter2(h, 44, 44);
-  CHECK(h.count_() == 1);
+  ZuCheckRT(h.count_() == 1);
 }
 
 template <typename H, template <typename> class A> void funcTest()
@@ -267,75 +247,11 @@ template <typename H, template <typename> class A> void funcTest()
   }
 }
 
-ZuDerive(PerfHash, (ZmHashKV<unsigned, String<16>, ZmHashLock<ZmLock> >));
-ZuDerive(PerfLHash, (ZmLHashKV<unsigned, String<16>, ZmLHashLock<ZmLock> >));
-
-unsigned perfTestSize = 1000;
-
-template <typename H> void hashIt(H *h)
-{
-  String<16> s = "Hello World", t = "Goodbye World";
-  unsigned i;
-
-  std::cout << "perfTestSize=" << perfTestSize << '\n' << std::flush;
-
-  for (i = 0; i < perfTestSize; i++) h->add(i, s);
-  for (i = 0; i < perfTestSize; i++) h->findAdd(i, t);
-  for (i = 0; i < perfTestSize; i++) h->del(i);
-  for (i = 0; i < perfTestSize; i++) h->add(i, s), h->del(i);
-  for (i = 0; i < perfTestSize; i++) h->findAdd(i, t);
-  for (i = 0; i < perfTestSize; i++) h->del(i, t);
-  for (i = 0; i < perfTestSize; i++) h->findAdd(i, t), h->del(i, t);
-}
-
-unsigned concurrency = 1;
-
-template <typename H, template <typename> class A> void perfTest_(int bits)
-{
-  ZmThread threads[16];
-  unsigned n = concurrency;
-
-  std::cout << "concurrency=" << concurrency << '\n' << std::flush;
-
-  if (n > 16) n = 16;
-
-  ZmRef<H> h = new H(ZmHashParams().bits(bits).loadFactor(1.0));
-
-  for (unsigned i = 0; i < n; i++)
-    threads[i] = ZmThread{[h]() { hashIt<H>(h.ptr()); }};
-  for (unsigned i = 0; i < n; i++) threads[i].join(0);
-}
-
-template <typename H, template <typename> class A> void perfTest()
-{
-  for (unsigned bits = 8; bits < 12; bits++) perfTest_<H, A>(bits);
-}
-
 int main(int argc, char **argv)
 {
-  ZuTime start, end;
+  parse(argc, argv);
+  ZuTestMain();
 
   funcTest<Hash, HashAdapter>();
   funcTest<LHash, LHashAdapter>();
-
-  if (argc > 1) perfTestSize = atoi(argv[1]);
-  if (argc > 2) concurrency = atoi(argv[2]);
-
-  std::cout
-    << "perfTestSize=" << perfTestSize
-    << " concurrency=" << concurrency << '\n' << std::flush;
-
-  start = Zm::now();
-  for (unsigned i = 0; i < 10; i++) perfTest<PerfHash, HashAdapter>();
-  end = Zm::now();
-  end -= start;
-
-  std::cout << "ZmHash time=" << end.interval() << '\n';
-
-  start = Zm::now();
-  for (unsigned i = 0; i < 10; i++) perfTest<PerfLHash, LHashAdapter>();
-  end = Zm::now();
-  end -= start;
-
-  std::cout << "ZmLHash time=" << end.interval() << '\n';
 }

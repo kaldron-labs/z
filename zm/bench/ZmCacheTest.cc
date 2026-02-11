@@ -4,13 +4,11 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-/* test program */
-
-#include <zlib/ZuLib.hh>
-
 #include <zlib/ZmCache.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmRBTree.hh>
+
+#include <iostream>
 
 struct Z {
   unsigned v;
@@ -62,8 +60,7 @@ void stats(const ZCache &cache)
     "count=" << stats.count <<
     " loads=" << stats.loads <<
     " misses=" << stats.misses <<
-    " evictions=" << stats.evictions <<
-    '\n' << std::flush;
+    " evictions=" << stats.evictions << '\n';
 }
 
 int main(int argc, char **argv)
@@ -81,8 +78,7 @@ int main(int argc, char **argv)
 
   auto threads = ZmAlloc(ZmThread, nThreads);
 
-  std::cout << "spawning "  << nThreads << " threads...\n";
-
+  std::cout << "spawning " << nThreads << " threads..." << '\n';
   overallStart = Zm::now();
 
   ZCache cache{ZmHashParams{cacheSize}};

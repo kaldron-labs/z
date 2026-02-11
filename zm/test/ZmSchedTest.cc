@@ -6,10 +6,9 @@
 
 // scheduler test program
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
-#include <stdio.h>
+
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmScheduler.hh>
@@ -17,12 +16,14 @@
 #include <zlib/ZmBackoff.hh>
 #include <zlib/ZmTimeout.hh>
 
+using namespace ZuTestUtil;
+
 struct TLS : public ZmObject {
   TLS() : m_ping(0) {
-    printf("TLS(0) [%d]\n", ZmSelf()->sid());
+    log("TLS(0) [", ZmSelf()->sid(), ']');
   }
   ~TLS() {
-    printf("~TLS(%u) [%d]\n", m_ping, ZmSelf()->sid());
+    log("~TLS(", m_ping, ") [", ZmSelf()->sid(), ']');
   }
   void ping() { ++m_ping; }
   unsigned	m_ping;
@@ -33,22 +34,21 @@ public:
   Job(const char *message, ZuTime timeout) :
     m_message{message}, m_timeout{timeout}
   {
-    std::cout
-      << "Job() this=" << ZuBoxPtr(this).hex()
-      << " message=" << ZuBoxPtr(m_message).hex()
-      << ' ' << message << '\n' << std::flush;
+    log("Job() this=", ZuBoxPtr(this).hex(),
+	" message=", ZuBoxPtr(m_message).hex(),
+	' ', message);
   }
   ~Job() {
-    printf("~Job() %p ~%s [%d]\n",
-	this, m_message, (int)ZmThreadContext::self()->sid());
+    log("~Job() ", ZuBoxPtr(this).hex(), " ~", m_message,
+	" [", ZmThreadContext::self()->sid(), ']');
     ::free((void *)m_message);
   }
 
   void *operator()() {
     ZmAssert(!(reinterpret_cast<uintptr_t>(this) & 8));
     ZmSpecific<TLS>::instance()->ping();
-    printf("Job::() %p %s [%d]\n",
-	this, m_message, (int)ZmThreadContext::self()->sid());
+    log("Job::() ", ZuBoxPtr(this).hex(), ' ', m_message,
+	" [", ZmThreadContext::self()->sid(), ']');
     return 0;
   }
 
@@ -66,7 +66,7 @@ public:
   void retry() {
     ZuTime now = Zm::now();
 
-    printf("%d %ld\n", (int)now.sec(), (long)now.nsec());
+    log(now.sec(), ' ', now.nsec());
   }
 };
 
@@ -74,84 +74,74 @@ public:
 
 void segv(int s)
 {
-  printf("%d/%d: SEGV\n", (int)Zm::getPID(), (int)Zm::getTID());
-  fflush(stdout);
+  log(Zm::getPID(), '/', Zm::getTID(), ": SEGV");
+  
   while (-1);
 }
 
-#ifdef _MSC_VER
-#pragma warning(disable:4996)
-#endif
-
-void usage()
+void breakpoint(ZmScheduler::Timer *timer)
 {
-  fputs(
+  log("breakpoint");
+}
+
+char *message_(int j)
+{
+  ZuCArray<32> s;
+  s << "Goodbye World " << j;
+  auto n = s.length() + 1;
+  auto *buf = static_cast<char *>(malloc(n));
+  if (!buf) return buf;
+  for (unsigned k = 0; k < n; k++) buf[k] = s.data()[k];
+  return buf;
+}
+
+void usage_()
+{
+  std::cerr <<
     "Usage: ZmSchedTest [OPTION]...\n\n"
     "Options:\n"
     "  -n N\tset number of threads to N\n"
     "  -c ID=CPUSET\tset thread ID affinity to CPUSET (e.g. 1=2,4)\n"
-    "  -i BITMAP\tset isolation (e.g. 1,3-4)\n"
-    , stderr);
+    "  -i BITMAP\tset isolation (e.g. 1,3-4)\n";
   Zm::exit(1);
-}
-
-void fail(const char *s) 
-{
-  printf("FAIL: %s\n", s);
-}
-
-#define test(t, x) \
-  (((ZuCArray<32>() << t(x)) == x) ? void() : fail(#t " \"" x "\""))
-#define test2(t, x, y) \
-  (((ZuCArray<32>() << t(x)) == y) ? void() : \
-   fail(#t " \"" x "\" != \"" y "\""))
-
-void breakpoint(ZmScheduler::Timer *timer)
-{
 }
 
 int main(int argc, char **argv)
 {
-  {
-    test(ZmBitmap, "");
-    test2(ZmBitmap, ",", "");
-    test2(ZmBitmap, ",,", "");
-    test(ZmBitmap, "0-");
-    test(ZmBitmap, "0,3-");
-    test(ZmBitmap, "3-");
-    test(ZmBitmap, "3-5,7");
-    test(ZmBitmap, "3-5,7,9-");
-  }
-
-  signal(SIGSEGV, segv);
-
   ZmSchedParams params = ZmSchedParams().id("sched");
   ZmBitmap isolation;
 
   for (int i = 1; i < argc; i++) {
-    if (argv[i][0] != '-') usage();
+    if (argv[i][0] != '-') usage_();
     switch (argv[i][1]) {
-      default:
-	usage();
+      case 'q':
+	verbose = false;
 	break;
       case 'n':
-	if (++i >= argc) usage();
+	if (++i >= argc) usage_();
 	params.nThreads(ZuBox<unsigned>(argv[i]));
 	break;
       case 'c': {
-	if (++i >= argc) usage();
+	if (++i >= argc) usage_();
 	unsigned o, n = strlen(argv[i]);
 	for (o = 0; o < n; o++) if (argv[i][o] == '=') break;
-	if (!o || o >= n - 1) usage();
+	if (!o || o >= n - 1) usage_();
 	params.thread(ZuBox<unsigned>(ZuCSpan(argv[i], o)))
 	  .cpuset(ZuCSpan(&argv[i][o + 1], n - o - 1));
       } break;
       case 'i':
-	if (++i >= argc) usage();
+	if (++i >= argc) usage_();
 	isolation = argv[i];
+	break;
+      default:
+	usage_();
 	break;
     }
   }
+
+  ZuTestMain();
+
+  signal(SIGSEGV, segv);
 
   {
     int tid = isolation.first();
@@ -172,8 +162,7 @@ int main(int argc, char **argv)
 
   for (i = 0; i < 10; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
-    char *buf = static_cast<char *>(malloc(32));
-    sprintf(buf, "Goodbye World %d", j);
+    char *buf = message_(j);
     // jobs[j - 1] = new Job(buf, t + ZuTime(((double)j) / 10.0));
     // fns[j - 1] = ZmFn<>{jobs[j - 1].ptr(), ZmFnPtr<&Job::operator()>{}};
     // s.add(&timers[j - 1], fns[j - 1], jobs[j - 1]->timeout());
@@ -181,16 +170,16 @@ int main(int argc, char **argv)
     s.add([
       job = ZmMkRef(new Job(buf, out))
     ](this const auto &self) {
-      std::cout << "operator()() this=" << ZuBoxPtr(&self).hex() << '\n';
+      log("operator()() this=", ZuBoxPtr(&self).hex());
       (*job)();
     }, out, &timers[j - 1]);
-    printf("Hello World %d\n", j);
+    log("Hello World ", j);
   }
 
 #if 0
   for (i = 5; i < 10; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
-    if (timers[j - 1]) printf("Disabling %d\n", j);
+    if (timers[j - 1]) log("Disabling ", j);
     timers[j - 1].fn = ZmFn<>{};
     // fns[j - 1] = ZmFn<>();
     // jobs[j - 1] = 0;
@@ -199,10 +188,10 @@ int main(int argc, char **argv)
 
   for (i = 0; i < 5; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
-    if (timers[j - 1]) printf("Deleting %d\n", j);
-    printf("Delete World %d\n", j);
+    if (timers[j - 1]) log("Deleting ", j);
+    log("Delete World ", j);
     if (s.del(&timers[j - 1]))
-      printf("Found and deleted %d\n", j);
+      log("Found and deleted ", j);
     // timers[j - 1] = 0;
     // fns[j - 1] = ZmFn<>();
     // jobs[j - 1] = 0;
@@ -211,9 +200,8 @@ int main(int argc, char **argv)
 
   Zm::sleep(ZuTime(.6));
 
-  puts("threads:");
-  std::cout << ZmThread::csv() << '\n';
-
+  log("threads:");
+  log(ZmThread::csv());
   s.stop();
 
   s.start();
@@ -222,14 +210,13 @@ int main(int argc, char **argv)
 
   for (i = 0; i < 10; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
-    char *buf = (char *)malloc(32);
-    sprintf(buf, "Goodbye World %d", j);
+    char *buf = message_(j);
     // jobs[j - 1] = new Job(buf, t + ZuTime(((double)j) / 10.0));
     // fns[j - 1] = ZmFn<>{jobs[j - 1].ptr(), ZmFnPtr<&Job::operator()>{}};
     ZuTime out = t + ZuTime(((double)j) / 10.0);
     s.add([job = ZmMkRef(new Job(buf, out))]() { (*job)(); },
 	out, &timers[j - 1]);
-    printf("Hello World %d\n", j);
+    log("Hello World ", j);
     if (j == 2) breakpoint(&timers[j - 1]);
   }
 
@@ -244,7 +231,7 @@ int main(int argc, char **argv)
 
   for (i = 5; i < 10; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
-    printf("Delete World %d\n", j);
+    log("Delete World ", j);
     s.del(&timers[j - 1]);
     // timers[j - 1] = 0;
     // fns[j - 1] = ZmFn<>();
@@ -254,9 +241,8 @@ int main(int argc, char **argv)
 
   Zm::sleep(ZuTime(.6));
 
-  puts("threads:");
-  std::cout << ZmThread::csv() << '\n';
-
+  log("threads:");
+  log(ZmThread::csv());
   s.stop();
 
   ZmBackoff o(.25, 5, 1.25, .25);
@@ -272,8 +258,9 @@ int main(int argc, char **argv)
 
   r->stop();
 
-  puts("threads:");
-  std::cout << ZmThread::csv() << '\n';
-
+  log("threads:");
+  log(ZmThread::csv());
   s.stop();
+
+  ZuCheck(true); // success is running to completion
 }

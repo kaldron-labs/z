@@ -4,29 +4,25 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
-#include <iostream>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmTime.hh>
 
-void fail() { Zm::exit(1); }
+using namespace ZuTestUtil;
 
-void out(const char *s) {
-  std::cout << s << '\n' << std::flush;
-}
-
-#define CHECK(x) ((x) ? (out("OK  " #x), void()) : (out("NOK " #x), fail()))
-
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+
+  ZuTestMain();
+
   ZuTime t;
-  CHECK(!*t);
-  CHECK(!!t);
-  CHECK(t);
+  ZuCheck(!*t);
+  ZuCheck(!!t);
+  ZuCheck(t);
   ZuTime t2 = 0;
-  CHECK(*t2);
-  CHECK(!t2);
-  std::cout << Zm::now() << '\n';
+  ZuCheck(*t2);
+  ZuCheck(!t2);
+  log(Zm::now());
 }

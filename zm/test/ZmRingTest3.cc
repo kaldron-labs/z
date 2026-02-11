@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuArray.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmRing.hh>
 #include <zlib/ZmThread.hh>
@@ -12,12 +13,15 @@
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmTimeInterval.hh>
 
-void usage()
+using namespace ZuTestUtil;
+
+void usage_()
 {
   std::cerr <<
     "Usage: ZmRingTest3 [OPTION]...\n"
     "  test read/write ring buffer in shared memory\n\n"
     "Options:\n"
+    "  -q\t\t- suppress diagnostic output\n"
     "  -b BUFSIZE\t- set buffer size to BUFSIZE (default: 8192)\n"
     "  -n COUNT\t- set number of messages to COUNT (default: 1)\n"
     "  -m MSGSIZE\t- set message size to MSGSIZE (default: 128)\n";
@@ -46,7 +50,7 @@ public:
   int main();
 
 private:
-  void run();
+  bool run();
 
   void reader();
   void writer();
@@ -59,22 +63,26 @@ int main(int argc, char **argv)
   Params params;
 
   for (int i = 1; i < argc; i++) {
-    if (argv[i][0] != '-') usage();
+    if (argv[i][0] != '-') usage_();
+    if (argv[i][2]) usage_();
     switch (argv[i][1]) {
+      case 'q':
+	verbose = false;
+	break;
       case 'b':
-	if (++i >= argc) usage();
+	if (++i >= argc) usage_();
 	params.bufsize = ZuBox<unsigned>{argv[i]};
 	break;
       case 'n':
-	if (++i >= argc) usage();
+	if (++i >= argc) usage_();
 	params.count = ZuBox<unsigned>{argv[i]};
 	break;
       case 'm':
-	if (++i >= argc) usage();
+	if (++i >= argc) usage_();
 	params.msgsize = ZuBox<unsigned>{argv[i]};
 	break;
       default:
-	usage();
+	usage_();
 	break;
     }
   }
@@ -89,23 +97,25 @@ int main(int argc, char **argv)
 template <typename Ring>
 int App<Ring>::main()
 {
-  run();
+  ZuTestMain();
+
+  ZuCheck(run());
+
   return 0;
 }
 
 template <typename Ring>
-void App<Ring>::run()
+bool App<Ring>::run()
 {
   if (ring.open(0) != Zu::OK) {
-    std::cerr << "open failed\n" << std::flush;
-    Zm::exit(1);
+    log_("open failed");
+    return false;
   }
 
-  std::cerr <<
-    "address: 0x" << ZuBoxPtr(ring.data()).hex() <<
-    "  ctrlSize: " << ZuBoxed(ring.ctrlSize()) <<
-    "  size: " << ZuBoxed(ring.size()) <<
-    "  msgSize: " << ZuBoxed(msgsize) << '\n';
+  log("address: 0x", ZuBoxPtr(ring.data()).hex(),
+      "  ctrlSize: ", ZuBoxed(ring.ctrlSize()),
+      "  size: ", ZuBoxed(ring.size()),
+      "  msgSize: ", ZuBoxed(msgsize));
 
   {
     ZmThread r, w;
@@ -123,36 +133,38 @@ void App<Ring>::run()
   }
 
   ring.close();
+
+  return true;
 }
 
 template <typename Ring>
 void App<Ring>::reader()
 {
-  std::cerr << "reader started\n";
+  log("reader started");
   Ring reader{ring};
   if (reader.open(Ring::Read) != Zu::OK) {
-    std::cerr << "reader open failed\n";
+    log_("reader open failed");
     return;
   }
   if (reader.attach() != Zu::OK) {
-    std::cerr << "reader attach failed\n";
+    log_("reader attach failed");
     return;
   }
   for (unsigned j = 0, n = count; j < n; j++) {
     if (const Msg *msg = static_cast<const Msg *>(reader.shift())) {
       reader.shift2(msg->len);
-      std::cout << "read " << ZuBoxed(msg->len) << " bytes\n";
+      log("read ", ZuBoxed(msg->len), " bytes");
     } else {
       int k = reader.readStatus();
       if (k == Zu::EndOfFile) {
-	std::cerr << "reader EOF\n";
+	log("reader EOF");
 	break;
       } else if (!k)
-	std::cerr << "ring empty\n";
+	log("ring empty");
       else {
 	ZuCArray<80> s;
 	s << "readStatus() returned " << ZuBoxed(k) << '\n';
-	std::cerr << s;
+	log(s);
       }
       Zm::sleep(.1);
       --j;
@@ -167,15 +179,15 @@ template <typename Ring>
 void App<Ring>::writer()
 {
   unsigned failed = 0;
-  std::cerr << "writer started\n";
+  log("writer started");
   Ring writer{ring};
   if (writer.open(Ring::Write) != Zu::OK) {
-    std::cerr << "writer open failed\n";
+    log_("writer open failed");
     return;
   }
   for (unsigned j = 0; j < count; j++) {
     if (void *ptr = writer.push(msgsize)) {
-      // puts("push");
+      // log("push");
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-variable"
       Msg *msg = new (ptr) Msg{msgsize};
@@ -185,14 +197,14 @@ void App<Ring>::writer()
     } else {
       int k = writer.writeStatus();
       if (k == Zu::EndOfFile) {
-	std::cerr << "writer EOF\n";
+	log("writer EOF");
 	break;
       } else if (k == Zu::NotReady) {
-	std::cerr << "no readers\n";
+	log("no readers");
       } else if (k >= (int)sizeof(Msg))
-	std::cerr << "writer OK!\n";
+	log("writer OK!");
       else {
-	std::cerr << "Ring Full\n";
+	log("Ring Full");
 	++failed;
       }
       Zm::sleep(.1);
@@ -204,7 +216,7 @@ void App<Ring>::writer()
     ZuCArray<64> s;
     s << "push failed " << ZuBoxed(failed) << " times\n"
       << "ring full " << ZuBoxed(writer.full()) << " times\n";
-    std::cerr << s;
+    log(s);
   }
   writer.close();
 }
