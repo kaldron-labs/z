@@ -16,14 +16,14 @@ noinst_PROGRAMS = \
 	ZuAxorTest ZuPtrTest ZuTimeTest ZuEndianTest \
 	ZuStreamTest ZuBitStreamTest \
 	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest \
-	ZuInvokeSwitchTest ZuMArrayIterTest ZuMatchTest ZuMetaTraitsTest \
+	ZuInvokeSwitchTest ZuMArrayIterTest ZuMatchTest ZuLibTest \
 	ZuNumConvTest ZuNXTest ZuFPTest ZuIntrinTest ZuPreprocTest \
 	ZuTimeCTest ZuTokenizerTest ZuTest ZuDemangleTest
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZuInspectTest_SOURCES = ZuInspectTest.cc
-ZuHashTest_SOURCES = ZuHashTest.cc Analyze.hh
+ZuHashTest_SOURCES = ZuHashTest.cc
 ZuCmpTest_SOURCES = ZuCmpTest.cc
 #ZuCmpTest_CXXFLAGS = $(AM_CXXFLAGS) -fprofile-instr-generate -fcoverage-mapping
 ZuSearchTest_SOURCES = ZuSearchTest.cc
@@ -55,7 +55,7 @@ ZuMArrayIterTest_SOURCES = ZuMArrayIterTest.cc
 ZuMatchTest_SOURCES = ZuMatchTest.cc
 #ZuMatchTest_CFLAGS = $(filter-out -g, $(AM_CFLAGS)) -O3 -g1
 ZuMatchTest_CXXFLAGS = $(AM_CXXFLAGS) -O3 -g1
-ZuMetaTraitsTest_SOURCES = ZuMetaTraitsTest.cc
+ZuLibTest_SOURCES = ZuLibTest.cc
 ZuNumConvTest_SOURCES = ZuNumConvTest.cc
 ZuNXTest_SOURCES = ZuNXTest.cc
 ZuFPTest_SOURCES = ZuFPTest.cc
