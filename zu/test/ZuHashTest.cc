@@ -8,13 +8,37 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuCmp.hh>
 
-#include "Analyze.hh"
+using namespace ZuTestUtil;
+
+void analyze(const char *run, int *count, unsigned n)
+{
+  double avg = 0;
+  int min = INT_MAX, max = 0;
+  for (int i = 0; i < n; i++) {
+    avg += count[i];
+    if (min > count[i]) min = count[i];
+    if (max < count[i]) max = count[i];
+  }
+  avg /= n;
+  double std_ = 0, delta;
+  for (int i = 0; i < n; i++) {
+    delta = avg - count[i];
+    std_ += delta * delta;
+  }
+  std_ = sqrt(std_ / n);
+  log(std::fixed, std::setprecision(4),
+    run, ": min ", min, " max ", max, " avg: ", avg, '\n',
+    "     std (68% CI): ", std_, ' ', (std_ / avg), "%\n",
+    "  2x std (95% CI): ", (std_ * 2), ' ', ((std_ * 2) / avg), '%');
+}
 
 static int count[256] = { 0 };
 
@@ -162,8 +186,10 @@ void testString(const char *s)
     std::cerr << "Failed to hash \"" << s << "\" to identical values\n");
 }
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+
   ZuTestMain();
 
 #define TestInt(bits, type, name) \
