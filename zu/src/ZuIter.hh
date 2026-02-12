@@ -6,7 +6,8 @@
 
 // generic delegated STL iterator
 // - reduced boilerplate
-// - random access, but not necessarily contiguous
+// - random access
+// - potentially discontiguous
 
 #ifndef ZuIter_HH
 #define ZuIter_HH

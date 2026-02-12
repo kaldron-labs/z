@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// utility class to capture a ring of recent backtraces and print them on demand
+// utility class to capture a ring of backtraces and print them on demand
 
 #ifndef ZmBackTracer_HH
 #define ZmBackTracer_HH
