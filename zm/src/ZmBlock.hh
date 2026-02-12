@@ -5,8 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // generic blocking call to async function with continuation
-//
-// consolidates thread-local semaphore usage into a single instance
+// - consolidates thread-local semaphore usage into a single instance
 
 #ifndef ZmBlock_HH
 #define ZmBlock_HH
