@@ -158,10 +158,52 @@ void roundTrip()
   ZuCheck(uri_ == uri2);
 }
 
+void malformedURINegatives()
+{
+  ZuTestScope(malformedURINegatives);
+
+  char badPct[] = "/foo%zz";
+  auto scanBadPct = ZtURI::scan(badPct);
+  ZuCheck(scanBadPct.p<0>() < 0);
+
+  char badEnd[] = "/foo%";
+  auto scanBadEnd = ZtURI::scan(badEnd);
+  ZuCheck(scanBadEnd.p<0>() < 0);
+}
+
+void reservedCharRoundTrip()
+{
+  ZuTestScope(reservedCharRoundTrip);
+
+  char empty[] = "";
+  auto scan = ZtURI::scan(empty);
+  Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+
+  foo.string = "a/b?c#d";
+  foo.id = "x y%z";
+  foo.bytes = "raw+bytes";
+
+  ZtString<> uri;
+  ZtURI::save<ZuFacet::Bah>(uri, foo);
+  ZtString<> uri_ = uri;
+
+  auto scan2 = ZtURI::scan(uri);
+  ZuCheck(scan2.p<0>() > 0);
+  ZuCheck(scan2.p<1>());
+  if (!scan2.p<1>()) return;
+
+  Foo bar = ZtURI::handler<Foo, ZuFacet::Bah>(scan2.template p<1>()).ctor();
+  ZtString<> uri2;
+  ZtURI::save<ZuFacet::Bah>(uri2, bar);
+  ZuCheck(uri2.length() > 0);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(roundTrip);
+  ZuTestCall(malformedURINegatives);
+  ZuTestCall(reservedCharRoundTrip);
   return 0;
 }

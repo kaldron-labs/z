@@ -16,12 +16,15 @@ libZmBTTest_la_LIBADD = libZmBTTest2.la
 libZmBTTest2_la_SOURCES = libZmBTTest2.cc
 libZmBTTest2_la_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 TESTPROGS = \
+	ZmAllocatorTest ZmCacheTest ZmCodecTest ZmConditionTest \
+	ZmEngineTest \
 	ZmRingTest2 ZmRingTest3 \
-	ZmFnTest ZmRBTest \
+	ZmFnTest ZmRBTest ZmRandomTest \
 	ZmBitmapTest ZmSchedTest ZmTest ZmHashTest2 \
 	ZmLHTest ZmHashCleanup \
 	ZmTIDTest ZmAllocTest ZmDemangleTest \
 	ZmPQueueTest ZmPQueueTest2 ZmPQueueTest3 ZmPQueueTest4 \
+	ZmQueueTest ZmRWLockTest ZmRingFnTest \
 	ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest
 if MINGW
 bin_PROGRAMS = ZmBTTest
@@ -35,6 +38,10 @@ test: $(noinst_PROGRAMS)
 ZmBTTest_SOURCES = ZmBTTest.cc
 ZmBTTest_LDADD = libZmBTTest.la ${LDADD}
 ZmFnTest_SOURCES = ZmFnTest.cc
+ZmCacheTest_SOURCES = ZmCacheTest.cc
+ZmCodecTest_SOURCES = ZmCodecTest.cc
+ZmConditionTest_SOURCES = ZmConditionTest.cc
+ZmEngineTest_SOURCES = ZmEngineTest.cc
 ZmRBTest_SOURCES = ZmRBTest.cc
 ZmBitmapTest_SOURCES = ZmBitmapTest.cc
 ZmSchedTest_SOURCES = ZmSchedTest.cc
@@ -46,10 +53,15 @@ ZmPQueueTest_SOURCES = ZmPQueueTest.cc
 ZmPQueueTest2_SOURCES = ZmPQueueTest2.cc
 ZmPQueueTest3_SOURCES = ZmPQueueTest3.cc
 ZmPQueueTest4_SOURCES = ZmPQueueTest4.cc
+ZmQueueTest_SOURCES = ZmQueueTest.cc
+ZmRWLockTest_SOURCES = ZmRWLockTest.cc
 ZmRingTest2_SOURCES = ZmRingTest2.cc
+ZmRingFnTest_SOURCES = ZmRingFnTest.cc
 ZmTIDTest_SOURCES = ZmTIDTest.cc
 ZmAllocTest_SOURCES = ZmAllocTest.cc
+ZmAllocatorTest_SOURCES = ZmAllocatorTest.cc
 ZmDemangleTest_SOURCES = ZmDemangleTest.cc
+ZmRandomTest_SOURCES = ZmRandomTest.cc
 ZmTimeTest_SOURCES = ZmTimeTest.cc
 ZmAssertTest_SOURCES = ZmAssertTest.cc
 ZmPolyHashTest_SOURCES = ZmPolyHashTest.cc

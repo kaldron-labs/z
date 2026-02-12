@@ -185,6 +185,18 @@ void parseCLI()
   ZuCheck(in.argv[1] == "blurch");
 }
 
+void parseCLIEscapedAndEmpty()
+{
+  ZuTestScope(parseCLIEscapedAndEmpty);
+
+  static char cli[] = "\"a\\\\\\\"b\" '' \"\" tail";
+  ZtCLI::InCLI in(cli);
+  ZuCheck(in.argv[0] == "a\\\"b");
+  ZuCheck(in.argv[1] == "");
+  ZuCheck(in.argv[2] == "");
+  ZuCheck(in.argv[3] == "tail");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -192,5 +204,6 @@ int main(int argc, char **argv)
   ZuTestCall(roundTrip);
   ZuTestCall(cmdQuote);
   ZuTestCall(parseCLI);
+  ZuTestCall(parseCLIEscapedAndEmpty);
   return 0;
 }

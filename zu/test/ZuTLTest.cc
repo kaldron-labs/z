@@ -10,6 +10,7 @@
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuDemangle.hh>
+#include <zlib/ZuTL.hh>
 
 using namespace ZuTestUtil;
 
@@ -25,6 +26,25 @@ DEFINE(E, 4);
 template <typename T> struct Index : public ZuUnsigned<T::I> { };
 
 using Sorted = ZuTypeSort<Index, A, B, C, D, E>;
+
+template <typename T> struct Wrap { };
+template <typename T> struct IsIntegralT : public ZuBool<ZuTraits<T>::IsIntegral> { };
+
+using TL = ZuTypeList<int, double, char>;
+using TLMap = ZuTypeMap<Wrap, TL>;
+using TLGrep = ZuTypeGrep<IsIntegralT, TL>;
+using TLHead = ZuTypeHead<2, TL>;
+using TLTail = ZuTypeTail<1, TL>;
+
+static_assert(TLMap::N == 3);
+static_assert(TLGrep::N == 2);
+static_assert(TLHead::N == 2);
+static_assert(TLTail::N == 2);
+
+using ConvertFrom = ZuTypeList<short, int>;
+using ConvertTo = ZuTypeList<int, long>;
+static_assert(ZuTLConverts<ConvertFrom, ConvertTo>{});
+static_assert(ZuTLConstructs<ConvertFrom, ConvertTo>{});
 
 struct X {
   X() = default;

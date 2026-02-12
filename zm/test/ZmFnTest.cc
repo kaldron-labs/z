@@ -363,4 +363,24 @@ int main(int argc, char **argv)
     short x = fn();
     ZuCheck(x == -42);
   }
+  {
+    // null callback invocation should be a no-op
+    ZmFn<> fn;
+    ZuCheck(!fn);
+    fn();
+  }
+  {
+    // move-from safety
+    ZmFn<int()> fn{[]{ return 7; }};
+    ZmFn<int()> moved{ZuMv(fn)};
+    ZuCheck(!fn);
+    ZuCheck(moved() == 7);
+  }
+  {
+    // bound member pointer vs unbound/lambda parity
+    E_ e{99};
+    auto bound = ZmFn<int()>{&e, ZmFnPtr<&E_::bar>{}};
+    auto unbound = ZmFn<int()>{[&e]{ return e.bar(); }};
+    ZuCheck(bound() == unbound());
+  }
 }

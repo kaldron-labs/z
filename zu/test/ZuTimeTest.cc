@@ -19,11 +19,9 @@
 
 using namespace ZuTestUtil;
 
-int main(int argc, char **argv)
+void testRoundTripAndDecimal()
 {
-  parse(argc, argv);
-
-  ZuTestMain();
+  ZuTestScope(testRoundTripAndDecimal);
 
   ZuDateTimeFmt::CSV fmt;
   ZuCHECK((ZuCArray<48>{} << ZuDateTime{ZuTime{ZuDecimal{1}}}.fmt(fmt)) == "1970/01/01 00:00:01");
@@ -32,4 +30,55 @@ int main(int argc, char **argv)
   log(ZuCArray<48>{} << ZuDateTime{ZuTime{ZuDecimal{"-1.01"}}}.fmt(fmt));
   ZuCHECK((ZuCArray<48>{} << ZuDateTime{ZuTime{ZuDecimal{"-1.01"}}}.fmt(fmt)) == "1969/12/31 23:59:58.99");
   ZuCHECK((ZuTime{ZuDecimal{1}} - ZuTime{ZuDecimal{1}}).as_decimal() == ZuDecimal{0});
+
+  ZuTime t{ZuDecimal{"12345.678901234"}};
+  ZuDecimal d = t.as_decimal();
+  ZuTime rt{d};
+  ZuCheck(t == rt);
+
+  ZuDateTime dt{t};
+  ZuCheck(dt.as_time() == t);
+}
+
+void testInvalidFormatPaths()
+{
+  ZuTestScope(testInvalidFormatPaths);
+
+  ZuTime t;
+  ZuCheck(t.scan("not-a-time") == 0);
+
+  ZuDateTime d;
+  ZuDateTimeScan::CSV csv;
+  ZuDateTimeScan::ISO iso;
+  ZuDateTimeScan::FIX fix;
+
+  ZuCheck(d.scan(csv, "not-a-time") == 0);
+  ZuCheck(d.scan(iso, "not-a-time") == 0);
+  ZuCheck(d.scan(fix, "not-a-time") == 0);
+}
+
+void testNsecBoundaries()
+{
+  ZuTestScope(testNsecBoundaries);
+
+  ZuTime t{1, 999999999};
+  t += ZuTime{0, 1};
+  ZuCheck(t.sec() == 2);
+  ZuCheck(t.nsec() == 0);
+
+  ZuTime u{2, 0};
+  u -= ZuTime{0, 1};
+  ZuCheck(u.sec() == 1);
+  ZuCheck(u.nsec() == 999999999);
+}
+
+int main(int argc, char **argv)
+{
+  parse(argc, argv);
+
+  ZuTestMain();
+  ZuTestCall(testRoundTripAndDecimal);
+  ZuTestCall(testInvalidFormatPaths);
+  ZuTestCall(testNsecBoundaries);
+  return 0;
 }

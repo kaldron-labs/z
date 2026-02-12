@@ -246,5 +246,26 @@ int main(int argc, char **argv)
 
     ZuCheck(json2 == json3);
   }
+
+  {
+    // malformed input should be rejected
+    char bad[] = "{ id : \"x\" ";
+    auto scan = ZtJSON::scan(bad);
+    ZuCheck(scan.p<0>() < 0);
+  }
+
+  {
+    // missing fields should preserve defaults on update
+    Foo foo;
+    char partial[] = "{\"int_\":7}";
+    auto scan = ZtJSON::scan(partial);
+    ZuCheck(scan.p<0>() >= 0);
+    if (scan.p<0>() >= 0) {
+      ZtJSON::handler<Foo, ZuFacet::JSON>(scan.p<1>()).update(foo);
+      ZuCheck(foo.int_ == 0);
+      ZuCheck(foo.int_ranged == 42);
+      ZuCheck(foo.enum_ == Values::Normal);
+    }
+  }
   return 0;
 }

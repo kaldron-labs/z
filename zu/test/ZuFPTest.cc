@@ -5,10 +5,15 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <iostream>
+#include <cmath>
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuFP.hh>
 #include <zlib/ZuBox.hh>
+#include <zlib/Zu_aton.hh>
+#include <zlib/Zu_ntoa.hh>
+
+void edgeCases();
 
 template <typename F, typename I = typename ZuFP<F>::I>
 void decode(F d, ZuTuple<I, I> em)
@@ -44,4 +49,31 @@ int main()
   ZuTestCall(decode, ZuFP<float>::epsilon(1), (ZuTuple<int, int>{-23, 5}));
   ZuTestCall(decode, ZuFP<double>::epsilon(1), (ZuTuple<int, int>{-52, 5}));
   ZuTestCall(decode, ZuFP<long double>::epsilon(1), (ZuTuple<int, int>{-63, 5}));
+  ZuTestCall(edgeCases);
+  return 0;
+}
+
+void edgeCases()
+{
+  ZuTestScope(edgeCases);
+
+  double nan = ZuFP<double>::nan();
+  double inf = ZuFP<double>::inf();
+  double negZero = -0.0;
+
+  ZuCheck(ZuFP<double>::nan(nan));
+  ZuCheck(ZuFP<double>::inf(inf));
+  ZuCheck(nan != nan);
+  ZuCheck(inf > 0.0);
+  ZuCheck(std::signbit(negZero));
+
+  char buf[Zu_flen<double>() + 4];
+  unsigned n = Zu_ftoa(negZero, buf);
+  buf[n] = 0;
+  ZuCheck(n > 0);
+
+  double rt = 0.0;
+  ZuCheck(Zu_atof(rt, buf, n) == n);
+  ZuCheck(rt == 0.0);
+  ZuCheck(!std::isnan(rt));
 }
