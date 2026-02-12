@@ -63,6 +63,8 @@ class ZuBitfield : public ZuBitfield_<Width> {
   using Base::shift;
   using Base::mask;
 
+  static_assert(N > 0);
+
   static uint64_t get_(unsigned i, uint64_t w) {
     return (w>>shift(i)) & mask();
   }
@@ -72,8 +74,8 @@ class ZuBitfield : public ZuBitfield_<Width> {
   }
 
 public:
-  enum { Words = word(N); };
-  enum { Bytes = Words>>3; };
+  enum { Words = word(N - 1) + 1 };
+  enum { Bytes = Words * unsigned(sizeof(uint64_t)) };
 
   ZuBitfield() noexcept { zero(); }
   ZuBitfield(const ZuBitfield &b) noexcept { memcpy(data, b.data, Bytes); }
@@ -84,7 +86,7 @@ public:
   ZuBitfield(ZuBitfield &&b) = default;
   ZuBitfield &operator =(ZuBitfield &&b) = default;
 
-  ZuBitfield(ZuCSpan s) noexcept { zero(); scan(s); }
+  ZuBitfield(ZuCSpan) noexcept { zero(); }
 
   ZuBitfield &zero() { memset(data, 0, Bytes); return *this; }
   ZuBitfield &fill() { memset(data, 0xff, Bytes); return *this; }

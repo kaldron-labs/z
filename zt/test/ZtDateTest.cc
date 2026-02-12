@@ -170,6 +170,25 @@ void testExtremesAndNow()
   ZuCheck(d2 >= d1);
 }
 
+void testBoundaryAndInvalidInputs()
+{
+  ZuTestScope(testBoundaryAndInvalidInputs);
+
+  ZuDateTime minDate(ZuDateTime::YYYYMMDD{10101}, ZuDateTime::HHMMSS{0});
+  ZuDateTime maxDate(
+    ZuDateTime::YYYYMMDD{99991231},
+    ZuDateTime::HHMMSS{235959});
+  ZuCheck(isoStr(minDate).length() > 0);
+  ZuCheck(isoStr(maxDate).length() > 0);
+
+  auto leap = ZuDateTime(ZuCSpan("2000-02-29T23:59:59+0000"));
+  ZuCheck(isoStr(leap).length() > 0);
+
+  auto &scan = ZmTLS<ZuDateTimeScan::ISO, testBoundaryAndInvalidInputs>();
+  ZuDateTime invalid;
+  ZuCheck(!invalid.scan(scan, "not-a-time"));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -179,5 +198,6 @@ int main(int argc, char **argv)
   ZuTestCall(testWeekDateCalcs);
   ZuTestCall(testStrftimeAndTZ);
   ZuTestCall(testExtremesAndNow);
+  ZuTestCall(testBoundaryAndInvalidInputs);
   return 0;
 }

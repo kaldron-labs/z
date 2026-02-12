@@ -133,7 +133,7 @@ inline unsigned getncpu() {
 }
 #endif
 
-// sleep & yield
+// yield
 #ifndef _WIN32
 ZuInline void yield() { sched_yield(); }
 #else

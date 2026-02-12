@@ -11,22 +11,34 @@ LDADD = $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
-	ZtArrayTest ZtDateTest ZtDateFixTest ZtRegexTest \
-	ZtStringHash ZtStringTest ZtIconvTest ZtBitWindowTest \
-	ZtStructTest ZtBitmapTest ZtStackTest ZtURITest ZtCLITest \
-	ZtASN1Test ZtDemangleTest
+	ZtArrayTest ZtASN1Test ZtBitWindowTest ZtBitmapTest ZtCLITest \
+	ZtCSVTest ZtDateTest ZtDateFixTest ZtDemangleTest ZtEnumTest \
+	ZtFmtTest ZtIconvTest ZtLocalBufferTest ZtPlatformTest \
+	ZtQuoteTest ZtRegexTest ZtScanBoolTest ZtStackTest \
+	ZtStringHash ZtStringTest ZtStructTest ZtURITest ZtWindowTest
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)
 ZtArrayTest_SOURCES = ZtArrayTest.cc
+ZtASN1Test_SOURCES = ZtASN1Test.cc
+ZtBitWindowTest_SOURCES = ZtBitWindowTest.cc
+ZtBitmapTest_SOURCES = ZtBitmapTest.cc
+ZtCLITest_SOURCES = ZtCLITest.cc
+ZtCSVTest_SOURCES = ZtCSVTest.cc
 ZtDateTest_SOURCES = ZtDateTest.cc
 ZtDateFixTest_SOURCES = ZtDateFixTest.cc
+ZtDemangleTest_SOURCES = ZtDemangleTest.cc
+ZtEnumTest_SOURCES = ZtEnumTest.cc
+ZtFmtTest_SOURCES = ZtFmtTest.cc
+ZtIconvTest_SOURCES = ZtIconvTest.cc
+ZtLocalBufferTest_SOURCES = ZtLocalBufferTest.cc
+ZtPlatformTest_SOURCES = ZtPlatformTest.cc
+ZtQuoteTest_SOURCES = ZtQuoteTest.cc
 ZtRegexTest_SOURCES = ZtRegexTest.cc
+ZtScanBoolTest_SOURCES = ZtScanBoolTest.cc
+ZtStackTest_SOURCES = ZtStackTest.cc
 ZtStringHash_SOURCES = ZtStringHash.cc
 ZtStringTest_SOURCES = ZtStringTest.cc
-ZtIconvTest_SOURCES = ZtIconvTest.cc
-ZtBitWindowTest_SOURCES = ZtBitWindowTest.cc
 ZtStructTest_SOURCES = ZtStructTest.cc
-ZtBitmapTest_SOURCES = ZtBitmapTest.cc
-ZtStackTest_SOURCES = ZtStackTest.cc
 ZtURITest_SOURCES = ZtURITest.cc
-ZtCLITest_SOURCES = ZtCLITest.cc
-ZtASN1Test_SOURCES = ZtASN1Test.cc
-ZtDemangleTest_SOURCES = ZtDemangleTest.cc
+ZtWindowTest_SOURCES = ZtWindowTest.cc

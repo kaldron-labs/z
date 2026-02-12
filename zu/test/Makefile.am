@@ -11,13 +11,14 @@ LDADD = $(top_builddir)/zu/src/libZu.la @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
 	ZuInspectTest ZuHashTest ZuCmpTest ZuBoxTest \
 	ZuArrayTest ZuTupleTest ZuIDTest ZuUTFTest ZuBitmapTest \
-	ZuSpanTest \
+	ZuArrayFnTest ZuBitfieldTest ZuBitmapCTest ZuSpanTest \
 	ZuDecimalTest ZuSearchTest ZuStructTest ZuTLTest \
 	ZuAxorTest ZuPtrTest ZuTimeTest ZuEndianTest \
 	ZuStreamTest ZuBitStreamTest \
 	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest \
-	ZuMatchTest ZuNXTest ZuFPTest ZuIntrinTest \
-	ZuTokenizerTest ZuTest ZuDemangleTest
+	ZuInvokeSwitchTest ZuMArrayIterTest ZuMatchTest ZuMetaTraitsTest \
+	ZuNumConvTest ZuNXTest ZuFPTest ZuIntrinTest ZuPreprocTest \
+	ZuTimeCTest ZuTokenizerTest ZuTest ZuDemangleTest
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
@@ -28,6 +29,9 @@ ZuCmpTest_SOURCES = ZuCmpTest.cc
 ZuSearchTest_SOURCES = ZuSearchTest.cc
 ZuBoxTest_SOURCES = ZuBoxTest.cc
 ZuArrayTest_SOURCES = ZuArrayTest.cc
+ZuArrayFnTest_SOURCES = ZuArrayFnTest.cc
+ZuBitfieldTest_SOURCES = ZuBitfieldTest.cc
+ZuBitmapCTest_SOURCES = ZuBitmapCTest.cc
 ZuSpanTest_SOURCES = ZuSpanTest.cc
 ZuTupleTest_SOURCES = ZuTupleTest.cc
 ZuIDTest_SOURCES = ZuIDTest.cc
@@ -46,12 +50,18 @@ ZuBase64Test_SOURCES = ZuBase64Test.cc
 ZuBase64URLTest_SOURCES = ZuBase64URLTest.cc
 ZuBase32Test_SOURCES = ZuBase32Test.cc
 ZuHexTest_SOURCES = ZuHexTest.cc
+ZuInvokeSwitchTest_SOURCES = ZuInvokeSwitchTest.cc
+ZuMArrayIterTest_SOURCES = ZuMArrayIterTest.cc
 ZuMatchTest_SOURCES = ZuMatchTest.cc
 #ZuMatchTest_CFLAGS = $(filter-out -g, $(AM_CFLAGS)) -O3 -g1
 ZuMatchTest_CXXFLAGS = $(AM_CXXFLAGS) -O3 -g1
+ZuMetaTraitsTest_SOURCES = ZuMetaTraitsTest.cc
+ZuNumConvTest_SOURCES = ZuNumConvTest.cc
 ZuNXTest_SOURCES = ZuNXTest.cc
 ZuFPTest_SOURCES = ZuFPTest.cc
 ZuIntrinTest_SOURCES = ZuIntrinTest.cc
+ZuPreprocTest_SOURCES = ZuPreprocTest.cc
+ZuTimeCTest_SOURCES = ZuTimeCTest.cc
 ZuTokenizerTest_SOURCES = ZuTokenizerTest.cc
 ZuTest_SOURCES = ZuTest.cc
 ZuDemangleTest_SOURCES = ZuDemangleTest.cc

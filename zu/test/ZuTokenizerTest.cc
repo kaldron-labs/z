@@ -10,8 +10,12 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuTokenizer.hh>
 
-int main()
+using namespace ZuTestUtil;
+
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+
   using namespace ZuTokenizer;
 
   ZuTestMain();
@@ -31,4 +35,21 @@ int main()
   ZuCheck(span == "");
   ZuCheck(WhiteSpace::next(span = "foo  bar ") == "foo");
   ZuCheck(span == "bar ");
+
+  // empty/consecutive/leading/trailing delimiter cases
+  ZuCheck(Delimited<','>::next(span = "") == "");
+  ZuCheck(Delimited<','>::next(span = ",a,,b,") == "");
+  ZuCheck(Delimited<','>::next(span) == "a");
+  ZuCheck(Delimited<','>::next(span) == "");
+  ZuCheck(Delimited<','>::next(span) == "b");
+  ZuCheck(Delimited<','>::next(span) == "");
+  ZuCheck(Delimited<','>::next(span) == "");
+
+  ZuCheck(WhiteSpace::next(span = "   ") == "");
+  WhiteSpace::skip(span = "  a   b   c ");
+  ZuCheck(WhiteSpace::next(span) == "a");
+  ZuCheck(WhiteSpace::next(span) == "b");
+  ZuCheck(WhiteSpace::next(span) == "c");
+  ZuCheck(WhiteSpace::next(span) == "");
+  return 0;
 }

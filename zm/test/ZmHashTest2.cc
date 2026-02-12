@@ -57,4 +57,17 @@ int main(int argc, char **argv)
   ZuCheck(o && o->id == 1);
   dump(o);
   ZuCheck(orders->count_() == 98);
+
+  // resize + deletion churn
+  for (unsigned i = 0; i < 2048; i++)
+    orders->add(new Order(1000 + i));
+  ZuCheck(orders->count_() == 98 + 2048);
+
+  bool churnOK = true;
+  for (unsigned i = 0; i < 2048; i++) {
+    auto d = orders->delVal(1000 + i);
+    if (!(d && d->id == (1000 + i))) churnOK = false;
+  }
+  ZuCheck(churnOK);
+  ZuCheck(orders->count_() == 98);
 }
