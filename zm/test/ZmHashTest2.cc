@@ -37,7 +37,9 @@ ZuDerive(Orders,
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+
   ZuTestMain();
+
   ZmHeapMgr::init("Orders", 0, ZmHeapConfig{100});
   ZmRef<Orders> orders = new Orders(ZmHashParams().bits(7).loadFactor(1.0));
 

@@ -268,25 +268,29 @@ public:
   ZuInline constexpr bool operator !() const { return !length(); }
   ZuOpBool
 
-  constexpr void offset(uint64_t n) {
-    if (ZuUnlikely(!n)) return;
-    if (ZuLikely(n < m_length))
-      m_data += n, m_length -= n;
-    else
-      m_data = nullptr, m_length = 0;
+  constexpr ZuSpan &offset(uint64_t n) {
+    if (ZuLikely(n)) {
+      if (ZuLikely(n < m_length))
+	m_data += n, m_length -= n;
+      else
+	m_data = nullptr, m_length = 0;
+    }
+    return *this;
   }
 
-  constexpr void trunc(uint64_t n) {
+  constexpr ZuSpan &trunc(uint64_t n) {
     if (ZuLikely(n < m_length)) {
       if (ZuLikely(n))
 	m_length = n;
       else
 	m_data = nullptr, m_length = 0;
     }
+    return *this;
   }
 
-  constexpr void rebase(ptrdiff_t offset) const {
+  constexpr const ZuSpan &rebase(ptrdiff_t offset) const {
     const_cast<ZuSpan *>(this)->m_data += offset;
+    return *this;
   }
 
 // splice operations

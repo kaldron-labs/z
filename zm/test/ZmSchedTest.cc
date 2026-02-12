@@ -100,8 +100,8 @@ void usage_()
   std::cerr <<
     "Usage: ZmSchedTest [OPTION]...\n\n"
     "Options:\n"
-    "  -q\tquiet output (default when test-harnessed)\n";
-    "  -n N\tset number of threads to N\n"
+    "  -q\t\tquiet output (default when test-harnessed)\n"
+    "  -n N\t\tset number of threads to N\n"
     "  -c ID=CPUSET\tset thread ID affinity to CPUSET (e.g. 1=2,4)\n"
     "  -i BITMAP\tset isolation (e.g. 1,3-4)\n";
   Zm::exit(1);
