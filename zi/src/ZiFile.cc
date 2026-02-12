@@ -1207,7 +1207,7 @@ ZiFile::Path ZiFile::leafname(const Path &name)
     if (name[o] == L'\\' || name[o] == L'/') break;
 #endif
   if (o < 0) return name;
-  return name.splice(o + 1);
+  return Path(name.cspan().offset(o + 1));
 }
 
 ZiFile::Path ZiFile::dirname(const Path &name)
@@ -1224,7 +1224,7 @@ ZiFile::Path ZiFile::dirname(const Path &name)
   if (o < 0) return L".";
   if (!o) return L"/";
 #endif
-  return name.splice(0, o);
+  return Path(name.cspan().trunc(o));
 }
 
 ZiFile::Path ZiFile::append(const Path &dir, const Path &name)

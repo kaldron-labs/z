@@ -21,10 +21,10 @@ void usage_()
     "Usage: ZmRingTest3 [OPTION]...\n"
     "  test read/write ring buffer in shared memory\n\n"
     "Options:\n"
-    "  -q\t\tquiet output (default when test-harnessed)\n";
-    "  -b BUFSIZE\t- set buffer size to BUFSIZE (default: 8192)\n"
-    "  -n COUNT\t- set number of messages to COUNT (default: 1)\n"
-    "  -m MSGSIZE\t- set message size to MSGSIZE (default: 128)\n";
+    "  -q\t\tquiet output (default when test-harnessed)\n"
+    "  -b BUFSIZE\tset buffer size to BUFSIZE (default: 8192)\n"
+    "  -n COUNT\tset number of messages to COUNT (default: 1)\n"
+    "  -m MSGSIZE\tset message size to MSGSIZE (default: 128)\n";
   Zm::exit(1);
 }
 
