@@ -15,6 +15,8 @@
 #endif
 
 #include <zlib/ZiIOContext.hh>
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZmList.hh>
 
 ZuDerive(ZiTxQueue,
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));

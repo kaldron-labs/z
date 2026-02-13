@@ -11,23 +11,31 @@ LDADD = $(top_builddir)/zi/src/libZi.la $(top_builddir)/ze/src/libZe.la \
 noinst_PROGRAMS = \
 	ZiFileTest ZiFileAgeTest ZiGlobTest \
 	ZiRingTest ZiRingTest2 \
-	ZiMxClient ZiMxServer ZiMxUDPClient ZiMxUDPServer \
-	ZiIOBufTest ZiLogTest
-noinst_HEADERS = Global.hh HttpHeader.hh
-if NETLINK
-noinst_PROGRAMS += ZiNetlinkTest
-endif
+	ZiIOBufTest \
+	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
+	ZiRxTest ZiTxTest ZiTxStreamTest ZiLogTest ZiMxLoopTest
+noinst_HEADERS = ZiTestResidue.hh
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)
 ZiFileTest_SOURCES = ZiFileTest.cc
 ZiFileAgeTest_SOURCES = ZiFileAgeTest.cc
 ZiGlobTest_SOURCES = ZiGlobTest.cc
 ZiRingTest_SOURCES = ZiRingTest.cc
 ZiRingTest2_SOURCES = ZiRingTest2.cc
-ZiMxClient_SOURCES = ZiMxClient.cc
-ZiMxServer_SOURCES = ZiMxServer.cc
-ZiMxUDPClient_SOURCES = ZiMxUDPClient.cc
-ZiMxUDPServer_SOURCES = ZiMxUDPServer.cc
 ZiIOBufTest_SOURCES = ZiIOBufTest.cc
+ZiDirTest_SOURCES = ZiDirTest.cc
+ZiIPTest_SOURCES = ZiIPTest.cc
+ZiModuleTest_SOURCES = ZiModuleTest.cc
+ZiPlatformTest_SOURCES = ZiPlatformTest.cc
+ZiIOContextTest_SOURCES = ZiIOContextTest.cc
+ZiCSVTest_SOURCES = ZiCSVTest.cc
+ZiRxTest_SOURCES = ZiRxTest.cc
+ZiTxTest_SOURCES = ZiTxTest.cc
+ZiTxStreamTest_SOURCES = ZiTxStreamTest.cc
 ZiLogTest_SOURCES = ZiLogTest.cc
+ZiMxLoopTest_SOURCES = ZiMxLoopTest.cc
 if NETLINK
-ZiNetlinkTest_SOURCES = ZiNetlinkTest.cc
+noinst_PROGRAMS += ZiNetlinkMsgTest
+ZiNetlinkMsgTest_SOURCES = ZiNetlinkMsgTest.cc
 endif

@@ -28,6 +28,8 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuPrint.hh>
 
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZiIOBuf.hh>
 
 namespace Zi {
@@ -41,13 +43,16 @@ class TxStream {
   TxStream &operator =(const TxStream &) = delete;
 
 public:
-  TxStream(unsigned maxSize, unsigned headRoom, unsigned tailRoom, Alloc alloc, Send send) :
+  TxStream(
+    unsigned maxSize, unsigned headRoom, unsigned tailRoom,
+    Alloc alloc, Send send)
+  :
     m_maxSize(maxSize), m_headRoom(headRoom), m_tailRoom(tailRoom),
     m_alloc(ZuMv(alloc)), m_send(ZuMv(send)), m_buf(m_alloc(m_headRoom)) { }
   ~TxStream() = default;
 
-  TxStream(ZiTxStream &&) = default;
-  TxStream &operator =(ZiTxStream &&) = default;
+  TxStream(TxStream &&) = default;
+  TxStream &operator =(TxStream &&) = default;
 
   void append(const uint8_t *data, unsigned length) {
   next:
@@ -89,8 +94,8 @@ private:
       avail = m_maxSize - (m_headRoom + m_tailRoom);
       if (length_ > avail)
 	throw ZeEXCEPT(Fatal, "ZiIOStream", ([avail, length_](auto &s) {
-	  s << "output length " << length_ << " exceeds maximum size " << avail;
-	}));
+		  s << "output length " << length_ << " exceeds maximum size " << avail;
+		}));
       bufLen = 0;
     }
     m_buf->length = bufLen + ZuPrint<P>::print(
@@ -113,30 +118,33 @@ private:
 
 public:
   // ZuBSpan will match any string/span type
-  IOStream &operator <<(ZuBSpan buf) {
+  TxStream &operator <<(ZuBSpan buf) {
     append(buf.data(), buf.length());
     return *this;
   }
   template <typename C>
-  MatchChar<C, IOStream &> operator <<(C c) {
+  MatchChar<C, TxStream &> operator <<(C c) {
     append(reinterpret_cast<const uint8_t *>(&c), 1);
     return *this;
   }
   template <typename R>
-  MatchReal<R, IOStream &> operator <<(const R &r) {
+  MatchReal<R, TxStream &> operator <<(const R &r) {
     append(ZuBoxed(r));
     return *this;
   }
   template <typename P>
-  MatchPrint<P, IOStream &> operator <<(const P &p) {
+  MatchPrint<P, TxStream &> operator <<(const P &p) {
     append(p);
     return *this;
   }
 
   // flush output
-  IOStream &operator <<(Flush) {
-    m_send();
-    m_buf = m_alloc(m_headRoom);
+  TxStream &operator <<(Flush) {
+    if (m_buf->length) {
+      m_send();
+      m_buf = m_alloc(m_headRoom);
+    }
+    return *this;
   }
 
 private:
@@ -149,13 +157,18 @@ private:
 };
 
 template <typename Alloc, typename Send>
-auto txStream(unsigned maxSize, unsigned headRoom, unsigned tailRoom, Alloc alloc, Send send)
+auto txStream(
+  unsigned maxSize, unsigned headRoom, unsigned tailRoom,
+  Alloc alloc, Send send)
 {
-  return TxStream<Alloc, Send>(maxSize, headRoom, tailRoom, ZuMv(alloc), ZuMv(send));
+  return TxStream<Alloc, Send>(
+    maxSize, headRoom,
+    tailRoom, ZuMv(alloc), ZuMv(send));
 }
 
 } // Zi
 
-using ZiTxStream = Zi::TxStream;
+template <typename Alloc, typename Send>
+using ZiTxStream = Zi::TxStream<Alloc, Send>;
 
 #endif /* ZiTxStream_HH */

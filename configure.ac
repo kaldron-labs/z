@@ -199,7 +199,7 @@ AC_CONFIG_FILES([Makefile \
 	zm/Makefile zm/src/Makefile zm/test/Makefile zm/bench/Makefile \
 	zt/Makefile zt/src/Makefile zt/test/Makefile \
 	ze/Makefile ze/src/Makefile ze/test/Makefile \
-	zi/Makefile zi/src/Makefile zi/test/Makefile \
+	zi/Makefile zi/src/Makefile zi/test/Makefile zi/example/Makefile \
 	ztls/Makefile ztls/src/Makefile ztls/test/Makefile \
 	zhttp/Makefile zhttp/src/Makefile zhttp/test/Makefile \
 	zrest/Makefile zrest/src/Makefile zrest/test/Makefile \

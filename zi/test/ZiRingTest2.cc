@@ -5,14 +5,17 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdlib.h>
-#include <stdio.h>
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuUnroll.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmSingleton.hh>
+#include <zlib/ZmTrap.hh>
 #include <zlib/ZmThread.hh>
+
+using namespace ZuTestUtil;
 
 class ZmRing_Breakpoint {
 public:
@@ -25,7 +28,7 @@ public:
   void wait() const { m_reached.wait(); }
   void proceed() const { m_proceed.post(); }
   void reached(const char *name) const {
-    // std::cout << "\t       " << name << std::flush;
+    // log("\t       ", name);
     if (!m_enabled) return;
     if (m_oneshot) m_enabled = false;
     m_reached.post();
@@ -46,18 +49,18 @@ private:
 
 #include <zlib/ZiRing.hh>
 
-void fail()
-{
-  Zm::exit(1);
-}
-#define ensure(x) ((x) ? void() : check_(x, __LINE__, #x))
-#define check(x) check_(x, __LINE__, #x)
+#include "ZiTestResidue.hh"
+
+namespace {
+Zi::Name g_ringName;
+} // namespace
+
+#define ensure(x) check_(x, __LINE__, #x)
 void check_(bool ok, unsigned line, const char *exp)
 {
-  std::cout << (ok ? " OK " : "NOK ")
-    << ZuBoxed(line).fmt<ZuFmt::Right<6>>() << ' ' << exp
-    << '\n' << std::flush;
-  if (!ok) fail();
+  if (ok) return;
+  log_("line ", line, ' ', exp);
+  Zm::exit(1);
 }
 
 class VMsg {
@@ -368,71 +371,58 @@ int Work<Ring, Msg>::operator()(Thread *thread) {
   switch (m_insn) {
     case Open:
       result = ring.open(m_param);
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " open(): " << result << '\n' << std::flush;
+      log('\t', thread->id(), " open(): ", result);
       break;
     case Close:
       ring.close();
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " close()\n" << std::flush;
+      log('\t', thread->id(), " close()");
       break;
     case Push:
       if (ptr = push(ring, m_param))
 	result = m_param;
       else
 	result = 0;
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " push(): " << result << '\n' << std::flush;
+      log('\t', thread->id(), " push(): ", result);
       break;
     case TryPush:
       if (ptr = tryPush(ring, m_param))
 	result = m_param;
       else
 	result = 0;
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " tryPush(): " << result << '\n' << std::flush;
+      log('\t', thread->id(), " tryPush(): ", result);
       break;
     case Push2:
       push2(ring, ptr, m_param);
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " push2()\n" << std::flush;
+      log('\t', thread->id(), " push2()");
       break;
     case EndOfFile:
       ring.eof();
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " eof()\n" << std::flush;
+      log('\t', thread->id(), " eof()");
       break;
     case Attach:
       result = ring.attach();
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " attach(): " << result << '\n' << std::flush;
+      log('\t', thread->id(), " attach(): ", result);
       break;
     case Detach:
       ring.detach();
       result = Zi::OK;
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " detach(): " << result << '\n' << std::flush;
+      log('\t', thread->id(), " detach(): ", result);
       break;
     case Shift:
       result = shift(ring);
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " shift(): " << result << '\n' << std::flush;
-      ;
+      log('\t', thread->id(), " shift(): ", result);
       break;
     case Shift2:
       shift2(ring, m_param);
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " shift2()\n" << std::flush;
+      log('\t', thread->id(), " shift2()");
       break;
     case ReadStatus:
       result = ring.readStatus();
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " readStatus(): " << result << '\n' << std::flush;
+      log('\t', thread->id(), " readStatus(): ", result);
       break;
     case WriteStatus:
       result = ring.writeStatus();
-      std::cout << "\t" << ZuBoxed(thread->id()).template fmt<ZuFmt::Right<6>>()
-		<< " writeStatus(): " << result << '\n' << std::flush;
+      log('\t', thread->id(), " writeStatus(): ", result);
       break;
   }
 
@@ -502,111 +492,112 @@ struct Test {
   static bool run(unsigned size) {
     enum { MR = 1 };
 
-    std::cout << "\ntest run" <<
-      " MW=" << MW <<
-      " MR=" << MR <<
-      " V=" << V << '\n';
+    if (verbose) std::cerr << '\n';
+    log("test run MW=", MW, " MR=", MR, " V=", V);
 
     if (!app()->start(2 + MR + MW,
-	  ZiRingParams{"ZiRingTest2", size})) return false;
+	  ZiRingParams{g_ringName, size})) {
+      log_("app start failed");
+      return false;
+    }
 
     using namespace Zu::IO;
 
-    check(synchronous(0, Open(Ring::Read)) == OK);
-    if constexpr (MR) check(synchronous(0 + MR, Open(Ring::Read)) == OK);
-    check(synchronous(1 + MR, Open(Ring::Write)) == OK);
-    if constexpr (MW) check(synchronous(1 + MR + MW, Open(Ring::Write)) == OK);
+    ensure(synchronous(0, Open(Ring::Read)) == OK);
+    if constexpr (MR) ensure(synchronous(0 + MR, Open(Ring::Read)) == OK);
+    ensure(synchronous(1 + MR, Open(Ring::Write)) == OK);
+    if constexpr (MW) ensure(synchronous(1 + MR + MW, Open(Ring::Write)) == OK);
 
     int size1 = app()->ring().size() - Zm::CacheLineSize - 1;
     int size2 = (app()->ring().size() / 2) + 1;
 
-    std::cout << "requested size: " << size
-      << " actual size: " << app()->ring().size()
-      << " size1: " << size << " size2: " << size2 << '\n' << std::flush;
+    log("requested size: ", size,
+	" actual size: ", app()->ring().size(),
+	" size1: ", size1, " size2: ", size2);
 
     // test push with concurrent attach
-    if constexpr (MR) check(synchronous(0, Attach()) == OK);
+    if constexpr (MR) ensure(synchronous(0, Attach()) == OK);
     asynchronous(0 + MR, Attach(), attach2);
-    check(synchronous(1 + MR, Push(size1)) > 0);
+    ensure(synchronous(1 + MR, Push(size1)) > 0);
     if constexpr (MR) asynchronous(0, Shift(), shift1);
     synchronous(1 + MR, Push2(size1));
     if constexpr (MR) proceed(0, shift1);
     proceed(0 + MR, attach2);
     if constexpr (MR) {
       if constexpr (V)
-	check(result(0) == size1);
+	ensure(result(0) == size1);
       else
 	size1 = result(0);
     }
-    check(result(0 + MR) == OK);
+    ensure(result(0 + MR) == OK);
     if constexpr (MR) {
       synchronous(0, Shift2(size1));
     } else {
-      check(synchronous(0, Shift()) == size1);
+      ensure(synchronous(0, Shift()) == size1);
       synchronous(0, Shift2(size1));
     }
 
     // test push with concurrent attach (2)
-    check(synchronous(0, Detach()) == OK);
+    ensure(synchronous(0, Detach()) == OK);
     asynchronous(0, Attach(), attach3);
-    check(synchronous(1 + MR, Push(size1)) > 0);
+    ensure(synchronous(1 + MR, Push(size1)) > 0);
     synchronous(1 + MR, Push2(size1));
     proceed(0, attach3);
-    check(result(0) == OK);
-    check(synchronous(0, Shift()) == size1);
+    ensure(result(0) == OK);
+    ensure(synchronous(0, Shift()) == size1);
     synchronous(0, Shift2(size1));
     if constexpr (MR) {
-      check(synchronous(0 + MR, Shift()) == size1);
+      ensure(synchronous(0 + MR, Shift()) == size1);
       synchronous(0 + MR, Shift2(size1));
     }
 
     // test push with concurrent dual shift
-    check(synchronous(1 + MR, Push(size2)) > 0);
+    ensure(synchronous(1 + MR, Push(size2)) > 0);
     asynchronous(0, Shift(), shift1);
     if constexpr (MR) asynchronous(0 + MR, Shift(), shift1);
     synchronous(1 + MR, Push2(size2));
     proceed(0, shift1);
     if constexpr (MR) proceed(0 + MR, shift1);
-    check(result(0) == size2);
-    if constexpr (MR) check(result(0 + MR) == size2);
+    ensure(result(0) == size2);
+    if constexpr (MR) ensure(result(0 + MR) == size2);
     synchronous(0, Shift2(size2));
     if constexpr (MR) synchronous(0 + MR, Shift2(size2));
 
     // test push with concurrent detach
-    check(synchronous(1 + MR, Push(size1)) > 0); 
+    ensure(synchronous(1 + MR, Push(size1)) > 0); 
     asynchronous(0, Detach(), detach3);
     synchronous(1 + MR, Push2(size1));
     if constexpr (MR) {
-      check(synchronous(0 + MR, Shift()) == size1);
+      ensure(synchronous(0 + MR, Shift()) == size1);
       synchronous(0 + MR, Shift2(size1));
     }
     proceed(0, detach3);
-    check(result(0) == OK);
+    ensure(result(0) == OK);
     if constexpr (MR) {
-      check(app()->thread(1 + MR)->ring().length() == 0);
-      check(synchronous(1, Detach()) == OK);
+      ensure(app()->thread(1 + MR)->ring().length() == 0);
+      ensure(synchronous(1, Detach()) == OK);
     } else {
-      check(synchronous(0, Attach()) == OK);
-      check(synchronous(0, Shift()) == size1);
+      ensure(synchronous(0, Attach()) == OK);
+      ensure(synchronous(0, Shift()) == size1);
       synchronous(0, Shift2(size1));
-      check(synchronous(0, Detach()) == OK);
+      ensure(synchronous(0, Detach()) == OK);
     }
 
     // test overflow with concurrent detach
-    check(synchronous(0, Attach()) == OK);
-    if constexpr (MR) check(synchronous(0 + MR, Attach()) == OK);
-    check(synchronous(1 + MR, Push(size2)) > 0);
+    ensure(synchronous(0, Attach()) == OK);
+    if constexpr (MR) ensure(synchronous(0 + MR, Attach()) == OK);
+    ensure(synchronous(1 + MR, Push(size2)) > 0);
     synchronous(1 + MR, Push2(size2));
-    check(synchronous(1 + MR, TryPush(size2)) == 0);
+    ensure(synchronous(1 + MR, TryPush(size2)) == 0);
     if constexpr (MR) {
-      check(synchronous(0 + MR, Shift()) == size2);
+      ensure(synchronous(0 + MR, Shift()) == size2);
       synchronous(0 + MR, Shift2(size2));
     }
     asynchronous(0, Detach(), detach1);
-    if constexpr (MR) check(synchronous(0 + MR, ReadStatus()) == 0);
+    if constexpr (MR) ensure(synchronous(0 + MR, ReadStatus()) == 0);
     proceed(0, detach1);
-    check(result(0) == OK);
-    if constexpr (MR) check(synchronous(0 + MR, Detach()) == OK);
+    ensure(result(0) == OK);
+    if constexpr (MR) ensure(synchronous(0 + MR, Detach()) == OK);
 
     synchronous(0, Close());
     if constexpr (MR) synchronous(0 + MR, Close());
@@ -619,33 +610,53 @@ struct Test {
   }
 };
 
-void usage()
+void usage_()
 {
   std::cerr <<
-    "Usage: ZiRingTest2 [SIZE]\n"
-    "\tSIZE - optional requested size of ring buffer\n"
-    << std::flush;
+    "Usage: ZiRingTest2 [OPTION]... [SIZE]\n"
+    "  SIZE - optional requested size of ring buffer\n\n"
+    "Options:\n"
+    "  -q\tquiet output (default when test-harnessed)\n";
   Zm::exit(1);
 }
 
 int main(int argc, char **argv)
 {
   int size = 8192;
+  unsigned nargs = 0;
 
-  if (argc < 1 || argc > 2) usage();
-  if (argc == 2) {
-    size = atoi(argv[1]);
-    if (size <= 0) usage();
-  }
+  ZiTestResidue::init("ZiRingTest2");
+  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::trap();
+  ::atexit(&ZiTestResidue::cleanupNow);
 
-  ZiLog::init("ZiRingTest2");
-  ZiLog::level(0);
-  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2"))); // log to stderr
-  ZiLog::start();
+  verbose = !::getenv("HARNESS_ACTIVE");
+  for (int i = 1; i < argc; i++)
+    if (argv[i][0] == '-') {
+      if (argv[i][2]) usage_();
+      switch (argv[i][1]) {
+	case 'q':
+	  verbose = false;
+	  break;
+	default:
+	  usage_();
+	  break;
+      }
+    } else {
+      if (++nargs > 1) usage_();
+	      size = atoi(argv[i]);
+	      if (size <= 0) usage_();
+	    }
 
-  if (!ZuUnroll::all<4>(true, [size](auto i, bool b) {
+  g_ringName = ZiTestResidue::uniqueName("ring");
+  ZiTestResidue::addShmBase(g_ringName);
+
+  ZuTestMain();
+
+  bool ok = ZuUnroll::all<4>(true, [size](auto i, bool b) {
     return b ? (b && Test<(i>>1) & 1, i & 1>::run(size)) : false;
-  })) return 1;
+  });
+  ZuCheck(ok);
 
   return 0;
 }

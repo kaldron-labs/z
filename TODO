@@ -141,6 +141,8 @@ https://www.youtube.com/watch?v=w61NXrYIx6Y
 - need single call to load cudf column from zdf reader
 - need single call to load cudf table from zdf dataframe
 
+- doxygen + htags
+
 - shields.io (see README.md for reflect-cpp)
 - TLS ZmRing for inbound 
 - python and node integration

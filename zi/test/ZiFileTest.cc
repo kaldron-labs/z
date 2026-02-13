@@ -4,59 +4,268 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZiLog.hh>
+#include <cstdint>
+#include <stdlib.h>
+
+#include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmTrap.hh>
 #include <zlib/ZiFile.hh>
 
-int main()
+#include "ZiTestResidue.hh"
+
+using namespace ZuTestUtil;
+
+namespace {
+Zi::Path g_root;
+Zi::Path g_foo;
+Zi::Path g_bar;
+Zi::Path g_baz;
+Zi::Path g_copy;
+Zi::Path g_renamed;
+Zi::Path g_dir;
+
+void initPaths()
 {
-  ZiLog::init("ZiFileTest");
-  ZiLog::sink(ZiLog::fileSink());
-  ZiLog::start();
+  g_root = ZiTestResidue::tempRoot();
 
-  try {
-    {
-      ZiFile f;
-      if (f.open("foo", ZiFile::Create | ZiFile::Truncate, 0666) != Zi::OK)
-	throw f.error();
-      ZtString<> hw = "Hello World\n";
+  g_foo = ZiFile::append(g_root, "foo");
+  g_bar = ZiFile::append(g_root, "bar");
+  g_baz = ZiFile::append(g_root, "baz");
+  g_copy = ZiFile::append(g_root, "copy");
+  g_renamed = ZiFile::append(g_root, "renamed");
+  g_dir = ZiFile::append(g_root, "dir");
 
-      if (f.write(hw.data(), hw.length()) != Zi::OK) throw f.error();
+  ZiTestResidue::addFile(g_foo);
+  ZiTestResidue::addFile(g_bar);
+  ZiTestResidue::addFile(g_baz);
+  ZiTestResidue::addFile(g_copy);
+  ZiTestResidue::addFile(g_renamed);
+  ZiTestResidue::addDir(g_dir);
+}
 
-      ZiFile g;
+void cleanupFiles()
+{
+  ZiFile::remove(g_foo);
+  ZiFile::remove(g_bar);
+  ZiFile::remove(g_baz);
+  ZiFile::remove(g_copy);
+  ZiFile::remove(g_renamed);
+  ZiFile::rmdir(g_dir);
+}
 
-      g.init(f.handle(), 0);
+void testWriteReadAndBlockSize()
+{
+  ZuTestScope(testWriteReadAndBlockSize);
 
-      printf("%d %d\n", f.blkSize(), g.blkSize());
-    }
+  cleanupFiles();
 
-    {
-      ZiFile f;
-      char buf[1024];
-      int i;
+  ZtString<> hw = "Hello World\n";
+  {
+    ZiFile f;
+    ZuCHECK(f.open(g_foo, ZiFile::Write, 0666) == Zi::OK,
+      "open(foo) failed: ", f.error());
 
-      if (f.open("foo", ZiFile::ReadOnly, 0777) != Zi::OK) throw f.error();
-      i = f.read(buf, 1024);
-      if (i < 0) throw f.error();
-      printf("%d\n", i);
-      buf[i] = 0;
-      fputs(buf, stdout);
-    }
+    ZuCHECK(f.write(hw.data(), hw.length()) == Zi::OK,
+      "write(foo) failed: ", f.error());
 
-    {
-      ZiFile f;
-      if (f.open("bar", ZiFile::Create | ZiFile::Truncate, 0666) != Zi::OK)
-	throw f.error();
-      uint32_t u = 1;
+    ZiFile g;
+    g.init(f.handle(), 0);
+    ZuCheck(f.blkSize() > 0);
+    ZuCheck(g.blkSize() == f.blkSize());
 
-      if (f.pwrite(4, &u, 4) != Zi::OK) throw f.error();
-      if (f.pread(0, &u, 4) < 4) throw f.error();
-      printf("uninitialized data: %.8x\n", (int)u); fflush(stdout);
-    }
-  } catch (const ZeError &e) {
-    ZiLOG(Fatal, "ZiFileTest", e);
-    Zm::exit(1);
+    f.close();
   }
 
-  ZiLog::stop();
+  {
+    ZiFile f;
+    char buf[1024];
+    ZuCHECK(f.open(g_foo, ZiFile::ReadOnly, 0777) == Zi::OK,
+      "open(foo) for read failed: ", f.error());
+
+    int i = f.read(buf, sizeof(buf) - 1);
+    ZuCHECK(i >= 0, "read(foo) failed: ", f.error());
+    buf[i] = 0;
+
+    ZtString<> got;
+    got << ZuCSpan(buf, i);
+    ZuCheck(got == hw);
+
+    f.close();
+  }
+}
+
+void testSparseReadDefaultsToZero()
+{
+  ZuTestScope(testSparseReadDefaultsToZero);
+
+  ZiFile::remove(g_bar);
+
+  ZiFile f;
+  ZuCHECK(f.open(g_bar, ZiFile::Create | ZiFile::Truncate, 0666) == Zi::OK,
+    "open(bar) failed: ", f.error());
+
+  uint32_t u = 1;
+  ZuCHECK(f.pwrite(4, &u, sizeof(u)) == Zi::OK,
+    "pwrite(bar) failed: ", f.error());
+
+  u = 0xffffffffU;
+  int n = f.pread(0, &u, sizeof(u));
+  ZuCHECK(n >= static_cast<int>(sizeof(u)),
+    "pread(bar) failed: ", f.error());
+  ZuCheck(u == 0);
+
+  f.close();
+}
+
+void testVectoredIO()
+{
+  ZuTestScope(testVectoredIO);
+
+  ZiFile::remove(g_baz);
+
+  ZiFile f;
+  ZuCHECK(f.open(g_baz, ZiFile::Create | ZiFile::Truncate, 0666) == Zi::OK,
+    "open(baz) failed: ", f.error());
+
+  const char *a = "alpha";
+  const char *b = "beta";
+  ZiVec wv[2];
+  ZiVec_init(wv[0], const_cast<char *>(a), 5);
+  ZiVec_init(wv[1], const_cast<char *>(b), 4);
+  ZuCHECK(f.writev(wv, 2) == Zi::OK, "writev failed: ", f.error());
+
+  const char *x = "ZZ";
+  const char *y = "YY";
+  ZiVec pwv[2];
+  ZiVec_init(pwv[0], const_cast<char *>(x), 2);
+  ZiVec_init(pwv[1], const_cast<char *>(y), 2);
+  ZuCHECK(f.pwritev(2, pwv, 2) == Zi::OK, "pwritev failed: ", f.error());
+
+  char out1[8] = {0};
+  char out2[8] = {0};
+  ZiVec rv[2];
+  ZiVec_init(rv[0], out1, 4);
+  ZiVec_init(rv[1], out2, 5);
+  ZuCHECK(f.preadv(0, rv, 2) == Zi::OK, "preadv failed: ", f.error());
+
+  ZtString<> got;
+  got << ZuCSpan(out1, 4) << ZuCSpan(out2, 5);
+  ZuCheck(got == "alZZYYeta");
+
+  f.close();
+}
+
+void testSeekSizeTruncateSync()
+{
+  ZuTestScope(testSeekSizeTruncateSync);
+
+  ZiFile::remove(g_foo);
+
+  ZiFile f;
+  ZuCHECK(f.open(g_foo, ZiFile::Write, 0666) == Zi::OK,
+    "open failed: ", f.error());
+  ZuCHECK(f.write("0123456789", 10) == Zi::OK, "write failed: ", f.error());
+
+  ZuCheck(f.size() >= 10);
+
+  f.seek(4);
+  ZuCheck(f.offset() == 4);
+
+  ZuCHECK(f.truncate(6) == Zi::OK, "truncate failed: ", f.error());
+  ZuCheck(f.size() == 6);
+
+  ZuCHECK(f.sync() == Zi::OK, "sync failed: ", f.error());
+  f.close();
+
+  ZiFile r;
+  ZuCHECK(r.open(g_foo, ZiFile::ReadOnly, 0777) == Zi::OK,
+    "open read failed: ", r.error());
+  char buf[32];
+  int n = r.read(buf, sizeof(buf));
+  ZuCHECK(n == 6, "read expected 6 got ", n);
+  r.close();
+}
+
+void testMetadataAndPathHelpers()
+{
+  ZuTestScope(testMetadataAndPathHelpers);
+
+  cleanupFiles();
+
+  Zi::Path cwd = ZiFile::cwd();
+  ZuCheck(!!cwd);
+  ZuCheck(ZiFile::isdir(cwd));
+
+  ZuCHECK(ZiFile::mkdir(g_dir) == Zi::OK, "mkdir failed");
+  ZuCheck(ZiFile::exists(g_dir));
+  ZuCheck(ZiFile::isdir(g_dir));
+
+  {
+    ZiFile f;
+    ZuCHECK(f.open(g_foo, ZiFile::Write, 0666) == Zi::OK, "open failed: ", f.error());
+    ZuCHECK(f.write("content", 7) == Zi::OK, "write failed: ", f.error());
+    f.close();
+  }
+
+  ZuTime mt = ZiFile::mtime(g_foo);
+  ZuCheck(!!mt);
+  ZuCheck(ZiFile::exists(g_foo));
+
+  ZuCHECK(ZiFile::rename(g_foo, g_renamed) == Zi::OK, "rename failed");
+  ZuCheck(!ZiFile::exists(g_foo));
+  ZuCheck(ZiFile::exists(g_renamed));
+
+  ZuCHECK(ZiFile::copy(g_renamed, g_copy) == Zi::OK, "copy failed");
+  ZuCheck(ZiFile::exists(g_copy));
+
+  ZiFile f;
+  ZuCHECK(f.open(g_copy, ZiFile::ReadOnly, 0777) == Zi::OK, "open copy failed: ", f.error());
+  char buf[16] = {0};
+  int n = f.read(buf, sizeof(buf));
+  ZuCHECK(n == 7, "copy read length mismatch");
+  ZtString<> got;
+  got << ZuCSpan(buf, 7);
+  ZuCheck(got == "content");
+  f.close();
+
+  Zi::Path joined = ZiFile::append(g_dir, "joined.txt");
+  ZuCheck(ZiFile::leafname(joined) == "joined.txt");
+  ZuCheck(ZiFile::dirname(joined) == g_dir);
+  ZuCheck(!ZiFile::absolute(joined));
+
+  Zi::Path absPath = ZiFile::append(cwd, "ZiFileTest.abs");
+  ZuCheck(ZiFile::absolute(absPath));
+
+  ZuCHECK(ZiFile::rmdir(g_dir) == Zi::OK, "rmdir failed");
+  ZuCheck(!ZiFile::isdir(g_dir));
+}
+
+void testNegativeOpen()
+{
+  ZuTestScope(testNegativeOpen);
+
+  ZiFile f;
+  ZuCheck(f.open(ZiFile::append(g_root, "does-not-exist"), ZiFile::ReadOnly, 0777) == Zi::IOError);
+}
+
+} // namespace
+
+int main(int argc, char **argv)
+{
+  ZiTestResidue::init("ZiFileTest");
+  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::trap();
+  ::atexit(&ZiTestResidue::cleanupNow);
+
+  initPaths();
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall(testWriteReadAndBlockSize);
+  ZuTestCall(testSparseReadDefaultsToZero);
+  ZuTestCall(testVectoredIO);
+  ZuTestCall(testSeekSizeTruncateSync);
+  ZuTestCall(testMetadataAndPathHelpers);
+  ZuTestCall(testNegativeOpen);
+  cleanupFiles();
   return 0;
 }
