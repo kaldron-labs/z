@@ -1089,8 +1089,10 @@ int ZiFile::copy(const Path &oldName, const Path &newName, ZeError *e_)
     for (Offset o = 0; o < size; o += bufSize) {
       Offset n = size - o;
       if (n > (Offset)bufSize) n = bufSize;
-      if (oldHandle.pread(o, buf.data(), unsigned(n)) != Zi::OK) goto error;
-      if (newHandle.pwrite(o, buf.data(), unsigned(n)) != Zi::OK) goto error;
+      if (oldHandle.pread(o, buf.data(), unsigned(n)) < 0)
+	{ e = oldHandle.error(); goto error; }
+      if (newHandle.pwrite(o, buf.data(), unsigned(n)) < 0)
+	{ e = newHandle.error(); goto error; }
     }
   }
 #else

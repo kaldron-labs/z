@@ -4,52 +4,205 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
+#include <stdlib.h>
+#include <string.h>
 
-#include <stdio.h>
+#include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiCSV.hh>
+#include <zlib/ZiFile.hh>
 
-#ifdef _WIN32
-#define TestError ERROR_FILE_NOT_FOUND
-#else
-#define TestError ENOENT
-#endif
+#include "ZiTestResidue.hh"
 
-int main(int argc, char **argv)
+using namespace ZuTestUtil;
+
+struct LogCsvRow {
+  ZuCArray<64>	component;
+  ZuCArray<512>	msg;
+};
+ZtStruct(LogCsvRow,
+  (((component), (Ctor<6>)), (String)),
+  (((msg),       (Ctor<7>)), (String)));
+
+namespace {
+
+Zi::Path g_root;
+Zi::Path g_log;
+Zi::Path g_log1;
+Zi::Path g_log2;
+Zi::Path g_csv;
+Zi::Path g_csv1;
+
+bool contains(const ZtString<> &s, const char *needle)
 {
-  if (argc < 1 || argc > 2 || (argc == 2 && strcmp(argv[1], "-s") && strcmp(argv[1], "-c"))) {
-    std::cerr << "Usage: ZiLogTest [-s|-c]\n" << std::flush;
+  ZuCSpan span{s};
+  return ::memmem(span.data(), span.length(), needle, ::strlen(needle));
+}
+
+void initPaths()
+{
+  g_root = ZiFile::append(ZiTestResidue::tempRoot(), "log");
+  g_log = ZiFile::append(g_root, "ZiLogTest.log");
+  g_csv = ZiFile::append(g_root, "ZiLogTest.csv");
+
+  g_log1 = {};
+  g_log1 << g_log << ".1";
+  g_log2 = {};
+  g_log2 << g_log << ".2";
+
+  g_csv1 = {};
+  g_csv1 << g_csv << ".1";
+
+  ZiFile::mkdir(g_root);
+  ZiTestResidue::addDir(g_root);
+
+  ZiTestResidue::addFile(g_log);
+  ZiTestResidue::addFile(g_log1);
+  ZiTestResidue::addFile(g_log2);
+  ZiTestResidue::addFile(g_csv);
+  ZiTestResidue::addFile(g_csv1);
+}
+
+void resetArtifacts()
+{
+  ZiFile::remove(g_log);
+  ZiFile::remove(g_log1);
+  ZiFile::remove(g_log2);
+  ZiFile::remove(g_csv);
+  ZiFile::remove(g_csv1);
+}
+
+void configure(ZmRef<ZiSink> sink)
+{
+  ZiLog::stop();
+  ZiLog::init("ZiLogTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZuMv(sink));
+}
+
+ZtString<> readFile(const Zi::Path &path)
+{
+  ZiFile f;
+  if (f.open(path, ZiFile::ReadOnly | ZiFile::GC) != Zi::OK) {
+    log_("open(", path, ") failed: ", f.error());
     Zm::exit(1);
   }
 
-  ZiLog::init("ZiLogTest");
+  auto n = f.size();
+  auto buf = ZmAlloc(char, static_cast<unsigned>(n) + 1U);
+  int r = f.read(&buf[0], static_cast<unsigned>(n));
+  if (r < 0) {
+    log_("read(", path, ") failed: ", f.error());
+    Zm::exit(1);
+  }
 
-  ZiLog::level(0);
+  ZtString<> out;
+  out << ZuCSpan(&buf[0], static_cast<unsigned>(r));
+  return out;
+}
 
-  if (argc == 2 && !strcmp(argv[1], "-s"))
-    ZiLog::sink(ZiLog::sysSink());
-  else if (argc == 2 && !strcmp(argv[1], "-c"))
-    ZiLog::sink(ZiLog::csvSink());
-  else
-    ZiLog::sink(ZiLog::fileSink());
+void testFileSinkWritesAndAges()
+{
+  ZuTestScope(testFileSinkWritesAndAges);
 
+  resetArtifacts();
+
+  configure(ZiLog::fileSink(ZiSinkOptions{}.path(g_log).age(2)));
   ZiLog::start();
-
-  ZiLOGBT(Error, "ZiLogTest", "test backtrace");
-
-  ZiLOG(Debug, "ZiLogTest", "test Debug message");
-  ZiLOG(Info, "ZiLogTest", "test Info message");
-  ZiLOG(Warning, "ZiLogTest", "test Warning message");
-  ZiLOG(Error, "ZiLogTest", "test Error message");
-  ZiLOG(Fatal, "ZiLogTest", "test Fatal message");
-  ZiLOG(Error, "ZiLogTest", ZtSprintf<ZeString>("test %s %d", "Error message", 42));
-  ZiLOG(Error, "ZiLogTest", ZeError{TestError});
-  ZiLOG(Error, "ZiLogTest",
-    ZtSprintf<ZeString>("fopen() failed: %s",
-      ZeError{TestError}.message()));
-
+  ZiLOG(Info, "ZiLogFile", "file sink line one");
+  ZiLOG(Error, "ZiLogFile", "file sink line two");
   ZiLog::stop();
 
+  auto text = readFile(g_log);
+  ZuCheck(contains(text, "ZiLogFile"));
+  ZuCheck(contains(text, "file sink line one"));
+  ZuCheck(contains(text, "file sink line two"));
+
+  ZiLog::age();
+  ZuCheck(ZiFile::exists(g_log1));
+}
+
+void testCsvSinkWritesAndParses()
+{
+  ZuTestScope(testCsvSinkWritesAndParses);
+
+  resetArtifacts();
+
+  configure(ZiLog::csvSink(ZiSinkOptions{}.path(g_csv).age(2)));
+  ZiLog::start();
+  ZiLOG(Info, "ZiLogCsv", "csv,message");
+  ZiLOG(Warning, "ZiLogCsv", "second message");
+  ZiLog::stop();
+
+  auto text = readFile(g_csv);
+  ZuCheck(contains(text, "component"));
+  ZuCheck(contains(text, "msg"));
+  ZuCheck(contains(text, "csv,message"));
+
+  auto reader = ZiCSV::reader<LogCsvRow>();
+  unsigned rows = 0;
+  bool sawQuoted = false;
+  auto r = reader.readFile(g_csv, [&rows, &sawQuoted](const auto &scan) {
+    auto row = scan.ctor();
+    ++rows;
+    if (row.component == "ZiLogCsv" && row.msg == "csv,message")
+      sawQuoted = true;
+  });
+  ZuCheck(!r.template is<ZeException>());
+  ZuCheck(rows == 2);
+  ZuCheck(sawQuoted);
+
+  ZiLog::age();
+  ZuCheck(ZiFile::exists(g_csv1));
+}
+
+void testLambdaSinkReceivesEvents()
+{
+  ZuTestScope(testLambdaSinkReceivesEvents);
+
+  resetArtifacts();
+
+  unsigned calls = 0;
+  int8_t severity = -1;
+  ZeString component;
+  ZtString<> msg;
+
+  configure(ZiLog::lambdaSink([&calls, &severity, &component, &msg](
+      ZiLogBuf &buf, const ZeEventInfo &info) {
+    ++calls;
+    severity = info.severity;
+    component = info.component;
+    msg = {};
+    msg << ZuCSpan(buf.data(), buf.length());
+  }));
+
+  ZiLog::start();
+  ZiLOG(Warning, "ZiLogLambda", "lambda sink message");
+  ZiLog::stop();
+
+  ZuCheck(calls == 1);
+  ZuCheck(severity == Ze::Warning);
+  ZuCheck(component == "ZiLogLambda");
+  ZuCheck(contains(msg, "lambda sink message"));
+}
+
+} // namespace
+
+int main(int argc, char **argv)
+{
+  ZiTestResidue::init("ZiLogTest");
+  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::trap();
+  ::atexit(&ZiTestResidue::cleanupNow);
+
+  initPaths();
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall(testFileSinkWritesAndAges);
+  ZuTestCall(testCsvSinkWritesAndParses);
+  ZuTestCall(testLambdaSinkReceivesEvents);
+  ZiLog::stop();
   return 0;
 }
