@@ -178,13 +178,13 @@ static const char *ptls_error_string_(int err)
   return nullptr;
 }
 
-static const EVP_MD *evp_md_(MD::T type)
+static const EVP_MD *evp_md_(MDType type)
 {
   switch (type) {
-    case MD::SHA1: return EVP_sha1();
-    case MD::SHA256: return EVP_sha256();
-    case MD::SHA384: return EVP_sha384();
-    case MD::SHA512: return EVP_sha512();
+    case SHA1: return EVP_sha1();
+    case SHA256: return EVP_sha256();
+    case SHA384: return EVP_sha384();
+    case SHA512: return EVP_sha512();
   }
   return EVP_sha256();
 }
@@ -277,7 +277,7 @@ static int ticket_key_cb_(unsigned char *key_name, unsigned char *iv,
 static int ticket_encrypt_cb_(ptls_encrypt_ticket_t *self, ptls_t *,
   int is_encrypt, ptls_buffer_t *dst, ptls_iovec_t src)
 {
-  ticket_key_tls_ = static_cast<TicketKey *>(self);
+  ticket_key_tls_ = reinterpret_cast<TicketKey *>(self);
   int ret = is_encrypt ?
     ptls_openssl_encrypt_ticket(dst, src, ticket_key_cb_) :
     ptls_openssl_decrypt_ticket(dst, src, ticket_key_cb_);
@@ -293,7 +293,6 @@ bool init()
   if (done) return true;
   done = true;
   Ztls::Pico::install();
-  CRYPTO_set_mem_functions(::malloc, ::realloc, ::free);
   OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, nullptr);
   return true;
 }
@@ -305,18 +304,18 @@ bool random_bytes(ZuSpan<uint8_t> data)
   return true;
 }
 
-ptls_hash_algorithm_t *hash_algorithm(MD::T type)
+ptls_hash_algorithm_t *hash_algorithm(MDType type)
 {
   switch (type) {
-    case MD::SHA1: return &sha1_algo;
-    case MD::SHA256: return &ptls_openssl_sha256;
-    case MD::SHA384: return &ptls_openssl_sha384;
-    case MD::SHA512: return &ptls_openssl_sha512;
+    case SHA1: return &sha1_algo;
+    case SHA256: return &ptls_openssl_sha256;
+    case SHA384: return &ptls_openssl_sha384;
+    case SHA512: return &ptls_openssl_sha512;
   }
   return &ptls_openssl_sha256;
 }
 
-size_t hash_size(MD::T type)
+size_t hash_size(MDType type)
 {
   return hash_algorithm(type)->digest_size;
 }
@@ -634,7 +633,7 @@ bool pkey_ec_export_oid(const PKey *key, ZuSpan<uint8_t> out)
 }
 
 bool pkey_sign(
-  const PKey *key, MD::T md, ZuBSpan data,
+  const PKey *key, MDType md, ZuBSpan data,
   ZuSpan<uint8_t> sig, size_t *siglen)
 {
   if (!key || !key->pkey || !siglen) return false;
@@ -659,7 +658,7 @@ bool pkey_sign(
   return true;
 }
 
-bool pkey_verify(const PKey *key, MD::T md, ZuBSpan data, ZuBSpan sig)
+bool pkey_verify(const PKey *key, MDType md, ZuBSpan data, ZuBSpan sig)
 {
   if (!key || !key->pkey) return false;
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(key->pkey, nullptr);

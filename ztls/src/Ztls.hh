@@ -241,7 +241,7 @@ protected:
     if (ZuUnlikely(!m_tls)) return false;
     if (ZuUnlikely(!m_handshakeStarted && !m_isServer)) {
       m_handshakeStarted = true;
-      unsigned inlen = 0;
+      size_t inlen = 0;
       int n = handshake_send_(nullptr, &inlen);
       if (!n) return handshake_done_();
       if (n == PTLS_ERROR_IN_PROGRESS || n == PTLS_ERROR_ASYNC_OPERATION)
@@ -260,7 +260,7 @@ protected:
 
     while (m_rxInQueue.count_()) {
       ZmRef<ZiIOBuf> buf = m_rxInQueue.shift();
-      unsigned inlen = buf->length;
+      size_t inlen = buf->length;
       int n = handshake_send_(buf->data(), &inlen);
       if (ZuUnlikely(inlen != buf->length)) {
 	ZiLOG(Error, "Ztls", "ptls_handshake() partial record");
@@ -288,7 +288,7 @@ private:
   bool recv() { // TLS thread
     if (ZuUnlikely(!m_tls || !m_rxInQueue.count_())) return false;
     ZmRef<ZiIOBuf> buf = m_rxInQueue.shift();
-    unsigned inlen = buf->length;
+    size_t inlen = buf->length;
     if (ZuUnlikely(!m_cipher)) return false;
     if (ZuUnlikely(buf->skip)) {
       ZiLOG(Error, "Ztls", "TLS RX buffer has non-zero skip");
@@ -480,7 +480,7 @@ private:
     ptls_buf_send_(ZuMv(buf), payload, len);
   }
 
-  int handshake_send_(const uint8_t *input, unsigned *inlen) { // TLS thread
+  int handshake_send_(const uint8_t *input, size_t *inlen) { // TLS thread
     ZmRef<ZiIOBuf> out = new TxBufAlloc{impl()};
     auto base = out->data() - out->skip;
     ptls_buffer_t sendbuf;
@@ -892,6 +892,7 @@ public:
   using Base::tls;
 
 friend Base;
+template <typename> friend class Client;
 
   CliLink(App *app) : Base{app, false} { }
   CliLink(App *app, Host server, uint16_t port) :
@@ -973,11 +974,11 @@ private:
 	ptls_iovec_init(m_ticket.data(), m_ticket.length());
     m_maxEarlyData = 0;
     props->client.max_early_data_size = &m_maxEarlyData;
-    props->client.early_data_acceptance = PTLS_EARLY_DATA_UNKNOWN;
+    props->client.early_data_acceptance = PTLS_EARLY_DATA_ACCEPTANCE_UNKNOWN;
   }
 
 protected:
-  unsigned maxEarlyData() const { return m_maxEarlyData; }
+  size_t maxEarlyData() const { return m_maxEarlyData; }
 
 public:
   void connectFailed(bool transient) {
@@ -993,7 +994,7 @@ public:
 private:
   ZmScheduler::Timer	m_reconnTimer;
   ZtArray<uint8_t>	m_ticket;
-  unsigned		m_maxEarlyData = 0;
+  size_t		m_maxEarlyData = 0;
   Host			m_server;
   uint16_t		m_port;
 };
@@ -1011,6 +1012,7 @@ public:
   using Base::app;
 
 friend Base;
+template <typename> friend class Server;
 
   SrvLink(App *app) : Base(app, true) { }
 
@@ -1333,11 +1335,12 @@ bool Client<App>::init(
   return Base::init(mx, thread, [
     this, caPath, alpn, certPath, keyPath
   ]() -> bool {
+    static ptls_save_ticket_t save_ticket_cb{
     if (!this->init_alpn_(alpn)) return false;
     auto ctx = this->ctx();
     ctx->on_client_hello = nullptr;
     ctx->save_ticket = {
-      .cb = [](ptls_save_ticket_t *, ptls_t *tls, ptls_iovec_t input) => int {
+      .cb = [](ptls_save_ticket_t *, ptls_t *tls, ptls_iovec_t input) -> int {
 	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
 	if (link) link->save_ticket(input);
 	return 0;
@@ -1476,7 +1479,7 @@ template <typename App>
 bool Server<App>::init(
   ZiMultiplex *mx, ZuCSpan thread, const char **alpn,
   const char *caPath, const char *certPath, const char *keyPath,
-  bool mTLS = false, int cacheMax = -1, int cacheTimeout = -1)
+  bool mTLS, int cacheMax, int cacheTimeout)
 {
   using Link = typename App::Link;
 
@@ -1487,7 +1490,7 @@ bool Server<App>::init(
     if (!this->init_alpn_(alpn)) return false;
     auto ctx = this->ctx();
     ctx->on_client_hello = {
-      .cb = [](ptls_on_client_hello_t *, ptls_t *tls, ptls_on_client_hello_parameters_t *params) {
+      .cb = [](ptls_on_client_hello_t *, ptls_t *tls, ptls_on_client_hello_parameters_t *params) -> int {
 	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
 	return link ? link->on_client_hello(tls, params) : 0;
       }

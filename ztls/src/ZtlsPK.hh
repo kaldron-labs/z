@@ -57,9 +57,9 @@ inline auto mwb_error_(int e) {
 namespace Load_ {
 
 constexpr auto matcher = ZuMatcher<
-  OID::PKCS1_RSA,			// RSA
-  OID::EC_ALG_UNRESTRICTED,		// EC
-  OID::ED25519				// ED25519
+  OIDs::PKCS1_RSA,			// RSA
+  OIDs::EC_ALG_UNRESTRICTED,		// EC
+  OIDs::ED25519				// ED25519
 >();
 
 inline auto mrb_error_(int e) {
@@ -88,7 +88,7 @@ save_PK_RSA(S &s, const Backend::PKey *key) {
     return ZeEXCEPT(Error, "ZtlsPK", "RSA export failed");
 
   Data::PK_X509_RSA data{
-    .id = OID::pkcs1_rsa(),
+    .id = OIDs::pkcs1_rsa(),
     .rsa = {	// PKCS#1
       modulus,
       pubExp
@@ -119,8 +119,8 @@ save_PK_EC(S &s, const Backend::PKey *key) {
     return ZeEXCEPT(Error, "ZtlsPK", "EC public key export failed");
 
   Data::PK_X509_EC data{
-    .id = OID::ec_alg_unrestricted(),
-    .id2 = {oid, oidLen},
+    .id = OIDs::ec_alg_unrestricted(),
+    .id2 = {oid.data(), oid.length()},
     .pubKey = pubKey,
   };
 
@@ -229,7 +229,7 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
 
     Data::SK_PKCS8_RSA data{
       .version = 0,
-      .id = OID::pkcs1_rsa(),
+      .id = OIDs::pkcs1_rsa(),
       .rsa = {	// PKCS#1
 	0,
 	modulus,
@@ -350,11 +350,11 @@ struct SK_EC_ : public PK_EC_<Heap> {
 
     unsigned n = Backend::pkey_ec_key_size(key);
     auto key_ = ZmAlloc(uint8_t, n);
-    ZuSpan<uint8_t> key(&key_[0], n);
-    if (!Backend::pkey_ec_export_private(this->key, key))
+    ZuSpan<uint8_t> prvKey(&key_[0], n);
+    if (!Backend::pkey_ec_export_private(this->key, prvKey))
       return ZeEXCEPT(Error, "ZtlsPK", "EC private key export failed");
 
-    unsigned pubLen = Backend::pkey_ec_public_size(key);
+    unsigned pubLen = Backend::pkey_ec_public_size(this->key);
     auto pubKey_ = ZmAlloc(uint8_t, pubLen);
     ZuSpan<uint8_t> pubKey(&pubKey_[0], pubLen);
     if (!Backend::pkey_ec_export_public(this->key, pubKey))
@@ -362,11 +362,11 @@ struct SK_EC_ : public PK_EC_<Heap> {
 
     Data::SK_PKCS8_EC data{
       .version = 0,
-      .id = OID::ec_alg_unrestricted(),
-      .id2 = {oid, oidLen},
+      .id = OIDs::ec_alg_unrestricted(),
+      .id2 = {oid.data(), oid.length()},
       .ec = {	// SEC1
 	.version = 1,
-	.key = key,
+	.key = prvKey,
 	.id = {},		// ID (unused when embedded in PKCS#8 wrapper)
 	.pubKey = pubKey	// optional public key
       }
@@ -442,7 +442,7 @@ public:
   template <typename S>
   ZuUnion<void, ZeException> save(S &s) const {
     Data::PK_X509_ED25519 data{
-      .id = OID::ed25519(),
+      .id = OIDs::ed25519(),
       .pubKey = pk
     };
 
@@ -496,7 +496,7 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
   ZuUnion<void, ZeException> save(S &s) const {
     Data::SK_PKCS8_ED25519 data{
       .version = 0,
-      .id = OID::ed25519(),
+      .id = OIDs::ed25519(),
       .key = sk
     };
 
@@ -782,8 +782,8 @@ template <typename S, typename Key>
 ZuUnion<void, ZeException> saveB64(S &s, Key *key) {
   using namespace Data;
 
-  auto buf_ = ZmAlloc(char, Data::DERBufSize);
-  ZtArray<char> buf(&buf_[0], 0, Data::DERBufSize, false);
+  auto buf_ = ZmAlloc(char, DERBufSize);
+  ZtArray<char> buf(&buf_[0], 0, DERBufSize, false);
   auto r = key->save(buf);
   if (ZuUnlikely(r.template is<ZeException>())) return r;
   ZmBase64::enc(buf.span(), [&s](ZuCSpan b64) { s << b64; });
