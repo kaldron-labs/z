@@ -47,9 +47,16 @@ struct App : public Ztls::Client<App> {
 	<< std::flush;
       ZtArray<uint8_t> request;
       request << Request << hostname << Request2;
-      send_(request.data(), request.length()); // in TLS thread
-      if (app()->payload().length())
-	send_(app()->payload().data(), app()->payload().length());
+      {
+	auto tx = txStream_();
+	tx.append(request.data(), request.length());
+	tx << Zi::flush();
+      }
+      if (app()->payload().length()) {
+	auto tx = txStream_();
+	tx.append(app()->payload().data(), app()->payload().length());
+	tx << Zi::flush();
+      }
     }
     void disconnected() {
       std::cerr << "disconnected\n" << std::flush;
@@ -69,7 +76,7 @@ struct App : public Ztls::Client<App> {
       app()->done();
     }
 
-    int process(Ztls::RxCursor &rx) {
+    int process(Ztls::RxStream &rx) {
       while (!rx.empty()) {
 	auto span = rx.span();
 	int n = process_span_(span);
