@@ -957,8 +957,8 @@ public:
 	bool(ZuIsSame<ZuDecay<T>, wchar_t>{}),
       IsWString = bool(ZuIsSame<ZuDecay<T>, wchar_t>{})
     };
-    ZuInline static constexpr Elem *data(Array &a) { return a.data(); }
-    ZuInline static constexpr const Elem *data(const Array &a) {
+    ZuInline static Elem *data(Array &a) { return a.data(); }
+    ZuInline static const Elem *data(const Array &a) {
       return a.data();
     }
     ZuInline static constexpr unsigned length(const Array &a) {
