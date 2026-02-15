@@ -30,7 +30,7 @@ enum { DERBufSize = 3<<10 };	// BufSize reduced by 3/4 for base64
 
 using namespace ZtASN1::Encoding;
 
-namespace OID {
+namespace OIDs {
   constexpr auto PKCS1_RSA = "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"_Zu;
   constexpr auto EC_ALG_UNRESTRICTED = "\x2a\x86\x48\xce\x3d\x02\x01"_Zu;
   constexpr auto ED25519 = "\x2b\x65\x70"_Zu;
@@ -52,7 +52,7 @@ namespace OID {
     return {reinterpret_cast<const uint8_t *>(EC_GRP_SECP256R1.data()),
       EC_GRP_SECP256R1.length()};
   }
-} // OID
+} // OIDs
 
 namespace Data {
 
@@ -83,7 +83,7 @@ ZtStruct((SK_PKCS1, ASN1),
 struct SK_SEC1 {
   uint8_t	version;
   ZuBSpan	key;
-  ZuBSpan	id;		// e.g. OID::EC_GRP_SECP256R1
+  ZuBSpan	id;		// e.g. OIDs::EC_GRP_SECP256R1
   ZuBSpan	pubKey;		// optional
 };
 ZtStruct((SK_SEC1, ASN1),
@@ -96,8 +96,8 @@ ZtStruct((SK_SEC1, ASN1),
 // PKCS#8 private key - header
 struct SK_PKCS8_HDR {
   uint8_t	version;	// 0
-  ZuBSpan	id;		// e.g. OID::EC_ALG_UNRESTRICTED for EC
-				//      OID::PKCS1_RSA for RSA
+  ZuBSpan	id;		// e.g. OIDs::EC_ALG_UNRESTRICTED for EC
+				//      OIDs::PKCS1_RSA for RSA
 				//      1.3.101.112 for ED25519
 };
 ZtStruct((SK_PKCS8_HDR, ASN1),
@@ -150,10 +150,10 @@ ZtStruct((PK_PKCS1, ASN1),
 
 // X509 public key - header (counterpart to both SEC1 and PKCS#8)
 struct PK_X509_HDR {
-  ZuBSpan	id;		// e.g. OID::EC_ALG_UNRESTRICTED for EC
-				//      OID::PKCS1_RSA for RSA
+  ZuBSpan	id;		// e.g. OIDs::EC_ALG_UNRESTRICTED for EC
+				//      OIDs::PKCS1_RSA for RSA
 				//      1.3.101.112 for ED25519
-  ZuBSpan	id2;		// e.g. OID::EC_GRP_SECP256R1 for EC
+  ZuBSpan	id2;		// e.g. OIDs::EC_GRP_SECP256R1 for EC
 				//      null for RSA and ED25519
 };
 ZtStruct((PK_X509_HDR, ASN1),

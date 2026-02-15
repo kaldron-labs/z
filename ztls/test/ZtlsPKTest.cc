@@ -49,7 +49,7 @@ void check(Ztls::Random &rng, ZuCSpan type)
   if constexpr (ZuIsSame<T, SK_RSA>{}) {
     sk = new T{rng, 2048};
   } else if constexpr (ZuIsSame<T, SK_EC>{}) {
-    sk = new T{rng, OID::ec_grp_secp256r1()};
+    sk = new T{rng, OIDs::ec_grp_secp256r1()};
   } else if constexpr (ZuIsSame<T, SK_ED25519>{}) {
     sk = new T{rng};
   }

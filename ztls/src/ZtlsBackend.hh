@@ -36,13 +36,19 @@
 
 namespace Ztls {
 
-namespace MD {
-  ZtEnum(MD, int8_t,
+namespace MDAlg {
+  ZtEnum(MDAlg, int8_t,
     SHA1,
     SHA256,
     SHA384,
     SHA512);
 }
+
+using MDType = MDAlg::T;
+inline constexpr MDType SHA1 = MDAlg::SHA1;
+inline constexpr MDType SHA256 = MDAlg::SHA256;
+inline constexpr MDType SHA384 = MDAlg::SHA384;
+inline constexpr MDType SHA512 = MDAlg::SHA512;
 
 namespace Backend {
 

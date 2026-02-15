@@ -12,7 +12,7 @@ typedef struct {
   ptls_hash_context_t *ctx;
 } ed25519_hash_context;
 
-static inline ptls_hash_algorithm_t *ed25520_hash_algo()
+static inline ptls_hash_algorithm_t *ed25519_hash_algo()
 {
   return &ptls_openssl_sha512;
 }
