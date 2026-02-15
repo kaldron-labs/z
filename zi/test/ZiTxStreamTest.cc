@@ -7,11 +7,8 @@
 #include <stdlib.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZiTxStream.hh>
-
-#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
@@ -161,11 +158,6 @@ void testOversizePrintableThrows()
 
 int main(int argc, char **argv)
 {
-  ZiTestResidue::init("ZiTxStreamTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
-  ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
-
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testSplitAndFlush);

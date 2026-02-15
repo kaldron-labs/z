@@ -7,12 +7,9 @@
 #include <stdlib.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiTx.hh>
-
-#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
@@ -203,11 +200,6 @@ void testAbortQueuedAndHeadCases()
 
 int main(int argc, char **argv)
 {
-  ZiTestResidue::init("ZiTxTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
-  ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
-
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testFifoAndPartialSendContinuation);

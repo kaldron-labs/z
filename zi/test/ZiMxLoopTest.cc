@@ -8,12 +8,9 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmTrap.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZiMultiplex.hh>
-
-#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
@@ -290,11 +287,6 @@ void testTcpLoopbackAndTelemetry()
 
 int main(int argc, char **argv)
 {
-  ZiTestResidue::init("ZiMxLoopTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
-  ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
-
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testTcpLoopbackAndTelemetry);

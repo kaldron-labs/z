@@ -7,11 +7,8 @@
 #include <stdlib.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZiIOContext.hh>
-
-#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
@@ -63,11 +60,6 @@ void testCompleteAndDisconnect()
 
 int main(int argc, char **argv)
 {
-  ZiTestResidue::init("ZiIOContextTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
-  ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
-
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testInitAndCallback);

@@ -8,13 +8,10 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiIOBuf.hh>
-
-#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
@@ -119,11 +116,6 @@ void testSpanOffsetAndLargeEnsure()
 
 int main(int argc, char **argv)
 {
-  ZiTestResidue::init("ZiIOBufTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
-  ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
-
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testSliceAndEnsurePreserveSpan);
