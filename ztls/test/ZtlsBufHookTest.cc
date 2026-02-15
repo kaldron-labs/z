@@ -144,12 +144,15 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 
     void connected(const char *, int) {
       auto &payload = this->app()->state.payload;
-      if (payload.length())
-	this->send_(payload.data(), unsigned(payload.length()));
+      if (payload.length()) {
+	auto tx = this->txStream_();
+	tx.append(payload.data(), unsigned(payload.length()));
+	tx << Zi::flush();
+      }
     }
     void disconnected() { this->app()->state.done_one(); }
     void connectFailed(bool) { this->app()->state.fail("connect failed"); }
-    int process(Ztls::RxCursor &rx) {
+    int process(Ztls::RxStream &rx) {
       while (!rx.empty()) {
 	auto span = rx.span();
 	rx.advance(span.length());
@@ -178,7 +181,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
 
     void connected(const char *, int) { }
     void disconnected() { this->app()->state.done_one(); }
-    int process(Ztls::RxCursor &rx) {
+    int process(Ztls::RxStream &rx) {
       while (!rx.empty()) {
 	auto span = rx.span();
 	unsigned got = unsigned(span.length());
@@ -187,8 +190,10 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
 	rx.advance(span.length());
 	if (this->app()->state.payload.length() &&
 	    total >= unsigned(this->app()->state.payload.length())) {
-	  this->send_(this->app()->state.payload.data(),
+	  auto tx = this->txStream_();
+	  tx.append(this->app()->state.payload.data(),
 	      unsigned(this->app()->state.payload.length()));
+	  tx << Zi::flush();
 	  return -1;
 	}
       }

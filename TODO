@@ -1,19 +1,7 @@
-- complete ZiIOStream
+- direction-aware ztls
 
 - factor out fbs codegen into shell script
   - used repeatedly in multiple Makefile.am
-
-parameters:
-- Alloc - allocate new buffer
-- Send - send buffer (includes captures for cxn, etc.)
-- MaxSize - maximum size of buffer (including headroom and tailroom), i.e. MTU
-- HeadRoom - headroom (skip)
-- TailRoom - required remaining size at Send
-- need a sustained Tx streaming API that:
-  s << x;
-  s emits buffers as needed;
-  s << flush() (or frame() or somesuch) flushes out the last buffer
-  - check STL conventions
 
 codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
 
@@ -51,17 +39,21 @@ codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
       - `ptls_buf_send` should be preceded by an independent KeyUpdate null send() if needed
   - ensures recs == 1 within `ptls_buf_send` because plaintext never exceeds `(16K-325)`
 
-- complete post-codex cleanup of ZtlsPico and Ztls
+- complete cleanup of ztls
   - unnecessary IOBufAlignBits constexpr calculation
   - unnecessary PreservePrefix
   - unnecessary origin_match
-  - send(data, len) can be removed in favor of send(buf)
-  - see above, caller should no longer use new IOBufAlloc...(cxn)
-    - need explicit per-thread (i.e. per-rx or per-tx) recycling to match future io_uring
-    - tx will have skip (headroom), rx will not
-    - m_rxBuf = new IOBufAlloc{...} needs to call allocator
-  - investigate use of tailroom
-  - investigate use of RxCursor - really necessary?
+  - the app defines the IOBufAlloc type separately for rx and tx
+  - send(data, len) is removed in favor of send(buf)
+    - ztls provides app with a suitable ZiTxStream via txStream()
+      - the app provides the buffer allocator to be used by ZiTxStream, enabling the app to specify the derived type of the buffer
+    - send(buf) is called within ZiTxStream (it is the stream's send handler), and it calls ptls send
+      - the ztls ZiTxStream instance ensures headroom and tailroom for use within ptls send
+  - app should no longer use new IOBufAlloc...(cxn)
+    - the app will use txStream() to transmit, the buffer allocator is provided by the app similar to how the app provides the buffer allocator to be used by the 
+    - the app will receive buffers from ztls, again the type of the buffers can be overridden by the app to enrich the buffer (see zdb for an example of this)
+    - down the road we will need need explicit per-rx or per-tx buffer recycling for future use of zero-copy io_uring
+  - RxCursor should disappear, it should no longer be necessary
 
 - need a rx and tx buf allocator in Ztls (and ZiMultiplex)
   - per-cxn

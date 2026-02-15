@@ -42,37 +42,40 @@ static_assert((ZiIOBuf_Align & (ZiIOBuf_Align - 1)) == 0,
 
 constexpr unsigned IOBufAlignBits = log2_align_(ZiIOBuf_Align);
 
-struct PreservePrefix {
+// PreserveBuf saves/restores buffer skip, length to ensure
+// that TLS head/tail are preserved during re-allocation/copying
+struct PreserveBuf {
   ZiIOBuf	*buf = nullptr;
   uint32_t	skip = 0;
   uint32_t	length = 0;
 
-  PreservePrefix(ZiIOBuf *buf_, uint32_t off) :
+  PreserveBuf(ZiIOBuf *buf_, uint32_t length_) :
       buf{buf_}, skip{buf_->skip}, length{buf_->length} {
     buf->skip = 0;
-    buf->length = off;
+    buf->length = length_;
   }
-  ~PreservePrefix() {
+  ~PreserveBuf() {
     buf->skip = skip;
     buf->length = length;
   }
 };
 
 static void *buffer_alloc_(ptls_buffer_t *buf, uint32_t capacity,
-    uint8_t align_bits)
+    uint8_t align_bits, int tx)
 {
+  buf->tx = tx ? 1 : 0;
   if (buf->origin) {
     if (ZuUnlikely(align_bits > IOBufAlignBits)) {
       counters.origin_align_fail++;
       return nullptr;
     }
     auto zbuf = static_cast<ZiIOBuf *>(buf->origin);
-    PreservePrefix preserve{zbuf, buf->off};
+    PreserveBuf preserve{zbuf, buf->off};
     if (ZuUnlikely(!zbuf->ensure(capacity))) {
       counters.origin_ensure_fail++;
       return nullptr;
     }
-    buf->base = zbuf->data() - zbuf->skip;
+    buf->base = zbuf->data();
     buf->capacity = zbuf->size;
     buf->is_allocated = 1;
     buf->align_bits = align_bits;
@@ -96,8 +99,9 @@ static void *buffer_alloc_(ptls_buffer_t *buf, uint32_t capacity,
   return newp;
 }
 
-static void buffer_free_(ptls_buffer_t *buf)
+static void buffer_free_(ptls_buffer_t *buf, int tx)
 {
+  (void)tx;
   if (ZuUnlikely(!buf || !buf->base)) return;
   if (buf->origin) {
     counters.origin_free++;

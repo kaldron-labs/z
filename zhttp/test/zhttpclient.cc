@@ -61,7 +61,7 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
     app()->done();
   }
 
-  int process(Ztls::RxCursor &rx) {
+  int process(Ztls::RxStream &rx) {
     while (!rx.empty()) {
       auto span = rx.span();
       int consumed = rxMsg.process(span, [this]() -> bool {

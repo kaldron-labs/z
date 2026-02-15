@@ -48,18 +48,26 @@ struct App : public Ztls::Server<App> {
       app()->done();
     }
 
-    int process(Ztls::RxCursor &rx) {
+    int process(Ztls::RxStream &rx) {
       while (!rx.empty()) {
 	auto span = rx.span();
 	ZtString<> response;
 	auto &content = app()->payload();
 	response << Response << content.length() << Response2;
-	send_(
-	  reinterpret_cast<const uint8_t *>(response.data()),
-	  response.length());
-	send_(
-	  reinterpret_cast<const uint8_t *>(content.data()),
-	  content.length());
+	{
+	  auto tx = txStream_();
+	  tx.append(
+	    reinterpret_cast<const uint8_t *>(response.data()),
+	    response.length());
+	  tx << Zi::flush();
+	}
+	{
+	  auto tx = txStream_();
+	  tx.append(
+	    reinterpret_cast<const uint8_t *>(content.data()),
+	    content.length());
+	  tx << Zi::flush();
+	}
 	rx.advance(span.length());
       }
       return 1;
