@@ -8,11 +8,8 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZiNetlinkMsg.hh>
-
-#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
@@ -76,11 +73,6 @@ void testFamilyNameTruncation()
 
 int main(int argc, char **argv)
 {
-  ZiTestResidue::init("ZiNetlinkMsgTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
-  ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
-
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testGenericHeaderFields);

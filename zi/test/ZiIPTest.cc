@@ -7,11 +7,8 @@
 #include <stdlib.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZiIP.hh>
-
-#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
@@ -74,11 +71,6 @@ void testSockAddrHelpers()
 
 int main(int argc, char **argv)
 {
-  ZiTestResidue::init("ZiIPTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
-  ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
-
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testParseResolveAndPrint);
