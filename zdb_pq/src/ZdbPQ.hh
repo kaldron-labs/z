@@ -26,6 +26,7 @@
 #include <zlib/ZmLHash.hh>
 
 #include <zlib/ZiAssert.hh>
+#include <zlib/ZiEventLoop.hh>
 
 #include <zlib/ZiIP.hh>
 
@@ -1949,7 +1950,6 @@ private:
   void stop_2();
 
   void wake();
-  void wake_();
   void run_();
 
   void recv();
@@ -1965,6 +1965,7 @@ private:
   int start_send();
   void start_rcvd(PGresult *);
   void start_failed(bool running, ZeException);
+  void start_failed_(ZeException);
   void started();
 
   // start phases
@@ -1994,13 +1995,7 @@ private:
 
   PGconn		*m_conn = nullptr;
   int			m_connFD = -1;
-#ifndef _WIN32
-  int			m_epollFD = -1;
-  int			m_wakeFD = -1, m_wakeFD2 = -1;
-#else
-  HANDLE		m_wakeSem = INVALID_HANDLE_VALUE;
-  HANDLE		m_connEvent = INVALID_HANDLE_VALUE;
-#endif
+  ZiEventLoop		m_eventLoop;
 
   // LATER - telemetry for queue lengths
   // LATER - test transient send failure, pushback, resend
