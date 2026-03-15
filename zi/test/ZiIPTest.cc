@@ -23,18 +23,18 @@ void testParseResolveAndPrint()
 
   ZeError e;
   ZiIP ip2;
-  ZuCheck(ip2.resolve("127.0.0.1", &e) == ZiIP::OK);
+  ZuCheck(ip2.resolve("127.0.0.1", &e) == Zi::OK);
   ZuCheck(ip2 == ip);
 
   ZiIP ip3;
-  ZuCheck(ip3.resolve("localhost", &e) == ZiIP::OK);
+  ZuCheck(ip3.resolve("localhost", &e) == Zi::OK);
   ZuCheck(!!ip3);
 
   auto name = ip.name(&e);
   ZuCheck(!!name);
 
   ZiIP bad;
-  ZuCheck(bad.resolve("definitely.invalid.localhost.zed", &e) == ZiIP::IOError);
+  ZuCheck(bad.resolve("definitely.invalid.localhost.zed", &e) == Zi::IOError);
 }
 
 void testMulticastBoundaries()

@@ -186,7 +186,7 @@ struct ZeEventInfo {
 // - the log buffer has a large built-in size so that heap allocation is
 //   an exceptional fallback
 ZuDerive(ZeLogBuf,
-  (ZtBuiltin<ZtArray<ZtArrayHeapID<"ZeLogBuf">>, ZeLog_BUFSIZ>));
+  (ZtBuiltin<ZtArray<char, ZtArrayHeapID<"ZeLogBuf">>, ZeLog_BUFSIZ>));
 
 // message as function delegate
 using ZeMsgFn = ZmFn<void(ZeLogBuf &, const ZeEventInfo &)>;
@@ -236,15 +236,17 @@ struct ZeEvent : public ZeAnyEvent {
     l{ZuFwd<L_>(l_)} { }
 
   template <typename S, typename L_ = L>
-  friend decltype(
-      ZuDeclVal<L_ &>()(ZuDeclVal<S &>()),
-      ZuDeclVal<S &>())
-  operator <<(S &s, const ZeEvent &e) { e.l(s); return s; }
+  decltype(
+    ZuDeclVal<L_ &>()(ZuDeclVal<S &>()),
+    ZuDeclVal<S &>(),
+    void())
+  print(S &s) const { l(s); }
   template <typename S, typename L_ = L>
-  friend decltype(
-      ZuDeclVal<L_ &>()(ZuDeclVal<S &>(), ZuDeclVal<const ZeEventInfo &>()),
-      ZuDeclVal<S &>())
-  operator <<(S &s, const ZeEvent &e) { e.l(s, e); return s; }
+  decltype(
+    ZuDeclVal<L_ &>()(ZuDeclVal<S &>(), ZuDeclVal<const ZeEventInfo &>()),
+    ZuDeclVal<S &>(),
+    void())
+  print(S &s) const { l(s, *this); }
 
   template <typename L_ = L>
   decltype(ZuDeclVal<L_ &>()(

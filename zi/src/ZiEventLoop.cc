@@ -21,7 +21,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiAssert.hh>
 
-namespace ZiEventLoop {
+namespace ZiEvent {
 
 // 64-bit pointer-packing for epoll u64
 
@@ -66,7 +66,7 @@ void Loop::start(StartFn fn)
       start_failed(ZeEXCEPT(Fatal, "ZiEventLoop", "start() failed"));
       return;
     }
-    m_sched->wakeFn(m_sid, ZmFn<>{this, [](Store *store) { store->wake(); }});
+    m_sched->wakeFn(m_sid, ZmFn<>{this, [](Loop *loop) { loop->wake(); }});
     run_();
   });
 }
@@ -79,21 +79,26 @@ bool Loop::start_()
 
   // set up I/O multiplexer (epoll)
   if ((m_epollFD = epoll_create(2)) < 0) {
-    ZiLOG(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
+    failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
       s << "epoll_create() failed: " << e;
-    }));
+    })));
+    ::close(m_epollFD); m_epollFD = -1;
     return false;
   }
   if (pipe(&m_wakeFD) < 0) {
-    ZiLOG(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
+    failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
       s << "pipe() failed: " << e;
-    }));
+    })));
+    ::close(m_epollFD); m_epollFD = -1;
     return false;
   }
   if (fcntl(m_wakeFD, F_SETFL, O_NONBLOCK) < 0) {
-    ZiLOG(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
+    failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
       s << "fcntl(F_SETFL, O_NONBLOCK) failed: " << e;
-    }));
+    })));
+    ::close(m_epollFD); m_epollFD = -1;
+    ::close(m_wakeFD); m_wakeFD = -1;
+    ::close(m_wakeFD2); m_wakeFD2 = -1;
     return false;
   }
   {
@@ -102,9 +107,12 @@ bool Loop::start_()
     ev.events = EPOLLIN;
     ev.data.u64 = 0;
     if (epoll_ctl(m_epollFD, EPOLL_CTL_ADD, m_wakeFD, &ev) < 0) {
-      ZiLOG(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
+      failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
 	s << "epoll_ctl(EPOLL_CTL_ADD) failed: " << e;
-      }));
+      })));
+      ::close(m_epollFD); m_epollFD = -1;
+      ::close(m_wakeFD); m_wakeFD = -1;
+      ::close(m_wakeFD2); m_wakeFD2 = -1;
       return false;
     }
   }
@@ -113,9 +121,9 @@ bool Loop::start_()
 
   HANDLE wakeSem = CreateSemaphore(nullptr, 0, 0x7fffffff, nullptr);
   if (wakeSem == NULL || wakeSem == INVALID_HANDLE_VALUE) {
-    ZiLOG(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
+    failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
       s << "CreateEvent() failed: " << e;
-    }));
+    })));
     return false;
   }
   m_wakeSemIndex = m_wfmoHandles.length();
@@ -139,7 +147,7 @@ void Loop::stop(StopFn fn)
     stop_2();
     StopFn stopFn = ZuMv(m_stopFn);
     m_stopFn = StopFn{};
-    stopFn(StopResult{});
+    if (stopFn) stopFn(StopResult{});
   });
   wake_();
 }
@@ -155,7 +163,7 @@ void Loop::stop_2()
   }
   // remove handles
   {
-    auto i = m_sockets.iter();
+    auto i = m_handles.iter();
     while (i()) delHandle_(i.del());
   }
 
@@ -206,9 +214,9 @@ void Loop::wake_()
   while (::write(m_wakeFD2, &c, 1) < 0) {
     ZeError e{errno};
     if (e.errNo() != EINTR && e.errNo() != EAGAIN) {
-      ZiLOG(Fatal, "ZiEventLoop", ([e](auto &s) {
+      failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e](auto &s) {
 	s << "write() failed: " << e;
-      }));
+      })));
       break;
     }
   }
@@ -216,15 +224,15 @@ void Loop::wake_()
 #else /* !_WIN32 */
 
   if (!ReleaseSemaphore(m_wfmoHandles[m_wakeSemIndex], 1, 0)) {
-    ZiLOG(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
+    failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
       s << "ReleaseSemaphore() failed: " << e;
-    }));
+    })));
   }
 
 #endif /* !_WIN32 */
 }
 
-bool Loop::addSocket(Zi::Socket socket_, SendFn send, RecvFn recv)
+bool Loop::addSocket(Zi::Socket socket_, SocketSendFn send, SocketRecvFn recv)
 {
   ZmRef<Socket> socket = new Socket{socket_, ZuMv(send), ZuMv(recv)};
 
@@ -239,7 +247,7 @@ bool Loop::addSocket(Zi::Socket socket_, SendFn send, RecvFn recv)
     memset(&ev, 0, sizeof(struct epoll_event));
     ev.events = EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
     ev.data.u64 = u64_socket(socket.ptr());
-    epoll_ctl(m_epollFD, EPOLL_CTL_ADD, socket, &ev);
+    epoll_ctl(m_epollFD, EPOLL_CTL_ADD, socket_, &ev);
   }
 
 #else /* !_WIN32 */
@@ -269,14 +277,14 @@ bool Loop::addSocket(Zi::Socket socket_, SendFn send, RecvFn recv)
   socket->send(socket_);
   socket->recv(socket_);
 
-  m_sockets.add(ZuMv(socket));
+  m_sockets.addNode(ZuMv(socket));
 
   return true;
 }
 
 void Loop::delSocket(Zi::Socket socket_)
 {
-  if (Zi::nullSocket(socket)) return;
+  if (Zi::nullSocket(socket_)) return;
 
   ZmRef<Socket> socket = m_sockets.del(socket_);
 
@@ -302,7 +310,7 @@ void Loop::delSocket_(ZmRef<Socket> socket)
 #endif /* !_WIN32 */
 }
 
-bool Loop::addHandle(Zi::Handle handle_, SendFn send, RecvFn recv)
+bool Loop::addHandle(Zi::Handle handle_, HandleSendFn send, HandleRecvFn recv)
 {
   ZmRef<Handle> handle = new Handle{handle_, ZuMv(send), ZuMv(recv)};
 
@@ -317,7 +325,7 @@ bool Loop::addHandle(Zi::Handle handle_, SendFn send, RecvFn recv)
     memset(&ev, 0, sizeof(struct epoll_event));
     ev.events = EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
     ev.data.u64 = u64_handle(handle.ptr());
-    epoll_ctl(m_epollFD, EPOLL_CTL_ADD, handle, &ev);
+    epoll_ctl(m_epollFD, EPOLL_CTL_ADD, handle_, &ev);
   }
 
 #else /* !_WIN32 */
@@ -333,14 +341,14 @@ bool Loop::addHandle(Zi::Handle handle_, SendFn send, RecvFn recv)
   handle->send(handle_);
   handle->recv(handle_);
 
-  m_handles.add(ZuMv(handle));
+  m_handles.addNode(ZuMv(handle));
 
   return true;
 }
 
 void Loop::delHandle(Zi::Handle handle_)
 {
-  if (Zi::nullHandle(handle)) return;
+  if (Zi::nullHandle(handle_)) return;
 
   ZmRef<Handle> handle = m_handles.del(handle_);
 
@@ -365,7 +373,7 @@ void Loop::delHandle_(ZmRef<Handle> handle)
 #endif /* !_WIN32 */
 }
 
-#ifndef _WIN32
+#ifdef _WIN32
 void Loop::delIndex_(unsigned i)
 {
   // splice out this object
@@ -375,10 +383,10 @@ void Loop::delIndex_(unsigned i)
   if (m_wakeSemIndex > i) --m_wakeSemIndex;
   for (unsigned n = m_wfmoData.length(); i < n; ) {
     if (u64_is_socket(u64)) {
-      auto socket = reinterpret_cast<Socket *>(u64_ptr(u64));
+      auto socket = u64_ptr<Socket>(u64);
       --socket->index;
     } else if (u64_is_handle(u64)) {
-      auto handle = reinterpret_cast<Handle *>(u64_ptr(u64));
+      auto handle = u64_ptr<Handle>(u64);
       --handle->index;
     }
   }
@@ -423,9 +431,9 @@ again:
     if (r < 0) {
       auto e = errno;
       if (e == EINTR || e == EAGAIN) goto again;
-      ZiLOG(Fatal, "ZiEventLoop", ([e](auto &s) {
+      failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e](auto &s) {
 	s << "epoll_wait() failed: " << e;
-      }));
+      })));
       return;
     }
     for (unsigned i = 0; i < unsigned(r); i++) {
@@ -440,14 +448,14 @@ again:
       })); */
 
       if (u64_is_socket(u64)) {
-	auto socket = reinterpret_cast<Socket *>(u64_ptr(u64));
+	auto socket = u64_ptr<Socket>(u64);
 
 	if (events & EPOLLOUT)
 	  socket->send(socket->socket);
 	if (events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR))
 	  socket->recv(socket->socket);
       } else if (u64_is_handle(u64)) {
-	auto handle = reinterpret_cast<Handle *>(u64_ptr(u64));
+	auto handle = u64_ptr<Handle>(u64);
 
 	if (events & EPOLLOUT)
 	  handle->send(handle->handle);
@@ -470,23 +478,23 @@ again:
     DWORD event = WaitForMultipleObjectsEx(
 	n, &m_wfmoHandles[0], false, INFINITE, false);
     if (event == WAIT_FAILED) {
-      ZiLOG(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
+      failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
 	s << "WaitForMultipleObjectsEx() failed: " << e;
-      }));
+      })));
       return;
     }
     if (event >= WAIT_OBJECT_0 && event < WAIT_OBJECT_0 + n) {
       int i = event - WAIT_OBJECT_0
       auto u64 = m_wfmoData[i];
       if (u64_is_socket(u64)) {
-	auto socket = reinterpret_cast<Socket *>(u64_ptr(u64));
+	auto socket = u64_ptr<Socket>(u64);
 
 	WSANETWORKEVENTS events;
 	auto i = WSAEnumNetworkEvents(socket->socket, m_wfmoHandles[socket->index], &events);
 	if (i != 0) {
-	  ZiLOG(Fatal, "ZiEventLoop", ([e = WSAGetLastError()](auto &s) {
+	  failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = WSAGetLastError()](auto &s) {
 	    s << "WSAEnumNetworkEvents() failed: " << e;
-	  }));
+	  })));
 	  return;
 	}
 	if ((events.lNetworkEvents & (FD_WRITE|FD_CLOSE)) == FD_WRITE)
@@ -494,7 +502,7 @@ again:
 	if (events.lNetworkEvents & (FD_READ|FD_OOB|FD_CLOSE))
 	  socket->recv(socket->socket);
       } else if (u64_is_handle(u64)) {
-	auto handle = reinterpret_cast<Handle *>(u64_ptr(u64));
+	auto handle = u64_ptr<Handle>(u64);
 
 	// FIXME - call handle->send() and/or handle->recv() accordingly
 
@@ -522,7 +530,7 @@ void Loop::started()
 
   m_startFn = StartFn{};
 
-  startFn(StartResult{});
+  if (startFn) startFn(StartResult{});
 }
 
 void Loop::start_failed(ZeException e)
@@ -535,7 +543,15 @@ void Loop::start_failed(ZeException e)
 
   m_startFn = StartFn{};
 
-  startFn(StartResult{ZuMv(e)});
+  if (startFn) startFn(StartResult{ZuMv(e)});
 }
 
-} // ZiEventLoop
+void Loop::failed(Exception e)
+{
+  if (m_failFn)
+    m_failFn(ZuMv(e));
+  else
+    ZiLog::log(ZuMv(e));
+}
+
+} // ZiEvent

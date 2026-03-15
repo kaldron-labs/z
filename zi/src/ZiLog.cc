@@ -292,7 +292,7 @@ void ZiSysSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 
 #ifndef _WIN32
   ::syslog(syslogger()->facility() | sysloglevel(info.severity),
-      "%.*s", buf.length(), buf.data());
+      "%.*s", (int)buf.length(), buf.data());
 #else
   ZmTrap::winErrLog(eventlogtype(info.severity), buf);
 #endif

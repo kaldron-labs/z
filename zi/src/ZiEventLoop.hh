@@ -25,7 +25,7 @@
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZiAssert.hh>
 
-namespace ZiEventLoop {
+namespace ZiEvent {
 
 // monomorphic ZeEvent
 using Exception = ZeException;
@@ -46,12 +46,12 @@ using FailFn = ZmFn<void(Exception)>;
 // send/receive callbacks
 using SocketSendFn = ZmFn<void(Zi::Socket)>;
 using SocketRecvFn = ZmFn<void(Zi::Socket)>;
+
 using HandleSendFn = ZmFn<void(Zi::Handle)>;
 using HandleRecvFn = ZmFn<void(Zi::Handle)>;
 
 // socket
-template <typename Heap = ZuEmpty>
-class Socket_ : public Heap, public ZuObject {
+struct Socket__ {
   Zi::Socket	socket = Zi::nullSocket();
   SocketSendFn	send;
   SocketRecvFn	recv;
@@ -59,20 +59,21 @@ class Socket_ : public Heap, public ZuObject {
   int		index = -1;	// index into WFMO arrays
 #endif
 
-  static auto KeyAxor(const Socket_ &socket) { return socket.socket; }
+  static auto KeyAxor(const Socket__ &socket) { return socket.socket; }
 };
-ZuDerive(Socket, (Socket_<ZmHeap<"ZiEventLoop.Socket", Socket_<>>>));
+struct Socket_ : public ZuObject, public Socket__ { ZuDerive_(Socket_, Socket__); };
 
 // Socket hash table, keyed on socket
 ZuDerive(Sockets,
-  (ZmHash<Socket,
-    ZmHashNode<Socket,
-      ZmHashKey<Socket::KeyAxor,
+  (ZmHash<Socket_,
+    ZmHashNode<Socket_,
+      ZmHashKey<Socket_::KeyAxor,
 	ZmHashHeapID<"ZiEventLoop.Socket">>>>));
 
+using Socket = Sockets::Node;
+
 // handle
-template <typename Heap = ZuEmpty>
-class Handle_ : public Heap, public ZuObject {
+struct Handle__ {
   Zi::Handle	handle = Zi::nullHandle();
   HandleSendFn	send;
   HandleRecvFn	recv;
@@ -80,18 +81,20 @@ class Handle_ : public Heap, public ZuObject {
   int		index = -1;	// index into WFMO arrays
 #endif
 
-  static auto KeyAxor(const Handle_ &handle) { return handle.handle; }
+  static auto KeyAxor(const Handle__ &handle) { return handle.handle; }
 };
-ZuDerive(Handle, (Handle_<ZmHeap<"ZiEventLoop.Handle", Handle_<>>>));
+struct Handle_ : public ZuObject, public Handle__ { ZuDerive_(Handle_, Handle__); };
 
 // Handle hash table, keyed on handle
 ZuDerive(Handles,
-  (ZmHash<Handle,
-    ZmHashNode<Handle,
-      ZmHashKey<Handle::KeyAxor,
+  (ZmHash<Handle_,
+    ZmHashNode<Handle_,
+      ZmHashKey<Handle_::KeyAxor,
 	ZmHashHeapID<"ZiEventLoop.Handle">>>>));
 
-// event loop
+using Handle = Handles::Node;
+
+// main event loop
 class Loop {
 public:
   void init(ZmScheduler *, unsigned sid, FailFn);
@@ -103,18 +106,18 @@ public:
   bool stopping() const { return m_stopping; }
 
   template <typename ...Args> void run(Args &&...args) {
-    m_mx->run(m_sid, ZuFwd<Args>(args)...);
+    m_sched->run(m_sid, ZuFwd<Args>(args)...);
   }
   template <typename ...Args> void invoke(Args &&...args) {
-    m_mx->invoke(m_sid, ZuFwd<Args>(args)...);
+    m_sched->invoke(m_sid, ZuFwd<Args>(args)...);
   }
 
-  void addSocket(Zi::Socket socket, SocketSendFn sendFn, SocketRecvFn recvFn);
+  bool addSocket(Zi::Socket socket, SocketSendFn, SocketRecvFn);
   void delSocket(Zi::Socket socket);
 
   void disconnect(Zi::Socket socket); // simulate remote disconnect
 
-  void addHandle(Zi::Handle handle, HandleSendFn sendFn, HandleRecvFn recvFn);
+  bool addHandle(Zi::Handle handle, HandleSendFn, HandleRecvFn);
   void delHandle(Zi::Handle handle);
 
   void close(Zi::Handle handle); // simulate remote close
@@ -135,6 +138,8 @@ private:
   void delSocket_(ZmRef<Socket>);
   void delHandle_(ZmRef<Handle>);
   void delIndex_(unsigned);
+
+  void failed(ZeException);
 
 private:
   ZmScheduler		*m_sched = nullptr;
@@ -158,8 +163,8 @@ private:
   Handles		m_handles;
 };
 
-} // Zi
+} // ZiEvent
 
-using ZiEventLoop = Zi::EventLoop;
+using ZiEventLoop = ZiEvent::Loop;
 
 #endif /* ZiEventLoop_HH */
