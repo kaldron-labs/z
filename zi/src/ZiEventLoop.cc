@@ -23,7 +23,7 @@
 
 namespace ZiEvent {
 
-// 64-bit pointer-packing for epoll u64
+// 64-bit pointer-packing
 
 inline uint64_t u64_socket(void *ptr) {
   return reinterpret_cast<uintptr_t>(ptr);
@@ -293,6 +293,27 @@ void Loop::delSocket(Zi::Socket socket_)
   delSocket_(ZuMv(socket));
 }
 
+bool Loop::unblock(Zi::Socket socket)
+{
+#ifndef _WIN32
+
+  if (fcntl(s, F_SETFL, O_NONBLOCK) < 0) {
+    Error("fcntl(O_NONBLOCK)", Zi::IOError, ZeLastError);
+    return false;
+  }
+
+#else /* !_WIN32 */
+
+  u_long mode = 1;
+  if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+    Error("ioctlsocket(FIONBIO, &1)", Zi::IOError, ZeLastError);
+    return false;
+  }
+
+#endif /* !_WIN32 */
+  return true;
+}
+
 void Loop::delSocket_(ZmRef<Socket> socket)
 {
 #ifndef _WIN32
@@ -331,7 +352,7 @@ bool Loop::addHandle(Zi::Handle handle_, HandleSendFn send, HandleRecvFn recv)
 #else /* !_WIN32 */
 
   handle->index = m_wfmoHandles.length();
-  m_wfmoHandles.push(handle);
+  m_wfmoHandles.push(handle->handle);
   m_wfmoData.push(u64_handle(handle.ptr()));
 
 #endif /* !_WIN32 */
@@ -381,7 +402,8 @@ void Loop::delIndex_(unsigned i)
   m_wfmoData.splice(i, 1);
   // adjust indices
   if (m_wakeSemIndex > i) --m_wakeSemIndex;
-  for (unsigned n = m_wfmoData.length(); i < n; ) {
+  for (unsigned n = m_wfmoData.length(); i < n; i++) {
+    auto u64 = m_wfmoData[i];
     if (u64_is_socket(u64)) {
       auto socket = u64_ptr<Socket>(u64);
       --socket->index;
@@ -405,6 +427,21 @@ void Loop::disconnect(Zi::Socket socket)
 #else /* !_WIN32 */
 
   ::closesocket(socket);
+
+#endif /* !_WIN32 */
+}
+
+void Loop::close(Zi::Handle handle)
+{
+  if (Zi::nullHandle(handle)) return;
+
+#ifndef _WIN32
+
+  ::close(handle);
+
+#else /* !_WIN32 */
+
+  CloseHandle(handle);
 
 #endif /* !_WIN32 */
 }
@@ -484,14 +521,15 @@ again:
       return;
     }
     if (event >= WAIT_OBJECT_0 && event < WAIT_OBJECT_0 + n) {
-      int i = event - WAIT_OBJECT_0
+      unsigned i = event - WAIT_OBJECT_0;
       auto u64 = m_wfmoData[i];
       if (u64_is_socket(u64)) {
 	auto socket = u64_ptr<Socket>(u64);
 
 	WSANETWORKEVENTS events;
-	auto i = WSAEnumNetworkEvents(socket->socket, m_wfmoHandles[socket->index], &events);
-	if (i != 0) {
+	auto rc = WSAEnumNetworkEvents(
+	  socket->socket, m_wfmoHandles[socket->index], &events);
+	if (rc != 0) {
 	  failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = WSAGetLastError()](auto &s) {
 	    s << "WSAEnumNetworkEvents() failed: " << e;
 	  })));
@@ -503,9 +541,8 @@ again:
 	  socket->recv(socket->socket);
       } else if (u64_is_handle(u64)) {
 	auto handle = u64_ptr<Handle>(u64);
-
-	// FIXME - call handle->send() and/or handle->recv() accordingly
-
+	if (handle->send) handle->send(handle->handle);
+	if (handle->recv) handle->recv(handle->handle);
       } else { // u64_is_wake(u64)
 	// LATER WFMO should have decremented the semaphore, but test this,
 	// we may need to:

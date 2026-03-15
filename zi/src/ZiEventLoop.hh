@@ -4,6 +4,15 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+// generic event loop for use with external handles/sockets
+// - intended for interop with sockets/handles from other libraries, e.g.
+//   - postgres server connection (libpq / ZdbPQ)
+//   - openssl async signing completion (libcrypto / Ztls)
+// - uses epoll under Linux, WFMO under Windows
+// - higher latency than ZiMultiplex under Windows
+//   - ZiMultiplex is socket-only, uses Windows overlapped I/O for perf
+//   - anonymous pipes (common on Windows) cannot use overlapped I/O
+
 #ifndef ZiEventLoop_HH
 #define ZiEventLoop_HH
 
@@ -112,13 +121,17 @@ public:
     m_sched->invoke(m_sid, ZuFwd<Args>(args)...);
   }
 
-  bool addSocket(Zi::Socket socket, SocketSendFn, SocketRecvFn);
-  void delSocket(Zi::Socket socket);
+  // use unblock() if sockets are not already set to non-blocking
+  // by the originating library
+  static bool unblock(Zi::Socket); // set non-blocking
 
-  void disconnect(Zi::Socket socket); // simulate remote disconnect
+  bool addSocket(Zi::Socket, SocketSendFn, SocketRecvFn);
+  void delSocket(Zi::Socket);
 
-  bool addHandle(Zi::Handle handle, HandleSendFn, HandleRecvFn);
-  void delHandle(Zi::Handle handle);
+  void disconnect(Zi::Socket); // simulate remote disconnect
+
+  bool addHandle(Zi::Handle, HandleSendFn, HandleRecvFn);
+  void delHandle(Zi::Handle);
 
   void close(Zi::Handle handle); // simulate remote close
 
