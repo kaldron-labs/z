@@ -4,16 +4,6 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef _WIN32
-#include <sys/epoll.h>
-#include <sys/ioctl.h>
-#include <linux/unistd.h>
-
-#ifndef EPOLLRDHUP
-#define EPOLLRDHUP 0
-#endif
-#endif
-
 #include <zlib/ZdbPQ.hh>
 
 #include <zlib/ZmDemangle.hh>
@@ -106,6 +96,7 @@ InitResult Store::init(ZvCf *cf, ZiMultiplex *mx, FailFn failFn)
 
 void Store::final()
 {
+  m_eventLoop.final();
   m_failFn = FailFn{};
   m_storeTbls->clean();
   m_storeTbls = nullptr;
@@ -120,13 +111,32 @@ void Store::start(StartFn fn)
     m_startState.reset();
     m_startFn = ZuMv(fn);
     m_stopFn = StopFn{};
+    m_eventLoop.init(m_mx, m_sid, m_failFn);
     if (!start_()) {
       start_failed(false, ZeEXCEPT(Fatal, "ZdbPQ", "PostgreSQL start() failed"));
       return;
     }
-    getOIDs();
-    m_mx->wakeFn(m_sid, ZmFn<>{this, [](Store *store) { store->wake(); }});
-    run_();
+    m_eventLoop.start(
+      ZmFn<void(ZiEvent::StartResult)>{
+	this,
+	[](Store *store, ZiEvent::StartResult result) mutable {
+	  if (ZuUnlikely(result.is<ZiEvent::Exception>())) {
+	    store->start_failed(false, ZuMv(result).p<ZiEvent::Exception>());
+	    return;
+	  }
+	  if (ZuUnlikely(!store->m_eventLoop.addSocket(
+		store->m_connFD,
+		ZmFn<void(Zi::Socket)>{
+		  store, [](Store *store, Zi::Socket) { store->send(); }},
+		ZmFn<void(Zi::Socket)>{
+		  store, [](Store *store, Zi::Socket) { store->recv(); }}))) {
+	    store->start_failed(
+	      true,
+	      ZeEXCEPT(Fatal, "ZdbPQ", "ZiEventLoop::addSocket() failed"));
+	    return;
+	  }
+	  store->getOIDs();
+	}});
   });
 }
 
@@ -193,79 +203,6 @@ bool Store::start_()
 
   m_syncSRM = false;
 
-#ifndef _WIN32
-
-  // set up I/O multiplexer (epoll)
-  if ((m_epollFD = epoll_create(2)) < 0) {
-    ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
-      s << "epoll_create() failed: " << e;
-    }));
-    return false;
-  }
-  if (pipe(&m_wakeFD) < 0) {
-    ZiLOG(Fatal, "ZdbPQ", ([e = errno](auto &s) {
-      s << "pipe() failed: " << e;
-    }));
-    return false;
-  }
-  if (fcntl(m_wakeFD, F_SETFL, O_NONBLOCK) < 0) {
-    ZiLOG(Fatal, "ZdbPQ", ([e = errno](auto &s) {
-      s << "fcntl(F_SETFL, O_NONBLOCK) failed: " << e;
-    }));
-    return false;
-  }
-  {
-    struct epoll_event ev;
-    memset(&ev, 0, sizeof(struct epoll_event));
-    ev.events = EPOLLIN;
-    ev.data.u64 = 0;
-    if (epoll_ctl(m_epollFD, EPOLL_CTL_ADD, m_wakeFD, &ev) < 0) {
-      ZiLOG(Fatal, "ZdbPQ", ([e = errno](auto &s) {
-	s << "epoll_ctl(EPOLL_CTL_ADD) failed: " << e;
-      }));
-      return false;
-    }
-  }
-
-  /* ZiLOG(Debug, "ZdbPQ", ([this](auto &s) {
-    s << "epoll_ctl(EPOLL_CTL_ADD) connFD=" << m_connFD;
-  })); */
-
-  {
-    struct epoll_event ev;
-    memset(&ev, 0, sizeof(struct epoll_event));
-    ev.events = EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
-    ev.data.u64 = 1;
-    epoll_ctl(m_epollFD, EPOLL_CTL_ADD, m_connFD, &ev);
-  }
-
-#else
-
-  m_wakeSem = CreateSemaphore(nullptr, 0, 0x7fffffff, nullptr);
-  if (m_wakeSem == NULL || m_wakeSem == INVALID_HANDLE_VALUE) {
-    ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
-      s << "CreateEvent() failed: " << e;
-    }));
-    return false;
-  }
-
-  m_connEvent = WSACreateEvent();
-  if (m_connEvent == NULL || m_connEvent == INVALID_HANDLE_VALUE) {
-    ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
-      s << "CreateEvent() failed: " << e;
-    }));
-    return false;
-  }
-  if (WSAEventSelect(m_connFD, m_connEvent,
-      FD_READ | FD_WRITE | FD_OOB | FD_CLOSE)) {
-    ZiLOG(Fatal, "ZdbPQ", ([e = WSAGetLastError()](auto &s) {
-      s << "WSAEventSelect() failed: " << e;
-    }));
-    return false;
-  }
-
-#endif
-
   return true;
 }
 
@@ -288,50 +225,21 @@ void Store::stop_()	// called after dequeuing Stop
 
 void Store::stop_1()
 {
-  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing stop_2()"; }));
+  m_eventLoop.stop(ZmFn<void(ZiEvent::StopResult)>{
+    this,
+    [](Store *store, ZiEvent::StopResult) mutable {
+      // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing stop_2()"; }));
 
-  m_mx->wakeFn(m_sid, ZmFn<>{});
-  m_mx->push(m_sid, [this]() mutable {
-    stop_2();
-    StopFn stopFn = ZuMv(m_stopFn);
-    m_stopFn = StopFn{};
-    stopFn(StopResult{});
-  });
-  wake_();
+      store->stop_2();
+      StopFn stopFn = ZuMv(store->m_stopFn);
+      store->m_stopFn = StopFn{};
+      if (stopFn) stopFn(StopResult{});
+    }});
 }
 
 void Store::stop_2()
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
-
-#ifndef _WIN32
-
-  // close I/O multiplexer
-  if (m_epollFD >= 0) {
-    if (m_wakeFD >= 0)
-      epoll_ctl(m_epollFD, EPOLL_CTL_DEL, m_wakeFD, 0);
-    if (m_connFD >= 0)
-      epoll_ctl(m_epollFD, EPOLL_CTL_DEL, m_connFD, 0);
-    ::close(m_epollFD);
-    m_epollFD = -1;
-  }
-  if (m_wakeFD >= 0) { ::close(m_wakeFD); m_wakeFD = -1; }
-  if (m_wakeFD2 >= 0) { ::close(m_wakeFD2); m_wakeFD2 = -1; }
-
-#else /* !_WIN32 */
-
-  // close wakeup event
-  if (m_wakeSem != INVALID_HANDLE_VALUE) {
-    CloseHandle(m_wakeSem);
-    m_wakeSem = INVALID_HANDLE_VALUE;
-  }
-  // close connection event
-  if (m_connEvent != INVALID_HANDLE_VALUE) {
-    CloseHandle(m_connEvent);
-    m_connEvent = INVALID_HANDLE_VALUE;
-  }
-
-#endif /* !_WIN32 */
 
   // close PG connection
   if (m_conn) {
@@ -343,32 +251,7 @@ void Store::stop_2()
 
 void Store::wake()
 {
-  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing run_()"; }));
-
-  m_mx->push(m_sid, [this]{ run_(); });
-  wake_();
-}
-
-void Store::wake_()
-{
-  // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
-
-#ifndef _WIN32
-  char c = 0;
-  while (::write(m_wakeFD2, &c, 1) < 0) {
-    ZeError e{errno};
-    if (e.errNo() != EINTR && e.errNo() != EAGAIN) {
-      ZiLOG(Fatal, "ZdbPQ", ([e](auto &s) { s << "write() failed: " << e; }));
-      break;
-    }
-  }
-#else /* !_WIN32 */
-  if (!ReleaseSemaphore(m_wakeSem, 1, 0)) {
-    ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
-      s << "ReleaseSemaphore() failed: " << e;
-    }));
-  }
-#endif /* !_WIN32 */
+  m_eventLoop.run([this]() { run_(); });
 }
 
 static bool isSync(Work::Queue::Node *work)
@@ -389,108 +272,15 @@ void Store::run_()
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
-  // "prime the pump" to ensure that read- and write-readiness is
-  // correctly signalled via epoll / WFMO
   send();
   recv();
-
-  for (;;) {
-
-#ifndef _WIN32
-
-    epoll_event ev[8];
-
-    // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "epoll_wait()..."; }));
-
-again:
-    int r = epoll_wait(m_epollFD, ev, 8, -1); // max events is 8
-
-    // ZiLOG(Debug, "ZdbPQ", ([r](auto &s) { s << "epoll_wait(): " << r; }));
-
-    if (r < 0) {
-      auto e = errno;
-      if (e == EINTR || e == EAGAIN) goto again;
-      ZiLOG(Fatal, "ZdbPQ", ([e](auto &s) {
-	s << "epoll_wait() failed: " << e;
-      }));
-      return;
-    }
-    for (unsigned i = 0; i < unsigned(r); i++) {
-      uint32_t events = ev[i].events;
-      auto v = ev[i].data.u64; // ID
-
-      /* ZiLOG(Debug, "ZdbPQ", ([events, v](auto &s) {
-	s << "epoll_wait() events=" << events << " v=" << v
-	  << " EPOLLIN=" << ZuBoxed(EPOLLIN).hex()
-	  << " EPOLLOUT=" << ZuBoxed(EPOLLOUT).hex();
-      })); */
-
-      if (ZuLikely(!v)) {
-	char c;
-	int r = ::read(m_wakeFD, &c, 1);
-	if (r >= 1) return;
-	if (r < 0) {
-	  ZeError e{errno};
-	  if (e.errNo() != EINTR && e.errNo() != EAGAIN) return;
-	}
-	continue;
-      }
-      if (events & EPOLLOUT)
-	send();
-      if (events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR))
-	recv();
-    }
-
-#else
-
-    HANDLE handles[2] = { m_wakeSem, m_connEvent };
-    DWORD event = WaitForMultipleObjectsEx(2, handles, false, INFINITE, false);
-    if (event == WAIT_FAILED) {
-      ZiLOG(Fatal, "ZdbPQ", ([e = ZeLastError](auto &s) {
-	s << "WaitForMultipleObjectsEx() failed: " << e;
-      }));
-      return;
-    }
-    if (event == WAIT_OBJECT_0) {
-      // LATER WFMO should have decremented the semaphore, but test this,
-      // we may need to:
-      // switch (WaitForSingleObject(m_wakeSem, 0)) {
-      //   case WAIT_OBJECT_0: return;
-      //   case WAIT_TIMEOUT:  break;
-      // }
-      return;
-    }
-    if (event == WAIT_OBJECT_0 + 1) {
-      WSANETWORKEVENTS events;
-      auto i = WSAEnumNetworkEvents(m_connFD, m_connEvent, &events);
-      if (i != 0) {
-	ZiLOG(Fatal, "ZdbPQ", ([e = WSAGetLastError()](auto &s) {
-	  s << "WSAEnumNetworkEvents() failed: " << e;
-	}));
-	return;
-      }
-      if ((events.lNetworkEvents & (FD_WRITE|FD_CLOSE)) == FD_WRITE)
-	send();
-      if (events.lNetworkEvents & (FD_READ|FD_OOB|FD_CLOSE))
-	recv();
-    }
-
-#endif
-
-  }
 }
 
 // simulate connection failure, for testing purposes only
 void Store::disconnect()
 {
-#ifndef _WIN32
-  if (m_connFD >= 0) { ::close(m_connFD); m_connFD = -1; }
-#else
-  if (m_connFD != (HANDLE)-1) {
-    CloseHandle(m_connFD);
-    m_connFD = -1;
-  }
-#endif
+  m_eventLoop.disconnect(m_connFD);
+  m_connFD = -1;
 }
 
 void Store::recv()
@@ -639,7 +429,7 @@ void Store::failed(Work::Queue::Node *work, ZeException e)
 }
 
 // send() is called after every enqueue to prevent starvation; sequence is:
-// wake(), enqueue(), dequeue(), send() (possible pushback), epoll_wait / WFMO
+// wake(), enqueue(), dequeue(), send() (possible pushback), ZiEventLoop wait
 
 // to match results to requests, each result is matched to the head request
 // on the sent request list, which is removed when the last tuple has
@@ -719,7 +509,7 @@ void Store::send()
   // client-side flush unless already performed by PQpipelineSync()
   if (sendState != SendState::Sync) {
     // ... PQflush() regardless, to ensure client-side send buffer drainage
-    // and correct signalling of write-readiness via epoll or WFMO
+    // and correct write-readiness signalling through ZiEventLoop
     if (PQflush(m_conn) < 0) {
       ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {
 	s << "PQflush() failed: " << e;
@@ -762,16 +552,27 @@ void Store::start_failed(bool running, ZeException e)
   m_startState.phase(StartState::Started);
   m_startState.setFailed();
 
-  if (running)
-    stop_1();
-  else
-    stop_2();
+  if (running) {
+    m_eventLoop.stop(ZmFn<void(ZiEvent::StopResult)>{
+      this,
+      [e = ZuMv(e)](Store *store, ZiEvent::StopResult) mutable {
+	store->start_failed_(ZuMv(e));
+      }});
+    return;
+  }
+
+  start_failed_(ZuMv(e));
+}
+
+void Store::start_failed_(ZeException e)
+{
+  stop_2();
 
   auto startFn = ZuMv(m_startFn);
 
   m_startFn = StartFn{};
 
-  startFn(StartResult{ZuMv(e)});
+  if (startFn) startFn(StartResult{ZuMv(e)});
 }
 
 void Store::started()
