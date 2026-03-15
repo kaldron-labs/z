@@ -35,7 +35,6 @@ struct StreamHarness {
   unsigned		allocCount = 0;
   unsigned		sendCount = 0;
 
-  ZmRef<ZiIOBuf>	last;
   ZmRef<ZiIOBuf>	sent[16];
   unsigned		sentLen[16] = {};
   unsigned		sentSkip[16] = {};
@@ -44,16 +43,15 @@ struct StreamHarness {
     ZmRef<ZiIOBuf> buf = new StreamAlloc{};
     buf->skip = headRoom;
     buf->length = 0;
-    last = buf;
     ++allocCount;
     return buf;
   }
 
-  void send() {
+  void send(ZmRef<ZiIOBuf> buf) {
     if (sendCount < 16) {
-      sent[sendCount] = last;
-      sentLen[sendCount] = last ? last->length : 0;
-      sentSkip[sendCount] = last ? last->skip : 0;
+      sent[sendCount] = buf;
+      sentLen[sendCount] = buf ? buf->length : 0;
+      sentSkip[sendCount] = buf ? buf->skip : 0;
     }
     ++sendCount;
   }
@@ -66,7 +64,7 @@ void testSplitAndFlush()
   StreamHarness h;
   auto stream = Zi::txStream(12, 2, 1,
       [&h](unsigned headRoom) { return h.alloc(headRoom); },
-      [&h]() { h.send(); });
+      [&h](ZmRef<ZiIOBuf> buf) { h.send(ZuMv(buf)); });
 
   char payload[20];
   for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = 'a' + i;
@@ -95,7 +93,7 @@ void testPrimitiveAppendAccounting()
   StreamHarness h;
   auto stream = Zi::txStream(10, 1, 1,
       [&h](unsigned headRoom) { return h.alloc(headRoom); },
-      [&h]() { h.send(); });
+      [&h](ZmRef<ZiIOBuf> buf) { h.send(ZuMv(buf)); });
 
   stream << 'A' << 'B' << 'C';
   ZuCheck(h.sendCount == 0);
@@ -113,7 +111,7 @@ void testFlushElidesEmptyBuffer()
   StreamHarness h;
   auto stream = Zi::txStream(10, 1, 1,
       [&h](unsigned headRoom) { return h.alloc(headRoom); },
-      [&h]() { h.send(); });
+      [&h](ZmRef<ZiIOBuf> buf) { h.send(ZuMv(buf)); });
 
   ZuCheck(h.allocCount == 1);
   ZuCheck(h.sendCount == 0);
@@ -140,7 +138,7 @@ void testOversizePrintableThrows()
   StreamHarness h;
   auto stream = Zi::txStream(12, 2, 1,
       [&h](unsigned headRoom) { return h.alloc(headRoom); },
-      [&h]() { h.send(); });
+      [&h](ZmRef<ZiIOBuf> buf) { h.send(ZuMv(buf)); });
 
   bool threw = false;
   try {

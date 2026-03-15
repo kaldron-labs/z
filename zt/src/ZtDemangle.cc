@@ -70,6 +70,7 @@ static void transform(void *, ZuSpan<char> &output)
       buf << "})";
       splice(buf);
     });
+
   // ZuStringT<"x">
   ZtREGEX("ZuConstant<ZuString<\d+[uUlL]*>, (\"(?:[^\"\\]|\\[\"\\])*\")>").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
@@ -77,6 +78,7 @@ static void transform(void *, ZuSpan<char> &output)
       buf << "ZuStringT<" << c[2] << ">";
       splice(buf);
     });
+
   // ZuStringTL<"x", "y", ...>
   ZtREGEX("ZuTypeList(<(?:[^<>]++|(?-1))*+>)").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {

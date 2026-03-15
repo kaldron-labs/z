@@ -25,7 +25,7 @@
 
 #include <zlib/ZmLHash.hh>
 
-#include <zlib/ZeAssert.hh>
+#include <zlib/ZiAssert.hh>
 
 #include <zlib/ZiIP.hh>
 
@@ -144,9 +144,9 @@ inline const VecHdr *vecHdr(ZuBSpan &buf) {
 inline int validateVecHdr(const VecHdr *hdr)
 {
   if (!int32_t(hdr->ndim)) return 0; // empty
-  ZeAssert(int32_t(hdr->ndim) == 1, "ZdbPQ",
+  ZiAssert(int32_t(hdr->ndim) == 1, "ZdbPQ",
     (i = int32_t(hdr->ndim)), "ndim=" << i, return -1);
-  ZeAssert(int32_t(hdr->lbound) == 1, "ZdbPQ",
+  ZiAssert(int32_t(hdr->lbound) == 1, "ZdbPQ",
     (i = int32_t(hdr->lbound)), "lbound=" << i, return -1);
   return int32_t(hdr->length);
 }

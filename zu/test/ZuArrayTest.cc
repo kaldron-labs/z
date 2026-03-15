@@ -468,6 +468,27 @@ void testSpliceVariantPaths()
   }
 }
 
+void testStringInitializers()
+{
+  ZuTestScope(string_initializers);
+
+  ZuArray b{ "foo", "bar", "baz_" };
+  ZuCheck(b[0] == "foo");
+  ZuCheck(b[1] == "bar");
+  ZuCheck(b[2] == "baz_");
+  ZuCheck((ZuIsSame<ZuDecay<decltype(b[0])>, ZuCSpan>{}));
+  ZuArray c{{1}, {1,2}, {1,2,3}};
+  ZuCheck((ZuIsSame<ZuDecay<decltype(c[0])>, ZuSpan<const int>>{}));
+
+  auto fn = []<auto &ZuTest_scope>(ZuSpan<ZuCSpan> b) {
+    ZuCheck(b[0] == "foo");
+    ZuCheck(b[1] == "bar");
+    ZuCheck(b[2] == "baz_");
+  };
+
+  fn.operator ()<ZuTest_scope>(b);
+}
+
 int main()
 {
   ZuTestMain();
@@ -475,6 +496,7 @@ int main()
   ZuTestCall(testSpliceBasicPaths);
   ZuTestCall(testSpliceRuntimePaths);
   ZuTestCall(testSpliceVariantPaths);
+  ZuTestCall(testStringInitializers);
 
   return 0;
 }

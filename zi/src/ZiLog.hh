@@ -57,8 +57,8 @@ struct ZiSink : public ZmPolymorph {
 
   ZiSink(int type_) : type(type_) { }
 
-  virtual void pre(ZiLogBuf &, const ZeEventInfo &) = 0;
-  virtual void post(ZiLogBuf &, const ZeEventInfo &) = 0;
+  virtual void pre(ZeLogBuf &, const ZeEventInfo &) = 0;
+  virtual void post(ZeLogBuf &, const ZeEventInfo &) = 0;
   virtual void age() = 0;
 };
 
@@ -91,8 +91,8 @@ public:
 
   ~ZiFileSink();
 
-  void pre(ZiLogBuf &, const ZeEventInfo &);
-  void post(ZiLogBuf &, const ZeEventInfo &);
+  void pre(ZeLogBuf &, const ZeEventInfo &);
+  void post(ZeLogBuf &, const ZeEventInfo &);
   void age();
 
 private:
@@ -117,8 +117,8 @@ public:
 
   ~ZiDebugSink();
 
-  void pre(ZiLogBuf &, const ZeEventInfo &);
-  void post(ZiLogBuf &, const ZeEventInfo &);
+  void pre(ZeLogBuf &, const ZeEventInfo &);
+  void post(ZeLogBuf &, const ZeEventInfo &);
   void age() { } // unused
 
 private:
@@ -130,7 +130,7 @@ private:
 };
 
 struct ZiSinkEvent {
-  const ZiLogBuf	&msg;
+  const ZeLogBuf	&msg;
   const ZeEventInfo	&info;
 };
 
@@ -157,8 +157,8 @@ public:
 
   ~ZiCSVSink();
 
-  void pre(ZiLogBuf &, const ZeEventInfo &);
-  void post(ZiLogBuf &, const ZeEventInfo &);
+  void pre(ZeLogBuf &, const ZeEventInfo &);
+  void post(ZeLogBuf &, const ZeEventInfo &);
   void age();
 
 private:
@@ -175,8 +175,8 @@ private:
 struct ZeAPI ZiSysSink : public ZiSink {
   ZiSysSink() : ZiSink{ZiSinkType::System} { }
 
-  void pre(ZiLogBuf &, const ZeEventInfo &);
-  void post(ZiLogBuf &, const ZeEventInfo &);
+  void pre(ZeLogBuf &, const ZeEventInfo &);
+  void post(ZeLogBuf &, const ZeEventInfo &);
   void age() { } // unused
 };
 
@@ -184,7 +184,7 @@ struct ZeAPI ZiLambdaSink_ : public ZiSink {
   ZiLambdaSink_(int tzOffset = 0) :
       ZiSink{ZiSinkType::Lambda}, m_dateFmt{tzOffset} { }
 
-  void pre(ZiLogBuf &, const ZeEventInfo &);
+  void pre(ZeLogBuf &, const ZeEventInfo &);
 
 private:
   ZuDateTimeFmt::CSV	m_dateFmt;
@@ -197,7 +197,7 @@ struct ZiLambdaSink : public ZiLambdaSink_ {
   ZiLambdaSink(L l_, int tzOffset = 0) :
       ZiLambdaSink_{tzOffset}, l{ZuMv(l_)} { }
 
-  void post(ZiLogBuf &buf, const ZeEventInfo &info) { l(buf, info); }
+  void post(ZeLogBuf &buf, const ZeEventInfo &info) { l(buf, info); }
   void age() { } // unused
 };
 
@@ -249,8 +249,8 @@ public:
     instance()->init_(program, facility);
   }
 
-  static void bufSize(unsigned n) {
-    instance()->bufSize_(n);
+  static void ringBufSize(unsigned n) {
+    instance()->ringBufSize_(n);
   }
 
   static ZuCSpan program() { return instance()->program_(); }
@@ -277,13 +277,13 @@ public:
     auto fn_ = [e = ZuMv(e)](ZiLog *this_) mutable {
       auto sink = this_->sink_();
       auto &buf = this_->m_buf;
-      buf.null();
+      buf.length(0);
       sink->pre(buf, e);
       buf << e;
       sink->post(buf, e);
     };
     Fn fn{fn_};
-    log__(fn);
+    log__(ZuMv(fn));
   }
   static void age() { instance()->age_(); }
 
@@ -294,7 +294,7 @@ private:
   void init_(const char *program, const char *facility);
   void init__(const char *program, const char *facility);
 
-  void bufSize_(unsigned n) { m_bufSize = n; }
+  void ringBufSize_(unsigned n) { m_ringBufSize = n; }
 
   ZuCSpan program_() const { return m_program; }
   ZuCSpan facility_() const { return m_facility; }
@@ -320,7 +320,7 @@ private:
   ZeString		m_program;
   ZeString		m_facility;
   int			m_level;
-  unsigned		m_bufSize = (1<<20);	// 1Mbyte
+  unsigned		m_ringBufSize = (1<<20);	// default 1Mb ring buffer
 
   ZmThread		m_thread;
   Ring			m_ring;
@@ -329,7 +329,7 @@ private:
     ZmRef<ZiSink>	  m_sink;
 
   // thread-specific to worker thread
-  ZiLogBuf		m_buf;
+  ZeLogBuf		m_buf;
 };
 
 // alias for ZiLog::log()
@@ -340,7 +340,7 @@ inline void ZiLogEvent(ZeEvent<L> e) {
 
 template <typename L>
 inline decltype(
-    ZuDeclVal<L &>()(ZuDeclVal<ZiLogBuf &>()),
+    ZuDeclVal<L &>()(ZuDeclVal<ZeLogBuf &>()),
     void())
 ZiLogBT(ZeEvent<L> event_) {
   ZmBackTrace bt{1};
@@ -354,7 +354,7 @@ ZiLogBT(ZeEvent<L> event_) {
 template <typename L>
 inline decltype(
     ZuDeclVal<L &>()(
-      ZuDeclVal<ZiLogBuf &>(),
+      ZuDeclVal<ZeLogBuf &>(),
       ZuDeclVal<const ZeEventInfo &>()),
     void())
 ZiLogBT(ZeEvent<L> event_) {

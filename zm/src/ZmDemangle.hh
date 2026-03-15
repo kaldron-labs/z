@@ -6,7 +6,8 @@
 
 // C++ demangling (binutils BFD version)
 
-// s << ZmDemangle{typeid(T).name()}
+// s << ZmDemangle<T>{}
+// s << ZmDemangle_{typeid(T).name()}
 
 #ifndef ZmDemangle_HH
 #define ZmDemangle_HH

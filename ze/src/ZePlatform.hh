@@ -37,6 +37,8 @@
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmLocal.hh>
 
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtBuiltin.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZtEnum.hh>
 
@@ -53,7 +55,7 @@
 // strerror() on Unix will not work with EAI_ codes - on Unix we
 // need to check for < 0 explicitly and call gai_strerror()
 
-#define ZiLog_BUFSIZ (32<<10)	// caps individual log message size to 32k
+#define ZeLog_BUFSIZ (8<<10)	// 8k built-in size
 
 // normalized severity levels
 namespace Ze {
@@ -181,11 +183,13 @@ struct ZeEventInfo {
 //   during concurrent fan-in
 // - the log buffer serves as both a consistent interface type and a
 //   mechanism to properly sequence interleaved output
-// - ZiLogBuf intentionally limits any single log entry to ZiLog_BUFSIZ
-using ZiLogBuf = ZuCArray<ZiLog_BUFSIZ>;
+// - the log buffer has a large built-in size so that heap allocation is
+//   an exceptional fallback
+ZuDerive(ZeLogBuf,
+  (ZtBuiltin<ZtArray<ZtArrayHeapID<"ZeLogBuf">>, ZeLog_BUFSIZ>));
 
 // message as function delegate
-using ZeMsgFn = ZmFn<void(ZiLogBuf &, const ZeEventInfo &)>;
+using ZeMsgFn = ZmFn<void(ZeLogBuf &, const ZeEventInfo &)>;
 
 // event base class
 struct ZeAnyEvent : public ZeEventInfo {
@@ -210,7 +214,7 @@ protected:
 
 public:
   template <typename S> void print(S &s) const {
-    auto buf = ZmLocal(ZiLogBuf);
+    auto buf = ZmLocal(ZeLogBuf);
     fn()(*buf, *this);
     s << *buf;
   }
@@ -244,14 +248,14 @@ struct ZeEvent : public ZeAnyEvent {
 
   template <typename L_ = L>
   decltype(ZuDeclVal<L_ &>()(
-	ZuDeclVal<ZiLogBuf &>()),
+	ZuDeclVal<ZeLogBuf &>()),
       ZeMsgFn())
   fn_() const {
     return {[l_ = ZuMv(l)](auto &s, const auto &) mutable { l_(s); }};
   }
   template <typename L_ = L>
   decltype(ZuDeclVal<L_ &>()(
-	ZuDeclVal<ZiLogBuf &>(),
+	ZuDeclVal<ZeLogBuf &>(),
 	ZuDeclVal<const ZeEventInfo &>()),
       ZeMsgFn())
   fn_() const {
@@ -281,7 +285,7 @@ struct ZeEvent<ZeMsgFn> : public ZeAnyEvent {
 
   template <
     typename L_,
-    decltype(ZuDeclVal<L_ &>()(ZuDeclVal<ZiLogBuf &>()), int()) = 0>
+    decltype(ZuDeclVal<L_ &>()(ZuDeclVal<ZeLogBuf &>()), int()) = 0>
   ZeEvent(
       int8_t severity,
       ZuCSpan file, unsigned line,
@@ -291,7 +295,7 @@ struct ZeEvent<ZeMsgFn> : public ZeAnyEvent {
   template <
     typename L_,
     decltype(ZuDeclVal<L_ &>()(
-	ZuDeclVal<ZiLogBuf &>(),
+	ZuDeclVal<ZeLogBuf &>(),
 	ZuDeclVal<const ZeEventInfo &>()), int()) = 0>
   ZeEvent(
       int8_t severity,

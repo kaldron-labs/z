@@ -1646,7 +1646,7 @@ int main(int argc, char **argv)
 
   ZiLog::init("zcmd");
   ZiLog::level(0);
-  ZiLog::sink(ZiLog::lambdaSink([](ZiLogBuf &buf, const ZeEventInfo &) {
+  ZiLog::sink(ZiLog::lambdaSink([](ZeLogBuf &buf, const ZeEventInfo &) {
     buf << '\n';
     std::cerr << buf << std::flush;
   }));

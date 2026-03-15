@@ -7,15 +7,14 @@
 // IO Receive Stream
 // - owns a queue of receive buffers and presents a consumable stream view
 // - applications define:
-//   - queue type, which must support count_(), headNode(), shift(),
-//     pushNode(node), clean()
+//   - queue type, which must support:
+//     count_(), headNode(), shift(), pushNode(node), clean()
 // - stream operations:
 //   - span()    - current contiguous bytes
 //   - advance() - consume bytes from current buffer
-//   - next()    - skip to next buffer
 //   - empty()   - true when no readable bytes remain
 // - queue operations:
-//   - pushNode(node)
+//   - push(node)
 //   - clean()
 //   - count_()
 
@@ -45,58 +44,37 @@ public:
   RxStream &operator =(RxStream &&) = default;
 
   template <typename NodeRef>
-  void pushNode(NodeRef &&node) {
-    m_queue.pushNode(ZuFwd<NodeRef>(node));
-    if (!m_cur && m_queue.count_()) m_cur = m_queue.headNode();
+  void push(NodeRef &&node) {
+    if (node->length) // filter out empty buffers
+      m_queue.pushNode(ZuFwd<NodeRef>(node));
   }
 
-  void clean() {
-    m_queue.clean();
-    m_cur = nullptr;
-  }
+  void clean() { m_queue.clean(); }
 
   auto count_() { return m_queue.count_(); }
 
   ZuSpan<uint8_t> span() {
-    refresh_();
-    return m_cur ? m_cur->span() : ZuSpan<uint8_t>{};
+    auto head = m_queue.headNode();
+    return head ? head->span() : ZuSpan<uint8_t>{};
   }
 
-  bool advance(size_t n) {
-    refresh_();
-    if (!m_cur) return false;
-    if (n > m_cur->length) n = m_cur->length;
-    m_cur->advance(n);
-    if (!m_cur->length) pop_();
-    return n != 0;
+  bool advance(unsigned n) {
+    auto head = m_queue.headNode();
+    if (!head) return false;
+    if (n > head->length) n = head->length;
+    head->advance(n);
+    if (!head->length) m_queue.shift();
+    return n;
   }
 
-  bool next() {
-    refresh_();
-    if (!m_cur) return false;
-    pop_();
-    return m_cur;
+  bool operator !() const {
+    return !m_queue.headNode();
   }
-
-  bool empty() {
-    refresh_();
-    return !m_cur;
-  }
+  ZuOpBool
 
 private:
-  void pop_() {
-    if (!m_cur) return;
-    m_queue.shift();
-    m_cur = m_queue.count_() ? m_queue.headNode() : nullptr;
-  }
 
-  void refresh_() {
-    if (!m_cur && m_queue.count_()) m_cur = m_queue.headNode();
-    while (m_cur && !m_cur->length) pop_();
-  }
-
-  Queue		m_queue;
-  ZmRef<ZiIOBuf>	m_cur;
+  Queue			m_queue;
 };
 
 template <typename Queue>

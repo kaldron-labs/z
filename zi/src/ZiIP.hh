@@ -27,11 +27,6 @@ class ZiAPI ZiIP : public in_addr {
 public:
   using Hostname = Zi::Hostname;
 
-  enum Result {
-    OK		= Zi::OK,
-    IOError	= Zi::IOError
-  };
-
   ZiIP() { s_addr = 0; }
 
   ZiIP(const ZiIP &a) { s_addr = a.s_addr; }
@@ -61,7 +56,7 @@ public:
 #pragma GCC diagnostic pop
 #endif
     ZeError e;
-    if (resolve(ZuFwd<S>(s), &e) != OK) throw e;
+    if (resolve(ZuFwd<S>(s), &e) != Zi::OK) throw e;
   }
   template <typename S>
   ZuMatchString<S &&, ZiIP &> &operator =(S &&s) {
@@ -75,7 +70,7 @@ public:
 #pragma GCC diagnostic pop
 #endif
     ZeError e;
-    if (resolve(ZuFwd<S>(s), &e) != OK) throw e;
+    if (resolve(ZuFwd<S>(s), &e) != Zi::OK) throw e;
     return *this;
   }
 

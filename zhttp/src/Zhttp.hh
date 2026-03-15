@@ -385,7 +385,7 @@ struct Header : public Msg<Keys> {
       return -1;
     }
     // defensive sanity check on parse() return, n > o wreaks havoc
-    ZeAssert(n <= o, "Zhttp", (o, n), "o=" << o << " n=" << n, n = o);
+    ZiAssert(n <= o, "Zhttp", (o, n), "o=" << o << " n=" << n, n = o);
     unsigned consumed = rcvd.length();
     if (n) {
       consumed -= (o - n);
@@ -520,7 +520,7 @@ struct Body {
     }
     unsigned o = offset, n = buf->length;
     // defensive sanity check on buffer length, n < o wreaks havoc
-    ZeAssert(n >= o, "Zhttp", (o, n), "o=" << o << " n=" << n, o = n);
+    ZiAssert(n >= o, "Zhttp", (o, n), "o=" << o << " n=" << n, o = n);
     n -= o;
     if (n > contentLength) n = contentLength;
     buf->length = offset + n;

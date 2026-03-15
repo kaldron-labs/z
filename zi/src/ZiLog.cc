@@ -186,7 +186,7 @@ void ZiLog::start_()
 void ZiLog::start__()
 {
   if (m_thread) return;
-  m_ring.init(ZmRingParams{m_bufSize});
+  m_ring.init(ZmRingParams{m_ringBufSize});
   {
     int r;
     if ((r = m_ring.open(Ring::Read | Ring::Write)) != Zu::OK) // idempotent
@@ -269,7 +269,7 @@ void ZiLog::age_()
   if (sink) sink->age();
 }
 
-void ZiSysSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
+void ZiSysSink::pre(ZeLogBuf &buf, const ZeEventInfo &info)
 {
 #ifdef _WIN32
   buf << ZuBoxed(info.tid) << " - ";
@@ -280,7 +280,7 @@ void ZiSysSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
   buf << '[' << info.component << "] " << Ze::function(info.function) << "() ";
 }
 
-void ZiSysSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
+void ZiSysSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 {
   buf << '\n';
 
@@ -340,7 +340,7 @@ ZiFileSink::~ZiFileSink()
 {
 }
 
-void ZiFileSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
+void ZiFileSink::pre(ZeLogBuf &buf, const ZeEventInfo &info)
 {
   ZuDateTime d{info.time};
 
@@ -353,7 +353,7 @@ void ZiFileSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
   buf << '[' << info.component << "] " << Ze::function(info.function) << "() ";
 }
 
-void ZiFileSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
+void ZiFileSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 {
   buf << '\n';
 
@@ -384,9 +384,9 @@ void ZiCSVSink::init()
 
 ZiCSVSink::~ZiCSVSink() { }
 
-void ZiCSVSink::pre(ZiLogBuf &, const ZeEventInfo &) { }
+void ZiCSVSink::pre(ZeLogBuf &, const ZeEventInfo &) { }
 
-void ZiCSVSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
+void ZiCSVSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 {
   ZiSinkEvent event(buf, info);
   m_writer.p<Writer>()(event);
@@ -413,7 +413,7 @@ ZiDebugSink::~ZiDebugSink()
 {
 }
 
-void ZiDebugSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
+void ZiDebugSink::pre(ZeLogBuf &buf, const ZeEventInfo &info)
 {
   ZuTime d = info.time - m_started;
 
@@ -426,7 +426,7 @@ void ZiDebugSink::pre(ZiLogBuf &buf, const ZeEventInfo &info)
   buf << '[' << info.component << "] " << Ze::function(info.function) << "() ";
 }
 
-void ZiDebugSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
+void ZiDebugSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 {
   buf << '\n';
 
@@ -437,7 +437,7 @@ void ZiDebugSink::post(ZiLogBuf &buf, const ZeEventInfo &info)
   m_file.write(buf.data(), len);
 }
 
-void ZiLambdaSink_::pre(ZiLogBuf &buf, const ZeEventInfo &info)
+void ZiLambdaSink_::pre(ZeLogBuf &buf, const ZeEventInfo &info)
 {
   ZuDateTime d{info.time};
 

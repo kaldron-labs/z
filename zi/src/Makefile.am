@@ -11,8 +11,8 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
 	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh ZiLib.hh ZiModule.hh \
 	ZiMultiplex.hh ZiPlatform.hh ZiRing.hh \
-	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiCSV.hh \
-	ZiTxStream.hh ZiRxStream.hh
+	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh \
+	ZiTxStream.hh ZiRxStream.hh ZiEventLoop.hh
 if NETLINK
 pkginclude_HEADERS += ZiNetlinkMsg.hh ZiNetlink.hh zi_netlink.h
 endif
@@ -20,7 +20,7 @@ lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \
 	ZiDir.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
 	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc \
-	ZiRing.cc ZiLog.cc
+	ZiRing.cc ZiLog.cc ZiEventLoop.cc
 if NETLINK
 libZi_la_SOURCES += ZiNetlink.cc ZiNetlinkMsg.cc
 endif

@@ -1633,7 +1633,7 @@ public:
   template <typename L> void grep(L &&l) {
     for (uint64_t i = 0, n = length(); i < n; i++)
       if (ZuFwd<L>(l)(m_data[i])) {
-	splice__(nullptr, i, 1, [](T *, uint64_t) -> uint64_t { return 0; }, 0);
+	splice(i, 1);
 	--i, --n;
       }
   }

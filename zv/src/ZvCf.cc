@@ -11,7 +11,7 @@
 #include <zlib/ZtRegex.hh>
 
 #include <zlib/ZePlatform.hh>
-#include <zlib/ZeAssert.hh>
+#include <zlib/ZiAssert.hh>
 
 #include <zlib/ZvCf.hh>
 

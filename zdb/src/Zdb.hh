@@ -84,7 +84,7 @@
 
 #include <zlib/ZePlatform.hh>
 #include <zlib/ZiLog.hh>
-#include <zlib/ZeAssert.hh>
+#include <zlib/ZiAssert.hh>
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
@@ -361,15 +361,15 @@ public:
   const void *ptr_() const { return const_cast<AnyObject *>(this)->ptr_(); }
 
   virtual void evict() {
-    ZeAssert(m_pinCount <= 0, "Zdb", (), "invalid evict()", return);
+    ZiAssert(m_pinCount <= 0, "Zdb", (), "invalid evict()", return);
     m_pinCount = -1;
   }
   void pin() {
-    ZeAssert(m_pinCount >= 0, "Zdb", (), "invalid pin()", return);
+    ZiAssert(m_pinCount >= 0, "Zdb", (), "invalid pin()", return);
     ++m_pinCount;
   }
   void unpin() {
-    ZeAssert(m_pinCount > 0, "Zdb", (), "invalid unpin()", return);
+    ZiAssert(m_pinCount > 0, "Zdb", (), "invalid unpin()", return);
     --m_pinCount;
   }
 
@@ -942,10 +942,10 @@ private:
     auto record = record_(msg_(buf->hdr()));
     if (record->vn() < 0) return {}; // deleted
     auto data = Zfb::Load::bytes(record->data());
-    ZeAssert(data, "Zdb",
+    ZiAssert(data, "Zdb",
       (id = this->id()), "missing record data in table " << id, return {});
     auto fbo = ZfbStruct::root<T>(&data[0]);
-    ZeAssert(fbo, "Zdb",
+    ZiAssert(fbo, "Zdb",
       (id = this->id()), "bad record data in table " << id, return {});
     ZmRef<Object<T>> object = new Object<T>(this, shard);
     ZfbStruct::new_<T>(object->ptr(), fbo);

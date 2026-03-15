@@ -4,10 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// ZuDerive - reduce boilerplate and symbol length of heavily templated types
-// - ZuDerive(Derived, Base) is a macro used as an alternative to a type
-//   aliases "using X = Y<Z...>"; however unlike a type alias or typedef,
-//   it introduces an explicit new type ID for the derived struct; the new type
+// ZuDerive - reduce boilerplate and link-time symbol length of templated types
+// - ZuDerive(Derived, Base) is a macro used as an alternative to type
+//   aliases "using X = Y<Z...>"; unlike a type alias or typedef,
+//   it introduces an explicit new type ID for the new type, which
 //   wraps the base and inherits constructors and assignment operators
 // - Base is typically a template with numerous parameters such as
 //   compile-time string literals, or a policy-based type like ZmHash

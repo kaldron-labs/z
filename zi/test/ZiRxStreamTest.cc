@@ -47,12 +47,11 @@ void testBasicAdvanceAndNext()
 
   auto stream = Zi::rxStream<RxQueue>();
 
-  ZuCheck(stream.empty());
+  ZuCheck(!stream);
   ZuCheck(!stream.advance(1));
-  ZuCheck(!stream.next());
 
-  stream.pushNode(mkBuf("abc"));
-  stream.pushNode(mkBuf("de"));
+  stream.push(mkBuf("abc"));
+  stream.push(mkBuf("de"));
 
   ZuCheck(stream.count_() == 2);
   ZuCheck(spanEq(stream.span(), "abc"));
@@ -68,8 +67,8 @@ void testBasicAdvanceAndNext()
   ZuCheck(!stream.advance(0));
   ZuCheck(spanEq(stream.span(), "de"));
 
-  ZuCheck(!stream.next());
-  ZuCheck(stream.empty());
+  ZuCheck(stream.advance(2));
+  ZuCheck(!stream);
   ZuCheck(stream.count_() == 0);
 }
 
@@ -79,18 +78,18 @@ void testRefreshSkipsZeroLengthNodes()
 
   ZiRxStream<RxQueue> stream;
 
-  stream.pushNode(mkBuf(""));
-  stream.pushNode(mkBuf(""));
-  stream.pushNode(mkBuf("xy"));
-  stream.pushNode(mkBuf(""));
+  stream.push(mkBuf(""));
+  stream.push(mkBuf(""));
+  stream.push(mkBuf("xy"));
+  stream.push(mkBuf(""));
 
   ZuCheck(stream.count_() == 4);
-  ZuCheck(!stream.empty());
+  ZuCheck(!!stream);
   ZuCheck(spanEq(stream.span(), "xy"));
   ZuCheck(stream.count_() == 2);
 
   ZuCheck(stream.advance(2));
-  ZuCheck(stream.empty());
+  ZuCheck(!stream);
   ZuCheck(stream.count_() == 0);
 }
 
@@ -99,18 +98,18 @@ void testNextSkipsCurrentRemainder()
   ZuTestScope(testNextSkipsCurrentRemainder);
 
   ZiRxStream<RxQueue> stream;
-  stream.pushNode(mkBuf("abcd"));
-  stream.pushNode(mkBuf("ef"));
+  stream.push(mkBuf("abcd"));
+  stream.push(mkBuf("ef"));
 
   ZuCheck(stream.advance(2));
   ZuCheck(spanEq(stream.span(), "cd"));
 
-  ZuCheck(stream.next());
+  ZuCheck(stream.advance(2));
   ZuCheck(spanEq(stream.span(), "ef"));
   ZuCheck(stream.count_() == 1);
 
-  ZuCheck(!stream.next());
-  ZuCheck(stream.empty());
+  ZuCheck(stream.advance(2));
+  ZuCheck(!stream);
 }
 
 void testCleanResetsState()
@@ -118,16 +117,16 @@ void testCleanResetsState()
   ZuTestScope(testCleanResetsState);
 
   ZiRxStream<RxQueue> stream;
-  stream.pushNode(mkBuf("aaa"));
-  stream.pushNode(mkBuf("bbb"));
+  stream.push(mkBuf("aaa"));
+  stream.push(mkBuf("bbb"));
 
   ZuCheck(stream.count_() == 2);
   stream.clean();
   ZuCheck(stream.count_() == 0);
-  ZuCheck(stream.empty());
+  ZuCheck(!stream);
   ZuCheck(stream.span().length() == 0);
 
-  stream.pushNode(mkBuf("z"));
+  stream.push(mkBuf("z"));
   ZuCheck(stream.count_() == 1);
   ZuCheck(spanEq(stream.span(), "z"));
 }

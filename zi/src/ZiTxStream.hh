@@ -66,7 +66,7 @@ public:
       length -= length_;
     }
     if (!length) return;
-    m_send();
+    m_send(ZuMv(m_buf));
     m_buf = m_alloc(m_headRoom);
     goto next;
   }
@@ -89,7 +89,7 @@ private:
     ZmAssert(total <= m_maxSize);
     unsigned avail = m_maxSize - total;
     if (avail < length_) {
-      m_send();
+      m_send(ZuMv(m_buf));
       m_buf = m_alloc(m_headRoom);
       avail = m_maxSize - (m_headRoom + m_tailRoom);
       if (length_ > avail)
@@ -141,7 +141,7 @@ public:
   // flush output
   TxStream &operator <<(Flush) {
     if (m_buf->length) {
-      m_send();
+      m_send(ZuMv(m_buf));
       m_buf = m_alloc(m_headRoom);
     }
     return *this;

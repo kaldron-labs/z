@@ -6,7 +6,7 @@
 
 // run-time assertion that falls back to ZiLOGBT in release code
 
-// Usage: ZeAssert(assertion, (captures), msg, return);
+// Usage: ZiAssert(assertion, (captures), msg, return);
 //
 // in debug mode, this is equivalent to ZmAssert(assertion), i.e.
 // if the assertion fails the program will abort
@@ -20,14 +20,14 @@
 //
 // void foo() {
 //   int i = 42, j = 43;
-//   ZeAssert(i == j - 1, (i, j), "i=" << i << " j=" << j, return);
+//   ZiAssert(i == j - 1, (i, j), "i=" << i << " j=" << j, return);
 // }
 
-#ifndef ZeAssert_HH
-#define ZeAssert_HH
+#ifndef ZiAssert_HH
+#define ZiAssert_HH
 
-#ifndef ZeLib_HH
-#include <zlib/ZeLib.hh>
+#ifndef ZiLib_HH
+#include <zlib/ZiLib.hh>
 #endif
 
 #include <zlib/ZuFnName.hh>
@@ -37,13 +37,13 @@
 #include <zlib/ZiLog.hh>
 
 #ifdef NDEBUG
-#define ZeAssert(assertion, component, captures, msg, return_) \
+#define ZiAssert(assertion, component, captures, msg, return_) \
   do { if (ZuUnlikely(!(assertion))) { \
     ZiLOGBT(Fatal, component, ([ZuPP_Strip(captures)](auto &s) { \
       s << " Assertion '" #assertion "' failed " << msg; \
     })); return_; } } while (0)
 #else
-#define ZeAssert(assertion, captures, component, msg, return_) ZmAssert(assertion)
+#define ZiAssert(assertion, captures, component, msg, return_) ZmAssert(assertion)
 #endif
 
-#endif /* ZeAssert_HH */
+#endif /* ZiAssert_HH */
