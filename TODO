@@ -1,10 +1,4 @@
-- complete ZiEventLoop (based on ZdbPQ.hh/cc)
-  - use u64_cxn etc. from ZiMultiplex for both wfmo and epoll
-  - addHandle, delHandle
-
-- refactor ZdbPQ to use ZiEventLoop
-
-- use ZiEventLoop in ztls
+- use ZiEventLoop in ztls for openssl async completion
 
 - direction-aware ztls
 
