@@ -26,7 +26,7 @@
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmAtomic.hh>
 
-#include <zlib/ZeAssert.hh>
+#include <zlib/ZiAssert.hh>
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiIP.hh>
@@ -73,7 +73,7 @@ struct ZvIOMsg_ : public ZmPolymorph {
 
   uint32_t length() const { return length_flags & ~Mask; }
   void length(uint32_t n) {
-    ZeAssert(n <= ~Mask, "ZvIOQ",
+    ZiAssert(n <= ~Mask, "ZvIOQ",
       n, "length(" << n << ") max exceeded", return);
     length_flags = (length_flags & Mask) | (n & ~Mask);
   }

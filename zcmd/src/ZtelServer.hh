@@ -16,7 +16,6 @@
 
 #include <zlib/ZmFn.hh>
 
-#include <zlib/ZtLocalArray.hh>
 #include <zlib/ZtRegex.hh>
 
 #include <zlib/ZvEngine.hh>
@@ -66,7 +65,7 @@ private:
   void error(bool index, const Message &message) {
     struct Fmt : public ZuDateTimeFmt::CSV { Fmt() { tzOffset(timezone); } };
     auto &dateFmt = ZmTLS<Fmt>();
-    auto buf = ZmLocal(ZiLogBuf);
+    auto buf = ZmLocal(ZeLogBuf);
     if (ZuUnlikely(!buf)) return; // paranoia
     *buf << ZuDateTime{Zm::now()}.fmt(dateFmt) <<
       " FATAL [Ztel] " << m_path << (index ? ".idx" : "") <<

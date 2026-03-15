@@ -4,7 +4,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-DZE_EXPORTS @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-pkginclude_HEADERS = ZeLib.hh ZePlatform.hh ZeAssert.hh
+pkginclude_HEADERS = ZeLib.hh ZePlatform.hh
 lib_LTLIBRARIES = libZe.la
 libZe_la_SOURCES = ZeLib.cc ZePlatform.cc
 libZe_la_LIBADD = $(top_builddir)/zt/src/libZt.la \

@@ -28,7 +28,7 @@ struct ZiIOContext {
   unsigned	size = 0;	// size of buffer - set by app
   unsigned	offset = 0;	// offset within buffer - set by app
   int		length = 0;	// length - set by ZiMultiplex (-1 on error)
-  ZiSockAddr	addr;		// set by app (send) / ZiMultiplex (recv)
+  ZiSockAddr	addr;		// UDP - set by app (send) / ZiMultiplex (recv)
 
   static constexpr uintptr_t invalid_ptr() { return uintptr_t(-1); }
 

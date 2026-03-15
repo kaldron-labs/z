@@ -98,7 +98,7 @@ struct LogCapture {
     return false;
   }
 
-  void onLog(ZiLogBuf &buf, const ZeEventInfo &info) {
+  void onLog(ZeLogBuf &buf, const ZeEventInfo &info) {
     ZuCSpan span{buf.data(), buf.length()};
     if (contains(span, "falling back to copy"))
       copy_warns.xchAdd(1);
@@ -275,7 +275,7 @@ int main()
   ZiLog::level(0);
 
   LogCapture capture;
-  ZiLog::sink(ZiLog::lambdaSink([&capture](ZiLogBuf &buf, const ZeEventInfo &info) {
+  ZiLog::sink(ZiLog::lambdaSink([&capture](ZeLogBuf &buf, const ZeEventInfo &info) {
     capture.onLog(buf, info);
   }));
   ZiLog::start();

@@ -194,17 +194,17 @@ int ZiIP::resolve_(ZuWSpan host_, ZeError *e)
       errno_ == EAI_SYSTEM ? ZeLastSockError :
 #endif
       ZeError(errno_);
-    return IOError;
+    return Zi::IOError;
   }
   if (!result || !result->ai_addr ||
       result->ai_addrlen < sizeof(struct sockaddr_in)) {
     if (e) *e = ZeError(EAI_NONAME);
     if (result) ZiIP_FreeAddrInfo(result);
-    return IOError;
+    return Zi::IOError;
   }
   s_addr = ((struct sockaddr_in *)result->ai_addr)->sin_addr.s_addr;
   ZiIP_FreeAddrInfo(result);
-  return OK;
+  return Zi::OK;
 }
 
 ZiIP::Hostname ZiIP::name(ZeError *e)

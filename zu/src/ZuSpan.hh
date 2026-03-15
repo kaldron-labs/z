@@ -30,6 +30,23 @@
 #include <zlib/ZuEquiv.hh>
 #include <zlib/ZuElem.hh>
 
+// ZuSpan_IsNestedIL is used to ensure that:
+// - ZuSpan s{"x", "y", "z"}
+// - ZuSpan s{{1}, {1, 2}, {1, 2, 3}}
+// deduce correctly as a "span of spans" - respectively matching:
+// - ZuSpan(T (&..._)[N])
+// - ZuSpan(std::initializer_list<std::initializer_list<T>>)
+// via deduction guides instead of deducing via the
+// ZuSpan(std::initializer_list<T>) constructor
+template <typename>
+struct ZuSpan_IsNestedIL : public ZuFalse { };
+// match std::initializer_list<const T *>
+template <typename T>
+struct ZuSpan_IsNestedIL<const T *> : public ZuTrue { };
+// match std::initializer_list<std::initializer_list<T>>
+template <typename T>
+struct ZuSpan_IsNestedIL<std::initializer_list<T>> : public ZuTrue { };
+
 template <typename T> struct ZuSpan_ { };
 template <> struct ZuSpan_<char> {
   friend ZuPrintString ZuPrintType(ZuSpan_ *);
@@ -66,7 +83,9 @@ public:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Winit-list-lifetime"
 #endif
-  constexpr ZuSpan(std::initializer_list<T> a) :
+  constexpr ZuSpan(std::initializer_list<T> a,
+    decltype(ZuIfT<!ZuSpan_IsNestedIL<T>{}>(), int()) = 0)
+  :
     m_data(const_cast<T *>(a.begin())), m_length(a.size()) { }
   constexpr ZuSpan &operator =(std::initializer_list<T> a) {
     m_data = const_cast<T *>(a.begin());
@@ -98,8 +117,8 @@ public:
     typename U, typename V = T,
     typename Elem = typename ZuTraits<U>::Elem>
   struct IsStrLiteral : public ZuBool<
-      bool(IsChar_<ZuStrip<Elem>>{}) &&
-      bool(IsLiteralArray_<U, Elem>{})> { };
+    bool(IsChar_<ZuStrip<Elem>>{}) &&
+    bool(IsLiteralArray_<U, Elem>{})> { };
   template <typename U, typename R = void>
   using MatchStrLiteral = ZuIfT<IsStrLiteral<U>{}, R>; 
 
@@ -108,20 +127,21 @@ public:
     typename U, typename V = T,
     typename Elem = typename ZuTraits<U>::Elem>
   struct IsPrimitiveArray : public ZuBool<
-      !IsStrLiteral<U>{} &&
-      ZuTraits<U>::IsArray &&
-      ZuTraits<U>::IsPrimitive &&
-      bool(ZuIsSame<Elem, V>{})> { };
+    !IsStrLiteral<U>{} &&
+    ZuTraits<U>::IsArray &&
+    ZuTraits<U>::IsPrimitive &&
+    bool(ZuIsSame<Elem, V>{})> { };
   template <typename U, typename R = void>
   using MatchPrimitiveArray = ZuIfT<IsPrimitiveArray<U>{}, R>; 
 
 // from C string (as a pointer, not a primitive array or literal)
-  template <typename U> struct IsCString : public ZuBool<
-      !IsStrLiteral<U>{} &&
-      !IsPrimitiveArray<U>{} &&
-      ZuTraits<U>::IsPrimitive &&
-      bool(IsChar_<U>{}) &&
-      ZuTraits<U>::IsCString> { };
+  template <typename U>
+  struct IsCString : public ZuBool<
+    !IsStrLiteral<U>{} &&
+    !IsPrimitiveArray<U>{} &&
+    ZuTraits<U>::IsPrimitive &&
+    bool(IsChar_<U>{}) &&
+    ZuTraits<U>::IsCString> { };
   template <typename U, typename R = void>
   using MatchCString = ZuIfT<IsCString<U>{}, R>; 
 
@@ -590,6 +610,8 @@ public:
 
   constexpr ZuSpan(const void *data, uint64_t length) { }
 };
+
+// deduction guides
 
 template <typename T, uint64_t N>
 ZuSpan(T(&)[N]) -> ZuSpan<T>;

@@ -984,6 +984,15 @@ template <typename T, unsigned N>
 Array(const T(&)[N]) -> Array<T, N>;
 template <typename T, unsigned N>
 Array(T(&)[N]) -> Array<T, N>;
+// matches ZuArray a{"a", "ab", "abc"}
+template <typename T, unsigned... N>
+Array(T (&..._)[N]) -> Array<ZuSpan<T>, sizeof...(N)>;
+// matches ZuArray a{{1}, {1, 2}, {1, 2, 3}}
+template <
+  typename T, typename... U,
+  decltype((ZuIsSame<U, T>{} && ...), int()) = 0>
+Array(std::initializer_list<T>, std::initializer_list<U>...) ->
+  Array<ZuSpan<const T>, 1U + sizeof...(U)>;
 
 } // namespace Zu_
 

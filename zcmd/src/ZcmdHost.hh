@@ -43,7 +43,7 @@ using OutBufAlloc = ZiIOBufAlloc<>;
 // can be thrown by command function
 struct Usage { };
 
-using Argv = ZuVArray<ZuSpan<char>>;		// argument array
+using Argv = ZuVArray<ZuSpan<char>>;		// argument array // FIXME
 
 template <template <typename> class Context_>
 class Host {

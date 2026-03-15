@@ -19,7 +19,7 @@
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZiLog.hh>
-#include <zlib/ZiAssert.hh>
+#include <zlib/ZeAssert.hh>
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
@@ -74,10 +74,6 @@ public:
     if (Link *link = m_link) link->disconnected_(this, ZuMv(m_link));
   }
 
-  int rcvd(ZmRef<IOBuf> buf) {
-    if (Link *link = m_link) link->rcvd(ZuMv(buf));
-  }
-
 private:
   LinkRef	m_link = nullptr;
 };
@@ -102,7 +98,7 @@ using IOBufAlloc =
 template <
   typename App, typename Impl, typename RxBufAlloc_, typename TxBufAlloc_,
   typename Cxn_, typename CxnRef_>
-class Link : public ZmPolymorph, public ZiRx<Impl, RxBufAlloc_> {
+class Link : public ZmPolymorph {
   ZuAssert((ZuIs_<RxBufAlloc_, IOQueue::Node>{}));
   ZuAssert((ZuIs_<TxBufAlloc_, IOQueue::Node>{}));
 
@@ -111,7 +107,6 @@ public:
   using TxBufAlloc = TxBufAlloc_;
   using Cxn = Cxn_;
   using CxnRef = CxnRef_;
-  using Rx = ZiRx<Impl, RxBufAlloc>;
   using ImplRef = typename Cxn::LinkRef;
 
 friend Cxn;
@@ -137,53 +132,29 @@ protected:
 private:
   static constexpr unsigned TxRecordCapacity = 16 * 1024;
   static constexpr unsigned TxMaxOverhead = 325;
+  static constexpr unsigned TxMaxPlaintext = TxRecordCapacity - TxMaxOverhead;
 
   auto &txOutQueue() { return m_txOutQueue; }
 
   void connected_(Cxn *cxn, ZiIOContext &io) {
+    m_rxBuf = new RxBufAlloc{impl()};
+    m_rxBuf->clear();
+    m_rx_need = m_rec_hdr_len;
+    m_rx_total = 0;
+    m_rx_hdr_rcvd = false;
+    io.init(ZiIOFn{ZmMkRef(this), [](Link *link, ZiIOContext &io) {
+      link->rx(io);
+      return true;
+    }}, m_rxBuf->data(), m_rx_need, 0);
     app()->run([impl = ZmMkRef(this->impl()), cxn = ZmMkRef(cxn)]() {
       impl->connected_2(ZuMv(cxn));
     });
-    recv<
-      [](const ZiIOContext &, ZiIOBuf *buf) -> int {
-	if (ZuUnlikely(buf->length < 5)) return INT_MAX;
-	auto hdr = buf->data();
-	auto n = (unsigned(hdr[3])<<8) | unsigned(hdr[4]);
-	if (n > RxBufAlloc::MaxSize) return -1;
-	return n;
-      },
-      [](Cxn_ *cxn, const ZiIOContext &, ZmRef<ZiIOBuf> buf) -> int {
-	return cxn->rcvd(ZuMv(buf));
-      }>(io);
   }
-
   void connected_2(ZmRef<Cxn> cxn) {
     if (ZuUnlikely(m_cxn == cxn)) return;
     if (ZuUnlikely(m_cxn)) { auto cxn_ = ZuMv(m_cxn); cxn_->close(); }
     m_cxn = ZuMv(cxn);
     impl()->connected__();
-  }
-
-  void rcvd(ZmRef<ZiIOBuf> buf) {
-    app()->run([impl = ZmMkRef(this->impl())]() {
-      impl->rcvd_(ZuMv(buf));
-    });
-  }
-
-  // connected__
-  // client: send HELO, need initial prepare handshake, handshake
-  // server: on receiving HELO, on_client_hello()
-  void rcvd_(ZmRef<ZiIOBuf> buf) {
-    if (ZuUnlikely(!m_tls)) return;
-    if (!m_handshook) {
-      handshake();
-      return;
-    }
-  }
-
-    app()->run([impl = ZmMkRef(this->impl()), cxn = ZmMkRef(cxn)]() {
-      while (this->handshake());
-    });
   }
 
   template <typename ImplRef_>
@@ -197,72 +168,186 @@ private:
     });
   }
   void disconnected_2(Cxn *cxn) { // TLS thread
+    if (m_rxInQueue.count_() && m_tls && ptls_handshake_is_complete(m_tls))
+      while (recv());
     if (m_cxn == cxn) m_cxn = nullptr;
     reset_tls_();
     impl()->disconnected();
   }
 
+  void rx(ZiIOContext &io) { // I/O Rx thread
+    io.offset += io.length;
+    m_rxBuf->length = io.offset;
+
+    if (!m_rx_hdr_rcvd) {
+      if (io.offset < m_rec_hdr_len) {
+	io.ptr = m_rxBuf->data();
+	io.size = m_rec_hdr_len;
+	return;
+      }
+      auto hdr = m_rxBuf->data();
+      unsigned rec_len = (unsigned(hdr[3]) << 8) | unsigned(hdr[4]);
+      m_rx_total = unsigned(m_rec_hdr_len) + rec_len;
+      if (ZuUnlikely(m_rx_total > RxBufAlloc::MaxSize)) {
+	ZiLOG(Error, "Ztls", "TLS record too big / corrupt");
+	io.disconnect();
+	return;
+      }
+      m_rx_need = m_rx_total - io.offset;
+      m_rx_hdr_rcvd = true;
+      if (ZuUnlikely(m_rx_total > m_rxBuf->size)) {
+	if (ZuUnlikely(!m_rxBuf->ensure(m_rx_total))) {
+	  io.disconnect();
+	  return;
+	}
+      }
+      io.ptr = m_rxBuf->data();
+      io.size = m_rx_total;
+    }
+
+    if (io.offset < m_rx_total) {
+      m_rx_need = m_rx_total - io.offset;
+      io.ptr = m_rxBuf->data();
+      io.size = m_rx_total;
+      return;
+    }
+
+    // full record
+    m_rxBuf->length = m_rx_total;
+    if (ZuLikely(!m_disconnecting.load_()))
+      app()->run([buf = ZuMv(m_rxBuf)]() {
+	auto link = static_cast<Impl *>(buf->owner);
+	link->recv_(ZuMv(buf));
+      });
+    m_rxBuf = new RxBufAlloc{impl()};
+    m_rxBuf->clear(); // FIXME - why is this needed, it was just constructed
+    m_rx_need = m_rec_hdr_len;
+    m_rx_total = 0;
+    m_rx_hdr_rcvd = false;
+    io.ptr = m_rxBuf->data();
+    io.size = m_rx_need;
+    io.offset = 0;
+  }
+
+  void recv_(ZmRef<ZiIOBuf> buf) { // TLS thread
+    m_rxInQueue.pushNode(ZmRef<IOQueue::Node>{ZuMv(buf)});
+    while (m_tls && !ptls_handshake_is_complete(m_tls))
+      if (!handshake()) return;
+    while (recv());
+  }
+
 protected:
   bool handshake() { // TLS thread
     if (ZuUnlikely(!m_tls)) return false;
-    int n;
-    if (!m_handshakeStarted && !m_isServer) { // FIXME - this should be in Client::connected
+    if (ZuUnlikely(!m_handshakeStarted && !m_isServer)) {
       m_handshakeStarted = true;
-      n = handshake_(nullptr, nullptr);
-    } else {
-      // FIXME - this should be if (handshaking) in recv()....
+      size_t inlen = 0;
+      int n = handshake_send_(nullptr, &inlen);
+      if (!n) return handshake_done_();
+      if (n == PTLS_ERROR_IN_PROGRESS || n == PTLS_ERROR_ASYNC_OPERATION)
+	return false;
+      if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
+	  PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
+	disconnect_(true);
+	return false;
+      }
+      ZiLOG(Error, "Ztls", ([n](auto &s) {
+	s << "ptls_handshake(): " << strerror_(n);
+      }));
+      disconnect_(false);
+      return false;
+    }
+
+    while (m_rxInQueue.count_()) {
+      ZmRef<ZiIOBuf> buf = m_rxInQueue.shift();
       size_t inlen = buf->length;
-      n = handshake_(buf->data(), &inlen);
-      // FIXME - handle !inlen, inlen < buf->length and PTLS_ERROR_ASYNC_OPERATION
+      int n = handshake_send_(buf->data(), &inlen);
       if (ZuUnlikely(inlen != buf->length)) {
 	ZiLOG(Error, "Ztls", "ptls_handshake() partial record");
 	disconnect_(false);
 	return false;
       }
-    }
-
-    if (!n) return handshake_done_();
-    if (n == PTLS_ERROR_IN_PROGRESS || n == PTLS_ERROR_ASYNC_OPERATION)
+      if (!n) return handshake_done_();
+      if (n == PTLS_ERROR_IN_PROGRESS || n == PTLS_ERROR_ASYNC_OPERATION)
+	return false;
+      if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
+	  PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
+	disconnect_(true);
+	return false;
+      }
+      ZiLOG(Error, "Ztls", ([n](auto &s) {
+	s << "ptls_handshake(): " << strerror_(n);
+      }));
+      disconnect_(false);
       return false;
-    if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
-	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
-      disconnect_(true);
-      return false;
     }
-    ZiLOG(Error, "Ztls", ([n](auto &s) {
-      s << "ptls_handshake(): " << strerror_(n);
-    }));
-    disconnect_(false);
     return false;
   }
 
 private:
-// FIXME - this is the post-handshake recv
   bool recv() { // TLS thread
-    if (ZuUnlikely(!m_tls)) return false;
+    if (ZuUnlikely(!m_tls || !m_rxInQueue.count_())) return false;
+    ZmRef<ZiIOBuf> buf = m_rxInQueue.shift();
+    size_t inlen = buf->length;
     if (ZuUnlikely(!m_cipher)) return false;
+    if (ZuUnlikely(buf->skip)) {
+      ZiLOG(Error, "Ztls", "TLS RX buffer has non-zero skip");
+      disconnect_(false);
+      return false;
+    }
+
     unsigned align_bits = m_cipher->aead->align_bits;
 
     ptls_buffer_t plain;
-    auto base = buf->data();
-    ptls_buffer_init_rx(&plain, buf->data() + m_headroom, buf->size - ();
+    auto base = buf->data() - buf->skip;
+    ptls_buffer_init_rx(&plain, base, buf->size);
     plain.origin = buf.ptr();
     plain.align_bits = align_bits;
-    int n = ptls_receive(m_tls, &plain, buf->data(), &inlen); // FIXME
+    int n = ptls_receive(m_tls, &plain, buf->data(), &inlen);
     if (ZuUnlikely(inlen != buf->length)) {
       ZiLOG(Error, "Ztls", "ptls_receive() partial record");
       disconnect_(false);
       return false;
     }
+    base = buf->data() - buf->skip;
+    bool origin_match = plain.origin == buf.ptr();
     if (!n) {
-      if (plain.off) {
+      if (origin_match) {
+	if (ZuUnlikely(plain.base != base)) {
+	  ZiLOG(Error, "Ztls", "TLS RX buffer origin mismatch");
+	  disconnect_(false);
+	  return false;
+	}
+	if (plain.off) {
+	  buf->skip = 0;
+	  buf->length = plain.off;
+	  m_rxPlainQueue.pushNode(ZmRef<IOQueue::Node>{ZuMv(buf)});
+	}
+      } else if (plain.base != base) {
+	if (ZuUnlikely(!m_rx_realloc_warned)) {
+	  m_rx_realloc_warned = true;
+	  ZiLOG(Warning, "Ztls", "ptls_receive() reallocated, falling back to copy");
+	}
+	if (plain.off) {
+	  ZmRef<ZiIOBuf> out = new RxBufAlloc{impl()};
+	  if (ZuUnlikely(plain.off > out->size))
+	    if (ZuUnlikely(!out->ensure(plain.off))) return false;
+	  out->length = plain.off;
+	  memcpy(out->data(), plain.base, plain.off);
+	  m_rxPlainQueue.pushNode(ZmRef<IOQueue::Node>{ZuMv(out)});
+	}
+	ptls_buffer_dispose(&plain);
+      } else if (plain.off) {
 	buf->skip = 0;
 	buf->length = plain.off;
-	m_rxStream.push(ZuMv<IOQueue::Node>(buf));
+	m_rxPlainQueue.pushNode(ZmRef<IOQueue::Node>{ZuMv(buf)});
       }
       int p = process_plaintext_();
       if (p < 0) return false;
+      if (!p) return m_rxInQueue.count_();
+      return m_rxInQueue.count_();
     }
+    if (!origin_match && plain.base != base) ptls_buffer_dispose(&plain);
     if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
 	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
       disconnect_(true);
@@ -276,134 +361,202 @@ private:
   }
 
 public:
+  // TX zero-copy requirements for txStream()/txStream_():
+  // - use alloc_txbuf() (skip == m_tx_headroom, capacity == 16K)
+  // - do not alter skip; headroom must be intact
+  // - payload must fit m_max_plaintext (16K - 325)
+  // - base must remain cache-line aligned (align_bits satisfied)
+  ZmRef<ZiIOBuf> alloc_txbuf(unsigned plaintext_len) { // App/TLS threads
+    if (ZuUnlikely(plaintext_len > m_max_plaintext)) return nullptr;
+    ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
+    if (ZuUnlikely(buf->size < TxRecordCapacity))
+      if (ZuUnlikely(!buf->ensure(TxRecordCapacity))) return nullptr;
+    buf->skip = m_tx_headroom;
+    buf->length = plaintext_len;
+    return buf;
+  }
+
+  // compatibility wrappers
+  void send(const uint8_t *data, unsigned len) { // App thread(s)
+    if (ZuUnlikely(!len)) return;
+    auto stream = txStream();
+    stream.append(data, len);
+    stream << Zi::flush();
+  }
+  void send(ZmRef<ZiIOBuf> buf) {
+    txStream_send(ZuMv(buf));
+  }
+  void send_(ZmRef<ZiIOBuf> buf) { // TLS thread
+    txStream_send_(ZuMv(buf));
+  }
+  void send_(const uint8_t *data, unsigned len) { // TLS thread
+    if (ZuUnlikely(!len)) return;
+    auto stream = txStream_();
+    stream.append(data, len);
+    stream << Zi::flush();
+  }
+
   auto txStream() { // App thread(s)
+    ZmRef<TxStreamState> state = new TxStreamState{};
     return Zi::txStream(
       unsigned(TxRecordCapacity),
-      unsigned(m_headroom),
-      unsigned(m_tailroom),
-      [this](unsigned skip) {
-	ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
-	buf->skip = skip;
-	return buf;
+      unsigned(m_tx_headroom),
+      unsigned(m_tx_tailroom),
+      [this, state](unsigned headRoom) -> ZmRef<ZiIOBuf> {
+	return txStream_alloc_(state.ptr(), headRoom);
       },
-      [](ZmRef<ZiIOBuf> buf) {
-	auto link = static_cast<Impl *>(buf->owner);
-	link->send(ZuMv(buf));
+      [this, state]() mutable {
+	if (state->buf && state->buf->length)
+	  txStream_send(ZuMv(state->buf));
       });
   }
   auto txStream_() { // TLS thread
+    ZmRef<TxStreamState> state = new TxStreamState{};
     return Zi::txStream(
       unsigned(TxRecordCapacity),
-      unsigned(m_headroom),
-      unsigned(m_tailroom),
-      [this](unsigned skip) {
-	ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
-	buf->skip = skip;
-	return buf;
+      unsigned(m_tx_headroom),
+      unsigned(m_tx_tailroom),
+      [this, state](unsigned headRoom) -> ZmRef<ZiIOBuf> {
+	return txStream_alloc_(state.ptr(), headRoom);
       },
-      [](ZmRef<ZiIOBuf> buf) {
-	auto link = static_cast<Impl *>(buf->owner);
-	link->send_(ZuMv(buf));
+      [this, state]() mutable {
+	if (state->buf && state->buf->length)
+	  txStream_send_(ZuMv(state->buf));
       });
   }
 
 private:
-  void send(ZmRef<ZiIOBuf> buf) {
+  struct TxStreamState : public ZmObject {
+    ZmRef<ZiIOBuf>	buf;
+  };
+  struct TxStreamAllocFailure { };
+
+  ZmRef<ZiIOBuf> txStream_alloc_(TxStreamState *state, unsigned headRoom) {
+    ZmRef<ZiIOBuf> out = alloc_txbuf(0);
+    if (ZuUnlikely(!out || out->skip != headRoom))
+      throw TxStreamAllocFailure{};
+    state->buf = out;
+    return out;
+  }
+
+  void txStream_send(ZmRef<ZiIOBuf> buf) {
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
+    buf->owner = this;
     app()->invoke([buf = ZuMv(buf)]() mutable {
-      auto link = static_cast<Impl *>(buf->owner);
-      link->send_(ZuMv(buf));
+      auto link = static_cast<Link *>(buf->owner);
+      link->txStream_send_(ZuMv(buf));
     });
   }
 
-  void send_(ZmRef<ZiIOBuf> buf) { // TLS thread
+  void txStream_send_(ZmRef<ZiIOBuf> buf) { // TLS thread
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
-    if (ZuUnlikely(!m_tls || !m_cipher)) return; // FIXME - log diagnostic
+    if (ZuUnlikely(!m_tls || !ptls_handshake_is_complete(m_tls))) return;
 
-    if (ZuUnlikely(buf->skip != m_headroom)) {
+    if (ZuUnlikely(buf->length > m_max_plaintext)) {
+      auto stream = txStream_();
+      stream.append(buf->data(), buf->length);
+      stream << Zi::flush();
+      return;
+    }
+
+    if (ZuUnlikely(buf->skip != m_tx_headroom)) {
       ZiLOG(Error, "Ztls", "TLS TX buffer missing headroom");
       disconnect_(false);
       return;
     }
-
-    constexpr uint64_t Threshold = (1ULL<<24);
-    if (m_tx_need_key_update || m_tx_seq_est >= Threshold - 1) {
-      m_tx_need_key_update = false;
-      int n = ptls_update_key(m_tls, 0);
-      if (n) {
-	ZiLOG(Error, "Ztls", ([n](auto &s) {
-	  s << "ptls_update_key(): " << strerror_(n);
-	}));
+    if (ZuUnlikely(buf->size < TxRecordCapacity))
+      if (ZuUnlikely(!buf->ensure(TxRecordCapacity))) {
+	ZiLOG(Error, "Ztls", "TLS TX buffer growth failed");
 	disconnect_(false);
-	return false;
+	return;
       }
-      ptls_buffer_t pbuf;
-      ZmRef<ZiIOBuf> kbuf = new TxBufAlloc{impl()};
-      ptls_buffer_init_tx(&pbuf, kbuf->data(), kbuf->size);
-      pbuf.origin = kbuf.ptr();
-      int n = ptls_send(m_tls, &pbuf, nullptr, 0); // FIXME - check n - see below
-      if (pbuf.off) {
-	++m_tx_seq_est;
-	kbuf->skip = 0;
-	kbuf->length = pbuf.off;
-	txOut(ZuMv(kbuf));
-      }
-      m_tx_seq_est = 0;
-    }
 
-    auto data = buf->data();
-    auto length = buf->length;
-    buf->skip = buf->length = 0;
-    ptls_buffer_t pbuf;
-    ptls_buffer_init_tx(&pbuf, buf->data(), buf->size);
-    pbuf.origin = buf.ptr();
-    int n = ptls_send(m_tls, &pbuf, data, length);
-    if (pbuf.off) {
-      ++m_tx_seq_est;
-      buf->skip = 0;
-      buf->length = pbuf.off;
-      txOut(ZuMv(buf));
-    }
-    if (n) { // FIXME - before if (pbuf.off) ?
-      ZiLOG(Error, "Ztls", ([n](auto &s) {
-	s << "ptls_send(): " << strerror_(n);
-      }));
-      disconnect_(false);
-      return false;
-    }
-    return true;
+    if (ZuUnlikely(!preflush_key_update_())) return;
+    if (ZuUnlikely(m_disconnecting.load_())) return;
+    const uint8_t *payload = buf->data();
+    unsigned len = buf->length;
+    ptls_buf_send_(ZuMv(buf), payload, len);
   }
 
-// FIXME - see codex resume 019c96bf-a138-7c73-9b2c-6a47e683a1ea
-  int handshake_(const uint8_t *input, size_t *inlen) { // TLS thread
-    ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
-    ptls_buffer_t pbuf;
-    ptls_buffer_init_tx(&pbuf, buf->data(), buf->size);
-    pbuf.origin = buf.ptr();
-    int n = ptls_handshake(m_tls, &pbuf, input, inlen, &m_props);
-    if (buf->length = pbuf.off) txOut(ZuMv(buf));
+  int handshake_send_(const uint8_t *input, size_t *inlen) { // TLS thread
+    ZmRef<ZiIOBuf> out = new TxBufAlloc{impl()};
+    auto base = out->data() - out->skip;
+    ptls_buffer_t sendbuf;
+    ptls_buffer_init_tx(&sendbuf, base, out->size);
+    sendbuf.origin = out.ptr();
+    int n = ptls_handshake(m_tls, &sendbuf, input, inlen, &m_props);
+    flush_sendbuf_(sendbuf, ZuMv(out));
     return n;
   }
 
   int send_alert_(uint8_t level, uint8_t desc) { // TLS thread
-    ZmRef<ZiIOBuf> buf = alloc_txbuf_(m_headroom);
-    if (ZuUnlikely(!buf->ensure(256))) return PTLS_ERROR_NO_MEMORY;
-    ptls_buffer_t pbuf;
-    ptls_buffer_init_tx(&pbuf, buf->data(), buf->size);
-    pbuf.origin = buf.ptr();
-    int n = ptls_send_alert(m_tls, &pbuf, level, desc);
-    if (buf->length = pbuf.off) txOut(ZuMv(buf));
+    ZmRef<ZiIOBuf> out = new TxBufAlloc{impl()};
+    if (ZuUnlikely(out->size < 256))
+      if (ZuUnlikely(!out->ensure(256))) return PTLS_ERROR_NO_MEMORY;
+    ptls_buffer_t sendbuf;
+    ptls_buffer_init_tx(&sendbuf, out->data() - out->skip, out->size);
+    sendbuf.origin = out.ptr();
+    int n = ptls_send_alert(m_tls, &sendbuf, level, desc);
+    flush_sendbuf_(sendbuf, ZuMv(out));
     return n;
   }
 
-  bool preflush_key_update_() { // TLS thread
+  void flush_sendbuf_(ptls_buffer_t &sendbuf, ZmRef<ZiIOBuf> out) {
+    auto base = out->data() - out->skip;
+    bool origin_match = sendbuf.origin == out.ptr();
+    if (!sendbuf.off) {
+      if (!origin_match && sendbuf.base != base) ptls_buffer_dispose(&sendbuf);
+      return;
+    }
+    if (sendbuf.base != base) {
+      if (origin_match) {
+	ZiLOG(Error, "Ztls", "TLS handshake buffer origin mismatch");
+	disconnect_(false);
+	return;
+      }
+      if (ZuUnlikely(!m_tx_realloc_warned)) {
+	m_tx_realloc_warned = true;
+	ZiLOG(Warning, "Ztls", "ptls_handshake() reallocated, falling back to copy");
+      }
+      txOut(sendbuf.base, sendbuf.off);
+      ptls_buffer_dispose(&sendbuf);
+      return;
+    }
+    out->skip = 0;
+    out->length = sendbuf.off;
+    txOut(ZuMv(out));
   }
 
-  bool ptls_tx_buf_init_(ptls_buffer_t &pbuf, ZiIOBuf *buf) {
+  bool preflush_key_update_() { // TLS thread
+    if (ZuUnlikely(!m_tls || !m_cipher)) return false;
+    if (m_tlsver != PTLS_PROTOCOL_VERSION_TLS13) return true;
+    constexpr uint64_t Threshold = (1ull<<24);
+    if (!m_tx_need_key_update && m_tx_seq_est < Threshold - 1) return true;
+    m_tx_need_key_update = false;
+    int n = ptls_update_key(m_tls, 0);
+    if (n) {
+      ZiLOG(Error, "Ztls", ([n](auto &s) {
+	s << "ptls_update_key(): " << strerror_(n);
+      }));
+      disconnect_(false);
+      return false;
+    }
+    ZmRef<ZiIOBuf> buf = alloc_txbuf(0);
+    if (ZuUnlikely(!buf)) {
+      ZiLOG(Error, "Ztls", "TLS TX buffer growth failed");
+      disconnect_(false);
+      return false;
+    }
+    if (ZuUnlikely(!ptls_buf_send_(ZuMv(buf), nullptr, 0))) return false;
+    m_tx_seq_est = 0;
+    return true;
+  }
+
+  bool ptls_buf_init_(ptls_buffer_t &out, ZiIOBuf *buf) {
     if (ZuUnlikely(!m_cipher)) return false;
-    auto base = buf->data() - buf->skip;
+    auto base = buf->data() - m_tx_headroom;
     unsigned align_bits = m_cipher->aead->align_bits;
     if (align_bits) {
       uintptr_t mask = (uintptr_t(1) << align_bits) - 1;
@@ -413,23 +566,49 @@ private:
 	return false;
       }
     }
-    ptls_buffer_init_tx(&pbuf, base, buf->size);
-    pbuf.origin = buf;
-    pbuf.align_bits = align_bits;
+    ptls_buffer_init_tx(&out, base, TxRecordCapacity);
+    out.origin = buf;
+    out.align_bits = align_bits;
     return true;
   }
 
-  bool ptls_buf_send_(ZmRef<ZiIOBuf> buf) {
+  bool ptls_buf_send_(
+      ZmRef<ZiIOBuf> buf, const uint8_t *payload, unsigned len) {
     if (ZuUnlikely(!m_cipher)) return false;
 
-    ptls_buffer_t pbuf;
-    if (ZuUnlikely(!ptls_tx_buf_init_(pbuf, buf.ptr()))) return false;
-    int n = ptls_send(m_tls, &pbuf, buf->data(), buf->length);
+    ptls_buffer_t out;
+    if (ZuUnlikely(!ptls_buf_init_(out, buf.ptr()))) return false;
+    int n = ptls_send(m_tls, &out, payload, len);
 
-    if (pbuf.off) {
-      ++m_tx_seq_est;
+    if (out.off) ++m_tx_seq_est;
+
+    auto current_base = buf->data() - m_tx_headroom;
+    bool origin_match = out.origin == buf.ptr();
+    if (out.base != current_base) {
+      if (origin_match) {
+	ZiLOG(Error, "Ztls", "TLS TX buffer origin mismatch");
+	disconnect_(false);
+	return false;
+      }
+      if (ZuUnlikely(!m_tx_realloc_warned)) {
+	m_tx_realloc_warned = true;
+	ZiLOG(Warning, "Ztls", "ptls_send() reallocated, falling back to copy");
+      }
+      txOut(out.base, out.off);
+      ptls_buffer_dispose(&out);
+      if (n) {
+	ZiLOG(Error, "Ztls", ([n](auto &s) {
+	  s << "ptls_send(): " << strerror_(n);
+	}));
+	disconnect_(false);
+	return false;
+      }
+      return true;
+    }
+
+    if (out.off) {
       buf->skip = 0;
-      buf->length = pbuf.off;
+      buf->length = out.off;
       txOut(ZuMv(buf));
     }
 
@@ -486,6 +665,58 @@ private:
     return buf->length;
   }
 
+  int txOut(const uint8_t *data, unsigned len) { // TLS thread
+    if (ZuUnlikely(!len)) return 0;
+    if (ZuUnlikely(!m_cxn)) return len; // discard late Tx
+    unsigned offset = 0;
+    do {
+      unsigned n = len - offset;
+      ZmRef<ZiIOBuf> buf = new TxBufAlloc{this};
+      if (ZuUnlikely(n > buf->size)) n = buf->size;
+      buf->length = n;
+      memcpy(buf->data(), data + offset, n);
+      m_cxn->send(ZiIOFn::mvFn(ZuMv(buf),
+	  [](ZmRef<ZiIOBuf> buf, ZiIOContext &io) {
+	    auto self = static_cast<Link *>(buf->owner);
+	    auto &queue = self->txOutQueue();
+	    if (queue.count_()) {
+	      queue.pushNode(ZuMv(buf));
+	      return true;
+	    }
+	    auto buf_ = buf.ptr();
+	    queue.pushNode(ZuMv(buf));
+	    io.init(ZiIOFn{queue.headNode(),
+	      [](ZiIOBuf *buf, ZiIOContext &io) {
+		auto self = static_cast<Link *>(buf->owner);
+		auto &queue = self->txOutQueue();
+		if (ZuUnlikely(io.length < 0)) {
+		  queue.clean();
+		  io.complete();
+		  return true;
+		}
+		if (ZuUnlikely((io.offset += io.length) < io.size))
+		  return true;
+		queue.shift();
+		if (queue.count_()) {
+		  {
+		    ZmRef<ZiIOBuf> buf_{queue.headNode()};
+		    buf = buf_.ptr();
+		    io.fn.object(ZuMv(buf_));
+		  }
+		  io.ptr = buf->data();
+		  io.size = buf->length;
+		  io.offset = 0;
+		} else
+		  io.complete();
+		return true;
+	      }}, buf_->data(), buf_->length, 0);
+	    return true;
+	  }));
+      offset += n;
+    } while (offset < len);
+    return len;
+  }
+
 public:
   void disconnect() { // App thread(s)
     m_disconnecting = 1;
@@ -536,15 +767,15 @@ protected:
       (m_tlsver == PTLS_PROTOCOL_VERSION_TLS12) ?
 	m_cipher->aead->tls12.record_iv_size : 0;
     m_rec_overhead = ptls_get_record_overhead(m_tls);
-    m_headroom = m_rec_hdr_len + m_rec_iv_len;
-    if (ZuUnlikely(
-	m_headroom > TxMaxOverhead ||
+    m_tx_headroom = m_rec_hdr_len + m_rec_iv_len;
+    if (ZuUnlikely(m_tx_headroom > TxMaxOverhead ||
 	m_rec_overhead > TxMaxOverhead)) {
       ZiLOG(Error, "Ztls", "TLS record overhead exceeds worst-case limit");
       disconnect_(false);
       return false;
     }
-    m_tailroom = m_rec_overhead - m_headroom;
+    m_tx_tailroom = TxMaxOverhead - m_tx_headroom;
+    m_max_plaintext = TxMaxPlaintext;
     m_tx_seq_est = 0;
     m_tx_need_key_update = false;
     m_tx_realloc_warned = false;
@@ -555,8 +786,8 @@ protected:
     return recv();
   }
   int process_plaintext_() {
-    while (m_rxStream) {
-      int n = impl()->process(m_rxStream);
+    while (!m_rxPlainQueue.empty()) {
+      int n = impl()->process(m_rxPlainQueue);
       if (ZuUnlikely(n < 0)) {
 	disconnect_();
 	return -1;
@@ -579,14 +810,15 @@ protected:
     m_rec_iv_len = 0;
     m_rec_tag_len = 0;
     m_rec_overhead = 0;
-    m_headroom = 0;
-    m_tailroom = TxMaxOverhead;
+    m_tx_headroom = 0;
+    m_tx_tailroom = TxMaxOverhead;
+    m_max_plaintext = TxMaxPlaintext;
     m_tx_seq_est = 0;
     m_tx_need_key_update = false;
     m_tx_realloc_warned = false;
     m_rx_realloc_warned = false;
     m_rxInQueue.clean();
-    m_rxStream.clean();
+    m_rxPlainQueue.clean();
     reset_handshake_props_();
     m_handshakeStarted = false;
   }
@@ -613,8 +845,9 @@ private:
   unsigned		m_rec_iv_len = 0;
   unsigned		m_rec_tag_len = 0;
   unsigned		m_rec_overhead = 0;
-  unsigned		m_headroom = 0;
-  unsigned		m_tailroom = TxMaxOverhead;
+  unsigned		m_tx_headroom = 0;
+  unsigned		m_tx_tailroom = TxMaxOverhead;
+  unsigned		m_max_plaintext = TxMaxPlaintext;
   uint64_t		m_tx_seq_est = 0;
   bool			m_tx_need_key_update = false;
   bool			m_tx_realloc_warned = false;
@@ -622,7 +855,8 @@ private:
   ptls_handshake_properties_t m_props{};
   bool			m_handshakeStarted = false;
   CxnRef		m_cxn = nullptr;
-  RxStream		m_rxStream;
+  IOQueue		m_rxInQueue;
+  RxStream		m_rxPlainQueue;
 
   // Contended
   ZmAtomic<unsigned>	m_disconnecting = 0;
@@ -722,6 +956,11 @@ private:
   }
 
   void connected__() {
+    prepare_handshake_();
+    while (this->handshake());
+  }
+
+  void prepare_handshake_() {
     reset_handshake_props_();
     auto props = handshake_props();
     auto list = app()->alpn_list();
@@ -736,7 +975,6 @@ private:
     m_maxEarlyData = 0;
     props->client.max_early_data_size = &m_maxEarlyData;
     props->client.early_data_acceptance = PTLS_EARLY_DATA_ACCEPTANCE_UNKNOWN;
-    handshake_(nullptr, nullptr); // send HELO
   }
 
 protected:
@@ -974,10 +1212,17 @@ protected:
   }
 
 protected:
-  bool init_alpn_(ZuSpan<ZuCSpan> alpn) {
-    m_alpn.length(0);
-    m_alpn.ensure(alpn.length());
-    for (auto &s : alpn) m_alpn.push(ptls_iovec_t{s.data(), s.length()});
+  bool init_alpn_(const char **alpn) {
+    m_alpn.clear();
+    if (!alpn) return true;
+    unsigned count = 0;
+    while (alpn[count]) ++count;
+    if (!count) return true;
+    m_alpn.length(count);
+    for (unsigned i = 0; i < count; ++i) {
+      const char *p = alpn[i];
+      m_alpn[i] = ptls_iovec_init(p, strlen(p));
+    }
     return true;
   }
 
@@ -1021,7 +1266,7 @@ private:
 
   ptls_context_t		m_ctx{};
   ptls_cipher_suite_t		*m_cipher_suites[16]{};
-  ZtArray<ptls_iovec_t>		m_alpn;
+  ZtArray<ptls_iovec_t>	m_alpn;
   Backend::CertStore		*m_cacert = nullptr;
   Backend::VerifyCert		*m_verify = nullptr;
 };
@@ -1065,9 +1310,10 @@ friend Base;
   }
 
   // specify certPath and keyPath for mTLS
-  bool init(
-    ZiMultiplex *mx, ZuCSpan thread, ZuSpan<ZuCSpan> alpn,
-    ZuCSpan caPath = {}, ZuCSpan certPath = {}, ZuCSpan keyPath = {});
+  bool init(ZiMultiplex *mx, ZuCSpan thread, const char **alpn,
+      const char *caPath = nullptr,
+      const char *certPath = nullptr,
+      const char *keyPath = nullptr);
 
   void final() { Base::final(); }
 
@@ -1081,8 +1327,8 @@ private:
 
 template <typename App>
 bool Client<App>::init(
-  ZiMultiplex *mx, ZuCSpan thread, ZuSpan<ZuCSpan> alpn,
-  ZuCSpan caPath, ZuCSpan certPath, ZuCSpan keyPath)
+  ZiMultiplex *mx, ZuCSpan thread, const char **alpn,
+  const char *caPath, const char *certPath, const char *keyPath)
 {
   using Link = typename App::Link;
 
@@ -1090,16 +1336,16 @@ bool Client<App>::init(
     this, caPath, alpn, certPath, keyPath
   ]() -> bool {
     static ptls_save_ticket_t save_ticket_cb{
+    if (!this->init_alpn_(alpn)) return false;
+    auto ctx = this->ctx();
+    ctx->on_client_hello = nullptr;
+    ctx->save_ticket = {
       .cb = [](ptls_save_ticket_t *, ptls_t *tls, ptls_iovec_t input) -> int {
 	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
 	if (link) link->save_ticket(input);
 	return 0;
       }
     };
-    if (!this->init_alpn_(alpn)) return false;
-    auto ctx = this->ctx();
-    ctx->on_client_hello = nullptr;
-    ctx->save_ticket = &save_ticket_cb;
     ctx->sign_certificate = nullptr;
     ctx->encrypt_ticket = nullptr;
     ctx->require_client_authentication = 0;
@@ -1174,8 +1420,8 @@ friend Base;
   }
 
   bool init(
-    ZiMultiplex *mx, ZuCSpan thread, ZuSpan<ZuCSpan> alpn,
-    ZuCSpan caPath = {}, ZuCSpan certPath = {}, ZuCSpan keyPath = {},
+    ZiMultiplex *mx, ZuCSpan thread, const char **alpn,
+    const char *caPath, const char *certPath, const char *keyPath,
     bool mTLS = false, int cacheMax = -1, int cacheTimeout = -1);
 
   void final() { Base::final(); }
@@ -1231,8 +1477,8 @@ private:
 
 template <typename App>
 bool Server<App>::init(
-  ZiMultiplex *mx, ZuCSpan thread, ZuSpan<ZuCSpan> alpn,
-  ZuCSpan caPath, ZuCSpan certPath, ZuCSpan keyPath,
+  ZiMultiplex *mx, ZuCSpan thread, const char **alpn,
+  const char *caPath, const char *certPath, const char *keyPath,
   bool mTLS, int cacheMax, int cacheTimeout)
 {
   using Link = typename App::Link;
@@ -1240,16 +1486,15 @@ bool Server<App>::init(
   return Base::init(mx, thread, [
     this, alpn, caPath, certPath, keyPath, mTLS, cacheMax, cacheTimeout
   ]() -> bool {
-    static ptls_on_client_hello_t on_client_hello_cb{
+    (void)cacheMax;
+    if (!this->init_alpn_(alpn)) return false;
+    auto ctx = this->ctx();
+    ctx->on_client_hello = {
       .cb = [](ptls_on_client_hello_t *, ptls_t *tls, ptls_on_client_hello_parameters_t *params) -> int {
 	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
 	return link ? link->on_client_hello(tls, params) : 0;
       }
     };
-    (void)cacheMax;
-    if (!this->init_alpn_(alpn)) return false;
-    auto ctx = this->ctx();
-    ctx->on_client_hello = &on_client_hello_cb;
     ctx->sign_certificate = nullptr;
     ctx->encrypt_ticket = nullptr;
     ctx->save_ticket = nullptr;

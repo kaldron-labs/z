@@ -20,8 +20,6 @@
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiModule.hh>
-#include <zlib/ZiRx.hh>
-#include <zlib/ZiTx.hh>
 
 #include <zlib/ZvCf.hh>
 #include <zlib/ZvCSV.hh>
@@ -170,13 +168,13 @@ struct CliContextData {
   Host		*host = nullptr;	// host
   ZiFile	dest;			// output destination
 };
-template <typename Host, typename Heap>
+template <typename Host, typename Heap = ZuEmpty>
 struct CliContext_ : public Heap, public ZmObject, public CliContextData<Host> {
   ZuDerive_(CliContext_, CliContextData<Host>)
 };
 template <typename Host>
 ZuDerive(CliContext,
-  (CliContext_<Host, ZmHeap<"Zcmd.CliContext", CliContext_<Host, ZuEmpty>>>));
+  (CliContext_<Host, ZmHeap<"Zcmd.CliContext", CliContext_<Host>>>));
 
 class ZCmd :
   public ZmPolymorph,
@@ -1746,7 +1744,7 @@ int main(int argc, char **argv)
 
   ZiLog::init("zcmd");
   ZiLog::level(0);
-  ZiLog::sink(ZiLog::lambdaSink([](ZiLogBuf &buf, const ZeEventInfo &) {
+  ZiLog::sink(ZiLog::lambdaSink([](ZeLogBuf &buf, const ZeEventInfo &) {
     buf << '\n';
     std::cerr << buf << std::flush;
   }));

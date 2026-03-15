@@ -32,7 +32,7 @@ void Store::dbCf(const ZvCf *cf, ZdbCf &dbCf)
 
 void Store::init(Zdb *db)
 {
-  ZeAssert(m_state == StoreState::Uninitialized, "Zdf",
+  ZiAssert(m_state == StoreState::Uninitialized, "Zdf",
     (state = m_state), "invalid state=" << state, return);
 
   m_seriesFixedTbl = db->initTable<DB::SeriesFixed>("zdf.series_fixed");

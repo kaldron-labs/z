@@ -14,7 +14,7 @@
 #include <zlib/ZtQuote.hh>
 
 #include <zlib/ZiLog.hh>
-#include <zlib/ZeAssert.hh>
+#include <zlib/ZiAssert.hh>
 
 #include <zlib/ZtlsTOTP.hh>
 
@@ -58,7 +58,7 @@ void UserDB::dbCf(const ZvCf *cf, ZdbCf &dbCf)
 
 void UserDB::init(ZvCf *cf, Zdb *db)
 {
-  ZeAssert(m_state == UserDBState::Uninitialized, "Zum",
+  ZiAssert(m_state == UserDBState::Uninitialized, "Zum",
     (state = m_state), "invalid state=" << state, return);
 
   m_passLen = cf->getInt("passLen", 6, 60, m_passLen);

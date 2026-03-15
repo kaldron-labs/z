@@ -27,7 +27,6 @@
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmGuard.hh>
-#include <zlib/ZmRef.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmLockTraits.hh>

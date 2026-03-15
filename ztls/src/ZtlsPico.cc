@@ -42,45 +42,26 @@ static_assert((ZiIOBuf_Align & (ZiIOBuf_Align - 1)) == 0,
 
 constexpr unsigned IOBufAlignBits = log2_align_(ZiIOBuf_Align);
 
-// PreserveBuf saves/restores buffer skip, length to ensure
-// that TLS head/tail are preserved during re-allocation/copying
-struct PreserveBuf {
-  ZiIOBuf	*buf = nullptr;
-  uint32_t	skip = 0;
-  uint32_t	length = 0;
-
-  PreserveBuf(ZiIOBuf *buf_, uint32_t length_) :
-      buf{buf_}, skip{buf_->skip}, length{buf_->length} {
-    buf->skip = 0;
-    buf->length = length_;
-  }
-  ~PreserveBuf() {
-    buf->skip = skip;
-    buf->length = length;
-  }
-};
-
-static void *buffer_alloc_(ptls_buffer_t *buf, uint32_t capacity,
+static void *buffer_alloc_(ptls_buffer_t *pbuf, uint32_t capacity,
     uint8_t align_bits, int tx)
 {
-  buf->tx = tx ? 1 : 0;
-  if (buf->origin) {
+  pbuf->tx = tx ? 1 : 0;
+  if (pbuf->origin) {
     if (ZuUnlikely(align_bits > IOBufAlignBits)) {
       counters.origin_align_fail++;
       return nullptr;
     }
-    auto zbuf = static_cast<ZiIOBuf *>(buf->origin);
-    PreserveBuf preserve{zbuf, buf->off};
-    if (ZuUnlikely(!zbuf->ensure(capacity))) {
+    auto buf = static_cast<ZiIOBuf *>(pbuf->origin);
+    if (ZuUnlikely(!buf->ensure(capacity))) {
       counters.origin_ensure_fail++;
       return nullptr;
     }
-    buf->base = zbuf->data();
-    buf->capacity = zbuf->size;
-    buf->is_allocated = 1;
-    buf->align_bits = align_bits;
+    pbuf->base = buf->data();
+    pbuf->capacity = buf->size;
+    pbuf->is_allocated = 1;
+    pbuf->align_bits = align_bits;
     counters.origin_alloc++;
-    return buf->base;
+    return pbuf->base;
   }
 
   auto newp = static_cast<uint8_t *>(Zi::VHeap::valloc(capacity));
@@ -88,26 +69,26 @@ static void *buffer_alloc_(ptls_buffer_t *buf, uint32_t capacity,
     counters.internal_alloc_fail++;
     return nullptr;
   }
-  if (buf->off) memcpy(newp, buf->base, buf->off);
-  ptls_clear_memory(buf->base, buf->off);
-  if (buf->is_allocated) Zi::VHeap::vfree(buf->base);
-  buf->base = newp;
-  buf->capacity = capacity;
-  buf->is_allocated = 1;
-  buf->align_bits = align_bits;
+  if (pbuf->off) memcpy(newp, pbuf->base, pbuf->off);
+  ptls_clear_memory(pbuf->base, pbuf->off);
+  if (pbuf->is_allocated) Zi::VHeap::vfree(pbuf->base);
+  pbuf->base = newp;
+  pbuf->capacity = capacity;
+  pbuf->is_allocated = 1;
+  pbuf->align_bits = align_bits;
   counters.internal_alloc++;
   return newp;
 }
 
-static void buffer_free_(ptls_buffer_t *buf, int tx)
+static void buffer_free_(ptls_buffer_t *pbuf, int tx)
 {
   (void)tx;
-  if (ZuUnlikely(!buf || !buf->base)) return;
-  if (buf->origin) {
+  if (ZuUnlikely(!pbuf || !pbuf->base)) return;
+  if (pbuf->origin) {
     counters.origin_free++;
     return;
   }
-  Zi::VHeap::vfree(buf->base);
+  Zi::VHeap::vfree(pbuf->base);
   counters.internal_free++;
 }
 
@@ -137,13 +118,13 @@ Stats stats()
 
 void reset_stats()
 {
-  counters.origin_alloc.store_(0);
-  counters.internal_alloc.store_(0);
-  counters.origin_free.store_(0);
-  counters.internal_free.store_(0);
-  counters.origin_align_fail.store_(0);
-  counters.origin_ensure_fail.store_(0);
-  counters.internal_alloc_fail.store_(0);
+  counters.origin_alloc = 0;
+  counters.internal_alloc = 0;
+  counters.origin_free = 0;
+  counters.internal_free = 0;
+  counters.origin_align_fail = 0;
+  counters.origin_ensure_fail = 0;
+  counters.internal_alloc_fail = 0;
 }
 
 } // namespace Ztls::Pico

@@ -170,7 +170,7 @@ void testLambdaSinkReceivesEvents()
   ZtString<> msg;
 
   configure(ZiLog::lambdaSink([&calls, &severity, &component, &msg](
-      ZiLogBuf &buf, const ZeEventInfo &info) {
+      ZeLogBuf &buf, const ZeEventInfo &info) {
     ++calls;
     severity = info.severity;
     component = info.component;
