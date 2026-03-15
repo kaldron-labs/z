@@ -11,7 +11,7 @@ LDADD = $(top_builddir)/zi/src/libZi.la $(top_builddir)/ze/src/libZe.la \
 noinst_PROGRAMS = \
 	ZiFileTest ZiFileAgeTest ZiGlobTest \
 	ZiRingTest ZiRingTest2 \
-	ZiIOBufTest \
+	ZiIOBufTest ZiEventLoopTest \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
 	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest
 noinst_HEADERS = ZiTestResidue.hh
@@ -24,6 +24,7 @@ ZiGlobTest_SOURCES = ZiGlobTest.cc
 ZiRingTest_SOURCES = ZiRingTest.cc
 ZiRingTest2_SOURCES = ZiRingTest2.cc
 ZiIOBufTest_SOURCES = ZiIOBufTest.cc
+ZiEventLoopTest_SOURCES = ZiEventLoopTest.cc
 ZiDirTest_SOURCES = ZiDirTest.cc
 ZiIPTest_SOURCES = ZiIPTest.cc
 ZiModuleTest_SOURCES = ZiModuleTest.cc

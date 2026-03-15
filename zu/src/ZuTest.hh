@@ -6,7 +6,7 @@
 
 // TAP-emitting test framework
 // - https://testanything.org/tap-version-14-specification.html
-// - statically scans tests before main() to permit early test counts
+// - static test count established before main()
 // - interactive harnesses can use early counts to track progress to 100%
 // - intentionally targeted at functional testing workloads that are
 //   predominantly static, i.e. established at compile-time
@@ -23,12 +23,12 @@
 // - a sub-test named "loop" with N fixed variations/iterations:
 //   { ZuTestRepeat(loop, N); for (...) ... }
 //   - N must be a compile-time constant
-// - sub-test in a callable named fn:
-//   void fn() { ZuTestScope(fn); ... }
 // - call a sub-test written in a callable named fn:
 //   ZuTestCall(fn);
+// - sub-test in a callable named fn:
+//   void fn() { ZuTestScope(fn); ... }
 // - dynamic sub-tests that vary at runtime should use RT equivalents:
-//   ZuCheckRT / ZuTestRT / ZuTestScopeRT / ZuTestCallRT
+//   ZuTestCallRT / ZuTestScopeRT / ZuCheckRT / ZuTestRT
 
 #ifndef ZuTest_HH
 #define ZuTest_HH

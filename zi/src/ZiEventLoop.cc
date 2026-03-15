@@ -297,16 +297,20 @@ bool Loop::unblock(Zi::Socket socket)
 {
 #ifndef _WIN32
 
-  if (fcntl(s, F_SETFL, O_NONBLOCK) < 0) {
-    Error("fcntl(O_NONBLOCK)", Zi::IOError, ZeLastError);
+  if (fcntl(socket, F_SETFL, O_NONBLOCK) < 0) {
+    ZiLOG(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
+      s << "fcntl(O_NONBLOCK) failed: " << e;
+    }));
     return false;
   }
 
 #else /* !_WIN32 */
 
   u_long mode = 1;
-  if (ioctlsocket(s, FIONBIO, &mode) != 0) {
-    Error("ioctlsocket(FIONBIO, &1)", Zi::IOError, ZeLastError);
+  if (ioctlsocket(socket, FIONBIO, &mode) != 0) {
+    ZiLOG(Fatal, "ZiEventLoop", ([e = ZeLastSockError](auto &s) {
+      s << "ioctlsocket(FIONBIO, &1) failed: " << e;
+    }));
     return false;
   }
 
