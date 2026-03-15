@@ -236,7 +236,7 @@ ZuDerive(Arg,
 ZuDerive(Argv,
   (ZtBuiltin<ZtArray<Arg, ZtArrayHeapID<"ZtCLI.Argv">>, BuiltinSize>));
 ZuDerive(SpanArgv,
-  (ZtBuiltin<ZtArray<ZuCSpan, ZtArrayHeapID<"ZtCLI.Argv">>, BuiltinSize>));
+  (ZtBuiltin<ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZtCLI.Argv">>, BuiltinSize>));
 ZuDerive(Argv_C,
   (ZtBuiltin<ZtArray<const char *, ZtArrayHeapID<"ZtCLI.Argv">>, BuiltinSize>));
 

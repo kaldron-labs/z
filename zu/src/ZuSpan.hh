@@ -30,23 +30,6 @@
 #include <zlib/ZuEquiv.hh>
 #include <zlib/ZuElem.hh>
 
-// ZuSpan_IsNestedIL is used to ensure that:
-// - ZuSpan s{"x", "y", "z"}
-// - ZuSpan s{{1}, {1, 2}, {1, 2, 3}}
-// deduce correctly as a "span of spans" - respectively matching:
-// - ZuSpan(T (&..._)[N])
-// - ZuSpan(std::initializer_list<std::initializer_list<T>>)
-// via deduction guides instead of deducing via the
-// ZuSpan(std::initializer_list<T>) constructor
-template <typename>
-struct ZuSpan_IsNestedIL : public ZuFalse { };
-// match std::initializer_list<const T *>
-template <typename T>
-struct ZuSpan_IsNestedIL<const T *> : public ZuTrue { };
-// match std::initializer_list<std::initializer_list<T>>
-template <typename T>
-struct ZuSpan_IsNestedIL<std::initializer_list<T>> : public ZuTrue { };
-
 template <typename T> struct ZuSpan_ { };
 template <> struct ZuSpan_<char> {
   friend ZuPrintString ZuPrintType(ZuSpan_ *);
@@ -83,9 +66,7 @@ public:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Winit-list-lifetime"
 #endif
-  constexpr ZuSpan(std::initializer_list<T> a,
-    decltype(ZuIfT<!ZuSpan_IsNestedIL<T>{}>(), int()) = 0)
-  :
+  constexpr ZuSpan(std::initializer_list<T> a) :
     m_data(const_cast<T *>(a.begin())), m_length(a.size()) { }
   constexpr ZuSpan &operator =(std::initializer_list<T> a) {
     m_data = const_cast<T *>(a.begin());
@@ -617,6 +598,17 @@ template <typename T, uint64_t N>
 ZuSpan(T(&)[N]) -> ZuSpan<T>;
 template <typename T, typename N>
 ZuSpan(T *, N) -> ZuSpan<T>;
+// regrettably nested initializer deduction guides cannot be generalized,
+// three levels of nesting, covers the vast majority of use cases
+template <typename T>
+ZuSpan(std::initializer_list<T>) -> ZuSpan<const T>;
+template <typename T>
+ZuSpan(std::initializer_list<std::initializer_list<T>>) ->
+  ZuSpan<ZuSpan<const T>>;
+template <typename T>
+ZuSpan(
+  std::initializer_list<std::initializer_list<std::initializer_list<T>>>) ->
+    ZuSpan<ZuSpan<ZuSpan<const T>>>;
 
 // various standard spans (byte, character, wide character)
 

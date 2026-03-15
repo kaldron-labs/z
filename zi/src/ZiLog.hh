@@ -283,7 +283,7 @@ public:
       sink->post(buf, e);
     };
     Fn fn{fn_};
-    log__(ZuMv(fn));
+    log__(fn);
   }
   static void age() { instance()->age_(); }
 

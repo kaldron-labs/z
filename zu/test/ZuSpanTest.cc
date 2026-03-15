@@ -441,6 +441,11 @@ int main()
 {
   ZuTestMain();
 
+  {
+    auto x = ZuSpan({{{42}}}); // check nested initializers
+    ZuCheck(x[0][0][0] == 42);
+  }
+
   ZuTestCall(testSpanSplice);
   ZuTestCall(testSpanSpliceRuntimePaths);
   ZuTestCall(testSpanSpliceVariantPaths);

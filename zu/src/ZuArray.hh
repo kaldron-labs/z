@@ -980,10 +980,12 @@ public:
   ZuInline constexpr T *end() { return data() + length_; }
 };
 
-template <typename T, unsigned N>
-Array(const T(&)[N]) -> Array<T, N>;
+// deduction guides
+
 template <typename T, unsigned N>
 Array(T(&)[N]) -> Array<T, N>;
+template <typename T, unsigned N>
+Array(const T(&)[N]) -> Array<T, N>;
 // matches ZuArray a{"a", "ab", "abc"}
 template <typename T, unsigned... N>
 Array(T (&..._)[N]) -> Array<ZuSpan<T>, sizeof...(N)>;
@@ -991,8 +993,8 @@ Array(T (&..._)[N]) -> Array<ZuSpan<T>, sizeof...(N)>;
 template <
   typename T, typename... U,
   decltype((ZuIsSame<U, T>{} && ...), int()) = 0>
-Array(std::initializer_list<T>, std::initializer_list<U>...) ->
-  Array<ZuSpan<const T>, 1U + sizeof...(U)>;
+Array(std::initializer_list<T>, std::initializer_list<T>, std::initializer_list<U>...) ->
+  Array<ZuSpan<const T>, 2U + sizeof...(U)>;
 
 } // namespace Zu_
 
