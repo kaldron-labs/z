@@ -598,17 +598,21 @@ template <typename T, uint64_t N>
 ZuSpan(T(&)[N]) -> ZuSpan<T>;
 template <typename T, typename N>
 ZuSpan(T *, N) -> ZuSpan<T>;
-// regrettably nested initializer deduction guides cannot be generalized,
-// three levels of nesting, covers the vast majority of use cases
+// regrettably nested initializer deduction guides cannot be generalized
+// - three levels of nesting covers the vast majority of use cases
 template <typename T>
 ZuSpan(std::initializer_list<T>) -> ZuSpan<const T>;
 template <typename T>
-ZuSpan(std::initializer_list<std::initializer_list<T>>) ->
-  ZuSpan<ZuSpan<const T>>;
+ZuSpan(
+  std::initializer_list<
+    std::initializer_list<T>>) ->
+      ZuSpan<ZuSpan<const T>>;
 template <typename T>
 ZuSpan(
-  std::initializer_list<std::initializer_list<std::initializer_list<T>>>) ->
-    ZuSpan<ZuSpan<ZuSpan<const T>>>;
+  std::initializer_list<
+    std::initializer_list<
+      std::initializer_list<T>>>) ->
+	ZuSpan<ZuSpan<ZuSpan<const T>>>;
 
 // various standard spans (byte, character, wide character)
 

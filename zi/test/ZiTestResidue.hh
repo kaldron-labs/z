@@ -10,8 +10,6 @@
 #include <unistd.h>
 #include <time.h>
 
-#include <vector>
-
 #ifndef _WIN32
 #include <sys/mman.h>
 #endif
@@ -20,6 +18,8 @@
 
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmGuard.hh>
+
+#include <zlib/ZtArray.hh>
 
 #include <zlib/ZiDir.hh>
 #include <zlib/ZiFile.hh>
@@ -38,9 +38,9 @@ struct State {
   Zi::Path			manifest;
   Zi::Name			testName;
   unsigned			counter = 0;
-  std::vector<Zi::Path>		files;
-  std::vector<Zi::Path>		dirs;
-  std::vector<Zi::Name>		shmBases;
+  ZtArray<Zi::Path>		files;
+  ZtArray<Zi::Path>		dirs;
+  ZtArray<Zi::Name>		shmBases;
 };
 
 inline State &state_()
@@ -113,7 +113,7 @@ inline void cleanupFromManifest_(const Zi::Path &manifestPath)
     return;
   }
 
-  std::vector<char> buf(static_cast<unsigned>(size_) + 1U);
+  ZtArray<char> buf(static_cast<unsigned>(size_) + 1U);
   int n = file.read(buf.data(), static_cast<unsigned>(size_));
   if (n <= 0) {
     ZiFile::remove(manifestPath);
@@ -121,7 +121,7 @@ inline void cleanupFromManifest_(const Zi::Path &manifestPath)
   }
   buf[n] = 0;
 
-  std::vector<Zi::Path> dirs;
+  ZtArray<Zi::Path> dirs;
 
   char *line = buf.data();
   for (;;) {
@@ -136,7 +136,7 @@ inline void cleanupFromManifest_(const Zi::Path &manifestPath)
 	  ZiFile::remove(payload);
 	  break;
 	case 'D':
-	  dirs.push_back(payload);
+	  dirs.push(payload);
 	  break;
 	case 'S':
 	  cleanupShm_(Zi::Name(payload));
@@ -149,8 +149,8 @@ inline void cleanupFromManifest_(const Zi::Path &manifestPath)
     line = next + 1;
   }
 
-  for (auto i = dirs.rbegin(); i != dirs.rend(); ++i)
-    ZiFile::rmdir(*i);
+  for (auto i = dirs.length(); i; )
+    ZiFile::rmdir(dirs[--i]);
 
   ZiFile::remove(manifestPath);
 }
@@ -200,7 +200,7 @@ inline void init(const char *testName)
   state.initialized = true;
   state.cleaned = false;
 
-  state.dirs.push_back(state.runDir);
+  state.dirs.push(state.runDir);
   writeManifest_('D', state.runDir);
 }
 
@@ -227,7 +227,7 @@ inline void addFile(const Zi::Path &path)
 {
   auto &state = state_();
   State::Guard guard(state.lock);
-  state.files.push_back(path);
+  state.files.push(path);
   writeManifest_('F', path);
 }
 
@@ -235,7 +235,7 @@ inline void addDir(const Zi::Path &path)
 {
   auto &state = state_();
   State::Guard guard(state.lock);
-  state.dirs.push_back(path);
+  state.dirs.push(path);
   writeManifest_('D', path);
 }
 
@@ -243,7 +243,7 @@ inline void addShmBase(const Zi::Name &name)
 {
   auto &state = state_();
   State::Guard guard(state.lock);
-  state.shmBases.push_back(name);
+  state.shmBases.push(name);
   writeManifest_('S', name);
 }
 
@@ -255,12 +255,12 @@ inline void cleanupNow()
 
   state.cleaned = true;
 
-  for (auto i = state.files.rbegin(); i != state.files.rend(); ++i)
-    ZiFile::remove(*i);
-  for (auto i = state.shmBases.rbegin(); i != state.shmBases.rend(); ++i)
-    cleanupShm_(*i);
-  for (auto i = state.dirs.rbegin(); i != state.dirs.rend(); ++i)
-    ZiFile::rmdir(*i);
+  for (auto i = state.files.length(); i; )
+    ZiFile::remove(state.files[--i]);
+  for (auto i = state.shmBases.length(); i; )
+    cleanupShm_(state.shmBases[--i]);
+  for (auto i = state.dirs.length(); i; )
+    ZiFile::rmdir(state.dirs[--i]);
 
   ZiFile::remove(state.manifest);
 }

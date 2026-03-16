@@ -72,9 +72,9 @@ void testBasicAdvanceAndNext()
   ZuCheck(stream.count_() == 0);
 }
 
-void testRefreshSkipsZeroLengthNodes()
+void testPushFiltersZeroLengthNodes()
 {
-  ZuTestScope(testRefreshSkipsZeroLengthNodes);
+  ZuTestScope(testPushFiltersZeroLengthNodes);
 
   ZiRxStream<RxQueue> stream;
 
@@ -83,10 +83,10 @@ void testRefreshSkipsZeroLengthNodes()
   stream.push(mkBuf("xy"));
   stream.push(mkBuf(""));
 
-  ZuCheck(stream.count_() == 4);
+  ZuCheck(stream.count_() == 1);
   ZuCheck(!!stream);
   ZuCheck(spanEq(stream.span(), "xy"));
-  ZuCheck(stream.count_() == 2);
+  ZuCheck(stream.count_() == 1);
 
   ZuCheck(stream.advance(2));
   ZuCheck(!stream);
@@ -138,7 +138,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testBasicAdvanceAndNext);
-  ZuTestCall(testRefreshSkipsZeroLengthNodes);
+  ZuTestCall(testPushFiltersZeroLengthNodes);
   ZuTestCall(testNextSkipsCurrentRemainder);
   ZuTestCall(testCleanResetsState);
   return 0;
