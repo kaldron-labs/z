@@ -105,7 +105,7 @@ bool Loop::start_()
     struct epoll_event ev;
     memset(&ev, 0, sizeof(struct epoll_event));
     ev.events = EPOLLIN;
-    ev.data.u64 = 0;
+    ev.data.u64 = u64_wake();
     if (epoll_ctl(m_epollFD, EPOLL_CTL_ADD, m_wakeFD, &ev) < 0) {
       failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
 	s << "epoll_ctl(EPOLL_CTL_ADD) failed: " << e;
