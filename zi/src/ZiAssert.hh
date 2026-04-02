@@ -41,7 +41,7 @@
   do { if (ZuUnlikely(!(assertion))) { \
     ZiLOGBT(Fatal, component, ([ZuPP_Strip(captures)](auto &s) { \
       s << " Assertion '" #assertion "' failed " << msg; \
-    })); return_; } } while (0)
+    })); ZuPP_Strip(return_); } } while (0)
 #else
 #define ZiAssert(assertion, captures, component, msg, return_) ZmAssert(assertion)
 #endif
