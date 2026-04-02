@@ -26,6 +26,17 @@
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZiIOBuf.hh>
 
+ZuDerive(ZiRxQueue,
+  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+
+using ZiRxBuf = ZiRxQueue::Node;
+
+template <
+  unsigned Size = ZiIOBuf_DefltSize,
+  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  ZuString HeapID = ZiIOBuf_HeapID{}()>
+using ZiRxBufAlloc = Zi::IOBufAlloc<ZiRxBuf, Size, MaxSize, ZuStringT<HeapID>>;
+
 template <typename Impl_, typename BufAlloc_>
 class ZiRx {
 public:
@@ -55,10 +66,7 @@ public:
   //   -ve - disconnect immediately
   template <auto Hdr, auto Body>
   void recv(ZiIOContext &io) {
-    ZmRef<ZiIOBuf> buf = new BufAlloc{impl()};
-    auto ptr = buf->data();
-    auto size = buf->size;
-    io.init(ZiIOFn{ZuMv(buf), [](ZiIOBuf *buf, ZiIOContext &io) {
+    auto fn = [](ZiIOBuf *buf, ZiIOContext &io) {
       unsigned len = io.offset += io.length;
       io.length = 0;
 
@@ -122,7 +130,15 @@ public:
       io.length = nextLen;
       io.fn.object(ZuMv(next));
       return false;
-    }}, ptr, size, 0);
+    };
+    if (io.fn) {
+      io.fn = ZiIOFn{io.fn.mvObject(), ZuMv(fn)};
+    } else {
+      ZmRef<ZiIOBuf> buf = new BufAlloc{impl()};
+      auto ptr = buf->data();
+      auto size = buf->size;
+      io.init(ZiIOFn{ZuMv(buf), ZuMv(fn)}, ptr, size, 0);
+    }
   }
 
   // synchronous receive from ZiIOContext
@@ -133,10 +149,7 @@ public:
   //   -ve - disconnect immediately
   template <auto Hdr, auto Body>
   void recvSync(ZiIOContext &io) {
-    ZmRef<ZiIOBuf> buf = new BufAlloc{impl()};
-    auto ptr = buf->data();
-    auto size = buf->size;
-    io.init(ZiIOFn{ZuMv(buf), [](ZiIOBuf *buf, ZiIOContext &io) {
+    auto fn = [](ZiIOBuf *buf, ZiIOContext &io) {
       unsigned len = io.offset += io.length;
       io.length = 0;
 
@@ -183,7 +196,15 @@ public:
       io.offset = 0;
       io.length = buf->length = nextLen;
       return false;
-    }}, ptr, size, 0);
+    };
+    if (io.fn) {
+      io.fn = ZiIOFn{io.fn.mvObject(), ZuMv(fn)};
+    } else {
+      ZmRef<ZiIOBuf> buf = new BufAlloc{impl()};
+      auto ptr = buf->data();
+      auto size = buf->size;
+      io.init(ZiIOFn{ZuMv(buf), ZuMv(fn)}, ptr, size, 0);
+    }
   }
 
   // in-memory receiver

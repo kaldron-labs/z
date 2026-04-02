@@ -37,7 +37,10 @@ friend ZiConnection;
   // initialize (called from within send/recv)
   template <typename Fn>
   void init_(Fn &&fn_) {
-    fn = ZuFwd<Fn>(fn_); ptr = nullptr; size = offset = length = 0; (*this)();
+    fn = ZuFwd<Fn>(fn_);
+    ptr = nullptr;
+    size = offset = length = 0;
+    (*this)();
   }
 
 public:

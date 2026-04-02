@@ -29,6 +29,14 @@ template <
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using ZiTxBufAlloc = Zi::IOBufAlloc<ZiTxBuf, Size, MaxSize, ZuStringT<HeapID>>;
 
+// CRTP - implementation must conform to the following interface:
+#if 0
+struct Impl : public ZiTx<Impl> {
+  ZiConnection *cxn();				// optional
+  void sent(ZmRef<ZiTxBuf>, bool ok);		// ''
+  void aborted(ZmRef<ZiTxBuf> buf, bool ok);	// ''
+};
+#endif
 template <typename Impl_>
 class ZiTx {
 public:
@@ -43,9 +51,15 @@ public:
     return static_cast<Impl *>(buf->owner);
   }
 
+  ZiConnection *cxn() { return static_cast<ZiConnection *>(impl()); }
+
   void send(ZmRef<ZiTxBuf> buf) {
+    if (ZuUnlikely(!buf || !buf->length)) return;
+    auto cxn = impl()->cxn();
+    if constexpr (!ZuIsSame<decltype(&Impl::cxn), decltype(&ZiTx::cxn)>{})
+      if (ZuUnlikely(!cxn)) return;
     buf->owner = impl();
-    impl()->ZiConnection::send(ZiIOFn::mvFn(ZuMv(buf),
+    cxn->ZiConnection::send(ZiIOFn::mvFn(ZuMv(buf),
 	[](ZmRef<ZiIOBuf> buf, ZiIOContext &io) {
 	  auto impl_ = impl(buf);
 	  auto &queue = impl_->ZiTx::txQueue;
@@ -85,7 +99,10 @@ public:
   void sent(ZmRef<ZiTxBuf>, bool ok) { } // can be overridden
 
   void abort(ZmRef<ZiTxBuf> buf) {
-    impl()->txInvoke([buf = ZuMv(buf)]() mutable {
+    auto cxn = impl()->cxn();
+    if constexpr (!ZuIsSame<decltype(&Impl::cxn), decltype(&ZiTx::cxn)>{})
+      if (ZuUnlikely(!cxn)) return;
+    cxn->mx()->txInvoke([buf = ZuMv(buf)]() mutable {
       auto impl_ = impl(buf);
       auto &queue = impl_->ZiTx::txQueue;
       if (queue.headPtr() == buf.ptr()) {

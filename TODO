@@ -1,6 +1,12 @@
-- use ZiEventLoop in ztls for openssl async completion
-
-- direction-aware ztls
+- Ztls.hh rewrite is code complete
+  - use codex to
+    - compare with original codex version
+    - code review
+  - then use codex to
+    - use ZiEventLoop for openssl async completion
+    - add ZiEventLoop handling using additional configured thread for async completions
+      (server side only)
+  - check that direction-aware ztls buffers are consistent
 
 - factor out fbs codegen into shell script
   - used repeatedly in multiple Makefile.am
@@ -26,8 +32,7 @@ codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
   handled. The alignment requirement is on the buffer base to make the aligned‑store strategy
   safe.
 
-- fix preflush etc. in ztls
-  - use ZiTxStream
+- need to document:
   - TLS record header is 5 bytes
   - TLS record length includes IV (TLS1.2 only), ciphertext, tail (AEAD tag or MAC + padding)
   - TLS headroom varies between 5 (TLS1.3) and 21 (TLS1.2 with AES-CBC)
@@ -41,25 +46,7 @@ codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
       - `ptls_buf_send` should be preceded by an independent KeyUpdate null send() if needed
   - ensures recs == 1 within `ptls_buf_send` because plaintext never exceeds `(16K-325)`
 
-- complete cleanup of ztls
-  - unnecessary IOBufAlignBits constexpr calculation
-  - unnecessary PreservePrefix
-  - unnecessary origin_match
-  - the app defines the IOBufAlloc type separately for rx and tx
-  - send(data, len) is removed in favor of send(buf)
-    - ztls provides app with a suitable ZiTxStream via txStream()
-      - the app provides the buffer allocator to be used by ZiTxStream, enabling the app to specify the derived type of the buffer
-    - send(buf) is called within ZiTxStream (it is the stream's send handler), and it calls ptls send
-      - the ztls ZiTxStream instance ensures headroom and tailroom for use within ptls send
-  - app should no longer use new IOBufAlloc...(cxn)
-    - the app will use txStream() to transmit, the buffer allocator is provided by the app similar to how the app provides the buffer allocator to be used by the 
-    - the app will receive buffers from ztls, again the type of the buffers can be overridden by the app to enrich the buffer (see zdb for an example of this)
-    - down the road we will need need explicit per-rx or per-tx buffer recycling for future use of zero-copy io_uring
-  - RxCursor should disappear, it should no longer be necessary
-
 - need a rx and tx buf allocator in Ztls (and ZiMultiplex)
-  - per-cxn
-  - tx will have headroom (skip) for in-place encryption
   - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
     - but not jumbo, in that case we fallback to non-registered buffers
     - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4

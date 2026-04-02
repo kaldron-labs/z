@@ -185,7 +185,7 @@ void Loop::stop_2()
   // - we previously removed all the Sockets, so any remaining
   //   element is the wakeup semaphore
   if (m_wfmoHandles.length()) {
-    ZeAssert(m_wfmoHandles.length() == 1 && m_wakeSemIndex == 0,
+    ZiAssert(m_wfmoHandles.length() == 1 && m_wakeSemIndex == 0,
       "ZiEventLoop", (), "internal error", return);
     CloseHandle(m_wfmoHandles[0]);
     m_wakeSemIndex = -1;
