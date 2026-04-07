@@ -58,6 +58,10 @@ public:
     return head ? head->span() : ZuSpan<uint8_t>{};
   }
 
+  bool empty() const {
+    return !m_queue.headNode();
+  }
+
   bool advance(unsigned n) {
     auto head = m_queue.headNode();
     if (!head) return false;
