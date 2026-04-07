@@ -132,7 +132,7 @@ public:
       return false;
     };
     if (io.fn) {
-      io.fn = ZiIOFn{io.fn.mvObject(), ZuMv(fn)};
+      io.fn = ZiIOFn{io.fn.mvObject<ZiIOBuf>(), ZuMv(fn)};
     } else {
       ZmRef<ZiIOBuf> buf = new BufAlloc{impl()};
       auto ptr = buf->data();
@@ -198,7 +198,7 @@ public:
       return false;
     };
     if (io.fn) {
-      io.fn = ZiIOFn{io.fn.mvObject(), ZuMv(fn)};
+      io.fn = ZiIOFn{io.fn.mvObject<ZiIOBuf>(), ZuMv(fn)};
     } else {
       ZmRef<ZiIOBuf> buf = new BufAlloc{impl()};
       auto ptr = buf->data();
