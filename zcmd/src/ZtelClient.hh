@@ -400,7 +400,7 @@ public:
 friend TLS;
 
   void init(ZiMultiplex *mx, const ZvCf *cf) {
-    static const char *alpn[] = { "zcmd", 0 };
+    ZuCSpan alpn[] = { "zcmd" };
 
     Dispatcher::init();
 

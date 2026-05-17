@@ -14,6 +14,6 @@ LDADD = $(top_builddir)/zcmd/src/libZcmd.la \
 	$(top_builddir)/zv/src/libZv.la $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
-	@MBEDTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = cmdtest
 cmdtest_SOURCES = cmdtest.cc

@@ -384,13 +384,13 @@ private:
     auto base = buf->data();
     bool origin_match = pbuf.origin == buf.ptr();
     if (!pbuf.off) {
-      if (!origin_match && pbuf.base != base) ptls_buffer_dispose(&pbuf);
+      if (pbuf.base != base) ptls_buffer_dispose(&pbuf);
       return;
     }
     if (ZuUnlikely(!origin_match || pbuf.base != base)) {
       ZiLOG(Error, "Ztls", "TLS TX buffer origin mismatch");
       disconnect_(false);
-      if (!origin_match && pbuf.base != base) ptls_buffer_dispose(&pbuf);
+      if (pbuf.base != base) ptls_buffer_dispose(&pbuf);
       return;
     }
     buf->skip = 0;
@@ -426,7 +426,7 @@ private:
       if (ZuUnlikely(!origin_match || pbuf.base != plain)) {
 	ZiLOG(Error, "Ztls", "TLS RX buffer origin mismatch");
 	disconnect_(false);
-	if (!origin_match && pbuf.base != plain) ptls_buffer_dispose(&pbuf);
+	if (pbuf.base != plain) ptls_buffer_dispose(&pbuf);
 	return;
       }
       if (pbuf.off) {
@@ -444,7 +444,7 @@ private:
       }
       return;
     }
-    if (!origin_match && pbuf.base != plain) ptls_buffer_dispose(&pbuf);
+    if (pbuf.base != plain) ptls_buffer_dispose(&pbuf);
     if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
 	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
       disconnect_(true);
@@ -469,7 +469,7 @@ private:
 	return nullptr;
       }
     }
-	ptls_buffer_init_rx(&pbuf, base + m_headroom, buf->size - m_rec_overhead);
+    ptls_buffer_init_rx(&pbuf, base + m_headroom, buf->size - m_rec_overhead);
     pbuf.origin = buf;
     pbuf.align_bits = align_bits;
     return base;
@@ -644,6 +644,14 @@ private:
     return m_asyncJob && m_asyncTLS == m_tls;
   }
 
+  void clearAsync_() {
+    m_asyncJob = nullptr;
+    m_asyncHandle = Zi::nullHandle();
+    m_asyncTLS = nullptr;
+    m_asyncGen = 0;
+    m_asyncReg = nullptr;
+  }
+
   bool asyncHandshake_() {
     if (ZuUnlikely(!app()->asyncConfigured_())) {
       app()->error_(ZeEXCEPT(Error, "Ztls", ([](auto &s) {
@@ -705,11 +713,7 @@ private:
 	      link->asyncReady_(tls_, job, handle, gen, reg);
 	    }},
 	  [reg]() mutable { reg->armed = 1; }))) {
-      m_asyncJob = nullptr;
-      m_asyncHandle = Zi::nullHandle();
-      m_asyncTLS = nullptr;
-      m_asyncGen = 0;
-      m_asyncReg = nullptr;
+      clearAsync_();
       app()->error_(ZeEXCEPT(Error, "Ztls",
 	"ZiEventLoop::addHandle() failed for picotls async job"));
       disconnect_(false);
@@ -722,7 +726,7 @@ private:
   void asyncReady_(
       ptls_t *tls_, ptls_async_job_t *job_,
       Zi::Handle handle_, uint64_t gen_, AsyncRegRef reg_) {
-    if (!reg_->armed) return;
+    if (!reg_->armed.xch(0)) return;
     app()->asyncRun_([
       link = ZmMkRef(impl()), tls_, job_, handle_, gen_, reg_
     ]() mutable {
@@ -744,11 +748,7 @@ private:
 	m_asyncGen == gen_ &&
 	m_asyncReg.ptr() == reg_.ptr() &&
 	m_tls == tls_) {
-      m_asyncJob = nullptr;
-      m_asyncHandle = Zi::nullHandle();
-      m_asyncTLS = nullptr;
-      m_asyncGen = 0;
-      m_asyncReg = nullptr;
+      clearAsync_();
       int n = handshake__(nullptr, nullptr);
       handleHandshakeResult_(n);
       return;
@@ -758,11 +758,8 @@ private:
 
   void asyncCleanup_() {
     Zi::Handle handle = m_asyncHandle;
-    m_asyncJob = nullptr;
-    m_asyncHandle = Zi::nullHandle();
-    m_asyncTLS = nullptr;
-    m_asyncGen = 0;
-    m_asyncReg = nullptr;
+    if (m_asyncReg) m_asyncReg->armed = 0;
+    clearAsync_();
     if (!Zi::nullHandle(handle)) app()->asyncDelHandle_(handle);
   }
 
@@ -770,11 +767,7 @@ private:
     if (!asyncPending_()) return false;
     m_asyncRetired.push(AsyncRetired{
       m_tls, m_asyncJob, m_asyncHandle, m_asyncGen, m_asyncReg});
-    m_asyncJob = nullptr;
-    m_asyncHandle = Zi::nullHandle();
-    m_asyncTLS = nullptr;
-    m_asyncGen = 0;
-    m_asyncReg = nullptr;
+    clearAsync_();
     return true;
   }
 

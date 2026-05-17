@@ -92,7 +92,7 @@ int main()
   }
 
   using Key = ZuStructKeyT<Order>;
-  std::cout << "Key " << ZmDemangle<Key> << '\n';
+  std::cout << "Key " << ZmDemangle<Key>{} << '\n';
   using KeyFields = ZuFields<Key>;
   std::cout << "KeyFields " << ZmDemangle<KeyFields>{} << '\n';
   ZuAssert((ZuIsSame<ZuUnder<Order>, Order>{}));
