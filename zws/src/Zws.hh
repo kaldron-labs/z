@@ -21,16 +21,16 @@ template <typename App, typename Link> class Client;
 template <
   typename App_,
   typename Impl_,
-  typename IOBufAlloc_ = Ztls::IOBufAlloc<>>
+  typename BufAlloc_ = Ztls::BufAlloc<>>
 class CliLink :
-  public Ztls::CliLink<App_, CliLink<App_, Impl_, IOBufAlloc_>>,
-  public ZiRx<CliLink<App_, Impl_, IOBufAlloc_>, IOBufAlloc_> {
+  public Ztls::CliLink<App_, CliLink<App_, Impl_, BufAlloc_>, BufAlloc_>,
+  public ZiRx<CliLink<App_, Impl_, BufAlloc_>, BufAlloc_> {
 public:
   using App = App_;
   using Impl = Impl_;
-  using Base = Ztls::CliLink<App, Impl>;
-  using IOBufAlloc = IOBufAlloc_;
-  using Rx = ZiRx<CliLink, IOBufAlloc>;
+  using Base = Ztls::CliLink<App, CliLink, BufAlloc_>;
+  using BufAlloc = BufAlloc_;
+  using Rx = ZiRx<CliLink, BufAlloc>;
 
   using Base::impl;
   using Base::app;
@@ -67,14 +67,14 @@ public:
     scheduleTimeout();
     m_state = State::Handshake;
 
-    ZmRef<IOBuf> buf = new IOBufAlloc{impl()};
-    buf << "GET " << m_path << " HTTP/1.1\r\nHost: " << this->server();
-    if (port != 443) buf << ':' << unsigned(this->port());
-    buf
+    auto tx = this->txStream_();
+    tx << "GET " << m_path << " HTTP/1.1\r\nHost: " << this->server();
+    if (this->port() != 443) tx << ':' << unsigned(this->port());
+    tx
       << "\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
 	 "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: "
-      << ZtQuote::Base64{m_key} << "\r\n\r\n";
-    Base::send_(ZuMv(buf));
+      << ZtQuote::Base64{m_key} << "\r\n\r\n"
+      << Zi::flush();
   }
 
   void disconnected() {
@@ -130,7 +130,7 @@ public:
 // https://username:password@host:port/path/to/resource1;rkey1=rvalue1;rkey2=rvalue2/resource2;rkey3=rvalue3?qkey1=qvalue1&qkey2=qvalue2#section
 // host can be IPv6, e.g. [2001:db8::1]
 
-  int process(Ztls::RxCursor &rx) {
+  int process(Ztls::RxStream &rx) {
     while (!rx.empty()) {
       auto span = rx.span();
       int n = process_span_(span);
@@ -236,7 +236,7 @@ public:
   using Base::app;
 
   void init(ZiMultiplex *mx, const ZvCf *cf) {
-    static const char *alpn[] = { "http/1.1", 0 };
+    ZuCSpan alpn[] = { "http/1.1" };
 
     TLS::init(mx, cf->get("thread", true), alpn, cf->get("caPath", false));
 

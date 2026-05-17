@@ -200,7 +200,7 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  static const char *alpn[] = { "http/1.1", 0 };
+  ZuCSpan alpn[] = { "http/1.1" };
 
   App app(repeats, payload_len);
 

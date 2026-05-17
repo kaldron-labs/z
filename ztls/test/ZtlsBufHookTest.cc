@@ -139,11 +139,11 @@ struct TestState {
 
 template <typename State>
 struct BaseClient : public Ztls::Client<BaseClient<State>> {
-  using IOBufAlloc = Ztls::IOBufAlloc<BufSize, MaxSize>;
+  using BufAlloc = Ztls::BufAlloc<BufSize, MaxSize>;
   using Base = Ztls::Client<BaseClient<State>>;
 
-  struct Link : public Ztls::CliLink<BaseClient, Link, IOBufAlloc> {
-    using BaseLink = Ztls::CliLink<BaseClient, Link, IOBufAlloc>;
+  struct Link : public Ztls::CliLink<BaseClient, Link, BufAlloc> {
+    using BaseLink = Ztls::CliLink<BaseClient, Link, BufAlloc>;
     Link(BaseClient *app) : BaseLink{app} { }
 
     void connected(const char *, int) {
@@ -176,11 +176,11 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 
 template <typename State>
 struct BaseServer : public Ztls::Server<BaseServer<State>> {
-  using IOBufAlloc = Ztls::IOBufAlloc<BufSize, MaxSize>;
+  using BufAlloc = Ztls::BufAlloc<BufSize, MaxSize>;
   using Base = Ztls::Server<BaseServer<State>>;
 
-  struct Link : public Ztls::SrvLink<BaseServer, Link, IOBufAlloc> {
-    using BaseLink = Ztls::SrvLink<BaseServer, Link, IOBufAlloc>;
+  struct Link : public Ztls::SrvLink<BaseServer, Link, BufAlloc> {
+    using BaseLink = Ztls::SrvLink<BaseServer, Link, BufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
 
     void connected(const char *, int) { }
@@ -313,13 +313,13 @@ int main()
     }
 
     BaseServer<TestState> server(state, state.ip);
-    if (!server.init(&mx, "3", nullptr, nullptr,
+    if (!server.init(&mx, "3", {}, {},
 	cert_path, key_path)) {
       std::cerr << "error: TLS server init failed\n" << std::flush;
       return 1;
     }
     BaseClient<TestState> client(state);
-    if (!client.init(&mx, "3", nullptr, cert_path, nullptr, nullptr)) {
+    if (!client.init(&mx, "3", {}, cert_path, {}, {})) {
       std::cerr << "error: TLS client init failed\n" << std::flush;
       return 1;
     }
@@ -375,13 +375,13 @@ int main()
     }
 
     BaseServer<TestState> server(state, state.ip);
-    if (!server.init(&mx, "3", nullptr, nullptr,
+    if (!server.init(&mx, "3", {}, {},
 	cert_path, key_path)) {
       std::cerr << "error: TLS server init failed\n" << std::flush;
       return 1;
     }
     BaseClient<TestState> client(state);
-    if (!client.init(&mx, "3", nullptr, cert_path, nullptr, nullptr)) {
+    if (!client.init(&mx, "3", {}, cert_path, {}, {})) {
       std::cerr << "error: TLS client init failed\n" << std::flush;
       return 1;
     }

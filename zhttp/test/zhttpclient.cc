@@ -29,8 +29,6 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
   using Base = Ztls::CliLink<App, Link>;
 
   using Base::app;
-  using Base::send_;
-
   Link(App *app) : Base{app}, rxMsg{new IOBufAlloc()} {
     // body.max = FIXME
   }
@@ -42,11 +40,11 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
 	<< " TLS: " << tlsver << " ALPN: " << alpn << ")\n")
       << std::flush;
     // connected() is called in TLS thread
-    Zhttp::Builder<> builder{new IOBufAlloc()};
-    builder.request(Zhttp::Method::GET, "/", hostname,
-      "User-Agent: zhttptest/1.0\r\nAccept: */*\r\n");
-    auto buf = builder.finish();
-    send_(ZuMv(buf));
+    auto tx = this->txStream_();
+    tx << Zhttp::Method::name(Zhttp::Method::GET)
+      << " / HTTP/1.1\r\nHost: " << ZuCSpan(hostname)
+      << "\r\nUser-Agent: zhttptest/1.0\r\nAccept: */*\r\n\r\n"
+      << Zi::flush();
   }
   void disconnected() {
     std::cerr << "disconnected\n" << std::flush;
@@ -112,7 +110,7 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  static const char *alpn[] = { "http/1.1", 0 };
+  ZuCSpan alpn[] = { "http/1.1" };
 
   App app;
 
