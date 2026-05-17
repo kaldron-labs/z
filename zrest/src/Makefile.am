@@ -19,7 +19,7 @@ libZrest_la_LIBADD = \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@MBEDTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 bin_PROGRAMS = zrest
 zrest_LDADD = libZrest.la $(libZrest_la_LDADD)
 zrest_SOURCES = zrest.cc

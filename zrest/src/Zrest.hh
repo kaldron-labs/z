@@ -511,7 +511,7 @@ public:
   using Base::app;
 
   void init(ZiMultiplex *mx, const ZvCf *cf) {
-    static const char *alpn[] = { "http/1.1", 0 };
+    ZuCSpan alpn[] = { "http/1.1" };
 
     if (!Base::init(
 	  Ztls::ClientParams(mx, cf->get("thread", true), alpn)

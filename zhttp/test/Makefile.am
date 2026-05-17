@@ -13,7 +13,7 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@MBEDTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zhttptest zhttpclient zhttptestd
 zhttptest_SOURCES = zhttptest.cc
 zhttpclient_SOURCES = zhttpclient.cc
