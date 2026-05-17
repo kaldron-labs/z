@@ -770,6 +770,25 @@ ptls_sign_certificate_t *sign_cert_cb(SignCert *sign)
   return sign ? &sign->impl.super : nullptr;
 }
 
+bool sign_cert_async(SignCert *sign, bool async)
+{
+  if (!sign) return false;
+#ifdef _WIN32
+  // picotls exposes an int fd for async jobs while Windows HANDLE is pointer-sized.
+  if (async) return false;
+  sign->impl.async = 0;
+  return true;
+#else
+#if defined(PTLS_OPENSSL_HAVE_ASYNC) && PTLS_OPENSSL_HAVE_ASYNC
+  sign->impl.async = async ? 1 : 0;
+  return true;
+#else
+  sign->impl.async = 0;
+  return !async;
+#endif
+#endif
+}
+
 PKey *pkey_load_pem(const char *path)
 {
   if (!path) return nullptr;

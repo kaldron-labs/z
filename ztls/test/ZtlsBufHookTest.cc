@@ -313,13 +313,15 @@ int main()
     }
 
     BaseServer<TestState> server(state, state.ip);
-    if (!server.init(&mx, "3", {}, {},
-	cert_path, key_path)) {
+    if (!server.init(
+	  Ztls::ServerParams(&mx, "3", {})
+	    .certPath(cert_path)
+	    .keyPath(key_path))) {
       std::cerr << "error: TLS server init failed\n" << std::flush;
       return 1;
     }
     BaseClient<TestState> client(state);
-    if (!client.init(&mx, "3", {}, cert_path, {}, {})) {
+    if (!client.init(Ztls::ClientParams(&mx, "3", {}).caPath(cert_path))) {
       std::cerr << "error: TLS client init failed\n" << std::flush;
       return 1;
     }
@@ -375,13 +377,15 @@ int main()
     }
 
     BaseServer<TestState> server(state, state.ip);
-    if (!server.init(&mx, "3", {}, {},
-	cert_path, key_path)) {
+    if (!server.init(
+	  Ztls::ServerParams(&mx, "3", {})
+	    .certPath(cert_path)
+	    .keyPath(key_path))) {
       std::cerr << "error: TLS server init failed\n" << std::flush;
       return 1;
     }
     BaseClient<TestState> client(state);
-    if (!client.init(&mx, "3", {}, cert_path, {}, {})) {
+    if (!client.init(Ztls::ClientParams(&mx, "3", {}).caPath(cert_path))) {
       std::cerr << "error: TLS client init failed\n" << std::flush;
       return 1;
     }

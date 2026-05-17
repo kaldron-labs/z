@@ -12,6 +12,7 @@ LDADD = $(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZtlsPKTest ZtlsBufHookTest
+noinst_PROGRAMS = ZtlsPKTest ZtlsBufHookTest ZtlsAsyncTest
 ZtlsPKTest_SOURCES = ZtlsPKTest.cc
 ZtlsBufHookTest_SOURCES = ZtlsBufHookTest.cc
+ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc

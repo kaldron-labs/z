@@ -20,6 +20,7 @@
 #include <zlib/ZuInvoke.hh>
 
 #include <zlib/ZmRef.hh>
+#include <zlib/ZmList.hh>
 
 #include <zlib/ZiLog.hh>
 

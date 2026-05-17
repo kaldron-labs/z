@@ -23,6 +23,7 @@
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiEventLoop.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
@@ -34,6 +35,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <fcntl.h>
+#endif
 
 namespace Ztls_ {
 
@@ -60,6 +64,76 @@ ZuDerive(Host, ZtString<ZtStringHeapID<"Ztls.Host">>);
 ZuDerive(Ticket, (ZtArray<uint8_t, ZtArrayHeapID<"Ztls.Ticket">>));
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Ztls.ALPNData">>));
 ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Ztls.ALPN">>));
+using ErrorFn = ZmFn<void(ZeException)>;
+ZuDerive(ParamString, ZtString<ZtStringHeapID<"Ztls.Param">>);
+ZuDerive(ParamStrings,
+  (ZtArray<ParamString, ZtArrayHeapID<"Ztls.ParamStrings">>));
+
+inline ErrorFn defaultErrorFn()
+{
+  return ErrorFn{[](ZeException e) { ZiLogEvent(ZuMv(e)); }};
+}
+
+struct EngineParams {
+  EngineParams(ZiMultiplex *mx_, ZuCSpan thread_, ZuSpan<ZuCSpan> alpn_) :
+      mx{mx_}, thread{thread_}, errorFn_{defaultErrorFn()} {
+    alpn.ensure(alpn_.length());
+    for (auto &s : alpn_) alpn.push(ParamString{s});
+  }
+
+  EngineParams &&caPath(ZuCSpan v) { caPath_ = v; return ZuMv(*this); }
+  EngineParams &&certPath(ZuCSpan v) { certPath_ = v; return ZuMv(*this); }
+  EngineParams &&keyPath(ZuCSpan v) { keyPath_ = v; return ZuMv(*this); }
+  EngineParams &&asyncThread(ZuCSpan v) {
+    asyncThread_ = v;
+    return ZuMv(*this);
+  }
+  EngineParams &&errorFn(ErrorFn v) { errorFn_ = ZuMv(v); return ZuMv(*this); }
+
+  ZiMultiplex *mx = nullptr;
+  ParamString thread;
+  ParamStrings alpn;
+  ParamString caPath_;
+  ParamString certPath_;
+  ParamString keyPath_;
+  ParamString asyncThread_;
+  ErrorFn errorFn_;
+};
+
+struct ClientParams : public EngineParams {
+  using EngineParams::EngineParams;
+
+  ClientParams &&caPath(ZuCSpan v)
+    { EngineParams::caPath(v); return ZuMv(*this); }
+  ClientParams &&certPath(ZuCSpan v)
+    { EngineParams::certPath(v); return ZuMv(*this); }
+  ClientParams &&keyPath(ZuCSpan v)
+    { EngineParams::keyPath(v); return ZuMv(*this); }
+  ClientParams &&asyncThread(ZuCSpan v)
+    { EngineParams::asyncThread(v); return ZuMv(*this); }
+  ClientParams &&errorFn(ErrorFn v)
+    { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
+};
+
+struct ServerParams : public EngineParams {
+  using EngineParams::EngineParams;
+
+  ServerParams &&caPath(ZuCSpan v)
+    { EngineParams::caPath(v); return ZuMv(*this); }
+  ServerParams &&certPath(ZuCSpan v)
+    { EngineParams::certPath(v); return ZuMv(*this); }
+  ServerParams &&keyPath(ZuCSpan v)
+    { EngineParams::keyPath(v); return ZuMv(*this); }
+  ServerParams &&asyncThread(ZuCSpan v)
+    { EngineParams::asyncThread(v); return ZuMv(*this); }
+  ServerParams &&errorFn(ErrorFn v)
+    { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
+  ServerParams &&mTLS(bool v) { mTLS_ = v; return ZuMv(*this); }
+  ServerParams &&cacheTimeout(int v) { cacheTimeout_ = v; return ZuMv(*this); }
+
+  bool mTLS_ = false;
+  int cacheTimeout_ = -1;
+};
 
 // picotls runs within a single dedicated thread, without lock contention
 
@@ -145,13 +219,25 @@ public:
 
 friend Cxn;
 
+private:
+  struct AsyncReg;
+  using AsyncRegRef = ZmRef<AsyncReg>;
+
+public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
   Link(App *app, bool isServer) : m_app(app), m_isServer(isServer) {
   }
   ~Link() {
-    if (m_tls) ptls_free(m_tls);
+    if (m_tls) {
+      if (ZuUnlikely(asyncPending_())) {
+	ZiLOG(Error, "Ztls", "TLS link destroyed with async job pending");
+      } else
+	ptls_free(m_tls);
+    }
+    for (unsigned i = 0, n = m_asyncRetired.length(); i < n; i++)
+      ZiLOG(Error, "Ztls", "TLS link destroyed with retired async job pending");
   }
 
   App *app() const { return m_app; }
@@ -210,28 +296,43 @@ private:
   }
 
   void handshake_(ZmRef<ZiIOBuf> buf) {
+    if (ZuUnlikely(asyncPending_())) {
+      app()->error_(ZeEXCEPT(Error, "Ztls",
+	"TLS handshake input received while async operation is pending"));
+      disconnect_(false);
+      return;
+    }
     size_t inlen = buf->length;
     int n = handshake__(buf->data(), &inlen);
-    if (!n) { handshook(); return; }
-    if (n == PTLS_ERROR_IN_PROGRESS) return;
-#if 0
-    if (n == PTLS_ERROR_ASYNC_OPERATION) {
-      // FIXME - handle PTLS_ERROR_ASYNC_OPERATION using ZiEventLoop
-      return false;
-    }
-#endif
+    handleHandshakeResult_(n);
+  }
+
+  static bool isCloseNotify_(int n) {
     if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
-	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
+	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) return true;
+    return false;
+  }
+
+protected:
+  bool handleHandshakeResult_(int n) {
+    if (!n) return finishHandshake_();
+    if (n == PTLS_ERROR_IN_PROGRESS) return true;
+    if (n == PTLS_ERROR_ASYNC_OPERATION) return asyncHandshake_();
+    if (isCloseNotify_(n)) {
       disconnect_(true);
-      return;
+      return false;
     }
     ZiLOG(Error, "Ztls", ([n](auto &s) {
       s << "ptls_handshake(): " << strerror_(n);
     }));
     disconnect_(false);
+    return false;
   }
 
-  bool handshook() {
+private:
+  bool finishHandshake_() {
+    if (m_handshook) return true;
+    asyncCleanup_();
     m_tlsver = ptls_get_protocol_version(m_tls);
     m_cipher = ptls_get_cipher(m_tls);
     if (ZuUnlikely(!m_cipher)) {
@@ -260,6 +361,7 @@ private:
     }
     m_tx_seq_est = 0;
     m_tx_need_key_update = false;
+    m_handshook = true;
     impl()->connected(
       ptls_get_negotiated_protocol(m_tls),
       tlsver_(ptls_get_protocol_version(m_tls)));
@@ -537,6 +639,164 @@ public:
     return n;
   }
 
+private:
+  bool asyncPending_() const {
+    return m_asyncJob && m_asyncTLS == m_tls;
+  }
+
+  bool asyncHandshake_() {
+    if (ZuUnlikely(!app()->asyncConfigured_())) {
+      app()->error_(ZeEXCEPT(Error, "Ztls", ([](auto &s) {
+	s << "ptls_handshake() returned PTLS_ERROR_ASYNC_OPERATION "
+	  << "but asyncThread is not configured";
+      })));
+      disconnect_(false);
+      return false;
+    }
+
+    auto job = ptls_get_async_job(tls());
+    if (ZuUnlikely(!job)) {
+      app()->error_(ZeEXCEPT(Error, "Ztls",
+	"ptls_get_async_job() returned null"));
+      disconnect_(false);
+      return false;
+    }
+    if (ZuUnlikely(!job->get_fd)) {
+      app()->error_(ZeEXCEPT(Error, "Ztls",
+	"callback-only picotls async jobs are unsupported"));
+      disconnect_(false);
+      return false;
+    }
+    int fd = job->get_fd(job);
+    Zi::Handle handle = static_cast<Zi::Handle>(fd);
+    if (ZuUnlikely(Zi::nullHandle(handle))) {
+      app()->error_(ZeEXCEPT(Error, "Ztls",
+	"picotls async job returned an invalid fd"));
+      disconnect_(false);
+      return false;
+    }
+#ifndef _WIN32
+    if (ZuUnlikely(fcntl(fd, F_GETFD) < 0)) {
+      app()->error_(ZeEXCEPT(Error, "Ztls", ([e = ZeError{errno}](auto &s) {
+	s << "picotls async job fd is invalid: " << e;
+      })));
+      disconnect_(false);
+      return false;
+    }
+#endif
+
+    asyncCleanup_();
+
+    auto gen = m_tlsGen;
+    auto tls_ = tls();
+    AsyncRegRef reg = new AsyncReg{};
+    m_asyncJob = job;
+    m_asyncHandle = handle;
+    m_asyncTLS = tls_;
+    m_asyncGen = gen;
+    m_asyncReg = reg;
+
+    auto link = ZmMkRef(impl());
+    if (ZuUnlikely(!app()->asyncAddHandle_(
+	  handle,
+	  ZiEvent::HandleSendFn{[](Zi::Handle) { }},
+	  ZiEvent::HandleRecvFn{
+	    [link = ZuMv(link), tls_, job, handle, gen, reg](Zi::Handle) mutable {
+	      link->asyncReady_(tls_, job, handle, gen, reg);
+	    }},
+	  [reg]() mutable { reg->armed = 1; }))) {
+      m_asyncJob = nullptr;
+      m_asyncHandle = Zi::nullHandle();
+      m_asyncTLS = nullptr;
+      m_asyncGen = 0;
+      m_asyncReg = nullptr;
+      app()->error_(ZeEXCEPT(Error, "Ztls",
+	"ZiEventLoop::addHandle() failed for picotls async job"));
+      disconnect_(false);
+      return false;
+    }
+
+    return true;
+  }
+
+  void asyncReady_(
+      ptls_t *tls_, ptls_async_job_t *job_,
+      Zi::Handle handle_, uint64_t gen_, AsyncRegRef reg_) {
+    if (!reg_->armed) return;
+    app()->asyncRun_([
+      link = ZmMkRef(impl()), tls_, job_, handle_, gen_, reg_
+    ]() mutable {
+      link->app()->asyncDelHandleNow_(handle_);
+      link->app()->run([
+	link = ZuMv(link), tls_, job_, handle_, gen_, reg_ = ZuMv(reg_)
+      ]() mutable {
+	link->asyncResume_(tls_, job_, handle_, gen_, ZuMv(reg_));
+      });
+    });
+  }
+
+  void asyncResume_(
+      ptls_t *tls_, ptls_async_job_t *job_,
+      Zi::Handle handle_, uint64_t gen_, AsyncRegRef reg_) {
+    if (m_asyncTLS == tls_ &&
+	m_asyncJob == job_ &&
+	m_asyncHandle == handle_ &&
+	m_asyncGen == gen_ &&
+	m_asyncReg.ptr() == reg_.ptr() &&
+	m_tls == tls_) {
+      m_asyncJob = nullptr;
+      m_asyncHandle = Zi::nullHandle();
+      m_asyncTLS = nullptr;
+      m_asyncGen = 0;
+      m_asyncReg = nullptr;
+      int n = handshake__(nullptr, nullptr);
+      handleHandshakeResult_(n);
+      return;
+    }
+    if (asyncRetiredReady_(tls_, job_, handle_, gen_, ZuMv(reg_))) return;
+  }
+
+  void asyncCleanup_() {
+    Zi::Handle handle = m_asyncHandle;
+    m_asyncJob = nullptr;
+    m_asyncHandle = Zi::nullHandle();
+    m_asyncTLS = nullptr;
+    m_asyncGen = 0;
+    m_asyncReg = nullptr;
+    if (!Zi::nullHandle(handle)) app()->asyncDelHandle_(handle);
+  }
+
+  bool asyncRetireTLS_() {
+    if (!asyncPending_()) return false;
+    m_asyncRetired.push(AsyncRetired{
+      m_tls, m_asyncJob, m_asyncHandle, m_asyncGen, m_asyncReg});
+    m_asyncJob = nullptr;
+    m_asyncHandle = Zi::nullHandle();
+    m_asyncTLS = nullptr;
+    m_asyncGen = 0;
+    m_asyncReg = nullptr;
+    return true;
+  }
+
+  bool asyncRetiredReady_(
+      ptls_t *tls_, ptls_async_job_t *job_,
+      Zi::Handle handle_, uint64_t gen_, AsyncRegRef reg_) {
+    for (unsigned i = 0, n = m_asyncRetired.length(); i < n; i++) {
+      auto &retired = m_asyncRetired[i];
+      if (retired.tls != tls_ ||
+	  retired.job != job_ ||
+	  retired.handle != handle_ ||
+	  retired.gen != gen_ ||
+	  retired.reg.ptr() != reg_.ptr())
+	continue;
+      ptls_free(retired.tls);
+      m_asyncRetired.splice(i, 1);
+      return true;
+    }
+    return false;
+  }
+
+public:
   void disconnect() { // App thread(s)
     m_disconnecting = 1;
     app()->invoke([this]() { disconnect_(); });
@@ -544,13 +804,18 @@ public:
   void disconnect_(bool notify = true) { // TLS thread
     m_disconnecting = 1; // disconnect() might be bypassed
     app()->mx()->del(&m_reconnTimer);
-    if (notify) {
+    bool asyncPending = asyncPending_();
+    if (notify && !asyncPending) {
       int n = m_tls ?
 	send_alert_(PTLS_ALERT_LEVEL_WARNING, PTLS_ALERT_CLOSE_NOTIFY) :
 	0;
       if (n) ZiLOG(Warning, "Ztls", ([n](auto &s) {
 	s << "ptls_send_alert(): " << strerror_(n);
       }));
+    }
+    if (asyncPending) {
+      asyncRetireTLS_();
+      m_tls = nullptr;
     }
     auto cxn = ZmRef<Cxn>{ZuMv(m_cxn)};
     m_cxn = nullptr;
@@ -574,7 +839,11 @@ protected:
   }
 
   void reset_tls_() {
-    if (m_tls) ptls_free(m_tls);
+    ++m_tlsGen;
+    if (m_tls) {
+      if (!asyncRetireTLS_())
+	ptls_free(m_tls);
+    }
     m_tls = ptls_new(app()->ctx(), m_isServer);
     if (!m_tls) {
       ZiLOG(Error, "Ztls", "ptls_new() failed");
@@ -590,6 +859,7 @@ protected:
     m_headroom = 0;
     m_tx_seq_est = 0;
     m_tx_need_key_update = false;
+    m_handshook = false;
     m_disconnecting = 0;
     reset_handshake_props_();
 
@@ -602,7 +872,22 @@ private:
   ZmScheduler::Timer	m_reconnTimer;
 
   // TLS thread
+  struct AsyncReg : public ZuObject {
+    ZmAtomic<unsigned>	armed = 0;
+  };
+
+  struct AsyncRetired {
+    ptls_t		*tls = nullptr;
+    ptls_async_job_t	*job = nullptr;
+    Zi::Handle		handle = Zi::nullHandle();
+    uint64_t		gen = 0;
+    AsyncRegRef		reg;
+  };
+  using AsyncRetireds =
+    ZtArray<AsyncRetired, ZtArrayHeapID<"Ztls.AsyncRetired">>;
+
   ptls_t		*m_tls = nullptr;
+  uint64_t		m_tlsGen = 0;
   uint16_t		m_tlsver = 0;
   ptls_cipher_suite_t	*m_cipher = nullptr;
   unsigned		m_rec_hdr_len = 5;
@@ -612,7 +897,14 @@ private:
   unsigned		m_headroom = 0;
   uint64_t		m_tx_seq_est = 0;
   bool			m_tx_need_key_update = false;
+  bool			m_handshook = false;
   ptls_handshake_properties_t m_props{};
+  ptls_async_job_t	*m_asyncJob = nullptr;
+  Zi::Handle		m_asyncHandle = Zi::nullHandle();
+  ptls_t		*m_asyncTLS = nullptr;
+  uint64_t		m_asyncGen = 0;
+  AsyncRegRef		m_asyncReg;
+  AsyncRetireds		m_asyncRetired;
   CxnRef		m_cxn = nullptr;
   RxStream		m_rxStream;
 
@@ -734,7 +1026,7 @@ private:
 
     // send HELO
     int n = this->handshake__(nullptr, nullptr);
-    if (n && n != PTLS_ERROR_IN_PROGRESS) this->disconnect_(false);
+    this->handleHandshakeResult_(n);
   }
 
 protected:
@@ -831,28 +1123,85 @@ template <typename, typename, typename, typename> friend class SrvLink;
     Backend::cert_store_free(m_cacert);
   }
 
-  template <typename L>
-  bool init(ZiMultiplex *mx, ZuCSpan thread, L l) {
-    m_mx = mx;
-    if (!(m_thread = m_mx->sid(thread))) {
-      ZiLOG(Error, "Ztls", ([thread = LogMsg{thread}](auto &s) {
+  bool init(EngineParams params) {
+    return init_(ZuMv(params), [](const EngineParams &) { return true; });
+  }
+
+protected:
+  template <typename Params, typename L>
+  bool init_(Params params, L l) {
+    if (!validate_(params)) return false;
+    m_mx = params.mx;
+    m_thread = m_mx->sid(params.thread);
+    m_asyncThread = 0;
+    if (params.asyncThread_) m_asyncThread = m_mx->sid(params.asyncThread_);
+    m_errorFn = ZuMv(params.errorFn_);
+    if (!m_errorFn) m_errorFn = defaultErrorFn();
+
+    return ZmBlock<bool>{}([
+      this, params = ZuMv(params), l = ZuMv(l)
+    ](auto wake) mutable {
+      invoke([
+	this, params = ZuMv(params), l = ZuMv(l), wake = ZuMv(wake)
+      ]() mutable {
+	wake(init_context_(params, l));
+      });
+    });
+  }
+
+private:
+  template <typename Params>
+  bool validate_(const Params &params) {
+    if (ZuUnlikely(!params.mx)) {
+      ZiLOG(Error, "Ztls", "multiplexer is null");
+      return false;
+    }
+    unsigned thread = params.mx->sid(params.thread);
+    if (!thread || thread > params.mx->params().nThreads()) {
+      ZiLOG(Error, "Ztls", ([thread = LogMsg{params.thread}](auto &s) {
 	s << "invalid thread ID \"" << thread << '"';
       }));
       return false;
     }
-    if (!m_mx->running()) {
+    if (!params.mx->running()) {
       ZiLOG(Error, "Ztls", "multiplexer not running");
       return false;
     }
-    return ZmBlock<bool>{}([this, l = ZuMv(l)](auto wake) mutable {
-      invoke([this, l = ZuMv(l), wake = ZuMv(wake)]() mutable {
-	wake(init_(ZuMv(l)));
-      });
-    });
+    if (params.asyncThread_) {
+#ifdef _WIN32
+      ZiLOG(Error, "Ztls", ([](auto &s) {
+	s << "asyncThread is unsupported on Windows because picotls exposes "
+	  << "an int fd while HANDLE is pointer-sized";
+      }));
+      return false;
+#else
+      unsigned asyncThread = params.mx->sid(params.asyncThread_);
+      if (!asyncThread || asyncThread > params.mx->params().nThreads()) {
+	ZiLOG(Error, "Ztls", ([thread = LogMsg{params.asyncThread_}](auto &s) {
+	  s << "invalid async thread ID \"" << thread << '"';
+	}));
+	return false;
+      }
+      if (asyncThread == thread) {
+	ZiLOG(Error, "Ztls", "async thread must differ from TLS thread");
+	return false;
+      }
+      if (asyncThread == params.mx->rxThread() ||
+	  asyncThread == params.mx->txThread()) {
+	ZiLOG(Error, "Ztls", "async thread must differ from I/O threads");
+	return false;
+      }
+      if (!params.mx->params().thread(asyncThread).isolated()) {
+	ZiLOG(Error, "Ztls", "async thread must be isolated");
+	return false;
+      }
+#endif
+    }
+    return true;
   }
-private:
-  template <typename L>
-  bool init_(L l) {
+
+  template <typename Params, typename L>
+  bool init_context_(Params &params, L &l) {
     if (!Random::init()) {
       ZiLOG(Error, "Ztls", "backend init failed");
       return false;
@@ -864,12 +1213,32 @@ private:
     init_cipher_suites_();
     m_ctx.cipher_suites = m_cipher_suites;
     m_ctx.server_cipher_preference = 1;
-    if (!l()) return false;
+    if (!init_alpn_(params.alpn)) return false;
+    if (asyncConfigured_())
+      if (!startAsyncLoop_()) return false;
+    if (!l(params)) {
+      stopAsyncLoop_();
+      return false;
+    }
     return true;
   }
 
 public:
-  void final() { }
+  void final() {
+    if (!m_mx || !m_thread) return;
+    if (m_mx->running()) {
+      if (invoked())
+	final_();
+      else
+	ZmBlock<>{}([this](auto wake) mutable {
+	  invoke([this, wake = ZuMv(wake)]() mutable {
+	    final_();
+	    wake();
+	  });
+	});
+    } else
+      final_();
+  }
 
   ZiMultiplex *mx() const { return m_mx; }
 
@@ -882,6 +1251,105 @@ public:
     m_mx->invoke(m_thread, ZuFwd<Args>(args)...);
   }
   bool invoked() { return m_mx->invoked(m_thread); }
+
+private:
+  bool asyncConfigured_() const { return m_asyncThread != 0; }
+
+  void error_(ZeException e) {
+    if (m_errorFn)
+      m_errorFn(ZuMv(e));
+    else
+      ZiLogEvent(ZuMv(e));
+  }
+
+  bool startAsyncLoop_() {
+    if (!asyncConfigured_() || m_eventLoopStarted) return true;
+    m_eventLoop.init(m_mx, m_asyncThread,
+      ZiEvent::FailFn{[this](ZeException e) { error_(ZuMv(e)); }});
+    m_eventLoopInit = true;
+    bool ok = ZmBlock<bool>{}([this](auto wake) mutable {
+      m_eventLoop.start(ZiEvent::StartFn{
+	[this, wake = ZuMv(wake)](ZiEvent::StartResult result) mutable {
+	  if (result.is<ZiEvent::Exception>()) {
+	    error_(ZuMv(result).p<ZiEvent::Exception>());
+	    wake(false);
+	    return;
+	  }
+	  wake(true);
+	}});
+    });
+    m_eventLoopStarted = ok;
+    if (!ok) {
+      m_eventLoop.final();
+      m_eventLoopInit = false;
+    }
+    return ok;
+  }
+
+  void stopAsyncLoop_() {
+    if (m_eventLoopStarted) {
+      ZmBlock<>{}([this](auto wake) mutable {
+	m_eventLoop.stop(ZiEvent::StopFn{
+	  [this, wake = ZuMv(wake)](ZiEvent::StopResult result) mutable {
+	    if (result.is<ZiEvent::Exception>())
+	      error_(ZuMv(result).p<ZiEvent::Exception>());
+	    wake();
+	  }});
+      });
+      m_eventLoopStarted = false;
+    }
+    if (m_eventLoopInit) {
+      m_eventLoop.final();
+      m_eventLoopInit = false;
+    }
+  }
+
+  void final_() {
+    stopAsyncLoop_();
+    m_errorFn = ErrorFn{};
+  }
+
+  template <typename SendFn, typename RecvFn, typename ArmedFn>
+  bool asyncAddHandle_(
+      Zi::Handle handle, SendFn send, RecvFn recv, ArmedFn armed) {
+    if (!m_eventLoopStarted) return false;
+    return ZmBlock<bool>{}([
+      this, handle, send = ZuMv(send), recv = ZuMv(recv),
+      armed = ZuMv(armed)
+    ](auto wake) mutable {
+      m_eventLoop.run([
+	this, handle, send = ZuMv(send), recv = ZuMv(recv),
+	armed = ZuMv(armed), wake = ZuMv(wake)
+      ]() mutable {
+	bool ok = m_eventLoop.addHandle(handle, ZuMv(send), ZuMv(recv));
+	if (ok) armed();
+	wake(ok);
+      });
+    });
+  }
+
+  void asyncRun_(ZmFn<> fn) {
+    if (!m_eventLoopStarted) return;
+    m_eventLoop.run(ZuMv(fn));
+  }
+
+  void asyncDelHandleNow_(Zi::Handle handle) {
+    m_eventLoop.delHandle(handle);
+  }
+
+  void asyncDelHandle_(Zi::Handle handle) {
+    if (Zi::nullHandle(handle) || !m_eventLoopStarted) return;
+    if (m_mx->invoked(m_asyncThread)) {
+      m_eventLoop.delHandle(handle);
+      return;
+    }
+    ZmBlock<>{}([this, handle](auto wake) mutable {
+      m_eventLoop.run([this, handle, wake = ZuMv(wake)]() mutable {
+	m_eventLoop.delHandle(handle);
+	wake();
+      });
+    });
+  }
 
 protected:
   // TLS thread
@@ -977,7 +1445,7 @@ protected:
   }
 
 protected:
-  bool init_alpn_(ZuSpan<ZuCSpan> alpn) {
+  bool init_alpn_(const ParamStrings &alpn) {
     m_alpn.length(0);
     m_alpnData.length(0);
     if (!alpn.length()) return true;
@@ -1033,6 +1501,11 @@ private:
 
   ZiMultiplex			*m_mx = nullptr;
   unsigned			m_thread = 0;
+  unsigned			m_asyncThread = 0;
+  ZiEventLoop			m_eventLoop;
+  bool				m_eventLoopInit = false;
+  bool				m_eventLoopStarted = false;
+  ErrorFn			m_errorFn;
 
   ptls_context_t		m_ctx{};
   ptls_cipher_suite_t		*m_cipher_suites[16]{};
@@ -1081,9 +1554,7 @@ friend Base;
   }
 
   // specify certPath and keyPath for mTLS
-  bool init(
-    ZiMultiplex *mx, ZuCSpan thread, ZuSpan<ZuCSpan> alpn,
-    ZuCSpan caPath = {}, ZuCSpan certPath = {}, ZuCSpan keyPath = {});
+  bool init(ClientParams params);
 
   void final() { Base::final(); }
 
@@ -1096,15 +1567,16 @@ private:
 };
 
 template <typename App>
-bool Client<App>::init(
-  ZiMultiplex *mx, ZuCSpan thread, ZuSpan<ZuCSpan> alpn,
-  ZuCSpan caPath, ZuCSpan certPath, ZuCSpan keyPath)
+bool Client<App>::init(ClientParams params)
 {
   using Link = typename App::Link;
 
-  return Base::init(mx, thread, [
-    this, caPath, alpn, certPath, keyPath
-  ]() -> bool {
+  if (bool(params.certPath_) != bool(params.keyPath_)) {
+    ZiLOG(Error, "Ztls", "client certPath and keyPath must be configured together");
+    return false;
+  }
+
+  return Base::init_(ZuMv(params), [this](const ClientParams &params) -> bool {
     static ptls_save_ticket_t save_ticket_cb{
       .cb = [](ptls_save_ticket_t *, ptls_t *tls, ptls_iovec_t input) -> int {
 	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
@@ -1112,18 +1584,18 @@ bool Client<App>::init(
 	return 0;
       }
     };
-    if (!this->init_alpn_(alpn)) return false;
     auto ctx = this->ctx();
     ctx->on_client_hello = nullptr;
     ctx->save_ticket = &save_ticket_cb;
     ctx->sign_certificate = nullptr;
     ctx->encrypt_ticket = nullptr;
     ctx->require_client_authentication = 0;
-    if (!this->loadCA(caPath)) return false;
+    if (!this->loadCA(ZuCSpan{params.caPath_})) return false;
 
-    if (certPath && keyPath) {
-      if (!Backend::load_certificates(ctx, certPath.data())) return false;
-      m_key = Backend::pkey_load_pem(keyPath.data());
+    if (params.certPath_ && params.keyPath_) {
+      if (!Backend::load_certificates(ctx, params.certPath_.data()))
+	return false;
+      m_key = Backend::pkey_load_pem(params.keyPath_.data());
       if (!m_key) return false;
       m_sign = Backend::sign_cert_new(m_key);
       if (!m_sign) {
@@ -1189,10 +1661,7 @@ friend Base;
     Backend::pkey_free(m_key);
   }
 
-  bool init(
-    ZiMultiplex *mx, ZuCSpan thread, ZuSpan<ZuCSpan> alpn,
-    ZuCSpan caPath = {}, ZuCSpan certPath = {}, ZuCSpan keyPath = {},
-    bool mTLS = false, int cacheMax = -1, int cacheTimeout = -1);
+  bool init(ServerParams params);
 
   void final() { Base::final(); }
 
@@ -1246,41 +1715,49 @@ private:
 };
 
 template <typename App>
-bool Server<App>::init(
-  ZiMultiplex *mx, ZuCSpan thread, ZuSpan<ZuCSpan> alpn,
-  ZuCSpan caPath, ZuCSpan certPath, ZuCSpan keyPath,
-  bool mTLS, int cacheMax, int cacheTimeout)
+bool Server<App>::init(ServerParams params)
 {
   using Link = typename App::Link;
 
-  return Base::init(mx, thread, [
-    this, alpn, caPath, certPath, keyPath, mTLS, cacheMax, cacheTimeout
-  ]() -> bool {
+  if (!params.certPath_) {
+    ZiLOG(Error, "Ztls", "server certPath is required");
+    return false;
+  }
+  if (!params.keyPath_) {
+    ZiLOG(Error, "Ztls", "server keyPath is required");
+    return false;
+  }
+
+  return Base::init_(ZuMv(params), [this](const ServerParams &params) -> bool {
     static ptls_on_client_hello_t on_client_hello_cb{
       .cb = [](ptls_on_client_hello_t *, ptls_t *tls, ptls_on_client_hello_parameters_t *params) -> int {
 	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
 	return link ? link->on_client_hello(tls, params) : 0;
       }
     };
-    (void)cacheMax;
-    if (!this->init_alpn_(alpn)) return false;
     auto ctx = this->ctx();
     ctx->on_client_hello = &on_client_hello_cb;
     ctx->sign_certificate = nullptr;
     ctx->encrypt_ticket = nullptr;
     ctx->save_ticket = nullptr;
-    ctx->require_client_authentication = mTLS ? 1 : 0;
+    ctx->require_client_authentication = params.mTLS_ ? 1 : 0;
     ctx->max_early_data_size = 0;
-    ctx->ticket_lifetime = cacheTimeout < 0 ? 86400 : cacheTimeout;
-    if (!this->loadCA(caPath)) return false;
+    ctx->ticket_lifetime =
+      params.cacheTimeout_ < 0 ? 86400 : params.cacheTimeout_;
+    if (!this->loadCA(ZuCSpan{params.caPath_})) return false;
 
-    if (!Backend::load_certificates(ctx, certPath.data())) return false;
-    m_key = Backend::pkey_load_pem(keyPath.data());
+    if (!Backend::load_certificates(ctx, params.certPath_.data()))
+      return false;
+    m_key = Backend::pkey_load_pem(params.keyPath_.data());
     if (!m_key) return false;
     m_sign = Backend::sign_cert_new(m_key);
     if (!m_sign) {
       Backend::pkey_free(m_key);
       m_key = nullptr;
+      return false;
+    }
+    if (params.asyncThread_ && !Backend::sign_cert_async(m_sign, true)) {
+      ZiLOG(Error, "Ztls", "async server certificate signing is unsupported");
       return false;
     }
     ctx->sign_certificate = Backend::sign_cert_cb(m_sign);

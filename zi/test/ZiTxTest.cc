@@ -26,6 +26,14 @@ struct FakeConnection {
     ++sendCalls;
     fn(io);
   }
+
+  FakeConnection *mx() { return this; }
+
+  template <typename L>
+  void txInvoke(L &&l)
+  {
+    ZuFwd<L>(l)();
+  }
 };
 
 struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
@@ -38,11 +46,7 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
   char		abortedOrder[16] = {};
   bool		abortedOK[16] = {};
 
-  template <typename L>
-  void txInvoke(L &&l)
-  {
-    ZuFwd<L>(l)();
-  }
+  FakeConnection *cxn() { return this; }
 
   void sent(ZmRef<ZiTxBuf> buf, bool ok)
   {
