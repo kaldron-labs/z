@@ -836,7 +836,7 @@ template <typename, typename, typename, typename> friend class SrvLink;
     m_mx = mx;
     if (!(m_thread = m_mx->sid(thread))) {
       ZiLOG(Error, "Ztls", ([thread = LogMsg{thread}](auto &s) {
-	s << "invalid Rx thread ID \"" << thread << '"';
+	s << "invalid thread ID \"" << thread << '"';
       }));
       return false;
     }
