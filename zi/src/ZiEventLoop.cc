@@ -247,7 +247,12 @@ bool Loop::addSocket(Zi::Socket socket_, SocketSendFn send, SocketRecvFn recv)
     memset(&ev, 0, sizeof(struct epoll_event));
     ev.events = EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
     ev.data.u64 = u64_socket(socket.ptr());
-    epoll_ctl(m_epollFD, EPOLL_CTL_ADD, socket_, &ev);
+    if (epoll_ctl(m_epollFD, EPOLL_CTL_ADD, socket_, &ev) < 0) {
+      failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
+	s << "epoll_ctl(EPOLL_CTL_ADD) failed: " << e;
+      })));
+      return false;
+    }
   }
 
 #else /* !_WIN32 */
@@ -350,7 +355,12 @@ bool Loop::addHandle(Zi::Handle handle_, HandleSendFn send, HandleRecvFn recv)
     memset(&ev, 0, sizeof(struct epoll_event));
     ev.events = EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
     ev.data.u64 = u64_handle(handle.ptr());
-    epoll_ctl(m_epollFD, EPOLL_CTL_ADD, handle_, &ev);
+    if (epoll_ctl(m_epollFD, EPOLL_CTL_ADD, handle_, &ev) < 0) {
+      failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
+	s << "epoll_ctl(EPOLL_CTL_ADD) failed: " << e;
+      })));
+      return false;
+    }
   }
 
 #else /* !_WIN32 */

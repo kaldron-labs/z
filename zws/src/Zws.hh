@@ -238,7 +238,10 @@ public:
   void init(ZiMultiplex *mx, const ZvCf *cf) {
     ZuCSpan alpn[] = { "http/1.1" };
 
-    TLS::init(mx, cf->get("thread", true), alpn, cf->get("caPath", false));
+    if (!Base::init(
+	  Ztls::ClientParams(mx, cf->get("thread", true), alpn)
+	    .caPath(cf->get("caPath", false))))
+      ZiLOG(Error, "Zws", "TLS client initialization failed");
 
     m_reconnFreq = cf->getInt("reconnFreq", 0, 3600, 0);
     m_timeout = cf->getInt("timeout", 0, 3600, 0);

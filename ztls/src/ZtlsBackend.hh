@@ -109,6 +109,7 @@ ptls_verify_certificate_t *verify_cert_cb(VerifyCert *);
 SignCert *sign_cert_new(PKey *);
 void sign_cert_free(SignCert *);
 ptls_sign_certificate_t *sign_cert_cb(SignCert *);
+bool sign_cert_async(SignCert *, bool);
 
 PKey *pkey_load_pem(const char *path);
 bool load_certificates(ptls_context_t *ctx, const char *path);

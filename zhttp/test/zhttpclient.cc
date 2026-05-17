@@ -128,7 +128,9 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if (!app.init(&mx, "3", alpn, argc == 4 ? argv[3] : nullptr)) {
+  if (!app.init(
+	Ztls::ClientParams(&mx, "3", alpn)
+	  .caPath(argc == 4 ? argv[3] : nullptr))) {
     std::cerr << "TLS client initialization failed\n" << std::flush;
     return 1;
   }

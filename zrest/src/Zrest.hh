@@ -513,7 +513,10 @@ public:
   void init(ZiMultiplex *mx, const ZvCf *cf) {
     static const char *alpn[] = { "http/1.1", 0 };
 
-    Base::init(mx, cf->get("thread", true), alpn, cf->get("caPath", false));
+    if (!Base::init(
+	  Ztls::ClientParams(mx, cf->get("thread", true), alpn)
+	    .caPath(cf->get("caPath", false))))
+      ZiLOG(Error, "Zrest", "TLS client initialization failed");
 
     m_reconnFreq = cf->getInt("reconnFreq", 0, 3600, 0);
     m_timeout = cf->getInt("timeout", 0, 3600, 0);

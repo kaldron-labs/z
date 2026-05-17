@@ -421,7 +421,10 @@ friend TLS;
 	  return static_cast<Link *>(link)->processTelemetry(ZuMv(buf));
 	});
 
-    TLS::init(mx, cf->get("thread", true), alpn, cf->get("caPath"));
+    if (!TLS::init(
+	  Ztls::ClientParams(mx, cf->get("thread", true), alpn)
+	    .caPath(cf->get("caPath"))))
+      ZiLOG(Error, "Ztel", "TLS client initialization failed");
 
     m_reconnFreq = cf->getInt("reconnFreq", 0, 3600, 0);
     m_timeout = cf->getInt("timeout", 0, 3600, 0);

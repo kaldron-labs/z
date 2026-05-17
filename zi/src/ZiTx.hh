@@ -59,7 +59,7 @@ public:
     if constexpr (!ZuIsSame<decltype(&Impl::cxn), decltype(&ZiTx::cxn)>{})
       if (ZuUnlikely(!cxn)) return;
     buf->owner = impl();
-    cxn->ZiConnection::send(ZiIOFn::mvFn(ZuMv(buf),
+    cxn->send(ZiIOFn::mvFn(ZuMv(buf),
 	[](ZmRef<ZiIOBuf> buf, ZiIOContext &io) {
 	  auto impl_ = impl(buf);
 	  auto &queue = impl_->ZiTx::txQueue;

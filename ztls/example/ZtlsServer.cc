@@ -158,7 +158,10 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if (!app.init(&mx, "3", alpn, {}, argv[3], argv[4])) {
+  if (!app.init(
+	Ztls::ServerParams(&mx, "3", alpn)
+	  .certPath(argv[3])
+	  .keyPath(argv[4]))) {
     std::cerr << "TLS server initialization failed\n" << std::flush;
     return 1;
   }
