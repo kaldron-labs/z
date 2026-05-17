@@ -127,7 +127,7 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  static const char *alpn[] = { "http/1.1", 0 };
+  ZuCSpan alpn[] = { "http/1.1" };
 
   unsigned repeats = 1;
   unsigned payload_len = 0;
@@ -158,7 +158,7 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if (!app.init(&mx, "3", alpn, nullptr, argv[3], argv[4])) {
+  if (!app.init(&mx, "3", alpn, {}, argv[3], argv[4])) {
     std::cerr << "TLS server initialization failed\n" << std::flush;
     return 1;
   }
