@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// IO Receive Stream
+// I/O Receive Stream
 // - owns a queue of receive buffers and presents a consumable stream view
 // - applications define:
 //   - queue type, which must support:

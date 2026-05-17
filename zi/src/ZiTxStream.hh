@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// IO Transmit Stream
+// I/O Transmit Stream
 // - streams output into a sequence of fixed-capacity buffers
 // - each buffer is assumed to be a single protocol frame, e.g. a TLS record
 // - applications define:
