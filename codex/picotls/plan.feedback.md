@@ -1,0 +1,5 @@
+- Hook placement: hooks in new `ZtlsPico.cc`
+- Receive-side origin tagging: origin should refer to an allocated Rx Ztls IOBuf so that Rx buffers can be moved/enqueued without copying
+- Exact preserve-region semantics: confirm how to compute the union of written prefix (`buf->off`) and plaintext region when ptls_send grows mid-flight.
+  - the written prefix is all that needs to be preserved, i.e. the region at `buf->base` with length `buf->off`
+- Failure policy: the design intentionally prevents alignment or ensure failures during normal operation - any failures should be treated as fatal disconnects
