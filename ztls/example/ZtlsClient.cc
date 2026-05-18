@@ -68,10 +68,13 @@ struct App : public Ztls::Client<App> {
     }
 
     void connectFailed(bool transient) {
-      if (transient)
+      if (transient) {
 	std::cerr << "failed to connect (transient)\n" << std::flush;
-      else
+	app()->setError("transient connect failure");
+      } else {
 	std::cerr << "failed to connect\n" << std::flush;
+	app()->setError("connect failure");
+      }
       close();
       app()->done();
     }
