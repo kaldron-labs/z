@@ -22,6 +22,7 @@
 #include <zlib/ZfbStruct.hh>
 
 #include <zlib/ZvCf.hh>
+#include <zlib/ZvRAG.hh>
 
 #include <zlib/ZdbTypes.hh>
 
@@ -31,6 +32,12 @@ namespace Zdb_::Tel {
 
 namespace DBCacheMode = Zdb_::CacheMode;
 namespace DBHostState = Zdb_::HostState;
+
+inline ZvRAG::T dbHostStateRAG(int8_t state) {
+  if (state == DBHostState::Instantiated) return ZvRAG::Red;
+  if (state == DBHostState::Active) return ZvRAG::Green;
+  return ZvRAG::Amber;
+}
 
 // display sequence: 
 //   name, cacheMode, cacheSize, count,
@@ -82,7 +89,7 @@ struct DBHost {
   int8_t	state = 0;// RAG: Instantiated - Red; Active - Green; * - Amber
   uint8_t	voted = 0;
 
-  ZvRAG::T rag() const { return DBHostState::rag(state); }
+  ZvRAG::T rag() const { return dbHostStateRAG(state); }
   void rag(ZvRAG::T) { } // unused
 
   friend ZtStructPrint ZuPrintType(DBHost *);
@@ -120,7 +127,7 @@ struct DB {
   uint8_t	recovering = 0;
   uint8_t	replicating = 0;
 
-  ZvRAG::T rag() const { return DBHostState::rag(state); }
+  ZvRAG::T rag() const { return dbHostStateRAG(state); }
   void rag(ZvRAG::T) { } // unused
 
   friend ZtStructPrint ZuPrintType(DB *);
@@ -143,7 +150,7 @@ ZfbStruct(DB,
     (((heartbeatTimeout), (Ctor<8>)),				(UInt32)),
     (((reconnectFreq),	(Ctor<9>)),				(UInt32)),
     (((electionTimeout), (Ctor<10>)),				(UInt32)),
-    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+    (((rag, RdFn),	(Synthetic, Series, Enum<ZvRAG::Map>)),	(Int8)));
 
 } // Zdb_::Tel
 

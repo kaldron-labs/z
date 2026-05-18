@@ -936,7 +936,7 @@ public:
 
   // buffer allocator
 private:
-  // objLoad(buf, shard, context)
+  // objLoad(buf, shard)
   // - construct object from flatbuffer (trusted source)
   ZmRef<Object<T>> objLoad(IOBuf *buf, unsigned shard) {
     auto record = record_(msg_(buf->hdr()));
@@ -1032,10 +1032,10 @@ private:
   // find, falling through object cache, buffer cache, backing data store
   template <
     unsigned KeyID, bool UpdateLRU, bool Evict, typename L>
-  void find_(Shard shard, Key<KeyID>, L l, ZmContext);
+  void find_(Shard shard, Key<KeyID>, L l);
   // find from backing data store (retried on failure)
   template <unsigned KeyID, typename L>
-  void retrieve(Shard shard, Key<KeyID>, L, ZmContext);
+  void retrieve(Shard shard, Key<KeyID>, L);
   template <unsigned KeyID>
   void retrieve_(ZmRef<Find<T, Key<KeyID>>> context);
 
@@ -1997,22 +1997,22 @@ inline void Table<T>::select_(
 template <typename T>
 template <
   unsigned KeyID, bool UpdateLRU, bool Evict, typename L>
-inline void Table<T>::find_(Shard shard, Key<KeyID> key, L l, ZmContext context) {
+inline void Table<T>::find_(Shard shard, Key<KeyID> key, L l) {
   ZmAssert(invoked(shard));
 
   auto load = [
-    this, shard, context = ZuMv(context)
+    this, shard
   ]<typename L_>(const Key<KeyID> &key, L_ l) mutable {
     auto [buf, found] = findBuf<KeyID>(shard, key);
     if (buf) {
-      l(objLoad(buf, shard, ZuMv(context)));
+      l(objLoad(buf, shard));
       return;
     }
     if (found) {
       l(nullptr);
       return;
     }
-    retrieve<KeyID>(shard, key, ZuMv(l), ZuMv(context));
+    retrieve<KeyID>(shard, key, ZuMv(l));
   };
   if constexpr (Evict) {
     m_cache[shard].template find<KeyID, UpdateLRU>(
@@ -2031,13 +2031,12 @@ inline void Table<T>::find_(Shard shard, Key<KeyID> key, L l, ZmContext context)
 template <typename T>
 template <unsigned KeyID, typename L>
 inline void Table<T>::retrieve(
-  Shard shard, Key<KeyID> key, L l, ZmContext context_)
+  Shard shard, Key<KeyID> key, L l)
 {
   using Key_ = Key<KeyID>;
   using Context = Find<T, Key_>;
 
-  auto context =
-    ZmMkRef(new Context{this, shard, ZuMv(key), ZuMv(l), ZuMv(context_)});
+  auto context = ZmMkRef(new Context{this, shard, ZuMv(key), ZuMv(l)});
 
   retrieve_<KeyID>(ZuMv(context));
 }
@@ -2076,7 +2075,7 @@ inline void Table<T>::retrieve_(
 	]() mutable {
 	  auto shard = context->shard;
 	  ZmRef<Object<T>> object =
-	    table->objLoad(ZuMv(buf), shard, ZuMv(context->context));
+	    table->objLoad(ZuMv(buf), shard);
 	  if (object->shard() != shard) {
 	    auto fn = ZuMv(context->fn);
 	    // sharding inconsistency is fatal, the app is broken
