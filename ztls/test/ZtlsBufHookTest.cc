@@ -23,6 +23,8 @@
 
 using namespace ZuTestUtil;
 
+#define ZTLS_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+
 namespace {
 
 constexpr unsigned BufSize = 128;
@@ -280,7 +282,7 @@ bool wait_done(TestState &state)
 void testDefaultBuffers(LogCapture &capture,
     const char *cert_path, const char *key_path)
 {
-  ZuTestScope(testDefaultBuffers);
+  ZuTestScopeRT(testDefaultBuffers);
 
   Ztls::Pico::reset_stats();
   capture.reset();
@@ -300,7 +302,7 @@ void testDefaultBuffers(LogCapture &capture,
 	.rxThread(1).txThread(2));
 
   bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "ZiMultiplex start failed");
+  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
 
   BaseServer<TestState> server(state, state.ip);
@@ -308,18 +310,18 @@ void testDefaultBuffers(LogCapture &capture,
     Ztls::ServerParams(&mx, "3", {})
       .certPath(cert_path)
       .keyPath(key_path));
-  ZuCHECK(serverOK, "TLS server init failed");
+  ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
 
   BaseClient<TestState> client(state);
   bool clientOK = client.init(
     Ztls::ClientParams(&mx, "3", {}).caPath(cert_path));
-  ZuCHECK(clientOK, "TLS client init failed");
+  ZTLS_CHECK_RT(clientOK, "TLS client init failed");
   if (!clientOK) { mx.stop(); return; }
 
   server.listen();
   bool listening = wait_for(state.listening);
-  ZuCHECK(listening, "listen timed out");
+  ZTLS_CHECK_RT(listening, "listen timed out");
   if (!listening) { mx.stop(); return; }
 
   ZmRef<BaseClient<TestState>::Link> link =
@@ -327,22 +329,22 @@ void testDefaultBuffers(LogCapture &capture,
   link->connect(state.ip, state.port);
 
   bool done = wait_done(state);
-  ZuCHECK(done, "TLS disconnect wait timed out");
+  ZTLS_CHECK_RT(done, "TLS disconnect wait timed out");
 
   mx.stop();
 
   auto stats = Ztls::Pico::stats();
   (void)stats;
-  ZuCHECK(!capture.copy_warns.load_(), "copy fallback warnings seen");
-  ZuCHECK(!capture.errors.load_(), "unexpected error logs");
-  ZuCHECK(!state.errors.load_(),
+  ZTLS_CHECK_RT(!capture.copy_warns.load_(), "copy fallback warnings seen");
+  ZTLS_CHECK_RT(!capture.errors.load_(), "unexpected error logs");
+  ZTLS_CHECK_RT(!state.errors.load_(),
     state.error_msg ? state.error_msg : "state error");
 }
 
 void testAlignedBuffers(LogCapture &capture,
     const char *cert_path, const char *key_path)
 {
-  ZuTestScope(testAlignedBuffers);
+  ZuTestScopeRT(testAlignedBuffers);
 
   Ztls::Pico::reset_stats();
   capture.reset();
@@ -365,7 +367,7 @@ void testAlignedBuffers(LogCapture &capture,
 	.rxThread(1).txThread(2));
 
   bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "ZiMultiplex start failed");
+  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
 
   BaseServer<TestState> server(state, state.ip);
@@ -373,13 +375,13 @@ void testAlignedBuffers(LogCapture &capture,
     Ztls::ServerParams(&mx, "3", {})
       .certPath(cert_path)
       .keyPath(key_path));
-  ZuCHECK(serverOK, "TLS server init failed");
+  ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
 
   BaseClient<TestState> client(state);
   bool clientOK = client.init(
     Ztls::ClientParams(&mx, "3", {}).caPath(cert_path));
-  ZuCHECK(clientOK, "TLS client init failed");
+  ZTLS_CHECK_RT(clientOK, "TLS client init failed");
   if (!clientOK) { mx.stop(); return; }
 
   server.override_cipher_suites(override_.list);
@@ -387,7 +389,7 @@ void testAlignedBuffers(LogCapture &capture,
 
   server.listen();
   bool listening = wait_for(state.listening);
-  ZuCHECK(listening, "listen timed out");
+  ZTLS_CHECK_RT(listening, "listen timed out");
   if (!listening) { mx.stop(); return; }
 
   ZmRef<BaseClient<TestState>::Link> link =
@@ -395,13 +397,13 @@ void testAlignedBuffers(LogCapture &capture,
   link->connect(state.ip, state.port);
 
   bool done = wait_done(state);
-  ZuCHECK(done, "TLS disconnect wait timed out");
+  ZTLS_CHECK_RT(done, "TLS disconnect wait timed out");
 
   mx.stop();
 
   auto stats = Ztls::Pico::stats();
   (void)stats;
-  ZuCHECK(!capture.copy_warns.load_(),
+  ZTLS_CHECK_RT(!capture.copy_warns.load_(),
     "copy fallback warnings seen (align case)");
 }
 
