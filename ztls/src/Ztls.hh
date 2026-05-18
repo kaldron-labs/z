@@ -699,7 +699,7 @@ private:
 
     AsyncJobRef async = new AsyncJob{
       ZmMkRef(impl()), tls(), job, handle, m_tlsGen};
-    m_asyncJob = async;
+    m_asyncJob = async.ptr();
 
     if (ZuUnlikely(!app()->asyncAddHandle_(
 	  handle,
@@ -730,7 +730,7 @@ private:
   void asyncResume_(AsyncJob *async) {
     if (async->tls == m_tls &&
 	async->gen == m_tlsGen &&
-	m_asyncJob.ptr() == async) {
+	m_asyncJob == async) {
       clearAsync_();
       int n = handshake__(nullptr, nullptr);
       handleHandshakeResult_(n);
@@ -743,7 +743,8 @@ private:
   }
 
   void asyncCleanup_() {
-    AsyncJobRef async = ZuMv(m_asyncJob);
+    AsyncJobRef async;
+    if (m_asyncJob) async = ZmMkRef(m_asyncJob);
     clearAsync_();
     if (!async) return;
     Zi::Handle handle = async->handle;
@@ -756,6 +757,10 @@ private:
     m_asyncJob->retired = true;
     clearAsync_();
     return true;
+  }
+
+  void asyncDestroyed_(AsyncJob *async) {
+    if (m_asyncJob == async) m_asyncJob = nullptr;
   }
 
 public:
@@ -841,6 +846,7 @@ private:
 	link{ZuMv(link_)}, tls{tls_}, job{job_}, handle{handle_}, gen{gen_} {
     }
     ~AsyncJob() {
+      link->asyncDestroyed_(this);
       if (retired && tls)
 	ZiLOG(Error, "Ztls", "TLS async job destroyed while still pending");
     }
@@ -870,7 +876,7 @@ private:
   bool			m_tx_need_key_update = false;
   bool			m_handshook = false;
   ptls_handshake_properties_t m_props{};
-  AsyncJobRef		m_asyncJob;
+  AsyncJob		*m_asyncJob = nullptr;
   CxnRef		m_cxn = nullptr;
   RxStream		m_rxStream;
 
