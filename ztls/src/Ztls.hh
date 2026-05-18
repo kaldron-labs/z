@@ -220,8 +220,8 @@ public:
 friend Cxn;
 
 private:
-  struct AsyncReg;
-  using AsyncRegRef = ZmRef<AsyncReg>;
+  struct AsyncJob;
+  using AsyncJobRef = ZmRef<AsyncJob>;
 
 public:
   auto impl() const { return static_cast<const Impl *>(this); }
@@ -231,13 +231,11 @@ public:
   }
   ~Link() {
     if (m_tls) {
-      if (ZuUnlikely(asyncPending_())) {
+      if (ZuUnlikely(asyncPending_()))
 	ZiLOG(Error, "Ztls", "TLS link destroyed with async job pending");
-      } else
+      else
 	ptls_free(m_tls);
     }
-    for (unsigned i = 0, n = m_asyncRetired.length(); i < n; i++)
-      ZiLOG(Error, "Ztls", "TLS link destroyed with retired async job pending");
   }
 
   App *app() const { return m_app; }
@@ -388,10 +386,18 @@ private:
       return;
     }
     if (ZuUnlikely(!origin_match || pbuf.base != base)) {
-      ZiLOG(Error, "Ztls", "TLS TX buffer origin mismatch");
-      disconnect_(false);
-      if (pbuf.base != base) ptls_buffer_dispose(&pbuf);
-      return;
+      if (ZuUnlikely(pbuf.base != base)) {
+	auto off = pbuf.off;
+	if (ZuUnlikely(buf->size < off && !buf->ensure(off))) {
+	  ZiLOG(Error, "Ztls", "TLS TX buffer growth failed");
+	  disconnect_(false);
+	  ptls_buffer_dispose(&pbuf);
+	  return;
+	}
+	memcpy(buf->data(), pbuf.base, off);
+	ptls_buffer_dispose(&pbuf);
+	pbuf.off = off;
+      }
     }
     buf->skip = 0;
     buf->length = pbuf.off;
@@ -641,15 +647,11 @@ public:
 
 private:
   bool asyncPending_() const {
-    return m_asyncJob && m_asyncTLS == m_tls;
+    return m_asyncJob && m_asyncJob->tls == m_tls;
   }
 
   void clearAsync_() {
     m_asyncJob = nullptr;
-    m_asyncHandle = Zi::nullHandle();
-    m_asyncTLS = nullptr;
-    m_asyncGen = 0;
-    m_asyncReg = nullptr;
   }
 
   bool asyncHandshake_() {
@@ -675,7 +677,7 @@ private:
       disconnect_(false);
       return false;
     }
-    int fd = job->get_fd(job);
+    auto fd = job->get_fd(job);
     Zi::Handle handle = static_cast<Zi::Handle>(fd);
     if (ZuUnlikely(Zi::nullHandle(handle))) {
       app()->error_(ZeEXCEPT(Error, "Ztls",
@@ -695,24 +697,15 @@ private:
 
     asyncCleanup_();
 
-    auto gen = m_tlsGen;
-    auto tls_ = tls();
-    AsyncRegRef reg = new AsyncReg{};
-    m_asyncJob = job;
-    m_asyncHandle = handle;
-    m_asyncTLS = tls_;
-    m_asyncGen = gen;
-    m_asyncReg = reg;
+    AsyncJobRef async = new AsyncJob{
+      ZmMkRef(impl()), tls(), job, handle, m_tlsGen};
+    m_asyncJob = async;
 
-    auto link = ZmMkRef(impl());
     if (ZuUnlikely(!app()->asyncAddHandle_(
 	  handle,
 	  ZiEvent::HandleSendFn{[](Zi::Handle) { }},
 	  ZiEvent::HandleRecvFn{
-	    [link = ZuMv(link), tls_, job, handle, gen, reg](Zi::Handle) mutable {
-	      link->asyncReady_(tls_, job, handle, gen, reg);
-	    }},
-	  [reg]() mutable { reg->armed = 1; }))) {
+	    async, ZmFnPtr<&AsyncJob::ready>{}}))) {
       clearAsync_();
       app()->error_(ZeEXCEPT(Error, "Ztls",
 	"ZiEventLoop::addHandle() failed for picotls async job"));
@@ -723,70 +716,46 @@ private:
     return true;
   }
 
-  void asyncReady_(
-      ptls_t *tls_, ptls_async_job_t *job_,
-      Zi::Handle handle_, uint64_t gen_, AsyncRegRef reg_) {
-    if (!reg_->armed.xch(0)) return;
-    app()->asyncRun_([
-      link = ZmMkRef(impl()), tls_, job_, handle_, gen_, reg_
-    ]() mutable {
-      link->app()->asyncDelHandleNow_(handle_);
-      link->app()->run([
-	link = ZuMv(link), tls_, job_, handle_, gen_, reg_ = ZuMv(reg_)
-      ]() mutable {
-	link->asyncResume_(tls_, job_, handle_, gen_, ZuMv(reg_));
-      });
-    });
+  void asyncReady_(AsyncJobRef async, Zi::Handle handle_) {
+    if (ZuUnlikely(handle_ != async->handle)) return;
+    if (++async->recvCount != 2) return;
+    async->handle = Zi::nullHandle();
+    app()->asyncDelHandleNow_(handle_);
+    app()->run(ZmFn<>{
+      ZuMv(async), [](AsyncJob *async) {
+	async->link->asyncResume_(async);
+      }});
   }
 
-  void asyncResume_(
-      ptls_t *tls_, ptls_async_job_t *job_,
-      Zi::Handle handle_, uint64_t gen_, AsyncRegRef reg_) {
-    if (m_asyncTLS == tls_ &&
-	m_asyncJob == job_ &&
-	m_asyncHandle == handle_ &&
-	m_asyncGen == gen_ &&
-	m_asyncReg.ptr() == reg_.ptr() &&
-	m_tls == tls_) {
+  void asyncResume_(AsyncJob *async) {
+    if (async->tls == m_tls &&
+	async->gen == m_tlsGen &&
+	m_asyncJob.ptr() == async) {
       clearAsync_();
       int n = handshake__(nullptr, nullptr);
       handleHandshakeResult_(n);
       return;
     }
-    if (asyncRetiredReady_(tls_, job_, handle_, gen_, ZuMv(reg_))) return;
+    if (async->retired && async->tls) {
+      ptls_free(async->tls);
+      async->tls = nullptr;
+    }
   }
 
   void asyncCleanup_() {
-    Zi::Handle handle = m_asyncHandle;
-    if (m_asyncReg) m_asyncReg->armed = 0;
+    AsyncJobRef async = ZuMv(m_asyncJob);
     clearAsync_();
+    if (!async) return;
+    Zi::Handle handle = async->handle;
+    async->handle = Zi::nullHandle();
     if (!Zi::nullHandle(handle)) app()->asyncDelHandle_(handle);
   }
 
   bool asyncRetireTLS_() {
     if (!asyncPending_()) return false;
-    m_asyncRetired.push(AsyncRetired{
-      m_tls, m_asyncJob, m_asyncHandle, m_asyncGen, m_asyncReg});
+    m_asyncJob->retired = true;
     clearAsync_();
     return true;
-  }
-
-  bool asyncRetiredReady_(
-      ptls_t *tls_, ptls_async_job_t *job_,
-      Zi::Handle handle_, uint64_t gen_, AsyncRegRef reg_) {
-    for (unsigned i = 0, n = m_asyncRetired.length(); i < n; i++) {
-      auto &retired = m_asyncRetired[i];
-      if (retired.tls != tls_ ||
-	  retired.job != job_ ||
-	  retired.handle != handle_ ||
-	  retired.gen != gen_ ||
-	  retired.reg.ptr() != reg_.ptr())
-	continue;
-      ptls_free(retired.tls);
-      m_asyncRetired.splice(i, 1);
-      return true;
-    }
-    return false;
   }
 
 public:
@@ -865,19 +834,28 @@ private:
   ZmScheduler::Timer	m_reconnTimer;
 
   // TLS thread
-  struct AsyncReg : public ZuObject {
-    ZmAtomic<unsigned>	armed = 0;
-  };
+  struct AsyncJob : public ZmPolymorph {
+    AsyncJob(
+	ZmRef<Impl> link_, ptls_t *tls_, ptls_async_job_t *job_,
+	Zi::Handle handle_, uint64_t gen_) :
+	link{ZuMv(link_)}, tls{tls_}, job{job_}, handle{handle_}, gen{gen_} {
+    }
+    ~AsyncJob() {
+      if (retired && tls)
+	ZiLOG(Error, "Ztls", "TLS async job destroyed while still pending");
+    }
+    void ready(Zi::Handle handle_) {
+      link->asyncReady_(ZmMkRef(this), handle_);
+    }
 
-  struct AsyncRetired {
+    ZmRef<Impl>		link;
     ptls_t		*tls = nullptr;
     ptls_async_job_t	*job = nullptr;
     Zi::Handle		handle = Zi::nullHandle();
     uint64_t		gen = 0;
-    AsyncRegRef		reg;
+    ZmAtomic<unsigned>	recvCount = 0;
+    bool		retired = false;
   };
-  using AsyncRetireds =
-    ZtArray<AsyncRetired, ZtArrayHeapID<"Ztls.AsyncRetired">>;
 
   ptls_t		*m_tls = nullptr;
   uint64_t		m_tlsGen = 0;
@@ -892,12 +870,7 @@ private:
   bool			m_tx_need_key_update = false;
   bool			m_handshook = false;
   ptls_handshake_properties_t m_props{};
-  ptls_async_job_t	*m_asyncJob = nullptr;
-  Zi::Handle		m_asyncHandle = Zi::nullHandle();
-  ptls_t		*m_asyncTLS = nullptr;
-  uint64_t		m_asyncGen = 0;
-  AsyncRegRef		m_asyncReg;
-  AsyncRetireds		m_asyncRetired;
+  AsyncJobRef		m_asyncJob;
   CxnRef		m_cxn = nullptr;
   RxStream		m_rxStream;
 
@@ -1302,20 +1275,18 @@ private:
     m_errorFn = ErrorFn{};
   }
 
-  template <typename SendFn, typename RecvFn, typename ArmedFn>
+  template <typename SendFn, typename RecvFn>
   bool asyncAddHandle_(
-      Zi::Handle handle, SendFn send, RecvFn recv, ArmedFn armed) {
+      Zi::Handle handle, SendFn send, RecvFn recv) {
     if (!m_eventLoopStarted) return false;
     return ZmBlock<bool>{}([
-      this, handle, send = ZuMv(send), recv = ZuMv(recv),
-      armed = ZuMv(armed)
+      this, handle, send = ZuMv(send), recv = ZuMv(recv)
     ](auto wake) mutable {
       m_eventLoop.run([
 	this, handle, send = ZuMv(send), recv = ZuMv(recv),
-	armed = ZuMv(armed), wake = ZuMv(wake)
+	wake = ZuMv(wake)
       ]() mutable {
 	bool ok = m_eventLoop.addHandle(handle, ZuMv(send), ZuMv(recv));
-	if (ok) armed();
 	wake(ok);
       });
     });

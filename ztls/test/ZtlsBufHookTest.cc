@@ -11,6 +11,7 @@
 
 #include <iostream>
 
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtArray.hh>
@@ -20,11 +21,14 @@
 #include <zlib/Ztls.hh>
 #include <zlib/ZtlsPico.hh>
 
+using namespace ZuTestUtil;
+
 namespace {
 
 constexpr unsigned BufSize = 128;
 constexpr unsigned MaxSize = (1u << 20);
 constexpr unsigned PayloadSize = 64u * 1024u;
+constexpr unsigned TimeoutSeconds = 5;
 
 const char *CertPem =
   "-----BEGIN CERTIFICATE-----\n"
@@ -117,6 +121,7 @@ struct TestState {
   ZmAtomic<unsigned>	done_count{0};
   ZmAtomic<unsigned>	rx_bytes{0};
   ZmAtomic<unsigned>	errors{0};
+  const char		*error_msg = nullptr;
   bool			allow_fail = false;
   ZiIP			ip;
   unsigned		port = 0;
@@ -131,8 +136,7 @@ struct TestState {
       for (unsigned i = 0; i < Target; ++i) done.post();
       return;
     }
-    if (!errors.xch(1))
-      std::cerr << "error: " << msg << '\n' << std::flush;
+    if (!errors.xch(1)) error_msg = msg;
     for (unsigned i = 0; i < Target; ++i) done.post();
   }
 };
@@ -261,16 +265,152 @@ void fill_payload(ZtArray<uint8_t> &payload, unsigned len)
     payload[i] = uint8_t(i);
 }
 
-void wait_done(TestState &state)
+bool wait_for(ZmSemaphore &sem)
+{
+  return sem.timedwait(Zm::now(TimeoutSeconds)) == 0;
+}
+
+bool wait_done(TestState &state)
 {
   for (unsigned i = 0; i < TestState::Target; ++i)
-    state.done.wait();
+    if (!wait_for(state.done)) return false;
+  return true;
+}
+
+void testDefaultBuffers(LogCapture &capture,
+    const char *cert_path, const char *key_path)
+{
+  ZuTestScope(testDefaultBuffers);
+
+  Ztls::Pico::reset_stats();
+  capture.reset();
+
+  TestState state;
+  state.ip = ZiIP("127.0.0.1");
+  state.allow_fail = true;
+  fill_payload(state.payload, PayloadSize);
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(4)
+	  .thread(1, [](auto &t) { t.isolated(1); })
+	  .thread(2, [](auto &t) { t.isolated(1); })
+	  .thread(3, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
+
+  BaseServer<TestState> server(state, state.ip);
+  bool serverOK = server.init(
+    Ztls::ServerParams(&mx, "3", {})
+      .certPath(cert_path)
+      .keyPath(key_path));
+  ZuCHECK(serverOK, "TLS server init failed");
+  if (!serverOK) { mx.stop(); return; }
+
+  BaseClient<TestState> client(state);
+  bool clientOK = client.init(
+    Ztls::ClientParams(&mx, "3", {}).caPath(cert_path));
+  ZuCHECK(clientOK, "TLS client init failed");
+  if (!clientOK) { mx.stop(); return; }
+
+  server.listen();
+  bool listening = wait_for(state.listening);
+  ZuCHECK(listening, "listen timed out");
+  if (!listening) { mx.stop(); return; }
+
+  ZmRef<BaseClient<TestState>::Link> link =
+    new BaseClient<TestState>::Link(&client);
+  link->connect(state.ip, state.port);
+
+  bool done = wait_done(state);
+  ZuCHECK(done, "TLS disconnect wait timed out");
+
+  mx.stop();
+
+  auto stats = Ztls::Pico::stats();
+  (void)stats;
+  ZuCHECK(!capture.copy_warns.load_(), "copy fallback warnings seen");
+  ZuCHECK(!capture.errors.load_(), "unexpected error logs");
+  ZuCHECK(!state.errors.load_(),
+    state.error_msg ? state.error_msg : "state error");
+}
+
+void testAlignedBuffers(LogCapture &capture,
+    const char *cert_path, const char *key_path)
+{
+  ZuTestScope(testAlignedBuffers);
+
+  Ztls::Pico::reset_stats();
+  capture.reset();
+
+  TestState state;
+  state.ip = ZiIP("127.0.0.1");
+  state.allow_fail = true;
+  fill_payload(state.payload, 1);
+
+  AlignOverride override_;
+  override_.init(12);
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(4)
+	  .thread(1, [](auto &t) { t.isolated(1); })
+	  .thread(2, [](auto &t) { t.isolated(1); })
+	  .thread(3, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
+
+  BaseServer<TestState> server(state, state.ip);
+  bool serverOK = server.init(
+    Ztls::ServerParams(&mx, "3", {})
+      .certPath(cert_path)
+      .keyPath(key_path));
+  ZuCHECK(serverOK, "TLS server init failed");
+  if (!serverOK) { mx.stop(); return; }
+
+  BaseClient<TestState> client(state);
+  bool clientOK = client.init(
+    Ztls::ClientParams(&mx, "3", {}).caPath(cert_path));
+  ZuCHECK(clientOK, "TLS client init failed");
+  if (!clientOK) { mx.stop(); return; }
+
+  server.override_cipher_suites(override_.list);
+  client.override_cipher_suites(override_.list);
+
+  server.listen();
+  bool listening = wait_for(state.listening);
+  ZuCHECK(listening, "listen timed out");
+  if (!listening) { mx.stop(); return; }
+
+  ZmRef<BaseClient<TestState>::Link> link =
+    new BaseClient<TestState>::Link(&client);
+  link->connect(state.ip, state.port);
+
+  bool done = wait_done(state);
+  ZuCHECK(done, "TLS disconnect wait timed out");
+
+  mx.stop();
+
+  auto stats = Ztls::Pico::stats();
+  (void)stats;
+  ZuCHECK(!capture.copy_warns.load_(),
+    "copy fallback warnings seen (align case)");
 }
 
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+  ZuTestUtil::parse(argc, argv);
+
   ZiLog::init("ZtlsBufHookTest");
   ZiLog::level(0);
 
@@ -282,136 +422,15 @@ int main()
 
   const char *cert_path = "ZtlsBufHookTest-cert.pem";
   const char *key_path = "ZtlsBufHookTest-key.pem";
-  if (!write_file(cert_path, CertPem) ||
-      !write_file(key_path, KeyPem)) {
-    std::cerr << "error: failed to write cert/key\n" << std::flush;
-    return 1;
-  }
 
-  {
-    Ztls::Pico::reset_stats();
-    capture.reset();
-
-    TestState state;
-    state.ip = ZiIP("127.0.0.1");
-    state.allow_fail = true;
-    fill_payload(state.payload, 1);
-    fill_payload(state.payload, PayloadSize);
-
-    ZiMultiplex mx(
-	ZiMxParams()
-	  .scheduler([](auto &s) {
-	    s.nThreads(4)
-	    .thread(1, [](auto &t) { t.isolated(1); })
-	    .thread(2, [](auto &t) { t.isolated(1); })
-	    .thread(3, [](auto &t) { t.isolated(1); }); })
-	  .rxThread(1).txThread(2));
-
-    if (!mx.start()) {
-      std::cerr << "error: ZiMultiplex start failed\n" << std::flush;
-      return 1;
-    }
-
-    BaseServer<TestState> server(state, state.ip);
-    if (!server.init(
-	  Ztls::ServerParams(&mx, "3", {})
-	    .certPath(cert_path)
-	    .keyPath(key_path))) {
-      std::cerr << "error: TLS server init failed\n" << std::flush;
-      return 1;
-    }
-    BaseClient<TestState> client(state);
-    if (!client.init(Ztls::ClientParams(&mx, "3", {}).caPath(cert_path))) {
-      std::cerr << "error: TLS client init failed\n" << std::flush;
-      return 1;
-    }
-
-    server.listen();
-    state.listening.wait();
-
-    ZmRef<BaseClient<TestState>::Link> link =
-      new BaseClient<TestState>::Link(&client);
-    link->connect(state.ip, state.port);
-
-    wait_done(state);
-
-    mx.stop();
-
-    auto stats = Ztls::Pico::stats();
-    (void)stats;
-    if (capture.copy_warns.load_()) {
-      std::cerr << "error: copy fallback warnings seen\n" << std::flush;
-      return 1;
-    }
-    if (capture.errors.load_()) {
-      std::cerr << "error: unexpected error logs\n" << std::flush;
-      return 1;
-    }
-    if (state.errors.load_()) return 1;
-  }
-
-  {
-    Ztls::Pico::reset_stats();
-    capture.reset();
-
-    TestState state;
-    state.ip = ZiIP("127.0.0.1");
-    state.allow_fail = true;
-    fill_payload(state.payload, 1);
-
-    AlignOverride override_;
-    override_.init(12);
-
-    ZiMultiplex mx(
-	ZiMxParams()
-	  .scheduler([](auto &s) {
-	    s.nThreads(4)
-	    .thread(1, [](auto &t) { t.isolated(1); })
-	    .thread(2, [](auto &t) { t.isolated(1); })
-	    .thread(3, [](auto &t) { t.isolated(1); }); })
-	  .rxThread(1).txThread(2));
-
-    if (!mx.start()) {
-      std::cerr << "error: ZiMultiplex start failed\n" << std::flush;
-      return 1;
-    }
-
-    BaseServer<TestState> server(state, state.ip);
-    if (!server.init(
-	  Ztls::ServerParams(&mx, "3", {})
-	    .certPath(cert_path)
-	    .keyPath(key_path))) {
-      std::cerr << "error: TLS server init failed\n" << std::flush;
-      return 1;
-    }
-    BaseClient<TestState> client(state);
-    if (!client.init(Ztls::ClientParams(&mx, "3", {}).caPath(cert_path))) {
-      std::cerr << "error: TLS client init failed\n" << std::flush;
-      return 1;
-    }
-
-    server.override_cipher_suites(override_.list);
-    client.override_cipher_suites(override_.list);
-
-    server.listen();
-    state.listening.wait();
-
-    ZmRef<BaseClient<TestState>::Link> link =
-      new BaseClient<TestState>::Link(&client);
-    link->connect(state.ip, state.port);
-
-    wait_done(state);
-
-    mx.stop();
-
-    auto stats = Ztls::Pico::stats();
-    (void)stats;
-    if (capture.copy_warns.load_()) {
-      std::cerr << "error: copy fallback warnings seen (align case)\n" << std::flush;
-      return 1;
-    }
+  ZuTestMain();
+  bool wroteCerts =
+    write_file(cert_path, CertPem) && write_file(key_path, KeyPem);
+  ZuCHECK(wroteCerts, "failed to write cert/key");
+  if (wroteCerts) {
+    ZuTestCall(testDefaultBuffers, capture, cert_path, key_path);
+    ZuTestCall(testAlignedBuffers, capture, cert_path, key_path);
   }
 
   ZiLog::stop();
-  return 0;
 }

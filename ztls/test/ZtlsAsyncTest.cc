@@ -4,9 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/Ztls.hh>
 
-#include <iostream>
+using namespace ZuTestUtil;
 
 namespace {
 
@@ -38,17 +39,12 @@ struct ServerApp : public Ztls::Server<ServerApp> {
 
 struct EngineApp : public Ztls::Engine<EngineApp> { };
 
-bool expect_fail(bool ok, const char *label)
-{
-  if (!ok) return true;
-  std::cerr << "error: " << label << " unexpectedly succeeded\n";
-  return false;
-}
-
 } // namespace
 
-int main()
+void testInitValidation()
 {
+  ZuTestScope(testInitValidation);
+
   ZiLog::init("ZtlsAsyncTest");
   ZiLog::level(0);
   ZiLog::start();
@@ -74,18 +70,15 @@ int main()
   (void)serverParams;
 
   ClientApp client;
-  if (!expect_fail(client.init(Ztls::ClientParams(nullptr, "1", alpn)),
-	"null multiplexer init"))
-    return 1;
-  if (!expect_fail(client.init(
-	Ztls::ClientParams(nullptr, "1", alpn).certPath("client.pem")),
-	"client cert/key XOR init"))
-    return 1;
+  ZuCHECK(!client.init(Ztls::ClientParams(nullptr, "1", alpn)),
+    "null multiplexer init unexpectedly succeeded");
+  ZuCHECK(!client.init(
+    Ztls::ClientParams(nullptr, "1", alpn).certPath("client.pem")),
+    "client cert/key XOR init unexpectedly succeeded");
 
   ServerApp server;
-  if (!expect_fail(server.init(Ztls::ServerParams(nullptr, "1", alpn)),
-	"missing server cert/key init"))
-    return 1;
+  ZuCHECK(!server.init(Ztls::ServerParams(nullptr, "1", alpn)),
+    "missing server cert/key init unexpectedly succeeded");
 
   ZiMultiplex mx(
       ZiMxParams()
@@ -97,63 +90,63 @@ int main()
 	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
-  if (!mx.start()) {
-    std::cerr << "error: ZiMultiplex start failed\n";
-    return 1;
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) {
+    ZiLog::stop();
+    return;
   }
 
   {
     EngineApp app;
-    if (!expect_fail(app.init(Ztls::EngineParams(&mx, "9", alpn)),
-	  "invalid TLS thread"))
-      return 1;
+    ZuCHECK(!app.init(Ztls::EngineParams(&mx, "9", alpn)),
+      "invalid TLS thread unexpectedly succeeded");
   }
   {
     EngineApp app;
-    if (!expect_fail(app.init(
-	  Ztls::EngineParams(&mx, "3", alpn).asyncThread("9")),
-	  "invalid async thread"))
-      return 1;
+    ZuCHECK(!app.init(
+      Ztls::EngineParams(&mx, "3", alpn).asyncThread("9")),
+      "invalid async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
-    if (!expect_fail(app.init(
-	  Ztls::EngineParams(&mx, "3", alpn).asyncThread("3")),
-	  "TLS async thread"))
-      return 1;
+    ZuCHECK(!app.init(
+      Ztls::EngineParams(&mx, "3", alpn).asyncThread("3")),
+      "TLS async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
-    if (!expect_fail(app.init(
-	  Ztls::EngineParams(&mx, "3", alpn).asyncThread("1")),
-	  "rx async thread"))
-      return 1;
+    ZuCHECK(!app.init(
+      Ztls::EngineParams(&mx, "3", alpn).asyncThread("1")),
+      "rx async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
-    if (!expect_fail(app.init(
-	  Ztls::EngineParams(&mx, "3", alpn).asyncThread("2")),
-	  "tx async thread"))
-      return 1;
+    ZuCHECK(!app.init(
+      Ztls::EngineParams(&mx, "3", alpn).asyncThread("2")),
+      "tx async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
-    if (!expect_fail(app.init(
-	  Ztls::EngineParams(&mx, "3", alpn).asyncThread("5")),
-	  "non-isolated async thread"))
-      return 1;
+    ZuCHECK(!app.init(
+      Ztls::EngineParams(&mx, "3", alpn).asyncThread("5")),
+      "non-isolated async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
-    if (!app.init(Ztls::EngineParams(&mx, "3", alpn).asyncThread("4"))) {
-      std::cerr << "error: valid async engine init failed\n";
-      return 1;
-    }
-    app.final();
+    bool ok = app.init(Ztls::EngineParams(&mx, "3", alpn).asyncThread("4"));
+    ZuCHECK(ok, "valid async engine init failed");
+    if (ok) app.final();
   }
 
   mx.stop();
   ZiLog::stop();
+}
 
-  return 0;
+int main(int argc, char **argv)
+{
+  ZuTestUtil::parse(argc, argv);
+
+  ZuTestMain();
+  ZuTestCall(testInitValidation);
 }
