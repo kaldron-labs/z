@@ -7,6 +7,7 @@
 // picotls buffer hook integration
 
 #include <stdint.h>
+#include <stddef.h>
 #include <string.h>
 
 #include <zlib/ZuLib.hh>
@@ -58,16 +59,27 @@ static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
       return nullptr;
     }
     auto buf = static_cast<ZiIOBuf *>(pbuf->origin);
-    if (ZuUnlikely(capacity > UINT32_MAX)) {
+    auto raw = buf->data_();
+    // Preserve picotls' base offset across ZiIOBuf relocation.
+    ptrdiff_t offset = pbuf->base ? pbuf->base - raw : 0;
+    if (ZuUnlikely(offset < 0)) {
       counters.origin_ensure_fail++;
       return nullptr;
     }
-    if (ZuUnlikely(!buf->ensure(uint32_t(capacity)))) {
+    auto offset_ = size_t(offset);
+    if (ZuUnlikely(capacity > UINT32_MAX ||
+	  offset_ > UINT32_MAX - capacity)) {
       counters.origin_ensure_fail++;
       return nullptr;
     }
-    pbuf->base = buf->data();
-    pbuf->capacity = buf->size;
+    if (ZuUnlikely(!buf->ensure(uint32_t(offset_ + capacity)))) {
+      counters.origin_ensure_fail++;
+      return nullptr;
+    }
+    raw = buf->data_();
+    // Capacity remains relative to the preserved base, not data().
+    pbuf->base = raw + offset_;
+    pbuf->capacity = buf->size - offset_;
     pbuf->is_allocated = 1;
     pbuf->align_bits = align_bits;
     counters.origin_alloc++;

@@ -6,8 +6,16 @@
 
 #include <zlib/ZuLib.hh>
 
+#include <errno.h>
+#include <arpa/inet.h>
+#include <limits.h>
+#include <netinet/in.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <iostream>
 
@@ -15,8 +23,8 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtString.hh>
 #include <zlib/ZiLog.hh>
-#include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/Ztls.hh>
 #include <zlib/ZtlsPico.hh>
@@ -29,119 +37,223 @@ namespace {
 
 constexpr unsigned BufSize = 128;
 constexpr unsigned MaxSize = (1u << 20);
-constexpr unsigned PayloadSize = 64u * 1024u;
-constexpr unsigned TimeoutSeconds = 5;
+constexpr unsigned JumboPayloadSize = 64u * 1024u;
+constexpr unsigned SmallPayloadSize = 4u * 1024u;
+constexpr unsigned TimeoutSeconds = 15;
 
-const char *CertPem =
-  "-----BEGIN CERTIFICATE-----\n"
-  "MIIDCTCCAfGgAwIBAgIUP94rLbvIoOd15zOK8+6MwicqslYwDQYJKoZIhvcNAQEL\n"
-  "BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDEwMzAzMDEzOFoXDTI2MDEw\n"
-  "NDAzMDEzOFowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF\n"
-  "AAOCAQ8AMIIBCgKCAQEAyo5t3mg7qCrParHZZ6o/Ug+93wSNPrqcOufVsbUvmQk5\n"
-  "fNZfoFwVttQ6w5gxBpEvV8oSG/ccTNpJFHsQsrhBgfv95vLnz4FPLIdCYAAsdrtf\n"
-  "w7Hjb6rLw4G5Waaq9+KuFMcaZV3x+LUFH0eSxp384fNDtu8D856bCvbL1z+QeLmM\n"
-  "8FmEjNQJjlNl4viiJ4Yt3LFfeuQ40iaFBohFNSaqmi6kiRFQ6+qN9YSjuw6Zv2CW\n"
-  "aA+eDw2I3geRfuUM+s0W9K9/KmsI60Mr7qxzb7VqvZovSl3Me5M17LM8Sd4oQdz/\n"
-  "4PtH6/tOe76MAr/Jl3HgLapBopTpWAHs/jyXy/4a1wIDAQABo1MwUTAdBgNVHQ4E\n"
-  "FgQUa3b6ClM5SDah3D9tEfglN2mw3RswHwYDVR0jBBgwFoAUa3b6ClM5SDah3D9t\n"
-  "EfglN2mw3RswDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAPjsR\n"
-  "2nHx9fWR3Cgx1J9nOWiNIaFG6hPSh7ADMpy+miw9QMuYhtFC9dD6jN2TUZv5I/eG\n"
-  "yzhods5U+b1A+Sx/fv3oaItm55iXBqHfEVxwbwJhQdDTLizcBtGhYEYgWs8JN2EV\n"
-  "QBnqRt2PtXXK4qndmifC+2Xx6I8D0+qbX+QWm4UDrra6hHz2W+K4xnPGjj3ZnoT8\n"
-  "D14Vt3usDSQ3SV2vEJ6a67l8vjMqvk6LjIvJjJL2CWugeEKcHy4ZHn3ubVry0skZ\n"
-  "E4rP2iu3uj/z8PNX69h41Ykxc5spYWyCuJA2iJewFnrZ9sg/5lQZ8ldHRCN52U59\n"
-  "9tDAxrbyv2bcqKkv3g==\n"
-  "-----END CERTIFICATE-----\n";
+struct TempDir {
+  char		path[PATH_MAX]{};
+  ZtString<>	certPath;
+  ZtString<>	keyPath;
 
-const char *KeyPem =
-  "-----BEGIN PRIVATE KEY-----\n"
-  "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDKjm3eaDuoKs9q\n"
-  "sdlnqj9SD73fBI0+upw659WxtS+ZCTl81l+gXBW21DrDmDEGkS9XyhIb9xxM2kkU\n"
-  "exCyuEGB+/3m8ufPgU8sh0JgACx2u1/DseNvqsvDgblZpqr34q4UxxplXfH4tQUf\n"
-  "R5LGnfzh80O27wPznpsK9svXP5B4uYzwWYSM1AmOU2Xi+KInhi3csV965DjSJoUG\n"
-  "iEU1JqqaLqSJEVDr6o31hKO7Dpm/YJZoD54PDYjeB5F+5Qz6zRb0r38qawjrQyvu\n"
-  "rHNvtWq9mi9KXcx7kzXsszxJ3ihB3P/g+0fr+057vowCv8mXceAtqkGilOlYAez+\n"
-  "PJfL/hrXAgMBAAECggEAEeqlEdbZbaFGK7NW8U72fxOdlI3EBDTtOPg+h2BpH4Al\n"
-  "e0/al7lQqGI/kmmyiHJGJEQSjWVMHDyNc0gEn/8hUdYqAFTv2tBrlU45H+G6c4Qh\n"
-  "m987winy3RrrFXpJePF7IW/2rnNJW6aAMS/OoU5IyuzbSmHI6svwMRLHnZ7MCiMc\n"
-  "zNmy8nexvJzBw+3N9whDz816XOtdjnYLTPsjs5J2B8o/+i9zBUfK3eaI7hvuWdJZ\n"
-  "V2dnaouUxZG8mcj9J+ICVOLxg9PbNZg0y/HbsOpyUoiTQ5s79Jn7GAD9qA/mkDGN\n"
-  "Wdp9sjsAYsGthXWJEpErLhsAYAsGpg6u2aJs4arxDQKBgQDpAtNOTydHrUEa5WFj\n"
-  "HuLUdADiKCR80UeMLzYVN2BPWoqX6xYwHEVQi6FnCruoFc3uladyEcHbIODbmS6K\n"
-  "TGsySFKB3YguSgS+6M8Vke8MD+xgejxHrOYiv3R+Dda6jtjfm2pe+Ic2rdT736qL\n"
-  "XPpJzvpovOYJOlEwHt3HLD2gowKBgQDeimh8oskGYv2VCE5D4Gs6EaXBYXU54nqe\n"
-  "/SpruCI9IxLWuakF1N6D7BfroNn8wOGfVy5VJDKYGzgllvbsNNeyq1yj+L8XI0N4\n"
-  "MYrfD+D/X9J/U9V98Wu3TuR3JlWX4xXUFYHzRCQhBK7fkrvsy14+0z9nbTS6u+XO\n"
-  "bi5XsB8cPQKBgF3dzoPwbRF54Q1VtGq6yYPui2CP7Ur+/8SgTDg1y62L+uMCSDjv\n"
-  "Wpj89vNMppYq2n+vd/oC30ZIM20jg1UhPdnOurYoKTEEjm7d2HaHCHaif4XKGDiD\n"
-  "lV4QJHyXVJZo70L9F9fUZJwJYRBqZQipVwaew8+nsT+sZ4JsHMmcr+LjAoGANB+K\n"
-  "9ZZTK1HIPz3gxvkrZEB56F9hS5uGSPLXGr/YFSW/5dc6hYkkTRXhTGkyZYbv0Zhj\n"
-  "28FMsF+/uN4xG4YM92Y3nphGea7iwKYp9rELbAUPko8aNBN1vUuXK2kpJxgjJrea\n"
-  "5lWReMJWCzudFItVmbV05k6nyQz1eHJKHHO99akCgYEAhikGyynXIZUoyvEvUYk1\n"
-  "4NI/PsnNyuRdaKQMxQhc9GxqnWCfrI4mp7srkVnk65M3hf7g+3deeSjSzFg0FLJ5\n"
-  "6KqfK8bg/0FGkuM4STEeEaU58Zha8lGtDe7IhkljSFqpMmCmZ4lUKwS2lqf0tSVy\n"
-  "pZnA7bHLDZG7Pzp9JcJXbaY=\n"
-  "-----END PRIVATE KEY-----\n";
+  ~TempDir() { cleanup(); }
+
+  bool init()
+  {
+    strcpy(path, "/tmp/ZtlsBufHookTest.XXXXXX");
+    if (!mkdtemp(path)) return false;
+
+    certPath << static_cast<const char *>(path) << "/cert.pem";
+    keyPath << static_cast<const char *>(path) << "/key.pem";
+
+    ZtString<> cmd;
+    cmd <<
+      "openssl req -x509 -newkey rsa:2048 -nodes -days 1 "
+      "-subj /CN=localhost "
+      "-addext basicConstraints=critical,CA:TRUE "
+      "-addext keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign "
+      "-addext subjectAltName=DNS:localhost,IP:127.0.0.1 "
+      "-keyout " << keyPath << ' ' <<
+      "-out " << certPath << " >/dev/null 2>&1";
+    return systemOK(system(cmd.data()));
+  }
+
+  ZtString<> pathOf(const char *name) const
+  {
+    ZtString<> s;
+    s << static_cast<const char *>(path) << '/' << name;
+    return s;
+  }
+
+  static bool systemOK(int status)
+  {
+    return status != -1 && WIFEXITED(status) && !WEXITSTATUS(status);
+  }
+
+  void cleanup()
+  {
+    if (!path[0]) return;
+    const char *names[] = {
+      "cert.pem", "key.pem", "tls12-in.bin", "tls12-out.bin",
+      "tls12-err.log", nullptr
+    };
+    for (auto name = names; *name; ++name) {
+      auto p = pathOf(*name);
+      unlink(p.data());
+    }
+    rmdir(path);
+    path[0] = 0;
+  }
+};
 
 struct LogCapture {
-  ZmAtomic<unsigned> copy_warns{0};
   ZmAtomic<unsigned> errors{0};
-  ZmAtomic<unsigned> misalign_errors{0};
 
   void reset() {
-    copy_warns.store_(0);
     errors.store_(0);
-    misalign_errors.store_(0);
   }
 
   static bool contains(ZuCSpan haystack, ZuCSpan needle) {
     if (!needle.length()) return true;
     if (needle.length() > haystack.length()) return false;
-    for (unsigned i = 0; i <= haystack.length() - needle.length(); ++i) {
+    for (unsigned i = 0; i <= haystack.length() - needle.length(); ++i)
       if (!memcmp(haystack.data() + i, needle.data(), needle.length()))
 	return true;
-    }
     return false;
   }
 
   void onLog(ZeLogBuf &buf, const ZeEventInfo &info) {
-    ZuCSpan span{buf.data(), buf.length()};
-    if (contains(span, "falling back to copy"))
-      copy_warns.xchAdd(1);
-    if (contains(span, "TLS TX buffer misaligned"))
-      misalign_errors.xchAdd(1);
-    if (info.severity >= Ze::Error)
-      errors.xchAdd(1);
+    (void)buf;
+    if (info.severity >= Ze::Error) errors.xchAdd(1);
   }
 };
 
 struct TestState {
-  static constexpr unsigned Target = 2;
-
   ZmSemaphore		done;
   ZmSemaphore		listening;
-  ZmAtomic<unsigned>	done_count{0};
-  ZmAtomic<unsigned>	rx_bytes{0};
-  ZmAtomic<unsigned>	errors{0};
-  const char		*error_msg = nullptr;
-  bool			allow_fail = false;
+  unsigned		target = 2;
   ZiIP			ip;
   unsigned		port = 0;
-  ZtArray<uint8_t>	payload;
+
+  ZtArray<uint8_t>	clientPayload;
+  ZtArray<uint8_t>	serverPayload;
+  bool			clientKeyUpdate = false;
+  bool			serverDisconnectAfterSend = false;
+
+  ZmAtomic<unsigned>	done_count{0};
+  ZmAtomic<unsigned>	errors{0};
+  ZmAtomic<unsigned>	client_rx_bytes{0};
+  ZmAtomic<unsigned>	server_rx_bytes{0};
+  ZmAtomic<unsigned>	client_connected{0};
+  ZmAtomic<unsigned>	server_connected{0};
+  ZmAtomic<unsigned>	client_tlsver{0};
+  ZmAtomic<unsigned>	server_tlsver{0};
+  ZmAtomic<unsigned>	client_cipher{0};
+  ZmAtomic<unsigned>	server_cipher{0};
+  ZmAtomic<unsigned>	client_closed{0};
+  ZmAtomic<unsigned>	server_replied{0};
+  const char		*error_msg = nullptr;
 
   void done_one() {
-    done_count.xchAdd(1);
-    done.post();
+    if (done_count.xchAdd(1) < target) done.post();
   }
   void fail(const char *msg) {
-    if (allow_fail) {
-      for (unsigned i = 0; i < Target; ++i) done.post();
-      return;
-    }
     if (!errors.xch(1)) error_msg = msg;
-    for (unsigned i = 0; i < Target; ++i) done.post();
+    for (unsigned i = 0; i < target; ++i) done.post();
   }
 };
+
+void fill_payload(ZtArray<uint8_t> &payload, unsigned len, uint8_t seed)
+{
+  payload.length(len);
+  for (unsigned i = 0; i < len; ++i)
+    payload[i] = uint8_t(seed + (i * 31u) + (i >> 3));
+}
+
+bool write_bytes(const char *path, const ZtArray<uint8_t> &data)
+{
+  FILE *file = fopen(path, "wb");
+  if (!file) return false;
+  bool ok = !data.length() ||
+    fwrite(data.data(), 1, data.length(), file) == data.length();
+  if (fclose(file)) ok = false;
+  return ok;
+}
+
+bool read_bytes(const char *path, ZtArray<uint8_t> &data)
+{
+  FILE *file = fopen(path, "rb");
+  if (!file) return false;
+  if (fseek(file, 0, SEEK_END)) { fclose(file); return false; }
+  long len = ftell(file);
+  if (len < 0) { fclose(file); return false; }
+  if (fseek(file, 0, SEEK_SET)) { fclose(file); return false; }
+  data.length(unsigned(len));
+  bool ok = !len || fread(data.data(), 1, unsigned(len), file) == unsigned(len);
+  if (fclose(file)) ok = false;
+  return ok;
+}
+
+bool consume_payload(
+    TestState &state,
+    ZmAtomic<unsigned> &offset,
+    const ZtArray<uint8_t> &expected,
+    ZuSpan<uint8_t> span,
+    const char *msg)
+{
+  unsigned len = unsigned(span.length());
+  unsigned off = offset.xchAdd(len);
+  if (off + len > expected.length()) {
+    state.fail(msg);
+    return false;
+  }
+  if (len && memcmp(span.data(), expected.data() + off, len)) {
+    state.fail(msg);
+    return false;
+  }
+  return off + len >= expected.length();
+}
+
+bool wait_for(ZmSemaphore &sem)
+{
+  return sem.timedwait(Zm::now(TimeoutSeconds)) == 0;
+}
+
+bool wait_done(TestState &state)
+{
+  for (unsigned i = 0; i < state.target; ++i)
+    if (!wait_for(state.done)) return false;
+  return true;
+}
+
+uint16_t reserve_loopback_port()
+{
+  int s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (s < 0) return 0;
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  uint16_t port = 0;
+  if (!::bind(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr))) {
+    socklen_t len = sizeof(addr);
+    if (!::getsockname(s, reinterpret_cast<sockaddr *>(&addr), &len))
+      port = ntohs(addr.sin_port);
+  }
+  ::close(s);
+  return port;
+}
+
+ZiMxParams mx_params()
+{
+  return ZiMxParams()
+    .scheduler([](auto &s) {
+      s.nThreads(4)
+	.thread(1, [](auto &t) { t.isolated(1); })
+	.thread(2, [](auto &t) { t.isolated(1); })
+	.thread(3, [](auto &t) { t.isolated(1); });
+    })
+    .rxThread(1).txThread(2);
+}
+
+template <typename Link>
+void send_payload(Link *link, const ZtArray<uint8_t> &payload)
+{
+  if (!payload.length()) return;
+  auto tx = link->txStream_();
+  tx.append(payload.data(), unsigned(payload.length()));
+  tx << Zi::flush();
+}
 
 template <typename State>
 struct BaseClient : public Ztls::Client<BaseClient<State>> {
@@ -152,20 +264,30 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
     using BaseLink = Ztls::CliLink<BaseClient, Link, BufAlloc>;
     Link(BaseClient *app) : BaseLink{app} { }
 
-    void connected(const char *, int) {
-      auto &payload = this->app()->state.payload;
-      if (payload.length()) {
-	auto tx = this->txStream_();
-	tx.append(payload.data(), unsigned(payload.length()));
-	tx << Zi::flush();
+    void connected(const char *, int tlsver) {
+      auto &state = this->app()->state;
+      state.client_connected = 1;
+      state.client_tlsver = unsigned(tlsver);
+      auto cipher = ptls_get_cipher(this->tls());
+      state.client_cipher = cipher ? cipher->id : 0;
+      if (state.clientKeyUpdate && !this->updateKey_(true)) {
+	state.fail("client key update failed");
+	return;
       }
+      send_payload(this, state.clientPayload);
     }
     void disconnected() { this->app()->state.done_one(); }
     void connectFailed(bool) { this->app()->state.fail("connect failed"); }
     int process(Ztls::RxStream &rx) {
+      auto &state = this->app()->state;
       while (!rx.empty()) {
 	auto span = rx.span();
+	bool complete = consume_payload(
+	  state, state.client_rx_bytes, state.serverPayload, span,
+	  "client received unexpected payload");
 	rx.advance(span.length());
+	if (complete && !state.client_closed.xch(1))
+	  this->disconnect_();
       }
       return 1;
     }
@@ -189,22 +311,25 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
     using BaseLink = Ztls::SrvLink<BaseServer, Link, BufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
 
-    void connected(const char *, int) { }
+    void connected(const char *, int tlsver) {
+      auto &state = this->app()->state;
+      state.server_connected = 1;
+      state.server_tlsver = unsigned(tlsver);
+      auto cipher = ptls_get_cipher(this->tls());
+      state.server_cipher = cipher ? cipher->id : 0;
+    }
     void disconnected() { this->app()->state.done_one(); }
     int process(Ztls::RxStream &rx) {
+      auto &state = this->app()->state;
       while (!rx.empty()) {
 	auto span = rx.span();
-	unsigned got = unsigned(span.length());
-	unsigned total = this->app()->state.rx_bytes.xchAdd(got);
-	total += got;
+	bool complete = consume_payload(
+	  state, state.server_rx_bytes, state.clientPayload, span,
+	  "server received unexpected payload");
 	rx.advance(span.length());
-	if (this->app()->state.payload.length() &&
-	    total >= unsigned(this->app()->state.payload.length())) {
-	  auto tx = this->txStream_();
-	  tx.append(this->app()->state.payload.data(),
-	      unsigned(this->app()->state.payload.length()));
-	  tx << Zi::flush();
-	  return -1;
+	if (complete && !state.server_replied.xch(1)) {
+	  send_payload(this, state.serverPayload);
+	  if (state.serverDisconnectAfterSend) this->disconnect_();
 	}
       }
       return 1;
@@ -219,7 +344,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
   BaseServer(State &state_, ZiIP ip_) : state(state_), ip(ip_) { }
 
   ZiIP localIP() const { return ip; }
-  unsigned localPort() const { return 0; }
+  unsigned localPort() const { return state.port; }
 
   void listening(const ZiListenInfo &info) {
     state.port = info.port;
@@ -230,77 +355,45 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
   void override_cipher_suites(ptls_cipher_suite_t **suites) {
     this->ctx()->cipher_suites = suites;
   }
+  void override_tls12_cipher_suites(ptls_cipher_suite_t **suites) {
+    this->ctx()->tls12_cipher_suites = suites;
+  }
 
   State	&state;
   ZiIP	ip;
 };
 
-struct AlignOverride {
-  struct st_ptls_aead_algorithm_t aead;
-  struct st_ptls_cipher_suite_t cipher;
+struct SuiteList {
   ptls_cipher_suite_t *list[2]{};
-
-  AlignOverride()
-    : aead(*ptls_openssl_cipher_suites[0]->aead),
-      cipher(*ptls_openssl_cipher_suites[0]) {
-    cipher.aead = &aead;
-    list[0] = &cipher;
+  void set(ptls_cipher_suite_t *suite) {
+    list[0] = suite;
     list[1] = nullptr;
-  }
-
-  void init(uint8_t align_bits) {
-    aead.align_bits = align_bits;
   }
 };
 
-bool write_file(const char *path, const char *data)
+void run_in_process(
+    TempDir &temp,
+    LogCapture &capture,
+    unsigned clientLen,
+    unsigned serverLen,
+    bool clientKeyUpdate,
+    ptls_cipher_suite_t **cipherSuites = nullptr,
+    unsigned expectedCipher = 0)
 {
-  ZiFile file;
-  if (file.open(path, ZiFile::Write) != Zi::OK) return false;
-  return file.write(data, strlen(data)) == Zi::OK;
-}
-
-void fill_payload(ZtArray<uint8_t> &payload, unsigned len)
-{
-  payload.length(len);
-  for (unsigned i = 0; i < len; ++i)
-    payload[i] = uint8_t(i);
-}
-
-bool wait_for(ZmSemaphore &sem)
-{
-  return sem.timedwait(Zm::now(TimeoutSeconds)) == 0;
-}
-
-bool wait_done(TestState &state)
-{
-  for (unsigned i = 0; i < TestState::Target; ++i)
-    if (!wait_for(state.done)) return false;
-  return true;
-}
-
-void testDefaultBuffers(LogCapture &capture,
-    const char *cert_path, const char *key_path)
-{
-  ZuTestScopeRT(testDefaultBuffers);
-
   Ztls::Pico::reset_stats();
   capture.reset();
 
   TestState state;
+  state.target = 2;
   state.ip = ZiIP("127.0.0.1");
-  state.allow_fail = true;
-  fill_payload(state.payload, PayloadSize);
+  state.port = reserve_loopback_port();
+  state.clientKeyUpdate = clientKeyUpdate;
+  fill_payload(state.clientPayload, clientLen, 0x11);
+  fill_payload(state.serverPayload, serverLen, 0x63);
+  ZTLS_CHECK_RT(state.port, "failed to reserve loopback port");
+  if (!state.port) return;
 
-  ZiMultiplex mx(
-      ZiMxParams()
-	.scheduler([](auto &s) {
-	  s.nThreads(4)
-	  .thread(1, [](auto &t) { t.isolated(1); })
-	  .thread(2, [](auto &t) { t.isolated(1); })
-	  .thread(3, [](auto &t) { t.isolated(1); }); })
-	.rxThread(1).txThread(2));
-
+  ZiMultiplex mx(mx_params());
   bool mxStarted = mx.start();
   ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
@@ -308,64 +401,202 @@ void testDefaultBuffers(LogCapture &capture,
   BaseServer<TestState> server(state, state.ip);
   bool serverOK = server.init(
     Ztls::ServerParams(&mx, "3", {})
-      .certPath(cert_path)
-      .keyPath(key_path));
+      .certPath(temp.certPath.data())
+      .keyPath(temp.keyPath.data()));
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
 
   BaseClient<TestState> client(state);
   bool clientOK = client.init(
-    Ztls::ClientParams(&mx, "3", {}).caPath(cert_path));
+    Ztls::ClientParams(&mx, "3", {}).caPath(temp.certPath.data()));
   ZTLS_CHECK_RT(clientOK, "TLS client init failed");
   if (!clientOK) { mx.stop(); return; }
+
+  if (cipherSuites) {
+    server.override_cipher_suites(cipherSuites);
+    client.override_cipher_suites(cipherSuites);
+  }
 
   server.listen();
   bool listening = wait_for(state.listening);
   ZTLS_CHECK_RT(listening, "listen timed out");
   if (!listening) { mx.stop(); return; }
 
-  ZmRef<BaseClient<TestState>::Link> link =
-    new BaseClient<TestState>::Link(&client);
-  link->connect(state.ip, state.port);
+  ZmRef<typename BaseClient<TestState>::Link> link =
+    new typename BaseClient<TestState>::Link(&client);
+  link->connect("127.0.0.1", state.port);
 
   bool done = wait_done(state);
   ZTLS_CHECK_RT(done, "TLS disconnect wait timed out");
 
   mx.stop();
 
-  auto stats = Ztls::Pico::stats();
-  (void)stats;
-  ZTLS_CHECK_RT(!capture.copy_warns.load_(), "copy fallback warnings seen");
   ZTLS_CHECK_RT(!capture.errors.load_(), "unexpected error logs");
   ZTLS_CHECK_RT(!state.errors.load_(),
     state.error_msg ? state.error_msg : "state error");
+  ZTLS_CHECK_RT(state.client_connected.load_(), "client did not connect");
+  ZTLS_CHECK_RT(state.server_connected.load_(), "server did not connect");
+  ZTLS_CHECK_RT(state.client_tlsver.load_() == 13, "client did not use TLS 1.3");
+  ZTLS_CHECK_RT(state.server_tlsver.load_() == 13, "server did not use TLS 1.3");
+  ZTLS_CHECK_RT(state.client_rx_bytes.load_() == serverLen,
+    "client payload length mismatch");
+  ZTLS_CHECK_RT(state.server_rx_bytes.load_() == clientLen,
+    "server payload length mismatch");
+  if (expectedCipher) {
+    ZTLS_CHECK_RT(state.client_cipher.load_() == expectedCipher,
+      "client selected unexpected cipher");
+    ZTLS_CHECK_RT(state.server_cipher.load_() == expectedCipher,
+      "server selected unexpected cipher");
+  }
 }
 
-void testAlignedBuffers(LogCapture &capture,
-    const char *cert_path, const char *key_path)
-{
-  ZuTestScopeRT(testAlignedBuffers);
+struct ImportedTLS {
+  SuiteList	suites;
+  ptls_context_t	ctx{};
+  ptls_t	*client = nullptr;
+  ptls_t	*server = nullptr;
+  ~ImportedTLS() {
+    if (client) ptls_free(client);
+    if (server) ptls_free(server);
+  }
+};
 
+bool import_tls12_one(
+    ptls_context_t *ctx,
+    ptls_cipher_suite_t *suite,
+    bool isServer,
+    ImportedTLS &pair)
+{
+  uint8_t master[PTLS_TLS12_MASTER_SECRET_SIZE];
+  uint8_t randoms[PTLS_HELLO_RANDOM_SIZE * 2];
+  for (unsigned i = 0; i < sizeof(master); ++i) master[i] = uint8_t(0x40 + i);
+  for (unsigned i = 0; i < sizeof(randoms); ++i) randoms[i] = uint8_t(0x80 + i);
+
+  uint8_t paramsStorage[512];
+  ptls_buffer_t params;
+  ptls_buffer_init_tx(&params, paramsStorage, sizeof(paramsStorage));
+  int n = ptls_build_tls12_export_params(
+    ctx, &params, isServer ? 1 : 0, 0, suite, master, randoms,
+    1, "localhost", ptls_iovec_init(nullptr, 0));
+  if (n) {
+    ptls_buffer_dispose(&params);
+    return false;
+  }
+  ptls_t *tls = nullptr;
+  n = ptls_import(ctx, &tls, ptls_iovec_init(params.base, params.off));
+  ptls_buffer_dispose(&params);
+  if (n) return false;
+  if (isServer)
+    pair.server = tls;
+  else
+    pair.client = tls;
+  return true;
+}
+
+bool import_tls12_pair(ptls_cipher_suite_t *suite, ImportedTLS &pair)
+{
+  pair.suites.set(suite);
+  pair.ctx.random_bytes = ptls_openssl_random_bytes;
+  pair.ctx.get_time = &ptls_get_time;
+  pair.ctx.cipher_suites = ptls_openssl_cipher_suites;
+  pair.ctx.tls12_cipher_suites = pair.suites.list;
+  return
+    import_tls12_one(&pair.ctx, suite, false, pair) &&
+    import_tls12_one(&pair.ctx, suite, true, pair);
+}
+
+bool tls12_roundtrip(
+    ptls_t *sender,
+    ptls_t *receiver,
+    ptls_cipher_suite_t *suite,
+    const ZtArray<uint8_t> &payload)
+{
+  constexpr unsigned TxRecordCapacity = 16 * 1024;
+  unsigned headroom = 5 + suite->aead->tls12.record_iv_size;
+  using TestBuf = Ztls::BufAlloc<BufSize, MaxSize>;
+
+  ZmRef<ZiIOBuf> buf = new TestBuf{nullptr};
+  if (!buf || !buf->ensure(TxRecordCapacity)) return false;
+  memcpy(buf->data_() + headroom, payload.data(), payload.length());
+
+  ptls_buffer_t tx;
+  ptls_buffer_init_tx(&tx, buf->data_(), TxRecordCapacity);
+  tx.origin = buf.ptr();
+  tx.align_bits = suite->aead->align_bits;
+  int n = ptls_send(sender, &tx, buf->data_() + headroom, payload.length());
+  if (n) return false;
+  if (tx.origin != buf.ptr() || tx.base != buf->data_() || !tx.off)
+    return false;
+
+  buf->skip = 0;
+  buf->length = uint32_t(tx.off);
+
+  ptls_buffer_t rx;
+  ptls_buffer_init_rx(&rx, buf->data_() + headroom, buf->size - headroom);
+  rx.origin = buf.ptr();
+  rx.align_bits = suite->aead->align_bits;
+  size_t inlen = buf->length;
+  n = ptls_receive(receiver, &rx, buf->data_(), &inlen);
+  if (n || inlen != buf->length) return false;
+  if (rx.origin != buf.ptr() || rx.base != buf->data_() + headroom)
+    return false;
+  if (rx.off != payload.length()) return false;
+  return !payload.length() || !memcmp(rx.base, payload.data(), payload.length());
+}
+
+void run_tls12_records(ptls_cipher_suite_t *suite)
+{
+  Ztls::Pico::install();
+  Ztls::Pico::reset_stats();
+
+  ImportedTLS pair;
+  bool imported = import_tls12_pair(suite, pair);
+  ZTLS_CHECK_RT(imported, "failed to import TLS 1.2 record state");
+  if (!imported) return;
+
+  ZTLS_CHECK_RT(ptls_get_protocol_version(pair.client) == PTLS_PROTOCOL_VERSION_TLS12,
+    "client import did not create TLS 1.2 state");
+  ZTLS_CHECK_RT(ptls_get_protocol_version(pair.server) == PTLS_PROTOCOL_VERSION_TLS12,
+    "server import did not create TLS 1.2 state");
+
+  auto overhead = 5 + suite->aead->tls12.record_iv_size + suite->aead->tag_size;
+  ZTLS_CHECK_RT(ptls_get_record_overhead(pair.client) == overhead,
+    "client TLS 1.2 record overhead mismatch");
+  ZTLS_CHECK_RT(ptls_get_record_overhead(pair.server) == overhead,
+    "server TLS 1.2 record overhead mismatch");
+
+  ZtArray<uint8_t> clientPayload;
+  ZtArray<uint8_t> serverPayload;
+  fill_payload(clientPayload, SmallPayloadSize, 0x27);
+  fill_payload(serverPayload, SmallPayloadSize, 0x91);
+
+  ZTLS_CHECK_RT(tls12_roundtrip(pair.client, pair.server, suite, clientPayload),
+    "client-to-server TLS 1.2 record round trip failed");
+  ZTLS_CHECK_RT(tls12_roundtrip(pair.server, pair.client, suite, serverPayload),
+    "server-to-client TLS 1.2 record round trip failed");
+}
+
+void run_tls12_handshake_rejected(
+    TempDir &temp,
+    LogCapture &capture)
+{
   Ztls::Pico::reset_stats();
   capture.reset();
 
+  SuiteList suites;
+  suites.set(&ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256);
+
   TestState state;
+  state.target = 1;
   state.ip = ZiIP("127.0.0.1");
-  state.allow_fail = true;
-  fill_payload(state.payload, 1);
+  state.port = reserve_loopback_port();
+  state.serverDisconnectAfterSend = true;
+  fill_payload(state.clientPayload, SmallPayloadSize, 0x27);
+  fill_payload(state.serverPayload, SmallPayloadSize, 0x91);
+  ZTLS_CHECK_RT(state.port, "failed to reserve loopback port");
+  if (!state.port) return;
 
-  AlignOverride override_;
-  override_.init(12);
-
-  ZiMultiplex mx(
-      ZiMxParams()
-	.scheduler([](auto &s) {
-	  s.nThreads(4)
-	  .thread(1, [](auto &t) { t.isolated(1); })
-	  .thread(2, [](auto &t) { t.isolated(1); })
-	  .thread(3, [](auto &t) { t.isolated(1); }); })
-	.rxThread(1).txThread(2));
-
+  ZiMultiplex mx(mx_params());
   bool mxStarted = mx.start();
   ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
@@ -373,38 +604,103 @@ void testAlignedBuffers(LogCapture &capture,
   BaseServer<TestState> server(state, state.ip);
   bool serverOK = server.init(
     Ztls::ServerParams(&mx, "3", {})
-      .certPath(cert_path)
-      .keyPath(key_path));
+      .certPath(temp.certPath.data())
+      .keyPath(temp.keyPath.data()));
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
+  server.override_tls12_cipher_suites(suites.list);
 
-  BaseClient<TestState> client(state);
-  bool clientOK = client.init(
-    Ztls::ClientParams(&mx, "3", {}).caPath(cert_path));
-  ZTLS_CHECK_RT(clientOK, "TLS client init failed");
-  if (!clientOK) { mx.stop(); return; }
-
-  server.override_cipher_suites(override_.list);
-  client.override_cipher_suites(override_.list);
+  auto inPath = temp.pathOf("tls12-in.bin");
+  auto outPath = temp.pathOf("tls12-out.bin");
+  auto errPath = temp.pathOf("tls12-err.log");
+  bool wrote = write_bytes(inPath.data(), state.clientPayload);
+  ZTLS_CHECK_RT(wrote, "failed to write openssl input");
+  if (!wrote) { mx.stop(); return; }
 
   server.listen();
   bool listening = wait_for(state.listening);
   ZTLS_CHECK_RT(listening, "listen timed out");
   if (!listening) { mx.stop(); return; }
 
-  ZmRef<BaseClient<TestState>::Link> link =
-    new BaseClient<TestState>::Link(&client);
-  link->connect(state.ip, state.port);
+  ZtString<> cmd;
+  cmd << "timeout " << TimeoutSeconds <<
+    "s openssl s_client -quiet -ign_eof -verify_return_error "
+    "-tls1_2 -cipher ECDHE-RSA-AES128-GCM-SHA256" <<
+    " -servername localhost -connect 127.0.0.1:" << state.port <<
+    " -CAfile " << temp.certPath <<
+    " < " << inPath <<
+    " > " << outPath <<
+    " 2> " << errPath;
+  bool cmdOK = TempDir::systemOK(system(cmd.data()));
+  if (cmdOK) state.fail("unexpected TLS 1.2 handshake success");
 
   bool done = wait_done(state);
-  ZTLS_CHECK_RT(done, "TLS disconnect wait timed out");
+  ZTLS_CHECK_RT(done, "TLS server disconnect wait timed out");
 
   mx.stop();
+  ZtArray<uint8_t> err;
+  bool readErr = read_bytes(errPath.data(), err);
+  bool protocolVersion =
+    readErr && LogCapture::contains(
+      ZuCSpan{reinterpret_cast<const char *>(err.data()), err.length()},
+      "protocol version");
+  ZTLS_CHECK_RT(!cmdOK, "TLS 1.2 handshake unexpectedly succeeded");
+  ZTLS_CHECK_RT(capture.errors.load_(),
+    "TLS 1.2 rejection did not log an error");
+  ZTLS_CHECK_RT(protocolVersion,
+    "TLS 1.2 rejection did not report protocol version");
+  ZTLS_CHECK_RT(!state.errors.load_(),
+    state.error_msg ? state.error_msg : "state error");
+  ZTLS_CHECK_RT(!state.server_connected.load_(),
+    "TLS 1.2 rejection reached application connected()");
+}
 
-  auto stats = Ztls::Pico::stats();
-  (void)stats;
-  ZTLS_CHECK_RT(!capture.copy_warns.load_(),
-    "copy fallback warnings seen (align case)");
+void testTLS13JumboBuffers(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testTLS13JumboBuffers);
+  run_in_process(temp, capture, JumboPayloadSize, JumboPayloadSize, false);
+}
+
+void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testTLS13KeyUpdate);
+  SuiteList suites;
+  suites.set(&ptls_openssl_aes128gcmsha256);
+  run_in_process(
+    temp, capture, SmallPayloadSize, SmallPayloadSize, true,
+    suites.list, PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
+}
+
+void testTLS12ExplicitIV(TempDir &temp, LogCapture &capture)
+{
+  (void)temp;
+  (void)capture;
+  ZuTestScopeRT(testTLS12ExplicitIV);
+  auto suite = &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256;
+  ZTLS_CHECK_RT(suite->aead->tls12.record_iv_size > 0,
+    "TLS 1.2 AES-GCM should use an explicit record IV");
+  run_tls12_records(suite);
+}
+
+void testTLS12NoExplicitIV(TempDir &temp, LogCapture &capture)
+{
+  (void)temp;
+  (void)capture;
+  ZuTestScopeRT(testTLS12NoExplicitIV);
+#if PTLS_OPENSSL_HAVE_CHACHA20_POLY1305
+  auto suite = &ptls_openssl_tls12_ecdhe_rsa_chacha20poly1305sha256;
+  ZTLS_CHECK_RT(!suite->aead->tls12.record_iv_size,
+    "TLS 1.2 ChaCha20-Poly1305 should not use an explicit record IV");
+  run_tls12_records(suite);
+#else
+  std::cout << "# TLS 1.2 ChaCha20-Poly1305 unavailable in this OpenSSL build\n";
+#endif
+}
+
+void testTLS12HandshakeRejected(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testTLS12HandshakeRejected);
+  run_tls12_handshake_rejected(temp, capture);
 }
 
 } // namespace
@@ -422,16 +718,16 @@ int main(int argc, char **argv)
   }));
   ZiLog::start();
 
-  const char *cert_path = "ZtlsBufHookTest-cert.pem";
-  const char *key_path = "ZtlsBufHookTest-key.pem";
-
   ZuTestMain();
-  bool wroteCerts =
-    write_file(cert_path, CertPem) && write_file(key_path, KeyPem);
-  ZuCHECK(wroteCerts, "failed to write cert/key");
-  if (wroteCerts) {
-    ZuTestCall(testDefaultBuffers, capture, cert_path, key_path);
-    ZuTestCall(testAlignedBuffers, capture, cert_path, key_path);
+  TempDir temp;
+  bool tempOK = temp.init();
+  ZuCHECK(tempOK, "failed to generate cert/key");
+  if (tempOK) {
+    ZuTestCall(testTLS13JumboBuffers, temp, capture);
+    ZuTestCall(testTLS13KeyUpdate, temp, capture);
+    ZuTestCall(testTLS12ExplicitIV, temp, capture);
+    ZuTestCall(testTLS12NoExplicitIV, temp, capture);
+    ZuTestCall(testTLS12HandshakeRejected, temp, capture);
   }
 
   ZiLog::stop();

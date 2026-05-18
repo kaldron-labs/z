@@ -87,7 +87,6 @@ public:
   IOBuf(IOBuf &&buf) = delete;
   IOBuf &operator =(IOBuf &&buf) = delete; 
 
-private:
   inline uint8_t *data_() {
     return reinterpret_cast<uint8_t *>(data__ & ~Jumbo);
   }
@@ -95,7 +94,6 @@ private:
     return const_cast<IOBuf *>(this)->data_();
   }
 
-public:
   bool operator !() const { return !length; }
 
   uint8_t *data() { return data_() + skip; }

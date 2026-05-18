@@ -16,3 +16,7 @@ noinst_PROGRAMS = ZtlsPKTest ZtlsBufHookTest ZtlsAsyncTest
 ZtlsPKTest_SOURCES = ZtlsPKTest.cc
 ZtlsBufHookTest_SOURCES = ZtlsBufHookTest.cc
 ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc
+
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)
