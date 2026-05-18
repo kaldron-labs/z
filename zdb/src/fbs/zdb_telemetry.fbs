@@ -12,6 +12,7 @@ table DBTable {
   cache_evictions:uint64;
   cache_size:uint32;
   cache_mode:Zdb_.fbs.CacheMode;
+  rag:int8;
 }
 table DBHost {
   ip:Zfb.IP;
@@ -20,6 +21,7 @@ table DBHost {
   port:uint16;
   state:Zdb_.fbs.HostState;
   voted:uint8;
+  rag:int8;
 }
 table DB {
   thread:string;
@@ -39,4 +41,5 @@ table DB {
   active:uint8;
   recovering:uint8;
   replicating:uint8;
+  rag:int8;
 }
