@@ -1181,7 +1181,7 @@ private:
     memset(&m_ctx, 0, sizeof(m_ctx));
     m_ctx.random_bytes = ptls_openssl_random_bytes;
     m_ctx.get_time = &ptls_get_time;
-    m_ctx.key_exchanges = ptls_openssl_key_exchanges;
+    m_ctx.key_exchanges = ptls_openssl_key_exchanges_all;
     init_cipher_suites_();
     m_ctx.cipher_suites = m_cipher_suites;
     m_ctx.server_cipher_preference = 1;
@@ -1445,13 +1445,13 @@ private:
 #if Ztls_Fusion
       static ptls_cipher_suite_t fusion_aes256gcmsha384 = {
 	.id = PTLS_CIPHER_SUITE_AES_256_GCM_SHA384,
-	.aead = &ptls_fusion_aes256gcm,
+	.aead = &ptls_non_temporal_aes256gcm,
 	.hash = &ptls_openssl_sha384,
 	.name = PTLS_CIPHER_SUITE_NAME_AES_256_GCM_SHA384
       };
       static ptls_cipher_suite_t fusion_aes128gcmsha256 = {
 	.id = PTLS_CIPHER_SUITE_AES_128_GCM_SHA256,
-	.aead = &ptls_fusion_aes128gcm,
+	.aead = &ptls_non_temporal_aes128gcm,
 	.hash = &ptls_openssl_sha256,
 	.name = PTLS_CIPHER_SUITE_NAME_AES_128_GCM_SHA256
       };

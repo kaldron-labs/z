@@ -6,6 +6,7 @@
 
 // picotls buffer hook integration
 
+#include <stdint.h>
 #include <string.h>
 
 #include <zlib/ZuLib.hh>
@@ -42,7 +43,12 @@ static_assert((ZiIOBuf_Align & (ZiIOBuf_Align - 1)) == 0,
 
 constexpr unsigned IOBufAlignBits = log2_align_(ZiIOBuf_Align);
 
-static void *buffer_alloc_(ptls_buffer_t *pbuf, uint32_t capacity,
+#if Ztls_Fusion
+static_assert(IOBufAlignBits >= PTLS_X86_CACHE_LINE_ALIGN_BITS,
+  "ZiIOBuf_Align must satisfy picotls fusion alignment");
+#endif
+
+static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
     uint8_t align_bits, int tx)
 {
   pbuf->tx = tx ? 1 : 0;
@@ -52,7 +58,11 @@ static void *buffer_alloc_(ptls_buffer_t *pbuf, uint32_t capacity,
       return nullptr;
     }
     auto buf = static_cast<ZiIOBuf *>(pbuf->origin);
-    if (ZuUnlikely(!buf->ensure(capacity))) {
+    if (ZuUnlikely(capacity > UINT32_MAX)) {
+      counters.origin_ensure_fail++;
+      return nullptr;
+    }
+    if (ZuUnlikely(!buf->ensure(static_cast<uint32_t>(capacity)))) {
       counters.origin_ensure_fail++;
       return nullptr;
     }

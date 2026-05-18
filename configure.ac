@@ -9,6 +9,22 @@ AM_INIT_AUTOMAKE([subdir-objects -Wno-portability])
 
 AC_LANG([C++])
 AC_PROG_CXX
+AC_PROG_CC
+
+# Autoconf may append a standard-mode probe to the compiler command.
+# This project manages language modes explicitly.
+for z_var in CC CXX; do
+  eval "z_compiler=\$$z_var"
+  z_clean_compiler=
+  for z_arg in $z_compiler; do
+    AS_CASE([$z_arg],
+      [-std=*], [],
+      [-std:*], [],
+      [z_clean_compiler="${z_clean_compiler}${z_clean_compiler:+ }$z_arg"])
+  done
+  eval "$z_var=\$z_clean_compiler"
+done
+
 LT_INIT([win32-dll shared disable-static])
 LT_LANG([C++])
 
@@ -101,17 +117,17 @@ Z_OFLAGS="-fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-n
 Z_CFLAGS="$Z_CFLAGS $Z_OFLAGS"
 Z_CXXFLAGS="$Z_CXXFLAGS $Z_OFLAGS"
 
-AS_IF([test ".$CC" = ".gcc"], [
-  Z_WFLAGS="-Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare" # C and C++
-  Z_CFLAGS="$Z_CFLAGS $Z_WFLAGS"
-  Z_CXXFLAGS="-std=gnu++2b -fstrict-aliasing -ftemplate-backtrace-limit=0 -Wno-non-template-friend -Wno-enum-compare -Wno-deprecated-enum-enum-conversion -Wno-int-in-bool-context -Wno-unused-value $Z_CXXFLAGS $Z_WFLAGS"
-])
-
-AS_IF([test ".$CC" = ".clang"], [
-  Z_WFLAGS="-Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function" # C and C++
-  Z_CFLAGS="$Z_CFLAGS $Z_WFLAGS"
-  Z_CXXFLAGS="-std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function $Z_CXXFLAGS $Z_WFLAGS"
-])
+AS_CASE([$CC],
+  [*clang*], [
+    Z_WFLAGS="-Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function" # C and C++
+    Z_CFLAGS="$Z_CFLAGS $Z_WFLAGS"
+    Z_CXXFLAGS="-std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function $Z_CXXFLAGS $Z_WFLAGS"
+  ],
+  [*gcc*], [
+    Z_WFLAGS="-Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare" # C and C++
+    Z_CFLAGS="$Z_CFLAGS $Z_WFLAGS"
+    Z_CXXFLAGS="-std=gnu++2b -fstrict-aliasing -ftemplate-backtrace-limit=0 -Wno-non-template-friend -Wno-enum-compare -Wno-deprecated-enum-enum-conversion -Wno-int-in-bool-context -Wno-unused-value $Z_CXXFLAGS $Z_WFLAGS"
+  ])
 
 AC_SUBST(Z_CPPFLAGS)
 AC_SUBST(Z_CFLAGS)
@@ -125,17 +141,13 @@ AC_SUBST(Z_IO_LIBS)
 AC_SUBST(Z_TERM_LIBS)
 
 # picotls
-PKG_CHECK_MODULES([PTLS_FUSION], [picotls-fusion >= 1.0], [], [dnl
-  AC_MSG_ERROR([picotls-fusion required])
+PKG_CHECK_MODULES([PTLS], [
+  picotls-core >= 1.3
+  picotls-openssl >= 1.3
+  picotls-fusion >= 1.3
+], [], [dnl
+  AC_MSG_ERROR([picotls >= 1.3 with OpenSSL and fusion support required])
 ])
-PKG_CHECK_MODULES([PTLS_CORE], [picotls-core >= 1.0], [], [dnl
-  AC_MSG_ERROR([picotls-core required])
-])
-PKG_CHECK_MODULES([PTLS_OPENSSL], [picotls-openssl >= 1.0], [], [dnl
-  AC_MSG_ERROR([picotls-openssl required])
-])
-PTLS_LIBS="$PTLS_FUSION_LIBS $PTLS_OPENSSL_LIBS $PTLS_CORE_LIBS"
-PTLS_CFLAGS="$PTLS_CORE_CFLAGS"
 AC_SUBST(PTLS_LIBS)
 AC_SUBST(PTLS_CFLAGS)
 
