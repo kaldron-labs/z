@@ -61,7 +61,7 @@ template <typename Buf>
 inline int loadHdr(const Buf *buf) {
   if (ZuUnlikely(buf->length < sizeof(Hdr))) return INT_MAX;
   auto hdr = buf->template ptr<Hdr>();
-  return sizeof(Hdr) + static_cast<uint32_t>(hdr->length);
+  return sizeof(Hdr) + uint32_t(hdr->length);
 }
 
 // returns -1 if the header is invalid/corrupted, or lambda return

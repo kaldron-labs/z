@@ -640,10 +640,10 @@ public:
 
   unsigned loadFactor_() const { return m_loadFactor; }
   double loadFactor() const {
-    return static_cast<double>(m_loadFactor) / 16.0;
+    return double(m_loadFactor) / 16.0;
   }
   unsigned size() const {
-    return static_cast<double>(static_cast<uint64_t>(1)<<m_bits) * loadFactor();
+    return double(uint64_t(1)<<m_bits) * loadFactor();
   }
 
   // intentionally unlocked and non-atomic

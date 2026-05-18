@@ -286,7 +286,7 @@ public:
     }
     {
       unsigned i = (begin>>BitShift);
-      uint64_t mask = ~static_cast<uint64_t>(0);
+      uint64_t mask = ~uint64_t(0);
       if (i == (end>>BitShift)) mask >>= (64 - (end - begin));
       if (uint64_t begin_ = (begin & Mask)) {
 	mask <<= begin_;
@@ -304,7 +304,7 @@ public:
       }
     }
     if (begin < end) {
-      uint64_t mask = (~static_cast<uint64_t>(0))>>(64 - (end - begin));
+      uint64_t mask = (~uint64_t(0))>>(64 - (end - begin));
       data[begin>>BitShift] |= mask;
     }
     return *this;
@@ -314,7 +314,7 @@ public:
     if (begin >= end) return *this;
     {
       unsigned i = (begin>>BitShift);
-      uint64_t mask = ~static_cast<uint64_t>(0);
+      uint64_t mask = ~uint64_t(0);
       if (i == (end>>BitShift)) mask >>= (64 - (end - begin));
       if (uint64_t begin_ = (begin & Mask)) {
 	mask <<= begin_;
@@ -332,7 +332,7 @@ public:
       }
     }
     if (begin < end) {
-      uint64_t mask = (~static_cast<uint64_t>(0))>>(64 - (end - begin));
+      uint64_t mask = (~uint64_t(0))>>(64 - (end - begin));
       data[begin>>BitShift] &= ~mask;
     }
     return *this;

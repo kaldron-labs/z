@@ -1234,7 +1234,7 @@ int Cxn_::msgRead2(ZmRef<IOBuf> buf)
     ZmAssert(msg);
     if (ZuUnlikely(!msg)) return -1;
 
-    auto length = static_cast<uint32_t>(hdr->length);
+    auto length = uint32_t(hdr->length);
 
     switch (msg->body_type()) {
       case fbs::Body::Heartbeat:

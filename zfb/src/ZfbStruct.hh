@@ -385,9 +385,7 @@ struct Bytes {
 struct Int128 {
   enum { IsInline = 1 };
   static auto save(const int128_t &v) {
-    return Zfb::Int128{
-      static_cast<uint64_t>(v>>64),
-      static_cast<uint64_t>(v)};
+    return Zfb::Int128{uint64_t(v>>64), uint64_t(v)};
   }
   static int128_t load(const Zfb::Int128 *v) {
     return (int128_t(v->h())<<64) | v->l();
@@ -397,9 +395,7 @@ struct Int128 {
 struct UInt128 {
   enum { IsInline = 1 };
   static auto save(const uint128_t &v) {
-    return Zfb::UInt128{
-      static_cast<uint64_t>(v>>64),
-      static_cast<uint64_t>(v)};
+    return Zfb::UInt128{uint64_t(v>>64), uint64_t(v)};
   }
   static uint128_t load(const Zfb::UInt128 *v) {
     return (uint128_t(v->h())<<64) | v->l();
@@ -421,9 +417,7 @@ struct Fixed {
 struct Decimal {
   enum { IsInline = 1 };
   static auto save(const ZuDecimal &v) {
-    return Zfb::Decimal{
-      static_cast<uint64_t>(v.value>>64),
-      static_cast<uint64_t>(v.value)};
+    return Zfb::Decimal{uint64_t(v.value>>64), uint64_t(v.value)};
   }
   static ZuDecimal load(const Zfb::Decimal *v) {
     return ZuDecimal{ZuDecimal::Unscaled{

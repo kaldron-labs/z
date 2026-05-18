@@ -53,7 +53,7 @@ template <> struct ZuBitfield_<32> {
 template <> struct ZuBitfield_<64> {
   static constexpr unsigned word(unsigned i) { return i; }
   static constexpr unsigned shift(unsigned i) { return 0; }
-  static constexpr uint64_t mask() { return ~static_cast<uint64_t>(0); }
+  static constexpr uint64_t mask() { return ~uint64_t(0); }
 };
 
 template <unsigned N, unsigned Width>
