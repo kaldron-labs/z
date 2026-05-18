@@ -531,24 +531,23 @@ int Cmd::parse(ZuCSpan s, int off)
     if (ZtREGEX("\G\s*(-?\d+)").m(s, c, off)) {
       off += c[1].length();
       uint16_t arg = ZuBox<int16_t>{c[2]};
-      m_value |= (static_cast<uint64_t>(arg)<<16);
+      m_value |= (uint64_t(arg)<<16);
     } else
-      m_value |=
-	(static_cast<uint64_t>(static_cast<uint16_t>(Cmd::nullArg()))<<16);
+      m_value |= (uint64_t(uint16_t(Cmd::nullArg()))<<16);
     if (ZtREGEX("\G\s*,").m(s, c, off)) {
       off += c[1].length();
       int32_t vkey;
       off = VKey_parse(vkey, s, off);
       if (off <= 0) return off;
-      m_value |= static_cast<uint64_t>(vkey)<<32;
+      m_value |= uint64_t(vkey)<<32;
     } else
-      m_value |= static_cast<uint64_t>(-VKey::Null)<<32;
+      m_value |= uint64_t(-VKey::Null)<<32;
     if (!ZtREGEX("\G\s*\)").m(s, c, off)) return -off;
     off += c[1].length();
   } else
     m_value |=
-      static_cast<uint64_t>(nullArg())<<16 |
-      static_cast<uint64_t>(-VKey::Null)<<32;
+      uint64_t(nullArg())<<16 |
+      uint64_t(-VKey::Null)<<32;
   return off;
 }
 

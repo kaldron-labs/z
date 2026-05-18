@@ -73,6 +73,6 @@ int main(int argc, char **argv)
   ZuTestCall_("12-bit", (test<12, 3051>));
   ZuTestCall_("16-bit", (test<16, 32771>));
   ZuTestCall_("32-bit", (test<32, 1073741827>));
-  ZuTestCall_("64-bit", (test<64, static_cast<uint64_t>(1152921504606846979ULL)>));
+  ZuTestCall_("64-bit", (test<64, uint64_t(1152921504606846979ULL)>));
   return 0;
 }

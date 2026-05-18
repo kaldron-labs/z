@@ -199,10 +199,10 @@ protected:
 // Waiting    SWSR *    !SWSR
 
 // 64bit versions of flags
-constexpr uint64_t EndOfFile() { return static_cast<uint64_t>(1)<<62; }
-constexpr uint64_t Waiting()   { return static_cast<uint64_t>(2)<<62; }
+constexpr uint64_t EndOfFile() { return uint64_t(1)<<62; }
+constexpr uint64_t Waiting()   { return uint64_t(2)<<62; }
 constexpr uint64_t Mask()      { return EndOfFile() | Waiting(); }
-constexpr uint64_t RdrMask() { return ~(static_cast<uint64_t>(3)<<62); }
+constexpr uint64_t RdrMask() { return ~(uint64_t(3)<<62); }
 enum { MaxRdrs = 62 };
 #if Zu_BIGENDIAN
 enum { Flags32Offset = 0 };	// 32bit offset of flags within 64bit header
@@ -210,10 +210,10 @@ enum { Flags32Offset = 0 };	// 32bit offset of flags within 64bit header
 enum { Flags32Offset = 1 };
 #endif
 // 32bit versions of flags
-constexpr uint32_t Wrapped32()   { return static_cast<uint32_t>(1)<<28; }
-constexpr uint32_t Locked32()    { return static_cast<uint32_t>(2)<<28; }
-constexpr uint32_t EndOfFile32() { return static_cast<uint32_t>(4)<<28; }
-constexpr uint32_t Waiting32()   { return static_cast<uint32_t>(8)<<28; }
+constexpr uint32_t Wrapped32()   { return uint32_t(1)<<28; }
+constexpr uint32_t Locked32()    { return uint32_t(2)<<28; }
+constexpr uint32_t EndOfFile32() { return uint32_t(4)<<28; }
+constexpr uint32_t Waiting32()   { return uint32_t(8)<<28; }
 constexpr uint32_t Mask32() {
   return Locked32() | EndOfFile32() | Waiting32();
 }
@@ -933,8 +933,7 @@ private:
 #define ZmRing_push2_get_head() \
     uint32_t head = this->head().load_();
 #define ZmRing_push2_ptr2head() \
-    uint32_t head = static_cast<uint32_t>( \
-	(reinterpret_cast<uint8_t *>(ptr) - 8) - data())
+    uint32_t head = uint32_t((reinterpret_cast<uint8_t *>(ptr) - 8) - data())
 
 #define ZmRing_push2_update_stats(msgSize) \
     inCount().store_(inCount().load_() + 1); \
@@ -943,7 +942,7 @@ private:
   // SWSR
   template <uint64_t Flags = 0, bool MW_ = MW, bool MR_ = MR>
   ZuIfT<!MW_ && !MR_> wakeReaders(uint32_t head) {
-    head = (head & ~Waiting32()) | static_cast<uint32_t>(Flags>>32);
+    head = (head & ~Waiting32()) | uint32_t(Flags>>32);
     if (ZuUnlikely(this->head().xch(head) & Waiting32()))
       m_headBlocker.wake(this->head());
   }

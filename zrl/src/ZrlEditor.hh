@@ -197,9 +197,7 @@ public:
   Cmd &operator =(Cmd &&) = default;
 
   Cmd(uint64_t op, int16_t arg = nullArg(), int32_t vkey = -VKey::Null) :
-      m_value{op |
-	(static_cast<uint64_t>(static_cast<uint16_t>(arg))<<16) |
-	(static_cast<uint64_t>(vkey)<<32)} { }
+      m_value{op | (uint64_t(uint16_t(arg))<<16) | (uint64_t(vkey)<<32)} { }
 
   auto op() const { return m_value & 0xffffU; }
   int16_t arg() const { return (m_value>>16) & 0xffffU; }
@@ -211,8 +209,7 @@ public:
   Cmd negArg() const {
     auto arg = this->arg();
     arg = -arg;
-    return Cmd{Internal,
-      (m_value & (~0xffffU<<16)) | (static_cast<uint64_t>(arg)<<16)};
+    return Cmd{Internal, (m_value & (~0xffffU<<16)) | (uint64_t(arg)<<16)};
   }
 
   int parse(ZuCSpan, int off);

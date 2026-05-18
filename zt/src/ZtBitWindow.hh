@@ -56,7 +56,7 @@ public:
 
 private:
   enum { Shift = ZtBitWindow_<Bits>::Shift };
-  static constexpr uint64_t Mask = (static_cast<uint64_t>(1)<<Bits) - 1;
+  static constexpr uint64_t Mask = (uint64_t(1)<<Bits) - 1;
   enum { IndexShift = (6 - Shift) };
   enum { IndexMask = (1<<IndexShift) - 1 };
 
@@ -287,7 +287,7 @@ public:
   enum { Bits = Bits_ };
 
 private:
-  static constexpr uint64_t Mask = (static_cast<uint64_t>(1)<<Bits) - 1;
+  static constexpr uint64_t Mask = (uint64_t(1)<<Bits) - 1;
   enum { IndexMul = ZtBitWindow_<Bits>::Mul };
 
 public:
@@ -633,7 +633,7 @@ public:
 #endif
   void set(uint64_t i) {
     uint64_t j = ensure(i);
-    m_data[j] = ~static_cast<uint64_t>(0);
+    m_data[j] = ~uint64_t(0);
   }
 #if 0
   void set(uint64_t i, uint64_t v) {

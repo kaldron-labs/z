@@ -62,7 +62,7 @@ struct ZuUTF8 {
     if (ZuUnlikely(n < 3)) return 0;
     if (ZuLikely((c>>4) == 0xe)) {
       c = *++s;
-      u = ((u<<12) & 0xf000) + ((static_cast<uint32_t>(c)<<6) & 0xfc0);
+      u = ((u<<12) & 0xf000) + ((uint32_t(c)<<6) & 0xfc0);
       c = *++s;
       u_ = u + (c & 0x3f);
       return 3;
@@ -70,9 +70,9 @@ struct ZuUTF8 {
     if (ZuUnlikely(n < 4)) return 0;
     if (ZuLikely((c>>3U) == 0x1e)) {
       c = *++s;
-      u = ((u<<18) & 0x1c0000) + ((static_cast<uint32_t>(c)<<12) & 0x3f000);
+      u = ((u<<18) & 0x1c0000) + ((uint32_t(c)<<12) & 0x3f000);
       c = *++s;
-      u += ((static_cast<uint32_t>(c)<<6) & 0xfc0);
+      u += ((uint32_t(c)<<6) & 0xfc0);
       c = *++s;
       u_ = u + (c & 0x3f);
       return 4;
@@ -149,7 +149,7 @@ struct ZuUTF16 {
     uint32_t u = c;
     c = *++s;
     if (ZuUnlikely(c < 0xdc00 || c >= 0xe000)) return 0;
-    u_ = (((u - 0xd800)<<10) | 0x10000) + ((static_cast<uint32_t>(c)) - 0xdc00);
+    u_ = (((u - 0xd800)<<10) | 0x10000) + (uint32_t(c) - 0xdc00);
     return 2;
   }
 

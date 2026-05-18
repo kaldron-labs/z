@@ -103,7 +103,7 @@ public:
   }
 
   bool multicast() const {
-    unsigned i = ((static_cast<uint32_t>(ntohl(s_addr)))>>24) & 0xff;
+    unsigned i = ((uint32_t(ntohl(s_addr)))>>24) & 0xff;
     return i >= 224 && i < 240;
   }
 

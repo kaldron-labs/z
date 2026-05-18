@@ -231,7 +231,7 @@ retry:
       file_ptr size() {
 	DWORD l, h = 0;
 	l = GetFileSize(handle, &h);
-	return (static_cast<uint64_t>(h)<<32) | l;
+	return (uint64_t(h)<<32) | l;
       }
     };
 #endif
