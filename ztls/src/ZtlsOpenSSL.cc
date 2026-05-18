@@ -518,7 +518,7 @@ size_t pkey_ec_oid_size(const PKey *key)
   ASN1_OBJECT *obj = OBJ_nid2obj(nid);
   if (!obj) return 0;
   int len = OBJ_length(obj);
-  return len > 0 ? static_cast<size_t>(len) : 0;
+  return len > 0 ? size_t(len) : 0;
 }
 
 bool pkey_ec_generate(PKey *key, ZuBSpan oid)

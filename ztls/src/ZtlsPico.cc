@@ -62,7 +62,7 @@ static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
       counters.origin_ensure_fail++;
       return nullptr;
     }
-    if (ZuUnlikely(!buf->ensure(static_cast<uint32_t>(capacity)))) {
+    if (ZuUnlikely(!buf->ensure(uint32_t(capacity)))) {
       counters.origin_ensure_fail++;
       return nullptr;
     }
