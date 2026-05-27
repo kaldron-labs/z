@@ -101,7 +101,7 @@ public:
       unsigned nextLen = len - frameLen;
       uint8_t *nextPtr = nullptr;
 
-      // copy any trailing data that is (part of) the next message
+      // copy any trailing data that is (part of) the next message(s)
       if (nextLen) {
 	next = new BufAlloc{impl(buf)};
 	nextPtr = next->ensure(nextLen);
