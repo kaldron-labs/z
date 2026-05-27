@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// picotls buffer hook integration
+// zpicotls buffer hook integration
 
 #ifndef ZtlsPico_HH
 #define ZtlsPico_HH

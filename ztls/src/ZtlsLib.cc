@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z TLS Library - picotls/OpenSSL wrapper
+// Z TLS Library - zpicotls/OpenSSL wrapper
 
 #include <zlib/ZtlsLib.hh>
 

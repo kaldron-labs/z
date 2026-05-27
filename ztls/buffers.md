@@ -1,14 +1,14 @@
-# Ztls / picotls Buffer Handling
+# Ztls / zpicotls Buffer Handling
 
 This document is the maintainer reference for how `ztls` supplies buffers to
-picotls and how picotls is allowed to use them. The rules below are invariants:
+zpicotls and how zpicotls is allowed to use them. The rules below are invariants:
 code that cannot satisfy them should fail with a diagnostic or `ZiAssert`, not
 try to repair the buffer after the fact.
 
-The implementation relies on a local picotls buffer hook installed by
-`Ztls::Pico::install()`. That hook lets picotls grow ztls-owned `ZiIOBuf`
-instances without copying through picotls' internal heap, while preserving
-picotls' `ptls_buffer_t` contract.
+The implementation relies on a local zpicotls buffer hook installed by
+`Ztls::Pico::install()`. That hook lets zpicotls grow ztls-owned `ZiIOBuf`
+instances without copying through zpicotls' internal heap, while preserving
+zpicotls' `ptls_buffer_t` contract.
 
 ## Data Model
 
@@ -22,7 +22,7 @@ picotls' `ptls_buffer_t` contract.
   plaintext:
   - TLS 1.3: `m_headroom == 5`.
   - TLS 1.2: `m_headroom == 5 + explicit record IV bytes`.
-- `ptls_buffer_t::base` is the first byte of the output region picotls writes
+- `ptls_buffer_t::base` is the first byte of the output region zpicotls writes
   into.
 - `ptls_buffer_t::off` is the number of valid output bytes starting at
   `pbuf.base`.
@@ -38,7 +38,7 @@ picotls' `ptls_buffer_t` contract.
   `ZiIOBuf` allocation as `pbuf.origin`.
 - Bounds are relative to the actual `pbuf.base`:
   `pbuf.off <= buf->size - (pbuf.base - buf->data_())`.
-- A ztls-owned `ptls_buffer_t` returning as an internal picotls allocation, or
+- A ztls-owned `ptls_buffer_t` returning as an internal zpicotls allocation, or
   returning a base outside its `ZiIOBuf`, is a contract violation.
 - The origin allocation hook must preserve `pbuf.base - buf->data_()` across
   `ZiIOBuf::ensure()`.
@@ -48,7 +48,7 @@ picotls' `ptls_buffer_t` contract.
 - The hook must not reset `pbuf.base` to `buf->data()`. `buf->data()` is
   path-dependent: application Tx uses it as the plaintext pointer, while the
   TLS record base remains `buf->data_()`.
-- When picotls requests `align_bits`, the buffer base passed to picotls for
+- When zpicotls requests `align_bits`, the buffer base passed to zpicotls for
   that operation must satisfy the requested alignment.
 - `ZiIOBuf_Align` must be sufficient for the fusion AEADs selected by ztls.
 
@@ -75,7 +75,7 @@ fusion is enabled, and excludes the non-temporal variants.
   application plaintext.
 - The `pbuf` supplied to `ptls_handshake()` is a handshake Tx buffer.
   Handshake Rx does not use `rxBuf()` and does not publish to `m_rxStream`.
-- `*inlen` is picotls' consumed-input count for the handshake call. It is not a
+- `*inlen` is zpicotls' consumed-input count for the handshake call. It is not a
   plaintext length and must not be used to adjust application-visible data.
 
 ## Handshake Tx
@@ -85,7 +85,7 @@ fusion is enabled, and excludes the non-temporal variants.
   starts with `buf->skip == 0`.
 - The handshake record base is `buf->data_()`. Since `skip == 0`, this is also
   `buf->data()`.
-- Ztls initializes picotls with
+- Ztls initializes zpicotls with
   `ptls_buffer_init_tx(&pbuf, buf->data_(), TxRecordCapacity)`, then sets
   `pbuf.origin = buf.ptr()` and `pbuf.align_bits`.
 - `ptls_handshake()` may write serialized handshake records into `pbuf`.
@@ -125,7 +125,7 @@ fusion is enabled, and excludes the non-temporal variants.
 - The application Tx TLS record base is `buf->data_()`, which is also
   `buf->data() - buf->skip`.
 - Application Tx must pre-size the `ZiIOBuf` to `TxRecordCapacity` before
-  plaintext is given to picotls.
+  plaintext is given to zpicotls.
 - `txStream()` bounds each plaintext fragment so
   `plaintext length + m_headroom + (TxMaxOverhead - m_headroom)` fits within
   `TxRecordCapacity`.
@@ -133,7 +133,7 @@ fusion is enabled, and excludes the non-temporal variants.
 - Growth of an application Tx origin buffer during `ptls_send()` is invalid.
   It means the headroom/tailroom sizing invariant was broken; the hook should
   not repair the buffer.
-- Ztls initializes picotls with
+- Ztls initializes zpicotls with
   `ptls_buffer_init_tx(&pbuf, buf->data_(), TxRecordCapacity)`, sets
   `pbuf.origin = buf.ptr()` and `pbuf.align_bits`, then calls
   `ptls_send(m_tls, &pbuf, buf->data(), buf->length)`.
@@ -142,7 +142,7 @@ fusion is enabled, and excludes the non-temporal variants.
 - For TLS 1.3, the encrypted body begins immediately after the 5-byte record
   header. TLS 1.3 also adds the inner content type before the AEAD tag, which is
   part of the tailroom budget.
-- Fusion AEAD alignment is satisfied by the TLS record base passed to picotls.
+- Fusion AEAD alignment is satisfied by the TLS record base passed to zpicotls.
   The plaintext pointer at `buf->data_() + m_headroom` does not need a separate
   alignment invariant.
 - After Tx finalization, `pbuf.base == buf->data_()` is invariant. The code
@@ -162,7 +162,7 @@ fusion is enabled, and excludes the non-temporal variants.
   `pbuf.origin == buf.ptr()` and `pbuf.base == base + m_headroom`.
 - The no-growth-before-`ptls_receive()` invariant is also the same as
   application Rx: the `ZiIOBuf` must be sized to cover the wire-record length
-  plus `m_headroom` before picotls parses and processes the record.
+  plus `m_headroom` before zpicotls parses and processes the record.
 - A pure post-handshake control message does not publish application plaintext.
   Successful processing with `pbuf.off == 0` must not push the buffer to
   `m_rxStream`.
@@ -174,7 +174,7 @@ fusion is enabled, and excludes the non-temporal variants.
 ## Post-Handshake Control Tx
 
 - Local or reciprocal re-keying Tx uses the no-plaintext control-message shape.
-- `ptls_update_key(m_tls, request_update)` updates picotls state.
+- `ptls_update_key(m_tls, request_update)` updates zpicotls state.
 - `ptls_send(m_tls, &pbuf, nullptr, 0)` serializes the KeyUpdate record.
 - Post-handshake control Tx uses `txBuf()`, not an application Tx buffer.
 - The record base is `buf->data_()`, `buf->skip == 0`, and
@@ -198,7 +198,7 @@ fusion is enabled, and excludes the non-temporal variants.
 
 ## Buffer Hook Contract
 
-The picotls hook receives all buffer-growth requests. The origin-backed path is
+The zpicotls hook receives all buffer-growth requests. The origin-backed path is
 used when `pbuf.origin` is non-null and points at a ztls `ZiIOBuf`.
 
 For origin-backed growth:
@@ -214,18 +214,18 @@ For origin-backed growth:
 - Set `pbuf.capacity = buf->size - offset`.
 - Leave ownership with the `ZiIOBuf`.
 
-For non-origin buffers, picotls owns the allocation. The hook may allocate
+For non-origin buffers, zpicotls owns the allocation. The hook may allocate
 through `Zi::VHeap`, copy existing bytes, clear old bytes, and free old internal
-storage as required by the picotls buffer contract.
+storage as required by the zpicotls buffer contract.
 
 ## Maintainer Checklist
 
 - Do not conflate `buf->data_()` and `buf->data()`.
 - Do not let application Tx growth occur inside `ptls_send()`.
 - Do not let application/control Rx growth occur inside `ptls_receive()`.
-- Do not dispose origin-owned picotls buffers as internal picotls allocations.
+- Do not dispose origin-owned zpicotls buffers as internal zpicotls allocations.
 - Keep handshake/control Tx separate from application Tx.
-- Keep post-handshake control records out of `m_rxStream` unless picotls
+- Keep post-handshake control records out of `m_rxStream` unless zpicotls
   produces application plaintext.
 - Keep selected AEADs compatible with exact in-place decrypt.
 - Keep tests covering jumbo Rx/Tx, TLS 1.3 handshakes, TLS 1.2 record overhead,

@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// HMAC wrapper (picotls/OpenSSL backend)
+// HMAC wrapper (zpicotls/OpenSSL backend)
 
 #ifndef ZtlsHMAC_HH
 #define ZtlsHMAC_HH

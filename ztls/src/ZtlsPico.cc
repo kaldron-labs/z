@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// picotls buffer hook integration
+// zpicotls buffer hook integration
 
 #include <stdint.h>
 #include <stddef.h>
@@ -46,7 +46,7 @@ constexpr unsigned IOBufAlignBits = log2_align_(ZiIOBuf_Align);
 
 #if Ztls_Fusion
 static_assert(IOBufAlignBits >= PTLS_X86_CACHE_LINE_ALIGN_BITS,
-  "ZiIOBuf_Align must satisfy picotls fusion alignment");
+  "ZiIOBuf_Align must satisfy zpicotls fusion alignment");
 #endif
 
 static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
@@ -60,7 +60,7 @@ static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
     }
     auto buf = static_cast<ZiIOBuf *>(pbuf->origin);
     auto raw = buf->data_();
-    // Preserve picotls' base offset across ZiIOBuf relocation.
+    // Preserve zpicotls' base offset across ZiIOBuf relocation.
     ptrdiff_t offset = pbuf->base ? pbuf->base - raw : 0;
     if (ZuUnlikely(offset < 0)) {
       counters.origin_ensure_fail++;

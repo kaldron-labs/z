@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <picotls.h>
+#include <zpicotls.h>
 
 #include <zlib/ZtlsBackendPico.hh>
 

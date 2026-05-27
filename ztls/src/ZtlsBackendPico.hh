@@ -4,12 +4,12 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// C/C++ compatible picotls backend include used by ed25519 glue.
+// C/C++ compatible zpicotls backend include used by ed25519 glue.
 
 #ifndef ZtlsBackendPico_HH
 #define ZtlsBackendPico_HH
 
-#include <picotls.h>
-#include <picotls/openssl.h>
+#include <zpicotls.h>
+#include <zpicotls/openssl.h>
 
 #endif /* ZtlsBackendPico_HH */
