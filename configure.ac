@@ -140,13 +140,13 @@ AC_SUBST(Z_ZT_LIBS)
 AC_SUBST(Z_IO_LIBS)
 AC_SUBST(Z_TERM_LIBS)
 
-# picotls
+# zpicotls
 PKG_CHECK_MODULES([PTLS], [
-  picotls-core >= 1.3
-  picotls-openssl >= 1.3
-  picotls-fusion >= 1.3
+  zpicotls-core >= 1.3
+  zpicotls-openssl >= 1.3
+  zpicotls-fusion >= 1.3
 ], [], [dnl
-  AC_MSG_ERROR([picotls >= 1.3 with OpenSSL and fusion support required])
+  AC_MSG_ERROR([zpicotls >= 1.3 with OpenSSL and fusion support required])
 ])
 AC_SUBST(PTLS_LIBS)
 AC_SUBST(PTLS_CFLAGS)

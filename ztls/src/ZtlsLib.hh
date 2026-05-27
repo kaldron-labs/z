@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// picotls/OpenSSL C++ wrapper
+// zpicotls/OpenSSL C++ wrapper
 
 #ifndef ZtlsLib_HH
 #define ZtlsLib_HH

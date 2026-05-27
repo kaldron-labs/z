@@ -336,7 +336,7 @@ size_t format_error(int err, char *buf, size_t len)
     }
   }
   if (auto ptls_err = ptls_error_string_(err)) {
-    return snprintf(buf, len, "picotls(%s)", ptls_err);
+    return snprintf(buf, len, "zpicotls(%s)", ptls_err);
   }
   return snprintf(buf, len, "error(%d)", err);
 }
@@ -774,7 +774,7 @@ bool sign_cert_async(SignCert *sign, bool async)
 {
   if (!sign) return false;
 #ifdef _WIN32
-  // picotls exposes an int fd for async jobs while Windows HANDLE is pointer-sized.
+  // zpicotls exposes an int fd for async jobs while Windows HANDLE is pointer-sized.
   if (async) return false;
   sign->impl.async = 0;
   return true;

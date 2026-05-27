@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// backend facade for ztls (picotls/OpenSSL)
+// backend facade for ztls (zpicotls/OpenSSL)
 
 #ifndef ZtlsBackend_HH
 #define ZtlsBackend_HH
@@ -22,12 +22,12 @@
 #endif
 #endif
 
-#include <picotls.h>
+#include <zpicotls.h>
 #if Ztls_OpenSSL
-#include <picotls/openssl.h>
+#include <zpicotls/openssl.h>
 #endif
 #if Ztls_Fusion
-#include <picotls/fusion.h>
+#include <zpicotls/fusion.h>
 #endif
 
 #include <zlib/ZuSpan.hh>

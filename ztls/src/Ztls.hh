@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// picotls/OpenSSL wrapper - main TLS component
+// zpicotls/OpenSSL wrapper - main TLS component
 
 #ifndef Ztls_HH
 #define Ztls_HH
@@ -135,7 +135,7 @@ struct ServerParams : public EngineParams {
   int cacheTimeout_ = -1;
 };
 
-// picotls runs within a single dedicated thread, without lock contention
+// zpicotls runs within a single dedicated thread, without lock contention
 
 // API functions: listen, connect, disconnect/disconnect_, txStream/txStream_ (Tx)
 // API callbacks: accepted, connected, disconnected, process (Rx)
@@ -463,7 +463,7 @@ private:
 	m_rxStream.push(ZuMv(buf));
       } else {
 	// A zero-output post-handshake control record can queue a reciprocal
-	// KeyUpdate inside picotls; flush it before the next application Tx.
+	// KeyUpdate inside zpicotls; flush it before the next application Tx.
 	m_tx_control_pending = true;
       }
       while (m_rxStream) {
@@ -496,7 +496,7 @@ private:
     ZiAssert(buf->length <= UINT32_MAX - m_headroom, "Ztls", (),
       "TLS Rx buffer length overflow", return nullptr);
     auto required = buf->length + m_headroom;
-    // Reserve before ptls_receive(); picotls parses input pointers first.
+    // Reserve before ptls_receive(); zpicotls parses input pointers first.
     if (ZuUnlikely(buf->size < required))
       if (ZuUnlikely(!buf->ensure(required))) {
 	ZiLOG(Error, "Ztls", "TLS Rx buffer growth failed");
@@ -724,7 +724,7 @@ private:
     }
     if (ZuUnlikely(!job->get_fd)) {
       app()->error_(ZeEXCEPT(Error, "Ztls",
-	"callback-only picotls async jobs are unsupported"));
+	"callback-only zpicotls async jobs are unsupported"));
       disconnect_(false);
       return false;
     }
@@ -732,14 +732,14 @@ private:
     Zi::Handle handle = static_cast<Zi::Handle>(fd);
     if (ZuUnlikely(Zi::nullHandle(handle))) {
       app()->error_(ZeEXCEPT(Error, "Ztls",
-	"picotls async job returned an invalid fd"));
+	"zpicotls async job returned an invalid fd"));
       disconnect_(false);
       return false;
     }
 #ifndef _WIN32
     if (ZuUnlikely(fcntl(fd, F_GETFD) < 0)) {
       app()->error_(ZeEXCEPT(Error, "Ztls", ([e = ZeError{errno}](auto &s) {
-	s << "picotls async job fd is invalid: " << e;
+	s << "zpicotls async job fd is invalid: " << e;
       })));
       disconnect_(false);
       return false;
@@ -759,7 +759,7 @@ private:
 	    async, ZmFnPtr<&AsyncJob::ready>{}}))) {
       clearAsync_();
       app()->error_(ZeEXCEPT(Error, "Ztls",
-	"ZiEventLoop::addHandle() failed for picotls async job"));
+	"ZiEventLoop::addHandle() failed for zpicotls async job"));
       disconnect_(false);
       return false;
     }
@@ -1193,7 +1193,7 @@ private:
     if (params.asyncThread_) {
 #ifdef _WIN32
       ZiLOG(Error, "Ztls", ([](auto &s) {
-	s << "asyncThread is unsupported on Windows because picotls exposes "
+	s << "asyncThread is unsupported on Windows because zpicotls exposes "
 	  << "an int fd while HANDLE is pointer-sized";
       }));
       return false;
