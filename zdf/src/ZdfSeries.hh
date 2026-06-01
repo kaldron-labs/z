@@ -683,7 +683,7 @@ private:
     auto blkData = new BlkData(tbl, m_shard);
     new (blkData->ptr_()) DB::BlkData{
       .blkOffset = blkOffset,
-      .seriesID = m_id
+      .seriesID = m_id,
       .series = static_cast<AnySeries *>(const_cast<Series *>(this)),
     };
     return blkData;
@@ -989,7 +989,8 @@ private:
 	this, l = ZuMv(l)
       ](ZmRef<BlkData> blkData) mutable {
 	if (ZuUnlikely(!blkData)) { l(nullptr); return; }
-	blkData->series = static_cast<AnySeries *>(const_cast<Series *>(this));
+	blkData->data().series =
+	  static_cast<AnySeries *>(const_cast<Series *>(this));
 	l(ZuMv(blkData));
       });
   }
@@ -1143,7 +1144,7 @@ private:
 // Zdb evict hook
 inline void DB::BlkData_Evict::evict(ZdbObject<BlkData> *blkData)
 {
-  blkData->data().series.object<AnySeries>()->unloadBlkData(blkData);
+  static_cast<AnySeries *>(blkData->data().series)->unloadBlkData(blkData);
 }
 
 class TimeSeries : public Series<DeltaDecoder<>> {

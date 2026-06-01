@@ -162,7 +162,7 @@ public:
     if (i) {
       capture(s, ovector, captures);
       ZuFwd<R>(r)(captures, [&s, &ovector](ZuCSpan r) {
-	s.splice(ovector[0], ovector[1] - ovector[0], r.data(), r.length());
+	s.splice(ovector[0], ovector[1] - ovector[0], r);
       });
     }
     return i;

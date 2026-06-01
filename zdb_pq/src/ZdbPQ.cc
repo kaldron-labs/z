@@ -119,7 +119,7 @@ void Store::start(StartFn fn)
     m_eventLoop.start(
       ZmFn<void(ZiEvent::StartResult)>{
 	this,
-	[](Store *store, ZiEvent::StartResult result) mutable {
+	[](Store *store, ZiEvent::StartResult result) {
 	  if (ZuUnlikely(result.is<ZiEvent::Exception>())) {
 	    store->start_failed(false, ZuMv(result).p<ZiEvent::Exception>());
 	    return;
@@ -227,7 +227,7 @@ void Store::stop_1()
 {
   m_eventLoop.stop(ZmFn<void(ZiEvent::StopResult)>{
     this,
-    [](Store *store, ZiEvent::StopResult) mutable {
+    [](Store *store, ZiEvent::StopResult) {
       // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing stop_2()"; }));
 
       store->stop_2();
@@ -554,8 +554,7 @@ void Store::start_failed(bool running, ZeException e)
 
   if (running) {
     m_eventLoop.stop(ZmFn<void(ZiEvent::StopResult)>{
-      this,
-      [e = ZuMv(e)](Store *store, ZiEvent::StopResult) mutable {
+      [store = this, e = ZuMv(e)](ZiEvent::StopResult) mutable {
 	store->start_failed_(ZuMv(e));
       }});
     return;
