@@ -5,12 +5,21 @@
 Task Steps:
 1. Read `requirements.new.md` in full
 2. Read `plan.md` in full, particularly the answers to open questions at the end
-3. Improve `plan.md`, writing a new version saved as `plan.new.md`:
+3. Use online web search as needed to refine understanding of requirements and their implications
+4. Improve `plan.md`, writing a new version saved as `plan.new.md`:
   - Read `plan.feedback.md` if it exists, incorporating this feedback into the revised plan
   - Review and SCRUTINIZE the planned use of all newly depended APIs
     - Review the detailed behavior of each newly depended API and ensure that the actual behavior of the API aligns with the intended uses
   - Review `plan.md` phase by phase, one phase at a time, improving each phase and appending it to `plan.new.md`
   - Carefully evaluate the dependencies of each phase on preceding phases
+    - When sequencing phases, do not rigidly align phases with architectural layers and work exclusively bottoms-up - prefer vertically-sliced feature-by-feature sequencing:
+      - Decompose features into sub-features
+      - Incrementally build the implementation by sequencing sub-features according to their inter-dependencies, from most internal dependents to least internal dependents
+        - The least interally-dependent features are those that are used directly by external applications
+      - Implement indvidual sub-features end-to-end within a single phase
+      - Trace sub-features through the layers of the architecture:
+        - Wire up sub-features end-to-end within a single phase
+        - Implement skeleton or placeholder code in prior phases for subsequent phases to fill out and complete
 
 ## CRITICAL: DO NO MORE THAN RESEARCH AND MAKE A PLAN
 
@@ -21,6 +30,7 @@ IMPORTANT
 - `plan.new.md` must be an improved and clarified version of `plan.md`, with no legacy open questions remaining and all details retained
 - Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
 - For each requirement, evaluate its complexity and feasibility, specifically:
+  - Use web search to research how comparable features were designed and implemented in comparable open source software
   - Evaluate how the requirement depends on the capabilities of the underlying technology stack
   - Comprehensively research the implications of the requirement for the codebase
   - Evaluate the complexity of implementing the requirement with the codebase

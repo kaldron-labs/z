@@ -15,6 +15,9 @@ IMPORTANT
   - USE trailing underscores to avoid naming collisions with inner-scoped locals
   - in Javascript catch `error`, not `err` or `e`
   - do not wrap single-line if statements in a { } block
+  - code for veteran engineers who are expert in the language and steeped in its conventions
+  - USE idiomatic, natural and maximally expressive code:
+    - PREFER brevity, expressiveness and often-used idiomatic expressions of the programming language to readability
 - Conform to existing frameworks and libraries including test frameworks
 - Re-use existing utilities, implementations, libraries and code modules as needed
   - Search the codebase for relevant implementations and patterns
@@ -24,4 +27,4 @@ IMPORTANT
   - Enhancing and refactor existing code as described in the plan
 - IMPORTANT - include new tests as specified in the plan
 - CRITICAL - DO NOT deviate from the plan in `plan.new.md`
-- If uncertain, stop and output open questions so the user can clarify before continuing
+- If uncertain, stop and output open questions so the user can amend the plan with clarifications

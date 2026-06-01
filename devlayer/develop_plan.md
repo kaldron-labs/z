@@ -52,6 +52,15 @@ IMPORTANT
 - Summarize key findings and technical decisions
 - Include all code snippets and files to be created/modified
 - Include any open questions needed to resolve uncertainty or ambiguity
+- When sequencing phases, do not rigidly align phases with architectural layers, and do not work rigidly bottoms-up:
+  - PREFER vertically-sliced feature-by-feature sequencing
+  - Decompose features into sub-features
+  - Incrementally build the implementation by sequencing sub-features according to their inter-dependencies, from most internal dependents to least internal dependents
+    - The least interally-dependent features are those that are used directly by external applications
+  - Implement indvidual sub-features end-to-end within a single phase
+  - Trace sub-features through the layers of the architecture:
+    - Wire up sub-features end-to-end within a single phase
+    - Implement skeleton or placeholder code in prior phases for subsequent phases to fill out and complete
 
 ## Structure the output document as follows:
     ```markdown
@@ -85,6 +94,12 @@ IMPORTANT
 
     ## Detailed Test Plan
     [Design and implementation of all new tests to be added to the test suite]
+
+    ## Acceptance Criteria
+    [Acceptance criteria for the implementation]
+
+    ## Non-goals
+    [Non-goals such as retaining API compatibility]
 
     ## Options and Open Questions
     [Major options]
