@@ -4,15 +4,17 @@
 
 Task Steps:
 1. Read `goal.md` in full
-2. Formulate detailed product requirements
-3. Save the requirements in markdown as `requirements.md`.
+2. Research the goal described in `goal.md` using online web search
+3. Formulate detailed product requirements
+4. Save the requirements in markdown as `requirements.md`.
 
 ## CRITICAL: DO NO MORE THAN RESEARCH AND FORMULATE REQUIREMENTS
 
 IMPORTANT
 - MAKE REQUIREMENTS, DO NOT IMPLEMENT THEM
 - Read `goal.md` in full
-- Research the goal and understand it
+- Research the goal, including online using web search, and understand it
+  - Use web search as needed to research how comparable goals were achieved in comparable projects
 - Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase, dependencies and underlying technology stack
 - Comprehensively research the implications of the goal for the existing codebase
 - Formulate detailed product requirements
@@ -23,6 +25,13 @@ IMPORTANT
 - When uncertain, describe the options
 - Summarize key findings
 - Include open questions at end to resolve uncertainty or ambiguity
+  - Potential non-goals include:
+    - API backwards compatibility - it may be acceptable to:
+      - fail to maintain compatibility
+      - break dependents
+    - Blast radius minimization - it may be desirable to:
+      - cascade breaking API changes throughout the codebase, tests and documentation and avoid the use of shims or adapters
+      - cascade re-naming to align with new/revised conventions
 
 ## Structure the output document as follows:
     ```markdown
