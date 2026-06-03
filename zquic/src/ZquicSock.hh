@@ -1,0 +1,53 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2026 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
+// Z QUIC socket controls
+
+#ifndef ZquicSock_HH
+#define ZquicSock_HH
+
+#ifndef ZquicPath_HH
+#include <zlib/ZquicPath.hh>
+#endif
+
+#include <zlib/ZiMultiplex.hh>
+
+namespace Zquic {
+
+struct SockConfig {
+  IPFamily::T	family = IPFamily::IPv4;
+  PathMode::T	mode = PathMode::ServerUnconnected;
+  bool		probe = false;
+  bool		errorQueue = true;
+};
+
+struct SockPlan {
+  bool		noFragment = false;
+  bool		probeMode = false;
+  bool		errorQueue = false;
+  bool		pmtuQuery = false;
+  bool		userMTU = false;
+  unsigned	nOptions = 0;
+};
+
+struct SockDiag {
+  uint64_t	optionsAttempted = 0;
+  uint64_t	optionsApplied = 0;
+  uint64_t	optionsUnsupported = 0;
+  uint64_t	optionErrors = 0;
+  uint64_t	mtuQueries = 0;
+  uint64_t	mtuQueryErrors = 0;
+};
+
+struct Sock {
+  static SockPlan plan(const SockConfig &);
+  static bool initUDP(Zi::Socket, const SockConfig &, SockDiag * = nullptr);
+  static PathHint pathHint(Zi::Socket, const SockConfig &, SockDiag * = nullptr);
+};
+
+} // namespace Zquic
+
+#endif /* ZquicSock_HH */

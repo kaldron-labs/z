@@ -1,7 +1,7 @@
 ACLOCAL_AMFLAGS = -I m4
 METASOURCES = AUTO
 SUBDIRS = zu zm zt ze zi zrl
-SUBDIRS += ztls zhttp
+SUBDIRS += ztls zquic zhttp
 SUBDIRS += zfb
 SUBDIRS += zv
 SUBDIRS += zdb
@@ -13,7 +13,7 @@ SUBDIRS += zdf
 if GTK
 #SUBDIRS += zgtk
 endif
-SUBDIRS += zrest
+#SUBDIRS += zrest
 
 .PHONY: test
 test:
