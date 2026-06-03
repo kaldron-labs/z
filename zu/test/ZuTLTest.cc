@@ -13,6 +13,7 @@
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuDemangle.hh>
 #include <zlib/ZuTL.hh>
+#include <zlib/ZuString.hh>
 
 using namespace ZuTestUtil;
 
@@ -75,40 +76,54 @@ int main(int argc, char **argv)
     q = x;
   }
   {
-    log("--- 0 1 2 3");
-    ZuUnroll::all<4>([](auto i) { log(i); });
+    ZuCArray<32> buf;
+    ZuStream s(buf.span());
+    ZuUnroll::all<4>([&s](auto i) { s << i() << '|'; });
+    s.finish(buf);
+    ZuCHECK(buf == "0|1|2|3|");
     ZuCHECK(ZuUnroll::all<4>(0, [](auto i, int j) {
       return j + 1;
     }) == 4);
-    auto j = ZuUnroll::all<4>(0, [](auto i, int j) {
-      log(i);
-      return j + 1;
-    });
-    ZuCHECK(j == 4);
-    log("j=", j);
   }
   {
-    log("--- 3 2 1 0");
-    ZuUnroll::all<ZuTypeRev<ZuSeqTL<ZuMkSeq<4>>>>([]<typename I>() {
-      log(I{});
+    ZuCArray<32> buf;
+    ZuStream s(buf.span());
+    ZuUnroll::all<ZuTypeRev<ZuSeqTL<ZuMkSeq<4>>>>([&s]<typename I>() {
+      s << I{}() << '|';
     });
+    s.finish(buf);
+    ZuCHECK(buf == "3|2|1|0|");
   }
   {
-    log("--- 1 2 3");
-    ZuUnroll::all<ZuTypeTail<1, ZuSeqTL<ZuMkSeq<4>>>>([]<typename I>() {
-      log(I{});
+    ZuCArray<32> buf;
+    ZuStream s(buf.span());
+    ZuUnroll::all<ZuTypeTail<1, ZuSeqTL<ZuMkSeq<4>>>>([&s]<typename I>() {
+      s << I{}() << '|';
     });
+    s.finish(buf);
+    ZuCHECK(buf == "1|2|3|");
   }
   {
-    log("--- 0 1 2");
-    ZuUnroll::all<ZuTypeHead<3, ZuSeqTL<ZuMkSeq<4>>>>([]<typename I>() {
-      log(I{});
+    ZuCArray<32> buf;
+    ZuStream s(buf.span());
+    ZuUnroll::all<ZuTypeHead<3, ZuSeqTL<ZuMkSeq<4>>>>([&s]<typename I>() {
+      s << I{}() << '|';
     });
+    s.finish(buf);
+    ZuCHECK(buf == "0|1|2|");
   }
   {
-    log("--- 42 42 42");
-    ZuUnroll::all<ZuTypeRepeat<3, ZuInt<42>>>([]<typename I>() {
-      log(I{});
+    ZuCArray<32> buf;
+    ZuStream s(buf.span());
+    ZuUnroll::all<ZuTypeRepeat<3, ZuInt<42>>>([&s]<typename I>() {
+      s << I{}() << '|';
     });
+    s.finish(buf);
+    ZuCHECK(buf == "42|42|42|");
+  }
+  {
+    using TL = ZuStringTL<"foo", "bar", "baz">;
+    using Bar = ZuStringT<"bar">;
+    ZuCHECK((ZuTypeIndex<Bar, TL>{}() == 1));
   }
 }
