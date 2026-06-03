@@ -16,13 +16,13 @@
 
 // gcc/clang at -O2 or better compiles to a classic switch jump table
 
-// the underlying trick is to use std::initializer_list<> to unpack
-// a parameter pack, where each expression in the list is evaluated with
-// a side effect that conditionally invokes the lambda, which in turn is
+// the underlying trick uses std::initializer_list<> to unpack
+// a parameter pack where each expression in the list is evaluated with
+// a side effect that conditionally invokes a lambda which is
 // passed a constexpr index parameter; in this way the initializer_list
 // composes the switch statement, each item in it becomes a case, and the
-// lambda can invoke code that is specialized by the constexpr index, where
-// each specialization is the code body of the corresponding case
+// lambda can invoke code that is specialized by the constexpr index;
+// each specialization is then the code body of the corresponding case
 
 #ifndef ZuSwitch_HH
 #define ZuSwitch_HH
