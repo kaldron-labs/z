@@ -8,6 +8,8 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuAssert.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuStream.hh>
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuDemangle.hh>
 #include <zlib/ZuTL.hh>
@@ -59,9 +61,13 @@ int main(int argc, char **argv)
   ZuTestMain();
 
   {
-    ZuUnroll::all<Sorted>([]<typename T>() {
-      log(T::I, ' ', T::id());
+    ZuCArray<32> buf;
+    ZuStream s(buf.span());
+    ZuUnroll::all<Sorted>([&s]<typename T>() {
+      s << T::I << ':' << T::id() << '|';
     });
+    s.finish(buf);
+    ZuCHECK(buf == "1:C|2:B|3:A|4:E|5:D|");
     X x;
     // X y = x;
     [[maybe_unused]] X z{x};

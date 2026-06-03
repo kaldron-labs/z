@@ -203,6 +203,11 @@ public:
     return *this;
   }
 
+  template <typename Buf>
+  void finish(Buf &buf) {
+    buf.length(data() - buf.data());
+  }
+
 private:
   bool	m_overflow = false;
 };
