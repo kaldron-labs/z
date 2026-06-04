@@ -93,9 +93,9 @@ private:
       m_buf = m_alloc(m_headRoom);
       avail = m_maxSize - (m_headRoom + m_tailRoom);
       if (length_ > avail)
-	throw ZeEXCEPT(Fatal, "ZiIOStream", ([avail, length_](auto &s) {
-		  s << "output length " << length_ << " exceeds maximum size " << avail;
-		}));
+	throw ZeEXCEPT(Fatal, "ZiTxStream", ([avail, length_](auto &s) {
+	  s << "output length " << length_ << " exceeds maximum size " << avail;
+	}));
       bufLen = 0;
     }
     m_buf->length = bufLen + ZuPrint<P>::print(
