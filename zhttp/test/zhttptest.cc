@@ -16,22 +16,22 @@ inline void out(const char *s) { std::cout << s << '\n'; }
 
 char response_[] =
 "HTTP/1.1 200 OK\r\n"
-"Server: nginx\r\n"
-"Date: Sun, 06 Oct 2024 06:12:39 GMT\r\n"
-"Content-Type: text/html; charset=UTF-8\r\n"
-"Content-Length: 211\r\n"
-"Connection: keep-alive\r\n"
-"X-hacker: If you're reading this, you should visit wpvip.com/careers and apply to join the fun, mention this header.\r\n"
-"X-Powered-By: WordPress VIP <https://wpvip.com>\r\n"
-"Host-Header: a9130478a60e5f9135f765b23f26593b\r\n"
-"X-Frame-Options: SAMEORIGIN\r\n"
-"Referrer-Policy: no-referrer-when-downgrade\r\n"
-"X-Content-Type-Options: nosniff\r\n"
-"X-XSS-Protection: 1; mode=block\r\n"
-"Content-Security-Policy: frame-ancestors nypost.com decider.com pagesix.com *.nypost.com *.decider.com *.pagesix.com; form-action 'self' *.nypdev.com nypost.com decider.com pagesix.com *.nypost.com *.decider.com *.pagesix.com\r\n"
-"Link: <https://nypost.com/wp-json/>; rel=\"https://api.w.org/\"\r\n"
-"Link: <https://wp.me/b3Qpq>; rel=shortlink\r\n"
-"Strict-Transport-Security: max-age=31536000\r\n"
+"server: nginx\r\n"
+"date: Sun, 06 Oct 2024 06:12:39 GMT\r\n"
+"content-type: text/html; charset=UTF-8\r\n"
+"content-length: 211\r\n"
+"connection: keep-alive\r\n"
+"x-hacker: If you're reading this, you should visit wpvip.com/careers and apply to join the fun, mention this header.\r\n"
+"x-powered-by: WordPress VIP <https://wpvip.com>\r\n"
+"host-header: a9130478a60e5f9135f765b23f26593b\r\n"
+"x-frame-options: SAMEORIGIN\r\n"
+"referrer-policy: no-referrer-when-downgrade\r\n"
+"x-content-type-options: nosniff\r\n"
+"x-xss-protection: 1; mode=block\r\n"
+"content-security-policy: frame-ancestors nypost.com decider.com pagesix.com *.nypost.com *.decider.com *.pagesix.com; form-action 'self' *.nypdev.com nypost.com decider.com pagesix.com *.nypost.com *.decider.com *.pagesix.com\r\n"
+"link: <https://nypost.com/wp-json/>; rel=\"https://api.w.org/\"\r\n"
+"link: <https://wp.me/b3Qpq>; rel=shortlink\r\n"
+"strict-transport-security: max-age=31536000\r\n"
 "x-rq: nrt1 123 242 443\r\n"
 "accept-ranges: bytes\r\n"
 "x-cache: HIT\r\n"
@@ -48,17 +48,54 @@ char response_[] =
 
 char request_[] =
 "GET / HTTP/1.1\r\n"
-"Host: foo.com\r\n"
-"User-Agent: zhttptest/1.0\r\n"
-"Accept: */*\r\n"
+"host: foo.com\r\n"
+"user-agent: zhttptest/1.0\r\n"
+"accept: */*\r\n"
 "\r\n";
 
 constexpr unsigned BufSize = 8<<10;	// default built-in buffer size
 constexpr unsigned MaxBufSize = 100<<20;// max HTTP body length (100Mb)
 
 using IOBufAlloc = ZiIOBufAlloc<BufSize, MaxBufSize, "Zhttp.Buf">;
-using RxMsg_ = Zhttp::RxMsg<
-  Zhttp::Response<ZuStringTL<"Referrer-Policy">>, Zhttp::Body<MaxBufSize>>;
+
+struct RequestCtx {
+  Zhttp::Method::T	method = -1;
+  ZuCSpan		path;
+  ZuCSpan		host;
+};
+
+struct ResponseCtx {
+  int			status = -1;
+  ZuCSpan		referrerPolicy;
+};
+
+struct TrailerCtx {
+  ZuCSpan		serverTiming;
+};
+
+using Parser_ = Zhttp::Parser<
+  Zhttp::Response<ZuStringTL<"referrer-policy">>,
+  Zhttp::Body<MaxBufSize>, ResponseCtx>;
+
+inline ZuSpan<uint8_t> bytes_(char *s) {
+  ZuSpan<char> span{s};
+  return {reinterpret_cast<uint8_t *>(span.data()), span.length()};
+}
+
+inline ZuSpan<uint8_t> bytes_(Zhttp::TrailerBuf &s) {
+  return {reinterpret_cast<uint8_t *>(s.data()), s.length()};
+}
+
+inline ZuCSpan serverTiming_(Zhttp::TrailerBuf &data) {
+  Zhttp::Headers<ZuStringTL<"server-timing">, ZuStringTL<>> trailer;
+  TrailerCtx ctx;
+  trailer.parse(bytes_(data), ctx,
+    [](TrailerCtx &ctx, int i, ZuCSpan s) {
+      if (!i) ctx.serverTiming = s;
+    },
+    [](TrailerCtx &, int) { });
+  return ctx.serverTiming;
+}
 
 int main()
 {
@@ -124,26 +161,38 @@ int main()
   }
 
   {
-    Request_<ZuStringTL<"Host">> r;
-    auto o = r.parse(::request_);
+    Request<ZuStringTL<"host">> r;
+    RequestCtx ctx;
+    auto o = r.parse(bytes_(::request_), ctx,
+      [](RequestCtx &ctx, Method::T method, ZuCSpan path) {
+	ctx.method = method;
+	ctx.path = path;
+      },
+      [](RequestCtx &ctx, int i, ZuCSpan value) {
+	if (!i) ctx.host = value;
+      },
+      [](RequestCtx &, int) { });
     CHECK(o > 0);
     CHECK(o == sizeof(::request_) - 1);
-    CHECK(r.protocol == "HTTP/1.1");
-    CHECK(r.path == "/");
-    CHECK(r.method == Zhttp::Method::GET);
-    CHECK(r.key(0) == "foo.com");
+    CHECK(ctx.path == "/");
+    CHECK(ctx.method == Zhttp::Method::GET);
+    CHECK(ctx.host == "foo.com");
   }
-  auto rcvd = [] { return true; };
+  auto status = [](auto &rx, int status) { rx.context.status = status; };
+  auto key = [](auto &rx, int i, ZuCSpan value) {
+    if (!i) rx.context.referrerPolicy = value;
+  };
+  auto kv = [](auto &, int) { };
+  auto rcvd = [](auto &) { return true; };
   {
-    ZuSpan<char> msg = ::response_;
+    auto msg = bytes_(::response_);
     ZmRef<ZiIOBuf> buf = new IOBufAlloc();
-    RxMsg_ rx{buf};
-    auto o = rx.process(msg, rcvd);
+    Parser_ rx{buf};
+    auto o = rx.process(msg, status, key, kv, rcvd);
     CHECK(o == msg.length());
-    CHECK(rx.header.protocol == "HTTP/1.1");
-    CHECK(rx.header.code == 200);
-    CHECK(rx.header.reason == "OK");
-    CHECK(rx.header.key(0) == "no-referrer-when-downgrade");
+    CHECK(rx.header.status == 200);
+    CHECK(rx.context.status == 200);
+    CHECK(rx.context.referrerPolicy == "no-referrer-when-downgrade");
     CHECK(rx.body.valid);
     CHECK(!rx.body.chunked);
     CHECK(rx.body.xferEncoding < 0);
@@ -158,8 +207,8 @@ int main()
   {
     static char chunked[] =
       "HTTP/1.1 200 OK\r\n"
-      "Content-Type: application/json\r\n"
-      "Transfer-Encoding: chunked\r\n"
+      "content-type: application/json\r\n"
+      "transfer-encoding: chunked\r\n"
       "\r\n"
       "1\r\n" // chunk[0] 1
       "{\r\n"
@@ -170,10 +219,10 @@ int main()
       "1\r\n" // chunk[3] 1
       "}\r\n"
       "0\r\n\r\n"; // end chunk, no trailers
-    ZuSpan<char> msg = chunked;
+    auto msg = bytes_(chunked);
     ZmRef<ZiIOBuf> buf = new IOBufAlloc();
-    RxMsg_ rx{buf};
-    auto o = rx.process(msg, rcvd);
+    Parser_ rx{buf};
+    auto o = rx.process(msg, status, key, kv, rcvd);
     CHECK(o > 0);
     CHECK(rx.body.complete);
     CHECK(rx.body.chunked);
@@ -185,8 +234,8 @@ int main()
   {
     static char chunked[] =
       "HTTP/1.1 200 OK\r\n"
-      "Content-Type: application/json\r\n"
-      "Transfer-Encoding: chunked\r\n"
+      "content-type: application/json\r\n"
+      "transfer-encoding: chunked\r\n"
       "\r\n"
       "1\r\n" // chunk[0] 1
       "{\r\n"
@@ -196,19 +245,17 @@ int main()
       "\"y\": 42\r\n"
       "1\r\n" // chunk[3] 1
       "}\r\n"
-      "0\r\nServer-Timing: cpu;dur=2.4\r\n\r\n"; // end chunk, with trailer
-    ZuSpan<char> msg = chunked;
+      "0\r\nserver-timing: cpu;dur=2.4\r\n\r\n"; // end chunk, with trailer
+    auto msg = bytes_(chunked);
     ZmRef<ZiIOBuf> buf = new IOBufAlloc();
-    RxMsg_ rx{buf};
-    auto o = rx.process(msg, rcvd);
+    Parser_ rx{buf};
+    auto o = rx.process(msg, status, key, kv, rcvd);
     CHECK(o > 0);
     CHECK(rx.body.complete);
     CHECK(rx.body.chunked);
     CHECK(rx.body.chunkBuf == "0\r\n");
-    CHECK(rx.body.chunkTrlr == "Server-Timing: cpu;dur=2.4\r\n\r\n");
-    Headers<ZuStringTL<"Server-Timing">> trailer;
-    trailer.parse(rx.body.chunkTrlr);
-    auto s = trailer.key(0);
+    CHECK(rx.body.chunkTrlr == "server-timing: cpu;dur=2.4\r\n\r\n");
+    auto s = serverTiming_(rx.body.chunkTrlr);
     CHECK(s == "cpu;dur=2.4");
     split<';'>(s, [](unsigned i, ZuCSpan s) {
       switch (i) {
@@ -222,8 +269,8 @@ int main()
   {
     static char frag0[] =
       "HTTP/1.1 200 OK\r\n"
-      "Content-Type: application/json\r\n"
-      "Transfer-Encoding: chunked\r\n"
+      "content-type: application/json\r\n"
+      "transfer-encoding: chunked\r\n"
       "\r\n";
     static char frag1[] =
       "1\r\n" // chunk[0] 1
@@ -241,7 +288,7 @@ int main()
       "}\r";
     static char frag5[] =
       "\n"
-      "0\r\nServer-Timing: "; // end chunk, with trailer
+      "0\r\nserver-timing: "; // end chunk, with trailer
     static char frag6[] =
       "cpu;dur=2.4\r";
     static char frag7[] =
@@ -249,32 +296,30 @@ int main()
     static char frag8[] =
       "\n";
     ZmRef<ZiIOBuf> buf = new IOBufAlloc();
-    RxMsg_ rx{buf};
-    auto o = rx.process(ZuSpan<char>(frag0), rcvd);
+    Parser_ rx{buf};
+    auto o = rx.process(bytes_(frag0), status, key, kv, rcvd);
     CHECK(o > 0);
     CHECK(!rx.body.complete);
-    o = rx.process(ZuSpan<char>(frag1), rcvd);
+    o = rx.process(bytes_(frag1), status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    o = rx.process(ZuSpan<char>(frag2), rcvd);
+    o = rx.process(bytes_(frag2), status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    o = rx.process(ZuSpan<char>(frag3), rcvd);
+    o = rx.process(bytes_(frag3), status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    o = rx.process(ZuSpan<char>(frag4), rcvd);
+    o = rx.process(bytes_(frag4), status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    o = rx.process(ZuSpan<char>(frag5), rcvd);
+    o = rx.process(bytes_(frag5), status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    o = rx.process(ZuSpan<char>(frag6), rcvd);
+    o = rx.process(bytes_(frag6), status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    o = rx.process(ZuSpan<char>(frag7), rcvd);
+    o = rx.process(bytes_(frag7), status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    o = rx.process(ZuSpan<char>(frag8), rcvd);
+    o = rx.process(bytes_(frag8), status, key, kv, rcvd);
     CHECK(rx.body.complete);
     CHECK(rx.body.chunked);
     CHECK(rx.body.chunkBuf == "0\r\n");
-    CHECK(rx.body.chunkTrlr == "Server-Timing: cpu;dur=2.4\r\n\r\n");
-    Headers<ZuStringTL<"Server-Timing">> trailer;
-    trailer.parse(rx.body.chunkTrlr);
-    auto s = trailer.key(0);
+    CHECK(rx.body.chunkTrlr == "server-timing: cpu;dur=2.4\r\n\r\n");
+    auto s = serverTiming_(rx.body.chunkTrlr);
     CHECK(s == "cpu;dur=2.4");
     split<';'>(s, [](unsigned i, ZuCSpan s) {
       switch (i) {
@@ -286,21 +331,25 @@ int main()
     CHECK(rx.body.span == "{\"x\": 42, \"y\": 42}");
   }
   {
-    Builder<false> builder{new ZiIOBufAlloc<>()};
-    builder.request(Method::GET, "/", "foo.com", [](auto &builder) {
-      *(builder.buf) << "User-Agent: zhttptest/1.0\r\nAccept: */*\r\n";
-    });
+    Builder<
+      ZuStringTL<>,
+      ZuStringTL<"user-agent: zhttptest/1.0", "accept: */*">,
+      false> builder{new ZiIOBufAlloc<>()};
+    builder.request(
+      Method::GET, "/", "foo.com", [](auto &, auto) { return ""; });
     auto buf = builder.finish();
     CHECK(buf->cspan() == ::request_);
   }
   {
-    Builder<true> builder{new ZiIOBufAlloc<>()};
-    builder.request(Method::POST, "/post", "foo.com", [](auto &builder) {
-      *(builder.buf) <<
-	"User-Agent: zhttptest/1.0\r\n"
-	"Accept: */*\r\n"
-	"Content-Type: application/json\r\n";
-    });
+    Builder<
+      ZuStringTL<>,
+      ZuStringTL<
+	"user-agent: zhttptest/1.0",
+	"accept: */*",
+	"content-type: application/json">,
+      true> builder{new ZiIOBufAlloc<>()};
+    builder.request(
+      Method::POST, "/post", "foo.com", [](auto &, auto) { return ""; });
     // x-www-form-urlencoded
     *(builder.buf) << "{ \"a\": 42 }";
     auto buf = builder.finish();

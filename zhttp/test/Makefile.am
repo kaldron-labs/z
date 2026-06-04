@@ -18,13 +18,15 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zhttptest zhttpclient zhttptestd \
-	ZhttpQPackTest Zhttp3Test Zhttp3LoopTest Zhttp3InteropTest \
-	ZhttpFallbackTest ZhttpQPackDynamicTest Zhttp3StateTest
+	ZhttpHPackTest ZhttpQPackTest Zhttp3Test Zhttp3LoopTest \
+	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
+	Zhttp3StateTest
 noinst_HEADERS = ZhttpCaddyInterop.hh
 EXTRA_DIST = caddy-h3.json
 zhttptest_SOURCES = zhttptest.cc
 zhttpclient_SOURCES = zhttpclient.cc
 zhttptestd_SOURCES = zhttptestd.cc
+ZhttpHPackTest_SOURCES = ZhttpHPackTest.cc
 ZhttpQPackTest_SOURCES = ZhttpQPackTest.cc
 Zhttp3Test_SOURCES = Zhttp3Test.cc
 Zhttp3LoopTest_SOURCES = Zhttp3LoopTest.cc
@@ -35,5 +37,6 @@ Zhttp3StateTest_SOURCES = Zhttp3StateTest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
-	prove ZhttpQPackTest Zhttp3Test Zhttp3LoopTest Zhttp3InteropTest \
-		ZhttpFallbackTest ZhttpQPackDynamicTest Zhttp3StateTest
+	prove ZhttpHPackTest ZhttpQPackTest Zhttp3Test Zhttp3LoopTest \
+		Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
+		Zhttp3StateTest

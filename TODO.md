@@ -1,64 +1,24 @@
-- Ztls.hh rewrite is code complete
-  - use codex to
-    - compare with original codex version
-    - code review
-  - then use codex to
-    - use ZiEventLoop for openssl async completion
-    - add ZiEventLoop handling using additional configured thread for async completions
-      (server side only)
-  - check that direction-aware ztls buffers are consistent
+# TODO
 
+## Zhttp
+- need to move from single buffer to `ZiTxStream` and `ZiRxStream`
+- adopt all-lower-case as canonical header casing
+- see `Zhttp.hh` for QPACK/HPACK handling plan
+
+## build system
 - factor out fbs codegen into shell script
   - used repeatedly in multiple Makefile.am
 
-codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
-
-• Yes — the ciphertext pointer is not 64‑byte aligned if you have a 5‑byte TLS record header. But
-  the non‑temporal fusion implementation is designed to handle that.
-
-  Key points:
-
-  - align_bits is enforced on buf->base, not on buf->off (the current write pointer). So only the
-    buffer base is guaranteed to be 64‑byte aligned, not the ciphertext start. See ../picotls/
-    include/picotls.h (align_bits) and ../picotls/lib/picotls.c (ptls_buffer_reserve_aligned).
-  - The non‑temporal encrypt path explicitly handles unaligned output. It uses
-    load_preceding_unaligned to pull the bytes preceding the ciphertext pointer (up to 63 bytes)
-    into a staging buffer, then writes aligned 64‑byte chunks back with NT stores. That preserves
-    the record header while keeping the bulk output aligned for NT stores. See ../picotls/lib/
-    fusion.c (non_temporal_encrypt_v128/256, comments around “load unaligned data within same
-    cache line”).
-
-  So with a 5‑byte record header, the ciphertext itself is unaligned, but that’s expected and
-  handled. The alignment requirement is on the buffer base to make the aligned‑store strategy
-  safe.
-
-- need to document:
-  - TLS record header is 5 bytes
-  - TLS record length includes IV (TLS1.2 only), ciphertext, tail (AEAD tag or MAC + padding)
-  - TLS headroom varies between 5 (TLS1.3) and 21 (TLS1.2 with AES-CBC)
-  - TLS tailroom varies between 16 (TLS1.2 AEAD) and 304 (TLS1.2 AES-CBC HMAC-SHA384, max padding)
-  - maximum overhead is 325
-  - implies tx buffers should be initially allocated with `skip` = headroom;
-    filled by application; split if needed into `(16K-325)` fragments; for each fragment:
-    - each plaintext fragment will be offset into buffer by `skip` (== headroom)
-    - `ptls_buf_init` should be called with base and full buffer capacity (16K)
-      - then passed to `ptls_buf_send` with plaintext data: base + skip, length
-      - `ptls_buf_send` should be preceded by an independent KeyUpdate null send() if needed
-  - ensures recs == 1 within `ptls_buf_send` because plaintext never exceeds `(16K-325)`
-
+## io_uring (LATER)
+- `io_uring_prep_send_zc_fixed`
 - need a rx and tx buf allocator in Ztls (and ZiMultiplex)
   - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
     - but not jumbo, in that case we fallback to non-registered buffers
     - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
+- steal from unum.cloud ucall for uring
+- https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
 
-- new TLS/HTTP/QUIC stack:
-  - TLS - picotls
-  - QUIC - ngtcp2
-  - HTTP/2 - nghttp2
-  - HTTP/3 - nghttp3
-
-- test Buf -> RepBuf and typed -> rep renaming
-
+## Zrest
 - figure out REST Rx -> ZvIOMsg
   - basically the same principle - store it after parse on receive,
     save the object in the DB, queue the buffer for subsequent processing
@@ -68,35 +28,95 @@ codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
   - these DB tables are persisted queues, no more and no less
   - actual stateful order, etc. tables are elsewhere and maintained
     via application logic when these messages are applied
-
-- zum overhaul
-  - all flatbuffers -> ZtStruct FB
-  - own protocol
-
-- zcmd overhaul
-  - remove ZcmdClient, ZcmdServer, OutBufAlloc, etc.
-  - make zcmd skeleton with no builtins, userDB, telemetry etc. are all
-    plugins
-  - zdash can use same plugins (if desired)
-  - get rid of Zcmd protocol framework entirely
-    - re-dedicate to userDB
-    - move into userDB plugin
-  - use different ports to segregate userDB from telemetry, etc.
-  - each command group manages it's own client, server links
-    - facilitates zdash telemetry fan-in / aggregation etc.
-  - command groups can be implemented using REST etc.
-
-- complete ZtCLI replacement for ZvCSV CLI/argv parsing
-  - fix Zcmd*
-  - fix zcmd
-  - replace all other remaining uses of ZvOpt, fromArg, fromArgs, etc.
-    - cmdtest, zdffptest, zproxy
-  - the ZvCf env format is redundant, remove it
-  - ensure ZvCf still works ok following changes
-
 - migrate Zrest to ZvEngine
 - get zrclient up and running
 
+## Zum
+- all flatbuffers -> ZtStruct FB
+- own protocol
+
+## Zcmd
+- remove ZcmdClient, ZcmdServer, OutBufAlloc, etc.
+- make zcmd skeleton with no builtins, userDB, telemetry etc. are all
+  plugins
+- zdash can use same plugins (if desired)
+- get rid of Zcmd protocol framework entirely
+  - re-dedicate to userDB
+  - move into userDB plugin
+- use different ports to segregate userDB from telemetry, etc.
+- each command group manages it's own client, server links
+  - facilitates zdash telemetry fan-in / aggregation etc.
+- command groups can be implemented using REST etc.
+
+# Z Candidate Work
+
+## ZtStruct
+- yaml, toml
+
+## Documentation
+- doxygen + htags
+- shields.io badges (see README.md for reflect-cpp)
+
+## Integrations
+- python
+- node.js
+
+## Zdf
+
+- cudf, dlpack integration (in that priority order)
+
+- TA_Lib (https://ta-lib.org/) integration
+
+- need single call to load cudf column from zdf reader
+- need single call to load cudf table from zdf dataframe
+
+## Build system
+- CI/CD
+- Nanobench
+- Containerize?
+
+## Testing
+- catch-2 (compare with `ZuTest`)
+- SAST - cppcheck, clang-tidy
+
+## Dependency Management
+- conan?
+
+## zdb_pq
+- postgresql extension productization
+
+## Mx Candidate Work
+- Binance feed handler
+  - https / websockets - https://libwebsockets.org/ - steal
+  - json / REST - steal from libws
+
+- permit app to specify dataframe and/or series epoch, so
+  time-series with time values from the past can be handled
+
+rds-postgres-extensions-request@amazon.com
+
+https://verdagon.dev/blog/when-to-use-memory-safe-part-2
+
+reimplement zdf on zdb
+
+- look at notes for schema definition
+
+reimplement mxmd on zdf
+
+integrate node / v8
+
+build Binance feed
+
+retest zcmd
+retest zdash
+
+- add 128bit print/scan tests
+- add vector print/scan tests
+- add vector ZvCf and ZvCSV tests
+
+# Notes
+
+## I/O
 - call sequence to start sending:
 
   app must call Link::start() via txInvoke() from connected()
@@ -119,64 +139,7 @@ codex resume 019b81b2-833c-7b93-9656-2b34cca5adf6
 
 https://www.youtube.com/watch?v=w61NXrYIx6Y
 
-- need single call to load cudf column from zdf reader
-- need single call to load cudf table from zdf dataframe
-
-- doxygen + htags
-
-- shields.io (see README.md for reflect-cpp)
-- TLS ZmRing for inbound 
-- python and node integration
-- cudf, dlpack integration (in that priority order)
-- ZiMultiplex -> io_uring (as an option)
-  - steal from unum.cloud ucall for uring
-- https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
-- TA_Lib integration
-- Binance feed handler
-- yaml for ZvCf
-
-- CI/CD
-
-- Nanobench
-
-- catch-2
-
-- SAST - cppcheck, clang-tidy
-
-- dependency management (conan?)
-
-- containerize
-
-- postgresql extension productization
-
-- implement data feed
-  - https / websockets - https://libwebsockets.org/ - steal
-  - json / REST - steal from libws
-
-- permit app to specify dataframe and/or series epoch, so
-  time-series with time values from the past can be handled
-
-rds-postgres-extensions-request@amazon.com
-
-https://verdagon.dev/blog/when-to-use-memory-safe-part-2
-
-reimplement zdf on zdb
-- look at notes for schema definition
-
-reimplement mxmd on zdf
-
-integrate node / v8
-
-build Binance feed
-
-retest zcmd
-retest zdash
-
-- add 128bit print/scan tests
-- add vector print/scan tests
-- add vector ZvCf and ZvCSV tests
-
-----
+## Sagas
 
 Sagas are aggregate intents to complete a number of individual actions,
 where each action is typically a write to a dependent database; the action
@@ -254,7 +217,7 @@ or on expiry of a message retention time window (FIX - typically 24hrs);
 garbage collection of transmit intents should be performed incrementally
 by a background process.
 
-----
+---
 
 sagas, idempotent reception and transmission
 example exchange trade saga involves:
@@ -295,9 +258,9 @@ seller {
 }
 transmit exchange balance
 
-----
+---
 
-Notes on market/participant failure and recovery for order/execution:
+## Market/participant failure and recovery for order/execution:
 
 market failover:
 

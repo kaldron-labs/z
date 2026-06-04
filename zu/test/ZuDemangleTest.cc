@@ -24,6 +24,17 @@ struct Foo { template <unsigned> static int bar(const char *); };
 
 template <typename> struct Baz { };
 
+struct Base {
+  auto foo(this auto &&self) {
+    return ZuDemangle<decltype(self)>{};
+  }
+};
+struct Derived : public Base {
+  auto bar(this auto &&self) {
+    return ZuFwdLike<decltype(self)>(self).foo();
+  }
+};
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -47,5 +58,12 @@ int main(int argc, char **argv)
     s = {}; s << ZuDemangle<typename ZuTraits<decltype(a)>::Elem>{};
     log(s);
     ZuCHECK(ZuMatcher<"ZuVArray_::Elem<ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
+  }
+  {
+    ZuCArray<512> s;
+    Derived d;
+    s << ZuMv(d).bar();
+    ZuCHECK(s == "Derived &&");
+    log(s);
   }
 }

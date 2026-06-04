@@ -135,7 +135,7 @@ bool Link::rcvd()
     std::cout << response << '\n';
     m_token = ZuMv(response.token);
     up();
-    send(request_<"Authorization">(
+    send(request_<"authorization">(
 	Zhttp::Method::GET, "/api/protected", m_token));
   } else {
     std::cout << ZtJSON::handler<ProtectedResponse>(scan.p<1>()).ctor() << '\n';

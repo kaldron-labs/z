@@ -173,12 +173,12 @@ public:
   bool operator !() const { return !m_pos; }
   ZuOpBool
 
-  // 0 <= Bits < 8
+  // 0 <= Bits <= 8
   template <unsigned Bits>
   bool avail() {
     return m_pos + ((m_outBits + Bits + 7)>>3) <= m_end;
   }
-  // 0 <= bits < 64
+  // 0 <= bits <= 64
   bool avail(unsigned bits) {
     return m_pos + ((m_outBits + bits + 7)>>3) <= m_end;
   }
@@ -281,17 +281,17 @@ public:
     m_inBits = saved.p<1>();
   }
 
-  // 0 <= Bits < 8
+  // 0 <= Bits <= 8
   template <unsigned Bits>
   bool avail() {
     return m_pos + ((m_inBits + Bits + 7)>>3) <= m_end;
   }
-  // 0 <= bits < 64
+  // 0 <= bits <= 64
   bool avail(unsigned bits) {
     return m_pos + ((m_inBits + bits + 7)>>3) <= m_end;
   }
 
-  // 0 <= Bits < 8
+  // 0 <= Bits <= 8
   template <unsigned Bits>
   uint8_t in() {
     if constexpr (!Bits) return 0;
@@ -312,7 +312,7 @@ public:
     }
     return v;
   }
-  // 0 <= bits < 64
+  // 0 <= bits <= 64
   uint64_t in(unsigned bits) {
     if (ZuUnlikely(!bits)) return 0;
     uint64_t v = 0;
@@ -387,12 +387,12 @@ public:
   bool operator !() const { return !m_pos; }
   ZuOpBool
 
-  // 0 <= Bits < 8
+  // 0 <= Bits <= 8
   template <unsigned Bits>
   bool avail() {
     return m_pos + ((m_outBits + Bits + 7)>>3) <= m_end;
   }
-  // 0 <= bits < 64
+  // 0 <= bits <= 64
   bool avail(unsigned bits) {
     return m_pos + ((m_outBits + bits + 7)>>3) <= m_end;
   }
