@@ -23,39 +23,50 @@
 
 #include <zlib/Ztls.hh>
 
-// FIXME
+// FIXME - HTTP/3 unification notes:
 
-// while on-the-wire data will remain in `ZiIOBuf`, temporary uncompressed data should be
-// predominantly on-stack; see `ZuBase64Test.cc` `enc()` for an example of encoding to an on-stack
-// buffer; since `Zhttp` is above `Zt`, we'll use `ZtLocalArray` for on-stack arrays staging
-// uncompressed data (either decoded from network buffers, or being encoded to network buffers);
-// the goal is to reduce heap memory allocation to a minimum, and potentially eliminate
-// `HeaderBytes` entirely; apps should interface with `Zhttp` via inversion-of-control callback
-// mechanisms, where `Zhttp` decodes/uncompresses to on-stack temporary storage then calls the app
-// with the data
+// HTTP/3 QPACK support:
+// - QPackKVs is a ZuStringTL<...>
+// - QPackKV2ID is a lookup ZuTypeList<ZuUnsigned<X>, ...>,
+//   where X is the QPACK static table index (ID) for the corresponding QPackKV string
+// - QPackID2KV is a ZuTypeList<ZuUnsigned<X>, void, ...>, which maps QPACK IDs back to kv
+// - QPackKeys is a ZuStringTL<...>
+// - QPackKey2ID is a lookup ZuTypeList<ZuUnsigned<X>, ...>,
+//   where X is the QPACK static table index (ID) for the corresponding QPackKey string
+// - QPackID2Key is a ZuTypeList<ZuUnsigned<X>, void, ...>, which maps QPACK IDs back to key
+// - while on-the-wire data will remain in `ZiIOBuf`, temporary uncompressed data should be
+//   predominantly on-stack; see `ZuBase64Test.cc` `enc()` for an example of encoding to
+//   a temporary on-stack buffer
+// - since `Zhttp` is above `Zt`, use `ZtLocalArray` for on-stack arrays to stage
+//   temporary uncompressed data (either decoded from network buffers, or being encoded
+//   to network buffers);
+// -  the goal is to reduce heap memory allocation to a minimum, and potentially eliminate
+//   `HeaderBytes` entirely; apps should interface with `Zhttp` via inversion-of-control callback
+//   mechanisms, where `Zhttp` decodes/uncompresses to on-stack temporary storage then calls
+//   the app with the data
 
-// - KVs can be output as-is (for HTTP 1.1)
-// - down the road with QPACK:
-//   - QPackKVs is a ZuStringTL<...>, QPackKV2ID is a ZuTypeList<ZuUnsigned<X>, ...>,
-//     where X is the QPACK static table index (ID) for the corresponding QPackKV string
-//     QPackID2KV is a ZuTypeList<ZuUnsigned<X>, void, ...>, which maps QPACK IDs back
-//     to kv
-//   - QPackKeys is a ZuStringTL<...>, QPackKey2ID is a ZuTypeList<ZuUnsigned<X>, ...>,
-//     where X is the QPACK static table index (ID) for the corresponding QPackKey string
-//     QPackID2Key is a ZuTypeList<ZuUnsigned<X>, void, ...>, which maps QPACK IDs back
-//     to key
-// - this allows compile-time determination of which KVs and Keys should be QPack-encoded
-//   on transmit (ZuTypeIndex<QPackKVs, ZuStringT<"...">>[} will be undefined)
-// - on receive,
+// HTTP/3 QPACK parse:
+// // parse QPACK, obtain QPACK static table id
+// if (/* literal */) {
+//   // process literal
+//   // use ZtLocalArray to decode to stack-allocated strings, then call app with that
+//   // as with HTTP/1.1
+// } else { /* QPACK static table ID */
 //   ZuSwitch::dispatch<...>(id, [...](auto ID) {
 //     using KV = ZuType<ID, QPackID2KV>;
-//     if constexpr (!ZuIsSame<KV, void>{})
-//       
-//   ZuSwitch -> ZuType<I, QPackID2Key> -> keys_[J] = span
-//   - BUT with Huffman coding (QPACK uses HPACK), storing the spans in the Reader doesn't
-//     work, what's really needed is a mutable context with callbacks so huffman decoding
-//     can be on-stack (e.g. "..." -> "1234" -> context.i = 1234;)
-//   - this mirrors Builder
+//     if constexpr (!ZuIsSame<KV, void>{}) {
+//       // call app kv(...)
+//     }
+//     using Key = ZuType<I, QPackID2Key>;
+//     if constexpr (!ZuIsSame<Key, void>{}) {
+//       // use ZtLocalArray to decode to stack-allocated string, then call app with that
+//     }
+//   }
+// }
+
+// HTTP/3 QPACK build:
+// - compile-time determination of which KVs and Keys should be QPACK static table encoded
+//   on transmit (ZuTypeIndex<QPackKVs, KV>{} and ZuTypeIndex<QPackKeys, Key>{})
 
 namespace Zhttp {
 
