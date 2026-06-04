@@ -13,6 +13,10 @@
 #include <zlib/Zhttp.hh>
 #endif
 
+#ifndef ZhttpHPack_HH
+#include <zlib/ZhttpHPack.hh>
+#endif
+
 #include <zlib/ZquicPacket.hh>
 #include <zlib/ZiAssert.hh>
 
@@ -51,7 +55,6 @@ struct FieldSectionPrefix {
   bool		baseNegative = false;
 };
 
-using HeaderBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HeaderBytes">>;
 using Headers = ZtArray<Header, ZtArrayHeapID<"Zhttp.H3.Headers">>;
 using HeaderName = ZtString<ZtStringHeapID<"Zhttp.H3.HeaderName">>;
 

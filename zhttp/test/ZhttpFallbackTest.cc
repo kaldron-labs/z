@@ -30,8 +30,19 @@ constexpr unsigned FallbackMaxBody = 64<<10;
 
 using IOBufAlloc =
   ZiIOBufAlloc<FallbackBufSize, FallbackMaxBody, "Zhttp.Fallback.Buf">;
+
+struct RequestCtx {
+  Zhttp::Method::T	method = -1;
+  ZuCSpan		path;
+  ZuCSpan		host;
+};
+
+struct ResponseCtx {
+  int			status = -1;
+};
+
 using ResponseRx =
-  Zhttp::RxMsg<Zhttp::Response<>, Zhttp::Body<FallbackMaxBody>>;
+  Zhttp::Parser<Zhttp::Response<>, Zhttp::Body<FallbackMaxBody>, ResponseCtx>;
 
 #ifndef _WIN32
 int listenLoopback_(unsigned &port)
@@ -144,19 +155,29 @@ pid_t startZhttpH1Server_(
     _exit(3);
   }
 
-  Zhttp::Request<ZuStringTL<"Host">> req;
-  int used = req.parse(ZuSpan<uint8_t>{reqBuf, reqLen});
+  Zhttp::Request<ZuStringTL<"host">> req;
+  RequestCtx ctx;
+  int used = req.parse(
+    ZuSpan<uint8_t>{reqBuf, reqLen}, ctx,
+    [](RequestCtx &ctx, Zhttp::Method::T method, ZuCSpan path) {
+      ctx.method = method;
+      ctx.path = path;
+    },
+    [](RequestCtx &ctx, int i, ZuCSpan value) {
+      if (!i) ctx.host = value;
+    },
+    [](RequestCtx &, int) { });
   if (used <= 0 ||
-      req.method != Zhttp::Method::GET ||
-      req.protocol != "HTTP/1.1" ||
-      req.path != expectedPath ||
-      !localhostHost_(req.key(0))) {
+      ctx.method != Zhttp::Method::GET ||
+      ctx.path != expectedPath ||
+      !localhostHost_(ctx.host)) {
     ::close(fd);
     _exit(4);
   }
 
-  Zhttp::Builder<true> resp{new IOBufAlloc()};
-  resp.response(200, "OK", [](auto &) { });
+  Zhttp::Builder<ZuStringTL<>, ZuStringTL<>, true> resp{
+    new IOBufAlloc()};
+  resp.response(200, "OK", [](auto &, auto) { return ""; });
   *(resp.buf) << responseBody;
   auto out = resp.finish();
   bool sent = sendAll_(fd, out->data(), out->length);
@@ -283,11 +304,12 @@ void testZhttpClientHttp11Fallback()
     return;
   }
 
-  Zhttp::Builder<false> req{new IOBufAlloc()};
+  Zhttp::Builder<
+    ZuStringTL<>,
+    ZuStringTL<"user-agent: ZhttpFallbackTest/1.0">,
+    false> req{new IOBufAlloc()};
   req.request(Zhttp::Method::GET, "/zhttp-fallback", "localhost",
-    [](auto &builder) {
-      *(builder.buf) << "User-Agent: ZhttpFallbackTest/1.0\r\n";
-    });
+    [](auto &, auto) { return ""; });
   auto out = req.finish();
   ZuCHECK(sendAll_(fd, out->data(), out->length),
     "Zhttp client fallback request send failed");
@@ -301,11 +323,14 @@ void testZhttpClientHttp11Fallback()
 
   ZmRef<ZiIOBuf> rxBuf = new IOBufAlloc();
   ResponseRx rx{rxBuf};
+  auto status = [](auto &rx, int status) { rx.context.status = status; };
+  auto key = [](auto &, int, ZuCSpan) { };
+  auto kv = [](auto &, int) { };
   int consumed = rx.process(
-    ZuSpan<uint8_t>{respBuf, respLen}, []() { return true; });
+    ZuSpan<uint8_t>{respBuf, respLen}, status, key, kv,
+    [](auto &) { return true; });
   if (!(consumed == int(respLen) &&
-	rx.header.protocol == "HTTP/1.1" &&
-	rx.header.code == 200 &&
+	rx.context.status == 200 &&
 	rx.body.contentLength == 11 &&
 	rx.body.complete &&
 	rx.body.span == "zhttp-h1-ok")) {
@@ -313,15 +338,13 @@ void testZhttpClientHttp11Fallback()
       "# fallback response diag:"
       " consumed=" << consumed <<
       " respLen=" << respLen <<
-      " protocol=" << rx.header.protocol <<
-      " code=" << rx.header.code <<
+      " status=" << rx.context.status <<
       " contentLength=" << rx.body.contentLength <<
       " bodyComplete=" << rx.body.complete <<
       " body='" << rx.body.span << "'\n";
   }
   ZuCHECK(consumed == int(respLen) &&
-      rx.header.protocol == "HTTP/1.1" &&
-      rx.header.code == 200 &&
+      rx.context.status == 200 &&
       rx.body.contentLength == 11 &&
       rx.body.complete &&
       rx.body.span == "zhttp-h1-ok",

@@ -22,14 +22,14 @@ constexpr unsigned BufSize = 8<<10;	// default built-in buffer size
 constexpr unsigned MaxBufSize = 100<<20;// max HTTP body length (100Mb)
 
 using IOBufAlloc = ZiIOBufAlloc<BufSize, MaxBufSize, "Zhttp.Buf">;
-using RxMsg = Zhttp::RxMsg<Zhttp::Response<>, Zhttp::Body<MaxBufSize>>;
+using HttpParser = Zhttp::Parser<Zhttp::Response<>, Zhttp::Body<MaxBufSize>>;
 
 template <typename App>
 struct Link : public Ztls::CliLink<App, Link<App>> {
-  using Base = Ztls::CliLink<App, Link>;
+  using Base = Ztls::CliLink<App, Link<App>>;
 
   using Base::app;
-  Link(App *app) : Base{app}, rxMsg{new IOBufAlloc()} {
+  Link(App *app) : Base{app}, parser{new IOBufAlloc()} {
     // body.max = FIXME
   }
 
@@ -42,8 +42,8 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
     // connected() is called in TLS thread
     auto tx = this->txStream_();
     tx << Zhttp::Method::name(Zhttp::Method::GET)
-      << " / HTTP/1.1\r\nHost: " << ZuCSpan(hostname)
-      << "\r\nUser-Agent: zhttptest/1.0\r\nAccept: */*\r\n\r\n"
+      << " / HTTP/1.1\r\nhost: " << ZuCSpan(hostname)
+      << "\r\nuser-agent: zhttptest/1.0\r\naccept: */*\r\n\r\n"
       << Zi::flush();
   }
   void disconnected() {
@@ -62,15 +62,20 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
   int process(Ztls::RxStream &rx) {
     while (!rx.empty()) {
       auto span = rx.span();
-      int consumed = rxMsg.process(span, [this]() -> bool {
-	const auto &header = rxMsg.header.span;
-	const auto &body = rxMsg.body.span;
-	if (auto file = ZiFile("index.hdr", ZiFile::Write | ZiFile::GC))
-	  file.write(header.data(), header.length());
-	if (auto file = ZiFile("index.html", ZiFile::Write | ZiFile::GC))
-	  file.write(body.data(), body.length());
-	// rxMsg.reset(); // to reuse rxMsg
-	return false; // disconnect
+      int consumed = parser.process(
+	span,
+	[](auto &, int) { },
+	[](auto &, int, ZuCSpan) { },
+	[](auto &, int) { },
+	[this](auto &) -> bool {
+	  const auto &header = parser.header.span;
+	  const auto &body = parser.body.span;
+	  if (auto file = ZiFile("index.hdr", ZiFile::Write | ZiFile::GC))
+	    file.write(header.data(), header.length());
+	  if (auto file = ZiFile("index.html", ZiFile::Write | ZiFile::GC))
+	    file.write(body.data(), body.length());
+	  // parser.reset(); // to reuse parser
+	  return false; // disconnect
       });
       if (consumed < 0) return -1;
       if (!consumed) return 0;
@@ -79,7 +84,7 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
     return 1;
   }
 
-  RxMsg	rxMsg;
+  HttpParser	parser;
 };
 
 struct App : public Ztls::Client<App> {

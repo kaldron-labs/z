@@ -23,6 +23,40 @@
 
 #include <zlib/Ztls.hh>
 
+// FIXME
+
+// while on-the-wire data will remain in `ZiIOBuf`, temporary uncompressed data should be
+// predominantly on-stack; see `ZuBase64Test.cc` `enc()` for an example of encoding to an on-stack
+// buffer; since `Zhttp` is above `Zt`, we'll use `ZtLocalArray` for on-stack arrays staging
+// uncompressed data (either decoded from network buffers, or being encoded to network buffers);
+// the goal is to reduce heap memory allocation to a minimum, and potentially eliminate
+// `HeaderBytes` entirely; apps should interface with `Zhttp` via inversion-of-control callback
+// mechanisms, where `Zhttp` decodes/uncompresses to on-stack temporary storage then calls the app
+// with the data
+
+// - KVs can be output as-is (for HTTP 1.1)
+// - down the road with QPACK:
+//   - QPackKVs is a ZuStringTL<...>, QPackKV2ID is a ZuTypeList<ZuUnsigned<X>, ...>,
+//     where X is the QPACK static table index (ID) for the corresponding QPackKV string
+//     QPackID2KV is a ZuTypeList<ZuUnsigned<X>, void, ...>, which maps QPACK IDs back
+//     to kv
+//   - QPackKeys is a ZuStringTL<...>, QPackKey2ID is a ZuTypeList<ZuUnsigned<X>, ...>,
+//     where X is the QPACK static table index (ID) for the corresponding QPackKey string
+//     QPackID2Key is a ZuTypeList<ZuUnsigned<X>, void, ...>, which maps QPACK IDs back
+//     to key
+// - this allows compile-time determination of which KVs and Keys should be QPack-encoded
+//   on transmit (ZuTypeIndex<QPackKVs, ZuStringT<"...">>[} will be undefined)
+// - on receive,
+//   ZuSwitch::dispatch<...>(id, [...](auto ID) {
+//     using KV = ZuType<ID, QPackID2KV>;
+//     if constexpr (!ZuIsSame<KV, void>{})
+//       
+//   ZuSwitch -> ZuType<I, QPackID2Key> -> keys_[J] = span
+//   - BUT with Huffman coding (QPACK uses HPACK), storing the spans in the Reader doesn't
+//     work, what's really needed is a mutable context with callbacks so huffman decoding
+//     can be on-stack (e.g. "..." -> "1234" -> context.i = 1234;)
+//   - this mirrors Builder
+
 namespace Zhttp {
 
 constexpr unsigned DefltMaxHdr = (64<<10);	// 64K default
@@ -141,20 +175,14 @@ inline void split(ZuBSpan data, L &&l) {
 }
 
 // normalize key case to be consistent (mutates key in place)
+// - ZuMatcher needs consistent casing for efficient key matching
 inline void normalize(ZuSpan<uint8_t> key) {
   unsigned n = key.length();
-  bool upper = true;
   int c; // intentionally int
 
   for (unsigned o = 0; o < n; o++) {
     c = key[o];
-    if (c == '-') { upper = true; continue; }
-    if (upper) {
-      if (c >= 'a' && c <= 'z') key[o] = c + 'A' - 'a';
-      upper = false;
-    } else {
-      if (c >= 'A' && c <= 'Z') key[o] = c + 'a' - 'A';
-    }
+    if (c >= 'A' && c <= 'Z') key[o] = c + 'a' - 'A';
   }
 }
 
@@ -163,42 +191,39 @@ inline void normalize(ZuSpan<uint8_t> key) {
 // built-in keys that are always matched for every message
 namespace Key {
   enum {
-    TransferEncoding = -2,
-    ContentLength = -1,
-    N = 2
+    TransferEncoding = 0,
+    ContentLength,
+    N
   };
 }
 
-template <typename Keys_>
+template <typename Keys_, typename KVs_>
 struct Headers {
   using Keys = typename Keys_::template Unshift<ZuStringTL<
-    "Transfer-Encoding",
-    "Content-Length"
+    "transfer-encoding",
+    "content-length"
   >>;
+  using KVs = KVs_;
 
-  static constexpr auto matcher = ZuMatcher<Keys>();
+  static constexpr auto keyMatcher = ZuMatcher<Keys>();
 
-  ZuCSpan	keys_[Keys::N];
-  unsigned	offset = 0;
-  bool		complete = false;
-
-  ZuCSpan key(int i) const {
-    i += Key::N;
-    return (ZuUnlikely(i < 0 || i >= Keys::N)) ? ZuCSpan() : keys_[i];
+  static int kvMatch(ZuBSpan kv) {
+    if constexpr (KVs::N) {
+      static constexpr auto matcher = ZuMatcher<KVs>();
+      return matcher.match(kv);
+    } else
+      return -1;
   }
 
-  // following a previous parse() the buffer's memory address
-  // may have moved due to growth reallocation; if necessary
-  // rebase all previously parsed headers
-  void rebase(ptrdiff_t o) {
-    if (!o || !offset) return;	// not moved or nothing parsed yet
-    ZuUnroll::all<Keys::N>([this, o](auto I) {
-      if (keys_[I]) keys_[I].rebase(o);
-    });
-  }
+  unsigned		offset = 0;
+  bool			complete = false;
+  int			contentLength = -1;
+  TransferEncoding::T	xferEncoding = -1;
+  bool			chunked = false;
 
   // parse headers
-  int parse(ZuSpan<uint8_t> data) {
+  template <typename Msg, typename KeyFn, typename KVFn>
+  int parse(ZuSpan<uint8_t> data, Msg &&msg, KeyFn &&keyFn, KVFn &&kvFn) {
     if (complete) return offset;
     unsigned o = offset;
     data.offset(o);
@@ -223,8 +248,40 @@ struct Headers {
       if (ZuUnlikely(n < 0)) return -1; // should never happen
       value.trunc(n);
       normalize(key);
-      int j = matcher.match(key);
-      if (j >= 0) keys_[j] = value;
+      ZuSpan kv(&key[0], &value[n] - &key[0]); // "key: value"
+      int j = kvMatch(kv);
+      if (j >= 0)
+	kvFn(msg, j);
+      else {
+	j = keyMatcher.match(key);
+	if (j >= 0) {
+	  switch (j) {
+	    case Key::TransferEncoding: {
+	      bool valid = true;
+	      split(value, [this, &valid](unsigned i, ZuBSpan token) {
+		// chunked must come last, anything else must be first
+		if (chunked)
+		  valid = false;
+		else if (token == "chunked")
+		  chunked = true;
+		else if (i)
+		  valid = false;
+		else
+		  xferEncoding = TransferEncoding::lookup(token);
+	      });
+	      if (!valid) return -1;
+	    } break;
+	    case Key::ContentLength:
+	      contentLength =
+		ZuBox<unsigned>{reinterpret_cast<const char *>(&value[0]),
+		  unsigned(value.length())};
+	      break;
+	    default:
+	      keyFn(msg, j - Key::N, value);
+	      break;
+	  }
+	}
+      }
       offset = o;
     }
     o += 2;
@@ -237,9 +294,11 @@ struct Headers {
 
   // reset for next message
   void reset() {
-    ZuUnroll::all<Keys::N>([this](auto I) { keys_[I] = {}; });
     offset = 0;
     complete = false;
+    contentLength = -1;
+    xferEncoding = -1;
+    chunked = false;
   }
 };
 
@@ -248,26 +307,20 @@ struct Headers {
 // 0   - incomplete
 // -1  - invalid / corrupt
 
-template <typename Keys>
-struct Request_ : public Headers<Keys> {
+template <typename Keys, typename KVs>
+struct Request_ : public Headers<Keys, KVs> {
   Method::T	method = -1;	// Method
-  ZuCSpan	path;		// path
-  ZuCSpan	protocol;	// e.g. HTTP/1.1
 
-  using Base = Headers<Keys>;
+  using Base = Headers<Keys, KVs>;
   using Base::offset;
   using Base::reset;
 
-  // rebase spans
-  void rebase(ptrdiff_t o) {
-    if (!o || !offset) return;
-    path.rebase(o);
-    protocol.rebase(o);
-    Headers<Keys>::rebase(o);
-  }
-
   // parse request
-  int parse(ZuSpan<uint8_t> data) {
+  template <typename Msg, typename Operation, typename Key, typename KV>
+  int parse(
+    ZuSpan<uint8_t> data,
+    Msg &&msg, Operation &&operation, Key &&key, KV &&kv)
+  {
     if (!offset) {
       unsigned n = data.length();
       if (ZuUnlikely(n < 27)) return 0; // shortest request length is 27
@@ -280,45 +333,35 @@ struct Request_ : public Headers<Keys> {
       while (data[o] != ' ')
 	if (ZuUnlikely(++o >= n)) return 0; // unterminated path
       if (ZuUnlikely(b == o)) return -1; // missing path
-      path = {&data[b], o - b};
+      ZuCSpan path{&data[b], o - b};
       b = ++o;
       o = eol({&data[b], n - b});
       if (ZuUnlikely(o < 0)) return 0; // unterminated protocol
-      protocol = {&data[b], unsigned(o)};
+      // ZuCSpan protocol{&data[b], unsigned(o)};
+      ZuFwd<Operation>(operation)(msg, method, path);
       offset = b + o + 2;
     }
-    return Headers<Keys>::parse(data);
+    return Headers<Keys, KVs>::parse(data, msg, ZuFwd<Key>(key), ZuFwd<KV>(kv));
   }
 
   // reset for next message
   void reset() {
     method = -1;
-    path = {};
-    protocol = {};
     Base::reset();
   }
 };
 
-template <typename Keys>
-struct Response_ : public Headers<Keys> {
-  ZuCSpan	protocol;	// e.g. HTTP/1.1
-  int		code = -1;	// e.g. 200
-  ZuCSpan	reason;		// e.g. OK
+template <typename Keys, typename KVs>
+struct Response_ : public Headers<Keys, KVs> {
+  int		status = -1;	// e.g. 200
 
-  using Base = Headers<Keys>;
+  using Base = Headers<Keys, KVs>;
   using Base::offset;
   using Base::reset;
 
-  // rebase spans
-  void rebase(ptrdiff_t o) {
-    if (!o || !offset) return;
-    protocol.rebase(o);
-    reason.rebase(o);
-    Headers<Keys>::rebase(o);
-  }
-
-  // parse response line
-  int parse(ZuSpan<uint8_t> data) { // returns offset to body, -1 if incomplete
+  // parse response
+  template <typename Msg, typename Status, typename Key, typename KV>
+  int parse(ZuSpan<uint8_t> data, Msg &&msg, Status &&status_, Key &&key, KV &&kv) {
     if (!offset) {
       unsigned n = data.length();
       if (ZuUnlikely(n < 19)) return 0; // shortest possible response is 19
@@ -326,40 +369,38 @@ struct Response_ : public Headers<Keys> {
       for (o = 0; data[o] != ' '; )
 	if (ZuUnlikely(++o > 8)) return 0; // unterminated protocol
       if (!o) return 0; // missing protocol
-      protocol = {&data[0], unsigned(o)};
+      // ZuCSpan protocol{&data[0], unsigned(o)};
       unsigned b = ++o;
       int c; // intentionally int
       while ((c = data[o]) != ' ') {
 	if (c < '0' || c > '9') return -1; // not a number
 	c -= '0';
-	code = code < 0 ? c : (code * 10) + c;
-	if (ZuUnlikely(++o > b + 3)) return 0; // unterminated code
+	status = status < 0 ? c : (status * 10) + c;
+	if (ZuUnlikely(++o > b + 3)) return 0; // unterminated status
       }
-      if (ZuUnlikely(b == o)) return -1; // missing code
+      if (ZuUnlikely(b == o)) return -1; // missing status
       b = ++o;
       o = eol({&data[b], n - b});
       if (ZuUnlikely(o < 0)) return 0; // unterminated reason
-      reason = {&data[b], unsigned(o)};
+      // ZuCSpan reason{&data[b], unsigned(o)};
+      ZuFwd<Status>(status_)(msg, status);
       offset = b + o + 2;
     }
-    return Headers<Keys>::parse(data);
+    return Headers<Keys, KVs>::parse(data, msg, ZuFwd<Key>(key), ZuFwd<KV>(kv));
   }
 
   // reset for next message
   void reset() {
-    protocol = {};
-    code = -1;
-    reason = {};
+    status = -1;
     Base::reset();
   }
 };
 
 // header loader
-template <template <typename> class Msg, typename Keys, unsigned Max>
-struct Header : public Msg<Keys> {
-  using Base = Msg<Keys>;
+template <template <typename, typename> class Msg, typename Keys, typename KVs, unsigned Max>
+struct Header : public Msg<Keys, KVs> {
+  using Base = Msg<Keys, KVs>;
   using Base::complete;
-  using Base::rebase;
   using Base::parse;
   using Base::reset;
 
@@ -367,19 +408,22 @@ struct Header : public Msg<Keys> {
   unsigned		max = Max;
   bool			valid = true;
 
-  int process(ZiIOBuf *buf, ZuSpan<uint8_t> rcvd) {
+  template <typename Parser, typename Head, typename Key, typename KV>
+  int process(
+    ZiIOBuf *buf, ZuSpan<uint8_t> rcvd,
+    Parser &&parser, Head &&head, Key &&key, KV &&kv)
+  {
     if (ZuUnlikely(complete)) return valid ? 0 : -1;
     if (buf->length + rcvd.length() > max) {
       complete = true, valid = false;
       return -1;
     }
-    auto span_ = &span[0];
     buf->append(&rcvd[0], rcvd.length());
     span = buf->span();
-    if (span_) rebase(&span[0] - span_);
 
     int o = span.length();
-    int n = parse(span);
+    int n = parse(
+      span, parser, ZuFwd<Head>(head), ZuFwd<Key>(key), ZuFwd<KV>(kv));
     if (n < 0) {
       complete = true, valid = false;
       return -1;
@@ -406,13 +450,15 @@ struct Header : public Msg<Keys> {
 // request header
 template <
   typename Keys = ZuStringTL<>,
+  typename KVs = ZuStringTL<>,
   unsigned Max = DefltMaxHdr>
-using Request = Header<Request_, Keys, Max>;
+using Request = Header<Request_, Keys, KVs, Max>;
 // response header
 template <
   typename Keys = ZuStringTL<>,
+  typename KVs = ZuStringTL<>,
   unsigned Max = DefltMaxHdr>
-using Response = Header<Response_, Keys, Max>;
+using Response = Header<Response_, Keys, KVs, Max>;
 
 ZuInline constexpr uint8_t hex(uint8_t c) {
   c |= 0x20;
@@ -475,7 +521,7 @@ struct Body {
   bool			valid = true;
   bool			complete = false;
 
-  // access and validate the Transfer-Encoding and Content-Length headers
+  // access and validate the transfer-encoding and content-length headers
   // - attempts to consume any body data lingering in the buffer
   // - returns number of additional bytes consumed
   // - returns -1 if header is invalid
@@ -483,31 +529,13 @@ struct Body {
   int init(ZiIOBuf *buf, const Header &header, unsigned max_ = Max) {
     max = max_;
     offset = header.span.length();
-    if (auto s = header.key(Key::TransferEncoding))
-      split(s, [this](unsigned i, ZuBSpan token) {
-	// chunked must come last, anything else must be first
-	if (chunked)
-	  valid = false;
-	else if (token == "chunked")
-	  chunked = true;
-	else if (i)
-	  valid = false;
-	else
-	  xferEncoding = TransferEncoding::lookup(token);
-      });
-    if (!valid) {
-      buf->length = offset;
-      return -1;
-    }
+    xferEncoding = header.xferEncoding;
+    chunked = header.chunked;
     if (chunked) {
       buf->length = offset;
       return 0;
     }
-    // from here body is valid and not chunked
-    if (auto s = header.key(Key::ContentLength))
-      contentLength = ZuBox<unsigned>{s};
-    else
-      contentLength = 0;
+    contentLength = header.contentLength < 0 ? 0 : header.contentLength;
     if (contentLength < 0 || contentLength > max) {
       buf->length = offset;
       valid = false;
@@ -641,6 +669,7 @@ struct Body {
     chunkHdr = {};
     chunkTrlr.clear();
     chunkTotal = 0;
+    contentLength = -1;
     xferEncoding = -1;
     chunked = false;
     valid = true;
@@ -658,37 +687,48 @@ template <> struct Builder_Body<true> {
 
 template <
   typename Header_ = Response<>,
-  typename Body_ = Body<>>
-struct RxMsg {
+  typename Body_ = Body<>,
+  typename Context = ZuEmpty>		// additional context for callbacks
+struct Parser {
   using Header = Header_;
   using Body = Body_;
 
   ZmRef<ZiIOBuf>	buf;
+  Context		context;
   Header		header;
   Body			body;
 
-  RxMsg(ZmRef<ZiIOBuf> buf_) : buf{ZuMv(buf_)} { }
+  Parser(ZmRef<ZiIOBuf> buf_) : buf{ZuMv(buf_)} { }
+  template <typename ...Args,
+    decltype(Context(ZuDeclVal<Args &&>()...), int()) = 0>
+  Parser(ZmRef<ZiIOBuf> buf_, Args &&...args) :
+    buf{ZuMv(buf_)}, context(ZuFwd<Args>(args)...) { }
 
   // bool rcvd()
   // - returns false to disconnect
-  template <typename Rcvd>
-  int process(ZuSpan<uint8_t> data, Rcvd rcvd) {
-    if (ZuUnlikely(body.complete)) return -1; // should not happen
+  template <typename Head, typename Key, typename KV, typename Rcvd>
+  int process(
+    this auto &&self, ZuSpan<uint8_t> data,
+    Head &&head, Key &&key, KV &&kv, Rcvd &&rcvd)
+  {
+    if (ZuUnlikely(self.body.complete)) return -1; // should not happen
 
     unsigned consumed = 0;
     int o;
 
-    if (!header.complete) {
-      o = header.process(buf, data);
+    if (!self.header.complete) {
+      o = self.header.process(
+	self.buf, data, self, ZuFwd<Head>(head), ZuFwd<Key>(key),
+	ZuFwd<KV>(kv));
       if (o < 0) { ZiLOG(Error, "Zhttp", "invalid HTTP response"); return -1; }
-      if (!header.complete) return o;
+      if (!self.header.complete) return o;
       if (o) {
 	consumed += o;
 	data.offset(o);
       }
-      auto n = body.init(buf, header);
+      auto n = self.body.init(self.buf, self.header);
       if (n < 0) {
-	ZiLOG(Error, "Zhttp", "invalid HTTP Transfer-Encoding / Content-Length");
+	ZiLOG(Error, "Zhttp", "invalid HTTP transfer-encoding / content-length");
 	return -1;
       }
       if (n) {
@@ -697,22 +737,22 @@ struct RxMsg {
       }
       if (!data) return consumed;
     }
-    if (!body.complete) {
-      o = body.process(buf, data);
+    if (!self.body.complete) {
+      o = self.body.process(self.buf, data);
       if (o < 0) { ZiLOG(Error, "Zhttp", "invalid HTTP body"); return -1; }
       if (o) {
 	consumed += o;
 	data.offset(o);
       }
     }
-    if (!body.complete) return consumed;
-    if (!body.valid) {
+    if (!self.body.complete) return consumed;
+    if (!self.body.valid) {
       // invalid body should have been caught by body.process() returning -1
       ZiLOG(Error, "Zhttp", "Zhttp internal error");
       return -1;
     }
 
-    bool disconnect = !rcvd();
+    bool disconnect = !rcvd(self);
 
     if (ZuUnlikely(disconnect)) return -1;
 
@@ -727,6 +767,8 @@ struct RxMsg {
 };
 
 template <
+  typename Keys = ZuStringTL<>,		// custom header keys
+  typename KVs = ZuStringTL<>,		// custom header fixed key/values
   bool HasBody = false,			// has a body
   typename Context = ZuEmpty>		// additional context for callbacks
 struct Builder : public Builder_Body<HasBody> {
@@ -746,11 +788,10 @@ struct Builder : public Builder_Body<HasBody> {
     public ZuTrue { };
 
   // request with query
-  template <typename Path, typename Query, typename Host, typename Headers>
+  template <typename Path, typename Query, typename Host, typename KeyFn>
   void request(
     this auto &self,
-    unsigned method, Path &&path, Query &&query, Host &&host,
-    Headers &&headers)
+    unsigned method, Path &&path, Query &&query, Host &&host, KeyFn &&keyFn)
   {
     auto &buf = *(self.buf);
     // method
@@ -759,38 +800,42 @@ struct Builder : public Builder_Body<HasBody> {
     if constexpr (!IsCallable<Path>{})
       buf << ZuFwd<Path>(path);
     else
-      ZuFwd<Path>(path)(ZuFwdLike<decltype(self)>(self));
+      ZuFwd<Path>(path)(self);
     // query (may be prefixed with trailing path components)
     if constexpr (!IsCallable<Query>{})
       buf << ZuFwd<Query>(query);
     else
-      ZuFwd<Query>(query)(ZuFwdLike<decltype(self)>(self));
+      ZuFwd<Query>(query)(self);
     // host
-    buf << " HTTP/1.1\r\nHost: ";
+    buf << " HTTP/1.1\r\nhost: ";
     if constexpr (!IsCallable<Host>{})
       buf << ZuFwd<Host>(host);
     else
-      ZuFwd<Host>(host)(ZuFwdLike<decltype(self)>(self));
+      ZuFwd<Host>(host)(self);
     buf << "\r\n";
     // canonical headers
     if constexpr (HasBody) {
-      buf << "Content-Length:           \r\n"; // placeholder empty value
+      buf << "content-length:           \r\n"; // placeholder empty value
       self.contentLen = buf.length - 12;
     }
-    // custom headers
-    if constexpr (!IsCallable<Headers>{})
-      buf << ZuFwd<Headers>(headers);
-    else
-      ZuFwd<Headers>(headers)(ZuFwdLike<decltype(self)>(self));
+    // custom fixed header key/values
+    ZuUnroll::all<KVs>([&buf]<typename KV>() {
+      buf << KV{}() << "\r\n";
+    });
+    // custom variable header keys
+    ZuUnroll::all<Keys>([&self, &buf, &keyFn]<typename Key>() {
+      using I = ZuTypeIndex<Key, Keys>;
+      buf << Key{}() << ": " << keyFn(self, I{}()) << "\r\n";
+    });
     buf << "\r\n";
     if constexpr (HasBody) self.body = buf.length;
   }
 
   // request without query
-  template <typename Path, typename Host, typename Headers>
+  template <typename Path, typename Host, typename KeyFn>
   void request(
     this auto &self,
-    unsigned method, Path &&path, Host &&host, Headers &&headers)
+    unsigned method, Path &&path, Host &&host, KeyFn &&keyFn)
   {
     auto &buf = *(self.buf);
     // method
@@ -799,53 +844,60 @@ struct Builder : public Builder_Body<HasBody> {
     if constexpr (!IsCallable<Path>{})
       buf << ZuFwd<Path>(path);
     else
-      ZuFwd<Path>(path)(ZuFwdLike<decltype(self)>(self));
+      ZuFwd<Path>(path)(self);
     // host
-    buf << " HTTP/1.1\r\nHost: ";
+    buf << " HTTP/1.1\r\nhost: ";
     if constexpr (!IsCallable<Host>{})
       buf << ZuFwd<Host>(host);
     else
-      ZuFwd<Host>(host)(ZuFwdLike<decltype(self)>(self));
+      ZuFwd<Host>(host)(self);
     buf << "\r\n";
     // canonical headers
     if constexpr (HasBody) {
-      buf << "Content-Length:           \r\n";
+      buf << "content-length:           \r\n";
       self.contentLen = buf.length - 12;
     }
-    // custom headers
-    if constexpr (!IsCallable<Headers>{})
-      buf << ZuFwd<Headers>(headers);
-    else
-      ZuFwd<Headers>(headers)(ZuFwdLike<decltype(self)>(self));
+    // custom fixed header key/values
+    ZuUnroll::all<KVs>([&buf]<typename KV>() {
+      buf << KV{}() << "\r\n";
+    });
+    // custom variable header keys
+    ZuUnroll::all<Keys>([&self, &buf, &keyFn]<typename Key>() {
+      using I = ZuTypeIndex<Key, Keys>;
+      buf << Key{}() << ": " << keyFn(self, I{}()) << "\r\n";
+    });
     buf << "\r\n";
     if constexpr (HasBody) self.body = buf.length;
   }
 
   // response
-  template <typename Reason, typename Headers>
+  template <typename Reason, typename KeyFn>
   void response(
-    this auto &self, unsigned code, Reason &&reason, Headers &&headers)
+    this auto &self, unsigned status, Reason &&reason, KeyFn &&keyFn)
   {
     auto &buf = *(self.buf);
-    // code
-    buf << "HTTP/1.1 " << ZuBox<unsigned>{code}.fmt<ZuFmt::Right<3>>() << ' ';
+    // status
+    buf << "HTTP/1.1 " << ZuBox<unsigned>{status}.fmt<ZuFmt::Right<3>>() << ' ';
     // reason
     if constexpr (!IsCallable<Reason>{})
       buf << ZuFwd<Reason>(reason);
     else
-      ZuFwd<Reason>(reason)(ZuFwdLike<decltype(self)>(self));
+      ZuFwd<Reason>(reason)(self);
     buf << "\r\n";
     // canonical headers
     if constexpr (HasBody) {
-      buf << "Content-Length:           \r\n";
+      buf << "content-length:           \r\n";
       self.contentLen = buf.length - 12;
     }
-    // custom headers
-    self.contentLen = buf.length - 12;
-    if constexpr (!IsCallable<Headers>{})
-      buf << ZuFwd<Headers>(headers);
-    else
-      ZuFwd<Headers>(headers)(ZuFwdLike<decltype(self)>(self));
+    // custom fixed header key/values
+    ZuUnroll::all<KVs>([&buf]<typename KV>() {
+      buf << KV{}() << "\r\n";
+    });
+    // custom variable header keys
+    ZuUnroll::all<Keys>([&self, &buf, &keyFn]<typename Key>() {
+      using I = ZuTypeIndex<Key, Keys>;
+      buf << Key{}() << ": " << keyFn(self, I{}()) << "\r\n";
+    });
     buf << "\r\n";
     if constexpr (HasBody) self.body = buf.length;
   }

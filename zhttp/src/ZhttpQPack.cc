@@ -36,73 +36,15 @@ static int putString_(HeaderBytes &out, uint8_t prefix, unsigned prefixBits,
   return 0;
 }
 
-struct HuffmanSymbol_ {
-  uint32_t	code;
-  uint8_t	bits;
-  uint16_t	symbol;
-};
-
-static const HuffmanSymbol_ huffman_[] = {
-  {0x1ff8U, 13, 0}, {0x7fffd8U, 23, 1}, {0xfffffe2U, 28, 2}, {0xfffffe3U, 28, 3},
-  {0xfffffe4U, 28, 4}, {0xfffffe5U, 28, 5}, {0xfffffe6U, 28, 6}, {0xfffffe7U, 28, 7},
-  {0xfffffe8U, 28, 8}, {0xffffeaU, 24, 9}, {0x3ffffffcU, 30, 10}, {0xfffffe9U, 28, 11},
-  {0xfffffeaU, 28, 12}, {0x3ffffffdU, 30, 13}, {0xfffffebU, 28, 14}, {0xfffffecU, 28, 15},
-  {0xfffffedU, 28, 16}, {0xfffffeeU, 28, 17}, {0xfffffefU, 28, 18}, {0xffffff0U, 28, 19},
-  {0xffffff1U, 28, 20}, {0xffffff2U, 28, 21}, {0x3ffffffeU, 30, 22}, {0xffffff3U, 28, 23},
-  {0xffffff4U, 28, 24}, {0xffffff5U, 28, 25}, {0xffffff6U, 28, 26}, {0xffffff7U, 28, 27},
-  {0xffffff8U, 28, 28}, {0xffffff9U, 28, 29}, {0xffffffaU, 28, 30}, {0xffffffbU, 28, 31},
-  {0x14U, 6, 32}, {0x3f8U, 10, 33}, {0x3f9U, 10, 34}, {0xffaU, 12, 35},
-  {0x1ff9U, 13, 36}, {0x15U, 6, 37}, {0xf8U, 8, 38}, {0x7faU, 11, 39},
-  {0x3faU, 10, 40}, {0x3fbU, 10, 41}, {0xf9U, 8, 42}, {0x7fbU, 11, 43},
-  {0xfaU, 8, 44}, {0x16U, 6, 45}, {0x17U, 6, 46}, {0x18U, 6, 47},
-  {0x0U, 5, 48}, {0x1U, 5, 49}, {0x2U, 5, 50}, {0x19U, 6, 51},
-  {0x1aU, 6, 52}, {0x1bU, 6, 53}, {0x1cU, 6, 54}, {0x1dU, 6, 55},
-  {0x1eU, 6, 56}, {0x1fU, 6, 57}, {0x5cU, 7, 58}, {0xfbU, 8, 59},
-  {0x7ffcU, 15, 60}, {0x20U, 6, 61}, {0xffbU, 12, 62}, {0x3fcU, 10, 63},
-  {0x1ffaU, 13, 64}, {0x21U, 6, 65}, {0x5dU, 7, 66}, {0x5eU, 7, 67},
-  {0x5fU, 7, 68}, {0x60U, 7, 69}, {0x61U, 7, 70}, {0x62U, 7, 71},
-  {0x63U, 7, 72}, {0x64U, 7, 73}, {0x65U, 7, 74}, {0x66U, 7, 75},
-  {0x67U, 7, 76}, {0x68U, 7, 77}, {0x69U, 7, 78}, {0x6aU, 7, 79},
-  {0x6bU, 7, 80}, {0x6cU, 7, 81}, {0x6dU, 7, 82}, {0x6eU, 7, 83},
-  {0x6fU, 7, 84}, {0x70U, 7, 85}, {0x71U, 7, 86}, {0x72U, 7, 87},
-  {0xfcU, 8, 88}, {0x73U, 7, 89}, {0xfdU, 8, 90}, {0x1ffbU, 13, 91},
-  {0x7fff0U, 19, 92}, {0x1ffcU, 13, 93}, {0x3ffcU, 14, 94}, {0x22U, 6, 95},
-  {0x7ffdU, 15, 96}, {0x3U, 5, 97}, {0x23U, 6, 98}, {0x4U, 5, 99},
-  {0x24U, 6, 100}, {0x5U, 5, 101}, {0x25U, 6, 102}, {0x26U, 6, 103},
-  {0x27U, 6, 104}, {0x6U, 5, 105}, {0x74U, 7, 106}, {0x75U, 7, 107},
-  {0x28U, 6, 108}, {0x29U, 6, 109}, {0x2aU, 6, 110}, {0x7U, 5, 111},
-  {0x2bU, 6, 112}, {0x76U, 7, 113}, {0x2cU, 6, 114}, {0x8U, 5, 115},
-  {0x9U, 5, 116}, {0x2dU, 6, 117}, {0x77U, 7, 118}, {0x78U, 7, 119},
-  {0x79U, 7, 120}, {0x7aU, 7, 121}, {0x7bU, 7, 122}, {0x7ffeU, 15, 123},
-  {0x7fcU, 11, 124}, {0x3ffdU, 14, 125}, {0x1ffdU, 13, 126}, {0x3fffffffU, 30, 256},
-};
-
 int QPack::decodeHuffman(HeaderBytes &out, ZuCSpan in)
 {
-  out.length(0);
-  uint32_t code = 0;
-  unsigned bits = 0;
-  for (unsigned i = 0; i < in.length(); ++i) {
-    uint8_t byte = uint8_t(in[i]);
-    for (int bit = 7; bit >= 0; --bit) {
-      code = (code << 1) | ((byte >> bit) & 1U);
-      ++bits;
-      bool matched = false;
-      for (auto &sym : huffman_) {
-	if (sym.bits != bits || sym.code != code) continue;
-	if (sym.symbol == 256) return -1;
-	out.push(uint8_t(sym.symbol));
-	code = 0;
-	bits = 0;
-	matched = true;
-	break;
-      }
-      if (!matched && bits > 30) return -1;
-    }
-  }
-  if (!bits) return int(out.length());
-  if (bits > 7 || code != ((1U << bits) - 1U)) return -1;
-  return int(out.length());
+  out.length(HPack::declen(in.length()));
+  int64_t n = HPack::decode(
+    ZuSpan<uint8_t>{out.data(), out.length()},
+    ZuBSpan{reinterpret_cast<const uint8_t *>(in.data()), in.length()});
+  if (n < 0) return -1;
+  out.length(uint64_t(n));
+  return int(n);
 }
 
 int QPack::decodeString(

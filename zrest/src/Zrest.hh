@@ -62,7 +62,7 @@ ZfbStruct(Request,
 namespace Zrest {
 
 // the REST builder layers on the HTTP builder, enriching requests with
-// Accept-encoding: identity and Content-Type: application/json as needed
+// accept-encoding: identity and content-type: application/json as needed
 template <
   bool HasBody = false,			// has a body
   typename Context = ZuEmpty>		// additional context for callbacks
@@ -85,9 +85,9 @@ struct Builder : public Zhttp::Builder<HasBody, Context> {
       method, ZuFwd<Path>(path), ZuFwd<Query>(query), ZuFwd<Host>(host),
       [headers = ZuFwd<Headers>(headers)](auto &&builder) {
 	ZiIOBuf *buf = builder.buf;
-	*buf << "Accept-Encoding: identity\r\n";
+	*buf << "accept-encoding: identity\r\n";
 	if constexpr (HasBody)
-	  *buf << "Content-Type: application/json\r\n";
+	  *buf << "content-type: application/json\r\n";
 	if constexpr (!IsCallable<Headers>{})
 	  *buf << ZuFwd<Headers>(headers);
 	else
@@ -105,9 +105,9 @@ struct Builder : public Zhttp::Builder<HasBody, Context> {
       method, ZuFwd<Path>(path), ZuFwd<Host>(host),
       [headers = ZuFwd<Header>(headers)](auto &&builder) {
 	ZiIOBuf *buf = builder.buf;
-	*buf << "Accept-Encoding: identity\r\n";
+	*buf << "accept-encoding: identity\r\n";
 	if constexpr (HasBody)
-	  *buf << "Content-Type: application/json\r\n";
+	  *buf << "content-type: application/json\r\n";
 	if constexpr (!IsCallable<Headers>{})
 	  *buf << ZuFwd<Headers>(headers);
 	else
@@ -124,7 +124,7 @@ struct Builder : public Zhttp::Builder<HasBody, Context> {
       method, code, ZuFwd<Reason>(reason),
       [headers = ZuFwd<Header>(headers)](auto &&builder) {
 	if constexpr (HasBody)
-	  *buf << "Content-Type: application/json\r\n";
+	  *buf << "content-type: application/json\r\n";
 	if constexpr (!IsCallable<Headers>{})
 	  *buf << ZuFwd<Headers>(headers);
 	else
