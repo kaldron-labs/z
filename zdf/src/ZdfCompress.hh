@@ -478,7 +478,9 @@ private:
   int64_t	m_base = 0;
 };
 
-class FloatDecoder : public ZuIBitStream {
+using BitReader = ZuBitStream::LE::Reader;
+
+class FloatDecoder : public BitReader {
 public:
   using Value = double;
 
@@ -491,7 +493,7 @@ public:
   FloatDecoder &operator =(FloatDecoder &&) = default;
 
   FloatDecoder(const uint8_t *start, const uint8_t *end) :
-    ZuIBitStream{start, end} { }
+    BitReader{start, end} { }
 
   unsigned offset() const { return m_offset; }
 
@@ -576,9 +578,9 @@ private:
   // - care is taken to prevent buffer overrun
   // - attempts to read beyond the end of the buffer will fail
   // - rewinding a failed read_() only requires the caller to restore
-  //   the underlying ZuIBitStream state
+  //   the underlying BitReader state
   // - rewinding a *successful* read_() requires the caller to restore
-  //   both the ZuIBitStream state, m_prev and m_prevLZ
+  //   both the BitReader state, m_prev and m_prevLZ
   bool read_(double *out) {
     static uint8_t lzmap[] = { 0, 8, 12, 16, 18, 20, 22, 24 };
 
@@ -624,18 +626,20 @@ private:
   unsigned	m_offset = 0;
 };
 
-template <> class Encoder<FloatDecoder> : public ZuOBitStream {
+using BitWriter = ZuBitStream::LE::Writer;
+
+template <> class Encoder<FloatDecoder> : public BitWriter {
   Encoder(const Encoder &) = delete;
   Encoder &operator =(const Encoder &) = delete;
 
 public:
   using Decoder = FloatDecoder;
 
-  Encoder(uint8_t *start, uint8_t *end) : ZuOBitStream{start, end} { }
+  Encoder(uint8_t *start, uint8_t *end) : BitWriter{start, end} { }
 
   Encoder() { }
   Encoder(Encoder &&w) :
-    ZuOBitStream{ZuMv(w)},
+    BitWriter{ZuMv(w)},
     m_prev{w.m_prev}, m_prevLZ{w.m_prevLZ}, m_offset{w.m_offset}
   {
     w.m_prev = 0;
@@ -651,7 +655,7 @@ public:
   }
 
   Encoder(const Decoder &decoder, uint8_t *end) :
-    ZuOBitStream{decoder, end},
+    BitWriter{decoder, end},
     m_offset{decoder.offset()}
   {
     ZmAssert(pos() + 2 < end);
@@ -718,7 +722,7 @@ public:
 
   void finish() {
     if (avail<2>()) out<2>(1); // ensure decoder terminates
-    ZuOBitStream::finish();
+    BitWriter::finish();
   }
 
 private:
