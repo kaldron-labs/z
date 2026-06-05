@@ -447,7 +447,7 @@ class ZvTx : public Base {
 public:
   using Tx = ZvIOQueueTx_<Impl>;
   using Mx = ZiMultiplex;
-  using Gap = ZvIOQueue::Gap;
+  using Span = ZvIOQueue::Span;
 
   using Base::engine;
 
@@ -551,8 +551,8 @@ struct Link : public ZvLink<Link> {
 
   // Rx
   ZuTime reReqInterval(); // resend request interval
-  void request(const ZvIOQueue::Gap &prev, const ZvIOQueue::Gap &now);
-  void reRequest(const ZvIOQueue::Gap &now);
+  void request(const ZvIOQueue::Span &prev, const ZvIOQueue::Span &now);
+  void reRequest(const ZvIOQueue::Span &now);
 
   // Tx
   void loaded_(ZvIOMsg *msg);
@@ -562,8 +562,8 @@ struct Link : public ZvLink<Link> {
   bool resend_(ZvIOMsg *msg, bool more); // true on success
   void aborted_(ZvIOMsg *msg);
 
-  bool sendGap_(const ZvIOQueue::Gap &gap, bool more); // true on success
-  bool resendGap_(const ZvIOQueue::Gap &gap, bool more); // true on success
+  bool sendGap_(const ZvIOQueue::Span &gap, bool more); // true on success
+  bool resendGap_(const ZvIOQueue::Span &gap, bool more); // true on success
 };
 #endif
 

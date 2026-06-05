@@ -48,8 +48,8 @@ ZfbStruct(Request,
   bool resend_(Msg *msg, bool more); // true on success
 
   // send gap (can do nothing if not required)
-  bool sendGap_(const MxQueue::Gap &gap, bool more); // true on success
-  bool resendGap_(const MxQueue::Gap &gap, bool more); // true on success
+  bool sendGap_(const MxQueue::Span &gap, bool more); // true on success
+  bool resendGap_(const MxQueue::Span &gap, bool more); // true on success
 
   // archive message (low level) (once ackd by receiver(s))
   void archive_(Msg *msg);

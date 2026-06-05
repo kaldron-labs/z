@@ -91,9 +91,9 @@ public:
   ZvIOQFn(const ZvIOMsg_ &msg) : m_msg{msg} { }
 
   Key key() const { return KeyAxor(m_msg); }
-  unsigned length() const { return m_msg.length(); }
-  unsigned clipHead(unsigned) { return length(); }
-  unsigned clipTail(unsigned) { return length(); }
+  uint64_t length() const { return m_msg.length(); }
+  uint64_t clipHead(uint64_t) { return length(); }
+  uint64_t clipTail(uint64_t) { return length(); }
   void write(const ZvIOQFn &) { }
 
 private:
@@ -132,7 +132,7 @@ private:
 };
 
 using ZvIOMsg = ZvIOQueue::Node;
-using ZvIOQGap = ZvIOQueue::Gap;
+using ZvIOQSpan = ZvIOQueue::Span;
 
 // ZvIOQueueRx - receive queue
 
@@ -153,8 +153,8 @@ struct Impl : public ZvIOQueueRx<Impl> {
   void rescheduleReRequest();	// ''
   void cancelReRequest();	// ''
 
-  void request(const ZvIOQGap &prev, const ZvIOQGap &now);
-  void reRequest(const ZvIOQGap &now);
+  void request(const ZvIOQSpan &prev, const ZvIOQSpan &now);
+  void reRequest(const ZvIOQSpan &now);
 };
 #endif
 
@@ -229,8 +229,8 @@ struct Impl : public ZvIOQueueTx<Impl, Pool> {
   bool resend_(ZvIOMsg *msg, bool more);
 
   // sendGap_() and resendGap_() return true, or false on transient failure
-  bool sendGap_(const ZvIOQGap &gap, bool more);
-  bool resendGap_(const ZvIOQGap &gap, bool more);
+  bool sendGap_(const ZvIOQSpan &gap, bool more);
+  bool resendGap_(const ZvIOQSpan &gap, bool more);
 };
 #endif
 
@@ -421,7 +421,7 @@ public:
   using Base::ready_;
   using Base::unready_;
 
-  using Gap = ZvIOQGap;
+  using Span = ZvIOQSpan;
   ZuDerive(Pool,
     (ZmRBTreeKV<ZuTime, ZmRef<Tx>,
       ZmRBTreeHeapID<"ZvIOQueueTxPool.Pool">>));
@@ -441,8 +441,8 @@ public:
   bool resend_(ZvIOMsg *, bool) { return true; } // unused
   void aborted_(ZvIOMsg *) { } // unused
 
-  bool sendGap_(const Gap &, bool) { return true; } // unused
-  bool resendGap_(const Gap &, bool) { return true; } // unused
+  bool sendGap_(const Span &, bool) { return true; } // unused
+  bool resendGap_(const Span &, bool) { return true; } // unused
 
   void sent_(ZvIOMsg *msg) {
     // this is a synthetic ack that calls ZmPQTx::ackd()
