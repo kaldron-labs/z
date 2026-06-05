@@ -11,7 +11,8 @@
 //     count_(), headNode(), shift(), pushNode(node), clean()
 // - stream operations:
 //   - span()    - current contiguous bytes
-//   - advance() - consume bytes from current buffer
+//   - spans()   - iterate over pending buffer spans in the stream
+//   - advance() - consume bytes from the stream
 //   - empty()   - true when no readable bytes remain
 // - queue operations:
 //   - push(node)
@@ -58,17 +59,31 @@ public:
     return head ? head->span() : ZuSpan<uint8_t>{};
   }
 
+  template <typename L>
+  bool spans(L &&l) {
+    auto i = m_queue.citer();
+    while (auto node = i())
+      if (!l(node->span())) return false;
+    return true;
+  }
+
   bool empty() const {
     return !m_queue.headNode();
   }
 
   bool advance(unsigned n) {
-    auto head = m_queue.headNode();
-    if (!head) return false;
-    if (n > head->length) n = head->length;
-    head->advance(n);
-    if (!head->length) m_queue.shift();
-    return n;
+    bool consumed = false;
+    while (n) {
+      auto head = m_queue.headNode();
+      if (!head) break;
+      unsigned m = n;
+      if (m > head->length) m = head->length;
+      head->advance(m);
+      n -= m;
+      consumed |= m;
+      if (!head->length) m_queue.shift();
+    }
+    return consumed;
   }
 
   bool operator !() const {

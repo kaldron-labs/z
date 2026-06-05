@@ -41,9 +41,9 @@ bool spanEq(ZuSpan<uint8_t> span, const char *s)
   return span.length() == n && (!n || !::memcmp(span.data(), s, n));
 }
 
-void testBasicAdvanceAndNext()
+void testAdvanceConsumesAcrossQueuedBuffers()
 {
-  ZuTestScope(testBasicAdvanceAndNext);
+  ZuTestScope(testAdvanceConsumesAcrossQueuedBuffers);
 
   auto stream = Zi::rxStream<RxQueue>();
 
@@ -61,15 +61,11 @@ void testBasicAdvanceAndNext()
   ZuCheck(stream.count_() == 2);
 
   ZuCheck(stream.advance(99));
-  ZuCheck(spanEq(stream.span(), "de"));
-  ZuCheck(stream.count_() == 1);
-
-  ZuCheck(!stream.advance(0));
-  ZuCheck(spanEq(stream.span(), "de"));
-
-  ZuCheck(stream.advance(2));
   ZuCheck(!stream);
   ZuCheck(stream.count_() == 0);
+
+  ZuCheck(!stream.advance(0));
+  ZuCheck(!stream.advance(2));
 }
 
 void testPushFiltersZeroLengthNodes()
@@ -112,6 +108,42 @@ void testNextSkipsCurrentRemainder()
   ZuCheck(!stream);
 }
 
+void testSpansIteratesWithoutConsuming()
+{
+  ZuTestScope(testSpansIteratesWithoutConsuming);
+
+  ZiRxStream<RxQueue> stream;
+  stream.push(mkBuf("abc"));
+  stream.push(mkBuf("de"));
+
+  char seen[6] = {};
+  unsigned len = 0;
+  unsigned calls = 0;
+  bool completed = stream.spans([&](ZuSpan<uint8_t> span) {
+    ::memcpy(seen + len, span.data(), span.length());
+    len += span.length();
+    ++calls;
+    return true;
+  });
+
+  ZuCheck(completed);
+  ZuCheck(calls == 2);
+  ZuCheck(len == 5 && !::memcmp(seen, "abcde", 5));
+  ZuCheck(stream.count_() == 2);
+  ZuCheck(spanEq(stream.span(), "abc"));
+
+  calls = 0;
+  completed = stream.spans([&](ZuSpan<uint8_t>) {
+    ++calls;
+    return false;
+  });
+
+  ZuCheck(!completed);
+  ZuCheck(calls == 1);
+  ZuCheck(stream.count_() == 2);
+  ZuCheck(spanEq(stream.span(), "abc"));
+}
+
 void testCleanResetsState()
 {
   ZuTestScope(testCleanResetsState);
@@ -137,9 +169,10 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testBasicAdvanceAndNext);
+  ZuTestCall(testAdvanceConsumesAcrossQueuedBuffers);
   ZuTestCall(testPushFiltersZeroLengthNodes);
   ZuTestCall(testNextSkipsCurrentRemainder);
+  ZuTestCall(testSpansIteratesWithoutConsuming);
   ZuTestCall(testCleanResetsState);
   return 0;
 }
