@@ -125,8 +125,8 @@ public:
   // ZvLink Rx CRTP
   void process(ZvIOMsg *msg) { }
   ZuTime reReqInterval() { return engine()->reReqInterval(); }
-  void request(const ZvIOQueue::Gap &prev, const ZvIOQueue::Gap &now) { }
-  void reRequest(const ZvIOQueue::Gap &now) { }
+  void request(const ZvIOQueue::Span &prev, const ZvIOQueue::Span &now) { }
+  void reRequest(const ZvIOQueue::Span &now) { }
 
   // ZvLink Tx CRTP
   void loaded_(ZvIOMsg *) { }
@@ -136,8 +136,8 @@ public:
   bool resend_(ZvIOMsg *, bool more) { return true; }
   void aborted_(ZvIOMsg *msg) { }
 
-  bool sendGap_(const ZvIOQueue::Gap &gap, bool more) { return true; }
-  bool resendGap_(const ZvIOQueue::Gap &gap, bool more) { return true; }
+  bool sendGap_(const ZvIOQueue::Span &gap, bool more) { return true; }
+  bool resendGap_(const ZvIOQueue::Span &gap, bool more) { return true; }
 
   // ZvIOQueueTx CRTP
   void archive_(ZvIOMsg *msg) { archived(msg->seqNo + 1); }

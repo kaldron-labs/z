@@ -374,7 +374,7 @@ struct IndexBlk_Fn {
   static Key KeyAxor(const IndexBlk_ &indexBlk) { return indexBlk.offset; }
 
   ZuInline Offset key() const { return indexBlk.offset; }
-  static constexpr unsigned length() { return IndexBlkSize; }
+  static constexpr uint64_t length() { return IndexBlkSize; }
 };
 ZuDerive(Index,
   (ZmPQueue<IndexBlk_,
