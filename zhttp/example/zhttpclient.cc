@@ -27,21 +27,29 @@ struct RxRef {
   Ztls::RxStream *rx = nullptr;
 
   ZuSpan<uint8_t> span() { return rx ? rx->span() : ZuSpan<uint8_t>{}; }
+  template <typename L>
+  bool spans(L &&l) { return rx && rx->spans(ZuFwd<L>(l)); }
   bool advance(unsigned n) { return rx && rx->advance(n); }
   bool empty() const { return !rx || rx->empty(); }
 };
 
+using ResponseKeys = ZuStringTL<"content-type", "location", "server">;
 using HttpParser =
-  Zhttp::Parser<Zhttp::Response<>, Zhttp::Body<MaxBufSize>, ZuEmpty, RxRef>;
+  Zhttp::Parser<
+    Zhttp::Response<ResponseKeys>, Zhttp::Body<MaxBufSize>, ZuEmpty, RxRef>;
+
+static constexpr const char *ResponseKeyName[] = {
+  "content-type",
+  "location",
+  "server"
+};
 
 template <typename App>
 struct Link : public Ztls::CliLink<App, Link<App>> {
   using Base = Ztls::CliLink<App, Link<App>>;
 
   using Base::app;
-  Link(App *app) : Base{app}, parser{RxRef{}} {
-    // body.max = FIXME
-  }
+  Link(App *app) : Base{app}, parser{RxRef{}} { }
 
   void connected(const char *alpn, int tlsver) {
     ZtArray<uint8_t> hostname = this->server();
@@ -72,24 +80,80 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
   int process(Ztls::RxStream &rx) {
     parser.stream.rx = &rx;
     while (!rx.empty()) {
+      bool done = false;
       int consumed = parser.process(
-	[](auto &, int) { },
-	[](auto &, int, ZuCSpan) { },
-	[](auto &, int) { },
-	[this](auto &) -> bool {
-	  const auto &body = parser.body.span;
-	  if (auto file = ZiFile("index.html", ZiFile::Write | ZiFile::GC))
-	    file.write(body.data(), body.length());
-	  // parser.reset(); // to reuse parser
-	  return false; // disconnect
+	[](auto &, int status) {
+	  std::cerr << "status: " << status << '\n' << std::flush;
+	},
+	[](auto &, int i, ZuCSpan value) {
+	  std::cerr << "header " << ResponseKeyName[i] << ": " << value <<
+	    '\n' << std::flush;
+	},
+	[](auto &, int i) {
+	  std::cerr << "fixed header match: " << i << '\n' << std::flush;
+	},
+	[this, &done](auto &) -> bool {
+	  if (!framingLogged) {
+	    std::cerr << "framing: ";
+	    if (parser.body.chunked)
+	      std::cerr << "chunked";
+	    else
+	      std::cerr << "content-length=" << parser.body.contentLength;
+	    std::cerr << '\n' << std::flush;
+	    framingLogged = true;
+	  }
+	  if (auto body = parser.body.span) {
+	    if (!bodyFileOpen) {
+	      bodyFile = ZiFile("index.html", ZiFile::Write | ZiFile::GC);
+	      if (!bodyFile) {
+		std::cerr << "failed to open index.html\n" << std::flush;
+		return false;
+	      }
+	      bodyFileOpen = true;
+	    }
+	    if (bodyFile.write(body.data(), body.length()) != Zi::OK) {
+	      std::cerr << "failed to write body chunk\n" << std::flush;
+	      return false;
+	    }
+	    bodyBytes += body.length();
+	    ++bodyChunks;
+	    std::cerr << "body chunk: " << body.length() << " bytes\n" <<
+	      std::flush;
+	  }
+	  if (auto trailer = parser.body.chunkTrlr) {
+	    trailerBytes += trailer.length();
+	    ++trailerChunks;
+	    auto text = ZuCSpan{
+	      reinterpret_cast<const char *>(trailer.data()), trailer.length()};
+	    std::cerr << "trailer chunk: " << trailer.length() <<
+	      " bytes\n" << text << std::flush;
+	  }
+	  if (parser.body.complete) {
+	    std::cerr << "body complete: " << bodyBytes << " bytes in " <<
+	      bodyChunks << " chunks";
+	    if (trailerChunks)
+	      std::cerr << ", trailers: " << trailerBytes << " bytes in " <<
+		trailerChunks << " chunks";
+	    std::cerr << '\n' << std::flush;
+	    done = true;
+	  }
+	  return true;
       });
       if (consumed < 0) return -1;
+      if (done) return -1;
       if (!consumed) return 0;
     }
     return 1;
   }
 
   HttpParser	parser;
+  ZiFile	bodyFile;
+  uint64_t	bodyBytes = 0;
+  uint64_t	trailerBytes = 0;
+  unsigned	bodyChunks = 0;
+  unsigned	trailerChunks = 0;
+  bool		bodyFileOpen = false;
+  bool		framingLogged = false;
 };
 
 struct App : public Ztls::Client<App> {

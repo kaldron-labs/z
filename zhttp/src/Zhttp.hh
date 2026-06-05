@@ -219,7 +219,8 @@ struct Headers {
       value.trunc(n);
       auto scratch = ZtLocalArray(HdrData, key.length() + 2 + value.length());
       scratch << key << uint8_t(':') << uint8_t(' ') << value;
-      normalize({scratch.data(), key.length()});
+      ZuSpan<uint8_t> key_{scratch.data(), key.length()};
+      normalize(key_);
       ZuSpan kv{scratch.data(), scratch.length()}; // "key: value"
       int j = kvMatch(kv);
       if (j >= 0)
@@ -709,25 +710,42 @@ struct Parser {
     if (!self.header.complete) {
       auto data = self.stream.span();
       if (!data) return 0;
-      int o = eoh(data);
-      if (ZuUnlikely(o < 0)) {
-	if (data.length() > self.header.max) {
-	  self.header.complete = true;
-	  self.header.valid = false;
-	  ZiLOG(Error, "Zhttp", "HTTP header too large");
-	  return -1;
-	}
-	return 0;
+      auto hdr = ZtLocalArray(HdrData, self.header.max);
+      int o = -1;
+      bool hdrTooLarge = false;
+      if constexpr (requires { self.stream.spans([](ZuSpan<uint8_t>) {
+	    return true;
+	  }); }) {
+	self.stream.spans([&hdr, &o, &hdrTooLarge, max = self.header.max](
+	      ZuSpan<uint8_t> data) {
+	  unsigned n = data.length();
+	  unsigned remaining = max - hdr.length();
+	  if (n > remaining) n = remaining;
+	  hdr << ZuBSpan{data.data(), n};
+	  o = eoh(hdr.span());
+	  if (o >= 0) return false;
+	  if (ZuUnlikely(n < data.length())) {
+	    hdrTooLarge = true;
+	    return false;
+	  }
+	  return true;
+	});
+      } else {
+	o = eoh(data);
+	if (ZuUnlikely(o < 0)) {
+	  if (data.length() > self.header.max) hdrTooLarge = true;
+	} else if (ZuUnlikely(unsigned(o) > self.header.max))
+	  hdrTooLarge = true;
+	if (o >= 0) hdr << ZuBSpan{data.data(), unsigned(o)};
       }
-      if (ZuUnlikely(unsigned(o) > self.header.max)) {
+      if (ZuUnlikely(hdrTooLarge)) {
 	self.header.complete = true;
 	self.header.valid = false;
 	ZiLOG(Error, "Zhttp", "HTTP header too large");
 	return -1;
       }
-      auto hdr = ZtLocalArray(HdrData, unsigned(o));
-      hdr << ZuBSpan{data.data(), unsigned(o)};
-      auto headerSpan = hdr.span();
+      if (o < 0) return 0;
+      ZuSpan<uint8_t> headerSpan{hdr.data(), unsigned(o)};
       int n = self.header.parse(
 	headerSpan, self, ZuFwd<Head>(head), ZuFwd<Key>(key),
 	ZuFwd<KV>(kv));
