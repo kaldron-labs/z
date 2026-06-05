@@ -21,19 +21,19 @@
 
 using namespace ZuTestUtil;
 
-using Msg_Data = ZuTuple<uint32_t, unsigned>;
+using Msg_Data = ZuTuple<uint32_t, uint64_t>;
 struct Msg_ : public ZuObject, public Msg_Data {
   using Msg_Data::Msg_Data;
   using Msg_Data::operator =;
   Msg_(const Msg_Data &v) : Msg_Data(v) { }
   Msg_(Msg_Data &&v) : Msg_Data(ZuMv(v)) { }
   uint32_t key() const { return p<0>(); }
-  unsigned length() const { return p<1>(); }
-  unsigned clipHead(unsigned length) {
+  uint64_t length() const { return p<1>(); }
+  uint64_t clipHead(uint64_t length) {
     p<0>() += length;
     return p<1>() -= length;
   }
-  unsigned clipTail(unsigned length) {
+  uint64_t clipTail(uint64_t length) {
     return p<1>() -= length;
   }
   template <typename I>
@@ -48,7 +48,7 @@ class App : public ZmPQTx<App, Queue, ZmNoLock> {
 public:
   using Tx = ZmPQTx<App, Queue, ZmNoLock>;
   using Msg = Queue::Node;
-  using Gap = Queue::Gap;
+  using Span = Queue::Span;
   using Fn = Queue::Fn;
 
   App(uint32_t head) : m_queue(head) { }
@@ -96,12 +96,12 @@ public:
   }
 
   // send gap (optional)
-  bool sendGap_(const Gap &gap, bool) {
+  bool sendGap_(const Span &gap, bool) {
     log("sendGap ", gap.key(), ", ", gap.length());
     m_sentGap = gap;
     return true;
   }
-  bool resendGap_(const Gap &gap, bool) { // resend
+  bool resendGap_(const Span &gap, bool) { // resend
     log("resendGap ", gap.key(), ", ", gap.length());
     m_resentGap = gap;
     return true;
@@ -153,9 +153,9 @@ public:
     m_sent = nullptr;
     return b;
   }
-  bool checkSentGap(const Gap &gap) {
+  bool checkSentGap(const Span &gap) {
     bool r = m_sentGap == gap;
-    m_sentGap = Gap();
+    m_sentGap = Span();
     return r;
   }
   bool checkResent(Msg *msg) {
@@ -163,9 +163,9 @@ public:
     m_resent = nullptr;
     return b;
   }
-  bool checkResentGap(const Gap &gap) {
+  bool checkResentGap(const Span &gap) {
     bool r = m_resentGap == gap;
-    m_resentGap = Gap();
+    m_resentGap = Span();
     return r;
   }
   bool checkArchived(Msg *msg) {
@@ -178,9 +178,9 @@ protected:
   unsigned			m_resends = 0;
   unsigned			m_archives = 0;
   ZmRef<Msg>			m_sent;
-  Gap				m_sentGap;
+  Span				m_sentGap;
   ZmRef<Msg>			m_resent;
-  Gap				m_resentGap;
+  Span				m_resentGap;
   ZmRef<Msg>			m_ackd;
 };
 
@@ -198,78 +198,78 @@ int main(int argc, char **argv)
   a.start();
 
   // basic load, send, resend, ack, resend test
-  msg = new App::Msg(App::Gap(1, 1));
+  msg = new App::Msg(App::Span(1, 1));
   a.send(msg);
   while (a.runSend());
   ZuCheck(a.checkSent(msg));
-  a.resend(App::Gap(1, 1));
+  a.resend(App::Span(1, 1));
   while (a.runResend());
   ZuCheck(a.checkResent(msg));
   a.ackd(2);
   while (a.runArchive());
   ZuCheck(a.checkArchived(msg));
-  a.resend(App::Gap(1, 1));
+  a.resend(App::Span(1, 1));
   while (a.runResend());
   ZuCheck(a.checkResent(msg));
 
   // load, send, resend, ack, resend test with gap
-  msg = new App::Msg(App::Gap(3, 1));
+  msg = new App::Msg(App::Span(3, 1));
   a.send(msg);
   while (a.runSend());
-  ZuCheck(a.checkSentGap(App::Gap(2, 1)));
+  ZuCheck(a.checkSentGap(App::Span(2, 1)));
   ZuCheck(a.checkSent(msg));
-  a.resend(App::Gap(2, 2));
+  a.resend(App::Span(2, 2));
   while (a.runResend());
-  ZuCheck(a.checkResentGap(App::Gap(2, 1)));
+  ZuCheck(a.checkResentGap(App::Span(2, 1)));
   ZuCheck(a.checkResent(msg));
   a.ackd(4);
   while (a.runArchive());
   ZuCheck(a.checkArchived(msg));
-  a.resend(App::Gap(2, 2));
+  a.resend(App::Span(2, 2));
   while (a.runResend());
-  ZuCheck(a.checkResentGap(App::Gap(2, 1)));
+  ZuCheck(a.checkResentGap(App::Span(2, 1)));
   ZuCheck(a.checkResent(msg));
  
   // load, send, resend, ack, resend test with
   // misaligned partially overlapping resend requests, including gaps
   a.txReset(1);
-  msg = new App::Msg(App::Gap(3, 3));
+  msg = new App::Msg(App::Span(3, 3));
   a.send(msg);
   while (a.runSend());
-  ZuCheck(a.checkSentGap(App::Gap(1, 2)));
+  ZuCheck(a.checkSentGap(App::Span(1, 2)));
   ZuCheck(a.checkSent(msg));
-  msg2 = new App::Msg(App::Gap(8, 3));
+  msg2 = new App::Msg(App::Span(8, 3));
   a.send(msg2);
   while (a.runSend());
-  ZuCheck(a.checkSentGap(App::Gap(6, 2)));
+  ZuCheck(a.checkSentGap(App::Span(6, 2)));
   ZuCheck(a.checkSent(msg2));
-  a.resend(App::Gap(4, 5));
+  a.resend(App::Span(4, 5));
   while (a.runResend());
-  ZuCheck(a.checkResentGap(App::Gap(6, 2)));
+  ZuCheck(a.checkResentGap(App::Span(6, 2)));
   ZuCheck(a.checkResent(msg2));
   a.ackd(4);
   while (a.runArchive());
   ZuCheck(a.checkArchived(msg));
-  a.resend(App::Gap(4, 5));
+  a.resend(App::Span(4, 5));
   while (a.runResend());
-  ZuCheck(a.checkResentGap(App::Gap(6, 2)));
+  ZuCheck(a.checkResentGap(App::Span(6, 2)));
   ZuCheck(a.checkResent(msg2));
 
   // resend request spanning unsent data
   a.txReset(1);
-  msg = new App::Msg(App::Gap(3, 3));
+  msg = new App::Msg(App::Span(3, 3));
   a.send(msg);
-  msg2 = new App::Msg(App::Gap(8, 3));
+  msg2 = new App::Msg(App::Span(8, 3));
   a.send(msg2);
-  a.resend(App::Gap(1, 12));
+  a.resend(App::Span(1, 12));
   a.runResend();
-  ZuCheck(a.checkResentGap(App::Gap(1, 2)));
+  ZuCheck(a.checkResentGap(App::Span(1, 2)));
   ZuCheck(a.checkResent(msg));
   a.runResend();
-  ZuCheck(a.checkResentGap(App::Gap(6, 2)));
+  ZuCheck(a.checkResentGap(App::Span(6, 2)));
   ZuCheck(a.checkResent(msg2));
   a.runResend();
-  ZuCheck(a.checkResentGap(App::Gap(11, 2)));
+  ZuCheck(a.checkResentGap(App::Span(11, 2)));
 
   log(ZmHeapMgr::csv());
 }

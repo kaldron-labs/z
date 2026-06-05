@@ -17,14 +17,14 @@
 
 using namespace ZuTestUtil;
 
-using Msg_Data = ZuTuple<uint32_t, unsigned>;
+using Msg_Data = ZuTuple<uint32_t, uint64_t>;
 struct Msg : public ZuObject, public Msg_Data {
   using Msg_Data::Msg_Data;
   using Msg_Data::operator =;
   Msg(const Msg_Data &v) : Msg_Data(v) { }
   Msg(Msg_Data &&v) : Msg_Data(ZuMv(v)) { }
   uint32_t key() const { return p<0>(); }
-  unsigned length() const { return p<1>(); }
+  uint64_t length() const { return p<1>(); }
 };
 
 ZuDerive(PQueue,
@@ -56,7 +56,7 @@ void find(const PQueue &q, uint32_t key)
   log("find ", msg->Msg::key(), ", ", msg->length());
 }
 
-void add(PQueue &q, uint32_t key, unsigned length)
+void add(PQueue &q, uint32_t key, uint64_t length)
 {
   log("add ", key, ", ", length);
   q.add(new QMsg(ZuFwdTuple(key, length)));

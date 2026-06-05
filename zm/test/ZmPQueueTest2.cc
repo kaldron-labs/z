@@ -23,19 +23,19 @@
 
 using namespace ZuTestUtil;
 
-using Msg_Data = ZuTuple<uint32_t, unsigned>;
+using Msg_Data = ZuTuple<uint32_t, uint64_t>;
 struct Msg_ : public ZmObject, public Msg_Data {
   using Msg_Data::Msg_Data;
   using Msg_Data::operator =;
   Msg_(const Msg_Data &v) : Msg_Data(v) { }
   Msg_(Msg_Data &&v) : Msg_Data(ZuMv(v)) { }
   uint32_t key() const { return p<0>(); }
-  unsigned length() const { return p<1>(); }
-  unsigned clipHead(unsigned length) {
+  uint64_t length() const { return p<1>(); }
+  uint64_t clipHead(uint64_t length) {
     p<0>() += length;
     return p<1>() -= length;
   }
-  unsigned clipTail(unsigned length) {
+  uint64_t clipTail(uint64_t length) {
     return p<1>() -= length;
   }
   template <typename I>
@@ -48,14 +48,14 @@ class App : public ZmPQRx<App, Queue, ZmNoLock> {
 public:
   using Rx = ZmPQRx<App, Queue, ZmNoLock>;
   using Msg = Queue::Node;
-  using Gap = Queue::Gap;
+  using Span = Queue::Span;
 
   App(uint32_t head) : m_queue(head) { }
 
   // -- test interface
 
   // send a new message into the receiver
-  void send(uint32_t key, unsigned length) {
+  void send(uint32_t key, uint64_t length) {
     unsigned precount = m_queue.count_();
     this->rcvd(new Msg(ZuFwdTuple(key, length)));
     log("send ", key, ", ", length,
@@ -64,10 +64,10 @@ public:
   }
 
   // respond to next queued resend request
-  void respond(unsigned clipHead, unsigned clipTail) {
+  void respond(uint64_t clipHead, uint64_t clipTail) {
     if (ZmRef<Msg> msg = ZuMv(m_resend)) {
       uint32_t inKey = msg->Msg_::key();
-      unsigned inLength = msg->length();
+      uint64_t inLength = msg->length();
       if (clipHead) msg->clipHead(clipHead);
       if (clipTail) msg->clipTail(clipTail);
       log("respond resend request in(",
@@ -108,7 +108,7 @@ public:
   // request resend, as protocol requires it; if now is a subset of
   // prev, then a request may not need to be sent if the protocol
   // is TCP based since the previous request will still be outstanding
-  void request(Gap prev, Gap now) {
+  void request(Span prev, Span now) {
     log("request resend prev(",
       prev.key(), ", ",
       prev.length(), ") now(",
@@ -118,7 +118,7 @@ public:
   }
 
   // re-request resend, as protocol requires it
-  void reRequest(Gap now) {
+  void reRequest(Span now) {
     log("re-request now(",
       now.key(), ", ",
       now.length(), ')');
@@ -162,7 +162,7 @@ protected:
   unsigned	m_reRequests = 0;
 };
 
-void send(App &a, uint32_t seqNo, unsigned length)
+void send(App &a, uint32_t seqNo, uint64_t length)
 {
   a.send(seqNo, length);
   while (a.runDequeue());
