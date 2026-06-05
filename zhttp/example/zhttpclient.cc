@@ -22,14 +22,24 @@ constexpr unsigned BufSize = 8<<10;	// default built-in buffer size
 constexpr unsigned MaxBufSize = 100<<20;// max HTTP body length (100Mb)
 
 using IOBufAlloc = ZiIOBufAlloc<BufSize, MaxBufSize, "Zhttp.Buf">;
-using HttpParser = Zhttp::Parser<Zhttp::Response<>, Zhttp::Body<MaxBufSize>>;
+
+struct RxRef {
+  Ztls::RxStream *rx = nullptr;
+
+  ZuSpan<uint8_t> span() { return rx ? rx->span() : ZuSpan<uint8_t>{}; }
+  bool advance(unsigned n) { return rx && rx->advance(n); }
+  bool empty() const { return !rx || rx->empty(); }
+};
+
+using HttpParser =
+  Zhttp::Parser<Zhttp::Response<>, Zhttp::Body<MaxBufSize>, ZuEmpty, RxRef>;
 
 template <typename App>
 struct Link : public Ztls::CliLink<App, Link<App>> {
   using Base = Ztls::CliLink<App, Link<App>>;
 
   using Base::app;
-  Link(App *app) : Base{app}, parser{new IOBufAlloc()} {
+  Link(App *app) : Base{app}, parser{RxRef{}} {
     // body.max = FIXME
   }
 
@@ -60,18 +70,14 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
   }
 
   int process(Ztls::RxStream &rx) {
+    parser.stream.rx = &rx;
     while (!rx.empty()) {
-      auto span = rx.span();
       int consumed = parser.process(
-	span,
 	[](auto &, int) { },
 	[](auto &, int, ZuCSpan) { },
 	[](auto &, int) { },
 	[this](auto &) -> bool {
-	  const auto &header = parser.header.span;
 	  const auto &body = parser.body.span;
-	  if (auto file = ZiFile("index.hdr", ZiFile::Write | ZiFile::GC))
-	    file.write(header.data(), header.length());
 	  if (auto file = ZiFile("index.html", ZiFile::Write | ZiFile::GC))
 	    file.write(body.data(), body.length());
 	  // parser.reset(); // to reuse parser
@@ -79,7 +85,6 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
       });
       if (consumed < 0) return -1;
       if (!consumed) return 0;
-      rx.advance(consumed);
     }
     return 1;
   }
