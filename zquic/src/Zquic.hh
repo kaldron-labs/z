@@ -1812,7 +1812,7 @@ public:
     auto first = iter();
     if (!first || length > first->data().length()) return false;
     uint64_t key = first->data().key();
-    auto node = m_txQueue.abort(key);
+    auto node = Tx::abort(key);
     if (!node) return false;
     TxData data = ZuMv(node->data());
     range = TxRange{data};
@@ -1821,7 +1821,7 @@ public:
     else m_txBufferedBytes -= length;
     if (length < data.length()) {
       data.clipHead(length);
-      m_txQueue.add(new TxDataPQueue::Node{ZuMv(data)});
+      Tx::send(new TxDataPQueue::Node{ZuMv(data)});
     }
     return true;
   }
@@ -1960,14 +1960,13 @@ private:
     ZmRef<ZiIOBuf> buf = new RxBufAlloc{this};
     if (ZuUnlikely(buf->size < length))
       if (ZuUnlikely(!buf->ensure(length))) return false;
-    buf->skip = 0;
-    buf->length = length;
-    memcpy(buf->data_(), frame.payload.data() + payloadOffset, length);
+    if (!copySpanToStream(
+	  buf, frame.payload, unsigned(payloadOffset), length, diag))
+      return false;
 
     Rx::rcvd(new StreamRxPQueue::Node{
       RxData{ZuMv(buf), first, 0, length}});
     ++m_rxCopies;
-    if (diag) ++diag->rxPacketToStreamCopies;
     return true;
   }
 

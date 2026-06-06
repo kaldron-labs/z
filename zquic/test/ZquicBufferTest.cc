@@ -29,6 +29,14 @@ void testPacketToStreamCopy()
     "packet-to-stream copy payload mismatch");
   ZuCHECK(diag.rxPacketToStreamCopies == 1 && diag.forbiddenCopies == 0,
     "buffer copy diagnostics mismatch");
+
+  ZmRef<ZiIOBuf> fromSpan = new Zquic::StreamBufAlloc<>{nullptr};
+  ZuCHECK(Zquic::copySpanToStream(fromSpan, "xxspan", 2, 4, &diag),
+    "span-to-stream copy failed");
+  ZuCHECK(fromSpan->length == 4 && !memcmp(fromSpan->data(), "span", 4),
+    "span-to-stream copy payload mismatch");
+  ZuCHECK(diag.rxPacketToStreamCopies == 2 && diag.forbiddenCopies == 0,
+    "span copy diagnostics mismatch");
 }
 
 void testDiagAggregation()

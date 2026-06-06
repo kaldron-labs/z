@@ -77,6 +77,24 @@ struct TxRange {
     streamOffset{streamOffset_} { }
 };
 
+inline bool copySpanToStream(
+  ZiIOBuf *dst, ZuCSpan src, unsigned offset, unsigned length,
+  BufDiag *diag = nullptr)
+{
+  ZiAssert(dst, "Zquic", (dst),
+    "null stream buffer in span-to-stream copy", return false);
+  ZiAssert(offset <= src.length() && length <= src.length() - offset,
+    "Zquic", (offset, length, src.length()),
+    "span-to-stream copy source range violation", return false);
+  ZiAssert(dst->size >= length, "Zquic", (dst->size, length),
+    "span-to-stream copy destination too small", return false);
+  dst->skip = 0;
+  dst->length = length;
+  if (length) memcpy(dst->data_(), src.data() + offset, length);
+  if (diag) ++diag->rxPacketToStreamCopies;
+  return true;
+}
+
 inline bool copyPacketToStream(
   ZiIOBuf *dst, const ZiIOBuf *src, unsigned offset, unsigned length,
   BufDiag *diag = nullptr)
@@ -86,13 +104,9 @@ inline bool copyPacketToStream(
   ZiAssert(offset <= src->length && length <= src->length - offset,
     "Zquic", (offset, length, src->length),
     "packet-to-stream copy source range violation", return false);
-  ZiAssert(dst->size >= length, "Zquic", (dst->size, length),
-    "packet-to-stream copy destination too small", return false);
-  dst->skip = 0;
-  dst->length = length;
-  if (length) memcpy(dst->data_(), src->data() + offset, length);
-  if (diag) ++diag->rxPacketToStreamCopies;
-  return true;
+  return copySpanToStream(dst,
+    ZuCSpan{reinterpret_cast<const char *>(src->data()), src->length},
+    offset, length, diag);
 }
 
 inline void assertPacketCapacity(const ZiIOBuf *buf, unsigned required)
