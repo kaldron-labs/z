@@ -161,11 +161,11 @@ struct Impl : public ZvIOQueueRx<Impl> {
 template <typename Impl_, typename Lock_ = ZmNoLock>
 class ZvIOQueueRx :
   public ZvIOQueueRxTx,
-  public ZmPQRx<Impl_, ZvIOQueue, Lock_> {
+  public ZmPQRx<Impl_, ZvIOQueue, ZmPQRxLock<Lock_>> {
 public:
   using Impl = Impl_;
   using Lock = Lock_;
-  using Base = ZmPQRx<Impl, ZvIOQueue, Lock>;
+  using Base = ZmPQRx<Impl, ZvIOQueue, ZmPQRxLock<Lock>>;
 
   using Guard = ZmGuard<Lock>;
 
@@ -237,11 +237,11 @@ struct Impl : public ZvIOQueueTx<Impl, Pool> {
 template <typename Impl_, typename Lock_ = ZmNoLock>
 class ZvIOQueueTx_ :
   public ZvIOQueueRxTx,
-  public ZmPQTx<Impl_, ZvIOQueue, Lock_> {
+  public ZmPQTx<Impl_, ZvIOQueue, ZmPQTxLock<Lock_>> {
 public:
   using Impl = Impl_;
   using Lock = Lock_;
-  using Base = ZmPQTx<Impl, ZvIOQueue, Lock>;
+  using Base = ZmPQTx<Impl, ZvIOQueue, ZmPQTxLock<Lock>>;
 
   auto impl() { return static_cast<Impl *>(this); }
   auto impl() const { return static_cast<const Impl *>(this); }
