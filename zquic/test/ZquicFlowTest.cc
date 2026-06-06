@@ -190,6 +190,16 @@ void testScheduling()
     streams.count() == 2, "stream scheduler duplicate handling failed");
   ZuCHECK(streams.next() == 4 && streams.next() == 8,
     "stream scheduler round robin mismatch");
+  bool scalableAdd = true;
+  for (unsigned i = 0; i < 128; ++i)
+    scalableAdd &= streams.add(1000 + i);
+  ZuCHECK(scalableAdd && streams.count() == 130 && streams.contains(1127),
+    "stream scheduler hash membership mismatch");
+  streams.remove(4);
+  streams.remove(1064);
+  ZuCHECK(!streams.contains(4) && !streams.contains(1064) &&
+      streams.count() == 128,
+    "stream scheduler hash removal mismatch");
 
   Zquic::TxScheduler tx;
   ZuCHECK(tx.addStream(4) && tx.addControl(2) && tx.next() == 2,
