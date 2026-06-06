@@ -9,9 +9,11 @@
 #ifndef ZquicEndpoint_HH
 #define ZquicEndpoint_HH
 
-#ifndef ZquicSock_HH
-#include <zlib/ZquicSock.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
+
+#include <zlib/ZquicSock.hh>
 
 namespace Zquic {
 
@@ -25,7 +27,9 @@ struct Datagram {
 };
 
 struct EndpointDiag {
-  ZmAtomic<uint64_t>	packetAllocs = 0;
+  ZmAtomic<uint64_t>	packetRxBufAllocs = 0;
+  ZmAtomic<uint64_t>	packetTxBufAllocs = 0;
+  ZmAtomic<uint64_t>	endpointCxnAllocs = 0;
   ZmAtomic<uint64_t>	datagramsRx = 0;
   ZmAtomic<uint64_t>	datagramsTx = 0;
   ZmAtomic<uint64_t>	bytesRx = 0;
@@ -38,7 +42,8 @@ class Endpoint : public ZmPolymorph {
   class Cxn_;
 
 public:
-  using PacketAlloc = PacketBufAlloc<>;
+  using RxPacketAlloc = PacketRxBufAlloc<>;
+  using TxPacketAlloc = PacketTxBufAlloc<>;
   using DatagramFn = ZmFn<void(Datagram)>;
   using ReadyFn = ZmFn<void(Endpoint *)>;
   using FailFn = ZmFn<void(bool)>;
@@ -69,6 +74,10 @@ public:
   const EndpointDiag &diag() const { return m_diag; }
 
   void datagramFn(DatagramFn fn) { m_datagramFn = ZuMv(fn); }
+  ZmRef<ZiIOBuf> allocTxPacket() {
+    ++m_diag.packetTxBufAllocs;
+    return new TxPacketAlloc{this};
+  }
   bool send(ZmRef<ZiIOBuf>, ZiSockAddr);
 
   void inject(Datagram datagram) { received_(ZuMv(datagram)); }
@@ -82,6 +91,10 @@ private:
   void received_(Datagram);
   void sent_(unsigned);
   void ioError_();
+  ZmRef<ZiIOBuf> allocRxPacket_() {
+    ++m_diag.packetRxBufAllocs;
+    return new RxPacketAlloc{this};
+  }
 
   ZiMultiplex	*m_mx = nullptr;
   Cxn_		*m_cxn = nullptr;

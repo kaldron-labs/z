@@ -70,8 +70,12 @@ void Diag::summary(DiagText &out) const
     " pmtudProbes=" << pmtudProbes <<
     " pmtudSuccess=" << pmtudSuccess <<
     " pmtudFailure=" << pmtudFailure <<
-    " rxPacketToStreamCopies=" << rxPacketToStreamCopies <<
-    " bufferContractViolations=" << bufferContractViolations;
+    " packetRxBufAllocs=" << packetRxBufAllocs <<
+    " packetTxBufAllocs=" << packetTxBufAllocs <<
+    " streamRxSliceAllocs=" << streamRxSliceAllocs <<
+    " streamTxBufAllocs=" << streamTxBufAllocs <<
+    " queueNodeAllocs=" << queueNodeAllocs <<
+    " packetProtectionContextInits=" << packetProtectionContextInits;
 }
 
 void Diag::recoverySummary(DiagText &out) const

@@ -18,13 +18,13 @@ using namespace ZuTestUtil;
 
 namespace {
 
+using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
+
 struct App { };
 struct TestStream :
-  public Zquic::Stream<TestStream, Zquic::StreamBufAlloc<>,
-    Zquic::StreamBufAlloc<>>
+  public Zquic::Stream<TestStream, StreamTxBufAlloc>
 {
-  using Base = Zquic::Stream<TestStream, Zquic::StreamBufAlloc<>,
-    Zquic::StreamBufAlloc<>>;
+  using Base = Zquic::Stream<TestStream, StreamTxBufAlloc>;
   TestStream(int64_t id) : Base{id} { }
   int process(Zquic::RxStream &) { ++processed; return 0; }
   unsigned processed = 0;
@@ -34,17 +34,35 @@ using TestLinkRef = ZmRef<TestLink>;
 using TestCxn = Zquic::Cxn<TestLink, TestLinkRef>;
 using TestCxnRef = ZmRef<TestCxn>;
 struct TestLink :
-  public Zquic::Link<App, TestLink, Zquic::StreamBufAlloc<>,
-    Zquic::StreamBufAlloc<>, TestCxn, TestCxnRef, TestStream>
+  public Zquic::Link<App, TestLink,
+    StreamTxBufAlloc, TestCxn, TestCxnRef, TestStream>
 {
-  using Base = Zquic::Link<App, TestLink, Zquic::StreamBufAlloc<>,
-    Zquic::StreamBufAlloc<>, TestCxn, TestCxnRef, TestStream>;
+  using Base = Zquic::Link<App, TestLink,
+    StreamTxBufAlloc, TestCxn, TestCxnRef, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
 };
 
 ZuCSpan bytes_(const uint8_t *data, unsigned len)
 {
   return ZuCSpan{reinterpret_cast<const char *>(data), len};
+}
+
+static ZmRef<ZiIOBuf> streamPacket_(
+  uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
+  Zquic::Frame &frame, unsigned &used)
+{
+  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  int n = Zquic::FrameCodec::writeStream(
+    packet->data_(), packet->size, id, offset, payload, fin);
+  if (n <= 0) return nullptr;
+  packet->skip = 0;
+  packet->length = unsigned(n);
+  if (Zquic::FrameCodec::parse(
+      ZuCSpan{reinterpret_cast<const char *>(packet->data_()),
+	packet->length}, frame, used) ||
+      used != packet->length)
+    return nullptr;
+  return packet;
 }
 
 } // namespace
@@ -99,43 +117,39 @@ void testSplitReorderedStreamFrames()
   memset(p0, 'a', sizeof(p0));
   memset(p1, 'b', sizeof(p1));
   memset(p2, 'c', sizeof(p2));
-  uint8_t b[800];
   Zquic::Frame f;
   unsigned used = 0;
   App app;
   TestLink client{&app};
   auto stream = client.stream(Zquic::StreamType::Bidi);
 
-  int n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), stream->id(), sizeof(p0), bytes_(p1, sizeof(p1)), false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      bytes_(b, unsigned(n)), f, used) &&
+  auto packet = streamPacket_(
+    stream->id(), sizeof(p0), bytes_(p1, sizeof(p1)), false, f, used);
+  ZuCHECK(packet &&
       f.offset == sizeof(p0) && f.length == sizeof(p1),
     "loop second STREAM frame parse failed");
-  ZuCHECK(stream->processFrame(f) == 0 &&
+  ZuCHECK(stream->processFrame(f, packet) == 0 &&
       stream->rxPending() == 1 &&
       !stream->rxBytes(),
     "loop out-of-order stream receive failed");
 
-  n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), stream->id(), 0, bytes_(p0, sizeof(p0)), false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      bytes_(b, unsigned(n)), f, used) &&
+  packet = streamPacket_(
+    stream->id(), 0, bytes_(p0, sizeof(p0)), false, f, used);
+  ZuCHECK(packet &&
       f.offset == 0 && f.length == sizeof(p0),
     "loop first STREAM frame parse failed");
-  ZuCHECK(stream->processFrame(f) == 0 &&
+  ZuCHECK(stream->processFrame(f, packet) == 0 &&
       stream->rxBytes() == sizeof(p0) + sizeof(p1) &&
       !stream->rxPending(),
     "loop stream gap fill failed");
 
-  n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), stream->id(), sizeof(p0) + sizeof(p1),
-    bytes_(p2, sizeof(p2)), true);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      bytes_(b, unsigned(n)), f, used) &&
+  packet = streamPacket_(
+    stream->id(), sizeof(p0) + sizeof(p1), bytes_(p2, sizeof(p2)), true,
+    f, used);
+  ZuCHECK(packet &&
       f.offset == sizeof(p0) + sizeof(p1) && f.length == sizeof(p2) && f.fin,
     "loop final STREAM frame parse failed");
-  ZuCHECK(stream->processFrame(f) == 0 &&
+  ZuCHECK(stream->processFrame(f, packet) == 0 &&
       stream->rxComplete() &&
       stream->finalSize() == sizeof(p0) + sizeof(p1) + sizeof(p2),
     "loop stream final-size completion failed");

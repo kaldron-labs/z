@@ -9,9 +9,11 @@
 #ifndef ZquicTransportParams_HH
 #define ZquicTransportParams_HH
 
-#ifndef ZquicPacket_HH
-#include <zlib/ZquicPacket.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
+
+#include <zlib/ZquicPacket.hh>
 
 namespace Zquic {
 

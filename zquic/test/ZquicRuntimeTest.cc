@@ -169,7 +169,8 @@ void testRuntimeEndpointOpen()
     "runtime server endpoint did not become ready");
   ZuCHECK(server.runtimeDiag().endpointReady == 1 &&
       !server.runtimeDiag().endpointFailures &&
-      server.endpointDiag().packetAllocs == 1 &&
+      server.endpointDiag().packetRxBufAllocs == 1 &&
+      !server.endpointDiag().packetTxBufAllocs &&
       server.local().port(),
     "runtime server endpoint diagnostics mismatch");
 
@@ -190,7 +191,7 @@ void testRuntimeEndpointOpen()
     "runtime client endpoint did not become ready");
   ZuCHECK(client.runtimeDiag().endpointReady == 1 &&
       !client.runtimeDiag().endpointFailures &&
-      client.endpointDiag().packetAllocs >= 1,
+      client.endpointDiag().packetRxBufAllocs >= 1,
     "runtime client endpoint diagnostics mismatch");
 
   bool established = waitUntil([&client, &server]() {

@@ -6,6 +6,8 @@
 
 #include <zlib/ZquicEndpoint.hh>
 
+#include <zlib/ZmHeap.hh>
+
 #ifndef _WIN32
 #include <sys/socket.h>
 #endif
@@ -17,6 +19,9 @@ friend Endpoint;
 
 public:
   static constexpr unsigned MaxTxQueue = 32;
+
+  void *operator new(size_t);
+  void operator delete(void *) noexcept;
 
   Cxn_(Endpoint *endpoint, const ZiCxnInfo &ci) :
       ZiConnection(endpoint->mx(), ci), m_endpoint{endpoint} { }
@@ -75,8 +80,7 @@ private:
   }
 
   void armRecv_(ZiIOContext &io) {
-    m_rxBuf = new Endpoint::PacketAlloc{m_endpoint};
-    ++m_endpoint->m_diag.packetAllocs;
+    m_rxBuf = m_endpoint->allocRxPacket_();
     io.init(
       ZiIOFn{this, ZmFnPtr<&Cxn_::recvDone_>{}},
       m_rxBuf->data_(), m_rxBuf->size, 0);
@@ -125,6 +129,18 @@ private:
   unsigned		m_txQueueCount = 0;
 };
 
+void *Endpoint::Cxn_::operator new(size_t s)
+{
+  using Heap = ZmHeap<"Zquic.Endpoint.Cxn", Endpoint::Cxn_>;
+  return Heap::operator new(s);
+}
+
+void Endpoint::Cxn_::operator delete(void *p) noexcept
+{
+  using Heap = ZmHeap<"Zquic.Endpoint.Cxn", Endpoint::Cxn_>;
+  Heap::operator delete(p);
+}
+
 bool Endpoint::openUDP(
   ZiMultiplex *mx,
   PathMode::T mode,
@@ -152,8 +168,10 @@ bool Endpoint::openUDP(
   options.udp(true);
 
   mx->udp(
+    // ZmFn captures only this pointer here; keep it inline and off hot heaps.
     ZiConnectFn{[this](const ZiCxnInfo &ci) -> ZiConnection * {
       auto cxn = new Cxn_{this, ci};
+      ++m_diag.endpointCxnAllocs;
       m_cxn = cxn;
       return cxn;
     }},

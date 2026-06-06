@@ -293,20 +293,27 @@ int FrameCodec::writePing(uint8_t *out, unsigned len)
 
 int FrameCodec::writeCrypto(uint8_t *out, unsigned len, uint64_t offset, ZuCSpan p)
 {
+  int n = writeCryptoPrefix(out, len, offset, p.length());
+  if (n < 0 || len - unsigned(n) < p.length()) return -1;
+  memcpy(out + n, p.data(), p.length());
+  return n + int(p.length());
+}
+
+int FrameCodec::writeCryptoPrefix(
+  uint8_t *out, unsigned len, uint64_t offset, unsigned payloadLen)
+{
   if (!len) return -1;
   unsigned o = 0;
   out[o++] = 0x06;
   if (VarInt::put(out, len, offset, o) < 0 ||
-      VarInt::put(out, len, p.length(), o) < 0 ||
-      len < o + p.length())
+      VarInt::put(out, len, payloadLen, o) < 0)
     return -1;
-  memcpy(out + o, p.data(), p.length());
-  return int(o + p.length());
+  return int(o);
 }
 
-int FrameCodec::writeStream(
+int FrameCodec::writeStreamPrefix(
   uint8_t *out, unsigned len, uint64_t streamID, uint64_t offset,
-  ZuCSpan p, bool fin)
+  unsigned payloadLen, bool fin)
 {
   if (!len) return -1;
   unsigned o = 0;
@@ -315,10 +322,18 @@ int FrameCodec::writeStream(
   out[o++] = t;
   if (VarInt::put(out, len, streamID, o) < 0) return -1;
   if (offset && VarInt::put(out, len, offset, o) < 0) return -1;
-  if (VarInt::put(out, len, p.length(), o) < 0 || len < o + p.length())
-    return -1;
-  memcpy(out + o, p.data(), p.length());
-  return int(o + p.length());
+  if (VarInt::put(out, len, payloadLen, o) < 0) return -1;
+  return int(o);
+}
+
+int FrameCodec::writeStream(
+  uint8_t *out, unsigned len, uint64_t streamID, uint64_t offset,
+  ZuCSpan p, bool fin)
+{
+  int n = writeStreamPrefix(out, len, streamID, offset, p.length(), fin);
+  if (n < 0 || len - unsigned(n) < p.length()) return -1;
+  memcpy(out + n, p.data(), p.length());
+  return n + int(p.length());
 }
 
 int FrameCodec::writeAck(

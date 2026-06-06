@@ -12,33 +12,6 @@
 
 using namespace ZuTestUtil;
 
-void testPacketToStreamCopy()
-{
-  ZuTestScope(testPacketToStreamCopy);
-
-  ZmRef<ZiIOBuf> packet = new Zquic::PacketBufAlloc<>{nullptr};
-  ZmRef<ZiIOBuf> stream = new Zquic::StreamBufAlloc<>{nullptr};
-  memcpy(packet->data_(), "xxpayload", 9);
-  packet->skip = 0;
-  packet->length = 9;
-
-  Zquic::BufDiag diag;
-  ZuCHECK(Zquic::copyPacketToStream(stream, packet, 2, 7, &diag),
-    "packet-to-stream copy failed");
-  ZuCHECK(stream->length == 7 && !memcmp(stream->data(), "payload", 7),
-    "packet-to-stream copy payload mismatch");
-  ZuCHECK(diag.rxPacketToStreamCopies == 1 && diag.forbiddenCopies == 0,
-    "buffer copy diagnostics mismatch");
-
-  ZmRef<ZiIOBuf> fromSpan = new Zquic::StreamBufAlloc<>{nullptr};
-  ZuCHECK(Zquic::copySpanToStream(fromSpan, "xxspan", 2, 4, &diag),
-    "span-to-stream copy failed");
-  ZuCHECK(fromSpan->length == 4 && !memcmp(fromSpan->data(), "span", 4),
-    "span-to-stream copy payload mismatch");
-  ZuCHECK(diag.rxPacketToStreamCopies == 2 && diag.forbiddenCopies == 0,
-    "span copy diagnostics mismatch");
-}
-
 void testDiagAggregation()
 {
   ZuTestScope(testDiagAggregation);
@@ -61,8 +34,12 @@ void testDiagAggregation()
   diag.setStreamCounts(3, 2);
 
   Zquic::BufDiag buf;
-  ++buf.rxPacketToStreamCopies;
-  ++buf.forbiddenCopies;
+  ++buf.packetRxBufAllocs;
+  ++buf.packetTxBufAllocs;
+  ++buf.streamRxSliceAllocs;
+  ++buf.streamTxBufAllocs;
+  ++buf.queueNodeAllocs;
+  ++buf.packetProtectionContextInits;
   diag.add(buf);
 
   Zquic::PathDiag path;
@@ -90,8 +67,12 @@ void testDiagAggregation()
       diag.handshakeState == "one_rtt" &&
       diag.openStreams == 3 &&
       diag.closedStreams == 2 &&
-      diag.rxPacketToStreamCopies == 1 &&
-      diag.bufferContractViolations == 1 &&
+      diag.packetRxBufAllocs == 1 &&
+      diag.packetTxBufAllocs == 1 &&
+      diag.streamRxSliceAllocs == 1 &&
+      diag.streamTxBufAllocs == 1 &&
+      diag.queueNodeAllocs == 1 &&
+      diag.packetProtectionContextInits == 1 &&
       diag.pmtudProbes == 2 &&
       diag.pmtudSuccess == 1 &&
       diag.pmtudFailure == 2,
@@ -110,7 +91,8 @@ void testDiagAggregation()
       strstr(summary.data(), "cwnd=12000") &&
       strstr(summary.data(), "handshakeState=one_rtt") &&
       strstr(summary.data(), "pmtudFailure=2") &&
-      strstr(summary.data(), "bufferContractViolations=1"),
+      strstr(summary.data(), "packetRxBufAllocs=1") &&
+      strstr(summary.data(), "packetProtectionContextInits=1"),
     "diagnostic summary text mismatch");
 
   Zquic::DiagText recovery = diag.recoverySummary();
@@ -129,6 +111,5 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testPacketToStreamCopy);
   ZuTestCall(testDiagAggregation);
 }

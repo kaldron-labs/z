@@ -9,9 +9,11 @@
 #ifndef ZquicRecovery_HH
 #define ZquicRecovery_HH
 
-#ifndef ZquicSched_HH
-#include <zlib/ZquicSched.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
+
+#include <zlib/ZquicSched.hh>
 
 namespace Zquic {
 
@@ -372,8 +374,9 @@ using TxPacket = SentPacket;
 using TxPacketQueue =
   ZmPQueue<TxPacket,
     ZmPQueueNode<ZuObject,
-      ZmPQueueBits<3,
-	ZmPQueueLevels<4>>>>;
+      ZmPQueueHeapID<"Zquic.Packet.TxSentNode",
+	ZmPQueueBits<3,
+	  ZmPQueueLevels<4>>>>>;
 
 class RetransmitQueue {
 public:
@@ -395,8 +398,9 @@ public:
 
   using Queue =
     ZmPQueue<Entry,
-      ZmPQueueBits<2,
-	ZmPQueueLevels<2>>>;
+      ZmPQueueHeapID<"Zquic.Packet.RetransmitNode",
+	ZmPQueueBits<2,
+	  ZmPQueueLevels<2>>>>;
 
   bool push(const SentFrameRef &frame) {
     if (frame.kind == SentFrameKind::None) return false;

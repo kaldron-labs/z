@@ -9,8 +9,8 @@
 #ifndef ZquicPacket_HH
 #define ZquicPacket_HH
 
-#ifndef ZquicBuf_HH
-#include <zlib/ZquicBuf.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
 
 #include <string.h>
@@ -18,14 +18,16 @@
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuSpan.hh>
 
+#include <zlib/ZquicBuf.hh>
+
 namespace Zquic {
 
-struct VarInt {
-  static unsigned length(uint64_t);
-  static int encode(uint8_t *, unsigned, uint64_t);
-  static int put(uint8_t *, unsigned, uint64_t, unsigned &);
-  static int decode(ZuCSpan, uint64_t &, unsigned &);
-};
+namespace VarInt {
+  unsigned length(uint64_t);
+  int encode(uint8_t *, unsigned, uint64_t);
+  int put(uint8_t *, unsigned, uint64_t, unsigned &);
+  int decode(ZuCSpan, uint64_t &, unsigned &);
+}
 
 class ConnectionID {
 public:

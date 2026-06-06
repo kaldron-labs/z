@@ -9,18 +9,19 @@
 #ifndef ZquicDiag_HH
 #define ZquicDiag_HH
 
-#ifndef ZquicRecovery_HH
-#include <zlib/ZquicRecovery.hh>
-#endif
-#ifndef ZquicPath_HH
-#include <zlib/ZquicPath.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
 
 #include <zlib/ZtString.hh>
 
+#include <zlib/ZquicPath.hh>
+#include <zlib/ZquicRecovery.hh>
+
 namespace Zquic {
 
-using DiagText = ZtString<ZtStringHeapID<"Zquic.DiagText">>;
+using DiagText = ZtString<ZtStringHeapID<"Zquic.DiagText",
+  ZtStringHeapMax<4096>>>;
 
 struct Diag {
   static ZuCSpan packetSpaceName(PacketSpace::T);
@@ -58,8 +59,13 @@ struct Diag {
   }
 
   void add(const BufDiag &diag) {
-    rxPacketToStreamCopies += uint64_t(diag.rxPacketToStreamCopies);
-    bufferContractViolations += uint64_t(diag.forbiddenCopies);
+    packetRxBufAllocs += uint64_t(diag.packetRxBufAllocs);
+    packetTxBufAllocs += uint64_t(diag.packetTxBufAllocs);
+    streamRxSliceAllocs += uint64_t(diag.streamRxSliceAllocs);
+    streamTxBufAllocs += uint64_t(diag.streamTxBufAllocs);
+    queueNodeAllocs += uint64_t(diag.queueNodeAllocs);
+    packetProtectionContextInits += uint64_t(
+      diag.packetProtectionContextInits);
   }
 
   void add(const PathDiag &diag) {
@@ -108,8 +114,12 @@ struct Diag {
   uint64_t	pmtudProbes = 0;
   uint64_t	pmtudSuccess = 0;
   uint64_t	pmtudFailure = 0;
-  uint64_t	rxPacketToStreamCopies = 0;
-  uint64_t	bufferContractViolations = 0;
+  uint64_t	packetRxBufAllocs = 0;
+  uint64_t	packetTxBufAllocs = 0;
+  uint64_t	streamRxSliceAllocs = 0;
+  uint64_t	streamTxBufAllocs = 0;
+  uint64_t	queueNodeAllocs = 0;
+  uint64_t	packetProtectionContextInits = 0;
 };
 
 } // namespace Zquic

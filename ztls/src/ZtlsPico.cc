@@ -14,6 +14,7 @@
 #include <zlib/ZtlsPico.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmVHeap.hh>
 #include <zlib/ZiIOBuf.hh>
 
 #include <zlib/ZtlsBackend.hh>
@@ -32,6 +33,9 @@ struct Counters {
 };
 
 Counters counters;
+
+using CtxHeap = ZmVHeap<
+  "Ztls.Pico.Ctx", 128, (1U<<17), ZiIOBuf_Align>;
 
 constexpr unsigned log2_align_(unsigned value) {
   unsigned bits = 0;
@@ -147,6 +151,104 @@ void reset_stats()
   counters.origin_align_fail = 0;
   counters.origin_ensure_fail = 0;
   counters.internal_alloc_fail = 0;
+}
+
+bool AeadCtx::init(
+  ptls_aead_algorithm_t *algo, bool enc, const void *key, const void *iv)
+{
+  clear();
+  if (!algo || !key || !iv ||
+      algo->context_size < sizeof(ptls_aead_context_t) ||
+      algo->context_size > UINT16_MAX ||
+      algo->align_bits > IOBufAlignBits)
+    return false;
+
+  auto storage = CtxHeap::valloc(algo->context_size);
+  if (!storage) return false;
+  auto ctx = reinterpret_cast<ptls_aead_context_t *>(
+    storage);
+  *ctx = ptls_aead_context_t{algo};
+  if (algo->setup_crypto(ctx, enc ? 1 : 0, key, iv)) {
+    ptls_clear_memory(ctx, algo->context_size);
+    CtxHeap::vfree(storage);
+    return false;
+  }
+  if (enc) {
+    if (!ctx->dispose_crypto || !ctx->do_encrypt || !ctx->do_encrypt_v ||
+	!ctx->do_encrypt_v_s) {
+      if (ctx->dispose_crypto) ctx->dispose_crypto(ctx);
+      ptls_clear_memory(ctx, algo->context_size);
+      CtxHeap::vfree(storage);
+      return false;
+    }
+  } else if (!ctx->dispose_crypto || !ctx->do_decrypt) {
+    if (ctx->dispose_crypto) ctx->dispose_crypto(ctx);
+    ptls_clear_memory(ctx, algo->context_size);
+    CtxHeap::vfree(storage);
+    return false;
+  }
+
+  m_storage = storage;
+  m_ctx = ctx;
+  m_size = uint16_t(algo->context_size);
+  return true;
+}
+
+void AeadCtx::clear()
+{
+  if (!m_storage) return;
+  if (m_ctx) {
+    m_ctx->dispose_crypto(m_ctx);
+    if (m_size) ptls_clear_memory(m_ctx, m_size);
+  }
+  CtxHeap::vfree(m_storage);
+  m_storage = nullptr;
+  m_ctx = nullptr;
+  m_size = 0;
+}
+
+bool CipherCtx::init(ptls_cipher_algorithm_t *algo, bool enc, const void *key)
+{
+  clear();
+  if (!algo || !key ||
+      algo->context_size < sizeof(ptls_cipher_context_t) ||
+      algo->context_size > UINT16_MAX)
+    return false;
+
+  auto storage = CtxHeap::valloc(algo->context_size);
+  if (!storage) return false;
+  auto ctx = reinterpret_cast<ptls_cipher_context_t *>(
+    storage);
+  *ctx = ptls_cipher_context_t{algo};
+  if (algo->setup_crypto(ctx, enc ? 1 : 0, key)) {
+    ptls_clear_memory(ctx, algo->context_size);
+    CtxHeap::vfree(storage);
+    return false;
+  }
+  if (!ctx->do_init || !ctx->do_transform || !ctx->do_dispose) {
+    if (ctx->do_dispose) ctx->do_dispose(ctx);
+    ptls_clear_memory(ctx, algo->context_size);
+    CtxHeap::vfree(storage);
+    return false;
+  }
+
+  m_storage = storage;
+  m_ctx = ctx;
+  m_size = uint16_t(algo->context_size);
+  return true;
+}
+
+void CipherCtx::clear()
+{
+  if (!m_storage) return;
+  if (m_ctx) {
+    m_ctx->do_dispose(m_ctx);
+    if (m_size) ptls_clear_memory(m_ctx, m_size);
+  }
+  CtxHeap::vfree(m_storage);
+  m_storage = nullptr;
+  m_ctx = nullptr;
+  m_size = 0;
 }
 
 } // namespace Ztls::Pico
