@@ -260,6 +260,18 @@ protected:
   ZuInline void outCount(uint64_t) { }
 };
 
+// result of add/rotate/unshift
+namespace ZmPQResult {
+  enum {
+    Inserted = 0,
+    Clipped,
+    Duplicate,
+    Overwrote,
+    Invalid
+  };
+  using T = uint8_t;
+}
+
 template <typename Item_, class NTP = ZmPQueue_Defaults>
 class ZmPQueue :
   public ZmNodeFn<NTP::Shadow, typename NTP::Node>,
@@ -301,6 +313,7 @@ public:
   using NodeRef = typename NodeFn::template Ref<Node>;
   using NodeMvRef = typename NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
+  using AddResult = ZuTuple<ZmPQResult::T, NodeRef>;
 
 private:
   template <typename I> class Iter_ {
@@ -811,25 +824,30 @@ public:
   };
 
 private:
-  void purge(Key key) {
+  bool purge(Key key) {
+    bool clipped = false;
     while (Node *node = m_head[0]) {
       Fn item{node->Node::data()};
       Key key_ = item.key();
-      if (key_ >= key) return;
+      if (key_ >= key) return clipped;
       Key end_;
       ZmAssert(endOf_(key_, item.length(), end_));
       if (end_ > key) {
 	if constexpr (Overlap)
-	  if (Length length = item.clipHead(key - key_))
+	  if (Length length = item.clipHead(key - key_)) {
 	    m_length -= (end_ - key_) - length;
-	return;
+	    return true;
+	  }
+	return clipped;
       }
       delHead_<0>();
       nodeDeref(node);
       nodeDelete(node);
       m_length -= end_ - key_;
       --m_count;
+      clipped = true;
     }
+    return clipped;
   }
 
 public:
@@ -866,17 +884,17 @@ public:
   // adds node at key, overwriting data already in the queue
   // - idempotent - does nothing if end <= head
   // - use unshift() to prepend
-  void add(NodeRef node) { add_<false>(ZuMv(node)); }
+  ZmPQResult::T add(NodeRef node) { return add_<false>(ZuMv(node)).template p<0>(); }
 
   // immediately returns node if key == head (head is incremented)
-  // returns 0 if key < head or key is already present in queue
-  // returns 0 and enqueues node if key > head
-  NodeRef rotate(NodeRef node) { return add_<true>(ZuMv(node)); }
+  // returns nullptr if key < head or key is already present in queue
+  // returns nullptr and enqueues node if key > head
+  AddResult rotate(NodeRef node) { return add_<true>(ZuMv(node)); }
 
   // unshift node onto head
   // - idempotent - does nothing if key >= head
   // - use add() to add to body or tail of queue
-  void unshift(NodeRef node) {
+  ZmPQResult::T unshift(NodeRef node) {
     Guard guard(m_lock);
 
     Fn item{node->Node::data()};
@@ -884,15 +902,21 @@ public:
     Length length = item.length();
     Key end;
 
-    if (ZuUnlikely(key >= m_headKey || !endOf_(key, length, end))) return;
+    if (ZuUnlikely(!endOf_(key, length, end)))
+      return ZmPQResult::Invalid;
 
+    if (ZuUnlikely(key >= m_headKey))
+      return ZmPQResult::Duplicate;
+
+    bool clipped = false;
     if constexpr (Overlap)
       if (ZuUnlikely(end > m_headKey)) { // clip tail
 	length = item.clipTail(end - m_headKey);
+	clipped = true;
 	ZmAssert(endOf_(key, length, end));
       }
 
-    if (ZuUnlikely(!length)) return;
+    if (ZuUnlikely(!length)) return ZmPQResult::Duplicate;
 
     unsigned addSeqNo = m_addSeqNo++;
 
@@ -904,11 +928,13 @@ public:
     m_headKey = key;
     m_length += end - key;
     ++m_count;
+
+    return clipped ? ZmPQResult::Clipped : ZmPQResult::Inserted;
   }
 
 private:
   template <bool Dequeue>
-  NodeRef add_(NodeRef node) {
+  AddResult add_(NodeRef node) {
     Guard guard(m_lock);
 
     Fn item{node->Node::data()};
@@ -916,29 +942,40 @@ private:
     Length length = item.length();
     Key end;
 
-    if (ZuUnlikely(!endOf_(key, length, end))) return nullptr;
+    if (ZuUnlikely(!endOf_(key, length, end)))
+      return {ZmPQResult::Invalid, nullptr};
 
-    if (ZuUnlikely(end <= m_headKey)) return nullptr; // already processed
+    if (ZuUnlikely(end <= m_headKey)) // already processed
+      return {ZmPQResult::Duplicate, nullptr};
 
+    bool clipped = false;
     if constexpr (Overlap)
       if (ZuUnlikely(key < m_headKey)) { // clip head
 	length = item.clipHead(m_headKey - key);
 	key = end - length;
+	clipped = true;
       }
 
     if (ZuUnlikely(!length)) { // zero-length heartbeats etc.
-      if (end > m_tailKey) m_tailKey = end;
-      return nullptr;
+      if (end > m_tailKey) {
+	m_tailKey = end;
+	return {ZmPQResult::Inserted, nullptr};
+      }
+      return {clipped ? ZmPQResult::Clipped : ZmPQResult::Duplicate, nullptr};
     }
 
     unsigned addSeqNo = m_addSeqNo++;
 
     if (ZuLikely(key == m_tailKey)) // common case - append at tail
-      return addTail_<Dequeue>(ZuMv(node), end, length, addSeqNo);
+      return addTail_<Dequeue>(
+	ZuMv(node), end, length, addSeqNo,
+	clipped ? ZmPQResult::Clipped : ZmPQResult::Inserted);
 
     if (ZuLikely(key == m_headKey)) { // common case - in-order at head
-      purge(end); // remove overlapping data from queue
-      return addHead_<Dequeue>(ZuMv(node), end, length, addSeqNo);
+      clipped = purge(end) || clipped; // remove overlapping data from queue
+      return addHead_<Dequeue>(
+	ZuMv(node), end, length, addSeqNo,
+	clipped ? ZmPQResult::Clipped : ZmPQResult::Inserted);
     }
 
     if constexpr (Stats) this->inCount(length);
@@ -964,8 +1001,11 @@ private:
 
 	// if the following item spans the new item, overwrite it and return
 	if (key_ == key && end_ >= end) {
-	  if constexpr (Overwrite) item_.write(item);
-	  return nullptr;
+	  if constexpr (Overwrite) {
+	    item_.write(item);
+	    return {ZmPQResult::Overwrote, nullptr};
+	  } else
+	    return {ZmPQResult::Duplicate, nullptr};
 	}
 
 	if (key_ == key)
@@ -987,13 +1027,18 @@ private:
 
 	// if the preceding item spans the new item, overwrite it and return
 	if (end_ >= end) {
-	  if constexpr (Overwrite) item_.write(item);
-	  return nullptr;
+	  if constexpr (Overwrite) {
+	    item_.write(item);
+	    return {ZmPQResult::Overwrote, nullptr};
+	  } else
+	    return {ZmPQResult::Duplicate, nullptr};
 	}
 
 	// if the preceding item partially overlaps the new item, clip it
-	if (end_ > key)
+	if (end_ > key) {
 	  m_length -= (end_ - key_) - item_.clipTail(end_ - key);
+	  clipped = true;
+	}
       }
 
       // remove all items that are completely overlapped by the new item
@@ -1013,6 +1058,7 @@ private:
 	if (end_ > end) {
 	  if (Length length = item_.clipHead(end - key_)) {
 	    m_length -= (end_ - key_) - length;
+	    clipped = true;
 	    break;
 	  }
 	}
@@ -1023,6 +1069,7 @@ private:
 	nodeDelete(node_);
 	m_length -= end_ - key_;
 	--m_count;
+	clipped = true;
       }
     }
 
@@ -1033,52 +1080,52 @@ private:
     m_length += end - key;
     ++m_count;
 
-    return nullptr;
+    return {clipped ? ZmPQResult::Clipped : ZmPQResult::Inserted, nullptr};
   }
   template <bool Dequeue>
-  ZuIfT<Dequeue, NodeRef> addTail_(NodeRef node,
-      Key end, Length length, unsigned addSeqNo) {
+  ZuIfT<Dequeue, AddResult> addTail_(NodeRef node,
+      Key end, Length length, unsigned addSeqNo, ZmPQResult::T result) {
     m_tailKey = end;
     if constexpr (Stats) this->inCount(length);
     if (end >= m_headKey && lengthOf_(m_headKey, end) == length) {
       m_headKey = end;
       if constexpr (Stats) this->outCount(length);
-      return node;
+      return {result, ZuMv(node)};
     } else {
       addTail__<0>(nodeRelease(ZuMv(node)), addSeqNo);
       m_length += length;
       ++m_count;
-      return nullptr;
+      return {result, nullptr};
     }
   }
   template <bool Dequeue>
-  ZuIfT<!Dequeue, NodeRef> addTail_(NodeRef node,
-      Key end, Length length, unsigned addSeqNo) {
+  ZuIfT<!Dequeue, AddResult> addTail_(NodeRef node,
+      Key end, Length length, unsigned addSeqNo, ZmPQResult::T result) {
     addTail__<0>(nodeRelease(ZuMv(node)), addSeqNo);
     m_tailKey = end;
     m_length += length;
     ++m_count;
     if constexpr (Stats) this->inCount(length);
-    return nullptr;
+    return {result, nullptr};
   }
   template <bool Dequeue>
-  ZuIfT<Dequeue, NodeRef> addHead_(NodeRef node,
-      Key end, Length length, unsigned) {
+  ZuIfT<Dequeue, AddResult> addHead_(NodeRef node,
+      Key end, Length length, unsigned, ZmPQResult::T result) {
     m_headKey = end;
     if (end > m_tailKey) m_tailKey = end;
     if constexpr (Stats) this->inCount(length);
     if constexpr (Stats) this->outCount(length);
-    return node;
+    return {result, ZuMv(node)};
   }
   template <bool Dequeue>
-  ZuIfT<!Dequeue, NodeRef> addHead_(NodeRef node,
-      Key end, Length length, unsigned addSeqNo) {
+  ZuIfT<!Dequeue, AddResult> addHead_(NodeRef node,
+      Key end, Length length, unsigned addSeqNo, ZmPQResult::T result) {
     addHead__<0>(nodeRelease(ZuMv(node)), addSeqNo);
     if (end > m_tailKey) m_tailKey = end;
     m_length += length;
     ++m_count;
     if constexpr (Stats) this->inCount(length);
-    return nullptr;
+    return {result, nullptr};
   }
 
   NodeMvRef dequeue_() {
@@ -1633,9 +1680,11 @@ struct Impl : public ZmPQRx<Impl, Queue> {
   // the previous (larger) request will still be outstanding
   // and may be relied upon to be fully satisfied; UDP based protocols
   // will need to send a resend request whenever this is called
+  // - required when GapPolicy is Observe or Fill
   void request(const Span &prev, const Span &now);
 
   // re-send resend request, as protocol requires it
+  // - required when GapPolicy is Fill
   void reRequest(const Span &now);
 
   // schedule dequeue() to be called (possibly from different thread)
@@ -1647,15 +1696,49 @@ struct Impl : public ZmPQRx<Impl, Queue> {
 
   // schedule reRequest() to be called (possibly from different thread)
   // at a configured interval later
+  // - required when GapPolicy is Fill
   void scheduleReRequest();
   // reschedule reRequest() recursively, from within reRequest() itself
+  // - required when GapPolicy is Fill
   void rescheduleReRequest();
   // cancel any scheduled reRequest()
+  // - required when GapPolicy is Fill
   void cancelReRequest();
 };
 #endif
 
-template <class Impl, class Queue, class Lock_ = ZmNoLock>
+namespace ZmPQRxGapPolicy {
+  enum {
+    Ignore = 0,
+    Observe,
+    Fill
+  };
+}
+
+struct ZmPQRx_Defaults {
+  using Lock = ZmNoLock;
+  enum { GapPolicy = ZmPQRxGapPolicy::Fill };
+};
+
+template <class Lock_, class NTP = ZmPQRx_Defaults>
+struct ZmPQRxLock : public NTP {
+  using Lock = Lock_;
+};
+
+template <class NTP = ZmPQRx_Defaults>
+struct ZmPQRxGapIgnore : public NTP {
+  enum { GapPolicy = ZmPQRxGapPolicy::Ignore };
+};
+template <class NTP = ZmPQRx_Defaults>
+struct ZmPQRxGapObserve : public NTP {
+  enum { GapPolicy = ZmPQRxGapPolicy::Observe };
+};
+template <class NTP = ZmPQRx_Defaults>
+struct ZmPQRxGapFill : public NTP {
+  enum { GapPolicy = ZmPQRxGapPolicy::Fill };
+};
+
+template <class Impl, class Queue, class NTP = ZmPQRx_Defaults>
 class ZmPQRx : public ZuPrintable {
   enum {
     Queuing	= 0x01,
@@ -1687,7 +1770,9 @@ public:
   using Key = typename Queue::Key;
   using Span = typename Queue::Span;
 
-  using Lock = Lock_;
+  using Lock = typename NTP::Lock;
+  enum { GapPolicy = NTP::GapPolicy };
+
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
@@ -1695,7 +1780,8 @@ public:
   void rxReset(Key key) {
     Impl *impl = static_cast<Impl *>(this);
     Guard guard(m_lock);
-    impl->cancelReRequest();
+    if constexpr (GapPolicy == ZmPQRxGapPolicy::Fill)
+      impl->cancelReRequest();
     m_flags &= ~(Queuing | Dequeuing);
     impl->rxQueue()->reset(key);
     m_gap = {};
@@ -1729,7 +1815,8 @@ public:
       impl->rxQueue()->add(ZuMv(msg));
       return;
     }
-    msg = impl->rxQueue()->rotate(ZuMv(msg));
+    auto addResult = impl->rxQueue()->rotate(ZuMv(msg));
+    msg = ZuMv(addResult.template p<1>());
     bool scheduleDequeue = msg && impl->rxQueue()->count_();
     if (scheduleDequeue) m_flags |= Dequeuing;
     guard.unlock();
@@ -1755,6 +1842,7 @@ public:
   }
 
   void reRequest() {
+    if constexpr (GapPolicy != ZmPQRxGapPolicy::Fill) return;
     Impl *impl = static_cast<Impl *>(this);
     Span gap;
     {
@@ -1781,6 +1869,7 @@ public:
 private:
   // receiver stalled, may schedule resend request if due to gap
   void stalled() {
+    if constexpr (GapPolicy == ZmPQRxGapPolicy::Ignore) return;
     Impl *impl = static_cast<Impl *>(this);
     Span old, gap;
     {
@@ -1791,10 +1880,12 @@ private:
       old = m_gap;
       m_gap = gap;
     }
-    impl->cancelReRequest();
+    if constexpr (GapPolicy == ZmPQRxGapPolicy::Fill)
+      impl->cancelReRequest();
     if (!gap.length()) return;
     impl->request(old, gap);
-    impl->scheduleReRequest();
+    if constexpr (GapPolicy == ZmPQRxGapPolicy::Fill)
+      impl->scheduleReRequest();
   }
 
   Lock		m_lock;
@@ -1867,7 +1958,16 @@ struct Impl : public ZmPQTx<Impl, Queue> {
 };
 #endif
 
-template <class Impl, class Queue, class Lock_ = ZmNoLock>
+struct ZmPQTx_Defaults {
+  using Lock = ZmNoLock;
+};
+
+template <class Lock_, class NTP = ZmPQTx_Defaults>
+struct ZmPQTxLock : public NTP {
+  using Lock = Lock_;
+};
+
+template <class Impl, class Queue, class NTP = ZmPQTx_Defaults>
 class ZmPQTx : public ZuPrintable {
 private:
   enum {
@@ -1910,7 +2010,8 @@ public:
   using Length = typename Queue::Length;
   using Span = typename Queue::Span;
 
-  using Lock = Lock_;
+  using Lock = typename NTP::Lock;
+
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 

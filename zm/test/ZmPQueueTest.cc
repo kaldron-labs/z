@@ -47,6 +47,16 @@ ZuDerive(PQueue,
 
 using QMsg = PQueue::Node;
 
+ZuDerive(NoOverlapPQueue,
+  (ZmPQueue<Msg,
+    ZmPQueueNode<Msg,
+      ZmPQueueStats<false,
+	ZmPQueueOverlap<false,
+	  ZmPQueueBits<3,
+	    ZmPQueueLevels<3>>>>>>));
+
+using NoOverlapQMsg = NoOverlapPQueue::Node;
+
 using PlainMsg_Data = ZuTuple<uint32_t, uint64_t>;
 struct PlainMsg : public PlainMsg_Data {
   using PlainMsg_Data::PlainMsg_Data;
@@ -109,6 +119,44 @@ ZuDerive(NoWritePQueue,
 using WriteQMsg = WritePQueue::Node;
 using NoWriteQMsg = NoWritePQueue::Node;
 
+void testItemHelpers()
+{
+  ZuTestScope(testItemHelpers);
+
+  const Msg_Data msgData{1, 5};
+  Msg msgCopy{msgData};
+  Msg_Data msgMoveData{2, 6};
+  Msg msgMove{ZuMv(msgMoveData)};
+  msgCopy.write(msgMove);
+  ZuCheck(msgCopy.elems() == 1);
+  ZuCheck(msgCopy.key() == 1 && msgCopy.length() == 5);
+  ZuCheck(msgMove.key() == 2 && msgMove.length() == 6);
+
+  const PlainMsg_Data plainData{10, 5};
+  PlainMsg plainCopy{plainData};
+  PlainMsg_Data plainMoveData{20, 6};
+  PlainMsg plainMove{ZuMv(plainMoveData)};
+  plainCopy.write(plainMove);
+  ZuCheck(plainCopy.clipHead(2) == 3);
+  ZuCheck(plainCopy.key() == 12 && plainCopy.length() == 3);
+  ZuCheck(plainCopy.clipTail(1) == 2);
+  ZuCheck(plainCopy.key() == 12 && plainCopy.length() == 2);
+  ZuCheck(plainMove.key() == 20 && plainMove.length() == 6);
+
+  const WriteMsg_Data writeData{30, 5, 1};
+  WriteMsg writeCopy{writeData};
+  WriteMsg_Data writeMoveData{40, 6, 2};
+  WriteMsg writeMove{ZuMv(writeMoveData)};
+  writeCopy.write(writeMove);
+  ZuCheck(writeCopy.value() == 2);
+  ZuCheck(writeCopy.clipHead(1) == 4);
+  ZuCheck(writeCopy.key() == 31 && writeCopy.length() == 4);
+  ZuCheck(writeCopy.clipTail(2) == 2);
+  ZuCheck(writeCopy.key() == 31 && writeCopy.length() == 2);
+  ZuCheck(writeMove.key() == 40 && writeMove.length() == 6 &&
+    writeMove.value() == 2);
+}
+
 void head(PQueue &q, uint32_t seqNo)
 {
   log("head ", seqNo);
@@ -122,7 +170,8 @@ void dequeue(PQueue &q)
 void add(PQueue &q, uint32_t seqNo, uint64_t length)
 {
   log("send ", seqNo, ", ", length);
-  ZmRef<QMsg> msg = q.rotate(ZmRef<QMsg>(new QMsg(ZuFwdTuple(seqNo, length))));
+  auto result = q.rotate(ZmRef<QMsg>(new QMsg(ZuFwdTuple(seqNo, length))));
+  ZmRef<QMsg> msg = ZuMv(result.template p<1>());
   log("send - head ", q.head(),
       " gap ", q.gap().key(),
       ", ", q.gap().length());
@@ -371,6 +420,77 @@ void testOverwritePolicy()
   }
 }
 
+void testAddResults()
+{
+  ZuTestScope(testAddResults);
+
+  {
+    PQueue q(0);
+    ZuCheck(q.add(new QMsg(ZuFwdTuple(2, 1))) == ZmPQResult::Inserted);
+    ZuCheck(q.add(new QMsg(ZuFwdTuple(~uint32_t{0}, 2))) ==
+      ZmPQResult::Invalid);
+  }
+
+  {
+    PQueue q(10);
+    ZuCheck(q.add(new QMsg(ZuFwdTuple(9, 2))) == ZmPQResult::Clipped);
+    ZuCheck(q.head() == 10 && q.tail() == 11 && q.verify());
+  }
+
+  {
+    PQueue q(0);
+    auto result = q.rotate(new QMsg(ZuFwdTuple(0, 1)));
+    ZuCheck(result.template p<0>() == ZmPQResult::Inserted);
+    ZmRef<QMsg> msg = ZuMv(result.template p<1>());
+    ZuCheck(msg && msg->Msg::key() == 0 && q.head() == 1);
+
+    auto queued = q.rotate(new QMsg(ZuFwdTuple(3, 1)));
+    ZuCheck(queued.template p<0>() == ZmPQResult::Inserted);
+    ZuCheck(!queued.template p<1>() && q.gap().equals(ZuFwdTuple(1, 2)));
+  }
+
+  {
+    PQueue q(0);
+    ZuCheck(q.add(new QMsg(ZuFwdTuple(2, 1))) == ZmPQResult::Inserted);
+    auto result = q.rotate(new QMsg(ZuFwdTuple(0, 3)));
+    ZuCheck(result.template p<0>() == ZmPQResult::Clipped);
+    ZmRef<QMsg> msg = ZuMv(result.template p<1>());
+    ZuCheck(msg && msg->Msg::key() == 0 && msg->length() == 3 &&
+      q.head() == 3 && q.verify());
+  }
+
+  {
+    WritePQueue q(0);
+    ZuCheck(q.add(new WriteQMsg(ZuFwdTuple(0, 5, 1))) ==
+      ZmPQResult::Inserted);
+    ZuCheck(q.add(new WriteQMsg(ZuFwdTuple(1, 1, 2))) ==
+      ZmPQResult::Overwrote);
+  }
+
+  {
+    NoWritePQueue q(0);
+    ZuCheck(q.add(new NoWriteQMsg(ZuFwdTuple(0, 5, 1))) ==
+      ZmPQResult::Inserted);
+    ZuCheck(q.add(new NoWriteQMsg(ZuFwdTuple(1, 1, 2))) ==
+      ZmPQResult::Duplicate);
+  }
+
+  {
+    PQueue q(10);
+    ZuCheck(q.unshift(new QMsg(ZuFwdTuple(8, 2))) ==
+      ZmPQResult::Inserted);
+    ZuCheck(q.unshift(new QMsg(ZuFwdTuple(7, 2))) ==
+      ZmPQResult::Clipped);
+    ZuCheck(q.unshift(new QMsg(ZuFwdTuple(7, 1))) ==
+      ZmPQResult::Duplicate);
+    ZuCheck(q.head() == 7 && q.verify());
+
+    PQueue q2(~uint32_t{0});
+    ZuCheck(q2.unshift(new QMsg(ZuFwdTuple(~uint32_t{0} - 1, 3))) ==
+      ZmPQResult::Invalid);
+  }
+}
+
 void testNodeMvRef()
 {
   ZuTestScope(testNodeMvRef);
@@ -406,14 +526,47 @@ void testNodeMvRef()
   ZuCheck(q.verify());
 }
 
+void testNoStatsNoOverlap()
+{
+  ZuTestScope(testNoStatsNoOverlap);
+
+  NoOverlapPQueue q(1);
+
+  q.add(new NoOverlapQMsg(ZuFwdTuple(0, 2)));
+  q.add(new NoOverlapQMsg(ZuFwdTuple(2, 2)));
+  q.add(new NoOverlapQMsg(ZuFwdTuple(4, 2)));
+  q.add(new NoOverlapQMsg(ZuFwdTuple(6, 2)));
+
+  q.head(3);
+  ZuCheck(q.head() == 2);
+
+  {
+    ZmRef<NoOverlapQMsg> msg = q.find(4);
+    ZuCheck(msg);
+    ZuCheck(msg->Msg::key() == 4 && msg->length() == 2);
+  }
+
+  {
+    ZmRef<NoOverlapQMsg> msg = q.find(7);
+    ZuCheck(msg);
+    ZuCheck(msg->Msg::key() == 6 && msg->length() == 2);
+  }
+
+  ZuCheck(q.verify());
+  log(q);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testItemHelpers);
   ZuTestCall(testIterators);
   ZuTestCall(testSpansAndGaps);
   ZuTestCall(testOverwritePolicy);
+  ZuTestCall(testAddResults);
   ZuTestCall(testNodeMvRef);
+  ZuTestCall(testNoStatsNoOverlap);
   PQueue q(1);
 
   add(q, 1, 1);
