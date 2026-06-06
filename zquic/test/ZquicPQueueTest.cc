@@ -17,11 +17,18 @@ void fill_(ZiIOBuf *buf, ZuCSpan data)
   buf->length = data.length();
 }
 
+ZmRef<ZiIOBuf> packet_(ZuCSpan data)
+{
+  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  fill_(packet, data);
+  return packet;
+}
+
 void testRxDataClipping()
 {
   ZuTestScope(testRxDataClipping);
 
-  ZmRef<ZiIOBuf> buf = new Zquic::StreamBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> buf = new Zquic::CryptoRxBufAlloc<>{nullptr};
   fill_(buf, "abcdef");
 
   Zquic::RxData data{buf, 10, 1, 4};
@@ -44,25 +51,22 @@ void testRxOverlapDrop()
   ZuTestScope(testRxOverlapDrop);
 
   Zquic::StreamRxPQueue q{0};
-  ZmRef<ZiIOBuf> first = new Zquic::StreamBufAlloc<>{nullptr};
-  ZmRef<ZiIOBuf> dup = new Zquic::StreamBufAlloc<>{nullptr};
-  ZmRef<ZiIOBuf> second = new Zquic::StreamBufAlloc<>{nullptr};
-  fill_(first, "world");
-  fill_(dup, "WORLD");
-  fill_(second, "helloworldtails");
+  auto first = packet_("world");
+  auto dup = packet_("WORLD");
+  auto second = packet_("helloworldtails");
 
   q.add(new Zquic::StreamRxPQueue::Node{
-    Zquic::RxData{ZuMv(first), 5, 0, 5}});
+    first, first->data(), first->length, nullptr, 5});
   unsigned count = q.count_();
   q.add(new Zquic::StreamRxPQueue::Node{
-    Zquic::RxData{ZuMv(dup), 5, 0, 5}});
+    dup, dup->data(), dup->length, nullptr, 5});
   ZuCHECK(q.count_() == count,
     "fully duplicate RxData mutated retained queue");
 
   q.add(new Zquic::StreamRxPQueue::Node{
-    Zquic::RxData{second, 0, 0, 5}});
+    second, second->data(), 5, nullptr, 0});
   q.add(new Zquic::StreamRxPQueue::Node{
-    Zquic::RxData{ZuMv(second), 10, 10, 5}});
+    second, second->data() + 10, 5, nullptr, 10});
 
   unsigned spans = 0;
   uint64_t firstKey = 0, firstLength = 0;
@@ -84,17 +88,15 @@ void testOutOfOrderDrain()
 
   Zquic::StreamRxPQueue q{0};
   for (unsigned i = 1; i < 32; ++i) {
-    ZmRef<ZiIOBuf> buf = new Zquic::StreamBufAlloc<>{nullptr};
-    fill_(buf, "x");
+    auto packet = packet_("x");
     q.add(new Zquic::StreamRxPQueue::Node{
-      Zquic::RxData{ZuMv(buf), uint64_t(i), 0, 1}});
+      packet, packet->data(), packet->length, nullptr, uint64_t(i)});
   }
   ZuCHECK(!q.dequeue(), "out-of-order queue drained before gap was filled");
 
-  ZmRef<ZiIOBuf> head = new Zquic::StreamBufAlloc<>{nullptr};
-  fill_(head, "x");
+  auto head = packet_("x");
   q.add(new Zquic::StreamRxPQueue::Node{
-    Zquic::RxData{ZuMv(head), 0, 0, 1}});
+    head, head->data(), head->length, nullptr, 0});
 
   unsigned drained = 0;
   while (auto node = q.dequeue()) {

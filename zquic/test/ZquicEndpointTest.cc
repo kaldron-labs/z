@@ -24,7 +24,11 @@ void testDatagramOwnership()
     ZuCHECK(d.addr.port() == 4433, "datagram address was not preserved");
   });
 
-  ZmRef<ZiIOBuf> buf = new Zquic::PacketBufAlloc<>{&ep};
+  ZmRef<ZiIOBuf> tx = ep.allocTxPacket();
+  ZuCHECK(tx && ep.diag().packetTxBufAllocs == 1,
+    "endpoint Tx packet allocation counter mismatch");
+
+  ZmRef<ZiIOBuf> buf = new Zquic::PacketRxBufAlloc<>{&ep};
   buf->append(reinterpret_cast<const uint8_t *>("PING"), 4);
   ep.inject(Zquic::Datagram{ZuMv(buf), ZiSockAddr{ZiIP("127.0.0.1"), 4433}});
 

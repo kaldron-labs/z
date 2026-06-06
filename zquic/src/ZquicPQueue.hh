@@ -9,11 +9,14 @@
 #ifndef ZquicPQueue_HH
 #define ZquicPQueue_HH
 
-#ifndef ZquicBuf_HH
-#include <zlib/ZquicBuf.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
 
 #include <zlib/ZmPQueue.hh>
+#include <zlib/ZtArray.hh>
+
+#include <zlib/ZquicBuf.hh>
 
 namespace Zquic {
 
@@ -47,32 +50,56 @@ struct RxData {
   void write(const I &) { }
 };
 
-struct TxData {
-  ZmRef<ZiIOBuf>	buf;
-  uint32_t		offset = 0;
+struct StreamRxData : public ZiIOBuf {
+  ZmRef<ZiIOBuf>	packet;
+  uint64_t		offset = 0;
+  uint64_t		bufOffset = 0;
   uint64_t		bytes = 0;
-  uint64_t		streamOffset = 0;
 
-  TxData() = default;
-  TxData(
-    ZmRef<ZiIOBuf> buf_, uint32_t offset_, uint64_t bytes_,
-    uint64_t streamOffset_ = 0) :
-    buf{ZuMv(buf_)}, offset{offset_}, bytes{bytes_},
-    streamOffset{streamOffset_} { }
-  TxData(TxRange range) :
-    buf{ZuMv(range.buf)}, offset{range.offset}, bytes{range.length},
-    streamOffset{range.streamOffset} { }
+  StreamRxData() : ZiIOBuf{nullptr, 0, nullptr, 0} { }
+  StreamRxData(
+    ZmRef<ZiIOBuf> packet_, const uint8_t *data_, unsigned length_,
+    void *owner_, uint64_t offset_) :
+    ZiIOBuf{const_cast<uint8_t *>(data_), length_, owner_, length_},
+    packet{ZuMv(packet_)}, offset{offset_}, bytes{length_} { }
 
-  operator TxRange() const {
-    return TxRange{buf, offset, uint32_t(bytes), streamOffset};
+  uint64_t key() const { return offset; }
+  uint64_t length() const { return bytes; }
+
+  uint64_t clipHead(uint64_t length) {
+    if (length > bytes) length = bytes;
+    offset += length;
+    bufOffset += length;
+    return bytes -= length;
   }
+  uint64_t clipTail(uint64_t length) {
+    if (length > bytes) length = bytes;
+    return bytes -= length;
+  }
+  template <typename I>
+  void write(const I &) { }
+};
 
+struct StreamTxData : public ZiIOBuf {
+  alignas(ZiIOBuf_Align) uint8_t data_[BufSize];
+  uint64_t		streamOffset = 0;
+  uint64_t		bufOffset = 0;
+  uint64_t		bytes = 0;
+
+  StreamTxData() : ZiIOBuf{data_, BufSize, nullptr} { }
+  explicit StreamTxData(void *owner_) : ZiIOBuf{data_, BufSize, owner_} { }
+
+  void publish(uint32_t offset_, uint32_t bytes_, uint64_t streamOffset_) {
+    bufOffset = offset_;
+    bytes = bytes_;
+    streamOffset = streamOffset_;
+  }
   uint64_t key() const { return streamOffset; }
   uint64_t length() const { return bytes; }
 
   uint64_t clipHead(uint64_t length) {
     if (length > bytes) length = bytes;
-    offset += uint32_t(length);
+    bufOffset += length;
     streamOffset += length;
     return bytes -= length;
   }
@@ -122,32 +149,99 @@ struct RxPacketMark {
 };
 
 using StreamRxPQueue =
+  ZmPQueue<StreamRxData,
+    ZmPQueueNode<StreamRxData,
+      ZmPQueueHeapID<"Zquic.Stream.RxNode",
+	ZmPQueueOverwrite<false,
+	  ZmPQueueBits<2,
+	    ZmPQueueLevels<2>>>>>>;
+
+using CryptoRxPQueue =
   ZmPQueue<RxData,
     ZmPQueueNode<ZuObject,
+      ZmPQueueHeapID<"Zquic.Crypto.RxNode",
+	ZmPQueueOverwrite<false,
+	  ZmPQueueBits<2,
+	    ZmPQueueLevels<2>>>>>>;
+
+using TxDataPQueue =
+  ZmPQueue<StreamTxData,
+    ZmPQueueNode<StreamTxData,
+      ZmPQueueHeapID<"Zquic.Stream.TxNode",
+	ZmPQueueBits<2,
+	  ZmPQueueLevels<3>>>>>;
+
+using ByteRangePQueue =
+  ZmPQueue<ByteRangeMark,
+    ZmPQueueHeapID<"Zquic.ByteRange.Node",
       ZmPQueueOverwrite<false,
 	ZmPQueueBits<2,
 	  ZmPQueueLevels<2>>>>>;
 
-using CryptoRxPQueue = StreamRxPQueue;
-
-using TxDataPQueue =
-  ZmPQueue<TxData,
-    ZmPQueueNode<ZuObject,
-      ZmPQueueBits<2,
-	ZmPQueueLevels<3>>>>;
-
-using ByteRangePQueue =
-  ZmPQueue<ByteRangeMark,
-    ZmPQueueOverwrite<false,
-      ZmPQueueBits<2,
-	ZmPQueueLevels<2>>>>;
-
 using PacketRxPQueue =
   ZmPQueue<RxPacketMark,
     ZmPQueueNode<ZuObject,
-      ZmPQueueOverwrite<false,
-	ZmPQueueBits<4,
-	  ZmPQueueLevels<4>>>>>;
+      ZmPQueueHeapID<"Zquic.Packet.RxNode",
+	ZmPQueueOverwrite<false,
+	  ZmPQueueBits<4,
+	    ZmPQueueLevels<4>>>>>>;
+
+using PacketTxPQueue =
+  ZmPQueue<ByteRangeMark,
+    ZmPQueueHeapID<"Zquic.Packet.TxRangeNode",
+      ZmPQueueBits<2,
+	ZmPQueueLevels<2>>>>;
+
+struct RxSpan {
+  uint64_t	first = 0;
+  uint64_t	last = 0;
+
+  uint64_t length() const { return last - first; }
+};
+
+ZuDerive(RxSpans, (ZtArray<RxSpan, ZtArrayHeapID<"Zquic.RxSpans">>));
+
+template <typename Queue>
+inline bool rxNovelSpans(
+  const Queue &queue, uint64_t first, uint64_t end, RxSpans &spans)
+{
+  if (end < first) return false;
+  return queue.gaps(first, end - first, [&spans](const auto &span) {
+    spans << RxSpan{span.key(), span.key() + span.length()};
+    return true;
+  });
+}
+
+inline uint64_t rxSpanBytes(const RxSpans &spans)
+{
+  uint64_t bytes = 0;
+  for (unsigned i = 0; i < spans.length(); ++i) bytes += spans[i].length();
+  return bytes;
+}
+
+template <typename Alloc, typename Enqueue>
+inline bool queueRxSpans(
+  const RxSpans &spans, uint64_t srcOffset, ZuCSpan payload,
+  Alloc alloc, Enqueue enqueue)
+{
+  for (unsigned i = 0; i < spans.length(); ++i) {
+    uint64_t payloadOffset = spans[i].first - srcOffset;
+    uint64_t length64 = spans[i].length();
+    if (payloadOffset > payload.length() ||
+	length64 > payload.length() - payloadOffset)
+      return false;
+    unsigned length = unsigned(length64);
+    ZmRef<ZiIOBuf> buf = alloc(length);
+    if (ZuUnlikely(!buf)) return false;
+    if (ZuUnlikely(buf->size < length))
+      if (ZuUnlikely(!buf->ensure(length))) return false;
+    buf->skip = 0;
+    buf->length = length;
+    if (length) memcpy(buf->data_(), payload.data() + payloadOffset, length);
+    enqueue(ZuMv(buf), spans[i].first, length);
+  }
+  return true;
+}
 
 } // namespace Zquic
 

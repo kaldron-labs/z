@@ -138,7 +138,8 @@ bool enqueueFlight_(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
 bool handleTLS_(
   TLSPeer &dst, TLSQueue &out, const TLSMessage *msg)
 {
-  uint8_t buf[TLSBufSize];
+  ZmRef<ZiIOBuf> buf =
+    new Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>{nullptr};
   size_t offsets[5] = {};
   ZuCSpan in;
   size_t inEpoch = msg ? msg->epoch : 0;
@@ -152,8 +153,8 @@ bool handleTLS_(
       return false;
     if (!in) return true;
   }
-  int n = dst.crypto->handleTLSMessage(buf, sizeof(buf), offsets, inEpoch, in);
-  return n >= 0 && enqueueFlight_(dst, out, buf, offsets);
+  int n = dst.crypto->handleTLSMessage(buf.ptr(), offsets, inEpoch, in);
+  return n >= 0 && enqueueFlight_(dst, out, buf->data(), offsets);
 }
 
 bool drainTLS_(TLSPeer &dst, TLSQueue &in, TLSQueue &out)
@@ -254,6 +255,20 @@ void testCryptoStreamFrames()
       parsed.offset == 0 && parsed.payload == "abc",
     "CRYPTO Tx frame parse failed");
 
+  Zquic::CryptoStream directRx;
+  Zquic::CryptoDiag directDiag;
+  static const char directPayload[] = "direct";
+  ZuCSpan directIn{directPayload, unsigned(sizeof(directPayload) - 1)};
+  ZuCSpan directOut;
+  ZuCHECK(!directRx.receive(0, directIn, directOut, &directDiag) &&
+      directOut.data() == directIn.data() &&
+      directOut.length() == directIn.length() &&
+      directRx.rxOffset() == directIn.length() &&
+      !directRx.rangeCount() &&
+      directDiag.cryptoFramesRx == 1 &&
+      directDiag.cryptoBytesRx == directIn.length(),
+    "in-order CRYPTO fast path copied payload");
+
   uint8_t first[64];
   uint8_t second[64];
   int f1 = Zquic::FrameCodec::writeCrypto(first, sizeof(first), 0, "hello");
@@ -339,16 +354,16 @@ void testMessageLevelTLSHandshake()
   ZuCHECK(h > 0, "1-RTT traffic probe short header encode failed");
   unsigned pnOffset = unsigned(h) - 2;
   uint8_t packet[256];
-  int n = Zquic::PacketProtection::protectShort(
-    packet, sizeof(packet), client.txTrafficSecret(Zquic::CryptoLevel::OneRTT),
-    3, bytes_(header, unsigned(h)), bytes_(payload, sizeof(payload)),
-    pnOffset, 2);
+  ptls_iovec_t plain = ptls_iovec_init(payload, sizeof(payload));
+  int n = Zquic::PacketProtection::protectShortV(
+    packet, sizeof(packet), client.txProtectionState(Zquic::CryptoLevel::OneRTT),
+    3, bytes_(header, unsigned(h)), &plain, 1, pnOffset, 2);
   ZuCHECK(n == int(unsigned(h) + sizeof(payload) + 16),
     "1-RTT traffic probe protection failed");
   uint64_t pn = 0;
   unsigned payloadOffset = 0;
   int plainLen = Zquic::PacketProtection::unprotectShort(
-    packet, unsigned(n), server.rxTrafficSecret(Zquic::CryptoLevel::OneRTT),
+    packet, unsigned(n), server.rxProtectionState(Zquic::CryptoLevel::OneRTT),
     0, pnOffset, pn, payloadOffset);
   ZuCHECK(plainLen == int(sizeof(payload)) &&
       pn == 3 && payloadOffset == unsigned(h) &&

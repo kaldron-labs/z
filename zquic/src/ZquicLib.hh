@@ -33,11 +33,6 @@
 namespace Zquic {
 
 inline constexpr const char Log[] = "Zquic";
-inline constexpr const char EndpointLog[] = "Zquic.Endpoint";
-inline constexpr const char CryptoLog[] = "Zquic.Crypto";
-inline constexpr const char RecoveryLog[] = "Zquic.Recovery";
-inline constexpr const char StreamLog[] = "Zquic.Stream";
-inline constexpr const char PMTUDLog[] = "Zquic.PMTUD";
 
 ZquicExtern void lib_init(); // can be called repeatedly
 

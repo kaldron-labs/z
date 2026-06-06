@@ -11,6 +11,8 @@
 
 #include <stdint.h>
 
+#include <zpicotls.h>
+
 namespace Ztls::Pico {
 
 struct Stats {
@@ -26,6 +28,42 @@ struct Stats {
 void install();
 Stats stats();
 void reset_stats();
+
+class AeadCtx {
+public:
+  AeadCtx() = default;
+  ~AeadCtx() { clear(); }
+  AeadCtx(const AeadCtx &) = delete;
+  AeadCtx &operator =(const AeadCtx &) = delete;
+
+  bool init(ptls_aead_algorithm_t *, bool, const void *, const void *);
+  void clear();
+  ptls_aead_context_t *get() const { return m_ctx; }
+  bool valid() const { return m_ctx; }
+
+private:
+  void		*m_storage = nullptr;
+  ptls_aead_context_t *m_ctx = nullptr;
+  uint16_t	m_size = 0;
+};
+
+class CipherCtx {
+public:
+  CipherCtx() = default;
+  ~CipherCtx() { clear(); }
+  CipherCtx(const CipherCtx &) = delete;
+  CipherCtx &operator =(const CipherCtx &) = delete;
+
+  bool init(ptls_cipher_algorithm_t *, bool, const void *);
+  void clear();
+  ptls_cipher_context_t *get() const { return m_ctx; }
+  bool valid() const { return m_ctx; }
+
+private:
+  void		*m_storage = nullptr;
+  ptls_cipher_context_t *m_ctx = nullptr;
+  uint16_t	m_size = 0;
+};
 
 } // namespace Ztls::Pico
 

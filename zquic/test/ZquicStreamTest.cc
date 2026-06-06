@@ -10,13 +10,13 @@
 
 using namespace ZuTestUtil;
 
+using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
+
 struct App { };
 struct TestStream :
-  public Zquic::Stream<TestStream, Zquic::StreamBufAlloc<>,
-    Zquic::StreamBufAlloc<>>
+  public Zquic::Stream<TestStream, StreamTxBufAlloc>
 {
-  using Base = Zquic::Stream<TestStream, Zquic::StreamBufAlloc<>,
-    Zquic::StreamBufAlloc<>>;
+  using Base = Zquic::Stream<TestStream, StreamTxBufAlloc>;
   TestStream(int64_t id) : Base{id} { }
   int process(Zquic::RxStream &) { ++processed; return 0; }
 
@@ -27,11 +27,11 @@ using TestLinkRef = ZmRef<TestLink>;
 using TestCxn = Zquic::Cxn<TestLink, TestLinkRef>;
 using TestCxnRef = ZmRef<TestCxn>;
 struct TestLink :
-  public Zquic::Link<App, TestLink, Zquic::StreamBufAlloc<>,
-    Zquic::StreamBufAlloc<>, TestCxn, TestCxnRef, TestStream>
+  public Zquic::Link<App, TestLink,
+    StreamTxBufAlloc, TestCxn, TestCxnRef, TestStream>
 {
-  using Base = Zquic::Link<App, TestLink, Zquic::StreamBufAlloc<>,
-    Zquic::StreamBufAlloc<>, TestCxn, TestCxnRef, TestStream>;
+  using Base = Zquic::Link<App, TestLink,
+    StreamTxBufAlloc, TestCxn, TestCxnRef, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
   void streamed(ZmRef<TestStream> stream) {
     lastStream = ZuMv(stream);
@@ -41,6 +41,24 @@ struct TestLink :
   ZmRef<TestStream>	lastStream;
   unsigned		streamedCount = 0;
 };
+
+static ZmRef<ZiIOBuf> streamPacket_(
+  uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
+  Zquic::Frame &frame, unsigned &used)
+{
+  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  int n = Zquic::FrameCodec::writeStream(
+    packet->data_(), packet->size, id, offset, payload, fin);
+  if (n <= 0) return nullptr;
+  packet->skip = 0;
+  packet->length = unsigned(n);
+  if (Zquic::FrameCodec::parse(
+      ZuCSpan{reinterpret_cast<const char *>(packet->data_()),
+	packet->length}, frame, used) ||
+      used != packet->length)
+    return nullptr;
+  return packet;
+}
 
 void testStreamIDs()
 {
@@ -67,24 +85,16 @@ void testStreamFrameDelivery()
   TestLink client{&app};
   auto stream = client.stream(Zquic::StreamType::Bidi);
 
-  uint8_t b[128];
-  int n = Zquic::FrameCodec::writeStream(b, sizeof(b), stream->id(), 0,
-    "hello", false);
-  ZuCHECK(n > 0, "STREAM frame write failed");
-
   Zquic::Frame frame;
   unsigned used = 0;
-  ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
-      used == unsigned(n),
-    "STREAM frame parse failed");
+  auto packet = streamPacket_(stream->id(), 0, "hello", false, frame, used);
+  ZuCHECK(packet, "STREAM frame setup failed");
 
   Zquic::BufDiag diag;
-  ZuCHECK(stream->processFrame(frame, &diag) == 0 &&
+  ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->processed == 1 &&
       stream->rxBytes() == 5 &&
-      stream->rxCopyCount() == 1 &&
-      uint64_t(diag.rxPacketToStreamCopies) == 1,
+      uint64_t(diag.streamRxSliceAllocs) == 1,
     "STREAM frame delivery accounting mismatch");
 
   auto &rx = stream->rxStream();
@@ -93,32 +103,64 @@ void testStreamFrameDelivery()
     "STREAM payload was not queued for receive");
   ZuCHECK(rx.advance(5) && rx.empty(), "STREAM receive queue advance failed");
 
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), stream->id(), 5,
-    {}, true);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
-    "STREAM FIN frame setup failed");
-  ZuCHECK(stream->processFrame(frame, &diag) == 0 &&
+  packet = streamPacket_(stream->id(), 5, {}, true, frame, used);
+  ZuCHECK(packet, "STREAM FIN frame setup failed");
+  ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->finReceived() && stream->rxComplete() &&
-      stream->finalSize() == 5 &&
-      uint64_t(diag.rxPacketToStreamCopies) == 1,
+      stream->finalSize() == 5,
     "STREAM FIN delivery mismatch");
 
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), stream->id(), 5,
-    "!", true);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(stream->id(), 5, "!", true, frame, used);
+  ZuCHECK(packet,
     "conflicting STREAM FIN setup failed");
-  ZuCHECK(!stream->receiveFrame(frame, &diag),
+  ZuCHECK(!stream->receiveFrame(frame, packet, &diag),
     "conflicting final-size STREAM was accepted");
 
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), stream->id() + 4, 0,
-    "x", false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(stream->id() + 4, 0, "x", false, frame, used);
+  ZuCHECK(packet,
     "wrong-ID STREAM setup failed");
-  ZuCHECK(!stream->receiveFrame(frame, &diag),
+  ZuCHECK(!stream->receiveFrame(frame, packet, &diag),
     "wrong-ID STREAM was accepted");
+}
+
+void testStreamRxSliceDelivery()
+{
+  ZuTestScope(testStreamRxSliceDelivery);
+
+  App app;
+  TestLink client{&app};
+  auto stream = client.stream(Zquic::StreamType::Bidi);
+
+  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  int n = Zquic::FrameCodec::writeStream(
+    packet->data_(), packet->size, stream->id(), 0, "slice", false);
+  ZuCHECK(n > 0, "packet-backed STREAM frame write failed");
+  packet->skip = 0;
+  packet->length = unsigned(n);
+
+  Zquic::Frame frame;
+  unsigned used = 0;
+  ZuCHECK(!Zquic::FrameCodec::parse(
+      ZuCSpan{reinterpret_cast<const char *>(packet->data_()),
+	packet->length}, frame, used) &&
+      used == packet->length,
+    "packet-backed STREAM frame parse failed");
+
+  Zquic::BufDiag diag;
+  ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
+      stream->processed == 1 &&
+      stream->rxBytes() == 5 &&
+      uint64_t(diag.streamRxSliceAllocs) == 1 &&
+      uint64_t(diag.queueNodeAllocs) == 1,
+    "packet-backed STREAM slice accounting mismatch");
+  packet = nullptr;
+
+  auto &rx = stream->rxStream();
+  auto span = rx.span();
+  ZuCHECK(span.length() == 5 && !memcmp(span.data(), "slice", 5),
+    "packet-backed STREAM slice payload mismatch");
+  ZuCHECK(rx.advance(5) && rx.empty(),
+    "packet-backed STREAM slice advance failed");
 }
 
 void testOutOfOrderStreamDelivery()
@@ -129,41 +171,33 @@ void testOutOfOrderStreamDelivery()
   TestLink client{&app};
   auto stream = client.stream(Zquic::StreamType::Bidi);
 
-  uint8_t b[128];
   Zquic::Frame frame;
   unsigned used = 0;
   Zquic::BufDiag diag;
 
-  int n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), stream->id(), 5, "world", false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  auto packet = streamPacket_(stream->id(), 5, "world", false, frame, used);
+  ZuCHECK(packet,
     "out-of-order STREAM setup failed");
-  ZuCHECK(stream->processFrame(frame, &diag) == 0 &&
+  ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->processed == 1 &&
       !stream->rxBytes() &&
       stream->rxPending() == 1 &&
       !stream->rxQueued() &&
-      stream->rxCopyCount() == 1 &&
-      uint64_t(diag.rxPacketToStreamCopies) == 1,
+      uint64_t(diag.streamRxSliceAllocs) == 1,
     "out-of-order STREAM pending state mismatch");
-  ZuCHECK(stream->processFrame(frame, &diag) == 0 &&
+  ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->rxPending() == 1 &&
-      stream->rxCopyCount() == 1 &&
-      uint64_t(diag.rxPacketToStreamCopies) == 1,
+      uint64_t(diag.streamRxSliceAllocs) == 1,
     "duplicate pending STREAM copied or queued again");
 
-  n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), stream->id(), 0, "hello", false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(stream->id(), 0, "hello", false, frame, used);
+  ZuCHECK(packet,
     "gap-filling STREAM setup failed");
-  ZuCHECK(stream->processFrame(frame, &diag) == 0 &&
+  ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->rxBytes() == 10 &&
       !stream->rxPending() &&
       stream->rxQueued() == 2 &&
-      stream->rxCopyCount() == 2 &&
-      uint64_t(diag.rxPacketToStreamCopies) == 2,
+      uint64_t(diag.streamRxSliceAllocs) == 2,
     "gap-filling STREAM did not drain pending data");
 
   auto &rx = stream->rxStream();
@@ -179,29 +213,23 @@ void testOutOfOrderStreamDelivery()
 
   auto split = client.stream(Zquic::StreamType::Bidi);
   diag = {};
-  n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), split->id(), 5, "world", false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(split->id(), 5, "world", false, frame, used);
+  ZuCHECK(packet,
     "split pending STREAM setup failed");
-  ZuCHECK(split->processFrame(frame, &diag) == 0 &&
+  ZuCHECK(split->processFrame(frame, packet, &diag) == 0 &&
       split->rxPending() == 1 &&
       !split->rxQueued() &&
-      split->rxCopyCount() == 1 &&
-      uint64_t(diag.rxPacketToStreamCopies) == 1,
+      uint64_t(diag.streamRxSliceAllocs) == 1,
     "split pending STREAM state mismatch");
 
-  n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), split->id(), 0, "helloworldtails", false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(split->id(), 0, "helloworldtails", false, frame, used);
+  ZuCHECK(packet,
     "interior-overlap STREAM setup failed");
-  ZuCHECK(split->processFrame(frame, &diag) == 0 &&
+  ZuCHECK(split->processFrame(frame, packet, &diag) == 0 &&
       split->rxBytes() == 15 &&
       !split->rxPending() &&
       split->rxQueued() == 3 &&
-      split->rxCopyCount() == 3 &&
-      uint64_t(diag.rxPacketToStreamCopies) == 3,
+      uint64_t(diag.streamRxSliceAllocs) == 3,
     "interior-overlap STREAM did not copy only novel spans");
 
   auto &splitRx = split->rxStream();
@@ -282,6 +310,31 @@ void testStreamTxRetention()
 void testStreamPacketizer()
 {
   ZuTestScope(testStreamPacketizer);
+
+  uint8_t prefix[32];
+  uint8_t assembled[64];
+  ZuCSpan prefixPayload{"prefix-payload", 14};
+  int prefixLen = Zquic::FrameCodec::writeStreamPrefix(
+    prefix, sizeof(prefix), 5, 9, prefixPayload.length(), true);
+  ZuCHECK(prefixLen > 0 &&
+      unsigned(prefixLen) + prefixPayload.length() <= sizeof(assembled),
+    "STREAM prefix writer failed");
+  memcpy(assembled, prefix, unsigned(prefixLen));
+  memcpy(assembled + prefixLen, prefixPayload.data(), prefixPayload.length());
+  Zquic::Frame prefixFrame;
+  unsigned prefixUsed = 0;
+  ZuCHECK(!Zquic::FrameCodec::parse(
+      ZuCSpan{reinterpret_cast<const char *>(assembled),
+	unsigned(prefixLen) + prefixPayload.length()},
+      prefixFrame, prefixUsed) &&
+      prefixUsed == unsigned(prefixLen) + prefixPayload.length() &&
+      prefixFrame.type == Zquic::FrameType::Stream &&
+      prefixFrame.streamID == 5 &&
+      prefixFrame.offset == 9 &&
+      prefixFrame.length == prefixPayload.length() &&
+      prefixFrame.payload == prefixPayload &&
+      prefixFrame.fin,
+    "STREAM prefix-only assembly parse mismatch");
 
   App app;
   TestLink client{&app};
@@ -425,18 +478,13 @@ void testPeerStreamAcceptance()
   App app;
   TestLink server{&app, true};
 
-  uint8_t b[128];
-  int n = Zquic::FrameCodec::writeStream(b, sizeof(b), 0, 0, "req", true);
-  ZuCHECK(n > 0, "client STREAM frame write failed");
-
   Zquic::Frame frame;
   unsigned used = 0;
-  ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
-    "client STREAM frame parse failed");
+  auto packet = streamPacket_(0, 0, "req", true, frame, used);
+  ZuCHECK(packet, "client STREAM frame setup failed");
 
   Zquic::BufDiag diag;
-  ZuCHECK(server.receiveFrame(frame, &diag) == 0,
+  ZuCHECK(server.receiveFrame(frame, packet, &diag) == 0,
     "server failed to receive peer STREAM frame");
   auto accepted = server.findStream(0);
   ZuCHECK(accepted && server.streamedCount == 1 &&
@@ -444,27 +492,24 @@ void testPeerStreamAcceptance()
       accepted->processed == 1 &&
       accepted->rxComplete() &&
       accepted->finalSize() == 3 &&
-      uint64_t(diag.rxPacketToStreamCopies) == 1,
+      uint64_t(diag.streamRxSliceAllocs) == 1,
     "peer stream acceptance state mismatch");
 
   TestLink client{&app};
   auto local = client.stream(Zquic::StreamType::Bidi);
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), local->id(), 0,
-    "rsp", true);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(local->id(), 0, "rsp", true, frame, used);
+  ZuCHECK(packet,
     "response STREAM frame setup failed");
-  ZuCHECK(client.receiveFrame(frame, &diag) == 0 &&
+  ZuCHECK(client.receiveFrame(frame, packet, &diag) == 0 &&
       !client.streamedCount &&
       local->processed == 1 &&
       local->rxComplete(),
     "existing local bidi stream receive mismatch");
 
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), 1, 0, "bad", false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(1, 0, "bad", false, frame, used);
+  ZuCHECK(packet,
     "local-origin STREAM setup failed");
-  ZuCHECK(server.receiveFrame(frame, &diag) < 0 && !server.findStream(1),
+  ZuCHECK(server.receiveFrame(frame, packet, &diag) < 0 && !server.findStream(1),
     "server accepted local-origin peer stream ID");
 }
 
@@ -507,45 +552,41 @@ void testStreamCountLimits()
 
   TestLink server{&app, true};
   server.setLocalStreamLimit(Zquic::StreamType::Bidi, 1);
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), 0, 0, "a", true);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  auto packet = streamPacket_(0, 0, "a", true, frame, used);
+  ZuCHECK(packet,
     "first peer STREAM setup failed");
-  ZuCHECK(server.receiveFrame(frame) == 0 &&
+  ZuCHECK(server.receiveFrame(frame, packet) == 0 &&
       server.peerStreamsOpened(Zquic::StreamType::Bidi) == 1 &&
       server.findStream(0),
     "first peer stream under local limit did not open");
 
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), 4, 0, "b", true);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(4, 0, "b", true, frame, used);
+  ZuCHECK(packet,
     "second peer STREAM setup failed");
-  ZuCHECK(server.receiveFrame(frame) < 0 &&
+  ZuCHECK(server.receiveFrame(frame, packet) < 0 &&
       server.peerStreamsOpened(Zquic::StreamType::Bidi) == 1 &&
       !server.findStream(4),
     "peer stream count limit was not enforced");
 
   server.setLocalStreamLimit(Zquic::StreamType::Bidi, 2);
-  ZuCHECK(server.receiveFrame(frame) == 0 &&
+  ZuCHECK(server.receiveFrame(frame, packet) == 0 &&
       server.peerStreamsOpened(Zquic::StreamType::Bidi) == 2 &&
       server.findStream(4),
     "extended local stream count did not admit peer stream");
 
   server.setLocalStreamLimit(Zquic::StreamType::Uni, 1);
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), 2, 0, "u", true);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(2, 0, "u", true, frame, used);
+  ZuCHECK(packet,
     "first peer uni STREAM setup failed");
-  ZuCHECK(server.receiveFrame(frame) == 0 &&
+  ZuCHECK(server.receiveFrame(frame, packet) == 0 &&
       server.peerStreamsOpened(Zquic::StreamType::Uni) == 1 &&
       server.findStream(2),
     "first peer uni stream under local limit did not open");
 
-  n = Zquic::FrameCodec::writeStream(b, sizeof(b), 6, 0, "v", true);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+  packet = streamPacket_(6, 0, "v", true, frame, used);
+  ZuCHECK(packet,
     "second peer uni STREAM setup failed");
-  ZuCHECK(server.receiveFrame(frame) < 0 &&
+  ZuCHECK(server.receiveFrame(frame, packet) < 0 &&
       server.peerStreamsOpened(Zquic::StreamType::Uni) == 1 &&
       !server.findStream(6),
     "peer uni stream count limit was not enforced");
@@ -589,11 +630,9 @@ void testResetStopFrames()
     "STOP_SENDING state mismatch");
 
   auto delivered = client.stream(Zquic::StreamType::Bidi);
-  n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), delivered->id(), 0, "hello", false);
-  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
-      delivered->receiveFrame(frame),
+  auto packet = streamPacket_(delivered->id(), 0, "hello", false, frame, used);
+  ZuCHECK(packet &&
+      delivered->receiveFrame(frame, packet),
     "delivered STREAM setup failed");
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), delivered->id(), 1, 3);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
@@ -609,6 +648,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testStreamIDs);
   ZuTestCall(testStreamFrameDelivery);
+  ZuTestCall(testStreamRxSliceDelivery);
   ZuTestCall(testOutOfOrderStreamDelivery);
   ZuTestCall(testStreamTxRetention);
   ZuTestCall(testStreamPacketizer);

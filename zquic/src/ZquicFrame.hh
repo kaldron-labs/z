@@ -9,9 +9,11 @@
 #ifndef ZquicFrame_HH
 #define ZquicFrame_HH
 
-#ifndef ZquicPacket_HH
-#include <zlib/ZquicPacket.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
+
+#include <zlib/ZquicPacket.hh>
 
 namespace Zquic {
 
@@ -42,8 +44,11 @@ struct FrameCodec {
   static int writePadding(uint8_t *, unsigned, unsigned);
   static int writePing(uint8_t *, unsigned);
   static int writeCrypto(uint8_t *, unsigned, uint64_t, ZuCSpan);
+  static int writeCryptoPrefix(uint8_t *, unsigned, uint64_t, unsigned);
   static int writeStream(
     uint8_t *, unsigned, uint64_t, uint64_t, ZuCSpan, bool);
+  static int writeStreamPrefix(
+    uint8_t *, unsigned, uint64_t, uint64_t, unsigned, bool);
   static int writeAck(uint8_t *, unsigned, uint64_t, uint64_t, uint64_t);
   static int writeAckRanges(
     uint8_t *, unsigned, const AckRange *, unsigned, uint64_t);

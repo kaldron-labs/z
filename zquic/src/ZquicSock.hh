@@ -9,11 +9,13 @@
 #ifndef ZquicSock_HH
 #define ZquicSock_HH
 
-#ifndef ZquicPath_HH
-#include <zlib/ZquicPath.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
 
 #include <zlib/ZiMultiplex.hh>
+
+#include <zlib/ZquicPath.hh>
 
 namespace Zquic {
 

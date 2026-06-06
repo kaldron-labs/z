@@ -6,6 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZquicCrypto.hh>
+#include <zlib/ZtlsPico.hh>
 
 using namespace ZuTestUtil;
 
@@ -34,9 +35,36 @@ void testCryptoPosture()
     "secret lifecycle diagnostics mismatch");
 }
 
+void testTLSOutputBuffer()
+{
+  ZuTestScope(testTLSOutputBuffer);
+
+  Zquic::Crypto crypto;
+  ZuCHECK(crypto.initTLS(Zquic::CryptoConfig{
+      false, false, "h3", {}, {}, {}, "localhost"}),
+    "client TLS init failed");
+
+  ZmRef<ZiIOBuf> out =
+    new Zquic::CryptoTxBufAlloc<
+      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr};
+  size_t offsets[5] = {};
+  Ztls::Pico::reset_stats();
+  int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
+  auto stats = Ztls::Pico::stats();
+  ZuCHECK(n > 0 && out->length == unsigned(n) && !out->skip,
+    "TLS output buffer was not published");
+  ZuCHECK(offsets[0] == 0 && offsets[1] == unsigned(n),
+    "TLS output epoch offsets mismatch");
+  ZuCHECK(!stats.internal_alloc && !stats.internal_free,
+    "TLS output used picotls internal buffer allocation");
+  ZuCHECK(crypto.diag().tlsMessagesEmitted == 1,
+    "TLS output diagnostic not updated");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testCryptoPosture);
+  ZuTestCall(testTLSOutputBuffer);
 }

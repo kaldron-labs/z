@@ -9,20 +9,19 @@
 #ifndef ZquicCrypto_HH
 #define ZquicCrypto_HH
 
-#ifndef ZquicTransportParams_HH
-#include <zlib/ZquicTransportParams.hh>
-#endif
-
-#ifndef ZquicFrame_HH
-#include <zlib/ZquicFrame.hh>
-#endif
-#ifndef ZquicPQueue_HH
-#include <zlib/ZquicPQueue.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
 
 #include <zpicotls.h>
 
 #include <zlib/ZtArray.hh>
+
+#include <zlib/ZtlsPico.hh>
+
+#include <zlib/ZquicFrame.hh>
+#include <zlib/ZquicPQueue.hh>
+#include <zlib/ZquicTransportParams.hh>
 
 namespace Ztls { namespace Backend {
 struct PKey;
@@ -56,6 +55,9 @@ struct InitialCrypto {
   static bool derive(InitialKeyMaterial &, const ConnectionID &);
   static int encrypt(
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuCSpan, ZuCSpan);
+  static int encryptV(
+    uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuCSpan,
+    const ptls_iovec_t *, unsigned);
   static int decrypt(
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuCSpan, ZuCSpan);
   static bool headerMask(
@@ -66,6 +68,9 @@ struct InitialPacketProtection {
   static int protectLong(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
     ZuCSpan, ZuCSpan, unsigned, unsigned);
+  static int protectLongV(
+    uint8_t *, unsigned, const InitialSecret &, uint64_t,
+    ZuCSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
   static int unprotectLong(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
@@ -92,21 +97,58 @@ struct TrafficSecret {
   ptls_aead_algorithm_t *aead = nullptr;
   ptls_hash_algorithm_t *hash = nullptr;
   ptls_cipher_algorithm_t *hpCipher = nullptr;
+  ptls_cipher_algorithm_t *hpSuppCipher = nullptr;
   bool		installed = false;
+};
+
+struct PacketProtectionState {
+  PacketProtectionState() = default;
+  PacketProtectionState(const PacketProtectionState &) = delete;
+  PacketProtectionState &operator =(const PacketProtectionState &) = delete;
+
+  bool init(const TrafficSecret &, CryptoLevel::T, bool);
+  void clear();
+  bool valid() const { return installed; }
+
+  Ztls::Pico::AeadCtx	aead;
+  Ztls::Pico::CipherCtx hp;
+  Ztls::Pico::CipherCtx hpSupp;
+  TrafficSecret		secret;
+  CryptoLevel::T	level = CryptoLevel::Initial;
+  bool			tx = false;
+  bool			installed = false;
 };
 
 struct PacketProtection {
   static bool deriveTrafficSecret(
     TrafficSecret &, ptls_cipher_suite_t *, ZuCSpan);
+  static int protectLongV(
+    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    ZuCSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
+  static int protectLong(
+    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    ZuCSpan, ZuCSpan, unsigned, unsigned);
   static int protectLong(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     ZuCSpan, ZuCSpan, unsigned, unsigned);
   static int unprotectLong(
+    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    unsigned, uint64_t &, unsigned &);
+  static int unprotectLong(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
+  static int protectShortV(
+    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    ZuCSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
+  static int protectShort(
+    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    ZuCSpan, ZuCSpan, unsigned, unsigned);
   static int protectShort(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     ZuCSpan, ZuCSpan, unsigned, unsigned);
+  static int unprotectShort(
+    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    unsigned, uint64_t &, unsigned &);
   static int unprotectShort(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
@@ -125,6 +167,7 @@ struct CryptoDiag {
   uint64_t	cryptoFramesRx = 0;
   uint64_t	cryptoBytesTx = 0;
   uint64_t	cryptoBytesRx = 0;
+  uint64_t	packetProtectionContextInits = 0;
 };
 
 using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
@@ -143,6 +186,7 @@ public:
   unsigned rangeCount() const { return m_rxQueue.count_(); }
 
   void reset();
+  int writeFramePrefix(uint8_t *, unsigned, unsigned, CryptoDiag * = nullptr);
   int writeFrame(uint8_t *, unsigned, ZuCSpan, CryptoDiag * = nullptr);
   int receiveFrame(const Frame &, ZuCSpan &, CryptoDiag * = nullptr);
   int receive(uint64_t, ZuCSpan, ZuCSpan &, CryptoDiag * = nullptr);
@@ -157,6 +201,8 @@ public:
 private:
   ZuDerive(Delivery,
     (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoDelivery">>));
+
+  void appendDelivery_(const uint8_t *, uint64_t);
 
   uint64_t	m_txOffset = 0;
   uint64_t	m_rxOffset = 0;
@@ -177,6 +223,8 @@ struct CryptoConfig {
 
 class Crypto {
 public:
+  static constexpr unsigned TLSOutputMax = 64 * 1024;
+
   ~Crypto();
 
   Crypto() = default;
@@ -207,6 +255,12 @@ public:
   const TrafficSecret &rxTrafficSecret(CryptoLevel::T level) const {
     return m_rxTrafficSecrets[level];
   }
+  PacketProtectionState &txProtectionState(CryptoLevel::T level) {
+    return m_txProtection[level];
+  }
+  PacketProtectionState &rxProtectionState(CryptoLevel::T level) {
+    return m_rxProtection[level];
+  }
   const CryptoDiag &diag() const { return m_diag; }
   int tlsResult() const { return m_tlsResult; }
   size_t tlsReadEpoch() const;
@@ -230,7 +284,7 @@ public:
   bool completeHandshake();
   bool initTLS(const CryptoConfig &);
   int handleTLSMessage(
-    uint8_t *, unsigned, size_t[5], size_t, ZuCSpan);
+    ZiIOBuf *, size_t[5], size_t, ZuCSpan);
 
 private:
   void resetTLS_();
@@ -254,6 +308,8 @@ private:
   bool		m_secretInstalled[3] = {};
   TrafficSecret m_txTrafficSecrets[3];
   TrafficSecret m_rxTrafficSecrets[3];
+  PacketProtectionState m_txProtection[3];
+  PacketProtectionState m_rxProtection[3];
   uint8_t	m_alpn[255] = {};
   uint8_t	m_alpnLength = 0;
   uint8_t	m_serverName[255] = {};

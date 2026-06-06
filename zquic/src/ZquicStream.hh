@@ -9,12 +9,12 @@
 #ifndef ZquicStream_HH
 #define ZquicStream_HH
 
-#ifndef ZquicFrame_HH
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
+#endif
+
 #include <zlib/ZquicFrame.hh>
-#endif
-#ifndef ZquicPQueue_HH
 #include <zlib/ZquicPQueue.hh>
-#endif
 
 namespace Zquic {
 

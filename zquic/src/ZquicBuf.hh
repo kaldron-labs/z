@@ -9,8 +9,8 @@
 #ifndef ZquicBuf_HH
 #define ZquicBuf_HH
 
-#ifndef ZquicTypes_HH
-#include <zlib/ZquicTypes.hh>
+#ifndef ZquicLib_HH
+#include <zlib/ZquicLib.hh>
 #endif
 
 #include <string.h>
@@ -24,9 +24,12 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
 
+#include <zlib/ZquicTypes.hh>
+
 namespace Zquic_ {
 
 ZuDerive(IOQueue,
+  // Intrusive base only; Zi::IOBufAlloc supplies the role heap.
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
 
 using RxStream = ZiRxStream<IOQueue>;
@@ -34,7 +37,7 @@ using RxStream = ZiRxStream<IOQueue>;
 template <
   unsigned Size = Zquic::BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
-  ZuString HeapID = ZiIOBuf_HeapID{}()>
+  ZuString HeapID = "Zquic.Buf">
 using BufAlloc =
   Zi::IOBufAlloc<IOQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
 
@@ -47,20 +50,40 @@ using RxStream = Zquic_::RxStream;
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
-  ZuString HeapID = "Zquic.Packet">
-using PacketBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+  ZuString HeapID = "Zquic.Packet.Rx">
+using PacketRxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
-  ZuString HeapID = "Zquic.StreamBuf">
-using StreamBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+  ZuString HeapID = "Zquic.Packet.Tx">
+using PacketTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+
+template <
+  unsigned Size = BufSize,
+  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  ZuString HeapID = "Zquic.Stream.TxBuf">
+using StreamTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+
+template <
+  unsigned Size = BufSize,
+  unsigned MaxSize = 64 * 1024,
+  ZuString HeapID = "Zquic.Crypto.RxBuf">
+using CryptoRxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+
+template <
+  unsigned Size = BufSize,
+  unsigned MaxSize = 64 * 1024,
+  ZuString HeapID = "Zquic.Crypto.TxBuf">
+using CryptoTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 
 struct BufDiag {
-  ZmAtomic<uint64_t>	packetAllocs = 0;
-  ZmAtomic<uint64_t>	streamAllocs = 0;
-  ZmAtomic<uint64_t>	rxPacketToStreamCopies = 0;
-  ZmAtomic<uint64_t>	forbiddenCopies = 0;
+  ZmAtomic<uint64_t>	packetRxBufAllocs = 0;
+  ZmAtomic<uint64_t>	packetTxBufAllocs = 0;
+  ZmAtomic<uint64_t>	streamRxSliceAllocs = 0;
+  ZmAtomic<uint64_t>	streamTxBufAllocs = 0;
+  ZmAtomic<uint64_t>	queueNodeAllocs = 0;
+  ZmAtomic<uint64_t>	packetProtectionContextInits = 0;
 };
 
 struct TxRange {
@@ -76,38 +99,6 @@ struct TxRange {
     buf{ZuMv(buf_)}, offset{offset_}, length{length_},
     streamOffset{streamOffset_} { }
 };
-
-inline bool copySpanToStream(
-  ZiIOBuf *dst, ZuCSpan src, unsigned offset, unsigned length,
-  BufDiag *diag = nullptr)
-{
-  ZiAssert(dst, "Zquic", (dst),
-    "null stream buffer in span-to-stream copy", return false);
-  ZiAssert(offset <= src.length() && length <= src.length() - offset,
-    "Zquic", (offset, length, src.length()),
-    "span-to-stream copy source range violation", return false);
-  ZiAssert(dst->size >= length, "Zquic", (dst->size, length),
-    "span-to-stream copy destination too small", return false);
-  dst->skip = 0;
-  dst->length = length;
-  if (length) memcpy(dst->data_(), src.data() + offset, length);
-  if (diag) ++diag->rxPacketToStreamCopies;
-  return true;
-}
-
-inline bool copyPacketToStream(
-  ZiIOBuf *dst, const ZiIOBuf *src, unsigned offset, unsigned length,
-  BufDiag *diag = nullptr)
-{
-  ZiAssert(src && dst, "Zquic", (src, dst),
-    "null buffer in packet-to-stream copy", return false);
-  ZiAssert(offset <= src->length && length <= src->length - offset,
-    "Zquic", (offset, length, src->length),
-    "packet-to-stream copy source range violation", return false);
-  return copySpanToStream(dst,
-    ZuCSpan{reinterpret_cast<const char *>(src->data()), src->length},
-    offset, length, diag);
-}
 
 inline void assertPacketCapacity(const ZiIOBuf *buf, unsigned required)
 {

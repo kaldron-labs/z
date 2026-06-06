@@ -6,6 +6,7 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZtlsLib.hh Ztls.hh \
 	ZtlsBackend.hh \
+	ZtlsPico.hh \
 	ZtlsHMAC.hh ZtlsMD.hh ZtlsTOTP.hh ZtlsRandom.hh \
 	ZtlsPK.hh ZtlsPK_Data.hh Ztls_ed25519.h
 lib_LTLIBRARIES = libZtls.la

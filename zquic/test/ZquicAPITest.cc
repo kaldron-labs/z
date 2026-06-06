@@ -4,8 +4,6 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <string.h>
-
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
 
@@ -13,12 +11,11 @@ using namespace ZuTestUtil;
 
 namespace {
 
-using PacketBufAlloc = Zquic::PacketBufAlloc<>;
-using StreamBufAlloc = Zquic::StreamBufAlloc<>;
+using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
 struct TestStream :
-    public Zquic::Stream<TestStream, StreamBufAlloc, StreamBufAlloc> {
-  using Base = Zquic::Stream<TestStream, StreamBufAlloc, StreamBufAlloc>;
+    public Zquic::Stream<TestStream, StreamTxBufAlloc> {
+  using Base = Zquic::Stream<TestStream, StreamTxBufAlloc>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
@@ -33,10 +30,10 @@ using TestCxn = Zquic::Cxn<TestLink, TestLink *>;
 
 struct TestLink :
     public Zquic::Link<
-      EngineApp, TestLink, PacketBufAlloc, StreamBufAlloc,
+      EngineApp, TestLink, StreamTxBufAlloc,
       TestCxn, TestLink *, TestStream> {
   using Base = Zquic::Link<
-    EngineApp, TestLink, PacketBufAlloc, StreamBufAlloc,
+    EngineApp, TestLink, StreamTxBufAlloc,
     TestCxn, TestLink *, TestStream>;
   using Base::Base;
 
@@ -74,19 +71,6 @@ void testParams()
     .alpn(ZuSpan<const ptls_iovec_t>(iov, 1))
     .errorFn(Zquic::defaultErrorFn());
   (void)serverParams;
-}
-
-void testLogSubsystemNames()
-{
-  ZuTestScope(testLogSubsystemNames);
-
-  ZuCHECK(!strcmp(Zquic::Log, "Zquic") &&
-      !strcmp(Zquic::EndpointLog, "Zquic.Endpoint") &&
-      !strcmp(Zquic::CryptoLog, "Zquic.Crypto") &&
-      !strcmp(Zquic::RecoveryLog, "Zquic.Recovery") &&
-      !strcmp(Zquic::StreamLog, "Zquic.Stream") &&
-      !strcmp(Zquic::PMTUDLog, "Zquic.PMTUD"),
-    "Zquic log subsystem names mismatch");
 }
 
 void testStreamShape()
@@ -198,7 +182,6 @@ int main(int argc, char **argv)
 
   ZuTestMain();
   ZuTestCall(testParams);
-  ZuTestCall(testLogSubsystemNames);
   ZuTestCall(testStreamShape);
   ZuTestCall(testInitValidation);
 }
