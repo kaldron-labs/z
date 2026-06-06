@@ -27,6 +27,9 @@ void testVarIntAndPacket()
   ZuCHECK(!Zquic::VarInt::decode(ZuCSpan{reinterpret_cast<char *>(b), 2}, v, n),
     "varint 2 decode failed");
   ZuCHECK(v == 16383 && n == 2, "varint 2 decode mismatch");
+  unsigned badOffset = 2;
+  ZuCHECK(Zquic::VarInt::put(b, 1, 1, badOffset) < 0 && badOffset == 2,
+    "varint put accepted an out-of-range offset");
 
   Zquic::ConnectionID dcid{"abcdefgh"};
   Zquic::ConnectionID scid{"server01"};

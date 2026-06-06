@@ -15,7 +15,6 @@
 
 #include <string.h>
 
-#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmRef.hh>
 
@@ -78,12 +77,12 @@ template <
 using CryptoTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 
 struct BufDiag {
-  ZmAtomic<uint64_t>	packetRxBufAllocs = 0;
-  ZmAtomic<uint64_t>	packetTxBufAllocs = 0;
-  ZmAtomic<uint64_t>	streamRxSliceAllocs = 0;
-  ZmAtomic<uint64_t>	streamTxBufAllocs = 0;
-  ZmAtomic<uint64_t>	queueNodeAllocs = 0;
-  ZmAtomic<uint64_t>	packetProtectionContextInits = 0;
+  uint64_t	packetRxBufAllocs = 0;
+  uint64_t	packetTxBufAllocs = 0;
+  uint64_t	streamRxSliceAllocs = 0;
+  uint64_t	streamTxBufAllocs = 0;
+  uint64_t	queueNodeAllocs = 0;
+  uint64_t	packetProtectionContextInits = 0;
 };
 
 struct TxRange {

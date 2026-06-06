@@ -49,6 +49,7 @@ int VarInt::encode(uint8_t *out, unsigned len, uint64_t v)
 
 int VarInt::put(uint8_t *out, unsigned len, uint64_t v, unsigned &o)
 {
+  if (o > len) return -1;
   int n = encode(out + o, len - o, v);
   if (n < 0) return -1;
   o += n;

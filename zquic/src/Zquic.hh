@@ -17,6 +17,7 @@
 
 #include <zpicotls.h>
 
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
@@ -73,6 +74,28 @@ inline PacketSpace::T runtimePacketSpace(CryptoLevel::T level)
   if (level == CryptoLevel::Initial) return PacketSpace::Initial;
   if (level == CryptoLevel::Handshake) return PacketSpace::Handshake;
   return PacketSpace::AppData;
+}
+
+inline ZuCSpan byteSpan(const uint8_t *data, unsigned len)
+{
+  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+}
+
+inline bool cryptoLevelFromEpoch(size_t epoch, CryptoLevel::T &level)
+{
+  if (epoch == 0) {
+    level = CryptoLevel::Initial;
+    return true;
+  }
+  if (epoch == 2) {
+    level = CryptoLevel::Handshake;
+    return true;
+  }
+  if (epoch >= 3) {
+    level = CryptoLevel::OneRTT;
+    return true;
+  }
+  return false;
 }
 
 inline bool runtimeFrameRef(
@@ -139,6 +162,49 @@ struct RuntimeDiag {
 	ZmAtomic<uint64_t>	streamBytesTx = 0;
 	ZmAtomic<uint64_t>	handshakeComplete = 0;
 };
+
+template <typename Send>
+inline bool sendRuntimeCryptoFlights(
+  CryptoStream (&txCrypto)[3], RuntimeDiag &diag,
+  const uint8_t *data, unsigned len, const size_t offsets[5],
+  unsigned chunkMax, ZiSockAddr addr, Send send)
+{
+  if (!chunkMax) return false;
+  for (size_t epoch = 0; epoch < 4; ++epoch) {
+    if (offsets[epoch + 1] < offsets[epoch] || offsets[epoch + 1] > len) {
+      ++diag.tlsFailures;
+      return false;
+    }
+    if (offsets[epoch + 1] <= offsets[epoch]) continue;
+    CryptoLevel::T level;
+    if (!cryptoLevelFromEpoch(epoch, level)) continue;
+    unsigned off = unsigned(offsets[epoch]);
+    unsigned remaining = unsigned(offsets[epoch + 1] - offsets[epoch]);
+    while (remaining) {
+      unsigned chunk = remaining > chunkMax ? chunkMax : remaining;
+      uint8_t frame[BufSize];
+      uint64_t cryptoOffset = txCrypto[level].txOffset();
+      int n = txCrypto[level].writeFramePrefix(frame, sizeof(frame), chunk);
+      if (n < 0) {
+	++diag.tlsFailures;
+	return false;
+      }
+      SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
+      ++diag.cryptoFramesTx;
+      diag.cryptoBytesTx += chunk;
+      if (!send(level, byteSpan(frame, unsigned(n)),
+	    byteSpan(data + off, chunk), ref, addr))
+	return false;
+      if (level == CryptoLevel::Handshake &&
+	  !send(level, byteSpan(frame, unsigned(n)),
+	    byteSpan(data + off, chunk), ref, addr))
+	return false;
+      off += chunk;
+      remaining -= chunk;
+    }
+  }
+  return true;
+}
 
 inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
 {
@@ -232,28 +298,6 @@ inline bool writeInitialPingProbe(ZiIOBuf *buf, uint64_t packetNumber)
   buf->skip = 0;
   buf->length = MinUDPPayload;
   return true;
-}
-
-inline ZuCSpan byteSpan(const uint8_t *data, unsigned len)
-{
-  return ZuCSpan{reinterpret_cast<const char *>(data), len};
-}
-
-inline bool cryptoLevelFromEpoch(size_t epoch, CryptoLevel::T &level)
-{
-  if (epoch == 0) {
-    level = CryptoLevel::Initial;
-    return true;
-  }
-  if (epoch == 2) {
-    level = CryptoLevel::Handshake;
-    return true;
-  }
-  if (epoch >= 3) {
-    level = CryptoLevel::OneRTT;
-    return true;
-  }
-  return false;
 }
 
 struct EngineParams {
@@ -714,40 +758,15 @@ private:
   bool sendCryptoFlights_(
     const uint8_t *data, unsigned len, const size_t offsets[5],
     ZiSockAddr addr) {
-    for (size_t epoch = 0; epoch < 4; ++epoch) {
-      if (offsets[epoch + 1] <= offsets[epoch]) continue;
-      CryptoLevel::T level;
-      if (!cryptoLevelFromEpoch(epoch, level)) continue;
-      unsigned off = unsigned(offsets[epoch]);
-      unsigned remaining = unsigned(offsets[epoch + 1] - offsets[epoch]);
-      while (remaining) {
-	unsigned chunk = remaining > RuntimeCryptoChunk ?
-	  RuntimeCryptoChunk : remaining;
-	uint8_t frame[BufSize];
-	uint64_t cryptoOffset = m_txCrypto[level].txOffset();
-	int n = m_txCrypto[level].writeFramePrefix(
-	  frame, sizeof(frame), chunk);
-	if (n < 0) {
-	  ++m_runtimeDiag.tlsFailures;
-	  return false;
-	}
-	SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
-	++m_runtimeDiag.cryptoFramesTx;
-	m_runtimeDiag.cryptoBytesTx += chunk;
-	if (!sendCryptoPacket_(
-	      level, byteSpan(frame, unsigned(n)),
-	      byteSpan(data + off, chunk), ref, addr))
-	  return false;
-	if (level == CryptoLevel::Handshake &&
-	    !sendCryptoPacket_(
-	      level, byteSpan(frame, unsigned(n)),
-	      byteSpan(data + off, chunk), ref, addr))
-	  return false;
-	off += chunk;
-	remaining -= chunk;
-      }
-    }
-    return true;
+    return sendRuntimeCryptoFlights(
+      m_txCrypto, m_runtimeDiag, data, len, offsets, RuntimeCryptoChunk,
+      ZuMv(addr),
+      [this](
+	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+	  const SentFrameRef &ref, ZiSockAddr addr_) {
+	return sendCryptoPacket_(
+	  level, prefix, payload, ref, ZuMv(addr_));
+      });
   }
 
   bool sendCryptoPacket_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
@@ -1321,40 +1340,15 @@ private:
   bool sendCryptoFlights_(
     const uint8_t *data, unsigned len, const size_t offsets[5],
     ZiSockAddr addr) {
-    for (size_t epoch = 0; epoch < 4; ++epoch) {
-      if (offsets[epoch + 1] <= offsets[epoch]) continue;
-      CryptoLevel::T level;
-      if (!cryptoLevelFromEpoch(epoch, level)) continue;
-      unsigned off = unsigned(offsets[epoch]);
-      unsigned remaining = unsigned(offsets[epoch + 1] - offsets[epoch]);
-      while (remaining) {
-	unsigned chunk = remaining > RuntimeCryptoChunk ?
-	  RuntimeCryptoChunk : remaining;
-	uint8_t frame[BufSize];
-	uint64_t cryptoOffset = m_txCrypto[level].txOffset();
-	int n = m_txCrypto[level].writeFramePrefix(
-	  frame, sizeof(frame), chunk);
-	if (n < 0) {
-	  ++m_runtimeDiag.tlsFailures;
-	  return false;
-	}
-	SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
-	++m_runtimeDiag.cryptoFramesTx;
-	m_runtimeDiag.cryptoBytesTx += chunk;
-	if (!sendCryptoPacket_(
-	      level, byteSpan(frame, unsigned(n)),
-	      byteSpan(data + off, chunk), ref, addr))
-	  return false;
-	if (level == CryptoLevel::Handshake &&
-	    !sendCryptoPacket_(
-	      level, byteSpan(frame, unsigned(n)),
-	      byteSpan(data + off, chunk), ref, addr))
-	  return false;
-	off += chunk;
-	remaining -= chunk;
-      }
-    }
-    return true;
+    return sendRuntimeCryptoFlights(
+      m_txCrypto, m_runtimeDiag, data, len, offsets, RuntimeCryptoChunk,
+      ZuMv(addr),
+      [this](
+	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+	  const SentFrameRef &ref, ZiSockAddr addr_) {
+	return sendCryptoPacket_(
+	  level, prefix, payload, ref, ZuMv(addr_));
+      });
   }
 
   bool sendCryptoPacket_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {

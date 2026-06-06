@@ -13,6 +13,8 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
+#include <zlib/ZmHash.hh>
+
 #include <zlib/ZquicBuf.hh>
 #include <zlib/ZquicStream.hh>
 
@@ -202,44 +204,88 @@ private:
   }
 };
 
+struct StreamScheduleEntry {
+  StreamScheduleEntry() = default;
+  StreamScheduleEntry(uint64_t id_) : id{id_} { }
+
+  uint64_t	id = 0;
+  StreamScheduleEntry *rrPrev = nullptr;
+  StreamScheduleEntry *rrNext = nullptr;
+};
+
+inline uint64_t StreamScheduleEntry_IDAxor(const StreamScheduleEntry &entry)
+{
+  return entry.id;
+}
+
+ZuDerive(StreamScheduleHash,
+  (ZmHash<StreamScheduleEntry,
+    ZmHashNode<StreamScheduleEntry,
+      ZmHashKey<StreamScheduleEntry_IDAxor,
+	ZmHashLock<ZmNoLock,
+	  ZmHashHeapID<"Zquic.StreamScheduler">>>>>));
+
 class StreamScheduler {
 public:
-  static constexpr unsigned Max = 64;
+  StreamScheduler() = default;
+  StreamScheduler(const ZmHashParams &params) : m_hash{params} { }
 
   bool add(uint64_t id) {
-    if (contains(id)) return true;
-    if (m_count >= Max) return false;
-    m_ids[m_count++] = id;
+    if (m_hash.findPtr(id)) return true;
+    link_(m_hash.add(id));
     return true;
   }
-  bool empty() const { return !m_count; }
-  unsigned count() const { return m_count; }
-  bool contains(uint64_t id) const {
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_ids[i] == id) return true;
-    return false;
-  }
+  bool empty() const { return !m_hash.count_(); }
+  unsigned count() const { return m_hash.count_(); }
+  bool contains(uint64_t id) const { return m_hash.findPtr(id); }
 
   uint64_t next() {
-    if (!m_count) return uint64_t(-1);
-    if (m_next >= m_count) m_next = 0;
-    return m_ids[m_next++];
+    if (!m_next) return uint64_t(-1);
+    auto node = m_next;
+    m_next = node_(node->rrNext);
+    return node->id;
   }
 
   void remove(uint64_t id) {
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (m_ids[i] != id) continue;
-      for (unsigned j = i + 1; j < m_count; ++j) m_ids[j - 1] = m_ids[j];
-      --m_count;
-      if (m_next > i) --m_next;
-      return;
-    }
+    auto node = m_hash.findPtr(id);
+    if (!node) return;
+    unlink_(node);
+    m_hash.delNode(node);
   }
 
 private:
-  uint64_t	m_ids[Max] = {};
-  unsigned	m_count = 0;
-  unsigned	m_next = 0;
+  using Node = StreamScheduleHash::Node;
+
+  static Node *node_(StreamScheduleEntry *entry) {
+    return static_cast<Node *>(entry);
+  }
+
+  void link_(Node *node) {
+    if (!m_next) {
+      node->rrPrev = node->rrNext = node;
+      m_next = node;
+      return;
+    }
+    auto tail = node_(m_next->rrPrev);
+    node->rrPrev = tail;
+    node->rrNext = m_next;
+    tail->rrNext = node;
+    m_next->rrPrev = node;
+  }
+
+  void unlink_(Node *node) {
+    if (node->rrNext == node) {
+      m_next = nullptr;
+      return;
+    }
+    if (m_next == node) m_next = node_(node->rrNext);
+    node->rrPrev->rrNext = node->rrNext;
+    node->rrNext->rrPrev = node->rrPrev;
+    node->rrPrev = node->rrNext = nullptr;
+  }
+
+  StreamScheduleHash	m_hash;
+  Node			*m_next = nullptr;
 };
 
 class TxScheduler {

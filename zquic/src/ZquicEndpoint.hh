@@ -13,6 +13,8 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
+#include <zlib/ZmAtomic.hh>
+
 #include <zlib/ZquicSock.hh>
 
 namespace Zquic {
