@@ -136,11 +136,12 @@ public:
     if (!avail) return -1;
 
     TxRange range;
-    if (stream.txRange(0, range))
+    bool fin = false;
+    if (!stream.nextTxRange(budget, range, fin)) return 0;
+    if (!fin)
       return writeRange_(out, avail, budget, assembly, stream, uint64_t(id),
 	info, range);
 
-    if (!stream.finReady()) return 0;
     return writeFin_(out, avail, budget, assembly, stream, uint64_t(id), info);
   }
 
@@ -172,7 +173,7 @@ private:
     if (n <= 0) return -1;
     if (!assembly.addStream(budget, unsigned(n))) return -1;
     TxRange consumed;
-    ZiAssert(stream.consumeTxRange(consumed, payloadLen), "Zquic",
+    ZiAssert(stream.commitTxRange(consumed, payloadLen), "Zquic",
       (id, payloadLen),
       "stream Tx range disappeared during packetization", return -1);
     if (info)

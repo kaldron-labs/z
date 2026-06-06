@@ -147,7 +147,7 @@ void CryptoStream::reset()
 {
   m_txOffset = 0;
   m_rxOffset = 0;
-  m_rxQueue.reset(0);
+  Rx::rxReset(0);
   m_delivery.length(0);
 }
 
@@ -175,6 +175,7 @@ int CryptoStream::receive(
   uint64_t offset, ZuCSpan payload, ZuCSpan &contiguous, CryptoDiag *diag)
 {
   contiguous = {};
+  m_delivery.length(0);
   uint64_t end = offset + payload.length();
   if (end < offset || end > MaxBuffered) return -1;
   if (diag) ++diag->cryptoFramesRx;
@@ -198,29 +199,25 @@ int CryptoStream::receive(
     buf->skip = 0;
     buf->length = unsigned(length);
     memcpy(buf->data_(), payload.data() + (spans[i].first - offset), length);
-    m_rxQueue.add(new CryptoRxPQueue::Node{
+    Rx::rcvd(new CryptoRxPQueue::Node{
       RxData{ZuMv(buf), spans[i].first, 0, length}});
   }
 
   if (diag) diag->cryptoBytesRx += bytes;
-  deliver_(contiguous);
-  return 0;
-}
-
-void CryptoStream::deliver_(ZuCSpan &contiguous)
-{
-  contiguous = {};
-  m_delivery.length(0);
-  while (auto node = m_rxQueue.dequeue()) {
-    RxData &data = node->data();
-    if (!data.buf || !data.bytes) continue;
-    const uint8_t *p = data.buf->data_() + data.bufOffset;
-    for (uint64_t i = 0; i < data.bytes; ++i) m_delivery.push(p[i]);
-    m_rxOffset += data.bytes;
-  }
   if (m_delivery.length())
     contiguous = ZuCSpan{
       reinterpret_cast<const char *>(m_delivery.data()), m_delivery.length()};
+  return 0;
+}
+
+void CryptoStream::process(Msg *node)
+{
+  if (!node) return;
+  RxData &data = node->data();
+  if (!data.buf || !data.bytes) return;
+  const uint8_t *p = data.buf->data_() + data.bufOffset;
+  for (uint64_t i = 0; i < data.bytes; ++i) m_delivery.push(p[i]);
+  m_rxOffset += data.bytes;
 }
 
 bool InitialCrypto::derive(InitialKeyMaterial &out, const ConnectionID &dcid)

@@ -127,9 +127,16 @@ struct CryptoDiag {
   uint64_t	cryptoBytesRx = 0;
 };
 
-class CryptoStream {
+using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
+
+class CryptoStream :
+  public ZmPQRx<CryptoStream, CryptoRxPQueue, CryptoStreamRxNTP> {
 public:
   static constexpr unsigned MaxBuffered = 64 * 1024;
+  using Queue = CryptoRxPQueue;
+  using Rx = ZmPQRx<CryptoStream, Queue, CryptoStreamRxNTP>;
+  using Msg = Queue::Node;
+  using Span = Queue::Span;
 
   uint64_t txOffset() const { return m_txOffset; }
   uint64_t rxOffset() const { return m_rxOffset; }
@@ -140,9 +147,14 @@ public:
   int receiveFrame(const Frame &, ZuCSpan &, CryptoDiag * = nullptr);
   int receive(uint64_t, ZuCSpan, ZuCSpan &, CryptoDiag * = nullptr);
 
-private:
-  void deliver_(ZuCSpan &);
+  Queue *rxQueue() { return &m_rxQueue; }
+  void process(Msg *);
+  void request(const Span &, const Span &) { }
+  void scheduleDequeue() { Rx::dequeue(); }
+  void rescheduleDequeue() { Rx::dequeue(); }
+  void idleDequeue() { }
 
+private:
   ZuDerive(Delivery,
     (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoDelivery">>));
 
