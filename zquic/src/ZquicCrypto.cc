@@ -196,9 +196,9 @@ int CryptoStream::receive(
       "Zquic.CryptoRx">{nullptr};
     if (ZuUnlikely(buf->size < length))
       if (ZuUnlikely(!buf->ensure(unsigned(length)))) return -1;
-    buf->skip = 0;
-    buf->length = unsigned(length);
-    memcpy(buf->data_(), payload.data() + (spans[i].first - offset), length);
+    if (!copySpanToStream(buf, payload,
+	  unsigned(spans[i].first - offset), unsigned(length)))
+      return -1;
     Rx::rcvd(new CryptoRxPQueue::Node{
       RxData{ZuMv(buf), spans[i].first, 0, length}});
   }
