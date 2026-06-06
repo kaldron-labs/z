@@ -1687,11 +1687,26 @@ private:
 
 template <
   typename Impl, typename RxBufAlloc_, typename TxBufAlloc_>
-class Stream : public ZmPolymorph {
+class Stream :
+  public ZmPolymorph,
+  public ZmPQRx<
+    Stream<Impl, RxBufAlloc_, TxBufAlloc_>,
+    StreamRxPQueue, ZmPQRxGapIgnore<>>,
+  public ZmPQTx<
+    Stream<Impl, RxBufAlloc_, TxBufAlloc_>,
+    TxDataPQueue> {
 public:
+  using Self = Stream<Impl, RxBufAlloc_, TxBufAlloc_>;
   using Impl_ = Impl;
   using RxBufAlloc = RxBufAlloc_;
   using TxBufAlloc = TxBufAlloc_;
+  using Rx = ZmPQRx<Self, StreamRxPQueue, ZmPQRxGapIgnore<>>;
+  using Tx = ZmPQTx<Self, TxDataPQueue>;
+  using RxMsg = StreamRxPQueue::Node;
+  using RxQueueSpan = StreamRxPQueue::Span;
+  using TxMsg = TxDataPQueue::Node;
+  using TxSpan = TxDataPQueue::Span;
+  using TxKey = TxDataPQueue::Key;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -1723,6 +1738,46 @@ public:
 
   RxStream &rxStream() { return m_rx; }
 
+  StreamRxPQueue *rxQueue() { return &m_rxQueue; }
+  TxDataPQueue *txQueue() { return &m_txQueue; }
+
+  void process(RxMsg *msg) {
+    if (!msg) return;
+    RxData &data = msg->data();
+    if (!data.buf || !data.bytes) return;
+    ZiAssert(data.bufOffset + data.bytes <= data.buf->length,
+      "Zquic", (data.bufOffset, data.bytes, data.buf->length),
+      "stream Rx queued range exceeds buffer", return);
+    if (data.bufOffset) {
+      data.buf->skip += unsigned(data.bufOffset);
+      data.buf->length -= unsigned(data.bufOffset);
+    }
+    data.buf->length = unsigned(data.bytes);
+    m_rxDelivered += data.bytes;
+    m_rxState.delivered(m_rxDelivered);
+    m_rx.push(ZuMv(data.buf));
+  }
+  void request(const RxQueueSpan &, const RxQueueSpan &) { }
+  void scheduleDequeue() { Rx::dequeue(); }
+  void rescheduleDequeue() { Rx::dequeue(); }
+  void idleDequeue() { }
+
+  bool send_(TxMsg *, bool) { return true; }
+  bool resend_(TxMsg *, bool) { return true; }
+  bool sendGap_(const TxSpan &, bool) { return true; }
+  bool resendGap_(const TxSpan &, bool) { return true; }
+  void archive_(TxMsg *) { }
+  ZmRef<TxMsg> retrieve_(TxKey, TxKey) { return nullptr; }
+  void scheduleSend() { }
+  void rescheduleSend() { }
+  void idleSend() { }
+  void scheduleResend() { }
+  void rescheduleResend() { }
+  void idleResend() { }
+  void scheduleArchive() { }
+  void rescheduleArchive() { }
+  void idleArchive() { }
+
   bool txRange(unsigned i, TxRange &range) const {
     auto iter = m_txQueue.citer();
     while (auto node = iter()) {
@@ -1733,11 +1788,23 @@ public:
     }
     return false;
   }
+  bool nextTxRange(PacketBudget &, TxRange &range, bool &fin) const {
+    fin = false;
+    if (txRange(0, range)) return true;
+    if (!finReady()) return false;
+    range = {};
+    range.streamOffset = m_txBytes;
+    fin = true;
+    return true;
+  }
   bool dequeueTxRange(TxRange &range) {
     auto iter = m_txQueue.citer();
     auto node = iter();
     if (!node) return false;
     return consumeTxRange(range, uint32_t(node->data().length()));
+  }
+  bool commitTxRange(TxRange &range, uint32_t length) {
+    return consumeTxRange(range, length);
   }
   bool consumeTxRange(TxRange &range, uint32_t length) {
     if (!length) return false;
@@ -1852,6 +1919,7 @@ private:
 
     if (!m_rxState.validate(frame.offset, frame.length, frame.fin))
       return false;
+    if (frame.fin && rxPendingBeyond_(end)) return false;
 
     auto spans = ZtLocalArray(RxSpans, m_rxQueue.count_() + 1);
     if (frame.length && !newRxSpans_(frame, spans)) return false;
@@ -1862,9 +1930,7 @@ private:
 
     if (spans.length() && !queueRx_(frame, spans, diag)) return false;
 
-    if (!m_rxState.receive(frame.offset, frame.length, frame.fin)) return false;
-    drainRx_();
-    return true;
+    return m_rxState.receive(frame.offset, frame.length, frame.fin);
   }
 
   bool newRxSpans_(const Frame &frame, RxSpans &spans) const {
@@ -1898,29 +1964,11 @@ private:
     buf->length = length;
     memcpy(buf->data_(), frame.payload.data() + payloadOffset, length);
 
-    m_rxQueue.add(new StreamRxPQueue::Node{
+    Rx::rcvd(new StreamRxPQueue::Node{
       RxData{ZuMv(buf), first, 0, length}});
     ++m_rxCopies;
     if (diag) ++diag->rxPacketToStreamCopies;
     return true;
-  }
-
-  void drainRx_() {
-    while (auto node = m_rxQueue.dequeue()) {
-      RxData &data = node->data();
-      if (!data.buf || !data.bytes) continue;
-      ZiAssert(data.bufOffset + data.bytes <= data.buf->length,
-	"Zquic", (data.bufOffset, data.bytes, data.buf->length),
-	"stream Rx queued range exceeds buffer", return);
-      if (data.bufOffset) {
-	data.buf->skip += unsigned(data.bufOffset);
-	data.buf->length -= unsigned(data.bufOffset);
-      }
-      data.buf->length = unsigned(data.bytes);
-      m_rxDelivered += data.bytes;
-      m_rxState.delivered(m_rxDelivered);
-      m_rx.push(ZuMv(data.buf));
-    }
   }
 
   bool rxPendingBeyond_(uint64_t finalSize) const {
@@ -1941,7 +1989,7 @@ private:
       "stream Tx buffer range violation", return);
     uint32_t offset = buf->skip;
     uint32_t length = buf->length;
-    m_txQueue.add(new TxDataPQueue::Node{
+    Tx::send(new TxDataPQueue::Node{
       TxData{ZuMv(buf), offset, length, m_txBytes}});
     m_txBytes += length;
     m_txBufferedBytes += length;

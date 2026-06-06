@@ -123,16 +123,18 @@ struct RxPacketMark {
 
 using StreamRxPQueue =
   ZmPQueue<RxData,
-    ZmPQueueOverwrite<false,
-      ZmPQueueBits<2,
-	ZmPQueueLevels<2>>>>;
+    ZmPQueueNode<ZuObject,
+      ZmPQueueOverwrite<false,
+	ZmPQueueBits<2,
+	  ZmPQueueLevels<2>>>>>;
 
 using CryptoRxPQueue = StreamRxPQueue;
 
 using TxDataPQueue =
   ZmPQueue<TxData,
-    ZmPQueueBits<2,
-      ZmPQueueLevels<3>>>;
+    ZmPQueueNode<ZuObject,
+      ZmPQueueBits<2,
+	ZmPQueueLevels<3>>>>;
 
 using ByteRangePQueue =
   ZmPQueue<ByteRangeMark,

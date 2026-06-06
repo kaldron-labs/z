@@ -15,19 +15,20 @@
 
 namespace Zquic {
 
+using AckTrackerRxNTP = ZmPQRxGapObserve<>;
+
 class AckTracker :
-  public ZmPQRx<AckTracker, PacketRxPQueue, ZmNoLock> {
+  public ZmPQRx<AckTracker, PacketRxPQueue, AckTrackerRxNTP> {
 public:
   static constexpr unsigned Max = 64;
   using Queue = PacketRxPQueue;
-  using Rx = ZmPQRx<AckTracker, Queue, ZmNoLock>;
+  using Rx = ZmPQRx<AckTracker, Queue, AckTrackerRxNTP>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
 
   bool add(uint64_t pn) {
     if (contains(pn)) return true;
     Rx::rcvd(new Queue::Node{RxPacketMark{pn}});
-    runDequeues_();
     return true;
   }
 
@@ -99,7 +100,6 @@ public:
     Rx::rxReset(0);
     m_ackHead = 0;
     m_ackGap = {};
-    m_dequeues = 0;
   }
 
   Queue *rxQueue() { return &m_packets; }
@@ -114,27 +114,12 @@ public:
   void request(const Span &, const Span &now) {
     m_ackGap = now;
   }
-  void reRequest(const Span &now) {
-    m_ackGap = now;
-  }
 
-  void scheduleDequeue() { ++m_dequeues; }
-  void rescheduleDequeue() { ++m_dequeues; }
+  void scheduleDequeue() { Rx::dequeue(); }
+  void rescheduleDequeue() { Rx::dequeue(); }
   void idleDequeue() { }
 
-  void scheduleReRequest() { }
-  void rescheduleReRequest() { }
-  void cancelReRequest() { }
-
 private:
-  void runDequeues_() {
-    while (m_dequeues) {
-      --m_dequeues;
-      Rx::dequeue();
-    }
-    refreshGap_();
-  }
-
   void refreshGap_() {
     Span gap = m_packets.gap();
     m_ackGap = gap.length() ? gap : Span{};
@@ -163,7 +148,6 @@ private:
   Queue		m_packets{0};
   Span		m_ackGap;
   uint64_t	m_ackHead = 0;
-  unsigned	m_dequeues = 0;
 };
 
 class AckManager {
@@ -440,10 +424,10 @@ private:
 };
 
 class PacketTxSpace :
-  public ZmPQTx<PacketTxSpace, TxPacketQueue, ZmNoLock> {
+  public ZmPQTx<PacketTxSpace, TxPacketQueue> {
 public:
   using Queue = TxPacketQueue;
-  using Tx = ZmPQTx<PacketTxSpace, Queue, ZmNoLock>;
+  using Tx = ZmPQTx<PacketTxSpace, Queue>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
   using Key = Queue::Key;
@@ -471,7 +455,7 @@ public:
 
   bool add(const SentPacket &p) {
     if (m_packets.has(p.pn)) return false;
-    m_packets.add(new Queue::Node{p});
+    Tx::send(new Queue::Node{p});
     if (p.inFlight) m_bytesInFlight += p.bytes;
     return true;
   }
@@ -558,7 +542,7 @@ public:
   }
   unsigned count() const { return m_packets.count_(); }
   void clear() {
-    m_packets.reset(0);
+    Tx::txReset(0);
     m_retransmit.clear();
     m_bytesInFlight = 0;
     m_acked = 0;

@@ -983,14 +983,12 @@ private:
     Node *next[Levels];
 
     // find the item immediately following the key
-
     find_(key, next);
 
     if constexpr (Overlap) {
       Node *node_ = next[0];
 
       // process any item immediately following the key
-
       if (node_) {
 	Fn item_(node_->Node::data());
 	Key key_ = item_.key();
@@ -1016,7 +1014,6 @@ private:
 	node_ = m_tail[0];
 
       // process any item immediately preceding the key
-
       if (node_) {
 	Fn item_(node_->Node::data());
 	Key key_ = item_.key();
@@ -1042,7 +1039,6 @@ private:
       }
 
       // remove all items that are completely overlapped by the new item
-
       while (Node *node_ = next[0]) {
 	Fn item_(node_->Node::data());
 	Key key_ = item_.key();
@@ -1074,7 +1070,6 @@ private:
     }
 
     // add new item into list before following item
-
     addAt_<0>(nodeRelease(ZuMv(node)), next, addSeqNo);
     if (end > m_tailKey) m_tailKey = end;
     m_length += end - key;
@@ -1182,6 +1177,7 @@ private:
     if constexpr (Stats) this->outCount(length);
     return ret;
   }
+
 public:
   NodeMvRef shift() {
     Guard guard(m_lock);
