@@ -79,6 +79,32 @@ void testRecovery()
       range1 == 1,
     "disjoint ACK frame range encoding mismatch");
 
+  Zquic::AckTracker reordered;
+  ZuCHECK(reordered.add(0) && reordered.add(2),
+    "reordered ACK range setup failed");
+  ZuCHECK(reordered.count() == 2 &&
+      reordered.first(0) == 0 &&
+      reordered.last(0) == 0 &&
+      reordered.first(1) == 2 &&
+      reordered.last(1) == 2,
+    "reordered ACK gap was not retained");
+  n = reordered.writeFrame(b, sizeof(b));
+  ZuCHECK(n > 0 &&
+      !Zquic::FrameCodec::parse(
+	ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
+	frame, used) &&
+      frame.ackRangeCount == 2 &&
+      frame.ackRanges[0].first == 0 &&
+      frame.ackRanges[0].largest == 0 &&
+      frame.ackRanges[1].first == 2 &&
+      frame.ackRanges[1].largest == 2,
+    "reordered ACK frame did not encode stashed gap");
+  ZuCHECK(reordered.add(1) &&
+      reordered.count() == 1 &&
+      reordered.first(0) == 0 &&
+      reordered.last(0) == 2,
+    "filled ACK gap did not coalesce ranges");
+
   Zquic::RttEstimator rtt;
   rtt.sample(1000, 0, true);
   rtt.sample(1200, 100, true);

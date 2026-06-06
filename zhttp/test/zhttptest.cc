@@ -65,6 +65,8 @@ struct SpanRx {
   SpanRx(ZuSpan<uint8_t> data_) : data{data_} { }
 
   ZuSpan<uint8_t> span() { return data; }
+  template <typename L>
+  bool spans(L &&l) { return l(data); }
   bool advance(unsigned n) {
     if (n > data.length()) n = data.length();
     data.offset(n);

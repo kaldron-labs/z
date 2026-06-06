@@ -12,6 +12,9 @@
 #ifndef ZquicFrame_HH
 #include <zlib/ZquicFrame.hh>
 #endif
+#ifndef ZquicPQueue_HH
+#include <zlib/ZquicPQueue.hh>
+#endif
 
 namespace Zquic {
 
@@ -178,29 +181,38 @@ private:
 
 class StreamRxState {
 public:
-  static constexpr unsigned MaxRanges = 16;
-
   bool finSeen() const { return m_finSeen; }
   bool finalSizeKnown() const { return m_finalSizeKnown; }
   uint64_t finalSize() const { return m_finalSize; }
   uint64_t delivered() const { return m_delivered; }
-  unsigned rangeCount() const { return m_count; }
-  uint64_t rangeFirst(unsigned i) const { return i < m_count ? m_ranges[i].first : 0; }
-  uint64_t rangeLast(unsigned i) const { return i < m_count ? m_ranges[i].last : 0; }
+  unsigned rangeCount() const { return 0; }
+  uint64_t rangeFirst(unsigned) const { return 0; }
+  uint64_t rangeLast(unsigned) const { return 0; }
 
-  bool receive(uint64_t offset, uint64_t length, bool fin) {
+  bool validate(uint64_t offset, uint64_t length, bool fin) const {
     uint64_t end = offset + length;
     if (end < offset) return false;
     if (m_finalSizeKnown && end > m_finalSize) return false;
     if (fin) {
       if (m_finalSizeKnown && m_finalSize != end) return false;
+    }
+    return !m_finalSizeKnown || m_delivered <= m_finalSize;
+  }
+
+  bool receive(uint64_t offset, uint64_t length, bool fin) {
+    if (!validate(offset, length, fin)) return false;
+    uint64_t end = offset + length;
+    if (fin) {
       m_finalSizeKnown = true;
       m_finSeen = true;
       m_finalSize = end;
     }
-    if (length && !insert_(offset, end)) return false;
-    advance_();
-    return !m_finalSizeKnown || m_delivered <= m_finalSize;
+    if (offset <= m_delivered && end > m_delivered) m_delivered = end;
+    return true;
+  }
+
+  void delivered(uint64_t n) {
+    if (n > m_delivered) m_delivered = n;
   }
 
   bool complete() const {
@@ -208,54 +220,10 @@ public:
   }
 
 private:
-  struct Range {
-    uint64_t	first = 0;
-    uint64_t	last = 0;
-  };
-
-  bool insert_(uint64_t first, uint64_t last) {
-    if (last <= m_delivered) return true;
-    if (first < m_delivered) first = m_delivered;
-    for (unsigned i = 0; i < m_count; ++i)
-      if (first >= m_ranges[i].first && last <= m_ranges[i].last)
-	return true;
-    if (m_count >= MaxRanges) return false;
-    m_ranges[m_count++] = Range{first, last};
-    for (unsigned i = 1; i < m_count; ++i) {
-      Range r = m_ranges[i];
-      unsigned j = i;
-      while (j && r.first < m_ranges[j - 1].first) {
-	m_ranges[j] = m_ranges[j - 1];
-	--j;
-      }
-      m_ranges[j] = r;
-    }
-    unsigned out = 0;
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (out && m_ranges[i].first <= m_ranges[out - 1].last) {
-	if (m_ranges[i].last > m_ranges[out - 1].last)
-	  m_ranges[out - 1].last = m_ranges[i].last;
-      } else
-	m_ranges[out++] = m_ranges[i];
-    }
-    m_count = out;
-    return true;
-  }
-
-  void advance_() {
-    while (m_count && m_ranges[0].first <= m_delivered) {
-      if (m_ranges[0].last > m_delivered) m_delivered = m_ranges[0].last;
-      for (unsigned i = 1; i < m_count; ++i) m_ranges[i - 1] = m_ranges[i];
-      --m_count;
-    }
-  }
-
   bool		m_finSeen = false;
   bool		m_finalSizeKnown = false;
   uint64_t	m_finalSize = 0;
   uint64_t	m_delivered = 0;
-  Range		m_ranges[MaxRanges];
-  unsigned	m_count = 0;
 };
 
 class StreamTxState {

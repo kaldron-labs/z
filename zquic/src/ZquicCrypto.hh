@@ -16,8 +16,13 @@
 #ifndef ZquicFrame_HH
 #include <zlib/ZquicFrame.hh>
 #endif
+#ifndef ZquicPQueue_HH
+#include <zlib/ZquicPQueue.hh>
+#endif
 
 #include <zpicotls.h>
+
+#include <zlib/ZtArray.hh>
 
 namespace Ztls { namespace Backend {
 struct PKey;
@@ -125,30 +130,26 @@ struct CryptoDiag {
 class CryptoStream {
 public:
   static constexpr unsigned MaxBuffered = 64 * 1024;
-  static constexpr unsigned MaxRanges = 16;
 
   uint64_t txOffset() const { return m_txOffset; }
   uint64_t rxOffset() const { return m_rxOffset; }
-  unsigned rangeCount() const { return m_rangeCount; }
+  unsigned rangeCount() const { return m_rxQueue.count_(); }
 
+  void reset();
   int writeFrame(uint8_t *, unsigned, ZuCSpan, CryptoDiag * = nullptr);
   int receiveFrame(const Frame &, ZuCSpan &, CryptoDiag * = nullptr);
   int receive(uint64_t, ZuCSpan, ZuCSpan &, CryptoDiag * = nullptr);
 
 private:
-  struct Range {
-    uint64_t	first = 0;
-    uint64_t	last = 0;
-  };
-
-  bool insert_(uint64_t, uint64_t);
   void deliver_(ZuCSpan &);
 
-  uint8_t	m_rx[MaxBuffered]{};
+  ZuDerive(Delivery,
+    (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoDelivery">>));
+
   uint64_t	m_txOffset = 0;
   uint64_t	m_rxOffset = 0;
-  Range		m_ranges[MaxRanges];
-  unsigned	m_rangeCount = 0;
+  CryptoRxPQueue m_rxQueue{0};
+  Delivery	m_delivery;
 };
 
 struct CryptoConfig {

@@ -36,12 +36,14 @@ void testStreamHelpers()
 
   Zquic::StreamRxState reorder;
   ZuCHECK(reorder.receive(5, 5, true), "out-of-order receive failed");
-  ZuCHECK(!reorder.complete() && reorder.rangeCount() == 1 &&
-    reorder.rangeFirst(0) == 5 && reorder.rangeLast(0) == 10,
-    "out-of-order range mismatch");
+  ZuCHECK(!reorder.complete() && reorder.finalSizeKnown() &&
+      reorder.finalSize() == 10 && !reorder.rangeCount(),
+    "out-of-order final-size state mismatch");
   ZuCHECK(reorder.receive(0, 5, false), "gap fill receive failed");
-  ZuCHECK(reorder.complete() && reorder.delivered() == 10,
-    "out-of-order stream did not complete");
+  ZuCHECK(!reorder.complete() && reorder.delivered() == 5,
+    "standalone stream state tracked queue delivery");
+  reorder.delivered(10);
+  ZuCHECK(reorder.complete(), "stream state did not complete after delivery");
   ZuCHECK(reorder.receive(2, 3, false), "duplicate range rejected");
 }
 

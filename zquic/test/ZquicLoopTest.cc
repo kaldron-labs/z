@@ -26,6 +26,8 @@ struct TestStream :
   using Base = Zquic::Stream<TestStream, Zquic::StreamBufAlloc<>,
     Zquic::StreamBufAlloc<>>;
   TestStream(int64_t id) : Base{id} { }
+  int process(Zquic::RxStream &) { ++processed; return 0; }
+  unsigned processed = 0;
 };
 struct TestLink;
 using TestLinkRef = ZmRef<TestLink>;
@@ -100,34 +102,42 @@ void testSplitReorderedStreamFrames()
   uint8_t b[800];
   Zquic::Frame f;
   unsigned used = 0;
-  Zquic::StreamRxState rx;
+  App app;
+  TestLink client{&app};
+  auto stream = client.stream(Zquic::StreamType::Bidi);
 
   int n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), 0, sizeof(p0), bytes_(p1, sizeof(p1)), false);
+    b, sizeof(b), stream->id(), sizeof(p0), bytes_(p1, sizeof(p1)), false);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
       bytes_(b, unsigned(n)), f, used) &&
       f.offset == sizeof(p0) && f.length == sizeof(p1),
     "loop second STREAM frame parse failed");
-  ZuCHECK(rx.receive(f.offset, f.length, f.fin) && !rx.complete(),
+  ZuCHECK(stream->processFrame(f) == 0 &&
+      stream->rxPending() == 1 &&
+      !stream->rxBytes(),
     "loop out-of-order stream receive failed");
 
   n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), 0, 0, bytes_(p0, sizeof(p0)), false);
+    b, sizeof(b), stream->id(), 0, bytes_(p0, sizeof(p0)), false);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
       bytes_(b, unsigned(n)), f, used) &&
       f.offset == 0 && f.length == sizeof(p0),
     "loop first STREAM frame parse failed");
-  ZuCHECK(rx.receive(f.offset, f.length, f.fin) && !rx.complete(),
+  ZuCHECK(stream->processFrame(f) == 0 &&
+      stream->rxBytes() == sizeof(p0) + sizeof(p1) &&
+      !stream->rxPending(),
     "loop stream gap fill failed");
 
   n = Zquic::FrameCodec::writeStream(
-    b, sizeof(b), 0, sizeof(p0) + sizeof(p1), bytes_(p2, sizeof(p2)), true);
+    b, sizeof(b), stream->id(), sizeof(p0) + sizeof(p1),
+    bytes_(p2, sizeof(p2)), true);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
       bytes_(b, unsigned(n)), f, used) &&
       f.offset == sizeof(p0) + sizeof(p1) && f.length == sizeof(p2) && f.fin,
     "loop final STREAM frame parse failed");
-  ZuCHECK(rx.receive(f.offset, f.length, f.fin) &&
-      rx.complete() && rx.finalSize() == sizeof(p0) + sizeof(p1) + sizeof(p2),
+  ZuCHECK(stream->processFrame(f) == 0 &&
+      stream->rxComplete() &&
+      stream->finalSize() == sizeof(p0) + sizeof(p1) + sizeof(p2),
     "loop stream final-size completion failed");
 }
 

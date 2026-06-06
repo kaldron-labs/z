@@ -191,6 +191,65 @@ struct Headers {
   TransferEncoding::T	xferEncoding = -1;
   bool			chunked = false;
 
+  // parse one complete header line, excluding the terminating CRLF
+  template <typename Msg, typename KeyFn, typename KVFn>
+  int parseLine(ZuSpan<uint8_t> line, Msg &&msg, KeyFn &&keyFn, KVFn &&kvFn) {
+    if (!line) {
+      complete = true;
+      return 1;
+    }
+    int n = eok(line);
+    if (ZuUnlikely(n < 0)) return -1;
+    ZuSpan key(&line[0], unsigned(n));
+    line.offset(n + 1); // skip key and delimiter
+    n = bov(line);
+    if (ZuUnlikely(n < 0)) return -1;
+    line.offset(n); // skip white space
+    ZuSpan value{line.data(), line.length()};
+    n = eov(value);
+    if (ZuUnlikely(n < 0)) return -1; // should never happen
+    value.trunc(n);
+    auto scratch = ZtLocalArray(HdrData, key.length() + 2 + value.length());
+    scratch << key << uint8_t(':') << uint8_t(' ') << value;
+    ZuSpan<uint8_t> key_{scratch.data(), key.length()};
+    normalize(key_);
+    ZuSpan kv{scratch.data(), scratch.length()}; // "key: value"
+    int j = kvMatch(kv);
+    if (j >= 0)
+      kvFn(msg, j);
+    else {
+      j = keyMatcher.match(key_);
+      if (j >= 0) {
+	switch (j) {
+	  case Key::TransferEncoding: {
+	    bool valid = true;
+	    split(value, [this, &valid](unsigned i, ZuBSpan token) {
+	      // chunked must come last, anything else must be first
+	      if (chunked)
+		valid = false;
+	      else if (token == "chunked")
+		chunked = true;
+	      else if (i)
+		valid = false;
+	      else
+		xferEncoding = TransferEncoding::lookup(token);
+	    });
+	    if (!valid) return -1;
+	  } break;
+	  case Key::ContentLength:
+	    contentLength =
+	      ZuBox<unsigned>{reinterpret_cast<const char *>(&value[0]),
+		unsigned(value.length())};
+	    break;
+	  default:
+	    keyFn(msg, j - Key::N, value);
+	    break;
+	}
+      }
+    }
+    return 1;
+  }
+
   // parse headers
   template <typename Msg, typename KeyFn, typename KVFn>
   int parse(ZuSpan<uint8_t> data, Msg &&msg, KeyFn &&keyFn, KVFn &&kvFn) {
@@ -199,70 +258,15 @@ struct Headers {
     data.offset(o);
     for (;;) {
       if (data.length() < 2) return 0;
-      if (data[0] == '\r' && data[1] == '\n') break;
-      int n = eok(data);
-      if (ZuUnlikely(n < 0)) return eol(data) < 0 ? 0 : -1; // unterminated key
-      ZuSpan key(&data[0], unsigned(n));
-      o += n + 1;
-      data.offset(n + 1); // skip key and delimiter
-      n = bov(data);
-      if (ZuUnlikely(n < 0)) return 0; // unterminated value
-      o += n;
-      data.offset(n); // skip white space
-      n = eol(data);
-      if (ZuUnlikely(n < 0)) return 0; // unterminated value
-      ZuSpan value(&data[0], unsigned(n));
+      int n = eol(data);
+      if (ZuUnlikely(n < 0)) return 0;
+      int r = parseLine({&data[0], unsigned(n)}, msg, keyFn, kvFn);
+      if (ZuUnlikely(r < 0)) return -1;
       o += n + 2;
-      data.offset(n + 2); // skip value and EOL
-      n = eov(value);
-      if (ZuUnlikely(n < 0)) return -1; // should never happen
-      value.trunc(n);
-      auto scratch = ZtLocalArray(HdrData, key.length() + 2 + value.length());
-      scratch << key << uint8_t(':') << uint8_t(' ') << value;
-      ZuSpan<uint8_t> key_{scratch.data(), key.length()};
-      normalize(key_);
-      ZuSpan kv{scratch.data(), scratch.length()}; // "key: value"
-      int j = kvMatch(kv);
-      if (j >= 0)
-	kvFn(msg, j);
-      else {
-	j = keyMatcher.match(key_);
-	if (j >= 0) {
-	  switch (j) {
-	    case Key::TransferEncoding: {
-	      bool valid = true;
-	      split(value, [this, &valid](unsigned i, ZuBSpan token) {
-		// chunked must come last, anything else must be first
-		if (chunked)
-		  valid = false;
-		else if (token == "chunked")
-		  chunked = true;
-		else if (i)
-		  valid = false;
-		else
-		  xferEncoding = TransferEncoding::lookup(token);
-	      });
-	      if (!valid) return -1;
-	    } break;
-	    case Key::ContentLength:
-	      contentLength =
-		ZuBox<unsigned>{reinterpret_cast<const char *>(&value[0]),
-		  unsigned(value.length())};
-	      break;
-	    default:
-	      keyFn(msg, j - Key::N, value);
-	      break;
-	  }
-	}
-      }
+      data.offset(n + 2);
       offset = o;
+      if (complete) return o;
     }
-    o += 2;
-    data.offset(2);
-    offset = o;
-    complete = true;
-
-    return o;
   }
 
   // reset for next message
@@ -288,6 +292,25 @@ struct Request_ : public Headers<Keys, KVs> {
   using Base::offset;
   using Base::reset;
 
+  // parse one complete request line, excluding the terminating CRLF
+  template <typename Msg, typename Operation>
+  int parseStartLine(ZuSpan<uint8_t> data, Msg &&msg, Operation &&operation) {
+    unsigned n = data.length();
+    int o = 0; // intentionally int
+    for (o = 0; o < int(n) && data[o] != ' '; )
+      if (ZuUnlikely(++o > 7)) return -1; // unterminated method
+    if (ZuUnlikely(!o || o >= int(n))) return -1; // missing method
+    method = Method::lookup({&data[0], unsigned(o)});
+    unsigned b = ++o;
+    while (o < int(n) && data[o] != ' ') ++o;
+    if (ZuUnlikely(b == unsigned(o) || o >= int(n))) return -1;
+    ZuCSpan path{&data[b], unsigned(o) - b};
+    b = ++o;
+    if (ZuUnlikely(b >= n)) return -1; // missing protocol
+    ZuFwd<Operation>(operation)(msg, method, path);
+    return 1;
+  }
+
   // parse request
   template <typename Msg, typename Operation, typename Key, typename KV>
   int parse(
@@ -295,24 +318,12 @@ struct Request_ : public Headers<Keys, KVs> {
     Msg &&msg, Operation &&operation, Key &&key, KV &&kv)
   {
     if (!offset) {
-      unsigned n = data.length();
-      if (ZuUnlikely(n < 27)) return 0; // shortest request length is 27
-      int o = 0; // intentionally int
-      for (o = 0; data[o] != ' '; )
-	if (ZuUnlikely(++o > 7)) return 0; // unterminated method
-      if (!o) return 0; // missing method
-      method = Method::lookup({&data[0], unsigned(o)});
-      unsigned b = ++o;
-      while (data[o] != ' ')
-	if (ZuUnlikely(++o >= n)) return 0; // unterminated path
-      if (ZuUnlikely(b == o)) return -1; // missing path
-      ZuCSpan path{&data[b], o - b};
-      b = ++o;
-      o = eol({&data[b], n - b});
-      if (ZuUnlikely(o < 0)) return 0; // unterminated protocol
-      // ZuCSpan protocol{&data[b], unsigned(o)};
-      ZuFwd<Operation>(operation)(msg, method, path);
-      offset = b + o + 2;
+      int o = eol<false>(data);
+      if (ZuUnlikely(o < 0)) return 0;
+      int r = parseStartLine({&data[0], unsigned(o)}, msg,
+	ZuFwd<Operation>(operation));
+      if (ZuUnlikely(r < 0)) return -1;
+      offset = o + 2;
     }
     return Headers<Keys, KVs>::parse(data, msg, ZuFwd<Key>(key), ZuFwd<KV>(kv));
   }
@@ -332,32 +343,37 @@ struct Response_ : public Headers<Keys, KVs> {
   using Base::offset;
   using Base::reset;
 
+  // parse one complete response line, excluding the terminating CRLF
+  template <typename Msg, typename Status>
+  int parseStartLine(ZuSpan<uint8_t> data, Msg &&msg, Status &&status_) {
+    unsigned n = data.length();
+    int o = 0; // intentionally int
+    for (o = 0; o < int(n) && data[o] != ' '; )
+      if (ZuUnlikely(++o > 8)) return -1; // unterminated protocol
+    if (ZuUnlikely(!o || o >= int(n))) return -1; // missing protocol
+    unsigned b = ++o;
+    int c; // intentionally int
+    while (o < int(n) && (c = data[o]) != ' ') {
+      if (c < '0' || c > '9') return -1; // not a number
+      c -= '0';
+      status = status < 0 ? c : (status * 10) + c;
+      if (ZuUnlikely(++o > int(b + 3))) return -1;
+    }
+    if (ZuUnlikely(b == unsigned(o) || o >= int(n))) return -1;
+    ZuFwd<Status>(status_)(msg, status);
+    return 1;
+  }
+
   // parse response
   template <typename Msg, typename Status, typename Key, typename KV>
   int parse(ZuSpan<uint8_t> data, Msg &&msg, Status &&status_, Key &&key, KV &&kv) {
     if (!offset) {
-      unsigned n = data.length();
-      if (ZuUnlikely(n < 19)) return 0; // shortest possible response is 19
-      int o = 0; // intentionally int
-      for (o = 0; data[o] != ' '; )
-	if (ZuUnlikely(++o > 8)) return 0; // unterminated protocol
-      if (!o) return 0; // missing protocol
-      // ZuCSpan protocol{&data[0], unsigned(o)};
-      unsigned b = ++o;
-      int c; // intentionally int
-      while ((c = data[o]) != ' ') {
-	if (c < '0' || c > '9') return -1; // not a number
-	c -= '0';
-	status = status < 0 ? c : (status * 10) + c;
-	if (ZuUnlikely(++o > b + 3)) return 0; // unterminated status
-      }
-      if (ZuUnlikely(b == o)) return -1; // missing status
-      b = ++o;
-      o = eol({&data[b], n - b});
-      if (ZuUnlikely(o < 0)) return 0; // unterminated reason
-      // ZuCSpan reason{&data[b], unsigned(o)};
-      ZuFwd<Status>(status_)(msg, status);
-      offset = b + o + 2;
+      int o = eol<false>(data);
+      if (ZuUnlikely(o < 0)) return 0;
+      int r = parseStartLine({&data[0], unsigned(o)}, msg,
+	ZuFwd<Status>(status_));
+      if (ZuUnlikely(r < 0)) return -1;
+      offset = o + 2;
     }
     return Headers<Keys, KVs>::parse(data, msg, ZuFwd<Key>(key), ZuFwd<KV>(kv));
   }
@@ -708,57 +724,87 @@ struct Parser {
     unsigned consumed = 0;
 
     if (!self.header.complete) {
-      auto data = self.stream.span();
-      if (!data) return 0;
-      auto hdr = ZtLocalArray(HdrData, self.header.max);
-      int o = -1;
-      bool hdrTooLarge = false;
-      if constexpr (requires { self.stream.spans([](ZuSpan<uint8_t>) {
-	    return true;
-	  }); }) {
-	self.stream.spans([&hdr, &o, &hdrTooLarge, max = self.header.max](
-	      ZuSpan<uint8_t> data) {
-	  unsigned n = data.length();
-	  unsigned remaining = max - hdr.length();
-	  if (n > remaining) n = remaining;
-	  hdr << ZuBSpan{data.data(), n};
-	  o = eoh(hdr.span());
-	  if (o >= 0) return false;
-	  if (ZuUnlikely(n < data.length())) {
-	    hdrTooLarge = true;
-	    return false;
-	  }
-	  return true;
-	});
-      } else {
-	o = eoh(data);
-	if (ZuUnlikely(o < 0)) {
-	  if (data.length() > self.header.max) hdrTooLarge = true;
-	} else if (ZuUnlikely(unsigned(o) > self.header.max))
-	  hdrTooLarge = true;
-	if (o >= 0) hdr << ZuBSpan{data.data(), unsigned(o)};
-      }
-      if (ZuUnlikely(hdrTooLarge)) {
+      auto hdrTooLarge = [&self]() {
 	self.header.complete = true;
 	self.header.valid = false;
 	ZiLOG(Error, "Zhttp", "HTTP header too large");
 	return -1;
+      };
+      auto parseLine = [&]<bool CanFold, typename Fn>(Fn &&fn) -> int {
+	auto data = self.stream.span();
+	if (!data) return 0;
+	if (ZuUnlikely(self.header.offset >= self.header.max))
+	  return hdrTooLarge();
+	unsigned remaining = self.header.max - self.header.offset;
+	auto consumeLine = [&](ZuSpan<uint8_t> line, unsigned n) -> int {
+	  if (ZuUnlikely(n > remaining)) return hdrTooLarge();
+	  int r = ZuFwd<Fn>(fn)(line);
+	  if (ZuUnlikely(r < 0)) return -1;
+	  self.stream.advance(n);
+	  consumed += n;
+	  self.header.offset += n;
+	  return 1;
+	};
+	int o = eol<CanFold>(data);
+	if (o >= 0) {
+	  unsigned n = unsigned(o) + 2;
+	  bool useScratch = false;
+	  if constexpr (CanFold) {
+	    if (o > 0 && n == data.length()) {
+	      bool head = true;
+	      self.stream.spans([&](ZuSpan<uint8_t> span) {
+		if (head) { head = false; return true; }
+		useScratch = span && islws(span[0]);
+		return false;
+	      });
+	    }
+	  }
+	  if (!useScratch) return consumeLine({data.data(), unsigned(o)}, n);
+	}
+	auto line = ZtLocalArray(HdrData, remaining);
+	o = -1;
+	bool tooLarge = false;
+	self.stream.spans([&](ZuSpan<uint8_t> data) {
+	  unsigned n = data.length();
+	  unsigned available = remaining - line.length();
+	  if (n > available) n = available;
+	  line << ZuBSpan{data.data(), n};
+	  o = eol<CanFold>(line.span());
+	  if (o >= 0) {
+	    unsigned m = unsigned(o) + 2;
+	    if constexpr (!CanFold)
+	      return false;
+	    else if (!o || m < line.length())
+	      return false;
+	  }
+	  if (ZuUnlikely(n < data.length())) {
+	    tooLarge = true;
+	    return false;
+	  }
+	  return true;
+	});
+	if (ZuUnlikely(tooLarge || (o < 0 && line.length() >= remaining)))
+	  return hdrTooLarge();
+	if (o < 0) return 0;
+	return consumeLine({line.data(), unsigned(o)}, unsigned(o) + 2);
+      };
+      while (!self.header.complete) {
+	int n;
+	if (!self.header.offset)
+	  n = parseLine.template operator()<false>([&](ZuSpan<uint8_t> line) {
+	    return self.header.parseStartLine(line, self, head);
+	  });
+	else
+	  n = parseLine.template operator()<true>([&](ZuSpan<uint8_t> line) {
+	    return self.header.parseLine(line, self, key, kv);
+	  });
+	if (n < 0) {
+	  ZiLOG(Error, "Zhttp", "invalid HTTP response");
+	  return -1;
+	}
+	if (!n) return consumed;
       }
-      if (o < 0) return 0;
-      ZuSpan<uint8_t> headerSpan{hdr.data(), unsigned(o)};
-      int n = self.header.parse(
-	headerSpan, self, ZuFwd<Head>(head), ZuFwd<Key>(key),
-	ZuFwd<KV>(kv));
-      if (n < 0) {
-	ZiLOG(Error, "Zhttp", "invalid HTTP response");
-	return -1;
-      }
-      // defensive sanity check on parse() return, n > o wreaks havoc
-      ZiAssert(n <= o, "Zhttp", (o, n), "o=" << o << " n=" << n, n = o);
-      if (!self.header.complete) return 0;
-      self.stream.advance(n);
-      consumed += n;
-      n = self.body.init(self.header);
+      int n = self.body.init(self.header);
       if (n < 0) {
 	ZiLOG(Error, "Zhttp", "invalid HTTP transfer-encoding / content-length");
 	return -1;

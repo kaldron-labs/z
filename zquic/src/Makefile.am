@@ -5,7 +5,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-pkginclude_HEADERS = ZquicLib.hh ZquicTypes.hh ZquicBuf.hh Zquic.hh \
+pkginclude_HEADERS = ZquicLib.hh ZquicTypes.hh ZquicBuf.hh ZquicPQueue.hh Zquic.hh \
 	ZquicEndpoint.hh ZquicPath.hh ZquicSock.hh ZquicPacket.hh \
 	ZquicFrame.hh ZquicTransportParams.hh ZquicCrypto.hh ZquicConn.hh \
 	ZquicStream.hh ZquicSched.hh ZquicRecovery.hh ZquicDiag.hh

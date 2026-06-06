@@ -15,91 +15,155 @@
 
 namespace Zquic {
 
-class AckTracker {
+class AckTracker :
+  public ZmPQRx<AckTracker, PacketRxPQueue, ZmNoLock> {
 public:
-  static constexpr unsigned Max = 16;
+  static constexpr unsigned Max = 64;
+  using Queue = PacketRxPQueue;
+  using Rx = ZmPQRx<AckTracker, Queue, ZmNoLock>;
+  using Msg = Queue::Node;
+  using Span = Queue::Span;
 
   bool add(uint64_t pn) {
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (pn >= m_first[i] && pn <= m_last[i]) return true;
-      bool before = pn != uint64_t(-1) && pn + 1 == m_first[i];
-      bool after = m_last[i] != uint64_t(-1) && pn == m_last[i] + 1;
-      if (!before && !after) continue;
-      if (before) m_first[i] = pn;
-      else m_last[i] = pn;
-      merge_();
-      return true;
-    }
-    if (m_count >= Max) return false;
-    m_first[m_count] = m_last[m_count] = pn;
-    ++m_count;
-    merge_();
+    if (contains(pn)) return true;
+    Rx::rcvd(new Queue::Node{RxPacketMark{pn}});
+    runDequeues_();
     return true;
   }
 
   bool contains(uint64_t pn) const {
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (pn >= m_first[i] && pn <= m_last[i]) return true;
-    }
-    return false;
+    return pn < m_ackHead || m_packets.has(pn);
   }
 
-  unsigned count() const { return m_count; }
-  uint64_t first(unsigned i) const { return i < m_count ? m_first[i] : 0; }
-  uint64_t last(unsigned i) const { return i < m_count ? m_last[i] : 0; }
+  unsigned count() const {
+    unsigned n = 0;
+    ranges_([&n](const AckRange &) { ++n; return true; });
+    return n;
+  }
+  uint64_t first(unsigned i) const {
+    uint64_t v = 0;
+    unsigned n = 0;
+    ranges_([i, &n, &v](const AckRange &range) {
+      if (n++ == i) { v = range.first; return false; }
+      return true;
+    });
+    return v;
+  }
+  uint64_t last(unsigned i) const {
+    uint64_t v = 0;
+    unsigned n = 0;
+    ranges_([i, &n, &v](const AckRange &range) {
+      if (n++ == i) { v = range.largest; return false; }
+      return true;
+    });
+    return v;
+  }
   bool range(unsigned i, AckRange &range) const {
-    if (i >= m_count) return false;
-    range = AckRange{m_last[i], m_first[i]};
-    return true;
+    bool found = false;
+    unsigned n = 0;
+    ranges_([i, &n, &found, &range](const AckRange &range_) {
+      if (n++ != i) return true;
+      range = range_;
+      found = true;
+      return false;
+    });
+    return found;
   }
   uint64_t largest() const {
     uint64_t v = 0;
-    for (unsigned i = 0; i < m_count; ++i)
-      if (!i || m_last[i] > v) v = m_last[i];
+    bool found = false;
+    m_packets.rspans([&v, &found](const auto &span) {
+      v = span.key() + span.length() - 1;
+      found = true;
+      return false;
+    });
+    if (m_ackHead && (!found || m_ackHead - 1 > v)) {
+      v = m_ackHead - 1;
+      found = true;
+    }
+    if (!found) return 0;
     return v;
   }
   int writeFrame(uint8_t *out, unsigned len, uint64_t delay = 0) const {
     AckRange ranges[Max];
-    for (unsigned i = 0; i < m_count; ++i)
-      ranges[i] = AckRange{m_last[i], m_first[i]};
-    return FrameCodec::writeAckRanges(out, len, ranges, m_count, delay);
+    unsigned n = 0;
+    bool ok = ranges_([&ranges, &n](const AckRange &range) {
+      if (n >= Max) return false;
+      ranges[n++] = range;
+      return true;
+    });
+    if (!ok || !n) return -1;
+    return FrameCodec::writeAckRanges(out, len, ranges, n, delay);
   }
-  void clear() { m_count = 0; }
+  void clear() {
+    Rx::rxReset(0);
+    m_ackHead = 0;
+    m_ackGap = {};
+    m_dequeues = 0;
+  }
+
+  Queue *rxQueue() { return &m_packets; }
+
+  void process(Msg *msg) {
+    if (!msg) return;
+    uint64_t pn = msg->data().pn;
+    if (pn >= m_ackHead) m_ackHead = pn + 1;
+    refreshGap_();
+  }
+
+  void request(const Span &, const Span &now) {
+    m_ackGap = now;
+  }
+  void reRequest(const Span &now) {
+    m_ackGap = now;
+  }
+
+  void scheduleDequeue() { ++m_dequeues; }
+  void rescheduleDequeue() { ++m_dequeues; }
+  void idleDequeue() { }
+
+  void scheduleReRequest() { }
+  void rescheduleReRequest() { }
+  void cancelReRequest() { }
 
 private:
-  static bool adjacent_(uint64_t l, uint64_t r) {
-    return l == r || (l < r && r - l == 1);
+  void runDequeues_() {
+    while (m_dequeues) {
+      --m_dequeues;
+      Rx::dequeue();
+    }
+    refreshGap_();
   }
 
-  void merge_() {
-    for (unsigned i = 1; i < m_count; ++i) {
-      uint64_t first = m_first[i], last = m_last[i];
-      unsigned j = i;
-      while (j && first < m_first[j - 1]) {
-	m_first[j] = m_first[j - 1];
-	m_last[j] = m_last[j - 1];
-	--j;
-      }
-      m_first[j] = first;
-      m_last[j] = last;
-    }
-    unsigned out = 0;
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (out && (m_first[i] <= m_last[out - 1] ||
-	    adjacent_(m_last[out - 1], m_first[i]))) {
-	if (m_last[i] > m_last[out - 1]) m_last[out - 1] = m_last[i];
-      } else {
-	m_first[out] = m_first[i];
-	m_last[out] = m_last[i];
-	++out;
-      }
-    }
-    m_count = out;
+  void refreshGap_() {
+    Span gap = m_packets.gap();
+    m_ackGap = gap.length() ? gap : Span{};
   }
 
-  uint64_t	m_first[Max] = {};
-  uint64_t	m_last[Max] = {};
-  unsigned	m_count = 0;
+  template <typename L>
+  bool ranges_(L &&l) const {
+    if (m_ackHead)
+      if (!l(AckRange{m_ackHead - 1, 0})) return false;
+    Span ackGap = m_ackGap;
+    uint64_t gapEnd = 0;
+    bool haveGap =
+      ackGap.length() && Queue::endOf(ackGap.key(), ackGap.length(), gapEnd);
+    return m_packets.spans([&l, haveGap, gapEnd](const auto &span) {
+      uint64_t first = span.key();
+      uint64_t end = 0;
+      if (!Queue::endOf(first, span.length(), end)) return false;
+      if (haveGap && first < gapEnd) {
+	if (end <= gapEnd) return true;
+	first = gapEnd;
+      }
+      return l(AckRange{end - 1, first});
+    });
+  }
+
+  Queue		m_packets{0};
+  Span		m_ackGap;
+  uint64_t	m_ackHead = 0;
+  unsigned	m_dequeues = 0;
 };
 
 class AckManager {
@@ -147,7 +211,6 @@ public:
   }
   void sent(PacketSpace::T space) {
     unsigned i = index_(space);
-    m_ack[i].clear();
     m_pending[i] = false;
     m_deadlineSet[i] = false;
     m_deadline[i] = 0;
@@ -254,7 +317,7 @@ struct SentFrameRef {
   SentFrameKind::T	kind = SentFrameKind::None;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
-  unsigned		length = 0;
+  uint64_t		length = 0;
   bool			fin = false;
   TxRange		range;
 
@@ -269,7 +332,7 @@ struct SentFrameRef {
     return ref;
   }
 
-  static SentFrameRef crypto(uint64_t offset_, unsigned length_) {
+  static SentFrameRef crypto(uint64_t offset_, uint64_t length_) {
     SentFrameRef ref;
     ref.kind = SentFrameKind::Crypto;
     ref.offset = offset_;
@@ -286,6 +349,13 @@ struct SentFrameRef {
 
 struct SentPacket {
   static constexpr unsigned MaxFrames = 8;
+
+  uint64_t key() const { return pn; }
+  uint64_t length() const { return 1; }
+  uint64_t clipHead(uint64_t) { return 0; }
+  uint64_t clipTail(uint64_t) { return 0; }
+  template <typename I>
+  void write(const I &) { }
 
   bool addFrame(const SentFrameRef &frame) {
     if (frame.kind == SentFrameKind::None || frameCount >= MaxFrames)
@@ -313,64 +383,102 @@ struct SentPacket {
   unsigned	frameCount = 0;
 };
 
+using TxPacket = SentPacket;
+
+using TxPacketQueue =
+  ZmPQueue<TxPacket,
+    ZmPQueueNode<ZuObject,
+      ZmPQueueBits<3,
+	ZmPQueueLevels<4>>>>;
+
 class RetransmitQueue {
 public:
-  static constexpr unsigned Max = 128;
+  struct Entry {
+    uint64_t		seq = 0;
+    SentFrameRef	frame;
+
+    Entry() = default;
+    Entry(uint64_t seq_, const SentFrameRef &frame_) :
+      seq{seq_}, frame{frame_} { }
+
+    uint64_t key() const { return seq; }
+    uint64_t length() const { return 1; }
+    uint64_t clipHead(uint64_t) { return 0; }
+    uint64_t clipTail(uint64_t) { return 0; }
+    template <typename I>
+    void write(const I &) { }
+  };
+
+  using Queue =
+    ZmPQueue<Entry,
+      ZmPQueueBits<2,
+	ZmPQueueLevels<2>>>;
 
   bool push(const SentFrameRef &frame) {
     if (frame.kind == SentFrameKind::None) return false;
-    if (m_count >= Max) {
-      ++m_dropped;
-      return false;
-    }
-    unsigned tail = (m_head + m_count) % Max;
-    m_frames[tail] = frame;
-    ++m_count;
+    m_frames.add(new Queue::Node{Entry{m_next++, frame}});
     return true;
   }
 
   bool pop(SentFrameRef &frame) {
-    if (!m_count) return false;
-    frame = m_frames[m_head];
-    m_head = (m_head + 1) % Max;
-    --m_count;
+    auto node = m_frames.dequeue();
+    if (!node) return false;
+    frame = node->data().frame;
     return true;
   }
 
-  unsigned count() const { return m_count; }
-  unsigned dropped() const { return m_dropped; }
-  bool empty() const { return !m_count; }
+  unsigned count() const { return m_frames.count_(); }
+  unsigned dropped() const { return 0; }
+  bool empty() const { return !m_frames.count_(); }
   void clear() {
-    m_head = 0;
-    m_count = 0;
+    m_frames.reset(m_next);
   }
 
 private:
-  SentFrameRef	m_frames[Max];
-  unsigned	m_head = 0;
-  unsigned	m_count = 0;
-  unsigned	m_dropped = 0;
+  Queue		m_frames{0};
+  uint64_t	m_next = 0;
 };
 
-class SentPacketTracker {
+class PacketTxSpace :
+  public ZmPQTx<PacketTxSpace, TxPacketQueue, ZmNoLock> {
 public:
-  static constexpr unsigned Max = 64;
+  using Queue = TxPacketQueue;
+  using Tx = ZmPQTx<PacketTxSpace, Queue, ZmNoLock>;
+  using Msg = Queue::Node;
+  using Span = Queue::Span;
+  using Key = Queue::Key;
+
+  Queue *txQueue() { return &m_packets; }
+
+  bool send_(Msg *, bool) { return true; }
+  bool resend_(Msg *msg, bool) {
+    if (msg) enqueueRetransmit_(msg->data());
+    return true;
+  }
+  bool sendGap_(const Span &, bool) { return true; }
+  bool resendGap_(const Span &, bool) { return true; }
+  void archive_(Msg *) { }
+  ZmRef<Msg> retrieve_(Key, Key) { return nullptr; }
+  void scheduleSend() { }
+  void rescheduleSend() { }
+  void idleSend() { }
+  void scheduleResend() { }
+  void rescheduleResend() { }
+  void idleResend() { }
+  void scheduleArchive() { }
+  void rescheduleArchive() { }
+  void idleArchive() { }
 
   bool add(const SentPacket &p) {
-    if (find_(p.pn)) return false;
-    if (m_count >= Max) return false;
-    m_packets[m_count++] = p;
+    if (m_packets.has(p.pn)) return false;
+    m_packets.add(new Queue::Node{p});
     if (p.inFlight) m_bytesInFlight += p.bytes;
     return true;
   }
 
   bool ack(uint64_t pn) {
-    SentPacket *p = find_(pn);
-    if (!p || p->acked || p->lost) return false;
-    p->acked = true;
-    if (p->inFlight) release_(p);
-    ++m_acked;
-    return true;
+    auto node = m_packets.find(pn);
+    return node && ack_(node->data());
   }
 
   unsigned ack(
@@ -378,44 +486,63 @@ public:
     unsigned packetThreshold = 3)
   {
     unsigned n = 0;
-    for (unsigned i = 0; i < m_count; ++i)
-      if (ranges.contains(m_packets[i].pn) && ack(m_packets[i].pn)) ++n;
+    auto iter = m_packets.iter();
+    while (auto node = iter())
+      if (ranges.contains(node->data().pn) && ack_(node->data())) ++n;
     unsigned l = markPacketThresholdLoss(ranges.largest(), packetThreshold);
     if (lost) *lost = l;
     return n;
   }
 
-  bool lose(uint64_t pn) {
-    SentPacket *p = find_(pn);
-    if (!p || p->acked || p->lost) return false;
-    p->lost = true;
-    if (p->inFlight) release_(p);
-    if (p->ackEliciting && !p->pmtudProbe) {
-      ++m_retransmittable;
-      enqueueRetransmit_(*p);
+  unsigned ack(
+    const AckRange *ranges, unsigned nRanges, unsigned *lost = nullptr,
+    unsigned packetThreshold = 3)
+  {
+    unsigned n = 0;
+    uint64_t largest = 0;
+    bool have = false;
+    for (unsigned i = 0; i < nRanges; ++i) {
+      const AckRange &range = ranges[i];
+      if (range.first > range.largest) continue;
+      if (!have || range.largest > largest) largest = range.largest;
+      have = true;
+      auto iter = m_packets.iter(range.first);
+      while (auto node = iter()) {
+	SentPacket &p = node->data();
+	if (p.pn > range.largest) break;
+	if (ack_(p)) ++n;
+      }
     }
-    ++m_lost;
-    return true;
+    unsigned l = have ? markPacketThresholdLoss(largest, packetThreshold) : 0;
+    if (lost) *lost = l;
+    return n;
+  }
+
+  bool lose(uint64_t pn) {
+    auto node = m_packets.find(pn);
+    return node && lose_(node->data());
   }
 
   unsigned markPacketThresholdLoss(uint64_t largestAcked, unsigned threshold = 3) {
     unsigned n = 0;
-    for (unsigned i = 0; i < m_count; ++i) {
-      SentPacket &p = m_packets[i];
+    auto iter = m_packets.iter();
+    while (auto node = iter()) {
+      SentPacket &p = node->data();
       if (p.acked || p.lost || p.pn + threshold > largestAcked) continue;
-      if (lose(p.pn)) ++n;
+      if (lose_(p)) ++n;
     }
     return n;
   }
 
   unsigned markTimeThresholdLoss(uint64_t now, uint64_t threshold) {
     unsigned n = 0;
-    for (unsigned i = 0; i < m_count; ++i) {
-      SentPacket &p = m_packets[i];
+    auto iter = m_packets.iter();
+    while (auto node = iter()) {
+      SentPacket &p = node->data();
       if (p.acked || p.lost || p.sentTime > now ||
 	  now - p.sentTime < threshold)
 	continue;
-      if (lose(p.pn)) ++n;
+      if (lose_(p)) ++n;
     }
     return n;
   }
@@ -429,20 +556,30 @@ public:
   bool nextRetransmit(SentFrameRef &frame) {
     return m_retransmit.pop(frame);
   }
-  unsigned count() const { return m_count; }
+  unsigned count() const { return m_packets.count_(); }
+  void clear() {
+    m_packets.reset(0);
+    m_retransmit.clear();
+    m_bytesInFlight = 0;
+    m_acked = 0;
+    m_lost = 0;
+    m_retransmittable = 0;
+  }
   bool persistentCongestion(uint64_t threshold) const {
     bool have = false;
     uint64_t first = 0, last = 0;
-    for (unsigned i = 0; i < m_count; ++i) {
-      const SentPacket &p = m_packets[i];
+    auto iter = m_packets.citer();
+    while (auto node = iter()) {
+      const SentPacket &p = node->data();
       if (!p.lost || !p.ackEliciting || p.pmtudProbe) continue;
       if (!have || p.sentTime < first) first = p.sentTime;
       if (!have || p.sentTime > last) last = p.sentTime;
       have = true;
     }
     if (!have || last <= first || last - first < threshold) return false;
-    for (unsigned i = 0; i < m_count; ++i) {
-      const SentPacket &p = m_packets[i];
+    iter.reset();
+    while (auto node = iter()) {
+      const SentPacket &p = node->data();
       if (p.acked && p.ackEliciting && !p.pmtudProbe &&
 	  p.sentTime >= first && p.sentTime <= last)
 	return false;
@@ -451,16 +588,30 @@ public:
   }
 
 private:
-  SentPacket *find_(uint64_t pn) {
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_packets[i].pn == pn) return &m_packets[i];
-    return nullptr;
+  bool ack_(SentPacket &p) {
+    if (p.acked || p.lost) return false;
+    p.acked = true;
+    if (p.inFlight) release_(p);
+    ++m_acked;
+    return true;
   }
 
-  void release_(SentPacket *p) {
-    p->inFlight = false;
-    if (p->bytes > m_bytesInFlight) m_bytesInFlight = 0;
-    else m_bytesInFlight -= p->bytes;
+  bool lose_(SentPacket &p) {
+    if (p.acked || p.lost) return false;
+    p.lost = true;
+    if (p.inFlight) release_(p);
+    if (p.ackEliciting && !p.pmtudProbe) {
+      ++m_retransmittable;
+      enqueueRetransmit_(p);
+    }
+    ++m_lost;
+    return true;
+  }
+
+  void release_(SentPacket &p) {
+    p.inFlight = false;
+    if (p.bytes > m_bytesInFlight) m_bytesInFlight = 0;
+    else m_bytesInFlight -= p.bytes;
   }
 
   void enqueueRetransmit_(const SentPacket &p) {
@@ -468,14 +619,15 @@ private:
       m_retransmit.push(p.frame(i));
   }
 
-  SentPacket	m_packets[Max];
+  Queue		m_packets{0};
   RetransmitQueue m_retransmit;
-  unsigned	m_count = 0;
   uint64_t	m_bytesInFlight = 0;
   unsigned	m_acked = 0;
   unsigned	m_lost = 0;
   unsigned	m_retransmittable = 0;
 };
+
+using SentPacketTracker = PacketTxSpace;
 
 class PTOBackoff {
 public:

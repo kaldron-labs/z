@@ -21,6 +21,8 @@ struct AckRange {
 };
 
 struct Frame {
+  static constexpr unsigned MaxAckRanges = 64;
+
   FrameType::T	type = FrameType::Unknown;
   uint64_t	streamID = 0;
   uint64_t	offset = 0;
@@ -30,6 +32,8 @@ struct Frame {
   StreamType::T	streamType = StreamType::Bidi;
   bool		fin = false;
   ZuCSpan	payload;
+  AckRange	ackRanges[MaxAckRanges];
+  unsigned	ackRangeCount = 0;
 };
 
 struct FrameCodec {
