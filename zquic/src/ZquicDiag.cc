@@ -10,40 +10,17 @@ namespace Zquic {
 
 ZuCSpan Diag::packetSpaceName(PacketSpace::T space)
 {
-  if (space == PacketSpace::Initial) return "initial";
-  if (space == PacketSpace::Handshake) return "handshake";
-  if (space == PacketSpace::AppData) return "app_data";
-  return "unknown";
+  return PacketSpace{}.name(space);
 }
 
 ZuCSpan Diag::frameTypeName(FrameType::T type)
 {
-  if (type == FrameType::Padding) return "padding";
-  if (type == FrameType::Ping) return "ping";
-  if (type == FrameType::Ack) return "ack";
-  if (type == FrameType::Crypto) return "crypto";
-  if (type == FrameType::Stream) return "stream";
-  if (type == FrameType::MaxData) return "max_data";
-  if (type == FrameType::MaxStreamData) return "max_stream_data";
-  if (type == FrameType::MaxStreams) return "max_streams";
-  if (type == FrameType::DataBlocked) return "data_blocked";
-  if (type == FrameType::StreamDataBlocked) return "stream_data_blocked";
-  if (type == FrameType::StreamsBlocked) return "streams_blocked";
-  if (type == FrameType::ResetStream) return "reset_stream";
-  if (type == FrameType::StopSending) return "stop_sending";
-  if (type == FrameType::NewConnectionID) return "new_connection_id";
-  if (type == FrameType::RetireConnectionID) return "retire_connection_id";
-  if (type == FrameType::PathChallenge) return "path_challenge";
-  if (type == FrameType::PathResponse) return "path_response";
-  if (type == FrameType::ConnectionClose) return "connection_close";
-  return "unknown";
+  return FrameType{}.name(type);
 }
 
 ZuCSpan Diag::streamTypeName(StreamType::T type)
 {
-  if (type == StreamType::Bidi) return "bidi";
-  if (type == StreamType::Uni) return "uni";
-  return "unknown";
+  return StreamType{}.name(type);
 }
 
 void Diag::summary(DiagText &out) const

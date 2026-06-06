@@ -23,20 +23,14 @@ constexpr unsigned MaxBufSize = 100<<20;// max HTTP body length (100Mb)
 
 using IOBufAlloc = ZiIOBufAlloc<BufSize, MaxBufSize, "Zhttp.Buf">;
 
-struct RxRef {
-  Ztls::RxStream *rx = nullptr;
-
-  ZuSpan<uint8_t> span() { return rx ? rx->span() : ZuSpan<uint8_t>{}; }
-  template <typename L>
-  bool spans(L &&l) { return rx && rx->spans(ZuFwd<L>(l)); }
-  bool advance(unsigned n) { return rx && rx->advance(n); }
-  bool empty() const { return !rx || rx->empty(); }
-};
-
 using ResponseKeys = ZuStringTL<"content-type", "location", "server">;
 using HttpParser =
   Zhttp::Parser<
-    Zhttp::Response<ResponseKeys>, Zhttp::Body<MaxBufSize>, ZuEmpty, RxRef>;
+    Zhttp::Response<ResponseKeys>, Zhttp::Body<MaxBufSize>, ZuEmpty>;
+using HttpRequestBuilder =
+  Zhttp::Builder<
+    ZuStringTL<>,
+    ZuStringTL<"user-agent: zhttptest/1.0", "accept: */*">>;
 
 static constexpr const char *ResponseKeyName[] = {
   "content-type",
@@ -49,7 +43,7 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
   using Base = Ztls::CliLink<App, Link<App>>;
 
   using Base::app;
-  Link(App *app) : Base{app}, parser{RxRef{}} { }
+  Link(App *app) : Base{app} { }
 
   void connected(const char *alpn, int tlsver) {
     ZtArray<uint8_t> hostname = this->server();
@@ -59,10 +53,11 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
       << std::flush;
     // connected() is called in TLS thread
     auto tx = this->txStream_();
-    tx << Zhttp::Method::name(Zhttp::Method::GET)
-      << " / HTTP/1.1\r\nhost: " << ZuCSpan(hostname)
-      << "\r\nuser-agent: zhttptest/1.0\r\naccept: */*\r\n\r\n"
-      << Zi::flush();
+    HttpRequestBuilder builder;
+    builder.request(tx, Zhttp::Method::GET, "/", ZuCSpan(hostname),
+      [](auto &, auto) { return ""; });
+    builder.finish(tx);
+    tx << Zi::flush();
   }
   void disconnected() {
     std::cerr << "disconnected\n" << std::flush;
@@ -78,10 +73,10 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
   }
 
   int process(Ztls::RxStream &rx) {
-    parser.stream.rx = &rx;
     while (!rx.empty()) {
       bool done = false;
       int consumed = parser.process(
+	rx,
 	[](auto &, int status) {
 	  std::cerr << "status: " << status << '\n' << std::flush;
 	},

@@ -71,7 +71,7 @@ struct ResponseCtx {
 
 using ResponseRx =
   Zhttp::Parser<
-    Zhttp::Response<>, Zhttp::Body<FallbackMaxBody>, ResponseCtx, SpanRx>;
+    Zhttp::Response<>, Zhttp::Body<FallbackMaxBody>, ResponseCtx>;
 
 #ifndef _WIN32
 int listenLoopback_(unsigned &port)
@@ -204,12 +204,12 @@ pid_t startZhttpH1Server_(
     _exit(4);
   }
 
-  Zhttp::Builder<ZuStringTL<>, ZuStringTL<>, true, false, ZuEmpty, BufTx>
-    resp{BufTx{new IOBufAlloc()}};
+  Zhttp::Builder<ZuStringTL<>, ZuStringTL<>, true, false, ZuEmpty> resp;
+  BufTx tx{new IOBufAlloc()};
   resp.contentLength(responseBody.length());
-  resp.response(200, "OK", [](auto &, auto) { return ""; });
-  resp << responseBody;
-  auto tx = resp.finish();
+  resp.response(tx, 200, "OK", [](auto &, auto) { return ""; });
+  tx << responseBody;
+  resp.finish(tx);
   bool sent = sendAll_(fd, tx.buf->data(), tx.buf->length);
   ::shutdown(fd, SHUT_RDWR);
   ::close(fd);
@@ -337,10 +337,11 @@ void testZhttpClientHttp11Fallback()
   Zhttp::Builder<
     ZuStringTL<>,
     ZuStringTL<"user-agent: ZhttpFallbackTest/1.0">,
-    false, false, ZuEmpty, BufTx> req{BufTx{new IOBufAlloc()}};
-  req.request(Zhttp::Method::GET, "/zhttp-fallback", "localhost",
+    false, false, ZuEmpty> req;
+  BufTx tx{new IOBufAlloc()};
+  req.request(tx, Zhttp::Method::GET, "/zhttp-fallback", "localhost",
     [](auto &, auto) { return ""; });
-  auto tx = req.finish();
+  req.finish(tx);
   ZuCHECK(sendAll_(fd, tx.buf->data(), tx.buf->length),
     "Zhttp client fallback request send failed");
   ::shutdown(fd, SHUT_WR);
@@ -351,12 +352,13 @@ void testZhttpClientHttp11Fallback()
     "Zhttp client fallback response receive failed");
   ::close(fd);
 
-  ResponseRx rx{SpanRx{ZuSpan<uint8_t>{respBuf, respLen}}};
+  ResponseRx rx;
+  SpanRx stream{ZuSpan<uint8_t>{respBuf, respLen}};
   Zhttp::BodyData bodyData;
   auto status = [](auto &rx, int status) { rx.context.status = status; };
   auto key = [](auto &, int, ZuCSpan) { };
   auto kv = [](auto &, int) { };
-  int consumed = rx.process(status, key, kv,
+  int consumed = rx.process(stream, status, key, kv,
     [&bodyData](auto &rx) {
       bodyData << rx.body.span;
       return true;

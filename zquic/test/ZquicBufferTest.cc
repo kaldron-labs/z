@@ -79,9 +79,9 @@ void testDiagAggregation()
     "diagnostic aggregation mismatch");
 
   ZuCHECK(Zquic::Diag::packetSpaceName(Zquic::PacketSpace::AppData) ==
-      "app_data" &&
-      Zquic::Diag::frameTypeName(Zquic::FrameType::Stream) == "stream" &&
-      Zquic::Diag::streamTypeName(Zquic::StreamType::Uni) == "uni",
+      "AppData" &&
+      Zquic::Diag::frameTypeName(Zquic::FrameType::Stream) == "Stream" &&
+      Zquic::Diag::streamTypeName(Zquic::StreamType::Uni) == "Uni",
     "diagnostic stable names mismatch");
 
   Zquic::DiagText summary = diag.summary();

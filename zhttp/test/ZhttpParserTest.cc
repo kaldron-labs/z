@@ -42,14 +42,12 @@ struct RequestCtx {
 using Parser = Zhttp::Parser<
   Zhttp::Response<ZuStringTL<"key">>,
   Zhttp::Body<1024>,
-  ResponseCtx,
-  RxStream>;
+  ResponseCtx>;
 
 using RequestParser = Zhttp::Parser<
   Zhttp::Request<ZuStringTL<"host">>,
   Zhttp::Body<1024>,
-  RequestCtx,
-  RxStream>;
+  RequestCtx>;
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
@@ -82,7 +80,8 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
     "\r\n"
     "hello";
 
-  Parser parser{RxStream{}};
+  Parser parser;
+  RxStream stream;
   Zhttp::BodyData bodyData;
 
   auto status = [](auto &parser, int status) {
@@ -101,9 +100,9 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
     return true;
   };
 
-  parser.stream.push(mkBuf(frag0));
+  stream.push(mkBuf(frag0));
 
-  int consumed = parser.process(status, key, kv, rcvd);
+  int consumed = parser.process(stream, status, key, kv, rcvd);
   ZuCHECK(consumed == sizeof(frag0) - sizeof("Key: Va"),
     "complete prefix lines were not consumed");
   ZuCHECK(!parser.header.complete, "header completed without final line");
@@ -112,13 +111,13 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
   ZuCHECK(parser.header.contentLength == 5, "content-length was not parsed");
   ZuCHECK(parser.context.keyCalls == 0, "selected key callback was premature");
   ZuCHECK(parser.context.bodyCalls == 0, "body callback was premature");
-  ZuCHECK(parser.stream.count_() == 1, "partial header buffer was dequeued");
-  ZuCHECK(spanEq(parser.stream.span(), "Key: Va"),
+  ZuCHECK(stream.count_() == 1, "partial header buffer was dequeued");
+  ZuCHECK(spanEq(stream.span(), "Key: Va"),
     "stream was not left at the incomplete header line");
 
-  parser.stream.push(mkBuf(frag1));
+  stream.push(mkBuf(frag1));
 
-  consumed = parser.process(status, key, kv, rcvd);
+  consumed = parser.process(stream, status, key, kv, rcvd);
   ZuCHECK(consumed == sizeof("Key: Va") + sizeof(frag1) - 2,
     "complete response byte count mismatch");
   ZuCHECK(parser.header.complete, "header did not complete after next buffer");
@@ -127,7 +126,7 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
   ZuCHECK(parser.body.complete, "body did not complete");
   ZuCHECK(parser.context.bodyCalls == 1, "body callback count mismatch");
   ZuCHECK(bodyData == "hello", "body data mismatch");
-  ZuCHECK(!parser.stream, "stream still has data after full response");
+  ZuCHECK(!stream, "stream still has data after full response");
 }
 
 void testSelectedHeaderLineFragmentedAcrossManyRxBuffers()
@@ -149,7 +148,8 @@ void testSelectedHeaderLineFragmentedAcrossManyRxBuffers()
     "\r\n"
     "hello";
 
-  Parser parser{RxStream{}};
+  Parser parser;
+  RxStream stream;
   Zhttp::BodyData bodyData;
 
   auto status = [](auto &parser, int status) {
@@ -168,8 +168,8 @@ void testSelectedHeaderLineFragmentedAcrossManyRxBuffers()
     return true;
   };
 
-  parser.stream.push(mkBuf(prefix));
-  int consumed = parser.process(status, key, kv, rcvd);
+  stream.push(mkBuf(prefix));
+  int consumed = parser.process(stream, status, key, kv, rcvd);
   ZuCHECK(consumed == sizeof(prefix) - 1,
     "complete prefix lines were not consumed");
   ZuCHECK(!parser.header.complete, "header completed before selected key");
@@ -181,8 +181,8 @@ void testSelectedHeaderLineFragmentedAcrossManyRxBuffers()
   const char *frags[] = { frag0, frag1, frag2, frag3, frag4, frag5, frag6 };
   bool incomplete = true;
   for (unsigned i = 0; i < sizeof(frags) / sizeof(frags[0]); ++i) {
-    parser.stream.push(mkBuf(frags[i]));
-    consumed = parser.process(status, key, kv, rcvd);
+    stream.push(mkBuf(frags[i]));
+    consumed = parser.process(stream, status, key, kv, rcvd);
     incomplete &= consumed == 0;
     incomplete &= !parser.header.complete;
     incomplete &= parser.context.keyCalls == 0;
@@ -190,24 +190,24 @@ void testSelectedHeaderLineFragmentedAcrossManyRxBuffers()
   }
   ZuCHECK(incomplete, "fragmented selected header was parsed before final LF");
 
-  parser.stream.push(mkBuf(frag7));
-  consumed = parser.process(status, key, kv, rcvd);
+  stream.push(mkBuf(frag7));
+  consumed = parser.process(stream, status, key, kv, rcvd);
   ZuCHECK(consumed == sizeof("Key: Value\r\n") - 1,
     "fragmented selected header byte count mismatch");
   ZuCHECK(!parser.header.complete, "header completed before empty line");
   ZuCHECK(parser.context.keyCalls == 1, "selected key callback count mismatch");
   ZuCHECK(parser.context.keyValue, "fragmented selected header value mismatch");
   ZuCHECK(parser.context.bodyCalls == 0, "body callback was premature");
-  ZuCHECK(!parser.stream, "fragmented selected header buffers not consumed");
+  ZuCHECK(!stream, "fragmented selected header buffers not consumed");
 
-  parser.stream.push(mkBuf(suffix));
-  consumed = parser.process(status, key, kv, rcvd);
+  stream.push(mkBuf(suffix));
+  consumed = parser.process(stream, status, key, kv, rcvd);
   ZuCHECK(consumed == sizeof(suffix) - 1, "suffix byte count mismatch");
   ZuCHECK(parser.header.complete, "header did not complete");
   ZuCHECK(parser.body.complete, "body did not complete");
   ZuCHECK(parser.context.bodyCalls == 1, "body callback count mismatch");
   ZuCHECK(bodyData == "hello", "body data mismatch");
-  ZuCHECK(!parser.stream, "stream still has data after full response");
+  ZuCHECK(!stream, "stream still has data after full response");
 }
 
 void testResponseStartLineFragmentedAcrossManyRxBuffers()
@@ -231,7 +231,8 @@ void testResponseStartLineFragmentedAcrossManyRxBuffers()
     "content-length: 0\r\n"
     "\r\n";
 
-  Parser parser{RxStream{}};
+  Parser parser;
+  RxStream stream;
 
   auto status = [](auto &parser, int status) {
     parser.context.status = status;
@@ -250,8 +251,8 @@ void testResponseStartLineFragmentedAcrossManyRxBuffers()
   bool incomplete = true;
   int consumed = 0;
   for (unsigned i = 0; i < sizeof(frags) / sizeof(frags[0]); ++i) {
-    parser.stream.push(mkBuf(frags[i]));
-    consumed = parser.process(status, key, kv, rcvd);
+    stream.push(mkBuf(frags[i]));
+    consumed = parser.process(stream, status, key, kv, rcvd);
     incomplete &= consumed == 0;
     incomplete &= parser.header.status == -1;
     incomplete &= parser.context.status == -1;
@@ -259,23 +260,23 @@ void testResponseStartLineFragmentedAcrossManyRxBuffers()
   }
   ZuCHECK(incomplete, "response start line was parsed before final LF");
 
-  parser.stream.push(mkBuf(frag12));
-  consumed = parser.process(status, key, kv, rcvd);
+  stream.push(mkBuf(frag12));
+  consumed = parser.process(stream, status, key, kv, rcvd);
   ZuCHECK(consumed == sizeof("HTTP/1.1 200 OK\r\n") - 1,
     "fragmented response start-line byte count mismatch");
   ZuCHECK(parser.header.status == 200, "response status not parsed");
   ZuCHECK(parser.context.status == 200, "status callback not invoked");
   ZuCHECK(!parser.header.complete, "header completed before field section");
   ZuCHECK(parser.context.bodyCalls == 0, "body callback was premature");
-  ZuCHECK(!parser.stream, "fragmented response start-line buffers not consumed");
+  ZuCHECK(!stream, "fragmented response start-line buffers not consumed");
 
-  parser.stream.push(mkBuf(suffix));
-  consumed = parser.process(status, key, kv, rcvd);
+  stream.push(mkBuf(suffix));
+  consumed = parser.process(stream, status, key, kv, rcvd);
   ZuCHECK(consumed == sizeof(suffix) - 1, "response suffix byte count mismatch");
   ZuCHECK(parser.header.complete, "response header did not complete");
   ZuCHECK(parser.body.complete, "response body did not complete");
   ZuCHECK(parser.context.bodyCalls == 1, "response body callback count mismatch");
-  ZuCHECK(!parser.stream, "stream still has data after response");
+  ZuCHECK(!stream, "stream still has data after response");
 }
 
 void testRequestStartLineFragmentedAcrossManyRxBuffers()
@@ -303,7 +304,8 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
     "host: example.com\r\n"
     "\r\n";
 
-  RequestParser parser{RxStream{}};
+  RequestParser parser;
+  RxStream stream;
 
   auto operation = [](auto &parser, Zhttp::Method::T method, ZuCSpan path) {
     parser.context.method = method == Zhttp::Method::GET;
@@ -328,8 +330,8 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
   bool incomplete = true;
   int consumed = 0;
   for (unsigned i = 0; i < sizeof(frags) / sizeof(frags[0]); ++i) {
-    parser.stream.push(mkBuf(frags[i]));
-    consumed = parser.process(operation, key, kv, rcvd);
+    stream.push(mkBuf(frags[i]));
+    consumed = parser.process(stream, operation, key, kv, rcvd);
     incomplete &= consumed == 0;
     incomplete &= !parser.context.method;
     incomplete &= !parser.context.path;
@@ -338,8 +340,8 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
   }
   ZuCHECK(incomplete, "request start line was parsed before final LF");
 
-  parser.stream.push(mkBuf(frag16));
-  consumed = parser.process(operation, key, kv, rcvd);
+  stream.push(mkBuf(frag16));
+  consumed = parser.process(stream, operation, key, kv, rcvd);
   ZuCHECK(consumed == sizeof("GET /v1/x?q=1 HTTP/1.1\r\n") - 1,
     "fragmented request start-line byte count mismatch");
   ZuCHECK(parser.context.method, "request method not parsed");
@@ -347,17 +349,17 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
   ZuCHECK(!parser.header.complete, "request header completed before fields");
   ZuCHECK(parser.context.hostCalls == 0, "host callback was premature");
   ZuCHECK(parser.context.bodyCalls == 0, "body callback was premature");
-  ZuCHECK(!parser.stream, "fragmented request start-line buffers not consumed");
+  ZuCHECK(!stream, "fragmented request start-line buffers not consumed");
 
-  parser.stream.push(mkBuf(suffix));
-  consumed = parser.process(operation, key, kv, rcvd);
+  stream.push(mkBuf(suffix));
+  consumed = parser.process(stream, operation, key, kv, rcvd);
   ZuCHECK(consumed == sizeof(suffix) - 1, "request suffix byte count mismatch");
   ZuCHECK(parser.header.complete, "request header did not complete");
   ZuCHECK(parser.context.hostCalls == 1, "host callback count mismatch");
   ZuCHECK(parser.context.host, "request host not parsed");
   ZuCHECK(parser.body.complete, "request body did not complete");
   ZuCHECK(parser.context.bodyCalls == 1, "request body callback count mismatch");
-  ZuCHECK(!parser.stream, "stream still has data after request");
+  ZuCHECK(!stream, "stream still has data after request");
 }
 
 } // namespace
