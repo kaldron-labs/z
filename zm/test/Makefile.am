@@ -23,7 +23,7 @@ TESTPROGS = \
 	ZmBitmapTest ZmSchedTest ZmTest ZmHashTest2 \
 	ZmLHTest ZmHashCleanup \
 	ZmTIDTest ZmAllocTest ZmDemangleTest \
-	ZmPQueueTest ZmPQueueTest2 ZmPQueueTest3 ZmPQueueTest4 \
+	ZmPQueueTest ZmPQRxTest ZmPQTxTest \
 	ZmQueueTest ZmRWLockTest ZmRingFnTest \
 	ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest
 if MINGW
@@ -50,9 +50,8 @@ ZmHashTest2_SOURCES = ZmHashTest2.cc
 ZmLHTest_SOURCES = ZmLHTest.cc
 ZmHashCleanup_SOURCES = ZmHashCleanup.cc
 ZmPQueueTest_SOURCES = ZmPQueueTest.cc
-ZmPQueueTest2_SOURCES = ZmPQueueTest2.cc
-ZmPQueueTest3_SOURCES = ZmPQueueTest3.cc
-ZmPQueueTest4_SOURCES = ZmPQueueTest4.cc
+ZmPQRxTest_SOURCES = ZmPQRxTest.cc
+ZmPQTxTest_SOURCES = ZmPQTxTest.cc
 ZmQueueTest_SOURCES = ZmQueueTest.cc
 ZmRWLockTest_SOURCES = ZmRWLockTest.cc
 ZmRingTest2_SOURCES = ZmRingTest2.cc
