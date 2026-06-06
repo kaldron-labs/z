@@ -29,6 +29,7 @@ bool TransportParams::validate() const
   return maxUDPPayloadSize >= MinUDPPayload &&
     maxUDPPayloadSize <= BufSize &&
     ackDelayExponent <= 20 &&
+    maxAckDelay < (1ULL<<14) &&
     activeConnectionIDLimit >= 2;
 }
 
@@ -125,7 +126,7 @@ int TransportParamsCodec::decode(ZuCSpan in, TransportParams &p)
 
     switch (id) {
       case TPOriginalDCID:
-	p.originalDCID.set(value);
+	if (!p.originalDCID.set(value)) return -1;
 	break;
       case TPMaxIdleTimeout:
 	if (getParamVar_(value, p.maxIdleTimeout) < 0) return -1;
@@ -167,10 +168,10 @@ int TransportParamsCodec::decode(ZuCSpan in, TransportParams &p)
 	if (getParamVar_(value, p.activeConnectionIDLimit) < 0) return -1;
 	break;
       case TPInitialSCID:
-	p.initialSCID.set(value);
+	if (!p.initialSCID.set(value)) return -1;
 	break;
       case TPRetrySCID:
-	p.retrySCID.set(value);
+	if (!p.retrySCID.set(value)) return -1;
 	break;
       default:
 	break;

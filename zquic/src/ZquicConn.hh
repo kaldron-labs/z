@@ -183,7 +183,7 @@ private:
 };
 
 struct CIDGenerator {
-  static constexpr unsigned InitialLength = 8;
+  static constexpr unsigned InitialLength = MinCIDLength;
 
   static bool random(ConnectionID &, unsigned length = InitialLength);
   static bool randomPair(
@@ -201,7 +201,9 @@ public:
   const ConnectionID &retrySCID() const { return m_retrySCID; }
 
   bool start(const ConnectionID &initialDCID, const ConnectionID &initialSCID) {
-    if (initialDCID.length() < 8 || initialSCID.length() < 8) return false;
+    if (initialDCID.length() < MinCIDLength ||
+	initialSCID.length() < MinCIDLength)
+      return false;
     m_initialDCID = initialDCID;
     m_initialSCID = initialSCID;
     m_retrySCID = {};
@@ -226,7 +228,7 @@ public:
   bool onRetry(const RetryPacket &retry) {
     if (!m_started ||
 	retry.header.type != PacketType::Retry ||
-	retry.header.scid.length() < 8 ||
+	retry.header.scid.length() < MinCIDLength ||
 	!retry.token ||
 	retry.integrityTag.length() != 16)
       return false;
