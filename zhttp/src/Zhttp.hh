@@ -41,6 +41,8 @@ namespace TransferEncoding {
   ZtEnum(TransferEncoding, int8_t, compress, deflate, gzip);
 }
 
+// HTTP message parser
+
 // hard-coded linear white space (ASCII/UTF8)
 ZuInline constexpr bool islws(uint8_t c) {
   return c == '\t' || c == ' ';
@@ -510,10 +512,9 @@ struct Body {
     }
   }
 
-  template <typename Parser, typename Rcvd>
-  int process(Parser &parser, Rcvd &&rcvd) {
+  template <typename Parser, typename Stream, typename Rcvd>
+  int process(Parser &parser, Stream &stream, Rcvd &&rcvd) {
     if (ZuUnlikely(complete)) return valid ? 0 : -1;
-    auto &stream = parser.stream;
     unsigned consumed = 0;
     if (!chunked) {
       if (ZuUnlikely(contentLength < 0)) {
@@ -665,59 +666,28 @@ struct Body {
   }
 };
 
-// HTTP message builder
-
-template <bool HasBody> struct Builder_Body { };
-template <> struct Builder_Body<true> {
-  unsigned	contentLen = 0;
-
-  void contentLength(unsigned n) { contentLen = n; }
-};
-
-template <
-  typename Header_,
-  typename Body_,
-  typename Context,
-  typename RxStream_>
-struct Parser;
-
-template <
-  typename Header = Response<>,
-  typename Body = Body<>,
-  typename Context = ZuEmpty,		// additional context for callbacks
-  typename RxStream,
-  typename ...Args>
-auto parser(RxStream stream, Args &&... args) {
-  return Parser<Header, Body, Context, RxStream>(
-    ZuMv(stream), ZuFwd<Args>(args)...);
-}
-
 template <
   typename Header_ = Response<>,
   typename Body_ = Body<>,
-  typename Context = ZuEmpty,		// additional context for callbacks
-  typename RxStream_ = ZuEmpty>
+  typename Context = ZuEmpty>		// additional context for callbacks
 struct Parser {
   using Header = Header_;
   using Body = Body_;
-  using RxStream = RxStream_;
 
-  RxStream		stream;
   Context		context;
   Header		header;
   Body			body;
 
-  Parser(RxStream stream_) : stream{ZuMv(stream_)} { }
+  Parser() = default;
   template <typename ...Args,
     decltype(Context(ZuDeclVal<Args &&>()...), int()) = 0>
-  Parser(RxStream stream_, Args &&...args) :
-    stream{ZuMv(stream_)}, context(ZuFwd<Args>(args)...) { }
+  Parser(Args &&...args) : context(ZuFwd<Args>(args)...) { }
 
   // bool rcvd()
   // - returns false to disconnect
-  template <typename Head, typename Key, typename KV, typename Rcvd>
+  template <typename Stream, typename Head, typename Key, typename KV, typename Rcvd>
   int process(
-    this auto &&self, Head &&head, Key &&key, KV &&kv, Rcvd &&rcvd)
+    this auto &&self, Stream &stream, Head &&head, Key &&key, KV &&kv, Rcvd &&rcvd)
   {
     if (ZuUnlikely(self.body.complete)) return -1; // should not happen
 
@@ -731,7 +701,7 @@ struct Parser {
 	return -1;
       };
       auto parseLine = [&]<bool CanFold, typename Fn>(Fn &&fn) -> int {
-	auto data = self.stream.span();
+	auto data = stream.span();
 	if (!data) return 0;
 	if (ZuUnlikely(self.header.offset >= self.header.max))
 	  return hdrTooLarge();
@@ -740,7 +710,7 @@ struct Parser {
 	  if (ZuUnlikely(n > remaining)) return hdrTooLarge();
 	  int r = ZuFwd<Fn>(fn)(line);
 	  if (ZuUnlikely(r < 0)) return -1;
-	  self.stream.advance(n);
+	  stream.advance(n);
 	  consumed += n;
 	  self.header.offset += n;
 	  return 1;
@@ -752,7 +722,7 @@ struct Parser {
 	  if constexpr (CanFold) {
 	    if (o > 0 && n == data.length()) {
 	      bool head = true;
-	      self.stream.spans([&](ZuSpan<uint8_t> span) {
+	      stream.spans([&](ZuSpan<uint8_t> span) {
 		if (head) { head = false; return true; }
 		useScratch = span && islws(span[0]);
 		return false;
@@ -764,7 +734,7 @@ struct Parser {
 	auto line = ZtLocalArray(HdrData, remaining);
 	o = -1;
 	bool tooLarge = false;
-	self.stream.spans([&](ZuSpan<uint8_t> data) {
+	stream.spans([&](ZuSpan<uint8_t> data) {
 	  unsigned n = data.length();
 	  unsigned available = remaining - line.length();
 	  if (n > available) n = available;
@@ -816,7 +786,7 @@ struct Parser {
       }
     }
     if (!self.body.complete) {
-      int o = self.body.process(self, ZuFwd<Rcvd>(rcvd));
+      int o = self.body.process(self, stream, ZuFwd<Rcvd>(rcvd));
       if (o < 0) { ZiLOG(Error, "Zhttp", "invalid HTTP body"); return -1; }
       consumed += o;
     }
@@ -838,138 +808,165 @@ struct Parser {
 };
 
 template <
-  typename Keys,
-  typename KVs,
-  bool HasBody,
-  bool IsChunked,
-  typename Context,
-  typename TxStream>
-struct Builder;
+  typename Header = Response<>,
+  typename Body = Body<>,
+  typename Context = ZuEmpty,		// additional context for callbacks
+  typename ...Args>
+auto parser(Args &&...args) {
+  return Parser<Header, Body, Context>{ZuFwd<Args>(args)...};
+}
+
+// HTTP message builder
+
+template <bool HasBody> struct Builder_Body {
+  void reset() { }
+};
+template <> struct Builder_Body<true> {
+  unsigned	contentLen = 0;
+
+  void contentLength(unsigned n) { contentLen = n; }
+  void reset() { contentLen = 0; }
+};
 
 template <
-  typename TxStream,
+  typename Keys = ZuStringTL<>,		// custom header keys
+  typename KVs = ZuStringTL<>,		// custom header fixed key/values
+  bool HasBody = false,			// has a body
+  bool IsChunked = false,		// body is chunked
+  typename Context = ZuEmpty>		// additional context for callbacks
+struct Builder : public Builder_Body<HasBody> {
+  Context		context;
+  bool			chunkStarted = false;
+
+  Builder() = default;
+  template <typename ...Args,
+    decltype(Context(ZuDeclVal<Args &&>()...), int()) = 0>
+  Builder(Args &&...args) : context(ZuFwd<Args>(args)...) { }
+
+  template <typename Stream, typename L, typename = void>
+  struct IsEmitter : public ZuFalse { };
+  template <typename Stream, typename L>
+  struct IsEmitter<Stream, L,
+    decltype(ZuDeclVal<L &>()(ZuDeclVal<Builder &>(), ZuDeclVal<Stream &>()))> :
+    public ZuTrue { };
+
+private:
+  template <typename Stream, typename V>
+  void emit(this auto &self, Stream &stream, V &&v) {
+    if constexpr (!IsEmitter<Stream, V>{})
+      stream << ZuFwd<V>(v);
+    else
+      ZuFwd<V>(v)(self, stream);
+  }
+
+  template <typename Stream, typename KeyFn>
+  void headers(this auto &self, Stream &stream, KeyFn &&keyFn) {
+    if constexpr (HasBody) {
+      if constexpr (IsChunked)
+	stream << "transfer-encoding: chunked\r\n";
+      else
+	stream << "content-length: " << self.contentLen << "\r\n";
+    }
+    // custom fixed header key/values
+    ZuUnroll::all<KVs>([&stream]<typename KV>() {
+      stream << KV{}() << "\r\n";
+    });
+    // custom variable header keys
+    ZuUnroll::all<Keys>([&self, &stream, &keyFn]<typename Key>() {
+      using I = ZuTypeIndex<Key, Keys>;
+      stream << Key{}() << ": " << keyFn(self, I{}()) << "\r\n";
+    });
+    stream << "\r\n";
+  }
+
+public:
+  // request with query
+  template <typename Stream, typename Path, typename Query, typename Host, typename KeyFn>
+  void request(
+    this auto &self, Stream &stream,
+    unsigned method, Path &&path, Query &&query, Host &&host, KeyFn &&keyFn)
+  {
+    // method
+    stream << Method::name(method) << ' ';
+    // path
+    self.emit(stream, ZuFwd<Path>(path));
+    // query (may be prefixed with trailing path components)
+    self.emit(stream, ZuFwd<Query>(query));
+    // host
+    stream << " HTTP/1.1\r\nhost: ";
+    self.emit(stream, ZuFwd<Host>(host));
+    stream << "\r\n";
+    self.headers(stream, ZuFwd<KeyFn>(keyFn));
+  }
+
+  // request without query
+  template <typename Stream, typename Path, typename Host, typename KeyFn>
+  void request(
+    this auto &self, Stream &stream,
+    unsigned method, Path &&path, Host &&host, KeyFn &&keyFn)
+  {
+    // method
+    stream << Method::name(method) << ' ';
+    // path
+    self.emit(stream, ZuFwd<Path>(path));
+    // host
+    stream << " HTTP/1.1\r\nhost: ";
+    self.emit(stream, ZuFwd<Host>(host));
+    stream << "\r\n";
+    self.headers(stream, ZuFwd<KeyFn>(keyFn));
+  }
+
+  // response
+  template <typename Stream, typename Reason, typename KeyFn>
+  void response(
+    this auto &self, Stream &stream,
+    unsigned status, Reason &&reason, KeyFn &&keyFn)
+  {
+    // status
+    stream << "HTTP/1.1 " <<
+      ZuBox<unsigned>{status}.fmt<ZuFmt::Right<3>>() << ' ';
+    // reason
+    self.emit(stream, ZuFwd<Reason>(reason));
+    stream << "\r\n";
+    self.headers(stream, ZuFwd<KeyFn>(keyFn));
+  }
+
+  // chunk
+  template <typename Stream>
+  void chunk(Stream &stream, unsigned n) {
+    if constexpr (IsChunked) {
+      if (chunkStarted) stream << "\r\n";
+      chunkStarted = true;
+      stream << ZuBoxed(n).hex<false>() << "\r\n";
+    }
+  }
+
+  // finish
+  template <typename Stream>
+  void finish(Stream &stream) {
+    if constexpr (IsChunked) {
+      if (chunkStarted) stream << "\r\n";
+      stream << "0\r\n\r\n";
+      chunkStarted = false;
+    }
+  }
+
+  void reset() {
+    Builder_Body<HasBody>::reset();
+    chunkStarted = false;
+  }
+};
+
+template <
   typename Keys = ZuStringTL<>,		// custom header keys
   typename KVs = ZuStringTL<>,		// custom header fixed key/values
   bool HasBody = false,			// has a body
   bool IsChunked = false,		// body is chunked
   typename Context = ZuEmpty,		// additional context for callbacks
   typename ...Args>
-auto builder(TxStream stream, Args &&... args) {
-  return Builder<Keys, KVs, HasBody, IsChunked, Context, TxStream>(
-    ZuMv(stream), ZuFwd<Args>(args)...);
+auto builder(Args &&...args) {
+  return Builder<Keys, KVs, HasBody, IsChunked, Context>{ZuFwd<Args>(args)...};
 }
-
-template <
-  typename Keys = ZuStringTL<>,		// custom header keys
-  typename KVs = ZuStringTL<>,		// custom header fixed key/values
-  bool HasBody = false,			// has a body
-  bool IsChunked = false,		// body is chunked
-  typename Context = ZuEmpty,		// additional context for callbacks
-  typename TxStream = ZuEmpty>
-struct Builder : public Builder_Body<HasBody> {
-  TxStream		stream;
-  Context		context;
-
-  Builder(TxStream stream_) : stream{ZuMv(stream_)} { }
-  template <typename ...Args,
-    decltype(Context(ZuDeclVal<Args &&>()...), int()) = 0>
-  Builder(TxStream stream_, Args &&...args) :
-    stream{ZuMv(stream_)}, context(ZuFwd<Args>(args)...) { }
-
-  template <typename L, typename = void>
-  struct IsCallable : public ZuFalse { };
-  template <typename L>
-  struct IsCallable<L, decltype(ZuDeclVal<L &>()(ZuDeclVal<Builder &>()))> :
-    public ZuTrue { };
-
-  template <typename V>
-  void emit(this auto &self, V &&v) {
-    if constexpr (!IsCallable<V>{})
-      self.stream << ZuFwd<V>(v);
-    else
-      ZuFwd<V>(v)(self);
-  }
-
-  template <typename KeyFn>
-  void headers(this auto &self, KeyFn &&keyFn) {
-    if constexpr (HasBody) {
-      if constexpr (IsChunked)
-	self.stream << "transfer-encoding: chunked\r\n";
-      else
-	self.stream << "content-length: " << self.contentLen << "\r\n";
-    }
-    // custom fixed header key/values
-    ZuUnroll::all<KVs>([&self]<typename KV>() {
-      self.stream << KV{}() << "\r\n";
-    });
-    // custom variable header keys
-    ZuUnroll::all<Keys>([&self, &keyFn]<typename Key>() {
-      using I = ZuTypeIndex<Key, Keys>;
-      self.stream << Key{}() << ": " << keyFn(self, I{}()) << "\r\n";
-    });
-    self.stream << "\r\n";
-  }
-
-  // request with query
-  template <typename Path, typename Query, typename Host, typename KeyFn>
-  void request(
-    this auto &self,
-    unsigned method, Path &&path, Query &&query, Host &&host, KeyFn &&keyFn)
-  {
-    // method
-    self.stream << Method::name(method) << ' ';
-    // path
-    self.emit(ZuFwd<Path>(path));
-    // query (may be prefixed with trailing path components)
-    self.emit(ZuFwd<Query>(query));
-    // host
-    self.stream << " HTTP/1.1\r\nhost: ";
-    self.emit(ZuFwd<Host>(host));
-    self.stream << "\r\n";
-    self.headers(ZuFwd<KeyFn>(keyFn));
-  }
-
-  // request without query
-  template <typename Path, typename Host, typename KeyFn>
-  void request(
-    this auto &self,
-    unsigned method, Path &&path, Host &&host, KeyFn &&keyFn)
-  {
-    // method
-    self.stream << Method::name(method) << ' ';
-    // path
-    self.emit(ZuFwd<Path>(path));
-    // host
-    self.stream << " HTTP/1.1\r\nhost: ";
-    self.emit(ZuFwd<Host>(host));
-    self.stream << "\r\n";
-    self.headers(ZuFwd<KeyFn>(keyFn));
-  }
-
-  // response
-  template <typename Reason, typename KeyFn>
-  void response(
-    this auto &self, unsigned status, Reason &&reason, KeyFn &&keyFn)
-  {
-    // status
-    self.stream << "HTTP/1.1 " <<
-      ZuBox<unsigned>{status}.fmt<ZuFmt::Right<3>>() << ' ';
-    // reason
-    self.emit(ZuFwd<Reason>(reason));
-    self.stream << "\r\n";
-    self.headers(ZuFwd<KeyFn>(keyFn));
-  }
-
-  template <typename V>
-  Builder &operator <<(V &&v) {
-    stream << ZuFwd<V>(v);
-    return *this;
-  }
-
-  TxStream finish(this auto &&self) {
-    return ZuMv(self.stream);
-  }
-};
 
 } // Zhttp
 

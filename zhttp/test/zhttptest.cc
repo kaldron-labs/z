@@ -100,7 +100,7 @@ struct ResponseCtx {
 
 using Parser_ = Zhttp::Parser<
   Zhttp::Response<ZuStringTL<"referrer-policy">>,
-  Zhttp::Body<MaxBufSize>, ResponseCtx, SpanRx>;
+  Zhttp::Body<MaxBufSize>, ResponseCtx>;
 
 inline ZuSpan<uint8_t> bytes_(char *s) {
   ZuSpan<char> span{s};
@@ -219,8 +219,9 @@ int main()
   {
     auto msg = bytes_(::response_);
     resetData();
-    Parser_ rx{SpanRx{msg}};
-    auto o = rx.process(status, key, kv, rcvd);
+    Parser_ rx;
+    SpanRx stream{msg};
+    auto o = rx.process(stream, status, key, kv, rcvd);
     CHECK(o == msg.length());
     CHECK(rx.header.status == 200);
     CHECK(rx.context.status == 200);
@@ -254,8 +255,9 @@ int main()
       "0\r\n\r\n"; // end chunk, no trailers
     auto msg = bytes_(chunked);
     resetData();
-    Parser_ rx{SpanRx{msg}};
-    auto o = rx.process(status, key, kv, rcvd);
+    Parser_ rx;
+    SpanRx stream{msg};
+    auto o = rx.process(stream, status, key, kv, rcvd);
     CHECK(o > 0);
     CHECK(rx.body.complete);
     CHECK(rx.body.chunked);
@@ -279,8 +281,9 @@ int main()
       "0\r\nserver-timing: cpu;dur=2.4\r\n\r\n"; // end chunk, with trailer
     auto msg = bytes_(chunked);
     resetData();
-    Parser_ rx{SpanRx{msg}};
-    auto o = rx.process(status, key, kv, rcvd);
+    Parser_ rx;
+    SpanRx stream{msg};
+    auto o = rx.process(stream, status, key, kv, rcvd);
     CHECK(o > 0);
     CHECK(rx.body.complete);
     CHECK(rx.body.chunked);
@@ -318,33 +321,34 @@ int main()
     static char frag8[] =
       "\n";
     resetData();
-    Parser_ rx{SpanRx{bytes_(frag0)}};
-    auto o = rx.process(status, key, kv, rcvd);
+    Parser_ rx;
+    SpanRx stream{bytes_(frag0)};
+    auto o = rx.process(stream, status, key, kv, rcvd);
     CHECK(o > 0);
     CHECK(!rx.body.complete);
-    rx.stream = SpanRx{bytes_(frag1)};
-    o = rx.process(status, key, kv, rcvd);
+    stream = SpanRx{bytes_(frag1)};
+    o = rx.process(stream, status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    rx.stream = SpanRx{bytes_(frag2)};
-    o = rx.process(status, key, kv, rcvd);
+    stream = SpanRx{bytes_(frag2)};
+    o = rx.process(stream, status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    rx.stream = SpanRx{bytes_(frag3)};
-    o = rx.process(status, key, kv, rcvd);
+    stream = SpanRx{bytes_(frag3)};
+    o = rx.process(stream, status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    rx.stream = SpanRx{bytes_(frag4)};
-    o = rx.process(status, key, kv, rcvd);
+    stream = SpanRx{bytes_(frag4)};
+    o = rx.process(stream, status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    rx.stream = SpanRx{bytes_(frag5)};
-    o = rx.process(status, key, kv, rcvd);
+    stream = SpanRx{bytes_(frag5)};
+    o = rx.process(stream, status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    rx.stream = SpanRx{bytes_(frag6)};
-    o = rx.process(status, key, kv, rcvd);
+    stream = SpanRx{bytes_(frag6)};
+    o = rx.process(stream, status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    rx.stream = SpanRx{bytes_(frag7)};
-    o = rx.process(status, key, kv, rcvd);
+    stream = SpanRx{bytes_(frag7)};
+    o = rx.process(stream, status, key, kv, rcvd);
     CHECK(!rx.body.complete);
-    rx.stream = SpanRx{bytes_(frag8)};
-    o = rx.process(status, key, kv, rcvd);
+    stream = SpanRx{bytes_(frag8)};
+    o = rx.process(stream, status, key, kv, rcvd);
     CHECK(rx.body.complete);
     CHECK(rx.body.chunked);
     CHECK(serverTiming_(trailerData));
@@ -355,10 +359,11 @@ int main()
     Builder<
       ZuStringTL<>,
       ZuStringTL<"user-agent: zhttptest/1.0", "accept: */*">,
-      false, false, ZuEmpty, BufTx> builder{BufTx{new ZiIOBufAlloc<>()}};
+      false, false, ZuEmpty> builder;
+    BufTx tx{new ZiIOBufAlloc<>()};
     builder.request(
-      Method::GET, "/", "foo.com", [](auto &, auto) { return ""; });
-    auto tx = builder.finish();
+      tx, Method::GET, "/", "foo.com", [](auto &, auto) { return ""; });
+    builder.finish(tx);
     CHECK(tx.buf->cspan() == ::request_);
   }
   {
@@ -369,13 +374,14 @@ int main()
 	"user-agent: zhttptest/1.0",
 	"accept: */*",
 	"content-type: application/json">,
-      true, false, ZuEmpty, BufTx> builder{BufTx{new ZiIOBufAlloc<>()}};
+      true, false, ZuEmpty> builder;
+    BufTx tx{new ZiIOBufAlloc<>()};
     builder.contentLength(body.length());
     builder.request(
-      Method::POST, "/post", "foo.com", [](auto &, auto) { return ""; });
+      tx, Method::POST, "/post", "foo.com", [](auto &, auto) { return ""; });
     // x-www-form-urlencoded
-    builder << body;
-    auto tx = builder.finish();
+    tx << body;
+    builder.finish(tx);
     std::cout << ZuCSpan(tx.buf->cspan()) << '\n';
   }
 }
