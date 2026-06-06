@@ -377,8 +377,8 @@ void testCurlZquicH3Server()
       server.runtimeDiag().handshakeDoneFramesTx,
     "curl->Zquic H3 diagnostics mismatch");
 
-  server.final();
   mx.stop();
+  server.final();
 }
 
 void testZquicH3ClientCaddy()
@@ -500,8 +500,9 @@ void testZquicH3ClientCaddy()
   ZuCHECK(diagOK,
     "Zquic H3 client->Caddy diagnostics mismatch");
 
-  client.final();
+  caddy.stop();
   mx.stop();
+  client.final();
 }
 
 void testSettingsFrame()

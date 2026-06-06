@@ -8,6 +8,8 @@
 
 #include <zlib/ZtlsBackend.hh>
 
+#include <zlib/ZtLocalArray.hh>
+
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,6 +135,22 @@ static bool isDir_(ZuCSpan path)
 
 } // namespace
 
+struct CryptoSpan_ {
+  uint64_t	first = 0;
+  uint64_t	last = 0;
+};
+
+ZuDerive(CryptoSpans_,
+  (ZtArray<CryptoSpan_, ZtArrayHeapID<"Zquic.CryptoSpans">>));
+
+void CryptoStream::reset()
+{
+  m_txOffset = 0;
+  m_rxOffset = 0;
+  m_rxQueue.reset(0);
+  m_delivery.length(0);
+}
+
 int CryptoStream::writeFrame(
   uint8_t *out, unsigned len, ZuCSpan payload, CryptoDiag *diag)
 {
@@ -161,56 +179,48 @@ int CryptoStream::receive(
   if (end < offset || end > MaxBuffered) return -1;
   if (diag) ++diag->cryptoFramesRx;
   if (!payload.length() || end <= m_rxOffset) return 0;
-  memcpy(m_rx + offset, payload.data(), payload.length());
   uint64_t first = offset < m_rxOffset ? m_rxOffset : offset;
-  if (!insert_(first, end)) return -1;
-  if (diag) diag->cryptoBytesRx += end - first;
+
+  auto spans = ZtLocalArray(CryptoSpans_, m_rxQueue.count_() + 1);
+  if (!m_rxQueue.gaps(first, end - first, [&spans](const auto &span) {
+    spans << CryptoSpan_{span.key(), span.key() + span.length()};
+    return true;
+  })) return -1;
+
+  uint64_t bytes = 0;
+  for (unsigned i = 0; i < spans.length(); ++i) {
+    uint64_t length = spans[i].last - spans[i].first;
+    bytes += length;
+    ZmRef<ZiIOBuf> buf = new StreamBufAlloc<BufSize, MaxBuffered,
+      "Zquic.CryptoRx">{nullptr};
+    if (ZuUnlikely(buf->size < length))
+      if (ZuUnlikely(!buf->ensure(unsigned(length)))) return -1;
+    buf->skip = 0;
+    buf->length = unsigned(length);
+    memcpy(buf->data_(), payload.data() + (spans[i].first - offset), length);
+    m_rxQueue.add(new CryptoRxPQueue::Node{
+      RxData{ZuMv(buf), spans[i].first, 0, length}});
+  }
+
+  if (diag) diag->cryptoBytesRx += bytes;
   deliver_(contiguous);
   return 0;
-}
-
-bool CryptoStream::insert_(uint64_t first, uint64_t last)
-{
-  if (last <= m_rxOffset) return true;
-  if (first < m_rxOffset) first = m_rxOffset;
-  for (unsigned i = 0; i < m_rangeCount; ++i)
-    if (first >= m_ranges[i].first && last <= m_ranges[i].last)
-      return true;
-  if (m_rangeCount >= MaxRanges) return false;
-  m_ranges[m_rangeCount++] = Range{first, last};
-  for (unsigned i = 1; i < m_rangeCount; ++i) {
-    Range r = m_ranges[i];
-    unsigned j = i;
-    while (j && r.first < m_ranges[j - 1].first) {
-      m_ranges[j] = m_ranges[j - 1];
-      --j;
-    }
-    m_ranges[j] = r;
-  }
-  unsigned out = 0;
-  for (unsigned i = 0; i < m_rangeCount; ++i) {
-    if (out && m_ranges[i].first <= m_ranges[out - 1].last) {
-      if (m_ranges[i].last > m_ranges[out - 1].last)
-	m_ranges[out - 1].last = m_ranges[i].last;
-    } else
-      m_ranges[out++] = m_ranges[i];
-  }
-  m_rangeCount = out;
-  return true;
 }
 
 void CryptoStream::deliver_(ZuCSpan &contiguous)
 {
   contiguous = {};
-  if (!m_rangeCount || m_ranges[0].first > m_rxOffset) return;
-  uint64_t first = m_rxOffset;
-  uint64_t last = m_ranges[0].last;
-  if (last <= first) return;
-  contiguous = ZuCSpan{
-    reinterpret_cast<const char *>(m_rx + first), unsigned(last - first)};
-  m_rxOffset = last;
-  for (unsigned i = 1; i < m_rangeCount; ++i) m_ranges[i - 1] = m_ranges[i];
-  --m_rangeCount;
+  m_delivery.length(0);
+  while (auto node = m_rxQueue.dequeue()) {
+    RxData &data = node->data();
+    if (!data.buf || !data.bytes) continue;
+    const uint8_t *p = data.buf->data_() + data.bufOffset;
+    for (uint64_t i = 0; i < data.bytes; ++i) m_delivery.push(p[i]);
+    m_rxOffset += data.bytes;
+  }
+  if (m_delivery.length())
+    contiguous = ZuCSpan{
+      reinterpret_cast<const char *>(m_delivery.data()), m_delivery.length()};
 }
 
 bool InitialCrypto::derive(InitialKeyMaterial &out, const ConnectionID &dcid)

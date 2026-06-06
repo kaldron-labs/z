@@ -105,7 +105,10 @@ void testFramesAndParams()
   ZuCHECK(l > 0, "ACK write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
     ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
-    f.type == Zquic::FrameType::Ack && f.offset == 10 && f.length == 3,
+    f.type == Zquic::FrameType::Ack && f.offset == 10 && f.length == 3 &&
+    f.ackRangeCount == 1 &&
+    f.ackRanges[0].first == 7 &&
+    f.ackRanges[0].largest == 10,
     "ACK parse mismatch");
 
   l = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 4, 7, 99);
@@ -172,7 +175,12 @@ void testFramesAndParams()
   ZuCHECK(!Zquic::FrameCodec::parse(
     ZuCSpan{reinterpret_cast<char *>(b), o}, f, used) &&
     f.type == Zquic::FrameType::Ack && f.offset == 10 &&
-    f.length == 2 && used == o,
+    f.length == 2 && used == o &&
+    f.ackRangeCount == 2 &&
+    f.ackRanges[0].first == 4 &&
+    f.ackRanges[0].largest == 5 &&
+    f.ackRanges[1].first == 8 &&
+    f.ackRanges[1].largest == 10,
     "ACK ECN/range parse mismatch");
 
   l = Zquic::FrameCodec::writeHandshakeDone(b, sizeof(b));

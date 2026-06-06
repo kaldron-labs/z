@@ -49,8 +49,10 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
 	getVar_(in, o, rangeCount) < 0 ||
 	getVar_(in, o, f.length) < 0)	// first range length
       return -1;
+    if (rangeCount >= Frame::MaxAckRanges) return -1;
     if (f.length > f.offset) return -1;
     uint64_t smallest = f.offset - f.length;
+    f.ackRanges[f.ackRangeCount++] = AckRange{f.offset, smallest};
     for (uint64_t i = 0; i < rangeCount; ++i) {
       uint64_t gap = 0, range = 0;
       if (getVar_(in, o, gap) < 0 || getVar_(in, o, range) < 0)
@@ -59,6 +61,12 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
       uint64_t base = smallest - gap - 2;
       if (range > base) return -1;
       smallest = base - range;
+      f.ackRanges[f.ackRangeCount++] = AckRange{base, smallest};
+    }
+    for (unsigned i = 0, j = f.ackRangeCount; i < --j; ++i) {
+      AckRange tmp = f.ackRanges[i];
+      f.ackRanges[i] = f.ackRanges[j];
+      f.ackRanges[j] = tmp;
     }
     if (t == 0x03) {
       uint64_t ecn = 0;
