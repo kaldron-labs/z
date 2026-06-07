@@ -210,4 +210,9 @@ int main(int argc, char **argv)
     ZuCHECK((ZuIsSame<const int &, decltype(cr.p<0>())>{}));
     ZuCHECK((ZuIsSame<int &&, decltype(ZuMv(r).p<0>())>{}));
   }
+  {
+    ZuTuple<int, int, int> t = { 42, 43, 44 };
+    auto [x, y, z] = t;
+    ZuCHECK(x == 42 && y == 43 && z == 44);
+  }
 }
