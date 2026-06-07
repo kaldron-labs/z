@@ -10,9 +10,9 @@
 //   - queue type, which must support:
 //     count_(), headNode(), shift(), pushNode(node), clean()
 // - stream operations:
-//   - span()    - current contiguous bytes
-//   - spans()   - iterate over pending buffer spans in the stream
-//   - advance() - consume bytes from the stream
+//   - consume(frame, data) returns the total number of bytes consumed across all spans
+//     - int64_t frame(span) returns the number of bytes to be consumed in span
+//     - data(span) delivers contiguous frame data to the app
 //   - empty()   - true when no readable bytes remain
 // - queue operations:
 //   - push(node)
@@ -54,41 +54,101 @@ public:
 
   auto count_() { return m_queue.count_(); }
 
-  ZuSpan<uint8_t> span() {
-    auto head = m_queue.headNode();
-    return head ? head->span() : ZuSpan<uint8_t>{};
+private:
+  enum { Locked = !ZuIsSame<ZmNoLock, typename Queue::Lock>{} };
+  using NodeRef = ZuIf<typename Queue::NodeRef, typename Queue::NodePtr, Locked>;
+  auto head() {
+    if constexpr (Locked)
+      return m_queue.headNode();
+    else
+      return m_queue.headPtr();
   }
 
-  template <typename L>
-  bool spans(L &&l) {
-    auto i = m_queue.citer();
-    while (auto node = i())
-      if (!l(node->span())) return false;
-    return true;
-  }
-
-  bool empty() const {
-    return !m_queue.headNode();
-  }
-
-  bool advance(unsigned n) {
-    bool consumed = false;
-    while (n) {
-      auto head = m_queue.headNode();
-      if (!head) break;
-      unsigned m = n;
-      if (m > head->length) m = head->length;
-      head->advance(m);
-      n -= m;
-      consumed |= m;
-      if (!head->length) m_queue.shift();
+public:
+  // consume(frame, data) returns the total number of bytes consumed across all spans
+  // - int64_t frame(span)
+  //   - returns the number of bytes N to be consumed in span
+  //   - N < 0 indicates an error:
+  //     - iteration ends
+  //     - no consumption occurs
+  //     - data(span) is not called
+  //   - if !N, iteration continues to the next span
+  //   - if N > 0:
+  //     - iteration ends
+  //     - prior spans will be consumed entirely
+  //     - the current span is consumed by N
+  //     - the current span will be included in the data if N > Trailer
+  // - data(span) delivers contiguous frame data to the app (length == total - Trailer)
+  // - iteration may complete without any consumption having occurred (will return 0)
+  template <
+    unsigned Trailer = 0,
+    typename HeapID = typename Queue::HeapID,
+    typename Frame, typename Data>
+  int64_t consume(Frame &&frame, Data &&data) {
+    int64_t consumed = 0;
+    uint64_t count = 0, total = 0;
+    {
+      auto i = m_queue.citer();
+      while (auto node = i()) {
+	if (consumed = frame(node->span())) goto framed;
+	++count;
+	total += node->length;
+      }
+      return 0;
     }
-    return consumed;
+  framed:
+    if (consumed < 0) return consumed; // error
+    total += consumed;
+    if (Trailer > 0 && ZuUnlikely(total < Trailer)) {
+      // edge case - short data
+      data(ZuBSpan{});
+      goto ret;
+    }
+    NodeRef head = this->head();
+    if (Trailer > 0 &&
+	ZuUnlikely(count == 1 && consumed <= Trailer)) {
+      // edge case - 2 spans - but 2nd span is trailer-only
+      auto span = head->span();
+      span.trunc(span.length() - (Trailer - consumed));
+      data(span);
+      goto ret;
+    }
+    if (ZuUnlikely(count > 0)) {
+      // multiple spans - need assembly into contiguous scratch buffer
+      using Scratch = ZtArray<uint8_t, ZtArrayHeapID_<HeapID>>;
+      auto scratch = ZtLocalArray(Scratch, total - Trailer);
+      do {
+	auto span = head->span();
+	if (Trailer > 0 &&
+	    ZuUnlikely(count == 1 && consumed <= Trailer))
+	  span.trunc(span.length() - (Trailer - consumed));
+	scratch << span;
+	m_queue.shift();
+	head = this->head();
+      } while (--count);
+      if (consumed > Trailer) {
+	auto span = head->span();
+	span.trunc(consumed - Trailer);
+	scratch << span;
+      }
+      data(scratch.span());
+    } else {
+      // single span - fast path - can be passed directly
+      auto span = head->span();
+      span.trunc(consumed - Trailer);
+      data(span);
+    }
+ret:
+    if (consumed < head->length)
+      head->advance(consumed);
+    else
+      m_queue.shift();
+    return total;
   }
 
-  bool operator !() const {
-    return !m_queue.headNode();
-  }
+  bool empty() const { return !head(); }
+
+  bool operator !() const { return empty(); }
   ZuOpBool
 
 private:
