@@ -493,8 +493,8 @@ public:
   using Link = Link_;
   using Base = ZvTx<ZvTxPool, ZvAnyTxPool>;
 
-  using Tx_ = ZmPQTx<ZvTxPool, ZvIOQueue>;
   using Tx = ZvIOQueueTxPool<ZvTxPool, Link>;
+  using Tx_ = typename Tx::Base::Base;
 
   using Base::engine;
   using Base::txRun;
@@ -578,10 +578,10 @@ public:
   using Pool = Pool_;
   using Base = ZvTx<Impl, ZvAnyLink>;
 
-  using Rx_ = ZmPQRx<Impl, ZvIOQueue>;
   using Rx = ZvIOQueueRx<Impl>;
-  using Tx_ = ZmPQTx<Impl, ZvIOQueue>;
+  using Rx_ = typename Rx::Base;
   using Tx = ZvIOQueueTx<Impl, Pool>;
+  using Tx_ = typename Tx::Base::Base;
 
   auto impl() { return static_cast<Impl *>(this); }
   auto impl() const { return static_cast<const Impl *>(this); }
