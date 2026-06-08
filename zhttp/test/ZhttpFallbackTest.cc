@@ -16,6 +16,9 @@
 #include <sys/socket.h>
 #endif
 
+#include <zlib/ZuDerive.hh>
+#include <zlib/ZmList.hh>
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zhttp3.hh>
 
@@ -31,21 +34,22 @@ constexpr unsigned FallbackMaxBody = 64<<10;
 using IOBufAlloc =
   ZiIOBufAlloc<FallbackBufSize, FallbackMaxBody, "Zhttp.Fallback.Buf">;
 
-struct SpanRx {
-  ZuSpan<uint8_t> data;
+ZuDerive(RxQueue,
+  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, FallbackBufSize,
+  FallbackMaxBody, ZuStringT<"Zhttp.Fallback.RxBuf">>;
+using RxStream = ZiRxStream<RxQueue>;
 
-  SpanRx() = default;
-  SpanRx(ZuSpan<uint8_t> data_) : data{data_} { }
-
-  ZuSpan<uint8_t> span() { return data; }
-  template <typename L>
-  bool spans(L &&l) { return l(data); }
-  bool advance(unsigned n) {
-    if (n > data.length()) n = data.length();
-    data.offset(n);
-    return n;
+ZmRef<RxQueue::Node> mkBuf(const uint8_t *data, unsigned len)
+{
+  ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
+  auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
+  if (len) {
+    ::memcpy(iobuf->data(), data, len);
+    iobuf->length = len;
   }
-};
+  return buf;
+}
 
 struct BufTx {
   ZmRef<ZiIOBuf> buf;
@@ -57,6 +61,8 @@ struct BufTx {
     *buf << ZuFwd<V>(v);
     return *this;
   }
+
+  void flush() { }
 };
 
 struct RequestCtx {
@@ -69,9 +75,72 @@ struct ResponseCtx {
   int			status = -1;
 };
 
-using ResponseRx =
-  Zhttp::Parser<
-    Zhttp::Response<>, Zhttp::Body<FallbackMaxBody>, ResponseCtx>;
+using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
+struct RequestRx :
+  public Zhttp::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody> {
+  using Base =
+    Zhttp::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody>;
+
+  void operation(Zhttp::Method::T method_, ZuCSpan path_) {
+    method = method_;
+    path.length(0);
+    path << path_;
+  }
+
+  template <typename Key>
+  void header(ZuBSpan value) {
+    if constexpr (ZuIsSame<Key, ZuStringT<"host">>{}) {
+      host.length(0);
+      host << ZuCSpan{
+	reinterpret_cast<const char *>(value.data()), value.length()};
+    }
+  }
+
+  Zhttp::Method::T	method = -1;
+  ZtString<>		path;
+  ZtString<>		host;
+};
+
+struct ResponseRx :
+  public Zhttp::Parser<ResponseRx, false, ZuTypeList<>, FallbackMaxBody> {
+  using Base = Zhttp::Parser<ResponseRx, false, ZuTypeList<>, FallbackMaxBody>;
+
+  void status(unsigned v) { statusSeen = v; }
+  void contentLength(uint64_t v) { contentLengthSeen = v; }
+  void body(ZuBSpan span) { bodyData << span; }
+  void complete(Zhttp::ParserState::T state_) { completeState = state_; }
+
+  int				statusSeen = -1;
+  int64_t			contentLengthSeen = -1;
+  Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
+  Zhttp::BodyData		bodyData;
+};
+
+struct ResponseBuilder :
+  public Zhttp::Builder<ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true> {
+  using Base =
+    Zhttp::Builder<ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true>;
+
+  ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
+
+  unsigned status() { return 200; }
+  template <typename L> void reason(L &&l) { l("OK"); }
+  uint64_t contentLength() { return contentLength_; }
+
+  uint64_t contentLength_;
+};
+
+using RequestBuilderHeaders =
+  ZuTypeList<ZuStringT<"user-agent">, ZuStringT<"ZhttpFallbackTest/1.0">>;
+struct RequestBuilder :
+  public Zhttp::Builder<RequestBuilder, RequestBuilderHeaders> {
+  using Base = Zhttp::Builder<RequestBuilder, RequestBuilderHeaders>;
+
+  template <typename L>
+  void operation(L &&l) { l(Zhttp::Method::GET, "/zhttp-fallback", ""); }
+  template <typename L>
+  void host(L &&l) { l("localhost"); }
+};
 
 #ifndef _WIN32
 int listenLoopback_(unsigned &port)
@@ -184,30 +253,21 @@ pid_t startZhttpH1Server_(
     _exit(3);
   }
 
-  Zhttp::Request<ZuStringTL<"host">> req;
-  RequestCtx ctx;
-  int used = req.parse(
-    ZuSpan<uint8_t>{reqBuf, reqLen}, ctx,
-    [](RequestCtx &ctx, Zhttp::Method::T method, ZuCSpan path) {
-      ctx.method = method;
-      ctx.path = path;
-    },
-    [](RequestCtx &ctx, int i, ZuCSpan value) {
-      if (!i) ctx.host = value;
-    },
-    [](RequestCtx &, int) { });
-  if (used <= 0 ||
-      ctx.method != Zhttp::Method::GET ||
-      ctx.path != expectedPath ||
-      !localhostHost_(ctx.host)) {
+  RequestRx req;
+  RxStream reqStream;
+  reqStream.push(mkBuf(reqBuf, reqLen));
+  auto reqState = req.process(reqStream);
+  if (reqState != Zhttp::ParserState::Complete ||
+      req.method != Zhttp::Method::GET ||
+      req.path != expectedPath ||
+      !localhostHost_(req.host)) {
     ::close(fd);
     _exit(4);
   }
 
-  Zhttp::Builder<ZuStringTL<>, ZuStringTL<>, true, false, ZuEmpty> resp;
-  BufTx tx{new IOBufAlloc()};
-  resp.contentLength(responseBody.length());
-  resp.response(tx, 200, "OK", [](auto &, auto) { return ""; });
+  ResponseBuilder resp{responseBody.length()};
+  BufTx tx{new IOBufAlloc{}};
+  resp.response(tx);
   tx << responseBody;
   resp.finish(tx);
   bool sent = sendAll_(fd, tx.buf->data(), tx.buf->length);
@@ -334,13 +394,9 @@ void testZhttpClientHttp11Fallback()
     return;
   }
 
-  Zhttp::Builder<
-    ZuStringTL<>,
-    ZuStringTL<"user-agent: ZhttpFallbackTest/1.0">,
-    false, false, ZuEmpty> req;
-  BufTx tx{new IOBufAlloc()};
-  req.request(tx, Zhttp::Method::GET, "/zhttp-fallback", "localhost",
-    [](auto &, auto) { return ""; });
+  RequestBuilder req;
+  BufTx tx{new IOBufAlloc{}};
+  req.request(tx);
   req.finish(tx);
   ZuCHECK(sendAll_(fd, tx.buf->data(), tx.buf->length),
     "Zhttp client fallback request send failed");
@@ -353,35 +409,27 @@ void testZhttpClientHttp11Fallback()
   ::close(fd);
 
   ResponseRx rx;
-  SpanRx stream{ZuSpan<uint8_t>{respBuf, respLen}};
-  Zhttp::BodyData bodyData;
-  auto status = [](auto &rx, int status) { rx.context.status = status; };
-  auto key = [](auto &, int, ZuCSpan) { };
-  auto kv = [](auto &, int) { };
-  int consumed = rx.process(stream, status, key, kv,
-    [&bodyData](auto &rx) {
-      bodyData << rx.body.span;
-      return true;
-    });
-  if (!(consumed == int(respLen) &&
-	rx.context.status == 200 &&
-	rx.body.contentLength == 11 &&
-	rx.body.complete &&
-	bodyData == "zhttp-h1-ok")) {
+  RxStream stream;
+  stream.push(mkBuf(respBuf, respLen));
+  auto respState = rx.process(stream);
+  if (!(respState == Zhttp::ParserState::Complete &&
+	rx.statusSeen == 200 &&
+	rx.contentLengthSeen == 11 &&
+	rx.bodyData == "zhttp-h1-ok" &&
+	!stream)) {
     std::cout <<
       "# fallback response diag:"
-      " consumed=" << consumed <<
+      " state=" << int(respState) <<
       " respLen=" << respLen <<
-      " status=" << rx.context.status <<
-      " contentLength=" << rx.body.contentLength <<
-      " bodyComplete=" << rx.body.complete <<
-      " body='" << bodyData << "'\n";
+      " status=" << rx.statusSeen <<
+      " contentLength=" << rx.contentLengthSeen <<
+      " body='" << rx.bodyData << "'\n";
   }
-  ZuCHECK(consumed == int(respLen) &&
-      rx.context.status == 200 &&
-      rx.body.contentLength == 11 &&
-      rx.body.complete &&
-      bodyData == "zhttp-h1-ok",
+  ZuCHECK(respState == Zhttp::ParserState::Complete &&
+      rx.statusSeen == 200 &&
+      rx.contentLengthSeen == 11 &&
+      rx.bodyData == "zhttp-h1-ok" &&
+      !stream,
     "Zhttp client fallback response parse mismatch");
   ZuCHECK(waitServerOK_(pid),
     "Zhttp client fallback server did not parse request and send response");

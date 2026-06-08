@@ -171,10 +171,12 @@ namespace Key {
 }
 
 // CRLF framing
-inline crlf() {
-  return [prevCR = false](ZuBSpan span) mutable -> uint64_t {
+template <bool CanFold = true>
+inline auto crlf() {
+  return [prevCR = false](ZuBSpan span) mutable -> int64_t {
     if (prevCR && span[0] == '\n') return 1;
-    if ((unsigned consumed = eol<CanFold>(span)) >= 0) return consumed + 2;
+    if (int consumed = eol<CanFold>(span); consumed >= 0)
+      return consumed + 2;
     prevCR = span[span.length() - 1] == '\r';
     return 0;
   };
@@ -184,27 +186,29 @@ inline crlf() {
 // - CanFold should be false for the start line
 // - span is empty for the last line before the body
 template <bool CanFold = true, typename Stream, typename Line>
-inline bool parseLine(Stream &stream, Line &&line) {
-  return stream.consume<2, ZuStringT<"Zhttp.Header">>(
-    crlf(), ZuFwd<Line>(line));
+inline int64_t parseLine(Stream &stream, Line &&line) {
+  return stream.template consume<2, ZuStringT<"Zhttp.Header">>(
+    crlf<CanFold>(), ZuFwd<Line>(line));
 }
 
 // parses a key and value from a line
 // - calls kv(key, value)
 template <typename KV>
-inline void parseKV(ZuSpan<uint8_t> line, KV &&kv) {
+inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
   int n = eok(line);
-  if (ZuUnlikely(n < 0)) return -1;
+  if (ZuUnlikely(n < 0)) return false;
   ZuSpan key(&line[0], unsigned(n));
   line.offset(n + 1); // skip key and delimiter
   n = bov(line);
-  if (ZuUnlikely(n < 0)) return -1;
+  if (ZuUnlikely(n < 0)) return false;
   line.offset(n); // skip white space
   ZuSpan value{line.data(), line.length()};
   n = eov(value);
-  if (ZuUnlikely(n < 0)) return -1; // should never happen
+  if (ZuUnlikely(n < 0)) return false; // should never happen
   value.trunc(n);
+  normalize(key);
   kv(key, value);
+  return true;
 }
 
 // ASCII -> hex
@@ -248,6 +252,15 @@ struct Impl : public Parser<Impl, ...> {
   // optional - header key+value
   template <typename Key, typename Value> void header();
 
+  // optional - content-length header
+  void contentLength(uint64_t);
+
+  // optional - transfer-encoding token
+  void transferEncoding(TransferEncoding::T);
+
+  // optional - transfer-encoding: chunked
+  void chunked();
+
   // optional - body data
   void body(ZuBSpan);
 
@@ -259,7 +272,7 @@ struct Impl : public Parser<Impl, ...> {
 template <
   typename Impl,
   bool Request_ = false,
-  typename Headers_ = ZuTypelist<>,
+  typename Headers_ = ZuTypeList<>,
   uint64_t MaxBody_ = DefltMaxBody>
 struct Parser {
   auto impl() const { return static_cast<const Impl *>(this); }
@@ -273,39 +286,45 @@ struct Parser {
   using Values = ZuTypeSlice<2, 1, Headers>;
   static constexpr uint64_t MaxBody = MaxBody_;
 
-  int64_t		contentLength = -1;
-  int64_t		chunkLength = -1;
-  TransferEncoding::T	xferEncoding = -1;
-  ParserState		state = ParserState::Initial;
-  bool			chunked = false;
-
 private:
+  int64_t		m_contentLength = -1;
+  int64_t		m_chunkLength = -1;
+  ParserState::T	m_state = ParserState::Initial;
+  bool			m_chunked = false;
+
   // process header with variable value
   template <typename Key> void header_(ZuBSpan value) {
     if constexpr (ZuIsSame<Key, ZuStringT<"transfer-encoding">>{}) {
-      split(value, [this](unsigned i, ZuBSpan token) -> bool {
+      bool invalid = false;
+      split(value, [this, &invalid](unsigned i, ZuBSpan token) -> bool {
 	// chunked must come last, anything else must be first
-	if (chunked) {
+	if (m_chunked) {
 	  invalid = true;
 	  return false;
-	} else if (token == "chunked")
-	  chunked = true;
-	else if (i) {
+	} else if (token == "chunked") {
+	  m_chunked = true;
+	  impl()->chunked();
+	} else if (i) {
 	  invalid = true;
 	  return false;
-	} else
-	  xferEncoding = TransferEncoding::lookup(token);
+	} else {
+	  auto xferEncoding = TransferEncoding::lookup(token);
+	  impl()->transferEncoding(xferEncoding);
+	}
 	return true;
       });
       if (invalid) {
-	state = ParserState::Error;
+	m_state = ParserState::Error;
 	ZiLOG(Error, "Zhttp", "invalid transfer-encoding");
       }
     } else if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
-      contentLength = ZuBox<uint64_t>{ZuCSpan(value)};
+      uint64_t contentLength = ZuBox<uint64_t>{ZuCSpan{value}};
       if (contentLength > MaxBody) {
-	state = ParserState::Error;
+	m_state = ParserState::Error;
 	ZiLOG(Error, "Zhttp", "invalid content-length");
+      } else {
+	m_contentLength = contentLength;
+	impl()->contentLength(contentLength);
       }
     } else {
       impl()->template header<Key>(value);
@@ -326,8 +345,8 @@ private:
 	    auto j = vMatcher.match(value);
 	    enum { I = i };
 	    if (j >= 0) {
-	      ZuSwitch::dispatch<Values::N>(j, [this](auto j) {
-		impl()->template header<ZuType<I, Keys>, ZuType<j, Values>>();
+	      ZuSwitch::dispatch<KValues::N>(j, [this](auto j) {
+		impl()->template header<ZuType<I, Keys>, ZuType<j, KValues>>();
 	      });
 	      return;
 	    }
@@ -341,7 +360,7 @@ private:
   // parse request operation line
   void parseOperation(ZuCSpan line) {
     auto error = [this]() {
-      state = ParserState::Error;
+      m_state = ParserState::Error;
       ZiLOG(Error, "Zhttp", "invalid HTTP operation");
     };
     unsigned n = line.length();
@@ -349,7 +368,7 @@ private:
     for (o = 0; o < int(n) && line[o] != ' '; )
       if (ZuUnlikely(++o > 7)) { error(); return; } // unterminated method
     if (ZuUnlikely(!o || o >= int(n))) { error(); return; } // missing method
-    method = Method::lookup({&line[0], unsigned(o)});
+    Method::T method = Method::lookup({&line[0], unsigned(o)});
     unsigned b = ++o;
     while (o < int(n) && line[o] != ' ') ++o;
     if (ZuUnlikely(b == unsigned(o) || o >= int(n))) error();
@@ -357,13 +376,13 @@ private:
     b = ++o;
     if (ZuUnlikely(b >= n)) { error(); return; } // missing protocol
     impl()->operation(method, path);
-    state = ParserState::Headers;
+    m_state = ParserState::Headers;
   }
 
   // parse response status line
   void parseStatus(ZuCSpan line) {
     auto error = [this]() {
-      state = ParserState::Error;
+      m_state = ParserState::Error;
       ZiLOG(Error, "Zhttp", "invalid HTTP response status");
     };
     unsigned n = line.length();
@@ -373,27 +392,30 @@ private:
     if (ZuUnlikely(!o || o >= int(n))) { error(); return; } // missing protocol
     unsigned b = ++o;
     int c; // intentionally int
+    unsigned code = 0;
     while (o < int(n) && (c = line[o]) != ' ') {
       if (c < '0' || c > '9') { error(); return; } // not a number
       c -= '0';
-      status = status < 0 ? c : (status * 10) + c;
+      code = code ? (code * 10) + c : c;
       if (ZuUnlikely(++o > int(b + 3))) { error(); return; }
     }
     if (ZuUnlikely(b == unsigned(o) || o >= int(n))) { error(); return; }
-    impl()->status(status);
-    state = ParserState::Headers;
+    impl()->status(code);
+    m_state = ParserState::Headers;
   }
 
 public:
   // top-level process
   template <typename Stream>
   ParserState::T process(Stream &stream) {
+    int64_t consumed = 0;
     do {
-      switch (state) {
+      consumed = 0;
+      switch (m_state) {
 	default:
 	  break;
 	case ParserState::Initial: { // parse first line
-	  consumed = parseLine<false>(stream, [this](ZuBSpan line) {
+	  consumed = parseLine<false>(stream, [this](ZuSpan<uint8_t> line) {
 	    if constexpr (Request)
 	      parseOperation(line);
 	    else
@@ -401,105 +423,110 @@ public:
 	  });
 	} break;
 	case ParserState::Headers: { // parse headers
-	  consumed = parseLine<true>(stream, [this](ZuBSpan line) {
+	  consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
 	    if (!line) {
-	      if (chunked) {
-		state = ParserState::ChunkHdr;
-		contentLength = 0;
-	      } else if (contentLength > 0)
-		state = ParserState::Body;
+	      if (m_chunked) {
+		m_state = ParserState::ChunkHdr;
+		m_contentLength = 0;
+	      } else if (m_contentLength > 0)
+		m_state = ParserState::Body;
 	      else
-		state = ParserState::Complete;
+		m_state = ParserState::Complete;
 	    } else
-	      parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
+	      if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
 		this->header_(key, value);
-	      });
+	      }))
+		m_state = ParserState::Error;
 	  });
 	} break;
 	case ParserState::Body: { // parse body
 	  consumed = stream.consume(
 	    [this](ZuBSpan span) {
 	      auto n = span.length();
-	      if (n > contentLength) n = contentLength;
-	      if (!(contentLength -= n)) state = ParserState::Complete;
+	      if (n > m_contentLength) n = m_contentLength;
+	      if (!(m_contentLength -= n)) m_state = ParserState::Complete;
 	      return n;
 	    }, [this](ZuBSpan span) { impl()->body(span); });
 	  } break;
 	case ParserState::ChunkHdr: { // parse chunk header
-	  consumed = stream.consume<2, ZuStringT<"Zhttp.ChunkHdr">>(
-	    crlf(), [this](ZuBSpan span) {
-	      if (!span) { state = ParserState::Complete; return; }
+	  consumed = stream.template consume<2, ZuStringT<"Zhttp.ChunkHdr">>(
+	    crlf<false>(), [this](ZuSpan<uint8_t> span) {
+	      if (!span) { m_state = ParserState::Complete; return; }
 	      auto error = [this]() {
-		state = ParserState::Error;
-		ZiLOG(Error, "Zhttp", "invalid content-length");
+		m_state = ParserState::Error;
+		ZiLOG(Error, "Zhttp", "invalid chunk-length");
 	      };
 	      ZuBox<uint64_t> l;
-	      auto n = l.scan<ZuFmt::Hex<>>(span);
+	      auto n = l.scan<ZuFmt::Hex<>>(ZuCSpan{span});
 	      if (!n) { error(); return; }
 	      // span.offset(n); // chunk extensions are ignored
-	      chunkLength = l;
-	      if (!chunkLength) {
-		state = ParserState::Trailers;
+	      m_chunkLength = l;
+	      if (!m_chunkLength) {
+		m_state = ParserState::Trailers;
 		return;
 	      }
-	      if (chunkLength > MaxBody) { error(); return; }
-	      if ((contentLength += chunkLength) > MaxBody) { error(); return; }
-	      state = ParserState::Chunk;
+	      if (m_chunkLength > MaxBody) { error(); return; }
+	      if ((m_contentLength += m_chunkLength) > MaxBody) { error(); return; }
+	      m_state = ParserState::Chunk;
 	    });
 	} break;
 	case ParserState::Chunk: { // parse chunk data
 	  consumed = stream.consume(
 	    [this](ZuBSpan span) {
 	      auto n = span.length();
-	      if (n > chunkLength) n = chunkLength;
-	      if (!(chunkLength -= n)) state = ParserState::ChunkTrlr;
+	      if (n > m_chunkLength) n = m_chunkLength;
+	      if (!(m_chunkLength -= n)) m_state = ParserState::ChunkTrlr;
 	      return n;
 	    }, [this](ZuBSpan span) { impl()->body(span); });
 	} break;
 	case ParserState::ChunkTrlr: { // parse trailing "\r\n"
-	  consumed = stream.consume(
-	    [this, prevCR = false](ZuBSpan span) mutable -> uint64_t {
+	  consumed = stream.template consume<2, ZuStringT<"Zhttp.ChunkTrlr">>(
+	    [this, prevCR = false](ZuBSpan span) mutable -> int64_t {
 	      auto error = [this]() {
-		state = ParserState::Error;
+		m_state = ParserState::Error;
 		ZiLOG(Error, "Zhttp", "invalid chunk trailer");
 		return -1;
 	      };
-	      if (prevCR && span[0] == '\n') return 1;
+	      if (prevCR && span[0] == '\n') {
+		m_state = ParserState::ChunkHdr;
+		return 1;
+	      }
 	      if (span.length() == 1) {
 		if (span[0] == '\r') { prevCR = true; return 0; }
 		return error();
 	      }
 	      if (span[0] != '\r' || span[1] != '\n') return error();
+	      m_state = ParserState::ChunkHdr;
 	      return 2;
-	    }, [this](ZuBSpan) { });
+	    }, [](ZuBSpan) { });
 	} break;
 	case ParserState::Trailers: { // parse trailers
-	  consumed = parseLine<true>(stream, [this](ZuBSpan line) {
+	  consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
 	    if (!line)
-	      state = ParserState::Complete;
+	      m_state = ParserState::Complete;
 	    else
-	      parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
+	      if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
 		this->header_(key, value);
-	      });
+	      }))
+		m_state = ParserState::Error;
 	  });
 	} break;
       }
-      if (state == ParserState::Complete ||
-	  state == ParserState::Error) {
-	impl()->complete(state);
+      if (m_state == ParserState::Complete ||
+	  m_state == ParserState::Error) {
+	impl()->complete(m_state);
 	break;
       }
     } while (consumed);
-    return state;
+    return m_state;
   }
 
   // reset for next message
   void reset() {
-    state = ParserState::Initial;
-    chunked = false;
-    contentLength = -1;
-    chunkLength = -1;
-    xferEncoding = -1;
+    m_state = ParserState::Initial;
+    m_chunked = false;
+    m_contentLength = -1;
+    m_chunkLength = -1;
   }
 
   // CRTP defaults
@@ -507,6 +534,9 @@ public:
   void status(unsigned) { }
   template <typename Key> void header(ZuBSpan) { }
   template <typename Key, typename Value> void header() { }
+  void contentLength(uint64_t) { }
+  void transferEncoding(TransferEncoding::T) { }
+  void chunked() { }
   void body(ZuBSpan) { }
   void complete(ParserState::T) { }
 };
@@ -515,32 +545,33 @@ public:
 
 // HTTP 1.1 chunked body Tx streaming
 template <typename Lower>
-struct BodyStream : public ZiTxLayer<BodyStream, Lower> {
-  using Base = ZiTxLayer<BodyStream, Lower>;
-
-  uint64_t contentLength;
+struct BodyStream : public ZiTxLayer<BodyStream<Lower>, Lower> {
+  using Base = ZiTxLayer<BodyStream<Lower>, Lower>;
 
   BodyStream(Lower &lower, uint64_t contentLength_) :
-    Base(lower, 0, 0), contentLength(contentLength_)  { }
+    Base(lower, 0, 0), m_contentLength(contentLength_)  { }
 
   void prepareBuf_(ZiIOBuf *buf) {
-    ZiAssert(contentLength >= buf->length,
-      "Zhttp", (), "oversized body", buf->length = contentLength);
-    contentLength -= buf->length;
+    ZiAssert(m_contentLength >= buf->length,
+      "Zhttp", (), "oversized body", buf->length = m_contentLength);
+    m_contentLength -= buf->length;
   }
+
+private:
+  uint64_t		m_contentLength;
 };
 template <typename Lower>
-auto bodyStream(Lower &lower) {
-  return BodyStream<Lower>(lower);
+auto bodyStream(Lower &lower, uint64_t contentLength) {
+  return BodyStream<Lower>(lower, contentLength);
 }
 
 // HTTP 1.1 chunked body Tx streaming
 template <typename Lower>
-struct ChunkedStream : public ZiTxLayer<ChunkedStream, Lower> {
+struct ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
   enum { HdrSize = 10 };	// 8 bytes of hex length + CRLF
   enum { TrlrSize = 2 };	// CRLF
 
-  using Base = ZiTxLayer<ChunkedStream, Lower>;
+  using Base = ZiTxLayer<ChunkedStream<Lower>, Lower>;
 
   ChunkedStream(Lower &lower) : Base(lower, HdrSize, TrlrSize) { }
 
@@ -556,7 +587,7 @@ struct ChunkedStream : public ZiTxLayer<ChunkedStream, Lower> {
       s << n.fmt<Fmt>() << "\r\n";
     }
     // chunk trailer
-    buf << "\r\n";
+    *buf << "\r\n";
   }
 };
 template <typename Lower>
@@ -575,7 +606,7 @@ struct Impl : public Builder<Impl, ...> {
   // optional - defaults to true
   bool request();
 
-  // optional - defaults to { l(Method::Get, "/", "") }
+  // optional - defaults to { l(Method::GET, "/", ""); }
   template <typename L> void operation(L &&l);
 
   // optional - defaults to { l("127.0.0.1"); }
@@ -599,8 +630,8 @@ struct Impl : public Builder<Impl, ...> {
 
 template <
   typename Impl,
-  typename Headers_ = ZuTypelist<>,
-  typename Trailers_ = ZuTypelist<>,	// ignored if not chunked
+  typename Headers_ = ZuTypeList<>,
+  typename Trailers_ = ZuTypeList<>,	// ignored if not chunked
   bool HasBody_ = false,		// has a body
   bool Chunked_ = false>		// body is chunked
 struct Builder {
@@ -619,7 +650,7 @@ private:
     {
       using Keys = ZuTypeSlice<2, 0, KVs>;
       using Values = ZuTypeSlice<2, 1, KVs>;
-      ZuUnroll::all<Keys>([&stream]<typename Key>() {
+      ZuUnroll::all<Keys>([this, &stream]<typename Key>() {
 	using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
 	if constexpr (!ZuIsSame<Value, void>{})
 	  stream << Key{}() << ": " << Value{}() << "\r\n";
@@ -674,7 +705,7 @@ public:
   void response(Stream &stream) {
     // status + reason
     stream << "HTTP/1.1 " <<
-      ZuBox<unsigned>{impl()->status}.fmt<ZuFmt::Right<3>>() << ' ';
+      ZuBox<unsigned>{impl()->status()}.fmt<ZuFmt::Right<3>>() << ' ';
     impl()->reason([&stream]<typename Reason>(Reason &&reason) {
       stream << ZuFwd<Reason>(reason);
     });
@@ -684,10 +715,12 @@ public:
   }
 
   // body
-  template <typename Stream, decltype(ZuIfT<HasBody && !Chunked>(), int()) = 0>
+  template <typename Stream, bool B = HasBody && !Chunked, ZuIfT<B, int> = 0>
   auto body(Stream &stream) { return bodyStream(stream, impl()->contentLength()); }
 
-  template <typename Stream, decltype(ZuIfT<HasBody && Chunked>(), int()) = 0>
+  template <
+    typename Stream, bool B = HasBody && Chunked,
+    ZuIfT<B, int> = 0, typename = void>
   auto body(Stream &stream) { return chunkedStream(stream); }
 
   // finish
@@ -704,7 +737,7 @@ public:
 
   // CRTP defaults
   bool request() { return true; }
-  template <typename L> void operation(L &&l) { l(Method::Get, "/", ""); }
+  template <typename L> void operation(L &&l) { l(Method::GET, "/", ""); }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   unsigned status() { return 200; }
   template <typename L> void reason(L &&l) { l(""); }

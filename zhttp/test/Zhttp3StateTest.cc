@@ -13,12 +13,11 @@ using namespace ZuTestUtil;
 
 namespace {
 
-using TestStreamBufAlloc = Zquic::StreamBufAlloc<>;
+using TestStreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
 struct TestStream :
-    public Zquic::Stream<TestStream, TestStreamBufAlloc, TestStreamBufAlloc> {
-  using Base = Zquic::Stream<TestStream, TestStreamBufAlloc,
-    TestStreamBufAlloc>;
+    public Zquic::Stream<TestStream, TestStreamTxBufAlloc> {
+  using Base = Zquic::Stream<TestStream, TestStreamTxBufAlloc>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }

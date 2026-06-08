@@ -24,31 +24,6 @@ using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 2048,
   ZuStringT<"ZhttpParserTest.Buf">>;
 using RxStream = ZiRxStream<RxQueue>;
 
-struct ResponseCtx {
-  int		status = -1;
-  bool		keyValue = false;
-  unsigned	keyCalls = 0;
-  unsigned	bodyCalls = 0;
-};
-
-struct RequestCtx {
-  bool		method = false;
-  bool		path = false;
-  bool		host = false;
-  unsigned	hostCalls = 0;
-  unsigned	bodyCalls = 0;
-};
-
-using Parser = Zhttp::Parser<
-  Zhttp::Response<ZuStringTL<"key">>,
-  Zhttp::Body<1024>,
-  ResponseCtx>;
-
-using RequestParser = Zhttp::Parser<
-  Zhttp::Request<ZuStringTL<"host">>,
-  Zhttp::Body<1024>,
-  RequestCtx>;
-
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
   unsigned n = static_cast<unsigned>(::strlen(s));
@@ -61,11 +36,92 @@ ZmRef<RxQueue::Node> mkBuf(const char *s)
   return buf;
 }
 
-bool spanEq(ZuSpan<uint8_t> span, const char *s)
+bool spanEq(ZuBSpan span, const char *s)
 {
   unsigned n = static_cast<unsigned>(::strlen(s));
   return span.length() == n && (!n || !::memcmp(span.data(), s, n));
 }
+
+using ResponseHeaders = ZuTypeList<ZuStringT<"key">, void>;
+struct ResponseParser :
+  public Zhttp::Parser<ResponseParser, false, ResponseHeaders, 1024> {
+  using Base = Zhttp::Parser<ResponseParser, false, ResponseHeaders, 1024>;
+
+  void status(unsigned v) { statusSeen = v; }
+  void contentLength(uint64_t v) { contentLengthSeen = v; }
+  void chunked() { chunkedSeen = true; }
+
+  template <typename Key>
+  void header(ZuBSpan value) {
+    if constexpr (ZuIsSame<Key, ZuStringT<"key">>{}) {
+      ++keyCalls;
+      keyValue = spanEq(value, "Value");
+    }
+  }
+
+  void body(ZuBSpan span) {
+    ++bodyCalls;
+    bodyBytes += span.length();
+    bodyData << span;
+  }
+
+  void complete(Zhttp::ParserState::T state_) {
+    completeState = state_;
+    ++completeCalls;
+  }
+
+  int				statusSeen = -1;
+  int64_t			contentLengthSeen = -1;
+  bool				keyValue = false;
+  bool				chunkedSeen = false;
+  unsigned			keyCalls = 0;
+  unsigned			bodyCalls = 0;
+  uint64_t			bodyBytes = 0;
+  unsigned			completeCalls = 0;
+  Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
+  Zhttp::BodyData		bodyData;
+};
+
+using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
+struct RequestParser :
+  public Zhttp::Parser<RequestParser, true, RequestHeaders, 1024> {
+  using Base = Zhttp::Parser<RequestParser, true, RequestHeaders, 1024>;
+
+  void operation(Zhttp::Method::T method_, ZuCSpan path_) {
+    method = method_;
+    path.length(0);
+    path << path_;
+  }
+
+  template <typename Key>
+  void header(ZuBSpan value) {
+    if constexpr (ZuIsSame<Key, ZuStringT<"host">>{}) {
+      ++hostCalls;
+      host.length(0);
+      host << ZuCSpan{
+	reinterpret_cast<const char *>(value.data()), value.length()};
+    }
+  }
+
+  void body(ZuBSpan span) {
+    ++bodyCalls;
+    bodyData << span;
+  }
+
+  void complete(Zhttp::ParserState::T state_) {
+    completeState = state_;
+    ++completeCalls;
+  }
+
+  Zhttp::Method::T		method = -1;
+  ZtString<>			path;
+  ZtString<>			host;
+  unsigned			hostCalls = 0;
+  unsigned			bodyCalls = 0;
+  unsigned			completeCalls = 0;
+  Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
+  Zhttp::BodyData		bodyData;
+};
 
 void testSelectedHeaderValueSplitAcrossRxBuffers()
 {
@@ -80,133 +136,28 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
     "\r\n"
     "hello";
 
-  Parser parser;
+  ResponseParser parser;
   RxStream stream;
-  Zhttp::BodyData bodyData;
-
-  auto status = [](auto &parser, int status) {
-    parser.context.status = status;
-  };
-  auto key = [](auto &parser, int i, ZuCSpan value) {
-    if (!i) {
-      ++parser.context.keyCalls;
-      parser.context.keyValue = value == "Value";
-    }
-  };
-  auto kv = [](auto &, int) { };
-  auto rcvd = [&bodyData](auto &parser) {
-    ++parser.context.bodyCalls;
-    bodyData << parser.body.span;
-    return true;
-  };
 
   stream.push(mkBuf(frag0));
-
-  int consumed = parser.process(stream, status, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof(frag0) - sizeof("Key: Va"),
-    "complete prefix lines were not consumed");
-  ZuCHECK(!parser.header.complete, "header completed without final line");
-  ZuCHECK(parser.header.status == 200, "response status not parsed");
-  ZuCHECK(parser.context.status == 200, "status callback not invoked");
-  ZuCHECK(parser.header.contentLength == 5, "content-length was not parsed");
-  ZuCHECK(parser.context.keyCalls == 0, "selected key callback was premature");
-  ZuCHECK(parser.context.bodyCalls == 0, "body callback was premature");
+  ZuCHECK(parser.process(stream) == Zhttp::ParserState::Headers,
+    "parser did not stop at incomplete header");
+  ZuCHECK(parser.statusSeen == 200, "response status not parsed");
+  ZuCHECK(parser.contentLengthSeen == 5, "content-length was not parsed");
+  ZuCHECK(parser.keyCalls == 0, "selected key callback was premature");
+  ZuCHECK(parser.bodyCalls == 0, "body callback was premature");
   ZuCHECK(stream.count_() == 1, "partial header buffer was dequeued");
-  ZuCHECK(spanEq(stream.span(), "Key: Va"),
-    "stream was not left at the incomplete header line");
 
   stream.push(mkBuf(frag1));
-
-  consumed = parser.process(stream, status, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof("Key: Va") + sizeof(frag1) - 2,
-    "complete response byte count mismatch");
-  ZuCHECK(parser.header.complete, "header did not complete after next buffer");
-  ZuCHECK(parser.context.keyCalls == 1, "selected key callback count mismatch");
-  ZuCHECK(parser.context.keyValue, "split selected header value mismatch");
-  ZuCHECK(parser.body.complete, "body did not complete");
-  ZuCHECK(parser.context.bodyCalls == 1, "body callback count mismatch");
-  ZuCHECK(bodyData == "hello", "body data mismatch");
-  ZuCHECK(!stream, "stream still has data after full response");
-}
-
-void testSelectedHeaderLineFragmentedAcrossManyRxBuffers()
-{
-  ZuTestScope(testSelectedHeaderLineFragmentedAcrossManyRxBuffers);
-
-  static const char prefix[] =
-    "HTTP/1.1 200 OK\r\n"
-    "content-length: 5\r\n";
-  static const char frag0[] = "Ke";
-  static const char frag1[] = "y:";
-  static const char frag2[] = " ";
-  static const char frag3[] = "V";
-  static const char frag4[] = "alu";
-  static const char frag5[] = "e";
-  static const char frag6[] = "\r";
-  static const char frag7[] = "\n";
-  static const char suffix[] =
-    "\r\n"
-    "hello";
-
-  Parser parser;
-  RxStream stream;
-  Zhttp::BodyData bodyData;
-
-  auto status = [](auto &parser, int status) {
-    parser.context.status = status;
-  };
-  auto key = [](auto &parser, int i, ZuCSpan value) {
-    if (!i) {
-      ++parser.context.keyCalls;
-      parser.context.keyValue = value == "Value";
-    }
-  };
-  auto kv = [](auto &, int) { };
-  auto rcvd = [&bodyData](auto &parser) {
-    ++parser.context.bodyCalls;
-    bodyData << parser.body.span;
-    return true;
-  };
-
-  stream.push(mkBuf(prefix));
-  int consumed = parser.process(stream, status, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof(prefix) - 1,
-    "complete prefix lines were not consumed");
-  ZuCHECK(!parser.header.complete, "header completed before selected key");
-  ZuCHECK(parser.header.status == 200, "response status not parsed");
-  ZuCHECK(parser.context.status == 200, "status callback not invoked");
-  ZuCHECK(parser.header.contentLength == 5, "content-length was not parsed");
-  ZuCHECK(parser.context.keyCalls == 0, "selected key callback was premature");
-
-  const char *frags[] = { frag0, frag1, frag2, frag3, frag4, frag5, frag6 };
-  bool incomplete = true;
-  for (unsigned i = 0; i < sizeof(frags) / sizeof(frags[0]); ++i) {
-    stream.push(mkBuf(frags[i]));
-    consumed = parser.process(stream, status, key, kv, rcvd);
-    incomplete &= consumed == 0;
-    incomplete &= !parser.header.complete;
-    incomplete &= parser.context.keyCalls == 0;
-    incomplete &= parser.context.bodyCalls == 0;
-  }
-  ZuCHECK(incomplete, "fragmented selected header was parsed before final LF");
-
-  stream.push(mkBuf(frag7));
-  consumed = parser.process(stream, status, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof("Key: Value\r\n") - 1,
-    "fragmented selected header byte count mismatch");
-  ZuCHECK(!parser.header.complete, "header completed before empty line");
-  ZuCHECK(parser.context.keyCalls == 1, "selected key callback count mismatch");
-  ZuCHECK(parser.context.keyValue, "fragmented selected header value mismatch");
-  ZuCHECK(parser.context.bodyCalls == 0, "body callback was premature");
-  ZuCHECK(!stream, "fragmented selected header buffers not consumed");
-
-  stream.push(mkBuf(suffix));
-  consumed = parser.process(stream, status, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof(suffix) - 1, "suffix byte count mismatch");
-  ZuCHECK(parser.header.complete, "header did not complete");
-  ZuCHECK(parser.body.complete, "body did not complete");
-  ZuCHECK(parser.context.bodyCalls == 1, "body callback count mismatch");
-  ZuCHECK(bodyData == "hello", "body data mismatch");
+  ZuCHECK(parser.process(stream) == Zhttp::ParserState::Complete,
+    "response did not complete after second fragment");
+  ZuCHECK(parser.keyCalls == 1, "selected key callback count mismatch");
+  ZuCHECK(parser.keyValue, "split selected header value mismatch");
+  ZuCHECK(parser.bodyCalls == 1, "body callback count mismatch");
+  ZuCHECK(parser.bodyData == "hello", "body data mismatch");
+  ZuCHECK(parser.completeCalls == 1 &&
+      parser.completeState == Zhttp::ParserState::Complete,
+    "complete callback mismatch");
   ZuCHECK(!stream, "stream still has data after full response");
 }
 
@@ -214,68 +165,37 @@ void testResponseStartLineFragmentedAcrossManyRxBuffers()
 {
   ZuTestScope(testResponseStartLineFragmentedAcrossManyRxBuffers);
 
-  static const char frag0[] = "HT";
-  static const char frag1[] = "TP";
-  static const char frag2[] = "/1";
-  static const char frag3[] = ".1";
-  static const char frag4[] = " ";
-  static const char frag5[] = "2";
-  static const char frag6[] = "0";
-  static const char frag7[] = "0";
-  static const char frag8[] = " ";
-  static const char frag9[] = "O";
-  static const char frag10[] = "K";
-  static const char frag11[] = "\r";
-  static const char frag12[] = "\n";
+  const char *frags[] = {
+    "HT", "TP", "/1", ".1", " ", "2", "0", "0", " ", "O", "K", "\r"
+  };
+  static const char lf[] = "\n";
   static const char suffix[] =
     "content-length: 0\r\n"
     "\r\n";
 
-  Parser parser;
+  ResponseParser parser;
   RxStream stream;
 
-  auto status = [](auto &parser, int status) {
-    parser.context.status = status;
-  };
-  auto key = [](auto &, int, ZuCSpan) { };
-  auto kv = [](auto &, int) { };
-  auto rcvd = [](auto &parser) {
-    ++parser.context.bodyCalls;
-    return true;
-  };
-
-  const char *frags[] = {
-    frag0, frag1, frag2, frag3, frag4, frag5,
-    frag6, frag7, frag8, frag9, frag10, frag11
-  };
   bool incomplete = true;
-  int consumed = 0;
-  for (unsigned i = 0; i < sizeof(frags) / sizeof(frags[0]); ++i) {
-    stream.push(mkBuf(frags[i]));
-    consumed = parser.process(stream, status, key, kv, rcvd);
-    incomplete &= consumed == 0;
-    incomplete &= parser.header.status == -1;
-    incomplete &= parser.context.status == -1;
-    incomplete &= parser.context.bodyCalls == 0;
+  for (auto frag : frags) {
+    stream.push(mkBuf(frag));
+    incomplete &= parser.process(stream) == Zhttp::ParserState::Initial;
+    incomplete &= parser.statusSeen == -1;
+    incomplete &= parser.bodyCalls == 0;
   }
   ZuCHECK(incomplete, "response start line was parsed before final LF");
 
-  stream.push(mkBuf(frag12));
-  consumed = parser.process(stream, status, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof("HTTP/1.1 200 OK\r\n") - 1,
-    "fragmented response start-line byte count mismatch");
-  ZuCHECK(parser.header.status == 200, "response status not parsed");
-  ZuCHECK(parser.context.status == 200, "status callback not invoked");
-  ZuCHECK(!parser.header.complete, "header completed before field section");
-  ZuCHECK(parser.context.bodyCalls == 0, "body callback was premature");
+  stream.push(mkBuf(lf));
+  ZuCHECK(parser.process(stream) == Zhttp::ParserState::Headers,
+    "response did not enter headers after start line");
+  ZuCHECK(parser.statusSeen == 200, "response status not parsed");
   ZuCHECK(!stream, "fragmented response start-line buffers not consumed");
 
   stream.push(mkBuf(suffix));
-  consumed = parser.process(stream, status, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof(suffix) - 1, "response suffix byte count mismatch");
-  ZuCHECK(parser.header.complete, "response header did not complete");
-  ZuCHECK(parser.body.complete, "response body did not complete");
-  ZuCHECK(parser.context.bodyCalls == 1, "response body callback count mismatch");
+  ZuCHECK(parser.process(stream) == Zhttp::ParserState::Complete,
+    "response suffix did not complete");
+  ZuCHECK(parser.completeCalls == 1, "response complete callback mismatch");
+  ZuCHECK(parser.bodyCalls == 0, "zero-length response delivered body");
   ZuCHECK(!stream, "stream still has data after response");
 }
 
@@ -283,23 +203,11 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
 {
   ZuTestScope(testRequestStartLineFragmentedAcrossManyRxBuffers);
 
-  static const char frag0[] = "G";
-  static const char frag1[] = "E";
-  static const char frag2[] = "T";
-  static const char frag3[] = " ";
-  static const char frag4[] = "/";
-  static const char frag5[] = "v";
-  static const char frag6[] = "1";
-  static const char frag7[] = "/x";
-  static const char frag8[] = "?";
-  static const char frag9[] = "q=1";
-  static const char frag10[] = " ";
-  static const char frag11[] = "HT";
-  static const char frag12[] = "TP";
-  static const char frag13[] = "/1";
-  static const char frag14[] = ".1";
-  static const char frag15[] = "\r";
-  static const char frag16[] = "\n";
+  const char *frags[] = {
+    "G", "E", "T", " ", "/", "v", "1", "/x", "?", "q=1",
+    " ", "HT", "TP", "/1", ".1", "\r"
+  };
+  static const char lf[] = "\n";
   static const char suffix[] =
     "host: example.com\r\n"
     "\r\n";
@@ -307,59 +215,65 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
   RequestParser parser;
   RxStream stream;
 
-  auto operation = [](auto &parser, Zhttp::Method::T method, ZuCSpan path) {
-    parser.context.method = method == Zhttp::Method::GET;
-    parser.context.path = path == "/v1/x?q=1";
-  };
-  auto key = [](auto &parser, int i, ZuCSpan value) {
-    if (!i) {
-      ++parser.context.hostCalls;
-      parser.context.host = value == "example.com";
-    }
-  };
-  auto kv = [](auto &, int) { };
-  auto rcvd = [](auto &parser) {
-    ++parser.context.bodyCalls;
-    return true;
-  };
-
-  const char *frags[] = {
-    frag0, frag1, frag2, frag3, frag4, frag5, frag6, frag7, frag8,
-    frag9, frag10, frag11, frag12, frag13, frag14, frag15
-  };
   bool incomplete = true;
-  int consumed = 0;
-  for (unsigned i = 0; i < sizeof(frags) / sizeof(frags[0]); ++i) {
-    stream.push(mkBuf(frags[i]));
-    consumed = parser.process(stream, operation, key, kv, rcvd);
-    incomplete &= consumed == 0;
-    incomplete &= !parser.context.method;
-    incomplete &= !parser.context.path;
-    incomplete &= parser.context.hostCalls == 0;
-    incomplete &= parser.context.bodyCalls == 0;
+  for (auto frag : frags) {
+    stream.push(mkBuf(frag));
+    incomplete &= parser.process(stream) == Zhttp::ParserState::Initial;
+    incomplete &= parser.method < 0;
+    incomplete &= parser.hostCalls == 0;
+    incomplete &= parser.bodyCalls == 0;
   }
   ZuCHECK(incomplete, "request start line was parsed before final LF");
 
-  stream.push(mkBuf(frag16));
-  consumed = parser.process(stream, operation, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof("GET /v1/x?q=1 HTTP/1.1\r\n") - 1,
-    "fragmented request start-line byte count mismatch");
-  ZuCHECK(parser.context.method, "request method not parsed");
-  ZuCHECK(parser.context.path, "request path not parsed");
-  ZuCHECK(!parser.header.complete, "request header completed before fields");
-  ZuCHECK(parser.context.hostCalls == 0, "host callback was premature");
-  ZuCHECK(parser.context.bodyCalls == 0, "body callback was premature");
+  stream.push(mkBuf(lf));
+  ZuCHECK(parser.process(stream) == Zhttp::ParserState::Headers,
+    "request did not enter headers after start line");
+  ZuCHECK(parser.method == Zhttp::Method::GET, "request method not parsed");
+  ZuCHECK(parser.path == "/v1/x?q=1", "request path not parsed");
   ZuCHECK(!stream, "fragmented request start-line buffers not consumed");
 
   stream.push(mkBuf(suffix));
-  consumed = parser.process(stream, operation, key, kv, rcvd);
-  ZuCHECK(consumed == sizeof(suffix) - 1, "request suffix byte count mismatch");
-  ZuCHECK(parser.header.complete, "request header did not complete");
-  ZuCHECK(parser.context.hostCalls == 1, "host callback count mismatch");
-  ZuCHECK(parser.context.host, "request host not parsed");
-  ZuCHECK(parser.body.complete, "request body did not complete");
-  ZuCHECK(parser.context.bodyCalls == 1, "request body callback count mismatch");
+  ZuCHECK(parser.process(stream) == Zhttp::ParserState::Complete,
+    "request suffix did not complete");
+  ZuCHECK(parser.hostCalls == 1, "host callback count mismatch");
+  ZuCHECK(parser.host == "example.com", "request host not parsed");
+  ZuCHECK(parser.completeCalls == 1, "request complete callback mismatch");
   ZuCHECK(!stream, "stream still has data after request");
+}
+
+void testChunkedBodyAcrossRxBuffers()
+{
+  ZuTestScope(testChunkedBodyAcrossRxBuffers);
+
+  const char *frags[] = {
+    "HTTP/1.1 200 OK\r\n"
+    "transfer-encoding: chunked\r\n"
+    "\r\n",
+    "1\r\n{\r\n",
+    "9\r\n\"x\": 42, \r\n",
+    "7\r\n\"y\": 42\r\n",
+    "1\r\n}\r\n",
+    "0\r\n\r\n"
+  };
+
+  ResponseParser parser;
+  RxStream stream;
+
+  for (unsigned i = 0; i < sizeof(frags) / sizeof(frags[0]); ++i) {
+    stream.push(mkBuf(frags[i]));
+    auto state = parser.process(stream);
+    if (i + 1 < sizeof(frags) / sizeof(frags[0]))
+      ZuCHECK(state != Zhttp::ParserState::Complete,
+	"chunked response completed too early");
+  }
+
+  ZuCHECK(parser.completeState == Zhttp::ParserState::Complete,
+    "chunked response did not complete");
+  ZuCHECK(parser.chunkedSeen, "chunked transfer-encoding was not detected");
+  ZuCHECK(parser.bodyBytes == 18, "chunked body total mismatch");
+  ZuCHECK(parser.bodyData == "{\"x\": 42, \"y\": 42}",
+    "chunked body data mismatch");
+  ZuCHECK(!stream, "stream still has data after chunked response");
 }
 
 } // namespace
@@ -369,8 +283,8 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testSelectedHeaderValueSplitAcrossRxBuffers);
-  ZuTestCall(testSelectedHeaderLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testRequestStartLineFragmentedAcrossManyRxBuffers);
+  ZuTestCall(testChunkedBodyAcrossRxBuffers);
   return 0;
 }
