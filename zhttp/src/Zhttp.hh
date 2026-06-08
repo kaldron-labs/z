@@ -433,7 +433,11 @@ public:
 		state = ParserState::Error;
 		ZiLOG(Error, "Zhttp", "invalid content-length");
 	      };
-	      chunkLength = ZuBox<uint64_t>(ZuFmt::Hex<>{}, span);
+	      ZuBox<uint64_t> l;
+	      auto n = l.scan<ZuFmt::Hex<>>(span);
+	      if (!n) { error(); return; }
+	      // span.offset(n); // chunk extensions are ignored
+	      chunkLength = l;
 	      if (!chunkLength) {
 		state = ParserState::Trailers;
 		return;
@@ -509,6 +513,57 @@ public:
 
 // HTTP message builder
 
+// HTTP 1.1 chunked body Tx streaming
+template <typename Lower>
+struct BodyStream : public ZiTxLayer<BodyStream, Lower> {
+  using Base = ZiTxLayer<BodyStream, Lower>;
+
+  uint64_t contentLength;
+
+  BodyStream(Lower &lower, uint64_t contentLength_) :
+    Base(lower, 0, 0), contentLength(contentLength_)  { }
+
+  void prepareBuf_(ZiIOBuf *buf) {
+    ZiAssert(contentLength >= buf->length,
+      "Zhttp", (), "oversized body", buf->length = contentLength);
+    contentLength -= buf->length;
+  }
+};
+template <typename Lower>
+auto bodyStream(Lower &lower) {
+  return BodyStream<Lower>(lower);
+}
+
+// HTTP 1.1 chunked body Tx streaming
+template <typename Lower>
+struct ChunkedStream : public ZiTxLayer<ChunkedStream, Lower> {
+  enum { HdrSize = 10 };	// 8 bytes of hex length + CRLF
+  enum { TrlrSize = 2 };	// CRLF
+
+  using Base = ZiTxLayer<ChunkedStream, Lower>;
+
+  ChunkedStream(Lower &lower) : Base(lower, HdrSize, TrlrSize) { }
+
+  void prepareBuf_(ZiIOBuf *buf) {
+    ZuBox<uint32_t> n = buf->length;
+    ZiAssert(buf->skip >= HdrSize,
+      "Zhttp", (), "ChunkedStream headroom error", return);
+    // chunk header
+    buf->rewind(HdrSize);
+    {
+      ZuStream s(buf->data(), HdrSize);
+      using Fmt = ZuFmt::Hex<1, ZuFmt::Right<8>>;
+      s << n.fmt<Fmt>() << "\r\n";
+    }
+    // chunk trailer
+    buf << "\r\n";
+  }
+};
+template <typename Lower>
+auto chunkedStream(Lower &lower) {
+  return ChunkedStream<Lower>(lower);
+}
+
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct Impl : public Builder<Impl, ...> {
@@ -520,127 +575,142 @@ struct Impl : public Builder<Impl, ...> {
   // optional - defaults to true
   bool request();
 
-  // optional - defaults to { l(Method::Get, "/") }
+  // optional - defaults to { l(Method::Get, "/", "") }
   template <typename L> void operation(L &&l);
+
+  // optional - defaults to { l("127.0.0.1"); }
+  template <typename L> void host(L &&l);
 
   // optional - defaults to 200
   unsigned status();
 
-  // optional - defaults to { l.template operator ()<Key>(""); }
+  // optional - defaults to { l(""); }
+  template <typename L> void reason(L &&l);
+
+  // optional - defaults to { l(""); }
   template <typename Key, typename L>
   void header(L &&l);
 
   // optional - defaults to 0
   // - only called if HasBody && !Chunked
-  unsigned contentLength();
+  uint64_t contentLength();
 };
 #endif
 
-// FIXME from here
 template <
   typename Impl,
   typename Headers_ = ZuTypelist<>,
   typename Trailers_ = ZuTypelist<>,	// ignored if not chunked
-  bool HasBody = false,			// has a body
-  bool Chunked = false>			// body is chunked
+  bool HasBody_ = false,		// has a body
+  bool Chunked_ = false>		// body is chunked
 struct Builder {
+  auto impl() const { return static_cast<const Impl *>(this); }
+  auto impl() { return static_cast<Impl *>(this); }
+
+  using Headers = Headers_;
+  using Trailers = Trailers_;
+  enum { HasBody = HasBody_ };
+  enum { Chunked = Chunked_ };
+
 private:
-  template <typename Stream, typename KeyFn>
-  void headers(this auto &self, Stream &stream, KeyFn &&keyFn) {
+  template <typename KVs = Headers, typename Stream>
+  void headers_(Stream &stream) {
+    // header key/values
+    {
+      using Keys = ZuTypeSlice<2, 0, KVs>;
+      using Values = ZuTypeSlice<2, 1, KVs>;
+      ZuUnroll::all<Keys>([&stream]<typename Key>() {
+	using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
+	if constexpr (!ZuIsSame<Value, void>{})
+	  stream << Key{}() << ": " << Value{}() << "\r\n";
+	else {
+	  stream << Key{}() << ": ";
+	  impl()->template header<Key>([&stream]<typename Value>(Value &&value) {
+	    stream << ZuFwd<Value>(value);
+	  });
+	  stream << "\r\n";
+	}
+      });
+    }
+    // end of headers
+    stream << "\r\n";
+  }
+  template <typename Stream>
+  void headers(Stream &stream) {
     if constexpr (HasBody) {
       if constexpr (Chunked)
 	stream << "transfer-encoding: chunked\r\n";
       else
-	stream << "content-length: " << self.contentLen << "\r\n";
+	stream << "content-length: " << impl()->contentLength() << "\r\n";
     }
-    // custom fixed header key/values
-    ZuUnroll::all<KVs>([&stream]<typename KV>() {
-      stream << KV{}() << "\r\n";
-    });
-    // custom variable header keys
-    ZuUnroll::all<Keys>([&self, &stream, &keyFn]<typename Key>() {
-      using I = ZuTypeIndex<Key, Keys>;
-      stream << Key{}() << ": " << keyFn(self, I{}()) << "\r\n";
-    });
-    stream << "\r\n";
+    headers_<Headers>(stream);
+  }
+  // chunked trailers
+  template <typename Stream>
+  void trailers(Stream &stream) {
+    headers_<Trailers>(stream);
   }
 
 public:
-  // request with query
-  template <typename Stream, typename Path, typename Query, typename Host, typename KeyFn>
-  void request(
-    this auto &self, Stream &stream,
-    unsigned method, Path &&path, Query &&query, Host &&host, KeyFn &&keyFn)
-  {
-    // method
-    stream << Method::name(method) << ' ';
-    // path
-    self.emit(stream, ZuFwd<Path>(path));
-    // query (may be prefixed with trailing path components)
-    self.emit(stream, ZuFwd<Query>(query));
+  // request
+  template <typename Stream>
+  void request(Stream &stream) {
+    impl()->operation([&stream]<typename Path, typename Query>(
+	Method::T method, Path &&path, Query &&query) {
+      stream << Method::name(method) << ' ' << ZuFwd<Path>(path) << ZuFwd<Query>(query);
+    });
     // host
     stream << " HTTP/1.1\r\nhost: ";
-    self.emit(stream, ZuFwd<Host>(host));
+    impl()->host([&stream]<typename Host>(Host &&host) {
+      stream << ZuFwd<Host>(host);
+    });
     stream << "\r\n";
-    self.headers(stream, ZuFwd<KeyFn>(keyFn));
-  }
-
-  // request without query
-  template <typename Stream, typename Path, typename Host, typename KeyFn>
-  void request(
-    this auto &self, Stream &stream,
-    unsigned method, Path &&path, Host &&host, KeyFn &&keyFn)
-  {
-    // method
-    stream << Method::name(method) << ' ';
-    // path
-    self.emit(stream, ZuFwd<Path>(path));
-    // host
-    stream << " HTTP/1.1\r\nhost: ";
-    self.emit(stream, ZuFwd<Host>(host));
-    stream << "\r\n";
-    self.headers(stream, ZuFwd<KeyFn>(keyFn));
+    // remaining headers
+    headers(stream);
   }
 
   // response
-  template <typename Stream, typename Reason, typename KeyFn>
-  void response(
-    this auto &self, Stream &stream,
-    unsigned status, Reason &&reason, KeyFn &&keyFn)
-  {
-    // status
+  template <typename Stream>
+  void response(Stream &stream) {
+    // status + reason
     stream << "HTTP/1.1 " <<
-      ZuBox<unsigned>{status}.fmt<ZuFmt::Right<3>>() << ' ';
-    // reason
-    self.emit(stream, ZuFwd<Reason>(reason));
+      ZuBox<unsigned>{impl()->status}.fmt<ZuFmt::Right<3>>() << ' ';
+    impl()->reason([&stream]<typename Reason>(Reason &&reason) {
+      stream << ZuFwd<Reason>(reason);
+    });
     stream << "\r\n";
-    self.headers(stream, ZuFwd<KeyFn>(keyFn));
+    // remaining headers
+    headers(stream);
   }
 
-  // chunk
-  template <typename Stream>
-  void chunk(Stream &stream, unsigned n) {
-    if constexpr (Chunked) {
-      if (chunkStarted) stream << "\r\n";
-      chunkStarted = true;
-      stream << ZuBoxed(n).hex<false>() << "\r\n";
-    }
-  }
+  // body
+  template <typename Stream, decltype(ZuIfT<HasBody && !Chunked>(), int()) = 0>
+  auto body(Stream &stream) { return bodyStream(stream, impl()->contentLength()); }
+
+  template <typename Stream, decltype(ZuIfT<HasBody && Chunked>(), int()) = 0>
+  auto body(Stream &stream) { return chunkedStream(stream); }
 
   // finish
   template <typename Stream>
   void finish(Stream &stream) {
     if constexpr (Chunked) {
-      if (chunkStarted) stream << "\r\n";
-      stream << "0\r\n\r\n";
-      chunkStarted = false;
+      stream << "0\r\n";
+      trailers(stream);
     }
+    stream.flush();
   }
 
-  void reset() {
-    Builder_Body<HasBody>::reset();
-    chunkStarted = false;
-  }
+  void reset() { }
+
+  // CRTP defaults
+  bool request() { return true; }
+  template <typename L> void operation(L &&l) { l(Method::Get, "/", ""); }
+  template <typename L> void host(L &&l) { l("127.0.0.1"); }
+  unsigned status() { return 200; }
+  template <typename L> void reason(L &&l) { l(""); }
+  template <typename Key, typename L>
+  void header(L &&l) { l(""); }
+  uint64_t contentLength() { return 0; }
 };
 
 } // Zhttp
