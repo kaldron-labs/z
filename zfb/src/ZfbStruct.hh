@@ -753,9 +753,9 @@ struct Primitive : public Base {
   static auto load_(const FBType_ *fbo) {
     return static_cast<typename Base::T>(Base::load_(fbo));
   }
-  template <bool _ = Base::ReadOnly, decltype(ZuIfT<_>(), int()) = 0>
+  template <bool _ = Base::ReadOnly, ZuIfT<_, int> = 0>
   static void load(O &, const FBType *) { }
-  template <bool _ = Base::ReadOnly, decltype(ZuIfT<!_>(), int()) = 0>
+  template <bool _ = Base::ReadOnly, ZuIfT<!_, int> = 0>
   static void load(O &o, const FBType *fbo) {
     Base::set(o, load_(fbo));
   }
@@ -781,9 +781,9 @@ struct Inline : public Base {
   static decltype(auto) load_(const FBType_ *fbo) {
     return Transformer::load(Base::load_(fbo));
   }
-  template <bool _ = Base::ReadOnly, decltype(ZuIfT<_>(), int()) = 0>
+  template <bool _ = Base::ReadOnly, ZuIfT<_, int> = 0>
   static void load(O &, const FBType *) { }
-  template <bool _ = Base::ReadOnly, decltype(ZuIfT<!_>(), int()) = 0>
+  template <bool _ = Base::ReadOnly, ZuIfT<!_, int> = 0>
   static void load(O &o, const FBType *fbo) {
     Base::set(o, load_(fbo));
   }
@@ -812,9 +812,9 @@ struct Nested : public Base {
   static decltype(auto) load_(const FBType_ *fbo) {
     return Transformer::template load<typename Base::T>(Base::load_(fbo));
   }
-  template <bool _ = Base::ReadOnly, decltype(ZuIfT<_>(), int()) = 0>
+  template <bool _ = Base::ReadOnly, ZuIfT<_, int> = 0>
   static void load(O &, const FBType *) { }
-  template <bool _ = Base::ReadOnly, decltype(ZuIfT<!_>(), int()) = 0>
+  template <bool _ = Base::ReadOnly, ZuIfT<!_, int> = 0>
   static void load(O &o, const FBType *fbo) {
     Base::set(o, load_(fbo));
   }

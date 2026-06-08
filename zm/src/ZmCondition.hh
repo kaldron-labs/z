@@ -72,11 +72,11 @@ template <typename Lock> class ZmCondition : public ZmCondition_<Lock> {
 public:
   template <
     typename Lock_ = Lock,
-    decltype(ZuSame<ZmNoLock, Lock_>(), int()) = 0>
+    ZuSame<ZmNoLock, Lock_, int> = 0>
   ZmCondition() : Base{} { }
   template <
     typename Lock_ = Lock,
-    decltype(ZuNotSame<ZmNoLock, Lock_>(), int()) = 0>
+    ZuNotSame<ZmNoLock, Lock_, int> = 0>
   ZmCondition(Lock &lock) : Base{lock} { }
   ~ZmCondition() { }
 

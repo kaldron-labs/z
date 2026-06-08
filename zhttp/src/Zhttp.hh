@@ -37,8 +37,8 @@ namespace Method {
     GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
 }
 
-namespace TransferEncoding {
-  ZtEnum(TransferEncoding, int8_t, compress, deflate, gzip);
+namespace XferCompression {
+  ZtEnum(XferCompression, int8_t, compress, deflate, gzip);
 }
 
 // HTTP message parser
@@ -161,15 +161,6 @@ inline void normalize(ZuSpan<uint8_t> key) {
 
 // Headers handles everything after the start line or a chunked trailer
 
-// built-in keys that are always matched for every message
-namespace Key {
-  enum {
-    TransferEncoding = 0,
-    ContentLength,
-    N
-  };
-}
-
 // CRLF framing
 template <bool CanFold = true>
 inline auto crlf() {
@@ -182,7 +173,7 @@ inline auto crlf() {
   };
 }
 
-// repeatedly calls line(span)
+// calls line(span)
 // - CanFold should be false for the start line
 // - span is empty for the last line before the body
 template <bool CanFold = true, typename Stream, typename Line>
@@ -209,14 +200,6 @@ inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
   normalize(key);
   kv(key, value);
   return true;
-}
-
-// ASCII -> hex
-ZuInline constexpr uint8_t hex(uint8_t c) {
-  c |= 0x20;
-  return 
-    (ZuLikely(c >= '0' && c <= '9')) ?  c - '0' :
-    (ZuLikely(c >= 'a' && c <= 'f')) ? (c - 'a') + 10 : 0xff;
 }
 
 namespace ParserState {
@@ -255,8 +238,10 @@ struct Impl : public Parser<Impl, ...> {
   // optional - content-length header
   void contentLength(uint64_t);
 
-  // optional - transfer-encoding token
-  void transferEncoding(TransferEncoding::T);
+  // optional - transfer-encoding compression
+  // - this will only be called if compress/deflate/gzip is specified
+  // - this is HTTP 1.1 only and not mainstream
+  void xferCompression(XferCompression::T);
 
   // optional - transfer-encoding: chunked
   void chunked();
@@ -287,11 +272,6 @@ struct Parser {
   static constexpr uint64_t MaxBody = MaxBody_;
 
 private:
-  int64_t		m_contentLength = -1;
-  int64_t		m_chunkLength = -1;
-  ParserState::T	m_state = ParserState::Initial;
-  bool			m_chunked = false;
-
   // process header with variable value
   template <typename Key> void header_(ZuBSpan value) {
     if constexpr (ZuIsSame<Key, ZuStringT<"transfer-encoding">>{}) {
@@ -308,8 +288,11 @@ private:
 	  invalid = true;
 	  return false;
 	} else {
-	  auto xferEncoding = TransferEncoding::lookup(token);
-	  impl()->transferEncoding(xferEncoding);
+	  auto xferCompression = XferCompression::lookup(token);
+	  if (xferCompression < 0)
+	    invalid = true;
+	  else
+	    impl()->xferCompression(xferCompression);
 	}
 	return true;
       });
@@ -535,15 +518,21 @@ public:
   template <typename Key> void header(ZuBSpan) { }
   template <typename Key, typename Value> void header() { }
   void contentLength(uint64_t) { }
-  void transferEncoding(TransferEncoding::T) { }
+  void xferCompression(XferCompression::T) { }
   void chunked() { }
   void body(ZuBSpan) { }
   void complete(ParserState::T) { }
+
+private:
+  int64_t		m_contentLength = -1;
+  int64_t		m_chunkLength = -1;
+  ParserState::T	m_state = ParserState::Initial;
+  bool			m_chunked = false;
 };
 
 // HTTP message builder
 
-// HTTP 1.1 chunked body Tx streaming
+// HTTP 1.1 non-chunked body Tx streaming
 template <typename Lower>
 struct BodyStream : public ZiTxLayer<BodyStream<Lower>, Lower> {
   using Base = ZiTxLayer<BodyStream<Lower>, Lower>;
@@ -715,12 +704,10 @@ public:
   }
 
   // body
-  template <typename Stream, bool B = HasBody && !Chunked, ZuIfT<B, int> = 0>
+  template <typename Stream, bool _ = HasBody && !Chunked, ZuIfT<_, int> = 0>
   auto body(Stream &stream) { return bodyStream(stream, impl()->contentLength()); }
 
-  template <
-    typename Stream, bool B = HasBody && Chunked,
-    ZuIfT<B, int> = 0, typename = void>
+  template <typename Stream, bool _ = HasBody && Chunked, ZuIfT<_, int> = 0>
   auto body(Stream &stream) { return chunkedStream(stream); }
 
   // finish

@@ -50,7 +50,6 @@ struct App : public Ztls::Server<App> {
 
     int process(Ztls::RxStream &rx) {
       while (!rx.empty()) {
-	auto span = rx.span();
 	ZtString<> response;
 	auto &content = app()->payload();
 	response << Response << content.length() << Response2;
@@ -68,7 +67,11 @@ struct App : public Ztls::Server<App> {
 	    content.length());
 	  tx << Zi::flush();
 	}
-	rx.advance(span.length());
+	int64_t consumed = rx.consume(
+	  [](ZuBSpan span) -> int64_t { return span.length(); },
+	  [](ZuBSpan) { });
+	if (consumed < 0) return -1;
+	if (!consumed) return 0;
       }
       return 1;
     }
