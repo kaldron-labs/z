@@ -540,39 +540,51 @@ private:
     return buf;
   }
 
-public:
-  auto txStream() { // App thread(s)
-    return Zi::txStream(
-      unsigned(TxRecordCapacity),
-      unsigned(m_headroom),
-      unsigned(TxMaxOverhead - m_headroom),
-      [this](unsigned skip) -> ZmRef<ZiIOBuf> {
-	auto buf = allocTxBuf_();
+  template <bool AppThread>
+  class TxStream_ : public Zi::TxStream<TxStream_<AppThread>> {
+    using Base = Zi::TxStream<TxStream_<AppThread>>;
+
+  public:
+    TxStream_(Link &link) :
+      Base(
+	unsigned(TxRecordCapacity),
+	unsigned(link.m_headroom),
+	unsigned(TxMaxOverhead - link.m_headroom)),
+      m_link{&link}
+    {
+    }
+
+    ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
+      auto buf = m_link->allocTxBuf_();
+      if constexpr (AppThread) {
 	if (ZuUnlikely(!buf || buf->skip > skip))
 	  throw TxStreamAllocFailure{};
 	buf->skip = skip;
-	return buf;
-      },
-      [](ZmRef<ZiIOBuf> buf) {
-	auto link = static_cast<Impl *>(buf->owner);
-	link->send(ZuMv(buf));
-      });
-  }
-  auto txStream_() { // TLS thread
-    return Zi::txStream(
-      unsigned(TxRecordCapacity),
-      unsigned(m_headroom),
-      unsigned(TxMaxOverhead - m_headroom),
-      [this](unsigned skip) -> ZmRef<ZiIOBuf> {
-	auto buf = allocTxBuf_();
+      } else {
 	if (ZuUnlikely(!buf || buf->skip != skip))
 	  throw TxStreamAllocFailure{};
-	return buf;
-      },
-      [](ZmRef<ZiIOBuf> buf) {
-	auto link = static_cast<Impl *>(buf->owner);
+      }
+      return buf;
+    }
+
+    void sendBuf_(ZmRef<ZiIOBuf> buf) {
+      auto link = static_cast<Impl *>(buf->owner);
+      if constexpr (AppThread)
+	link->send(ZuMv(buf));
+      else
 	link->send_(ZuMv(buf));
-      });
+    }
+
+  private:
+    Link	*m_link;
+  };
+
+public:
+  auto txStream() { // App thread(s)
+    return TxStream_<true>{*this};
+  }
+  auto txStream_() { // TLS thread
+    return TxStream_<false>{*this};
   }
 
 protected:

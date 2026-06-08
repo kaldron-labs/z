@@ -188,7 +188,7 @@ bool consume_payload(
     TestState &state,
     ZmAtomic<unsigned> &offset,
     const ZtArray<uint8_t> &expected,
-    ZuSpan<uint8_t> span,
+    ZuBSpan span,
     const char *msg)
 {
   unsigned len = unsigned(span.length());
@@ -202,6 +202,36 @@ bool consume_payload(
     return false;
   }
   return off + len >= expected.length();
+}
+
+int consume_payload_frame(
+    TestState &state,
+    ZmAtomic<unsigned> &offset,
+    const ZtArray<uint8_t> &expected,
+    Ztls::RxStream &rx,
+    const char *msg,
+    bool &complete)
+{
+  unsigned off = offset.load_();
+  if (ZuUnlikely(off >= expected.length())) {
+    state.fail(msg);
+    return -1;
+  }
+
+  uint64_t need = expected.length() - off;
+  uint64_t seen = 0;
+  int64_t consumed = rx.consume(
+    [&](ZuBSpan span) -> int64_t {
+      seen += span.length();
+      if (seen < need) return 0;
+      return span.length() - (seen - need);
+    },
+    [&](ZuBSpan span) {
+      complete = consume_payload(state, offset, expected, span, msg);
+    });
+
+  if (ZuUnlikely(consumed < 0)) return -1;
+  return consumed ? 1 : 0;
 }
 
 bool wait_for(ZmSemaphore &sem)
@@ -281,11 +311,12 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
     int process(Ztls::RxStream &rx) {
       auto &state = this->app()->state;
       while (!rx.empty()) {
-	auto span = rx.span();
-	bool complete = consume_payload(
-	  state, state.client_rx_bytes, state.serverPayload, span,
-	  "client received unexpected payload");
-	rx.advance(span.length());
+	bool complete = false;
+	int consumed = consume_payload_frame(
+	  state, state.client_rx_bytes, state.serverPayload, rx,
+	  "client received unexpected payload", complete);
+	if (ZuUnlikely(consumed < 0)) return -1;
+	if (!consumed) return 0;
 	if (complete && !state.client_closed.xch(1))
 	  this->disconnect_();
       }
@@ -322,11 +353,12 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
     int process(Ztls::RxStream &rx) {
       auto &state = this->app()->state;
       while (!rx.empty()) {
-	auto span = rx.span();
-	bool complete = consume_payload(
-	  state, state.server_rx_bytes, state.clientPayload, span,
-	  "server received unexpected payload");
-	rx.advance(span.length());
+	bool complete = false;
+	int consumed = consume_payload_frame(
+	  state, state.server_rx_bytes, state.clientPayload, rx,
+	  "server received unexpected payload", complete);
+	if (ZuUnlikely(consumed < 0)) return -1;
+	if (!consumed) return 0;
 	if (complete && !state.server_replied.xch(1)) {
 	  send_payload(this, state.serverPayload);
 	  if (state.serverDisconnectAfterSend) this->disconnect_();

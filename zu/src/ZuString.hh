@@ -92,6 +92,8 @@ template <unsigned N_> struct ZuString {
 
   uint32_t hash() const { return Fn::hash(data(), length()); }
 
+  friend ZuPrintString ZuPrintType(ZuString *);
+
 // STL cruft
 
   using iterator = char *;

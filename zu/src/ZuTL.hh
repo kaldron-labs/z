@@ -314,7 +314,7 @@ using ZuTypeSort = typename ZuTypeSort_<Index, Ts...>::T;
 // compile-time typelist slice
 template <
   unsigned Stride, unsigned Offset, typename Ts,
-  bool = (Offset < Stride && Stride < Ts::N)>
+  bool = (Offset < Stride && Offset < Ts::N)>
 struct ZuTypeSlice__ {
   using T = typename ZuTypeSlice__<
     Stride, Offset, ZuTypeTail<Stride, Ts>>::T::
@@ -326,7 +326,7 @@ struct ZuTypeSlice__<Stride, Offset, Ts, false> {
 };
 template <unsigned Stride, unsigned Offset, typename ...Ts>
 struct ZuTypeSlice_ :
-  public ZuTypeSlice__<Stride, Offset, ZuTypeList<Ts...>> { }
+  public ZuTypeSlice__<Stride, Offset, ZuTypeList<Ts...>> { };
 template <unsigned Stride, unsigned Offset, typename ...Ts>
 struct ZuTypeSlice_<Stride, Offset, ZuTypeList<Ts...>> :
   public ZuTypeSlice__<Stride, Offset, ZuTypeList<Ts...>> { };

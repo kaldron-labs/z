@@ -132,11 +132,13 @@ public:
 
   int process(Ztls::RxStream &rx) {
     while (!rx.empty()) {
-      auto span = rx.span();
-      int n = process_span_(span);
+      int n = 0;
+      int64_t consumed = rx.consume(
+	[](ZuBSpan span) -> int64_t { return span.length(); },
+	[&](ZuBSpan span) { n = process_span_(span); });
       if (ZuUnlikely(n < 0)) return -1;
-      if (!n) return 0;
-      rx.advance(n);
+      if (ZuUnlikely(consumed < 0)) return -1;
+      if (!consumed) return 0;
     }
     return 1;
   }

@@ -184,25 +184,30 @@ public:
 #endif
 
   // TLS callback
-  int process(Ztls::RxCursor &rx) {
+  int process(Ztls::RxStream &rx) {
     while (!rx.empty()) {
-      auto span = rx.span();
-      int consumed = rxMsg->process(span, [this]() -> bool {
-	ZmRef<RxMsg> rxMsg = new RxMsg(new IOBufAlloc());
-	rxMsg.swap(this->rxMsg);
-	// -----
-	//   HTTP path -> message type parse (server side)
-	//   resolve msg type from header.path (header is Zhttp::Response)
-	// OR
-	//   pending request head -> message type parse (client side)
-	// -----
-	msgType->rcvd(ZuMv(this, ZuMv(rxMsg)); // virtual dispatch
-	return true; // false to disconnect
+      int consumed = 0;
+      int64_t n = rx.consume(
+	[&](ZuBSpan span) -> int64_t {
+	  consumed = rxMsg->process(span, [this]() -> bool {
+	    ZmRef<RxMsg> rxMsg = new RxMsg(new IOBufAlloc());
+	    rxMsg.swap(this->rxMsg);
+	    // -----
+	    //   HTTP path -> message type parse (server side)
+	    //   resolve msg type from header.path (header is Zhttp::Response)
+	    // OR
+	    //   pending request head -> message type parse (client side)
+	    // -----
+	    msgType->rcvd(ZuMv(this, ZuMv(rxMsg)); // virtual dispatch
+	    return true; // false to disconnect
 
-      });
+	  });
+	  return consumed;
+	},
+	[](ZuBSpan) { });
       if (consumed < 0) return -1;
-      if (!consumed) return 0;
-      rx.advance(consumed);
+      if (n < 0) return -1;
+      if (!n) return 0;
     }
     return 1;
   }
