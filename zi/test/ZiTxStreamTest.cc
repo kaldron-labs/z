@@ -57,14 +57,31 @@ struct StreamHarness {
   }
 };
 
+struct TestTxStream : public Zi::TxStream<TestTxStream> {
+  using Base = Zi::TxStream<TestTxStream>;
+
+  TestTxStream(
+      StreamHarness &h_, unsigned maxSize, unsigned headRoom,
+      unsigned tailRoom) :
+    Base(maxSize, headRoom, tailRoom), h{&h_} { }
+
+  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+    return h->alloc(headRoom);
+  }
+
+  void sendBuf_(ZmRef<ZiIOBuf> buf) {
+    h->send(ZuMv(buf));
+  }
+
+  StreamHarness	*h;
+};
+
 void testSplitAndFlush()
 {
   ZuTestScope(testSplitAndFlush);
 
   StreamHarness h;
-  auto stream = Zi::txStream(12, 2, 1,
-      [&h](unsigned headRoom) { return h.alloc(headRoom); },
-      [&h](ZmRef<ZiIOBuf> buf) { h.send(ZuMv(buf)); });
+  TestTxStream stream{h, 12, 2, 1};
 
   char payload[20];
   for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = 'a' + i;
@@ -80,7 +97,7 @@ void testSplitAndFlush()
 
   stream << Zi::flush();
 
-  ZuCheck(h.allocCount == 4);
+  ZuCheck(h.allocCount == 3);
   ZuCheck(h.sendCount == 3);
   ZuCheck(h.sentLen[2] == 2);
   ZuCheck(h.sentSkip[2] == 2);
@@ -91,9 +108,7 @@ void testPrimitiveAppendAccounting()
   ZuTestScope(testPrimitiveAppendAccounting);
 
   StreamHarness h;
-  auto stream = Zi::txStream(10, 1, 1,
-      [&h](unsigned headRoom) { return h.alloc(headRoom); },
-      [&h](ZmRef<ZiIOBuf> buf) { h.send(ZuMv(buf)); });
+  TestTxStream stream{h, 10, 1, 1};
 
   stream << 'A' << 'B' << 'C';
   ZuCheck(h.sendCount == 0);
@@ -109,25 +124,23 @@ void testFlushElidesEmptyBuffer()
   ZuTestScope(testFlushElidesEmptyBuffer);
 
   StreamHarness h;
-  auto stream = Zi::txStream(10, 1, 1,
-      [&h](unsigned headRoom) { return h.alloc(headRoom); },
-      [&h](ZmRef<ZiIOBuf> buf) { h.send(ZuMv(buf)); });
+  TestTxStream stream{h, 10, 1, 1};
 
-  ZuCheck(h.allocCount == 1);
+  ZuCheck(h.allocCount == 0);
   ZuCheck(h.sendCount == 0);
 
   stream << Zi::flush();
-  ZuCheck(h.allocCount == 1);
+  ZuCheck(h.allocCount == 0);
   ZuCheck(h.sendCount == 0);
 
   stream << 'Z' << Zi::flush();
-  ZuCheck(h.allocCount == 2);
+  ZuCheck(h.allocCount == 1);
   ZuCheck(h.sendCount == 1);
   ZuCheck(h.sentLen[0] == 1);
   ZuCheck(h.sentSkip[0] == 1);
 
   stream << Zi::flush();
-  ZuCheck(h.allocCount == 2);
+  ZuCheck(h.allocCount == 1);
   ZuCheck(h.sendCount == 1);
 }
 
@@ -136,9 +149,7 @@ void testOversizePrintableThrows()
   ZuTestScope(testOversizePrintableThrows);
 
   StreamHarness h;
-  auto stream = Zi::txStream(12, 2, 1,
-      [&h](unsigned headRoom) { return h.alloc(headRoom); },
-      [&h](ZmRef<ZiIOBuf> buf) { h.send(ZuMv(buf)); });
+  TestTxStream stream{h, 12, 2, 1};
 
   bool threw = false;
   try {

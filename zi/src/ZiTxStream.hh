@@ -60,7 +60,6 @@ public:
   TxStream(unsigned maxSize, unsigned headRoom, unsigned tailRoom) :
     m_maxSize(maxSize), m_headRoom(headRoom), m_tailRoom(tailRoom)
   {
-    allocBuf();
   }
   ~TxStream() { flush(); }
 
@@ -103,6 +102,7 @@ private:
 
   template <typename P>
   MatchPDelegate<P> append(P &&p) {
+    ensureBuf();
     ZuPrint<P>::print(*m_buf, ZuFwd<P>(p));
   }
   template <typename P>
@@ -188,7 +188,7 @@ struct Impl : public TxLayer<Impl, ...> {
 
 template <typename Impl, typename Below>
 class TxLayer : public TxStream<TxLayer<Impl, Below>> {
-  using Base = TxStream<TxLayer>;
+  using Base = TxStream<TxLayer<Impl, Below>>;
 
 public:
   auto impl() const { return static_cast<const Impl *>(this); }
@@ -203,7 +203,7 @@ public:
   {
     m_below.flush();
   }
-  ~TxLayer { m_below.flush(); }
+  ~TxLayer() { m_below.flush(); }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     return m_below.allocBuf_(headRoom);
