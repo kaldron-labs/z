@@ -77,11 +77,11 @@ public:
   //     - iteration ends
   //     - prior spans will be consumed entirely
   //     - the current span is consumed by N
-  //     - the current span will be included in the data if N > Trailer
-  // - data(span) delivers contiguous frame data to the app (length == total - Trailer)
+  //     - the current span will be included in the data if N > Padding
+  // - data(span) delivers contiguous frame data to the app (length == total - Padding)
   // - iteration may complete without any consumption having occurred (will return 0)
   template <
-    unsigned Trailer = 0,
+    unsigned Padding = 0,
     typename HeapID = typename Queue::HeapID,
     typename Frame, typename Data>
   int64_t consume(Frame &&frame, Data &&data) {
@@ -99,43 +99,43 @@ public:
   framed:
     if (consumed < 0) return consumed; // error
     total += consumed;
-    if (Trailer > 0 && ZuUnlikely(total < Trailer)) {
+    if (Padding > 0 && ZuUnlikely(total < Padding)) {
       // edge case - short data
       data(ZuBSpan{});
       goto ret;
     }
     NodeRef head = this->head();
-    if (Trailer > 0 &&
-	ZuUnlikely(count == 1 && consumed <= Trailer)) {
-      // edge case - 2 spans - but 2nd span is trailer-only
+    if (Padding > 0 &&
+	ZuUnlikely(count == 1 && consumed <= Padding)) {
+      // edge case - 2 spans - but 2nd span is entirely padding
       auto span = head->span();
-      span.trunc(span.length() - (Trailer - consumed));
+      span.trunc(span.length() - (Padding - consumed));
       data(span);
       goto ret;
     }
     if (ZuUnlikely(count > 0)) {
-      // multiple spans - need assembly into contiguous scratch buffer
+      // multiple spans - need gathering into contiguous scratch buffer
       using Scratch = ZtArray<uint8_t, ZtArrayHeapID_<HeapID>>;
-      auto scratch = ZtLocalArray(Scratch, total - Trailer);
+      auto scratch = ZtLocalArray(Scratch, total - Padding);
       do {
 	auto span = head->span();
-	if (Trailer > 0 &&
-	    ZuUnlikely(count == 1 && consumed <= Trailer))
-	  span.trunc(span.length() - (Trailer - consumed));
+	if (Padding > 0 &&
+	    ZuUnlikely(count == 1 && consumed <= Padding))
+	  span.trunc(span.length() - (Padding - consumed));
 	scratch << span;
 	m_queue.shift();
 	head = this->head();
       } while (--count);
-      if (consumed > Trailer) {
+      if (consumed > Padding) {
 	auto span = head->span();
-	span.trunc(consumed - Trailer);
+	span.trunc(consumed - Padding);
 	scratch << span;
       }
       data(scratch.span());
     } else {
       // single span - fast path - can be passed directly
       auto span = head->span();
-      span.trunc(consumed - Trailer);
+      span.trunc(consumed - Padding);
       data(span);
     }
 ret:
@@ -155,12 +155,6 @@ private:
 
   Queue			m_queue;
 };
-
-template <typename Queue>
-auto rxStream()
-{
-  return RxStream<Queue>();
-}
 
 } // Zi
 
