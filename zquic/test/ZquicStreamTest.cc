@@ -60,6 +60,27 @@ static ZmRef<ZiIOBuf> streamPacket_(
   return packet;
 }
 
+static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuCSpan expected)
+{
+  unsigned remaining = n;
+  bool called = false;
+  bool ok = false;
+  int64_t consumed = rx.consume(
+    [&remaining](ZuBSpan span) -> int64_t {
+      if (remaining > span.length()) {
+	remaining -= span.length();
+	return 0;
+      }
+      return remaining;
+    },
+    [&](ZuBSpan span) {
+      called = true;
+      ok = span.length() == expected.length() &&
+	!memcmp(span.data(), expected.data(), expected.length());
+    });
+  return consumed == n && called && ok;
+}
+
 void testStreamIDs()
 {
   ZuTestScope(testStreamIDs);
@@ -98,10 +119,9 @@ void testStreamFrameDelivery()
     "STREAM frame delivery accounting mismatch");
 
   auto &rx = stream->rxStream();
-  auto span = rx.span();
-  ZuCHECK(span.length() == 5 && !memcmp(span.data(), "hello", 5),
+  ZuCHECK(consumeExact_(rx, 5, "hello"),
     "STREAM payload was not queued for receive");
-  ZuCHECK(rx.advance(5) && rx.empty(), "STREAM receive queue advance failed");
+  ZuCHECK(rx.empty(), "STREAM receive queue consume failed");
 
   packet = streamPacket_(stream->id(), 5, {}, true, frame, used);
   ZuCHECK(packet, "STREAM FIN frame setup failed");
@@ -156,11 +176,9 @@ void testStreamRxSliceDelivery()
   packet = nullptr;
 
   auto &rx = stream->rxStream();
-  auto span = rx.span();
-  ZuCHECK(span.length() == 5 && !memcmp(span.data(), "slice", 5),
+  ZuCHECK(consumeExact_(rx, 5, "slice"),
     "packet-backed STREAM slice payload mismatch");
-  ZuCHECK(rx.advance(5) && rx.empty(),
-    "packet-backed STREAM slice advance failed");
+  ZuCHECK(rx.empty(), "packet-backed STREAM slice consume failed");
 }
 
 void testOutOfOrderStreamDelivery()
@@ -201,15 +219,11 @@ void testOutOfOrderStreamDelivery()
     "gap-filling STREAM did not drain pending data");
 
   auto &rx = stream->rxStream();
-  auto span = rx.span();
-  ZuCHECK(span.length() == 5 && !memcmp(span.data(), "hello", 5),
+  ZuCHECK(consumeExact_(rx, 5, "hello"),
     "first reordered STREAM payload mismatch");
-  ZuCHECK(rx.advance(5), "first reordered STREAM advance failed");
-  span = rx.span();
-  ZuCHECK(span.length() == 5 && !memcmp(span.data(), "world", 5),
+  ZuCHECK(consumeExact_(rx, 5, "world"),
     "second reordered STREAM payload mismatch");
-  ZuCHECK(rx.advance(5) && rx.empty(),
-    "second reordered STREAM advance failed");
+  ZuCHECK(rx.empty(), "second reordered STREAM consume failed");
 
   auto split = client.stream(Zquic::StreamType::Bidi);
   diag = {};
@@ -233,19 +247,13 @@ void testOutOfOrderStreamDelivery()
     "interior-overlap STREAM did not copy only novel spans");
 
   auto &splitRx = split->rxStream();
-  span = splitRx.span();
-  ZuCHECK(span.length() == 5 && !memcmp(span.data(), "hello", 5),
+  ZuCHECK(consumeExact_(splitRx, 5, "hello"),
     "split first STREAM payload mismatch");
-  ZuCHECK(splitRx.advance(5), "split first STREAM advance failed");
-  span = splitRx.span();
-  ZuCHECK(span.length() == 5 && !memcmp(span.data(), "world", 5),
+  ZuCHECK(consumeExact_(splitRx, 5, "world"),
     "split second STREAM payload mismatch");
-  ZuCHECK(splitRx.advance(5), "split second STREAM advance failed");
-  span = splitRx.span();
-  ZuCHECK(span.length() == 5 && !memcmp(span.data(), "tails", 5),
+  ZuCHECK(consumeExact_(splitRx, 5, "tails"),
     "split third STREAM payload mismatch");
-  ZuCHECK(splitRx.advance(5) && splitRx.empty(),
-    "split third STREAM advance failed");
+  ZuCHECK(splitRx.empty(), "split STREAM consume failed");
 }
 
 void testStreamTxRetention()
