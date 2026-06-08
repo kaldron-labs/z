@@ -35,37 +35,59 @@ ZmRef<RxQueue::Node> mkBuf(const char *s)
   return buf;
 }
 
-bool spanEq(ZuSpan<uint8_t> span, const char *s)
+bool spanEq(ZuBSpan span, const char *s)
 {
   unsigned n = static_cast<unsigned>(::strlen(s));
   return span.length() == n && (!n || !::memcmp(span.data(), s, n));
 }
 
-void testAdvanceConsumesAcrossQueuedBuffers()
+template <typename Stream>
+bool consumeExact(Stream &stream, unsigned n, const char *expected)
 {
-  ZuTestScope(testAdvanceConsumesAcrossQueuedBuffers);
+  if (!n)
+    return !stream.consume(
+      [](ZuBSpan) -> int64_t { return 0; },
+      [](ZuBSpan) { });
 
-  auto stream = Zi::rxStream<RxQueue>();
+  unsigned remaining = n;
+  bool called = false;
+  bool ok = false;
+  int64_t consumed = stream.consume(
+    [&remaining](ZuBSpan span) -> int64_t {
+      if (remaining > span.length()) {
+	remaining -= span.length();
+	return 0;
+      }
+      return remaining;
+    },
+    [&](ZuBSpan span) {
+      called = true;
+      ok = spanEq(span, expected);
+    });
+  return consumed == n && called && ok;
+}
+
+void testConsumeAcrossQueuedBuffers()
+{
+  ZuTestScope(testConsumeAcrossQueuedBuffers);
+
+  ZiRxStream<RxQueue> stream;
 
   ZuCheck(!stream);
-  ZuCheck(!stream.advance(1));
+  ZuCheck(!consumeExact(stream, 1, ""));
 
   stream.push(mkBuf("abc"));
   stream.push(mkBuf("de"));
 
   ZuCheck(stream.count_() == 2);
-  ZuCheck(spanEq(stream.span(), "abc"));
-
-  ZuCheck(stream.advance(1));
-  ZuCheck(spanEq(stream.span(), "bc"));
+  ZuCheck(consumeExact(stream, 1, "a"));
   ZuCheck(stream.count_() == 2);
-
-  ZuCheck(stream.advance(99));
+  ZuCheck(consumeExact(stream, 4, "bcde"));
   ZuCheck(!stream);
   ZuCheck(stream.count_() == 0);
 
-  ZuCheck(!stream.advance(0));
-  ZuCheck(!stream.advance(2));
+  ZuCheck(consumeExact(stream, 0, ""));
+  ZuCheck(!consumeExact(stream, 2, ""));
 }
 
 void testPushFiltersZeroLengthNodes()
@@ -81,67 +103,88 @@ void testPushFiltersZeroLengthNodes()
 
   ZuCheck(stream.count_() == 1);
   ZuCheck(!!stream);
-  ZuCheck(spanEq(stream.span(), "xy"));
-  ZuCheck(stream.count_() == 1);
-
-  ZuCheck(stream.advance(2));
+  ZuCheck(consumeExact(stream, 2, "xy"));
   ZuCheck(!stream);
   ZuCheck(stream.count_() == 0);
 }
 
-void testNextSkipsCurrentRemainder()
+void testConsumeStepsThroughQueuedBuffers()
 {
-  ZuTestScope(testNextSkipsCurrentRemainder);
+  ZuTestScope(testConsumeStepsThroughQueuedBuffers);
 
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abcd"));
   stream.push(mkBuf("ef"));
 
-  ZuCheck(stream.advance(2));
-  ZuCheck(spanEq(stream.span(), "cd"));
-
-  ZuCheck(stream.advance(2));
-  ZuCheck(spanEq(stream.span(), "ef"));
+  ZuCheck(consumeExact(stream, 2, "ab"));
+  ZuCheck(consumeExact(stream, 2, "cd"));
   ZuCheck(stream.count_() == 1);
 
-  ZuCheck(stream.advance(2));
+  ZuCheck(consumeExact(stream, 2, "ef"));
   ZuCheck(!stream);
 }
 
-void testSpansIteratesWithoutConsuming()
+void testConsumeGathersFragmentedFrame()
 {
-  ZuTestScope(testSpansIteratesWithoutConsuming);
+  ZuTestScope(testConsumeGathersFragmentedFrame);
 
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abc"));
   stream.push(mkBuf("de"));
 
-  char seen[6] = {};
-  unsigned len = 0;
-  unsigned calls = 0;
-  bool completed = stream.spans([&](ZuSpan<uint8_t> span) {
-    ::memcpy(seen + len, span.data(), span.length());
-    len += span.length();
-    ++calls;
-    return true;
-  });
+  bool called = false;
+  int64_t consumed = stream.consume(
+    [](ZuBSpan) -> int64_t { return 0; },
+    [&](ZuBSpan) { called = true; });
 
-  ZuCheck(completed);
-  ZuCheck(calls == 2);
-  ZuCheck(len == 5 && !::memcmp(seen, "abcde", 5));
+  ZuCheck(!consumed);
+  ZuCheck(!called);
   ZuCheck(stream.count_() == 2);
-  ZuCheck(spanEq(stream.span(), "abc"));
 
-  calls = 0;
-  completed = stream.spans([&](ZuSpan<uint8_t>) {
-    ++calls;
-    return false;
-  });
+  unsigned seen = 0;
+  consumed = stream.consume(
+    [&seen](ZuBSpan span) -> int64_t {
+      seen += span.length();
+      return seen >= 5 ? span.length() : 0;
+    },
+    [&](ZuBSpan span) {
+      called = true;
+      ZuCheck(spanEq(span, "abcde"));
+    });
 
-  ZuCheck(!completed);
-  ZuCheck(calls == 1);
-  ZuCheck(stream.count_() == 2);
-  ZuCheck(spanEq(stream.span(), "abc"));
+  ZuCheck(consumed == 5);
+  ZuCheck(called);
+  ZuCheck(!stream);
+}
+
+void testConsumePaddingAcrossQueuedBuffers()
+{
+  ZuTestScope(testConsumePaddingAcrossQueuedBuffers);
+
+  ZiRxStream<RxQueue> stream;
+  stream.push(mkBuf("abc\r"));
+  stream.push(mkBuf("\nrest"));
+
+  bool called = false;
+  int64_t consumed = stream.consume<2>(
+    [prevCR = false](ZuBSpan span) mutable -> int64_t {
+      if (prevCR && span[0] == '\n') return 1;
+      for (unsigned i = 1; i < span.length(); ++i)
+	if (span[i - 1] == '\r' && span[i] == '\n')
+	  return i + 1;
+      prevCR = span[span.length() - 1] == '\r';
+      return 0;
+    },
+    [&](ZuBSpan span) {
+      called = true;
+      ZuCheck(spanEq(span, "abc"));
+    });
+
+  ZuCheck(consumed == 5);
+  ZuCheck(called);
+  ZuCheck(stream.count_() == 1);
+  ZuCheck(consumeExact(stream, 4, "rest"));
+  ZuCheck(!stream);
 }
 
 void testCleanResetsState()
@@ -156,11 +199,11 @@ void testCleanResetsState()
   stream.clean();
   ZuCheck(stream.count_() == 0);
   ZuCheck(!stream);
-  ZuCheck(stream.span().length() == 0);
+  ZuCheck(!consumeExact(stream, 1, ""));
 
   stream.push(mkBuf("z"));
   ZuCheck(stream.count_() == 1);
-  ZuCheck(spanEq(stream.span(), "z"));
+  ZuCheck(consumeExact(stream, 1, "z"));
 }
 
 } // namespace
@@ -169,10 +212,11 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testAdvanceConsumesAcrossQueuedBuffers);
+  ZuTestCall(testConsumeAcrossQueuedBuffers);
   ZuTestCall(testPushFiltersZeroLengthNodes);
-  ZuTestCall(testNextSkipsCurrentRemainder);
-  ZuTestCall(testSpansIteratesWithoutConsuming);
+  ZuTestCall(testConsumeStepsThroughQueuedBuffers);
+  ZuTestCall(testConsumeGathersFragmentedFrame);
+  ZuTestCall(testConsumePaddingAcrossQueuedBuffers);
   ZuTestCall(testCleanResetsState);
   return 0;
 }

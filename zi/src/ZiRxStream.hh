@@ -28,6 +28,9 @@
 
 #include <zlib/ZuSpan.hh>
 
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtLocalArray.hh>
+
 #include <zlib/ZiIOBuf.hh>
 
 namespace Zi {
@@ -52,12 +55,12 @@ public:
 
   void clean() { m_queue.clean(); }
 
-  auto count_() { return m_queue.count_(); }
+  auto count_() const { return m_queue.count_(); }
 
 private:
   enum { Locked = !ZuIsSame<ZmNoLock, typename Queue::Lock>{} };
-  using NodeRef = ZuIf<typename Queue::NodeRef, typename Queue::NodePtr, Locked>;
-  auto head() {
+  using NodeRef = ZuIf<Locked, typename Queue::NodeRef, typename Queue::NodePtr>;
+  auto head() const {
     if constexpr (Locked)
       return m_queue.headNode();
     else
@@ -99,46 +102,46 @@ public:
   framed:
     if (consumed < 0) return consumed; // error
     total += consumed;
-    if (Padding > 0 && ZuUnlikely(total < Padding)) {
-      // edge case - short data
-      data(ZuBSpan{});
-      goto ret;
-    }
-    NodeRef head = this->head();
-    if (Padding > 0 &&
-	ZuUnlikely(count == 1 && consumed <= Padding)) {
-      // edge case - 2 spans - but 2nd span is entirely padding
-      auto span = head->span();
-      span.trunc(span.length() - (Padding - consumed));
-      data(span);
-      goto ret;
-    }
-    if (ZuUnlikely(count > 0)) {
-      // multiple spans - need gathering into contiguous scratch buffer
-      using Scratch = ZtArray<uint8_t, ZtArrayHeapID_<HeapID>>;
-      auto scratch = ZtLocalArray(Scratch, total - Padding);
-      do {
-	auto span = head->span();
-	if (Padding > 0 &&
-	    ZuUnlikely(count == 1 && consumed <= Padding))
-	  span.trunc(span.length() - (Padding - consumed));
-	scratch << span;
-	m_queue.shift();
-	head = this->head();
-      } while (--count);
-      if (consumed > Padding) {
-	auto span = head->span();
-	span.trunc(consumed - Padding);
-	scratch << span;
+
+    {
+      uint64_t dataLen = total;
+      uint64_t dataCount = count;
+      if constexpr (Padding > 0) {
+	if (dataLen > Padding)
+	  dataLen -= Padding;
+	else
+	  dataLen = 0;
+	if (ZuUnlikely(dataCount == 1 && consumed <= Padding))
+	  // edge case - 2 spans - but 2nd span is entirely padding
+	  dataCount = 0;
       }
-      data(scratch.span());
-    } else {
-      // single span - fast path - can be passed directly
-      auto span = head->span();
-      span.trunc(consumed - Padding);
-      data(span);
+      if (!dataLen) {
+	// edge case - short data
+	data(ZuSpan<uint8_t>{});
+      } else if (ZuLikely(!dataCount)) {
+	// single span - fast path - can be passed directly
+	NodeRef head = this->head();
+	auto span = head->span();
+	span.trunc(dataLen);
+	data(span);
+      } else {
+	// multiple spans - need gathering into contiguous scratch buffer
+	using Scratch = ZtArray<uint8_t, ZtArrayHeapID_<HeapID>>;
+	auto scratch = ZtLocalArray(Scratch, dataLen);
+	auto i = m_queue.citer();
+	while (dataLen) {
+	  auto node = i();
+	  auto span = node->span();
+	  if (span.length() > dataLen) span.trunc(dataLen);
+	  scratch << span;
+	  dataLen -= span.length();
+	}
+	data(scratch.span());
+      }
     }
-ret:
+
+    while (count--) m_queue.shift();
+    NodeRef head = this->head();
     if (consumed < head->length)
       head->advance(consumed);
     else
