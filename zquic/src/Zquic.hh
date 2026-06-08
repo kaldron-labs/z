@@ -1947,22 +1947,31 @@ public:
     return true;
   }
 
-  auto txStream() {
-    return Zi::txStream(
-      unsigned(BufSize), 0, 0,
-      [this](unsigned skip) -> ZmRef<ZiIOBuf> {
-	ZiAssert(skip <= BufSize, "Zquic", (skip),
-	  "invalid stream headroom " << skip, return nullptr);
-	ZmRef<ZiIOBuf> buf = new TxDataPQueue::Node{this};
-	buf->skip = skip;
-	buf->length = 0;
-	return buf;
-      },
-      [](ZmRef<ZiIOBuf> buf) {
-	auto stream = static_cast<Stream *>(buf->owner);
-	stream->sent_(ZuMv(buf));
-      });
-  }
+  class TxStream_ : public Zi::TxStream<TxStream_> {
+    using Base = Zi::TxStream<TxStream_>;
+
+  public:
+    TxStream_(Stream &stream) : Base(unsigned(BufSize), 0, 0), m_stream{&stream} { }
+
+    ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
+      ZiAssert(skip <= BufSize, "Zquic", (skip),
+	"invalid stream headroom " << skip, return nullptr);
+      ZmRef<ZiIOBuf> buf = new TxDataPQueue::Node{m_stream};
+      buf->skip = skip;
+      buf->length = 0;
+      return buf;
+    }
+
+    void sendBuf_(ZmRef<ZiIOBuf> buf) {
+      auto stream = static_cast<Stream *>(buf->owner);
+      stream->sent_(ZuMv(buf));
+    }
+
+  private:
+    Stream	*m_stream;
+  };
+
+  auto txStream() { return TxStream_{*this}; }
 
   void fin() { m_fin = true; }
   void reset(uint64_t appError) {
