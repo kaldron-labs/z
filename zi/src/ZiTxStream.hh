@@ -11,12 +11,12 @@
 //   - maxSize - overall capacity for each buffer
 //   - headRoom - how much space is reserved for a frame header
 //   - tailRoom - how much space is reserved for a frame trailer
-//   - how new buffers are allocated - the alloc callback:
-//     - ZmRef<IOBuf> alloc(unsigned headRoom)
+//   - how new buffers are allocated - the allocBuf_ callback:
+//     - ZmRef<IOBuf> allocBuf_(unsigned headRoom)
 //     - return a new buffer with skip == headRoom
-//   - how buffers are sent - the send callback
-//     - void send(ZmRef<IOBuf> buf)
-//     - send buf to lower-level protocol
+//   - how buffers are sent - the sendBuf_ callback
+//     - void sendBuf_(ZmRef<IOBuf> buf)
+//     - send buf (via lower-level protocol)
 
 #ifndef ZiTxStream_HH
 #define ZiTxStream_HH
@@ -37,38 +37,62 @@ namespace Zi {
 struct Flush { };
 inline Flush flush() { return {}; }
 
-template <typename Alloc, typename Send>
+// CRTP - implementation must conform to the following interface:
+#if 0
+struct Impl : public TxStream<Impl> {
+  using Base = TxStream<Impl>;
+
+  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom);
+
+  void sendBuf_(ZmRef<ZiIOBuf>);
+};
+#endif
+
+template <typename Impl>
 class TxStream {
   TxStream(const TxStream &) = delete;
   TxStream &operator =(const TxStream &) = delete;
 
 public:
-  TxStream(
-    unsigned maxSize, unsigned headRoom, unsigned tailRoom,
-    Alloc alloc, Send send)
-  :
-    m_maxSize(maxSize), m_headRoom(headRoom), m_tailRoom(tailRoom),
-    m_alloc(ZuMv(alloc)), m_send(ZuMv(send)), m_buf(m_alloc(m_headRoom)) { }
-  ~TxStream() = default;
+  auto impl() const { return static_cast<const Impl *>(this); }
+  auto impl() { return static_cast<Impl *>(this); }
+
+  TxStream(unsigned maxSize, unsigned headRoom, unsigned tailRoom) :
+    m_maxSize(maxSize), m_headRoom(headRoom), m_tailRoom(tailRoom)
+  {
+    allocBuf();
+  }
+  ~TxStream() { flush(); }
 
   TxStream(TxStream &&) = default;
   TxStream &operator =(TxStream &&) = default;
 
+  unsigned maxSize() const { return m_maxSize; }
+  unsigned headRoom() const { return m_headRoom; }
+  unsigned tailRoom() const { return m_tailRoom; }
+
+private:
+  void allocBuf() { m_buf = impl()->allocBuf_(m_headRoom); }
+  void ensureBuf() { if (!m_buf) allocBuf(); }
+  void sendBuf() { impl()->sendBuf_(ZuMv(m_buf)); allocBuf(); }
+  void flushBuf() { impl()->sendBuf_(ZuMv(m_buf)); m_buf = {}; }
+
+public:
   void append(const uint8_t *data, unsigned length) {
-  next:
-    unsigned total = m_buf->length + m_headRoom + m_tailRoom;
-    ZmAssert(total <= m_maxSize);
-    unsigned avail = m_maxSize - total;
-    unsigned length_ = length > avail ? avail : length;
-    if (length_) {
-      m_buf->append(data, length_);
-      data += length_;
-      length -= length_;
+    ensureBuf();
+    for (;;) {
+      unsigned total = m_buf->length + m_headRoom + m_tailRoom;
+      ZmAssert(total <= m_maxSize);
+      unsigned avail = m_maxSize - total;
+      unsigned length_ = length > avail ? avail : length;
+      if (length_) {
+	m_buf->append(data, length_);
+	data += length_;
+	length -= length_;
+      }
+      if (!length) return;
+      sendBuf();
     }
-    if (!length) return;
-    m_send(ZuMv(m_buf));
-    m_buf = m_alloc(m_headRoom);
-    goto next;
   }
 
 private:
@@ -83,14 +107,15 @@ private:
   }
   template <typename P>
   MatchPBuffer<P> append(const P &p) {
+    ensureBuf();
     unsigned length_ = ZuPrint<P>::length(p);
     unsigned bufLen = m_buf->length;
     unsigned total = bufLen + m_headRoom + m_tailRoom;
-    ZmAssert(total <= m_maxSize);
+    ZmAssert(total <= m_maxSize); // sanity check on current buf
     unsigned avail = m_maxSize - total;
     if (avail < length_) {
-      m_send(ZuMv(m_buf));
-      m_buf = m_alloc(m_headRoom);
+      // need new buf
+      sendBuf();
       avail = m_maxSize - (m_headRoom + m_tailRoom);
       if (length_ > avail)
 	throw ZeEXCEPT(Fatal, "ZiTxStream", ([avail, length_](auto &s) {
@@ -139,11 +164,9 @@ public:
   }
 
   // flush output
+  void flush() { if (m_buf && m_buf->length) flushBuf(); }
   TxStream &operator <<(Flush) {
-    if (m_buf->length) {
-      m_send(ZuMv(m_buf));
-      m_buf = m_alloc(m_headRoom);
-    }
+    flush();
     return *this;
   }
 
@@ -151,24 +174,56 @@ private:
   unsigned		m_maxSize;
   unsigned		m_headRoom;
   unsigned		m_tailRoom;
-  Alloc			m_alloc;
-  Send			m_send;
   ZmRef<ZiIOBuf>	m_buf;
 };
 
-template <typename Alloc, typename Send>
-auto txStream(
-  unsigned maxSize, unsigned headRoom, unsigned tailRoom,
-  Alloc alloc, Send send)
-{
-  return TxStream<Alloc, Send>(
-    maxSize, headRoom,
-    tailRoom, ZuMv(alloc), ZuMv(send));
-}
+// CRTP - implementation must conform to the following interface:
+#if 0
+struct Impl : public TxLayer<Impl, ...> {
+  using Base = TxStream<Impl, ...>;
+
+  void prepareBuf_(ZiIOBuf *); // prepare for sending
+};
+#endif
+
+template <typename Impl, typename Below>
+class TxLayer : public TxStream<TxLayer<Impl, Below>> {
+  using Base = TxStream<TxLayer>;
+
+public:
+  auto impl() const { return static_cast<const Impl *>(this); }
+  auto impl() { return static_cast<Impl *>(this); }
+
+  TxLayer(Below &below, unsigned headRoom, unsigned tailRoom) :
+    Base(
+      below.maxSize(),
+      below.headRoom() + headRoom,
+      below.tailRoom() + tailRoom),
+    m_below(below)
+  {
+    m_below.flush();
+  }
+  ~TxLayer { m_below.flush(); }
+
+  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+    return m_below.allocBuf_(headRoom);
+  }
+
+  void sendBuf_(ZmRef<ZiIOBuf> buf) {
+    impl()->prepareBuf_(buf);
+    m_below.sendBuf_(ZuMv(buf));
+  }
+
+private:
+  Below			&m_below;
+};
 
 } // Zi
 
-template <typename Alloc, typename Send>
-using ZiTxStream = Zi::TxStream<Alloc, Send>;
+template <typename Impl>
+using ZiTxStream = Zi::TxStream<Impl>;
+
+template <typename Impl, typename Lower>
+using ZiTxLayer = Zi::TxLayer<Impl, Lower>;
 
 #endif /* ZiTxStream_HH */

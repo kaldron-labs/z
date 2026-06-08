@@ -548,8 +548,9 @@ public:
       unsigned(TxMaxOverhead - m_headroom),
       [this](unsigned skip) -> ZmRef<ZiIOBuf> {
 	auto buf = allocTxBuf_();
-	if (ZuUnlikely(!buf || buf->skip != skip))
+	if (ZuUnlikely(!buf || buf->skip > skip))
 	  throw TxStreamAllocFailure{};
+	buf->skip = skip;
 	return buf;
       },
       [](ZmRef<ZiIOBuf> buf) {
