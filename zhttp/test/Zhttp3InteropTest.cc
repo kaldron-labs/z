@@ -24,8 +24,21 @@ using Zhttp::Test::waitCaddyReady;
 using Zhttp::Test::waitUntil;
 using Zhttp::Test::writeCaddyfile;
 
-struct RuntimeClient : public Zquic::Client<RuntimeClient> { };
-struct RuntimeServer : public Zquic::Server<RuntimeServer> { };
+struct RuntimeClient : public Zquic::Client<RuntimeClient> {
+  struct Link;
+  struct Stream;
+};
+struct RuntimeServer : public Zquic::Server<RuntimeServer> {
+  struct Link;
+  struct Stream;
+
+  ZmRef<Link> link();
+  ZmRef<Link> accepted(const Zquic::InitialInfo &);
+  ZiIP localIP() const { return ZiIP("127.0.0.1"); }
+
+  ZmRef<Link> link_;
+  ZmAtomic<unsigned> acceptedCount = 0;
+};
 struct H3App { };
 
 ZuCSpan headerBytes_(const Zhttp::H3::HeaderBytes &b)
@@ -54,46 +67,76 @@ bool writeControlStream_(
   return true;
 }
 
+struct RuntimeClient::Stream :
+  public Zquic::CliStream<RuntimeClient::Link, RuntimeClient::Stream> {
+  using Base =
+    Zquic::CliStream<RuntimeClient::Link, RuntimeClient::Stream>;
+  using Base::Base;
+
+  int process(Zquic::RxStream &) { return 0; }
+};
+
+struct RuntimeClient::Link :
+  public Zquic::CliLink<RuntimeClient, RuntimeClient::Link,
+    RuntimeClient::Stream> {
+  using Base = Zquic::CliLink<RuntimeClient, RuntimeClient::Link,
+    RuntimeClient::Stream>;
+  using Base::Base;
+
+  Link(RuntimeClient *app) : Base{app} { }
+
+  void connected(const char *, int) { ++connectedCount; }
+  void disconnected() { ++disconnectedCount; }
+  void connectFailed(bool) { ++connectFailures; }
+  void streamed(ZmRef<Stream>) { }
+
+  ZmAtomic<unsigned> connectedCount = 0;
+  ZmAtomic<unsigned> disconnectedCount = 0;
+  ZmAtomic<unsigned> connectFailures = 0;
+};
+
+struct RuntimeServer::Stream :
+  public Zquic::SrvStream<RuntimeServer::Link, RuntimeServer::Stream> {
+  using Base =
+    Zquic::SrvStream<RuntimeServer::Link, RuntimeServer::Stream>;
+  using Base::Base;
+
+  int process(Zquic::RxStream &) { return 0; }
+};
+
+struct RuntimeServer::Link :
+  public Zquic::SrvLink<RuntimeServer, RuntimeServer::Link,
+    RuntimeServer::Stream> {
+  using Base = Zquic::SrvLink<RuntimeServer, RuntimeServer::Link,
+    RuntimeServer::Stream>;
+  using Base::Base;
+
+  Link(RuntimeServer *app) : Base{app} { }
+
+  void connected(const char *, int) { ++connectedCount; }
+  void disconnected() { ++disconnectedCount; }
+  void streamed(ZmRef<Stream>) { }
+
+  ZmAtomic<unsigned> connectedCount = 0;
+  ZmAtomic<unsigned> disconnectedCount = 0;
+};
+
+ZmRef<RuntimeServer::Link> RuntimeServer::link()
+{
+  return link_;
+}
+
+ZmRef<RuntimeServer::Link> RuntimeServer::accepted(
+  const Zquic::InitialInfo &)
+{
+  link_ = new Link{this};
+  ++acceptedCount;
+  return link_;
+}
+
 struct ZhttpRuntimeClient : public Zquic::Client<ZhttpRuntimeClient> {
-  void zquicStream(uint64_t streamID, uint64_t offset, ZuCSpan payload, bool)
-  {
-    if (streamID != 0) return;
-    uint64_t seen = responseOffset;
-    if (offset < seen) return;
-    if (offset != seen) {
-      responseErrors = 1;
-      return;
-    }
-    responseOffset = seen + payload.length();
-    if (!payload.length()) return;
-    unsigned o = 0;
-    while (o < payload.length()) {
-      Zhttp::H3::H3Frame frame;
-      unsigned used = 0;
-      if (Zhttp::H3::H3FrameCodec::parse(
-	    ZuCSpan{payload.data() + o, payload.length() - o},
-	    frame, used) < 0 || !used) {
-	responseErrors = 1;
-	return;
-      }
-      o += used;
-      if (frame.type == Zhttp::H3::H3FrameType::Headers) {
-	if (h3.decodeResponse(frame, response) < 0) {
-	  responseErrors = 1;
-	  return;
-	}
-	responseHeadersSeen = 1;
-      } else if (frame.type == Zhttp::H3::H3FrameType::Data) {
-	ZuCSpan data;
-	if (h3.decodeData(frame, data) < 0) {
-	  responseErrors = 1;
-	  return;
-	}
-	body << data;
-      }
-    }
-    responseSeen = 1;
-  }
+  struct Link;
+  struct Stream;
 
   Zhttp::H3::Connection h3;
   Zhttp::H3::DecodedResponse response;
@@ -104,24 +147,42 @@ struct ZhttpRuntimeClient : public Zquic::Client<ZhttpRuntimeClient> {
   ZmAtomic<uint64_t>	responseOffset = 0;
 };
 
-struct ZhttpRuntimeServer : public Zquic::Server<ZhttpRuntimeServer> {
-  void zquicStream(uint64_t streamID, uint64_t offset, ZuCSpan payload, bool)
+struct ZhttpRuntimeClient::Stream :
+  public Zquic::CliStream<ZhttpRuntimeClient::Link,
+    ZhttpRuntimeClient::Stream> {
+  using Base = Zquic::CliStream<ZhttpRuntimeClient::Link,
+    ZhttpRuntimeClient::Stream>;
+  using Base::Base;
+
+  int process(Zquic::RxStream &) { return 0; }
+};
+
+struct ZhttpRuntimeClient::Link :
+  public Zquic::CliLink<ZhttpRuntimeClient, ZhttpRuntimeClient::Link,
+    ZhttpRuntimeClient::Stream> {
+  using Base = Zquic::CliLink<ZhttpRuntimeClient,
+    ZhttpRuntimeClient::Link, ZhttpRuntimeClient::Stream>;
+  using Base::Base;
+
+  Link(ZhttpRuntimeClient *app) : Base{app} { }
+
+  void connected(const char *, int) { ++connectedCount; }
+  void disconnected() { ++disconnectedCount; }
+  void connectFailed(bool) { ++connectFailures; }
+  void streamed(ZmRef<Stream>) { }
+
+  void streamFrame(uint64_t streamID, uint64_t offset, ZuCSpan payload, bool)
   {
-    ++streamsSeen;
-    lastStreamID = streamID;
-    if (!(streamID & 3)) {
-      ++requestStreamsSeen;
-      lastRequestStreamID = streamID;
-    }
+    auto app_ = this->app();
     if (streamID != 0) return;
-    uint64_t seen = requestOffset;
+    uint64_t seen = app_->responseOffset;
     if (offset < seen) return;
     if (offset != seen) {
-      requestErrors = 1;
+      app_->responseErrors = 1;
       return;
     }
-    requestOffset = seen + payload.length();
-    if (!payload.length() || responseSent) return;
+    app_->responseOffset = seen + payload.length();
+    if (!payload.length()) return;
     unsigned o = 0;
     while (o < payload.length()) {
       Zhttp::H3::H3Frame frame;
@@ -129,49 +190,46 @@ struct ZhttpRuntimeServer : public Zquic::Server<ZhttpRuntimeServer> {
       if (Zhttp::H3::H3FrameCodec::parse(
 	    ZuCSpan{payload.data() + o, payload.length() - o},
 	    frame, used) < 0 || !used) {
-	requestErrors = 1;
+	app_->responseErrors = 1;
 	return;
       }
       o += used;
       if (frame.type == Zhttp::H3::H3FrameType::Headers) {
-	if (h3.decodeRequest(frame, request) < 0) {
-	  requestErrors = 1;
+	if (app_->h3.decodeResponse(frame, app_->response) < 0) {
+	  app_->responseErrors = 1;
 	  return;
 	}
-	requestSeen = 1;
+	app_->responseHeadersSeen = 1;
       } else if (frame.type == Zhttp::H3::H3FrameType::Data) {
 	ZuCSpan data;
-	if (h3.decodeData(frame, data) < 0) {
-	  requestErrors = 1;
+	if (app_->h3.decodeData(frame, data) < 0) {
+	  app_->responseErrors = 1;
 	  return;
 	}
-	body << data;
+	app_->body << data;
       }
     }
-
-    Zhttp::H3::ResponseParams resp;
-    resp.status = 200;
-    Zhttp::H3::HeaderBytes response;
-    if (h3.encodeResponse(response, resp) < 0) {
-      requestErrors = 1;
-      return;
-    }
-    Zhttp::H3::HeaderBytes data;
-    if (h3.encodeData(data, "zhttp-h3-ok") < 0) {
-      requestErrors = 1;
-      return;
-    }
-    appendHeaderBytes_(response, data);
-    if (!sendStream(streamID, headerBytes_(response))) {
-      requestErrors = 1;
-      return;
-    }
-    responseSent = 1;
+    app_->responseSeen = 1;
   }
+
+  ZmAtomic<unsigned> connectedCount = 0;
+  ZmAtomic<unsigned> disconnectedCount = 0;
+  ZmAtomic<unsigned> connectFailures = 0;
+};
+
+struct ZhttpRuntimeServer : public Zquic::Server<ZhttpRuntimeServer> {
+  struct Link;
+  struct Stream;
+
+  ZmRef<Link> link();
+  ZmRef<Link> accepted(const Zquic::InitialInfo &);
+  ZiIP localIP() const { return ZiIP("127.0.0.1"); }
 
   Zhttp::H3::Connection h3;
   Zhttp::H3::DecodedRequest request;
   ZtString<>	body;
+  ZmRef<Link>	link_;
+  ZmAtomic<unsigned>	acceptedCount = 0;
   ZmAtomic<unsigned>	requestSeen = 0;
   ZmAtomic<unsigned>	responseSent = 0;
   ZmAtomic<unsigned>	requestErrors = 0;
@@ -181,6 +239,112 @@ struct ZhttpRuntimeServer : public Zquic::Server<ZhttpRuntimeServer> {
   ZmAtomic<uint64_t>	lastRequestStreamID = 0;
   ZmAtomic<uint64_t>	requestOffset = 0;
 };
+
+struct ZhttpRuntimeServer::Stream :
+  public Zquic::SrvStream<ZhttpRuntimeServer::Link,
+    ZhttpRuntimeServer::Stream> {
+  using Base = Zquic::SrvStream<ZhttpRuntimeServer::Link,
+    ZhttpRuntimeServer::Stream>;
+  using Base::Base;
+
+  int process(Zquic::RxStream &) { return 0; }
+};
+
+struct ZhttpRuntimeServer::Link :
+  public Zquic::SrvLink<ZhttpRuntimeServer, ZhttpRuntimeServer::Link,
+    ZhttpRuntimeServer::Stream> {
+  using Base = Zquic::SrvLink<ZhttpRuntimeServer,
+    ZhttpRuntimeServer::Link, ZhttpRuntimeServer::Stream>;
+  using Base::Base;
+
+  Link(ZhttpRuntimeServer *app) : Base{app} { }
+
+  void connected(const char *, int) { ++connectedCount; }
+  void disconnected() { ++disconnectedCount; }
+  void streamed(ZmRef<Stream>) { }
+
+  void streamFrame(uint64_t streamID, uint64_t offset, ZuCSpan payload, bool)
+  {
+    auto app_ = this->app();
+    ++app_->streamsSeen;
+    app_->lastStreamID = streamID;
+    if (!(streamID & 3)) {
+      ++app_->requestStreamsSeen;
+      app_->lastRequestStreamID = streamID;
+    }
+    if (streamID != 0) return;
+    uint64_t seen = app_->requestOffset;
+    if (offset < seen) return;
+    if (offset != seen) {
+      app_->requestErrors = 1;
+      return;
+    }
+    app_->requestOffset = seen + payload.length();
+    if (!payload.length() || app_->responseSent) return;
+    unsigned o = 0;
+    while (o < payload.length()) {
+      Zhttp::H3::H3Frame frame;
+      unsigned used = 0;
+      if (Zhttp::H3::H3FrameCodec::parse(
+	    ZuCSpan{payload.data() + o, payload.length() - o},
+	    frame, used) < 0 || !used) {
+	app_->requestErrors = 1;
+	return;
+      }
+      o += used;
+      if (frame.type == Zhttp::H3::H3FrameType::Headers) {
+	if (app_->h3.decodeRequest(frame, app_->request) < 0) {
+	  app_->requestErrors = 1;
+	  return;
+	}
+	app_->requestSeen = 1;
+      } else if (frame.type == Zhttp::H3::H3FrameType::Data) {
+	ZuCSpan data;
+	if (app_->h3.decodeData(frame, data) < 0) {
+	  app_->requestErrors = 1;
+	  return;
+	}
+	app_->body << data;
+      }
+    }
+
+    Zhttp::H3::ResponseParams resp;
+    resp.status = 200;
+    Zhttp::H3::HeaderBytes response;
+    if (app_->h3.encodeResponse(response, resp) < 0) {
+      app_->requestErrors = 1;
+      return;
+    }
+    Zhttp::H3::HeaderBytes data;
+    if (app_->h3.encodeData(data, "zhttp-h3-ok") < 0) {
+      app_->requestErrors = 1;
+      return;
+    }
+    appendHeaderBytes_(response, data);
+    auto stream = this->findStream(int64_t(streamID));
+    if (!stream || !this->send(stream, headerBytes_(response))) {
+      app_->requestErrors = 1;
+      return;
+    }
+    app_->responseSent = 1;
+  }
+
+  ZmAtomic<unsigned> connectedCount = 0;
+  ZmAtomic<unsigned> disconnectedCount = 0;
+};
+
+ZmRef<ZhttpRuntimeServer::Link> ZhttpRuntimeServer::link()
+{
+  return link_;
+}
+
+ZmRef<ZhttpRuntimeServer::Link> ZhttpRuntimeServer::accepted(
+  const Zquic::InitialInfo &)
+{
+  link_ = new Link{this};
+  ++acceptedCount;
+  return link_;
+}
 
 } // namespace
 
@@ -251,7 +415,7 @@ void testZhttpRuntimeTrafficGuard()
 	.maxStreamsUni(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "Zhttp H3 runtime guard server init failed");
-  ZuCHECK(zquicServer.listen(ZiIP("127.0.0.1"), 0),
+  ZuCHECK(zquicServer.listen(),
     "Zhttp H3 runtime guard server listen failed");
   ZuCHECK(waitUntil([&zquicServer]() { return zquicServer.listening(); }),
     "Zhttp H3 runtime guard server did not become ready");
@@ -266,17 +430,20 @@ void testZhttpRuntimeTrafficGuard()
 	.maxStreamsUni(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "Zhttp H3 runtime guard client init failed");
-  ZuCHECK(zquicClient.connect(
-      ZiIP("127.0.0.1"), 0,
-      ZiIP("127.0.0.1"), zquicServer.local().port()),
-    "Zhttp H3 runtime guard client connect failed");
-  ZuCHECK(waitUntil([&zquicClient]() { return zquicClient.ready(); }),
+  ZmRef<RuntimeClient::Link> zquicClientLink =
+    new RuntimeClient::Link{&zquicClient};
+  zquicClientLink->connect(
+    Zquic::Host{"127.0.0.1"}, zquicServer.local().port());
+  ZuCHECK(waitUntil([&zquicClientLink]() { return zquicClientLink->ready(); }),
     "Zhttp H3 runtime guard client did not become ready");
-  ZuCHECK(waitUntil([&zquicClient, &zquicServer]() {
-      return zquicClient.established() && zquicServer.established();
+  ZmRef<RuntimeServer::Link> zquicServerLink;
+  ZuCHECK(waitUntil([&zquicClientLink, &zquicServer, &zquicServerLink]() {
+      if (!zquicServerLink) zquicServerLink = zquicServer.link();
+      return zquicServerLink && zquicClientLink->established() &&
+	zquicServerLink->established();
     }), "Zhttp H3 runtime guard did not establish Zquic");
-  ZuCHECK(zquicClient.crypto().negotiatedProtocol() == "h3" &&
-      zquicServer.crypto().negotiatedProtocol() == "h3",
+  ZuCHECK(zquicClientLink->crypto().negotiatedProtocol() == "h3" &&
+      zquicServerLink->crypto().negotiatedProtocol() == "h3",
     "Zhttp H3 runtime guard ALPN mismatch");
 
   H3App clientApp, serverApp;
@@ -291,16 +458,17 @@ void testZhttpRuntimeTrafficGuard()
   ZuCHECK(h3Client.connection().ready() && h3Server.connection().ready(),
     "Zhttp H3 runtime guard control streams not ready");
 
-  ZuCHECK(zquicClient.sendBidi("zhttp-h3-runtime"),
+  auto guardStream = zquicClientLink->stream(Zquic::StreamType::Bidi);
+  ZuCHECK(zquicClientLink->send(guardStream, "zhttp-h3-runtime"),
     "Zhttp H3 runtime guard stream send failed");
-  ZuCHECK(waitUntil([&zquicServer]() {
-      return zquicServer.runtimeDiag().streamBytesRx == 16;
+  ZuCHECK(waitUntil([&zquicServerLink]() {
+      return zquicServerLink->runtimeDiag().streamBytesRx == 16;
     }), "Zhttp H3 runtime guard did not deliver stream bytes");
-  ZuCHECK(zquicServer.runtimeDiag().protectedPacketsRx &&
-      zquicClient.runtimeDiag().protectedPacketsTx &&
-      zquicServer.runtimeDiag().cryptoFramesRx &&
-      zquicClient.runtimeDiag().cryptoFramesTx &&
-      !zquicServer.runtimeDiag().packetParseErrors,
+  ZuCHECK(zquicServerLink->runtimeDiag().protectedPacketsRx &&
+      zquicClientLink->runtimeDiag().protectedPacketsTx &&
+      zquicServerLink->runtimeDiag().cryptoFramesRx &&
+      zquicClientLink->runtimeDiag().cryptoFramesTx &&
+      !zquicServerLink->runtimeDiag().packetParseErrors,
     "Zhttp H3 runtime guard Zquic diagnostics mismatch");
 
   Zhttp::H3::RequestParams req;
@@ -334,6 +502,13 @@ void testZhttpRuntimeTrafficGuard()
       decodedResp.status == 200,
     "Zhttp H3 runtime guard response decode failed");
 
+  zquicClientLink->disconnect();
+  zquicServer.close();
+  ZuCHECK(waitUntil([&zquicClientLink]() {
+      return !zquicClientLink->cxn() &&
+	zquicClientLink->disconnectedCount == 1;
+    }), "Zhttp H3 runtime guard client link did not disconnect");
+  zquicClientLink = nullptr;
   zquicClient.final();
   zquicServer.final();
   mx.stop();
@@ -377,7 +552,7 @@ void testZhttpRuntimeRequestResponse()
 	.maxStreamsUni(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "Zhttp runtime request server init failed");
-  ZuCHECK(server.listen(ZiIP("127.0.0.1"), 0),
+  ZuCHECK(server.listen(),
     "Zhttp runtime request server listen failed");
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "Zhttp runtime request server did not become ready");
@@ -392,14 +567,16 @@ void testZhttpRuntimeRequestResponse()
 	.maxStreamsUni(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "Zhttp runtime request client init failed");
-  ZuCHECK(client.connect(
-      ZiIP("127.0.0.1"), 0,
-      ZiIP("127.0.0.1"), server.local().port()),
-    "Zhttp runtime request client connect failed");
-  ZuCHECK(waitUntil([&client]() { return client.ready(); }),
+  ZmRef<ZhttpRuntimeClient::Link> clientLink =
+    new ZhttpRuntimeClient::Link{&client};
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+  ZuCHECK(waitUntil([&clientLink]() { return clientLink->ready(); }),
     "Zhttp runtime request client did not become ready");
-  ZuCHECK(waitUntil([&client, &server]() {
-      return client.established() && server.established();
+  ZmRef<ZhttpRuntimeServer::Link> serverLink;
+  ZuCHECK(waitUntil([&clientLink, &server, &serverLink]() {
+      if (!serverLink) serverLink = server.link();
+      return serverLink && clientLink->established() &&
+	serverLink->established();
     }), "Zhttp runtime request Zquic connection did not establish");
 
   client.h3.openLocalControl();
@@ -409,11 +586,13 @@ void testZhttpRuntimeRequestResponse()
   Zhttp::H3::HeaderBytes control;
   ZuCHECK(writeControlStream_(control, client.h3),
     "Zhttp runtime client control stream encode failed");
-  ZuCHECK(client.sendUni(headerBytes_(control)),
+  auto clientControl = clientLink->stream(Zquic::StreamType::Uni);
+  ZuCHECK(clientLink->send(clientControl, headerBytes_(control)),
     "Zhttp runtime client control stream send failed");
   ZuCHECK(writeControlStream_(control, server.h3),
     "Zhttp runtime server control stream encode failed");
-  ZuCHECK(server.sendUni(headerBytes_(control)),
+  auto serverControl = serverLink->stream(Zquic::StreamType::Uni);
+  ZuCHECK(serverLink->send(serverControl, headerBytes_(control)),
     "Zhttp runtime server control stream send failed");
 
   Zhttp::H3::RequestParams req;
@@ -426,7 +605,8 @@ void testZhttpRuntimeRequestResponse()
   ZuCHECK(client.h3.encodeData(data, "ping") > 0,
     "Zhttp runtime request DATA encode failed");
   appendHeaderBytes_(request, data);
-  ZuCHECK(client.sendStream(0, headerBytes_(request)),
+  auto requestStream = clientLink->stream(Zquic::StreamType::Bidi);
+  ZuCHECK(clientLink->send(requestStream, headerBytes_(request)),
     "Zhttp runtime request stream send failed");
 
   ZuCHECK(waitUntil([&client, &server]() {
@@ -451,10 +631,16 @@ void testZhttpRuntimeRequestResponse()
       server.h3.diag().headersRx &&
       server.h3.diag().dataFramesTx &&
       server.h3.diag().dataFramesRx &&
-      !client.runtimeDiag().packetParseErrors &&
-      !server.runtimeDiag().packetParseErrors,
+      !clientLink->runtimeDiag().packetParseErrors &&
+      !serverLink->runtimeDiag().packetParseErrors,
     "Zhttp runtime H3/Zquic diagnostics mismatch");
 
+  clientLink->disconnect();
+  server.close();
+  ZuCHECK(waitUntil([&clientLink]() {
+      return !clientLink->cxn() && clientLink->disconnectedCount == 1;
+    }), "Zhttp runtime request client link did not disconnect");
+  clientLink = nullptr;
   client.final();
   server.final();
   mx.stop();
@@ -500,31 +686,34 @@ void testCurlZhttpH3Server()
 	.maxStreamsUni(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "curl->Zhttp H3 server init failed");
-  ZuCHECK(server.listen(ZiIP("127.0.0.1"), 0),
+  ZuCHECK(server.listen(),
     "curl->Zhttp H3 server listen failed");
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "curl->Zhttp H3 server did not become ready");
 
   bool curlOK = runCurlH3(
     temp, server.local().port(), "/zhttp-runtime", "zhttp-h3-ok");
+  ZmRef<ZhttpRuntimeServer::Link> serverLink = server.link();
   if (!curlOK || !server.requestSeen || server.requestErrors) {
-    const auto &d = server.runtimeDiag();
-    std::cout <<
-      "# zhttp server diag:"
-      " datagramsRx=" << uint64_t(d.datagramsRx) <<
-      " packetsRx=" << uint64_t(d.packetsRx) <<
-      " protectedRx=" << uint64_t(d.protectedPacketsRx) <<
-      " cryptoRx=" << uint64_t(d.cryptoFramesRx) <<
-      " streamRx=" << uint64_t(d.streamFramesRx) <<
-      " streamTx=" << uint64_t(d.streamFramesTx) <<
-      " handshakeDoneTx=" << uint64_t(d.handshakeDoneFramesTx) <<
-      " parseErrors=" << uint64_t(d.packetParseErrors) <<
-      " appStreams=" << unsigned(server.streamsSeen) <<
-      " appReqStreams=" << unsigned(server.requestStreamsSeen) <<
-      " lastStreamID=" << uint64_t(server.lastStreamID) <<
-      " lastReqStreamID=" << uint64_t(server.lastRequestStreamID) <<
-      " requestErrors=" << unsigned(server.requestErrors) <<
-      '\n';
+    if (serverLink) {
+      const auto &d = serverLink->runtimeDiag();
+      std::cout <<
+	"# zhttp server diag:"
+	" datagramsRx=" << uint64_t(d.datagramsRx) <<
+	" packetsRx=" << uint64_t(d.packetsRx) <<
+	" protectedRx=" << uint64_t(d.protectedPacketsRx) <<
+	" cryptoRx=" << uint64_t(d.cryptoFramesRx) <<
+	" streamRx=" << uint64_t(d.streamFramesRx) <<
+	" streamTx=" << uint64_t(d.streamFramesTx) <<
+	" handshakeDoneTx=" << uint64_t(d.handshakeDoneFramesTx) <<
+	" parseErrors=" << uint64_t(d.packetParseErrors) <<
+	" appStreams=" << unsigned(server.streamsSeen) <<
+	" appReqStreams=" << unsigned(server.requestStreamsSeen) <<
+	" lastStreamID=" << uint64_t(server.lastStreamID) <<
+	" lastReqStreamID=" << uint64_t(server.lastRequestStreamID) <<
+	" requestErrors=" << unsigned(server.requestErrors) <<
+	'\n';
+    }
   }
   ZuCHECK(curlOK, "curl HTTP/3 request to local Zhttp H3 server failed");
   ZuCHECK(waitUntil([&server]() { return server.requestSeen; }),
@@ -537,10 +726,11 @@ void testCurlZhttpH3Server()
   ZuCHECK(server.h3.diag().headersRx &&
       server.h3.diag().headersTx &&
       server.h3.diag().dataFramesTx &&
-      server.runtimeDiag().protectedPacketsRx &&
-      server.runtimeDiag().streamFramesRx &&
-      server.runtimeDiag().streamFramesTx &&
-      server.runtimeDiag().handshakeDoneFramesTx,
+      serverLink &&
+      serverLink->runtimeDiag().protectedPacketsRx &&
+      serverLink->runtimeDiag().streamFramesRx &&
+      serverLink->runtimeDiag().streamFramesTx &&
+      serverLink->runtimeDiag().handshakeDoneFramesTx,
     "curl->Zhttp H3 diagnostics mismatch");
 
   server.final();
@@ -599,12 +789,12 @@ void testZhttpH3ClientCaddy()
 	.maxStreamsUni(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "Zhttp H3 client->Caddy client init failed");
-  ZuCHECK(client.connect(
-      ZiIP("127.0.0.1"), 0, ZiIP("127.0.0.1"), port),
-    "Zhttp H3 client->Caddy connect failed");
-  ZuCHECK(waitUntil([&client]() { return client.ready(); }),
+  ZmRef<ZhttpRuntimeClient::Link> clientLink =
+    new ZhttpRuntimeClient::Link{&client};
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, port);
+  ZuCHECK(waitUntil([&clientLink]() { return clientLink->ready(); }),
     "Zhttp H3 client->Caddy client did not become ready");
-  ZuCHECK(waitUntil([&client]() { return client.established(); }),
+  ZuCHECK(waitUntil([&clientLink]() { return clientLink->established(); }),
     "Zhttp H3 client->Caddy QUIC connection did not establish");
 
   client.h3.openLocalControl();
@@ -612,7 +802,8 @@ void testZhttpH3ClientCaddy()
   Zhttp::H3::HeaderBytes control;
   ZuCHECK(writeControlStream_(control, client.h3),
     "Zhttp H3 client->Caddy control stream encode failed");
-  ZuCHECK(client.sendUni(headerBytes_(control)),
+  auto clientControl = clientLink->stream(Zquic::StreamType::Uni);
+  ZuCHECK(clientLink->send(clientControl, headerBytes_(control)),
     "Zhttp H3 client->Caddy control stream send failed");
 
   Zhttp::H3::RequestParams req;
@@ -621,13 +812,14 @@ void testZhttpH3ClientCaddy()
   Zhttp::H3::HeaderBytes request;
   ZuCHECK(client.h3.encodeRequest(request, req) > 0,
     "Zhttp H3 client->Caddy request encode failed");
-  ZuCHECK(client.sendStream(0, headerBytes_(request)),
+  auto requestStream = clientLink->stream(Zquic::StreamType::Bidi);
+  ZuCHECK(clientLink->send(requestStream, headerBytes_(request)),
     "Zhttp H3 client->Caddy request stream send failed");
 
   ZuCHECK(waitUntil([&client]() { return client.responseSeen; }),
     "Zhttp H3 client->Caddy response did not arrive");
   if (!client.responseSeen || client.responseErrors) {
-    const auto &d = client.runtimeDiag();
+    const auto &d = clientLink->runtimeDiag();
     std::cout <<
       "# zhttp client diag:"
       " datagramsRx=" << uint64_t(d.datagramsRx) <<
@@ -650,12 +842,17 @@ void testZhttpH3ClientCaddy()
   ZuCHECK(client.h3.diag().headersTx &&
       client.h3.diag().headersRx &&
       client.h3.diag().dataFramesRx &&
-      client.runtimeDiag().protectedPacketsRx &&
-      client.runtimeDiag().streamFramesRx &&
-      client.runtimeDiag().streamFramesTx &&
-      client.runtimeDiag().handshakeDoneFramesRx,
+      clientLink->runtimeDiag().protectedPacketsRx &&
+      clientLink->runtimeDiag().streamFramesRx &&
+      clientLink->runtimeDiag().streamFramesTx &&
+      clientLink->runtimeDiag().handshakeDoneFramesRx,
     "Zhttp H3 client->Caddy diagnostics mismatch");
 
+  clientLink->disconnect();
+  ZuCHECK(waitUntil([&clientLink]() {
+      return !clientLink->cxn() && clientLink->disconnectedCount == 1;
+    }), "Zhttp H3 client->Caddy client link did not disconnect");
+  clientLink = nullptr;
   client.final();
   mx.stop();
 }

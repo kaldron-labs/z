@@ -4,24 +4,46 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// basic test HTTP client that retrieves index.html via TLS
+// basic test HTTP client
 
 #include <iostream>
+#include <string.h>
 
 #include <zlib/ZuLib.hh>
 
-#include <zlib/ZtRegex.hh>
-#include <zlib/ZtArray.hh>
-#include <zlib/ZtHexDump.hh>
+#include <zlib/ZiFile.hh>
+#include <zlib/ZmSemaphore.hh>
 
+#include <zlib/ZtCLI.hh>
+
+#include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
 
 #include <zlib/Zhttp.hh>
 
-constexpr unsigned BufSize = 8<<10;	// default built-in buffer size
-constexpr unsigned MaxBufSize = 100<<20;// max HTTP body length (100Mb)
+struct Options {
+ ZuCSpan	ca;
+ ZuCSpan	output{"index.html"};
+ ZuCSpan	url;
+ bool		help = false;
+};
 
-using IOBufAlloc = ZiIOBufAlloc<BufSize, MaxBufSize, "Zhttp.Buf">;
+ZtStruct((Options, CLI),
+  (((ca),     (CLI::Opt<'c'>, CLI::Long<"ca">)),     (String)),
+  (((output), (CLI::Opt<'o'>, CLI::Long<"output">)), (String, "index.html")),
+  (((url),    (CLI::Arg<1>)),                        (String)),
+  (((help),   (CLI::Flag<'h'>, CLI::Long<"help">)),  (Bool)));
+
+void usage(int code = 1)
+{
+  std::cerr <<
+    "Usage: zhttpclient [OPTION]... URL\n\n"
+    "Options:\n"
+    "  -c, --ca=PATH       CA path for https:\n"
+    "  -o, --output=PATH   response body output path\n"
+    "  -h, --help          show help\n" << std::flush;
+  ::exit(code);
+}
 
 using ResponseHeaders = ZuTypeList<
   ZuStringT<"content-type">, void,
@@ -31,128 +53,22 @@ using RequestHeaders = ZuTypeList<
   ZuStringT<"user-agent">, ZuStringT<"zhttptest/1.0">,
   ZuStringT<"accept">, ZuStringT<"*/*">>;
 
-struct HttpRequestBuilder :
-  public Zhttp::Builder<HttpRequestBuilder, RequestHeaders> {
-  using Base = Zhttp::Builder<HttpRequestBuilder, RequestHeaders>;
+bool starts(ZuCSpan s, ZuCSpan prefix)
+{
+  return s.length() >= prefix.length() &&
+    !memcmp(s.data(), prefix.data(), prefix.length());
+}
 
-  HttpRequestBuilder(ZuCSpan hostname_) : hostname{hostname_} { }
-
-  template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::GET, "/", ""); }
-  template <typename L>
-  void host(L &&l) { l(hostname); }
-
-  ZuCSpan hostname;
+struct URL {
+  ZuCSpan	scheme;
+  ZtString<>	host;
+  uint16_t	port = 0;
+  ZtString<>	target;
 };
 
-template <typename App>
-struct Link : public Ztls::CliLink<App, Link<App>> {
-  using Base = Ztls::CliLink<App, Link<App>>;
-
-  using Base::app;
-  Link(App *app) : Base{app} { }
-
-  struct HttpParser :
-    public Zhttp::Parser<HttpParser, false, ResponseHeaders, MaxBufSize> {
-    using Base =
-      Zhttp::Parser<HttpParser, false, ResponseHeaders, MaxBufSize>;
-
-    HttpParser(Link *link_) : link{link_} { }
-
-    void status(unsigned status) {
-      std::cerr << "status: " << status << '\n' << std::flush;
-    }
-    void contentLength(uint64_t contentLength) {
-      link->contentLength = contentLength;
-    }
-    void chunked() { link->chunked = true; }
-
-    template <typename Key>
-    void header(ZuBSpan value) {
-      std::cerr << "header " << Key{}() << ": " << ZuCSpan(value) <<
-	'\n' << std::flush;
-    }
-
-    void body(ZuBSpan span) {
-      link->logFraming();
-      if (!span) return;
-      if (!link->bodyFileOpen) {
-	link->bodyFile = ZiFile("index.html", ZiFile::Write | ZiFile::GC);
-	if (!link->bodyFile) {
-	  std::cerr << "failed to open index.html\n" << std::flush;
-	  link->done = true;
-	  return;
-	}
-	link->bodyFileOpen = true;
-      }
-      if (link->bodyFile.write(span.data(), span.length()) != Zi::OK) {
-	std::cerr << "failed to write body chunk\n" << std::flush;
-	link->done = true;
-	return;
-      }
-      link->bodyBytes += span.length();
-      ++link->bodyChunks;
-      std::cerr << "body chunk: " << span.length() << " bytes\n" <<
-	std::flush;
-    }
-
-    void complete(Zhttp::ParserState::T) {
-      std::cerr << "body complete: " << link->bodyBytes << " bytes in " <<
-	link->bodyChunks << " chunks\n" << std::flush;
-      link->done = true;
-    }
-
-    Link *link;
-  };
-
-  void connected(const char *alpn, int tlsver) {
-    ZtArray<uint8_t> hostname = this->server();
-    std::cerr << (ZeString{}
-	<< "TLS handshake completed (hostname: " << ZuCSpan(hostname)
-	<< " TLS: " << tlsver << " ALPN: " << alpn << ")\n")
-      << std::flush;
-    // connected() is called on the Ztls Rx thread.
-    auto tx = this->txStream();
-    HttpRequestBuilder builder{ZuCSpan(hostname)};
-    builder.request(tx);
-    builder.finish(tx);
-    tx << Zi::flush();
-  }
-  void disconnected() {
-    std::cerr << "disconnected\n" << std::flush;
-    app()->done();
-  }
-
-  void connectFailed(bool transient) {
-    if (transient)
-      std::cerr << "failed to connect (transient)\n" << std::flush;
-    else
-      std::cerr << "failed to connect\n" << std::flush;
-    app()->done();
-  }
-
-  int process(Ztls::RxStream &rx) {
-    auto state = parser.process(rx);
-    if (done) return -1;
-    if (state == Zhttp::ParserState::Error) return -1;
-    if (state != Zhttp::ParserState::Complete) return 0;
-    return 1;
-  }
-
-  void logFraming() {
-    if (framingLogged) return;
-    std::cerr << "framing: ";
-    if (chunked)
-      std::cerr << "chunked";
-    else if (contentLength >= 0)
-      std::cerr << "content-length=" << contentLength;
-    else
-      std::cerr << "no content-length";
-    std::cerr << '\n' << std::flush;
-    framingLogged = true;
-  }
-
-  HttpParser	parser{this};
+struct State {
+  URL		url;
+  Options	options;
   ZiFile	bodyFile;
   int64_t	contentLength = -1;
   uint64_t	bodyBytes = 0;
@@ -163,71 +79,349 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
   bool		done = false;
 };
 
-struct App : public Ztls::Client<App> {
-  ZmSemaphore sem;
+bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
+{
+  auto fail = [error](ZuCSpan msg) {
+    if (error) *error = ZeEXCEPT(Error, "Zhttp", msg);
+    return false;
+  };
 
-  using Link = ::Link<App>;
+  ZuCSpan rest;
+  if (starts(input, "http://")) {
+    url.scheme = "http";
+    url.port = 80;
+    rest = input;
+    rest.offset(7);
+  } else if (starts(input, "https://")) {
+    url.scheme = "https";
+    url.port = 443;
+    rest = input;
+    rest.offset(8);
+  } else
+    return fail("unsupported URL scheme");
 
-  void done() { sem.post(); }
+  unsigned slash = rest.length();
+  for (unsigned i = 0; i < rest.length(); ++i)
+    if (rest[i] == '/') { slash = i; break; }
+
+  ZuCSpan authority = rest;
+  authority.trunc(slash);
+  ZuCSpan target = rest;
+  target.offset(slash);
+  if (!target) target = "/";
+
+  if (!authority) return fail("missing URL host");
+  for (unsigned i = 0; i < authority.length(); ++i) {
+    if (authority[i] != ':') continue;
+    ZuCSpan host = authority;
+    host.trunc(i);
+    ZuCSpan port = authority;
+    port.offset(i + 1);
+    if (!host || !port) return fail("invalid URL authority");
+    unsigned p = ZuBox<unsigned>(port);
+    if (!p || p > 65535) return fail("invalid URL port");
+    url.host = host;
+    url.port = p;
+    url.target = target;
+    return true;
+  }
+
+  url.host = authority;
+  url.target = target;
+  return true;
+}
+
+struct RequestBuilder :
+  public Zhttp::Builder<RequestBuilder, RequestHeaders> {
+  using Base = Zhttp::Builder<RequestBuilder, RequestHeaders>;
+
+  RequestBuilder(const State &state_) : state{&state_} { }
+
+  template <typename L>
+  void operation(L &&l) {
+    ZuCSpan target = state->url.target;
+    ZuCSpan path = target;
+    ZuCSpan query;
+    for (unsigned i = 0; i < target.length(); ++i) {
+      if (target[i] != '?') continue;
+      path.trunc(i);
+      query = target;
+      query.offset(i + 1);
+      break;
+    }
+    if (!path) path = "/";
+    l(Zhttp::Method::GET, path, query);
+  }
+  template <typename L>
+  void host(L &&l) { l(ZuCSpan{state->url.host}); }
+
+  const State *state = nullptr;
 };
 
-void usage()
+template <typename Stream>
+void sendRequest(State &state, Stream &tx)
 {
-  std::cerr << "Usage: zhttpclient SERVER PORT [CA]\n" << std::flush;
-  ::exit(1);
+  RequestBuilder builder{state};
+  builder.request(tx);
+  builder.finish(tx);
+}
+
+void logFraming(State &state)
+{
+  if (state.framingLogged) return;
+  std::cerr << "framing: ";
+  if (state.chunked)
+    std::cerr << "chunked";
+  else if (state.contentLength >= 0)
+    std::cerr << "content-length=" << state.contentLength;
+  else
+    std::cerr << "no content-length";
+  std::cerr << '\n' << std::flush;
+  state.framingLogged = true;
+}
+
+template <typename Link>
+struct ResponseParser :
+  public Zhttp::Parser<ResponseParser<Link>, false, ResponseHeaders, 100<<20> {
+  using Base =
+    Zhttp::Parser<ResponseParser<Link>, false, ResponseHeaders, 100<<20>;
+
+  ResponseParser(Link *link_, State *state_) : link{link_}, state{state_} { }
+
+  void status(unsigned status) {
+    std::cerr << "status: " << status << '\n' << std::flush;
+  }
+  void contentLength(uint64_t contentLength) {
+    state->contentLength = contentLength;
+  }
+  void chunked() { state->chunked = true; }
+
+  template <typename Key>
+  void header(ZuBSpan value) {
+    std::cerr << "header " << Key{}() << ": " << ZuCSpan(value) <<
+      '\n' << std::flush;
+  }
+
+  void body(ZuBSpan span) {
+    logFraming(*state);
+    if (!span) return;
+    if (!state->bodyFileOpen) {
+      state->bodyFile =
+	ZiFile(state->options.output, ZiFile::Write | ZiFile::GC);
+      if (!state->bodyFile) {
+	std::cerr << "failed to open " << state->options.output << '\n' <<
+	  std::flush;
+	state->done = true;
+	return;
+      }
+      state->bodyFileOpen = true;
+    }
+    if (state->bodyFile.write(span.data(), span.length()) != Zi::OK) {
+      std::cerr << "failed to write body chunk\n" << std::flush;
+      state->done = true;
+      return;
+    }
+    state->bodyBytes += span.length();
+    ++state->bodyChunks;
+    std::cerr << "body chunk: " << span.length() << " bytes\n" << std::flush;
+  }
+
+  void complete(Zhttp::ParserState::T) {
+    std::cerr << "body complete: " << state->bodyBytes << " bytes in " <<
+      state->bodyChunks << " chunks\n" << std::flush;
+    state->done = true;
+  }
+
+  Link		*link = nullptr;
+  State		*state = nullptr;
+};
+
+template <typename Link, typename Stream>
+int processResponse(Link &link, State &state, Stream &rx)
+{
+  if (!link.parser) link.parser = new ResponseParser<Link>{&link, &state};
+  auto parserState = link.parser->process(rx);
+  if (state.done) return -1;
+  if (parserState == Zhttp::ParserState::Error) return -1;
+  if (parserState != Zhttp::ParserState::Complete) return 0;
+  return 1;
+}
+
+struct App : public Ztcp::Client<App> {
+  struct Link;
+  using RxBufAlloc = Ztcp::RxBufAlloc<8<<10, 100<<20, "Zhttp.Buf">;
+  using TxBufAlloc = Ztcp::TxBufAlloc<8<<10, 100<<20, "Zhttp.Buf">;
+
+  ZmSemaphore sem;
+  State state;
+
+  void done() { sem.post(); }
+  unsigned reconnFreq() const { return 0; }
+};
+
+struct App::Link :
+  public Ztcp::CliLink<App, App::Link, App::RxBufAlloc, App::TxBufAlloc> {
+  using Base = Ztcp::CliLink<App, Link, App::RxBufAlloc, App::TxBufAlloc>;
+
+  Link(App *app) : Base{app} { }
+  ~Link() { delete parser; }
+
+  void connected() {
+    std::cerr << "TCP connected (hostname: " << app()->state.url.host <<
+      ")\n" << std::flush;
+    auto tx = txStream();
+    sendRequest(app()->state, tx);
+    tx << Zi::flush();
+  }
+  void disconnected() {
+    std::cerr << "disconnected\n" << std::flush;
+    app()->done();
+  }
+  void connectFailed(bool transient) {
+    std::cerr << "failed to connect" << (transient ? " (transient)" : "") <<
+      '\n' << std::flush;
+    app()->done();
+  }
+  int process(Ztcp::RxStream &rx) {
+    return processResponse(*this, app()->state, rx);
+  }
+
+  ResponseParser<Link> *parser = nullptr;
+};
+
+struct TLSApp : public Ztls::Client<TLSApp> {
+  struct Link;
+  using RxBufAlloc = Ztls::RxBufAlloc<8<<10, 100<<20, "Zhttp.Buf">;
+  using TxBufAlloc = Ztls::TxBufAlloc<8<<10, 100<<20, "Zhttp.Buf">;
+
+  ZmSemaphore sem;
+  State state;
+
+  void done() { sem.post(); }
+  unsigned reconnFreq() const { return 0; }
+};
+
+struct TLSApp::Link :
+  public Ztls::CliLink<
+    TLSApp, TLSApp::Link, TLSApp::RxBufAlloc, TLSApp::TxBufAlloc> {
+  using Base =
+    Ztls::CliLink<TLSApp, Link, TLSApp::RxBufAlloc, TLSApp::TxBufAlloc>;
+
+  Link(TLSApp *app) : Base{app} { }
+  ~Link() { delete parser; }
+
+  void connected(const char *alpn, int tlsver) {
+    std::cerr << (ZeString{}
+	<< "TLS handshake completed (hostname: " << app()->state.url.host
+	<< " TLS: " << tlsver << " ALPN: " << alpn << ")\n") <<
+      std::flush;
+    auto tx = txStream();
+    sendRequest(app()->state, tx);
+    tx << Zi::flush();
+  }
+  void disconnected() {
+    std::cerr << "disconnected\n" << std::flush;
+    app()->done();
+  }
+  void connectFailed(bool transient) {
+    std::cerr << "failed to connect" << (transient ? " (transient)" : "") <<
+      '\n' << std::flush;
+    app()->done();
+  }
+  int process(Ztls::RxStream &rx) {
+    return processResponse(*this, app()->state, rx);
+  }
+
+  ResponseParser<Link> *parser = nullptr;
+};
+
+ZiMxParams mxParams()
+{
+  return ZiMxParams()
+    .scheduler([](auto &s) {
+      s.nThreads(4)
+      .thread(1, [](auto &t) { t.isolated(1); })
+      .thread(2, [](auto &t) { t.isolated(1); })
+      .thread(3, [](auto &t) { t.isolated(1); })
+      .thread(4, [](auto &t) { t.isolated(1); }); })
+    .rxThread(1).txThread(2);
+}
+
+int runHTTP(ZiMultiplex &mx, const Options &options, URL url)
+{
+  App app;
+  app.state.url = ZuMv(url);
+  app.state.options.output = options.output;
+
+  if (!app.init(Ztcp::ClientParams(&mx, "3", "4"))) {
+    std::cerr << "TCP client initialization failed\n" << std::flush;
+    return 1;
+  }
+
+  {
+    ZmRef<App::Link> link = new App::Link(&app);
+    link->connect(app.state.url.host, app.state.url.port);
+    app.sem.wait();
+  }
+  app.final();
+  return 0;
+}
+
+int runHTTPS(ZiMultiplex &mx, const Options &options, URL url)
+{
+  TLSApp app;
+  app.state.url = ZuMv(url);
+  app.state.options.output = options.output;
+
+  ZuCSpan alpn[] = { "http/1.1" };
+  if (!app.init(
+	Ztls::ClientParams(&mx, "3", "4").alpn(alpn).caPath(options.ca))) {
+    std::cerr << "TLS client initialization failed\n" << std::flush;
+    return 1;
+  }
+
+  {
+    ZmRef<TLSApp::Link> link = new TLSApp::Link(&app);
+    link->connect(app.state.url.host, app.state.url.port);
+    app.sem.wait();
+  }
+  app.final();
+  return 0;
 }
 
 int main(int argc, char **argv)
 {
-  if (argc < 3 || argc > 4) usage();
+  Options options;
+  argc = ZtCLI::load(options, argc, argv);
+  if (options.help) usage(0);
+  if (argc != 2) usage();
 
-  ZuCSpan server = argv[1];
-  unsigned port = ZuBox<unsigned>(argv[2]);
-
-  if (!port) usage();
+  URL url;
+  ZeException error;
+  if (!parseURL(options.url, url, &error)) {
+    ZiLogEvent(ZuMv(error));
+    usage();
+  }
 
   ZiLog::init("zhttpclient");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZuCSpan alpn[] = { "http/1.1" };
-
-  App app;
-
-  ZiMultiplex mx(
-      ZiMxParams()
-	.scheduler([](auto &s) {
-	  s.nThreads(4)
-	  .thread(1, [](auto &t) { t.isolated(1); })
-	  .thread(2, [](auto &t) { t.isolated(1); })
-	  .thread(3, [](auto &t) { t.isolated(1); })
-	  .thread(4, [](auto &t) { t.isolated(1); }); })
-	.rxThread(1).txThread(2));
-
+  ZiMultiplex mx(mxParams());
   if (!mx.start()) {
     std::cerr << "ZiMultiplex start failed\n" << std::flush;
     return 1;
   }
 
-  if (!app.init(
-	Ztls::ClientParams(&mx, "3", "4").alpn(alpn)
-	  .caPath(argc == 4 ? argv[3] : nullptr))) {
-    std::cerr << "TLS client initialization failed\n" << std::flush;
-    return 1;
-  }
-
-  {
-    ZmRef<App::Link> link = new App::Link(&app);
-
-    link->connect(server, port);
-
-    app.sem.wait();
-  }
+  int rc;
+  if (url.scheme == "http")
+    rc = runHTTP(mx, options, ZuMv(url));
+  else
+    rc = runHTTPS(mx, options, ZuMv(url));
 
   mx.stop();
-
   ZiLog::stop();
 
-  return 0;
+  return rc;
 }

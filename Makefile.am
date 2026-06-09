@@ -1,7 +1,7 @@
 ACLOCAL_AMFLAGS = -I m4
 METASOURCES = AUTO
 SUBDIRS = zu zm zt ze zi zrl
-SUBDIRS += ztls zquic zhttp
+SUBDIRS += ztcp ztls zquic zhttp
 SUBDIRS += zfb
 SUBDIRS += zv
 SUBDIRS += zdb

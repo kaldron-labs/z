@@ -13,6 +13,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
+#include <zlib/ZtString.hh>
 
 using namespace ZuTestUtil;
 
@@ -23,6 +24,7 @@ ZuDerive(RxQueue,
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 2048,
   ZuStringT<"ZhttpParserTest.Buf">>;
 using RxStream = ZiRxStream<RxQueue>;
+using BodyData = ZtString<ZtStringHeapID<"ZhttpParserTest.BodyData">>;
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
@@ -79,7 +81,7 @@ struct ResponseParser :
   uint64_t			bodyBytes = 0;
   unsigned			completeCalls = 0;
   Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
-  Zhttp::BodyData		bodyData;
+  BodyData			bodyData;
 };
 
 using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
@@ -120,7 +122,7 @@ struct RequestParser :
   unsigned			bodyCalls = 0;
   unsigned			completeCalls = 0;
   Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
-  Zhttp::BodyData		bodyData;
+  BodyData			bodyData;
 };
 
 void testSelectedHeaderValueSplitAcrossRxBuffers()
