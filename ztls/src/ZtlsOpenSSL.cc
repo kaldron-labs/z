@@ -23,6 +23,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <zpicotls/openssl.h>
+
 #include <zlib/ZtlsBackend.hh>
 #include <zlib/ZtlsPico.hh>
 
@@ -302,6 +304,40 @@ bool random_bytes(ZuSpan<uint8_t> data)
   if (!data.length()) return true;
   ptls_openssl_random_bytes(data.data(), data.length());
   return true;
+}
+
+RandomBytesFn random_bytes_cb()
+{
+  return ptls_openssl_random_bytes;
+}
+
+ptls_key_exchange_algorithm_t **key_exchanges()
+{
+  return ptls_openssl_key_exchanges_all;
+}
+
+ptls_cipher_suite_t **cipher_suites()
+{
+  return ptls_openssl_cipher_suites;
+}
+
+ptls_cipher_suite_t *cipher_suite(uint16_t id)
+{
+  return ptls_find_cipher_suite(cipher_suites(), id);
+}
+
+ptls_cipher_suite_t *tls12_ecdhe_rsa_aes128gcmsha256()
+{
+  return &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256;
+}
+
+ptls_cipher_suite_t *tls12_ecdhe_rsa_chacha20poly1305sha256()
+{
+#if PTLS_OPENSSL_HAVE_CHACHA20_POLY1305
+  return &ptls_openssl_tls12_ecdhe_rsa_chacha20poly1305sha256;
+#else
+  return nullptr;
+#endif
 }
 
 ptls_hash_algorithm_t *hash_algorithm(MDType type)
@@ -632,11 +668,107 @@ bool pkey_ec_export_oid(const PKey *key, ZuSpan<uint8_t> out)
   return oid_from_nid_(nid, out);
 }
 
+bool pkey_ed25519_generate(PKey *key)
+{
+#if defined(EVP_PKEY_ED25519)
+  if (!key) return false;
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
+  if (!ctx) return false;
+  EVP_PKEY *pkey = nullptr;
+  bool ok = EVP_PKEY_keygen_init(ctx) == 1 &&
+    EVP_PKEY_keygen(ctx, &pkey) == 1 && pkey;
+  EVP_PKEY_CTX_free(ctx);
+  if (!ok) {
+    if (pkey) EVP_PKEY_free(pkey);
+    return false;
+  }
+  replace_pkey_(key, pkey);
+  return true;
+#else
+  (void)key;
+  return false;
+#endif
+}
+
+bool pkey_ed25519_import_public(PKey *key, ZuBSpan pubKey)
+{
+#if defined(EVP_PKEY_ED25519)
+  if (!key || pubKey.length() != 32) return false;
+  EVP_PKEY *pkey = EVP_PKEY_new_raw_public_key(
+    EVP_PKEY_ED25519, nullptr, pubKey.data(), pubKey.length());
+  if (!pkey) return false;
+  replace_pkey_(key, pkey);
+  return true;
+#else
+  (void)key;
+  (void)pubKey;
+  return false;
+#endif
+}
+
+bool pkey_ed25519_import_private(PKey *key, ZuBSpan privKey)
+{
+#if defined(EVP_PKEY_ED25519)
+  if (!key || privKey.length() != 32) return false;
+  EVP_PKEY *pkey = EVP_PKEY_new_raw_private_key(
+    EVP_PKEY_ED25519, nullptr, privKey.data(), privKey.length());
+  if (!pkey) return false;
+  replace_pkey_(key, pkey);
+  return true;
+#else
+  (void)key;
+  (void)privKey;
+  return false;
+#endif
+}
+
+bool pkey_ed25519_export_public(const PKey *key, ZuSpan<uint8_t> pubKey)
+{
+#if defined(EVP_PKEY_ED25519)
+  if (!key || !key->pkey || pubKey.length() != 32) return false;
+  size_t len = pubKey.length();
+  return EVP_PKEY_get_raw_public_key(key->pkey, pubKey.data(), &len) == 1 &&
+    len == pubKey.length();
+#else
+  (void)key;
+  (void)pubKey;
+  return false;
+#endif
+}
+
+bool pkey_ed25519_export_private(const PKey *key, ZuSpan<uint8_t> privKey)
+{
+#if defined(EVP_PKEY_ED25519)
+  if (!key || !key->pkey || privKey.length() != 32) return false;
+  size_t len = privKey.length();
+  return EVP_PKEY_get_raw_private_key(key->pkey, privKey.data(), &len) == 1 &&
+    len == privKey.length();
+#else
+  (void)key;
+  (void)privKey;
+  return false;
+#endif
+}
+
 bool pkey_sign(
   const PKey *key, MDType md, ZuBSpan data,
   ZuSpan<uint8_t> sig, size_t *siglen)
 {
   if (!key || !key->pkey || !siglen) return false;
+#if defined(EVP_PKEY_ED25519)
+  if (EVP_PKEY_base_id(key->pkey) == EVP_PKEY_ED25519) {
+    (void)md;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) return false;
+    size_t len = sig.length();
+    int ok = EVP_DigestSignInit(ctx, nullptr, nullptr, nullptr, key->pkey) == 1 &&
+      EVP_DigestSign(ctx, sig.data(), &len, data.data(), data.length()) == 1;
+    EVP_MD_CTX_free(ctx);
+    if (!ok) return false;
+    *siglen = len;
+    return true;
+  }
+#endif
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(key->pkey, nullptr);
   if (!ctx) return false;
   if (EVP_PKEY_sign_init(ctx) <= 0) {
@@ -661,6 +793,18 @@ bool pkey_sign(
 bool pkey_verify(const PKey *key, MDType md, ZuBSpan data, ZuBSpan sig)
 {
   if (!key || !key->pkey) return false;
+#if defined(EVP_PKEY_ED25519)
+  if (EVP_PKEY_base_id(key->pkey) == EVP_PKEY_ED25519) {
+    (void)md;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) return false;
+    int ok = EVP_DigestVerifyInit(ctx, nullptr, nullptr, nullptr, key->pkey) == 1 &&
+      EVP_DigestVerify(ctx,
+	sig.data(), sig.length(), data.data(), data.length()) == 1;
+    EVP_MD_CTX_free(ctx);
+    return ok == 1;
+  }
+#endif
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(key->pkey, nullptr);
   if (!ctx) return false;
   if (EVP_PKEY_verify_init(ctx) <= 0) {
