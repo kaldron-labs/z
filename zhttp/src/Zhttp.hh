@@ -41,6 +41,7 @@ namespace Method {
     GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
 }
 
+// deprecated transfer-encoding compression
 namespace XferCompression {
   ZtEnum(XferCompression, int8_t, compress, deflate, gzip);
 }
@@ -162,8 +163,6 @@ inline void normalize(ZuSpan<uint8_t> key) {
     if (c >= 'A' && c <= 'Z') key[o] = c + 'a' - 'A';
   }
 }
-
-// Headers handles everything after the start line or a chunked trailer
 
 // CRLF framing
 template <bool CanFold = true>
