@@ -117,16 +117,24 @@ public:
       m_slots[i].state = CIDState::Active;
       return true;
     }
-    if (m_count >= Max) return false;
-    m_slots[m_count++] =
-      CIDSlot{cid, sequence, token, resetToken, CIDState::Active};
-    return true;
-  }
+	  if (m_count >= Max) return false;
+	  m_slots[m_count++] =
+	    CIDSlot{cid, sequence, token, resetToken, CIDState::Active};
+	  return true;
+	}
+	bool add(const CIDRouter &router) {
+	  bool ok = true;
+	  router.all([this, &ok](const CIDSlot &slot) {
+	    if (!add(slot.cid, slot.sequence, slot.routeToken, slot.resetToken))
+	      ok = false;
+	  });
+	  return ok;
+	}
 
-  uintptr_t find(const ConnectionID &cid) const {
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_slots[i].state == CIDState::Active && m_slots[i].cid == cid)
-	return m_slots[i].routeToken;
+	uintptr_t find(const ConnectionID &cid) const {
+	  for (unsigned i = 0; i < m_count; ++i)
+	    if (m_slots[i].state == CIDState::Active && m_slots[i].cid == cid)
+		return m_slots[i].routeToken;
     return 0;
   }
   bool resetToken(const ConnectionID &cid, StatelessResetToken &token) const {
@@ -145,6 +153,7 @@ public:
       if (!(m_slots[i].cid == cid) || m_slots[i].state != CIDState::Active)
 	continue;
       m_slots[i].state = CIDState::Retired;
+      m_slots[i].routeToken = 0;
       return true;
     }
     return false;
@@ -170,16 +179,21 @@ public:
   }
 
   unsigned count() const { return m_count; }
-  unsigned active() const {
-    unsigned n = 0;
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_slots[i].state == CIDState::Active) ++n;
-    return n;
-  }
+	unsigned active() const {
+	  unsigned n = 0;
+	  for (unsigned i = 0; i < m_count; ++i)
+	    if (m_slots[i].state == CIDState::Active) ++n;
+	  return n;
+	}
+	template <typename Fn>
+	void all(Fn fn) const {
+	  for (unsigned i = 0; i < m_count; ++i)
+	    if (m_slots[i].state == CIDState::Active) fn(m_slots[i]);
+	}
 
 private:
-  CIDSlot	m_slots[Max];
-  unsigned	m_count = 0;
+	CIDSlot	m_slots[Max];
+	unsigned	m_count = 0;
 };
 
 struct CIDGenerator {

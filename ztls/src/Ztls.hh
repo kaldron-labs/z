@@ -95,14 +95,6 @@ struct EngineParams {
     for (auto &s : v) alpn_.push(ParamString{s});
     return ZuMv(*this);
   }
-  EngineParams &&alpn(ZuSpan<const ptls_iovec_t> v) {
-    alpn_.length(0);
-    alpn_.ensure(v.length());
-    for (auto &p : v)
-      alpn_.push(ParamString{ZuCSpan{
-	reinterpret_cast<const char *>(p.base), p.len}});
-    return ZuMv(*this);
-  }
   EngineParams &&errorFn(ErrorFn v) { errorFn_ = ZuMv(v); return ZuMv(*this); }
 
   ZiMultiplex *mx = nullptr;
@@ -129,8 +121,6 @@ struct ClientParams : public EngineParams {
     { EngineParams::asyncThread(v); return ZuMv(*this); }
   ClientParams &&alpn(ZuSpan<ZuCSpan> v)
     { EngineParams::alpn(v); return ZuMv(*this); }
-  ClientParams &&alpn(ZuSpan<const ptls_iovec_t> v)
-    { EngineParams::alpn(v); return ZuMv(*this); }
   ClientParams &&errorFn(ErrorFn v)
     { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
 };
@@ -147,8 +137,6 @@ struct ServerParams : public EngineParams {
   ServerParams &&asyncThread(ZuCSpan v)
     { EngineParams::asyncThread(v); return ZuMv(*this); }
   ServerParams &&alpn(ZuSpan<ZuCSpan> v)
-    { EngineParams::alpn(v); return ZuMv(*this); }
-  ServerParams &&alpn(ZuSpan<const ptls_iovec_t> v)
     { EngineParams::alpn(v); return ZuMv(*this); }
   ServerParams &&errorFn(ErrorFn v)
     { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
@@ -174,20 +162,22 @@ struct TlsInfo {
 // API functions: listen, connect, disconnect/disconnect_, txStream/txStream_ (Tx)
 // API callbacks: accepted, connected, disconnected, process (Rx)
 
-// Function Category | I/O Threads |          Rx thread         |  Tx thread
+// Function Category | I/O Threads |        TLS threads         | App threads
 // ------------------|-------------|----------------------------|------------
-// Server            | accepted()  | connected() disconnected() |
-// Client            |             | connect_() connectFailed() |
-// Disconnect        |             | disconnect_()              |
-// Transmission (Tx) |             |                            | txStream_()
+// Server            | accepted()  | connected() disconnected() | listen()
+// Client            |             | connect_() connectFailed() | connect()
+// Disconnect        |             | disconnect_()              | disconnect()
+// Transmission (Tx) |             | txStream_()                | txStream()
 // Reception    (Rx) |             | process()                  |
 
 // ZiIOBuf buffers transport data between threads (--> arrows below)
 
-// I/O Threads |          Rx thread           |      Tx thread
-// ------------|------------------------------|----------------------------
-//     I/O Rx --> Rx input -> Rx output -> App |
-//     I/O Tx <------------------------------- Tx output <- Tx input
+// I/O Threads |                   TLS threads                   | App threads
+// ------------|-------------------------------------------------|------------
+//     I/O Rx --> Rx input  -> Decryption -> Rx output -> App Rx |
+// ------------|-------------------------------------------------|
+//     I/O Tx <-- Tx output <- Encryption <- Tx input           <-- App Tx
+// ------------|-------------------------------------------------|------------
 
 template <typename Link_, typename LinkRef_>
 class Cxn : public ZiConnection {

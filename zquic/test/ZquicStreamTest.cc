@@ -13,16 +13,16 @@ using namespace ZuTestUtil;
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
 struct App { };
+struct TestLink;
 struct TestStream :
-  public Zquic::Stream<TestStream, StreamTxBufAlloc>
+  public Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>
 {
-  using Base = Zquic::Stream<TestStream, StreamTxBufAlloc>;
-  TestStream(int64_t id) : Base{id} { }
+  using Base = Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>;
+  using Base::Base;
   int process(Zquic::RxStream &) { ++processed; return 0; }
 
   unsigned processed = 0;
 };
-struct TestLink;
 using TestLinkRef = ZmRef<TestLink>;
 using TestCxn = Zquic::Cxn<TestLink, TestLinkRef>;
 using TestCxnRef = ZmRef<TestCxn>;
@@ -265,7 +265,7 @@ void testStreamTxRetention()
   auto stream = client.stream(Zquic::StreamType::Bidi);
 
   {
-    auto tx = stream->txStream();
+    auto tx = stream->txStream_();
     tx << "abc" << Zi::flush();
     tx << "def" << Zi::flush();
   }
@@ -348,7 +348,7 @@ void testStreamPacketizer()
   TestLink client{&app};
   auto stream = client.stream(Zquic::StreamType::Bidi);
   {
-    auto tx = stream->txStream();
+    auto tx = stream->txStream_();
     tx << "abc" << Zi::flush();
     tx << "def" << Zi::flush();
   }
@@ -395,35 +395,18 @@ void testStreamPacketizer()
   ZuCHECK(n > 0 &&
       info.offset == 3 &&
       info.length == 3 &&
-      !info.fin &&
+      info.fin &&
       !stream->txRangeCount() &&
-      stream->finReady(),
+      stream->finDequeued() &&
+      !stream->finReady(),
     "second packetized STREAM accounting mismatch");
   ZuCHECK(!Zquic::FrameCodec::parse(
       ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
       frame.offset == 3 &&
       frame.length == 3 &&
       frame.payload == "def" &&
-      !frame.fin,
-    "second packetized STREAM parse mismatch");
-
-  budget = {};
-  assembly = {};
-  n = Zquic::StreamPacketizer::writeNext(
-    b, sizeof(b), budget, assembly, *stream, &info);
-  ZuCHECK(n > 0 &&
-      info.offset == 6 &&
-      !info.length &&
-      info.fin &&
-      stream->finDequeued() &&
-      !stream->finReady(),
-    "packetized FIN accounting mismatch");
-  ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
-      frame.offset == 6 &&
-      !frame.length &&
       frame.fin,
-    "packetized FIN parse mismatch");
+    "second packetized STREAM parse mismatch");
 
   budget = {};
   assembly = {};
@@ -433,7 +416,7 @@ void testStreamPacketizer()
 
   auto blocked = client.stream(Zquic::StreamType::Bidi);
   {
-    auto tx = blocked->txStream();
+    auto tx = blocked->txStream_();
     tx << "blocked" << Zi::flush();
   }
   budget = {};
@@ -448,7 +431,7 @@ void testStreamPacketizer()
 
   auto split = client.stream(Zquic::StreamType::Bidi);
   {
-    auto tx = split->txStream();
+    auto tx = split->txStream_();
     tx << "abcdefghij" << Zi::flush();
   }
   budget = {};

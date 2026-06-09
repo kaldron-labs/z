@@ -6,9 +6,11 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZquicLib.hh ZquicTypes.hh ZquicBuf.hh ZquicPQueue.hh Zquic.hh \
-	ZquicEndpoint.hh ZquicPath.hh ZquicSock.hh ZquicPacket.hh ZquicPacketBuilder.hh \
-	ZquicFrame.hh ZquicTransportParams.hh ZquicCrypto.hh ZquicConn.hh \
-	ZquicStream.hh ZquicSched.hh ZquicRecovery.hh ZquicDiag.hh
+	ZquicDatagram.hh ZquicPath.hh ZquicSock.hh ZquicPacket.hh \
+	ZquicPacketBuilder.hh ZquicFrame.hh ZquicTransportParams.hh \
+	ZquicCrypto.hh ZquicConn.hh ZquicStream.hh ZquicSched.hh \
+	ZquicRecovery.hh ZquicDiag.hh
+noinst_HEADERS = ZquicEndpoint.hh
 lib_LTLIBRARIES = libZquic.la
 libZquic_la_CPPFLAGS = $(AM_CPPFLAGS) @PTLS_CFLAGS@ -DZQUIC_EXPORTS
 libZquic_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@

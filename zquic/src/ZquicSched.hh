@@ -164,11 +164,13 @@ private:
       reinterpret_cast<const char *>(range.buf->data_() + range.offset);
     unsigned payloadLen = range.length;
     if (payloadLen > len) payloadLen = len;
+    bool fin = stream.finSent() && stream.txRangeCount() == 1;
     int n = -1;
     while (payloadLen) {
       ZuCSpan payload{data, payloadLen};
+      if (payloadLen < range.length) fin = false;
       n = FrameCodec::writeStream(
-	out, len, id, range.streamOffset, payload, false);
+	out, len, id, range.streamOffset, payload, fin);
       if (n > 0) break;
       --payloadLen;
     }
@@ -178,9 +180,16 @@ private:
     ZiAssert(stream.commitTxRange(consumed, payloadLen), "Zquic",
       (id, payloadLen),
       "stream Tx range disappeared during packetization", return -1);
+    if (fin) {
+      uint64_t dequeuedOffset = 0;
+      ZiAssert(stream.dequeueFin(dequeuedOffset) &&
+	  dequeuedOffset == range.streamOffset + payloadLen,
+	"Zquic", (id, dequeuedOffset, range.streamOffset, payloadLen),
+	"stream FIN disappeared during packetization", return -1);
+    }
     if (info)
       *info = StreamFrameInfo{
-	id, range.streamOffset, payloadLen, unsigned(n), false};
+	id, range.streamOffset, payloadLen, unsigned(n), fin};
     return n;
   }
 
