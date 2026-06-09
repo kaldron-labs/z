@@ -23,9 +23,6 @@
 #endif
 
 #include <zpicotls.h>
-#if Ztls_OpenSSL
-#include <zpicotls/openssl.h>
-#endif
 #if Ztls_Fusion
 #include <zpicotls/fusion.h>
 #endif
@@ -61,6 +58,14 @@ struct TicketKey;
 bool init();
 bool random_bytes(ZuSpan<uint8_t> data);
 
+using RandomBytesFn = void (*)(void *, size_t);
+RandomBytesFn random_bytes_cb();
+ptls_key_exchange_algorithm_t **key_exchanges();
+ptls_cipher_suite_t **cipher_suites();
+ptls_cipher_suite_t *cipher_suite(uint16_t id);
+ptls_cipher_suite_t *tls12_ecdhe_rsa_aes128gcmsha256();
+ptls_cipher_suite_t *tls12_ecdhe_rsa_chacha20poly1305sha256();
+
 ptls_hash_algorithm_t *hash_algorithm(MDType type);
 size_t hash_size(MDType type);
 
@@ -91,6 +96,12 @@ bool pkey_ec_import_private(PKey *, ZuBSpan oid, ZuBSpan key);
 bool pkey_ec_export_private(const PKey *, ZuSpan<uint8_t> key);
 bool pkey_ec_export_public(const PKey *, ZuSpan<uint8_t> pubKey);
 bool pkey_ec_export_oid(const PKey *, ZuSpan<uint8_t> oid);
+
+bool pkey_ed25519_generate(PKey *);
+bool pkey_ed25519_import_public(PKey *, ZuBSpan pubKey);
+bool pkey_ed25519_import_private(PKey *, ZuBSpan key);
+bool pkey_ed25519_export_public(const PKey *, ZuSpan<uint8_t> pubKey);
+bool pkey_ed25519_export_private(const PKey *, ZuSpan<uint8_t> key);
 
 bool pkey_sign(const PKey *, MDType md, ZuBSpan data,
   ZuSpan<uint8_t> sig, size_t *siglen);

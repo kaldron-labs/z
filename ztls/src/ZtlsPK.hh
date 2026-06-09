@@ -10,7 +10,7 @@
 // - reads any of PKCS#8, PKCS#1, SEC1, X509
 // - writes PKCS#8 for private keys, X509 for public keys
 // - DER, b64 and PEM support
-// - extended beyond OpenSSL for ED25519 keys
+// - includes backend raw-key support for ED25519 keys
 // - SK* - private (secret) key related
 // - PK* - public key related
 
@@ -38,7 +38,6 @@
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsPK_Data.hh>
-#include <zlib/Ztls_ed25519.h>
 
 namespace Ztls::PK {
 
@@ -420,10 +419,8 @@ ZuDerive(SK_EC, (SK_EC_<SK_EC_Heap>));
 
 // ED25519 public key
 template <typename Heap>
-struct PK_ED25519_ : public Heap, public AnyKey {
+struct PK_ED25519_ : public Heap, public AnyPK {
   enum { Secret = 0 };
-
-  ed25519_public_key	pk;
 
 protected:
   PK_ED25519_() { }
@@ -431,19 +428,20 @@ protected:
 public:
   // load key from X509 data
   PK_ED25519_(ZuBSpan key) {
-    using namespace Load_;
-
-    if (key.length() != 32)
-      throw ZeEXCEPT(Error, "ZtlsPK", "PK_ED25519 - invalid key data");
-    memcpy(pk, &key[0], 32);
+    if (!Backend::pkey_ed25519_import_public(this->key, key))
+      throw ZeEXCEPT(Error, "ZtlsPK", "ED25519 public key import failed");
   }
 
   // save public key
   template <typename S>
   ZuUnion<void, ZeException> save(S &s) const {
+    uint8_t pubKey[32];
+    if (!Backend::pkey_ed25519_export_public(this->key, pubKey))
+      return ZeEXCEPT(Error, "ZtlsPK", "ED25519 public key export failed");
+
     Data::PK_X509_ED25519 data{
       .id = OIDs::ed25519(),
-      .pubKey = pk
+      .pubKey = ZuBSpan{pubKey, sizeof(pubKey)}
     };
 
     ZtASN1::save(s, data);
@@ -454,12 +452,10 @@ public:
   // verify signature
   template <MDType MDType = SHA256>
   ZuUnion<bool, ZeException> verify(ZuBSpan data, ZuBSpan signature) {
-    if (signature.length() != sizeof(ed25519_signature))
+    if (signature.length() != 64)
       return ZeEXCEPT(Error, "ZtlsPK", "invalid ED25519 signature");
     ZmAssert(data.length() == Ztls::MD<MDType>::Size);
-    return !ed25519_sign_open(
-      &data[0], data.length(),
-      pk, *reinterpret_cast<const ed25519_signature *>(&signature[0]));
+    return Backend::pkey_verify(this->key, MDType, data, signature);
   }
 };
 using PK_ED25519_Heap = ZmHeap<"Ztls.PK_ED25519", PK_ED25519_<ZuEmpty>>;
@@ -471,33 +467,32 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
   enum { Secret = 1 };
   using PK = PK_ED25519;
   using PK_ = PK_ED25519_<Heap>;
-  using PK_::pk;
-
-  ed25519_secret_key	sk;
+  using PK_::key;
 
   // generate key
   SK_ED25519_(Random &rng) {
-    rng.random(sk);
-    ed25519_publickey(sk, pk);
+    (void)rng;
+    if (!Backend::pkey_ed25519_generate(key))
+      throw ZeEXCEPT(Error, "ZtlsPK", "ED25519 key generation failed");
   }
 
   // load key from PKCS#8 data
   SK_ED25519_(ZuBSpan key) {
-    using namespace Load_;
-
-    if (key.length() != 32)
-      throw ZeEXCEPT(Error, "ZtlsPK", "SK_ED25519 - invalid key data");
-    memcpy(sk, &key[0], 32);
-    ed25519_publickey(sk, pk);
+    if (!Backend::pkey_ed25519_import_private(this->key, key))
+      throw ZeEXCEPT(Error, "ZtlsPK", "ED25519 private key import failed");
   }
 
   // save private key
   template <typename S>
   ZuUnion<void, ZeException> save(S &s) const {
+    uint8_t prvKey[32];
+    if (!Backend::pkey_ed25519_export_private(key, prvKey))
+      return ZeEXCEPT(Error, "ZtlsPK", "ED25519 private key export failed");
+
     Data::SK_PKCS8_ED25519 data{
       .version = 0,
       .id = OIDs::ed25519(),
-      .key = sk
+      .key = ZuBSpan{prvKey, sizeof(prvKey)}
     };
 
     ZtASN1::save(s, data);
@@ -528,10 +523,14 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
   // sign data
   template <MDType MDType = SHA256, typename L>
   ZuUnion<void, ZeException> sign(Random &, ZuBSpan data, L &&l) {
-    ed25519_signature signature;
+    uint8_t signature[64];
+    size_t k = 0;
     ZmAssert(data.length() == Ztls::MD<MDType>::Size);
-    ed25519_sign(&data[0], data.length(), sk, pk, signature);
-    ZuFwd<L>(l)(ZuBSpan{&signature[0], 64});
+    if (!Backend::pkey_sign(
+	key, MDType, data, {signature, sizeof(signature)}, &k) ||
+	k != sizeof(signature))
+      return ZeEXCEPT(Error, "ZtlsPK", "ED25519 sign failed");
+    ZuFwd<L>(l)(ZuBSpan{signature, sizeof(signature)});
     return {};
   }
 };

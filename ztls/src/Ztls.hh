@@ -268,7 +268,19 @@ public:
 
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
-  TlsInfo tlsInfo() const { return m_tlsInfo; }
+  TlsInfo tlsInfo() const {
+    if (!m_tls || !m_handshook) return {};
+    auto tls = const_cast<ptls_t *>(m_tls);
+    auto cipher = ptls_get_cipher(tls);
+    auto tlsver = ptls_get_protocol_version(tls);
+    return TlsInfo{
+      .tlsver = tlsver_(tlsver),
+      .protocolVersion = tlsver,
+      .cipherID = cipher ? cipher->id : uint16_t{0},
+      .alpn = ptls_get_negotiated_protocol(tls),
+      .psk = bool(ptls_is_psk_handshake(tls))
+    };
+  }
 
 protected:
   ptls_t *tls() { return m_tls; }
@@ -375,51 +387,50 @@ private:
   bool finishHandshake_() {
     if (m_handshook) return true;
     asyncCleanup_();
-    m_tlsver = ptls_get_protocol_version(m_tls);
-    m_cipher = ptls_get_cipher(m_tls);
-    if (ZuUnlikely(!m_cipher)) {
+    auto tlsver = ptls_get_protocol_version(m_tls);
+    auto cipher = ptls_get_cipher(m_tls);
+    if (ZuUnlikely(!cipher)) {
       app()->error_(ZeEXCEPT(Error, "Ztls", "ptls_get_cipher() failed"));
       disconnect_(false);
       return false;
     }
-    if (ZuUnlikely(!m_cipher->aead)) {
+    if (ZuUnlikely(!cipher->aead)) {
       app()->error_(ZeEXCEPT(Error, "Ztls",
 	"ptls_get_cipher()->aead is null"));
       disconnect_(false);
       return false;
     }
-    m_rec_hdr_len = 5;
-    m_rec_tag_len = m_cipher->aead->tag_size;
-    m_rec_iv_len =
-      (m_tlsver == PTLS_PROTOCOL_VERSION_TLS12) ?
-	m_cipher->aead->tls12.record_iv_size : 0;
-    m_rec_overhead = ptls_get_record_overhead(m_tls);
-    m_headroom = m_rec_hdr_len + m_rec_iv_len;
+    unsigned recOverhead = ptls_get_record_overhead(m_tls);
+    unsigned recIVLen =
+      (tlsver == PTLS_PROTOCOL_VERSION_TLS12) ?
+	cipher->aead->tls12.record_iv_size : 0;
+    m_headroom = 5 + recIVLen;
     // Tx buffers are pre-sized; negotiated overhead must fit the budget.
     if (ZuUnlikely(
 	m_headroom > TxMaxOverhead ||
-	m_rec_overhead > TxMaxOverhead)) {
+	recOverhead > TxMaxOverhead)) {
       app()->error_(ZeEXCEPT(Error, "Ztls",
 	"TLS record overhead exceeds worst-case limit"));
       disconnect_(false);
       return false;
     }
-    m_tx_seq_est = 0;
-    m_tx_control_pending = false;
+    m_txSeqEst = 0;
+    m_txControlPending = false;
     m_handshook = true;
-    m_tlsInfo.tlsver = tlsver_(m_tlsver);
-    m_tlsInfo.protocolVersion = m_tlsver;
-    m_tlsInfo.cipherID = m_cipher->id;
-    m_tlsInfo.alpn = ptls_get_negotiated_protocol(m_tls);
-    m_tlsInfo.psk = ptls_is_psk_handshake(m_tls);
     impl()->connected(
       ptls_get_negotiated_protocol(m_tls),
       tlsver_(ptls_get_protocol_version(m_tls)));
     return true;
   }
 
+  ptls_cipher_suite_t *cipher_() const {
+    return m_tls ? ptls_get_cipher(const_cast<ptls_t *>(m_tls)) : nullptr;
+  }
+
   unsigned alignBits_() const {
-    return m_cipher ? m_cipher->aead->align_bits : 0;
+    if (auto cipher = cipher_())
+      if (cipher->aead) return cipher->aead->align_bits;
+    return 0;
   }
 
   bool aligned_(const uint8_t *base, unsigned align_bits) {
@@ -503,7 +514,7 @@ private:
       } else {
 	// A zero-output post-handshake control record can queue a reciprocal
 	// KeyUpdate inside zpicotls; flush it before the next application Tx.
-	m_tx_control_pending = true;
+	m_txControlPending = true;
       }
       while (m_rxStream) {
 	int n = impl()->process(m_rxStream);
@@ -530,7 +541,7 @@ private:
   uint8_t *rxBuf(ptls_buffer_t &pbuf, ZiIOBuf *buf) {
     ZiAssert(!buf->skip, "Ztls", (),
       "TLS Rx buffer skip is non-zero", return nullptr);
-    ZiAssert(buf->size >= m_rec_overhead, "Ztls", (),
+    ZiAssert(buf->size >= ptls_get_record_overhead(m_tls), "Ztls", (),
       "TLS Rx buffer smaller than record overhead", return nullptr);
     ZiAssert(buf->length <= UINT32_MAX - m_headroom, "Ztls", (),
       "TLS Rx buffer length overflow", return nullptr);
@@ -636,8 +647,9 @@ protected:
   bool updateKey_(bool requestUpdate = false) { // Ztls Rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS KeyUpdate outside Rx thread", return false);
-    if (ZuUnlikely(!m_tls || !m_cipher)) return false;
-    ZiAssert(m_tlsver == PTLS_PROTOCOL_VERSION_TLS13, "Ztls", (),
+    if (ZuUnlikely(!m_tls || !cipher_())) return false;
+    ZiAssert(ptls_get_protocol_version(m_tls) == PTLS_PROTOCOL_VERSION_TLS13,
+      "Ztls", (),
       "TLS KeyUpdate requires TLS 1.3", return false);
     int n = ptls_update_key(m_tls, requestUpdate ? 1 : 0);
     if (n) {
@@ -688,8 +700,8 @@ private:
       "TLS control Tx produced no record", return false);
     bool sent = pbuf.off;
     if (!finalizeTxBuf_(pbuf, ZuMv(buf))) return false;
-    if (sent) m_tx_seq_est = 0;
-    m_tx_control_pending = false;
+    if (sent) m_txSeqEst = 0;
+    m_txControlPending = false;
     return true;
   }
 
@@ -712,7 +724,7 @@ private:
       "TLS legacy send outside Rx thread", return);
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
-    if (ZuUnlikely(!m_tls || !m_cipher)) return; // FIXME - log diagnostic
+    if (ZuUnlikely(!m_tls || !cipher_())) return; // FIXME - log diagnostic
 
     ZiAssert(buf->length <= TxMaxPlaintext, "Ztls", (),
       "TLS Tx plaintext exceeds record limit", return);
@@ -730,7 +742,7 @@ private:
     ptls_buffer_t pbuf;
     constexpr uint64_t Threshold = (1ULL<<24);
     bool expectControl = false;
-    if (ZuUnlikely(m_tx_seq_est >= Threshold - 1)) {
+    if (ZuUnlikely(m_txSeqEst >= Threshold - 1)) {
       int n = ptls_update_key(m_tls, 0);
       if (n) {
 	app()->error_(ZeEXCEPT(Error, "Ztls", ([n](auto &s) {
@@ -741,7 +753,7 @@ private:
       }
       expectControl = true;
     }
-    if (ZuUnlikely(m_tx_control_pending || expectControl))
+    if (ZuUnlikely(m_txControlPending || expectControl))
       if (!flushTxControl_(expectControl)) return;
 
     // Application Tx encrypts data() into a serialized record at data_().
@@ -754,7 +766,7 @@ private:
     pbuf.origin = buf.ptr();
     pbuf.align_bits = align_bits;
     int n = ptls_send(m_tls, &pbuf, data, length); // in-place overwrite
-    if (pbuf.off) ++m_tx_seq_est;
+    if (pbuf.off) ++m_txSeqEst;
     if (!assertTxBuf_(pbuf, buf.ptr())) return;
     if (n) {
       app()->error_(ZeEXCEPT(Error, "Ztls", ([n](auto &s) {
@@ -951,17 +963,10 @@ protected:
       return;
     }
     *ptls_get_data_ptr(m_tls) = impl();
-    m_tlsver = 0;
-    m_cipher = nullptr;
-    m_rec_hdr_len = 5;
-    m_rec_iv_len = 0;
-    m_rec_tag_len = 0;
-    m_rec_overhead = 0;
     m_headroom = 0;
-    m_tx_seq_est = 0;
-    m_tx_control_pending = false;
+    m_txSeqEst = 0;
+    m_txControlPending = false;
     m_handshook = false;
-    m_tlsInfo = TlsInfo{};
     m_disconnecting = 0;
     reset_handshake_props_();
 
@@ -1001,17 +1006,10 @@ private:
 
   ptls_t		*m_tls = nullptr;
   uint64_t		m_tlsGen = 0;
-  uint16_t		m_tlsver = 0;
-  ptls_cipher_suite_t	*m_cipher = nullptr;
-  unsigned		m_rec_hdr_len = 5;
-  unsigned		m_rec_iv_len = 0;
-  unsigned		m_rec_tag_len = 0;
-  unsigned		m_rec_overhead = 0;
   unsigned		m_headroom = 0;
-  uint64_t		m_tx_seq_est = 0;
-  bool			m_tx_control_pending = false;
+  uint64_t		m_txSeqEst = 0;
+  bool			m_txControlPending = false;
   bool			m_handshook = false;
-  TlsInfo		m_tlsInfo;
   ptls_handshake_properties_t m_props{};
   AsyncJob		*m_asyncJob = nullptr;
   CxnRef		m_cxn = nullptr;
@@ -1347,11 +1345,11 @@ private:
       return false;
     }
     memset(&m_ctx, 0, sizeof(m_ctx));
-    m_ctx.random_bytes = ptls_openssl_random_bytes;
+    m_ctx.random_bytes = Backend::random_bytes_cb();
     m_ctx.get_time = &ptls_get_time;
-    m_ctx.key_exchanges = ptls_openssl_key_exchanges_all;
+    m_ctx.key_exchanges = Backend::key_exchanges();
     init_cipher_suites_();
-    m_ctx.cipher_suites = m_cipher_suites;
+    m_ctx.cipher_suites = m_cipherSuites;
     m_ctx.server_cipher_preference = 1;
     if (!init_alpn_(params.alpn_)) return false;
     if (asyncConfigured_())
@@ -1628,29 +1626,29 @@ private:
       static ptls_cipher_suite_t fusion_aes256gcmsha384 = {
 	.id = PTLS_CIPHER_SUITE_AES_256_GCM_SHA384,
 	.aead = &ptls_fusion_aes256gcm,
-	.hash = &ptls_openssl_sha384,
+	.hash = Backend::hash_algorithm(SHA384),
 	.name = PTLS_CIPHER_SUITE_NAME_AES_256_GCM_SHA384
       };
       static ptls_cipher_suite_t fusion_aes128gcmsha256 = {
 	.id = PTLS_CIPHER_SUITE_AES_128_GCM_SHA256,
 	.aead = &ptls_fusion_aes128gcm,
-	.hash = &ptls_openssl_sha256,
+	.hash = Backend::hash_algorithm(SHA256),
 	.name = PTLS_CIPHER_SUITE_NAME_AES_128_GCM_SHA256
       };
       // Non-temporal fusion decrypt is not exact-in-place safe: it overwrites
       // ciphertext before GHASH finishes reading it. Use normal fusion AEADs.
-      m_cipher_suites[n++] = &fusion_aes256gcmsha384;
-      m_cipher_suites[n++] = &fusion_aes128gcmsha256;
+      m_cipherSuites[n++] = &fusion_aes256gcmsha384;
+      m_cipherSuites[n++] = &fusion_aes128gcmsha256;
 #endif
     }
-    for (auto p = ptls_openssl_cipher_suites; *p; ++p) {
+    for (auto p = Backend::cipher_suites(); *p; ++p) {
       if (use_fusion &&
 	  ((*p)->id == PTLS_CIPHER_SUITE_AES_256_GCM_SHA384 ||
 	   (*p)->id == PTLS_CIPHER_SUITE_AES_128_GCM_SHA256))
 	continue;
-      m_cipher_suites[n++] = *p;
+      m_cipherSuites[n++] = *p;
     }
-    m_cipher_suites[n] = nullptr;
+    m_cipherSuites[n] = nullptr;
   }
 
   ZiMultiplex			*m_mx = nullptr;
@@ -1663,7 +1661,7 @@ private:
   ErrorFn			m_errorFn;
 
   ptls_context_t		m_ctx{};
-  ptls_cipher_suite_t		*m_cipher_suites[16]{};
+  ptls_cipher_suite_t		*m_cipherSuites[16]{};
   ALPNData			m_alpnData;
   ALPN				m_alpn;
   Backend::CertStore		*m_cacert = nullptr;

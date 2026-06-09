@@ -5,16 +5,14 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZtlsLib.hh Ztls.hh \
-	ZtlsBackend.hh \
 	ZtlsPico.hh \
+	ZtlsBackend.hh \
 	ZtlsHMAC.hh ZtlsMD.hh ZtlsTOTP.hh ZtlsRandom.hh \
-	ZtlsPK.hh ZtlsPK_Data.hh Ztls_ed25519.h
+	ZtlsPK.hh ZtlsPK_Data.hh
 lib_LTLIBRARIES = libZtls.la
-libZtls_la_CPPFLAGS = $(AM_CPPFLAGS) @PTLS_CFLAGS@ -DZTLS_EXPORTS \
-	-I./ed25519 -DED25519_CUSTOMHASH -DED25519_CUSTOMRANDOM
+libZtls_la_CPPFLAGS = $(AM_CPPFLAGS) @PTLS_CFLAGS@ -DZTLS_EXPORTS
 libZtls_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@
-libZtls_la_SOURCES = ZtlsLib.cc ZtlsOpenSSL.cc ZtlsPico.cc ZtlsTOTP.cc \
-	ed25519/ed25519.c
+libZtls_la_SOURCES = ZtlsLib.cc ZtlsPico.cc ZtlsOpenSSL.cc ZtlsTOTP.cc
 libZtls_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \

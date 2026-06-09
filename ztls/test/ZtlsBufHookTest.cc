@@ -529,9 +529,9 @@ bool import_tls12_one(
 bool import_tls12_pair(ptls_cipher_suite_t *suite, ImportedTLS &pair)
 {
   pair.suites.set(suite);
-  pair.ctx.random_bytes = ptls_openssl_random_bytes;
+  pair.ctx.random_bytes = Ztls::Backend::random_bytes_cb();
   pair.ctx.get_time = &ptls_get_time;
-  pair.ctx.cipher_suites = ptls_openssl_cipher_suites;
+  pair.ctx.cipher_suites = Ztls::Backend::cipher_suites();
   pair.ctx.tls12_cipher_suites = pair.suites.list;
   return
     import_tls12_one(&pair.ctx, suite, false, pair) &&
@@ -617,7 +617,10 @@ void run_tls12_handshake_rejected(
   capture.reset();
 
   SuiteList suites;
-  suites.set(&ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256);
+  auto suite = Ztls::Backend::tls12_ecdhe_rsa_aes128gcmsha256();
+  ZTLS_CHECK_RT(suite, "TLS 1.2 AES-GCM suite unavailable");
+  if (!suite) return;
+  suites.set(suite);
 
   TestState state;
   state.target = 1;
@@ -698,7 +701,10 @@ void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13KeyUpdate);
   SuiteList suites;
-  suites.set(&ptls_openssl_aes128gcmsha256);
+  auto suite = Ztls::Backend::cipher_suite(PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
+  ZTLS_CHECK_RT(suite, "TLS 1.3 AES-GCM suite unavailable");
+  if (!suite) return;
+  suites.set(suite);
   run_in_process(
     temp, capture, SmallPayloadSize, SmallPayloadSize, true,
     suites.list, PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
@@ -709,7 +715,9 @@ void testTLS12ExplicitIV(TempDir &temp, LogCapture &capture)
   (void)temp;
   (void)capture;
   ZuTestScopeRT(testTLS12ExplicitIV);
-  auto suite = &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256;
+  auto suite = Ztls::Backend::tls12_ecdhe_rsa_aes128gcmsha256();
+  ZTLS_CHECK_RT(suite, "TLS 1.2 AES-GCM suite unavailable");
+  if (!suite) return;
   ZTLS_CHECK_RT(suite->aead->tls12.record_iv_size > 0,
     "TLS 1.2 AES-GCM should use an explicit record IV");
   run_tls12_records(suite);
@@ -720,14 +728,14 @@ void testTLS12NoExplicitIV(TempDir &temp, LogCapture &capture)
   (void)temp;
   (void)capture;
   ZuTestScopeRT(testTLS12NoExplicitIV);
-#if PTLS_OPENSSL_HAVE_CHACHA20_POLY1305
-  auto suite = &ptls_openssl_tls12_ecdhe_rsa_chacha20poly1305sha256;
+  auto suite = Ztls::Backend::tls12_ecdhe_rsa_chacha20poly1305sha256();
+  if (!suite) {
+    std::cout << "# TLS 1.2 ChaCha20-Poly1305 unavailable in this backend\n";
+    return;
+  }
   ZTLS_CHECK_RT(!suite->aead->tls12.record_iv_size,
     "TLS 1.2 ChaCha20-Poly1305 should not use an explicit record IV");
   run_tls12_records(suite);
-#else
-  std::cout << "# TLS 1.2 ChaCha20-Poly1305 unavailable in this OpenSSL build\n";
-#endif
 }
 
 void testTLS12HandshakeRejected(TempDir &temp, LogCapture &capture)
