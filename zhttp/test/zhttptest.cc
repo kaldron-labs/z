@@ -10,6 +10,8 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZmList.hh>
 
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
 
 inline void out(const char *s) { std::cout << s << '\n'; }

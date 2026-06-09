@@ -20,6 +20,8 @@
 #include <zlib/ZmList.hh>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp3.hh>
 
 #include "ZhttpCaddyInterop.hh"
