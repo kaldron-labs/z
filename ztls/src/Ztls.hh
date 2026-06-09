@@ -75,11 +75,12 @@ inline ErrorFn defaultErrorFn()
 }
 
 struct EngineParams {
-  EngineParams(ZiMultiplex *mx_, ZuCSpan thread_, ZuSpan<ZuCSpan> alpn_) :
-      mx{mx_}, thread{thread_}, errorFn_{defaultErrorFn()} {
-    alpn.ensure(alpn_.length());
-    for (auto &s : alpn_) alpn.push(ParamString{s});
-  }
+  EngineParams(
+    ZiMultiplex *mx_ = nullptr,
+    ZuCSpan rxThread_ = {},
+    ZuCSpan txThread_ = {}) :
+      mx{mx_}, rxThread{rxThread_}, txThread{txThread_},
+      errorFn_{defaultErrorFn()} { }
 
   EngineParams &&caPath(ZuCSpan v) { caPath_ = v; return ZuMv(*this); }
   EngineParams &&certPath(ZuCSpan v) { certPath_ = v; return ZuMv(*this); }
@@ -88,11 +89,26 @@ struct EngineParams {
     asyncThread_ = v;
     return ZuMv(*this);
   }
+  EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
+    alpn_.length(0);
+    alpn_.ensure(v.length());
+    for (auto &s : v) alpn_.push(ParamString{s});
+    return ZuMv(*this);
+  }
+  EngineParams &&alpn(ZuSpan<const ptls_iovec_t> v) {
+    alpn_.length(0);
+    alpn_.ensure(v.length());
+    for (auto &p : v)
+      alpn_.push(ParamString{ZuCSpan{
+	reinterpret_cast<const char *>(p.base), p.len}});
+    return ZuMv(*this);
+  }
   EngineParams &&errorFn(ErrorFn v) { errorFn_ = ZuMv(v); return ZuMv(*this); }
 
   ZiMultiplex *mx = nullptr;
-  ParamString thread;
-  ParamStrings alpn;
+  ParamString rxThread;
+  ParamString txThread;
+  ParamStrings alpn_;
   ParamString caPath_;
   ParamString certPath_;
   ParamString keyPath_;
@@ -111,6 +127,10 @@ struct ClientParams : public EngineParams {
     { EngineParams::keyPath(v); return ZuMv(*this); }
   ClientParams &&asyncThread(ZuCSpan v)
     { EngineParams::asyncThread(v); return ZuMv(*this); }
+  ClientParams &&alpn(ZuSpan<ZuCSpan> v)
+    { EngineParams::alpn(v); return ZuMv(*this); }
+  ClientParams &&alpn(ZuSpan<const ptls_iovec_t> v)
+    { EngineParams::alpn(v); return ZuMv(*this); }
   ClientParams &&errorFn(ErrorFn v)
     { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
 };
@@ -126,6 +146,10 @@ struct ServerParams : public EngineParams {
     { EngineParams::keyPath(v); return ZuMv(*this); }
   ServerParams &&asyncThread(ZuCSpan v)
     { EngineParams::asyncThread(v); return ZuMv(*this); }
+  ServerParams &&alpn(ZuSpan<ZuCSpan> v)
+    { EngineParams::alpn(v); return ZuMv(*this); }
+  ServerParams &&alpn(ZuSpan<const ptls_iovec_t> v)
+    { EngineParams::alpn(v); return ZuMv(*this); }
   ServerParams &&errorFn(ErrorFn v)
     { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
   ServerParams &&mTLS(bool v) { mTLS_ = v; return ZuMv(*this); }
@@ -135,27 +159,35 @@ struct ServerParams : public EngineParams {
   int cacheTimeout_ = -1;
 };
 
-// zpicotls runs within a single dedicated thread, without lock contention
+struct TlsInfo {
+  int		tlsver = 0;
+  uint16_t	protocolVersion = 0;
+  uint16_t	cipherID = 0;
+  const char	*alpn = nullptr;
+  bool		psk = false;
+};
+
+// zpicotls control state runs on the Ztls Rx thread. Application Tx is posted
+// to the Ztls Tx thread; later record-protection phases remove shared ptls_t
+// use from application data records.
 
 // API functions: listen, connect, disconnect/disconnect_, txStream/txStream_ (Tx)
 // API callbacks: accepted, connected, disconnected, process (Rx)
 
-// Function Category | I/O Threads |        TLS thread          | App threads
+// Function Category | I/O Threads |          Rx thread         |  Tx thread
 // ------------------|-------------|----------------------------|------------
-// Server            | accepted()  | connected() disconnected() | listen()
-// Client            |             | connect_() connectFailed() | connect()
-// Disconnect        |             | disconnect_()              | disconnect()
-// Transmission (Tx) |             | txStream_()                | txStream()
+// Server            | accepted()  | connected() disconnected() |
+// Client            |             | connect_() connectFailed() |
+// Disconnect        |             | disconnect_()              |
+// Transmission (Tx) |             |                            | txStream_()
 // Reception    (Rx) |             | process()                  |
 
 // ZiIOBuf buffers transport data between threads (--> arrows below)
 
-// I/O Threads |                    TLS thread                   | App threads
-// ------------|-------------------------------------------------|------------
-//     I/O Rx --> Rx input  -> Decryption -> Rx output -> App Rx |
-// ------------|                                                 |
-//     I/O Tx <-- Tx output <- Encryption <- Tx input           <-- App Tx
-// ------------|-------------------------------------------------|------------
+// I/O Threads |          Rx thread           |      Tx thread
+// ------------|------------------------------|----------------------------
+//     I/O Rx --> Rx input -> Rx output -> App |
+//     I/O Tx <------------------------------- Tx output <- Tx input
 
 template <typename Link_, typename LinkRef_>
 class Cxn : public ZiConnection {
@@ -185,8 +217,14 @@ using RxStream = Ztls_::RxStream;
 template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
-  ZuString HeapID = ZiIOBuf_HeapID{}()>
-using BufAlloc = Ztls_::BufAlloc<Size, MaxSize, HeapID>;
+  ZuString HeapID = "Ztls.RxBuf">
+using RxBufAlloc = Ztls_::BufAlloc<Size, MaxSize, HeapID>;
+
+template <
+  unsigned Size = ZiIOBuf_DefltSize,
+  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  ZuString HeapID = "Ztls.TxBuf">
+using TxBufAlloc = Ztls_::BufAlloc<Size, MaxSize, HeapID>;
 
 template <typename RxBufAlloc>
 inline int parseHdr(const ZiIOContext &, ZiIOBuf *buf) {
@@ -240,6 +278,7 @@ public:
 
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
+  TlsInfo tlsInfo() const { return m_tlsInfo; }
 
 protected:
   ptls_t *tls() { return m_tls; }
@@ -256,13 +295,15 @@ private:
   // this is the internal TCP-level connected; once handshake is completed,
   // the application's connected_() will be called
   void connected_0(Cxn *cxn, ZiIOContext &io) { // runs on I/O Rx thread
-    app()->run([impl = ZmMkRef(this->impl()), cxn = ZmMkRef(cxn)]() {
+    app()->rxRun([impl = ZmMkRef(this->impl()), cxn = ZmMkRef(cxn)]() {
       impl->connected_1(ZuMv(cxn));
     });
     Rx::template recv<parseHdr<RxBufAlloc>, &Impl::recvRecord>(io);
   }
 
-  void connected_1(ZmRef<Cxn> cxn) { // runs on TLS thread
+  void connected_1(ZmRef<Cxn> cxn) { // runs on Ztls Rx thread
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS connected dispatch outside Rx thread", return);
     // idempotent
     if (ZuUnlikely(m_cxn == cxn)) return;
     // handle overlapping connections
@@ -274,7 +315,7 @@ private:
   int recvRecord(const ZiIOContext &io, ZmRef<ZiIOBuf> buf) {
     auto n = int(buf->length);
     auto cxn = static_cast<Cxn *>(io.cxn);
-    app()->run([
+    app()->rxRun([
       impl = ZmMkRef(this->impl()),
       cxn = ZmMkRef(cxn),
       buf = ZuMv(buf)
@@ -285,7 +326,9 @@ private:
     return n;
   }
 
-  void record_(ZmRef<ZiIOBuf> buf) { // runs on TLS thread
+  void record_(ZmRef<ZiIOBuf> buf) { // runs on Ztls Rx thread
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS record dispatch outside Rx thread", return);
     if (ZuUnlikely(!m_tls)) return;
     // Handshake records do not enter the application Rx path.
     if (ptls_handshake_is_complete(m_tls))
@@ -295,7 +338,9 @@ private:
   }
 
 protected:
-  bool handshake_(ZmRef<ZiIOBuf> buf) { // TLS thread
+  bool handshake_(ZmRef<ZiIOBuf> buf) { // Ztls Rx thread
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS handshake outside Rx thread", return false);
     const uint8_t *input = nullptr;
     size_t inlen_;
     size_t *inlen = nullptr;
@@ -372,6 +417,11 @@ private:
     m_tx_seq_est = 0;
     m_tx_control_pending = false;
     m_handshook = true;
+    m_tlsInfo.tlsver = tlsver_(m_tlsver);
+    m_tlsInfo.protocolVersion = m_tlsver;
+    m_tlsInfo.cipherID = m_cipher->id;
+    m_tlsInfo.alpn = ptls_get_negotiated_protocol(m_tls);
+    m_tlsInfo.psk = ptls_is_psk_handshake(m_tls);
     impl()->connected(
       ptls_get_negotiated_protocol(m_tls),
       tlsver_(ptls_get_protocol_version(m_tls)));
@@ -516,21 +566,23 @@ private:
   template <typename ImplRef_>
   void disconnected_0(Cxn *cxn, ImplRef_ impl_) {
     ZmRef<Impl> impl{ZuMv(impl_)};
-    app()->run([impl = ZuMv(impl), cxn = ZmMkRef(cxn)]() {
+    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn)]() {
       impl->disconnected_(cxn);
       auto mx = cxn->mx();
       // drain Tx while keeping cxn referenced
       mx->txRun([cxn = ZuMv(cxn)]() { });
     });
   }
-  void disconnected_(Cxn *cxn) { // TLS thread
+  void disconnected_(Cxn *cxn) { // Ztls Rx thread
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS disconnected dispatch outside Rx thread", return);
     if (m_cxn == cxn) m_cxn = nullptr;
     reset_tls_();
     impl()->disconnected();
   }
 
 private:
-  ZmRef<ZiIOBuf> allocTxBuf_() { // App/TLS threads
+  ZmRef<ZiIOBuf> allocTxBuf_() { // App/Rx/Tx threads
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
     if (ZuUnlikely(buf->size < TxRecordCapacity))
       if (ZuUnlikely(!buf->ensure(TxRecordCapacity))) return nullptr;
@@ -568,6 +620,7 @@ private:
     }
 
     void sendBuf_(ZmRef<ZiIOBuf> buf) {
+      buf->owner = m_link->impl();
       auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)
 	link->send(ZuMv(buf));
@@ -583,12 +636,16 @@ public:
   auto txStream() { // App thread(s)
     return TxStream_<true>{*this};
   }
-  auto txStream_() { // TLS thread
+  auto txStream_() { // Ztls Tx thread
+    ZiAssert(app()->txInvoked(), "Ztls", (),
+      "TLS txStream_ outside Tx thread", return TxStream_<false>{*this});
     return TxStream_<false>{*this};
   }
 
 protected:
-  bool updateKey_(bool requestUpdate = false) { // TLS thread
+  bool updateKey_(bool requestUpdate = false) { // Ztls Rx thread
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS KeyUpdate outside Rx thread", return false);
     if (ZuUnlikely(!m_tls || !m_cipher)) return false;
     ZiAssert(m_tlsver == PTLS_PROTOCOL_VERSION_TLS13, "Ztls", (),
       "TLS KeyUpdate requires TLS 1.3", return false);
@@ -606,15 +663,18 @@ protected:
 private:
   struct TxStreamAllocFailure { };
 
+public:
   void send(ZmRef<ZiIOBuf> buf) {
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
-    app()->invoke([buf = ZuMv(buf)]() mutable {
+    buf->owner = impl();
+    app()->txInvoke([buf = ZuMv(buf)]() mutable {
       auto link = static_cast<Impl *>(buf->owner);
       link->send_(ZuMv(buf));
     });
   }
 
+private:
   bool flushTxControl_(bool expectOutput) {
     ptls_buffer_t pbuf;
     auto buf = txBuf(pbuf);
@@ -643,7 +703,23 @@ private:
     return true;
   }
 
-  void send_(ZmRef<ZiIOBuf> buf) { // TLS thread
+protected:
+  void send_(ZmRef<ZiIOBuf> buf) { // Ztls Tx thread
+    ZiAssert(app()->txInvoked(), "Ztls", (),
+      "TLS send_ outside Tx thread", return);
+    if (ZuUnlikely(!buf || !buf->length)) return;
+    if (ZuUnlikely(m_disconnecting.load_())) return;
+    buf->owner = impl();
+    app()->rxRun([buf = ZuMv(buf)]() mutable {
+      auto link = static_cast<Impl *>(buf->owner);
+      link->sendRx_(ZuMv(buf));
+    });
+  }
+
+private:
+  void sendRx_(ZmRef<ZiIOBuf> buf) { // transitional legacy record path
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS legacy send outside Rx thread", return);
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
     if (ZuUnlikely(!m_tls || !m_cipher)) return; // FIXME - log diagnostic
@@ -700,8 +776,9 @@ private:
     finalizeTxBuf_(pbuf, ZuMv(buf));
   }
 
-public:
-  int send_alert_(uint8_t level, uint8_t desc) { // TLS thread
+  int send_alert_(uint8_t level, uint8_t desc) { // Ztls Rx thread
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS alert outside Rx thread", return PTLS_ERROR_LIBRARY);
     ptls_buffer_t pbuf;
     auto buf = txBuf(pbuf);
     if (ZuUnlikely(!buf)) return PTLS_ERROR_NO_MEMORY;
@@ -787,7 +864,7 @@ private:
     if (++async->recvCount != 2) return;
     async->handle = Zi::nullHandle();
     app()->asyncDelHandleNow_(handle_);
-    app()->run(ZmFn<>{
+    app()->rxRun(ZmFn<>{
       ZuMv(async), [](AsyncJob *async) {
 	async->link->asyncResume_(async);
       }});
@@ -831,9 +908,11 @@ private:
 public:
   void disconnect() { // App thread(s)
     m_disconnecting = 1;
-    app()->invoke([this]() { disconnect_(); });
+    app()->rxInvoke([this]() { disconnect_(); });
   }
-  void disconnect_(bool notify = true) { // TLS thread
+  void disconnect_(bool notify = true) { // Ztls Rx thread
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS disconnect outside Rx thread", return);
     m_disconnecting = 1; // disconnect() might be bypassed
     app()->mx()->del(&m_reconnTimer);
     bool asyncPending = asyncPending_();
@@ -892,6 +971,7 @@ protected:
     m_tx_seq_est = 0;
     m_tx_control_pending = false;
     m_handshook = false;
+    m_tlsInfo = TlsInfo{};
     m_disconnecting = 0;
     reset_handshake_props_();
 
@@ -903,7 +983,7 @@ private:
   bool			m_isServer = false;
   ZmScheduler::Timer	m_reconnTimer;
 
-  // TLS thread
+  // Ztls Rx thread
   struct AsyncJob : public ZmPolymorph {
     AsyncJob(
 	ZmRef<Impl> link_, ptls_t *tls_, ptls_async_job_t *job_,
@@ -941,6 +1021,7 @@ private:
   uint64_t		m_tx_seq_est = 0;
   bool			m_tx_control_pending = false;
   bool			m_handshook = false;
+  TlsInfo		m_tlsInfo;
   ptls_handshake_properties_t m_props{};
   AsyncJob		*m_asyncJob = nullptr;
   CxnRef		m_cxn = nullptr;
@@ -965,11 +1046,14 @@ using SrvLink_ = Link<App, Impl, RxBufAlloc, TxBufAlloc, Cxn, Cxn *>;
 
 template <
   typename App, typename Impl,
-  typename RxBufAlloc = BufAlloc<>,
-  typename TxBufAlloc = RxBufAlloc>
-class CliLink : public CliLink_<App, Impl, RxBufAlloc, TxBufAlloc, CliCxn<Impl>> {
+  typename RxBufAlloc_ = Ztls::RxBufAlloc<>,
+  typename TxBufAlloc_ = Ztls::TxBufAlloc<>>
+class CliLink :
+  public CliLink_<App, Impl, RxBufAlloc_, TxBufAlloc_, CliCxn<Impl>> {
 public:
   using Cxn = CliCxn<Impl>;
+  using RxBufAlloc = RxBufAlloc_;
+  using TxBufAlloc = TxBufAlloc_;
   using Base = CliLink_<App, Impl, RxBufAlloc, TxBufAlloc, Cxn>;
 
   using Base::impl;
@@ -989,18 +1073,20 @@ template <typename> friend class Client;
   ~CliLink() { }
 
   void connect() { // App thread(s)
-    app()->invoke([this]() mutable { connect_(); });
+    app()->rxInvoke([this]() mutable { connect_(); });
   }
   void connect(Host server, uint16_t port) { // App thread(s)
     m_server = ZuMv(server);
     m_port = port;
-    app()->invoke([this]() mutable { connect_(); });
+    app()->rxInvoke([this]() mutable { connect_(); });
   }
 
   const Host &server() const { return m_server; }
   uint16_t port() const { return m_port; }
 
-  void connect_() { // TLS thread
+  void connect_() { // Ztls Rx thread
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS connect outside Rx thread", return);
     ZiIP ip = m_server;
     if (!ip) {
       app()->error_(ZeEXCEPT(Error, "Ztls", ([server = LogMsg{m_server}](auto &s) {
@@ -1074,7 +1160,7 @@ public:
   void connectFailed(bool transient) {
     unsigned reconnFreq = app()->reconnFreq();
     if (transient && reconnFreq > 0)
-	app()->run(
+	app()->rxRun(
 	  ZmFn<>{this, [](CliLink *link) { link->connect_(); }},
 	  Zm::now(reconnFreq), ZmScheduler::Update, &m_reconnTimer);
     else
@@ -1091,11 +1177,14 @@ private:
 
 template <
   typename App, typename Impl,
-  typename RxBufAlloc = BufAlloc<>,
-  typename TxBufAlloc = RxBufAlloc>
-class SrvLink : public SrvLink_<App, Impl, RxBufAlloc, TxBufAlloc, SrvCxn<Impl>> {
+  typename RxBufAlloc_ = Ztls::RxBufAlloc<>,
+  typename TxBufAlloc_ = Ztls::TxBufAlloc<>>
+class SrvLink :
+  public SrvLink_<App, Impl, RxBufAlloc_, TxBufAlloc_, SrvCxn<Impl>> {
 public:
   using Cxn = SrvCxn<Impl>;
+  using RxBufAlloc = RxBufAlloc_;
+  using TxBufAlloc = TxBufAlloc_;
   using Base = SrvLink_<App, Impl, RxBufAlloc, TxBufAlloc, Cxn>;
 
   using Base::impl;
@@ -1174,14 +1263,15 @@ protected:
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
     m_mx = params.mx;
-    m_thread = m_mx->sid(params.thread);
-    m_asyncThread = 0;
-    if (params.asyncThread_) m_asyncThread = m_mx->sid(params.asyncThread_);
+    m_rxThread = thread_(params.rxThread, m_mx->rxThread());
+    m_txThread = thread_(params.txThread, m_mx->txThread());
+    m_asyncThread = params.asyncThread_ ?
+      m_mx->sid(params.asyncThread_) : 0;
 
     return ZmBlock<bool>{}([
       this, params = ZuMv(params), l = ZuMv(l)
     ](auto wake) mutable {
-      invoke([
+      rxInvoke([
 	this, params = ZuMv(params), l = ZuMv(l), wake = ZuMv(wake)
       ]() mutable {
 	wake(init_context_(params, l));
@@ -1190,17 +1280,35 @@ protected:
   }
 
 private:
+  unsigned thread_(const ParamString &id, unsigned deflt) const {
+    return id ? m_mx->sid(id) : deflt;
+  }
+
   template <typename Params>
   bool validate_(const Params &params) {
     if (ZuUnlikely(!params.mx)) {
       error_(ZeEXCEPT(Error, "Ztls", "multiplexer is null"));
       return false;
     }
-    unsigned thread = params.mx->sid(params.thread);
-    if (!thread || thread > params.mx->params().nThreads()) {
-      error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.thread}](auto &s) {
-	s << "invalid thread ID \"" << thread << '"';
+    unsigned rxThread = params.rxThread ?
+      params.mx->sid(params.rxThread) : params.mx->rxThread();
+    unsigned txThread = params.txThread ?
+      params.mx->sid(params.txThread) : params.mx->txThread();
+    if (!rxThread || rxThread > params.mx->params().nThreads()) {
+      error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.rxThread}](auto &s) {
+	s << "invalid TLS Rx thread ID \"" << thread << '"';
       })));
+      return false;
+    }
+    if (!txThread || txThread > params.mx->params().nThreads()) {
+      error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.txThread}](auto &s) {
+	s << "invalid TLS Tx thread ID \"" << thread << '"';
+      })));
+      return false;
+    }
+    if (rxThread == txThread) {
+      error_(ZeEXCEPT(Error, "Ztls",
+	"TLS Rx and Tx threads must differ"));
       return false;
     }
     if (!params.mx->running()) {
@@ -1222,9 +1330,9 @@ private:
 	})));
 	return false;
       }
-      if (asyncThread == thread) {
+      if (asyncThread == rxThread || asyncThread == txThread) {
 	error_(ZeEXCEPT(Error, "Ztls",
-	  "async thread must differ from TLS thread"));
+	  "async thread must differ from TLS Rx and Tx threads"));
 	return false;
       }
       if (asyncThread == params.mx->rxThread() ||
@@ -1255,7 +1363,7 @@ private:
     init_cipher_suites_();
     m_ctx.cipher_suites = m_cipher_suites;
     m_ctx.server_cipher_preference = 1;
-    if (!init_alpn_(params.alpn)) return false;
+    if (!init_alpn_(params.alpn_)) return false;
     if (asyncConfigured_())
       if (!startAsyncLoop_()) return false;
     if (!l(params)) {
@@ -1267,13 +1375,13 @@ private:
 
 public:
   void final() {
-    if (!m_mx || !m_thread) return;
+    if (!m_mx || !m_rxThread) return;
     if (m_mx->running()) {
-      if (invoked())
+      if (rxInvoked())
 	final_();
       else
 	ZmBlock<>{}([this](auto wake) mutable {
-	  invoke([this, wake = ZuMv(wake)]() mutable {
+	  rxInvoke([this, wake = ZuMv(wake)]() mutable {
 	    final_();
 	    wake();
 	  });
@@ -1283,16 +1391,28 @@ public:
   }
 
   ZiMultiplex *mx() const { return m_mx; }
+  unsigned rxThread() const { return m_rxThread; }
+  unsigned txThread() const { return m_txThread; }
+  unsigned asyncThread() const { return m_asyncThread; }
 
   template <typename ...Args>
-  void run(Args &&...args) {
-    m_mx->run(m_thread, ZuFwd<Args>(args)...);
+  void rxRun(Args &&...args) {
+    m_mx->run(m_rxThread, ZuFwd<Args>(args)...);
   }
   template <typename ...Args>
-  void invoke(Args &&...args) {
-    m_mx->invoke(m_thread, ZuFwd<Args>(args)...);
+  void rxInvoke(Args &&...args) {
+    m_mx->invoke(m_rxThread, ZuFwd<Args>(args)...);
   }
-  bool invoked() { return m_mx->invoked(m_thread); }
+  bool rxInvoked() { return m_mx->invoked(m_rxThread); }
+  template <typename ...Args>
+  void txRun(Args &&...args) {
+    m_mx->run(m_txThread, ZuFwd<Args>(args)...);
+  }
+  template <typename ...Args>
+  void txInvoke(Args &&...args) {
+    m_mx->invoke(m_txThread, ZuFwd<Args>(args)...);
+  }
+  bool txInvoked() { return m_mx->invoked(m_txThread); }
 
 private:
   bool asyncConfigured_() const { return m_asyncThread != 0; }
@@ -1394,7 +1514,7 @@ private:
   }
 
 protected:
-  // TLS thread
+  // Ztls Rx thread
   ptls_context_t *ctx() { return &m_ctx; }
   const ptls_context_t *ctx() const { return &m_ctx; }
 
@@ -1544,7 +1664,8 @@ private:
   }
 
   ZiMultiplex			*m_mx = nullptr;
-  unsigned			m_thread = 0;
+  unsigned			m_rxThread = 0;
+  unsigned			m_txThread = 0;
   unsigned			m_asyncThread = 0;
   ZiEventLoop			m_eventLoop;
   bool				m_eventLoopInit = false;
@@ -1562,15 +1683,16 @@ private:
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct App : public Client<App> {
-  using BufAlloc = Ztls::BufAlloc<BufSize>;
+  using RxBufAlloc = Ztls::RxBufAlloc<BufSize>;
+  using TxBufAlloc = Ztls::TxBufAlloc<BufSize>;
 
   void exception(ZmRef<ZeEvent>); // optional
 
-  struct Link : public CliLink<App, Link, BufAlloc> {
-    // TLS thread - handshake completed
+  struct Link : public CliLink<App, Link, RxBufAlloc, TxBufAlloc> {
+    // Ztls Rx thread - handshake completed
     void connected(const char *alpn, int tlsver);
 
-    void disconnected(); // TLS thread
+    void disconnected(); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread
 
     // process() should return:
@@ -1661,15 +1783,16 @@ bool Client<App>::init(ClientParams params)
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct App : public Server<App> {
-  using BufAlloc = Ztls::BufAlloc<BufSize>;
+  using RxBufAlloc = Ztls::RxBufAlloc<BufSize>;
+  using TxBufAlloc = Ztls::TxBufAlloc<BufSize>;
 
   void exception(ZmRef<ZeEvent>); // optional
 
-  struct Link : public SrvLink<App, Link, BufAlloc> {
-    // TLS thread - handshake completed
+  struct Link : public SrvLink<App, Link, RxBufAlloc, TxBufAlloc> {
+    // Ztls Rx thread - handshake completed
     void connected(const char *alpn);
 
-    void disconnected(); // TLS thread
+    void disconnected(); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread
     
     // process() should return:
@@ -1751,7 +1874,7 @@ protected:
   void listenFailed(bool transient) { // default
     unsigned rebindFreq = app()->rebindFreq();
     if (transient && rebindFreq > 0)
-      app()->run([this]() { listen(); },
+      app()->rxRun([this]() { listen(); },
 	  Zm::now(rebindFreq), ZmScheduler::Update, &m_rebindTimer);
     else
       app()->error_(ZeEXCEPT(Error, "Ztls", ([transient](auto &s) {

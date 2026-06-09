@@ -31,7 +31,7 @@ struct App : public Ztls::Client<App> {
 
     void connected(const char *alpn, int tlsver) {
       ++round;
-      bool resumed = ptls_is_psk_handshake(this->tls());
+      bool resumed = this->tlsInfo().psk;
       if (round > 1) {
 	if (!resumed) app()->setError("session not resumed");
 	if (this->maxEarlyData() != 0)
@@ -48,12 +48,12 @@ struct App : public Ztls::Client<App> {
       ZtArray<uint8_t> request;
       request << Request << hostname << Request2;
       {
-	auto tx = txStream_();
+	auto tx = txStream();
 	tx.append(request.data(), request.length());
 	tx << Zi::flush();
       }
       if (app()->payload().length()) {
-	auto tx = txStream_();
+	auto tx = txStream();
 	tx.append(app()->payload().data(), app()->payload().length());
 	tx << Zi::flush();
       }
@@ -215,7 +215,8 @@ int main(int argc, char **argv)
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })
 	  .thread(2, [](auto &t) { t.isolated(1); })
-	  .thread(3, [](auto &t) { t.isolated(1); }); })
+	  .thread(3, [](auto &t) { t.isolated(1); })
+	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
   if (!mx.start()) {
@@ -223,7 +224,7 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if (!app.init(Ztls::ClientParams(&mx, "3", alpn).caPath(ca))) {
+  if (!app.init(Ztls::ClientParams(&mx, "3", "4").alpn(alpn).caPath(ca))) {
     std::cerr << "TLS client initialization failed\n" << std::flush;
     return 1;
   }

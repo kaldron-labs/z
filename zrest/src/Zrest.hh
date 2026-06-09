@@ -311,8 +311,8 @@ struct FooType : public typename Link::MsgType {
     // -----
 
     auto buf = builder.finish();
-    // Note: tls->send_() is not link->send_() (which is our caller)
-    tls->send_(ZuMv(buf));
+    // Note: tls->send() is not link->send() (which is our caller)
+    tls->send(ZuMv(buf));
 
     // persist msg
     table->insert(ZuMv(o), [](ZdbObject<T> *o) { o->commit(); });
@@ -354,10 +354,13 @@ template <
   typename Impl_,
   typename RxKeys_ = ZuStringTL<>,
   typename TxKeys_ = ZuStringTL<>,
-  typename IOBufAlloc_ = Ztls::IOBufAlloc<>>
+  typename IOBufAlloc_ = Ztls::RxBufAlloc<>,
+  typename TxBufAlloc_ = Ztls::TxBufAlloc<>>
 class CliLink :
-  public Ztls::CliLink<App_, Impl_>,
-  public ZiRx<CliLink<App_, Impl_, IOBufAlloc_>, IOBufAlloc_>,
+  public Ztls::CliLink<App_, Impl_, IOBufAlloc_, TxBufAlloc_>,
+  public ZiRx<
+    CliLink<App_, Impl_, RxKeys_, TxKeys_, IOBufAlloc_, TxBufAlloc_>,
+    IOBufAlloc_>,
   public ZvLink<CliLink, ZvTxPool<CliLink>>,
   public Zhttp::Receiver<CliLink, Zhttp::Header<RxKeys_>, Zhttp::Body<>>
 {
@@ -413,8 +416,9 @@ public:
   using RxKeys = RxKeys_;
   using TxKeys = TxKeys_;
   using IOBufAlloc = IOBufAlloc_;
+  using TxBufAlloc = TxBufAlloc_;
 
-  using TLS = Ztls::CliLink<App, Impl>;
+  using TLS = Ztls::CliLink<App, Impl, IOBufAlloc, TxBufAlloc>;
   using Rx = ZiRx<CliLink, IOBufAlloc>;
   using Link = ZvLink<CliLink, ZvTxPool<CliLink>>;
   using Header = Zhttp::Header<RxKeys>;
@@ -427,7 +431,7 @@ public:
   using TLS::port;
   using TLS::connect;
   using TLS::disconnect;
-  // using TLS::send;
+  using TLS::send;
   // using TLS::send_;
 
   using Link::state;
@@ -475,7 +479,7 @@ template <typename, typename> friend class Client;
       ZtURI::save<Fields>(builder.buf, object);
     }, host, /* FIXME - headers must come from msg */);
     auto buf = builder.finish();
-    TLS::send_(ZuMv(buf));
+    TLS::send(ZuMv(buf));
   }
   bool resend_(ZvIOMsg *msg, bool more) {
     // FIXME
@@ -519,7 +523,8 @@ public:
     ZuCSpan alpn[] = { "http/1.1" };
 
     if (!Base::init(
-	  Ztls::ClientParams(mx, cf->get("thread", true), alpn)
+	  Ztls::ClientParams(
+	    mx, cf->get("rxThread", true), cf->get("txThread", true)).alpn(alpn)
 	    .caPath(cf->get("caPath", false))))
       ZiLOG(Error, "Zrest", "TLS client initialization failed");
 
@@ -546,10 +551,13 @@ template <
   typename Impl_,
   typename RxKeys_ = ZuStringTL<>,
   typename TxKeys_ = ZuStringTL<>,
-  typename IOBufAlloc_ = Ztls::IOBufAlloc<>>
+  typename IOBufAlloc_ = Ztls::RxBufAlloc<>,
+  typename TxBufAlloc_ = Ztls::TxBufAlloc<>>
 class SrvLink :
-  public Ztls::SrvLink<App_, Impl_, IOBufAlloc_>,
-  public ZiRx<SrvLink<App_, Impl_, IOBufAlloc_>, IOBufAlloc_>,
+  public Ztls::SrvLink<App_, Impl_, IOBufAlloc_, TxBufAlloc_>,
+  public ZiRx<
+    SrvLink<App_, Impl_, RxKeys_, TxKeys_, IOBufAlloc_, TxBufAlloc_>,
+    IOBufAlloc_>,
   public Zhttp::Receiver<SrvLink, Zhttp::Header<RxKeys_>, Zhttp::Body<>> {
 public:
   using App = App_;
@@ -557,8 +565,9 @@ public:
   using RxKeys = RxKeys_;
   using TxKeys = TxKeys_;
   using IOBufAlloc = IOBufAlloc_;
+  using TxBufAlloc = TxBufAlloc_;
 
-  using Base = Ztls::SrvLink<App, Impl, IOBufAlloc>;
+  using Base = Ztls::SrvLink<App, Impl, IOBufAlloc, TxBufAlloc>;
   using Rx = ZiRx<SrvLink, IOBufAlloc>;
 
   using Base::impl;
@@ -569,7 +578,7 @@ public:
 
 template <typename, typename> friend class Server;
 
-  SrvLink(App *app) : Ztls::SrvLink<App, Impl>(app) { }
+  SrvLink(App *app) : Base(app) { }
 
   // void connected(const char *alpn, int tlsver);
   // void disconnected();

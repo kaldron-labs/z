@@ -12,9 +12,11 @@ using namespace ZuTestUtil;
 namespace {
 
 struct ClientApp : public Ztls::Client<ClientApp> {
-  using BufAlloc = Ztls::BufAlloc<>;
-  struct Link : public Ztls::CliLink<ClientApp, Link, BufAlloc> {
-    Link(ClientApp *app) : Ztls::CliLink<ClientApp, Link, BufAlloc>(app) { }
+  using RxBufAlloc = Ztls::RxBufAlloc<>;
+  using TxBufAlloc = Ztls::TxBufAlloc<>;
+  struct Link : public Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc> {
+    using Base = Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc>;
+    Link(ClientApp *app) : Base(app) { }
     void connected(const char *, int) { }
     void disconnected() { }
     void connectFailed(bool) { }
@@ -23,9 +25,11 @@ struct ClientApp : public Ztls::Client<ClientApp> {
 };
 
 struct ServerApp : public Ztls::Server<ServerApp> {
-  using BufAlloc = Ztls::BufAlloc<>;
-  struct Link : public Ztls::SrvLink<ServerApp, Link, BufAlloc> {
-    Link(ServerApp *app) : Ztls::SrvLink<ServerApp, Link, BufAlloc>(app) { }
+  using RxBufAlloc = Ztls::RxBufAlloc<>;
+  using TxBufAlloc = Ztls::TxBufAlloc<>;
+  struct Link : public Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc> {
+    using Base = Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc>;
+    Link(ServerApp *app) : Base(app) { }
     void connected(const char *, int) { }
     void disconnected() { }
     int process(Ztls::RxStream &) { return 0; }
@@ -51,7 +55,7 @@ void testInitValidation()
 
   ZuCSpan alpn[] = { "ztls-test" };
 
-  auto clientParams = Ztls::ClientParams(nullptr, "1", alpn)
+  auto clientParams = Ztls::ClientParams(nullptr, "1", "2").alpn(alpn)
     .caPath("ca.pem")
     .certPath("client.pem")
     .keyPath("client.key")
@@ -59,7 +63,7 @@ void testInitValidation()
     .errorFn(Ztls::defaultErrorFn());
   (void)clientParams;
 
-  auto serverParams = Ztls::ServerParams(nullptr, "1", alpn)
+  auto serverParams = Ztls::ServerParams(nullptr, "1", "2").alpn(alpn)
     .caPath("ca.pem")
     .certPath("server.pem")
     .keyPath("server.key")
@@ -70,24 +74,25 @@ void testInitValidation()
   (void)serverParams;
 
   ClientApp client;
-  ZuCHECK(!client.init(Ztls::ClientParams(nullptr, "1", alpn)),
+  ZuCHECK(!client.init(Ztls::ClientParams(nullptr, "1", "2").alpn(alpn)),
     "null multiplexer init unexpectedly succeeded");
   ZuCHECK(!client.init(
-    Ztls::ClientParams(nullptr, "1", alpn).certPath("client.pem")),
+    Ztls::ClientParams(nullptr, "1", "2").alpn(alpn).certPath("client.pem")),
     "client cert/key XOR init unexpectedly succeeded");
 
   ServerApp server;
-  ZuCHECK(!server.init(Ztls::ServerParams(nullptr, "1", alpn)),
+  ZuCHECK(!server.init(Ztls::ServerParams(nullptr, "1", "2").alpn(alpn)),
     "missing server cert/key init unexpectedly succeeded");
 
   ZiMultiplex mx(
       ZiMxParams()
 	.scheduler([](auto &s) {
-	  s.nThreads(5)
+	  s.nThreads(6)
 	    .thread(1, [](auto &t) { t.isolated(1); })
 	    .thread(2, [](auto &t) { t.isolated(1); })
 	    .thread(3, [](auto &t) { t.isolated(1); })
-	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	    .thread(4, [](auto &t) { t.isolated(1); })
+	    .thread(5, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
   bool mxStarted = mx.start();
@@ -99,42 +104,49 @@ void testInitValidation()
 
   {
     EngineApp app;
-    ZuCHECK(!app.init(Ztls::EngineParams(&mx, "9", alpn)),
-      "invalid TLS thread unexpectedly succeeded");
+    ZuCHECK(!app.init(Ztls::EngineParams(&mx, "9", "4").alpn(alpn)),
+      "invalid TLS Rx thread unexpectedly succeeded");
   }
   {
     EngineApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", alpn).asyncThread("9")),
+      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("9")),
       "invalid async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", alpn).asyncThread("3")),
-      "TLS async thread unexpectedly succeeded");
+      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("3")),
+      "TLS Rx async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", alpn).asyncThread("1")),
+      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("4")),
+      "TLS Tx async thread unexpectedly succeeded");
+  }
+  {
+    EngineApp app;
+    ZuCHECK(!app.init(
+      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("1")),
       "rx async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", alpn).asyncThread("2")),
+      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("2")),
       "tx async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", alpn).asyncThread("5")),
+      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("6")),
       "non-isolated async thread unexpectedly succeeded");
   }
   {
     EngineApp app;
-    bool ok = app.init(Ztls::EngineParams(&mx, "3", alpn).asyncThread("4"));
+    bool ok = app.init(
+      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("5"));
     ZuCHECK(ok, "valid async engine init failed");
     if (ok) app.final();
   }

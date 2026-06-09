@@ -101,15 +101,17 @@ template <typename App, typename Link> class Client;
 template <
   typename App_,
   typename Impl_,
-  typename IOBufAlloc_ = Ztls::IOBufAlloc<>>
+  typename IOBufAlloc_ = Ztls::RxBufAlloc<>,
+  typename TxBufAlloc_ = Ztls::TxBufAlloc<>>
 class CliLink :
-    public Ztls::CliLink<App_, Impl_>,
-    public ZiRx<CliLink<App_, Impl_, IOBufAlloc_>, IOBufAlloc_> {
+    public Ztls::CliLink<App_, Impl_, IOBufAlloc_, TxBufAlloc_>,
+    public ZiRx<CliLink<App_, Impl_, IOBufAlloc_, TxBufAlloc_>, IOBufAlloc_> {
 public:
   using App = App_;
   using Impl = Impl_;
-  using Base = Ztls::CliLink<App, Impl>;
+  using Base = Ztls::CliLink<App, Impl, IOBufAlloc_, TxBufAlloc_>;
   using IOBufAlloc = IOBufAlloc_;
+  using TxBufAlloc = TxBufAlloc_;
   using Rx = ZiRx<CliLink, IOBufAlloc>;
 
   using Base::impl;
@@ -252,7 +254,7 @@ public:
 	      data.stamp,
 	      Zfb::Save::bytes(fbb, data.hmac)).Union()));
     }
-    send_(Zcmd::saveHdr(fbb.buf(), Zcmd::Type::login()));
+    send(Zcmd::saveHdr(fbb.buf(), Zcmd::Type::login()));
   }
 
   void disconnected() {
@@ -424,7 +426,8 @@ friend TLS;
 	});
 
     if (!TLS::init(
-	  Ztls::ClientParams(mx, cf->get("thread", true), alpn)
+	  Ztls::ClientParams(
+	    mx, cf->get("rxThread", true), cf->get("txThread", true)).alpn(alpn)
 	    .caPath(cf->get("caPath"))))
       ZiLOG(Error, "Ztel", "TLS client initialization failed");
 
