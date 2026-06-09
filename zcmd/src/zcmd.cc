@@ -1818,7 +1818,8 @@ int main(int argc, char **argv)
 	  s.nThreads(4)
 	    .thread(1, [](auto &t) { t.isolated(1); })
 	    .thread(2, [](auto &t) { t.isolated(1); })
-	    .thread(3, [](auto &t) { t.isolated(1); }); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
   mx->start();
@@ -1831,7 +1832,8 @@ int main(int argc, char **argv)
   {
     ZmRef<ZvCf> cf = new ZvCf();
     cf->set("timeout", "1");
-    cf->set("thread", "3");
+    cf->set("rxThread", "3");
+    cf->set("txThread", "4");
     if (auto caPath = ::getenv("ZCMD_CAPATH"))
       cf->set("caPath", caPath);
     else

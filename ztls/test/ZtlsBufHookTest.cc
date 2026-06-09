@@ -271,7 +271,8 @@ ZiMxParams mx_params()
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
 	.thread(2, [](auto &t) { t.isolated(1); })
-	.thread(3, [](auto &t) { t.isolated(1); });
+	.thread(3, [](auto &t) { t.isolated(1); })
+	.thread(4, [](auto &t) { t.isolated(1); });
     })
     .rxThread(1).txThread(2);
 }
@@ -280,26 +281,26 @@ template <typename Link>
 void send_payload(Link *link, const ZtArray<uint8_t> &payload)
 {
   if (!payload.length()) return;
-  auto tx = link->txStream_();
+  auto tx = link->txStream();
   tx.append(payload.data(), unsigned(payload.length()));
   tx << Zi::flush();
 }
 
 template <typename State>
 struct BaseClient : public Ztls::Client<BaseClient<State>> {
-  using BufAlloc = Ztls::BufAlloc<BufSize, MaxSize>;
+  using RxBufAlloc = Ztls::RxBufAlloc<BufSize, MaxSize>;
+  using TxBufAlloc = Ztls::TxBufAlloc<BufSize, MaxSize>;
   using Base = Ztls::Client<BaseClient<State>>;
 
-  struct Link : public Ztls::CliLink<BaseClient, Link, BufAlloc> {
-    using BaseLink = Ztls::CliLink<BaseClient, Link, BufAlloc>;
+  struct Link : public Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc> {
+    using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseClient *app) : BaseLink{app} { }
 
     void connected(const char *, int tlsver) {
       auto &state = this->app()->state;
       state.client_connected = 1;
       state.client_tlsver = unsigned(tlsver);
-      auto cipher = ptls_get_cipher(this->tls());
-      state.client_cipher = cipher ? cipher->id : 0;
+      state.client_cipher = this->tlsInfo().cipherID;
       if (state.clientKeyUpdate && !this->updateKey_(true)) {
 	state.fail("client key update failed");
 	return;
@@ -335,19 +336,19 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 
 template <typename State>
 struct BaseServer : public Ztls::Server<BaseServer<State>> {
-  using BufAlloc = Ztls::BufAlloc<BufSize, MaxSize>;
+  using RxBufAlloc = Ztls::RxBufAlloc<BufSize, MaxSize>;
+  using TxBufAlloc = Ztls::TxBufAlloc<BufSize, MaxSize>;
   using Base = Ztls::Server<BaseServer<State>>;
 
-  struct Link : public Ztls::SrvLink<BaseServer, Link, BufAlloc> {
-    using BaseLink = Ztls::SrvLink<BaseServer, Link, BufAlloc>;
+  struct Link : public Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc> {
+    using BaseLink = Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
 
     void connected(const char *, int tlsver) {
       auto &state = this->app()->state;
       state.server_connected = 1;
       state.server_tlsver = unsigned(tlsver);
-      auto cipher = ptls_get_cipher(this->tls());
-      state.server_cipher = cipher ? cipher->id : 0;
+      state.server_cipher = this->tlsInfo().cipherID;
     }
     void disconnected() { this->app()->state.done_one(); }
     int process(Ztls::RxStream &rx) {
@@ -432,7 +433,7 @@ void run_in_process(
 
   BaseServer<TestState> server(state, state.ip);
   bool serverOK = server.init(
-    Ztls::ServerParams(&mx, "3", {})
+    Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data())
       .keyPath(temp.keyPath.data()));
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");
@@ -440,7 +441,7 @@ void run_in_process(
 
   BaseClient<TestState> client(state);
   bool clientOK = client.init(
-    Ztls::ClientParams(&mx, "3", {}).caPath(temp.certPath.data()));
+    Ztls::ClientParams(&mx, "3", "4").caPath(temp.certPath.data()));
   ZTLS_CHECK_RT(clientOK, "TLS client init failed");
   if (!clientOK) { mx.stop(); return; }
 
@@ -545,7 +546,7 @@ bool tls12_roundtrip(
 {
   constexpr unsigned TxRecordCapacity = 16 * 1024;
   unsigned headroom = 5 + suite->aead->tls12.record_iv_size;
-  using TestBuf = Ztls::BufAlloc<BufSize, MaxSize>;
+  using TestBuf = Ztls::TxBufAlloc<BufSize, MaxSize>;
 
   ZmRef<ZiIOBuf> buf = new TestBuf{nullptr};
   if (!buf || !buf->ensure(TxRecordCapacity)) return false;
@@ -635,7 +636,7 @@ void run_tls12_handshake_rejected(
 
   BaseServer<TestState> server(state, state.ip);
   bool serverOK = server.init(
-    Ztls::ServerParams(&mx, "3", {})
+    Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data())
       .keyPath(temp.keyPath.data()));
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");

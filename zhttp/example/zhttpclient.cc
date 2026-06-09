@@ -111,8 +111,8 @@ struct Link : public Ztls::CliLink<App, Link<App>> {
 	<< "TLS handshake completed (hostname: " << ZuCSpan(hostname)
 	<< " TLS: " << tlsver << " ALPN: " << alpn << ")\n")
       << std::flush;
-    // connected() is called in TLS thread
-    auto tx = this->txStream_();
+    // connected() is called on the Ztls Rx thread.
+    auto tx = this->txStream();
     HttpRequestBuilder builder{ZuCSpan(hostname)};
     builder.request(tx);
     builder.finish(tx);
@@ -201,7 +201,8 @@ int main(int argc, char **argv)
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })
 	  .thread(2, [](auto &t) { t.isolated(1); })
-	  .thread(3, [](auto &t) { t.isolated(1); }); })
+	  .thread(3, [](auto &t) { t.isolated(1); })
+	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
   if (!mx.start()) {
@@ -210,7 +211,7 @@ int main(int argc, char **argv)
   }
 
   if (!app.init(
-	Ztls::ClientParams(&mx, "3", alpn)
+	Ztls::ClientParams(&mx, "3", "4").alpn(alpn)
 	  .caPath(argc == 4 ? argv[3] : nullptr))) {
     std::cerr << "TLS client initialization failed\n" << std::flush;
     return 1;

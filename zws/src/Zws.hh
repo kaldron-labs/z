@@ -21,16 +21,21 @@ template <typename App, typename Link> class Client;
 template <
   typename App_,
   typename Impl_,
-  typename BufAlloc_ = Ztls::BufAlloc<>>
+  typename RxBufAlloc_ = Ztls::RxBufAlloc<>,
+  typename TxBufAlloc_ = Ztls::TxBufAlloc<>>
 class CliLink :
-  public Ztls::CliLink<App_, CliLink<App_, Impl_, BufAlloc_>, BufAlloc_>,
-  public ZiRx<CliLink<App_, Impl_, BufAlloc_>, BufAlloc_> {
+  public Ztls::CliLink<
+    App_, CliLink<App_, Impl_, RxBufAlloc_, TxBufAlloc_>,
+    RxBufAlloc_, TxBufAlloc_>,
+  public ZiRx<
+    CliLink<App_, Impl_, RxBufAlloc_, TxBufAlloc_>, RxBufAlloc_> {
 public:
   using App = App_;
   using Impl = Impl_;
-  using Base = Ztls::CliLink<App, CliLink, BufAlloc_>;
-  using BufAlloc = BufAlloc_;
-  using Rx = ZiRx<CliLink, BufAlloc>;
+  using RxBufAlloc = RxBufAlloc_;
+  using TxBufAlloc = TxBufAlloc_;
+  using Base = Ztls::CliLink<App, CliLink, RxBufAlloc, TxBufAlloc>;
+  using Rx = ZiRx<CliLink, RxBufAlloc>;
 
   using Base::impl;
   using Base::app;
@@ -67,7 +72,7 @@ public:
     scheduleTimeout();
     m_state = State::Handshake;
 
-    auto tx = this->txStream_();
+    auto tx = this->txStream();
     tx << "GET " << m_path << " HTTP/1.1\r\nHost: " << this->server();
     if (this->port() != 443) tx << ':' << unsigned(this->port());
     tx
@@ -241,7 +246,8 @@ public:
     ZuCSpan alpn[] = { "http/1.1" };
 
     if (!Base::init(
-	  Ztls::ClientParams(mx, cf->get("thread", true), alpn)
+	  Ztls::ClientParams(
+	    mx, cf->get("rxThread", true), cf->get("txThread", true)).alpn(alpn)
 	    .caPath(cf->get("caPath", false))))
       ZiLOG(Error, "Zws", "TLS client initialization failed");
 
