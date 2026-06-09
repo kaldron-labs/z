@@ -147,40 +147,43 @@ inline bool runtimeFrameRef(
   return true;
 }
 
+// these counters are intentionally non-atomic
+// - occasional off-by-one due to concurrent
+//   modification is not a concern
 struct RuntimeDiag {
-	ZmAtomic<uint64_t>	endpointReady = 0;
-	ZmAtomic<uint64_t>	endpointFailures = 0;
-	ZmAtomic<uint64_t>	datagramsRx = 0;
-	ZmAtomic<uint64_t>	bytesRx = 0;
-	ZmAtomic<uint64_t>	packetsRx = 0;
-	ZmAtomic<uint64_t>	initialPacketsRx = 0;
-	ZmAtomic<uint64_t>	framesRx = 0;
-	ZmAtomic<uint64_t>	pingFramesRx = 0;
-	ZmAtomic<uint64_t>	ackFramesRx = 0;
-	ZmAtomic<uint64_t>	ackFramesTx = 0;
-	ZmAtomic<uint64_t>	handshakeDoneFramesRx = 0;
-	ZmAtomic<uint64_t>	handshakeDoneFramesTx = 0;
-	ZmAtomic<uint64_t>	packetParseErrors = 0;
-	ZmAtomic<uint64_t>	packetsTx = 0;
-	ZmAtomic<uint64_t>	initialPacketsTx = 0;
-	ZmAtomic<uint64_t>	bytesTx = 0;
-	ZmAtomic<uint64_t>	handshakePacketsRx = 0;
-	ZmAtomic<uint64_t>	handshakePacketsTx = 0;
-	ZmAtomic<uint64_t>	shortPacketsRx = 0;
-	ZmAtomic<uint64_t>	shortPacketsTx = 0;
-	ZmAtomic<uint64_t>	protectedPacketsRx = 0;
-	ZmAtomic<uint64_t>	protectedPacketsTx = 0;
-	ZmAtomic<uint64_t>	packetProtectionFailures = 0;
-	ZmAtomic<uint64_t>	tlsFailures = 0;
-	ZmAtomic<uint64_t>	cryptoFramesRx = 0;
-	ZmAtomic<uint64_t>	cryptoFramesTx = 0;
-	ZmAtomic<uint64_t>	cryptoBytesRx = 0;
-	ZmAtomic<uint64_t>	cryptoBytesTx = 0;
-	ZmAtomic<uint64_t>	streamFramesRx = 0;
-	ZmAtomic<uint64_t>	streamFramesTx = 0;
-	ZmAtomic<uint64_t>	streamBytesRx = 0;
-	ZmAtomic<uint64_t>	streamBytesTx = 0;
-	ZmAtomic<uint64_t>	handshakeComplete = 0;
+  uint64_t	endpointReady = 0;
+  uint64_t	endpointFailures = 0;
+  uint64_t	datagramsRx = 0;
+  uint64_t	bytesRx = 0;
+  uint64_t	packetsRx = 0;
+  uint64_t	initialPacketsRx = 0;
+  uint64_t	framesRx = 0;
+  uint64_t	pingFramesRx = 0;
+  uint64_t	ackFramesRx = 0;
+  uint64_t	ackFramesTx = 0;
+  uint64_t	handshakeDoneFramesRx = 0;
+  uint64_t	handshakeDoneFramesTx = 0;
+  uint64_t	packetParseErrors = 0;
+  uint64_t	packetsTx = 0;
+  uint64_t	initialPacketsTx = 0;
+  uint64_t	bytesTx = 0;
+  uint64_t	handshakePacketsRx = 0;
+  uint64_t	handshakePacketsTx = 0;
+  uint64_t	shortPacketsRx = 0;
+  uint64_t	shortPacketsTx = 0;
+  uint64_t	protectedPacketsRx = 0;
+  uint64_t	protectedPacketsTx = 0;
+  uint64_t	packetProtectionFailures = 0;
+  uint64_t	tlsFailures = 0;
+  uint64_t	cryptoFramesRx = 0;
+  uint64_t	cryptoFramesTx = 0;
+  uint64_t	cryptoBytesRx = 0;
+  uint64_t	cryptoBytesTx = 0;
+  uint64_t	streamFramesRx = 0;
+  uint64_t	streamFramesTx = 0;
+  uint64_t	streamBytesRx = 0;
+  uint64_t	streamBytesTx = 0;
+  uint64_t	handshakeComplete = 0;
 };
 
 template <typename Send>
