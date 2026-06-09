@@ -14,11 +14,13 @@ using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
+struct FlowLink;
 struct FlowStream :
-  public Zquic::Stream<FlowStream, StreamTxBufAlloc>
+  public Zquic::Stream<FlowLink, FlowStream, StreamTxBufAlloc>
 {
-  using Base = Zquic::Stream<FlowStream, StreamTxBufAlloc>;
-  FlowStream(int64_t id) : Base{id} { }
+  using Base = Zquic::Stream<FlowLink, FlowStream, StreamTxBufAlloc>;
+  FlowStream(int64_t id) : Base{nullptr, id} { }
+  using Base::Base;
   int process(Zquic::RxStream &) { return 0; }
 };
 

@@ -13,32 +13,12 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
-#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmFn.hh>
+#include <zlib/ZmPolymorph.hh>
 
-#include <zlib/ZquicSock.hh>
+#include <zlib/ZquicDatagram.hh>
 
 namespace Zquic {
-
-struct Datagram {
-  ZmRef<ZiIOBuf>	buf;
-  ZiSockAddr		addr;
-
-  Datagram() = default;
-  Datagram(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_) :
-    buf{ZuMv(buf_)}, addr{ZuMv(addr_)} { }
-};
-
-struct EndpointDiag {
-  ZmAtomic<uint64_t>	packetRxBufAllocs = 0;
-  ZmAtomic<uint64_t>	packetTxBufAllocs = 0;
-  ZmAtomic<uint64_t>	endpointCxnAllocs = 0;
-  ZmAtomic<uint64_t>	datagramsRx = 0;
-  ZmAtomic<uint64_t>	datagramsTx = 0;
-  ZmAtomic<uint64_t>	bytesRx = 0;
-  ZmAtomic<uint64_t>	bytesTx = 0;
-  ZmAtomic<uint64_t>	openFailures = 0;
-  ZmAtomic<uint64_t>	ioErrors = 0;
-};
 
 class Endpoint : public ZmPolymorph {
   class Cxn_;

@@ -21,15 +21,15 @@ namespace {
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
 struct App { };
+struct TestLink;
 struct TestStream :
-  public Zquic::Stream<TestStream, StreamTxBufAlloc>
+  public Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>
 {
-  using Base = Zquic::Stream<TestStream, StreamTxBufAlloc>;
-  TestStream(int64_t id) : Base{id} { }
+  using Base = Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>;
+  using Base::Base;
   int process(Zquic::RxStream &) { ++processed; return 0; }
   unsigned processed = 0;
 };
-struct TestLink;
 using TestLinkRef = ZmRef<TestLink>;
 using TestCxn = Zquic::Cxn<TestLink, TestLinkRef>;
 using TestCxnRef = ZmRef<TestCxn>;
@@ -100,7 +100,7 @@ void testHandshakeStreamsAndClose()
   ZuCHECK(c0->id() == 0 && c1->id() == 2 && s0->id() == 1,
     "loop stream IDs mismatch");
   {
-    auto tx = c0->txStream();
+    auto tx = c0->txStream_();
     tx << "request-body" << Zi::flush();
   }
   ZuCHECK(c0->txBytes() == 12, "loop stream Tx accounting mismatch");

@@ -5,26 +5,33 @@ stream buffers, UDP path handling, loss recovery, flow control, and timers.
 
 The public API is transport-oriented:
 
-- applications create `Zquic::Link` objects;
-- a link creates local streams with `stream()`;
-- each `Zquic::Stream` exposes `txStream()`, `fin()`, `reset()`, and `stop()`;
-- peer-created streams are reported to the link implementation with the
-  `streamed(ZmRef<Stream>)` callback in later protocol phases.
+- client applications derive from `Zquic::Client<App>` and create
+  `Zquic::CliLink<App, Link, Stream>` objects;
+- server applications derive from `Zquic::Server<App>`, call `listen()`, and
+  accept logical connections by returning `SrvLink` instances from
+  `accepted(const Zquic::InitialInfo &)`;
+- each link owns its streams and creates local streams with `stream()`;
+- client and server streams derive from `CliStream` and `SrvStream`;
+- each stream exposes `txStream()`, `fin()`, `reset()`, and `stop()`;
+- peer-created streams are reported to the link implementation with
+  `streamed(ZmRef<Stream>)`.
 
 Runtime entry points are also transport-oriented. `Zquic::Server::listen()`
-opens an unconnected UDP endpoint on `ZiMultiplex::udp()`, while
-`Zquic::Client::connect()` opens a connected UDP endpoint when a remote address
-is supplied. Runtime diagnostics expose endpoint readiness/failure counts,
-datagram byte counts, parsed packet/frame counts, and probe Tx counts. The
-current `sendInitialProbe()` path is a packet-pump diagnostic: it emits a
-padded QUIC v1 Initial datagram carrying PING so endpoint, packet-codec, and
-diagnostic wiring can be proved over loopback before the full TLS handshake and
-stream scheduler are joined to the runtime path.
+opens one unconnected UDP listener on `ZiMultiplex::udp()` and routes datagrams
+to active `SrvLink`s by connection ID. `Zquic::CliLink::connect()` opens a
+connected UDP socket through `CliCxn`. Runtime diagnostics expose endpoint
+readiness/failure counts, datagram byte counts, parsed packet/frame counts,
+handshake progress, stream frames, ACKs, and packet protection counters.
 
 `Zquic` does not expose HTTP/3 request, response, QPACK, or WebTransport types.
 Production HTTP/3 is owned by `Zhttp` and will use `Zquic` as its transport.
 Any HTTP/3 code inside the `zquic` module is limited to test-only interop
 harnesses under `zquic/test`.
+
+`zquic/example` contains small noinst transport examples:
+`ZquicServer` listens on one UDP socket and accepts routed `SrvLink`s, while
+`ZquicClient` opens a `CliLink`, sends one stream payload, and prints the
+server's stream response.
 
 The `zquic/test` H3Lite harness is intentionally narrow: it uses ALPN `h3`,
 SETTINGS, HEADERS, DATA, GOAWAY, and zero-capacity QPACK field sections with
@@ -69,6 +76,10 @@ Client UDP sockets may be connected when the platform exposes useful PMTU
 queries for connected sockets. Server UDP sockets remain unconnected so one
 socket can serve many peers and paths.
 
+`Zquic::Endpoint` is retained only as a private/test UDP helper. Public
+datagram ownership and endpoint diagnostics live in `ZquicDatagram.hh`; the
+aligned runtime surface is `Cxn`, `CliCxn`, `SrvCxn`, `CliLink`, and `SrvLink`.
+
 `Zquic` owns packetization and PMTUD/DPLPMTUD. It disables IP fragmentation
 where the platform allows it, starts with a safe active payload size, and raises
 the active PMTU only after QUIC probe success. Kernel PMTU, ICMP Packet Too Big,
@@ -97,3 +108,6 @@ Log subsystem names are stable constants:
 - `Zquic.Recovery`
 - `Zquic.Stream`
 - `Zquic.PMTUD`
+
+`Zquic.Endpoint` is the internal UDP-adapter diagnostic category; the public
+runtime API is `Client` / `Server` with `CliLink` / `SrvLink` and `Cxn`.
