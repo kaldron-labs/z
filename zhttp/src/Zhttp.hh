@@ -15,13 +15,17 @@
 
 #include <zlib/ZhttpLib.hh>
 
+#include <zlib/ZuString.hh>
+#include <zlib/ZuTL.hh>
 #include <zlib/ZuMatcher.hh>
+#include <zlib/ZuSwitch.hh>
 #include <zlib/ZuUnroll.hh>
 
-#include <zlib/ZtBuiltin.hh>
 #include <zlib/ZtLocalArray.hh>
 
-#include <zlib/Ztls.hh>
+#include <zlib/ZiAssert.hh>
+#include <zlib/ZiLog.hh>
+#include <zlib/ZiTxStream.hh>
 
 namespace Zhttp {
 
@@ -704,11 +708,13 @@ public:
   }
 
   // body
-  template <typename Stream, bool _ = HasBody && !Chunked, ZuIfT<_, int> = 0>
-  auto body(Stream &stream) { return bodyStream(stream, impl()->contentLength()); }
+  template <typename Stream, bool _ = HasBody && !Chunked>
+  ZuIfT<_, BodyStream<Stream>>
+  body(Stream &stream) { return bodyStream(stream, impl()->contentLength()); }
 
-  template <typename Stream, bool _ = HasBody && Chunked, ZuIfT<_, int> = 0>
-  auto body(Stream &stream) { return chunkedStream(stream); }
+  template <typename Stream, bool _ = HasBody && Chunked>
+  ZuIfT<_, ChunkedStream<Stream>>
+  body(Stream &stream) { return chunkedStream(stream); }
 
   // finish
   template <typename Stream>
