@@ -15,10 +15,13 @@ namespace {
 
 using TestStreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
+struct TestLink { };
+
 struct TestStream :
-    public Zquic::Stream<TestStream, TestStreamTxBufAlloc> {
-  using Base = Zquic::Stream<TestStream, TestStreamTxBufAlloc>;
-  using Base::Base;
+    public Zquic::Stream<TestLink, TestStream, TestStreamTxBufAlloc> {
+  using Base = Zquic::Stream<TestLink, TestStream, TestStreamTxBufAlloc>;
+
+  TestStream(int64_t id = 0) : Base{nullptr, id} { }
 
   int process(Zquic::RxStream &) { return 0; }
 };

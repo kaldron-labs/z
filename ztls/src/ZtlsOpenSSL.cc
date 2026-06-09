@@ -10,10 +10,11 @@
 #include <openssl/err.h>
 #include <openssl/bn.h>
 #include <openssl/asn1.h>
+#include <openssl/core_names.h>
 #include <openssl/objects.h>
 #include <openssl/ec.h>
 #include <openssl/evp.h>
-#include <openssl/hmac.h>
+#include <openssl/param_build.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/rsa.h>
@@ -206,6 +207,145 @@ static BIGNUM *bn_from_span_(ZuBSpan in)
   return BN_bin2bn(in.data(), in.length(), nullptr);
 }
 
+static bool bn_param_write_padded_(
+  const EVP_PKEY *pkey, const char *param, ZuSpan<uint8_t> out)
+{
+  BIGNUM *bn = nullptr;
+  if (EVP_PKEY_get_bn_param(pkey, param, &bn) != 1) return false;
+  bool ok = bn_write_padded_(bn, out);
+  BN_free(bn);
+  return ok;
+}
+
+static EVP_PKEY *pkey_fromdata_(const char *type, int selection,
+    OSSL_PARAM *params)
+{
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(nullptr, type, nullptr);
+  if (!ctx) return nullptr;
+  EVP_PKEY *pkey = nullptr;
+  if (EVP_PKEY_fromdata_init(ctx) != 1 ||
+      EVP_PKEY_fromdata(ctx, &pkey, selection, params) != 1) {
+    if (pkey) EVP_PKEY_free(pkey);
+    pkey = nullptr;
+  }
+  EVP_PKEY_CTX_free(ctx);
+  return pkey;
+}
+
+static bool pkey_check_(EVP_PKEY *pkey, bool privateKey)
+{
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, pkey, nullptr);
+  if (!ctx) return false;
+  int ok = privateKey ?
+    EVP_PKEY_pairwise_check(ctx) : EVP_PKEY_public_check(ctx);
+  EVP_PKEY_CTX_free(ctx);
+  return ok == 1;
+}
+
+static int ec_nid_from_pkey_(const EVP_PKEY *pkey)
+{
+  char groupName[80];
+  size_t len = 0;
+  if (EVP_PKEY_get_utf8_string_param(
+	pkey, OSSL_PKEY_PARAM_GROUP_NAME, groupName, sizeof(groupName), &len) != 1)
+    return NID_undef;
+  if (len >= sizeof(groupName)) return NID_undef;
+  groupName[len] = '\0';
+  return OBJ_sn2nid(groupName);
+}
+
+static bool ec_public_from_private_(int nid, const BIGNUM *priv,
+    uint8_t **pubKey, size_t *pubKeyLen)
+{
+  *pubKey = nullptr;
+  *pubKeyLen = 0;
+  EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
+  if (!group) return false;
+  EC_POINT *pub = EC_POINT_new(group);
+  if (!pub) { EC_GROUP_free(group); return false; }
+  bool ok = false;
+  if (EC_POINT_mul(group, pub, priv, nullptr, nullptr, nullptr) == 1) {
+    size_t n = EC_POINT_point2oct(
+      group, pub, POINT_CONVERSION_UNCOMPRESSED, nullptr, 0, nullptr);
+    if (n) {
+      auto data = static_cast<uint8_t *>(OPENSSL_malloc(n));
+      if (data) {
+	ok = EC_POINT_point2oct(
+	  group, pub, POINT_CONVERSION_UNCOMPRESSED,
+	  data, n, nullptr) == n;
+	if (ok) {
+	  *pubKey = data;
+	  *pubKeyLen = n;
+	} else {
+	  OPENSSL_free(data);
+	}
+      }
+    }
+  }
+  EC_POINT_free(pub);
+  EC_GROUP_free(group);
+  return ok;
+}
+
+static EVP_PKEY *rsa_fromdata_(bool privateKey,
+    BIGNUM *n, BIGNUM *e, BIGNUM *d = nullptr,
+    BIGNUM *p = nullptr, BIGNUM *q = nullptr,
+    BIGNUM *dp = nullptr, BIGNUM *dq = nullptr, BIGNUM *qi = nullptr)
+{
+  OSSL_PARAM_BLD *bld = OSSL_PARAM_BLD_new();
+  if (!bld) return nullptr;
+  int ok =
+    OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_N, n) == 1 &&
+    OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_E, e) == 1;
+  if (ok && privateKey) {
+    ok =
+      OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_D, d) == 1 &&
+      OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_FACTOR1, p) == 1 &&
+      OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_FACTOR2, q) == 1 &&
+      OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_EXPONENT1, dp) == 1 &&
+      OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_EXPONENT2, dq) == 1 &&
+      OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_COEFFICIENT1, qi) == 1;
+  }
+  OSSL_PARAM *params = ok ? OSSL_PARAM_BLD_to_param(bld) : nullptr;
+  EVP_PKEY *pkey = params ?
+    pkey_fromdata_("RSA",
+      privateKey ? EVP_PKEY_KEYPAIR : EVP_PKEY_PUBLIC_KEY, params) : nullptr;
+  OSSL_PARAM_free(params);
+  OSSL_PARAM_BLD_free(bld);
+  if (pkey && !pkey_check_(pkey, privateKey)) {
+    EVP_PKEY_free(pkey);
+    pkey = nullptr;
+  }
+  return pkey;
+}
+
+static EVP_PKEY *ec_fromdata_(int nid, bool privateKey,
+    ZuBSpan pubKey, BIGNUM *priv = nullptr)
+{
+  const char *groupName = OBJ_nid2sn(nid);
+  if (!groupName) return nullptr;
+  OSSL_PARAM_BLD *bld = OSSL_PARAM_BLD_new();
+  if (!bld) return nullptr;
+  int ok =
+    OSSL_PARAM_BLD_push_utf8_string(
+      bld, OSSL_PKEY_PARAM_GROUP_NAME, groupName, 0) == 1 &&
+    (!privateKey ||
+      OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_PRIV_KEY, priv) == 1) &&
+    OSSL_PARAM_BLD_push_octet_string(
+      bld, OSSL_PKEY_PARAM_PUB_KEY, pubKey.data(), pubKey.length()) == 1;
+  OSSL_PARAM *params = ok ? OSSL_PARAM_BLD_to_param(bld) : nullptr;
+  EVP_PKEY *pkey = params ?
+    pkey_fromdata_("EC",
+      privateKey ? EVP_PKEY_KEYPAIR : EVP_PKEY_PUBLIC_KEY, params) : nullptr;
+  OSSL_PARAM_free(params);
+  OSSL_PARAM_BLD_free(bld);
+  if (pkey && !pkey_check_(pkey, privateKey)) {
+    EVP_PKEY_free(pkey);
+    pkey = nullptr;
+  }
+  return pkey;
+}
+
 static int nid_from_oid_(ZuBSpan oid)
 {
   if (!oid.length()) return NID_undef;
@@ -257,22 +397,27 @@ static void replace_pkey_(PKey *key, EVP_PKEY *pkey)
 static thread_local TicketKey *ticket_key_tls_ = nullptr;
 
 static int ticket_key_cb_(unsigned char *key_name, unsigned char *iv,
-  EVP_CIPHER_CTX *ctx, HMAC_CTX *hctx, int enc)
+  EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc)
 {
   auto key = ticket_key_tls_;
   if (!key) return -1;
+  OSSL_PARAM params[] = {
+    OSSL_PARAM_construct_utf8_string(
+      OSSL_MAC_PARAM_DIGEST, const_cast<char *>("SHA256"), 0),
+    OSSL_PARAM_construct_end()
+  };
   if (enc) {
     memcpy(key_name, key->name, sizeof(key->name));
     RAND_bytes(iv, EVP_CIPHER_iv_length(EVP_aes_256_cbc()));
     EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key->aes_key, iv);
-    HMAC_Init_ex(hctx, key->hmac_key, sizeof(key->hmac_key),
-      EVP_sha256(), nullptr);
+    if (EVP_MAC_init(hctx, key->hmac_key, sizeof(key->hmac_key), params) != 1)
+      return -1;
     return 1;
   }
   if (memcmp(key_name, key->name, sizeof(key->name))) return 0;
   EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key->aes_key, iv);
-  HMAC_Init_ex(hctx, key->hmac_key, sizeof(key->hmac_key),
-    EVP_sha256(), nullptr);
+  if (EVP_MAC_init(hctx, key->hmac_key, sizeof(key->hmac_key), params) != 1)
+    return -1;
   return 1;
 }
 
@@ -281,8 +426,8 @@ static int ticket_encrypt_cb_(ptls_encrypt_ticket_t *self, ptls_t *,
 {
   ticket_key_tls_ = reinterpret_cast<TicketKey *>(self);
   int ret = is_encrypt ?
-    ptls_openssl_encrypt_ticket(dst, src, ticket_key_cb_) :
-    ptls_openssl_decrypt_ticket(dst, src, ticket_key_cb_);
+    ptls_openssl_encrypt_ticket_evp(dst, src, ticket_key_cb_) :
+    ptls_openssl_decrypt_ticket_evp(dst, src, ticket_key_cb_);
   ticket_key_tls_ = nullptr;
   return ret;
 }
@@ -388,31 +533,30 @@ void pkey_free(PKey *key)
 size_t pkey_rsa_size(const PKey *key)
 {
   if (!key || !key->pkey) return 0;
-  const RSA *rsa = EVP_PKEY_get0_RSA(key->pkey);
-  if (!rsa) return 0;
-  return RSA_size(rsa);
+  BIGNUM *n = nullptr;
+  if (EVP_PKEY_get_bn_param(key->pkey, OSSL_PKEY_PARAM_RSA_N, &n) != 1)
+    return 0;
+  int len = BN_num_bytes(n);
+  BN_free(n);
+  return len > 0 ? size_t(len) : 0;
 }
 
 bool pkey_rsa_generate(PKey *key, unsigned bits)
 {
   if (!key) return false;
-  RSA *rsa = RSA_new();
-  if (!rsa) return false;
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr);
+  if (!ctx) return false;
   BIGNUM *e = BN_new();
-  if (!e) { RSA_free(rsa); return false; }
-  BN_set_word(e, RSA_F4);
-  if (RSA_generate_key_ex(rsa, bits, e, nullptr) != 1) {
-    BN_free(e);
-    RSA_free(rsa);
-    return false;
-  }
+  EVP_PKEY *pkey = nullptr;
+  bool ok = e &&
+    BN_set_word(e, RSA_F4) == 1 &&
+    EVP_PKEY_keygen_init(ctx) == 1 &&
+    EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, bits) == 1 &&
+    EVP_PKEY_CTX_set1_rsa_keygen_pubexp(ctx, e) == 1 &&
+    EVP_PKEY_keygen(ctx, &pkey) == 1 && pkey;
   BN_free(e);
-  EVP_PKEY *pkey = EVP_PKEY_new();
-  if (!pkey || EVP_PKEY_assign_RSA(pkey, rsa) != 1) {
-    if (pkey) EVP_PKEY_free(pkey);
-    RSA_free(rsa);
-    return false;
-  }
+  EVP_PKEY_CTX_free(ctx);
+  if (!ok) { if (pkey) EVP_PKEY_free(pkey); return false; }
   replace_pkey_(key, pkey);
   return true;
 }
@@ -420,22 +564,13 @@ bool pkey_rsa_generate(PKey *key, unsigned bits)
 bool pkey_rsa_import_public(PKey *key, ZuBSpan modulus, ZuBSpan pubExp)
 {
   if (!key) return false;
-  RSA *rsa = RSA_new();
-  if (!rsa) return false;
   BIGNUM *n = bn_from_span_(modulus);
   BIGNUM *e = bn_from_span_(pubExp);
-  if (!n || !e || RSA_set0_key(rsa, n, e, nullptr) != 1) {
-    if (n) BN_free(n);
-    if (e) BN_free(e);
-    RSA_free(rsa);
+  EVP_PKEY *pkey = (n && e) ? rsa_fromdata_(false, n, e) : nullptr;
+  BN_free(n);
+  BN_free(e);
+  if (!pkey)
     return false;
-  }
-  EVP_PKEY *pkey = EVP_PKEY_new();
-  if (!pkey || EVP_PKEY_assign_RSA(pkey, rsa) != 1) {
-    if (pkey) EVP_PKEY_free(pkey);
-    RSA_free(rsa);
-    return false;
-  }
   replace_pkey_(key, pkey);
   return true;
 }
@@ -445,8 +580,6 @@ bool pkey_rsa_import_private(
   ZuBSpan prime1, ZuBSpan prime2, ZuBSpan exp1, ZuBSpan exp2, ZuBSpan coeff)
 {
   if (!key) return false;
-  RSA *rsa = RSA_new();
-  if (!rsa) return false;
   BIGNUM *n = bn_from_span_(modulus);
   BIGNUM *e = bn_from_span_(pubExp);
   BIGNUM *d = bn_from_span_(prvExp);
@@ -455,31 +588,17 @@ bool pkey_rsa_import_private(
   BIGNUM *dp = bn_from_span_(exp1);
   BIGNUM *dq = bn_from_span_(exp2);
   BIGNUM *qi = bn_from_span_(coeff);
-  if (!n || !e || !d || !p || !q || !dp || !dq || !qi ||
-      RSA_set0_key(rsa, n, e, d) != 1 ||
-      RSA_set0_factors(rsa, p, q) != 1 ||
-      RSA_set0_crt_params(rsa, dp, dq, qi) != 1) {
-    if (n) BN_free(n);
-    if (e) BN_free(e);
-    if (d) BN_free(d);
-    if (p) BN_free(p);
-    if (q) BN_free(q);
-    if (dp) BN_free(dp);
-    if (dq) BN_free(dq);
-    if (qi) BN_free(qi);
-    RSA_free(rsa);
-    return false;
-  }
-  if (RSA_check_key(rsa) != 1) {
-    RSA_free(rsa);
-    return false;
-  }
-  EVP_PKEY *pkey = EVP_PKEY_new();
-  if (!pkey || EVP_PKEY_assign_RSA(pkey, rsa) != 1) {
-    if (pkey) EVP_PKEY_free(pkey);
-    RSA_free(rsa);
-    return false;
-  }
+  EVP_PKEY *pkey = (n && e && d && p && q && dp && dq && qi) ?
+    rsa_fromdata_(true, n, e, d, p, q, dp, dq, qi) : nullptr;
+  BN_free(n);
+  BN_free(e);
+  BN_free(d);
+  BN_free(p);
+  BN_free(q);
+  BN_free(dp);
+  BN_free(dq);
+  BN_free(qi);
+  if (!pkey) return false;
   replace_pkey_(key, pkey);
   return true;
 }
@@ -488,12 +607,9 @@ bool pkey_rsa_export_public(
   const PKey *key, ZuSpan<uint8_t> modulus, ZuSpan<uint8_t> pubExp)
 {
   if (!key || !key->pkey) return false;
-  const RSA *rsa = EVP_PKEY_get0_RSA(key->pkey);
-  if (!rsa) return false;
-  const BIGNUM *n = nullptr;
-  const BIGNUM *e = nullptr;
-  RSA_get0_key(rsa, &n, &e, nullptr);
-  return bn_write_padded_(n, modulus) && bn_write_padded_(e, pubExp);
+  return
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_N, modulus) &&
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_E, pubExp);
 }
 
 bool pkey_rsa_export_private(
@@ -502,55 +618,43 @@ bool pkey_rsa_export_private(
   ZuSpan<uint8_t> exp1, ZuSpan<uint8_t> exp2, ZuSpan<uint8_t> coeff)
 {
   if (!key || !key->pkey) return false;
-  const RSA *rsa = EVP_PKEY_get0_RSA(key->pkey);
-  if (!rsa) return false;
-  const BIGNUM *n = nullptr, *e = nullptr, *d = nullptr;
-  const BIGNUM *p = nullptr, *q = nullptr;
-  const BIGNUM *dp = nullptr, *dq = nullptr, *qi = nullptr;
-  RSA_get0_key(rsa, &n, &e, &d);
-  RSA_get0_factors(rsa, &p, &q);
-  RSA_get0_crt_params(rsa, &dp, &dq, &qi);
-  return bn_write_padded_(n, modulus) &&
-    bn_write_padded_(e, pubExp) &&
-    bn_write_padded_(d, prvExp) &&
-    bn_write_padded_(p, prime1) &&
-    bn_write_padded_(q, prime2) &&
-    bn_write_padded_(dp, exp1) &&
-    bn_write_padded_(dq, exp2) &&
-    bn_write_padded_(qi, coeff);
+  return
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_N, modulus) &&
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_E, pubExp) &&
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_D, prvExp) &&
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_FACTOR1, prime1) &&
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_FACTOR2, prime2) &&
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_EXPONENT1, exp1) &&
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_EXPONENT2, exp2) &&
+    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_COEFFICIENT1, coeff);
 }
 
 size_t pkey_ec_key_size(const PKey *key)
 {
   if (!key || !key->pkey) return 0;
-  const EC_KEY *ec = EVP_PKEY_get0_EC_KEY(key->pkey);
-  if (!ec) return 0;
-  const EC_GROUP *group = EC_KEY_get0_group(ec);
+  int nid = ec_nid_from_pkey_(key->pkey);
+  if (nid == NID_undef) return 0;
+  EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
   if (!group) return 0;
   int bits = EC_GROUP_get_degree(group);
+  EC_GROUP_free(group);
   return (bits + 7) >> 3;
 }
 
 size_t pkey_ec_public_size(const PKey *key)
 {
   if (!key || !key->pkey) return 0;
-  const EC_KEY *ec = EVP_PKEY_get0_EC_KEY(key->pkey);
-  if (!ec) return 0;
-  const EC_GROUP *group = EC_KEY_get0_group(ec);
-  const EC_POINT *point = EC_KEY_get0_public_key(ec);
-  if (!group || !point) return 0;
-  return EC_POINT_point2oct(group, point,
-    POINT_CONVERSION_UNCOMPRESSED, nullptr, 0, nullptr);
+  size_t len = 0;
+  if (EVP_PKEY_get_octet_string_param(
+	key->pkey, OSSL_PKEY_PARAM_PUB_KEY, nullptr, 0, &len) != 1)
+    return 0;
+  return len;
 }
 
 size_t pkey_ec_oid_size(const PKey *key)
 {
   if (!key || !key->pkey) return 0;
-  const EC_KEY *ec = EVP_PKEY_get0_EC_KEY(key->pkey);
-  if (!ec) return 0;
-  const EC_GROUP *group = EC_KEY_get0_group(ec);
-  if (!group) return 0;
-  int nid = EC_GROUP_get_curve_name(group);
+  int nid = ec_nid_from_pkey_(key->pkey);
   ASN1_OBJECT *obj = OBJ_nid2obj(nid);
   if (!obj) return 0;
   int len = OBJ_length(obj);
@@ -562,15 +666,16 @@ bool pkey_ec_generate(PKey *key, ZuBSpan oid)
   if (!key) return false;
   int nid = nid_from_oid_(oid);
   if (nid == NID_undef) return false;
-  EC_KEY *ec = EC_KEY_new_by_curve_name(nid);
-  if (!ec) return false;
-  if (EC_KEY_generate_key(ec) != 1) { EC_KEY_free(ec); return false; }
-  EVP_PKEY *pkey = EVP_PKEY_new();
-  if (!pkey || EVP_PKEY_assign_EC_KEY(pkey, ec) != 1) {
-    if (pkey) EVP_PKEY_free(pkey);
-    EC_KEY_free(ec);
-    return false;
-  }
+  const char *groupName = OBJ_nid2sn(nid);
+  if (!groupName) return false;
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
+  if (!ctx) return false;
+  EVP_PKEY *pkey = nullptr;
+  bool ok = EVP_PKEY_keygen_init(ctx) == 1 &&
+    EVP_PKEY_CTX_set_group_name(ctx, groupName) == 1 &&
+    EVP_PKEY_keygen(ctx, &pkey) == 1 && pkey;
+  EVP_PKEY_CTX_free(ctx);
+  if (!ok) { if (pkey) EVP_PKEY_free(pkey); return false; }
   replace_pkey_(key, pkey);
   return true;
 }
@@ -580,18 +685,8 @@ bool pkey_ec_import_public(PKey *key, ZuBSpan oid, ZuBSpan pubKey)
   if (!key) return false;
   int nid = nid_from_oid_(oid);
   if (nid == NID_undef) return false;
-  EC_KEY *ec = EC_KEY_new_by_curve_name(nid);
-  if (!ec) return false;
-  if (EC_KEY_oct2key(ec, pubKey.data(), pubKey.length(), nullptr) != 1) {
-    EC_KEY_free(ec);
-    return false;
-  }
-  EVP_PKEY *pkey = EVP_PKEY_new();
-  if (!pkey || EVP_PKEY_assign_EC_KEY(pkey, ec) != 1) {
-    if (pkey) EVP_PKEY_free(pkey);
-    EC_KEY_free(ec);
-    return false;
-  }
+  EVP_PKEY *pkey = ec_fromdata_(nid, false, pubKey);
+  if (!pkey) return false;
   replace_pkey_(key, pkey);
   return true;
 }
@@ -601,34 +696,18 @@ bool pkey_ec_import_private(PKey *key, ZuBSpan oid, ZuBSpan priv)
   if (!key) return false;
   int nid = nid_from_oid_(oid);
   if (nid == NID_undef) return false;
-  EC_KEY *ec = EC_KEY_new_by_curve_name(nid);
-  if (!ec) return false;
-  const EC_GROUP *group = EC_KEY_get0_group(ec);
-  if (!group) { EC_KEY_free(ec); return false; }
   BIGNUM *d = bn_from_span_(priv);
-  if (!d) { EC_KEY_free(ec); return false; }
-  if (EC_KEY_set_private_key(ec, d) != 1) {
+  if (!d) return false;
+  uint8_t *pubKey = nullptr;
+  size_t pubKeyLen = 0;
+  if (!ec_public_from_private_(nid, d, &pubKey, &pubKeyLen)) {
     BN_free(d);
-    EC_KEY_free(ec);
     return false;
   }
-  EC_POINT *pub = EC_POINT_new(group);
-  if (!pub) { BN_free(d); EC_KEY_free(ec); return false; }
-  if (EC_POINT_mul(group, pub, d, nullptr, nullptr, nullptr) != 1 ||
-      EC_KEY_set_public_key(ec, pub) != 1) {
-    EC_POINT_free(pub);
-    BN_free(d);
-    EC_KEY_free(ec);
-    return false;
-  }
-  EC_POINT_free(pub);
+  EVP_PKEY *pkey = ec_fromdata_(nid, true, {pubKey, unsigned(pubKeyLen)}, d);
+  OPENSSL_free(pubKey);
   BN_free(d);
-  EVP_PKEY *pkey = EVP_PKEY_new();
-  if (!pkey || EVP_PKEY_assign_EC_KEY(pkey, ec) != 1) {
-    if (pkey) EVP_PKEY_free(pkey);
-    EC_KEY_free(ec);
-    return false;
-  }
+  if (!pkey) return false;
   replace_pkey_(key, pkey);
   return true;
 }
@@ -636,34 +715,23 @@ bool pkey_ec_import_private(PKey *key, ZuBSpan oid, ZuBSpan priv)
 bool pkey_ec_export_private(const PKey *key, ZuSpan<uint8_t> out)
 {
   if (!key || !key->pkey) return false;
-  const EC_KEY *ec = EVP_PKEY_get0_EC_KEY(key->pkey);
-  if (!ec) return false;
-  const BIGNUM *d = EC_KEY_get0_private_key(ec);
-  return bn_write_padded_(d, out);
+  return bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_PRIV_KEY, out);
 }
 
 bool pkey_ec_export_public(const PKey *key, ZuSpan<uint8_t> out)
 {
   if (!key || !key->pkey) return false;
-  const EC_KEY *ec = EVP_PKEY_get0_EC_KEY(key->pkey);
-  if (!ec) return false;
-  const EC_GROUP *group = EC_KEY_get0_group(ec);
-  const EC_POINT *point = EC_KEY_get0_public_key(ec);
-  if (!group || !point) return false;
-  size_t n = EC_POINT_point2oct(
-    group, point, POINT_CONVERSION_UNCOMPRESSED,
-    out.data(), out.length(), nullptr);
+  size_t n = 0;
+  if (EVP_PKEY_get_octet_string_param(
+	key->pkey, OSSL_PKEY_PARAM_PUB_KEY, out.data(), out.length(), &n) != 1)
+    return false;
   return n == out.length();
 }
 
 bool pkey_ec_export_oid(const PKey *key, ZuSpan<uint8_t> out)
 {
   if (!key || !key->pkey) return false;
-  const EC_KEY *ec = EVP_PKEY_get0_EC_KEY(key->pkey);
-  if (!ec) return false;
-  const EC_GROUP *group = EC_KEY_get0_group(ec);
-  if (!group) return false;
-  int nid = EC_GROUP_get_curve_name(group);
+  int nid = ec_nid_from_pkey_(key->pkey);
   if (nid == NID_undef) return false;
   return oid_from_nid_(nid, out);
 }

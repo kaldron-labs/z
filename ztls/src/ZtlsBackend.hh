@@ -4,7 +4,9 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// backend facade for ztls (zpicotls/OpenSSL)
+// backend facade for the zpicotls back-end
+// - currently OpenSSL
+// - minicrypto could be a future option
 
 #ifndef ZtlsBackend_HH
 #define ZtlsBackend_HH

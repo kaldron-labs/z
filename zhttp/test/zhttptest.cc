@@ -13,6 +13,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
+#include <zlib/ZtString.hh>
 
 inline void out(const char *s) { std::cout << s << '\n'; }
 
@@ -41,6 +42,7 @@ using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, BufSize, MaxBufSize,
   ZuStringT<"Zhttp.Buf">>;
 using RxStream = ZiRxStream<RxQueue>;
 using IOBufAlloc = ZiIOBufAlloc<BufSize, MaxBufSize, "Zhttp.Buf">;
+using BodyData = ZtString<ZtStringHeapID<"Zhttp.Test.BodyData">>;
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
@@ -101,7 +103,7 @@ struct ResponseParser :
   bool				chunkedSeen = false;
   uint64_t			bodyBytes = 0;
   Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
-  Zhttp::BodyData		bodyData;
+  BodyData			bodyData;
 };
 
 using RequestHeaders = ZuTypeList<

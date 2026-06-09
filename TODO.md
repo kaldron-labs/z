@@ -1,22 +1,25 @@
 # TODO
 
+## Zquic
+- comments and source code style
+  - white space, indentation, line folding
+
+## Ztcp
+- raw equivalent of `Ztls`
+
+## ZvEngine
+- becomes `ZiEngine` / ...
+- type-erased telemetry + command/control APIs (not CRTP)
+- `Zquic` + `Ztcp` derive from `Zi*`, implement APIs
+
 ## Zhttp
-- need to move from single buffer to `ZiTxStream` and `ZiRxStream`
-- adopt all-lower-case as canonical header casing
-- see `Zhttp.hh` for QPACK/HPACK handling plan
+- add layering on `Ztcp` for HTTP 1.1 `http:`
+- unify with HTTP/3 and `Zquic`
+- add benchmarking
 
 ## build system
 - factor out fbs codegen into shell script
   - used repeatedly in multiple Makefile.am
-
-## io_uring (LATER)
-- `io_uring_prep_send_zc_fixed`
-- need a rx and tx buf allocator in Ztls (and ZiMultiplex)
-  - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
-    - but not jumbo, in that case we fallback to non-registered buffers
-    - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
-- steal from unum.cloud ucall for uring
-- https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
 
 ## Zrest
 - figure out REST Rx -> ZvIOMsg
@@ -48,10 +51,22 @@
   - facilitates zdash telemetry fan-in / aggregation etc.
 - command groups can be implemented using REST etc.
 
+# Z Deferred Work
+
+## io_uring
+- `io_uring_prep_send_zc_fixed`
+- need a rx and tx buf allocator in Ztls (and ZiMultiplex)
+  - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
+    - but not jumbo, in that case we fallback to non-registered buffers
+    - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
+- steal from unum.cloud ucall for uring
+- https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
+
 # Z Candidate Work
 
 ## ZtStruct
-- yaml, toml
+- yaml: `ZvYAML`
+- toml: `ZvTOML`
 
 ## Documentation
 - doxygen + htags
@@ -59,16 +74,18 @@
 
 ## Integrations
 - python
-- node.js
+- node.js / v8
 
 ## Zdf
-
+- permit app to specify dataframe and/or series epoch, so
+  time-series with time values from the past can be handled
 - cudf, dlpack integration (in that priority order)
-
 - TA_Lib (https://ta-lib.org/) integration
-
 - need single call to load cudf column from zdf reader
 - need single call to load cudf table from zdf dataframe
+
+## zdash
+- get running, retest
 
 ## Build system
 - CI/CD
@@ -84,37 +101,21 @@
 
 ## zdb_pq
 - postgresql extension productization
+- register at rds-postgres-extensions-request@amazon.com
 
-## Mx Candidate Work
+## Mx Work
+- reimplement mxmd on zdf
 - Binance feed handler
   - https / websockets - https://libwebsockets.org/ - steal
   - json / REST - steal from libws
 
-- permit app to specify dataframe and/or series epoch, so
-  time-series with time values from the past can be handled
-
-rds-postgres-extensions-request@amazon.com
-
-https://verdagon.dev/blog/when-to-use-memory-safe-part-2
-
-reimplement zdf on zdb
-
-- look at notes for schema definition
-
-reimplement mxmd on zdf
-
-integrate node / v8
-
-build Binance feed
-
-retest zcmd
-retest zdash
-
-- add 128bit print/scan tests
-- add vector print/scan tests
-- add vector ZvCf and ZvCSV tests
+### Test Coverage
+- 128bit print/scan tests
+- vector print/scan tests
+- vector ZvCf and ZvCSV tests
 
 # Notes
+- https://verdagon.dev/blog/when-to-use-memory-safe-part-2
 
 ## I/O
 - call sequence to start sending:

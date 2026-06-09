@@ -29,12 +29,8 @@
 
 namespace Zhttp {
 
-constexpr unsigned DefltMaxHdr = (64<<10);	// 64K default
+constexpr unsigned DefltMaxHdr = (1<<16);	// 64K default
 constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
-
-using HdrData = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.HdrData">>;
-using BodyData = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.BodyData">>;
-using TrailerData = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.TrailerData">>;
 
 namespace Method {
   ZtEnum(Method, int8_t,

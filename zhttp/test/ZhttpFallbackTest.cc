@@ -23,6 +23,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp3.hh>
+#include <zlib/ZtString.hh>
 
 #include "ZhttpCaddyInterop.hh"
 
@@ -41,6 +42,7 @@ ZuDerive(RxQueue,
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, FallbackBufSize,
   FallbackMaxBody, ZuStringT<"Zhttp.Fallback.RxBuf">>;
 using RxStream = ZiRxStream<RxQueue>;
+using BodyData = ZtString<ZtStringHeapID<"Zhttp.Fallback.BodyData">>;
 
 ZmRef<RxQueue::Node> mkBuf(const uint8_t *data, unsigned len)
 {
@@ -115,7 +117,7 @@ struct ResponseRx :
   int				statusSeen = -1;
   int64_t			contentLengthSeen = -1;
   Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
-  Zhttp::BodyData		bodyData;
+  BodyData			bodyData;
 };
 
 struct ResponseBuilder :
