@@ -15,6 +15,10 @@
 
 #include <string.h>
 
+#include <limits.h>
+
+#include <zpicotls.h>
+
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuDerive.hh>
@@ -97,6 +101,89 @@ struct Packet {
   static int writeVersionNegotiation(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
     const uint32_t *, unsigned);
+};
+
+inline constexpr uint8_t PacketBuildZeroPad[BufSize] = {};
+
+inline ZuCSpan packetBuildSpan(const uint8_t *data, unsigned len)
+{
+  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+}
+
+class PlainVec {
+public:
+  static constexpr unsigned Max = 8;
+
+  const ptls_iovec_t *data() const { return m_vec; }
+  unsigned count() const { return m_count; }
+  unsigned bytes() const { return m_bytes; }
+
+  void reset() {
+    m_count = 0;
+    m_bytes = 0;
+  }
+
+  bool add(ZuCSpan span) {
+    if (!span.length()) return true;
+    if (m_count >= Max || span.length() > UINT_MAX - m_bytes) return false;
+    m_vec[m_count++] = ptls_iovec_init(span.data(), span.length());
+    m_bytes += span.length();
+    return true;
+  }
+
+private:
+  ptls_iovec_t	m_vec[Max];
+  unsigned	m_count = 0;
+  unsigned	m_bytes = 0;
+};
+
+class PacketBuild {
+public:
+  const ptls_iovec_t *data() const { return m_plain.data(); }
+  unsigned count() const { return m_plain.count(); }
+  unsigned bytes() const { return m_plain.bytes(); }
+  uint8_t *scratch() { return m_scratch + m_scratchLen; }
+  unsigned scratchAvail() const { return BufSize - m_scratchLen; }
+
+  void reset() {
+    m_plain.reset();
+    m_scratchLen = 0;
+  }
+
+  bool commitScratch(unsigned len) {
+    if (len > scratchAvail()) return false;
+    unsigned off = m_scratchLen;
+    m_scratchLen += len;
+    return m_plain.add(packetBuildSpan(m_scratch + off, len));
+  }
+
+  bool add(ZuCSpan span) { return m_plain.add(span); }
+
+  bool pad(unsigned len) {
+    if (!len) return true;
+    if (len > BufSize) return false;
+    return m_plain.add(packetBuildSpan(PacketBuildZeroPad, len));
+  }
+
+  bool padTo(unsigned bytes) {
+    unsigned n = m_plain.bytes();
+    return bytes <= n || pad(bytes - n);
+  }
+
+  bool padForProtectionSample(
+    unsigned pnOffset, unsigned pnLength, unsigned tagLen)
+  {
+    unsigned headerLen = pnOffset + pnLength;
+    unsigned minPacketLen = pnOffset + 4 + 16;
+    unsigned minPayloadLen = minPacketLen > headerLen + tagLen ?
+      minPacketLen - headerLen - tagLen : 0;
+    return padTo(minPayloadLen);
+  }
+
+private:
+  PlainVec	m_plain;
+  uint8_t	m_scratch[BufSize];
+  unsigned	m_scratchLen = 0;
 };
 
 } // namespace Zquic

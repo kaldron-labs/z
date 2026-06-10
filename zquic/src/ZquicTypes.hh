@@ -25,12 +25,12 @@ namespace Zquic {
 ZuDerive(Host, ZtString<ZtStringHeapID<"Zquic.Host">>);
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Zquic.Param">>);
 
-class StatelessResetToken {
+class ResetToken {
 public:
   static constexpr unsigned Length = 16;
 
-  StatelessResetToken() = default;
-  explicit StatelessResetToken(ZuCSpan token) { set(token); }
+  ResetToken() = default;
+  explicit ResetToken(ZuCSpan token) { set(token); }
 
   bool set(ZuCSpan);
   bool generate();
@@ -42,10 +42,10 @@ public:
       reinterpret_cast<const char *>(m_data), m_valid ? Length : 0};
   }
 
-  bool equals(const StatelessResetToken &) const;
+  bool equals(const ResetToken &) const;
 
   friend inline bool operator ==(
-    const StatelessResetToken &l, const StatelessResetToken &r) {
+    const ResetToken &l, const ResetToken &r) {
     return l.equals(r);
   }
 

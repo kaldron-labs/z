@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZquicConn.hh>
+#include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
 
@@ -43,9 +43,9 @@ void testStatelessReset()
 {
   ZuTestScope(testStatelessReset);
 
-  Zquic::StatelessResetToken resetToken{"0123456789abcdef"};
+  Zquic::ResetToken resetToken{"0123456789abcdef"};
   ZuCHECK(resetToken.valid() &&
-      resetToken.length() == Zquic::StatelessResetToken::Length,
+      resetToken.length() == Zquic::ResetToken::Length,
     "stateless reset token setup failed");
 
   TestRouteLink link;
@@ -53,7 +53,7 @@ void testStatelessReset()
   Zquic::CxnID cid{"server01"};
   ZuCHECK(router.add(cid, 0, &link, resetToken),
     "CID add with stateless reset token failed");
-  Zquic::StatelessResetToken found;
+  Zquic::ResetToken found;
   ZuCHECK(router.resetToken(cid, found) && found == resetToken,
     "CID stateless reset token lookup failed");
   ZuCHECK(router.retire(cid) && router.resetToken(cid, found) &&
@@ -72,8 +72,8 @@ void testStatelessReset()
   ZuCHECK(!(out[0] & 0x80) && (out[0] & 0x40),
     "stateless reset first byte is not short-header-like");
   ZuCHECK(!memcmp(
-      out + n - Zquic::StatelessResetToken::Length,
-      resetToken.data(), Zquic::StatelessResetToken::Length),
+      out + n - Zquic::ResetToken::Length,
+      resetToken.data(), Zquic::ResetToken::Length),
     "stateless reset token suffix mismatch");
 
   packet[0] = 0xc0;
@@ -86,7 +86,7 @@ void testStatelessReset()
       ZuCSpan{reinterpret_cast<const char *>(packet),
 	unsigned(Zquic::StatelessReset::MinLength)},
       resetToken) < 0, "too-short packet produced stateless reset");
-  Zquic::StatelessResetToken invalid;
+  Zquic::ResetToken invalid;
   ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
       out, sizeof(out), ZuCSpan{reinterpret_cast<const char *>(packet), 64},
       invalid) < 0, "invalid token produced stateless reset");
@@ -101,7 +101,7 @@ void testVariableShortCIDRouteMatch()
   Zquic::CxnRouter<TestRouteLink> router;
   Zquic::CxnID shortCID{"server01"};
   Zquic::CxnID longCID{"server019"};
-  Zquic::StatelessResetToken token{"0123456789abcdef"};
+  Zquic::ResetToken token{"0123456789abcdef"};
 
   ZuCHECK(router.add(shortCID, 0, &shortLink),
     "short CID route add failed");
@@ -117,7 +117,7 @@ void testVariableShortCIDRouteMatch()
   ZuCHECK(router.matchShort(datagram, &matched) == &longLink &&
       matched == longCID,
     "known-length short-header route did not select longest matching CID");
-  Zquic::StatelessResetToken found;
+  Zquic::ResetToken found;
   ZuCHECK(router.resetTokenForShort(datagram, found) && found == token,
     "known-length short-header reset token lookup failed");
 }

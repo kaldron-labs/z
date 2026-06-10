@@ -13,7 +13,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtString.hh>
-#include <zlib/ZquicConn.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZquicCrypto.hh>
 
 using namespace ZuTestUtil;

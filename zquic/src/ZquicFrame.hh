@@ -33,7 +33,7 @@ struct Frame {
   uint64_t		errorCode = 0;
   StreamType::T		streamType = StreamType::Bidi;
   bool			fin = false;
-  StatelessResetToken	resetToken;
+  ResetToken	resetToken;
   ZuCSpan		payload;
   AckRange		ackRanges[MaxAckRanges];
   unsigned		ackRangeCount = 0;
@@ -63,7 +63,7 @@ struct FrameCodec {
   static int writeStreamsBlocked(uint8_t *, unsigned, StreamType::T, uint64_t);
   static int writeNewConnectionID(
     uint8_t *, unsigned, uint64_t sequence, uint64_t retirePriorTo,
-    const CxnID &, const StatelessResetToken &);
+    const CxnID &, const ResetToken &);
   static int writeRetireConnectionID(uint8_t *, unsigned, uint64_t sequence);
   static int writePathChallenge(uint8_t *, unsigned, ZuCSpan);
   static int writePathResponse(uint8_t *, unsigned, ZuCSpan);

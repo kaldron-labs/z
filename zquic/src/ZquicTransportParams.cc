@@ -177,8 +177,8 @@ int TransportParams::decode(ZuCSpan in)
 	originalDCID = value;
 	break;
       case TPStatelessResetToken:
-	if (value.length() != StatelessResetToken::Length) return -1;
-	statelessResetToken = StatelessResetToken{value};
+	if (value.length() != ResetToken::Length) return -1;
+	statelessResetToken = ResetToken{value};
 	statelessResetTokenPresent = true;
 	break;
       case TPMaxIdleTimeout:

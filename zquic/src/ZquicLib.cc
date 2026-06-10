@@ -14,9 +14,9 @@ ZquicExtern const char ZquicLib[] = "@(#) Z QUIC Library v" Z_VERNAME;
 
 namespace Zquic {
 
-ZquicExtern void lib_init()
+ZquicExtern void init()
 {
-  Ztls::lib_init();
+  Ztls::init();
 }
 
 } // namespace Zquic
