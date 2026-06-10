@@ -13,6 +13,9 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
+#include <zlib/ZuObject.hh>
+#include <zlib/ZmHash.hh>
+
 #include <zlib/ZquicTransportParams.hh>
 
 namespace Zquic {
@@ -51,149 +54,164 @@ struct ServerPacket {
     ZuCSpan, uint8_t *response, unsigned responseLen);
 };
 
-class StatelessResetToken {
-public:
-  static constexpr unsigned Length = 16;
-
-  StatelessResetToken() = default;
-  explicit StatelessResetToken(ZuCSpan token) { set(token); }
-
-  bool set(ZuCSpan);
-  bool generate();
-  bool valid() const { return m_valid; }
-  unsigned length() const { return m_valid ? Length : 0; }
-  const uint8_t *data() const { return m_data; }
-  ZuCSpan cspan() const {
-    return ZuCSpan{
-      reinterpret_cast<const char *>(m_data), m_valid ? Length : 0};
-  }
-
-  bool equals(const StatelessResetToken &) const;
-
-  friend inline bool operator ==(
-    const StatelessResetToken &l, const StatelessResetToken &r) {
-    return l.equals(r);
-  }
-
-private:
-  uint8_t	m_data[Length] = {};
-  bool		m_valid = false;
-};
-
 struct StatelessReset {
   static constexpr unsigned TokenLength = StatelessResetToken::Length;
   static constexpr unsigned MinLength = 21;
 
+  static int decode(StatelessResetToken &, ZuCSpan datagram);
+  static bool verify(ZuCSpan datagram, const StatelessResetToken &);
   static int writeForUnknownCID(
     uint8_t *, unsigned, ZuCSpan receivedPacket,
     const StatelessResetToken &);
 };
 
-struct CxnIDSlot {
-  CxnID			cid;
+template <typename Link_>
+struct Cxn : public ZuObject {
+  Cxn() = default;
+  Cxn(
+    const CxnID &id_, uint64_t sequence_, Link_ *link_,
+    const StatelessResetToken &resetToken_, CxnState::T state_) :
+      id{id_},
+      sequence{sequence_},
+      link{link_},
+      resetToken{resetToken_},
+      state{state_} { }
+
+  CxnID			id;
   uint64_t		sequence = 0;
-  uintptr_t		routeToken = 0;
+  Link_			*link = nullptr;
   StatelessResetToken	resetToken;
-  CxnIDState::T		state = CxnIDState::Active;
+  CxnState::T		state = CxnState::Active;
 };
 
-class CxnIDRouter {
-public:
-  static constexpr unsigned Max = 16;
+template <typename Link_>
+inline const CxnID &Cxn_IDAxor(const Cxn<Link_> *cxn) { return cxn->id; }
 
-  bool add(const CxnID &cid, uint64_t sequence, uintptr_t token) {
-    return add(cid, sequence, token, {});
+template <typename Link_>
+ZuDerive(CxnRoutes_,
+  (ZmHash<ZmRef<Cxn<Link_>>,
+    ZmHashKey<Cxn_IDAxor<Link_>,
+      ZmHashLock<ZmPLock,
+	ZmHashHeapID<"Zquic.Endpoint.CxnRouter">>>>));
+
+template <typename Link_>
+class CxnRouter {
+public:
+  using Route = Cxn<Link_>;
+  using Routes = CxnRoutes_<Link_>;
+
+  CxnRouter() : m_routes{new Routes{
+      ZmHashParams().bits(5).loadFactor(1).cBits(3)}} { }
+
+  bool add(const CxnID &id, uint64_t sequence, Link_ *link) {
+    return add(id, sequence, link, {});
   }
   bool add(
-    const CxnID &cid, uint64_t sequence, uintptr_t token,
+    const CxnID &id, uint64_t sequence, Link_ *link,
     const StatelessResetToken &resetToken) {
-    if (!cid.length()) return false;
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (!(m_slots[i].cid == cid)) continue;
-      if (m_slots[i].state == CxnIDState::Tombstone) return false;
-      m_slots[i].sequence = sequence;
-      m_slots[i].routeToken = token;
-      m_slots[i].resetToken = resetToken;
-      m_slots[i].state = CxnIDState::Active;
+    if (!id.length() || !link) return false;
+    if (auto route = m_routes->findVal(id)) {
+      if (route->state == CxnState::Tombstone) return false;
+      route->sequence = sequence;
+      route->link = link;
+      route->resetToken = resetToken;
+      route->state = CxnState::Active;
       return true;
     }
-    if (m_count >= Max) return false;
-    m_slots[m_count++] =
-      CxnIDSlot{cid, sequence, token, resetToken, CxnIDState::Active};
-    return true;
-  }
-  bool add(const CxnIDRouter &router) {
-    bool ok = true;
-    router.all([this, &ok](const CxnIDSlot &slot) {
-      if (!add(slot.cid, slot.sequence, slot.routeToken, slot.resetToken))
-	ok = false;
-    });
-    return ok;
-  }
-
-  uintptr_t find(const CxnID &cid) const {
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_slots[i].state == CxnIDState::Active && m_slots[i].cid == cid)
-	  return m_slots[i].routeToken;
-    return 0;
-  }
-  bool resetToken(const CxnID &cid, StatelessResetToken &token) const {
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (m_slots[i].state != CxnIDState::Active || !(m_slots[i].cid == cid))
-	continue;
-      if (!m_slots[i].resetToken.valid()) return false;
-      token = m_slots[i].resetToken;
-      return true;
-    }
-    return false;
-  }
-
-  bool retire(const CxnID &cid) {
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (!(m_slots[i].cid == cid) || m_slots[i].state != CxnIDState::Active)
-	continue;
-      m_slots[i].state = CxnIDState::Retired;
-      m_slots[i].routeToken = 0;
-      return true;
-    }
-    return false;
-  }
-
-  bool tombstone(const CxnID &cid) {
-    for (unsigned i = 0; i < m_count; ++i) {
-      if (!(m_slots[i].cid == cid)) continue;
-      m_slots[i].state = CxnIDState::Tombstone;
-      m_slots[i].routeToken = 0;
-      m_slots[i].resetToken = {};
-      return true;
-    }
-    if (m_count >= Max || !cid.length()) return false;
-    m_slots[m_count++] = CxnIDSlot{cid, 0, 0, {}, CxnIDState::Tombstone};
+    m_routes->add(new Route{id, sequence, link, resetToken, CxnState::Active});
     return true;
   }
 
-  CxnIDState::T state(const CxnID &cid) const {
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_slots[i].cid == cid) return m_slots[i].state;
-    return CxnIDState::Tombstone;
+  Link_ *find(const CxnID &id) const {
+    auto route = m_routes->findVal(id);
+    if (!route || route->state != CxnState::Active) return nullptr;
+    return route->link;
+  }
+  Link_ *matchShort(ZuCSpan packet, CxnID *id = nullptr) const {
+    const Route *route = matchShortRoute_(packet, true);
+    if (!route) return nullptr;
+    if (id) *id = route->id;
+    return route->link;
+  }
+  bool resetToken(const CxnID &id, StatelessResetToken &token) const {
+    auto route = m_routes->findVal(id);
+    if (!route || route->state == CxnState::Tombstone ||
+	!route->resetToken.valid())
+      return false;
+    token = route->resetToken;
+    return true;
+  }
+  bool resetTokenForShort(ZuCSpan packet, StatelessResetToken &token) const {
+    const Route *route = matchShortRoute_(packet, false);
+    if (!route || !route->resetToken.valid()) return false;
+    token = route->resetToken;
+    return true;
   }
 
-  unsigned count() const { return m_count; }
+  bool retire(const CxnID &id) {
+    auto route = m_routes->findVal(id);
+    if (!route || route->state != CxnState::Active) return false;
+    route->state = CxnState::Retired;
+    route->link = nullptr;
+    return true;
+  }
+
+  bool tombstone(const CxnID &id) {
+    if (!id.length()) return false;
+    if (auto route = m_routes->findVal(id)) {
+      route->state = CxnState::Tombstone;
+      route->link = nullptr;
+      route->resetToken = {};
+      return true;
+    }
+    m_routes->add(new Route{id, 0, nullptr, {}, CxnState::Tombstone});
+    return true;
+  }
+
+  CxnState::T state(const CxnID &id) const {
+    auto route = m_routes->findVal(id);
+    return route ? route->state : CxnState::Tombstone;
+  }
+
+  void clear() {
+    m_routes = new Routes{ZmHashParams().bits(5).loadFactor(1).cBits(3)};
+  }
+
+  unsigned count() const { return m_routes->count_(); }
   unsigned active() const {
     unsigned n = 0;
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_slots[i].state == CxnIDState::Active) ++n;
+    all([&n](const Route &) { ++n; });
     return n;
   }
   template <typename Fn>
   void all(Fn fn) const {
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_slots[i].state == CxnIDState::Active) fn(m_slots[i]);
+    auto i = m_routes->citer();
+    while (auto node = i()) {
+      const auto &route = *node->val();
+      if (route.state == CxnState::Active) fn(route);
+    }
   }
 
 private:
-  CxnIDSlot	m_slots[Max];
-  unsigned	m_count = 0;
+  const Route *matchShortRoute_(ZuCSpan packet, bool activeOnly) const {
+    if (!packet || packet.length() < 2 || Packet::isLong(packet)) return nullptr;
+    const Route *best = nullptr;
+    auto i = m_routes->citer();
+    while (auto node = i()) {
+      const auto &route = *node->val();
+      if (!route.id.length()) continue;
+      if (route.state == CxnState::Tombstone) continue;
+      if (activeOnly && route.state != CxnState::Active) continue;
+      if (packet.length() < 1 + route.id.length()) continue;
+      if (memcmp(packet.data() + 1, route.id.data(), route.id.length()))
+	continue;
+      if (!best || route.id.length() > best->id.length())
+	best = &route;
+    }
+    return best;
+  }
+
+  ZmRef<Routes>	m_routes;
 };
 
 struct CxnIDGen {
@@ -282,11 +300,8 @@ public:
   const StatelessResetToken &statelessResetToken() const {
     return m_statelessResetToken;
   }
-  const CxnIDRouter &localCIDs() const { return m_localCIDs; }
-  const CxnIDRouter &initialDCIDs() const { return m_initialDCIDs; }
 
-  bool acceptInitial(
-    const LongHeader &, unsigned datagramLength, uintptr_t routeToken);
+  bool acceptInitial(const LongHeader &, unsigned datagramLength);
   bool transportParams(TransportParams &) const;
 
 private:
@@ -294,8 +309,6 @@ private:
   CxnID			m_clientInitialSCID;
   CxnID			m_localInitialSCID;
   StatelessResetToken	m_statelessResetToken;
-  CxnIDRouter		m_localCIDs;
-  CxnIDRouter		m_initialDCIDs;
   bool			m_accepted = false;
 };
 

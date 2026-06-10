@@ -33,9 +33,12 @@ struct RuntimeClient : public Zquic::Client<RuntimeClient> {
   struct Link;
   struct Stream;
 };
-struct RuntimeServer : public Zquic::Server<RuntimeServer> {
-  struct Link;
-  struct Stream;
+struct RuntimeServerLink;
+struct RuntimeServerStream;
+struct RuntimeServer :
+    public Zquic::Server<RuntimeServer, RuntimeServerLink> {
+  using Link = RuntimeServerLink;
+  using Stream = RuntimeServerStream;
 
   ZmRef<Link> link();
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
@@ -93,23 +96,23 @@ struct RuntimeClient::Link :
   ZmAtomic<unsigned> connectFailures = 0;
 };
 
-struct RuntimeServer::Stream :
-  public Zquic::SrvStream<RuntimeServer::Link, RuntimeServer::Stream> {
+struct RuntimeServerStream :
+  public Zquic::SrvStream<RuntimeServerLink, RuntimeServerStream> {
   using Base =
-    Zquic::SrvStream<RuntimeServer::Link, RuntimeServer::Stream>;
+    Zquic::SrvStream<RuntimeServerLink, RuntimeServerStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
 };
 
-struct RuntimeServer::Link :
-  public Zquic::SrvLink<RuntimeServer, RuntimeServer::Link,
-    RuntimeServer::Stream> {
-  using Base = Zquic::SrvLink<RuntimeServer, RuntimeServer::Link,
-    RuntimeServer::Stream>;
+struct RuntimeServerLink :
+  public Zquic::SrvLink<RuntimeServer, RuntimeServerLink,
+    RuntimeServerStream> {
+  using Base = Zquic::SrvLink<RuntimeServer, RuntimeServerLink,
+    RuntimeServerStream>;
   using Base::Base;
 
-  Link(RuntimeServer *app) : Base{app} { }
+  RuntimeServerLink(RuntimeServer *app) : Base{app} { }
 
   void connected(const char *, int) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
@@ -199,9 +202,12 @@ struct H3RuntimeClient::Link :
   ZmAtomic<unsigned> connectFailures = 0;
 };
 
-struct H3RuntimeServer : public Zquic::Server<H3RuntimeServer> {
-  struct Link;
-  struct Stream;
+struct H3RuntimeServerLink;
+struct H3RuntimeServerStream;
+struct H3RuntimeServer :
+    public Zquic::Server<H3RuntimeServer, H3RuntimeServerLink> {
+  using Link = H3RuntimeServerLink;
+  using Stream = H3RuntimeServerStream;
 
   ZmRef<Link> link();
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
@@ -218,23 +224,23 @@ struct H3RuntimeServer : public Zquic::Server<H3RuntimeServer> {
   ZmAtomic<uint64_t>	lastRequestStreamID = 0;
 };
 
-struct H3RuntimeServer::Stream :
-  public Zquic::SrvStream<H3RuntimeServer::Link, H3RuntimeServer::Stream> {
+struct H3RuntimeServerStream :
+  public Zquic::SrvStream<H3RuntimeServerLink, H3RuntimeServerStream> {
   using Base =
-    Zquic::SrvStream<H3RuntimeServer::Link, H3RuntimeServer::Stream>;
+    Zquic::SrvStream<H3RuntimeServerLink, H3RuntimeServerStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
 };
 
-struct H3RuntimeServer::Link :
-  public Zquic::SrvLink<H3RuntimeServer, H3RuntimeServer::Link,
-    H3RuntimeServer::Stream> {
-  using Base = Zquic::SrvLink<H3RuntimeServer, H3RuntimeServer::Link,
-    H3RuntimeServer::Stream>;
+struct H3RuntimeServerLink :
+  public Zquic::SrvLink<H3RuntimeServer, H3RuntimeServerLink,
+    H3RuntimeServerStream> {
+  using Base = Zquic::SrvLink<H3RuntimeServer, H3RuntimeServerLink,
+    H3RuntimeServerStream>;
   using Base::Base;
 
-  Link(H3RuntimeServer *app) : Base{app} { }
+  H3RuntimeServerLink(H3RuntimeServer *app) : Base{app} { }
 
   void connected(const char *, int) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }

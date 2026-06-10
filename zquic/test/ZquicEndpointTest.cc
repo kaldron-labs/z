@@ -5,11 +5,72 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
+#include <unistd.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZquicEndpoint.hh>
 
 using namespace ZuTestUtil;
+
+template <typename L>
+bool waitUntil(L l)
+{
+  for (unsigned i = 0; i < 2000; ++i) {
+    if (l()) return true;
+    usleep(1000);
+  }
+  return false;
+}
+
+void testEndpointReadyDownCallbacks()
+{
+  ZuTestScope(testEndpointReadyDownCallbacks);
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(4)
+	    .thread(1, [](auto &t) { t.isolated(1); })
+	    .thread(2, [](auto &t) { t.isolated(1); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "endpoint callback multiplexer start failed");
+  if (!mxStarted) return;
+
+  Zquic::Endpoint ep;
+  bool ready = false;
+  bool down = false;
+  bool failed = false;
+  ZuCHECK(ep.openUDP(
+      &mx, Zquic::PathMode::ServerUnconnected,
+      ZiIP("127.0.0.1"), 0, ZiIP{}, 0,
+      Zquic::Endpoint::DatagramFn{},
+      Zquic::Endpoint::ReadyFn{[&ready](Zquic::Endpoint *) {
+	ready = true;
+      }},
+      Zquic::Endpoint::FailFn{[&failed](bool) { failed = true; }},
+      Zquic::Endpoint::DownFn{[&down](Zquic::Endpoint *) {
+	down = true;
+      }}), "endpoint open failed");
+
+  ZuCHECK(waitUntil([&ep, &ready]() {
+      return ready && ep.listening() && ep.local().port();
+    }), "endpoint ready callback did not fire");
+  ZuCHECK(!failed, "endpoint open failed asynchronously");
+
+  uint64_t failures = ep.diag().failures;
+  ep.closeUDP();
+  ZuCHECK(waitUntil([&down]() { return down; }),
+    "endpoint down callback did not fire");
+  ZuCHECK(ep.diag().failures == failures,
+    "endpoint callback test changed failure counter");
+
+  mx.stop();
+}
 
 void testDatagramOwnership()
 {
@@ -39,6 +100,12 @@ void testDatagramOwnership()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiLog::init("ZquicEndpointTest");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
+  ZuTestCall(testEndpointReadyDownCallbacks);
   ZuTestCall(testDatagramOwnership);
+  ZiLog::stop();
 }

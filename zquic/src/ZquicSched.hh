@@ -262,6 +262,10 @@ public:
     m_hash.delNode(node);
   }
 
+  void clear() {
+    while (m_next) remove(m_next->id);
+  }
+
 private:
   using Node = StreamScheduleHash::Node;
 

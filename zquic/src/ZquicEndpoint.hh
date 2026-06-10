@@ -29,6 +29,7 @@ public:
   using DatagramFn = ZmFn<void(Datagram)>;
   using ReadyFn = ZmFn<void(Endpoint *)>;
   using FailFn = ZmFn<void(bool)>;
+  using DownFn = ZmFn<void(Endpoint *)>;
 
   Endpoint() = default;
   ~Endpoint() { closeUDP(); }
@@ -43,7 +44,8 @@ public:
     ZiIP remoteIP, uint16_t remotePort,
     DatagramFn datagramFn = {},
     ReadyFn readyFn = {},
-    FailFn failFn = {});
+    FailFn failFn = {},
+    DownFn downFn = {});
 
   void closeUDP();
 
@@ -54,6 +56,7 @@ public:
   const ZiSockAddr &remote() const { return m_remote; }
   PathMode::T mode() const { return m_mode; }
   const EndpointDiag &diag() const { return m_diag; }
+  void failure() { ++m_diag.failures; }
 
   void datagramFn(DatagramFn fn) { m_datagramFn = ZuMv(fn); }
   ZmRef<ZiIOBuf> allocTxPacket() {
@@ -72,6 +75,7 @@ private:
   void received_(Datagram);
   void sent_(unsigned);
   void ioError_();
+  void clearFns_();
   ZmRef<ZiIOBuf> allocRxPacket_() {
     return new RxPacketAlloc{this};
   }
@@ -84,6 +88,10 @@ private:
   DatagramFn	m_datagramFn;
   ReadyFn	m_readyFn;
   FailFn	m_failFn;
+  DownFn	m_downFn;
+  Cxn_		*m_closingCxn = nullptr;
+  unsigned	m_generation = 0;
+  unsigned	m_closingGeneration = 0;
   ZmAtomic<unsigned>	m_listening = 0;
   EndpointDiag	m_diag;
 };

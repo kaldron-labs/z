@@ -30,15 +30,12 @@ struct TestStream :
   int process(Zquic::RxStream &) { ++processed; return 0; }
   unsigned processed = 0;
 };
-using TestLinkRef = ZmRef<TestLink>;
-using TestCxn = Zquic::Cxn<TestLink, TestLinkRef>;
-using TestCxnRef = ZmRef<TestCxn>;
 struct TestLink :
   public Zquic::Link<App, TestLink,
-    StreamTxBufAlloc, TestCxn, TestCxnRef, TestStream>
+    StreamTxBufAlloc, TestStream>
 {
   using Base = Zquic::Link<App, TestLink,
-    StreamTxBufAlloc, TestCxn, TestCxnRef, TestStream>;
+    StreamTxBufAlloc, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
 };
 
