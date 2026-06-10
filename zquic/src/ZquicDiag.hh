@@ -20,8 +20,9 @@
 
 namespace Zquic {
 
-using DiagText = ZtString<ZtStringHeapID<"Zquic.DiagText",
-  ZtStringHeapMax<4096>>>;
+using DiagText = ZtString<
+  ZtStringHeapID<"Zquic.DiagText",
+    ZtStringHeapMax<4096>>>;
 
 struct Diag {
   static ZuCSpan packetSpaceName(PacketSpace::T);
