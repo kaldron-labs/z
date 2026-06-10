@@ -466,7 +466,7 @@ int FrameCodec::writeStreamsBlocked(
 
 int FrameCodec::writeNewConnectionID(
   uint8_t *out, unsigned len, uint64_t sequence, uint64_t retirePriorTo,
-  const CxnID &cid, const StatelessResetToken &token)
+  const CxnID &cid, const ResetToken &token)
 {
   if (!len || !cid.length() || cid.length() > CxnIDMax || !token.valid())
     return -1;
@@ -475,13 +475,13 @@ int FrameCodec::writeNewConnectionID(
   if (VarInt::put(out, len, sequence, o) < 0 ||
       VarInt::put(out, len, retirePriorTo, o) < 0)
     return -1;
-  if (len < o + 1 + cid.length() + StatelessResetToken::Length)
+  if (len < o + 1 + cid.length() + ResetToken::Length)
     return -1;
   out[o++] = uint8_t(cid.length());
   memcpy(out + o, cid.data(), cid.length());
   o += cid.length();
-  memcpy(out + o, token.data(), StatelessResetToken::Length);
-  o += StatelessResetToken::Length;
+  memcpy(out + o, token.data(), ResetToken::Length);
+  o += ResetToken::Length;
   return int(o);
 }
 

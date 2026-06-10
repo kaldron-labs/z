@@ -8,7 +8,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicConn.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZquicCrypto.hh>
 #include <zlib/ZquicPath.hh>
 #include <zlib/ZquicRecovery.hh>

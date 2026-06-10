@@ -115,12 +115,12 @@ struct TestLink :
   using Base::Base;
 
   void streamed(ZmRef<TestStream>) { }
-	  void setPeerResetToken(const Zquic::StatelessResetToken &token) {
+	  void setPeerResetToken(const Zquic::ResetToken &token) {
 	    Base::setPeerResetToken_(token);
 	  }
   bool addLocalCID(
     const Zquic::CxnID &id, uint64_t sequence,
-    const Zquic::StatelessResetToken &token = {}) {
+    const Zquic::ResetToken &token = {}) {
     return Base::addLocalCID_(id, sequence, token);
   }
   bool receiveNewConnectionID(const Zquic::Frame &frame) {
@@ -131,7 +131,7 @@ struct TestLink :
   }
   bool peerCID(
     uint64_t sequence, Zquic::CxnID &id,
-    Zquic::StatelessResetToken &token) const {
+    Zquic::ResetToken &token) const {
     auto cid = Base::peerCID_(sequence);
     if (!cid) return false;
     id = cid->id;
@@ -258,16 +258,16 @@ void testStatelessResetDetection()
 
   EngineApp app;
   TestLink link{&app};
-  Zquic::StatelessResetToken token{"0123456789abcdef"};
+  Zquic::ResetToken token{"0123456789abcdef"};
   uint8_t packet[64] = {};
   memset(packet, 0xa5, sizeof(packet));
   packet[0] = 0x65;
   memcpy(
-    packet + sizeof(packet) - Zquic::StatelessResetToken::Length,
-    token.data(), Zquic::StatelessResetToken::Length);
+    packet + sizeof(packet) - Zquic::ResetToken::Length,
+    token.data(), Zquic::ResetToken::Length);
   ZuCSpan datagram{reinterpret_cast<const char *>(packet), sizeof(packet)};
 
-  Zquic::StatelessResetToken decoded;
+  Zquic::ResetToken decoded;
   ZuCHECK(!Zquic::StatelessReset::decode(decoded, datagram) &&
       decoded == token,
     "stateless reset token decode mismatch");
@@ -286,7 +286,7 @@ void testConnectionIDFrameLifecycle()
 
   EngineApp app;
   TestLink link{&app};
-  Zquic::StatelessResetToken peerToken{"0123456789abcdef"};
+  Zquic::ResetToken peerToken{"0123456789abcdef"};
   Zquic::Frame f;
   f.type = Zquic::FrameType::NewConnectionID;
   f.value = 5;
@@ -298,13 +298,13 @@ void testConnectionIDFrameLifecycle()
     "NEW_CONNECTION_ID frame was rejected");
 
   Zquic::CxnID peerCID;
-  Zquic::StatelessResetToken foundToken;
+  Zquic::ResetToken foundToken;
   ZuCHECK(link.peerCID(5, peerCID, foundToken) &&
       peerCID == Zquic::CxnID{"peerCID09"} && foundToken == peerToken,
     "NEW_CONNECTION_ID did not store peer CID and reset token");
 
   Zquic::CxnID localCID{"local003"};
-  Zquic::StatelessResetToken localToken{"fedcba9876543210"};
+  Zquic::ResetToken localToken{"fedcba9876543210"};
   ZuCHECK(link.addLocalCID(localCID, 3, localToken),
     "local CID setup failed");
   Zquic::Frame retire;

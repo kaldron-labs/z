@@ -7,15 +7,15 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZquicLib.hh ZquicTypes.hh ZquicBuf.hh ZquicPQueue.hh Zquic.hh \
 	ZquicPath.hh ZquicSock.hh ZquicPacket.hh \
-	ZquicPacketBuilder.hh ZquicFrame.hh ZquicTransportParams.hh \
-	ZquicCrypto.hh ZquicConn.hh ZquicEndpoint.hh ZquicStream.hh ZquicSched.hh \
+	ZquicFrame.hh ZquicTransportParams.hh \
+	ZquicCrypto.hh ZquicEndpoint.hh ZquicStream.hh ZquicSched.hh \
 	ZquicRecovery.hh ZquicDiag.hh
 lib_LTLIBRARIES = libZquic.la
 libZquic_la_CPPFLAGS = $(AM_CPPFLAGS) @PTLS_CFLAGS@ -DZQUIC_EXPORTS
 libZquic_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@
 libZquic_la_SOURCES = ZquicLib.cc ZquicEndpoint.cc ZquicPath.cc \
 	ZquicSock.cc ZquicPacket.cc ZquicFrame.cc \
-	ZquicTransportParams.cc ZquicCrypto.cc ZquicConn.cc ZquicStream.cc \
+	ZquicTransportParams.cc ZquicCrypto.cc Zquic.cc ZquicStream.cc \
 	ZquicSched.cc ZquicRecovery.cc ZquicDiag.cc
 libZquic_la_LIBADD = \
 	$(top_builddir)/ztls/src/libZtls.la \

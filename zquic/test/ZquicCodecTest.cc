@@ -231,7 +231,7 @@ void testFramesAndParams()
   p.maxUDPPayloadSize = 1400;
   p.initialMaxData = 1000;
   p.initialSCID = "server01";
-  p.statelessResetToken = Zquic::StatelessResetToken{"0123456789abcdef"};
+  p.statelessResetToken = Zquic::ResetToken{"0123456789abcdef"};
   p.statelessResetTokenPresent = true;
   l = p.encode(b, sizeof(b));
   ZuCHECK(l > 0, "transport parameter encode failed");
@@ -445,7 +445,7 @@ void testControlFrameCoverage()
     "PATH_RESPONSE coverage mismatch");
 
   Zquic::CxnID ncid{"server01"};
-  Zquic::StatelessResetToken ncidToken{"0123456789abcdef"};
+  Zquic::ResetToken ncidToken{"0123456789abcdef"};
   n = Zquic::FrameCodec::writeNewConnectionID(
     b, sizeof(b), 7, 2, ncid, ncidToken);
   ZuCHECK(n > 0, "NEW_CONNECTION_ID setup failed");
@@ -570,7 +570,7 @@ void testTransportParamCoverage()
   p.ackDelayExponent = 20;
   p.maxAckDelay = 63;
   p.activeConnectionIDLimit = 1073741824;
-  p.statelessResetToken = Zquic::StatelessResetToken{"0123456789abcdef"};
+  p.statelessResetToken = Zquic::ResetToken{"0123456789abcdef"};
   p.statelessResetTokenPresent = true;
   p.disableActiveMigration = true;
   int n = p.encode(b, sizeof(b));

@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZquicConn.hh>
+#include <zlib/Zquic.hh>
 
 #include <string.h>
 
@@ -36,7 +36,7 @@ ServerPacketDecision ServerPacket::routeLongHeader(
   return decision;
 }
 
-bool StatelessResetToken::set(ZuCSpan token)
+bool ResetToken::set(ZuCSpan token)
 {
   if (token.length() != Length) return false;
   memcpy(m_data, token.data(), Length);
@@ -44,7 +44,7 @@ bool StatelessResetToken::set(ZuCSpan token)
   return true;
 }
 
-bool StatelessResetToken::generate()
+bool ResetToken::generate()
 {
   uint8_t bytes[Length];
   if (!Ztls::Backend::init() ||
@@ -53,13 +53,13 @@ bool StatelessResetToken::generate()
   return set(ZuCSpan{reinterpret_cast<const char *>(bytes), Length});
 }
 
-bool StatelessResetToken::equals(const StatelessResetToken &token) const
+bool ResetToken::equals(const ResetToken &token) const
 {
   return m_valid == token.m_valid &&
     (!m_valid || !memcmp(m_data, token.m_data, Length));
 }
 
-int StatelessReset::decode(StatelessResetToken &token, ZuCSpan datagram)
+int StatelessReset::decode(ResetToken &token, ZuCSpan datagram)
 {
   if (!datagram || datagram.length() <= MinLength || Packet::isLong(datagram))
     return -1;
@@ -68,10 +68,10 @@ int StatelessReset::decode(StatelessResetToken &token, ZuCSpan datagram)
   return token.set(suffix) ? 0 : -1;
 }
 
-bool StatelessReset::verify(ZuCSpan datagram, const StatelessResetToken &token)
+bool StatelessReset::verify(ZuCSpan datagram, const ResetToken &token)
 {
   if (!token.valid()) return false;
-  StatelessResetToken decoded;
+  ResetToken decoded;
   if (decode(decoded, datagram) < 0) return false;
   uint8_t diff = 0;
   for (unsigned i = 0; i < TokenLength; ++i)
@@ -81,7 +81,7 @@ bool StatelessReset::verify(ZuCSpan datagram, const StatelessResetToken &token)
 
 int StatelessReset::writeForUnknownCID(
   uint8_t *out, unsigned len, ZuCSpan receivedPacket,
-  const StatelessResetToken &token)
+  const ResetToken &token)
 {
   if (!token.valid() || !receivedPacket || Packet::isLong(receivedPacket) ||
       receivedPacket.length() <= MinLength)
@@ -151,7 +151,7 @@ bool ServerBootstrap::acceptInitial(
     return false;
 
   CxnID localSCID;
-  StatelessResetToken resetToken;
+  ResetToken resetToken;
   if (!CxnIDGen::random(localSCID) || !resetToken.generate()) return false;
 
   m_originalDCID = initial.dcid;
