@@ -43,8 +43,8 @@ struct PacketNumber {
 struct LongHeader {
   PacketType::T	type = PacketType::Initial;
   uint32_t	version = Version1;
-  CxnID	dcid;
-  CxnID	scid;
+  CxnID		dcid;
+  CxnID		scid;
   uint64_t	tokenLength = 0;
   uint64_t	length = 0;
   unsigned	pnLength = 0;

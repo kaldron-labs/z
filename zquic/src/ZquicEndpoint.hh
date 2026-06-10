@@ -80,20 +80,20 @@ private:
     return new RxPacketAlloc{this};
   }
 
-  ZiMultiplex	*m_mx = nullptr;
-  Cxn_		*m_cxn = nullptr;
-  PathMode::T	m_mode = PathMode::ServerUnconnected;
-  ZiSockAddr	m_local;
-  ZiSockAddr	m_remote;
-  DatagramFn	m_datagramFn;
-  ReadyFn	m_readyFn;
-  FailFn	m_failFn;
-  DownFn	m_downFn;
-  Cxn_		*m_closingCxn = nullptr;
-  unsigned	m_generation = 0;
-  unsigned	m_closingGeneration = 0;
+  ZiMultiplex		*m_mx = nullptr;
+  Cxn_			*m_cxn = nullptr;
+  PathMode::T		m_mode = PathMode::ServerUnconnected;
+  ZiSockAddr		m_local;
+  ZiSockAddr		m_remote;
+  DatagramFn		m_datagramFn;
+  ReadyFn		m_readyFn;
+  FailFn		m_failFn;
+  DownFn		m_downFn;
+  Cxn_			*m_closingCxn = nullptr;
+  unsigned		m_generation = 0;
+  unsigned		m_closingGeneration = 0;
   ZmAtomic<unsigned>	m_listening = 0;
-  EndpointDiag	m_diag;
+  EndpointDiag		m_diag;
 };
 
 } // namespace Zquic
