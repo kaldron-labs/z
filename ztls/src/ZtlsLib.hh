@@ -38,7 +38,7 @@
 
 namespace Ztls {
 
-ZtlsExtern void lib_init(); // can be called repeatedly
+ZtlsExtern void init(); // can be called repeatedly
 
 struct StrError { char buf[200]; };
 
