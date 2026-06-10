@@ -16,7 +16,7 @@ ZtlsExtern const char ZtlsLib[] = "@(#) Z TLS Library v" Z_VERNAME;
 
 namespace Ztls {
 
-ZtlsExtern void lib_init()
+ZtlsExtern void init()
 {
   Backend::init();
 }
