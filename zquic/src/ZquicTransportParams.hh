@@ -34,6 +34,8 @@ struct TransportParams {
   uint64_t	ackDelayExponent = 3;
   uint64_t	maxAckDelay = 25;
   uint64_t	activeConnectionIDLimit = 2;
+  StatelessResetToken	statelessResetToken;
+  bool		statelessResetTokenPresent = false;
   bool		disableActiveMigration = true;
 
   bool validate() const;

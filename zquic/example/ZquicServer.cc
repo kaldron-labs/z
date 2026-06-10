@@ -20,9 +20,11 @@ ZuCSpan cspan(const ZtString<> &s)
   return ZuCSpan{s.data(), s.length()};
 }
 
-struct App : public Zquic::Server<App> {
-  struct Link;
-  struct Stream;
+struct AppLink;
+struct AppStream;
+struct App : public Zquic::Server<App, AppLink> {
+  using Link = AppLink;
+  using Stream = AppStream;
 
   App(ZiIP localIP, unsigned localPort, unsigned target) :
     m_localIP{localIP}, m_localPort{localPort}, m_target{target} { }
@@ -53,20 +55,20 @@ struct App : public Zquic::Server<App> {
   ZmAtomic<unsigned>	m_error{0};
 };
 
-struct App::Stream :
-  public Zquic::SrvStream<App::Link, App::Stream> {
-  using Base = Zquic::SrvStream<App::Link, App::Stream>;
+struct AppStream :
+  public Zquic::SrvStream<AppLink, AppStream> {
+  using Base = Zquic::SrvStream<AppLink, AppStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
 };
 
-struct App::Link :
-  public Zquic::SrvLink<App, App::Link, App::Stream> {
-  using Base = Zquic::SrvLink<App, App::Link, App::Stream>;
+struct AppLink :
+  public Zquic::SrvLink<App, AppLink, AppStream> {
+  using Base = Zquic::SrvLink<App, AppLink, AppStream>;
   using Base::Base;
 
-  Link(App *app) : Base{app} { }
+  AppLink(App *app) : Base{app} { }
 
   void connected(const char *alpn, int quicver) {
     std::cerr << "QUIC handshake completed"

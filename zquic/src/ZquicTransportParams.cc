@@ -10,6 +10,7 @@ namespace Zquic {
 
 static constexpr uint64_t TPOriginalDCID = 0x00;
 static constexpr uint64_t TPMaxIdleTimeout = 0x01;
+static constexpr uint64_t TPStatelessResetToken = 0x02;
 static constexpr uint64_t TPMaxUDPPayloadSize = 0x03;
 static constexpr uint64_t TPInitialMaxData = 0x04;
 static constexpr uint64_t TPInitialMaxStreamDataBidiLocal = 0x05;
@@ -76,6 +77,8 @@ unsigned TransportParams::encodedLength() const
   unsigned n = 0;
   if (originalDCID.length())
     n += paramBytesLen_(TPOriginalDCID, originalDCID);
+  if (statelessResetTokenPresent)
+    n += paramBytesLen_(TPStatelessResetToken, statelessResetToken.cspan());
   n +=
     paramVarLen_(TPMaxIdleTimeout, maxIdleTimeout) +
     paramVarLen_(TPMaxUDPPayloadSize, maxUDPPayloadSize) +
@@ -106,6 +109,10 @@ int TransportParams::encode(uint8_t *out, unsigned len) const
   unsigned o = 0;
   if (originalDCID.length() &&
       putParamBytes_(out, len, TPOriginalDCID, originalDCID, o) < 0)
+    return -1;
+  if (statelessResetTokenPresent &&
+      putParamBytes_(
+	out, len, TPStatelessResetToken, statelessResetToken.cspan(), o) < 0)
     return -1;
   if (putParamVar_(out, len, TPMaxIdleTimeout, maxIdleTimeout, o) < 0 ||
       putParamVar_(out, len, TPMaxUDPPayloadSize, maxUDPPayloadSize, o) < 0 ||
@@ -168,6 +175,11 @@ int TransportParams::decode(ZuCSpan in)
       case TPOriginalDCID:
 	if (value.length() > CxnIDMax) return -1;
 	originalDCID = value;
+	break;
+      case TPStatelessResetToken:
+	if (value.length() != StatelessResetToken::Length) return -1;
+	statelessResetToken = StatelessResetToken{value};
+	statelessResetTokenPresent = true;
 	break;
       case TPMaxIdleTimeout:
 	if (getParamVar_(value, maxIdleTimeout) < 0) return -1;

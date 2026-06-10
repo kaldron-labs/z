@@ -59,6 +59,26 @@ bool StatelessResetToken::equals(const StatelessResetToken &token) const
     (!m_valid || !memcmp(m_data, token.m_data, Length));
 }
 
+int StatelessReset::decode(StatelessResetToken &token, ZuCSpan datagram)
+{
+  if (!datagram || datagram.length() <= MinLength || Packet::isLong(datagram))
+    return -1;
+  ZuCSpan suffix{
+    datagram.data() + datagram.length() - TokenLength, TokenLength};
+  return token.set(suffix) ? 0 : -1;
+}
+
+bool StatelessReset::verify(ZuCSpan datagram, const StatelessResetToken &token)
+{
+  if (!token.valid()) return false;
+  StatelessResetToken decoded;
+  if (decode(decoded, datagram) < 0) return false;
+  uint8_t diff = 0;
+  for (unsigned i = 0; i < TokenLength; ++i)
+    diff |= decoded.data()[i] ^ token.data()[i];
+  return !diff;
+}
+
 int StatelessReset::writeForUnknownCID(
   uint8_t *out, unsigned len, ZuCSpan receivedPacket,
   const StatelessResetToken &token)
@@ -120,24 +140,19 @@ bool ClientBootstrap::startRandom(unsigned dcidLength, unsigned scidLength)
 }
 
 bool ServerBootstrap::acceptInitial(
-  const LongHeader &initial, unsigned datagramLength, uintptr_t routeToken)
+  const LongHeader &initial, unsigned datagramLength)
 {
   if (m_accepted ||
       initial.type != PacketType::Initial ||
       !VersionNegotiation::supported(initial.version) ||
       initial.dcid.length() < CxnIDGen::InitialLength ||
       initial.scid.length() < CxnIDGen::InitialLength ||
-      datagramLength < MinUDPPayload ||
-      !routeToken)
+      datagramLength < MinUDPPayload)
     return false;
 
   CxnID localSCID;
   StatelessResetToken resetToken;
   if (!CxnIDGen::random(localSCID) || !resetToken.generate()) return false;
-
-  if (!m_initialDCIDs.add(initial.dcid, 0, routeToken) ||
-      !m_localCIDs.add(localSCID, 0, routeToken, resetToken))
-    return false;
 
   m_originalDCID = initial.dcid;
   m_clientInitialSCID = initial.scid;
@@ -152,6 +167,8 @@ bool ServerBootstrap::transportParams(TransportParams &params) const
   if (!m_accepted) return false;
   params.originalDCID = m_originalDCID;
   params.initialSCID = m_localInitialSCID;
+  params.statelessResetToken = m_statelessResetToken;
+  params.statelessResetTokenPresent = true;
   return true;
 }
 

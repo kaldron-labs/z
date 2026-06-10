@@ -23,8 +23,10 @@ public:
   void *operator new(size_t);
   void operator delete(void *) noexcept;
 
-  Cxn_(Endpoint *endpoint, const ZiCxnInfo &ci) :
-      ZiConnection(endpoint->mx(), ci), m_endpoint{endpoint} { }
+  Cxn_(Endpoint *endpoint, const ZiCxnInfo &ci, unsigned generation) :
+      ZiConnection(endpoint->mx(), ci),
+      m_endpoint{endpoint},
+      m_generation{generation} { }
 
   void connected(ZiIOContext &io) override {
     m_endpoint->connected_(this, io);
@@ -32,6 +34,8 @@ public:
   void disconnected() override {
     m_endpoint->disconnected_(this);
   }
+
+  unsigned generation() const { return m_generation; }
 
   bool sendPacket(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (!buf) return false;
@@ -119,6 +123,7 @@ private:
 
 private:
   Endpoint		*m_endpoint = nullptr;
+  unsigned		m_generation = 0;
   ZmRef<ZiIOBuf>	m_rxBuf;
   ZmRef<ZiIOBuf>	m_txBuf;
   ZiSockAddr		m_txAddr;
@@ -148,7 +153,8 @@ bool Endpoint::openUDP(
   ZiIP remoteIP, uint16_t remotePort,
   DatagramFn datagramFn,
   ReadyFn readyFn,
-  FailFn failFn)
+  FailFn failFn,
+  DownFn downFn)
 {
   ZiAssert(mx, "Zquic", (mx), "null endpoint multiplexer", return false);
   ZiAssert(mx->running(), "Zquic", (mx),
@@ -162,14 +168,16 @@ bool Endpoint::openUDP(
   m_datagramFn = ZuMv(datagramFn);
   m_readyFn = ZuMv(readyFn);
   m_failFn = ZuMv(failFn);
+  m_downFn = ZuMv(downFn);
   m_listening = false;
+  ++m_generation;
 
   ZiCxnOptions options;
   options.udp(true);
 
   mx->udp(
     ZiConnectFn{this, [](Endpoint *self, const ZiCxnInfo &ci) -> ZiConnection * {
-      auto cxn = new Cxn_{self, ci};
+      auto cxn = new Cxn_{self, ci, self->m_generation};
       self->m_cxn = cxn;
       return cxn;
     }},
@@ -188,6 +196,8 @@ void Endpoint::closeUDP()
 {
   m_listening = false;
   if (m_cxn) {
+    m_closingCxn = m_cxn;
+    m_closingGeneration = m_cxn->generation();
     m_cxn->close();
     m_cxn = nullptr;
   }
@@ -201,7 +211,7 @@ bool Endpoint::send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
 
 void Endpoint::connected_(Cxn_ *cxn, ZiIOContext &io)
 {
-  if (cxn != m_cxn) return;
+  if (cxn != m_cxn || cxn->generation() != m_generation) return;
 
 #ifndef _WIN32
   {
@@ -219,9 +229,16 @@ void Endpoint::connected_(Cxn_ *cxn, ZiIOContext &io)
 
 void Endpoint::disconnected_(Cxn_ *cxn)
 {
-  if (cxn == m_cxn) {
+  bool active = cxn == m_cxn && cxn->generation() == m_generation;
+  bool closing = cxn == m_closingCxn &&
+    cxn->generation() == m_closingGeneration &&
+    cxn->generation() == m_generation;
+  if (active || closing) {
     m_cxn = nullptr;
+    if (closing) m_closingCxn = nullptr;
     m_listening = false;
+    if (m_downFn) m_downFn(this);
+    clearFns_();
   }
 }
 
@@ -229,6 +246,7 @@ void Endpoint::failed_(bool transient)
 {
   ++m_diag.failures;
   if (m_failFn) m_failFn(transient);
+  clearFns_();
 }
 
 void Endpoint::received_(Datagram datagram)
@@ -247,6 +265,14 @@ void Endpoint::sent_(unsigned bytes)
 void Endpoint::ioError_()
 {
   ++m_diag.failures;
+}
+
+void Endpoint::clearFns_()
+{
+  m_datagramFn = DatagramFn{};
+  m_readyFn = ReadyFn{};
+  m_failFn = FailFn{};
+  m_downFn = DownFn{};
 }
 
 } // namespace Zquic

@@ -27,7 +27,27 @@ struct TestStream :
 
 struct EngineApp : public Zquic::Engine<EngineApp> { };
 struct ClientApp : public Zquic::Client<ClientApp> { };
-struct ServerApp : public Zquic::Server<ServerApp> { };
+struct ServerAppLink;
+struct ServerApp : public Zquic::Server<ServerApp, ServerAppLink> { };
+struct ServerAppStream :
+    public Zquic::SrvStream<
+      ServerAppLink, ServerAppStream, StreamTxBufAlloc> {
+  using Base = Zquic::SrvStream<
+    ServerAppLink, ServerAppStream, StreamTxBufAlloc>;
+  using Base::Base;
+
+  int process(Zquic::RxStream &) { return 0; }
+};
+struct ServerAppLink :
+    public Zquic::SrvLink<
+      ServerApp, ServerAppLink, ServerAppStream, StreamTxBufAlloc> {
+  using Base = Zquic::SrvLink<
+    ServerApp, ServerAppLink, ServerAppStream, StreamTxBufAlloc>;
+
+  ServerAppLink(ServerApp *app) : Base{app} { }
+
+  void streamed(ZmRef<ServerAppStream>) { }
+};
 
 struct ClientShapeApp : public Zquic::Client<ClientShapeApp> { };
 struct ClientShapeLink;
@@ -59,8 +79,9 @@ struct ClientShapeLink :
   ZmAtomic<unsigned> disconnects = 0;
 };
 
-struct ServerShapeApp : public Zquic::Server<ServerShapeApp> { };
 struct ServerShapeLink;
+struct ServerShapeApp :
+    public Zquic::Server<ServerShapeApp, ServerShapeLink> { };
 struct ServerShapeStream :
     public Zquic::SrvStream<
       ServerShapeLink, ServerShapeStream, StreamTxBufAlloc> {
@@ -84,19 +105,56 @@ struct ServerShapeLink :
   void streamed(ZmRef<ServerShapeStream>) { }
 };
 
-using TestCxn = Zquic::Cxn<TestLink, TestLink *>;
-
 struct TestLink :
     public Zquic::Link<
       EngineApp, TestLink, StreamTxBufAlloc,
-      TestCxn, TestLink *, TestStream> {
+      TestStream> {
   using Base = Zquic::Link<
     EngineApp, TestLink, StreamTxBufAlloc,
-    TestCxn, TestLink *, TestStream>;
+    TestStream>;
   using Base::Base;
 
   void streamed(ZmRef<TestStream>) { }
-};
+	  void setPeerResetToken(const Zquic::StatelessResetToken &token) {
+	    Base::setPeerResetToken_(token);
+	  }
+  bool addLocalCID(
+    const Zquic::CxnID &id, uint64_t sequence,
+    const Zquic::StatelessResetToken &token = {}) {
+    return Base::addLocalCID_(id, sequence, token);
+  }
+  bool receiveNewConnectionID(const Zquic::Frame &frame) {
+    return Base::receiveNewConnectionID_(frame);
+  }
+  bool receiveRetireConnectionID(const Zquic::Frame &frame) {
+    return Base::receiveRetireConnectionID_(frame);
+  }
+  bool peerCID(
+    uint64_t sequence, Zquic::CxnID &id,
+    Zquic::StatelessResetToken &token) const {
+    auto cid = Base::peerCID_(sequence);
+    if (!cid) return false;
+    id = cid->id;
+    token = cid->resetToken;
+    return true;
+  }
+  bool localCIDRetired(uint64_t sequence) const {
+    auto cid = Base::localCID_(sequence);
+    return cid && cid->state == Zquic::CxnState::Retired;
+  }
+  void retiredLocalCID_(uint64_t sequence, const Zquic::CxnID &id) {
+    retiredSeq = sequence;
+    retiredCID = id;
+    ++retiredCount;
+  }
+	  bool checkStatelessReset(ZuCSpan datagram) {
+	    return Base::checkStatelessReset_(datagram);
+	  }
+	  bool draining() const { return Base::runtimeDraining_(); }
+  uint64_t retiredSeq = 0;
+  Zquic::CxnID retiredCID;
+  unsigned retiredCount = 0;
+	};
 
 template <typename L>
 bool waitUntil(L l)
@@ -181,11 +239,6 @@ void testAlignedSurfaceShape()
 {
   ZuTestScope(testAlignedSurfaceShape);
 
-  using ClientPhysical = Zquic::CliCxn<ClientShapeLink>;
-  using ServerListener = Zquic::SrvCxn<ServerShapeApp>;
-  (void)sizeof(ClientPhysical *);
-  (void)sizeof(ServerListener *);
-
   ClientShapeApp clientApp;
   ClientShapeLink client{&clientApp};
   auto c0 = client.stream();
@@ -197,6 +250,71 @@ void testAlignedSurfaceShape()
   auto s0 = server.stream();
   ZuCHECK(s0 && s0->id() == 1 && s0->link() == &server && server.isServer(),
     "server aligned link/stream shape mismatch");
+}
+
+void testStatelessResetDetection()
+{
+  ZuTestScope(testStatelessResetDetection);
+
+  EngineApp app;
+  TestLink link{&app};
+  Zquic::StatelessResetToken token{"0123456789abcdef"};
+  uint8_t packet[64] = {};
+  memset(packet, 0xa5, sizeof(packet));
+  packet[0] = 0x65;
+  memcpy(
+    packet + sizeof(packet) - Zquic::StatelessResetToken::Length,
+    token.data(), Zquic::StatelessResetToken::Length);
+  ZuCSpan datagram{reinterpret_cast<const char *>(packet), sizeof(packet)};
+
+  Zquic::StatelessResetToken decoded;
+  ZuCHECK(!Zquic::StatelessReset::decode(decoded, datagram) &&
+      decoded == token,
+    "stateless reset token decode mismatch");
+  ZuCHECK(Zquic::StatelessReset::verify(datagram, token),
+    "stateless reset token verify failed");
+  ZuCHECK(!link.checkStatelessReset(datagram) && !link.draining(),
+    "link accepted stateless reset before peer token was known");
+  link.setPeerResetToken(token);
+  ZuCHECK(link.checkStatelessReset(datagram) && link.draining(),
+    "link did not enter draining on matching stateless reset");
+}
+
+void testConnectionIDFrameLifecycle()
+{
+  ZuTestScope(testConnectionIDFrameLifecycle);
+
+  EngineApp app;
+  TestLink link{&app};
+  Zquic::StatelessResetToken peerToken{"0123456789abcdef"};
+  Zquic::Frame f;
+  f.type = Zquic::FrameType::NewConnectionID;
+  f.value = 5;
+  f.offset = 0;
+  f.length = 9;
+  f.payload = "peerCID09";
+  f.resetToken = peerToken;
+  ZuCHECK(link.receiveNewConnectionID(f),
+    "NEW_CONNECTION_ID frame was rejected");
+
+  Zquic::CxnID peerCID;
+  Zquic::StatelessResetToken foundToken;
+  ZuCHECK(link.peerCID(5, peerCID, foundToken) &&
+      peerCID == Zquic::CxnID{"peerCID09"} && foundToken == peerToken,
+    "NEW_CONNECTION_ID did not store peer CID and reset token");
+
+  Zquic::CxnID localCID{"local003"};
+  Zquic::StatelessResetToken localToken{"fedcba9876543210"};
+  ZuCHECK(link.addLocalCID(localCID, 3, localToken),
+    "local CID setup failed");
+  Zquic::Frame retire;
+  retire.type = Zquic::FrameType::RetireConnectionID;
+  retire.value = 3;
+  ZuCHECK(link.receiveRetireConnectionID(retire),
+    "RETIRE_CONNECTION_ID frame was rejected");
+  ZuCHECK(link.localCIDRetired(3) && link.retiredCount == 1 &&
+      link.retiredSeq == 3 && link.retiredCID == localCID,
+    "RETIRE_CONNECTION_ID did not retire local CID and notify hook");
 }
 
 void testCliLinkUDPConnect()
@@ -389,6 +507,8 @@ int main(int argc, char **argv)
   ZuTestCall(testParams);
   ZuTestCall(testStreamShape);
   ZuTestCall(testAlignedSurfaceShape);
+  ZuTestCall(testStatelessResetDetection);
+  ZuTestCall(testConnectionIDFrameLifecycle);
   ZuTestCall(testCliLinkUDPConnect);
   ZuTestCall(testInitValidation);
 }

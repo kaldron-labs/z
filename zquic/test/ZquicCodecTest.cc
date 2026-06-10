@@ -231,6 +231,8 @@ void testFramesAndParams()
   p.maxUDPPayloadSize = 1400;
   p.initialMaxData = 1000;
   p.initialSCID = "server01";
+  p.statelessResetToken = Zquic::StatelessResetToken{"0123456789abcdef"};
+  p.statelessResetTokenPresent = true;
   l = p.encode(b, sizeof(b));
   ZuCHECK(l > 0, "transport parameter encode failed");
   Zquic::TransportParams q;
@@ -239,6 +241,9 @@ void testFramesAndParams()
   ZuCHECK(q.maxUDPPayloadSize == 1400 && q.initialMaxData == 1000,
     "transport parameter values mismatch");
   ZuCHECK(q.initialSCID == p.initialSCID, "transport parameter CID mismatch");
+  ZuCHECK(q.statelessResetTokenPresent &&
+      q.statelessResetToken == p.statelessResetToken,
+    "transport parameter stateless reset token mismatch");
 
   l = Zquic::FrameCodec::writeAck(b, sizeof(b), 10, 0, 3);
   ZuCHECK(l > 0, "ACK write failed");
@@ -439,25 +444,22 @@ void testControlFrameCoverage()
       f.type == Zquic::FrameType::PathResponse && f.payload == "87654321",
     "PATH_RESPONSE coverage mismatch");
 
-  o = 0;
-  b[o++] = 0x18;
-  ZuCHECK(!Zquic::VarInt::put(b, sizeof(b), 7, o) &&
-      !Zquic::VarInt::put(b, sizeof(b), 2, o),
-    "NEW_CONNECTION_ID setup failed");
-  b[o++] = 8;
-  memcpy(b + o, "server01", 8); o += 8;
-  memset(b + o, 0xa5, 16); o += 16;
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, o), f, used) &&
+  Zquic::CxnID ncid{"server01"};
+  Zquic::StatelessResetToken ncidToken{"0123456789abcdef"};
+  n = Zquic::FrameCodec::writeNewConnectionID(
+    b, sizeof(b), 7, 2, ncid, ncidToken);
+  ZuCHECK(n > 0, "NEW_CONNECTION_ID setup failed");
+  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::NewConnectionID &&
       f.value == 7 && f.offset == 2 &&
-      f.length == 8 && f.payload == "server01" && used == o,
+      f.length == 8 && f.payload == "server01" &&
+      f.resetToken == ncidToken && used == unsigned(n),
     "NEW_CONNECTION_ID parse mismatch");
 
-  o = 0;
-  b[o++] = 0x19;
-  ZuCHECK(!Zquic::VarInt::put(b, sizeof(b), 7, o),
+  n = Zquic::FrameCodec::writeRetireConnectionID(b, sizeof(b), 7);
+  ZuCHECK(n > 0,
     "RETIRE_CONNECTION_ID setup failed");
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, o), f, used) &&
+  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::RetireConnectionID && f.value == 7,
     "RETIRE_CONNECTION_ID parse mismatch");
 
@@ -568,6 +570,8 @@ void testTransportParamCoverage()
   p.ackDelayExponent = 20;
   p.maxAckDelay = 63;
   p.activeConnectionIDLimit = 1073741824;
+  p.statelessResetToken = Zquic::StatelessResetToken{"0123456789abcdef"};
+  p.statelessResetTokenPresent = true;
   p.disableActiveMigration = true;
   int n = p.encode(b, sizeof(b));
   ZuCHECK(n > 0, "full transport parameter encode failed");
@@ -591,6 +595,8 @@ void testTransportParamCoverage()
       q.ackDelayExponent == p.ackDelayExponent &&
       q.maxAckDelay == p.maxAckDelay &&
       q.activeConnectionIDLimit == p.activeConnectionIDLimit &&
+      q.statelessResetTokenPresent == p.statelessResetTokenPresent &&
+      q.statelessResetToken == p.statelessResetToken &&
       q.disableActiveMigration == p.disableActiveMigration,
     "full transport parameter round-trip mismatch");
 
@@ -619,6 +625,10 @@ void testTransportParamCoverage()
   ZuCHECK(n > 0 &&
       q.decode(bytes_(b, unsigned(n))) < 0,
     "undersized active_connection_id_limit accepted");
+  n = putParam_(b, sizeof(b), 0x02, "short-token");
+  ZuCHECK(n > 0 &&
+      q.decode(bytes_(b, unsigned(n))) < 0,
+    "short stateless_reset_token accepted");
 
   uint8_t value[32];
   memset(value, 'a', sizeof(value));

@@ -23,15 +23,12 @@ struct TestStream :
 
   unsigned processed = 0;
 };
-using TestLinkRef = ZmRef<TestLink>;
-using TestCxn = Zquic::Cxn<TestLink, TestLinkRef>;
-using TestCxnRef = ZmRef<TestCxn>;
 struct TestLink :
   public Zquic::Link<App, TestLink,
-    StreamTxBufAlloc, TestCxn, TestCxnRef, TestStream>
+    StreamTxBufAlloc, TestStream>
 {
   using Base = Zquic::Link<App, TestLink,
-    StreamTxBufAlloc, TestCxn, TestCxnRef, TestStream>;
+    StreamTxBufAlloc, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
   void streamed(ZmRef<TestStream> stream) {
     lastStream = ZuMv(stream);

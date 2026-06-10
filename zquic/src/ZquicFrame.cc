@@ -237,6 +237,9 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
     if (f.length > CxnIDMax || in.length() < o + f.length + 16)
       return -1;
     f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+    if (!f.resetToken.set(
+	  ZuCSpan{in.data() + o + unsigned(f.length), 16}))
+      return -1;
     used = o + f.length + 16;
     return 0;
   }
@@ -458,6 +461,37 @@ int FrameCodec::writeStreamsBlocked(
   unsigned o = 0;
   out[o++] = type == StreamType::Bidi ? 0x16 : 0x17;
   if (VarInt::put(out, len, maximum, o) < 0) return -1;
+  return int(o);
+}
+
+int FrameCodec::writeNewConnectionID(
+  uint8_t *out, unsigned len, uint64_t sequence, uint64_t retirePriorTo,
+  const CxnID &cid, const StatelessResetToken &token)
+{
+  if (!len || !cid.length() || cid.length() > CxnIDMax || !token.valid())
+    return -1;
+  unsigned o = 0;
+  out[o++] = 0x18;
+  if (VarInt::put(out, len, sequence, o) < 0 ||
+      VarInt::put(out, len, retirePriorTo, o) < 0)
+    return -1;
+  if (len < o + 1 + cid.length() + StatelessResetToken::Length)
+    return -1;
+  out[o++] = uint8_t(cid.length());
+  memcpy(out + o, cid.data(), cid.length());
+  o += cid.length();
+  memcpy(out + o, token.data(), StatelessResetToken::Length);
+  o += StatelessResetToken::Length;
+  return int(o);
+}
+
+int FrameCodec::writeRetireConnectionID(
+  uint8_t *out, unsigned len, uint64_t sequence)
+{
+  if (!len) return -1;
+  unsigned o = 0;
+  out[o++] = 0x19;
+  if (VarInt::put(out, len, sequence, o) < 0) return -1;
   return int(o);
 }
 

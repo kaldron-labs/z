@@ -25,6 +25,35 @@ namespace Zquic {
 ZuDerive(Host, ZtString<ZtStringHeapID<"Zquic.Host">>);
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Zquic.Param">>);
 
+class StatelessResetToken {
+public:
+  static constexpr unsigned Length = 16;
+
+  StatelessResetToken() = default;
+  explicit StatelessResetToken(ZuCSpan token) { set(token); }
+
+  bool set(ZuCSpan);
+  bool generate();
+  bool valid() const { return m_valid; }
+  unsigned length() const { return m_valid ? Length : 0; }
+  const uint8_t *data() const { return m_data; }
+  ZuCSpan cspan() const {
+    return ZuCSpan{
+      reinterpret_cast<const char *>(m_data), m_valid ? Length : 0};
+  }
+
+  bool equals(const StatelessResetToken &) const;
+
+  friend inline bool operator ==(
+    const StatelessResetToken &l, const StatelessResetToken &r) {
+    return l.equals(r);
+  }
+
+private:
+  uint8_t	m_data[Length] = {};
+  bool		m_valid = false;
+};
+
 inline constexpr uint32_t Version1 = 0x00000001U;
 inline constexpr unsigned MinUDPPayload = 1200;
 inline constexpr unsigned BufSize = 1472;
@@ -70,8 +99,8 @@ struct FrameType {
     PathChallenge, PathResponse, ConnectionClose, HandshakeDone, Unknown);
 };
 
-struct CxnIDState {
-  ZtEnum(CxnIDState, int8_t, Active, Retired, Tombstone);
+struct CxnState {
+  ZtEnum(CxnState, int8_t, Active, Retired, Tombstone);
 };
 
 struct PathMode {

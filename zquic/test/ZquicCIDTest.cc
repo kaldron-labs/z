@@ -11,23 +11,31 @@
 
 using namespace ZuTestUtil;
 
-void testCxnIDRouter()
-{
-  ZuTestScope(testCxnIDRouter);
+namespace {
 
-  Zquic::CxnIDRouter router;
+struct TestRouteLink { };
+
+} // namespace
+
+void testCxnRouter()
+{
+  ZuTestScope(testCxnRouter);
+
+  TestRouteLink link1;
+  TestRouteLink link2;
+  Zquic::CxnRouter<TestRouteLink> router;
   Zquic::CxnID cid{"server01"};
-  ZuCHECK(router.add(cid, 0, 42), "CID add failed");
-  ZuCHECK(router.find(cid) == 42 && router.active() == 1,
+  ZuCHECK(router.add(cid, 0, &link1), "CID add failed");
+  ZuCHECK(router.find(cid) == &link1 && router.active() == 1,
     "CID lookup mismatch");
   ZuCHECK(router.retire(cid), "CID retire failed");
-  ZuCHECK(!router.find(cid) && router.state(cid) == Zquic::CxnIDState::Retired,
+  ZuCHECK(!router.find(cid) && router.state(cid) == Zquic::CxnState::Retired,
     "retired CID still active");
-  ZuCHECK(router.add(cid, 1, 43), "CID reactivate failed");
-  ZuCHECK(router.find(cid) == 43, "reactivated CID mismatch");
+  ZuCHECK(router.add(cid, 1, &link2), "CID reactivate failed");
+  ZuCHECK(router.find(cid) == &link2, "reactivated CID mismatch");
   ZuCHECK(router.tombstone(cid), "CID tombstone failed");
-  ZuCHECK(!router.add(cid, 2, 44), "tombstoned CID reactivated");
-  ZuCHECK(router.state(cid) == Zquic::CxnIDState::Tombstone,
+  ZuCHECK(!router.add(cid, 2, &link1), "tombstoned CID reactivated");
+  ZuCHECK(router.state(cid) == Zquic::CxnState::Tombstone,
     "CID tombstone state mismatch");
 }
 
@@ -40,13 +48,17 @@ void testStatelessReset()
       resetToken.length() == Zquic::StatelessResetToken::Length,
     "stateless reset token setup failed");
 
-  Zquic::CxnIDRouter router;
+  TestRouteLink link;
+  Zquic::CxnRouter<TestRouteLink> router;
   Zquic::CxnID cid{"server01"};
-  ZuCHECK(router.add(cid, 0, 42, resetToken),
+  ZuCHECK(router.add(cid, 0, &link, resetToken),
     "CID add with stateless reset token failed");
   Zquic::StatelessResetToken found;
   ZuCHECK(router.resetToken(cid, found) && found == resetToken,
     "CID stateless reset token lookup failed");
+  ZuCHECK(router.retire(cid) && router.resetToken(cid, found) &&
+      found == resetToken,
+    "retired CID did not retain stateless reset token");
   ZuCHECK(router.tombstone(cid) && !router.resetToken(cid, found),
     "tombstoned CID kept stateless reset token");
 
@@ -78,6 +90,36 @@ void testStatelessReset()
   ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
       out, sizeof(out), ZuCSpan{reinterpret_cast<const char *>(packet), 64},
       invalid) < 0, "invalid token produced stateless reset");
+}
+
+void testVariableShortCIDRouteMatch()
+{
+  ZuTestScope(testVariableShortCIDRouteMatch);
+
+  TestRouteLink shortLink;
+  TestRouteLink longLink;
+  Zquic::CxnRouter<TestRouteLink> router;
+  Zquic::CxnID shortCID{"server01"};
+  Zquic::CxnID longCID{"server019"};
+  Zquic::StatelessResetToken token{"0123456789abcdef"};
+
+  ZuCHECK(router.add(shortCID, 0, &shortLink),
+    "short CID route add failed");
+  ZuCHECK(router.add(longCID, 1, &longLink, token),
+    "long CID route add failed");
+
+  uint8_t packet[64] = {};
+  packet[0] = 0x40;
+  memcpy(packet + 1, longCID.data(), longCID.length());
+  ZuCSpan datagram{reinterpret_cast<const char *>(packet), sizeof(packet)};
+
+  Zquic::CxnID matched;
+  ZuCHECK(router.matchShort(datagram, &matched) == &longLink &&
+      matched == longCID,
+    "known-length short-header route did not select longest matching CID");
+  Zquic::StatelessResetToken found;
+  ZuCHECK(router.resetTokenForShort(datagram, found) && found == token,
+    "known-length short-header reset token lookup failed");
 }
 
 void testCxnIDGen()
@@ -123,22 +165,17 @@ void testServerInitialBootstrap()
 
   Zquic::ServerBootstrap server;
   ZuCHECK(!server.acceptInitial(
-      initial, Zquic::MinUDPPayload - 1, 42),
+      initial, Zquic::MinUDPPayload - 1),
     "undersized Initial datagram was accepted");
-  ZuCHECK(server.acceptInitial(initial, Zquic::MinUDPPayload, 42),
+  ZuCHECK(server.acceptInitial(initial, Zquic::MinUDPPayload),
     "server Initial accept failed");
   ZuCHECK(server.accepted() &&
       server.originalDCID() == initial.dcid &&
       server.clientInitialSCID() == initial.scid &&
       server.localInitialSCID().length() >= Zquic::CxnIDGen::InitialLength,
     "server Initial CID state mismatch");
-  ZuCHECK(server.initialDCIDs().find(initial.dcid) == 42 &&
-      server.localCIDs().find(server.localInitialSCID()) == 42,
-    "server Initial routing table mismatch");
-  Zquic::StatelessResetToken resetToken;
-  ZuCHECK(server.localCIDs().resetToken(server.localInitialSCID(), resetToken) &&
-      resetToken == server.statelessResetToken(),
-    "server Initial stateless reset token routing mismatch");
+  ZuCHECK(server.statelessResetToken().valid(),
+    "server Initial stateless reset token generation failed");
 
   Zquic::TransportParams params;
   ZuCHECK(server.transportParams(params) &&
@@ -150,32 +187,31 @@ void testServerInitialBootstrap()
   ZuCHECK(client.start(initial.dcid, initial.scid) &&
       client.validateServerTransportParams(params, server.localInitialSCID()),
     "client rejected server Initial transport parameters");
-  ZuCHECK(!server.acceptInitial(initial, Zquic::MinUDPPayload, 43),
+  ZuCHECK(!server.acceptInitial(initial, Zquic::MinUDPPayload),
     "server accepted a second Initial");
 
   Zquic::LongHeader bad = initial;
   bad.version = 0xff00001dU;
   Zquic::ServerBootstrap badServer;
-  ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload, 42),
+  ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
     "unsupported Initial version was accepted");
   bad = initial;
   bad.scid = "short";
-  ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload, 42),
+  ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
     "short client SCID was accepted");
   bad = initial;
   bad.type = Zquic::PacketType::Handshake;
-  ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload, 42),
+  ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
     "non-Initial packet was accepted");
-  ZuCHECK(!badServer.acceptInitial(initial, Zquic::MinUDPPayload, 0),
-    "zero route token was accepted");
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testCxnIDRouter);
+  ZuTestCall(testCxnRouter);
   ZuTestCall(testStatelessReset);
+  ZuTestCall(testVariableShortCIDRouteMatch);
   ZuTestCall(testCxnIDGen);
   ZuTestCall(testServerInitialBootstrap);
 }
