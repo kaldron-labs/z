@@ -56,8 +56,8 @@ void testVarIntAndPacket()
   ZuCHECK(Zquic::VarInt::put(b, 1, 1, badOffset) < 0 && badOffset == 2,
     "varint put accepted an out-of-range offset");
 
-  Zquic::ConnectionID dcid{"abcdefgh"};
-  Zquic::ConnectionID scid{"server01"};
+  Zquic::CxnID dcid{"abcdefgh"};
+  Zquic::CxnID scid{"server01"};
   int l = Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 16, 2);
   ZuCHECK(l > 0, "Initial header write failed");
   Zquic::LongHeader h;
@@ -175,12 +175,12 @@ void testPacketParserRejections()
 
   b[0] = 0xc0;
   b[4] = 1;
-  b[5] = Zquic::ConnectionID::Max + 1;
+  b[5] = Zquic::CxnIDMax + 1;
   ZuCHECK(Zquic::Packet::parseLong(bytes_(b, 7), h) < 0,
     "overlong DCID length was accepted");
 
-  Zquic::ConnectionID dcid{"abcdefgh"};
-  Zquic::ConnectionID scid{"server01"};
+  Zquic::CxnID dcid{"abcdefgh"};
+  Zquic::CxnID scid{"server01"};
   ZuCHECK(Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 0, 0) < 0 &&
       Zquic::Packet::writeShort(b, sizeof(b), dcid, 1, 5) < 0,
     "invalid packet number length accepted");
@@ -206,7 +206,7 @@ void testPacketParserRejections()
     "long-header packet parsed as short");
   b[0] = 0x40;
   ZuCHECK(Zquic::Packet::parseShort(
-      bytes_(b, sizeof(b)), Zquic::ConnectionID::Max + 1, sh) < 0,
+      bytes_(b, sizeof(b)), Zquic::CxnIDMax + 1, sh) < 0,
     "overlong short-header CID length was accepted");
 }
 
@@ -230,12 +230,11 @@ void testFramesAndParams()
   Zquic::TransportParams p;
   p.maxUDPPayloadSize = 1400;
   p.initialMaxData = 1000;
-  p.initialSCID.set("server01");
-  l = Zquic::TransportParamsCodec::encode(b, sizeof(b), p);
+  p.initialSCID = "server01";
+  l = p.encode(b, sizeof(b));
   ZuCHECK(l > 0, "transport parameter encode failed");
   Zquic::TransportParams q;
-  ZuCHECK(!Zquic::TransportParamsCodec::decode(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, q),
+  ZuCHECK(!q.decode(ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}),
     "transport parameter decode failed");
   ZuCHECK(q.maxUDPPayloadSize == 1400 && q.initialMaxData == 1000,
     "transport parameter values mismatch");
@@ -542,9 +541,9 @@ void testMalformedFrameCoverage()
   ZuCHECK(!Zquic::VarInt::put(b, sizeof(b), 1, o) &&
       !Zquic::VarInt::put(b, sizeof(b), 0, o),
     "overlong NEW_CONNECTION_ID setup failed");
-  b[o++] = Zquic::ConnectionID::Max + 1;
-  memset(b + o, 0, Zquic::ConnectionID::Max + 1 + 16);
-  o += Zquic::ConnectionID::Max + 1 + 16;
+  b[o++] = Zquic::CxnIDMax + 1;
+  memset(b + o, 0, Zquic::CxnIDMax + 1 + 16);
+  o += Zquic::CxnIDMax + 1 + 16;
   ZuCHECK(Zquic::FrameCodec::parse(bytes_(b, o), f, used) < 0,
     "overlong NEW_CONNECTION_ID CID accepted");
 }
@@ -555,9 +554,9 @@ void testTransportParamCoverage()
 
   uint8_t b[512];
   Zquic::TransportParams p;
-  p.originalDCID.set("orig-dcid");
-  p.initialSCID.set("init-scid");
-  p.retrySCID.set("retrycid");
+  p.originalDCID = "orig-dcid";
+  p.initialSCID = "init-scid";
+  p.retrySCID = "retrycid";
   p.maxIdleTimeout = 16363;
   p.maxUDPPayloadSize = Zquic::BufSize;
   p.initialMaxData = 1000000009;
@@ -570,11 +569,11 @@ void testTransportParamCoverage()
   p.maxAckDelay = 63;
   p.activeConnectionIDLimit = 1073741824;
   p.disableActiveMigration = true;
-  int n = Zquic::TransportParamsCodec::encode(b, sizeof(b), p);
+  int n = p.encode(b, sizeof(b));
   ZuCHECK(n > 0, "full transport parameter encode failed");
 
   Zquic::TransportParams q;
-  ZuCHECK(!Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q),
+  ZuCHECK(!q.decode(bytes_(b, unsigned(n))),
     "full transport parameter decode failed");
   ZuCHECK(q.originalDCID == p.originalDCID &&
       q.initialSCID == p.initialSCID &&
@@ -597,28 +596,28 @@ void testTransportParamCoverage()
 
   n = putParam_(b, sizeof(b), 0x3f, "abc");
   ZuCHECK(n > 0 &&
-      !Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q),
+      !q.decode(bytes_(b, unsigned(n))),
     "unknown transport parameter was not ignored");
 
   n = putParam_(b, sizeof(b), 0x0c, "x");
   ZuCHECK(n > 0 &&
-      Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q) < 0,
+      q.decode(bytes_(b, unsigned(n))) < 0,
     "non-empty disable_active_migration accepted");
   n = putParamVar_(b, sizeof(b), 0x03, Zquic::MinUDPPayload - 1);
   ZuCHECK(n > 0 &&
-      Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q) < 0,
+      q.decode(bytes_(b, unsigned(n))) < 0,
     "undersized max_udp_payload_size accepted");
   n = putParamVar_(b, sizeof(b), 0x0a, 21);
   ZuCHECK(n > 0 &&
-      Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q) < 0,
+      q.decode(bytes_(b, unsigned(n))) < 0,
     "oversized ack_delay_exponent accepted");
   n = putParamVar_(b, sizeof(b), 0x0b, 1ULL<<14);
   ZuCHECK(n > 0 &&
-      Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q) < 0,
+      q.decode(bytes_(b, unsigned(n))) < 0,
     "oversized max_ack_delay accepted");
   n = putParamVar_(b, sizeof(b), 0x0e, 1);
   ZuCHECK(n > 0 &&
-      Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q) < 0,
+      q.decode(bytes_(b, unsigned(n))) < 0,
     "undersized active_connection_id_limit accepted");
 
   uint8_t value[32];
@@ -626,13 +625,13 @@ void testTransportParamCoverage()
   n = putParam_(b, sizeof(b), 0x0f,
     bytes_(value, Zquic::MinCIDLength - 1));
   ZuCHECK(n > 0 &&
-      !Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q) &&
+      !q.decode(bytes_(b, unsigned(n))) &&
       q.initialSCID.length() == Zquic::MinCIDLength - 1,
     "short peer initial_source_connection_id was rejected");
   n = putParam_(b, sizeof(b), 0x0f,
-    bytes_(value, Zquic::ConnectionID::Max + 1));
+    bytes_(value, Zquic::CxnIDMax + 1));
   ZuCHECK(n > 0 &&
-      Zquic::TransportParamsCodec::decode(bytes_(b, unsigned(n)), q) < 0,
+      q.decode(bytes_(b, unsigned(n))) < 0,
     "overlong initial_source_connection_id accepted");
 
   unsigned o = 0;
@@ -641,13 +640,12 @@ void testTransportParamCoverage()
     "malformed transport varint setup failed");
   b[o++] = Zquic::MinUDPPayload & 0x3fU;
   b[o++] = 0;
-  ZuCHECK(Zquic::TransportParamsCodec::decode(bytes_(b, o), q) < 0,
+  ZuCHECK(q.decode(bytes_(b, o)) < 0,
     "transport parameter varint with trailing byte accepted");
 
-  n = Zquic::TransportParamsCodec::encode(b, sizeof(b), p);
+  n = p.encode(b, sizeof(b));
   ZuCHECK(n > 1 &&
-      Zquic::TransportParamsCodec::decode(
-	bytes_(b, unsigned(n - 1)), q) < 0,
+      q.decode(bytes_(b, unsigned(n - 1))) < 0,
     "truncated transport parameter accepted");
 }
 

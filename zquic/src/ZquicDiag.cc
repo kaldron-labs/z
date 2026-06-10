@@ -46,13 +46,7 @@ void Diag::summary(DiagText &out) const
     " closedStreams=" << closedStreams <<
     " pmtudProbes=" << pmtudProbes <<
     " pmtudSuccess=" << pmtudSuccess <<
-    " pmtudFailure=" << pmtudFailure <<
-    " packetRxBufAllocs=" << packetRxBufAllocs <<
-    " packetTxBufAllocs=" << packetTxBufAllocs <<
-    " streamRxSliceAllocs=" << streamRxSliceAllocs <<
-    " streamTxBufAllocs=" << streamTxBufAllocs <<
-    " queueNodeAllocs=" << queueNodeAllocs <<
-    " packetProtectionContextInits=" << packetProtectionContextInits;
+    " pmtudFailure=" << pmtudFailure;
 }
 
 void Diag::recoverySummary(DiagText &out) const

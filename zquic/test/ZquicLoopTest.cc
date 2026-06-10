@@ -71,7 +71,7 @@ void testHandshakeStreamsAndClose()
 {
   ZuTestScope(testHandshakeStreamsAndClose);
 
-  Zquic::ConnectionID dcid{"client01"};
+  Zquic::CxnID dcid{"client01"};
   Zquic::Crypto clientCrypto;
   Zquic::Crypto serverCrypto;
   ZuCHECK(clientCrypto.init(Zquic::CryptoConfig{false, false, "h3"}) &&
@@ -80,16 +80,10 @@ void testHandshakeStreamsAndClose()
   ZuCHECK(clientCrypto.deriveInitial(dcid) && serverCrypto.deriveInitial(dcid),
     "loop Initial key derivation failed");
 
-  Zquic::ConnState clientState;
-  Zquic::ConnState serverState;
-  ZuCHECK(clientState.startHandshake() && serverState.startHandshake(),
-    "loop handshake state start failed");
   clientCrypto.installSecret(Zquic::CryptoLevel::OneRTT, "client-app");
   serverCrypto.installSecret(Zquic::CryptoLevel::OneRTT, "server-app");
   ZuCHECK(clientCrypto.completeHandshake() && serverCrypto.completeHandshake(),
     "loop 1-RTT readiness failed");
-  ZuCHECK(clientState.establish() && serverState.establish(),
-    "loop connection establish failed");
 
   App app;
   TestLink client{&app};

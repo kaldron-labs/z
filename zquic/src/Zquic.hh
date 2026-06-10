@@ -40,15 +40,13 @@
 #include <zlib/ZquicFrame.hh>
 #include <zlib/ZquicPacketBuilder.hh>
 #include <zlib/ZquicConn.hh>
-#include <zlib/ZquicDatagram.hh>
 #include <zlib/ZquicCrypto.hh>
 #include <zlib/ZquicRecovery.hh>
+#include <zlib/ZquicSock.hh>
 
 namespace Zquic {
 
 ZuDerive(LogMsg, ZtString<ZtStringHeapID<"Zquic.Log">>);
-ZuDerive(Host, ZtString<ZtStringHeapID<"Zquic.Host">>);
-ZuDerive(ParamString, ZtString<ZtStringHeapID<"Zquic.Param">>);
 ZuDerive(ParamStrings,
   (ZtArray<ParamString, ZtArrayHeapID<"Zquic.ParamStrings">>));
 
@@ -61,8 +59,8 @@ struct InitialInfo {
 class LinkBase : public ZmPolymorph {
 public:
   virtual void receivedRouted_(Datagram) { }
-  virtual void serverRoutes_(CIDRouter &) const { }
-  virtual void serverRoutesClosed_(CIDRouter &) const { }
+  virtual void serverRoutes_(CxnIDRouter &) const { }
+  virtual void serverRoutesClosed_(CxnIDRouter &) const { }
 };
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.ALPNData">>));
 ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Zquic.ALPN">>));
@@ -152,37 +150,17 @@ inline bool runtimeFrameRef(
 //   modification is not a concern
 struct RuntimeDiag {
   uint64_t	endpointReady = 0;
-  uint64_t	endpointFailures = 0;
   uint64_t	datagramsRx = 0;
   uint64_t	bytesRx = 0;
   uint64_t	packetsRx = 0;
-  uint64_t	initialPacketsRx = 0;
   uint64_t	framesRx = 0;
-  uint64_t	pingFramesRx = 0;
-  uint64_t	ackFramesRx = 0;
-  uint64_t	ackFramesTx = 0;
-  uint64_t	handshakeDoneFramesRx = 0;
-  uint64_t	handshakeDoneFramesTx = 0;
-  uint64_t	packetParseErrors = 0;
   uint64_t	packetsTx = 0;
-  uint64_t	initialPacketsTx = 0;
   uint64_t	bytesTx = 0;
-  uint64_t	handshakePacketsRx = 0;
-  uint64_t	handshakePacketsTx = 0;
-  uint64_t	shortPacketsRx = 0;
-  uint64_t	shortPacketsTx = 0;
-  uint64_t	protectedPacketsRx = 0;
-  uint64_t	protectedPacketsTx = 0;
-  uint64_t	packetProtectionFailures = 0;
-  uint64_t	tlsFailures = 0;
-  uint64_t	cryptoFramesRx = 0;
-  uint64_t	cryptoFramesTx = 0;
   uint64_t	cryptoBytesRx = 0;
   uint64_t	cryptoBytesTx = 0;
-  uint64_t	streamFramesRx = 0;
-  uint64_t	streamFramesTx = 0;
   uint64_t	streamBytesRx = 0;
   uint64_t	streamBytesTx = 0;
+  uint64_t	failures = 0;
   uint64_t	handshakeComplete = 0;
 };
 
@@ -195,7 +173,7 @@ inline bool sendRuntimeCryptoFlights(
   if (!chunkMax) return false;
   for (size_t epoch = 0; epoch < 4; ++epoch) {
     if (offsets[epoch + 1] < offsets[epoch] || offsets[epoch + 1] > len) {
-      ++diag.tlsFailures;
+      ++diag.failures;
       return false;
     }
     if (offsets[epoch + 1] <= offsets[epoch]) continue;
@@ -209,11 +187,10 @@ inline bool sendRuntimeCryptoFlights(
       uint64_t cryptoOffset = txCrypto[level].txOffset();
       int n = txCrypto[level].writeFramePrefix(frame, sizeof(frame), chunk);
       if (n < 0) {
-	++diag.tlsFailures;
+	++diag.failures;
 	return false;
       }
       SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
-      ++diag.cryptoFramesTx;
       diag.cryptoBytesTx += chunk;
       if (!send(level, byteSpan(frame, unsigned(n)),
 	    byteSpan(data + off, chunk), ref, addr))
@@ -233,33 +210,32 @@ inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
 {
   ++diag.datagramsRx;
   if (!d.buf) {
-    ++diag.packetParseErrors;
+    ++diag.failures;
     return;
   }
   diag.bytesRx += d.buf->length;
 
   LongHeader h;
   if (Packet::parseLong(d.buf->cspan(), h) < 0) {
-    ++diag.packetParseErrors;
+    ++diag.failures;
     return;
   }
   ++diag.packetsRx;
-  if (h.type == PacketType::Initial) ++diag.initialPacketsRx;
 
   if (h.length < h.pnLength || h.length > d.buf->length) {
-    ++diag.packetParseErrors;
+    ++diag.failures;
     return;
   }
   unsigned packetLength = h.length;
   if (h.pnOffset > d.buf->length - packetLength) {
-    ++diag.packetParseErrors;
+    ++diag.failures;
     return;
   }
   unsigned payloadLength = packetLength - h.pnLength;
   unsigned payloadOffset = h.payloadOffset;
   if (payloadOffset > d.buf->length ||
       payloadLength > d.buf->length - payloadOffset) {
-    ++diag.packetParseErrors;
+    ++diag.failures;
     return;
   }
 
@@ -272,11 +248,10 @@ inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
     if (FrameCodec::parse(
 	  ZuCSpan{payload + offset, payloadLength - offset},
 	  frame, used) < 0 || !used) {
-      ++diag.packetParseErrors;
+      ++diag.failures;
       return;
     }
     ++diag.framesRx;
-    if (frame.type == FrameType::Ping) ++diag.pingFramesRx;
     offset += used;
   }
 }
@@ -286,8 +261,8 @@ inline bool writeInitialPingProbe(ZiIOBuf *buf, uint64_t packetNumber)
   if (!buf) return false;
   if (buf->size < MinUDPPayload && !buf->ensure(MinUDPPayload)) return false;
 
-  ConnectionID dcid{"zqserv01"};
-  ConnectionID scid{"zqcli001"};
+  CxnID dcid{"zqserv01"};
+  CxnID scid{"zqcli001"};
   static constexpr unsigned PNLength = 1;
   uint8_t *out = buf->data_();
   unsigned payloadLength = 1;
@@ -325,122 +300,84 @@ inline bool writeInitialPingProbe(ZiIOBuf *buf, uint64_t packetNumber)
 
 struct EngineParams {
   EngineParams(
-    ZiMultiplex *mx_ = nullptr,
-    ZuCSpan rxThread_ = {},
-    ZuCSpan txThread_ = {}) :
-      mx{mx_}, rxThread{rxThread_}, txThread{txThread_},
-      errorFn_{defaultErrorFn()} { }
+    ZiMultiplex *mx = nullptr,
+    ZuCSpan rxThread = {},
+    ZuCSpan txThread = {}) :
+      m_mx{mx}, m_rxThread{rxThread}, m_txThread{txThread},
+      m_errorFn{defaultErrorFn()} { }
 
-  EngineParams &&caPath(ZuCSpan v) { caPath_ = v; return ZuMv(*this); }
-  EngineParams &&certPath(ZuCSpan v) { certPath_ = v; return ZuMv(*this); }
-  EngineParams &&keyPath(ZuCSpan v) { keyPath_ = v; return ZuMv(*this); }
+  EngineParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
+  EngineParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
+  EngineParams &&keyPath(ZuCSpan v) { m_keyPath = v; return ZuMv(*this); }
   EngineParams &&asyncThread(ZuCSpan v) {
-    asyncThread_ = v;
+    m_asyncThread = v;
     return ZuMv(*this);
   }
-  EngineParams &&maxData(uint64_t v) { maxData_ = v; return ZuMv(*this); }
+  EngineParams &&maxData(uint64_t v) { m_maxData = v; return ZuMv(*this); }
   EngineParams &&maxStreamData(uint64_t v) {
-    maxStreamData_ = v;
+    m_maxStreamData = v;
     return ZuMv(*this);
   }
   EngineParams &&maxStreamsBidi(uint64_t v) {
-    maxStreamsBidi_ = v;
+    m_maxStreamsBidi = v;
     return ZuMv(*this);
   }
   EngineParams &&maxStreamsUni(uint64_t v) {
-    maxStreamsUni_ = v;
+    m_maxStreamsUni = v;
     return ZuMv(*this);
   }
-  EngineParams &&maxUDP(unsigned v) { maxUDP_ = v; return ZuMv(*this); }
+  EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
   EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
-    alpn_.length(0);
-    alpn_.ensure(v.length());
-    for (auto &s : v) alpn_.push(ParamString{s});
+    m_alpn.length(0);
+    m_alpn.ensure(v.length());
+    for (auto &s : v) m_alpn.push(ParamString{s});
     return ZuMv(*this);
   }
   EngineParams &&alpn(ZuSpan<const ptls_iovec_t> v) {
-    alpn_.length(0);
-    alpn_.ensure(v.length());
+    m_alpn.length(0);
+    m_alpn.ensure(v.length());
     for (auto &p : v)
-      alpn_.push(ParamString{ZuCSpan{
+      m_alpn.push(ParamString{ZuCSpan{
 	reinterpret_cast<const char *>(p.base), p.len}});
     return ZuMv(*this);
   }
-  EngineParams &&errorFn(ErrorFn v) { errorFn_ = ZuMv(v); return ZuMv(*this); }
+  EngineParams &&errorFn(ErrorFn v) { m_errorFn = ZuMv(v); return ZuMv(*this); }
 
-  ZiMultiplex	*mx = nullptr;
-  ParamString	rxThread;
-  ParamString	txThread;
-  ParamStrings	alpn_;
-  ParamString	caPath_;
-  ParamString	certPath_;
-  ParamString	keyPath_;
-  ParamString	asyncThread_;
-  uint64_t	maxData_ = 0;
-  uint64_t	maxStreamData_ = 0;
-  uint64_t	maxStreamsBidi_ = 0;
-  uint64_t	maxStreamsUni_ = 0;
-  unsigned	maxUDP_ = MinUDPPayload;
-  ErrorFn	errorFn_;
+  ZiMultiplex *mx() const { return m_mx; }
+  ZuCSpan rxThread() const { return m_rxThread; }
+  ZuCSpan txThread() const { return m_txThread; }
+  const ParamStrings &alpn() const { return m_alpn; }
+  ZuCSpan caPath() const { return m_caPath; }
+  ZuCSpan certPath() const { return m_certPath; }
+  ZuCSpan keyPath() const { return m_keyPath; }
+  ZuCSpan asyncThread() const { return m_asyncThread; }
+  uint64_t maxData() const { return m_maxData; }
+  uint64_t maxStreamData() const { return m_maxStreamData; }
+  uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
+  uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
+  unsigned maxUDP() const { return m_maxUDP; }
+  const ErrorFn &errorFn() const { return m_errorFn; }
+  ErrorFn &errorFn() { return m_errorFn; }
+
+private:
+  ZiMultiplex	*m_mx = nullptr;
+  ParamString	m_rxThread;
+  ParamString	m_txThread;
+  ParamStrings	m_alpn;
+  ParamString	m_caPath;
+  ParamString	m_certPath;
+  ParamString	m_keyPath;
+  ParamString	m_asyncThread;
+  uint64_t	m_maxData = 0;
+  uint64_t	m_maxStreamData = 0;
+  uint64_t	m_maxStreamsBidi = 0;
+  uint64_t	m_maxStreamsUni = 0;
+  unsigned	m_maxUDP = MinUDPPayload;
+  ErrorFn	m_errorFn;
 };
 
-struct ClientParams : public EngineParams {
-  using EngineParams::EngineParams;
-
-  ClientParams &&caPath(ZuCSpan v)
-    { EngineParams::caPath(v); return ZuMv(*this); }
-  ClientParams &&certPath(ZuCSpan v)
-    { EngineParams::certPath(v); return ZuMv(*this); }
-  ClientParams &&keyPath(ZuCSpan v)
-    { EngineParams::keyPath(v); return ZuMv(*this); }
-  ClientParams &&asyncThread(ZuCSpan v)
-    { EngineParams::asyncThread(v); return ZuMv(*this); }
-  ClientParams &&maxData(uint64_t v)
-    { EngineParams::maxData(v); return ZuMv(*this); }
-  ClientParams &&maxStreamData(uint64_t v)
-    { EngineParams::maxStreamData(v); return ZuMv(*this); }
-  ClientParams &&maxStreamsBidi(uint64_t v)
-    { EngineParams::maxStreamsBidi(v); return ZuMv(*this); }
-  ClientParams &&maxStreamsUni(uint64_t v)
-    { EngineParams::maxStreamsUni(v); return ZuMv(*this); }
-  ClientParams &&maxUDP(unsigned v)
-    { EngineParams::maxUDP(v); return ZuMv(*this); }
-  ClientParams &&alpn(ZuSpan<ZuCSpan> v)
-    { EngineParams::alpn(v); return ZuMv(*this); }
-  ClientParams &&alpn(ZuSpan<const ptls_iovec_t> v)
-    { EngineParams::alpn(v); return ZuMv(*this); }
-  ClientParams &&errorFn(ErrorFn v)
-    { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
-};
-
-struct ServerParams : public EngineParams {
-  using EngineParams::EngineParams;
-
-  ServerParams &&caPath(ZuCSpan v)
-    { EngineParams::caPath(v); return ZuMv(*this); }
-  ServerParams &&certPath(ZuCSpan v)
-    { EngineParams::certPath(v); return ZuMv(*this); }
-  ServerParams &&keyPath(ZuCSpan v)
-    { EngineParams::keyPath(v); return ZuMv(*this); }
-  ServerParams &&asyncThread(ZuCSpan v)
-    { EngineParams::asyncThread(v); return ZuMv(*this); }
-  ServerParams &&maxData(uint64_t v)
-    { EngineParams::maxData(v); return ZuMv(*this); }
-  ServerParams &&maxStreamData(uint64_t v)
-    { EngineParams::maxStreamData(v); return ZuMv(*this); }
-  ServerParams &&maxStreamsBidi(uint64_t v)
-    { EngineParams::maxStreamsBidi(v); return ZuMv(*this); }
-  ServerParams &&maxStreamsUni(uint64_t v)
-    { EngineParams::maxStreamsUni(v); return ZuMv(*this); }
-  ServerParams &&maxUDP(unsigned v)
-    { EngineParams::maxUDP(v); return ZuMv(*this); }
-  ServerParams &&alpn(ZuSpan<ZuCSpan> v)
-    { EngineParams::alpn(v); return ZuMv(*this); }
-  ServerParams &&alpn(ZuSpan<const ptls_iovec_t> v)
-    { EngineParams::alpn(v); return ZuMv(*this); }
-  ServerParams &&errorFn(ErrorFn v)
-    { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
-};
+using ClientParams = EngineParams;
+using ServerParams = EngineParams;
 
 template <typename App_> class Engine : public ZmPolymorph {
 public:
@@ -497,41 +434,41 @@ friend class SrvLink;
   void rxRun(Args &&...args) {
     m_mx->run(m_rxThread, ZuFwd<Args>(args)...);
   }
-	  template <typename ...Args>
-	  void rxInvoke(Args &&...args) {
-	    m_mx->invoke(m_rxThread, ZuFwd<Args>(args)...);
-	  }
-	  bool rxInvoked() { return m_mx->invoked(m_rxThread); }
-	  template <typename ...Args>
-	  void txRun(Args &&...args) {
-	    m_mx->run(m_txThread, ZuFwd<Args>(args)...);
-	  }
-	  template <typename ...Args>
-	  void txInvoke(Args &&...args) {
-	    m_mx->invoke(m_txThread, ZuFwd<Args>(args)...);
-	  }
-	  bool txInvoked() { return m_mx->invoked(m_txThread); }
+  template <typename ...Args>
+  void rxInvoke(Args &&...args) {
+    m_mx->invoke(m_rxThread, ZuFwd<Args>(args)...);
+  }
+  bool rxInvoked() { return m_mx->invoked(m_rxThread); }
+  template <typename ...Args>
+  void txRun(Args &&...args) {
+    m_mx->run(m_txThread, ZuFwd<Args>(args)...);
+  }
+  template <typename ...Args>
+  void txInvoke(Args &&...args) {
+    m_mx->invoke(m_txThread, ZuFwd<Args>(args)...);
+  }
+  bool txInvoked() { return m_mx->invoked(m_txThread); }
 
 protected:
   template <typename Params, typename L>
   bool init_(Params params, L l) {
-    m_errorFn = ZuMv(params.errorFn_);
+    m_errorFn = ZuMv(params.errorFn());
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
-    m_mx = params.mx;
-    m_rxThread = thread_(params.rxThread, m_mx->rxThread());
-    m_txThread = thread_(params.txThread, m_mx->txThread());
-    m_asyncThread = params.asyncThread_ ?
-      m_mx->sid(params.asyncThread_) : 0;
-    m_caPath = params.caPath_;
-    m_certPath = params.certPath_;
-    m_keyPath = params.keyPath_;
-    m_maxData = params.maxData_;
-    m_maxStreamData = params.maxStreamData_;
-    m_maxStreamsBidi = params.maxStreamsBidi_;
-    m_maxStreamsUni = params.maxStreamsUni_;
-    m_maxUDP = params.maxUDP_;
-    if (!init_alpn_(params.alpn_)) return false;
+    m_mx = params.mx();
+    m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
+    m_txThread = thread_(params.txThread(), m_mx->txThread());
+    m_asyncThread = params.asyncThread() ?
+      m_mx->sid(params.asyncThread()) : 0;
+    m_caPath = params.caPath();
+    m_certPath = params.certPath();
+    m_keyPath = params.keyPath();
+    m_maxData = params.maxData();
+    m_maxStreamData = params.maxStreamData();
+    m_maxStreamsBidi = params.maxStreamsBidi();
+    m_maxStreamsUni = params.maxStreamsUni();
+    m_maxUDP = params.maxUDP();
+    if (!init_alpn_(params.alpn())) return false;
     return l(params);
   }
 
@@ -549,24 +486,24 @@ private:
 
   template <typename Params>
   bool validate_(const Params &params) {
-    if (ZuUnlikely(!params.mx)) {
+    if (ZuUnlikely(!params.mx())) {
       error_(ZeEXCEPT(Error, "Zquic", "multiplexer is null"));
       return false;
     }
-    unsigned rxThread = params.rxThread ?
-      params.mx->sid(params.rxThread) : params.mx->rxThread();
-    unsigned txThread = params.txThread ?
-      params.mx->sid(params.txThread) : params.mx->txThread();
-    if (!rxThread || rxThread > params.mx->params().nThreads()) {
+    unsigned rxThread = params.rxThread() ?
+      params.mx()->sid(params.rxThread()) : params.mx()->rxThread();
+    unsigned txThread = params.txThread() ?
+      params.mx()->sid(params.txThread()) : params.mx()->txThread();
+    if (!rxThread || rxThread > params.mx()->params().nThreads()) {
       error_(ZeEXCEPT(Error, "Zquic",
-	([thread = LogMsg{params.rxThread}](auto &s) {
+	([thread = LogMsg{params.rxThread()}](auto &s) {
 	s << "invalid QUIC Rx thread ID \"" << thread << '"';
       })));
       return false;
     }
-    if (!txThread || txThread > params.mx->params().nThreads()) {
+    if (!txThread || txThread > params.mx()->params().nThreads()) {
       error_(ZeEXCEPT(Error, "Zquic",
-	([thread = LogMsg{params.txThread}](auto &s) {
+	([thread = LogMsg{params.txThread()}](auto &s) {
 	s << "invalid QUIC Tx thread ID \"" << thread << '"';
       })));
       return false;
@@ -576,27 +513,27 @@ private:
 	"QUIC Rx and Tx threads must differ"));
       return false;
     }
-    if (!params.mx->running()) {
+    if (!params.mx()->running()) {
       error_(ZeEXCEPT(Error, "Zquic", "multiplexer not running"));
       return false;
     }
-    if (params.maxUDP_ > BufSize) {
+    if (params.maxUDP() > BufSize) {
       error_(ZeEXCEPT(Error, "Zquic",
-	([maxUDP = params.maxUDP_](auto &s) {
+	([maxUDP = params.maxUDP()](auto &s) {
 	s << "maxUDP " << maxUDP << " exceeds packet buffer size " << BufSize;
       })));
       return false;
     }
-    if (params.asyncThread_) {
+    if (params.asyncThread()) {
 #ifdef _WIN32
       error_(ZeEXCEPT(Error, "Zquic",
 	"asyncThread is unsupported on Windows"));
       return false;
 #else
-      unsigned asyncThread = params.mx->sid(params.asyncThread_);
-      if (!asyncThread || asyncThread > params.mx->params().nThreads()) {
+      unsigned asyncThread = params.mx()->sid(params.asyncThread());
+      if (!asyncThread || asyncThread > params.mx()->params().nThreads()) {
 	error_(ZeEXCEPT(Error, "Zquic",
-	  ([thread = LogMsg{params.asyncThread_}](auto &s) {
+	  ([thread = LogMsg{params.asyncThread()}](auto &s) {
 	  s << "invalid async thread ID \"" << thread << '"';
 	})));
 	return false;
@@ -606,13 +543,13 @@ private:
 	  "async thread must differ from QUIC Rx and Tx threads"));
 	return false;
       }
-      if (asyncThread == params.mx->rxThread() ||
-	  asyncThread == params.mx->txThread()) {
+      if (asyncThread == params.mx()->rxThread() ||
+	  asyncThread == params.mx()->txThread()) {
 	error_(ZeEXCEPT(Error, "Zquic",
 	  "async thread must differ from I/O threads"));
 	return false;
       }
-      if (!params.mx->params().thread(asyncThread).isolated()) {
+      if (!params.mx()->params().thread(asyncThread).isolated()) {
 	error_(ZeEXCEPT(Error, "Zquic",
 	  "async thread must be isolated"));
 	return false;
@@ -689,8 +626,8 @@ public:
   static constexpr unsigned RuntimeCryptoChunk = 900;
 
   bool init(ClientParams params) {
-    if (bool(params.certPath_) != bool(params.keyPath_)) {
-      auto errorFn = params.errorFn_ ? params.errorFn_ : defaultErrorFn();
+    if (bool(params.certPath()) != bool(params.keyPath())) {
+      auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
       errorFn(ZeEXCEPT(Error, "Zquic",
 	"client certPath and keyPath must be configured together"));
       return false;
@@ -747,8 +684,8 @@ template <typename, typename, typename, typename, typename, typename>
 friend class SrvLink;
 
   bool init(ServerParams params) {
-    if (!params.certPath_ || !params.keyPath_) {
-      auto errorFn = params.errorFn_ ? params.errorFn_ : defaultErrorFn();
+    if (!params.certPath() || !params.keyPath()) {
+      auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
       errorFn(ZeEXCEPT(Error, "Zquic",
 	"server certPath and keyPath are required"));
       return false;
@@ -773,10 +710,12 @@ friend class SrvLink;
     options.udp(true);
 
     this->mx()->udp(
-      ZiConnectFn{[this](const ZiCxnInfo &ci) -> ZiConnection * {
-	return newCxn_(ci);
+      ZiConnectFn{this, [](Server *self, const ZiCxnInfo &ci) -> ZiConnection * {
+	return self->newCxn_(ci);
       }},
-      ZiFailFn{[this](bool transient) { failed_0(transient); }},
+      ZiFailFn{this, [](Server *self, bool transient) {
+	self->failed_0(transient);
+      }},
       localIP, localPort, ZiIP{}, 0, options);
 
     return true;
@@ -801,7 +740,6 @@ friend class SrvLink;
   uint16_t localPort() const { return 0; }
 
   ZmRef<ZiIOBuf> allocTxPacket_() {
-    ++m_diag.packetTxBufAllocs;
     return new PacketTxBufAlloc<>{this};
   }
   bool sendPacket_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
@@ -811,7 +749,6 @@ friend class SrvLink;
 
 private:
   ListenerCxn *newCxn_(const ZiCxnInfo &ci) {
-    ++m_diag.endpointCxnAllocs;
     m_cxn = new ListenerCxn(this, ci);
     return m_cxn;
   }
@@ -848,16 +785,15 @@ private:
   }
 
   void ioError_0() {
-    ++m_diag.ioErrors;
+    ++m_diag.failures;
   }
 
   ZmRef<ZiIOBuf> allocRxPacket_() {
-    ++m_diag.packetRxBufAllocs;
     return new PacketRxBufAlloc<>{this};
   }
 
   void failed_0(bool transient) {
-    ++m_diag.openFailures;
+    ++m_diag.failures;
     if constexpr (requires(App *app_, bool transient_) {
       app_->listenFailed(transient_);
     })
@@ -872,7 +808,7 @@ private:
   void received_(Datagram d) {
     LinkBase *link = route_(d);
     if (!link) {
-      ++m_diag.datagramDrops;
+      ++m_diag.failures;
       return;
     }
     link->receivedRouted_(ZuMv(d));
@@ -902,7 +838,7 @@ private:
 
   LinkBase *routeShort_(const Datagram &, ZuCSpan packet) {
     ShortHeader h;
-    if (Packet::parseShort(packet, CIDGenerator::InitialLength, h) < 0)
+    if (Packet::parseShort(packet, CxnIDGen::InitialLength, h) < 0)
       return nullptr;
     return link_(m_routes.find(h.dcid));
   }
@@ -926,9 +862,9 @@ private:
 
   bool addLink_(ZmRef<LinkBase> link) {
     if (!link) return false;
-    for (unsigned i = 0; i < CIDRouter::Max; ++i)
+    for (unsigned i = 0; i < CxnIDRouter::Max; ++i)
       if (m_links[i].ptr() == link.ptr()) return true;
-    for (unsigned i = 0; i < CIDRouter::Max; ++i) {
+    for (unsigned i = 0; i < CxnIDRouter::Max; ++i) {
       if (m_links[i]) continue;
       m_links[i] = ZuMv(link);
       return true;
@@ -941,7 +877,7 @@ private:
   void releaseLink_(LinkBase *link) {
     if (!link) return;
     link->serverRoutesClosed_(m_routes);
-    for (unsigned i = 0; i < CIDRouter::Max; ++i) {
+    for (unsigned i = 0; i < CxnIDRouter::Max; ++i) {
       if (m_links[i].ptr() != link) continue;
       m_links[i] = nullptr;
       return;
@@ -951,14 +887,14 @@ private:
   LinkBase *link_(uintptr_t token) const {
     if (!token) return nullptr;
     auto ptr = reinterpret_cast<LinkBase *>(token);
-    for (unsigned i = 0; i < CIDRouter::Max; ++i)
+    for (unsigned i = 0; i < CxnIDRouter::Max; ++i)
       if (m_links[i].ptr() == ptr) return ptr;
     return nullptr;
   }
 
   void clearLinks_() {
     m_routes = {};
-    for (unsigned i = 0; i < CIDRouter::Max; ++i)
+    for (unsigned i = 0; i < CxnIDRouter::Max; ++i)
       m_links[i] = nullptr;
   }
 
@@ -973,8 +909,8 @@ private:
   }
 
   ListenerCxn		*m_cxn = nullptr;
-  ZmRef<LinkBase>	m_links[CIDRouter::Max];
-  CIDRouter		m_routes;
+  ZmRef<LinkBase>	m_links[CxnIDRouter::Max];
+  CxnIDRouter		m_routes;
   ZiSockAddr		m_local;
   ZiSockAddr		m_remote;
   ZmAtomic<unsigned>	m_listening = 0;
@@ -1273,10 +1209,6 @@ private:
 	frame.payload.data() + payloadOffset);
       Rx::rcvd(new StreamRxPQueue::Node{
 	packet, data, unsigned(length64), this, spans[i].first});
-      if (diag) {
-	++diag->streamRxSliceAllocs;
-	++diag->queueNodeAllocs;
-      }
     }
     return true;
   }
@@ -1663,26 +1595,6 @@ public:
     m_closed = true;
   }
 
-private:
-  struct Runtime {
-    RuntimeDiag		diag;
-    Crypto		crypto;
-    TransportParams	transportParams;
-    ConnState		state;
-    CryptoStream	txCrypto[3];
-    CryptoStream	rxCrypto[3];
-    ConnectionID	initialDCID;
-    ConnectionID	localSCID;
-    ConnectionID	peerCID;
-    uint64_t		txPN[3]{};
-    uint64_t		rxLargestPN[3]{};
-    AckTracker		rxPackets[3];
-    PacketTxSpace	txPackets[3];
-    bool		pendingAck[3]{};
-    ZmAtomic<unsigned>	handshakeStarted = 0;
-    ZmAtomic<unsigned>	established = 0;
-  };
-
 protected:
   struct InitialKeyDir { enum T { Client, Server }; };
   struct RuntimeCID { enum T { Initial, Local, Peer }; };
@@ -1691,126 +1603,126 @@ protected:
     return m_streamScheduler.count();
   }
 
-  bool runtimeEstablished_() const { return m_runtime.established; }
-  bool runtimeHandshakeStarted_() const { return m_runtime.handshakeStarted; }
-  const RuntimeDiag &runtimeDiag_() const { return m_runtime.diag; }
-  const Crypto &crypto_() const { return m_runtime.crypto; }
+  bool runtimeEstablished_() const { return m_established; }
+  bool runtimeHandshakeStarted_() const { return m_handshakeStarted; }
+  const RuntimeDiag &runtimeDiag_() const { return m_diag; }
+  const Crypto &crypto_() const { return m_crypto; }
 
-  void resetRuntimeDiag_() { m_runtime.diag = {}; }
+  void resetRuntimeDiag_() { m_diag = {}; }
   void resetRuntime_() {
-    m_runtime.state = ConnState{};
-    m_runtime.established = 0;
-    m_runtime.handshakeStarted = 0;
-    m_runtime.initialDCID = {};
-    m_runtime.localSCID = {};
-    m_runtime.peerCID = {};
-    m_runtime.transportParams = {};
+    resetLinkState_();
+    m_established = 0;
+    m_handshakeStarted = 0;
+    m_initialDCID = {};
+    m_localSCID = {};
+    m_peerCID = {};
+    m_transportParams = {};
     resetPacketRuntime_();
   }
 
   void closeRuntime_(uint64_t errorCode = 0) {
-    m_runtime.state.close(errorCode);
-    m_runtime.established = 0;
+    closeLinkState_(errorCode);
+    m_established = 0;
   }
 
-  void endpointReady_() { ++m_runtime.diag.endpointReady; }
-  void endpointFailure_() { ++m_runtime.diag.endpointFailures; }
-  void packetParseFailure_() { ++m_runtime.diag.packetParseErrors; }
-  void tlsFailure_() { ++m_runtime.diag.tlsFailures; }
-  void handshakeDoneTx_() { ++m_runtime.diag.handshakeDoneFramesTx; }
+  void endpointReady_() { ++m_diag.endpointReady; }
+  void endpointFailure_() { ++m_diag.failures; }
+  void packetParseFailure_() { ++m_diag.failures; }
+  void tlsFailure_() { ++m_diag.failures; }
+  void handshakeDoneTx_() { }
 
   void setRuntimeCIDs_(
-    const ConnectionID &initialDCID,
-    const ConnectionID &localSCID,
-    const ConnectionID &peerCID) {
-    m_runtime.initialDCID = initialDCID;
-    m_runtime.localSCID = localSCID;
-    m_runtime.peerCID = peerCID;
+    const CxnID &initialDCID,
+    const CxnID &localSCID,
+    const CxnID &peerCID) {
+    m_initialDCID = initialDCID;
+    m_localSCID = localSCID;
+    m_peerCID = peerCID;
   }
 
   void setPeerCIDFromHeaderSCID_(const LongHeader &h) {
-    if (h.scid.length()) m_runtime.peerCID = h.scid;
+    if (h.scid.length()) m_peerCID = h.scid;
   }
 
-  const ConnectionID &runtimeCID_(RuntimeCID::T cid) const {
+  const CxnID &runtimeCID_(RuntimeCID::T cid) const {
     switch (cid) {
-      case RuntimeCID::Initial: return m_runtime.initialDCID;
-      case RuntimeCID::Local: return m_runtime.localSCID;
-      default: return m_runtime.peerCID;
+      case RuntimeCID::Initial: return m_initialDCID;
+      case RuntimeCID::Local: return m_localSCID;
+      default: return m_peerCID;
     }
   }
 
   template <typename AppLike>
   void configureLocalTransportParams_(AppLike *app) {
-    m_runtime.transportParams.initialSCID = m_runtime.localSCID;
-    m_runtime.transportParams.maxUDPPayloadSize = app->maxUDP();
-    m_runtime.transportParams.initialMaxData = app->maxData();
-    m_runtime.transportParams.initialMaxStreamDataBidiLocal =
+    m_transportParams.initialSCID = m_localSCID;
+    m_transportParams.maxUDPPayloadSize = app->maxUDP();
+    m_transportParams.initialMaxData = app->maxData();
+    m_transportParams.initialMaxStreamDataBidiLocal =
       app->maxStreamData();
-    m_runtime.transportParams.initialMaxStreamDataBidiRemote =
+    m_transportParams.initialMaxStreamDataBidiRemote =
       app->maxStreamData();
-    m_runtime.transportParams.initialMaxStreamDataUni = app->maxStreamData();
-    m_runtime.transportParams.initialMaxStreamsBidi = app->maxStreamsBidi();
-    m_runtime.transportParams.initialMaxStreamsUni = app->maxStreamsUni();
+    m_transportParams.initialMaxStreamDataUni = app->maxStreamData();
+    m_transportParams.initialMaxStreamsBidi = app->maxStreamsBidi();
+    m_transportParams.initialMaxStreamsUni = app->maxStreamsUni();
   }
 
   bool loadServerTransportParams_(const ServerBootstrap &bootstrap) {
-    if (bootstrap.transportParams(m_runtime.transportParams)) return true;
+    if (bootstrap.transportParams(m_transportParams)) return true;
     tlsFailure_();
     return false;
   }
 
   bool deriveInitial_() {
-    if (m_runtime.crypto.deriveInitial(m_runtime.initialDCID)) return true;
+    if (m_crypto.deriveInitial(m_initialDCID)) return true;
     tlsFailure_();
     return false;
   }
 
   bool initTLS_(CryptoConfig config) {
-    config.localTransportParams = &m_runtime.transportParams;
-    if (m_runtime.crypto.initTLS(config)) return true;
+    config.localTransportParams = &m_transportParams;
+    if (m_crypto.initTLS(config)) return true;
     tlsFailure_();
     return false;
   }
 
   bool startRuntimeHandshake_() {
-    if (m_runtime.handshakeStarted) return false;
-    m_runtime.handshakeStarted = 1;
-    m_runtime.state.startHandshake();
+    if (m_handshakeStarted) return false;
+    m_handshakeStarted = 1;
+    startHandshakeState_();
     return true;
   }
 
   bool runtimeReadyToEstablish_() const {
-    return !m_runtime.established &&
-      m_runtime.crypto.oneRTTReady() &&
-      m_runtime.crypto.txTrafficSecretInstalled(CryptoLevel::OneRTT) &&
-      m_runtime.crypto.rxTrafficSecretInstalled(CryptoLevel::OneRTT);
+    return !m_established &&
+      m_crypto.oneRTTReady() &&
+      m_crypto.txTrafficSecretInstalled(CryptoLevel::OneRTT) &&
+      m_crypto.rxTrafficSecretInstalled(CryptoLevel::OneRTT);
   }
 
   bool validateServerTransportParams_(const ClientBootstrap &bootstrap) const {
-    return m_runtime.crypto.peerTransportParamsReceived() &&
+    return m_crypto.peerTransportParamsReceived() &&
       bootstrap.validateServerTransportParams(
-	m_runtime.crypto.peerTransportParams(), m_runtime.peerCID);
+	m_crypto.peerTransportParams(), m_peerCID);
   }
 
   void establishRuntime_() {
-    m_runtime.established = 1;
-    m_runtime.state.establish();
-    ++m_runtime.diag.handshakeComplete;
+    m_established = 1;
+    establishState_();
+    ++m_diag.handshakeComplete;
   }
 
   auto negotiatedProtocol_() const {
-    return m_runtime.crypto.negotiatedProtocol();
+    return m_crypto.negotiatedProtocol();
   }
 
   void resetPacketRuntime_() {
-    for (auto &s : m_runtime.txCrypto) s.reset();
-    for (auto &s : m_runtime.rxCrypto) s.reset();
-    memset(m_runtime.txPN, 0, sizeof(m_runtime.txPN));
-    memset(m_runtime.rxLargestPN, 0, sizeof(m_runtime.rxLargestPN));
-    for (auto &a : m_runtime.rxPackets) a.clear();
-    for (auto &p : m_runtime.txPackets) p.clear();
-    memset(m_runtime.pendingAck, 0, sizeof(m_runtime.pendingAck));
+    for (auto &s : m_txCrypto) s.reset();
+    for (auto &s : m_rxCrypto) s.reset();
+    memset(m_txPN, 0, sizeof(m_txPN));
+    memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
+    for (auto &a : m_rxPackets) a.clear();
+    for (auto &p : m_txPackets) p.clear();
+    memset(m_pendingAck, 0, sizeof(m_pendingAck));
   }
 
   template <
@@ -1824,7 +1736,7 @@ protected:
       new CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>{this};
     size_t offsets[5] = {};
     int n =
-      m_runtime.crypto.handleTLSMessage(out.ptr(), offsets, inEpoch, input);
+      m_crypto.handleTLSMessage(out.ptr(), offsets, inEpoch, input);
     if (n < 0) {
       tlsFailure_();
       return false;
@@ -1876,8 +1788,7 @@ protected:
     ref.fin = info.fin;
     ref.range = TxRange{nullptr, 0, uint32_t(info.length), info.offset};
     if (!sendPacket(build, ZuMv(addr), ref)) return false;
-    ++m_runtime.diag.streamFramesTx;
-    m_runtime.diag.streamBytesTx += info.length;
+    m_diag.streamBytesTx += info.length;
     return true;
   }
 
@@ -1899,27 +1810,26 @@ protected:
   }
 
   void noteAck_(CryptoLevel::T level, uint64_t) {
-    m_runtime.pendingAck[level] = true;
+    m_pendingAck[level] = true;
   }
 
   bool appendPendingAck_(
     CryptoLevel::T level, PacketBuild &build) {
-    if (!m_runtime.pendingAck[level]) return true;
-    int n = m_runtime.rxPackets[level].writeFrame(
+    if (!m_pendingAck[level]) return true;
+    int n = m_rxPackets[level].writeFrame(
       build.scratch(), build.scratchAvail(), 0);
     if (n < 0) return false;
     if (!build.commitScratch(unsigned(n))) return false;
-    m_runtime.pendingAck[level] = false;
-    ++m_runtime.diag.ackFramesTx;
+    m_pendingAck[level] = false;
     return true;
   }
 
   bool recordRxPacket_(
     CryptoLevel::T level, uint64_t pn) {
-    if (m_runtime.rxPackets[level].contains(pn)) return false;
-    m_runtime.rxPackets[level].add(pn);
-    if (pn > m_runtime.rxLargestPN[level])
-      m_runtime.rxLargestPN[level] = pn;
+    if (m_rxPackets[level].contains(pn)) return false;
+    m_rxPackets[level].add(pn);
+    if (pn > m_rxLargestPN[level])
+      m_rxLargestPN[level] = pn;
     return true;
   }
 
@@ -1941,12 +1851,12 @@ protected:
     packet.ackEliciting = ackEliciting;
     packet.inFlight = ackEliciting;
     if (ref.kind != SentFrameKind::None) packet.addFrame(ref);
-    m_runtime.txPackets[level].add(packet);
+    m_txPackets[level].add(packet);
   }
 
   void processAckFrame_(CryptoLevel::T level, const Frame &frame) {
     if (!frame.ackRangeCount) return;
-    m_runtime.txPackets[level].ack(frame.ackRanges, frame.ackRangeCount);
+    m_txPackets[level].ack(frame.ackRanges, frame.ackRangeCount);
   }
 
   bool buildPayload_(
@@ -1968,7 +1878,7 @@ protected:
     const uint8_t *data, unsigned len, const size_t offsets[5],
     unsigned chunkMax, ZiSockAddr addr, SendCryptoPacket sendCryptoPacket) {
     return sendRuntimeCryptoFlights(
-      m_runtime.txCrypto, m_runtime.diag,
+      m_txCrypto, m_diag,
       data, len, offsets, chunkMax, ZuMv(addr),
       [sendCryptoPacket](
 	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
@@ -2018,22 +1928,15 @@ protected:
       recordTxPacket_(level, pn, bytes, *recordRef, ackEliciting);
     else
       recordTxPacket_(level, pn, bytes, recordFrame);
-    ++m_runtime.txPN[level];
-    ++m_runtime.diag.packetsTx;
-    if (level == CryptoLevel::Initial)
-      ++m_runtime.diag.initialPacketsTx;
-    else if (level == CryptoLevel::Handshake)
-      ++m_runtime.diag.handshakePacketsTx;
-    else
-      ++m_runtime.diag.shortPacketsTx;
-    ++m_runtime.diag.protectedPacketsTx;
-    m_runtime.diag.bytesTx += bytes;
+    ++m_txPN[level];
+    ++m_diag.packetsTx;
+    m_diag.bytesTx += bytes;
   }
 
   const auto &initialKeys_(InitialKeyDir::T dir) const {
     return dir == InitialKeyDir::Client ?
-      m_runtime.crypto.initialKeys().client :
-      m_runtime.crypto.initialKeys().server;
+      m_crypto.initialKeys().client :
+      m_crypto.initialKeys().server;
   }
 
   template <typename AllocTxPacket, typename SendPacket>
@@ -2060,15 +1963,15 @@ protected:
     if (padInitial && !payload.padTo(targetPlainLen)) return false;
     if (PacketNumber::encode(
 	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
-	  m_runtime.txPN[CryptoLevel::Initial], pnLength) != int(pnLength))
+	  m_txPN[CryptoLevel::Initial], pnLength) != int(pnLength))
       return false;
-    uint64_t pn = m_runtime.txPN[CryptoLevel::Initial];
+    uint64_t pn = m_txPN[CryptoLevel::Initial];
     int n = InitialPacketProtection::protectLongV(
       buf->data_(), buf->size, initialKeys, pn,
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
-      ++m_runtime.diag.packetProtectionFailures;
+      ++m_diag.failures;
       return false;
     }
     buf->skip = 0;
@@ -2086,29 +1989,29 @@ protected:
     PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef, bool ackEliciting,
     AllocTxPacket allocTxPacket, SendPacket sendPacket) {
-    if (!m_runtime.crypto.txTrafficSecretInstalled(CryptoLevel::Handshake)) {
-      ++m_runtime.diag.packetProtectionFailures;
+    if (!m_crypto.txTrafficSecretInstalled(CryptoLevel::Handshake)) {
+      ++m_diag.failures;
       return false;
     }
     ZmRef<ZiIOBuf> buf = allocTxPacket();
     int headerLen = Packet::writeHandshake(
       buf->data_(), buf->size, runtimeCID_(dcid), runtimeCID_(scid),
       payload.bytes() +
-	m_runtime.crypto.txTrafficSecret(CryptoLevel::Handshake).tagLen,
+	m_crypto.txTrafficSecret(CryptoLevel::Handshake).tagLen,
       pnLength);
     if (headerLen < 0 ||
 	PacketNumber::encode(
 	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
-	  m_runtime.txPN[CryptoLevel::Handshake], pnLength) != int(pnLength))
+	  m_txPN[CryptoLevel::Handshake], pnLength) != int(pnLength))
       return false;
-    uint64_t pn = m_runtime.txPN[CryptoLevel::Handshake];
+    uint64_t pn = m_txPN[CryptoLevel::Handshake];
     int n = PacketProtection::protectLongV(
       buf->data_(), buf->size,
-      m_runtime.crypto.txProtectionState(CryptoLevel::Handshake), pn,
+      m_crypto.txProtectionState(CryptoLevel::Handshake), pn,
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
-      ++m_runtime.diag.packetProtectionFailures;
+      ++m_diag.failures;
       return false;
     }
     buf->skip = 0;
@@ -2125,29 +2028,29 @@ protected:
     RuntimeCID::T dcid, unsigned pnLength, PacketBuild &payload,
     ZiSockAddr addr, ZuCSpan recordFrame, const SentFrameRef *recordRef,
     bool ackEliciting, AllocTxPacket allocTxPacket, SendPacket sendPacket) {
-    if (!m_runtime.established &&
-	!m_runtime.crypto.txTrafficSecretInstalled(CryptoLevel::OneRTT)) {
-      ++m_runtime.diag.packetProtectionFailures;
+    if (!m_established &&
+	!m_crypto.txTrafficSecretInstalled(CryptoLevel::OneRTT)) {
+      ++m_diag.failures;
       return false;
     }
     ZmRef<ZiIOBuf> buf = allocTxPacket();
     int headerLen = Packet::writeShort(
       buf->data_(), buf->size, runtimeCID_(dcid),
-      m_runtime.txPN[CryptoLevel::OneRTT], pnLength);
+      m_txPN[CryptoLevel::OneRTT], pnLength);
     if (headerLen < 0) return false;
     if (!payload.padForProtectionSample(
 	  unsigned(headerLen) - pnLength, pnLength,
-	  m_runtime.crypto.txTrafficSecret(CryptoLevel::OneRTT).tagLen))
+	  m_crypto.txTrafficSecret(CryptoLevel::OneRTT).tagLen))
       return false;
-    uint64_t pn = m_runtime.txPN[CryptoLevel::OneRTT];
+    uint64_t pn = m_txPN[CryptoLevel::OneRTT];
     int n = PacketProtection::protectShortV(
       buf->data_(), buf->size,
-      m_runtime.crypto.txProtectionState(CryptoLevel::OneRTT), pn,
+      m_crypto.txProtectionState(CryptoLevel::OneRTT), pn,
       byteSpan(buf->data_(), unsigned(headerLen)),
       payload.data(), payload.count(),
       unsigned(headerLen) - pnLength, pnLength);
     if (n < 0) {
-      ++m_runtime.diag.packetProtectionFailures;
+      ++m_diag.failures;
       return false;
     }
     buf->skip = 0;
@@ -2162,12 +2065,12 @@ protected:
   template <typename ReceiveLong, typename ReceiveShort>
   void receiveDatagram_(
     Datagram d, ReceiveLong receiveLong, ReceiveShort receiveShort) {
-    ++m_runtime.diag.datagramsRx;
+    ++m_diag.datagramsRx;
     if (!d.buf) {
-      ++m_runtime.diag.packetParseErrors;
+      ++m_diag.failures;
       return;
     }
-    m_runtime.diag.bytesRx += d.buf->length;
+    m_diag.bytesRx += d.buf->length;
     bool ok = true;
     unsigned offset = 0;
     while (offset < d.buf->length) {
@@ -2192,7 +2095,7 @@ protected:
       if (!receiveShort(d, offset, d.buf->length - offset)) ok = false;
       break;
     }
-    if (!ok) ++m_runtime.diag.packetParseErrors;
+    if (!ok) ++m_diag.failures;
   }
 
   template <typename PrepareLong, typename ConsumeFrames>
@@ -2217,26 +2120,23 @@ protected:
     if (level == CryptoLevel::Initial)
       plainLen = InitialPacketProtection::unprotectLong(
 	base, packetLen, initialKeys_(keyDir),
-	m_runtime.rxLargestPN[level], h.pnOffset, pn, payloadOffset);
+	m_rxLargestPN[level], h.pnOffset, pn, payloadOffset);
     else {
-      if (!m_runtime.crypto.rxTrafficSecretInstalled(CryptoLevel::Handshake)) {
-	++m_runtime.diag.packetProtectionFailures;
+      if (!m_crypto.rxTrafficSecretInstalled(CryptoLevel::Handshake)) {
+	++m_diag.failures;
 	return false;
       }
       plainLen = PacketProtection::unprotectLong(
 	base, packetLen,
-	m_runtime.crypto.rxProtectionState(CryptoLevel::Handshake),
-	m_runtime.rxLargestPN[level], h.pnOffset, pn, payloadOffset);
+	m_crypto.rxProtectionState(CryptoLevel::Handshake),
+	m_rxLargestPN[level], h.pnOffset, pn, payloadOffset);
     }
     if (plainLen < 0) {
-      ++m_runtime.diag.packetProtectionFailures;
+      ++m_diag.failures;
       return false;
     }
     if (!recordRxPacket_(level, pn)) return true;
-    ++m_runtime.diag.packetsRx;
-    ++m_runtime.diag.protectedPacketsRx;
-    if (level == CryptoLevel::Initial) ++m_runtime.diag.initialPacketsRx;
-    else ++m_runtime.diag.handshakePacketsRx;
+    ++m_diag.packetsRx;
     return consumeFrames(
       level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
       d.addr, d.buf);
@@ -2246,31 +2146,29 @@ protected:
   bool receiveProtectedShortPacket_(
     Datagram &d, unsigned packetOffset, unsigned packetLen,
     ConsumeFrames consumeFrames) {
-    if (!m_runtime.crypto.rxTrafficSecretInstalled(CryptoLevel::OneRTT))
+    if (!m_crypto.rxTrafficSecretInstalled(CryptoLevel::OneRTT))
       return false;
     uint8_t *base = d.buf->data_() + packetOffset;
     ZuCSpan packet{
       reinterpret_cast<const char *>(base), packetLen};
     ShortHeader h;
-    if (Packet::parseShort(packet, m_runtime.localSCID.length(), h) < 0 ||
-	!(h.dcid == m_runtime.localSCID))
+    if (Packet::parseShort(packet, m_localSCID.length(), h) < 0 ||
+	!(h.dcid == m_localSCID))
       return false;
     uint64_t pn = 0;
     unsigned payloadOffset = 0;
     int plainLen = PacketProtection::unprotectShort(
       base, packetLen,
-      m_runtime.crypto.rxProtectionState(CryptoLevel::OneRTT),
-      m_runtime.rxLargestPN[CryptoLevel::OneRTT],
+      m_crypto.rxProtectionState(CryptoLevel::OneRTT),
+      m_rxLargestPN[CryptoLevel::OneRTT],
       h.pnOffset, pn, payloadOffset);
     if (plainLen < 0) {
-      ++m_runtime.diag.packetProtectionFailures;
+      ++m_diag.failures;
       return false;
     }
     if (!recordRxPacket_(CryptoLevel::OneRTT, pn))
       return true;
-    ++m_runtime.diag.packetsRx;
-    ++m_runtime.diag.shortPacketsRx;
-    ++m_runtime.diag.protectedPacketsRx;
+    ++m_diag.packetsRx;
     return consumeFrames(
       CryptoLevel::OneRTT, pn,
       byteSpan(base + payloadOffset, unsigned(plainLen)), d.addr, d.buf);
@@ -2289,30 +2187,26 @@ protected:
 	    ZuCSpan{frames.data() + offset, frames.length() - offset},
 	    frame, used) < 0 || !used)
 	return false;
-      ++m_runtime.diag.framesRx;
+      ++m_diag.framesRx;
       if (FrameCodec::ackEliciting(frame.type))
 	noteAck_(level, pn);
-      if (frame.type == FrameType::Ping) ++m_runtime.diag.pingFramesRx;
       if (frame.type == FrameType::Ack) {
-	++m_runtime.diag.ackFramesRx;
 	processAckFrame_(level, frame);
       }
       if (countHandshakeDone && frame.type == FrameType::HandshakeDone)
-	++m_runtime.diag.handshakeDoneFramesRx;
+	;
       if (frame.type == FrameType::Crypto) {
 	ZuCSpan contiguous;
-	if (m_runtime.rxCrypto[level].receiveFrame(frame, contiguous) < 0)
+	if (m_rxCrypto[level].receiveFrame(frame, contiguous) < 0)
 	  return false;
-	++m_runtime.diag.cryptoFramesRx;
-	m_runtime.diag.cryptoBytesRx += frame.payload.length();
+	m_diag.cryptoBytesRx += frame.payload.length();
 	if (contiguous) {
 	  size_t epoch = level == CryptoLevel::Initial ? 0 :
 	    level == CryptoLevel::Handshake ? 2 : 3;
 	  if (!emitTLS(epoch, contiguous, addr)) return false;
 	}
       } else if (frame.type == FrameType::Stream) {
-	++m_runtime.diag.streamFramesRx;
-	m_runtime.diag.streamBytesRx += frame.payload.length();
+	m_diag.streamBytesRx += frame.payload.length();
 	if (receiveFrame(frame, ZmRef<ZiIOBuf>{packetBuf}) < 0)
 	  return false;
 	if constexpr (requires(Impl *impl_, uint64_t streamID,
@@ -2414,7 +2308,53 @@ private:
   StreamScheduler m_streamScheduler;
 
 private:
-  Runtime	m_runtime;
+  void resetLinkState_() {
+    m_linkState = LinkState::Starting;
+    m_runtimeCloseState = CloseState::Open;
+    m_runtimeCloseError = 0;
+    m_drainPTOs = 0;
+  }
+
+  bool startHandshakeState_() {
+    if (m_linkState != LinkState::Starting) return false;
+    m_linkState = LinkState::Handshaking;
+    return true;
+  }
+
+  bool establishState_() {
+    if (m_linkState != LinkState::Handshaking) return false;
+    m_linkState = LinkState::Established;
+    return true;
+  }
+
+  bool closeLinkState_(uint64_t error = 0) {
+    if (m_linkState == LinkState::Closed) return false;
+    m_runtimeCloseError = error;
+    m_runtimeCloseState = CloseState::Closing;
+    m_linkState = LinkState::Closing;
+    m_drainPTOs = 0;
+    return true;
+  }
+
+  RuntimeDiag		m_diag;
+  Crypto		m_crypto;
+  TransportParams	m_transportParams;
+  CryptoStream		m_txCrypto[3];
+  CryptoStream		m_rxCrypto[3];
+  CxnID			m_initialDCID;
+  CxnID			m_localSCID;
+  CxnID			m_peerCID;
+  uint64_t		m_txPN[3]{};
+  uint64_t		m_rxLargestPN[3]{};
+  AckTracker		m_rxPackets[3];
+  PacketTxSpace		m_txPackets[3];
+  bool			m_pendingAck[3]{};
+  unsigned		m_handshakeStarted = 0;
+  unsigned		m_established = 0;
+  LinkState::T		m_linkState = LinkState::Starting;
+  CloseState::T		m_runtimeCloseState = CloseState::Open;
+  uint64_t		m_runtimeCloseError = 0;
+  unsigned		m_drainPTOs = 0;
 };
 
 template <
@@ -2482,48 +2422,48 @@ public:
   const RuntimeDiag &runtimeDiag() const { return Base::runtimeDiag_(); }
   const Crypto &crypto() const { return Base::crypto_(); }
 
-	  bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
-	    if (!stream || (!payload.length() && !fin))
-	      return false;
-	    if (app()->txInvoked()) return send_(ZuMv(stream), payload, fin);
-	    ZtBytes payload_;
-	    payload_.length(payload.length());
-	    if (payload.length())
-	      memcpy(payload_.data(), payload.data(), payload.length());
-	    app()->txInvoke([
-	      link = ZmMkRef(this->impl()),
-	      stream = ZuMv(stream),
-	      payload = ZuMv(payload_),
-	      fin
-	    ]() mutable {
-	      link->send_(
-		ZuMv(stream),
-		ZuCSpan{
-		  reinterpret_cast<const char *>(payload.data()),
-		  payload.length()},
-		fin);
-	    });
-	    return true;
-	  }
-	  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
-	    ZiAssert(app()->txInvoked(), "Zquic", (),
-	      "QUIC client send_ outside Tx thread", return false);
-	    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
-		(!payload.length() && !fin))
-	      return false;
-	    if (fin) stream->fin();
-	    if (payload.length()) {
-	      auto tx = stream->txStream_();
-	      tx.append(
-		reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
-	      tx.flush();
-	    }
-	    return Base::flushWritableStreams_(
-	      m_remote,
-	      [this](StreamRef stream, ZiSockAddr addr) {
-		return sendQueuedStreamPacket_(stream, ZuMv(addr));
-	      });
-	  }
+  bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
+    if (!stream || (!payload.length() && !fin))
+      return false;
+    if (app()->txInvoked()) return send_(ZuMv(stream), payload, fin);
+    ZtBytes payload_;
+    payload_.length(payload.length());
+    if (payload.length())
+      memcpy(payload_.data(), payload.data(), payload.length());
+    app()->txInvoke([
+      link = ZmMkRef(this->impl()),
+      stream = ZuMv(stream),
+      payload = ZuMv(payload_),
+      fin
+    ]() mutable {
+      link->send_(
+	ZuMv(stream),
+	ZuCSpan{
+	  reinterpret_cast<const char *>(payload.data()),
+	  payload.length()},
+	fin);
+    });
+    return true;
+  }
+  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client send_ outside Tx thread", return false);
+    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
+	(!payload.length() && !fin))
+      return false;
+    if (fin) stream->fin();
+    if (payload.length()) {
+      auto tx = stream->txStream_();
+      tx.append(
+	reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
+      tx.flush();
+    }
+    return Base::flushWritableStreams_(
+      m_remote,
+      [this](StreamRef stream, ZiSockAddr addr) {
+	return sendQueuedStreamPacket_(stream, ZuMv(addr));
+      });
+  }
 
   void connect_() {
     if (!app() || !app()->mx()) {
@@ -2586,16 +2526,14 @@ public:
   }
 
   void ioError_0() {
-    ++m_cxnDiag.ioErrors;
+    ++m_cxnDiag.failures;
   }
 
   ZmRef<ZiIOBuf> allocRxPacket_() {
-    ++m_cxnDiag.packetRxBufAllocs;
     return new PacketRxBufAlloc<>{this};
   }
 
   ZmRef<ZiIOBuf> allocTxPacket_() {
-    ++m_cxnDiag.packetTxBufAllocs;
     return new PacketTxBufAlloc<>{this};
   }
 
@@ -2614,7 +2552,6 @@ private:
   using RuntimeCID = typename Base::RuntimeCID;
 
   Cxn *newCxn_(const ZiCxnInfo &ci) {
-    ++m_cxnDiag.endpointCxnAllocs;
     return new Cxn(impl(), ci);
   }
 
@@ -2922,7 +2859,7 @@ private:
   }
 
   void connectFailed_0(bool transient) {
-    ++m_cxnDiag.openFailures;
+    ++m_cxnDiag.failures;
     Base::endpointFailure_();
     if (!app() || !app()->mx()) {
       impl()->connectFailed(transient);
@@ -2976,48 +2913,48 @@ template <typename> friend class Server;
   const Crypto &crypto() const { return Base::crypto_(); }
   const ZiSockAddr &peer() const { return m_peerAddr; }
 
-	  bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
-	    if (!stream || (!payload.length() && !fin))
-	      return false;
-	    if (app()->txInvoked()) return send_(ZuMv(stream), payload, fin);
-	    ZtBytes payload_;
-	    payload_.length(payload.length());
-	    if (payload.length())
-	      memcpy(payload_.data(), payload.data(), payload.length());
-	    app()->txInvoke([
-	      link = ZmMkRef(this->impl()),
-	      stream = ZuMv(stream),
-	      payload = ZuMv(payload_),
-	      fin
-	    ]() mutable {
-	      link->send_(
-		ZuMv(stream),
-		ZuCSpan{
-		  reinterpret_cast<const char *>(payload.data()),
-		  payload.length()},
-		fin);
-	    });
-	    return true;
-	  }
-	  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
-	    ZiAssert(app()->txInvoked(), "Zquic", (),
-	      "QUIC server send_ outside Tx thread", return false);
-	    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
-		(!payload.length() && !fin))
-	      return false;
-	    if (fin) stream->fin();
-	    if (payload.length()) {
-	      auto tx = stream->txStream_();
-	      tx.append(
-		reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
-	      tx.flush();
-	    }
-	    return Base::flushWritableStreams_(
-	      m_peerAddr,
-	      [this](StreamRef stream, ZiSockAddr addr) {
-		return sendQueuedStreamPacket_(stream, ZuMv(addr));
-	      });
-	  }
+  bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
+    if (!stream || (!payload.length() && !fin))
+      return false;
+    if (app()->txInvoked()) return send_(ZuMv(stream), payload, fin);
+    ZtBytes payload_;
+    payload_.length(payload.length());
+    if (payload.length())
+      memcpy(payload_.data(), payload.data(), payload.length());
+    app()->txInvoke([
+      link = ZmMkRef(this->impl()),
+      stream = ZuMv(stream),
+      payload = ZuMv(payload_),
+      fin
+    ]() mutable {
+      link->send_(
+	ZuMv(stream),
+	ZuCSpan{
+	  reinterpret_cast<const char *>(payload.data()),
+	  payload.length()},
+	fin);
+    });
+    return true;
+  }
+  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server send_ outside Tx thread", return false);
+    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
+	(!payload.length() && !fin))
+      return false;
+    if (fin) stream->fin();
+    if (payload.length()) {
+      auto tx = stream->txStream_();
+      tx.append(
+	reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
+      tx.flush();
+    }
+    return Base::flushWritableStreams_(
+      m_peerAddr,
+      [this](StreamRef stream, ZiSockAddr addr) {
+	return sendQueuedStreamPacket_(stream, ZuMv(addr));
+      });
+  }
 
   void close(uint64_t errorCode = 0) {
     if (Base::closed()) return;
@@ -3303,16 +3240,16 @@ private:
     received_(ZuMv(d));
   }
 
-  void serverRoutes_(CIDRouter &routes) const override {
+  void serverRoutes_(CxnIDRouter &routes) const override {
     routes.add(m_bootstrap.initialDCIDs());
     routes.add(m_bootstrap.localCIDs());
   }
 
-  void serverRoutesClosed_(CIDRouter &routes) const override {
-    m_bootstrap.initialDCIDs().all([&routes](const CIDSlot &slot) {
+  void serverRoutesClosed_(CxnIDRouter &routes) const override {
+    m_bootstrap.initialDCIDs().all([&routes](const CxnIDSlot &slot) {
       routes.tombstone(slot.cid);
     });
-    m_bootstrap.localCIDs().all([&routes](const CIDSlot &slot) {
+    m_bootstrap.localCIDs().all([&routes](const CxnIDSlot &slot) {
       routes.retire(slot.cid);
     });
   }

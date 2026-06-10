@@ -25,8 +25,7 @@ void testDatagramOwnership()
   });
 
   ZmRef<ZiIOBuf> tx = ep.allocTxPacket();
-  ZuCHECK(tx && ep.diag().packetTxBufAllocs == 1,
-    "endpoint Tx packet allocation counter mismatch");
+  ZuCHECK(tx, "endpoint Tx packet allocation failed");
 
   ZmRef<ZiIOBuf> buf = new Zquic::PacketRxBufAlloc<>{&ep};
   buf->append(reinterpret_cast<const uint8_t *>("PING"), 4);

@@ -16,7 +16,7 @@
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmPolymorph.hh>
 
-#include <zlib/ZquicDatagram.hh>
+#include <zlib/ZquicSock.hh>
 
 namespace Zquic {
 
@@ -57,7 +57,6 @@ public:
 
   void datagramFn(DatagramFn fn) { m_datagramFn = ZuMv(fn); }
   ZmRef<ZiIOBuf> allocTxPacket() {
-    ++m_diag.packetTxBufAllocs;
     return new TxPacketAlloc{this};
   }
   bool send(ZmRef<ZiIOBuf>, ZiSockAddr);
@@ -74,7 +73,6 @@ private:
   void sent_(unsigned);
   void ioError_();
   ZmRef<ZiIOBuf> allocRxPacket_() {
-    ++m_diag.packetRxBufAllocs;
     return new RxPacketAlloc{this};
   }
 

@@ -58,15 +58,7 @@ struct Diag {
     closedStreams = closed;
   }
 
-  void add(const BufDiag &diag) {
-    packetRxBufAllocs += uint64_t(diag.packetRxBufAllocs);
-    packetTxBufAllocs += uint64_t(diag.packetTxBufAllocs);
-    streamRxSliceAllocs += uint64_t(diag.streamRxSliceAllocs);
-    streamTxBufAllocs += uint64_t(diag.streamTxBufAllocs);
-    queueNodeAllocs += uint64_t(diag.queueNodeAllocs);
-    packetProtectionContextInits += uint64_t(
-      diag.packetProtectionContextInits);
-  }
+  void add(const BufDiag &) { }
 
   void add(const PathDiag &diag) {
     pmtudProbes += diag.probesSent;
@@ -114,12 +106,6 @@ struct Diag {
   uint64_t	pmtudProbes = 0;
   uint64_t	pmtudSuccess = 0;
   uint64_t	pmtudFailure = 0;
-  uint64_t	packetRxBufAllocs = 0;
-  uint64_t	packetTxBufAllocs = 0;
-  uint64_t	streamRxSliceAllocs = 0;
-  uint64_t	streamTxBufAllocs = 0;
-  uint64_t	queueNodeAllocs = 0;
-  uint64_t	packetProtectionContextInits = 0;
 };
 
 } // namespace Zquic

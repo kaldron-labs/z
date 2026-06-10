@@ -168,14 +168,14 @@ bool Endpoint::openUDP(
   options.udp(true);
 
   mx->udp(
-    // ZmFn captures only this pointer here; keep it inline and off hot heaps.
-    ZiConnectFn{[this](const ZiCxnInfo &ci) -> ZiConnection * {
-      auto cxn = new Cxn_{this, ci};
-      ++m_diag.endpointCxnAllocs;
-      m_cxn = cxn;
+    ZiConnectFn{this, [](Endpoint *self, const ZiCxnInfo &ci) -> ZiConnection * {
+      auto cxn = new Cxn_{self, ci};
+      self->m_cxn = cxn;
       return cxn;
     }},
-    ZiFailFn{[this](bool transient) { failed_(transient); }},
+    ZiFailFn{this, [](Endpoint *self, bool transient) {
+      self->failed_(transient);
+    }},
     localIP, localPort,
     mode == PathMode::ClientConnected ? remoteIP : ZiIP{},
     mode == PathMode::ClientConnected ? remotePort : 0,
@@ -227,7 +227,7 @@ void Endpoint::disconnected_(Cxn_ *cxn)
 
 void Endpoint::failed_(bool transient)
 {
-  ++m_diag.openFailures;
+  ++m_diag.failures;
   if (m_failFn) m_failFn(transient);
 }
 
@@ -246,7 +246,7 @@ void Endpoint::sent_(unsigned bytes)
 
 void Endpoint::ioError_()
 {
-  ++m_diag.ioErrors;
+  ++m_diag.failures;
 }
 
 } // namespace Zquic

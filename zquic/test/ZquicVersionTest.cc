@@ -21,8 +21,8 @@ void testVersionNegotiation()
   ZuCHECK(!Zquic::VersionNegotiation::supported(0xff00001dU),
     "unsupported version accepted");
 
-  Zquic::ConnectionID dcid{"client01"};
-  Zquic::ConnectionID scid{"server01"};
+  Zquic::CxnID dcid{"client01"};
+  Zquic::CxnID scid{"server01"};
   uint8_t b[128];
   int n = Zquic::VersionNegotiation::write(b, sizeof(b), dcid, scid);
   ZuCHECK(n > 0, "version negotiation write failed");
@@ -40,8 +40,8 @@ void testServerVersionDecision()
 {
   ZuTestScope(testServerVersionDecision);
 
-  Zquic::ConnectionID dcid{"client-dc"};
-  Zquic::ConnectionID scid{"client-sc"};
+  Zquic::CxnID dcid{"client-dc"};
+  Zquic::CxnID scid{"client-sc"};
   uint8_t b[128];
   int n = Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 0, 1);
   ZuCHECK(n > 0, "Initial write failed");
@@ -101,8 +101,8 @@ void testRetryHeader()
 {
   ZuTestScope(testRetryHeader);
 
-  Zquic::ConnectionID dcid{"client01"};
-  Zquic::ConnectionID scid{"server01"};
+  Zquic::CxnID dcid{"client01"};
+  Zquic::CxnID scid{"server01"};
   static constexpr char Tag[] = "0123456789abcdef";
   uint8_t b[128];
   int n = Zquic::Packet::writeRetry(
@@ -123,7 +123,7 @@ void testRetryHeader()
   ZuCHECK(retry.token == "retry-token" && retry.integrityTag == Tag,
     "Retry token/tag parse mismatch");
 
-  Zquic::ConnectionID odcid{"original"};
+  Zquic::CxnID odcid{"original"};
   n = Zquic::Packet::writeRetryAuthenticated(
     b, sizeof(b), dcid, scid, "retry-token", odcid);
   ZuCHECK(n > 0, "authenticated Retry write failed");
@@ -145,10 +145,10 @@ void testRetryTransportParameterValidation()
 {
   ZuTestScope(testRetryTransportParameterValidation);
 
-  Zquic::ConnectionID initialDCID{"client-dc"};
-  Zquic::ConnectionID initialSCID{"client-sc"};
-  Zquic::ConnectionID retrySCID{"retry-sc"};
-  Zquic::ConnectionID serverInitialSCID{"server-sc"};
+  Zquic::CxnID initialDCID{"client-dc"};
+  Zquic::CxnID initialSCID{"client-sc"};
+  Zquic::CxnID retrySCID{"retry-sc"};
+  Zquic::CxnID serverInitialSCID{"server-sc"};
   static constexpr char Tag[] = "0123456789abcdef";
 
   Zquic::ClientBootstrap bootstrap;
@@ -192,7 +192,7 @@ void testRetryTransportParameterValidation()
   params.retrySCID = retrySCID;
   ZuCHECK(bootstrap.validateServerTransportParams(params, serverInitialSCID),
     "Retry transport parameter validation failed");
-  params.retrySCID.set("wrong-sc");
+  params.retrySCID = "wrong-sc";
   ZuCHECK(!bootstrap.validateServerTransportParams(params, serverInitialSCID),
     "bad Retry SCID was accepted");
 

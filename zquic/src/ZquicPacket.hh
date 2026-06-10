@@ -17,6 +17,8 @@
 
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuDerive.hh>
+#include <zlib/ZuArray.hh>
 
 #include <zlib/ZquicBuf.hh>
 
@@ -29,36 +31,8 @@ namespace VarInt {
   int decode(ZuCSpan, uint64_t &, unsigned &);
 }
 
-class ConnectionID {
-public:
-  static constexpr unsigned Max = 20;
-
-  ConnectionID() = default;
-  explicit ConnectionID(ZuCSpan s) { set(s); }
-
-  bool set(ZuCSpan);
-  unsigned length() const { return m_length; }
-  const uint8_t *data() const { return m_data; }
-  uint8_t *data() { return m_data; }
-  ZuCSpan cspan() const {
-    return ZuCSpan{reinterpret_cast<const char *>(m_data), m_length};
-  }
-
-  bool equals(const ConnectionID &) const;
-  int cmp(const ConnectionID &) const;
-  uint32_t hash() const { return ZuHash<ZuCSpan>::hash(cspan()); }
-
-  friend inline bool operator ==(const ConnectionID &l, const ConnectionID &r) {
-    return l.equals(r);
-  }
-  friend inline int operator <=>(const ConnectionID &l, const ConnectionID &r) {
-    return l.cmp(r);
-  }
-
-private:
-  uint8_t	m_data[Max] = {};
-  uint8_t	m_length = 0;
-};
+using CxnID = ZuBArray<20>;
+inline constexpr unsigned CxnIDMax = 20;
 
 struct PacketNumber {
   static unsigned encodedLength(uint64_t pn, uint64_t largestAcked);
@@ -69,8 +43,8 @@ struct PacketNumber {
 struct LongHeader {
   PacketType::T	type = PacketType::Initial;
   uint32_t	version = Version1;
-  ConnectionID	dcid;
-  ConnectionID	scid;
+  CxnID	dcid;
+  CxnID	scid;
   uint64_t	tokenLength = 0;
   uint64_t	length = 0;
   unsigned	pnLength = 0;
@@ -85,7 +59,7 @@ struct RetryPacket {
 };
 
 struct ShortHeader {
-  ConnectionID	dcid;
+  CxnID	dcid;
   unsigned	pnLength = 0;
   unsigned	pnOffset = 0;
 };
@@ -97,31 +71,31 @@ struct Packet {
   static int parseRetry(ZuCSpan, RetryPacket &);
   static int retryIntegrityTag(
     uint8_t *, unsigned, ZuCSpan retryWithoutTag,
-    const ConnectionID &originalDCID);
-  static bool validateRetryIntegrity(ZuCSpan, const ConnectionID &originalDCID);
+    const CxnID &originalDCID);
+  static bool validateRetryIntegrity(ZuCSpan, const CxnID &originalDCID);
   static int parseShort(ZuCSpan, unsigned cidLen, ShortHeader &);
   static int parseVersionNegotiation(
     ZuCSpan, uint32_t *, unsigned capacity, unsigned &nVersions);
   static int writeLong(
     uint8_t *, unsigned, PacketType::T,
-    const ConnectionID &, const ConnectionID &,
+    const CxnID &, const CxnID &,
     uint64_t payloadLength, unsigned pnLength);
   static int writeInitial(
-    uint8_t *, unsigned, const ConnectionID &, const ConnectionID &,
+    uint8_t *, unsigned, const CxnID &, const CxnID &,
     uint64_t payloadLength, unsigned pnLength);
   static int writeHandshake(
-    uint8_t *, unsigned, const ConnectionID &, const ConnectionID &,
+    uint8_t *, unsigned, const CxnID &, const CxnID &,
     uint64_t payloadLength, unsigned pnLength);
   static int writeRetry(
-    uint8_t *, unsigned, const ConnectionID &, const ConnectionID &,
+    uint8_t *, unsigned, const CxnID &, const CxnID &,
     ZuCSpan token, ZuCSpan retryIntegrityTag = {});
   static int writeRetryAuthenticated(
-    uint8_t *, unsigned, const ConnectionID &, const ConnectionID &,
-    ZuCSpan token, const ConnectionID &originalDCID);
+    uint8_t *, unsigned, const CxnID &, const CxnID &,
+    ZuCSpan token, const CxnID &originalDCID);
   static int writeShort(
-    uint8_t *, unsigned, const ConnectionID &, uint64_t pn, unsigned pnLength);
+    uint8_t *, unsigned, const CxnID &, uint64_t pn, unsigned pnLength);
   static int writeVersionNegotiation(
-    uint8_t *, unsigned, const ConnectionID &, const ConnectionID &,
+    uint8_t *, unsigned, const CxnID &, const CxnID &,
     const uint32_t *, unsigned);
 };
 

@@ -34,12 +34,6 @@ void testDiagAggregation()
   diag.setStreamCounts(3, 2);
 
   Zquic::BufDiag buf;
-  ++buf.packetRxBufAllocs;
-  ++buf.packetTxBufAllocs;
-  ++buf.streamRxSliceAllocs;
-  ++buf.streamTxBufAllocs;
-  ++buf.queueNodeAllocs;
-  ++buf.packetProtectionContextInits;
   diag.add(buf);
 
   Zquic::PathDiag path;
@@ -67,12 +61,6 @@ void testDiagAggregation()
       diag.handshakeState == "one_rtt" &&
       diag.openStreams == 3 &&
       diag.closedStreams == 2 &&
-      diag.packetRxBufAllocs == 1 &&
-      diag.packetTxBufAllocs == 1 &&
-      diag.streamRxSliceAllocs == 1 &&
-      diag.streamTxBufAllocs == 1 &&
-      diag.queueNodeAllocs == 1 &&
-      diag.packetProtectionContextInits == 1 &&
       diag.pmtudProbes == 2 &&
       diag.pmtudSuccess == 1 &&
       diag.pmtudFailure == 2,
@@ -90,9 +78,7 @@ void testDiagAggregation()
       strstr(summary.data(), "bodyBytesTx=14") &&
       strstr(summary.data(), "cwnd=12000") &&
       strstr(summary.data(), "handshakeState=one_rtt") &&
-      strstr(summary.data(), "pmtudFailure=2") &&
-      strstr(summary.data(), "packetRxBufAllocs=1") &&
-      strstr(summary.data(), "packetProtectionContextInits=1"),
+      strstr(summary.data(), "pmtudFailure=2"),
     "diagnostic summary text mismatch");
 
   Zquic::DiagText recovery = diag.recoverySummary();

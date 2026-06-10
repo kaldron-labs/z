@@ -234,7 +234,7 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
     o += n;
     if (in.length() < o + 1) return -1;
     f.length = uint8_t(in[o++]);
-    if (f.length > ConnectionID::Max || in.length() < o + f.length + 16)
+    if (f.length > CxnIDMax || in.length() < o + f.length + 16)
       return -1;
     f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
     used = o + f.length + 16;

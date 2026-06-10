@@ -114,9 +114,8 @@ void testStreamFrameDelivery()
   Zquic::BufDiag diag;
   ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->processed == 1 &&
-      stream->rxBytes() == 5 &&
-      uint64_t(diag.streamRxSliceAllocs) == 1,
-    "STREAM frame delivery accounting mismatch");
+      stream->rxBytes() == 5,
+    "STREAM frame delivery mismatch");
 
   auto &rx = stream->rxStream();
   ZuCHECK(consumeExact_(rx, 5, "hello"),
@@ -169,10 +168,8 @@ void testStreamRxSliceDelivery()
   Zquic::BufDiag diag;
   ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->processed == 1 &&
-      stream->rxBytes() == 5 &&
-      uint64_t(diag.streamRxSliceAllocs) == 1 &&
-      uint64_t(diag.queueNodeAllocs) == 1,
-    "packet-backed STREAM slice accounting mismatch");
+      stream->rxBytes() == 5,
+    "packet-backed STREAM slice mismatch");
   packet = nullptr;
 
   auto &rx = stream->rxStream();
@@ -200,12 +197,10 @@ void testOutOfOrderStreamDelivery()
       stream->processed == 1 &&
       !stream->rxBytes() &&
       stream->rxPending() == 1 &&
-      !stream->rxQueued() &&
-      uint64_t(diag.streamRxSliceAllocs) == 1,
+      !stream->rxQueued(),
     "out-of-order STREAM pending state mismatch");
   ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
-      stream->rxPending() == 1 &&
-      uint64_t(diag.streamRxSliceAllocs) == 1,
+      stream->rxPending() == 1,
     "duplicate pending STREAM copied or queued again");
 
   packet = streamPacket_(stream->id(), 0, "hello", false, frame, used);
@@ -214,8 +209,7 @@ void testOutOfOrderStreamDelivery()
   ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->rxBytes() == 10 &&
       !stream->rxPending() &&
-      stream->rxQueued() == 2 &&
-      uint64_t(diag.streamRxSliceAllocs) == 2,
+      stream->rxQueued() == 2,
     "gap-filling STREAM did not drain pending data");
 
   auto &rx = stream->rxStream();
@@ -232,8 +226,7 @@ void testOutOfOrderStreamDelivery()
     "split pending STREAM setup failed");
   ZuCHECK(split->processFrame(frame, packet, &diag) == 0 &&
       split->rxPending() == 1 &&
-      !split->rxQueued() &&
-      uint64_t(diag.streamRxSliceAllocs) == 1,
+      !split->rxQueued(),
     "split pending STREAM state mismatch");
 
   packet = streamPacket_(split->id(), 0, "helloworldtails", false, frame, used);
@@ -242,8 +235,7 @@ void testOutOfOrderStreamDelivery()
   ZuCHECK(split->processFrame(frame, packet, &diag) == 0 &&
       split->rxBytes() == 15 &&
       !split->rxPending() &&
-      split->rxQueued() == 3 &&
-      uint64_t(diag.streamRxSliceAllocs) == 3,
+      split->rxQueued() == 3,
     "interior-overlap STREAM did not copy only novel spans");
 
   auto &splitRx = split->rxStream();
@@ -482,8 +474,7 @@ void testPeerStreamAcceptance()
       server.lastStream == accepted &&
       accepted->processed == 1 &&
       accepted->rxComplete() &&
-      accepted->finalSize() == 3 &&
-      uint64_t(diag.streamRxSliceAllocs) == 1,
+      accepted->finalSize() == 3,
     "peer stream acceptance state mismatch");
 
   TestLink client{&app};

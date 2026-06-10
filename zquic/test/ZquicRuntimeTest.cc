@@ -136,26 +136,16 @@ void dumpRuntimeDiag(
     "# " << name <<
     " endpointReady=" << uint64_t(d.endpointReady) <<
     " datagramsRx=" << uint64_t(d.datagramsRx) <<
+    " bytesRx=" << uint64_t(d.bytesRx) <<
+    " bytesTx=" << uint64_t(d.bytesTx) <<
     " packetsTx=" << uint64_t(d.packetsTx) <<
     " packetsRx=" << uint64_t(d.packetsRx) <<
-    " initialTx=" << uint64_t(d.initialPacketsTx) <<
-    " initialRx=" << uint64_t(d.initialPacketsRx) <<
-    " handshakeTx=" << uint64_t(d.handshakePacketsTx) <<
-    " handshakeRx=" << uint64_t(d.handshakePacketsRx) <<
-    " shortTx=" << uint64_t(d.shortPacketsTx) <<
-    " shortRx=" << uint64_t(d.shortPacketsRx) <<
     " framesRx=" << uint64_t(d.framesRx) <<
-    " cryptoFramesTx=" << uint64_t(d.cryptoFramesTx) <<
-    " cryptoFramesRx=" << uint64_t(d.cryptoFramesRx) <<
     " cryptoBytesTx=" << uint64_t(d.cryptoBytesTx) <<
     " cryptoBytesRx=" << uint64_t(d.cryptoBytesRx) <<
-    " ackTx=" << uint64_t(d.ackFramesTx) <<
-    " ackRx=" << uint64_t(d.ackFramesRx) <<
-    " handshakeDoneTx=" << uint64_t(d.handshakeDoneFramesTx) <<
-    " handshakeDoneRx=" << uint64_t(d.handshakeDoneFramesRx) <<
-    " packetParseErrors=" << uint64_t(d.packetParseErrors) <<
-    " packetProtectionFailures=" << uint64_t(d.packetProtectionFailures) <<
-    " tlsFailures=" << uint64_t(d.tlsFailures) <<
+    " streamBytesTx=" << uint64_t(d.streamBytesTx) <<
+    " streamBytesRx=" << uint64_t(d.streamBytesRx) <<
+    " failures=" << uint64_t(d.failures) <<
     " handshakeComplete=" << uint64_t(d.handshakeComplete) <<
     " tlsHandled=" << c.tlsMessagesHandled <<
     " tlsEmitted=" << c.tlsMessagesEmitted <<
@@ -261,8 +251,7 @@ void testRuntimeEndpointOpen()
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "runtime server endpoint did not become ready");
   ZuCHECK(server.listening() &&
-      server.endpointDiag().packetRxBufAllocs == 1 &&
-      !server.endpointDiag().packetTxBufAllocs &&
+      !server.endpointDiag().failures &&
       server.local().port(),
     "runtime server endpoint diagnostics mismatch");
 
@@ -281,8 +270,8 @@ void testRuntimeEndpointOpen()
   ZuCHECK(waitUntil([&clientLink]() { return clientLink->ready(); }),
     "runtime client link did not become ready");
   ZuCHECK(clientLink->runtimeDiag().endpointReady == 1 &&
-      !clientLink->runtimeDiag().endpointFailures &&
-      clientLink->cxnDiag().packetRxBufAllocs >= 1,
+      !clientLink->runtimeDiag().failures &&
+      !clientLink->cxnDiag().failures,
     "runtime client link diagnostics mismatch");
 
   ZmRef<RuntimeServer::Link> serverLink;
@@ -310,26 +299,20 @@ void testRuntimeEndpointOpen()
     "runtime client handshake completion diagnostics mismatch");
   ZuCHECK(serverLink->runtimeDiag().handshakeComplete == 1,
     "runtime server handshake completion diagnostics mismatch");
-  ZuCHECK(clientLink->runtimeDiag().protectedPacketsTx &&
-      clientLink->runtimeDiag().protectedPacketsRx &&
-      serverLink->runtimeDiag().protectedPacketsTx &&
-      serverLink->runtimeDiag().protectedPacketsRx,
-    "runtime protected packet diagnostics mismatch");
-  ZuCHECK(clientLink->runtimeDiag().cryptoFramesTx &&
-      clientLink->runtimeDiag().cryptoFramesRx &&
-      serverLink->runtimeDiag().cryptoFramesTx &&
-      serverLink->runtimeDiag().cryptoFramesRx,
-    "runtime CRYPTO frame diagnostics mismatch");
-  ZuCHECK(serverLink->runtimeDiag().handshakeDoneFramesTx == 1,
-    "runtime server HANDSHAKE_DONE Tx diagnostics mismatch");
-  ZuCHECK(waitUntil([&clientLink]() {
-      return clientLink->runtimeDiag().handshakeDoneFramesRx == 1;
-    }),
-    "runtime client HANDSHAKE_DONE Rx diagnostics mismatch");
-  ZuCHECK(!clientLink->runtimeDiag().packetParseErrors,
-    "runtime client packet parse diagnostics mismatch");
-  ZuCHECK(!serverLink->runtimeDiag().packetParseErrors,
-    "runtime server packet parse diagnostics mismatch");
+  ZuCHECK(clientLink->runtimeDiag().packetsTx &&
+      clientLink->runtimeDiag().packetsRx &&
+      serverLink->runtimeDiag().packetsTx &&
+      serverLink->runtimeDiag().packetsRx,
+    "runtime packet diagnostics mismatch");
+  ZuCHECK(clientLink->runtimeDiag().cryptoBytesTx &&
+      clientLink->runtimeDiag().cryptoBytesRx &&
+      serverLink->runtimeDiag().cryptoBytesTx &&
+      serverLink->runtimeDiag().cryptoBytesRx,
+    "runtime CRYPTO byte diagnostics mismatch");
+  ZuCHECK(!clientLink->runtimeDiag().failures,
+    "runtime client failure diagnostics mismatch");
+  ZuCHECK(!serverLink->runtimeDiag().failures,
+    "runtime server failure diagnostics mismatch");
 
   auto clientBidi = clientLink->stream(Zquic::StreamType::Bidi);
   auto clientUni = clientLink->stream(Zquic::StreamType::Uni);
@@ -345,12 +328,10 @@ void testRuntimeEndpointOpen()
       return serverLink->runtimeDiag().streamBytesRx == 21 &&
 	clientLink->runtimeDiag().streamBytesRx == 21;
     }), "runtime protected stream bytes did not arrive");
-  ZuCHECK(clientLink->runtimeDiag().streamFramesTx == 2 &&
-      serverLink->runtimeDiag().streamFramesTx == 2 &&
-      clientLink->runtimeDiag().streamFramesRx == 2 &&
-      serverLink->runtimeDiag().streamFramesRx == 2 &&
-      clientLink->runtimeDiag().shortPacketsTx >= 2 &&
-      serverLink->runtimeDiag().shortPacketsTx >= 2,
+  ZuCHECK(clientLink->runtimeDiag().streamBytesTx == 21 &&
+      serverLink->runtimeDiag().streamBytesTx == 21 &&
+      clientLink->runtimeDiag().packetsTx >= 2 &&
+      serverLink->runtimeDiag().packetsTx >= 2,
     "runtime stream diagnostics mismatch");
   auto serverRxBidi = serverLink->findStream(0);
   auto serverRxUni = serverLink->findStream(2);
@@ -466,7 +447,7 @@ void testRuntimeServerMultiConnection()
 
   uint64_t s0Bytes = s0->runtimeDiag().streamBytesRx;
   uint64_t s1Bytes = s1->runtimeDiag().streamBytesRx;
-  uint64_t drops = server.endpointDiag().datagramDrops;
+  uint64_t failures = server.endpointDiag().failures;
   unsigned errors = serverErrors;
   s0->close();
   ZuCHECK(waitUntil([&s0]() {
@@ -477,8 +458,8 @@ void testRuntimeServerMultiConnection()
   auto c1Live = c1->stream(Zquic::StreamType::Bidi);
   ZuCHECK(c0->send(c0Stale, "drop") && c1->send(c1Live, "alive"),
     "multi runtime post-close client stream sends failed");
-  ZuCHECK(waitUntil([&server, &s1, drops, s1Bytes]() {
-      return server.endpointDiag().datagramDrops > drops &&
+  ZuCHECK(waitUntil([&server, &s1, failures, s1Bytes]() {
+      return server.endpointDiag().failures > failures &&
 	s1->runtimeDiag().streamBytesRx >= s1Bytes + 5;
     }), "multi runtime stale route drop or sibling delivery did not happen");
   ZuCHECK(s0->runtimeDiag().streamBytesRx == s0Bytes,

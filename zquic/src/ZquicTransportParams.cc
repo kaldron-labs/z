@@ -60,42 +60,82 @@ static int putParamBytes_(uint8_t *out, unsigned len, uint64_t id, ZuCSpan v,
   return 0;
 }
 
-int TransportParamsCodec::encode(
-  uint8_t *out, unsigned len, const TransportParams &p)
+static unsigned paramVarLen_(uint64_t id, uint64_t v)
+{
+  unsigned n = VarInt::length(v);
+  return VarInt::length(id) + VarInt::length(n) + n;
+}
+
+static unsigned paramBytesLen_(uint64_t id, ZuCSpan v)
+{
+  return VarInt::length(id) + VarInt::length(v.length()) + v.length();
+}
+
+unsigned TransportParams::encodedLength() const
+{
+  unsigned n = 0;
+  if (originalDCID.length())
+    n += paramBytesLen_(TPOriginalDCID, originalDCID);
+  n +=
+    paramVarLen_(TPMaxIdleTimeout, maxIdleTimeout) +
+    paramVarLen_(TPMaxUDPPayloadSize, maxUDPPayloadSize) +
+    paramVarLen_(TPInitialMaxData, initialMaxData) +
+    paramVarLen_(
+      TPInitialMaxStreamDataBidiLocal,
+      initialMaxStreamDataBidiLocal) +
+    paramVarLen_(
+      TPInitialMaxStreamDataBidiRemote,
+      initialMaxStreamDataBidiRemote) +
+    paramVarLen_(TPInitialMaxStreamDataUni, initialMaxStreamDataUni) +
+    paramVarLen_(TPInitialMaxStreamsBidi, initialMaxStreamsBidi) +
+    paramVarLen_(TPInitialMaxStreamsUni, initialMaxStreamsUni) +
+    paramVarLen_(TPAckDelayExponent, ackDelayExponent) +
+    paramVarLen_(TPMaxAckDelay, maxAckDelay) +
+    paramVarLen_(TPActiveConnectionIDLimit, activeConnectionIDLimit);
+  if (disableActiveMigration)
+    n += VarInt::length(TPDisableActiveMigration) + VarInt::length(0);
+  if (initialSCID.length())
+    n += paramBytesLen_(TPInitialSCID, initialSCID);
+  if (retrySCID.length())
+    n += paramBytesLen_(TPRetrySCID, retrySCID);
+  return n;
+}
+
+int TransportParams::encode(uint8_t *out, unsigned len) const
 {
   unsigned o = 0;
-  if (p.originalDCID.length() &&
-      putParamBytes_(out, len, TPOriginalDCID, p.originalDCID.cspan(), o) < 0)
+  if (originalDCID.length() &&
+      putParamBytes_(out, len, TPOriginalDCID, originalDCID, o) < 0)
     return -1;
-  if (putParamVar_(out, len, TPMaxIdleTimeout, p.maxIdleTimeout, o) < 0 ||
-      putParamVar_(out, len, TPMaxUDPPayloadSize, p.maxUDPPayloadSize, o) < 0 ||
-      putParamVar_(out, len, TPInitialMaxData, p.initialMaxData, o) < 0 ||
+  if (putParamVar_(out, len, TPMaxIdleTimeout, maxIdleTimeout, o) < 0 ||
+      putParamVar_(out, len, TPMaxUDPPayloadSize, maxUDPPayloadSize, o) < 0 ||
+      putParamVar_(out, len, TPInitialMaxData, initialMaxData, o) < 0 ||
       putParamVar_(
 	out, len, TPInitialMaxStreamDataBidiLocal,
-	p.initialMaxStreamDataBidiLocal, o) < 0 ||
+	initialMaxStreamDataBidiLocal, o) < 0 ||
       putParamVar_(
 	out, len, TPInitialMaxStreamDataBidiRemote,
-	p.initialMaxStreamDataBidiRemote, o) < 0 ||
+	initialMaxStreamDataBidiRemote, o) < 0 ||
       putParamVar_(
-	out, len, TPInitialMaxStreamDataUni, p.initialMaxStreamDataUni, o) < 0 ||
+	out, len, TPInitialMaxStreamDataUni, initialMaxStreamDataUni, o) < 0 ||
       putParamVar_(out, len, TPInitialMaxStreamsBidi,
-	p.initialMaxStreamsBidi, o) < 0 ||
+	initialMaxStreamsBidi, o) < 0 ||
       putParamVar_(out, len, TPInitialMaxStreamsUni,
-	p.initialMaxStreamsUni, o) < 0 ||
-      putParamVar_(out, len, TPAckDelayExponent, p.ackDelayExponent, o) < 0 ||
-      putParamVar_(out, len, TPMaxAckDelay, p.maxAckDelay, o) < 0 ||
+	initialMaxStreamsUni, o) < 0 ||
+      putParamVar_(out, len, TPAckDelayExponent, ackDelayExponent, o) < 0 ||
+      putParamVar_(out, len, TPMaxAckDelay, maxAckDelay, o) < 0 ||
       putParamVar_(
-	out, len, TPActiveConnectionIDLimit, p.activeConnectionIDLimit, o) < 0)
+	out, len, TPActiveConnectionIDLimit, activeConnectionIDLimit, o) < 0)
     return -1;
-  if (p.disableActiveMigration &&
+  if (disableActiveMigration &&
       (VarInt::put(out, len, TPDisableActiveMigration, o) < 0 ||
        VarInt::put(out, len, 0, o) < 0))
     return -1;
-  if (p.initialSCID.length() &&
-      putParamBytes_(out, len, TPInitialSCID, p.initialSCID.cspan(), o) < 0)
+  if (initialSCID.length() &&
+      putParamBytes_(out, len, TPInitialSCID, initialSCID, o) < 0)
     return -1;
-  if (p.retrySCID.length() &&
-      putParamBytes_(out, len, TPRetrySCID, p.retrySCID.cspan(), o) < 0)
+  if (retrySCID.length() &&
+      putParamBytes_(out, len, TPRetrySCID, retrySCID, o) < 0)
     return -1;
   return int(o);
 }
@@ -107,9 +147,9 @@ static int getParamVar_(ZuCSpan v, uint64_t &out)
   return 0;
 }
 
-int TransportParamsCodec::decode(ZuCSpan in, TransportParams &p)
+int TransportParams::decode(ZuCSpan in)
 {
-  p = {};
+  *this = {};
   unsigned o = 0;
   while (o < in.length()) {
     uint64_t id = 0, len = 0;
@@ -126,58 +166,61 @@ int TransportParamsCodec::decode(ZuCSpan in, TransportParams &p)
 
     switch (id) {
       case TPOriginalDCID:
-	if (!p.originalDCID.set(value)) return -1;
+	if (value.length() > CxnIDMax) return -1;
+	originalDCID = value;
 	break;
       case TPMaxIdleTimeout:
-	if (getParamVar_(value, p.maxIdleTimeout) < 0) return -1;
+	if (getParamVar_(value, maxIdleTimeout) < 0) return -1;
 	break;
       case TPMaxUDPPayloadSize:
-	if (getParamVar_(value, p.maxUDPPayloadSize) < 0) return -1;
+	if (getParamVar_(value, maxUDPPayloadSize) < 0) return -1;
 	break;
       case TPInitialMaxData:
-	if (getParamVar_(value, p.initialMaxData) < 0) return -1;
+	if (getParamVar_(value, initialMaxData) < 0) return -1;
 	break;
       case TPInitialMaxStreamDataBidiLocal:
-	if (getParamVar_(value, p.initialMaxStreamDataBidiLocal) < 0)
+	if (getParamVar_(value, initialMaxStreamDataBidiLocal) < 0)
 	  return -1;
 	break;
       case TPInitialMaxStreamDataBidiRemote:
-	if (getParamVar_(value, p.initialMaxStreamDataBidiRemote) < 0)
+	if (getParamVar_(value, initialMaxStreamDataBidiRemote) < 0)
 	  return -1;
 	break;
       case TPInitialMaxStreamDataUni:
-	if (getParamVar_(value, p.initialMaxStreamDataUni) < 0) return -1;
+	if (getParamVar_(value, initialMaxStreamDataUni) < 0) return -1;
 	break;
       case TPInitialMaxStreamsBidi:
-	if (getParamVar_(value, p.initialMaxStreamsBidi) < 0) return -1;
+	if (getParamVar_(value, initialMaxStreamsBidi) < 0) return -1;
 	break;
       case TPInitialMaxStreamsUni:
-	if (getParamVar_(value, p.initialMaxStreamsUni) < 0) return -1;
+	if (getParamVar_(value, initialMaxStreamsUni) < 0) return -1;
 	break;
       case TPAckDelayExponent:
-	if (getParamVar_(value, p.ackDelayExponent) < 0) return -1;
+	if (getParamVar_(value, ackDelayExponent) < 0) return -1;
 	break;
       case TPMaxAckDelay:
-	if (getParamVar_(value, p.maxAckDelay) < 0) return -1;
+	if (getParamVar_(value, maxAckDelay) < 0) return -1;
 	break;
       case TPDisableActiveMigration:
 	if (len) return -1;
-	p.disableActiveMigration = true;
+	disableActiveMigration = true;
 	break;
       case TPActiveConnectionIDLimit:
-	if (getParamVar_(value, p.activeConnectionIDLimit) < 0) return -1;
+	if (getParamVar_(value, activeConnectionIDLimit) < 0) return -1;
 	break;
       case TPInitialSCID:
-	if (!p.initialSCID.set(value)) return -1;
+	if (value.length() > CxnIDMax) return -1;
+	initialSCID = value;
 	break;
       case TPRetrySCID:
-	if (!p.retrySCID.set(value)) return -1;
+	if (value.length() > CxnIDMax) return -1;
+	retrySCID = value;
 	break;
       default:
 	break;
     }
   }
-  return p.validate() ? 0 : -1;
+  return validate() ? 0 : -1;
 }
 
 } // namespace Zquic
