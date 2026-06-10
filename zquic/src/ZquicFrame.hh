@@ -25,18 +25,18 @@ struct AckRange {
 struct Frame {
   static constexpr unsigned MaxAckRanges = 64;
 
-  FrameType::T	type = FrameType::Unknown;
-  uint64_t	streamID = 0;
-  uint64_t	offset = 0;
-  uint64_t	length = 0;
-  uint64_t	value = 0;
-  uint64_t	errorCode = 0;
-  StreamType::T	streamType = StreamType::Bidi;
-  bool		fin = false;
-  StatelessResetToken resetToken;
-  ZuCSpan	payload;
-  AckRange	ackRanges[MaxAckRanges];
-  unsigned	ackRangeCount = 0;
+  FrameType::T		type = FrameType::Unknown;
+  uint64_t		streamID = 0;
+  uint64_t		offset = 0;
+  uint64_t		length = 0;
+  uint64_t		value = 0;
+  uint64_t		errorCode = 0;
+  StreamType::T		streamType = StreamType::Bidi;
+  bool			fin = false;
+  StatelessResetToken	resetToken;
+  ZuCSpan		payload;
+  AckRange		ackRanges[MaxAckRanges];
+  unsigned		ackRangeCount = 0;
 };
 
 struct FrameCodec {

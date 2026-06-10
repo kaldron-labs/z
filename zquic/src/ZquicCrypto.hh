@@ -300,34 +300,34 @@ private:
   static int collectedExtensionsCB_(
     ptls_t *, ptls_handshake_properties_t *, ptls_raw_extension_t *);
 
-  bool		m_isServer = false;
-  bool		m_earlyDataEnabled = false;
-  bool		m_oneRTTReady = false;
-  bool		m_secretInstalled[3] = {};
-  TrafficSecret m_txTrafficSecrets[3];
-  TrafficSecret m_rxTrafficSecrets[3];
-  PacketProtectionState m_txProtection[3];
-  PacketProtectionState m_rxProtection[3];
-  ParamString	m_alpn;
-  Host		m_serverName;
-  InitialKeyMaterial m_initialKeys;
-  CryptoDiag	m_diag;
-  TransportParams m_localTransportParams;
-  TransportParams m_peerTransportParams;
-  bool		m_peerTransportParamsReceived = false;
-  ptls_context_t m_tlsCtx{};
-  ptls_cipher_suite_t *m_tlsCipherSuites[16]{};
-  ptls_t	*m_tls = nullptr;
-  ptls_handshake_properties_t m_tlsProps{};
-  ptls_raw_extension_t m_tlsExtensions[2]{};
-  TLSTransportParams m_tlsTransportParams;
-  ptls_iovec_t	m_alpnVec{};
-  size_t	m_maxEarlyData = 0;
-  int		m_tlsResult = PTLS_ERROR_IN_PROGRESS;
-  Ztls::Backend::CertStore *m_certStore = nullptr;
-  Ztls::Backend::VerifyCert *m_verify = nullptr;
-  Ztls::Backend::PKey *m_key = nullptr;
-  Ztls::Backend::SignCert *m_sign = nullptr;
+  bool				m_isServer = false;
+  bool				m_earlyDataEnabled = false;
+  bool				m_oneRTTReady = false;
+  bool				m_secretInstalled[3] = {};
+  TrafficSecret 		m_txTrafficSecrets[3];
+  TrafficSecret 		m_rxTrafficSecrets[3];
+  PacketProtectionState		m_txProtection[3];
+  PacketProtectionState		m_rxProtection[3];
+  ParamString			m_alpn;
+  Host				m_serverName;
+  InitialKeyMaterial 		m_initialKeys;
+  CryptoDiag			m_diag;
+  TransportParams 		m_localTransportParams;
+  TransportParams 		m_peerTransportParams;
+  bool				m_peerTransportParamsReceived = false;
+  ptls_context_t 		m_tlsCtx{};
+  ptls_cipher_suite_t		*m_tlsCipherSuites[16]{};	// FIXME - why 16?
+  ptls_t			*m_tls = nullptr;
+  ptls_handshake_properties_t 	m_tlsProps{};
+  ptls_raw_extension_t 		m_tlsExtensions[2]{};
+  TLSTransportParams 		m_tlsTransportParams;
+  ptls_iovec_t			m_alpnVec{};
+  size_t			m_maxEarlyData = 0;
+  int				m_tlsResult = PTLS_ERROR_IN_PROGRESS;
+  Ztls::Backend::CertStore	*m_certStore = nullptr;
+  Ztls::Backend::VerifyCert	*m_verify = nullptr;
+  Ztls::Backend::PKey		*m_key = nullptr;
+  Ztls::Backend::SignCert	*m_sign = nullptr;
 };
 
 } // namespace Zquic

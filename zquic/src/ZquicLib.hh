@@ -34,7 +34,7 @@ namespace Zquic {
 
 inline constexpr const char Log[] = "Zquic";
 
-ZquicExtern void lib_init(); // can be called repeatedly
+ZquicExtern void lib_init(); // idempotent
 
 }
 

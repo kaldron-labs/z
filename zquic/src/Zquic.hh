@@ -1441,7 +1441,7 @@ protected:
     if (h.scid.length()) m_peerCID = h.scid;
   }
 
-	  void setPeerResetToken_(const StatelessResetToken &token) {
+  void setPeerResetToken_(const StatelessResetToken &token) {
     m_peerResetToken = token;
     if (m_peerCID.length())
       addPeerCID_(m_peerCID, 0, token);
@@ -2318,13 +2318,13 @@ private:
   CryptoStream		m_txCrypto[3];
   CryptoStream		m_rxCrypto[3];
   CxnID			m_initialDCID;
-	  CxnID			m_localSCID;
-	  CxnID			m_peerCID;
-	  StatelessResetToken	m_peerResetToken;
+  CxnID			m_localSCID;
+  CxnID			m_peerCID;
+  StatelessResetToken	m_peerResetToken;
   LinkCID		m_localCIDs[MaxConnectionIDs];
   LinkCID		m_peerCIDs[MaxConnectionIDs];
   uint64_t		m_peerRetirePriorTo = 0;
-	  uint64_t		m_txPN[3]{};
+  uint64_t		m_txPN[3]{};
   uint64_t		m_rxLargestPN[3]{};
   AckTracker		m_rxPackets[3];
   PacketTxSpace		m_txPackets[3];
@@ -3159,19 +3159,19 @@ private:
       });
   }
 
-	  void receivedRouted_(Datagram d) {
-	    received_(ZuMv(d));
-	  }
+  void receivedRouted_(Datagram d) {
+    received_(ZuMv(d));
+  }
 
-	  void installRoutes_(CxnRouter<Impl> &routes) {
-	    routes.add(m_bootstrap.originalDCID(), 0, impl());
+  void installRoutes_(CxnRouter<Impl> &routes) {
+    routes.add(m_bootstrap.originalDCID(), 0, impl());
     Base::installLocalCIDRoutes_(routes);
-	  }
+  }
 
-	  void retireRoutes_(CxnRouter<Impl> &routes) {
-	    routes.tombstone(m_bootstrap.originalDCID());
+  void retireRoutes_(CxnRouter<Impl> &routes) {
+    routes.tombstone(m_bootstrap.originalDCID());
     Base::retireLocalCIDRoutes_(routes);
-	  }
+  }
 
 protected:
   void retiredLocalCID_(uint64_t, const CxnID &id) {
