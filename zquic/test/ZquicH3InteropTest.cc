@@ -369,11 +369,11 @@ void testRuntimeTrafficGuard()
   ZuCHECK(waitUntil([&serverLink]() {
       return serverLink->runtimeDiag().streamBytesRx == 15;
     }), "H3 interop traffic guard did not deliver stream bytes");
-  ZuCHECK(serverLink->runtimeDiag().protectedPacketsRx &&
-      clientLink->runtimeDiag().protectedPacketsTx &&
-      serverLink->runtimeDiag().cryptoFramesRx &&
-      clientLink->runtimeDiag().cryptoFramesTx &&
-      !serverLink->runtimeDiag().packetParseErrors,
+  ZuCHECK(serverLink->runtimeDiag().packetsRx &&
+      clientLink->runtimeDiag().packetsTx &&
+      serverLink->runtimeDiag().cryptoBytesRx &&
+      clientLink->runtimeDiag().cryptoBytesTx &&
+      !serverLink->runtimeDiag().failures,
     "H3 interop traffic guard diagnostics mismatch");
 
   clientLink->disconnect();
@@ -471,12 +471,12 @@ void testRuntimeH3LiteRequestResponse()
   ZuCHECK(client.response.status == 200 &&
       client.response.body == "zquic-h3-ok",
     "H3Lite runtime response mismatch");
-  ZuCHECK(clientLink->runtimeDiag().streamFramesTx >= 2 &&
-      clientLink->runtimeDiag().streamFramesRx >= 1 &&
-      serverLink->runtimeDiag().streamFramesTx >= 2 &&
-      serverLink->runtimeDiag().streamFramesRx >= 2 &&
-      !clientLink->runtimeDiag().packetParseErrors &&
-      !serverLink->runtimeDiag().packetParseErrors,
+  ZuCHECK(clientLink->runtimeDiag().streamBytesTx &&
+      clientLink->runtimeDiag().streamBytesRx &&
+      serverLink->runtimeDiag().streamBytesTx &&
+      serverLink->runtimeDiag().streamBytesRx &&
+      !clientLink->runtimeDiag().failures &&
+      !serverLink->runtimeDiag().failures,
     "H3Lite runtime Zquic diagnostics mismatch");
 
   clientLink->disconnect();
@@ -536,19 +536,15 @@ void testCurlZquicH3Server()
       std::cout <<
 	"# zquic server diag:"
 	" datagramsRx=" << uint64_t(d.datagramsRx) <<
+	" bytesRx=" << uint64_t(d.bytesRx) <<
+	" bytesTx=" << uint64_t(d.bytesTx) <<
 	" packetsRx=" << uint64_t(d.packetsRx) <<
-	" initialRx=" << uint64_t(d.initialPacketsRx) <<
-	" handshakeRx=" << uint64_t(d.handshakePacketsRx) <<
-	" shortRx=" << uint64_t(d.shortPacketsRx) <<
-	" protectedRx=" << uint64_t(d.protectedPacketsRx) <<
-	" cryptoRx=" << uint64_t(d.cryptoFramesRx) <<
-	" streamRx=" << uint64_t(d.streamFramesRx) <<
-	" streamTx=" << uint64_t(d.streamFramesTx) <<
-	" tlsFailures=" << uint64_t(d.tlsFailures) <<
-	" protectionFailures=" << uint64_t(d.packetProtectionFailures) <<
-	" parseErrors=" << uint64_t(d.packetParseErrors) <<
+	" packetsTx=" << uint64_t(d.packetsTx) <<
+	" cryptoRx=" << uint64_t(d.cryptoBytesRx) <<
+	" streamRx=" << uint64_t(d.streamBytesRx) <<
+	" streamTx=" << uint64_t(d.streamBytesTx) <<
+	" failures=" << uint64_t(d.failures) <<
 	" handshakeComplete=" << uint64_t(d.handshakeComplete) <<
-	" handshakeDoneTx=" << uint64_t(d.handshakeDoneFramesTx) <<
 	" appStreams=" << unsigned(server.streamsSeen) <<
 	" appReqStreams=" << unsigned(server.requestStreamsSeen) <<
 	" lastStreamID=" << uint64_t(server.lastStreamID) <<
@@ -561,10 +557,10 @@ void testCurlZquicH3Server()
   ZuCHECK(waitUntil([&server]() { return server.requestSeen; }),
     "curl->Zquic H3 request did not enter Zquic");
   ZuCHECK(server.acceptedCount == 1 && serverLink && !server.requestErrors &&
-      serverLink->runtimeDiag().protectedPacketsRx &&
-      serverLink->runtimeDiag().streamFramesRx &&
-      serverLink->runtimeDiag().streamFramesTx &&
-      serverLink->runtimeDiag().handshakeDoneFramesTx,
+      serverLink->runtimeDiag().packetsRx &&
+      serverLink->runtimeDiag().streamBytesRx &&
+      serverLink->runtimeDiag().streamBytesTx &&
+      serverLink->runtimeDiag().handshakeComplete,
     "curl->Zquic H3 diagnostics mismatch");
 
   server.final();
@@ -647,17 +643,14 @@ void testZquicH3ClientCaddy()
     std::cout <<
       "# zquic client diag:"
       " datagramsRx=" << uint64_t(d.datagramsRx) <<
+      " bytesRx=" << uint64_t(d.bytesRx) <<
+      " bytesTx=" << uint64_t(d.bytesTx) <<
       " packetsRx=" << uint64_t(d.packetsRx) <<
-      " initialRx=" << uint64_t(d.initialPacketsRx) <<
-      " handshakeRx=" << uint64_t(d.handshakePacketsRx) <<
-      " shortRx=" << uint64_t(d.shortPacketsRx) <<
-      " protectedRx=" << uint64_t(d.protectedPacketsRx) <<
-      " cryptoRx=" << uint64_t(d.cryptoFramesRx) <<
-      " streamRx=" << uint64_t(d.streamFramesRx) <<
-      " streamTx=" << uint64_t(d.streamFramesTx) <<
-      " tlsFailures=" << uint64_t(d.tlsFailures) <<
-      " protectionFailures=" << uint64_t(d.packetProtectionFailures) <<
-      " parseErrors=" << uint64_t(d.packetParseErrors) <<
+      " packetsTx=" << uint64_t(d.packetsTx) <<
+      " cryptoRx=" << uint64_t(d.cryptoBytesRx) <<
+      " streamRx=" << uint64_t(d.streamBytesRx) <<
+      " streamTx=" << uint64_t(d.streamBytesTx) <<
+      " failures=" << uint64_t(d.failures) <<
       " responseErrors=" << unsigned(client.responseErrors) <<
       '\n';
     printFile("caddy log", caddy.logPath);
@@ -666,27 +659,23 @@ void testZquicH3ClientCaddy()
       client.response.status == 200 &&
       client.response.body == "caddy-h3-ok",
     "Zquic H3 client->Caddy response mismatch");
-  bool diagOK = clientLink->runtimeDiag().protectedPacketsRx &&
-    clientLink->runtimeDiag().streamFramesRx &&
-    clientLink->runtimeDiag().streamFramesTx &&
-    clientLink->runtimeDiag().handshakeDoneFramesRx;
+  bool diagOK = clientLink->runtimeDiag().packetsRx &&
+    clientLink->runtimeDiag().streamBytesRx &&
+    clientLink->runtimeDiag().streamBytesTx &&
+    clientLink->runtimeDiag().handshakeComplete;
   if (!diagOK) {
     const auto &d = clientLink->runtimeDiag();
     std::cout <<
       "# zquic client final diag:"
       " datagramsRx=" << uint64_t(d.datagramsRx) <<
+      " bytesRx=" << uint64_t(d.bytesRx) <<
+      " bytesTx=" << uint64_t(d.bytesTx) <<
       " packetsRx=" << uint64_t(d.packetsRx) <<
-      " initialRx=" << uint64_t(d.initialPacketsRx) <<
-      " handshakeRx=" << uint64_t(d.handshakePacketsRx) <<
-      " shortRx=" << uint64_t(d.shortPacketsRx) <<
-      " protectedRx=" << uint64_t(d.protectedPacketsRx) <<
-      " cryptoRx=" << uint64_t(d.cryptoFramesRx) <<
-      " streamRx=" << uint64_t(d.streamFramesRx) <<
-      " streamTx=" << uint64_t(d.streamFramesTx) <<
-      " handshakeDoneRx=" << uint64_t(d.handshakeDoneFramesRx) <<
-      " tlsFailures=" << uint64_t(d.tlsFailures) <<
-      " protectionFailures=" << uint64_t(d.packetProtectionFailures) <<
-      " parseErrors=" << uint64_t(d.packetParseErrors) <<
+      " packetsTx=" << uint64_t(d.packetsTx) <<
+      " cryptoRx=" << uint64_t(d.cryptoBytesRx) <<
+      " streamRx=" << uint64_t(d.streamBytesRx) <<
+      " streamTx=" << uint64_t(d.streamBytesTx) <<
+      " failures=" << uint64_t(d.failures) <<
       '\n';
   }
   ZuCHECK(diagOK,

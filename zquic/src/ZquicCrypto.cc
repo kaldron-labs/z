@@ -151,7 +151,6 @@ int CryptoStream::writeFrame(
   memcpy(out + n, payload.data(), payload.length());
   m_txOffset += payload.length();
   if (diag) {
-    ++diag->cryptoFramesTx;
     diag->cryptoBytesTx += payload.length();
   }
   return n + int(payload.length());
@@ -164,7 +163,6 @@ int CryptoStream::writeFramePrefix(
   if (n < 0) return -1;
   m_txOffset += payloadLen;
   if (diag) {
-    ++diag->cryptoFramesTx;
     diag->cryptoBytesTx += payloadLen;
   }
   return int(n);
@@ -184,7 +182,6 @@ int CryptoStream::receive(
   m_delivery.length(0);
   uint64_t end = offset + payload.length();
   if (end < offset || end > MaxBuffered) return -1;
-  if (diag) ++diag->cryptoFramesRx;
   if (!payload.length() || end <= m_rxOffset) return 0;
   uint64_t first = offset < m_rxOffset ? m_rxOffset : offset;
   if (first == m_rxOffset && !m_rxQueue.count_()) {
@@ -236,11 +233,11 @@ void CryptoStream::process(Msg *node)
   m_rxOffset += data.bytes;
 }
 
-bool InitialCrypto::derive(InitialKeyMaterial &out, const ConnectionID &dcid)
+bool InitialCrypto::derive(InitialKeyMaterial &out, const CxnID &dcid)
 {
   out = {};
   if (!hkdfExtract_(out.initial, InitialSaltV1_, sizeof(InitialSaltV1_),
-	dcid.cspan()))
+	dcid))
     return false;
   return deriveSecret_(out.client, out.initial, "client in") &&
     deriveSecret_(out.server, out.initial, "server in");
@@ -711,8 +708,7 @@ Crypto::~Crypto()
 bool Crypto::init(const CryptoConfig &config)
 {
   resetTLS_();
-  if (config.alpn.length() > sizeof(m_alpn)) return false;
-  if (config.serverName.length() > sizeof(m_serverName)) return false;
+  if (config.alpn.length() > 255) return false;
   m_isServer = config.isServer;
   m_earlyDataEnabled = false;
   m_oneRTTReady = false;
@@ -721,11 +717,8 @@ bool Crypto::init(const CryptoConfig &config)
   for (auto &secret : m_rxTrafficSecrets) secret.clear();
   for (auto &state : m_txProtection) state.clear();
   for (auto &state : m_rxProtection) state.clear();
-  m_alpnLength = config.alpn.length();
-  if (m_alpnLength) memcpy(m_alpn, config.alpn.data(), m_alpnLength);
-  m_serverNameLength = config.serverName.length();
-  if (m_serverNameLength)
-    memcpy(m_serverName, config.serverName.data(), m_serverNameLength);
+  m_alpn = ParamString{config.alpn};
+  m_serverName = Host{config.serverName};
   m_localTransportParams = config.localTransportParams ?
     *config.localTransportParams : TransportParams{};
   m_peerTransportParams = {};
@@ -797,10 +790,8 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
   m_tls = ptls_new(&m_tlsCtx, m_isServer ? 1 : 0);
   if (!m_tls) return false;
   *ptls_get_data_ptr(m_tls) = this;
-  if (!m_isServer && m_serverNameLength)
-    if (ptls_set_server_name(
-	  m_tls, reinterpret_cast<const char *>(m_serverName),
-	  m_serverNameLength))
+  if (!m_isServer && m_serverName)
+    if (ptls_set_server_name(m_tls, m_serverName.data(), m_serverName.length()))
       return false;
   return true;
 }
@@ -808,21 +799,24 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
 bool Crypto::initTLSProperties_(const CryptoConfig &)
 {
   memset(&m_tlsProps, 0, sizeof(m_tlsProps));
+  unsigned transportParamsLen =
+    m_localTransportParams.encodedLength();
+  m_tlsTransportParams.length(transportParamsLen);
   int n = encodeTransportParams(
-    m_tlsTransportParams, sizeof(m_tlsTransportParams), m_localTransportParams);
-  if (n < 0) return false;
-  m_tlsTransportParamsLen = unsigned(n);
+    m_tlsTransportParams.data(), m_tlsTransportParams.length(),
+    m_localTransportParams);
+  if (n < 0 || unsigned(n) != m_tlsTransportParams.length()) return false;
   m_tlsExtensions[0].type = TLSExtQUICTransportParamsV1;
   m_tlsExtensions[0].data =
-    ptls_iovec_init(m_tlsTransportParams, m_tlsTransportParamsLen);
+    ptls_iovec_init(m_tlsTransportParams.data(), m_tlsTransportParams.length());
   m_tlsExtensions[1].type = UINT16_MAX;
   m_tlsExtensions[1].data = {};
   m_tlsProps.additional_extensions = m_tlsExtensions;
   m_tlsProps.collect_extension = &Crypto::collectExtensionCB_;
   m_tlsProps.collected_extensions = &Crypto::collectedExtensionsCB_;
 
-  if (!m_isServer && m_alpnLength) {
-    m_alpnVec = ptls_iovec_init(m_alpn, m_alpnLength);
+  if (!m_isServer && m_alpn) {
+    m_alpnVec = ptls_iovec_init(m_alpn.data(), m_alpn.length());
     m_tlsProps.client.negotiated_protocols.list = &m_alpnVec;
     m_tlsProps.client.negotiated_protocols.count = 1;
   }
@@ -862,8 +856,7 @@ void Crypto::resetTLS_()
   memset(m_tlsCipherSuites, 0, sizeof(m_tlsCipherSuites));
   memset(&m_tlsProps, 0, sizeof(m_tlsProps));
   memset(m_tlsExtensions, 0, sizeof(m_tlsExtensions));
-  memset(m_tlsTransportParams, 0, sizeof(m_tlsTransportParams));
-  m_tlsTransportParamsLen = 0;
+  m_tlsTransportParams.length(0);
   m_alpnVec = {};
   m_maxEarlyData = 0;
   m_tlsResult = PTLS_ERROR_IN_PROGRESS;
@@ -909,7 +902,6 @@ int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
     traffic.clear();
     return -1;
   }
-  m_diag.packetProtectionContextInits += isEnc ? 3 : 2;
   installSecret(level, secretSpan);
   return 0;
 }
@@ -921,14 +913,14 @@ int Crypto::onClientHello_(ptls_on_client_hello_parameters_t *params)
     ptls_set_server_name(
       m_tls, reinterpret_cast<const char *>(params->server_name.base),
       params->server_name.len);
-  if (!m_alpnLength) return 0;
+  if (!m_alpn) return 0;
   for (size_t i = 0; i < params->negotiated_protocols.count; ++i) {
     auto protocol = params->negotiated_protocols.list[i];
-    if (protocol.len != m_alpnLength ||
-	memcmp(protocol.base, m_alpn, m_alpnLength))
+    if (protocol.len != m_alpn.length() ||
+	memcmp(protocol.base, m_alpn.data(), m_alpn.length()))
       continue;
     return ptls_set_negotiated_protocol(
-      m_tls, reinterpret_cast<const char *>(m_alpn), m_alpnLength);
+      m_tls, m_alpn.data(), m_alpn.length());
   }
   return PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_NO_APPLICATION_PROTOCOL);
 }
@@ -1013,14 +1005,14 @@ int Crypto::handleTLSMessage(
 int Crypto::encodeTransportParams(
   uint8_t *out, unsigned len, const TransportParams &params)
 {
-  int n = TransportParamsCodec::encode(out, len, params);
+  int n = params.encode(out, len);
   if (n >= 0) ++m_diag.transportParamsEncoded;
   return n;
 }
 
 int Crypto::decodeTransportParams(ZuCSpan in, TransportParams &params)
 {
-  int n = TransportParamsCodec::decode(in, params);
+  int n = params.decode(in);
   if (!n) ++m_diag.transportParamsDecoded;
   return n;
 }
@@ -1051,7 +1043,7 @@ bool Crypto::discardSecret(CryptoLevel::T level)
   return true;
 }
 
-bool Crypto::deriveInitial(const ConnectionID &dcid)
+bool Crypto::deriveInitial(const CxnID &dcid)
 {
   if (!InitialCrypto::derive(m_initialKeys, dcid)) return false;
   ++m_diag.initialKeysDerived;

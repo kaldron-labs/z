@@ -76,57 +76,60 @@ inline ErrorFn defaultErrorFn()
 
 struct EngineParams {
   EngineParams(
-    ZiMultiplex *mx_ = nullptr,
-    ZuCSpan rxThread_ = {},
-    ZuCSpan txThread_ = {}) :
-      mx{mx_}, rxThread{rxThread_}, txThread{txThread_},
-      errorFn_{defaultErrorFn()} { }
+    ZiMultiplex *mx = nullptr,
+    ZuCSpan rxThread = {},
+    ZuCSpan txThread = {}) :
+      m_mx{mx}, m_rxThread{rxThread}, m_txThread{txThread},
+      m_errorFn{defaultErrorFn()} { }
 
-  EngineParams &&caPath(ZuCSpan v) { caPath_ = v; return ZuMv(*this); }
-  EngineParams &&certPath(ZuCSpan v) { certPath_ = v; return ZuMv(*this); }
-  EngineParams &&keyPath(ZuCSpan v) { keyPath_ = v; return ZuMv(*this); }
+  EngineParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
+  EngineParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
+  EngineParams &&keyPath(ZuCSpan v) { m_keyPath = v; return ZuMv(*this); }
   EngineParams &&asyncThread(ZuCSpan v) {
-    asyncThread_ = v;
+    m_asyncThread = v;
     return ZuMv(*this);
   }
   EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
-    alpn_.length(0);
-    alpn_.ensure(v.length());
-    for (auto &s : v) alpn_.push(ParamString{s});
+    m_alpn.length(0);
+    m_alpn.ensure(v.length());
+    for (auto &s : v) m_alpn.push(ParamString{s});
     return ZuMv(*this);
   }
-  EngineParams &&errorFn(ErrorFn v) { errorFn_ = ZuMv(v); return ZuMv(*this); }
+  EngineParams &&errorFn(ErrorFn v) { m_errorFn = ZuMv(v); return ZuMv(*this); }
 
-  ZiMultiplex *mx = nullptr;
-  ParamString rxThread;
-  ParamString txThread;
-  ParamStrings alpn_;
-  ParamString caPath_;
-  ParamString certPath_;
-  ParamString keyPath_;
-  ParamString asyncThread_;
-  ErrorFn errorFn_;
+  ZiMultiplex *mx() const { return m_mx; }
+  ZuCSpan rxThread() const { return m_rxThread; }
+  ZuCSpan txThread() const { return m_txThread; }
+  const ParamStrings &alpn() const { return m_alpn; }
+  ZuCSpan caPath() const { return m_caPath; }
+  ZuCSpan certPath() const { return m_certPath; }
+  ZuCSpan keyPath() const { return m_keyPath; }
+  ZuCSpan asyncThread() const { return m_asyncThread; }
+  const ErrorFn &errorFn() const { return m_errorFn; }
+  ErrorFn &errorFn() { return m_errorFn; }
+
+private:
+  ZiMultiplex	*m_mx = nullptr;
+  ParamString	m_rxThread;
+  ParamString	m_txThread;
+  ParamStrings	m_alpn;
+  ParamString	m_caPath;
+  ParamString	m_certPath;
+  ParamString	m_keyPath;
+  ParamString	m_asyncThread;
+  ErrorFn	m_errorFn;
 };
 
-struct ClientParams : public EngineParams {
-  using EngineParams::EngineParams;
-
-  ClientParams &&caPath(ZuCSpan v)
-    { EngineParams::caPath(v); return ZuMv(*this); }
-  ClientParams &&certPath(ZuCSpan v)
-    { EngineParams::certPath(v); return ZuMv(*this); }
-  ClientParams &&keyPath(ZuCSpan v)
-    { EngineParams::keyPath(v); return ZuMv(*this); }
-  ClientParams &&asyncThread(ZuCSpan v)
-    { EngineParams::asyncThread(v); return ZuMv(*this); }
-  ClientParams &&alpn(ZuSpan<ZuCSpan> v)
-    { EngineParams::alpn(v); return ZuMv(*this); }
-  ClientParams &&errorFn(ErrorFn v)
-    { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
-};
+using ClientParams = EngineParams;
 
 struct ServerParams : public EngineParams {
   using EngineParams::EngineParams;
+  using EngineParams::caPath;
+  using EngineParams::certPath;
+  using EngineParams::keyPath;
+  using EngineParams::asyncThread;
+  using EngineParams::alpn;
+  using EngineParams::errorFn;
 
   ServerParams &&caPath(ZuCSpan v)
     { EngineParams::caPath(v); return ZuMv(*this); }
@@ -140,11 +143,15 @@ struct ServerParams : public EngineParams {
     { EngineParams::alpn(v); return ZuMv(*this); }
   ServerParams &&errorFn(ErrorFn v)
     { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
-  ServerParams &&mTLS(bool v) { mTLS_ = v; return ZuMv(*this); }
-  ServerParams &&cacheTimeout(int v) { cacheTimeout_ = v; return ZuMv(*this); }
+  ServerParams &&mTLS(bool v) { m_mTLS = v; return ZuMv(*this); }
+  ServerParams &&cacheTimeout(int v) { m_cacheTimeout = v; return ZuMv(*this); }
 
-  bool mTLS_ = false;
-  int cacheTimeout_ = -1;
+  bool mTLS() const { return m_mTLS; }
+  int cacheTimeout() const { return m_cacheTimeout; }
+
+private:
+  bool	m_mTLS = false;
+  int	m_cacheTimeout = -1;
 };
 
 struct TlsInfo {
@@ -1247,14 +1254,14 @@ template <typename, typename, typename, typename> friend class SrvLink;
 protected:
   template <typename Params, typename L>
   bool init_(Params params, L l) {
-    m_errorFn = ZuMv(params.errorFn_);
+    m_errorFn = ZuMv(params.errorFn());
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
-    m_mx = params.mx;
-    m_rxThread = thread_(params.rxThread, m_mx->rxThread());
-    m_txThread = thread_(params.txThread, m_mx->txThread());
-    m_asyncThread = params.asyncThread_ ?
-      m_mx->sid(params.asyncThread_) : 0;
+    m_mx = params.mx();
+    m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
+    m_txThread = thread_(params.txThread(), m_mx->txThread());
+    m_asyncThread = params.asyncThread() ?
+      m_mx->sid(params.asyncThread()) : 0;
 
     return ZmBlock<bool>{}([
       this, params = ZuMv(params), l = ZuMv(l)
@@ -1274,22 +1281,22 @@ private:
 
   template <typename Params>
   bool validate_(const Params &params) {
-    if (ZuUnlikely(!params.mx)) {
+    if (ZuUnlikely(!params.mx())) {
       error_(ZeEXCEPT(Error, "Ztls", "multiplexer is null"));
       return false;
     }
-    unsigned rxThread = params.rxThread ?
-      params.mx->sid(params.rxThread) : params.mx->rxThread();
-    unsigned txThread = params.txThread ?
-      params.mx->sid(params.txThread) : params.mx->txThread();
-    if (!rxThread || rxThread > params.mx->params().nThreads()) {
-      error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.rxThread}](auto &s) {
+    unsigned rxThread = params.rxThread() ?
+      params.mx()->sid(params.rxThread()) : params.mx()->rxThread();
+    unsigned txThread = params.txThread() ?
+      params.mx()->sid(params.txThread()) : params.mx()->txThread();
+    if (!rxThread || rxThread > params.mx()->params().nThreads()) {
+      error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.rxThread()}](auto &s) {
 	s << "invalid TLS Rx thread ID \"" << thread << '"';
       })));
       return false;
     }
-    if (!txThread || txThread > params.mx->params().nThreads()) {
-      error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.txThread}](auto &s) {
+    if (!txThread || txThread > params.mx()->params().nThreads()) {
+      error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.txThread()}](auto &s) {
 	s << "invalid TLS Tx thread ID \"" << thread << '"';
       })));
       return false;
@@ -1299,11 +1306,11 @@ private:
 	"TLS Rx and Tx threads must differ"));
       return false;
     }
-    if (!params.mx->running()) {
+    if (!params.mx()->running()) {
       error_(ZeEXCEPT(Error, "Ztls", "multiplexer not running"));
       return false;
     }
-    if (params.asyncThread_) {
+    if (params.asyncThread()) {
 #ifdef _WIN32
       error_(ZeEXCEPT(Error, "Ztls", ([](auto &s) {
 	s << "asyncThread is unsupported on Windows because zpicotls exposes "
@@ -1311,9 +1318,9 @@ private:
       })));
       return false;
 #else
-      unsigned asyncThread = params.mx->sid(params.asyncThread_);
-      if (!asyncThread || asyncThread > params.mx->params().nThreads()) {
-	error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.asyncThread_}](auto &s) {
+      unsigned asyncThread = params.mx()->sid(params.asyncThread());
+      if (!asyncThread || asyncThread > params.mx()->params().nThreads()) {
+	error_(ZeEXCEPT(Error, "Ztls", ([thread = LogMsg{params.asyncThread()}](auto &s) {
 	  s << "invalid async thread ID \"" << thread << '"';
 	})));
 	return false;
@@ -1323,13 +1330,13 @@ private:
 	  "async thread must differ from TLS Rx and Tx threads"));
 	return false;
       }
-      if (asyncThread == params.mx->rxThread() ||
-	  asyncThread == params.mx->txThread()) {
+      if (asyncThread == params.mx()->rxThread() ||
+	  asyncThread == params.mx()->txThread()) {
 	error_(ZeEXCEPT(Error, "Ztls",
 	  "async thread must differ from I/O threads"));
 	return false;
       }
-      if (!params.mx->params().thread(asyncThread).isolated()) {
+      if (!params.mx()->params().thread(asyncThread).isolated()) {
 	error_(ZeEXCEPT(Error, "Ztls", "async thread must be isolated"));
 	return false;
       }
@@ -1351,7 +1358,7 @@ private:
     init_cipher_suites_();
     m_ctx.cipher_suites = m_cipherSuites;
     m_ctx.server_cipher_preference = 1;
-    if (!init_alpn_(params.alpn_)) return false;
+    if (!init_alpn_(params.alpn())) return false;
     if (asyncConfigured_())
       if (!startAsyncLoop_()) return false;
     if (!l(params)) {
@@ -1728,8 +1735,8 @@ bool Client<App>::init(ClientParams params)
 {
   using Link = typename App::Link;
 
-  if (bool(params.certPath_) != bool(params.keyPath_)) {
-    auto errorFn = params.errorFn_ ? params.errorFn_ : defaultErrorFn();
+  if (bool(params.certPath()) != bool(params.keyPath())) {
+    auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
     errorFn(ZeEXCEPT(Error, "Ztls",
       "client certPath and keyPath must be configured together"));
     return false;
@@ -1749,12 +1756,12 @@ bool Client<App>::init(ClientParams params)
     ctx->sign_certificate = nullptr;
     ctx->encrypt_ticket = nullptr;
     ctx->require_client_authentication = 0;
-    if (!loadCA(ZuCSpan{params.caPath_})) return false;
+    if (!loadCA(ZuCSpan{params.caPath()})) return false;
 
-    if (params.certPath_ && params.keyPath_) {
-      if (!Backend::load_certificates(ctx, params.certPath_.data()))
+    if (params.certPath() && params.keyPath()) {
+      if (!Backend::load_certificates(ctx, params.certPath().data()))
 	return false;
-      m_key = Backend::pkey_load_pem(params.keyPath_.data());
+      m_key = Backend::pkey_load_pem(params.keyPath().data());
       if (!m_key) return false;
       m_sign = Backend::sign_cert_new(m_key);
       if (!m_sign) {
@@ -1883,13 +1890,13 @@ bool Server<App>::init(ServerParams params)
 {
   using Link = typename App::Link;
 
-  if (!params.certPath_) {
-    auto errorFn = params.errorFn_ ? params.errorFn_ : defaultErrorFn();
+  if (!params.certPath()) {
+    auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
     errorFn(ZeEXCEPT(Error, "Ztls", "server certPath is required"));
     return false;
   }
-  if (!params.keyPath_) {
-    auto errorFn = params.errorFn_ ? params.errorFn_ : defaultErrorFn();
+  if (!params.keyPath()) {
+    auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
     errorFn(ZeEXCEPT(Error, "Ztls", "server keyPath is required"));
     return false;
   }
@@ -1906,15 +1913,15 @@ bool Server<App>::init(ServerParams params)
     ctx->sign_certificate = nullptr;
     ctx->encrypt_ticket = nullptr;
     ctx->save_ticket = nullptr;
-    ctx->require_client_authentication = params.mTLS_ ? 1 : 0;
+    ctx->require_client_authentication = params.mTLS() ? 1 : 0;
     ctx->max_early_data_size = 0;
     ctx->ticket_lifetime =
-      params.cacheTimeout_ < 0 ? 86400 : params.cacheTimeout_;
-    if (!loadCA(ZuCSpan{params.caPath_})) return false;
+      params.cacheTimeout() < 0 ? 86400 : params.cacheTimeout();
+    if (!loadCA(ZuCSpan{params.caPath()})) return false;
 
-    if (!Backend::load_certificates(ctx, params.certPath_.data()))
+    if (!Backend::load_certificates(ctx, params.certPath().data()))
       return false;
-    m_key = Backend::pkey_load_pem(params.keyPath_.data());
+    m_key = Backend::pkey_load_pem(params.keyPath().data());
     if (!m_key) return false;
     m_sign = Backend::sign_cert_new(m_key);
     if (!m_sign) {
@@ -1922,7 +1929,7 @@ bool Server<App>::init(ServerParams params)
       m_key = nullptr;
       return false;
     }
-    if (params.asyncThread_ && !Backend::sign_cert_async(m_sign, true)) {
+    if (params.asyncThread() && !Backend::sign_cert_async(m_sign, true)) {
       error_(ZeEXCEPT(Error, "Ztls",
 	"async server certificate signing is unsupported"));
       return false;

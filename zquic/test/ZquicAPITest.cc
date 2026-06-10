@@ -244,9 +244,7 @@ void testCliLinkUDPConnect()
   ZuCHECK(waitUntil([&link]() { return link->udpReady(); }),
     "CliLink UDP socket did not become ready");
   ZuCHECK(link->udpReadyCount() == 1 &&
-      link->cxnDiag().endpointCxnAllocs == 1 &&
-      link->cxnDiag().packetRxBufAllocs == 1 &&
-      !link->cxnDiag().openFailures &&
+      !link->cxnDiag().failures &&
       !link->failures,
     "CliLink UDP diagnostics mismatch");
 
@@ -254,9 +252,7 @@ void testCliLinkUDPConnect()
   ZuCHECK(waitUntil([&link]() {
       return link->udpReady() && link->udpReadyCount() == 2;
     }), "CliLink UDP reconnect did not become ready");
-  ZuCHECK(link->cxnDiag().endpointCxnAllocs == 2 &&
-      link->cxnDiag().packetRxBufAllocs == 2 &&
-      !link->cxnDiag().openFailures &&
+  ZuCHECK(!link->cxnDiag().failures &&
       !link->failures,
     "CliLink UDP reconnect diagnostics mismatch");
 

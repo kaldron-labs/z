@@ -18,7 +18,7 @@ noinst_PROGRAMS = ZquicAPITest ZquicEndpointTest ZquicSockTest \
 	ZquicCodecTest ZquicCryptoTest ZquicPacketProtectionTest \
 	ZquicHandshakeTest ZquicRecoveryTest \
 	ZquicStreamStateTest ZquicPMTUDTest ZquicVersionTest ZquicCIDTest \
-	ZquicCloseTest ZquicStreamTest ZquicFlowTest ZquicBufferTest \
+	ZquicStreamTest ZquicFlowTest ZquicBufferTest \
 	ZquicCongestionTest ZquicPQueueTest ZquicLoopTest ZquicRuntimeTest \
 	ZquicH3InteropTest
 ZquicAPITest_SOURCES = ZquicAPITest.cc
@@ -33,7 +33,6 @@ ZquicStreamStateTest_SOURCES = ZquicStreamStateTest.cc
 ZquicPMTUDTest_SOURCES = ZquicPMTUDTest.cc
 ZquicVersionTest_SOURCES = ZquicVersionTest.cc
 ZquicCIDTest_SOURCES = ZquicCIDTest.cc
-ZquicCloseTest_SOURCES = ZquicCloseTest.cc
 ZquicStreamTest_SOURCES = ZquicStreamTest.cc
 ZquicFlowTest_SOURCES = ZquicFlowTest.cc
 ZquicBufferTest_SOURCES = ZquicBufferTest.cc

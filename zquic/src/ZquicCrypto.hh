@@ -52,7 +52,7 @@ struct InitialKeyMaterial {
 };
 
 struct InitialCrypto {
-  static bool derive(InitialKeyMaterial &, const ConnectionID &);
+  static bool derive(InitialKeyMaterial &, const CxnID &);
   static int encrypt(
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuCSpan, ZuCSpan);
   static int encryptV(
@@ -163,11 +163,8 @@ struct CryptoDiag {
   uint64_t	initialKeysDerived = 0;
   uint64_t	tlsMessagesHandled = 0;
   uint64_t	tlsMessagesEmitted = 0;
-  uint64_t	cryptoFramesTx = 0;
-  uint64_t	cryptoFramesRx = 0;
   uint64_t	cryptoBytesTx = 0;
   uint64_t	cryptoBytesRx = 0;
-  uint64_t	packetProtectionContextInits = 0;
 };
 
 using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
@@ -221,6 +218,9 @@ struct CryptoConfig {
   const TransportParams *localTransportParams = nullptr;
 };
 
+ZuDerive(TLSTransportParams,
+  (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Crypto.TLSTransportParams">>));
+
 class Crypto {
 public:
   static constexpr unsigned TLSOutputMax = 64 * 1024;
@@ -236,9 +236,7 @@ public:
   bool earlyDataEnabled() const { return m_earlyDataEnabled; }
   bool oneRTTReady() const { return m_oneRTTReady; }
   bool tlsReady() const { return m_tls; }
-  ZuCSpan alpn() const {
-    return ZuCSpan{reinterpret_cast<const char *>(m_alpn), m_alpnLength};
-  }
+  ZuCSpan alpn() const { return m_alpn; }
   ZuCSpan negotiatedProtocol() const;
   bool secretInstalled(CryptoLevel::T level) const {
     return m_secretInstalled[level];
@@ -278,7 +276,7 @@ public:
   int decodeTransportParams(ZuCSpan, TransportParams &);
   void installSecret(CryptoLevel::T, ZuCSpan);
   bool discardSecret(CryptoLevel::T);
-  bool deriveInitial(const ConnectionID &);
+  bool deriveInitial(const CxnID &);
   const InitialKeyMaterial &initialKeys() const { return m_initialKeys; }
   bool rejectZeroRTT();
   bool completeHandshake();
@@ -310,10 +308,8 @@ private:
   TrafficSecret m_rxTrafficSecrets[3];
   PacketProtectionState m_txProtection[3];
   PacketProtectionState m_rxProtection[3];
-  uint8_t	m_alpn[255] = {};
-  uint8_t	m_alpnLength = 0;
-  uint8_t	m_serverName[255] = {};
-  uint8_t	m_serverNameLength = 0;
+  ParamString	m_alpn;
+  Host		m_serverName;
   InitialKeyMaterial m_initialKeys;
   CryptoDiag	m_diag;
   TransportParams m_localTransportParams;
@@ -324,8 +320,7 @@ private:
   ptls_t	*m_tls = nullptr;
   ptls_handshake_properties_t m_tlsProps{};
   ptls_raw_extension_t m_tlsExtensions[2]{};
-  uint8_t	m_tlsTransportParams[512]{};
-  unsigned	m_tlsTransportParamsLen = 0;
+  TLSTransportParams m_tlsTransportParams;
   ptls_iovec_t	m_alpnVec{};
   size_t	m_maxEarlyData = 0;
   int		m_tlsResult = PTLS_ERROR_IN_PROGRESS;

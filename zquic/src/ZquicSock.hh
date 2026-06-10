@@ -15,9 +15,27 @@
 
 #include <zlib/ZiMultiplex.hh>
 
+#include <zlib/ZquicBuf.hh>
 #include <zlib/ZquicPath.hh>
 
 namespace Zquic {
+
+struct Datagram {
+  ZmRef<ZiIOBuf>	buf;
+  ZiSockAddr		addr;
+
+  Datagram() = default;
+  Datagram(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_) :
+    buf{ZuMv(buf_)}, addr{ZuMv(addr_)} { }
+};
+
+struct EndpointDiag {
+  uint64_t	datagramsRx = 0;
+  uint64_t	datagramsTx = 0;
+  uint64_t	bytesRx = 0;
+  uint64_t	bytesTx = 0;
+  uint64_t	failures = 0;
+};
 
 struct SockConfig {
   IPFamily::T	family = IPFamily::IPv4;

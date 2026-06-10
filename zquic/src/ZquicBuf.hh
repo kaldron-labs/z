@@ -76,14 +76,7 @@ template <
   ZuString HeapID = "Zquic.Crypto.TxBuf">
 using CryptoTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 
-struct BufDiag {
-  uint64_t	packetRxBufAllocs = 0;
-  uint64_t	packetTxBufAllocs = 0;
-  uint64_t	streamRxSliceAllocs = 0;
-  uint64_t	streamTxBufAllocs = 0;
-  uint64_t	queueNodeAllocs = 0;
-  uint64_t	packetProtectionContextInits = 0;
-};
+struct BufDiag { };
 
 struct TxRange {
   ZmRef<ZiIOBuf>	buf;

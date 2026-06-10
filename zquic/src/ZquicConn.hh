@@ -28,8 +28,8 @@ struct VersionNegotiation {
   }
 
   static int write(
-    uint8_t *out, unsigned len, const ConnectionID &dcid,
-    const ConnectionID &scid) {
+    uint8_t *out, unsigned len, const CxnID &dcid,
+    const CxnID &scid) {
     uint32_t versions[] = { Version1 };
     return Packet::writeVersionNegotiation(out, len, dcid, scid, versions, 1);
   }
@@ -43,7 +43,7 @@ struct VersionNegotiation {
 struct ServerPacketDecision {
   ServerPacketAction::T	action = ServerPacketAction::Drop;
   LongHeader		header;
-  int			responseLength = 0;
+  unsigned		responseLength = 0;
 };
 
 struct ServerPacket {
@@ -89,57 +89,57 @@ struct StatelessReset {
     const StatelessResetToken &);
 };
 
-struct CIDSlot {
-  ConnectionID	cid;
-  uint64_t	sequence = 0;
-  uintptr_t	routeToken = 0;
-  StatelessResetToken resetToken;
-  CIDState::T	state = CIDState::Active;
+struct CxnIDSlot {
+  CxnID			cid;
+  uint64_t		sequence = 0;
+  uintptr_t		routeToken = 0;
+  StatelessResetToken	resetToken;
+  CxnIDState::T		state = CxnIDState::Active;
 };
 
-class CIDRouter {
+class CxnIDRouter {
 public:
   static constexpr unsigned Max = 16;
 
-  bool add(const ConnectionID &cid, uint64_t sequence, uintptr_t token) {
+  bool add(const CxnID &cid, uint64_t sequence, uintptr_t token) {
     return add(cid, sequence, token, {});
   }
   bool add(
-    const ConnectionID &cid, uint64_t sequence, uintptr_t token,
+    const CxnID &cid, uint64_t sequence, uintptr_t token,
     const StatelessResetToken &resetToken) {
     if (!cid.length()) return false;
     for (unsigned i = 0; i < m_count; ++i) {
       if (!(m_slots[i].cid == cid)) continue;
-      if (m_slots[i].state == CIDState::Tombstone) return false;
+      if (m_slots[i].state == CxnIDState::Tombstone) return false;
       m_slots[i].sequence = sequence;
       m_slots[i].routeToken = token;
       m_slots[i].resetToken = resetToken;
-      m_slots[i].state = CIDState::Active;
+      m_slots[i].state = CxnIDState::Active;
       return true;
     }
-	  if (m_count >= Max) return false;
-	  m_slots[m_count++] =
-	    CIDSlot{cid, sequence, token, resetToken, CIDState::Active};
-	  return true;
-	}
-	bool add(const CIDRouter &router) {
-	  bool ok = true;
-	  router.all([this, &ok](const CIDSlot &slot) {
-	    if (!add(slot.cid, slot.sequence, slot.routeToken, slot.resetToken))
-	      ok = false;
-	  });
-	  return ok;
-	}
+    if (m_count >= Max) return false;
+    m_slots[m_count++] =
+      CxnIDSlot{cid, sequence, token, resetToken, CxnIDState::Active};
+    return true;
+  }
+  bool add(const CxnIDRouter &router) {
+    bool ok = true;
+    router.all([this, &ok](const CxnIDSlot &slot) {
+      if (!add(slot.cid, slot.sequence, slot.routeToken, slot.resetToken))
+	ok = false;
+    });
+    return ok;
+  }
 
-	uintptr_t find(const ConnectionID &cid) const {
-	  for (unsigned i = 0; i < m_count; ++i)
-	    if (m_slots[i].state == CIDState::Active && m_slots[i].cid == cid)
-		return m_slots[i].routeToken;
+  uintptr_t find(const CxnID &cid) const {
+    for (unsigned i = 0; i < m_count; ++i)
+      if (m_slots[i].state == CxnIDState::Active && m_slots[i].cid == cid)
+	  return m_slots[i].routeToken;
     return 0;
   }
-  bool resetToken(const ConnectionID &cid, StatelessResetToken &token) const {
+  bool resetToken(const CxnID &cid, StatelessResetToken &token) const {
     for (unsigned i = 0; i < m_count; ++i) {
-      if (m_slots[i].state != CIDState::Active || !(m_slots[i].cid == cid))
+      if (m_slots[i].state != CxnIDState::Active || !(m_slots[i].cid == cid))
 	continue;
       if (!m_slots[i].resetToken.valid()) return false;
       token = m_slots[i].resetToken;
@@ -148,60 +148,60 @@ public:
     return false;
   }
 
-  bool retire(const ConnectionID &cid) {
+  bool retire(const CxnID &cid) {
     for (unsigned i = 0; i < m_count; ++i) {
-      if (!(m_slots[i].cid == cid) || m_slots[i].state != CIDState::Active)
+      if (!(m_slots[i].cid == cid) || m_slots[i].state != CxnIDState::Active)
 	continue;
-      m_slots[i].state = CIDState::Retired;
+      m_slots[i].state = CxnIDState::Retired;
       m_slots[i].routeToken = 0;
       return true;
     }
     return false;
   }
 
-  bool tombstone(const ConnectionID &cid) {
+  bool tombstone(const CxnID &cid) {
     for (unsigned i = 0; i < m_count; ++i) {
       if (!(m_slots[i].cid == cid)) continue;
-      m_slots[i].state = CIDState::Tombstone;
+      m_slots[i].state = CxnIDState::Tombstone;
       m_slots[i].routeToken = 0;
       m_slots[i].resetToken = {};
       return true;
     }
     if (m_count >= Max || !cid.length()) return false;
-    m_slots[m_count++] = CIDSlot{cid, 0, 0, {}, CIDState::Tombstone};
+    m_slots[m_count++] = CxnIDSlot{cid, 0, 0, {}, CxnIDState::Tombstone};
     return true;
   }
 
-  CIDState::T state(const ConnectionID &cid) const {
+  CxnIDState::T state(const CxnID &cid) const {
     for (unsigned i = 0; i < m_count; ++i)
       if (m_slots[i].cid == cid) return m_slots[i].state;
-    return CIDState::Tombstone;
+    return CxnIDState::Tombstone;
   }
 
   unsigned count() const { return m_count; }
-	unsigned active() const {
-	  unsigned n = 0;
-	  for (unsigned i = 0; i < m_count; ++i)
-	    if (m_slots[i].state == CIDState::Active) ++n;
-	  return n;
-	}
-	template <typename Fn>
-	void all(Fn fn) const {
-	  for (unsigned i = 0; i < m_count; ++i)
-	    if (m_slots[i].state == CIDState::Active) fn(m_slots[i]);
-	}
+  unsigned active() const {
+    unsigned n = 0;
+    for (unsigned i = 0; i < m_count; ++i)
+      if (m_slots[i].state == CxnIDState::Active) ++n;
+    return n;
+  }
+  template <typename Fn>
+  void all(Fn fn) const {
+    for (unsigned i = 0; i < m_count; ++i)
+      if (m_slots[i].state == CxnIDState::Active) fn(m_slots[i]);
+  }
 
 private:
-	CIDSlot	m_slots[Max];
-	unsigned	m_count = 0;
+  CxnIDSlot	m_slots[Max];
+  unsigned	m_count = 0;
 };
 
-struct CIDGenerator {
+struct CxnIDGen {
   static constexpr unsigned InitialLength = MinCIDLength;
 
-  static bool random(ConnectionID &, unsigned length = InitialLength);
+  static bool random(CxnID &, unsigned length = InitialLength);
   static bool randomPair(
-    ConnectionID &initialDCID, ConnectionID &initialSCID,
+    CxnID &initialDCID, CxnID &initialSCID,
     unsigned dcidLength = InitialLength, unsigned scidLength = InitialLength);
 };
 
@@ -210,11 +210,11 @@ public:
   bool started() const { return m_started; }
   bool retried() const { return m_retried; }
   uint64_t retryTokenLength() const { return m_retryTokenLength; }
-  const ConnectionID &initialDCID() const { return m_initialDCID; }
-  const ConnectionID &initialSCID() const { return m_initialSCID; }
-  const ConnectionID &retrySCID() const { return m_retrySCID; }
+  const CxnID &initialDCID() const { return m_initialDCID; }
+  const CxnID &initialSCID() const { return m_initialSCID; }
+  const CxnID &retrySCID() const { return m_retrySCID; }
 
-  bool start(const ConnectionID &initialDCID, const ConnectionID &initialSCID) {
+  bool start(const CxnID &initialDCID, const CxnID &initialSCID) {
     if (initialDCID.length() < MinCIDLength ||
 	initialSCID.length() < MinCIDLength)
       return false;
@@ -227,8 +227,8 @@ public:
     return true;
   }
   bool startRandom(
-    unsigned dcidLength = CIDGenerator::InitialLength,
-    unsigned scidLength = CIDGenerator::InitialLength);
+    unsigned dcidLength = CxnIDGen::InitialLength,
+    unsigned scidLength = CxnIDGen::InitialLength);
 
   bool onRetry(ZuCSpan packet) {
     RetryPacket retry;
@@ -254,7 +254,7 @@ public:
 
   bool validateServerTransportParams(
     const TransportParams &params,
-    const ConnectionID &serverInitialSCID) const {
+    const CxnID &serverInitialSCID) const {
     if (!m_started ||
 	!(params.originalDCID == m_initialDCID) ||
 	!(params.initialSCID == serverInitialSCID))
@@ -265,9 +265,9 @@ public:
   }
 
 private:
-  ConnectionID	m_initialDCID;
-  ConnectionID	m_initialSCID;
-  ConnectionID	m_retrySCID;
+  CxnID		m_initialDCID;
+  CxnID		m_initialSCID;
+  CxnID		m_retrySCID;
   uint64_t	m_retryTokenLength = 0;
   bool		m_started = false;
   bool		m_retried = false;
@@ -276,106 +276,27 @@ private:
 class ServerBootstrap {
 public:
   bool accepted() const { return m_accepted; }
-  const ConnectionID &originalDCID() const { return m_originalDCID; }
-  const ConnectionID &clientInitialSCID() const { return m_clientInitialSCID; }
-  const ConnectionID &localInitialSCID() const { return m_localInitialSCID; }
+  const CxnID &originalDCID() const { return m_originalDCID; }
+  const CxnID &clientInitialSCID() const { return m_clientInitialSCID; }
+  const CxnID &localInitialSCID() const { return m_localInitialSCID; }
   const StatelessResetToken &statelessResetToken() const {
     return m_statelessResetToken;
   }
-  const CIDRouter &localCIDs() const { return m_localCIDs; }
-  const CIDRouter &initialDCIDs() const { return m_initialDCIDs; }
+  const CxnIDRouter &localCIDs() const { return m_localCIDs; }
+  const CxnIDRouter &initialDCIDs() const { return m_initialDCIDs; }
 
   bool acceptInitial(
     const LongHeader &, unsigned datagramLength, uintptr_t routeToken);
   bool transportParams(TransportParams &) const;
 
 private:
-  ConnectionID		m_originalDCID;
-  ConnectionID		m_clientInitialSCID;
-  ConnectionID		m_localInitialSCID;
+  CxnID			m_originalDCID;
+  CxnID			m_clientInitialSCID;
+  CxnID			m_localInitialSCID;
   StatelessResetToken	m_statelessResetToken;
-  CIDRouter		m_localCIDs;
-  CIDRouter		m_initialDCIDs;
+  CxnIDRouter		m_localCIDs;
+  CxnIDRouter		m_initialDCIDs;
   bool			m_accepted = false;
-};
-
-class ConnState {
-public:
-  LinkState::T state() const { return m_state; }
-  CloseState::T closeState() const { return m_closeState; }
-  uint64_t closeError() const { return m_closeError; }
-  unsigned drainPTOs() const { return m_drainPTOs; }
-  bool closed() const { return m_state == LinkState::Closed; }
-
-  bool startHandshake() {
-    if (m_state != LinkState::Starting) return false;
-    m_state = LinkState::Handshaking;
-    return true;
-  }
-  bool establish() {
-    if (m_state != LinkState::Handshaking) return false;
-    m_state = LinkState::Established;
-    return true;
-  }
-  bool close(uint64_t error = 0) {
-    if (m_state == LinkState::Closed) return false;
-    m_closeError = error;
-    m_closeState = CloseState::Closing;
-    m_state = LinkState::Closing;
-    m_drainPTOs = 0;
-    return true;
-  }
-  bool peerClose(uint64_t error = 0) {
-    if (m_state == LinkState::Closed) return false;
-    m_closeError = error;
-    m_closeState = CloseState::Draining;
-    m_state = LinkState::Draining;
-    m_drainPTOs = 0;
-    return true;
-  }
-  bool drain() {
-    if (m_state != LinkState::Closing) return false;
-    m_closeState = CloseState::Draining;
-    m_state = LinkState::Draining;
-    m_drainPTOs = 0;
-    return true;
-  }
-  bool onPTO() {
-    if (m_state != LinkState::Draining) return false;
-    if (++m_drainPTOs >= 3) {
-      m_state = LinkState::Closed;
-      m_closeState = CloseState::Closed;
-    }
-    return true;
-  }
-  void abort(uint64_t error) {
-    m_closeError = error;
-    m_state = LinkState::Closed;
-    m_closeState = CloseState::Closed;
-    m_drainPTOs = 3;
-  }
-  bool idleTimeout(uint64_t error = 0) {
-    if (m_state == LinkState::Closed) return false;
-    m_closeError = error;
-    m_state = LinkState::Closed;
-    m_closeState = CloseState::Closed;
-    m_drainPTOs = 3;
-    return true;
-  }
-  bool drop(uint64_t error = 0) {
-    if (m_state == LinkState::Closed) return false;
-    m_closeError = error;
-    m_state = LinkState::Closed;
-    m_closeState = CloseState::Closed;
-    m_drainPTOs = 3;
-    return true;
-  }
-
-private:
-  LinkState::T	m_state = LinkState::Starting;
-  CloseState::T m_closeState = CloseState::Open;
-  uint64_t	m_closeError = 0;
-  unsigned	m_drainPTOs = 0;
 };
 
 } // namespace Zquic

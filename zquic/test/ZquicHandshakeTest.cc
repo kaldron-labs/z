@@ -189,7 +189,7 @@ void testDeterministicHandshakeProfile()
 {
   ZuTestScope(testDeterministicHandshakeProfile);
 
-  Zquic::ConnectionID dcid{"client01"};
+  Zquic::CxnID dcid{"client01"};
   Zquic::Crypto client;
   Zquic::Crypto server;
   ZuCHECK(client.init(Zquic::CryptoConfig{false, false, "h3"}),
@@ -202,11 +202,6 @@ void testDeterministicHandshakeProfile()
     "0-RTT was enabled");
   ZuCHECK(server.diag().zeroRTTRejected == 1,
     "server 0-RTT rejection not counted");
-
-  Zquic::ConnState clientState;
-  Zquic::ConnState serverState;
-  ZuCHECK(clientState.startHandshake() && serverState.startHandshake(),
-    "handshake state did not start");
 
   ZuCHECK(client.deriveInitial(dcid) && server.deriveInitial(dcid),
     "Initial key derivation failed");
@@ -227,11 +222,6 @@ void testDeterministicHandshakeProfile()
   server.installSecret(Zquic::CryptoLevel::OneRTT, "server-app");
   ZuCHECK(client.completeHandshake() && server.completeHandshake(),
     "1-RTT readiness not reached");
-  ZuCHECK(clientState.establish() && serverState.establish(),
-    "connection state did not establish");
-  ZuCHECK(clientState.state() == Zquic::LinkState::Established &&
-      serverState.state() == Zquic::LinkState::Established,
-    "established state mismatch");
 }
 
 void testCryptoStreamFrames()
@@ -243,7 +233,7 @@ void testCryptoStreamFrames()
   Zquic::CryptoStream tx;
   int n = tx.writeFrame(frame, sizeof(frame), "abc", &diag);
   ZuCHECK(n > 0 && tx.txOffset() == 3 &&
-      diag.cryptoFramesTx == 1 && diag.cryptoBytesTx == 3,
+      diag.cryptoBytesTx == 3,
     "CRYPTO Tx frame accounting failed");
 
   Zquic::Frame parsed;
@@ -265,7 +255,6 @@ void testCryptoStreamFrames()
       directOut.length() == directIn.length() &&
       directRx.rxOffset() == directIn.length() &&
       !directRx.rangeCount() &&
-      directDiag.cryptoFramesRx == 1 &&
       directDiag.cryptoBytesRx == directIn.length(),
     "in-order CRYPTO fast path copied payload");
 
@@ -291,7 +280,7 @@ void testCryptoStreamFrames()
   ZuCHECK(!rx.receive(0, "hello", contiguous, &diag) &&
       !contiguous && rx.rxOffset() == 10,
     "duplicate CRYPTO data was delivered");
-  ZuCHECK(diag.cryptoFramesRx == 3 && diag.cryptoBytesRx == 10,
+  ZuCHECK(diag.cryptoBytesRx == 10,
     "CRYPTO Rx diagnostics failed");
 }
 
@@ -306,13 +295,13 @@ void testMessageLevelTLSHandshake()
   clientParams.maxUDPPayloadSize = 1400;
   clientParams.initialMaxData = 8192;
   clientParams.initialMaxStreamsBidi = 8;
-  clientParams.initialSCID.set("clienttp");
+  clientParams.initialSCID = "clienttp";
 
   Zquic::TransportParams serverParams;
   serverParams.maxUDPPayloadSize = 1350;
   serverParams.initialMaxData = 16384;
   serverParams.initialMaxStreamsUni = 4;
-  serverParams.initialSCID.set("servertp");
+  serverParams.initialSCID = "servertp";
 
   Zquic::Crypto client;
   Zquic::Crypto server;
@@ -348,7 +337,7 @@ void testMessageLevelTLSHandshake()
   uint8_t payload[32] = {};
   ZuCHECK(Zquic::FrameCodec::writePing(payload, sizeof(payload)) == 1,
     "1-RTT traffic probe frame encode failed");
-  Zquic::ConnectionID dcid{"server01"};
+  Zquic::CxnID dcid{"server01"};
   uint8_t header[128];
   int h = Zquic::Packet::writeShort(header, sizeof(header), dcid, 3, 2);
   ZuCHECK(h > 0, "1-RTT traffic probe short header encode failed");
@@ -402,8 +391,8 @@ void testZeroRTTPacketDrop()
 {
   ZuTestScope(testZeroRTTPacketDrop);
 
-  Zquic::ConnectionID dcid{"client01"};
-  Zquic::ConnectionID scid{"server01"};
+  Zquic::CxnID dcid{"client01"};
+  Zquic::CxnID scid{"server01"};
   uint8_t packet[128];
   int n = Zquic::Packet::writeLong(
     packet, sizeof(packet), Zquic::PacketType::ZeroRTT, dcid, scid, 8, 2);

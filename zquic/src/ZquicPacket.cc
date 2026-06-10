@@ -66,25 +66,6 @@ int VarInt::decode(ZuCSpan in, uint64_t &v, unsigned &n)
   return 0;
 }
 
-bool ConnectionID::set(ZuCSpan s)
-{
-  if (s.length() > Max) return false;
-  m_length = s.length();
-  if (m_length) memcpy(m_data, s.data(), m_length);
-  return true;
-}
-
-bool ConnectionID::equals(const ConnectionID &cid) const
-{
-  return m_length == cid.m_length && !memcmp(m_data, cid.m_data, m_length);
-}
-
-int ConnectionID::cmp(const ConnectionID &cid) const
-{
-  if (int i = int(m_length) - int(cid.m_length)) return i;
-  return memcmp(m_data, cid.m_data, m_length);
-}
-
 unsigned PacketNumber::encodedLength(uint64_t pn, uint64_t largestAcked)
 {
   uint64_t n = pn - largestAcked;
@@ -156,12 +137,12 @@ int Packet::parseLong(ZuCSpan p, LongHeader &h)
   }
   unsigned o = 5;
   unsigned dlen = uint8_t(p[o++]);
-  if (dlen > ConnectionID::Max || p.length() < o + dlen + 1) return -1;
-  h.dcid.set(ZuCSpan{p.data() + o, dlen});
+  if (dlen > CxnIDMax || p.length() < o + dlen + 1) return -1;
+  h.dcid = ZuCSpan{p.data() + o, dlen};
   o += dlen;
   unsigned slen = uint8_t(p[o++]);
-  if (slen > ConnectionID::Max || p.length() < o + slen) return -1;
-  h.scid.set(ZuCSpan{p.data() + o, slen});
+  if (slen > CxnIDMax || p.length() < o + slen) return -1;
+  h.scid = ZuCSpan{p.data() + o, slen};
   o += slen;
   if (isVersionNegotiation(p) || h.type == PacketType::Retry) {
     h.payloadOffset = o;
@@ -200,7 +181,7 @@ int Packet::parseRetry(ZuCSpan p, RetryPacket &retry)
 
 int Packet::retryIntegrityTag(
   uint8_t *tag, unsigned len, ZuCSpan retryWithoutTag,
-  const ConnectionID &originalDCID)
+  const CxnID &originalDCID)
 {
   static constexpr uint8_t Key[16] = {
     0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a,
@@ -238,7 +219,7 @@ int Packet::retryIntegrityTag(
   return ok ? 16 : -1;
 }
 
-bool Packet::validateRetryIntegrity(ZuCSpan p, const ConnectionID &originalDCID)
+bool Packet::validateRetryIntegrity(ZuCSpan p, const CxnID &originalDCID)
 {
   RetryPacket retry;
   if (parseRetry(p, retry) < 0) return false;
@@ -253,9 +234,9 @@ bool Packet::validateRetryIntegrity(ZuCSpan p, const ConnectionID &originalDCID)
 
 int Packet::parseShort(ZuCSpan p, unsigned cidLen, ShortHeader &h)
 {
-  if (p.length() < 1 + cidLen + 1 || isLong(p) || cidLen > ConnectionID::Max)
+  if (p.length() < 1 + cidLen + 1 || isLong(p) || cidLen > CxnIDMax)
     return -1;
-  h.dcid.set(ZuCSpan{p.data() + 1, cidLen});
+  h.dcid = ZuCSpan{p.data() + 1, cidLen};
   h.pnLength = (uint8_t(p[0]) & 0x03) + 1;
   h.pnOffset = 1 + cidLen;
   return int(h.pnOffset + h.pnLength);
@@ -287,7 +268,7 @@ static int longTypeBits_(PacketType::T type)
 
 int Packet::writeLong(
   uint8_t *out, unsigned len, PacketType::T type,
-  const ConnectionID &dcid, const ConnectionID &scid,
+  const CxnID &dcid, const CxnID &scid,
   uint64_t payloadLength, unsigned pnLength)
 {
   if (pnLength < 1 || pnLength > 4) return -1;
@@ -313,7 +294,7 @@ int Packet::writeLong(
 }
 
 int Packet::writeInitial(
-  uint8_t *out, unsigned len, const ConnectionID &dcid, const ConnectionID &scid,
+  uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   uint64_t payloadLength, unsigned pnLength)
 {
   return writeLong(
@@ -321,7 +302,7 @@ int Packet::writeInitial(
 }
 
 int Packet::writeHandshake(
-  uint8_t *out, unsigned len, const ConnectionID &dcid, const ConnectionID &scid,
+  uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   uint64_t payloadLength, unsigned pnLength)
 {
   return writeLong(
@@ -329,7 +310,7 @@ int Packet::writeHandshake(
 }
 
 int Packet::writeRetry(
-  uint8_t *out, unsigned len, const ConnectionID &dcid, const ConnectionID &scid,
+  uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   ZuCSpan token, ZuCSpan retryIntegrityTag)
 {
   unsigned need =
@@ -355,8 +336,8 @@ int Packet::writeRetry(
 }
 
 int Packet::writeRetryAuthenticated(
-  uint8_t *out, unsigned len, const ConnectionID &dcid, const ConnectionID &scid,
-  ZuCSpan token, const ConnectionID &originalDCID)
+  uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
+  ZuCSpan token, const CxnID &originalDCID)
 {
   int n = writeRetry(out, len, dcid, scid, token);
   if (n < 0 || len < unsigned(n) + 16) return -1;
@@ -369,7 +350,7 @@ int Packet::writeRetryAuthenticated(
 }
 
 int Packet::writeShort(
-  uint8_t *out, unsigned len, const ConnectionID &dcid, uint64_t pn,
+  uint8_t *out, unsigned len, const CxnID &dcid, uint64_t pn,
   unsigned pnLength)
 {
   if (pnLength < 1 || pnLength > 4) return -1;
@@ -383,7 +364,7 @@ int Packet::writeShort(
 }
 
 int Packet::writeVersionNegotiation(
-  uint8_t *out, unsigned len, const ConnectionID &dcid, const ConnectionID &scid,
+  uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   const uint32_t *versions, unsigned nVersions)
 {
   unsigned need = 7 + dcid.length() + scid.length() + nVersions*4;

@@ -20,9 +20,9 @@ namespace Zquic {
 static constexpr uint16_t TLSExtQUICTransportParamsV1 = 0x39;
 
 struct TransportParams {
-  ConnectionID	originalDCID;
-  ConnectionID	initialSCID;
-  ConnectionID	retrySCID;
+  CxnID		originalDCID;
+  CxnID		initialSCID;
+  CxnID		retrySCID;
   uint64_t	maxIdleTimeout = 0;
   uint64_t	maxUDPPayloadSize = MinUDPPayload;
   uint64_t	initialMaxData = 0;
@@ -37,11 +37,9 @@ struct TransportParams {
   bool		disableActiveMigration = true;
 
   bool validate() const;
-};
-
-struct TransportParamsCodec {
-  static int encode(uint8_t *, unsigned, const TransportParams &);
-  static int decode(ZuCSpan, TransportParams &);
+  unsigned encodedLength() const;
+  int encode(uint8_t *, unsigned) const;
+  int decode(ZuCSpan);
 };
 
 } // namespace Zquic

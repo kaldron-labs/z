@@ -61,7 +61,7 @@ void testRFC9001InitialKeys()
   uint8_t dcidRaw[8];
   ZuCHECK(hexDecode_(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
     "test DCID decode failed");
-  Zquic::ConnectionID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
+  Zquic::CxnID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
   Zquic::InitialKeyMaterial keys;
   ZuCHECK(Zquic::InitialCrypto::derive(keys, dcid),
     "Initial key derivation failed");
@@ -109,7 +109,7 @@ void testInitialProtection()
   uint8_t dcidRaw[8];
   ZuCHECK(hexDecode_(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
     "test DCID decode failed");
-  Zquic::ConnectionID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
+  Zquic::CxnID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
   Zquic::InitialKeyMaterial keys;
   ZuCHECK(Zquic::InitialCrypto::derive(keys, dcid),
     "Initial key derivation failed");
@@ -157,7 +157,7 @@ void testRFC9001ClientInitialProtection()
   uint8_t dcidRaw[8];
   ZuCHECK(hexDecode_(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
     "test DCID decode failed");
-  Zquic::ConnectionID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
+  Zquic::CxnID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
   Zquic::InitialKeyMaterial keys;
   ZuCHECK(Zquic::InitialCrypto::derive(keys, dcid),
     "Initial key derivation failed");
@@ -256,7 +256,7 @@ void testHeaderProtection()
   uint8_t dcidRaw[8];
   ZuCHECK(hexDecode_(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
     "test DCID decode failed");
-  Zquic::ConnectionID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
+  Zquic::CxnID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
   Zquic::InitialKeyMaterial keys;
   ZuCHECK(Zquic::InitialCrypto::derive(keys, dcid),
     "Initial key derivation failed");
@@ -317,8 +317,8 @@ void testTrafficSecretProtection()
   auto rxShortAead = rxShort.aead.get();
   auto rxShortHP = rxShort.hp.get();
 
-  Zquic::ConnectionID dcid{"server01"};
-  Zquic::ConnectionID scid{"client01"};
+  Zquic::CxnID dcid{"server01"};
+  Zquic::CxnID scid{"client01"};
   uint8_t payload[32] = {};
   ZuCHECK(Zquic::FrameCodec::writePing(payload, sizeof(payload)) == 1,
     "traffic test PING encode failed");

@@ -22,10 +22,12 @@ ServerPacketDecision ServerPacket::routeLongHeader(
   if (Packet::parseLong(datagram, decision.header) < 0) return decision;
 
   if (!VersionNegotiation::supported(decision.header.version)) {
-    decision.responseLength = VersionNegotiation::write(
+    int n = VersionNegotiation::write(
       response, responseLen, decision.header.scid, decision.header.dcid);
-    if (decision.responseLength > 0)
+    if (n > 0) {
+      decision.responseLength = unsigned(n);
       decision.action = ServerPacketAction::VersionNegotiation;
+    }
     return decision;
   }
 
@@ -80,28 +82,27 @@ int StatelessReset::writeForUnknownCID(
   return int(n);
 }
 
-bool CIDGenerator::random(ConnectionID &cid, unsigned length)
+bool CxnIDGen::random(CxnID &cid, unsigned length)
 {
-  if (length < InitialLength || length > ConnectionID::Max) return false;
+  if (length < InitialLength || length > CxnIDMax) return false;
 
-  uint8_t bytes[ConnectionID::Max];
+  uint8_t bytes[CxnIDMax];
   if (!Ztls::Backend::init() ||
       !Ztls::Backend::random_bytes(ZuSpan<uint8_t>{bytes, length}))
     return false;
 
-  ConnectionID generated;
-  if (!generated.set(ZuCSpan{reinterpret_cast<const char *>(bytes), length}))
-    return false;
+  CxnID generated;
+  generated = ZuBSpan{bytes, length};
   cid = generated;
   return true;
 }
 
-bool CIDGenerator::randomPair(
-  ConnectionID &initialDCID, ConnectionID &initialSCID,
+bool CxnIDGen::randomPair(
+  CxnID &initialDCID, CxnID &initialSCID,
   unsigned dcidLength, unsigned scidLength)
 {
-  ConnectionID dcid;
-  ConnectionID scid;
+  CxnID dcid;
+  CxnID scid;
   if (!random(dcid, dcidLength) || !random(scid, scidLength)) return false;
   initialDCID = dcid;
   initialSCID = scid;
@@ -110,9 +111,9 @@ bool CIDGenerator::randomPair(
 
 bool ClientBootstrap::startRandom(unsigned dcidLength, unsigned scidLength)
 {
-  ConnectionID initialDCID;
-  ConnectionID initialSCID;
-  if (!CIDGenerator::randomPair(
+  CxnID initialDCID;
+  CxnID initialSCID;
+  if (!CxnIDGen::randomPair(
 	initialDCID, initialSCID, dcidLength, scidLength))
     return false;
   return start(initialDCID, initialSCID);
@@ -124,15 +125,15 @@ bool ServerBootstrap::acceptInitial(
   if (m_accepted ||
       initial.type != PacketType::Initial ||
       !VersionNegotiation::supported(initial.version) ||
-      initial.dcid.length() < CIDGenerator::InitialLength ||
-      initial.scid.length() < CIDGenerator::InitialLength ||
+      initial.dcid.length() < CxnIDGen::InitialLength ||
+      initial.scid.length() < CxnIDGen::InitialLength ||
       datagramLength < MinUDPPayload ||
       !routeToken)
     return false;
 
-  ConnectionID localSCID;
+  CxnID localSCID;
   StatelessResetToken resetToken;
-  if (!CIDGenerator::random(localSCID) || !resetToken.generate()) return false;
+  if (!CxnIDGen::random(localSCID) || !resetToken.generate()) return false;
 
   if (!m_initialDCIDs.add(initial.dcid, 0, routeToken) ||
       !m_localCIDs.add(localSCID, 0, routeToken, resetToken))

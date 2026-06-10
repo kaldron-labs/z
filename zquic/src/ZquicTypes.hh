@@ -15,9 +15,15 @@
 
 #include <stdint.h>
 
+#include <zlib/ZuDerive.hh>
+
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZtString.hh>
 
 namespace Zquic {
+
+ZuDerive(Host, ZtString<ZtStringHeapID<"Zquic.Host">>);
+ZuDerive(ParamString, ZtString<ZtStringHeapID<"Zquic.Param">>);
 
 inline constexpr uint32_t Version1 = 0x00000001U;
 inline constexpr unsigned MinUDPPayload = 1200;
@@ -64,8 +70,8 @@ struct FrameType {
     PathChallenge, PathResponse, ConnectionClose, HandshakeDone, Unknown);
 };
 
-struct CIDState {
-  ZtEnum(CIDState, int8_t, Active, Retired, Tombstone);
+struct CxnIDState {
+  ZtEnum(CxnIDState, int8_t, Active, Retired, Tombstone);
 };
 
 struct PathMode {
