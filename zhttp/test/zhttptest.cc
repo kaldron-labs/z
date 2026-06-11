@@ -33,6 +33,13 @@ char request_[] =
 "accept: */*\r\n"
 "\r\n";
 
+char requestQuery_[] =
+"GET /search?q=z HTTP/1.1\r\n"
+"host: foo.com\r\n"
+"user-agent: zhttptest/1.0\r\n"
+"accept: */*\r\n"
+"\r\n";
+
 constexpr unsigned BufSize = 8<<10;
 constexpr unsigned MaxBufSize = 100<<20;
 
@@ -119,6 +126,16 @@ struct RequestBuilder :
   void host(L &&l) { l("foo.com"); }
 };
 
+struct QueryRequestBuilder :
+  public Zhttp::H1::Builder<QueryRequestBuilder, RequestHeaders> {
+  using Base = Zhttp::H1::Builder<QueryRequestBuilder, RequestHeaders>;
+
+  template <typename L>
+  void operation(L &&l) { l(Zhttp::Method::GET, "/search", "q=z"); }
+  template <typename L>
+  void host(L &&l) { l("foo.com"); }
+};
+
 int main()
 {
   using namespace Zhttp;
@@ -184,5 +201,13 @@ int main()
     builder.request(tx);
     builder.finish(tx);
     CHECK(tx.buf->cspan() == ::request_);
+  }
+
+  {
+    QueryRequestBuilder builder;
+    BufTx tx{new IOBufAlloc{}};
+    builder.request(tx);
+    builder.finish(tx);
+    CHECK(tx.buf->cspan() == ::requestQuery_);
   }
 }
