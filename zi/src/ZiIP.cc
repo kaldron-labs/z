@@ -160,34 +160,20 @@ using ZiIP_AddrInfo = struct addrinfo;
 
 #endif /* _WIN32 */
 
-int ZiIP::resolve_(ZuCSpan host_, ZeError *e)
-#ifdef _WIN32
-{
-  ZuWArray<Zi::NameMax + 1> host;
-  host.length(ZuUTF<wchar_t, char>::cvt(
-	ZuSpan<wchar_t>(host.data(), host.size() - 1), host_));
-  return resolve_(ZuWSpan(host), e);
-}
-int ZiIP::resolve_(ZuWSpan host_, ZeError *e)
-#endif /* _WIN32 */
+namespace Zi {
+
+int resolve(Hostname host, ZmFn<bool(ZiIP)> fn, ZeError *e)
 {
   ZiIP_InitOnce();
 
   ZiIP_AddrInfo hints;
   ZiIP_AddrInfo *result;
   int errno_;
- 
-  // ensure host is null terminated
-#ifndef _WIN32
-  ZuCArray<Zi::HostnameMax> host(host_);
-#else
-  ZuWArray<Zi::HostnameMax> host(host_);
-#endif
 
   memset(&hints, 0, sizeof(ZiIP_AddrInfo));
   hints.ai_family = AF_INET;
   hints.ai_protocol = PF_INET;
-  while (errno_ = ZiIP_GetAddrInfo(host.terminate(), 0, &hints, &result)) {
+  while (errno_ = ZiIP_GetAddrInfo(host.data(), 0, &hints, &result)) {
     if (errno_ == EAI_AGAIN) continue;
     if (e) *e =
 #ifdef EAI_SYSTEM
@@ -196,16 +182,22 @@ int ZiIP::resolve_(ZuWSpan host_, ZeError *e)
       ZeError(errno_);
     return Zi::IOError;
   }
-  if (!result || !result->ai_addr ||
-      result->ai_addrlen < sizeof(struct sockaddr_in)) {
-    if (e) *e = ZeError(EAI_NONAME);
-    if (result) ZiIP_FreeAddrInfo(result);
-    return Zi::IOError;
+
+  unsigned count = 0;
+  for (auto ai = result; ai; ai = ai->ai_next) {
+    if (!ai->ai_addr || ai->ai_addrlen < sizeof(struct sockaddr_in))
+      continue;
+    ++count;
+    ZiIP ip{((struct sockaddr_in *)ai->ai_addr)->sin_addr};
+    if (!fn(ip)) break;
   }
-  s_addr = ((struct sockaddr_in *)result->ai_addr)->sin_addr.s_addr;
   ZiIP_FreeAddrInfo(result);
-  return Zi::OK;
+  if (count) return Zi::OK;
+  if (e) *e = ZeError(EAI_NONAME);
+  return Zi::IOError;
 }
+
+} // Zi
 
 ZiIP::Hostname ZiIP::name(ZeError *e)
 {

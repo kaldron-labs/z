@@ -129,13 +129,13 @@ private:
   }
 
   template <typename U, typename R = void>
-  using MatchChar = ZuSame<U, char, R>;
+  using MatchChar = ZuIfT<ZuEquiv<U, char>{}, R>;
 
   template <typename U, typename R = void>
   using MatchReal = ZuIfT<
     ZuTraits<U>::IsPrimitive &&
     ZuTraits<U>::IsReal &&
-    !ZuIsSame<U, char>{}, R>;
+    !ZuEquiv<U, char>{}, R>;
 
   template <typename U, typename R = void>
   using MatchPrint = ZuIfT<

@@ -119,6 +119,23 @@ void testPrimitiveAppendAccounting()
   ZuCheck(h.sentSkip[0] == 1);
 }
 
+void testRealPrimitiveFormatting()
+{
+  ZuTestScope(testRealPrimitiveFormatting);
+
+  StreamHarness h;
+  TestTxStream stream{h, 64, 1, 1};
+
+  stream << uint64_t(1234567890123456789ULL) << ' ' << int64_t(-42) <<
+    ' ' << unsigned(17) << Zi::flush();
+
+  ZuCheck(h.sendCount == 1);
+  ZuCheck(h.sentLen[0] == 26);
+  ZuCSpan sent{
+    reinterpret_cast<const char *>(h.sent[0]->data()), h.sent[0]->length};
+  ZuCheck(sent == "1234567890123456789 -42 17");
+}
+
 void testFlushElidesEmptyBuffer()
 {
   ZuTestScope(testFlushElidesEmptyBuffer);
@@ -171,6 +188,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testSplitAndFlush);
   ZuTestCall(testPrimitiveAppendAccounting);
+  ZuTestCall(testRealPrimitiveFormatting);
   ZuTestCall(testFlushElidesEmptyBuffer);
   ZuTestCall(testOversizePrintableThrows);
   return 0;

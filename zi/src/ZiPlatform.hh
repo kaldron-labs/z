@@ -66,8 +66,8 @@ ZuInline constexpr bool nullSocket(Socket i) { return i < 0; }
 inline void closeSocket(Socket s) { ::close(s); }
 using Path = ZtString<ZtStringHeapID<"Zi.Path">>;
 using Offset = off_t;
-using Hostname = ZtString<ZtStringHeapID<"Zi.Hostname">>;
-using Username = ZtString<ZtStringHeapID<"Zi.Username">>;
+using Hostname = ZtString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Hostname">>>;
+using Username = ZtString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Username">>>;
 enum {
   PathMax = PATH_MAX,
   NameMax = NAME_MAX,
@@ -83,8 +83,8 @@ ZuInline constexpr bool nullSocket(Socket i) { return i == INVALID_SOCKET; }
 inline void closeSocket(Socket s) { ::closesocket(s); }
 using Path = ZtWString<ZtStringHeapID<"Zi.Path">>;
 using Offset = int64_t;	// 2x DWORD
-using Hostname = ZtWString<ZtStringHeapID<"Zi.Hostname">>;
-using Username = ZtWString<ZtStringHeapID<"Zi.Username">>;
+using Hostname = ZtWString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Hostname">>>;
+using Username = ZtWString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Username">>>;
 enum {
   PathMax = 32767,	// NTFS limit (MAX_PATH is 260 for FAT)
   NameMax = 255,	// NTFS & FAT limit
