@@ -19,9 +19,23 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuPrint.hh>
 
+#include <zlib/ZmFn.hh>
+
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZiPlatform.hh>
+
+class ZiIP;
+
+namespace Zi {
+
+// fn(ZiIP) should return true to continue resolving additional IPs, false to stop
+// - if resolution succeeds, fn() will be called at least once and Zi::OK will be returned
+// - ... otherwise fn() will not be called and Zi::IOError will be returned
+//   - if e is not null, *e will be set accordingly
+ZiExtern int resolve(Hostname host, ZmFn<bool(ZiIP)> fn, ZeError *e = nullptr);
+
+}
 
 class ZiAPI ZiIP : public in_addr {
 public:
@@ -112,15 +126,14 @@ public:
 
   friend ZuPrintFn ZuPrintType(ZiIP *);
 
-private:
-  int resolve_(ZuCSpan, ZeError *e = 0);
-#ifdef _WIN32
-  int resolve_(ZuWSpan, ZeError *e = 0);
-#endif
 public:
   template <typename S>
   ZuMatchString<S &&, int> resolve(S &&s, ZeError *e = 0) {
-    return resolve_(ZuCSpan(s), e);
+    Zi::Hostname host{ZuFwd<S>(s)};
+    return Zi::resolve(ZuMv(host), ZmFn<bool(ZiIP)>{[this](ZiIP ip) {
+      s_addr = ip.s_addr;
+      return false;
+    }}, e);
   }
   Hostname name(ZeError *e = 0);
 };
