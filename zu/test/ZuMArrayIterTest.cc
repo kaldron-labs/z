@@ -7,6 +7,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuMArray.hh>
+#include <zlib/ZuVArray.hh>
 
 using namespace ZuTestUtil;
 
@@ -71,11 +72,37 @@ void testIteratorArithmetic()
   ZuCheck(int(*b2) == 8);
 }
 
+void testFindStarts()
+{
+  ZuTestScope(testFindStarts);
+
+  ZuArray<int, 8> raw;
+  raw << 1 << 2 << 3 << 4;
+  ScaledArray a{raw};
+  ZuArray<int, 4> prefix;
+  prefix << 2 << 4 << 6;
+  ZuArray<int, 4> mismatch;
+  mismatch << 2 << 6;
+
+  ZuCheck(a.find([](auto v) { return int(v) == 6; }) == 2);
+  ZuCheck(a.find([](auto v) { return int(v) == 9; }) < 0);
+  ZuCheck(a.starts(prefix));
+  ZuCheck(!a.starts(mismatch));
+
+  const ScaledArray ca{raw};
+  ZuVArray<int, false> v{ca};
+  ZuCheck(v.find([](auto e) { return int(e) == 8; }) == 3);
+  ZuCheck(v.find([](auto e) { return int(e) == 10; }) < 0);
+  ZuCheck(v.starts(prefix));
+  ZuCheck(!v.starts(mismatch));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testCRTPGetSetAndIteration);
   ZuTestCall(testIteratorArithmetic);
+  ZuTestCall(testFindStarts);
   return 0;
 }

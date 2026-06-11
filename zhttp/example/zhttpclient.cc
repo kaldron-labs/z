@@ -45,19 +45,13 @@ void usage(int code = 1)
   ::exit(code);
 }
 
+using RequestHeaders = ZuTypeList<
+  ZuStringT<"user-agent">, ZuStringT<"zhttptest/1.0">,
+  ZuStringT<"accept">, ZuStringT<"*/*">>;
 using ResponseHeaders = ZuTypeList<
   ZuStringT<"content-type">, void,
   ZuStringT<"location">, void,
   ZuStringT<"server">, void>;
-using RequestHeaders = ZuTypeList<
-  ZuStringT<"user-agent">, ZuStringT<"zhttptest/1.0">,
-  ZuStringT<"accept">, ZuStringT<"*/*">>;
-
-bool starts(ZuCSpan s, ZuCSpan prefix)
-{
-  return s.length() >= prefix.length() &&
-    !memcmp(s.data(), prefix.data(), prefix.length());
-}
 
 struct URL {
   ZuCSpan	scheme;
@@ -87,12 +81,12 @@ bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
   };
 
   ZuCSpan rest;
-  if (starts(input, "http://")) {
+  if (input.starts("http://")) {
     url.scheme = "http";
     url.port = 80;
     rest = input;
     rest.offset(7);
-  } else if (starts(input, "https://")) {
+  } else if (input.starts("https://")) {
     url.scheme = "https";
     url.port = 443;
     rest = input;
@@ -100,9 +94,8 @@ bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
   } else
     return fail("unsupported URL scheme");
 
-  unsigned slash = rest.length();
-  for (unsigned i = 0; i < rest.length(); ++i)
-    if (rest[i] == '/') { slash = i; break; }
+  auto slash = rest.find([](auto c) { return c == '/'; });
+  if (slash < 0) slash = rest.length();
 
   ZuCSpan authority = rest;
   authority.trunc(slash);
@@ -142,12 +135,10 @@ struct RequestBuilder :
     ZuCSpan target = state->url.target;
     ZuCSpan path = target;
     ZuCSpan query;
-    for (unsigned i = 0; i < target.length(); ++i) {
-      if (target[i] != '?') continue;
+    if (auto i = target.find([](auto c) { return c == '?'; }); i >= 0) {
       path.trunc(i);
       query = target;
       query.offset(i + 1);
-      break;
     }
     if (!path) path = "/";
     l(Zhttp::Method::GET, path, query);

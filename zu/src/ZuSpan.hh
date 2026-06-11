@@ -525,6 +525,24 @@ public:
     for (uint64_t i = 0, n = length(); i < n; i++) ZuFwd<L>(l)(m_data[i]);
   }
 
+// find element - lambda should return true on match
+  template <typename L>
+  constexpr int64_t find(L &&l) const {
+    for (uint64_t i = 0, n = length(); i < n; i++)
+      if (ZuFwd<L>(l)(m_data[i])) return i;
+    return -1;
+  }
+
+// match at start
+  template <typename R>
+  constexpr ZuIfT<ZuIsConstructible<R, ZuSpan>{}, bool>
+  starts(const R &r_) const {
+    ZuSpan r(r_);
+    auto n = length(), nr = r.length();
+    if (n < nr) return false;
+    return Ops::equals(this->data(), r.data(), nr);
+  }
+
 // traits
   struct Traits : public ZuBaseTraits<ZuSpan> {
     using Elem = T;
