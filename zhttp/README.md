@@ -31,20 +31,8 @@ connection's QPACK encoder state. Dynamic field-section references are decoded
 through the connection's QPACK decoder state. QPACK encoder and decoder stream
 bytes are consumed as ordered instruction sequences by the connection.
 
-HTTP/3 errors and QPACK errors have distinct enum values and stable wire-code
-mappings. Fallback-capable clients should try HTTP/3 when configured and fall
-back to HTTP/1.1 over TLS when HTTP/3 is unavailable or rejected by policy.
-`Zhttp::H3::FallbackPolicy` records that decision explicitly: it selects
-HTTP/3 when enabled, available, ALPN-accepted, and connected; otherwise it can
-select HTTP/1.1 with a reason such as HTTP/3 disabled, unavailable, ALPN
-rejected, or connect failed. If HTTP/1.1 fallback is disabled, the decision
-fails closed instead of silently selecting an insecure or unconfigured path.
-
-HTTP/3 diagnostics count H3 frames, header bytes, body bytes, control frames,
-GOAWAY, QPACK instructions, and the last surfaced H3/QPACK error. Stable
-formatter helpers expose H3 frame, stream, setting, message-part, field-section,
-and summary names. Log subsystem names are `Zhttp`, `Zhttp.H3`, and
-`Zhttp.QPack`.
+Fallback-capable clients should try HTTP/3 when configured and fall back to
+HTTP/1.1 over TLS when HTTP/3 is unavailable or rejected by policy.
 
 First-release exclusions match the transport scope: no server push, no
 WebTransport, no DATAGRAM, no 0-RTT, no QUIC v2, no multipath, and no active

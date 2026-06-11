@@ -22,7 +22,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
-#include <zlib/Zhttp3.hh>
+#include <zlib/Zhttp.hh>
 #include <zlib/ZtString.hh>
 
 #include "ZhttpCaddyInterop.hh"
@@ -331,11 +331,6 @@ void testCurlCaddyHttp11Fallback()
 {
   ZuTestScope(testCurlCaddyHttp11Fallback);
 
-  auto decision = Zhttp::H3::FallbackPolicy{}.select(false, true, true);
-  ZuCHECK(decision.protocol == Zhttp::H3::FallbackProtocol::HTTP11 &&
-      decision.reason == Zhttp::H3::FallbackReason::HTTP3Unavailable &&
-      decision.fallback(),
-    "Zhttp fallback policy did not select HTTP/1.1 before interop");
   ZuCHECK(Zhttp::Test::runCaddyCurl(
       "\"h1\"", "--http1.1", "1.1", "zhttp-h1-ok", true),
     "HTTP/1.1 fallback route failed");
@@ -369,12 +364,6 @@ void testCurlZhttpHttp11Fallback()
 void testZhttpClientHttp11Fallback()
 {
   ZuTestScope(testZhttpClientHttp11Fallback);
-
-  auto decision = Zhttp::H3::FallbackPolicy{}.select(false, true, true);
-  ZuCHECK(decision.protocol == Zhttp::H3::FallbackProtocol::HTTP11 &&
-      decision.reason == Zhttp::H3::FallbackReason::HTTP3Unavailable &&
-      decision.fallback(),
-    "Zhttp client fallback policy did not select HTTP/1.1");
 
   unsigned port = 0;
   int listener = listenLoopback_(port);
@@ -439,62 +428,6 @@ void testZhttpClientHttp11Fallback()
     "Zhttp client fallback server did not parse request and send response");
 }
 
-void testFallbackPolicyShape()
-{
-  ZuTestScope(testFallbackPolicyShape);
-
-  Zhttp::H3::FallbackPolicy policy;
-  auto decision = policy.select(true, true, true);
-  ZuCHECK(decision.protocol == Zhttp::H3::FallbackProtocol::HTTP3 &&
-      decision.reason == Zhttp::H3::FallbackReason::None &&
-      decision.error == Zhttp::H3::H3Error::NoError &&
-      !decision.fallback() && !decision.failed(),
-    "fallback policy did not select healthy HTTP/3");
-
-  decision = policy.select(false, true, true);
-  ZuCHECK(decision.protocol == Zhttp::H3::FallbackProtocol::HTTP11 &&
-      decision.reason == Zhttp::H3::FallbackReason::HTTP3Unavailable &&
-      decision.error == Zhttp::H3::H3Error::VersionFallback &&
-      decision.fallback(),
-    "fallback policy did not fall back when HTTP/3 was unavailable");
-
-  decision = policy.select(true, false, true);
-  ZuCHECK(decision.protocol == Zhttp::H3::FallbackProtocol::HTTP11 &&
-      decision.reason == Zhttp::H3::FallbackReason::ALPNRejected &&
-      decision.error == Zhttp::H3::H3Error::VersionFallback &&
-      decision.fallback(),
-    "fallback policy did not fall back on ALPN rejection");
-
-  decision = policy.select(true, true, false);
-  ZuCHECK(decision.protocol == Zhttp::H3::FallbackProtocol::HTTP11 &&
-      decision.reason == Zhttp::H3::FallbackReason::ConnectFailed &&
-      decision.error == Zhttp::H3::H3Error::ConnectError &&
-      decision.fallback(),
-    "fallback policy did not fall back on HTTP/3 connect failure");
-
-  decision = Zhttp::H3::FallbackPolicy{}.http3(false).
-    select(true, true, true);
-  ZuCHECK(decision.protocol == Zhttp::H3::FallbackProtocol::HTTP11 &&
-      decision.reason == Zhttp::H3::FallbackReason::HTTP3Disabled &&
-      decision.error == Zhttp::H3::H3Error::VersionFallback &&
-      decision.fallback(),
-    "fallback policy did not fall back when HTTP/3 was disabled");
-
-  decision = Zhttp::H3::FallbackPolicy{}.http11(false).
-    select(false, true, true);
-  ZuCHECK(decision.protocol == Zhttp::H3::FallbackProtocol::None &&
-      decision.reason == Zhttp::H3::FallbackReason::HTTP11Disabled &&
-      decision.error == Zhttp::H3::H3Error::VersionFallback &&
-      decision.failed(),
-    "fallback policy did not fail closed when HTTP/1.1 was disabled");
-
-  Zhttp::H3::Params params;
-  params.qpackTableCapacity(0).qpackBlockedStreams(0);
-  ZuCHECK(params.qpackTableCapacity() == 0 &&
-    params.qpackBlockedStreams() == 0,
-    "zero-capacity QPACK fallback profile mismatch");
-}
-
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -503,5 +436,4 @@ int main(int argc, char **argv)
   ZuTestCall(testCurlCaddyHttp11Fallback);
   ZuTestCall(testCurlZhttpHttp11Fallback);
   ZuTestCall(testZhttpClientHttp11Fallback);
-  ZuTestCall(testFallbackPolicyShape);
 }
