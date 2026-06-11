@@ -71,19 +71,20 @@ template <typename ...Ts>
 using ZuTypeRev = typename ZuTypeRev_<Ts...>::T;
 
 // index -> type
-template <unsigned, typename ...> struct ZuType_;
+template <unsigned, typename ...> struct ZuType__;
 template <unsigned I, typename T0, typename ...Ts>
-struct ZuType__ {
-  using T = typename ZuType_<I - 1, Ts...>::T;
+struct ZuType__<I, T0, Ts...> {
+  using T = typename ZuType__<I - 1, Ts...>::T;
 };
 template <typename T0, typename ...Ts>
 struct ZuType__<0, T0, Ts...> {
   using T = T0;
 };
+template <unsigned, typename ...> struct ZuType_;
 template <unsigned I, typename ...Ts>
 struct ZuType_ : public ZuType__<I, Ts...> { };
 template <unsigned I, typename ...Ts>
-struct ZuType_<I, ZuTypeList<Ts...>> : public ZuType_<I, Ts...> { };
+struct ZuType_<I, ZuTypeList<Ts...>> : public ZuType__<I, Ts...> { };
 template <unsigned I, typename ...Ts>
 using ZuType = typename ZuType_<I, Ts...>::T;
 

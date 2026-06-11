@@ -81,9 +81,9 @@ struct ResponseCtx {
 
 using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
 struct RequestRx :
-  public Zhttp::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody> {
+  public Zhttp::H1::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody> {
   using Base =
-    Zhttp::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody>;
+    Zhttp::H1::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody>;
 
   void operation(Zhttp::Method::T method_, ZuCSpan path_) {
     method = method_;
@@ -106,24 +106,24 @@ struct RequestRx :
 };
 
 struct ResponseRx :
-  public Zhttp::Parser<ResponseRx, false, ZuTypeList<>, FallbackMaxBody> {
-  using Base = Zhttp::Parser<ResponseRx, false, ZuTypeList<>, FallbackMaxBody>;
+  public Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>, FallbackMaxBody> {
+  using Base = Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>, FallbackMaxBody>;
 
   void status(unsigned v) { statusSeen = v; }
   void contentLength(uint64_t v) { contentLengthSeen = v; }
   void body(ZuBSpan span) { bodyData << span; }
-  void complete(Zhttp::ParserState::T state_) { completeState = state_; }
+  void complete(Zhttp::H1::ParserState::T state_) { completeState = state_; }
 
   int				statusSeen = -1;
   int64_t			contentLengthSeen = -1;
-  Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
+  Zhttp::H1::ParserState::T		completeState = Zhttp::H1::ParserState::Initial;
   BodyData			bodyData;
 };
 
 struct ResponseBuilder :
-  public Zhttp::Builder<ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true> {
+  public Zhttp::H1::Builder<ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true> {
   using Base =
-    Zhttp::Builder<ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true>;
+    Zhttp::H1::Builder<ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true>;
 
   ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
 
@@ -137,8 +137,8 @@ struct ResponseBuilder :
 using RequestBuilderHeaders =
   ZuTypeList<ZuStringT<"user-agent">, ZuStringT<"ZhttpFallbackTest/1.0">>;
 struct RequestBuilder :
-  public Zhttp::Builder<RequestBuilder, RequestBuilderHeaders> {
-  using Base = Zhttp::Builder<RequestBuilder, RequestBuilderHeaders>;
+  public Zhttp::H1::Builder<RequestBuilder, RequestBuilderHeaders> {
+  using Base = Zhttp::H1::Builder<RequestBuilder, RequestBuilderHeaders>;
 
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::GET, "/zhttp-fallback", ""); }
@@ -261,7 +261,7 @@ pid_t startZhttpH1Server_(
   RxStream reqStream;
   reqStream.push(mkBuf(reqBuf, reqLen));
   auto reqState = req.process(reqStream);
-  if (reqState != Zhttp::ParserState::Complete ||
+  if (reqState != Zhttp::H1::ParserState::Complete ||
       req.method != Zhttp::Method::GET ||
       req.path != expectedPath ||
       !localhostHost_(req.host)) {
@@ -416,7 +416,7 @@ void testZhttpClientHttp11Fallback()
   RxStream stream;
   stream.push(mkBuf(respBuf, respLen));
   auto respState = rx.process(stream);
-  if (!(respState == Zhttp::ParserState::Complete &&
+  if (!(respState == Zhttp::H1::ParserState::Complete &&
 	rx.statusSeen == 200 &&
 	rx.contentLengthSeen == 11 &&
 	rx.bodyData == "zhttp-h1-ok" &&
@@ -429,7 +429,7 @@ void testZhttpClientHttp11Fallback()
       " contentLength=" << rx.contentLengthSeen <<
       " body='" << rx.bodyData << "'\n";
   }
-  ZuCHECK(respState == Zhttp::ParserState::Complete &&
+  ZuCHECK(respState == Zhttp::H1::ParserState::Complete &&
       rx.statusSeen == 200 &&
       rx.contentLengthSeen == 11 &&
       rx.bodyData == "zhttp-h1-ok" &&

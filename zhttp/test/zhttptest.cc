@@ -74,9 +74,9 @@ using ResponseHeaders = ZuTypeList<
   ZuStringT<"referrer-policy">, void,
   ZuStringT<"server-timing">, void>;
 struct ResponseParser :
-  public Zhttp::Parser<ResponseParser, false, ResponseHeaders, MaxBufSize> {
+  public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, MaxBufSize> {
   using Base =
-    Zhttp::Parser<ResponseParser, false, ResponseHeaders, MaxBufSize>;
+    Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, MaxBufSize>;
 
   void status(unsigned v) { statusSeen = v; }
   void contentLength(uint64_t v) { contentLengthSeen = v; }
@@ -94,7 +94,7 @@ struct ResponseParser :
     bodyBytes += span.length();
     bodyData << span;
   }
-  void complete(Zhttp::ParserState::T state_) { completeState = state_; }
+  void complete(Zhttp::H1::ParserState::T state_) { completeState = state_; }
 
   int				statusSeen = -1;
   int64_t			contentLengthSeen = -1;
@@ -102,7 +102,7 @@ struct ResponseParser :
   bool				serverTiming = false;
   bool				chunkedSeen = false;
   uint64_t			bodyBytes = 0;
-  Zhttp::ParserState::T		completeState = Zhttp::ParserState::Initial;
+  Zhttp::H1::ParserState::T		completeState = Zhttp::H1::ParserState::Initial;
   BodyData			bodyData;
 };
 
@@ -110,8 +110,8 @@ using RequestHeaders = ZuTypeList<
   ZuStringT<"user-agent">, ZuStringT<"zhttptest/1.0">,
   ZuStringT<"accept">, ZuStringT<"*/*">>;
 struct RequestBuilder :
-  public Zhttp::Builder<RequestBuilder, RequestHeaders> {
-  using Base = Zhttp::Builder<RequestBuilder, RequestHeaders>;
+  public Zhttp::H1::Builder<RequestBuilder, RequestHeaders> {
+  using Base = Zhttp::H1::Builder<RequestBuilder, RequestHeaders>;
 
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::GET, "/", ""); }
@@ -145,7 +145,7 @@ int main()
     ResponseParser parser;
     RxStream stream;
     stream.push(mkBuf(::response_));
-    CHECK(parser.process(stream) == ParserState::Complete);
+    CHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete);
     CHECK(parser.statusSeen == 200);
     CHECK(parser.contentLengthSeen == 13);
     CHECK(parser.referrerPolicy);
@@ -170,7 +170,7 @@ int main()
     ResponseParser parser;
     RxStream stream;
     stream.push(mkBuf(chunked));
-    CHECK(parser.process(stream) == ParserState::Complete);
+    CHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete);
     CHECK(parser.chunkedSeen);
     CHECK(parser.bodyBytes == 18);
     CHECK(parser.serverTiming);
