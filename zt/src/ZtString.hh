@@ -870,6 +870,19 @@ public:
   }
 
 public:
+// find character - lambda should return true on match
+  template <typename L>
+  int64_t find(L &&l) const {
+    return cspan().find(ZuFwd<L>(l));
+  }
+
+// match at start
+  template <typename S>
+  bool starts(const S &s_) const {
+    ZuSpan<const Char> s(s_);
+    return cspan().starts(s);
+  }
+
 // hash()
   uint64_t hash() const { return ZuHash<String>::hash(*this); }
 

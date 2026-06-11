@@ -28,9 +28,12 @@ struct RuntimeClient : public Zquic::Client<RuntimeClient> {
   struct Link;
   struct Stream;
 };
-struct RuntimeServer : public Zquic::Server<RuntimeServer> {
-  struct Link;
-  struct Stream;
+struct RuntimeServerLink;
+struct RuntimeServerStream;
+struct RuntimeServer :
+    public Zquic::Server<RuntimeServer, RuntimeServerLink> {
+  using Link = RuntimeServerLink;
+  using Stream = RuntimeServerStream;
 
   ZmRef<Link> link();
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
@@ -95,23 +98,23 @@ struct RuntimeClient::Link :
   ZmAtomic<unsigned> connectFailures = 0;
 };
 
-struct RuntimeServer::Stream :
-  public Zquic::SrvStream<RuntimeServer::Link, RuntimeServer::Stream> {
+struct RuntimeServerStream :
+  public Zquic::SrvStream<RuntimeServerLink, RuntimeServerStream> {
   using Base =
-    Zquic::SrvStream<RuntimeServer::Link, RuntimeServer::Stream>;
+    Zquic::SrvStream<RuntimeServerLink, RuntimeServerStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
 };
 
-struct RuntimeServer::Link :
-  public Zquic::SrvLink<RuntimeServer, RuntimeServer::Link,
-    RuntimeServer::Stream> {
-  using Base = Zquic::SrvLink<RuntimeServer, RuntimeServer::Link,
-    RuntimeServer::Stream>;
+struct RuntimeServerLink :
+  public Zquic::SrvLink<RuntimeServer, RuntimeServerLink,
+    RuntimeServerStream> {
+  using Base = Zquic::SrvLink<RuntimeServer, RuntimeServerLink,
+    RuntimeServerStream>;
   using Base::Base;
 
-  Link(RuntimeServer *app) : Base{app} { }
+  RuntimeServerLink(RuntimeServer *app) : Base{app} { }
 
   void connected(const char *, int) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
@@ -217,9 +220,12 @@ struct ZhttpRuntimeClient::Link :
   ZmAtomic<unsigned> connectFailures = 0;
 };
 
-struct ZhttpRuntimeServer : public Zquic::Server<ZhttpRuntimeServer> {
-  struct Link;
-  struct Stream;
+struct ZhttpRuntimeServerLink;
+struct ZhttpRuntimeServerStream;
+struct ZhttpRuntimeServer :
+    public Zquic::Server<ZhttpRuntimeServer, ZhttpRuntimeServerLink> {
+  using Link = ZhttpRuntimeServerLink;
+  using Stream = ZhttpRuntimeServerStream;
 
   ZmRef<Link> link();
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
@@ -240,24 +246,24 @@ struct ZhttpRuntimeServer : public Zquic::Server<ZhttpRuntimeServer> {
   ZmAtomic<uint64_t>	requestOffset = 0;
 };
 
-struct ZhttpRuntimeServer::Stream :
-  public Zquic::SrvStream<ZhttpRuntimeServer::Link,
-    ZhttpRuntimeServer::Stream> {
-  using Base = Zquic::SrvStream<ZhttpRuntimeServer::Link,
-    ZhttpRuntimeServer::Stream>;
+struct ZhttpRuntimeServerStream :
+  public Zquic::SrvStream<ZhttpRuntimeServerLink,
+    ZhttpRuntimeServerStream> {
+  using Base = Zquic::SrvStream<ZhttpRuntimeServerLink,
+    ZhttpRuntimeServerStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
 };
 
-struct ZhttpRuntimeServer::Link :
-  public Zquic::SrvLink<ZhttpRuntimeServer, ZhttpRuntimeServer::Link,
-    ZhttpRuntimeServer::Stream> {
+struct ZhttpRuntimeServerLink :
+  public Zquic::SrvLink<ZhttpRuntimeServer, ZhttpRuntimeServerLink,
+    ZhttpRuntimeServerStream> {
   using Base = Zquic::SrvLink<ZhttpRuntimeServer,
-    ZhttpRuntimeServer::Link, ZhttpRuntimeServer::Stream>;
+    ZhttpRuntimeServerLink, ZhttpRuntimeServerStream>;
   using Base::Base;
 
-  Link(ZhttpRuntimeServer *app) : Base{app} { }
+  ZhttpRuntimeServerLink(ZhttpRuntimeServer *app) : Base{app} { }
 
   void connected(const char *, int) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
@@ -464,11 +470,11 @@ void testZhttpRuntimeTrafficGuard()
   ZuCHECK(waitUntil([&zquicServerLink]() {
       return zquicServerLink->runtimeDiag().streamBytesRx == 16;
     }), "Zhttp H3 runtime guard did not deliver stream bytes");
-  ZuCHECK(zquicServerLink->runtimeDiag().protectedPacketsRx &&
-      zquicClientLink->runtimeDiag().protectedPacketsTx &&
-      zquicServerLink->runtimeDiag().cryptoFramesRx &&
-      zquicClientLink->runtimeDiag().cryptoFramesTx &&
-      !zquicServerLink->runtimeDiag().packetParseErrors,
+  ZuCHECK(zquicServerLink->runtimeDiag().packetsRx &&
+      zquicClientLink->runtimeDiag().packetsTx &&
+      zquicServerLink->runtimeDiag().cryptoBytesRx &&
+      zquicClientLink->runtimeDiag().cryptoBytesTx &&
+      !zquicServerLink->runtimeDiag().failures,
     "Zhttp H3 runtime guard Zquic diagnostics mismatch");
 
   Zhttp::H3::RequestParams req;
@@ -631,8 +637,8 @@ void testZhttpRuntimeRequestResponse()
       server.h3.diag().headersRx &&
       server.h3.diag().dataFramesTx &&
       server.h3.diag().dataFramesRx &&
-      !clientLink->runtimeDiag().packetParseErrors &&
-      !serverLink->runtimeDiag().packetParseErrors,
+      !clientLink->runtimeDiag().failures &&
+      !serverLink->runtimeDiag().failures,
     "Zhttp runtime H3/Zquic diagnostics mismatch");
 
   clientLink->disconnect();
@@ -701,12 +707,12 @@ void testCurlZhttpH3Server()
 	"# zhttp server diag:"
 	" datagramsRx=" << uint64_t(d.datagramsRx) <<
 	" packetsRx=" << uint64_t(d.packetsRx) <<
-	" protectedRx=" << uint64_t(d.protectedPacketsRx) <<
-	" cryptoRx=" << uint64_t(d.cryptoFramesRx) <<
-	" streamRx=" << uint64_t(d.streamFramesRx) <<
-	" streamTx=" << uint64_t(d.streamFramesTx) <<
-	" handshakeDoneTx=" << uint64_t(d.handshakeDoneFramesTx) <<
-	" parseErrors=" << uint64_t(d.packetParseErrors) <<
+	" protectedRx=" << uint64_t(d.packetsRx) <<
+	" cryptoRx=" << uint64_t(d.cryptoBytesRx) <<
+	" streamRx=" << uint64_t(d.streamBytesRx) <<
+	" streamTx=" << uint64_t(d.streamBytesTx) <<
+	" handshakeDoneTx=" << uint64_t(d.packetsTx) <<
+	" parseErrors=" << uint64_t(d.failures) <<
 	" appStreams=" << unsigned(server.streamsSeen) <<
 	" appReqStreams=" << unsigned(server.requestStreamsSeen) <<
 	" lastStreamID=" << uint64_t(server.lastStreamID) <<
@@ -727,10 +733,10 @@ void testCurlZhttpH3Server()
       server.h3.diag().headersTx &&
       server.h3.diag().dataFramesTx &&
       serverLink &&
-      serverLink->runtimeDiag().protectedPacketsRx &&
-      serverLink->runtimeDiag().streamFramesRx &&
-      serverLink->runtimeDiag().streamFramesTx &&
-      serverLink->runtimeDiag().handshakeDoneFramesTx,
+      serverLink->runtimeDiag().packetsRx &&
+      serverLink->runtimeDiag().streamBytesRx &&
+      serverLink->runtimeDiag().streamBytesTx &&
+      serverLink->runtimeDiag().packetsTx,
     "curl->Zhttp H3 diagnostics mismatch");
 
   server.final();
@@ -824,12 +830,12 @@ void testZhttpH3ClientCaddy()
       "# zhttp client diag:"
       " datagramsRx=" << uint64_t(d.datagramsRx) <<
       " packetsRx=" << uint64_t(d.packetsRx) <<
-      " protectedRx=" << uint64_t(d.protectedPacketsRx) <<
-      " cryptoRx=" << uint64_t(d.cryptoFramesRx) <<
-      " streamRx=" << uint64_t(d.streamFramesRx) <<
-      " streamTx=" << uint64_t(d.streamFramesTx) <<
-      " handshakeDoneRx=" << uint64_t(d.handshakeDoneFramesRx) <<
-      " parseErrors=" << uint64_t(d.packetParseErrors) <<
+      " protectedRx=" << uint64_t(d.packetsRx) <<
+      " cryptoRx=" << uint64_t(d.cryptoBytesRx) <<
+      " streamRx=" << uint64_t(d.streamBytesRx) <<
+      " streamTx=" << uint64_t(d.streamBytesTx) <<
+      " handshakeDoneRx=" << uint64_t(d.packetsRx) <<
+      " parseErrors=" << uint64_t(d.failures) <<
       " responseErrors=" << unsigned(client.responseErrors) <<
       '\n';
     printFile("caddy log", caddy.logPath);
@@ -842,10 +848,10 @@ void testZhttpH3ClientCaddy()
   ZuCHECK(client.h3.diag().headersTx &&
       client.h3.diag().headersRx &&
       client.h3.diag().dataFramesRx &&
-      clientLink->runtimeDiag().protectedPacketsRx &&
-      clientLink->runtimeDiag().streamFramesRx &&
-      clientLink->runtimeDiag().streamFramesTx &&
-      clientLink->runtimeDiag().handshakeDoneFramesRx,
+      clientLink->runtimeDiag().packetsRx &&
+      clientLink->runtimeDiag().streamBytesRx &&
+      clientLink->runtimeDiag().streamBytesTx &&
+      clientLink->runtimeDiag().packetsRx,
     "Zhttp H3 client->Caddy diagnostics mismatch");
 
   clientLink->disconnect();

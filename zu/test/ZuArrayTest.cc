@@ -7,6 +7,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuString.hh>
 
 class I {
 public:
@@ -142,6 +143,28 @@ static_assert(spliceConstevalRemoved());
 static_assert(spliceConstevalOffsetOnly());
 static_assert(spliceConstevalReplaceShrink());
 static_assert(spliceConstevalCase1Replace());
+
+constexpr bool findStartsConsteval()
+{
+  ZuArray<int, 6> a;
+  a << 1 << 2 << 3 << 4;
+  ZuArray<int, 3> prefix;
+  prefix << 1 << 2 << 3;
+  ZuArray<int, 3> mismatch;
+  mismatch << 1 << 3;
+  constexpr ZuString s{"abcdef"};
+  return
+    a.find([](int v) { return v == 3; }) == 2 &&
+    a.find([](int v) { return v == 9; }) < 0 &&
+    a.starts(prefix) &&
+    !a.starts(mismatch) &&
+    s.find([](char c) { return c == 'd'; }) == 3 &&
+    s.find([](char c) { return c == 'x'; }) < 0 &&
+    s.starts("abc") &&
+    !s.starts("abd");
+}
+
+static_assert(findStartsConsteval());
 
 void testSpliceBasicPaths()
 {
@@ -489,6 +512,29 @@ void testStringInitializers()
   fn.operator ()<ZuTest_scope>(b);
 }
 
+void testFindStarts()
+{
+  ZuTestScope(find_starts);
+
+  ZuArray<int, 6> a;
+  a << 10 << 20 << 30 << 40;
+  ZuArray<int, 3> prefix;
+  prefix << 10 << 20;
+  ZuArray<int, 3> mismatch;
+  mismatch << 10 << 30;
+
+  ZuCheck(a.find([](int v) { return v == 30; }) == 2);
+  ZuCheck(a.find([](int v) { return v == 99; }) < 0);
+  ZuCheck(a.starts(prefix));
+  ZuCheck(!a.starts(mismatch));
+
+  constexpr ZuString s{"hello"};
+  ZuCheck(s.find([](char c) { return c == 'l'; }) == 2);
+  ZuCheck(s.find([](char c) { return c == 'z'; }) < 0);
+  ZuCheck(s.starts("he"));
+  ZuCheck(!s.starts("ha"));
+}
+
 int main()
 {
   ZuTestMain();
@@ -497,6 +543,7 @@ int main()
   ZuTestCall(testSpliceRuntimePaths);
   ZuTestCall(testSpliceVariantPaths);
   ZuTestCall(testStringInitializers);
+  ZuTestCall(testFindStarts);
 
   return 0;
 }

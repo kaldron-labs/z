@@ -658,6 +658,14 @@ void testString()
       ZuCheck(s == over);
     }
   }
+  {
+    ZtString<> s = "hello world";
+    ZuCheck(s.find([](char c) { return c == 'w'; }) == 6);
+    ZuCheck(s.find([](char c) { return c == 'z'; }) < 0);
+    ZuCheck(s.starts("hello"));
+    ZuCheck(s.starts(ZuCSpan{"hello"}));
+    ZuCheck(!s.starts("world"));
+  }
 }
 
 int main(int argc, char **argv)

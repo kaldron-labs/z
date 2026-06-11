@@ -90,6 +90,27 @@ template <unsigned N_> struct ZuString {
   friend ZuInline constexpr ZuIfT<ZuIs_<L, ZuString>{}, int>
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
+  template <typename L>
+  constexpr int64_t find(L &&l) const {
+    for (unsigned i = 0, n = length(); i < n; i++)
+      if (ZuFwd<L>(l)(data_[i])) return i;
+    return -1;
+  }
+
+  template <typename A>
+  ZuInline constexpr bool starts(const A &a) const {
+    if (ZuConstEval()) {
+      unsigned l = length();
+      unsigned n = ZuTraits<A>::length(a);
+      if (l < n) return false;
+      for (unsigned i = 0; i < n; i++)
+	if (data_[i] != a[i]) return false;
+      return true;
+    } else {
+      return cspan().starts(a);
+    }
+  }
+
   uint32_t hash() const { return Fn::hash(data(), length()); }
 
   friend ZuPrintString ZuPrintType(ZuString *);

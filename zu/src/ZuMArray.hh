@@ -143,6 +143,25 @@ friend Elem;
       ZuFwd<L>(l)((*this)[i]);
   }
 
+// find element - lambda should return true on match
+  template <typename L>
+  int64_t find(L &&l) const {
+    for (uint64_t i = 0, n = impl()->length(); i < n; i++)
+      if (ZuFwd<L>(l)((*this)[i])) return i;
+    return -1;
+  }
+
+// match at start
+  template <typename A>
+  bool starts(const A &a) const {
+    uint64_t l = impl()->length();
+    uint64_t n = ZuTraits<A>::length(a);
+    if (l < n) return false;
+    for (uint64_t i = 0; i < n; i++)
+      if (!(R((*this)[i]) == a[i])) return false;
+    return true;
+  }
+
   bool operator !() const { return !impl()->length(); }
   ZuOpBool
 

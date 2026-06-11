@@ -557,6 +557,29 @@ public:
     for (unsigned i = 0, n = length_; i < n; i++) ZuFwd<L>(l)(data_[i]);
   }
 
+// find element - lambda should return true on match
+  template <typename L>
+  constexpr int64_t find(L &&l) const {
+    for (unsigned i = 0, n = length_; i < n; i++)
+      if (ZuFwd<L>(l)((*this)[i])) return i;
+    return -1;
+  }
+
+// match at start
+  template <typename A>
+  constexpr bool starts(const A &a) const {
+    if (ZuConstEval()) {
+      unsigned l = length();
+      unsigned n = ZuTraits<A>::length(a);
+      if (l < n) return false;
+      for (unsigned i = 0; i < n; i++)
+	if (!Cmp::equals((*this)[i], a[i])) return false;
+      return true;
+    } else {
+      return cspan().starts(a);
+    }
+  }
+
 // reset to null
 
   constexpr void clear() { null(); }
