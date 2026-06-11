@@ -10,10 +10,10 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh Zhttp3.hh ZhttpHPack.hh ZhttpQPack.hh
+pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpHPack.hh ZhttpQPack.hh
 lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
-libZhttp_la_SOURCES = ZhttpLib.cc Zhttp3.cc ZhttpHPack.cc ZhttpQPack.cc
+libZhttp_la_SOURCES = ZhttpLib.cc ZhttpHPack.cc ZhttpQPack.cc
 libZhttp_la_LIBADD = \
 	$(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/ztls/src/libZtls.la \

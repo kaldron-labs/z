@@ -163,6 +163,24 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
   ZuCHECK(!stream, "stream still has data after full response");
 }
 
+void testCanonicalContentLengthHeader()
+{
+  ZuTestScope(testCanonicalContentLengthHeader);
+
+  ResponseParser parser;
+  RxStream stream;
+  stream.push(mkBuf(
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Length: 5\r\n"
+    "\r\n"
+    "hello"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
+    "canonical content-length response completed");
+  ZuCHECK(parser.contentLengthSeen == 5,
+    "canonical content-length was parsed");
+  ZuCHECK(parser.bodyData == "hello", "canonical content-length body parsed");
+}
+
 void testResponseStartLineFragmentedAcrossManyRxBuffers()
 {
   ZuTestScope(testResponseStartLineFragmentedAcrossManyRxBuffers);
@@ -285,6 +303,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testSelectedHeaderValueSplitAcrossRxBuffers);
+  ZuTestCall(testCanonicalContentLengthHeader);
   ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testRequestStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testChunkedBodyAcrossRxBuffers);

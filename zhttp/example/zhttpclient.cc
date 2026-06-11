@@ -18,6 +18,7 @@
 
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
+#include <zlib/Zquic.hh>
 
 #include <zlib/Zhttp.hh>
 
@@ -25,12 +26,16 @@ struct Options {
  ZuCSpan	ca;
  ZuCSpan	output{"index.html"};
  ZuCSpan	url;
+ bool		http3 = false;
+ bool		http3Only = false;
  bool		help = false;
 };
 
 ZtStruct((Options, CLI),
   (((ca),     (CLI::Opt<'c'>, CLI::Long<"ca">)),     (String)),
   (((output), (CLI::Opt<'o'>, CLI::Long<"output">)), (String, "index.html")),
+  (((http3),  (CLI::Long<"http3">)),                 (Bool)),
+  (((http3Only), (CLI::Long<"http3-only">)),          (Bool)),
   (((url),    (CLI::Arg<1>)),                        (String)),
   (((help),   (CLI::Flag<'h'>, CLI::Long<"help">)),  (Bool)));
 
@@ -41,14 +46,17 @@ void usage(int code = 1)
     "Options:\n"
     "  -c, --ca=PATH       CA path for https:\n"
     "  -o, --output=PATH   response body output path\n"
+    "      --http3         try HTTP/3, fall back to HTTP/1.1\n"
+    "      --http3-only    force HTTP/3, do not fall back\n"
     "  -h, --help          show help\n" << std::flush;
   ::exit(code);
 }
 
 using RequestHeaders = ZhttpHeaders(
-  ("user-agent", "zhttpclient/1.0"),
-  ("accept", "*/*"));
+  "user-agent",
+  "accept");
 using ResponseHeaders = ZhttpHeaders(
+  "alt-svc",
   "content-type",
   "location",
   "server");
@@ -56,22 +64,51 @@ using ResponseHeaders = ZhttpHeaders(
 struct URL {
   ZuCSpan	scheme;
   ZtString<>	host;
+  Zi::Hostname	dnsHost;
   uint16_t	port = 0;
   ZtString<>	target;
 };
 
+namespace Protocol {
+  ZtEnum(Protocol, int8_t, H1, H3);
+}
+
 struct State {
   URL		url;
   Options	options;
+  Protocol::T	protocol = Protocol::H1;
+  Zhttp::H3::CxnState::T h3State = Zhttp::H3::CxnState::Init;
+  ZtString<>	altSvcHost;
+  uint16_t	altSvcPort = 0;
+  int64_t	responseStreamID = -1;
   ZiFile	bodyFile;
   int64_t	contentLength = -1;
   uint64_t	bodyBytes = 0;
   unsigned	bodyChunks = 0;
   bool		bodyFileOpen = false;
   bool		chunked = false;
+  bool		altSvcH3 = false;
   bool		framingLogged = false;
   bool		done = false;
 };
+
+struct AltSvcEndpoint {
+  ZtString<>	host;
+  Zi::Hostname	dnsHost;
+  uint16_t	port = 0;
+  bool		h3 = false;
+};
+
+void setHost(URL &url, ZuCSpan host)
+{
+  url.host = host;
+#ifndef _WIN32
+  url.dnsHost = host;
+#else
+  url.dnsHost.length(ZuUTF<wchar_t, char>::cvt(
+    ZuSpan<wchar_t>(url.dnsHost.data(), url.dnsHost.size() - 1), host));
+#endif
+}
 
 bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
 {
@@ -113,50 +150,142 @@ bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
     if (!host || !port) return fail("invalid URL authority");
     unsigned p = ZuBox<unsigned>(port);
     if (!p || p > 65535) return fail("invalid URL port");
-    url.host = host;
+    setHost(url, host);
     url.port = p;
     url.target = target;
     return true;
   }
 
-  url.host = authority;
+  setHost(url, authority);
   url.target = target;
   return true;
 }
 
-struct RequestBuilder :
-  public Zhttp::H1::Builder<RequestBuilder, RequestHeaders> {
-  using Base = Zhttp::H1::Builder<RequestBuilder, RequestHeaders>;
+void splitTarget(ZuCSpan target, ZuCSpan &path, ZuCSpan &query)
+{
+  path = target;
+  query = {};
+  if (auto i = target.find([](auto c) { return c == '?'; }); i >= 0) {
+    path.trunc(i);
+    query = target;
+    query.offset(i + 1);
+  }
+  if (!path) path = "/";
+}
 
-  RequestBuilder(const State &state_) : state{&state_} { }
+bool parsePort(ZuCSpan s, uint16_t &port)
+{
+  unsigned p = ZuBox<unsigned>(s);
+  if (!p || p > 65535) return false;
+  port = p;
+  return true;
+}
+
+bool parseAltSvc(State &state, ZuCSpan value)
+{
+  if (value.starts("clear")) return false;
+  int h = -1;
+  for (unsigned i = 0; i + 3 <= value.length(); ++i) {
+    if (value[i] == 'h' && value[i + 1] == '3' && value[i + 2] == '=') {
+      h = i;
+      break;
+    }
+  }
+  if (h < 0) return false;
+  ZuCSpan rest = value;
+  rest.offset(h + 3);
+  if (!rest || rest[0] != '"') return false;
+  rest.offset(1);
+  int q = rest.find([](auto c) { return c == '"'; });
+  if (q < 0) return false;
+  ZuCSpan authority = rest;
+  authority.trunc(q);
+  if (!authority) return false;
+
+  ZuCSpan host = state.url.host;
+  uint16_t port = state.url.port;
+  if (authority[0] == ':') {
+    ZuCSpan port_ = authority;
+    port_.offset(1);
+    if (!parsePort(port_, port)) return false;
+  } else {
+    host = authority;
+    if (auto i = authority.find([](auto c) { return c == ':'; }); i >= 0) {
+      host = authority;
+      host.trunc(i);
+      ZuCSpan port_ = authority;
+      port_.offset(i + 1);
+      if (!host || !parsePort(port_, port)) return false;
+    }
+  }
+
+  state.altSvcHost = host;
+  state.altSvcPort = port;
+  state.altSvcH3 = true;
+  return true;
+}
+
+struct RequestOps {
+  RequestOps(const State &state_) : state{&state_} { }
 
   template <typename L>
   void operation(L &&l) {
-    ZuCSpan target = state->url.target;
-    ZuCSpan path = target;
+    ZuCSpan path;
     ZuCSpan query;
-    if (auto i = target.find([](auto c) { return c == '?'; }); i >= 0) {
-      path.trunc(i);
-      query = target;
-      query.offset(i + 1);
-    }
-    if (!path) path = "/";
+    splitTarget(state->url.target, path, query);
     l(Zhttp::Method::GET, path, query);
   }
   template <typename L>
   void host(L &&l) { l(ZuCSpan{state->url.host}); }
+  template <typename Key, typename L>
+  void header(L &&l) {
+    if constexpr (ZuIsSame<Key, ZuStringT<"user-agent">>{})
+      l("zhttpclient/1.0");
+    else if constexpr (ZuIsSame<Key, ZuStringT<"accept">>{})
+      l("*/*");
+    else
+      l("");
+  }
 
   const State *state = nullptr;
 };
 
+template <template <typename, typename> typename Builder>
+struct RequestBuilder :
+  public Builder<RequestBuilder<Builder>, RequestHeaders>,
+  public RequestOps
+{
+  using Base = Builder<RequestBuilder<Builder>, RequestHeaders>;
+
+  RequestBuilder(const State &state_) : RequestOps{state_} { }
+
+  using RequestOps::host;
+  using RequestOps::header;
+  using RequestOps::operation;
+};
+template <typename Impl, typename Headers>
+using H1RequestBuilder_ = Zhttp::H1::Builder<Impl, Headers>;
+using H1RequestBuilder = RequestBuilder<H1RequestBuilder_>;
+template <typename Impl, typename Headers>
+using H3RequestBuilder_ = Zhttp::H3::Builder<Impl, Headers>;
+using H3RequestBuilder = RequestBuilder<H3RequestBuilder_>;
+
 template <typename StreamRef>
-void sendRequest(State &state, StreamRef stream)
+void sendH1Request(State &state, StreamRef stream)
 {
   auto tx = stream->txStream();
-  RequestBuilder builder{state};
+  H1RequestBuilder builder{state};
   builder.request(tx);
   builder.finish(tx);
   tx << Zi::flush();
+}
+
+template <typename StreamRef>
+void sendH3Request(State &state, StreamRef stream)
+{
+  H3RequestBuilder builder{state};
+  builder.request(*stream);
+  builder.finish(*stream);
 }
 
 void logFraming(State &state)
@@ -174,12 +303,8 @@ void logFraming(State &state)
 }
 
 template <typename Link>
-struct ResponseParser :
-  public Zhttp::H1::Parser<ResponseParser<Link>, false, ResponseHeaders, 100<<20> {
-  using Base =
-    Zhttp::H1::Parser<ResponseParser<Link>, false, ResponseHeaders, 100<<20>;
-
-  ResponseParser(Link *link_, State *state_) : link{link_}, state{state_} { }
+struct ResponseSink {
+  ResponseSink(Link *link_, State *state_) : link{link_}, state{state_} { }
 
   void status(unsigned status) {
     std::cerr << "status: " << status << '\n' << std::flush;
@@ -191,6 +316,11 @@ struct ResponseParser :
 
   template <typename Key>
   void header(ZuBSpan value) {
+    if constexpr (ZuIsSame<Key, ZuStringT<"alt-svc">>{}) {
+      if (parseAltSvc(*state, ZuCSpan(value)))
+	std::cerr << "alt-svc: h3=\"" << state->altSvcHost << ':' <<
+	  state->altSvcPort << "\"\n" << std::flush;
+    }
     std::cerr << "header " << Key{}() << ": " << ZuCSpan(value) <<
       '\n' << std::flush;
   }
@@ -219,7 +349,8 @@ struct ResponseParser :
     std::cerr << "body chunk: " << span.length() << " bytes\n" << std::flush;
   }
 
-  void complete(Zhttp::H1::ParserState::T) {
+  template <typename ParserState>
+  void complete(ParserState) {
     std::cerr << "body complete: " << state->bodyBytes << " bytes in " <<
       state->bodyChunks << " chunks\n" << std::flush;
     state->done = true;
@@ -229,14 +360,56 @@ struct ResponseParser :
   State		*state = nullptr;
 };
 
-template <typename Link, typename Stream>
+template <
+  typename Link,
+  template <typename, bool, typename, uint64_t> typename Parser>
+struct ResponseParser :
+  public Parser<ResponseParser<Link, Parser>, false, ResponseHeaders, (100<<20)>,
+  public ResponseSink<Link> {
+  using ParserBase =
+    Parser<ResponseParser<Link, Parser>, false, ResponseHeaders, (100<<20)>;
+  using SinkBase = ResponseSink<Link>;
+  using State = typename ParserBase::State;
+
+  ResponseParser(Link *link_, ::State *state_) : SinkBase{link_, state_} { }
+
+  using SinkBase::body;
+  using SinkBase::chunked;
+  using SinkBase::complete;
+  using SinkBase::contentLength;
+  using SinkBase::header;
+  using SinkBase::status;
+};
+
+template <typename Impl, bool Request, typename Headers, uint64_t MaxBody>
+using H1ResponseParser_ =
+  Zhttp::H1::Parser<Impl, Request, Headers, MaxBody>;
+template <typename Link>
+using H1ResponseParser = ResponseParser<Link, H1ResponseParser_>;
+
+template <typename Impl, bool Request, typename Headers, uint64_t MaxBody>
+using H3ResponseParser_ =
+  Zhttp::H3::Parser<Impl, Request, Headers, MaxBody>;
+template <typename Link>
+using H3ResponseParser = ResponseParser<Link, H3ResponseParser_>;
+
+template <typename Link, bool H3> struct ResponseParser_;
+template <typename Link> struct ResponseParser_<Link, false> {
+  using T = H1ResponseParser<Link>;
+};
+template <typename Link> struct ResponseParser_<Link, true> {
+  using T = H3ResponseParser<Link>;
+};
+
+template <bool H3, typename Link, typename Stream>
 int processResponse(Link &link, State &state, Stream &rx)
 {
-  if (!link.parser) link.parser = new ResponseParser<Link>{&link, &state};
+  using Parser = typename ResponseParser_<Link, H3>::T;
+  if (!link.parser) link.parser = new Parser{&link, &state};
   auto parserState = link.parser->process(rx);
   if (state.done) return -1;
-  if (parserState == Zhttp::H1::ParserState::Error) return -1;
-  if (parserState != Zhttp::H1::ParserState::Complete) return 0;
+  if (parserState == Parser::State::Error) return -1;
+  if (parserState != Parser::State::Complete) return 0;
   return 1;
 }
 
@@ -256,10 +429,46 @@ void logConnected(const State &state, Zi::Connected info)
   std::cerr << ")\n" << std::flush;
 }
 
-template <typename App_, typename Base_>
+template <typename Link>
+bool openH3LocalStreams(Link &link, State &state)
+{
+  auto control = link.stream(Zi::StreamType::Simplex);
+  if (!control) return false;
+  {
+    auto tx = control->txStream();
+    Zhttp::H3::TxBytes out{tx};
+    if (Zhttp::H3::putVar(out, 0x00) < 0 ||
+	Zhttp::H3::writeFrameHeader(tx, 0x04, 0) < 0)
+      return false;
+    tx.flush();
+  }
+  state.h3State = Zhttp::H3::CxnState::LocalControlOpen;
+
+  auto enc = link.stream(Zi::StreamType::Simplex);
+  auto dec = link.stream(Zi::StreamType::Simplex);
+  if (!enc || !dec) return false;
+  {
+    auto tx = enc->txStream();
+    Zhttp::H3::TxBytes out{tx};
+    if (Zhttp::H3::putVar(out, 0x02) < 0) return false;
+    tx.flush();
+  }
+  {
+    auto tx = dec->txStream();
+    Zhttp::H3::TxBytes out{tx};
+    if (Zhttp::H3::putVar(out, 0x03) < 0) return false;
+    tx.flush();
+  }
+  state.h3State = Zhttp::H3::CxnState::Ready;
+  return true;
+}
+
+template <typename App_, typename Base_, bool H3_ = false>
 struct CliLink : public Base_ {
   using App = App_;
   using Base = Base_;
+  enum { H3 = H3_ };
+  using Parser = typename ResponseParser_<CliLink, H3>::T;
 
   using Base::Base;
 
@@ -268,12 +477,24 @@ struct CliLink : public Base_ {
 
   void connected(Zi::Connected info) {
     logConnected(this->app()->state, info);
-    typename Base::StreamRef stream = this->stream();
+    typename Base::StreamRef stream;
+    if constexpr (H3) {
+      if (!openH3LocalStreams(*this, this->app()->state)) {
+	this->app()->done();
+	return;
+      }
+      stream = this->stream(Zi::StreamType::Duplex);
+      this->app()->state.responseStreamID = stream ? stream->id() : -1;
+    } else
+      stream = this->stream();
     if (!stream) {
       this->app()->done();
       return;
     }
-    sendRequest(this->app()->state, stream);
+    if constexpr (H3)
+      sendH3Request(this->app()->state, stream);
+    else
+      sendH1Request(this->app()->state, stream);
   }
   void disconnected() {
     std::cerr << "disconnected\n" << std::flush;
@@ -286,10 +507,10 @@ struct CliLink : public Base_ {
   }
   template <typename Rx>
   int process(Rx &rx) {
-    return processResponse(*this, this->app()->state, rx);
+    return processResponse<H3>(*this, this->app()->state, rx);
   }
 
-  ResponseParser<CliLink> *parser = nullptr;
+  Parser	*parser = nullptr;
 };
 
 template <
@@ -319,22 +540,71 @@ struct Client : public Client_<App> {
 struct TCPClient : public Client<TCPClient, Ztcp::Client, Ztcp::CliLink> { };
 struct TLSClient : public Client<TLSClient, Ztls::Client, Ztls::CliLink> { };
 
+struct QUICClient : public Zquic::Client<QUICClient> {
+  struct Link;
+  struct Stream;
+
+  ZmSemaphore sem;
+  State state;
+
+  void done() { sem.post(); }
+  unsigned reconnFreq() const { return 0; }
+  uint64_t maxStreamsBidi() const { return 16; }
+  uint64_t maxStreamsUni() const { return 16; }
+};
+
+struct QUICClient::Stream :
+  public Zquic::CliStream<QUICClient::Link, QUICClient::Stream> {
+  using Base = Zquic::CliStream<QUICClient::Link, QUICClient::Stream>;
+  using Base::Base;
+
+  int process(Zquic::RxStream &);
+};
+
+struct QUICClient::Link :
+  public CliLink<QUICClient,
+    Zquic::CliLink<QUICClient, QUICClient::Link, QUICClient::Stream>, true> {
+  using Base = CliLink<QUICClient,
+    Zquic::CliLink<QUICClient, QUICClient::Link, QUICClient::Stream>, true>;
+  using Base::Base;
+
+  void streamed(ZmRef<Stream>) { }
+};
+
+int QUICClient::Stream::process(Zquic::RxStream &)
+{
+  if (this->id() != this->link()->app()->state.responseStreamID) return 0;
+  return this->link()->process(*this);
+}
+
 template <typename Client>
-int run(ZiMultiplex &mx, const Options &options, URL url) {
+int run(
+  ZiMultiplex &mx, const Options &options, URL url,
+  AltSvcEndpoint *altSvc = nullptr) {
   Client client;
   client.state.url = ZuMv(url);
-  client.state.options.output = options.output;
+  client.state.options = options;
 
   if constexpr (Client::Transport == Zi::Transport::TCP) {
+    client.state.protocol = Protocol::H1;
     if (!client.init(Ztcp::ClientParams(&mx, "3", "4"))) {
       std::cerr << "TCP client initialization failed\n" << std::flush;
       return 1;
     }
   } else if constexpr (Client::Transport == Zi::Transport::TLS) {
+    client.state.protocol = Protocol::H1;
     ZuCSpan alpn[] = { "http/1.1" };
     if (!client.init(
 	  Ztls::ClientParams(&mx, "3", "4").alpn(alpn).caPath(options.ca))) {
       std::cerr << "TLS client initialization failed\n" << std::flush;
+      return 1;
+    }
+  } else if constexpr (Client::Transport == Zi::Transport::QUIC) {
+    client.state.protocol = Protocol::H3;
+    ZuCSpan alpn[] = { "h3" };
+    if (!client.init(
+	  Zquic::ClientParams(&mx, "3", "4").alpn(alpn).caPath(options.ca))) {
+      std::cerr << "QUIC client initialization failed\n" << std::flush;
       return 1;
     }
   }
@@ -344,6 +614,12 @@ int run(ZiMultiplex &mx, const Options &options, URL url) {
     ZmRef<Link> link = new Link(&client);
     link->connect(client.state.url.host, client.state.url.port);
     client.sem.wait();
+  }
+  if (altSvc && client.state.altSvcH3) {
+    altSvc->host = client.state.altSvcHost;
+    altSvc->dnsHost = client.state.url.dnsHost;
+    altSvc->port = client.state.altSvcPort;
+    altSvc->h3 = true;
   }
   client.final();
   return 0;
@@ -361,6 +637,29 @@ ZiMxParams mxParams()
     .rxThread(1).txThread(2);
 }
 
+bool resolveForQUIC(const URL &url)
+{
+  ZiIP ips[8];
+  unsigned n = 0;
+  ZeError e;
+  int rc = Zi::resolve(url.dnsHost,
+    ZmFn<bool(ZiIP)>{[&ips, &n](ZiIP ip) {
+      for (unsigned i = 0; i < n; ++i)
+	if (ips[i] == ip) return true;
+      if (n < 8) ips[n++] = ip;
+      return n < 8;
+    }}, &e);
+  if (rc != Zi::OK || !n) {
+    std::cerr << "DNS resolution failed for " << url.host << '\n' <<
+      std::flush;
+    return false;
+  }
+  std::cerr << "DNS: " << url.host << " resolved to";
+  for (unsigned i = 0; i < n; ++i) std::cerr << ' ' << ips[i];
+  std::cerr << '\n' << std::flush;
+  return true;
+}
+
 int main(int argc, char **argv)
 {
   Options options;
@@ -373,6 +672,11 @@ int main(int argc, char **argv)
   if (!parseURL(options.url, url, &error)) {
     ZiLogEvent(ZuMv(error));
     usage();
+  }
+  if (options.http3Only) options.http3 = true;
+  if (url.scheme == "http" && options.http3) {
+    std::cerr << "HTTP/3 requires https:// URL\n" << std::flush;
+    return 1;
   }
 
   ZiLog::init("zhttpclient");
@@ -389,8 +693,21 @@ int main(int argc, char **argv)
   int rc;
   if (url.scheme == "http")
     rc = run<TCPClient>(mx, options, ZuMv(url));
-  else
-    rc = run<TLSClient>(mx, options, ZuMv(url));
+  else if (options.http3) {
+    URL fallbackURL = url;
+    rc = resolveForQUIC(url) ? run<QUICClient>(mx, options, ZuMv(url)) : 1;
+    if (rc && !options.http3Only)
+      rc = run<TLSClient>(mx, options, ZuMv(fallbackURL));
+  } else {
+    URL h1URL = url;
+    AltSvcEndpoint altSvc;
+    rc = run<TLSClient>(mx, options, ZuMv(url), &altSvc);
+    if (!rc && altSvc.h3 && altSvc.host == h1URL.host && altSvc.port) {
+      h1URL.port = altSvc.port;
+      if (resolveForQUIC(h1URL))
+	rc = run<QUICClient>(mx, options, ZuMv(h1URL));
+    }
+  }
 
   mx.stop();
   ZiLog::stop();

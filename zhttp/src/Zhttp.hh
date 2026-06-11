@@ -5,7 +5,8 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Z http library
-// - HTTP 1.1
+// - HTTP 1.1 and HTTP/3
+// - HTTP 1.1:
 //   - optionally chunked body
 //   - optional chunked trailers (rarely used feature)
 // - caller is responsible for body decompression (if required)
@@ -266,7 +267,7 @@ struct Impl : public Parser<Impl, ...> {
 
 namespace H1 {
 
-  namespace ParserState {
+  struct ParserState {
     ZtEnum(ParserState, int8_t,
       Initial,		// first line - request operation or response status
       Headers,		// reading headers
@@ -277,7 +278,7 @@ namespace H1 {
       Trailers,		// trailers after final chunk
       Complete,		// message completely read
       Error);		// invalid message
-  }
+  };
 
   template <
     typename Impl,
@@ -295,6 +296,7 @@ namespace H1 {
     using Keys = ZuTypeSlice<2, 0, Headers>;
     using Values = ZuTypeSlice<2, 1, Headers>;
     static constexpr uint64_t MaxBody = MaxBody_;
+    using State = ParserState;
 
   private:
     // process header with variable value
@@ -322,13 +324,13 @@ namespace H1 {
 	  return true;
 	});
 	if (invalid) {
-	  m_state = ParserState::Error;
+	  m_state = State::Error;
 	  ZiLOG(Error, "Zhttp", "invalid transfer-encoding");
 	}
       } else if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
 	uint64_t contentLength = ZuBox<uint64_t>{ZuCSpan{value}};
 	if (contentLength > MaxBody) {
-	  m_state = ParserState::Error;
+	  m_state = State::Error;
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
 	} else {
 	  m_contentLength = contentLength;
@@ -339,8 +341,22 @@ namespace H1 {
       }
     }
 
+    static bool headerKey_(ZuBSpan key, ZuCSpan name) {
+      return key.length() == name.length() &&
+	!Zu::stricmp_(
+	  reinterpret_cast<const char *>(key.data()), name.data(), key.length());
+    }
+
     // process header key/value
     void header_(ZuBSpan key, ZuBSpan value) {
+      if (headerKey_(key, "transfer-encoding")) {
+	this->template header_<ZuStringT<"transfer-encoding">>(value);
+	return;
+      }
+      if (headerKey_(key, "content-length")) {
+	this->template header_<ZuStringT<"content-length">>(value);
+	return;
+      }
       if constexpr (Keys::N) {
 	static constexpr auto kMatcher = ZuMatcher<Keys>();
 	auto i = kMatcher.match(key);
@@ -368,7 +384,7 @@ namespace H1 {
     // parse request operation line
     void parseOperation(ZuCSpan line) {
       auto error = [this]() {
-	m_state = ParserState::Error;
+	m_state = State::Error;
 	ZiLOG(Error, "Zhttp", "invalid HTTP operation");
       };
       unsigned n = line.length();
@@ -384,13 +400,13 @@ namespace H1 {
       b = ++o;
       if (ZuUnlikely(b >= n)) { error(); return; } // missing protocol
       impl()->operation(method, path);
-      m_state = ParserState::Headers;
+      m_state = State::Headers;
     }
 
     // parse response status line
     void parseStatus(ZuCSpan line) {
       auto error = [this]() {
-	m_state = ParserState::Error;
+	m_state = State::Error;
 	ZiLOG(Error, "Zhttp", "invalid HTTP response status");
       };
       unsigned n = line.length();
@@ -409,20 +425,20 @@ namespace H1 {
       }
       if (ZuUnlikely(b == unsigned(o) || o >= int(n))) { error(); return; }
       impl()->status(code);
-      m_state = ParserState::Headers;
+      m_state = State::Headers;
     }
 
   public:
     // top-level process
     template <typename Stream>
-    ParserState::T process(Stream &stream) {
+    State::T process(Stream &stream) {
       int64_t consumed = 0;
       do {
 	consumed = 0;
 	switch (m_state) {
 	  default:
 	    break;
-	  case ParserState::Initial: { // parse first line
+	  case State::Initial: { // parse first line
 	    consumed = parseLine<false>(stream, [this](ZuSpan<uint8_t> line) {
 	      if constexpr (Request)
 		parseOperation(line);
@@ -430,38 +446,38 @@ namespace H1 {
 		parseStatus(line);
 	    });
 	  } break;
-	  case ParserState::Headers: { // parse headers
+	  case State::Headers: { // parse headers
 	    consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line) {
 		if (m_chunked) {
-		  m_state = ParserState::ChunkHdr;
+		  m_state = State::ChunkHdr;
 		  m_contentLength = 0;
 		} else if (m_contentLength > 0)
-		  m_state = ParserState::Body;
+		  m_state = State::Body;
 		else
-		  m_state = ParserState::Complete;
+		  m_state = State::Complete;
 	      } else
 		if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
 		  this->header_(key, value);
 		}))
-		  m_state = ParserState::Error;
+		  m_state = State::Error;
 	    });
 	  } break;
-	  case ParserState::Body: { // parse body
+	  case State::Body: { // parse body
 	    consumed = stream.consume(
 	      [this](ZuBSpan span) {
 		auto n = span.length();
 		if (n > m_contentLength) n = m_contentLength;
-		if (!(m_contentLength -= n)) m_state = ParserState::Complete;
+		if (!(m_contentLength -= n)) m_state = State::Complete;
 		return n;
 	      }, [this](ZuBSpan span) { impl()->body(span); });
 	    } break;
-	  case ParserState::ChunkHdr: { // parse chunk header
+	  case State::ChunkHdr: { // parse chunk header
 	    consumed = stream.template consume<2, ZuStringT<"Zhttp.ChunkHdr">>(
 	      crlf<false>(), [this](ZuSpan<uint8_t> span) {
-		if (!span) { m_state = ParserState::Complete; return; }
+		if (!span) { m_state = State::Complete; return; }
 		auto error = [this]() {
-		  m_state = ParserState::Error;
+		  m_state = State::Error;
 		  ZiLOG(Error, "Zhttp", "invalid chunk-length");
 		};
 		ZuBox<uint64_t> l;
@@ -470,33 +486,33 @@ namespace H1 {
 		// span.offset(n); // chunk extensions are ignored
 		m_chunkLength = l;
 		if (!m_chunkLength) {
-		  m_state = ParserState::Trailers;
+		  m_state = State::Trailers;
 		  return;
 		}
 		if (m_chunkLength > MaxBody) { error(); return; }
 		if ((m_contentLength += m_chunkLength) > MaxBody) { error(); return; }
-		m_state = ParserState::Chunk;
+		m_state = State::Chunk;
 	      });
 	  } break;
-	  case ParserState::Chunk: { // parse chunk data
+	  case State::Chunk: { // parse chunk data
 	    consumed = stream.consume(
 	      [this](ZuBSpan span) {
 		auto n = span.length();
 		if (n > m_chunkLength) n = m_chunkLength;
-		if (!(m_chunkLength -= n)) m_state = ParserState::ChunkTrlr;
+		if (!(m_chunkLength -= n)) m_state = State::ChunkTrlr;
 		return n;
 	      }, [this](ZuBSpan span) { impl()->body(span); });
 	  } break;
-	  case ParserState::ChunkTrlr: { // parse trailing "\r\n"
+	  case State::ChunkTrlr: { // parse trailing "\r\n"
 	    consumed = stream.template consume<2, ZuStringT<"Zhttp.ChunkTrlr">>(
 	      [this, prevCR = false](ZuBSpan span) mutable -> int64_t {
 		auto error = [this]() {
-		  m_state = ParserState::Error;
+		  m_state = State::Error;
 		  ZiLOG(Error, "Zhttp", "invalid chunk trailer");
 		  return -1;
 		};
 		if (prevCR && span[0] == '\n') {
-		  m_state = ParserState::ChunkHdr;
+		  m_state = State::ChunkHdr;
 		  return 1;
 		}
 		if (span.length() == 1) {
@@ -504,24 +520,24 @@ namespace H1 {
 		  return error();
 		}
 		if (span[0] != '\r' || span[1] != '\n') return error();
-		m_state = ParserState::ChunkHdr;
+		m_state = State::ChunkHdr;
 		return 2;
 	      }, [](ZuBSpan) { });
 	  } break;
-	  case ParserState::Trailers: { // parse trailers
+	  case State::Trailers: { // parse trailers
 	    consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line)
-		m_state = ParserState::Complete;
+		m_state = State::Complete;
 	      else
 		if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
 		  this->header_(key, value);
 		}))
-		  m_state = ParserState::Error;
+		  m_state = State::Error;
 	    });
 	  } break;
 	}
-	if (m_state == ParserState::Complete ||
-	    m_state == ParserState::Error) {
+	if (m_state == State::Complete ||
+	    m_state == State::Error) {
 	  impl()->complete(m_state);
 	  break;
 	}
@@ -531,7 +547,7 @@ namespace H1 {
 
     // reset for next message
     void reset() {
-      m_state = ParserState::Initial;
+      m_state = State::Initial;
       m_chunked = false;
       m_contentLength = -1;
       m_chunkLength = -1;
@@ -546,13 +562,13 @@ namespace H1 {
     void xferCompression(XferCompression::T) { }
     void chunked() { }
     void body(ZuBSpan) { }
-    void complete(ParserState::T) { }
+    void complete(State::T) { }
 
   private:
-    int64_t		m_contentLength = -1;
-    int64_t		m_chunkLength = -1;
-    ParserState::T	m_state = ParserState::Initial;
-    bool		m_chunked = false;
+    int64_t	m_contentLength = -1;
+    int64_t	m_chunkLength = -1;
+    State::T	m_state = State::Initial;
+    bool	m_chunked = false;
   };
 
 } // H1
@@ -693,13 +709,13 @@ namespace H3 {
   // evaluates QPACK static table index I given <Key, Value>
   // - use <Key, void> for entries which are Key only
   // - evaluates to -1 if <Key, Value> are not in table
-  template <typename Key, typename Value, typename = void>
-  struct QPackIndex_ { using T = ZuInt<-1>; };
+  template <typename Key, typename Value,
+    bool = ZuTypeIn<ZuTypeList<Key, Value>, QPackTbl>{}>
+  struct QPackIndex_ {
+    using T = ZuInt<-1>;
+  };
   template <typename Key, typename Value>
-  struct QPackIndex_<
-    Key, Value,
-    decltype(ZuTypeIndex<ZuTypeList<Key, Value>, QPackTbl>(), void())>
-  {
+  struct QPackIndex_<Key, Value, true> {
     using T = ZuTypeIndex<ZuTypeList<Key, Value>, QPackTbl>;
   };
   template <typename Key, typename Value>
@@ -721,7 +737,7 @@ namespace H3 {
   template <typename KV>
   using QPackValue = typename QPackValue_<KV>::T;
 
-  namespace ParserState {
+  struct ParserState {
     ZtEnum(ParserState, int8_t,
       Initial,		// expecting first HEADERS frame
       Body,		// after initial HEADERS; accepting DATA or trailers
@@ -729,7 +745,7 @@ namespace H3 {
       Complete,		// stream FIN / closed cleanly
       Cancelled,	// RESET_STREAM / STOP_SENDING / app cancellation
       Error);		// invalid frame sequence or decode failure
-  }
+  };
 
   namespace FrameState {
     ZtEnum(FrameState, int8_t,
@@ -739,6 +755,14 @@ namespace H3 {
       LengthCont,	// reading remaining frame length bytes
       Payload);		// reading frame payload bytes
   }
+
+  template <bool Request> struct FieldState_ {
+    Method::T	method = -1;
+    ZuCSpan	path;
+  };
+  template <> struct FieldState_<false> {
+    int		status = -1;
+  };
 
   template <
     typename Impl,
@@ -755,6 +779,7 @@ namespace H3 {
     using HeaderKeys = ZuTypeSlice<2, 0, Headers>;
     using HeaderValues = ZuTypeSlice<2, 1, Headers>;
     static constexpr uint64_t MaxBody = MaxBody_;
+    using State = ParserState;
 
   private:
     int64_t consumeFrame_(ZuBSpan span) {
@@ -832,17 +857,10 @@ namespace H3 {
       return int(len);
     }
 
-    template <bool Request__> struct FieldState__ {
-      Method::T	method = -1;
-      ZuCSpan	path;
-    };
-    template <> struct FieldState__<false> {
-      int	status = -1;
-    };
-    using FieldState_ = FieldState__<Request>;
+    using FieldState = FieldState_<Request>;
 
     template <unsigned I>
-    bool staticHeader_(FieldState_ &fields, bool initial) {
+    bool staticHeader_(FieldState &fields, bool initial) {
       using KV = QPackKV<I>;
       using Key = ZuType<0, KV>;
       using Value = QPackValue<KV>;
@@ -853,7 +871,7 @@ namespace H3 {
     }
 
     bool qpackHeader_(
-      FieldState_ &fields, bool initial, ZuCSpan name, ZuCSpan value) {
+      FieldState &fields, bool initial, ZuCSpan name, ZuCSpan value) {
       if (!name) return false;
       if (name[0] == ':') {
 	if (!initial) return false;
@@ -908,7 +926,7 @@ namespace H3 {
       if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
 	uint64_t contentLength = ZuBox<uint64_t>{ZuCSpan{value}};
 	if (contentLength > MaxBody) {
-	  m_state = ParserState::Error;
+	  m_state = State::Error;
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
 	} else {
 	  m_contentLen = contentLength;
@@ -960,7 +978,7 @@ namespace H3 {
 	  decodePref_(payload, o, 7, base, &baseFirst) < 0 ||
 	  (baseFirst & 0x80) || base)
 	return false;
-      FieldState_ fields;
+      FieldState fields;
 
       while (o < payload.length()) {
 	uint8_t first = uint8_t(payload[o]);
@@ -1040,18 +1058,18 @@ namespace H3 {
       ZuCSpan payload{frameBytes.data() + o, unsigned(len)};
 
       if (type == 0x01) { // HEADERS
-	if (m_state == ParserState::Initial) {
+	if (m_state == State::Initial) {
 	  if (!parseFields_(payload, true)) return false;
-	  m_state = ParserState::Body;
+	  m_state = State::Body;
 	  return true;
 	}
-	if (m_state != ParserState::Body) return false;
+	if (m_state != State::Body) return false;
 	if (!bodyComplete_() || !parseFields_(payload, false)) return false;
-	m_state = ParserState::Trailers;
+	m_state = State::Trailers;
 	return true;
       }
       if (type == 0x00) { // DATA
-	if (m_state != ParserState::Body) return false;
+	if (m_state != State::Body) return false;
 	if (payload.length() > MaxBody || m_bodyLen > MaxBody - payload.length())
 	  return false;
 	m_bodyLen += payload.length();
@@ -1077,9 +1095,9 @@ namespace H3 {
   public:
     // top-level process
     template <typename Stream>
-    ParserState::T process(Stream &stream) {
+    State::T process(Stream &stream) {
       if (stream.resetReceived() || stream.stopReceived()) {
-	m_state = ParserState::Cancelled;
+	m_state = State::Cancelled;
 	impl()->complete(m_state);
 	return m_state;
       }
@@ -1092,32 +1110,32 @@ namespace H3 {
 	  [this](ZuBSpan span) {
 	    if (!this->processFrame_(ZuCSpan{
 		  reinterpret_cast<const char *>(span.data()), span.length()}))
-	      m_state = ParserState::Error;
+	      m_state = State::Error;
 	    m_frameState = FrameState::Type;
 	    m_varLen = m_varBytes = 0;
 	    m_frameLen = m_frameOff = 0;
 	  });
-	if (consumed < 0) m_state = ParserState::Error;
-	if (m_state == ParserState::Error) break;
+	if (consumed < 0) m_state = State::Error;
+	if (m_state == State::Error) break;
       } while (consumed);
 
       if (stream.finReceived() && rx.empty()) {
-	if (m_state == ParserState::Initial)
-	  m_state = ParserState::Error;
+	if (m_state == State::Initial)
+	  m_state = State::Error;
 	else if (!bodyComplete_())
-	  m_state = ParserState::Error;
-	else if (m_state != ParserState::Error)
-	  m_state = ParserState::Complete;
+	  m_state = State::Error;
+	else if (m_state != State::Error)
+	  m_state = State::Complete;
       }
-      if (m_state == ParserState::Complete ||
-	  m_state == ParserState::Cancelled ||
-	  m_state == ParserState::Error)
+      if (m_state == State::Complete ||
+	  m_state == State::Cancelled ||
+	  m_state == State::Error)
 	impl()->complete(m_state);
       return m_state;
     }
 
     void reset() {
-      m_state = ParserState::Initial;
+      m_state = State::Initial;
       m_contentLen = -1;
       m_bodyLen = 0;
       m_frameState = FrameState::Type;
@@ -1131,12 +1149,12 @@ namespace H3 {
     template <typename Key, typename Value> void header() { }
     void contentLength(uint64_t) { }
     void body(ZuBSpan) { }
-    void complete(ParserState::T) { }
+    void complete(State::T) { }
 
   private:
     int64_t		m_contentLen = -1;
     uint64_t		m_bodyLen = 0;
-    ParserState::T	m_state = ParserState::Initial;
+    State::T		m_state = State::Initial;
     FrameState::T	m_frameState = FrameState::Type;
     unsigned		m_varLen = 0;
     unsigned		m_varBytes = 0;
@@ -1574,13 +1592,13 @@ namespace H3 {
       ZuUnroll::all<HeaderKeys>([this, &out, &ok]<typename Key>() {
 	using Value = ZuType<ZuTypeIndex<Key, HeaderKeys>{}, HeaderValues>;
 	if constexpr (!ZuIsSame<Value, void>{}) {
-	  if (encodeKnownField<Out, Key{}, Value{}>(out) < 0) {
+	  if (encodeKnownField<Out, Key{}(), Value{}()>(out) < 0) {
 	    ZiLOG(Error, "Zhttp", "failed to encode H3 header");
 	    ok = false;
 	  }
 	} else {
 	  impl()->template header<Key>([&out, &ok]<typename V>(V &&v) {
-	    if (encodeVariableField<Out, Key{}>(
+	    if (encodeVariableField<Out, Key{}()>(
 		  out, ZuCSpan{ZuFwd<V>(v)}) < 0) {
 	      ZiLOG(Error, "Zhttp", "failed to encode H3 header");
 	      ok = false;

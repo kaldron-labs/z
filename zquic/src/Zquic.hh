@@ -2823,7 +2823,7 @@ private:
     if (!Base::deriveInitial_()) return false;
     if (!Base::initTLS_(CryptoConfig{
 	false, false, app()->firstALPN(), app()->caPath(), {}, {},
-	"localhost"}))
+	m_server}))
       return false;
     return true;
   }
