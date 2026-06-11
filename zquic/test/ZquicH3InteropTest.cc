@@ -86,7 +86,7 @@ struct RuntimeClient::Link :
 
   Link(RuntimeClient *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
   void connectFailed(bool) { ++connectFailures; }
   void streamed(ZmRef<Stream>) { }
@@ -114,7 +114,7 @@ struct RuntimeServerLink :
 
   RuntimeServerLink(RuntimeServer *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
   void streamed(ZmRef<Stream>) { }
 
@@ -163,7 +163,7 @@ struct H3RuntimeClient::Link :
 
   Link(H3RuntimeClient *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
   void connectFailed(bool) { ++connectFailures; }
   void streamed(ZmRef<Stream>) { }
@@ -242,7 +242,7 @@ struct H3RuntimeServerLink :
 
   H3RuntimeServerLink(H3RuntimeServer *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
   void streamed(ZmRef<Stream>) { }
 
@@ -369,7 +369,7 @@ void testRuntimeTrafficGuard()
   ZuCHECK(clientLink->crypto().negotiatedProtocol() == "h3" &&
       serverLink->crypto().negotiatedProtocol() == "h3",
     "H3 interop traffic guard ALPN mismatch");
-  auto requestStream = clientLink->stream(Zquic::StreamType::Bidi);
+  auto requestStream = clientLink->stream(Zi::StreamType::Duplex);
   ZuCHECK(clientLink->send(requestStream, "h3-lite-request"),
     "H3 interop traffic guard stream send failed");
   ZuCHECK(waitUntil([&serverLink]() {
@@ -456,8 +456,8 @@ void testRuntimeH3LiteRequestResponse()
 
   Zquic::H3Lite::Bytes control;
   ZuCHECK(writeControlStream_(control), "H3Lite control stream encode failed");
-  auto clientControl = clientLink->stream(Zquic::StreamType::Uni);
-  auto serverControl = serverLink->stream(Zquic::StreamType::Uni);
+  auto clientControl = clientLink->stream(Zi::StreamType::Simplex);
+  auto serverControl = serverLink->stream(Zi::StreamType::Simplex);
   ZuCHECK(clientLink->send(clientControl, bytesCSpan_(control)) &&
       serverLink->send(serverControl, bytesCSpan_(control)),
     "H3Lite runtime control stream send failed");
@@ -465,7 +465,7 @@ void testRuntimeH3LiteRequestResponse()
   Zquic::H3Lite::Bytes request;
   ZuCHECK(client.h3.request(request, "localhost", "/zquic-runtime") > 0,
     "H3Lite runtime request encode failed");
-  auto requestStream = clientLink->stream(Zquic::StreamType::Bidi);
+  auto requestStream = clientLink->stream(Zi::StreamType::Duplex);
   ZuCHECK(clientLink->send(requestStream, bytesCSpan_(request)),
     "H3Lite runtime request stream send failed");
 
@@ -631,14 +631,14 @@ void testZquicH3ClientCaddy()
   Zquic::H3Lite::Bytes control;
   ZuCHECK(writeControlStream_(control),
     "Zquic H3 client->Caddy control stream encode failed");
-  auto clientControl = clientLink->stream(Zquic::StreamType::Uni);
+  auto clientControl = clientLink->stream(Zi::StreamType::Simplex);
   ZuCHECK(clientLink->send(clientControl, bytesCSpan_(control)),
     "Zquic H3 client->Caddy control stream send failed");
 
   Zquic::H3Lite::Bytes request;
   ZuCHECK(client.h3.request(request, "localhost", "/zquic-interop") > 0,
     "Zquic H3 client->Caddy request encode failed");
-  auto requestStream = clientLink->stream(Zquic::StreamType::Bidi);
+  auto requestStream = clientLink->stream(Zi::StreamType::Duplex);
   ZuCHECK(clientLink->send(requestStream, bytesCSpan_(request)),
     "Zquic H3 client->Caddy request stream send failed");
 

@@ -24,9 +24,9 @@ struct StreamID {
   static bool uni(uint64_t id) { return id & 2; }
   static bool bidi(uint64_t id) { return !(id & 2); }
   static uint64_t ordinal(uint64_t id) { return id >> 2; }
-  static uint64_t make(bool server, StreamType::T type, uint64_t ordinal) {
+  static uint64_t make(bool server, Zi::StreamType::T type, uint64_t ordinal) {
     return (ordinal<<2) | (server ? 1U : 0U) |
-      (type == StreamType::Uni ? 2U : 0U);
+      (type == Zi::StreamType::Simplex ? 2U : 0U);
   }
 };
 
@@ -70,7 +70,7 @@ struct FlowUpdate {
   FrameType::T	type = FrameType::Unknown;
   uint64_t	streamID = 0;
   uint64_t	maximum = 0;
-  StreamType::T	streamType = StreamType::Bidi;
+  Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
 
   bool needed() const { return type != FrameType::Unknown; }
 
@@ -119,12 +119,12 @@ public:
 
   bool maxDataUpdate(FlowUpdate &update) {
     return update_(m_connection, m_dataWindow,
-      FlowUpdate{FrameType::MaxData, 0, 0, StreamType::Bidi}, update);
+      FlowUpdate{FrameType::MaxData, 0, 0, Zi::StreamType::Duplex}, update);
   }
 
   bool maxStreamDataUpdate(uint64_t streamID, FlowUpdate &update) {
     return update_(m_stream, m_streamWindow,
-      FlowUpdate{FrameType::MaxStreamData, streamID, 0, StreamType::Bidi},
+      FlowUpdate{FrameType::MaxStreamData, streamID, 0, Zi::StreamType::Duplex},
       update);
   }
 

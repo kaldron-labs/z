@@ -37,10 +37,10 @@ struct App : public Ztls::Server<App> {
   struct Link : public Ztls::SrvLink<App, Link> {
     Link(App *app) : Ztls::SrvLink<App, Link>(app) { }
 
-    void connected(const char *alpn, int tlsver) {
+    void connected(Zi::Connected info) {
       std::cerr << (ZuCArray<100>()
-	  << "TLS handshake completed (TLS: " << tlsver
-	  << " ALPN: " << alpn << ")\n")
+	  << "TLS handshake completed (TLS: " << info.version
+	  << " ALPN: " << info.alpn << ")\n")
 	<< std::flush;
     }
     void disconnected() {

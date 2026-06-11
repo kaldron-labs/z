@@ -28,6 +28,7 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTx.hh>
 #include <zlib/ZiTxStream.hh>
+#include <zlib/ZiTransport.hh>
 
 namespace Ztcp_ {
 
@@ -138,6 +139,8 @@ public:
   using Cxn = Cxn_;
   using CxnRef = CxnRef_;
   using Tx = ZiTx<Impl>;
+  using Stream = Impl;
+  using StreamRef = Impl *;
 
 friend Cxn;
 
@@ -149,6 +152,9 @@ friend Cxn;
 
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
+  StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
+    return type == Zi::StreamType::Duplex ? impl() : nullptr;
+  }
 
 private:
   void connected_0(Cxn *cxn, ZiIOContext &io) {
@@ -203,7 +209,7 @@ private:
     m_cxn = ZuMv(cxn);
     m_disconnecting = 0;
     m_rxStream.clean();
-    impl()->connected();
+    impl()->connected(Zi::Connected{.transport = Zi::Transport::TCP});
   }
 
   template <typename ImplRef_>
@@ -440,15 +446,18 @@ template <typename> friend class Server;
 };
 
 template <typename App_> class Engine {
-public:
-  using App = App_;
 template <typename, typename, typename, typename, typename, typename>
 friend class Link;
 template <typename, typename, typename, typename> friend class CliLink;
 template <typename, typename, typename, typename> friend class SrvLink;
 
+public:
+  using App = App_;
+
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
+
+  enum { Transport = Zi::Transport::TCP };
 
   bool init(EngineParams params) {
     return init_(ZuMv(params), [](const EngineParams &) { return true; });

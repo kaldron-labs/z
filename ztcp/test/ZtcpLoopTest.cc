@@ -35,6 +35,8 @@ struct State {
   ZmSemaphore		listening;
   ZmAtomic<unsigned>	errors{0};
   ZmAtomic<unsigned>	doneCount{0};
+  ZmAtomic<unsigned>	clientConnected{0};
+  ZmAtomic<unsigned>	serverConnected{0};
   unsigned		port = 0;
 
   void fail() {
@@ -113,7 +115,22 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
 
   Link(ClientApp *app) : Base(app) { }
 
-  void connected() { sendBytes(*this, Ping); }
+  void connected(Zi::Connected info) {
+    ZTCP_CHECK_RT(info.transport == Zi::Transport::TCP,
+      "client transport is not TCP");
+    ZTCP_CHECK_RT(info.version == 0, "client TCP version is non-zero");
+    ZTCP_CHECK_RT(!info.alpn, "client TCP ALPN is not empty");
+    ZTCP_CHECK_RT(this->stream() == this, "client bidi stream is not link");
+    ZTCP_CHECK_RT(
+      this->stream(Zi::StreamType::Simplex) == nullptr,
+      "client uni stream is not null");
+    typename Link::StreamRef stream = this->stream();
+    ZTCP_CHECK_RT(stream, "client stream ref is null");
+    auto tx = stream->txStream();
+    (void)tx;
+    app()->state->clientConnected = 1;
+    sendBytes(*this, Ping);
+  }
   void disconnected() { }
 
   int process(Ztcp::RxStream &rx) {
@@ -149,7 +166,21 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
 
   Link(ServerApp *app) : Base(app) { }
 
-  void connected() { }
+  void connected(Zi::Connected info) {
+    ZTCP_CHECK_RT(info.transport == Zi::Transport::TCP,
+      "server transport is not TCP");
+    ZTCP_CHECK_RT(info.version == 0, "server TCP version is non-zero");
+    ZTCP_CHECK_RT(!info.alpn, "server TCP ALPN is not empty");
+    ZTCP_CHECK_RT(this->stream() == this, "server bidi stream is not link");
+    ZTCP_CHECK_RT(
+      this->stream(Zi::StreamType::Simplex) == nullptr,
+      "server uni stream is not null");
+    typename Link::StreamRef stream = this->stream();
+    ZTCP_CHECK_RT(stream, "server stream ref is null");
+    auto tx = stream->txStream();
+    (void)tx;
+    app()->state->serverConnected = 1;
+  }
   void disconnected() { }
 
   int process(Ztcp::RxStream &rx) {
@@ -195,6 +226,8 @@ void testLoop()
   ZTCP_CHECK_RT(state.done.timedwait(Zm::now(5)) == 0, "loopback timed out");
   ZTCP_CHECK_RT(!state.errors.load_(), "loopback error");
   ZTCP_CHECK_RT(state.doneCount.load_() == 1, "client did not receive response");
+  ZTCP_CHECK_RT(state.clientConnected.load_(), "client did not connect");
+  ZTCP_CHECK_RT(state.serverConnected.load_(), "server did not connect");
 
   server.stopListening();
   client.final();

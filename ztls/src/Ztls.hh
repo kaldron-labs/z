@@ -29,6 +29,7 @@
 #include <zlib/ZiTx.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
+#include <zlib/ZiTransport.hh>
 
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsBackend.hh>
@@ -251,6 +252,8 @@ public:
   using Rx = ZiRx<Impl, RxBufAlloc>;
   using Tx = ZiTx<Impl>;
   using ImplRef = typename Cxn::LinkRef;
+  using Stream = Impl;
+  using StreamRef = Impl *;
 
 friend Cxn;
 
@@ -275,6 +278,9 @@ public:
 
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
+  StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
+    return type == Zi::StreamType::Duplex ? impl() : nullptr;
+  }
   TlsInfo tlsInfo() const {
     if (!m_tls || !m_handshook) return {};
     auto tls = const_cast<ptls_t *>(m_tls);
@@ -424,9 +430,12 @@ private:
     m_txSeqEst = 0;
     m_txControlPending = false;
     m_handshook = true;
-    impl()->connected(
-      ptls_get_negotiated_protocol(m_tls),
-      tlsver_(ptls_get_protocol_version(m_tls)));
+    const char *alpn = ptls_get_negotiated_protocol(m_tls);
+    impl()->connected(Zi::Connected{
+      .transport = Zi::Transport::TLS,
+      .alpn = alpn ? ZuCSpan{alpn, unsigned(strlen(alpn))} : ZuCSpan{},
+      .version = tlsver_(tlsver)
+    });
     return true;
   }
 
@@ -1228,15 +1237,18 @@ private:
 };
 
 template <typename App_> class Engine : public Random {
-public:
-  using App = App_;
 template <typename, typename, typename, typename, typename, typename>
 friend class Link;
 template <typename, typename, typename, typename> friend class CliLink;
 template <typename, typename, typename, typename> friend class SrvLink;
 
+public:
+  using App = App_;
+
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
+
+  enum { Transport = Zi::Transport::TLS };
 
   Engine() {
     memset(&m_ctx, 0, sizeof(m_ctx));
@@ -1685,7 +1697,7 @@ struct App : public Client<App> {
 
   struct Link : public CliLink<App, Link, RxBufAlloc, TxBufAlloc> {
     // Ztls Rx thread - handshake completed
-    void connected(const char *alpn, int tlsver);
+    void connected(Zi::Connected);
 
     void disconnected(); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread
@@ -1785,7 +1797,7 @@ struct App : public Server<App> {
 
   struct Link : public SrvLink<App, Link, RxBufAlloc, TxBufAlloc> {
     // Ztls Rx thread - handshake completed
-    void connected(const char *alpn);
+    void connected(Zi::Connected);
 
     void disconnected(); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread

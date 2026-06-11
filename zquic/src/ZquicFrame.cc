@@ -186,7 +186,7 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
     }
     if (t == 0x12 || t == 0x13) {
       f.type = FrameType::MaxStreams;
-      f.streamType = t == 0x12 ? StreamType::Bidi : StreamType::Uni;
+      f.streamType = t == 0x12 ? Zi::StreamType::Duplex : Zi::StreamType::Simplex;
       if (VarInt::decode(
 	    ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
 	return -1;
@@ -214,7 +214,7 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
       return 0;
     }
     f.type = FrameType::StreamsBlocked;
-    f.streamType = t == 0x16 ? StreamType::Bidi : StreamType::Uni;
+    f.streamType = t == 0x16 ? Zi::StreamType::Duplex : Zi::StreamType::Simplex;
     if (VarInt::decode(
 	  ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
       return -1;
@@ -424,11 +424,11 @@ int FrameCodec::writeMaxStreamData(
 }
 
 int FrameCodec::writeMaxStreams(
-  uint8_t *out, unsigned len, StreamType::T type, uint64_t maximum)
+  uint8_t *out, unsigned len, Zi::StreamType::T type, uint64_t maximum)
 {
   if (!len) return -1;
   unsigned o = 0;
-  out[o++] = type == StreamType::Bidi ? 0x12 : 0x13;
+  out[o++] = type == Zi::StreamType::Duplex ? 0x12 : 0x13;
   if (VarInt::put(out, len, maximum, o) < 0) return -1;
   return int(o);
 }
@@ -455,11 +455,11 @@ int FrameCodec::writeStreamDataBlocked(
 }
 
 int FrameCodec::writeStreamsBlocked(
-  uint8_t *out, unsigned len, StreamType::T type, uint64_t maximum)
+  uint8_t *out, unsigned len, Zi::StreamType::T type, uint64_t maximum)
 {
   if (!len) return -1;
   unsigned o = 0;
-  out[o++] = type == StreamType::Bidi ? 0x16 : 0x17;
+  out[o++] = type == Zi::StreamType::Duplex ? 0x16 : 0x17;
   if (VarInt::put(out, len, maximum, o) < 0) return -1;
   return int(o);
 }

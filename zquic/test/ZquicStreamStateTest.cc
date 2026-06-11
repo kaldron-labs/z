@@ -13,11 +13,11 @@ void testStreamHelpers()
 {
   ZuTestScope(testStreamHelpers);
 
-  uint64_t id = Zquic::StreamID::make(false, Zquic::StreamType::Bidi, 7);
+  uint64_t id = Zquic::StreamID::make(false, Zi::StreamType::Duplex, 7);
   ZuCHECK(id == 28 && Zquic::StreamID::client(id) &&
     Zquic::StreamID::bidi(id) && Zquic::StreamID::ordinal(id) == 7,
     "client bidi stream ID helper mismatch");
-  id = Zquic::StreamID::make(true, Zquic::StreamType::Uni, 2);
+  id = Zquic::StreamID::make(true, Zi::StreamType::Simplex, 2);
   ZuCHECK(id == 11 && Zquic::StreamID::server(id) && Zquic::StreamID::uni(id),
     "server uni stream ID helper mismatch");
 

@@ -61,7 +61,7 @@ struct RuntimeClient::Link :
 
   Link(RuntimeClient *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
   void connectFailed(bool) { ++connectFailures; }
   void streamed(ZmRef<Stream>) { ++streamedCount; }
@@ -92,7 +92,7 @@ struct RuntimeServerLink :
 
   RuntimeServerLink(RuntimeServer *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected) { ++connectedCount; }
   void disconnected() { ++disconnectedCount; }
   void streamed(ZmRef<Stream>) { ++streamedCount; }
 
@@ -317,13 +317,13 @@ void testRuntimeEndpointOpen()
   ZuCHECK(!serverLink->runtimeDiag().failures,
     "runtime server failure diagnostics mismatch");
 
-  auto clientBidi = clientLink->stream(Zquic::StreamType::Bidi);
-  auto clientUni = clientLink->stream(Zquic::StreamType::Uni);
+  auto clientBidi = clientLink->stream(Zi::StreamType::Duplex);
+  auto clientUni = clientLink->stream(Zi::StreamType::Simplex);
   ZuCHECK(clientLink->send(clientBidi, "client-bidi") &&
       clientLink->send(clientUni, "client-uni"),
     "runtime client stream send failed");
-  auto serverBidi = serverLink->stream(Zquic::StreamType::Bidi);
-  auto serverUni = serverLink->stream(Zquic::StreamType::Uni);
+  auto serverBidi = serverLink->stream(Zi::StreamType::Duplex);
+  auto serverUni = serverLink->stream(Zi::StreamType::Simplex);
   ZuCHECK(serverLink->send(serverBidi, "server-bidi") &&
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
@@ -439,8 +439,8 @@ void testRuntimeServerMultiConnection()
   }
   ZuCHECK(established, "multi runtime connections did not establish");
 
-  auto c0s = c0->stream(Zquic::StreamType::Bidi);
-  auto c1s = c1->stream(Zquic::StreamType::Bidi);
+  auto c0s = c0->stream(Zi::StreamType::Duplex);
+  auto c1s = c1->stream(Zi::StreamType::Duplex);
   ZuCHECK(c0->send(c0s, "zero") && c1->send(c1s, "one"),
     "multi runtime client stream sends failed");
   ZuCHECK(waitUntil([&s0, &s1]() {
@@ -457,8 +457,8 @@ void testRuntimeServerMultiConnection()
       return s0->closed() && !s0->established();
     }), "multi runtime server link did not close logically");
 
-  auto c0Stale = c0->stream(Zquic::StreamType::Bidi);
-  auto c1Live = c1->stream(Zquic::StreamType::Bidi);
+  auto c0Stale = c0->stream(Zi::StreamType::Duplex);
+  auto c1Live = c1->stream(Zi::StreamType::Duplex);
   ZuCHECK(c0->send(c0Stale, "drop") && c1->send(c1Live, "alive"),
     "multi runtime post-close client stream sends failed");
   ZuCHECK(waitUntil([&server, &s1, failures, s1Bytes]() {

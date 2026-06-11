@@ -46,6 +46,7 @@ struct ServerAppLink :
 
   ServerAppLink(ServerApp *app) : Base{app} { }
 
+  void connected(Zi::Connected) { }
   void streamed(ZmRef<ServerAppStream>) { }
 };
 
@@ -71,6 +72,7 @@ struct ClientShapeLink :
 
   ClientShapeLink(ClientShapeApp *app) : Base{app} { }
 
+  void connected(Zi::Connected) { }
   void streamed(ZmRef<ClientShapeStream>) { }
   void connectFailed(bool) { ++failures; }
   void disconnected() { ++disconnects; }
@@ -102,6 +104,7 @@ struct ServerShapeLink :
 
   ServerShapeLink(ServerShapeApp *app) : Base{app} { }
 
+  void connected(Zi::Connected) { }
   void streamed(ZmRef<ServerShapeStream>) { }
 };
 
@@ -208,7 +211,7 @@ void testStreamShape()
   TestLink server{&app, true};
 
   auto c0 = client.stream();
-  auto c1 = client.stream(Zquic::StreamType::Uni);
+  auto c1 = client.stream(Zi::StreamType::Simplex);
   auto s0 = server.stream();
 
   ZuCHECK(c0 && c0->id() == 0, "client bidi stream ID mismatch");

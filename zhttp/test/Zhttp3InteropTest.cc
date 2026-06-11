@@ -24,6 +24,14 @@ using Zhttp::Test::waitCaddyReady;
 using Zhttp::Test::waitUntil;
 using Zhttp::Test::writeCaddyfile;
 
+bool validQUICInfo(Zi::Connected info)
+{
+  return
+    info.transport == Zi::Transport::QUIC &&
+    info.version == int(Zquic::Version1) &&
+    info.alpn == "h3";
+}
+
 struct RuntimeClient : public Zquic::Client<RuntimeClient> {
   struct Link;
   struct Stream;
@@ -88,7 +96,10 @@ struct RuntimeClient::Link :
 
   Link(RuntimeClient *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected info) {
+    infoOK = validQUICInfo(info);
+    ++connectedCount;
+  }
   void disconnected() { ++disconnectedCount; }
   void connectFailed(bool) { ++connectFailures; }
   void streamed(ZmRef<Stream>) { }
@@ -96,6 +107,7 @@ struct RuntimeClient::Link :
   ZmAtomic<unsigned> connectedCount = 0;
   ZmAtomic<unsigned> disconnectedCount = 0;
   ZmAtomic<unsigned> connectFailures = 0;
+  ZmAtomic<unsigned> infoOK = 0;
 };
 
 struct RuntimeServerStream :
@@ -116,12 +128,16 @@ struct RuntimeServerLink :
 
   RuntimeServerLink(RuntimeServer *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected info) {
+    infoOK = validQUICInfo(info);
+    ++connectedCount;
+  }
   void disconnected() { ++disconnectedCount; }
   void streamed(ZmRef<Stream>) { }
 
   ZmAtomic<unsigned> connectedCount = 0;
   ZmAtomic<unsigned> disconnectedCount = 0;
+  ZmAtomic<unsigned> infoOK = 0;
 };
 
 ZmRef<RuntimeServer::Link> RuntimeServer::link()
@@ -169,7 +185,10 @@ struct ZhttpRuntimeClient::Link :
 
   Link(ZhttpRuntimeClient *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected info) {
+    infoOK = validQUICInfo(info);
+    ++connectedCount;
+  }
   void disconnected() { ++disconnectedCount; }
   void connectFailed(bool) { ++connectFailures; }
   void streamed(ZmRef<Stream>) { }
@@ -218,6 +237,7 @@ struct ZhttpRuntimeClient::Link :
   ZmAtomic<unsigned> connectedCount = 0;
   ZmAtomic<unsigned> disconnectedCount = 0;
   ZmAtomic<unsigned> connectFailures = 0;
+  ZmAtomic<unsigned> infoOK = 0;
 };
 
 struct ZhttpRuntimeServerLink;
@@ -265,7 +285,10 @@ struct ZhttpRuntimeServerLink :
 
   ZhttpRuntimeServerLink(ZhttpRuntimeServer *app) : Base{app} { }
 
-  void connected(const char *, int) { ++connectedCount; }
+  void connected(Zi::Connected info) {
+    infoOK = validQUICInfo(info);
+    ++connectedCount;
+  }
   void disconnected() { ++disconnectedCount; }
   void streamed(ZmRef<Stream>) { }
 
@@ -337,6 +360,7 @@ struct ZhttpRuntimeServerLink :
 
   ZmAtomic<unsigned> connectedCount = 0;
   ZmAtomic<unsigned> disconnectedCount = 0;
+  ZmAtomic<unsigned> infoOK = 0;
 };
 
 ZmRef<ZhttpRuntimeServer::Link> ZhttpRuntimeServer::link()
@@ -451,6 +475,8 @@ void testZhttpRuntimeTrafficGuard()
   ZuCHECK(zquicClientLink->crypto().negotiatedProtocol() == "h3" &&
       zquicServerLink->crypto().negotiatedProtocol() == "h3",
     "Zhttp H3 runtime guard ALPN mismatch");
+  ZuCHECK(zquicClientLink->infoOK && zquicServerLink->infoOK,
+    "Zhttp H3 runtime guard Connected mismatch");
 
   H3App clientApp, serverApp;
   Zhttp::H3::Client<H3App, RuntimeClient> h3Client{
@@ -464,7 +490,7 @@ void testZhttpRuntimeTrafficGuard()
   ZuCHECK(h3Client.connection().ready() && h3Server.connection().ready(),
     "Zhttp H3 runtime guard control streams not ready");
 
-  auto guardStream = zquicClientLink->stream(Zquic::StreamType::Bidi);
+  auto guardStream = zquicClientLink->stream(Zi::StreamType::Duplex);
   ZuCHECK(zquicClientLink->send(guardStream, "zhttp-h3-runtime"),
     "Zhttp H3 runtime guard stream send failed");
   ZuCHECK(waitUntil([&zquicServerLink]() {
@@ -584,6 +610,8 @@ void testZhttpRuntimeRequestResponse()
       return serverLink && clientLink->established() &&
 	serverLink->established();
     }), "Zhttp runtime request Zquic connection did not establish");
+  ZuCHECK(clientLink->infoOK && serverLink->infoOK,
+    "Zhttp runtime request Connected mismatch");
 
   client.h3.openLocalControl();
   client.h3.openLocalQPack();
@@ -592,12 +620,12 @@ void testZhttpRuntimeRequestResponse()
   Zhttp::H3::HeaderBytes control;
   ZuCHECK(writeControlStream_(control, client.h3),
     "Zhttp runtime client control stream encode failed");
-  auto clientControl = clientLink->stream(Zquic::StreamType::Uni);
+  auto clientControl = clientLink->stream(Zi::StreamType::Simplex);
   ZuCHECK(clientLink->send(clientControl, headerBytes_(control)),
     "Zhttp runtime client control stream send failed");
   ZuCHECK(writeControlStream_(control, server.h3),
     "Zhttp runtime server control stream encode failed");
-  auto serverControl = serverLink->stream(Zquic::StreamType::Uni);
+  auto serverControl = serverLink->stream(Zi::StreamType::Simplex);
   ZuCHECK(serverLink->send(serverControl, headerBytes_(control)),
     "Zhttp runtime server control stream send failed");
 
@@ -611,7 +639,7 @@ void testZhttpRuntimeRequestResponse()
   ZuCHECK(client.h3.encodeData(data, "ping") > 0,
     "Zhttp runtime request DATA encode failed");
   appendHeaderBytes_(request, data);
-  auto requestStream = clientLink->stream(Zquic::StreamType::Bidi);
+  auto requestStream = clientLink->stream(Zi::StreamType::Duplex);
   ZuCHECK(clientLink->send(requestStream, headerBytes_(request)),
     "Zhttp runtime request stream send failed");
 
@@ -733,6 +761,7 @@ void testCurlZhttpH3Server()
       server.h3.diag().headersTx &&
       server.h3.diag().dataFramesTx &&
       serverLink &&
+      serverLink->infoOK &&
       serverLink->runtimeDiag().packetsRx &&
       serverLink->runtimeDiag().streamBytesRx &&
       serverLink->runtimeDiag().streamBytesTx &&
@@ -802,13 +831,15 @@ void testZhttpH3ClientCaddy()
     "Zhttp H3 client->Caddy client did not become ready");
   ZuCHECK(waitUntil([&clientLink]() { return clientLink->established(); }),
     "Zhttp H3 client->Caddy QUIC connection did not establish");
+  ZuCHECK(clientLink->infoOK,
+    "Zhttp H3 client->Caddy Connected mismatch");
 
   client.h3.openLocalControl();
   client.h3.openLocalQPack();
   Zhttp::H3::HeaderBytes control;
   ZuCHECK(writeControlStream_(control, client.h3),
     "Zhttp H3 client->Caddy control stream encode failed");
-  auto clientControl = clientLink->stream(Zquic::StreamType::Uni);
+  auto clientControl = clientLink->stream(Zi::StreamType::Simplex);
   ZuCHECK(clientLink->send(clientControl, headerBytes_(control)),
     "Zhttp H3 client->Caddy control stream send failed");
 
@@ -818,7 +849,7 @@ void testZhttpH3ClientCaddy()
   Zhttp::H3::HeaderBytes request;
   ZuCHECK(client.h3.encodeRequest(request, req) > 0,
     "Zhttp H3 client->Caddy request encode failed");
-  auto requestStream = clientLink->stream(Zquic::StreamType::Bidi);
+  auto requestStream = clientLink->stream(Zi::StreamType::Duplex);
   ZuCHECK(clientLink->send(requestStream, headerBytes_(request)),
     "Zhttp H3 client->Caddy request stream send failed");
 

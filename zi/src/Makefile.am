@@ -12,7 +12,7 @@ pkginclude_HEADERS = \
 	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh ZiLib.hh ZiModule.hh \
 	ZiMultiplex.hh ZiPlatform.hh ZiRing.hh \
 	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh \
-	ZiTxStream.hh ZiRxStream.hh ZiEventLoop.hh
+	ZiTxStream.hh ZiRxStream.hh ZiEventLoop.hh ZiTransport.hh
 if NETLINK
 pkginclude_HEADERS += ZiNetlinkMsg.hh ZiNetlink.hh zi_netlink.h
 endif

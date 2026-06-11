@@ -296,10 +296,10 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
     using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseClient *app) : BaseLink{app} { }
 
-    void connected(const char *, int tlsver) {
+    void connected(Zi::Connected info) {
       auto &state = this->app()->state;
       state.client_connected = 1;
-      state.client_tlsver = unsigned(tlsver);
+      state.client_tlsver = unsigned(info.version);
       state.client_cipher = this->tlsInfo().cipherID;
       if (state.clientKeyUpdate && !this->updateKey_(true)) {
 	state.fail("client key update failed");
@@ -344,10 +344,10 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
     using BaseLink = Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
 
-    void connected(const char *, int tlsver) {
+    void connected(Zi::Connected info) {
       auto &state = this->app()->state;
       state.server_connected = 1;
-      state.server_tlsver = unsigned(tlsver);
+      state.server_tlsver = unsigned(info.version);
       state.server_cipher = this->tlsInfo().cipherID;
     }
     void disconnected() { this->app()->state.done_one(); }
