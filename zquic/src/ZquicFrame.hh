@@ -31,7 +31,7 @@ struct Frame {
   uint64_t		length = 0;
   uint64_t		value = 0;
   uint64_t		errorCode = 0;
-  StreamType::T		streamType = StreamType::Bidi;
+  Zi::StreamType::T		streamType = Zi::StreamType::Duplex;
   bool			fin = false;
   ResetToken	resetToken;
   ZuCSpan		payload;
@@ -57,10 +57,10 @@ struct FrameCodec {
   static int writeStopSending(uint8_t *, unsigned, uint64_t, uint64_t);
   static int writeMaxData(uint8_t *, unsigned, uint64_t);
   static int writeMaxStreamData(uint8_t *, unsigned, uint64_t, uint64_t);
-  static int writeMaxStreams(uint8_t *, unsigned, StreamType::T, uint64_t);
+  static int writeMaxStreams(uint8_t *, unsigned, Zi::StreamType::T, uint64_t);
   static int writeDataBlocked(uint8_t *, unsigned, uint64_t);
   static int writeStreamDataBlocked(uint8_t *, unsigned, uint64_t, uint64_t);
-  static int writeStreamsBlocked(uint8_t *, unsigned, StreamType::T, uint64_t);
+  static int writeStreamsBlocked(uint8_t *, unsigned, Zi::StreamType::T, uint64_t);
   static int writeNewConnectionID(
     uint8_t *, unsigned, uint64_t sequence, uint64_t retirePriorTo,
     const CxnID &, const ResetToken &);

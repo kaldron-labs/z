@@ -29,7 +29,7 @@ struct App : public Ztls::Client<App> {
 
     Link(App *app) : Base{app} { }
 
-    void connected(const char *alpn, int tlsver) {
+    void connected(Zi::Connected info) {
       ++round;
       bool resumed = this->tlsInfo().psk;
       if (round > 1) {
@@ -40,7 +40,7 @@ struct App : public Ztls::Client<App> {
       ZtArray<uint8_t> hostname = this->server();
       std::cerr << (ZtString<>{}
 	  << "TLS handshake completed (hostname: " << ZuCSpan(hostname)
-	  << " TLS: " << tlsver << " ALPN: " << alpn
+	  << " TLS: " << info.version << " ALPN: " << info.alpn
 	  << " resumed: " << (resumed ? "yes" : "no")
 	  << " early_data: " << this->maxEarlyData()
 	  << ")\n")

@@ -27,7 +27,7 @@ using DiagText = ZtString<
 struct Diag {
   static ZuCSpan packetSpaceName(PacketSpace::T);
   static ZuCSpan frameTypeName(FrameType::T);
-  static ZuCSpan streamTypeName(StreamType::T);
+  static ZuCSpan streamTypeName(Zi::StreamType::T);
 
   void notePacketRx(unsigned bytes) {
     ++packetsRx;

@@ -667,8 +667,6 @@ using ClientParams = EngineParams;
 using ServerParams = EngineParams;
 
 template <typename App_> class Engine : public ZmPolymorph {
-public:
-  using App = App_;
 template <typename, typename, typename, typename>
 friend class Link;
 template <typename, typename, typename, typename>
@@ -676,8 +674,13 @@ friend class CliLink;
 template <typename, typename, typename, typename>
 friend class SrvLink;
 
+public:
+  using App = App_;
+
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
+
+  enum { Transport = Zi::Transport::QUIC };
 
   bool init(EngineParams params) {
     return init_(ZuMv(params), [](const EngineParams &) { return true; });
@@ -896,7 +899,7 @@ struct App::Stream : public Zquic::CliStream<Link, Stream> {
 struct App::Link : public Zquic::CliLink<App, Link, App::Stream> {
   Link(App *, Zquic::Host server, uint16_t port);
 
-  void connected(const char *alpn, int quicver); // Zquic Rx thread
+  void connected(Zi::Connected); // Zquic Rx thread
   void disconnected(); // Zquic Rx thread
   void connectFailed(bool transient); // Zquic Rx thread
   void streamed(ZmRef<Stream>); // Zquic Rx thread
@@ -946,7 +949,7 @@ struct AppStream : public Zquic::SrvStream<AppLink, AppStream> {
 struct AppLink : public Zquic::SrvLink<App, AppLink, AppStream> {
   AppLink(App *);
 
-  void connected(const char *alpn, int quicver); // Zquic Rx thread
+  void connected(Zi::Connected); // Zquic Rx thread
   void disconnected(); // Zquic Rx thread
   void streamed(ZmRef<Stream>); // Zquic Rx thread
 };
@@ -1577,29 +1580,29 @@ public:
   bool closed() const { return m_closed; }
   uint64_t closeError() const { return m_closeError; }
   uint64_t streamCount() const { return m_streams.count_(); }
-  uint64_t peerStreamLimit(StreamType::T type) const {
+  uint64_t peerStreamLimit(Zi::StreamType::T type) const {
     return localLimit_(type).limit();
   }
-  uint64_t localStreamsOpened(StreamType::T type) const {
+  uint64_t localStreamsOpened(Zi::StreamType::T type) const {
     return localLimit_(type).opened();
   }
-  uint64_t queuedLocalStreams(StreamType::T type) const {
+  uint64_t queuedLocalStreams(Zi::StreamType::T type) const {
     return queued_(type);
   }
-  uint64_t localStreamLimit(StreamType::T type) const {
+  uint64_t localStreamLimit(Zi::StreamType::T type) const {
     return peerLimit_(type).limit();
   }
-  uint64_t peerStreamsOpened(StreamType::T type) const {
+  uint64_t peerStreamsOpened(Zi::StreamType::T type) const {
     return peerLimit_(type).opened();
   }
-  bool localStreamsBlocked(StreamType::T type) const {
+  bool localStreamsBlocked(Zi::StreamType::T type) const {
     return queued_(type) != 0;
   }
 
-  void setPeerStreamLimit(StreamType::T type, uint64_t limit) {
+  void setPeerStreamLimit(Zi::StreamType::T type, uint64_t limit) {
     localLimit_(type).set(limit);
   }
-  void setLocalStreamLimit(StreamType::T type, uint64_t limit) {
+  void setLocalStreamLimit(Zi::StreamType::T type, uint64_t limit) {
     peerLimit_(type).set(limit);
   }
 
@@ -1610,7 +1613,7 @@ public:
     return true;
   }
 
-  StreamRef stream(StreamType::T type = StreamType::Bidi) {
+  StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
     if (!localLimit_(type).open()) {
       ++queued_(type);
       return nullptr;
@@ -1622,7 +1625,7 @@ public:
     if (id > uint64_t(INT64_MAX)) return nullptr;
     if (StreamID::server(id) == m_isServer) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
-    StreamType::T type = StreamID::uni(id) ? StreamType::Uni : StreamType::Bidi;
+    Zi::StreamType::T type = StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
     uint64_t opened = StreamID::ordinal(id) + 1;
     if (!peerLimit_(type).allowsTo(opened)) return nullptr;
 
@@ -2493,35 +2496,35 @@ protected:
   }
 
 private:
-  const StreamLimit &localLimit_(StreamType::T type) const {
-    return type == StreamType::Uni ? m_peerUniLimit : m_peerBidiLimit;
+  const StreamLimit &localLimit_(Zi::StreamType::T type) const {
+    return type == Zi::StreamType::Simplex ? m_peerUniLimit : m_peerBidiLimit;
   }
 
-  StreamLimit &localLimit_(StreamType::T type) {
-    return type == StreamType::Uni ? m_peerUniLimit : m_peerBidiLimit;
+  StreamLimit &localLimit_(Zi::StreamType::T type) {
+    return type == Zi::StreamType::Simplex ? m_peerUniLimit : m_peerBidiLimit;
   }
 
-  const StreamLimit &peerLimit_(StreamType::T type) const {
-    return type == StreamType::Uni ? m_localUniLimit : m_localBidiLimit;
+  const StreamLimit &peerLimit_(Zi::StreamType::T type) const {
+    return type == Zi::StreamType::Simplex ? m_localUniLimit : m_localBidiLimit;
   }
 
-  StreamLimit &peerLimit_(StreamType::T type) {
-    return type == StreamType::Uni ? m_localUniLimit : m_localBidiLimit;
+  StreamLimit &peerLimit_(Zi::StreamType::T type) {
+    return type == Zi::StreamType::Simplex ? m_localUniLimit : m_localBidiLimit;
   }
 
-  const uint64_t &queued_(StreamType::T type) const {
-    return type == StreamType::Uni ? m_queuedUni : m_queuedBidi;
+  const uint64_t &queued_(Zi::StreamType::T type) const {
+    return type == Zi::StreamType::Simplex ? m_queuedUni : m_queuedBidi;
   }
 
-  uint64_t &queued_(StreamType::T type) {
-    return type == StreamType::Uni ? m_queuedUni : m_queuedBidi;
+  uint64_t &queued_(Zi::StreamType::T type) {
+    return type == Zi::StreamType::Simplex ? m_queuedUni : m_queuedBidi;
   }
 
-  StreamRef openLocalStream_(StreamType::T type) {
+  StreamRef openLocalStream_(Zi::StreamType::T type) {
     return newStream_(nextStreamID_(type));
   }
 
-  unsigned openQueued_(StreamType::T type) {
+  unsigned openQueued_(Zi::StreamType::T type) {
     uint64_t &queued = queued_(type);
     unsigned opened = 0;
     while (queued && localLimit_(type).open()) {
@@ -2548,12 +2551,12 @@ private:
     return stream;
   }
 
-  int64_t nextStreamID_(StreamType::T type) {
+  int64_t nextStreamID_(Zi::StreamType::T type) {
     uint64_t &ordinal =
-      type == StreamType::Uni ? m_nextUniOrdinal : m_nextBidiOrdinal;
+      type == Zi::StreamType::Simplex ? m_nextUniOrdinal : m_nextBidiOrdinal;
     uint64_t id = (ordinal++ << 2) |
       (m_isServer ? 1U : 0U) |
-      (type == StreamType::Uni ? 2U : 0U);
+      (type == Zi::StreamType::Simplex ? 2U : 0U);
     ZiAssert(id <= uint64_t(INT64_MAX), "Zquic", (id),
       "stream ID overflow id=" << id, return INT64_MAX);
     return int64_t(id);
@@ -2846,11 +2849,11 @@ private:
       m_peerParamsValidated = true;
     }
     Base::establishRuntime_();
-    auto alpn = Base::negotiatedProtocol_();
-    if constexpr (requires(Impl *impl_, const char *alpn_, int ver_) {
-      impl_->connected(alpn_, ver_);
-    })
-      impl()->connected(alpn.data(), int(Version1));
+    impl()->connected(Zi::Connected{
+      .transport = Zi::Transport::QUIC,
+      .alpn = Base::negotiatedProtocol_(),
+      .version = int(Version1)
+    });
   }
 
   bool emitTLS_(size_t inEpoch, ZuCSpan input, ZiSockAddr addr) {
@@ -3226,11 +3229,11 @@ private:
       return;
     }
     Base::establishRuntime_();
-    auto alpn = Base::negotiatedProtocol_();
-    if constexpr (requires(Impl *impl_, const char *alpn_, int ver_) {
-      impl_->connected(alpn_, ver_);
-    })
-      impl()->connected(alpn.data(), int(Version1));
+    impl()->connected(Zi::Connected{
+      .transport = Zi::Transport::QUIC,
+      .alpn = Base::negotiatedProtocol_(),
+      .version = int(Version1)
+    });
   }
 
   bool emitTLS_(size_t inEpoch, ZuCSpan input, ZiSockAddr addr) {

@@ -17,6 +17,8 @@
 
 #include <zlib/ZuDerive.hh>
 
+#include <zlib/ZiTransport.hh>
+
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
@@ -58,10 +60,6 @@ inline constexpr uint32_t Version1 = 0x00000001U;
 inline constexpr unsigned MinUDPPayload = 1200;
 inline constexpr unsigned BufSize = 1472;
 inline constexpr unsigned MinCIDLength = 8;
-
-struct StreamType {
-  ZtEnum(StreamType, int8_t, Bidi, Uni);
-};
 
 struct StreamError {
   ZtEnum(StreamError, int8_t, None, Reset, Stop);

@@ -61,11 +61,11 @@ struct App::Link :
 
   Link(App *app) : Base{app} { }
 
-  void connected(const char *alpn, int quicver) {
+  void connected(Zi::Connected info) {
     std::cerr << "QUIC handshake completed"
-      << " version=" << quicver
-      << " alpn=" << alpn << '\n' << std::flush;
-    auto s = stream(Zquic::StreamType::Bidi);
+      << " version=" << info.version
+      << " alpn=" << info.alpn << '\n' << std::flush;
+    auto s = stream(Zi::StreamType::Duplex);
     if (!s || !send(s, app()->request())) {
       app()->setError("stream send failed");
       app()->done();

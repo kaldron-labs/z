@@ -17,7 +17,7 @@ struct ClientApp : public Ztls::Client<ClientApp> {
   struct Link : public Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc> {
     using Base = Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc>;
     Link(ClientApp *app) : Base(app) { }
-    void connected(const char *, int) { }
+    void connected(Zi::Connected) { }
     void disconnected() { }
     void connectFailed(bool) { }
     int process(Ztls::RxStream &) { return 0; }
@@ -30,7 +30,7 @@ struct ServerApp : public Ztls::Server<ServerApp> {
   struct Link : public Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc> {
     using Base = Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc>;
     Link(ServerApp *app) : Base(app) { }
-    void connected(const char *, int) { }
+    void connected(Zi::Connected) { }
     void disconnected() { }
     int process(Ztls::RxStream &) { return 0; }
   };
@@ -74,6 +74,16 @@ void testInitValidation()
   (void)serverParams;
 
   ClientApp client;
+  {
+    ClientApp::Link link(&client);
+    ZuCHECK(link.stream() == &link, "TLS client bidi stream is not link");
+    ZuCHECK(
+      link.stream(Zi::StreamType::Simplex) == nullptr,
+      "TLS client uni stream is not null");
+    typename ClientApp::Link::StreamRef stream = link.stream();
+    auto tx = stream->txStream();
+    (void)tx;
+  }
   ZuCHECK(!client.init(Ztls::ClientParams(nullptr, "1", "2").alpn(alpn)),
     "null multiplexer init unexpectedly succeeded");
   ZuCHECK(!client.init(
@@ -81,6 +91,16 @@ void testInitValidation()
     "client cert/key XOR init unexpectedly succeeded");
 
   ServerApp server;
+  {
+    ServerApp::Link link(&server);
+    ZuCHECK(link.stream() == &link, "TLS server bidi stream is not link");
+    ZuCHECK(
+      link.stream(Zi::StreamType::Simplex) == nullptr,
+      "TLS server uni stream is not null");
+    typename ServerApp::Link::StreamRef stream = link.stream();
+    auto tx = stream->txStream();
+    (void)tx;
+  }
   ZuCHECK(!server.init(Ztls::ServerParams(nullptr, "1", "2").alpn(alpn)),
     "missing server cert/key init unexpectedly succeeded");
 
