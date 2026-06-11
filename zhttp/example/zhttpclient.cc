@@ -45,13 +45,13 @@ void usage(int code = 1)
   ::exit(code);
 }
 
-using RequestHeaders = ZuTypeList<
-  ZuStringT<"user-agent">, ZuStringT<"zhttptest/1.0">,
-  ZuStringT<"accept">, ZuStringT<"*/*">>;
-using ResponseHeaders = ZuTypeList<
-  ZuStringT<"content-type">, void,
-  ZuStringT<"location">, void,
-  ZuStringT<"server">, void>;
+using RequestHeaders = ZhttpHeaders(
+  ("user-agent", "zhttpclient/1.0"),
+  ("accept", "*/*"));
+using ResponseHeaders = ZhttpHeaders(
+  "content-type",
+  "location",
+  "server");
 
 struct URL {
   ZuCSpan	scheme;

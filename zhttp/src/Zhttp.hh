@@ -27,6 +27,30 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiTxStream.hh>
 
+// Headers typelist definition, e.g.
+// - keys (variable values):
+//   ZhttpHeaders("content-type", "server");
+// - keys + values:
+//   ZhttpHeaders(("user-agent", "zhttpclient"), ("accept", "*/*"));
+#define Zhttp_HdrValue(Value) ZuStringT<Value>
+#define Zhttp_HdrValues_(...) \
+  ZuPP_Eval__(ZuPP_MapComma(Zhttp_HdrValue,  __VA_ARGS__))
+#define Zhttp_HdrValues(Values) \
+  ZuPP_Defer(Zhttp_HdrValues_)(ZuPP_Strip(Values))
+#define Zhttp_Header_1(Key) \
+  ZuStringT<Key>, void
+#define Zhttp_Header_2(Key, Values) \
+  ZuStringT<Key>, ZuTypeList<Zhttp_HdrValues(Values)>
+#define Zhttp_Header_N(_0, _1, Fn, ...) Fn
+#define Zhttp_Header_(...) \
+  Zhttp_Header_N(__VA_ARGS__, \
+    Zhttp_Header_2(__VA_ARGS__), \
+    Zhttp_Header_1(__VA_ARGS__))
+#define Zhttp_Header(KV) \
+  ZuPP_Defer(Zhttp_Header_)(ZuPP_Strip(KV))
+#define ZhttpHeaders(...) \
+  ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(Zhttp_Header,  __VA_ARGS__))>
+
 namespace Zhttp {
 
 constexpr unsigned DefltMaxHdr = (1<<16);	// 64K default
@@ -533,7 +557,156 @@ namespace H1 {
 
 } // H1
 
+// QPack static table compile-time lookup definition
+#define Zhttp_QPack_1(Key) \
+  ZuTypeList<ZuStringT<Key>, void>
+#define Zhttp_QPack_2(Key, Value) \
+  ZuTypeList<ZuStringT<Key>, ZuStringT<Value>>
+#define Zhttp_QPack_N(_0, _1, Fn, ...) Fn
+#define Zhttp_QPack_(...) \
+  Zhttp_QPack_N(__VA_ARGS__, \
+    Zhttp_QPack_2, \
+    Zhttp_QPack_1)(__VA_ARGS__)
+#define Zhttp_QPack(KV) \
+  ZuPP_Defer(Zhttp_QPack_)(ZuPP_Strip(KV))
+#define ZhttpQPackTbl(...) \
+  ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(Zhttp_QPack,  __VA_ARGS__))>
+
 namespace H3 {
+
+  // QPACK static table
+
+  template <typename Headers>
+  using Keys = ZuTypeSlice<2, 0, Headers>;
+  template <typename Headers>
+  using Values = ZuTypeSlice<2, 1, Headers>;
+
+  using QPackTbl = ZhttpQPackTbl(
+    (":authority"),
+    (":path", "/"),
+    ("age", "0"),
+    ("content-disposition"),
+    ("content-length", "0"),
+    ("cookie"),
+    ("date"),
+    ("etag"),
+    ("if-modified-since"),
+    ("if-none-match"),
+    ("last-modified"),
+    ("link"),
+    ("location"),
+    ("referer"),
+    ("set-cookie"),
+    (":method", "CONNECT"),
+    (":method", "DELETE"),
+    (":method", "GET"),
+    (":method", "HEAD"),
+    (":method", "OPTIONS"),
+    (":method", "POST"),
+    (":method", "PUT"),
+    (":scheme", "http"),
+    (":scheme", "https"),
+    (":status", "103"),
+    (":status", "200"),
+    (":status", "304"),
+    (":status", "404"),
+    (":status", "503"),
+    ("accept", "*/*"),
+    ("accept", "application/dns-message"),
+    ("accept-encoding", "gzip, deflate, br"),
+    ("accept-ranges", "bytes"),
+    ("access-control-allow-headers", "cache-control"),
+    ("access-control-allow-headers", "content-type"),
+    ("access-control-allow-origin", "*"),
+    ("cache-control", "max-age=0"),
+    ("cache-control", "max-age=2592000"),
+    ("cache-control", "max-age=604800"),
+    ("cache-control", "no-cache"),
+    ("cache-control", "no-store"),
+    ("cache-control", "public, max-age=31536000"),
+    ("content-encoding", "br"),
+    ("content-encoding", "gzip"),
+    ("content-type", "application/dns-message"),
+    ("content-type", "application/javascript"),
+    ("content-type", "application/json"),
+    ("content-type", "application/x-www-form-urlencoded"),
+    ("content-type", "image/gif"),
+    ("content-type", "image/jpeg"),
+    ("content-type", "image/png"),
+    ("content-type", "text/css"),
+    ("content-type", "text/html; charset=utf-8"),
+    ("content-type", "text/plain"),
+    ("content-type", "text/plain;charset=utf-8"),
+    ("range", "bytes=0-"),
+    ("strict-transport-security", "max-age=31536000"),
+    ("strict-transport-security", "max-age=31536000; includesubdomains"),
+    ("strict-transport-security", "max-age=31536000; includesubdomains; preload"),
+    ("vary", "accept-encoding"),
+    ("vary", "origin"),
+    ("x-content-type-options", "nosniff"),
+    ("x-xss-protection", "1; mode=block"),
+    (":status", "100"),
+    (":status", "204"),
+    (":status", "206"),
+    (":status", "302"),
+    (":status", "400"),
+    (":status", "403"),
+    (":status", "421"),
+    (":status", "425"),
+    (":status", "500"),
+    ("accept-language"),
+    ("access-control-allow-credentials", "FALSE"),
+    ("access-control-allow-credentials", "TRUE"),
+    ("access-control-allow-headers", "*"),
+    ("access-control-allow-methods", "get"),
+    ("access-control-allow-methods", "get, post, options"),
+    ("access-control-allow-methods", "options"),
+    ("access-control-expose-headers", "content-length"),
+    ("access-control-request-headers", "content-type"),
+    ("access-control-request-method", "get"),
+    ("access-control-request-method", "post"),
+    ("alt-svc", "clear"),
+    ("authorization"),
+    ("content-security-policy", "script-src 'none'; object-src 'none'; base-uri 'none'"),
+    ("early-data", "1"),
+    ("expect-ct"),
+    ("forwarded"),
+    ("if-range"),
+    ("origin"),
+    ("purpose", "prefetch"),
+    ("server"),
+    ("timing-allow-origin", "*"),
+    ("upgrade-insecure-requests", "1"),
+    ("user-agent"),
+    ("x-forwarded-for"),
+    ("x-frame-options", "deny"),
+    ("x-frame-options", "sameorigin"));
+
+  // evaluates QPACK static table index I given <Key, Value>
+  // - use <Key, void> for entries which are Key only
+  // - evaluates to -1 if <Key, Value> are not in table
+  template <typename Key, typename Value, typename = void>
+  struct QPackIndex_ { using T = ZuInt<-1>; };
+  template <typename Key, typename Value>
+  struct QPackIndex_<
+    Key, Value,
+    decltype(ZuTypeIndex<ZuTypeList<Key, Value>, QPackTbl>(), void())>
+  {
+    using T = ZuTypeIndex<ZuTypeList<Key, Value>, QPackTbl>;
+  };
+  template <typename Key, typename Value>
+  using QPackIndex = typename QPackIndex_<Key, Value>::T;
+
+  // evaluates QPACK static table key, value given an index I
+  // - undefined if I is out of range
+  template <unsigned I>
+  using QPackKV = ZuType<I, QPackTbl>;
+  template <typename KV, bool = (KV::N > 1)>
+  struct QPackValue_ { using T = void; };
+  template <typename KV>
+  struct QPackValue_<KV, true> { using T = ZuType<1, KV>; };
+  template <typename KV>
+  using QPackValue = typename QPackValue_<KV>::T;
 
   namespace ParserState {
     ZtEnum(ParserState, int8_t,
@@ -554,14 +727,373 @@ namespace H3 {
     auto impl() const { return static_cast<const Impl *>(this); }
     auto impl() { return static_cast<Impl *>(this); }
 
-    // FIXME
+    enum { Request = Request_ };
+    using Headers = typename Headers_::template Unshift<
+      ZuStringT<"content-length">, void>;
+    using HeaderKeys = ZuTypeSlice<2, 0, Headers>;
+    using HeaderValues = ZuTypeSlice<2, 1, Headers>;
+    static constexpr uint64_t MaxBody = MaxBody_;
+
+  private:
+    int64_t consumeFrame_(ZuBSpan span) {
+      for (unsigned o = 0; o < span.length(); ++o) {
+	uint8_t c = span[o];
+	if (!m_frameField) {
+	  m_frameField = 1;
+	  m_frameFieldLen = 1U << (c >> 6);
+	  m_frameFieldBytes = 1;
+	  m_frameType = c & 0x3f;
+	  if (m_frameFieldBytes < m_frameFieldLen) continue;
+	  m_frameField = 2;
+	  m_frameFieldLen = 0;
+	}
+	if (m_frameField == 1) {
+	  m_frameType = (m_frameType << 8) | c;
+	  if (++m_frameFieldBytes < m_frameFieldLen) continue;
+	  m_frameField = 2;
+	  m_frameFieldLen = 0;
+	}
+	if (m_frameField == 2) {
+	  m_frameFieldLen = 1U << (c >> 6);
+	  m_frameFieldBytes = 1;
+	  m_frameLength = c & 0x3f;
+	  m_frameField = 3;
+	  if (m_frameFieldBytes < m_frameFieldLen) continue;
+	  m_frameField = 4;
+	  m_frameSeen = 0;
+	} else if (m_frameField == 3) {
+	  m_frameLength = (m_frameLength << 8) | c;
+	  if (++m_frameFieldBytes < m_frameFieldLen) continue;
+	  m_frameField = 4;
+	  m_frameSeen = 0;
+	}
+	if (m_frameField == 4) {
+	  uint64_t avail = span.length() - o - 1;
+	  if (avail >= m_frameLength - m_frameSeen)
+	    return o + 1 + int64_t(m_frameLength - m_frameSeen);
+	  m_frameSeen += avail + 1;
+	  return 0;
+	}
+      }
+      return 0;
+    }
+
+    static int decodePref_(ZuCSpan in, unsigned &o, unsigned bits,
+      uint64_t &v, uint8_t *firstByte = nullptr) {
+      if (o >= in.length() || !bits || bits > 8) return -1;
+      uint8_t mask = uint8_t((1U << bits) - 1U);
+      uint8_t first = uint8_t(in[o++]);
+      if (firstByte) *firstByte = first;
+      v = first & mask;
+      if (v < mask) return 0;
+      unsigned shift = 0;
+      for (;;) {
+	if (o >= in.length() || shift >= 56) return -1;
+	uint8_t b = uint8_t(in[o++]);
+	v += uint64_t(b & 0x7f) << shift;
+	if (!(b & 0x80)) return 0;
+	shift += 7;
+      }
+    }
+
+    static int decodeString_(ZuCSpan in, unsigned &o, unsigned bits,
+      uint8_t huffmanMask, ZuCSpan &out) {
+      uint64_t len = 0;
+      uint8_t first = 0;
+      if (decodePref_(in, o, bits, len, &first) < 0 ||
+	  (first & huffmanMask) || in.length() < o + len)
+	return -1;
+      out = ZuCSpan{in.data() + o, unsigned(len)};
+      o += unsigned(len);
+      return int(len);
+    }
+
+    template <unsigned I>
+    void staticHeader_() {
+      using KV = QPackKV<I>;
+      using Key = ZuType<0, KV>;
+      using Value = QPackValue<KV>;
+      if constexpr (ZuIsSame<Value, void>{})
+	qpackHeader_(Key{}(), "");
+      else
+	qpackHeader_(Key{}(), Value{}());
+    }
+
+    bool qpackHeader_(ZuCSpan name, ZuCSpan value) {
+      if (!name) return false;
+      if (name[0] == ':') {
+	if constexpr (Request) {
+	  if (name == ":method") {
+	    Method::T method = Method::lookup(value);
+	    if (method < 0) return false;
+	    m_method = method;
+	    m_hasMethod = true;
+	    return true;
+	  }
+	  if (name == ":path") {
+	    m_path = value;
+	    m_hasPath = true;
+	    return true;
+	  }
+	  return name == ":scheme" || name == ":authority";
+	} else {
+	  if (name != ":status" || value.length() != 3) return false;
+	  unsigned status = 0;
+	  for (unsigned i = 0; i < 3; ++i) {
+	    if (value[i] < '0' || value[i] > '9') return false;
+	    status = (status * 10) + unsigned(value[i] - '0');
+	  }
+	  impl()->status(status);
+	  m_hasStatus = true;
+	  return true;
+	}
+      }
+      uint8_t key_[256];
+      if (name.length() > 256) return false;
+      ZuSpan key{key_, name.length()};
+      memcpy(key.data(), name.data(), name.length());
+      normalize(key);
+      header_(key, ZuBSpan{
+	reinterpret_cast<const uint8_t *>(value.data()), value.length()});
+      return true;
+    }
+
+    template <typename Key> void header_(ZuBSpan value) {
+      if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
+	uint64_t contentLength = ZuBox<uint64_t>{ZuCSpan{value}};
+	if (contentLength > MaxBody) {
+	  m_state = ParserState::Error;
+	  ZiLOG(Error, "Zhttp", "invalid content-length");
+	} else {
+	  m_contentLength = contentLength;
+	  impl()->contentLength(contentLength);
+	}
+      } else {
+	impl()->template header<Key>(value);
+      }
+    }
+
+    void header_(ZuBSpan key, ZuBSpan value) {
+      if constexpr (HeaderKeys::N) {
+	static constexpr auto kMatcher = ZuMatcher<HeaderKeys>();
+	auto i = kMatcher.match(key);
+	if (i < 0) return;
+	ZuSwitch::dispatch<HeaderKeys::N>(i, [this, &value](auto i) {
+	  using KValues = ZuType<i, HeaderValues>;
+	  if constexpr (!ZuIsSame<KValues, void>{}) {
+	    if constexpr (requires { KValues::N; }) {
+	      static constexpr auto vMatcher = ZuMatcher<KValues>();
+	      auto j = vMatcher.match(value);
+	      enum { I = i };
+	      if (j >= 0) {
+		ZuSwitch::dispatch<KValues::N>(j, [this](auto j) {
+		  impl()->template header<
+		    ZuType<I, HeaderKeys>, ZuType<j, KValues>>();
+		});
+		return;
+	      }
+	    } else if (ZuCSpan{value} == KValues{}()) {
+	      if constexpr (requires(Impl *impl_) {
+		impl_->template header<ZuType<i, HeaderKeys>, KValues>();
+	      })
+		impl()->template header<ZuType<i, HeaderKeys>, KValues>();
+	      return;
+	    }
+	  }
+	  this->template header_<ZuType<i, HeaderKeys>>(value);
+	});
+      }
+    }
+
+    bool parseFields_(ZuCSpan payload) {
+      unsigned o = 0;
+      uint64_t requiredInsertCount = 0, base = 0;
+      uint8_t baseFirst = 0;
+      if (decodePref_(payload, o, 8, requiredInsertCount) < 0 ||
+	  requiredInsertCount ||
+	  decodePref_(payload, o, 7, base, &baseFirst) < 0 ||
+	  (baseFirst & 0x80) || base)
+	return false;
+
+      while (o < payload.length()) {
+	uint8_t first = uint8_t(payload[o]);
+	ZuCSpan name;
+	ZuCSpan value;
+
+	if (first & 0x80) {
+	  uint64_t index = 0;
+	  uint8_t indexFirst = 0;
+	  if (decodePref_(payload, o, 6, index, &indexFirst) < 0 ||
+	      !(indexFirst & 0x40) || index >= QPackTbl::N)
+	    return false;
+	  bool ok = false;
+	  ZuSwitch::dispatch<QPackTbl::N>(unsigned(index),
+	    [this, &ok](auto i) {
+	      this->template staticHeader_<i>();
+	      ok = true;
+	    });
+	  if (!ok) return false;
+	  continue;
+	}
+
+	if ((first & 0xc0) == 0x40) {
+	  uint64_t index = 0;
+	  uint8_t nameFirst = 0;
+	  if (decodePref_(payload, o, 4, index, &nameFirst) < 0 ||
+	      !(nameFirst & 0x10) || index >= QPackTbl::N)
+	    return false;
+	  bool ok = false;
+	  ZuSwitch::dispatch<QPackTbl::N>(unsigned(index),
+	    [&name, &ok](auto i) {
+	      using KV = QPackKV<i>;
+	      name = ZuType<0, KV>{}();
+	      ok = true;
+	    });
+	  if (!ok ||
+	      decodeString_(payload, o, 7, 0x80, value) < 0 ||
+	      !qpackHeader_(name, value))
+	    return false;
+	  continue;
+	}
+
+	if ((first & 0xe0) == 0x20) {
+	  if (decodeString_(payload, o, 3, 0x08, name) < 0 ||
+	      decodeString_(payload, o, 7, 0x80, value) < 0 ||
+	      !qpackHeader_(name, value))
+	    return false;
+	  continue;
+	}
+
+	return false;
+      }
+
+      if constexpr (Request) {
+	if (!m_hasMethod || !m_hasPath) return false;
+	impl()->operation(m_method, ZuBSpan{
+	  reinterpret_cast<const uint8_t *>(m_path.data()), m_path.length()});
+      } else {
+	if (!m_hasStatus) return false;
+      }
+      return true;
+    }
+
+    bool processFrame_(ZuCSpan frameBytes) {
+      unsigned o = 0;
+      uint64_t type = 0, len = 0;
+      if (decodeVar_(frameBytes, o, type) < 0 ||
+	  decodeVar_(frameBytes, o, len) < 0 ||
+	  frameBytes.length() != o + len)
+	return false;
+      ZuCSpan payload{frameBytes.data() + o, unsigned(len)};
+
+      if (type == 0x01) { // HEADERS
+	if (m_state == ParserState::Initial) {
+	  if (!parseFields_(payload)) return false;
+	  m_state = ParserState::Body;
+	  return true;
+	}
+	if (m_state != ParserState::Body) return false;
+	if (!parseFields_(payload)) return false;
+	m_state = ParserState::Trailers;
+	return true;
+      }
+      if (type == 0x00) { // DATA
+	if (m_state != ParserState::Body) return false;
+	if (payload.length() > MaxBody ||
+	    (m_bodyBytes += payload.length()) > MaxBody)
+	  return false;
+	impl()->body(ZuBSpan{
+	  reinterpret_cast<const uint8_t *>(payload.data()), payload.length()});
+	return true;
+      }
+      return true; // ignore unknown extension frames on request streams
+    }
+
+    static int decodeVar_(ZuCSpan in, unsigned &o, uint64_t &v) {
+      if (o >= in.length()) return -1;
+      uint8_t c = uint8_t(in[o++]);
+      unsigned len = 1U << (c >> 6);
+      v = c & 0x3f;
+      if (in.length() < o + len - 1) return -1;
+      for (unsigned i = 1; i < len; ++i) v = (v << 8) | uint8_t(in[o++]);
+      return 0;
+    }
  
   public:
     // top-level process
     template <typename Stream>
     ParserState::T process(Stream &stream) {
-      // FIXME
+      if (stream.resetReceived() || stream.stopReceived()) {
+	m_state = ParserState::Cancelled;
+	impl()->complete(m_state);
+	return m_state;
+      }
+
+      auto &rx = stream.rxStream();
+      int64_t consumed = 0;
+      do {
+	consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Frame">>(
+	  [this](ZuBSpan span) { return this->consumeFrame_(span); },
+	  [this](ZuBSpan span) {
+	    if (!this->processFrame_(ZuCSpan{
+		  reinterpret_cast<const char *>(span.data()), span.length()}))
+	      m_state = ParserState::Error;
+	    m_frameField = 0;
+	    m_frameFieldLen = m_frameFieldBytes = 0;
+	    m_frameType = m_frameLength = m_frameSeen = 0;
+	  });
+	if (consumed < 0) m_state = ParserState::Error;
+	if (m_state == ParserState::Error) break;
+      } while (consumed);
+
+      if (stream.finReceived() && rx.empty()) {
+	if (m_state == ParserState::Initial)
+	  m_state = ParserState::Error;
+	else if (m_state != ParserState::Error)
+	  m_state = ParserState::Complete;
+      }
+      if (m_state == ParserState::Complete ||
+	  m_state == ParserState::Cancelled ||
+	  m_state == ParserState::Error)
+	impl()->complete(m_state);
+      return m_state;
     }
+
+    void reset() {
+      m_state = ParserState::Initial;
+      m_method = -1;
+      m_path = {};
+      m_contentLength = -1;
+      m_bodyBytes = 0;
+      m_hasMethod = m_hasPath = m_hasStatus = false;
+      m_frameField = 0;
+      m_frameFieldLen = m_frameFieldBytes = 0;
+      m_frameType = m_frameLength = m_frameSeen = 0;
+    }
+
+    void operation(Method::T, ZuBSpan) { }
+    void status(unsigned) { }
+    template <typename Key> void header(ZuBSpan) { }
+    template <typename Key, typename Value> void header() { }
+    void contentLength(uint64_t) { }
+    void body(ZuBSpan) { }
+    void complete(ParserState::T) { }
+
+  private:
+    int64_t		m_contentLength = -1;
+    uint64_t		m_bodyBytes = 0;
+    Method::T		m_method = -1;
+    ZuCSpan		m_path;
+    ParserState::T	m_state = ParserState::Initial;
+    uint8_t		m_frameField = 0;
+    unsigned		m_frameFieldLen = 0;
+    unsigned		m_frameFieldBytes = 0;
+    uint64_t		m_frameType = 0;
+    uint64_t		m_frameLength = 0;
+    uint64_t		m_frameSeen = 0;
+    bool		m_hasMethod = false;
+    bool		m_hasPath = false;
+    bool		m_hasStatus = false;
   };
 
 } // H3
@@ -626,7 +1158,135 @@ namespace H1 {
 
 namespace H3 {
 
-  // FIXME
+  template <typename Bytes>
+  inline int putVar(Bytes &out, uint64_t v) {
+    if (v < (1ULL<<6)) {
+      out.push(uint8_t(v));
+      return 0;
+    }
+    if (v < (1ULL<<14)) {
+      out.push(uint8_t(0x40 | (v >> 8)));
+      out.push(uint8_t(v));
+      return 0;
+    }
+    if (v < (1ULL<<30)) {
+      out.push(uint8_t(0x80 | (v >> 24)));
+      out.push(uint8_t(v >> 16));
+      out.push(uint8_t(v >> 8));
+      out.push(uint8_t(v));
+      return 0;
+    }
+    if (v < (1ULL<<62)) {
+      out.push(uint8_t(0xc0 | (v >> 56)));
+      out.push(uint8_t(v >> 48));
+      out.push(uint8_t(v >> 40));
+      out.push(uint8_t(v >> 32));
+      out.push(uint8_t(v >> 24));
+      out.push(uint8_t(v >> 16));
+      out.push(uint8_t(v >> 8));
+      out.push(uint8_t(v));
+      return 0;
+    }
+    return -1;
+  }
+
+  template <typename Bytes>
+  inline int putPref(Bytes &out, uint8_t prefix, unsigned bits, uint64_t v) {
+    if (!bits || bits > 8) return -1;
+    uint8_t mask = uint8_t((1U << bits) - 1U);
+    if (v < mask) {
+      out.push(prefix | uint8_t(v));
+      return 0;
+    }
+    out.push(prefix | mask);
+    v -= mask;
+    while (v >= 128) {
+      out.push(uint8_t((v & 0x7f) | 0x80));
+      v >>= 7;
+    }
+    out.push(uint8_t(v));
+    return 0;
+  }
+
+  template <typename Bytes>
+  inline int putString(Bytes &out, uint8_t prefix, unsigned bits, ZuCSpan s) {
+    if (putPref(out, prefix, bits, s.length()) < 0) return -1;
+    for (unsigned i = 0; i < s.length(); ++i) out.push(uint8_t(s[i]));
+    return 0;
+  }
+
+  template <typename Bytes, typename Stream>
+  inline int writeFrame(Stream &stream, uint64_t type, const Bytes &payload) {
+    auto tx = stream.txStream();
+    Bytes frame;
+    if (putVar(frame, type) < 0 || putVar(frame, payload.length()) < 0)
+      return -1;
+    for (unsigned i = 0; i < payload.length(); ++i)
+      frame.push(payload.data()[i]);
+    tx << ZuCSpan{
+      reinterpret_cast<const char *>(frame.data()), frame.length()};
+    tx.flush();
+    return frame.length();
+  }
+
+  template <typename Bytes>
+  inline int encodeFieldPrefix(Bytes &out) {
+    out.push(0); // Required Insert Count
+    out.push(0); // Delta Base
+    return 0;
+  }
+
+  template <typename Key, typename Value>
+  inline constexpr bool HasQPackIndex =
+    (QPackIndex<Key, Value>{} >= 0);
+
+  template <typename Bytes, typename Key, typename Value>
+  inline int encodeKnownField(Bytes &out) {
+    if constexpr (HasQPackIndex<Key, Value>) {
+      return putPref(out, 0xc0, 6, QPackIndex<Key, Value>{});
+    } else if constexpr (HasQPackIndex<Key, void>) {
+      if (putPref(out, 0x50, 4, QPackIndex<Key, void>{}) < 0)
+	return -1;
+      return putString(out, 0, 7, Value{}());
+    } else {
+      if (putString(out, 0x20, 3, Key{}()) < 0) return -1;
+      return putString(out, 0, 7, Value{}());
+    }
+  }
+
+  template <typename Bytes, typename Key>
+  inline int encodeVariableField(Bytes &out, ZuCSpan value) {
+    if constexpr (HasQPackIndex<Key, void>) {
+      if (putPref(out, 0x50, 4, QPackIndex<Key, void>{}) < 0)
+	return -1;
+      return putString(out, 0, 7, value);
+    } else {
+      if (putString(out, 0x20, 3, Key{}()) < 0) return -1;
+      return putString(out, 0, 7, value);
+    }
+  }
+
+  template <typename Lower>
+  struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
+    using Base = ZiTxLayer<DataStream<Lower>, Lower>;
+
+    DataStream(Lower &lower) : Base(lower, 9, 0) { }
+
+    void prepareBuf_(ZiIOBuf *buf) {
+      uint8_t hdr[16];
+      ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.FrameHdr">> frameHdr;
+      putVar(frameHdr, 0);
+      putVar(frameHdr, buf->length);
+      ZiAssert(buf->skip >= frameHdr.length(),
+	"Zhttp", (), "H3 DataStream headroom error", return);
+      memcpy(hdr, frameHdr.data(), frameHdr.length());
+      buf->rewind(frameHdr.length());
+      memcpy(buf->data(), hdr, frameHdr.length());
+    }
+  };
+
+  template <typename Lower>
+  auto dataStream(Lower &lower) { return DataStream<Lower>(lower); }
 
 } // H3
 
@@ -801,30 +1461,160 @@ namespace H3 {
     using Trailers = Trailers_;
     enum { HasBody = HasBody_ };
 
-    // FIXME
+  private:
+    using Bytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.Builder">>;
+
+    static ZuCSpan uintSpan_(uint64_t v, char (&buf)[32]) {
+      unsigned o = sizeof(buf);
+      do {
+	buf[--o] = char('0' + (v % 10));
+	v /= 10;
+      } while (v);
+      return ZuCSpan{buf + o, unsigned(sizeof(buf) - o)};
+    }
+
+    static ZuCSpan statusSpan_(unsigned status, char (&buf)[4]) {
+      buf[0] = char('0' + ((status / 100) % 10));
+      buf[1] = char('0' + ((status / 10) % 10));
+      buf[2] = char('0' + (status % 10));
+      buf[3] = 0;
+      return ZuCSpan{buf, 3};
+    }
+
+    template <typename KVs = Headers>
+    void headers_(Bytes &fields) {
+      using HeaderKeys = ZuTypeSlice<2, 0, KVs>;
+      using HeaderValues = ZuTypeSlice<2, 1, KVs>;
+      ZuUnroll::all<HeaderKeys>([this, &fields]<typename Key>() {
+	using Value = ZuType<ZuTypeIndex<Key, HeaderKeys>{}, HeaderValues>;
+	if constexpr (!ZuIsSame<Value, void>{}) {
+	  if (encodeKnownField<Bytes, Key, Value>(fields) < 0) {
+	    ZiLOG(Error, "Zhttp", "failed to encode H3 header");
+	    return;
+	  }
+	} else {
+	  impl()->template header<Key>([&fields]<typename V>(V &&v) {
+	    if (encodeVariableField<Bytes, Key>(
+		  fields, ZuCSpan{ZuFwd<V>(v)}) < 0)
+	      ZiLOG(Error, "Zhttp", "failed to encode H3 header");
+	  });
+	}
+      });
+    }
+
+    void contentLength_(Bytes &fields) {
+      if constexpr (HasBody) {
+	char buf[32];
+	encodeVariableField<Bytes, ZuStringT<"content-length">>(
+	  fields, uintSpan_(impl()->contentLength(), buf));
+      }
+    }
+
+    static int encodeMethod_(Bytes &fields, Method::T method) {
+      if (method == Method::GET)
+	return putPref(fields, 0xc0, 6,
+	  QPackIndex<ZuStringT<":method">, ZuStringT<"GET">>{});
+      if (method == Method::POST)
+	return putPref(fields, 0xc0, 6,
+	  QPackIndex<ZuStringT<":method">, ZuStringT<"POST">>{});
+      return encodeVariableField<Bytes, ZuStringT<":method">>(
+	fields, Method::name(method));
+    }
+
+    static int encodePath_(Bytes &fields, ZuCSpan path, ZuCSpan query) {
+      if (!query && path == "/")
+	return putPref(fields, 0xc0, 6,
+	  QPackIndex<ZuStringT<":path">, ZuStringT<"/">>{});
+      if (!query)
+	return encodeVariableField<Bytes, ZuStringT<":path">>(fields, path);
+      Bytes value;
+      for (unsigned i = 0; i < path.length(); ++i)
+	value.push(uint8_t(path[i]));
+      value.push('?');
+      for (unsigned i = 0; i < query.length(); ++i)
+	value.push(uint8_t(query[i]));
+      return encodeVariableField<Bytes, ZuStringT<":path">>(
+	fields, ZuCSpan{
+	  reinterpret_cast<const char *>(value.data()), value.length()});
+    }
+
+    template <typename Stream>
+    void writeHeaders_(Stream &stream, Bytes &fields) {
+      if (writeFrame<Bytes>(stream, 0x01, fields) < 0)
+	ZiLOG(Error, "Zhttp", "failed to write H3 headers");
+    }
 
     // request
+  public:
     template <typename Stream>
     void request(Stream &stream) {
-      // FIXME
+      Bytes fields;
+      encodeFieldPrefix(fields);
+      impl()->operation([this, &fields]<typename Path, typename Query>(
+	  Method::T method, Path &&path, Query &&query) {
+	encodeMethod_(fields, method);
+	encodePath_(fields, ZuCSpan{ZuFwd<Path>(path)},
+	  ZuCSpan{ZuFwd<Query>(query)});
+      });
+      putPref(fields, 0xc0, 6,
+	QPackIndex<ZuStringT<":scheme">, ZuStringT<"https">>{});
+      impl()->host([&fields]<typename Host>(Host &&host) {
+	encodeVariableField<Bytes, ZuStringT<":authority">>(
+	  fields, ZuCSpan{ZuFwd<Host>(host)});
+      });
+      contentLength_(fields);
+      headers_(fields);
+      writeHeaders_(stream, fields);
     }
+
     // response
     template <typename Stream>
     void response(Stream &stream) {
-      // FIXME
+      Bytes fields;
+      encodeFieldPrefix(fields);
+      unsigned status = impl()->status();
+      if (status == 200)
+	putPref(fields, 0xc0, 6,
+	  QPackIndex<ZuStringT<":status">, ZuStringT<"200">>{});
+      else {
+	char buf[4];
+	encodeVariableField<Bytes, ZuStringT<":status">>(
+	  fields, statusSpan_(status, buf));
+      }
+      contentLength_(fields);
+      headers_(fields);
+      writeHeaders_(stream, fields);
     }
 
     // body
     template <typename Stream>
-    void body(Stream &stream) {
-      // FIXME
+    auto body(Stream &stream) {
+      auto tx = stream.txStream();
+      return dataStream(tx);
     }
 
     // finish
     template <typename Stream>
     void finish(Stream &stream) {
-      // FIXME
+      if constexpr (Trailers::N) {
+	Bytes fields;
+	encodeFieldPrefix(fields);
+	headers_<Trailers>(fields);
+	writeHeaders_(stream, fields);
+      }
+      stream.fin();
     }
+
+    void reset() { }
+
+    bool request() { return true; }
+    template <typename L> void operation(L &&l) { l(Method::GET, "/", ""); }
+    template <typename L> void host(L &&l) { l("127.0.0.1"); }
+    unsigned status() { return 200; }
+    template <typename L> void reason(L &&l) { l(""); }
+    template <typename Key, typename L>
+    void header(L &&l) { l(""); }
+    uint64_t contentLength() { return 0; }
   };
 
 } // H3

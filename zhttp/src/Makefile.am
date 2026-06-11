@@ -1,4 +1,8 @@
 METASOURCES = AUTO
+.cc.s:
+	$(CXXCOMPILE) -c -S $<
+%.i.cc: %.cc
+	$(CXXCOMPILE) -C -E $< -o $@
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I${top_srcdir}/zi/src \
 	-I$(top_srcdir)/ztls/src \
