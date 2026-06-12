@@ -19,7 +19,6 @@
 #include <zlib/ZtString.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZmLHash.hh>
-#include <zlib/ZmNoLock.hh>
 
 namespace Zhttp { namespace H3 {
 
@@ -45,10 +44,19 @@ struct Header {
   ZuCSpan	value;
 };
 
+struct QPackFieldFlags {
+  bool	staticRef = false;
+  bool	dynamicRef = false;
+  bool	postBase = false;
+  bool	neverIndex = false;
+};
+
 struct QPackDecodedInstruction {
   QPackInstruction::T	type = QPackInstruction::SetCapacity;
   uint64_t		value = 0;
   Header		header;
+  HeaderBytes		nameStorage;
+  HeaderBytes		valueStorage;
   bool			nameRefDynamic = false;
 };
 
@@ -65,6 +73,8 @@ struct EncodedFieldSectionPrefix {
 
 using Headers = ZtArray<Header, ZtArrayHeapID<"Zhttp.H3.Headers">>;
 using HeaderName = ZtString<ZtStringHeapID<"Zhttp.H3.HeaderName">>;
+using QPackNameList =
+  ZtArray<HeaderName, ZtArrayHeapID<"Zhttp.H3.Params.Names">>;
 
 struct Params {
   Params &&maxHeaderListSize(unsigned v) {
@@ -80,23 +90,23 @@ struct Params {
     return ZuMv(*this);
   }
   Params &&qpackIndex(ZuCSpan name) {
-    if (nIndex_ < MaxNames) index_[nIndex_++] = name;
+    new (index_.push()) HeaderName{headerName_(name)};
     return ZuMv(*this);
   }
   Params &&qpackNeverIndex(ZuCSpan name) {
-    if (nNeverIndex_ < MaxNames) neverIndex_[nNeverIndex_++] = name;
+    new (neverIndex_.push()) HeaderName{headerName_(name)};
     return ZuMv(*this);
   }
 
   bool indexAllowed(ZuCSpan name) const {
-    for (unsigned i = 0; i < nNeverIndex_; ++i)
+    for (unsigned i = 0; i < neverIndex_.length(); ++i)
       if (neverIndex_[i] == name) return false;
-    for (unsigned i = 0; i < nIndex_; ++i)
+    for (unsigned i = 0; i < index_.length(); ++i)
       if (index_[i] == name) return true;
     return false;
   }
   bool neverIndex(ZuCSpan name) const {
-    for (unsigned i = 0; i < nNeverIndex_; ++i)
+    for (unsigned i = 0; i < neverIndex_.length(); ++i)
       if (neverIndex_[i] == name) return true;
     return name == "authorization" || name == "cookie" ||
       name == "set-cookie";
@@ -107,15 +117,20 @@ struct Params {
   unsigned qpackBlockedStreams() const { return qpackBlockedStreams_; }
 
 private:
-  static constexpr unsigned MaxNames = 32;
+  static ZuCSpan headerName_(ZuCSpan name) {
+    for (unsigned i = 0; i < name.length(); ++i)
+      if (!name[i]) {
+	name = ZuCSpan{name.data(), i};
+	break;
+      }
+    return name;
+  }
 
   unsigned	maxHeaderListSize_ = 1<<16;
   unsigned	qpackTableCapacity_ = 0;
   unsigned	qpackBlockedStreams_ = 0;
-  HeaderName	index_[MaxNames];
-  HeaderName	neverIndex_[MaxNames];
-  unsigned	nIndex_ = 0;
-  unsigned	nNeverIndex_ = 0;
+  QPackNameList	index_;
+  QPackNameList	neverIndex_;
 };
 
 using QPackRxString =
@@ -132,6 +147,8 @@ using QPackRxArray =
   ZtArray<QPackRxEntry, ZtArrayHeapID<"Zhttp.H3.QPackRx.Array">>;
 
 struct QPackRxTable {
+  // Connection-affine Rx state. Callers must serialize access from the owning
+  // receive path; table storage is deliberately unsynchronized.
   bool setCapacity(uint32_t);
   bool insert(Header);
   bool insert(ZuCSpan, ZuCSpan);
@@ -139,6 +156,9 @@ struct QPackRxTable {
   bool lookupAbs(uint64_t, Header &) const;
   bool lookupRelative(uint64_t, uint64_t, Header &) const;
   bool lookupPostBase(uint64_t, uint64_t, Header &) const;
+  QPackRxEntry *pushNewest();
+  void dropOldest();
+  const QPackRxEntry *oldest() const;
   uint64_t insertCount() const { return insertCount_; }
   uint64_t baseAbs() const { return baseAbs_; }
   uint32_t capacity() const { return capacityBytes_; }
@@ -178,9 +198,9 @@ struct QPackFieldKey {
     return l.cmp(r);
   }
   uint32_t hash() const {
-    return ZuHash<ZuCSpan>::hash(name) ^
-      (ZuHash<ZuCSpan>::hash(value) + 0x9e3779b9U +
-	(ZuHash<ZuCSpan>::hash(name)<<6) + (ZuHash<ZuCSpan>::hash(name)>>2));
+    uint32_t h = ZuHash<ZuCSpan>::hash(name);
+    return h ^ (ZuHash<ZuCSpan>::hash(value) + 0x9e3779b9U +
+      (h<<6) + (h>>2));
   }
 };
 
@@ -198,11 +218,17 @@ struct QPackTxEntry {
 
 using QPackTxHash = ZmLHash<QPackTxEntry,
   ZmLHashKey<QPackTxEntry::FieldAxor,
-    ZmLHashID<QPackTxHashID,
-      ZmLHashLock<ZmNoLock>>>>;
+    ZmLHashID<QPackTxHashID>>>;
+
+struct QPackTxOrderEntry {
+  uint64_t	abs = 0;
+  uint32_t	size = 0;
+  QPackTxString	name;
+  QPackTxString	value;
+};
 
 using QPackTxOrder =
-  ZtArray<uint64_t, ZtArrayHeapID<"Zhttp.H3.QPackTx.Order">>;
+  ZtArray<QPackTxOrderEntry, ZtArrayHeapID<"Zhttp.H3.QPackTx.Order">>;
 
 using QPackTxRefs =
   ZtArray<uint64_t, ZtArrayHeapID<"Zhttp.H3.QPackTx.Refs">>;
@@ -210,17 +236,30 @@ using QPackTxRefs =
 struct QPackTxSection {
   uint64_t	streamID = 0;
   QPackTxRefs	refs;
+
+  static uint64_t StreamAxor(const QPackTxSection &section) {
+    return section.streamID;
+  }
 };
 
+static inline const char *QPackTxSectionsID() {
+  return "Zhttp.H3.QPackTx.Sections";
+}
+
 using QPackTxSections =
-  ZtArray<QPackTxSection, ZtArrayHeapID<"Zhttp.H3.QPackTx.Sections">>;
+  ZmLHash<QPackTxSection,
+    ZmLHashKey<QPackTxSection::StreamAxor,
+      ZmLHashID<QPackTxSectionsID>>>;
 
 struct QPackTxTable {
-  QPackTxTable() : hash{ZmHashParams{128}} { }
+  // Connection-affine Tx state. Callers must serialize access from the owning
+  // transmit path.
+  QPackTxTable() : hash{ZmHashParams{128}}, sections{ZmHashParams{64}} { }
 
   bool setCapacity(uint32_t);
   bool setMaxCapacity(uint32_t);
   const QPackTxEntry *find(ZuCSpan, ZuCSpan) const;
+  const QPackTxEntry *findAbs(uint64_t) const;
   bool insert(Header, uint64_t * = nullptr);
   bool lookupAbs(uint64_t, Header &) const;
   bool evict();

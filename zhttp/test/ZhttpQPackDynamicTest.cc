@@ -5,13 +5,114 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZhttpQPack.hh>
+#include <zlib/Zhttp.hh>
 
 using namespace ZuTestUtil;
 
 static ZuCSpan span(const Zhttp::H3::HeaderBytes &bytes)
 {
   return ZuCSpan{reinterpret_cast<const char *>(bytes.data()), bytes.length()};
+}
+
+static void appendSpan(Zhttp::H3::HeaderBytes &bytes, ZuCSpan s)
+{
+  for (unsigned i = 0; i < s.length(); ++i) bytes.push(uint8_t(s[i]));
+}
+
+namespace {
+
+using StreamAlloc = ZiIOBufAlloc<256, 4096, "ZhttpQPackDynamicTest.Buf">;
+using BuilderHeaders = ZhttpHeaders("accept");
+
+struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
+  using Base = Zi::TxStream<CaptureTxStream>;
+
+  CaptureTxStream() : Base(4096, 0, 0) { }
+
+  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+    ZmRef<ZiIOBuf> buf = new StreamAlloc{};
+    buf->skip = headRoom;
+    buf->length = 0;
+    return buf;
+  }
+
+  void sendBuf_(ZmRef<ZiIOBuf> buf) {
+    if (!buf) return;
+    for (unsigned i = 0; i < buf->length; ++i) bytes.push(buf->data()[i]);
+  }
+
+  Zhttp::H3::HeaderBytes	bytes;
+};
+
+struct CaptureEncoderTx : public Zhttp::H3::QPackEncoderTx {
+  void write(ZuCSpan span) override { appendSpan(bytes, span); }
+
+  Zhttp::H3::HeaderBytes	bytes;
+};
+
+struct BuilderState :
+  public Zhttp::H3::Builder<BuilderState, BuilderHeaders> {
+  using Base = Zhttp::H3::Builder<BuilderState, BuilderHeaders>;
+
+  const Zhttp::H3::Params &h3Params() const { return params; }
+  Zhttp::H3::QPackTxTable *qpackTx() { return &tx; }
+  Zhttp::H3::QPackEncoderTx *qpackEncoderTx() { return &encoder; }
+  uint64_t streamID() const { return id; }
+  unsigned status() const { return 200; }
+
+  template <typename L>
+  void operation(L &&l) const {
+    l(Zhttp::Method::GET, path, query);
+  }
+  template <typename L> void host(L &&l) const { l("example.com"); }
+  template <typename Key, typename L>
+  void header(L &&l) const {
+    if constexpr (ZuIsSame<Key, ZuStringT<"accept">>{})
+      l("application/json");
+    else
+      l("");
+  }
+
+  Zhttp::H3::Params	params;
+  Zhttp::H3::QPackTxTable tx;
+  CaptureEncoderTx	encoder;
+  uint64_t		id = 1;
+  ZuCSpan		path = "/sample";
+  ZuCSpan		query = "";
+};
+
+static ZuCSpan captureSpan(const CaptureTxStream &stream)
+{
+  return ZuCSpan{
+    reinterpret_cast<const char *>(stream.bytes.data()), stream.bytes.length()};
+}
+
+static bool headersPayload(ZuCSpan bytes, ZuCSpan &payload)
+{
+  unsigned o = 0;
+  uint64_t type = 0, len = 0;
+  if (Zhttp::H3::decodeVar(bytes, o, type) < 0 ||
+      Zhttp::H3::decodeVar(bytes, o, len) < 0 ||
+      type != 0x01 || bytes.length() != o + len)
+    return false;
+  payload = ZuCSpan{bytes.data() + o, unsigned(len)};
+  return true;
+}
+
+} // namespace
+
+static void appendHuffmanString(
+  Zhttp::H3::HeaderBytes &bytes, uint8_t prefix, unsigned prefixBits,
+  ZuCSpan s)
+{
+  Zhttp::H3::HeaderBytes encoded;
+  encoded.length(Zhttp::H3::HPack::enclen(s.length()));
+  uint64_t n = Zhttp::H3::HPack::encode(
+    ZuSpan<uint8_t>{encoded.data(), encoded.length()},
+    ZuBSpan{reinterpret_cast<const uint8_t *>(s.data()), s.length()});
+  encoded.length(n);
+  bytes.push(prefix | uint8_t(encoded.length()));
+  appendSpan(bytes, span(encoded));
 }
 
 void testRxTable()
@@ -131,6 +232,30 @@ void testTxTable()
   ZuCHECK(table.used() <= table.capacity(), "tx eviction failed");
 }
 
+void testTxEvictReferenced()
+{
+  ZuTestScope(testTxEvictReferenced);
+
+  Zhttp::H3::QPackTxTable table;
+  ZuCHECK(table.setMaxCapacity(128) && table.setCapacity(128),
+    "tx capacity setup failed");
+  uint64_t abs0 = uint64_t(-1), abs1 = uint64_t(-1);
+  ZuCHECK(table.insert({"a", "b"}, &abs0) && !abs0 &&
+      table.insert({"c", "d"}, &abs1) && abs1 == 1,
+    "tx referenced eviction insert setup failed");
+  Zhttp::H3::QPackTxRefs refs;
+  refs.push(abs0);
+  table.trackSection(7, refs);
+  Zhttp::H3::Header h;
+  ZuCHECK(!table.setCapacity(48) && table.capacity() == 128 &&
+      table.lookupAbs(abs0, h) && h.name == "a" && h.value == "b",
+    "tx capacity reduction evicted referenced entry");
+  ZuCHECK(table.sectionAck(7) && table.setCapacity(48) &&
+      table.used() <= table.capacity() && !table.lookupAbs(abs0, h) &&
+      table.lookupAbs(abs1, h) && h.name == "c" && h.value == "d",
+    "tx eviction after section ack failed");
+}
+
 void testInstructionEncoding()
 {
   ZuTestScope(testInstructionEncoding);
@@ -201,6 +326,128 @@ void testInstructionEncoding()
     "zero insert count increment was encoded");
 }
 
+void testHuffmanInstructionStorage()
+{
+  ZuTestScope(testHuffmanInstructionStorage);
+
+  Zhttp::H3::HeaderBytes bytes;
+  appendHuffmanString(bytes, 0x60, 5, "accept");
+  appendHuffmanString(bytes, 0x80, 7, "gzip");
+
+  Zhttp::H3::QPackDecodedInstruction decoded;
+  ZuCHECK(Zhttp::H3::QPack::decodeEncoderInstructionOne(
+      span(bytes), decoded) == int(bytes.length()) &&
+      decoded.type == Zhttp::H3::QPackInstruction::InsertWithoutNameRef &&
+      decoded.header.name == "accept" && decoded.header.value == "gzip",
+    "Huffman insert literal instruction decode failed");
+  bytes.length(0);
+  ZuCHECK(decoded.header.name == "accept" && decoded.header.value == "gzip",
+    "Huffman instruction spans did not survive input buffer reuse");
+}
+
+void testInstructionParserSplit()
+{
+  ZuTestScope(testInstructionParserSplit);
+
+  Zhttp::H3::HeaderBytes encoderBytes;
+  Zhttp::H3::HeaderBytes decoderBytes;
+  Zhttp::H3::QPack::encodeInsertLiteral(encoderBytes, {"accept", "json"});
+  Zhttp::H3::QPack::encodeSectionAck(decoderBytes, 9);
+
+  Zhttp::H3::QPackInsnParser encoder;
+  Zhttp::H3::QPackInsnParser decoder;
+  unsigned encoderApplied = 0, decoderApplied = 0;
+  auto decodeEncoder = [](ZuCSpan bytes, Zhttp::H3::QPackDecodedInstruction &i) {
+    return Zhttp::H3::QPack::decodeEncoderInstructionOne(bytes, i);
+  };
+  auto decodeDecoder = [](ZuCSpan bytes, Zhttp::H3::QPackDecodedInstruction &i) {
+    return Zhttp::H3::QPack::decodeDecoderInstructionOne(bytes, i);
+  };
+  auto applyEncoder = [&encoderApplied](
+    const Zhttp::H3::QPackDecodedInstruction &i) {
+    if (i.type == Zhttp::H3::QPackInstruction::InsertWithoutNameRef &&
+	i.header.name == "accept" && i.header.value == "json")
+      ++encoderApplied;
+    return true;
+  };
+  auto applyDecoder = [&decoderApplied](
+    const Zhttp::H3::QPackDecodedInstruction &i) {
+    if (i.type == Zhttp::H3::QPackInstruction::SectionAck && i.value == 9)
+      ++decoderApplied;
+    return true;
+  };
+
+  ZuCHECK(encoder.parse(
+      ZuBSpan{encoderBytes.data(), 1}, decodeEncoder, applyEncoder) &&
+      !encoderApplied,
+    "split encoder instruction was applied early");
+  ZuCHECK(decoder.parse(
+      ZuBSpan{decoderBytes.data(), decoderBytes.length()},
+      decodeDecoder, applyDecoder) && decoderApplied == 1,
+    "decoder parser did not stay independent of partial encoder parser");
+  ZuCHECK(encoder.parse(
+      ZuBSpan{encoderBytes.data() + 1, encoderBytes.length() - 1},
+      decodeEncoder, applyEncoder) && encoderApplied == 1,
+    "split encoder instruction did not complete");
+}
+
+void testBuilderPeerCapacity()
+{
+  ZuTestScope(testBuilderPeerCapacity);
+
+  BuilderState builder;
+  builder.params.qpackTableCapacity(256);
+  CaptureTxStream stream;
+  builder.request(stream);
+  ZuCHECK(!builder.encoder.bytes.length() && !builder.tx.capacity() &&
+      !builder.tx.insertCount(),
+    "builder emitted dynamic QPACK before peer capacity");
+
+  ZuCSpan payload;
+  ZuCHECK(headersPayload(captureSpan(stream), payload),
+    "builder did not emit a valid HEADERS frame");
+  unsigned seen = 0;
+  ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
+      payload,
+      [&seen](Zhttp::H3::Header h) {
+	if (h.name == "accept" && h.value == "application/json") ++seen;
+      }) == int(payload.length()) && seen == 1,
+    "builder static/literal HEADERS payload did not decode");
+
+  BuilderState dynamicBuilder;
+  dynamicBuilder.params.qpackTableCapacity(256);
+  ZuCHECK(dynamicBuilder.tx.setMaxCapacity(256),
+    "builder tx max capacity setup failed");
+  CaptureTxStream dynamicStream;
+  dynamicBuilder.request(dynamicStream);
+  ZuCHECK(dynamicBuilder.encoder.bytes.length() &&
+      dynamicBuilder.tx.capacity() == 256 &&
+      dynamicBuilder.tx.insertCount() > 0,
+    "builder did not commit dynamic QPACK after peer capacity");
+}
+
+void testBuilderQueryPath()
+{
+  ZuTestScope(testBuilderQueryPath);
+
+  BuilderState builder;
+  builder.path = "/sample";
+  builder.query = "q=1";
+  CaptureTxStream stream;
+  builder.request(stream);
+
+  ZuCSpan payload;
+  ZuCHECK(headersPayload(captureSpan(stream), payload),
+    "builder query path did not emit a valid HEADERS frame");
+  bool sawPath = false;
+  ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
+      payload,
+      [&sawPath](Zhttp::H3::Header h) {
+	if (h.name == ":path" && h.value == "/sample?q=1") sawPath = true;
+      }) == int(payload.length()) && sawPath,
+    "builder query path did not decode as a segmented :path value");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -208,5 +455,10 @@ int main(int argc, char **argv)
   ZuTestCall(testRxTable);
   ZuTestCall(testDynamicFieldSectionDecode);
   ZuTestCall(testTxTable);
+  ZuTestCall(testTxEvictReferenced);
   ZuTestCall(testInstructionEncoding);
+  ZuTestCall(testHuffmanInstructionStorage);
+  ZuTestCall(testInstructionParserSplit);
+  ZuTestCall(testBuilderPeerCapacity);
+  ZuTestCall(testBuilderQueryPath);
 }

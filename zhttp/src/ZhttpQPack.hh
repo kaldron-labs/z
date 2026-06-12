@@ -18,6 +18,7 @@
 #endif
 
 #include <zlib/ZiAssert.hh>
+#include <zlib/ZtLocalArray.hh>
 
 namespace Zhttp { namespace H3 {
 
@@ -89,57 +90,183 @@ struct QPack {
     HeaderBytes &, ZuCSpan, unsigned &, unsigned, uint8_t, ZuCSpan &);
 
   template <typename L>
-  static int decodeLiteral(
-    ZuCSpan in, L l, const Params &params = {}, uint64_t insertCount = 0) {
+  static int decodeFieldSection(
+    ZuCSpan in, const QPackRxTable *table, L l,
+    const Params &params = {}, uint64_t insertCount = 0,
+    uint64_t maxCapacity = 0, FieldSectionPrefix *decodedPrefix = nullptr) {
+    if (table) {
+      insertCount = table->insertCount();
+      maxCapacity = table->maxCapacity();
+    }
     FieldSectionPrefix prefix;
     int prefixLen = decodeFieldSectionPrefix(
-      in, prefix, insertCount, params.qpackTableCapacity());
+      in, prefix, insertCount, maxCapacity);
     if (prefixLen < 0 || !validateFieldSectionPrefix(prefix, insertCount))
       return -1;
+    if (decodedPrefix) *decodedPrefix = prefix;
+
     unsigned o = unsigned(prefixLen);
-    unsigned headerBytes = 0;
+    uint64_t base = prefix.base;
+    uint64_t headerBytes = 0;
+    auto nameStorage = ZtLocalArray(HeaderBytes, HPack::declen(in.length()));
+    auto valueStorage = ZtLocalArray(HeaderBytes, HPack::declen(in.length()));
+
+    auto countHeader = [&headerBytes, &params](ZuCSpan name, ZuCSpan value) {
+      if (headerBytes > params.maxHeaderListSize() - name.length())
+	return false;
+      headerBytes += name.length();
+      if (headerBytes > params.maxHeaderListSize() - value.length())
+	return false;
+      headerBytes += value.length();
+      return true;
+    };
+    auto readValue = [&](ZuCSpan &value) {
+      valueStorage.length(0);
+      return decodeString(valueStorage, in, o, 7, 0x80, value) >= 0;
+    };
+
     while (o < in.length()) {
       uint8_t first = uint8_t(in[o]);
       ZuCSpan name;
       ZuCSpan value;
-      HeaderBytes nameStorage;
-      HeaderBytes valueStorage;
+      Header indexed;
+      HeaderName indexedNameStorage;
+      QPackFieldFlags flags;
 
       if (first & 0x80) {
 	uint64_t index = 0;
 	uint8_t indexFirst = 0;
-	if (qpackDecodePrefInt_(in, o, 6, index, &indexFirst) < 0 ||
-	    !(indexFirst & 0x40))
+	if (qpackDecodePrefInt_(in, o, 6, index, &indexFirst) < 0)
 	  return -1;
-	Header h;
-	if (!staticField(index, h)) return -1;
-	name = h.name;
-	value = h.value;
+	if (indexFirst & 0x40) {
+	  if (!staticField(index, indexed)) return -1;
+	  flags.staticRef = true;
+	} else {
+	  if (!table || !table->lookupRelative(base, index, indexed))
+	    return -1;
+	  flags.dynamicRef = true;
+	}
+	name = indexed.name;
+	value = indexed.value;
+      } else if ((first & 0xf0) == 0x10) {
+	uint64_t index = 0;
+	if (qpackDecodePrefInt_(in, o, 4, index) < 0 ||
+	    !table || !table->lookupPostBase(base, index, indexed))
+	  return -1;
+	name = indexed.name;
+	value = indexed.value;
+	flags.dynamicRef = true;
+	flags.postBase = true;
       } else if ((first & 0xc0) == 0x40) {
 	uint64_t index = 0;
 	uint8_t nameFirst = 0;
-	if (qpackDecodePrefInt_(in, o, 4, index, &nameFirst) < 0 ||
-	    !(nameFirst & 0x10))
+	if (qpackDecodePrefInt_(in, o, 4, index, &nameFirst) < 0)
 	  return -1;
-	Header h;
-	if (!staticField(index, h)) return -1;
-	name = h.name;
-	if (decodeString(valueStorage, in, o, 7, 0x80, value) < 0)
+	flags.neverIndex = nameFirst & 0x20;
+	if (nameFirst & 0x10) {
+	  if (!staticName(index, indexedNameStorage)) return -1;
+	  name = indexedNameStorage;
+	  flags.staticRef = true;
+	} else {
+	  if (!table || !table->lookupRelative(base, index, indexed))
+	    return -1;
+	  name = indexed.name;
+	  flags.dynamicRef = true;
+	}
+	if (!readValue(value)) return -1;
+      } else if ((first & 0xf0) == 0x00) {
+	uint64_t index = 0;
+	if (qpackDecodePrefInt_(in, o, 3, index) < 0 ||
+	    !table || !table->lookupPostBase(base, index, indexed))
 	  return -1;
+	flags.neverIndex = first & 0x08;
+	flags.dynamicRef = true;
+	flags.postBase = true;
+	name = indexed.name;
+	if (!readValue(value)) return -1;
       } else if ((first & 0xe0) == 0x20) {
-	if (decodeString(nameStorage, in, o, 3, 0x08, name) < 0)
+	nameStorage.length(0);
+	valueStorage.length(0);
+	if (decodeString(nameStorage, in, o, 3, 0x08, name) < 0 ||
+	    decodeString(valueStorage, in, o, 7, 0x80, value) < 0)
 	  return -1;
-	if (decodeString(valueStorage, in, o, 7, 0x80, value) < 0)
-	  return -1;
+	flags.neverIndex = first & 0x10;
       } else
 	return -1;
 
-      headerBytes += name.length() + value.length();
-      if (headerBytes > params.maxHeaderListSize()) return -1;
-      l(Header{name, value});
+      if (!countHeader(name, value)) return -1;
+      l(Header{name, value}, flags);
     }
     return int(o);
   }
+
+  template <typename L>
+  static int decodeLiteral(
+    ZuCSpan in, L l, const Params &params = {}, uint64_t insertCount = 0) {
+    return decodeFieldSection(
+      in, nullptr,
+      [&l](Header h, QPackFieldFlags) { l(h); },
+      params, insertCount, params.qpackTableCapacity());
+  }
+};
+
+struct QPackInsnParser {
+  template <typename Decode, typename Apply>
+  bool parse(ZuBSpan span, Decode decode, Apply apply) {
+    if (bytes.length() != offset) {
+      for (unsigned i = 0; i < span.length(); ++i) bytes.push(span[i]);
+      return drain_(decode, apply);
+    }
+
+    unsigned o = 0;
+    while (o < span.length()) {
+      QPackDecodedInstruction insn;
+      int n = decode(ZuCSpan{
+	reinterpret_cast<const char *>(span.data() + o), span.length() - o},
+	insn);
+      if (n == -2) {
+	for (unsigned i = o; i < span.length(); ++i) bytes.push(span[i]);
+	offset = 0;
+	return bytes.length() <= MaxBuffered;
+      }
+      if (n < 0 || !apply(insn)) return false;
+      o += unsigned(n);
+    }
+    return true;
+  }
+
+  void reset() {
+    bytes.length(0);
+    offset = 0;
+  }
+
+private:
+  template <typename Decode, typename Apply>
+  bool drain_(Decode decode, Apply apply) {
+    for (;;) {
+      QPackDecodedInstruction insn;
+      int n = decode(ZuCSpan{
+	reinterpret_cast<const char *>(bytes.data() + offset),
+	bytes.length() - offset}, insn);
+      if (n == -2) {
+	if (offset > 4096 && offset > (bytes.length()>>1)) {
+	  bytes.splice(0, offset);
+	  offset = 0;
+	}
+	return bytes.length() - offset <= MaxBuffered;
+      }
+      if (n < 0 || !apply(insn)) return false;
+      offset += unsigned(n);
+      if (offset == bytes.length()) {
+	reset();
+	return true;
+      }
+    }
+  }
+
+  HeaderBytes	bytes;
+  unsigned	offset = 0;
+  static constexpr unsigned MaxBuffered = 1<<16;
 };
 
 template <typename L>
@@ -147,75 +274,10 @@ int decodeLiteralDynamic(
   ZuCSpan in, const QPackRxTable &table, L l,
   const Params &params = {})
 {
-  FieldSectionPrefix prefix;
-  int prefixLen = QPack::decodeFieldSectionPrefix(
-    in, prefix, table.insertCount(), table.maxCapacity());
-  if (prefixLen < 0 || prefix.requiredInsertCount > table.insertCount())
-    return -1;
-  uint64_t base = prefix.base;
-
-  unsigned o = unsigned(prefixLen);
-  unsigned headerBytes = 0;
-  while (o < in.length()) {
-    uint8_t first = uint8_t(in[o]);
-    ZuCSpan name;
-    ZuCSpan value;
-    Header indexed;
-    HeaderBytes nameStorage;
-    HeaderBytes valueStorage;
-
-    auto readValue = [&]() -> bool {
-      return QPack::decodeString(valueStorage, in, o, 7, 0x80, value) >= 0;
-    };
-
-    if (first & 0x80) {
-      uint64_t index = 0;
-      uint8_t indexFirst = 0;
-      if (qpackDecodePrefInt_(in, o, 6, index, &indexFirst) < 0)
-	return -1;
-      if (indexFirst & 0x40) {
-	if (!QPack::staticField(index, indexed)) return -1;
-      } else if (!table.lookupRelative(base, index, indexed))
-	return -1;
-      name = indexed.name;
-      value = indexed.value;
-    } else if ((first & 0xf0) == 0x10) {
-      uint64_t index = 0;
-      if (qpackDecodePrefInt_(in, o, 4, index) < 0 ||
-	  !table.lookupPostBase(base, index, indexed))
-	return -1;
-      name = indexed.name;
-      value = indexed.value;
-    } else if ((first & 0xc0) == 0x40) {
-      uint64_t index = 0;
-      uint8_t nameFirst = 0;
-      if (qpackDecodePrefInt_(in, o, 4, index, &nameFirst) < 0)
-	return -1;
-      if (nameFirst & 0x10) {
-	if (!QPack::staticField(index, indexed)) return -1;
-      } else if (!table.lookupRelative(base, index, indexed))
-	return -1;
-      name = indexed.name;
-      if (!readValue()) return -1;
-    } else if ((first & 0xf0) == 0x00) {
-      uint64_t index = 0;
-      if (qpackDecodePrefInt_(in, o, 3, index) < 0 ||
-	  !table.lookupPostBase(base, index, indexed))
-	return -1;
-      name = indexed.name;
-      if (!readValue()) return -1;
-    } else if ((first & 0xe0) == 0x20) {
-      if (QPack::decodeString(nameStorage, in, o, 3, 0x08, name) < 0)
-	return -1;
-      if (!readValue()) return -1;
-    } else
-      return -1;
-
-    headerBytes += name.length() + value.length();
-    if (headerBytes > params.maxHeaderListSize()) return -1;
-    l(Header{name, value});
-  }
-  return int(o);
+  return QPack::decodeFieldSection(
+    in, &table,
+    [&l](Header h, QPackFieldFlags) { l(h); },
+    params);
 }
 
 }} // namespace Zhttp::H3
