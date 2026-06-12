@@ -1,0 +1,11 @@
+incorporate `ZiEventLoop` into `Ztls` to handle `PTLS_ERROR_ASYNC_OPERATION` (see commented-out block in `Ztls.hh:217-222`):
+- `Client::init` and `Server::init` currently take a number of required and optional parameters to initialize and configure `Ztls`:
+  - add a `struct EngineParams` in `Ztls` namespace, patterned after `ZiMxParams`, that is positionally constructed with common required parameters, but permits optional parameters to be specified inline. E.g. a caller could write: `init(ClientParams(mx, thread, alpn).caPath(caPath).certPath(certPath))`
+  - add `ClientParams` and `ServerParams`, both deriving from `EngineParams`, adding in client- and server-specific options
+  - `Engine::init` will take a single `EngineParams` parameter
+  - `Client::init` will take a single `ClientParams` parameter
+  - `Server::init` will take a single `ServerParams` parameter
+  - add `ZuCSpan asyncThread` to `ServerParams` as optional
+- add `m_eventLoop` to `Server` (may be unitialized if no thread is configured)
+- in `Server`, use `asyncThread` from the initialization parameters to initialize `m_eventLoop`
+- use `m_eventLoop` to handle `PTLS_ERROR_ASYNC_OPERATION`
