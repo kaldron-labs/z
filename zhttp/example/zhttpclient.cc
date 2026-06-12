@@ -556,6 +556,7 @@ struct CliLink : public Base_ {
     typename Base::StreamRef stream;
     if constexpr (H3) {
       if (!openH3LocalStreams(*this, this->app()->state)) {
+	this->app()->state.failed = true;
 	this->app()->done();
 	return;
       }
@@ -564,6 +565,7 @@ struct CliLink : public Base_ {
     } else
       stream = this->stream();
     if (!stream) {
+      this->app()->state.failed = true;
       this->app()->done();
       return;
     }
@@ -574,11 +576,13 @@ struct CliLink : public Base_ {
   }
   void disconnected() {
     std::cerr << "disconnected\n" << std::flush;
+    if (!this->app()->state.done) this->app()->state.failed = true;
     this->app()->done();
   }
   void connectFailed(bool transient) {
     std::cerr << "failed to connect" << (transient ? " (transient)" : "") <<
       '\n' << std::flush;
+    this->app()->state.failed = true;
     this->app()->done();
   }
   template <typename Rx>

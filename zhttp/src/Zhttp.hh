@@ -216,14 +216,34 @@ inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
   ZuSpan key(&line[0], unsigned(n));
   line.offset(n + 1); // skip key and delimiter
   n = bov(line);
-  if (ZuUnlikely(n < 0)) return false;
-  line.offset(n); // skip white space
+  if (n < 0)
+    line.trunc(0);
+  else
+    line.offset(n); // skip white space
   ZuSpan value{line.data(), line.length()};
-  n = eov(value);
-  if (ZuUnlikely(n < 0)) return false; // should never happen
-  value.trunc(n);
+  if (value) {
+    n = eov(value);
+    if (ZuUnlikely(n < 0)) return false; // should never happen
+    value.trunc(n);
+  }
   normalize(key);
   kv(key, value);
+  return true;
+}
+
+inline bool parseUInt64Full_(ZuBSpan value, uint64_t &out) {
+  ZuBox<uint64_t> box;
+  unsigned n = box.scan(ZuCSpan{value});
+  if (ZuUnlikely(!n || n != value.length())) return false;
+  uint64_t v = 0;
+  for (unsigned i = 0; i < value.length(); ++i) {
+    int c = value[i];
+    if (ZuUnlikely(c < '0' || c > '9')) return false;
+    c -= '0';
+    if (ZuUnlikely(v > (uint64_t(-1) - unsigned(c)) / 10)) return false;
+    v = (v * 10) + unsigned(c);
+  }
+  out = v;
   return true;
 }
 
@@ -329,8 +349,9 @@ namespace H1 {
 	  ZiLOG(Error, "Zhttp", "invalid transfer-encoding");
 	}
       } else if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
-	uint64_t contentLength = ZuBox<uint64_t>{ZuCSpan{value}};
-	if (contentLength > MaxBody) {
+	uint64_t contentLength;
+	if (!parseUInt64Full_(value, contentLength) ||
+	    contentLength > MaxBody) {
 	  m_state = State::Error;
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
 	} else {
@@ -394,6 +415,7 @@ namespace H1 {
 	if (ZuUnlikely(++o > 7)) { error(); return; } // unterminated method
       if (ZuUnlikely(!o || o >= int(n))) { error(); return; } // missing method
       Method::T method = Method::lookup({&line[0], unsigned(o)});
+      if (ZuUnlikely(method < 0)) { error(); return; }
       unsigned b = ++o;
       while (o < int(n) && line[o] != ' ') ++o;
       if (ZuUnlikely(b == unsigned(o) || o >= int(n))) error();
@@ -882,13 +904,6 @@ namespace H3 {
   template <typename Impl>
   struct HasQPackDecoderTx_<Impl,
     decltype(ZuDeclVal<Impl *>()->qpackDecoderTx(), void())> :
-    public ZuTrue { };
-
-  template <typename Impl, typename = void>
-  struct HasQPackEncoderTx_ : public ZuFalse { };
-  template <typename Impl>
-  struct HasQPackEncoderTx_<Impl,
-    decltype(ZuDeclVal<Impl *>()->qpackEncoderTx(), void())> :
     public ZuTrue { };
 
   template <typename Impl, typename = void>
@@ -1434,15 +1449,22 @@ namespace H3 {
     }
 
     template <typename L>
-    static bool withString_(QPackStringRef ref, L l) {
-      if (!ref.huffman) return l(ref.raw);
-      uint8_t storage[DefltMaxHdr];
+    bool withString_(QPackStringRef ref, L l) {
+      if (!ref.huffman)
+	return ref.raw.length() <= h3Params_().maxHeaderListSize() &&
+	  l(ref.raw);
+      uint64_t decodedMax = HPack::declen(ref.raw.length());
+      if (ZuUnlikely(decodedMax > h3Params_().maxHeaderListSize()))
+	return false;
+      auto storage = ZtLocalArray(HeaderBytes, decodedMax);
       int64_t n = HPack::decode(
-	ZuSpan<uint8_t>{storage, DefltMaxHdr},
+	ZuSpan<uint8_t>{storage.data(), unsigned(decodedMax)},
 	ZuBSpan{
 	  reinterpret_cast<const uint8_t *>(ref.raw.data()), ref.raw.length()});
       if (n < 0) return false;
-      return l(ZuCSpan{reinterpret_cast<const char *>(storage), unsigned(n)});
+      storage.length(unsigned(n));
+      return l(ZuCSpan{
+	reinterpret_cast<const char *>(storage.data()), storage.length()});
     }
 
     using FieldState = FieldState_<Request>;
@@ -1508,13 +1530,13 @@ namespace H3 {
 	}
       }
       return withString_(valueRef, [this, name](ZuCSpan value) {
-	uint8_t key_[256];
-	if (name.length() > 256) return false;
-	ZuSpan key{key_, name.length()};
+	unsigned n = name.length();
+	auto key_ = ZtLocalArray(HeaderBytes, n, n > 256 ? n : 256);
+	ZuSpan key{key_.data(), name.length()};
 	memcpy(key.data(), name.data(), name.length());
 	normalize(key);
 	header_(key, ZuBSpan{value});
-	return true;
+	return m_state != State::Error;
       });
     }
 
@@ -1552,8 +1574,9 @@ namespace H3 {
 
     template <typename Key> void header_(ZuBSpan value) {
       if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
-	uint64_t contentLength = ZuBox<uint64_t>{ZuCSpan{value}};
-	if (contentLength > MaxBody) {
+	uint64_t contentLength;
+	if (!parseUInt64Full_(value, contentLength) ||
+	    contentLength > MaxBody) {
 	  m_state = State::Error;
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
 	} else {
@@ -2375,17 +2398,9 @@ namespace H3 {
       else
 	return nullptr;
     }
-    QPackEncoderTx *qpackEncoderTx_() {
-      if constexpr (HasQPackEncoderTx_<Impl>{})
-	return impl()->qpackEncoderTx();
-      else
-	return nullptr;
-    }
     bool qpackEncoderWriteAccepted_(ZuBSpan span) {
       if constexpr (HasQPackEncoderWriteAccepted_<Impl>{})
 	return impl()->qpackEncoderWriteAccepted(span);
-      else if (auto tx = qpackEncoderTx_())
-	return tx->writeAccepted(span);
       else
 	return true;
     }
