@@ -1350,16 +1350,11 @@ public:
     }, length);
   }
 
-// shift(N) - optimized version of splice(0, length)
-  void shift(uint64_t length) {
-    if (ZuUnlikely(!length)) return;
-    uint64_t n = this->length();
-    if (length > n) length = n;
-    destroyElems(m_data, length);
-    if (n -= length) moveElems(m_data, m_data + length, n);
-    length_(n);
-  }
+// push/pop/shift/unshift
 
+  // push() intentionally returns uninitialized storage
+  // - recommended style:
+  //   auto o = new (array.push()) T(...)
   T *push() {
     uint64_t n = length();
     uint64_t z = size();
@@ -1440,6 +1435,16 @@ public:
   }
   template <typename V> void unshift(V &&v) {
     initElem(unshift(), ZuFwd<V>(v));
+  }
+
+  // shift(N) - optimized version of splice(0, length)
+  void shift(uint64_t length) {
+    if (ZuUnlikely(!length)) return;
+    uint64_t n = this->length();
+    if (length > n) length = n;
+    destroyElems(m_data, length);
+    if (n -= length) moveElems(m_data, m_data + length, n);
+    length_(n);
   }
 
 // splice()
