@@ -97,6 +97,10 @@ These guidelines extend `AGENTS.md`
   - buffer heap pool sizes can be optimally tuned to the workload at run-time
 - use `ZiMultiplex` for I/O multiplexing / reactor
 - use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests
+- use appropriate containers: `ZmHash`, `ZmLHash`, `ZmList`, `ZmRBTree`, `ZmPQueue`, ...
+  - Z iterators are usually optionally mutable and can delete while iterating
+  - `del()` / `delNode()` usually returns a movable reference to the deleted node/value
+- use `ZmRing`, `ZiRing` for inter-thread and inter-process communication
 
 ## No Dogma
 - mutability is encouraged if it benefits performance
