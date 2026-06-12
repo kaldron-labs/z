@@ -469,7 +469,7 @@ namespace H1 {
 	  } break;
 	  case State::Body: { // parse body
 	    consumed = stream.consume(
-	      [this](ZuBSpan span) {
+	      [this](ZuBSpan span) -> int64_t {
 		auto n = span.length();
 		if (n > m_contentLength) n = m_contentLength;
 		if (!(m_contentLength -= n)) m_state = State::Complete;
@@ -500,7 +500,7 @@ namespace H1 {
 	  } break;
 	  case State::Chunk: { // parse chunk data
 	    consumed = stream.consume(
-	      [this](ZuBSpan span) {
+	      [this](ZuBSpan span) -> int64_t {
 		auto n = span.length();
 		if (n > m_chunkLength) n = m_chunkLength;
 		if (!(m_chunkLength -= n)) m_state = State::ChunkTrlr;
@@ -772,11 +772,12 @@ namespace H3 {
   }
 
   struct CxnStreamState {
-    ZtEnum(CxnStreamState, int8_t,
-      Type,		// reading stream type
-      Control,		// HTTP/3 control stream frames
-      QPack,		// QPACK encoder/decoder stream bytes
-      Extension,	// unknown extension stream bytes
+	  ZtEnum(CxnStreamState, int8_t,
+	    Type,		// reading stream type
+	    Control,		// HTTP/3 control stream frames
+	    QPackEncoder,	// peer QPACK encoder stream bytes
+	    QPackDecoder,	// peer QPACK decoder stream bytes
+	    Extension,	// unknown extension stream bytes
       Complete,		// stream FIN / closed cleanly
       Cancelled,	// RESET_STREAM / STOP_SENDING
       Error);		// invalid connection stream
@@ -927,11 +928,11 @@ namespace H3 {
 	  return true;
 	case 0x02: // QPACK encoder stream
 	  if (!peerEncoderStream_()) return false;
-	  m_streamState = StreamState::QPack;
+	  m_streamState = StreamState::QPackEncoder;
 	  return true;
 	case 0x03: // QPACK decoder stream
 	  if (!peerDecoderStream_()) return false;
-	  m_streamState = StreamState::QPack;
+	  m_streamState = StreamState::QPackDecoder;
 	  return true;
 	default:
 	  if (!peerExtensionStream_(type)) return false;
@@ -1011,27 +1012,50 @@ namespace H3 {
       int64_t consumed = 0;
       do {
 	consumed = 0;
-	if (m_streamState == StreamState::Type) {
-	  consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.CxnType">>(
-	    [this](ZuBSpan span) { return this->consumeVar_(span); },
-	    [this](ZuBSpan span) {
-	      if (!this->parseType_(ZuCSpan{
-		    reinterpret_cast<const char *>(span.data()), span.length()}))
-		m_streamState = StreamState::Error;
-	      m_varLen = m_varBytes = 0;
-	    });
-	} else if (m_streamState == StreamState::Control) {
-	  consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.CxnFrame">>(
-	    [this](ZuBSpan span) { return this->consumeFrame_(span); },
-	    [this](ZuBSpan span) {
-	      if (!this->parseControlFrame_(ZuCSpan{
-		    reinterpret_cast<const char *>(span.data()), span.length()}))
-		m_streamState = StreamState::Error;
-	      resetFrame_();
-	    });
-	} else if (m_streamState == StreamState::QPack ||
-	    m_streamState == StreamState::Extension) {
-	  if (drain_(rx) < 0) m_streamState = StreamState::Error;
+	switch (m_streamState) {
+	  default:
+	    break;
+	  case StreamState::Type: {
+	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.CxnType">>(
+	      [this](ZuBSpan span) { return this->consumeVar_(span); },
+	      [this](ZuBSpan span) {
+		if (!this->parseType_(ZuCSpan{
+		      reinterpret_cast<const char *>(span.data()), span.length()}))
+		  m_streamState = StreamState::Error;
+		m_varLen = m_varBytes = 0;
+	      });
+	  } break;
+	  case StreamState::Control: {
+	    auto frameState = m_frameState;
+	    unsigned varLen = m_varLen, varBytes = m_varBytes;
+	    uint64_t frameLen = m_frameLen, frameOff = m_frameOff;
+	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.CxnFrame">>(
+	      [this](ZuBSpan span) { return this->consumeFrame_(span); },
+	      [this](ZuBSpan span) {
+		if (!this->parseControlFrame_(ZuCSpan{
+		      reinterpret_cast<const char *>(span.data()), span.length()}))
+		  m_streamState = StreamState::Error;
+		resetFrame_();
+	      });
+	    if (!consumed) {
+	      m_frameState = frameState;
+	      m_varLen = varLen;
+	      m_varBytes = varBytes;
+	      m_frameLen = frameLen;
+	      m_frameOff = frameOff;
+	    }
+	  } break;
+	  case StreamState::QPackEncoder:
+	    // Dynamic QPACK is disabled; peer encoder instructions are invalid.
+	    if (!rx.empty()) m_streamState = StreamState::Error;
+	    break;
+	  case StreamState::QPackDecoder:
+	    // We never emit dynamic references, so peer decoder updates are irrelevant.
+	    if (drain_(rx) < 0) m_streamState = StreamState::Error;
+	    break;
+	  case StreamState::Extension:
+	    if (drain_(rx) < 0) m_streamState = StreamState::Error;
+	    break;
 	}
 	if (consumed < 0 || m_streamState == StreamState::Error) {
 	  state_(State::Error);
@@ -1106,48 +1130,24 @@ namespace H3 {
     using State = ParserState;
 
   private:
-    int64_t consumeFrame_(ZuBSpan span) {
-      for (unsigned o = 0; o < span.length(); ++o) {
-	uint8_t c = span[o];
-	if (m_frameState == FrameState::Type) {
-	  m_frameState = FrameState::TypeCont;
-	  m_varLen = 1U << (c >> 6);
-	  m_varBytes = 1;
-	  if (m_varBytes < m_varLen) continue;
-	  m_frameState = FrameState::Length;
-	  continue;
-	}
-	if (m_frameState == FrameState::TypeCont) {
-	  if (++m_varBytes < m_varLen) continue;
-	  m_frameState = FrameState::Length;
-	  continue;
-	}
-	if (m_frameState == FrameState::Length) {
-	  m_varLen = 1U << (c >> 6);
-	  m_varBytes = 1;
-	  m_frameLen = c & 0x3f;
-	  m_frameState = FrameState::LengthCont;
-	  if (m_varBytes < m_varLen) continue;
-	  m_frameState = FrameState::Payload;
-	  m_frameOff = 0;
-	  if (!m_frameLen) return o + 1;
-	  continue;
-	} else if (m_frameState == FrameState::LengthCont) {
-	  m_frameLen = (m_frameLen << 8) | c;
-	  if (++m_varBytes < m_varLen) continue;
-	  m_frameState = FrameState::Payload;
-	  m_frameOff = 0;
-	  if (!m_frameLen) return o + 1;
-	  continue;
-	}
-	if (m_frameState == FrameState::Payload) {
-	  uint64_t avail = span.length() - o;
-	  if (avail >= m_frameLen - m_frameOff)
-	    return o + int64_t(m_frameLen - m_frameOff);
-	  m_frameOff += avail;
-	  return 0;
-	}
+    int64_t consumePayload_(ZuBSpan span) {
+      auto n = span.length();
+      uint64_t remaining = m_frameLen - m_frameOff;
+      if (n > remaining) n = remaining;
+      if (!(m_frameOff += n)) return n;
+      if (m_frameOff == m_frameLen) m_frameState = FrameState::Type;
+      return n;
+    }
+
+    int64_t consumeFullPayload_(ZuBSpan span) {
+      auto n = span.length();
+      uint64_t remaining = m_frameLen - m_frameOff;
+      if (n >= remaining) {
+	m_frameOff = m_frameLen;
+	m_frameState = FrameState::Type;
+	return remaining;
       }
+      m_frameOff += n;
       return 0;
     }
 
@@ -1321,6 +1321,7 @@ namespace H3 {
       unsigned o = 0;
       uint64_t requiredInsertCount = 0, base = 0;
       uint8_t baseFirst = 0;
+      // Dynamic QPACK is disabled; field sections must not depend on it.
       if (decodePref_(payload, o, 8, requiredInsertCount) < 0 ||
 	  requiredInsertCount ||
 	  decodePref_(payload, o, 7, base, &baseFirst) < 0 ||
@@ -1402,15 +1403,7 @@ namespace H3 {
       return m_contentLen < 0 || m_bodyLen == uint64_t(m_contentLen);
     }
 
-    bool processFrame_(ZuCSpan frameBytes) {
-      unsigned o = 0;
-      uint64_t type = 0, len = 0;
-      if (decodeVar_(frameBytes, o, type) < 0 ||
-	  decodeVar_(frameBytes, o, len) < 0 ||
-	  frameBytes.length() != o + len)
-	return false;
-      ZuCSpan payload{frameBytes.data() + o, unsigned(len)};
-
+    bool processPayloadFrame_(uint64_t type, ZuCSpan payload) {
       if (type == 0x01) { // HEADERS
 	if (m_state == State::Initial) {
 	  if (!parseFields_(payload, true)) return false;
@@ -1423,16 +1416,35 @@ namespace H3 {
 	return true;
       }
       if (type == 0x00) { // DATA
-	if (m_state != State::Body) return false;
-	if (payload.length() > MaxBody || m_bodyLen > MaxBody - payload.length())
-	  return false;
-	m_bodyLen += payload.length();
-	if (m_contentLen >= 0 && m_bodyLen > uint64_t(m_contentLen))
-	  return false;
-	impl()->body(payload);
-	return true;
+	return processDataPayload_(payload);
       }
       return true; // ignore unknown extension frames on request streams
+    }
+
+    void resetFrame_() {
+      m_frameState = FrameState::Type;
+      m_varLen = m_varBytes = 0;
+      m_frameType = m_frameLen = m_frameOff = 0;
+    }
+
+    bool processDataPayload_(ZuCSpan payload) {
+      if (m_state != State::Body) return false;
+      if (payload.length() > MaxBody ||
+	  m_bodyLen > MaxBody - payload.length())
+	return false;
+      m_bodyLen += payload.length();
+      if (m_contentLen >= 0 && m_bodyLen > uint64_t(m_contentLen))
+	return false;
+      impl()->body(payload);
+      return true;
+    }
+
+    template <typename Stream, typename Rx>
+    static bool streamComplete_(Stream &stream, Rx &rx) {
+      if constexpr (requires { stream.rxComplete(); })
+	return stream.rxComplete() && rx.empty();
+      else
+	return stream.finReceived() && rx.empty();
     }
 
     static int decodeVar_(ZuCSpan in, unsigned &o, uint64_t &v) {
@@ -1458,21 +1470,160 @@ namespace H3 {
       auto &rx = stream.rxStream();
       int64_t consumed = 0;
       do {
-	consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Frame">>(
-	  [this](ZuBSpan span) { return this->consumeFrame_(span); },
-	  [this](ZuBSpan span) {
-	    if (!this->processFrame_(ZuCSpan{
-		  reinterpret_cast<const char *>(span.data()), span.length()}))
-	      m_state = State::Error;
-	    m_frameState = FrameState::Type;
-	    m_varLen = m_varBytes = 0;
-	    m_frameLen = m_frameOff = 0;
-	  });
+	consumed = 0;
+	switch (m_frameState) {
+	  default:
+	    m_state = State::Error;
+	    break;
+	  case FrameState::Type: { // parse frame type
+	    auto frameState = m_frameState;
+	    unsigned varLen = m_varLen, varBytes = m_varBytes;
+	    uint64_t frameType = m_frameType;
+	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Type">>(
+	      [this](ZuBSpan span) -> int64_t {
+		for (unsigned o = 0; o < span.length(); ++o) {
+		  uint8_t c = span[o];
+		  if (m_frameState == FrameState::Type) {
+		    m_frameState = FrameState::TypeCont;
+		    m_varLen = 1U << (c >> 6);
+		    m_varBytes = 1;
+		    m_frameType = c & 0x3f;
+		    if (m_varBytes < m_varLen) continue;
+		    m_frameState = FrameState::Length;
+		    return o + 1;
+		  }
+		  m_frameType = (m_frameType << 8) | c;
+		  if (++m_varBytes < m_varLen) continue;
+		  m_frameState = FrameState::Length;
+		  return o + 1;
+		}
+		return 0;
+	      },
+	      [](ZuBSpan) { });
+	    if (!consumed) {
+	      m_frameState = frameState;
+	      m_varLen = varLen;
+	      m_varBytes = varBytes;
+	      m_frameType = frameType;
+	    }
+	  } break;
+	  case FrameState::TypeCont: { // parse frame type continuation
+	    auto frameState = m_frameState;
+	    unsigned varBytes = m_varBytes;
+	    uint64_t frameType = m_frameType;
+	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Type">>(
+	      [this](ZuBSpan span) -> int64_t {
+		for (unsigned o = 0; o < span.length(); ++o) {
+		  m_frameType = (m_frameType << 8) | uint8_t(span[o]);
+		  if (++m_varBytes < m_varLen) continue;
+		  m_frameState = FrameState::Length;
+		  return o + 1;
+		}
+		return 0;
+	      },
+	      [](ZuBSpan) { });
+	    if (!consumed) {
+	      m_frameState = frameState;
+	      m_varBytes = varBytes;
+	      m_frameType = frameType;
+	    }
+	  } break;
+	  case FrameState::Length: { // parse frame length
+	    auto frameState = m_frameState;
+	    unsigned varLen = m_varLen, varBytes = m_varBytes;
+	    uint64_t frameLen = m_frameLen;
+	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Length">>(
+	      [this](ZuBSpan span) -> int64_t {
+		for (unsigned o = 0; o < span.length(); ++o) {
+		  uint8_t c = span[o];
+		  if (m_frameState == FrameState::Length) {
+		    m_varLen = 1U << (c >> 6);
+		    m_varBytes = 1;
+		    m_frameLen = c & 0x3f;
+		    m_frameState = FrameState::LengthCont;
+		    if (m_varBytes < m_varLen) continue;
+		    m_frameState = FrameState::Payload;
+		    m_frameOff = 0;
+		    return o + 1;
+		  }
+		  m_frameLen = (m_frameLen << 8) | c;
+		  if (++m_varBytes < m_varLen) continue;
+		  m_frameState = FrameState::Payload;
+		  m_frameOff = 0;
+		  return o + 1;
+		}
+		return 0;
+	      },
+	      [](ZuBSpan) { });
+	    if (!consumed) {
+	      m_frameState = frameState;
+	      m_varLen = varLen;
+	      m_varBytes = varBytes;
+	      m_frameLen = frameLen;
+	    }
+	  } break;
+	  case FrameState::LengthCont: { // parse frame length continuation
+	    auto frameState = m_frameState;
+	    unsigned varBytes = m_varBytes;
+	    uint64_t frameLen = m_frameLen;
+	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Length">>(
+	      [this](ZuBSpan span) -> int64_t {
+		for (unsigned o = 0; o < span.length(); ++o) {
+		  m_frameLen = (m_frameLen << 8) | uint8_t(span[o]);
+		  if (++m_varBytes < m_varLen) continue;
+		  m_frameState = FrameState::Payload;
+		  m_frameOff = 0;
+		  return o + 1;
+		}
+		return 0;
+	      },
+	      [](ZuBSpan) { });
+	    if (!consumed) {
+	      m_frameState = frameState;
+	      m_varBytes = varBytes;
+	      m_frameLen = frameLen;
+	    }
+	  } break;
+	  case FrameState::Payload: { // parse frame payload
+	    if (!m_frameLen) {
+	      if (!processPayloadFrame_(m_frameType, {}))
+		m_state = State::Error;
+	      resetFrame_();
+	      consumed = 1;
+	      break;
+	    }
+	    if (m_frameType == 0x00) { // DATA
+	      consumed = rx.consume(
+		[this](ZuBSpan span) {
+		  return this->consumePayload_(span);
+		}, [this](ZuBSpan span) {
+		  ZuCSpan payload{
+		    reinterpret_cast<const char *>(span.data()), span.length()};
+		  if (!this->processDataPayload_(payload))
+		    m_state = State::Error;
+		  if (m_frameOff == m_frameLen) resetFrame_();
+		});
+	      break;
+	    }
+	    uint64_t frameOff = m_frameOff;
+	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Payload">>(
+	      [this](ZuBSpan span) {
+		return this->consumeFullPayload_(span);
+	      }, [this](ZuBSpan span) {
+		ZuCSpan payload{
+		  reinterpret_cast<const char *>(span.data()), span.length()};
+		if (!this->processPayloadFrame_(m_frameType, payload))
+		  m_state = State::Error;
+		resetFrame_();
+	      });
+	    if (!consumed) m_frameOff = frameOff;
+	  } break;
+	}
 	if (consumed < 0) m_state = State::Error;
 	if (m_state == State::Error) break;
       } while (consumed);
 
-      if (stream.finReceived() && rx.empty()) {
+      if (streamComplete_(stream, rx)) {
 	if (m_state == State::Initial)
 	  m_state = State::Error;
 	else if (!bodyComplete_())
@@ -1493,7 +1644,7 @@ namespace H3 {
       m_bodyLen = 0;
       m_frameState = FrameState::Type;
       m_varLen = m_varBytes = 0;
-      m_frameLen = m_frameOff = 0;
+      m_frameType = m_frameLen = m_frameOff = 0;
     }
 
     void operation(Method::T, ZuBSpan) { }
@@ -1512,6 +1663,7 @@ namespace H3 {
     unsigned		m_varLen = 0;
     unsigned		m_varBytes = 0;
     uint64_t		m_frameLen = 0;
+    uint64_t		m_frameType = 0;
     uint64_t		m_frameOff = 0;
   };
 

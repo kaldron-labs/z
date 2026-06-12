@@ -271,13 +271,17 @@ bool sendH3ControlStreams(
   control = link.stream(Zi::StreamType::Simplex);
   if (!control) return false;
   {
-    auto tx = control->txStream();
-    Zhttp::H3::TxBytes out{tx};
-    if (Zhttp::H3::putVar(out, 0x00) < 0 ||
-	Zhttp::H3::writeFrameHeader(tx, 0x04, 0) < 0)
-      return false;
-    tx.flush();
-  }
+	  auto tx = control->txStream();
+	  Zhttp::H3::TxBytes out{tx};
+	  if (Zhttp::H3::putVar(out, 0x00) < 0 ||
+	      Zhttp::H3::writeFrameHeader(tx, 0x04, 4) < 0 ||
+	      Zhttp::H3::putVar(out, 0x01) < 0 ||
+	      Zhttp::H3::putVar(out, 0) < 0 ||
+	      Zhttp::H3::putVar(out, 0x07) < 0 ||
+	      Zhttp::H3::putVar(out, 0) < 0)
+	    return false;
+	  tx.flush();
+	}
   enc = link.stream(Zi::StreamType::Simplex);
   dec = link.stream(Zi::StreamType::Simplex);
   if (!enc || !dec) return false;
