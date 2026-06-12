@@ -3534,7 +3534,7 @@ private:
     Base::retireLocalCIDRoutes_(routes);
   }
 
-protected:
+public:
   void retiredLocalCID_(uint64_t, const CxnID &id) {
     if (app())
       static_cast<Server<App, Impl> *>(app())->dissociateRoute_(id);
