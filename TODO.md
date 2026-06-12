@@ -1,11 +1,22 @@
 # TODO
 
+## ZiRxStream
+
+```
+  template <
+    unsigned Padding = 0,
+    ZuString HeapID = Queue::HeapID{},
+    typename Frame, typename Data>
+  int64_t consume(Frame &&frame, Data &&data) {
+    ...
+	using Scratch = ZtArray<uint8_t, ZtArrayHeapID<HeapID>>;
+```
+
 ## Zquic
-- comments and source code style
-  - white space, indentation, line folding
+- review and cleanup
 
 ## Ztcp
-- raw equivalent of `Ztls`
+- review and cleanup
 
 ## ZvEngine
 - becomes `ZiEngine` / ...
