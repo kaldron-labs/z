@@ -109,13 +109,17 @@ static void nonce_(uint8_t *out, const InitialSecret &secret, uint64_t pn)
     out[InitialSecret::IVLen - 1 - i] ^= uint8_t(pn >> (i * 8));
 }
 
-static void initCipherSuites_(ptls_cipher_suite_t **suites)
+static bool initCipherSuites_(ptls_cipher_suite_t **suites, unsigned max)
 {
   unsigned n = 0;
-  for (auto p = ptls_openssl_cipher_suites; *p && n < 15; ++p)
-    if ((*p)->aead && (*p)->aead->ecb_cipher && (*p)->aead->ctr_cipher)
+  for (auto p = ptls_openssl_cipher_suites; *p; ++p) {
+    if ((*p)->aead && (*p)->aead->ecb_cipher && (*p)->aead->ctr_cipher) {
+      if (n >= max) return false;
       suites[n++] = *p;
+    }
+  }
   suites[n] = nullptr;
+  return true;
 }
 
 static void freeCertificates_(ptls_context_t &ctx)
@@ -749,7 +753,7 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
   m_tlsCtx.random_bytes = ptls_openssl_random_bytes;
   m_tlsCtx.get_time = &ptls_get_time;
   m_tlsCtx.key_exchanges = ptls_openssl_key_exchanges;
-  initCipherSuites_(m_tlsCipherSuites);
+  if (!initCipherSuites_(m_tlsCipherSuites, TLSMaxCiphers)) return false;
   m_tlsCtx.cipher_suites = m_tlsCipherSuites;
   m_tlsCtx.server_cipher_preference = 1;
   m_tlsCtx.max_early_data_size = 0;

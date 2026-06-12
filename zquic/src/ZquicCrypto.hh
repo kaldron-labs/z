@@ -85,20 +85,20 @@ struct TrafficSecret {
   void clear();
   bool valid() const { return installed; }
 
-  uint8_t	secret[MaxSecretLen] = {};
-  uint8_t	key[MaxKeyLen] = {};
-  uint8_t	iv[MaxIVLen] = {};
-  uint8_t	hp[MaxHPLen] = {};
-  unsigned	secretLen = 0;
-  unsigned	keyLen = 0;
-  unsigned	ivLen = 0;
-  unsigned	hpLen = 0;
-  unsigned	tagLen = 0;
-  ptls_aead_algorithm_t *aead = nullptr;
-  ptls_hash_algorithm_t *hash = nullptr;
-  ptls_cipher_algorithm_t *hpCipher = nullptr;
-  ptls_cipher_algorithm_t *hpSuppCipher = nullptr;
-  bool		installed = false;
+  uint8_t			secret[MaxSecretLen] = {};
+  uint8_t			key[MaxKeyLen] = {};
+  uint8_t			iv[MaxIVLen] = {};
+  uint8_t			hp[MaxHPLen] = {};
+  unsigned			secretLen = 0;
+  unsigned			keyLen = 0;
+  unsigned			ivLen = 0;
+  unsigned			hpLen = 0;
+  unsigned			tagLen = 0;
+  ptls_aead_algorithm_t		*aead = nullptr;
+  ptls_hash_algorithm_t		*hash = nullptr;
+  ptls_cipher_algorithm_t	*hpCipher = nullptr;
+  ptls_cipher_algorithm_t	*hpSuppCipher = nullptr;
+  bool				installed = false;
 };
 
 struct PacketProtectionState {
@@ -201,21 +201,21 @@ private:
 
   void appendDelivery_(const uint8_t *, uint64_t);
 
-  uint64_t	m_txOffset = 0;
-  uint64_t	m_rxOffset = 0;
-  CryptoRxPQueue m_rxQueue{0};
-  Delivery	m_delivery;
+  uint64_t		m_txOffset = 0;
+  uint64_t		m_rxOffset = 0;
+  CryptoRxPQueue	m_rxQueue{0};
+  Delivery		m_delivery;
 };
 
 struct CryptoConfig {
-  bool		isServer = false;
-  bool		enable0RTT = false;
-  ZuCSpan	alpn;
-  ZuCSpan	caPath;
-  ZuCSpan	certPath;
-  ZuCSpan	keyPath;
-  ZuCSpan	serverName;
-  const TransportParams *localTransportParams = nullptr;
+  bool			isServer = false;
+  bool			enable0RTT = false;
+  ZuCSpan		alpn;
+  ZuCSpan		caPath;
+  ZuCSpan		certPath;
+  ZuCSpan		keyPath;
+  ZuCSpan		serverName;
+  const TransportParams	*localTransportParams = nullptr;
 };
 
 ZuDerive(TLSTransportParams,
@@ -224,6 +224,10 @@ ZuDerive(TLSTransportParams,
 class Crypto {
 public:
   static constexpr unsigned TLSOutputMax = 64 * 1024;
+  // QUIC uses TLS 1.3 cipher suites with defined header protection. TLS 1.3
+  // currently has a small suite set; keep one extra slot for picotls' null
+  // terminator.
+  static constexpr unsigned TLSMaxCiphers = 15;
 
   ~Crypto();
 
@@ -316,7 +320,7 @@ private:
   TransportParams 		m_peerTransportParams;
   bool				m_peerTransportParamsReceived = false;
   ptls_context_t 		m_tlsCtx{};
-  ptls_cipher_suite_t		*m_tlsCipherSuites[16]{};	// FIXME - why 16?
+  ptls_cipher_suite_t		*m_tlsCipherSuites[TLSMaxCiphers + 1]{};
   ptls_t			*m_tls = nullptr;
   ptls_handshake_properties_t 	m_tlsProps{};
   ptls_raw_extension_t 		m_tlsExtensions[2]{};

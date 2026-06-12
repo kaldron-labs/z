@@ -93,7 +93,7 @@ void testRecovery()
       !Zquic::FrameCodec::parse(
 	ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
 	frame, used) &&
-      frame.ackRangeCount == 2 &&
+      frame.ackRanges.length() == 2 &&
       frame.ackRanges[0].first == 0 &&
       frame.ackRanges[0].largest == 0 &&
       frame.ackRanges[1].first == 2 &&

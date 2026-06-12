@@ -120,6 +120,7 @@ struct StreamFrameInfo {
   unsigned	length = 0;
   unsigned	bytes = 0;
   bool		fin = false;
+  TxRange	range;
 };
 
 class StreamPacketizer {
@@ -134,7 +135,6 @@ public:
     int64_t id = stream.id();
     if (!out || !len || id < 0 || assembly.streamAdded()) return -1;
     unsigned avail = budget.remaining();
-    if (len < avail) avail = len;
     if (!avail) return -1;
 
     TxRange range;
@@ -160,22 +160,21 @@ private:
     ZiAssert(range.offset + range.length <= range.buf->size, "Zquic",
       (range.offset, range.length, range.buf->size),
       "stream Tx range exceeds buffer capacity", return -1);
-    const char *data =
-      reinterpret_cast<const char *>(range.buf->data_() + range.offset);
     unsigned payloadLen = range.length;
     if (payloadLen > len) payloadLen = len;
+    if (payloadLen > budget.remaining()) payloadLen = budget.remaining();
     bool fin = stream.finSent() && stream.txRangeCount() == 1;
     int n = -1;
     while (payloadLen) {
-      ZuCSpan payload{data, payloadLen};
       if (payloadLen < range.length) fin = false;
-      n = FrameCodec::writeStream(
-	out, len, id, range.streamOffset, payload, fin);
-      if (n > 0) break;
+      n = FrameCodec::writeStreamPrefix(
+	out, len, id, range.streamOffset, payloadLen, fin);
+      if (n > 0 && unsigned(n) + payloadLen <= budget.remaining()) break;
       --payloadLen;
     }
     if (n <= 0) return -1;
-    if (!assembly.addStream(budget, unsigned(n))) return -1;
+    unsigned frameBytes = unsigned(n) + payloadLen;
+    if (!assembly.addStream(budget, frameBytes)) return -1;
     TxRange consumed;
     ZiAssert(stream.commitTxRange(consumed, payloadLen), "Zquic",
       (id, payloadLen),
@@ -189,7 +188,7 @@ private:
     }
     if (info)
       *info = StreamFrameInfo{
-	id, range.streamOffset, payloadLen, unsigned(n), fin};
+	id, range.streamOffset, payloadLen, frameBytes, fin, ZuMv(consumed)};
     return n;
   }
 
@@ -208,7 +207,7 @@ private:
       "Zquic", (id, dequeuedOffset, offset),
       "stream FIN disappeared during packetization", return -1);
     if (info)
-      *info = StreamFrameInfo{id, offset, 0, unsigned(n), true};
+      *info = StreamFrameInfo{id, offset, 0, unsigned(n), true, {}};
     return n;
   }
 };

@@ -28,7 +28,7 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
   if (!in.length()) return -1;
   uint8_t t = uint8_t(in[0]);
   unsigned o = 1;
-  f = {};
+  f.reset();
 
   if (t == 0x00) {
     f.type = FrameType::Padding;
@@ -49,10 +49,10 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
 	getVar_(in, o, rangeCount) < 0 ||
 	getVar_(in, o, f.length) < 0)	// first range length
       return -1;
-    if (rangeCount >= Frame::MaxAckRanges) return -1;
+    if (rangeCount + 1 > Frame::MaxAckRanges) return -1;
     if (f.length > f.offset) return -1;
     uint64_t smallest = f.offset - f.length;
-    f.ackRanges[f.ackRangeCount++] = AckRange{f.offset, smallest};
+    f.ackRanges.push(AckRange{f.offset, smallest});
     for (uint64_t i = 0; i < rangeCount; ++i) {
       uint64_t gap = 0, range = 0;
       if (getVar_(in, o, gap) < 0 || getVar_(in, o, range) < 0)
@@ -61,9 +61,9 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
       uint64_t base = smallest - gap - 2;
       if (range > base) return -1;
       smallest = base - range;
-      f.ackRanges[f.ackRangeCount++] = AckRange{base, smallest};
+      f.ackRanges.push(AckRange{base, smallest});
     }
-    for (unsigned i = 0, j = f.ackRangeCount; i < --j; ++i) {
+    for (unsigned i = 0, j = f.ackRanges.length(); i < --j; ++i) {
       AckRange tmp = f.ackRanges[i];
       f.ackRanges[i] = f.ackRanges[j];
       f.ackRanges[j] = tmp;

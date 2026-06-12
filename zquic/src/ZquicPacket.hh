@@ -35,8 +35,8 @@ namespace VarInt {
   int decode(ZuCSpan, uint64_t &, unsigned &);
 }
 
-using CxnID = ZuBArray<20>;
 inline constexpr unsigned CxnIDMax = 20;
+using CxnID = ZuBArray<CxnIDMax>;
 
 struct PacketNumber {
   static unsigned encodedLength(uint64_t pn, uint64_t largestAcked);
@@ -104,6 +104,12 @@ struct Packet {
 };
 
 inline constexpr uint8_t PacketBuildZeroPad[BufSize] = {};
+// Scratch holds locally encoded ACK/control and frame prefixes only. It is
+// sized for the current ACK encoder cap of 64 ranges plus one STREAM prefix.
+inline constexpr unsigned PacketBuildMaxAckRanges = 64;
+inline constexpr unsigned PacketBuildScratchSize =
+  1 + (4 * 8) + ((PacketBuildMaxAckRanges - 1) * 2 * 8) +
+  1 + (3 * 8);
 
 inline ZuCSpan packetBuildSpan(const uint8_t *data, unsigned len)
 {
@@ -112,7 +118,9 @@ inline ZuCSpan packetBuildSpan(const uint8_t *data, unsigned len)
 
 class PlainVec {
 public:
-  static constexpr unsigned Max = 8;
+  // Current packet assembly uses at most: generated control, frame prefix,
+  // frame payload, and padding.
+  static constexpr unsigned Max = 4;
 
   const ptls_iovec_t *data() const { return m_vec; }
   unsigned count() const { return m_count; }
@@ -139,11 +147,16 @@ private:
 
 class PacketBuild {
 public:
+  PacketBuild() = default;
+
+  PacketBuild(const PacketBuild &) = delete;
+  PacketBuild &operator =(const PacketBuild &) = delete;
+
   const ptls_iovec_t *data() const { return m_plain.data(); }
   unsigned count() const { return m_plain.count(); }
   unsigned bytes() const { return m_plain.bytes(); }
   uint8_t *scratch() { return m_scratch + m_scratchLen; }
-  unsigned scratchAvail() const { return BufSize - m_scratchLen; }
+  unsigned scratchAvail() const { return sizeof(m_scratch) - m_scratchLen; }
 
   void reset() {
     m_plain.reset();
@@ -158,6 +171,13 @@ public:
   }
 
   bool add(ZuCSpan span) { return m_plain.add(span); }
+  bool add(const TxRange &range) {
+    if (!range.length) return true;
+    if (!range.buf || range.offset + range.length > range.buf->size)
+      return false;
+    return m_plain.add(
+      packetBuildSpan(range.buf->data_() + range.offset, range.length));
+  }
 
   bool pad(unsigned len) {
     if (!len) return true;
@@ -181,9 +201,9 @@ public:
   }
 
 private:
-  PlainVec	m_plain;
-  uint8_t	m_scratch[BufSize];
-  unsigned	m_scratchLen = 0;
+  PlainVec		m_plain;
+  uint8_t		m_scratch[PacketBuildScratchSize];
+  unsigned		m_scratchLen = 0;
 };
 
 } // namespace Zquic

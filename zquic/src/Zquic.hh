@@ -24,6 +24,7 @@
 #include <zlib/ZuObject.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
@@ -470,20 +471,21 @@ inline bool sendRuntimeCryptoFlights(
     unsigned remaining = unsigned(offsets[epoch + 1] - offsets[epoch]);
     while (remaining) {
       unsigned chunk = remaining > chunkMax ? chunkMax : remaining;
-      uint8_t frame[BufSize];
+      using Frame = ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Runtime.Frame">>;
+      auto frame = ZtLocalArray(Frame, BufSize);
       uint64_t cryptoOffset = txCrypto[level].txOffset();
-      int n = txCrypto[level].writeFramePrefix(frame, sizeof(frame), chunk);
+      int n = txCrypto[level].writeFramePrefix(frame.data(), BufSize, chunk);
       if (n < 0) {
 	++diag.failures;
 	return false;
       }
       SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
       diag.cryptoBytesTx += chunk;
-      if (!send(level, byteSpan(frame, unsigned(n)),
+      if (!send(level, byteSpan(frame.data(), unsigned(n)),
 	    byteSpan(data + off, chunk), ref, addr))
 	return false;
       if (level == CryptoLevel::Handshake &&
-	  !send(level, byteSpan(frame, unsigned(n)),
+	  !send(level, byteSpan(frame.data(), unsigned(n)),
 	    byteSpan(data + off, chunk), ref, addr))
 	return false;
       off += chunk;
@@ -529,8 +531,11 @@ inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
   const char *payload =
     reinterpret_cast<const char *>(d.buf->data() + payloadOffset);
   unsigned offset = 0;
+  auto frame_ = ZmAlloc(Frame, 1);
+  new (&frame_[0]) Frame{};
+  auto &frame = frame_[0];
+  ZuGuard frameGuard{[&frame]() { frame.~Frame(); }};
   while (offset < payloadLength) {
-    Frame frame;
     unsigned used = 0;
     if (FrameCodec::parse(
 	  ZuCSpan{payload + offset, payloadLength - offset},
@@ -1023,9 +1028,9 @@ friend class SrvLink;
   ZmRef<ZiIOBuf> allocTxPacket_() {
     return m_endpoint.allocTxPacket();
   }
-	  bool sendPacket_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
-	    return m_endpoint.send(ZuMv(buf), ZuMv(addr));
-	  }
+  bool sendPacket_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    return m_endpoint.send(ZuMv(buf), ZuMv(addr));
+  }
   void dissociateRoute_(const CxnID &id) {
     m_routes.retire(id);
   }
@@ -1672,8 +1677,11 @@ public:
   }
 
 protected:
-	  struct InitialKeyDir { enum T { Client, Server }; };
-	  struct RuntimeCID { enum T { Initial, Local, Peer }; };
+  struct InitialKeyDir { enum T { Client, Server }; };
+  struct RuntimeCID { enum T { Initial, Local, Peer }; };
+  // RFC9000 specifies only a minimum/default of 2 for active_connection_id_limit.
+  // Mainstream implementations use small caps: quic-go stores 4 and issues 6,
+  // while ngtcp2 accepts up to 8.
   static constexpr unsigned MaxConnectionIDs = 8;
 
   struct LinkCID {
@@ -1721,7 +1729,7 @@ protected:
   void tlsFailure_() { ++m_diag.failures; }
   void handshakeDoneTx_() { }
 
-	  void setRuntimeCIDs_(
+  void setRuntimeCIDs_(
     const CxnID &initialDCID,
     const CxnID &localSCID,
     const CxnID &peerCID) {
@@ -1876,7 +1884,7 @@ protected:
 	cid.state = CxnState::Retired;
   }
 
-	  const CxnID &runtimeCID_(RuntimeCID::T cid) const {
+  const CxnID &runtimeCID_(RuntimeCID::T cid) const {
     switch (cid) {
       case RuntimeCID::Initial: return m_initialDCID;
       case RuntimeCID::Local: return m_localSCID;
@@ -2037,13 +2045,12 @@ protected:
       budget, assembly, *stream, &info);
     if (n <= 0 || !build.commitScratch(unsigned(n)))
       return false;
-    SentFrameRef ref;
-    ref.kind = SentFrameKind::Stream;
-    ref.streamID = info.streamID;
-    ref.offset = info.offset;
-    ref.length = info.length;
-    ref.fin = info.fin;
-    ref.range = TxRange{nullptr, 0, uint32_t(info.length), info.offset};
+    if (!build.add(info.range)) return false;
+    SentFrameRef ref = SentFrameRef::stream(info.streamID, info.range, info.fin);
+    if (!info.length) {
+      ref.offset = info.offset;
+      ref.length = 0;
+    }
     if (!sendPacket(build, ZuMv(addr), ref)) return false;
     m_diag.streamBytesTx += info.length;
     return true;
@@ -2112,8 +2119,8 @@ protected:
   }
 
   void processAckFrame_(CryptoLevel::T level, const Frame &frame) {
-    if (!frame.ackRangeCount) return;
-    m_txPackets[level].ack(frame.ackRanges, frame.ackRangeCount);
+    if (!frame.ackRanges.length()) return;
+    m_txPackets[level].ack(frame.ackRanges.data(), frame.ackRanges.length());
   }
 
   bool buildPayload_(
@@ -2444,11 +2451,14 @@ protected:
   template <typename EmitTLS>
   bool consumeProtectedFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
-    const ZmRef<ZiIOBuf> &packetBuf, bool countHandshakeDone,
-    EmitTLS emitTLS) {
+    const ZmRef<ZiIOBuf> &packetBuf, EmitTLS emitTLS) {
     unsigned offset = 0;
+    auto frame_ = ZmAlloc(Frame, 1);
+    new (&frame_[0]) Frame{};
+    auto &frame = frame_[0];
+    ZuGuard frameGuard{[&frame]() { frame.~Frame(); }};
+
     while (offset < frames.length()) {
-      Frame frame;
       unsigned used = 0;
       if (FrameCodec::parse(
 	    ZuCSpan{frames.data() + offset, frames.length() - offset},
@@ -2459,10 +2469,7 @@ protected:
 	noteAck_(level, pn);
       if (frame.type == FrameType::Ack) {
 	processAckFrame_(level, frame);
-      }
-      if (countHandshakeDone && frame.type == FrameType::HandshakeDone)
-	;
-      if (frame.type == FrameType::Crypto) {
+      } else if (frame.type == FrameType::Crypto) {
 	ZuCSpan contiguous;
 	if (m_rxCrypto[level].receiveFrame(frame, contiguous) < 0)
 	  return false;
@@ -2482,17 +2489,17 @@ protected:
 	})
 	  impl()->streamFrame(
 	    frame.streamID, frame.offset, frame.payload, frame.fin);
-	      } else if (frame.type == FrameType::ResetStream ||
-		  frame.type == FrameType::StopSending) {
-		if (receiveFrame(frame) < 0) return false;
-	      } else if (frame.type == FrameType::NewConnectionID) {
-		if (!receiveNewConnectionID_(frame)) return false;
-	      } else if (frame.type == FrameType::RetireConnectionID) {
-		if (!receiveRetireConnectionID_(frame)) return false;
-	      }
-	      offset += used;
-	    }
-	    return true;
+      } else if (frame.type == FrameType::ResetStream ||
+	  frame.type == FrameType::StopSending) {
+	if (receiveFrame(frame) < 0) return false;
+      } else if (frame.type == FrameType::NewConnectionID) {
+	if (!receiveNewConnectionID_(frame)) return false;
+      } else if (frame.type == FrameType::RetireConnectionID) {
+	if (!receiveRetireConnectionID_(frame)) return false;
+      }
+      offset += used;
+    }
+    return true;
   }
 
 private:
@@ -2615,7 +2622,7 @@ private:
   CxnID			m_initialDCID;
   CxnID			m_localSCID;
   CxnID			m_peerCID;
-  ResetToken	m_peerResetToken;
+  ResetToken		m_peerResetToken;
   LinkCID		m_localCIDs[MaxConnectionIDs];
   LinkCID		m_peerCIDs[MaxConnectionIDs];
   uint64_t		m_peerRetirePriorTo = 0;
@@ -2761,27 +2768,27 @@ public:
     Base::resetRuntimeDiag_();
 
     if (!m_endpoint.openUDP(
-	    app()->mx(),
-	    PathMode::ClientConnected,
-	    ZiIP{}, 0, ip, m_port,
-	    Endpoint::DatagramFn{[link = ZmMkRef(impl())](Datagram d) mutable {
-	      link->app()->rxRun([link, d = ZuMv(d)]() mutable {
-		link->received_(ZuMv(d));
-	      });
-	    }},
-	    Endpoint::ReadyFn{[link = ZmMkRef(impl())](Endpoint *ep) mutable {
-	      link->app()->rxRun([link, ep]() mutable {
-		link->endpointReady_(ep);
-	      });
-	    }},
+	app()->mx(),
+	PathMode::ClientConnected,
+	ZiIP{}, 0, ip, m_port,
+	Endpoint::DatagramFn{[link = ZmMkRef(impl())](Datagram d) mutable {
+	  link->app()->rxRun([link, d = ZuMv(d)]() mutable {
+	    link->received_(ZuMv(d));
+	  });
+	}},
+	Endpoint::ReadyFn{[link = ZmMkRef(impl())](Endpoint *ep) mutable {
+	  link->app()->rxRun([link, ep]() mutable {
+	    link->endpointReady_(ep);
+	  });
+	}},
 	Endpoint::FailFn{[link = ZmMkRef(impl())](bool transient) mutable {
 	  link->connectFailed_0(transient);
 	    }},
-	    Endpoint::DownFn{[link = ZmMkRef(impl())](Endpoint *ep) mutable {
-	      link->app()->rxRun([link, ep]() mutable {
-		link->endpointDown_(ep);
-	      });
-	    }}))
+	Endpoint::DownFn{[link = ZmMkRef(impl())](Endpoint *ep) mutable {
+	  link->app()->rxRun([link, ep]() mutable {
+	    link->endpointDown_(ep);
+	  });
+	}}))
       connectFailed_0(false);
   }
 
@@ -3074,7 +3081,7 @@ private:
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf) {
     return Base::consumeProtectedFrames_(
-      level, pn, frames, ZuMv(addr), packetBuf, true,
+      level, pn, frames, ZuMv(addr), packetBuf,
       [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
       });
@@ -3488,7 +3495,7 @@ private:
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf) {
     return Base::consumeProtectedFrames_(
-      level, pn, frames, ZuMv(addr), packetBuf, false,
+      level, pn, frames, ZuMv(addr), packetBuf,
       [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
       });
