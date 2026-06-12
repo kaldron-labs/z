@@ -815,47 +815,10 @@ namespace H3 {
     return 0;
   }
 
-  template <typename Stream, typename = void>
-  struct HasH3WriteFrameHeaderAccepted_ : public ZuFalse { };
-  template <typename Stream>
-  struct HasH3WriteFrameHeaderAccepted_<Stream,
-    decltype(ZuDeclVal<Stream &>().h3WriteFrameHeaderAccepted(
-      uint64_t{}, uint64_t{}), void())> :
-    public ZuTrue { };
-
-  template <typename Stream, typename = void>
-  struct HasH3WriteSpanAccepted_ : public ZuFalse { };
-  template <typename Stream>
-  struct HasH3WriteSpanAccepted_<Stream,
-    decltype(ZuDeclVal<Stream &>().h3WriteSpanAccepted(ZuDeclVal<ZuBSpan>()),
-      void())> :
-    public ZuTrue { };
-
-  template <typename Stream, typename = void>
-  struct HasH3WriteByteAccepted_ : public ZuFalse { };
-  template <typename Stream>
-  struct HasH3WriteByteAccepted_<Stream,
-    decltype(ZuDeclVal<Stream &>().h3WriteByteAccepted(uint8_t{}), void())> :
-    public ZuTrue { };
-
-  template <typename Stream, typename = void>
-  struct HasH3FlushAccepted_ : public ZuFalse { };
-  template <typename Stream>
-  struct HasH3FlushAccepted_<Stream,
-    decltype(ZuDeclVal<Stream &>().h3FlushAccepted(), void())> :
-    public ZuTrue { };
-
   template <typename T, typename = void>
   struct HasTypeListN_ : public ZuFalse { };
   template <typename T>
   struct HasTypeListN_<T, decltype(T::N, void())> : public ZuTrue { };
-
-  template <typename Impl, typename Key, typename Value, typename = void>
-  struct HasH3StaticHeader_ : public ZuFalse { };
-  template <typename Impl, typename Key, typename Value>
-  struct HasH3StaticHeader_<Impl, Key, Value,
-    decltype(ZuDeclVal<Impl *>()->template header<Key, Value>(), void())> :
-    public ZuTrue { };
 
   template <typename Stream, typename = void>
   struct HasRxComplete_ : public ZuFalse { };
@@ -1424,11 +1387,9 @@ namespace H3 {
 		    ZuType<I, HeaderKeys>, ZuType<j, KValues>>();
 		});
 		return;
-	      }
+	    }
 	    } else if (ZuCSpan{value} == KValues{}()) {
-	      if constexpr (HasH3StaticHeader_<
-		    Impl, ZuType<i, HeaderKeys>, KValues>{})
-		impl()->template header<ZuType<i, HeaderKeys>, KValues>();
+	      impl()->template header<ZuType<i, HeaderKeys>, KValues>();
 	      return;
 	    }
 	  }
@@ -2221,62 +2182,33 @@ namespace H3 {
     }
 
     template <typename Stream>
-    static bool writeByteAccepted_(Stream &stream, uint8_t c) {
-      if constexpr (HasH3WriteByteAccepted_<Stream>{})
-	return stream.h3WriteByteAccepted(c);
-      else {
-	stream << char(c);
-	return true;
-      }
+    static void writeSpan_(Stream &stream, ZuBSpan span) {
+      stream << span;
     }
 
     template <typename Stream>
-    static bool writeSpanAccepted_(Stream &stream, ZuBSpan span) {
-      if constexpr (HasH3WriteSpanAccepted_<Stream>{})
-	return stream.h3WriteSpanAccepted(span);
-      else {
-	for (unsigned i = 0; i < span.length(); ++i)
-	  if (!writeByteAccepted_(stream, span[i])) return false;
-	return true;
-      }
+    static void flush_(Stream &stream) {
+      stream.flush();
     }
 
     template <typename Stream>
-    static bool flushAccepted_(Stream &stream) {
-      if constexpr (HasH3FlushAccepted_<Stream>{})
-	return stream.h3FlushAccepted();
-      else {
-	stream.flush();
-	return true;
-      }
-    }
-
-    template <typename Stream>
-    struct AcceptedBytes {
-      AcceptedBytes(Stream &stream_) : stream(stream_) { }
+    struct StreamBytes {
+      StreamBytes(Stream &stream_) : stream(stream_) { }
 
       void push(uint8_t c) {
-	if (ok && writeByteAccepted_(stream, c)) ++n;
-	else ok = false;
+	stream << char(c);
+	++n;
       }
       uint64_t length() const { return n; }
 
       Stream	&stream;
       uint64_t	n = 0;
-      bool	ok = true;
     };
 
     template <typename Stream>
-    static bool writeFrameHeaderAccepted_(
+    static bool writeFrameHeader_(
       Stream &stream, uint64_t type, uint64_t length) {
-      if constexpr (HasH3WriteFrameHeaderAccepted_<Stream>{})
-	return stream.h3WriteFrameHeaderAccepted(type, length);
-      else {
-	AcceptedBytes out{stream};
-	if (putVar(out, type) < 0 || putVar(out, length) < 0)
-	  return false;
-	return out.ok;
-      }
+      return writeFrameHeader(stream, type, length) >= 0;
     }
 
     template <typename Bytes, bool Plan>
@@ -2452,38 +2384,29 @@ namespace H3 {
 	  encoderEmitted = true;
 	}
       }
-      if (!writeFrameHeaderAccepted_(
+      if (!writeFrameHeader_(
 	    stream, 0x01, prefix.length() + count.length())) {
 	impl()->qpackFailure(QPackBuildFailure::HeadersFrameHeaderWrite);
 	ZiLOG(Error, "Zhttp", "failed to write H3 HEADERS frame header");
 	return;
       }
-      AcceptedBytes out{stream};
-      if (!writeSpanAccepted_(stream, ZuBSpan{prefix})) {
-	impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
-	ZiLOG(Error, "Zhttp", "failed to emit H3 QPACK prefix");
-	return;
-      }
+      StreamBytes out{stream};
+      writeSpan_(stream, ZuBSpan{prefix});
       out.n += prefix.length();
       uint64_t bodyStart = out.length();
-      Build<AcceptedBytes<Stream>, false> emit{out};
+      Build<StreamBytes<Stream>, false> emit{out};
       emit.tx = plan.tx;
       emit.params = plan.params;
       emit.base = plan.base;
       emit.plannedCapacity = plan.plannedCapacity;
       emit.sendCapacity = plan.sendCapacity;
       if (!encode(emit) || !emit.ok ||
-	  !out.ok ||
 	  out.length() - bodyStart != count.length()) {
 	impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
 	ZiLOG(Error, "Zhttp", "failed to emit H3 headers");
 	return;
       }
-      if (!flushAccepted_(stream)) {
-	impl()->qpackFailure(QPackBuildFailure::Flush);
-	ZiLOG(Error, "Zhttp", "failed to flush H3 headers");
-	return;
-      }
+      flush_(stream);
       if (plan.tx) {
 	if (encoderEmitted) {
 	  if (plan.sendCapacity) {

@@ -80,31 +80,7 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
     for (unsigned i = 0; i < buf->length; ++i) bytes.push(buf->data()[i]);
   }
 
-  bool h3WriteFrameHeaderAccepted(uint64_t type, uint64_t length) {
-    if (failFrameHeader) return false;
-    return Zhttp::H3::writeFrameHeader(*this, type, length) >= 0;
-  }
-
-  bool h3WriteByteAccepted(uint8_t c) {
-    if (failPayloadAfter >= 0 &&
-	unsigned(failPayloadAfter) == payloadBytes)
-      return false;
-    *this << char(c);
-    ++payloadBytes;
-    return true;
-  }
-
-  bool h3FlushAccepted() {
-    if (failFlush) return false;
-    flush();
-    return true;
-  }
-
   Zhttp::H3::HeaderBytes	bytes;
-  int				failPayloadAfter = -1;
-  unsigned			payloadBytes = 0;
-  bool				failFrameHeader = false;
-  bool				failFlush = false;
 };
 
 struct CaptureEncoder {
@@ -1089,46 +1065,6 @@ void testBuilderCommitFailureAtomic()
     ZuCHECK(builder.qpackFailure() ==
 	Zhttp::H3::QPackBuildFailure::EncoderInsertWrite,
       "insert write failure reason mismatch");
-  }
-  {
-    BuilderState builder;
-    builder.params.qpackTableCapacity(256);
-    ZuCHECK(builder.tx.setMaxCapacity(256),
-      "frame failure max setup failed");
-    CaptureTxStream stream;
-    stream.failFrameHeader = true;
-    builder.request(stream);
-    ZuCHECK(txUnchanged(builder.tx),
-      "HEADERS frame failure changed tx state");
-    ZuCHECK(builder.qpackFailure() ==
-	Zhttp::H3::QPackBuildFailure::HeadersFrameHeaderWrite,
-      "HEADERS frame failure reason mismatch");
-  }
-  {
-    BuilderState builder;
-    builder.params.qpackTableCapacity(256);
-    ZuCHECK(builder.tx.setMaxCapacity(256),
-      "payload failure max setup failed");
-    CaptureTxStream stream;
-    stream.failPayloadAfter = 0;
-    builder.request(stream);
-    ZuCHECK(txUnchanged(builder.tx),
-      "HEADERS payload failure changed tx state");
-    ZuCHECK(builder.qpackFailure() ==
-	Zhttp::H3::QPackBuildFailure::HeadersPayloadEmit,
-      "HEADERS payload failure reason mismatch");
-  }
-  {
-    BuilderState builder;
-    builder.params.qpackTableCapacity(256);
-    ZuCHECK(builder.tx.setMaxCapacity(256),
-      "flush failure max setup failed");
-    CaptureTxStream stream;
-    stream.failFlush = true;
-    builder.request(stream);
-    ZuCHECK(txUnchanged(builder.tx), "flush failure changed tx state");
-    ZuCHECK(builder.qpackFailure() == Zhttp::H3::QPackBuildFailure::Flush,
-      "flush failure reason mismatch");
   }
   {
     BuilderState builder;
