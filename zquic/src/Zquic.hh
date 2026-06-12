@@ -59,72 +59,6 @@ struct InitialInfo {
   unsigned	datagramLength = 0;
 };
 
-template <typename App, typename = void>
-struct HasListening : ZuFalse { };
-template <typename App>
-struct HasListening<App, decltype(ZuDeclVal<App *>()->listening(), void())> :
-  ZuTrue { };
-
-template <typename App, typename = void>
-struct HasListenFailed : ZuFalse { };
-template <typename App>
-struct HasListenFailed<App,
-  decltype(ZuDeclVal<App *>()->listenFailed(ZuDeclVal<bool>()), void())> :
-  ZuTrue { };
-
-template <typename App, typename = void>
-struct HasAccepted : ZuFalse { };
-template <typename App>
-struct HasAccepted<App,
-  decltype(ZuDeclVal<App *>()->accepted(ZuDeclVal<const InitialInfo &>()),
-    void())> :
-  ZuTrue { };
-
-template <typename Link, typename = void>
-struct HasTxInvoked : ZuFalse { };
-template <typename Link>
-struct HasTxInvoked<Link,
-  decltype(ZuDeclVal<Link *>()->app()->txInvoked(), void())> :
-  ZuTrue { };
-
-template <typename Link, typename Fn, typename = void>
-struct HasTxInvoke : ZuFalse { };
-template <typename Link, typename Fn>
-struct HasTxInvoke<Link, Fn,
-  decltype(ZuDeclVal<Link *>()->app()->txInvoke(ZuDeclVal<Fn>()), void())> :
-  ZuTrue { };
-
-template <typename Impl, typename = void>
-struct HasRetiredLocalCID : ZuFalse { };
-template <typename Impl>
-struct HasRetiredLocalCID<Impl,
-  decltype(ZuDeclVal<Impl *>()->retiredLocalCID_(
-      ZuDeclVal<uint64_t>(), ZuDeclVal<const CxnID &>()), void())> :
-  ZuTrue { };
-
-template <typename Impl, typename = void>
-struct HasStatelessReset : ZuFalse { };
-template <typename Impl>
-struct HasStatelessReset<Impl,
-  decltype(ZuDeclVal<Impl *>()->statelessReset(), void())> :
-  ZuTrue { };
-
-template <typename Impl, typename = void>
-struct HasStreamFrame : ZuFalse { };
-template <typename Impl>
-struct HasStreamFrame<Impl,
-  decltype(ZuDeclVal<Impl *>()->streamFrame(
-      ZuDeclVal<uint64_t>(), ZuDeclVal<uint64_t>(),
-      ZuDeclVal<ZuCSpan>(), ZuDeclVal<bool>()), void())> :
-  ZuTrue { };
-
-template <typename Impl, typename = void>
-struct HasDisconnected : ZuFalse { };
-template <typename Impl>
-struct HasDisconnected<Impl,
-  decltype(ZuDeclVal<Impl *>()->disconnected(), void())> :
-  ZuTrue { };
-
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.ALPNData">>));
 ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Zquic.ALPN">>));
 
@@ -1096,8 +1030,7 @@ friend class SrvLink;
 	});
       }},
       Endpoint::ReadyFn{this, [](Server *self, Endpoint *) {
-	if constexpr (HasListening<App>{})
-	  self->app()->listening();
+	self->app()->listening();
       }},
       Endpoint::FailFn{this, [](Server *self, bool transient) {
 	self->failed_0(transient);
@@ -1117,6 +1050,18 @@ friend class SrvLink;
   ZiIP localIP() const { return ZiIP{}; }
   uint16_t localPort() const { return 0; }
 
+  void listenFailed(bool transient) {
+    this->error_(ZeEXCEPT(Error, "Zquic",
+      ([transient](auto &s) {
+	s << "QUIC server listen failed transient=" << transient;
+      })));
+  }
+  LinkRef accepted(const InitialInfo &) {
+    this->error_(ZeEXCEPT(Error, "Zquic",
+      "QUIC server App must provide accepted(const InitialInfo &)"));
+    return {};
+  }
+
   ZmRef<ZiIOBuf> allocTxPacket_() {
     return m_endpoint.allocTxPacket();
   }
@@ -1129,13 +1074,7 @@ friend class SrvLink;
 
 private:
   void failed_0(bool transient) {
-    if constexpr (HasListenFailed<App>{})
-      this->app()->listenFailed(transient);
-    else
-      this->error_(ZeEXCEPT(Error, "Zquic",
-	([transient](auto &s) {
-	  s << "QUIC server listen failed transient=" << transient;
-	})));
+    this->app()->listenFailed(transient);
   }
 
   void received_(Datagram d) {
@@ -1191,13 +1130,7 @@ private:
 
   Link *accept_(const InitialInfo &info) {
     LinkRef link;
-    if constexpr (HasAccepted<App>{})
-      link = this->app()->accepted(info);
-    else {
-      this->error_(ZeEXCEPT(Error, "Zquic",
-	"QUIC server App must provide accepted(const InitialInfo &)"));
-      return nullptr;
-    }
+    link = this->app()->accepted(info);
     if (!link) return nullptr;
     Link *ptr = link.ptr();
     if (!addLink_(ZuMv(link))) return nullptr;
@@ -1574,22 +1507,16 @@ private:
   }
 
   bool txInvoked_() const {
-    if constexpr (HasTxInvoked<Link>{}) {
-      if (ZuUnlikely(!m_link || !m_link->app() || !m_link->app()->mx()))
-	return true;
-      return m_link->app()->txInvoked();
-    } else {
+    if (ZuUnlikely(!m_link || !m_link->app() || !m_link->app()->mx()))
       return true;
-    }
+    return m_link->app()->txInvoked();
   }
 
   template <typename Fn>
   void txInvoke_(Fn &&fn) {
-    if constexpr (HasTxInvoke<Link, Fn>{}) {
-      if (ZuLikely(m_link && m_link->app() && m_link->app()->mx())) {
-	m_link->app()->txInvoke(ZuFwd<Fn>(fn));
-	return;
-      }
+    if (ZuLikely(m_link && m_link->app() && m_link->app()->mx())) {
+      m_link->app()->txInvoke(ZuFwd<Fn>(fn));
+      return;
     }
     ZuFwd<Fn>(fn)();
   }
@@ -1806,6 +1733,11 @@ protected:
   void packetParseFailure_() { ++m_diag.failures; }
   void tlsFailure_() { ++m_diag.failures; }
   void handshakeDoneTx_() { }
+  void streamFrame(
+    uint64_t, uint64_t, ZuCSpan, bool) { }
+  void retiredLocalCID_(uint64_t, const CxnID &) { }
+  void statelessReset() { }
+  void disconnected() { }
 
   void setRuntimeCIDs_(
     const CxnID &initialDCID,
@@ -1872,8 +1804,7 @@ protected:
     if (frame.type != FrameType::RetireConnectionID) return false;
     CxnID id;
     if (!retireLocalCID_(frame.value, id)) return false;
-    if constexpr (HasRetiredLocalCID<Impl>{})
-      impl()->retiredLocalCID_(frame.value, id);
+    impl()->retiredLocalCID_(frame.value, id);
     return true;
   }
   template <typename Routes>
@@ -2069,8 +2000,7 @@ protected:
     for (auto &p : m_txPackets) p.clear();
     memset(m_pendingAck, 0, sizeof(m_pendingAck));
     ++m_diag.failures;
-    if constexpr (HasStatelessReset<Impl>{})
-      impl()->statelessReset();
+    impl()->statelessReset();
     return true;
   }
 
@@ -2571,9 +2501,8 @@ protected:
 	  m_diag.streamBytesRx += frame.payload.length();
 	  if (receiveFrame(frame, ZmRef<ZiIOBuf>{packetBuf}) < 0)
 	    return false;
-	  if constexpr (HasStreamFrame<Impl>{})
-	    impl()->streamFrame(
-	      frame.streamID, frame.offset, frame.payload, frame.fin);
+	  impl()->streamFrame(
+	    frame.streamID, frame.offset, frame.payload, frame.fin);
 	  break;
 	case FrameType::ResetStream:
 	case FrameType::StopSending:
@@ -3191,8 +3120,7 @@ private:
     if (ep != &m_endpoint) return;
     m_udpReady = 0;
     if (m_notifyEndpointDown) {
-      if constexpr (HasDisconnected<Impl>{})
-	impl()->disconnected();
+      impl()->disconnected();
     }
     m_notifyEndpointDown = true;
   }
