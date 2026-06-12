@@ -1,34 +1,9 @@
 # TODO
 
-## Ztls
-- review and cleanup
-- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
-
-## Zquic
-- review and cleanup
-- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
-
-## Ztcp
-- review and cleanup
-- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
-
 ## Zhttp
-- add benchmarking
 - check DNS capabilities for HTTP/3 selection
   - `ZiIP`'s resolver interface may need upgrading
 - add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
-
-## Z Framework
-- generate docs
-
-## ZvEngine
-- becomes `ZiEngine` / ...
-- type-erased telemetry + command/control APIs (not CRTP)
-- `Zquic` + `Ztcp` derive from `Zi*`, implement APIs
-
-## build system
-- factor out fbs codegen into shell script
-  - used repeatedly in multiple Makefile.am
 
 ## Zrest
 - figure out REST Rx -> ZvIOMsg
@@ -42,6 +17,30 @@
   via application logic when these messages are applied
 - migrate Zrest to ZvEngine
 - get zrclient up and running
+
+## Ztls
+- review and cleanup
+- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
+
+## Zquic
+- review and cleanup
+- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
+
+## Ztcp
+- review and cleanup
+- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
+
+## Z Framework
+- generate docs
+
+## ZvEngine
+- becomes `ZiEngine` / ...
+- type-erased telemetry + command/control APIs (not CRTP)
+- `Zquic` + `Ztcp` derive from `Zi*`, implement APIs
+
+## build system
+- factor out fbs codegen into shell script
+  - used repeatedly in multiple Makefile.am
 
 ## Zum
 - all flatbuffers -> ZtStruct FB
