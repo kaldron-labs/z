@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZhttpQPack.hh>
+#include <zlib/Zhttp.hh>
 
 namespace Zhttp { namespace H3 {
 
@@ -42,15 +42,43 @@ static uint32_t qpackEntrySize_(ZuCSpan name, ZuCSpan value)
   return n > uint32_t(-1) ? uint32_t(-1) : uint32_t(n);
 }
 
+static_assert(QPackTbl::N == 99);
+
+template <unsigned I>
+static Header qpackStaticField_()
+{
+  using KV = QPackKV<I>;
+  using Key = ZuType<0, KV>;
+  using Value = QPackValue<KV>;
+  if constexpr (ZuIsSame<Value, void>{})
+    return Header{Key{}(), ""};
+  else
+    return Header{Key{}(), Value{}()};
+}
+
+QPackRxEntry *QPackRxTable::pushNewest()
+{
+  return new (entries.push()) QPackRxEntry();
+}
+
+const QPackRxEntry *QPackRxTable::oldest() const
+{
+  return entries.length() ? &entries[0] : nullptr;
+}
+
+void QPackRxTable::dropOldest()
+{
+  if (!entries.length()) return;
+  usedBytes_ -= entries[0].size;
+  entries.splice(0, 1);
+  ++baseAbs_;
+}
+
 bool QPackRxTable::setCapacity(uint32_t capacity)
 {
   if (capacity > maxCapacityBytes_) return false;
   capacityBytes_ = capacity;
-  while (entries.length() && usedBytes_ > capacityBytes_) {
-    usedBytes_ -= entries[0].size;
-    entries.splice(0, 1);
-    ++baseAbs_;
-  }
+  while (oldest() && usedBytes_ > capacityBytes_) dropOldest();
   return true;
 }
 
@@ -63,12 +91,8 @@ bool QPackRxTable::insert(ZuCSpan name, ZuCSpan value)
 {
   uint32_t n = qpackEntrySize_(name, value);
   if (n > capacityBytes_) return false;
-  while (entries.length() && usedBytes_ + n > capacityBytes_) {
-    usedBytes_ -= entries[0].size;
-    entries.splice(0, 1);
-    ++baseAbs_;
-  }
-  auto e = entries.push();
+  while (oldest() && usedBytes_ + n > capacityBytes_) dropOldest();
+  auto e = pushNewest();
   e->abs = insertCount_++;
   e->size = n;
   e->name = name;
@@ -118,8 +142,11 @@ bool QPackTxTable::setMaxCapacity(uint32_t capacity)
 bool QPackTxTable::setCapacity(uint32_t capacity)
 {
   if (capacity > maxCapacityBytes_) return false;
+  uint32_t old = capacityBytes_;
   capacityBytes_ = capacity;
-  return evict();
+  if (evict()) return true;
+  capacityBytes_ = old;
+  return false;
 }
 
 const QPackTxEntry *QPackTxTable::find(ZuCSpan name, ZuCSpan value) const
@@ -127,15 +154,25 @@ const QPackTxEntry *QPackTxTable::find(ZuCSpan name, ZuCSpan value) const
   return hash.find(QPackFieldKey{name, value});
 }
 
+const QPackTxEntry *QPackTxTable::findAbs(uint64_t abs) const
+{
+  if (!order.length()) return nullptr;
+  uint64_t base = order[0].abs;
+  if (abs < base || abs >= base + order.length()) return nullptr;
+  const auto &o = order[unsigned(abs - base)];
+  if (o.abs != abs) return nullptr;
+  return find(o.name, o.value);
+}
+
 bool QPackTxTable::lookupAbs(uint64_t abs, Header &h) const
 {
-  QPackTxHash::CIter i{hash};
-  while (auto e = i())
-    if (e->abs == abs) {
-      h = Header{e->name, e->value};
-      return true;
-    }
-  return false;
+  if (!order.length()) return false;
+  uint64_t base = order[0].abs;
+  if (abs < base || abs >= base + order.length()) return false;
+  const auto &o = order[unsigned(abs - base)];
+  if (o.abs != abs) return false;
+  h = Header{o.name, o.value};
+  return true;
 }
 
 bool QPackTxTable::insert(Header h, uint64_t *abs)
@@ -156,7 +193,11 @@ bool QPackTxTable::insert(Header h, uint64_t *abs)
   e.name = h.name;
   e.value = h.value;
   if (!hash.add(e)) return false;
-  order.push(e.abs);
+  auto o = new (order.push()) QPackTxOrderEntry();
+  o->abs = e.abs;
+  o->size = e.size;
+  o->name = e.name;
+  o->value = e.value;
   usedBytes_ += n;
   if (abs) *abs = e.abs;
   return true;
@@ -165,19 +206,13 @@ bool QPackTxTable::insert(Header h, uint64_t *abs)
 bool QPackTxTable::evict()
 {
   while (order.length() && usedBytes_ > capacityBytes_) {
-    uint64_t abs = order[0];
-    bool removed = false;
-    QPackTxHash::Iter i{hash};
-    while (auto e = i()) {
-      if (e->abs != abs) continue;
+    const auto &old = order[0];
+    if (auto e = find(old.name, old.value)) {
       if (e->refcnt) return false;
       usedBytes_ -= e->size;
-      i.del();
-      removed = true;
-      break;
+      hash.del(QPackFieldKey{old.name, old.value});
     }
     order.splice(0, 1);
-    if (!removed) continue;
   }
   return usedBytes_ <= capacityBytes_;
 }
@@ -193,36 +228,27 @@ bool QPackTxTable::insertCountIncrement(uint64_t n)
 void QPackTxTable::trackSection(uint64_t streamID, ZuSpan<uint64_t> refs)
 {
   if (!refs.length()) return;
-  auto section = sections.push();
-  section->streamID = streamID;
+  QPackTxSection section_;
+  section_.streamID = streamID;
+  auto section = const_cast<QPackTxSection *>(sections.add(section_));
+  if (!section) return;
   for (unsigned i = 0; i < refs.length(); ++i) {
     section->refs.push(refs[i]);
-    QPackTxHash::Iter hi{hash};
-    while (auto e = hi())
-      if (e->abs == refs[i]) {
-	const_cast<QPackTxEntry *>(e)->refcnt++;
-	break;
-      }
+    if (auto e = findAbs(refs[i]))
+      const_cast<QPackTxEntry *>(e)->refcnt++;
   }
 }
 
 bool QPackTxTable::sectionAck(uint64_t streamID)
 {
-  for (unsigned i = 0; i < sections.length(); ++i) {
-    if (sections[i].streamID != streamID) continue;
-    for (unsigned j = 0; j < sections[i].refs.length(); ++j) {
-      uint64_t abs = sections[i].refs[j];
-      QPackTxHash::Iter hi{hash};
-      while (auto e = hi())
-	if (e->abs == abs) {
-	  if (e->refcnt) const_cast<QPackTxEntry *>(e)->refcnt--;
-	  break;
-	}
-    }
-    sections.splice(i, 1);
-    return true;
+  auto section = sections.find(streamID);
+  if (!section) return false;
+  for (unsigned i = 0; i < section->refs.length(); ++i) {
+    if (auto e = findAbs(section->refs[i]))
+      if (e->refcnt) const_cast<QPackTxEntry *>(e)->refcnt--;
   }
-  return false;
+  sections.del(streamID);
+  return true;
 }
 
 bool QPackTxTable::streamCancellation(uint64_t streamID)
@@ -264,111 +290,65 @@ int QPack::decodeString(
 
 bool QPack::staticNameIndex(ZuCSpan name, uint64_t &index)
 {
-  if (name == ":authority") { index = 0; return true; }
-  if (name == ":path") { index = 1; return true; }
-  if (name == "accept") { index = 29; return true; }
-  if (name == "accept-encoding") { index = 31; return true; }
-  if (name == "authorization") { index = 84; return true; }
-  if (name == "content-length") { index = 4; return true; }
-  if (name == "content-type") { index = 46; return true; }
-  if (name == "cookie") { index = 5; return true; }
-  if (name == "date") { index = 6; return true; }
-  if (name == "server") { index = 92; return true; }
-  if (name == "user-agent") { index = 95; return true; }
-  return false;
+  bool ok = false;
+  unsigned i = 0;
+  ZuUnroll::all<QPackTbl>([&]<typename KV>() {
+    if (!ok) {
+      using Key = ZuType<0, KV>;
+      if (Key{}() == name) {
+	index = i;
+	ok = true;
+      }
+    }
+    ++i;
+  });
+  return ok;
 }
 
 int QPack::staticIndex(ZuCSpan name, ZuCSpan value)
 {
-  if (name == ":method" && value == "GET") return 17;
-  if (name == ":method" && value == "POST") return 20;
-  if (name == ":authority" && !value.length()) return 0;
-  if (name == ":scheme" && value == "http") return 22;
-  if (name == ":scheme" && value == "https") return 23;
-  if (name == ":path" && value == "/") return 1;
-  if (name == ":status" && value == "100") return 63;
-  if (name == ":status" && value == "103") return 24;
-  if (name == ":status" && value == "200") return 25;
-  if (name == ":status" && value == "204") return 64;
-  if (name == ":status" && value == "304") return 26;
-  if (name == ":status" && value == "404") return 27;
-  if (name == ":status" && value == "503") return 28;
-  if (name == "accept" && value == "*/*") return 29;
-  if (name == "accept-encoding" && value == "gzip, deflate, br") return 31;
-  if (name == "content-length" && value == "0") return 4;
-  if (name == "content-type" && value == "application/json") return 46;
-  if (name == "content-type" && value == "text/plain") return 53;
-  return -1;
+  int index = -1;
+  unsigned i = 0;
+  ZuUnroll::all<QPackTbl>([&]<typename KV>() {
+    if (index < 0) {
+      using Key = ZuType<0, KV>;
+      using Value = QPackValue<KV>;
+      if (Key{}() == name) {
+	if constexpr (ZuIsSame<Value, void>{}) {
+	  if (!value.length()) index = int(i);
+	} else if (Value{}() == value)
+	  index = int(i);
+      }
+    }
+    ++i;
+  });
+  return index;
 }
 
 bool QPack::staticField(uint64_t index, Header &field)
 {
-  if (index == 0) { field = Header{":authority", ""}; return true; }
-  if (index == 1) { field = Header{":path", "/"}; return true; }
-  if (index == 2) { field = Header{"age", "0"}; return true; }
-  if (index == 4) { field = Header{"content-length", "0"}; return true; }
-  if (index == 5) { field = Header{"cookie", ""}; return true; }
-  if (index == 6) { field = Header{"date", ""}; return true; }
-  if (index == 17 || index == 20) {
-    field = Header{":method", index == 17 ? "GET" : "POST"};
-    return true;
-  }
-  if (index == 22) { field = Header{":scheme", "http"}; return true; }
-  if (index == 23) {
-    field = Header{":scheme", "https"};
-    return true;
-  }
-  if (index == 24) { field = Header{":status", "103"}; return true; }
-  if (index == 25) { field = Header{":status", "200"}; return true; }
-  if (index == 26) { field = Header{":status", "304"}; return true; }
-  if (index == 27) { field = Header{":status", "404"}; return true; }
-  if (index == 28) { field = Header{":status", "503"}; return true; }
-  if (index == 29) { field = Header{"accept", "*/*"}; return true; }
-  if (index == 30) {
-    field = Header{"accept", "application/dns-message"};
-    return true;
-  }
-  if (index == 31) {
-    field = Header{"accept-encoding", "gzip, deflate, br"};
-    return true;
-  }
-  if (index >= 44 && index <= 54) {
-    ZuCSpan value = "";
-    if (index == 44) value = "application/dns-message";
-    else if (index == 45) value = "application/javascript";
-    else if (index == 46) value = "application/json";
-    else if (index == 47) value = "application/x-www-form-urlencoded";
-    else if (index == 48) value = "image/gif";
-    else if (index == 49) value = "image/jpeg";
-    else if (index == 50) value = "image/png";
-    else if (index == 51) value = "text/css";
-    else if (index == 52) value = "text/html; charset=utf-8";
-    else if (index == 53) value = "text/plain";
-    else if (index == 54) value = "text/plain;charset=utf-8";
-    field = Header{"content-type", value};
-    return true;
-  }
-  if (index == 63) { field = Header{":status", "100"}; return true; }
-  if (index == 64) { field = Header{":status", "204"}; return true; }
-  if (index == 65) { field = Header{":status", "206"}; return true; }
-  if (index == 66) { field = Header{":status", "302"}; return true; }
-  if (index == 67) { field = Header{":status", "400"}; return true; }
-  if (index == 68) { field = Header{":status", "403"}; return true; }
-  if (index == 69) { field = Header{":status", "421"}; return true; }
-  if (index == 70) { field = Header{":status", "425"}; return true; }
-  if (index == 71) { field = Header{":status", "500"}; return true; }
-  if (index == 84) { field = Header{"authorization", ""}; return true; }
-  if (index == 92) { field = Header{"server", ""}; return true; }
-  if (index == 95) { field = Header{"user-agent", ""}; return true; }
-  return false;
+  if (index >= QPackTbl::N) return false;
+  bool ok = false;
+  ZuSwitch::dispatch<QPackTbl::N>(unsigned(index),
+    [&field, &ok](auto i) {
+      field = qpackStaticField_<i>();
+      ok = true;
+    });
+  return ok;
 }
 
 bool QPack::staticName(uint64_t index, HeaderName &name)
 {
-  Header field;
-  if (!staticField(index, field)) return false;
-  name = field.name;
-  return true;
+  if (index >= QPackTbl::N) return false;
+  bool ok = false;
+  ZuSwitch::dispatch<QPackTbl::N>(unsigned(index),
+    [&name, &ok](auto i) {
+      using KV = QPackKV<i>;
+      using Key = ZuType<0, KV>;
+      name = Key{}();
+      ok = true;
+    });
+  return ok;
 }
 
 int QPack::encodeFieldSectionPrefix(
@@ -569,17 +549,16 @@ int QPack::decodeEncoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
     int n = qpackDecodePrefInt_(in, o, 6, i.value, &first);
     if (n < 0) return n;
     i.nameRefDynamic = !(first & 0x40);
-    HeaderBytes valueStorage;
-    if ((n = decodeString(valueStorage, in, o, 7, 0x80, i.header.value)) < 0)
+    if ((n = decodeString(
+	  i.valueStorage, in, o, 7, 0x80, i.header.value)) < 0)
       return n;
     return int(o);
   }
-  if ((uint8_t(in[0]) & 0xe0) == 0x40) {
+  if ((uint8_t(in[0]) & 0xc0) == 0x40) {
     i.type = QPackInstruction::InsertWithoutNameRef;
-    HeaderBytes nameStorage, valueStorage;
-    int n = decodeString(nameStorage, in, o, 5, 0x20, i.header.name);
+    int n = decodeString(i.nameStorage, in, o, 5, 0x20, i.header.name);
     if (n < 0) return n;
-    n = decodeString(valueStorage, in, o, 7, 0x80, i.header.value);
+    n = decodeString(i.valueStorage, in, o, 7, 0x80, i.header.value);
     if (n < 0) return n;
     return int(o);
   }

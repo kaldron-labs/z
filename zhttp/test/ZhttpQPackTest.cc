@@ -7,6 +7,8 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZhttpQPack.hh>
 
+#include <stdio.h>
+
 using namespace ZuTestUtil;
 
 static ZuCSpan span(const Zhttp::H3::HeaderBytes &bytes)
@@ -25,6 +27,13 @@ void testQPackLiteral()
   ZuCHECK(Zhttp::H3::QPack::staticIndex(
       "content-type", "application/json") == 46,
     "QPACK content-type static index mismatch");
+  ZuCHECK(Zhttp::H3::QPack::staticIndex(
+      "x-frame-options", "sameorigin") == 98,
+    "QPACK static lookup missed table tail");
+  Zhttp::H3::Header staticField;
+  ZuCHECK(Zhttp::H3::QPack::staticField(72, staticField) &&
+      staticField.name == "accept-language" && !staticField.value.length(),
+    "QPACK static field lookup missed name-only entry");
 
   Zhttp::H3::Params params;
   params.maxHeaderListSize(128).qpackNeverIndex("authorization");
@@ -73,7 +82,14 @@ void testQPackPolicy()
 
   Zhttp::H3::Params params;
   params.qpackTableCapacity(256).qpackIndex("accept").qpackNeverIndex("cookie");
+  for (unsigned i = 0; i < 40; ++i) {
+    char name[16];
+    snprintf(name, sizeof(name), "x-qpack-%u", i);
+    params.qpackIndex(name);
+  }
   ZuCHECK(params.indexAllowed("accept"), "QPACK index allowlist mismatch");
+  ZuCHECK(params.indexAllowed("x-qpack-39"),
+    "QPACK index allowlist truncated after fixed bound");
   ZuCHECK(!params.indexAllowed("cookie"), "QPACK never-index override failed");
   ZuCHECK(params.neverIndex("authorization"),
     "authorization should be never-index by default");
