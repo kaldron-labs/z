@@ -36,7 +36,7 @@ using BuilderHeaders = ZhttpHeaders("accept");
 ZuDerive(RxQueue,
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf,
     ZmListHeapID<"">>>));
-using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 4096,
+using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 1<<20,
   ZuStringT<"ZhttpQPackDynamicTest.RxBuf">>;
 using RxStream = ZiRxStream<RxQueue>;
 
@@ -44,10 +44,7 @@ static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 {
   ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
   auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
-  if (span.length()) {
-    ::memcpy(iobuf->data(), span.data(), span.length());
-    iobuf->length = span.length();
-  }
+  if (span.length()) iobuf->append(span.data(), span.length());
   return buf;
 }
 
@@ -110,9 +107,8 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
   bool				failFlush = false;
 };
 
-struct CaptureEncoderTx : public Zhttp::H3::QPackEncoderTx {
-  void write(ZuCSpan span) override { appendSpan(bytes, span); }
-  bool writeAccepted(ZuBSpan span) override {
+struct CaptureEncoder {
+  bool writeAccepted(ZuBSpan span) {
     if (failWrite >= 0 && unsigned(failWrite) == writes++) return false;
     appendBytes(bytes, span);
     return true;
@@ -129,7 +125,6 @@ struct BuilderState :
 
   const Zhttp::H3::Params &h3Params() const { return params; }
   Zhttp::H3::QPackTxTable *qpackTx() { return &tx; }
-  Zhttp::H3::QPackEncoderTx *qpackEncoderTx() { return &encoder; }
   bool qpackEncoderWriteAccepted(ZuBSpan span) {
     return encoder.writeAccepted(span);
   }
@@ -151,7 +146,7 @@ struct BuilderState :
 
   Zhttp::H3::Params	params;
   Zhttp::H3::QPackTxTable tx;
-  CaptureEncoderTx	encoder;
+  CaptureEncoder	encoder;
   uint64_t		id = 1;
   ZuCSpan		path = "/sample";
   ZuCSpan		query = "";
@@ -181,12 +176,19 @@ struct ParserStream :
   template <typename Key> void header(ZuBSpan value) {
     if constexpr (ZuIsSame<Key, ZuStringT<"x-test">>{}) {
       ++xTestCalls;
-      xTest.length(0);
-      xTest << ZuCSpan{value};
+      xTestLen = value.length();
+      if (value.length() <= 4096) {
+	xTest.length(0);
+	xTest << ZuCSpan{value};
+      }
     }
   }
-  void body(ZuBSpan) { }
-  void complete(Zhttp::H3::ParserState::T state_) { completeState = state_; }
+  void contentLength(uint64_t v) { contentLen = v; ++contentLenCalls; }
+  void body(ZuBSpan) { ++bodyCalls; }
+  void complete(Zhttp::H3::ParserState::T state_) {
+    completeState = state_;
+    ++completeCalls;
+  }
 
   RxStream			rx;
   Zhttp::H3::QPackRxTable	qpackRxTable;
@@ -195,6 +197,11 @@ struct ParserStream :
   ZtString<>			path;
   ZtString<>			xTest;
   unsigned			xTestCalls = 0;
+  unsigned			xTestLen = 0;
+  int64_t			contentLen = -1;
+  unsigned			contentLenCalls = 0;
+  unsigned			bodyCalls = 0;
+  unsigned			completeCalls = 0;
   bool				fin = false;
   Zhttp::H3::ParserState::T	completeState =
     Zhttp::H3::ParserState::Initial;
@@ -250,8 +257,7 @@ static void appendString(
   Zhttp::H3::HeaderBytes &bytes, uint8_t prefix, unsigned prefixBits,
   ZuCSpan s)
 {
-  uint8_t mask = uint8_t((1U << prefixBits) - 1U);
-  bytes.push(prefix | uint8_t(s.length() < mask ? s.length() : mask));
+  Zhttp::H3::putPref(bytes, prefix, prefixBits, s.length());
   appendSpan(bytes, s);
 }
 
@@ -267,7 +273,7 @@ static void appendHuffmanString(
     ZuSpan<uint8_t>{encoded.data(), encoded.length()},
     ZuBSpan{reinterpret_cast<const uint8_t *>(s.data()), s.length()});
   encoded.length(n);
-  bytes.push(prefix | uint8_t(encoded.length()));
+  Zhttp::H3::putPref(bytes, prefix, prefixBits, encoded.length());
   appendSpan(bytes, span(encoded));
 }
 
@@ -580,6 +586,113 @@ void testParserInvalidFields()
   }
 }
 
+void testParserStrictContentLength()
+{
+  ZuTestScope(testParserStrictContentLength);
+
+  static const char *values[] = { "5x", "18446744073709551616" };
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    ParserStream parser;
+    Zhttp::H3::Header initialHeaders[] = {
+      {":method", "GET"},
+      {":path", "/parser"},
+      {"content-length", values[i]}
+    };
+    Zhttp::H3::HeaderBytes frame;
+    putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 3});
+    parser.push(frame);
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error,
+      "invalid H3 content-length was not rejected");
+    ZuCHECK(!parser.contentLenCalls && !parser.bodyCalls &&
+	parser.completeCalls == 1 &&
+	parser.completeState == Zhttp::H3::ParserState::Error,
+      "invalid H3 content-length delivered callbacks");
+  }
+}
+
+static void putLiteralField(
+  Zhttp::H3::HeaderBytes &payload, ZuCSpan name, ZuCSpan value,
+  bool huffmanValue = false)
+{
+  appendString(payload, 0x20, 3, name);
+  if (huffmanValue)
+    appendHuffmanString(payload, 0x80, 7, value);
+  else
+    appendString(payload, 0x00, 7, value);
+}
+
+void testParserHeaderScratchAndLimits()
+{
+  ZuTestScope(testParserHeaderScratchAndLimits);
+
+  ZtString<> longValue;
+  for (unsigned i = 0; i < 66000; ++i) longValue << 'a';
+  {
+    ParserStream parser;
+    parser.params.maxHeaderListSize(80000);
+    Zhttp::H3::HeaderBytes payload;
+    payload.push(0);
+    payload.push(0);
+    putLiteralField(payload, ":method", "GET");
+    putLiteralField(payload, ":path", "/parser");
+    putLiteralField(payload, "x-test", longValue, true);
+    Zhttp::H3::HeaderBytes frame;
+    putFrame(frame, 0x01, ZuBSpan{payload});
+    parser.push(frame);
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
+	parser.xTestCalls == 1 && parser.xTestLen == longValue.length(),
+      "large Huffman header value did not decode through dynamic scratch");
+  }
+  {
+    ParserStream parser;
+    parser.params.maxHeaderListSize(1024);
+    Zhttp::H3::HeaderBytes payload;
+    payload.push(0);
+    payload.push(0);
+    putLiteralField(payload, ":method", "GET");
+    putLiteralField(payload, ":path", "/parser");
+    putLiteralField(payload, "x-test", longValue, true);
+    Zhttp::H3::HeaderBytes frame;
+    putFrame(frame, 0x01, ZuBSpan{payload});
+    parser.push(frame);
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error,
+      "oversized Huffman header value was accepted");
+  }
+  {
+    ParserStream parser;
+    parser.params.maxHeaderListSize(4096);
+    ZtString<> longName;
+    longName << "x-long-";
+    for (unsigned i = 0; i < 300; ++i) longName << 'A';
+    Zhttp::H3::HeaderBytes payload;
+    payload.push(0);
+    payload.push(0);
+    putLiteralField(payload, ":method", "GET");
+    putLiteralField(payload, ":path", "/parser");
+    putLiteralField(payload, longName, "ok");
+    Zhttp::H3::HeaderBytes frame;
+    putFrame(frame, 0x01, ZuBSpan{payload});
+    parser.push(frame);
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body,
+      "header name longer than 256 bytes was rejected");
+  }
+  {
+    ParserStream parser;
+    parser.params.maxHeaderListSize(24);
+    Zhttp::H3::HeaderBytes payload;
+    payload.push(0);
+    payload.push(0);
+    putLiteralField(payload, ":method", "GET");
+    putLiteralField(payload, ":path", "/parser");
+    putLiteralField(payload, "x-test", "value-too-large");
+    Zhttp::H3::HeaderBytes frame;
+    putFrame(frame, 0x01, ZuBSpan{payload});
+    parser.push(frame);
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error,
+      "oversized H3 field section was accepted");
+  }
+}
+
 void testFieldDecodeAllocationDiscipline()
 {
   ZuTestScope(testFieldDecodeAllocationDiscipline);
@@ -664,15 +777,32 @@ void testTxTable()
   uint64_t abs = uint64_t(-1);
   ZuCHECK(table.insert({"accept", "application/json"}, &abs) && !abs,
     "tx insert failed");
+  ZuCHECK(table.insertCount() == 1 && table.used() &&
+      table.used() <= table.capacity(),
+    "tx insert accounting mismatch");
   ZuCHECK(table.find("accept", "application/json") &&
       table.find(
 	ZuCSpan{"accept"}, ZuCSpan{"application/json"})->abs == abs,
     "tx exact lookup by temporary spans failed");
+  uint32_t used = table.used();
+  ZuCHECK(table.insert({"accept", "application/json"}, &abs) && !abs &&
+      table.insertCount() == 1 && table.used() == used,
+    "tx duplicate insert changed accounting");
   table.insertCountIncrement(1);
   Zhttp::H3::Header h;
   ZuCHECK(table.lookupAbs(0, h) &&
       h.name == "accept" && h.value == "application/json",
     "tx absolute lookup failed");
+  used = table.used();
+  uint64_t count = table.insertCount();
+  ZuCSpan oversized =
+    "012345678901234567890123456789012345678901234567890123456789"
+    "012345678901234567890123456789012345678901234567890123456789";
+  ZuCHECK(!table.insert({"oversized", oversized}, &abs) &&
+      table.insertCount() == count && table.used() == used &&
+      !table.find("oversized", oversized) &&
+      !table.lookupAbs(count, h),
+    "tx failed insert changed state");
   ZuCHECK(table.insert({"server", "z"}, &abs) && abs == 1,
     "tx second insert failed");
   table.setCapacity(48);
@@ -1045,6 +1175,8 @@ int main(int argc, char **argv)
   ZuTestCall(testFieldRepresentationGoldens);
   ZuTestCall(testParserFieldCallbacks);
   ZuTestCall(testParserInvalidFields);
+  ZuTestCall(testParserStrictContentLength);
+  ZuTestCall(testParserHeaderScratchAndLimits);
   ZuTestCall(testFieldDecodeAllocationDiscipline);
   ZuTestCall(testSettingsKeyBoundary);
   ZuTestCall(testTxTable);

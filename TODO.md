@@ -1,19 +1,22 @@
 # TODO
 
-## devlayer
-- update devlayer from `codex/zquic2`
+## Ztls
+- review and cleanup
+- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
 
 ## Zquic
 - review and cleanup
+- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
 
 ## Ztcp
 - review and cleanup
+- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
 
 ## Zhttp
 - add benchmarking
-
 - check DNS capabilities for HTTP/3 selection
   - `ZiIP`'s resolver interface may need upgrading
+- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
 
 ## Z Framework
 - generate docs

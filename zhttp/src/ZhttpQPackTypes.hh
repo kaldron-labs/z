@@ -222,9 +222,7 @@ using QPackTxHash = ZmLHash<QPackTxEntry,
 
 struct QPackTxOrderEntry {
   uint64_t	abs = 0;
-  uint32_t	size = 0;
-  QPackTxString	name;
-  QPackTxString	value;
+  const QPackTxEntry *entry = nullptr;
 };
 
 using QPackTxOrder =
@@ -250,6 +248,17 @@ using QPackTxSections =
   ZmLHash<QPackTxSection,
     ZmLHashKey<QPackTxSection::StreamAxor,
       ZmLHashID<QPackTxSectionsID>>>;
+
+// Legacy decoder-stream transport hook. Builder encoder-stream output uses
+// the static qpackEncoderWriteAccepted() detector instead.
+struct QPackEncoderTx {
+  virtual ~QPackEncoderTx() = default;
+  virtual void write(ZuCSpan) = 0;
+  virtual bool writeAccepted(ZuBSpan s) {
+    write(s);
+    return true;
+  }
+};
 
 struct QPackTxTable {
   // Connection-affine Tx state. Callers must serialize access from the owning
@@ -286,15 +295,6 @@ struct QPackTxTable {
   uint32_t	maxCapacityBytes_ = 0;
   uint32_t	usedBytes_ = 0;
   bool		capacitySent = false;
-};
-
-struct QPackEncoderTx {
-  virtual ~QPackEncoderTx() = default;
-  virtual void write(ZuCSpan) = 0;
-  virtual bool writeAccepted(ZuBSpan s) {
-    write(s);
-    return true;
-  }
 };
 
 }} // namespace Zhttp::H3

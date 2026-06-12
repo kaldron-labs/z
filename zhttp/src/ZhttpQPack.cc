@@ -177,7 +177,7 @@ const QPackTxEntry *QPackTxTable::findAbs(uint64_t abs) const
   if (abs < base || abs >= base + count) return nullptr;
   const auto &o = order[orderHead_ + unsigned(abs - base)];
   if (o.abs != abs) return nullptr;
-  return find(o.name, o.value);
+  return o.entry;
 }
 
 bool QPackTxTable::lookupAbs(uint64_t abs, Header &h) const
@@ -187,8 +187,8 @@ bool QPackTxTable::lookupAbs(uint64_t abs, Header &h) const
   uint64_t count = order.length() - orderHead_;
   if (abs < base || abs >= base + count) return false;
   const auto &o = order[orderHead_ + unsigned(abs - base)];
-  if (o.abs != abs) return false;
-  h = Header{o.name, o.value};
+  if (o.abs != abs || !o.entry) return false;
+  h = Header{o.entry->name, o.entry->value};
   return true;
 }
 
@@ -203,19 +203,20 @@ bool QPackTxTable::insert(Header h, uint64_t *abs)
   while (orderHead_ < order.length() && usedBytes_ + n > capacityBytes_)
     if (!dropOldest()) return false;
   if (usedBytes_ + n > capacityBytes_) return false;
+  uint64_t nextAbs = insertCount_;
   QPackTxEntry e;
-  e.abs = insertCount_++;
+  e.abs = nextAbs;
   e.size = n;
   e.name = h.name;
   e.value = h.value;
-  if (!hash.add(e)) return false;
+  auto entry = hash.add(e);
+  if (!entry) return false;
   auto o = new (order.push()) QPackTxOrderEntry();
-  o->abs = e.abs;
-  o->size = e.size;
-  o->name = e.name;
-  o->value = e.value;
+  o->abs = nextAbs;
+  o->entry = entry;
   usedBytes_ += n;
-  if (abs) *abs = e.abs;
+  insertCount_ = nextAbs + 1;
+  if (abs) *abs = nextAbs;
   return true;
 }
 
@@ -230,10 +231,10 @@ bool QPackTxTable::dropOldest()
 {
   if (orderHead_ >= order.length()) return false;
   const auto &old = order[orderHead_];
-  if (auto e = find(old.name, old.value)) {
+  if (auto e = old.entry) {
     if (e->refcnt) return false;
     usedBytes_ -= e->size;
-    hash.del(QPackFieldKey{old.name, old.value});
+    hash.del(QPackFieldKey{e->name, e->value});
   }
   ++orderHead_;
   if (orderHead_ == order.length()) {

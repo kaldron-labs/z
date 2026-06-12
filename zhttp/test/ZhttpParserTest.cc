@@ -44,7 +44,9 @@ bool spanEq(ZuBSpan span, const char *s)
   return span.length() == n && (!n || !::memcmp(span.data(), s, n));
 }
 
-using ResponseHeaders = ZuTypeList<ZuStringT<"key">, void>;
+using ResponseHeaders = ZuTypeList<
+  ZuStringT<"key">, void,
+  ZuStringT<"x-empty">, void>;
 struct ResponseParser :
   public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, 1024> {
   using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, 1024>;
@@ -58,6 +60,9 @@ struct ResponseParser :
     if constexpr (ZuIsSame<Key, ZuStringT<"key">>{}) {
       ++keyCalls;
       keyValue = spanEq(value, "Value");
+    } else if constexpr (ZuIsSame<Key, ZuStringT<"x-empty">>{}) {
+      ++emptyCalls;
+      emptyLen = value.length();
     }
   }
 
@@ -77,6 +82,8 @@ struct ResponseParser :
   bool				keyValue = false;
   bool				chunkedSeen = false;
   unsigned			keyCalls = 0;
+  unsigned			emptyCalls = 0;
+  unsigned			emptyLen = 1;
   unsigned			bodyCalls = 0;
   uint64_t			bodyBytes = 0;
   unsigned			completeCalls = 0;
@@ -261,6 +268,79 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
   ZuCHECK(!stream, "stream still has data after request");
 }
 
+void testInvalidRequestMethod()
+{
+  ZuTestScope(testInvalidRequestMethod);
+
+  RequestParser parser;
+  RxStream stream;
+  stream.push(mkBuf(
+    "WHAT /bad HTTP/1.1\r\n"
+    "host: example.com\r\n"
+    "\r\n"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error,
+    "invalid request method was not rejected");
+  ZuCHECK(parser.method < 0 && !parser.hostCalls && !parser.bodyCalls,
+    "invalid request method delivered callbacks");
+  ZuCHECK(parser.completeCalls == 1 &&
+      parser.completeState == Zhttp::H1::ParserState::Error,
+    "invalid request method completion mismatch");
+}
+
+void testEmptySelectedHeaderValues()
+{
+  ZuTestScope(testEmptySelectedHeaderValues);
+
+  {
+    ResponseParser parser;
+    RxStream stream;
+    stream.push(mkBuf(
+      "HTTP/1.1 200 OK\r\n"
+      "X-Empty:\r\n"
+      "\r\n"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
+      "empty selected header response failed");
+    ZuCHECK(parser.emptyCalls == 1 && !parser.emptyLen,
+      "empty selected header value was not delivered as empty");
+  }
+  {
+    ResponseParser parser;
+    RxStream stream;
+    stream.push(mkBuf(
+      "HTTP/1.1 200 OK\r\n"
+      "X-Empty:   \r\n"
+      "\r\n"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
+      "OWS-only selected header response failed");
+    ZuCHECK(parser.emptyCalls == 1 && !parser.emptyLen,
+      "OWS-only selected header value was not delivered as empty");
+  }
+}
+
+void testInvalidContentLengthValues()
+{
+  ZuTestScope(testInvalidContentLengthValues);
+
+  static const char *values[] = {
+    "", "+5", "-5", "5x", "18446744073709551616"
+  };
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    ResponseParser parser;
+    RxStream stream;
+    ZtString<> msg;
+    msg << "HTTP/1.1 200 OK\r\ncontent-length: " << values[i] <<
+      "\r\n\r\nhello";
+    stream.push(mkBuf(msg));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error,
+      "invalid content-length was not rejected");
+    ZuCHECK(parser.contentLengthSeen < 0 && !parser.bodyCalls,
+      "invalid content-length delivered callbacks");
+    ZuCHECK(parser.completeCalls == 1 &&
+	parser.completeState == Zhttp::H1::ParserState::Error,
+      "invalid content-length completion mismatch");
+  }
+}
+
 void testChunkedBodyAcrossRxBuffers()
 {
   ZuTestScope(testChunkedBodyAcrossRxBuffers);
@@ -304,6 +384,9 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testSelectedHeaderValueSplitAcrossRxBuffers);
   ZuTestCall(testCanonicalContentLengthHeader);
+  ZuTestCall(testInvalidRequestMethod);
+  ZuTestCall(testEmptySelectedHeaderValues);
+  ZuTestCall(testInvalidContentLengthValues);
   ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testRequestStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testChunkedBodyAcrossRxBuffers);
