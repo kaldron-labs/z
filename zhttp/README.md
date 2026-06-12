@@ -26,10 +26,12 @@ zero unless configured. Applications may allowlist fields for indexing with
 headers such as `authorization`, `cookie`, and `set-cookie` are never-index by
 default. Dynamic table state and instructions are bounded by the advertised
 maximum. Dynamic HEADERS encoding emits QPACK encoder-stream insert
-instructions and then uses relative dynamic indexed field lines through the
-connection's QPACK encoder state. Dynamic field-section references are decoded
-through the connection's QPACK decoder state. QPACK encoder and decoder stream
-bytes are consumed as ordered instruction sequences by the connection.
+instructions and may use relative dynamic indexed field lines once the encoder
+knows the peer has received the referenced entries. Dynamic field-section
+references are decoded through the connection's QPACK decoder state when they
+are immediately satisfiable. Non-zero blocked-stream buffering is not part of
+this profile. QPACK encoder and decoder stream bytes are consumed as ordered
+instruction sequences by the connection.
 
 Fallback-capable clients should try HTTP/3 when configured and fall back to
 HTTP/1.1 over TLS when HTTP/3 is unavailable or rejected by policy.
