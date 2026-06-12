@@ -59,7 +59,7 @@ public:
   Link(Client *client, ZtString<> server, uint16_t port) :
     Base{client, ZuMv(server), port} { }
 
-  void connected(const char *alpn, int tlsver);
+  void connected(Zi::Connected);
   void connectFailed(bool transient);
   void disconnected();
 
@@ -103,9 +103,9 @@ private:
   ZmRef<Link>		m_link;
 };
 
-void Link::connected(const char *alpn, int tlsver)
+void Link::connected(Zi::Connected info)
 {
-  Base::connected(alpn, tlsver);
+  Base::connected(info);
   send_(request(Zhttp::Method::POST, "/api/auth", [](ZiIOBuf &buf) {
     ZtJSON::save(buf, Credentials{"test", "test123"});
   }));

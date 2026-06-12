@@ -93,6 +93,12 @@ IMPORTANT
     ## Detailed Test Plan
     [Design and implementation of all new tests to be added to the test suite]
 
+    ## Acceptance Criteria
+    [Acceptance criteria for the implementation]
+
+    ## Non-goals
+    [Non-goals such as retaining API compatibility]
+
     ## Options and Open Questions
     [Major options]
     [Ambiguities]
