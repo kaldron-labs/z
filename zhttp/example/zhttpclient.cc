@@ -31,12 +31,12 @@ struct Options {
 };
 
 ZtStruct((Options, CLI),
-  (((ca),     (CLI::Opt<'c'>, CLI::Long<"ca">)),     (String)),
-  (((output), (CLI::Opt<'o'>, CLI::Long<"output">)), (String, "index.html")),
-  (((http3),  (CLI::Flag<1>, CLI::Long<"http3">)),   (Bool)),
-  (((http3Only), (CLI::Flag<2>, CLI::Long<"http3-only">)), (Bool)),
-  (((url),    (CLI::Arg<1>)),                        (String)),
-  (((help),   (CLI::Flag<'h'>, CLI::Long<"help">)),  (Bool)));
+  (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
+  (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
+  (((http3),     (CLI::Flag<1>,   CLI::Long<"http3">)),      (Bool)),
+  (((http3Only), (CLI::Flag<2>,   CLI::Long<"http3-only">)), (Bool)),
+  (((url),       (CLI::Arg<1>)),                             (String)),
+  (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool)));
 
 void usage(int code = 1)
 {

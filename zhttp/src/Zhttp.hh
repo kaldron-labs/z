@@ -2144,7 +2144,7 @@ namespace H1 {
     template <typename Key, typename L>
     void header(L &&l) { l(""); }
     uint64_t contentLength() { return 0; }
-    QPackTxTable *qpackTx() { return nullptr; }
+    H3::QPackTxTable *qpackTx() { return nullptr; }
   };
 
 } // H1
@@ -2200,7 +2200,8 @@ namespace H3 {
     template <typename Stream>
     bool writeSpanAccepted(Stream &stream, ZuBSpan span) {
       for (unsigned i = 0; i < span.length(); ++i)
-	if (!this->template writeByteAccepted(stream, span[i])) return false;
+	if (!this->template writeByteAccepted<Stream>(stream, span[i]))
+	  return false;
       return true;
     }
 
@@ -2216,7 +2217,7 @@ namespace H3 {
 	builder(builder_), stream(stream_) { }
 
       void push(uint8_t c) {
-	if (ok && builder.template writeByteAccepted(stream, c)) ++n;
+	if (ok && builder.template writeByteAccepted<Stream>(stream, c)) ++n;
 	else ok = false;
       }
       uint64_t length() const { return n; }
@@ -2362,7 +2363,7 @@ namespace H3 {
 	ZiLOG(Error, "Zhttp", "failed to plan H3 headers");
 	return;
       }
-      auto prefix = ZtLocalArray(HeaderBytes, 16);
+      ZtBuiltin<HeaderBytes, 16> prefix;
       FieldSectionPrefix p;
       p.requiredInsertCount = plan.required;
       p.base = plan.required ? plan.base : 0;
