@@ -437,6 +437,8 @@ public:
   using Span = Queue::Span;
   using Key = Queue::Key;
 
+  PacketTxSpace() { Tx::start(); }
+
   Queue *txQueue() { return &m_packets; }
 
   bool send_(Msg *, bool) { return true; }
@@ -544,6 +546,21 @@ public:
   unsigned retransmitDropped() const { return m_retransmit.dropped(); }
   bool nextRetransmit(SentFrameRef &frame) {
     return m_retransmit.pop(frame);
+  }
+  unsigned reclaimOnPTO(unsigned limit) {
+    unsigned n = 0;
+    auto iter = m_packets.iter();
+    while (n < limit)
+      if (auto node = iter()) {
+	SentPacket &p = node->data();
+	if (p.acked || p.lost || !p.inFlight || !p.ackEliciting)
+	  continue;
+	Tx::resend(Span{p.pn, 1});
+	Tx::resend();
+	++n;
+      } else
+	break;
+    return n;
   }
   unsigned count() const { return m_packets.count_(); }
   void clear() {
