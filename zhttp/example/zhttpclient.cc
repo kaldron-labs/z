@@ -15,7 +15,6 @@
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtCLI.hh>
-
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
 #include <zlib/Zquic.hh>
@@ -283,9 +282,19 @@ void sendH1Request(State &state, StreamRef stream)
 template <typename StreamRef>
 void sendH3Request(State &state, StreamRef stream)
 {
+  using Scratch = ZtArray<uint8_t, ZtArrayHeapID<"ZhttpClient.H3Request">>;
+  struct Tx {
+    void operator <<(char c) { bytes->push(uint8_t(c)); }
+    void flush() { }
+    Scratch	*bytes = nullptr;
+  };
+  auto bytes = ZtLocalArray(Scratch, 2048);
+  Tx tx{&bytes};
   H3RequestBuilder builder{state};
-  builder.request(*stream);
-  builder.finish(*stream);
+  builder.request(tx);
+  builder.finish(tx);
+  stream->link()->send(stream, ZuCSpan{
+    reinterpret_cast<const char *>(bytes.data()), bytes.length()}, true);
 }
 
 void logFraming(State &state)
@@ -351,9 +360,11 @@ struct ResponseSink {
 
   template <typename ParserState>
   void complete(ParserState) {
+    if (state->done) return;
     std::cerr << "body complete: " << state->bodyBytes << " bytes in " <<
       state->bodyChunks << " chunks\n" << std::flush;
     state->done = true;
+    if (state->protocol == Protocol::H3) link->disconnect();
   }
 
   Link		*link = nullptr;
@@ -434,31 +445,30 @@ bool openH3LocalStreams(Link &link, State &state)
 {
   auto control = link.stream(Zi::StreamType::Simplex);
   if (!control) return false;
-  {
-    auto tx = control->txStream();
-    Zhttp::H3::TxBytes out{tx};
-    if (Zhttp::H3::putVar(out, 0x00) < 0 ||
-	Zhttp::H3::writeFrameHeader(tx, 0x04, 0) < 0)
-      return false;
-    tx.flush();
-  }
+  using Scratch = ZtArray<uint8_t, ZtArrayHeapID<"ZhttpClient.H3Control">>;
+  auto payload = ZtLocalArray(Scratch, 64);
+  Zhttp::H3::CountBytes count;
+  if (Zhttp::H3::putVar(count, 0x01) < 0 ||
+      Zhttp::H3::putVar(count, 0) < 0 ||
+      Zhttp::H3::putVar(count, 0x06) < 0 ||
+      Zhttp::H3::putVar(count, 65536) < 0 ||
+      Zhttp::H3::putVar(count, 0x07) < 0 ||
+      Zhttp::H3::putVar(count, 0) < 0)
+    return false;
+  if (Zhttp::H3::putVar(payload, 0x00) < 0 ||
+      Zhttp::H3::putVar(payload, 0x04) < 0 ||
+      Zhttp::H3::putVar(payload, count.length()) < 0 ||
+      Zhttp::H3::putVar(payload, 0x01) < 0 ||
+      Zhttp::H3::putVar(payload, 0) < 0 ||
+      Zhttp::H3::putVar(payload, 0x06) < 0 ||
+      Zhttp::H3::putVar(payload, 65536) < 0 ||
+      Zhttp::H3::putVar(payload, 0x07) < 0 ||
+      Zhttp::H3::putVar(payload, 0) < 0)
+    return false;
+  if (!link.send(control, ZuCSpan{
+	reinterpret_cast<const char *>(payload.data()), payload.length()}, false))
+    return false;
   state.h3State = Zhttp::H3::CxnState::LocalControlOpen;
-
-  auto enc = link.stream(Zi::StreamType::Simplex);
-  auto dec = link.stream(Zi::StreamType::Simplex);
-  if (!enc || !dec) return false;
-  {
-    auto tx = enc->txStream();
-    Zhttp::H3::TxBytes out{tx};
-    if (Zhttp::H3::putVar(out, 0x02) < 0) return false;
-    tx.flush();
-  }
-  {
-    auto tx = dec->txStream();
-    Zhttp::H3::TxBytes out{tx};
-    if (Zhttp::H3::putVar(out, 0x03) < 0) return false;
-    tx.flush();
-  }
   state.h3State = Zhttp::H3::CxnState::Ready;
   return true;
 }
@@ -511,6 +521,9 @@ struct CliLink : public Base_ {
   }
 
   Parser	*parser = nullptr;
+  bool		peerControl = false;
+  bool		peerEncoder = false;
+  bool		peerDecoder = false;
 };
 
 template <
@@ -554,11 +567,18 @@ struct QUICClient : public Zquic::Client<QUICClient> {
 };
 
 struct QUICClient::Stream :
-  public Zquic::CliStream<QUICClient::Link, QUICClient::Stream> {
+  public Zquic::CliStream<QUICClient::Link, QUICClient::Stream>,
+  public Zhttp::H3::CxnParser<QUICClient::Stream> {
   using Base = Zquic::CliStream<QUICClient::Link, QUICClient::Stream>;
+  using CxnParser = Zhttp::H3::CxnParser<QUICClient::Stream>;
   using Base::Base;
 
   int process(Zquic::RxStream &);
+  Zhttp::H3::CxnState::T h3State() const;
+  void h3State(Zhttp::H3::CxnState::T);
+  bool peerControlStream();
+  bool peerEncoderStream();
+  bool peerDecoderStream();
 };
 
 struct QUICClient::Link :
@@ -573,8 +593,50 @@ struct QUICClient::Link :
 
 int QUICClient::Stream::process(Zquic::RxStream &)
 {
+  if (Zquic::StreamID::uni(uint64_t(this->id()))) {
+    auto s = this->CxnParser::process(*this);
+    if (s == Zhttp::H3::CxnState::Error) {
+      this->link()->app()->done();
+      return -1;
+    }
+    return 0;
+  }
   if (this->id() != this->link()->app()->state.responseStreamID) return 0;
   return this->link()->process(*this);
+}
+
+Zhttp::H3::CxnState::T QUICClient::Stream::h3State() const
+{
+  return this->link()->app()->state.h3State;
+}
+
+void QUICClient::Stream::h3State(Zhttp::H3::CxnState::T state)
+{
+  this->link()->app()->state.h3State = state;
+}
+
+bool QUICClient::Stream::peerControlStream()
+{
+  auto link = this->link();
+  if (link->peerControl) return false;
+  link->peerControl = true;
+  return true;
+}
+
+bool QUICClient::Stream::peerEncoderStream()
+{
+  auto link = this->link();
+  if (link->peerEncoder) return false;
+  link->peerEncoder = true;
+  return true;
+}
+
+bool QUICClient::Stream::peerDecoderStream()
+{
+  auto link = this->link();
+  if (link->peerDecoder) return false;
+  link->peerDecoder = true;
+  return true;
 }
 
 template <typename Client>
@@ -603,7 +665,13 @@ int run(
     client.state.protocol = Protocol::H3;
     ZuCSpan alpn[] = { "h3" };
     if (!client.init(
-	  Zquic::ClientParams(&mx, "3", "4").alpn(alpn).caPath(options.ca))) {
+	  Zquic::ClientParams(&mx, "3", "4")
+	    .alpn(alpn)
+	    .caPath(options.ca)
+	    .maxData(100<<20)
+	    .maxStreamData(16<<20)
+	    .maxStreamsBidi(16)
+	    .maxStreamsUni(16))) {
       std::cerr << "QUIC client initialization failed\n" << std::flush;
       return 1;
     }
