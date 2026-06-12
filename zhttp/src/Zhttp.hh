@@ -815,35 +815,6 @@ namespace H3 {
     return 0;
   }
 
-  template <typename Impl, typename = void>
-  struct HasH3Params_ : public ZuFalse { };
-  template <typename Impl>
-  struct HasH3Params_<Impl,
-    decltype(ZuDeclVal<const Impl *>()->h3Params(), void())> :
-    public ZuTrue { };
-
-  template <typename Impl, typename = void>
-  struct HasH3StreamID_ : public ZuFalse { };
-  template <typename Impl>
-  struct HasH3StreamID_<Impl,
-    decltype(ZuDeclVal<const Impl *>()->streamID(), void())> :
-    public ZuTrue { };
-
-  template <typename Impl, typename = void>
-  struct HasQPackDecoderTx_ : public ZuFalse { };
-  template <typename Impl>
-  struct HasQPackDecoderTx_<Impl,
-    decltype(ZuDeclVal<Impl *>()->qpackDecoderTx(), void())> :
-    public ZuTrue { };
-
-  template <typename Impl, typename = void>
-  struct HasQPackFailureSet_ : public ZuFalse { };
-  template <typename Impl>
-  struct HasQPackFailureSet_<Impl,
-    decltype(ZuDeclVal<Impl *>()->qpackFailure(
-      ZuDeclVal<QPackBuildFailure::T>()), void())> :
-    public ZuTrue { };
-
   template <typename T, typename = void>
   struct HasTypeListN_ : public ZuFalse { };
   template <typename T>
@@ -1288,10 +1259,10 @@ namespace H3 {
     template <typename L>
     bool withString_(QPackStringRef ref, L l) {
       if (!ref.huffman)
-	return ref.raw.length() <= h3Params_().maxHeaderListSize() &&
+	return ref.raw.length() <= impl()->h3Params().maxHeaderListSize() &&
 	  l(ref.raw);
       uint64_t decodedMax = HPack::declen(ref.raw.length());
-      if (ZuUnlikely(decodedMax > h3Params_().maxHeaderListSize()))
+      if (ZuUnlikely(decodedMax > impl()->h3Params().maxHeaderListSize()))
 	return false;
       auto storage = ZtLocalArray(HeaderBytes, decodedMax);
       int64_t n = HPack::decode(
@@ -1382,26 +1353,12 @@ namespace H3 {
       return qpackHeaderRef_(fields, initial, name, { value, false });
     }
 
-    const Params &h3Params_() const {
-      if constexpr (HasH3Params_<Impl>{})
-	return impl()->h3Params();
-      else {
-	static const Params params;
-	return params;
-      }
+    const Params &h3Params() const {
+      static const Params params;
+      return params;
     }
-    uint64_t streamID_() const {
-      if constexpr (HasH3StreamID_<Impl>{})
-	return impl()->streamID();
-      else
-	return 0;
-    }
-    QPackEncoderTx *qpackDecoderTx_() {
-      if constexpr (HasQPackDecoderTx_<Impl>{})
-	return impl()->qpackDecoderTx();
-      else
-	return nullptr;
-    }
+    uint64_t streamID() const { return 0; }
+    QPackEncoderTx *qpackDecoderTx() { return nullptr; }
 
     template <typename Key> void header_(ZuBSpan value) {
       if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
@@ -1461,13 +1418,13 @@ namespace H3 {
 	  if (!this->qpackHeader_(fields, initial, h.name, h.value))
 	    ok = false;
 	},
-	h3Params_(), 0, 0, &prefix);
+	impl()->h3Params(), 0, 0, &prefix);
       if (used != int(payload.length()) || !ok) return false;
       if (prefix.requiredInsertCount && !rx) return false;
       if (prefix.requiredInsertCount)
-	if (auto tx = qpackDecoderTx_()) {
+	if (auto tx = impl()->qpackDecoderTx()) {
 	  HeaderBytes ack;
-	  if (QPack::encodeSectionAck(ack, streamID_()) < 0) return false;
+	  if (QPack::encodeSectionAck(ack, impl()->streamID()) < 0) return false;
 	  tx->write(ZuCSpan{
 	    reinterpret_cast<const char *>(ack.data()), ack.length()});
 	}
@@ -2227,11 +2184,7 @@ namespace H3 {
     }
 
     bool qpackEncoderWriteAccepted(ZuBSpan) { return true; }
-    void qpackFailure_(QPackBuildFailure::T failure) {
-      m_qpackFailure = failure;
-      if constexpr (HasQPackFailureSet_<Impl>{})
-	impl()->qpackFailure(failure);
-    }
+    void qpackFailure(QPackBuildFailure::T failure) { m_qpackFailure = failure; }
     const Params &h3Params() const {
       static const Params params;
       return params;
@@ -2388,7 +2341,7 @@ namespace H3 {
 
     template <typename Stream, typename Encode>
     void writeHeaders_(Stream &stream, Encode &&encode) {
-      qpackFailure_(QPackBuildFailure::None);
+      impl()->qpackFailure(QPackBuildFailure::None);
       CountBytes count;
       Build<CountBytes, true> plan{count};
       plan.tx = impl()->qpackTx();
@@ -2405,7 +2358,7 @@ namespace H3 {
 	plan.base = plan.tx->insertCount();
       }
       if (!encode(plan) || !plan.ok) {
-	qpackFailure_(QPackBuildFailure::Plan);
+	impl()->qpackFailure(QPackBuildFailure::Plan);
 	ZiLOG(Error, "Zhttp", "failed to plan H3 headers");
 	return;
       }
@@ -2415,7 +2368,7 @@ namespace H3 {
       p.base = plan.required ? plan.base : 0;
       if (QPack::encodeFieldSectionPrefix(
 	    prefix, p, plan.plannedCapacity) < 0) {
-	qpackFailure_(QPackBuildFailure::PrefixEncode);
+	impl()->qpackFailure(QPackBuildFailure::PrefixEncode);
 	ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK prefix");
 	return;
       }
@@ -2424,12 +2377,12 @@ namespace H3 {
 	auto scratch = ZtLocalArray(HeaderBytes, 256);
 	if (plan.sendCapacity) {
 	  if (QPack::encodeSetCapacity(scratch, plan.plannedCapacity) < 0) {
-	    qpackFailure_(QPackBuildFailure::CapacityPolicy);
+	    impl()->qpackFailure(QPackBuildFailure::CapacityPolicy);
 	    ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK capacity");
 	    return;
 	  }
 	  if (!impl()->qpackEncoderWriteAccepted(ZuBSpan{scratch})) {
-	    qpackFailure_(QPackBuildFailure::EncoderCapacityWrite);
+	    impl()->qpackFailure(QPackBuildFailure::EncoderCapacityWrite);
 	    ZiLOG(Error, "Zhttp", "failed to write H3 QPACK capacity");
 	    return;
 	  }
@@ -2444,12 +2397,12 @@ namespace H3 {
 	    QPack::encodeInsertLiteral(
 	      scratch, Header{insert.name, insert.value});
 	  if (n < 0) {
-	    qpackFailure_(QPackBuildFailure::Plan);
+	    impl()->qpackFailure(QPackBuildFailure::Plan);
 	    ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK insert");
 	    return;
 	  }
 	  if (!impl()->qpackEncoderWriteAccepted(ZuBSpan{scratch})) {
-	    qpackFailure_(QPackBuildFailure::EncoderInsertWrite);
+	    impl()->qpackFailure(QPackBuildFailure::EncoderInsertWrite);
 	    ZiLOG(Error, "Zhttp", "failed to write H3 QPACK insert");
 	    return;
 	  }
@@ -2458,13 +2411,13 @@ namespace H3 {
       }
       if (!impl()->writeFrameHeaderAccepted(
 	    stream, 0x01, prefix.length() + count.length())) {
-	qpackFailure_(QPackBuildFailure::HeadersFrameHeaderWrite);
+	impl()->qpackFailure(QPackBuildFailure::HeadersFrameHeaderWrite);
 	ZiLOG(Error, "Zhttp", "failed to write H3 HEADERS frame header");
 	return;
       }
       AcceptedBytes out{*this, stream};
       if (!impl()->writeSpanAccepted(stream, ZuBSpan{prefix})) {
-	qpackFailure_(QPackBuildFailure::HeadersPayloadEmit);
+	impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
 	ZiLOG(Error, "Zhttp", "failed to emit H3 QPACK prefix");
 	return;
       }
@@ -2479,12 +2432,12 @@ namespace H3 {
       if (!encode(emit) || !emit.ok ||
 	  !out.ok ||
 	  out.length() - bodyStart != count.length()) {
-	qpackFailure_(QPackBuildFailure::HeadersPayloadEmit);
+	impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
 	ZiLOG(Error, "Zhttp", "failed to emit H3 headers");
 	return;
       }
       if (!impl()->flushAccepted(stream)) {
-	qpackFailure_(QPackBuildFailure::Flush);
+	impl()->qpackFailure(QPackBuildFailure::Flush);
 	ZiLOG(Error, "Zhttp", "failed to flush H3 headers");
 	return;
       }
@@ -2492,7 +2445,7 @@ namespace H3 {
 	if (encoderEmitted) {
 	  if (plan.sendCapacity) {
 	    if (!plan.tx->setCapacity(plan.plannedCapacity)) {
-	      qpackFailure_(QPackBuildFailure::CapacityCommit);
+	      impl()->qpackFailure(QPackBuildFailure::CapacityCommit);
 	      ZiLOG(Error, "Zhttp", "failed to commit QPACK capacity");
 	      return;
 	    }
@@ -2501,14 +2454,14 @@ namespace H3 {
 	  for (unsigned i = 0; i < plan.inserts.length(); ++i)
 	    if (!plan.tx->insert({
 		  plan.inserts[i].name, plan.inserts[i].value})) {
-	      qpackFailure_(QPackBuildFailure::InsertCommit);
+	      impl()->qpackFailure(QPackBuildFailure::InsertCommit);
 	      ZiLOG(Error, "Zhttp", "failed to commit QPACK insert");
 	      return;
 	    }
 	}
 	if (plan.refs.length())
 		  if (!plan.tx->trackSection(impl()->streamID(), plan.refs)) {
-	    qpackFailure_(QPackBuildFailure::SectionTracking);
+	    impl()->qpackFailure(QPackBuildFailure::SectionTracking);
 	    ZiLOG(Error, "Zhttp", "failed to track QPACK section");
 	  }
       }
