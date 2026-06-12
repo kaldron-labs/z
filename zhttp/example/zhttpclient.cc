@@ -56,6 +56,7 @@ using RequestHeaders = ZhttpHeaders(
   "accept");
 using ResponseHeaders = ZhttpHeaders(
   "alt-svc",
+  "content-length",
   "content-type",
   "location",
   "server");
@@ -72,6 +73,9 @@ namespace Protocol {
   ZtEnum(Protocol, int8_t, H1, H3);
 }
 
+constexpr unsigned ClientTimeout = 10;
+constexpr unsigned MaxRedirects = 8;
+
 struct State {
   URL		url;
   Options	options;
@@ -79,7 +83,9 @@ struct State {
   Zhttp::H3::CxnState::T h3State = Zhttp::H3::CxnState::Init;
   ZtString<>	altSvcHost;
   uint16_t	altSvcPort = 0;
+  ZtString<>	location;
   int64_t	responseStreamID = -1;
+  unsigned	status = 0;
   ZiFile	bodyFile;
   int64_t	contentLength = -1;
   uint64_t	bodyBytes = 0;
@@ -87,8 +93,10 @@ struct State {
   bool		bodyFileOpen = false;
   bool		chunked = false;
   bool		altSvcH3 = false;
+  bool		redirect = false;
   bool		framingLogged = false;
   bool		done = false;
+  bool		failed = false;
 };
 
 struct AltSvcEndpoint {
@@ -96,6 +104,12 @@ struct AltSvcEndpoint {
   Zi::Hostname	dnsHost;
   uint16_t	port = 0;
   bool		h3 = false;
+};
+
+struct RequestResult {
+  unsigned	status = 0;
+  ZtString<>	location;
+  AltSvcEndpoint altSvc;
 };
 
 void setHost(URL &url, ZuCSpan host)
@@ -224,6 +238,46 @@ bool parseAltSvc(State &state, ZuCSpan value)
   return true;
 }
 
+bool redirectStatus(unsigned status)
+{
+  return status == 301 || status == 302 || status == 303 ||
+    status == 307 || status == 308;
+}
+
+bool parseLocation(const URL &base, ZuCSpan location, URL &url)
+{
+  ZeException error;
+  if (location.starts("http://") || location.starts("https://"))
+    return parseURL(location, url, &error);
+  url = base;
+  if (location.starts("//")) {
+    ZtString<> absolute;
+    absolute << base.scheme << ':' << location;
+    return parseURL(absolute, url, &error);
+  }
+  if (location.starts("/")) {
+    url.target = location;
+    return true;
+  }
+
+  ZuCSpan target{base.target};
+  auto q = target.find([](auto c) { return c == '?'; });
+  if (q >= 0) target.trunc(q);
+  int slash = -1;
+  for (unsigned i = 0; i < target.length(); ++i)
+    if (target[i] == '/') slash = i;
+  ZtString<> next;
+  if (slash >= 0) {
+    ZuCSpan dir = target;
+    dir.trunc(slash + 1);
+    next << dir;
+  } else
+    next << '/';
+  next << location;
+  url.target = next;
+  return true;
+}
+
 struct RequestOps {
   RequestOps(const State &state_) : state{&state_} { }
 
@@ -316,6 +370,8 @@ struct ResponseSink {
   ResponseSink(Link *link_, State *state_) : link{link_}, state{state_} { }
 
   void status(unsigned status) {
+    state->status = status;
+    state->redirect = redirectStatus(status);
     std::cerr << "status: " << status << '\n' << std::flush;
   }
   void contentLength(uint64_t contentLength) {
@@ -329,6 +385,8 @@ struct ResponseSink {
       if (parseAltSvc(*state, ZuCSpan(value)))
 	std::cerr << "alt-svc: h3=\"" << state->altSvcHost << ':' <<
 	  state->altSvcPort << "\"\n" << std::flush;
+    } else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{}) {
+      state->location = ZuCSpan(value);
     }
     std::cerr << "header " << Key{}() << ": " << ZuCSpan(value) <<
       '\n' << std::flush;
@@ -336,13 +394,14 @@ struct ResponseSink {
 
   void body(ZuBSpan span) {
     logFraming(*state);
-    if (!span) return;
+    if (!span || state->redirect) return;
     if (!state->bodyFileOpen) {
       state->bodyFile =
 	ZiFile(state->options.output, ZiFile::Write | ZiFile::GC);
       if (!state->bodyFile) {
 	std::cerr << "failed to open " << state->options.output << '\n' <<
 	  std::flush;
+	state->failed = true;
 	state->done = true;
 	return;
       }
@@ -350,19 +409,23 @@ struct ResponseSink {
     }
     if (state->bodyFile.write(span.data(), span.length()) != Zi::OK) {
       std::cerr << "failed to write body chunk\n" << std::flush;
+      state->failed = true;
       state->done = true;
       return;
     }
     state->bodyBytes += span.length();
     ++state->bodyChunks;
-    std::cerr << "body chunk: " << span.length() << " bytes\n" << std::flush;
   }
 
   template <typename ParserState>
-  void complete(ParserState) {
+  void complete(typename ParserState::T parserState) {
     if (state->done) return;
-    std::cerr << "body complete: " << state->bodyBytes << " bytes in " <<
-      state->bodyChunks << " chunks\n" << std::flush;
+    if (parserState == ParserState::Complete)
+      std::cerr << "body complete: " << state->bodyBytes << " bytes in " <<
+	state->bodyChunks << " chunks\n" << std::flush;
+    else
+      std::cerr << "response " << parserState << '\n' << std::flush;
+    if (parserState != ParserState::Complete) state->failed = true;
     state->done = true;
     if (state->protocol == Protocol::H3) link->disconnect();
   }
@@ -384,9 +447,12 @@ struct ResponseParser :
 
   ResponseParser(Link *link_, ::State *state_) : SinkBase{link_, state_} { }
 
+  void complete(typename State::T state) {
+    SinkBase::template complete<State>(state);
+  }
+
   using SinkBase::body;
   using SinkBase::chunked;
-  using SinkBase::complete;
   using SinkBase::contentLength;
   using SinkBase::header;
   using SinkBase::status;
@@ -642,7 +708,7 @@ bool QUICClient::Stream::peerDecoderStream()
 template <typename Client>
 int run(
   ZiMultiplex &mx, const Options &options, URL url,
-  AltSvcEndpoint *altSvc = nullptr) {
+  RequestResult *result = nullptr) {
   Client client;
   client.state.url = ZuMv(url);
   client.state.options = options;
@@ -681,16 +747,26 @@ int run(
     using Link = typename Client::Link;
     ZmRef<Link> link = new Link(&client);
     link->connect(client.state.url.host, client.state.url.port);
-    client.sem.wait();
+    if (client.sem.timedwait(Zm::now(ClientTimeout)) != 0) {
+      std::cerr << "timed out\n" << std::flush;
+      client.state.failed = true;
+      link->disconnect();
+      client.sem.timedwait(Zm::now(2));
+    }
   }
-  if (altSvc && client.state.altSvcH3) {
-    altSvc->host = client.state.altSvcHost;
-    altSvc->dnsHost = client.state.url.dnsHost;
-    altSvc->port = client.state.altSvcPort;
-    altSvc->h3 = true;
+  if (result) {
+    result->status = client.state.status;
+    result->location = client.state.location;
+    if (client.state.altSvcH3) {
+      result->altSvc.host = client.state.altSvcHost;
+      result->altSvc.dnsHost = client.state.url.dnsHost;
+      result->altSvc.port = client.state.altSvcPort;
+      result->altSvc.h3 = true;
+    }
   }
+  int rc = client.state.failed ? 1 : 0;
   client.final();
-  return 0;
+  return rc;
 }
 
 ZiMxParams mxParams()
@@ -728,6 +804,47 @@ bool resolveForQUIC(const URL &url)
   return true;
 }
 
+URL altSvcURL(const URL &url, const AltSvcEndpoint &altSvc)
+{
+  URL h3URL = url;
+  if (altSvc.host) setHost(h3URL, altSvc.host);
+  if (altSvc.port) h3URL.port = altSvc.port;
+  return h3URL;
+}
+
+int runH3DNSFirst(
+  ZiMultiplex &mx, const Options &options, const URL &url,
+  RequestResult &result, bool fallback)
+{
+  URL h1URL = url;
+  int rc = resolveForQUIC(url) ?
+    run<QUICClient>(mx, options, url, &result) : 1;
+  if (rc && fallback)
+    rc = run<TLSClient>(mx, options, ZuMv(h1URL), &result);
+  return rc;
+}
+
+int runH1AltSvcFirst(
+  ZiMultiplex &mx, const Options &options, const URL &url,
+  RequestResult &result)
+{
+  int rc = run<TLSClient>(mx, options, url, &result);
+  if (rc || redirectStatus(result.status) || !result.altSvc.h3) return rc;
+
+  RequestResult h3Result;
+  URL h3URL = altSvcURL(url, result.altSvc);
+  int h3rc = resolveForQUIC(h3URL) ?
+    run<QUICClient>(mx, options, ZuMv(h3URL), &h3Result) : 1;
+  if (!h3rc) {
+    result = ZuMv(h3Result);
+    return 0;
+  }
+
+  // Restore output if a failed H3 upgrade wrote a partial body.
+  result = {};
+  return run<TLSClient>(mx, options, url, &result);
+}
+
 int main(int argc, char **argv)
 {
   Options options;
@@ -742,10 +859,6 @@ int main(int argc, char **argv)
     usage();
   }
   if (options.http3Only) options.http3 = true;
-  if (url.scheme == "http" && options.http3) {
-    std::cerr << "HTTP/3 requires https:// URL\n" << std::flush;
-    return 1;
-  }
 
   ZiLog::init("zhttpclient");
   ZiLog::level(0);
@@ -758,16 +871,32 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  int rc;
-  if (url.scheme == "http")
-    rc = run<TCPClient>(mx, options, ZuMv(url));
-  else if (options.http3) {
-    URL fallbackURL = url;
-    rc = resolveForQUIC(url) ? run<QUICClient>(mx, options, ZuMv(url)) : 1;
-    if (rc && !options.http3Only)
-      rc = run<TLSClient>(mx, options, ZuMv(fallbackURL));
-  } else
-    rc = run<TLSClient>(mx, options, ZuMv(url));
+  int rc = 1;
+  for (unsigned redirect = 0; redirect <= MaxRedirects; ++redirect) {
+    RequestResult result;
+    if (url.scheme == "http")
+      rc = run<TCPClient>(mx, options, url, &result);
+    else if (options.http3)
+      rc = runH3DNSFirst(mx, options, url, result, !options.http3Only);
+    else
+      rc = runH1AltSvcFirst(mx, options, url, result);
+
+    if (rc || !redirectStatus(result.status) || !result.location) break;
+    URL next;
+    if (!parseLocation(url, result.location, next)) {
+      std::cerr << "invalid redirect location: " << result.location << '\n' <<
+	std::flush;
+      rc = 1;
+      break;
+    }
+    std::cerr << "redirect: " << next.scheme << "://" << next.host <<
+      next.target << '\n' << std::flush;
+    url = ZuMv(next);
+    if (redirect == MaxRedirects) {
+      std::cerr << "too many redirects\n" << std::flush;
+      rc = 1;
+    }
+  }
 
   mx.stop();
   ZiLog::stop();

@@ -2727,13 +2727,13 @@ public:
     if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
 	(!payload.length() && !fin))
       return false;
-    if (fin) stream->fin();
     if (payload.length()) {
       auto tx = stream->txStream_();
       tx.append(
 	reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
       tx.flush();
     }
+    if (fin) stream->fin();
     return Base::flushWritableStreams_(
       m_endpoint.remote(),
       [this](StreamRef stream, ZiSockAddr addr) {
@@ -3015,7 +3015,26 @@ private:
       });
   }
 
+  bool flushPendingAck_(CryptoLevel::T level, ZiSockAddr addr) {
+    PacketBuild build;
+    build.reset();
+    if (!appendPendingAck_(level, build)) return false;
+    if (!build.bytes()) return true;
+    if (level == CryptoLevel::Initial)
+      return sendInitialPacket_(build, ZuMv(addr), {});
+    if (level == CryptoLevel::Handshake)
+      return sendHandshakePacket_(build, ZuMv(addr), {});
+    return sendShortPacket_(build, ZuMv(addr), {});
+  }
+
+  bool flushPendingAcks_(ZiSockAddr addr) {
+    return flushPendingAck_(CryptoLevel::Initial, addr) &&
+      flushPendingAck_(CryptoLevel::Handshake, addr) &&
+      flushPendingAck_(CryptoLevel::OneRTT, ZuMv(addr));
+  }
+
   void received_(Datagram d) {
+    ZiSockAddr addr = d.addr;
     Base::receiveDatagram_(
       ZuMv(d),
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
@@ -3024,6 +3043,7 @@ private:
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
 	return receivedShort_(d_, packetOffset, packetLen);
       });
+    flushPendingAcks_(ZuMv(addr));
   }
 
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
@@ -3154,13 +3174,13 @@ template <typename, typename> friend class Server;
     if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
 	(!payload.length() && !fin))
       return false;
-    if (fin) stream->fin();
     if (payload.length()) {
       auto tx = stream->txStream_();
       tx.append(
 	reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
       tx.flush();
     }
+    if (fin) stream->fin();
     return Base::flushWritableStreams_(
       m_peerAddr,
       [this](StreamRef stream, ZiSockAddr addr) {
@@ -3406,7 +3426,26 @@ private:
       });
   }
 
+  bool flushPendingAck_(CryptoLevel::T level, ZiSockAddr addr) {
+    PacketBuild build;
+    build.reset();
+    if (!appendPendingAck_(level, build)) return false;
+    if (!build.bytes()) return true;
+    if (level == CryptoLevel::Initial)
+      return sendInitialPacket_(build, ZuMv(addr), {});
+    if (level == CryptoLevel::Handshake)
+      return sendHandshakePacket_(build, ZuMv(addr), {});
+    return sendShortPacket_(build, ZuMv(addr), {});
+  }
+
+  bool flushPendingAcks_(ZiSockAddr addr) {
+    return flushPendingAck_(CryptoLevel::Initial, addr) &&
+      flushPendingAck_(CryptoLevel::Handshake, addr) &&
+      flushPendingAck_(CryptoLevel::OneRTT, ZuMv(addr));
+  }
+
   void received_(Datagram d) {
+    ZiSockAddr addr = d.addr;
     Base::receiveDatagram_(
       ZuMv(d),
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
@@ -3415,6 +3454,7 @@ private:
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
 	return receivedShort_(d_, packetOffset, packetLen);
       });
+    flushPendingAcks_(ZuMv(addr));
   }
 
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
