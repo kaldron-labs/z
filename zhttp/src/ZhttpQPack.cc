@@ -119,9 +119,7 @@ bool QPackRxTable::duplicate(uint64_t relativeIndex)
 {
   Header h;
   if (!lookupRelative(insertCount_, relativeIndex, h)) return false;
-  QPackRxString name = h.name;
-  QPackRxString value = h.value;
-  return insert(name, value);
+  return insert(h.name, h.value);
 }
 
 bool QPackRxTable::lookupAbs(uint64_t abs, Header &h) const
@@ -194,11 +192,17 @@ bool QPackTxTable::lookupAbs(uint64_t abs, Header &h) const
 
 bool QPackTxTable::insert(Header h, uint64_t *abs)
 {
-  if (auto e = find(h.name, h.value)) {
+  return insert(QPackTxString{h.name}, QPackTxString{h.value}, abs);
+}
+
+bool QPackTxTable::insert(
+  QPackTxString name, QPackTxString value, uint64_t *abs)
+{
+  if (auto e = find(name, value)) {
     if (abs) *abs = e->abs;
     return true;
   }
-  uint32_t n = qpackEntrySize_(h.name, h.value);
+  uint32_t n = qpackEntrySize_(name, value);
   if (n > capacityBytes_) return false;
   while (orderHead_ < order.length() && usedBytes_ + n > capacityBytes_)
     if (!dropOldest()) return false;
@@ -207,9 +211,9 @@ bool QPackTxTable::insert(Header h, uint64_t *abs)
   QPackTxEntry e;
   e.abs = nextAbs;
   e.size = n;
-  e.name = h.name;
-  e.value = h.value;
-  auto entry = hash.add(e);
+  e.name = ZuMv(name);
+  e.value = ZuMv(value);
+  auto entry = hash.add(ZuMv(e));
   if (!entry) return false;
   auto o = new (order.push()) QPackTxOrderEntry();
   o->abs = nextAbs;
@@ -262,16 +266,23 @@ bool QPackTxTable::insertCountIncrement(uint64_t n)
 
 bool QPackTxTable::trackSection(uint64_t streamID, ZuSpan<uint64_t> refs)
 {
+  QPackTxRefs refs_;
+  refs_.length(refs.length());
+  for (unsigned i = 0; i < refs.length(); ++i) refs_[i] = refs[i];
+  return trackSection(streamID, ZuMv(refs_));
+}
+
+bool QPackTxTable::trackSection(uint64_t streamID, QPackTxRefs refs)
+{
   if (!refs.length()) return true;
   if (sections.find(streamID)) return false;
   QPackTxSection section_;
   section_.streamID = streamID;
-  for (unsigned i = 0; i < refs.length(); ++i)
-    section_.refs.push(refs[i]);
-  auto section = const_cast<QPackTxSection *>(sections.add(section_));
+  section_.refs = ZuMv(refs);
+  auto section = const_cast<QPackTxSection *>(sections.add(ZuMv(section_)));
   if (!section) return false;
-  for (unsigned i = 0; i < refs.length(); ++i) {
-    if (auto e = findAbs(refs[i]))
+  for (unsigned i = 0; i < section->refs.length(); ++i) {
+    if (auto e = findAbs(section->refs[i]))
       const_cast<QPackTxEntry *>(e)->refcnt++;
   }
   return true;

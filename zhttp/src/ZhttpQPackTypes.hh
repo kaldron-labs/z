@@ -249,15 +249,9 @@ using QPackTxSections =
     ZmLHashKey<QPackTxSection::StreamAxor,
       ZmLHashID<QPackTxSectionsID>>>;
 
-// Legacy decoder-stream transport hook. Builder encoder-stream output uses
-// the static qpackEncoderWriteAccepted() detector instead.
 struct QPackEncoderTx {
   virtual ~QPackEncoderTx() = default;
-  virtual void write(ZuCSpan) = 0;
-  virtual bool writeAccepted(ZuBSpan s) {
-    write(s);
-    return true;
-  }
+  virtual bool write(ZuBSpan) = 0;
 };
 
 struct QPackTxTable {
@@ -270,6 +264,7 @@ struct QPackTxTable {
   const QPackTxEntry *find(ZuCSpan, ZuCSpan) const;
   const QPackTxEntry *findAbs(uint64_t) const;
   bool insert(Header, uint64_t * = nullptr);
+  bool insert(QPackTxString, QPackTxString, uint64_t * = nullptr);
   bool lookupAbs(uint64_t, Header &) const;
   bool evict();
   bool dropOldest();
@@ -277,6 +272,7 @@ struct QPackTxTable {
   bool sectionAck(uint64_t);
   bool streamCancellation(uint64_t);
   bool trackSection(uint64_t, ZuSpan<uint64_t>);
+  bool trackSection(uint64_t, QPackTxRefs);
   void compactOrder();
 
   uint64_t insertCount() const { return insertCount_; }
