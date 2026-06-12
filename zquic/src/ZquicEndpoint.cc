@@ -7,6 +7,7 @@
 #include <zlib/ZquicEndpoint.hh>
 
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmList.hh>
 
 #ifndef _WIN32
 #include <sys/socket.h>
@@ -18,7 +19,20 @@ class Endpoint::Cxn_ : public ZiConnection {
 friend Endpoint;
 
 public:
-  static constexpr unsigned MaxTxQueue = 32;
+  static constexpr unsigned EndpointTxQueueLimit = 32;
+
+  struct TxNode : public ZuObject {
+    TxNode() = default;
+    TxNode(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_) :
+      buf{ZuMv(buf_)}, addr{ZuMv(addr_)} { }
+
+    ZmRef<ZiIOBuf>	buf;
+    ZiSockAddr		addr;
+  };
+  ZuDerive(TxQueue,
+    (ZmList<ZmRef<TxNode>,
+      ZmListNode<ZmRef<TxNode>,
+	ZmListHeapID<"Zquic.Endpoint.TxQueue">>>));
 
   void *operator new(size_t);
   void operator delete(void *) noexcept;
@@ -48,22 +62,19 @@ public:
 
 private:
   bool enqueueTx_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
-    if (m_txQueueCount >= MaxTxQueue) return false;
-    unsigned i = m_txQueueTail;
-    m_txQueueBuf[i] = ZuMv(buf);
-    m_txQueueAddr[i] = ZuMv(addr);
-    m_txQueueTail = (m_txQueueTail + 1) % MaxTxQueue;
-    ++m_txQueueCount;
+    if (m_txQueue.count_() >= EndpointTxQueueLimit) {
+      ++m_endpoint->m_diag.txBackPressure;
+      return false;
+    }
+    m_txQueue.push(new TxNode{ZuMv(buf), ZuMv(addr)});
     return true;
   }
 
   bool dequeueTx_() {
-    if (!m_txQueueCount) return false;
-    unsigned i = m_txQueueHead;
-    m_txBuf = ZuMv(m_txQueueBuf[i]);
-    m_txAddr = ZuMv(m_txQueueAddr[i]);
-    m_txQueueHead = (m_txQueueHead + 1) % MaxTxQueue;
-    --m_txQueueCount;
+    auto node = m_txQueue.shiftVal();
+    if (!node) return false;
+    m_txBuf = ZuMv(node->buf);
+    m_txAddr = ZuMv(node->addr);
     return true;
   }
 
@@ -127,11 +138,7 @@ private:
   ZmRef<ZiIOBuf>	m_rxBuf;
   ZmRef<ZiIOBuf>	m_txBuf;
   ZiSockAddr		m_txAddr;
-  ZmRef<ZiIOBuf>	m_txQueueBuf[MaxTxQueue];
-  ZiSockAddr		m_txQueueAddr[MaxTxQueue];
-  unsigned		m_txQueueHead = 0;
-  unsigned		m_txQueueTail = 0;
-  unsigned		m_txQueueCount = 0;
+  TxQueue		m_txQueue;
 };
 
 void *Endpoint::Cxn_::operator new(size_t s)

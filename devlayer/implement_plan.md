@@ -1,5 +1,7 @@
 # Implement New Feature
 
+## Act as a principal software engineer who is the leading global expert in performance-oriented C++ systems and network programming
+
 Task: Execute the design and implementation plan in `plan.new.md`.
 
 IMPORTANT
@@ -7,18 +9,10 @@ IMPORTANT
 - FOLLOW the "Detailed Design and Implementation Plan" section in `plan.new.md`
   - execute the plan phase by phase
 - Think deeply when executing the plan
-- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
-- Conform to existing coding style, conventions and naming conventions
-  - PREFER succinct expressive names to verbose names
-  - PREFER succinct expressive code to verbose code
-  - PREFER modern natural code as used by programmers who are fluent in the language
-  - USE trailing underscores to avoid naming collisions with inner-scoped locals
-  - in Javascript catch `error`, not `err` or `e`
-  - do not wrap single-line if statements in a { } block
-  - code for veteran engineers who are expert in the language and steeped in its conventions
-  - USE idiomatic, natural and maximally expressive code:
-    - PREFER brevity, expressiveness and often-used idiomatic expressions of the programming language to readability
-- Conform to existing frameworks and libraries including test frameworks
+- Read `AGENTS.md`, `GUIDELINES.md` and `CODEBASE.md` to understand the existing codebase
+- Conform to `AGENTS.md` and `GUIDELINES.md`
+- Dependent compatibility is a non-goal unless otherwise directed
+  - propagate API changes to dependent code
 - Re-use existing utilities, implementations, libraries and code modules as needed
   - Search the codebase for relevant implementations and patterns
   - Examine existing similar features and related code

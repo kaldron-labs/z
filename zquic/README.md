@@ -22,6 +22,8 @@ to active `SrvLink`s by connection ID. `Zquic::CliLink::connect()` opens a
 connected UDP socket through `CliCxn`. Runtime diagnostics expose endpoint
 readiness/failure counts, datagram byte counts, parsed packet/frame counts,
 handshake progress, stream frames, ACKs, and packet protection counters.
+The endpoint Tx backlog is explicitly bounded and reports back-pressure through
+endpoint diagnostics when enqueue fails.
 
 `Zquic` does not expose HTTP/3 request, response, QPACK, or WebTransport types.
 Production HTTP/3 is owned by `Zhttp` and uses `Zquic` as its transport.
@@ -47,6 +49,9 @@ First release scope:
 Version negotiation is v1-only. Retry packets use the QUIC v1 Retry Integrity
 Tag calculation and client bootstrap exposes a raw-packet validation path before
 accepting the Retry token and server-selected connection ID.
+The implementation advertises and enforces a local active connection ID limit
+of 8; CID storage is dynamically backed but remains bounded by that negotiated
+policy.
 
 ## Buffers
 
@@ -91,6 +96,8 @@ loss, PTO, retransmission, congestion window, bytes in flight, handshake state,
 stream counts, PMTUD probe outcomes, required Rx packet-to-stream copies, and
 buffer-contract violations. Stable formatter helpers expose packet-space,
 frame, stream, recovery, and summary names for tests and logs.
+Retransmit-drop reporting is zero by construction because the current
+retransmit queue has no drop policy.
 
 Log subsystem names are stable constants:
 

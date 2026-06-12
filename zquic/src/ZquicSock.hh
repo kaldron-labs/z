@@ -34,6 +34,7 @@ struct EndpointDiag {
   uint64_t	datagramsTx = 0;
   uint64_t	bytesRx = 0;
   uint64_t	bytesTx = 0;
+  uint64_t	txBackPressure = 0;
   uint64_t	failures = 0;
 };
 

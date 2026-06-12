@@ -30,249 +30,180 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
   unsigned o = 1;
   f.reset();
 
-  if (t == 0x00) {
-    f.type = FrameType::Padding;
-    while (o < in.length() && !in[o]) ++o;
-    used = o;
-    return 0;
-  }
-  if (t == 0x01) {
-    f.type = FrameType::Ping;
-    used = o;
-    return 0;
-  }
-  if (t == 0x02 || t == 0x03) {
-    f.type = FrameType::Ack;
-    uint64_t rangeCount = 0;
-    if (getVar_(in, o, f.offset) < 0 ||	// largest acked
-	getVar_(in, o, f.value) < 0 ||	// ack delay
-	getVar_(in, o, rangeCount) < 0 ||
-	getVar_(in, o, f.length) < 0)	// first range length
-      return -1;
-    if (rangeCount + 1 > Frame::MaxAckRanges) return -1;
-    if (f.length > f.offset) return -1;
-    uint64_t smallest = f.offset - f.length;
-    f.ackRanges.push(AckRange{f.offset, smallest});
-    for (uint64_t i = 0; i < rangeCount; ++i) {
-      uint64_t gap = 0, range = 0;
-      if (getVar_(in, o, gap) < 0 || getVar_(in, o, range) < 0)
+  switch (t) {
+    case 0x00:
+      f.type = FrameType::Padding;
+      while (o < in.length() && !in[o]) ++o;
+      used = o;
+      return 0;
+    case 0x01:
+      f.type = FrameType::Ping;
+      used = o;
+      return 0;
+    case 0x02:
+    case 0x03: {
+      f.type = FrameType::Ack;
+      uint64_t rangeCount = 0;
+      if (getVar_(in, o, f.offset) < 0 ||
+	  getVar_(in, o, f.value) < 0 ||
+	  getVar_(in, o, rangeCount) < 0 ||
+	  getVar_(in, o, f.length) < 0)
 	return -1;
-      if (gap > smallest || smallest - gap < 2) return -1;
-      uint64_t base = smallest - gap - 2;
-      if (range > base) return -1;
-      smallest = base - range;
-      f.ackRanges.push(AckRange{base, smallest});
+      if (rangeCount + 1 > Frame::MaxAckRanges) return -1;
+      if (f.length > f.offset) return -1;
+      uint64_t smallest = f.offset - f.length;
+      f.ackRanges.push(AckRange{f.offset, smallest});
+      for (uint64_t i = 0; i < rangeCount; ++i) {
+	uint64_t gap = 0, range = 0;
+	if (getVar_(in, o, gap) < 0 || getVar_(in, o, range) < 0)
+	  return -1;
+	if (gap > smallest || smallest - gap < 2) return -1;
+	uint64_t base = smallest - gap - 2;
+	if (range > base) return -1;
+	smallest = base - range;
+	f.ackRanges.push(AckRange{base, smallest});
+      }
+      for (unsigned i = 0, j = f.ackRanges.length(); i < --j; ++i) {
+	AckRange tmp = f.ackRanges[i];
+	f.ackRanges[i] = f.ackRanges[j];
+	f.ackRanges[j] = tmp;
+      }
+      if (t == 0x03) {
+	uint64_t ecn = 0;
+	if (getVar_(in, o, ecn) < 0 ||
+	    getVar_(in, o, ecn) < 0 ||
+	    getVar_(in, o, ecn) < 0)
+	  return -1;
+      }
+      used = o;
+      return 0;
     }
-    for (unsigned i = 0, j = f.ackRanges.length(); i < --j; ++i) {
-      AckRange tmp = f.ackRanges[i];
-      f.ackRanges[i] = f.ackRanges[j];
-      f.ackRanges[j] = tmp;
-    }
-    if (t == 0x03) {
-      uint64_t ecn = 0;
-      if (getVar_(in, o, ecn) < 0 ||
-	  getVar_(in, o, ecn) < 0 ||
-	  getVar_(in, o, ecn) < 0)
+    case 0x04:
+      f.type = FrameType::ResetStream;
+      if (getVar_(in, o, f.streamID) < 0 ||
+	  getVar_(in, o, f.errorCode) < 0 ||
+	  getVar_(in, o, f.length) < 0)
 	return -1;
-    }
-    used = o;
-    return 0;
-  }
-  if (t == 0x04) {
-    unsigned n = 0;
-    f.type = FrameType::ResetStream;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.streamID, n) < 0)
-      return -1;
-    o += n;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.errorCode, n) < 0)
-      return -1;
-    o += n;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.length, n) < 0)
-      return -1;
-    used = o + n;
-    return 0;
-  }
-  if (t == 0x05) {
-    unsigned n = 0;
-    f.type = FrameType::StopSending;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.streamID, n) < 0)
-      return -1;
-    o += n;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.errorCode, n) < 0)
-      return -1;
-    used = o + n;
-    return 0;
-  }
-  if (t == 0x06) {
-    unsigned n = 0;
-    f.type = FrameType::Crypto;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.offset, n) < 0)
-      return -1;
-    o += n;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.length, n) < 0)
-      return -1;
-    o += n;
-    if (in.length() < o + f.length) return -1;
-    f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
-    used = o + f.length;
-    return 0;
-  }
-  if (t == 0x07) {
-    unsigned n = 0;
-    f.type = FrameType::NewToken;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.length, n) < 0)
-      return -1;
-    o += n;
-    if (in.length() < o + f.length) return -1;
-    f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
-    used = o + f.length;
-    return 0;
-  }
-  if (t >= 0x08 && t <= 0x0f) {
-    unsigned n = 0;
-    f.type = FrameType::Stream;
-    f.fin = t & 0x01;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.streamID, n) < 0)
-      return -1;
-    o += n;
-    if (t & 0x04) {
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.offset, n) < 0)
+      used = o;
+      return 0;
+    case 0x05:
+      f.type = FrameType::StopSending;
+      if (getVar_(in, o, f.streamID) < 0 ||
+	  getVar_(in, o, f.errorCode) < 0)
 	return -1;
-      o += n;
-    }
-    if (t & 0x02) {
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.length, n) < 0)
+      used = o;
+      return 0;
+    case 0x06:
+      f.type = FrameType::Crypto;
+      if (getVar_(in, o, f.offset) < 0 ||
+	  getVar_(in, o, f.length) < 0)
 	return -1;
-      o += n;
       if (in.length() < o + f.length) return -1;
-    } else
-      f.length = in.length() - o;
-    f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
-    used = o + f.length;
-    return 0;
-  }
-  if (t >= 0x10 && t <= 0x17) {
-    unsigned n = 0;
-    if (t == 0x10) {
+      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      used = o + f.length;
+      return 0;
+    case 0x07:
+      f.type = FrameType::NewToken;
+      if (getVar_(in, o, f.length) < 0) return -1;
+      if (in.length() < o + f.length) return -1;
+      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      used = o + f.length;
+      return 0;
+    case 0x08 ... 0x0f:
+      f.type = FrameType::Stream;
+      f.fin = t & 0x01;
+      if (getVar_(in, o, f.streamID) < 0) return -1;
+      if ((t & 0x04) && getVar_(in, o, f.offset) < 0) return -1;
+      if (t & 0x02) {
+	if (getVar_(in, o, f.length) < 0) return -1;
+	if (in.length() < o + f.length) return -1;
+      } else
+	f.length = in.length() - o;
+      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      used = o + f.length;
+      return 0;
+    case 0x10:
       f.type = FrameType::MaxData;
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
-	return -1;
-      used = o + n;
+      if (getVar_(in, o, f.value) < 0) return -1;
+      used = o;
       return 0;
-    }
-    if (t == 0x11) {
+    case 0x11:
       f.type = FrameType::MaxStreamData;
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.streamID, n) < 0)
+      if (getVar_(in, o, f.streamID) < 0 ||
+	  getVar_(in, o, f.value) < 0)
 	return -1;
-      o += n;
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
-	return -1;
-      used = o + n;
+      used = o;
       return 0;
-    }
-    if (t == 0x12 || t == 0x13) {
+    case 0x12:
+    case 0x13:
       f.type = FrameType::MaxStreams;
-      f.streamType = t == 0x12 ? Zi::StreamType::Duplex : Zi::StreamType::Simplex;
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
-	return -1;
-      used = o + n;
+      f.streamType =
+	t == 0x12 ? Zi::StreamType::Duplex : Zi::StreamType::Simplex;
+      if (getVar_(in, o, f.value) < 0) return -1;
+      used = o;
       return 0;
-    }
-    if (t == 0x14) {
+    case 0x14:
       f.type = FrameType::DataBlocked;
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
-	return -1;
-      used = o + n;
+      if (getVar_(in, o, f.value) < 0) return -1;
+      used = o;
       return 0;
-    }
-    if (t == 0x15) {
+    case 0x15:
       f.type = FrameType::StreamDataBlocked;
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.streamID, n) < 0)
+      if (getVar_(in, o, f.streamID) < 0 ||
+	  getVar_(in, o, f.value) < 0)
 	return -1;
-      o += n;
-      if (VarInt::decode(
-	    ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
-	return -1;
-      used = o + n;
+      used = o;
       return 0;
-    }
-    f.type = FrameType::StreamsBlocked;
-    f.streamType = t == 0x16 ? Zi::StreamType::Duplex : Zi::StreamType::Simplex;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
-      return -1;
-    used = o + n;
-    return 0;
-  }
-  if (t == 0x18) {
-    unsigned n = 0;
-    f.type = FrameType::NewConnectionID;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
-      return -1;
-    o += n;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.offset, n) < 0)
-      return -1;
-    o += n;
-    if (in.length() < o + 1) return -1;
-    f.length = uint8_t(in[o++]);
-    if (f.length > CxnIDMax || in.length() < o + f.length + 16)
-      return -1;
-    f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
-    if (!f.resetToken.set(
-	  ZuCSpan{in.data() + o + unsigned(f.length), 16}))
-      return -1;
-    used = o + f.length + 16;
-    return 0;
-  }
-  if (t == 0x19) {
-    unsigned n = 0;
-    f.type = FrameType::RetireConnectionID;
-    if (VarInt::decode(
-	  ZuCSpan{in.data() + o, in.length() - o}, f.value, n) < 0)
-      return -1;
-    used = o + n;
-    return 0;
-  }
-  if (t == 0x1a || t == 0x1b) {
-    f.type = t == 0x1a ? FrameType::PathChallenge : FrameType::PathResponse;
-    if (in.length() < o + 8) return -1;
-    f.payload = ZuCSpan{in.data() + o, 8};
-    used = o + 8;
-    return 0;
-  }
-  if (t == 0x1c || t == 0x1d) {
-    f.type = FrameType::ConnectionClose;
-    if (getVar_(in, o, f.errorCode) < 0) return -1;
-    if (t == 0x1c && getVar_(in, o, f.value) < 0) return -1;
-    if (getVar_(in, o, f.length) < 0) return -1;
-    if (in.length() < o + f.length) return -1;
-    f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
-    used = o + f.length;
-    return 0;
-  }
-  if (t == 0x1e) {
-    f.type = FrameType::HandshakeDone;
-    used = o;
-    return 0;
+    case 0x16:
+    case 0x17:
+      f.type = FrameType::StreamsBlocked;
+      f.streamType =
+	t == 0x16 ? Zi::StreamType::Duplex : Zi::StreamType::Simplex;
+      if (getVar_(in, o, f.value) < 0) return -1;
+      used = o;
+      return 0;
+    case 0x18:
+      f.type = FrameType::NewConnectionID;
+      if (getVar_(in, o, f.value) < 0 ||
+	  getVar_(in, o, f.offset) < 0)
+	return -1;
+      if (in.length() < o + 1) return -1;
+      f.length = uint8_t(in[o++]);
+      if (f.length > CxnIDMax || in.length() < o + f.length + 16)
+	return -1;
+      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      if (!f.resetToken.set(
+	    ZuCSpan{in.data() + o + unsigned(f.length), 16}))
+	return -1;
+      used = o + f.length + 16;
+      return 0;
+    case 0x19:
+      f.type = FrameType::RetireConnectionID;
+      if (getVar_(in, o, f.value) < 0) return -1;
+      used = o;
+      return 0;
+    case 0x1a:
+    case 0x1b:
+      f.type = t == 0x1a ?
+	FrameType::PathChallenge : FrameType::PathResponse;
+      if (in.length() < o + 8) return -1;
+      f.payload = ZuCSpan{in.data() + o, 8};
+      used = o + 8;
+      return 0;
+    case 0x1c:
+    case 0x1d:
+      f.type = FrameType::ConnectionClose;
+      if (getVar_(in, o, f.errorCode) < 0) return -1;
+      if (t == 0x1c && getVar_(in, o, f.value) < 0) return -1;
+      if (getVar_(in, o, f.length) < 0) return -1;
+      if (in.length() < o + f.length) return -1;
+      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      used = o + f.length;
+      return 0;
+    case 0x1e:
+      f.type = FrameType::HandshakeDone;
+      used = o;
+      return 0;
   }
 
   f.type = FrameType::Unknown;

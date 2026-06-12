@@ -416,6 +416,7 @@ public:
   }
 
   unsigned count() const { return m_frames.count_(); }
+  // No retransmit drop policy exists for this unbounded queue.
   unsigned dropped() const { return 0; }
   bool empty() const { return !m_frames.count_(); }
   void clear() {
