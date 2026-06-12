@@ -20,7 +20,7 @@ namespace {
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-struct App { };
+struct App : public Zquic::Engine<App> { };
 struct TestLink;
 struct TestStream :
   public Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>
