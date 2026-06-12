@@ -1,0 +1,5 @@
+- fold `ZquicPacketBuilder.hh` into `ZquicPacket.hh` and delete it
+- fold `ZquicConn.hh` into `Zquic.hh` and delete it
+- fold `ZquicConn.cc` into `Zquic.cc` and delete it
+- rename `Zquic::lib_init` to `Zquic::init`
+- rename `StatelessResetToken` to `ResetToken`

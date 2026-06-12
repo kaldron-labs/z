@@ -1,0 +1,5 @@
+- shared client code should be a new library header `ZhttpClient.hh`
+  - use a namespace `Zhttp::Client`
+  - `HttpSessionState` should be `ZHttp::Client::State`
+  - `HttpApp` should be `Zhttp::Client::App`
+  - align the other elements of the plan accordingly
