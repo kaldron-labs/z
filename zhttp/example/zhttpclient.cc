@@ -33,8 +33,8 @@ struct Options {
 ZtStruct((Options, CLI),
   (((ca),     (CLI::Opt<'c'>, CLI::Long<"ca">)),     (String)),
   (((output), (CLI::Opt<'o'>, CLI::Long<"output">)), (String, "index.html")),
-  (((http3),  (CLI::Long<"http3">)),                 (Bool)),
-  (((http3Only), (CLI::Long<"http3-only">)),          (Bool)),
+  (((http3),  (CLI::Flag<1>, CLI::Long<"http3">)),   (Bool)),
+  (((http3Only), (CLI::Flag<2>, CLI::Long<"http3-only">)), (Bool)),
   (((url),    (CLI::Arg<1>)),                        (String)),
   (((help),   (CLI::Flag<'h'>, CLI::Long<"help">)),  (Bool)));
 
@@ -766,16 +766,8 @@ int main(int argc, char **argv)
     rc = resolveForQUIC(url) ? run<QUICClient>(mx, options, ZuMv(url)) : 1;
     if (rc && !options.http3Only)
       rc = run<TLSClient>(mx, options, ZuMv(fallbackURL));
-  } else {
-    URL h1URL = url;
-    AltSvcEndpoint altSvc;
-    rc = run<TLSClient>(mx, options, ZuMv(url), &altSvc);
-    if (!rc && altSvc.h3 && altSvc.host == h1URL.host && altSvc.port) {
-      h1URL.port = altSvc.port;
-      if (resolveForQUIC(h1URL))
-	rc = run<QUICClient>(mx, options, ZuMv(h1URL));
-    }
-  }
+  } else
+    rc = run<TLSClient>(mx, options, ZuMv(url));
 
   mx.stop();
   ZiLog::stop();
