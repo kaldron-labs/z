@@ -9,15 +9,13 @@
 #ifndef ZhttpHPack_HH
 #define ZhttpHPack_HH
 
-#ifndef Zhttp_HH
-#include <zlib/Zhttp.hh>
+#ifndef ZhttpQPackTypes_HH
+#include <zlib/ZhttpQPackTypes.hh>
 #endif
 
 #include <zlib/ZuBitStream.hh>
 
 namespace Zhttp { namespace H3 {
-
-using HeaderBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HeaderBytes">>;
 
 namespace HPack {
 

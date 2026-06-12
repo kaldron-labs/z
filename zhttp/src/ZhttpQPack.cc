@@ -36,6 +36,200 @@ static int putString_(HeaderBytes &out, uint8_t prefix, unsigned prefixBits,
   return 0;
 }
 
+static uint32_t qpackEntrySize_(ZuCSpan name, ZuCSpan value)
+{
+  uint64_t n = uint64_t(name.length()) + value.length() + 32;
+  return n > uint32_t(-1) ? uint32_t(-1) : uint32_t(n);
+}
+
+bool QPackRxTable::setCapacity(uint32_t capacity)
+{
+  if (capacity > maxCapacityBytes_) return false;
+  capacityBytes_ = capacity;
+  while (entries.length() && usedBytes_ > capacityBytes_) {
+    usedBytes_ -= entries[0].size;
+    entries.splice(0, 1);
+    ++baseAbs_;
+  }
+  return true;
+}
+
+bool QPackRxTable::insert(Header h)
+{
+  return insert(h.name, h.value);
+}
+
+bool QPackRxTable::insert(ZuCSpan name, ZuCSpan value)
+{
+  uint32_t n = qpackEntrySize_(name, value);
+  if (n > capacityBytes_) return false;
+  while (entries.length() && usedBytes_ + n > capacityBytes_) {
+    usedBytes_ -= entries[0].size;
+    entries.splice(0, 1);
+    ++baseAbs_;
+  }
+  auto e = entries.push();
+  e->abs = insertCount_++;
+  e->size = n;
+  e->name = name;
+  e->value = value;
+  usedBytes_ += n;
+  return true;
+}
+
+bool QPackRxTable::duplicate(uint64_t relativeIndex)
+{
+  Header h;
+  if (!lookupRelative(insertCount_, relativeIndex, h)) return false;
+  QPackRxString name = h.name;
+  QPackRxString value = h.value;
+  return insert(name, value);
+}
+
+bool QPackRxTable::lookupAbs(uint64_t abs, Header &h) const
+{
+  if (abs < baseAbs_ || abs >= baseAbs_ + entries.length()) return false;
+  const auto &e = entries[unsigned(abs - baseAbs_)];
+  h = Header{e.name, e.value};
+  return true;
+}
+
+bool QPackRxTable::lookupRelative(
+  uint64_t base, uint64_t index, Header &h) const
+{
+  if (!base || index >= base) return false;
+  return lookupAbs(base - index - 1, h);
+}
+
+bool QPackRxTable::lookupPostBase(
+  uint64_t base, uint64_t index, Header &h) const
+{
+  if (base > uint64_t(-1) - index) return false;
+  return lookupAbs(base + index, h);
+}
+
+bool QPackTxTable::setMaxCapacity(uint32_t capacity)
+{
+  maxCapacityBytes_ = capacity;
+  if (capacityBytes_ > maxCapacityBytes_) return setCapacity(maxCapacityBytes_);
+  return true;
+}
+
+bool QPackTxTable::setCapacity(uint32_t capacity)
+{
+  if (capacity > maxCapacityBytes_) return false;
+  capacityBytes_ = capacity;
+  return evict();
+}
+
+const QPackTxEntry *QPackTxTable::find(ZuCSpan name, ZuCSpan value) const
+{
+  return hash.find(QPackFieldKey{name, value});
+}
+
+bool QPackTxTable::lookupAbs(uint64_t abs, Header &h) const
+{
+  QPackTxHash::CIter i{hash};
+  while (auto e = i())
+    if (e->abs == abs) {
+      h = Header{e->name, e->value};
+      return true;
+    }
+  return false;
+}
+
+bool QPackTxTable::insert(Header h, uint64_t *abs)
+{
+  if (auto e = find(h.name, h.value)) {
+    if (abs) *abs = e->abs;
+    return true;
+  }
+  uint32_t n = qpackEntrySize_(h.name, h.value);
+  if (n > capacityBytes_) return false;
+  while (order.length() && usedBytes_ + n > capacityBytes_) {
+    if (!evict()) return false;
+    if (!order.length() && usedBytes_ + n > capacityBytes_) return false;
+  }
+  QPackTxEntry e;
+  e.abs = insertCount_++;
+  e.size = n;
+  e.name = h.name;
+  e.value = h.value;
+  if (!hash.add(e)) return false;
+  order.push(e.abs);
+  usedBytes_ += n;
+  if (abs) *abs = e.abs;
+  return true;
+}
+
+bool QPackTxTable::evict()
+{
+  while (order.length() && usedBytes_ > capacityBytes_) {
+    uint64_t abs = order[0];
+    bool removed = false;
+    QPackTxHash::Iter i{hash};
+    while (auto e = i()) {
+      if (e->abs != abs) continue;
+      if (e->refcnt) return false;
+      usedBytes_ -= e->size;
+      i.del();
+      removed = true;
+      break;
+    }
+    order.splice(0, 1);
+    if (!removed) continue;
+  }
+  return usedBytes_ <= capacityBytes_;
+}
+
+bool QPackTxTable::insertCountIncrement(uint64_t n)
+{
+  if (!n || n > insertCount_ || knownReceivedCount_ > insertCount_ - n)
+    return false;
+  knownReceivedCount_ += n;
+  return knownReceivedCount_ <= insertCount_;
+}
+
+void QPackTxTable::trackSection(uint64_t streamID, ZuSpan<uint64_t> refs)
+{
+  if (!refs.length()) return;
+  auto section = sections.push();
+  section->streamID = streamID;
+  for (unsigned i = 0; i < refs.length(); ++i) {
+    section->refs.push(refs[i]);
+    QPackTxHash::Iter hi{hash};
+    while (auto e = hi())
+      if (e->abs == refs[i]) {
+	const_cast<QPackTxEntry *>(e)->refcnt++;
+	break;
+      }
+  }
+}
+
+bool QPackTxTable::sectionAck(uint64_t streamID)
+{
+  for (unsigned i = 0; i < sections.length(); ++i) {
+    if (sections[i].streamID != streamID) continue;
+    for (unsigned j = 0; j < sections[i].refs.length(); ++j) {
+      uint64_t abs = sections[i].refs[j];
+      QPackTxHash::Iter hi{hash};
+      while (auto e = hi())
+	if (e->abs == abs) {
+	  if (e->refcnt) const_cast<QPackTxEntry *>(e)->refcnt--;
+	  break;
+	}
+    }
+    sections.splice(i, 1);
+    return true;
+  }
+  return false;
+}
+
+bool QPackTxTable::streamCancellation(uint64_t streamID)
+{
+  return sectionAck(streamID);
+}
+
 int QPack::decodeHuffman(HeaderBytes &out, ZuCSpan in)
 {
   out.length(HPack::declen(in.length()));
@@ -53,9 +247,9 @@ int QPack::decodeString(
 {
   uint64_t len = 0;
   uint8_t first = 0;
-  if (qpackDecodePrefInt_(in, o, prefixBits, len, &first) < 0 ||
-      in.length() < o + len)
-    return -1;
+  int n = qpackDecodePrefInt_(in, o, prefixBits, len, &first);
+  if (n < 0) return n;
+  if (in.length() < o + len) return -2;
   ZuCSpan raw{in.data() + o, unsigned(len)};
   o += unsigned(len);
   if (!(first & huffmanMask)) {
@@ -178,51 +372,91 @@ bool QPack::staticName(uint64_t index, HeaderName &name)
 }
 
 int QPack::encodeFieldSectionPrefix(
-  HeaderBytes &out, const FieldSectionPrefix &prefix)
+  HeaderBytes &out, const FieldSectionPrefix &prefix, uint64_t maxCapacity)
 {
-  if (putPref_(out, 0, 8, prefix.requiredInsertCount) < 0 ||
-      putPref_(out, prefix.baseNegative ? 0x80 : 0x00, 7, prefix.base) < 0)
+  uint64_t encodedInsertCount = 0;
+  uint64_t deltaBase = 0;
+  bool negative = false;
+  if (prefix.requiredInsertCount) {
+    uint64_t maxEntries = maxCapacity>>5;
+    if (!maxEntries) return -1;
+    uint64_t fullRange = maxEntries<<1;
+    encodedInsertCount = (prefix.requiredInsertCount % fullRange) + 1;
+    if (prefix.base >= prefix.requiredInsertCount)
+      deltaBase = prefix.base - prefix.requiredInsertCount;
+    else {
+      negative = true;
+      deltaBase = prefix.requiredInsertCount - prefix.base - 1;
+    }
+  } else if (prefix.base)
+    return -1;
+  if (putPref_(out, 0, 8, encodedInsertCount) < 0 ||
+      putPref_(out, negative ? 0x80 : 0x00, 7, deltaBase) < 0)
     return -1;
   return out.length();
 }
 
-int QPack::decodeFieldSectionPrefix(ZuCSpan in, FieldSectionPrefix &prefix)
+int QPack::decodeFieldSectionPrefix(
+  ZuCSpan in, EncodedFieldSectionPrefix &prefix)
 {
   prefix = {};
   unsigned o = 0;
   uint8_t baseFirst = 0;
-  if (qpackDecodePrefInt_(in, o, 8, prefix.requiredInsertCount) < 0 ||
-      qpackDecodePrefInt_(in, o, 7, prefix.base, &baseFirst) < 0)
+  if (qpackDecodePrefInt_(in, o, 8, prefix.encodedInsertCount) < 0 ||
+      qpackDecodePrefInt_(in, o, 7, prefix.deltaBase, &baseFirst) < 0)
     return -1;
   prefix.baseNegative = baseFirst & 0x80;
   return int(o);
 }
 
 bool QPack::fieldSectionBase(
-  const FieldSectionPrefix &prefix, uint64_t insertCount, uint64_t &base)
+  const EncodedFieldSectionPrefix &prefix, uint64_t req, uint64_t &base)
 {
   base = 0;
-  if (!prefix.requiredInsertCount) {
-    if (prefix.base || prefix.baseNegative) return false;
+  if (!req) {
+    if (prefix.deltaBase || prefix.baseNegative) return false;
     return true;
   }
-  if (prefix.requiredInsertCount > insertCount) return false;
   if (prefix.baseNegative) {
-    if (prefix.base > prefix.requiredInsertCount) return false;
-    base = prefix.requiredInsertCount - prefix.base;
+    if (req <= prefix.deltaBase) return false;
+    base = req - prefix.deltaBase - 1;
   } else {
-    if (prefix.base > uint64_t(-1) - prefix.requiredInsertCount)
-      return false;
-    base = prefix.requiredInsertCount + prefix.base;
+    if (prefix.deltaBase > uint64_t(-1) - req) return false;
+    base = req + prefix.deltaBase;
   }
-  return base <= insertCount;
+  return true;
+}
+
+int QPack::decodeFieldSectionPrefix(
+  ZuCSpan in, FieldSectionPrefix &prefix, uint64_t insertCount,
+  uint64_t maxCapacity)
+{
+  EncodedFieldSectionPrefix encoded;
+  int n = decodeFieldSectionPrefix(in, encoded);
+  if (n < 0) return -1;
+  prefix = {};
+  if (encoded.encodedInsertCount) {
+    uint64_t maxEntries = maxCapacity>>5;
+    if (!maxEntries) return -1;
+    uint64_t fullRange = maxEntries<<1;
+    if (encoded.encodedInsertCount > fullRange) return -1;
+    uint64_t maxValue = insertCount + maxEntries;
+    uint64_t maxWrapped = (maxValue / fullRange) * fullRange;
+    uint64_t req = maxWrapped + encoded.encodedInsertCount - 1;
+    if (req > maxValue) req -= fullRange;
+    if (!req) return -1;
+    prefix.requiredInsertCount = req;
+  } else if (encoded.deltaBase || encoded.baseNegative)
+    return -1;
+  if (!fieldSectionBase(encoded, prefix.requiredInsertCount, prefix.base))
+    return -1;
+  return n;
 }
 
 bool QPack::validateFieldSectionPrefix(
   const FieldSectionPrefix &prefix, uint64_t insertCount)
 {
-  uint64_t base = 0;
-  return fieldSectionBase(prefix, insertCount, base);
+  return prefix.requiredInsertCount <= insertCount && prefix.base <= insertCount;
 }
 
 int QPack::encodeFieldLine(HeaderBytes &out, Header h, const Params &params)
@@ -279,133 +513,116 @@ int QPack::encodeLiteral(HeaderBytes &out, ZuSpan<Header> headers,
 int QPack::encodeSetCapacity(HeaderBytes &out, uint64_t capacity)
 {
   out.length(0);
-  if (CodecBytes::putVar(out, 0x01) < 0 ||
-      CodecBytes::putVar(out, capacity) < 0)
-    return -1;
-  return out.length();
+  return putPref_(out, 0x20, 5, capacity) < 0 ? -1 : int(out.length());
 }
 
 int QPack::encodeInsertWithNameRef(
   HeaderBytes &out, uint64_t index, bool dynamic, ZuCSpan value)
 {
   out.length(0);
-  if (CodecBytes::putVar(out, 0x07) < 0 ||
-      CodecBytes::putVar(out, dynamic ? 1 : 0) < 0 ||
-      CodecBytes::putVar(out, index) < 0 ||
-      CodecBytes::putVar(out, value.length()) < 0)
-    return -1;
-  CodecBytes::putSpan(out, value);
-  return out.length();
+  uint8_t prefix = uint8_t(0x80 | (dynamic ? 0x00 : 0x40));
+  return putPref_(out, prefix, 6, index) < 0 ||
+    putString_(out, 0x00, 7, value) < 0 ? -1 : int(out.length());
 }
 
 int QPack::encodeInsertLiteral(HeaderBytes &out, Header h)
 {
   out.length(0);
-  if (CodecBytes::putVar(out, 0x02) < 0 ||
-      CodecBytes::putVar(out, h.name.length()) < 0)
-    return -1;
-  CodecBytes::putSpan(out, h.name);
-  if (CodecBytes::putVar(out, h.value.length()) < 0) return -1;
-  CodecBytes::putSpan(out, h.value);
-  return out.length();
+  return putString_(out, 0x40, 5, h.name) < 0 ||
+    putString_(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
 }
 
 int QPack::encodeDuplicate(HeaderBytes &out, uint64_t index)
 {
   out.length(0);
-  if (CodecBytes::putVar(out, 0x06) < 0 ||
-      CodecBytes::putVar(out, index) < 0)
-    return -1;
-  return out.length();
+  return putPref_(out, 0x00, 5, index) < 0 ? -1 : int(out.length());
 }
 
 int QPack::encodeSectionAck(HeaderBytes &out, uint64_t streamID)
 {
   out.length(0);
-  if (CodecBytes::putVar(out, 0x03) < 0 ||
-      CodecBytes::putVar(out, streamID) < 0)
-    return -1;
-  return out.length();
+  return putPref_(out, 0x80, 7, streamID) < 0 ? -1 : int(out.length());
 }
 
 int QPack::encodeStreamCancellation(HeaderBytes &out, uint64_t streamID)
 {
   out.length(0);
-  if (CodecBytes::putVar(out, 0x04) < 0 ||
-      CodecBytes::putVar(out, streamID) < 0)
-    return -1;
-  return out.length();
+  return putPref_(out, 0x40, 6, streamID) < 0 ? -1 : int(out.length());
 }
 
 int QPack::encodeInsertCountIncrement(HeaderBytes &out, uint64_t n)
 {
   out.length(0);
-  if (CodecBytes::putVar(out, 0x05) < 0 ||
-      CodecBytes::putVar(out, n) < 0)
-    return -1;
-  return out.length();
+  if (!n) return -1;
+  return putPref_(out, 0x00, 6, n) < 0 ? -1 : int(out.length());
 }
 
-static int getVar_(ZuCSpan in, unsigned &o, uint64_t &v)
+int QPack::decodeEncoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
 {
-  unsigned n = 0;
-  if (Zquic::VarInt::decode(ZuCSpan{in.data() + o, in.length() - o}, v, n) < 0)
-    return -1;
-  o += n;
-  return 0;
+  unsigned o = 0;
+  uint8_t first = 0;
+  if (!in.length()) return -2;
+  i = {};
+
+  if (uint8_t(in[0]) & 0x80) {
+    i.type = QPackInstruction::InsertWithNameRef;
+    int n = qpackDecodePrefInt_(in, o, 6, i.value, &first);
+    if (n < 0) return n;
+    i.nameRefDynamic = !(first & 0x40);
+    HeaderBytes valueStorage;
+    if ((n = decodeString(valueStorage, in, o, 7, 0x80, i.header.value)) < 0)
+      return n;
+    return int(o);
+  }
+  if ((uint8_t(in[0]) & 0xe0) == 0x40) {
+    i.type = QPackInstruction::InsertWithoutNameRef;
+    HeaderBytes nameStorage, valueStorage;
+    int n = decodeString(nameStorage, in, o, 5, 0x20, i.header.name);
+    if (n < 0) return n;
+    n = decodeString(valueStorage, in, o, 7, 0x80, i.header.value);
+    if (n < 0) return n;
+    return int(o);
+  }
+  if ((uint8_t(in[0]) & 0xe0) == 0x20) {
+    i.type = QPackInstruction::SetCapacity;
+    int n = qpackDecodePrefInt_(in, o, 5, i.value);
+    return n < 0 ? n : int(o);
+  }
+  if ((uint8_t(in[0]) & 0xe0) == 0x00) {
+    i.type = QPackInstruction::Duplicate;
+    int n = qpackDecodePrefInt_(in, o, 5, i.value);
+    return n < 0 ? n : int(o);
+  }
+  return -1;
+}
+
+int QPack::decodeDecoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
+{
+  unsigned o = 0;
+  if (!in.length()) return -2;
+  i = {};
+  if (uint8_t(in[0]) & 0x80) {
+    i.type = QPackInstruction::SectionAck;
+    int n = qpackDecodePrefInt_(in, o, 7, i.value);
+    return n < 0 ? n : int(o);
+  }
+  if (uint8_t(in[0]) & 0x40) {
+    i.type = QPackInstruction::StreamCancellation;
+    int n = qpackDecodePrefInt_(in, o, 6, i.value);
+    return n < 0 ? n : int(o);
+  }
+  i.type = QPackInstruction::InsertCountIncrement;
+  int n = qpackDecodePrefInt_(in, o, 6, i.value);
+  if (n < 0) return n;
+  if (!i.value) return -1;
+  return int(o);
 }
 
 int QPack::decodeInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
 {
-  uint64_t type = 0;
-  unsigned o = 0;
-  if (getVar_(in, o, type) < 0) return -1;
-  i = {};
-
-  if (type == 0x01) {
-    i.type = QPackInstruction::SetCapacity;
-    return getVar_(in, o, i.value) < 0 ? -1 : int(o);
-  }
-  if (type == 0x02) {
-    uint64_t nlen = 0, vlen = 0;
-    i.type = QPackInstruction::InsertWithoutNameRef;
-    if (getVar_(in, o, nlen) < 0 || nlen > in.length() - o) return -1;
-    i.header.name = ZuCSpan{in.data() + o, unsigned(nlen)};
-    o += nlen;
-    if (getVar_(in, o, vlen) < 0 || vlen > in.length() - o) return -1;
-    i.header.value = ZuCSpan{in.data() + o, unsigned(vlen)};
-    o += vlen;
-    return int(o);
-  }
-  if (type == 0x07) {
-    uint64_t dynamic = 0, vlen = 0;
-    i.type = QPackInstruction::InsertWithNameRef;
-    if (getVar_(in, o, dynamic) < 0 || dynamic > 1 ||
-	getVar_(in, o, i.value) < 0 ||
-	getVar_(in, o, vlen) < 0 || vlen > in.length() - o)
-      return -1;
-    i.nameRefDynamic = dynamic;
-    i.header.value = ZuCSpan{in.data() + o, unsigned(vlen)};
-    o += vlen;
-    return int(o);
-  }
-  if (type == 0x03) {
-    i.type = QPackInstruction::SectionAck;
-    return getVar_(in, o, i.value) < 0 ? -1 : int(o);
-  }
-  if (type == 0x04) {
-    i.type = QPackInstruction::StreamCancellation;
-    return getVar_(in, o, i.value) < 0 ? -1 : int(o);
-  }
-  if (type == 0x05) {
-    i.type = QPackInstruction::InsertCountIncrement;
-    return getVar_(in, o, i.value) < 0 ? -1 : int(o);
-  }
-  if (type == 0x06) {
-    i.type = QPackInstruction::Duplicate;
-    return getVar_(in, o, i.value) < 0 ? -1 : int(o);
-  }
-  return -1;
+  int n = decodeEncoderInstructionOne(in, i);
+  if (n > 0) return n;
+  return decodeDecoderInstructionOne(in, i);
 }
 
 int QPack::decodeInstruction(ZuCSpan in, QPackDecodedInstruction &i)
