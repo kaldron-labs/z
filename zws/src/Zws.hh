@@ -63,8 +63,8 @@ public:
     return true;
   }
 
-  void connected(const char *alpn, int /* tlsver */) {
-    if (!alpn || strcmp(alpn, "http/1.1")) {
+  void connected(Zi::Connected info) {
+    if (info.alpn != "http/1.1") {
       disconnect();
       return;
     }

@@ -223,8 +223,8 @@ public:
 
   void loggedIn() { } // default
 
-  void connected(const char *alpn, int /* tlsver */) {
-    if (!alpn || strcmp(alpn, "zcmd")) {
+  void connected(Zi::Connected info) {
+    if (info.alpn != "zcmd") {
       disconnect();
       return;
     }

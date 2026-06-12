@@ -1,5 +1,8 @@
 # TODO
 
+## devlayer
+- update devlayer from `codex/zquic2`
+
 ## Zquic
 - review and cleanup
 
@@ -10,8 +13,7 @@
 - add benchmarking
 
 ## Z Framework
-
-generate docs
+- generate docs
 
 ## ZvEngine
 - becomes `ZiEngine` / ...
