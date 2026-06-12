@@ -120,17 +120,23 @@ void flushH3Message(Stream &stream)
 template <typename Stream>
 void sendH3Response(Stream &stream, ZuCSpan body)
 {
-  auto tx = stream.txStream();
-  H3ResponseBuilder builder{body};
-  builder.response(tx);
-  if (body) {
-    auto bodyTx = builder.body(tx);
-    bodyTx << body;
-    bodyTx.flush();
-  }
-  builder.finish(tx);
-  stream.fin();
-  flushH3Message(stream);
+  auto ref = stream.link()->findStream(stream.id());
+  if (!ref) return;
+  ZtString<> body_{body};
+  stream.link()->app()->txInvoke([
+    link = ZmMkRef(stream.link()), ref, body_ = ZuMv(body_)
+  ]() mutable {
+    auto tx = ref->txStream_();
+    H3ResponseBuilder builder{ZuCSpan{body_}};
+    builder.response(tx);
+    if (body_) {
+      auto bodyTx = builder.body(tx);
+      bodyTx << ZuCSpan{body_};
+      bodyTx.flush();
+    }
+    builder.finish(tx);
+    link->send_(ref, "", true);
+  });
 }
 
 struct RequestSeen {
@@ -242,12 +248,18 @@ void sendH1Request(Stream &stream, ZuCSpan body)
 template <typename Stream>
 void sendH3Request(Stream &stream, ZuCSpan body)
 {
-  auto tx = stream.txStream();
-  H3RequestBuilder builder{body};
-  builder.request(tx);
-  builder.finish(tx);
-  stream.fin();
-  flushH3Message(stream);
+  auto ref = stream.link()->findStream(stream.id());
+  if (!ref) return;
+  ZtString<> body_{body};
+  stream.link()->app()->txInvoke([
+    link = ZmMkRef(stream.link()), ref, body_ = ZuMv(body_)
+  ]() mutable {
+    auto tx = ref->txStream_();
+    H3RequestBuilder builder{ZuCSpan{body_}};
+    builder.request(tx);
+    builder.finish(tx);
+    link->send_(ref, "", true);
+  });
 }
 
 struct ServerState {

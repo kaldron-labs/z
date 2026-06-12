@@ -496,20 +496,6 @@ int QPack::encodeFieldLine(HeaderBytes &out, Header h, const Params &params)
     putString_(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
 }
 
-int QPack::encodeDynamicIndexed(HeaderBytes &out, uint64_t relativeIndex)
-{
-  return putPref_(out, 0x80, 6, relativeIndex) < 0 ?
-    -1 : int(out.length());
-}
-
-int QPack::encodeDynamicNameRef(
-  HeaderBytes &out, uint64_t relativeIndex, ZuCSpan value, bool neverIndex)
-{
-  uint8_t prefix = uint8_t(0x40 | (neverIndex ? 0x20 : 0));
-  return putPref_(out, prefix, 4, relativeIndex) < 0 ||
-    putString_(out, 0x00, 7, value) < 0 ? -1 : int(out.length());
-}
-
 int QPack::encodeLiteral(HeaderBytes &out, ZuSpan<Header> headers,
     const Params &params, const FieldSectionPrefix &prefix)
 {
@@ -549,29 +535,10 @@ int QPack::encodeInsertLiteral(HeaderBytes &out, Header h)
     putString_(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
 }
 
-int QPack::encodeDuplicate(HeaderBytes &out, uint64_t index)
-{
-  out.length(0);
-  return putPref_(out, 0x00, 5, index) < 0 ? -1 : int(out.length());
-}
-
 int QPack::encodeSectionAck(HeaderBytes &out, uint64_t streamID)
 {
   out.length(0);
   return putPref_(out, 0x80, 7, streamID) < 0 ? -1 : int(out.length());
-}
-
-int QPack::encodeStreamCancellation(HeaderBytes &out, uint64_t streamID)
-{
-  out.length(0);
-  return putPref_(out, 0x40, 6, streamID) < 0 ? -1 : int(out.length());
-}
-
-int QPack::encodeInsertCountIncrement(HeaderBytes &out, uint64_t n)
-{
-  out.length(0);
-  if (!n) return -1;
-  return putPref_(out, 0x00, 6, n) < 0 ? -1 : int(out.length());
 }
 
 int QPack::decodeEncoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
@@ -632,19 +599,6 @@ int QPack::decodeDecoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
   if (n < 0) return n;
   if (!i.value) return -1;
   return int(o);
-}
-
-int QPack::decodeInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
-{
-  int n = decodeEncoderInstructionOne(in, i);
-  if (n > 0) return n;
-  return decodeDecoderInstructionOne(in, i);
-}
-
-int QPack::decodeInstruction(ZuCSpan in, QPackDecodedInstruction &i)
-{
-  int n = decodeInstructionOne(in, i);
-  return n < 0 || n != int(in.length()) ? -1 : n;
 }
 
 }} // namespace Zhttp::H3

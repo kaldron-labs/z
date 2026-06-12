@@ -67,9 +67,6 @@ struct QPack {
   static bool validateFieldSectionPrefix(
     const FieldSectionPrefix &, uint64_t);
   static int encodeFieldLine(HeaderBytes &, Header, const Params &);
-  static int encodeDynamicIndexed(HeaderBytes &, uint64_t);
-  static int encodeDynamicNameRef(
-    HeaderBytes &, uint64_t, ZuCSpan, bool = false);
   static int encodeLiteral(
     HeaderBytes &, ZuSpan<Header>, const Params &,
     const FieldSectionPrefix & = {});
@@ -77,14 +74,9 @@ struct QPack {
   static int encodeInsertWithNameRef(
     HeaderBytes &, uint64_t, bool, ZuCSpan);
   static int encodeInsertLiteral(HeaderBytes &, Header);
-  static int encodeDuplicate(HeaderBytes &, uint64_t);
   static int encodeSectionAck(HeaderBytes &, uint64_t);
-  static int encodeStreamCancellation(HeaderBytes &, uint64_t);
-  static int encodeInsertCountIncrement(HeaderBytes &, uint64_t);
   static int decodeEncoderInstructionOne(ZuCSpan, QPackDecodedInstruction &);
   static int decodeDecoderInstructionOne(ZuCSpan, QPackDecodedInstruction &);
-  static int decodeInstructionOne(ZuCSpan, QPackDecodedInstruction &);
-  static int decodeInstruction(ZuCSpan, QPackDecodedInstruction &);
   static int decodeHuffman(HeaderBytes &, ZuCSpan);
   static int decodeString(
     HeaderBytes &, ZuCSpan, unsigned &, unsigned, uint8_t, ZuCSpan &);

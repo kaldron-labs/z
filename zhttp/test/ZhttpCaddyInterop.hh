@@ -25,18 +25,6 @@ using Zquic::Test::waitUntil;
 using Zquic::Test::writeCaddyfile;
 using Zquic::Test::writeSelfSignedLocalhostCert;
 
-inline bool validateCaddyConfig(ZuCSpan configPath)
-{
-  TempDir temp;
-  if (!temp.init("ZhttpCaddyValidate")) return false;
-  ZtString<> cmd;
-  cmd <<
-    "XDG_DATA_HOME=" << static_cast<const char *>(temp.path) << "/data "
-    "XDG_CONFIG_HOME=" << static_cast<const char *>(temp.path) << "/config "
-    "caddy validate --config " << configPath << " >/dev/null 2>&1";
-  return systemOK(::system(cmd.data()));
-}
-
 inline bool writeCaddyConfig(
   ZuCSpan path, unsigned port, ZuCSpan protocols, ZuCSpan body)
 {

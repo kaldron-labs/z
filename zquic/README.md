@@ -24,20 +24,12 @@ readiness/failure counts, datagram byte counts, parsed packet/frame counts,
 handshake progress, stream frames, ACKs, and packet protection counters.
 
 `Zquic` does not expose HTTP/3 request, response, QPACK, or WebTransport types.
-Production HTTP/3 is owned by `Zhttp` and will use `Zquic` as its transport.
-Any HTTP/3 code inside the `zquic` module is limited to test-only interop
-harnesses under `zquic/test`.
+Production HTTP/3 is owned by `Zhttp` and uses `Zquic` as its transport.
 
 `zquic/example` contains small noinst transport examples:
 `ZquicServer` listens on one UDP socket and accepts routed `SrvLink`s, while
 `ZquicClient` opens a `CliLink`, sends one stream payload, and prints the
 server's stream response.
-
-The `zquic/test` H3Lite harness is intentionally narrow: it uses ALPN `h3`,
-SETTINGS, HEADERS, DATA, GOAWAY, and zero-capacity QPACK field sections with
-static indexed, static-name-reference, and literal-name field lines. It rejects
-dynamic references and has no dynamic table. It exists to drive transport
-interop tests and is not installed or exposed as a supported HTTP API.
 
 First release scope:
 
