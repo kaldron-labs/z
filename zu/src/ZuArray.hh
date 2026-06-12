@@ -615,6 +615,9 @@ public:
 
 // push/pop/shift/unshift
 
+  // push() intentionally returns uninitialized storage
+  // - recommended style:
+  //   auto o = new (array.push()) T(...)
   constexpr T *push() {
     if (length_ >= N) return nullptr;
     if (ZuConstEval())
