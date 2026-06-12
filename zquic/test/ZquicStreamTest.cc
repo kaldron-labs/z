@@ -351,20 +351,26 @@ void testStreamPacketizer()
     b, sizeof(b), budget, assembly, *stream, &info);
   ZuCHECK(n > 0 &&
       assembly.streamAdded() &&
-      budget.used == unsigned(n) &&
+      budget.used == info.bytes &&
       info.streamID == 0 &&
       info.offset == 0 &&
       info.length == 3 &&
-      info.bytes == unsigned(n) &&
+      info.bytes == unsigned(n) + info.length &&
+      info.range.length == 3 &&
+      !memcmp(info.range.buf->data_() + info.range.offset, "abc", 3) &&
       !info.fin &&
       stream->txRangeCount() == 1,
     "first packetized STREAM accounting mismatch");
 
   Zquic::Frame frame;
   unsigned used = 0;
+  memcpy(assembled, b, unsigned(n));
+  memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
+    info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
-      used == unsigned(n) &&
+      ZuCSpan{reinterpret_cast<const char *>(assembled), info.bytes},
+      frame, used) &&
+      used == info.bytes &&
       frame.type == Zquic::FrameType::Stream &&
       frame.streamID == 0 &&
       frame.offset == 0 &&
@@ -382,15 +388,24 @@ void testStreamPacketizer()
   n = Zquic::StreamPacketizer::writeNext(
     b, sizeof(b), budget, assembly, *stream, &info);
   ZuCHECK(n > 0 &&
+      budget.used == info.bytes &&
       info.offset == 3 &&
       info.length == 3 &&
+      info.bytes == unsigned(n) + info.length &&
+      info.range.length == 3 &&
+      !memcmp(info.range.buf->data_() + info.range.offset, "def", 3) &&
       info.fin &&
       !stream->txRangeCount() &&
       stream->finDequeued() &&
       !stream->finReady(),
     "second packetized STREAM accounting mismatch");
+  memcpy(assembled, b, unsigned(n));
+  memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
+    info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
+      ZuCSpan{reinterpret_cast<const char *>(assembled), info.bytes},
+      frame, used) &&
+      used == info.bytes &&
       frame.offset == 3 &&
       frame.length == 3 &&
       frame.payload == "def" &&
@@ -428,16 +443,24 @@ void testStreamPacketizer()
   assembly = {};
   n = Zquic::StreamPacketizer::writeNext(
     b, sizeof(b), budget, assembly, *split, &info);
-  ZuCHECK(n == 8 &&
+  ZuCHECK(n > 0 &&
+      unsigned(n) < info.bytes &&
       info.streamID == uint64_t(split->id()) &&
       info.offset == 0 &&
       info.length == 5 &&
       info.bytes == 8 &&
+      info.range.length == 5 &&
+      !memcmp(info.range.buf->data_() + info.range.offset, "abcde", 5) &&
       split->txRangeCount() == 1 &&
       split->txBufferedBytes() == 5,
     "packetizer did not split oversized stream range");
+  memcpy(assembled, b, unsigned(n));
+  memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
+    info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
+      ZuCSpan{reinterpret_cast<const char *>(assembled), info.bytes},
+      frame, used) &&
+      used == info.bytes &&
       frame.streamID == uint64_t(split->id()) &&
       frame.offset == 0 &&
       frame.length == 5 &&

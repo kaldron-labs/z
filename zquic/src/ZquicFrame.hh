@@ -13,6 +13,9 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtBuiltin.hh>
+
 #include <zlib/ZquicPacket.hh>
 
 namespace Zquic {
@@ -24,6 +27,12 @@ struct AckRange {
 
 struct Frame {
   static constexpr unsigned MaxAckRanges = 64;
+  static constexpr unsigned BuiltinAckRanges = 32;
+  using AckRanges = ZtBuiltin<
+    ZtArray<AckRange,
+      ZtArrayHeapMax<MaxAckRanges,
+	ZtArrayHeapID<"Zquic.Frame.AckRanges">>>,
+    BuiltinAckRanges>;
 
   FrameType::T		type = FrameType::Unknown;
   uint64_t		streamID = 0;
@@ -31,12 +40,25 @@ struct Frame {
   uint64_t		length = 0;
   uint64_t		value = 0;
   uint64_t		errorCode = 0;
-  Zi::StreamType::T		streamType = Zi::StreamType::Duplex;
+  Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
   bool			fin = false;
-  ResetToken	resetToken;
+  ResetToken		resetToken;
   ZuCSpan		payload;
-  AckRange		ackRanges[MaxAckRanges];
-  unsigned		ackRangeCount = 0;
+  AckRanges		ackRanges;
+
+  void reset() {
+    type = FrameType::Unknown;
+    streamID = 0;
+    offset = 0;
+    length = 0;
+    value = 0;
+    errorCode = 0;
+    streamType = Zi::StreamType::Duplex;
+    fin = false;
+    resetToken = {};
+    payload = {};
+    ackRanges.length(0);
+  }
 };
 
 struct FrameCodec {

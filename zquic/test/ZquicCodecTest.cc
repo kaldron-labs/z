@@ -250,7 +250,7 @@ void testFramesAndParams()
   ZuCHECK(!Zquic::FrameCodec::parse(
     ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::Ack && f.offset == 10 && f.length == 3 &&
-    f.ackRangeCount == 1 &&
+    f.ackRanges.length() == 1 &&
     f.ackRanges[0].first == 7 &&
     f.ackRanges[0].largest == 10,
     "ACK parse mismatch");
@@ -320,7 +320,7 @@ void testFramesAndParams()
     ZuCSpan{reinterpret_cast<char *>(b), o}, f, used) &&
     f.type == Zquic::FrameType::Ack && f.offset == 10 &&
     f.length == 2 && used == o &&
-    f.ackRangeCount == 2 &&
+    f.ackRanges.length() == 2 &&
     f.ackRanges[0].first == 4 &&
     f.ackRanges[0].largest == 5 &&
     f.ackRanges[1].first == 8 &&
@@ -432,7 +432,7 @@ void testControlFrameCoverage()
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::Ack && f.value == 4 &&
-      f.ackRangeCount == 3 &&
+      f.ackRanges.length() == 3 &&
       f.ackRanges[0].first == 5 && f.ackRanges[0].largest == 7 &&
       f.ackRanges[1].first == 10 && f.ackRanges[1].largest == 11 &&
       f.ackRanges[2].first == 15 && f.ackRanges[2].largest == 15,
