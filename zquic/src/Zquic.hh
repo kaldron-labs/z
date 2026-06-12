@@ -923,21 +923,21 @@ private:
     return true;
   }
 
-  ZiMultiplex	*m_mx = nullptr;
-  unsigned	m_rxThread = 0;
-  unsigned	m_txThread = 0;
-  unsigned	m_asyncThread = 0;
-  ErrorFn	m_errorFn;
-  ALPNData	m_alpnData;
-  ALPN		m_alpn;
-  ParamString	m_caPath;
-  ParamString	m_certPath;
-  ParamString	m_keyPath;
-  uint64_t	m_maxData = 0;
-  uint64_t	m_maxStreamData = 0;
-  uint64_t	m_maxStreamsBidi = 0;
-  uint64_t	m_maxStreamsUni = 0;
-  unsigned	m_maxUDP = MinUDPPayload;
+  ZiMultiplex		*m_mx = nullptr;
+  unsigned		m_rxThread = 0;
+  unsigned		m_txThread = 0;
+  unsigned		m_asyncThread = 0;
+  ErrorFn		m_errorFn;
+  ALPNData		m_alpnData;
+  ALPN			m_alpn;
+  ParamString		m_caPath;
+  ParamString		m_certPath;
+  ParamString		m_keyPath;
+  uint64_t		m_maxData = 0;
+  uint64_t		m_maxStreamData = 0;
+  uint64_t		m_maxStreamsBidi = 0;
+  uint64_t		m_maxStreamsUni = 0;
+  unsigned		m_maxUDP = MinUDPPayload;
   ZmScheduler::Timer	m_ptoTimer;
 };
 
