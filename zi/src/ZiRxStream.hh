@@ -85,7 +85,7 @@ public:
   // - iteration may complete without any consumption having occurred (will return 0)
   template <
     unsigned Padding = 0,
-    typename HeapID = typename Queue::HeapID,
+    ZuString HeapID = typename Queue::HeapID{}(),
     typename Frame, typename Data>
   int64_t consume(Frame &&frame, Data &&data) {
     int64_t consumed = 0;
@@ -126,7 +126,7 @@ public:
 	data(span);
       } else {
 	// multiple spans - need gathering into contiguous scratch buffer
-	using Scratch = ZtArray<uint8_t, ZtArrayHeapID_<HeapID>>;
+	using Scratch = ZtArray<uint8_t, ZtArrayHeapID<HeapID>>;
 	auto scratch = ZtLocalArray(Scratch, dataLen);
 	auto i = m_queue.citer();
 	while (dataLen) {

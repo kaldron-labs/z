@@ -1,32 +1,22 @@
 # TODO
 
-## ZiRxStream
-
-```
-  template <
-    unsigned Padding = 0,
-    ZuString HeapID = Queue::HeapID{},
-    typename Frame, typename Data>
-  int64_t consume(Frame &&frame, Data &&data) {
-    ...
-	using Scratch = ZtArray<uint8_t, ZtArrayHeapID<HeapID>>;
-```
-
 ## Zquic
 - review and cleanup
 
 ## Ztcp
 - review and cleanup
 
+## Zhttp
+- add benchmarking
+
+## Z Framework
+
+generate docs
+
 ## ZvEngine
 - becomes `ZiEngine` / ...
 - type-erased telemetry + command/control APIs (not CRTP)
 - `Zquic` + `Ztcp` derive from `Zi*`, implement APIs
-
-## Zhttp
-- add layering on `Ztcp` for HTTP 1.1 `http:`
-- unify with HTTP/3 and `Zquic`
-- add benchmarking
 
 ## build system
 - factor out fbs codegen into shell script
