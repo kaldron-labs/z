@@ -108,6 +108,9 @@ struct QPack {
     unsigned o = unsigned(prefixLen);
     uint64_t base = prefix.base;
     uint64_t headerBytes = 0;
+    // Non-Huffman strings are returned as spans into the input section.
+    // Huffman strings use these per-section scratch buffers, reused for each
+    // field rather than allocated inside the representation loop.
     auto nameStorage = ZtLocalArray(HeaderBytes, HPack::declen(in.length()));
     auto valueStorage = ZtLocalArray(HeaderBytes, HPack::declen(in.length()));
 

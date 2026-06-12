@@ -58,20 +58,34 @@ static Header qpackStaticField_()
 
 QPackRxEntry *QPackRxTable::pushNewest()
 {
+  if (head_ && head_ >= 64 && head_ >= (entries.length()>>1))
+    compact();
   return new (entries.push()) QPackRxEntry();
 }
 
 const QPackRxEntry *QPackRxTable::oldest() const
 {
-  return entries.length() ? &entries[0] : nullptr;
+  return head_ < entries.length() ? &entries[head_] : nullptr;
 }
 
 void QPackRxTable::dropOldest()
 {
-  if (!entries.length()) return;
-  usedBytes_ -= entries[0].size;
-  entries.splice(0, 1);
+  if (head_ >= entries.length()) return;
+  usedBytes_ -= entries[head_].size;
+  ++head_;
   ++baseAbs_;
+  if (head_ == entries.length()) {
+    entries.length(0);
+    head_ = 0;
+  } else if (head_ >= 64 && head_ >= (entries.length()>>1))
+    compact();
+}
+
+void QPackRxTable::compact()
+{
+  if (!head_) return;
+  entries.splice(0, head_);
+  head_ = 0;
 }
 
 bool QPackRxTable::setCapacity(uint32_t capacity)
@@ -112,8 +126,9 @@ bool QPackRxTable::duplicate(uint64_t relativeIndex)
 
 bool QPackRxTable::lookupAbs(uint64_t abs, Header &h) const
 {
-  if (abs < baseAbs_ || abs >= baseAbs_ + entries.length()) return false;
-  const auto &e = entries[unsigned(abs - baseAbs_)];
+  uint64_t count = entries.length() - head_;
+  if (abs < baseAbs_ || abs >= baseAbs_ + count) return false;
+  const auto &e = entries[head_ + unsigned(abs - baseAbs_)];
   h = Header{e.name, e.value};
   return true;
 }
@@ -156,20 +171,22 @@ const QPackTxEntry *QPackTxTable::find(ZuCSpan name, ZuCSpan value) const
 
 const QPackTxEntry *QPackTxTable::findAbs(uint64_t abs) const
 {
-  if (!order.length()) return nullptr;
-  uint64_t base = order[0].abs;
-  if (abs < base || abs >= base + order.length()) return nullptr;
-  const auto &o = order[unsigned(abs - base)];
+  if (orderHead_ >= order.length()) return nullptr;
+  uint64_t base = order[orderHead_].abs;
+  uint64_t count = order.length() - orderHead_;
+  if (abs < base || abs >= base + count) return nullptr;
+  const auto &o = order[orderHead_ + unsigned(abs - base)];
   if (o.abs != abs) return nullptr;
   return find(o.name, o.value);
 }
 
 bool QPackTxTable::lookupAbs(uint64_t abs, Header &h) const
 {
-  if (!order.length()) return false;
-  uint64_t base = order[0].abs;
-  if (abs < base || abs >= base + order.length()) return false;
-  const auto &o = order[unsigned(abs - base)];
+  if (orderHead_ >= order.length()) return false;
+  uint64_t base = order[orderHead_].abs;
+  uint64_t count = order.length() - orderHead_;
+  if (abs < base || abs >= base + count) return false;
+  const auto &o = order[orderHead_ + unsigned(abs - base)];
   if (o.abs != abs) return false;
   h = Header{o.name, o.value};
   return true;
@@ -183,10 +200,9 @@ bool QPackTxTable::insert(Header h, uint64_t *abs)
   }
   uint32_t n = qpackEntrySize_(h.name, h.value);
   if (n > capacityBytes_) return false;
-  while (order.length() && usedBytes_ + n > capacityBytes_) {
-    if (!evict()) return false;
-    if (!order.length() && usedBytes_ + n > capacityBytes_) return false;
-  }
+  while (orderHead_ < order.length() && usedBytes_ + n > capacityBytes_)
+    if (!dropOldest()) return false;
+  if (usedBytes_ + n > capacityBytes_) return false;
   QPackTxEntry e;
   e.abs = insertCount_++;
   e.size = n;
@@ -205,16 +221,34 @@ bool QPackTxTable::insert(Header h, uint64_t *abs)
 
 bool QPackTxTable::evict()
 {
-  while (order.length() && usedBytes_ > capacityBytes_) {
-    const auto &old = order[0];
-    if (auto e = find(old.name, old.value)) {
-      if (e->refcnt) return false;
-      usedBytes_ -= e->size;
-      hash.del(QPackFieldKey{old.name, old.value});
-    }
-    order.splice(0, 1);
-  }
+  while (orderHead_ < order.length() && usedBytes_ > capacityBytes_)
+    if (!dropOldest()) return false;
   return usedBytes_ <= capacityBytes_;
+}
+
+bool QPackTxTable::dropOldest()
+{
+  if (orderHead_ >= order.length()) return false;
+  const auto &old = order[orderHead_];
+  if (auto e = find(old.name, old.value)) {
+    if (e->refcnt) return false;
+    usedBytes_ -= e->size;
+    hash.del(QPackFieldKey{old.name, old.value});
+  }
+  ++orderHead_;
+  if (orderHead_ == order.length()) {
+    order.length(0);
+    orderHead_ = 0;
+  } else if (orderHead_ >= 64 && orderHead_ >= (order.length()>>1))
+    compactOrder();
+  return true;
+}
+
+void QPackTxTable::compactOrder()
+{
+  if (!orderHead_) return;
+  order.splice(0, orderHead_);
+  orderHead_ = 0;
 }
 
 bool QPackTxTable::insertCountIncrement(uint64_t n)
@@ -225,18 +259,21 @@ bool QPackTxTable::insertCountIncrement(uint64_t n)
   return knownReceivedCount_ <= insertCount_;
 }
 
-void QPackTxTable::trackSection(uint64_t streamID, ZuSpan<uint64_t> refs)
+bool QPackTxTable::trackSection(uint64_t streamID, ZuSpan<uint64_t> refs)
 {
-  if (!refs.length()) return;
+  if (!refs.length()) return true;
+  if (sections.find(streamID)) return false;
   QPackTxSection section_;
   section_.streamID = streamID;
+  for (unsigned i = 0; i < refs.length(); ++i)
+    section_.refs.push(refs[i]);
   auto section = const_cast<QPackTxSection *>(sections.add(section_));
-  if (!section) return;
+  if (!section) return false;
   for (unsigned i = 0; i < refs.length(); ++i) {
-    section->refs.push(refs[i]);
     if (auto e = findAbs(refs[i]))
       const_cast<QPackTxEntry *>(e)->refcnt++;
   }
+  return true;
 }
 
 bool QPackTxTable::sectionAck(uint64_t streamID)

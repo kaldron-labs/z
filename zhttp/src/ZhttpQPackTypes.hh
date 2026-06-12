@@ -51,6 +51,13 @@ struct QPackFieldFlags {
   bool	neverIndex = false;
 };
 
+struct QPackBuildFailure {
+  ZtEnum(QPackBuildFailure, uint8_t,
+    None, Plan, PrefixEncode, CapacityPolicy, EncoderCapacityWrite,
+    EncoderInsertWrite, HeadersFrameHeaderWrite, HeadersPayloadEmit,
+    Flush, CapacityCommit, InsertCommit, SectionTracking);
+};
+
 struct QPackDecodedInstruction {
   QPackInstruction::T	type = QPackInstruction::SetCapacity;
   uint64_t		value = 0;
@@ -159,15 +166,17 @@ struct QPackRxTable {
   QPackRxEntry *pushNewest();
   void dropOldest();
   const QPackRxEntry *oldest() const;
+  void compact();
   uint64_t insertCount() const { return insertCount_; }
   uint64_t baseAbs() const { return baseAbs_; }
   uint32_t capacity() const { return capacityBytes_; }
   uint32_t maxCapacity() const { return maxCapacityBytes_; }
   uint32_t used() const { return usedBytes_; }
-  uint32_t count() const { return entries.length(); }
+  uint32_t count() const { return entries.length() - head_; }
   uint32_t maxEntries() const { return maxCapacityBytes_>>5; }
 
   QPackRxArray	entries;	// oldest-to-newest
+  uint32_t	head_ = 0;
   uint64_t	baseAbs_ = 0;
   uint64_t	insertCount_ = 0;
   uint32_t	capacityBytes_ = 0;
@@ -263,10 +272,12 @@ struct QPackTxTable {
   bool insert(Header, uint64_t * = nullptr);
   bool lookupAbs(uint64_t, Header &) const;
   bool evict();
+  bool dropOldest();
   bool insertCountIncrement(uint64_t);
   bool sectionAck(uint64_t);
   bool streamCancellation(uint64_t);
-  void trackSection(uint64_t, ZuSpan<uint64_t>);
+  bool trackSection(uint64_t, ZuSpan<uint64_t>);
+  void compactOrder();
 
   uint64_t insertCount() const { return insertCount_; }
   uint64_t knownReceivedCount() const { return knownReceivedCount_; }
@@ -277,6 +288,7 @@ struct QPackTxTable {
   QPackTxHash	hash;
   QPackTxOrder	order;
   QPackTxSections sections;
+  uint32_t	orderHead_ = 0;
   uint64_t	insertCount_ = 0;
   uint64_t	knownReceivedCount_ = 0;
   uint32_t	capacityBytes_ = 0;
@@ -288,6 +300,10 @@ struct QPackTxTable {
 struct QPackEncoderTx {
   virtual ~QPackEncoderTx() = default;
   virtual void write(ZuCSpan) = 0;
+  virtual bool writeAccepted(ZuBSpan s) {
+    write(s);
+    return true;
+  }
 };
 
 }} // namespace Zhttp::H3
