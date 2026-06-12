@@ -111,17 +111,26 @@ void sendH1Response(Stream &stream, ZuCSpan body)
 }
 
 template <typename Stream>
+void flushH3Message(Stream &stream)
+{
+  auto ref = stream.link()->findStream(stream.id());
+  if (ref) stream.link()->send(ref, "", true);
+}
+
+template <typename Stream>
 void sendH3Response(Stream &stream, ZuCSpan body)
 {
+  auto tx = stream.txStream();
   H3ResponseBuilder builder{body};
-  builder.response(stream);
+  builder.response(tx);
   if (body) {
-    auto tx = stream.txStream();
-    auto bodyTx = Zhttp::H3::dataStream(tx);
+    auto bodyTx = builder.body(tx);
     bodyTx << body;
     bodyTx.flush();
   }
-  builder.finish(stream);
+  builder.finish(tx);
+  stream.fin();
+  flushH3Message(stream);
 }
 
 struct RequestSeen {
@@ -233,9 +242,12 @@ void sendH1Request(Stream &stream, ZuCSpan body)
 template <typename Stream>
 void sendH3Request(Stream &stream, ZuCSpan body)
 {
+  auto tx = stream.txStream();
   H3RequestBuilder builder{body};
-  builder.request(stream);
-  builder.finish(stream);
+  builder.request(tx);
+  builder.finish(tx);
+  stream.fin();
+  flushH3Message(stream);
 }
 
 struct ServerState {
@@ -245,6 +257,11 @@ struct ServerState {
   RequestSeen	request;
   unsigned	port = 0;
   ZmAtomic<unsigned> errors = 0;
+  ZmAtomic<uint64_t> lastH3StreamID = 0;
+  ZmAtomic<unsigned> h3UniStreams = 0;
+  ZmAtomic<unsigned> h3BidiStreams = 0;
+  ZmAtomic<int>	h3State = Zhttp::H3::CxnState::Init;
+  ZmAtomic<int>	h3ParserState = RequestParser<true>::State::Initial;
 };
 
 template <typename Link, typename StreamRef>
@@ -277,19 +294,6 @@ bool sendH3ControlStreams(
     tx.flush();
   }
   return true;
-}
-
-template <typename Rx>
-int drainH3Stream(Rx &rx)
-{
-  int64_t consumed;
-  do {
-    consumed = rx.consume(
-      [](ZuBSpan span) -> int64_t { return span.length(); },
-      [](ZuBSpan) { });
-    if (consumed < 0) return -1;
-  } while (consumed);
-  return 0;
 }
 
 template <typename App>
@@ -421,11 +425,18 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
 };
 
 struct H3ServerStream :
-  public Zquic::SrvStream<H3ServerLink, H3ServerStream> {
+  public Zquic::SrvStream<H3ServerLink, H3ServerStream>,
+  public Zhttp::H3::CxnParser<H3ServerStream> {
   using Base = Zquic::SrvStream<H3ServerLink, H3ServerStream>;
+  using CxnParser = Zhttp::H3::CxnParser<H3ServerStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &);
+  Zhttp::H3::CxnState::T h3State() const;
+  void h3State(Zhttp::H3::CxnState::T);
+  bool peerControlStream();
+  bool peerEncoderStream();
+  bool peerDecoderStream();
 
   RequestParser<true>	parser;
 };
@@ -447,6 +458,10 @@ struct H3ServerLink :
   ZmRef<Stream>	control;
   ZmRef<Stream>	enc;
   ZmRef<Stream>	dec;
+  Zhttp::H3::CxnState::T h3State = Zhttp::H3::CxnState::Init;
+  bool		peerControl = false;
+  bool		peerEncoder = false;
+  bool		peerDecoder = false;
 };
 
 ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &)
@@ -457,9 +472,23 @@ ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &)
 
 int H3ServerStream::process(Zquic::RxStream &rx)
 {
-  if (this->id() & 0x2) return drainH3Stream(rx);
-  auto s = parser.process(*this);
   auto state = this->link()->app()->state;
+  state->lastH3StreamID = uint64_t(this->id());
+  if (Zquic::StreamID::uni(uint64_t(this->id()))) {
+    ++state->h3UniStreams;
+    auto s = this->CxnParser::process(*this);
+    state->h3State = s;
+    if (s == Zhttp::H3::CxnState::Error) {
+      state->errors = 1;
+      state->done.post();
+      return -1;
+    }
+    (void)rx;
+    return 0;
+  }
+  ++state->h3BidiStreams;
+  auto s = parser.process(*this);
+  state->h3ParserState = s;
   if (s == RequestParser<true>::State::Error ||
       s == RequestParser<true>::State::Cancelled) {
     state->errors = 1;
@@ -474,6 +503,40 @@ int H3ServerStream::process(Zquic::RxStream &rx)
   }
   (void)rx;
   return 0;
+}
+
+Zhttp::H3::CxnState::T H3ServerStream::h3State() const
+{
+  return this->link()->h3State;
+}
+
+void H3ServerStream::h3State(Zhttp::H3::CxnState::T state)
+{
+  this->link()->h3State = state;
+}
+
+bool H3ServerStream::peerControlStream()
+{
+  auto link = this->link();
+  if (link->peerControl) return false;
+  link->peerControl = true;
+  return true;
+}
+
+bool H3ServerStream::peerEncoderStream()
+{
+  auto link = this->link();
+  if (link->peerEncoder) return false;
+  link->peerEncoder = true;
+  return true;
+}
+
+bool H3ServerStream::peerDecoderStream()
+{
+  auto link = this->link();
+  if (link->peerDecoder) return false;
+  link->peerDecoder = true;
+  return true;
 }
 
 struct ClientState {
@@ -575,11 +638,18 @@ struct H3Client : public Zquic::Client<H3Client> {
 };
 
 struct H3Client::Stream :
-  public Zquic::CliStream<H3Client::Link, H3Client::Stream> {
+  public Zquic::CliStream<H3Client::Link, H3Client::Stream>,
+  public Zhttp::H3::CxnParser<H3Client::Stream> {
   using Base = Zquic::CliStream<H3Client::Link, H3Client::Stream>;
+  using CxnParser = Zhttp::H3::CxnParser<H3Client::Stream>;
   using Base::Base;
 
   int process(Zquic::RxStream &);
+  Zhttp::H3::CxnState::T h3State() const;
+  void h3State(Zhttp::H3::CxnState::T);
+  bool peerControlStream();
+  bool peerEncoderStream();
+  bool peerDecoderStream();
 
   ResponseParser<true>	parser;
 };
@@ -613,10 +683,9 @@ struct H3Client::Link :
   }
   void disconnected() {
     auto state = app()->state;
-    if (!state->response.complete) {
+    if (!state->response.complete)
       state->errors = 1;
-      state->done.post();
-    }
+    state->done.post();
   }
   void connectFailed(bool) {
     app()->state->errors = 1;
@@ -628,13 +697,61 @@ struct H3Client::Link :
   ZmRef<Stream>	enc;
   ZmRef<Stream>	dec;
   ZmRef<Stream>	request;
+  Zhttp::H3::CxnState::T h3State = Zhttp::H3::CxnState::Init;
+  bool		peerControl = false;
+  bool		peerEncoder = false;
+  bool		peerDecoder = false;
 };
 
 int H3Client::Stream::process(Zquic::RxStream &rx)
 {
-  if (this->id() != this->link()->app()->responseStreamID)
-    return drainH3Stream(rx);
+  if (Zquic::StreamID::uni(uint64_t(this->id()))) {
+    auto s = this->CxnParser::process(*this);
+    if (s == Zhttp::H3::CxnState::Error) {
+      auto state = this->link()->app()->state;
+      state->errors = 1;
+      state->done.post();
+      return -1;
+    }
+    (void)rx;
+    return 0;
+  }
+  if (this->id() != this->link()->app()->responseStreamID) return 0;
   return processResponse<true>(this->link()->app(), parser, *this);
+}
+
+Zhttp::H3::CxnState::T H3Client::Stream::h3State() const
+{
+  return this->link()->h3State;
+}
+
+void H3Client::Stream::h3State(Zhttp::H3::CxnState::T state)
+{
+  this->link()->h3State = state;
+}
+
+bool H3Client::Stream::peerControlStream()
+{
+  auto link = this->link();
+  if (link->peerControl) return false;
+  link->peerControl = true;
+  return true;
+}
+
+bool H3Client::Stream::peerEncoderStream()
+{
+  auto link = this->link();
+  if (link->peerEncoder) return false;
+  link->peerEncoder = true;
+  return true;
+}
+
+bool H3Client::Stream::peerDecoderStream()
+{
+  auto link = this->link();
+  if (link->peerDecoder) return false;
+  link->peerDecoder = true;
+  return true;
 }
 
 bool waitDone(ZmSemaphore &sem)
@@ -799,6 +916,10 @@ void testZhttpClientCaddyHttpsH3()
   ZuCHECK(!state.errors && state.response.complete &&
       state.response.status == 200 && state.response.body == "caddy-h3-ok",
     "Zhttp client->Caddy HTTPS/H3 response mismatch");
+  link->disconnect();
+  ZuCHECK(waitDone(state.done),
+    "Zhttp client->Caddy HTTPS/H3 disconnect timed out");
+  link = nullptr;
   client.final();
   mx.stop();
 }
@@ -849,6 +970,23 @@ bool curlHTTPSH1(unsigned port, ZuCSpan certPath, ZuCSpan expectedBody)
   cmd << "grep -qx '" << expectedBody << "' " << body <<
     " && grep -qx '1.1' " << version;
   return systemOK(::system(cmd.data()));
+}
+
+void printH3ServerState(ServerState &state)
+{
+  std::cout <<
+    "# h3 server state:"
+    " errors=" << unsigned(state.errors) <<
+    " requestComplete=" << state.request.complete <<
+    " requestErrors=" << state.request.errors <<
+    " method=" << int(state.request.method) <<
+    " path=\"" << state.request.path << '"' <<
+    " uniStreams=" << unsigned(state.h3UniStreams) <<
+    " bidiStreams=" << unsigned(state.h3BidiStreams) <<
+    " lastStreamID=" << uint64_t(state.lastH3StreamID) <<
+    " cxnState=" << int(state.h3State) <<
+    " parserState=" << int(state.h3ParserState) <<
+    '\n';
 }
 
 void testCurlZhttpHttpServer()
@@ -948,6 +1086,9 @@ void testCurlZhttpHttpsH3Server()
       temp, server.local().port(), Path, state.body),
     "curl HTTPS/H3 request to local Zhttp server failed");
   ZuCHECK(waitDone(state.done), "curl->Zhttp HTTPS/H3 server timed out");
+  if (state.errors || !state.request.complete ||
+      state.request.method != Zhttp::Method::GET || state.request.path != Path)
+    printH3ServerState(state);
   ZuCHECK(!state.errors && state.request.complete &&
       state.request.method == Zhttp::Method::GET &&
       state.request.path == Path,
