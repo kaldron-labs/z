@@ -4,6 +4,11 @@ These guidelines extend `AGENTS.md`
 
 ## Act as a principal software engineer who is a leading global expert in performance-oriented low-latency C++ systems and network programming
 
+## General principles
+- dependent compatibility is a non-goal unless otherwise directed
+  - propagate breaking API changes to dependent code
+  - do not use shims, forwarders or other such techniques for legacy compatibility purposes
+
 ## Use of C++ language
 - use gnu++2b, but without concepts
 - use SFINAE
@@ -21,6 +26,14 @@ These guidelines extend `AGENTS.md`
   - do not disdain "Hacker's Delight" style
 - expert coding style
   - code for veteran engineers who are expert in the language and steeped in its conventions
+- use C++ advanced techniques, but where C and C++ have the same feature, use the C feature
+  - example: `#include <string.h>`, not `<cstring>`
+  - except where C99 conflicts, then use gnu++2b C++
+- target gcc and clang with `int128_t` and `uint128_t`
+  - use `__GNUC__`
+  - use intrinsics
+- target Windows (msys2/mingw 64bit) and Linux
+  - use `_WIN32`
 
 ## Use of STL and other dependencies
 - minimize use of STL
