@@ -89,15 +89,27 @@ template <unsigned I, typename ...Ts>
 using ZuType = typename ZuType_<I, Ts...>::T;
 
 // type -> index (returns first match) (undefined if type is not in list)
+template <typename, typename ...> struct ZuTypeIndex_;
+template <typename T, typename ...Ts>
+struct ZuTypeIndex_<T, T, Ts...> : public ZuUnsigned<0> { };
+template <typename T, typename O, typename ...Ts>
+struct ZuTypeIndex_<T, O, Ts...> :
+  public ZuUnsigned<1 + ZuTypeIndex_<T, Ts...>{}> { };
+
+template <typename, typename, bool> struct ZuTypeIndex__;
+template <typename T, typename List>
+struct ZuTypeIndex__<T, List, true> : public ZuUnsigned<0> { };
+template <typename T, typename ...Ts>
+struct ZuTypeIndex__<T, ZuTypeList<Ts...>, false> :
+  public ZuTypeIndex_<T, Ts...> { };
+
 template <typename, typename ...> struct ZuTypeIndex;
 template <typename T, typename ...Ts>
-struct ZuTypeIndex<T, T, Ts...> : public ZuUnsigned<0> { };
-template <typename T, typename O, typename ...Ts>
-struct ZuTypeIndex<T, O, Ts...> :
-  public ZuUnsigned<1 + ZuTypeIndex<T, Ts...>{}> { };
+struct ZuTypeIndex : public ZuTypeIndex_<T, Ts...> { };
 template <typename T, typename ...Ts>
 struct ZuTypeIndex<T, ZuTypeList<Ts...>> :
-  public ZuTypeIndex<T, Ts...> { };
+  public ZuTypeIndex__<
+    T, ZuTypeList<Ts...>, ZuIsSame<T, ZuTypeList<Ts...>>{}> { };
 
 // typelist map
 // - maps T to Map<T> for each T in the list

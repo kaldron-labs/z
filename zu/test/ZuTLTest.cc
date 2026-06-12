@@ -126,4 +126,12 @@ int main(int argc, char **argv)
     using Bar = ZuStringT<"bar">;
     ZuCHECK((ZuTypeIndex<Bar, TL>{}() == 1));
   }
+  {
+    using Foo = ZuTypeList<ZuStringT<"foo">, ZuStringT<"one">>;
+    using Bar = ZuTypeList<ZuStringT<"bar">, ZuStringT<"two">>;
+    using TL = ZuTypeList<Foo, Bar>;
+    ZuCHECK((ZuTypeIndex<Foo, TL>{}() == 0));
+    ZuCHECK((ZuTypeIndex<Bar, TL>{}() == 1));
+    ZuCHECK((ZuTypeIndex<Bar, Foo, Bar>{}() == 1));
+  }
 }
