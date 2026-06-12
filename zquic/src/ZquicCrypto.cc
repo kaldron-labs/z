@@ -22,6 +22,25 @@ namespace Zquic {
 
 namespace {
 
+struct OpenSSLCipherCtx {
+  OpenSSLCipherCtx() = default;
+  ~OpenSSLCipherCtx() { if (ctx) EVP_CIPHER_CTX_free(ctx); }
+
+  EVP_CIPHER_CTX *get() {
+    if (!ctx) return ctx = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX_reset(ctx);
+    return ctx;
+  }
+
+  EVP_CIPHER_CTX	*ctx = nullptr;
+};
+
+EVP_CIPHER_CTX *opensslCipherCtx_()
+{
+  thread_local OpenSSLCipherCtx ctx;
+  return ctx.get();
+}
+
 static constexpr uint8_t InitialSaltV1_[] = {
   0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
   0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a
@@ -271,7 +290,7 @@ int InitialCrypto::encryptV(
   uint8_t nonce[InitialSecret::IVLen];
   nonce_(nonce, secret, pn);
 
-  EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+  EVP_CIPHER_CTX *ctx = opensslCipherCtx_();
   if (!ctx) return -1;
   int n = 0, off = 0;
   bool ok =
@@ -290,7 +309,6 @@ int InitialCrypto::encryptV(
   if (ok) off += n;
   ok = ok && EVP_CIPHER_CTX_ctrl(
     ctx, EVP_CTRL_GCM_GET_TAG, InitialSecret::TagLen, out + off) == 1;
-  EVP_CIPHER_CTX_free(ctx);
   return ok ? off + int(InitialSecret::TagLen) : -1;
 }
 
@@ -304,7 +322,7 @@ int InitialCrypto::decrypt(
   uint8_t nonce[InitialSecret::IVLen];
   nonce_(nonce, secret, pn);
 
-  EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+  EVP_CIPHER_CTX *ctx = opensslCipherCtx_();
   if (!ctx) return -1;
   int n = 0, off = 0;
   bool ok =
@@ -321,7 +339,6 @@ int InitialCrypto::decrypt(
       const_cast<char *>(ciphertext.data()) + plainLen) == 1 &&
     EVP_DecryptFinal_ex(ctx, out + off, &n) == 1;
   if (ok) off += n;
-  EVP_CIPHER_CTX_free(ctx);
   return ok ? off : -1;
 }
 
@@ -330,7 +347,7 @@ bool InitialCrypto::headerMask(
 {
   if (len < InitialSecret::HPMaskLen || sample.length() < 16) return false;
   uint8_t block[32];
-  EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+  EVP_CIPHER_CTX *ctx = opensslCipherCtx_();
   if (!ctx) return false;
   int n = 0, total = 0;
   bool ok =
@@ -341,7 +358,6 @@ bool InitialCrypto::headerMask(
   if (ok) total = n;
   ok = ok && EVP_EncryptFinal_ex(ctx, block + total, &n) == 1;
   if (ok) memcpy(out, block, InitialSecret::HPMaskLen);
-  EVP_CIPHER_CTX_free(ctx);
   return ok;
 }
 

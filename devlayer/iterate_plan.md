@@ -3,10 +3,9 @@
 ## Act as a principal software engineer who is the leading global expert in the field
 
 Task Steps:
-1. Read `requirements.new.md` in full
-2. Read `plan.md` in full, particularly the answers to open questions at the end
-3. Use online web search as needed to refine understanding of requirements and their implications
-4. Improve `plan.md`, writing a new version saved as `plan.new.md`:
+1. Read `plan.md` in full, particularly the answers to open questions at the end
+2. Use online web search as needed to refine understanding of requirements and their implications
+3. Improve `plan.md`, writing a new version saved as `plan.new.md`:
   - Read `plan.feedback.md` if it exists, incorporating this feedback into the revised plan
   - Review and SCRUTINIZE the planned use of all newly depended APIs
     - Review the detailed behavior of each newly depended API and ensure that the actual behavior of the API aligns with the intended uses
@@ -28,7 +27,7 @@ IMPORTANT
 - DO NOT RELY ON MEMORY - `requirements.new.md` and `plan.md` may have been edited outside this session
 - RETAIN ALL IMPORTANT DETAIL from `plan.md`
 - `plan.new.md` must be an improved and clarified version of `plan.md`, with no legacy open questions remaining and all details retained
-- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
+- Read `AGENTS.md`, `GUIDELINES.md` and `CODEBASE.md` to understand the existing codebase
 - For each requirement, evaluate its complexity and feasibility, specifically:
   - Use web search to research how comparable features were designed and implemented in comparable open source software
   - Evaluate how the requirement depends on the capabilities of the underlying technology stack

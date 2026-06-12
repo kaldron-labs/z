@@ -20,6 +20,7 @@
 #include <zlib/ZmList.hh>
 
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtBuiltin.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZtHexDump.hh>
 #include <zlib/ZtCase.hh>
@@ -592,6 +593,20 @@ void testNonStringArrays()
     Array buf{1};
     buf << "foo";
     for (unsigned i = 0; i < 100; i++) buf << " bar";
+  }
+
+  {
+    using Builtin =
+      ZtBuiltin<ZtArray<char, ZtArrayHeapID<"ZtArrayTest.Builtin">>, 4>;
+    Builtin b;
+    auto ptr = b.data();
+    b.length(0);
+    ZuCheck(b.data() == ptr && b.size() == 4 && !b.vallocd() && !b.length());
+    b.length(4);
+    ZuCheck(b.data() == ptr && b.size() == 4 && !b.vallocd() &&
+      b.length() == 4);
+    b.length(0);
+    ZuCheck(b.data() == ptr && b.size() == 4 && !b.vallocd() && !b.length());
   }
 }
 

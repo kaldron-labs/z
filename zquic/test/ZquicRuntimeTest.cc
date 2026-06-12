@@ -21,6 +21,9 @@ using namespace ZuTestUtil;
 
 namespace {
 
+static constexpr unsigned RuntimeServerLinkCapacity = 20;
+static constexpr unsigned RuntimeServerMultiConnections = 17;
+
 struct RuntimeClient : public Zquic::Client<RuntimeClient> {
   struct Link;
   struct Stream;
@@ -37,7 +40,7 @@ struct RuntimeServer :
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
 
   ZmRef<Link> link_;
-  ZmRef<Link> links_[4];
+  ZmRef<Link> links_[RuntimeServerLinkCapacity];
   ZmAtomic<unsigned> acceptedCount = 0;
 };
 
@@ -103,14 +106,15 @@ struct RuntimeServerLink :
 
 ZmRef<RuntimeServer::Link> RuntimeServer::link(unsigned i)
 {
-  if (i != unsigned(-1)) return i < 4 ? links_[i] : nullptr;
+  if (i != unsigned(-1))
+    return i < RuntimeServerLinkCapacity ? links_[i] : nullptr;
   return link_;
 }
 
 ZmRef<RuntimeServer::Link> RuntimeServer::accepted(const Zquic::InitialInfo &)
 {
   unsigned i = acceptedCount;
-  if (i >= 4) return nullptr;
+  if (i >= RuntimeServerLinkCapacity) return nullptr;
   links_[i] = new Link{this};
   link_ = links_[i];
   ++acceptedCount;
@@ -416,28 +420,40 @@ void testRuntimeServerMultiConnection()
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "multi runtime client init failed");
 
-  ZmRef<RuntimeClient::Link> c0 = new RuntimeClient::Link{&client};
-  ZmRef<RuntimeClient::Link> c1 = new RuntimeClient::Link{&client};
-  c0->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
-  c1->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+  ZmRef<RuntimeClient::Link> clients[RuntimeServerMultiConnections];
+  ZmRef<RuntimeServer::Link> serverLinks[RuntimeServerMultiConnections];
+  for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
+    clients[i] = new RuntimeClient::Link{&client};
+    clients[i]->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+  }
+  auto &c0 = clients[0];
+  auto &c1 = clients[1];
+  auto &s0 = serverLinks[0];
+  auto &s1 = serverLinks[1];
 
-  ZmRef<RuntimeServer::Link> s0;
-  ZmRef<RuntimeServer::Link> s1;
-  bool established = waitUntil([&server, &c0, &c1, &s0, &s1]() {
-      if (!s0) s0 = server.link(0);
-      if (!s1) s1 = server.link(1);
-      return server.acceptedCount == 2 &&
-	s0 && s1 && s0.ptr() != s1.ptr() &&
-	c0->established() && c1->established() &&
-	s0->established() && s1->established();
+  bool established = waitUntil([&server, &clients, &serverLinks]() {
+      if (server.acceptedCount != RuntimeServerMultiConnections) return false;
+      for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
+	if (!serverLinks[i]) serverLinks[i] = server.link(i);
+	if (!serverLinks[i] || !clients[i]->established() ||
+	    !serverLinks[i]->established())
+	  return false;
+      }
+      return true;
     });
   if (!established) {
-    dumpRuntimeDiag("client0", c0->runtimeDiag(), c0->crypto().diag());
-    dumpRuntimeDiag("client1", c1->runtimeDiag(), c1->crypto().diag());
-    if (s0) dumpRuntimeDiag("server0", s0->runtimeDiag(), s0->crypto().diag());
-    if (s1) dumpRuntimeDiag("server1", s1->runtimeDiag(), s1->crypto().diag());
+    for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
+      dumpRuntimeDiag("client", clients[i]->runtimeDiag(), clients[i]->crypto().diag());
+      if (serverLinks[i])
+	dumpRuntimeDiag(
+	  "server", serverLinks[i]->runtimeDiag(), serverLinks[i]->crypto().diag());
+    }
   }
-  ZuCHECK(established, "multi runtime connections did not establish");
+  ZuCHECK(established,
+    "17 simultaneous runtime connections did not establish");
+  ZuCHECK(server.acceptedCount == RuntimeServerMultiConnections &&
+      !serverErrors,
+    "server live-link table rejected connections past the old cap");
 
   auto c0s = c0->stream(Zi::StreamType::Duplex);
   auto c1s = c1->stream(Zi::StreamType::Duplex);
@@ -470,16 +486,18 @@ void testRuntimeServerMultiConnection()
   ZuCHECK(serverErrors == errors,
     "stale routed datagram used ErrorFn instead of diagnostics");
 
-  c0->disconnect();
-  c1->disconnect();
+  for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+    clients[i]->disconnect();
   server.close();
-  ZuCHECK(waitUntil([&c0, &c1]() {
-      return !c0->cxn() && !c1->cxn();
+  ZuCHECK(waitUntil([&clients]() {
+      for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+	if (clients[i]->cxn()) return false;
+      return true;
     }) && !server.connected(),
     "multi runtime endpoints remained connected after close");
 
-  c0 = nullptr;
-  c1 = nullptr;
+  for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+    clients[i] = nullptr;
   client.final();
   server.final();
   mx.stop();

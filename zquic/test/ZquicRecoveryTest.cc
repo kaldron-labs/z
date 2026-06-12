@@ -130,6 +130,10 @@ void testRecovery()
   cwnd = cc.cwnd();
   cc.lostAt(0, 90);
   ZuCHECK(cc.cwnd() == cwnd, "old packet loss reduced cwnd during recovery");
+
+  Zquic::PacketTxSpace tx;
+  ZuCHECK(!tx.retransmitDropped(),
+    "unbounded retransmit queue reported dropped frames");
 }
 
 void testAckManager()

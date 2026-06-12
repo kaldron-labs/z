@@ -12,6 +12,9 @@
 ## Zhttp
 - add benchmarking
 
+- check DNS capabilities for HTTP/3 selection
+  - `ZiIP`'s resolver interface may need upgrading
+
 ## Z Framework
 - generate docs
 
@@ -29,11 +32,11 @@
   - basically the same principle - store it after parse on receive,
     save the object in the DB, queue the buffer for subsequent processing
   - persisted state is Received but not Processed (mirror of Sent but not Ackd)
-  - both ackd and processed are DB updates
-  - all messages are idempotent, can be repeated (at least once)
-  - these DB tables are persisted queues, no more and no less
-  - actual stateful order, etc. tables are elsewhere and maintained
-    via application logic when these messages are applied
+- both ackd and processed are DB updates
+- all messages are idempotent, can be repeated (at least once)
+- these DB tables are persisted queues, no more and no less
+- actual stateful order, etc. tables are elsewhere and maintained
+  via application logic when these messages are applied
 - migrate Zrest to ZvEngine
 - get zrclient up and running
 

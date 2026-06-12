@@ -11,6 +11,29 @@
 
 namespace Zquic {
 
+namespace {
+
+struct OpenSSLCipherCtx {
+  OpenSSLCipherCtx() = default;
+  ~OpenSSLCipherCtx() { if (ctx) EVP_CIPHER_CTX_free(ctx); }
+
+  EVP_CIPHER_CTX *get() {
+    if (!ctx) return ctx = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX_reset(ctx);
+    return ctx;
+  }
+
+  EVP_CIPHER_CTX	*ctx = nullptr;
+};
+
+EVP_CIPHER_CTX *opensslCipherCtx_()
+{
+  thread_local OpenSSLCipherCtx ctx;
+  return ctx.get();
+}
+
+} // namespace
+
 unsigned VarInt::length(uint64_t v)
 {
   if (v < (1ULL<<6)) return 1;
@@ -195,7 +218,7 @@ int Packet::retryIntegrityTag(
   if (!tag || len < 16 || !retryWithoutTag || originalDCID.length() > 20)
     return -1;
 
-  EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+  EVP_CIPHER_CTX *ctx = opensslCipherCtx_();
   if (!ctx) return -1;
 
   int ok = 0;
@@ -215,7 +238,6 @@ int Packet::retryIntegrityTag(
       EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag) == 1)
     ok = 1;
 
-  EVP_CIPHER_CTX_free(ctx);
   return ok ? 16 : -1;
 }
 

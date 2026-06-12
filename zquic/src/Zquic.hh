@@ -59,6 +59,72 @@ struct InitialInfo {
   unsigned	datagramLength = 0;
 };
 
+template <typename App, typename = void>
+struct HasListening : ZuFalse { };
+template <typename App>
+struct HasListening<App, decltype(ZuDeclVal<App *>()->listening(), void())> :
+  ZuTrue { };
+
+template <typename App, typename = void>
+struct HasListenFailed : ZuFalse { };
+template <typename App>
+struct HasListenFailed<App,
+  decltype(ZuDeclVal<App *>()->listenFailed(ZuDeclVal<bool>()), void())> :
+  ZuTrue { };
+
+template <typename App, typename = void>
+struct HasAccepted : ZuFalse { };
+template <typename App>
+struct HasAccepted<App,
+  decltype(ZuDeclVal<App *>()->accepted(ZuDeclVal<const InitialInfo &>()),
+    void())> :
+  ZuTrue { };
+
+template <typename Link, typename = void>
+struct HasTxInvoked : ZuFalse { };
+template <typename Link>
+struct HasTxInvoked<Link,
+  decltype(ZuDeclVal<Link *>()->app()->txInvoked(), void())> :
+  ZuTrue { };
+
+template <typename Link, typename Fn, typename = void>
+struct HasTxInvoke : ZuFalse { };
+template <typename Link, typename Fn>
+struct HasTxInvoke<Link, Fn,
+  decltype(ZuDeclVal<Link *>()->app()->txInvoke(ZuDeclVal<Fn>()), void())> :
+  ZuTrue { };
+
+template <typename Impl, typename = void>
+struct HasRetiredLocalCID : ZuFalse { };
+template <typename Impl>
+struct HasRetiredLocalCID<Impl,
+  decltype(ZuDeclVal<Impl *>()->retiredLocalCID_(
+      ZuDeclVal<uint64_t>(), ZuDeclVal<const CxnID &>()), void())> :
+  ZuTrue { };
+
+template <typename Impl, typename = void>
+struct HasStatelessReset : ZuFalse { };
+template <typename Impl>
+struct HasStatelessReset<Impl,
+  decltype(ZuDeclVal<Impl *>()->statelessReset(), void())> :
+  ZuTrue { };
+
+template <typename Impl, typename = void>
+struct HasStreamFrame : ZuFalse { };
+template <typename Impl>
+struct HasStreamFrame<Impl,
+  decltype(ZuDeclVal<Impl *>()->streamFrame(
+      ZuDeclVal<uint64_t>(), ZuDeclVal<uint64_t>(),
+      ZuDeclVal<ZuCSpan>(), ZuDeclVal<bool>()), void())> :
+  ZuTrue { };
+
+template <typename Impl, typename = void>
+struct HasDisconnected : ZuFalse { };
+template <typename Impl>
+struct HasDisconnected<Impl,
+  decltype(ZuDeclVal<Impl *>()->disconnected(), void())> :
+  ZuTrue { };
+
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.ALPNData">>));
 ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Zquic.ALPN">>));
 
@@ -334,6 +400,30 @@ private:
 
   ZmRef<Routes>	m_routes;
 };
+
+template <typename Link_>
+struct ServerLinkEntry : public ZuObject {
+  using LinkRef = ZmRef<Link_>;
+
+  ServerLinkEntry() = default;
+  ServerLinkEntry(LinkRef ref_) : link{ref_.ptr()}, linkRef{ZuMv(ref_)} { }
+
+  Link_		*link = nullptr;
+  LinkRef	linkRef;
+};
+
+template <typename Link_>
+inline Link_ *ServerLinkEntry_LinkAxor(
+  const ServerLinkEntry<Link_> *entry) {
+  return entry->link;
+}
+
+template <typename Link_>
+ZuDerive(ServerLinks_,
+  (ZmHash<ZmRef<ServerLinkEntry<Link_>>,
+    ZmHashKey<ServerLinkEntry_LinkAxor<Link_>,
+      ZmHashLock<ZmPLock,
+	ZmHashHeapID<"Zquic.Server.LinkTable">>>>));
 
 struct CxnIDGen {
   static constexpr unsigned InitialLength = MinCIDLength;
@@ -964,6 +1054,8 @@ public:
   using App = App_;
   using Link = Link_;
   using LinkRef = ZmRef<Link>;
+  using LinkEntry = ServerLinkEntry<Link>;
+  using LinkTable = ServerLinks_<Link>;
   using Base = Engine<App>;
   using Base::app;
   static constexpr unsigned TLSBufSize = Client<App>::TLSBufSize;
@@ -1004,7 +1096,7 @@ friend class SrvLink;
 	});
       }},
       Endpoint::ReadyFn{this, [](Server *self, Endpoint *) {
-	if constexpr (requires(App *app_) { app_->listening(); })
+	if constexpr (HasListening<App>{})
 	  self->app()->listening();
       }},
       Endpoint::FailFn{this, [](Server *self, bool transient) {
@@ -1037,9 +1129,7 @@ friend class SrvLink;
 
 private:
   void failed_0(bool transient) {
-    if constexpr (requires(App *app_, bool transient_) {
-      app_->listenFailed(transient_);
-    })
+    if constexpr (HasListenFailed<App>{})
       this->app()->listenFailed(transient);
     else
       this->error_(ZeEXCEPT(Error, "Zquic",
@@ -1101,9 +1191,7 @@ private:
 
   Link *accept_(const InitialInfo &info) {
     LinkRef link;
-    if constexpr (requires(App *app_, const InitialInfo &info_) {
-      app_->accepted(info_);
-    })
+    if constexpr (HasAccepted<App>{})
       link = this->app()->accepted(info);
     else {
       this->error_(ZeEXCEPT(Error, "Zquic",
@@ -1118,32 +1206,22 @@ private:
 
   bool addLink_(LinkRef link) {
     if (!link) return false;
-    for (unsigned i = 0; i < MaxLinks; ++i)
-      if (m_links[i].ptr() == link.ptr()) return true;
-    for (unsigned i = 0; i < MaxLinks; ++i) {
-      if (m_links[i]) continue;
-      m_links[i] = ZuMv(link);
-      return true;
-    }
-    this->error_(ZeEXCEPT(Error, "Zquic",
-      "QUIC server active SrvLink table is full"));
-    return false;
+    Link *ptr = link.ptr();
+    if (m_links->findVal(ptr)) return true;
+    m_links->add(new LinkEntry{ZuMv(link)});
+    return true;
   }
 
   void releaseLink_(Link *link) {
     if (!link) return;
     link->retireRoutes_(m_routes);
-    for (unsigned i = 0; i < MaxLinks; ++i) {
-      if (m_links[i].ptr() != link) continue;
-      m_links[i] = nullptr;
-      return;
-    }
+    m_links->del(link);
   }
 
   void clearLinks_() {
     m_routes.clear();
-    for (unsigned i = 0; i < MaxLinks; ++i)
-      m_links[i] = nullptr;
+    m_links = new LinkTable{
+      ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   }
 
   bool sendVersionNegotiation_(const LongHeader &h, ZiSockAddr addr) {
@@ -1156,10 +1234,9 @@ private:
     return sendPacket_(ZuMv(buf), ZuMv(addr));
   }
 
-  static constexpr unsigned MaxLinks = 16;
-
   Endpoint		m_endpoint;
-  LinkRef		m_links[MaxLinks];
+  ZmRef<LinkTable>	m_links = new LinkTable{
+    ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;
 };
 
@@ -1497,7 +1574,7 @@ private:
   }
 
   bool txInvoked_() const {
-    if constexpr (requires(Link *link) { link->app()->txInvoked(); }) {
+    if constexpr (HasTxInvoked<Link>{}) {
       if (ZuUnlikely(!m_link || !m_link->app() || !m_link->app()->mx()))
 	return true;
       return m_link->app()->txInvoked();
@@ -1508,9 +1585,7 @@ private:
 
   template <typename Fn>
   void txInvoke_(Fn &&fn) {
-    if constexpr (requires(Link *link, Fn fn_) {
-      link->app()->txInvoke(ZuMv(fn_));
-    }) {
+    if constexpr (HasTxInvoke<Link, Fn>{}) {
       if (ZuLikely(m_link && m_link->app() && m_link->app()->mx())) {
 	m_link->app()->txInvoke(ZuFwd<Fn>(fn));
 	return;
@@ -1680,9 +1755,8 @@ protected:
   struct InitialKeyDir { enum T { Client, Server }; };
   struct RuntimeCID { enum T { Initial, Local, Peer }; };
   // RFC9000 specifies only a minimum/default of 2 for active_connection_id_limit.
-  // Mainstream implementations use small caps: quic-go stores 4 and issues 6,
-  // while ngtcp2 accepts up to 8.
-  static constexpr unsigned MaxConnectionIDs = 8;
+  // This is the local advertised policy cap for active peer-issued CIDs.
+  static constexpr unsigned LocalActiveConnectionIDLimit = 8;
 
   struct LinkCID {
     CxnID			id;
@@ -1691,6 +1765,10 @@ protected:
     CxnState::T		state = CxnState::Tombstone;
     bool			associated = false;
   };
+  using LocalCIDs =
+    ZtArray<LinkCID, ZtArrayHeapID<"Zquic.Link.LocalCID">>;
+  using PeerCIDs =
+    ZtArray<LinkCID, ZtArrayHeapID<"Zquic.Link.PeerCID">>;
 
   unsigned scheduledStreamCount_() const {
     return m_streamScheduler.count();
@@ -1794,9 +1872,7 @@ protected:
     if (frame.type != FrameType::RetireConnectionID) return false;
     CxnID id;
     if (!retireLocalCID_(frame.value, id)) return false;
-    if constexpr (requires(Impl *impl_, uint64_t seq, const CxnID &cid) {
-      impl_->retiredLocalCID_(seq, cid);
-    })
+    if constexpr (HasRetiredLocalCID<Impl>{})
       impl()->retiredLocalCID_(frame.value, id);
     return true;
   }
@@ -1819,32 +1895,34 @@ protected:
   }
 
   void clearCIDState_() {
-    for (auto &cid : m_localCIDs) cid = {};
-    for (auto &cid : m_peerCIDs) cid = {};
+    m_localCIDs.clear();
+    m_peerCIDs.clear();
     m_peerRetirePriorTo = 0;
   }
-  static LinkCID *findCID_(LinkCID (&cids)[MaxConnectionIDs], uint64_t seq) {
+  template <typename CIDs>
+  static LinkCID *findCID_(CIDs &cids, uint64_t seq) {
     for (auto &cid : cids)
       if (cid.state != CxnState::Tombstone && cid.sequence == seq)
 	return &cid;
     return nullptr;
   }
-  static const LinkCID *findCID_(
-    const LinkCID (&cids)[MaxConnectionIDs], uint64_t seq) {
+  template <typename CIDs>
+  static const LinkCID *findCID_(const CIDs &cids, uint64_t seq) {
     for (const auto &cid : cids)
       if (cid.state != CxnState::Tombstone && cid.sequence == seq)
 	return &cid;
     return nullptr;
   }
-  static LinkCID *findCID_(
-    LinkCID (&cids)[MaxConnectionIDs], const CxnID &id) {
+  template <typename CIDs>
+  static LinkCID *findCID_(CIDs &cids, const CxnID &id) {
     for (auto &cid : cids)
       if (cid.state != CxnState::Tombstone && cid.id == id)
 	return &cid;
     return nullptr;
   }
+  template <typename CIDs>
   bool addCID_(
-    LinkCID (&cids)[MaxConnectionIDs], const CxnID &id, uint64_t sequence,
+    CIDs &cids, const CxnID &id, uint64_t sequence,
     const ResetToken &resetToken, bool local) {
     if (!id.length()) return false;
     if (auto cid = findCID_(cids, sequence)) {
@@ -1871,9 +1949,14 @@ protected:
       if (cid.state == CxnState::Active) ++active;
       if (!slot && cid.state == CxnState::Tombstone) slot = &cid;
     }
-    if (!slot) return false;
-    if (!local && active >= m_transportParams.activeConnectionIDLimit)
+    uint64_t limit = local ?
+      LocalActiveConnectionIDLimit :
+      m_transportParams.activeConnectionIDLimit;
+    if (active >= limit)
       return false;
+    if (!slot && cids.length() < limit)
+      slot = cids.push();
+    if (!slot) return false;
     *slot = LinkCID{id, sequence, resetToken, CxnState::Active, false};
     return true;
   }
@@ -1904,6 +1987,7 @@ protected:
     m_transportParams.initialMaxStreamDataUni = app->maxStreamData();
     m_transportParams.initialMaxStreamsBidi = app->maxStreamsBidi();
     m_transportParams.initialMaxStreamsUni = app->maxStreamsUni();
+    m_transportParams.activeConnectionIDLimit = LocalActiveConnectionIDLimit;
   }
 
   bool loadServerTransportParams_(const ServerBootstrap &bootstrap) {
@@ -1985,7 +2069,7 @@ protected:
     for (auto &p : m_txPackets) p.clear();
     memset(m_pendingAck, 0, sizeof(m_pendingAck));
     ++m_diag.failures;
-    if constexpr (requires(Impl *impl_) { impl_->statelessReset(); })
+    if constexpr (HasStatelessReset<Impl>{})
       impl()->statelessReset();
     return true;
   }
@@ -2467,35 +2551,42 @@ protected:
       ++m_diag.framesRx;
       if (FrameCodec::ackEliciting(frame.type))
 	noteAck_(level, pn);
-      if (frame.type == FrameType::Ack) {
-	processAckFrame_(level, frame);
-      } else if (frame.type == FrameType::Crypto) {
-	ZuCSpan contiguous;
-	if (m_rxCrypto[level].receiveFrame(frame, contiguous) < 0)
-	  return false;
-	m_diag.cryptoBytesRx += frame.payload.length();
-	if (contiguous) {
-	  size_t epoch = level == CryptoLevel::Initial ? 0 :
-	    level == CryptoLevel::Handshake ? 2 : 3;
-	  if (!emitTLS(epoch, contiguous, addr)) return false;
+      switch (frame.type) {
+	case FrameType::Ack:
+	  processAckFrame_(level, frame);
+	  break;
+	case FrameType::Crypto: {
+	  ZuCSpan contiguous;
+	  if (m_rxCrypto[level].receiveFrame(frame, contiguous) < 0)
+	    return false;
+	  m_diag.cryptoBytesRx += frame.payload.length();
+	  if (contiguous) {
+	    size_t epoch = level == CryptoLevel::Initial ? 0 :
+	      level == CryptoLevel::Handshake ? 2 : 3;
+	    if (!emitTLS(epoch, contiguous, addr)) return false;
+	  }
+	  break;
 	}
-      } else if (frame.type == FrameType::Stream) {
-	m_diag.streamBytesRx += frame.payload.length();
-	if (receiveFrame(frame, ZmRef<ZiIOBuf>{packetBuf}) < 0)
-	  return false;
-	if constexpr (requires(Impl *impl_, uint64_t streamID,
-	      uint64_t offset_, ZuCSpan payload, bool fin) {
-	  impl_->streamFrame(streamID, offset_, payload, fin);
-	})
-	  impl()->streamFrame(
-	    frame.streamID, frame.offset, frame.payload, frame.fin);
-      } else if (frame.type == FrameType::ResetStream ||
-	  frame.type == FrameType::StopSending) {
-	if (receiveFrame(frame) < 0) return false;
-      } else if (frame.type == FrameType::NewConnectionID) {
-	if (!receiveNewConnectionID_(frame)) return false;
-      } else if (frame.type == FrameType::RetireConnectionID) {
-	if (!receiveRetireConnectionID_(frame)) return false;
+	case FrameType::Stream:
+	  m_diag.streamBytesRx += frame.payload.length();
+	  if (receiveFrame(frame, ZmRef<ZiIOBuf>{packetBuf}) < 0)
+	    return false;
+	  if constexpr (HasStreamFrame<Impl>{})
+	    impl()->streamFrame(
+	      frame.streamID, frame.offset, frame.payload, frame.fin);
+	  break;
+	case FrameType::ResetStream:
+	case FrameType::StopSending:
+	  if (receiveFrame(frame) < 0) return false;
+	  break;
+	case FrameType::NewConnectionID:
+	  if (!receiveNewConnectionID_(frame)) return false;
+	  break;
+	case FrameType::RetireConnectionID:
+	  if (!receiveRetireConnectionID_(frame)) return false;
+	  break;
+	default:
+	  break;
       }
       offset += used;
     }
@@ -2623,8 +2714,8 @@ private:
   CxnID			m_localSCID;
   CxnID			m_peerCID;
   ResetToken		m_peerResetToken;
-  LinkCID		m_localCIDs[MaxConnectionIDs];
-  LinkCID		m_peerCIDs[MaxConnectionIDs];
+  LocalCIDs		m_localCIDs;
+  PeerCIDs		m_peerCIDs;
   uint64_t		m_peerRetirePriorTo = 0;
   uint64_t		m_txPN[3]{};
   uint64_t		m_rxLargestPN[3]{};
@@ -3100,7 +3191,7 @@ private:
     if (ep != &m_endpoint) return;
     m_udpReady = 0;
     if (m_notifyEndpointDown) {
-      if constexpr (requires(Impl *impl_) { impl_->disconnected(); })
+      if constexpr (HasDisconnected<Impl>{})
 	impl()->disconnected();
     }
     m_notifyEndpointDown = true;

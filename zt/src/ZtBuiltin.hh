@@ -28,19 +28,35 @@ protected:
   using Array::shadow__;
   using Array::own__;
   using Array::assign;
+  using Array::length_;
+
+  T *builtinData_() {
+    if constexpr (BuiltinSize)
+      return reinterpret_cast<T *>(&m_data_[0]);
+    else
+      return nullptr;
+  }
+  const T *builtinData_() const {
+    if constexpr (BuiltinSize)
+      return reinterpret_cast<const T *>(&m_data_[0]);
+    else
+      return nullptr;
+  }
 
 public:
+  using Array::length;
+
   ZtBuiltin() noexcept(ZuNXConstruct<Array>{}) :
-    Array(reinterpret_cast<T *>(&m_data_[0]), 0, BuiltinSize, false) { }
+    Array(builtinData_(), 0, BuiltinSize, false) { }
 
   ZtBuiltin(const ZtBuiltin &a) noexcept(ZuNXCopy<T>{}) :
-    Array(reinterpret_cast<T *>(&m_data_[0]), 0, BuiltinSize, false)
+    Array(builtinData_(), 0, BuiltinSize, false)
   {
     auto length = a.length();
     if (length) copy___(a.data(), length);
   }
   ZtBuiltin(ZtBuiltin &&a) noexcept(ZuNXMove<T>{}) :
-    Array(reinterpret_cast<T *>(&m_data_[0]), 0, BuiltinSize, false)
+    Array(builtinData_(), 0, BuiltinSize, false)
   {
     auto length = a.length();
     if (!length) return;
@@ -74,6 +90,27 @@ public:
   ZtBuiltin &operator =(Arg &&arg) {
     assign(ZuFwd<Arg>(arg));
     return *this;
+  }
+
+  void length(uint64_t length) {
+    this->length(length, !ZuTraits<T>::IsPrimitive);
+  }
+  void length(uint64_t length, bool initElems_) {
+    if constexpr (BuiltinSize) {
+      auto builtinData = builtinData_();
+      if (ZuLikely(length <= BuiltinSize && this->data() == builtinData)) {
+	if (initElems_) {
+	  auto n = this->length();
+	  if (length > n)
+	    this->initElems(builtinData + n, length - n);
+	  else if (length < n)
+	    this->destroyElems(builtinData + length, n - length);
+	}
+	length_(length);
+	return;
+      }
+    }
+    Array::length(length, initElems_);
   }
 
 private:
