@@ -110,7 +110,7 @@ struct TempDir {
 
   bool init()
   {
-    return init("ZquicH3InteropTest") &&
+    return init("ZquicInteropTest") &&
       writeSelfSignedLocalhostCert_(cspan(certPath), cspan(keyPath));
   }
 

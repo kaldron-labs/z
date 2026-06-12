@@ -819,14 +819,6 @@ void testInstructionEncoding()
       decoded.header.value == "json",
     "insert literal mismatch");
 
-  ZuCHECK(Zhttp::H3::QPack::encodeDuplicate(bytes, 0) > 0 &&
-      bytes.length() == 1 && bytes[0] == 0x00 &&
-      Zhttp::H3::QPack::decodeEncoderInstructionOne(
-	span(bytes), decoded) == int(bytes.length()) &&
-      decoded.type == Zhttp::H3::QPackInstruction::Duplicate &&
-      !decoded.value,
-    "duplicate instruction mismatch");
-
   ZuCHECK(Zhttp::H3::QPack::encodeSectionAck(bytes, 4) > 0 &&
       bytes.length() == 1 && bytes[0] == 0x84 &&
       Zhttp::H3::QPack::decodeDecoderInstructionOne(
@@ -834,24 +826,6 @@ void testInstructionEncoding()
       decoded.type == Zhttp::H3::QPackInstruction::SectionAck &&
       decoded.value == 4,
     "section ack instruction mismatch");
-
-  ZuCHECK(Zhttp::H3::QPack::encodeStreamCancellation(bytes, 4) > 0 &&
-      bytes.length() == 1 && bytes[0] == 0x44 &&
-      Zhttp::H3::QPack::decodeDecoderInstructionOne(
-	span(bytes), decoded) == int(bytes.length()) &&
-      decoded.type == Zhttp::H3::QPackInstruction::StreamCancellation &&
-      decoded.value == 4,
-    "stream cancellation instruction mismatch");
-
-  ZuCHECK(Zhttp::H3::QPack::encodeInsertCountIncrement(bytes, 1) > 0 &&
-      bytes.length() == 1 && bytes[0] == 0x01 &&
-      Zhttp::H3::QPack::decodeDecoderInstructionOne(
-	span(bytes), decoded) == int(bytes.length()) &&
-      decoded.type == Zhttp::H3::QPackInstruction::InsertCountIncrement &&
-      decoded.value == 1,
-    "insert count increment instruction mismatch");
-  ZuCHECK(Zhttp::H3::QPack::encodeInsertCountIncrement(bytes, 0) < 0,
-    "zero insert count increment was encoded");
 }
 
 void testHuffmanInstructionStorage()

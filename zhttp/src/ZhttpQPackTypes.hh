@@ -24,15 +24,6 @@ namespace Zhttp { namespace H3 {
 
 using HeaderBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HeaderBytes">>;
 
-struct H3Error {
-  ZtEnum(H3Error, uint16_t,
-    NoError, GeneralProtocol, Internal, StreamCreation, ClosedCriticalStream,
-    FrameUnexpected, FrameError, ExcessiveLoad, IDError, SettingsError,
-    MissingSettings, RequestRejected, RequestCancelled, RequestIncomplete,
-    MessageError, ConnectError, VersionFallback, QPackDecompressionFailed,
-    QPackEncoderStreamError, QPackDecoderStreamError);
-};
-
 struct QPackInstruction {
   ZtEnum(QPackInstruction, int8_t,
     InsertWithNameRef, InsertWithoutNameRef, Duplicate, SetCapacity,

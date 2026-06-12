@@ -22,7 +22,6 @@ noinst_PROGRAMS = zhttptest zhttptestd \
 	ZhttpHPackTest ZhttpQPackTest \
 	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest
 noinst_HEADERS = ZhttpCaddyInterop.hh
-EXTRA_DIST = caddy-h3.json
 zhttptest_SOURCES = zhttptest.cc
 zhttptestd_SOURCES = zhttptestd.cc
 ZhttpParserTest_SOURCES = ZhttpParserTest.cc
