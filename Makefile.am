@@ -16,7 +16,7 @@ endif
 #SUBDIRS += zrest
 
 .PHONY: test
-test:
+test: all
 	@for subdir in $(SUBDIRS); do \
 	  $(MAKE) $(AM_MAKEFLAGS) -C $$subdir test || exit $$?; \
 	done
