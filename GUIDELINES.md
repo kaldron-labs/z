@@ -5,10 +5,13 @@ These guidelines extend `AGENTS.md`
 ## Act as a principal software engineer who is a leading global expert in performance-oriented low-latency C++ systems and network programming
 
 ## Use of C++ language
-- use CRTP in preference to virtual polymorphism
 - use gnu++2b, but without concepts
 - use SFINAE
 - use `typename = void` and `decltype(CODE, void())` specializations to test for CODE correctness
+- use CRTP in preference to virtual polymorphism
+  - for optional CRTP callbacks, prefer providing base defaults and callers using `impl()->callback(...)` directly over `if constexpr (Has... ) impl()->callback(...)` wrappers
+    - keep defaults side-effect-safe in the base (e.g. `return true`, `return nullptr`, no-op)
+    - use `if constexpr` traits only when behavior is not expressible as a safe base default
 - use friend functions and ADL to "tag" types
   - example: `friend ZuStructPrint ZuPrintType(DB *)`
     - `decltype(ZuPrintType(...))` is used by `ZuPrint` to determine how to print a type
@@ -84,8 +87,9 @@ These guidelines extend `AGENTS.md`
 - use `ZmAlloc` for large single-object stack allocations with heap fallback
 - use `ZtBuiltin` for builtin arrays with heap-allocation fallback
 - use `ZuMatcher` for token-matching multiple possibilities, use `==` for a single possibility
-- use `ZuStruct`/`ZtStruct`/`ZfbStruct` for compile-time extract/transform
+- use `ZuStruct`/`ZtStruct`/`ZfbStruct` for compile-time extract/transform metadata
   - JSON - `ZtJSON`, ASN.1 - `ZtASN1`, CLI - `ZtCLI`, CSV - `ZtCSV`, URI query - `ZtURI`
+  - Framebuffers - `ZfbStruct`
 - use `ZmScheduler` `isolated` threads to ensure "sharding"
   - sharding is associating data with single specific threads
     - minimize inter-thread sharing of data and consequent locking/atomics
@@ -102,7 +106,7 @@ These guidelines extend `AGENTS.md`
   - `del()` / `delNode()` usually returns a movable reference to the deleted node/value
 - use `ZmRing`, `ZiRing` for inter-thread and inter-process communication
 
-## No Dogma
+## No Immutability Dogma
 - mutability is encouraged if it benefits performance
   - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
   - example: in-place decoding of strings in JSON parsing
