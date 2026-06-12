@@ -1,5 +1,10 @@
 # Repository Guidelines
 
+These instructions summarize repository layout and day-to-day commands. For
+engineering style, performance expectations, Z Framework idioms, and review
+criteria, follow `GUIDELINES.md`; it extends this file and is authoritative for
+implementation choices.
+
 ## Project Structure & Module Organization
 The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`, `zi`, `zdb`). Each module typically contains `src/` for library code and `test/` for module-specific test binaries. Top-level build inputs live in `configure.ac`, `Makefile.am`, and `m4/`. Helper scripts live under `scripts/` and the `z.config` wrapper centralizes configure flags.
 
@@ -13,7 +18,9 @@ The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`
 - C++ is compiled as GNU C++2b; headers use `.hh`, sources use `.cc`.
 - Indentation uses tabs (width 8) with a 2-space logical offset; follow existing file headers for editor settings.
 - Names are short and prefixed by module (`Zu`, `Zm`, `Zt`, etc.); internal namespaces often use `Zxx_`.
-- Keep STL usage minimal and mirror nearby patterns/macros (for example `ZuInline`, `ZuAssert`).
+- Treat `GUIDELINES.md` as the detailed coding standard. In particular, prefer CRTP and static polymorphism, avoid C++ concepts and `requires`, express compile-time constraints with `ZuIfT`/SFINAE traits and detector structs, keep STL usage minimal, and mirror nearby Z Framework patterns/macros (for example `ZuInline`, `ZuAssert`).
+- Prefer existing `Zu*`, `Zm*`, `Zt*`, and `Zi*` facilities over standard-library or ad hoc replacements, especially in performance-sensitive paths.
+- Review heap allocations, fixed-size arrays, algorithmic inefficiencies, unnecessary casts between span/string/array types, and duplicated logic against the amber flags in `GUIDELINES.md`.
 
 ## Testing Guidelines
 - Tests are built as standalone binaries under each module’s `test/` directory.

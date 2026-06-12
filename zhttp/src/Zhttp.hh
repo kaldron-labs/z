@@ -203,7 +203,7 @@ inline auto crlf() {
 // - span is empty for the last line before the body
 template <bool CanFold = true, typename Stream, typename Line>
 inline int64_t parseLine(Stream &stream, Line &&line) {
-  return stream.template consume<2, ZuStringT<"Zhttp.Header">>(
+  return stream.template consume<2, "Zhttp.Header">(
     crlf<CanFold>(), ZuFwd<Line>(line));
 }
 
@@ -474,7 +474,7 @@ namespace H1 {
 	      }, [this](ZuBSpan span) { impl()->body(span); });
 	    } break;
 	  case State::ChunkHdr: { // parse chunk header
-	    consumed = stream.template consume<2, ZuStringT<"Zhttp.ChunkHdr">>(
+	    consumed = stream.template consume<2, "Zhttp.ChunkHdr">(
 	      crlf<false>(), [this](ZuSpan<uint8_t> span) {
 		if (!span) { m_state = State::Complete; return; }
 		auto error = [this]() {
@@ -505,7 +505,7 @@ namespace H1 {
 	      }, [this](ZuBSpan span) { impl()->body(span); });
 	  } break;
 	  case State::ChunkTrlr: { // parse trailing "\r\n"
-	    consumed = stream.template consume<2, ZuStringT<"Zhttp.ChunkTrlr">>(
+	    consumed = stream.template consume<2, "Zhttp.ChunkTrlr">(
 	      [this, prevCR = false](ZuBSpan span) mutable -> int64_t {
 		auto error = [this]() {
 		  m_state = State::Error;
@@ -1239,7 +1239,7 @@ namespace H3 {
 	  default:
 	    break;
 	  case StreamState::Type: {
-	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.CxnType">>(
+	    consumed = rx.template consume<0, "Zhttp.H3.CxnType">(
 	      [this](ZuBSpan span) { return this->consumeVar_(span); },
 	      [this](ZuBSpan span) {
 		if (!this->parseType_(ZuCSpan{
@@ -1252,7 +1252,7 @@ namespace H3 {
 	    auto frameState = m_frameState;
 	    unsigned varLen = m_varLen, varBytes = m_varBytes;
 	    uint64_t frameLen = m_frameLen, frameOff = m_frameOff;
-	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.CxnFrame">>(
+	    consumed = rx.template consume<0, "Zhttp.H3.CxnFrame">(
 	      [this](ZuBSpan span) { return this->consumeFrame_(span); },
 	      [this](ZuBSpan span) {
 		if (!this->parseControlFrame_(ZuCSpan{
@@ -1712,7 +1712,7 @@ namespace H3 {
 	    auto frameState = m_frameState;
 	    unsigned varLen = m_varLen, varBytes = m_varBytes;
 	    uint64_t frameType = m_frameType;
-	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Type">>(
+	    consumed = rx.template consume<0, "Zhttp.H3.Type">(
 	      [this](ZuBSpan span) -> int64_t {
 		for (unsigned o = 0; o < span.length(); ++o) {
 		  uint8_t c = span[o];
@@ -1744,7 +1744,7 @@ namespace H3 {
 	    auto frameState = m_frameState;
 	    unsigned varBytes = m_varBytes;
 	    uint64_t frameType = m_frameType;
-	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Type">>(
+	    consumed = rx.template consume<0, "Zhttp.H3.Type">(
 	      [this](ZuBSpan span) -> int64_t {
 		for (unsigned o = 0; o < span.length(); ++o) {
 		  m_frameType = (m_frameType << 8) | uint8_t(span[o]);
@@ -1765,7 +1765,7 @@ namespace H3 {
 	    auto frameState = m_frameState;
 	    unsigned varLen = m_varLen, varBytes = m_varBytes;
 	    uint64_t frameLen = m_frameLen;
-	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Length">>(
+	    consumed = rx.template consume<0, "Zhttp.H3.Length">(
 	      [this](ZuBSpan span) -> int64_t {
 		for (unsigned o = 0; o < span.length(); ++o) {
 		  uint8_t c = span[o];
@@ -1799,7 +1799,7 @@ namespace H3 {
 	    auto frameState = m_frameState;
 	    unsigned varBytes = m_varBytes;
 	    uint64_t frameLen = m_frameLen;
-	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Length">>(
+	    consumed = rx.template consume<0, "Zhttp.H3.Length">(
 	      [this](ZuBSpan span) -> int64_t {
 		for (unsigned o = 0; o < span.length(); ++o) {
 		  m_frameLen = (m_frameLen << 8) | uint8_t(span[o]);
@@ -1839,7 +1839,7 @@ namespace H3 {
 	      break;
 	    }
 	    uint64_t frameOff = m_frameOff;
-	    consumed = rx.template consume<0, ZuStringT<"Zhttp.H3.Payload">>(
+	    consumed = rx.template consume<0, "Zhttp.H3.Payload">(
 	      [this](ZuBSpan span) {
 		return this->consumeFullPayload_(span);
 	      }, [this](ZuBSpan span) {
