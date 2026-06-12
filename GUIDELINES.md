@@ -28,6 +28,17 @@ These guidelines extend `AGENTS.md`
 - fixed-size arrays
   - if accompanied by explicitly and separately maintained lengths, these should almost certainly be replaced by `ZuArray`/`ZtArray`/`ZtString`/`ZtLocalArray` etc.
   - if lookup tables, `ZmHash`/`ZmLHash` are probably more appropriate, with appopriate locking, hash IDs, etc. to permit run-time sizing/tuning
+  - hard-coded size/capacity limits are always questionable
+    - too low? do they impair scaling?
+    - too high? do they bloat stack or heap? is the capacity mostly unused?
+    - mandated by RFC, other standard or authority?
+    - aligned with other mainstream implementations of the same functionality?
+  - array rules:
+    - if required, hard upper limits on array size should be explicitly enforced in code
+    - arrays in hot paths should be dynamic with a builtin size (`ZtBuiltin`) that covers 95-99% of usage in real-world workloads
+    - arrays in cold paths should be dynamic with no builtin size (`ZtArray`)
+    - arrays in hot paths that can be scratch should be stack-allocated with heap fallback (`ZtLocalArray`)
+  - hard-coded numbers, e.g. 16, should always be library-defined compile-time constants that are prominently located in the code with a comment so they can be maintained
 - heap allocations
   - heap allocations that should be scratch stack allocations
   - heap allocations that do not leverage `ZmHeap` / `ZmVHeap`
@@ -40,6 +51,7 @@ These guidelines extend `AGENTS.md`
       - see `ZmPolyCache` for an example of nesting a hash table node, a list node and reference-counting in a single allocated node
   - prefer callbacks with stack-allocated scratch temporaries (using `ZtLocalArray` and other such) to heap-allocated context
   - ensure `ZmHeap`-optimized buffer management and queue node management
+  - I/O buffers are an exception to the usual "prefer stack over heap" - see below
 - algorithmic inefficiencies
 - performance, latency or throughput impairments
 - ineffective use of Z Framework
@@ -49,6 +61,14 @@ These guidelines extend `AGENTS.md`
 - highly nested logic
 - repeated code blocks that are near-identical, violating "DRY"
 - historical compatibility code that should be deleted
+- unnecessary casts
+  - unnecessary casting among char-equivalent pointers
+    - most Z framework types convert equivalent primitive element types automatically
+  - unnecessary casting to base of CRTP `impl()` / `app()`
+    - bases that need to constrain function name resolution should use `using T::function;`
+- unnecessary constructor churn with needlessly-initialized storage
+  - Z intentionally prefers uninitialized storage and explicit placement new
+  - Z array containers are intentionally uninitialized until filled
 
 ## Leveraging Key Z Framework Capabilities
 - `ZuSpan` `*Array` and `*String` interoperate smoothly without explicit casting:
@@ -61,6 +81,8 @@ These guidelines extend `AGENTS.md`
 - use `ZuStringTL` for compile-time lists of strings
 - use `ZtLocalArray` for stack-allocated scratch, will fallback to heap-allocation
   - ensure appropriate heap identification of the underlying array
+- use `ZmAlloc` for large single-object stack allocations with heap fallback
+- use `ZtBuiltin` for builtin arrays with heap-allocation fallback
 - use `ZuMatcher` for token-matching multiple possibilities, use `==` for a single possibility
 - use `ZuStruct`/`ZtStruct`/`ZfbStruct` for compile-time extract/transform
   - JSON - `ZtJSON`, ASN.1 - `ZtASN1`, CLI - `ZtCLI`, CSV - `ZtCSV`, URI query - `ZtURI`
@@ -69,4 +91,14 @@ These guidelines extend `AGENTS.md`
     - minimize inter-thread sharing of data and consequent locking/atomics
   - dedicate threads and associated data to independent Rx and Tx in I/O
 - use `ZiIOBuf` for buffer management
+  - I/O buffers are an exception to the usual "prefer stack over heap"
+  - pooled heap buffer allocations is actually preferred to on-stack
+  - buffers can be moved between threads by reference without copying
+  - buffer heap pool sizes can be optimally tuned to the workload at run-time
 - use `ZiMultiplex` for I/O multiplexing / reactor
+- use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests
+
+## No Dogma
+- mutability is encouraged if it benefits performance
+  - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
+  - example: in-place decoding of strings in JSON parsing
