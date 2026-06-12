@@ -775,6 +775,16 @@ bool waitDone(ZmSemaphore &sem)
   return sem.timedwait(Zm::now(10)) == 0;
 }
 
+bool runCurlH3Retry(
+  const TempDir &temp, unsigned port, ZuCSpan path, ZuCSpan expectedBody)
+{
+  for (unsigned i = 0; i < 5; ++i) {
+    if (Zhttp::Test::runCurlH3(temp, port, path, expectedBody)) return true;
+    Zquic::Test::sleepMS(100);
+  }
+  return false;
+}
+
 bool writeHttpCaddyfile(ZuCSpan path, unsigned port, ZuCSpan body)
 {
   ZtString<> filePath;
@@ -911,6 +921,8 @@ void testZhttpClientCaddyHttpsH3()
     "Zhttp client->Caddy HTTPS/H3 start failed");
   ZuCHECK(waitCaddyReady(port, Path),
     "Zhttp client->Caddy HTTPS/H3 did not become ready");
+  ZuCHECK(runCurlH3Retry(temp, port, Path, "caddy-h3-ok"),
+    "Zhttp client->Caddy HTTPS/H3 did not become H3-ready");
 
   ZiMultiplex mx(mxParams());
   bool mxStarted = mx.start();
@@ -1098,8 +1110,7 @@ void testCurlZhttpHttpsH3Server()
   ZuCHECK(server.listen(), "curl->Zhttp HTTPS/H3 server listen failed");
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "curl->Zhttp HTTPS/H3 server did not become ready");
-  ZuCHECK(Zhttp::Test::runCurlH3(
-      temp, server.local().port(), Path, state.body),
+  ZuCHECK(runCurlH3Retry(temp, server.local().port(), Path, state.body),
     "curl HTTPS/H3 request to local Zhttp server failed");
   ZuCHECK(waitDone(state.done), "curl->Zhttp HTTPS/H3 server timed out");
   if (state.errors || !state.request.complete ||

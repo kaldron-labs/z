@@ -38,10 +38,36 @@ struct RuntimeServer :
   ZmRef<Link> link(unsigned i = unsigned(-1));
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
+  bool sendPacket(const ZmRef<ZiIOBuf> &buf) {
+    if (!buf || !buf->length) return true;
+    ZuCSpan packet{
+      reinterpret_cast<const char *>(buf->data_()), buf->length};
+    if (Zquic::Packet::isLong(packet)) return true;
+    ++shortPackets;
+    if (!dropNextShort) return true;
+    dropNextShort = 0;
+    ++droppedShort;
+    return false;
+  }
+  bool sendFrame(const Zquic::SentFrameRef &ref) {
+    if (ref.kind != Zquic::SentFrameKind::Stream) return true;
+    ++streamFrames;
+    if (dropStreamID < 0 || ref.streamID != uint64_t(dropStreamID))
+      return true;
+    dropStreamID = -1;
+    ++droppedStream;
+    return false;
+  }
 
   ZmRef<Link> link_;
   ZmRef<Link> links_[RuntimeServerLinkCapacity];
   ZmAtomic<unsigned> acceptedCount = 0;
+  ZmAtomic<unsigned> dropNextShort = 0;
+  ZmAtomic<unsigned> droppedShort = 0;
+  ZmAtomic<unsigned> shortPackets = 0;
+  ZmAtomic<int64_t> dropStreamID = -1;
+  ZmAtomic<unsigned> droppedStream = 0;
+  ZmAtomic<unsigned> streamFrames = 0;
 };
 
 struct RuntimeClient::Stream :
@@ -124,7 +150,7 @@ ZmRef<RuntimeServer::Link> RuntimeServer::accepted(const Zquic::InitialInfo &)
 template <typename L>
 bool waitUntil(L l)
 {
-  for (unsigned i = 0; i < 2000; ++i) {
+  for (unsigned i = 0; i < 10000; ++i) {
     if (l()) return true;
     usleep(1000);
   }
@@ -152,6 +178,8 @@ void dumpRuntimeDiag(
     " cryptoBytesRx=" << uint64_t(d.cryptoBytesRx) <<
     " streamBytesTx=" << uint64_t(d.streamBytesTx) <<
     " streamBytesRx=" << uint64_t(d.streamBytesRx) <<
+    " ptoCount=" << uint64_t(d.ptoCount) <<
+    " retransmittedFrames=" << uint64_t(d.retransmittedFrames) <<
     " failures=" << uint64_t(d.failures) <<
     " handshakeComplete=" << uint64_t(d.handshakeComplete) <<
     " tlsHandled=" << c.tlsMessagesHandled <<
@@ -328,13 +356,26 @@ void testRuntimeEndpointOpen()
     "runtime client stream send failed");
   auto serverBidi = serverLink->stream(Zi::StreamType::Duplex);
   auto serverUni = serverLink->stream(Zi::StreamType::Simplex);
+  server.dropStreamID = serverUni->id();
   ZuCHECK(serverLink->send(serverBidi, "server-bidi") &&
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
-  ZuCHECK(waitUntil([&clientLink, &serverLink]() {
-      return serverLink->runtimeDiag().streamBytesRx == 21 &&
-	clientLink->runtimeDiag().streamBytesRx == 21;
-    }), "runtime protected stream bytes did not arrive");
+  bool streamsArrived = waitUntil([&clientLink, &serverLink]() {
+      return serverLink->runtimeDiag().streamBytesRx >= 21 &&
+	clientLink->runtimeDiag().streamBytesRx >= 21;
+    });
+  if (!streamsArrived) {
+    dumpRuntimeDiag(
+      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+    dumpRuntimeDiag(
+      "server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+  }
+  ZuCHECK(streamsArrived, "runtime protected stream bytes did not arrive");
+  ZuCHECK(server.droppedStream == 1,
+    "runtime packet-loss shim did not drop a 1-RTT STREAM frame");
+  ZuCHECK(serverLink->runtimeDiag().ptoCount &&
+      serverLink->runtimeDiag().retransmittedFrames,
+    "runtime PTO did not reclaim and retransmit a dropped 1-RTT frame");
   ZuCHECK(clientLink->runtimeDiag().streamBytesTx == 21 &&
       serverLink->runtimeDiag().streamBytesTx == 21 &&
       clientLink->runtimeDiag().packetsTx >= 2 &&

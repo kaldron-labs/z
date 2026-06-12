@@ -472,6 +472,8 @@ struct RuntimeDiag {
   uint64_t	cryptoBytesTx = 0;
   uint64_t	streamBytesRx = 0;
   uint64_t	streamBytesTx = 0;
+  uint64_t	ptoCount = 0;
+  uint64_t	retransmittedFrames = 0;
   uint64_t	failures = 0;
   uint64_t	handshakeComplete = 0;
 };
@@ -716,6 +718,18 @@ public:
   }
 
   void final() {
+    if (m_mx && m_rxThread && m_txThread &&
+	!rxInvoked() && !txInvoked()) {
+      ZmSemaphore stopped;
+      rxInvoke([this, &stopped]() { stop_1(&stopped); });
+      stopped.wait();
+      return;
+    }
+    stop_3();
+  }
+
+  void stop_3() {
+    if (m_mx) m_mx->del(&m_ptoTimer);
     m_mx = nullptr;
     m_rxThread = m_txThread = m_asyncThread = 0;
     m_errorFn = ErrorFn{};
@@ -769,6 +783,17 @@ public:
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
 protected:
+  void stop_1(ZmSemaphore *stopped) {
+    txInvoke([this, stopped]() {
+      stop_2(stopped);
+    });
+  }
+
+  void stop_2(ZmSemaphore *stopped) {
+    stop_3();
+    stopped->post();
+  }
+
   template <typename Params, typename L>
   bool init_(Params params, L l) {
     m_errorFn = ZuMv(params.errorFn());
@@ -797,6 +822,9 @@ protected:
     else
       ZiLogEvent(ZuMv(e));
   }
+
+  static ZuTime ptoTimeout_() { return Zm::now(1); }
+  ZmScheduler::Timer *ptoTimer() { return &m_ptoTimer; }
 
 private:
   unsigned thread_(const ParamString &id, unsigned deflt) const {
@@ -910,6 +938,7 @@ private:
   uint64_t	m_maxStreamsBidi = 0;
   uint64_t	m_maxStreamsUni = 0;
   unsigned	m_maxUDP = MinUDPPayload;
+  ZmScheduler::Timer	m_ptoTimer;
 };
 
 // CRTP - aligned client implementation should conform to this interface:
@@ -1049,6 +1078,8 @@ friend class SrvLink;
 
   ZiIP localIP() const { return ZiIP{}; }
   uint16_t localPort() const { return 0; }
+  bool sendPacket(const ZmRef<ZiIOBuf> &) { return true; }
+  bool sendFrame(const SentFrameRef &) { return true; }
 
   void listenFailed(bool transient) {
     this->error_(ZeEXCEPT(Error, "Zquic",
@@ -1066,6 +1097,7 @@ friend class SrvLink;
     return m_endpoint.allocTxPacket();
   }
   bool sendPacket_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    if (!this->app()->sendPacket(buf)) return true;
     return m_endpoint.send(ZuMv(buf), ZuMv(addr));
   }
   void dissociateRoute_(const CxnID &id) {
@@ -1386,7 +1418,13 @@ public:
 
   int processFrame(
     const Frame &frame, ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr) {
+    uint64_t delivered = m_rxState.delivered();
+    bool finSeen = m_rxState.finSeen();
+    unsigned pending = m_rxQueue.count_();
     if (!receiveFrame(frame, ZuMv(packet), diag)) return -1;
+    if (m_rxState.delivered() == delivered && m_rxState.finSeen() == finSeen &&
+	m_rxQueue.count_() == pending)
+      return 0;
     return impl()->process(m_rx);
   }
 
@@ -2102,6 +2140,39 @@ protected:
     return true;
   }
 
+  void schedulePTO_() {
+    if (!app() || !app()->mx() || closed()) return;
+    if (!m_txPackets[CryptoLevel::OneRTT].bytesInFlight()) return;
+    app()->mx()->run(app()->txThread(),
+      [link = ZmMkRef(impl())]() { link->pto_(); },
+      app()->ptoTimeout_(), ZmScheduler::Advance, app()->ptoTimer());
+  }
+
+  bool reclaimPTO_() {
+    unsigned n = m_txPackets[CryptoLevel::OneRTT].reclaimOnPTO(1);
+    if (n) ++m_diag.ptoCount;
+    return n;
+  }
+
+  bool nextRetransmit_(SentFrameRef &ref) {
+    if (!m_txPackets[CryptoLevel::OneRTT].nextRetransmit(ref)) return false;
+    ++m_diag.retransmittedFrames;
+    return true;
+  }
+
+  bool buildRetransmitStream_(PacketBuild &build, const SentFrameRef &ref) {
+    if (ref.kind != SentFrameKind::Stream) return false;
+    StreamRef stream = findStream(int64_t(ref.streamID));
+    if (!stream) return false;
+    build.reset();
+    if (!appendPendingAck_(CryptoLevel::OneRTT, build)) return false;
+    int n = FrameCodec::writeStreamPrefix(
+      build.scratch(), build.scratchAvail(), ref.streamID, ref.offset,
+      ref.length, ref.fin);
+    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    return build.add(ref.range);
+  }
+
   bool recordRxPacket_(
     CryptoLevel::T level, uint64_t pn) {
     if (m_rxPackets[level].contains(pn)) return false;
@@ -2209,6 +2280,7 @@ protected:
     ++m_txPN[level];
     ++m_diag.packetsTx;
     m_diag.bytesTx += bytes;
+    if (level == CryptoLevel::OneRTT && ackEliciting) schedulePTO_();
   }
 
   const auto &initialKeys_(InitialKeyDir::T dir) const {
@@ -2768,6 +2840,21 @@ public:
       });
   }
 
+  void pto_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client PTO outside Tx thread", return);
+    if (Base::closed() || !Base::runtimeEstablished_() ||
+	!m_endpoint.connected())
+      return;
+    Base::reclaimPTO_();
+    SentFrameRef ref;
+    if (!Base::nextRetransmit_(ref)) return;
+    PacketBuild build;
+    if (!Base::buildRetransmitStream_(build, ref)) return;
+    (void)sendShortPacket_(build, m_endpoint.remote(), {}, &ref, true);
+    Base::schedulePTO_();
+  }
+
   void connect_() {
     if (!app() || !app()->mx()) {
       connectFailed_0(false);
@@ -3214,6 +3301,20 @@ template <typename, typename> friend class Server;
       });
   }
 
+  void pto_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server PTO outside Tx thread", return);
+    if (Base::closed() || !Base::runtimeEstablished_() || !m_peerAddr)
+      return;
+    Base::reclaimPTO_();
+    SentFrameRef ref;
+    if (!Base::nextRetransmit_(ref)) return;
+    PacketBuild build;
+    if (!Base::buildRetransmitStream_(build, ref)) return;
+    (void)sendShortPacket_(build, m_peerAddr, {}, &ref, true);
+    Base::schedulePTO_();
+  }
+
   void close(uint64_t errorCode = 0) {
     if (Base::closed()) return;
     Base::close(errorCode);
@@ -3386,7 +3487,8 @@ private:
       RuntimePNLength, false, payload, ZuMv(addr), recordFrame,
       recordRef, ackEliciting,
       [this]() { return app()->allocTxPacket_(); },
-      [this](auto buf, ZiSockAddr addr_) {
+      [this, recordRef](auto buf, ZiSockAddr addr_) {
+	if (recordRef && !app()->sendFrame(*recordRef)) return true;
 	return app()->sendPacket_(ZuMv(buf), ZuMv(addr_));
       });
   }
@@ -3423,7 +3525,8 @@ private:
       RuntimeCID::Peer, RuntimePNLength, payload, ZuMv(addr), recordFrame,
       recordRef, ackEliciting,
       [this]() { return app()->allocTxPacket_(); },
-      [this](auto buf, ZiSockAddr addr_) {
+      [this, recordRef](auto buf, ZiSockAddr addr_) {
+	if (recordRef && !app()->sendFrame(*recordRef)) return true;
 	return app()->sendPacket_(ZuMv(buf), ZuMv(addr_));
       });
   }
