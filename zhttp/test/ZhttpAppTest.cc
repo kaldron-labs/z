@@ -79,7 +79,7 @@ bool writeHTTPAppScript(
     script << "-c " << certPath << " -o " << tempPath << "/body " <<
       "https://localhost:" << port << "/zhttp-interop ";
   else
-    script << "--http3-only -c " << certPath << " -o " <<
+    script << "--http3 -c " << certPath << " -o " <<
       tempPath << "/body https://localhost:" << port << "/zhttp-interop ";
   script <<
       ">" << tempPath << "/client.out 2>" << tempPath << "/client.err; then\n"

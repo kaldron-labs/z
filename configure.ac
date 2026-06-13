@@ -95,7 +95,7 @@ case $build_os in
     Z_LIBS="-lm"
     Z_MT_LIBS="$CK_LIBS $HWLOC_LIBS -latomic"
     Z_ZT_LIBS="$PCRE_LIBS -liconv"
-    Z_IO_LIBS="-lws2_32 -lwsock32"
+    Z_IO_LIBS="-lws2_32 -lwsock32 -ldnsapi"
     Z_TERM_LIBS=""
     ;;
   *)
@@ -112,6 +112,20 @@ case $build_os in
 esac
 
 AC_MSG_RESULT([${Z_MT_LIBS}])
+
+case $build_os in
+  linux-*)
+    save_LIBS="$LIBS"
+    AC_SEARCH_LIBS([res_nquery], [resolv], [
+      AC_DEFINE([HAVE_RES_NQUERY], [1], [Define if res_nquery is available])
+      if test "x$ac_cv_search_res_nquery" != "xnone required"; then
+	Z_IO_LIBS="$Z_IO_LIBS $ac_cv_search_res_nquery"
+      fi
+    ])
+    AC_CHECK_FUNCS([res_ninit res_nclose res_query])
+    LIBS="$save_LIBS"
+    ;;
+esac
 
 Z_OFLAGS="-fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans"
 Z_CFLAGS="$Z_CFLAGS $Z_OFLAGS"

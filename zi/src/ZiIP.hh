@@ -27,13 +27,11 @@
 
 class ZiIP;
 
-namespace Zi {
+namespace ZiResolver {
 
-// fn(ZiIP) should return true to continue resolving additional IPs, false to stop
-// - if resolution succeeds, fn() will be called at least once and Zi::OK will be returned
-// - ... otherwise fn() will not be called and Zi::IOError will be returned
-//   - if e is not null, *e will be set accordingly
-ZiExtern int resolve(Hostname host, ZmFn<bool(ZiIP)> fn, ZeError *e = nullptr);
+ZiExtern int resolve(
+  Zi::Hostname host, ZmFn<bool(ZiIP)> fn, ZeError *e);
+ZiExtern Zi::Hostname name(ZiIP ip, ZeError *e);
 
 }
 
@@ -130,7 +128,7 @@ public:
   template <typename S>
   ZuMatchString<S &&, int> resolve(S &&s, ZeError *e = 0) {
     Zi::Hostname host{ZuFwd<S>(s)};
-    return Zi::resolve(ZuMv(host), ZmFn<bool(ZiIP)>{[this](ZiIP ip) {
+    return ZiResolver::resolve(ZuMv(host), ZmFn<bool(ZiIP)>{[this](ZiIP ip) {
       s_addr = ip.s_addr;
       return false;
     }}, e);

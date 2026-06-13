@@ -14,7 +14,7 @@ noinst_PROGRAMS = \
 	ZiIOBufTest ZiEventLoopTest \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
 	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest \
-	ZiDaemonTest
+	ZiDaemonTest ZiResolverTest
 noinst_HEADERS = ZiTestResidue.hh
 .PHONY: test
 test: $(noinst_PROGRAMS)
@@ -28,6 +28,7 @@ ZiIOBufTest_SOURCES = ZiIOBufTest.cc
 ZiEventLoopTest_SOURCES = ZiEventLoopTest.cc
 ZiDirTest_SOURCES = ZiDirTest.cc
 ZiIPTest_SOURCES = ZiIPTest.cc
+ZiResolverTest_SOURCES = ZiResolverTest.cc
 ZiModuleTest_SOURCES = ZiModuleTest.cc
 ZiPlatformTest_SOURCES = ZiPlatformTest.cc
 ZiIOContextTest_SOURCES = ZiIOContextTest.cc
