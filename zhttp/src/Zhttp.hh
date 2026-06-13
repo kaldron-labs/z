@@ -2121,7 +2121,7 @@ namespace H1 {
     template <typename Key, typename L>
     void header(L &&l) { l(""); }
     uint64_t contentLength() { return 0; }
-    H3::QPackTxTable *qpackTx() { return nullptr; }
+    // H3::QPackTxTable *qpackTx() { return nullptr; }
   };
 
 } // H1
