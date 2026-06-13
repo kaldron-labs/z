@@ -83,6 +83,9 @@ struct ResponseBuilder : public Builder_<ResponseBuilder<Builder_>> {
   unsigned status() const { return 200; }
   template <typename L> void reason(L &&l) const { l("OK"); }
   uint64_t contentLength() const { return content.length(); }
+  Zhttp::H3::QPackTxTable *qpackTx() const { return qpackTx_; }
+  Zhttp::H3::QPackEncoderTx *qpackEncoderTx() const { return qpackEncoderTx_; }
+  uint64_t streamID() const { return streamID_; }
   template <typename Key, typename L>
   void header(L &&l) const {
     if constexpr (ZuIsSame<Key, ZuStringT<"content-type">>{})
@@ -91,7 +94,10 @@ struct ResponseBuilder : public Builder_<ResponseBuilder<Builder_>> {
       l("");
   }
 
-  ZuCSpan	content;
+  ZuCSpan			content;
+  Zhttp::H3::QPackTxTable	*qpackTx_ = nullptr;
+  Zhttp::H3::QPackEncoderTx	*qpackEncoderTx_ = nullptr;
+  uint64_t			streamID_ = 0;
 };
 
 using H1ResponseBuilder = ResponseBuilder<H1ResponseBuilder_>;
@@ -128,6 +134,9 @@ void sendH3Response(Stream &stream, ZuCSpan body)
   ]() mutable {
     auto tx = ref->txStream_();
     H3ResponseBuilder builder{ZuCSpan{body_}};
+    builder.qpackTx_ = &link->qpackTxTable;
+    builder.qpackEncoderTx_ = &link->qpackEncoder;
+    builder.streamID_ = uint64_t(ref->id());
     builder.response(tx);
     if (body_) {
       auto bodyTx = builder.body(tx);
@@ -161,6 +170,9 @@ struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
   using Base = RequestParserBase_<RequestParser<H3>, H3>;
   using State = typename Base::State;
 
+  Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
+  Zhttp::H3::QPackEncoderTx *qpackDecoderTx() const { return qpackDecoderTx_; }
+  uint64_t streamID() const { return streamID_; }
   void operation(Zhttp::Method::T method, ZuBSpan path) {
     seen.method = method;
     seen.path = ZuCSpan{path};
@@ -174,7 +186,10 @@ struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
     }
   }
 
-  RequestSeen	seen;
+  RequestSeen			seen;
+  Zhttp::H3::QPackRxTable	*qpackRx_ = nullptr;
+  Zhttp::H3::QPackEncoderTx	*qpackDecoderTx_ = nullptr;
+  uint64_t			streamID_ = 0;
 };
 
 struct ResponseSeen {
@@ -198,6 +213,9 @@ struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
   using Base = ResponseParserBase_<ResponseParser<H3>, H3>;
   using State = typename Base::State;
 
+  Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
+  Zhttp::H3::QPackEncoderTx *qpackDecoderTx() const { return qpackDecoderTx_; }
+  uint64_t streamID() const { return streamID_; }
   void status(unsigned status_) { seen.status = status_; }
   void body(ZuBSpan body) { seen.body << ZuCSpan{body}; }
   void complete(typename State::T state) {
@@ -208,7 +226,10 @@ struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
     }
   }
 
-  ResponseSeen	seen;
+  ResponseSeen			seen;
+  Zhttp::H3::QPackRxTable	*qpackRx_ = nullptr;
+  Zhttp::H3::QPackEncoderTx	*qpackDecoderTx_ = nullptr;
+  uint64_t			streamID_ = 0;
 };
 
 template <typename Impl>
@@ -229,8 +250,14 @@ struct RequestBuilder : public Builder_<RequestBuilder<Builder_>> {
   }
   template <typename L> void host(L &&l) const { l(Host); }
   uint64_t contentLength() const { return content.length(); }
+  Zhttp::H3::QPackTxTable *qpackTx() const { return qpackTx_; }
+  Zhttp::H3::QPackEncoderTx *qpackEncoderTx() const { return qpackEncoderTx_; }
+  uint64_t streamID() const { return streamID_; }
 
-  ZuCSpan	content;
+  ZuCSpan			content;
+  Zhttp::H3::QPackTxTable	*qpackTx_ = nullptr;
+  Zhttp::H3::QPackEncoderTx	*qpackEncoderTx_ = nullptr;
+  uint64_t			streamID_ = 0;
 };
 
 using H1RequestBuilder = RequestBuilder<RequestBuilder_>;
@@ -256,6 +283,9 @@ void sendH3Request(Stream &stream, ZuCSpan body)
   ]() mutable {
     auto tx = ref->txStream_();
     H3RequestBuilder builder{ZuCSpan{body_}};
+    builder.qpackTx_ = &link->qpackTxTable;
+    builder.qpackEncoderTx_ = &link->qpackEncoder;
+    builder.streamID_ = uint64_t(ref->id());
     builder.request(tx);
     builder.finish(tx);
     link->send_(ref, "", true);
@@ -453,6 +483,8 @@ struct H3ServerStream :
   bool peerControlStream();
   bool peerEncoderStream();
   bool peerDecoderStream();
+  Zhttp::H3::QPackRxTable *qpackRx();
+  Zhttp::H3::QPackTxTable *qpackTx();
 
   RequestParser<true>	parser;
 };
@@ -460,9 +492,22 @@ struct H3ServerStream :
 struct H3ServerLink :
   public Zquic::SrvLink<H3Server, H3ServerLink, H3ServerStream> {
   using Base = Zquic::SrvLink<H3Server, H3ServerLink, H3ServerStream>;
-  using Base::Base;
 
-  H3ServerLink(H3Server *app) : Base{app} { }
+  struct QPackStreamTx : public Zhttp::H3::QPackEncoderTx {
+    QPackStreamTx(H3ServerLink *link_, ZmRef<Stream> *stream_) :
+      link{link_}, stream{stream_} { }
+
+    bool write(ZuBSpan span) override {
+      if (!link || !stream || !*stream || !span) return false;
+      return link->send(*stream, span, false);
+    }
+
+    H3ServerLink	*link = nullptr;
+    ZmRef<Stream>	*stream = nullptr;
+  };
+
+  H3ServerLink(H3Server *app) :
+    Base{app}, qpackEncoder{this, &enc}, qpackDecoder{this, &dec} { }
   void connected(Zi::Connected info) {
     if (!validQUICInfo(info)) app()->state->errors = 1;
     if (!sendH3ControlStreams(*this, control, enc, dec))
@@ -478,6 +523,10 @@ struct H3ServerLink :
   bool		peerControl = false;
   bool		peerEncoder = false;
   bool		peerDecoder = false;
+  Zhttp::H3::QPackRxTable	qpackRxTable;
+  Zhttp::H3::QPackTxTable	qpackTxTable;
+  QPackStreamTx			qpackEncoder;
+  QPackStreamTx			qpackDecoder;
 };
 
 ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &)
@@ -503,6 +552,9 @@ int H3ServerStream::process(Zquic::RxStream &rx)
     return 0;
   }
   ++state->h3BidiStreams;
+  parser.qpackRx_ = &this->link()->qpackRxTable;
+  parser.qpackDecoderTx_ = &this->link()->qpackDecoder;
+  parser.streamID_ = uint64_t(this->id());
   auto s = parser.process(*this);
   state->h3ParserState = s;
   if (s == RequestParser<true>::State::Error ||
@@ -553,6 +605,16 @@ bool H3ServerStream::peerDecoderStream()
   if (link->peerDecoder) return false;
   link->peerDecoder = true;
   return true;
+}
+
+Zhttp::H3::QPackRxTable *H3ServerStream::qpackRx()
+{
+  return &this->link()->qpackRxTable;
+}
+
+Zhttp::H3::QPackTxTable *H3ServerStream::qpackTx()
+{
+  return &this->link()->qpackTxTable;
 }
 
 struct ClientState {
@@ -666,6 +728,8 @@ struct H3Client::Stream :
   bool peerControlStream();
   bool peerEncoderStream();
   bool peerDecoderStream();
+  Zhttp::H3::QPackRxTable *qpackRx();
+  Zhttp::H3::QPackTxTable *qpackTx();
 
   ResponseParser<true>	parser;
 };
@@ -673,9 +737,22 @@ struct H3Client::Stream :
 struct H3Client::Link :
   public Zquic::CliLink<H3Client, H3Client::Link, H3Client::Stream> {
   using Base = Zquic::CliLink<H3Client, H3Client::Link, H3Client::Stream>;
-  using Base::Base;
 
-  Link(H3Client *app) : Base{app} { }
+  struct QPackStreamTx : public Zhttp::H3::QPackEncoderTx {
+    QPackStreamTx(Link *link_, ZmRef<Stream> *stream_) :
+      link{link_}, stream{stream_} { }
+
+    bool write(ZuBSpan span) override {
+      if (!link || !stream || !*stream || !span) return false;
+      return link->send(*stream, span, false);
+    }
+
+    Link		*link = nullptr;
+    ZmRef<Stream>	*stream = nullptr;
+  };
+
+  Link(H3Client *app) :
+    Base{app}, qpackEncoder{this, &enc}, qpackDecoder{this, &dec} { }
 
   void connected(Zi::Connected info) {
     if (!validQUICInfo(info)) {
@@ -717,6 +794,10 @@ struct H3Client::Link :
   bool		peerControl = false;
   bool		peerEncoder = false;
   bool		peerDecoder = false;
+  Zhttp::H3::QPackRxTable	qpackRxTable;
+  Zhttp::H3::QPackTxTable	qpackTxTable;
+  QPackStreamTx			qpackEncoder;
+  QPackStreamTx			qpackDecoder;
 };
 
 int H3Client::Stream::process(Zquic::RxStream &rx)
@@ -733,6 +814,9 @@ int H3Client::Stream::process(Zquic::RxStream &rx)
     return 0;
   }
   if (this->id() != this->link()->app()->responseStreamID) return 0;
+  parser.qpackRx_ = &this->link()->qpackRxTable;
+  parser.qpackDecoderTx_ = &this->link()->qpackDecoder;
+  parser.streamID_ = uint64_t(this->id());
   return processResponse<true>(this->link()->app(), parser, *this);
 }
 
@@ -768,6 +852,16 @@ bool H3Client::Stream::peerDecoderStream()
   if (link->peerDecoder) return false;
   link->peerDecoder = true;
   return true;
+}
+
+Zhttp::H3::QPackRxTable *H3Client::Stream::qpackRx()
+{
+  return &this->link()->qpackRxTable;
+}
+
+Zhttp::H3::QPackTxTable *H3Client::Stream::qpackTx()
+{
+  return &this->link()->qpackTxTable;
 }
 
 bool waitDone(ZmSemaphore &sem)
