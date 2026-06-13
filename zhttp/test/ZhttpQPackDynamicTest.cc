@@ -117,6 +117,10 @@ struct BuilderState :
     else
       l("");
   }
+  template <typename L>
+  void header(L &&l) const {
+    if (runtimeHeader) l(runtimeName, runtimeValue);
+  }
 
   Zhttp::H3::Params	params;
   Zhttp::H3::QPackTxTable tx;
@@ -124,6 +128,9 @@ struct BuilderState :
   uint64_t		id = 1;
   ZuCSpan		path = "/sample";
   ZuCSpan		query = "";
+  bool			runtimeHeader = false;
+  ZuCSpan		runtimeName = "server";
+  ZuCSpan		runtimeValue = "zhttp-runtime";
 };
 
 using ParserHeaders = ZhttpHeaders("x-test");
@@ -157,6 +164,13 @@ struct ParserStream :
       }
     }
   }
+  void header(ZuCSpan name, ZuCSpan value) {
+    ++runtimeCalls;
+    runtimeName.length(0);
+    runtimeValue.length(0);
+    runtimeName << name;
+    runtimeValue << value;
+  }
   void contentLength(uint64_t v) { contentLen = v; ++contentLenCalls; }
   void body(ZuBSpan) { ++bodyCalls; }
   void complete(Zhttp::H3::ParserState::T state_) {
@@ -172,6 +186,7 @@ struct ParserStream :
   ZtString<>			xTest;
   unsigned			xTestCalls = 0;
   unsigned			xTestLen = 0;
+  unsigned			runtimeCalls = 0;
   int64_t			contentLen = -1;
   unsigned			contentLenCalls = 0;
   unsigned			bodyCalls = 0;
@@ -179,6 +194,8 @@ struct ParserStream :
   bool				fin = false;
   Zhttp::H3::ParserState::T	completeState =
     Zhttp::H3::ParserState::Initial;
+  ZtString<>			runtimeName;
+  ZtString<>			runtimeValue;
 };
 
 struct CxnStream :
@@ -490,6 +507,10 @@ static void putHeadersFrame(
   putFrame(frame, 0x01, ZuBSpan{payload});
 }
 
+static void putLiteralField(
+  Zhttp::H3::HdrBytes &payload, ZuCSpan name, ZuCSpan value,
+  bool huffmanValue = false, bool huffmanName = false);
+
 void testParserFieldCallbacks()
 {
   ZuTestScope(testParserFieldCallbacks);
@@ -499,15 +520,19 @@ void testParserFieldCallbacks()
   Zhttp::H3::Header initialHeaders[] = {
     {":method", "GET"},
     {":path", "/parser"},
-    {"x-test", "initial"}
+    {"x-test", "initial"},
+    {"x-runtime", "plain"}
   };
   Zhttp::H3::HdrBytes frame;
-  putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 3});
+  putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 4});
   parser.push(frame);
   ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
       parser.method == Zhttp::Method::GET &&
       parser.path == "/parser" &&
-      parser.xTestCalls == 1 && parser.xTest == "initial",
+      parser.xTestCalls == 1 && parser.xTest == "initial" &&
+      parser.runtimeCalls == 1 &&
+      parser.runtimeName == "x-runtime" &&
+      parser.runtimeValue == "plain",
     "parser did not deliver initial pseudo/regular fields");
 
   Zhttp::H3::Header trailerHeaders[] = {
@@ -519,6 +544,27 @@ void testParserFieldCallbacks()
   ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Trailers &&
       parser.xTestCalls == 2 && parser.xTest == "trailer",
     "parser did not deliver trailer fields");
+}
+
+void testParserHuffmanRuntimeHeader()
+{
+  ZuTestScope(testParserHuffmanRuntimeHeader);
+
+  ParserStream parser;
+  Zhttp::H3::HdrBytes payload;
+  payload.push(0);
+  payload.push(0);
+  putLiteralField(payload, ":method", "GET");
+  putLiteralField(payload, ":path", "/parser");
+  putLiteralField(payload, "x-hpack-key", "hpack-value", true, true);
+  Zhttp::H3::HdrBytes frame;
+  putFrame(frame, 0x01, ZuBSpan{payload});
+  parser.push(frame);
+  ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
+      parser.runtimeCalls == 1 &&
+      parser.runtimeName == "x-hpack-key" &&
+      parser.runtimeValue == "hpack-value",
+    "Huffman literal runtime header was not delivered");
 }
 
 void testParserInvalidFields()
@@ -586,9 +632,12 @@ void testParserStrictContentLength()
 
 static void putLiteralField(
   Zhttp::H3::HdrBytes &payload, ZuCSpan name, ZuCSpan value,
-  bool huffmanValue = false)
+  bool huffmanValue, bool huffmanName)
 {
-  appendString(payload, 0x20, 3, name);
+  if (huffmanName)
+    appendHuffmanString(payload, 0x28, 3, name);
+  else
+    appendString(payload, 0x20, 3, name);
   if (huffmanValue)
     appendHuffmanString(payload, 0x80, 7, value);
   else
@@ -1100,6 +1149,38 @@ void testBuilderQueryPath()
     "builder query path did not decode as a segmented :path value");
 }
 
+void testBuilderRuntimeHeaders()
+{
+  ZuTestScope(testBuilderRuntimeHeaders);
+
+  BuilderState builder;
+  builder.runtimeHeader = true;
+  CaptureTxStream stream;
+  builder.request(stream);
+
+  ZuCSpan payload;
+  ZuCHECK(headersPayload(captureSpan(stream), payload),
+    "runtime header builder did not emit a valid HEADERS frame");
+  bool sawRuntime = false;
+  ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
+      payload,
+      [&sawRuntime](Zhttp::H3::Header h) {
+	if (h.name == "server" && h.value == "zhttp-runtime")
+	  sawRuntime = true;
+      }) == int(payload.length()) && sawRuntime,
+    "runtime header did not decode from H3 HEADERS payload");
+
+  BuilderState dynamicBuilder;
+  dynamicBuilder.runtimeHeader = true;
+  dynamicBuilder.params.qpackTableCapacity(256);
+  ZuCHECK(dynamicBuilder.tx.setMaxCapacity(256),
+    "runtime header builder tx max capacity setup failed");
+  CaptureTxStream dynamicStream;
+  dynamicBuilder.request(dynamicStream);
+  ZuCHECK(dynamicBuilder.tx.find("server", "zhttp-runtime"),
+    "runtime header was not planned through dynamic QPACK");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -1108,6 +1189,7 @@ int main(int argc, char **argv)
   ZuTestCall(testDynamicFieldSectionDecode);
   ZuTestCall(testFieldRepresentationGoldens);
   ZuTestCall(testParserFieldCallbacks);
+  ZuTestCall(testParserHuffmanRuntimeHeader);
   ZuTestCall(testParserInvalidFields);
   ZuTestCall(testParserStrictContentLength);
   ZuTestCall(testParserHeaderScratchAndLimits);
@@ -1123,4 +1205,5 @@ int main(int argc, char **argv)
   ZuTestCall(testBuilderPeerCapacity);
   ZuTestCall(testBuilderCommitFailureAtomic);
   ZuTestCall(testBuilderQueryPath);
+  ZuTestCall(testBuilderRuntimeHeaders);
 }

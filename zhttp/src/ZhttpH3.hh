@@ -85,6 +85,21 @@ namespace H3 {
   struct HasH3Cxn<Impl,
     decltype(ZuDeclVal<Impl *>()->h3Cxn(), void())> : public ZuTrue { };
 
+  template <typename Impl, typename = void>
+  struct HasRuntimeHeader_ : public ZuFalse { };
+  template <typename Impl>
+  struct HasRuntimeHeader_<Impl,
+    decltype(ZuDeclVal<Impl *>()->header(
+      ZuDeclVal<ZuCSpan>(), ZuDeclVal<ZuCSpan>()), void())> :
+      public ZuTrue { };
+
+  template <typename Impl, typename L, typename = void>
+  struct HasRuntimeHeaderBuilder_ : public ZuFalse { };
+  template <typename Impl, typename L>
+  struct HasRuntimeHeaderBuilder_<Impl, L,
+    decltype(ZuDeclVal<Impl *>()->header(ZuDeclVal<L &&>()), void())> :
+      public ZuTrue { };
+
   // HTTP/3 unidirectional connection stream parser
   //
   // CRTP - implementation may implement the following callbacks:
@@ -724,11 +739,19 @@ namespace H3 {
       }
     }
 
+    void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
+      if constexpr (HasRuntimeHeader_<Impl>{})
+	impl()->header(ZuCSpan{key}, ZuCSpan{value});
+    }
+
     void header_(ZuBSpan key, ZuBSpan value) {
       if constexpr (HeaderKeys::N) {
 	static constexpr auto kMatcher = ZuMatcher<HeaderKeys>();
 	auto i = kMatcher.match(key);
-	if (i < 0) return;
+	if (i < 0) {
+	  runtimeHeader_(key, value);
+	  return;
+	}
 	ZuSwitch::dispatch<HeaderKeys::N>(i, [this, &value](auto i) {
 	  using KValues = ZuType<i, HeaderValues>;
 	  if constexpr (!ZuIsSame<KValues, void>{}) {
@@ -745,6 +768,8 @@ namespace H3 {
 	  }
 	  this->template header_<ZuType<i, HeaderKeys>>(value);
 	});
+      } else {
+	runtimeHeader_(key, value);
       }
     }
 
@@ -1031,6 +1056,7 @@ namespace H3 {
     void status(unsigned) { }
     template <typename Key> void header(ZuBSpan) { }
     template <typename Key, typename Value> void header() { }
+    void header(ZuCSpan, ZuCSpan) { }
     void contentLength(uint64_t) { }
     void body(ZuBSpan) { }
     void complete(State::T) { }
@@ -1302,6 +1328,12 @@ namespace H3 {
     enum { HasBody = HasBody_ };
 
   private:
+    template <typename L>
+    void runtimeHeaders_(L &&l) {
+      if constexpr (HasRuntimeHeaderBuilder_<Impl, L>{})
+	impl()->header(ZuFwd<L>(l));
+    }
+
     static ZuCSpan uintSpan_(uint64_t v, char (&buf)[32]) {
       unsigned o = sizeof(buf);
       do {
@@ -1427,6 +1459,9 @@ namespace H3 {
 	    if (value) build.field(Key{}(), value);
 	  });
 	}
+      });
+      runtimeHeaders_([&build](ZuCSpan name, ZuCSpan value) {
+	if (name) build.field(name, value);
       });
       return build.ok;
     }
@@ -1638,7 +1673,8 @@ namespace H3 {
     unsigned status() { return 200; }
     template <typename L> void reason(L &&l) { l(""); }
     template <typename Key, typename L>
-    void header(L &&l) { l(""); }
+    void header(L &&) { }
+    template <typename L> void header(L &&) { }
     uint64_t contentLength() { return 0; }
     QPackTxTable *qpackTx() {
       if constexpr (HasH3Cxn<Impl>{})
