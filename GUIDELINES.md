@@ -9,6 +9,12 @@ These guidelines extend `AGENTS.md`
   - propagate breaking API changes to dependent code
   - do not use shims, forwarders or other such techniques for legacy compatibility purposes
 
+## Build system
+- use the `configure` wrapper named `z.config` to reconfigure the build
+  - usage: `z.config -h`
+- add external dependencies in `configure.ac`
+  - use `PKG_CHECK_MODULES` if the dependency is in pkg-config, falling back to dependency-specific `m4` if not
+
 ## Use of C++ language
 - use gnu++2b, but without concepts
 - use SFINAE
