@@ -87,6 +87,8 @@ These guidelines extend `AGENTS.md`
 - unnecessary constructor churn with needlessly-initialized storage
   - Z intentionally prefers uninitialized storage and explicit placement new
   - Z array containers are intentionally uninitialized until filled
+- direct use of `FILE`, `syslog`, etc.
+  - use `ZiLog`, `ZiFile`
 
 ## Leveraging Key Z Framework Capabilities
 - `ZuSpan` `*Array` and `*String` interoperate smoothly without explicit casting:
@@ -105,7 +107,8 @@ These guidelines extend `AGENTS.md`
 - use `ZuStruct`/`ZtStruct`/`ZfbStruct` for compile-time extract/transform metadata
   - JSON - `ZtJSON`, ASN.1 - `ZtASN1`, CLI - `ZtCLI`, CSV - `ZtCSV`, URI query - `ZtURI`
   - Framebuffers - `ZfbStruct`
-- use `ZmScheduler` `isolated` threads to ensure "sharding"
+- use `ZmScheduler` for thread pools
+  - use `ZmScheduler` `isolated` threads to ensure "sharding"
   - sharding is associating data with single specific threads
     - minimize inter-thread sharing of data and consequent locking/atomics
   - dedicate threads and associated data to independent Rx and Tx in I/O
@@ -114,12 +117,15 @@ These guidelines extend `AGENTS.md`
   - pooled heap buffer allocations is actually preferred to on-stack
   - buffers can be moved between threads by reference without copying
   - buffer heap pool sizes can be optimally tuned to the workload at run-time
-- use `ZiMultiplex` for I/O multiplexing / reactor
 - use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests
 - use appropriate containers: `ZmHash`, `ZmLHash`, `ZmList`, `ZmRBTree`, `ZmPQueue`, ...
   - Z iterators are usually optionally mutable and can delete while iterating
   - `del()` / `delNode()` usually returns a movable reference to the deleted node/value
 - use `ZmRing`, `ZiRing` for inter-thread and inter-process communication
+- use `ZiLog` for logging
+- use `ZiAssert` for run-time assertions that need graceful failure handling
+- use `ZiFile` for file I/O, `ZiMMapFile` for memory-mapped I/O, `ZiMultiplex` for network I/O multiplexing
+- use `ZiEventLoop` for interoperability with other event loops and types of handles
 
 ## Code Style
 - library headers must follow the following format:
