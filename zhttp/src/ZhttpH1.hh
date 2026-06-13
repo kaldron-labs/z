@@ -151,7 +151,9 @@ namespace H1 {
       ZuCSpan path{&line[b], unsigned(o) - b};
       b = ++o;
       if (ZuUnlikely(b >= n)) { error(); return; } // missing protocol
+      ZuCSpan protocol{&line[b], n - b};
       impl()->operation(method, path);
+      impl()->version(protocol);
       m_state = State::Headers;
     }
 
@@ -307,6 +309,7 @@ namespace H1 {
 
     // CRTP defaults
     void operation(Method::T, ZuBSpan) { }
+    void version(ZuBSpan) { }
     void status(unsigned) { }
     template <typename Key> void header(ZuBSpan) { }
     template <typename Key, typename Value> void header() { }
@@ -408,11 +411,10 @@ namespace H1 {
 	  if constexpr (!ZuIsSame<Value, void>{})
 	    stream << Key{}() << ": " << Value{}() << "\r\n";
 	  else {
-	    stream << Key{}() << ": ";
 	    impl()->template header<Key>([&stream]<typename Value>(Value &&value) {
-	      stream << ZuFwd<Value>(value);
+	      ZuCSpan v{ZuFwd<Value>(value)};
+	      if (v) stream << Key{}() << ": " << v << "\r\n";
 	    });
-	    stream << "\r\n";
 	  }
 	});
       }

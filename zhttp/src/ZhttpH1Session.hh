@@ -46,6 +46,37 @@ void sendResp(Stream &stream, Builder &builder) {
   builder.finish(tx);
 }
 
+template <typename Impl, typename Parser_>
+struct Server {
+  using Parser = Parser_;
+  using State = typename Parser::State;
+
+  auto impl() const { return static_cast<const Impl *>(this); }
+  auto impl() { return static_cast<Impl *>(this); }
+
+  void connected(auto &) { }
+  void disconnected(auto &) { }
+
+  template <typename Link, typename Rx>
+  int process(Link &link, Rx &rx) {
+    auto state = parser.process(rx);
+    if (state == State::Error) return impl()->error(link, parser);
+    if (state == State::Complete) {
+      int rc = impl()->request(link, parser);
+      parser.reset();
+      return rc;
+    }
+    return 0;
+  }
+
+  template <typename Link>
+  int error(Link &, Parser &) { return -1; }
+  template <typename Link>
+  int request(Link &, Parser &) { return 1; }
+
+  Parser	parser;
+};
+
 }} // Zhttp::H1
 
 #endif /* ZhttpH1Session_HH */

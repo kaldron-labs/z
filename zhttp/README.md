@@ -36,11 +36,50 @@ instruction sequences by the connection.
 Fallback-capable clients should try HTTP/3 when configured and fall back to
 HTTP/1.1 over TLS when HTTP/3 is unavailable or rejected by policy.
 
-The example server can be started for the plain HTTP/1.1 path with:
+The example server is a static file server:
 
 ```sh
-zhttpserver --http --addr 127.0.0.1 --port 8080 --body zhttp-ok
+mkdir -p /tmp/www
+printf 'zhttp-ok\n' >/tmp/www/index.html
+zhttpserver /tmp/www --http --addr 127.0.0.1 --port 8080
 ```
+
+For local TLS and HTTP/3 tests, generate a temporary localhost certificate:
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj /CN=localhost \
+  -addext basicConstraints=critical,CA:TRUE \
+  -addext keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign \
+  -addext subjectAltName=DNS:localhost,IP:127.0.0.1 \
+  -keyout key.pem -out cert.pem
+```
+
+Then start the TLS or HTTP/3 transports:
+
+```sh
+zhttpserver /tmp/www --https --addr 127.0.0.1 --port 8443 \
+  --cert cert.pem --key key.pem
+zhttpserver /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
+  --cert cert.pem --key key.pem
+```
+
+Useful client checks:
+
+```sh
+zhttpclient -o body http://127.0.0.1:8080/
+zhttpclient -c cert.pem -o body https://localhost:8443/
+zhttpclient --http3-only -c cert.pem -o body https://localhost:8443/
+```
+
+Static-server options include directory indexes and listings, MIME overrides,
+single-file mode, hidden-dotfile rejection, Basic auth, host redirects,
+HTTP-to-HTTPS redirects, keep-alive timeout, maximum accepted connections,
+`ZiLog` file/syslog sinks, daemon/PID handling, Unix chroot, and Unix
+uid/gid dropping. Chroot and uid/gid options are rejected on unsupported
+platforms. Basic auth protects only credentials at the HTTP layer; use TLS for
+confidentiality. Symlink escape prevention is not enforced by the first static
+server pass.
 
 First-release exclusions match the transport scope: no server push, no
 WebTransport, no DATAGRAM, no 0-RTT, no QUIC v2, no multipath, and no active

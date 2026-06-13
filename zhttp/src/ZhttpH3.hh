@@ -1423,7 +1423,8 @@ namespace H3 {
 	  build.field(Key{}(), Value{}());
 	} else {
 	  impl()->template header<Key>([&build]<typename V>(V &&v) {
-	    build.field(Key{}(), ZuCSpan{ZuFwd<V>(v)});
+	    ZuCSpan value{ZuFwd<V>(v)};
+	    if (value) build.field(Key{}(), value);
 	  });
 	}
       });
