@@ -476,7 +476,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zum/src/ZumServer.cc:53` - Top-level symbols: using Node, using Key, using RowKey, using Row, using KeyID, using Row
 - `zhttp/test/zhttptest.cc:13` - Top-level symbols: function out, define CHECK, using IOBufAlloc, using RxMsg_
 - `zhttp/test/zhttptestd.cc:1` - Top-level contents (no regex-matched symbols)
-- `zhttp/test/zhttpclient.cc:24` - Top-level symbols: using IOBufAlloc, using RxMsg, struct Link, using Base, function connected, function disconnected
+- `zhttp/example/zhttp.cc:1` - Top-level contents for the zhttp client example
 - `zt/test/ZtRegexTest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zt/test/ZtStringHash.cc:1` - Top-level contents (no regex-matched symbols)
 - `zt/test/ZtDateFixTest.cc:20` - Top-level symbols: define CHECK, struct Null

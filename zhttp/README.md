@@ -67,9 +67,9 @@ zhttpserver /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
 Useful client checks:
 
 ```sh
-zhttpclient -o body http://127.0.0.1:8080/
-zhttpclient -c cert.pem -o body https://localhost:8443/
-zhttpclient --http3-only -c cert.pem -o body https://localhost:8443/
+zhttp -o body http://127.0.0.1:8080/
+zhttp -c cert.pem -o body https://localhost:8443/
+zhttp --http3-only -c cert.pem -o body https://localhost:8443/
 ```
 
 Static-server options include directory indexes and listings, MIME overrides,

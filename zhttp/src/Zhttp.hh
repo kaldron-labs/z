@@ -38,7 +38,7 @@
 // - keys (variable values):
 //   ZhttpHeaders("content-type", "server");
 // - keys + values:
-//   ZhttpHeaders(("user-agent", "zhttpclient"), ("accept", "*/*"));
+//   ZhttpHeaders(("user-agent", "zhttp"), ("accept", "*/*"));
 #define Zhttp_HdrValue(Value) ZuStringT<Value>
 #define Zhttp_HdrValues_(...) \
   ZuPP_Eval__(ZuPP_MapComma(Zhttp_HdrValue,  __VA_ARGS__))
