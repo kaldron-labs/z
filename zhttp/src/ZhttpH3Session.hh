@@ -27,29 +27,6 @@ struct HasStreamSend<Link, StreamRef,
     void())> : public ZuTrue { };
 
 template <typename Link, typename StreamRef>
-struct QPackStreamTx : public QPackEncoderTx {
-  QPackStreamTx() = default;
-  QPackStreamTx(Link *link_, StreamRef *stream_) :
-    link{link_}, stream{stream_} { }
-
-  void init(Link *link_, StreamRef *stream_) {
-    link = link_;
-    stream = stream_;
-  }
-
-  bool write(ZuBSpan span) override {
-    if (!link || !stream || !*stream || !span) return false;
-    if constexpr (HasStreamSend<Link, StreamRef>{})
-      return link->send(*stream, span, false);
-    else
-      return false;
-  }
-
-  Link		*link = nullptr;
-  StreamRef	*stream = nullptr;
-};
-
-template <typename Link, typename StreamRef>
 struct Cxn {
   using State = CxnState;
 
@@ -92,8 +69,7 @@ struct Cxn {
       if (putVar(out, 0x03) < 0) return false;
       tx.flush();
     }
-    qpackEncoder.init(&link, &enc);
-    qpackDecoder.init(&link, &dec);
+    link_ = &link;
     state = State::Ready;
     return true;
   }
@@ -124,8 +100,21 @@ struct Cxn {
   }
   QPackRxTable *qpackRx() { return &qpackRxTable; }
   QPackTxTable *qpackTx() { return &qpackTxTable; }
+  bool qpackEncoderWrite(ZuBSpan span) { return writeQPack_(enc, span); }
+  bool qpackDecoderWrite(ZuBSpan span) { return writeQPack_(dec, span); }
 
+private:
+  bool writeQPack_(StreamRef &stream, ZuBSpan span) {
+    if (!link_ || !stream || !span) return false;
+    if constexpr (HasStreamSend<Link, StreamRef>{})
+      return link_->send(stream, span, false);
+    else
+      return false;
+  }
+
+public:
   State::T		state = State::Init;
+  Link			*link_ = nullptr;
   StreamRef		control;
   StreamRef		enc;
   StreamRef		dec;
@@ -134,8 +123,6 @@ struct Cxn {
   bool			peerDecoder = false;
   QPackRxTable		qpackRxTable;
   QPackTxTable		qpackTxTable;
-  QPackStreamTx<Link, StreamRef> qpackEncoder;
-  QPackStreamTx<Link, StreamRef> qpackDecoder;
 };
 
 template <typename Impl, typename Cxn_>
@@ -154,6 +141,9 @@ struct CxnStream : public CxnParser<Impl> {
   bool peerDecoderStream() { return impl()->h3Cxn().peerDecoderStream(); }
   QPackRxTable *qpackRx() { return impl()->h3Cxn().qpackRx(); }
   QPackTxTable *qpackTx() { return impl()->h3Cxn().qpackTx(); }
+  bool qpackDecoderWrite(ZuBSpan span) {
+    return impl()->h3Cxn().qpackDecoderWrite(span);
+  }
 };
 
 template <typename Stream, typename Builder>
