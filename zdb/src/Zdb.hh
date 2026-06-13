@@ -152,9 +152,9 @@ struct Record_Print;
 // --- replication connection
 
 class Cxn_ :
-    public ZiConnection,
-    public ZiRx<Cxn_, RxBufAlloc>,
-    public ZiTx<Cxn_> {
+  public ZiConnection,
+  public ZiRx<Cxn_, RxBufAlloc>,
+  public ZiTx<Cxn_> {
 friend DB;
 friend Host;
 friend AnyTable;
@@ -212,8 +212,9 @@ struct DBState : public DBState_ {
   DBState(unsigned size) : DBState_{ZmHashParams{size}} { }
 
   DBState(const fbs::DBState *dbState) :
-      DBState_{ZmHashParams{dbState->tableStates()->size()}},
-      sn{ZfbTransform::UInt128::load(dbState->sn())} {
+    DBState_{ZmHashParams{dbState->tableStates()->size()}},
+    sn{ZfbTransform::UInt128::load(dbState->sn())}
+  {
     Zfb::Load::all(dbState->tableStates(),
 	[this](unsigned, const fbs::TableState *tableState) {
 	  add(Zfb::Load::str(tableState->table()), tableState->un());

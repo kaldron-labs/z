@@ -720,7 +720,8 @@ Zhttp::H3::QPackTxTable *QUICClient::Stream::qpackTx()
 template <typename Client>
 int run(
   ZiMultiplex &mx, const Options &options, URL url,
-  RequestResult *result = nullptr) {
+  RequestResult *result = nullptr)
+{
   Client client;
   client.state.url = ZuMv(url);
   client.state.options = options;
