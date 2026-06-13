@@ -475,7 +475,6 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zcmd/test/cmdtest.cc:15` - Top-level symbols: class CmdTest, struct Link, using Base, class CmdTest, function init, function wait
 - `zum/src/ZumServer.cc:53` - Top-level symbols: using Node, using Key, using RowKey, using Row, using KeyID, using Row
 - `zhttp/test/zhttptest.cc:13` - Top-level symbols: function out, define CHECK, using IOBufAlloc, using RxMsg_
-- `zhttp/test/zhttptestd.cc:1` - Top-level contents (no regex-matched symbols)
 - `zhttp/example/zhttp.cc:1` - Top-level contents for the zhttp client example
 - `zt/test/ZtRegexTest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zt/test/ZtStringHash.cc:1` - Top-level contents (no regex-matched symbols)

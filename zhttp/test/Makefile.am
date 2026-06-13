@@ -17,14 +17,13 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zhttptest zhttptestd \
+noinst_PROGRAMS = zhttptest \
 	ZhttpParserTest \
 	ZhttpHPackTest ZhttpQPackTest \
 	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
 	ZhttpAppTest ZhttpdTest ZhttpDarkhttpdCompatTest
 noinst_HEADERS = ZhttpCaddyInterop.hh ZhttpTestUtil.hh
 zhttptest_SOURCES = zhttptest.cc
-zhttptestd_SOURCES = zhttptestd.cc
 ZhttpParserTest_SOURCES = ZhttpParserTest.cc
 ZhttpHPackTest_SOURCES = ZhttpHPackTest.cc
 ZhttpQPackTest_SOURCES = ZhttpQPackTest.cc
