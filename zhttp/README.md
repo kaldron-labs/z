@@ -33,8 +33,15 @@ are immediately satisfiable. Non-zero blocked-stream buffering is not part of
 this profile. QPACK encoder and decoder stream bytes are consumed as ordered
 instruction sequences by the connection.
 
-Fallback-capable clients should try HTTP/3 when configured and fall back to
-HTTP/1.1 over TLS when HTTP/3 is unavailable or rejected by policy.
+For `http:` URLs, the example client always uses HTTP/1.1 over `Ztcp`; if a
+redirect moves the request to `https:`, HTTPS policy then applies. For `https:`
+URLs, fallback-capable clients should try DNS-advertised HTTP/3 first, then use
+HTTP/1.1 over TLS and follow Alt-Svc HTTP/3 upgrades, then remain on HTTP/1.1
+when HTTP/3 is unavailable or rejected by policy. `--http3` skips DNS and
+Alt-Svc probing and runs HTTP/3 over QUIC directly for `https:` requests.
+`-v`/`--verbose` shows DNS and Alt-Svc probing. IPv6, DoH, DoT, ECH,
+WebTransport, DATAGRAM, and QUIC v2 discovery remain out of scope for this
+resolver path.
 
 The example server is a static file server:
 
@@ -69,7 +76,7 @@ Useful client checks:
 ```sh
 zhttp -o body http://127.0.0.1:8080/
 zhttp -c cert.pem -o body https://localhost:8443/
-zhttp --http3-only -c cert.pem -o body https://localhost:8443/
+zhttp --http3 -c cert.pem -o body https://localhost:8443/
 ```
 
 Static-server options include directory indexes and listings, MIME overrides,

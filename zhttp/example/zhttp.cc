@@ -13,6 +13,7 @@
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiResolver.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtCLI.hh>
@@ -27,7 +28,7 @@ struct Options {
  ZuCSpan	output{"index.html"};
  ZuCSpan	url;
  bool		http3 = false;
- bool		http3Only = false;
+ bool		verbose = false;
  bool		help = false;
 };
 
@@ -35,7 +36,7 @@ ZtStruct((Options, CLI),
   (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
   (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
   (((http3),     (CLI::Flag<1>,   CLI::Long<"http3">)),      (Bool)),
-  (((http3Only), (CLI::Flag<2>,   CLI::Long<"http3-only">)), (Bool)),
+  (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool)),
   (((url),       (CLI::Arg<1>)),                             (String)),
   (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool)));
 
@@ -46,8 +47,8 @@ void usage(int code = 1)
     "Options:\n"
     "  -c, --ca=PATH       CA path for https:\n"
     "  -o, --output=PATH   response body output path\n"
-    "      --http3         try HTTP/3, fall back to HTTP/1.1\n"
-    "      --http3-only    force HTTP/3, do not fall back\n"
+    "      --http3         force HTTP/3 over QUIC for https:\n"
+    "  -v, --verbose       show DNS and Alt-Svc probing\n"
     "  -h, --help          show help\n" << std::flush;
   ::exit(code);
 }
@@ -83,7 +84,6 @@ constexpr uint64_t H3DataMax = 100<<20;
 constexpr uint64_t H3StreamDataMax = 16<<20;
 constexpr uint64_t H3BidiMax = 16;
 constexpr uint64_t H3UniMax = 16;
-constexpr unsigned DNSMaxIPs = 8;
 
 using H3CxnState = Zhttp::H3::CxnState;
 
@@ -794,27 +794,31 @@ ZiMxParams mxParams()
     .rxThread(1).txThread(2);
 }
 
-bool resolveForQUIC(const URL &url)
+bool resolveH3(const URL &url, ZiResolver::H3Policy policy)
 {
-  ZiIP ips[DNSMaxIPs];
+  ZiResolver::H3Endpoint eps[ZiResolver::H3MaxIPs];
   unsigned n = 0;
+  bool advertised = false;
   ZeError e;
-  int rc = Zi::resolve(url.dnsHost,
-    ZmFn<bool(ZiIP)>{[&ips, &n](ZiIP ip) {
+  int rc = ZiResolver::http3(url.dnsHost, url.dnsHost, url.port, policy,
+    ZmFn<bool(const ZiResolver::H3Endpoint &)>{[&](const auto &ep) {
       for (unsigned i = 0; i < n; ++i)
-	if (ips[i] == ip) return true;
-      if (n < DNSMaxIPs) ips[n++] = ip;
-      return n < DNSMaxIPs;
+	if (eps[i].ip == ep.ip && eps[i].port == ep.port) return true;
+      advertised |= ep.fromHTTPS;
+      if (n < ZiResolver::H3MaxIPs) eps[n++] = ep;
+      return n < ZiResolver::H3MaxIPs;
     }}, &e);
   if (rc != Zi::OK || !n) {
-    ZiLOG(Error, "zhttp", ([&url](auto &s) {
-      s << "DNS resolution failed for " << url.host;
+    ZiLOG(Info, "zhttp", ([&url](auto &s) {
+      s << "DNS did not advertise HTTP/3 for " << url.host;
     }));
     return false;
   }
-  ZiLOG(Info, "zhttp", ([&url, &ips, n](auto &s) {
-    s << "DNS: " << url.host << " resolved to";
-    for (unsigned i = 0; i < n; ++i) s << ' ' << ips[i];
+  ZiLOG(Info, "zhttp", ([&url, &eps, n, advertised](auto &s) {
+    s << "DNS: " << url.host <<
+      (advertised ? " advertised HTTP/3 at" : " blind HTTP/3 probe at");
+    for (unsigned i = 0; i < n; ++i)
+      s << ' ' << eps[i].ip << ':' << ZuBoxed(eps[i].port);
   }));
   return true;
 }
@@ -827,16 +831,14 @@ URL altSvcURL(const URL &url, const AltSvcEndpoint &altSvc)
   return h3URL;
 }
 
-int runH3DNSFirst(
+int runH3Direct(
   ZiMultiplex &mx, const Options &options, const URL &url,
-  RequestResult &result, bool fallback)
+  RequestResult &result)
 {
-  URL h1URL = url;
-  int rc = resolveForQUIC(url) ?
-    run<QUICClient>(mx, options, url, &result) : 1;
-  if (rc && fallback)
-    rc = run<TLSClient>(mx, options, ZuMv(h1URL), &result);
-  return rc;
+  ZiLOG(Info, "zhttp", ([&url](auto &s) {
+    s << "HTTP/3 direct: " << url.host << ':' << ZuBoxed(url.port);
+  }));
+  return run<QUICClient>(mx, options, url, &result);
 }
 
 int runH1AltSvcFirst(
@@ -848,8 +850,11 @@ int runH1AltSvcFirst(
 
   RequestResult h3Result;
   URL h3URL = altSvcURL(url, result.altSvc);
-  int h3rc = resolveForQUIC(h3URL) ?
-    run<QUICClient>(mx, options, ZuMv(h3URL), &h3Result) : 1;
+  ZiLOG(Info, "zhttp", ([&h3URL](auto &s) {
+    s << "Alt-Svc HTTP/3 probe: " << h3URL.host << ':' <<
+      ZuBoxed(h3URL.port);
+  }));
+  int h3rc = run<QUICClient>(mx, options, ZuMv(h3URL), &h3Result);
   if (!h3rc) {
     result = ZuMv(h3Result);
     return 0;
@@ -858,6 +863,21 @@ int runH1AltSvcFirst(
   // Restore output if a failed H3 upgrade wrote a partial body.
   result = {};
   return run<TLSClient>(mx, options, url, &result);
+}
+
+int runH3DNSAltSvcFallback(
+  ZiMultiplex &mx, const Options &options, const URL &url,
+  RequestResult &result)
+{
+  RequestResult h3Result;
+  if (resolveH3(url, ZiResolver::H3Policy::DNSOnly) &&
+      !run<QUICClient>(mx, options, url, &h3Result)) {
+    result = ZuMv(h3Result);
+    return 0;
+  }
+
+  result = {};
+  return runH1AltSvcFirst(mx, options, url, result);
 }
 
 int main(int argc, char **argv)
@@ -873,10 +893,9 @@ int main(int argc, char **argv)
     ZiLogEvent(ZuMv(error));
     usage();
   }
-  if (options.http3Only) options.http3 = true;
 
   ZiLog::init("zhttp");
-  ZiLog::level(0);
+  ZiLog::level(options.verbose ? Ze::Info : Ze::Warning);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
@@ -892,9 +911,9 @@ int main(int argc, char **argv)
     if (url.scheme == "http")
       rc = run<TCPClient>(mx, options, url, &result);
     else if (options.http3)
-      rc = runH3DNSFirst(mx, options, url, result, !options.http3Only);
+      rc = runH3Direct(mx, options, url, result);
     else
-      rc = runH1AltSvcFirst(mx, options, url, result);
+      rc = runH3DNSAltSvcFallback(mx, options, url, result);
 
     if (rc || !redirectStatus(result.status) || !result.location) break;
     URL next;
