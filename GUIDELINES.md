@@ -34,6 +34,8 @@ These guidelines extend `AGENTS.md`
   - do not disdain "Hacker's Delight" style
 - expert coding style
   - code for veteran engineers who are expert in the language and steeped in its conventions
+  - use idiomatic, natural and maximally expressive code:
+  - prefer brevity, expressiveness and often-used idiomatic expressions of the programming language to readability
 - use C++ advanced techniques, but where C and C++ have the same feature, use the C feature
   - example: `#include <string.h>`, not `<cstring>`
   - except where C99 conflicts, then use gnu++2b C++
