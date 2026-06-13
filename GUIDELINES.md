@@ -78,6 +78,15 @@ These guidelines extend `AGENTS.md`
   - prefer callbacks with stack-allocated scratch temporaries (using `ZtLocalArray` and other such) to heap-allocated context
   - ensure `ZmHeap`-optimized buffer management and queue node management
   - I/O buffers are an exception to the usual "prefer stack over heap" - see below
+- copying of string/byte data to/from temporaries
+  - this is legitimate to achieve a contiguous span in:
+    - stack-allocated scratch buffers which will be passed to CRTP callbacks
+    - long-lived heap memory which needs to be retained in the program state
+  - this is not legitimate in almost all other cases, including encoding/decoding and encryption/decryption
+    - encoding/decoding and encryption/decryption should be done in place using mutable buffers if possible, unless
+    - encoding/decoding/encrypting/decrypting to a destination that is uninitialized storage elides copying to that destination
+- unnecessary default- or zero-initialization
+  - if memory is going to be overwritten immediately, use uninitialized storage
 - algorithmic inefficiencies
 - performance, latency or throughput impairments
 - ineffective use of Z Framework
