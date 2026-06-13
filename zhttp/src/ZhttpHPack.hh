@@ -9,10 +9,6 @@
 #ifndef ZhttpHPack_HH
 #define ZhttpHPack_HH
 
-#ifndef ZhttpQPackTypes_HH
-#include <zlib/ZhttpQPackTypes.hh>
-#endif
-
 #include <zlib/ZuBitStream.hh>
 
 namespace Zhttp { namespace H3 {

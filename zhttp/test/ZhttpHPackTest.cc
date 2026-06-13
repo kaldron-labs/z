@@ -5,16 +5,19 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZtArray.hh>
 #include <zlib/ZhttpHPack.hh>
 
 using namespace ZuTestUtil;
+
+using HdrBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HPackTest.Bytes">>;
 
 static ZuCSpan bytes_(const uint8_t *data, unsigned length)
 {
   return ZuCSpan{reinterpret_cast<const char *>(data), length};
 }
 
-static ZuCSpan bytes_(const Zhttp::H3::HeaderBytes &data)
+static ZuCSpan bytes_(const HdrBytes &data)
 {
   return bytes_(data.data(), data.length());
 }
@@ -27,7 +30,7 @@ static ZuBSpan bspan_(ZuCSpan data)
 
 static bool encodeEq_(ZuCSpan in, const uint8_t *expected, unsigned n)
 {
-  Zhttp::H3::HeaderBytes encoded;
+  HdrBytes encoded;
   encoded.length(Zhttp::H3::HPack::enclen(in.length()));
   uint64_t used = Zhttp::H3::HPack::encode(
     ZuSpan<uint8_t>{encoded.data(), encoded.length()}, bspan_(in));
@@ -38,10 +41,10 @@ static bool encodeEq_(ZuCSpan in, const uint8_t *expected, unsigned n)
 
 static bool decodeEq_(const uint8_t *in, unsigned n, ZuCSpan expected)
 {
-  Zhttp::H3::HeaderBytes decoded;
+  HdrBytes decoded;
   decoded.length(Zhttp::H3::HPack::declen(n));
   int64_t used = Zhttp::H3::HPack::decode(
-    ZuSpan<uint8_t>{decoded.data(), decoded.length()}, ZuBSpan{in, n});
+    decoded.span(), ZuBSpan{in, n});
   decoded.length(used < 0 ? 0 : uint64_t(used));
   return used == int64_t(expected.length()) &&
     bytes_(decoded) == expected;
@@ -49,15 +52,15 @@ static bool decodeEq_(const uint8_t *in, unsigned n, ZuCSpan expected)
 
 static bool roundTrip_(ZuCSpan in)
 {
-  Zhttp::H3::HeaderBytes encoded;
-  Zhttp::H3::HeaderBytes decoded;
+  HdrBytes encoded;
+  HdrBytes decoded;
   encoded.length(Zhttp::H3::HPack::enclen(in.length()));
   uint64_t encodedLen = Zhttp::H3::HPack::encode(
     ZuSpan<uint8_t>{encoded.data(), encoded.length()}, bspan_(in));
   encoded.length(encodedLen);
   decoded.length(Zhttp::H3::HPack::declen(encoded.length()));
   int64_t decodedLen = Zhttp::H3::HPack::decode(
-    ZuSpan<uint8_t>{decoded.data(), decoded.length()},
+    decoded.span(),
     ZuBSpan{encoded.data(), encoded.length()});
   decoded.length(decodedLen < 0 ? 0 : uint64_t(decodedLen));
   return decodedLen == int64_t(in.length()) &&
@@ -181,40 +184,40 @@ void testHPackHuffmanMalformed()
 {
   ZuTestScope(testHPackHuffmanMalformed);
 
-  Zhttp::H3::HeaderBytes decoded;
+  HdrBytes decoded;
 
   uint8_t eosBadPad[] = { 0xff, 0xff, 0xff, 0xfc };
   decoded.length(Zhttp::H3::HPack::declen(sizeof(eosBadPad)));
   ZuCHECK(Zhttp::H3::HPack::decode(
-      ZuSpan<uint8_t>{decoded.data(), decoded.length()},
+      decoded.span(),
       ZuBSpan{eosBadPad, sizeof(eosBadPad)}) < 0,
     "HPACK Huffman accepted EOS symbol");
 
   uint8_t eosGoodPad[] = { 0xff, 0xff, 0xff, 0xff };
   decoded.length(Zhttp::H3::HPack::declen(sizeof(eosGoodPad)));
   ZuCHECK(Zhttp::H3::HPack::decode(
-      ZuSpan<uint8_t>{decoded.data(), decoded.length()},
+      decoded.span(),
       ZuBSpan{eosGoodPad, sizeof(eosGoodPad)}) < 0,
     "HPACK Huffman accepted EOS symbol with valid-looking padding");
 
   uint8_t overlongPadding[] = { 0xff };
   decoded.length(Zhttp::H3::HPack::declen(sizeof(overlongPadding)));
   ZuCHECK(Zhttp::H3::HPack::decode(
-      ZuSpan<uint8_t>{decoded.data(), decoded.length()},
+      decoded.span(),
       ZuBSpan{overlongPadding, sizeof(overlongPadding)}) < 0,
     "HPACK Huffman accepted overlong padding");
 
   uint8_t badPadding[] = { 0x00 };
   decoded.length(Zhttp::H3::HPack::declen(sizeof(badPadding)));
   ZuCHECK(Zhttp::H3::HPack::decode(
-      ZuSpan<uint8_t>{decoded.data(), decoded.length()},
+      decoded.span(),
       ZuBSpan{badPadding, sizeof(badPadding)}) < 0,
     "HPACK Huffman accepted zero padding");
 
   uint8_t truncatedLong[] = { 0xff, 0xfe };
   decoded.length(Zhttp::H3::HPack::declen(sizeof(truncatedLong)));
   ZuCHECK(Zhttp::H3::HPack::decode(
-      ZuSpan<uint8_t>{decoded.data(), decoded.length()},
+      decoded.span(),
       ZuBSpan{truncatedLong, sizeof(truncatedLong)}) < 0,
     "HPACK Huffman accepted truncated long symbol");
 }

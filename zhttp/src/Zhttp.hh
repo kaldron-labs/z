@@ -14,8 +14,9 @@
 #ifndef Zhttp_HH
 #define Zhttp_HH
 
+#ifndef ZhttpLib_HH
 #include <zlib/ZhttpLib.hh>
-#include <zlib/ZhttpQPack.hh>
+#endif
 
 #include <zlib/ZuString.hh>
 #include <zlib/ZuTL.hh>
@@ -28,6 +29,10 @@
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiTxStream.hh>
+
+#include <zlib/ZhttpUtil.hh>
+#include <zlib/ZhttpHPack.hh>
+#include <zlib/ZhttpQPack.hh>
 
 // Headers typelist definition, e.g.
 // - keys (variable values):
@@ -68,184 +73,7 @@ namespace XferCompression {
   ZtEnum(XferCompression, int8_t, compress, deflate, gzip);
 }
 
-// HTTP message parser
-
-// hard-coded linear white space (ASCII/UTF8)
-ZuInline constexpr bool islws(uint8_t c) {
-  return c == '\t' || c == ' ';
-}
-
-// hard-coded Boyer-Moore to find end of header "\r\n\r\n"
-ZuInline int eoh(ZuBSpan data) {
-  unsigned n = data.length();
-
-  if (ZuUnlikely(n < 4)) return -1;
-  n -= 4;
-
-  int j;
-  uint8_t c;
-
-  for (unsigned o = 0; o <= n; ) {
-    j = 3;
-    while (j >= 0 && ((j & 1) ? '\n' : '\r') == (c = data[o + j])) j--;
-    if (j < 0) return o + 4;
-    j -= (c == '\r' ? 2 : c == '\n' ? 3 : -1);
-    o += j < 1 ? 1 : j;
-  }
-  return -1;
-}
-
-// hard-coded Boyer-Moore to find end of line "\r\n[^\t ]" or "\r\n"
-template <bool CanFold = true> // set to false to just match "\r\n"
-ZuInline int eol(ZuBSpan data) {
-  unsigned n = data.length();
-
-  if (ZuUnlikely(n < 2)) return -1;
-  n -= 2;
-
-  uint8_t c;
-
-  for (unsigned o = 0; o <= n; ) {
-    if (ZuLikely(o < n)) {
-      c = data[o + 2];
-      if constexpr (CanFold)
-	if (c == '\t' || c == ' ') { o += 3; continue; }
-    }
-    if (data[o + 1] != '\n') { ++o; continue; }
-    if (data[o] == '\r') return o;
-    o += 2;
-  }
-  return -1;
-}
-
-// find end of key ':'
-// - uses memchr to leverage any available performance advantage
-ZuInline int eok(ZuBSpan data) {
-  auto p = static_cast<const uint8_t *>(memchr(&data[0], ':', data.length()));
-  if (!p) return -1;
-  return p - &data[0];
-}
-
-// skip leading linear white space to find beginning of header value
-ZuInline int bov(ZuBSpan data) {
-  for (unsigned o = 0, n = data.length(); o < n; ++o)
-    if (!islws(data[o])) return o;
-  return -1;
-}
-
-// remove trailing linear white space to find end of header value
-ZuInline int eov(ZuBSpan data) {
-  for (int o = data.length(); --o >= 0; )
-    if (!islws(data[o])) return o + 1;
-  return -1;
-}
-
-// split and iterate over HTTP value delimited by \s+,\s+
-// - strips leading/trailing white space
-// - single-pass, no back-tracking
-// - optional alternate delimiter character (';' is also frequently used)
-template <uint8_t Delim = ',', typename L>
-inline void split(ZuBSpan data, L &&l) {
-  unsigned count = 0;
-  int begin, end;
-  unsigned o = 0, n = data.length();
-
-  for (;;) {
-    // skip leading linear white space
-    for (; o < n; ++o) if (!islws(data[o])) break;
-    begin = o; end = -1;
-    // find delimiter or end of string, remembering last non-white-space
-    for (; o < n; ++o) {
-      auto c = data[o];
-      if (c == Delim) break;
-      if (end < 0 ) {
-	if (islws(c)) end = o;
-      } else {
-	if (!islws(c)) end = -1;
-      }
-    }
-    if (end < 0) end = o;
-    if (ZuLikely(end > begin || count || o < n))
-      if (!l(count++, ZuBSpan(&data[begin], unsigned(end - begin))))
-	break;
-    if (o >= n) break;
-    // skip trailing linear white space
-    while (++o < n) if (!islws(data[o])) break;
-  }
-}
-
-// normalize key case to be consistent (mutates key in place)
-// - ZuMatcher needs consistent casing for efficient key matching
-inline void normalize(ZuSpan<uint8_t> key) {
-  unsigned n = key.length();
-  int c; // intentionally int
-
-  for (unsigned o = 0; o < n; o++) {
-    c = key[o];
-    if (c >= 'A' && c <= 'Z') key[o] = c + 'a' - 'A';
-  }
-}
-
-// CRLF framing
-template <bool CanFold = true>
-inline auto crlf() {
-  return [prevCR = false](ZuBSpan span) mutable -> int64_t {
-    if (prevCR && span[0] == '\n') return 1;
-    if (int consumed = eol<CanFold>(span); consumed >= 0)
-      return consumed + 2;
-    prevCR = span[span.length() - 1] == '\r';
-    return 0;
-  };
-}
-
-// calls line(span)
-// - CanFold should be false for the start line
-// - span is empty for the last line before the body
-template <bool CanFold = true, typename Stream, typename Line>
-inline int64_t parseLine(Stream &stream, Line &&line) {
-  return stream.template consume<2, "Zhttp.Header">(
-    crlf<CanFold>(), ZuFwd<Line>(line));
-}
-
-// parses a key and value from a line
-// - calls kv(key, value)
-template <typename KV>
-inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
-  int n = eok(line);
-  if (ZuUnlikely(n < 0)) return false;
-  ZuSpan key(&line[0], unsigned(n));
-  line.offset(n + 1); // skip key and delimiter
-  n = bov(line);
-  if (n < 0)
-    line.trunc(0);
-  else
-    line.offset(n); // skip white space
-  ZuSpan value{line.data(), line.length()};
-  if (value) {
-    n = eov(value);
-    if (ZuUnlikely(n < 0)) return false; // should never happen
-    value.trunc(n);
-  }
-  normalize(key);
-  kv(key, value);
-  return true;
-}
-
-inline bool parseUInt64Full_(ZuBSpan value, uint64_t &out) {
-  ZuBox<uint64_t> box;
-  unsigned n = box.scan(ZuCSpan{value});
-  if (ZuUnlikely(!n || n != value.length())) return false;
-  uint64_t v = 0;
-  for (unsigned i = 0; i < value.length(); ++i) {
-    int c = value[i];
-    if (ZuUnlikely(c < '0' || c > '9')) return false;
-    c -= '0';
-    if (ZuUnlikely(v > (uint64_t(-1) - unsigned(c)) / 10)) return false;
-    v = (v * 10) + unsigned(c);
-  }
-  out = v;
-  return true;
-}
+// HTTP Parser
 
 // CRTP - implementation must conform to the following interface:
 #if 0
@@ -596,21 +424,6 @@ namespace H1 {
 
 } // H1
 
-// QPack static table compile-time lookup definition
-#define Zhttp_QPack_1(Key) \
-  ZuTypeList<ZuStringT<Key>, void>
-#define Zhttp_QPack_2(Key, Value) \
-  ZuTypeList<ZuStringT<Key>, ZuStringT<Value>>
-#define Zhttp_QPack_N(_0, _1, Fn, ...) Fn
-#define Zhttp_QPack_(...) \
-  Zhttp_QPack_N(__VA_ARGS__, \
-    Zhttp_QPack_2, \
-    Zhttp_QPack_1)(__VA_ARGS__)
-#define Zhttp_QPack(KV) \
-  ZuPP_Defer(Zhttp_QPack_)(ZuPP_Strip(KV))
-#define ZhttpQPackTbl(...) \
-  ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(Zhttp_QPack,  __VA_ARGS__))>
-
 namespace H3 {
 
   // HTTP/3 connection state
@@ -626,150 +439,6 @@ namespace H3 {
       Draining,
       Error);
   };
-
-  // QPACK static table
-  using QPackTbl = ZhttpQPackTbl(
-    (":authority"),
-    (":path", "/"),
-    ("age", "0"),
-    ("content-disposition"),
-    ("content-length", "0"),
-    ("cookie"),
-    ("date"),
-    ("etag"),
-    ("if-modified-since"),
-    ("if-none-match"),
-    ("last-modified"),
-    ("link"),
-    ("location"),
-    ("referer"),
-    ("set-cookie"),
-    (":method", "CONNECT"),
-    (":method", "DELETE"),
-    (":method", "GET"),
-    (":method", "HEAD"),
-    (":method", "OPTIONS"),
-    (":method", "POST"),
-    (":method", "PUT"),
-    (":scheme", "http"),
-    (":scheme", "https"),
-    (":status", "103"),
-    (":status", "200"),
-    (":status", "304"),
-    (":status", "404"),
-    (":status", "503"),
-    ("accept", "*/*"),
-    ("accept", "application/dns-message"),
-    ("accept-encoding", "gzip, deflate, br"),
-    ("accept-ranges", "bytes"),
-    ("access-control-allow-headers", "cache-control"),
-    ("access-control-allow-headers", "content-type"),
-    ("access-control-allow-origin", "*"),
-    ("cache-control", "max-age=0"),
-    ("cache-control", "max-age=2592000"),
-    ("cache-control", "max-age=604800"),
-    ("cache-control", "no-cache"),
-    ("cache-control", "no-store"),
-    ("cache-control", "public, max-age=31536000"),
-    ("content-encoding", "br"),
-    ("content-encoding", "gzip"),
-    ("content-type", "application/dns-message"),
-    ("content-type", "application/javascript"),
-    ("content-type", "application/json"),
-    ("content-type", "application/x-www-form-urlencoded"),
-    ("content-type", "image/gif"),
-    ("content-type", "image/jpeg"),
-    ("content-type", "image/png"),
-    ("content-type", "text/css"),
-    ("content-type", "text/html; charset=utf-8"),
-    ("content-type", "text/plain"),
-    ("content-type", "text/plain;charset=utf-8"),
-    ("range", "bytes=0-"),
-    ("strict-transport-security", "max-age=31536000"),
-    ("strict-transport-security", "max-age=31536000; includesubdomains"),
-    ("strict-transport-security", "max-age=31536000; includesubdomains; preload"),
-    ("vary", "accept-encoding"),
-    ("vary", "origin"),
-    ("x-content-type-options", "nosniff"),
-    ("x-xss-protection", "1; mode=block"),
-    (":status", "100"),
-    (":status", "204"),
-    (":status", "206"),
-    (":status", "302"),
-    (":status", "400"),
-    (":status", "403"),
-    (":status", "421"),
-    (":status", "425"),
-    (":status", "500"),
-    ("accept-language"),
-    ("access-control-allow-credentials", "FALSE"),
-    ("access-control-allow-credentials", "TRUE"),
-    ("access-control-allow-headers", "*"),
-    ("access-control-allow-methods", "get"),
-    ("access-control-allow-methods", "get, post, options"),
-    ("access-control-allow-methods", "options"),
-    ("access-control-expose-headers", "content-length"),
-    ("access-control-request-headers", "content-type"),
-    ("access-control-request-method", "get"),
-    ("access-control-request-method", "post"),
-    ("alt-svc", "clear"),
-    ("authorization"),
-    ("content-security-policy", "script-src 'none'; object-src 'none'; base-uri 'none'"),
-    ("early-data", "1"),
-    ("expect-ct"),
-    ("forwarded"),
-    ("if-range"),
-    ("origin"),
-    ("purpose", "prefetch"),
-    ("server"),
-    ("timing-allow-origin", "*"),
-    ("upgrade-insecure-requests", "1"),
-    ("user-agent"),
-    ("x-forwarded-for"),
-    ("x-frame-options", "deny"),
-    ("x-frame-options", "sameorigin"));
-
-  // evaluates QPACK static table index I given <Key, Value>
-  // - use <Key, void> for entries which are Key only
-  // - evaluates to -1 if <Key, Value> are not in table
-  template <typename Key, typename Value,
-    bool = ZuTypeIn<ZuTypeList<Key, Value>, QPackTbl>{}>
-  struct QPackIndex_ {
-    using T = ZuInt<-1>;
-  };
-  template <typename Key, typename Value>
-  struct QPackIndex_<Key, Value, true> {
-    using T = ZuTypeIndex<ZuTypeList<Key, Value>, QPackTbl>;
-  };
-  template <typename Key, typename Value>
-  using QPackIndex = typename QPackIndex_<Key, Value>::T;
-
-  template <ZuString Key, ZuString Value>
-  using QPackKVIndex = QPackIndex<ZuStringT<Key>, ZuStringT<Value>>;
-  template <typename KV>
-  using QPackKey = ZuType<0, KV>;
-  using QPackKeys = ZuTypeMap<QPackKey, QPackTbl>;
-  template <typename Key, bool = ZuTypeIn<Key, QPackKeys>{}>
-  struct QPackKeyIndex_ {
-    using T = ZuInt<-1>;
-  };
-  template <typename Key>
-  struct QPackKeyIndex_<Key, true> {
-    using T = ZuTypeIndex<Key, QPackKeys>;
-  };
-  template <ZuString Key>
-  using QPackKeyIndex = typename QPackKeyIndex_<ZuStringT<Key>>::T;
-
-  // evaluates QPACK static table key, value given an index I
-  // - undefined if I is out of range
-  template <unsigned I>
-  using QPackKV = ZuType<I, QPackTbl>;
-  template <typename KV, bool = (KV::N > 1)>
-  struct QPackValue_ { using T = void; };
-  template <typename KV>
-  struct QPackValue_<KV, true> { using T = ZuType<1, KV>; };
-  template <typename KV>
-  using QPackValue = typename QPackValue_<KV>::T;
 
   struct ParserState {
     ZtEnum(ParserState, int8_t,
@@ -828,18 +497,18 @@ namespace H3 {
     using StreamState = CxnStreamState;
 
   private:
-    bool applyEncoderInstruction_(const QPackDecodedInstruction &i) {
+    bool applyEncoderInstruction_(const QPackDecodedInsn &i) {
       auto rx = impl()->qpackRx();
-      if (!rx) return i.type == QPackInstruction::SetCapacity && !i.value;
-      if (i.type == QPackInstruction::SetCapacity) {
+      if (!rx) return i.type == QPackInsn::SetCapacity && !i.value;
+      if (i.type == QPackInsn::SetCapacity) {
 	if (i.value > uint32_t(-1)) return false;
 	return rx->setCapacity(uint32_t(i.value));
       }
-      if (i.type == QPackInstruction::InsertWithoutNameRef)
+      if (i.type == QPackInsn::InsertWithoutNameRef)
 	return rx->insert(i.header);
-      if (i.type == QPackInstruction::Duplicate)
+      if (i.type == QPackInsn::Duplicate)
 	return rx->duplicate(i.value);
-      if (i.type != QPackInstruction::InsertWithNameRef) return false;
+      if (i.type != QPackInsn::InsertWithNameRef) return false;
       HeaderName name;
       if (i.nameRefDynamic) {
 	Header h;
@@ -849,14 +518,14 @@ namespace H3 {
 	return false;
       return rx->insert(Header{name, i.header.value});
     }
-    bool applyDecoderInstruction_(const QPackDecodedInstruction &i) {
+    bool applyDecoderInstruction_(const QPackDecodedInsn &i) {
       auto tx = impl()->qpackTx();
       if (!tx) return true;
-      if (i.type == QPackInstruction::SectionAck)
+      if (i.type == QPackInsn::SectionAck)
 	return tx->sectionAck(i.value);
-      if (i.type == QPackInstruction::StreamCancellation)
+      if (i.type == QPackInsn::StreamCancellation)
 	return tx->streamCancellation(i.value);
-      if (i.type == QPackInstruction::InsertCountIncrement)
+      if (i.type == QPackInsn::InsertCountIncrement)
 	return tx->insertCountIncrement(i.value);
       return false;
     }
@@ -1073,10 +742,10 @@ namespace H3 {
 	      [](ZuBSpan span) -> int64_t { return span.length(); },
 	      [this](ZuBSpan span) {
 		if (!this->parseQPack_(m_qpackEncoderParser, span,
-		    [](ZuCSpan bytes, QPackDecodedInstruction &i) {
-		      return QPack::decodeEncoderInstructionOne(bytes, i);
+		    [](ZuCSpan bytes, QPackDecodedInsn &i) {
+		      return QPack::decodeEncoderInsnOne(bytes, i);
 		    },
-		    [this](const QPackDecodedInstruction &i) {
+		    [this](const QPackDecodedInsn &i) {
 		      return this->applyEncoderInstruction_(i);
 		    }))
 		  m_streamState = StreamState::Error;
@@ -1087,10 +756,10 @@ namespace H3 {
 	      [](ZuBSpan span) -> int64_t { return span.length(); },
 	      [this](ZuBSpan span) {
 		if (!this->parseQPack_(m_qpackDecoderParser, span,
-		    [](ZuCSpan bytes, QPackDecodedInstruction &i) {
-		      return QPack::decodeDecoderInstructionOne(bytes, i);
+		    [](ZuCSpan bytes, QPackDecodedInsn &i) {
+		      return QPack::decodeDecoderInsnOne(bytes, i);
 		    },
-		    [this](const QPackDecodedInstruction &i) {
+		    [this](const QPackDecodedInsn &i) {
 		      return this->applyDecoderInstruction_(i);
 		    }))
 		  m_streamState = StreamState::Error;
@@ -1249,7 +918,7 @@ namespace H3 {
       uint64_t decodedMax = HPack::declen(ref.raw.length());
       if (ZuUnlikely(decodedMax > impl()->h3Params().maxHeaderListSize()))
 	return false;
-      auto storage = ZtLocalArray(HeaderBytes, decodedMax);
+      auto storage = ZtLocalArray(HdrBytes, decodedMax);
       int64_t n = HPack::decode(
 	ZuSpan<uint8_t>{storage.data(), unsigned(decodedMax)},
 	ZuBSpan{
@@ -1324,7 +993,7 @@ namespace H3 {
       }
       return withString_(valueRef, [this, name](ZuCSpan value) {
 	unsigned n = name.length();
-	auto key_ = ZtLocalArray(HeaderBytes, n, n > 256 ? n : 256);
+	auto key_ = ZtLocalArray(HdrBytes, n, n > 256 ? n : 256);
 	ZuSpan key{key_.data(), name.length()};
 	memcpy(key.data(), name.data(), name.length());
 	normalize(key);
@@ -1401,7 +1070,7 @@ namespace H3 {
       if (prefix.requiredInsertCount && !rx) return false;
       if (prefix.requiredInsertCount)
 	if (auto tx = impl()->qpackDecoderTx()) {
-	  HeaderBytes ack;
+	  HdrBytes ack;
 	  if (QPack::encodeSectionAck(ack, impl()->streamID()) < 0) return false;
 	  if (!tx->write(ZuBSpan{ack})) return false;
 	}
@@ -2323,7 +1992,7 @@ namespace H3 {
 	ZiLOG(Error, "Zhttp", "failed to plan H3 headers");
 	return;
       }
-      auto prefix = ZtLocalArray(HeaderBytes, PrefixBuiltin);
+      auto prefix = ZtLocalArray(HdrBytes, PrefixBuiltin);
       FieldSectionPrefix p;
       p.requiredInsertCount = plan.required;
       p.base = plan.required ? plan.base : 0;
@@ -2341,7 +2010,7 @@ namespace H3 {
 	  ZiLOG(Error, "Zhttp", "missing H3 QPACK encoder stream");
 	  return;
 	}
-	auto scratch = ZtLocalArray(HeaderBytes, EncoderScratchBuiltin);
+	auto scratch = ZtLocalArray(HdrBytes, EncoderScratchBuiltin);
 	if (plan.sendCapacity) {
 	  if (QPack::encodeSetCapacity(scratch, plan.plannedCapacity) < 0) {
 	    impl()->qpackFailure(QPackBuildFailure::CapacityPolicy);

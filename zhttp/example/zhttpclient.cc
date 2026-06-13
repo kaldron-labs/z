@@ -76,11 +76,13 @@ namespace Protocol {
 constexpr unsigned ClientTimeout = 10;
 constexpr unsigned MaxRedirects = 8;
 
+using H3CxnState = Zhttp::H3::CxnState;
+
 struct State {
   URL		url;
   Options	options;
   Protocol::T	protocol = Protocol::H1;
-  Zhttp::H3::CxnState::T h3State = Zhttp::H3::CxnState::Init;
+  H3CxnState::T h3State = Zhttp::H3::CxnState::Init;
   ZtString<>	altSvcHost;
   uint16_t	altSvcPort = 0;
   ZtString<>	location;
@@ -338,30 +340,20 @@ void sendH1Request(State &state, StreamRef stream)
   H1RequestBuilder builder{state};
   builder.request(tx);
   builder.finish(tx);
-  tx << Zi::flush();
+  tx << Zi::flush(); // FIXME - doesn't builder.finish() do this?
 }
 
 template <typename StreamRef>
 void sendH3Request(State &state, StreamRef stream)
 {
-  using Scratch = ZtArray<char, ZtArrayHeapID<"ZhttpClient.H3Request">>;
-  struct Tx {
-    void operator <<(char c) { bytes->push(c); }
-    void operator <<(ZuBSpan span) {
-      for (unsigned i = 0; i < span.length(); ++i) bytes->push(char(span[i]));
-    }
-    void flush() { }
-    Scratch	*bytes = nullptr;
-  };
-  auto bytes = ZtLocalArray(Scratch, 2048);
-  Tx tx{&bytes};
+  auto tx = stream->txStream();
   H3RequestBuilder builder{state};
   builder.qpackTx_ = &stream->link()->qpackTxTable;
   builder.qpackEncoderTx_ = &stream->link()->qpackEncoder;
   builder.streamID_ = uint64_t(stream->id());
   builder.request(tx);
   builder.finish(tx);
-  stream->link()->send(stream, bytes, true);
+  stream->link()->send(stream, {}, true);
 }
 
 void logFraming(State &state)
@@ -569,8 +561,8 @@ bool openH3LocalStreams(Link &link, State &state)
     if (Zhttp::H3::putVar(out, 0x03) < 0) return false;
     tx.flush();
   }
-  state.h3State = Zhttp::H3::CxnState::LocalControlOpen;
-  state.h3State = Zhttp::H3::CxnState::Ready;
+  state.h3State = H3CxnState::LocalControlOpen;
+  state.h3State = H3CxnState::Ready;
   return true;
 }
 
@@ -704,8 +696,8 @@ struct QUICClient::Stream :
   using Base::Base;
 
   int process(Zquic::RxStream &);
-  Zhttp::H3::CxnState::T h3State() const;
-  void h3State(Zhttp::H3::CxnState::T);
+  H3CxnState::T h3State() const;
+  void h3State(H3CxnState::T);
   bool peerControlStream();
   bool peerEncoderStream();
   bool peerDecoderStream();
@@ -727,7 +719,7 @@ int QUICClient::Stream::process(Zquic::RxStream &)
 {
   if (Zquic::StreamID::uni(uint64_t(this->id()))) {
     auto s = this->CxnParser::process(*this);
-    if (s == Zhttp::H3::CxnState::Error) {
+    if (s == H3CxnState::Error) {
       this->link()->app()->done();
       return -1;
     }
@@ -737,12 +729,12 @@ int QUICClient::Stream::process(Zquic::RxStream &)
   return this->link()->process(*this);
 }
 
-Zhttp::H3::CxnState::T QUICClient::Stream::h3State() const
+H3CxnState::T QUICClient::Stream::h3State() const
 {
   return this->link()->app()->state.h3State;
 }
 
-void QUICClient::Stream::h3State(Zhttp::H3::CxnState::T state)
+void QUICClient::Stream::h3State(H3CxnState::T state)
 {
   this->link()->app()->state.h3State = state;
 }
