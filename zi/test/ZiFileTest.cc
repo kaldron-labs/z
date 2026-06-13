@@ -23,6 +23,8 @@ Zi::Path g_baz;
 Zi::Path g_copy;
 Zi::Path g_renamed;
 Zi::Path g_dir;
+Zi::Path g_child;
+Zi::Path g_link;
 
 void initPaths()
 {
@@ -34,23 +36,53 @@ void initPaths()
   g_copy = ZiFile::append(g_root, "copy");
   g_renamed = ZiFile::append(g_root, "renamed");
   g_dir = ZiFile::append(g_root, "dir");
+  g_child = ZiFile::append(g_dir, "child.txt");
+  g_link = ZiFile::append(g_dir, "link.txt");
 
   ZiTestResidue::addFile(g_foo);
   ZiTestResidue::addFile(g_bar);
   ZiTestResidue::addFile(g_baz);
   ZiTestResidue::addFile(g_copy);
   ZiTestResidue::addFile(g_renamed);
+  ZiTestResidue::addFile(g_child);
   ZiTestResidue::addDir(g_dir);
 }
 
 void cleanupFiles()
 {
+  ZiFile::remove(g_link);
+  ZiFile::remove(g_child);
   ZiFile::remove(g_foo);
   ZiFile::remove(g_bar);
   ZiFile::remove(g_baz);
   ZiFile::remove(g_copy);
   ZiFile::remove(g_renamed);
   ZiFile::rmdir(g_dir);
+}
+
+Zi::Path path_(const char *s)
+{
+#ifndef _WIN32
+  return s;
+#else
+  Zi::Path out;
+  while (*s) out << wchar_t(*s++);
+  return out;
+#endif
+}
+
+bool makeSymlink(const Zi::Path &target, const Zi::Path &link)
+{
+#ifndef _WIN32
+  return ::symlink(target, link) == 0;
+#else
+#ifndef SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+#define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
+#endif
+  return CreateSymbolicLinkW(
+    link, target, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0 ||
+    CreateSymbolicLinkW(link, target, 0) != 0;
+#endif
 }
 
 void testWriteReadAndBlockSize()
@@ -248,6 +280,66 @@ void testNegativeOpen()
   ZuCheck(f.open(ZiFile::append(g_root, "does-not-exist"), ZiFile::ReadOnly, 0777) == Zi::IOError);
 }
 
+void testOpenAtNoFollowAndStat()
+{
+  ZuTestScope(testOpenAtNoFollowAndStat);
+
+  cleanupFiles();
+  ZuCHECK(ZiFile::mkdir(g_dir) == Zi::OK, "mkdir(dir) failed");
+
+  {
+    ZiFile f;
+    ZuCHECK(f.open(g_child, ZiFile::Write, 0666) == Zi::OK,
+      "open child failed: ", f.error());
+    ZuCHECK(f.write("child", 5) == Zi::OK, "write child failed: ", f.error());
+  }
+
+  ZiFile dir;
+  ZuCHECK(dir.open(g_dir,
+      ZiFile::ReadOnly | ZiFile::Directory | ZiFile::GC) == Zi::OK,
+    "open directory failed: ", dir.error());
+
+  ZiFile::Stat dirStat;
+  ZuCHECK(dir.fstat(dirStat) == Zi::OK, "directory fstat failed: ", dir.error());
+  ZuCheck(dirStat.directory);
+  ZuCheck(!dirStat.regular);
+
+  ZiFile file;
+  ZuCHECK(file.openAt(dir, path_("child.txt"),
+      ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK,
+    "openAt child failed: ", file.error());
+
+  ZiFile::Stat fileStat;
+  ZuCHECK(file.fstat(fileStat) == Zi::OK, "file fstat failed: ", file.error());
+  ZuCheck(fileStat.regular);
+  ZuCheck(!fileStat.directory);
+  ZuCheck(fileStat.size == 5);
+  ZuCheck(!!fileStat.mtime);
+
+  char buf[8] = {0};
+  int n = file.read(buf, 5);
+  ZuCHECK(n == 5, "file read length mismatch: ", n);
+  ZuCheck(ZuCSpan(buf, 5) == "child");
+
+  ZiFile dup;
+  ZuCHECK(dup.dup(file, ZiFile::GC) == Zi::OK, "dup failed: ", dup.error());
+  file.close();
+  n = dup.pread(0, buf, 5);
+  ZuCHECK(n == 5, "dup read length mismatch: ", n);
+  ZuCheck(ZuCSpan(buf, 5) == "child");
+
+  ZiFile bad;
+  ZuCheck(bad.openAt(dir, path_("nested/name"), ZiFile::ReadOnly) == Zi::IOError);
+  ZuCheck(bad.openAt(dir, g_child, ZiFile::ReadOnly) == Zi::IOError);
+
+  if (makeSymlink(g_child, g_link)) {
+    ZiFile link;
+    ZuCheck(link.openAt(dir, path_("link.txt"),
+	ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::IOError);
+    ZiFile::remove(g_link);
+  }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -266,6 +358,7 @@ int main(int argc, char **argv)
   ZuTestCall(testSeekSizeTruncateSync);
   ZuTestCall(testMetadataAndPathHelpers);
   ZuTestCall(testNegativeOpen);
+  ZuTestCall(testOpenAtNoFollowAndStat);
   cleanupFiles();
   return 0;
 }

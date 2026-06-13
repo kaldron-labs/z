@@ -31,13 +31,36 @@
 static bool islower__(wchar_t c) { return c >= 'a' && c <= 'z'; }
 
 extern "C" {
+  typedef LONG NTSTATUS;
+
   typedef struct {
     WORD Length;
     WORD MaximumLength;
     wchar_t *Buffer;
   } UNICODE_STRING;
 
+  typedef struct {
+    union {
+      NTSTATUS Status;
+      PVOID Pointer;
+    };
+    ULONG_PTR Information;
+  } IO_STATUS_BLOCK;
+
+  typedef struct {
+    ULONG Length;
+    HANDLE RootDirectory;
+    UNICODE_STRING *ObjectName;
+    ULONG Attributes;
+    PVOID SecurityDescriptor;
+    PVOID SecurityQualityOfService;
+  } OBJECT_ATTRIBUTES;
+
   typedef LONG (WINAPI *PNtQueryObject)(HANDLE, int, void *, ULONG, PULONG);
+  typedef NTSTATUS (WINAPI *PNtCreateFile)(
+    PHANDLE, ACCESS_MASK, OBJECT_ATTRIBUTES *, IO_STATUS_BLOCK *,
+    PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+  typedef ULONG (WINAPI *PRtlNtStatusToDosError)(NTSTATUS);
 }
 
 class ZiFile_WindowsDrives {
@@ -85,6 +108,64 @@ private:
   DriveLetters		m_driveLetters;
   DriveBlkSizes		m_driveBlkSizes;
 };
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+#ifndef OBJ_CASE_INSENSITIVE
+#define OBJ_CASE_INSENSITIVE 0x00000040UL
+#endif
+#ifndef FILE_OPEN
+#define FILE_OPEN 0x00000001UL
+#endif
+#ifndef FILE_CREATE
+#define FILE_CREATE 0x00000002UL
+#endif
+#ifndef FILE_OPEN_IF
+#define FILE_OPEN_IF 0x00000003UL
+#endif
+#ifndef FILE_DIRECTORY_FILE
+#define FILE_DIRECTORY_FILE 0x00000001UL
+#endif
+#ifndef FILE_WRITE_THROUGH
+#define FILE_WRITE_THROUGH 0x00000002UL
+#endif
+#ifndef FILE_NO_INTERMEDIATE_BUFFERING
+#define FILE_NO_INTERMEDIATE_BUFFERING 0x00000008UL
+#endif
+#ifndef FILE_OPEN_REPARSE_POINT
+#define FILE_OPEN_REPARSE_POINT 0x00200000UL
+#endif
+#ifndef FILE_OPEN_FOR_BACKUP_INTENT
+#define FILE_OPEN_FOR_BACKUP_INTENT 0x00004000UL
+#endif
+
+static PNtCreateFile ZiFile_NtCreateFile()
+{
+  static HMODULE ntdll = LoadLibrary(L"ntdll.dll");
+  static PNtCreateFile ntCreateFile = ntdll ?
+    reinterpret_cast<PNtCreateFile>(GetProcAddress(ntdll, "NtCreateFile")) :
+    nullptr;
+  return ntCreateFile;
+}
+
+static ZeError ZiFile_NtStatusError(NTSTATUS status)
+{
+  static HMODULE ntdll = LoadLibrary(L"ntdll.dll");
+  static PRtlNtStatusToDosError rtlNtStatusToDosError = ntdll ?
+    reinterpret_cast<PRtlNtStatusToDosError>(
+      GetProcAddress(ntdll, "RtlNtStatusToDosError")) :
+    nullptr;
+  return ZeError{rtlNtStatusToDosError ?
+    rtlNtStatusToDosError(status) : static_cast<ULONG>(status)};
+}
+
+static bool ZiFile_WindowsReparse(HANDLE h)
+{
+  BY_HANDLE_FILE_INFORMATION info;
+  if (!GetFileInformationByHandle(h, &info)) return false;
+  return info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
+}
 
 ZiFile_WindowsDrives *ZiFile_WindowsDrives::instance()
 {
@@ -246,6 +327,29 @@ int ZiFile_WindowsDrives::blkSize_handle(HANDLE handle)
 
 #endif /* _WIN32 */
 
+static bool ZiFile_relativeLeaf(const ZiFile::Path &name)
+{
+  if (!name) return false;
+  if (ZiFile::absolute(name)) return false;
+  for (unsigned i = 0; i < name.length(); ++i) {
+#ifndef _WIN32
+    if (name[i] == '/') return false;
+#else
+    if (name[i] == L'/' || name[i] == L'\\') return false;
+#endif
+  }
+  return true;
+}
+
+static ZeError ZiFile_einval()
+{
+#ifndef _WIN32
+  return ZeError{EINVAL};
+#else
+  return ZeError{ERROR_INVALID_PARAMETER};
+#endif
+}
+
 int ZiFile::open(
     const Path &name, unsigned flags, unsigned mode, Offset length)
 {
@@ -275,6 +379,8 @@ int ZiFile::open_(
   if (flags & Exclusive) openFlags |= O_EXCL;	// do not open existing file
   if (flags & Direct)	 openFlags |= O_DIRECT;	// direct I/O - bypass OS cache
   if (flags & Sync)	 openFlags |= O_DSYNC;	// synchronize all writes
+  if (flags & NoFollow) openFlags |= O_NOFOLLOW;// do not follow symlinks
+  if (flags & Directory) openFlags |= O_DIRECTORY;// open directory
   if (flags & Shm) {
     if (length <= 0) goto einval;
     Zi::Path name_(name.length() + 2);
@@ -289,7 +395,7 @@ int ZiFile::open_(
     {
       struct stat s;
 
-      if (fstat(h, &s) < 0) { ::close(h); goto error; }
+      if (::fstat(h, &s) < 0) { ::close(h); goto error; }
       blkSize = s.st_blksize;
     }
   }
@@ -321,9 +427,16 @@ int ZiFile::open_(
     DWORD fileFlags = FILE_FLAG_OVERLAPPED;
     if (flags & Direct) fileFlags |= FILE_FLAG_NO_BUFFERING;
     if (flags & Sync) fileFlags |= FILE_FLAG_WRITE_THROUGH;
+    if (flags & NoFollow) fileFlags |= FILE_FLAG_OPEN_REPARSE_POINT;
+    if (flags & Directory) fileFlags |= FILE_FLAG_BACKUP_SEMANTICS;
     h = CreateFile(
 	name, accessFlags, shareFlags, nullptr, createFlags, fileFlags, NULL);
     if (h == INVALID_HANDLE_VALUE) goto error;
+    if ((flags & NoFollow) && ZiFile_WindowsReparse(h)) {
+      CloseHandle(h);
+      m_error = ERROR_ACCESS_DENIED;
+      return Zi::IOError;
+    }
     if ((length > 0 && size() < length) || (flags & Truncate)) {
       LONG high = length>>32;
       if ((SetFilePointer(h, length & 0xffffffffU, &high, FILE_BEGIN) ==
@@ -350,6 +463,142 @@ einval:
   m_error = ERROR_INVALID_PARAMETER;
 #endif
   return Zi::IOError;
+}
+
+int ZiFile::openAt(
+    const ZiFile &dir, const Path &name,
+    unsigned flags, unsigned mode, Offset length)
+{
+  if (!Zi::nullHandle(m_handle) ||
+      Zi::nullHandle(dir.handle()) || !ZiFile_relativeLeaf(name)) {
+    m_error = ZiFile_einval();
+    return Zi::IOError;
+  }
+
+  Handle h;
+  unsigned blkSize;
+
+#ifndef _WIN32
+  int openFlags = (flags & ReadOnly) ? O_RDONLY :
+		  (flags & WriteOnly) ? O_WRONLY : O_RDWR;
+  if (flags & Create)	 openFlags |= O_CREAT;
+  if (flags & Exclusive) openFlags |= O_EXCL;
+  if (flags & Direct)	 openFlags |= O_DIRECT;
+  if (flags & Sync)	 openFlags |= O_DSYNC;
+  if (flags & NoFollow) openFlags |= O_NOFOLLOW;
+  if (flags & Directory) openFlags |= O_DIRECTORY;
+
+  h = ::openat(dir.handle(), name, openFlags, mode);
+  if (h < 0) goto error;
+  {
+    struct stat s;
+    if (::fstat(h, &s) < 0) { ::close(h); goto error; }
+    blkSize = s.st_blksize;
+  }
+  if (length >= 0 && (flags & Truncate || length > 0)) {
+    if (::ftruncate(h, length) < 0) { ::close(h); goto error; }
+  }
+#else
+  {
+    auto ntCreateFile = ZiFile_NtCreateFile();
+    if (!ntCreateFile) {
+      m_error = ERROR_PROC_NOT_FOUND;
+      return Zi::IOError;
+    }
+
+    ACCESS_MASK accessFlags = (flags & ReadOnly) ? GENERIC_READ :
+      (flags & WriteOnly) ? GENERIC_WRITE : GENERIC_READ | GENERIC_WRITE;
+    DWORD shareFlags = (flags & ReadOnly) ? FILE_SHARE_READ :
+      FILE_SHARE_READ | FILE_SHARE_WRITE;
+    ULONG createDisposition = !(flags & Create) ? FILE_OPEN :
+      (flags & Exclusive) ? FILE_CREATE : FILE_OPEN_IF;
+    ULONG createOptions = 0;
+    if (flags & Direct) createOptions |= FILE_NO_INTERMEDIATE_BUFFERING;
+    if (flags & Sync) createOptions |= FILE_WRITE_THROUGH;
+    if (flags & NoFollow) createOptions |= FILE_OPEN_REPARSE_POINT;
+    if (flags & Directory)
+      createOptions |= FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT;
+
+    UNICODE_STRING objectName;
+    objectName.Length = static_cast<USHORT>(name.length() * sizeof(wchar_t));
+    objectName.MaximumLength = objectName.Length;
+    objectName.Buffer = const_cast<wchar_t *>(name.data());
+    OBJECT_ATTRIBUTES objectAttributes{
+      sizeof(OBJECT_ATTRIBUTES), dir.handle(), &objectName,
+      OBJ_CASE_INSENSITIVE, nullptr, nullptr};
+    IO_STATUS_BLOCK ioStatus;
+    NTSTATUS status = ntCreateFile(
+      &h, accessFlags, &objectAttributes, &ioStatus, nullptr,
+      FILE_ATTRIBUTE_NORMAL, shareFlags, createDisposition, createOptions,
+      nullptr, 0);
+    if (!NT_SUCCESS(status)) {
+      m_error = ZiFile_NtStatusError(status);
+      return Zi::IOError;
+    }
+    if ((flags & NoFollow) && ZiFile_WindowsReparse(h)) {
+      CloseHandle(h);
+      m_error = ERROR_ACCESS_DENIED;
+      return Zi::IOError;
+    }
+    blkSize = ZiFile_WindowsDrives::blkSize(h);
+    if (length > 0 || (flags & Truncate)) {
+      LONG high = length>>32;
+      if ((SetFilePointer(h, length & 0xffffffffU, &high, FILE_BEGIN) ==
+	    INVALID_SET_FILE_POINTER &&
+	  GetLastError() != NO_ERROR) || !SetEndOfFile(h)) {
+	CloseHandle(h);
+	goto error;
+      }
+    }
+  }
+#endif
+
+  init_(h, flags | GC, blkSize);
+  return Zi::OK;
+
+error:
+  m_error = ZeLastError;
+  return Zi::IOError;
+}
+
+int ZiFile::dup(const ZiFile &file, unsigned flags)
+{
+  if (!Zi::nullHandle(m_handle) || Zi::nullHandle(file.m_handle)) {
+    m_error = ZiFile_einval();
+    return Zi::IOError;
+  }
+
+  Handle h;
+#ifndef _WIN32
+  if ((h = ::dup(file.m_handle)) < 0) {
+    m_error = ZeLastError;
+    return Zi::IOError;
+  }
+#else
+  if (!DuplicateHandle(
+	GetCurrentProcess(), file.m_handle, GetCurrentProcess(), &h,
+	0, FALSE, DUPLICATE_SAME_ACCESS))
+    goto error;
+#endif
+
+  unsigned flags_ =
+    (file.m_flags & ~(GC | Shadow | MMap | Shm | ShmMirror |
+      StdIn | StdOut | StdErr)) | flags;
+  int r = init(h, flags_);
+  if (r != Zi::OK) {
+#ifndef _WIN32
+    ::close(h);
+#else
+    CloseHandle(h);
+#endif
+  }
+  return r;
+
+#ifdef _WIN32
+error:
+  m_error = ZeLastError;
+  return Zi::IOError;
+#endif
 }
 
 int ZiMMapFile::mmap(
@@ -519,7 +768,7 @@ int ZiFile::init(Handle handle, unsigned flags)
 #ifndef _WIN32
   struct stat s;
 
-  if (fstat(handle, &s) < 0) goto error;
+  if (::fstat(handle, &s) < 0) goto error;
   blkSize = s.st_blksize;
 #else
   blkSize = ZiFile_WindowsDrives::blkSize(handle);
@@ -588,6 +837,45 @@ ZiFile::Offset ZiFile::size()
   l = GetFileSize(m_handle, &h);
   return (Offset(h)<<32) | l;
 #endif
+}
+
+int ZiFile::fstat(Stat &stat) const
+{
+  if (Zi::nullHandle(m_handle)) {
+#ifndef _WIN32
+    const_cast<ZiFile *>(this)->m_error = EBADF;
+#else
+    const_cast<ZiFile *>(this)->m_error = ERROR_INVALID_HANDLE;
+#endif
+    return Zi::IOError;
+  }
+
+#ifndef _WIN32
+  struct stat s;
+  if (::fstat(m_handle, &s) < 0) goto error;
+  stat.size = s.st_size;
+#ifdef __APPLE__
+  stat.mtime = ZuTime{s.st_mtimespec};
+#else
+  stat.mtime = ZuTime{s.st_mtim};
+#endif
+  stat.regular = S_ISREG(s.st_mode);
+  stat.directory = S_ISDIR(s.st_mode);
+#else
+  BY_HANDLE_FILE_INFORMATION info;
+  if (!GetFileInformationByHandle(m_handle, &info)) goto error;
+  stat.size = (Offset(info.nFileSizeHigh)<<32) | info.nFileSizeLow;
+  stat.mtime = ZuTime{info.ftLastWriteTime};
+  stat.directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
+  stat.regular = !(info.dwFileAttributes &
+    (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+#endif
+
+  return Zi::OK;
+
+error:
+  const_cast<ZiFile *>(this)->m_error = ZeLastError;
+  return Zi::IOError;
 }
 
 // ZiFile maintains its own offset, no need to keep the OS offset synchronized

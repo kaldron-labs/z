@@ -55,10 +55,19 @@ public:
     StdIn	= 0x04000,// standard input
     StdOut	= 0x08000,// standard output
     StdErr	= 0x10000,// standard error
+    NoFollow	= 0x20000,// do not follow final symlink/reparse point
+    Directory	= 0x40000,// open directory
 
     // frequently used combinations
     Write	= Create | WriteOnly | Truncate,
     Append	= Create | WriteOnly | Append_
+  };
+
+  struct Stat {
+    Offset	size = 0;
+    ZuTime	mtime;
+    bool	regular = false;
+    bool	directory = false;
   };
 
   // Note: Direct requires caller align all reads/writes to blkSize()
@@ -97,7 +106,7 @@ public:
 
   ZuInline Handle handle() const { return m_handle; }
 
-  ZuInline unsigned flags() { return m_flags; }
+  ZuInline unsigned flags() const { return m_flags; }
   void setFlags(int f) { m_flags |= f; }
   void clrFlags(int f) { m_flags &= ~f; }
 
@@ -133,6 +142,10 @@ public:
 
   int open(
     const Path &name, unsigned flags, unsigned mode = 0666, Offset length = 0);
+  int openAt(
+    const ZiFile &dir, const Path &name,
+    unsigned flags, unsigned mode = 0666, Offset length = 0);
+  int dup(const ZiFile &file, unsigned flags = GC);
   void openStdIn();
   void openStdOut();
   void openStdErr();
@@ -140,6 +153,7 @@ public:
   void close();
 
   Offset size();
+  int fstat(Stat &stat) const;
   int blkSize() { return m_blkSize; }
 
   Offset offset() { return m_offset; }
