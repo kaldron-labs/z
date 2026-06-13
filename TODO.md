@@ -1,12 +1,8 @@
 # TODO
 
 ## Zhttp
-- add run-time-varying header key support to `H1` and `H3` / `Builder` and `Parser`
-  - align with existing run-time-varying value support
-  - in H3, support QPACK and HPACK 
-- check DNS capabilities for HTTP/3 selection
-  - `ZiIP`'s resolver interface may need upgrading
 - add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
+  - see `http_bench.md`
 
 ## Zrest
 - figure out REST Rx -> ZvIOMsg
