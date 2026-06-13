@@ -12,6 +12,7 @@
 #include <zlib/ZuLib.hh>
 
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtCLI.hh>
@@ -75,6 +76,14 @@ namespace Protocol {
 
 constexpr unsigned ClientTimeout = 10;
 constexpr unsigned MaxRedirects = 8;
+constexpr uint64_t RespBodyMax = 100<<20;
+constexpr unsigned BufBuiltin = 8<<10;
+constexpr unsigned BufMax = 100<<20;
+constexpr uint64_t H3DataMax = 100<<20;
+constexpr uint64_t H3StreamDataMax = 16<<20;
+constexpr uint64_t H3BidiMax = 16;
+constexpr uint64_t H3UniMax = 16;
+constexpr unsigned DNSMaxIPs = 8;
 
 using H3CxnState = Zhttp::H3::CxnState;
 
@@ -351,7 +360,6 @@ void sendH1Request(State &state, StreamRef stream)
   H1RequestBuilder builder{state};
   builder.request(tx);
   builder.finish(tx);
-  tx << Zi::flush(); // FIXME - doesn't builder.finish() do this?
 }
 
 template <typename StreamRef>
@@ -369,14 +377,15 @@ void sendH3Request(State &state, StreamRef stream)
 void logFraming(State &state)
 {
   if (state.framingLogged) return;
-  std::cerr << "framing: ";
-  if (state.chunked)
-    std::cerr << "chunked";
-  else if (state.contentLength >= 0)
-    std::cerr << "content-length=" << state.contentLength;
-  else
-    std::cerr << "no content-length";
-  std::cerr << '\n' << std::flush;
+  ZiLOG(Info, "zhttpclient.response", ([&state](auto &s) {
+    s << "framing: ";
+    if (state.chunked)
+      s << "chunked";
+    else if (state.contentLength >= 0)
+      s << "content-length=" << state.contentLength;
+    else
+      s << "no content-length";
+  }));
   state.framingLogged = true;
 }
 
@@ -387,7 +396,9 @@ struct ResponseSink {
   void status(unsigned status) {
     state->status = status;
     state->redirect = redirectStatus(status);
-    std::cerr << "status: " << status << '\n' << std::flush;
+    ZiLOG(Info, "zhttpclient.response", ([status](auto &s) {
+      s << "status: " << status;
+    }));
   }
   void contentLength(uint64_t contentLength) {
     state->contentLength = contentLength;
@@ -398,13 +409,16 @@ struct ResponseSink {
   void header(ZuBSpan value) {
     if constexpr (ZuIsSame<Key, ZuStringT<"alt-svc">>{}) {
       if (parseAltSvc(*state, ZuCSpan(value)))
-	std::cerr << "alt-svc: h3=\"" << state->altSvcHost << ':' <<
-	  state->altSvcPort << "\"\n" << std::flush;
+	ZiLOG(Info, "zhttpclient.response", ([state = state](auto &s) {
+	  s << "alt-svc: h3=\"" << state->altSvcHost << ':' <<
+	    state->altSvcPort << '"';
+	}));
     } else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{}) {
       state->location = ZuCSpan(value);
     }
-    std::cerr << "header " << Key{}() << ": " << ZuCSpan(value) <<
-      '\n' << std::flush;
+    ZiLOG(Info, "zhttpclient.response", ([value](auto &s) {
+      s << "header " << Key{}() << ": " << ZuCSpan(value);
+    }));
   }
 
   void body(ZuBSpan span) {
@@ -414,8 +428,9 @@ struct ResponseSink {
       state->bodyFile =
 	ZiFile(state->options.output, ZiFile::Write | ZiFile::GC);
       if (!state->bodyFile) {
-	std::cerr << "failed to open " << state->options.output << '\n' <<
-	  std::flush;
+	ZiLOG(Error, "zhttpclient", ([state = state](auto &s) {
+	  s << "failed to open " << state->options.output;
+	}));
 	state->failed = true;
 	state->done = true;
 	return;
@@ -423,7 +438,7 @@ struct ResponseSink {
       state->bodyFileOpen = true;
     }
     if (state->bodyFile.write(span.data(), span.length()) != Zi::OK) {
-      std::cerr << "failed to write body chunk\n" << std::flush;
+      ZiLOG(Error, "zhttpclient", "failed to write body chunk");
       state->failed = true;
       state->done = true;
       return;
@@ -436,10 +451,14 @@ struct ResponseSink {
   void complete(typename ParserState::T parserState) {
     if (state->done) return;
     if (parserState == ParserState::Complete)
-      std::cerr << "body complete: " << state->bodyBytes << " bytes in " <<
-	state->bodyChunks << " chunks\n" << std::flush;
+      ZiLOG(Info, "zhttpclient.response", ([state = state](auto &s) {
+	s << "body complete: " << state->bodyBytes << " bytes in " <<
+	  state->bodyChunks << " chunks";
+      }));
     else
-      std::cerr << "response " << parserState << '\n' << std::flush;
+      ZiLOG(Error, "zhttpclient.response", ([parserState](auto &s) {
+	s << "response " << parserState;
+      }));
     if (parserState != ParserState::Complete) state->failed = true;
     state->done = true;
     if (state->protocol == Protocol::H3) link->disconnect();
@@ -453,10 +472,10 @@ template <
   typename Link,
   template <typename, bool, typename, uint64_t> typename Parser>
 struct ResponseParser :
-  public Parser<ResponseParser<Link, Parser>, false, ResponseHeaders, (100<<20)>,
+  public Parser<ResponseParser<Link, Parser>, false, ResponseHeaders, RespBodyMax>,
   public ResponseSink<Link> {
   using ParserBase =
-    Parser<ResponseParser<Link, Parser>, false, ResponseHeaders, (100<<20)>;
+    Parser<ResponseParser<Link, Parser>, false, ResponseHeaders, RespBodyMax>;
   using SinkBase = ResponseSink<Link>;
   using State = typename ParserBase::State;
 
@@ -501,8 +520,7 @@ template <bool H3, typename Link, typename Stream>
 int processResponse(Link &link, State &state, Stream &rx)
 {
   using Parser = typename ResponseParser_<Link, H3>::T;
-  if (!link.parser) link.parser = new Parser{&link, &state};
-  auto parserState = link.parser->process(rx);
+  auto parserState = link.parser.process(rx);
   if (state.done) return -1;
   if (parserState == Parser::State::Error) return -1;
   if (parserState != Parser::State::Complete) return 0;
@@ -518,11 +536,13 @@ ZuCSpan transportName(Zi::Transport::T transport)
 
 void logConnected(const State &state, Zi::Connected info)
 {
-  std::cerr << transportName(info.transport) << " connected (hostname: " <<
-    state.url.host;
-  if (info.version) std::cerr << " version: " << info.version;
-  if (info.alpn) std::cerr << " ALPN: " << info.alpn;
-  std::cerr << ")\n" << std::flush;
+  ZiLOG(Info, "zhttpclient", ([&state, info](auto &s) {
+    s << transportName(info.transport) << " connected (hostname: " <<
+      state.url.host;
+    if (info.version) s << " version: " << info.version;
+    if (info.alpn) s << " ALPN: " << info.alpn;
+    s << ')';
+  }));
 }
 
 template <typename App_, typename Base_, bool H3_ = false>
@@ -534,8 +554,7 @@ struct CliLink : public Base_ {
 
   using H3Cxn = Zhttp::H3::Cxn<CliLink, typename Base::StreamRef>;
 
-  CliLink(App *app) : Base{app} { }
-  ~CliLink() { delete parser; }
+  CliLink(App *app) : Base{app}, parser{this, &app->state} { }
 
   void connected(Zi::Connected info) {
     logConnected(this->app()->state, info);
@@ -561,13 +580,15 @@ struct CliLink : public Base_ {
       sendH1Request(this->app()->state, stream);
   }
   void disconnected() {
-    std::cerr << "disconnected\n" << std::flush;
+    ZiLOG(Info, "zhttpclient", "disconnected");
     if (!this->app()->state.done) this->app()->state.failed = true;
     this->app()->done();
   }
   void connectFailed(bool transient) {
-    std::cerr << "failed to connect" << (transient ? " (transient)" : "") <<
-      '\n' << std::flush;
+    ZiLOG(Error, "zhttpclient", ([transient](auto &s) {
+      s << "failed to connect";
+      if (transient) s << " (transient)";
+    }));
     this->app()->state.failed = true;
     this->app()->done();
   }
@@ -576,7 +597,7 @@ struct CliLink : public Base_ {
     return processResponse<H3>(*this, this->app()->state, rx);
   }
 
-  Parser			*parser = nullptr;
+  Parser		parser;
   H3Cxn			h3;
 };
 
@@ -588,8 +609,8 @@ struct Client : public Client_<App> {
   auto impl() const { return static_cast<const App *>(this); }
   auto impl() { return static_cast<App *>(this); }
 
-  using RxBufAlloc = Ztcp::RxBufAlloc<8<<10, 100<<20, "Zhttp.Buf">;
-  using TxBufAlloc = Ztcp::TxBufAlloc<8<<10, 100<<20, "Zhttp.Buf">;
+  using RxBufAlloc = Ztcp::RxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
+  using TxBufAlloc = Ztcp::TxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
   template <typename Impl>
   using Link_ = Link__<App, Impl, RxBufAlloc, TxBufAlloc>;
   struct Link : public CliLink<App, Link_<Link>> {
@@ -616,8 +637,8 @@ struct QUICClient : public Zquic::Client<QUICClient> {
 
   void done() { sem.post(); }
   unsigned reconnFreq() const { return 0; }
-  uint64_t maxStreamsBidi() const { return 16; }
-  uint64_t maxStreamsUni() const { return 16; }
+  uint64_t maxStreamsBidi() const { return H3BidiMax; }
+  uint64_t maxStreamsUni() const { return H3UniMax; }
 };
 
 struct QUICClient::Stream :
@@ -707,7 +728,7 @@ int run(
   if constexpr (Client::Transport == Zi::Transport::TCP) {
     client.state.protocol = Protocol::H1;
     if (!client.init(Ztcp::ClientParams(&mx, "3", "4"))) {
-      std::cerr << "TCP client initialization failed\n" << std::flush;
+      ZiLOG(Error, "zhttpclient", "TCP client initialization failed");
       return 1;
     }
   } else if constexpr (Client::Transport == Zi::Transport::TLS) {
@@ -715,7 +736,7 @@ int run(
     ZuCSpan alpn[] = { "http/1.1" };
     if (!client.init(
 	  Ztls::ClientParams(&mx, "3", "4").alpn(alpn).caPath(options.ca))) {
-      std::cerr << "TLS client initialization failed\n" << std::flush;
+      ZiLOG(Error, "zhttpclient", "TLS client initialization failed");
       return 1;
     }
   } else if constexpr (Client::Transport == Zi::Transport::QUIC) {
@@ -725,11 +746,11 @@ int run(
 	  Zquic::ClientParams(&mx, "3", "4")
 	    .alpn(alpn)
 	    .caPath(options.ca)
-	    .maxData(100<<20)
-	    .maxStreamData(16<<20)
-	    .maxStreamsBidi(16)
-	    .maxStreamsUni(16))) {
-      std::cerr << "QUIC client initialization failed\n" << std::flush;
+	    .maxData(H3DataMax)
+	    .maxStreamData(H3StreamDataMax)
+	    .maxStreamsBidi(H3BidiMax)
+	    .maxStreamsUni(H3UniMax))) {
+      ZiLOG(Error, "zhttpclient", "QUIC client initialization failed");
       return 1;
     }
   }
@@ -739,7 +760,7 @@ int run(
     ZmRef<Link> link = new Link(&client);
     link->connect(client.state.url.host, client.state.url.port);
     if (client.sem.timedwait(Zm::now(ClientTimeout)) != 0) {
-      std::cerr << "timed out\n" << std::flush;
+      ZiLOG(Error, "zhttpclient", "timed out");
       client.state.failed = true;
       link->disconnect();
       client.sem.timedwait(Zm::now(2));
@@ -774,24 +795,26 @@ ZiMxParams mxParams()
 
 bool resolveForQUIC(const URL &url)
 {
-  ZiIP ips[8];
+  ZiIP ips[DNSMaxIPs];
   unsigned n = 0;
   ZeError e;
   int rc = Zi::resolve(url.dnsHost,
     ZmFn<bool(ZiIP)>{[&ips, &n](ZiIP ip) {
       for (unsigned i = 0; i < n; ++i)
 	if (ips[i] == ip) return true;
-      if (n < 8) ips[n++] = ip;
-      return n < 8;
+      if (n < DNSMaxIPs) ips[n++] = ip;
+      return n < DNSMaxIPs;
     }}, &e);
   if (rc != Zi::OK || !n) {
-    std::cerr << "DNS resolution failed for " << url.host << '\n' <<
-      std::flush;
+    ZiLOG(Error, "zhttpclient", ([&url](auto &s) {
+      s << "DNS resolution failed for " << url.host;
+    }));
     return false;
   }
-  std::cerr << "DNS: " << url.host << " resolved to";
-  for (unsigned i = 0; i < n; ++i) std::cerr << ' ' << ips[i];
-  std::cerr << '\n' << std::flush;
+  ZiLOG(Info, "zhttpclient", ([&url, &ips, n](auto &s) {
+    s << "DNS: " << url.host << " resolved to";
+    for (unsigned i = 0; i < n; ++i) s << ' ' << ips[i];
+  }));
   return true;
 }
 
@@ -858,7 +881,7 @@ int main(int argc, char **argv)
 
   ZiMultiplex mx(mxParams());
   if (!mx.start()) {
-    std::cerr << "ZiMultiplex start failed\n" << std::flush;
+    ZiLOG(Error, "zhttpclient", "ZiMultiplex start failed");
     return 1;
   }
 
@@ -875,16 +898,18 @@ int main(int argc, char **argv)
     if (rc || !redirectStatus(result.status) || !result.location) break;
     URL next;
     if (!parseLocation(url, result.location, next)) {
-      std::cerr << "invalid redirect location: " << result.location << '\n' <<
-	std::flush;
+      ZiLOG(Error, "zhttpclient", ([&result](auto &s) {
+	s << "invalid redirect location: " << result.location;
+      }));
       rc = 1;
       break;
     }
-    std::cerr << "redirect: " << next.scheme << "://" << next.host <<
-      next.target << '\n' << std::flush;
+    ZiLOG(Info, "zhttpclient", ([&next](auto &s) {
+      s << "redirect: " << next.scheme << "://" << next.host << next.target;
+    }));
     url = ZuMv(next);
     if (redirect == MaxRedirects) {
-      std::cerr << "too many redirects\n" << std::flush;
+      ZiLOG(Error, "zhttpclient", "too many redirects");
       rc = 1;
     }
   }

@@ -9,13 +9,10 @@
 #ifndef ZhttpStaticServer_HH
 #define ZhttpStaticServer_HH
 
-#include <algorithm>
 #include <errno.h>
-#include <filesystem>
-#include <string>
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
-#include <vector>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -23,27 +20,50 @@
 
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuPercent.hh>
+#include <zlib/ZuSort.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmGuard.hh>
+#include <zlib/ZmHash.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtCLI.hh>
 #include <zlib/ZtString.hh>
+#include <zlib/ZiDir.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/Zhttp.hh>
 
+ZtCLIConfig(CLI,
+  (ZtCLI_ArrayFmt<ZtCLI::Delimited, ZtCLI_Delimiter<';'>>));
+
 namespace ZhttpStatic {
 
-inline std::string str(ZuCSpan s) { return {s.data(), s.length()}; }
-inline std::string lower(std::string s) {
-  for (auto &c : s) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-  return s;
+constexpr unsigned FileChunk = 16<<10;
+constexpr unsigned MimeFileMax = 16<<20;
+
+template <typename L>
+void fileChunks(uint64_t len, L l) {
+  while (len) {
+    unsigned n = len > FileChunk ? FileChunk : unsigned(len);
+    l(n);
+    len -= n;
+  }
 }
-inline ZtString<> zstr(const std::string &s) {
-  ZtString<> out;
-  out << ZuCSpan{s.data(), unsigned(s.size())};
-  return out;
+
+template <typename Body>
+void sendSpanChunks(Body &body, const char *p, uint64_t len) {
+  fileChunks(len, [&body, &p](unsigned n) {
+    body << ZuCSpan{p, n};
+    p += n;
+  });
+}
+
+inline ZtString<> lower(ZuCSpan s_) {
+  ZtString<> s{s_};
+  for (unsigned i = 0, n = s.length(); i < n; ++i)
+    if (s[i] >= 'A' && s[i] <= 'Z') s[i] += 'a' - 'A';
+  return s;
 }
 
 struct Forward {
@@ -54,14 +74,16 @@ struct Forward {
 struct Options {
   ZtString<>		root;
   ZtString<>		addr{"0.0.0.0"};
-  uint16_t		port = 8080;
+  unsigned		port = 8080;
   ZtString<>		cert;
   ZtString<>		key;
   ZtString<>		index{"index.html"};
   ZtString<>		mimetypes;
   ZtString<>		defaultMimetype{"application/octet-stream"};
+  ZtArray<ZtString<> >	forward;
   ZtArray<Forward>	forwards;
   ZtString<>		forwardAll;
+  ZtString<>		auth;
   ZtString<>		authUser;
   ZtString<>		authPass;
   ZtString<>		logPath{"-"};
@@ -83,7 +105,43 @@ struct Options {
   bool			http = true;
   bool			https = false;
   bool			http3 = false;
+  bool			help = false;
 };
+
+ZtStruct((Options, CLI),
+  (((root),            (CLI::Arg<1>)),                           (String)),
+  (((addr),            (CLI::Long<"addr">)),                     (String, "0.0.0.0")),
+  (((port),            (CLI::Long<"port">)),                     (UInt32, 8080)),
+  (((cert),            (CLI::Long<"cert">)),                     (String)),
+  (((key),             (CLI::Long<"key">)),                      (String)),
+  (((index),           (CLI::Long<"index">)),                    (String, "index.html")),
+  (((mimetypes),       (CLI::Long<"mimetypes">)),                (String)),
+  (((defaultMimetype),
+    (CLI::Long<"default-mimetype">)),
+    (String, "application/octet-stream")),
+  (((forward),         (CLI::Long<"forward">)),                  (StringVec)),
+  (((forwardAll),      (CLI::Long<"forward-all">)),              (String)),
+  (((auth),            (CLI::Long<"auth">)),                     (String)),
+  (((logPath),         (CLI::Long<"log">)),                      (String, "-")),
+  (((pidfile),         (CLI::Long<"pidfile">)),                  (String)),
+  (((uid),             (CLI::Long<"uid">)),                      (String)),
+  (((gid),             (CLI::Long<"gid">)),                      (String)),
+  (((maxconn),         (CLI::Long<"maxconn">)),                  (UInt32)),
+  (((timeout),         (CLI::Long<"timeout">)),                  (UInt32, 30)),
+  (((ipv6),            (CLI::Long<"ipv6">)),                     (Bool)),
+  (((daemon),          (CLI::Long<"daemon">)),                   (Bool)),
+  (((syslog),          (CLI::Long<"syslog">)),                   (Bool)),
+  (((noListing),       (CLI::Long<"no-listing">)),               (Bool)),
+  (((chroot),          (CLI::Long<"chroot">)),                   (Bool)),
+  (((noKeepalive),     (CLI::Long<"no-keepalive">)),             (Bool)),
+  (((singleFile),      (CLI::Long<"single-file">)),              (Bool)),
+  (((hideDotfiles),    (CLI::Long<"hide-dotfiles">)),            (Bool)),
+  (((forwardHttps),    (CLI::Long<"forward-https">)),            (Bool)),
+  (((noServerID),      (CLI::Long<"no-server-id">)),             (Bool)),
+  (((http),            (CLI::Long<"http">)),                     (Bool, true)),
+  (((https),           (CLI::Long<"https">)),                    (Bool)),
+  (((http3),           (CLI::Long<"http3">)),                    (Bool)),
+  (((help),            (CLI::Flag<'h'>, CLI::Long<"help">)),     (Bool)));
 
 struct RequestData {
   Zhttp::Method::T	method = -1;
@@ -103,6 +161,43 @@ struct RequestData {
 };
 
 struct ResponsePlan {
+  ResponsePlan() = default;
+  ResponsePlan(const ResponsePlan &resp) :
+    status{resp.status},
+    reason{resp.reason},
+    contentType{resp.contentType},
+    location{resp.location},
+    wwwAuthenticate{resp.wwwAuthenticate},
+    lastModified{resp.lastModified},
+    date{resp.date},
+    etag{resp.etag},
+    contentRange{resp.contentRange},
+    allow{resp.allow},
+    connection{resp.connection},
+    server{resp.server},
+    body{resp.body},
+    filePath{resp.filePath},
+    contentLength{resp.contentLength},
+    fileOffset{resp.fileOffset},
+    fileLength{resp.fileLength},
+    sendBody{resp.sendBody},
+    close{resp.close},
+    file{resp.file},
+    generated{resp.generated}
+  {
+    if (resp.fileHandle)
+      fileHandle.dup(resp.fileHandle, ZiFile::GC);
+  }
+  ResponsePlan &operator =(const ResponsePlan &resp) {
+    if (this != &resp) {
+      this->~ResponsePlan();
+      new (this) ResponsePlan{resp};
+    }
+    return *this;
+  }
+  ResponsePlan(ResponsePlan &&) = default;
+  ResponsePlan &operator =(ResponsePlan &&) = default;
+
   unsigned		status = 500;
   ZtString<>		reason{"Internal Server Error"};
   ZtString<>		contentType;
@@ -116,6 +211,7 @@ struct ResponsePlan {
   ZtString<>		connection;
   ZtString<>		server;
   ZtString<>		body;
+  ZiFile		fileHandle;
   ZtString<>		filePath;
   uint64_t		contentLength = 0;
   uint64_t		fileOffset = 0;
@@ -127,10 +223,19 @@ struct ResponsePlan {
 };
 
 struct MimeMap {
-  std::vector<std::pair<std::string, std::string> > map;
+  using String = ZtString<ZtStringHeapID<"ZhttpStatic.Mime.String">>;
+  using Map = ZmHashKV<String, String,
+    ZmHashHeapID<"ZhttpStatic.Mime">>;
+  Map			map;
+
+  void add(ZuCSpan ext, ZuCSpan mime) {
+    String ext_{lower(ext)};
+    map.del(ext_);
+    map.add(ZuMv(ext_), String{mime});
+  }
 
   void init(const Options &options) {
-    static const std::pair<const char *, const char *> builtins[] = {
+    static const struct { const char *ext; const char *mime; } builtins[] = {
       {"html", "text/html"}, {"htm", "text/html"},
       {"txt", "text/plain"}, {"css", "text/css"},
       {"js", "application/javascript"}, {"json", "application/json"},
@@ -141,14 +246,13 @@ struct MimeMap {
       {"mp3", "audio/mpeg"}, {"mp4", "video/mp4"},
       {"webp", "image/webp"}
     };
-    for (auto &m : builtins) map.emplace_back(m.first, m.second);
-    auto path = str(options.mimetypes);
-    if (path.empty()) return;
+    for (auto &m : builtins) add(m.ext, m.mime);
+    if (!options.mimetypes) return;
     ZiFile f;
-    if (f.open(path.c_str(), ZiFile::ReadOnly | ZiFile::GC) != Zi::OK)
+    if (f.open(options.mimetypes, ZiFile::ReadOnly | ZiFile::GC) != Zi::OK)
       return;
     auto size = f.size();
-    if (size <= 0 || size > (16<<20)) return;
+    if (size <= 0 || size > MimeFileMax) return;
     ZtString<> text;
     text.length(unsigned(size));
     int n = f.read(text.data(), text.length());
@@ -167,29 +271,31 @@ struct MimeMap {
       const char *b = p;
       while (p < e && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
 	++p;
-      std::string mime{b, size_t(p - b)};
+      ZtString<> mime{ZuCSpan{b, unsigned(p - b)}};
       while (p < e && *p != '\r' && *p != '\n') {
 	while (p < e && (*p == ' ' || *p == '\t')) ++p;
 	if (p >= e || *p == '\r' || *p == '\n') break;
 	b = p;
 	while (p < e && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
 	  ++p;
-	map.emplace_back(lower(std::string{b, size_t(p - b)}), mime);
+	add(ZuCSpan{b, unsigned(p - b)}, mime);
       }
       while (p < e && *p != '\n') ++p;
       if (p < e) ++p;
     }
   }
 
-  ZtString<> lookup(const Options &options, const std::string &path) const {
-    auto slash = path.find_last_of("/\\");
-    auto dot = path.find_last_of('.');
-    if (dot == std::string::npos ||
-	(slash != std::string::npos && dot < slash))
+  ZtString<> lookup(const Options &options, ZuCSpan path) const {
+    int slash = -1, dot = -1;
+    for (unsigned i = 0, n = path.length(); i < n; ++i) {
+      if (path[i] == '/' || path[i] == '\\') slash = int(i);
+      else if (path[i] == '.') dot = int(i);
+    }
+    if (dot < 0 || (slash >= 0 && dot < slash))
       return options.defaultMimetype;
-    auto ext = lower(path.substr(dot + 1));
-    for (auto i = map.rbegin(); i != map.rend(); ++i)
-      if (i->first == ext) return zstr(i->second);
+    String ext{lower(ZuCSpan{path.data() + dot + 1,
+      path.length() - unsigned(dot) - 1})};
+    if (auto node = map.find(ext)) return ZuCSpan{node->val()};
     return options.defaultMimetype;
   }
 };
@@ -243,6 +349,9 @@ struct State {
   Options		options;
   MimeMap		mime;
   LogSink		log;
+  ZiFile		rootDir;
+  ZiFile		rootFile;
+  ZiFile::Stat		rootFileStat;
   ZmSemaphore		done;
   ZmAtomic<unsigned>	active = 0;
   ZmAtomic<uint64_t>	requests = 0;
@@ -262,7 +371,7 @@ struct HrefPolicy : ZuPercent::NoTerm, ZuPercent::NoPlus {
   }
 };
 
-inline std::string httpDate(time_t t) {
+inline ZtString<> httpDate(time_t t) {
   char buf[64];
   struct tm tm_;
 #ifdef _WIN32
@@ -270,15 +379,15 @@ inline std::string httpDate(time_t t) {
 #else
   gmtime_r(&t, &tm_);
 #endif
-  strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_);
-  return buf;
+  size_t n = strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_);
+  return ZuCSpan{buf, unsigned(n)};
 }
 
 inline bool parseHTTPDate(ZuCSpan s, time_t &out) {
-  std::string in = str(s);
+  ZtString<> in{s};
   struct tm tm_;
   memset(&tm_, 0, sizeof(tm_));
-  char *p = strptime(in.c_str(), "%a, %d %b %Y %H:%M:%S GMT", &tm_);
+  char *p = strptime(in.ndata(), "%a, %d %b %Y %H:%M:%S GMT", &tm_);
   if (!p || *p) return false;
 #ifdef _WIN32
   out = _mkgmtime(&tm_);
@@ -288,115 +397,148 @@ inline bool parseHTTPDate(ZuCSpan s, time_t &out) {
   return out != time_t(-1);
 }
 
-inline bool appendUInt(std::string &out, ZuCSpan s) {
+inline bool appendUInt(ZtString<> &out, ZuCSpan s) {
   if (!s) return false;
   for (unsigned i = 0; i < s.length(); ++i)
     if (s[i] < '0' || s[i] > '9') return false;
-  out.append(s.data(), s.length());
+  out << s;
   return true;
 }
 
 inline void splitTarget(RequestData &req) {
-  auto target = str(req.target);
-  auto q = target.find('?');
-  req.path = zstr(q == std::string::npos ? target : target.substr(0, q));
-  req.query = q == std::string::npos ? ZtString<>{} : zstr(target.substr(q + 1));
+  ZuCSpan target{req.target};
+  int64_t q = target.find([](auto c) { return c == '?'; });
+  req.path = q < 0 ? target : ZuCSpan{target.data(), unsigned(q)};
+  if (q < 0)
+    req.query = {};
+  else
+    req.query = ZuCSpan{target.data() + q + 1,
+      target.length() - unsigned(q) - 1};
 }
 
 inline bool decodeNormalizePath(
-  ZuCSpan path_, bool hideDotfiles, std::string &path, std::string &err)
+  ZuCSpan path_, bool hideDotfiles, ZtString<> &path, ZtString<> &err)
 {
-  std::string decoded = str(path_);
-  if (decoded.empty() || decoded[0] != '/') decoded.insert(decoded.begin(), '/');
+  ZtString<> decoded;
+  if (!path_ || path_[0] != '/') decoded << '/';
+  decoded << path_;
   auto scan = ZuPercent::Codec<PathPolicy>::decode(
-    ZuSpan<char>{decoded.data(), unsigned(decoded.size())});
+    ZuSpan<char>{decoded.data(), unsigned(decoded.length())});
   if (!scan) { err = "bad percent escape"; return false; }
-  decoded.resize(scan.out);
-  for (char c : decoded)
-    if (!c) { err = "NUL in path"; return false; }
+  decoded.length(scan.out);
+  for (unsigned i = 0, n = decoded.length(); i < n; ++i)
+    if (!decoded[i]) { err = "NUL in path"; return false; }
 
-  std::vector<std::string> parts;
-  size_t i = 0;
-  while (i < decoded.size()) {
-    while (i < decoded.size() && decoded[i] == '/') ++i;
-    size_t b = i;
-    while (i < decoded.size() && decoded[i] != '/') ++i;
+  ZtArray<ZtString<> > parts;
+  unsigned i = 0;
+  while (i < decoded.length()) {
+    while (i < decoded.length() && decoded[i] == '/') ++i;
+    unsigned b = i;
+    while (i < decoded.length() && decoded[i] != '/') ++i;
     if (b == i) continue;
-    auto part = decoded.substr(b, i - b);
+    ZuCSpan part{decoded.data() + b, i - b};
     if (part == ".") continue;
     if (part == "..") {
-      if (parts.empty()) { err = "path traversal"; return false; }
-      parts.pop_back();
+      if (!parts.length()) { err = "path traversal"; return false; }
+      parts.length(parts.length() - 1);
       continue;
     }
-    if (hideDotfiles && !part.empty() && part[0] == '.') {
+    if (hideDotfiles && part && part[0] == '.') {
       err = "hidden path";
       return false;
     }
-    parts.push_back(part);
+    parts.push(part);
   }
   path = "/";
-  for (unsigned n = 0; n < parts.size(); ++n) {
-    if (n) path.push_back('/');
-    path += parts[n];
+  for (unsigned n = 0; n < parts.length(); ++n) {
+    if (n) path << '/';
+    path << parts[n];
   }
   return true;
 }
 
-inline std::string hrefEncode(const std::string &s) {
-  std::string out;
-  out.resize(ZuPercent::Codec<HrefPolicy>::len(
-    ZuBSpan{s.data(), unsigned(s.size())}));
+inline void pathComponents(ZuCSpan clean, ZtArray<Zi::Path> &parts)
+{
+  parts.clear();
+  unsigned i = 0;
+  while (i < clean.length()) {
+    while (i < clean.length() && clean[i] == '/') ++i;
+    unsigned b = i;
+    while (i < clean.length() && clean[i] != '/') ++i;
+    if (b < i) parts.push(ZuCSpan{clean.data() + b, i - b});
+  }
+}
+
+inline Zi::Path staticPath(const Options &options, ZuCSpan clean)
+{
+  Zi::Path path{options.root};
+  if (clean.length() > 1) {
+    unsigned n = path.length();
+    if (n && path[n - 1] != '/' && path[n - 1] != '\\') path << '/';
+    path << ZuCSpan{clean.data() + 1, clean.length() - 1};
+  }
+  return path;
+}
+
+inline ZtString<> hrefEncode(ZuCSpan s) {
+  ZtString<> out;
+  out.length(ZuPercent::Codec<HrefPolicy>::len(
+    ZuBSpan{s.data(), unsigned(s.length())}));
   auto n = ZuPercent::Codec<HrefPolicy>::encode(
     ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(out.data()),
-      unsigned(out.size())},
-    ZuBSpan{s.data(), unsigned(s.size())});
-  out.resize(n);
+      unsigned(out.length())},
+    ZuBSpan{s.data(), unsigned(s.length())});
+  out.length(n);
   return out;
 }
 
-inline void htmlEsc(std::string &out, const std::string &s) {
-  for (char c : s) {
+inline void htmlEsc(ZtString<> &out, ZuCSpan s) {
+  for (unsigned i = 0, n = s.length(); i < n; ++i) {
+    char c = s[i];
     switch (c) {
       case '&': out += "&amp;"; break;
       case '<': out += "&lt;"; break;
       case '>': out += "&gt;"; break;
       case '"': out += "&quot;"; break;
-      default: out.push_back(c); break;
+      default: out << c; break;
     }
   }
 }
 
-inline std::string hostName(ZuCSpan host_) {
-  auto host = str(host_);
-  if (!host.empty() && host[0] == '[') {
-    auto p = host.find(']');
-    if (p != std::string::npos) return lower(host.substr(1, p - 1));
+inline ZtString<> hostName(ZuCSpan host_) {
+  ZtString<> host{host_};
+  if (host && host[0] == '[') {
+    auto p = host.find([](auto c) { return c == ']'; });
+    if (p >= 0)
+      return lower(ZuCSpan{host.data() + 1, unsigned(p - 1)});
   }
-  auto p = host.rfind(':');
-  if (p != std::string::npos) host.resize(p);
+  int p = -1;
+  for (unsigned i = 0, n = host.length(); i < n; ++i)
+    if (host[i] == ':') p = int(i);
+  if (p >= 0) host.length(p);
   return lower(host);
 }
 
-inline bool constTimeEqual(const std::string &a, const std::string &b) {
-  if (a.size() != b.size()) return false;
+inline bool constTimeEqual(ZuCSpan a, ZuCSpan b) {
+  if (a.length() != b.length()) return false;
   unsigned char d = 0;
-  for (unsigned i = 0; i < a.size(); ++i) d |= a[i] ^ b[i];
+  for (unsigned i = 0; i < a.length(); ++i) d |= a[i] ^ b[i];
   return !d;
 }
 
-inline std::string basicAuthValue(const Options &options) {
-  std::string raw = str(options.authUser);
-  raw.push_back(':');
-  raw += str(options.authPass);
-  std::string out;
-  out.resize(ZuBase64::enclen(raw.size()));
+inline ZtString<> basicAuthValue(const Options &options) {
+  ZtString<> raw;
+  raw << options.authUser << ':' << options.authPass;
+  ZtString<> out;
+  out << "Basic ";
+  unsigned offset = out.length();
+  out.length(offset + ZuBase64::enclen(raw.length()));
   auto n = ZuBase64::encode(
-    ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(out.data()),
-      unsigned(out.size())},
-    ZuBSpan{raw.data(), unsigned(raw.size())});
-  out.resize(n);
-  return "Basic " + out;
+    ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(out.data() + offset),
+      unsigned(out.length() - offset)},
+    ZuBSpan{raw.data(), unsigned(raw.length())});
+  out.length(offset + n);
+  return out;
 }
 
 struct StaticPlanner {
@@ -404,9 +546,9 @@ struct StaticPlanner {
 
   ResponsePlan plan(const RequestData &req) const {
     ResponsePlan resp;
-    resp.date = zstr(httpDate(time(nullptr)));
+    resp.date = httpDate(time(nullptr));
     if (!state->options.noServerID) resp.server = "zhttpserver";
-    auto connection = lower(str(req.connection));
+    auto connection = lower(req.connection);
     if (state->options.noKeepalive || connection == "close" ||
 	(req.http10 && connection != "keep-alive")) {
       resp.close = true;
@@ -414,20 +556,19 @@ struct StaticPlanner {
     }
 
     if (state->options.forwardAll)
-      return redirect(req, str(state->options.forwardAll), resp);
+      return redirect(req, state->options.forwardAll, resp);
     for (unsigned i = 0; i < state->options.forwards.length(); ++i)
-      if (hostName(req.host) == lower(str(state->options.forwards[i].host)))
-	return redirect(req, str(state->options.forwards[i].url), resp);
+      if (hostName(req.host) == lower(state->options.forwards[i].host))
+	return redirect(req, state->options.forwards[i].url, resp);
     if (state->options.forwardHttps && !req.tls) {
-      std::string url = "https://";
-      url += str(req.host);
-      url += str(req.target);
+      ZtString<> url;
+      url << "https://" << req.host << req.target;
       return redirect(req, url, resp, false);
     }
 
     if (state->options.authUser) {
       auto expect = basicAuthValue(state->options);
-      if (!constTimeEqual(str(req.authorization), expect)) {
+      if (!constTimeEqual(req.authorization, expect)) {
 	resp.status = 401;
 	resp.reason = "Unauthorized";
 	resp.wwwAuthenticate = "Basic realm=\"zhttpserver\"";
@@ -454,25 +595,25 @@ struct StaticPlanner {
 
     RequestData req_ = req;
     splitTarget(req_);
-    std::string clean, err;
+    ZtString<> clean, err;
     if (!decodeNormalizePath(req_.path, state->options.hideDotfiles, clean, err))
-      return error(resp, 400, "Bad Request", err.c_str(), req.method);
+      return error(resp, 400, "Bad Request", err, req.method);
     if (req_.path.length() > 1 && req_.path[req_.path.length() - 1] == '/' &&
 	clean != "/")
-      clean.push_back('/');
+      clean << '/';
 
     if (state->options.singleFile) return singleFile(req_, clean, resp);
     return fileOrDir(req_, clean, resp);
   }
 
   ResponsePlan redirect(
-    const RequestData &req, const std::string &base, ResponsePlan resp,
+    const RequestData &req, ZuCSpan base, ResponsePlan resp,
     bool appendTarget = true) const {
     resp.status = 301;
     resp.reason = "Moved Permanently";
-    std::string location = base;
-    if (appendTarget) location += str(req.target);
-    resp.location = zstr(location);
+    ZtString<> location{base};
+    if (appendTarget) location << req.target;
+    resp.location = ZuMv(location);
     resp.contentType = "text/plain";
     resp.body = "Moved Permanently\n";
     resp.contentLength = resp.body.length();
@@ -495,31 +636,30 @@ struct StaticPlanner {
   }
 
   ResponsePlan singleFile(
-    const RequestData &req, const std::string &clean, ResponsePlan resp) const {
-    std::filesystem::path root{str(state->options.root)};
-    auto leaf = "/" + root.filename().string();
+    const RequestData &req, ZuCSpan clean, ResponsePlan resp) const {
+    ZtString<> leaf;
+    leaf << '/' << ZiFile::leafname(state->options.root);
     if (clean != "/" && clean != leaf) return notFound(resp, req.method);
-    return regularFile(req, root, resp);
+    ZiFile file;
+    if (file.dup(state->rootFile, ZiFile::GC) != Zi::OK)
+      return error(resp, 403, "Forbidden", "Forbidden", req.method);
+    return regularFile(req, ZuMv(file), state->rootFileStat,
+      state->options.root, resp);
   }
 
   ResponsePlan fileOrDir(
-    const RequestData &req, const std::string &clean, ResponsePlan resp) const {
-    std::filesystem::path root{str(state->options.root)};
-    auto rel = clean.size() > 1 ? clean.substr(1) : std::string{};
-    auto path = root / std::filesystem::path(rel);
-    std::error_code ec;
-    auto st = std::filesystem::symlink_status(path, ec);
-    if (ec || !std::filesystem::exists(st)) return notFound(resp, req.method);
-    if (std::filesystem::is_directory(st)) {
-      if (clean.empty() || clean.back() != '/') {
-	std::string loc = clean + "/";
+    const RequestData &req, ZuCSpan clean, ResponsePlan resp) const {
+    ZiFile dir;
+    if (openDir(clean, dir) == Zi::OK) {
+      if (!clean || clean[clean.length() - 1] != '/') {
+	ZtString<> loc{clean};
+	loc << '/';
 	if (req.query) {
-	  loc.push_back('?');
-	  loc += str(req.query);
+	  loc << '?' << req.query;
 	}
 	resp.status = 301;
 	resp.reason = "Moved Permanently";
-	resp.location = zstr(loc);
+	resp.location = ZuMv(loc);
 	resp.contentType = "text/plain";
 	resp.body = "Moved Permanently\n";
 	resp.contentLength = resp.body.length();
@@ -527,16 +667,32 @@ struct StaticPlanner {
 	resp.sendBody = req.method != Zhttp::Method::HEAD;
 	return resp;
       }
-      auto index = path / str(state->options.index);
-      if (std::filesystem::is_regular_file(index, ec))
-	return regularFile(req, index, resp);
+      ZiFile index;
+      if (index.openAt(dir, state->options.index,
+	  ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK) {
+	ZiFile::Stat stat;
+	if (index.fstat(stat) == Zi::OK && stat.regular) {
+	  Zi::Path indexPath = staticPath(state->options, clean);
+	  if (indexPath && indexPath[indexPath.length() - 1] != '/' &&
+	      state->options.index)
+	    indexPath << '/';
+	  indexPath << state->options.index;
+	  return regularFile(req, ZuMv(index), stat, indexPath, resp);
+	}
+      }
       if (state->options.noListing)
 	return error(resp, 403, "Forbidden", "Forbidden", req.method);
-      return listing(req, path, clean, resp);
+      return listing(req, staticPath(state->options, clean), clean, resp);
     }
-    if (!std::filesystem::is_regular_file(st))
+    if (clean && clean[clean.length() - 1] == '/') return notFound(resp, req.method);
+    ZiFile file;
+    ZiFile::Stat stat;
+    int rc = openFile(clean, file, stat);
+    if (rc != Zi::OK) return notFound(resp, req.method);
+    if (!stat.regular)
       return error(resp, 403, "Forbidden", "Forbidden", req.method);
-    return regularFile(req, path, resp);
+    return regularFile(req, ZuMv(file), stat,
+      staticPath(state->options, clean), resp);
   }
 
   ResponsePlan notFound(ResponsePlan resp, Zhttp::Method::T method) const {
@@ -544,23 +700,16 @@ struct StaticPlanner {
   }
 
   ResponsePlan regularFile(
-    const RequestData &req, const std::filesystem::path &path,
+    const RequestData &req, ZiFile file, const ZiFile::Stat &stat,
+    ZuCSpan path,
     ResponsePlan resp) const {
-    std::error_code ec;
-    auto size = std::filesystem::file_size(path, ec);
-    if (ec) return error(resp, 403, "Forbidden", "Forbidden", req.method);
-    auto mtime_ = std::filesystem::last_write_time(path, ec);
-    time_t mtime = time(nullptr);
-    if (!ec) {
-      auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-	std::chrono::file_clock::to_sys(mtime_));
-      mtime = std::chrono::system_clock::to_time_t(sctp);
-    }
+    uint64_t size = stat.size;
+    time_t mtime = stat.mtime ? stat.mtime.as_time_t() : time(nullptr);
     time_t ims;
     if (parseHTTPDate(req.ifModifiedSince, ims) && mtime <= ims) {
       resp.status = 304;
       resp.reason = "Not Modified";
-      resp.lastModified = zstr(httpDate(mtime));
+      resp.lastModified = httpDate(mtime);
       resp.contentLength = 0;
       resp.sendBody = false;
       return resp;
@@ -572,8 +721,7 @@ struct StaticPlanner {
     if (unsat) {
       resp.status = 416;
       resp.reason = "Range Not Satisfiable";
-      std::string cr = "bytes */" + std::to_string(size);
-      resp.contentRange = zstr(cr);
+      resp.contentRange << "bytes */" << size;
       resp.contentLength = 0;
       resp.sendBody = false;
       return resp;
@@ -581,51 +729,97 @@ struct StaticPlanner {
 
     resp.status = ranged ? 206 : 200;
     resp.reason = ranged ? "Partial Content" : "OK";
-    resp.contentType = state->mime.lookup(state->options, path.string());
-    resp.lastModified = zstr(httpDate(mtime));
-    resp.filePath = zstr(path.string());
+    resp.contentType = state->mime.lookup(state->options, path);
+    resp.lastModified = httpDate(mtime);
+    resp.fileHandle = ZuMv(file);
+    resp.filePath = path;
     resp.contentLength = length;
     resp.fileOffset = first;
     resp.fileLength = length;
     resp.file = true;
     resp.sendBody = req.method != Zhttp::Method::HEAD && length > 0;
     if (ranged) {
-      std::string cr = "bytes " + std::to_string(first) + "-" +
-	std::to_string(first + length - 1) + "/" + std::to_string(size);
-      resp.contentRange = zstr(cr);
+      resp.contentRange << "bytes " << first << '-' <<
+	(first + length - 1) << '/' << size;
     }
     return resp;
+  }
+
+  int openDir(ZuCSpan clean, ZiFile &dir) const {
+    ZiFile cur;
+    if (cur.dup(state->rootDir, ZiFile::GC) != Zi::OK) return Zi::IOError;
+    ZtArray<Zi::Path> parts;
+    pathComponents(clean, parts);
+    for (unsigned i = 0, n = parts.length(); i < n; ++i) {
+      ZiFile next;
+      if (next.openAt(cur, parts[i],
+	  ZiFile::ReadOnly | ZiFile::Directory |
+	    ZiFile::NoFollow | ZiFile::GC) != Zi::OK)
+	return Zi::IOError;
+      cur = ZuMv(next);
+    }
+    dir = ZuMv(cur);
+    return Zi::OK;
+  }
+
+  int openFile(
+    ZuCSpan clean, ZiFile &file, ZiFile::Stat &stat) const {
+    ZtArray<Zi::Path> parts;
+    pathComponents(clean, parts);
+    if (!parts.length()) return Zi::IOError;
+    ZiFile dir;
+    if (dir.dup(state->rootDir, ZiFile::GC) != Zi::OK) return Zi::IOError;
+    for (unsigned i = 0; i + 1 < parts.length(); ++i) {
+      ZiFile next;
+      if (next.openAt(dir, parts[i],
+	  ZiFile::ReadOnly | ZiFile::Directory |
+	    ZiFile::NoFollow | ZiFile::GC) != Zi::OK)
+	return Zi::IOError;
+      dir = ZuMv(next);
+    }
+    ZiFile out;
+    if (out.openAt(dir, parts[parts.length() - 1],
+	ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK)
+      return Zi::IOError;
+    if (out.fstat(stat) != Zi::OK) return Zi::IOError;
+    file = ZuMv(out);
+    return Zi::OK;
   }
 
   static void parseRange(
     ZuCSpan range_, uint64_t size, uint64_t &first, uint64_t &length,
     bool &ranged, bool &unsat) {
-    auto range = str(range_);
-    if (range.rfind("bytes=", 0) != 0) return;
-    auto spec = range.substr(6);
-    if (spec.find(',') != std::string::npos) return;
-    auto dash = spec.find('-');
-    if (dash == std::string::npos) return;
-    auto a = spec.substr(0, dash);
-    auto b = spec.substr(dash + 1);
-    auto isnum = [](const std::string &s) {
-      if (s.empty()) return false;
-      for (char c : s) if (c < '0' || c > '9') return false;
+    ZuCSpan range{range_};
+    if (!range.starts("bytes=")) return;
+    ZuCSpan spec{range.data() + 6, range.length() - 6};
+    if (spec.find([](auto c) { return c == ','; }) >= 0) return;
+    auto dash = spec.find([](auto c) { return c == '-'; });
+    if (dash < 0) return;
+    ZuCSpan a{spec.data(), unsigned(dash)};
+    ZuCSpan b{spec.data() + dash + 1, spec.length() - unsigned(dash) - 1};
+    auto isnum = [](ZuCSpan s) {
+      if (!s) return false;
+      for (unsigned i = 0, n = s.length(); i < n; ++i)
+	if (s[i] < '0' || s[i] > '9') return false;
       return true;
     };
-    if (a.empty()) {
+    auto toU64 = [](ZuCSpan s) {
+      ZtString<> tmp{s};
+      return strtoull(tmp.ndata(), nullptr, 10);
+    };
+    if (!a) {
       if (!isnum(b)) return;
-      uint64_t suffix = strtoull(b.c_str(), nullptr, 10);
+      uint64_t suffix = toU64(b);
       if (!suffix) { unsat = true; return; }
       if (suffix >= size) { first = 0; length = size; }
       else { first = size - suffix; length = suffix; }
       ranged = true;
       return;
     }
-    if (!isnum(a) || (!b.empty() && !isnum(b))) return;
-    uint64_t start = strtoull(a.c_str(), nullptr, 10);
+    if (!isnum(a) || (b && !isnum(b))) return;
+    uint64_t start = toU64(a);
     if (start >= size) { unsat = true; return; }
-    uint64_t end = b.empty() ? size - 1 : strtoull(b.c_str(), nullptr, 10);
+    uint64_t end = !b ? size - 1 : toU64(b);
     if (end < start) { unsat = true; return; }
     if (end >= size) end = size - 1;
     first = start;
@@ -634,52 +828,66 @@ struct StaticPlanner {
   }
 
   ResponsePlan listing(
-    const RequestData &req, const std::filesystem::path &path,
-    const std::string &clean, ResponsePlan resp) const {
+    const RequestData &req, const Zi::Path &path,
+    ZuCSpan clean, ResponsePlan resp) const {
     struct Entry {
-      std::string name;
+      ZtString<> name;
       bool dir = false;
       uint64_t size = 0;
       time_t mtime = 0;
     };
-    std::vector<Entry> entries;
-    std::error_code ec;
-    for (auto &e : std::filesystem::directory_iterator(path, ec)) {
-      auto name = e.path().filename().string();
+    ZtArray<Entry> entries;
+    ZiDir dir;
+    Zi::Path name;
+    if (dir.open(path) == Zi::OK) {
+      while (dir.read(name) == Zi::OK) {
       if (name == "." || name == "..") continue;
-      if (state->options.hideDotfiles && !name.empty() && name[0] == '.')
+      if (state->options.hideDotfiles && name && name[0] == '.')
 	continue;
-      Entry entry;
-      entry.name = name;
-      entry.dir = e.is_directory(ec);
-      if (!entry.dir) entry.size = e.file_size(ec);
-      auto mt = e.last_write_time(ec);
-      if (!ec) {
-	auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-	  std::chrono::file_clock::to_sys(mt));
-	entry.mtime = std::chrono::system_clock::to_time_t(sctp);
+      auto *entry = new (entries.push()) Entry();
+      entry->name = name;
+      Zi::Path child = ZiFile::append(path, name);
+      ZiFile file;
+      ZiFile::Stat stat;
+      if (file.open(child,
+	  ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK &&
+	  file.fstat(stat) == Zi::OK) {
+	entry->dir = stat.directory;
+	entry->size = stat.size;
+	entry->mtime = stat.mtime ? stat.mtime.as_time_t() : 0;
+      } else if (file.open(child,
+	  ZiFile::ReadOnly | ZiFile::Directory |
+	    ZiFile::NoFollow | ZiFile::GC) == Zi::OK &&
+	  file.fstat(stat) == Zi::OK) {
+	entry->dir = stat.directory;
+	entry->size = stat.size;
+	entry->mtime = stat.mtime ? stat.mtime.as_time_t() : 0;
       }
-      entries.push_back(entry);
+      }
     }
-    std::sort(entries.begin(), entries.end(),
-      [](const Entry &a, const Entry &b) { return a.name < b.name; });
-    std::string html;
+    ZuSort(entries.data(), entries.length(),
+      [](const Entry &a, const Entry &b) {
+	return ZuCmp<ZtString<>>::cmp(a.name, b.name);
+      });
+    ZtString<> html;
     html += "<!doctype html><html><head><meta charset=\"utf-8\"><title>Index of ";
     htmlEsc(html, clean);
     html += "</title></head><body><h1>Index of ";
     htmlEsc(html, clean);
     html += "</h1><pre>";
     if (clean != "/") html += "<a href=\"../\">../</a>\n";
-    for (auto &e : entries) {
-      auto label = e.name + (e.dir ? "/" : "");
+    for (unsigned i = 0, n = entries.length(); i < n; ++i) {
+      auto &e = entries[i];
+      ZtString<> label{e.name};
+      if (e.dir) label << '/';
       auto href = hrefEncode(label);
       html += "<a href=\"";
       html += href;
       html += "\">";
       htmlEsc(html, label);
       html += "</a>";
-      if (!e.dir) html += " " + std::to_string(e.size);
-      if (e.mtime) html += " " + httpDate(e.mtime);
+      if (!e.dir) html << ' ' << e.size;
+      if (e.mtime) html << ' ' << httpDate(e.mtime);
       html += "\n";
     }
     html += "</pre>";
@@ -689,7 +897,7 @@ struct StaticPlanner {
     resp.status = 200;
     resp.reason = "OK";
     resp.contentType = "text/html";
-    resp.body = zstr(html);
+    resp.body = ZuMv(html);
     resp.contentLength = resp.body.length();
     resp.generated = true;
     resp.sendBody = req.method != Zhttp::Method::HEAD;
@@ -707,6 +915,14 @@ inline bool parseForward(Options &options, ZuCSpan host, ZuCSpan url) {
   return true;
 }
 
+inline bool parseForward(Options &options, ZuCSpan spec) {
+  auto comma = spec.find([](auto c) { return c == ','; });
+  if (comma <= 0 || unsigned(comma) + 1 >= spec.length()) return false;
+  return parseForward(options,
+    ZuCSpan{spec.data(), unsigned(comma)},
+    ZuCSpan{spec.data() + comma + 1, spec.length() - unsigned(comma) - 1});
+}
+
 inline bool parseAuth(Options &options, ZuCSpan auth) {
   auto colon = auth.find([](auto c) { return c == ':'; });
   if (colon <= 0) return false;
@@ -716,12 +932,56 @@ inline bool parseAuth(Options &options, ZuCSpan auth) {
   return true;
 }
 
-inline bool readableFile(const std::string &path) {
-  ZiFile f;
-  return f.open(path.c_str(), ZiFile::ReadOnly | ZiFile::GC) == Zi::OK;
+inline bool loadOptions(Options &options, int argc, char **argv, bool &help) {
+  bool httpSet = false;
+  for (int i = 1; i < argc; ++i) {
+    ZuCSpan arg{argv[i]};
+    if (arg == "--http") httpSet = true;
+  }
+  int argc_ = ZtCLI::load(options, argc, const_cast<const char *const *>(argv));
+  if (argc_ < 0) return false;
+  help = options.help;
+  if (help) return true;
+  if (argc_ != 2) return false;
+  if (options.port > 65535) return false;
+  for (unsigned i = 0, n = options.forward.length(); i < n; ++i)
+    if (!parseForward(options, options.forward[i])) return false;
+  if (options.auth && !parseAuth(options, options.auth)) return false;
+#ifndef _WIN32
+  if (options.port == 8080 && !geteuid()) options.port = 80;
+#endif
+  if (!httpSet && (options.https || options.http3)) options.http = false;
+  return true;
 }
 
-inline bool validate(Options &options, std::string &error) {
+inline bool initFileState(State &state, ZtString<> &error) {
+  if (state.options.singleFile) {
+    if (state.rootFile.open(state.options.root,
+	ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK) {
+      error = "failed to open root file";
+      return false;
+    }
+    if (state.rootFile.fstat(state.rootFileStat) != Zi::OK ||
+	!state.rootFileStat.regular) {
+      error = "root is not a regular file";
+      return false;
+    }
+    return true;
+  }
+  if (state.rootDir.open(state.options.root,
+      ZiFile::ReadOnly | ZiFile::Directory | ZiFile::GC) != Zi::OK) {
+    error = "failed to open root directory";
+    return false;
+  }
+  ZiFile::Stat stat;
+  if (state.rootDir.fstat(stat) != Zi::OK || !stat.directory) {
+    error = "root is not a directory";
+    return false;
+  }
+  return true;
+}
+
+inline bool validate(Options &options, ZtString<> &error) {
   if (!options.root) { error = "root required"; return false; }
   if ((options.https || options.http3) && (!options.cert || !options.key)) {
     error = "--https/--http3 require --cert and --key";
@@ -733,17 +993,22 @@ inline bool validate(Options &options, std::string &error) {
     return false;
   }
 #endif
-  std::error_code ec;
-  auto root = std::filesystem::path{str(options.root)};
-  if (!std::filesystem::exists(root, ec)) { error = "root does not exist"; return false; }
+  ZiFile root;
+  ZiFile::Stat stat;
   if (options.singleFile) {
-    if (!std::filesystem::is_regular_file(root, ec) || !readableFile(root.string())) {
+    if (root.open(options.root,
+	  ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK ||
+	root.fstat(stat) != Zi::OK || !stat.regular) {
       error = "--single-file root is not a readable regular file";
       return false;
     }
-  } else if (!std::filesystem::is_directory(root, ec)) {
-    error = "root is not a directory";
-    return false;
+  } else {
+    if (root.open(options.root,
+	  ZiFile::ReadOnly | ZiFile::Directory | ZiFile::GC) != Zi::OK ||
+	root.fstat(stat) != Zi::OK || !stat.directory) {
+      error = "root is not a directory";
+      return false;
+    }
   }
   return true;
 }

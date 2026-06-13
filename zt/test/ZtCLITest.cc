@@ -97,6 +97,15 @@ ZtStruct((Foo, Bah),
 
 ZtCLIConfig(Bah, (ZtCLI_ArrayFmt<ZtCLI::Delimited>));
 
+struct LongOnly {
+  unsigned	port = 0;
+  bool		verbose = false;
+};
+
+ZtStruct((LongOnly, CLI),
+  (((port),    (CLI::Long<"port">)),    (UInt32)),
+  (((verbose), (CLI::Long<"verbose">)), (Bool)));
+
 void roundTrip()
 {
   ZuTestScope(roundTrip);
@@ -197,6 +206,28 @@ void parseCLIEscapedAndEmpty()
   ZuCheck(in.argv[3] == "tail");
 }
 
+void longOnlyOptions()
+{
+  ZuTestScope(longOnlyOptions);
+
+  ZtCLI::OutArgv out;
+  out.argv.push("");
+  out.argv.push("--port");
+  out.argv.push("8080");
+  out.argv.push("--verbose");
+  out.finish();
+
+  ZtCLI::Parser<LongOnly> parser;
+  ZuCheck(parser.scanArgv(out.argv));
+  ZuCheck(parser.hasKey("verbose"));
+
+  LongOnly options;
+  int argc = ZtCLI::load(options, out.argc(), out.argv_c());
+  ZuCheck(argc == 1);
+  ZuCheck(options.port == 8080);
+  ZuCheck(options.verbose);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -205,5 +236,6 @@ int main(int argc, char **argv)
   ZuTestCall(cmdQuote);
   ZuTestCall(parseCLI);
   ZuTestCall(parseCLIEscapedAndEmpty);
+  ZuTestCall(longOnlyOptions);
   return 0;
 }

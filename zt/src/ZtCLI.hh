@@ -823,6 +823,11 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
       constexpr int8_t Flag = ZuFieldProp::CLI::GetFlag<Props>{};
       if constexpr (Flag >= 0)
 	return R(true);
+      else if constexpr (TypeCode == ZtFieldTC::Bool) {
+	if (child->data.template is<Node::String>())
+	  return R(ZtScanBool(child->data.template p<Node::String>()));
+	return R(true);
+      }
       else if constexpr (TypeCode == ZtFieldTC::UDT)
 	return typename As<T>::template Handler<T, Facet>{child}.ctor();
       else
@@ -965,7 +970,7 @@ constexpr unsigned nOptions_() {
 template <typename O, typename Facet>
 constexpr unsigned nOptions() {
   unsigned n = nOptions_<O, Facet>();
-  return n <= 1 ? 1 : (1U<<((sizeof(n)<<3) - ZuIntrin::clz(n - 1)));
+  return n <= 1 ? 1 : ((sizeof(n)<<3) - ZuIntrin::clz(n - 1));
 }
 template <typename O, typename Facet, typename Hash>
 void initOptions(Hash &hash, ZuCSpan prefix = {}) {
@@ -1017,6 +1022,41 @@ private:
   bool opt = false;		// reading option key with single arg
   bool args = false;		// reading vector value of multiple args
   bool eoo = false;		// no more options following --
+
+  template <typename U>
+  static OptType::T longOptType_(ZuCSpan key_, ZuCSpan prefix = {}) {
+    OptType::T type = -1;
+    using AllFields = ZuFields<U, Facet>;
+    using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
+    ZuUnroll::all<LoadFields>([&type, &key_, &prefix]<typename Field>() {
+      if (type >= 0) return;
+      using Props = typename Field::Props;
+      enum { TypeCode = Field::Type::Code };
+      constexpr int8_t Arg = ZuFieldProp::CLI::GetArg<Props>{};
+      constexpr int8_t Args = ZuFieldProp::CLI::GetArgs<Props>{};
+      if constexpr (Arg < 0 && Args < 0) {
+	ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
+	unsigned n = prefix.length();
+	if (n) ++n;
+	n += longOpt.length();
+	auto expansion = ZtLocalString(Expansion, n);
+	if (prefix) expansion << prefix << '.';
+	expansion << longOpt;
+	if (key_ == expansion) {
+	  if constexpr (TypeCode == ZtFieldTC::Bool ||
+	      ZuIsSame<ZuDecay<typename Field::T>, bool>{})
+	    type = OptType::Flag;
+	  else
+	    type = OptType::Option;
+	}
+	if constexpr (TypeCode == ZtFieldTC::UDT) {
+	  if (type < 0)
+	    type = longOptType_<typename Field::T>(key_, expansion.cspan());
+	}
+      }
+    });
+    return type;
+  }
 
 public:
   Parser() : root{new Node{Node::Object{}}} {
@@ -1105,8 +1145,19 @@ public:
 	  val = {&arg[p], uint64_t(n - p)};
 	} else {
 	  // --x
-	  key = arg;
-	  val = {};
+	  switch (longOptType_<O>(arg)) {
+	    default:
+	      return false;
+	    case OptType::Option:
+	      key = arg;
+	      opt = true;
+	      return true;
+	    case OptType::Flag:
+	      key = arg;
+	      static char true_[] = "1";
+	      val = {true_, 1};
+	      break;
+	  }
 	}
 	return addNode(key, val);
       }
@@ -1168,7 +1219,7 @@ public:
   bool scanArgv(const Argv &argv) {
     for (unsigned i = 0, n = argv.length(); i < n; i++)
       if (!scanArg(argv[i])) return false;
-    return true;
+    return !opt && !args;
   }
 };
 
