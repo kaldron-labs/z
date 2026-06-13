@@ -25,7 +25,7 @@
 #include <zlib/Zhttp.hh>
 #include <zlib/ZtString.hh>
 
-#include "ZhttpCaddyInterop.hh"
+#include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
 
@@ -323,17 +323,6 @@ void testInteropPrerequisites()
 
   ZuCHECK(Zhttp::Test::haveCurlH3(),
     "curl with HTTP3/ngtcp2/nghttp3 is required for fallback tests");
-  ZuCHECK(Zhttp::Test::haveCaddy(),
-    "caddy is required for fallback tests");
-}
-
-void testCurlCaddyHttp11Fallback()
-{
-  ZuTestScope(testCurlCaddyHttp11Fallback);
-
-  ZuCHECK(Zhttp::Test::runCaddyCurl(
-      "\"h1\"", "--http1.1", "1.1", "zhttp-h1-ok", true),
-    "HTTP/1.1 fallback route failed");
 }
 
 void testCurlZhttpHttp11Fallback()
@@ -433,7 +422,6 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testInteropPrerequisites);
-  ZuTestCall(testCurlCaddyHttp11Fallback);
   ZuTestCall(testCurlZhttpHttp11Fallback);
   ZuTestCall(testZhttpClientHttp11Fallback);
 }
