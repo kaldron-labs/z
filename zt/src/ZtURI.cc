@@ -25,49 +25,8 @@ unsigned skip(ZuSpan<char> span) {
 
 ZuTuple<int, int, char> eoc(ZuSpan<char> span)
 {
-  unsigned n = span.length();
-
-  if (ZuUnlikely(n < 1)) goto bad;
-
-  // fast path - no decoding/mutation
-  unsigned i;
-  for (i = 0; i < n; i++) {
-    char c = span[i];
-    if (ZuUnlikely(c == '%')) goto slow;
-    if (ZuUnlikely(c == '/' || c == '?' || escaped(c))) {
-      span[i] = 0;
-      return {i, i + 1, c};
-    }
-  }
-  return {i, i, 0};
-
-slow:
-  // slow path - span[i] == '%' || span[i] == '+' is a precondition
-  {
-    unsigned o = i;
-    while (i < n) {
-      char c = span[i];
-      if (ZuUnlikely(c == '%')) {
-	if (ZuUnlikely(++i > n - 2)) goto bad;
-	auto h = hex(span[i++]);
-	auto l = hex(span[i++]);
-	if (ZuUnlikely(h < 0 || l < 0)) goto bad;
-	span[o++] = char((h<<4) | l);
-	continue;
-      }
-      if (ZuUnlikely(c == '/' || c == '?' || escaped(c))) {
-	++i;
-	memset(&span[o], 0, i - o); // terminate and pad with zeros
-	return {o, i, c};
-      }
-      ++i;
-      span[o++] = c; // o < i is guaranteed
-    }
-    return {o, i, 0};
-  }
-
-bad:
-  return {-1};
+  auto r = ZuPercent::Codec<PercentPath>::decode(span);
+  return {r.out, r.in, r.term};
 }
 
 #if 0
@@ -94,54 +53,8 @@ int boq(ZuCSpan span)
 
 ZuTuple<int, int, char> eos(ZuSpan<char> span)
 {
-  unsigned n = span.length();
-
-  if (ZuUnlikely(n < 1)) goto bad;
-
-  // fast path - no decoding/mutation
-  unsigned i;
-  for (i = 0; i < n; i++) {
-    char c = span[i];
-    if (ZuUnlikely(c == '%' || c == '+')) goto slow;
-    if (ZuUnlikely(escaped(c))) {
-      span[i] = 0;
-      return {i, i + 1, c};
-    }
-  }
-  return {i, i, 0};
-
-slow:
-  // slow path - span[i] == '%' || span[i] == '+' is a precondition
-  {
-    unsigned o = i;
-    while (i < n) {
-      char c = span[i];
-      if (ZuUnlikely(c == '+')) {
-	++i;
-	span[o++] = ' ';
-	continue;
-      }
-      if (ZuUnlikely(c == '%')) {
-	if (ZuUnlikely(++i > n - 2)) goto bad;
-	auto h = hex(span[i++]);
-	auto l = hex(span[i++]);
-	if (ZuUnlikely(h < 0 || l < 0)) goto bad;
-	span[o++] = char((h<<4) | l);
-	continue;
-      }
-      if (ZuUnlikely(escaped(c))) {
-	++i;
-	memset(&span[o], 0, i - o); // terminate and pad with zeros
-	return {o, i, c};
-      }
-      ++i;
-      span[o++] = c; // o < i is guaranteed
-    }
-    return {o, i, 0};
-  }
-
-bad:
-  return {-1};
+  auto r = ZuPercent::Codec<PercentQuery>::decode(span);
+  return {r.out, r.in, r.term};
 }
 
 // scankey() consumes part of a potentially composite key
