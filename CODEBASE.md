@@ -25,6 +25,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - Connections: used by Zi for multiplexing and I/O, by Zt and Zfb for buffer allocation, and by higher-level modules such as Zdb and Zv (e.g., `zi/src/ZiMultiplex.hh:10`, `zdb/src/Zdb.hh:57`, `zv/src/ZvEngine.hh:10`).
 
 ### Zi (system, I/O, network)
+- Platform I/O, networking, logging, and daemon helpers in `zi/src/ZiFile.hh:10`, `zi/src/ZiMultiplex.hh:10`, `zi/src/ZiLog.hh:10`, and `zi/src/ZiDaemon.hh:10`.
 - Multiplexing and I/O buffer abstractions in `zi/src/ZiMultiplex.hh:10` and `zi/src/ZiIOBuf.hh:22`.
 - Filesystem and path handling in `zi/src/ZiFile.hh:13` and directory/globbing support in `zi/src/ZiDir.hh:10` and `zi/src/ZiGlob.hh:13`.
 - Network-specific utilities for ring buffers and netlink in `zi/src/ZiRing.hh:22` and `zi/src/ZiNetlink.hh:8`.
@@ -89,7 +90,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 
 ### Zv (connectivity framework)
 - Core engine, link, and queue abstractions in `zv/src/ZvEngine.hh:10` and `zv/src/ZvIOQueue.hh:13`.
-- Configuration, CSV, and daemon helpers in `zv/src/ZvCf.hh:18`, `zv/src/ZvCSV.hh:12`, and `zv/src/ZvDaemon.hh:10`.
+- Configuration and CSV helpers in `zv/src/ZvCf.hh:18` and `zv/src/ZvCSV.hh:12`.
 - Connections: uses Zi multiplexing and Zm engine primitives; higher-level services (e.g., Zdb) reference Zv configuration structures.
 
 ### Zgtk (GTK integration)
@@ -243,7 +244,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/test/ZuNXTest.cc:17` - Top-level symbols: function out, define CHECK, struct A, struct B, function test1, function test2
 - `zv/src/ZvIOQueue.hh:13` - Top-level symbols: define ZvIOQueue_HH, struct ZvIOQueueRxTx, using ZvSeqNo, using ZvAtomicSeqNo, struct ZvIOMsg_, function length
 - `zu/test/ZuDecimalTest.cc:15` - Top-level symbols: function out, define CHECK
-- `zv/src/ZvDaemon.hh:10` - Top-level symbols: define ZvDaemon_HH, class ZvAPI
+- `zi/src/ZiDaemon.hh:10` - Top-level symbols: define ZiDaemon_HH, class ZiAPI
 - `zu/test/ZuUTFTest.cc:18` - Top-level symbols: function out, define CHECK
 - `zv/src/ZvLib.hh:10` - Top-level symbols: define ZvLib_HH, define ZvAPI, define ZvExplicit, define ZvAPI, define ZvExplicit, define ZvExtern
 - `zu/test/ZuMvArrayTest.cc:13` - Top-level symbols: function out, define CHECK, struct E, struct G, struct H
@@ -252,7 +253,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/test/ZuPercentTest.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define ENC, define DEC
 - `zv/src/ZvCSV.cc:1` - Top-level contents (no regex-matched symbols)
 - `zu/test/ZuFPTest.cc:14` - Top-level symbols: function out, define CHECK, function decode, using FP
-- `zv/src/ZvDaemon.cc:33` - Top-level symbols: struct passwd
+- `zi/src/ZiDaemon.cc:33` - Top-level symbols: struct passwd
 - `zu/test/Analyze.hh:1` - Top-level contents (no regex-matched symbols)
 - `zv/src/ZvCSV.hh:12` - Top-level symbols: define ZvCSV_HH, using Base64, using Base64URL, using Base32, using Hex, using Raw
 - `zu/test/ZuStructTest.cc:17` - Top-level symbols: function out, define CHECK, struct TimeFmt, using Props, using Base64, using Base32
@@ -400,7 +401,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zgtk/src/ZGtkCallback.hh:10` - Top-level symbols: define ZGtkCallback_HH, function callback
 - `zv/test/CSVTest.cc:21` - Top-level symbols: function out, define CHECK, struct Row_, struct RowNode, using Row, function ZeEXCEPT
 - `zgtk/src/ZGtkApp.cc:1` - Top-level contents (no regex-matched symbols)
-- `zv/test/DaemonTest.cc:18` - Top-level symbols: function usage, function notify, function sigint, struct Options
+- `zi/test/ZiDaemonTest.cc:18` - Top-level symbols: function usage, function notify, function sigint, struct Options
 - `zgtk/src/ZGtkLib.hh:10` - Top-level symbols: define ZGtkLib_HH, define ZGtkAPI, define ZGtkExplicit, define ZGtkAPI, define ZGtkExplicit, define ZGtkExtern
 - `zv/test/CfTest.cc:19` - Top-level symbols: function fail, function out_, define CHECK_, define CHECK
 - `zv/test/ZvEngineTest.cc:12` - Top-level symbols: class Mgr, function addEngine, function delEngine, function updEngine, function updLink, function addQueue

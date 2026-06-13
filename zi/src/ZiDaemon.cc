@@ -6,7 +6,7 @@
 
 // daemon-ization
 
-#include <zlib/ZvDaemon.hh>
+#include <zlib/ZiDaemon.hh>
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiFile.hh>
@@ -21,7 +21,7 @@
 #pragma warning(disable:4996)
 #endif
 
-int ZvDaemon::init(
+int ZiDaemon::init(
   const char *username, const char *password,
   int umask, bool daemonize, const char *pidFile)
 {
@@ -33,7 +33,7 @@ int ZvDaemon::init(
     struct passwd *p = getpwnam(username);
 
     if (!p) {
-      ZiLOG(Error, "ZvDaemon", ([username](auto &s) {
+      ZiLOG(Error, "ZiDaemon", ([username](auto &s) {
 	s << "getpwnam(\"" << username << "\") failed";
       }));
     } else {
@@ -53,7 +53,7 @@ int ZvDaemon::init(
 
     switch (fork()) {
     case -1:
-      ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
+      ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	s << "fork() failed: " << e.message() << "";
       }));
       return Error;
@@ -71,7 +71,7 @@ int ZvDaemon::init(
 #else
 
   if (username || daemonize) {
-    // on Windows, re-invoke the same program unless ZvDaemon is set
+    // on Windows, re-invoke the same program unless ZiDaemon is set
     bool daemon = false;
 
     // get path to current program
@@ -81,13 +81,13 @@ int ZvDaemon::init(
     path.truncate();
 
     {
-      wchar_t *s = _wgetenv(L"_ZvDaemon");
+      wchar_t *s = _wgetenv(L"_ZiDaemon");
 
       if (path == s) daemon = true;
     }
 
     if (!daemon) {
-      _wputenv(ZtWString<>{L"_ZvDaemon="} << path);
+      _wputenv(ZtWString<>{L"_ZiDaemon="} << path);
 
       // get command line
       ZtWString<> commandLine(GetCommandLine());
@@ -112,7 +112,7 @@ int ZvDaemon::init(
 	// re-invoke same program
 	if (!CreateProcess(
 	      path, commandLine, 0, 0, TRUE, flags, 0, 0, &si, &pi)) {
-	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "CreateProcess failed: " << e;
 	  }));
 	  return Error;
@@ -124,7 +124,7 @@ int ZvDaemon::init(
 	      ZtWString<>(username), 0, ZtWString<>(password),
 	      LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, &user
 	    )) {
-	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "LogonUser failed: " << e;
 	  }));
 	  return Error;
@@ -136,7 +136,7 @@ int ZvDaemon::init(
 	      SecurityImpersonation, TokenPrimary, &token
 	    )) {
 	  CloseHandle(user);
-	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "DuplicateTokenEx failed: " << e;
 	  }));
 	  return Error;
@@ -146,7 +146,7 @@ int ZvDaemon::init(
 
 	if (!ImpersonateLoggedOnUser(token)) {
 	  CloseHandle(token);
-	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "ImpersonateLoggedOnUser failed: " << e;
 	  }));
 	  return Error;
@@ -171,7 +171,7 @@ int ZvDaemon::init(
 	    &sa, 0, TRUE, flags, 0, 0, &si, &pi)) {
 	  RevertToSelf();
 	  CloseHandle(token);
-	  ZiLOG(Fatal, "ZvDaemon", ([e = ZeLastError](auto &s) {
+	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "CreateProcessAsUser failed: " << e;
 	  }));
 	  return Error;
@@ -199,7 +199,7 @@ int ZvDaemon::init(
     if (file.open(pidFile,
 	ZiFile::Create | ZiFile::Exclusive | ZiFile::GC, 0644) != Zi::OK) {
       if (file.open(pidFile, ZiFile::GC, 0) != Zi::OK) {
-	ZiLOG(Error, "ZvDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
+	ZiLOG(Error, "ZiDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
 	  s << "open(" << f << "): " << e;
 	}));
 	return Error;
@@ -208,7 +208,7 @@ int ZvDaemon::init(
       int n;
 
       if ((n = file.read(buf.data(), 15)) < 0) {
-	ZiLOG(Error, "ZvDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
+	ZiLOG(Error, "ZiDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
 	  s << "read(" << f << "): " << e;
 	}));
 	return Error;
@@ -223,7 +223,7 @@ int ZvDaemon::init(
 	int i = kill(pid, 0);
 
 	if (i >= 0 || (i < 0 && errno == EPERM)) {
-	  ZiLOG(Error, "ZvDaemon", ([pid](auto &s) {
+	  ZiLOG(Error, "ZiDaemon", ([pid](auto &s) {
 	    s << "PID " << pid << " still running";
 	  }));
 	  return Running;
@@ -233,7 +233,7 @@ int ZvDaemon::init(
 
 	if (h) {
 	  CloseHandle(h);
-	  ZiLOG(Error, "ZvDaemon", ([pid](auto &s) {
+	  ZiLOG(Error, "ZiDaemon", ([pid](auto &s) {
 	    s << "PID " << pid << " still running";
 	  }));
 	  return Running;
@@ -248,7 +248,7 @@ int ZvDaemon::init(
     buf << ZuBox<int>(Zm::getPID());
 
     if (file.write(buf.data(), buf.length()) != Zi::OK) {
-      ZiLOG(Error, "ZvDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
+      ZiLOG(Error, "ZiDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
 	s << "write(" << f << "): " << e;
       }));
       return Error;
