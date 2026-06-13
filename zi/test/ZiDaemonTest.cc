@@ -11,70 +11,77 @@
 
 #include <zlib/ZiLog.hh>
 
-#include <zlib/ZvDaemon.hh>
-#include <zlib/ZvCf.hh>
+#include <zlib/ZiDaemon.hh>
+
+#include <string.h>
 
 namespace {
   void usage() {
-    puts("Usage: DaemonTest [username [password]] [-d|--daemonize]");
+    puts("Usage: ZiDaemonTest [username [password]] [-d|--daemonize]");
     Zm::exit(1);
   }
 
   void notify(const char *text) {
-    ZiLOG(Info, "DaemonTest", ZtSprintf("PID %d: %s", (int)Zm::getPID(), text));
+    ZiLOG(Info, "ZiDaemonTest", ([pid = Zm::getPID(), text](auto &s) {
+      s << "PID " << pid << ": " << text;
+    }));
   }
 
   ZmSemaphore done;
 
   void sigint() {
-    ZiLOG(Info, "DaemonTest", "SIGINT");
+    ZiLOG(Info, "ZiDaemonTest", "SIGINT");
     done.post();
   }
 } // namespace
 
 struct Options {
-  ZuCSpan	username;
-  ZuCSpan	password;
+  const char	*username;
+  const char	*password;
   bool		daemonize;
   bool		help;
 };
 
-ZuStruct(Options,
-  (((username),		(CLI::Arg<1>)),		(String)),
-  (((password),		(CLI::Arg<2>)),		(String)),
-  (((daemonize),	(CLI::Flag<'d'>)),	(Bool)),
-  (((help)),					(Bool)));
-
 int main(int argc_, char **argv)
 {
-  Options options;
-  int argc = ZtCLI::load(options, argc_, argv);
-  if (argc < 1 || argc > 3) usage();
+  Options options{};
+  for (int i = 1; i < argc_; i++) {
+    if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help"))
+      options.help = true;
+    else if (!strcmp(argv[i], "-d") || !strcmp(argv[i], "--daemonize"))
+      options.daemonize = true;
+    else if (!options.username)
+      options.username = argv[i];
+    else if (!options.password)
+      options.password = argv[i];
+    else
+      usage();
+  }
   if (options.help) usage();
 
-  ZiLog::init("DaemonTest");
+  ZiLog::init("ZiDaemonTest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::debugSink());
 
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
 
-  int r = ZvDaemon::init(
+  int r = ZiDaemon::init(
     options.username, options.password,
-    0, options.daemonize, "DaemonTest.pid");
+    0, options.daemonize, "ZiDaemonTest.pid");
 
   ZiLog::start();
 
   switch (r) {
-    case ZvDaemon::OK:
+    case ZiDaemon::OK:
       notify("OK");
       break;
-    case ZvDaemon::Running:
+    case ZiDaemon::Running:
       notify("already running");
       ZiLog::stop();
       Zm::exit(1);
       break;
-    case ZvDaemon::Error:
+    case ZiDaemon::Error:
       notify("error");
       ZiLog::stop();
       Zm::exit(1);

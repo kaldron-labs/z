@@ -14,6 +14,7 @@ noinst_PROGRAMS = \
 	ZiIOBufTest ZiEventLoopTest \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
 	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest
+EXTRA_PROGRAMS = ZiDaemonTest
 noinst_HEADERS = ZiTestResidue.hh
 .PHONY: test
 test: $(noinst_PROGRAMS)
@@ -37,6 +38,7 @@ ZiTxStreamTest_SOURCES = ZiTxStreamTest.cc
 ZiRxStreamTest_SOURCES = ZiRxStreamTest.cc
 ZiLogTest_SOURCES = ZiLogTest.cc
 ZiMxLoopTest_SOURCES = ZiMxLoopTest.cc
+ZiDaemonTest_SOURCES = ZiDaemonTest.cc
 if NETLINK
 noinst_PROGRAMS += ZiNetlinkMsgTest
 ZiNetlinkMsgTest_SOURCES = ZiNetlinkMsgTest.cc

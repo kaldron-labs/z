@@ -6,17 +6,17 @@
 
 // daemon-ization
 
-#ifndef ZvDaemon_HH
-#define ZvDaemon_HH
+#ifndef ZiDaemon_HH
+#define ZiDaemon_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZiLib_HH
+#include <zlib/ZiLib.hh>
 #endif
 
-class ZvAPI ZvDaemon {
-  ZvDaemon() = delete;
-  ZvDaemon(const ZvDaemon &) = delete;
-  ZvDaemon &operator =(const ZvDaemon &) = delete;
+class ZiAPI ZiDaemon {
+  ZiDaemon() = delete;
+  ZiDaemon(const ZiDaemon &) = delete;
+  ZiDaemon &operator =(const ZiDaemon &) = delete;
 
 public:
   enum { OK = 0, Error = -1, Running = -2 };
@@ -50,4 +50,4 @@ public:
       const char *pidFile);
 };
 
-#endif /* ZvDaemon_HH */
+#endif /* ZiDaemon_HH */
