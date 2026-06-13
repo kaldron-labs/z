@@ -134,6 +134,8 @@ These guidelines extend `AGENTS.md`
 - use `ZiAssert` for run-time assertions that need graceful failure handling
 - use `ZiFile` for file I/O, `ZiMMapFile` for memory-mapped I/O, `ZiMultiplex` for network I/O multiplexing
 - use `ZiEventLoop` for interoperability with other event loops and types of handles
+- use `Zdb` for relational data persistency
+  - use sagas for transactional integrity
 
 ## Code Style
 - library headers must follow the following format:
