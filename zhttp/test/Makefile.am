@@ -20,7 +20,8 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 noinst_PROGRAMS = zhttptest zhttptestd \
 	ZhttpParserTest \
 	ZhttpHPackTest ZhttpQPackTest \
-	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest
+	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
+	ZhttpClientServerTest
 noinst_HEADERS = ZhttpCaddyInterop.hh
 zhttptest_SOURCES = zhttptest.cc
 zhttptestd_SOURCES = zhttptestd.cc
@@ -30,8 +31,10 @@ ZhttpQPackTest_SOURCES = ZhttpQPackTest.cc
 Zhttp3InteropTest_SOURCES = Zhttp3InteropTest.cc
 ZhttpFallbackTest_SOURCES = ZhttpFallbackTest.cc
 ZhttpQPackDynamicTest_SOURCES = ZhttpQPackDynamicTest.cc
+ZhttpClientServerTest_SOURCES = ZhttpClientServerTest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove ZhttpParserTest ZhttpHPackTest ZhttpQPackTest \
-		Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest
+		Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
+		ZhttpClientServerTest

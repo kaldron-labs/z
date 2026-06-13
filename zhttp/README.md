@@ -36,6 +36,12 @@ instruction sequences by the connection.
 Fallback-capable clients should try HTTP/3 when configured and fall back to
 HTTP/1.1 over TLS when HTTP/3 is unavailable or rejected by policy.
 
+The example server can be started for the plain HTTP/1.1 path with:
+
+```sh
+zhttpserver --http --addr 127.0.0.1 --port 8080 --body zhttp-ok
+```
+
 First-release exclusions match the transport scope: no server push, no
 WebTransport, no DATAGRAM, no 0-RTT, no QUIC v2, no multipath, and no active
 ECN behavior.
