@@ -12,27 +12,26 @@
 #include <zlib/Zquic.hh>
 #include <zlib/Zhttp.hh>
 
-#include "ZhttpCaddyInterop.hh"
 #include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
 
 namespace {
 
-using Zhttp::Test::CaddyProcess;
 using Zhttp::Test::TempDir;
 using Zhttp::Test::cspan;
-using Zhttp::Test::haveCaddy;
 using Zhttp::Test::haveCurlH3;
 using Zhttp::Test::loopbackPort;
 using Zhttp::Test::printFile;
 using Zhttp::Test::retry;
 using Zhttp::Test::runCurlH3Retry;
 using Zhttp::Test::systemOK;
-using Zhttp::Test::waitCaddyReady;
 using Zhttp::Test::waitUntil;
-using Zhttp::Test::writeCaddyfile;
 using Zhttp::Test::writeSelfSignedLocalhostCert;
+using Zquic::Test::CaddyProcess;
+using Zquic::Test::haveCaddy;
+using Zquic::Test::waitCaddyReady;
+using Zquic::Test::writeCaddyfile;
 
 using RequestHeaders = ZhttpHeaders("content-length");
 using ResponseHeaders = ZhttpHeaders("content-type");
