@@ -42,7 +42,7 @@ ZtStruct((Options, CLI),
 void usage(int code = 1)
 {
   std::cerr <<
-    "Usage: zhttpclient [OPTION]... URL\n\n"
+    "Usage: zhttp [OPTION]... URL\n\n"
     "Options:\n"
     "  -c, --ca=PATH       CA path for https:\n"
     "  -o, --output=PATH   response body output path\n"
@@ -304,7 +304,7 @@ struct RequestOps {
   template <typename Key, typename L>
   void header(L &&l) {
     if constexpr (ZuIsSame<Key, ZuStringT<"user-agent">>{})
-      l("zhttpclient/1.0");
+      l("zhttp/1.0");
     else if constexpr (ZuIsSame<Key, ZuStringT<"accept">>{})
       l("*/*");
     else
@@ -377,7 +377,7 @@ void sendH3Request(State &state, StreamRef stream)
 void logFraming(State &state)
 {
   if (state.framingLogged) return;
-  ZiLOG(Info, "zhttpclient.response", ([&state](auto &s) {
+  ZiLOG(Info, "zhttp.response", ([&state](auto &s) {
     s << "framing: ";
     if (state.chunked)
       s << "chunked";
@@ -396,7 +396,7 @@ struct ResponseSink {
   void status(unsigned status) {
     state->status = status;
     state->redirect = redirectStatus(status);
-    ZiLOG(Info, "zhttpclient.response", ([status](auto &s) {
+    ZiLOG(Info, "zhttp.response", ([status](auto &s) {
       s << "status: " << status;
     }));
   }
@@ -409,14 +409,14 @@ struct ResponseSink {
   void header(ZuBSpan value) {
     if constexpr (ZuIsSame<Key, ZuStringT<"alt-svc">>{}) {
       if (parseAltSvc(*state, ZuCSpan(value)))
-	ZiLOG(Info, "zhttpclient.response", ([state = state](auto &s) {
+	ZiLOG(Info, "zhttp.response", ([state = state](auto &s) {
 	  s << "alt-svc: h3=\"" << state->altSvcHost << ':' <<
 	    state->altSvcPort << '"';
 	}));
     } else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{}) {
       state->location = ZuCSpan(value);
     }
-    ZiLOG(Info, "zhttpclient.response", ([value](auto &s) {
+    ZiLOG(Info, "zhttp.response", ([value](auto &s) {
       s << "header " << Key{}() << ": " << ZuCSpan(value);
     }));
   }
@@ -428,7 +428,7 @@ struct ResponseSink {
       state->bodyFile =
 	ZiFile(state->options.output, ZiFile::Write | ZiFile::GC);
       if (!state->bodyFile) {
-	ZiLOG(Error, "zhttpclient", ([state = state](auto &s) {
+	ZiLOG(Error, "zhttp", ([state = state](auto &s) {
 	  s << "failed to open " << state->options.output;
 	}));
 	state->failed = true;
@@ -438,7 +438,7 @@ struct ResponseSink {
       state->bodyFileOpen = true;
     }
     if (state->bodyFile.write(span.data(), span.length()) != Zi::OK) {
-      ZiLOG(Error, "zhttpclient", "failed to write body chunk");
+      ZiLOG(Error, "zhttp", "failed to write body chunk");
       state->failed = true;
       state->done = true;
       return;
@@ -451,12 +451,12 @@ struct ResponseSink {
   void complete(typename ParserState::T parserState) {
     if (state->done) return;
     if (parserState == ParserState::Complete)
-      ZiLOG(Info, "zhttpclient.response", ([state = state](auto &s) {
+      ZiLOG(Info, "zhttp.response", ([state = state](auto &s) {
 	s << "body complete: " << state->bodyBytes << " bytes in " <<
 	  state->bodyChunks << " chunks";
       }));
     else
-      ZiLOG(Error, "zhttpclient.response", ([parserState](auto &s) {
+      ZiLOG(Error, "zhttp.response", ([parserState](auto &s) {
 	s << "response " << parserState;
       }));
     if (parserState != ParserState::Complete) state->failed = true;
@@ -536,7 +536,7 @@ ZuCSpan transportName(Zi::Transport::T transport)
 
 void logConnected(const State &state, Zi::Connected info)
 {
-  ZiLOG(Info, "zhttpclient", ([&state, info](auto &s) {
+  ZiLOG(Info, "zhttp", ([&state, info](auto &s) {
     s << transportName(info.transport) << " connected (hostname: " <<
       state.url.host;
     if (info.version) s << " version: " << info.version;
@@ -580,12 +580,12 @@ struct CliLink : public Base_ {
       sendH1Request(this->app()->state, stream);
   }
   void disconnected() {
-    ZiLOG(Info, "zhttpclient", "disconnected");
+    ZiLOG(Info, "zhttp", "disconnected");
     if (!this->app()->state.done) this->app()->state.failed = true;
     this->app()->done();
   }
   void connectFailed(bool transient) {
-    ZiLOG(Error, "zhttpclient", ([transient](auto &s) {
+    ZiLOG(Error, "zhttp", ([transient](auto &s) {
       s << "failed to connect";
       if (transient) s << " (transient)";
     }));
@@ -728,7 +728,7 @@ int run(
   if constexpr (Client::Transport == Zi::Transport::TCP) {
     client.state.protocol = Protocol::H1;
     if (!client.init(Ztcp::ClientParams(&mx, "3", "4"))) {
-      ZiLOG(Error, "zhttpclient", "TCP client initialization failed");
+      ZiLOG(Error, "zhttp", "TCP client initialization failed");
       return 1;
     }
   } else if constexpr (Client::Transport == Zi::Transport::TLS) {
@@ -736,7 +736,7 @@ int run(
     ZuCSpan alpn[] = { "http/1.1" };
     if (!client.init(
 	  Ztls::ClientParams(&mx, "3", "4").alpn(alpn).caPath(options.ca))) {
-      ZiLOG(Error, "zhttpclient", "TLS client initialization failed");
+      ZiLOG(Error, "zhttp", "TLS client initialization failed");
       return 1;
     }
   } else if constexpr (Client::Transport == Zi::Transport::QUIC) {
@@ -750,7 +750,7 @@ int run(
 	    .maxStreamData(H3StreamDataMax)
 	    .maxStreamsBidi(H3BidiMax)
 	    .maxStreamsUni(H3UniMax))) {
-      ZiLOG(Error, "zhttpclient", "QUIC client initialization failed");
+      ZiLOG(Error, "zhttp", "QUIC client initialization failed");
       return 1;
     }
   }
@@ -760,7 +760,7 @@ int run(
     ZmRef<Link> link = new Link(&client);
     link->connect(client.state.url.host, client.state.url.port);
     if (client.sem.timedwait(Zm::now(ClientTimeout)) != 0) {
-      ZiLOG(Error, "zhttpclient", "timed out");
+      ZiLOG(Error, "zhttp", "timed out");
       client.state.failed = true;
       link->disconnect();
       client.sem.timedwait(Zm::now(2));
@@ -806,12 +806,12 @@ bool resolveForQUIC(const URL &url)
       return n < DNSMaxIPs;
     }}, &e);
   if (rc != Zi::OK || !n) {
-    ZiLOG(Error, "zhttpclient", ([&url](auto &s) {
+    ZiLOG(Error, "zhttp", ([&url](auto &s) {
       s << "DNS resolution failed for " << url.host;
     }));
     return false;
   }
-  ZiLOG(Info, "zhttpclient", ([&url, &ips, n](auto &s) {
+  ZiLOG(Info, "zhttp", ([&url, &ips, n](auto &s) {
     s << "DNS: " << url.host << " resolved to";
     for (unsigned i = 0; i < n; ++i) s << ' ' << ips[i];
   }));
@@ -874,14 +874,14 @@ int main(int argc, char **argv)
   }
   if (options.http3Only) options.http3 = true;
 
-  ZiLog::init("zhttpclient");
+  ZiLog::init("zhttp");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
   ZiMultiplex mx(mxParams());
   if (!mx.start()) {
-    ZiLOG(Error, "zhttpclient", "ZiMultiplex start failed");
+    ZiLOG(Error, "zhttp", "ZiMultiplex start failed");
     return 1;
   }
 
@@ -898,18 +898,18 @@ int main(int argc, char **argv)
     if (rc || !redirectStatus(result.status) || !result.location) break;
     URL next;
     if (!parseLocation(url, result.location, next)) {
-      ZiLOG(Error, "zhttpclient", ([&result](auto &s) {
+      ZiLOG(Error, "zhttp", ([&result](auto &s) {
 	s << "invalid redirect location: " << result.location;
       }));
       rc = 1;
       break;
     }
-    ZiLOG(Info, "zhttpclient", ([&next](auto &s) {
+    ZiLOG(Info, "zhttp", ([&next](auto &s) {
       s << "redirect: " << next.scheme << "://" << next.host << next.target;
     }));
     url = ZuMv(next);
     if (redirect == MaxRedirects) {
-      ZiLOG(Error, "zhttpclient", "too many redirects");
+      ZiLOG(Error, "zhttp", "too many redirects");
       rc = 1;
     }
   }

@@ -1,8 +1,7 @@
 # TODO
 
 ## Zhttp
-- rename `zhttpclient` to `zhttp`
-- rename `zhttpserver` to `zhttpd`
+- rename `zhttpserver` to `zhttpd` and `ZhttpStaticServer*` to `Zhttpd*`
 - update `zhttptestd` to align with `zhttpserver`
 - add run-time-varying header key support to `H1` and `H3` / `Builder` and `Parser`
   - align with existing run-time-varying value support

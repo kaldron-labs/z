@@ -23,6 +23,3 @@ libZhttp_la_LIBADD = \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-bin_PROGRAMS = zhttp
-zhttp_LDADD = libZhttp.la $(libZhttp_la_LDADD)
-zhttp_SOURCES = zhttp.cc
