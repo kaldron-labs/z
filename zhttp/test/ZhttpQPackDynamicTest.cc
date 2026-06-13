@@ -83,8 +83,8 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
   Zhttp::H3::HdrBytes	bytes;
 };
 
-struct CaptureEncoder : public Zhttp::H3::QPackEncoderTx {
-  bool write(ZuBSpan span) override {
+struct CaptureEncoder {
+  bool write(ZuBSpan span) {
     if (failWrite >= 0 && unsigned(failWrite) == writes++) return false;
     appendBytes(bytes, span);
     return true;
@@ -101,7 +101,7 @@ struct BuilderState :
 
   const Zhttp::H3::Params &h3Params() const { return params; }
   Zhttp::H3::QPackTxTable *qpackTx() { return &tx; }
-  Zhttp::H3::QPackEncoderTx *qpackEncoderTx() { return &encoder; }
+  bool qpackEncoderWrite(ZuBSpan span) { return encoder.write(span); }
   uint64_t streamID() const { return id; }
   unsigned status() const { return 200; }
 

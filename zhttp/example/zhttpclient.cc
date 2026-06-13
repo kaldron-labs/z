@@ -314,24 +314,35 @@ struct RequestBuilder :
 
   RequestBuilder(const State &state_) : RequestOps{state_} { }
 
-  Zhttp::H3::QPackTxTable *qpackTx() const { return qpackTx_; }
-  Zhttp::H3::QPackEncoderTx *qpackEncoderTx() const { return qpackEncoderTx_; }
+  using RequestOps::host;
+  using RequestOps::header;
+  using RequestOps::operation;
+};
+template <typename Impl, typename Headers>
+using H1RequestBuilder_ = Zhttp::H1ReqBuilder<Impl, Headers>;
+using H1RequestBuilder = RequestBuilder<H1RequestBuilder_>;
+
+template <typename H3Cxn_>
+struct H3RequestBuilder :
+  public Zhttp::H3ReqBuilder<H3RequestBuilder<H3Cxn_>, RequestHeaders>,
+  public RequestOps
+{
+  using Base = Zhttp::H3ReqBuilder<H3RequestBuilder<H3Cxn_>, RequestHeaders>;
+  using H3Cxn = H3Cxn_;
+
+  H3RequestBuilder(const State &state_, H3Cxn &h3_, uint64_t streamID_) :
+    RequestOps{state_}, h3{&h3_}, streamID_{streamID_} { }
+
+  H3Cxn &h3Cxn() const { return *h3; }
   uint64_t streamID() const { return streamID_; }
 
   using RequestOps::host;
   using RequestOps::header;
   using RequestOps::operation;
 
-  Zhttp::H3::QPackTxTable	*qpackTx_ = nullptr;
-  Zhttp::H3::QPackEncoderTx	*qpackEncoderTx_ = nullptr;
-  uint64_t			streamID_ = 0;
+  H3Cxn		*h3 = nullptr;
+  uint64_t	streamID_ = 0;
 };
-template <typename Impl, typename Headers>
-using H1RequestBuilder_ = Zhttp::H1ReqBuilder<Impl, Headers>;
-using H1RequestBuilder = RequestBuilder<H1RequestBuilder_>;
-template <typename Impl, typename Headers>
-using H3RequestBuilder_ = Zhttp::H3ReqBuilder<Impl, Headers>;
-using H3RequestBuilder = RequestBuilder<H3RequestBuilder_>;
 
 template <typename StreamRef>
 void sendH1Request(State &state, StreamRef stream)
@@ -347,10 +358,9 @@ template <typename StreamRef>
 void sendH3Request(State &state, StreamRef stream)
 {
   auto tx = stream->txStream();
-  H3RequestBuilder builder{state};
-  builder.qpackTx_ = &stream->link()->h3.qpackTxTable;
-  builder.qpackEncoderTx_ = &stream->link()->h3.qpackEncoder;
-  builder.streamID_ = uint64_t(stream->id());
+  using H3Cxn = ZuDecay<decltype(stream->link()->h3)>;
+  H3RequestBuilder<H3Cxn> builder{
+    state, stream->link()->h3, uint64_t(stream->id())};
   builder.request(tx);
   builder.finish(tx);
   stream->link()->send(stream, {}, true);
@@ -452,12 +462,7 @@ struct ResponseParser :
 
   ResponseParser(Link *link_, ::State *state_) : SinkBase{link_, state_} { }
 
-  Zhttp::H3::QPackRxTable *qpackRx() const {
-    return &this->link->h3.qpackRxTable;
-  }
-  Zhttp::H3::QPackEncoderTx *qpackDecoderTx() const {
-    return &this->link->h3.qpackDecoder;
-  }
+  auto &h3Cxn() const { return this->link->h3; }
   uint64_t streamID() const {
     return uint64_t(this->link->app()->state.responseStreamID);
   }

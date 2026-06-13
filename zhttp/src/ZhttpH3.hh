@@ -79,6 +79,12 @@ namespace H3 {
   template <typename ...Ts>
   struct IsTypeList_<ZuTypeList<Ts...>> : public ZuTrue { };
 
+  template <typename Impl, typename = void>
+  struct HasH3Cxn : public ZuFalse { };
+  template <typename Impl>
+  struct HasH3Cxn<Impl,
+    decltype(ZuDeclVal<Impl *>()->h3Cxn(), void())> : public ZuTrue { };
+
   // HTTP/3 unidirectional connection stream parser
   //
   // CRTP - implementation may implement the following callbacks:
@@ -512,7 +518,7 @@ namespace H3 {
     uint64_t streamID() const;
 
     // optional - write to local QPACK decoder stream for section acks
-    QPackEncoderTx *qpackDecoderTx();
+    bool qpackDecoderWrite(ZuBSpan);
 
     // optional - peer dynamic table; nullptr disables dynamic QPACK decoding
     QPackRxTable *qpackRx();
@@ -695,7 +701,12 @@ namespace H3 {
       return params;
     }
     uint64_t streamID() const { return 0; }
-    QPackEncoderTx *qpackDecoderTx() { return nullptr; }
+    bool qpackDecoderWrite(ZuBSpan span) {
+      if constexpr (HasH3Cxn<Impl>{})
+	return impl()->h3Cxn().qpackDecoderWrite(span);
+      else
+	return false;
+    }
 
     template <typename Key> void header_(ZuBSpan value) {
       if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
@@ -751,12 +762,11 @@ namespace H3 {
 	impl()->h3Params(), 0, 0, &prefix);
       if (used != int(payload.length()) || !ok) return false;
       if (prefix.requiredInsertCount && !rx) return false;
-      if (prefix.requiredInsertCount)
-	if (auto tx = impl()->qpackDecoderTx()) {
-	  HdrBytes ack;
-	  if (QPack::encodeSectionAck(ack, impl()->streamID()) < 0) return false;
-	  if (!tx->write(ZuBSpan{ack})) return false;
-	}
+      if (prefix.requiredInsertCount) {
+	HdrBytes ack;
+	if (QPack::encodeSectionAck(ack, impl()->streamID()) < 0) return false;
+	if (!impl()->qpackDecoderWrite(ZuBSpan{ack})) return false;
+      }
 
       if (initial) {
 	if constexpr (Request) {
@@ -1025,8 +1035,18 @@ namespace H3 {
     void body(ZuBSpan) { }
     void complete(State::T) { }
     bool rxComplete() const { return impl()->finReceived(); }
-    QPackRxTable *qpackRx() { return nullptr; }
-    QPackTxTable *qpackTx() { return nullptr; }
+    QPackRxTable *qpackRx() {
+      if constexpr (HasH3Cxn<Impl>{})
+	return impl()->h3Cxn().qpackRx();
+      else
+	return nullptr;
+    }
+    QPackTxTable *qpackTx() {
+      if constexpr (HasH3Cxn<Impl>{})
+	return impl()->h3Cxn().qpackTx();
+      else
+	return nullptr;
+    }
 
   private:
     int64_t		m_contentLen = -1;
@@ -1469,12 +1489,6 @@ namespace H3 {
       }
       bool encoderEmitted = false;
       if (plan.sendCapacity || plan.inserts.length()) {
-	auto encoderTx = impl()->qpackEncoderTx();
-	if (!encoderTx) {
-	  impl()->qpackFailure(QPackBuildFailure::EncoderCapacityWrite);
-	  ZiLOG(Error, "Zhttp", "missing H3 QPACK encoder stream");
-	  return;
-	}
 	auto scratch = ZtLocalArray(HdrBytes, EncoderScratchBuiltin);
 	if (plan.sendCapacity) {
 	  if (QPack::encodeSetCapacity(scratch, plan.plannedCapacity) < 0) {
@@ -1482,7 +1496,7 @@ namespace H3 {
 	    ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK capacity");
 	    return;
 	  }
-	  if (!encoderTx->write(ZuBSpan{scratch})) {
+	  if (!impl()->qpackEncoderWrite(ZuBSpan{scratch})) {
 	    impl()->qpackFailure(QPackBuildFailure::EncoderCapacityWrite);
 	    ZiLOG(Error, "Zhttp", "failed to write H3 QPACK capacity");
 	    return;
@@ -1502,7 +1516,7 @@ namespace H3 {
 	    ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK insert");
 	    return;
 	  }
-	  if (!encoderTx->write(ZuBSpan{scratch})) {
+	  if (!impl()->qpackEncoderWrite(ZuBSpan{scratch})) {
 	    impl()->qpackFailure(QPackBuildFailure::EncoderInsertWrite);
 	    ZiLOG(Error, "Zhttp", "failed to write H3 QPACK insert");
 	    return;
@@ -1625,8 +1639,18 @@ namespace H3 {
     template <typename Key, typename L>
     void header(L &&l) { l(""); }
     uint64_t contentLength() { return 0; }
-    QPackTxTable *qpackTx() { return nullptr; }
-    QPackEncoderTx *qpackEncoderTx() { return nullptr; }
+    QPackTxTable *qpackTx() {
+      if constexpr (HasH3Cxn<Impl>{})
+	return impl()->h3Cxn().qpackTx();
+      else
+	return nullptr;
+    }
+    bool qpackEncoderWrite(ZuBSpan span) {
+      if constexpr (HasH3Cxn<Impl>{})
+	return impl()->h3Cxn().qpackEncoderWrite(span);
+      else
+	return false;
+    }
     void qpackFailure(QPackBuildFailure::T failure) { m_qpackFailure = failure; }
     const Params &h3Params() const {
       static const Params params;

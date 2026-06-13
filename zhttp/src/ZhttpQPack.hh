@@ -256,11 +256,6 @@ using QPackTxSections =
     ZmLHashKey<QPackTxSection::StreamAxor,
       ZmLHashID<QPackTxSectionsID>>>;
 
-struct QPackEncoderTx {
-  virtual ~QPackEncoderTx() = default;
-  virtual bool write(ZuBSpan) = 0;
-};
-
 struct QPackTxTable {
   // Connection-affine Tx state. Callers must serialize access from the owning
   // transmit path.
