@@ -327,10 +327,10 @@ struct RequestBuilder :
   uint64_t			streamID_ = 0;
 };
 template <typename Impl, typename Headers>
-using H1RequestBuilder_ = Zhttp::H1::Builder<Impl, Headers>;
+using H1RequestBuilder_ = Zhttp::H1ReqBuilder<Impl, Headers>;
 using H1RequestBuilder = RequestBuilder<H1RequestBuilder_>;
 template <typename Impl, typename Headers>
-using H3RequestBuilder_ = Zhttp::H3::Builder<Impl, Headers>;
+using H3RequestBuilder_ = Zhttp::H3ReqBuilder<Impl, Headers>;
 using H3RequestBuilder = RequestBuilder<H3RequestBuilder_>;
 
 template <typename StreamRef>
@@ -348,8 +348,8 @@ void sendH3Request(State &state, StreamRef stream)
 {
   auto tx = stream->txStream();
   H3RequestBuilder builder{state};
-  builder.qpackTx_ = &stream->link()->qpackTxTable;
-  builder.qpackEncoderTx_ = &stream->link()->qpackEncoder;
+  builder.qpackTx_ = &stream->link()->h3.qpackTxTable;
+  builder.qpackEncoderTx_ = &stream->link()->h3.qpackEncoder;
   builder.streamID_ = uint64_t(stream->id());
   builder.request(tx);
   builder.finish(tx);
@@ -453,10 +453,10 @@ struct ResponseParser :
   ResponseParser(Link *link_, ::State *state_) : SinkBase{link_, state_} { }
 
   Zhttp::H3::QPackRxTable *qpackRx() const {
-    return &this->link->qpackRxTable;
+    return &this->link->h3.qpackRxTable;
   }
   Zhttp::H3::QPackEncoderTx *qpackDecoderTx() const {
-    return &this->link->qpackDecoder;
+    return &this->link->h3.qpackDecoder;
   }
   uint64_t streamID() const {
     return uint64_t(this->link->app()->state.responseStreamID);
@@ -474,13 +474,13 @@ struct ResponseParser :
 
 template <typename Impl, bool Request, typename Headers, uint64_t MaxBody>
 using H1ResponseParser_ =
-  Zhttp::H1::Parser<Impl, Request, Headers, MaxBody>;
+  Zhttp::H1RespParser<Impl, Headers, MaxBody>;
 template <typename Link>
 using H1ResponseParser = ResponseParser<Link, H1ResponseParser_>;
 
 template <typename Impl, bool Request, typename Headers, uint64_t MaxBody>
 using H3ResponseParser_ =
-  Zhttp::H3::Parser<Impl, Request, Headers, MaxBody>;
+  Zhttp::H3RespParser<Impl, Headers, MaxBody>;
 template <typename Link>
 using H3ResponseParser = ResponseParser<Link, H3ResponseParser_>;
 
@@ -520,52 +520,6 @@ void logConnected(const State &state, Zi::Connected info)
   std::cerr << ")\n" << std::flush;
 }
 
-template <typename Link>
-bool openH3LocalStreams(Link &link, State &state)
-{
-  link.control = link.stream(Zi::StreamType::Simplex);
-  link.enc = link.stream(Zi::StreamType::Simplex);
-  link.dec = link.stream(Zi::StreamType::Simplex);
-  if (!link.control || !link.enc || !link.dec) return false;
-  using Scratch = ZtArray<char, ZtArrayHeapID<"ZhttpClient.H3Control">>;
-  auto payload = ZtLocalArray(Scratch, 64);
-  Zhttp::H3::CountBytes count;
-  if (Zhttp::H3::putVar(count, 0x01) < 0 ||
-      Zhttp::H3::putVar(count, 0) < 0 ||
-      Zhttp::H3::putVar(count, 0x06) < 0 ||
-      Zhttp::H3::putVar(count, 65536) < 0 ||
-      Zhttp::H3::putVar(count, 0x07) < 0 ||
-      Zhttp::H3::putVar(count, 0) < 0)
-    return false;
-  if (Zhttp::H3::putVar(payload, 0x00) < 0 ||
-      Zhttp::H3::putVar(payload, 0x04) < 0 ||
-      Zhttp::H3::putVar(payload, count.length()) < 0 ||
-      Zhttp::H3::putVar(payload, 0x01) < 0 ||
-      Zhttp::H3::putVar(payload, 0) < 0 ||
-      Zhttp::H3::putVar(payload, 0x06) < 0 ||
-      Zhttp::H3::putVar(payload, 65536) < 0 ||
-      Zhttp::H3::putVar(payload, 0x07) < 0 ||
-      Zhttp::H3::putVar(payload, 0) < 0)
-    return false;
-  if (!link.send(link.control, payload, false))
-    return false;
-  {
-    auto tx = link.enc->txStream();
-    Zhttp::H3::TxBytes out{tx};
-    if (Zhttp::H3::putVar(out, 0x02) < 0) return false;
-    tx.flush();
-  }
-  {
-    auto tx = link.dec->txStream();
-    Zhttp::H3::TxBytes out{tx};
-    if (Zhttp::H3::putVar(out, 0x03) < 0) return false;
-    tx.flush();
-  }
-  state.h3State = H3CxnState::LocalControlOpen;
-  state.h3State = H3CxnState::Ready;
-  return true;
-}
-
 template <typename App_, typename Base_, bool H3_ = false>
 struct CliLink : public Base_ {
   using App = App_;
@@ -573,34 +527,16 @@ struct CliLink : public Base_ {
   enum { H3 = H3_ };
   using Parser = typename ResponseParser_<CliLink, H3>::T;
 
-  struct QPackStreamTx : public Zhttp::H3::QPackEncoderTx {
-    using StreamRef = typename Base::StreamRef;
+  using H3Cxn = Zhttp::H3::Cxn<CliLink, typename Base::StreamRef>;
 
-    QPackStreamTx(CliLink *link_, StreamRef *stream_) :
-      link{link_}, stream{stream_} { }
-
-    bool write(ZuBSpan span) override {
-      if constexpr (H3) {
-	if (!link || !stream || !*stream || !span) return false;
-	return link->send(*stream, span, false);
-      } else {
-	return false;
-      }
-    }
-
-    CliLink	*link = nullptr;
-    StreamRef	*stream = nullptr;
-  };
-
-  CliLink(App *app) :
-    Base{app}, qpackEncoder{this, &enc}, qpackDecoder{this, &dec} { }
+  CliLink(App *app) : Base{app} { }
   ~CliLink() { delete parser; }
 
   void connected(Zi::Connected info) {
     logConnected(this->app()->state, info);
     typename Base::StreamRef stream;
     if constexpr (H3) {
-      if (!openH3LocalStreams(*this, this->app()->state)) {
+      if (!h3.openLocal(*this)) {
 	this->app()->state.failed = true;
 	this->app()->done();
 	return;
@@ -636,16 +572,7 @@ struct CliLink : public Base_ {
   }
 
   Parser			*parser = nullptr;
-  typename Base::StreamRef	control;
-  typename Base::StreamRef	enc;
-  typename Base::StreamRef	dec;
-  bool				peerControl = false;
-  bool				peerEncoder = false;
-  bool				peerDecoder = false;
-  Zhttp::H3::QPackRxTable	qpackRxTable;
-  Zhttp::H3::QPackTxTable	qpackTxTable;
-  QPackStreamTx			qpackEncoder;
-  QPackStreamTx			qpackDecoder;
+  H3Cxn			h3;
 };
 
 template <
@@ -731,46 +658,37 @@ int QUICClient::Stream::process(Zquic::RxStream &)
 
 H3CxnState::T QUICClient::Stream::h3State() const
 {
-  return this->link()->app()->state.h3State;
+  return this->link()->h3.state;
 }
 
 void QUICClient::Stream::h3State(H3CxnState::T state)
 {
-  this->link()->app()->state.h3State = state;
+  this->link()->h3.state = state;
 }
 
 bool QUICClient::Stream::peerControlStream()
 {
-  auto link = this->link();
-  if (link->peerControl) return false;
-  link->peerControl = true;
-  return true;
+  return this->link()->h3.peerControlStream();
 }
 
 bool QUICClient::Stream::peerEncoderStream()
 {
-  auto link = this->link();
-  if (link->peerEncoder) return false;
-  link->peerEncoder = true;
-  return true;
+  return this->link()->h3.peerEncoderStream();
 }
 
 bool QUICClient::Stream::peerDecoderStream()
 {
-  auto link = this->link();
-  if (link->peerDecoder) return false;
-  link->peerDecoder = true;
-  return true;
+  return this->link()->h3.peerDecoderStream();
 }
 
 Zhttp::H3::QPackRxTable *QUICClient::Stream::qpackRx()
 {
-  return &this->link()->qpackRxTable;
+  return this->link()->h3.qpackRx();
 }
 
 Zhttp::H3::QPackTxTable *QUICClient::Stream::qpackTx()
 {
-  return &this->link()->qpackTxTable;
+  return this->link()->h3.qpackTx();
 }
 
 template <typename Client>
