@@ -21,6 +21,8 @@ These guidelines extend `AGENTS.md`
   - example: `friend ZuStructPrint ZuPrintType(DB *)`
     - `decltype(ZuPrintType(...))` is used by `ZuPrint` to determine how to print a type
   - example: `ZuFields_(O *, Facet *)` is used by `ZuStruct` to determine the fields of a type
+- "DRY" - don't repeat yourself
+  - use templates and CRTP to factor out common code
 - idiomatic, natural and maximally expressive code
   - prefer brevity, expressiveness and often-used idiomatic expressions to readability
   - do not disdain "Hacker's Delight" style
