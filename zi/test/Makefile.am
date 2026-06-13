@@ -13,8 +13,8 @@ noinst_PROGRAMS = \
 	ZiRingTest ZiRingTest2 \
 	ZiIOBufTest ZiEventLoopTest \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
-	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest
-EXTRA_PROGRAMS = ZiDaemonTest
+	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest \
+	ZiDaemonTest
 noinst_HEADERS = ZiTestResidue.hh
 .PHONY: test
 test: $(noinst_PROGRAMS)
