@@ -40,6 +40,14 @@ char requestQuery_[] =
 "accept: */*\r\n"
 "\r\n";
 
+char requestRuntime_[] =
+"GET / HTTP/1.1\r\n"
+"host: foo.com\r\n"
+"user-agent: zhttptest/1.0\r\n"
+"accept: */*\r\n"
+"x-runtime-key: runtime-value\r\n"
+"\r\n";
+
 constexpr unsigned BufSize = 8<<10;
 constexpr unsigned MaxBufSize = 100<<20;
 
@@ -136,6 +144,18 @@ struct QueryRequestBuilder :
   void host(L &&l) { l("foo.com"); }
 };
 
+struct RuntimeRequestBuilder :
+  public Zhttp::H1::Builder<RuntimeRequestBuilder, RequestHeaders> {
+  using Base = Zhttp::H1::Builder<RuntimeRequestBuilder, RequestHeaders>;
+
+  template <typename L>
+  void operation(L &&l) { l(Zhttp::Method::GET, "/", ""); }
+  template <typename L>
+  void host(L &&l) { l("foo.com"); }
+  template <typename L>
+  void header(L &&l) { l("x-runtime-key", "runtime-value"); }
+};
+
 int main()
 {
   using namespace Zhttp;
@@ -209,5 +229,13 @@ int main()
     builder.request(tx);
     builder.finish(tx);
     CHECK(tx.buf->cspan() == ::requestQuery_);
+  }
+
+  {
+    RuntimeRequestBuilder builder;
+    BufTx tx{new IOBufAlloc{}};
+    builder.request(tx);
+    builder.finish(tx);
+    CHECK(tx.buf->cspan() == ::requestRuntime_);
   }
 }

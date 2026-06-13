@@ -30,6 +30,21 @@ namespace H1 {
       Error);		// invalid message
   };
 
+  template <typename Impl, typename = void>
+  struct HasRuntimeHeader_ : public ZuFalse { };
+  template <typename Impl>
+  struct HasRuntimeHeader_<Impl,
+    decltype(ZuDeclVal<Impl *>()->header(
+      ZuDeclVal<ZuCSpan>(), ZuDeclVal<ZuCSpan>()), void())> :
+      public ZuTrue { };
+
+  template <typename Impl, typename L, typename = void>
+  struct HasRuntimeHeaderBuilder_ : public ZuFalse { };
+  template <typename Impl, typename L>
+  struct HasRuntimeHeaderBuilder_<Impl, L,
+    decltype(ZuDeclVal<Impl *>()->header(ZuDeclVal<L &&>()), void())> :
+      public ZuTrue { };
+
   template <
     typename Impl,
     bool Request_ = false,
@@ -98,6 +113,11 @@ namespace H1 {
 	  reinterpret_cast<const char *>(key.data()), name.data(), key.length());
     }
 
+    void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
+      if constexpr (HasRuntimeHeader_<Impl>{})
+	impl()->header(ZuCSpan{key}, ZuCSpan{value});
+    }
+
     // process header key/value
     void header_(ZuBSpan key, ZuBSpan value) {
       if (headerKey_(key, "transfer-encoding")) {
@@ -111,7 +131,10 @@ namespace H1 {
       if constexpr (Keys::N) {
 	static constexpr auto kMatcher = ZuMatcher<Keys>();
 	auto i = kMatcher.match(key);
-	if (i < 0) return;
+	if (i < 0) {
+	  runtimeHeader_(key, value);
+	  return;
+	}
 	ZuSwitch::dispatch<Keys::N>(i, [this, &value](auto i) {
 	  using KValues = ZuType<i, Values>;
 	  if constexpr (!ZuIsSame<KValues, void>{}) {
@@ -129,6 +152,8 @@ namespace H1 {
 	  }
 	  this->template header_<ZuType<i, Keys>>(value);
 	});
+      } else {
+	runtimeHeader_(key, value);
       }
     }
 
@@ -313,6 +338,7 @@ namespace H1 {
     void status(unsigned) { }
     template <typename Key> void header(ZuBSpan) { }
     template <typename Key, typename Value> void header() { }
+    void header(ZuCSpan, ZuCSpan) { }
     void contentLength(uint64_t) { }
     void xferCompression(XferCompression::T) { }
     void chunked() { }
@@ -400,6 +426,12 @@ namespace H1 {
     enum { Chunked = Chunked_ };
 
   private:
+    template <typename L>
+    void runtimeHeaders_(L &&l) {
+      if constexpr (HasRuntimeHeaderBuilder_<Impl, L>{})
+	impl()->header(ZuFwd<L>(l));
+    }
+
     template <typename KVs = Headers, typename Stream>
     void headers_(Stream &stream) {
       // header key/values
@@ -418,6 +450,9 @@ namespace H1 {
 	  }
 	});
       }
+      runtimeHeaders_([&stream](ZuCSpan key, ZuCSpan value) {
+	if (key) stream << key << ": " << value << "\r\n";
+      });
       // end of headers
       stream << "\r\n";
     }
@@ -499,7 +534,8 @@ namespace H1 {
     unsigned status() { return 200; }
     template <typename L> void reason(L &&l) { l(""); }
     template <typename Key, typename L>
-    void header(L &&l) { l(""); }
+    void header(L &&) { }
+    template <typename L> void header(L &&) { }
     uint64_t contentLength() { return 0; }
     // H3::QPackTxTable *qpackTx() { return nullptr; }
   };

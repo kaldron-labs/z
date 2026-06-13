@@ -77,6 +77,14 @@ struct ResponseParser :
     ++completeCalls;
   }
 
+  void header(ZuCSpan key, ZuCSpan value) {
+    ++runtimeCalls;
+    runtimeKey.length(0);
+    runtimeValue.length(0);
+    runtimeKey << key;
+    runtimeValue << value;
+  }
+
   int				statusSeen = -1;
   int64_t			contentLengthSeen = -1;
   bool				keyValue = false;
@@ -87,8 +95,11 @@ struct ResponseParser :
   unsigned			bodyCalls = 0;
   uint64_t			bodyBytes = 0;
   unsigned			completeCalls = 0;
+  unsigned			runtimeCalls = 0;
   Zhttp::H1::ParserState::T		completeState = Zhttp::H1::ParserState::Initial;
   BodyData			bodyData;
+  ZtString<>			runtimeKey;
+  ZtString<>			runtimeValue;
 };
 
 using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
@@ -186,6 +197,29 @@ void testCanonicalContentLengthHeader()
   ZuCHECK(parser.contentLengthSeen == 5,
     "canonical content-length was parsed");
   ZuCHECK(parser.bodyData == "hello", "canonical content-length body parsed");
+}
+
+void testRuntimeHeaderCallback()
+{
+  ZuTestScope(testRuntimeHeaderCallback);
+
+  ResponseParser parser;
+  RxStream stream;
+  stream.push(mkBuf(
+    "HTTP/1.1 200 OK\r\n"
+    "Key: Value\r\n"
+    "X-Runtime: varied\r\n"
+    "\r\n"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
+    "runtime header response failed");
+  ZuCHECK(parser.keyCalls == 1,
+    "selected header was not delivered through typed callback");
+  ZuCHECK(parser.runtimeCalls == 1,
+    "unselected header callback count mismatch");
+  ZuCHECK(parser.runtimeKey == "x-runtime",
+    "unselected header key mismatch");
+  ZuCHECK(parser.runtimeValue == "varied",
+    "unselected header value mismatch");
 }
 
 void testResponseStartLineFragmentedAcrossManyRxBuffers()
@@ -384,6 +418,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testSelectedHeaderValueSplitAcrossRxBuffers);
   ZuTestCall(testCanonicalContentLengthHeader);
+  ZuTestCall(testRuntimeHeaderCallback);
   ZuTestCall(testInvalidRequestMethod);
   ZuTestCall(testEmptySelectedHeaderValues);
   ZuTestCall(testInvalidContentLengthValues);
