@@ -13,6 +13,7 @@
 #include <zlib/Zhttp.hh>
 
 #include "ZhttpCaddyInterop.hh"
+#include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
 
@@ -25,6 +26,8 @@ using Zhttp::Test::haveCaddy;
 using Zhttp::Test::haveCurlH3;
 using Zhttp::Test::loopbackPort;
 using Zhttp::Test::printFile;
+using Zhttp::Test::retry;
+using Zhttp::Test::runCurlH3Retry;
 using Zhttp::Test::systemOK;
 using Zhttp::Test::waitCaddyReady;
 using Zhttp::Test::waitUntil;
@@ -797,16 +800,6 @@ bool waitDone(ZmSemaphore &sem)
   return sem.timedwait(Zm::now(10)) == 0;
 }
 
-bool runCurlH3Retry(
-  const TempDir &temp, unsigned port, ZuCSpan path, ZuCSpan expectedBody)
-{
-  for (unsigned i = 0; i < 5; ++i) {
-    if (Zhttp::Test::runCurlH3(temp, port, path, expectedBody)) return true;
-    Zquic::Test::sleepMS(100);
-  }
-  return false;
-}
-
 bool writeHttpCaddyfile(ZuCSpan path, unsigned port, ZuCSpan body)
 {
   ZtString<> filePath;
@@ -828,15 +821,13 @@ bool writeHttpCaddyfile(ZuCSpan path, unsigned port, ZuCSpan body)
 
 bool waitHttpCaddyReady(unsigned port)
 {
-  for (unsigned i = 0; i < 100; ++i) {
+  return retry(100, 100, [port]() {
     ZtString<> cmd;
     cmd <<
       "curl --http1.1 --fail -sS --connect-timeout 1 --max-time 2 "
       "http://127.0.0.1:" << port << Path << " >/dev/null 2>&1";
-    if (systemOK(::system(cmd.data()))) return true;
-    Zquic::Test::sleepMS(100);
-  }
-  return false;
+    return systemOK(::system(cmd.data()));
+  });
 }
 
 void testZhttpClientCaddyHttp()

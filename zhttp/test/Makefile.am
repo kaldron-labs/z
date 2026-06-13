@@ -22,7 +22,7 @@ noinst_PROGRAMS = zhttptest zhttptestd \
 	ZhttpHPackTest ZhttpQPackTest \
 	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
 	ZhttpClientServerTest
-noinst_HEADERS = ZhttpCaddyInterop.hh
+noinst_HEADERS = ZhttpCaddyInterop.hh ZhttpTestUtil.hh
 zhttptest_SOURCES = zhttptest.cc
 zhttptestd_SOURCES = zhttptestd.cc
 ZhttpParserTest_SOURCES = ZhttpParserTest.cc

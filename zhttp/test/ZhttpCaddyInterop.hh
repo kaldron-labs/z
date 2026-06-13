@@ -7,23 +7,14 @@
 #ifndef ZhttpCaddyInterop_HH
 #define ZhttpCaddyInterop_HH
 
-#include "ZquicInteropTest.hh"
+#include "ZhttpTestUtil.hh"
 
 namespace Zhttp::Test {
 
 using Zquic::Test::CaddyProcess;
-using Zquic::Test::TempDir;
-using Zquic::Test::cspan;
 using Zquic::Test::haveCaddy;
-using Zquic::Test::haveCurlH3;
-using Zquic::Test::loopbackPort;
-using Zquic::Test::printFile;
-using Zquic::Test::runCurlH3;
-using Zquic::Test::systemOK;
 using Zquic::Test::waitCaddyReady;
-using Zquic::Test::waitUntil;
 using Zquic::Test::writeCaddyfile;
-using Zquic::Test::writeSelfSignedLocalhostCert;
 
 inline bool writeCaddyConfig(
   ZuCSpan path, unsigned port, ZuCSpan protocols, ZuCSpan body)
