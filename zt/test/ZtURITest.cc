@@ -6,6 +6,8 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <string.h>
+
 #include <zlib/ZuID.hh>
 #include <zlib/ZuUnroll.hh>
 
@@ -13,6 +15,10 @@
 #include <zlib/ZtURI.hh>
 
 using namespace ZuTestUtil;
+
+namespace ZtURI {
+  ZuTuple<int, int, char> eoc(ZuSpan<char>);
+}
 
 namespace Values {
   ZtEnum(Values, int8_t, High, Low, Normal);
@@ -198,6 +204,45 @@ void reservedCharRoundTrip()
   ZuCheck(uri2.length() > 0);
 }
 
+void percentPolicies()
+{
+  ZuTestScope(percentPolicies);
+
+  {
+    ZtString<> body;
+    ZtURI::URIQuote<true>::quote(body, "a b");
+    ZuCheck(body == "a+b");
+  }
+  {
+    char query[] = "foo%20bar&";
+    auto r = ZtURI::eos(query);
+    ZuCheck(r.p<0>() == 7 && r.p<1>() == 10 && r.p<2>() == '&');
+    ZuCheck(ZuCSpan(query, 7) == "foo bar");
+  }
+  {
+    char path[] = "a%2Fb/c";
+    auto r = ZtURI::eoc(path);
+    ZuCheck(r.p<0>() == 3 && r.p<1>() == 6 && r.p<2>() == '/');
+    ZuCheck(ZuCSpan(path, 3) == "a/b");
+  }
+  {
+    char path[] = "a/b";
+    auto r = ZtURI::eoc(path);
+    ZuCheck(r.p<0>() == 1 && r.p<1>() == 2 && r.p<2>() == '/');
+    ZuCheck(ZuCSpan(path, 1) == "a");
+  }
+  {
+    char empty[] = "";
+    auto scan = ZtURI::scan(empty);
+    Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+    foo.string = "a<c";
+
+    ZtString<> uri;
+    ZtURI::save<ZuFacet::Bah>(uri, foo);
+    ZuCheck(strstr(uri.data(), "%3C"));
+  }
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -205,5 +250,6 @@ int main(int argc, char **argv)
   ZuTestCall(roundTrip);
   ZuTestCall(malformedURINegatives);
   ZuTestCall(reservedCharRoundTrip);
+  ZuTestCall(percentPolicies);
   return 0;
 }

@@ -11,7 +11,7 @@ pkginclude_HEADERS = \
 	ZuLambdaTraits.hh ZuReserved.hh \
 	ZuObjectTraits.hh ZuObject.hh ZuPolymorph.hh ZuPP.hh \
 	ZuPrint.hh ZuRef.hh ZuStdString.hh \
-	ZuStringFn.hh ZuTraits.hh ZuTuple.hh ZuUnion.hh \
+	ZuStringFn.hh ZuTraits.hh ZuTuple.hh ZuUnion.hh ZuPercent.hh \
 	Zu_aton.hh Zu_ntoa.hh ZuDecimalFn.hh ZuUTF.hh \
 	ZuDecimal.hh ZuSwitch.hh ZuSort.hh ZuPtr.hh \
 	ZuNorm.hh ZuEquiv.hh ZuStruct.hh ZuIOResult.hh ZuUnroll.hh \

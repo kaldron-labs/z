@@ -15,7 +15,7 @@ noinst_PROGRAMS = \
 	ZuDecimalTest ZuSearchTest ZuStructTest ZuTLTest \
 	ZuAxorTest ZuPtrTest ZuTimeTest ZuEndianTest \
 	ZuStreamTest ZuBitStreamTest \
-	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest \
+	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest ZuPercentTest \
 	ZuInvokeSwitchTest ZuMArrayIterTest ZuMatchTest ZuLibTest \
 	ZuNumConvTest ZuNXTest ZuFPTest ZuIntrinTest ZuPreprocTest \
 	ZuTimeCTest ZuTokenizerTest ZuTest ZuDemangleTest
@@ -50,6 +50,7 @@ ZuBase64Test_SOURCES = ZuBase64Test.cc
 ZuBase64URLTest_SOURCES = ZuBase64URLTest.cc
 ZuBase32Test_SOURCES = ZuBase32Test.cc
 ZuHexTest_SOURCES = ZuHexTest.cc
+ZuPercentTest_SOURCES = ZuPercentTest.cc
 ZuInvokeSwitchTest_SOURCES = ZuInvokeSwitchTest.cc
 ZuMArrayIterTest_SOURCES = ZuMArrayIterTest.cc
 ZuMatchTest_SOURCES = ZuMatchTest.cc

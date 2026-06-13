@@ -119,6 +119,7 @@
 #include <zlib/ZuStream.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuHex.hh>
+#include <zlib/ZuPercent.hh>
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
@@ -391,13 +392,6 @@ ZuInline constexpr bool isspace__(char c) {
   return ((c >= '\t' && c <= '\r') || c == ' ');
 }
 
-ZuInline constexpr int hex(char c) {
-  c |= 0x20;
-  return 
-    (ZuLikely(c >= '0' && c <= '9')) ?  c - '0' :
-    (ZuLikely(c >= 'a' && c <= 'f')) ? (c - 'a') + 10 : -1;
-}
-
 // a URI query string is ?...
 // - this implementation intentionally assumes UTF8
 
@@ -575,22 +569,38 @@ constexpr bool escaped(uint8_t c) {
   return map[c>>3] & (1U<<(c & 7));
 }
 
+struct PercentEsc {
+  static constexpr bool esc(uint8_t c) { return escaped(c); }
+};
+
+struct PercentPath : public PercentEsc {
+  static constexpr bool term(uint8_t c) {
+    return c == '/' || c == '?' || escaped(c);
+  }
+  static constexpr bool plus() { return false; }
+  static constexpr bool spacePlus() { return false; }
+};
+
+struct PercentQuery : public PercentEsc {
+  static constexpr bool term(uint8_t c) { return escaped(c); }
+  static constexpr bool plus() { return true; }
+  static constexpr bool spacePlus() { return false; }
+};
+
+template <bool Body>
+struct PercentQuote : public PercentEsc {
+  static constexpr bool term(uint8_t) { return false; }
+  static constexpr bool plus() { return Body; }
+  static constexpr bool spacePlus() { return Body; }
+};
+
 template <bool Body = false>
 struct URIQuote {
   // in the body, + should be used for space
   template <typename S>
   static void quote(S &s, ZuCSpan v) {
-    for (unsigned i = 0, n = v.length(); i < n; i++) {
-      uint8_t c = v[i];
-      if (Body && c == ' ') {
-	s << '+';
-      } else if (escaped(c)) {
-	static constexpr const char digits[] = "0123456789ABCDEF";
-	s << '%' << digits[c>>4] << digits[c & 15];
-      } else {
-	s << c;
-      }
-    }
+    using Policy = PercentQuote<Body>;
+    ZuPercent::Codec<Policy>::print(s, ZuBSpan{v});
   }
 };
 
