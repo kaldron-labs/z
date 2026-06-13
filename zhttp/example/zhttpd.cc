@@ -22,9 +22,9 @@
 #include <zlib/Zquic.hh>
 #include <zlib/Zhttp.hh>
 
-#include "ZhttpStaticServer.hh"
+#include "Zhttpd.hh"
 
-using namespace ZhttpStatic;
+using namespace Zhttpd;
 
 constexpr uint64_t ReqBodyMax = 1<<20;
 constexpr unsigned BufBuiltin = 8<<10;
@@ -37,7 +37,7 @@ constexpr uint64_t H3UniMax = 16;
 void usage(int code = 1)
 {
   std::cerr <<
-    "Usage: zhttpserver /path/to/wwwroot [OPTION]...\n\n"
+    "Usage: zhttpd /path/to/wwwroot [OPTION]...\n\n"
     "Options:\n"
     "  --port number              listen port, default 8080 or 80 if root\n"
     "  --addr ip                  listen address, default all interfaces\n"
@@ -75,7 +75,7 @@ void usage(int code = 1)
 bool loadOptions(Options &options, int argc, char **argv)
 {
   bool help = false;
-  if (!ZhttpStatic::loadOptions(options, argc, argv, help)) return false;
+  if (!Zhttpd::loadOptions(options, argc, argv, help)) return false;
   if (help) usage(0);
   return true;
 }
@@ -171,20 +171,20 @@ bool prepareProcess(Options &options)
   const char *pidfile = options.pidfile ? options.pidfile.data() : nullptr;
   int rc = ZiDaemon::init(nullptr, nullptr, -1, options.daemon, pidfile);
   if (rc == ZiDaemon::Running) {
-    ZiLOG(Error, "zhttpserver", "PID file names a running process");
+    ZiLOG(Error, "zhttpd", "PID file names a running process");
     return false;
   }
   if (rc != ZiDaemon::OK) {
-    ZiLOG(Error, "zhttpserver", "daemon initialization failed");
+    ZiLOG(Error, "zhttpd", "daemon initialization failed");
     return false;
   }
 #ifndef _WIN32
   if (options.chroot && !chrootRoot(options)) {
-    ZiLOG(Error, "zhttpserver", "chroot failed");
+    ZiLOG(Error, "zhttpd", "chroot failed");
     return false;
   }
   if (!dropPrivileges(options)) {
-    ZiLOG(Error, "zhttpserver", "privilege drop failed");
+    ZiLOG(Error, "zhttpd", "privilege drop failed");
     return false;
   }
 #else
@@ -447,7 +447,7 @@ struct HTTPServer : public Ztcp::Server<HTTPServer> {
   ZiIP localIP() const { return ZiIP(state->options.addr); }
   unsigned localPort() const { return state->options.port; }
   void listening(const ZiListenInfo &info) {
-    ZiLOG(Info, "zhttpserver", ([port = info.port](auto &s) {
+    ZiLOG(Info, "zhttpd", ([port = info.port](auto &s) {
       s << "http listening: " << port;
     }));
   }
@@ -525,7 +525,7 @@ struct TLSServer : public Ztls::Server<TLSServer> {
   ZiIP localIP() const { return ZiIP(state->options.addr); }
   unsigned localPort() const { return state->options.port; }
   void listening(const ZiListenInfo &info) {
-    ZiLOG(Info, "zhttpserver", ([port = info.port](auto &s) {
+    ZiLOG(Info, "zhttpd", ([port = info.port](auto &s) {
       s << "https listening: " << port;
     }));
   }
@@ -606,7 +606,7 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
   ZiIP localIP() const { return ZiIP(state->options.addr); }
   uint16_t localPort() const { return state->options.port; }
   void listening() {
-    ZiLOG(Info, "zhttpserver", ([port = this->local().port()](auto &s) {
+    ZiLOG(Info, "zhttpd", ([port = this->local().port()](auto &s) {
       s << "h3 listening: " << port;
     }));
   }
@@ -734,10 +734,10 @@ int main(int argc, char **argv)
   if (!loadOptions(options, argc, argv)) usage();
   ZtString<> error;
   if (!validate(options, error)) {
-    std::cerr << "zhttpserver: " << error << '\n' << std::flush;
+    std::cerr << "zhttpd: " << error << '\n' << std::flush;
     return 1;
   }
-  ZiLog::init("zhttpserver", options.syslog ? "daemon" : "user");
+  ZiLog::init("zhttpd", options.syslog ? "daemon" : "user");
   ZiLog::level(0);
   if (options.syslog)
     ZiLog::sink(ZiLog::sysSink());
@@ -755,22 +755,22 @@ int main(int argc, char **argv)
   State state;
   state.options = options;
   if (!initFileState(state, error)) {
-    ZiLOG(Error, "zhttpserver", ([error = ZuMv(error)](auto &s) mutable {
-      s << "zhttpserver: " << error;
+    ZiLOG(Error, "zhttpd", ([error = ZuMv(error)](auto &s) mutable {
+      s << "zhttpd: " << error;
     }));
     ZiLog::stop();
     return 1;
   }
   state.mime.init(state.options);
   if (!state.log.init(state.options)) {
-    ZiLOG(Error, "zhttpserver", "failed to open access log");
+    ZiLOG(Error, "zhttpd", "failed to open access log");
     ZiLog::stop();
     return 1;
   }
 
   ZiMultiplex mx(mxParams());
   if (!mx.start()) {
-    ZiLOG(Error, "zhttpserver", "ZiMultiplex start failed");
+    ZiLOG(Error, "zhttpd", "ZiMultiplex start failed");
     state.log.final();
     ZiLog::stop();
     return 1;
@@ -783,7 +783,7 @@ int main(int argc, char **argv)
   H3Server h3{&state};
   if (state.options.http) {
     if (!http.init(Ztcp::ServerParams(&mx, "3", "4"))) {
-      ZiLOG(Error, "zhttpserver", "HTTP server initialization failed");
+      ZiLOG(Error, "zhttpd", "HTTP server initialization failed");
       mx.stop();
       state.log.final();
       ZiLog::stop();
@@ -797,7 +797,7 @@ int main(int argc, char **argv)
 	  Ztls::ServerParams(&mx, "3", "4")
 	    .certPath(state.options.cert).keyPath(state.options.key)
 	    .alpn(alpn))) {
-      ZiLOG(Error, "zhttpserver", "HTTPS server initialization failed");
+      ZiLOG(Error, "zhttpd", "HTTPS server initialization failed");
       if (httpInit) http.final();
       mx.stop();
       state.log.final();
@@ -813,7 +813,7 @@ int main(int argc, char **argv)
 	    .certPath(state.options.cert).keyPath(state.options.key).alpn(alpn)
 	    .maxData(H3DataMax).maxStreamData(H3StreamDataMax)
 	    .maxStreamsBidi(H3BidiMax).maxStreamsUni(H3UniMax))) {
-      ZiLOG(Error, "zhttpserver", "H3 server initialization failed");
+      ZiLOG(Error, "zhttpd", "H3 server initialization failed");
       if (tlsInit) tls.final();
       if (httpInit) http.final();
       mx.stop();
@@ -824,7 +824,7 @@ int main(int argc, char **argv)
     h3Init = true;
   }
   if (!httpInit && !tlsInit && !h3Init) {
-    ZiLOG(Error, "zhttpserver", "no transport enabled");
+    ZiLOG(Error, "zhttpd", "no transport enabled");
     mx.stop();
     state.log.final();
     ZiLog::stop();
@@ -833,7 +833,7 @@ int main(int argc, char **argv)
   if (httpInit) http.listen();
   if (tlsInit) tls.listen();
   if (h3Init && !h3.listen()) {
-    ZiLOG(Error, "zhttpserver", "H3 server listen failed");
+    ZiLOG(Error, "zhttpd", "H3 server listen failed");
     state.errors = 1;
     state.done.post();
   }

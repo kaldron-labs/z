@@ -11,11 +11,11 @@
 #include <unistd.h>
 #endif
 
-#include "../example/ZhttpStaticServer.hh"
+#include "../example/Zhttpd.hh"
 #include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
-using namespace ZhttpStatic;
+using namespace Zhttpd;
 
 namespace {
 
@@ -87,29 +87,29 @@ void testCLI()
   ZuTestScope(testCLI);
   {
     Options options;
-    ZuCHECK(load(options, {"zhttpserver", "/tmp/www", "--port", "8081"}),
+    ZuCHECK(load(options, {"zhttpd", "/tmp/www", "--port", "8081"}),
       "--port value failed");
     ZuCheck(options.root == "/tmp/www");
     ZuCheck(options.port == 8081);
   }
   {
     Options options;
-    ZuCHECK(load(options, {"zhttpserver", "/tmp/www", "--port=8082"}),
+    ZuCHECK(load(options, {"zhttpd", "/tmp/www", "--port=8082"}),
       "--port=value failed");
     ZuCheck(options.port == 8082);
   }
   {
     Options options;
-    ZuCHECK(!load(options, {"zhttpserver"}), "missing root accepted");
-    ZuCHECK(!load(options, {"zhttpserver", "/a", "/b"}),
+    ZuCHECK(!load(options, {"zhttpd"}), "missing root accepted");
+    ZuCHECK(!load(options, {"zhttpd", "/a", "/b"}),
       "duplicate root accepted");
-    ZuCHECK(!load(options, {"zhttpserver", "/tmp/www", "--port=70000"}),
+    ZuCHECK(!load(options, {"zhttpd", "/tmp/www", "--port=70000"}),
       "overflow port accepted");
   }
   {
     Options options;
     ZuCHECK(load(options, {
-	"zhttpserver", "/tmp/www",
+	"zhttpd", "/tmp/www",
 	"--forward", "a.example,https://a.invalid",
 	"--forward=b.example,https://b.invalid"}),
       "repeated forward failed");
@@ -119,23 +119,23 @@ void testCLI()
   }
   {
     Options options;
-    ZuCHECK(load(options, {"zhttpserver", "/tmp/www", "--auth", "u:p"}),
+    ZuCHECK(load(options, {"zhttpd", "/tmp/www", "--auth", "u:p"}),
       "auth failed");
     ZuCheck(options.authUser == "u");
     ZuCheck(options.authPass == "p");
     Options bad;
-    ZuCHECK(!load(bad, {"zhttpserver", "/tmp/www", "--auth", "missingcolon"}),
+    ZuCHECK(!load(bad, {"zhttpd", "/tmp/www", "--auth", "missingcolon"}),
       "invalid auth accepted");
   }
   {
     Options options;
-    ZuCHECK(load(options, {"zhttpserver", "/tmp/www", "--https",
+    ZuCHECK(load(options, {"zhttpd", "/tmp/www", "--https",
 	"--cert", "c", "--key", "k"}),
       "https default load failed");
     ZuCheck(!options.http);
     ZuCheck(options.https);
     Options both;
-    ZuCHECK(load(both, {"zhttpserver", "/tmp/www", "--http", "--https",
+    ZuCHECK(load(both, {"zhttpd", "/tmp/www", "--http", "--https",
 	"--cert", "c", "--key", "k"}),
       "explicit http+https load failed");
     ZuCheck(both.http);
@@ -147,7 +147,7 @@ void testMime()
 {
   ZuTestScope(testMime);
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpStaticMime"), "temporary directory failed");
+  ZuCHECK(temp.init("ZhttpdMime"), "temporary directory failed");
   Zi::Path root = tempRoot(temp);
   State state;
   ZuCHECK(initState(state, root), "state initialization failed");
@@ -178,7 +178,7 @@ void testPlannerFiles()
 {
   ZuTestScope(testPlannerFiles);
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpStaticFiles"), "temporary directory failed");
+  ZuCHECK(temp.init("ZhttpdFiles"), "temporary directory failed");
   Zi::Path root = tempRoot(temp);
   ZuCHECK(writeFile(ZiFile::append(root, "hello.txt"), "hello\n"),
     "file write failed");
@@ -207,7 +207,7 @@ void testSymlinkRejected()
   ZuTestScope(testSymlinkRejected);
 #ifndef _WIN32
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpStaticSymlink"), "temporary directory failed");
+  ZuCHECK(temp.init("ZhttpdSymlink"), "temporary directory failed");
   Zi::Path root = tempRoot(temp);
   auto outside = ZiFile::append(ZiFile::dirname(root), "outside.txt");
   ZuCHECK(writeFile(outside, "outside\n"), "outside write failed");
@@ -228,7 +228,7 @@ void testDirectory()
 {
   ZuTestScope(testDirectory);
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpStaticDir"), "temporary directory failed");
+  ZuCHECK(temp.init("ZhttpdDir"), "temporary directory failed");
   Zi::Path root = tempRoot(temp);
   auto dir = ZiFile::append(root, "dir");
   ZuCHECK(ZiFile::mkdir(dir) == Zi::OK, "directory creation failed");
@@ -262,7 +262,7 @@ void testIfModifiedSince()
 {
   ZuTestScope(testIfModifiedSince);
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpStaticIMS"), "temporary directory failed");
+  ZuCHECK(temp.init("ZhttpdIMS"), "temporary directory failed");
   Zi::Path root = tempRoot(temp);
   ZuCHECK(writeFile(ZiFile::append(root, "hello.txt"), "hello\n"),
     "file write failed");
@@ -280,7 +280,7 @@ void testPolicy()
 {
   ZuTestScope(testPolicy);
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpStaticPolicy"), "temporary directory failed");
+  ZuCHECK(temp.init("ZhttpdPolicy"), "temporary directory failed");
   Zi::Path root = tempRoot(temp);
   ZuCHECK(writeFile(ZiFile::append(root, "hello.txt"), "hello\n"),
     "file write failed");
@@ -308,7 +308,7 @@ void testRanges()
 {
   ZuTestScope(testRanges);
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpStaticRange"), "temporary directory failed");
+  ZuCHECK(temp.init("ZhttpdRange"), "temporary directory failed");
   Zi::Path root = tempRoot(temp);
   ZuCHECK(writeFile(ZiFile::append(root, "data.bin"), "0123456789"),
     "range file write failed");
@@ -334,7 +334,7 @@ void testSingleFile()
 {
   ZuTestScope(testSingleFile);
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpStaticSingle"), "temporary directory failed");
+  ZuCHECK(temp.init("ZhttpdSingle"), "temporary directory failed");
   Zi::Path root = tempRoot(temp);
   auto file = ZiFile::append(root, "only.txt");
   ZuCHECK(writeFile(file, "only"), "single file write failed");

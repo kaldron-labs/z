@@ -41,7 +41,7 @@ The example server is a static file server:
 ```sh
 mkdir -p /tmp/www
 printf 'zhttp-ok\n' >/tmp/www/index.html
-zhttpserver /tmp/www --http --addr 127.0.0.1 --port 8080
+zhttpd /tmp/www --http --addr 127.0.0.1 --port 8080
 ```
 
 For local TLS and HTTP/3 tests, generate a temporary localhost certificate:
@@ -58,9 +58,9 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
 Then start the TLS or HTTP/3 transports:
 
 ```sh
-zhttpserver /tmp/www --https --addr 127.0.0.1 --port 8443 \
+zhttpd /tmp/www --https --addr 127.0.0.1 --port 8443 \
   --cert cert.pem --key key.pem
-zhttpserver /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
+zhttpd /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
   --cert cert.pem --key key.pem
 ```
 

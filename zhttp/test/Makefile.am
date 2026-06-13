@@ -21,7 +21,7 @@ noinst_PROGRAMS = zhttptest zhttptestd \
 	ZhttpParserTest \
 	ZhttpHPackTest ZhttpQPackTest \
 	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
-	ZhttpAppTest ZhttpStaticServerTest ZhttpDarkhttpdCompatTest
+	ZhttpAppTest ZhttpdTest ZhttpDarkhttpdCompatTest
 noinst_HEADERS = ZhttpCaddyInterop.hh ZhttpTestUtil.hh
 zhttptest_SOURCES = zhttptest.cc
 zhttptestd_SOURCES = zhttptestd.cc
@@ -32,11 +32,11 @@ Zhttp3InteropTest_SOURCES = Zhttp3InteropTest.cc
 ZhttpFallbackTest_SOURCES = ZhttpFallbackTest.cc
 ZhttpQPackDynamicTest_SOURCES = ZhttpQPackDynamicTest.cc
 ZhttpAppTest_SOURCES = ZhttpAppTest.cc
-ZhttpStaticServerTest_SOURCES = ZhttpStaticServerTest.cc
+ZhttpdTest_SOURCES = ZhttpdTest.cc
 ZhttpDarkhttpdCompatTest_SOURCES = ZhttpDarkhttpdCompatTest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove ZhttpParserTest ZhttpHPackTest ZhttpQPackTest \
 		Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
-		ZhttpAppTest ZhttpStaticServerTest ZhttpDarkhttpdCompatTest
+		ZhttpAppTest ZhttpdTest ZhttpDarkhttpdCompatTest
