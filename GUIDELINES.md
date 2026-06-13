@@ -119,6 +119,65 @@ These guidelines extend `AGENTS.md`
   - `del()` / `delNode()` usually returns a movable reference to the deleted node/value
 - use `ZmRing`, `ZiRing` for inter-thread and inter-process communication
 
+## Code Style
+- library headers must follow the following format:
+  - example `[header]`: "ZuString", "ZhttpQPack"
+  - example `[component]`: "Zu", "Zhttp"
+  ```
+  //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+  //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+  // (c) Copyright [year] [author]
+  // This code is licensed by the MIT license (see LICENSE for details)
+
+  // [title and brief description of header]
+
+  #ifndef [header]_HH
+  #define [header]_HH
+
+  #ifndef [component]Lib_HH
+  #include <zlib/[component]Lib.hh>
+  #endif
+
+  [lowest-level includes, e.g. system library includes]
+
+  [next-lowest-level includes, e.g. Zu includes]
+
+  [next-lowest-level includes, e.g. Zt includes]
+
+  [same-level component includes]
+
+  [body of header]
+  ```
+  - headers must include all their **direct** dependencies
+  - headers must not include **indirect** dependencies unless they use related code/definitions
+- indentation:
+  - match the prevailing style in `{zu,zm,zt,ze,zi}/src/*.{hh,cc}`; when
+    these rules, an editor's interpretation of `cino`, and local code disagree,
+    code precedent wins
+  - use hard tabs for indentation (`noet`, `ts=8`) and a 2-column logical C++
+    indent (`sw=2`); do not replace leading tabs with spaces
+  - indent block contents by one logical level:
+    - namespace/class/struct/function bodies, control-flow bodies and lambda
+      bodies use one extra logical level
+    - `public:`, `protected:` and `private:` labels are flush with the class
+      declaration body; members following them are indented one logical level
+    - `case`/`default` labels follow the local switch style; statements under a
+      label are indented one logical level from the label
+  - for multi-line declarations and expressions, prefer the existing visual
+    alignment style over mechanically adding fixed-width continuation indents:
+    - split long template parameter lists, inheritance lists, base constructor
+      calls and function argument lists after a natural delimiter
+    - continue nested template/base/member initializer expressions one logical
+      level deeper than their containing line
+    - align continuation lines with the open construct when that is what nearby
+      code does
+  - keep short, simple functions and statements on one line when the surrounding
+    code does so; split only when line length or expression shape makes the code
+    clearer
+  - preserve tabular alignment for data members, macro bodies and compact tables
+    that already use tabs to line up names, initializers or comments
+
 ## No Immutability Dogma
 - mutability is encouraged if it benefits performance
   - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
