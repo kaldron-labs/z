@@ -1186,8 +1186,8 @@ public:
   StoreTbl(
     Store *store, IDString id, unsigned nShards,
     ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
-    const reflection::Schema *schema, IOBufAllocFn bufAllocFn
-  ) :
+    const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
+  :
     m_store{store}, m_id{ZuMv(id)},
     m_fields{ZuMv(fields)}, m_keyFields{ZuMv(keyFields)},
     m_bufAllocFn{ZuMv(bufAllocFn)}

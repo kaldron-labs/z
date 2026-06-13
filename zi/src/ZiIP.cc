@@ -96,9 +96,10 @@ void ZiIP_WSDLL::freeAddrInfo(ADDRINFOT *ai)
   (*m_freeAddrInfoW)(ai);
 }
 
-int ZiIP_WSDLL::getNameInfo(const struct sockaddr *sa, socklen_t salen,
-		   wchar_t *host, DWORD hostlen, wchar_t *serv, DWORD servlen,
-		   int flags)
+int ZiIP_WSDLL::getNameInfo(
+  const struct sockaddr *sa, socklen_t salen,
+  wchar_t *host, DWORD hostlen, wchar_t *serv, DWORD servlen,
+  int flags)
 {
   if (!m_getNameInfoW) return WSASYSNOTREADY;
   return (*m_getNameInfoW)(sa, salen, host, hostlen, serv, servlen, flags);
