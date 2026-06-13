@@ -73,9 +73,9 @@ namespace XferCompression {
   ZtEnum(XferCompression, int8_t, compress, deflate, gzip);
 }
 
-// HTTP Parser
+// HTTP/1 Parser
 
-// CRTP - implementation must conform to the following interface:
+// CRTP - implementation may implement the following callbacks:
 #if 0
 struct Impl : public Parser<Impl, ...> {
   using Base = Parser<Impl, ...>;
@@ -109,7 +109,7 @@ struct Impl : public Parser<Impl, ...> {
   // optional - body data
   void body(ZuBSpan);
 
-  // end of message (end of body, or end of header if no body))
+  // optional - end of message (end of body, or end of header if no body)
   void complete(ParserState::T);
 };
 #endif
@@ -488,6 +488,43 @@ namespace H3 {
   template <typename ...Ts>
   struct IsTypeList_<ZuTypeList<Ts...>> : public ZuTrue { };
 
+  // HTTP/3 unidirectional connection stream parser
+  //
+  // CRTP - implementation may implement the following callbacks:
+#if 0
+  struct Impl : public CxnParser<Impl> {
+    using Base = CxnParser<Impl>;
+
+    // optional - if implemented, must call Base::reset()
+    void reset();
+
+    // optional - connection state storage, defaults to Base-owned state
+    CxnState::T h3State() const;
+    void h3State(CxnState::T);
+
+    // optional - validate peer unidirectional stream uniqueness/policy
+    // - return false to reject the stream
+    bool peerControlStream();
+    bool peerEncoderStream();
+    bool peerDecoderStream();
+    bool peerExtensionStream(uint64_t type);
+
+    // optional - SETTINGS callback
+    // - Base::setting() applies SETTINGS_QPACK_MAX_TABLE_CAPACITY to qpackTx()
+    void setting(uint64_t key, uint64_t value);
+
+    // optional - GOAWAY callback
+    void goaway(uint64_t id);
+
+    // optional - peer encoder stream state; nullptr disables dynamic QPACK Rx
+    QPackRxTable *qpackRx();
+
+    // optional - local Tx dynamic table, updated by peer decoder stream
+    // - nullptr ignores peer decoder instructions
+    QPackTxTable *qpackTx();
+  };
+#endif
+
   template <typename Impl>
   struct CxnParser {
     auto impl() const { return static_cast<const Impl *>(this); }
@@ -838,6 +875,61 @@ namespace H3 {
   template <> struct FieldState_<false> {
     int		status = -1;
   };
+
+  // HTTP/3 request/response stream parser
+  //
+  // CRTP - implementation may implement the following callbacks:
+#if 0
+  struct Impl : public Parser<Impl, ...> {
+    using Base = Parser<Impl, ...>;
+
+    // optional - if implemented, must call Base::reset()
+    void reset();
+
+    // optional - request callback
+    void operation(Method::T method, ZuBSpan path);
+
+    // optional - response callback
+    void status(unsigned);
+
+    // optional - header key
+    template <typename Key> void header(ZuBSpan value);
+
+    // optional - header key+value
+    template <typename Key, typename Value> void header();
+
+    // optional - content-length header
+    void contentLength(uint64_t);
+
+    // optional - body data
+    void body(ZuBSpan);
+
+    // optional - end of stream/message
+    void complete(ParserState::T);
+
+    // optional - stream completion predicate
+    // - default calls impl()->finReceived()
+    bool rxComplete() const;
+
+    // required only when using Base::rxComplete()
+    bool finReceived() const;
+
+    // optional - H3/QPACK parameters, defaults to default Params
+    const Params &h3Params() const;
+
+    // optional - current stream ID, used for QPACK section acknowledgements
+    uint64_t streamID() const;
+
+    // optional - write to local QPACK decoder stream for section acks
+    QPackEncoderTx *qpackDecoderTx();
+
+    // optional - peer dynamic table; nullptr disables dynamic QPACK decoding
+    QPackRxTable *qpackRx();
+
+    // optional - local Tx dynamic table, currently exposed for symmetry
+    QPackTxTable *qpackTx();
+  };
+#endif
 
   template <
     typename Impl,
@@ -1637,7 +1729,9 @@ namespace H3 {
 
 } // H3
 
-// CRTP - implementation must conform to the following interface:
+// HTTP/1 and HTTP/3 Builder
+
+// CRTP - implementation may implement the following callbacks:
 #if 0
 struct Impl : public Builder<Impl, ...> {
   using Base = Builder<Impl, ...>;
@@ -1667,6 +1761,22 @@ struct Impl : public Builder<Impl, ...> {
   // optional - defaults to 0
   // - only called if HasBody && !Chunked
   uint64_t contentLength();
+
+  // optional - H3 only, defaults to nullptr; enables dynamic QPACK Tx when set
+  QPackTxTable *qpackTx();
+
+  // optional - H3 only, required when qpackTx() plans encoder-stream writes
+  QPackEncoderTx *qpackEncoderTx();
+
+  // optional - H3 only, records last QPACK build failure
+  void qpackFailure(QPackBuildFailure::T);
+  QPackBuildFailure::T qpackFailure() const;
+
+  // optional - H3 only, defaults to default Params
+  const Params &h3Params() const;
+
+  // optional - H3 only, used when tracking QPACK-blocked field sections
+  uint64_t streamID() const;
 };
 #endif
 
