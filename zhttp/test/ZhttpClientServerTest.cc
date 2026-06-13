@@ -6,7 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include "ZhttpCaddyInterop.hh"
+#include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
 
