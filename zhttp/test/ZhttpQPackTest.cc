@@ -11,7 +11,7 @@
 
 using namespace ZuTestUtil;
 
-static ZuCSpan span(const Zhttp::H3::HeaderBytes &bytes)
+static ZuCSpan span(const Zhttp::H3::HdrBytes &bytes)
 {
   return ZuCSpan{reinterpret_cast<const char *>(bytes.data()), bytes.length()};
 }
@@ -42,7 +42,7 @@ void testQPackLiteral()
     { ":path", "/" },
     { "accept", "application/json" }
   };
-  Zhttp::H3::HeaderBytes bytes;
+  Zhttp::H3::HdrBytes bytes;
   ZuCHECK(Zhttp::H3::QPack::encodeLiteral(
     bytes, ZuSpan<Zhttp::H3::Header>{headers, 3}, params) > 0,
     "QPACK literal encode failed");
@@ -99,7 +99,7 @@ void testQPackFieldSectionPrefix()
 {
   ZuTestScope(testQPackFieldSectionPrefix);
 
-  Zhttp::H3::HeaderBytes bytes;
+  Zhttp::H3::HdrBytes bytes;
   Zhttp::H3::FieldSectionPrefix prefix;
   ZuCHECK(Zhttp::H3::QPack::encodeFieldSectionPrefix(bytes, prefix) > 0,
     "zero field-section prefix encode failed");

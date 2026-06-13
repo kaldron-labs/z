@@ -4,11 +4,11 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/Zhttp.hh>
+#include <zlib/ZhttpQPack.hh>
 
 namespace Zhttp { namespace H3 {
 
-static int putPref_(HeaderBytes &out, uint8_t prefix, unsigned prefixBits,
+static int putPref_(HdrBytes &out, uint8_t prefix, unsigned prefixBits,
   uint64_t v)
 {
   if (!prefixBits || prefixBits > 8) return -1;
@@ -28,7 +28,7 @@ static int putPref_(HeaderBytes &out, uint8_t prefix, unsigned prefixBits,
   return 0;
 }
 
-static int putString_(HeaderBytes &out, uint8_t prefix, unsigned prefixBits,
+static int putString_(HdrBytes &out, uint8_t prefix, unsigned prefixBits,
   ZuCSpan s)
 {
   if (putPref_(out, prefix, prefixBits, s.length()) < 0) return -1;
@@ -305,7 +305,7 @@ bool QPackTxTable::streamCancellation(uint64_t streamID)
   return sectionAck(streamID);
 }
 
-int QPack::decodeHuffman(HeaderBytes &out, ZuCSpan in)
+int QPack::decodeHuffman(HdrBytes &out, ZuCSpan in)
 {
   out.length(HPack::declen(in.length()));
   int64_t n = HPack::decode(
@@ -317,7 +317,7 @@ int QPack::decodeHuffman(HeaderBytes &out, ZuCSpan in)
 }
 
 int QPack::decodeString(
-  HeaderBytes &storage, ZuCSpan in, unsigned &o, unsigned prefixBits,
+  HdrBytes &storage, ZuCSpan in, unsigned &o, unsigned prefixBits,
   uint8_t huffmanMask, ZuCSpan &out)
 {
   uint64_t len = 0;
@@ -401,7 +401,7 @@ bool QPack::staticName(uint64_t index, HeaderName &name)
 }
 
 int QPack::encodeFieldSectionPrefix(
-  HeaderBytes &out, const FieldSectionPrefix &prefix, uint64_t maxCapacity)
+  HdrBytes &out, const FieldSectionPrefix &prefix, uint64_t maxCapacity)
 {
   uint64_t encodedInsertCount = 0;
   uint64_t deltaBase = 0;
@@ -488,7 +488,7 @@ bool QPack::validateFieldSectionPrefix(
   return prefix.requiredInsertCount <= insertCount && prefix.base <= insertCount;
 }
 
-int QPack::encodeFieldLine(HeaderBytes &out, Header h, const Params &params)
+int QPack::encodeFieldLine(HdrBytes &out, Header h, const Params &params)
 {
   int staticIndex = QPack::staticIndex(h.name, h.value);
   if (staticIndex >= 0)
@@ -508,7 +508,7 @@ int QPack::encodeFieldLine(HeaderBytes &out, Header h, const Params &params)
     putString_(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
 }
 
-int QPack::encodeLiteral(HeaderBytes &out, ZuSpan<Header> headers,
+int QPack::encodeLiteral(HdrBytes &out, ZuSpan<Header> headers,
     const Params &params, const FieldSectionPrefix &prefix)
 {
   out.length(0);
@@ -525,14 +525,14 @@ int QPack::encodeLiteral(HeaderBytes &out, ZuSpan<Header> headers,
   return out.length();
 }
 
-int QPack::encodeSetCapacity(HeaderBytes &out, uint64_t capacity)
+int QPack::encodeSetCapacity(HdrBytes &out, uint64_t capacity)
 {
   out.length(0);
   return putPref_(out, 0x20, 5, capacity) < 0 ? -1 : int(out.length());
 }
 
 int QPack::encodeInsertWithNameRef(
-  HeaderBytes &out, uint64_t index, bool dynamic, ZuCSpan value)
+  HdrBytes &out, uint64_t index, bool dynamic, ZuCSpan value)
 {
   out.length(0);
   uint8_t prefix = uint8_t(0x80 | (dynamic ? 0x00 : 0x40));
@@ -540,20 +540,20 @@ int QPack::encodeInsertWithNameRef(
     putString_(out, 0x00, 7, value) < 0 ? -1 : int(out.length());
 }
 
-int QPack::encodeInsertLiteral(HeaderBytes &out, Header h)
+int QPack::encodeInsertLiteral(HdrBytes &out, Header h)
 {
   out.length(0);
   return putString_(out, 0x40, 5, h.name) < 0 ||
     putString_(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
 }
 
-int QPack::encodeSectionAck(HeaderBytes &out, uint64_t streamID)
+int QPack::encodeSectionAck(HdrBytes &out, uint64_t streamID)
 {
   out.length(0);
   return putPref_(out, 0x80, 7, streamID) < 0 ? -1 : int(out.length());
 }
 
-int QPack::decodeEncoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
+int QPack::decodeEncoderInsnOne(ZuCSpan in, QPackDecodedInsn &i)
 {
   unsigned o = 0;
   uint8_t first = 0;
@@ -561,7 +561,7 @@ int QPack::decodeEncoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
   i = {};
 
   if (uint8_t(in[0]) & 0x80) {
-    i.type = QPackInstruction::InsertWithNameRef;
+    i.type = QPackInsn::InsertWithNameRef;
     int n = qpackDecodePrefInt_(in, o, 6, i.value, &first);
     if (n < 0) return n;
     i.nameRefDynamic = !(first & 0x40);
@@ -571,7 +571,7 @@ int QPack::decodeEncoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
     return int(o);
   }
   if ((uint8_t(in[0]) & 0xc0) == 0x40) {
-    i.type = QPackInstruction::InsertWithoutNameRef;
+    i.type = QPackInsn::InsertWithoutNameRef;
     int n = decodeString(i.nameStorage, in, o, 5, 0x20, i.header.name);
     if (n < 0) return n;
     n = decodeString(i.valueStorage, in, o, 7, 0x80, i.header.value);
@@ -579,34 +579,34 @@ int QPack::decodeEncoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
     return int(o);
   }
   if ((uint8_t(in[0]) & 0xe0) == 0x20) {
-    i.type = QPackInstruction::SetCapacity;
+    i.type = QPackInsn::SetCapacity;
     int n = qpackDecodePrefInt_(in, o, 5, i.value);
     return n < 0 ? n : int(o);
   }
   if ((uint8_t(in[0]) & 0xe0) == 0x00) {
-    i.type = QPackInstruction::Duplicate;
+    i.type = QPackInsn::Duplicate;
     int n = qpackDecodePrefInt_(in, o, 5, i.value);
     return n < 0 ? n : int(o);
   }
   return -1;
 }
 
-int QPack::decodeDecoderInstructionOne(ZuCSpan in, QPackDecodedInstruction &i)
+int QPack::decodeDecoderInsnOne(ZuCSpan in, QPackDecodedInsn &i)
 {
   unsigned o = 0;
   if (!in.length()) return -2;
   i = {};
   if (uint8_t(in[0]) & 0x80) {
-    i.type = QPackInstruction::SectionAck;
+    i.type = QPackInsn::SectionAck;
     int n = qpackDecodePrefInt_(in, o, 7, i.value);
     return n < 0 ? n : int(o);
   }
   if (uint8_t(in[0]) & 0x40) {
-    i.type = QPackInstruction::StreamCancellation;
+    i.type = QPackInsn::StreamCancellation;
     int n = qpackDecodePrefInt_(in, o, 6, i.value);
     return n < 0 ? n : int(o);
   }
-  i.type = QPackInstruction::InsertCountIncrement;
+  i.type = QPackInsn::InsertCountIncrement;
   int n = qpackDecodePrefInt_(in, o, 6, i.value);
   if (n < 0) return n;
   if (!i.value) return -1;
