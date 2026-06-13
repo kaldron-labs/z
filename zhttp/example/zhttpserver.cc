@@ -26,6 +26,14 @@
 
 using namespace ZhttpStatic;
 
+constexpr uint64_t ReqBodyMax = 1<<20;
+constexpr unsigned BufBuiltin = 8<<10;
+constexpr unsigned BufMax = 100<<20;
+constexpr uint64_t H3DataMax = 100<<20;
+constexpr uint64_t H3StreamDataMax = 16<<20;
+constexpr uint64_t H3BidiMax = 64;
+constexpr uint64_t H3UniMax = 16;
+
 void usage(int code = 1)
 {
   std::cerr <<
@@ -49,7 +57,7 @@ void usage(int code = 1)
     "  --no-keepalive             disable HTTP keep-alive\n"
     "  --single-file              serve only the specified file\n"
     "  --hide-dotfiles            reject dotfiles\n"
-    "  --forward host url         301 redirect by Host, repeatable\n"
+    "  --forward host,url         301 redirect by Host, repeatable\n"
     "  --forward-all url          301 redirect all requests\n"
     "  --forward-https            redirect HTTP requests to HTTPS\n"
     "  --no-server-id             omit server identity headers/listings\n"
@@ -64,91 +72,11 @@ void usage(int code = 1)
   ::exit(code);
 }
 
-bool parseUInt(ZuCSpan v, unsigned &out)
-{
-  if (!v) return false;
-  unsigned n = 0;
-  for (unsigned i = 0; i < v.length(); ++i) {
-    if (v[i] < '0' || v[i] > '9') return false;
-    n = (n * 10) + (v[i] - '0');
-  }
-  out = n;
-  return true;
-}
-
 bool loadOptions(Options &options, int argc, char **argv)
 {
-  bool root = false;
-  bool httpSet = false;
-  for (int i = 1; i < argc; ++i) {
-    ZuCSpan arg{argv[i]};
-    auto value = [&]() -> ZuCSpan {
-      if (auto eq = arg.find([](auto c) { return c == '='; }); eq >= 0)
-	return ZuCSpan{arg.data() + eq + 1, arg.length() - unsigned(eq) - 1};
-      if (i + 1 >= argc) return {};
-      return ZuCSpan{argv[++i]};
-    };
-    if (arg == "-h" || arg == "--help") usage(0);
-    else if (arg == "--http") { options.http = true; httpSet = true; }
-    else if (arg == "--https") options.https = true;
-    else if (arg == "--http3") options.http3 = true;
-    else if (arg == "--ipv6") options.ipv6 = true;
-    else if (arg == "--daemon") options.daemon = true;
-    else if (arg == "--syslog") options.syslog = true;
-    else if (arg == "--no-listing") options.noListing = true;
-    else if (arg == "--chroot") options.chroot = true;
-    else if (arg == "--no-keepalive") options.noKeepalive = true;
-    else if (arg == "--single-file") options.singleFile = true;
-    else if (arg == "--hide-dotfiles") options.hideDotfiles = true;
-    else if (arg == "--forward-https") options.forwardHttps = true;
-    else if (arg == "--no-server-id") options.noServerID = true;
-    else if (arg == "--addr") options.addr = value();
-    else if (arg.starts("--addr=")) options.addr = value();
-    else if (arg == "--port" || arg.starts("--port=")) {
-      unsigned port;
-      if (!parseUInt(value(), port) || port > 65535) return false;
-      options.port = port;
-    } else if (arg == "--cert" || arg.starts("--cert=")) options.cert = value();
-    else if (arg == "--key" || arg.starts("--key=")) options.key = value();
-    else if (arg == "--index" || arg.starts("--index=")) options.index = value();
-    else if (arg == "--mimetypes" || arg.starts("--mimetypes="))
-      options.mimetypes = value();
-    else if (arg == "--default-mimetype" ||
-	arg.starts("--default-mimetype="))
-      options.defaultMimetype = value();
-    else if (arg == "--uid" || arg.starts("--uid=")) options.uid = value();
-    else if (arg == "--gid" || arg.starts("--gid=")) options.gid = value();
-    else if (arg == "--pidfile" || arg.starts("--pidfile="))
-      options.pidfile = value();
-    else if (arg == "--log" || arg.starts("--log=")) options.logPath = value();
-    else if (arg == "--timeout" || arg.starts("--timeout=")) {
-      unsigned timeout;
-      if (!parseUInt(value(), timeout)) return false;
-      options.timeout = timeout;
-    } else if (arg == "--maxconn" || arg.starts("--maxconn=")) {
-      unsigned maxconn;
-      if (!parseUInt(value(), maxconn)) return false;
-      options.maxconn = maxconn;
-    } else if (arg == "--auth" || arg.starts("--auth=")) {
-      if (!parseAuth(options, value())) return false;
-    } else if (arg == "--forward" || arg.starts("--forward=")) {
-      ZuCSpan host = value();
-      ZuCSpan url = value();
-      if (!parseForward(options, host, url)) return false;
-    } else if (arg == "--forward-all" || arg.starts("--forward-all="))
-      options.forwardAll = value();
-    else if (arg[0] == '-')
-      return false;
-    else if (!root) {
-      options.root = arg;
-      root = true;
-    } else
-      return false;
-  }
-#ifndef _WIN32
-  if (options.port == 8080 && !geteuid()) options.port = 80;
-#endif
-  if (!httpSet && (options.https || options.http3)) options.http = false;
+  bool help = false;
+  if (!ZhttpStatic::loadOptions(options, argc, argv, help)) return false;
+  if (help) usage(0);
   return true;
 }
 
@@ -172,8 +100,8 @@ bool resolveUID(ZuCSpan user, uid_t &uid, gid_t &gid, ZtString<> &name)
     uid = id;
     return true;
   }
-  auto s = str(user);
-  struct passwd *pw = getpwnam(s.c_str());
+  ZtString<> s{user};
+  struct passwd *pw = getpwnam(s.ndata());
   if (!pw) return false;
   uid = pw->pw_uid;
   gid = pw->pw_gid;
@@ -188,8 +116,8 @@ bool resolveGID(ZuCSpan group, gid_t &gid)
     gid = id;
     return true;
   }
-  auto s = str(group);
-  struct group *gr = getgrnam(s.c_str());
+  ZtString<> s{group};
+  struct group *gr = getgrnam(s.ndata());
   if (!gr) return false;
   gid = gr->gr_gid;
   return true;
@@ -197,18 +125,20 @@ bool resolveGID(ZuCSpan group, gid_t &gid)
 
 bool chrootRoot(Options &options)
 {
-  auto root = std::filesystem::absolute(std::filesystem::path{str(options.root)});
+  Zi::Path root = options.root;
+  if (!ZiFile::absolute(root))
+    root = ZiFile::append(ZiFile::cwd(), root);
   if (options.singleFile) {
-    auto dir = root.parent_path();
-    auto leaf = root.filename();
-    if (dir.empty() || leaf.empty()) return false;
-    if (::chdir(dir.c_str()) < 0 || ::chroot(dir.c_str()) < 0 ||
+    Zi::Path dir = ZiFile::dirname(root);
+    Zi::Path leaf = ZiFile::leafname(root);
+    if (!dir || !leaf) return false;
+    if (::chdir(dir.ndata()) < 0 || ::chroot(dir.ndata()) < 0 ||
 	::chdir("/") < 0)
       return false;
-    options.root = zstr(leaf.string());
+    options.root = leaf;
     return true;
   }
-  if (::chdir(root.c_str()) < 0 || ::chroot(root.c_str()) < 0 ||
+  if (::chdir(root.ndata()) < 0 || ::chroot(root.ndata()) < 0 ||
       ::chdir("/") < 0)
     return false;
   options.root = "/";
@@ -226,8 +156,7 @@ bool dropPrivileges(const Options &options)
   if (options.gid && !resolveGID(options.gid, gid))
     return false;
   if (userName) {
-    auto s = str(userName);
-    if (initgroups(s.c_str(), gid) < 0) return false;
+    if (initgroups(userName.ndata(), gid) < 0) return false;
   } else {
     if (setgroups(0, nullptr) < 0 && errno != EPERM) return false;
   }
@@ -325,10 +254,10 @@ template <typename Impl, bool H3>
 struct ReqParserBase_;
 template <typename Impl>
 struct ReqParserBase_<Impl, false> :
-  public Zhttp::H1ReqParser<Impl, ReqHeaders, (1<<20)> { };
+  public Zhttp::H1ReqParser<Impl, ReqHeaders, ReqBodyMax> { };
 template <typename Impl>
 struct ReqParserBase_<Impl, true> :
-  public Zhttp::H3ReqParser<Impl, ReqHeaders, (1<<20)> { };
+  public Zhttp::H3ReqParser<Impl, ReqHeaders, ReqBodyMax> { };
 
 template <bool H3>
 struct ReqParser :
@@ -429,28 +358,21 @@ void sendBody(Tx &tx, Builder &builder, const ResponsePlan &resp) {
   if (!resp.sendBody) return;
   auto body = static_cast<typename Builder::Base &>(builder).body(tx);
   if (resp.generated) {
-    body << ZuCSpan{resp.body};
+    sendSpanChunks(body, resp.body.data(), resp.body.length());
     return;
   }
   if (!resp.file || !resp.fileLength) return;
-  ZiMMapFile map;
-  if (map.mmap(resp.filePath, ZiFile::ReadOnly | ZiFile::GC,
-	resp.fileOffset + resp.fileLength, false) == Zi::OK) {
-    const char *p = static_cast<const char *>(map.addr()) + resp.fileOffset;
-    body << ZuCSpan{p, unsigned(resp.fileLength)};
-    return;
-  }
   ZiFile file;
-  if (file.open(resp.filePath, ZiFile::ReadOnly | ZiFile::GC) != Zi::OK)
+  if (file.dup(resp.fileHandle, ZiFile::GC) != Zi::OK)
     return;
-  char buf[16384];
+  char buf[FileChunk];
   uint64_t offset = resp.fileOffset;
   uint64_t left = resp.fileLength;
   while (left) {
-    unsigned n = left > sizeof(buf) ? sizeof(buf) : unsigned(left);
+    unsigned n = left > FileChunk ? FileChunk : unsigned(left);
     int r = file.pread(offset, buf, n);
     if (r <= 0) break;
-    body << ZuCSpan{buf, unsigned(r)};
+    sendSpanChunks(body, buf, unsigned(r));
     offset += r;
     left -= r;
   }
@@ -497,8 +419,8 @@ struct StaticH3Server :
     parser.req.tls = true;
     StaticPlanner planner{stream.link()->app()->state};
     auto resp = planner.plan(parser.req);
-    stream.sendResponse(resp);
     stream.link()->app()->state->log.write(parser.req, resp, stream.link()->remote);
+    stream.sendResponse(ZuMv(resp));
     return 1;
   }
 };
@@ -525,7 +447,9 @@ struct HTTPServer : public Ztcp::Server<HTTPServer> {
   ZiIP localIP() const { return ZiIP(state->options.addr); }
   unsigned localPort() const { return state->options.port; }
   void listening(const ZiListenInfo &info) {
-    std::cerr << "http listening: " << info.port << '\n' << std::flush;
+    ZiLOG(Info, "zhttpserver", ([port = info.port](auto &s) {
+      s << "http listening: " << port;
+    }));
   }
   void listenFailed(bool) {
     state->errors = 1;
@@ -591,8 +515,8 @@ ZiConnection *HTTPServer::accepted(const ZiCxnInfo &ci)
 }
 
 struct TLSServer : public Ztls::Server<TLSServer> {
-  using RxBufAlloc = Ztls::RxBufAlloc<8<<10, 100<<20, "Zhttp.Buf">;
-  using TxBufAlloc = Ztls::TxBufAlloc<8<<10, 100<<20, "Zhttp.Buf">;
+  using RxBufAlloc = Ztls::RxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
+  using TxBufAlloc = Ztls::TxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
   struct Link;
 
   TLSServer(State *state_) : state{state_} { }
@@ -690,10 +614,10 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
     state->errors = 1;
     state->done.post();
   }
-  uint64_t maxData() const { return 100<<20; }
-  uint64_t maxStreamData() const { return 16<<20; }
-  uint64_t maxStreamsBidi() const { return 64; }
-  uint64_t maxStreamsUni() const { return 16; }
+  uint64_t maxData() const { return H3DataMax; }
+  uint64_t maxStreamData() const { return H3StreamDataMax; }
+  uint64_t maxStreamsBidi() const { return H3BidiMax; }
+  uint64_t maxStreamsUni() const { return H3UniMax; }
 
   State	*state = nullptr;
 };
@@ -808,7 +732,7 @@ int main(int argc, char **argv)
 {
   Options options;
   if (!loadOptions(options, argc, argv)) usage();
-  std::string error;
+  ZtString<> error;
   if (!validate(options, error)) {
     std::cerr << "zhttpserver: " << error << '\n' << std::flush;
     return 1;
@@ -830,16 +754,23 @@ int main(int argc, char **argv)
 
   State state;
   state.options = options;
+  if (!initFileState(state, error)) {
+    ZiLOG(Error, "zhttpserver", ([error = ZuMv(error)](auto &s) mutable {
+      s << "zhttpserver: " << error;
+    }));
+    ZiLog::stop();
+    return 1;
+  }
   state.mime.init(state.options);
   if (!state.log.init(state.options)) {
-    std::cerr << "zhttpserver: failed to open access log\n" << std::flush;
+    ZiLOG(Error, "zhttpserver", "failed to open access log");
     ZiLog::stop();
     return 1;
   }
 
   ZiMultiplex mx(mxParams());
   if (!mx.start()) {
-    std::cerr << "ZiMultiplex start failed\n" << std::flush;
+    ZiLOG(Error, "zhttpserver", "ZiMultiplex start failed");
     state.log.final();
     ZiLog::stop();
     return 1;
@@ -852,7 +783,7 @@ int main(int argc, char **argv)
   H3Server h3{&state};
   if (state.options.http) {
     if (!http.init(Ztcp::ServerParams(&mx, "3", "4"))) {
-      std::cerr << "HTTP server initialization failed\n" << std::flush;
+      ZiLOG(Error, "zhttpserver", "HTTP server initialization failed");
       mx.stop();
       state.log.final();
       ZiLog::stop();
@@ -866,7 +797,7 @@ int main(int argc, char **argv)
 	  Ztls::ServerParams(&mx, "3", "4")
 	    .certPath(state.options.cert).keyPath(state.options.key)
 	    .alpn(alpn))) {
-      std::cerr << "HTTPS server initialization failed\n" << std::flush;
+      ZiLOG(Error, "zhttpserver", "HTTPS server initialization failed");
       if (httpInit) http.final();
       mx.stop();
       state.log.final();
@@ -880,9 +811,9 @@ int main(int argc, char **argv)
     if (!h3.init(
 	  Zquic::ServerParams(&mx, "3", "4")
 	    .certPath(state.options.cert).keyPath(state.options.key).alpn(alpn)
-	    .maxData(100<<20).maxStreamData(16<<20)
-	    .maxStreamsBidi(64).maxStreamsUni(16))) {
-      std::cerr << "H3 server initialization failed\n" << std::flush;
+	    .maxData(H3DataMax).maxStreamData(H3StreamDataMax)
+	    .maxStreamsBidi(H3BidiMax).maxStreamsUni(H3UniMax))) {
+      ZiLOG(Error, "zhttpserver", "H3 server initialization failed");
       if (tlsInit) tls.final();
       if (httpInit) http.final();
       mx.stop();
@@ -893,7 +824,7 @@ int main(int argc, char **argv)
     h3Init = true;
   }
   if (!httpInit && !tlsInit && !h3Init) {
-    std::cerr << "zhttpserver: no transport enabled\n" << std::flush;
+    ZiLOG(Error, "zhttpserver", "no transport enabled");
     mx.stop();
     state.log.final();
     ZiLog::stop();
@@ -902,7 +833,7 @@ int main(int argc, char **argv)
   if (httpInit) http.listen();
   if (tlsInit) tls.listen();
   if (h3Init && !h3.listen()) {
-    std::cerr << "H3 server listen failed\n" << std::flush;
+    ZiLOG(Error, "zhttpserver", "H3 server listen failed");
     state.errors = 1;
     state.done.post();
   }

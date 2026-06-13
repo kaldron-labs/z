@@ -4,8 +4,12 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <filesystem>
+#include <cstdint>
 #include <zlib/ZuTestUtil.hh>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "../example/ZhttpStaticServer.hh"
 #include "ZhttpTestUtil.hh"
@@ -17,20 +21,28 @@ namespace {
 
 using Zhttp::Test::TempDir;
 
-bool writeFile(const std::filesystem::path &path, ZuCSpan body)
+Zi::Path tempRoot(const TempDir &temp)
+{
+  return static_cast<const char *>(temp.path);
+}
+
+bool writeFile(const Zi::Path &path, ZuCSpan body)
 {
   ZiFile f;
-  if (f.open(path.string().c_str(), ZiFile::Write, 0666) != Zi::OK)
+  if (f.open(path, ZiFile::Write, 0666) != Zi::OK)
     return false;
   if (f.write(body.data(), body.length()) != Zi::OK) return false;
   f.close();
   return true;
 }
 
-void initState(State &state, const std::filesystem::path &root)
+bool initState(State &state, const Zi::Path &root)
 {
-  state.options.root = root.string().c_str();
+  state.options.root = root;
+  ZtString<> error;
+  if (!initFileState(state, error)) return false;
   state.mime.init(state.options);
+  return true;
 }
 
 RequestData req(ZuCSpan target)
@@ -42,10 +54,18 @@ RequestData req(ZuCSpan target)
   return r;
 }
 
+bool load(Options &options, std::initializer_list<const char *> args)
+{
+  ZtArray<char *> argv;
+  for (auto arg : args) argv.push(const_cast<char *>(arg));
+  bool help = false;
+  return loadOptions(options, int(argv.length()), argv.data(), help) && !help;
+}
+
 void testPathNormalize()
 {
   ZuTestScope(testPathNormalize);
-  std::string out, err;
+  ZtString<> out, err;
   ZuCHECK(decodeNormalizePath("/a//b/./c", false, out, err) &&
       out == "/a/b/c", "path normalization failed");
   ZuCHECK(!decodeNormalizePath("/../x", false, out, err),
@@ -62,14 +82,75 @@ void testPathNormalize()
     "visible dotfile rejected without hide-dotfiles");
 }
 
+void testCLI()
+{
+  ZuTestScope(testCLI);
+  {
+    Options options;
+    ZuCHECK(load(options, {"zhttpserver", "/tmp/www", "--port", "8081"}),
+      "--port value failed");
+    ZuCheck(options.root == "/tmp/www");
+    ZuCheck(options.port == 8081);
+  }
+  {
+    Options options;
+    ZuCHECK(load(options, {"zhttpserver", "/tmp/www", "--port=8082"}),
+      "--port=value failed");
+    ZuCheck(options.port == 8082);
+  }
+  {
+    Options options;
+    ZuCHECK(!load(options, {"zhttpserver"}), "missing root accepted");
+    ZuCHECK(!load(options, {"zhttpserver", "/a", "/b"}),
+      "duplicate root accepted");
+    ZuCHECK(!load(options, {"zhttpserver", "/tmp/www", "--port=70000"}),
+      "overflow port accepted");
+  }
+  {
+    Options options;
+    ZuCHECK(load(options, {
+	"zhttpserver", "/tmp/www",
+	"--forward", "a.example,https://a.invalid",
+	"--forward=b.example,https://b.invalid"}),
+      "repeated forward failed");
+    ZuCheck(options.forwards.length() == 2);
+    ZuCheck(options.forwards[0].host == "a.example");
+    ZuCheck(options.forwards[1].url == "https://b.invalid");
+  }
+  {
+    Options options;
+    ZuCHECK(load(options, {"zhttpserver", "/tmp/www", "--auth", "u:p"}),
+      "auth failed");
+    ZuCheck(options.authUser == "u");
+    ZuCheck(options.authPass == "p");
+    Options bad;
+    ZuCHECK(!load(bad, {"zhttpserver", "/tmp/www", "--auth", "missingcolon"}),
+      "invalid auth accepted");
+  }
+  {
+    Options options;
+    ZuCHECK(load(options, {"zhttpserver", "/tmp/www", "--https",
+	"--cert", "c", "--key", "k"}),
+      "https default load failed");
+    ZuCheck(!options.http);
+    ZuCheck(options.https);
+    Options both;
+    ZuCHECK(load(both, {"zhttpserver", "/tmp/www", "--http", "--https",
+	"--cert", "c", "--key", "k"}),
+      "explicit http+https load failed");
+    ZuCheck(both.http);
+    ZuCheck(both.https);
+  }
+}
+
 void testMime()
 {
   ZuTestScope(testMime);
   TempDir temp;
   ZuCHECK(temp.init("ZhttpStaticMime"), "temporary directory failed");
-  auto root = std::filesystem::path(static_cast<const char *>(temp.path));
+  Zi::Path root = tempRoot(temp);
   State state;
-  initState(state, root);
+  ZuCHECK(initState(state, root), "state initialization failed");
   ZuCHECK(state.mime.lookup(state.options, "index.HTML") == "text/html",
     "case-insensitive builtin MIME lookup failed");
   ZuCHECK(state.mime.lookup(state.options, "file.unknown") ==
@@ -77,6 +158,20 @@ void testMime()
   state.options.defaultMimetype = "text/plain";
   ZuCHECK(state.mime.lookup(state.options, "file.unknown") == "text/plain",
     "custom default MIME lookup failed");
+  auto types = ZiFile::append(root, "mime.types");
+  ZuCHECK(writeFile(types, "text/custom html foo\n"),
+    "mimetypes write failed");
+  State custom;
+  custom.options.root = root;
+  custom.options.mimetypes = types;
+  ZtString<> error;
+  ZuCHECK(initFileState(custom, error),
+    "custom state initialization failed");
+  custom.mime.init(custom.options);
+  ZuCHECK(custom.mime.lookup(custom.options, "index.html") == "text/custom",
+    "custom MIME override failed");
+  ZuCHECK(custom.mime.lookup(custom.options, "file.foo") == "text/custom",
+    "custom MIME lookup failed");
 }
 
 void testPlannerFiles()
@@ -84,16 +179,18 @@ void testPlannerFiles()
   ZuTestScope(testPlannerFiles);
   TempDir temp;
   ZuCHECK(temp.init("ZhttpStaticFiles"), "temporary directory failed");
-  auto root = std::filesystem::path(static_cast<const char *>(temp.path));
-  ZuCHECK(writeFile(root / "hello.txt", "hello\n"), "file write failed");
+  Zi::Path root = tempRoot(temp);
+  ZuCHECK(writeFile(ZiFile::append(root, "hello.txt"), "hello\n"),
+    "file write failed");
   State state;
-  initState(state, root);
+  ZuCHECK(initState(state, root), "state initialization failed");
   StaticPlanner planner{&state};
 
   auto r = req("/hello.txt");
   auto p = planner.plan(r);
   ZuCHECK(p.status == 200 && p.file && p.contentLength == 6 &&
-      p.contentType == "text/plain", "file GET planning failed");
+      p.contentType == "text/plain" && p.fileHandle,
+    "file GET planning failed");
 
   r.method = Zhttp::Method::HEAD;
   p = planner.plan(r);
@@ -105,34 +202,78 @@ void testPlannerFiles()
   ZuCHECK(p.status == 404, "missing file did not return 404");
 }
 
+void testSymlinkRejected()
+{
+  ZuTestScope(testSymlinkRejected);
+#ifndef _WIN32
+  TempDir temp;
+  ZuCHECK(temp.init("ZhttpStaticSymlink"), "temporary directory failed");
+  Zi::Path root = tempRoot(temp);
+  auto outside = ZiFile::append(ZiFile::dirname(root), "outside.txt");
+  ZuCHECK(writeFile(outside, "outside\n"), "outside write failed");
+  auto link = ZiFile::append(root, "link.txt");
+  ZuCHECK(::symlink(outside.ndata(), link.ndata()) == 0,
+    "symlink creation failed");
+  State state;
+  ZuCHECK(initState(state, root), "state initialization failed");
+  StaticPlanner planner{&state};
+  auto p = planner.plan(req("/link.txt"));
+  ZuCHECK((p.status == 403 || p.status == 404) && !p.file,
+    "final symlink was served");
+  ZiFile::remove(outside);
+#endif
+}
+
 void testDirectory()
 {
   ZuTestScope(testDirectory);
   TempDir temp;
   ZuCHECK(temp.init("ZhttpStaticDir"), "temporary directory failed");
-  auto root = std::filesystem::path(static_cast<const char *>(temp.path));
-  std::filesystem::create_directory(root / "dir");
-  ZuCHECK(writeFile(root / "dir" / "b.txt", "b"), "b write failed");
-  ZuCHECK(writeFile(root / "dir" / "a.txt", "a"), "a write failed");
+  Zi::Path root = tempRoot(temp);
+  auto dir = ZiFile::append(root, "dir");
+  ZuCHECK(ZiFile::mkdir(dir) == Zi::OK, "directory creation failed");
+  ZuCHECK(writeFile(ZiFile::append(dir, "b.txt"), "b"), "b write failed");
+  ZuCHECK(writeFile(ZiFile::append(dir, "a.txt"), "a"), "a write failed");
   State state;
-  initState(state, root);
+  ZuCHECK(initState(state, root), "state initialization failed");
   StaticPlanner planner{&state};
 
   auto p = planner.plan(req("/dir"));
   ZuCHECK(p.status == 301 && p.location == "/dir/",
     "directory slash redirect failed");
+  p = planner.plan(req("/dir?q=1"));
+  ZuCHECK(p.status == 301 && p.location == "/dir/?q=1",
+    "directory slash redirect query failed");
   p = planner.plan(req("/dir/"));
   {
-    auto body = str(p.body);
     ZuCHECK(p.status == 200 && p.generated && p.contentType == "text/html" &&
-	body.find("a.txt") != std::string::npos &&
-	body.find("b.txt") != std::string::npos,
+	!!strstr(p.body.ndata(), "a.txt") &&
+	!!strstr(p.body.ndata(), "b.txt"),
       "directory listing failed");
   }
-  ZuCHECK(writeFile(root / "dir" / "index.html", "index"), "index write failed");
+  ZuCHECK(writeFile(ZiFile::append(dir, "index.html"), "index"),
+    "index write failed");
   p = planner.plan(req("/dir/"));
   ZuCHECK(p.status == 200 && p.file && p.filePath,
     "directory index did not win over listing");
+}
+
+void testIfModifiedSince()
+{
+  ZuTestScope(testIfModifiedSince);
+  TempDir temp;
+  ZuCHECK(temp.init("ZhttpStaticIMS"), "temporary directory failed");
+  Zi::Path root = tempRoot(temp);
+  ZuCHECK(writeFile(ZiFile::append(root, "hello.txt"), "hello\n"),
+    "file write failed");
+  State state;
+  ZuCHECK(initState(state, root), "state initialization failed");
+  StaticPlanner planner{&state};
+  auto r = req("/hello.txt");
+  r.ifModifiedSince = httpDate(time(nullptr) + 60);
+  auto p = planner.plan(r);
+  ZuCHECK(p.status == 304 && !p.sendBody && p.contentLength == 0,
+    "If-Modified-Since did not return 304");
 }
 
 void testPolicy()
@@ -140,10 +281,11 @@ void testPolicy()
   ZuTestScope(testPolicy);
   TempDir temp;
   ZuCHECK(temp.init("ZhttpStaticPolicy"), "temporary directory failed");
-  auto root = std::filesystem::path(static_cast<const char *>(temp.path));
-  ZuCHECK(writeFile(root / "hello.txt", "hello\n"), "file write failed");
+  Zi::Path root = tempRoot(temp);
+  ZuCHECK(writeFile(ZiFile::append(root, "hello.txt"), "hello\n"),
+    "file write failed");
   State state;
-  initState(state, root);
+  ZuCHECK(initState(state, root), "state initialization failed");
   state.options.authUser = "u";
   state.options.authPass = "p";
   StaticPlanner planner{&state};
@@ -152,7 +294,7 @@ void testPolicy()
   ZuCHECK(p.status == 401 && p.wwwAuthenticate,
     "missing auth did not return 401");
   auto r = req("/hello.txt");
-  r.authorization = zstr(basicAuthValue(state.options));
+  r.authorization = basicAuthValue(state.options);
   p = planner.plan(r);
   ZuCHECK(p.status == 200, "valid auth did not pass");
 
@@ -167,10 +309,11 @@ void testRanges()
   ZuTestScope(testRanges);
   TempDir temp;
   ZuCHECK(temp.init("ZhttpStaticRange"), "temporary directory failed");
-  auto root = std::filesystem::path(static_cast<const char *>(temp.path));
-  ZuCHECK(writeFile(root / "data.bin", "0123456789"), "range file write failed");
+  Zi::Path root = tempRoot(temp);
+  ZuCHECK(writeFile(ZiFile::append(root, "data.bin"), "0123456789"),
+    "range file write failed");
   State state;
-  initState(state, root);
+  ZuCHECK(initState(state, root), "state initialization failed");
   StaticPlanner planner{&state};
   auto r = req("/data.bin");
   r.range = "bytes=2-5";
@@ -187,6 +330,47 @@ void testRanges()
     "unsatisfiable range failed");
 }
 
+void testSingleFile()
+{
+  ZuTestScope(testSingleFile);
+  TempDir temp;
+  ZuCHECK(temp.init("ZhttpStaticSingle"), "temporary directory failed");
+  Zi::Path root = tempRoot(temp);
+  auto file = ZiFile::append(root, "only.txt");
+  ZuCHECK(writeFile(file, "only"), "single file write failed");
+  State state;
+  state.options.root = file;
+  state.options.singleFile = true;
+  ZtString<> error;
+  ZuCHECK(initFileState(state, error), "single file state failed: ", error);
+  state.mime.init(state.options);
+  StaticPlanner planner{&state};
+  auto p = planner.plan(req("/"));
+  ZuCHECK(p.status == 200 && p.file && p.contentLength == 4,
+    "single-file / failed");
+  p = planner.plan(req("/only.txt"));
+  ZuCHECK(p.status == 200 && p.file, "single-file leaf failed");
+  p = planner.plan(req("/other.txt"));
+  ZuCHECK(p.status == 404, "single-file extra path accepted");
+}
+
+void testFileChunks()
+{
+  ZuTestScope(testFileChunks);
+  uint64_t len = uint64_t(UINT32_MAX) + FileChunk + 7;
+  uint64_t total = 0;
+  unsigned chunks = 0;
+  unsigned max = 0;
+  fileChunks(len, [&](unsigned n) {
+    total += n;
+    if (n > max) max = n;
+    ++chunks;
+  });
+  ZuCHECK(total == len, "chunk total mismatch");
+  ZuCHECK(max == FileChunk, "chunk max mismatch: ", max);
+  ZuCHECK(chunks > 1, "large length was not chunked");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -194,9 +378,14 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testPathNormalize);
+  ZuTestCall(testCLI);
   ZuTestCall(testMime);
   ZuTestCall(testPlannerFiles);
+  ZuTestCall(testSymlinkRejected);
   ZuTestCall(testDirectory);
   ZuTestCall(testPolicy);
+  ZuTestCall(testIfModifiedSince);
   ZuTestCall(testRanges);
+  ZuTestCall(testSingleFile);
+  ZuTestCall(testFileChunks);
 }
