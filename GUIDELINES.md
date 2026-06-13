@@ -106,6 +106,9 @@ These guidelines extend `AGENTS.md`
   - Z array containers are intentionally uninitialized until filled
 - direct use of `FILE`, `syslog`, etc.
   - use `ZiLog`, `ZiFile`
+- use of `*printf` variable args
+  - use Z framework types with `<<`
+  - use `ZuBox` and `ZuFmt` for formatting
 
 ## Leveraging Key Z Framework Capabilities
 - `ZuSpan` `*Array` and `*String` interoperate smoothly without explicit casting:
@@ -121,6 +124,9 @@ These guidelines extend `AGENTS.md`
 - use `ZmAlloc` for large single-object stack allocations with heap fallback
 - use `ZtBuiltin` for builtin arrays with heap-allocation fallback
 - use `ZuMatcher` for token-matching multiple possibilities, use `==` for a single possibility
+- use `ZuBox`, `ZuFmt`, `ZuPrint` for printing
+  - stream directly to `Z*String` and `Z*Array` types
+  - stream directly to `std::cout` etc.
 - use `ZuStruct`/`ZtStruct`/`ZfbStruct` for compile-time extract/transform metadata
   - JSON - `ZtJSON`, ASN.1 - `ZtASN1`, CLI - `ZtCLI`, CSV - `ZtCSV`, URI query - `ZtURI`
   - Framebuffers - `ZfbStruct`
