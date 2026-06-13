@@ -205,6 +205,28 @@ These guidelines extend `AGENTS.md`
       level deeper than their containing line
     - align continuation lines with the open construct when that is what nearby
       code does
+    - example function multi-line style (note the `{` on a line of its own):
+      ```
+      template <typename Client>
+      int run(
+        ZiMultiplex &mx, const Options &options, URL url,
+        RequestResult *result = nullptr)
+      {
+        Client client;
+      ```
+    - example constructor multi-line style (note the `:` and `{` on a line of their own):
+      ```
+      StoreTbl(
+        Store *store, IDString id, unsigned nShards,
+        ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
+        const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
+      :
+        m_store{store}, m_id{ZuMv(id)},
+        m_fields{ZuMv(fields)}, m_keyFields{ZuMv(keyFields)},
+        m_bufAllocFn{ZuMv(bufAllocFn)}
+      {
+        // introspect fields and flatbuffers reflection data, building
+      ```
   - keep short, simple functions and statements on one line when the surrounding
     code does so; split only when line length or expression shape makes the code
     clearer
