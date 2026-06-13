@@ -76,8 +76,15 @@ int ZiDaemon::init(
 
     // get path to current program
     ZtWString<> path{Zi::PathMax};
-    GetModuleFileName(0, path.data(), path.size());
-    path.calcLength();
+    DWORD pathLen = GetModuleFileNameW(
+	0, path.data(), static_cast<DWORD>(path.size()));
+    if (!pathLen || pathLen >= path.size()) {
+      ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
+	s << "GetModuleFileName failed: " << e;
+      }));
+      return Error;
+    }
+    path.length(pathLen);
     path.truncate();
 
     {
@@ -90,28 +97,25 @@ int ZiDaemon::init(
       _wputenv(ZtWString<>{L"_ZiDaemon="} << path);
 
       // get command line
-      ZtWString<> commandLine(GetCommandLine());
+      ZtWString<> commandLine(GetCommandLineW());
 
-      STARTUPINFO si;
+      STARTUPINFOW si;
       memset(&si, 0, sizeof(si));
       si.cb = sizeof(si);
       if (daemonize) {
-	si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+	si.dwFlags = STARTF_USESHOWWINDOW;
 	si.wShowWindow = SW_HIDE;
-	si.hStdInput = INVALID_HANDLE_VALUE;
-	si.hStdOutput = INVALID_HANDLE_VALUE;
-	si.hStdError = INVALID_HANDLE_VALUE;
       }
 
-      int flags = CREATE_UNICODE_ENVIRONMENT;
+      DWORD flags = CREATE_UNICODE_ENVIRONMENT;
       if (daemonize) flags |= DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
 
       PROCESS_INFORMATION pi;
 
       if (!username) {
 	// re-invoke same program
-	if (!CreateProcess(
-	      path, commandLine, 0, 0, TRUE, flags, 0, 0, &si, &pi)) {
+	if (!CreateProcessW(
+	      path, commandLine, 0, 0, FALSE, flags, 0, 0, &si, &pi)) {
 	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "CreateProcess failed: " << e;
 	  }));
@@ -120,9 +124,9 @@ int ZiDaemon::init(
       } else {
 	// re-invoke same program as impersonated user
 	HANDLE user;
-	if (!LogonUser(
+	if (!LogonUserW(
 	      ZtWString<>(username), 0, ZtWString<>(password),
-	      LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, &user
+	      LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, &user
 	    )) {
 	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "LogonUser failed: " << e;
@@ -132,7 +136,8 @@ int ZiDaemon::init(
 
 	HANDLE token;
 	if (!DuplicateTokenEx(
-	      user, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY, 0,
+	      user, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY |
+	      TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID, 0,
 	      SecurityImpersonation, TokenPrimary, &token
 	    )) {
 	  CloseHandle(user);
@@ -144,32 +149,9 @@ int ZiDaemon::init(
 
 	CloseHandle(user);
 
-	if (!ImpersonateLoggedOnUser(token)) {
-	  CloseHandle(token);
-	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
-	    s << "ImpersonateLoggedOnUser failed: " << e;
-	  }));
-	  return Error;
-	}
-
-	SECURITY_DESCRIPTOR sd;
-	memset(&sd, 0, sizeof(sd));
-	InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
-	SetSecurityDescriptorDacl(&sd, -1, 0, 0);
-
-	SECURITY_ATTRIBUTES sa;
-	memset(&sa, 0, sizeof(sa));
-	sa.nLength = sizeof(sa);
-	sa.lpSecurityDescriptor = &sd;
-	sa.bInheritHandle = FALSE;
-
-	static wchar_t desktop_[] = L"Winsta0\\Default";
-	si.lpDesktop = &desktop_[0];
-
-	if (!CreateProcessAsUser(
+	if (!CreateProcessAsUserW(
 	    token, path, commandLine,
-	    &sa, 0, TRUE, flags, 0, 0, &si, &pi)) {
-	  RevertToSelf();
+	    0, 0, FALSE, flags, 0, 0, &si, &pi)) {
 	  CloseHandle(token);
 	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "CreateProcessAsUser failed: " << e;
@@ -177,7 +159,6 @@ int ZiDaemon::init(
 	  return Error;
 	}
 
-	RevertToSelf();
 	CloseHandle(token);
       }
 
@@ -229,10 +210,22 @@ int ZiDaemon::init(
 	  return Running;
 	}
 #else
-	HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+	HANDLE h = OpenProcess(
+	    PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
 
 	if (h) {
+	  DWORD exitCode = 0;
+	  bool running =
+	    WaitForSingleObject(h, 0) == WAIT_TIMEOUT &&
+	    GetExitCodeProcess(h, &exitCode) && exitCode == STILL_ACTIVE;
 	  CloseHandle(h);
+	  if (running) {
+	    ZiLOG(Error, "ZiDaemon", ([pid](auto &s) {
+	      s << "PID " << pid << " still running";
+	    }));
+	    return Running;
+	  }
+	} else if (GetLastError() == ERROR_ACCESS_DENIED) {
 	  ZiLOG(Error, "ZiDaemon", ([pid](auto &s) {
 	    s << "PID " << pid << " still running";
 	  }));
