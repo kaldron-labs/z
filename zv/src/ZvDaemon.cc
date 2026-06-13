@@ -81,13 +81,13 @@ int ZvDaemon::init(
     path.truncate();
 
     {
-      wchar_t *s = _wgetenv(L"ZvDaemon");
+      wchar_t *s = _wgetenv(L"_ZvDaemon");
 
       if (path == s) daemon = true;
     }
 
     if (!daemon) {
-      _wputenv(ZtWString<>{L"ZvDaemon="} << path);
+      _wputenv(ZtWString<>{L"_ZvDaemon="} << path);
 
       // get command line
       ZtWString<> commandLine(GetCommandLine());

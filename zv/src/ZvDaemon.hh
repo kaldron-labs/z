@@ -21,12 +21,12 @@ class ZvAPI ZvDaemon {
 public:
   enum { OK = 0, Error = -1, Running = -2 };
 
-  // * Unix
+  // - Unix:
   //   - if daemonize is true the calling program is forked
   //   - if username is set the calling program must be running as root
   //   - password is ignored
   //
-  // * Windows
+  // - Windows:
   //   - the calling program is terminated and re-invoked regardless
   //   - if username is set, the calling user must have the
   //	 "Replace a process level token" right; this is granted by default
@@ -35,11 +35,11 @@ public:
   //	 Local Security Policy and add the users/groups needed
   //   - umask is ignored and has no effect
   //
-  // * If forked (Unix) or re-invoked (Windows):
+  // - If forked (Unix) or re-invoked (Windows):
   //   - All running threads will be terminated
   //   - All open files and sockets will be closed
   //
-  // * If daemonize is true
+  // - If daemonize is true:
   //   - Standard input, output and error are closed and become unavailable
 
   static int init(
