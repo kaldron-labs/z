@@ -4,10 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// static file server support for zhttpserver
+// static file server support for zhttpd
 
-#ifndef ZhttpStaticServer_HH
-#define ZhttpStaticServer_HH
+#ifndef Zhttpd_HH
+#define Zhttpd_HH
 
 #include <errno.h>
 #include <string.h>
@@ -37,7 +37,7 @@
 ZtCLIConfig(CLI,
   (ZtCLI_ArrayFmt<ZtCLI::Delimited, ZtCLI_Delimiter<';'>>));
 
-namespace ZhttpStatic {
+namespace Zhttpd {
 
 constexpr unsigned FileChunk = 16<<10;
 constexpr unsigned MimeFileMax = 16<<20;
@@ -223,9 +223,9 @@ struct ResponsePlan {
 };
 
 struct MimeMap {
-  using String = ZtString<ZtStringHeapID<"ZhttpStatic.Mime.String">>;
+  using String = ZtString<ZtStringHeapID<"Zhttpd.Mime.String">>;
   using Map = ZmHashKV<String, String,
-    ZmHashHeapID<"ZhttpStatic.Mime">>;
+    ZmHashHeapID<"Zhttpd.Mime">>;
   Map			map;
 
   void add(ZuCSpan ext, ZuCSpan mime) {
@@ -308,7 +308,7 @@ struct LogSink {
     auto referer = escaped(req.referer);
     auto agent = escaped(req.userAgent);
     auto date = logDate();
-    ZiLOG(Info, "zhttpserver.access", ([
+    ZiLOG(Info, "zhttpd.access", ([
       remote = ZtString<>{remote}, date = ZuMv(date), target = ZuMv(target),
       referer = ZuMv(referer), agent = ZuMv(agent), status = resp.status,
       length = resp.contentLength
@@ -547,7 +547,7 @@ struct StaticPlanner {
   ResponsePlan plan(const RequestData &req) const {
     ResponsePlan resp;
     resp.date = httpDate(time(nullptr));
-    if (!state->options.noServerID) resp.server = "zhttpserver";
+    if (!state->options.noServerID) resp.server = "zhttpd";
     auto connection = lower(req.connection);
     if (state->options.noKeepalive || connection == "close" ||
 	(req.http10 && connection != "keep-alive")) {
@@ -571,7 +571,7 @@ struct StaticPlanner {
       if (!constTimeEqual(req.authorization, expect)) {
 	resp.status = 401;
 	resp.reason = "Unauthorized";
-	resp.wwwAuthenticate = "Basic realm=\"zhttpserver\"";
+	resp.wwwAuthenticate = "Basic realm=\"zhttpd\"";
 	resp.contentType = "text/plain";
 	resp.body = "Unauthorized\n";
 	resp.contentLength = resp.body.length();
@@ -892,7 +892,7 @@ struct StaticPlanner {
     }
     html += "</pre>";
     if (!state->options.noServerID)
-      html += "<hr><address>zhttpserver</address>";
+      html += "<hr><address>zhttpd</address>";
     html += "</body></html>\n";
     resp.status = 200;
     resp.reason = "OK";
@@ -1013,6 +1013,6 @@ inline bool validate(Options &options, ZtString<> &error) {
   return true;
 }
 
-} // namespace ZhttpStatic
+} // namespace Zhttpd
 
-#endif /* ZhttpStaticServer_HH */
+#endif /* Zhttpd_HH */

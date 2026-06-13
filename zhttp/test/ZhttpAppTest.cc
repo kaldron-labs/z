@@ -50,9 +50,9 @@ bool writeHTTPAppScript(
     "  fi\n"
     "}\n"
     "trap cleanup EXIT INT TERM\n"
-    "server=../example/zhttpserver\n"
+    "server=../example/zhttpd\n"
     "client=../example/zhttp\n"
-    "[ -x \"$server\" ] || server=./zhttp/example/zhttpserver\n"
+    "[ -x \"$server\" ] || server=./zhttp/example/zhttpd\n"
     "[ -x \"$client\" ] || client=./zhttp/example/zhttp\n";
   if (transport == "http")
     script << "\"$server\" " << rootPath <<

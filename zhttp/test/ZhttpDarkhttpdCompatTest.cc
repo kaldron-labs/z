@@ -58,8 +58,8 @@ bool writeCompatScript(
     "trap cleanup EXIT INT TERM\n"
     "command -v darkhttpd >/dev/null || exit 77\n"
     "command -v curl >/dev/null || exit 77\n"
-    "server=../example/zhttpserver\n"
-    "[ -x \"$server\" ] || server=./zhttp/example/zhttpserver\n"
+    "server=../example/zhttpd\n"
+    "[ -x \"$server\" ] || server=./zhttp/example/zhttpd\n"
     "\"$server\" " << rootPath <<
       " --http --addr 127.0.0.1 --port " << zport <<
       " >" << tempPath << "/zhttp.out 2>" << tempPath << "/zhttp.err &\n"
