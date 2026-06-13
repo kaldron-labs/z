@@ -4,7 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z library main header
+// Z library core header
+// - extended capabilities not present in STL (e.g. ZuFwdLike, ZuUnder, etc.)
+// - natural camel-case naming not constrained by STL tech debt
+// - avoids dragging in STL cruft
 
 #ifndef ZuLib_HH
 #define ZuLib_HH
@@ -167,7 +170,7 @@ constexpr T *ZuLaunder(T *p) noexcept {
 #endif
 }
 
-// std::remove_reference without dragging in STL cruft
+// alternative to std::remove_reference
 template <typename T_>
 struct ZuDeref_ { using T = T_; };
 template <typename T_>
@@ -183,7 +186,7 @@ struct ZuDeref_<T_ &&> { using T = T_; };
 template <typename T>
 using ZuDeref = typename ZuDeref_<T>::T;
 
-// std::remove_cv (strip qualifiers) without dragging in STL cruft
+// alternative to std::remove_cv (strip qualifiers)
 template <typename T_>
 struct ZuStrip_ { using T = T_; };
 template <typename T_>
@@ -195,7 +198,7 @@ struct ZuStrip_<const volatile T_> { using T = T_; };
 template <typename T>
 using ZuStrip = typename ZuStrip_<T>::T;
 
-// std::decay without dragging in STL cruft
+// alternative to std::decay
 template <typename T> using ZuDecay = ZuStrip<ZuDeref<T>>;
 
 // various type mappings used as template parameters
@@ -308,7 +311,7 @@ struct ZuNotRRef_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
 using ZuNotRRef = typename ZuNotRRef_<U, R>::T;
 
-// shorthand constexpr std::forward without STL cruft
+// shorthand constexpr alternative to std::forward
 template <typename T>
 constexpr T &&ZuFwd(ZuDeref<T> &v) noexcept { // fwd lvalue
   return static_cast<T &&>(v);
@@ -317,7 +320,7 @@ template <typename T>
 constexpr T &&ZuFwd(ZuDeref<T> &&v) noexcept { // fwd rvalue
   return static_cast<T &&>(v);
 }
-// shorthand constexpr std::move without STL cruft
+// shorthand constexpr alternative to std::move
 template <typename T>
 constexpr ZuDeref<T> &&ZuMv(T &&v) noexcept {
   return static_cast<ZuDeref<T> &&>(v);
@@ -692,7 +695,7 @@ auto ZuUnderlying(U &&v) noexcept { return ZuUnder<U>(ZuFwd<U>(v)); }
 
 struct ZuEmpty { };
 
-// std::is_constant_evaluated() without STL cruft
+// alternative to std::is_constant_evaluated()
 constexpr bool ZuConstEval() noexcept {
   return __builtin_is_constant_evaluated();
 }
@@ -721,7 +724,7 @@ constexpr auto ZuNew(T *v, Args && ...args) noexcept(NoExcept) {
   // return new (v) T(ZuFwd<Args>(args)...); // uncomment for C++26
 }
 
-// std::bit_cast without STL cruft
+// alternative to std::bit_cast
 template <typename To, typename From>
 constexpr To ZuCast(const From &from) noexcept {
 #ifdef __GNUC__
