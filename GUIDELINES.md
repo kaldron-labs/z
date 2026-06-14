@@ -122,6 +122,8 @@ These guidelines extend `AGENTS.md`
 - use `ZtLocalArray` for stack-allocated scratch, will fallback to heap-allocation
   - ensure appropriate heap identification of the underlying array
 - use `ZmAlloc` for large single-object stack allocations with heap fallback
+- use `ZmSpecific` instead of `thread_local`
+- use `ZmSingleton` for global singletons
 - use `ZtBuiltin` for builtin arrays with heap-allocation fallback
 - use `ZuMatcher` for token-matching multiple possibilities, use `==` for a single possibility
 - use `ZuBox`, `ZuFmt`, `ZuPrint` for printing
