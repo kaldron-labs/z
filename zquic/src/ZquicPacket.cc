@@ -6,33 +6,12 @@
 
 #include <zlib/ZquicPacket.hh>
 
+#include "ZquicOpenSSL.hh"
+
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 
 namespace Zquic {
-
-namespace {
-
-struct OpenSSLCipherCtx {
-  OpenSSLCipherCtx() = default;
-  ~OpenSSLCipherCtx() { if (ctx) EVP_CIPHER_CTX_free(ctx); }
-
-  EVP_CIPHER_CTX *get() {
-    if (!ctx) return ctx = EVP_CIPHER_CTX_new();
-    EVP_CIPHER_CTX_reset(ctx);
-    return ctx;
-  }
-
-  EVP_CIPHER_CTX	*ctx = nullptr;
-};
-
-EVP_CIPHER_CTX *opensslCipherCtx_()
-{
-  thread_local OpenSSLCipherCtx ctx;
-  return ctx.get();
-}
-
-} // namespace
 
 unsigned VarInt::length(uint64_t v)
 {
@@ -176,8 +155,9 @@ int Packet::parseLong(ZuCSpan p, LongHeader &h)
     if (VarInt::decode(
 	  ZuCSpan{p.data() + o, p.length() - o}, h.tokenLength, n) < 0)
       return -1;
-    o += n + h.tokenLength;
-    if (p.length() < o) return -1;
+    o += n;
+    if (h.tokenLength > p.length() - o) return -1;
+    o += unsigned(h.tokenLength);
   }
   unsigned n = 0;
   if (VarInt::decode(ZuCSpan{p.data() + o, p.length() - o}, h.length, n) < 0)
@@ -186,7 +166,7 @@ int Packet::parseLong(ZuCSpan p, LongHeader &h)
   h.pnLength = (uint8_t(p[0]) & 0x03) + 1;
   h.pnOffset = o;
   h.payloadOffset = o + h.pnLength;
-  if (p.length() < h.payloadOffset) return -1;
+  if (h.pnLength > p.length() - h.pnOffset) return -1;
   return int(h.payloadOffset);
 }
 
@@ -218,7 +198,7 @@ int Packet::retryIntegrityTag(
   if (!tag || len < 16 || !retryWithoutTag || originalDCID.length() > 20)
     return -1;
 
-  EVP_CIPHER_CTX *ctx = opensslCipherCtx_();
+  EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return -1;
 
   int ok = 0;

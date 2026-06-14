@@ -10,6 +10,7 @@ pkginclude_HEADERS = ZquicLib.hh ZquicTypes.hh ZquicBuf.hh ZquicPQueue.hh Zquic.
 	ZquicFrame.hh ZquicTransportParams.hh \
 	ZquicCrypto.hh ZquicEndpoint.hh ZquicStream.hh ZquicSched.hh \
 	ZquicRecovery.hh ZquicDiag.hh
+noinst_HEADERS = ZquicOpenSSL.hh
 lib_LTLIBRARIES = libZquic.la
 libZquic_la_CPPFLAGS = $(AM_CPPFLAGS) @PTLS_CFLAGS@ -DZQUIC_EXPORTS
 libZquic_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@
