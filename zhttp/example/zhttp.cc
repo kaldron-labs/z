@@ -112,7 +112,7 @@ constexpr unsigned BufBuiltin = 8<<10;
 constexpr unsigned BufMax = 100<<20;
 constexpr uint64_t H3DataMax = 100<<20;
 constexpr uint64_t H3StreamDataMax = 16<<20;
-constexpr uint64_t H3BidiMax = 16;
+constexpr uint64_t H3BidiMax = 100;
 constexpr uint64_t H3UniMax = 16;
 
 using H3CxnState = Zhttp::H3::CxnState;
@@ -144,6 +144,7 @@ struct Req {
   bool		redirecting = false;
   bool		framingLogged = false;
   bool		truncateOutput = false;
+  bool		h3Active = false;
   bool		done = false;
   bool		failed = false;
 };
@@ -1050,6 +1051,7 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   uint64_t maxStreamsUni() const { return H3UniMax; }
   bool multi() const { return run; }
   void openH3Streams(Link *);
+  bool activateH3Req(Req *);
   void sendH3Req(Link *, ZmRef<Stream>, Req *);
   void queueH3Req(Req *);
   Req *popH3Req();
@@ -1180,8 +1182,8 @@ Zhttp::H3::QPackTxTable *QUICClient::Stream::qpackTx()
 void QUICClient::openH3Streams(Link *link_)
 {
   if (!link_) return;
-  if (!this->txInvoked()) {
-    this->txInvoke([this, link = ZmMkRef(link_)]() mutable {
+  if (!this->rxInvoked()) {
+    this->rxInvoke([this, link = ZmMkRef(link_)]() mutable {
       openH3Streams(link.ptr());
     });
     return;
@@ -1194,7 +1196,6 @@ void QUICClient::openH3Streams(Link *link_)
 	  scheduled >= run->options.requests)
 	return;
       req = &run->reqs[scheduled++];
-      ++active;
     }
     resetAttempt(*req, true);
     auto stream = link_->stream(Zi::StreamType::Duplex);
@@ -1202,8 +1203,21 @@ void QUICClient::openH3Streams(Link *link_)
       queueH3Req(req);
       return;
     }
+    if (!activateH3Req(req)) return;
     sendH3Req(link_, ZuMv(stream), req);
   }
+}
+
+bool QUICClient::activateH3Req(Req *req)
+{
+  if (!req) return false;
+  ZmGuard<ZmLock> guard(lock);
+  if (!run || req->done) return false;
+  if (!req->h3Active) {
+    ++active;
+    req->h3Active = true;
+  }
+  return true;
 }
 
 void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
@@ -1212,8 +1226,8 @@ void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
     finishH3Req(link_, req, false);
     return;
   }
-  if (!this->txInvoked()) {
-    this->txInvoke([
+  if (!this->rxInvoked()) {
+    this->rxInvoke([
       this, link = ZmMkRef(link_), stream = ZuMv(stream), req
     ]() mutable {
       if (!run || req->done) return;
@@ -1250,13 +1264,26 @@ Req *QUICClient::popH3Req()
 
 void QUICClient::bindH3Stream(Link *link_, ZmRef<Stream> stream)
 {
+  if (link_ && !this->rxInvoked()) {
+    this->rxInvoke([this, link = ZmMkRef(link_), stream = ZuMv(stream)]() mutable {
+      bindH3Stream(link.ptr(), ZuMv(stream));
+    });
+    return;
+  }
   Req *req = popH3Req();
   if (!req) return;
+  if (!activateH3Req(req)) return;
   sendH3Req(link_, ZuMv(stream), req);
 }
 
 void QUICClient::finishH3Req(Link *link_, Req *req, bool ok)
 {
+  if (link_ && !this->rxInvoked()) {
+    this->rxInvoke([this, link = ZmMkRef(link_), req, ok]() mutable {
+      finishH3Req(link.ptr(), req, ok);
+    });
+    return;
+  }
   bool done = false;
   ok = ok && req && !req->failed;
   if (req && ok && req->redirecting) {
@@ -1269,24 +1296,23 @@ void QUICClient::finishH3Req(Link *link_, Req *req, bool ok)
       req->url = ZuMv(next);
       ++req->redirects;
       resetAttempt(*req, true);
-      if (!this->txInvoked()) {
-	this->txInvoke([this, link = ZmMkRef(link_), req]() mutable {
-	  if (!run) return;
-	  auto stream = link->stream(Zi::StreamType::Duplex);
-	  if (!stream) {
-	    queueH3Req(req);
-	    return;
-	  }
-	  sendH3Req(link.ptr(), ZuMv(stream), req);
-	});
+      if (!run) return;
+      auto stream = link_->stream(Zi::StreamType::Duplex);
+      if (!stream) {
+	queueH3Req(req);
 	return;
       }
+      sendH3Req(link_, ZuMv(stream), req);
+      return;
     }
   }
   {
     ZmGuard<ZmLock> guard(lock);
-    if (active) --active;
     if (req) {
+      if (req->h3Active) {
+	if (active) --active;
+	req->h3Active = false;
+      }
       closeBody(*req);
       req->done = true;
       req->failed = !ok;
@@ -1315,6 +1341,7 @@ void QUICClient::failH3Link()
     closeBody(req);
     req.done = true;
     req.failed = true;
+    req.h3Active = false;
     ++failed;
     ++complete;
   }

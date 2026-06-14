@@ -13,7 +13,10 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
+#include <string.h>
+
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmQueue.hh>
 
 #include <zlib/ZquicBuf.hh>
 #include <zlib/ZquicStream.hh>
@@ -127,6 +130,70 @@ struct StreamFrameInfo {
   TxRange	range;
 };
 
+struct ControlFrame {
+  FrameType::T		type = FrameType::Unknown;
+  uint64_t		streamID = 0;
+  uint64_t		value = 0;
+  Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
+  uint8_t		payload[8]{};
+
+  bool operator !() const { return type == FrameType::Unknown; }
+  bool operator ==(const ControlFrame &o) const {
+    if (type != o.type || streamID != o.streamID || value != o.value ||
+	streamType != o.streamType)
+      return false;
+    if (type == FrameType::PathResponse)
+      return !memcmp(payload, o.payload, sizeof(payload));
+    return true;
+  }
+
+  static ControlFrame flowUpdate(const FlowUpdate &update) {
+    return ControlFrame{
+      update.type, update.streamID, update.maximum, update.streamType, {}};
+  }
+  static ControlFrame blocked(
+    FrameType::T type_, uint64_t streamID_, uint64_t value_,
+    Zi::StreamType::T streamType_ = Zi::StreamType::Duplex) {
+    return ControlFrame{type_, streamID_, value_, streamType_, {}};
+  }
+  static ControlFrame pathResponse(ZuCSpan data) {
+    ControlFrame frame;
+    frame.type = FrameType::PathResponse;
+    if (data.length() == sizeof(frame.payload))
+      memcpy(frame.payload, data.data(), sizeof(frame.payload));
+    return frame;
+  }
+  static ControlFrame handshakeDone() {
+    ControlFrame frame;
+    frame.type = FrameType::HandshakeDone;
+    return frame;
+  }
+
+  int write(uint8_t *out, unsigned len) const {
+    switch (type) {
+      case FrameType::MaxData:
+	return FrameCodec::writeMaxData(out, len, value);
+      case FrameType::MaxStreamData:
+	return FrameCodec::writeMaxStreamData(out, len, streamID, value);
+      case FrameType::MaxStreams:
+	return FrameCodec::writeMaxStreams(out, len, streamType, value);
+      case FrameType::DataBlocked:
+	return FrameCodec::writeDataBlocked(out, len, value);
+      case FrameType::StreamDataBlocked:
+	return FrameCodec::writeStreamDataBlocked(out, len, streamID, value);
+      case FrameType::StreamsBlocked:
+	return FrameCodec::writeStreamsBlocked(out, len, streamType, value);
+      case FrameType::PathResponse:
+	return FrameCodec::writePathResponse(out, len, ZuCSpan{
+	  payload, sizeof(payload)});
+      case FrameType::HandshakeDone:
+	return FrameCodec::writeHandshakeDone(out, len);
+      default:
+	return -1;
+    }
+  }
+};
+
 class StreamPacketizer {
 public:
   template <typename Stream>
@@ -170,10 +237,11 @@ private:
     if (payloadLen > budget.flowRemaining()) payloadLen = budget.flowRemaining();
     if (payloadLen > stream.txCreditAvailable())
       payloadLen = unsigned(stream.txCreditAvailable());
-    bool fin = stream.finSent() && stream.txRangeCount() == 1;
+    bool fin = false;
     int n = -1;
     while (payloadLen) {
-      if (payloadLen < range.length) fin = false;
+      fin = stream.finSent() && stream.txRangeCount() == 1 &&
+	payloadLen == range.length;
       n = FrameCodec::writeStreamPrefix(
 	out, len, id, range.streamOffset, payloadLen, fin);
       if (n > 0 && unsigned(n) + payloadLen <= budget.remaining()) break;
@@ -194,7 +262,7 @@ private:
       ZiAssert(stream.dequeueFin(dequeuedOffset) &&
 	  dequeuedOffset == range.streamOffset + payloadLen,
 	"Zquic", (id, dequeuedOffset, range.streamOffset, payloadLen),
-	"stream FIN disappeared during packetization", return -1);
+	"stream FIN disappeared during data packetization", return -1);
     }
     if (info)
       *info = StreamFrameInfo{

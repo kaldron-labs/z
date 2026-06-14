@@ -40,8 +40,7 @@ public:
   unsigned length() const { return m_valid ? Length : 0; }
   const uint8_t *data() const { return m_data; }
   ZuCSpan cspan() const {
-    return ZuCSpan{
-      reinterpret_cast<const char *>(m_data), m_valid ? Length : 0};
+    return ZuCSpan{m_data, m_valid ? Length : 0};
   }
 
   bool equals(const ResetToken &) const;
@@ -94,7 +93,8 @@ struct FrameType {
     Padding, Ping, Ack, Crypto, Stream, MaxData, MaxStreamData,
     MaxStreams, DataBlocked, StreamDataBlocked, StreamsBlocked,
     ResetStream, StopSending, NewToken, NewConnectionID, RetireConnectionID,
-    PathChallenge, PathResponse, ConnectionClose, HandshakeDone, Unknown);
+    PathChallenge, PathResponse, ConnectionClose, ApplicationClose,
+    HandshakeDone, Unknown);
 };
 
 struct CxnState {

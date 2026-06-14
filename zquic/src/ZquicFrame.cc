@@ -191,11 +191,20 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
       used = o + 8;
       return 0;
     case 0x1c:
-    case 0x1d:
       f.type = FrameType::ConnectionClose;
-      if (getVar_(in, o, f.errorCode) < 0) return -1;
-      if (t == 0x1c && getVar_(in, o, f.value) < 0) return -1;
-      if (getVar_(in, o, f.length) < 0) return -1;
+      if (getVar_(in, o, f.errorCode) < 0 ||
+	  getVar_(in, o, f.value) < 0 ||
+	  getVar_(in, o, f.length) < 0)
+	return -1;
+      if (in.length() < o + f.length) return -1;
+      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      used = o + f.length;
+      return 0;
+    case 0x1d:
+      f.type = FrameType::ApplicationClose;
+      if (getVar_(in, o, f.errorCode) < 0 ||
+	  getVar_(in, o, f.length) < 0)
+	return -1;
       if (in.length() < o + f.length) return -1;
       f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
       used = o + f.length;
@@ -450,6 +459,21 @@ int FrameCodec::writeConnectionClose(uint8_t *out, unsigned len, uint64_t err)
   if (VarInt::put(out, len, err, o) < 0) return -1;
   if (VarInt::put(out, len, 0, o) < 0) return -1;
   if (VarInt::put(out, len, 0, o) < 0) return -1;
+  return int(o);
+}
+
+int FrameCodec::writeApplicationClose(
+  uint8_t *out, unsigned len, uint64_t err, ZuCSpan reason)
+{
+  if (!len) return -1;
+  unsigned o = 0;
+  out[o++] = 0x1d;
+  if (VarInt::put(out, len, err, o) < 0 ||
+      VarInt::put(out, len, reason.length(), o) < 0)
+    return -1;
+  if (len < o + reason.length()) return -1;
+  memcpy(out + o, reason.data(), reason.length());
+  o += reason.length();
   return int(o);
 }
 

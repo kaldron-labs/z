@@ -90,6 +90,7 @@ struct FrameCodec {
   static int writePathChallenge(uint8_t *, unsigned, ZuCSpan);
   static int writePathResponse(uint8_t *, unsigned, ZuCSpan);
   static int writeConnectionClose(uint8_t *, unsigned, uint64_t);
+  static int writeApplicationClose(uint8_t *, unsigned, uint64_t, ZuCSpan = {});
   static int writeHandshakeDone(uint8_t *, unsigned);
 };
 

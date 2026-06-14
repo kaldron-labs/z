@@ -62,8 +62,16 @@ struct InitialInfo {
 
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.ALPNData">>));
 ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Zquic.ALPN">>));
+ZuDerive(AsyncSendPayload,
+  (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.AsyncSendPayload">>));
 
 using ErrorFn = ZmFn<void(ZeException)>;
+
+inline constexpr uint64_t DefaultMaxData = 16U * 1024U * 1024U;
+inline constexpr uint64_t DefaultMaxStreamData = 1U * 1024U * 1024U;
+inline constexpr uint64_t DefaultMaxStreamsBidi = 128;
+inline constexpr uint64_t DefaultMaxStreamsUni = 16;
+inline constexpr uint64_t MaxStreamCount = uint64_t(INT64_MAX) >> 2;
 
 inline ErrorFn defaultErrorFn()
 {
@@ -94,7 +102,7 @@ inline PacketSpace::T runtimePacketSpace(CryptoLevel::T level)
 
 inline ZuCSpan byteSpan(const uint8_t *data, unsigned len)
 {
-  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+  return ZuCSpan{data, len};
 }
 
 inline bool cryptoLevelFromEpoch(size_t epoch, CryptoLevel::T &level)
@@ -139,7 +147,22 @@ inline bool runtimeFrameRef(
       nullptr, 0, uint32_t(frame.length), frame.offset};
     return true;
   }
-  ref = SentFrameRef::control();
+  if (frame.type == FrameType::MaxData ||
+      frame.type == FrameType::MaxStreamData ||
+      frame.type == FrameType::MaxStreams)
+    ref = SentFrameRef::flowUpdate(
+      FlowUpdate{frame.type, frame.streamID, frame.value, frame.streamType});
+  else if (frame.type == FrameType::DataBlocked ||
+      frame.type == FrameType::StreamDataBlocked ||
+      frame.type == FrameType::StreamsBlocked)
+    ref = SentFrameRef::blocked(
+      frame.type, frame.streamID, frame.value, frame.streamType);
+  else if (frame.type == FrameType::PathResponse)
+    ref = SentFrameRef::pathResponse(frame.payload);
+  else if (frame.type == FrameType::HandshakeDone)
+    ref = SentFrameRef::handshakeDone();
+  else
+    ref = SentFrameRef::control();
   return true;
 }
 
@@ -687,10 +710,10 @@ private:
   ParamString	m_certPath;
   ParamString	m_keyPath;
   ParamString	m_asyncThread;
-  uint64_t	m_maxData = 0;
-  uint64_t	m_maxStreamData = 0;
-  uint64_t	m_maxStreamsBidi = 0;
-  uint64_t	m_maxStreamsUni = 0;
+  uint64_t	m_maxData = DefaultMaxData;
+  uint64_t	m_maxStreamData = DefaultMaxStreamData;
+  uint64_t	m_maxStreamsBidi = DefaultMaxStreamsBidi;
+  uint64_t	m_maxStreamsUni = DefaultMaxStreamsUni;
   unsigned	m_maxUDP = MinUDPPayload;
   ErrorFn	m_errorFn;
 };
@@ -737,8 +760,10 @@ public:
     m_alpn.length(0);
     m_alpnData.length(0);
     m_caPath = m_certPath = m_keyPath = ParamString{};
-    m_maxData = m_maxStreamData = 0;
-    m_maxStreamsBidi = m_maxStreamsUni = 0;
+    m_maxData = DefaultMaxData;
+    m_maxStreamData = DefaultMaxStreamData;
+    m_maxStreamsBidi = DefaultMaxStreamsBidi;
+    m_maxStreamsUni = DefaultMaxStreamsUni;
     m_maxUDP = MinUDPPayload;
   }
 
@@ -934,10 +959,10 @@ private:
   ParamString		m_caPath;
   ParamString		m_certPath;
   ParamString		m_keyPath;
-  uint64_t		m_maxData = 0;
-  uint64_t		m_maxStreamData = 0;
-  uint64_t		m_maxStreamsBidi = 0;
-  uint64_t		m_maxStreamsUni = 0;
+  uint64_t		m_maxData = DefaultMaxData;
+  uint64_t		m_maxStreamData = DefaultMaxStreamData;
+  uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
+  uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
   unsigned		m_maxUDP = MinUDPPayload;
   ZmScheduler::Timer	m_ptoTimer;
 };
@@ -1239,6 +1264,9 @@ public:
   uint64_t txBufferedBytes() const { return m_txBufferedBytes; }
   uint64_t txCreditLimit() const { return m_txCredit.limit(); }
   uint64_t txCreditAvailable() const { return m_txCredit.available(); }
+  uint64_t rxCreditUsed() const { return m_rxCredit.used(); }
+  uint64_t rxCreditLimit() const { return m_rxCredit.limit(); }
+  uint64_t rxCreditAvailable() const { return m_rxCredit.available(); }
   unsigned txRangeCount() const { return m_txQueue.count_(); }
   uint64_t rxBytes() const { return m_rxDelivered; }
   uint64_t finalSize() const { return m_rxState.finalSize(); }
@@ -1253,6 +1281,11 @@ public:
   bool resetReceived() const { return m_resetReceived; }
   bool stopSent() const { return m_stopSent; }
   bool stopReceived() const { return m_stopReceived; }
+  bool readOpen() const { return !m_resetReceived && !rxComplete(); }
+  bool closedForStreamCredit() const {
+    return (rxComplete() || m_resetReceived) && (m_finDequeued || m_resetSent);
+  }
+  bool streamCreditReturned() const { return m_streamCreditReturned; }
   bool rxComplete() const {
     return m_rxState.complete() && m_rxDelivered == m_rxState.finalSize();
   }
@@ -1266,6 +1299,12 @@ public:
   void txCredit(uint64_t limit) { m_txCredit.set(limit); }
   void extendTxCredit(uint64_t limit) { m_txCredit.extend(limit); }
   bool consumeTxCredit(uint64_t n) { return m_txCredit.consume(n); }
+  void rxCredit(uint64_t limit) { m_rxCredit.set(limit); }
+  void extendRxCredit(uint64_t limit) { m_rxCredit.extend(limit); }
+  bool consumeRxCreditTo(uint64_t n) { return m_rxCredit.consumeTo(n); }
+  uint64_t lastStreamDataBlocked() const { return m_lastStreamDataBlocked; }
+  void lastStreamDataBlocked(uint64_t n) { m_lastStreamDataBlocked = n; }
+  void markStreamCreditReturned() { m_streamCreditReturned = true; }
 
   void process(RxMsg *msg) {
     if (!msg) return;
@@ -1434,6 +1473,19 @@ public:
       return 0;
     return impl()->process(m_rx);
   }
+  int processFrame(
+    const Frame &frame, FlowCredit &connection,
+    ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr) {
+    uint64_t delivered = m_rxState.delivered();
+    bool finSeen = m_rxState.finSeen();
+    unsigned pending = m_rxQueue.count_();
+    if (!receiveFrame_(frame, nullptr, &connection, diag, ZuMv(packet)))
+      return -1;
+    if (m_rxState.delivered() == delivered && m_rxState.finSeen() == finSeen &&
+	m_rxQueue.count_() == pending)
+      return 0;
+    return impl()->process(m_rx);
+  }
 
   bool receiveReset(const Frame &frame) {
     if (frame.type != FrameType::ResetStream || m_id < 0 ||
@@ -1450,6 +1502,15 @@ public:
     return true;
   }
 
+  bool receiveBlocked(const Frame &frame) const {
+    if (frame.type != FrameType::StreamDataBlocked || m_id < 0 ||
+	frame.streamID != uint64_t(m_id))
+      return false;
+    if (m_rxState.finalSizeKnown() && frame.value > m_rxState.finalSize())
+      return false;
+    return frame.value <= m_rxCredit.limit();
+  }
+
   bool receiveStop(const Frame &frame) {
     if (frame.type != FrameType::StopSending || m_id < 0 ||
 	frame.streamID != uint64_t(m_id))
@@ -1464,6 +1525,12 @@ private:
   bool receiveFrame_(
     const Frame &frame, ReceiveFlow *flow, BufDiag *diag,
     ZmRef<ZiIOBuf> packet) {
+    return receiveFrame_(frame, flow, nullptr, diag, ZuMv(packet));
+  }
+
+  bool receiveFrame_(
+    const Frame &frame, ReceiveFlow *flow, FlowCredit *connection,
+    BufDiag *diag, ZmRef<ZiIOBuf> packet) {
     if (frame.type != FrameType::Stream || m_id < 0 ||
 	frame.streamID != uint64_t(m_id) ||
 	frame.length != frame.payload.length() ||
@@ -1480,6 +1547,12 @@ private:
     if (frame.length && !newRxSpans_(frame, spans)) return false;
     uint64_t newBytes = rxSpanBytes(spans);
     if (flow && !flow->receive(end, newBytes)) return false;
+    if (connection) {
+      if (end > m_rxCredit.limit() || newBytes > connection->available())
+	return false;
+      if (!m_rxCredit.consumeTo(end) || !connection->consume(newBytes))
+	return false;
+    }
 
     if (spans.length())
       if (!queueRxSlices_(frame, spans, ZuMv(packet), diag)) return false;
@@ -1575,6 +1648,8 @@ private:
   uint64_t		m_txBytes = 0;
   uint64_t		m_txBufferedBytes = 0;
   FlowCredit		m_txCredit;
+  FlowCredit		m_rxCredit;
+  uint64_t		m_lastStreamDataBlocked = uint64_t(-1);
   uint64_t		m_rxDelivered = 0;
   uint64_t		m_appError = 0;
   StreamError::T	m_error = StreamError::None;
@@ -1584,6 +1659,7 @@ private:
   bool			m_resetReceived = false;
   bool			m_stopSent = false;
   bool			m_stopReceived = false;
+  bool			m_streamCreditReturned = false;
   StreamRxState		m_rxState;
   RxStream		m_rx;
   StreamRxPQueue	m_rxQueue{0};
@@ -1621,6 +1697,9 @@ public:
   using Stream = Stream_;
   using StreamRef = ZmRef<Stream>;
   using Streams = Streams_<Stream>;
+  using ControlQueue =
+    ZmQueue<ControlFrame,
+      ZmQueueHeapID<"Zquic.Link.ControlQueue">>;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -1651,6 +1730,10 @@ public:
   bool localStreamsBlocked(Zi::StreamType::T type) const {
     return queued_(type) != 0;
   }
+  unsigned queuedControlFrames() const { return m_controlQueue.count_(); }
+  uint64_t rxDataCreditUsed() const { return m_rxDataCredit.used(); }
+  uint64_t rxDataCreditLimit() const { return m_rxDataCredit.limit(); }
+  uint64_t rxDataCreditAvailable() const { return m_rxDataCredit.available(); }
 
   void setPeerStreamLimit(Zi::StreamType::T type, uint64_t limit) {
     localLimit_(type).set(limit);
@@ -1660,30 +1743,42 @@ public:
   }
 
   bool applyMaxStreams(const Frame &frame) {
-    if (frame.type != FrameType::MaxStreams) return false;
+    if (!validateMaxStreams_(frame)) return false;
     localLimit_(frame.streamType).extend(frame.value);
     openQueued_(frame.streamType);
     return true;
   }
   bool applyMaxData(const Frame &frame) {
-    if (frame.type != FrameType::MaxData) return false;
+    if (!validateMaxData_(frame)) return false;
+    if (frame.value <= m_txDataCredit.limit()) return true;
     m_txDataCredit.extend(frame.value);
     return true;
   }
   bool applyMaxStreamData(const Frame &frame) {
-    if (frame.type != FrameType::MaxStreamData ||
-	frame.streamID > uint64_t(INT64_MAX))
-      return false;
-    StreamRef stream = findStream(int64_t(frame.streamID));
-    if (!stream) return true;
+    StreamRef stream;
+    if (!validateMaxStreamData_(frame, stream)) return false;
     stream->extendTxCredit(frame.value);
     if (streamTxPending_(stream)) streamWritable_(frame.streamID);
     return true;
+  }
+  bool receiveDataBlocked(const Frame &frame) {
+    return validateDataBlocked_(frame);
+  }
+  bool receiveStreamDataBlocked(const Frame &frame) {
+    return receiveStreamDataBlocked_(frame);
+  }
+  bool receiveStreamsBlocked(const Frame &frame) {
+    return validateStreamsBlocked_(frame);
+  }
+  bool frameLegal(CryptoLevel::T level, const Frame &frame) const {
+    return packetFrameLegal_(level, frame);
   }
 
   StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
     if (!localLimit_(type).open()) {
       ++queued_(type);
+      queueBlocked_(
+	FrameType::StreamsBlocked, 0, localLimit_(type).limit(), type);
       impl()->streamsBlocked_(type, localLimit_(type).limit());
       return nullptr;
     }
@@ -1717,8 +1812,20 @@ public:
       return -1;
     StreamRef stream = findOrAccept_(frame.streamID);
     if (!stream) return -1;
-    if (frame.type == FrameType::ResetStream)
-      return stream->receiveReset(frame) ? 0 : -1;
+    if (frame.type == FrameType::ResetStream) {
+      uint64_t old = stream->rxCreditUsed();
+      uint64_t novel = frame.length > old ? frame.length - old : 0;
+      if (frame.length > stream->rxCreditLimit() ||
+	  novel > m_rxDataCredit.available())
+	return -1;
+      if (!stream->receiveReset(frame)) return -1;
+      if (!stream->consumeRxCreditTo(frame.length) ||
+	  !m_rxDataCredit.consume(novel))
+	return -1;
+      maybeExtendMaxData_();
+      maybeExtendMaxStreamData_(stream);
+      return 0;
+    }
     return stream->receiveStop(frame) ? 0 : -1;
   }
 
@@ -1728,7 +1835,13 @@ public:
       return receiveFrame(frame, diag);
     StreamRef stream = findOrAccept_(frame.streamID);
     if (!stream) return -1;
-    return stream->processFrame(frame, ZuMv(packet), diag);
+    int rc = stream->processFrame(frame, m_rxDataCredit, ZuMv(packet), diag);
+    if (rc >= 0) {
+      maybeExtendMaxData_();
+      maybeExtendMaxStreamData_(stream);
+      maybeReturnStreamCredit_(stream);
+    }
+    return rc;
   }
 
   void streamWritable_(uint64_t id) {
@@ -1763,6 +1876,31 @@ protected:
     return m_streamScheduler.count();
   }
 
+  bool queueControl_(const ControlFrame &frame) {
+    if (!frame || controlQueuedAtLeast_(frame)) return false;
+    m_controlQueue.push(frame);
+    return true;
+  }
+  bool queueFlowUpdate_(const FlowUpdate &update) {
+    return update.needed() && queueControl_(ControlFrame::flowUpdate(update));
+  }
+  bool queueBlocked_(
+    FrameType::T type, uint64_t streamID, uint64_t value,
+    Zi::StreamType::T streamType = Zi::StreamType::Duplex) {
+    ControlFrame frame = ControlFrame::blocked(
+      type, streamID, value, streamType);
+    if (!blockedFrameNeeded_(frame)) return false;
+    if (!queueControl_(frame)) return false;
+    noteBlockedQueued_(frame);
+    return true;
+  }
+  bool queuePathResponse_(ZuCSpan data) {
+    return queueControl_(ControlFrame::pathResponse(data));
+  }
+  bool queueHandshakeDone_() {
+    return queueControl_(ControlFrame::handshakeDone());
+  }
+
   bool runtimeEstablished_() const { return m_established; }
   bool runtimeDraining_() const {
     return m_runtimeCloseState == CloseState::Draining;
@@ -1783,6 +1921,12 @@ protected:
     clearCIDState_();
     m_transportParams = {};
     m_txDataCredit = {};
+    m_rxDataCredit = {};
+    m_rxDataWindow = 0;
+    m_lastDataBlocked = uint64_t(-1);
+    m_lastStreamsBlockedBidi = uint64_t(-1);
+    m_lastStreamsBlockedUni = uint64_t(-1);
+    m_controlQueue.clean();
     resetPacketRuntime_();
   }
 
@@ -1985,6 +2129,8 @@ protected:
     m_transportParams.initialMaxStreamsBidi = app->maxStreamsBidi();
     m_transportParams.initialMaxStreamsUni = app->maxStreamsUni();
     m_transportParams.activeConnectionIDLimit = LocalActiveConnectionIDLimit;
+    m_rxDataCredit.set(m_transportParams.initialMaxData);
+    m_rxDataWindow = m_transportParams.initialMaxData;
   }
 
   bool loadServerTransportParams_(const ServerBootstrap &bootstrap) {
@@ -2060,6 +2206,22 @@ protected:
     for (auto &a : m_rxPackets) a.clear();
     for (auto &p : m_txPackets) p.clear();
     memset(m_pendingAck, 0, sizeof(m_pendingAck));
+    m_txKeyPhase = false;
+  }
+
+  bool installPeerKeyUpdate_(const TrafficSecret &nextRxSecret) {
+    if (!m_crypto.updateRxTrafficSecret(CryptoLevel::OneRTT, nextRxSecret))
+      return false;
+    return withTxLock_([this]() {
+      TrafficSecret nextTxSecret;
+      if (!PacketProtection::deriveNextTrafficSecret(
+	    nextTxSecret, m_crypto.txTrafficSecret(CryptoLevel::OneRTT)) ||
+	  !m_crypto.updateTxTrafficSecret(
+	    CryptoLevel::OneRTT, nextTxSecret))
+	return false;
+      m_txKeyPhase = !m_txKeyPhase;
+      return true;
+    });
   }
 
   bool checkStatelessReset_(ZuCSpan datagram) {
@@ -2110,6 +2272,128 @@ protected:
     return stream && (stream->txRangeCount() || stream->finReady());
   }
 
+  SentFrameRef controlRef_(const ControlFrame &frame) const {
+    switch (frame.type) {
+      case FrameType::MaxData:
+      case FrameType::MaxStreamData:
+      case FrameType::MaxStreams:
+	return SentFrameRef::flowUpdate(
+	  FlowUpdate{frame.type, frame.streamID, frame.value, frame.streamType});
+      case FrameType::DataBlocked:
+      case FrameType::StreamDataBlocked:
+      case FrameType::StreamsBlocked:
+	return SentFrameRef::blocked(
+	  frame.type, frame.streamID, frame.value, frame.streamType);
+      case FrameType::PathResponse:
+	return SentFrameRef::pathResponse(
+	  byteSpan(frame.payload, sizeof(frame.payload)));
+      case FrameType::HandshakeDone:
+	return SentFrameRef::handshakeDone();
+      default:
+	return SentFrameRef::control();
+    }
+  }
+
+  ControlFrame controlFrame_(const SentFrameRef &ref) const {
+    ControlFrame frame;
+    frame.type = ref.controlType;
+    frame.streamID = ref.streamID;
+    frame.value = ref.value;
+    frame.streamType = ref.streamType;
+    if (ref.controlType == FrameType::PathResponse)
+      memcpy(frame.payload, ref.payload, sizeof(frame.payload));
+    return frame;
+  }
+
+  template <typename AppendAck, typename SendPacket>
+  bool sendQueuedControlPacket_(
+    ZiSockAddr addr, AppendAck appendAck, SendPacket sendPacket) {
+    while (m_controlQueue.count_()) {
+      ControlFrame frame = m_controlQueue.head();
+      if (!controlStillValid_(frame)) {
+	m_controlQueue.shift();
+	continue;
+      }
+      PacketBuild build;
+      build.reset();
+      PacketBudget budget;
+      budget.pmtu = budget.congestion = budget.antiAmplification =
+	app()->maxUDP();
+      PacketAssembly assembly;
+      unsigned before = build.bytes();
+      if (!appendAck(build)) return false;
+      unsigned ackBytes = build.bytes() - before;
+      if (ackBytes && !assembly.addControl(budget, ackBytes)) return false;
+      int n = frame.write(build.scratch(), build.scratchAvail());
+      if (n <= 0 || !assembly.addControl(budget, unsigned(n)) ||
+	  !build.commitScratch(unsigned(n)))
+	return false;
+      SentFrameRef ref = controlRef_(frame);
+      if (!sendPacket(build, ZuMv(addr), ref)) return false;
+      m_controlQueue.shift();
+      return true;
+    }
+    return false;
+  }
+
+  template <typename AppendAck, typename SendPacket>
+  bool flushControlAndStreams_(
+    ZiSockAddr addr, AppendAck appendAck, SendPacket sendPacket) {
+    return withTxLock_([this, addr = ZuMv(addr), &appendAck, &sendPacket]() mutable {
+      return flushControlAndStreamsLocked_(
+	ZuMv(addr),
+	[&appendAck](PacketBuild &build) { return appendAck(build); },
+	[&sendPacket](
+	    PacketBuild &build, ZiSockAddr addr_,
+	    const SentFrameRef &ref) {
+	  return sendPacket(build, ZuMv(addr_), ref);
+	});
+    });
+  }
+
+  template <typename AppendAck, typename SendPacket>
+  bool flushControlAndStreamsLocked_(
+    ZiSockAddr addr, AppendAck appendAck, SendPacket sendPacket) {
+    bool sent = false;
+    while (sendQueuedControlPacket_(
+	addr,
+	[&appendAck](PacketBuild &build) { return appendAck(build); },
+	[&sendPacket](
+	    PacketBuild &build, ZiSockAddr addr_,
+	    const SentFrameRef &ref) {
+	  return sendPacket(build, ZuMv(addr_), ref);
+	}))
+      sent = true;
+    bool streams = flushWritableStreams_(
+      addr,
+      [this, &appendAck, &sendPacket](StreamRef stream, ZiSockAddr addr_) {
+	return sendQueuedStreamPacket_(
+	  ZuMv(stream), ZuMv(addr_),
+	  [&appendAck](PacketBuild &build) { return appendAck(build); },
+	  [&sendPacket](
+	      PacketBuild &build, ZiSockAddr addr__,
+	      const SentFrameRef &ref) {
+	    return sendPacket(build, ZuMv(addr__), ref);
+	  });
+      });
+    while (sendQueuedControlPacket_(
+	addr,
+	[&appendAck](PacketBuild &build) { return appendAck(build); },
+	[&sendPacket](
+	    PacketBuild &build, ZiSockAddr addr_,
+	    const SentFrameRef &ref) {
+	  return sendPacket(build, ZuMv(addr_), ref);
+	}))
+      sent = true;
+    return sent || streams;
+  }
+
+  template <typename Fn>
+  bool withTxLock_(Fn fn) {
+    ZmGuard<ZmLock> guard(m_txLock);
+    return fn();
+  }
+
   template <typename AppendAck, typename SendPacket>
   bool sendQueuedStreamPacket_(
     StreamRef stream, ZiSockAddr addr, AppendAck appendAck,
@@ -2123,12 +2407,13 @@ protected:
     PacketAssembly assembly;
     if (stream->txRangeCount() && m_txDataCredit.blocked()) {
       streamWritable_(uint64_t(stream->id()));
-      impl()->dataBlocked_(m_txDataCredit.limit());
+      queueBlocked_(FrameType::DataBlocked, 0, m_txDataCredit.limit());
       return false;
     }
     if (stream->txRangeCount() && !stream->txCreditAvailable()) {
       streamWritable_(uint64_t(stream->id()));
-      impl()->streamDataBlocked_(uint64_t(stream->id()), stream->txCreditLimit());
+      uint64_t limit = stream->txCreditLimit();
+      queueBlocked_(FrameType::StreamDataBlocked, uint64_t(stream->id()), limit);
       return false;
     }
     unsigned before = build.bytes();
@@ -2188,7 +2473,8 @@ protected:
 
   void schedulePTO_() {
     if (!app() || !app()->mx() || closed()) return;
-    if (!m_txPackets[CryptoLevel::OneRTT].bytesInFlight()) return;
+    auto &tx = m_txPackets[CryptoLevel::OneRTT];
+    if (!tx.bytesInFlight() && !tx.retransmitPending()) return;
     app()->mx()->run(app()->txThread(),
       [link = ZmMkRef(impl())]() { link->pto_(); },
       app()->ptoTimeout_(), ZmScheduler::Advance, app()->ptoTimer());
@@ -2217,6 +2503,18 @@ protected:
       ref.length, ref.fin);
     if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
     return build.add(ref.range);
+  }
+
+  bool buildRetransmitControl_(PacketBuild &build, const SentFrameRef &ref) {
+    if (ref.kind != SentFrameKind::Control ||
+	ref.controlType == FrameType::Unknown)
+      return false;
+    ControlFrame frame = controlFrame_(ref);
+    if (!controlStillValid_(frame)) return false;
+    build.reset();
+    if (!appendPendingAck_(CryptoLevel::OneRTT, build)) return false;
+    int n = frame.write(build.scratch(), build.scratchAvail());
+    return n > 0 && build.commitScratch(unsigned(n));
   }
 
   bool recordRxPacket_(
@@ -2252,6 +2550,7 @@ protected:
   void processAckFrame_(CryptoLevel::T level, const Frame &frame) {
     if (!frame.ackRanges.length()) return;
     m_txPackets[level].ack(frame.ackRanges.data(), frame.ackRanges.length());
+    if (level == CryptoLevel::OneRTT) schedulePTO_();
   }
 
   bool buildPayload_(
@@ -2437,6 +2736,7 @@ protected:
       buf->data_(), buf->size, runtimeCID_(dcid),
       m_txPN[CryptoLevel::OneRTT], pnLength);
     if (headerLen < 0) return false;
+    if (m_txKeyPhase) buf->data_()[0] |= 0x04;
     if (!payload.padForProtectionSample(
 	  unsigned(headerLen) - pnLength, pnLength,
 	  m_crypto.txTrafficSecret(CryptoLevel::OneRTT).tagLen))
@@ -2571,9 +2871,24 @@ protected:
       m_rxLargestPN[CryptoLevel::OneRTT],
       h.pnOffset, pn, payloadOffset);
     if (plainLen < 0) {
-      if (checkStatelessReset_(datagram)) return true;
-      ++m_diag.failures;
-      return false;
+      TrafficSecret nextSecret;
+      PacketProtectionState nextState;
+      if (PacketProtection::deriveNextTrafficSecret(
+	    nextSecret, m_crypto.rxTrafficSecret(CryptoLevel::OneRTT)) &&
+	  nextState.init(nextSecret, CryptoLevel::OneRTT, false)) {
+	plainLen = PacketProtection::unprotectShort(
+	  base, packetLen, nextState,
+	  m_rxLargestPN[CryptoLevel::OneRTT],
+	  h.pnOffset, pn, payloadOffset);
+	if (plainLen >= 0 &&
+	    !installPeerKeyUpdate_(nextSecret))
+	  return false;
+      }
+      if (plainLen < 0) {
+	if (checkStatelessReset_(datagram)) return true;
+	++m_diag.failures;
+	return false;
+      }
     }
     if (!recordRxPacket_(CryptoLevel::OneRTT, pn))
       return true;
@@ -2601,6 +2916,7 @@ protected:
 	    frame, used) < 0 || !used)
 	return false;
       ++m_diag.framesRx;
+      if (!packetFrameLegal_(level, frame)) return false;
       if (FrameCodec::ackEliciting(frame.type))
 	noteAck_(level, pn);
       switch (frame.type) {
@@ -2645,16 +2961,34 @@ protected:
 	      !handleControl(level, frame, addr)) return false;
 	  break;
 	case FrameType::MaxStreams:
-	  if (!applyMaxStreams(frame)) return false;
+	  if (!applyMaxStreams(frame) ||
+	      !handleControl(level, frame, addr)) return false;
+	  break;
+	case FrameType::DataBlocked:
+	  if (!validateDataBlocked_(frame) ||
+	      !handleControl(level, frame, addr)) return false;
+	  break;
+	case FrameType::StreamDataBlocked:
+	  if (!receiveStreamDataBlocked_(frame) ||
+	      !handleControl(level, frame, addr)) return false;
+	  break;
+	case FrameType::StreamsBlocked:
+	  if (!validateStreamsBlocked_(frame) ||
+	      !handleControl(level, frame, addr)) return false;
 	  break;
 	case FrameType::PathChallenge:
 	case FrameType::PathResponse:
 	case FrameType::ConnectionClose:
+	case FrameType::ApplicationClose:
 	case FrameType::HandshakeDone:
 	  if (!handleControl(level, frame, addr)) return false;
 	  break;
-	default:
+	case FrameType::Padding:
+	case FrameType::Ping:
+	case FrameType::NewToken:
 	  break;
+	default:
+	  return false;
 	}
       offset += used;
     }
@@ -2662,6 +2996,46 @@ protected:
   }
 
 private:
+  bool packetFrameLegal_(CryptoLevel::T level, const Frame &frame) const {
+    switch (frame.type) {
+      case FrameType::Unknown:
+	return false;
+      case FrameType::Padding:
+      case FrameType::Ping:
+      case FrameType::ConnectionClose:
+	return true;
+      case FrameType::Ack:
+	for (unsigned i = 0; i < frame.ackRanges.length(); ++i)
+	  if (frame.ackRanges[i].largest >= m_txPN[level]) return false;
+	return true;
+      case FrameType::Crypto:
+	return level != CryptoLevel::OneRTT || m_established;
+      case FrameType::Stream:
+      case FrameType::ResetStream:
+      case FrameType::StopSending:
+      case FrameType::MaxData:
+      case FrameType::MaxStreamData:
+      case FrameType::MaxStreams:
+      case FrameType::DataBlocked:
+      case FrameType::StreamDataBlocked:
+      case FrameType::StreamsBlocked:
+      case FrameType::NewConnectionID:
+      case FrameType::RetireConnectionID:
+      case FrameType::PathChallenge:
+      case FrameType::PathResponse:
+	return level == CryptoLevel::OneRTT;
+      case FrameType::NewToken:
+	return !m_isServer && level == CryptoLevel::OneRTT &&
+	  frame.payload.length();
+      case FrameType::ApplicationClose:
+	return level == CryptoLevel::OneRTT;
+      case FrameType::HandshakeDone:
+	return !m_isServer && level == CryptoLevel::OneRTT;
+      default:
+	return false;
+    }
+  }
+
   const StreamLimit &localLimit_(Zi::StreamType::T type) const {
     return type == Zi::StreamType::Simplex ? m_peerUniLimit : m_peerBidiLimit;
   }
@@ -2684,6 +3058,14 @@ private:
 
   uint64_t &queued_(Zi::StreamType::T type) {
     return type == Zi::StreamType::Simplex ? m_queuedUni : m_queuedBidi;
+  }
+  const uint64_t &lastStreamsBlocked_(Zi::StreamType::T type) const {
+    return type == Zi::StreamType::Simplex ?
+      m_lastStreamsBlockedUni : m_lastStreamsBlockedBidi;
+  }
+  uint64_t &lastStreamsBlocked_(Zi::StreamType::T type) {
+    return type == Zi::StreamType::Simplex ?
+      m_lastStreamsBlockedUni : m_lastStreamsBlockedBidi;
   }
 
   StreamRef openLocalStream_(Zi::StreamType::T type) {
@@ -2710,10 +3092,187 @@ private:
     return acceptPeerStream(id);
   }
 
+  static bool localInitiated_(uint64_t id, bool isServer) {
+    return StreamID::server(id) == isServer;
+  }
+  bool canPeerSend_(uint64_t id) const {
+    return !StreamID::uni(id) || !localInitiated_(id, m_isServer);
+  }
+  bool canLocalSend_(uint64_t id) const {
+    return !StreamID::uni(id) || localInitiated_(id, m_isServer);
+  }
+
+  bool validateMaxData_(const Frame &frame) const {
+    return frame.type == FrameType::MaxData;
+  }
+  bool validateMaxStreams_(const Frame &frame) const {
+    return frame.type == FrameType::MaxStreams &&
+      frame.value <= MaxStreamCount;
+  }
+  bool validateMaxStreamData_(const Frame &frame, StreamRef &stream) {
+    stream = nullptr;
+    if (frame.type != FrameType::MaxStreamData ||
+	frame.streamID > uint64_t(INT64_MAX) ||
+	!canLocalSend_(frame.streamID))
+      return false;
+    stream = findStream(int64_t(frame.streamID));
+    if (stream) return true;
+    if (localInitiated_(frame.streamID, m_isServer)) return false;
+    if (StreamID::uni(frame.streamID)) return false;
+    stream = acceptPeerStream(frame.streamID);
+    return stream;
+  }
+  bool validateDataBlocked_(const Frame &frame) const {
+    return frame.type == FrameType::DataBlocked &&
+      frame.value <= m_rxDataCredit.limit();
+  }
+  bool validateStreamDataBlocked_(const Frame &frame, StreamRef &stream) {
+    stream = nullptr;
+    if (frame.type != FrameType::StreamDataBlocked ||
+	frame.streamID > uint64_t(INT64_MAX) ||
+	!canPeerSend_(frame.streamID))
+      return false;
+    stream = findOrAccept_(frame.streamID);
+    return stream && frame.value <= stream->rxCreditLimit();
+  }
+  bool validateStreamsBlocked_(const Frame &frame) const {
+    return frame.type == FrameType::StreamsBlocked &&
+      frame.value <= peerLimit_(frame.streamType).limit();
+  }
+
+  bool receiveStreamDataBlocked_(const Frame &frame) {
+    StreamRef stream;
+    if (!validateStreamDataBlocked_(frame, stream)) return false;
+    return stream->receiveBlocked(frame);
+  }
+  bool blockedFrameNeeded_(const ControlFrame &frame) const {
+    switch (frame.type) {
+      case FrameType::DataBlocked:
+	return m_lastDataBlocked != frame.value;
+      case FrameType::StreamDataBlocked: {
+	StreamRef stream = findStream(int64_t(frame.streamID));
+	return !stream || stream->lastStreamDataBlocked() != frame.value;
+      }
+      case FrameType::StreamsBlocked:
+	return lastStreamsBlocked_(frame.streamType) != frame.value;
+      default:
+	return true;
+    }
+  }
+  void noteBlockedQueued_(const ControlFrame &frame) {
+    switch (frame.type) {
+      case FrameType::DataBlocked:
+	m_lastDataBlocked = frame.value;
+	break;
+      case FrameType::StreamDataBlocked:
+	if (StreamRef stream = findStream(int64_t(frame.streamID)))
+	  stream->lastStreamDataBlocked(frame.value);
+	break;
+      case FrameType::StreamsBlocked:
+	lastStreamsBlocked_(frame.streamType) = frame.value;
+	break;
+      default:
+	break;
+    }
+  }
+
+  bool controlQueuedAtLeast_(const ControlFrame &frame) {
+    auto iter = m_controlQueue.iter();
+    while (auto ptr = iter.ptr()) {
+      const ControlFrame &queued = *ptr;
+      if (queued.type != frame.type ||
+	  queued.streamID != frame.streamID ||
+	  queued.streamType != frame.streamType)
+	continue;
+      if (frame.type == FrameType::PathResponse) {
+	if (!memcmp(queued.payload, frame.payload, sizeof(frame.payload)))
+	  return true;
+	continue;
+      }
+      if (frame.type == FrameType::HandshakeDone) return true;
+      if (queued.value >= frame.value) return true;
+    }
+    return false;
+  }
+
+  bool controlStillValid_(const ControlFrame &frame) const {
+    switch (frame.type) {
+      case FrameType::MaxData:
+	return frame.value == m_rxDataCredit.limit();
+      case FrameType::MaxStreamData: {
+	StreamRef stream = findStream(int64_t(frame.streamID));
+	return stream && stream->readOpen() &&
+	  frame.value == stream->rxCreditLimit();
+      }
+      case FrameType::MaxStreams:
+	return frame.value == peerLimit_(frame.streamType).limit();
+      case FrameType::DataBlocked:
+	return m_txDataCredit.blocked() &&
+	  frame.value == m_txDataCredit.limit();
+      case FrameType::StreamDataBlocked: {
+	StreamRef stream = findStream(int64_t(frame.streamID));
+	return stream && !stream->txCreditAvailable() &&
+	  frame.value == stream->txCreditLimit();
+      }
+      case FrameType::StreamsBlocked:
+	return queued_(frame.streamType) &&
+	  frame.value == localLimit_(frame.streamType).limit();
+      case FrameType::PathResponse:
+      case FrameType::HandshakeDone:
+	return true;
+      default:
+	return false;
+    }
+  }
+
+  void maybeExtendMaxData_() {
+    uint64_t window = m_rxDataWindow ? m_rxDataWindow :
+      m_transportParams.initialMaxData;
+    if (!window || m_rxDataCredit.available() > window / 2) return;
+    uint64_t maximum =
+      m_rxDataCredit.used() > uint64_t(-1) - window ? uint64_t(-1) :
+      m_rxDataCredit.used() + window;
+    if (maximum <= m_rxDataCredit.limit()) return;
+    m_rxDataCredit.extend(maximum);
+    queueFlowUpdate_(
+      FlowUpdate{FrameType::MaxData, 0, maximum, Zi::StreamType::Duplex});
+  }
+  void maybeExtendMaxStreamData_(const StreamRef &stream) {
+    if (!stream || !stream->readOpen()) return;
+    uint64_t window = initialStreamRxCredit_(uint64_t(stream->id()));
+    if (!window || stream->rxCreditAvailable() > window / 2) return;
+    uint64_t maximum =
+      stream->rxCreditUsed() > uint64_t(-1) - window ? uint64_t(-1) :
+      stream->rxCreditUsed() + window;
+    if (maximum <= stream->rxCreditLimit()) return;
+    stream->extendRxCredit(maximum);
+    queueFlowUpdate_(FlowUpdate{
+      FrameType::MaxStreamData, uint64_t(stream->id()), maximum,
+      Zi::StreamType::Duplex});
+  }
+  void maybeReturnStreamCredit_(const StreamRef &stream) {
+    if (!stream || stream->id() < 0 || stream->streamCreditReturned())
+      return;
+    uint64_t id = uint64_t(stream->id());
+    if (localInitiated_(id, m_isServer)) return;
+    if (!stream->rxComplete() && !stream->resetReceived()) return;
+    if (!StreamID::uni(id) && !stream->finDequeued() && !stream->resetSent())
+      return;
+    Zi::StreamType::T type =
+      StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
+    StreamLimit &limit = peerLimit_(type);
+    uint64_t next = limit.limit() == uint64_t(-1) ?
+      uint64_t(-1) : limit.limit() + 1;
+    limit.extend(next);
+    stream->markStreamCreditReturned();
+    queueFlowUpdate_(FlowUpdate{FrameType::MaxStreams, 0, limit.limit(), type});
+  }
+
   StreamRef newStream_(int64_t id) {
     auto node = new typename Streams::Node{impl(), id};
     StreamRef stream{node};
     stream->txCredit(initialStreamTxCredit_(uint64_t(id)));
+    stream->rxCredit(initialStreamRxCredit_(uint64_t(id)));
     m_streams.addNode(node);
     return stream;
   }
@@ -2725,6 +3284,14 @@ private:
     bool local = StreamID::server(id) == m_isServer;
     return local ? params.initialMaxStreamDataBidiRemote :
       params.initialMaxStreamDataBidiLocal;
+  }
+
+  uint64_t initialStreamRxCredit_(uint64_t id) const {
+    if (StreamID::uni(id) && StreamID::server(id) == m_isServer) return 0;
+    if (StreamID::uni(id)) return m_transportParams.initialMaxStreamDataUni;
+    bool local = StreamID::server(id) == m_isServer;
+    return local ? m_transportParams.initialMaxStreamDataBidiLocal :
+      m_transportParams.initialMaxStreamDataBidiRemote;
   }
 
   int64_t nextStreamID_(Zi::StreamType::T type) {
@@ -2743,6 +3310,8 @@ private:
   bool		m_closed = false;
   uint64_t	m_closeError = 0;
   FlowCredit	m_txDataCredit;
+  FlowCredit	m_rxDataCredit;
+  uint64_t	m_rxDataWindow = 0;
   uint64_t	m_nextBidiOrdinal = 0;
   uint64_t	m_nextUniOrdinal = 0;
   StreamLimit	m_peerBidiLimit{uint64_t(INT64_MAX) >> 2};
@@ -2751,9 +3320,13 @@ private:
   StreamLimit	m_localUniLimit{uint64_t(INT64_MAX) >> 2};
   uint64_t	m_queuedBidi = 0;
   uint64_t	m_queuedUni = 0;
+  uint64_t	m_lastDataBlocked = uint64_t(-1);
+  uint64_t	m_lastStreamsBlockedBidi = uint64_t(-1);
+  uint64_t	m_lastStreamsBlockedUni = uint64_t(-1);
 
   Streams	m_streams; // rx thread dedicated, used to dispatch received data
   StreamScheduler m_streamScheduler;
+  ControlQueue	m_controlQueue{ZmQueueParams{}.initial(8)};
 
 private:
   void resetLinkState_() {
@@ -2802,6 +3375,7 @@ private:
   AckTracker		m_rxPackets[3];
   PacketTxSpace		m_txPackets[3];
   bool			m_pendingAck[3]{};
+  bool			m_txKeyPhase = false;
   unsigned		m_handshakeStarted = 0;
   unsigned		m_established = 0;
   LinkState::T		m_linkState = LinkState::Starting;
@@ -2881,7 +3455,7 @@ public:
     if (!stream || (!payload.length() && !fin))
       return false;
     if (app()->txInvoked()) return send_(ZuMv(stream), payload, fin);
-    ZtBytes payload_;
+    AsyncSendPayload payload_;
     payload_.length(payload.length());
     if (payload.length())
       memcpy(payload_.data(), payload.data(), payload.length());
@@ -2893,9 +3467,7 @@ public:
     ]() mutable {
       link->send_(
 	ZuMv(stream),
-	ZuCSpan{
-	  reinterpret_cast<const char *>(payload.data()),
-	  payload.length()},
+	ZuCSpan{payload.data(), payload.length()},
 	fin);
     });
     return true;
@@ -2903,20 +3475,26 @@ public:
   bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client send_ outside Tx thread", return false);
-    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
-	(!payload.length() && !fin))
-      return false;
-    if (payload.length()) {
-      auto tx = stream->txStream_();
-      tx.append(
-	reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
-      tx.flush();
-    }
-    if (fin) stream->fin();
-    return Base::flushWritableStreams_(
-      m_endpoint.remote(),
-      [this](StreamRef stream, ZiSockAddr addr) {
-	return sendQueuedStreamPacket_(stream, ZuMv(addr));
+    return Base::withTxLock_([this, stream = ZuMv(stream), payload, fin]() mutable {
+      if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
+	  (!payload.length() && !fin))
+	return false;
+      if (payload.length()) {
+	auto tx = stream->txStream_();
+	tx << payload;
+	tx.flush();
+      }
+      if (fin) stream->fin();
+      return Base::flushControlAndStreamsLocked_(
+	m_endpoint.remote(),
+	[this](PacketBuild &build) {
+	  return appendPendingAck_(CryptoLevel::OneRTT, build);
+	},
+	[this](
+	    PacketBuild &build, ZiSockAddr addr,
+	    const SentFrameRef &ref) {
+	  return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	});
       });
   }
 
@@ -2928,11 +3506,17 @@ public:
       return;
     Base::reclaimPTO_();
     SentFrameRef ref;
-    if (!Base::nextRetransmit_(ref)) return;
-    PacketBuild build;
-    if (!Base::buildRetransmitStream_(build, ref)) return;
-    (void)sendShortPacket_(build, m_endpoint.remote(), {}, &ref, true);
-    Base::schedulePTO_();
+    bool sent = false;
+    while (Base::nextRetransmit_(ref)) {
+      PacketBuild build;
+      if (ref.kind == SentFrameKind::Stream) {
+	if (!Base::buildRetransmitStream_(build, ref)) continue;
+      } else if (!Base::buildRetransmitControl_(build, ref))
+	continue;
+      (void)sendShortPacket_(build, m_endpoint.remote(), {}, &ref, true);
+      sent = true;
+    }
+    if (sent) Base::schedulePTO_();
   }
 
   void connect_() {
@@ -3183,12 +3767,6 @@ private:
     return sendShortPacket_(build, ZuMv(addr), payload);
   }
 
-  bool sendAckElicitingShortFrame_(ZuCSpan payload, ZiSockAddr addr) {
-    PacketBuild build;
-    if (!buildPayload_(CryptoLevel::OneRTT, build, payload)) return false;
-    return sendShortPacket_(build, ZuMv(addr), payload, nullptr, true);
-  }
-
   bool sendShortPacket_(
     PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
@@ -3244,6 +3822,16 @@ private:
 	return receivedShort_(d_, packetOffset, packetLen);
       });
     flushPendingAcks_(ZuMv(addr));
+    (void)Base::flushControlAndStreams_(
+      m_endpoint.remote(),
+      [this](PacketBuild &build) {
+	return appendPendingAck_(CryptoLevel::OneRTT, build);
+      },
+      [this](
+	  PacketBuild &build, ZiSockAddr addr_,
+	  const SentFrameRef &ref) {
+	return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+      });
   }
 
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
@@ -3289,22 +3877,36 @@ private:
     switch (frame.type) {
       case FrameType::MaxData:
       case FrameType::MaxStreamData:
-	(void)Base::flushWritableStreams_(
+      case FrameType::MaxStreams:
+	(void)Base::flushControlAndStreams_(
 	  m_endpoint.remote(),
-	  [this](StreamRef stream, ZiSockAddr addr_) {
-	    return sendQueuedStreamPacket_(stream, ZuMv(addr_));
+	  [this](PacketBuild &build) {
+	    return appendPendingAck_(CryptoLevel::OneRTT, build);
+	  },
+	  [this](
+	      PacketBuild &build, ZiSockAddr addr_,
+	      const SentFrameRef &ref) {
+	    return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
 	  });
 	return true;
       case FrameType::PathChallenge: {
-	uint8_t out[16];
-	int n = FrameCodec::writePathResponse(out, sizeof(out), frame.payload);
-	return n > 0 &&
-	  sendAckElicitingShortFrame_(byteSpan(out, unsigned(n)), ZuMv(addr));
+	Base::queuePathResponse_(frame.payload);
+	return Base::flushControlAndStreams_(
+	  ZuMv(addr),
+	  [this](PacketBuild &build) {
+	    return appendPendingAck_(CryptoLevel::OneRTT, build);
+	  },
+	  [this](
+	      PacketBuild &build, ZiSockAddr addr_,
+	      const SentFrameRef &ref) {
+	    return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	  });
       }
       case FrameType::PathResponse:
       case FrameType::HandshakeDone:
 	return true;
       case FrameType::ConnectionClose:
+      case FrameType::ApplicationClose:
 	Base::closeRuntime_(frame.errorCode);
 	closeCurrent_(true);
 	return true;
@@ -3314,23 +3916,43 @@ private:
   }
 
   void dataBlocked_(uint64_t maximum) {
-    uint8_t frame[16];
-    int n = FrameCodec::writeDataBlocked(frame, sizeof(frame), maximum);
-    if (n > 0) (void)sendAckElicitingShortFrame_(byteSpan(frame, unsigned(n)),
-      m_endpoint.remote());
+    Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
+    (void)Base::flushControlAndStreams_(
+      m_endpoint.remote(),
+      [this](PacketBuild &build) {
+	return appendPendingAck_(CryptoLevel::OneRTT, build);
+      },
+      [this](
+	  PacketBuild &build, ZiSockAddr addr,
+	  const SentFrameRef &ref) {
+	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+      });
   }
   void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
-    uint8_t frame[24];
-    int n = FrameCodec::writeStreamDataBlocked(
-      frame, sizeof(frame), streamID, maximum);
-    if (n > 0) (void)sendAckElicitingShortFrame_(byteSpan(frame, unsigned(n)),
-      m_endpoint.remote());
+    Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
+    (void)Base::flushControlAndStreams_(
+      m_endpoint.remote(),
+      [this](PacketBuild &build) {
+	return appendPendingAck_(CryptoLevel::OneRTT, build);
+      },
+      [this](
+	  PacketBuild &build, ZiSockAddr addr,
+	  const SentFrameRef &ref) {
+	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+      });
   }
   void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
-    uint8_t frame[16];
-    int n = FrameCodec::writeStreamsBlocked(frame, sizeof(frame), type, maximum);
-    if (n > 0) (void)sendAckElicitingShortFrame_(byteSpan(frame, unsigned(n)),
-      m_endpoint.remote());
+    Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
+    (void)Base::flushControlAndStreams_(
+      m_endpoint.remote(),
+      [this](PacketBuild &build) {
+	return appendPendingAck_(CryptoLevel::OneRTT, build);
+      },
+      [this](
+	  PacketBuild &build, ZiSockAddr addr,
+	  const SentFrameRef &ref) {
+	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+      });
   }
 
   void endpointReady_(Endpoint *ep) {
@@ -3402,7 +4024,7 @@ public:
     if (!stream || (!payload.length() && !fin))
       return false;
     if (app()->txInvoked()) return send_(ZuMv(stream), payload, fin);
-    ZtBytes payload_;
+    AsyncSendPayload payload_;
     payload_.length(payload.length());
     if (payload.length())
       memcpy(payload_.data(), payload.data(), payload.length());
@@ -3414,9 +4036,7 @@ public:
     ]() mutable {
       link->send_(
 	ZuMv(stream),
-	ZuCSpan{
-	  reinterpret_cast<const char *>(payload.data()),
-	  payload.length()},
+	ZuCSpan{payload.data(), payload.length()},
 	fin);
     });
     return true;
@@ -3424,20 +4044,26 @@ public:
   bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server send_ outside Tx thread", return false);
-    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
-	(!payload.length() && !fin))
-      return false;
-    if (payload.length()) {
-      auto tx = stream->txStream_();
-      tx.append(
-	reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
-      tx.flush();
-    }
-    if (fin) stream->fin();
-    return Base::flushWritableStreams_(
-      m_peerAddr,
-      [this](StreamRef stream, ZiSockAddr addr) {
-	return sendQueuedStreamPacket_(stream, ZuMv(addr));
+    return Base::withTxLock_([this, stream = ZuMv(stream), payload, fin]() mutable {
+      if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
+	  (!payload.length() && !fin))
+	return false;
+      if (payload.length()) {
+	auto tx = stream->txStream_();
+	tx << payload;
+	tx.flush();
+      }
+      if (fin) stream->fin();
+      return Base::flushControlAndStreamsLocked_(
+	m_peerAddr,
+	[this](PacketBuild &build) {
+	  return appendPendingAck_(CryptoLevel::OneRTT, build);
+	},
+	[this](
+	    PacketBuild &build, ZiSockAddr addr,
+	    const SentFrameRef &ref) {
+	  return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	});
       });
   }
 
@@ -3448,11 +4074,17 @@ public:
       return;
     Base::reclaimPTO_();
     SentFrameRef ref;
-    if (!Base::nextRetransmit_(ref)) return;
-    PacketBuild build;
-    if (!Base::buildRetransmitStream_(build, ref)) return;
-    (void)sendShortPacket_(build, m_peerAddr, {}, &ref, true);
-    Base::schedulePTO_();
+    bool sent = false;
+    while (Base::nextRetransmit_(ref)) {
+      PacketBuild build;
+      if (ref.kind == SentFrameKind::Stream) {
+	if (!Base::buildRetransmitStream_(build, ref)) continue;
+      } else if (!Base::buildRetransmitControl_(build, ref))
+	continue;
+      (void)sendShortPacket_(build, m_peerAddr, {}, &ref, true);
+      sent = true;
+    }
+    if (sent) Base::schedulePTO_();
   }
 
   void close(uint64_t errorCode = 0) {
@@ -3658,12 +4290,6 @@ private:
     return sendShortPacket_(build, ZuMv(addr), payload);
   }
 
-  bool sendAckElicitingShortFrame_(ZuCSpan payload, ZiSockAddr addr) {
-    PacketBuild build;
-    if (!buildPayload_(CryptoLevel::OneRTT, build, payload)) return false;
-    return sendShortPacket_(build, ZuMv(addr), payload, nullptr, true);
-  }
-
   bool sendShortPacket_(
     PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
@@ -3678,10 +4304,17 @@ private:
   }
 
   bool sendHandshakeDone_(ZiSockAddr addr) {
-    uint8_t frame[8];
-    int n = FrameCodec::writeHandshakeDone(frame, sizeof(frame));
-    if (n < 0) return false;
-    if (!sendShortPacket_(byteSpan(frame, unsigned(n)), ZuMv(addr)))
+    Base::queueHandshakeDone_();
+    if (!Base::flushControlAndStreams_(
+	ZuMv(addr),
+	[this](PacketBuild &build) {
+	  return appendPendingAck_(CryptoLevel::OneRTT, build);
+	},
+	[this](
+	    PacketBuild &build, ZiSockAddr addr_,
+	    const SentFrameRef &ref) {
+	  return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	}))
       return false;
     m_handshakeDoneSent = 1;
     Base::handshakeDoneTx_();
@@ -3730,6 +4363,16 @@ private:
 	return receivedShort_(d_, packetOffset, packetLen);
       });
     flushPendingAcks_(ZuMv(addr));
+    (void)Base::flushControlAndStreams_(
+      m_peerAddr,
+      [this](PacketBuild &build) {
+	return appendPendingAck_(CryptoLevel::OneRTT, build);
+      },
+      [this](
+	  PacketBuild &build, ZiSockAddr addr_,
+	  const SentFrameRef &ref) {
+	return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+      });
   }
 
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
@@ -3778,21 +4421,35 @@ private:
     switch (frame.type) {
       case FrameType::MaxData:
       case FrameType::MaxStreamData:
-	(void)Base::flushWritableStreams_(
+      case FrameType::MaxStreams:
+	(void)Base::flushControlAndStreams_(
 	  m_peerAddr,
-	  [this](StreamRef stream, ZiSockAddr addr_) {
-	    return sendQueuedStreamPacket_(stream, ZuMv(addr_));
+	  [this](PacketBuild &build) {
+	    return appendPendingAck_(CryptoLevel::OneRTT, build);
+	  },
+	  [this](
+	      PacketBuild &build, ZiSockAddr addr_,
+	      const SentFrameRef &ref) {
+	    return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
 	  });
 	return true;
       case FrameType::PathChallenge: {
-	uint8_t out[16];
-	int n = FrameCodec::writePathResponse(out, sizeof(out), frame.payload);
-	return n > 0 &&
-	  sendAckElicitingShortFrame_(byteSpan(out, unsigned(n)), ZuMv(addr));
+	Base::queuePathResponse_(frame.payload);
+	return Base::flushControlAndStreams_(
+	  ZuMv(addr),
+	  [this](PacketBuild &build) {
+	    return appendPendingAck_(CryptoLevel::OneRTT, build);
+	  },
+	  [this](
+	      PacketBuild &build, ZiSockAddr addr_,
+	      const SentFrameRef &ref) {
+	    return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	  });
       }
       case FrameType::PathResponse:
 	return true;
       case FrameType::ConnectionClose:
+      case FrameType::ApplicationClose:
 	close_(frame.errorCode);
 	impl()->disconnected();
 	return true;
@@ -3804,23 +4461,43 @@ private:
   }
 
   void dataBlocked_(uint64_t maximum) {
-    uint8_t frame[16];
-    int n = FrameCodec::writeDataBlocked(frame, sizeof(frame), maximum);
-    if (n > 0)
-      (void)sendAckElicitingShortFrame_(byteSpan(frame, unsigned(n)), m_peerAddr);
+    Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
+    (void)Base::flushControlAndStreams_(
+      m_peerAddr,
+      [this](PacketBuild &build) {
+	return appendPendingAck_(CryptoLevel::OneRTT, build);
+      },
+      [this](
+	  PacketBuild &build, ZiSockAddr addr,
+	  const SentFrameRef &ref) {
+	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+      });
   }
   void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
-    uint8_t frame[24];
-    int n = FrameCodec::writeStreamDataBlocked(
-      frame, sizeof(frame), streamID, maximum);
-    if (n > 0)
-      (void)sendAckElicitingShortFrame_(byteSpan(frame, unsigned(n)), m_peerAddr);
+    Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
+    (void)Base::flushControlAndStreams_(
+      m_peerAddr,
+      [this](PacketBuild &build) {
+	return appendPendingAck_(CryptoLevel::OneRTT, build);
+      },
+      [this](
+	  PacketBuild &build, ZiSockAddr addr,
+	  const SentFrameRef &ref) {
+	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+      });
   }
   void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
-    uint8_t frame[16];
-    int n = FrameCodec::writeStreamsBlocked(frame, sizeof(frame), type, maximum);
-    if (n > 0)
-      (void)sendAckElicitingShortFrame_(byteSpan(frame, unsigned(n)), m_peerAddr);
+    Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
+    (void)Base::flushControlAndStreams_(
+      m_peerAddr,
+      [this](PacketBuild &build) {
+	return appendPendingAck_(CryptoLevel::OneRTT, build);
+      },
+      [this](
+	  PacketBuild &build, ZiSockAddr addr,
+	  const SentFrameRef &ref) {
+	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+      });
   }
 
   void receivedRouted_(Datagram d) {

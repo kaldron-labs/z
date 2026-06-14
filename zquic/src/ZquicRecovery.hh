@@ -13,6 +13,8 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
+#include <string.h>
+
 #include <zlib/ZmQueue.hh>
 
 #include <zlib/ZquicSched.hh>
@@ -303,10 +305,14 @@ private:
 
 struct SentFrameRef {
   SentFrameKind::T	kind = SentFrameKind::None;
+  FrameType::T		controlType = FrameType::Unknown;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
   uint64_t		length = 0;
+  uint64_t		value = 0;
+  Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
   bool			fin = false;
+  uint8_t		payload[8]{};
   TxRange		range;
 
   bool operator !() const { return kind == SentFrameKind::None; }
@@ -333,6 +339,39 @@ struct SentFrameRef {
   static SentFrameRef control() {
     SentFrameRef ref;
     ref.kind = SentFrameKind::Control;
+    return ref;
+  }
+
+  static SentFrameRef flowUpdate(const FlowUpdate &update) {
+    SentFrameRef ref = control();
+    ref.controlType = update.type;
+    ref.streamID = update.streamID;
+    ref.value = update.maximum;
+    ref.streamType = update.streamType;
+    return ref;
+  }
+
+  static SentFrameRef blocked(
+    FrameType::T type, uint64_t streamID_, uint64_t limit,
+    Zi::StreamType::T streamType_ = Zi::StreamType::Duplex) {
+    SentFrameRef ref = control();
+    ref.controlType = type;
+    ref.streamID = streamID_;
+    ref.value = limit;
+    ref.streamType = streamType_;
+    return ref;
+  }
+
+  static SentFrameRef pathResponse(ZuCSpan data) {
+    SentFrameRef ref = control();
+    ref.controlType = FrameType::PathResponse;
+    if (data.length() == 8) memcpy(ref.payload, data.data(), 8);
+    return ref;
+  }
+
+  static SentFrameRef handshakeDone() {
+    SentFrameRef ref = control();
+    ref.controlType = FrameType::HandshakeDone;
     return ref;
   }
 };

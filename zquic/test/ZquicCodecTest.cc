@@ -14,7 +14,7 @@ using namespace ZuTestUtil;
 
 static ZuCSpan bytes_(const uint8_t *p, unsigned n)
 {
-  return ZuCSpan{reinterpret_cast<const char *>(p), n};
+  return ZuCSpan{p, n};
 }
 
 static int putParam_(uint8_t *out, unsigned len, uint64_t id, ZuCSpan value)
@@ -45,11 +45,11 @@ void testVarIntAndPacket()
   uint64_t v = 0;
   unsigned n = 0;
   ZuCHECK(Zquic::VarInt::encode(b, sizeof(b), 63) == 1, "varint 1 encode");
-  ZuCHECK(!Zquic::VarInt::decode(ZuCSpan{reinterpret_cast<char *>(b), 1}, v, n),
+  ZuCHECK(!Zquic::VarInt::decode(ZuCSpan{b, 1}, v, n),
     "varint 1 decode failed");
   ZuCHECK(v == 63 && n == 1, "varint 1 decode mismatch");
   ZuCHECK(Zquic::VarInt::encode(b, sizeof(b), 16383) == 2, "varint 2 encode");
-  ZuCHECK(!Zquic::VarInt::decode(ZuCSpan{reinterpret_cast<char *>(b), 2}, v, n),
+  ZuCHECK(!Zquic::VarInt::decode(ZuCSpan{b, 2}, v, n),
     "varint 2 decode failed");
   ZuCHECK(v == 16383 && n == 2, "varint 2 decode mismatch");
   unsigned badOffset = 2;
@@ -62,7 +62,7 @@ void testVarIntAndPacket()
   ZuCHECK(l > 0, "Initial header write failed");
   Zquic::LongHeader h;
   ZuCHECK(Zquic::Packet::parseLong(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l + 2)}, h) > 0,
+    ZuCSpan{b, unsigned(l + 2)}, h) > 0,
     "Initial header parse failed");
   ZuCHECK(h.type == Zquic::PacketType::Initial, "Initial type mismatch");
   ZuCHECK(h.dcid == dcid && h.scid == scid, "CID parse mismatch");
@@ -72,12 +72,12 @@ void testVarIntAndPacket()
     b, sizeof(b), dcid, scid, versions, 1);
   ZuCHECK(l > 0, "VN write failed");
   ZuCHECK(Zquic::Packet::isVersionNegotiation(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}),
+    ZuCSpan{b, unsigned(l)}),
     "VN recognition failed");
   unsigned nVersions = 0;
   uint32_t parsedVersions[2] = {};
   ZuCHECK(!Zquic::Packet::parseVersionNegotiation(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)},
+    ZuCSpan{b, unsigned(l)},
     parsedVersions, 2, nVersions), "VN parse failed");
   ZuCHECK(nVersions == 1 && parsedVersions[0] == Zquic::Version1,
     "VN version list mismatch");
@@ -85,7 +85,7 @@ void testVarIntAndPacket()
   l = Zquic::Packet::writeHandshake(b, sizeof(b), dcid, scid, 12, 1);
   ZuCHECK(l > 0, "Handshake header write failed");
   ZuCHECK(Zquic::Packet::parseLong(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l + 1)}, h) > 0 &&
+    ZuCSpan{b, unsigned(l + 1)}, h) > 0 &&
     h.type == Zquic::PacketType::Handshake,
     "Handshake header parse failed");
 
@@ -93,7 +93,7 @@ void testVarIntAndPacket()
   ZuCHECK(l > 0, "short header write failed");
   Zquic::ShortHeader sh;
   ZuCHECK(Zquic::Packet::parseShort(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, dcid.length(), sh) > 0 &&
+    ZuCSpan{b, unsigned(l)}, dcid.length(), sh) > 0 &&
     sh.dcid == dcid && sh.pnLength == 2,
     "short header parse failed");
 }
@@ -221,7 +221,7 @@ void testFramesAndParams()
   Zquic::Frame f;
   unsigned used = 0;
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used),
+    ZuCSpan{b, unsigned(l)}, f, used),
     "STREAM parse failed");
   ZuCHECK(f.type == Zquic::FrameType::Stream, "STREAM type mismatch");
   ZuCHECK(f.streamID == 0 && f.offset == 3 && f.length == 5 && f.fin,
@@ -236,7 +236,7 @@ void testFramesAndParams()
   l = p.encode(b, sizeof(b));
   ZuCHECK(l > 0, "transport parameter encode failed");
   Zquic::TransportParams q;
-  ZuCHECK(!q.decode(ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}),
+  ZuCHECK(!q.decode(ZuCSpan{b, unsigned(l)}),
     "transport parameter decode failed");
   ZuCHECK(q.maxUDPPayloadSize == 1400 && q.initialMaxData == 1000,
     "transport parameter values mismatch");
@@ -248,7 +248,7 @@ void testFramesAndParams()
   l = Zquic::FrameCodec::writeAck(b, sizeof(b), 10, 0, 3);
   ZuCHECK(l > 0, "ACK write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
+    ZuCSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::Ack && f.offset == 10 && f.length == 3 &&
     f.ackRanges.length() == 1 &&
     f.ackRanges[0].first == 7 &&
@@ -258,7 +258,7 @@ void testFramesAndParams()
   l = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 4, 7, 99);
   ZuCHECK(l > 0, "RESET_STREAM write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
+    ZuCSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::ResetStream &&
     f.streamID == 4 && f.errorCode == 7 && f.length == 99,
     "RESET_STREAM parse mismatch");
@@ -266,7 +266,7 @@ void testFramesAndParams()
   l = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 4, 4096);
   ZuCHECK(l > 0, "MAX_STREAM_DATA write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
+    ZuCSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::MaxStreamData &&
     f.streamID == 4 && f.value == 4096,
     "MAX_STREAM_DATA parse mismatch");
@@ -275,7 +275,7 @@ void testFramesAndParams()
     b, sizeof(b), Zi::StreamType::Simplex, 11);
   ZuCHECK(l > 0, "STREAMS_BLOCKED write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
+    ZuCSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::StreamsBlocked &&
     f.streamType == Zi::StreamType::Simplex && f.value == 11,
     "STREAMS_BLOCKED parse mismatch");
@@ -283,7 +283,7 @@ void testFramesAndParams()
   l = Zquic::FrameCodec::writePathChallenge(b, sizeof(b), "12345678");
   ZuCHECK(l > 0, "PATH_CHALLENGE write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
+    ZuCSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::PathChallenge && f.payload == "12345678",
     "PATH_CHALLENGE parse mismatch");
 
@@ -291,7 +291,7 @@ void testFramesAndParams()
     b, sizeof(b), Zquic::TransportError::FrameEncoding);
   ZuCHECK(l > 0, "CONNECTION_CLOSE write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
+    ZuCSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::ConnectionClose &&
     f.errorCode == Zquic::TransportError::FrameEncoding &&
     !f.value && !f.length && used == unsigned(l),
@@ -317,7 +317,7 @@ void testFramesAndParams()
     ++o;
   }
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), o}, f, used) &&
+    ZuCSpan{b, o}, f, used) &&
     f.type == Zquic::FrameType::Ack && f.offset == 10 &&
     f.length == 2 && used == o &&
     f.ackRanges.length() == 2 &&
@@ -330,7 +330,7 @@ void testFramesAndParams()
   l = Zquic::FrameCodec::writeHandshakeDone(b, sizeof(b));
   ZuCHECK(l == 1, "HANDSHAKE_DONE write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(l)}, f, used) &&
+    ZuCSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::HandshakeDone && used == unsigned(l),
     "HANDSHAKE_DONE parse mismatch");
   ZuCHECK(Zquic::FrameCodec::ackEliciting(Zquic::FrameType::HandshakeDone),
@@ -340,6 +340,17 @@ void testFramesAndParams()
 void testControlFrameCoverage()
 {
   ZuTestScope(testControlFrameCoverage);
+
+  // QUIC v1 base frame matrix covered here:
+  // 0x00 PADDING, 0x01 PING, 0x02/0x03 ACK, 0x04 RESET_STREAM,
+  // 0x05 STOP_SENDING, 0x06 CRYPTO, 0x07 NEW_TOKEN, 0x08..0x0f STREAM,
+  // 0x10 MAX_DATA, 0x11 MAX_STREAM_DATA, 0x12/0x13 MAX_STREAMS,
+  // 0x14 DATA_BLOCKED, 0x15 STREAM_DATA_BLOCKED,
+  // 0x16/0x17 STREAMS_BLOCKED, 0x18 NEW_CONNECTION_ID,
+  // 0x19 RETIRE_CONNECTION_ID, 0x1a PATH_CHALLENGE,
+  // 0x1b PATH_RESPONSE, 0x1c CONNECTION_CLOSE,
+  // 0x1d CONNECTION_CLOSE_APP, 0x1e HANDSHAKE_DONE.
+  // DATAGRAM is intentionally unsupported unless negotiated by extension.
 
   uint8_t b[256];
   Zquic::Frame f;
@@ -463,16 +474,17 @@ void testControlFrameCoverage()
       f.type == Zquic::FrameType::RetireConnectionID && f.value == 7,
     "RETIRE_CONNECTION_ID parse mismatch");
 
-  o = 0;
-  b[o++] = 0x1d;
-  ZuCHECK(!Zquic::VarInt::put(b, sizeof(b), 42, o) &&
-      !Zquic::VarInt::put(b, sizeof(b), 4, o),
-    "application close setup failed");
-  memcpy(b + o, "fail", 4); o += 4;
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, o), f, used) &&
-      f.type == Zquic::FrameType::ConnectionClose &&
+  n = Zquic::FrameCodec::writeApplicationClose(b, sizeof(b), 42, "fail");
+  ZuCHECK(n > 0 &&
+      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      f.type == Zquic::FrameType::ApplicationClose &&
       f.errorCode == 42 && f.length == 4 && f.payload == "fail",
     "application CONNECTION_CLOSE parse mismatch");
+
+  b[0] = 0x30;
+  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, 1), f, used) &&
+      f.type == Zquic::FrameType::Unknown && used == 1,
+    "unsupported DATAGRAM frame parse mismatch");
 
   b[0] = 0x40;
   ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, 1), f, used) &&

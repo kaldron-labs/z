@@ -29,15 +29,56 @@ struct TestLink :
 {
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
-  TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
+  TestLink(App *app, bool isServer = false) : Base{app, isServer} {
+    Base::configureLocalTransportParams_(app);
+  }
   void streamed(ZmRef<TestStream> stream) {
     lastStream = ZuMv(stream);
     ++streamedCount;
+  }
+  bool queuePathResponse() {
+    static const char data[] = "response";
+    return Base::queuePathResponse_(ZuCSpan{data, sizeof(data) - 1});
+  }
+  bool queueDataBlocked(uint64_t value) {
+    return Base::queueBlocked_(Zquic::FrameType::DataBlocked, 0, value);
+  }
+  bool queueStreamDataBlocked(uint64_t streamID, uint64_t value) {
+    return Base::queueBlocked_(
+      Zquic::FrameType::StreamDataBlocked, streamID, value);
+  }
+  bool queueStreamsBlocked(Zi::StreamType::T type, uint64_t value) {
+    return Base::queueBlocked_(
+      Zquic::FrameType::StreamsBlocked, 0, value, type);
+  }
+  bool flushControlSendFails() {
+    return Base::flushControlAndStreamsLocked_(
+      ZiSockAddr{},
+      [](Zquic::PacketBuild &) { return true; },
+      [](Zquic::PacketBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
+	return false;
+      });
+  }
+  bool flushControlSends() {
+    return Base::flushControlAndStreamsLocked_(
+      ZiSockAddr{},
+      [](Zquic::PacketBuild &) { return true; },
+      [](Zquic::PacketBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
+	return true;
+      });
   }
 
   ZmRef<TestStream>	lastStream;
   unsigned		streamedCount = 0;
 };
+
+static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
+{
+  unsigned used = 0;
+  return n > 0 && !Zquic::FrameCodec::parse(
+    ZuCSpan{b, unsigned(n)}, frame, used) &&
+    used == unsigned(n);
+}
 
 static ZmRef<ZiIOBuf> streamPacket_(
   uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
@@ -49,9 +90,7 @@ static ZmRef<ZiIOBuf> streamPacket_(
   if (n <= 0) return nullptr;
   packet->skip = 0;
   packet->length = unsigned(n);
-  if (Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(packet->data_()),
-	packet->length}, frame, used) ||
+  if (Zquic::FrameCodec::parse(packet->cspan(), frame, used) ||
       used != packet->length)
     return nullptr;
   return packet;
@@ -156,9 +195,7 @@ void testStreamRxSliceDelivery()
 
   Zquic::Frame frame;
   unsigned used = 0;
-  ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(packet->data_()),
-	packet->length}, frame, used) &&
+  ZuCHECK(!Zquic::FrameCodec::parse(packet->cspan(), frame, used) &&
       used == packet->length,
     "packet-backed STREAM frame parse failed");
 
@@ -321,8 +358,7 @@ void testStreamPacketizer()
   Zquic::Frame prefixFrame;
   unsigned prefixUsed = 0;
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(assembled),
-	unsigned(prefixLen) + prefixPayload.length()},
+      ZuCSpan{assembled, unsigned(prefixLen) + prefixPayload.length()},
       prefixFrame, prefixUsed) &&
       prefixUsed == unsigned(prefixLen) + prefixPayload.length() &&
       prefixFrame.type == Zquic::FrameType::Stream &&
@@ -336,6 +372,7 @@ void testStreamPacketizer()
   App app;
   TestLink client{&app};
   auto stream = client.stream(Zi::StreamType::Duplex);
+  stream->txCredit(6);
   {
     auto tx = stream->txStream_();
     tx << "abc" << Zi::flush();
@@ -368,7 +405,7 @@ void testStreamPacketizer()
   memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
     info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(assembled), info.bytes},
+      ZuCSpan{assembled, info.bytes},
       frame, used) &&
       used == info.bytes &&
       frame.type == Zquic::FrameType::Stream &&
@@ -391,34 +428,35 @@ void testStreamPacketizer()
       budget.used == info.bytes &&
       info.offset == 3 &&
       info.length == 3 &&
-      info.bytes == unsigned(n) + info.length &&
-      info.range.length == 3 &&
-      !memcmp(info.range.buf->data_() + info.range.offset, "def", 3) &&
-      info.fin &&
-      !stream->txRangeCount() &&
-      stream->finDequeued() &&
-      !stream->finReady(),
-    "second packetized STREAM accounting mismatch");
+	      info.bytes == unsigned(n) + info.length &&
+	      info.range.length == 3 &&
+	      !memcmp(info.range.buf->data_() + info.range.offset, "def", 3) &&
+	      info.fin &&
+	      !stream->txRangeCount() &&
+	      stream->finDequeued() &&
+	      !stream->finReady(),
+	    "second packetized STREAM accounting mismatch");
   memcpy(assembled, b, unsigned(n));
   memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
     info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(assembled), info.bytes},
+      ZuCSpan{assembled, info.bytes},
       frame, used) &&
       used == info.bytes &&
-      frame.offset == 3 &&
-      frame.length == 3 &&
-      frame.payload == "def" &&
-      frame.fin,
-    "second packetized STREAM parse mismatch");
+	      frame.offset == 3 &&
+	      frame.length == 3 &&
+	      frame.payload == "def" &&
+	      frame.fin,
+	    "second packetized STREAM parse mismatch");
 
-  budget = {};
-  assembly = {};
-  ZuCHECK(!Zquic::StreamPacketizer::writeNext(
-      b, sizeof(b), budget, assembly, *stream, &info),
-    "packetizer wrote a frame for an empty stream");
+	  budget = {};
+	  assembly = {};
+	  ZuCHECK(!Zquic::StreamPacketizer::writeNext(
+	      b, sizeof(b), budget, assembly, *stream, &info),
+	    "packetizer wrote a frame for an empty stream");
 
   auto blocked = client.stream(Zi::StreamType::Duplex);
+  blocked->txCredit(7);
   {
     auto tx = blocked->txStream_();
     tx << "blocked" << Zi::flush();
@@ -434,6 +472,7 @@ void testStreamPacketizer()
     "packetizer consumed data without packet budget");
 
   auto split = client.stream(Zi::StreamType::Duplex);
+  split->txCredit(10);
   {
     auto tx = split->txStream_();
     tx << "abcdefghij" << Zi::flush();
@@ -458,7 +497,7 @@ void testStreamPacketizer()
   memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
     info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(assembled), info.bytes},
+      ZuCSpan{assembled, info.bytes},
       frame, used) &&
       used == info.bytes &&
       frame.streamID == uint64_t(split->id()) &&
@@ -471,7 +510,71 @@ void testStreamPacketizer()
       tail.length == 5 &&
       tail.streamOffset == 5 &&
       !memcmp(tail.buf->data_() + tail.offset, "fghij", 5),
-    "split packetizer retained tail mismatch");
+	    "split packetizer retained tail mismatch");
+}
+
+void testQueuedControlSendFailureRetainsFrame()
+{
+  ZuTestScope(testQueuedControlSendFailureRetainsFrame);
+
+  App app;
+  TestLink client{&app};
+  ZuCHECK(client.queuePathResponse() &&
+      client.queuedControlFrames() == 1,
+    "queued control setup failed");
+  ZuCHECK(!client.flushControlSendFails() &&
+      client.queuedControlFrames() == 1,
+    "failed control send dropped queued frame");
+  ZuCHECK(client.flushControlSends() &&
+      !client.queuedControlFrames(),
+    "successful control send did not dequeue frame");
+}
+
+void testBlockedFrameDuplicateSuppression()
+{
+  ZuTestScope(testBlockedFrameDuplicateSuppression);
+
+  App app;
+  TestLink client{&app};
+  ZuCHECK(client.queueDataBlocked(1024) &&
+      !client.queueDataBlocked(1024) &&
+      client.queuedControlFrames() == 1,
+    "pending DATA_BLOCKED duplicate was queued");
+  (void)client.flushControlSends();
+  ZuCHECK(
+      !client.queuedControlFrames() &&
+      !client.queueDataBlocked(1024) &&
+      client.queueDataBlocked(2048) &&
+      client.queuedControlFrames() == 1,
+    "sent DATA_BLOCKED duplicate suppression mismatch");
+
+  TestLink streamLink{&app};
+  auto stream = streamLink.stream(Zi::StreamType::Duplex);
+  ZuCHECK(stream &&
+      streamLink.queueStreamDataBlocked(uint64_t(stream->id()), 4096) &&
+      !streamLink.queueStreamDataBlocked(uint64_t(stream->id()), 4096) &&
+      streamLink.queuedControlFrames() == 1,
+    "pending STREAM_DATA_BLOCKED duplicate was queued");
+  (void)streamLink.flushControlSends();
+  ZuCHECK(
+      !streamLink.queuedControlFrames() &&
+      !streamLink.queueStreamDataBlocked(uint64_t(stream->id()), 4096) &&
+      streamLink.queueStreamDataBlocked(uint64_t(stream->id()), 8192) &&
+      streamLink.queuedControlFrames() == 1,
+    "sent STREAM_DATA_BLOCKED duplicate suppression mismatch");
+
+  TestLink limitLink{&app};
+  ZuCHECK(limitLink.queueStreamsBlocked(Zi::StreamType::Duplex, 7) &&
+      !limitLink.queueStreamsBlocked(Zi::StreamType::Duplex, 7) &&
+      limitLink.queuedControlFrames() == 1,
+    "pending STREAMS_BLOCKED duplicate was queued");
+  (void)limitLink.flushControlSends();
+  ZuCHECK(
+      !limitLink.queuedControlFrames() &&
+      !limitLink.queueStreamsBlocked(Zi::StreamType::Duplex, 7) &&
+      limitLink.queueStreamsBlocked(Zi::StreamType::Duplex, 8) &&
+      limitLink.queuedControlFrames() == 1,
+    "sent STREAMS_BLOCKED duplicate suppression mismatch");
 }
 
 void testPeerStreamAcceptance()
@@ -541,7 +644,7 @@ void testStreamCountLimits()
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+      ZuCSpan{b, unsigned(n)}, frame, used),
     "MAX_STREAMS setup failed");
   ZuCHECK(client.applyMaxStreams(frame) &&
       !client.queuedLocalStreams(Zi::StreamType::Duplex) &&
@@ -588,10 +691,11 @@ void testStreamCountLimits()
   packet = streamPacket_(6, 0, "v", true, frame, used);
   ZuCHECK(packet,
     "second peer uni STREAM setup failed");
-  ZuCHECK(server.receiveFrame(frame, packet) < 0 &&
-      server.peerStreamsOpened(Zi::StreamType::Simplex) == 1 &&
-      !server.findStream(6),
-    "peer uni stream count limit was not enforced");
+  ZuCHECK(server.receiveFrame(frame, packet) == 0 &&
+      server.peerStreamsOpened(Zi::StreamType::Simplex) == 2 &&
+      server.localStreamLimit(Zi::StreamType::Simplex) == 3 &&
+      server.findStream(6),
+    "completed peer uni stream did not return stream-count credit");
 }
 
 void testResetStopFrames()
@@ -606,7 +710,7 @@ void testResetStopFrames()
   TestLink server{&app, true};
   int n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+      ZuCSpan{b, unsigned(n)}, frame, used),
     "RESET_STREAM setup failed");
   ZuCHECK(server.receiveFrame(frame) == 0, "server rejected peer RESET_STREAM");
   auto reset = server.findStream(0);
@@ -623,7 +727,7 @@ void testResetStopFrames()
   auto local = client.stream(Zi::StreamType::Duplex);
   n = Zquic::FrameCodec::writeStopSending(b, sizeof(b), local->id(), 9);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+      ZuCSpan{b, unsigned(n)}, frame, used),
     "STOP_SENDING setup failed");
   ZuCHECK(client.receiveFrame(frame) == 0 &&
       local->stopReceived() &&
@@ -638,10 +742,199 @@ void testResetStopFrames()
     "delivered STREAM setup failed");
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), delivered->id(), 1, 3);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used),
+      ZuCSpan{b, unsigned(n)}, frame, used),
     "final-size violating RESET_STREAM setup failed");
   ZuCHECK(!delivered->receiveReset(frame),
     "RESET_STREAM final-size violation was accepted");
+}
+
+void testMaxAndBlockedFrameValidation()
+{
+  ZuTestScope(testMaxAndBlockedFrameValidation);
+
+  App app;
+  uint8_t b[128];
+  Zquic::Frame frame;
+
+  TestLink client{&app};
+  auto localBidi = client.stream(Zi::StreamType::Duplex);
+  auto localUni = client.stream(Zi::StreamType::Simplex);
+  int n = Zquic::FrameCodec::writeMaxStreamData(
+    b, sizeof(b), localBidi->id(), 4096);
+  ZuCHECK(parseFrame_(b, n, frame) && client.applyMaxStreamData(frame) &&
+      localBidi->txCreditLimit() == 4096,
+    "MAX_STREAM_DATA did not extend local bidirectional stream credit");
+
+  n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 8, 4096);
+  ZuCHECK(parseFrame_(b, n, frame) && !client.applyMaxStreamData(frame),
+    "MAX_STREAM_DATA for uninitiated local stream was accepted");
+
+  n = Zquic::FrameCodec::writeMaxStreamData(
+    b, sizeof(b), localUni->id(), 4096);
+  ZuCHECK(parseFrame_(b, n, frame) && client.applyMaxStreamData(frame),
+    "MAX_STREAM_DATA for local unidirectional sender was rejected");
+
+  n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 3, 4096);
+  ZuCHECK(parseFrame_(b, n, frame) && !client.applyMaxStreamData(frame),
+    "MAX_STREAM_DATA for peer unidirectional stream was accepted");
+
+  TestLink server{&app, true};
+  server.setLocalStreamLimit(Zi::StreamType::Duplex, 2);
+  n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 0, 2048);
+  ZuCHECK(parseFrame_(b, n, frame) && server.applyMaxStreamData(frame) &&
+      server.findStream(0) &&
+      server.peerStreamsOpened(Zi::StreamType::Duplex) == 1,
+    "MAX_STREAM_DATA did not create valid peer bidirectional stream");
+
+  server.setLocalStreamLimit(Zi::StreamType::Duplex, 1);
+  n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 4, 2048);
+  ZuCHECK(parseFrame_(b, n, frame) && !server.applyMaxStreamData(frame) &&
+      !server.findStream(4),
+    "MAX_STREAM_DATA created peer stream beyond local stream limit");
+
+  n = Zquic::FrameCodec::writeDataBlocked(
+    b, sizeof(b), server.rxDataCreditLimit());
+  ZuCHECK(parseFrame_(b, n, frame) && server.receiveDataBlocked(frame),
+    "DATA_BLOCKED at local receive limit was rejected");
+  n = Zquic::FrameCodec::writeDataBlocked(
+    b, sizeof(b), server.rxDataCreditLimit() + 1);
+  ZuCHECK(parseFrame_(b, n, frame) && !server.receiveDataBlocked(frame),
+    "DATA_BLOCKED above local receive limit was accepted");
+
+  n = Zquic::FrameCodec::writeStreamsBlocked(
+    b, sizeof(b), Zi::StreamType::Duplex,
+    server.localStreamLimit(Zi::StreamType::Duplex));
+  ZuCHECK(parseFrame_(b, n, frame) && server.receiveStreamsBlocked(frame),
+    "STREAMS_BLOCKED at local advertised peer limit was rejected");
+  n = Zquic::FrameCodec::writeStreamsBlocked(
+    b, sizeof(b), Zi::StreamType::Duplex,
+    server.localStreamLimit(Zi::StreamType::Duplex) + 1);
+  ZuCHECK(parseFrame_(b, n, frame) && !server.receiveStreamsBlocked(frame),
+    "STREAMS_BLOCKED above local advertised peer limit was accepted");
+}
+
+void testStreamDataBlockedValidation()
+{
+  ZuTestScope(testStreamDataBlockedValidation);
+
+  App app;
+  uint8_t b[128];
+  Zquic::Frame frame;
+
+  TestLink server{&app, true};
+  server.setLocalStreamLimit(Zi::StreamType::Duplex, 2);
+  int n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 0, 128);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      server.receiveStreamDataBlocked(frame) &&
+      server.findStream(0) &&
+      server.findStream(0)->rxCreditUsed() == 0 &&
+      server.rxDataCreditUsed() == 0,
+    "valid STREAM_DATA_BLOCKED mutated receive credit");
+
+  n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 0, 64);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      server.receiveStreamDataBlocked(frame) &&
+      server.findStream(0)->rxCreditUsed() == 0 &&
+      server.rxDataCreditUsed() == 0,
+    "decreasing STREAM_DATA_BLOCKED mutated receive credit");
+
+  n = Zquic::FrameCodec::writeStreamDataBlocked(
+    b, sizeof(b), 0, server.findStream(0)->rxCreditLimit() + 1);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      !server.receiveStreamDataBlocked(frame),
+    "STREAM_DATA_BLOCKED beyond stream receive limit was accepted");
+
+  n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 4, 128);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      server.receiveStreamDataBlocked(frame) &&
+      server.findStream(4) &&
+      server.peerStreamsOpened(Zi::StreamType::Duplex) == 2,
+    "valid unopened peer STREAM_DATA_BLOCKED did not create stream");
+
+  n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 8, 128);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      !server.receiveStreamDataBlocked(frame) &&
+      !server.findStream(8),
+    "STREAM_DATA_BLOCKED opened stream beyond stream-count limit");
+
+  TestLink client{&app};
+  n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 2, 128);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      !client.receiveStreamDataBlocked(frame),
+    "STREAM_DATA_BLOCKED for local unidirectional stream was accepted");
+
+  TestLink small{&app, true};
+  small.setLocalStreamLimit(Zi::StreamType::Duplex, 1);
+  n = Zquic::FrameCodec::writeStreamDataBlocked(
+    b, sizeof(b), 0, small.rxDataCreditLimit() + 1);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      !small.receiveStreamDataBlocked(frame),
+    "STREAM_DATA_BLOCKED beyond connection receive limit was accepted");
+}
+
+void testFrameRoleAndSpaceLegality()
+{
+  ZuTestScope(testFrameRoleAndSpaceLegality);
+
+  App app;
+  TestLink client{&app};
+  TestLink server{&app, true};
+  Zquic::Frame frame;
+
+  frame.type = Zquic::FrameType::Ping;
+  ZuCHECK(client.frameLegal(Zquic::CryptoLevel::Initial, frame) &&
+      client.frameLegal(Zquic::CryptoLevel::Handshake, frame) &&
+      client.frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+    "PING frame-space legality mismatch");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::Stream;
+  ZuCHECK(!client.frameLegal(Zquic::CryptoLevel::Initial, frame) &&
+      !client.frameLegal(Zquic::CryptoLevel::Handshake, frame) &&
+      client.frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+    "STREAM frame-space legality mismatch");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::Crypto;
+  ZuCHECK(client.frameLegal(Zquic::CryptoLevel::Initial, frame) &&
+      client.frameLegal(Zquic::CryptoLevel::Handshake, frame) &&
+      !client.frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+    "CRYPTO frame-space legality mismatch");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::Ack;
+  frame.ackRanges.push(Zquic::AckRange{0, 0});
+  ZuCHECK(!client.frameLegal(Zquic::CryptoLevel::Initial, frame),
+    "ACK for unsent packet number was accepted");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::NewToken;
+  frame.payload = ZuCSpan{"token", 5};
+  ZuCHECK(client.frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
+      !server.frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
+      !client.frameLegal(Zquic::CryptoLevel::Handshake, frame),
+    "NEW_TOKEN role/space legality mismatch");
+  frame.payload = {};
+  ZuCHECK(!client.frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+    "empty NEW_TOKEN was accepted");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::HandshakeDone;
+  ZuCHECK(client.frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
+      !server.frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
+      !client.frameLegal(Zquic::CryptoLevel::Handshake, frame),
+    "HANDSHAKE_DONE role/space legality mismatch");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::ApplicationClose;
+  ZuCHECK(!client.frameLegal(Zquic::CryptoLevel::Initial, frame) &&
+      client.frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+    "APPLICATION_CLOSE frame-space legality mismatch");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::Unknown;
+  ZuCHECK(!client.frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+    "unknown extension frame was accepted");
 }
 
 int main(int argc, char **argv)
@@ -654,7 +947,12 @@ int main(int argc, char **argv)
   ZuTestCall(testOutOfOrderStreamDelivery);
   ZuTestCall(testStreamTxRetention);
   ZuTestCall(testStreamPacketizer);
+  ZuTestCall(testQueuedControlSendFailureRetainsFrame);
+  ZuTestCall(testBlockedFrameDuplicateSuppression);
   ZuTestCall(testPeerStreamAcceptance);
   ZuTestCall(testStreamCountLimits);
   ZuTestCall(testResetStopFrames);
+  ZuTestCall(testMaxAndBlockedFrameValidation);
+  ZuTestCall(testStreamDataBlockedValidation);
+  ZuTestCall(testFrameRoleAndSpaceLegality);
 }

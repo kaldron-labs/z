@@ -50,7 +50,7 @@ bool ResetToken::generate()
   if (!Ztls::Backend::init() ||
       !Ztls::Backend::random_bytes(ZuSpan<uint8_t>{bytes, Length}))
     return false;
-  return set(ZuCSpan{reinterpret_cast<const char *>(bytes), Length});
+  return set(ZuCSpan{bytes, Length});
 }
 
 bool ResetToken::equals(const ResetToken &token) const
