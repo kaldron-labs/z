@@ -133,11 +133,11 @@ inline bool runtimeFrameRef(
   if (FrameCodec::parse(bytes, frame, used) < 0 || !used) return false;
   ackEliciting = FrameCodec::ackEliciting(frame.type);
   if (!ackEliciting) return true;
-  if (frame.type == FrameType::Crypto) {
+  switch (frame.type) {
+  case FrameType::Crypto:
     ref = SentFrameRef::crypto(frame.offset, frame.length);
     return true;
-  }
-  if (frame.type == FrameType::Stream) {
+  case FrameType::Stream:
     ref.kind = SentFrameKind::Stream;
     ref.streamID = frame.streamID;
     ref.offset = frame.offset;
@@ -146,23 +146,28 @@ inline bool runtimeFrameRef(
     ref.range = TxRange{
       nullptr, 0, uint32_t(frame.length), frame.offset};
     return true;
-  }
-  if (frame.type == FrameType::MaxData ||
-      frame.type == FrameType::MaxStreamData ||
-      frame.type == FrameType::MaxStreams)
+  case FrameType::MaxData:
+  case FrameType::MaxStreamData:
+  case FrameType::MaxStreams:
     ref = SentFrameRef::flowUpdate(
       FlowUpdate{frame.type, frame.streamID, frame.value, frame.streamType});
-  else if (frame.type == FrameType::DataBlocked ||
-      frame.type == FrameType::StreamDataBlocked ||
-      frame.type == FrameType::StreamsBlocked)
+    break;
+  case FrameType::DataBlocked:
+  case FrameType::StreamDataBlocked:
+  case FrameType::StreamsBlocked:
     ref = SentFrameRef::blocked(
       frame.type, frame.streamID, frame.value, frame.streamType);
-  else if (frame.type == FrameType::PathResponse)
+    break;
+  case FrameType::PathResponse:
     ref = SentFrameRef::pathResponse(frame.payload);
-  else if (frame.type == FrameType::HandshakeDone)
+    break;
+  case FrameType::HandshakeDone:
     ref = SentFrameRef::handshakeDone();
-  else
+    break;
+  default:
     ref = SentFrameRef::control();
+    break;
+  }
   return true;
 }
 
