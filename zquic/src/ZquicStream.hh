@@ -53,6 +53,10 @@ public:
     m_used += n;
     return true;
   }
+  void set(uint64_t limit) {
+    m_limit = limit;
+    if (m_used > m_limit) m_used = m_limit;
+  }
   bool consumeTo(uint64_t n) {
     if (n > m_limit) return false;
     if (n > m_used) m_used = n;

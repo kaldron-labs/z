@@ -575,17 +575,20 @@ static int protect_(
     memcpy(out, header.data(), header.length());
 
   ptls_aead_context_t *ctx = state.aead.get();
-  ptls_aead_supplementary_encryption_t supp;
-  supp.ctx = state.hpSupp.get();
-  supp.input = out + pnOffset + 4;
-  size_t n = ptls_aead_encrypt_v_s(
+  ptls_aead_encrypt_v(
     ctx, out + header.length(), plain, plainCount, pn,
-    out, header.length(), &supp);
+    out, header.length());
+  size_t n = plainLen + secret.tagLen;
   if (n != plainLen + secret.tagLen) return -1;
 
-  out[0] ^= supp.output[0] & firstMask;
+  uint8_t mask[InitialSecret::HPMaskLen];
+  if (!trafficMask_(
+	mask, sizeof(mask), state,
+	ZuCSpan{reinterpret_cast<const char *>(out + pnOffset + 4), 16}))
+    return -1;
+  out[0] ^= mask[0] & firstMask;
   for (unsigned i = 0; i < pnLength; ++i)
-    out[pnOffset + i] ^= supp.output[1 + i];
+    out[pnOffset + i] ^= mask[1 + i];
   return int(packetLen);
 }
 
