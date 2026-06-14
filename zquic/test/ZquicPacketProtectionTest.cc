@@ -44,7 +44,7 @@ bool hexEquals_(const uint8_t (&actual)[N], const char *expected)
 
 ZuCSpan bytes_(const uint8_t *data, unsigned len)
 {
-  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+  return ZuCSpan{data, len};
 }
 
 ZuCSpan text_(const char *s)
@@ -381,14 +381,34 @@ void testTrafficSecretProtection()
     ptls_iovec_init(payload + 3, 0),
     ptls_iovec_init(payload + 3, sizeof(payload) - 3)
   };
-  nv = Zquic::PacketProtection::protectShortV(
-    packetV, sizeof(packetV), txShortSplit, 11, bytes_(header, unsigned(h)),
-    shortVec, 3, pnOffset, 2);
-  ZuCHECK(nv == n && !memcmp(packetV, packet, unsigned(n)),
-    "traffic short vector protection parity failed");
+	  nv = Zquic::PacketProtection::protectShortV(
+	    packetV, sizeof(packetV), txShortSplit, 11, bytes_(header, unsigned(h)),
+	    shortVec, 3, pnOffset, 2);
+	  ZuCHECK(nv == n && !memcmp(packetV, packet, unsigned(n)),
+	    "traffic short vector protection parity failed");
 
-  plainLen = Zquic::PacketProtection::unprotectShort(
-    packet, unsigned(n), rxShort, 0, pnOffset, pn, payloadOffset);
+	  Zquic::TrafficSecret wrongSecret = secret;
+	  wrongSecret.key[0] ^= 0x55;
+	  Zquic::PacketProtectionState wrongRx;
+	  Zquic::PacketProtectionState retryRx;
+	  uint8_t retry[256];
+	  memcpy(retry, packetV, unsigned(nv));
+	  ZuCHECK(wrongRx.init(wrongSecret, Zquic::CryptoLevel::OneRTT, false) &&
+	      retryRx.init(secret, Zquic::CryptoLevel::OneRTT, false),
+	    "traffic short retry state init failed");
+	  plainLen = Zquic::PacketProtection::unprotectShort(
+	    retry, unsigned(nv), wrongRx, 0, pnOffset, pn, payloadOffset);
+	  ZuCHECK(plainLen < 0, "traffic short wrong-key unprotect succeeded");
+	  plainLen = Zquic::PacketProtection::unprotectShort(
+	    retry, unsigned(nv), retryRx, 0, pnOffset, pn, payloadOffset);
+	  ZuCHECK(plainLen == int(sizeof(payload)) &&
+	      pn == 11 && payloadOffset == unsigned(h) &&
+	      !memcmp(retry, header, unsigned(h)) &&
+	      !memcmp(retry + payloadOffset, payload, sizeof(payload)),
+	    "traffic short retry after failed unprotect did not recover");
+
+	  plainLen = Zquic::PacketProtection::unprotectShort(
+	    packet, unsigned(n), rxShort, 0, pnOffset, pn, payloadOffset);
   ZuCHECK(plainLen == int(sizeof(payload)) &&
       pn == 11 && payloadOffset == unsigned(h),
     "traffic short unprotect metadata mismatch");

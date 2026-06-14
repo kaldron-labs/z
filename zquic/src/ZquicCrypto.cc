@@ -534,6 +534,62 @@ bool PacketProtection::deriveTrafficSecret(
   return true;
 }
 
+bool PacketProtection::deriveNextTrafficSecret(
+  TrafficSecret &out, const TrafficSecret &current)
+{
+  out.clear();
+  if (!current.valid() || !current.hash || !current.aead ||
+      !current.hpCipher || !current.secretLen ||
+      current.secretLen > TrafficSecret::MaxSecretLen)
+    return false;
+
+  out.secretLen = current.secretLen;
+  out.keyLen = current.keyLen;
+  out.ivLen = current.ivLen;
+  out.hpLen = current.hpLen;
+  out.tagLen = current.tagLen;
+  out.aead = current.aead;
+  out.hash = current.hash;
+  out.hpCipher = current.hpCipher;
+  out.hpSuppCipher = current.hpSuppCipher;
+
+  ZuCSpan secret{current.secret};
+  secret.trunc(current.secretLen);
+  if (!hkdfExpandLabelPTLS_(current.hash, out.secret, out.secretLen,
+	secret, "quic ku")) {
+    out.clear();
+    return false;
+  }
+  ZuCSpan next{out.secret};
+  next.trunc(out.secretLen);
+  if (!hkdfExpandLabelPTLS_(current.hash, out.key, out.keyLen,
+	next, "quic key") ||
+      !hkdfExpandLabelPTLS_(current.hash, out.iv, out.ivLen,
+	next, "quic iv")) {
+    out.clear();
+    return false;
+  }
+  memcpy(out.hp, current.hp, out.hpLen);
+  out.installed = true;
+  return true;
+}
+
+bool Crypto::updateTxTrafficSecret(
+  CryptoLevel::T level, const TrafficSecret &secret)
+{
+  if (level < 0 || level >= 3 || !secret.valid()) return false;
+  m_txTrafficSecrets[level] = secret;
+  return m_txProtection[level].init(m_txTrafficSecrets[level], level, true);
+}
+
+bool Crypto::updateRxTrafficSecret(
+  CryptoLevel::T level, const TrafficSecret &secret)
+{
+  if (level < 0 || level >= 3 || !secret.valid()) return false;
+  m_rxTrafficSecrets[level] = secret;
+  return m_rxProtection[level].init(m_rxTrafficSecrets[level], level, false);
+}
+
 static bool trafficMask_(
   uint8_t *mask, unsigned len, PacketProtectionState &state, ZuCSpan sample)
 {
@@ -601,15 +657,22 @@ static int unprotect_(
   if (!state.valid() || !secret.valid() || !state.aead.valid() ||
       !secret.aead || pnOffset + 4 + 16 > len)
     return -1;
+  if (len > BufSize) return -1;
+  uint8_t saved[BufSize];
+  memcpy(saved, packet, len);
+  auto fail = [&]() -> int {
+    memcpy(packet, saved, len);
+    return -1;
+  };
   uint8_t mask[InitialSecret::HPMaskLen];
   if (!trafficMask_(
 	mask, sizeof(mask), state,
 	ZuCSpan{reinterpret_cast<const char *>(packet + pnOffset + 4), 16}))
-    return -1;
+    return fail();
   packet[0] ^= mask[0] & firstMask;
   unsigned pnLength = (packet[0] & 0x03) + 1;
   if (pnLength < 1 || pnLength > 4 || pnOffset + pnLength > len)
-    return -1;
+    return fail();
   uint64_t truncated = 0;
   for (unsigned i = 0; i < pnLength; ++i) {
     packet[pnOffset + i] ^= mask[1 + i];
@@ -622,7 +685,8 @@ static int unprotect_(
   size_t n = ptls_aead_decrypt(
     ctx, packet + payloadOffset, packet + payloadOffset,
     len - payloadOffset, pn, packet, payloadOffset);
-  return n == SIZE_MAX ? -1 : int(n);
+  if (n == SIZE_MAX) return fail();
+  return int(n);
 }
 
 int PacketProtection::protectLongV(

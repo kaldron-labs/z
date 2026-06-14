@@ -152,6 +152,7 @@ struct PacketProtection {
   static int unprotectShort(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
+  static bool deriveNextTrafficSecret(TrafficSecret &, const TrafficSecret &);
 };
 
 struct CryptoDiag {
@@ -263,6 +264,8 @@ public:
   PacketProtectionState &rxProtectionState(CryptoLevel::T level) {
     return m_rxProtection[level];
   }
+  bool updateTxTrafficSecret(CryptoLevel::T, const TrafficSecret &);
+  bool updateRxTrafficSecret(CryptoLevel::T, const TrafficSecret &);
   const CryptoDiag &diag() const { return m_diag; }
   int tlsResult() const { return m_tlsResult; }
   size_t tlsReadEpoch() const;

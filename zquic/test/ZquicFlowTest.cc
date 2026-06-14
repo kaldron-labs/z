@@ -34,9 +34,7 @@ static ZmRef<ZiIOBuf> streamPacket_(
   if (n <= 0) return nullptr;
   packet->skip = 0;
   packet->length = unsigned(n);
-  if (Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(packet->data_()),
-	packet->length}, frame, used) ||
+  if (Zquic::FrameCodec::parse(packet->cspan(), frame, used) ||
       used != packet->length)
     return nullptr;
   return packet;
@@ -77,16 +75,40 @@ void testFlowControlFrames()
 
   int n = Zquic::FrameCodec::writeDataBlocked(b, sizeof(b), 100);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, f, used) &&
+    ZuCSpan{b, unsigned(n)}, f, used) &&
     f.type == Zquic::FrameType::DataBlocked && f.value == 100,
     "DATA_BLOCKED frame mismatch");
 
   n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 4, 200);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, f, used) &&
+    ZuCSpan{b, unsigned(n)}, f, used) &&
     f.type == Zquic::FrameType::StreamDataBlocked &&
     f.streamID == 4 && f.value == 200,
-    "STREAM_DATA_BLOCKED frame mismatch");
+	    "STREAM_DATA_BLOCKED frame mismatch");
+}
+
+void testStreamDataBlockedIsAdvisory()
+{
+  ZuTestScope(testStreamDataBlockedIsAdvisory);
+
+  FlowStream stream{4};
+  stream.rxCredit(200);
+
+  Zquic::Frame frame;
+  frame.type = Zquic::FrameType::StreamDataBlocked;
+  frame.streamID = 4;
+  frame.value = 100;
+
+  ZuCHECK(stream.receiveBlocked(frame) &&
+      !stream.rxCreditUsed() &&
+      stream.rxCreditLimit() == 200,
+    "STREAM_DATA_BLOCKED mutated receive credit");
+
+  frame.value = 201;
+  ZuCHECK(!stream.receiveBlocked(frame) &&
+      !stream.rxCreditUsed() &&
+      stream.rxCreditLimit() == 200,
+    "oversized STREAM_DATA_BLOCKED changed receive credit");
 }
 
 void testReceiveFlowControl()
@@ -163,7 +185,7 @@ void testReceiveFlowUpdates()
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
+      ZuCSpan{b, unsigned(n)}, frame, used) &&
       frame.type == Zquic::FrameType::MaxData &&
       frame.value == 16,
     "MAX_DATA update frame mismatch");
@@ -176,7 +198,7 @@ void testReceiveFlowUpdates()
     "MAX_STREAM_DATA update decision mismatch");
   n = update.write(b, sizeof(b));
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)}, frame, used) &&
+      ZuCSpan{b, unsigned(n)}, frame, used) &&
       frame.type == Zquic::FrameType::MaxStreamData &&
       frame.streamID == 4 &&
       frame.value == 18,
@@ -220,6 +242,30 @@ void testScheduling()
     packet.addControl(budget, 20) &&
     packet.controlFrames() == 2 && packet.streamAdded() &&
     !budget.remaining(), "packet assembly budget/STREAM rules mismatch");
+
+  Zquic::ControlFrame control = Zquic::ControlFrame::blocked(
+    Zquic::FrameType::StreamDataBlocked, 4, 1024);
+  uint8_t b[32];
+  int n = control.write(b, sizeof(b));
+  Zquic::Frame frame;
+  unsigned used = 0;
+  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
+      ZuCSpan{b, unsigned(n)}, frame, used) &&
+      frame.type == Zquic::FrameType::StreamDataBlocked &&
+      frame.streamID == 4 &&
+      frame.value == 1024,
+    "queued STREAM_DATA_BLOCKED control write mismatch");
+
+  control = Zquic::ControlFrame::flowUpdate(
+    Zquic::FlowUpdate{
+      Zquic::FrameType::MaxStreams, 0, 8, Zi::StreamType::Simplex});
+  n = control.write(b, sizeof(b));
+  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
+      ZuCSpan{b, unsigned(n)}, frame, used) &&
+      frame.type == Zquic::FrameType::MaxStreams &&
+      frame.streamType == Zi::StreamType::Simplex &&
+      frame.value == 8,
+    "queued MAX_STREAMS control write mismatch");
 }
 
 void testPacing()
@@ -245,6 +291,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testFlowCreditAndLimits);
   ZuTestCall(testFlowControlFrames);
+  ZuTestCall(testStreamDataBlockedIsAdvisory);
   ZuTestCall(testReceiveFlowControl);
   ZuTestCall(testReceiveFlowUpdates);
   ZuTestCall(testScheduling);

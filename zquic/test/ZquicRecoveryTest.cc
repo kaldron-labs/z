@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <string.h>
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZquicRecovery.hh>
 
@@ -13,7 +15,7 @@ static bool getVar_(const uint8_t *b, unsigned len, unsigned &o, uint64_t &v)
 {
   unsigned n = 0;
   if (Zquic::VarInt::decode(
-      ZuCSpan{reinterpret_cast<const char *>(b + o), len - o}, v, n) < 0)
+      ZuCSpan{b + o, len - o}, v, n) < 0)
     return false;
   o += n;
   return true;
@@ -55,7 +57,7 @@ void testRecovery()
   unsigned used = 0;
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
+	ZuCSpan{b, unsigned(n)},
 	frame, used) &&
       used == unsigned(n) &&
       frame.type == Zquic::FrameType::Ack &&
@@ -105,7 +107,7 @@ void testRecovery()
   n = reordered.writeFrame(b, sizeof(b));
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
+	ZuCSpan{b, unsigned(n)},
 	frame, used) &&
       frame.ackRanges.length() == 2 &&
       frame.ackRanges[0].first == 0 &&
@@ -242,6 +244,72 @@ void testPTOReclaimUsesRetransmitQueue()
     "PTO retransmit queue contents mismatch");
 }
 
+void testAckCanLeaveOnlyRetransmitsPending()
+{
+  ZuTestScope(testAckCanLeaveOnlyRetransmitsPending);
+
+  Zquic::PacketTxSpace tx;
+  for (uint64_t pn = 0; pn < 6; ++pn)
+    ZuCHECK(tx.add(txPacket_(pn)), "sent packet setup failed");
+
+  Zquic::AckRange ranges[] = { Zquic::AckRange{5, 2} };
+  unsigned lost = 0;
+  ZuCHECK(tx.ack(ranges, 1, &lost) == 4 &&
+      lost == 2 &&
+      tx.acked() == 4 &&
+      tx.lost() == 2 &&
+      tx.retransmittable() == 2 &&
+      !tx.bytesInFlight() &&
+      tx.retransmitPending() == 2,
+    "ACK/loss did not leave queued retransmits without bytes in flight");
+
+  Zquic::SentFrameRef ref;
+  ZuCHECK(tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 0 &&
+      ref.length == 1,
+    "first zero-flight retransmit ref mismatch");
+  ZuCHECK(tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 10 &&
+      ref.length == 2 &&
+      !tx.nextRetransmit(ref),
+    "second zero-flight retransmit ref mismatch");
+}
+
+void testTypedControlRefs()
+{
+  ZuTestScope(testTypedControlRefs);
+
+  Zquic::FlowUpdate update{
+    Zquic::FrameType::MaxStreamData, 8, 4096, Zi::StreamType::Duplex};
+  Zquic::SentFrameRef ref = Zquic::SentFrameRef::flowUpdate(update);
+  ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
+      ref.controlType == Zquic::FrameType::MaxStreamData &&
+      ref.streamID == 8 &&
+      ref.value == 4096,
+    "typed flow-update control ref mismatch");
+
+  ref = Zquic::SentFrameRef::blocked(
+    Zquic::FrameType::StreamsBlocked, 0, 17, Zi::StreamType::Simplex);
+  ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
+      ref.controlType == Zquic::FrameType::StreamsBlocked &&
+      ref.streamType == Zi::StreamType::Simplex &&
+      ref.value == 17,
+    "typed blocked control ref mismatch");
+
+  ref = Zquic::SentFrameRef::pathResponse("12345678");
+  ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
+      ref.controlType == Zquic::FrameType::PathResponse &&
+      !memcmp(ref.payload, "12345678", 8),
+    "typed PATH_RESPONSE control ref mismatch");
+
+  ref = Zquic::SentFrameRef::handshakeDone();
+  ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
+      ref.controlType == Zquic::FrameType::HandshakeDone,
+    "typed HANDSHAKE_DONE control ref mismatch");
+}
+
 void testAckManager()
 {
   ZuTestScope(testAckManager);
@@ -267,7 +335,7 @@ void testAckManager()
   unsigned used = 0;
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
+	ZuCSpan{b, unsigned(n)},
 	frame, used) &&
       frame.type == Zquic::FrameType::Ack &&
       frame.offset == 1 &&
@@ -292,7 +360,7 @@ void testAckManager()
   n = acks.writeFrame(Zquic::PacketSpace::AppData, b, sizeof(b));
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
+	ZuCSpan{b, unsigned(n)},
 	frame, used) &&
       frame.offset == 6 &&
       frame.length == 1,
@@ -306,5 +374,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRecovery);
   ZuTestCall(testPacketReorderDuplicateLoss);
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);
+  ZuTestCall(testAckCanLeaveOnlyRetransmitsPending);
+  ZuTestCall(testTypedControlRefs);
   ZuTestCall(testAckManager);
 }

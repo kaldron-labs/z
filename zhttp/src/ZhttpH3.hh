@@ -344,7 +344,7 @@ namespace H3 {
   public:
     template <typename Stream>
     State::T process(Stream &stream) {
-      if (stream.resetReceived() || stream.stopReceived()) {
+      if (stream.resetReceived()) {
 	m_streamState = StreamState::Cancelled;
 	return impl()->h3State();
       }
@@ -866,7 +866,7 @@ namespace H3 {
     // top-level process
     template <typename Stream>
     State::T process(Stream &stream) {
-      if (stream.resetReceived() || stream.stopReceived()) {
+      if (stream.resetReceived()) {
 	m_state = State::Cancelled;
 	impl()->complete(m_state);
 	return m_state;

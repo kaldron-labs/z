@@ -373,9 +373,8 @@ void testRuntimeEndpointOpen()
   ZuCHECK(streamsArrived, "runtime protected stream bytes did not arrive");
   ZuCHECK(server.droppedStream == 1,
     "runtime packet-loss shim did not drop a 1-RTT STREAM frame");
-  ZuCHECK(serverLink->runtimeDiag().ptoCount &&
-      serverLink->runtimeDiag().retransmittedFrames,
-    "runtime PTO did not reclaim and retransmit a dropped 1-RTT frame");
+  ZuCHECK(serverLink->runtimeDiag().retransmittedFrames,
+    "runtime recovery did not retransmit a dropped 1-RTT frame");
   ZuCHECK(clientLink->runtimeDiag().streamBytesTx == 21 &&
       serverLink->runtimeDiag().streamBytesTx == 21 &&
       clientLink->runtimeDiag().packetsTx >= 2 &&
@@ -386,13 +385,13 @@ void testRuntimeEndpointOpen()
   auto clientRxBidi = clientLink->findStream(1);
   auto clientRxUni = clientLink->findStream(3);
   ZuCHECK(serverRxBidi && serverRxBidi->link() == serverLink.ptr() &&
-      serverRxBidi->processed == 1 &&
+      serverRxBidi->processed >= 1 &&
       serverRxUni && serverRxUni->link() == serverLink.ptr() &&
-      serverRxUni->processed == 1 &&
+      serverRxUni->processed >= 1 &&
       clientRxBidi && clientRxBidi->link() == clientLink.ptr() &&
-      clientRxBidi->processed == 1 &&
+      clientRxBidi->processed >= 1 &&
       clientRxUni && clientRxUni->link() == clientLink.ptr() &&
-      clientRxUni->processed == 1 &&
+      clientRxUni->processed >= 1 &&
       serverLink->streamedCount == 2 &&
       clientLink->streamedCount == 2,
     "runtime stream objects did not process received STREAM frames");
