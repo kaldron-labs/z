@@ -1038,6 +1038,8 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   unsigned active = 0;
   unsigned complete = 0;
   unsigned failed = 0;
+  ZtArray<Req *, ZtArrayHeapID<"Zhttp.H3Pending">> pending;
+  unsigned pendingHead = 0;
 
   void done() { sem.post(); }
   unsigned reconnFreq() const { return 0; }
@@ -1048,6 +1050,10 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   uint64_t maxStreamsUni() const { return H3UniMax; }
   bool multi() const { return run; }
   void openH3Streams(Link *);
+  void sendH3Req(Link *, ZmRef<Stream>, Req *);
+  void queueH3Req(Req *);
+  Req *popH3Req();
+  void bindH3Stream(Link *, ZmRef<Stream>);
   void finishH3Req(Link *, Req *, bool);
   void failH3Link();
 };
@@ -1108,7 +1114,10 @@ struct QUICClient::Link :
       stream->req = nullptr;
     this->app()->finishH3Req(this, state, ok);
   }
-  void streamed(ZmRef<Stream>) { }
+  void streamed(ZmRef<Stream> stream) {
+    if (!this->app()->multi()) return;
+    this->app()->bindH3Stream(this, ZuMv(stream));
+  }
 };
 
 int QUICClient::Stream::process(Zquic::RxStream &)
@@ -1188,20 +1197,62 @@ void QUICClient::openH3Streams(Link *link_)
       ++active;
     }
     resetAttempt(*req, true);
-    req->protocol = Protocol::H3;
     auto stream = link_->stream(Zi::StreamType::Duplex);
     if (!stream) {
-      ZmGuard<ZmLock> guard(lock);
-      --active;
-      --scheduled;
+      queueH3Req(req);
       return;
     }
-    req->responseStreamID = stream->id();
-    stream->req = req;
-    stream->parser.bind(link_, req);
-    stream->parser.reset();
-    sendH3Request(*req, stream);
+    sendH3Req(link_, ZuMv(stream), req);
   }
+}
+
+void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
+{
+  if (!link_ || !stream || !req) {
+    finishH3Req(link_, req, false);
+    return;
+  }
+  if (!this->txInvoked()) {
+    this->txInvoke([
+      this, link = ZmMkRef(link_), stream = ZuMv(stream), req
+    ]() mutable {
+      if (!run || req->done) return;
+      sendH3Req(link.ptr(), ZuMv(stream), req);
+    });
+    return;
+  }
+  req->protocol = Protocol::H3;
+  req->responseStreamID = stream->id();
+  stream->req = req;
+  stream->parser.bind(link_, req);
+  stream->parser.reset();
+  sendH3Request(*req, stream);
+}
+
+void QUICClient::queueH3Req(Req *req)
+{
+  if (!req) return;
+  ZmGuard<ZmLock> guard(lock);
+  pending.push(req);
+}
+
+Req *QUICClient::popH3Req()
+{
+  ZmGuard<ZmLock> guard(lock);
+  if (pendingHead >= pending.length()) return nullptr;
+  Req *req = pending[pendingHead++];
+  if (pendingHead >= pending.length()) {
+    pending.length(0);
+    pendingHead = 0;
+  }
+  return req;
+}
+
+void QUICClient::bindH3Stream(Link *link_, ZmRef<Stream> stream)
+{
+  Req *req = popH3Req();
+  if (!req) return;
+  sendH3Req(link_, ZuMv(stream), req);
 }
 
 void QUICClient::finishH3Req(Link *link_, Req *req, bool ok)
@@ -1223,15 +1274,10 @@ void QUICClient::finishH3Req(Link *link_, Req *req, bool ok)
 	  if (!run) return;
 	  auto stream = link->stream(Zi::StreamType::Duplex);
 	  if (!stream) {
-	    finishH3Req(link.ptr(), req, false);
+	    queueH3Req(req);
 	    return;
 	  }
-	  req->protocol = Protocol::H3;
-	  req->responseStreamID = stream->id();
-	  stream->req = req;
-	  stream->parser.bind(link.ptr(), req);
-	  stream->parser.reset();
-	  sendH3Request(*req, stream);
+	  sendH3Req(link.ptr(), ZuMv(stream), req);
 	});
 	return;
       }
