@@ -64,4 +64,4 @@ struct ZmAlloc_ {
       Zm::alignedAlloc<alignof(T)>((n) * sizeof(T)) : \
 	ZuAlloca((n) * sizeof(T), alignof(T))))}
 
-#endif /* ZmLocal_HH */
+#endif /* ZmAlloc_HH */

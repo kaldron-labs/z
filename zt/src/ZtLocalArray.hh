@@ -21,6 +21,7 @@
 #include <zlib/ZmAlloc.hh>
 
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtAlloc.hh>
 
 template <typename Array>
 struct ZtLocalArray_ : private ZmAlloc_<typename Array::T>, public Array {
@@ -53,9 +54,9 @@ struct ZtLocalArray_ : private ZmAlloc_<typename Array::T>, public Array {
 };
 
 #define ZtLocalArray_1(A, size) \
-  ZtLocalArray_<A>(ZmAlloc(typename A::T, size), size)
+  ZtLocalArray_<A>(ZtAlloc(A, typename A::T, size), size)
 #define ZtLocalArray_2(A, length, size) \
-  ZtLocalArray_<A>(ZmAlloc(typename A::T, size), length, size)
+  ZtLocalArray_<A>(ZtAlloc(A, typename A::T, size), length, size)
 #define ZtLocalArray_N(_0, _1, Fn, ...) Fn
 #define ZtLocalArray__(A, ...) \
   ZtLocalArray_N(__VA_ARGS__, \
