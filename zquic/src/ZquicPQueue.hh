@@ -111,29 +111,6 @@ struct StreamTxData : public ZiIOBuf {
   void write(const I &) { }
 };
 
-struct ByteRangeMark {
-  uint64_t	offset = 0;
-  uint64_t	bytes = 0;
-
-  ByteRangeMark() = default;
-  ByteRangeMark(uint64_t offset_, uint64_t bytes_) :
-    offset{offset_}, bytes{bytes_} { }
-
-  uint64_t key() const { return offset; }
-  uint64_t length() const { return bytes; }
-  uint64_t clipHead(uint64_t length) {
-    if (length > bytes) length = bytes;
-    offset += length;
-    return bytes -= length;
-  }
-  uint64_t clipTail(uint64_t length) {
-    if (length > bytes) length = bytes;
-    return bytes -= length;
-  }
-  template <typename I>
-  void write(const I &) { }
-};
-
 struct RxPacketMark {
   uint64_t	pn = 0;
 
@@ -171,13 +148,6 @@ using TxDataPQueue =
 	ZmPQueueBits<2,
 	  ZmPQueueLevels<3>>>>>;
 
-using ByteRangePQueue =
-  ZmPQueue<ByteRangeMark,
-    ZmPQueueHeapID<"Zquic.ByteRange.Node",
-      ZmPQueueOverwrite<false,
-	ZmPQueueBits<2,
-	  ZmPQueueLevels<2>>>>>;
-
 using PacketRxPQueue =
   ZmPQueue<RxPacketMark,
     ZmPQueueNode<ZuObject,
@@ -185,12 +155,6 @@ using PacketRxPQueue =
 	ZmPQueueOverwrite<false,
 	  ZmPQueueBits<4,
 	    ZmPQueueLevels<4>>>>>>;
-
-using PacketTxPQueue =
-  ZmPQueue<ByteRangeMark,
-    ZmPQueueHeapID<"Zquic.Packet.TxRangeNode",
-      ZmPQueueBits<2,
-	ZmPQueueLevels<2>>>>;
 
 struct RxSpan {
   uint64_t	first = 0;
