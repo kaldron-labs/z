@@ -3,6 +3,9 @@
 ## Zhttp
 - add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
   - see `http_bench.md`
+- add `ZQUIC_LOSS` env var - `N%` to randomly drop N% of QUIC UDP packets
+  - read by `zhttp` and `zhttpd` and added as a config to `Zhttp`
+- run benchmark with loss at 5%, 10%, 15%, 20% to check it works
 
 ## Zrest
 - figure out REST Rx -> ZvIOMsg
