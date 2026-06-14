@@ -15,7 +15,7 @@ IMPORTANT
 - Read `goal.md` in full
 - Research the goal, including online using web search, and understand it
   - Use web search as needed to research how comparable goals were achieved in comparable projects
-- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase, dependencies and underlying technology stack
+- Read `AGENTS.md`, `GUIDELINES.md` and `CODEBASE.md` to understand the existing codebase, dependencies and underlying technology stack
 - Comprehensively research the implications of the goal for the existing codebase
 - Formulate detailed product requirements
   - Think deeply to formulate the requirements
