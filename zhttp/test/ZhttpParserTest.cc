@@ -209,6 +209,7 @@ void testRuntimeHeaderCallback()
     "HTTP/1.1 200 OK\r\n"
     "Key: Value\r\n"
     "X-Runtime: varied\r\n"
+    "Content-Length: 0\r\n"
     "\r\n"));
   ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
     "runtime header response failed");
@@ -331,6 +332,7 @@ void testEmptySelectedHeaderValues()
     stream.push(mkBuf(
       "HTTP/1.1 200 OK\r\n"
       "X-Empty:\r\n"
+      "Content-Length: 0\r\n"
       "\r\n"));
     ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
       "empty selected header response failed");
@@ -343,6 +345,7 @@ void testEmptySelectedHeaderValues()
     stream.push(mkBuf(
       "HTTP/1.1 200 OK\r\n"
       "X-Empty:   \r\n"
+      "Content-Length: 0\r\n"
       "\r\n"));
     ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
       "OWS-only selected header response failed");
@@ -410,6 +413,85 @@ void testChunkedBodyAcrossRxBuffers()
   ZuCHECK(!stream, "stream still has data after chunked response");
 }
 
+void testCloseDelimitedResponseBody()
+{
+  ZuTestScope(testCloseDelimitedResponseBody);
+
+  const char *frags[] = {
+    "HTTP/1.1 200 OK\r\n"
+    "Key: Value\r\n"
+    "\r\n"
+    "hello, ",
+    "world"
+  };
+
+  ResponseParser parser;
+  RxStream stream;
+
+  stream.push(mkBuf(frags[0]));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Body,
+    "close-delimited response did not enter body state");
+  ZuCHECK(parser.bodyData == "hello, ",
+    "close-delimited first body fragment mismatch");
+  ZuCHECK(parser.completeCalls == 0,
+    "close-delimited response completed before EOF");
+  ZuCHECK(!stream, "stream still has data after first body fragment");
+
+  stream.push(mkBuf(frags[1]));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Body,
+    "close-delimited response left body state before EOF");
+  ZuCHECK(parser.bodyData == "hello, world",
+    "close-delimited body mismatch before EOF");
+  ZuCHECK(parser.completeCalls == 0,
+    "close-delimited response completed before final EOF");
+  ZuCHECK(!stream, "stream still has data after second body fragment");
+
+  ZuCHECK(parser.eof() == Zhttp::H1::ParserState::Complete,
+    "close-delimited response did not complete on EOF");
+  ZuCHECK(parser.completeCalls == 1 &&
+      parser.completeState == Zhttp::H1::ParserState::Complete,
+    "close-delimited completion callback mismatch");
+}
+
+void testCloseDelimitedResponseTooLarge()
+{
+  ZuTestScope(testCloseDelimitedResponseTooLarge);
+
+  ZtString<> msg;
+  msg << "HTTP/1.1 200 OK\r\n\r\n";
+  for (unsigned i = 0; i <= 1024; ++i) msg << 'x';
+
+  ResponseParser parser;
+  RxStream stream;
+  stream.push(mkBuf(msg));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error,
+    "oversized close-delimited response was not rejected");
+  ZuCHECK(parser.completeCalls == 1 &&
+      parser.completeState == Zhttp::H1::ParserState::Error,
+    "oversized close-delimited completion mismatch");
+}
+
+void testNoBodyStatusWithoutLengthCompletesAtHeaders()
+{
+  ZuTestScope(testNoBodyStatusWithoutLengthCompletesAtHeaders);
+
+  ResponseParser parser;
+  RxStream stream;
+  stream.push(mkBuf(
+    "HTTP/1.1 204 No Content\r\n"
+    "Key: Value\r\n"
+    "\r\n"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
+    "no-body status did not complete at headers");
+  ZuCHECK(parser.keyCalls == 1 && parser.keyValue,
+    "no-body status header mismatch");
+  ZuCHECK(parser.bodyCalls == 0, "no-body status delivered body");
+  ZuCHECK(parser.completeCalls == 1 &&
+      parser.completeState == Zhttp::H1::ParserState::Complete,
+    "no-body status completion mismatch");
+  ZuCHECK(!stream, "stream still has data after no-body status response");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -425,5 +507,8 @@ int main(int argc, char **argv)
   ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testRequestStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testChunkedBodyAcrossRxBuffers);
+  ZuTestCall(testCloseDelimitedResponseBody);
+  ZuTestCall(testCloseDelimitedResponseTooLarge);
+  ZuTestCall(testNoBodyStatusWithoutLengthCompletesAtHeaders);
   return 0;
 }

@@ -617,7 +617,12 @@ struct H1ClientLinkOps : public Base {
   void disconnected() {
     auto state = this->app()->state;
     if (!state->response.complete) {
-      state->errors = 1;
+      auto s = parser.eof();
+      using State = typename ResponseParser<false>::State;
+      if (s == State::Complete)
+	state->response = parser.seen;
+      else
+	state->errors = 1;
       state->done.post();
     }
   }

@@ -581,7 +581,11 @@ struct CliLink : public Base_ {
   }
   void disconnected() {
     ZiLOG(Info, "zhttp", "disconnected");
-    if (!this->app()->state.done) this->app()->state.failed = true;
+    if (!this->app()->state.done) {
+      if constexpr (!H3)
+	parser.eof();
+      if (!this->app()->state.done) this->app()->state.failed = true;
+    }
     this->app()->done();
   }
   void connectFailed(bool transient) {

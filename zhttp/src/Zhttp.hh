@@ -114,6 +114,10 @@ void complete(ParserState::T);
 };
 #endif
 
+// For HTTP/1 responses framed by connection close (no Content-Length and no
+// transfer-encoding: chunked), call parser.eof() from the connection close path
+// after all received bytes have been passed to parser.process().
+
 } // Zhttp
 
 #include <zlib/ZhttpH1.hh>
