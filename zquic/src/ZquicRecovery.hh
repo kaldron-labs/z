@@ -13,6 +13,8 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
+#include <zlib/ZmQueue.hh>
+
 #include <zlib/ZquicSched.hh>
 
 namespace Zquic {
@@ -307,6 +309,8 @@ struct SentFrameRef {
   bool			fin = false;
   TxRange		range;
 
+  bool operator !() const { return kind == SentFrameKind::None; }
+
   static SentFrameRef stream(uint64_t id, const TxRange &range_, bool fin_) {
     SentFrameRef ref;
     ref.kind = SentFrameKind::Stream;
@@ -380,38 +384,19 @@ using TxPacketQueue =
 
 class RetransmitQueue {
 public:
-  struct Entry {
-    uint64_t		seq = 0;
-    SentFrameRef	frame;
-
-    Entry() = default;
-    Entry(uint64_t seq_, const SentFrameRef &frame_) :
-      seq{seq_}, frame{frame_} { }
-
-    uint64_t key() const { return seq; }
-    uint64_t length() const { return 1; }
-    uint64_t clipHead(uint64_t) { return 0; }
-    uint64_t clipTail(uint64_t) { return 0; }
-    template <typename I>
-    void write(const I &) { }
-  };
-
   using Queue =
-    ZmPQueue<Entry,
-      ZmPQueueHeapID<"Zquic.Packet.RetransmitNode",
-	ZmPQueueBits<2,
-	  ZmPQueueLevels<2>>>>;
+    ZmQueue<SentFrameRef,
+      ZmQueueHeapID<"Zquic.Packet.RetransmitQueue">>;
 
   bool push(const SentFrameRef &frame) {
     if (frame.kind == SentFrameKind::None) return false;
-    m_frames.add(new Queue::Node{Entry{m_next++, frame}});
+    m_frames.push(frame);
     return true;
   }
 
   bool pop(SentFrameRef &frame) {
-    auto node = m_frames.dequeue();
-    if (!node) return false;
-    frame = node->data().frame;
+    if (!m_frames.count_()) return false;
+    frame = m_frames.shift();
     return true;
   }
 
@@ -420,12 +405,11 @@ public:
   unsigned dropped() const { return 0; }
   bool empty() const { return !m_frames.count_(); }
   void clear() {
-    m_frames.reset(m_next);
+    m_frames.clean();
   }
 
 private:
-  Queue		m_frames{0};
-  uint64_t	m_next = 0;
+  Queue		m_frames;
 };
 
 class PacketTxSpace :
