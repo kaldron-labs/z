@@ -25,6 +25,7 @@ struct PacketBudget {
   unsigned	congestion = MinUDPPayload;
   unsigned	antiAmplification = MinUDPPayload;
   unsigned	used = 0;
+  uint64_t	flow = uint64_t(-1);
 
   unsigned limit() const {
     unsigned n = pmtu;
@@ -36,6 +37,9 @@ struct PacketBudget {
   unsigned remaining() const {
     unsigned n = limit();
     return used < n ? n - used : 0;
+  }
+  unsigned flowRemaining() const {
+    return flow > unsigned(-1) ? unsigned(-1) : unsigned(flow);
   }
   bool canFit(unsigned n) const { return used + n <= limit(); }
   bool add(unsigned n) {
@@ -163,6 +167,9 @@ private:
     unsigned payloadLen = range.length;
     if (payloadLen > len) payloadLen = len;
     if (payloadLen > budget.remaining()) payloadLen = budget.remaining();
+    if (payloadLen > budget.flowRemaining()) payloadLen = budget.flowRemaining();
+    if (payloadLen > stream.txCreditAvailable())
+      payloadLen = unsigned(stream.txCreditAvailable());
     bool fin = stream.finSent() && stream.txRangeCount() == 1;
     int n = -1;
     while (payloadLen) {
@@ -179,6 +186,9 @@ private:
     ZiAssert(stream.commitTxRange(consumed, payloadLen), "Zquic",
       (id, payloadLen),
       "stream Tx range disappeared during packetization", return -1);
+    ZiAssert(stream.consumeTxCredit(payloadLen), "Zquic",
+      (id, payloadLen),
+      "stream Tx exceeded MAX_STREAM_DATA", return -1);
     if (fin) {
       uint64_t dequeuedOffset = 0;
       ZiAssert(stream.dequeueFin(dequeuedOffset) &&
