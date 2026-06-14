@@ -86,6 +86,14 @@ bool writeScript(ZuCSpan path, const char *tempPath_, unsigned port)
     "grep -qx 'zhttp-multi-ok' " << tempPath << "/body.0\n"
     "grep -qx 'zhttp-multi-ok' " << tempPath << "/body.1\n"
     "grep -qx 'zhttp-multi-ok' " << tempPath << "/body.2\n"
+    "\"$client\" -n 4 -j 2 -o " << tempPath <<
+      "/bodyj http://127.0.0.1:" << port <<
+      "/zhttp-multi >" << tempPath << "/client-j.out 2>" <<
+      tempPath << "/client-j.err\n"
+    "grep -qx 'zhttp-multi-ok' " << tempPath << "/bodyj.0\n"
+    "grep -qx 'zhttp-multi-ok' " << tempPath << "/bodyj.1\n"
+    "grep -qx 'zhttp-multi-ok' " << tempPath << "/bodyj.2\n"
+    "grep -qx 'zhttp-multi-ok' " << tempPath << "/bodyj.3\n"
     "cd " << tempPath << "\n"
     "\"$OLDPWD/$client\" -n 2 http://127.0.0.1:" << port <<
       "/zhttp-multi >client-default.out 2>client-default.err\n"
@@ -118,6 +126,7 @@ void testMultiRequestCLIAndOutput()
   if (!systemOK(::system(cmd.data()))) {
     printFile("server stderr", temp.pathOf("server.err"));
     printFile("client stderr", temp.pathOf("client.err"));
+    printFile("client -j stderr", temp.pathOf("client-j.err"));
     printFile("client default stderr", temp.pathOf("client-default.err"));
     ZuCHECK(false, "Zhttp multi-request integration failed");
   } else {

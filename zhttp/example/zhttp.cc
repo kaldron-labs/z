@@ -15,6 +15,9 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiResolver.hh>
+#include <zlib/ZmGuard.hh>
+#include <zlib/ZmHash.hh>
+#include <zlib/ZmLock.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtCLI.hh>
@@ -151,33 +154,68 @@ struct Req {
   bool		bodyFileOpen = false;
   bool		chunked = false;
   bool		connectionClose = false;
+  bool		connectionKeepAlive = false;
   bool		http10 = false;
+  bool		closeDelimited = false;
   bool		altSvcH3 = false;
   bool		redirecting = false;
   bool		framingLogged = false;
+  bool		truncateOutput = false;
   bool		done = false;
   bool		failed = false;
 };
 
 using State = Req;
 
+struct AltSvcEndpoint {
+  ZtString<>	host;
+  Zi::Hostname	dnsHost;
+  uint16_t	port = 0;
+  bool		h3 = false;
+};
+
+struct Origin {
+  ZtString<>	scheme;
+  ZtString<>	host;
+  uint16_t	port = 0;
+
+  bool equals(const Origin &o) const {
+    return scheme == o.scheme && host == o.host && port == o.port;
+  }
+  friend bool operator ==(const Origin &l, const Origin &r) {
+    return l.equals(r);
+  }
+  uint32_t hash() const {
+    uint32_t h = ZuHash<ZtString<>>::hash(scheme);
+    h ^= ZuHash<ZtString<>>::hash(host) + 0x9e3779b9U + (h<<6) + (h>>2);
+    h ^= ZuHash<uint16_t>::hash(port) + 0x9e3779b9U + (h<<6) + (h>>2);
+    return h;
+  }
+};
+
+struct OriginDiscovery {
+  bool		dnsChecked = false;
+  bool		dnsH3 = false;
+  AltSvcEndpoint dnsEndpoint;
+  bool		altSvcChecked = false;
+  bool		altSvcH3 = false;
+  AltSvcEndpoint altSvcEndpoint;
+};
+
+using DiscoveryCache = ZmHashKV<Origin, OriginDiscovery,
+  ZmHashHeapID<"Zhttp.Discovery">>;
+
 struct Run {
   Options	options;
   URL		originalURL;
   ZtArray<Req, ZtArrayHeapID<"Zhttp.Req">> reqs;
+  DiscoveryCache discovery;
   ZmSemaphore	done;
   unsigned	scheduled = 0;
   unsigned	active = 0;
   unsigned	complete = 0;
   unsigned	failed = 0;
   bool		fatal = false;
-};
-
-struct AltSvcEndpoint {
-  ZtString<>	host;
-  Zi::Hostname	dnsHost;
-  uint16_t	port = 0;
-  bool		h3 = false;
 };
 
 struct RequestResult {
@@ -322,7 +360,6 @@ void closeBody(Req &req)
 
 void resetAttempt(Req &req, bool truncateOutput)
 {
-  (void)truncateOutput;
   closeBody(req);
   req.altSvcHost.length(0);
   req.altSvcPort = 0;
@@ -334,10 +371,13 @@ void resetAttempt(Req &req, bool truncateOutput)
   req.bodyChunks = 0;
   req.chunked = false;
   req.connectionClose = false;
+  req.connectionKeepAlive = false;
   req.http10 = false;
+  req.closeDelimited = false;
   req.altSvcH3 = false;
   req.redirecting = false;
   req.framingLogged = false;
+  req.truncateOutput = truncateOutput;
   req.done = false;
   req.failed = false;
 }
@@ -346,6 +386,24 @@ template <typename S>
 void reqLogPrefix(const Req &req, S &s)
 {
   if (req.requests > 1) s << "req=" << req.id << ' ';
+}
+
+bool truncateOutputPath(Req &req)
+{
+  if (!req.truncateOutput) return true;
+  ZiFile f{req.output, ZiFile::Write | ZiFile::GC};
+  if (!f) {
+    ZiLOG(Error, "zhttp", ([&req](auto &s) {
+      reqLogPrefix(req, s);
+      s << "failed to open " << req.output;
+    }));
+    req.failed = true;
+    req.done = true;
+    return false;
+  }
+  f.close();
+  req.truncateOutput = false;
+  return true;
 }
 
 bool redirectStatus(unsigned status)
@@ -491,11 +549,17 @@ void logFraming(State &state)
 
 template <typename Link>
 struct ResponseSink {
+  ResponseSink() = default;
   ResponseSink(Link *link_, State *state_) : link{link_}, state{state_} { }
+  void bind(Link *link_, State *state_) {
+    link = link_;
+    state = state_;
+  }
 
   void status(unsigned status) {
     state->status = status;
     state->redirecting = redirectStatus(status);
+    if (!state->redirecting && !truncateOutputPath(*state)) return;
     ZiLOG(Info, "zhttp.response", ([state = state, status](auto &s) {
       reqLogPrefix(*state, s);
       s << "status: " << status;
@@ -505,6 +569,9 @@ struct ResponseSink {
     state->contentLength = contentLength;
   }
   void chunked() { state->chunked = true; }
+  void version(ZuBSpan version) {
+    state->http10 = ZuCSpan(version) == "HTTP/1.0";
+  }
 
   template <typename Key>
   void header(ZuBSpan value) {
@@ -518,6 +585,8 @@ struct ResponseSink {
     } else if constexpr (ZuIsSame<Key, ZuStringT<"connection">>{}) {
       if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "close"))
 	state->connectionClose = true;
+      else if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "keep-alive"))
+	state->connectionKeepAlive = true;
     } else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{}) {
       state->location = ZuCSpan(value);
     }
@@ -530,6 +599,7 @@ struct ResponseSink {
   void body(ZuBSpan span) {
     logFraming(*state);
     if (!span || state->redirecting) return;
+    if (!truncateOutputPath(*state)) return;
     if (!state->bodyFileOpen) {
       state->bodyFile = ZiFile(state->output, ZiFile::Write | ZiFile::GC);
       if (!state->bodyFile) {
@@ -573,7 +643,7 @@ struct ResponseSink {
     if (parserState != ParserState::Complete) state->failed = true;
     closeBody(*state);
     state->done = true;
-    link->disconnect();
+    link->responseComplete(state, parserState == ParserState::Complete);
   }
 
   Link		*link = nullptr;
@@ -591,11 +661,13 @@ struct ResponseParser :
   using SinkBase = ResponseSink<Link>;
   using State = typename ParserBase::State;
 
+  ResponseParser() = default;
   ResponseParser(Link *link_, ::State *state_) : SinkBase{link_, state_} { }
+  void bind(Link *link_, ::State *state_) { SinkBase::bind(link_, state_); }
 
   auto &h3Cxn() const { return this->link->h3; }
   uint64_t streamID() const {
-    return uint64_t(this->link->app()->state.responseStreamID);
+    return uint64_t(this->state->responseStreamID);
   }
   void complete(typename State::T state) {
     SinkBase::template complete<State>(state);
@@ -606,6 +678,7 @@ struct ResponseParser :
   using SinkBase::contentLength;
   using SinkBase::header;
   using SinkBase::status;
+  using SinkBase::version;
 };
 
 template <typename Impl, bool Request, typename Headers, uint64_t MaxBody>
@@ -633,8 +706,9 @@ int processResponse(Link &link, State &state, Stream &rx)
 {
   using Parser = typename ResponseParser_<Link, H3>::T;
   auto parserState = link.parser.process(rx);
-  if (state.done) return -1;
   if (parserState == Parser::State::Error) return -1;
+  if (parserState == Parser::State::Complete) return 1;
+  if (state.done) return -1;
   if (parserState != Parser::State::Complete) return 0;
   return 1;
 }
@@ -708,6 +782,7 @@ struct CliLink : public Base_ {
     this->app()->state.failed = true;
     this->app()->done();
   }
+  void responseComplete(State *, bool) { this->disconnect(); }
   template <typename Rx>
   int process(Rx &rx) {
     return processResponse<H3>(*this, this->app()->state, rx);
@@ -744,17 +819,254 @@ struct Client : public Client_<App> {
 struct TCPClient : public Client<TCPClient, Ztcp::Client, Ztcp::CliLink> { };
 struct TLSClient : public Client<TLSClient, Ztls::Client, Ztls::CliLink> { };
 
+template <typename Client>
+bool h1TransportOK(const URL &url)
+{
+  if constexpr (Client::Transport == Zi::Transport::TCP)
+    return url.scheme == "http";
+  else
+    return url.scheme == "https";
+}
+
+bool sameOrigin(const URL &a, const URL &b)
+{
+  return a.scheme == b.scheme && a.host == b.host && a.port == b.port;
+}
+
+Origin originOf(const URL &url)
+{
+  Origin origin;
+  origin.scheme = url.scheme;
+  origin.host = url.host;
+  origin.port = url.port;
+  return origin;
+}
+
+OriginDiscovery &discoveryFor(Run &run, const URL &url)
+{
+  Origin origin = originOf(url);
+  if (auto node = run.discovery.find(origin)) return node->val();
+  run.discovery.add(origin, OriginDiscovery{});
+  return run.discovery.find(origin)->val();
+}
+
+template <typename App_, typename Base_>
+struct H1PoolLink : public Base_ {
+  using App = App_;
+  using Base = Base_;
+  using Parser = H1ResponseParser<H1PoolLink>;
+
+  H1PoolLink(App *app_, unsigned id_) : Base{app_}, id{id_} {
+    parser.bind(this, nullptr);
+  }
+
+  void assign(Req *req_) {
+    req = req_;
+    retryConnects = 0;
+    if (!req) return;
+    resetAttempt(*req, true);
+    parser.bind(this, req);
+    parser.reset();
+  }
+  void sendCurrent() {
+    if (!req) return;
+    parser.bind(this, req);
+    parser.reset();
+    sendH1Request(*req, this->stream());
+  }
+  void connected(Zi::Connected info) {
+    connectedFlag = true;
+    if (req) logConnected(*req, info);
+    sendCurrent();
+  }
+  void disconnected() {
+    connectedFlag = false;
+    ZiLOG(Info, "zhttp", ([this](auto &s) {
+      s << "worker=" << id << " disconnected";
+    }));
+    if (closing) {
+      closing = false;
+      if (req) this->connect(req->url.host, req->url.port);
+      return;
+    }
+    if (stopping) {
+      stopping = false;
+      this->app()->workerStopped(this->impl());
+      return;
+    }
+    if (req && !req->done) {
+      if (!req->status && retryConnects < 1) {
+	++retryConnects;
+	parser.bind(this, req);
+	parser.reset();
+	this->connect(req->url.host, req->url.port);
+	return;
+      }
+      req->closeDelimited = true;
+      parser.eof();
+      if (!req || req->done) return;
+      req->failed = true;
+      req->done = true;
+      responseComplete(req, false);
+    }
+  }
+  void connectFailed(bool transient) {
+    ZiLOG(Error, "zhttp", ([this, transient](auto &s) {
+      s << "worker=" << id << " failed to connect";
+      if (transient) s << " (transient)";
+    }));
+    if (req) {
+      req->failed = true;
+      req->done = true;
+      responseComplete(req, false);
+    } else
+      this->app()->workerIdle(this->impl(), false);
+  }
+  void responseComplete(State *state, bool ok) {
+    if (!req || state != req) return;
+    ok = ok && !req->failed;
+    if (ok && req->redirecting) {
+      URL next;
+      if (!req->location || req->redirects >= MaxRedirects ||
+	  !parseLocation(req->url, req->location, next) ||
+	  !h1TransportOK<App>(next)) {
+	req->failed = true;
+	ok = false;
+      } else {
+	URL prev = req->url;
+	req->url = ZuMv(next);
+	++req->redirects;
+	bool reuse = reusable() && sameOrigin(prev, req->url);
+	resetAttempt(*req, true);
+	if (reuse)
+	  sendCurrent();
+	else {
+	  closing = true;
+	  this->disconnect();
+	}
+	return;
+      }
+    }
+    bool reuse = ok && reusable();
+    this->app()->finishReq(req, ok);
+    req = this->app()->nextReq();
+    if (!req) {
+      stopping = true;
+      this->disconnect();
+      return;
+    }
+    assign(req);
+    if (reuse)
+      sendCurrent();
+    else {
+      closing = true;
+      this->disconnect();
+    }
+  }
+  template <typename Rx>
+  int process(Rx &rx) {
+    return processResponse<false>(*this, *req, rx);
+  }
+  bool reusable() const {
+    return req && !req->connectionClose && !req->closeDelimited &&
+      (!req->http10 || req->connectionKeepAlive) && !req->failed;
+  }
+
+  unsigned	id = 0;
+  Req		*req = nullptr;
+  bool		connectedFlag = false;
+  bool		closing = false;
+  bool		stopping = false;
+  unsigned	retryConnects = 0;
+  Parser	parser;
+};
+
+template <
+  typename App,
+  template <typename> class Client_,
+  template <typename, typename, typename, typename> class Link__>
+struct H1PoolClient : public Client_<App> {
+  auto impl() const { return static_cast<const App *>(this); }
+  auto impl() { return static_cast<App *>(this); }
+
+  using RxBufAlloc = Ztcp::RxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
+  using TxBufAlloc = Ztcp::TxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
+  template <typename Impl>
+  using Link_ = Link__<App, Impl, RxBufAlloc, TxBufAlloc>;
+  struct Link : public H1PoolLink<App, Link_<Link>> {
+    using Base = H1PoolLink<App, Link_<Link>>;
+    Link(App *app, unsigned id) : Base{app, id} { }
+  };
+
+  Run			*run = nullptr;
+  ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttp.H1Worker">> links;
+  ZmSemaphore		sem;
+  unsigned		next = 0;
+  unsigned		complete = 0;
+  unsigned		failed = 0;
+  unsigned		stopped = 0;
+
+  Req *nextReq() {
+    if (!run || next >= run->options.requests) return nullptr;
+    return &run->reqs[next++];
+  }
+  void finishReq(Req *req, bool ok) {
+    if (!req) return;
+    closeBody(*req);
+    req->failed = !ok;
+    ++complete;
+    if (!ok) ++failed;
+  }
+  void workerIdle(Link *link, bool reconnect) {
+    Req *req = nextReq();
+    if (!req) {
+      if (complete >= run->options.requests) sem.post();
+      return;
+    }
+    link->assign(req);
+    if (reconnect)
+      link->connect(req->url.host, req->url.port);
+    else
+      link->sendCurrent();
+  }
+  void workerStopped(Link *) {
+    ++stopped;
+    if (complete >= run->options.requests && stopped >= links.length())
+      sem.post();
+  }
+  unsigned reconnFreq() const { return 0; }
+};
+
+struct H1TCPClient :
+  public H1PoolClient<H1TCPClient, Ztcp::Client, Ztcp::CliLink> { };
+struct H1TLSClient :
+  public H1PoolClient<H1TLSClient, Ztls::Client, Ztls::CliLink> { };
+
 struct QUICClient : public Zquic::Client<QUICClient> {
   struct Link;
   struct Stream;
 
   ZmSemaphore sem;
   State state;
+  Run *run = nullptr;
+  ZmRef<Link> link;
+  ZmLock lock;
+  unsigned scheduled = 0;
+  unsigned active = 0;
+  unsigned complete = 0;
+  unsigned failed = 0;
 
   void done() { sem.post(); }
   unsigned reconnFreq() const { return 0; }
-  uint64_t maxStreamsBidi() const { return H3BidiMax; }
+  uint64_t maxStreamsBidi() const {
+    return run && run->options.concurrency > H3BidiMax ?
+      run->options.concurrency : H3BidiMax;
+  }
   uint64_t maxStreamsUni() const { return H3UniMax; }
+  bool multi() const { return run; }
+  void openH3Streams(Link *);
+  void finishH3Req(Link *, Req *, bool);
+  void failH3Link();
 };
 
 struct QUICClient::Stream :
@@ -772,6 +1084,9 @@ struct QUICClient::Stream :
   bool peerDecoderStream();
   Zhttp::H3::QPackRxTable *qpackRx();
   Zhttp::H3::QPackTxTable *qpackTx();
+
+  Req *req = nullptr;
+  H3ResponseParser<QUICClient::Link> parser;
 };
 
 struct QUICClient::Link :
@@ -781,6 +1096,35 @@ struct QUICClient::Link :
     Zquic::CliLink<QUICClient, QUICClient::Link, QUICClient::Stream>, true>;
   using Base::Base;
 
+  void connected(Zi::Connected info) {
+    if (!this->app()->multi()) return Base::connected(info);
+    logConnected(this->app()->run->reqs[0], info);
+    if (!this->h3.openLocal(*this)) {
+      this->app()->failH3Link();
+      return;
+    }
+    this->app()->link = ZmMkRef(this);
+    this->app()->openH3Streams(this);
+  }
+  void disconnected() {
+    if (!this->app()->multi()) return Base::disconnected();
+    ZiLOG(Info, "zhttp", "disconnected");
+    this->app()->failH3Link();
+  }
+  void connectFailed(bool transient) {
+    if (!this->app()->multi()) return Base::connectFailed(transient);
+    ZiLOG(Error, "zhttp", ([transient](auto &s) {
+      s << "failed to connect";
+      if (transient) s << " (transient)";
+    }));
+    this->app()->failH3Link();
+  }
+  void responseComplete(State *state, bool ok) {
+    if (!this->app()->multi()) return Base::responseComplete(state, ok);
+    if (auto stream = this->findStream(state->responseStreamID))
+      stream->req = nullptr;
+    this->app()->finishH3Req(this, state, ok);
+  }
   void streamed(ZmRef<Stream>) { }
 };
 
@@ -792,6 +1136,14 @@ int QUICClient::Stream::process(Zquic::RxStream &)
       this->link()->app()->done();
       return -1;
     }
+    return 0;
+  }
+  if (req) {
+    auto parserState = parser.process(*this);
+    using Parser = ZuDecay<decltype(parser)>;
+    if (parserState == Parser::State::Error) return -1;
+    if (parserState == Parser::State::Complete) return 1;
+    if (req && req->done) return -1;
     return 0;
   }
   if (this->id() != this->link()->app()->state.responseStreamID) return 0;
@@ -831,6 +1183,114 @@ Zhttp::H3::QPackRxTable *QUICClient::Stream::qpackRx()
 Zhttp::H3::QPackTxTable *QUICClient::Stream::qpackTx()
 {
   return this->link()->h3.qpackTx();
+}
+
+void QUICClient::openH3Streams(Link *link_)
+{
+  if (!link_) return;
+  if (!this->txInvoked()) {
+    this->txInvoke([this, link = ZmMkRef(link_)]() mutable {
+      openH3Streams(link.ptr());
+    });
+    return;
+  }
+  for (;;) {
+    Req *req = nullptr;
+    {
+      ZmGuard<ZmLock> guard(lock);
+      if (!run || active >= run->options.concurrency ||
+	  scheduled >= run->options.requests)
+	return;
+      req = &run->reqs[scheduled++];
+      ++active;
+    }
+    resetAttempt(*req, true);
+    req->protocol = Protocol::H3;
+    auto stream = link_->stream(Zi::StreamType::Duplex);
+    if (!stream) {
+      ZmGuard<ZmLock> guard(lock);
+      --active;
+      --scheduled;
+      return;
+    }
+    req->responseStreamID = stream->id();
+    stream->req = req;
+    stream->parser.bind(link_, req);
+    stream->parser.reset();
+    sendH3Request(*req, stream);
+  }
+}
+
+void QUICClient::finishH3Req(Link *link_, Req *req, bool ok)
+{
+  bool done = false;
+  ok = ok && req && !req->failed;
+  if (req && ok && req->redirecting) {
+    URL next;
+    if (!req->location || req->redirects >= MaxRedirects ||
+	!parseLocation(req->url, req->location, next) ||
+	!sameOrigin(req->url, next)) {
+      ok = false;
+    } else {
+      req->url = ZuMv(next);
+      ++req->redirects;
+      resetAttempt(*req, true);
+      if (!this->txInvoked()) {
+	this->txInvoke([this, link = ZmMkRef(link_), req]() mutable {
+	  if (!run) return;
+	  auto stream = link->stream(Zi::StreamType::Duplex);
+	  if (!stream) {
+	    finishH3Req(link.ptr(), req, false);
+	    return;
+	  }
+	  req->protocol = Protocol::H3;
+	  req->responseStreamID = stream->id();
+	  stream->req = req;
+	  stream->parser.bind(link.ptr(), req);
+	  stream->parser.reset();
+	  sendH3Request(*req, stream);
+	});
+	return;
+      }
+    }
+  }
+  {
+    ZmGuard<ZmLock> guard(lock);
+    if (active) --active;
+    if (req) {
+      closeBody(*req);
+      req->done = true;
+      req->failed = !ok;
+    }
+    ++complete;
+    if (!ok) ++failed;
+    done = !run || complete >= run->options.requests;
+  }
+  if (done)
+    sem.post();
+  else
+    openH3Streams(link_);
+}
+
+void QUICClient::failH3Link()
+{
+  ZmGuard<ZmLock> guard(lock);
+  if (!run) {
+    state.failed = true;
+    done();
+    return;
+  }
+  for (unsigned i = 0; i < run->options.requests; ++i) {
+    auto &req = run->reqs[i];
+    if (req.done) continue;
+    closeBody(req);
+    req.done = true;
+    req.failed = true;
+    ++failed;
+    ++complete;
+  }
+  active = 0;
+  sem.post();
 }
 
 template <typename Client>
@@ -902,6 +1362,97 @@ int run(
   return rc;
 }
 
+template <typename Client>
+int runH1Pool(ZiMultiplex &mx, Run &run)
+{
+  Client client;
+  client.run = &run;
+
+  if constexpr (Client::Transport == Zi::Transport::TCP) {
+    if (!client.init(Ztcp::ClientParams(&mx, "3", "4"))) {
+      ZiLOG(Error, "zhttp", "TCP client initialization failed");
+      return 1;
+    }
+  } else {
+    ZuCSpan alpn[] = { "http/1.1" };
+    if (!client.init(
+	  Ztls::ClientParams(&mx, "3", "4")
+	    .alpn(alpn).caPath(run.options.ca))) {
+      ZiLOG(Error, "zhttp", "TLS client initialization failed");
+      return 1;
+    }
+  }
+
+  unsigned n = run.options.concurrency;
+  if (n > run.options.requests) n = run.options.requests;
+  client.links.length(n);
+  for (unsigned i = 0; i < n; ++i) {
+    auto link = new typename Client::Link(&client, i);
+    client.links[i] = link;
+    Req *req = client.nextReq();
+    if (!req) continue;
+    link->assign(req);
+    link->connect(req->url.host, req->url.port);
+  }
+
+  unsigned timeout = ClientTimeout *
+    ((run.options.requests + run.options.concurrency - 1) /
+      run.options.concurrency + 1);
+  if (client.sem.timedwait(Zm::now(timeout)) != 0) {
+    ZiLOG(Error, "zhttp", "timed out");
+    for (unsigned i = 0; i < client.links.length(); ++i)
+      if (client.links[i]) client.links[i]->disconnect();
+    client.sem.timedwait(Zm::now(2));
+    client.failed += run.options.requests - client.complete;
+  }
+
+  run.complete = client.complete;
+  run.failed = client.failed;
+  client.final();
+  return client.failed ? 1 : 0;
+}
+
+int runH3Multi(ZiMultiplex &mx, Run &run)
+{
+  QUICClient client;
+  client.run = &run;
+  ZuCSpan alpn[] = { "h3" };
+  if (!client.init(
+	Zquic::ClientParams(&mx, "3", "4")
+	  .alpn(alpn)
+	  .caPath(run.options.ca)
+	  .maxData(H3DataMax)
+	  .maxStreamData(H3StreamDataMax)
+	  .maxStreamsBidi(client.maxStreamsBidi())
+	  .maxStreamsUni(H3UniMax))) {
+    ZiLOG(Error, "zhttp", "QUIC client initialization failed");
+    return 1;
+  }
+
+  auto link = new QUICClient::Link(&client);
+  client.link = link;
+  link->connect(run.originalURL.host, run.originalURL.port);
+  unsigned timeout = ClientTimeout *
+    ((run.options.requests + run.options.concurrency - 1) /
+      run.options.concurrency + 1);
+  if (client.sem.timedwait(Zm::now(timeout)) != 0) {
+    ZiLOG(Error, "zhttp", "timed out");
+    link->disconnect();
+    client.sem.timedwait(Zm::now(2));
+    client.failH3Link();
+  } else {
+    link->disconnect();
+    client.sem.timedwait(Zm::now(2));
+  }
+  {
+    ZmGuard<ZmLock> guard(client.lock);
+    run.complete = client.complete;
+    run.failed = client.failed;
+  }
+  client.final();
+  return run.failed ? 1 : 0;
+}
+
 ZiMxParams mxParams()
 {
   return ZiMxParams()
@@ -943,12 +1494,39 @@ bool resolveH3(const URL &url, ZiResolver::H3Policy policy)
   return true;
 }
 
+bool resolveH3Cached(Run &run_, const URL &url, ZiResolver::H3Policy policy)
+{
+  if (policy != ZiResolver::H3Policy::DNSOnly)
+    return resolveH3(url, policy);
+  auto &discovery = discoveryFor(run_, url);
+  if (discovery.dnsChecked) return discovery.dnsH3;
+  discovery.dnsChecked = true;
+  discovery.dnsH3 = resolveH3(url, policy);
+  return discovery.dnsH3;
+}
+
 URL altSvcURL(const URL &url, const AltSvcEndpoint &altSvc)
 {
   URL h3URL = url;
   if (altSvc.host) setHost(h3URL, altSvc.host);
   if (altSvc.port) h3URL.port = altSvc.port;
   return h3URL;
+}
+
+void cacheAltSvc(Run &run_, const URL &url, const AltSvcEndpoint &altSvc)
+{
+  auto &discovery = discoveryFor(run_, url);
+  discovery.altSvcChecked = true;
+  discovery.altSvcH3 = altSvc.h3;
+  discovery.altSvcEndpoint = altSvc;
+}
+
+bool cachedAltSvc(Run &run_, const URL &url, AltSvcEndpoint &altSvc)
+{
+  auto &discovery = discoveryFor(run_, url);
+  if (!discovery.altSvcChecked || !discovery.altSvcH3) return false;
+  altSvc = discovery.altSvcEndpoint;
+  return true;
 }
 
 int runH3Direct(
@@ -964,11 +1542,32 @@ int runH3Direct(
 }
 
 int runH1AltSvcFirst(
-  ZiMultiplex &mx, const Options &options, Req &req,
+  ZiMultiplex &mx, Run &run_, Req &req,
   RequestResult &result)
 {
+  const auto &options = run_.options;
+  AltSvcEndpoint cached;
+  if (cachedAltSvc(run_, req.url, cached)) {
+    RequestResult h3Result;
+    URL h1URL = req.url;
+    req.url = altSvcURL(h1URL, cached);
+    ZiLOG(Info, "zhttp", ([&req](auto &s) {
+      reqLogPrefix(req, s);
+      s << "cached Alt-Svc HTTP/3 probe: " << req.url.host << ':' <<
+	ZuBoxed(req.url.port);
+    }));
+    resetAttempt(req, true);
+    int h3rc = run<QUICClient>(mx, options, req, &h3Result);
+    if (!h3rc) {
+      result = ZuMv(h3Result);
+      return 0;
+    }
+    req.url = ZuMv(h1URL);
+  }
+
   resetAttempt(req, true);
   int rc = run<TLSClient>(mx, options, req, &result);
+  if (result.altSvc.h3) cacheAltSvc(run_, req.url, result.altSvc);
   if (rc || redirectStatus(result.status) || !result.altSvc.h3) return rc;
 
   RequestResult h3Result;
@@ -993,11 +1592,12 @@ int runH1AltSvcFirst(
 }
 
 int runH3DNSAltSvcFallback(
-  ZiMultiplex &mx, const Options &options, Req &req,
+  ZiMultiplex &mx, Run &run_, Req &req,
   RequestResult &result)
 {
+  const auto &options = run_.options;
   RequestResult h3Result;
-  if (resolveH3(req.url, ZiResolver::H3Policy::DNSOnly)) {
+  if (resolveH3Cached(run_, req.url, ZiResolver::H3Policy::DNSOnly)) {
     resetAttempt(req, true);
     if (!run<QUICClient>(mx, options, req, &h3Result)) {
       result = ZuMv(h3Result);
@@ -1006,11 +1606,12 @@ int runH3DNSAltSvcFallback(
   }
 
   result = {};
-  return runH1AltSvcFirst(mx, options, req, result);
+  return runH1AltSvcFirst(mx, run_, req, result);
 }
 
-int runReqSerial(ZiMultiplex &mx, const Options &options, Req &req)
+int runReqSerial(ZiMultiplex &mx, Run &run_, Req &req)
 {
+  const auto &options = run_.options;
   int rc = 1;
   for (req.redirects = 0; req.redirects <= MaxRedirects; ++req.redirects) {
     RequestResult result;
@@ -1020,7 +1621,7 @@ int runReqSerial(ZiMultiplex &mx, const Options &options, Req &req)
     } else if (options.http3)
       rc = runH3Direct(mx, options, req, result);
     else
-      rc = runH3DNSAltSvcFallback(mx, options, req, result);
+      rc = runH3DNSAltSvcFallback(mx, run_, req, result);
 
     if (rc || !redirectStatus(result.status) || !result.location) break;
     URL next;
@@ -1089,12 +1690,20 @@ int main(int argc, char **argv)
   }
 
   int rc = 0;
-  for (unsigned i = 0; i < options.requests; ++i) {
-    if (runReqSerial(mx, options, run.reqs[i])) {
-      ++run.failed;
-      rc = 1;
+  if (options.requests > 1 && options.http3 && url.scheme == "https") {
+    rc = runH3Multi(mx, run);
+  } else if (options.requests > 1 && url.scheme == "http") {
+    rc = runH1Pool<H1TCPClient>(mx, run);
+  } else if (options.requests > 1 && url.scheme == "https") {
+    rc = runH1Pool<H1TLSClient>(mx, run);
+  } else {
+    for (unsigned i = 0; i < options.requests; ++i) {
+      if (runReqSerial(mx, run, run.reqs[i])) {
+	++run.failed;
+	rc = 1;
+      }
+      ++run.complete;
     }
-    ++run.complete;
   }
 
   mx.stop();
