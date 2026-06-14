@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include <zlib/ZuLib.hh>
+#include <zlib/ZuICmp.hh>
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
@@ -26,6 +27,8 @@
 struct Options {
  ZuCSpan	ca;
  ZuCSpan	output{"index.html"};
+ uint32_t	requests = 1;
+ uint32_t	concurrency = 1;
  ZuCSpan	url;
  bool		http3 = false;
  bool		verbose = false;
@@ -35,6 +38,8 @@ struct Options {
 ZtStruct((Options, CLI),
   (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
   (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
+  (((requests),  (CLI::Opt<'n'>,  CLI::Long<"requests">)),   (UInt32, 1)),
+  (((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),       (UInt32, 1)),
   (((http3),     (CLI::Flag<1>,   CLI::Long<"http3">)),      (Bool)),
   (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool)),
   (((url),       (CLI::Arg<1>)),                             (String)),
@@ -47,10 +52,48 @@ void usage(int code = 1)
     "Options:\n"
     "  -c, --ca=PATH       CA path for https:\n"
     "  -o, --output=PATH   response body output path\n"
+    "  -n, --requests=N    submit N GET requests, default 1\n"
+    "  -j, --jobs=M        run up to M requests concurrently, default 1;\n"
+    "                      valid only when N > 1; M must be <= N\n"
     "      --http3         force HTTP/3 over QUIC for https:\n"
     "  -v, --verbose       show DNS and Alt-Svc probing\n"
-    "  -h, --help          show help\n" << std::flush;
+    "  -h, --help          show help\n\n"
+    "For N > 1, response bodies are written to PATH.0, PATH.1, ...\n" <<
+    std::flush;
   ::exit(code);
+}
+
+bool hasJobsOpt(int argc, char **argv)
+{
+  for (int i = 1; i < argc; ++i) {
+    ZuCSpan arg{argv[i]};
+    if (arg == "--") return false;
+    if (arg.starts("--jobs")) {
+      if (arg.length() == 6 || arg[6] == '=') return true;
+      continue;
+    }
+    if (!arg.starts("-") || arg.starts("--")) continue;
+    for (unsigned j = 1; j < arg.length(); ++j)
+      if (arg[j] == 'j') return true;
+  }
+  return false;
+}
+
+bool validateOptions(const Options &options, int argc, bool jobsSet)
+{
+  if (argc < 0 || argc != 2) return false;
+  if (!options.requests || !options.concurrency) return false;
+  if (jobsSet && options.requests <= 1) return false;
+  if (options.concurrency > options.requests) return false;
+  return true;
+}
+
+ZtString<> outputPath(ZuCSpan base, unsigned reqID, unsigned requests)
+{
+  ZtString<> path;
+  path << base;
+  if (requests > 1) path << '.' << ZuBoxed(reqID);
+  return path;
 }
 
 using RequestHeaders = ZhttpHeaders(
@@ -58,6 +101,7 @@ using RequestHeaders = ZhttpHeaders(
   "accept");
 using ResponseHeaders = ZhttpHeaders(
   "alt-svc",
+  "connection",
   "content-length",
   "content-type",
   "location",
@@ -87,15 +131,18 @@ constexpr uint64_t H3UniMax = 16;
 
 using H3CxnState = Zhttp::H3::CxnState;
 
-struct State {
+struct Req {
+  unsigned	id = 0;
+  unsigned	requests = 1;
   URL		url;
-  Options	options;
   Protocol::T	protocol = Protocol::H1;
   H3CxnState::T h3State = Zhttp::H3::CxnState::Init;
+  ZtString<>	output;
   ZtString<>	altSvcHost;
   uint16_t	altSvcPort = 0;
   ZtString<>	location;
   int64_t	responseStreamID = -1;
+  unsigned	redirects = 0;
   unsigned	status = 0;
   ZiFile	bodyFile;
   int64_t	contentLength = -1;
@@ -103,11 +150,27 @@ struct State {
   unsigned	bodyChunks = 0;
   bool		bodyFileOpen = false;
   bool		chunked = false;
+  bool		connectionClose = false;
+  bool		http10 = false;
   bool		altSvcH3 = false;
-  bool		redirect = false;
+  bool		redirecting = false;
   bool		framingLogged = false;
   bool		done = false;
   bool		failed = false;
+};
+
+using State = Req;
+
+struct Run {
+  Options	options;
+  URL		originalURL;
+  ZtArray<Req, ZtArrayHeapID<"Zhttp.Req">> reqs;
+  ZmSemaphore	done;
+  unsigned	scheduled = 0;
+  unsigned	active = 0;
+  unsigned	complete = 0;
+  unsigned	failed = 0;
+  bool		fatal = false;
 };
 
 struct AltSvcEndpoint {
@@ -249,6 +312,42 @@ bool parseAltSvc(State &state, ZuCSpan value)
   return true;
 }
 
+void closeBody(Req &req)
+{
+  if (req.bodyFileOpen) {
+    req.bodyFile.close();
+    req.bodyFileOpen = false;
+  }
+}
+
+void resetAttempt(Req &req, bool truncateOutput)
+{
+  (void)truncateOutput;
+  closeBody(req);
+  req.altSvcHost.length(0);
+  req.altSvcPort = 0;
+  req.location.length(0);
+  req.responseStreamID = -1;
+  req.status = 0;
+  req.contentLength = -1;
+  req.bodyBytes = 0;
+  req.bodyChunks = 0;
+  req.chunked = false;
+  req.connectionClose = false;
+  req.http10 = false;
+  req.altSvcH3 = false;
+  req.redirecting = false;
+  req.framingLogged = false;
+  req.done = false;
+  req.failed = false;
+}
+
+template <typename S>
+void reqLogPrefix(const Req &req, S &s)
+{
+  if (req.requests > 1) s << "req=" << req.id << ' ';
+}
+
 bool redirectStatus(unsigned status)
 {
   return status == 301 || status == 302 || status == 303 ||
@@ -378,6 +477,7 @@ void logFraming(State &state)
 {
   if (state.framingLogged) return;
   ZiLOG(Info, "zhttp.response", ([&state](auto &s) {
+    reqLogPrefix(state, s);
     s << "framing: ";
     if (state.chunked)
       s << "chunked";
@@ -395,8 +495,9 @@ struct ResponseSink {
 
   void status(unsigned status) {
     state->status = status;
-    state->redirect = redirectStatus(status);
-    ZiLOG(Info, "zhttp.response", ([status](auto &s) {
+    state->redirecting = redirectStatus(status);
+    ZiLOG(Info, "zhttp.response", ([state = state, status](auto &s) {
+      reqLogPrefix(*state, s);
       s << "status: " << status;
     }));
   }
@@ -410,26 +511,31 @@ struct ResponseSink {
     if constexpr (ZuIsSame<Key, ZuStringT<"alt-svc">>{}) {
       if (parseAltSvc(*state, ZuCSpan(value)))
 	ZiLOG(Info, "zhttp.response", ([state = state](auto &s) {
+	  reqLogPrefix(*state, s);
 	  s << "alt-svc: h3=\"" << state->altSvcHost << ':' <<
 	    state->altSvcPort << '"';
 	}));
+    } else if constexpr (ZuIsSame<Key, ZuStringT<"connection">>{}) {
+      if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "close"))
+	state->connectionClose = true;
     } else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{}) {
       state->location = ZuCSpan(value);
     }
-    ZiLOG(Info, "zhttp.response", ([value](auto &s) {
+    ZiLOG(Info, "zhttp.response", ([state = state, value](auto &s) {
+      reqLogPrefix(*state, s);
       s << "header " << Key{}() << ": " << ZuCSpan(value);
     }));
   }
 
   void body(ZuBSpan span) {
     logFraming(*state);
-    if (!span || state->redirect) return;
+    if (!span || state->redirecting) return;
     if (!state->bodyFileOpen) {
-      state->bodyFile =
-	ZiFile(state->options.output, ZiFile::Write | ZiFile::GC);
+      state->bodyFile = ZiFile(state->output, ZiFile::Write | ZiFile::GC);
       if (!state->bodyFile) {
 	ZiLOG(Error, "zhttp", ([state = state](auto &s) {
-	  s << "failed to open " << state->options.output;
+	  reqLogPrefix(*state, s);
+	  s << "failed to open " << state->output;
 	}));
 	state->failed = true;
 	state->done = true;
@@ -438,7 +544,10 @@ struct ResponseSink {
       state->bodyFileOpen = true;
     }
     if (state->bodyFile.write(span.data(), span.length()) != Zi::OK) {
-      ZiLOG(Error, "zhttp", "failed to write body chunk");
+      ZiLOG(Error, "zhttp", ([state = state](auto &s) {
+	reqLogPrefix(*state, s);
+	s << "failed to write body chunk";
+      }));
       state->failed = true;
       state->done = true;
       return;
@@ -452,16 +561,19 @@ struct ResponseSink {
     if (state->done) return;
     if (parserState == ParserState::Complete)
       ZiLOG(Info, "zhttp.response", ([state = state](auto &s) {
+	reqLogPrefix(*state, s);
 	s << "body complete: " << state->bodyBytes << " bytes in " <<
 	  state->bodyChunks << " chunks";
       }));
     else
-      ZiLOG(Error, "zhttp.response", ([parserState](auto &s) {
+      ZiLOG(Error, "zhttp.response", ([state = state, parserState](auto &s) {
+	reqLogPrefix(*state, s);
 	s << "response " << parserState;
       }));
     if (parserState != ParserState::Complete) state->failed = true;
+    closeBody(*state);
     state->done = true;
-    if (state->protocol == Protocol::H3) link->disconnect();
+    link->disconnect();
   }
 
   Link		*link = nullptr;
@@ -723,12 +835,14 @@ Zhttp::H3::QPackTxTable *QUICClient::Stream::qpackTx()
 
 template <typename Client>
 int run(
-  ZiMultiplex &mx, const Options &options, URL url,
+  ZiMultiplex &mx, const Options &options, Req &req,
   RequestResult *result = nullptr)
 {
   Client client;
-  client.state.url = ZuMv(url);
-  client.state.options = options;
+  client.state.id = req.id;
+  client.state.requests = req.requests;
+  client.state.url = req.url;
+  client.state.output = req.output;
 
   if constexpr (Client::Transport == Zi::Transport::TCP) {
     client.state.protocol = Protocol::H1;
@@ -782,6 +896,8 @@ int run(
     }
   }
   int rc = client.state.failed ? 1 : 0;
+  closeBody(client.state);
+  req = ZuMv(client.state);
   client.final();
   return rc;
 }
@@ -836,60 +952,111 @@ URL altSvcURL(const URL &url, const AltSvcEndpoint &altSvc)
 }
 
 int runH3Direct(
-  ZiMultiplex &mx, const Options &options, const URL &url,
+  ZiMultiplex &mx, const Options &options, Req &req,
   RequestResult &result)
 {
-  ZiLOG(Info, "zhttp", ([&url](auto &s) {
-    s << "HTTP/3 direct: " << url.host << ':' << ZuBoxed(url.port);
+  ZiLOG(Info, "zhttp", ([&req](auto &s) {
+    reqLogPrefix(req, s);
+    s << "HTTP/3 direct: " << req.url.host << ':' << ZuBoxed(req.url.port);
   }));
-  return run<QUICClient>(mx, options, url, &result);
+  resetAttempt(req, true);
+  return run<QUICClient>(mx, options, req, &result);
 }
 
 int runH1AltSvcFirst(
-  ZiMultiplex &mx, const Options &options, const URL &url,
+  ZiMultiplex &mx, const Options &options, Req &req,
   RequestResult &result)
 {
-  int rc = run<TLSClient>(mx, options, url, &result);
+  resetAttempt(req, true);
+  int rc = run<TLSClient>(mx, options, req, &result);
   if (rc || redirectStatus(result.status) || !result.altSvc.h3) return rc;
 
   RequestResult h3Result;
-  URL h3URL = altSvcURL(url, result.altSvc);
-  ZiLOG(Info, "zhttp", ([&h3URL](auto &s) {
-    s << "Alt-Svc HTTP/3 probe: " << h3URL.host << ':' <<
-      ZuBoxed(h3URL.port);
+  URL h1URL = req.url;
+  req.url = altSvcURL(h1URL, result.altSvc);
+  ZiLOG(Info, "zhttp", ([&req](auto &s) {
+    reqLogPrefix(req, s);
+    s << "Alt-Svc HTTP/3 probe: " << req.url.host << ':' <<
+      ZuBoxed(req.url.port);
   }));
-  int h3rc = run<QUICClient>(mx, options, ZuMv(h3URL), &h3Result);
+  resetAttempt(req, true);
+  int h3rc = run<QUICClient>(mx, options, req, &h3Result);
   if (!h3rc) {
     result = ZuMv(h3Result);
     return 0;
   }
 
-  // Restore output if a failed H3 upgrade wrote a partial body.
+  req.url = ZuMv(h1URL);
   result = {};
-  return run<TLSClient>(mx, options, url, &result);
+  resetAttempt(req, true);
+  return run<TLSClient>(mx, options, req, &result);
 }
 
 int runH3DNSAltSvcFallback(
-  ZiMultiplex &mx, const Options &options, const URL &url,
+  ZiMultiplex &mx, const Options &options, Req &req,
   RequestResult &result)
 {
   RequestResult h3Result;
-  if (resolveH3(url, ZiResolver::H3Policy::DNSOnly) &&
-      !run<QUICClient>(mx, options, url, &h3Result)) {
-    result = ZuMv(h3Result);
-    return 0;
+  if (resolveH3(req.url, ZiResolver::H3Policy::DNSOnly)) {
+    resetAttempt(req, true);
+    if (!run<QUICClient>(mx, options, req, &h3Result)) {
+      result = ZuMv(h3Result);
+      return 0;
+    }
   }
 
   result = {};
-  return runH1AltSvcFirst(mx, options, url, result);
+  return runH1AltSvcFirst(mx, options, req, result);
+}
+
+int runReqSerial(ZiMultiplex &mx, const Options &options, Req &req)
+{
+  int rc = 1;
+  for (req.redirects = 0; req.redirects <= MaxRedirects; ++req.redirects) {
+    RequestResult result;
+    if (req.url.scheme == "http") {
+      resetAttempt(req, true);
+      rc = run<TCPClient>(mx, options, req, &result);
+    } else if (options.http3)
+      rc = runH3Direct(mx, options, req, result);
+    else
+      rc = runH3DNSAltSvcFallback(mx, options, req, result);
+
+    if (rc || !redirectStatus(result.status) || !result.location) break;
+    URL next;
+    if (!parseLocation(req.url, result.location, next)) {
+      ZiLOG(Error, "zhttp", ([&req, &result](auto &s) {
+	reqLogPrefix(req, s);
+	s << "invalid redirect location: " << result.location;
+      }));
+      rc = 1;
+      break;
+    }
+    ZiLOG(Info, "zhttp", ([&req, &next](auto &s) {
+      reqLogPrefix(req, s);
+      s << "redirect: " << next.scheme << "://" << next.host << next.target;
+    }));
+    req.url = ZuMv(next);
+    if (req.redirects == MaxRedirects) {
+      ZiLOG(Error, "zhttp", ([&req](auto &s) {
+	reqLogPrefix(req, s);
+	s << "too many redirects";
+      }));
+      rc = 1;
+    }
+  }
+  req.failed = rc != 0;
+  return rc;
 }
 
 int main(int argc, char **argv)
 {
+  bool jobsSet = hasJobsOpt(argc, argv);
   Options options;
   argc = ZtCLI::load(options, argc, argv);
   if (options.help) usage(0);
-  if (argc != 2) usage();
+  if (!validateOptions(options, argc, jobsSet)) usage();
+  if (options.requests == 1) options.concurrency = 1;
 
   URL url;
   ZeException error;
@@ -909,33 +1076,25 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  int rc = 1;
-  for (unsigned redirect = 0; redirect <= MaxRedirects; ++redirect) {
-    RequestResult result;
-    if (url.scheme == "http")
-      rc = run<TCPClient>(mx, options, url, &result);
-    else if (options.http3)
-      rc = runH3Direct(mx, options, url, result);
-    else
-      rc = runH3DNSAltSvcFallback(mx, options, url, result);
+  Run run;
+  run.options = options;
+  run.originalURL = url;
+  run.reqs.length(options.requests);
+  for (unsigned i = 0; i < options.requests; ++i) {
+    auto &req = run.reqs[i];
+    req.id = i;
+    req.requests = options.requests;
+    req.url = url;
+    req.output = outputPath(options.output, i, options.requests);
+  }
 
-    if (rc || !redirectStatus(result.status) || !result.location) break;
-    URL next;
-    if (!parseLocation(url, result.location, next)) {
-      ZiLOG(Error, "zhttp", ([&result](auto &s) {
-	s << "invalid redirect location: " << result.location;
-      }));
-      rc = 1;
-      break;
-    }
-    ZiLOG(Info, "zhttp", ([&next](auto &s) {
-      s << "redirect: " << next.scheme << "://" << next.host << next.target;
-    }));
-    url = ZuMv(next);
-    if (redirect == MaxRedirects) {
-      ZiLOG(Error, "zhttp", "too many redirects");
+  int rc = 0;
+  for (unsigned i = 0; i < options.requests; ++i) {
+    if (runReqSerial(mx, options, run.reqs[i])) {
+      ++run.failed;
       rc = 1;
     }
+    ++run.complete;
   }
 
   mx.stop();
