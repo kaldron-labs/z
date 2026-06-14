@@ -193,6 +193,7 @@ namespace H1 {
       for (o = 0; o < int(n) && line[o] != ' '; )
 	if (ZuUnlikely(++o > 8)) { error(); return; } // unterminated protocol
       if (ZuUnlikely(!o || o >= int(n))) { error(); return; } // missing protocol
+      ZuCSpan protocol{&line[0], unsigned(o)};
       unsigned b = ++o;
       int c; // intentionally int
       unsigned code = 0;
@@ -204,6 +205,7 @@ namespace H1 {
       }
       if (ZuUnlikely(b == unsigned(o) || o >= int(n))) { error(); return; }
       m_statusCode = code;
+      impl()->version(protocol);
       impl()->status(code);
       m_state = State::Headers;
     }
