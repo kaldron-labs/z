@@ -203,6 +203,7 @@ namespace H1 {
 	if (ZuUnlikely(++o > int(b + 3))) { error(); return; }
       }
       if (ZuUnlikely(b == unsigned(o) || o >= int(n))) { error(); return; }
+      m_statusCode = code;
       impl()->status(code);
       m_state = State::Headers;
     }
@@ -233,8 +234,17 @@ namespace H1 {
 		  m_contentLength = 0;
 		} else if (m_contentLength > 0)
 		  m_state = State::Body;
-		else
+		else if constexpr (Request) {
 		  m_state = State::Complete;
+		} else {
+		  if (m_contentLength == 0 || noResponseBody_())
+		    m_state = State::Complete;
+		  else {
+		    m_state = State::Body;
+		    m_eofBody = true;
+		    m_contentLength = 0;
+		  }
+		}
 	      } else
 		if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
 		  this->header_(key, value);
@@ -246,8 +256,17 @@ namespace H1 {
 	    consumed = stream.consume(
 	      [this](ZuBSpan span) -> int64_t {
 		auto n = span.length();
-		if (n > m_contentLength) n = m_contentLength;
-		if (!(m_contentLength -= n)) m_state = State::Complete;
+		if (m_eofBody) {
+		  if (ZuUnlikely(m_contentLength + n > MaxBody)) {
+		    m_state = State::Error;
+		    ZiLOG(Error, "Zhttp", "oversized body");
+		    return -1;
+		  }
+		  m_contentLength += n;
+		} else {
+		  if (n > m_contentLength) n = m_contentLength;
+		  if (!(m_contentLength -= n)) m_state = State::Complete;
+		}
 		return n;
 	      }, [this](ZuBSpan span) { impl()->body(span); });
 	    } break;
@@ -324,12 +343,26 @@ namespace H1 {
       return m_state;
     }
 
+    // complete an EOF-framed response body when the connection closes
+    State::T eof() {
+      if (m_state == State::Complete || m_state == State::Error)
+	return m_state;
+      if (m_state == State::Body && m_eofBody)
+	m_state = State::Complete;
+      else
+	m_state = State::Error;
+      impl()->complete(m_state);
+      return m_state;
+    }
+
     // reset for next message
     void reset() {
       m_state = State::Initial;
       m_chunked = false;
+      m_eofBody = false;
       m_contentLength = -1;
       m_chunkLength = -1;
+      m_statusCode = 0;
     }
 
     // CRTP defaults
@@ -346,10 +379,17 @@ namespace H1 {
     void complete(State::T) { }
 
   private:
+    bool noResponseBody_() const {
+      return (m_statusCode >= 100 && m_statusCode < 200) ||
+	m_statusCode == 204 || m_statusCode == 304;
+    }
+
     int64_t	m_contentLength = -1;
     int64_t	m_chunkLength = -1;
+    unsigned	m_statusCode = 0;
     State::T	m_state = State::Initial;
     bool	m_chunked = false;
+    bool	m_eofBody = false;
   };
 
 } // H1
