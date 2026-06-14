@@ -753,12 +753,15 @@ Validation:
   client. If the current H3 client/session API cannot issue concurrent streams
   over one QUIC connection without invasive refactoring, keep zhttp H3 rows
   skipped and implement H1/H1TLS native multi-request first.
+  - ANSWER: `zhttp` has been upgraded with `-n` and `-j`
 - **Installed tool variance:** External tool behavior differs by build. The
   harness must report skipped/failed rows precisely instead of normalizing away
   those differences.
+  - ANSWER: agreed
 - **Result append semantics:** Appending to an existing CSV is convenient, but
   mixed option sets can coexist in one file. Include all option values needed to
   interpret each row, and rely on `schema` for future column changes.
+  - ANSWER: agreed
 
 ## Research References
 
