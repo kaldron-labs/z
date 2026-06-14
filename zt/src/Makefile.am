@@ -14,7 +14,7 @@ pkginclude_HEADERS = \
 	ZtWindow.hh ZtBitmap.hh ZtFmt.hh \
 	ZtStruct.hh ZtScanBool.hh ZtCase.hh ZtTimeZone.hh \
 	ZtQuote.hh ZtJSON.hh ZtURI.hh ZtCLI.hh ZtASN1.hh \
-	ZtBytesFmt.hh ZtCSV.hh
+	ZtBytesFmt.hh ZtCSV.hh ZtAlloc.hh
 lib_LTLIBRARIES = libZt.la
 libZt_la_SOURCES = \
 	ZtLib.cc ZtRegex.cc ZtString.cc ZtHexDump.cc ZtTimeZone.cc \
