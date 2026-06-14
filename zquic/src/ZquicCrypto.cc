@@ -6,6 +6,8 @@
 
 #include <zlib/ZquicCrypto.hh>
 
+#include "ZquicOpenSSL.hh"
+
 #include <zlib/ZtlsBackend.hh>
 
 #include <zlib/ZtLocalArray.hh>
@@ -21,25 +23,6 @@
 namespace Zquic {
 
 namespace {
-
-struct OpenSSLCipherCtx {
-  OpenSSLCipherCtx() = default;
-  ~OpenSSLCipherCtx() { if (ctx) EVP_CIPHER_CTX_free(ctx); }
-
-  EVP_CIPHER_CTX *get() {
-    if (!ctx) return ctx = EVP_CIPHER_CTX_new();
-    EVP_CIPHER_CTX_reset(ctx);
-    return ctx;
-  }
-
-  EVP_CIPHER_CTX	*ctx = nullptr;
-};
-
-EVP_CIPHER_CTX *opensslCipherCtx_()
-{
-  thread_local OpenSSLCipherCtx ctx;
-  return ctx.get();
-}
 
 static constexpr uint8_t InitialSaltV1_[] = {
   0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
@@ -143,10 +126,9 @@ static bool initCipherSuites_(ptls_cipher_suite_t **suites, unsigned max)
 
 static void freeCertificates_(ptls_context_t &ctx)
 {
-  // ztls currently leaves this ownership to picotls process lifetime; this
-  // zpicotls build does not expose a stable per-certificate free contract.
-  ctx.certificates.list = nullptr;
+  if (ctx.certificates.list) ::free(ctx.certificates.list);
   ctx.certificates.count = 0;
+  ctx.certificates.list = nullptr;
 }
 
 static bool isDir_(ZuCSpan path)
@@ -290,7 +272,7 @@ int InitialCrypto::encryptV(
   uint8_t nonce[InitialSecret::IVLen];
   nonce_(nonce, secret, pn);
 
-  EVP_CIPHER_CTX *ctx = opensslCipherCtx_();
+  EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return -1;
   int n = 0, off = 0;
   bool ok =
@@ -322,7 +304,7 @@ int InitialCrypto::decrypt(
   uint8_t nonce[InitialSecret::IVLen];
   nonce_(nonce, secret, pn);
 
-  EVP_CIPHER_CTX *ctx = opensslCipherCtx_();
+  EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return -1;
   int n = 0, off = 0;
   bool ok =
@@ -347,7 +329,7 @@ bool InitialCrypto::headerMask(
 {
   if (len < InitialSecret::HPMaskLen || sample.length() < 16) return false;
   uint8_t block[32];
-  EVP_CIPHER_CTX *ctx = opensslCipherCtx_();
+  EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return false;
   int n = 0, total = 0;
   bool ok =
@@ -658,10 +640,12 @@ static int unprotect_(
       !secret.aead || pnOffset + 4 + 16 > len)
     return -1;
   if (len > BufSize) return -1;
-  uint8_t saved[BufSize];
-  memcpy(saved, packet, len);
+  uint8_t first = packet[0];
+  uint8_t pnBytes[4];
+  memcpy(pnBytes, packet + pnOffset, sizeof(pnBytes));
   auto fail = [&]() -> int {
-    memcpy(packet, saved, len);
+    packet[0] = first;
+    memcpy(packet + pnOffset, pnBytes, sizeof(pnBytes));
     return -1;
   };
   uint8_t mask[InitialSecret::HPMaskLen];
@@ -682,10 +666,17 @@ static int unprotect_(
   payloadOffset = pnOffset + pnLength;
 
   ptls_aead_context_t *ctx = state.aead.get();
+  using Plain = ZtArray<
+    uint8_t, ZtArrayHeapID<"Zquic.PacketProtection.Plain">>;
+  unsigned cipherLen = len - payloadOffset;
+  auto plain = ZtLocalArray(Plain, cipherLen, cipherLen);
+  if (cipherLen && !plain) return fail();
   size_t n = ptls_aead_decrypt(
-    ctx, packet + payloadOffset, packet + payloadOffset,
+    ctx, plain.data(), packet + payloadOffset,
     len - payloadOffset, pn, packet, payloadOffset);
   if (n == SIZE_MAX) return fail();
+  if (n > cipherLen) return fail();
+  if (n) memcpy(packet + payloadOffset, plain.data(), n);
   return int(n);
 }
 

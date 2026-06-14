@@ -1418,7 +1418,7 @@ public:
     void sendBuf_(ZmRef<ZiIOBuf> buf) {
       buf->owner = m_stream;
       auto stream = static_cast<Stream *>(buf->owner);
-      if constexpr (AppThread)
+      if (AppThread)
 	stream->send(ZuMv(buf));
       else
 	stream->send_(ZuMv(buf));
@@ -2782,13 +2782,14 @@ protected:
 	  ok = false;
 	  break;
 	}
-	unsigned packetLen = h.pnOffset + h.length;
-	if (packetLen > packet.length() || packetLen < h.payloadOffset) {
+	uint64_t packetLen = uint64_t(h.pnOffset) + h.length;
+	if (packetLen > packet.length() || packetLen < h.payloadOffset ||
+	    packetLen > UINT_MAX) {
 	  ok = false;
 	  break;
 	}
-	if (!receiveLong(d, offset, packetLen)) ok = false;
-	offset += packetLen;
+	if (!receiveLong(d, offset, unsigned(packetLen))) ok = false;
+	offset += unsigned(packetLen);
 	continue;
       }
       if (!receiveShort(d, offset, d.buf->length - offset)) ok = false;

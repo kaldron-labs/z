@@ -184,6 +184,19 @@ void testPacketParserRejections()
   ZuCHECK(Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 0, 0) < 0 &&
       Zquic::Packet::writeShort(b, sizeof(b), dcid, 1, 5) < 0,
     "invalid packet number length accepted");
+  int l = Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 4, 1);
+  ZuCHECK(l > 0, "Initial token overrun setup failed");
+  unsigned tokenOff = 1 + 4 + 1 + dcid.length() + 1 + scid.length();
+  unsigned o = tokenOff;
+  ZuCHECK(Zquic::VarInt::put(b, sizeof(b), 16, o) == 0,
+    "Initial token overrun token length setup failed");
+  ZuCHECK(Zquic::Packet::parseLong(bytes_(b, o + 1), h) < 0,
+    "Initial token length beyond packet was accepted");
+  o = tokenOff;
+  ZuCHECK(Zquic::VarInt::put(b, sizeof(b), (1ULL<<62) - 1, o) == 0,
+    "Initial token max length setup failed");
+  ZuCHECK(Zquic::Packet::parseLong(bytes_(b, o), h) < 0,
+    "Initial max token length beyond packet was accepted");
 
   uint32_t versions[] = { Zquic::Version1 };
   int n = Zquic::Packet::writeVersionNegotiation(
