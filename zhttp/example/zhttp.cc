@@ -66,27 +66,10 @@ void usage(int code = 1)
   ::exit(code);
 }
 
-bool hasJobsOpt(int argc, char **argv)
-{
-  for (int i = 1; i < argc; ++i) {
-    ZuCSpan arg{argv[i]};
-    if (arg == "--") return false;
-    if (arg.starts("--jobs")) {
-      if (arg.length() == 6 || arg[6] == '=') return true;
-      continue;
-    }
-    if (!arg.starts("-") || arg.starts("--")) continue;
-    for (unsigned j = 1; j < arg.length(); ++j)
-      if (arg[j] == 'j') return true;
-  }
-  return false;
-}
-
-bool validateOptions(const Options &options, int argc, bool jobsSet)
+bool validateOptions(const Options &options, int argc)
 {
   if (argc < 0 || argc != 2) return false;
   if (!options.requests || !options.concurrency) return false;
-  if (jobsSet && options.requests <= 1) return false;
   if (options.concurrency > options.requests) return false;
   return true;
 }
@@ -1652,11 +1635,10 @@ int runReqSerial(ZiMultiplex &mx, Run &run_, Req &req)
 
 int main(int argc, char **argv)
 {
-  bool jobsSet = hasJobsOpt(argc, argv);
   Options options;
   argc = ZtCLI::load(options, argc, argv);
   if (options.help) usage(0);
-  if (!validateOptions(options, argc, jobsSet)) usage();
+  if (!validateOptions(options, argc)) usage();
   if (options.requests == 1) options.concurrency = 1;
 
   URL url;

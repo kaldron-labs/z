@@ -50,10 +50,6 @@ bool writeScript(ZuCSpan path, const char *tempPath_, unsigned port)
     "client=../example/zhttp\n"
     "[ -x \"$server\" ] || server=./zhttp/example/zhttpd\n"
     "[ -x \"$client\" ] || client=./zhttp/example/zhttp\n"
-    "\"$client\" -j 2 http://127.0.0.1:" << port <<
-      "/zhttp-multi >/dev/null 2>" << tempPath << "/bad-j.err && exit 1\n"
-    "\"$client\" -n 1 -j 1 http://127.0.0.1:" << port <<
-      "/zhttp-multi >/dev/null 2>" << tempPath << "/bad-n1j.err && exit 1\n"
     "\"$client\" -n 2 -j 3 http://127.0.0.1:" << port <<
       "/zhttp-multi >/dev/null 2>" << tempPath << "/bad-gt.err && exit 1\n"
     "\"$client\" -n 0 http://127.0.0.1:" << port <<
@@ -83,6 +79,11 @@ bool writeScript(ZuCSpan path, const char *tempPath_, unsigned port)
     "  cat " << tempPath << "/client.err\n"
     "  exit 1\n"
     "fi\n"
+    "\"$client\" -j 1 -o " << tempPath <<
+      "/body-one http://127.0.0.1:" << port <<
+      "/zhttp-multi >" << tempPath << "/client-one.out 2>" <<
+      tempPath << "/client-one.err\n"
+    "grep -qx 'zhttp-multi-ok' " << tempPath << "/body-one\n"
     "grep -qx 'zhttp-multi-ok' " << tempPath << "/body.0\n"
     "grep -qx 'zhttp-multi-ok' " << tempPath << "/body.1\n"
     "grep -qx 'zhttp-multi-ok' " << tempPath << "/body.2\n"
