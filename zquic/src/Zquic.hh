@@ -3824,6 +3824,7 @@ public:
     if (Base::closed() || !Base::runtimeEstablished_() ||
 	!m_endpoint.connected())
       return;
+    if (flushTx_()) return;
     Base::reclaimPTO_();
     retransmit_();
   }
@@ -4070,21 +4071,21 @@ private:
     });
   }
 
-  void flushTx_() {
+  bool flushTx_() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
-      "QUIC client flush outside Tx thread", return);
+      "QUIC client flush outside Tx thread", return false);
     if (Base::closed() || !Base::runtimeEstablished_() ||
 	!m_endpoint.remote())
-      return;
-    flushTx_(m_endpoint.remote());
+      return false;
+    return flushTx_(m_endpoint.remote());
   }
-  void flushTx_(ZiSockAddr addr) {
+  bool flushTx_(ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
-      "QUIC client flush outside Tx thread", return);
-    if (Base::closed() || !addr) return;
+      "QUIC client flush outside Tx thread", return false);
+    if (Base::closed() || !addr) return false;
     flushPendingAcks_(addr);
-    if (!Base::runtimeEstablished_()) return;
-    (void)Base::flushControlAndStreams_(
+    if (!Base::runtimeEstablished_()) return false;
+    return Base::flushControlAndStreams_(
       ZuMv(addr),
       [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
@@ -4438,6 +4439,7 @@ public:
       "QUIC server PTO outside Tx thread", return);
     if (Base::closed() || !Base::runtimeEstablished_() || !m_peerAddr)
       return;
+    if (flushTx_()) return;
     Base::reclaimPTO_();
     retransmit_();
   }
@@ -4643,20 +4645,20 @@ private:
     });
   }
 
-  void flushTx_() {
+  bool flushTx_() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
-      "QUIC server flush outside Tx thread", return);
+      "QUIC server flush outside Tx thread", return false);
     if (Base::closed() || !Base::runtimeEstablished_() || !m_peerAddr)
-      return;
-    flushTx_(m_peerAddr);
+      return false;
+    return flushTx_(m_peerAddr);
   }
-  void flushTx_(ZiSockAddr addr) {
+  bool flushTx_(ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
-      "QUIC server flush outside Tx thread", return);
-    if (Base::closed() || !addr) return;
+      "QUIC server flush outside Tx thread", return false);
+    if (Base::closed() || !addr) return false;
     flushPendingAcks_(addr);
-    if (!Base::runtimeEstablished_()) return;
-    (void)Base::flushControlAndStreams_(
+    if (!Base::runtimeEstablished_()) return false;
+    return Base::flushControlAndStreams_(
       ZuMv(addr),
       [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
