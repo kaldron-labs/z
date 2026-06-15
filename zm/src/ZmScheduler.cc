@@ -206,6 +206,7 @@ void ZmScheduler::timer()
 	  Zm::sleep(m_params.quantum());
 	  return;
 	}
+	timer->fn = Fn{};
 	timer->timeout = ZuTime{};
 	if (timer->transient) delete timer;
       }
@@ -276,6 +277,7 @@ bool ZmScheduler::del(Timer *timer)
 
   if (!*timer) return false;
   bool found = !!m_schedule.delNode(timer);
+  if (found) timer->fn = Fn{};
   timer->timeout = ZuTime{};
   if (timer->transient) delete timer;
   return found;

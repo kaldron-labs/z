@@ -10,6 +10,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZtCLI.hh>
 
 #include "ZhttpTestUtil.hh"
 
@@ -37,12 +38,43 @@ namespace Proto {
   enum T { H1TCP, H1TLS, H3 };
 }
 
+namespace PairOpt {
+  ZtEnum(PairOpt, int8_t, all, zhttpCaddy, zhttpZhttpd, curlZhttpd);
+}
+
+namespace ProtoOpt {
+  ZtEnum(ProtoOpt, int8_t, all, h1tcp, h1tls, h3);
+}
+
 struct Case {
   Pair::T	pair;
   Proto::T	proto;
   unsigned	jobs;
   unsigned	requests;
 };
+
+using OptString = ZtString<ZtStringHeapID<"ZtCLI.Option">>;
+
+struct Options {
+  OptString	pair;
+  OptString	proto;
+  uint32_t	jobs = 0;
+  uint32_t	requests = 0;
+  OptString	caseName;
+  bool		quiet = false;
+  bool		help = false;
+};
+
+ZtStruct((Options, CLI),
+  (((pair),     (CLI::Long<"pair">)),                            (String, "all")),
+  (((proto),    (CLI::Long<"proto">)),                           (String, "all")),
+  (((jobs),     (CLI::Opt<'j'>, CLI::Long<"jobs">)),             (UInt32, 0)),
+  (((requests), (CLI::Opt<'n'>, CLI::Long<"requests">)),         (UInt32, 0)),
+  (((caseName), (CLI::Long<"case">)),                            (String, "")),
+  (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),           (Bool, false)),
+  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),            (Bool, false)));
+
+Options options;
 
 const char *pairName(Pair::T pair)
 {
@@ -54,6 +86,16 @@ const char *pairName(Pair::T pair)
   return "unknown";
 }
 
+const char *pairCaseName(Pair::T pair)
+{
+  switch (pair) {
+    case Pair::ZhttpCaddy: return "ZhttpCaddy";
+    case Pair::ZhttpZhttpd: return "ZhttpZhttpd";
+    case Pair::CurlZhttpd: return "CurlZhttpd";
+  }
+  return "Unknown";
+}
+
 const char *protoName(Proto::T proto)
 {
   switch (proto) {
@@ -62,6 +104,143 @@ const char *protoName(Proto::T proto)
     case Proto::H3: return "h3/quic";
   }
   return "unknown";
+}
+
+const char *protoCaseName(Proto::T proto)
+{
+  switch (proto) {
+    case Proto::H1TCP: return "H1TCP";
+    case Proto::H1TLS: return "H1TLS";
+    case Proto::H3: return "H3";
+  }
+  return "Unknown";
+}
+
+void caseName(ZtString<> &s, const Case &c)
+{
+  s << pairCaseName(c.pair) << '/' << protoCaseName(c.proto) <<
+    "/j" << c.jobs << 'n' << c.requests;
+}
+
+void usage(int code = 1)
+{
+  std::cerr <<
+    "Usage: ZhttpInteropMatrixTest [OPTION]...\n\n"
+    "Options:\n"
+    "  --pair=PAIR       all, zhttpCaddy, zhttpZhttpd, curlZhttpd\n"
+    "  --proto=PROTO     all, h1tcp, h1tls, h3\n"
+    "  -j, --jobs=N      select workload concurrency\n"
+    "  -n, --requests=N  select workload request count\n"
+    "  --case=CASE       exact case, e.g. ZhttpZhttpd/H3/j10n1000\n"
+    "  -q, --quiet       quiet output\n"
+    "  -h, --help        show help\n" <<
+    std::flush;
+  ::exit(code);
+}
+
+bool validOptions()
+{
+  if (PairOpt::lookup(options.pair) < 0) return false;
+  if (ProtoOpt::lookup(options.proto) < 0) return false;
+  if (options.jobs && options.jobs != 1 && options.jobs != 10) return false;
+  if (options.requests && options.requests != 1 && options.requests != 1000)
+    return false;
+  return true;
+}
+
+bool selected(const Case &c)
+{
+  if (options.caseName) {
+    ZtString<> name;
+    caseName(name, c);
+    return name == options.caseName;
+  }
+  switch (PairOpt::lookup(options.pair)) {
+    case PairOpt::all: break;
+    case PairOpt::zhttpCaddy:
+      if (c.pair != Pair::ZhttpCaddy) return false;
+      break;
+    case PairOpt::zhttpZhttpd:
+      if (c.pair != Pair::ZhttpZhttpd) return false;
+      break;
+    case PairOpt::curlZhttpd:
+      if (c.pair != Pair::CurlZhttpd) return false;
+      break;
+    default:
+      return false;
+  }
+  switch (ProtoOpt::lookup(options.proto)) {
+    case ProtoOpt::all: break;
+    case ProtoOpt::h1tcp:
+      if (c.proto != Proto::H1TCP) return false;
+      break;
+    case ProtoOpt::h1tls:
+      if (c.proto != Proto::H1TLS) return false;
+      break;
+    case ProtoOpt::h3:
+      if (c.proto != Proto::H3) return false;
+      break;
+    default:
+      return false;
+  }
+  if (options.jobs && c.jobs != options.jobs) return false;
+  if (options.requests && c.requests != options.requests) return false;
+  return true;
+}
+
+template <typename L>
+void eachCase(L l)
+{
+  Pair::T pairs[] = {
+    Pair::ZhttpCaddy,
+    Pair::ZhttpZhttpd,
+    Pair::CurlZhttpd
+  };
+  Proto::T protos[] = {
+    Proto::H1TCP,
+    Proto::H1TLS,
+    Proto::H3
+  };
+  struct Workload {
+    unsigned jobs;
+    unsigned requests;
+  };
+  Workload workloads[] = {
+    {1, 1},
+    {1, 1000},
+    {10, 1000}
+  };
+  for (auto pair : pairs)
+    for (auto proto : protos)
+      for (auto workload : workloads)
+	l(Case{pair, proto, workload.jobs, workload.requests});
+}
+
+bool anySelected()
+{
+  bool any = false;
+  eachCase([&any](const Case &c) {
+    if (selected(c)) any = true;
+  });
+  return any;
+}
+
+bool selectedNeedsCaddy()
+{
+  bool need = false;
+  eachCase([&need](const Case &c) {
+    if (selected(c) && c.pair == Pair::ZhttpCaddy) need = true;
+  });
+  return need;
+}
+
+bool selectedNeedsCurlH3()
+{
+  bool need = false;
+  eachCase([&need](const Case &c) {
+    if (selected(c) && c.proto == Proto::H3) need = true;
+  });
+  return need;
 }
 
 bool writeFile(ZuCSpan path, ZuCSpan data, unsigned mode = 0666)
@@ -397,17 +576,22 @@ void runCase(Case c)
 
 void testPrerequisites()
 {
-  ZuTestScope(testPrerequisites);
-  ZuCHECK(haveCaddy(), "caddy is required for Zhttp interop matrix tests");
-  ZuCHECK(haveCurlH3(),
-    "curl with HTTP3/ngtcp2/nghttp3 is required for Zhttp interop matrix tests");
+  ZuTestScopeRT(testPrerequisites);
+  ZuCheckRT(anySelected());
+  if (selectedNeedsCaddy())
+    ZuCheckRT(haveCaddy());
+  if (selectedNeedsCurlH3())
+    ZuCheckRT(haveCurlH3());
 }
 
 } // namespace
 
 #define ZHTTP_INTEROP_CASE(pair, proto, j, n) \
-  ZuTestCallRT_(#pair "/" #proto "/j" #j "n" #n, runCase, \
-    Case{Pair::pair, Proto::proto, j, n})
+  do { \
+    Case c{Pair::pair, Proto::proto, j, n}; \
+    if (selected(c)) \
+      ZuTestCallRT_(#pair "/" #proto "/j" #j "n" #n, runCase, c); \
+  } while (0)
 
 #define ZHTTP_INTEROP_WORKLOADS(pair, proto) \
   ZHTTP_INTEROP_CASE(pair, proto, 1, 1); \
@@ -421,7 +605,10 @@ void testPrerequisites()
 
 int main(int argc, char **argv)
 {
-  parse(argc, argv);
+  argc = ZtCLI::load(options, argc, const_cast<const char *const *>(argv));
+  if (options.help) usage(0);
+  if (argc != 1 || !validOptions()) usage();
+  verbose = !options.quiet && !::getenv("HARNESS_ACTIVE");
   ZuTestMain();
   ZuTestCall(testPrerequisites);
   ZHTTP_INTEROP_PROTOCOLS(ZhttpCaddy);
