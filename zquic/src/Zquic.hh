@@ -1361,7 +1361,8 @@ public:
     data.ZiIOBuf::length = unsigned(data.bytes);
     m_rxDelivered += data.bytes;
     m_rxState.delivered(m_rxDelivered);
-    ZmRef<ZiIOBuf> buf = msg;
+    ZmRef<Zquic_::IOQueue::Node> buf =
+      static_cast<Zquic_::IOQueue::Node *>(msg);
     m_rx.push(ZuMv(buf));
   }
   void request(const RxQueueSpan &, const RxQueueSpan &) { }
