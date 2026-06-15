@@ -174,10 +174,13 @@ struct ServerStream {
 
   template <typename Stream, typename Rx>
   int processReq(Stream &stream, Rx &rx) {
+    if (m_complete) return 1;
     auto state = parser.process(rx);
     if (state == State::Error) return impl()->error(stream, parser);
-    if (state == State::Complete)
+    if (state == State::Complete) {
+      m_complete = true;
       return impl()->request(stream, parser);
+    }
     return 0;
   }
 
@@ -187,6 +190,7 @@ struct ServerStream {
   int request(Stream &, Parser &) { return 0; }
 
   Parser	parser;
+  bool		m_complete = false;
 };
 
 }} // Zhttp::H3

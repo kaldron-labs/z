@@ -19,7 +19,10 @@ class Endpoint::Cxn_ : public ZiConnection {
 friend Endpoint;
 
 public:
-  static constexpr unsigned EndpointTxQueueLimit = 32;
+  // Stream packetization consumes queued stream ranges before endpoint send;
+  // local endpoint backpressure must not reject packets here or data is lost.
+  // Keep this as a diagnostic threshold only.
+  static constexpr unsigned EndpointTxQueueLimit = 4096;
 
   struct TxNode : public ZuObject {
     TxNode() = default;
@@ -52,6 +55,9 @@ public:
   unsigned generation() const { return m_generation; }
 
   bool sendPkt(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(m_endpoint->m_mx &&
+	m_endpoint->m_mx->invoked(m_endpoint->m_mx->txThread()),
+      "Zquic", (), "QUIC endpoint send outside Tx thread", return false);
     if (!buf) return false;
     if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr));
     m_txBuf = ZuMv(buf);
@@ -61,11 +67,10 @@ public:
   }
 
 private:
+  // Tx-owned: endpoint send queue and active send buffer.
   bool enqueueTx_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
-    if (m_txQueue.count_() >= EndpointTxQueueLimit) {
+    if (m_txQueue.count_() >= EndpointTxQueueLimit)
       ++m_endpoint->m_diag.txBackPressure;
-      return false;
-    }
     m_txQueue.push(new TxNode{ZuMv(buf), ZuMv(addr)});
     return true;
   }
@@ -120,14 +125,17 @@ private:
       return true;
     }
     if ((io.offset += io.length) < io.size) return true;
+    bool hadQueue = m_txQueue.count_();
     m_endpoint->sent_(io.size);
     m_txBuf = nullptr;
     if (dequeueTx_()) {
       io.init(
 	ZiIOFn{this, ZmFnPtr<&Cxn_::sendDone_>{}},
 	m_txBuf->data(), m_txBuf->length, 0, m_txAddr);
+      if (hadQueue) m_endpoint->txDrained_();
       return true;
     }
+    if (hadQueue) m_endpoint->txDrained_();
     io.complete();
     return true;
   }
@@ -135,7 +143,9 @@ private:
 private:
   Endpoint		*m_endpoint = nullptr;
   unsigned		m_generation = 0;
+  // Rx-owned.
   ZmRef<ZiIOBuf>	m_rxBuf;
+  // Tx-owned.
   ZmRef<ZiIOBuf>	m_txBuf;
   ZiSockAddr		m_txAddr;
   TxQueue		m_txQueue;
@@ -161,7 +171,8 @@ bool Endpoint::openUDP(
   DatagramFn datagramFn,
   ReadyFn readyFn,
   FailFn failFn,
-  DownFn downFn)
+  DownFn downFn,
+  TxDrainedFn txDrainedFn)
 {
   ZiAssert(mx, "Zquic", (mx), "null endpoint multiplexer", return false);
   ZiAssert(mx->running(), "Zquic", (mx),
@@ -176,6 +187,7 @@ bool Endpoint::openUDP(
   m_readyFn = ZuMv(readyFn);
   m_failFn = ZuMv(failFn);
   m_downFn = ZuMv(downFn);
+  m_txDrainedFn = ZuMv(txDrainedFn);
   m_listening = false;
   ++m_generation;
 
@@ -212,8 +224,16 @@ void Endpoint::closeUDP()
 
 bool Endpoint::send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
 {
-  if (!m_cxn) return false;
-  return m_cxn->sendPkt(ZuMv(buf), ZuMv(addr));
+  if (!buf) return false;
+  Cxn_ *cxn = m_cxn;
+  if (!cxn) return false;
+  if (!m_mx || m_mx->invoked(m_mx->txThread()))
+    return cxn->sendPkt(ZuMv(buf), ZuMv(addr));
+  m_mx->txRun([cxn = ZmMkRef(cxn), buf = ZuMv(buf), addr = ZuMv(addr)]()
+      mutable {
+    (void)cxn->sendPkt(ZuMv(buf), ZuMv(addr));
+  });
+  return true;
 }
 
 void Endpoint::connected_(Cxn_ *cxn, ZiIOContext &io)
@@ -269,6 +289,11 @@ void Endpoint::sent_(unsigned bytes)
   m_diag.bytesTx += bytes;
 }
 
+void Endpoint::txDrained_()
+{
+  if (m_txDrainedFn) m_txDrainedFn();
+}
+
 void Endpoint::ioError_()
 {
   ++m_diag.failures;
@@ -280,6 +305,7 @@ void Endpoint::clearFns_()
   m_readyFn = ReadyFn{};
   m_failFn = FailFn{};
   m_downFn = DownFn{};
+  m_txDrainedFn = TxDrainedFn{};
 }
 
 } // namespace Zquic

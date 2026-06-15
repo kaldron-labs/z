@@ -31,7 +31,7 @@ constexpr unsigned BufBuiltin = 8<<10;
 constexpr unsigned BufMax = 100<<20;
 constexpr uint64_t H3DataMax = 100<<20;
 constexpr uint64_t H3StreamDataMax = 16<<20;
-constexpr uint64_t H3BidiMax = 64;
+constexpr uint64_t H3BidiMax = 4096;
 constexpr uint64_t H3UniMax = 16;
 
 void usage(int code = 1)
@@ -68,6 +68,7 @@ void usage(int code = 1)
     "  --http3                    enable HTTP/3 over QUIC\n"
     "  --cert path                TLS certificate for --https/--http3\n"
     "  --key path                 TLS private key for --https/--http3\n"
+    "  --debug                    enable ZiMultiplex and HTTP/3 debug logging\n"
     "  -h, --help                 show help\n" << std::flush;
   ::exit(code);
 }
@@ -408,26 +409,37 @@ struct StaticH3Server :
 
   template <typename Stream>
   int error(Stream &stream, ReqParser<true> &) {
+    ZiLOG(Debug, "zhttpd.h3", ([id = stream.id()](auto &s) {
+      s << "request parse error stream=" << id;
+    }));
     stream.link()->app()->state->errors = 1;
     return -1;
   }
 
   template <typename Stream>
   int request(Stream &stream, ReqParser<true> &parser) {
-    ++stream.link()->app()->state->requests;
+    auto n = ++stream.link()->app()->state->requests;
     parser.req.h3 = true;
     parser.req.tls = true;
     StaticPlanner planner{stream.link()->app()->state};
     auto resp = planner.plan(parser.req);
+    ZiLOG(Debug, "zhttpd.h3", ([
+      id = stream.id(), target = parser.req.target,
+      status = resp.status, length = resp.contentLength, n
+    ](auto &s) mutable {
+      s << "request stream=" << id << " total=" << n <<
+	" target=" << target << " status=" << status <<
+	" content-length=" << length;
+    }));
     stream.link()->app()->state->log.write(parser.req, resp, stream.link()->remote);
     stream.sendResponse(ZuMv(resp));
     return 1;
   }
 };
 
-ZiMxParams mxParams()
+ZiMxParams mxParams(bool debug = false)
 {
-  return ZiMxParams()
+  auto params = ZiMxParams()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -436,6 +448,12 @@ ZiMxParams mxParams()
 	.thread(4, [](auto &t) { t.isolated(1); });
     })
     .rxThread(1).txThread(2);
+#ifdef ZiMultiplex_DEBUG
+  if (debug) params.debug(true);
+#else
+  (void)debug;
+#endif
+  return params;
 }
 
 struct HTTPServer : public Ztcp::Server<HTTPServer> {
@@ -644,24 +662,47 @@ struct H3ServerLink :
   using Base = Zquic::SrvLink<H3Server, H3ServerLink, H3ServerStream>;
   using H3Cxn = Zhttp::H3::Cxn<H3ServerLink, ZmRef<H3ServerStream> >;
 
-  H3ServerLink(H3Server *app, ZuCSpan remote_) :
-    Base{app}, remote{remote_} { }
+  H3ServerLink(H3Server *app, State *state_, ZuCSpan remote_) :
+    Base{app}, state{state_}, remote{remote_} { }
   void connected(Zi::Connected info) {
     if (info.transport != Zi::Transport::QUIC ||
 	info.version != int(Zquic::Version1) || info.alpn != "h3")
       app()->state->errors = 1;
     if (!h3.openLocal(*this))
       app()->state->errors = 1;
+    ZiLOG(Debug, "zhttpd.h3", ([remote = remote, info](auto &s) mutable {
+      s << "connected remote=" << remote <<
+	" version=" << info.version << " alpn=" << info.alpn;
+    }));
   }
   void disconnected() {
-    if (counted) {
-      --app()->state->active;
+    unsigned active = state ? state->active.load_() : 0;
+    uint64_t requests = state ? state->requests.load_() : 0;
+    uint64_t errors = state ? state->errors.load_() : 0;
+    ZiLOG(Debug, "zhttpd.h3", ([
+      remote = remote, counted = counted, active, requests, errors,
+      haveState = bool(state)
+    ](auto &s) mutable {
+      s << "disconnected remote=" << remote <<
+	" counted=" << counted;
+      if (haveState)
+	s << " active=" << active <<
+	  " requests=" << requests <<
+	  " errors=" << errors;
+    }));
+    if (counted && state) {
+      --state->active;
       counted = false;
     }
   }
-  void streamed(ZmRef<Stream>) { }
+  void streamed(ZmRef<Stream> stream) {
+    ZiLOG(Debug, "zhttpd.h3", ([id = stream ? stream->id() : -1](auto &s) {
+      s << "streamed stream=" << id;
+    }));
+  }
 
   H3Cxn	h3;
+  State		*state = nullptr;
   ZtString<>	remote;
   bool		counted = true;
 };
@@ -670,12 +711,19 @@ ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &info)
 {
   unsigned active = ++state->active;
   if (state->options.maxconn && active > state->options.maxconn) {
+    ZiLOG(Debug, "zhttpd.h3", ([&info, active](auto &s) {
+      s << "reject initial peer=" << info.peer.ip() <<
+	" active=" << active;
+    }));
     --state->active;
     return {};
   }
   ZtString<> remote;
   remote << info.peer.ip();
-  return new Link{this, remote};
+  ZiLOG(Debug, "zhttpd.h3", ([remote, active](auto &s) mutable {
+    s << "accepted remote=" << remote << " active=" << active;
+  }));
+  return new Link{this, state, remote};
 }
 
 H3ServerStream::H3Cxn &H3ServerStream::h3Cxn() const
@@ -687,6 +735,9 @@ int H3ServerStream::process(Zquic::RxStream &rx)
 {
   if (Zquic::StreamID::uni(uint64_t(this->id()))) {
     auto s = this->CxnStream::process(*this);
+    ZiLOG(Debug, "zhttpd.h3", ([id = this->id(), s](auto &out) {
+      out << "control stream=" << id << " state=" << s;
+    }));
     if (s == Zhttp::H3::CxnState::Error) {
       this->link()->app()->state->errors = 1;
       return -1;
@@ -702,13 +753,28 @@ int H3ServerStream::process(Zquic::RxStream &rx)
     return static_cast<Cxn *>(ptr)->qpackDecoderWrite(span);
   };
   h3.parser.streamID_ = uint64_t(this->id());
-  return h3.processReq(*this, *this);
+  int rc = h3.processReq(*this, *this);
+  ZiLOG(Debug, "zhttpd.h3", ([id = this->id(), rc](auto &s) {
+    s << "process request stream=" << id << " rc=" << rc;
+  }));
+  return rc;
 }
 
 void H3ServerStream::sendResponse(ResponsePlan resp)
 {
+  ZiLOG(Debug, "zhttpd.h3", ([
+    id = this->id(), status = resp.status, length = resp.contentLength
+  ](auto &s) {
+    s << "queue response stream=" << id << " status=" << status <<
+      " content-length=" << length;
+  }));
   auto ref = this->link()->findStream(this->id());
-  if (!ref) return;
+  if (!ref) {
+    ZiLOG(Error, "zhttpd", ([id = this->id()](auto &s) {
+      s << "H3 response stream not found: " << id;
+    }));
+    return;
+  }
   this->link()->app()->txInvoke([
     link = ZmMkRef(this->link()), ref, resp = ZuMv(resp)
   ]() mutable {
@@ -724,7 +790,14 @@ void H3ServerStream::sendResponse(ResponsePlan resp)
     builder.response(tx);
     sendBody(tx, builder, resp);
     builder.finish(tx);
-    link->send_(ref, "", true);
+    bool ok = link->send_(ref, "", true);
+    ZiLOG(Debug, "zhttpd.h3", ([id = ref->id(), ok](auto &s) {
+      s << "send response stream=" << id << " ok=" << ok;
+    }));
+    if (!ok)
+      ZiLOG(Error, "zhttpd", ([id = ref->id()](auto &s) {
+	s << "H3 response send failed: " << id;
+      }));
   });
 }
 
@@ -738,7 +811,7 @@ int main(int argc, char **argv)
     return 1;
   }
   ZiLog::init("zhttpd", options.syslog ? "daemon" : "user");
-  ZiLog::level(0);
+  ZiLog::level(options.debug ? Ze::Debug : Ze::Info);
   if (options.syslog)
     ZiLog::sink(ZiLog::sysSink());
   else if (options.logPath && options.logPath != "-")
@@ -768,7 +841,7 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  ZiMultiplex mx(mxParams());
+  ZiMultiplex mx(mxParams(options.debug));
   if (!mx.start()) {
     ZiLOG(Error, "zhttpd", "ZiMultiplex start failed");
     state.log.final();
