@@ -69,143 +69,158 @@ These guidelines extend `AGENTS.md`
 - maximally leverage `Zu*`, `Zm*`, `Zt*` and `Zi*`
 
 ## Amber flags
-- fixed-size arrays
-  - if accompanied by explicitly and separately maintained lengths, these should almost certainly be replaced by `ZuArray`/`ZtArray`/`ZtString`/`ZtLocalArray` etc.
-  - if lookup tables, `ZmHash`/`ZmLHash` are probably more appropriate, with appopriate locking, hash IDs, etc. to permit run-time sizing/tuning
-  - hard-coded size/capacity limits are always questionable
-    - too low? do they impair scaling?
-    - too high? do they bloat stack or heap? is the capacity mostly unused?
-    - mandated by RFC, other standard or authority?
-    - aligned with other mainstream implementations of the same functionality?
-  - array rules:
-    - if required, hard upper limits on array size should be explicitly enforced in code
-    - arrays in hot paths should be dynamic with a builtin size (`ZtBuiltin`) that covers 95-99% of usage in real-world workloads
-    - arrays in cold paths should be dynamic with no builtin size (`ZtArray`)
-    - arrays in hot paths that can be scratch should be stack-allocated with heap fallback (`ZtLocalArray`)
-  - hard-coded numbers, e.g. 16, should always be library-defined compile-time constants that are prominently located in the code with a comment so they can be maintained
-- heap allocations
-  - heap allocations that should be scratch stack allocations
-  - heap allocations that do not leverage `ZmHeap` / `ZmVHeap`
-  - default-identified heap allocations that do not specify a heap ID
-  - heap allocations in a hot path are a red flag
-  - necessary heap allocations should:
-    - leverage `ZmHeap` for fixed-size, `ZmVHeap` for variable size
-    - be identified with `ZmHeapID` for run-time telemetry and tuning
-    - be consolidated with intrusive reference counting and container overhead
-      - see `ZmPolyCache` for an example of nesting a hash table node, a list node and reference-counting in a single allocated node
-  - prefer callbacks with stack-allocated scratch temporaries (using `ZtLocalArray` and other such) to heap-allocated context
-  - ensure `ZmHeap`-optimized buffer management and queue node management
-  - I/O buffers are an exception to the usual "prefer stack over heap" - see below
-- copying of string/byte data to/from temporaries
-  - this is legitimate to achieve a contiguous span in:
-    - stack-allocated scratch buffers which will be passed to CRTP callbacks
-    - long-lived heap memory which needs to be retained in the program state
-  - this is not legitimate in almost all other cases, including encoding/decoding and encryption/decryption
-    - encoding/decoding and encryption/decryption should be done in place using mutable buffers if possible, unless
-    - encoding/decoding/encrypting/decrypting to a destination that is uninitialized storage elides copying to that destination
-- unnecessary default- or zero-initialization
-  - if memory is going to be overwritten immediately, use uninitialized storage
-- algorithmic inefficiencies
-- performance, latency or throughput impairments
-- ineffective use of Z Framework
-  - redundant code that duplicates available capabilities in Z framework lower-level libraries
-- misalignments with goal, guidelines, these guidelines and `AGENTS.md`
-- chained `if` statements that should be `switch`
-- highly nested logic
-- repeated code blocks that are near-identical, violating "DRY"
-- dead code that should be deleted
-  - delete historical compatibility code unless explicitly required
-- unnecessary casts
-  - unnecessary casting among char-equivalent pointers
-    - most Z framework types convert equivalent primitive element types automatically
-  - unnecessary casting to base of CRTP `impl()` / `app()`
-    - bases that need to constrain function name resolution should use `using T::function;`
-- unnecessary constructor churn with needlessly-initialized storage
-  - Z intentionally prefers uninitialized storage and explicit placement new
-  - Z array containers are intentionally uninitialized until filled
-- direct use of `FILE`, `syslog`, etc.
-  - use `ZiLog`, `ZiFile`
-- use of `*printf` variable args
-  - use Z framework types with `<<`
-  - use `ZuBox` and `ZuFmt` for formatting
-- use of separate `bool` instead of sentinel values to signal unset, uninitialized or null
-  - Z prefers sentinel values
+### Storage and capacity
+- Anti-pattern: fixed-size arrays, especially with separately maintained lengths.
+  Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
+  Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, etc.; enforce any required hard upper limit in code.
+- Anti-pattern: fixed-size lookup tables.
+  Problem: static sizing prevents run-time tuning and often misses required locking/hash-ID integration.
+  Fix: use `ZmHash`/`ZmLHash` with appropriate locking and hash IDs.
+- Anti-pattern: hard-coded capacities such as `16`.
+  Problem: unexplained limits may impair scaling when too low, bloat stack/heap when too high, or leave mostly unused capacity.
+  Fix: use prominently located, named library-defined compile-time constants with a maintenance comment: RFC/standard mandate, mainstream alignment, or measured scaling/footprint trade-off.
+- Anti-pattern: arrays on hot or cold paths without workload-aware storage.
+  Problem: the wrong storage choice adds allocation latency, stack pressure, or unused capacity.
+  Fix: use `ZtBuiltin` sized for 95-99% of hot-path usage, plain `ZtArray` for cold paths, and `ZtLocalArray` for scratch hot-path storage with heap fallback.
+
+### Heap allocation
+- Anti-pattern: heap allocation in hot paths or for scratch state.
+  Problem: allocator latency and contention directly hurt tail latency and throughput.
+  Fix: use stack scratch such as `ZtLocalArray` and pass it through callbacks; I/O buffers are the exception, see the I/O guidance below.
+- Anti-pattern: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
+  Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
+  Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`.
+- Anti-pattern: separate allocations for object, refcount, and container nodes.
+  Problem: fragmented allocation adds memory overhead and pointer chasing.
+  Fix: consolidate with intrusive reference counting and container nodes where practical; see `ZmPolyCache` nesting a hash node, list node, and refcount in one allocated node.
+- Anti-pattern: buffer or queue-node management bypassing optimized Z heap paths.
+  Problem: common data-path allocations miss pooling and telemetry.
+  Fix: use `ZmHeap`-optimized buffer and queue-node management.
+
+### Data movement and initialization
+- Anti-pattern: copying string/byte data through temporaries.
+  Problem: avoidable memory traffic dominates many encode/decode and crypto paths.
+  Fix: operate in place on mutable buffers, or write directly into uninitialized destination storage when that elides a copy; copies are not legitimate in almost all other cases.
+- Anti-pattern: temporary contiguous copies.
+  Problem: they are usually hidden allocation/copy costs.
+  Fix: allow them only for stack scratch passed to CRTP callbacks or for long-lived heap state that must retain data.
+- Anti-pattern: default/zero initialization or constructor churn before immediate overwrite.
+  Problem: it burns cycles and cache bandwidth for data that will not be read.
+  Fix: use uninitialized storage and explicit placement new where appropriate; Z array containers are intentionally uninitialized until filled.
+
+### Algorithm and control flow
+- Anti-pattern: algorithmic inefficiency, latency regression, throughput impairment, or avoidable work.
+  Problem: small local costs often become system-level throughput or tail-latency limits.
+  Fix: choose the lower-complexity or lower-allocation design and validate hot paths.
+- Anti-pattern: chained `if` statements that should be `switch`.
+  Problem: intent and dispatch shape are harder for both readers and compilers to see.
+  Fix: use `switch` when branching on one discrete value.
+- Anti-pattern: highly nested logic.
+  Problem: state and error handling become difficult to audit.
+  Fix: flatten control flow with early exits, helper functions, or clearer state transitions.
+- Anti-pattern: near-identical repeated blocks.
+  Problem: duplication hides divergent fixes and violates DRY.
+  Fix: factor common code with templates, CRTP, or local helpers that preserve performance.
+
+### Framework fit
+- Anti-pattern: reimplementing lower-level Z Framework capabilities.
+  Problem: duplicate code misses established semantics, optimizations, and maintenance paths.
+  Fix: use the existing `Zu*`, `Zm*`, `Zt*`, and `Zi*` facilities.
+- Anti-pattern: direct use of `FILE`, `syslog`, etc.
+  Problem: it bypasses Z I/O and logging conventions.
+  Fix: use `ZiFile`, `ZiLog`, etc.
+- Anti-pattern: `*printf` varargs formatting.
+  Problem: varargs are weakly typed and bypass Z formatting conventions.
+  Fix: use Z framework types with `<<`, `ZuBox`, and `ZuFmt`.
+- Anti-pattern: separate `bool` flags for unset, uninitialized, or null state.
+  Problem: extra flags can diverge from the value they describe.
+  Fix: use sentinel values.
+
+### Type and API friction
+- Anti-pattern: unnecessary casts.
+  Problem: casts hide type-system mistakes and make ownership/aliasing harder to audit.
+  Fix: rely on existing Z conversions and fix the type boundary.
+- Anti-pattern: casts among char-equivalent pointers.
+  Problem: most Z types already convert equivalent primitive element types automatically.
+  Fix: remove the cast unless a real representation change is required.
+- Anti-pattern: casts to CRTP `impl()`/`app()` bases.
+  Problem: they obscure name lookup and static dispatch.
+  Fix: use `using T::function;` in bases that need constrained function lookup.
+
+### Scope and cleanup
+- Anti-pattern: code that does not align with the goal, these guidelines, or `AGENTS.md`.
+  Problem: local changes can erode project architecture and review expectations.
+  Fix: realign the change or call out the required exception explicitly.
+- Anti-pattern: dead code or historical compatibility code.
+  Problem: unused code increases audit, test, and maintenance burden.
+  Fix: delete it unless compatibility is explicitly required.
 
 ## Leveraging Key Z Framework Capabilities
-- assertions:
-  - use `ZuAssert` for compile-time assertions
-  - run-time assertions:
-      - below `zm`, use plain `assert`
-      - below `zi`, use `ZmAssert`
-      - in `zi` or above, use `ZiAssert`
-        - always use `ZiAssert` for run-time assertions that need graceful failure handling
-- linker symbol length control for complex template aliases
-  - use `ZuDerive(x, ([complex template instantiation]))` in place of
-    `using X = [complex template instantiation]`; this introduces a new
-    explicit type ID, which helps the compiler
-- `ZuSpan` `*Array` and `*String` interoperate smoothly without explicit casting:
-  - do not unnecessarily cast them - for example, `ZuCSpan` and `ZuBSpan` silently convert
-- `ZuTypeList` and `ZuSeq` encode tables, associative containers and sequences at compile-time 
-  - use `ZuSwitch` instead of static lookup tables
-  - use `ZuUnroll` to iterate over compile-time type lists and sequences
-  - use `ZuType`, `ZuTypeIndex`, `ZuTypeMap`, `ZuTypeSlice`, etc. to transform type lists and sequences
-- use `ZuString` and `ZuStringT` for compile-time strings
-- use `ZuStringTL` for compile-time lists of strings
-- use `ZtLocalArray` for stack-allocated scratch, will fallback to heap-allocation
-  - ensure appropriate heap identification of the underlying array
-- use `ZmAlloc` for large single-object stack allocations with heap fallback
-- use `ZmSpecific` instead of `thread_local`
-- use `ZmSingleton` for global singletons
-- use `ZtBuiltin` for builtin arrays with heap-allocation fallback
-- use `ZuMatcher` for token-matching multiple possibilities, use `==` for a single possibility
-- use `ZuBox`, `ZuFmt`, `ZuPrint` for printing
-  - stream directly to `Z*String` and `Z*Array` types
-  - stream directly to `std::cout` etc.
-- use `ZuStruct`/`ZtStruct`/`ZfbStruct` for compile-time extract/transform metadata
-  - JSON - `ZtJSON`, ASN.1 - `ZtASN1`, CLI - `ZtCLI`, CSV - `ZtCSV`, URI query - `ZtURI`
-  - Framebuffers - `ZfbStruct`
-- use `ZmScheduler` for thread pools
-  - use `ZmScheduler` `isolated` threads to ensure "sharding"
-  - sharding is associating data with single specific threads
-    - minimize inter-thread sharing of data and consequent locking/atomics
-  - dedicate threads and associated data to independent Rx and Tx in I/O
-- use `ZiIOBuf` for buffer management
-  - I/O buffers are an exception to the usual "prefer stack over heap"
-  - pooled heap buffer allocations is actually preferred to on-stack
-  - buffers can be moved between threads by reference without copying
-  - buffer heap pool sizes can be optimally tuned to the workload at run-time
-- use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests
-- use appropriate containers: `ZmHash`, `ZmLHash`, `ZmList`, `ZmRBTree`, `ZmPQueue`, ...
-  - Z iterators are usually optionally mutable and can delete while iterating
-  - `del()` / `delNode()` usually returns a movable reference to the deleted node/value
-- use `ZmRing`, `ZiRing` for inter-thread and inter-process communication
-- use `ZiLog` for logging
-- use `ZiFile` for file I/O, `ZiMMapFile` for memory-mapped I/O, `ZiMultiplex` for network I/O multiplexing
-- use `ZiEventLoop` for interoperability with other event loops and types of handles
-- use `Zdb` for relational data persistency
-  - use sagas for transactional integrity
-- comparisons and sentinels:
-  - use `operator *` to detect sentinel null
-  - see `ZuCmp` for sentinel values and associated logic
-  - use `ZuCmp::cmp` in preference to `operator <=>` because `cmp` returns a plain int
-- use `ZmFn` for type-erased lambdas
-  - try and consolidate captures into a single 64bit value (e.g. a `ZmRef`)
-    - use `ZmFn`'s built-in capture to elide heap-allocation for lambda instances
-    - leverage `mvFn`
-- combine `ZmFn` with `ZiIOFn` and `ZiIOContext` to optimize I/O processing
-- intrusive containers:
-  - containers like `ZmHash` can intrude their container node into the application's node type; this is preferred to passing in/out entire keys and values, because:
-    - it reduces copying of keys and values
-    - it reduces heap churn when the value is a reference-counted smart pointer to application data
-      - two allocations (one for the application data, one for the container node) are consolidated into one
-  - stacked intrusion:
-    - when application nodes are used with multiple containers simultaneously (e.g. `ZmCache`, which wraps a LRU `ZmList` and a `ZmHash`), container node intrusions can be stacked in the same object
-    - in such cases, `HeapID<"">` is used to disable the usual `ZmHeap` allocation for the nodes in the inner containers (the full size of the node is only available at the outermost container node)
+### Assertions and type mechanics
+- Assertions: use `ZuAssert` at compile time; at run time use plain `assert` below `zm`, `ZmAssert` below `zi`, and `ZiAssert` in `zi` or above.
+- Use `ZiAssert` whenever run-time assertion failure needs graceful handling.
+- For complex template aliases, prefer `ZuDerive(x, ([complex template instantiation]))` over `using X = ...`; the explicit type ID helps compiler/linker symbol length handling.
+- `ZuSpan`, `*Array`, and `*String` interoperate without explicit casts; avoid casts such as between `ZuCSpan` and `ZuBSpan`.
+- Comparisons and sentinels: use `operator *` to detect sentinel null, use `ZuCmp` sentinel logic, and prefer `ZuCmp::cmp` over `operator <=>` because it returns plain `int`.
 
-## Code Style
-- library headers must follow the following format:
-  - example `[header]`: "ZuString", "ZhttpQPack"
-  - example `[component]`: "Zu", "Zhttp"
+### Compile-time data and matching
+- Use `ZuTypeList` and `ZuSeq` for compile-time tables, associative containers, and sequences.
+- Use `ZuSwitch` instead of static lookup tables.
+- Use `ZuUnroll` to iterate compile-time type lists and sequences.
+- Use `ZuType`, `ZuTypeIndex`, `ZuTypeMap`, `ZuTypeSlice`, etc. to transform type lists and sequences.
+- Use `ZuString`/`ZuStringT` for compile-time strings and `ZuStringTL` for compile-time string lists.
+- Use `ZuMatcher` for token matching among multiple possibilities; use `==` for a single possibility.
+
+### Storage and lifetime
+- Use `ZtLocalArray` for stack scratch with heap fallback; ensure the underlying array has appropriate heap identification.
+- Use `ZtBuiltin` for builtin arrays with heap-allocation fallback.
+- Use `ZmAlloc` for large single-object stack allocations with heap fallback.
+- Use `ZmSpecific` instead of `thread_local`.
+- Use `ZmSingleton` for global singletons.
+
+### Formatting
+- Use `ZuBox`, `ZuFmt`, and `ZuPrint` for printing.
+- Stream directly to `Z*String`, `Z*Array`, and `std::cout`-style outputs.
+
+### Metadata
+- Use `ZuStruct`, `ZtStruct`, and `ZfbStruct` for compile-time extract/transform metadata.
+- Use metadata integrations instead of ad hoc parsing: JSON `ZtJSON`, ASN.1 `ZtASN1`, CLI `ZtCLI`, CSV `ZtCSV`, URI query `ZtURI`, and Framebuffers `ZfbStruct`.
+
+### Concurrency and sharding
+- Use `ZmScheduler` for thread pools.
+- Use `ZmScheduler` `isolated` threads for sharding: associate data with specific threads to minimize sharing, locking, and atomics.
+- Dedicate threads and their data to independent Rx and Tx in I/O.
+- Use `ZmRing` and `ZiRing` for inter-thread and inter-process communication.
+
+### I/O and system integration
+- Use `ZiIOBuf` for buffer management.
+- I/O buffers are the exception to "prefer stack over heap": pooled heap buffers are preferred, move between threads by reference without copying, and allow run-time pool tuning.
+- Use `ZiLog` for logging.
+- Use `ZiFile` for file I/O, `ZiMMapFile` for memory-mapped I/O, and `ZiMultiplex` for network I/O multiplexing.
+- Use `ZiEventLoop` for interoperability with other event loops and handle types.
+
+### Containers and intrusion
+- Use appropriate containers: `ZmHash`, `ZmLHash`, `ZmList`, `ZmRBTree`, `ZmPQueue`, etc.
+- Z iterators are usually optionally mutable and can delete while iterating.
+- `del()`/`delNode()` usually returns a movable reference to the deleted node/value.
+- Prefer intrusive container nodes when application nodes can own them; this reduces key/value copying and, for reference-counted application data, consolidates the application object and container node from two allocations into one.
+- Stack container intrusions when one application node participates in multiple containers, e.g. `ZmCache` combining an LRU `ZmList` and `ZmHash`.
+- Use `HeapID<"">` to disable inner-container `ZmHeap` allocation when the full node size is only available at the outermost container.
+
+### Callbacks
+- Use `ZmFn` for type-erased lambdas.
+- Consolidate captures into a single 64-bit value where possible, e.g. `ZmRef`; use `ZmFn` built-in capture to elide heap allocation and leverage `mvFn`.
+- Combine `ZmFn` with `ZiIOFn` and `ZiIOContext` to optimize I/O processing.
+
+### Tests
+- Use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests.
+
+### Persistence
+- Use `Zdb` for relational data persistency; use sagas for transactional integrity.
+
+## Code style
+### Header layout
+- Library headers must follow this skeleton (`[header]`: `ZuString`, `ZhttpQPack`; `[component]`: `Zu`, `Zhttp`):
   ```
   //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
   //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
@@ -232,79 +247,65 @@ These guidelines extend `AGENTS.md`
 
   [body of header]
   ```
-  - headers must include all their **direct** dependencies
-  - headers must not include **indirect** dependencies unless they use related code/definitions
-- indentation:
-  - match the prevailing style in `{zu,zm,zt,ze,zi}/src/*.{hh,cc}`; when
-    these rules, an editor's interpretation of `cino`, and local code disagree,
-    code precedent wins
-  - use hard tabs for indentation (`noet`, `ts=8`) and a 2-column logical C++
-    indent (`sw=2`); do not replace leading tabs with spaces
-  - indent block contents by one logical level:
-    - namespace/class/struct/function bodies, control-flow bodies and lambda
-      bodies use one extra logical level
-    - `public:`, `protected:` and `private:` labels are flush with the class
-      declaration body; members following them are indented one logical level
-    - `friend` declarations are flush with the class declaration body
-      - `friend` declarations should go at top in the default private section
-    - `case`/`default` labels follow the local switch style; statements under a
-      label are indented one logical level from the label
-  - for multi-line declarations and expressions, prefer the existing visual
-    alignment style over mechanically adding fixed-width continuation indents:
-    - split long template parameter lists, inheritance lists, base constructor
-      calls and function argument lists after a natural delimiter
-    - continue nested template/base/member initializer expressions one logical
-      level deeper than their containing line
-    - align continuation lines with the open construct when that is what nearby
-      code does
-    - example function multi-line style (note the `{` on a line of its own):
-      ```
-      template <typename Client>
-      int run(
-        ZiMultiplex &mx, const Options &options, URL url,
-        RequestResult *result = nullptr)
-      {
-        Client client;
-      ```
-    - example constructor multi-line style (note the `:` and `{` on a line of their own):
-      ```
-      StoreTbl(
-        Store *store, IDString id, unsigned nShards,
-        ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
-        const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
-      :
-        m_store{store}, m_id{ZuMv(id)},
-        m_fields{ZuMv(fields)}, m_keyFields{ZuMv(keyFields)},
-        m_bufAllocFn{ZuMv(bufAllocFn)}
-      {
-        // introspect fields and flatbuffers reflection data, building
-      ```
-  - keep short, simple functions and statements on one line when the surrounding
-    code does so; split only when line length or expression shape makes the code
-    clearer
-  - preserve tabular alignment for data members, macro bodies and compact tables
-    that already use tabs to line up names, initializers or comments
-  - do not deeply indent lambdas, example with large multiline captures and parameters:
-    ```
-    auto lambda = [
-      ... /* multiline captures */
-    ](
-      ... /* multiline parameters */)
-    {
-      ... /* body */
-    };
-    ```
-- `class` vs `struct`
-  - `struct`s must be all-public data members
-    - not prefixed with `m_`
-    - declared at top before function members (if any)
-  - `class`es must be all-private data members
-    - prefixed with `m_`
-    - declared at bottom before closing `};`
-  - no hybrid `class` or `struct` with mixed public/private data members
-- right-align members with hard TABs
-- `*` and `&` go with the member, not the type
-  - `void<TAB>*m_`, not `void *<TAB>m_`
+- Headers must include all direct dependencies.
+- Headers must not include indirect dependencies unless they use related code/definitions.
+
+### Indentation
+- Match prevailing style in `{zu,zm,zt,ze,zi}/src/*.{hh,cc}`; when these rules, editor `cino`, and local precedent disagree, code precedent wins.
+- Use hard tabs for indentation (`noet`, `ts=8`) and a 2-column logical C++ indent (`sw=2`); do not replace leading tabs with spaces.
+- Indent namespace/class/struct/function bodies, control-flow bodies, and lambda bodies one logical level.
+- Keep `public:`, `protected:`, and `private:` flush with the class declaration body; indent following members one logical level.
+- Keep `friend` declarations flush with the class declaration body, at the top in the default private section.
+- Follow local switch style for `case`/`default`; indent statements one logical level from the label.
+
+### Multiline layout
+- Prefer existing visual alignment over mechanical fixed-width continuation indents.
+- Split long template parameter lists, inheritance lists, base constructor calls, and function argument lists after natural delimiters.
+- Continue nested template/base/member-initializer expressions one logical level deeper than their containing line.
+- Align continuation lines with the open construct when nearby code does.
+- Function multiline style, with `{` on its own line:
+  ```
+  template <typename Client>
+  int run(
+    ZiMultiplex &mx, const Options &options, URL url,
+    RequestResult *result = nullptr)
+  {
+    Client client;
+  ```
+- Constructor multiline style, with `:` and `{` on their own lines:
+  ```
+  StoreTbl(
+    Store *store, IDString id, unsigned nShards,
+    ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
+    const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
+  :
+    m_store{store}, m_id{ZuMv(id)},
+    m_fields{ZuMv(fields)}, m_keyFields{ZuMv(keyFields)},
+    m_bufAllocFn{ZuMv(bufAllocFn)}
+  {
+    // introspect fields and flatbuffers reflection data, building
+  ```
+- Do not deeply indent lambdas; large multiline captures/parameters use this shape:
+  ```
+  auto lambda = [
+    ... /* multiline captures */
+  ](
+    ... /* multiline parameters */)
+  {
+    ... /* body */
+  };
+  ```
+
+### Compact layout and alignment
+- Keep short, simple functions and statements on one line when surrounding code does; split only when line length or expression shape makes it clearer.
+- Preserve tabular alignment for data members, macro bodies, and compact tables already using tabs to align names, initializers, or comments.
+- Right-align members with hard tabs.
+- `*` and `&` go with the member, not the type: `void<TAB>*m_`, not `void *<TAB>m_`.
+
+### Class and struct shape
+- `struct`s are all-public data: members are not prefixed with `m_` and appear at the top before function members.
+- `class`es have all-private data: members are prefixed with `m_` and appear at the bottom before closing `};`.
+- Do not create hybrid `class` or `struct` types with mixed public/private data members.
 
 ## I/O sharding
 Every data member involved in I/O rx/tx should have one owning shard:
@@ -371,31 +372,30 @@ Shutdown remains a multi-phase operation: stop ingress, drain or cancel queued
 dependent work on each owning shard, then release owning objects.
 
 ## Naming
-- names must be concise; no names can exceed 32 bytes (hard upper limit)
-  - while "packet" would be fine as a name, "reservePacketProtection" would not
-    - use standard abbreviations common in code:
-      `reserve` -> `res`
-      `packet` -> `pkt`
-      `client` -> `cli`
-      `server` -> `srv`
-      `protection` -> `prot`
-      ... etc.
-    - resulting name would be "resPktProt"
-- names are generally camelCase, not snake_case
-  - exceptions are made for external dependencies
-- `m_` is reserved for private data members of classes
-- use overloads for getters/setters, do not name them independently
-  - example: `int x() const` and `void x(int)`
-    - it's also ok to `decltype(auto) x(this &&self) { ... }` to properly handle move context
-  - `int &x()` might be ok as a setter, if thread-safety is guaranteed by the calling context, but this pattern is an amber flag
-    - in such cases `int x` should probably be a public data member
-- use trailing underscores to indicate:
-  - internal-only or thread-dedicated functions/types
-    - e.g. `send` might use `txInvoke` (which checks the running thread) to possibly enqueue a call to `send_` on the tx thread so it can be called from any thread, while `send_` can assume the caller is already running on the right thread and elide the check and potential context switch
-    - e.g. `template <typename T> struct Foo : public Foo_ { ... };` - `Foo` is the API, while `Foo_` is a `T`-independent common base.
-- "utilties" not "helpers", "duplex" not "bidi", etc.
-  - no imprecise or primitive use of the English language designed to make it more accessible to non-native/non-technical/non-veteran readers
-  - accessibility of language or naming is a hard non-goal
+### Length and abbreviations
+- Names must be concise; 32 bytes is the hard upper limit.
+- Use standard in-code abbreviations for long names: `reserve` -> `res`, `packet` -> `pkt`, `client` -> `cli`, `server` -> `srv`, `protection` -> `prot`, etc.
+- Example: `packet` is fine; `reservePacketProtection` is too long; use `resPktProt`.
+
+### Casing and member prefixes
+- Names are generally camelCase, not snake_case.
+- External dependencies may keep their native naming.
+- `m_` is reserved for private data members of classes.
+
+### Accessors
+- Use overloads for getters/setters; do not invent separate names.
+- Example: `int x() const` and `void x(int)`.
+- `decltype(auto) x(this &&self) { ... }` is acceptable to preserve move context.
+- `int &x()` as a setter is an amber flag; use it only when thread-safety is guaranteed by the calling context. If direct mutation is intended, `int x` should probably be a public data member.
+
+### Trailing underscores
+- Use trailing underscores for internal-only or thread-dedicated functions/types.
+- Example: `send` may `txInvoke` a `send_` call on the Tx thread; `send_` can assume the correct thread and elide the check/context switch.
+- Example: `template <typename T> struct Foo : public Foo_ { ... };` where `Foo` is the API and `Foo_` is a `T`-independent common base.
+
+### Vocabulary
+- Prefer precise project vocabulary: "utilities" not "helpers", "duplex" not "bidi", etc.
+- Do not choose imprecise or primitive English for accessibility to non-native, non-technical, or non-veteran readers; accessible naming is a hard non-goal.
 
 ## Debugging
 - use `libtool exec` to run test programs under debugging tools within the source tree
