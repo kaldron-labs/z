@@ -42,6 +42,8 @@ namespace Zhttpd {
 constexpr unsigned FileChunk = 16<<10;
 constexpr unsigned MimeFileMax = 16<<20;
 
+using Text = ZtString<ZtStringHeapID<"Zhttpd.Text">>;
+
 template <typename L>
 void fileChunks(uint64_t len, L l) {
   while (len) {
@@ -59,37 +61,64 @@ void sendSpanChunks(Body &body, const char *p, uint64_t len) {
   });
 }
 
-inline ZtString<> lower(ZuCSpan s_) {
-  ZtString<> s{s_};
-  for (unsigned i = 0, n = s.length(); i < n; ++i)
-    if (s[i] >= 'A' && s[i] <= 'Z') s[i] += 'a' - 'A';
+ZuInline static constexpr bool isspace__(char c) {
+  return ((c >= '\t' && c <= '\r') || c == ' ');
+}
+
+ZuInline static constexpr char lower__(char c) {
+  return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+}
+
+template <typename S>
+inline void lower(S &s) {
+  for (unsigned i = 0, n = s.length(); i < n; ++i) s[i] = lower__(s[i]);
+}
+
+template <typename S>
+inline void lower(S &s, ZuCSpan src) {
+  s.length(src.length());
+  char *dst = s.data();
+  const char *ptr = src.data();
+  for (unsigned i = 0, n = src.length(); i < n; ++i) dst[i] = lower__(ptr[i]);
+}
+
+inline Text lower(ZuCSpan s_) {
+  Text s;
+  lower(s, s_);
   return s;
 }
 
+inline bool ieq(ZuCSpan a, ZuCSpan b) {
+  if (a.length() != b.length()) return false;
+  for (unsigned i = 0, n = a.length(); i < n; ++i)
+    if (lower__(a[i]) != lower__(b[i])) return false;
+  return true;
+}
+
 struct Forward {
-  ZtString<>	host;
-  ZtString<>	url;
+  Text	host;
+  Text	url;
 };
 
 struct Options {
-  ZtString<>		root;
-  ZtString<>		addr{"0.0.0.0"};
+  Text		root;
+  Text		addr{"0.0.0.0"};
   unsigned		port = 8080;
-  ZtString<>		cert;
-  ZtString<>		key;
-  ZtString<>		index{"index.html"};
-  ZtString<>		mimetypes;
-  ZtString<>		defaultMimetype{"application/octet-stream"};
-  ZtArray<ZtString<> >	forward;
+  Text		cert;
+  Text		key;
+  Text		index{"index.html"};
+  Text		mimetypes;
+  Text		defaultMimetype{"application/octet-stream"};
+  ZtArray<Text >	forward;
   ZtArray<Forward>	forwards;
-  ZtString<>		forwardAll;
-  ZtString<>		auth;
-  ZtString<>		authUser;
-  ZtString<>		authPass;
-  ZtString<>		logPath{"-"};
-  ZtString<>		pidfile;
-  ZtString<>		uid;
-  ZtString<>		gid;
+  Text		forwardAll;
+  Text		auth;
+  Text		authUser;
+  Text		authPass;
+  Text		logPath{"-"};
+  Text		pidfile;
+  Text		uid;
+  Text		gid;
   unsigned		maxconn = 0;
   unsigned		timeout = 30;
   bool			ipv6 = false;
@@ -147,16 +176,16 @@ ZtStruct((Options, CLI),
 
 struct RequestData {
   Zhttp::Method::T	method = -1;
-  ZtString<>		target;
-  ZtString<>		path;
-  ZtString<>		query;
-  ZtString<>		host;
-  ZtString<>		authorization;
-  ZtString<>		range;
-  ZtString<>		ifModifiedSince;
-  ZtString<>		connection;
-  ZtString<>		referer;
-  ZtString<>		userAgent;
+  Text		target;
+  Text		path;
+  Text		query;
+  Text		host;
+  Text		authorization;
+  Text		range;
+  Text		ifModifiedSince;
+  Text		connection;
+  Text		referer;
+  Text		userAgent;
   bool			h3 = false;
   bool			tls = false;
   bool			http10 = false;
@@ -201,20 +230,20 @@ struct ResponsePlan {
   ResponsePlan &operator =(ResponsePlan &&) = default;
 
   unsigned		status = 500;
-  ZtString<>		reason{"Internal Server Error"};
-  ZtString<>		contentType;
-  ZtString<>		location;
-  ZtString<>		wwwAuthenticate;
-  ZtString<>		lastModified;
-  ZtString<>		date;
-  ZtString<>		etag;
-  ZtString<>		contentRange;
-  ZtString<>		allow;
-  ZtString<>		connection;
-  ZtString<>		server;
-  ZtString<>		body;
+  Text		reason{"Internal Server Error"};
+  Text		contentType;
+  Text		location;
+  Text		wwwAuthenticate;
+  Text		lastModified;
+  Text		date;
+  Text		etag;
+  Text		contentRange;
+  Text		allow;
+  Text		connection;
+  Text		server;
+  Text		body;
   ZiFile		fileHandle;
-  ZtString<>		filePath;
+  Text		filePath;
   uint64_t		contentLength = 0;
   uint64_t		fileOffset = 0;
   uint64_t		fileLength = 0;
@@ -230,7 +259,8 @@ struct MimeMap {
   Map			map;
 
   void add(ZuCSpan ext, ZuCSpan mime) {
-    String ext_{lower(ext)};
+    String ext_;
+    lower(ext_, ext);
     map.del(ext_);
     map.add(ZuMv(ext_), String{mime});
   }
@@ -254,7 +284,7 @@ struct MimeMap {
       return;
     auto size = f.size();
     if (size <= 0 || size > MimeFileMax) return;
-    ZtString<> text;
+    Text text;
     text.length(unsigned(size));
     int n = f.read(text.data(), text.length());
     if (n <= 0) return;
@@ -262,7 +292,7 @@ struct MimeMap {
     const char *p = text.data();
     const char *e = p + text.length();
     while (p < e) {
-      while (p < e && (*p == ' ' || *p == '\t')) ++p;
+      while (p < e && isspace__(*p) && *p != '\r' && *p != '\n') ++p;
       if (p >= e) break;
       if (*p == '#' || *p == '\r' || *p == '\n') {
 	while (p < e && *p != '\n') ++p;
@@ -270,15 +300,13 @@ struct MimeMap {
 	continue;
       }
       const char *b = p;
-      while (p < e && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
-	++p;
-      ZuCSpan mime{b, unsigned(p - b)}};
+      while (p < e && !isspace__(*p)) ++p;
+      ZuCSpan mime{b, unsigned(p - b)};
       while (p < e && *p != '\r' && *p != '\n') {
-	while (p < e && (*p == ' ' || *p == '\t')) ++p;
+	while (p < e && isspace__(*p) && *p != '\r' && *p != '\n') ++p;
 	if (p >= e || *p == '\r' || *p == '\n') break;
 	b = p;
-	while (p < e && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
-	  ++p;
+	while (p < e && !isspace__(*p)) ++p;
 	add(ZuCSpan{b, unsigned(p - b)}, mime);
       }
       while (p < e && *p != '\n') ++p;
@@ -286,7 +314,7 @@ struct MimeMap {
     }
   }
 
-  ZtString<> lookup(const Options &options, ZuCSpan path) const {
+  Text lookup(const Options &options, ZuCSpan path) const {
     int slash = -1, dot = -1;
     for (unsigned i = 0, n = path.length(); i < n; ++i) {
       if (path[i] == '/' || path[i] == '\\') slash = int(i);
@@ -294,8 +322,9 @@ struct MimeMap {
     }
     if (dot < 0 || (slash >= 0 && dot < slash))
       return options.defaultMimetype;
-    String ext{lower(ZuCSpan{path.data() + dot + 1,
-      path.length() - unsigned(dot) - 1})};
+    String ext;
+    lower(ext, ZuCSpan{path.data() + dot + 1,
+      path.length() - unsigned(dot) - 1});
     if (auto node = map.find(ext)) return ZuCSpan{node->val()};
     return options.defaultMimetype;
   }
@@ -310,7 +339,7 @@ struct LogSink {
     auto agent = escaped(req.userAgent);
     auto date = logDate();
     ZiLOG(Info, "zhttpd.access", ([
-      remote = ZtString<>{remote}, date = ZuMv(date), target = ZuMv(target),
+      remote = Text{remote}, date = ZuMv(date), target = ZuMv(target),
       referer = ZuMv(referer), agent = ZuMv(agent), status = resp.status,
       length = resp.contentLength
     ](auto &s) mutable {
@@ -321,8 +350,8 @@ struct LogSink {
     }));
   }
 
-  static ZtString<> escaped(ZuCSpan s) {
-    ZtString<> out;
+  static Text escaped(ZuCSpan s) {
+    Text out;
     out.ensure(s.length());
     for (unsigned i = 0; i < s.length(); ++i) {
       char c = s[i];
@@ -332,7 +361,7 @@ struct LogSink {
     }
     return out;
   }
-  static ZtString<> logDate() {
+  static Text logDate() {
     char buf[64];
     time_t now = time(nullptr);
     struct tm tm_;
@@ -372,7 +401,7 @@ struct HrefPolicy : ZuPercent::NoTerm, ZuPercent::NoPlus {
   }
 };
 
-inline ZtString<> httpDate(time_t t) {
+inline Text httpDate(time_t t) {
   char buf[64];
   struct tm tm_;
 #ifdef _WIN32
@@ -385,7 +414,7 @@ inline ZtString<> httpDate(time_t t) {
 }
 
 inline bool parseHTTPDate(ZuCSpan s, time_t &out) {
-  ZtString<> in{s};
+  Text in{s};
   struct tm tm_;
   memset(&tm_, 0, sizeof(tm_));
   char *p = strptime(in.ndata(), "%a, %d %b %Y %H:%M:%S GMT", &tm_);
@@ -398,7 +427,7 @@ inline bool parseHTTPDate(ZuCSpan s, time_t &out) {
   return out != time_t(-1);
 }
 
-inline bool appendUInt(ZtString<> &out, ZuCSpan s) {
+inline bool appendUInt(Text &out, ZuCSpan s) {
   if (!s) return false;
   for (unsigned i = 0; i < s.length(); ++i)
     if (s[i] < '0' || s[i] > '9') return false;
@@ -418,9 +447,9 @@ inline void splitTarget(RequestData &req) {
 }
 
 inline bool decodeNormalizePath(
-  ZuCSpan path_, bool hideDotfiles, ZtString<> &path, ZtString<> &err)
+  ZuCSpan path_, bool hideDotfiles, Text &path, Text &err)
 {
-  ZtString<> decoded;
+  Text decoded;
   if (!path_ || path_[0] != '/') decoded << '/';
   decoded << path_;
   auto scan = ZuPercent::Codec<PathPolicy>::decode(
@@ -430,7 +459,7 @@ inline bool decodeNormalizePath(
   for (unsigned i = 0, n = decoded.length(); i < n; ++i)
     if (!decoded[i]) { err = "NUL in path"; return false; }
 
-  ZtArray<ZtString<> > parts;
+  ZtArray<Text > parts;
   unsigned i = 0;
   while (i < decoded.length()) {
     while (i < decoded.length() && decoded[i] == '/') ++i;
@@ -481,8 +510,8 @@ inline Zi::Path staticPath(const Options &options, ZuCSpan clean)
   return path;
 }
 
-inline ZtString<> hrefEncode(ZuCSpan s) {
-  ZtString<> out;
+inline Text hrefEncode(ZuCSpan s) {
+  Text out;
   out.length(ZuPercent::Codec<HrefPolicy>::len(
     ZuBSpan{s.data(), unsigned(s.length())}));
   auto n = ZuPercent::Codec<HrefPolicy>::encode(
@@ -493,7 +522,7 @@ inline ZtString<> hrefEncode(ZuCSpan s) {
   return out;
 }
 
-inline void htmlEsc(ZtString<> &out, ZuCSpan s) {
+inline void htmlEsc(Text &out, ZuCSpan s) {
   for (unsigned i = 0, n = s.length(); i < n; ++i) {
     char c = s[i];
     switch (c) {
@@ -506,18 +535,22 @@ inline void htmlEsc(ZtString<> &out, ZuCSpan s) {
   }
 }
 
-inline ZtString<> hostName(ZuCSpan host_) {
-  ZtString<> host{host_};
+inline Text hostName(ZuCSpan host_) {
+  Text host{host_};
   if (host && host[0] == '[') {
     auto p = host.find([](auto c) { return c == ']'; });
-    if (p >= 0)
-      return lower(ZuCSpan{host.data() + 1, unsigned(p - 1)});
+    if (p >= 0) {
+      Text out;
+      lower(out, ZuCSpan{host.data() + 1, unsigned(p - 1)});
+      return out;
+    }
   }
   int p = -1;
   for (unsigned i = 0, n = host.length(); i < n; ++i)
     if (host[i] == ':') p = int(i);
   if (p >= 0) host.length(p);
-  return lower(host);
+  lower(host);
+  return ZuMv(host);
 }
 
 inline bool constTimeEqual(ZuCSpan a, ZuCSpan b) {
@@ -527,10 +560,10 @@ inline bool constTimeEqual(ZuCSpan a, ZuCSpan b) {
   return !d;
 }
 
-inline ZtString<> basicAuthValue(const Options &options) {
-  ZtString<> raw;
+inline Text basicAuthValue(const Options &options) {
+  Text raw;
   raw << options.authUser << ':' << options.authPass;
-  ZtString<> out;
+  Text out;
   out << "Basic ";
   unsigned offset = out.length();
   out.length(offset + ZuBase64::enclen(raw.length()));
@@ -549,20 +582,21 @@ struct StaticPlanner {
     ResponsePlan resp;
     resp.date = httpDate(time(nullptr));
     if (!state->options.noServerID) resp.server = "zhttpd";
-    auto connection = lower(req.connection);
-    if (state->options.noKeepalive || connection == "close" ||
-	(req.http10 && connection != "keep-alive")) {
+    if (state->options.noKeepalive || ieq(req.connection, "close") ||
+	(req.http10 && !ieq(req.connection, "keep-alive"))) {
       resp.close = true;
       resp.connection = "close";
     }
 
     if (state->options.forwardAll)
       return redirect(req, state->options.forwardAll, resp);
+    Text host;
+    if (state->options.forwards.length()) host = hostName(req.host);
     for (unsigned i = 0; i < state->options.forwards.length(); ++i)
-      if (hostName(req.host) == lower(state->options.forwards[i].host))
+      if (host == state->options.forwards[i].host)
 	return redirect(req, state->options.forwards[i].url, resp);
     if (state->options.forwardHttps && !req.tls) {
-      ZtString<> url;
+      Text url;
       url << "https://" << req.host << req.target;
       return redirect(req, url, resp, false);
     }
@@ -596,7 +630,7 @@ struct StaticPlanner {
 
     RequestData req_ = req;
     splitTarget(req_);
-    ZtString<> clean, err;
+    Text clean, err;
     if (!decodeNormalizePath(req_.path, state->options.hideDotfiles, clean, err))
       return error(resp, 400, "Bad Request", err, req.method);
     if (req_.path.length() > 1 && req_.path[req_.path.length() - 1] == '/' &&
@@ -612,7 +646,7 @@ struct StaticPlanner {
     bool appendTarget = true) const {
     resp.status = 301;
     resp.reason = "Moved Permanently";
-    ZtString<> location{base};
+    Text location{base};
     if (appendTarget) location << req.target;
     resp.location = ZuMv(location);
     resp.contentType = "text/plain";
@@ -638,7 +672,7 @@ struct StaticPlanner {
 
   ResponsePlan singleFile(
     const RequestData &req, ZuCSpan clean, ResponsePlan resp) const {
-    ZtString<> leaf;
+    Text leaf;
     leaf << '/' << ZiFile::leafname(state->options.root);
     if (clean != "/" && clean != leaf) return notFound(resp, req.method);
     ZiFile file;
@@ -653,7 +687,7 @@ struct StaticPlanner {
     ZiFile dir;
     if (openDir(clean, dir) == Zi::OK) {
       if (!clean || clean[clean.length() - 1] != '/') {
-	ZtString<> loc{clean};
+	Text loc{clean};
 	loc << '/';
 	if (req.query) {
 	  loc << '?' << req.query;
@@ -805,7 +839,7 @@ struct StaticPlanner {
       return true;
     };
     auto toU64 = [](ZuCSpan s) {
-      ZtString<> tmp{s};
+      Text tmp{s};
       return strtoull(tmp.ndata(), nullptr, 10);
     };
     if (!a) {
@@ -832,7 +866,7 @@ struct StaticPlanner {
     const RequestData &req, const Zi::Path &path,
     ZuCSpan clean, ResponsePlan resp) const {
     struct Entry {
-      ZtString<> name;
+      Text name;
       bool dir = false;
       uint64_t size = 0;
       time_t mtime = 0;
@@ -868,9 +902,9 @@ struct StaticPlanner {
     }
     ZuSort(entries.data(), entries.length(),
       [](const Entry &a, const Entry &b) {
-	return ZuCmp<ZtString<>>::cmp(a.name, b.name);
+	return ZuCmp<Text>::cmp(a.name, b.name);
       });
-    ZtString<> html;
+    Text html;
     html += "<!doctype html><html><head><meta charset=\"utf-8\"><title>Index of ";
     htmlEsc(html, clean);
     html += "</title></head><body><h1>Index of ";
@@ -879,7 +913,7 @@ struct StaticPlanner {
     if (clean != "/") html += "<a href=\"../\">../</a>\n";
     for (unsigned i = 0, n = entries.length(); i < n; ++i) {
       auto &e = entries[i];
-      ZtString<> label{e.name};
+      Text label{e.name};
       if (e.dir) label << '/';
       auto href = hrefEncode(label);
       html += "<a href=\"";
@@ -911,7 +945,7 @@ struct StaticPlanner {
 inline bool parseForward(Options &options, ZuCSpan host, ZuCSpan url) {
   if (!host || !url) return false;
   auto *f = new (options.forwards.push()) Forward();
-  f->host = host;
+  lower(f->host, host);
   f->url = url;
   return true;
 }
@@ -955,7 +989,7 @@ inline bool loadOptions(Options &options, int argc, char **argv, bool &help) {
   return true;
 }
 
-inline bool initFileState(State &state, ZtString<> &error) {
+inline bool initFileState(State &state, Text &error) {
   if (state.options.singleFile) {
     if (state.rootFile.open(state.options.root,
 	ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK) {
@@ -982,7 +1016,7 @@ inline bool initFileState(State &state, ZtString<> &error) {
   return true;
 }
 
-inline bool validate(Options &options, ZtString<> &error) {
+inline bool validate(Options &options, Text &error) {
   if (!options.root) { error = "root required"; return false; }
   if ((options.https || options.http3) && (!options.cert || !options.key)) {
     error = "--https/--http3 require --cert and --key";

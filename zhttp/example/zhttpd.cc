@@ -94,14 +94,14 @@ bool parseID(ZuCSpan s, unsigned &id)
   return true;
 }
 
-bool resolveUID(ZuCSpan user, uid_t &uid, gid_t &gid, ZtString<> &name)
+bool resolveUID(ZuCSpan user, uid_t &uid, gid_t &gid, Text &name)
 {
   unsigned id;
   if (parseID(user, id)) {
     uid = id;
     return true;
   }
-  ZtString<> s{user};
+  Text s{user};
   struct passwd *pw = getpwnam(s.ndata());
   if (!pw) return false;
   uid = pw->pw_uid;
@@ -117,7 +117,7 @@ bool resolveGID(ZuCSpan group, gid_t &gid)
     gid = id;
     return true;
   }
-  ZtString<> s{group};
+  Text s{group};
   struct group *gr = getgrnam(s.ndata());
   if (!gr) return false;
   gid = gr->gr_gid;
@@ -151,7 +151,7 @@ bool dropPrivileges(const Options &options)
   if (!options.uid && !options.gid) return true;
   uid_t uid = getuid();
   gid_t gid = getgid();
-  ZtString<> userName;
+  Text userName;
   if (options.uid && !resolveUID(options.uid, uid, gid, userName))
     return false;
   if (options.gid && !resolveGID(options.gid, gid))
@@ -516,7 +516,7 @@ struct HTTPServer::Link :
 
   StaticH1Server h1;
   ZmScheduler::Timer idleTimer;
-  ZtString<>	remote;
+  Text	remote;
   bool		counted = true;
 };
 
@@ -527,7 +527,7 @@ ZiConnection *HTTPServer::accepted(const ZiCxnInfo &ci)
     --state->active;
     return nullptr;
   }
-  ZtString<> remote;
+  Text remote;
   remote << ci.remoteIP;
   return new Link::Cxn(new Link(this, remote), ci);
 }
@@ -596,7 +596,7 @@ struct TLSServer::Link :
 
   StaticH1Server h1;
   ZmScheduler::Timer idleTimer;
-  ZtString<>	remote;
+  Text	remote;
   bool		counted = true;
 };
 
@@ -607,7 +607,7 @@ ZiConnection *TLSServer::accepted(const ZiCxnInfo &ci)
     --state->active;
     return nullptr;
   }
-  ZtString<> remote;
+  Text remote;
   remote << ci.remoteIP;
   return new Link::Cxn(new Link(this, remote), ci);
 }
@@ -703,7 +703,7 @@ struct H3ServerLink :
 
   H3Cxn	h3;
   State		*state = nullptr;
-  ZtString<>	remote;
+  Text	remote;
   bool		counted = true;
 };
 
@@ -718,7 +718,7 @@ ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &info)
     --state->active;
     return {};
   }
-  ZtString<> remote;
+  Text remote;
   remote << info.peer.ip();
   ZiLOG(Debug, "zhttpd.h3", ([remote, active](auto &s) mutable {
     s << "accepted remote=" << remote << " active=" << active;
@@ -805,7 +805,7 @@ int main(int argc, char **argv)
 {
   Options options;
   if (!loadOptions(options, argc, argv)) usage();
-  ZtString<> error;
+  Text error;
   if (!validate(options, error)) {
     std::cerr << "zhttpd: " << error << '\n' << std::flush;
     return 1;
