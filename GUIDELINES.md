@@ -131,6 +131,13 @@ These guidelines extend `AGENTS.md`
   - Z prefers sentinel values
 
 ## Leveraging Key Z Framework Capabilities
+- assertions:
+  - use `ZuAssert` for compile-time assertions
+  - run-time assertions:
+      - below `zm`, use plain `assert`
+      - below `zi`, use `ZmAssert`
+      - in `zi` or above, use `ZiAssert`
+        - always use `ZiAssert` for run-time assertions that need graceful failure handling
 - `ZuSpan` `*Array` and `*String` interoperate smoothly without explicit casting:
   - do not unnecessarily cast them - for example, `ZuCSpan` and `ZuBSpan` silently convert
 - `ZuTypeList` and `ZuSeq` encode tables, associative containers and sequences at compile-time 
@@ -168,7 +175,6 @@ These guidelines extend `AGENTS.md`
   - `del()` / `delNode()` usually returns a movable reference to the deleted node/value
 - use `ZmRing`, `ZiRing` for inter-thread and inter-process communication
 - use `ZiLog` for logging
-- use `ZiAssert` for run-time assertions that need graceful failure handling
 - use `ZiFile` for file I/O, `ZiMMapFile` for memory-mapped I/O, `ZiMultiplex` for network I/O multiplexing
 - use `ZiEventLoop` for interoperability with other event loops and types of handles
 - use `Zdb` for relational data persistency
@@ -182,6 +188,14 @@ These guidelines extend `AGENTS.md`
     - use `ZmFn`'s built-in capture to elide heap-allocation for lambda instances
     - leverage `mvFn`
 - combine `ZmFn` with `ZiIOFn` and `ZiIOContext` to optimize I/O processing
+- intrusive containers:
+  - containers like `ZmHash` can intrude their container node into the application's node type; this is preferred to passing in/out entire keys and values, because:
+    - it reduces copying of keys and values
+    - it reduces heap churn when the value is a reference-counted smart pointer to application data
+      - two allocations (one for the application data, one for the container node) are consolidated into one
+  - stacked intrusion:
+    - when application nodes are used with multiple containers simultaneously (e.g. `ZmCache`, which wraps a LRU `ZmList` and a `ZmHash`), container node intrusions can be stacked in the same object
+    - in such cases, `HeapID<"">` is used to disable the usual `ZmHeap` allocation for the nodes in the inner containers (the full size of the node is only available at the outermost container node)
 
 ## Code Style
 - library headers must follow the following format:
