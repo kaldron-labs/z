@@ -50,17 +50,19 @@ struct RxData {
   void write(const I &) { }
 };
 
-struct StreamRxData : public ZiIOBuf {
+struct StreamRxData : public Zquic_::IOQueue::Node {
+  using Base = Zquic_::IOQueue::Node;
+
   ZmRef<ZiIOBuf>	packet;
   uint64_t		offset = 0;
   uint64_t		bufOffset = 0;
   uint64_t		bytes = 0;
 
-  StreamRxData() : ZiIOBuf{nullptr, 0, nullptr, 0} { }
+  StreamRxData() : Base{nullptr, 0, nullptr, 0} { }
   StreamRxData(
     ZmRef<ZiIOBuf> packet_, const uint8_t *data_, unsigned length_,
     void *owner_, uint64_t offset_) :
-    ZiIOBuf{const_cast<uint8_t *>(data_), length_, owner_, length_},
+    Base{const_cast<uint8_t *>(data_), length_, owner_, length_},
     packet{ZuMv(packet_)}, offset{offset_}, bytes{length_} { }
 
   uint64_t key() const { return offset; }
