@@ -246,6 +246,17 @@ bool writeScript(
   script <<
     "#!/bin/sh\n"
     "set -eu\n"
+    "lsan_suppressions=\n"
+    "for f in .lsan-suppressions ../../.lsan-suppressions; do\n"
+    "  if [ -f \"$f\" ]; then\n"
+    "    lsan_suppressions=$f\n"
+    "    break\n"
+    "  fi\n"
+    "done\n"
+    "if [ -n \"$lsan_suppressions\" ]; then\n"
+    "  LSAN_OPTIONS=\"${LSAN_OPTIONS:+$LSAN_OPTIONS:}suppressions=$lsan_suppressions\"\n"
+    "  export LSAN_OPTIONS\n"
+    "fi\n"
     "pid=\n"
     "cleanup() {\n"
     "  if [ -n \"$pid\" ]; then\n"
@@ -264,8 +275,25 @@ bool writeScript(
       "export XDG_CONFIG_HOME=" << tempPath << "/caddy-config\n"
       "mkdir -p \"$XDG_DATA_HOME\" \"$XDG_CONFIG_HOME\"\n"
       "caddy validate --config " << caddyfile << " >/dev/null 2>&1\n"
-      "caddy run --config " << caddyfile << " >" << tempPath <<
-	"/server.out 2>" << tempPath << "/server.err &\n";
+      ": >" << tempPath << "/server.err\n"
+      "for start_attempt in $(seq 1 20); do\n"
+      "  caddy run --config " << caddyfile << " >" << tempPath <<
+	"/server.out 2>" << tempPath << "/server.err &\n"
+      "  pid=$!\n"
+      "  sleep 0.1\n"
+      "  if kill -0 \"$pid\" 2>/dev/null; then\n"
+      "    break\n"
+      "  fi\n"
+      "  if grep -q 'address already in use' " << tempPath <<
+	"/server.err; then\n"
+      "    wait \"$pid\" 2>/dev/null || true\n"
+      "    pid=\n"
+      "    : >" << tempPath << "/server.err\n"
+      "    sleep 0.2\n"
+      "    continue\n"
+      "  fi\n"
+      "  break\n"
+      "done\n";
   else {
     script << "\"$server\" " << rootPath;
     switch (c.proto) {
@@ -282,10 +310,10 @@ bool writeScript(
     script <<
       " --addr 127.0.0.1 --port " << port <<
       " --timeout 0 --log " << tempPath << "/access.log"
-      " >" << tempPath << "/server.out 2>" << tempPath << "/server.err &\n";
+      " >" << tempPath << "/server.out 2>" << tempPath << "/server.err &\n"
+      "pid=$!\n";
   }
   script <<
-    "pid=$!\n"
     "ready=0\n"
     "for i in $(seq 1 200); do\n";
   appendReadyCommand(script, c.proto, port, certPath);

@@ -1330,6 +1330,12 @@ public:
   RxStream &rxStream() { return m_rx; }
 
   StreamRxPQueue *rxQueue() { return &m_rxQueue; }
+  void drainRx_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream Rx drain outside Rx thread", return);
+    while (m_rxQueue.shift());
+    m_rx.clean();
+  }
   TxDataPQueue *txQueue() { return &m_txQueue; }
 
   void txCredit(uint64_t limit) { m_txCredit.set(limit); }
@@ -2073,6 +2079,7 @@ protected:
 
   void resetRuntimeDiag_() { m_diag = {}; }
   void resetRuntime_() {
+    drainStreamsRx_();
     resetLinkState_();
     m_established = 0;
     m_handshakeStarted = 0;
@@ -2093,7 +2100,8 @@ protected:
   }
 
   void closeRuntime_(uint64_t errorCode = 0) {
-    if (app() && app()->mx()) app()->mx()->del(&m_ptoTimer);
+    drainStreamsRx_();
+    cancelPTO();
     closeLinkState_(errorCode);
     m_established = 0;
   }
@@ -2371,7 +2379,7 @@ protected:
   }
 
   void resetPktRuntime_() {
-    if (app() && app()->mx()) app()->mx()->del(&m_ptoTimer);
+    cancelPTO();
     for (auto &s : m_txCrypto) s.reset();
     for (auto &s : m_rxCrypto) s.reset();
     for (auto &s : m_txTrafficSecrets) s.clear();
@@ -2384,6 +2392,13 @@ protected:
     m_rtt = {};
     m_ptoBackoff.reset();
     m_txKeyPhase = false;
+  }
+
+  void drainStreamsRx_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream table Rx drain outside Rx thread", return);
+    auto i = m_streams.iter();
+    while (auto stream = i()) stream->drainRx_();
   }
 
 	  bool installPeerKeyUpdate_(const TrafficSecret &nextRxSecret) {
@@ -2693,6 +2708,20 @@ protected:
     app()->mx()->run(app()->txThread(),
       [link = ZmMkRef(impl())]() { link->pto_(); },
       out, ZmScheduler::Advance, &m_ptoTimer);
+  }
+
+  void cancelPTO() {
+    if (!app() || !app()->mx()) return;
+    if (txInvoked_()) return cancelPTO_();
+    app()->txInvoke([link = ZmMkRef(impl())]() mutable {
+      link->cancelPTO_();
+    });
+  }
+
+  void cancelPTO_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC PTO cancel outside Tx thread", return);
+    if (app() && app()->mx()) app()->mx()->del(&m_ptoTimer);
   }
 
   bool reclaimPTO_() {
@@ -3732,7 +3761,6 @@ public:
   }
   void disconnect_() {
     closeCurrent_(true);
-    resetRuntimeState_();
   }
 
   const Host &server() const { return m_server; }
@@ -3852,12 +3880,12 @@ public:
 	PathMode::ClientConnected,
 	ZiIP{}, 0, ip, m_port,
 	Endpoint::DatagramFn{[link = ZmMkRef(impl())](Datagram d) mutable {
-	  link->app()->rxRun([link, d = ZuMv(d)]() mutable {
+	  link->app()->rxInvoke([link, d = ZuMv(d)]() mutable {
 	    link->received_(ZuMv(d));
 	  });
 	}},
 	Endpoint::ReadyFn{[link = ZmMkRef(impl())](Endpoint *ep) mutable {
-	  link->app()->rxRun([link, ep]() mutable {
+	  link->app()->rxInvoke([link, ep]() mutable {
 	    link->endpointReady_(ep);
 	  });
 	}},
@@ -3865,7 +3893,7 @@ public:
 	  link->connectFailed_0(transient);
 	    }},
 	Endpoint::DownFn{[link = ZmMkRef(impl())](Endpoint *ep) mutable {
-	  link->app()->rxRun([link, ep]() mutable {
+	  link->app()->rxInvoke([link, ep]() mutable {
 	    link->endpointDown_(ep);
 	  });
 	}},
@@ -4313,10 +4341,12 @@ private:
   void endpointDown_(Endpoint *ep) {
     if (ep != &m_endpoint) return;
     m_udpReady = 0;
-    if (m_notifyEndpointDown) {
+    bool notify = m_notifyEndpointDown;
+    m_notifyEndpointDown = true;
+    resetRuntimeState_();
+    if (notify) {
       impl()->disconnected();
     }
-    m_notifyEndpointDown = true;
   }
 
   void connectFailed_0(bool transient) {
