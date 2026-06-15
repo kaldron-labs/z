@@ -203,6 +203,8 @@ These guidelines extend `AGENTS.md`
       bodies use one extra logical level
     - `public:`, `protected:` and `private:` labels are flush with the class
       declaration body; members following them are indented one logical level
+    - `friend` declarations are flush with the class declaration body
+      - `friend` declarations should go at top in the default private section
     - `case`/`default` labels follow the local switch style; statements under a
       label are indented one logical level from the label
   - for multi-line declarations and expressions, prefer the existing visual
@@ -240,6 +242,17 @@ These guidelines extend `AGENTS.md`
     clearer
   - preserve tabular alignment for data members, macro bodies and compact tables
     that already use tabs to line up names, initializers or comments
+- `class` vs `struct`
+  - `struct`s must be all-public data members
+    - not prefixed with `m_`
+    - declared at top before function members (if any)
+  - `class`es must be all-private data members
+    - prefixed with `m_`
+    - declared at bottom before closing `};`
+  - no hybrid `class` or `struct` with mixed public/private data members
+- right-align members with hard TABs
+- `*` and `&` go with the member, not the type
+  - `void<TAB>*m_`, not `void *<TAB>m_`
 
 ## Naming
 - names must be concise; no names can exceed 32 bytes (hard upper limit)
@@ -255,8 +268,6 @@ These guidelines extend `AGENTS.md`
 - names are generally camelCase, not snake_case
   - exceptions are made for external dependencies
 - `m_` is reserved for private data members of classes
-- public data members should go at top, private at bottom
-  - a struct with public data members should be "all public", no `m_` used, otherwise it should be a class with `m_` private data members and public accessors
 - use overloads for getters/setters, do not name them independently
   - example: `int x() const` and `void x(int)`
     - it's also ok to `decltype(auto) x(this &&self) { ... }` to properly handle move context
