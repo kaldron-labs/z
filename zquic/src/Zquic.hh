@@ -486,10 +486,50 @@ private:
   bool		m_accepted = false;
 };
 
-// these counters are intentionally non-atomic
-// - occasional off-by-one due to concurrent
-//   modification is not a concern
+struct RuntimeRxDiag {
+  uint64_t	endpointReady = 0;
+  uint64_t	datagramsRx = 0;
+  uint64_t	bytesRx = 0;
+  uint64_t	packetsRx = 0;
+  uint64_t	framesRx = 0;
+  uint64_t	cryptoBytesRx = 0;
+  uint64_t	streamBytesRx = 0;
+  uint64_t	failures = 0;
+  uint64_t	handshakeComplete = 0;
+};
+
+struct RuntimeTxDiag {
+  uint64_t	packetsTx = 0;
+  uint64_t	bytesTx = 0;
+  uint64_t	cryptoBytesTx = 0;
+  uint64_t	streamBytesTx = 0;
+  uint64_t	ptoCount = 0;
+  uint64_t	retransmittedFrames = 0;
+  uint64_t	failures = 0;
+};
+
 struct RuntimeDiag {
+  RuntimeDiag() = default;
+  RuntimeDiag(const RuntimeRxDiag &rx, const RuntimeTxDiag &tx) {
+    endpointReady = rx.endpointReady;
+    datagramsRx = rx.datagramsRx;
+    bytesRx = rx.bytesRx;
+    packetsRx = rx.packetsRx;
+    framesRx = rx.framesRx;
+    cryptoBytesRx = rx.cryptoBytesRx;
+    streamBytesRx = rx.streamBytesRx;
+    handshakeComplete = rx.handshakeComplete;
+
+    packetsTx = tx.packetsTx;
+    bytesTx = tx.bytesTx;
+    cryptoBytesTx = tx.cryptoBytesTx;
+    streamBytesTx = tx.streamBytesTx;
+    ptoCount = tx.ptoCount;
+    retransmittedFrames = tx.retransmittedFrames;
+
+    failures = rx.failures + tx.failures;
+  }
+
   uint64_t	endpointReady = 0;
   uint64_t	datagramsRx = 0;
   uint64_t	bytesRx = 0;
@@ -509,7 +549,7 @@ struct RuntimeDiag {
 
 template <typename Send>
 inline bool sendRuntimeCryptoFlights(
-  CryptoStream (&txCrypto)[3], RuntimeDiag &diag,
+  CryptoStream (&txCrypto)[3], RuntimeTxDiag &diag,
   const uint8_t *data, unsigned len, const size_t offsets[5],
   unsigned chunkMax, ZiSockAddr addr, Send send)
 {
@@ -2033,11 +2073,20 @@ protected:
 	  }
 
 	  bool runtimeEstablished_() const { return m_established; }
+  bool debugLog_() const {
+#ifdef ZiMultiplex_DEBUG
+    return app() && app()->mx() && app()->mx()->debug();
+#else
+    return false;
+#endif
+  }
   bool runtimeDraining_() const {
     return m_runtimeCloseState == CloseState::Draining;
   }
   bool runtimeHandshakeStarted_() const { return m_handshakeStarted; }
-  const RuntimeDiag &runtimeDiag_() const { return m_diag; }
+  RuntimeDiag rxDiagSnapshot_() const { return {m_rxDiag, {}}; }
+  RuntimeDiag txDiagSnapshot_() const { return {{}, m_txDiag}; }
+  RuntimeDiag runtimeDiag_() const { return {m_rxDiag, m_txDiag}; }
   const Crypto &crypto_() const { return m_crypto; }
   void snapshotTxCrypto_(TxCryptoSnapshot &snapshot) const {
     for (unsigned i = 0; i < 3; ++i) {
@@ -2078,7 +2127,7 @@ protected:
     return m_txProt[level];
   }
 
-  void resetRuntimeDiag_() { m_diag = {}; }
+  void resetRuntimeDiag_() { m_rxDiag = {}; m_txDiag = {}; }
   void resetRuntime_() {
     drainStreamsRx_();
     resetLinkState_();
@@ -2107,10 +2156,10 @@ protected:
     m_established = 0;
   }
 
-  void endpointReady_() { ++m_diag.endpointReady; }
-  void endpointFailure_() { ++m_diag.failures; }
-  void packetParseFailure_() { ++m_diag.failures; }
-  void tlsFailure_() { ++m_diag.failures; }
+  void endpointReady_() { ++m_rxDiag.endpointReady; }
+  void endpointFailure_() { ++m_rxDiag.failures; }
+  void packetParseFailure_() { ++m_rxDiag.failures; }
+  void tlsFailure_() { ++m_rxDiag.failures; }
   void handshakeDoneTx_() { }
   void dataBlocked_(uint64_t) { }
   void streamDataBlocked_(uint64_t, uint64_t) { }
@@ -2372,7 +2421,7 @@ protected:
     }
     m_established = 1;
     establishState_();
-    ++m_diag.handshakeComplete;
+    ++m_rxDiag.handshakeComplete;
   }
 
   auto negotiatedProtocol_() const {
@@ -2432,7 +2481,7 @@ protected:
     m_streamQueue.clean();
     for (auto &p : m_txPkts) p.clear();
     memset(m_pendingAck, 0, sizeof(m_pendingAck));
-    ++m_diag.failures;
+    ++m_rxDiag.failures;
     impl()->statelessReset();
     return true;
   }
@@ -2633,7 +2682,7 @@ protected:
     }
     if (!sendPkt(build, ZuMv(addr), ref)) return false;
     if (info.length && !m_txDataCredit.consume(info.length)) return false;
-    m_diag.streamBytesTx += info.length;
+    m_txDiag.streamBytesTx += info.length;
     return true;
   }
 
@@ -2666,6 +2715,10 @@ protected:
       ack.nRanges = Frame::MaxAckRanges;
     for (unsigned i = 0; i < ack.nRanges; ++i)
       m_rxPkts[level].range(i, ack.ranges[i]);
+    if (debugLog_())
+      ZiLOG(Debug, "Zquic", ([level, n = ack.nRanges](auto &s) {
+	s << "ACK snapshot posted level=" << int(level) << " ranges=" << n;
+      }));
     app()->txRun([link = ZmMkRef(impl()), ack]() mutable {
       link->noteAckTx_(ack);
     });
@@ -2675,6 +2728,10 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK snapshot install outside Tx thread", return);
     m_txAck[ack.level] = ack;
+    if (debugLog_())
+      ZiLOG(Debug, "Zquic", ([level = ack.level, n = ack.nRanges](auto &s) {
+	s << "ACK snapshot processed level=" << int(level) << " ranges=" << n;
+      }));
   }
 
   bool appendPendingAck_(
@@ -2706,6 +2763,10 @@ protected:
     auto &tx = m_txPkts[CryptoLevel::OneRTT];
     if (!tx.bytesInFlight() && !tx.retransmitPending()) return;
     ZuTime out = Zm::now() + ptoTimeout_();
+    if (debugLog_())
+      ZiLOG(Debug, "Zquic", ([bif = tx.bytesInFlight()](auto &s) {
+	s << "PTO armed bytesInFlight=" << bif;
+      }));
     app()->mx()->run(app()->txThread(),
       [link = ZmMkRef(impl())]() { link->pto_(); },
       out, ZmScheduler::Advance, &m_ptoTimer);
@@ -2730,8 +2791,12 @@ protected:
       "QUIC PTO reclaim outside Tx thread", return false);
     unsigned n = m_txPkts[CryptoLevel::OneRTT].reclaimOnPTO(2);
     if (n) {
-      ++m_diag.ptoCount;
+      ++m_txDiag.ptoCount;
       m_ptoBackoff.expired();
+      if (debugLog_())
+	ZiLOG(Debug, "Zquic", ([n](auto &s) {
+	  s << "PTO fired probes=" << n;
+	}));
     }
     return n;
   }
@@ -2740,7 +2805,14 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC retransmit selection outside Tx thread", return false);
     if (!m_txPkts[CryptoLevel::OneRTT].nextRetransmit(ref)) return false;
-    ++m_diag.retransmittedFrames;
+    ++m_txDiag.retransmittedFrames;
+    if (debugLog_())
+      ZiLOG(Debug, "Zquic", ([ref](auto &s) {
+	s << "retransmit queued kind=" << int(ref.kind) <<
+	  " streamID=" << ref.streamID <<
+	  " offset=" << ref.offset <<
+	  " length=" << ref.length;
+      }));
     return true;
   }
 
@@ -2872,7 +2944,7 @@ protected:
     const uint8_t *data, unsigned len, const size_t offsets[5],
     unsigned chunkMax, ZiSockAddr addr, SendCryptoPkt sendCryptoPkt) {
     return sendRuntimeCryptoFlights(
-      m_txCrypto, m_diag,
+      m_txCrypto, m_txDiag,
       data, len, offsets, chunkMax, ZuMv(addr),
       [sendCryptoPkt](
 	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
@@ -2923,8 +2995,15 @@ protected:
     else
       recordTxPkt_(level, pn, bytes, recordFrame);
     ++m_txPN[level];
-    ++m_diag.packetsTx;
-    m_diag.bytesTx += bytes;
+    ++m_txDiag.packetsTx;
+    m_txDiag.bytesTx += bytes;
+    if (debugLog_())
+      ZiLOG(Debug, "Zquic", ([level, pn, bytes, ackEliciting](auto &s) {
+	s << "packet sent level=" << int(level) <<
+	  " pn=" << pn <<
+	  " bytes=" << bytes <<
+	  " ackEliciting=" << ackEliciting;
+      }));
     if (level == CryptoLevel::OneRTT && ackEliciting) schedulePTO();
   }
 
@@ -2968,7 +3047,7 @@ protected:
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
-      ++m_diag.failures;
+      ++m_txDiag.failures;
       return false;
     }
     buf->skip = 0;
@@ -2989,7 +3068,7 @@ protected:
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC Handshake packet protection outside Tx thread", return false);
 	    if (!txTrafficSecretInstalled_(CryptoLevel::Handshake)) {
-	      ++m_diag.failures;
+	      ++m_txDiag.failures;
 	      return false;
 	    }
     ZmRef<ZiIOBuf> buf = allocTxPkt();
@@ -3010,7 +3089,7 @@ protected:
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
-      ++m_diag.failures;
+      ++m_txDiag.failures;
       return false;
     }
     buf->skip = 0;
@@ -3031,7 +3110,7 @@ protected:
 	      "QUIC Short packet protection outside Tx thread", return false);
 	    if (!m_established &&
 		!txTrafficSecretInstalled_(CryptoLevel::OneRTT)) {
-	      ++m_diag.failures;
+	      ++m_txDiag.failures;
 	      return false;
 	    }
     ZmRef<ZiIOBuf> buf = allocTxPkt();
@@ -3052,7 +3131,7 @@ protected:
       payload.data(), payload.count(),
       unsigned(headerLen) - pnLength, pnLength);
     if (n < 0) {
-      ++m_diag.failures;
+      ++m_txDiag.failures;
       return false;
     }
     buf->skip = 0;
@@ -3067,12 +3146,12 @@ protected:
   template <typename ReceiveLong, typename ReceiveShort>
   void receiveDatagram_(
     Datagram d, ReceiveLong receiveLong, ReceiveShort receiveShort) {
-    ++m_diag.datagramsRx;
+    ++m_rxDiag.datagramsRx;
     if (!d.buf) {
-      ++m_diag.failures;
+      ++m_rxDiag.failures;
       return;
     }
-    m_diag.bytesRx += d.buf->length;
+    m_rxDiag.bytesRx += d.buf->length;
     bool ok = true;
     unsigned offset = 0;
     while (offset < d.buf->length) {
@@ -3098,7 +3177,7 @@ protected:
       if (!receiveShort(d, offset, d.buf->length - offset)) ok = false;
       break;
     }
-    if (!ok) ++m_diag.failures;
+    if (!ok) ++m_rxDiag.failures;
   }
 
   template <typename PrepareLong, typename ConsumeFrames>
@@ -3128,7 +3207,7 @@ protected:
 	m_rxLargestPN[level], h.pnOffset, pn, payloadOffset);
     else {
       if (!m_crypto.rxTrafficSecretInstalled(CryptoLevel::Handshake)) {
-	++m_diag.failures;
+	++m_rxDiag.failures;
 	return false;
       }
       plainLen = PktProt::unprotectLong(
@@ -3138,11 +3217,11 @@ protected:
     }
     if (plainLen < 0) {
       if (checkStatelessReset_(datagram)) return true;
-      ++m_diag.failures;
+      ++m_rxDiag.failures;
       return false;
     }
     if (!recordRxPkt_(level, pn)) return true;
-    ++m_diag.packetsRx;
+    ++m_rxDiag.packetsRx;
     return consumeFrames(
       level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
       d.addr, d.buf);
@@ -3190,13 +3269,13 @@ protected:
       }
       if (plainLen < 0) {
 	if (checkStatelessReset_(datagram)) return true;
-	++m_diag.failures;
+	++m_rxDiag.failures;
 	return false;
       }
     }
     if (!recordRxPkt_(CryptoLevel::OneRTT, pn))
       return true;
-    ++m_diag.packetsRx;
+    ++m_rxDiag.packetsRx;
     return consumeFrames(
       CryptoLevel::OneRTT, pn,
       byteSpan(base + payloadOffset, unsigned(plainLen)), d.addr, d.buf);
@@ -3219,7 +3298,7 @@ protected:
 	    ZuCSpan{frames.data() + offset, frames.length() - offset},
 	    frame, used) < 0 || !used)
 	return false;
-      ++m_diag.framesRx;
+      ++m_rxDiag.framesRx;
       if (!packetFrameLegal_(level, frame)) return false;
       if (FrameCodec::ackEliciting(frame.type))
 	noteAck_(level, pn);
@@ -3231,7 +3310,7 @@ protected:
 	  ZuCSpan contiguous;
 	  if (m_rxCrypto[level].receiveFrame(frame, contiguous) < 0)
 	    return false;
-	  m_diag.cryptoBytesRx += frame.payload.length();
+	  m_rxDiag.cryptoBytesRx += frame.payload.length();
 	  if (contiguous) {
 	    size_t epoch = level == CryptoLevel::Initial ? 0 :
 	      level == CryptoLevel::Handshake ? 2 : 3;
@@ -3240,7 +3319,7 @@ protected:
 	  break;
 	}
 	case FrameType::Stream:
-	  m_diag.streamBytesRx += frame.payload.length();
+	  m_rxDiag.streamBytesRx += frame.payload.length();
 	  if (receiveFrame(frame, ZmRef<ZiIOBuf>{packetBuf}) < 0)
 	    return false;
 	  impl()->streamFrame(
@@ -3680,7 +3759,7 @@ private:
 
   // Rx-owned runtime state. These members are read or mutated only on the
   // QUIC Rx thread. Tx work must use snapshots or dispatch onto Rx.
-  RuntimeDiag		m_diag;
+  RuntimeRxDiag		m_rxDiag;
   Crypto		m_crypto;
   TransportParams	m_transportParams;
   CryptoStream		m_rxCrypto[3];
@@ -3709,6 +3788,7 @@ private:
   CryptoStream		m_txCrypto[3];
   TrafficSecret		m_txTrafficSecrets[3];
   PktProtState		m_txProt[3];
+  RuntimeTxDiag		m_txDiag;
   uint64_t		m_txPN[3]{};
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
@@ -3779,7 +3859,7 @@ public:
   const ZiSockAddr &remote() const { return m_endpoint.remote(); }
   const EndpointDiag &cxnDiag() const { return m_endpoint.diag(); }
   const EndpointDiag &endpointDiag() const { return m_endpoint.diag(); }
-  const RuntimeDiag &runtimeDiag() const { return Base::runtimeDiag_(); }
+  RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
   const Crypto &crypto() const { return Base::crypto_(); }
 
   bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
@@ -4394,7 +4474,7 @@ public:
   SrvLink(App *app) : Base{app, true} { }
 
   bool established() const { return Base::runtimeEstablished_(); }
-  const RuntimeDiag &runtimeDiag() const { return Base::runtimeDiag_(); }
+  RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
   const Crypto &crypto() const { return Base::crypto_(); }
   const ZiSockAddr &peer() const { return m_peerAddr; }
 
