@@ -29,7 +29,29 @@ struct Datagram {
     buf{ZuMv(buf_)}, addr{ZuMv(addr_)} { }
 };
 
+struct EndpointRxDiag {
+  uint64_t	datagramsRx = 0;
+  uint64_t	bytesRx = 0;
+  uint64_t	failures = 0;
+};
+
+struct EndpointTxDiag {
+  uint64_t	datagramsTx = 0;
+  uint64_t	bytesTx = 0;
+  uint64_t	txBackPressure = 0;
+  uint64_t	failures = 0;
+};
+
 struct EndpointDiag {
+  EndpointDiag() = default;
+  EndpointDiag(const EndpointRxDiag &rx, const EndpointTxDiag &tx) :
+    datagramsRx{rx.datagramsRx},
+    datagramsTx{tx.datagramsTx},
+    bytesRx{rx.bytesRx},
+    bytesTx{tx.bytesTx},
+    txBackPressure{tx.txBackPressure},
+    failures{rx.failures + tx.failures} { }
+
   uint64_t	datagramsRx = 0;
   uint64_t	datagramsTx = 0;
   uint64_t	bytesRx = 0;

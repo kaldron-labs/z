@@ -58,8 +58,8 @@ public:
   const ZiSockAddr &local() const { return m_local; }
   const ZiSockAddr &remote() const { return m_remote; }
   PathMode::T mode() const { return m_mode; }
-  const EndpointDiag &diag() const { return m_diag; }
-  void failure() { ++m_diag.failures; }
+  EndpointDiag diag() const { return {m_rxDiag, m_txDiag}; }
+  void failure() { ++m_rxDiag.failures; }
 
   void datagramFn(DatagramFn fn) { m_datagramFn = ZuMv(fn); }
   ZmRef<ZiIOBuf> allocTxPkt() {
@@ -105,8 +105,11 @@ private:
   unsigned		m_closingGeneration = 0;
   ZmAtomic<unsigned>	m_listening = 0;
 
-  // Shared diagnostics; individual counters are touched by their owning path.
-  EndpointDiag		m_diag;
+  // Rx-owned diagnostics.
+  EndpointRxDiag	m_rxDiag;
+
+  // Tx-owned diagnostics.
+  EndpointTxDiag	m_txDiag;
 };
 
 } // namespace Zquic
