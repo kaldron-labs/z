@@ -270,10 +270,12 @@ These guidelines extend `AGENTS.md`
   - no imprecise or primitive use of the English language designed to make it more accessible to non-native/non-technical/non-veteran readers
   - accessibility of language or naming is a hard non-goal
 
-## Sentinel Values
-- Z prefers
-
 ## No Immutability Dogma
 - mutability is encouraged if it benefits performance
   - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
   - example: in-place decoding of strings in JSON parsing
+
+## Debugging
+- use `libtool exec` to run test programs under debugging tools within the source tree
+  - do not run the binaries in  `.libs` directly - library paths will be incorrect
+  - `libtool exec` can be used with `gdb`, `valgrind`, etc.
