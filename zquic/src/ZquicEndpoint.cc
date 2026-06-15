@@ -276,9 +276,8 @@ bool Endpoint::send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
   if (!buf) return false;
   Cxn_ *cxn = m_cxn;
   if (!cxn) return false;
-  if (!m_mx || m_mx->invoked(m_mx->txThread()))
-    return cxn->sendPkt(ZuMv(buf), ZuMv(addr));
-  m_mx->txRun([cxn = ZmMkRef(cxn), buf = ZuMv(buf), addr = ZuMv(addr)]()
+  ZiAssert(m_mx, "Zquic", (), "null endpoint multiplexer", return false);
+  m_mx->txInvoke([cxn = ZmMkRef(cxn), buf = ZuMv(buf), addr = ZuMv(addr)]()
       mutable {
     (void)cxn->sendPkt(ZuMv(buf), ZuMv(addr));
   });
@@ -330,8 +329,11 @@ void Endpoint::disconnected_(Cxn_ *cxn)
 void Endpoint::failed_(bool transient)
 {
   ++m_rxDiag.failures;
+  m_listening = false;
   if (m_failFn) m_failFn(transient);
+  if (m_downFn) m_downFn(this);
   clearFns_();
+  m_mx = nullptr;
 }
 
 void Endpoint::received_(Datagram datagram)

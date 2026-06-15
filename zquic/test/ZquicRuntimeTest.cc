@@ -289,6 +289,11 @@ void testRuntimeEndpointOpen()
       !server.endpointDiag().failures &&
       server.local().port(),
     "runtime server endpoint diagnostics mismatch");
+  if (!server.listening()) {
+    server.final();
+    mx.stop();
+    return;
+  }
 
   RuntimeClient client;
   ZuCHECK(client.init(
@@ -308,6 +313,12 @@ void testRuntimeEndpointOpen()
       !clientLink->runtimeDiag().failures &&
       !clientLink->cxnDiag().failures,
     "runtime client link diagnostics mismatch");
+  if (!clientLink->ready()) {
+    client.final();
+    server.final();
+    mx.stop();
+    return;
+  }
 
   ZmRef<RuntimeServer::Link> serverLink;
   bool established = waitUntil([&server, &clientLink, &serverLink]() {
@@ -323,6 +334,12 @@ void testRuntimeEndpointOpen()
 	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
   }
   ZuCHECK(established, "runtime UDP QUIC handshake did not establish");
+  if (!established || !serverLink) {
+    client.final();
+    server.final();
+    mx.stop();
+    return;
+  }
   ZuCHECK(server.acceptedCount == 1, "runtime server accept count mismatch");
   ZuCHECK(clientLink->crypto().oneRTTReady() &&
       serverLink->crypto().oneRTTReady() &&

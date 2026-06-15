@@ -700,6 +700,10 @@ struct EngineParams {
     m_asyncThread = v;
     return ZuMv(*this);
   }
+  EngineParams &&sameThread(bool v = true) {
+    m_sameThread = v;
+    return ZuMv(*this);
+  }
   EngineParams &&maxData(uint64_t v) { m_maxData = v; return ZuMv(*this); }
   EngineParams &&maxStreamData(uint64_t v) {
     m_maxStreamData = v;
@@ -738,6 +742,7 @@ struct EngineParams {
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
   ZuCSpan asyncThread() const { return m_asyncThread; }
+  bool sameThread() const { return m_sameThread; }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
   uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
@@ -755,6 +760,7 @@ private:
   ParamString	m_certPath;
   ParamString	m_keyPath;
   ParamString	m_asyncThread;
+  bool		m_sameThread = false;
   uint64_t	m_maxData = DefaultMaxData;
   uint64_t	m_maxStreamData = DefaultMaxStreamData;
   uint64_t	m_maxStreamsBidi = DefaultMaxStreamsBidi;
@@ -935,7 +941,7 @@ private:
       })));
       return false;
     }
-    if (rxThread == txThread) {
+    if (rxThread == txThread && !params.sameThread()) {
       error_(ZeEXCEPT(Error, "Zquic",
 	"QUIC Rx and Tx threads must differ"));
       return false;
@@ -1718,23 +1724,24 @@ private:
   }
 
   bool txInvoked_() const {
-    if (ZuUnlikely(!m_link || !m_link->app() || !m_link->app()->mx()))
-      return true;
+    ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
+      "Zquic", (), "QUIC stream Tx access before app initialization",
+      return false);
     return m_link->app()->txInvoked();
   }
   bool rxInvoked_() const {
-    if (ZuUnlikely(!m_link || !m_link->app() || !m_link->app()->mx()))
-      return true;
+    ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
+      "Zquic", (), "QUIC stream Rx access before app initialization",
+      return false);
     return m_link->app()->rxInvoked();
   }
 
   template <typename Fn>
   void txInvoke_(Fn &&fn) {
-    if (ZuLikely(m_link && m_link->app() && m_link->app()->mx())) {
-      m_link->app()->txInvoke(ZuFwd<Fn>(fn));
-      return;
-    }
-    ZuFwd<Fn>(fn)();
+    ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
+      "Zquic", (), "QUIC stream Tx invoke before app initialization",
+      return);
+    m_link->app()->txInvoke(ZuFwd<Fn>(fn));
   }
 
   void notifyTx_() {
@@ -2001,9 +2008,9 @@ protected:
 
 	  bool queueControl_(const ControlFrame &frame) {
 	    if (!frame) return false;
-	    if (txInvoked_()) return txQueueControl_(frame);
-	    app()->txRun([link = ZmMkRef(impl()), frame]() mutable {
+	    app()->txInvoke(impl(), [link = impl(), frame]() mutable {
 	      link->txQueueControl_(frame);
+	      return link;
 	    });
 	    return true;
 	  }
@@ -2455,9 +2462,9 @@ protected:
 	  bool installPeerKeyUpdate_(const TrafficSecret &nextRxSecret) {
 	    if (!m_crypto.updateRxTrafficSecret(CryptoLevel::OneRTT, nextRxSecret))
 	      return false;
-	    if (txInvoked_()) return txInstallPeerKeyUpdate_();
-	    app()->txRun([link = ZmMkRef(impl())]() mutable {
+	    app()->txInvoke(impl(), [link = impl()]() mutable {
 	      link->txInstallPeerKeyUpdate_();
+	      return link;
 	    });
 	    return true;
 	  }
@@ -3722,11 +3729,13 @@ private:
 
 private:
   bool rxInvoked_() const {
-    if (ZuUnlikely(!m_app || !m_app->mx())) return true;
+    ZiAssert(m_app && m_app->mx(), "Zquic", (),
+      "QUIC link Rx access before app initialization", return false);
     return m_app->rxInvoked();
   }
   bool txInvoked_() const {
-    if (ZuUnlikely(!m_app || !m_app->mx())) return true;
+    ZiAssert(m_app && m_app->mx(), "Zquic", (),
+      "QUIC link Tx access before app initialization", return false);
     return m_app->txInvoked();
   }
 
@@ -3826,7 +3835,10 @@ public:
       connectFailed_0(false);
       return;
     }
-    app()->rxInvoke([this]() { connect_(); });
+    app()->rxInvoke(impl(), [link = impl()]() {
+      link->connect_();
+      return link;
+    });
   }
   void connect(Host server, uint16_t port) {
     m_server = ZuMv(server);
@@ -3839,7 +3851,10 @@ public:
       disconnect_();
       return;
     }
-    app()->rxInvoke([this]() { disconnect_(); });
+    app()->rxInvoke(impl(), [link = impl()]() {
+      link->disconnect_();
+      return link;
+    });
   }
   void disconnect_() {
     closeCurrent_(true);
