@@ -855,7 +855,6 @@ protected:
       ZiLogEvent(ZuMv(e));
   }
 
-  static ZuTime ptoTimeout_() { return Zm::now(1); }
   ZmScheduler::Timer *ptoTimer() { return &m_ptoTimer; }
 
 private:
@@ -2217,6 +2216,8 @@ protected:
     for (auto &a : m_rxPkts) a.clear();
     for (auto &p : m_txPkts) p.clear();
     memset(m_pendingAck, 0, sizeof(m_pendingAck));
+    m_rtt = {};
+    m_ptoBackoff.reset();
     m_txKeyPhase = false;
   }
 
@@ -2486,14 +2487,18 @@ protected:
     if (!app() || !app()->mx() || closed()) return;
     auto &tx = m_txPkts[CryptoLevel::OneRTT];
     if (!tx.bytesInFlight() && !tx.retransmitPending()) return;
+    ZuTime out = Zm::now() + ptoTimeout_();
     app()->mx()->run(app()->txThread(),
       [link = ZmMkRef(impl())]() { link->pto_(); },
-      app()->ptoTimeout_(), ZmScheduler::Advance, app()->ptoTimer());
+      out, ZmScheduler::Advance, app()->ptoTimer());
   }
 
   bool reclaimPTO_() {
     unsigned n = m_txPkts[CryptoLevel::OneRTT].reclaimOnPTO(1);
-    if (n) ++m_diag.ptoCount;
+    if (n) {
+      ++m_diag.ptoCount;
+      m_ptoBackoff.expired();
+    }
     return n;
   }
 
@@ -2552,6 +2557,7 @@ protected:
     packet.pn = pn;
     packet.space = runtimePktSpace(level);
     packet.bytes = bytes;
+    packet.sentTime = runtimeNow_();
     packet.ackEliciting = ackEliciting;
     packet.inFlight = ackEliciting;
     if (ref.kind != SentFrameKind::None) packet.addFrame(ref);
@@ -2560,8 +2566,38 @@ protected:
 
   void processAckFrame_(CryptoLevel::T level, const Frame &frame) {
     if (!frame.ackRanges.length()) return;
-    m_txPkts[level].ack(frame.ackRanges.data(), frame.ackRanges.length());
-    if (level == CryptoLevel::OneRTT) schedulePTO_();
+    ZuTime sentTime;
+    unsigned acked = m_txPkts[level].ack(
+      frame.ackRanges.data(), frame.ackRanges.length(), nullptr, 3,
+      level == CryptoLevel::OneRTT ? &sentTime : nullptr);
+    if (level != CryptoLevel::OneRTT) return;
+    if (acked) {
+      ZuTime now = runtimeNow_();
+      if (*sentTime && sentTime < now)
+	m_rtt.sample(now - sentTime, ackDelay_(frame.value), true);
+      m_ptoBackoff.reset();
+    }
+    schedulePTO_();
+  }
+
+  static ZuTime runtimeNow_() { return Zm::now(); }
+  ZuTime maxAckDelay_() const {
+    if (!m_crypto.peerTransportParamsReceived()) return ZuTime{0};
+    return timeUS(m_crypto.peerTransportParams().maxAckDelay * 1000);
+  }
+  ZuTime ackDelay_(uint64_t delay) const {
+    if (!m_crypto.peerTransportParamsReceived()) return ZuTime{0};
+    const auto &params = m_crypto.peerTransportParams();
+    ZuTime maxAckDelay = maxAckDelay_();
+    uint64_t maxAckUsec = uint64_t(maxAckDelay.microsecs());
+    if (delay > (maxAckUsec >> params.ackDelayExponent))
+      return maxAckDelay;
+    delay <<= params.ackDelayExponent;
+    ZuTime ackDelay = timeUS(delay);
+    return ackDelay < maxAckDelay ? ackDelay : maxAckDelay;
+  }
+  ZuTime ptoTimeout_() const {
+    return m_ptoBackoff.timeout(m_rtt, maxAckDelay_());
   }
 
   bool buildPayload_(
@@ -3386,6 +3422,8 @@ private:
   uint64_t		m_rxLargestPN[3]{};
   AckTracker		m_rxPkts[3];
   PktTxSpace		m_txPkts[3];
+  RttEstimator		m_rtt;
+  PTOBackoff		m_ptoBackoff;
   bool			m_pendingAck[3]{};
   bool			m_txKeyPhase = false;
   unsigned		m_handshakeStarted = 0;

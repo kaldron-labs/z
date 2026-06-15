@@ -21,6 +21,27 @@
 
 namespace Zquic {
 
+inline constexpr ZuTime timeUS(uint64_t usec)
+{
+  return ZuTime{
+    int64_t(usec / 1000000), int32_t((usec % 1000000) * 1000)};
+}
+
+inline constexpr ZuTime timePow2(ZuTime t, unsigned n)
+{
+  return ZuTime{ZuTime::Nano{t.nanosecs() << n}};
+}
+
+inline constexpr ZuTime timeMul(ZuTime t, uint64_t n)
+{
+  return ZuTime{ZuTime::Nano{t.nanosecs() * n}};
+}
+
+inline constexpr ZuTime timeDiv(ZuTime t, uint64_t n)
+{
+  return ZuTime{ZuTime::Nano{t.nanosecs() / n}};
+}
+
 using AckTrackerRxNTP = ZmPQRxGapObserve<>;
 
 class AckTracker :
@@ -221,32 +242,46 @@ private:
 
 class RttEstimator {
 public:
-  uint64_t latest() const { return m_latest; }
-  uint64_t smoothed() const { return m_smoothed; }
-  uint64_t variance() const { return m_variance; }
+  static constexpr ZuTime InitialRTT = timeUS(333000);
+  static constexpr ZuTime Granularity = timeUS(1000);
 
-  void sample(uint64_t rtt, uint64_t ackDelay, bool appData) {
-    if (appData && rtt > ackDelay) rtt -= ackDelay;
+  ZuTime latest() const { return m_latest; }
+  ZuTime min() const { return m_min; }
+  ZuTime smoothed() const { return m_smoothed; }
+  ZuTime variance() const { return m_variance; }
+
+  void sample(ZuTime rtt, ZuTime ackDelay, bool appData) {
+    if (!*rtt || !rtt) return;
+    if (!*m_min || rtt < m_min) m_min = rtt;
+    if (appData) {
+      ZuTime minAck = *ackDelay && ackDelay ? m_min + ackDelay : m_min;
+      if (*ackDelay && ackDelay && rtt >= minAck) rtt -= ackDelay;
+    }
     m_latest = rtt;
-    if (!m_smoothed) {
+    if (!*m_smoothed) {
       m_smoothed = rtt;
-      m_variance = rtt >> 1;
+      m_variance = timeDiv(rtt, 2);
       return;
     }
-    uint64_t diff = m_smoothed > rtt ? m_smoothed - rtt : rtt - m_smoothed;
-    m_variance = (m_variance * 3 + diff) >> 2;
-    m_smoothed = (m_smoothed * 7 + rtt) >> 3;
+    ZuTime diff = m_smoothed > rtt ? m_smoothed - rtt : rtt - m_smoothed;
+    m_variance = timeDiv(timeMul(m_variance, 3) + diff, 4);
+    m_smoothed = timeDiv(timeMul(m_smoothed, 7) + rtt, 8);
   }
 
-  uint64_t pto(uint64_t maxAckDelay) const {
-    if (!m_smoothed) return 1000000;
-    return m_smoothed + (m_variance<<2) + maxAckDelay;
+  ZuTime pto(ZuTime maxAckDelay) const {
+    ZuTime smoothed = *m_smoothed ? m_smoothed : InitialRTT;
+    ZuTime variance = *m_smoothed ? m_variance : timeDiv(InitialRTT, 2);
+    ZuTime var4 = timePow2(variance, 2);
+    if (var4 < Granularity) var4 = Granularity;
+    ZuTime pto = smoothed + var4;
+    return *maxAckDelay && maxAckDelay ? pto + maxAckDelay : pto;
   }
 
 private:
-  uint64_t	m_latest = 0;
-  uint64_t	m_smoothed = 0;
-  uint64_t	m_variance = 0;
+  ZuTime	m_latest;
+  ZuTime	m_min;
+  ZuTime	m_smoothed;
+  ZuTime	m_variance;
 };
 
 class NewReno {
@@ -400,7 +435,7 @@ struct SentPkt {
   }
 
   uint64_t	pn = 0;
-  uint64_t	sentTime = 0;
+  ZuTime	sentTime;
   unsigned	bytes = 0;
   PktSpace::T space = PktSpace::AppData;
   bool		ackEliciting = false;
@@ -510,11 +545,14 @@ public:
 
   unsigned ack(
     const AckRange *ranges, unsigned nRanges, unsigned *lost = nullptr,
-    unsigned packetThreshold = 3)
+    unsigned packetThreshold = 3, ZuTime *latestSentTime = nullptr)
   {
     unsigned n = 0;
     uint64_t largest = 0;
+    uint64_t largestAcked = 0;
     bool have = false;
+    bool haveAcked = false;
+    if (latestSentTime) *latestSentTime = ZuTime{0};
     for (unsigned i = 0; i < nRanges; ++i) {
       const AckRange &range = ranges[i];
       if (range.first > range.largest) continue;
@@ -524,7 +562,14 @@ public:
       while (auto node = iter()) {
 	SentPkt &p = node->data();
 	if (p.pn > range.largest) break;
-	if (ack_(p)) ++n;
+	if (ack_(p)) {
+	  ++n;
+	  if (latestSentTime && (!haveAcked || p.pn > largestAcked)) {
+	    largestAcked = p.pn;
+	    *latestSentTime = p.sentTime;
+	    haveAcked = true;
+	  }
+	}
       }
     }
     unsigned l = have ? markPktThresholdLoss(largest, packetThreshold) : 0;
@@ -548,12 +593,12 @@ public:
     return n;
   }
 
-  unsigned markTimeThresholdLoss(uint64_t now, uint64_t threshold) {
+  unsigned markTimeThresholdLoss(ZuTime now, ZuTime threshold) {
     unsigned n = 0;
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
-      if (p.acked || p.lost || p.sentTime > now ||
+      if (p.acked || p.lost || !*p.sentTime || p.sentTime > now ||
 	  now - p.sentTime < threshold)
 	continue;
       if (lose_(p)) ++n;
@@ -594,9 +639,9 @@ public:
     m_lost = 0;
     m_retransmittable = 0;
   }
-  bool persistentCongestion(uint64_t threshold) const {
+  bool persistentCongestion(ZuTime threshold) const {
     bool have = false;
-    uint64_t first = 0, last = 0;
+    ZuTime first, last;
     auto iter = m_packets.citer();
     while (auto node = iter()) {
       const SentPkt &p = node->data();
@@ -660,8 +705,8 @@ using SentPktTracker = PktTxSpace;
 
 class PTOBackoff {
 public:
-  uint64_t timeout(const RttEstimator &rtt, uint64_t maxAckDelay) const {
-    return rtt.pto(maxAckDelay) << m_count;
+  ZuTime timeout(const RttEstimator &rtt, ZuTime maxAckDelay) const {
+    return timePow2(rtt.pto(maxAckDelay), m_count);
   }
   void expired() { if (m_count < 16) ++m_count; }
   void reset() { m_count = 0; }

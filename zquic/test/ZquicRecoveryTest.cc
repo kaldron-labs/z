@@ -26,7 +26,7 @@ static Zquic::TxPkt txPkt_(
 {
   Zquic::TxPkt p;
   p.pn = pn;
-  p.sentTime = pn * 100;
+  p.sentTime = Zquic::timeUS(pn * 100);
   p.bytes = bytes;
   p.space = Zquic::PktSpace::AppData;
   p.ackEliciting = ackEliciting;
@@ -128,9 +128,11 @@ void testRecovery()
     "duplicate packet numbers mutated ACK ranges");
 
   Zquic::RttEstimator rtt;
-  rtt.sample(1000, 0, true);
-  rtt.sample(1200, 100, true);
-  ZuCHECK(rtt.smoothed() > 0 && rtt.pto(25) > rtt.smoothed(),
+  ZuCHECK(rtt.pto(ZuTime{0}) == Zquic::timeUS(999000),
+    "initial PTO did not use RFC/ngtcp2 initial RTT");
+  rtt.sample(Zquic::timeUS(1000), ZuTime{0}, true);
+  rtt.sample(Zquic::timeUS(1200), Zquic::timeUS(100), true);
+  ZuCHECK(rtt.smoothed() && rtt.pto(Zquic::timeUS(25)) > rtt.smoothed(),
     "RTT/PTO estimate mismatch");
 
   Zquic::NewReno cc(1200);
@@ -156,6 +158,16 @@ void testRecovery()
   Zquic::PktTxSpace tx;
   ZuCHECK(!tx.retransmitDropped(),
     "unbounded retransmit queue reported dropped frames");
+
+  Zquic::PktTxSpace rttTx;
+  ZuCHECK(rttTx.add(txPkt_(1)) && rttTx.add(txPkt_(3)) &&
+      rttTx.add(txPkt_(2)), "RTT sent-packet setup failed");
+  Zquic::AckRange rttRanges[] = {
+    Zquic::AckRange{1, 1}, Zquic::AckRange{3, 3} };
+  ZuTime sentTime;
+  ZuCHECK(rttTx.ack(rttRanges, 2, nullptr, 3, &sentTime) == 2 &&
+      sentTime == Zquic::timeUS(300),
+    "ACK processing did not report largest newly acknowledged sent time");
 }
 
 void testPktReorderDuplicateLoss()
