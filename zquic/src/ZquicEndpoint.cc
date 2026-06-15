@@ -141,11 +141,16 @@ private:
   }
 
 private:
+  // Shared immutable identity/back-pointer. Endpoint close/drain must make sure
+  // no Cxn_ callbacks or queued sends outlive the Endpoint.
   Endpoint		*m_endpoint = nullptr;
   unsigned		m_generation = 0;
-  // Rx-owned.
+
+  // Rx-owned receive buffer. Only ZiMultiplex Rx callbacks touch this.
   ZmRef<ZiIOBuf>	m_rxBuf;
-  // Tx-owned.
+
+  // Tx-owned send buffer and local endpoint send queue. Only ZiMultiplex Tx
+  // callbacks and Endpoint::send()'s Tx dispatch target touch these.
   ZmRef<ZiIOBuf>	m_txBuf;
   ZiSockAddr		m_txAddr;
   TxQueue		m_txQueue;

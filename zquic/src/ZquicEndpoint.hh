@@ -89,7 +89,8 @@ private:
   ZiSockAddr		m_local;
   ZiSockAddr		m_remote;
 
-  // Rx-owned endpoint state.
+  // Rx-owned endpoint lifecycle/callback state. Tx work must not retain Link
+  // ownership or depend on these callbacks after closeUDP() has begun draining.
   Cxn_			*m_cxn = nullptr;
   DatagramFn		m_datagramFn;
   ReadyFn		m_readyFn;
