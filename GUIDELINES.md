@@ -109,6 +109,8 @@ These guidelines extend `AGENTS.md`
 - use of `*printf` variable args
   - use Z framework types with `<<`
   - use `ZuBox` and `ZuFmt` for formatting
+- use of separate `bool` instead of sentinel values to signal unset, uninitialized or null
+  - Z prefers sentinel values
 
 ## Leveraging Key Z Framework Capabilities
 - `ZuSpan` `*Array` and `*String` interoperate smoothly without explicit casting:
@@ -153,6 +155,10 @@ These guidelines extend `AGENTS.md`
 - use `ZiEventLoop` for interoperability with other event loops and types of handles
 - use `Zdb` for relational data persistency
   - use sagas for transactional integrity
+- comparisons and sentinels:
+  - use `operator *` to detect sentinel null
+  - see `ZuCmp` for sentinel values and associated logic
+  - use `ZuCmp::cmp` in preference to `operator <=>` because `cmp` returns a plain int
 
 ## Code Style
 - library headers must follow the following format:
@@ -263,6 +269,9 @@ These guidelines extend `AGENTS.md`
 - "utilties" not "helpers", "duplex" not "bidi", etc.
   - no imprecise or primitive use of the English language designed to make it more accessible to non-native/non-technical/non-veteran readers
   - accessibility of language or naming is a hard non-goal
+
+## Sentinel Values
+- Z prefers
 
 ## No Immutability Dogma
 - mutability is encouraged if it benefits performance
