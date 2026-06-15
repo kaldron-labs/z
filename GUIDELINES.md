@@ -399,4 +399,4 @@ dependent work on each owning shard, then release owning objects.
 ## Debugging
 - use `libtool exec` to run test programs under debugging tools within the source tree
   - do not run the binaries in  `.libs` directly - library paths will be incorrect
-  - `libtool exec` can be used with `gdb`, `valgrind`, etc.
+  - `libtool exec` should be used to run `gdb`, `valgrind`, etc.
