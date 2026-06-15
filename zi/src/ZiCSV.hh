@@ -26,8 +26,26 @@ using namespace ZtCSV;
 
 using Path = Zi::Path;
 
+enum WriteMode {
+  Replace,
+  Create,
+  Append
+};
+
 inline ZeException overflow() {
   return ZeEXCEPT(Error, "ZiCSV", "maximum row length exceeded");
+}
+
+inline ZeException existsError(const Path &path) {
+  return ZeEXCEPT(Error, "ZiCSV", ([path](auto &s) {
+    s << '"' << path << "\" " << "file already contains data";
+  }));
+}
+
+inline ZeException headerError(const Path &path) {
+  return ZeEXCEPT(Error, "ZiCSV", ([path](auto &s) {
+    s << '"' << path << "\" " << "CSV header mismatch";
+  }));
 }
 
 inline ZeException ioError(const Path &path, const ZiFile &file) {
@@ -55,22 +73,74 @@ private:
     }
     return true;
   }
-  void writeHeader() {
-    if (file.open(path, ZiFile::Append | ZiFile::GC) != Zi::OK) {
-      error = ioError(path, file);
-      return;
-    }
-    auto buf_ = ZmAlloc(char, MaxRowLen);
-    ZuStream buf{&buf_[0], MaxRowLen};
+  bool writeHeader(char *buf_) {
+    ZuStream buf{buf_, MaxRowLen};
     this->saveHdr(buf);
-    if (ZuUnlikely(buf.overflow())) { error = overflow(); return; }
-    write(&buf_[0], &buf[0] - &buf_[0]);
+    if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
+    return write(buf_, &buf[0] - buf_);
+  }
+  bool matchHeader(char *buf_) {
+    unsigned offset = 0;
+    do {
+      auto r = file.read(&buf_[offset], MaxRowLen - offset);
+      if (r == Zi::IOError) { error = ioError(path, file); return false; }
+      if (r <= 0) { error = headerError(path); return false; }
+      offset += r;
+      ZuSpan<char> header_[Base::AllFields::N];
+      Header header(&header_[0], 0, Base::AllFields::N, false);
+      auto n = split(ZuSpan<char>(&buf_[0], offset), header);
+      if (n >= 0) {
+	if (this->matchHdr(header)) return true;
+	error = headerError(path);
+	return false;
+      }
+    } while (offset < MaxRowLen);
+    error = overflow();
+    return false;
+  }
+  void open(WriteMode mode) {
+    auto buf_ = ZmAlloc(char, MaxRowLen);
+    switch (mode) {
+      case Replace:
+	if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
+	  error = ioError(path, file);
+	  return;
+	}
+	writeHeader(&buf_[0]);
+	return;
+      case Create:
+	if (file.open(
+	    path, ZiFile::Create | ZiFile::WriteOnly | ZiFile::GC) != Zi::OK) {
+	  error = ioError(path, file);
+	  return;
+	}
+	if (file.size() > 0) { error = existsError(path); return; }
+	writeHeader(&buf_[0]);
+	return;
+      case Append:
+	if (file.open(path, ZiFile::Create | ZiFile::Append_ | ZiFile::GC) !=
+	    Zi::OK) {
+	  error = ioError(path, file);
+	  return;
+	}
+	{
+	  auto size = file.size();
+	  if (size > 0) {
+	    file.seek(0);
+	    if (!matchHeader(&buf_[0])) return;
+	    file.seek(size);
+	  } else
+	    writeHeader(&buf_[0]);
+	}
+	return;
+    }
   }
 
 public:
-  PushFile(Path path_) : path{ZuMv(path_)} { writeHeader(); }
-  PushFile(Columns columns, Path path_) : Base{columns}, path{ZuMv(path_)} {
-    writeHeader();
+  PushFile(Path path_, WriteMode mode) : path{ZuMv(path_)} { open(mode); }
+  PushFile(Columns columns, Path path_, WriteMode mode) :
+      Base{columns}, path{ZuMv(path_)} {
+    open(mode);
   }
   PushFile(PushFile &&) = default;
   PushFile &operator =(PushFile &&) = default;
@@ -96,16 +166,16 @@ template <
   typename O,
   typename Facet = ZuFacet::Core,
   unsigned MaxRowLen = 4096>
-inline auto writeFile(Path path) {
-  return PushFile<O, Facet, MaxRowLen>{ZuMv(path)};
+inline auto writeFile(Path path, WriteMode mode) {
+  return PushFile<O, Facet, MaxRowLen>{ZuMv(path), mode};
 }
 
 template <
   typename O,
   typename Facet = ZuFacet::Core,
   unsigned MaxRowLen = 4096>
-inline auto writeFile(Columns columns, Path path) {
-  return PushFile<O, Facet, MaxRowLen>{columns, ZuMv(path)};
+inline auto writeFile(Columns columns, Path path, WriteMode mode) {
+  return PushFile<O, Facet, MaxRowLen>{columns, ZuMv(path), mode};
 }
 
 template <
@@ -125,20 +195,71 @@ private:
     }
     return true;
   }
+  bool writeHeader(const Path &path, ZiFile &file, char *buf_) {
+    ZuStream buf{buf_, MaxRowLen};
+    this->saveHdr(buf);
+    if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
+    return write_(path, file, buf_, &buf[0] - buf_);
+  }
+  bool matchHeader(const Path &path, ZiFile &file, char *buf_) {
+    unsigned offset = 0;
+    do {
+      auto r = file.read(&buf_[offset], MaxRowLen - offset);
+      if (r == Zi::IOError) { error = ioError(path, file); return false; }
+      if (r <= 0) { error = headerError(path); return false; }
+      offset += r;
+      ZuSpan<char> header_[Base::AllFields::N];
+      Header header(&header_[0], 0, Base::AllFields::N, false);
+      auto n = split(ZuSpan<char>(&buf_[0], offset), header);
+      if (n >= 0) {
+	if (this->matchHdr(header)) return true;
+	error = headerError(path);
+	return false;
+      }
+    } while (offset < MaxRowLen);
+    error = overflow();
+    return false;
+  }
+  bool open(ZiFile &file, const Path &path, WriteMode mode, char *buf_) {
+    switch (mode) {
+      case Replace:
+	if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
+	  error = ioError(path, file);
+	  return false;
+	}
+	return writeHeader(path, file, buf_);
+      case Create:
+	if (file.open(
+	    path, ZiFile::Create | ZiFile::WriteOnly | ZiFile::GC) != Zi::OK) {
+	  error = ioError(path, file);
+	  return false;
+	}
+	if (file.size() > 0) { error = existsError(path); return false; }
+	return writeHeader(path, file, buf_);
+      case Append:
+	if (file.open(path, ZiFile::Create | ZiFile::Append_ | ZiFile::GC) !=
+	    Zi::OK) {
+	  error = ioError(path, file);
+	  return false;
+	}
+	{
+	  auto size = file.size();
+	  if (size > 0) {
+	    file.seek(0);
+	    if (!matchHeader(path, file, buf_)) return false;
+	    file.seek(size);
+	  } else if (!writeHeader(path, file, buf_))
+	    return false;
+	}
+	return true;
+    }
+    ZuUnreachable();
+  }
 
   template <typename L>
-  bool write(const Path &path, char *buf_, L l) {
+  bool write(const Path &path, WriteMode mode, char *buf_, L l) {
     ZiFile file;
-    if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
-      error = ioError(path, file);
-      return false;
-    }
-    {
-      ZuStream buf{buf_, MaxRowLen};
-      this->saveHdr(buf);
-      if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
-      if (!write_(path, file, buf_, &buf[0] - buf_)) return false;
-    }
+    if (!open(file, path, mode, buf_)) return false;
     for (;;) {
       ZuStream buf{buf_, MaxRowLen};
       if (!l([this, &buf](const O &o) { this->save(buf, o); })) return true;
@@ -150,10 +271,13 @@ private:
 
 public:
   template <typename L>
-  PullFile(const Path &path, char *buf_, L l) { write(path, buf_, ZuMv(l)); }
+  PullFile(const Path &path, WriteMode mode, char *buf_, L l) {
+    write(path, mode, buf_, ZuMv(l));
+  }
   template <typename L>
-  PullFile(Columns columns, const Path &path, char *buf_, L l) : Base{columns} {
-    write(path, buf_, ZuMv(l));
+  PullFile(Columns columns, const Path &path, WriteMode mode, char *buf_, L l) :
+      Base{columns} {
+    write(path, mode, buf_, ZuMv(l));
   }
 
   bool operator !() const { return error; }
@@ -171,9 +295,9 @@ template <
   typename Facet = ZuFacet::Core,
   unsigned MaxRowLen = 4096,
   typename L>
-ZuUnion<void, ZeException> writeFile(Path path, L l) {
+ZuUnion<void, ZeException> writeFile(Path path, WriteMode mode, L l) {
   auto buf_ = ZmAlloc(char, MaxRowLen);
-  PullFile<O, Facet, MaxRowLen> pull(ZuMv(path), &buf_[0], ZuMv(l));
+  PullFile<O, Facet, MaxRowLen> pull(ZuMv(path), mode, &buf_[0], ZuMv(l));
   if (pull) return {};
   return ZuMv(pull.error);
 }
@@ -183,9 +307,11 @@ template <
   typename Facet = ZuFacet::Core,
   unsigned MaxRowLen = 4096,
   typename L>
-ZuUnion<void, ZeException> writeFile(Columns columns, Path path, L l) {
+ZuUnion<void, ZeException> writeFile(
+    Columns columns, Path path, WriteMode mode, L l) {
   auto buf_ = ZmAlloc(char, MaxRowLen);
-  PullFile<O, Facet, MaxRowLen> pull(columns, ZuMv(path), &buf_[0], ZuMv(l));
+  PullFile<O, Facet, MaxRowLen> pull(
+    columns, ZuMv(path), mode, &buf_[0], ZuMv(l));
   if (pull) return {};
   return ZuMv(pull.error);
 }

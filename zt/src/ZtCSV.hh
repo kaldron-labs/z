@@ -567,6 +567,38 @@ struct Writer {
     s << '\n';
   }
 
+  // Match the same column set and adopt the header order for appends.
+  bool matchHdr(Header &header) {
+    unsigned n = columns.length();
+    if (header.length() != n) return false;
+
+    ZuArray<uint8_t, AllFields::N> matched;
+    matched.length(n);
+    for (unsigned i = 0; i < n; i++) matched[i] = 0;
+    ZuArray<unsigned, AllFields::N> columns_;
+    columns_.length(n);
+
+    for (unsigned i = 0; i < n; i++) {
+      ZuSpan<char> hdr = header[i];
+      unquote(hdr);
+      int found = -1;
+      for (unsigned j = 0; j < n; j++) {
+	ZuSwitch::dispatch<AllFields::N>(columns[j], [&hdr, &found, j](auto I) {
+	  using Field = ZuType<I, AllFields>;
+	  ZuCSpan fieldID = ZuFieldProp::CSV::GetID<Field>{}().cspan();
+	  if (hdr == fieldID) found = j;
+	});
+	if (found >= 0) break;
+      }
+      if (found < 0 || matched[found]) return false;
+      matched[found] = 1;
+      columns_[i] = columns[found];
+    }
+
+    for (unsigned i = 0; i < n; i++) columns[i] = columns_[i];
+    return true;
+  }
+
   template <typename S>
   void save(S &s, const O &o) const {
     for (unsigned i = 0, n = columns.length(); i < n; i++) {

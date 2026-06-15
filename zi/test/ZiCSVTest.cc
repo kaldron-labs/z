@@ -29,6 +29,7 @@ namespace {
 Zi::Path g_csv;
 Zi::Path g_filtered;
 Zi::Path g_overflow;
+Zi::Path g_append;
 
 bool contains(const ZtString<> &s, const char *needle)
 {
@@ -42,10 +43,12 @@ void initPaths()
   g_csv = ZiFile::append(root, "rows.csv");
   g_filtered = ZiFile::append(root, "filtered.csv");
   g_overflow = ZiFile::append(root, "overflow.csv");
+  g_append = ZiFile::append(root, "append.csv");
 
   ZiTestResidue::addFile(g_csv);
   ZiTestResidue::addFile(g_filtered);
   ZiTestResidue::addFile(g_overflow);
+  ZiTestResidue::addFile(g_append);
 }
 
 ZtString<> readFile(const Zi::Path &path)
@@ -72,7 +75,7 @@ void testRoundTrip()
   ZuTestScope(testRoundTrip);
 
   unsigned i = 0;
-  auto w = ZiCSV::writeFile<CSVRow>(g_csv, [&i](auto emit) {
+  auto w = ZiCSV::writeFile<CSVRow>(g_csv, ZiCSV::Replace, [&i](auto emit) {
     CSVRow row;
     switch (i++) {
       case 0:
@@ -115,7 +118,7 @@ void testFilteredColumns()
   unsigned i = 0;
   auto w = ZiCSV::writeFile<CSVRow>({
       ZtFieldIndex(CSVRow, text)
-    }, g_filtered, [&i](auto emit) {
+    }, g_filtered, ZiCSV::Replace, [&i](auto emit) {
       CSVRow row;
       switch (i++) {
 	case 0:
@@ -146,7 +149,8 @@ void testOverflowAndMissingFileErrors()
   ZuTestScope(testOverflowAndMissingFileErrors);
 
   unsigned i = 0;
-  auto w = ZiCSV::writeFile<CSVRow, ZuFacet::Core, 16>(g_overflow, [&i](auto emit) {
+  auto w = ZiCSV::writeFile<CSVRow, ZuFacet::Core, 16>(
+      g_overflow, ZiCSV::Replace, [&i](auto emit) {
     if (i++) return false;
     CSVRow row;
     row.text = "this is a row that is intentionally too long";
@@ -161,6 +165,42 @@ void testOverflowAndMissingFileErrors()
       [](const auto &) {
       });
   ZuCheck(r.template is<ZeException>());
+}
+
+void testAppend()
+{
+  ZuTestScope(testAppend);
+
+  {
+    auto w = ZiCSV::writeFile<CSVRow>(g_append, ZiCSV::Replace);
+    CSVRow row;
+    row.text = "alpha";
+    row.id = 1;
+    ZuCheck(w(row));
+  }
+  {
+    auto w = ZiCSV::writeFile<CSVRow>({
+	ZtFieldIndex(CSVRow, id),
+	ZtFieldIndex(CSVRow, text)
+      }, g_append, ZiCSV::Append);
+    CSVRow row;
+    row.text = "beta";
+    row.id = 2;
+    ZuCheck(w(row));
+  }
+
+  auto text = readFile(g_append);
+  ZuCheck(contains(text, "text,id\n"));
+  ZuCheck(contains(text, "\"alpha\",1\n"));
+  ZuCheck(contains(text, "\"beta\",2\n"));
+
+  {
+    auto w = ZiCSV::writeFile<CSVRow>({
+	ZtFieldIndex(CSVRow, text)
+      }, g_append, ZiCSV::Append);
+    ZuCheck(!w);
+    ZuCheck(w.error);
+  }
 }
 
 } // namespace
@@ -178,5 +218,6 @@ int main(int argc, char **argv)
   ZuTestCall(testRoundTrip);
   ZuTestCall(testFilteredColumns);
   ZuTestCall(testOverflowAndMissingFileErrors);
+  ZuTestCall(testAppend);
   return 0;
 }
