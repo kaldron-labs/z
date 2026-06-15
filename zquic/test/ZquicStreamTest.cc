@@ -12,7 +12,40 @@ using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-struct App : public Zquic::Engine<App> { };
+struct App : public Zquic::Engine<App> {
+  using Base = Zquic::Engine<App>;
+
+  App() : m_mx{mxParams_()} {
+    bool ok = m_mx.start();
+    ZiAssert(ok, "Zquic", (), "stream test multiplexer start failed", return);
+    if (ok)
+      ok = Base::init(Zquic::EngineParams(&m_mx, "3", "3").sameThread());
+    ZiAssert(ok, "Zquic", (), "stream test app init failed", return);
+  }
+  ~App() {
+    Base::final();
+    m_mx.stop();
+  }
+
+  bool rxInvoked() const { return true; }
+  bool txInvoked() const { return true; }
+  template <typename L> void rxRun(L l) { l(); }
+  template <typename L> void rxInvoke(L l) { l(); }
+  template <typename L> void txRun(L l) { l(); }
+  template <typename L> void txInvoke(L l) { l(); }
+  template <typename O, typename L> void txInvoke(O *, L l) { l(); }
+
+private:
+  static ZiMxParams mxParams_() {
+    return ZiMxParams()
+      .scheduler([](auto &s) {
+	s.nThreads(3);
+      })
+      .rxThread(1).txThread(2);
+  }
+
+  ZiMultiplex	m_mx;
+};
 struct TestLink;
 struct TestStream :
   public Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>

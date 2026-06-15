@@ -25,7 +25,15 @@ struct TestStream :
   int process(Zquic::RxStream &) { return 0; }
 };
 
-struct EngineApp : public Zquic::Engine<EngineApp> { };
+struct EngineApp : public Zquic::Engine<EngineApp> {
+  bool rxInvoked() const { return true; }
+  bool txInvoked() const { return true; }
+  template <typename L> void rxRun(L l) { l(); }
+  template <typename L> void rxInvoke(L l) { l(); }
+  template <typename L> void txRun(L l) { l(); }
+  template <typename L> void txInvoke(L l) { l(); }
+  template <typename O, typename L> void txInvoke(O *, L l) { l(); }
+};
 struct ClientApp : public Zquic::Client<ClientApp> { };
 struct ServerAppLink;
 struct ServerApp : public Zquic::Server<ServerApp, ServerAppLink> { };
@@ -169,6 +177,30 @@ bool waitUntil(L l)
   return false;
 }
 
+struct EngineFixture {
+  EngineFixture() : mx{mxParams_()} {
+    ZiAssert(mx.start(), "Zquic", (),
+      "API test multiplexer start failed", return);
+    ZiAssert(app.init(Zquic::EngineParams(&mx, "3", "3").sameThread()),
+      "Zquic", (), "API test engine init failed", return);
+  }
+  ~EngineFixture() {
+    app.final();
+    mx.stop();
+  }
+
+  static ZiMxParams mxParams_() {
+    return ZiMxParams()
+      .scheduler([](auto &s) {
+	s.nThreads(3);
+      })
+      .rxThread(1).txThread(2);
+  }
+
+  ZiMultiplex	mx;
+  EngineApp	app;
+};
+
 } // namespace
 
 void testParams()
@@ -206,9 +238,9 @@ void testStreamShape()
 {
   ZuTestScope(testStreamShape);
 
-  EngineApp app;
-  TestLink client{&app, false};
-  TestLink server{&app, true};
+  EngineFixture fixture;
+  TestLink client{&fixture.app, false};
+  TestLink server{&fixture.app, true};
 
   auto c0 = client.stream();
   auto c1 = client.stream(Zi::StreamType::Simplex);
@@ -259,8 +291,8 @@ void testStatelessResetDetection()
 {
   ZuTestScope(testStatelessResetDetection);
 
-  EngineApp app;
-  TestLink link{&app};
+  EngineFixture fixture;
+  TestLink link{&fixture.app};
   Zquic::ResetToken token{"0123456789abcdef"};
   uint8_t packet[64] = {};
   memset(packet, 0xa5, sizeof(packet));
@@ -287,8 +319,8 @@ void testConnectionIDFrameLifecycle()
 {
   ZuTestScope(testConnectionIDFrameLifecycle);
 
-  EngineApp app;
-  TestLink link{&app};
+  EngineFixture fixture;
+  TestLink link{&fixture.app};
   Zquic::ResetToken peerToken{"0123456789abcdef"};
   Zquic::Frame f;
   f.type = Zquic::FrameType::NewConnectionID;
@@ -340,16 +372,28 @@ void testCliLinkUDPConnect()
 
   Zquic::Endpoint sink;
   bool sinkReady = false;
+  bool sinkFailed = false;
   ZuCHECK(sink.openUDP(
       &mx, Zquic::PathMode::ServerUnconnected,
       ZiIP("127.0.0.1"), 0, ZiIP{}, 0,
       Zquic::Endpoint::DatagramFn{},
       Zquic::Endpoint::ReadyFn{[&sinkReady](Zquic::Endpoint *) {
 	sinkReady = true;
+      }},
+      Zquic::Endpoint::FailFn{[&sinkFailed](bool) {
+	sinkFailed = true;
       }}), "CliLink UDP sink open failed");
-  ZuCHECK(waitUntil([&sink, &sinkReady]() {
-      return sinkReady && sink.listening() && sink.local().port();
-    }), "CliLink UDP sink did not become ready");
+  bool sinkOpened = waitUntil([&sink, &sinkReady, &sinkFailed]() {
+      return sinkFailed || (sinkReady && sink.listening() && sink.local().port());
+    });
+  if (sinkFailed) {
+    ZuCHECK(!sink.listening() && sink.diag().failures,
+      "CliLink UDP sink did not fail cleanly");
+    sink.closeUDP();
+    mx.stop();
+    return;
+  }
+  ZuCHECK(sinkOpened, "CliLink UDP sink did not become ready");
 
   ClientShapeApp app;
   bool appOK = app.init(

@@ -57,10 +57,12 @@ void testEndpointReadyDownCallbacks()
 	down = true;
       }}), "endpoint open failed");
 
-  ZuCHECK(waitUntil([&ep, &ready]() {
-      return ready && ep.listening() && ep.local().port();
-    }), "endpoint ready callback did not fire");
-  ZuCHECK(!failed, "endpoint open failed asynchronously");
+  bool opened = waitUntil([&ep, &ready, &failed]() {
+      return failed || (ready && ep.listening() && ep.local().port());
+    });
+  ZuCHECK(opened, "endpoint ready/fail callback did not fire");
+  ZuCHECK(!failed || (!ep.listening() && ep.diag().failures),
+    "endpoint open did not fail cleanly");
 
   uint64_t failures = ep.diag().failures;
   ep.closeUDP();

@@ -14,7 +14,39 @@ using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-struct FlowApp : public Zquic::Engine<FlowApp> { };
+struct FlowApp : public Zquic::Engine<FlowApp> {
+  using Base = Zquic::Engine<FlowApp>;
+
+  FlowApp() : m_mx{mxParams_()} {
+    ZiAssert(m_mx.start(), "Zquic", (),
+      "flow test multiplexer start failed", return);
+    ZiAssert(Base::init(Zquic::EngineParams(&m_mx, "3", "3").sameThread()),
+      "Zquic", (), "flow test app init failed", return);
+  }
+  ~FlowApp() {
+    Base::final();
+    m_mx.stop();
+  }
+
+  bool rxInvoked() const { return true; }
+  bool txInvoked() const { return true; }
+  template <typename L> void rxRun(L l) { l(); }
+  template <typename L> void rxInvoke(L l) { l(); }
+  template <typename L> void txRun(L l) { l(); }
+  template <typename L> void txInvoke(L l) { l(); }
+  template <typename O, typename L> void txInvoke(O *, L l) { l(); }
+
+private:
+  static ZiMxParams mxParams_() {
+    return ZiMxParams()
+      .scheduler([](auto &s) {
+	s.nThreads(3);
+      })
+      .rxThread(1).txThread(2);
+  }
+
+  ZiMultiplex	m_mx;
+};
 struct FlowLink;
 struct FlowStream :
   public Zquic::Stream<FlowLink, FlowStream, StreamTxBufAlloc>
@@ -98,7 +130,9 @@ void testStreamDataBlockedIsAdvisory()
 {
   ZuTestScope(testStreamDataBlockedIsAdvisory);
 
-  FlowStream stream{4};
+  FlowApp app;
+  FlowLink link{&app};
+  FlowStream stream{&link, 4};
   stream.rxCredit(200);
 
   Zquic::Frame frame;
@@ -126,7 +160,9 @@ void testReceiveFlowControl()
   unsigned used = 0;
   Zquic::BufDiag diag;
 
-  FlowStream stream{0};
+  FlowApp app;
+  FlowLink link{&app};
+  FlowStream stream{&link, 0};
   Zquic::ReceiveFlow flow{8, 5};
   auto packet = streamPkt_(stream.id(), 3, "de", false, frame, used);
   ZuCHECK(packet,
@@ -159,7 +195,7 @@ void testReceiveFlowControl()
       flow.streamUsed() == 5,
     "stream-level flow violation was not rejected cleanly");
 
-  FlowStream connLimited{4};
+  FlowStream connLimited{&link, 4};
   Zquic::ReceiveFlow connFlow{6, 20};
   packet = streamPkt_(connLimited.id(), 0, "hello", false, frame, used);
   ZuCHECK(packet &&
