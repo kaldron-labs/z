@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC Tx scheduling helpers
+// Z QUIC Tx scheduling utilities
 
 #ifndef ZquicSched_HH
 #define ZquicSched_HH

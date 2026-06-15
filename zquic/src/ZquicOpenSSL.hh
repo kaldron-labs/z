@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC OpenSSL internal helpers
+// Z QUIC OpenSSL internal utilities
 
 #ifndef ZquicOpenSSL_HH
 #define ZquicOpenSSL_HH

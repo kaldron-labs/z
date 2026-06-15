@@ -9,17 +9,17 @@
 
 using namespace ZuTestUtil;
 
-void testStreamHelpers()
+void testStreamUtilities()
 {
-  ZuTestScope(testStreamHelpers);
+  ZuTestScope(testStreamUtilities);
 
   uint64_t id = Zquic::StreamID::make(false, Zi::StreamType::Duplex, 7);
   ZuCHECK(id == 28 && Zquic::StreamID::client(id) &&
     Zquic::StreamID::bidi(id) && Zquic::StreamID::ordinal(id) == 7,
-    "client bidi stream ID helper mismatch");
+    "client bidi stream ID utility mismatch");
   id = Zquic::StreamID::make(true, Zi::StreamType::Simplex, 2);
   ZuCHECK(id == 11 && Zquic::StreamID::server(id) && Zquic::StreamID::uni(id),
-    "server uni stream ID helper mismatch");
+    "server uni stream ID utility mismatch");
 
   Zquic::FlowCredit credit{10};
   ZuCHECK(credit.consume(7) && credit.available() == 3, "flow consume failed");
@@ -51,5 +51,5 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testStreamHelpers);
+  ZuTestCall(testStreamUtilities);
 }

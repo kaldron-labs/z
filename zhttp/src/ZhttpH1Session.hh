@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - HTTP/1 session helpers
+// Z http library - HTTP/1 session utilities
 
 #ifndef ZhttpH1Session_HH
 #define ZhttpH1Session_HH
