@@ -1,0 +1,5 @@
+# LeakSanitizer suppressions for intentional or cached Z debug allocations.
+# Keep entries narrow and stack-rooted; do not suppress generic allocators.
+
+leak:Ztls::Pico::(anonymous namespace)::buffer_alloc_
+leak:schedulePTO_
