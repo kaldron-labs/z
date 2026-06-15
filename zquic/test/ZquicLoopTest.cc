@@ -44,11 +44,11 @@ ZuCSpan bytes_(const uint8_t *data, unsigned len)
   return ZuCSpan{reinterpret_cast<const char *>(data), len};
 }
 
-static ZmRef<ZiIOBuf> streamPacket_(
+static ZmRef<ZiIOBuf> streamPkt_(
   uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;
@@ -114,7 +114,7 @@ void testSplitReorderedStreamFrames()
   TestLink client{&app};
   auto stream = client.stream(Zi::StreamType::Duplex);
 
-  auto packet = streamPacket_(
+  auto packet = streamPkt_(
     stream->id(), sizeof(p0), bytes_(p1, sizeof(p1)), false, f, used);
   ZuCHECK(packet &&
       f.offset == sizeof(p0) && f.length == sizeof(p1),
@@ -124,7 +124,7 @@ void testSplitReorderedStreamFrames()
       !stream->rxBytes(),
     "loop out-of-order stream receive failed");
 
-  packet = streamPacket_(
+  packet = streamPkt_(
     stream->id(), 0, bytes_(p0, sizeof(p0)), false, f, used);
   ZuCHECK(packet &&
       f.offset == 0 && f.length == sizeof(p0),
@@ -134,7 +134,7 @@ void testSplitReorderedStreamFrames()
       !stream->rxPending(),
     "loop stream gap fill failed");
 
-  packet = streamPacket_(
+  packet = streamPkt_(
     stream->id(), sizeof(p0) + sizeof(p1), bytes_(p2, sizeof(p2)), true,
     f, used);
   ZuCHECK(packet &&
@@ -158,16 +158,16 @@ void testRecoveryFlowAndPMTUD()
   ZuCHECK(credit.consume(600) && !credit.blocked(),
     "loop flow unblock failed");
 
-  Zquic::SentPacketTracker sent;
-  ZuCHECK(sent.add({1, 100, 1200, Zquic::PacketSpace::AppData,
+  Zquic::SentPktTracker sent;
+  ZuCHECK(sent.add({1, 100, 1200, Zquic::PktSpace::AppData,
       true, true, false}) &&
-      sent.add({2, 110, 1200, Zquic::PacketSpace::AppData,
+      sent.add({2, 110, 1200, Zquic::PktSpace::AppData,
       true, true, false}) &&
-      sent.add({5, 120, 1200, Zquic::PacketSpace::AppData,
+      sent.add({5, 120, 1200, Zquic::PktSpace::AppData,
       true, true, false}),
     "loop sent-packet add failed");
   ZuCHECK(sent.ack(5), "loop ACK failed");
-  ZuCHECK(sent.markPacketThresholdLoss(5) == 2 &&
+  ZuCHECK(sent.markPktThresholdLoss(5) == 2 &&
       sent.lost() == 2 && sent.retransmittable() == 2,
     "loop packet-threshold loss failed");
 

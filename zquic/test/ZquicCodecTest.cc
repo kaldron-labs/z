@@ -37,9 +37,9 @@ static int putParamVar_(
   return putParam_(out, len, id, bytes_(v, unsigned(n)));
 }
 
-void testVarIntAndPacket()
+void testVarIntAndPkt()
 {
-  ZuTestScope(testVarIntAndPacket);
+  ZuTestScope(testVarIntAndPkt);
 
   uint8_t b[256];
   uint64_t v = 0;
@@ -58,49 +58,49 @@ void testVarIntAndPacket()
 
   Zquic::CxnID dcid{"abcdefgh"};
   Zquic::CxnID scid{"server01"};
-  int l = Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 16, 2);
+  int l = Zquic::Pkt::writeInitial(b, sizeof(b), dcid, scid, 16, 2);
   ZuCHECK(l > 0, "Initial header write failed");
-  Zquic::LongHeader h;
-  ZuCHECK(Zquic::Packet::parseLong(
+  Zquic::LongHdr h;
+  ZuCHECK(Zquic::Pkt::parseLong(
     ZuCSpan{b, unsigned(l + 2)}, h) > 0,
     "Initial header parse failed");
-  ZuCHECK(h.type == Zquic::PacketType::Initial, "Initial type mismatch");
+  ZuCHECK(h.type == Zquic::PktType::Initial, "Initial type mismatch");
   ZuCHECK(h.dcid == dcid && h.scid == scid, "CID parse mismatch");
 
   uint32_t versions[] = { Zquic::Version1 };
-  l = Zquic::Packet::writeVersionNegotiation(
+  l = Zquic::Pkt::writeVersionNegotiation(
     b, sizeof(b), dcid, scid, versions, 1);
   ZuCHECK(l > 0, "VN write failed");
-  ZuCHECK(Zquic::Packet::isVersionNegotiation(
+  ZuCHECK(Zquic::Pkt::isVersionNegotiation(
     ZuCSpan{b, unsigned(l)}),
     "VN recognition failed");
   unsigned nVersions = 0;
   uint32_t parsedVersions[2] = {};
-  ZuCHECK(!Zquic::Packet::parseVersionNegotiation(
+  ZuCHECK(!Zquic::Pkt::parseVersionNegotiation(
     ZuCSpan{b, unsigned(l)},
     parsedVersions, 2, nVersions), "VN parse failed");
   ZuCHECK(nVersions == 1 && parsedVersions[0] == Zquic::Version1,
     "VN version list mismatch");
 
-  l = Zquic::Packet::writeHandshake(b, sizeof(b), dcid, scid, 12, 1);
+  l = Zquic::Pkt::writeHandshake(b, sizeof(b), dcid, scid, 12, 1);
   ZuCHECK(l > 0, "Handshake header write failed");
-  ZuCHECK(Zquic::Packet::parseLong(
+  ZuCHECK(Zquic::Pkt::parseLong(
     ZuCSpan{b, unsigned(l + 1)}, h) > 0 &&
-    h.type == Zquic::PacketType::Handshake,
+    h.type == Zquic::PktType::Handshake,
     "Handshake header parse failed");
 
-  l = Zquic::Packet::writeShort(b, sizeof(b), dcid, 0x1234, 2);
+  l = Zquic::Pkt::writeShort(b, sizeof(b), dcid, 0x1234, 2);
   ZuCHECK(l > 0, "short header write failed");
-  Zquic::ShortHeader sh;
-  ZuCHECK(Zquic::Packet::parseShort(
+  Zquic::ShortHdr sh;
+  ZuCHECK(Zquic::Pkt::parseShort(
     ZuCSpan{b, unsigned(l)}, dcid.length(), sh) > 0 &&
     sh.dcid == dcid && sh.pnLength == 2,
     "short header parse failed");
 }
 
-void testVarIntBoundariesAndPacketNumbers()
+void testVarIntBoundariesAndPktNumbers()
 {
-  ZuTestScope(testVarIntBoundariesAndPacketNumbers);
+  ZuTestScope(testVarIntBoundariesAndPktNumbers);
 
   struct Case {
     uint64_t	value;
@@ -140,85 +140,85 @@ void testVarIntBoundariesAndPacketNumbers()
       b[0] == 0xaa,
     "varint put offset handling mismatch");
 
-  ZuCHECK(Zquic::PacketNumber::encodedLength(1, 0) == 1 &&
-      Zquic::PacketNumber::encodedLength(1ULL<<7, 0) == 2 &&
-      Zquic::PacketNumber::encodedLength(1ULL<<15, 0) == 3 &&
-      Zquic::PacketNumber::encodedLength(1ULL<<23, 0) == 4,
+  ZuCHECK(Zquic::PktNumber::encodedLength(1, 0) == 1 &&
+      Zquic::PktNumber::encodedLength(1ULL<<7, 0) == 2 &&
+      Zquic::PktNumber::encodedLength(1ULL<<15, 0) == 3 &&
+      Zquic::PktNumber::encodedLength(1ULL<<23, 0) == 4,
     "packet number encoded length boundaries mismatch");
-  ZuCHECK(Zquic::PacketNumber::encode(b, sizeof(b), 0x123456U, 3) == 3 &&
+  ZuCHECK(Zquic::PktNumber::encode(b, sizeof(b), 0x123456U, 3) == 3 &&
       b[0] == 0x12 && b[1] == 0x34 && b[2] == 0x56,
     "packet number encode mismatch");
-  ZuCHECK(Zquic::PacketNumber::encode(b, sizeof(b), 1, 0) < 0 &&
-      Zquic::PacketNumber::encode(b, sizeof(b), 1, 5) < 0 &&
-      Zquic::PacketNumber::encode(b, 2, 1, 3) < 0,
+  ZuCHECK(Zquic::PktNumber::encode(b, sizeof(b), 1, 0) < 0 &&
+      Zquic::PktNumber::encode(b, sizeof(b), 1, 5) < 0 &&
+      Zquic::PktNumber::encode(b, 2, 1, 3) < 0,
     "invalid packet number encode accepted");
-  ZuCHECK(Zquic::PacketNumber::decode(0xa82f30eaULL, 0x9b32, 16) ==
+  ZuCHECK(Zquic::PktNumber::decode(0xa82f30eaULL, 0x9b32, 16) ==
       0xa82f9b32ULL,
     "packet number decode near expected mismatch");
-  ZuCHECK(Zquic::PacketNumber::decode(0xff, 0x00, 8) == 0x100,
+  ZuCHECK(Zquic::PktNumber::decode(0xff, 0x00, 8) == 0x100,
     "packet number decode forward wrap mismatch");
-  ZuCHECK(Zquic::PacketNumber::decode(0x100, 0xff, 8) == 0xff,
+  ZuCHECK(Zquic::PktNumber::decode(0x100, 0xff, 8) == 0xff,
     "packet number decode backward wrap mismatch");
 }
 
-void testPacketParserRejections()
+void testPktParserRejections()
 {
-  ZuTestScope(testPacketParserRejections);
+  ZuTestScope(testPktParserRejections);
 
   uint8_t b[128] = {};
-  Zquic::LongHeader h;
-  ZuCHECK(Zquic::Packet::parseLong({}, h) < 0,
+  Zquic::LongHdr h;
+  ZuCHECK(Zquic::Pkt::parseLong({}, h) < 0,
     "empty long header was accepted");
   b[0] = 0x40;
-  ZuCHECK(Zquic::Packet::parseLong(bytes_(b, 8), h) < 0,
+  ZuCHECK(Zquic::Pkt::parseLong(bytes_(b, 8), h) < 0,
     "short-header packet parsed as long");
 
   b[0] = 0xc0;
   b[4] = 1;
   b[5] = Zquic::CxnIDMax + 1;
-  ZuCHECK(Zquic::Packet::parseLong(bytes_(b, 7), h) < 0,
+  ZuCHECK(Zquic::Pkt::parseLong(bytes_(b, 7), h) < 0,
     "overlong DCID length was accepted");
 
   Zquic::CxnID dcid{"abcdefgh"};
   Zquic::CxnID scid{"server01"};
-  ZuCHECK(Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 0, 0) < 0 &&
-      Zquic::Packet::writeShort(b, sizeof(b), dcid, 1, 5) < 0,
+  ZuCHECK(Zquic::Pkt::writeInitial(b, sizeof(b), dcid, scid, 0, 0) < 0 &&
+      Zquic::Pkt::writeShort(b, sizeof(b), dcid, 1, 5) < 0,
     "invalid packet number length accepted");
-  int l = Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 4, 1);
+  int l = Zquic::Pkt::writeInitial(b, sizeof(b), dcid, scid, 4, 1);
   ZuCHECK(l > 0, "Initial token overrun setup failed");
   unsigned tokenOff = 1 + 4 + 1 + dcid.length() + 1 + scid.length();
   unsigned o = tokenOff;
   ZuCHECK(Zquic::VarInt::put(b, sizeof(b), 16, o) == 0,
     "Initial token overrun token length setup failed");
-  ZuCHECK(Zquic::Packet::parseLong(bytes_(b, o + 1), h) < 0,
+  ZuCHECK(Zquic::Pkt::parseLong(bytes_(b, o + 1), h) < 0,
     "Initial token length beyond packet was accepted");
   o = tokenOff;
   ZuCHECK(Zquic::VarInt::put(b, sizeof(b), (1ULL<<62) - 1, o) == 0,
     "Initial token max length setup failed");
-  ZuCHECK(Zquic::Packet::parseLong(bytes_(b, o), h) < 0,
+  ZuCHECK(Zquic::Pkt::parseLong(bytes_(b, o), h) < 0,
     "Initial max token length beyond packet was accepted");
 
   uint32_t versions[] = { Zquic::Version1 };
-  int n = Zquic::Packet::writeVersionNegotiation(
+  int n = Zquic::Pkt::writeVersionNegotiation(
     b, sizeof(b), dcid, scid, versions, 1);
   ZuCHECK(n > 0, "VN setup failed");
   unsigned nVersions = 0;
   uint32_t parsed[1];
-  ZuCHECK(Zquic::Packet::parseVersionNegotiation(
+  ZuCHECK(Zquic::Pkt::parseVersionNegotiation(
       bytes_(b, unsigned(n - 1)), parsed, 1, nVersions) < 0,
     "malformed VN version list was accepted");
-  ZuCHECK(Zquic::Packet::parseVersionNegotiation(
+  ZuCHECK(Zquic::Pkt::parseVersionNegotiation(
       bytes_(b, unsigned(n)), parsed, 0, nVersions) < 0,
     "VN parse ignored version capacity");
 
-  Zquic::ShortHeader sh;
-  ZuCHECK(Zquic::Packet::parseShort(bytes_(b, 4), dcid.length(), sh) < 0,
+  Zquic::ShortHdr sh;
+  ZuCHECK(Zquic::Pkt::parseShort(bytes_(b, 4), dcid.length(), sh) < 0,
     "too-short short header was accepted");
   b[0] = 0xc0;
-  ZuCHECK(Zquic::Packet::parseShort(bytes_(b, sizeof(b)), dcid.length(), sh) < 0,
+  ZuCHECK(Zquic::Pkt::parseShort(bytes_(b, sizeof(b)), dcid.length(), sh) < 0,
     "long-header packet parsed as short");
   b[0] = 0x40;
-  ZuCHECK(Zquic::Packet::parseShort(
+  ZuCHECK(Zquic::Pkt::parseShort(
       bytes_(b, sizeof(b)), Zquic::CxnIDMax + 1, sh) < 0,
     "overlong short-header CID length was accepted");
 }
@@ -688,9 +688,9 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testVarIntAndPacket);
-  ZuTestCall(testVarIntBoundariesAndPacketNumbers);
-  ZuTestCall(testPacketParserRejections);
+  ZuTestCall(testVarIntAndPkt);
+  ZuTestCall(testVarIntBoundariesAndPktNumbers);
+  ZuTestCall(testPktParserRejections);
   ZuTestCall(testFramesAndParams);
   ZuTestCall(testControlFrameCoverage);
   ZuTestCall(testMalformedFrameCoverage);

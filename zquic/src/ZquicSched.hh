@@ -23,7 +23,7 @@
 
 namespace Zquic {
 
-struct PacketBudget {
+struct PktBudget {
   unsigned	pmtu = MinUDPPayload;
   unsigned	congestion = MinUDPPayload;
   unsigned	antiAmplification = MinUDPPayload;
@@ -52,17 +52,17 @@ struct PacketBudget {
   }
 };
 
-class PacketAssembly {
+class PktAssembly {
 public:
   bool streamAdded() const { return m_streamAdded; }
   unsigned controlFrames() const { return m_controlFrames; }
 
-  bool addControl(PacketBudget &budget, unsigned bytes) {
+  bool addControl(PktBudget &budget, unsigned bytes) {
     if (!budget.add(bytes)) return false;
     ++m_controlFrames;
     return true;
   }
-  bool addStream(PacketBudget &budget, unsigned bytes) {
+  bool addStream(PktBudget &budget, unsigned bytes) {
     if (m_streamAdded || !budget.add(bytes)) return false;
     m_streamAdded = true;
     return true;
@@ -194,12 +194,12 @@ struct ControlFrame {
   }
 };
 
-class StreamPacketizer {
+class StreamPktizer {
 public:
   template <typename Stream>
   static int writeNext(
-    uint8_t *out, unsigned len, PacketBudget &budget,
-    PacketAssembly &assembly, Stream &stream,
+    uint8_t *out, unsigned len, PktBudget &budget,
+    PktAssembly &assembly, Stream &stream,
     StreamFrameInfo *info = nullptr)
   {
     if (info) *info = {};
@@ -221,8 +221,8 @@ public:
 private:
   template <typename Stream>
   static int writeRange_(
-    uint8_t *out, unsigned len, PacketBudget &budget,
-    PacketAssembly &assembly, Stream &stream, uint64_t id,
+    uint8_t *out, unsigned len, PktBudget &budget,
+    PktAssembly &assembly, Stream &stream, uint64_t id,
     StreamFrameInfo *info, const TxRange &range)
   {
     ZiAssert(range.buf && range.length, "Zquic",
@@ -272,8 +272,8 @@ private:
 
   template <typename Stream>
   static int writeFin_(
-    uint8_t *out, unsigned len, PacketBudget &budget,
-    PacketAssembly &assembly, Stream &stream, uint64_t id,
+    uint8_t *out, unsigned len, PktBudget &budget,
+    PktAssembly &assembly, Stream &stream, uint64_t id,
     StreamFrameInfo *info)
   {
     uint64_t offset = stream.txBytes();

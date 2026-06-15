@@ -43,32 +43,32 @@ void testServerVersionDecision()
   Zquic::CxnID dcid{"client-dc"};
   Zquic::CxnID scid{"client-sc"};
   uint8_t b[128];
-  int n = Zquic::Packet::writeInitial(b, sizeof(b), dcid, scid, 0, 1);
+  int n = Zquic::Pkt::writeInitial(b, sizeof(b), dcid, scid, 0, 1);
   ZuCHECK(n > 0, "Initial write failed");
   b[n++] = 0;
 
   uint8_t response[128];
-  Zquic::ServerPacketDecision d = Zquic::ServerPacket::routeLongHeader(
+  Zquic::ServerPktDecision d = Zquic::ServerPkt::routeLongHdr(
     ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
     response, sizeof(response));
-  ZuCHECK(d.action == Zquic::ServerPacketAction::AcceptInitial &&
+  ZuCHECK(d.action == Zquic::ServerPktAction::AcceptInitial &&
       d.header.dcid == dcid && d.header.scid == scid &&
       !d.responseLength,
     "supported Initial was not accepted for bootstrap");
 
   b[1] = 0xff; b[2] = 0x00; b[3] = 0x00; b[4] = 0x1d;
-  d = Zquic::ServerPacket::routeLongHeader(
+  d = Zquic::ServerPkt::routeLongHdr(
     ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
     response, sizeof(response));
-  ZuCHECK(d.action == Zquic::ServerPacketAction::VersionNegotiation &&
+  ZuCHECK(d.action == Zquic::ServerPktAction::VersionNegotiation &&
       d.responseLength > 0,
     "unsupported Initial did not produce Version Negotiation");
 
-  Zquic::LongHeader h;
-  ZuCHECK(Zquic::Packet::parseLong(
+  Zquic::LongHdr h;
+  ZuCHECK(Zquic::Pkt::parseLong(
       ZuCSpan{reinterpret_cast<const char *>(response),
 	unsigned(d.responseLength)}, h) > 0 &&
-      Zquic::Packet::isVersionNegotiation(
+      Zquic::Pkt::isVersionNegotiation(
 	ZuCSpan{reinterpret_cast<const char *>(response),
 	  unsigned(d.responseLength)}) &&
       h.dcid == scid && h.scid == dcid,
@@ -76,67 +76,67 @@ void testServerVersionDecision()
 
   uint32_t versions[1] = {};
   unsigned nVersions = 0;
-  ZuCHECK(!Zquic::Packet::parseVersionNegotiation(
+  ZuCHECK(!Zquic::Pkt::parseVersionNegotiation(
       ZuCSpan{reinterpret_cast<const char *>(response),
 	unsigned(d.responseLength)}, versions, 1, nVersions) &&
       nVersions == 1 && versions[0] == Zquic::Version1,
     "Version Negotiation response version list mismatch");
 
-  d = Zquic::ServerPacket::routeLongHeader(
+  d = Zquic::ServerPkt::routeLongHdr(
     ZuCSpan{reinterpret_cast<const char *>(response), unsigned(d.responseLength)},
     response, sizeof(response));
-  ZuCHECK(d.action == Zquic::ServerPacketAction::Drop,
+  ZuCHECK(d.action == Zquic::ServerPktAction::Drop,
     "server accepted a Version Negotiation packet");
 
-  n = Zquic::Packet::writeHandshake(b, sizeof(b), dcid, scid, 0, 1);
+  n = Zquic::Pkt::writeHandshake(b, sizeof(b), dcid, scid, 0, 1);
   ZuCHECK(n > 0, "Handshake write failed");
-  d = Zquic::ServerPacket::routeLongHeader(
+  d = Zquic::ServerPkt::routeLongHdr(
     ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
     response, sizeof(response));
-  ZuCHECK(d.action == Zquic::ServerPacketAction::Drop,
+  ZuCHECK(d.action == Zquic::ServerPktAction::Drop,
     "server accepted non-Initial bootstrap packet");
 }
 
-void testRetryHeader()
+void testRetryHdr()
 {
-  ZuTestScope(testRetryHeader);
+  ZuTestScope(testRetryHdr);
 
   Zquic::CxnID dcid{"client01"};
   Zquic::CxnID scid{"server01"};
   static constexpr char Tag[] = "0123456789abcdef";
   uint8_t b[128];
-  int n = Zquic::Packet::writeRetry(
+  int n = Zquic::Pkt::writeRetry(
     b, sizeof(b), dcid, scid, "retry-token", Tag);
   ZuCHECK(n > 0, "Retry write failed");
 
-  Zquic::LongHeader h;
-  ZuCHECK(Zquic::Packet::parseLong(
+  Zquic::LongHdr h;
+  ZuCHECK(Zquic::Pkt::parseLong(
     ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, h) > 0,
     "Retry parse failed");
-  ZuCHECK(h.type == Zquic::PacketType::Retry && h.dcid == dcid && h.scid == scid,
+  ZuCHECK(h.type == Zquic::PktType::Retry && h.dcid == dcid && h.scid == scid,
     "Retry header mismatch");
 
-  Zquic::RetryPacket retry;
-  ZuCHECK(Zquic::Packet::parseRetry(
+  Zquic::RetryPkt retry;
+  ZuCHECK(Zquic::Pkt::parseRetry(
       ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, retry) == n,
     "Retry packet parse failed");
   ZuCHECK(retry.token == "retry-token" && retry.integrityTag == Tag,
     "Retry token/tag parse mismatch");
 
   Zquic::CxnID odcid{"original"};
-  n = Zquic::Packet::writeRetryAuthenticated(
+  n = Zquic::Pkt::writeRetryAuthenticated(
     b, sizeof(b), dcid, scid, "retry-token", odcid);
   ZuCHECK(n > 0, "authenticated Retry write failed");
-  ZuCHECK(Zquic::Packet::parseRetry(
+  ZuCHECK(Zquic::Pkt::parseRetry(
       ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, retry) == n &&
       retry.token == "retry-token" &&
       retry.integrityTag.length() == 16,
     "authenticated Retry parse failed");
-  ZuCHECK(Zquic::Packet::validateRetryIntegrity(
+  ZuCHECK(Zquic::Pkt::validateRetryIntegrity(
       ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, odcid),
     "authenticated Retry integrity validation failed");
   b[n - 1] ^= 1;
-  ZuCHECK(!Zquic::Packet::validateRetryIntegrity(
+  ZuCHECK(!Zquic::Pkt::validateRetryIntegrity(
       ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, odcid),
     "mutated Retry integrity tag was accepted");
 }
@@ -156,10 +156,10 @@ void testRetryTransportParameterValidation()
     "client bootstrap start failed");
 
   uint8_t b[128];
-  int n = Zquic::Packet::writeRetry(
+  int n = Zquic::Pkt::writeRetry(
     b, sizeof(b), initialSCID, retrySCID, "retry-token", Tag);
-  Zquic::RetryPacket retry;
-  ZuCHECK(n > 0 && Zquic::Packet::parseRetry(
+  Zquic::RetryPkt retry;
+  ZuCHECK(n > 0 && Zquic::Pkt::parseRetry(
       ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, retry) == n,
     "Retry packet setup failed");
   ZuCHECK(bootstrap.onRetry(retry) && bootstrap.retried() &&
@@ -170,7 +170,7 @@ void testRetryTransportParameterValidation()
   Zquic::ClientBootstrap checkedBootstrap;
   ZuCHECK(checkedBootstrap.start(initialDCID, initialSCID),
     "checked Retry bootstrap start failed");
-  n = Zquic::Packet::writeRetryAuthenticated(
+  n = Zquic::Pkt::writeRetryAuthenticated(
     b, sizeof(b), initialSCID, retrySCID, "retry-token", initialDCID);
   ZuCHECK(n > 0 && checkedBootstrap.onRetry(
       ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}) &&
@@ -213,6 +213,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testVersionNegotiation);
   ZuTestCall(testServerVersionDecision);
-  ZuTestCall(testRetryHeader);
+  ZuTestCall(testRetryHdr);
   ZuTestCall(testRetryTransportParameterValidation);
 }

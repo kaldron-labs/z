@@ -111,11 +111,11 @@ struct StreamTxData : public ZiIOBuf {
   void write(const I &) { }
 };
 
-struct RxPacketMark {
+struct RxPktMark {
   uint64_t	pn = 0;
 
-  RxPacketMark() = default;
-  explicit RxPacketMark(uint64_t pn_) : pn{pn_} { }
+  RxPktMark() = default;
+  explicit RxPktMark(uint64_t pn_) : pn{pn_} { }
 
   uint64_t key() const { return pn; }
   uint64_t length() const { return 1; }
@@ -148,10 +148,10 @@ using TxDataPQueue =
 	ZmPQueueBits<2,
 	  ZmPQueueLevels<3>>>>>;
 
-using PacketRxPQueue =
-  ZmPQueue<RxPacketMark,
+using PktRxPQueue =
+  ZmPQueue<RxPktMark,
     ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zquic.Packet.RxNode",
+      ZmPQueueHeapID<"Zquic.Pkt.RxNode",
 	ZmPQueueOverwrite<false,
 	  ZmPQueueBits<4,
 	    ZmPQueueLevels<4>>>>>>;

@@ -339,20 +339,20 @@ void testMessageLevelTLSHandshake()
     "1-RTT traffic probe frame encode failed");
   Zquic::CxnID dcid{"server01"};
   uint8_t header[128];
-  int h = Zquic::Packet::writeShort(header, sizeof(header), dcid, 3, 2);
+  int h = Zquic::Pkt::writeShort(header, sizeof(header), dcid, 3, 2);
   ZuCHECK(h > 0, "1-RTT traffic probe short header encode failed");
   unsigned pnOffset = unsigned(h) - 2;
   uint8_t packet[256];
   ptls_iovec_t plain = ptls_iovec_init(payload, sizeof(payload));
-  int n = Zquic::PacketProtection::protectShortV(
-    packet, sizeof(packet), client.txProtectionState(Zquic::CryptoLevel::OneRTT),
+  int n = Zquic::PktProt::protectShortV(
+    packet, sizeof(packet), client.txProtState(Zquic::CryptoLevel::OneRTT),
     3, bytes_(header, unsigned(h)), &plain, 1, pnOffset, 2);
   ZuCHECK(n == int(unsigned(h) + sizeof(payload) + 16),
     "1-RTT traffic probe protection failed");
   uint64_t pn = 0;
   unsigned payloadOffset = 0;
-  int plainLen = Zquic::PacketProtection::unprotectShort(
-    packet, unsigned(n), server.rxProtectionState(Zquic::CryptoLevel::OneRTT),
+  int plainLen = Zquic::PktProt::unprotectShort(
+    packet, unsigned(n), server.rxProtState(Zquic::CryptoLevel::OneRTT),
     0, pnOffset, pn, payloadOffset);
   ZuCHECK(plainLen == int(sizeof(payload)) &&
       pn == 3 && payloadOffset == unsigned(h) &&
@@ -387,24 +387,24 @@ void testMessageLevelTLSHandshake()
     "TLS message diagnostics were not updated");
 }
 
-void testZeroRTTPacketDrop()
+void testZeroRTTPktDrop()
 {
-  ZuTestScope(testZeroRTTPacketDrop);
+  ZuTestScope(testZeroRTTPktDrop);
 
   Zquic::CxnID dcid{"client01"};
   Zquic::CxnID scid{"server01"};
   uint8_t packet[128];
-  int n = Zquic::Packet::writeLong(
-    packet, sizeof(packet), Zquic::PacketType::ZeroRTT, dcid, scid, 8, 2);
+  int n = Zquic::Pkt::writeLong(
+    packet, sizeof(packet), Zquic::PktType::ZeroRTT, dcid, scid, 8, 2);
   ZuCHECK(n > 0, "0-RTT packet header write failed");
   packet[n++] = 0;
   packet[n++] = 1;
 
-  Zquic::LongHeader h;
-  ZuCHECK(Zquic::Packet::parseLong(
+  Zquic::LongHdr h;
+  ZuCHECK(Zquic::Pkt::parseLong(
       ZuCSpan{reinterpret_cast<char *>(packet), unsigned(n)}, h) > 0,
     "0-RTT packet parse failed");
-  ZuCHECK(h.type == Zquic::PacketType::ZeroRTT, "0-RTT type not recognized");
+  ZuCHECK(h.type == Zquic::PktType::ZeroRTT, "0-RTT type not recognized");
 
   Zquic::Crypto server;
   ZuCHECK(server.init(Zquic::CryptoConfig{true, false, "h3"}),
@@ -421,5 +421,5 @@ int main(int argc, char **argv)
   ZuTestCall(testDeterministicHandshakeProfile);
   ZuTestCall(testCryptoStreamFrames);
   ZuTestCall(testMessageLevelTLSHandshake);
-  ZuTestCall(testZeroRTTPacketDrop);
+  ZuTestCall(testZeroRTTPktDrop);
 }

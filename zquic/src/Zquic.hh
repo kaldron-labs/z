@@ -55,7 +55,7 @@ ZuDerive(ParamStrings,
   (ZtArray<ParamString, ZtArrayHeapID<"Zquic.ParamStrings">>));
 
 struct InitialInfo {
-  LongHeader	header;
+  LongHdr	header;
   ZiSockAddr	peer;
   unsigned	datagramLength = 0;
 };
@@ -78,14 +78,14 @@ inline ErrorFn defaultErrorFn()
   return ErrorFn{[](ZeException e) { ZiLogEvent(ZuMv(e)); }};
 }
 
-inline bool padForProtectionSample(
+inline bool padForProtSample(
   unsigned pnOffset, unsigned pnLength, unsigned tagLen,
   uint8_t *payload, unsigned len, unsigned &payloadLen)
 {
   unsigned headerLen = pnOffset + pnLength;
-  unsigned minPacketLen = pnOffset + 4 + 16;
-  unsigned minPayloadLen = minPacketLen > headerLen + tagLen ?
-    minPacketLen - headerLen - tagLen : 0;
+  unsigned minPktLen = pnOffset + 4 + 16;
+  unsigned minPayloadLen = minPktLen > headerLen + tagLen ?
+    minPktLen - headerLen - tagLen : 0;
   if (payloadLen >= minPayloadLen) return true;
   if (minPayloadLen > len) return false;
   memset(payload + payloadLen, 0, minPayloadLen - payloadLen);
@@ -93,11 +93,11 @@ inline bool padForProtectionSample(
   return true;
 }
 
-inline PacketSpace::T runtimePacketSpace(CryptoLevel::T level)
+inline PktSpace::T runtimePktSpace(CryptoLevel::T level)
 {
-  if (level == CryptoLevel::Initial) return PacketSpace::Initial;
-  if (level == CryptoLevel::Handshake) return PacketSpace::Handshake;
-  return PacketSpace::AppData;
+  if (level == CryptoLevel::Initial) return PktSpace::Initial;
+  if (level == CryptoLevel::Handshake) return PktSpace::Handshake;
+  return PktSpace::AppData;
 }
 
 inline ZuCSpan byteSpan(const uint8_t *data, unsigned len)
@@ -185,23 +185,23 @@ struct VersionNegotiation {
     uint8_t *out, unsigned len, const CxnID &dcid,
     const CxnID &scid) {
     uint32_t versions[] = { Version1 };
-    return Packet::writeVersionNegotiation(out, len, dcid, scid, versions, 1);
+    return Pkt::writeVersionNegotiation(out, len, dcid, scid, versions, 1);
   }
 
   static int parse(
     ZuCSpan in, uint32_t *versions, unsigned capacity, unsigned &nVersions) {
-    return Packet::parseVersionNegotiation(in, versions, capacity, nVersions);
+    return Pkt::parseVersionNegotiation(in, versions, capacity, nVersions);
   }
 };
 
-struct ServerPacketDecision {
-  ServerPacketAction::T	action = ServerPacketAction::Drop;
-  LongHeader		header;
+struct ServerPktDecision {
+  ServerPktAction::T	action = ServerPktAction::Drop;
+  LongHdr		header;
   unsigned		responseLength = 0;
 };
 
-struct ServerPacket {
-  static ServerPacketDecision routeLongHeader(
+struct ServerPkt {
+  static ServerPktDecision routeLongHdr(
     ZuCSpan, uint8_t *response, unsigned responseLen);
 };
 
@@ -212,7 +212,7 @@ struct StatelessReset {
   static int decode(ResetToken &, ZuCSpan datagram);
   static bool verify(ZuCSpan datagram, const ResetToken &);
   static int writeForUnknownCID(
-    uint8_t *, unsigned, ZuCSpan receivedPacket, const ResetToken &);
+    uint8_t *, unsigned, ZuCSpan receivedPkt, const ResetToken &);
 };
 
 template <typename Link_>
@@ -344,7 +344,7 @@ public:
 
 private:
   const Route *matchShortRoute_(ZuCSpan packet, bool activeOnly) const {
-    if (!packet || packet.length() < 2 || Packet::isLong(packet)) return nullptr;
+    if (!packet || packet.length() < 2 || Pkt::isLong(packet)) return nullptr;
     const Route *best = nullptr;
     auto i = m_routes->citer();
     while (auto node = i()) {
@@ -423,17 +423,17 @@ public:
     unsigned scidLength = CxnIDGen::InitialLength);
 
   bool onRetry(ZuCSpan packet) {
-    RetryPacket retry;
+    RetryPkt retry;
     if (!m_started ||
-	Packet::parseRetry(packet, retry) < 0 ||
-	!Packet::validateRetryIntegrity(packet, m_initialDCID))
+	Pkt::parseRetry(packet, retry) < 0 ||
+	!Pkt::validateRetryIntegrity(packet, m_initialDCID))
       return false;
     return onRetry(retry);
   }
 
-  bool onRetry(const RetryPacket &retry) {
+  bool onRetry(const RetryPkt &retry) {
     if (!m_started ||
-	retry.header.type != PacketType::Retry ||
+	retry.header.type != PktType::Retry ||
 	retry.header.scid.length() < MinCIDLength ||
 	!retry.token ||
 	retry.integrityTag.length() != 16)
@@ -475,7 +475,7 @@ public:
     return m_statelessResetToken;
   }
 
-  bool acceptInitial(const LongHeader &, unsigned datagramLength);
+  bool acceptInitial(const LongHdr &, unsigned datagramLength);
   bool transportParams(TransportParams &) const;
 
 private:
@@ -559,8 +559,8 @@ inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
   }
   diag.bytesRx += d.buf->length;
 
-  LongHeader h;
-  if (Packet::parseLong(d.buf->cspan(), h) < 0) {
+  LongHdr h;
+  if (Pkt::parseLong(d.buf->cspan(), h) < 0) {
     ++diag.failures;
     return;
   }
@@ -616,7 +616,7 @@ inline bool writeInitialPingProbe(ZiIOBuf *buf, uint64_t packetNumber)
   int headerLength = -1;
 
   for (unsigned i = 0; i < 4; ++i) {
-    headerLength = Packet::writeInitial(
+    headerLength = Pkt::writeInitial(
       out, buf->size, dcid, scid, payloadLength, PNLength);
     if (headerLength < 0 ||
 	MinUDPPayload < unsigned(headerLength) + PNLength + 1)
@@ -628,7 +628,7 @@ inline bool writeInitialPingProbe(ZiIOBuf *buf, uint64_t packetNumber)
   }
   if (headerLength < 0) return false;
 
-  int pnLength = PacketNumber::encode(
+  int pnLength = PktNumber::encode(
     out + headerLength, buf->size - unsigned(headerLength),
     packetNumber, PNLength);
   if (pnLength != int(PNLength)) return false;
@@ -844,6 +844,7 @@ protected:
     m_maxStreamsUni = params.maxStreamsUni();
     m_maxUDP = params.maxUDP();
     if (!init_alpn_(params.alpn())) return false;
+    warmup_();
     return l(params);
   }
 
@@ -858,6 +859,11 @@ protected:
   ZmScheduler::Timer *ptoTimer() { return &m_ptoTimer; }
 
 private:
+  void warmup_() {
+    rxInvoke([]() { Zquic::warmup(); });
+    txInvoke([]() { Zquic::warmup(); });
+  }
+
   unsigned thread_(const ParamString &id, unsigned deflt) const {
     return id ? m_mx->sid(id) : deflt;
   }
@@ -1109,7 +1115,7 @@ friend class SrvLink;
 
   ZiIP localIP() const { return ZiIP{}; }
   uint16_t localPort() const { return 0; }
-  bool sendPacket(const ZmRef<ZiIOBuf> &) { return true; }
+  bool sendPkt(const ZmRef<ZiIOBuf> &) { return true; }
   bool sendFrame(const SentFrameRef &) { return true; }
 
   void listenFailed(bool transient) {
@@ -1124,11 +1130,11 @@ friend class SrvLink;
     return {};
   }
 
-  ZmRef<ZiIOBuf> allocTxPacket_() {
-    return m_endpoint.allocTxPacket();
+  ZmRef<ZiIOBuf> allocTxPkt_() {
+    return m_endpoint.allocTxPkt();
   }
-  bool sendPacket_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
-    if (!this->app()->sendPacket(buf)) return true;
+  bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    if (!this->app()->sendPkt(buf)) return true;
     return m_endpoint.send(ZuMv(buf), ZuMv(addr));
   }
   void dissociateRoute_(const CxnID &id) {
@@ -1155,19 +1161,19 @@ private:
     if (!d.buf || !d.buf->length) return nullptr;
     ZuCSpan packet{
       reinterpret_cast<const char *>(d.buf->data_()), d.buf->length};
-    if (Packet::isLong(packet)) return routeLong_(d, packet);
+    if (Pkt::isLong(packet)) return routeLong_(d, packet);
     return routeShort_(d, packet);
   }
 
   Link *routeLong_(const Datagram &d, ZuCSpan packet) {
-    LongHeader h;
-    if (Packet::parseLong(packet, h) < 0) return nullptr;
+    LongHdr h;
+    if (Pkt::parseLong(packet, h) < 0) return nullptr;
     if (!VersionNegotiation::supported(h.version)) {
       sendVersionNegotiation_(h, d.addr);
       return nullptr;
     }
     if (Link *link = m_routes.find(h.dcid)) return link;
-    if (h.type != PacketType::Initial) return nullptr;
+    if (h.type != PktType::Initial) return nullptr;
     return accept_(InitialInfo{h, d.addr, d.buf->length});
   }
 
@@ -1179,16 +1185,16 @@ private:
     if (!d.buf || !d.buf->length) return false;
     ZuCSpan packet{
       reinterpret_cast<const char *>(d.buf->data_()), d.buf->length};
-    if (Packet::isLong(packet)) return false;
+    if (Pkt::isLong(packet)) return false;
     ResetToken token;
     if (!m_routes.resetTokenForShort(packet, token)) return false;
-    ZmRef<ZiIOBuf> buf = allocTxPacket_();
+    ZmRef<ZiIOBuf> buf = allocTxPkt_();
     int n = StatelessReset::writeForUnknownCID(
       buf->data_(), buf->size, packet, token);
     if (n < 0) return false;
     buf->skip = 0;
     buf->length = unsigned(n);
-    return sendPacket_(ZuMv(buf), d.addr);
+    return sendPkt_(ZuMv(buf), d.addr);
   }
 
   Link *accept_(const InitialInfo &info) {
@@ -1220,14 +1226,14 @@ private:
       ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   }
 
-  bool sendVersionNegotiation_(const LongHeader &h, ZiSockAddr addr) {
-    ZmRef<ZiIOBuf> buf = allocTxPacket_();
+  bool sendVersionNegotiation_(const LongHdr &h, ZiSockAddr addr) {
+    ZmRef<ZiIOBuf> buf = allocTxPkt_();
     int n = VersionNegotiation::write(
       buf->data_(), buf->size, h.scid, h.dcid);
     if (n < 0) return false;
     buf->skip = 0;
     buf->length = unsigned(n);
-    return sendPacket_(ZuMv(buf), ZuMv(addr));
+    return sendPkt_(ZuMv(buf), ZuMv(addr));
   }
 
   Endpoint		m_endpoint;
@@ -1359,7 +1365,7 @@ public:
     }
     return false;
   }
-  bool nextTxRange(PacketBudget &, TxRange &range, bool &fin) const {
+  bool nextTxRange(PktBudget &, TxRange &range, bool &fin) const {
     fin = false;
     if (txRange(0, range)) return true;
     if (!finReady()) return false;
@@ -1932,7 +1938,7 @@ protected:
     m_lastStreamsBlockedBidi = uint64_t(-1);
     m_lastStreamsBlockedUni = uint64_t(-1);
     m_controlQueue.clean();
-    resetPacketRuntime_();
+    resetPktRuntime_();
   }
 
   void closeRuntime_(uint64_t errorCode = 0) {
@@ -1965,7 +1971,7 @@ protected:
     addPeerCID_(peerCID, 0);
   }
 
-  void setPeerCIDFromHeaderSCID_(const LongHeader &h) {
+  void setPeerCIDFromHdrSCID_(const LongHdr &h) {
     if (h.scid.length()) m_peerCID = h.scid;
   }
 
@@ -2203,13 +2209,13 @@ protected:
     return m_crypto.negotiatedProtocol();
   }
 
-  void resetPacketRuntime_() {
+  void resetPktRuntime_() {
     for (auto &s : m_txCrypto) s.reset();
     for (auto &s : m_rxCrypto) s.reset();
     memset(m_txPN, 0, sizeof(m_txPN));
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
-    for (auto &a : m_rxPackets) a.clear();
-    for (auto &p : m_txPackets) p.clear();
+    for (auto &a : m_rxPkts) a.clear();
+    for (auto &p : m_txPkts) p.clear();
     memset(m_pendingAck, 0, sizeof(m_pendingAck));
     m_txKeyPhase = false;
   }
@@ -2219,7 +2225,7 @@ protected:
       return false;
     return withTxLock_([this]() {
       TrafficSecret nextTxSecret;
-      if (!PacketProtection::deriveNextTrafficSecret(
+      if (!PktProt::deriveNextTrafficSecret(
 	    nextTxSecret, m_crypto.txTrafficSecret(CryptoLevel::OneRTT)) ||
 	  !m_crypto.updateTxTrafficSecret(
 	    CryptoLevel::OneRTT, nextTxSecret))
@@ -2236,7 +2242,7 @@ protected:
     m_established = 0;
     m_handshakeStarted = 0;
     m_streamScheduler.clear();
-    for (auto &p : m_txPackets) p.clear();
+    for (auto &p : m_txPkts) p.clear();
     memset(m_pendingAck, 0, sizeof(m_pendingAck));
     ++m_diag.failures;
     impl()->statelessReset();
@@ -2310,21 +2316,21 @@ protected:
     return frame;
   }
 
-  template <typename AppendAck, typename SendPacket>
-  bool sendQueuedControlPacket_(
-    ZiSockAddr addr, AppendAck appendAck, SendPacket sendPacket) {
+  template <typename AppendAck, typename SendPkt>
+  bool sendQueuedControlPkt_(
+    ZiSockAddr addr, AppendAck appendAck, SendPkt sendPkt) {
     while (m_controlQueue.count_()) {
       ControlFrame frame = m_controlQueue.head();
       if (!controlStillValid_(frame)) {
 	m_controlQueue.shift();
 	continue;
       }
-      PacketBuild build;
+      PktBuild build;
       build.reset();
-      PacketBudget budget;
+      PktBudget budget;
       budget.pmtu = budget.congestion = budget.antiAmplification =
 	app()->maxUDP();
-      PacketAssembly assembly;
+      PktAssembly assembly;
       unsigned before = build.bytes();
       if (!appendAck(build)) return false;
       unsigned ackBytes = build.bytes() - before;
@@ -2334,60 +2340,60 @@ protected:
 	  !build.commitScratch(unsigned(n)))
 	return false;
       SentFrameRef ref = controlRef_(frame);
-      if (!sendPacket(build, ZuMv(addr), ref)) return false;
+      if (!sendPkt(build, ZuMv(addr), ref)) return false;
       m_controlQueue.shift();
       return true;
     }
     return false;
   }
 
-  template <typename AppendAck, typename SendPacket>
+  template <typename AppendAck, typename SendPkt>
   bool flushControlAndStreams_(
-    ZiSockAddr addr, AppendAck appendAck, SendPacket sendPacket) {
-    return withTxLock_([this, addr = ZuMv(addr), &appendAck, &sendPacket]() mutable {
+    ZiSockAddr addr, AppendAck appendAck, SendPkt sendPkt) {
+    return withTxLock_([this, addr = ZuMv(addr), &appendAck, &sendPkt]() mutable {
       return flushControlAndStreamsLocked_(
 	ZuMv(addr),
-	[&appendAck](PacketBuild &build) { return appendAck(build); },
-	[&sendPacket](
-	    PacketBuild &build, ZiSockAddr addr_,
+	[&appendAck](PktBuild &build) { return appendAck(build); },
+	[&sendPkt](
+	    PktBuild &build, ZiSockAddr addr_,
 	    const SentFrameRef &ref) {
-	  return sendPacket(build, ZuMv(addr_), ref);
+	  return sendPkt(build, ZuMv(addr_), ref);
 	});
     });
   }
 
-  template <typename AppendAck, typename SendPacket>
+  template <typename AppendAck, typename SendPkt>
   bool flushControlAndStreamsLocked_(
-    ZiSockAddr addr, AppendAck appendAck, SendPacket sendPacket) {
+    ZiSockAddr addr, AppendAck appendAck, SendPkt sendPkt) {
     bool sent = false;
-    while (sendQueuedControlPacket_(
+    while (sendQueuedControlPkt_(
 	addr,
-	[&appendAck](PacketBuild &build) { return appendAck(build); },
-	[&sendPacket](
-	    PacketBuild &build, ZiSockAddr addr_,
+	[&appendAck](PktBuild &build) { return appendAck(build); },
+	[&sendPkt](
+	    PktBuild &build, ZiSockAddr addr_,
 	    const SentFrameRef &ref) {
-	  return sendPacket(build, ZuMv(addr_), ref);
+	  return sendPkt(build, ZuMv(addr_), ref);
 	}))
       sent = true;
     bool streams = flushWritableStreams_(
       addr,
-      [this, &appendAck, &sendPacket](StreamRef stream, ZiSockAddr addr_) {
-	return sendQueuedStreamPacket_(
+      [this, &appendAck, &sendPkt](StreamRef stream, ZiSockAddr addr_) {
+	return sendQueuedStreamPkt_(
 	  ZuMv(stream), ZuMv(addr_),
-	  [&appendAck](PacketBuild &build) { return appendAck(build); },
-	  [&sendPacket](
-	      PacketBuild &build, ZiSockAddr addr__,
+	  [&appendAck](PktBuild &build) { return appendAck(build); },
+	  [&sendPkt](
+	      PktBuild &build, ZiSockAddr addr__,
 	      const SentFrameRef &ref) {
-	    return sendPacket(build, ZuMv(addr__), ref);
+	    return sendPkt(build, ZuMv(addr__), ref);
 	  });
       });
-    while (sendQueuedControlPacket_(
+    while (sendQueuedControlPkt_(
 	addr,
-	[&appendAck](PacketBuild &build) { return appendAck(build); },
-	[&sendPacket](
-	    PacketBuild &build, ZiSockAddr addr_,
+	[&appendAck](PktBuild &build) { return appendAck(build); },
+	[&sendPkt](
+	    PktBuild &build, ZiSockAddr addr_,
 	    const SentFrameRef &ref) {
-	  return sendPacket(build, ZuMv(addr_), ref);
+	  return sendPkt(build, ZuMv(addr_), ref);
 	}))
       sent = true;
     return sent || streams;
@@ -2399,17 +2405,17 @@ protected:
     return fn();
   }
 
-  template <typename AppendAck, typename SendPacket>
-  bool sendQueuedStreamPacket_(
+  template <typename AppendAck, typename SendPkt>
+  bool sendQueuedStreamPkt_(
     StreamRef stream, ZiSockAddr addr, AppendAck appendAck,
-    SendPacket sendPacket) {
-    PacketBuild build;
+    SendPkt sendPkt) {
+    PktBuild build;
     build.reset();
-    PacketBudget budget;
+    PktBudget budget;
     budget.pmtu = budget.congestion = budget.antiAmplification =
       app()->maxUDP();
     budget.flow = m_txDataCredit.available();
-    PacketAssembly assembly;
+    PktAssembly assembly;
     if (stream->txRangeCount() && m_txDataCredit.blocked()) {
       streamWritable_(uint64_t(stream->id()));
       queueBlocked_(FrameType::DataBlocked, 0, m_txDataCredit.limit());
@@ -2427,7 +2433,7 @@ protected:
     if (controlBytes && !assembly.addControl(budget, controlBytes))
       return false;
     StreamFrameInfo info;
-    int n = StreamPacketizer::writeNext(
+    int n = StreamPktizer::writeNext(
       build.scratch(), build.scratchAvail(),
       budget, assembly, *stream, &info);
     if (n <= 0 || !build.commitScratch(unsigned(n)))
@@ -2438,7 +2444,7 @@ protected:
       ref.offset = info.offset;
       ref.length = 0;
     }
-    if (!sendPacket(build, ZuMv(addr), ref)) return false;
+    if (!sendPkt(build, ZuMv(addr), ref)) return false;
     if (info.length && !m_txDataCredit.consume(info.length)) return false;
     m_diag.streamBytesTx += info.length;
     return true;
@@ -2466,9 +2472,9 @@ protected:
   }
 
   bool appendPendingAck_(
-    CryptoLevel::T level, PacketBuild &build) {
+    CryptoLevel::T level, PktBuild &build) {
     if (!m_pendingAck[level]) return true;
-    int n = m_rxPackets[level].writeFrame(
+    int n = m_rxPkts[level].writeFrame(
       build.scratch(), build.scratchAvail(), 0);
     if (n < 0) return false;
     if (!build.commitScratch(unsigned(n))) return false;
@@ -2478,7 +2484,7 @@ protected:
 
   void schedulePTO_() {
     if (!app() || !app()->mx() || closed()) return;
-    auto &tx = m_txPackets[CryptoLevel::OneRTT];
+    auto &tx = m_txPkts[CryptoLevel::OneRTT];
     if (!tx.bytesInFlight() && !tx.retransmitPending()) return;
     app()->mx()->run(app()->txThread(),
       [link = ZmMkRef(impl())]() { link->pto_(); },
@@ -2486,18 +2492,18 @@ protected:
   }
 
   bool reclaimPTO_() {
-    unsigned n = m_txPackets[CryptoLevel::OneRTT].reclaimOnPTO(1);
+    unsigned n = m_txPkts[CryptoLevel::OneRTT].reclaimOnPTO(1);
     if (n) ++m_diag.ptoCount;
     return n;
   }
 
   bool nextRetransmit_(SentFrameRef &ref) {
-    if (!m_txPackets[CryptoLevel::OneRTT].nextRetransmit(ref)) return false;
+    if (!m_txPkts[CryptoLevel::OneRTT].nextRetransmit(ref)) return false;
     ++m_diag.retransmittedFrames;
     return true;
   }
 
-  bool buildRetransmitStream_(PacketBuild &build, const SentFrameRef &ref) {
+  bool buildRetransmitStream_(PktBuild &build, const SentFrameRef &ref) {
     if (ref.kind != SentFrameKind::Stream) return false;
     StreamRef stream = findStream(int64_t(ref.streamID));
     if (!stream) return false;
@@ -2510,7 +2516,7 @@ protected:
     return build.add(ref.range);
   }
 
-  bool buildRetransmitControl_(PacketBuild &build, const SentFrameRef &ref) {
+  bool buildRetransmitControl_(PktBuild &build, const SentFrameRef &ref) {
     if (ref.kind != SentFrameKind::Control ||
 	ref.controlType == FrameType::Unknown)
       return false;
@@ -2522,67 +2528,67 @@ protected:
     return n > 0 && build.commitScratch(unsigned(n));
   }
 
-  bool recordRxPacket_(
+  bool recordRxPkt_(
     CryptoLevel::T level, uint64_t pn) {
-    if (m_rxPackets[level].contains(pn)) return false;
-    m_rxPackets[level].add(pn);
+    if (m_rxPkts[level].contains(pn)) return false;
+    m_rxPkts[level].add(pn);
     if (pn > m_rxLargestPN[level])
       m_rxLargestPN[level] = pn;
     return true;
   }
 
-  void recordTxPacket_(
+  void recordTxPkt_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan frame) {
     SentFrameRef ref;
     bool ackEliciting = false;
     if (!runtimeFrameRef(frame, ref, ackEliciting)) return;
-    recordTxPacket_(level, pn, bytes, ref, ackEliciting);
+    recordTxPkt_(level, pn, bytes, ref, ackEliciting);
   }
 
-  void recordTxPacket_(
+  void recordTxPkt_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes,
     const SentFrameRef &ref, bool ackEliciting) {
-    SentPacket packet;
+    SentPkt packet;
     packet.pn = pn;
-    packet.space = runtimePacketSpace(level);
+    packet.space = runtimePktSpace(level);
     packet.bytes = bytes;
     packet.ackEliciting = ackEliciting;
     packet.inFlight = ackEliciting;
     if (ref.kind != SentFrameKind::None) packet.addFrame(ref);
-    m_txPackets[level].add(packet);
+    m_txPkts[level].add(packet);
   }
 
   void processAckFrame_(CryptoLevel::T level, const Frame &frame) {
     if (!frame.ackRanges.length()) return;
-    m_txPackets[level].ack(frame.ackRanges.data(), frame.ackRanges.length());
+    m_txPkts[level].ack(frame.ackRanges.data(), frame.ackRanges.length());
     if (level == CryptoLevel::OneRTT) schedulePTO_();
   }
 
   bool buildPayload_(
-    CryptoLevel::T level, PacketBuild &build, ZuCSpan frame) {
+    CryptoLevel::T level, PktBuild &build, ZuCSpan frame) {
     build.reset();
     return appendPendingAck_(level, build) && build.add(frame);
   }
 
   bool buildPayload_(
-    CryptoLevel::T level, PacketBuild &build,
+    CryptoLevel::T level, PktBuild &build,
     ZuCSpan prefix, ZuCSpan payload) {
     build.reset();
     return appendPendingAck_(level, build) &&
       build.add(prefix) && build.add(payload);
   }
 
-  template <typename SendCryptoPacket>
+  template <typename SendCryptoPkt>
   bool sendCryptoFlights_(
     const uint8_t *data, unsigned len, const size_t offsets[5],
-    unsigned chunkMax, ZiSockAddr addr, SendCryptoPacket sendCryptoPacket) {
+    unsigned chunkMax, ZiSockAddr addr, SendCryptoPkt sendCryptoPkt) {
     return sendRuntimeCryptoFlights(
       m_txCrypto, m_diag,
       data, len, offsets, chunkMax, ZuMv(addr),
-      [sendCryptoPacket](
+      [sendCryptoPkt](
 	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
 	  const SentFrameRef &ref, ZiSockAddr addr_) mutable {
-	return sendCryptoPacket(
+	return sendCryptoPkt(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
   }
@@ -2590,11 +2596,11 @@ protected:
   template <
     typename BuildPayload,
     typename SendInitial, typename SendHandshake, typename SendShort>
-  bool sendCryptoPacket_(
+  bool sendCryptoPkt_(
     CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr,
     BuildPayload buildPayload,
     SendInitial sendInitial, SendHandshake sendHandshake, SendShort sendShort) {
-    PacketBuild build;
+    PktBuild build;
     if (!buildPayload(level, build, frame)) return false;
     if (level == CryptoLevel::Initial)
       return sendInitial(build, ZuMv(addr), frame);
@@ -2606,12 +2612,12 @@ protected:
   template <
     typename BuildPayload,
     typename SendInitial, typename SendHandshake, typename SendShort>
-  bool sendCryptoPacket_(
+  bool sendCryptoPkt_(
     CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
     const SentFrameRef &ref, ZiSockAddr addr,
     BuildPayload buildPayload,
     SendInitial sendInitial, SendHandshake sendHandshake, SendShort sendShort) {
-    PacketBuild build;
+    PktBuild build;
     if (!buildPayload(level, build, prefix, payload)) return false;
     if (level == CryptoLevel::Initial)
       return sendInitial(build, ZuMv(addr), {}, &ref, true);
@@ -2620,13 +2626,13 @@ protected:
     return sendShort(build, ZuMv(addr), {}, &ref, true);
   }
 
-  void recordProtectedPacketTx_(
+  void recordProtPktTx_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan recordFrame,
     const SentFrameRef *recordRef, bool ackEliciting) {
     if (recordRef)
-      recordTxPacket_(level, pn, bytes, *recordRef, ackEliciting);
+      recordTxPkt_(level, pn, bytes, *recordRef, ackEliciting);
     else
-      recordTxPacket_(level, pn, bytes, recordFrame);
+      recordTxPkt_(level, pn, bytes, recordFrame);
     ++m_txPN[level];
     ++m_diag.packetsTx;
     m_diag.bytesTx += bytes;
@@ -2639,19 +2645,19 @@ protected:
       m_crypto.initialKeys().server;
   }
 
-  template <typename AllocTxPacket, typename SendPacket>
-  bool sendProtectedInitialPacket_(
+  template <typename AllocTxPkt, typename SendPkt>
+  bool sendProtInitialPkt_(
     InitialKeyDir::T keyDir, RuntimeCID::T dcid, RuntimeCID::T scid,
-    unsigned pnLength, bool padInitial, PacketBuild &payload, ZiSockAddr addr,
+    unsigned pnLength, bool padInitial, PktBuild &payload, ZiSockAddr addr,
     ZuCSpan recordFrame, const SentFrameRef *recordRef, bool ackEliciting,
-    AllocTxPacket allocTxPacket, SendPacket sendPacket) {
+    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
     ZmGuard<ZmLock> guard(m_txLock);
-    ZmRef<ZiIOBuf> buf = allocTxPacket();
+    ZmRef<ZiIOBuf> buf = allocTxPkt();
     const auto &initialKeys = initialKeys_(keyDir);
     int headerLen = -1;
     unsigned targetPlainLen = payload.bytes();
     for (unsigned i = 0; i < 4; ++i) {
-      headerLen = Packet::writeInitial(
+      headerLen = Pkt::writeInitial(
 	buf->data_(), buf->size, runtimeCID_(dcid), runtimeCID_(scid),
 	targetPlainLen + InitialSecret::TagLen, pnLength);
       if (headerLen < 0) return false;
@@ -2662,12 +2668,12 @@ protected:
       targetPlainLen = minPlainLen;
     }
     if (padInitial && !payload.padTo(targetPlainLen)) return false;
-    if (PacketNumber::encode(
+    if (PktNumber::encode(
 	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
 	  m_txPN[CryptoLevel::Initial], pnLength) != int(pnLength))
       return false;
     uint64_t pn = m_txPN[CryptoLevel::Initial];
-    int n = InitialPacketProtection::protectLongV(
+    int n = InitialPktProt::protectLongV(
       buf->data_(), buf->size, initialKeys, pn,
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
@@ -2677,39 +2683,39 @@ protected:
     }
     buf->skip = 0;
     buf->length = unsigned(n);
-    if (!sendPacket(ZuMv(buf), ZuMv(addr))) return false;
-    recordProtectedPacketTx_(
+    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
+    recordProtPktTx_(
       CryptoLevel::Initial, pn, unsigned(n), recordFrame, recordRef,
       ackEliciting);
     return true;
   }
 
-  template <typename AllocTxPacket, typename SendPacket>
-  bool sendProtectedHandshakePacket_(
+  template <typename AllocTxPkt, typename SendPkt>
+  bool sendProtHandshakePkt_(
     RuntimeCID::T dcid, RuntimeCID::T scid, unsigned pnLength,
-    PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef, bool ackEliciting,
-    AllocTxPacket allocTxPacket, SendPacket sendPacket) {
+    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
     if (!m_crypto.txTrafficSecretInstalled(CryptoLevel::Handshake)) {
       ++m_diag.failures;
       return false;
     }
     ZmGuard<ZmLock> guard(m_txLock);
-    ZmRef<ZiIOBuf> buf = allocTxPacket();
-    int headerLen = Packet::writeHandshake(
+    ZmRef<ZiIOBuf> buf = allocTxPkt();
+    int headerLen = Pkt::writeHandshake(
       buf->data_(), buf->size, runtimeCID_(dcid), runtimeCID_(scid),
       payload.bytes() +
 	m_crypto.txTrafficSecret(CryptoLevel::Handshake).tagLen,
       pnLength);
     if (headerLen < 0 ||
-	PacketNumber::encode(
+	PktNumber::encode(
 	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
 	  m_txPN[CryptoLevel::Handshake], pnLength) != int(pnLength))
       return false;
     uint64_t pn = m_txPN[CryptoLevel::Handshake];
-    int n = PacketProtection::protectLongV(
+    int n = PktProt::protectLongV(
       buf->data_(), buf->size,
-      m_crypto.txProtectionState(CryptoLevel::Handshake), pn,
+      m_crypto.txProtState(CryptoLevel::Handshake), pn,
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
@@ -2718,38 +2724,38 @@ protected:
     }
     buf->skip = 0;
     buf->length = unsigned(n);
-    if (!sendPacket(ZuMv(buf), ZuMv(addr))) return false;
-    recordProtectedPacketTx_(
+    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
+    recordProtPktTx_(
       CryptoLevel::Handshake, pn, unsigned(n), recordFrame, recordRef,
       ackEliciting);
     return true;
   }
 
-  template <typename AllocTxPacket, typename SendPacket>
-  bool sendProtectedShortPacket_(
-    RuntimeCID::T dcid, unsigned pnLength, PacketBuild &payload,
+  template <typename AllocTxPkt, typename SendPkt>
+  bool sendProtShortPkt_(
+    RuntimeCID::T dcid, unsigned pnLength, PktBuild &payload,
     ZiSockAddr addr, ZuCSpan recordFrame, const SentFrameRef *recordRef,
-    bool ackEliciting, AllocTxPacket allocTxPacket, SendPacket sendPacket) {
+    bool ackEliciting, AllocTxPkt allocTxPkt, SendPkt sendPkt) {
     if (!m_established &&
 	!m_crypto.txTrafficSecretInstalled(CryptoLevel::OneRTT)) {
       ++m_diag.failures;
       return false;
     }
     ZmGuard<ZmLock> guard(m_txLock);
-    ZmRef<ZiIOBuf> buf = allocTxPacket();
-    int headerLen = Packet::writeShort(
+    ZmRef<ZiIOBuf> buf = allocTxPkt();
+    int headerLen = Pkt::writeShort(
       buf->data_(), buf->size, runtimeCID_(dcid),
       m_txPN[CryptoLevel::OneRTT], pnLength);
     if (headerLen < 0) return false;
     if (m_txKeyPhase) buf->data_()[0] |= 0x04;
-    if (!payload.padForProtectionSample(
+    if (!payload.padForProtSample(
 	  unsigned(headerLen) - pnLength, pnLength,
 	  m_crypto.txTrafficSecret(CryptoLevel::OneRTT).tagLen))
       return false;
     uint64_t pn = m_txPN[CryptoLevel::OneRTT];
-    int n = PacketProtection::protectShortV(
+    int n = PktProt::protectShortV(
       buf->data_(), buf->size,
-      m_crypto.txProtectionState(CryptoLevel::OneRTT), pn,
+      m_crypto.txProtState(CryptoLevel::OneRTT), pn,
       byteSpan(buf->data_(), unsigned(headerLen)),
       payload.data(), payload.count(),
       unsigned(headerLen) - pnLength, pnLength);
@@ -2759,8 +2765,8 @@ protected:
     }
     buf->skip = 0;
     buf->length = unsigned(n);
-    if (!sendPacket(ZuMv(buf), ZuMv(addr))) return false;
-    recordProtectedPacketTx_(
+    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
+    recordProtPktTx_(
       CryptoLevel::OneRTT, pn, unsigned(n), recordFrame, recordRef,
       ackEliciting);
     return true;
@@ -2781,9 +2787,9 @@ protected:
       ZuCSpan packet{
 	reinterpret_cast<const char *>(d.buf->data_() + offset),
 	d.buf->length - offset};
-      if (Packet::isLong(packet)) {
-	LongHeader h;
-	if (Packet::parseLong(packet, h) < 0) {
+      if (Pkt::isLong(packet)) {
+	LongHdr h;
+	if (Pkt::parseLong(packet, h) < 0) {
 	  ok = false;
 	  break;
 	}
@@ -2804,7 +2810,7 @@ protected:
   }
 
   template <typename PrepareLong, typename ConsumeFrames>
-  bool receiveProtectedLongPacket_(
+  bool receiveProtLongPkt_(
     InitialKeyDir::T keyDir, Datagram &d, unsigned packetOffset, unsigned packetLen,
     PrepareLong prepareLong, ConsumeFrames consumeFrames) {
     uint8_t *base = d.buf->data_() + packetOffset;
@@ -2812,20 +2818,20 @@ protected:
       reinterpret_cast<const char *>(base), packetLen};
     ZuCSpan datagram{
       reinterpret_cast<const char *>(d.buf->data_()), d.buf->length};
-    LongHeader h;
-    if (Packet::parseLong(packet, h) < 0) return false;
+    LongHdr h;
+    if (Pkt::parseLong(packet, h) < 0) return false;
     if (!prepareLong(h, d)) return false;
     CryptoLevel::T level =
-      h.type == PacketType::Initial ? CryptoLevel::Initial :
-      h.type == PacketType::Handshake ? CryptoLevel::Handshake :
+      h.type == PktType::Initial ? CryptoLevel::Initial :
+      h.type == PktType::Handshake ? CryptoLevel::Handshake :
       CryptoLevel::OneRTT;
-    if (h.type != PacketType::Initial && h.type != PacketType::Handshake)
+    if (h.type != PktType::Initial && h.type != PktType::Handshake)
       return false;
     uint64_t pn = 0;
     unsigned payloadOffset = 0;
     int plainLen = -1;
     if (level == CryptoLevel::Initial)
-      plainLen = InitialPacketProtection::unprotectLong(
+      plainLen = InitialPktProt::unprotectLong(
 	base, packetLen, initialKeys_(keyDir),
 	m_rxLargestPN[level], h.pnOffset, pn, payloadOffset);
     else {
@@ -2833,9 +2839,9 @@ protected:
 	++m_diag.failures;
 	return false;
       }
-      plainLen = PacketProtection::unprotectLong(
+      plainLen = PktProt::unprotectLong(
 	base, packetLen,
-	m_crypto.rxProtectionState(CryptoLevel::Handshake),
+	m_crypto.rxProtState(CryptoLevel::Handshake),
 	m_rxLargestPN[level], h.pnOffset, pn, payloadOffset);
     }
     if (plainLen < 0) {
@@ -2843,7 +2849,7 @@ protected:
       ++m_diag.failures;
       return false;
     }
-    if (!recordRxPacket_(level, pn)) return true;
+    if (!recordRxPkt_(level, pn)) return true;
     ++m_diag.packetsRx;
     return consumeFrames(
       level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
@@ -2851,7 +2857,7 @@ protected:
   }
 
   template <typename ConsumeFrames>
-  bool receiveProtectedShortPacket_(
+  bool receiveProtShortPkt_(
     Datagram &d, unsigned packetOffset, unsigned packetLen,
     ConsumeFrames consumeFrames) {
     uint8_t *base = d.buf->data_() + packetOffset;
@@ -2863,26 +2869,26 @@ protected:
       if (checkStatelessReset_(datagram)) return true;
       return false;
     }
-    ShortHeader h;
-    if (Packet::parseShort(packet, m_localSCID.length(), h) < 0 ||
+    ShortHdr h;
+    if (Pkt::parseShort(packet, m_localSCID.length(), h) < 0 ||
 	!(h.dcid == m_localSCID)) {
       if (checkStatelessReset_(datagram)) return true;
       return false;
     }
     uint64_t pn = 0;
     unsigned payloadOffset = 0;
-    int plainLen = PacketProtection::unprotectShort(
+    int plainLen = PktProt::unprotectShort(
       base, packetLen,
-      m_crypto.rxProtectionState(CryptoLevel::OneRTT),
+      m_crypto.rxProtState(CryptoLevel::OneRTT),
       m_rxLargestPN[CryptoLevel::OneRTT],
       h.pnOffset, pn, payloadOffset);
     if (plainLen < 0) {
       TrafficSecret nextSecret;
-      PacketProtectionState nextState;
-      if (PacketProtection::deriveNextTrafficSecret(
+      PktProtState nextState;
+      if (PktProt::deriveNextTrafficSecret(
 	    nextSecret, m_crypto.rxTrafficSecret(CryptoLevel::OneRTT)) &&
 	  nextState.init(nextSecret, CryptoLevel::OneRTT, false)) {
-	plainLen = PacketProtection::unprotectShort(
+	plainLen = PktProt::unprotectShort(
 	  base, packetLen, nextState,
 	  m_rxLargestPN[CryptoLevel::OneRTT],
 	  h.pnOffset, pn, payloadOffset);
@@ -2896,7 +2902,7 @@ protected:
 	return false;
       }
     }
-    if (!recordRxPacket_(CryptoLevel::OneRTT, pn))
+    if (!recordRxPkt_(CryptoLevel::OneRTT, pn))
       return true;
     ++m_diag.packetsRx;
     return consumeFrames(
@@ -2905,7 +2911,7 @@ protected:
   }
 
   template <typename EmitTLS, typename HandleControl>
-  bool consumeProtectedFrames_(
+  bool consumeProtFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf, EmitTLS emitTLS,
     HandleControl handleControl) {
@@ -3378,8 +3384,8 @@ private:
   uint64_t		m_txPN[3]{};
   ZmLock		m_txLock;
   uint64_t		m_rxLargestPN[3]{};
-  AckTracker		m_rxPackets[3];
-  PacketTxSpace		m_txPackets[3];
+  AckTracker		m_rxPkts[3];
+  PktTxSpace		m_txPkts[3];
   bool			m_pendingAck[3]{};
   bool			m_txKeyPhase = false;
   unsigned		m_handshakeStarted = 0;
@@ -3493,13 +3499,13 @@ public:
       if (fin) stream->fin();
       return Base::flushControlAndStreamsLocked_(
 	m_endpoint.remote(),
-	[this](PacketBuild &build) {
+	[this](PktBuild &build) {
 	  return appendPendingAck_(CryptoLevel::OneRTT, build);
 	},
 	[this](
-	    PacketBuild &build, ZiSockAddr addr,
+	    PktBuild &build, ZiSockAddr addr,
 	    const SentFrameRef &ref) {
-	  return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	  return sendShortPkt_(build, ZuMv(addr), {}, &ref, true);
 	});
       });
   }
@@ -3514,12 +3520,12 @@ public:
     SentFrameRef ref;
     bool sent = false;
     while (Base::nextRetransmit_(ref)) {
-      PacketBuild build;
+      PktBuild build;
       if (ref.kind == SentFrameKind::Stream) {
 	if (!Base::buildRetransmitStream_(build, ref)) continue;
       } else if (!Base::buildRetransmitControl_(build, ref))
 	continue;
-      (void)sendShortPacket_(build, m_endpoint.remote(), {}, &ref, true);
+      (void)sendShortPkt_(build, m_endpoint.remote(), {}, &ref, true);
       sent = true;
     }
     if (sent) Base::schedulePTO_();
@@ -3660,155 +3666,155 @@ private:
       [this](
 	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
 	  const SentFrameRef &ref, ZiSockAddr addr_) {
-	return sendCryptoPacket_(
+	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
   }
 
-  bool sendCryptoPacket_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
-    return Base::sendCryptoPacket_(
+  bool sendCryptoPkt_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
+    return Base::sendCryptoPkt_(
       level, frame, ZuMv(addr),
-      [this](CryptoLevel::T level_, PacketBuild &build, ZuCSpan frame_) {
+      [this](CryptoLevel::T level_, PktBuild &build, ZuCSpan frame_) {
 	return buildPayload_(level_, build, frame_);
       },
-      [this](PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
-	return sendInitialPacket_(build, ZuMv(addr_), frame_);
+      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+	return sendInitialPkt_(build, ZuMv(addr_), frame_);
       },
-      [this](PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
-	return sendHandshakePacket_(build, ZuMv(addr_), frame_);
+      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+	return sendHandshakePkt_(build, ZuMv(addr_), frame_);
       },
-      [this](PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
-	return sendShortPacket_(build, ZuMv(addr_), frame_);
+      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+	return sendShortPkt_(build, ZuMv(addr_), frame_);
       });
   }
 
-  bool sendCryptoPacket_(
+  bool sendCryptoPkt_(
     CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
     const SentFrameRef &ref, ZiSockAddr addr) {
-    return Base::sendCryptoPacket_(
+    return Base::sendCryptoPkt_(
       level, prefix, payload, ref, ZuMv(addr),
       [this](
-	  CryptoLevel::T level_, PacketBuild &build,
+	  CryptoLevel::T level_, PktBuild &build,
 	  ZuCSpan prefix_, ZuCSpan payload_) {
 	return buildPayload_(level_, build, prefix_, payload_);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendInitialPacket_(
+	return sendInitialPkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendHandshakePacket_(
+	return sendHandshakePkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendShortPacket_(
+	return sendShortPkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       });
   }
 
   bool appendPendingAck_(
-    CryptoLevel::T level, PacketBuild &build) {
+    CryptoLevel::T level, PktBuild &build) {
     return Base::appendPendingAck_(level, build);
   }
 
-  bool buildPayload_(CryptoLevel::T level, PacketBuild &build, ZuCSpan frame) {
+  bool buildPayload_(CryptoLevel::T level, PktBuild &build, ZuCSpan frame) {
     return Base::buildPayload_(level, build, frame);
   }
 
   bool buildPayload_(
-    CryptoLevel::T level, PacketBuild &build,
+    CryptoLevel::T level, PktBuild &build,
     ZuCSpan prefix, ZuCSpan payload) {
     return Base::buildPayload_(level, build, prefix, payload);
   }
 
-  bool sendInitialPacket_(ZuCSpan frame, ZiSockAddr addr) {
-    PacketBuild payload;
+  bool sendInitialPkt_(ZuCSpan frame, ZiSockAddr addr) {
+    PktBuild payload;
     if (!buildPayload_(CryptoLevel::Initial, payload, frame)) return false;
-    return sendInitialPacket_(payload, ZuMv(addr), frame);
+    return sendInitialPkt_(payload, ZuMv(addr), frame);
   }
 
-  bool sendInitialPacket_(
-    PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+  bool sendInitialPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     if (!m_endpoint.connected()) return false;
-    return Base::sendProtectedInitialPacket_(
+    return Base::sendProtInitialPkt_(
       InitialKeyDir::Client, RuntimeCID::Initial, RuntimeCID::Local,
       RuntimePNLength, true, payload, ZuMv(addr), recordFrame,
       recordRef, ackEliciting,
-      [this]() { return m_endpoint.allocTxPacket(); },
+      [this]() { return m_endpoint.allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
 	return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
       });
   }
 
-  bool sendHandshakePacket_(ZuCSpan frame, ZiSockAddr addr) {
-    PacketBuild payload;
+  bool sendHandshakePkt_(ZuCSpan frame, ZiSockAddr addr) {
+    PktBuild payload;
     if (!buildPayload_(CryptoLevel::Handshake, payload, frame)) return false;
-    return sendHandshakePacket_(payload, ZuMv(addr), frame);
+    return sendHandshakePkt_(payload, ZuMv(addr), frame);
   }
 
-  bool sendHandshakePacket_(
-    PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+  bool sendHandshakePkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     if (!m_endpoint.connected()) return false;
-    return Base::sendProtectedHandshakePacket_(
+    return Base::sendProtHandshakePkt_(
       RuntimeCID::Peer, RuntimeCID::Local, RuntimePNLength,
       payload, ZuMv(addr), recordFrame, recordRef,
       ackEliciting,
-      [this]() { return m_endpoint.allocTxPacket(); },
+      [this]() { return m_endpoint.allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
 	return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
       });
   }
 
-  bool sendShortPacket_(ZuCSpan payload, ZiSockAddr addr) {
-    PacketBuild build;
+  bool sendShortPkt_(ZuCSpan payload, ZiSockAddr addr) {
+    PktBuild build;
     if (!buildPayload_(CryptoLevel::OneRTT, build, payload)) return false;
-    return sendShortPacket_(build, ZuMv(addr), payload);
+    return sendShortPkt_(build, ZuMv(addr), payload);
   }
 
-  bool sendShortPacket_(
-    PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+  bool sendShortPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     if (!m_endpoint.connected()) return false;
-    return Base::sendProtectedShortPacket_(
+    return Base::sendProtShortPkt_(
       RuntimeCID::Peer, RuntimePNLength, payload, ZuMv(addr), recordFrame,
       recordRef, ackEliciting,
-      [this]() { return m_endpoint.allocTxPacket(); },
+      [this]() { return m_endpoint.allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
 	return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
       });
   }
 
-  bool sendQueuedStreamPacket_(StreamRef stream, ZiSockAddr addr) {
-    return Base::sendQueuedStreamPacket_(
+  bool sendQueuedStreamPkt_(StreamRef stream, ZiSockAddr addr) {
+    return Base::sendQueuedStreamPkt_(
       ZuMv(stream), ZuMv(addr),
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_,
+	  PktBuild &build, ZiSockAddr addr_,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
       });
   }
 
   bool flushPendingAck_(CryptoLevel::T level, ZiSockAddr addr) {
-    PacketBuild build;
+    PktBuild build;
     build.reset();
     if (!appendPendingAck_(level, build)) return false;
     if (!build.bytes()) return true;
     if (level == CryptoLevel::Initial)
-      return sendInitialPacket_(build, ZuMv(addr), {});
+      return sendInitialPkt_(build, ZuMv(addr), {});
     if (level == CryptoLevel::Handshake)
-      return sendHandshakePacket_(build, ZuMv(addr), {});
-    return sendShortPacket_(build, ZuMv(addr), {});
+      return sendHandshakePkt_(build, ZuMv(addr), {});
+    return sendShortPkt_(build, ZuMv(addr), {});
   }
 
   bool flushPendingAcks_(ZiSockAddr addr) {
@@ -3830,21 +3836,21 @@ private:
     flushPendingAcks_(ZuMv(addr));
     (void)Base::flushControlAndStreams_(
       m_endpoint.remote(),
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_,
+	  PktBuild &build, ZiSockAddr addr_,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
       });
   }
 
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
-    return Base::receiveProtectedLongPacket_(
+    return Base::receiveProtLongPkt_(
       InitialKeyDir::Server, d, packetOffset, packetLen,
-      [this](const LongHeader &h, Datagram &) {
-	Base::setPeerCIDFromHeaderSCID_(h);
+      [this](const LongHdr &h, Datagram &) {
+	Base::setPeerCIDFromHdrSCID_(h);
 	return true;
       },
       [this](
@@ -3855,7 +3861,7 @@ private:
   }
 
   bool receivedShort_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
-    return Base::receiveProtectedShortPacket_(
+    return Base::receiveProtShortPkt_(
       d, packetOffset, packetLen,
       [this](
 	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
@@ -3867,7 +3873,7 @@ private:
   bool consumeFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf) {
-    return Base::consumeProtectedFrames_(
+    return Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf,
       [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
@@ -3886,26 +3892,26 @@ private:
       case FrameType::MaxStreams:
 	(void)Base::flushControlAndStreams_(
 	  m_endpoint.remote(),
-	  [this](PacketBuild &build) {
+	  [this](PktBuild &build) {
 	    return appendPendingAck_(CryptoLevel::OneRTT, build);
 	  },
 	  [this](
-	      PacketBuild &build, ZiSockAddr addr_,
+	      PktBuild &build, ZiSockAddr addr_,
 	      const SentFrameRef &ref) {
-	    return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	    return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
 	  });
 	return true;
       case FrameType::PathChallenge: {
 	Base::queuePathResponse_(frame.payload);
 	return Base::flushControlAndStreams_(
 	  ZuMv(addr),
-	  [this](PacketBuild &build) {
+	  [this](PktBuild &build) {
 	    return appendPendingAck_(CryptoLevel::OneRTT, build);
 	  },
 	  [this](
-	      PacketBuild &build, ZiSockAddr addr_,
+	      PktBuild &build, ZiSockAddr addr_,
 	      const SentFrameRef &ref) {
-	    return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	    return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
 	  });
       }
       case FrameType::PathResponse:
@@ -3925,39 +3931,39 @@ private:
     Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
     (void)Base::flushControlAndStreams_(
       m_endpoint.remote(),
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr,
+	  PktBuild &build, ZiSockAddr addr,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr), {}, &ref, true);
       });
   }
   void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
     (void)Base::flushControlAndStreams_(
       m_endpoint.remote(),
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr,
+	  PktBuild &build, ZiSockAddr addr,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr), {}, &ref, true);
       });
   }
   void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
     (void)Base::flushControlAndStreams_(
       m_endpoint.remote(),
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr,
+	  PktBuild &build, ZiSockAddr addr,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr), {}, &ref, true);
       });
   }
 
@@ -4062,13 +4068,13 @@ public:
       if (fin) stream->fin();
       return Base::flushControlAndStreamsLocked_(
 	m_peerAddr,
-	[this](PacketBuild &build) {
+	[this](PktBuild &build) {
 	  return appendPendingAck_(CryptoLevel::OneRTT, build);
 	},
 	[this](
-	    PacketBuild &build, ZiSockAddr addr,
+	    PktBuild &build, ZiSockAddr addr,
 	    const SentFrameRef &ref) {
-	  return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	  return sendShortPkt_(build, ZuMv(addr), {}, &ref, true);
 	});
       });
   }
@@ -4082,12 +4088,12 @@ public:
     SentFrameRef ref;
     bool sent = false;
     while (Base::nextRetransmit_(ref)) {
-      PacketBuild build;
+      PktBuild build;
       if (ref.kind == SentFrameKind::Stream) {
 	if (!Base::buildRetransmitStream_(build, ref)) continue;
       } else if (!Base::buildRetransmitControl_(build, ref))
 	continue;
-      (void)sendShortPacket_(build, m_peerAddr, {}, &ref, true);
+      (void)sendShortPkt_(build, m_peerAddr, {}, &ref, true);
       sent = true;
     }
     if (sent) Base::schedulePTO_();
@@ -4122,8 +4128,8 @@ private:
     m_handshakeDoneSent = 0;
   }
 
-  bool initRuntimeCrypto_(const LongHeader &h, unsigned datagramLen) {
-    if (h.type != PacketType::Initial ||
+  bool initRuntimeCrypto_(const LongHdr &h, unsigned datagramLen) {
+    if (h.type != PktType::Initial ||
 	!m_bootstrap.acceptInitial(h, datagramLen)) {
       Base::packetParseFailure_();
       return false;
@@ -4185,127 +4191,127 @@ private:
       [this](
 	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
 	  const SentFrameRef &ref, ZiSockAddr addr_) {
-	return sendCryptoPacket_(
+	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
   }
 
-  bool sendCryptoPacket_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
-    return Base::sendCryptoPacket_(
+  bool sendCryptoPkt_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
+    return Base::sendCryptoPkt_(
       level, frame, ZuMv(addr),
-      [this](CryptoLevel::T level_, PacketBuild &build, ZuCSpan frame_) {
+      [this](CryptoLevel::T level_, PktBuild &build, ZuCSpan frame_) {
 	return buildPayload_(level_, build, frame_);
       },
-      [this](PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
-	return sendInitialPacket_(build, ZuMv(addr_), frame_);
+      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+	return sendInitialPkt_(build, ZuMv(addr_), frame_);
       },
-      [this](PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
-	return sendHandshakePacket_(build, ZuMv(addr_), frame_);
+      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+	return sendHandshakePkt_(build, ZuMv(addr_), frame_);
       },
-      [this](PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
-	return sendShortPacket_(build, ZuMv(addr_), frame_);
+      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+	return sendShortPkt_(build, ZuMv(addr_), frame_);
       });
   }
 
-  bool sendCryptoPacket_(
+  bool sendCryptoPkt_(
     CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
     const SentFrameRef &ref, ZiSockAddr addr) {
-    return Base::sendCryptoPacket_(
+    return Base::sendCryptoPkt_(
       level, prefix, payload, ref, ZuMv(addr),
       [this](
-	  CryptoLevel::T level_, PacketBuild &build,
+	  CryptoLevel::T level_, PktBuild &build,
 	  ZuCSpan prefix_, ZuCSpan payload_) {
 	return buildPayload_(level_, build, prefix_, payload_);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendInitialPacket_(
+	return sendInitialPkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendHandshakePacket_(
+	return sendHandshakePkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendShortPacket_(
+	return sendShortPkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       });
   }
 
-  bool appendPendingAck_(CryptoLevel::T level, PacketBuild &build) {
+  bool appendPendingAck_(CryptoLevel::T level, PktBuild &build) {
     return Base::appendPendingAck_(level, build);
   }
 
-  bool buildPayload_(CryptoLevel::T level, PacketBuild &build, ZuCSpan frame) {
+  bool buildPayload_(CryptoLevel::T level, PktBuild &build, ZuCSpan frame) {
     return Base::buildPayload_(level, build, frame);
   }
 
   bool buildPayload_(
-    CryptoLevel::T level, PacketBuild &build,
+    CryptoLevel::T level, PktBuild &build,
     ZuCSpan prefix, ZuCSpan payload) {
     return Base::buildPayload_(level, build, prefix, payload);
   }
 
-  bool sendInitialPacket_(ZuCSpan frame, ZiSockAddr addr) {
-    PacketBuild payload;
+  bool sendInitialPkt_(ZuCSpan frame, ZiSockAddr addr) {
+    PktBuild payload;
     if (!buildPayload_(CryptoLevel::Initial, payload, frame)) return false;
-    return sendInitialPacket_(payload, ZuMv(addr), frame);
+    return sendInitialPkt_(payload, ZuMv(addr), frame);
   }
 
-  bool sendInitialPacket_(
-    PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+  bool sendInitialPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
-    return Base::sendProtectedInitialPacket_(
+    return Base::sendProtInitialPkt_(
       InitialKeyDir::Server, RuntimeCID::Peer, RuntimeCID::Local,
       RuntimePNLength, false, payload, ZuMv(addr), recordFrame,
       recordRef, ackEliciting,
-      [this]() { return app()->allocTxPacket_(); },
+      [this]() { return app()->allocTxPkt_(); },
       [this, recordRef](auto buf, ZiSockAddr addr_) {
 	if (recordRef && !app()->sendFrame(*recordRef)) return true;
-	return app()->sendPacket_(ZuMv(buf), ZuMv(addr_));
+	return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
       });
   }
 
-  bool sendHandshakePacket_(ZuCSpan frame, ZiSockAddr addr) {
-    PacketBuild payload;
+  bool sendHandshakePkt_(ZuCSpan frame, ZiSockAddr addr) {
+    PktBuild payload;
     if (!buildPayload_(CryptoLevel::Handshake, payload, frame)) return false;
-    return sendHandshakePacket_(payload, ZuMv(addr), frame);
+    return sendHandshakePkt_(payload, ZuMv(addr), frame);
   }
 
-  bool sendHandshakePacket_(
-    PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+  bool sendHandshakePkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
-    return Base::sendProtectedHandshakePacket_(
+    return Base::sendProtHandshakePkt_(
       RuntimeCID::Peer, RuntimeCID::Local, RuntimePNLength,
       payload, ZuMv(addr), recordFrame, recordRef,
       ackEliciting,
-      [this]() { return app()->allocTxPacket_(); },
+      [this]() { return app()->allocTxPkt_(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return app()->sendPacket_(ZuMv(buf), ZuMv(addr_));
+	return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
       });
   }
 
-  bool sendShortPacket_(ZuCSpan payload, ZiSockAddr addr) {
-    PacketBuild build;
+  bool sendShortPkt_(ZuCSpan payload, ZiSockAddr addr) {
+    PktBuild build;
     if (!buildPayload_(CryptoLevel::OneRTT, build, payload)) return false;
-    return sendShortPacket_(build, ZuMv(addr), payload);
+    return sendShortPkt_(build, ZuMv(addr), payload);
   }
 
-  bool sendShortPacket_(
-    PacketBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+  bool sendShortPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
-    return Base::sendProtectedShortPacket_(
+    return Base::sendProtShortPkt_(
       RuntimeCID::Peer, RuntimePNLength, payload, ZuMv(addr), recordFrame,
       recordRef, ackEliciting,
-      [this]() { return app()->allocTxPacket_(); },
+      [this]() { return app()->allocTxPkt_(); },
       [this, recordRef](auto buf, ZiSockAddr addr_) {
 	if (recordRef && !app()->sendFrame(*recordRef)) return true;
-	return app()->sendPacket_(ZuMv(buf), ZuMv(addr_));
+	return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
       });
   }
 
@@ -4313,13 +4319,13 @@ private:
     Base::queueHandshakeDone_();
     if (!Base::flushControlAndStreams_(
 	ZuMv(addr),
-	[this](PacketBuild &build) {
+	[this](PktBuild &build) {
 	  return appendPendingAck_(CryptoLevel::OneRTT, build);
 	},
 	[this](
-	    PacketBuild &build, ZiSockAddr addr_,
+	    PktBuild &build, ZiSockAddr addr_,
 	    const SentFrameRef &ref) {
-	  return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	  return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
 	}))
       return false;
     m_handshakeDoneSent = 1;
@@ -4327,29 +4333,29 @@ private:
     return true;
   }
 
-  bool sendQueuedStreamPacket_(StreamRef stream, ZiSockAddr addr) {
-    return Base::sendQueuedStreamPacket_(
+  bool sendQueuedStreamPkt_(StreamRef stream, ZiSockAddr addr) {
+    return Base::sendQueuedStreamPkt_(
       ZuMv(stream), ZuMv(addr),
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_,
+	  PktBuild &build, ZiSockAddr addr_,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
       });
   }
 
   bool flushPendingAck_(CryptoLevel::T level, ZiSockAddr addr) {
-    PacketBuild build;
+    PktBuild build;
     build.reset();
     if (!appendPendingAck_(level, build)) return false;
     if (!build.bytes()) return true;
     if (level == CryptoLevel::Initial)
-      return sendInitialPacket_(build, ZuMv(addr), {});
+      return sendInitialPkt_(build, ZuMv(addr), {});
     if (level == CryptoLevel::Handshake)
-      return sendHandshakePacket_(build, ZuMv(addr), {});
-    return sendShortPacket_(build, ZuMv(addr), {});
+      return sendHandshakePkt_(build, ZuMv(addr), {});
+    return sendShortPkt_(build, ZuMv(addr), {});
   }
 
   bool flushPendingAcks_(ZiSockAddr addr) {
@@ -4371,20 +4377,20 @@ private:
     flushPendingAcks_(ZuMv(addr));
     (void)Base::flushControlAndStreams_(
       m_peerAddr,
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr_,
+	  PktBuild &build, ZiSockAddr addr_,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
       });
   }
 
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
-    return Base::receiveProtectedLongPacket_(
+    return Base::receiveProtLongPkt_(
       InitialKeyDir::Client, d, packetOffset, packetLen,
-      [this](const LongHeader &h, Datagram &d_) {
+      [this](const LongHdr &h, Datagram &d_) {
 	if (!Base::runtimeHandshakeStarted_()) {
 	  m_peerAddr = d_.addr;
 	  if (!initRuntimeCrypto_(h, d_.buf->length)) return false;
@@ -4399,7 +4405,7 @@ private:
   }
 
   bool receivedShort_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
-    return Base::receiveProtectedShortPacket_(
+    return Base::receiveProtShortPkt_(
       d, packetOffset, packetLen,
       [this](
 	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
@@ -4411,7 +4417,7 @@ private:
   bool consumeFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf) {
-    return Base::consumeProtectedFrames_(
+    return Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf,
       [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
@@ -4430,26 +4436,26 @@ private:
       case FrameType::MaxStreams:
 	(void)Base::flushControlAndStreams_(
 	  m_peerAddr,
-	  [this](PacketBuild &build) {
+	  [this](PktBuild &build) {
 	    return appendPendingAck_(CryptoLevel::OneRTT, build);
 	  },
 	  [this](
-	      PacketBuild &build, ZiSockAddr addr_,
+	      PktBuild &build, ZiSockAddr addr_,
 	      const SentFrameRef &ref) {
-	    return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	    return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
 	  });
 	return true;
       case FrameType::PathChallenge: {
 	Base::queuePathResponse_(frame.payload);
 	return Base::flushControlAndStreams_(
 	  ZuMv(addr),
-	  [this](PacketBuild &build) {
+	  [this](PktBuild &build) {
 	    return appendPendingAck_(CryptoLevel::OneRTT, build);
 	  },
 	  [this](
-	      PacketBuild &build, ZiSockAddr addr_,
+	      PktBuild &build, ZiSockAddr addr_,
 	      const SentFrameRef &ref) {
-	    return sendShortPacket_(build, ZuMv(addr_), {}, &ref, true);
+	    return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
 	  });
       }
       case FrameType::PathResponse:
@@ -4470,39 +4476,39 @@ private:
     Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
     (void)Base::flushControlAndStreams_(
       m_peerAddr,
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr,
+	  PktBuild &build, ZiSockAddr addr,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr), {}, &ref, true);
       });
   }
   void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
     (void)Base::flushControlAndStreams_(
       m_peerAddr,
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr,
+	  PktBuild &build, ZiSockAddr addr,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr), {}, &ref, true);
       });
   }
   void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
     (void)Base::flushControlAndStreams_(
       m_peerAddr,
-      [this](PacketBuild &build) {
+      [this](PktBuild &build) {
 	return appendPendingAck_(CryptoLevel::OneRTT, build);
       },
       [this](
-	  PacketBuild &build, ZiSockAddr addr,
+	  PktBuild &build, ZiSockAddr addr,
 	  const SentFrameRef &ref) {
-	return sendShortPacket_(build, ZuMv(addr), {}, &ref, true);
+	return sendShortPkt_(build, ZuMv(addr), {}, &ref, true);
       });
   }
 

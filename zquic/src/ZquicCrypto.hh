@@ -64,7 +64,7 @@ struct InitialCrypto {
     uint8_t *, unsigned, const InitialSecret &, ZuCSpan);
 };
 
-struct InitialPacketProtection {
+struct InitialPktProt {
   static int protectLong(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
     ZuCSpan, ZuCSpan, unsigned, unsigned);
@@ -101,10 +101,10 @@ struct TrafficSecret {
   bool				installed = false;
 };
 
-struct PacketProtectionState {
-  PacketProtectionState() = default;
-  PacketProtectionState(const PacketProtectionState &) = delete;
-  PacketProtectionState &operator =(const PacketProtectionState &) = delete;
+struct PktProtState {
+  PktProtState() = default;
+  PktProtState(const PktProtState &) = delete;
+  PktProtState &operator =(const PktProtState &) = delete;
 
   bool init(const TrafficSecret &, CryptoLevel::T, bool);
   void clear();
@@ -119,35 +119,35 @@ struct PacketProtectionState {
   bool			installed = false;
 };
 
-struct PacketProtection {
+struct PktProt {
   static bool deriveTrafficSecret(
     TrafficSecret &, ptls_cipher_suite_t *, ZuCSpan);
   static int protectLongV(
-    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuCSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
   static int protectLong(
-    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuCSpan, ZuCSpan, unsigned, unsigned);
   static int protectLong(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     ZuCSpan, ZuCSpan, unsigned, unsigned);
   static int unprotectLong(
-    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    uint8_t *, unsigned, PktProtState &, uint64_t,
     unsigned, uint64_t &, unsigned &);
   static int unprotectLong(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
   static int protectShortV(
-    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuCSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
   static int protectShort(
-    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuCSpan, ZuCSpan, unsigned, unsigned);
   static int protectShort(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     ZuCSpan, ZuCSpan, unsigned, unsigned);
   static int unprotectShort(
-    uint8_t *, unsigned, PacketProtectionState &, uint64_t,
+    uint8_t *, unsigned, PktProtState &, uint64_t,
     unsigned, uint64_t &, unsigned &);
   static int unprotectShort(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
@@ -258,11 +258,11 @@ public:
   const TrafficSecret &rxTrafficSecret(CryptoLevel::T level) const {
     return m_rxTrafficSecrets[level];
   }
-  PacketProtectionState &txProtectionState(CryptoLevel::T level) {
-    return m_txProtection[level];
+  PktProtState &txProtState(CryptoLevel::T level) {
+    return m_txProt[level];
   }
-  PacketProtectionState &rxProtectionState(CryptoLevel::T level) {
-    return m_rxProtection[level];
+  PktProtState &rxProtState(CryptoLevel::T level) {
+    return m_rxProt[level];
   }
   bool updateTxTrafficSecret(CryptoLevel::T, const TrafficSecret &);
   bool updateRxTrafficSecret(CryptoLevel::T, const TrafficSecret &);
@@ -313,8 +313,8 @@ private:
   bool				m_secretInstalled[3] = {};
   TrafficSecret 		m_txTrafficSecrets[3];
   TrafficSecret 		m_rxTrafficSecrets[3];
-  PacketProtectionState		m_txProtection[3];
-  PacketProtectionState		m_rxProtection[3];
+  PktProtState		m_txProt[3];
+  PktProtState		m_rxProt[3];
   ParamString			m_alpn;
   Host				m_serverName;
   InitialKeyMaterial 		m_initialKeys;

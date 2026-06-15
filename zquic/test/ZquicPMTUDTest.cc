@@ -124,7 +124,7 @@ void testPMTUD()
   path.startProbe(1400);
   path.probeAcked();
   ZuCHECK(path.activeMaxUDP() == 1400, "PMTUD probe success not applied");
-  path.applyHint({Zquic::PathHintKind::PacketTooBig, 1300, 0});
+  path.applyHint({Zquic::PathHintKind::PktTooBig, 1300, 0});
   ZuCHECK(path.activeMaxUDP() == 1300 &&
       path.ceiling() == 1300 &&
       path.failureFloor() == 1300,

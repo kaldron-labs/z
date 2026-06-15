@@ -157,8 +157,8 @@ void testServerInitialBootstrap()
 {
   ZuTestScope(testServerInitialBootstrap);
 
-  Zquic::LongHeader initial;
-  initial.type = Zquic::PacketType::Initial;
+  Zquic::LongHdr initial;
+  initial.type = Zquic::PktType::Initial;
   initial.version = Zquic::Version1;
   initial.dcid = "client-dc";
   initial.scid = "client-sc";
@@ -190,7 +190,7 @@ void testServerInitialBootstrap()
   ZuCHECK(!server.acceptInitial(initial, Zquic::MinUDPPayload),
     "server accepted a second Initial");
 
-  Zquic::LongHeader bad = initial;
+  Zquic::LongHdr bad = initial;
   bad.version = 0xff00001dU;
   Zquic::ServerBootstrap badServer;
   ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
@@ -200,7 +200,7 @@ void testServerInitialBootstrap()
   ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
     "short client SCID was accepted");
   bad = initial;
-  bad.type = Zquic::PacketType::Handshake;
+  bad.type = Zquic::PktType::Handshake;
   ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
     "non-Initial packet was accepted");
 }

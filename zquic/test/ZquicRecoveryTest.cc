@@ -21,14 +21,14 @@ static bool getVar_(const uint8_t *b, unsigned len, unsigned &o, uint64_t &v)
   return true;
 }
 
-static Zquic::TxPacket txPacket_(
+static Zquic::TxPkt txPkt_(
   uint64_t pn, unsigned bytes = 100, bool ackEliciting = true)
 {
-  Zquic::TxPacket p;
+  Zquic::TxPkt p;
   p.pn = pn;
   p.sentTime = pn * 100;
   p.bytes = bytes;
-  p.space = Zquic::PacketSpace::AppData;
+  p.space = Zquic::PktSpace::AppData;
   p.ackEliciting = ackEliciting;
   p.inFlight = bytes;
   p.addFrame(Zquic::SentFrameRef::crypto(pn * 10, pn + 1));
@@ -153,14 +153,14 @@ void testRecovery()
   cc.lostAt(0, 90);
   ZuCHECK(cc.cwnd() == cwnd, "old packet loss reduced cwnd during recovery");
 
-  Zquic::PacketTxSpace tx;
+  Zquic::PktTxSpace tx;
   ZuCHECK(!tx.retransmitDropped(),
     "unbounded retransmit queue reported dropped frames");
 }
 
-void testPacketReorderDuplicateLoss()
+void testPktReorderDuplicateLoss()
 {
-  ZuTestScope(testPacketReorderDuplicateLoss);
+  ZuTestScope(testPktReorderDuplicateLoss);
 
   Zquic::AckTracker ack;
   ZuCHECK(ack.add(0) && ack.add(2),
@@ -182,9 +182,9 @@ void testPacketReorderDuplicateLoss()
       ack.last(0) == 2,
     "reordered packet gap fill did not coalesce ACK ranges");
 
-  Zquic::PacketTxSpace tx;
+  Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn < 6; ++pn)
-    ZuCHECK(tx.add(txPacket_(pn)), "sent packet setup failed");
+    ZuCHECK(tx.add(txPkt_(pn)), "sent packet setup failed");
   ZuCHECK(tx.bytesInFlight() == 600,
     "sent packet bytes-in-flight setup mismatch");
 
@@ -224,8 +224,8 @@ void testPTOReclaimUsesRetransmitQueue()
 {
   ZuTestScope(testPTOReclaimUsesRetransmitQueue);
 
-  Zquic::PacketTxSpace tx;
-  ZuCHECK(tx.add(txPacket_(7, 1200)) &&
+  Zquic::PktTxSpace tx;
+  ZuCHECK(tx.add(txPkt_(7, 1200)) &&
       tx.bytesInFlight() == 1200,
     "PTO packet setup failed");
   ZuCHECK(tx.reclaimOnPTO(1) == 1 &&
@@ -248,9 +248,9 @@ void testAckCanLeaveOnlyRetransmitsPending()
 {
   ZuTestScope(testAckCanLeaveOnlyRetransmitsPending);
 
-  Zquic::PacketTxSpace tx;
+  Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn < 6; ++pn)
-    ZuCHECK(tx.add(txPacket_(pn)), "sent packet setup failed");
+    ZuCHECK(tx.add(txPkt_(pn)), "sent packet setup failed");
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{5, 2} };
   unsigned lost = 0;
@@ -315,22 +315,22 @@ void testAckManager()
   ZuTestScope(testAckManager);
 
   Zquic::AckManager acks;
-  ZuCHECK(acks.received(Zquic::PacketSpace::Initial, 1, 1000, 25) &&
-      acks.received(Zquic::PacketSpace::AppData, 5, 1000, 25, false),
+  ZuCHECK(acks.received(Zquic::PktSpace::Initial, 1, 1000, 25) &&
+      acks.received(Zquic::PktSpace::AppData, 5, 1000, 25, false),
     "ACK manager receive failed");
-  ZuCHECK(acks.pending(Zquic::PacketSpace::Initial) &&
-      acks.deadlineSet(Zquic::PacketSpace::Initial) &&
-      acks.deadline(Zquic::PacketSpace::Initial) == 1025 &&
-      !acks.due(Zquic::PacketSpace::Initial, 1024) &&
-      acks.due(Zquic::PacketSpace::Initial, 1025),
+  ZuCHECK(acks.pending(Zquic::PktSpace::Initial) &&
+      acks.deadlineSet(Zquic::PktSpace::Initial) &&
+      acks.deadline(Zquic::PktSpace::Initial) == 1025 &&
+      !acks.due(Zquic::PktSpace::Initial, 1024) &&
+      acks.due(Zquic::PktSpace::Initial, 1025),
     "ACK manager Initial deadline mismatch");
-  ZuCHECK(acks.pending(Zquic::PacketSpace::AppData) &&
-      !acks.deadlineSet(Zquic::PacketSpace::AppData) &&
-      !acks.due(Zquic::PacketSpace::AppData, 2000),
+  ZuCHECK(acks.pending(Zquic::PktSpace::AppData) &&
+      !acks.deadlineSet(Zquic::PktSpace::AppData) &&
+      !acks.due(Zquic::PktSpace::AppData, 2000),
     "ACK-only AppData packet set an ACK deadline");
 
   uint8_t b[64];
-  int n = acks.writeFrame(Zquic::PacketSpace::Initial, b, sizeof(b), 4);
+  int n = acks.writeFrame(Zquic::PktSpace::Initial, b, sizeof(b), 4);
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(n > 0 &&
@@ -342,22 +342,22 @@ void testAckManager()
       frame.value == 4 &&
       !frame.length,
     "ACK manager Initial frame mismatch");
-  acks.sent(Zquic::PacketSpace::Initial);
-  ZuCHECK(!acks.pending(Zquic::PacketSpace::Initial) &&
-      acks.pending(Zquic::PacketSpace::AppData),
+  acks.sent(Zquic::PktSpace::Initial);
+  ZuCHECK(!acks.pending(Zquic::PktSpace::Initial) &&
+      acks.pending(Zquic::PktSpace::AppData),
     "ACK manager sent cleared wrong packet space");
 
-  ZuCHECK(acks.received(Zquic::PacketSpace::AppData, 6, 2000, 25) &&
-      acks.deadlineSet(Zquic::PacketSpace::AppData) &&
-      acks.deadline(Zquic::PacketSpace::AppData) == 2025,
+  ZuCHECK(acks.received(Zquic::PktSpace::AppData, 6, 2000, 25) &&
+      acks.deadlineSet(Zquic::PktSpace::AppData) &&
+      acks.deadline(Zquic::PktSpace::AppData) == 2025,
     "ACK manager AppData deadline mismatch");
-  ZuCHECK(acks.received(Zquic::PacketSpace::AppData, 6, 2010, 50) &&
-      acks.pending(Zquic::PacketSpace::AppData) &&
-      acks.deadlineSet(Zquic::PacketSpace::AppData) &&
-      acks.deadline(Zquic::PacketSpace::AppData) == 2025 &&
-      acks.tracker(Zquic::PacketSpace::AppData).count() == 1,
+  ZuCHECK(acks.received(Zquic::PktSpace::AppData, 6, 2010, 50) &&
+      acks.pending(Zquic::PktSpace::AppData) &&
+      acks.deadlineSet(Zquic::PktSpace::AppData) &&
+      acks.deadline(Zquic::PktSpace::AppData) == 2025 &&
+      acks.tracker(Zquic::PktSpace::AppData).count() == 1,
     "ACK manager duplicate packet changed deadline or ranges");
-  n = acks.writeFrame(Zquic::PacketSpace::AppData, b, sizeof(b));
+  n = acks.writeFrame(Zquic::PktSpace::AppData, b, sizeof(b));
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
 	ZuCSpan{b, unsigned(n)},
@@ -372,7 +372,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testRecovery);
-  ZuTestCall(testPacketReorderDuplicateLoss);
+  ZuTestCall(testPktReorderDuplicateLoss);
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);
   ZuTestCall(testAckCanLeaveOnlyRetransmitsPending);
   ZuTestCall(testTypedControlRefs);

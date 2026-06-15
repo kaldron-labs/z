@@ -8,9 +8,9 @@
 
 namespace Zquic {
 
-ZuCSpan Diag::packetSpaceName(PacketSpace::T space)
+ZuCSpan Diag::packetSpaceName(PktSpace::T space)
 {
-  return PacketSpace{}.name(space);
+  return PktSpace{}.name(space);
 }
 
 ZuCSpan Diag::frameTypeName(FrameType::T type)

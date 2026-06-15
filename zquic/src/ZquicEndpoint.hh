@@ -24,8 +24,8 @@ class Endpoint : public ZmPolymorph {
   class Cxn_;
 
 public:
-  using RxPacketAlloc = PacketRxBufAlloc<>;
-  using TxPacketAlloc = PacketTxBufAlloc<>;
+  using RxPktAlloc = PktRxBufAlloc<>;
+  using TxPktAlloc = PktTxBufAlloc<>;
   using DatagramFn = ZmFn<void(Datagram)>;
   using ReadyFn = ZmFn<void(Endpoint *)>;
   using FailFn = ZmFn<void(bool)>;
@@ -59,8 +59,8 @@ public:
   void failure() { ++m_diag.failures; }
 
   void datagramFn(DatagramFn fn) { m_datagramFn = ZuMv(fn); }
-  ZmRef<ZiIOBuf> allocTxPacket() {
-    return new TxPacketAlloc{this};
+  ZmRef<ZiIOBuf> allocTxPkt() {
+    return new TxPktAlloc{this};
   }
   bool send(ZmRef<ZiIOBuf>, ZiSockAddr);
 
@@ -76,8 +76,8 @@ private:
   void sent_(unsigned);
   void ioError_();
   void clearFns_();
-  ZmRef<ZiIOBuf> allocRxPacket_() {
-    return new RxPacketAlloc{this};
+  ZmRef<ZiIOBuf> allocRxPkt_() {
+    return new RxPktAlloc{this};
   }
 
   ZiMultiplex		*m_mx = nullptr;

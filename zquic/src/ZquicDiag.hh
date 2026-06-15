@@ -25,25 +25,25 @@ using DiagText = ZtString<
     ZtStringHeapMax<4096>>>;
 
 struct Diag {
-  static ZuCSpan packetSpaceName(PacketSpace::T);
+  static ZuCSpan packetSpaceName(PktSpace::T);
   static ZuCSpan frameTypeName(FrameType::T);
   static ZuCSpan streamTypeName(Zi::StreamType::T);
 
-  void notePacketRx(unsigned bytes) {
+  void notePktRx(unsigned bytes) {
     ++packetsRx;
     bytesRx += bytes;
   }
-  void notePacketTx(unsigned bytes) {
+  void notePktTx(unsigned bytes) {
     ++packetsTx;
     bytesTx += bytes;
   }
-  void noteHeaderRx(unsigned bytes) { headerBytesRx += bytes; }
-  void noteHeaderTx(unsigned bytes) { headerBytesTx += bytes; }
+  void noteHdrRx(unsigned bytes) { headerBytesRx += bytes; }
+  void noteHdrTx(unsigned bytes) { headerBytesTx += bytes; }
   void noteBodyRx(unsigned bytes) { bodyBytesRx += bytes; }
   void noteBodyTx(unsigned bytes) { bodyBytesTx += bytes; }
   void noteStreamRx(unsigned bytes) { streamBytesRx += bytes; }
   void noteStreamTx(unsigned bytes) { streamBytesTx += bytes; }
-  void noteLoss(const SentPacket &) { ++packetsLost; }
+  void noteLoss(const SentPkt &) { ++packetsLost; }
   void notePTO() { ++ptoCount; }
   void noteRetransmit(const SentFrameRef &) { ++retransmittedFrames; }
   void setRecovery(uint64_t cwnd_, uint64_t bytesInFlight_) {

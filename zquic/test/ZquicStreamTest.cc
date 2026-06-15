@@ -54,16 +54,16 @@ struct TestLink :
   bool flushControlSendFails() {
     return Base::flushControlAndStreamsLocked_(
       ZiSockAddr{},
-      [](Zquic::PacketBuild &) { return true; },
-      [](Zquic::PacketBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
+      [](Zquic::PktBuild &) { return true; },
+      [](Zquic::PktBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
 	return false;
       });
   }
   bool flushControlSends() {
     return Base::flushControlAndStreamsLocked_(
       ZiSockAddr{},
-      [](Zquic::PacketBuild &) { return true; },
-      [](Zquic::PacketBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
+      [](Zquic::PktBuild &) { return true; },
+      [](Zquic::PktBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
 	return true;
       });
   }
@@ -80,11 +80,11 @@ static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
     used == unsigned(n);
 }
 
-static ZmRef<ZiIOBuf> streamPacket_(
+static ZmRef<ZiIOBuf> streamPkt_(
   uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;
@@ -144,7 +144,7 @@ void testStreamFrameDelivery()
 
   Zquic::Frame frame;
   unsigned used = 0;
-  auto packet = streamPacket_(stream->id(), 0, "hello", false, frame, used);
+  auto packet = streamPkt_(stream->id(), 0, "hello", false, frame, used);
   ZuCHECK(packet, "STREAM frame setup failed");
 
   Zquic::BufDiag diag;
@@ -158,20 +158,20 @@ void testStreamFrameDelivery()
     "STREAM payload was not queued for receive");
   ZuCHECK(rx.empty(), "STREAM receive queue consume failed");
 
-  packet = streamPacket_(stream->id(), 5, {}, true, frame, used);
+  packet = streamPkt_(stream->id(), 5, {}, true, frame, used);
   ZuCHECK(packet, "STREAM FIN frame setup failed");
   ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
       stream->finReceived() && stream->rxComplete() &&
       stream->finalSize() == 5,
     "STREAM FIN delivery mismatch");
 
-  packet = streamPacket_(stream->id(), 5, "!", true, frame, used);
+  packet = streamPkt_(stream->id(), 5, "!", true, frame, used);
   ZuCHECK(packet,
     "conflicting STREAM FIN setup failed");
   ZuCHECK(!stream->receiveFrame(frame, packet, &diag),
     "conflicting final-size STREAM was accepted");
 
-  packet = streamPacket_(stream->id() + 4, 0, "x", false, frame, used);
+  packet = streamPkt_(stream->id() + 4, 0, "x", false, frame, used);
   ZuCHECK(packet,
     "wrong-ID STREAM setup failed");
   ZuCHECK(!stream->receiveFrame(frame, packet, &diag),
@@ -186,7 +186,7 @@ void testStreamRxSliceDelivery()
   TestLink client{&app};
   auto stream = client.stream(Zi::StreamType::Duplex);
 
-  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, stream->id(), 0, "slice", false);
   ZuCHECK(n > 0, "packet-backed STREAM frame write failed");
@@ -224,7 +224,7 @@ void testOutOfOrderStreamDelivery()
   unsigned used = 0;
   Zquic::BufDiag diag;
 
-  auto packet = streamPacket_(stream->id(), 5, "world", false, frame, used);
+  auto packet = streamPkt_(stream->id(), 5, "world", false, frame, used);
   ZuCHECK(packet,
     "out-of-order STREAM setup failed");
   ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
@@ -237,7 +237,7 @@ void testOutOfOrderStreamDelivery()
       stream->rxPending() == 1,
     "duplicate pending STREAM copied or queued again");
 
-  packet = streamPacket_(stream->id(), 0, "hello", false, frame, used);
+  packet = streamPkt_(stream->id(), 0, "hello", false, frame, used);
   ZuCHECK(packet,
     "gap-filling STREAM setup failed");
   ZuCHECK(stream->processFrame(frame, packet, &diag) == 0 &&
@@ -255,7 +255,7 @@ void testOutOfOrderStreamDelivery()
 
   auto split = client.stream(Zi::StreamType::Duplex);
   diag = {};
-  packet = streamPacket_(split->id(), 5, "world", false, frame, used);
+  packet = streamPkt_(split->id(), 5, "world", false, frame, used);
   ZuCHECK(packet,
     "split pending STREAM setup failed");
   ZuCHECK(split->processFrame(frame, packet, &diag) == 0 &&
@@ -263,7 +263,7 @@ void testOutOfOrderStreamDelivery()
       !split->rxQueued(),
     "split pending STREAM state mismatch");
 
-  packet = streamPacket_(split->id(), 0, "helloworldtails", false, frame, used);
+  packet = streamPkt_(split->id(), 0, "helloworldtails", false, frame, used);
   ZuCHECK(packet,
     "interior-overlap STREAM setup failed");
   ZuCHECK(split->processFrame(frame, packet, &diag) == 0 &&
@@ -341,9 +341,9 @@ void testStreamTxRetention()
     "empty Tx range dequeue succeeded");
 }
 
-void testStreamPacketizer()
+void testStreamPktizer()
 {
-  ZuTestScope(testStreamPacketizer);
+  ZuTestScope(testStreamPktizer);
 
   uint8_t prefix[32];
   uint8_t assembled[64];
@@ -381,10 +381,10 @@ void testStreamPacketizer()
   stream->fin();
 
   uint8_t b[128];
-  Zquic::PacketBudget budget;
-  Zquic::PacketAssembly assembly;
+  Zquic::PktBudget budget;
+  Zquic::PktAssembly assembly;
   Zquic::StreamFrameInfo info;
-  int n = Zquic::StreamPacketizer::writeNext(
+  int n = Zquic::StreamPktizer::writeNext(
     b, sizeof(b), budget, assembly, *stream, &info);
   ZuCHECK(n > 0 &&
       assembly.streamAdded() &&
@@ -415,14 +415,14 @@ void testStreamPacketizer()
       frame.payload == "abc" &&
       !frame.fin,
     "first packetized STREAM parse mismatch");
-  ZuCHECK(Zquic::StreamPacketizer::writeNext(
+  ZuCHECK(Zquic::StreamPktizer::writeNext(
       b, sizeof(b), budget, assembly, *stream, &info) < 0 &&
       stream->txRangeCount() == 1,
     "packetizer allowed a second STREAM frame in one packet");
 
   budget = {};
   assembly = {};
-  n = Zquic::StreamPacketizer::writeNext(
+  n = Zquic::StreamPktizer::writeNext(
     b, sizeof(b), budget, assembly, *stream, &info);
   ZuCHECK(n > 0 &&
       budget.used == info.bytes &&
@@ -451,7 +451,7 @@ void testStreamPacketizer()
 
 	  budget = {};
 	  assembly = {};
-	  ZuCHECK(!Zquic::StreamPacketizer::writeNext(
+	  ZuCHECK(!Zquic::StreamPktizer::writeNext(
 	      b, sizeof(b), budget, assembly, *stream, &info),
 	    "packetizer wrote a frame for an empty stream");
 
@@ -464,7 +464,7 @@ void testStreamPacketizer()
   budget = {};
   budget.pmtu = budget.congestion = budget.antiAmplification = 2;
   assembly = {};
-  ZuCHECK(Zquic::StreamPacketizer::writeNext(
+  ZuCHECK(Zquic::StreamPktizer::writeNext(
       b, sizeof(b), budget, assembly, *blocked, &info) < 0 &&
       blocked->txRangeCount() == 1 &&
       blocked->txBufferedBytes() == 7 &&
@@ -480,7 +480,7 @@ void testStreamPacketizer()
   budget = {};
   budget.pmtu = budget.congestion = budget.antiAmplification = 8;
   assembly = {};
-  n = Zquic::StreamPacketizer::writeNext(
+  n = Zquic::StreamPktizer::writeNext(
     b, sizeof(b), budget, assembly, *split, &info);
   ZuCHECK(n > 0 &&
       unsigned(n) < info.bytes &&
@@ -586,7 +586,7 @@ void testPeerStreamAcceptance()
 
   Zquic::Frame frame;
   unsigned used = 0;
-  auto packet = streamPacket_(0, 0, "req", true, frame, used);
+  auto packet = streamPkt_(0, 0, "req", true, frame, used);
   ZuCHECK(packet, "client STREAM frame setup failed");
 
   Zquic::BufDiag diag;
@@ -602,7 +602,7 @@ void testPeerStreamAcceptance()
 
   TestLink client{&app};
   auto local = client.stream(Zi::StreamType::Duplex);
-  packet = streamPacket_(local->id(), 0, "rsp", true, frame, used);
+  packet = streamPkt_(local->id(), 0, "rsp", true, frame, used);
   ZuCHECK(packet,
     "response STREAM frame setup failed");
   ZuCHECK(client.receiveFrame(frame, packet, &diag) == 0 &&
@@ -611,7 +611,7 @@ void testPeerStreamAcceptance()
       local->rxComplete(),
     "existing local bidi stream receive mismatch");
 
-  packet = streamPacket_(1, 0, "bad", false, frame, used);
+  packet = streamPkt_(1, 0, "bad", false, frame, used);
   ZuCHECK(packet,
     "local-origin STREAM setup failed");
   ZuCHECK(server.receiveFrame(frame, packet, &diag) < 0 && !server.findStream(1),
@@ -657,7 +657,7 @@ void testStreamCountLimits()
 
   TestLink server{&app, true};
   server.setLocalStreamLimit(Zi::StreamType::Duplex, 1);
-  auto packet = streamPacket_(0, 0, "a", true, frame, used);
+  auto packet = streamPkt_(0, 0, "a", true, frame, used);
   ZuCHECK(packet,
     "first peer STREAM setup failed");
   ZuCHECK(server.receiveFrame(frame, packet) == 0 &&
@@ -665,7 +665,7 @@ void testStreamCountLimits()
       server.findStream(0),
     "first peer stream under local limit did not open");
 
-  packet = streamPacket_(4, 0, "b", true, frame, used);
+  packet = streamPkt_(4, 0, "b", true, frame, used);
   ZuCHECK(packet,
     "second peer STREAM setup failed");
   ZuCHECK(server.receiveFrame(frame, packet) < 0 &&
@@ -680,7 +680,7 @@ void testStreamCountLimits()
     "extended local stream count did not admit peer stream");
 
   server.setLocalStreamLimit(Zi::StreamType::Simplex, 1);
-  packet = streamPacket_(2, 0, "u", true, frame, used);
+  packet = streamPkt_(2, 0, "u", true, frame, used);
   ZuCHECK(packet,
     "first peer uni STREAM setup failed");
   ZuCHECK(server.receiveFrame(frame, packet) == 0 &&
@@ -688,7 +688,7 @@ void testStreamCountLimits()
       server.findStream(2),
     "first peer uni stream under local limit did not open");
 
-  packet = streamPacket_(6, 0, "v", true, frame, used);
+  packet = streamPkt_(6, 0, "v", true, frame, used);
   ZuCHECK(packet,
     "second peer uni STREAM setup failed");
   ZuCHECK(server.receiveFrame(frame, packet) == 0 &&
@@ -736,7 +736,7 @@ void testResetStopFrames()
     "STOP_SENDING state mismatch");
 
   auto delivered = client.stream(Zi::StreamType::Duplex);
-  auto packet = streamPacket_(delivered->id(), 0, "hello", false, frame, used);
+  auto packet = streamPkt_(delivered->id(), 0, "hello", false, frame, used);
   ZuCHECK(packet &&
       delivered->receiveFrame(frame, packet),
     "delivered STREAM setup failed");
@@ -946,7 +946,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamRxSliceDelivery);
   ZuTestCall(testOutOfOrderStreamDelivery);
   ZuTestCall(testStreamTxRetention);
-  ZuTestCall(testStreamPacketizer);
+  ZuTestCall(testStreamPktizer);
   ZuTestCall(testQueuedControlSendFailureRetainsFrame);
   ZuTestCall(testBlockedFrameDuplicateSuppression);
   ZuTestCall(testPeerStreamAcceptance);

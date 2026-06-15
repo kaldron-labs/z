@@ -17,16 +17,16 @@ void testDiagAggregation()
   ZuTestScope(testDiagAggregation);
 
   Zquic::Diag diag;
-  diag.notePacketRx(100);
-  diag.notePacketTx(200);
-  diag.noteHeaderRx(11);
-  diag.noteHeaderTx(12);
+  diag.notePktRx(100);
+  diag.notePktTx(200);
+  diag.noteHdrRx(11);
+  diag.noteHdrTx(12);
   diag.noteBodyRx(13);
   diag.noteBodyTx(14);
   diag.noteStreamRx(30);
   diag.noteStreamTx(40);
-  diag.noteLoss(Zquic::SentPacket{
-    1, 0, 100, Zquic::PacketSpace::AppData, true, true, false });
+  diag.noteLoss(Zquic::SentPkt{
+    1, 0, 100, Zquic::PktSpace::AppData, true, true, false });
   diag.notePTO();
   diag.noteRetransmit(Zquic::SentFrameRef::control());
   diag.setRecovery(12000, 500);
@@ -66,7 +66,7 @@ void testDiagAggregation()
       diag.pmtudFailure == 2,
     "diagnostic aggregation mismatch");
 
-  ZuCHECK(Zquic::Diag::packetSpaceName(Zquic::PacketSpace::AppData) ==
+  ZuCHECK(Zquic::Diag::packetSpaceName(Zquic::PktSpace::AppData) ==
       "AppData" &&
       Zquic::Diag::frameTypeName(Zquic::FrameType::Stream) == "Stream" &&
       Zquic::Diag::streamTypeName(Zi::StreamType::Simplex) == "Simplex",
