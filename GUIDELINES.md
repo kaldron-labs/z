@@ -235,6 +235,35 @@ These guidelines extend `AGENTS.md`
   - preserve tabular alignment for data members, macro bodies and compact tables
     that already use tabs to line up names, initializers or comments
 
+## Naming
+- names must be concise; no names can exceed 32 bytes (hard upper limit)
+  - while "packet" would be fine as a name, "reservePacketProtection" would not
+    - use standard abbreviations common in code:
+      `reserve` -> `res`
+      `packet` -> `pkt`
+      `client` -> `cli`
+      `server` -> `srv`
+      `protection` -> `prot`
+      ... etc.
+    - resulting name would be "resPktProt"
+- names are generally camelCase, not snake_case
+  - exceptions are made for external dependencies
+- `m_` is reserved for private data members of classes
+- public data members should go at top, private at bottom
+  - a struct with public data members should be "all public", no `m_` used, otherwise it should be a class with `m_` private data members and public accessors
+- use overloads for getters/setters, do not name them independently
+  - example: `int x() const` and `void x(int)`
+    - it's also ok to `decltype(auto) x(this &&self) { ... }` to properly handle move context
+  - `int &x()` might be ok as a setter, if thread-safety is guaranteed by the calling context, but this pattern is an amber flag
+    - in such cases `int x` should probably be a public data member
+- use trailing underscores to indicate:
+  - internal-only or thread-dedicated functions/types
+    - e.g. `send` might use `txInvoke` (which checks the running thread) to possibly enqueue a call to `send_` on the tx thread so it can be called from any thread, while `send_` can assume the caller is already running on the right thread and elide the check and potential context switch
+    - e.g. `template <typename T> struct Foo : public Foo_ { ... };` - `Foo` is the API, while `Foo_` is a `T`-independent common base.
+- "utilties" not "helpers", "duplex" not "bidi", etc.
+  - no imprecise or primitive use of the English language designed to make it more accessible to non-native/non-technical/non-veteran readers
+  - accessibility of language or naming is a hard non-goal
+
 ## No Immutability Dogma
 - mutability is encouraged if it benefits performance
   - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
