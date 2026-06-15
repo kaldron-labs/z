@@ -21,7 +21,7 @@ noinst_PROGRAMS = zhttptest \
 	ZhttpParserTest \
 	ZhttpHPackTest ZhttpQPackTest \
 	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
-	ZhttpAppTest ZhttpMultiRequestTest \
+	ZhttpAppTest ZhttpMultiRequestTest ZhttpInteropMatrixTest \
 	ZhttpdTest ZhttpDarkhttpdCompatTest
 noinst_HEADERS = ZhttpTestUtil.hh
 zhttptest_SOURCES = zhttptest.cc
@@ -33,6 +33,7 @@ ZhttpFallbackTest_SOURCES = ZhttpFallbackTest.cc
 ZhttpQPackDynamicTest_SOURCES = ZhttpQPackDynamicTest.cc
 ZhttpAppTest_SOURCES = ZhttpAppTest.cc
 ZhttpMultiRequestTest_SOURCES = ZhttpMultiRequestTest.cc
+ZhttpInteropMatrixTest_SOURCES = ZhttpInteropMatrixTest.cc
 ZhttpdTest_SOURCES = ZhttpdTest.cc
 ZhttpDarkhttpdCompatTest_SOURCES = ZhttpDarkhttpdCompatTest.cc
 
@@ -40,5 +41,5 @@ ZhttpDarkhttpdCompatTest_SOURCES = ZhttpDarkhttpdCompatTest.cc
 test: $(noinst_PROGRAMS)
 	prove ZhttpParserTest ZhttpHPackTest ZhttpQPackTest \
 		Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
-		ZhttpAppTest ZhttpMultiRequestTest \
+		ZhttpAppTest ZhttpMultiRequestTest ZhttpInteropMatrixTest \
 		ZhttpdTest ZhttpDarkhttpdCompatTest

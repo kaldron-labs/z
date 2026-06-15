@@ -131,7 +131,7 @@ void testTxPktLossRequeue()
 
   Zquic::TxPkt p;
   p.pn = 7;
-  p.sentTime = 100;
+  p.sentTime = Zquic::timeUS(100);
   p.bytes = 1200;
   p.space = Zquic::PktSpace::AppData;
   p.ackEliciting = true;
