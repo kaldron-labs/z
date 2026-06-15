@@ -30,6 +30,7 @@ public:
   using ReadyFn = ZmFn<void(Endpoint *)>;
   using FailFn = ZmFn<void(bool)>;
   using DownFn = ZmFn<void(Endpoint *)>;
+  using TxDrainedFn = ZmFn<void()>;
 
   Endpoint() = default;
   ~Endpoint() { closeUDP(); }
@@ -45,7 +46,8 @@ public:
     DatagramFn datagramFn = {},
     ReadyFn readyFn = {},
     FailFn failFn = {},
-    DownFn downFn = {});
+    DownFn downFn = {},
+    TxDrainedFn txDrainedFn = {});
 
   void closeUDP();
 
@@ -74,25 +76,32 @@ private:
   void failed_(bool);
   void received_(Datagram);
   void sent_(unsigned);
+  void txDrained_();
   void ioError_();
   void clearFns_();
   ZmRef<ZiIOBuf> allocRxPkt_() {
     return new RxPktAlloc{this};
   }
 
+  // Shared immutable/configuration after openUDP(), read from Rx and Tx.
   ZiMultiplex		*m_mx = nullptr;
-  Cxn_			*m_cxn = nullptr;
   PathMode::T		m_mode = PathMode::ServerUnconnected;
   ZiSockAddr		m_local;
   ZiSockAddr		m_remote;
+
+  // Rx-owned endpoint state.
+  Cxn_			*m_cxn = nullptr;
   DatagramFn		m_datagramFn;
   ReadyFn		m_readyFn;
   FailFn		m_failFn;
   DownFn		m_downFn;
+  TxDrainedFn		m_txDrainedFn;
   Cxn_			*m_closingCxn = nullptr;
   unsigned		m_generation = 0;
   unsigned		m_closingGeneration = 0;
   ZmAtomic<unsigned>	m_listening = 0;
+
+  // Shared diagnostics; individual counters are touched by their owning path.
   EndpointDiag		m_diag;
 };
 

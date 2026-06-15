@@ -617,17 +617,21 @@ public:
   }
   unsigned reclaimOnPTO(unsigned limit) {
     unsigned n = 0;
-    auto iter = m_packets.iter();
-    while (n < limit)
-      if (auto node = iter()) {
+    m_packets.rspans([this, limit, &n](const Span &span) {
+      uint64_t pn = span.key() + span.length();
+      while (n < limit && pn > span.key()) {
+	--pn;
+	auto node = m_packets.find(pn);
+	if (!node) continue;
 	SentPkt &p = node->data();
 	if (p.acked || p.lost || !p.inFlight || !p.ackEliciting)
 	  continue;
 	Tx::resend(Span{p.pn, 1});
 	Tx::resend();
 	++n;
-      } else
-	break;
+      }
+      return n < limit;
+    });
     return n;
   }
   unsigned count() const { return m_packets.count_(); }

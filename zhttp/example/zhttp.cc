@@ -39,6 +39,7 @@ struct Options {
  ZuCSpan	url;
  int8_t		http3 = Http3Mode::prefer;
  bool		verbose = false;
+ bool		debug = false;
  bool		help = false;
 };
 
@@ -51,6 +52,7 @@ ZtStruct((Options, CLI),
 		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
 								 Http3Mode::prefer)),
   (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool)),
+  (((debug),     (CLI::Long<"debug">)),                      (Bool)),
   (((url),       (CLI::Arg<1>)),                             (String)),
   (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool)));
 
@@ -67,6 +69,7 @@ void usage(int code = 1)
     "  -3, --http3=MODE   HTTP/3 mode for https: force, prefer, disable;\n"
     "                      default prefer\n"
     "  -v, --verbose       show DNS and Alt-Svc probing\n"
+    "  --debug             enable ZiMultiplex and HTTP/3 debug logging\n"
     "  -h, --help          show help\n\n"
     "For N > 1, response bodies are written to PATH.0, PATH.1, ...\n" <<
     std::flush;
@@ -515,6 +518,13 @@ template <typename StreamRef>
 void sendH3Request(State &state, StreamRef stream)
 {
   auto tx = stream->txStream();
+  ZiLOG(Debug, "zhttp.h3", ([
+    reqID = state.id, requests = state.requests,
+    target = state.url.target, id = stream->id()
+  ](auto &s) mutable {
+    if (requests > 1) s << "req=" << reqID << ' ';
+    s << "send request stream=" << id << " target=" << target;
+  }));
   using H3Cxn = ZuDecay<decltype(stream->link()->h3)>;
   H3RequestBuilder<H3Cxn> builder{
     state, stream->link()->h3, uint64_t(stream->id())};
@@ -1204,10 +1214,22 @@ void QUICClient::openH3Streams(Link *link_)
 	  scheduled >= run->options.requests)
 	return;
       req = &run->reqs[scheduled++];
+      ZiLOG(Debug, "zhttp.h3", ([
+	req, scheduled = scheduled, active = active,
+	concurrency = run->options.concurrency
+      ](auto &s) {
+	reqLogPrefix(*req, s);
+	s << "schedule h3 request scheduled=" << scheduled <<
+	  " active=" << active << " concurrency=" << concurrency;
+      }));
     }
     resetAttempt(*req, true);
     auto stream = link_->stream(Zi::StreamType::Duplex);
     if (!stream) {
+      ZiLOG(Debug, "zhttp.h3", ([req](auto &s) {
+	reqLogPrefix(*req, s);
+	s << "no stream credit, queue request";
+      }));
       queueH3Req(req);
       return;
     }
@@ -1231,6 +1253,10 @@ bool QUICClient::activateH3Req(Req *req)
 void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
 {
   if (!link_ || !stream || !req) {
+    ZiLOG(Debug, "zhttp.h3", ([req](auto &s) {
+      if (req) reqLogPrefix(*req, s);
+      s << "send h3 request failed before send";
+    }));
     finishH3Req(link_, req, false);
     return;
   }
@@ -1248,6 +1274,10 @@ void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
   stream->req = req;
   stream->parser.bind(link_, req);
   stream->parser.reset();
+  ZiLOG(Debug, "zhttp.h3", ([req, id = stream->id()](auto &s) {
+    reqLogPrefix(*req, s);
+    s << "activate stream=" << id;
+  }));
   sendH3Request(*req, stream);
 }
 
@@ -1256,6 +1286,10 @@ void QUICClient::queueH3Req(Req *req)
   if (!req) return;
   ZmGuard<ZmLock> guard(lock);
   pending.push(req);
+  ZiLOG(Debug, "zhttp.h3", ([req, n = pending.length() - pendingHead](auto &s) {
+    reqLogPrefix(*req, s);
+    s << "queued pending=" << n;
+  }));
 }
 
 Req *QUICClient::popH3Req()
@@ -1281,6 +1315,10 @@ void QUICClient::bindH3Stream(Link *link_, ZmRef<Stream> stream)
   Req *req = popH3Req();
   if (!req) return;
   if (!activateH3Req(req)) return;
+  ZiLOG(Debug, "zhttp.h3", ([req, id = stream->id()](auto &s) {
+    reqLogPrefix(*req, s);
+    s << "bind returned stream=" << id;
+  }));
   sendH3Req(link_, ZuMv(stream), req);
 }
 
@@ -1328,6 +1366,15 @@ void QUICClient::finishH3Req(Link *link_, Req *req, bool ok)
     ++complete;
     if (!ok) ++failed;
     done = !run || complete >= run->options.requests;
+    ZiLOG(Debug, "zhttp.h3", ([
+      req, ok, active = active, complete = complete,
+      failed = failed, done
+    ](auto &s) {
+      if (req) reqLogPrefix(*req, s);
+      s << "finish h3 request ok=" << ok <<
+	" active=" << active << " complete=" << complete <<
+	" failed=" << failed << " done=" << done;
+    }));
   }
   if (done)
     sem.post();
@@ -1339,10 +1386,19 @@ void QUICClient::failH3Link()
 {
   ZmGuard<ZmLock> guard(lock);
   if (!run) {
+    ZiLOG(Debug, "zhttp.h3", "fail single h3 link");
     state.failed = true;
     done();
     return;
   }
+  ZiLOG(Debug, "zhttp.h3", ([
+    complete = complete, failed = failed, active = active,
+    scheduled = scheduled
+  ](auto &s) {
+    s << "fail h3 link scheduled=" << scheduled <<
+      " active=" << active << " complete=" << complete <<
+      " failed=" << failed;
+  }));
   for (unsigned i = 0; i < run->options.requests; ++i) {
     auto &req = run->reqs[i];
     if (req.done) continue;
@@ -1517,9 +1573,9 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
   return run.failed ? 1 : 0;
 }
 
-ZiMxParams mxParams()
+ZiMxParams mxParams(bool debug = false)
 {
-  return ZiMxParams()
+  auto params = ZiMxParams()
     .scheduler([](auto &s) {
       s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
@@ -1527,6 +1583,12 @@ ZiMxParams mxParams()
       .thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); }); })
     .rxThread(1).txThread(2);
+#ifdef ZiMultiplex_DEBUG
+  if (debug) params.debug(true);
+#else
+  (void)debug;
+#endif
+  return params;
 }
 
 bool resolveH3(const URL &url, ZiResolver::H3Policy policy)
@@ -1733,11 +1795,12 @@ int main(int argc, char **argv)
   }
 
   ZiLog::init("zhttp");
-  ZiLog::level(options.verbose ? Ze::Info : Ze::Warning);
+  ZiLog::level(options.debug ? Ze::Debug :
+    (options.verbose ? Ze::Info : Ze::Warning));
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZiMultiplex mx(mxParams());
+  ZiMultiplex mx(mxParams(options.debug));
   if (!mx.start()) {
     ZiLOG(Error, "zhttp", "ZiMultiplex start failed");
     return 1;
