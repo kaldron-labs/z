@@ -7,8 +7,8 @@
 // hex dump
 //
 // ZuBSpan b{ptr, length};
-// std::cout << ZtHexDump_{b} << std::flush;		// b not copied
-// std::cout << ZtHexDump{"b", b} << std::flush;	// b is copied
+// std::cout << ZtHexDump_(b) << std::flush;		// b not copied
+// std::cout << ZtHexDump("b", b) << std::flush;	// b is copied
 //
 // ZtHexDump_ is a low-level hex dumper by reference that does NOT copy
 // prefix or data
