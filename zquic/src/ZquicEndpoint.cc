@@ -261,7 +261,13 @@ void Endpoint::closeUDP_(ZmSemaphore *stopped)
     auto waiter = m_closeWaiter;
     m_closeWaiter = nullptr;
     clearFns_();
+    m_mx = nullptr;
     waiter->post();
+    return;
+  }
+  if (!m_closingCxn) {
+    clearFns_();
+    m_mx = nullptr;
   }
 }
 
@@ -313,7 +319,10 @@ void Endpoint::disconnected_(Cxn_ *cxn)
     if (m_closeWaiter) {
       auto waiter = m_closeWaiter;
       m_closeWaiter = nullptr;
+      m_mx = nullptr;
       waiter->post();
+    } else {
+      m_mx = nullptr;
     }
   }
 }

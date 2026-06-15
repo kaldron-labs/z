@@ -2130,6 +2130,7 @@ protected:
   void resetRuntimeDiag_() { m_rxDiag = {}; m_txDiag = {}; }
   void resetRuntime_() {
     drainStreamsRx_();
+    cancelPTO();
     resetLinkState_();
     m_established = 0;
     m_handshakeStarted = 0;
