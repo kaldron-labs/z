@@ -138,6 +138,10 @@ These guidelines extend `AGENTS.md`
       - below `zi`, use `ZmAssert`
       - in `zi` or above, use `ZiAssert`
         - always use `ZiAssert` for run-time assertions that need graceful failure handling
+- linker symbol length control for complex template aliases
+  - use `ZuDerive(x, ([complex template instantiation]))` in place of
+    `using X = [complex template instantiation]`; this introduces a new
+    explicit type ID, which helps the compiler
 - `ZuSpan` `*Array` and `*String` interoperate smoothly without explicit casting:
   - do not unnecessarily cast them - for example, `ZuCSpan` and `ZuBSpan` silently convert
 - `ZuTypeList` and `ZuSeq` encode tables, associative containers and sequences at compile-time 
