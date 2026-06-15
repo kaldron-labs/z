@@ -236,6 +236,51 @@ void testIterators()
   }
 
   {
+    auto i = q.rciter();
+    uint32_t keys[3]{};
+    uint64_t lengths[3]{};
+    unsigned n = 0;
+    while (auto node = i()) {
+      ZuCheck(n < 3);
+      keys[n] = node->data().key();
+      lengths[n] = node->data().length();
+      ++n;
+    }
+    ZuCheck(n == 3 &&
+      keys[0] == 5 && lengths[0] == 1 &&
+      keys[1] == 2 && lengths[1] == 2 &&
+      keys[2] == 0 && lengths[2] == 1);
+  }
+
+  {
+    auto i = q.rciter(4);
+    auto node = i();
+    ZuCheck(node && node->data().key() == 2 &&
+      node->data().length() == 2);
+    node = i();
+    ZuCheck(node && node->data().key() == 0);
+    ZuCheck(!i());
+  }
+
+  {
+    auto i = q.rciter(6);
+    auto node = i();
+    ZuCheck(node && node->data().key() == 5);
+    node = i();
+    ZuCheck(node && node->data().key() == 2);
+    node = i();
+    ZuCheck(node && node->data().key() == 0);
+    ZuCheck(!i());
+  }
+
+  {
+    auto i = q.rciter(0);
+    auto node = i();
+    ZuCheck(node && node->data().key() == 0);
+    ZuCheck(!i());
+  }
+
+  {
     auto i = q.iter(2);
     auto node = i();
     ZuCheck(node && node->data().key() == 2);
@@ -247,7 +292,20 @@ void testIterators()
     ZuCheck(!i());
   }
 
-  ZuCheck(q.count_() == 2 && q.length_() == 2 && !q.find(2));
+  {
+    auto i = q.riter();
+    auto node = i();
+    ZuCheck(node && node->data().key() == 5);
+    auto removed = i.del();
+    ZuCheck(removed && removed->data().key() == 5 &&
+      removed->data().length() == 1);
+    node = i();
+    ZuCheck(node && node->data().key() == 0);
+    ZuCheck(!i());
+  }
+
+  ZuCheck(q.count_() == 1 && q.length_() == 1 &&
+    !q.find(2) && !q.find(5));
   ZuCheck(q.verify());
 }
 
