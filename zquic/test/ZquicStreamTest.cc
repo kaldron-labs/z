@@ -52,7 +52,7 @@ struct TestLink :
       Zquic::FrameType::StreamsBlocked, 0, value, type);
   }
   bool flushControlSendFails() {
-    return Base::flushControlAndStreamsLocked_(
+    return Base::flushControlAndStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
       [](Zquic::PktBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
@@ -60,7 +60,7 @@ struct TestLink :
       });
   }
   bool flushControlSends() {
-    return Base::flushControlAndStreamsLocked_(
+    return Base::flushControlAndStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
       [](Zquic::PktBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {

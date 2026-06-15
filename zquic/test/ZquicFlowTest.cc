@@ -14,6 +14,7 @@ using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
+struct FlowApp : public Zquic::Engine<FlowApp> { };
 struct FlowLink;
 struct FlowStream :
   public Zquic::Stream<FlowLink, FlowStream, StreamTxBufAlloc>
@@ -22,6 +23,12 @@ struct FlowStream :
   FlowStream(int64_t id) : Base{nullptr, id} { }
   using Base::Base;
   int process(Zquic::RxStream &) { return 0; }
+};
+struct FlowLink :
+  public Zquic::Link<FlowApp, FlowLink, StreamTxBufAlloc, FlowStream>
+{
+  using Base = Zquic::Link<FlowApp, FlowLink, StreamTxBufAlloc, FlowStream>;
+  using Base::Base;
 };
 
 static ZmRef<ZiIOBuf> streamPkt_(

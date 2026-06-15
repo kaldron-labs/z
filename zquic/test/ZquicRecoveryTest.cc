@@ -238,22 +238,23 @@ void testPTOReclaimUsesRetransmitQueue()
 
   Zquic::PktTxSpace tx;
   ZuCHECK(tx.add(txPkt_(7, 1200)) &&
-      tx.bytesInFlight() == 1200,
+      tx.add(txPkt_(8, 1200)) &&
+      tx.bytesInFlight() == 2400,
     "PTO packet setup failed");
   ZuCHECK(tx.reclaimOnPTO(1) == 1 &&
       !tx.lost() &&
       !tx.acked() &&
-      tx.bytesInFlight() == 1200 &&
+      tx.bytesInFlight() == 2400 &&
       tx.retransmitPending() == 1,
     "PTO reclaim did not enqueue through retransmit queue");
 
   Zquic::SentFrameRef ref;
   ZuCHECK(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
-      ref.offset == 70 &&
-      ref.length == 8 &&
+      ref.offset == 80 &&
+      ref.length == 9 &&
       !tx.nextRetransmit(ref),
-    "PTO retransmit queue contents mismatch");
+    "PTO retransmit fallback did not choose newest outstanding packet");
 }
 
 void testAckCanLeaveOnlyRetransmitsPending()
