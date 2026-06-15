@@ -1,0 +1,10 @@
+# Clang sanitizer special case list for Z debug sanitizer builds.
+#
+# z.config includes this file for -D builds with:
+#   -fsanitize-ignorelist=$PWD/.clang-sanitize-ignorelist
+#
+# Keep entries narrowly scoped. This file is for intentional Z idioms that
+# compiler instrumentation cannot model correctly, not for suppressing real
+# ownership, lifetime, bounds, or allocator bugs.
+
+[address]
