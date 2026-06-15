@@ -437,7 +437,7 @@ void ZiCSVSink::init()
 
   ageFile(m_path, m_age);
 
-  new (m_writer.new_<Writer>()) Writer(m_path);
+  new (m_writer.new_<Writer>()) Writer(m_path, ZiCSV::Create);
 }
 
 ZiCSVSink::~ZiCSVSink() { }
@@ -454,7 +454,7 @@ void ZiCSVSink::age()
 {
   m_writer.new_<void>();
   ageFile(m_path, m_age);
-  new (m_writer.new_<Writer>()) Writer(m_path);
+  new (m_writer.new_<Writer>()) Writer(m_path, ZiCSV::Create);
 }
 
 void ZiDebugSink::init()
