@@ -9,6 +9,11 @@ These guidelines extend `AGENTS.md`
   - propagate breaking API changes to dependent code
   - do not use shims, forwarders or other such techniques for legacy compatibility purposes
 
+## Target systems
+- compilers: current gcc, clang
+- CPU: x64 intel/amd, ARM
+- OS: linux, windows
+
 ## Build system
 - use the `configure` wrapper named `z.config` to reconfigure the build
   - usage: `z.config -h`
@@ -16,7 +21,7 @@ These guidelines extend `AGENTS.md`
   - use `PKG_CHECK_MODULES` if the dependency is in pkg-config, falling back to dependency-specific `m4` if not
 
 ## Use of C++ language
-- use gnu++2b, but without concepts
+- gnu++2b, but without concepts
 - use SFINAE
 - use `typename = void` and `decltype(CODE, void())` specializations to test for CODE correctness
 - use CRTP in preference to virtual polymorphism
@@ -281,10 +286,17 @@ These guidelines extend `AGENTS.md`
   - no imprecise or primitive use of the English language designed to make it more accessible to non-native/non-technical/non-veteran readers
   - accessibility of language or naming is a hard non-goal
 
-## No Immutability Dogma
-- mutability is encouraged if it benefits performance
-  - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
-  - example: in-place decoding of strings in JSON parsing
+## No Dogma
+- immutability
+  - pervasive immutability is a non-goal
+  - mutability is encouraged if it benefits performance
+    - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
+    - example: in-place decoding of strings in JSON parsing
+- type punning
+  - type punning is endorsed, not discouraged
+- undefined behavior
+  - many things that are technically UB can actually be used reliably with the systems that Z targets (see "Target systems")
+  - UB is only a concern when it actually creates a tangible risk to correct behavior in targeted environments
 
 ## Debugging
 - use `libtool exec` to run test programs under debugging tools within the source tree
