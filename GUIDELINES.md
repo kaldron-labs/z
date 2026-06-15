@@ -9,7 +9,7 @@ These guidelines extend `AGENTS.md`
   - propagate breaking API changes to dependent code
   - do not use shims, forwarders or other such techniques for legacy compatibility purposes
 
-## No Dogma
+## No dogma
 - immutability
   - pervasive immutability is a non-goal
   - mutability is encouraged if it benefits performance
@@ -33,41 +33,42 @@ These guidelines extend `AGENTS.md`
   - use `PKG_CHECK_MODULES` if the dependency is in pkg-config, falling back to dependency-specific `m4` if not
 
 ## Use of C++ language
-- gnu++2b, but without concepts
-- use SFINAE
-- use `typename = void` and `decltype(CODE, void())` specializations to test for CODE correctness
-- use CRTP in preference to virtual polymorphism
-  - for optional CRTP callbacks, prefer providing base defaults and callers using `impl()->callback(...)` directly over `if constexpr (Has... ) impl()->callback(...)` wrappers
-    - keep defaults side-effect-safe in the base (e.g. `return true`, `return nullptr`, no-op)
-    - use `if constexpr` traits only when behavior is not expressible as a safe base default
-- use friend functions and ADL to "tag" types
-  - example: `friend ZuStructPrint ZuPrintType(DB *)`
-    - `decltype(ZuPrintType(...))` is used by `ZuPrint` to determine how to print a type
-  - example: `ZuFields_(O *, Facet *)` is used by `ZuStruct` to determine the fields of a type
-- "DRY" - don't repeat yourself
-  - use templates and CRTP to factor out common code
-- idiomatic, natural and maximally expressive code
-  - prefer brevity, expressiveness and often-used idiomatic expressions to readability
-  - do not disdain "Hacker's Delight" style
-- expert coding style
-  - code for veteran engineers who are expert in the language and steeped in its conventions
-  - use idiomatic, natural and maximally expressive code:
-  - prefer brevity, expressiveness and often-used idiomatic expressions of the programming language to readability
-- use C++ advanced techniques, but where C and C++ have the same feature, use the C feature
-  - example: `#include <string.h>`, not `<cstring>`
-  - except where C99 conflicts, then use gnu++2b C++
-- target gcc and clang with `int128_t` and `uint128_t`
-  - use `__GNUC__`
-  - use intrinsics
-- target Windows (msys2/mingw 64bit) and Linux
-  - use `_WIN32`
+### Language level
+- Compile as GNU C++2b, but do not use C++ concepts or `requires`.
+- Use advanced C++ where it is expressive and efficient; where C and C++ offer the same facility, prefer the C form.
+  - Example: `#include <string.h>`, not `<cstring>`.
+  - Where C99 conflicts, use the GNU C++2b form.
+
+### Static polymorphism and constraints
+- Prefer CRTP, templates, and compile-time dispatch over virtual polymorphism.
+- Use templates and CRTP to factor common code; keep logic DRY without adding weak abstractions.
+- Express constraints with SFINAE and detector traits.
+  - Prefer `typename = void` plus `decltype(CODE, void())` specializations to test whether `CODE` is well-formed.
+  - Do not replace established `ZuIfT`/detector idioms with concepts.
+- For optional CRTP callbacks, prefer side-effect-safe base defaults and direct calls such as `impl()->callback(...)`.
+  - Defaults should be harmless: `return true`, `return nullptr`, or no-op.
+  - Use `if constexpr` traits only when a safe base default cannot express the behavior.
+
+### ADL tagging
+- Use friend functions and ADL to tag types and expose compile-time metadata.
+  - Example: `friend ZuStructPrint ZuPrintType(DB *)`; `decltype(ZuPrintType(...))` lets `ZuPrint` choose formatting.
+  - Example: `ZuFields_(O *, Facet *)` lets `ZuStruct` discover fields.
+
+### Style
+- Write idiomatic, natural, maximally expressive code for veteran C++ engineers.
+- Prefer brevity, common expert idioms, and precise structure over beginner-oriented readability.
+- Do not disdain "Hacker's Delight" style when it is clear, correct, and faster.
+
+### Portability and compiler features
+- Target gcc and clang; use `__GNUC__`, intrinsics, `int128_t`, and `uint128_t` where appropriate.
+- Target Linux and Windows via msys2/mingw 64-bit; use `_WIN32` for Windows-specific paths.
 
 ## Use of STL and other dependencies
 - minimize use of STL
 - use `Zu` alternatives to STL: example: `ZuIfT` instead of `enable_if`
 - maximally leverage `Zu*`, `Zm*`, `Zt*` and `Zi*`
 
-## Amber Flags
+## Amber flags
 - fixed-size arrays
   - if accompanied by explicitly and separately maintained lengths, these should almost certainly be replaced by `ZuArray`/`ZtArray`/`ZtString`/`ZtLocalArray` etc.
   - if lookup tables, `ZmHash`/`ZmLHash` are probably more appropriate, with appopriate locking, hash IDs, etc. to permit run-time sizing/tuning
