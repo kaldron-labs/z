@@ -316,7 +316,7 @@ public:
   using AddResult = ZuTuple<ZmPQResult::T, NodeRef>;
 
 private:
-  template <typename I> class Iter_ {
+  template <typename I, bool Reverse_> class Iter_ {
     Iter_(const Iter_ &) = delete;
     Iter_ &operator =(const Iter_ &) = delete;
 
@@ -324,17 +324,29 @@ private:
   friend Queue;
 
   protected:
+    enum { Reverse = Reverse_ };
+
     Iter_(Iter_ &&) = default;
     Iter_ &operator =(Iter_ &&) = delete;
 
     Iter_(Queue &queue) : m_queue{queue} { }
 
   public:
-    void reset() { m_queue.iterReset(static_cast<I &>(*this)); }
-    void reset(Key key) { m_queue.iterReset(static_cast<I &>(*this), key); }
+    void reset() {
+      if constexpr (Reverse)
+	m_queue.riterReset(static_cast<I &>(*this));
+      else
+	m_queue.iterReset(static_cast<I &>(*this));
+    }
+    void reset(Key key) {
+      if constexpr (Reverse)
+	m_queue.riterReset(static_cast<I &>(*this), key);
+      else
+	m_queue.iterReset(static_cast<I &>(*this), key);
+    }
 
     Node *operator ()() {
-      return m_queue.iterate(static_cast<I &>(*this));
+      return m_queue.template iterate<Reverse>(static_cast<I &>(*this));
     }
 
     unsigned count() const { return m_queue.count_(); }
@@ -346,13 +358,13 @@ private:
   };
 
 public:
-  class Iter : private Guard, public Iter_<Iter> {
+  class Iter : private Guard, public Iter_<Iter, false> {
     Iter(const Iter &) = delete;
     Iter &operator =(const Iter &) = delete;
 
     using Queue = ZmPQueue<Item, NTP>;
   friend Queue;
-    using Base = Iter_<Iter>;
+    using Base = Iter_<Iter, false>;
 
   public:
     Iter(Iter &&) = default;
@@ -368,13 +380,35 @@ public:
     NodeMvRef del() { return this->m_queue.iterDel(*this); }
   };
 
-  class CIter : private ReadGuard, public Iter_<CIter> {
+  class RIter : private Guard, public Iter_<RIter, true> {
+    RIter(const RIter &) = delete;
+    RIter &operator =(const RIter &) = delete;
+
+    using Queue = ZmPQueue<Item, NTP>;
+  friend Queue;
+    using Base = Iter_<RIter, true>;
+
+  public:
+    RIter(RIter &&) = default;
+    RIter &operator =(RIter &&) = delete;
+
+    RIter(Queue &queue) : Guard{queue.m_lock}, Base{queue} {
+      queue.riterReset(*this);
+    }
+    RIter(Queue &queue, Key key) : Guard{queue.m_lock}, Base{queue} {
+      queue.riterReset(*this, key);
+    }
+
+    NodeMvRef del() { return this->m_queue.riterDel(*this); }
+  };
+
+  class CIter : private ReadGuard, public Iter_<CIter, false> {
     CIter(const CIter &) = delete;
     CIter &operator =(const CIter &) = delete;
 
     using Queue = ZmPQueue<Item, NTP>;
   friend Queue;
-    using Base = Iter_<CIter>;
+    using Base = Iter_<CIter, false>;
 
   public:
     CIter(CIter &&) = default;
@@ -387,6 +421,28 @@ public:
     CIter(const Queue &queue, Key key) :
       ReadGuard{queue.m_lock}, Base{const_cast<Queue &>(queue)} {
       const_cast<Queue &>(queue).iterReset(*this, key);
+    }
+  };
+
+  class RCIter : private ReadGuard, public Iter_<RCIter, true> {
+    RCIter(const RCIter &) = delete;
+    RCIter &operator =(const RCIter &) = delete;
+
+    using Queue = ZmPQueue<Item, NTP>;
+  friend Queue;
+    using Base = Iter_<RCIter, true>;
+
+  public:
+    RCIter(RCIter &&) = default;
+    RCIter &operator =(RCIter &&) = delete;
+
+    RCIter(const Queue &queue) :
+      ReadGuard{queue.m_lock}, Base{const_cast<Queue &>(queue)} {
+      const_cast<Queue &>(queue).riterReset(*this);
+    }
+    RCIter(const Queue &queue, Key key) :
+      ReadGuard{queue.m_lock}, Base{const_cast<Queue &>(queue)} {
+      const_cast<Queue &>(queue).riterReset(*this, key);
     }
   };
 
@@ -1231,8 +1287,12 @@ public:
 
   auto iter() { return Iter{*this}; }
   auto iter(Key key) { return Iter{*this, key}; }
+  auto riter() { return RIter{*this}; }
+  auto riter(Key key) { return RIter{*this, key}; }
   auto citer() const { return CIter{*this}; }
   auto citer(Key key) const { return CIter{*this, key}; }
+  auto rciter() const { return RCIter{*this}; }
+  auto rciter(Key key) const { return RCIter{*this, key}; }
 
   template <typename L>
   bool spans(L &&l) const {
@@ -1462,6 +1522,12 @@ private:
   }
 
   template <typename I>
+  void riterReset(I &iter) const {
+    iter.m_node = nullptr;
+    iter.m_end = false;
+  }
+
+  template <typename I>
   void iterReset(I &iter, Key key) const {
     Node *node = nullptr;
     Node *next[Levels];
@@ -1497,11 +1563,38 @@ private:
   }
 
   template <typename I>
+  void riterReset(I &iter, Key key) const {
+    Node *node = nullptr;
+    Node *next[Levels];
+
+    find_(key, next);
+    if (next[0]) {
+      Fn item{next[0]->Node::data()};
+      if (item.key() <= key)
+	node = next[0];
+      else if (Node *prev = next[0]->NodeExt::prev(0))
+	node = prev;
+    } else
+      node = m_tail[0];
+
+    if (node) {
+      iter.m_node = node->NodeExt::next(0);
+      iter.m_end = false;
+    } else {
+      iter.m_node = nullptr;
+      iter.m_end = true;
+    }
+  }
+
+  template <bool Reverse, typename I>
   Node *iterate(I &iter) const {
     if (iter.m_end) return nullptr;
 
     Node *node = iter.m_node;
-    node = node ? node->NodeExt::next(0) : m_head[0];
+    if constexpr (Reverse)
+      node = node ? node->NodeExt::prev(0) : m_tail[0];
+    else
+      node = node ? node->NodeExt::next(0) : m_head[0];
 
     if (!node) {
       iter.m_end = true;
@@ -1547,6 +1640,28 @@ private:
     m_length -= item.length();
     --m_count;
     iter.m_node = prev;
+    iter.m_end = false;
+
+    return ret;
+  }
+
+  template <typename I>
+  NodeMvRef riterDel(I &iter) {
+    if (!m_count || iter.m_end) return nullptr;
+
+    Node *node = iter.m_node;
+
+    if (ZuUnlikely(!node)) return nullptr;
+
+    NodeMvRef ret{node};
+    Node *next = node->NodeExt::next(0);
+    Fn item{node->Node::data()};
+
+    delNode_<0>(node);
+    nodeDeref(node);
+    m_length -= item.length();
+    --m_count;
+    iter.m_node = next;
     iter.m_end = false;
 
     return ret;
