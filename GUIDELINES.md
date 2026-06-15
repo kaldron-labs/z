@@ -13,7 +13,7 @@ These guidelines extend `AGENTS.md`
 - immutability
   - pervasive immutability is a non-goal
   - mutability is encouraged if it benefits performance
-    - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
+    - example: in-place encrypt plaintext, decrypt ciphertext for TLS
     - example: in-place decoding of strings in JSON parsing
 - type punning
   - type punning is endorsed, not discouraged
@@ -112,7 +112,8 @@ These guidelines extend `AGENTS.md`
 - chained `if` statements that should be `switch`
 - highly nested logic
 - repeated code blocks that are near-identical, violating "DRY"
-- historical compatibility code that should be deleted
+- dead code that should be deleted
+  - delete historical compatibility code unless explicitly required
 - unnecessary casts
   - unnecessary casting among char-equivalent pointers
     - most Z framework types convert equivalent primitive element types automatically
@@ -316,7 +317,11 @@ Functions should be organized by owning shard:
   They may read/write Tx-owned members only.
 - Public entry points that may be called from either shard should be thin
   dispatchers that copy/capture only the data needed by the destination shard
-  and immediately `rxRun`/`rxInvoke` or `txRun`/`txInvoke`.
+  and immediately `rxRun`/`rxInvoke` or `txRun`/`txInvoke` to trailing
+  underscored variants that can assume correct thread ownership and
+  assert accordingly in debug mode
+  - the thread-specific variants can be publicly accessible for callers to use
+    when the owning thread can be relied on, to elide the overhead of `*Invoke`
 
 Avoid functions that are "mostly Rx" but opportunistically touch Tx queues, or
 "mostly Tx" but inspect Rx stream state. Split those into two functions with an
