@@ -42,7 +42,7 @@
 #include <zlib/ZquicStream.hh>
 #include <zlib/ZquicSched.hh>
 #include <zlib/ZquicFrame.hh>
-#include <zlib/ZquicTransportParams.hh>
+#include <zlib/ZquicTransport.hh>
 #include <zlib/ZquicCrypto.hh>
 #include <zlib/ZquicEndpoint.hh>
 #include <zlib/ZquicRecovery.hh>

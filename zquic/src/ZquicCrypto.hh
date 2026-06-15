@@ -21,7 +21,7 @@
 
 #include <zlib/ZquicFrame.hh>
 #include <zlib/ZquicPQueue.hh>
-#include <zlib/ZquicTransportParams.hh>
+#include <zlib/ZquicTransport.hh>
 
 namespace Ztls { namespace Backend {
 struct PKey;

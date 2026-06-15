@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZquicTransportParams.hh>
+#include <zlib/ZquicTransport.hh>
 
 namespace Zquic {
 
