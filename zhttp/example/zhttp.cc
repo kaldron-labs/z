@@ -27,13 +27,17 @@
 
 #include <zlib/Zhttp.hh>
 
+namespace Http3Mode {
+  ZtEnum(Http3Mode, int8_t, force, prefer, disable);
+}
+
 struct Options {
  ZuCSpan	ca;
  ZuCSpan	output{"index.html"};
  uint32_t	requests = 1;
  uint32_t	concurrency = 1;
  ZuCSpan	url;
- bool		http3 = false;
+ int8_t		http3 = Http3Mode::prefer;
  bool		verbose = false;
  bool		help = false;
 };
@@ -43,7 +47,9 @@ ZtStruct((Options, CLI),
   (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
   (((requests),  (CLI::Opt<'n'>,  CLI::Long<"requests">)),   (UInt32, 1)),
   (((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),       (UInt32, 1)),
-  (((http3),     (CLI::Flag<1>,   CLI::Long<"http3">)),      (Bool)),
+  (((http3),     (Enum<Http3Mode::Map>,
+		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
+								 Http3Mode::prefer)),
   (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool)),
   (((url),       (CLI::Arg<1>)),                             (String)),
   (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool)));
@@ -58,7 +64,8 @@ void usage(int code = 1)
     "  -n, --requests=N    submit N GET requests, default 1\n"
     "  -j, --jobs=M        run up to M requests concurrently, default 1;\n"
     "                      valid only when N > 1; M must be <= N\n"
-    "      --http3         force HTTP/3 over QUIC for https:\n"
+    "  -3, --http3=MODE   HTTP/3 mode for https: force, prefer, disable;\n"
+    "                      default prefer\n"
     "  -v, --verbose       show DNS and Alt-Svc probing\n"
     "  -h, --help          show help\n\n"
     "For N > 1, response bodies are written to PATH.0, PATH.1, ...\n" <<
@@ -71,6 +78,7 @@ bool validateOptions(const Options &options, int argc)
   if (argc < 0 || argc != 2) return false;
   if (!options.requests || !options.concurrency) return false;
   if (options.concurrency > options.requests) return false;
+  if (options.http3 < 0 || options.http3 >= Http3Mode::N) return false;
   return true;
 }
 
@@ -1674,9 +1682,12 @@ int runReqSerial(ZiMultiplex &mx, Run &run_, Req &req)
     if (req.url.scheme == "http") {
       resetAttempt(req, true);
       rc = run<TCPClient>(mx, options, req, &result);
-    } else if (options.http3)
+    } else if (options.http3 == Http3Mode::force)
       rc = runH3Direct(mx, options, req, result);
-    else
+    else if (options.http3 == Http3Mode::disable) {
+      resetAttempt(req, true);
+      rc = run<TLSClient>(mx, options, req, &result);
+    } else
       rc = runH3DNSAltSvcFallback(mx, run_, req, result);
 
     if (rc || !redirectStatus(result.status) || !result.location) break;
@@ -1745,11 +1756,13 @@ int main(int argc, char **argv)
   }
 
   int rc = 0;
-  if (options.requests > 1 && options.http3 && url.scheme == "https") {
+  if (options.requests > 1 &&
+      options.http3 == Http3Mode::force && url.scheme == "https") {
     rc = runH3Multi(mx, run);
   } else if (options.requests > 1 && url.scheme == "http") {
     rc = runH1Pool<H1TCPClient>(mx, run);
-  } else if (options.requests > 1 && url.scheme == "https") {
+  } else if (options.requests > 1 &&
+      options.http3 == Http3Mode::disable && url.scheme == "https") {
     rc = runH1Pool<H1TLSClient>(mx, run);
   } else {
     for (unsigned i = 0; i < options.requests; ++i) {
