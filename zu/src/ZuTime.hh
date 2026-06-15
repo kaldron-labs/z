@@ -7,6 +7,8 @@
 // nanosecond precision time class
 // - essentially a C++ equivalent of POSIX timespec
 // - used indiscriminately for intervals, relative and absolute times
+// - default construction is sentinel null; use ZuTime{0} for zero
+// - operator * tests for sentinel null; operator bool tests for non-zero
 
 #ifndef ZuTime_HH
 #define ZuTime_HH
