@@ -226,8 +226,7 @@ struct ResponsePlan {
 
 struct MimeMap {
   using String = ZtString<ZtStringHeapID<"Zhttpd.Mime.String">>;
-  using Map = ZmHashKV<String, String,
-    ZmHashHeapID<"Zhttpd.Mime">>;
+  using Map = ZmHashKV<String, String, ZmHashHeapID<"Zhttpd.Mime">>;
   Map			map;
 
   void add(ZuCSpan ext, ZuCSpan mime) {
@@ -273,7 +272,7 @@ struct MimeMap {
       const char *b = p;
       while (p < e && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
 	++p;
-      ZtString<> mime{ZuCSpan{b, unsigned(p - b)}};
+      ZuCSpan mime{b, unsigned(p - b)}};
       while (p < e && *p != '\r' && *p != '\n') {
 	while (p < e && (*p == ' ' || *p == '\t')) ++p;
 	if (p >= e || *p == '\r' || *p == '\n') break;

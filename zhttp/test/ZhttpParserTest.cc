@@ -31,10 +31,7 @@ ZmRef<RxQueue::Node> mkBuf(const char *s)
   unsigned n = static_cast<unsigned>(::strlen(s));
   ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
   auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
-  if (n) {
-    ::memcpy(iobuf->data(), s, n);
-    iobuf->length = n;
-  }
+  if (n) iobuf->append(reinterpret_cast<const uint8_t *>(s), n);
   return buf;
 }
 

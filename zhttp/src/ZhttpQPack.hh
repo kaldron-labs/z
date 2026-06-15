@@ -217,19 +217,25 @@ struct QPackTxEntry {
   uint64_t	refcnt = 0;
   QPackTxString	name;
   QPackTxString	value;
+};
 
-  static QPackFieldKey FieldAxor(const QPackTxEntry &entry) {
-    return {entry.name, entry.value};
+struct QPackTxHashEntry {
+  uint32_t	index = 0;
+  QPackFieldKey	key;
+
+  static QPackFieldKey FieldAxor(const QPackTxHashEntry &entry) {
+    return entry.key;
   }
 };
 
-using QPackTxHash = ZmLHash<QPackTxEntry,
-  ZmLHashKey<QPackTxEntry::FieldAxor,
+using QPackTxHash = ZmLHash<QPackTxHashEntry,
+  ZmLHashKey<QPackTxHashEntry::FieldAxor,
     ZmLHashID<QPackTxHashID>>>;
 
-struct QPackTxOrderEntry {
-  uint64_t	abs = 0;
-  const QPackTxEntry *entry = nullptr;
+struct QPackTxOrderEntry : public QPackTxEntry {
+  static QPackFieldKey FieldAxor(const QPackTxOrderEntry &entry) {
+    return {entry.name, entry.value};
+  }
 };
 
 using QPackTxOrder =
@@ -276,6 +282,7 @@ struct QPackTxTable {
   bool trackSection(uint64_t, ZuSpan<uint64_t>);
   bool trackSection(uint64_t, QPackTxRefs);
   void compactOrder();
+  void rebuildHash();
 
   uint64_t insertCount() const { return insertCount_; }
   uint64_t knownReceivedCount() const { return knownReceivedCount_; }
