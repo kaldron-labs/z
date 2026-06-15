@@ -73,7 +73,7 @@ Client UDP sockets may be connected when the platform exposes useful PMTU
 queries for connected sockets. Server UDP sockets remain unconnected so one
 socket can serve many peers and paths.
 
-`Zquic::Endpoint` is retained only as a private/test UDP helper. Public
+`Zquic::Endpoint` is retained only as a private/test UDP utility. Public
 datagram ownership and endpoint diagnostics live in `ZquicDatagram.hh`; the
 aligned runtime surface is `Cxn`, `CliCxn`, `SrvCxn`, `CliLink`, and `SrvLink`.
 
@@ -94,7 +94,7 @@ platform would force fragmentation for datagrams above the safe minimum.
 Transport diagnostics count packets, bytes, header/body bytes, stream bytes,
 loss, PTO, retransmission, congestion window, bytes in flight, handshake state,
 stream counts, PMTUD probe outcomes, required Rx packet-to-stream copies, and
-buffer-contract violations. Stable formatter helpers expose packet-space,
+buffer-contract violations. Stable formatter utilities expose packet-space,
 frame, stream, recovery, and summary names for tests and logs.
 Retransmit-drop reporting is zero by construction because the current
 retransmit queue has no drop policy.

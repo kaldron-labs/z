@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC recovery helpers
+// Z QUIC recovery utilities
 
 #ifndef ZquicRecovery_HH
 #define ZquicRecovery_HH
