@@ -1939,6 +1939,10 @@ protected:
     unsigned		nRanges = 0;
     AckRange		ranges[Frame::MaxAckRanges];
   };
+  struct TxCryptoSnapshot {
+    TrafficSecret	secrets[3];
+    bool		installed[3] = {};
+  };
   using LocalCIDs =
     ZtArray<LinkCID, ZtArrayHeapID<"Zquic.Link.LocalCID">>;
   using PeerCIDs =
@@ -2028,6 +2032,44 @@ protected:
   bool runtimeHandshakeStarted_() const { return m_handshakeStarted; }
   const RuntimeDiag &runtimeDiag_() const { return m_diag; }
   const Crypto &crypto_() const { return m_crypto; }
+  void snapshotTxCrypto_(TxCryptoSnapshot &snapshot) const {
+    for (unsigned i = 0; i < 3; ++i) {
+      auto level = CryptoLevel::T(i);
+      snapshot.installed[i] = m_crypto.txTrafficSecretInstalled(level);
+      if (snapshot.installed[i])
+	snapshot.secrets[i] = m_crypto.txTrafficSecret(level);
+    }
+  }
+  bool txInstallTrafficSecret_(
+    CryptoLevel::T level, const TrafficSecret &secret) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx traffic secret install outside Tx thread", return false);
+    if (!secret.valid()) return false;
+    m_txTrafficSecrets[level] = secret;
+    if (!m_txProt[level].init(m_txTrafficSecrets[level], level, true)) {
+      m_txTrafficSecrets[level].clear();
+      return false;
+    }
+    return true;
+  }
+  bool installTxCrypto_(const TxCryptoSnapshot &snapshot) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx crypto snapshot install outside Tx thread", return false);
+    for (unsigned i = 0; i < 3; ++i)
+      if (snapshot.installed[i] &&
+	  !txInstallTrafficSecret_(CryptoLevel::T(i), snapshot.secrets[i]))
+	return false;
+    return true;
+  }
+  bool txTrafficSecretInstalled_(CryptoLevel::T level) const {
+    return m_txTrafficSecrets[level].valid();
+  }
+  const TrafficSecret &txTrafficSecret_(CryptoLevel::T level) const {
+    return m_txTrafficSecrets[level];
+  }
+  PktProtState &txProtState_(CryptoLevel::T level) {
+    return m_txProt[level];
+  }
 
   void resetRuntimeDiag_() { m_diag = {}; }
   void resetRuntime_() {
@@ -2332,6 +2374,8 @@ protected:
     if (app() && app()->mx()) app()->mx()->del(&m_ptoTimer);
     for (auto &s : m_txCrypto) s.reset();
     for (auto &s : m_rxCrypto) s.reset();
+    for (auto &s : m_txTrafficSecrets) s.clear();
+    for (auto &p : m_txProt) p.clear();
     memset(m_txPN, 0, sizeof(m_txPN));
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
     for (auto &a : m_rxPkts) a.clear();
@@ -2356,9 +2400,8 @@ protected:
 	      "QUIC peer key update outside Tx thread", return false);
 	    TrafficSecret nextTxSecret;
 	    if (!PktProt::deriveNextTrafficSecret(
-		  nextTxSecret, m_crypto.txTrafficSecret(CryptoLevel::OneRTT)) ||
-		!m_crypto.updateTxTrafficSecret(
-		  CryptoLevel::OneRTT, nextTxSecret))
+		  nextTxSecret, txTrafficSecret_(CryptoLevel::OneRTT)) ||
+		!txInstallTrafficSecret_(CryptoLevel::OneRTT, nextTxSecret))
 	      return false;
 	    m_txKeyPhase = !m_txKeyPhase;
 	    return true;
@@ -2915,7 +2958,7 @@ protected:
 	    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC Handshake packet protection outside Tx thread", return false);
-	    if (!m_crypto.txTrafficSecretInstalled(CryptoLevel::Handshake)) {
+	    if (!txTrafficSecretInstalled_(CryptoLevel::Handshake)) {
 	      ++m_diag.failures;
 	      return false;
 	    }
@@ -2923,7 +2966,7 @@ protected:
     int headerLen = Pkt::writeHandshake(
       buf->data_(), buf->size, runtimeCID_(dcid), runtimeCID_(scid),
       payload.bytes() +
-	m_crypto.txTrafficSecret(CryptoLevel::Handshake).tagLen,
+	txTrafficSecret_(CryptoLevel::Handshake).tagLen,
       pnLength);
     if (headerLen < 0 ||
 	PktNumber::encode(
@@ -2933,7 +2976,7 @@ protected:
     uint64_t pn = m_txPN[CryptoLevel::Handshake];
     int n = PktProt::protectLongV(
       buf->data_(), buf->size,
-      m_crypto.txProtState(CryptoLevel::Handshake), pn,
+      txProtState_(CryptoLevel::Handshake), pn,
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
@@ -2957,7 +3000,7 @@ protected:
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC Short packet protection outside Tx thread", return false);
 	    if (!m_established &&
-		!m_crypto.txTrafficSecretInstalled(CryptoLevel::OneRTT)) {
+		!txTrafficSecretInstalled_(CryptoLevel::OneRTT)) {
 	      ++m_diag.failures;
 	      return false;
 	    }
@@ -2969,12 +3012,12 @@ protected:
     if (m_txKeyPhase) buf->data_()[0] |= 0x04;
     if (!payload.padForProtSample(
 	  unsigned(headerLen) - pnLength, pnLength,
-	  m_crypto.txTrafficSecret(CryptoLevel::OneRTT).tagLen))
+	  txTrafficSecret_(CryptoLevel::OneRTT).tagLen))
       return false;
     uint64_t pn = m_txPN[CryptoLevel::OneRTT];
     int n = PktProt::protectShortV(
       buf->data_(), buf->size,
-      m_crypto.txProtState(CryptoLevel::OneRTT), pn,
+      txProtState_(CryptoLevel::OneRTT), pn,
       byteSpan(buf->data_(), unsigned(headerLen)),
       payload.data(), payload.count(),
       unsigned(headerLen) - pnLength, pnLength);
@@ -3634,6 +3677,8 @@ private:
   // Tx-owned runtime state. This group must only be accessed on the QUIC Tx
   // thread; Rx-side control prepares data and dispatches Tx work.
   CryptoStream		m_txCrypto[3];
+  TrafficSecret		m_txTrafficSecrets[3];
+  PktProtState		m_txProt[3];
   uint64_t		m_txPN[3]{};
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
@@ -3918,6 +3963,8 @@ private:
   bool sendCryptoFlights_(
     const uint8_t *data, unsigned len, const size_t offsets[5],
     ZiSockAddr addr) {
+    typename Base::TxCryptoSnapshot txCrypto;
+    Base::snapshotTxCrypto_(txCrypto);
     AsyncSendPayload payload;
     payload.length(len);
     if (len) memcpy(payload.data(), data, len);
@@ -3928,12 +3975,14 @@ private:
     size_t offset4 = offsets[4];
     app()->txRun([
       link = ZmMkRef(impl()),
+      txCrypto,
       payload = ZuMv(payload),
       offset0, offset1, offset2, offset3, offset4,
       addr = ZuMv(addr)
     ]() mutable {
       size_t offsets_[5] = {offset0, offset1, offset2, offset3, offset4};
-      link->sendCryptoFlightsTx_(
+      if (!link->installTxCrypto_(txCrypto)) return;
+      (void)link->sendCryptoFlightsTx_(
 	payload.data(), payload.length(), offsets_, ZuMv(addr));
     });
     return true;
@@ -4485,6 +4534,8 @@ private:
   bool sendCryptoFlights_(
     const uint8_t *data, unsigned len, const size_t offsets[5],
     ZiSockAddr addr) {
+    typename Base::TxCryptoSnapshot txCrypto;
+    Base::snapshotTxCrypto_(txCrypto);
     AsyncSendPayload payload;
     payload.length(len);
     if (len) memcpy(payload.data(), data, len);
@@ -4495,12 +4546,14 @@ private:
     size_t offset4 = offsets[4];
     app()->txRun([
       link = ZmMkRef(impl()),
+      txCrypto,
       payload = ZuMv(payload),
       offset0, offset1, offset2, offset3, offset4,
       addr = ZuMv(addr)
     ]() mutable {
       size_t offsets_[5] = {offset0, offset1, offset2, offset3, offset4};
-      link->sendCryptoFlightsTx_(
+      if (!link->installTxCrypto_(txCrypto)) return;
+      (void)link->sendCryptoFlightsTx_(
 	payload.data(), payload.length(), offsets_, ZuMv(addr));
     });
     return true;
