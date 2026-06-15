@@ -584,24 +584,73 @@ void testPrerequisites()
     ZuCheckRT(haveCurlH3());
 }
 
+bool prerequisitesOK()
+{
+  if (!anySelected()) return false;
+  if (selectedNeedsCaddy() && !haveCaddy()) return false;
+  if (selectedNeedsCurlH3() && !haveCurlH3()) return false;
+  return true;
+}
+
 } // namespace
 
-#define ZHTTP_INTEROP_CASE(pair, proto, j, n) \
+#define ZHTTP_INTEROP_CASE(pair_, proto_, j, n) \
   do { \
-    Case c{Pair::pair, Proto::proto, j, n}; \
+    Case c{Pair::pair_, Proto::proto_, j, n}; \
     if (selected(c)) \
-      ZuTestCallRT_(#pair "/" #proto "/j" #j "n" #n, runCase, c); \
+      ZuTestCallRT_(#pair_ "/" #proto_ "/j" #j "n" #n, runCase, c); \
   } while (0)
 
-#define ZHTTP_INTEROP_WORKLOADS(pair, proto) \
-  ZHTTP_INTEROP_CASE(pair, proto, 1, 1); \
-  ZHTTP_INTEROP_CASE(pair, proto, 1, 1000); \
-  ZHTTP_INTEROP_CASE(pair, proto, 10, 1000)
+#define ZHTTP_INTEROP_WORKLOADS(pair_, proto_) \
+  ZHTTP_INTEROP_CASE(pair_, proto_, 1, 1); \
+  ZHTTP_INTEROP_CASE(pair_, proto_, 1, 1000); \
+  ZHTTP_INTEROP_CASE(pair_, proto_, 10, 1000)
 
-#define ZHTTP_INTEROP_PROTOCOLS(pair) \
-  ZHTTP_INTEROP_WORKLOADS(pair, H1TCP); \
-  ZHTTP_INTEROP_WORKLOADS(pair, H1TLS); \
-  ZHTTP_INTEROP_WORKLOADS(pair, H3)
+#define ZHTTP_INTEROP_PROTOCOLS(pair_) \
+  ZHTTP_INTEROP_WORKLOADS(pair_, H1TCP); \
+  ZHTTP_INTEROP_WORKLOADS(pair_, H1TLS); \
+  ZHTTP_INTEROP_WORKLOADS(pair_, H3)
+
+#define ZHTTP_INTEROP_COUNT(pair_, proto_, j, n) \
+  do { \
+    Case c{Pair::pair_, Proto::proto_, j, n}; \
+    if (selected(c)) ++nTests; \
+  } while (0)
+
+#define ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, proto_) \
+  ZHTTP_INTEROP_COUNT(pair_, proto_, 1, 1); \
+  ZHTTP_INTEROP_COUNT(pair_, proto_, 1, 1000); \
+  ZHTTP_INTEROP_COUNT(pair_, proto_, 10, 1000)
+
+#define ZHTTP_INTEROP_COUNT_PROTOCOLS(pair_) \
+  ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H1TCP); \
+  ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H1TLS); \
+  ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H3)
+
+#define ZHTTP_INTEROP_RUN(pair_, proto_, j, n) \
+  do { \
+    Case c{Pair::pair_, Proto::proto_, j, n}; \
+    if (selected(c)) { \
+      ZtString<> name; \
+      caseName(name, c); \
+      std::cout << "# interop case: " << pairName(c.pair) << ' ' << \
+	protoName(c.proto) << " -j" << c.jobs << " -n" << c.requests << '\n'; \
+      bool ok = prereqOK && runCase_(c); \
+      pass &= ok; \
+      std::cout << (ok ? "ok " : "not ok ") << ++testNo << " - " << \
+	name << '\n'; \
+    } \
+  } while (0)
+
+#define ZHTTP_INTEROP_RUN_WORKLOADS(pair_, proto_) \
+  ZHTTP_INTEROP_RUN(pair_, proto_, 1, 1); \
+  ZHTTP_INTEROP_RUN(pair_, proto_, 1, 1000); \
+  ZHTTP_INTEROP_RUN(pair_, proto_, 10, 1000)
+
+#define ZHTTP_INTEROP_RUN_PROTOCOLS(pair_) \
+  ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H1TCP); \
+  ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H1TLS); \
+  ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H3)
 
 int main(int argc, char **argv)
 {
@@ -609,9 +658,24 @@ int main(int argc, char **argv)
   if (options.help) usage(0);
   if (argc != 1 || !validOptions()) usage();
   verbose = !options.quiet && !::getenv("HARNESS_ACTIVE");
-  ZuTestMain();
-  ZuTestCall(testPrerequisites);
-  ZHTTP_INTEROP_PROTOCOLS(ZhttpCaddy);
-  ZHTTP_INTEROP_PROTOCOLS(ZhttpZhttpd);
-  ZHTTP_INTEROP_PROTOCOLS(CurlZhttpd);
+
+  unsigned nTests = 1;
+  ZHTTP_INTEROP_COUNT_PROTOCOLS(ZhttpCaddy);
+  ZHTTP_INTEROP_COUNT_PROTOCOLS(ZhttpZhttpd);
+  ZHTTP_INTEROP_COUNT_PROTOCOLS(CurlZhttpd);
+
+  std::cout << "TAP version 14\n1.." << nTests << '\n';
+
+  bool pass = true;
+  unsigned testNo = 1;
+  bool prereqOK = prerequisitesOK();
+  pass &= prereqOK;
+  std::cout << (prereqOK ? "ok " : "not ok ") << testNo <<
+    " - testPrerequisites\n";
+
+  ZHTTP_INTEROP_RUN_PROTOCOLS(ZhttpCaddy);
+  ZHTTP_INTEROP_RUN_PROTOCOLS(ZhttpZhttpd);
+  ZHTTP_INTEROP_RUN_PROTOCOLS(CurlZhttpd);
+
+  return pass ? 0 : 1;
 }

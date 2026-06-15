@@ -375,17 +375,16 @@ void testFieldRepresentationGoldens()
   prefix.base = table.insertCount();
 
   auto decodeOne = [&table](
-    Zhttp::H3::HdrBytes &bytes, Zhttp::H3::Header &h,
-    Zhttp::H3::QPackFieldFlags &flags) {
+    Zhttp::H3::HdrBytes &bytes, ZuCSpan name, ZuCSpan value, auto check) {
     unsigned seen = 0;
+    bool matched = false;
     int n = Zhttp::H3::QPack::decodeFieldSection(
       span(bytes), &table,
       [&](Zhttp::H3::Header h_, Zhttp::H3::QPackFieldFlags flags_) {
-	h = h_;
-	flags = flags_;
+	matched = h_.name == name && h_.value == value && check(flags_);
 	++seen;
       });
-    return n == int(bytes.length()) && seen == 1;
+    return n == int(bytes.length()) && seen == 1 && matched;
   };
   Zhttp::H3::HdrBytes bytes;
   auto reset = [&bytes, &prefix, &table]() -> Zhttp::H3::HdrBytes & {
@@ -395,106 +394,116 @@ void testFieldRepresentationGoldens()
     return bytes;
   };
 
-  Zhttp::H3::Header h;
-  Zhttp::H3::QPackFieldFlags flags;
   uint64_t nameIndex = 0;
   ZuCHECK(Zhttp::H3::QPack::staticNameIndex(":path", nameIndex),
     "static name index setup failed");
 
   auto &staticIndexed = reset();
   staticIndexed.push(0xd1);
-  ZuCHECK(decodeOne(staticIndexed, h, flags) &&
-      h.name == ":method" && h.value == "GET" &&
-      flags.staticRef && !flags.dynamicRef && !flags.postBase &&
-      !flags.neverIndex,
+  ZuCHECK(decodeOne(staticIndexed, ":method", "GET",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.staticRef && !flags.dynamicRef && !flags.postBase &&
+	  !flags.neverIndex;
+      }),
     "static indexed field flags mismatch");
 
   auto &dynamicIndexed = reset();
   dynamicIndexed.push(0x80);
-  ZuCHECK(decodeOne(dynamicIndexed, h, flags) &&
-      h.name == "x-b" && h.value == "two" &&
-      flags.dynamicRef && !flags.staticRef && !flags.postBase,
+  ZuCHECK(decodeOne(dynamicIndexed, "x-b", "two",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.dynamicRef && !flags.staticRef && !flags.postBase;
+      }),
     "dynamic relative indexed field flags mismatch");
 
   prefix.base = 0;
   auto &postBaseIndexed = reset();
   postBaseIndexed.push(0x10);
-  ZuCHECK(decodeOne(postBaseIndexed, h, flags) &&
-      h.name == "x-a" && h.value == "one" &&
-      flags.dynamicRef && flags.postBase,
+  ZuCHECK(decodeOne(postBaseIndexed, "x-a", "one",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.dynamicRef && flags.postBase;
+      }),
     "dynamic post-base indexed field flags mismatch");
 
   prefix.base = table.insertCount();
   auto &staticName = reset();
   staticName.push(uint8_t(0x50 | nameIndex));
   appendString(staticName, 0x00, 7, "/gold");
-  ZuCHECK(decodeOne(staticName, h, flags) &&
-      h.name == ":path" && h.value == "/gold" &&
-      flags.staticRef && !flags.neverIndex,
+  ZuCHECK(decodeOne(staticName, ":path", "/gold",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.staticRef && !flags.neverIndex;
+      }),
     "literal static name reference flags mismatch");
 
   auto &staticNameNever = reset();
   staticNameNever.push(uint8_t(0x70 | nameIndex));
   appendString(staticNameNever, 0x00, 7, "/never");
-  ZuCHECK(decodeOne(staticNameNever, h, flags) &&
-      h.name == ":path" && h.value == "/never" &&
-      flags.staticRef && flags.neverIndex,
+  ZuCHECK(decodeOne(staticNameNever, ":path", "/never",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.staticRef && flags.neverIndex;
+      }),
     "literal static name never-index flags mismatch");
 
   auto &dynamicName = reset();
   dynamicName.push(0x40);
   appendString(dynamicName, 0x00, 7, "dyn");
-  ZuCHECK(decodeOne(dynamicName, h, flags) &&
-      h.name == "x-b" && h.value == "dyn" &&
-      flags.dynamicRef && !flags.neverIndex,
+  ZuCHECK(decodeOne(dynamicName, "x-b", "dyn",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.dynamicRef && !flags.neverIndex;
+      }),
     "literal dynamic name reference flags mismatch");
 
   auto &dynamicNameNever = reset();
   dynamicNameNever.push(0x60);
   appendString(dynamicNameNever, 0x00, 7, "dyn-never");
-  ZuCHECK(decodeOne(dynamicNameNever, h, flags) &&
-      h.name == "x-b" && h.value == "dyn-never" &&
-      flags.dynamicRef && flags.neverIndex,
+  ZuCHECK(decodeOne(dynamicNameNever, "x-b", "dyn-never",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.dynamicRef && flags.neverIndex;
+      }),
     "literal dynamic name never-index flags mismatch");
 
   prefix.base = 0;
   auto &postBaseName = reset();
   postBaseName.push(0x00);
   appendString(postBaseName, 0x00, 7, "post");
-  ZuCHECK(decodeOne(postBaseName, h, flags) &&
-      h.name == "x-a" && h.value == "post" &&
-      flags.dynamicRef && flags.postBase && !flags.neverIndex,
+  ZuCHECK(decodeOne(postBaseName, "x-a", "post",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.dynamicRef && flags.postBase && !flags.neverIndex;
+      }),
     "literal post-base name flags mismatch");
 
   auto &postBaseNameNever = reset();
   postBaseNameNever.push(0x08);
   appendString(postBaseNameNever, 0x00, 7, "post-never");
-  ZuCHECK(decodeOne(postBaseNameNever, h, flags) &&
-      h.name == "x-a" && h.value == "post-never" &&
-      flags.dynamicRef && flags.postBase && flags.neverIndex,
+  ZuCHECK(decodeOne(postBaseNameNever, "x-a", "post-never",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.dynamicRef && flags.postBase && flags.neverIndex;
+      }),
     "literal post-base name never-index flags mismatch");
 
   prefix.base = table.insertCount();
   auto &literalName = reset();
   appendString(literalName, 0x20, 3, "x-lit");
   appendString(literalName, 0x00, 7, "plain");
-  ZuCHECK(decodeOne(literalName, h, flags) &&
-      h.name == "x-lit" && h.value == "plain" &&
-      !flags.staticRef && !flags.dynamicRef && !flags.neverIndex,
+  ZuCHECK(decodeOne(literalName, "x-lit", "plain",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return !flags.staticRef && !flags.dynamicRef && !flags.neverIndex;
+      }),
     "literal name flags mismatch");
 
   auto &literalNameNever = reset();
   appendString(literalNameNever, 0x30, 3, "x-sec");
   appendString(literalNameNever, 0x00, 7, "secret");
-  ZuCHECK(decodeOne(literalNameNever, h, flags) &&
-      h.name == "x-sec" && h.value == "secret" && flags.neverIndex,
+  ZuCHECK(decodeOne(literalNameNever, "x-sec", "secret",
+      [](const Zhttp::H3::QPackFieldFlags &flags) {
+	return flags.neverIndex;
+      }),
     "literal name never-index flags mismatch");
 
   auto &huffman = reset();
   appendHuffmanString(huffman, 0x28, 3, "x-h");
   appendHuffmanString(huffman, 0x80, 7, "zip");
-  ZuCHECK(decodeOne(huffman, h, flags) &&
-      h.name == "x-h" && h.value == "zip",
+  ZuCHECK(decodeOne(huffman, "x-h", "zip",
+      [](const Zhttp::H3::QPackFieldFlags &) { return true; }),
     "Huffman literal name/value decode mismatch");
 }
 
@@ -863,15 +872,13 @@ void testRxTxChurn()
   Zhttp::H3::QPackRxTable rx;
   rx.maxCapacityBytes_ = 96;
   ZuCHECK(rx.setCapacity(96), "rx churn capacity setup failed");
-  ZtArray<Zhttp::H3::QPackRxString> rxNames;
-  ZtArray<Zhttp::H3::QPackRxString> rxValues;
   for (unsigned i = 0; i < 40; ++i) {
     char name[16], value[16];
     snprintf(name, sizeof(name), "x-rx-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
-    new (rxNames.push()) Zhttp::H3::QPackRxString{name};
-    new (rxValues.push()) Zhttp::H3::QPackRxString{value};
-    ZuCHECK(rx.insert({rxNames[i], rxValues[i]}), "rx churn insert failed");
+    const char *name_ = name, *value_ = value;
+    ZuCHECK(rx.insert({ZuCSpan(name_), ZuCSpan(value_)}),
+      "rx churn insert failed");
     ZuCHECK(rx.used() <= rx.capacity(), "rx churn exceeded capacity");
   }
   Zhttp::H3::Header h;
@@ -884,24 +891,25 @@ void testRxTxChurn()
   Zhttp::H3::QPackTxTable tx;
   ZuCHECK(tx.setMaxCapacity(96) && tx.setCapacity(96),
     "tx churn capacity setup failed");
-  ZtArray<Zhttp::H3::QPackTxString> txNames;
-  ZtArray<Zhttp::H3::QPackTxString> txValues;
   for (unsigned i = 0; i < 40; ++i) {
     char name[16], value[16];
     snprintf(name, sizeof(name), "x-tx-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
-    new (txNames.push()) Zhttp::H3::QPackTxString{name};
-    new (txValues.push()) Zhttp::H3::QPackTxString{value};
+    const char *name_ = name, *value_ = value;
     uint64_t abs = 0;
-    ZuCHECK(tx.insert({txNames[i], txValues[i]}, &abs) && abs == i,
+    ZuCHECK(tx.insert({ZuCSpan(name_), ZuCSpan(value_)}, &abs) &&
+	abs == i,
       "tx churn insert failed");
     ZuCHECK(tx.used() <= tx.capacity(), "tx churn exceeded capacity");
   }
-  ZuCHECK(!tx.lookupAbs(0, h) &&
-      tx.lookupAbs(tx.insertCount() - 1, h) &&
-      h.name == txNames[39] && h.value == txValues[39] &&
-      tx.find(txNames[39], txValues[39]),
-    "tx churn lookup failed");
+  ZuCSpan name{"x-tx-39"};
+  ZuCSpan value{"v39"};
+  ZuCHECK(!tx.lookupAbs(0, h), "tx churn failed to evict oldest");
+  ZuCHECK(tx.lookupAbs(tx.insertCount() - 1, h),
+    "tx churn newest lookup failed");
+  ZuCHECK(h.name == name && h.value == value,
+    "tx churn newest value mismatch");
+  ZuCHECK(tx.find(name, value), "tx churn hash lookup failed");
 }
 
 void testTxSectionStress()
