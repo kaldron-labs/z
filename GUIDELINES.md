@@ -9,6 +9,18 @@ These guidelines extend `AGENTS.md`
   - propagate breaking API changes to dependent code
   - do not use shims, forwarders or other such techniques for legacy compatibility purposes
 
+## No Dogma
+- immutability
+  - pervasive immutability is a non-goal
+  - mutability is encouraged if it benefits performance
+    - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
+    - example: in-place decoding of strings in JSON parsing
+- type punning
+  - type punning is endorsed, not discouraged
+- undefined behavior
+  - many things that are technically UB can actually be used reliably with the systems that Z targets (see "Target systems")
+  - UB is only a concern when it actually creates a tangible risk to correct behavior in targeted environments
+
 ## Target systems
 - compilers: current gcc, clang
 - CPU: x64 intel/amd, ARM
@@ -252,6 +264,16 @@ These guidelines extend `AGENTS.md`
     clearer
   - preserve tabular alignment for data members, macro bodies and compact tables
     that already use tabs to line up names, initializers or comments
+  - do not deeply indent lambdas, example with large multiline captures and parameters:
+    ```
+    auto lambda = [
+      ... /* multiline captures */
+    ](
+      ... /* multiline parameters */)
+    {
+      ... /* body */
+    };
+    ```
 - `class` vs `struct`
   - `struct`s must be all-public data members
     - not prefixed with `m_`
@@ -263,6 +285,66 @@ These guidelines extend `AGENTS.md`
 - right-align members with hard TABs
 - `*` and `&` go with the member, not the type
   - `void<TAB>*m_`, not `void *<TAB>m_`
+
+## I/O sharding
+Every data member involved in I/O rx/tx should have one owning shard:
+
+- Rx-owned state is accessed only on the Rx thread.
+- Tx-owned state is accessed only on the Tx thread.
+- A function must not access Rx-owned and Tx-owned data in the same thread
+  context.
+- Cross-shard work is transferred by posting a function to the owning shard,
+  not by locking around the non-owning shard's data.
+
+State that is inescapably shared by both rx and tx should be rx-owned,
+and tx activity should enqueue mutations; locking/atomics may be permitted,
+exceptionally, if the tx side just needs read access without the overhead
+of posting work onto the rx thread just to read then posting back again
+the remainder
+
+`ZmPQRx` is Rx-owned in its entirety. `ZmPQTx` is Tx-owned in its entirety.
+If a class inherits both, as `Zquic::Stream` does, each base subobject still
+keeps its own shard ownership. Rx code may use only the `ZmPQRx` side; Tx code
+may use only the `ZmPQTx` side.
+
+### I/O Function Organization
+Functions should be organized by owning shard:
+
+- Rx-only functions assert or are otherwise guaranteed to run on `rxThread`.
+  They may read/write Rx-owned members only.
+- Tx-only functions assert or are otherwise guaranteed to run on `txThread`.
+  They may read/write Tx-owned members only.
+- Public entry points that may be called from either shard should be thin
+  dispatchers that copy/capture only the data needed by the destination shard
+  and immediately `rxRun`/`rxInvoke` or `txRun`/`txInvoke`.
+
+Avoid functions that are "mostly Rx" but opportunistically touch Tx queues, or
+"mostly Tx" but inspect Rx stream state. Split those into two functions with an
+explicit handoff.
+
+### Cross-Shard Handoffs
+Small fixed-size information may be snapshotted and captured by value when
+posting to another shard. Examples include scalar counters, packet numbers, or
+bounded ACK ranges.
+
+Large or variable-size information should not be captured directly by lambda.
+Write it into a buffer or queue owned by the destination shard, then capture
+only the handle and fixed metadata needed to consume it. For Tx work, this
+usually means writing into a Tx buffer on the Tx side.
+
+Do not use `ZmLock` to make non-owner access acceptable. A lock can protect
+memory, but it does not preserve the sharding model and tends to hide work
+running on the wrong I/O thread.
+
+### Lifetime
+I/O buffers and dependent structures should use raw back-pointers to owning
+link/session/connection/... objects where that is the local pattern.
+The owner is responsible for draining or cancelling dependent structures during
+shutdown before destruction. Do not keep links alive by adding buffer-level reference
+churn unless the ownership model explicitly requires it.
+
+Shutdown remains a multi-phase operation: stop ingress, drain or cancel queued
+dependent work on each owning shard, then release owning objects.
 
 ## Naming
 - names must be concise; no names can exceed 32 bytes (hard upper limit)
@@ -290,18 +372,6 @@ These guidelines extend `AGENTS.md`
 - "utilties" not "helpers", "duplex" not "bidi", etc.
   - no imprecise or primitive use of the English language designed to make it more accessible to non-native/non-technical/non-veteran readers
   - accessibility of language or naming is a hard non-goal
-
-## No Dogma
-- immutability
-  - pervasive immutability is a non-goal
-  - mutability is encouraged if it benefits performance
-    - example: encrypt plaintext, decrypt ciphertext, in-place for TLS
-    - example: in-place decoding of strings in JSON parsing
-- type punning
-  - type punning is endorsed, not discouraged
-- undefined behavior
-  - many things that are technically UB can actually be used reliably with the systems that Z targets (see "Target systems")
-  - UB is only a concern when it actually creates a tangible risk to correct behavior in targeted environments
 
 ## Debugging
 - use `libtool exec` to run test programs under debugging tools within the source tree
