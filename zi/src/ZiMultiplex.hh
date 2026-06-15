@@ -38,6 +38,7 @@
 
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZiIP.hh>
+#include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiIOContext.hh>
 
 #if defined(ZDEBUG) && !defined(ZiMultiplex_DEBUG)
@@ -61,6 +62,14 @@
 #endif
 
 #ifdef ZiMultiplex_DEBUG
+using ZiDebugBuf_ = ZiIOBufAlloc<
+  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, "Zi.DebugBuf">;
+struct ZiDebugBuf : public ZiDebugBuf_ {
+  ZiDebugBuf(const void *ptr, unsigned len) {
+    memcpy(this->ensure(len), ptr, len);
+    this->length = len;
+  }
+};
 #define ZiDEBUG(mx, e) do { if ((mx)->debug()) ZiLOG(Debug, "ZiMultiplex", (e)); } while (0)
 #else
 #define ZiDEBUG(mx, e) (void())

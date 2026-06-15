@@ -1023,7 +1023,11 @@ struct H1PoolClient : public Client_<App> {
   void workerIdle(Link *link, bool reconnect) {
     Req *req = nextReq();
     if (!req) {
-      if (complete >= run->options.requests) sem.post();
+      link->stopping = true;
+      if (link->connectedFlag)
+	link->disconnect();
+      else
+	workerStopped(link);
       return;
     }
     link->assign(req);
