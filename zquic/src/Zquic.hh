@@ -1160,7 +1160,7 @@ friend class SrvLink;
   bool listening() const { return m_endpoint.listening(); }
   bool connected() const { return m_endpoint.connected(); }
   const ZiSockAddr &local() const { return m_endpoint.local(); }
-  const EndpointDiag &endpointDiag() const { return m_endpoint.diag(); }
+  EndpointDiag endpointDiag() const { return m_endpoint.diag(); }
 
   ZiIP localIP() const { return ZiIP{}; }
   uint16_t localPort() const { return 0; }
@@ -3858,8 +3858,8 @@ public:
   }
   const ZiSockAddr &local() const { return m_endpoint.local(); }
   const ZiSockAddr &remote() const { return m_endpoint.remote(); }
-  const EndpointDiag &cxnDiag() const { return m_endpoint.diag(); }
-  const EndpointDiag &endpointDiag() const { return m_endpoint.diag(); }
+  EndpointDiag cxnDiag() const { return m_endpoint.diag(); }
+  EndpointDiag endpointDiag() const { return m_endpoint.diag(); }
   RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
   const Crypto &crypto() const { return Base::crypto_(); }
 

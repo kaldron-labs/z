@@ -78,7 +78,7 @@ private:
 
   bool enqueueTx_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (m_txQueue.count_() >= EndpointTxQueueLimit)
-      ++m_endpoint->m_diag.txBackPressure;
+      ++m_endpoint->m_txDiag.txBackPressure;
     m_txQueue.push(new TxNode{ZuMv(buf), ZuMv(addr)});
     return true;
   }
@@ -329,22 +329,22 @@ void Endpoint::disconnected_(Cxn_ *cxn)
 
 void Endpoint::failed_(bool transient)
 {
-  ++m_diag.failures;
+  ++m_rxDiag.failures;
   if (m_failFn) m_failFn(transient);
   clearFns_();
 }
 
 void Endpoint::received_(Datagram datagram)
 {
-  ++m_diag.datagramsRx;
-  if (datagram.buf) m_diag.bytesRx += datagram.buf->length;
+  ++m_rxDiag.datagramsRx;
+  if (datagram.buf) m_rxDiag.bytesRx += datagram.buf->length;
   if (m_datagramFn) m_datagramFn(ZuMv(datagram));
 }
 
 void Endpoint::sent_(unsigned bytes)
 {
-  ++m_diag.datagramsTx;
-  m_diag.bytesTx += bytes;
+  ++m_txDiag.datagramsTx;
+  m_txDiag.bytesTx += bytes;
 }
 
 void Endpoint::txDrained_()
@@ -354,7 +354,10 @@ void Endpoint::txDrained_()
 
 void Endpoint::ioError_()
 {
-  ++m_diag.failures;
+  if (m_mx && m_mx->invoked(m_mx->txThread()))
+    ++m_txDiag.failures;
+  else
+    ++m_rxDiag.failures;
 }
 
 void Endpoint::clearFns_()
