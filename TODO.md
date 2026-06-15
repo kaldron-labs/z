@@ -1,11 +1,53 @@
 # TODO
 
+## Zhttp hardening
+
+improve the automated `zhttp` interop test suite as follows:
+- client/server combinations:
+  - `zhttp`>`caddy`
+  - `zhttp`>`zhttpd`
+  - `curl`>`zhttpd`
+- workloads:
+  - `-j1 -n1` (smoke test)
+  - `-j1 -n1000` (serial test)
+  - `-j10 -n1000` (concurrent test)
+- protocols:
+  - H1/tcp (`http:` URL)
+  - H1/tls (`https:` URL)
+    - `zhttp`: `--http3=disable`
+    - `curl`: as appropriate
+  - H3/quic (`https:` URL)
+    - `zhttp`: `--http3=force`
+    - `curl`: as appropriate
+- timeout: 20s
+- with this, the interop test suite should run 3x3x3 combinations, i.e. 27 tests
+  - each of the 27 tests should complete within 20s
+- all 27 tests should complete reliably without failures or stalls
+
+## ZiLog standardization
+
+standardize `ZiLog` configuration from command line / environment variables
+
+## devlayer
+
+L-sized work:
+- initial plan
+- vertically slice plan
+- split out slices
+- phase slices independently
+- iterate slices individually
+  - acceptance criteria from each phase to the next, and at end
+- rework slice 2 to align with completion of slice 1, 3 with cumulative 1+2, 4 with cumulative 1+2+3, etc.
+- split out phases from slices
+  - ... then each phase within each slice is a bite-size incremental piece of work with acceptance criteria
+
 ## Zhttp
-- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
-  - see `http_bench.md`
 - add `ZQUIC_LOSS` env var - `N%` to randomly drop N% of QUIC UDP packets
   - read by `zhttp` and `zhttpd` and added as a config to `Zhttp`
 - run benchmark with loss at 5%, 10%, 15%, 20% to check it works
+- audit against `GUIDELINES.md`
+- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
+  - see `plan.new.md`
 
 ## Zrest
 - figure out REST Rx -> ZvIOMsg
