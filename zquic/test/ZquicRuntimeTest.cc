@@ -248,14 +248,6 @@ void testRuntimeEndpointOpen()
   TempDir temp;
   ZuCHECK(temp.init(), "runtime temporary TLS certificate generation failed");
 
-  RuntimeClient uninitialized;
-  ZmRef<RuntimeClient::Link> uninitializedLink =
-    new RuntimeClient::Link{&uninitialized};
-  uninitializedLink->connect(Zquic::Host{"127.0.0.1"}, 4433);
-  ZuCHECK(!uninitializedLink->cxn() &&
-      uninitializedLink->connectFailures == 1,
-    "uninitialized runtime client link opened a UDP socket");
-
   ZiMultiplex mx(
       ZiMxParams()
 	.scheduler([](auto &s) {

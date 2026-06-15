@@ -181,7 +181,7 @@ struct EngineFixture {
   EngineFixture() : mx{mxParams_()} {
     ZiAssert(mx.start(), "Zquic", (),
       "API test multiplexer start failed", return);
-    ZiAssert(app.init(Zquic::EngineParams(&mx, "3", "3").sameThread()),
+    ZiAssert(app.init(Zquic::EngineParams(&mx, "3", "4")),
       "Zquic", (), "API test engine init failed", return);
   }
   ~EngineFixture() {
@@ -192,7 +192,7 @@ struct EngineFixture {
   static ZiMxParams mxParams_() {
     return ZiMxParams()
       .scheduler([](auto &s) {
-	s.nThreads(3);
+	s.nThreads(4);
       })
       .rxThread(1).txThread(2);
   }

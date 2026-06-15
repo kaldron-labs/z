@@ -700,10 +700,6 @@ struct EngineParams {
     m_asyncThread = v;
     return ZuMv(*this);
   }
-  EngineParams &&sameThread(bool v = true) {
-    m_sameThread = v;
-    return ZuMv(*this);
-  }
   EngineParams &&maxData(uint64_t v) { m_maxData = v; return ZuMv(*this); }
   EngineParams &&maxStreamData(uint64_t v) {
     m_maxStreamData = v;
@@ -742,7 +738,6 @@ struct EngineParams {
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
   ZuCSpan asyncThread() const { return m_asyncThread; }
-  bool sameThread() const { return m_sameThread; }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
   uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
@@ -760,7 +755,6 @@ private:
   ParamString	m_certPath;
   ParamString	m_keyPath;
   ParamString	m_asyncThread;
-  bool		m_sameThread = false;
   uint64_t	m_maxData = DefaultMaxData;
   uint64_t	m_maxStreamData = DefaultMaxStreamData;
   uint64_t	m_maxStreamsBidi = DefaultMaxStreamsBidi;
@@ -859,13 +853,6 @@ public:
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
 protected:
-  bool onRxThread_() const {
-    return !m_mx || m_mx->invoked(m_rxThread);
-  }
-  bool onTxThread_() const {
-    return !m_mx || m_mx->invoked(m_txThread);
-  }
-
   void stop_1(ZmSemaphore *stopped) {
     txInvoke([this, stopped]() {
       stop_2(stopped);
@@ -941,7 +928,7 @@ private:
       })));
       return false;
     }
-    if (rxThread == txThread && !params.sameThread()) {
+    if (rxThread == txThread) {
       error_(ZeEXCEPT(Error, "Zquic",
 	"QUIC Rx and Tx threads must differ"));
       return false;
@@ -1130,7 +1117,8 @@ friend class SrvLink;
   }
 
   bool listen() {
-    if (!this->mx()) return false;
+    ZiAssert(this->mx(), "Zquic", (),
+      "QUIC server listen before app initialization", return false);
     close();
     ZiIP localIP = this->app()->localIP();
     uint16_t localPort = this->app()->localPort();
@@ -2758,7 +2746,9 @@ protected:
   }
 
   void schedulePTO() {
-    if (!app() || !app()->mx() || closed()) return;
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC PTO schedule before app initialization", return);
+    if (closed()) return;
     app()->txInvoke([link = ZmMkRef(impl())]() mutable {
       link->schedulePTO_();
     });
@@ -2767,7 +2757,9 @@ protected:
   void schedulePTO_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PTO schedule outside Tx thread", return);
-    if (!app() || !app()->mx() || closed()) return;
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC PTO schedule before app initialization", return);
+    if (closed()) return;
     auto &tx = m_txPkts[CryptoLevel::OneRTT];
     if (!tx.bytesInFlight() && !tx.retransmitPending()) return;
     ZuTime out = Zm::now() + ptoTimeout_();
@@ -2781,7 +2773,8 @@ protected:
   }
 
   void cancelPTO() {
-    if (!app() || !app()->mx()) return;
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC PTO cancel before app initialization", return);
     if (txInvoked_()) return cancelPTO_();
     app()->txInvoke([link = ZmMkRef(impl())]() mutable {
       link->cancelPTO_();
@@ -3831,10 +3824,8 @@ public:
   }
 
   void connect() {
-    if (!app() || !app()->mx()) {
-      connectFailed_0(false);
-      return;
-    }
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC client connect before app initialization", return);
     app()->rxInvoke(impl(), [link = impl()]() {
       link->connect_();
       return link;
@@ -3847,10 +3838,8 @@ public:
   }
 
   void disconnect() {
-    if (!app() || !app()->mx()) {
-      disconnect_();
-      return;
-    }
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC client disconnect before app initialization", return);
     app()->rxInvoke(impl(), [link = impl()]() {
       link->disconnect_();
       return link;
@@ -3927,7 +3916,8 @@ public:
   }
 
   void queueRetransmit_() {
-    if (!app() || !app()->mx()) return;
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC client retransmit before app initialization", return);
     app()->txRun([link = ZmMkRef(impl())]() mutable {
       link->retransmit_();
     });
@@ -3955,10 +3945,8 @@ public:
   }
 
   void connect_() {
-    if (!app() || !app()->mx()) {
-      connectFailed_0(false);
-      return;
-    }
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC client connect before app initialization", return);
     ZiIP ip = m_server;
     if (!ip || !m_port) {
       app()->error_(ZeEXCEPT(Error, "Zquic",
@@ -4449,10 +4437,8 @@ private:
 
   void connectFailed_0(bool transient) {
     Base::endpointFailure_();
-    if (!app() || !app()->mx()) {
-      impl()->connectFailed(transient);
-      return;
-    }
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC client connect failure before app initialization", return);
     app()->rxRun([link = ZmMkRef(impl()), transient]() {
       link->connectFailed(transient);
     });
@@ -4542,7 +4528,8 @@ public:
   }
 
   void queueRetransmit_() {
-    if (!app() || !app()->mx()) return;
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC server retransmit before app initialization", return);
     app()->txRun([link = ZmMkRef(impl())]() mutable {
       link->retransmit_();
     });
@@ -4571,10 +4558,8 @@ public:
   void close(uint64_t errorCode = 0) {
     if (Base::closed()) return;
     Base::close(errorCode);
-    if (!app() || !app()->mx()) {
-      close_(errorCode);
-      return;
-    }
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC server close before app initialization", return);
     app()->rxInvoke([link = ZmMkRef(impl()), errorCode]() {
       link->close_(errorCode);
     });
