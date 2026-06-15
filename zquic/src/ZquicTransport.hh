@@ -4,10 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC transport parameters
+// Z QUIC transport
 
-#ifndef ZquicTransportParams_HH
-#define ZquicTransportParams_HH
+#ifndef ZquicTransport_HH
+#define ZquicTransport_HH
 
 #ifndef ZquicLib_HH
 #include <zlib/ZquicLib.hh>
@@ -46,4 +46,4 @@ struct TransportParams {
 
 } // namespace Zquic
 
-#endif /* ZquicTransportParams_HH */
+#endif /* ZquicTransport_HH */
