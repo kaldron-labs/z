@@ -15,6 +15,7 @@
 
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZquicSock.hh>
 
@@ -78,6 +79,7 @@ private:
   void sent_(unsigned);
   void txDrained_();
   void ioError_();
+  void closeUDP_(ZmSemaphore *);
   void clearFns_();
   ZmRef<ZiIOBuf> allocRxPkt_() {
     return new RxPktAlloc{this};
@@ -98,6 +100,7 @@ private:
   DownFn		m_downFn;
   TxDrainedFn		m_txDrainedFn;
   Cxn_			*m_closingCxn = nullptr;
+  ZmSemaphore		*m_closeWaiter = nullptr;
   unsigned		m_generation = 0;
   unsigned		m_closingGeneration = 0;
   ZmAtomic<unsigned>	m_listening = 0;

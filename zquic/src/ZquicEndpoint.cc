@@ -58,6 +58,7 @@ public:
     ZiAssert(m_endpoint->m_mx &&
 	m_endpoint->m_mx->invoked(m_endpoint->m_mx->txThread()),
       "Zquic", (), "QUIC endpoint send outside Tx thread", return false);
+    if (m_closing.load_()) return false;
     if (!buf) return false;
     if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr));
     m_txBuf = ZuMv(buf);
@@ -67,7 +68,14 @@ public:
   }
 
 private:
-  // Tx-owned: endpoint send queue and active send buffer.
+  void beginCloseRx_() {
+    m_closing = true;
+  }
+
+  void drainRx_() {
+    m_rxBuf = nullptr;
+  }
+
   bool enqueueTx_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (m_txQueue.count_() >= EndpointTxQueueLimit)
       ++m_endpoint->m_diag.txBackPressure;
@@ -95,7 +103,7 @@ private:
       auto buf = ZuMv(m_rxBuf);
       m_endpoint->received_(Datagram{ZuMv(buf), io.addr});
     }
-    armRecv_(io);
+    if (!m_closing.load_()) armRecv_(io);
     return true;
   }
 
@@ -145,6 +153,7 @@ private:
   // no Cxn_ callbacks or queued sends outlive the Endpoint.
   Endpoint		*m_endpoint = nullptr;
   unsigned		m_generation = 0;
+  ZmAtomic<unsigned>	m_closing = 0;
 
   // Rx-owned receive buffer. Only ZiMultiplex Rx callbacks touch this.
   ZmRef<ZiIOBuf>	m_rxBuf;
@@ -218,12 +227,41 @@ bool Endpoint::openUDP(
 
 void Endpoint::closeUDP()
 {
+  if (!m_mx || m_mx->invoked(m_mx->rxThread())) {
+    closeUDP_(nullptr);
+    return;
+  }
+  if (m_mx->invoked(m_mx->txThread())) {
+    m_mx->rxRun([this]() { closeUDP_(nullptr); });
+    return;
+  }
+
+  ZmSemaphore stopped;
+  m_mx->rxInvoke([this, &stopped]() { closeUDP_(&stopped); });
+  stopped.wait();
+}
+
+void Endpoint::closeUDP_(ZmSemaphore *stopped)
+{
   m_listening = false;
+  m_datagramFn = DatagramFn{};
+  m_readyFn = ReadyFn{};
+  m_failFn = FailFn{};
+  m_txDrainedFn = TxDrainedFn{};
+  if (stopped) m_closeWaiter = stopped;
   if (m_cxn) {
     m_closingCxn = m_cxn;
     m_closingGeneration = m_cxn->generation();
+    m_cxn->beginCloseRx_();
     m_cxn->close();
     m_cxn = nullptr;
+    return;
+  }
+  if (!m_closingCxn && m_closeWaiter) {
+    auto waiter = m_closeWaiter;
+    m_closeWaiter = nullptr;
+    clearFns_();
+    waiter->post();
   }
 }
 
@@ -266,11 +304,17 @@ void Endpoint::disconnected_(Cxn_ *cxn)
     cxn->generation() == m_closingGeneration &&
     cxn->generation() == m_generation;
   if (active || closing) {
+    cxn->drainRx_();
     m_cxn = nullptr;
     if (closing) m_closingCxn = nullptr;
     m_listening = false;
     if (m_downFn) m_downFn(this);
     clearFns_();
+    if (m_closeWaiter) {
+      auto waiter = m_closeWaiter;
+      m_closeWaiter = nullptr;
+      waiter->post();
+    }
   }
 }
 

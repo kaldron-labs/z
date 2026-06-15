@@ -1007,6 +1007,7 @@ struct H1PoolClient : public Client_<App> {
   unsigned		complete = 0;
   unsigned		failed = 0;
   unsigned		stopped = 0;
+  bool			stopping = false;
 
   Req *nextReq() {
     if (!run || next >= run->options.requests) return nullptr;
@@ -1033,7 +1034,8 @@ struct H1PoolClient : public Client_<App> {
   }
   void workerStopped(Link *) {
     ++stopped;
-    if (complete >= run->options.requests && stopped >= links.length())
+    if ((stopping || complete >= run->options.requests) &&
+	stopped >= links.length())
       sem.post();
   }
   unsigned reconnFreq() const { return 0; }
@@ -1053,6 +1055,8 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   Run *run = nullptr;
   ZmRef<Link> link;
   ZmLock lock;
+  ZmAtomic<unsigned> stopping = 0;
+  ZmAtomic<int> up = 0;
   unsigned scheduled = 0;
   unsigned active = 0;
   unsigned complete = 0;
@@ -1107,6 +1111,7 @@ struct QUICClient::Link :
 
   void connected(Zi::Connected info) {
     if (!this->app()->multi()) return Base::connected(info);
+    ++this->app()->up;
     logConnected(this->app()->run->reqs[0], info);
     if (!this->h3.openLocal(*this)) {
       this->app()->failH3Link();
@@ -1118,6 +1123,13 @@ struct QUICClient::Link :
   void disconnected() {
     if (!this->app()->multi()) return Base::disconnected();
     ZiLOG(Info, "zhttp", "disconnected");
+    int up = --this->app()->up;
+    ZiAssert(up >= 0, "zhttp", (up),
+      "QUIC client link up counter underflow", return);
+    if (this->app()->stopping.load_()) {
+      if (!up) this->app()->done();
+      return;
+    }
     this->app()->failH3Link();
   }
   void connectFailed(bool transient) {
@@ -1520,6 +1532,7 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
       run.options.concurrency + 1);
   if (client.sem.timedwait(Zm::now(timeout)) != 0) {
     ZiLOG(Error, "zhttp", "timed out");
+    client.stopping = true;
     for (unsigned i = 0; i < client.links.length(); ++i)
       if (client.links[i]) client.links[i]->disconnect();
     client.sem.timedwait(Zm::now(2));
@@ -1557,10 +1570,12 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       run.options.concurrency + 1);
   if (client.sem.timedwait(Zm::now(timeout)) != 0) {
     ZiLOG(Error, "zhttp", "timed out");
+    client.stopping = true;
     link->disconnect();
     client.sem.timedwait(Zm::now(2));
     client.failH3Link();
   } else {
+    client.stopping = true;
     link->disconnect();
     client.sem.timedwait(Zm::now(2));
   }
