@@ -51,7 +51,7 @@ public:
 
   unsigned generation() const { return m_generation; }
 
-  bool sendPacket(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+  bool sendPkt(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (!buf) return false;
     if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr));
     m_txBuf = ZuMv(buf);
@@ -95,7 +95,7 @@ private:
   }
 
   void armRecv_(ZiIOContext &io) {
-    m_rxBuf = m_endpoint->allocRxPacket_();
+    m_rxBuf = m_endpoint->allocRxPkt_();
     io.init(
       ZiIOFn{this, ZmFnPtr<&Cxn_::recvDone_>{}},
       m_rxBuf->data_(), m_rxBuf->size, 0);
@@ -213,7 +213,7 @@ void Endpoint::closeUDP()
 bool Endpoint::send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
 {
   if (!m_cxn) return false;
-  return m_cxn->sendPacket(ZuMv(buf), ZuMv(addr));
+  return m_cxn->sendPkt(ZuMv(buf), ZuMv(addr));
 }
 
 void Endpoint::connected_(Cxn_ *cxn, ZiIOContext &io)

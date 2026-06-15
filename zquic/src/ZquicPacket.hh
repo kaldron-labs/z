@@ -6,8 +6,8 @@
 
 // Z QUIC packet codec
 
-#ifndef ZquicPacket_HH
-#define ZquicPacket_HH
+#ifndef ZquicPkt_HH
+#define ZquicPkt_HH
 
 #ifndef ZquicLib_HH
 #include <zlib/ZquicLib.hh>
@@ -38,14 +38,14 @@ namespace VarInt {
 inline constexpr unsigned CxnIDMax = 20;
 using CxnID = ZuBArray<CxnIDMax>;
 
-struct PacketNumber {
+struct PktNumber {
   static unsigned encodedLength(uint64_t pn, uint64_t largestAcked);
   static int encode(uint8_t *, unsigned, uint64_t pn, unsigned length);
   static uint64_t decode(uint64_t largestPN, uint64_t truncated, unsigned bits);
 };
 
-struct LongHeader {
-  PacketType::T	type = PacketType::Initial;
+struct LongHdr {
+  PktType::T	type = PktType::Initial;
   uint32_t	version = Version1;
   CxnID		dcid;
   CxnID		scid;
@@ -56,32 +56,32 @@ struct LongHeader {
   unsigned	payloadOffset = 0;
 };
 
-struct RetryPacket {
-  LongHeader	header;
+struct RetryPkt {
+  LongHdr	header;
   ZuCSpan	token;
   ZuCSpan	integrityTag;
 };
 
-struct ShortHeader {
+struct ShortHdr {
   CxnID	dcid;
   unsigned	pnLength = 0;
   unsigned	pnOffset = 0;
 };
 
-struct Packet {
+struct Pkt {
   static bool isLong(ZuCSpan);
   static bool isVersionNegotiation(ZuCSpan);
-  static int parseLong(ZuCSpan, LongHeader &);
-  static int parseRetry(ZuCSpan, RetryPacket &);
+  static int parseLong(ZuCSpan, LongHdr &);
+  static int parseRetry(ZuCSpan, RetryPkt &);
   static int retryIntegrityTag(
     uint8_t *, unsigned, ZuCSpan retryWithoutTag,
     const CxnID &originalDCID);
   static bool validateRetryIntegrity(ZuCSpan, const CxnID &originalDCID);
-  static int parseShort(ZuCSpan, unsigned cidLen, ShortHeader &);
+  static int parseShort(ZuCSpan, unsigned cidLen, ShortHdr &);
   static int parseVersionNegotiation(
     ZuCSpan, uint32_t *, unsigned capacity, unsigned &nVersions);
   static int writeLong(
-    uint8_t *, unsigned, PacketType::T,
+    uint8_t *, unsigned, PktType::T,
     const CxnID &, const CxnID &,
     uint64_t payloadLength, unsigned pnLength);
   static int writeInitial(
@@ -103,15 +103,15 @@ struct Packet {
     const uint32_t *, unsigned);
 };
 
-inline constexpr uint8_t PacketBuildZeroPad[BufSize] = {};
+inline constexpr uint8_t PktBuildZeroPad[BufSize] = {};
 // Scratch holds locally encoded ACK/control and frame prefixes only. It is
 // sized for the current ACK encoder cap of 64 ranges plus one STREAM prefix.
-inline constexpr unsigned PacketBuildMaxAckRanges = 64;
-inline constexpr unsigned PacketBuildScratchSize =
-  1 + (4 * 8) + ((PacketBuildMaxAckRanges - 1) * 2 * 8) +
+inline constexpr unsigned PktBuildMaxAckRanges = 64;
+inline constexpr unsigned PktBuildScratchSize =
+  1 + (4 * 8) + ((PktBuildMaxAckRanges - 1) * 2 * 8) +
   1 + (3 * 8);
 
-inline ZuCSpan packetBuildSpan(const uint8_t *data, unsigned len)
+inline ZuCSpan pktBuildSpan(const uint8_t *data, unsigned len)
 {
   return ZuCSpan{reinterpret_cast<const char *>(data), len};
 }
@@ -145,12 +145,12 @@ private:
   unsigned	m_bytes = 0;
 };
 
-class PacketBuild {
+class PktBuild {
 public:
-  PacketBuild() = default;
+  PktBuild() = default;
 
-  PacketBuild(const PacketBuild &) = delete;
-  PacketBuild &operator =(const PacketBuild &) = delete;
+  PktBuild(const PktBuild &) = delete;
+  PktBuild &operator =(const PktBuild &) = delete;
 
   const ptls_iovec_t *data() const { return m_plain.data(); }
   unsigned count() const { return m_plain.count(); }
@@ -167,7 +167,7 @@ public:
     if (len > scratchAvail()) return false;
     unsigned off = m_scratchLen;
     m_scratchLen += len;
-    return m_plain.add(packetBuildSpan(m_scratch + off, len));
+    return m_plain.add(pktBuildSpan(m_scratch + off, len));
   }
 
   bool add(ZuCSpan span) { return m_plain.add(span); }
@@ -176,13 +176,13 @@ public:
     if (!range.buf || range.offset + range.length > range.buf->size)
       return false;
     return m_plain.add(
-      packetBuildSpan(range.buf->data_() + range.offset, range.length));
+      pktBuildSpan(range.buf->data_() + range.offset, range.length));
   }
 
   bool pad(unsigned len) {
     if (!len) return true;
     if (len > BufSize) return false;
-    return m_plain.add(packetBuildSpan(PacketBuildZeroPad, len));
+    return m_plain.add(pktBuildSpan(PktBuildZeroPad, len));
   }
 
   bool padTo(unsigned bytes) {
@@ -190,22 +190,22 @@ public:
     return bytes <= n || pad(bytes - n);
   }
 
-  bool padForProtectionSample(
+  bool padForProtSample(
     unsigned pnOffset, unsigned pnLength, unsigned tagLen)
   {
     unsigned headerLen = pnOffset + pnLength;
-    unsigned minPacketLen = pnOffset + 4 + 16;
-    unsigned minPayloadLen = minPacketLen > headerLen + tagLen ?
-      minPacketLen - headerLen - tagLen : 0;
+    unsigned minPktLen = pnOffset + 4 + 16;
+    unsigned minPayloadLen = minPktLen > headerLen + tagLen ?
+      minPktLen - headerLen - tagLen : 0;
     return padTo(minPayloadLen);
   }
 
 private:
   PlainVec		m_plain;
-  uint8_t		m_scratch[PacketBuildScratchSize];
+  uint8_t		m_scratch[PktBuildScratchSize];
   unsigned		m_scratchLen = 0;
 };
 
 } // namespace Zquic
 
-#endif /* ZquicPacket_HH */
+#endif /* ZquicPkt_HH */

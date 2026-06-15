@@ -64,12 +64,12 @@ struct StreamError {
   ZtEnum(StreamError, int8_t, None, Reset, Stop);
 };
 
-struct PacketSpace {
-  ZtEnum(PacketSpace, int8_t, Initial, Handshake, AppData);
+struct PktSpace {
+  ZtEnum(PktSpace, int8_t, Initial, Handshake, AppData);
 };
 
-struct PacketType {
-  ZtEnum(PacketType, int8_t, Initial, ZeroRTT, Handshake, Retry, Short);
+struct PktType {
+  ZtEnum(PktType, int8_t, Initial, ZeroRTT, Handshake, Retry, Short);
 };
 
 struct CloseState {
@@ -114,11 +114,11 @@ struct PMTUDState {
 };
 
 struct PathHintKind {
-  ZtEnum(PathHintKind, int8_t, None, KernelMTU, PacketTooBig, SendTooBig);
+  ZtEnum(PathHintKind, int8_t, None, KernelMTU, PktTooBig, SendTooBig);
 };
 
-struct ServerPacketAction {
-  ZtEnum(ServerPacketAction, int8_t, Drop, AcceptInitial, VersionNegotiation);
+struct ServerPktAction {
+  ZtEnum(ServerPktAction, int8_t, Drop, AcceptInitial, VersionNegotiation);
 };
 
 struct RecoveryEvent {

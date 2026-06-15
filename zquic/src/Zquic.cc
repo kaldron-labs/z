@@ -12,27 +12,27 @@
 
 namespace Zquic {
 
-ServerPacketDecision ServerPacket::routeLongHeader(
+ServerPktDecision ServerPkt::routeLongHdr(
   ZuCSpan datagram, uint8_t *response, unsigned responseLen)
 {
-  ServerPacketDecision decision;
-  if (!Packet::isLong(datagram) || Packet::isVersionNegotiation(datagram))
+  ServerPktDecision decision;
+  if (!Pkt::isLong(datagram) || Pkt::isVersionNegotiation(datagram))
     return decision;
 
-  if (Packet::parseLong(datagram, decision.header) < 0) return decision;
+  if (Pkt::parseLong(datagram, decision.header) < 0) return decision;
 
   if (!VersionNegotiation::supported(decision.header.version)) {
     int n = VersionNegotiation::write(
       response, responseLen, decision.header.scid, decision.header.dcid);
     if (n > 0) {
       decision.responseLength = unsigned(n);
-      decision.action = ServerPacketAction::VersionNegotiation;
+      decision.action = ServerPktAction::VersionNegotiation;
     }
     return decision;
   }
 
-  if (decision.header.type == PacketType::Initial)
-    decision.action = ServerPacketAction::AcceptInitial;
+  if (decision.header.type == PktType::Initial)
+    decision.action = ServerPktAction::AcceptInitial;
   return decision;
 }
 
@@ -61,7 +61,7 @@ bool ResetToken::equals(const ResetToken &token) const
 
 int StatelessReset::decode(ResetToken &token, ZuCSpan datagram)
 {
-  if (!datagram || datagram.length() <= MinLength || Packet::isLong(datagram))
+  if (!datagram || datagram.length() <= MinLength || Pkt::isLong(datagram))
     return -1;
   ZuCSpan suffix{
     datagram.data() + datagram.length() - TokenLength, TokenLength};
@@ -80,14 +80,14 @@ bool StatelessReset::verify(ZuCSpan datagram, const ResetToken &token)
 }
 
 int StatelessReset::writeForUnknownCID(
-  uint8_t *out, unsigned len, ZuCSpan receivedPacket,
+  uint8_t *out, unsigned len, ZuCSpan receivedPkt,
   const ResetToken &token)
 {
-  if (!token.valid() || !receivedPacket || Packet::isLong(receivedPacket) ||
-      receivedPacket.length() <= MinLength)
+  if (!token.valid() || !receivedPkt || Pkt::isLong(receivedPkt) ||
+      receivedPkt.length() <= MinLength)
     return -1;
 
-  unsigned n = receivedPacket.length() - 1;
+  unsigned n = receivedPkt.length() - 1;
   if (n > len) n = len;
   if (n < MinLength) return -1;
 
@@ -140,10 +140,10 @@ bool ClientBootstrap::startRandom(unsigned dcidLength, unsigned scidLength)
 }
 
 bool ServerBootstrap::acceptInitial(
-  const LongHeader &initial, unsigned datagramLength)
+  const LongHdr &initial, unsigned datagramLength)
 {
   if (m_accepted ||
-      initial.type != PacketType::Initial ||
+      initial.type != PktType::Initial ||
       !VersionNegotiation::supported(initial.version) ||
       initial.dcid.length() < CxnIDGen::InitialLength ||
       initial.scid.length() < CxnIDGen::InitialLength ||

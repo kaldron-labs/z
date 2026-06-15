@@ -38,12 +38,12 @@ struct RuntimeServer :
   ZmRef<Link> link(unsigned i = unsigned(-1));
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
-  bool sendPacket(const ZmRef<ZiIOBuf> &buf) {
+  bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
     if (!buf || !buf->length) return true;
     ZuCSpan packet{
       reinterpret_cast<const char *>(buf->data_()), buf->length};
-    if (Zquic::Packet::isLong(packet)) return true;
-    ++shortPackets;
+    if (Zquic::Pkt::isLong(packet)) return true;
+    ++shortPkts;
     if (!dropNextShort) return true;
     dropNextShort = 0;
     ++droppedShort;
@@ -64,7 +64,7 @@ struct RuntimeServer :
   ZmAtomic<unsigned> acceptedCount = 0;
   ZmAtomic<unsigned> dropNextShort = 0;
   ZmAtomic<unsigned> droppedShort = 0;
-  ZmAtomic<unsigned> shortPackets = 0;
+  ZmAtomic<unsigned> shortPkts = 0;
   ZmAtomic<int64_t> dropStreamID = -1;
   ZmAtomic<unsigned> droppedStream = 0;
   ZmAtomic<unsigned> streamFrames = 0;

@@ -19,7 +19,7 @@ void fill_(ZiIOBuf *buf, ZuCSpan data)
 
 ZmRef<ZiIOBuf> packet_(ZuCSpan data)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
   fill_(packet, data);
   return packet;
 }
@@ -125,22 +125,22 @@ void testAckRanges()
     "packet Rx range export mismatch");
 }
 
-void testTxPacketLossRequeue()
+void testTxPktLossRequeue()
 {
-  ZuTestScope(testTxPacketLossRequeue);
+  ZuTestScope(testTxPktLossRequeue);
 
-  Zquic::TxPacket p;
+  Zquic::TxPkt p;
   p.pn = 7;
   p.sentTime = 100;
   p.bytes = 1200;
-  p.space = Zquic::PacketSpace::AppData;
+  p.space = Zquic::PktSpace::AppData;
   p.ackEliciting = true;
   p.inFlight = true;
   p.addFrame(Zquic::SentFrameRef::crypto(3, 9));
   ZuCHECK(p.key() == 7 && p.length() == 1,
-    "TxPacket key/length mismatch");
+    "TxPkt key/length mismatch");
 
-  Zquic::SentPacketTracker tracker;
+  Zquic::SentPktTracker tracker;
   ZuCHECK(tracker.add(p) && tracker.lose(7),
     "sent packet queue loss setup failed");
   Zquic::SentFrameRef frame;
@@ -151,20 +151,20 @@ void testTxPacketLossRequeue()
       !tracker.nextRetransmit(frame) &&
       tracker.lost() == 1 &&
       tracker.retransmittable() == 1,
-    "lost TxPacket did not requeue frame references");
+    "lost TxPkt did not requeue frame references");
 }
 
-void testTxPacketAckRanges()
+void testTxPktAckRanges()
 {
-  ZuTestScope(testTxPacketAckRanges);
+  ZuTestScope(testTxPktAckRanges);
 
-  Zquic::SentPacketTracker tracker;
+  Zquic::SentPktTracker tracker;
   uint64_t pns[] = { 10, 11, 13, 15 };
   for (uint64_t pn : pns) {
-    Zquic::TxPacket p;
+    Zquic::TxPkt p;
     p.pn = pn;
     p.bytes = 100;
-    p.space = Zquic::PacketSpace::AppData;
+    p.space = Zquic::PktSpace::AppData;
     p.ackEliciting = true;
     p.inFlight = true;
     ZuCHECK(tracker.add(p), "sent packet add failed");
@@ -190,6 +190,6 @@ int main(int argc, char **argv)
   ZuTestCall(testRxOverlapDrop);
   ZuTestCall(testOutOfOrderDrain);
   ZuTestCall(testAckRanges);
-  ZuTestCall(testTxPacketLossRequeue);
-  ZuTestCall(testTxPacketAckRanges);
+  ZuTestCall(testTxPktLossRequeue);
+  ZuTestCall(testTxPktAckRanges);
 }

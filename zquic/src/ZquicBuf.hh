@@ -49,14 +49,14 @@ using RxStream = Zquic_::RxStream;
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
-  ZuString HeapID = "Zquic.Packet.Rx">
-using PacketRxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+  ZuString HeapID = "Zquic.Pkt.Rx">
+using PktRxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
-  ZuString HeapID = "Zquic.Packet.Tx">
-using PacketTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+  ZuString HeapID = "Zquic.Pkt.Tx">
+using PktTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 
 template <
   unsigned Size = BufSize,
@@ -92,7 +92,7 @@ struct TxRange {
     streamOffset{streamOffset_} { }
 };
 
-inline void assertPacketCapacity(const ZiIOBuf *buf, unsigned required)
+inline void assertPktCapacity(const ZiIOBuf *buf, unsigned required)
 {
   ZiAssert(buf && buf->size >= required, "Zquic", (buf, required),
     "packet buffer capacity violation required=" << required,

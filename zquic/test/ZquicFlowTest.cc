@@ -24,11 +24,11 @@ struct FlowStream :
   int process(Zquic::RxStream &) { return 0; }
 };
 
-static ZmRef<ZiIOBuf> streamPacket_(
+static ZmRef<ZiIOBuf> streamPkt_(
   uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PacketRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;
@@ -121,7 +121,7 @@ void testReceiveFlowControl()
 
   FlowStream stream{0};
   Zquic::ReceiveFlow flow{8, 5};
-  auto packet = streamPacket_(stream.id(), 3, "de", false, frame, used);
+  auto packet = streamPkt_(stream.id(), 3, "de", false, frame, used);
   ZuCHECK(packet,
     "out-of-order flow STREAM setup failed");
   ZuCHECK(stream.receiveFrame(frame, flow, packet, &diag) &&
@@ -130,7 +130,7 @@ void testReceiveFlowControl()
       stream.rxPending() == 1,
     "out-of-order receive flow accounting mismatch");
 
-  packet = streamPacket_(stream.id(), 0, "abc", false, frame, used);
+  packet = streamPkt_(stream.id(), 0, "abc", false, frame, used);
   ZuCHECK(packet,
     "gap-filling flow STREAM setup failed");
   ZuCHECK(stream.receiveFrame(frame, flow, packet, &diag) &&
@@ -143,7 +143,7 @@ void testReceiveFlowControl()
       flow.dataUsed() == 5,
     "duplicate STREAM changed receive flow accounting");
 
-  packet = streamPacket_(stream.id(), 5, "x", false, frame, used);
+  packet = streamPkt_(stream.id(), 5, "x", false, frame, used);
   ZuCHECK(packet,
     "stream-limit flow violation setup failed");
   ZuCHECK(!stream.receiveFrame(frame, flow, packet, &diag) &&
@@ -154,11 +154,11 @@ void testReceiveFlowControl()
 
   FlowStream connLimited{4};
   Zquic::ReceiveFlow connFlow{6, 20};
-  packet = streamPacket_(connLimited.id(), 0, "hello", false, frame, used);
+  packet = streamPkt_(connLimited.id(), 0, "hello", false, frame, used);
   ZuCHECK(packet &&
       connLimited.receiveFrame(frame, connFlow, packet, &diag),
     "connection flow first receive failed");
-  packet = streamPacket_(connLimited.id(), 5, "!!", false, frame, used);
+  packet = streamPkt_(connLimited.id(), 5, "!!", false, frame, used);
   ZuCHECK(packet,
     "connection-limit flow violation setup failed");
   ZuCHECK(!connLimited.receiveFrame(frame, connFlow, packet, &diag) &&
@@ -231,11 +231,11 @@ void testScheduling()
   tx.remove(2);
   ZuCHECK(tx.next() == 4, "data stream scheduling mismatch");
 
-  Zquic::PacketBudget budget;
+  Zquic::PktBudget budget;
   budget.pmtu = 50;
   budget.congestion = 50;
   budget.antiAmplification = 50;
-  Zquic::PacketAssembly packet;
+  Zquic::PktAssembly packet;
   ZuCHECK(packet.addControl(budget, 10) &&
     packet.addStream(budget, 20) &&
     !packet.addStream(budget, 1) &&

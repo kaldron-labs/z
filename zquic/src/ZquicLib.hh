@@ -35,6 +35,7 @@ namespace Zquic {
 inline constexpr const char Log[] = "Zquic";
 
 ZquicExtern void init(); // idempotent
+ZquicExtern void warmup();
 
 }
 

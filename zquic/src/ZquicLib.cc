@@ -8,6 +8,8 @@
 
 #include <zlib/ZquicLib.hh>
 
+#include "ZquicOpenSSL.hh"
+
 #include <zlib/ZtlsLib.hh>
 
 ZquicExtern const char ZquicLib[] = "@(#) Z QUIC Library v" Z_VERNAME;
@@ -17,6 +19,11 @@ namespace Zquic {
 ZquicExtern void init()
 {
   Ztls::init();
+}
+
+ZquicExtern void warmup()
+{
+  (void)opensslCipherCtx();
 }
 
 } // namespace Zquic

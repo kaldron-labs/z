@@ -24,17 +24,17 @@ namespace Zquic {
 using AckTrackerRxNTP = ZmPQRxGapObserve<>;
 
 class AckTracker :
-  public ZmPQRx<AckTracker, PacketRxPQueue, AckTrackerRxNTP> {
+  public ZmPQRx<AckTracker, PktRxPQueue, AckTrackerRxNTP> {
 public:
   static constexpr unsigned Max = 64;
-  using Queue = PacketRxPQueue;
+  using Queue = PktRxPQueue;
   using Rx = ZmPQRx<AckTracker, Queue, AckTrackerRxNTP>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
 
   bool add(uint64_t pn) {
     if (contains(pn)) return true;
-    Rx::rcvd(new Queue::Node{RxPacketMark{pn}});
+    Rx::rcvd(new Queue::Node{RxPktMark{pn}});
     return true;
   }
 
@@ -161,7 +161,7 @@ public:
   static constexpr unsigned Spaces = 3;
 
   bool received(
-    PacketSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
+    PktSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
     bool ackEliciting = true)
   {
     unsigned i = index_(space);
@@ -177,29 +177,29 @@ public:
     return true;
   }
 
-  const AckTracker &tracker(PacketSpace::T space) const {
+  const AckTracker &tracker(PktSpace::T space) const {
     return m_ack[index_(space)];
   }
-  bool pending(PacketSpace::T space) const {
+  bool pending(PktSpace::T space) const {
     return m_pending[index_(space)];
   }
-  bool deadlineSet(PacketSpace::T space) const {
+  bool deadlineSet(PktSpace::T space) const {
     return m_deadlineSet[index_(space)];
   }
-  uint64_t deadline(PacketSpace::T space) const {
+  uint64_t deadline(PktSpace::T space) const {
     return m_deadline[index_(space)];
   }
-  bool due(PacketSpace::T space, uint64_t now) const {
+  bool due(PktSpace::T space, uint64_t now) const {
     unsigned i = index_(space);
     return m_pending[i] && m_deadlineSet[i] && now >= m_deadline[i];
   }
   int writeFrame(
-    PacketSpace::T space, uint8_t *out, unsigned len,
+    PktSpace::T space, uint8_t *out, unsigned len,
     uint64_t delay = 0) const
   {
     return m_ack[index_(space)].writeFrame(out, len, delay);
   }
-  void sent(PacketSpace::T space) {
+  void sent(PktSpace::T space) {
     unsigned i = index_(space);
     m_pending[i] = false;
     m_deadlineSet[i] = false;
@@ -207,9 +207,9 @@ public:
   }
 
 private:
-  static unsigned index_(PacketSpace::T space) {
-    if (space == PacketSpace::Initial) return 0;
-    if (space == PacketSpace::Handshake) return 1;
+  static unsigned index_(PktSpace::T space) {
+    if (space == PktSpace::Initial) return 0;
+    if (space == PktSpace::Handshake) return 1;
     return 2;
   }
 
@@ -376,7 +376,7 @@ struct SentFrameRef {
   }
 };
 
-struct SentPacket {
+struct SentPkt {
   static constexpr unsigned MaxFrames = 8;
 
   uint64_t key() const { return pn; }
@@ -402,7 +402,7 @@ struct SentPacket {
   uint64_t	pn = 0;
   uint64_t	sentTime = 0;
   unsigned	bytes = 0;
-  PacketSpace::T space = PacketSpace::AppData;
+  PktSpace::T space = PktSpace::AppData;
   bool		ackEliciting = false;
   bool		inFlight = false;
   bool		pmtudProbe = false;
@@ -412,12 +412,12 @@ struct SentPacket {
   unsigned	frameCount = 0;
 };
 
-using TxPacket = SentPacket;
+using TxPkt = SentPkt;
 
-using TxPacketQueue =
-  ZmPQueue<TxPacket,
+using TxPktQueue =
+  ZmPQueue<TxPkt,
     ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zquic.Packet.TxSentNode",
+      ZmPQueueHeapID<"Zquic.Pkt.TxSentNode",
 	ZmPQueueBits<3,
 	  ZmPQueueLevels<4>>>>>;
 
@@ -425,7 +425,7 @@ class RetransmitQueue {
 public:
   using Queue =
     ZmQueue<SentFrameRef,
-      ZmQueueHeapID<"Zquic.Packet.RetransmitQueue">>;
+      ZmQueueHeapID<"Zquic.Pkt.RetransmitQueue">>;
 
   bool push(const SentFrameRef &frame) {
     if (frame.kind == SentFrameKind::None) return false;
@@ -451,16 +451,16 @@ private:
   Queue		m_frames;
 };
 
-class PacketTxSpace :
-  public ZmPQTx<PacketTxSpace, TxPacketQueue> {
+class PktTxSpace :
+  public ZmPQTx<PktTxSpace, TxPktQueue> {
 public:
-  using Queue = TxPacketQueue;
-  using Tx = ZmPQTx<PacketTxSpace, Queue>;
+  using Queue = TxPktQueue;
+  using Tx = ZmPQTx<PktTxSpace, Queue>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
   using Key = Queue::Key;
 
-  PacketTxSpace() { Tx::start(); }
+  PktTxSpace() { Tx::start(); }
 
   Queue *txQueue() { return &m_packets; }
 
@@ -483,7 +483,7 @@ public:
   void rescheduleArchive() { }
   void idleArchive() { }
 
-  bool add(const SentPacket &p) {
+  bool add(const SentPkt &p) {
     if (m_packets.has(p.pn)) return false;
     Tx::send(new Queue::Node{p});
     if (p.inFlight) m_bytesInFlight += p.bytes;
@@ -503,7 +503,7 @@ public:
     auto iter = m_packets.iter();
     while (auto node = iter())
       if (ranges.contains(node->data().pn) && ack_(node->data())) ++n;
-    unsigned l = markPacketThresholdLoss(ranges.largest(), packetThreshold);
+    unsigned l = markPktThresholdLoss(ranges.largest(), packetThreshold);
     if (lost) *lost = l;
     return n;
   }
@@ -522,12 +522,12 @@ public:
       have = true;
       auto iter = m_packets.iter(range.first);
       while (auto node = iter()) {
-	SentPacket &p = node->data();
+	SentPkt &p = node->data();
 	if (p.pn > range.largest) break;
 	if (ack_(p)) ++n;
       }
     }
-    unsigned l = have ? markPacketThresholdLoss(largest, packetThreshold) : 0;
+    unsigned l = have ? markPktThresholdLoss(largest, packetThreshold) : 0;
     if (lost) *lost = l;
     return n;
   }
@@ -537,11 +537,11 @@ public:
     return node && lose_(node->data());
   }
 
-  unsigned markPacketThresholdLoss(uint64_t largestAcked, unsigned threshold = 3) {
+  unsigned markPktThresholdLoss(uint64_t largestAcked, unsigned threshold = 3) {
     unsigned n = 0;
     auto iter = m_packets.iter();
     while (auto node = iter()) {
-      SentPacket &p = node->data();
+      SentPkt &p = node->data();
       if (p.acked || p.lost || p.pn + threshold > largestAcked) continue;
       if (lose_(p)) ++n;
     }
@@ -552,7 +552,7 @@ public:
     unsigned n = 0;
     auto iter = m_packets.iter();
     while (auto node = iter()) {
-      SentPacket &p = node->data();
+      SentPkt &p = node->data();
       if (p.acked || p.lost || p.sentTime > now ||
 	  now - p.sentTime < threshold)
 	continue;
@@ -575,7 +575,7 @@ public:
     auto iter = m_packets.iter();
     while (n < limit)
       if (auto node = iter()) {
-	SentPacket &p = node->data();
+	SentPkt &p = node->data();
 	if (p.acked || p.lost || !p.inFlight || !p.ackEliciting)
 	  continue;
 	Tx::resend(Span{p.pn, 1});
@@ -599,7 +599,7 @@ public:
     uint64_t first = 0, last = 0;
     auto iter = m_packets.citer();
     while (auto node = iter()) {
-      const SentPacket &p = node->data();
+      const SentPkt &p = node->data();
       if (!p.lost || !p.ackEliciting || p.pmtudProbe) continue;
       if (!have || p.sentTime < first) first = p.sentTime;
       if (!have || p.sentTime > last) last = p.sentTime;
@@ -608,7 +608,7 @@ public:
     if (!have || last <= first || last - first < threshold) return false;
     iter.reset();
     while (auto node = iter()) {
-      const SentPacket &p = node->data();
+      const SentPkt &p = node->data();
       if (p.acked && p.ackEliciting && !p.pmtudProbe &&
 	  p.sentTime >= first && p.sentTime <= last)
 	return false;
@@ -617,7 +617,7 @@ public:
   }
 
 private:
-  bool ack_(SentPacket &p) {
+  bool ack_(SentPkt &p) {
     if (p.acked || p.lost) return false;
     p.acked = true;
     if (p.inFlight) release_(p);
@@ -625,7 +625,7 @@ private:
     return true;
   }
 
-  bool lose_(SentPacket &p) {
+  bool lose_(SentPkt &p) {
     if (p.acked || p.lost) return false;
     p.lost = true;
     if (p.inFlight) release_(p);
@@ -637,13 +637,13 @@ private:
     return true;
   }
 
-  void release_(SentPacket &p) {
+  void release_(SentPkt &p) {
     p.inFlight = false;
     if (p.bytes > m_bytesInFlight) m_bytesInFlight = 0;
     else m_bytesInFlight -= p.bytes;
   }
 
-  void enqueueRetransmit_(const SentPacket &p) {
+  void enqueueRetransmit_(const SentPkt &p) {
     for (unsigned i = 0; i < p.framesUsed(); ++i)
       m_retransmit.push(p.frame(i));
   }
@@ -656,7 +656,7 @@ private:
   unsigned	m_retransmittable = 0;
 };
 
-using SentPacketTracker = PacketTxSpace;
+using SentPktTracker = PktTxSpace;
 
 class PTOBackoff {
 public:

@@ -238,7 +238,7 @@ public:
     if (!m_failureFloor || hint.mtu < m_failureFloor)
       m_failureFloor = hint.mtu;
     if (hint.kind == PathHintKind::KernelMTU ||
-	hint.kind == PathHintKind::PacketTooBig)
+	hint.kind == PathHintKind::PktTooBig)
       ++m_diag.kernelHints;
     if (hint.kind == PathHintKind::SendTooBig) ++m_diag.sendTooBigHints;
     if (m_probeSize >= hint.mtu || m_retryProbeSize >= hint.mtu) {

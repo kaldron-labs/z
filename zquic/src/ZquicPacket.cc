@@ -68,7 +68,7 @@ int VarInt::decode(ZuCSpan in, uint64_t &v, unsigned &n)
   return 0;
 }
 
-unsigned PacketNumber::encodedLength(uint64_t pn, uint64_t largestAcked)
+unsigned PktNumber::encodedLength(uint64_t pn, uint64_t largestAcked)
 {
   uint64_t n = pn - largestAcked;
   if (n < (1ULL<<7)) return 1;
@@ -77,7 +77,7 @@ unsigned PacketNumber::encodedLength(uint64_t pn, uint64_t largestAcked)
   return 4;
 }
 
-int PacketNumber::encode(uint8_t *out, unsigned len, uint64_t pn, unsigned n)
+int PktNumber::encode(uint8_t *out, unsigned len, uint64_t pn, unsigned n)
 {
   if (n < 1 || n > 4 || len < n) return -1;
   for (unsigned i = 0; i < n; ++i)
@@ -85,7 +85,7 @@ int PacketNumber::encode(uint8_t *out, unsigned len, uint64_t pn, unsigned n)
   return int(n);
 }
 
-uint64_t PacketNumber::decode(uint64_t largestPN, uint64_t truncated, unsigned bits)
+uint64_t PktNumber::decode(uint64_t largestPN, uint64_t truncated, unsigned bits)
 {
   uint64_t expected = largestPN + 1;
   uint64_t window = 1ULL << bits;
@@ -97,12 +97,12 @@ uint64_t PacketNumber::decode(uint64_t largestPN, uint64_t truncated, unsigned b
   return candidate;
 }
 
-bool Packet::isLong(ZuCSpan p)
+bool Pkt::isLong(ZuCSpan p)
 {
   return p.length() && (uint8_t(p[0]) & 0x80);
 }
 
-bool Packet::isVersionNegotiation(ZuCSpan p)
+bool Pkt::isVersionNegotiation(ZuCSpan p)
 {
   return isLong(p) && p.length() >= 5 &&
     !uint8_t(p[1]) && !uint8_t(p[2]) && !uint8_t(p[3]) && !uint8_t(p[4]);
@@ -124,17 +124,17 @@ static void store32_(uint8_t *p, uint32_t v)
   p[3] = uint8_t(v);
 }
 
-int Packet::parseLong(ZuCSpan p, LongHeader &h)
+int Pkt::parseLong(ZuCSpan p, LongHdr &h)
 {
   if (p.length() < 7 || !isLong(p)) return -1;
   h.version = load32_(p.data() + 1);
-  if (isVersionNegotiation(p)) h.type = PacketType::Initial;
+  if (isVersionNegotiation(p)) h.type = PktType::Initial;
   else {
     switch ((uint8_t(p[0]) >> 4) & 0x03) {
-      case 0: h.type = PacketType::Initial; break;
-      case 1: h.type = PacketType::ZeroRTT; break;
-      case 2: h.type = PacketType::Handshake; break;
-      default: h.type = PacketType::Retry; break;
+      case 0: h.type = PktType::Initial; break;
+      case 1: h.type = PktType::ZeroRTT; break;
+      case 2: h.type = PktType::Handshake; break;
+      default: h.type = PktType::Retry; break;
     }
   }
   unsigned o = 5;
@@ -146,11 +146,11 @@ int Packet::parseLong(ZuCSpan p, LongHeader &h)
   if (slen > CxnIDMax || p.length() < o + slen) return -1;
   h.scid = ZuCSpan{p.data() + o, slen};
   o += slen;
-  if (isVersionNegotiation(p) || h.type == PacketType::Retry) {
+  if (isVersionNegotiation(p) || h.type == PktType::Retry) {
     h.payloadOffset = o;
     return int(o);
   }
-  if (h.type == PacketType::Initial) {
+  if (h.type == PktType::Initial) {
     unsigned n = 0;
     if (VarInt::decode(
 	  ZuCSpan{p.data() + o, p.length() - o}, h.tokenLength, n) < 0)
@@ -170,11 +170,11 @@ int Packet::parseLong(ZuCSpan p, LongHeader &h)
   return int(h.payloadOffset);
 }
 
-int Packet::parseRetry(ZuCSpan p, RetryPacket &retry)
+int Pkt::parseRetry(ZuCSpan p, RetryPkt &retry)
 {
   retry = {};
   int o = parseLong(p, retry.header);
-  if (o < 0 || retry.header.type != PacketType::Retry) return -1;
+  if (o < 0 || retry.header.type != PktType::Retry) return -1;
   if (p.length() < unsigned(o) + 16) return -1;
   unsigned payloadLen = p.length() - unsigned(o);
   retry.token = ZuCSpan{p.data() + o, payloadLen - 16};
@@ -182,7 +182,7 @@ int Packet::parseRetry(ZuCSpan p, RetryPacket &retry)
   return int(p.length());
 }
 
-int Packet::retryIntegrityTag(
+int Pkt::retryIntegrityTag(
   uint8_t *tag, unsigned len, ZuCSpan retryWithoutTag,
   const CxnID &originalDCID)
 {
@@ -221,9 +221,9 @@ int Packet::retryIntegrityTag(
   return ok ? 16 : -1;
 }
 
-bool Packet::validateRetryIntegrity(ZuCSpan p, const CxnID &originalDCID)
+bool Pkt::validateRetryIntegrity(ZuCSpan p, const CxnID &originalDCID)
 {
-  RetryPacket retry;
+  RetryPkt retry;
   if (parseRetry(p, retry) < 0) return false;
   uint8_t tag[16];
   if (retryIntegrityTag(
@@ -234,7 +234,7 @@ bool Packet::validateRetryIntegrity(ZuCSpan p, const CxnID &originalDCID)
   return !CRYPTO_memcmp(tag, retry.integrityTag.data(), sizeof(tag));
 }
 
-int Packet::parseShort(ZuCSpan p, unsigned cidLen, ShortHeader &h)
+int Pkt::parseShort(ZuCSpan p, unsigned cidLen, ShortHdr &h)
 {
   if (p.length() < 1 + cidLen + 1 || isLong(p) || cidLen > CxnIDMax)
     return -1;
@@ -244,12 +244,12 @@ int Packet::parseShort(ZuCSpan p, unsigned cidLen, ShortHeader &h)
   return int(h.pnOffset + h.pnLength);
 }
 
-int Packet::parseVersionNegotiation(
+int Pkt::parseVersionNegotiation(
   ZuCSpan p, uint32_t *versions, unsigned capacity, unsigned &nVersions)
 {
   nVersions = 0;
   if (!isVersionNegotiation(p)) return -1;
-  LongHeader h;
+  LongHdr h;
   int o = parseLong(p, h);
   if (o < 0 || ((p.length() - unsigned(o)) % 4)) return -1;
   for (unsigned i = unsigned(o); i < p.length(); i += 4) {
@@ -259,23 +259,23 @@ int Packet::parseVersionNegotiation(
   return 0;
 }
 
-static int longTypeBits_(PacketType::T type)
+static int longTypeBits_(PktType::T type)
 {
-  if (type == PacketType::Initial) return 0;
-  if (type == PacketType::ZeroRTT) return 1;
-  if (type == PacketType::Handshake) return 2;
-  if (type == PacketType::Retry) return 3;
+  if (type == PktType::Initial) return 0;
+  if (type == PktType::ZeroRTT) return 1;
+  if (type == PktType::Handshake) return 2;
+  if (type == PktType::Retry) return 3;
   return -1;
 }
 
-int Packet::writeLong(
-  uint8_t *out, unsigned len, PacketType::T type,
+int Pkt::writeLong(
+  uint8_t *out, unsigned len, PktType::T type,
   const CxnID &dcid, const CxnID &scid,
   uint64_t payloadLength, unsigned pnLength)
 {
   if (pnLength < 1 || pnLength > 4) return -1;
   int typeBits = longTypeBits_(type);
-  if (typeBits < 0 || type == PacketType::Retry) return -1;
+  if (typeBits < 0 || type == PktType::Retry) return -1;
   if (len < 7 + dcid.length() + scid.length() + 8) return -1;
   unsigned o = 0;
   out[o++] = uint8_t(0xc0 | (typeBits << 4) | (pnLength - 1));
@@ -284,7 +284,7 @@ int Packet::writeLong(
   memcpy(out + o, dcid.data(), dcid.length()); o += dcid.length();
   out[o++] = scid.length();
   memcpy(out + o, scid.data(), scid.length()); o += scid.length();
-  if (type == PacketType::Initial) {
+  if (type == PktType::Initial) {
     int n = VarInt::encode(out + o, len - o, 0);
     if (n < 0) return -1;
     o += n;
@@ -295,23 +295,23 @@ int Packet::writeLong(
   return int(o);
 }
 
-int Packet::writeInitial(
+int Pkt::writeInitial(
   uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   uint64_t payloadLength, unsigned pnLength)
 {
   return writeLong(
-    out, len, PacketType::Initial, dcid, scid, payloadLength, pnLength);
+    out, len, PktType::Initial, dcid, scid, payloadLength, pnLength);
 }
 
-int Packet::writeHandshake(
+int Pkt::writeHandshake(
   uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   uint64_t payloadLength, unsigned pnLength)
 {
   return writeLong(
-    out, len, PacketType::Handshake, dcid, scid, payloadLength, pnLength);
+    out, len, PktType::Handshake, dcid, scid, payloadLength, pnLength);
 }
 
-int Packet::writeRetry(
+int Pkt::writeRetry(
   uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   ZuCSpan token, ZuCSpan retryIntegrityTag)
 {
@@ -337,7 +337,7 @@ int Packet::writeRetry(
   return int(o);
 }
 
-int Packet::writeRetryAuthenticated(
+int Pkt::writeRetryAuthenticated(
   uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   ZuCSpan token, const CxnID &originalDCID)
 {
@@ -351,7 +351,7 @@ int Packet::writeRetryAuthenticated(
   return n + 16;
 }
 
-int Packet::writeShort(
+int Pkt::writeShort(
   uint8_t *out, unsigned len, const CxnID &dcid, uint64_t pn,
   unsigned pnLength)
 {
@@ -361,11 +361,11 @@ int Packet::writeShort(
   unsigned o = 0;
   out[o++] = uint8_t(0x40 | (pnLength - 1));
   memcpy(out + o, dcid.data(), dcid.length()); o += dcid.length();
-  if (PacketNumber::encode(out + o, len - o, pn, pnLength) < 0) return -1;
+  if (PktNumber::encode(out + o, len - o, pn, pnLength) < 0) return -1;
   return int(o + pnLength);
 }
 
-int Packet::writeVersionNegotiation(
+int Pkt::writeVersionNegotiation(
   uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   const uint32_t *versions, unsigned nVersions)
 {
