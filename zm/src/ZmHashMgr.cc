@@ -11,6 +11,7 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuArray.hh>
 
+#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmSingleton.hh>
 
 class ZmHashMgr_ : public ZmObject {
@@ -25,12 +26,28 @@ friend ZmHashMgr;
 public:
   ZmHashMgr_() { }
   ~ZmHashMgr_() {
-    ZmGuard<ZmPLock> guard(m_lock);
-    auto i = m_tables.iter();
-    if (ZuLikely(!i.count())) return;
-    while (auto tbl = i()) {
-      tbl->ref2_();
-      (i.del(tbl))->deref_();
+    for (;;) {
+      unsigned n = m_tables.count_();
+      if (ZuLikely(!n)) return;
+      auto buf = ZmAlloc(ZmAnyHash *, n);
+      if (!buf) return;
+      unsigned j = 0;
+      bool overflow = false;
+      {
+	ZmGuard<ZmPLock> guard(m_lock);
+	auto i = m_tables.iter();
+	while (ZmAnyHash *tbl = i()) {
+	  if (ZuUnlikely(j >= n)) {
+	    overflow = true;
+	    break;
+	  }
+	  tbl->ref2_();
+	  buf[j++] = tbl;
+	  i.del(tbl);
+	}
+      }
+      for (unsigned k = 0; k < j; ++k) buf[k]->deref_();
+      if (!overflow) return;
     }
   }
 
