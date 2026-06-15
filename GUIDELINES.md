@@ -171,8 +171,20 @@ These guidelines extend `AGENTS.md`
 - Assertions: use `ZuAssert` at compile time; at run time use plain `assert` below `zm`, `ZmAssert` below `zi`, and `ZiAssert` in `zi` or above.
 - Use `ZiAssert` whenever run-time assertion failure needs graceful handling.
 - For complex template aliases, prefer `ZuDerive(x, ([complex template instantiation]))` over `using X = ...`; the explicit type ID helps compiler/linker symbol length handling.
-- `ZuSpan`, `*Array`, and `*String` interoperate without explicit casts; avoid casts such as between `ZuCSpan` and `ZuBSpan`.
 - Comparisons and sentinels: use `operator *` to detect sentinel null, use `ZuCmp` sentinel logic, and prefer `ZuCmp::cmp` over `operator <=>` because it returns plain `int`.
+- Traits: `ZuTraits` provides the type traits used to distinguish string types, etc.
+
+### Strings
+- arrays of chars trait as strings and interoperate
+- `ZuSpan`, `*Array`, and `*String` interoperate without explicit casts; avoid casts such as between `ZuCSpan` and `ZuBSpan`.
+- Z string types always cache length
+  - they will automatically `strlen` passed values if they trait as C strings
+- There are 3 groups of string types
+  - `*String`: by-value, potentially owning, null-terminated
+  - `*Array`: by-value, potentially owning, not null-terminated
+  - `ZtString` and `ZtArray` can shadow memory
+  - `ZtString` and `ZtBuiltin` have built-in storage
+  - `*Span`: by-reference, never owning, not-null-terminated
 
 ### Compile-time data and matching
 - Use `ZuTypeList` and `ZuSeq` for compile-time tables, associative containers, and sequences.
