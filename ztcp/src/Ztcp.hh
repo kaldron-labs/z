@@ -218,7 +218,7 @@ private:
     app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn)]() {
       impl->disconnected_(cxn.ptr());
       auto mx = cxn->mx();
-      mx->txRun([cxn = ZuMv(cxn)]() { });
+      mx->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn)]() { });
     });
   }
 

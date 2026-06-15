@@ -586,8 +586,8 @@ private:
     app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn)]() {
       impl->disconnected_(cxn);
       auto mx = cxn->mx();
-      // drain Tx while keeping cxn referenced
-      mx->txRun([cxn = ZuMv(cxn)]() { });
+      // drain Tx while keeping cxn/impl referenced
+      mx->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn)]() { });
     });
   }
   void disconnected_(Cxn *cxn) { // Ztls Rx thread
