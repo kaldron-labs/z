@@ -164,6 +164,11 @@ These guidelines extend `AGENTS.md`
   - use `operator *` to detect sentinel null
   - see `ZuCmp` for sentinel values and associated logic
   - use `ZuCmp::cmp` in preference to `operator <=>` because `cmp` returns a plain int
+- use `ZmFn` for type-erased lambdas
+  - try and consolidate captures into a single 64bit value (e.g. a `ZmRef`)
+    - use `ZmFn`'s built-in capture to elide heap-allocation for lambda instances
+    - leverage `mvFn`
+- combine `ZmFn` with `ZiIOFn` and `ZiIOContext` to optimize I/O processing
 
 ## Code Style
 - library headers must follow the following format:
