@@ -63,6 +63,17 @@ These guidelines extend `AGENTS.md`
 - Target gcc and clang; use `__GNUC__`, intrinsics, `int128_t`, and `uint128_t` where appropriate.
 - Target Linux and Windows via msys2/mingw 64-bit; use `_WIN32` for Windows-specific paths.
 
+### Enums
+- do not use `enum class`
+  - if the enum needs to be type-aliased by dependents, use `struct E { enum { ... } };`
+  - otherwise use `namespace E { enum { ... } };` because this permits dependents to `using namespace E`
+  - above `zm` use `ZtEnum`:
+    - if an external API type
+    - if callers need name lookup at run-time
+
+### Constant literals
+- when a constant literal is integral or boolean and does not need to be wider than `int`, use `enum { X = 42 };` in favor of `static constexpr T = 42`
+
 ## Use of STL and other dependencies
 - minimize use of STL
 - use `Zu` alternatives to STL: example: `ZuIfT` instead of `enable_if`
