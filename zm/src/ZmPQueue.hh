@@ -425,7 +425,7 @@ private:
     if (!prev)
       m_head[0] = node;
     else
-      prev->next(0, node);
+      prev->NodeExt::next(0, node);
     addTail__<1>(node, addSeqNo);
   }
   template <int Level>
@@ -439,7 +439,7 @@ private:
       if (!prev)
 	m_head[Level] = node;
       else
-	prev->next(Level, node);
+	prev->NodeExt::next(Level, node);
       addTail__<Level + 1>(node, addSeqNo);
       return;
     }
@@ -471,7 +471,7 @@ private:
     if (!next)
       m_tail[0] = node;
     else
-      next->prev(0, node);
+      next->NodeExt::prev(0, node);
     addHead__<1>(node, addSeqNo);
   }
   template <int Level>
@@ -485,7 +485,7 @@ private:
       if (!next)
 	m_tail[Level] = node;
       else
-	next->prev(Level, node);
+	next->NodeExt::prev(Level, node);
       addHead__<Level + 1>(node, addSeqNo);
       return;
     }
@@ -511,17 +511,17 @@ private:
   typename ZmPQueue_::First<Level, Levels>::T addAt_(
       Node *node, Node **next_, unsigned addSeqNo) {
     Node *next = next_[0];
-    Node *prev = next ? next->prev(0) : m_tail[0];
+    Node *prev = next ? next->NodeExt::prev(0) : m_tail[0];
     node->NodeExt::next(0, next);
     if (ZuUnlikely(!next))
       m_tail[0] = node;
     else
-      next->prev(0, node);
+      next->NodeExt::prev(0, node);
     node->NodeExt::prev(0, prev);
     if (ZuUnlikely(!prev))
       m_head[0] = node;
     else
-      prev->next(0, node);
+      prev->NodeExt::next(0, node);
     addAt_<1>(node, next_, addSeqNo);
   }
   template <int Level>
@@ -529,17 +529,17 @@ private:
       Node *node, Node **next_, unsigned addSeqNo) {
     if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits * Level)) - 1)))) {
       Node *next = next_[Level];
-      Node *prev = next ? next->prev(Level) : m_tail[Level];
+      Node *prev = next ? next->NodeExt::prev(Level) : m_tail[Level];
       node->NodeExt::next(Level, next);
       if (ZuUnlikely(!next))
 	m_tail[Level] = node;
       else
-	next->prev(Level, node);
+	next->NodeExt::prev(Level, node);
       node->NodeExt::prev(Level, prev);
       if (ZuUnlikely(!prev))
 	m_head[Level] = node;
       else
-	prev->next(Level, node);
+	prev->NodeExt::next(Level, node);
       addAt_<Level + 1>(node, next_, addSeqNo);
     } else {
       node->NodeExt::prev(Level, nullptr);
@@ -564,11 +564,11 @@ private:
   // delete head
   template <int Level>
   void delHead__() {
-    Node *next(m_head[Level]->next(Level));
+    Node *next(m_head[Level]->NodeExt::next(Level));
     if (!(m_head[Level] = next))
       m_tail[Level] = 0;
     else
-      next->prev(Level, nullptr);
+      next->NodeExt::prev(Level, nullptr);
   }
   template <int Level>
   typename ZmPQueue_::First<Level, Levels>::T delHead_() {
@@ -592,11 +592,11 @@ private:
     if (ZuUnlikely(!prev))
       m_head[Level] = next;
     else
-      prev->next(Level, next);
+      prev->NodeExt::next(Level, next);
     if (ZuUnlikely(!next))
       m_tail[Level] = prev;
     else
-      next->prev(Level, prev);
+      next->NodeExt::prev(Level, prev);
     return next;
   }
   template <int Level>
