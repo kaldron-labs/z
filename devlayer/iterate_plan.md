@@ -24,7 +24,7 @@ Task Steps:
 
 IMPORTANT
 - MAKE A PLAN, DO NOT IMPLEMENT IT
-- DO NOT RELY ON MEMORY - `requirements.new.md` and `plan.md` may have been edited outside this session
+- DO NOT RELY ON MEMORY - `plan.md` may have been edited outside this session
 - RETAIN ALL IMPORTANT DETAIL from `plan.md`
 - `plan.new.md` must be an improved and clarified version of `plan.md`, with no legacy open questions remaining and all details retained
 - Read `AGENTS.md`, `GUIDELINES.md` and `CODEBASE.md` to understand the existing codebase
