@@ -20,7 +20,7 @@ struct FlowApp : public Zquic::Engine<FlowApp> {
   FlowApp() : m_mx{mxParams_()} {
     ZiAssert(m_mx.start(), "Zquic", (),
       "flow test multiplexer start failed", return);
-    ZiAssert(Base::init(Zquic::EngineParams(&m_mx, "3", "3").sameThread()),
+    ZiAssert(Base::init(Zquic::EngineParams(&m_mx, "3", "4")),
       "Zquic", (), "flow test app init failed", return);
   }
   ~FlowApp() {
@@ -40,7 +40,7 @@ private:
   static ZiMxParams mxParams_() {
     return ZiMxParams()
       .scheduler([](auto &s) {
-	s.nThreads(3);
+	s.nThreads(4);
       })
       .rxThread(1).txThread(2);
   }

@@ -19,7 +19,7 @@ struct App : public Zquic::Engine<App> {
     bool ok = m_mx.start();
     ZiAssert(ok, "Zquic", (), "stream test multiplexer start failed", return);
     if (ok)
-      ok = Base::init(Zquic::EngineParams(&m_mx, "3", "3").sameThread());
+      ok = Base::init(Zquic::EngineParams(&m_mx, "3", "4"));
     ZiAssert(ok, "Zquic", (), "stream test app init failed", return);
   }
   ~App() {
@@ -39,7 +39,7 @@ private:
   static ZiMxParams mxParams_() {
     return ZiMxParams()
       .scheduler([](auto &s) {
-	s.nThreads(3);
+	s.nThreads(4);
       })
       .rxThread(1).txThread(2);
   }
