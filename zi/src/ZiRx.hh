@@ -68,12 +68,13 @@ public:
   template <auto Hdr, auto Body>
   void recv(ZiIOContext &io) {
     auto fn = [](ZiIOBuf *buf, ZiIOContext &io) {
+      auto impl_ = impl(buf);
       unsigned len = io.offset += io.length;
       io.length = 0;
 
       // scan header
       buf->length = len;
-      int frameLen = ZuInvoke<Hdr>(impl(buf), io, buf);
+      int frameLen = ZuInvoke<Hdr>(impl_, io, buf);
       if (ZuUnlikely(frameLen < 0)) {
 	io.disconnect();
 	return true;
@@ -103,7 +104,7 @@ public:
 
       // copy any trailing data that is (part of) the next message(s)
       if (nextLen) {
-	next = new BufAlloc{impl(buf)};
+	next = new BufAlloc{impl_};
 	nextPtr = next->ensure(nextLen);
 	memcpy(nextPtr, io.ptr + frameLen, nextLen);
 	next->length = nextLen;
@@ -111,7 +112,7 @@ public:
       }
 
       // process body
-      frameLen = ZuInvoke<Body>(impl(buf), io, io.fn.mvObject<ZiIOBuf>());
+      frameLen = ZuInvoke<Body>(impl_, io, io.fn.mvObject<ZiIOBuf>());
       if (ZuUnlikely(frameLen < 0)) {
 	io.disconnect();
 	return true;
@@ -120,7 +121,7 @@ public:
 
       // no trailing data - allocate blank next message
       if (!next) {
-	next = new BufAlloc{impl(buf)};
+	next = new BufAlloc{impl_};
 	nextPtr = next->data();
       }
 
@@ -151,12 +152,13 @@ public:
   template <auto Hdr, auto Body>
   void recvSync(ZiIOContext &io) {
     auto fn = [](ZiIOBuf *buf, ZiIOContext &io) {
+      auto impl_ = impl(buf);
       unsigned len = io.offset += io.length;
       io.length = 0;
 
       // scan header
       buf->length = len;
-      int frameLen = ZuInvoke<Hdr>(impl(buf), io, buf);
+      int frameLen = ZuInvoke<Hdr>(impl_, io, buf);
       if (ZuUnlikely(frameLen < 0)) {
 	io.disconnect();
 	return true;
@@ -180,7 +182,7 @@ public:
       }
 
       // process body
-      frameLen = ZuInvoke<Body>(impl(buf), io, buf, frameLen);
+      frameLen = ZuInvoke<Body>(impl_, io, buf, frameLen);
       if (ZuUnlikely(frameLen < 0)) {
 	io.disconnect();
 	return true;
