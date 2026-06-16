@@ -20,15 +20,3 @@ Initial and Handshake discard is split by owner thread.  Establishment marks obs
 
 Added direct recovery coverage for ACK/loss/retransmit behavior in Initial, Handshake, and AppData `PktTxSpace` instances.  Added CRYPTO stream retention checks and runtime handshake-loss coverage that drops server Initial CRYPTO and multiple server Handshake CRYPTO packets, verifying PTO-driven retransmission completes the handshake.  Validated with ASan/LSan `make -C zquic/test test`, dependent `make -C zhttp/test test`, and `git diff --check`.
 
-## Wire time-threshold loss and persistent congestion into runtime
-Implemented QUIC time-threshold loss processing and recovery feedback.  Added runtime helpers to compute packet-loss delay from RTT samples, scan all active packet number spaces for time-threshold losses, and arm a dedicated loss timer to the earliest deadline.  Loss handling now enqueues retransmit work per space, updates `NewReno` state (`sent`, `acked`, `lostAt`), tracks persistent congestion, and updates diagnostics with packets-lost, cwnd, and bytes-in-flight metrics.
-
-ACK processing now returns both ACKed and lost metadata from `PktTxSpace`; ACKed bytes feed congestion ACK accounting, while lost bytes/final timestamps feed loss accounting.  Packet retransmission now uses those same metadata paths for both ACK-triggered and timer-triggered recovery.
-
-`PktTxSpace` was extended with timestamp-aware loss-marking outputs (acked/lost byte totals and latest-loss sent time) and a `nextLossTime` query so runtime can compute the next timer deadline deterministically.
-
-`loss_time` timer callbacks and PTO callback scheduling run on the Tx shard, and timer teardown now uses a generation/cancel discipline: timers carry raw-owner pointers, are cancelled with `del`, and late timer callbacks bail if a newer generation is observed.
-
-Timer safety fixes also align shutdown with the required 3-phase teardown pattern: owners cancel timers, drain callback threads via `app()->txRun`/`app()->rxRun` continuations with completion inside the callback, and only then perform runtime teardown notifications.  This removed the stale-pointer/stale-callback leak reported during endpoint-down and connection close.
-
-Coverage added in `zquic/test/ZquicRecoveryTest.cc` and `zquic/test/ZquicRuntimeTest.cc` for deterministic time-threshold loss behavior, recovery via loss timer without PTO, and persistent telemetry updates.  Verified with `make -C zquic/test test` and `make -C zhttp/test test` under sanitizer.
