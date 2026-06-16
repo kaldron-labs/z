@@ -85,9 +85,11 @@ bool validateOptions(const Options &options, int argc)
   return true;
 }
 
-ZtString<> outputPath(ZuCSpan base, unsigned reqID, unsigned requests)
+ZuDerive(HdrString, ZtString<ZtStringHeapID<"zhttp.HdrString">>);
+
+HdrString outputPath(ZuCSpan base, unsigned reqID, unsigned requests)
 {
-  ZtString<> path;
+  HdrString path;
   path << base;
   if (requests > 1) path << '.' << ZuBoxed(reqID);
   return path;
@@ -106,10 +108,10 @@ using ResponseHeaders = ZhttpHeaders(
 
 struct URL {
   ZuCSpan	scheme;
-  ZtString<>	host;
+  HdrString	host;
   Zi::Hostname	dnsHost;
   uint16_t	port = 0;
-  ZtString<>	target;
+  HdrString	target;
 };
 
 namespace Protocol {
@@ -134,10 +136,10 @@ struct Req {
   URL		url;
   Protocol::T	protocol = Protocol::H1;
   H3CxnState::T h3State = Zhttp::H3::CxnState::Init;
-  ZtString<>	output;
-  ZtString<>	altSvcHost;
+  HdrString	output;
+  HdrString	altSvcHost;
   uint16_t	altSvcPort = 0;
-  ZtString<>	location;
+  HdrString	location;
   int64_t	responseStreamID = -1;
   unsigned	redirects = 0;
   unsigned	status = 0;
@@ -173,15 +175,15 @@ inline ReqLogCtx reqLogCtx(const Req &req)
 }
 
 struct AltSvcEndpoint {
-  ZtString<>	host;
+  HdrString	host;
   Zi::Hostname	dnsHost;
   uint16_t	port = 0;
   bool		h3 = false;
 };
 
 struct Origin {
-  ZtString<>	scheme;
-  ZtString<>	host;
+  HdrString	scheme;
+  HdrString	host;
   uint16_t	port = 0;
 
   bool equals(const Origin &o) const {
@@ -191,8 +193,8 @@ struct Origin {
     return l.equals(r);
   }
   uint32_t hash() const {
-    uint32_t h = ZuHash<ZtString<>>::hash(scheme);
-    h ^= ZuHash<ZtString<>>::hash(host) + 0x9e3779b9U + (h<<6) + (h>>2);
+    uint32_t h = ZuHash<HdrString>::hash(scheme);
+    h ^= ZuHash<HdrString>::hash(host) + 0x9e3779b9U + (h<<6) + (h>>2);
     h ^= ZuHash<uint16_t>::hash(port) + 0x9e3779b9U + (h<<6) + (h>>2);
     return h;
   }
@@ -225,7 +227,7 @@ struct Run {
 
 struct RequestResult {
   unsigned	status = 0;
-  ZtString<>	location;
+  HdrString	location;
   AltSvcEndpoint altSvc;
 };
 
@@ -430,7 +432,7 @@ bool parseLocation(const URL &base, ZuCSpan location, URL &url)
     return parseURL(location, url, &error);
   url = base;
   if (location.starts("//")) {
-    ZtString<> absolute;
+    HdrString absolute;
     absolute << base.scheme << ':' << location;
     return parseURL(absolute, url, &error);
   }
@@ -445,7 +447,7 @@ bool parseLocation(const URL &base, ZuCSpan location, URL &url)
   int slash = -1;
   for (unsigned i = 0; i < target.length(); ++i)
     if (target[i] == '/') slash = i;
-  ZtString<> next;
+  HdrString next;
   if (slash >= 0) {
     ZuCSpan dir = target;
     dir.trunc(slash + 1);

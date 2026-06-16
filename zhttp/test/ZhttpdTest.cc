@@ -39,7 +39,7 @@ bool writeFile(const Zi::Path &path, ZuCSpan body)
 bool initState(State &state, const Zi::Path &root)
 {
   state.options.root = root;
-  Text error;
+  HdrString error;
   if (!initFileState(state, error)) return false;
   state.mime.init(state.options);
   return true;
@@ -65,7 +65,7 @@ bool load(Options &options, std::initializer_list<const char *> args)
 void testPathNormalize()
 {
   ZuTestScope(testPathNormalize);
-  Text out, err;
+  HdrString out, err;
   ZuCHECK(decodeNormalizePath("/a//b/./c", false, out, err) &&
       out == "/a/b/c", "path normalization failed");
   ZuCHECK(!decodeNormalizePath("/../x", false, out, err),
@@ -164,7 +164,7 @@ void testMime()
   State custom;
   custom.options.root = root;
   custom.options.mimetypes = types;
-  Text error;
+  HdrString error;
   ZuCHECK(initFileState(custom, error),
     "custom state initialization failed");
   custom.mime.init(custom.options);
@@ -341,7 +341,7 @@ void testSingleFile()
   State state;
   state.options.root = file;
   state.options.singleFile = true;
-  Text error;
+  HdrString error;
   ZuCHECK(initFileState(state, error), "single file state failed: ", error);
   state.mime.init(state.options);
   StaticPlanner planner{&state};
