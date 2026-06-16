@@ -117,6 +117,10 @@ struct PathHintKind {
   ZtEnum(PathHintKind, int8_t, None, KernelMTU, PktTooBig, SendTooBig);
 };
 
+struct EcnMark {
+  ZtEnum(EcnMark, int8_t, NotECT, ECT0, ECT1, CE);
+};
+
 struct ServerPktAction {
   ZtEnum(ServerPktAction, int8_t, Drop, AcceptInitial, VersionNegotiation);
 };

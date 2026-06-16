@@ -454,6 +454,28 @@ void testAckManager()
       frame.length == 1,
     "ACK manager AppData coalesced frame mismatch");
 
+  Zquic::AckManager ecnAcks;
+  ZuCHECK(ecnAcks.received(
+      Zquic::PktSpace::AppData, 1, 1000, 25, true, false,
+      Zquic::EcnMark::ECT0) &&
+      ecnAcks.received(
+	Zquic::PktSpace::AppData, 2, 1001, 25, true, false,
+	Zquic::EcnMark::ECT1) &&
+      ecnAcks.received(
+	Zquic::PktSpace::AppData, 3, 1002, 25, true, false,
+	Zquic::EcnMark::CE) &&
+      !ecnAcks.received(
+	Zquic::PktSpace::AppData, 3, 1003, 25, true, false,
+	Zquic::EcnMark::CE),
+    "ACK manager ECN receive accounting failed");
+  n = ecnAcks.writeFrame(Zquic::PktSpace::AppData, b, sizeof(b), 0, true);
+  ZuCHECK(n > 0 && b[0] == 0x03 &&
+      !Zquic::FrameCodec::parse(ZuCSpan{b, unsigned(n)}, frame, used) &&
+      frame.ackECN.ect0 == 1 &&
+      frame.ackECN.ect1 == 1 &&
+      frame.ackECN.ce == 1,
+    "ACK manager ACK_ECN frame mismatch");
+
   Zquic::AckManager runtime;
   ZuCHECK(runtime.received(Zquic::PktSpace::Initial, 1, 1000, 25, true, true) &&
       runtime.immediate(Zquic::PktSpace::Initial) &&

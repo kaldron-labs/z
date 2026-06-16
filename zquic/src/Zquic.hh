@@ -495,6 +495,7 @@ struct RuntimeRxDiag {
   uint64_t	framesRx = 0;
   uint64_t	cryptoBytesRx = 0;
   uint64_t	streamBytesRx = 0;
+  AckECN	ecnRx[3];
   uint64_t	failures = 0;
   uint64_t	handshakeComplete = 0;
 };
@@ -510,6 +511,8 @@ struct RuntimeTxDiag {
   uint64_t	congestionSSThresh = 0;
   uint64_t	congestionBytesInFlight = 0;
   uint64_t	persistentCongestion = 0;
+  AckECN	peerAckECN[3];
+  uint64_t	ecnValidationFailures = 0;
   uint64_t	failures = 0;
 };
 
@@ -523,6 +526,7 @@ struct RuntimeDiag {
     framesRx = rx.framesRx;
     cryptoBytesRx = rx.cryptoBytesRx;
     streamBytesRx = rx.streamBytesRx;
+    for (unsigned i = 0; i < 3; ++i) ecnRx[i] = rx.ecnRx[i];
     handshakeComplete = rx.handshakeComplete;
 
     packetsTx = tx.packetsTx;
@@ -535,6 +539,8 @@ struct RuntimeDiag {
     congestionSSThresh = tx.congestionSSThresh;
     congestionBytesInFlight = tx.congestionBytesInFlight;
     persistentCongestion = tx.persistentCongestion;
+    for (unsigned i = 0; i < 3; ++i) peerAckECN[i] = tx.peerAckECN[i];
+    ecnValidationFailures = tx.ecnValidationFailures;
 
     failures = rx.failures + tx.failures;
   }
@@ -550,12 +556,15 @@ struct RuntimeDiag {
   uint64_t	cryptoBytesTx = 0;
   uint64_t	streamBytesRx = 0;
   uint64_t	streamBytesTx = 0;
+  AckECN	ecnRx[3];
   uint64_t	ptoCount = 0;
   uint64_t	retransmittedFrames = 0;
   uint64_t	congestionWindow = 0;
   uint64_t	congestionSSThresh = 0;
   uint64_t	congestionBytesInFlight = 0;
   uint64_t	persistentCongestion = 0;
+  AckECN	peerAckECN[3];
+  uint64_t	ecnValidationFailures = 0;
   uint64_t	failures = 0;
   uint64_t	handshakeComplete = 0;
 };
@@ -2016,6 +2025,7 @@ protected:
     uint64_t		gen = 0;
     uint64_t		delay = 0;
     uint64_t		largestRxTime = 0;
+    AckECN		ecn;
     unsigned		nRanges = 0;
     bool		due = false;
     AckRange		ranges[Frame::MaxAckRanges];
@@ -2167,6 +2177,14 @@ protected:
     m_txDiag.congestionSSThresh = m_congestion.ssthresh();
     m_txDiag.congestionBytesInFlight = m_congestion.bytesInFlight();
   }
+  void noteRxECN_(CryptoLevel::T level, EcnMark::T ecn) {
+    AckECN &diag = m_rxDiag.ecnRx[level];
+    switch (ecn) {
+      case EcnMark::ECT0: ++diag.ect0; break;
+      case EcnMark::ECT1: ++diag.ect1; break;
+      case EcnMark::CE: ++diag.ce; break;
+    }
+  }
   unsigned congestionAllowance_() const {
     uint64_t cwnd = m_congestion.cwnd();
     uint64_t inFlight = m_congestion.bytesInFlight();
@@ -2175,6 +2193,8 @@ protected:
     return allowance > uint64_t(unsigned(-1)) ?
       unsigned(-1) : unsigned(allowance);
   }
+  bool ecnDisabled_() const { return m_path.ecnDisabled(); }
+  void setEcnDisabled_(bool b = true) { m_path.setEcnDisabled(b); }
   PktBudget sendBudget_() const {
     PktBudget budget;
     unsigned maxUDP = app()->maxUDP();
@@ -2512,6 +2532,8 @@ protected:
     memset(m_txPN, 0, sizeof(m_txPN));
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
     m_rxAcks.clear();
+    for (auto &ack : m_txAck) ack = {};
+    for (auto &ecn : m_peerAckECN) ecn.reset();
     for (auto &p : m_txPkts) p.clear();
     memset(m_rxSpaceDiscarded, 0, sizeof(m_rxSpaceDiscarded));
     memset(m_txSpaceDiscarded, 0, sizeof(m_txSpaceDiscarded));
@@ -2806,6 +2828,7 @@ protected:
     ack.gen = m_rxAcks.gen(space);
     ack.largestRxTime = m_rxAcks.largestRxTime(space);
     ack.due = m_rxAcks.immediate(space);
+    ack.ecn = m_rxAcks.ackECN(space);
     const AckTracker &tracker = m_rxAcks.tracker(space);
     ack.nRanges = tracker.count();
     if (ack.nRanges > Frame::MaxAckRanges)
@@ -2870,9 +2893,13 @@ protected:
 	delay = (now - ack.largestRxTime) >>
 	  m_transportParams.ackDelayExponent;
     }
-    int n = FrameCodec::writeAckRanges(
-      build.scratch(), build.scratchAvail(), ack.ranges, ack.nRanges,
-      delay);
+    int n = !m_path.ecnDisabled() && ack.ecn.any() ?
+      FrameCodec::writeAckECN(
+	build.scratch(), build.scratchAvail(), ack.ranges, ack.nRanges,
+	delay, ack.ecn) :
+      FrameCodec::writeAckRanges(
+	build.scratch(), build.scratchAvail(), ack.ranges, ack.nRanges,
+	delay);
     if (n < 0) return false;
     if (!build.commitScratch(unsigned(n))) return false;
     build.markAck(unsigned(level));
@@ -3247,10 +3274,13 @@ protected:
   }
 
   bool recordRxPkt_(
-    CryptoLevel::T level, uint64_t pn) {
+    CryptoLevel::T level, uint64_t pn,
+    EcnMark::T ecn = EcnMark::NotECT) {
     if (m_rxAcks.tracker(pktSpace_(level)).contains(pn)) return false;
     m_rxAcks.received(
-      pktSpace_(level), pn, nowUS_(), localMaxAckDelayUS_(), false);
+      pktSpace_(level), pn, nowUS_(), localMaxAckDelayUS_(), false, false,
+      ecn);
+    noteRxECN_(level, ecn);
     if (pn > m_rxLargestPN[level])
       m_rxLargestPN[level] = pn;
     return true;
@@ -3291,6 +3321,7 @@ protected:
     AckSnapshot ack;
     ack.level = level;
     ack.delay = frame.value;
+    ack.ecn = frame.ackECN;
     ack.nRanges = frame.ackRanges.length();
     for (unsigned i = 0; i < ack.nRanges; ++i)
       ack.ranges[i] = frame.ackRanges[i];
@@ -3303,6 +3334,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK sent-packet processing outside Tx thread", return);
     if (!ack.nRanges || m_txSpaceDiscarded[ack.level]) return;
+    validateAckECN_(ack);
     ZuTime sentTime;
     unsigned lost = 0;
     uint64_t ackedBytes = 0;
@@ -3336,6 +3368,32 @@ protected:
     schedulePTO_();
     scheduleLossTimer_();
     if (congestionOpened) impl()->queueTxFlush_();
+  }
+
+  bool validateAckECN_(const AckSnapshot &ack) {
+    if (!ack.ecn.any()) return true;
+    unsigned i = unsigned(ack.level);
+    const AckECN &last = m_peerAckECN[i];
+    bool fail =
+      ack.ecn.ect0 < last.ect0 ||
+      ack.ecn.ect1 < last.ect1 ||
+      ack.ecn.ce < last.ce;
+    uint64_t total = ack.ecn.ect0 + ack.ecn.ect1;
+    if (total < ack.ecn.ect0) fail = true;
+    uint64_t withCE = total + ack.ecn.ce;
+    if (withCE < total) fail = true;
+    if (ack.nRanges) {
+      uint64_t largest = ack.ranges[ack.nRanges - 1].largest;
+      if (withCE > largest + 1) fail = true;
+    }
+    if (fail) {
+      m_path.setEcnDisabled();
+      ++m_txDiag.ecnValidationFailures;
+      return false;
+    }
+    m_peerAckECN[i] = ack.ecn;
+    m_txDiag.peerAckECN[i] = ack.ecn;
+    return true;
   }
 
   static ZuTime runtimeNow_() { return Zm::now(); }
@@ -3658,7 +3716,7 @@ protected:
       ++m_rxDiag.failures;
       return false;
     }
-    if (!recordRxPkt_(level, pn)) return true;
+    if (!recordRxPkt_(level, pn, d.ecn)) return true;
     ++m_rxDiag.packetsRx;
     return consumeFrames(
       level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
@@ -3711,7 +3769,7 @@ protected:
 	return false;
       }
     }
-    if (!recordRxPkt_(CryptoLevel::OneRTT, pn))
+    if (!recordRxPkt_(CryptoLevel::OneRTT, pn, d.ecn))
       return true;
     ++m_rxDiag.packetsRx;
     return consumeFrames(
@@ -4288,6 +4346,8 @@ private:
   uint64_t		m_txPN[3]{};
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
+  AckECN		m_peerAckECN[3];
+  Path			m_path;
   bool			m_txSpaceDiscarded[3]{};
   bool			m_txKeyPhase = false;
 };

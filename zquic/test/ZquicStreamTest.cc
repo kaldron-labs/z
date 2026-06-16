@@ -135,8 +135,35 @@ struct TestLink :
     ack.ranges[0] = Zquic::AckRange{pn, 0};
     Base::processAckFrameTx_(ack);
   }
+  void sendAckEliciting(uint64_t pn, unsigned bytes = 1200) {
+    Base::recordTxPkt_(
+      Zquic::CryptoLevel::OneRTT, pn, bytes,
+      Zquic::SentFrameRef::control(), true);
+  }
+  void ackECN(uint64_t largest, uint64_t ect0, uint64_t ect1, uint64_t ce) {
+    Base::AckSnapshot ack;
+    ack.level = Zquic::CryptoLevel::OneRTT;
+    ack.nRanges = 1;
+    ack.ranges[0] = Zquic::AckRange{largest, 0};
+    ack.ecn.ect0 = ect0;
+    ack.ecn.ect1 = ect1;
+    ack.ecn.ce = ce;
+    Base::processAckFrameTx_(ack);
+  }
+  bool receiveMarked(uint64_t pn, Zquic::EcnMark::T ecn) {
+    bool ok = Base::recordRxPkt_(Zquic::CryptoLevel::OneRTT, pn, ecn);
+    if (ok) Base::postAckSnapshot_(Zquic::CryptoLevel::OneRTT, ZiSockAddr{});
+    return ok;
+  }
+  bool writePendingAck(Zquic::PktBuild &build) {
+    return Base::appendPendingAck_(Zquic::CryptoLevel::OneRTT, build);
+  }
   Zquic::RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
   unsigned congestionAllowance() const { return Base::congestionAllowance_(); }
+  bool ecnDisabled() const { return Base::ecnDisabled_(); }
+  void enableECN() { Base::setEcnDisabled_(false); }
+  void flushTx_() { ++txFlushQueued; }
+  void flushTx_(ZiSockAddr) { ++txFlushQueued; }
   void queueTxFlush_() { ++txFlushQueued; }
   void pto_() { ++ptos; }
   bool retransmit_() { ++retransmits; return false; }
@@ -648,6 +675,66 @@ void testCongestionBudgetGatesRuntimeSends()
   link.close();
 }
 
+void testAckECNValidationDisablesECN()
+{
+  ZuTestScope(testAckECNValidationDisablesECN);
+
+  App app;
+  ZmRef<TestLink> link = new TestLink{&app};
+  link->enableECN();
+  ZuCHECK(!link->ecnDisabled(), "ECN did not enable for validation test");
+  ZuCHECK(link->receiveMarked(1, Zquic::EcnMark::ECT0) &&
+      link->receiveMarked(2, Zquic::EcnMark::CE),
+    "runtime ECN receive marking failed");
+  Zquic::RuntimeDiag diag = link->runtimeDiag();
+  ZuCHECK(diag.ecnRx[Zquic::CryptoLevel::OneRTT].ect0 == 1 &&
+      diag.ecnRx[Zquic::CryptoLevel::OneRTT].ce == 1,
+    "runtime ECN receive diagnostics mismatch");
+  Zquic::PktBuild build;
+  ZuCHECK(link->writePendingAck(build) &&
+      build.count() == 1 &&
+      build.data()[0].len > 0,
+    "runtime pending ACK_ECN build failed");
+  Zquic::Frame frame;
+  unsigned used = 0;
+  ZuCHECK(!Zquic::FrameCodec::parse(
+      ZuCSpan{
+	reinterpret_cast<const char *>(build.data()[0].base),
+	unsigned(build.data()[0].len)},
+      frame, used) &&
+      frame.type == Zquic::FrameType::Ack &&
+      frame.ackECN.ect0 == 1 &&
+      frame.ackECN.ce == 1,
+    "runtime received ECN marks were not emitted in ACK_ECN");
+
+  link->ackECN(9, 2, 1, 0);
+  diag = link->runtimeDiag();
+  ZuCHECK(!link->ecnDisabled() &&
+      diag.peerAckECN[Zquic::CryptoLevel::OneRTT].ect0 == 2 &&
+      diag.peerAckECN[Zquic::CryptoLevel::OneRTT].ect1 == 1,
+    "valid ACK_ECN did not update runtime diagnostics");
+  link->ackECN(9, 1, 1, 0);
+  diag = link->runtimeDiag();
+  ZuCHECK(link->ecnDisabled() && diag.ecnValidationFailures == 1,
+    "regressing ACK_ECN did not disable ECN");
+  link->close();
+
+  TestLink impossible{&app};
+  impossible.enableECN();
+  impossible.sendAckEliciting(0);
+  diag = impossible.runtimeDiag();
+  uint64_t inFlight = diag.congestionBytesInFlight;
+  unsigned queued = impossible.txFlushQueued;
+  impossible.ackECN(0, 2, 0, 0);
+  diag = impossible.runtimeDiag();
+  ZuCHECK(impossible.ecnDisabled() &&
+      diag.ecnValidationFailures == 1 &&
+      diag.congestionBytesInFlight < inFlight &&
+      impossible.txFlushQueued == queued + 1,
+    "impossible ACK_ECN did not disable ECN while preserving ACK processing");
+  impossible.close();
+}
+
 void testBlockedFrameDuplicateSuppression()
 {
   ZuTestScope(testBlockedFrameDuplicateSuppression);
@@ -1067,6 +1154,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamPktizer);
   ZuTestCall(testQueuedControlSendFailureRetainsFrame);
   ZuTestCall(testCongestionBudgetGatesRuntimeSends);
+  ZuTestCall(testAckECNValidationDisablesECN);
   ZuTestCall(testBlockedFrameDuplicateSuppression);
   ZuTestCall(testPeerStreamAcceptance);
   ZuTestCall(testStreamCountLimits);

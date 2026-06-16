@@ -105,10 +105,10 @@ struct Pkt {
 
 inline constexpr uint8_t PktBuildZeroPad[BufSize] = {};
 // Scratch holds locally encoded ACK/control and frame prefixes only. It is
-// sized for the current ACK encoder cap of 64 ranges plus one STREAM prefix.
+// sized for the current ACK_ECN encoder cap of 64 ranges plus one STREAM prefix.
 inline constexpr unsigned PktBuildMaxAckRanges = 64;
 inline constexpr unsigned PktBuildScratchSize =
-  1 + (4 * 8) + ((PktBuildMaxAckRanges - 1) * 2 * 8) +
+  1 + (7 * 8) + ((PktBuildMaxAckRanges - 1) * 2 * 8) +
   1 + (3 * 8);
 
 inline ZuCSpan pktBuildSpan(const uint8_t *data, unsigned len)
