@@ -261,6 +261,12 @@ These guidelines extend `AGENTS.md`
 ### Tests
 - Use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests.
 
+### Tracing and debug logging
+- use `ZmBackTrace` for backtracing
+  - use `ZmBackTracer` to efficiently capture/log a ring of backtraces
+- demangling: below `zm`, use `ZuDemangle`, otherwise use `ZmDemangle`
+  - demangling post-processing can be extended with `ZtDemangle`
+
 ### Persistence
 - Use `Zdb` for relational data persistency; use sagas for transactional integrity.
 
