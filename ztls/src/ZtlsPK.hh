@@ -656,7 +656,7 @@ public:
 	case Type::PK_X509: {
 	  auto hdr = ZtASN1::handler<PK_X509_HDR>(span).ctor();
 	  auto id = Load_::matcher.match(hdr.id);
-	  if (id < 0) return ZeEXCEPT(Error, "ZtlsPK", ([id = ZtBytes(hdr.id)](auto &s) {
+	  if (id < 0) return ZeEXCEPT(Error, "ZtlsPK", ([id = ZtBArray(hdr.id)](auto &s) {
 	    ZmHex::enc(id, [&s](ZuCSpan id) {
 	      s << "unknown X509 OID " << id;
 	    });
@@ -737,7 +737,7 @@ public:
 	case Type::SK_PKCS8: {
 	  auto hdr = ZtASN1::handler<SK_PKCS8_HDR>(span).ctor();
 	  auto id = Load_::matcher.match(hdr.id);
-	  if (id < 0) return ZeEXCEPT(Error, "ZtlsPK", ([id = ZtBytes(hdr.id)](auto &s) {
+	  if (id < 0) return ZeEXCEPT(Error, "ZtlsPK", ([id = ZtBArray(hdr.id)](auto &s) {
 	    ZmHex::enc(id, [&s](ZuCSpan id) {
 	      s << "unknown PKCS#8 OID " << id;
 	    });
