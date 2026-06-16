@@ -1,36 +1,17 @@
 # TODO
 
-Diagnose and fix this: There is a correctness smell in the zhttp debug response parse under --debug: header/body lengths are garbage, likely due debug logging or parser state after binary body handling, but it still completes.
+## Zu
 
-ensure that rx-owned and tx-owned data members in `zquic` and `zhttp` are commented as such
-
-`Zquic.hh` `SrvLink`:
-- `m_` data members should not be public
-- which members are rx-owned, which tx-owned?
-
-use this format (example: `ZiMultiplex.hh`):
+replace many occurrences of:
+`if constexpr (ZuIsSame<T, ZuStringT<S>>{})` with:
+`if constexpr (ZuIsStr<T, S>{})`
+using:
 ```
-  // immutable
-  [type]        m_[member];
-
-  // Rx thread exclusive
-  [type]        m_[member];
-  ...
-
-  // Tx thread exclusive
-  [type]        m_[member];
-  ...
-
-  // shared
-  [atomic type] m_[atomic member];
-  [lock]        m_lock;
-    [type]        m_[guarded member];
+template <typename T, ZuString S>
+using ZuIsStr = ZuIsSame<T, ZuStringT<S>>
 ```
-Notes:
-- "immutable" here means immutable during lifetime
-  - i.e. from after construction to before destruction
-- the shared section only exists if there are shared members
-  - locked shared members are indented below the lock that guards them
+
+## Zhttp
 
 add command line option `--frag` and `--yield` to `zhttp` and `zhttpd` to configure `ZiMultiplex` `frag` for I/O fragmentation and `yield` for thread yielding, respectively
 
