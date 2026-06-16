@@ -243,6 +243,7 @@ These guidelines extend `AGENTS.md`
   - 1. cancel the timer (`ZmScheduler::del`)
   - 2. post a teardown continuation on the thread to drain any late callbacks
   - 3. (in the continuation) complete the teardown with late callbacks drained
+- the continuation needs to be posted on the same thread the timer callback would run on
 - do NOT block except in the main thread, this is async continuation code
 - as with I/O buffers, timer callbacks are short-lived objects owned by longer-lived objects
   - short-lived objects should NOT introduce reference-counting cycles by holding reference counts back to their owners
