@@ -73,6 +73,7 @@ New or changed data stores: sent-packet entries may need byte length and PMTUD-p
 - Open question: whether server anti-amplification or cwnd should cap first when both apply.  Use the minimum effective allowance.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

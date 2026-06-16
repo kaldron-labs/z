@@ -68,6 +68,7 @@ New or changed data stores: retain bounded old/new secrets and discard deadlines
 - Open question: exact discard duration should follow QUIC packet threshold/time guidance using existing RTT state.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

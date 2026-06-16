@@ -69,6 +69,7 @@ New or changed data stores: per-space ECT0, ECT1, and CE counters plus validatio
 - Open question: how much socket ECN plumbing is already available in `Zi`; inspect before adding any platform wrappers.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

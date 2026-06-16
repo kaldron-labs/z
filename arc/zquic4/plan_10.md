@@ -71,6 +71,7 @@ New or changed data stores: sent-packet record needs a PMTUD-probe flag and prob
 - Open question: platform coverage for asynchronous send-too-big errors through `Zi`.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

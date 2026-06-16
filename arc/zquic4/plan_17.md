@@ -65,6 +65,7 @@ New or changed data stores: retain early transport parameters and cleanup state 
 - Open question: how much session resumption state zpicotls integration already exposes.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

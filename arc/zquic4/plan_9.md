@@ -71,6 +71,7 @@ New or changed data stores: maintain active, validating, and retired path/CID as
 - Open question: whether NAT rebinding should preserve the existing DCID until validation or immediately switch to an unused peer CID.  Start conservative and bind a candidate CID before promotion.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

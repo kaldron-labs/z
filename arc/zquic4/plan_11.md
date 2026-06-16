@@ -70,6 +70,7 @@ New or changed data stores: sent frame refs need enough data to rebuild reset/st
 - Open question: exact stale suppression rules for STOP_SENDING after a peer reset.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

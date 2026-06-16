@@ -67,6 +67,7 @@ New or changed data stores: optional writer state belongs to the app; runtime st
 - Open question: whether repository already has a preferred JSON streaming helper beyond `ZtJSON`.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
