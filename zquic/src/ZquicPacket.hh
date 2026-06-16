@@ -157,10 +157,15 @@ public:
   unsigned bytes() const { return m_plain.bytes(); }
   uint8_t *scratch() { return m_scratch + m_scratchLen; }
   unsigned scratchAvail() const { return sizeof(m_scratch) - m_scratchLen; }
+  bool ack(unsigned level) const {
+    return m_ackLevel == level && m_ackLevel < 3;
+  }
+  void markAck(unsigned level) { m_ackLevel = level; }
 
   void reset() {
     m_plain.reset();
     m_scratchLen = 0;
+    m_ackLevel = 3;
   }
 
   bool commitScratch(unsigned len) {
@@ -204,6 +209,7 @@ private:
   PlainVec		m_plain;
   uint8_t		m_scratch[PktBuildScratchSize];
   unsigned		m_scratchLen = 0;
+  unsigned		m_ackLevel = 3;
 };
 
 } // namespace Zquic
