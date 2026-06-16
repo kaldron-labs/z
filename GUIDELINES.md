@@ -58,6 +58,7 @@ These guidelines extend `AGENTS.md`
 - Write idiomatic, natural, maximally expressive code for veteran C++ engineers.
 - Prefer brevity, common expert idioms, and precise structure over beginner-oriented readability.
 - Do not disdain "Hacker's Delight" style when it is clear, correct, and faster.
+- `auto ptr = ...` not `auto *ptr = ...`
 
 ### Portability and compiler features
 - Target gcc and clang; use `__GNUC__`, intrinsics, `int128_t`, and `uint128_t` where appropriate.
