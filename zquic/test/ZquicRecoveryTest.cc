@@ -22,13 +22,14 @@ static bool getVar_(const uint8_t *b, unsigned len, unsigned &o, uint64_t &v)
 }
 
 static Zquic::TxPkt txPkt_(
-  uint64_t pn, unsigned bytes = 100, bool ackEliciting = true)
+  uint64_t pn, unsigned bytes = 100, bool ackEliciting = true,
+  Zquic::PktSpace::T space = Zquic::PktSpace::AppData)
 {
   Zquic::TxPkt p;
   p.pn = pn;
   p.sentTime = Zquic::timeUS(pn * 100);
   p.bytes = bytes;
-  p.space = Zquic::PktSpace::AppData;
+  p.space = space;
   p.ackEliciting = ackEliciting;
   p.inFlight = bytes;
   p.addFrame(Zquic::SentFrameRef::crypto(pn * 10, pn + 1));
@@ -232,6 +233,44 @@ void testPktReorderDuplicateLoss()
     "duplicate ACK range mutated sent-packet state");
 }
 
+void testPktSpaceAckLoss()
+{
+  ZuTestScope(testPktSpaceAckLoss);
+
+  static const Zquic::PktSpace::T spaces[] = {
+    Zquic::PktSpace::Initial,
+    Zquic::PktSpace::Handshake,
+    Zquic::PktSpace::AppData
+  };
+  for (auto space : spaces) {
+    Zquic::PktTxSpace tx;
+    for (uint64_t pn = 0; pn < 6; ++pn)
+      ZuCHECK(tx.add(txPkt_(pn, 100, true, space)),
+	"packet-space sent packet setup failed");
+    Zquic::AckRange ranges[] = { Zquic::AckRange{5, 3} };
+    unsigned lost = 0;
+    ZuTime sentTime;
+    ZuCHECK(tx.ack(ranges, 1, &lost, 3, &sentTime) == 3 &&
+	lost == 3 &&
+	tx.acked() == 3 &&
+	tx.lost() == 3 &&
+	tx.bytesInFlight() == 0 &&
+	sentTime == Zquic::timeUS(500),
+      "packet-space ACK/loss processing mismatch");
+
+    Zquic::SentFrameRef ref;
+    for (uint64_t pn = 0; pn < 3; ++pn) {
+      ZuCHECK(tx.nextRetransmit(ref) &&
+	  ref.kind == Zquic::SentFrameKind::Crypto &&
+	  ref.offset == pn * 10 &&
+	  ref.length == pn + 1,
+	"packet-space retransmit ref mismatch");
+    }
+    ZuCHECK(!tx.nextRetransmit(ref),
+      "packet-space retransmit queue retained extra refs");
+  }
+}
+
 void testPTOReclaimUsesRetransmitQueue()
 {
   ZuTestScope(testPTOReclaimUsesRetransmitQueue);
@@ -386,6 +425,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRecovery);
   ZuTestCall(testPktReorderDuplicateLoss);
+  ZuTestCall(testPktSpaceAckLoss);
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);
   ZuTestCall(testAckCanLeaveOnlyRetransmitsPending);
   ZuTestCall(testTypedControlRefs);

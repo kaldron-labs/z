@@ -184,6 +184,8 @@ public:
   unsigned rangeCount() const { return m_rxQueue.count_(); }
 
   void reset();
+  bool sent(uint64_t, ZuCSpan);
+  bool txPayload(uint64_t, uint64_t, ZuCSpan &) const;
   int writeFramePrefix(uint8_t *, unsigned, unsigned, CryptoDiag * = nullptr);
   int writeFrame(uint8_t *, unsigned, ZuCSpan, CryptoDiag * = nullptr);
   int receiveFrame(const Frame &, ZuCSpan &, CryptoDiag * = nullptr);
@@ -199,6 +201,8 @@ public:
 private:
   ZuDerive(Delivery,
     (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoDelivery">>));
+  ZuDerive(TxData,
+    (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoTx">>));
 
   void appendDelivery_(const uint8_t *, uint64_t);
 
@@ -206,6 +210,7 @@ private:
   uint64_t		m_rxOffset = 0;
   CryptoRxPQueue	m_rxQueue{0};
   Delivery		m_delivery;
+  TxData		m_txData;
 };
 
 struct CryptoConfig {

@@ -576,6 +576,10 @@ inline bool sendRuntimeCryptoFlights(
 	return false;
       }
       SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
+      if (!txCrypto[level].sent(cryptoOffset, byteSpan(data + off, chunk))) {
+	++diag.failures;
+	return false;
+      }
       diag.cryptoBytesTx += chunk;
       if (!send(level, byteSpan(frame.data(), unsigned(n)),
 	    byteSpan(data + off, chunk), ref, addr))
@@ -2441,6 +2445,8 @@ protected:
       m_peerUniLimit.set(params.initialMaxStreamsUni);
     }
     m_established = 1;
+    discardPktSpace_(CryptoLevel::Initial);
+    discardPktSpace_(CryptoLevel::Handshake);
     establishState_();
     ++m_rxDiag.handshakeComplete;
   }
@@ -2460,6 +2466,8 @@ protected:
     for (auto &a : m_rxPkts) a.clear();
     for (auto &p : m_txPkts) p.clear();
     memset(m_pendingAck, 0, sizeof(m_pendingAck));
+    memset(m_rxSpaceDiscarded, 0, sizeof(m_rxSpaceDiscarded));
+    memset(m_txSpaceDiscarded, 0, sizeof(m_txSpaceDiscarded));
     m_rtt = {};
     m_ptoBackoff.reset();
     m_txKeyPhase = false;
@@ -2925,6 +2933,26 @@ protected:
   void pmtudExpired_() { }
   void pathExpired_() { }
 
+  void discardPktSpace_(CryptoLevel::T level) {
+    if (level == CryptoLevel::OneRTT) return;
+    m_rxSpaceDiscarded[level] = true;
+    m_rxCrypto[level].reset();
+    m_pendingAck[level] = false;
+    app()->txRun([link = ZmMkRef(impl()), level]() mutable {
+      link->discardTxPktSpace_(level);
+    });
+  }
+
+  void discardTxPktSpace_(CryptoLevel::T level) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC sent-packet discard outside Tx thread", return);
+    if (level == CryptoLevel::OneRTT) return;
+    m_txSpaceDiscarded[level] = true;
+    m_txPkts[level].clear();
+    m_txCrypto[level].reset();
+    m_txAck[level].nRanges = 0;
+  }
+
   bool reclaimPTO_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PTO reclaim outside Tx thread", return false);
@@ -2942,19 +2970,27 @@ protected:
     return n;
   }
 
-  bool nextRetransmit_(SentFrameRef &ref) {
+  bool nextRetransmit_(CryptoLevel::T &level, SentFrameRef &ref) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC retransmit selection outside Tx thread", return false);
-    if (!m_txPkts[CryptoLevel::OneRTT].nextRetransmit(ref)) return false;
-    ++m_txDiag.retransmittedFrames;
-    if (debugLog_())
-      ZiLOG(Debug, "Zquic", ([ref](auto &s) {
-	s << "retransmit queued kind=" << int(ref.kind) <<
-	  " streamID=" << ref.streamID <<
-	  " offset=" << ref.offset <<
-	  " length=" << ref.length;
-      }));
-    return true;
+    for (unsigned i = 0; i < 3; ++i) {
+      CryptoLevel::T l = CryptoLevel::T(i);
+      if (m_txSpaceDiscarded[l] ||
+	  !m_txPkts[l].nextRetransmit(ref))
+	continue;
+      level = l;
+      ++m_txDiag.retransmittedFrames;
+      if (debugLog_())
+	ZiLOG(Debug, "Zquic", ([level, ref](auto &s) {
+	  s << "retransmit queued level=" << int(level) <<
+	    " kind=" << int(ref.kind) <<
+	    " streamID=" << ref.streamID <<
+	    " offset=" << ref.offset <<
+	    " length=" << ref.length;
+	}));
+      return true;
+    }
+    return false;
   }
 
   bool buildRetransmitStream_(PktBuild &build, const SentFrameRef &ref) {
@@ -2980,6 +3016,21 @@ protected:
     return n > 0 && build.commitScratch(unsigned(n));
   }
 
+  bool buildRetransmitCrypto_(
+    CryptoLevel::T level, PktBuild &build, const SentFrameRef &ref) {
+    if (ref.kind != SentFrameKind::Crypto || m_txSpaceDiscarded[level])
+      return false;
+    ZuCSpan payload;
+    if (!m_txCrypto[level].txPayload(ref.offset, ref.length, payload))
+      return false;
+    build.reset();
+    if (!appendPendingAck_(level, build)) return false;
+    int n = FrameCodec::writeCryptoPrefix(
+      build.scratch(), build.scratchAvail(), ref.offset, payload.length());
+    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    return build.add(payload);
+  }
+
   bool recordRxPkt_(
     CryptoLevel::T level, uint64_t pn) {
     if (m_rxPkts[level].contains(pn)) return false;
@@ -3000,6 +3051,7 @@ protected:
   void recordTxPkt_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes,
     const SentFrameRef &ref, bool ackEliciting) {
+    if (m_txSpaceDiscarded[level]) return;
     SentPkt packet;
     packet.pn = pn;
     packet.space = runtimePktSpace(level);
@@ -3029,18 +3081,19 @@ protected:
   void processAckFrameTx_(const AckSnapshot &ack) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK sent-packet processing outside Tx thread", return);
-    if (!ack.nRanges) return;
+    if (!ack.nRanges || m_txSpaceDiscarded[ack.level]) return;
     ZuTime sentTime;
     unsigned lost = 0;
     unsigned acked = m_txPkts[ack.level].ack(
       ack.ranges, ack.nRanges, &lost, 3,
       ack.level == CryptoLevel::OneRTT ? &sentTime : nullptr);
-    if (ack.level != CryptoLevel::OneRTT) return;
     if (lost) impl()->retransmit_();
-    if (acked) {
+    if (acked && ack.level == CryptoLevel::OneRTT) {
       ZuTime now = runtimeNow_();
       if (*sentTime && sentTime < now)
 	m_rtt.sample(now - sentTime, ackDelay_(ack.delay), true);
+      m_ptoBackoff.reset();
+    } else if (acked) {
       m_ptoBackoff.reset();
     }
     schedulePTO_();
@@ -3145,7 +3198,7 @@ protected:
 	  " bytes=" << bytes <<
 	  " ackEliciting=" << ackEliciting;
       }));
-    if (level == CryptoLevel::OneRTT && ackEliciting) schedulePTO();
+    if (ackEliciting) schedulePTO();
   }
 
   const auto &initialKeys_(InitialKeyDir::T dir) const {
@@ -3339,6 +3392,7 @@ protected:
       CryptoLevel::OneRTT;
     if (h.type != PktType::Initial && h.type != PktType::Handshake)
       return false;
+    if (m_rxSpaceDiscarded[level]) return true;
     uint64_t pn = 0;
     unsigned payloadOffset = 0;
     int plainLen = -1;
@@ -3896,6 +3950,7 @@ private:
     ZuTime out;
     for (unsigned i = 0; i < 3; ++i) {
       auto l = CryptoLevel::T(i);
+      if (m_txSpaceDiscarded[l]) continue;
       const auto &tx = m_txPkts[l];
       if (!tx.bytesInFlight() && !tx.retransmitPending()) continue;
       ZuTime deadline = ptoDeadline_(l);
@@ -3969,6 +4024,7 @@ private:
   ZmScheduler::Timer	m_pmtudTimer;
   ZmScheduler::Timer	m_pathTimer;
   bool			m_pendingAck[3]{};
+  bool			m_rxSpaceDiscarded[3]{};
   unsigned		m_handshakeStarted = 0;
   unsigned		m_established = 0;
   LinkState::T		m_linkState = LinkState::Starting;
@@ -3985,6 +4041,7 @@ private:
   uint64_t		m_txPN[3]{};
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
+  bool			m_txSpaceDiscarded[3]{};
   bool			m_txKeyPhase = false;
 };
 
@@ -4098,8 +4155,7 @@ public:
   void pto_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client PTO outside Tx thread", return);
-    if (Base::closed() || !Base::runtimeEstablished_() ||
-	!m_endpoint.connected())
+    if (Base::closed() || !m_endpoint.connected())
       return;
     if (flushTx_()) return;
     Base::reclaimPTO_();
@@ -4117,13 +4173,25 @@ public:
   bool retransmit_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client retransmit outside Tx thread", return false);
-    if (Base::closed() || !Base::runtimeEstablished_() ||
-	!m_endpoint.connected())
+    if (Base::closed() || !m_endpoint.connected())
       return false;
     SentFrameRef ref;
     bool sent = false;
-    while (Base::nextRetransmit_(ref)) {
+    CryptoLevel::T level;
+    while (Base::nextRetransmit_(level, ref)) {
       PktBuild build;
+      if (ref.kind == SentFrameKind::Crypto) {
+	if (!Base::buildRetransmitCrypto_(level, build, ref)) continue;
+	if (level == CryptoLevel::Initial)
+	  sent |= sendInitialPkt_(build, m_endpoint.remote(), {}, &ref, true);
+	else if (level == CryptoLevel::Handshake)
+	  sent |= sendHandshakePkt_(build, m_endpoint.remote(), {}, &ref, true);
+	else
+	  sent |= sendShortPkt_(build, m_endpoint.remote(), {}, &ref, true);
+	continue;
+      }
+      if (level != CryptoLevel::OneRTT || !Base::runtimeEstablished_())
+	continue;
       if (ref.kind == SentFrameKind::Stream) {
 	if (!Base::buildRetransmitStream_(build, ref)) continue;
       } else if (!Base::buildRetransmitControl_(build, ref))
@@ -4752,7 +4820,7 @@ public:
   void pto_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server PTO outside Tx thread", return);
-    if (Base::closed() || !Base::runtimeEstablished_() || !m_peerAddr)
+    if (Base::closed() || !m_peerAddr)
       return;
     if (flushTx_()) return;
     Base::reclaimPTO_();
@@ -4770,12 +4838,25 @@ public:
   bool retransmit_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server retransmit outside Tx thread", return false);
-    if (Base::closed() || !Base::runtimeEstablished_() || !m_peerAddr)
+    if (Base::closed() || !m_peerAddr)
       return false;
     SentFrameRef ref;
     bool sent = false;
-    while (Base::nextRetransmit_(ref)) {
+    CryptoLevel::T level;
+    while (Base::nextRetransmit_(level, ref)) {
       PktBuild build;
+      if (ref.kind == SentFrameKind::Crypto) {
+	if (!Base::buildRetransmitCrypto_(level, build, ref)) continue;
+	if (level == CryptoLevel::Initial)
+	  sent |= sendInitialPkt_(build, m_peerAddr, {}, &ref, true);
+	else if (level == CryptoLevel::Handshake)
+	  sent |= sendHandshakePkt_(build, m_peerAddr, {}, &ref, true);
+	else
+	  sent |= sendShortPkt_(build, m_peerAddr, {}, &ref, true);
+	continue;
+      }
+      if (level != CryptoLevel::OneRTT || !Base::runtimeEstablished_())
+	continue;
       if (ref.kind == SentFrameKind::Stream) {
 	if (!Base::buildRetransmitStream_(build, ref)) continue;
       } else if (!Base::buildRetransmitControl_(build, ref))
