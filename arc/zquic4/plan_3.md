@@ -14,6 +14,8 @@ IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
+CRITICAL: Implementing safe timer shutdown and callback draining is key to this phase, follow the "Timer Teardown" guideline in `GUIDELINES.md` precisely
+
 ## Architecture Documentation
 New or changed components: add loss-deadline computation over the existing sent-packet spaces.
 
