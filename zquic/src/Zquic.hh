@@ -4411,14 +4411,14 @@ private:
     switch (frame.type) {
       case FrameType::MaxData:
       case FrameType::MaxStreamData:
-	      case FrameType::MaxStreams:
-		queueTxFlush_();
-		return true;
-	      case FrameType::PathChallenge: {
-		Base::queuePathResponse_(frame.payload);
-		queueTxFlush_(ZuMv(addr));
-		return true;
-	      }
+      case FrameType::MaxStreams:
+	queueTxFlush_();
+	return true;
+      case FrameType::PathChallenge: {
+	Base::queuePathResponse_(frame.payload);
+	queueTxFlush_(ZuMv(addr));
+	return true;
+      }
       case FrameType::PathResponse:
       case FrameType::HandshakeDone:
 	return true;
@@ -4432,18 +4432,18 @@ private:
     }
   }
 
-	  void dataBlocked_(uint64_t maximum) {
-	    Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
-	    queueTxFlush_();
-	  }
-	  void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
-	    Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
-	    queueTxFlush_();
-	  }
-	  void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
-	    Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
-	    queueTxFlush_();
-	  }
+  void dataBlocked_(uint64_t maximum) {
+    Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
+    queueTxFlush_();
+  }
+  void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
+    Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
+    queueTxFlush_();
+  }
+  void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
+    Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
+    queueTxFlush_();
+  }
 
   void endpointReady_(Endpoint *ep) {
     if (ep != &m_endpoint) return;
