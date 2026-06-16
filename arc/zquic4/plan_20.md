@@ -71,6 +71,7 @@ New or changed data stores: no production data stores.
 - Open question: whether timer determinism requires a scheduler test mode; add one only if existing scheduler cannot be controlled reliably.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

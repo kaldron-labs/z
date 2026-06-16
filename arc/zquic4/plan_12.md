@@ -70,6 +70,7 @@ New or changed data stores: compact counters by error class; avoid per-offense h
 - Open question: exact threshold values; choose small named constants with comments, not unexplained literals.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

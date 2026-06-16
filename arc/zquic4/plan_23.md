@@ -70,6 +70,7 @@ New or changed data stores: document runtime-owned recovery/path/CID/key state w
 - Open question: where project maintainers prefer API examples to live if no current examples directory exists.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

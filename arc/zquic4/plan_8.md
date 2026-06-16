@@ -71,6 +71,7 @@ New or changed data stores: active path stores local/remote addresses, validatio
 - Open question: exact handshake point for server validation in all Retry/no-Retry cases; align with transport parameter validation.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

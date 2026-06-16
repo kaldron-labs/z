@@ -68,6 +68,7 @@ New or changed data stores: per-connection and per-stream window policy state if
 - Open question: default adaptive policy should depend on product workload expectations not yet encoded in repo.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

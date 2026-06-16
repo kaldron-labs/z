@@ -69,6 +69,7 @@ New or changed data stores: bounded retransmit queue with counters for dropped s
 - Open question: correct bound should be packet-count, frame-count, or byte-estimate based.  Start with named frame-count bound and diagnostics.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

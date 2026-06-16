@@ -64,6 +64,7 @@ New or changed data stores: token secret/config and optional stateless token met
 - Open question: token binding to client IP under NAT/load balancers; make binding configurable.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

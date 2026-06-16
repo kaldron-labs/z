@@ -68,6 +68,7 @@ New or changed data stores: CID entries store sequence, CID, reset token, state,
 - Open question: cleanup timer ownership could be a separate CID timer or folded into draining/lifecycle timer.  Avoid overloading key-discard semantics.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

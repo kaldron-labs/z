@@ -69,6 +69,7 @@ New or changed data stores: diagnostics add counters for unhandled/defaulted eve
 - Open question: whether callbacks should be allowed to synchronously queue sends; follow existing stream API precedent.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

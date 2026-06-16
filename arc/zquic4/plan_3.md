@@ -70,6 +70,7 @@ New or changed data stores: add per-space persistent congestion episode tracking
 - Open question: exact storage for lost interval endpoints if existing packet records do not retain enough metadata.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

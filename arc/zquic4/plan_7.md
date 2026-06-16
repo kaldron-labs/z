@@ -69,6 +69,7 @@ New or changed data stores: track largest acknowledged packet per space for pack
 - Open question: whether coalescing should be limited to handshake until path budgeting is complete.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

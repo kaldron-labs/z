@@ -71,6 +71,7 @@ New or changed data stores: controller state remains inline; avoid virtual heap 
 - Open question: whether pacing should be per connection or per path; start per connection and revisit for migration/multipath.
 
 ## Acceptance Criteria
+- Implementation is audited and aligned with `GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
