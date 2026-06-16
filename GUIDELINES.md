@@ -120,7 +120,7 @@ These guidelines extend `AGENTS.md`
   Fix: use uninitialized storage and explicit placement new where appropriate; Z array containers are intentionally uninitialized until filled.
 - Flag: calling `ZiLOG` with a lambda that captures by reference.
   Problem: the logger runs lambdas on a dedicated logger thread at a later time
-  Fix: capture by copy the specific data needed for the log trace
+  Fix: capture by copy the specific data needed for the log trace; use `ZeString` for scratch strings
 
 ### Algorithm and control flow
 - Flag: algorithmic inefficiency, latency regression, throughput impairment, or avoidable work.
