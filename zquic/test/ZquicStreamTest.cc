@@ -63,6 +63,7 @@ struct TestLink :
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} {
+    Base::resetRuntime_();
     Base::configureLocalTransportParams_(app);
   }
   void streamed(ZmRef<TestStream> stream) {
@@ -100,9 +101,52 @@ struct TestLink :
 	return true;
       });
   }
+  bool flushCongestedStream(ZmRef<TestStream> stream) {
+    return Base::sendQueuedStreamPkt_(
+      ZuMv(stream), ZiSockAddr{},
+      [](Zquic::PktBuild &) { return true; },
+      [this](
+	  Zquic::PktBuild &build, ZiSockAddr,
+	  const Zquic::SentFrameRef &ref) {
+	Base::recordTxPkt_(
+	  Zquic::CryptoLevel::OneRTT, sentPkts, build.bytes(), ref, true);
+	++sentPkts;
+	return true;
+      });
+  }
+  void fillCwnd() {
+    Zquic::RuntimeDiag diag = Base::runtimeDiag_();
+    while (diag.congestionBytesInFlight < diag.congestionWindow) {
+      uint64_t remaining =
+	diag.congestionWindow - diag.congestionBytesInFlight;
+      unsigned bytes = remaining > app()->maxUDP() ?
+	app()->maxUDP() : unsigned(remaining);
+      Base::recordTxPkt_(
+	Zquic::CryptoLevel::OneRTT, sentPkts, bytes,
+	Zquic::SentFrameRef::control(), true);
+      ++sentPkts;
+      diag = Base::runtimeDiag_();
+    }
+  }
+  void ackThrough(uint64_t pn) {
+    Base::AckSnapshot ack;
+    ack.level = Zquic::CryptoLevel::OneRTT;
+    ack.nRanges = 1;
+    ack.ranges[0] = Zquic::AckRange{pn, 0};
+    Base::processAckFrameTx_(ack);
+  }
+  Zquic::RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
+  unsigned congestionAllowance() const { return Base::congestionAllowance_(); }
+  void queueTxFlush_() { ++txFlushQueued; }
+  void pto_() { ++ptos; }
+  bool retransmit_() { ++retransmits; return false; }
 
   ZmRef<TestStream>	lastStream;
   unsigned		streamedCount = 0;
+  uint64_t		sentPkts = 0;
+  unsigned		txFlushQueued = 0;
+  unsigned		ptos = 0;
+  unsigned		retransmits = 0;
 };
 
 static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
@@ -563,6 +607,47 @@ void testQueuedControlSendFailureRetainsFrame()
     "successful control send did not dequeue frame");
 }
 
+void testCongestionBudgetGatesRuntimeSends()
+{
+  ZuTestScope(testCongestionBudgetGatesRuntimeSends);
+
+  App app;
+  TestLink link{&app};
+  auto stream = link.stream(Zi::StreamType::Duplex);
+  stream->txCredit(20000);
+  {
+    auto tx = stream->txStream_();
+    tx << "0123456789abcdef0123456789abcdef" << Zi::flush();
+  }
+  stream->fin();
+
+  link.fillCwnd();
+  Zquic::RuntimeDiag diag = link.runtimeDiag();
+  ZuCHECK(diag.congestionBytesInFlight >= diag.congestionWindow &&
+      !link.flushCongestedStream(stream) &&
+      stream->txBufferedBytes(),
+    "runtime stream send bypassed closed congestion window");
+
+  ZuCHECK(!link.congestionAllowance(),
+    "runtime congestion allowance remained open after cwnd fill");
+  ZuCHECK(link.queuePathResponse(), "runtime control frame queue failed");
+  ZuCHECK(!link.flushControlSends(),
+    "runtime control send bypassed closed congestion window");
+  ZuCHECK(link.queuedControlFrames() == 1,
+    "runtime blocked control frame was not retained");
+
+  unsigned queued = link.txFlushQueued;
+  link.ackThrough(link.sentPkts - 1);
+  diag = link.runtimeDiag();
+  ZuCHECK(diag.congestionBytesInFlight < diag.congestionWindow &&
+      link.txFlushQueued == queued + 1,
+    "runtime ACK did not reopen congestion window and queue Tx flush");
+  ZuCHECK(link.flushControlSends() &&
+      !link.queuedControlFrames(),
+    "runtime control send did not resume after ACK opened cwnd");
+  link.close();
+}
+
 void testBlockedFrameDuplicateSuppression()
 {
   ZuTestScope(testBlockedFrameDuplicateSuppression);
@@ -981,6 +1066,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamTxRetention);
   ZuTestCall(testStreamPktizer);
   ZuTestCall(testQueuedControlSendFailureRetainsFrame);
+  ZuTestCall(testCongestionBudgetGatesRuntimeSends);
   ZuTestCall(testBlockedFrameDuplicateSuppression);
   ZuTestCall(testPeerStreamAcceptance);
   ZuTestCall(testStreamCountLimits);
