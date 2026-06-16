@@ -237,6 +237,11 @@ These guidelines extend `AGENTS.md`
   - `Timer`s are intended to be contained by value as data members in owning structs/classes
     - they are referenced by raw pointer from the scheduler
   - `Timer`s must be cancelled with `del` before owner destruction during close/shutdown/stop to prevent stale pointer dereference
+#### Timer Teardown
+- timer teardown requires a 3-phase process, similar to I/O teardown (see below)
+  - 1. cancel the timer (`ZmScheduler::del`)
+  - 2. post a teardown continuation on the thread to drain any late callbacks
+  - 3. (in the continuation) complete the teardown with late callbacks drained
 
 ### I/O and system integration
 - Use `ZiIOBuf` for buffer management.
@@ -420,8 +425,11 @@ The owner is responsible for draining or cancelling dependent structures during
 shutdown before destruction. Do not keep links alive by adding buffer-level reference
 churn unless the ownership model explicitly requires it.
 
-Shutdown remains a multi-phase operation: stop ingress, drain or cancel queued
-dependent work on each owning shard, then release owning objects.
+### Teardown
+Sharded I/O teardown requires a 3-phase process:
+- 1. stop ingress and post a teardown continuation on the rx thread to drain rx activity
+- 2. (in the rx thread continuation) post a teardown continuation on the tx thread to drain tx activity
+- 3. (in the tx thread continuation) complete the teardown and release object ownership
 
 ## Naming
 ### Length and abbreviations
