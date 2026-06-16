@@ -11,6 +11,8 @@ Preconditions: plans 1 through 3 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add a `NewReno` member to connection/link runtime state and a thin recovery facade that updates it.
 
@@ -71,6 +73,20 @@ New or changed data stores: sent-packet entries may need byte length and PMTUD-p
 - Open question: whether server anti-amplification or cwnd should cap first when both apply.  Use the minimum effective allowance.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Congestion window gates normal stream/control sends.
 - ACK increases cwnd; loss reduces cwnd; PMTUD probe loss does not reduce cwnd.
 - Runtime tests include cwnd-limited send and loss recovery cases.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

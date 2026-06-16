@@ -11,6 +11,8 @@ Preconditions: plans 1 through 10 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add control-frame queue entries for local stream reset and stop-sending.
 
@@ -68,5 +70,19 @@ New or changed data stores: sent frame refs need enough data to rebuild reset/st
 - Open question: exact stale suppression rules for STOP_SENDING after a peer reset.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Tests cover local RESET_STREAM send, peer RESET_STREAM receive, local STOP_SENDING send, peer STOP_SENDING receive, and retransmission after loss.
 - Reset final-size validation remains intact.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

@@ -12,6 +12,8 @@ Preconditions: plans 1 through 7 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add active `Path` state to client and server links.
 
@@ -69,6 +71,20 @@ New or changed data stores: active path stores local/remote addresses, validatio
 - Open question: exact handshake point for server validation in all Retry/no-Retry cases; align with transport parameter validation.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Server cannot send more than 3x received bytes before validation.
 - Active path MTU controls packet payload sizing.
 - Tests cover unvalidated path budget exhaustion and validation unlock.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

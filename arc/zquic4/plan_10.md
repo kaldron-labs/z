@@ -11,6 +11,8 @@ Preconditions: plans 1 through 9 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add runtime PMTUD probe scheduling and sent-packet metadata for PMTUD probes.
 
@@ -69,5 +71,19 @@ New or changed data stores: sent-packet record needs a PMTUD-probe flag and prob
 - Open question: platform coverage for asynchronous send-too-big errors through `Zi`.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Tests cover successful probe growth, failed probe retry, blackhole fallback, and send-too-big hint handling.
 - Active packet size follows PMTUD state.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

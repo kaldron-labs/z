@@ -11,6 +11,8 @@ Preconditions: plans 1 through 11 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add per-connection suspicious-activity counters and lightweight per-stream closed-state checks.
 
@@ -68,5 +70,19 @@ New or changed data stores: compact counters by error class; avoid per-offense h
 - Open question: exact threshold values; choose small named constants with comments, not unexplained literals.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Tests cover closed-stream MAX_STREAM_DATA, RESET_STREAM, STREAM_DATA_BLOCKED, and duplicate-final-size cases.
 - Repeated invalid activity trips a deterministic internal/protocol error path.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`
