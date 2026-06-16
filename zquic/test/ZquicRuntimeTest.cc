@@ -196,8 +196,12 @@ void dumpRuntimeDiag(
     " cryptoBytesRx=" << uint64_t(d.cryptoBytesRx) <<
     " streamBytesTx=" << uint64_t(d.streamBytesTx) <<
     " streamBytesRx=" << uint64_t(d.streamBytesRx) <<
+    " packetsLost=" << uint64_t(d.packetsLost) <<
     " ptoCount=" << uint64_t(d.ptoCount) <<
     " retransmittedFrames=" << uint64_t(d.retransmittedFrames) <<
+    " persistentCongestion=" << uint64_t(d.persistentCongestion) <<
+    " cwnd=" << uint64_t(d.cwnd) <<
+    " bytesInFlight=" << uint64_t(d.bytesInFlight) <<
     " failures=" << uint64_t(d.failures) <<
     " handshakeComplete=" << uint64_t(d.handshakeComplete) <<
     " tlsHandled=" << c.tlsMessagesHandled <<
@@ -507,9 +511,11 @@ void testRuntimeHandshakeCryptoLoss()
     ZuCHECK(dropHandshake ? server.droppedHandshake == 4 :
 	server.droppedInitial == 1,
       "loss runtime did not drop selected long-header packet");
-    ZuCHECK(serverLink && serverLink->runtimeDiag().ptoCount &&
+    ZuCHECK(serverLink &&
+	(serverLink->runtimeDiag().ptoCount ||
+	  serverLink->runtimeDiag().packetsLost) &&
 	serverLink->runtimeDiag().retransmittedFrames,
-      "loss runtime did not recover via PTO retransmit");
+      "loss runtime did not recover via timer retransmit");
 
     clientLink->disconnect();
     server.close();
@@ -522,6 +528,103 @@ void testRuntimeHandshakeCryptoLoss()
     server.final();
   }
 
+  mx.stop();
+}
+
+void testRuntimeTimeThresholdLoss()
+{
+  ZuTestScope(testRuntimeTimeThresholdLoss);
+
+  TempDir temp;
+  ZuCHECK(temp.init(), "time-loss runtime temporary TLS certificate failed");
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(5)
+	    .thread(1, [](auto &t) { t.isolated(1); })
+	    .thread(2, [](auto &t) { t.isolated(1); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "time-loss runtime multiplexer start failed");
+  if (!mxStarted) return;
+
+  RuntimeServer server;
+  ZuCHECK(server.init(
+      Zquic::ServerParams(&mx, "3", "4")
+	.certPath(cspan_(temp.certPath))
+	.keyPath(cspan_(temp.keyPath))
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsBidi(8)
+	.maxStreamsUni(8)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "time-loss runtime server init failed");
+  ZuCHECK(server.listen(), "time-loss runtime server listen failed");
+  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+    "time-loss runtime server did not listen");
+
+  RuntimeClient client;
+  ZuCHECK(client.init(
+      Zquic::ClientParams(&mx, "3", "4")
+	.caPath(cspan_(temp.certPath))
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsBidi(8)
+	.maxStreamsUni(8)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "time-loss runtime client init failed");
+  ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+
+  ZmRef<RuntimeServer::Link> serverLink;
+  bool established = waitUntil([&server, &clientLink, &serverLink]() {
+      if (!serverLink) serverLink = server.link();
+      return serverLink && clientLink->established() &&
+	serverLink->established();
+    });
+  ZuCHECK(established, "time-loss runtime handshake failed");
+  if (!established) {
+    client.final();
+    server.final();
+    mx.stop();
+    return;
+  }
+
+  auto serverUni = serverLink->stream(Zi::StreamType::Simplex);
+  server.dropStreamID = serverUni->id();
+  ZuCHECK(serverLink->send(serverUni, "timer-loss"),
+    "time-loss runtime server send failed");
+  bool arrived = waitUntil([&clientLink]() {
+      return clientLink->runtimeDiag().streamBytesRx >= 10;
+    });
+  if (!arrived) {
+    dumpRuntimeDiag(
+      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+    dumpRuntimeDiag(
+      "server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+  }
+  ZuCHECK(arrived, "time-loss runtime stream bytes did not arrive");
+  ZuCHECK(server.droppedStream == 1,
+    "time-loss runtime did not drop selected STREAM frame");
+  Zquic::RuntimeDiag diag = serverLink->runtimeDiag();
+  ZuCHECK(diag.packetsLost >= 1 &&
+      diag.retransmittedFrames >= 1 &&
+      !diag.ptoCount,
+    "time-loss runtime did not recover through loss timer");
+
+  clientLink->disconnect();
+  server.close();
+  ZuCHECK(waitUntil([&clientLink]() {
+      return !clientLink->cxn();
+    }) && !server.connected(),
+    "time-loss runtime endpoints remained connected after close");
+  clientLink = nullptr;
+  client.final();
+  server.final();
   mx.stop();
 }
 
@@ -665,5 +768,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRuntimeEndpointOpen);
   ZuTestCall(testRuntimeHandshakeCryptoLoss);
+  ZuTestCall(testRuntimeTimeThresholdLoss);
   ZuTestCall(testRuntimeServerMultiConnection);
 }
