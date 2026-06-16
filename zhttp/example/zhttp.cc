@@ -162,6 +162,16 @@ struct Req {
 
 using State = Req;
 
+struct ReqLogCtx {
+  unsigned	id = 0;
+  unsigned	requests = 1;
+};
+
+inline ReqLogCtx reqLogCtx(const Req &req)
+{
+  return {req.id, req.requests};
+}
+
 struct AltSvcEndpoint {
   ZtString<>	host;
   Zi::Hostname	dnsHost;
@@ -382,15 +392,21 @@ void reqLogPrefix(const Req &req, S &s)
 {
   if (req.requests > 1) s << "req=" << req.id << ' ';
 }
+template <typename S>
+void reqLogPrefix(const ReqLogCtx &ctx, S &s)
+{
+  if (ctx.requests > 1) s << "req=" << ctx.id << ' ';
+}
 
 bool truncateOutputPath(Req &req)
 {
   if (!req.truncateOutput) return true;
   ZiFile f{req.output, ZiFile::Write | ZiFile::GC};
   if (!f) {
-    ZiLOG(Error, "zhttp", ([&req](auto &s) {
-      reqLogPrefix(req, s);
-      s << "failed to open " << req.output;
+    auto ctx = reqLogCtx(req);
+    ZiLOG(Error, "zhttp", ([ctx, output = ZeString(req.output)](auto &s) {
+      reqLogPrefix(ctx, s);
+      s << "failed to open " << output;
     }));
     req.failed = true;
     req.done = true;
@@ -520,7 +536,7 @@ void sendH3Request(State &state, StreamRef stream)
   auto tx = stream->txStream();
   ZiLOG(Debug, "zhttp.h3", ([
     reqID = state.id, requests = state.requests,
-    target = state.url.target, id = stream->id()
+    target = ZeString(state.url.target), id = stream->id()
   ](auto &s) mutable {
     if (requests > 1) s << "req=" << reqID << ' ';
     s << "send request stream=" << id << " target=" << target;
@@ -536,13 +552,16 @@ void sendH3Request(State &state, StreamRef stream)
 void logFraming(State &state)
 {
   if (state.framingLogged) return;
-  ZiLOG(Info, "zhttp.response", ([&state](auto &s) {
-    reqLogPrefix(state, s);
+  auto ctx = reqLogCtx(state);
+  auto chunked = state.chunked;
+  auto contentLength = state.contentLength;
+  ZiLOG(Info, "zhttp.response", ([ctx, chunked, contentLength](auto &s) {
+    reqLogPrefix(ctx, s);
     s << "framing: ";
-    if (state.chunked)
+    if (chunked)
       s << "chunked";
-    else if (state.contentLength >= 0)
-      s << "content-length=" << state.contentLength;
+    else if (contentLength >= 0)
+      s << "content-length=" << contentLength;
     else
       s << "no content-length";
   }));
@@ -562,8 +581,9 @@ struct ResponseSink {
     state->status = status;
     state->redirecting = redirectStatus(status);
     if (!state->redirecting && !truncateOutputPath(*state)) return;
-    ZiLOG(Info, "zhttp.response", ([state = state, status](auto &s) {
-      reqLogPrefix(*state, s);
+    auto ctx = reqLogCtx(*state);
+    ZiLOG(Info, "zhttp.response", ([ctx, status](auto &s) {
+      reqLogPrefix(ctx, s);
       s << "status: " << status;
     }));
   }
@@ -578,12 +598,16 @@ struct ResponseSink {
   template <typename Key>
   void header(ZuBSpan value) {
     if constexpr (ZuIsSame<Key, ZuStringT<"alt-svc">>{}) {
-      if (parseAltSvc(*state, ZuCSpan(value)))
-	ZiLOG(Info, "zhttp.response", ([state = state](auto &s) {
-	  reqLogPrefix(*state, s);
-	  s << "alt-svc: h3=\"" << state->altSvcHost << ':' <<
-	    state->altSvcPort << '"';
+      if (parseAltSvc(*state, ZuCSpan(value))) {
+	auto ctx = reqLogCtx(*state);
+	ZeString host;
+	host << state->altSvcHost;
+	auto port = state->altSvcPort;
+	ZiLOG(Info, "zhttp.response", ([ctx, host = ZuMv(host), port](auto &s) {
+	  reqLogPrefix(ctx, s);
+	  s << "alt-svc: h3=\"" << host << ':' << port << '"';
 	}));
+      }
     } else if constexpr (ZuIsSame<Key, ZuStringT<"connection">>{}) {
       if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "close"))
 	state->connectionClose = true;
@@ -592,9 +616,12 @@ struct ResponseSink {
     } else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{}) {
       state->location = ZuCSpan(value);
     }
-    ZiLOG(Info, "zhttp.response", ([state = state, value](auto &s) {
-      reqLogPrefix(*state, s);
-      s << "header " << Key{}() << ": " << ZuCSpan(value);
+    auto ctx = reqLogCtx(*state);
+    ZeString value_;
+    value_ << ZuCSpan(value);
+    ZiLOG(Info, "zhttp.response", ([ctx, value = ZuMv(value_)](auto &s) {
+      reqLogPrefix(ctx, s);
+      s << "header " << Key{}() << ": " << value;
     }));
   }
 
@@ -605,9 +632,10 @@ struct ResponseSink {
     if (!state->bodyFileOpen) {
       state->bodyFile = ZiFile(state->output, ZiFile::Write | ZiFile::GC);
       if (!state->bodyFile) {
-	ZiLOG(Error, "zhttp", ([state = state](auto &s) {
-	  reqLogPrefix(*state, s);
-	  s << "failed to open " << state->output;
+	auto ctx = reqLogCtx(*state);
+	ZiLOG(Error, "zhttp", ([ctx, output = ZeString(state->output)](auto &s) {
+	  reqLogPrefix(ctx, s);
+	  s << "failed to open " << output;
 	}));
 	state->failed = true;
 	state->done = true;
@@ -616,8 +644,9 @@ struct ResponseSink {
       state->bodyFileOpen = true;
     }
     if (state->bodyFile.write(span.data(), span.length()) != Zi::OK) {
-      ZiLOG(Error, "zhttp", ([state = state](auto &s) {
-	reqLogPrefix(*state, s);
+      auto ctx = reqLogCtx(*state);
+      ZiLOG(Error, "zhttp", ([ctx](auto &s) {
+	reqLogPrefix(ctx, s);
 	s << "failed to write body chunk";
       }));
       state->failed = true;
@@ -631,15 +660,18 @@ struct ResponseSink {
   template <typename ParserState>
   void complete(typename ParserState::T parserState) {
     if (state->done) return;
-    if (parserState == ParserState::Complete)
-      ZiLOG(Info, "zhttp.response", ([state = state](auto &s) {
-	reqLogPrefix(*state, s);
-	s << "body complete: " << state->bodyBytes << " bytes in " <<
-	  state->bodyChunks << " chunks";
+    auto ctx = reqLogCtx(*state);
+    if (parserState == ParserState::Complete) {
+      auto bodyBytes = state->bodyBytes;
+      auto bodyChunks = state->bodyChunks;
+      ZiLOG(Info, "zhttp.response", ([ctx, bodyBytes, bodyChunks](auto &s) {
+	reqLogPrefix(ctx, s);
+	s << "body complete: " << bodyBytes << " bytes in " << bodyChunks <<
+	  " chunks";
       }));
-    else
-      ZiLOG(Error, "zhttp.response", ([state = state, parserState](auto &s) {
-	reqLogPrefix(*state, s);
+    } else
+      ZiLOG(Error, "zhttp.response", ([ctx, parserState](auto &s) {
+	reqLogPrefix(ctx, s);
 	s << "response " << parserState;
       }));
     if (parserState != ParserState::Complete) state->failed = true;
@@ -724,11 +756,15 @@ ZuCSpan transportName(Zi::Transport::T transport)
 
 void logConnected(const State &state, Zi::Connected info)
 {
-  ZiLOG(Info, "zhttp", ([&state, info](auto &s) {
-    s << transportName(info.transport) << " connected (hostname: " <<
-      state.url.host;
-    if (info.version) s << " version: " << info.version;
-    if (info.alpn) s << " ALPN: " << info.alpn;
+  ZiLOG(Info, "zhttp", ([
+    transport = info.transport,
+    host = ZeString(state.url.host),
+    version = info.version,
+    alpn = ZeString(info.alpn)
+  ](auto &s) {
+    s << transportName(transport) << " connected (hostname: " << host;
+    if (version) s << " version: " << version;
+    if (alpn) s << " ALPN: " << alpn;
     s << ')';
   }));
 }
@@ -883,7 +919,7 @@ struct H1PoolLink : public Base_ {
   }
   void disconnected() {
     connectedFlag = false;
-    ZiLOG(Info, "zhttp", ([this](auto &s) {
+    ZiLOG(Info, "zhttp", ([id = id](auto &s) {
       s << "worker=" << id << " disconnected";
     }));
     if (closing) {
@@ -913,7 +949,7 @@ struct H1PoolLink : public Base_ {
     }
   }
   void connectFailed(bool transient) {
-    ZiLOG(Error, "zhttp", ([this, transient](auto &s) {
+    ZiLOG(Error, "zhttp", ([id = id, transient](auto &s) {
       s << "worker=" << id << " failed to connect";
       if (transient) s << " (transient)";
     }));
@@ -1230,11 +1266,12 @@ void QUICClient::openH3Streams(Link *link_)
 	  scheduled >= run->options.requests)
 	return;
       req = &run->reqs[scheduled++];
+      auto ctx = reqLogCtx(*req);
       ZiLOG(Debug, "zhttp.h3", ([
-	req, scheduled = scheduled, active = active,
+	ctx, scheduled = scheduled, active = active,
 	concurrency = run->options.concurrency
       ](auto &s) {
-	reqLogPrefix(*req, s);
+	reqLogPrefix(ctx, s);
 	s << "schedule h3 request scheduled=" << scheduled <<
 	  " active=" << active << " concurrency=" << concurrency;
       }));
@@ -1242,8 +1279,9 @@ void QUICClient::openH3Streams(Link *link_)
     resetAttempt(*req, true);
     auto stream = link_->stream(Zi::StreamType::Duplex);
     if (!stream) {
-      ZiLOG(Debug, "zhttp.h3", ([req](auto &s) {
-	reqLogPrefix(*req, s);
+      auto ctx = reqLogCtx(*req);
+      ZiLOG(Debug, "zhttp.h3", ([ctx](auto &s) {
+	reqLogPrefix(ctx, s);
 	s << "no stream credit, queue request";
       }));
       queueH3Req(req);
@@ -1269,8 +1307,10 @@ bool QUICClient::activateH3Req(Req *req)
 void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
 {
   if (!link_ || !stream || !req) {
-    ZiLOG(Debug, "zhttp.h3", ([req](auto &s) {
-      if (req) reqLogPrefix(*req, s);
+    auto haveReq = !!req;
+    auto ctx = haveReq ? reqLogCtx(*req) : ReqLogCtx{};
+    ZiLOG(Debug, "zhttp.h3", ([haveReq, ctx](auto &s) {
+      if (haveReq) reqLogPrefix(ctx, s);
       s << "send h3 request failed before send";
     }));
     finishH3Req(link_, req, false);
@@ -1290,8 +1330,9 @@ void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
   stream->req = req;
   stream->parser.bind(link_, req);
   stream->parser.reset();
-  ZiLOG(Debug, "zhttp.h3", ([req, id = stream->id()](auto &s) {
-    reqLogPrefix(*req, s);
+  auto ctx = reqLogCtx(*req);
+  ZiLOG(Debug, "zhttp.h3", ([ctx, id = stream->id()](auto &s) {
+    reqLogPrefix(ctx, s);
     s << "activate stream=" << id;
   }));
   sendH3Request(*req, stream);
@@ -1302,8 +1343,9 @@ void QUICClient::queueH3Req(Req *req)
   if (!req) return;
   ZmGuard<ZmLock> guard(lock);
   pending.push(req);
-  ZiLOG(Debug, "zhttp.h3", ([req, n = pending.length() - pendingHead](auto &s) {
-    reqLogPrefix(*req, s);
+  auto ctx = reqLogCtx(*req);
+  ZiLOG(Debug, "zhttp.h3", ([ctx, n = pending.length() - pendingHead](auto &s) {
+    reqLogPrefix(ctx, s);
     s << "queued pending=" << n;
   }));
 }
@@ -1331,8 +1373,9 @@ void QUICClient::bindH3Stream(Link *link_, ZmRef<Stream> stream)
   Req *req = popH3Req();
   if (!req) return;
   if (!activateH3Req(req)) return;
-  ZiLOG(Debug, "zhttp.h3", ([req, id = stream->id()](auto &s) {
-    reqLogPrefix(*req, s);
+  auto ctx = reqLogCtx(*req);
+  ZiLOG(Debug, "zhttp.h3", ([ctx, id = stream->id()](auto &s) {
+    reqLogPrefix(ctx, s);
     s << "bind returned stream=" << id;
   }));
   sendH3Req(link_, ZuMv(stream), req);
@@ -1382,11 +1425,13 @@ void QUICClient::finishH3Req(Link *link_, Req *req, bool ok)
     ++complete;
     if (!ok) ++failed;
     done = !run || complete >= run->options.requests;
+    auto haveReq = !!req;
+    auto ctx = haveReq ? reqLogCtx(*req) : ReqLogCtx{};
     ZiLOG(Debug, "zhttp.h3", ([
-      req, ok, active = active, complete = complete,
+      haveReq, ctx, ok, active = active, complete = complete,
       failed = failed, done
     ](auto &s) {
-      if (req) reqLogPrefix(*req, s);
+      if (haveReq) reqLogPrefix(ctx, s);
       s << "finish h3 request ok=" << ok <<
 	" active=" << active << " complete=" << complete <<
 	" failed=" << failed << " done=" << done;
@@ -1625,16 +1670,18 @@ bool resolveH3(const URL &url, ZiResolver::H3Policy policy)
       return n < ZiResolver::H3MaxIPs;
     }}, &e);
   if (rc != Zi::OK || !n) {
-    ZiLOG(Info, "zhttp", ([&url](auto &s) {
-      s << "DNS did not advertise HTTP/3 for " << url.host;
+    ZiLOG(Info, "zhttp", ([host = ZeString(url.host)](auto &s) {
+      s << "DNS did not advertise HTTP/3 for " << host;
     }));
     return false;
   }
-  ZiLOG(Info, "zhttp", ([&url, &eps, n, advertised](auto &s) {
-    s << "DNS: " << url.host <<
+  ZeString dns;
+  dns << "DNS: " << url.host <<
       (advertised ? " advertised HTTP/3 at" : " blind HTTP/3 probe at");
-    for (unsigned i = 0; i < n; ++i)
-      s << ' ' << eps[i].ip << ':' << ZuBoxed(eps[i].port);
+  for (unsigned i = 0; i < n; ++i)
+    dns << ' ' << eps[i].ip << ':' << ZuBoxed(eps[i].port);
+  ZiLOG(Info, "zhttp", ([dns = ZuMv(dns)](auto &s) {
+    s << dns;
   }));
   return true;
 }
@@ -1678,9 +1725,12 @@ int runH3Direct(
   ZiMultiplex &mx, const Options &options, Req &req,
   RequestResult &result)
 {
-  ZiLOG(Info, "zhttp", ([&req](auto &s) {
-    reqLogPrefix(req, s);
-    s << "HTTP/3 direct: " << req.url.host << ':' << ZuBoxed(req.url.port);
+  auto ctx = reqLogCtx(req);
+  ZiLOG(Info, "zhttp", ([
+    ctx, host = ZeString(req.url.host), port = req.url.port
+  ](auto &s) {
+    reqLogPrefix(ctx, s);
+    s << "HTTP/3 direct: " << host << ':' << ZuBoxed(port);
   }));
   resetAttempt(req, true);
   return run<QUICClient>(mx, options, req, &result);
@@ -1696,10 +1746,13 @@ int runH1AltSvcFirst(
     RequestResult h3Result;
     URL h1URL = req.url;
     req.url = altSvcURL(h1URL, cached);
-    ZiLOG(Info, "zhttp", ([&req](auto &s) {
-      reqLogPrefix(req, s);
-      s << "cached Alt-Svc HTTP/3 probe: " << req.url.host << ':' <<
-	ZuBoxed(req.url.port);
+    auto ctx = reqLogCtx(req);
+    ZiLOG(Info, "zhttp", ([
+      ctx, host = ZeString(req.url.host), port = req.url.port
+    ](auto &s) {
+      reqLogPrefix(ctx, s);
+      s << "cached Alt-Svc HTTP/3 probe: " << host << ':' <<
+	ZuBoxed(port);
     }));
     resetAttempt(req, true);
     int h3rc = run<QUICClient>(mx, options, req, &h3Result);
@@ -1718,10 +1771,12 @@ int runH1AltSvcFirst(
   RequestResult h3Result;
   URL h1URL = req.url;
   req.url = altSvcURL(h1URL, result.altSvc);
-  ZiLOG(Info, "zhttp", ([&req](auto &s) {
-    reqLogPrefix(req, s);
-    s << "Alt-Svc HTTP/3 probe: " << req.url.host << ':' <<
-      ZuBoxed(req.url.port);
+  auto ctx = reqLogCtx(req);
+  ZiLOG(Info, "zhttp", ([
+    ctx, host = ZeString(req.url.host), port = req.url.port
+  ](auto &s) {
+    reqLogPrefix(ctx, s);
+    s << "Alt-Svc HTTP/3 probe: " << host << ':' << ZuBoxed(port);
   }));
   resetAttempt(req, true);
   int h3rc = run<QUICClient>(mx, options, req, &h3Result);
@@ -1774,21 +1829,29 @@ int runReqSerial(ZiMultiplex &mx, Run &run_, Req &req)
     if (rc || !redirectStatus(result.status) || !result.location) break;
     URL next;
     if (!parseLocation(req.url, result.location, next)) {
-      ZiLOG(Error, "zhttp", ([&req, &result](auto &s) {
-	reqLogPrefix(req, s);
-	s << "invalid redirect location: " << result.location;
+      auto ctx = reqLogCtx(req);
+      ZiLOG(Error, "zhttp", ([
+	ctx, location = ZeString(result.location)
+      ](auto &s) {
+	reqLogPrefix(ctx, s);
+	s << "invalid redirect location: " << location;
       }));
       rc = 1;
       break;
     }
-    ZiLOG(Info, "zhttp", ([&req, &next](auto &s) {
-      reqLogPrefix(req, s);
-      s << "redirect: " << next.scheme << "://" << next.host << next.target;
+    auto ctx = reqLogCtx(req);
+    ZiLOG(Info, "zhttp", ([
+      ctx, scheme = ZeString(next.scheme), host = ZeString(next.host),
+      target = ZeString(next.target)
+    ](auto &s) {
+      reqLogPrefix(ctx, s);
+      s << "redirect: " << scheme << "://" << host << target;
     }));
     req.url = ZuMv(next);
     if (req.redirects == MaxRedirects) {
-      ZiLOG(Error, "zhttp", ([&req](auto &s) {
-	reqLogPrefix(req, s);
+      auto ctx = reqLogCtx(req);
+      ZiLOG(Error, "zhttp", ([ctx](auto &s) {
+	reqLogPrefix(ctx, s);
 	s << "too many redirects";
       }));
       rc = 1;
