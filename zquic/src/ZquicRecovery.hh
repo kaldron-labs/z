@@ -191,7 +191,7 @@ public:
     bool ackEliciting = true, bool immediate = false,
     EcnMark::T ecn = EcnMark::NotECT)
   {
-    unsigned i = index_(space);
+    unsigned i = space;
     uint64_t largest = 0;
     bool haveLargest = m_ack[i].count();
     if (haveLargest) largest = m_ack[i].largest();
@@ -222,7 +222,7 @@ public:
     PktSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
     bool immediate = false)
   {
-    unsigned i = index_(space);
+    unsigned i = space;
     if (!m_ack[i].contains(pn)) return false;
     if (m_ack[i].largest() == pn) m_largestRxTime[i] = now;
     m_ackEliciting[i] = true;
@@ -241,34 +241,34 @@ public:
   }
 
   const AckTracker &tracker(PktSpace::T space) const {
-    return m_ack[index_(space)];
+    return m_ack[space];
   }
   bool pending(PktSpace::T space) const {
-    return m_pending[index_(space)];
+    return m_pending[space];
   }
   bool deadlineSet(PktSpace::T space) const {
-    return m_deadlineSet[index_(space)];
+    return m_deadlineSet[space];
   }
   bool immediate(PktSpace::T space) const {
-    return m_immediate[index_(space)];
+    return m_immediate[space];
   }
   bool ackEliciting(PktSpace::T space) const {
-    return m_ackEliciting[index_(space)];
+    return m_ackEliciting[space];
   }
   uint64_t deadline(PktSpace::T space) const {
-    return m_deadline[index_(space)];
+    return m_deadline[space];
   }
   uint64_t largestRxTime(PktSpace::T space) const {
-    return m_largestRxTime[index_(space)];
+    return m_largestRxTime[space];
   }
   uint64_t gen(PktSpace::T space) const {
-    return m_gen[index_(space)];
+    return m_gen[space];
   }
   const AckECN &ackECN(PktSpace::T space) const {
-    return m_ecn[index_(space)];
+    return m_ecn[space];
   }
   bool due(PktSpace::T space, uint64_t now) const {
-    unsigned i = index_(space);
+    unsigned i = space;
     return m_pending[i] &&
       (m_immediate[i] || (m_deadlineSet[i] && now >= m_deadline[i]));
   }
@@ -276,11 +276,11 @@ public:
     PktSpace::T space, uint8_t *out, unsigned len,
     uint64_t delay = 0, bool ecn = false) const
   {
-    unsigned i = index_(space);
+    unsigned i = space;
     return m_ack[i].writeFrame(out, len, delay, ecn ? &m_ecn[i] : nullptr);
   }
   void sent(PktSpace::T space, uint64_t gen = uint64_t(-1)) {
-    unsigned i = index_(space);
+    unsigned i = space;
     if (gen != uint64_t(-1) && gen != m_gen[i]) return;
     m_pending[i] = false;
     m_ackEliciting[i] = false;
@@ -303,11 +303,6 @@ public:
   }
 
 private:
-  static unsigned index_(PktSpace::T space) {
-    if (space == PktSpace::Initial) return 0;
-    if (space == PktSpace::Handshake) return 1;
-    return 2;
-  }
   void noteECN_(unsigned i, EcnMark::T ecn) {
     switch (ecn) {
       case EcnMark::ECT0: ++m_ecn[i].ect0; break;
