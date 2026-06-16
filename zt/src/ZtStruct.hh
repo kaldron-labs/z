@@ -1835,7 +1835,7 @@ struct ZtField_Bytes_Get {
     using O = typename Base::O;
     // field get() returns a temporary
     return {.get_ = {.bytes = [](const void *o) -> ZuBSpan {
-      auto &v = ZmTLS<ZtBytes, getFn>();
+      auto &v = ZmTLS<ZtBArray, getFn>();
       v = Base::get(*static_cast<const O *>(o));
       return v;
     }}};

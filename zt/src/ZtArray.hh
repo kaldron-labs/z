@@ -1714,6 +1714,11 @@ inline void ZtArray<T, NTP>::convert_(const S &s, ZtIconv *iconv) {
   iconv->convert(*this, s);
 }
 
-using ZtBytes = ZtArray<uint8_t>;
+template <typename NTP = ZtArray_Defaults>
+using ZtCArray = ZtArray<char, NTP>;
+template <typename NTP = ZtArray_Defaults>
+using ZtBArray = ZtArray<uint8_t, NTP>;
+template <typename NTP = ZtArray_Defaults>
+using ZtWArray = ZtArray<wchar_t, NTP>;
 
 #endif /* ZtArray_HH */
