@@ -173,6 +173,11 @@ These guidelines extend `AGENTS.md`
   Problem: causes reference-count churn in the owner and risks ownership cycles
   Fix: short-lived objects should use raw pointers back to longer-lived owners; owners must teardown carefully to ensure that they cannot be outlived by short-lived objects that they own
 
+### Unnecessary atomic operations, locking and copies
+- Flag: diagnostic, statistics or telemetry data (e.g. counters) without any requirement for accuracy or stable reads are needlessly atomic or guarded by locks or snapshotted
+  Problem: atomic operations and locking induce latency volatility
+  Fix: use primitive types, do not guard with locks, permit unclean reads from other threads
+
 ## Leveraging Key Z Framework Capabilities
 ### Assertions and type mechanics
 - Assertions: use `ZuAssert` at compile time; at run time use plain `assert` below `zm`, `ZmAssert` below `zi`, and `ZiAssert` in `zi` or above.
