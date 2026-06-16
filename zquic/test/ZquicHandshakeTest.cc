@@ -244,6 +244,11 @@ void testCryptoStreamFrames()
       parsed.type == Zquic::FrameType::Crypto &&
       parsed.offset == 0 && parsed.payload == "abc",
     "CRYPTO Tx frame parse failed");
+  ZuCSpan txPayload;
+  ZuCHECK(tx.txPayload(0, 3, txPayload) && txPayload == "abc",
+    "CRYPTO Tx payload retention failed");
+  ZuCHECK(!tx.txPayload(2, 3, txPayload),
+    "CRYPTO Tx payload retention accepted overrun");
 
   Zquic::CryptoStream directRx;
   Zquic::CryptoDiag directDiag;

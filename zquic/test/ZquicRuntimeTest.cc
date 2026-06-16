@@ -42,7 +42,21 @@ struct RuntimeServer :
     if (!buf || !buf->length) return true;
     ZuCSpan packet{
       reinterpret_cast<const char *>(buf->data_()), buf->length};
-    if (Zquic::Pkt::isLong(packet)) return true;
+    if (Zquic::Pkt::isLong(packet)) {
+      Zquic::LongHdr h;
+      if (Zquic::Pkt::parseLong(packet, h) < 0) return true;
+      if (h.type == Zquic::PktType::Initial && dropNextInitial) {
+	--dropNextInitial;
+	++droppedInitial;
+	return false;
+      }
+      if (h.type == Zquic::PktType::Handshake && dropNextHandshake) {
+	--dropNextHandshake;
+	++droppedHandshake;
+	return false;
+      }
+      return true;
+    }
     ++shortPkts;
     if (!dropNextShort) return true;
     dropNextShort = 0;
@@ -62,6 +76,10 @@ struct RuntimeServer :
   ZmRef<Link> link_;
   ZmRef<Link> links_[RuntimeServerLinkCapacity];
   ZmAtomic<unsigned> acceptedCount = 0;
+  ZmAtomic<unsigned> dropNextInitial = 0;
+  ZmAtomic<unsigned> droppedInitial = 0;
+  ZmAtomic<unsigned> dropNextHandshake = 0;
+  ZmAtomic<unsigned> droppedHandshake = 0;
   ZmAtomic<unsigned> dropNextShort = 0;
   ZmAtomic<unsigned> droppedShort = 0;
   ZmAtomic<unsigned> shortPkts = 0;
@@ -418,6 +436,95 @@ void testRuntimeEndpointOpen()
   mx.stop();
 }
 
+void testRuntimeHandshakeCryptoLoss()
+{
+  ZuTestScope(testRuntimeHandshakeCryptoLoss);
+
+  TempDir temp;
+  ZuCHECK(temp.init(), "loss runtime temporary TLS certificate failed");
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(5)
+	    .thread(1, [](auto &t) { t.isolated(1); })
+	    .thread(2, [](auto &t) { t.isolated(1); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "loss runtime multiplexer start failed");
+  if (!mxStarted) return;
+
+  for (unsigned dropHandshake = 0; dropHandshake < 2; ++dropHandshake) {
+    RuntimeServer server;
+    ZuCHECK(server.init(
+	Zquic::ServerParams(&mx, "3", "4")
+	  .certPath(cspan_(temp.certPath))
+	  .keyPath(cspan_(temp.keyPath))
+	  .maxData(32768)
+	  .maxStreamData(8192)
+	  .maxStreamsBidi(8)
+	  .maxStreamsUni(8)
+	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
+      "loss runtime server init failed");
+    ZuCHECK(server.listen(), "loss runtime server listen failed");
+    ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+      "loss runtime server did not listen");
+    if (dropHandshake)
+      server.dropNextHandshake = 4;
+    else
+      server.dropNextInitial = 1;
+
+    RuntimeClient client;
+    ZuCHECK(client.init(
+	Zquic::ClientParams(&mx, "3", "4")
+	  .caPath(cspan_(temp.certPath))
+	  .maxData(32768)
+	  .maxStreamData(8192)
+	  .maxStreamsBidi(8)
+	  .maxStreamsUni(8)
+	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
+      "loss runtime client init failed");
+    ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+    clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+
+    ZmRef<RuntimeServer::Link> serverLink;
+    bool established = waitUntil([&server, &clientLink, &serverLink]() {
+	if (!serverLink) serverLink = server.link();
+	return serverLink && clientLink->established() &&
+	  serverLink->established();
+      });
+    if (!established) {
+      dumpRuntimeDiag(
+	"client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+      if (serverLink)
+	dumpRuntimeDiag(
+	  "server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+    }
+    ZuCHECK(established, "loss runtime handshake did not recover");
+    ZuCHECK(dropHandshake ? server.droppedHandshake == 4 :
+	server.droppedInitial == 1,
+      "loss runtime did not drop selected long-header packet");
+    ZuCHECK(serverLink && serverLink->runtimeDiag().ptoCount &&
+	serverLink->runtimeDiag().retransmittedFrames,
+      "loss runtime did not recover via PTO retransmit");
+
+    clientLink->disconnect();
+    server.close();
+    ZuCHECK(waitUntil([&clientLink]() {
+	return !clientLink->cxn();
+      }) && !server.connected(),
+      "loss runtime endpoints remained connected after close");
+    clientLink = nullptr;
+    client.final();
+    server.final();
+  }
+
+  mx.stop();
+}
+
 void testRuntimeServerMultiConnection()
 {
   ZuTestScope(testRuntimeServerMultiConnection);
@@ -557,5 +664,6 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testRuntimeEndpointOpen);
+  ZuTestCall(testRuntimeHandshakeCryptoLoss);
   ZuTestCall(testRuntimeServerMultiConnection);
 }

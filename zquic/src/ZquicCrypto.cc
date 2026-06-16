@@ -150,6 +150,32 @@ void CryptoStream::reset()
   m_rxOffset = 0;
   Rx::rxReset(0);
   m_delivery.length(0);
+  m_txData.length(0);
+}
+
+bool CryptoStream::sent(uint64_t offset, ZuCSpan payload)
+{
+  uint64_t end = offset + payload.length();
+  if (end < offset || end > MaxBuffered) return false;
+  if (offset < m_txData.length()) {
+    if (end > m_txData.length()) return false;
+    return !memcmp(m_txData.data() + offset, payload.data(), payload.length());
+  }
+  if (offset != m_txData.length()) return false;
+  m_txData.append(
+    reinterpret_cast<const uint8_t *>(payload.data()), payload.length());
+  return true;
+}
+
+bool CryptoStream::txPayload(
+  uint64_t offset, uint64_t length, ZuCSpan &payload) const
+{
+  uint64_t end = offset + length;
+  if (end < offset || end > m_txData.length()) return false;
+  payload = ZuCSpan{
+    reinterpret_cast<const char *>(m_txData.data() + offset),
+    unsigned(length)};
+  return true;
 }
 
 int CryptoStream::writeFrame(
@@ -157,6 +183,7 @@ int CryptoStream::writeFrame(
 {
   int n = FrameCodec::writeCryptoPrefix(out, len, m_txOffset, payload.length());
   if (n < 0 || len - unsigned(n) < payload.length()) return -1;
+  if (!sent(m_txOffset, payload)) return -1;
   memcpy(out + n, payload.data(), payload.length());
   m_txOffset += payload.length();
   if (diag) {
