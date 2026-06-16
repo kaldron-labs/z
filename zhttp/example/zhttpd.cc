@@ -514,10 +514,10 @@ struct HTTPServer::Link :
     return rc;
   }
 
-  StaticH1Server h1;
-  ZmScheduler::Timer idleTimer;
-  Text	remote;
-  bool		counted = true;
+  StaticH1Server	h1;
+  ZmScheduler::Timer	idleTimer;
+  Text			remote;
+  bool			counted = true;
 };
 
 ZiConnection *HTTPServer::accepted(const ZiCxnInfo &ci)
@@ -701,9 +701,9 @@ struct H3ServerLink :
     }));
   }
 
-  H3Cxn	h3;
+  H3Cxn		h3;
   State		*state = nullptr;
-  Text	remote;
+  Text		remote;
   bool		counted = true;
 };
 
@@ -711,9 +711,9 @@ ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &info)
 {
   unsigned active = ++state->active;
   if (state->options.maxconn && active > state->options.maxconn) {
-    ZiLOG(Debug, "zhttpd.h3", ([&info, active](auto &s) {
-      s << "reject initial peer=" << info.peer.ip() <<
-	" active=" << active;
+    ZiLOG(Debug, "zhttpd.h3", ([ip = info.peer.ip(), active](auto &s) {
+      s << "reject initial peer=" << ip
+	<< " active=" << active;
     }));
     --state->active;
     return {};
