@@ -458,7 +458,7 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 ## Naming
 ### Length and abbreviations
 - Names must be concise; 32 bytes is the hard upper limit.
-- Use standard in-code abbreviations for long names: `reserve` -> `res`, `packet` -> `pkt`, `client` -> `cli`, `server` -> `srv`, `protection` -> `prot`, etc.
+- Use standard in-code abbreviations for long names: `reserve` -> `res`, `packet` -> `pkt`, `client` -> `cli`, `server` -> `srv`, `protection` -> `prot`, `generation` -> `gen`, etc.
 - Example: `packet` is fine; `reservePacketProtection` is too long; use `resPktProt`.
 
 ### Casing and member prefixes
