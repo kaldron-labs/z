@@ -619,7 +619,8 @@ private:
 	unsigned(TxRecordCapacity),
 	unsigned(link.m_headroom),
 	unsigned(TxMaxOverhead - link.m_headroom)),
-      m_link{&link}
+      m_link{&link},
+      m_gen{link.m_tlsGen.load_()}
     {
     }
 
@@ -640,13 +641,14 @@ private:
       buf->owner = m_link->impl();
       auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)
-	link->send(ZuMv(buf));
+	link->send(ZuMv(buf), m_gen);
       else
-	link->send_(ZuMv(buf));
+	link->send_(ZuMv(buf), m_gen);
     }
 
   private:
     Link	*m_link;
+    uint64_t	m_gen = 0;
   };
 
 public:
@@ -683,12 +685,16 @@ private:
 
 public:
   void send(ZmRef<ZiIOBuf> buf) {
+    send(ZuMv(buf), m_tlsGen.load_());
+  }
+  void send(ZmRef<ZiIOBuf> buf, uint64_t gen) {
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
+    if (ZuUnlikely(gen != m_tlsGen.load_())) return;
     buf->owner = impl();
-    app()->txInvoke([buf = ZuMv(buf)]() mutable {
+    app()->txInvoke([buf = ZuMv(buf), gen]() mutable {
       auto link = static_cast<Impl *>(buf->owner);
-      link->send_(ZuMv(buf));
+      link->send_(ZuMv(buf), gen);
     });
   }
 
@@ -723,23 +729,28 @@ private:
 
 protected:
   void send_(ZmRef<ZiIOBuf> buf) { // Ztls Tx thread
+    send_(ZuMv(buf), m_tlsGen.load_());
+  }
+  void send_(ZmRef<ZiIOBuf> buf, uint64_t gen) { // Ztls Tx thread
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS send_ outside Tx thread", return);
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
+    if (ZuUnlikely(gen != m_tlsGen.load_())) return;
     buf->owner = impl();
-    app()->rxRun([buf = ZuMv(buf)]() mutable {
+    app()->rxRun([buf = ZuMv(buf), gen]() mutable {
       auto link = static_cast<Impl *>(buf->owner);
-      link->sendRx_(ZuMv(buf));
+      link->sendRx_(ZuMv(buf), gen);
     });
   }
 
 private:
-  void sendRx_(ZmRef<ZiIOBuf> buf) { // transitional legacy record path
+  void sendRx_(ZmRef<ZiIOBuf> buf, uint64_t gen) { // transitional legacy record path
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS legacy send outside Rx thread", return);
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
+    if (ZuUnlikely(gen != m_tlsGen.load_())) return;
     if (ZuUnlikely(!m_tls || !cipher_())) return; // FIXME - log diagnostic
 
     ZiAssert(buf->length <= TxMaxPlaintext, "Ztls", (),
@@ -859,7 +870,7 @@ private:
     asyncCleanup_();
 
     AsyncJobRef async = new AsyncJob{
-      ZmMkRef(impl()), tls(), job, handle, m_tlsGen};
+      ZmMkRef(impl()), tls(), job, handle, m_tlsGen.load_()};
     m_asyncJob = async.ptr();
 
     if (ZuUnlikely(!app()->asyncAddHandle_(
@@ -890,7 +901,7 @@ private:
 
   void asyncResume_(AsyncJob *async) {
     if (async->tls == m_tls &&
-	async->gen == m_tlsGen &&
+	async->gen == m_tlsGen.load_() &&
 	m_asyncJob == async) {
       clearAsync_();
       handshake_(nullptr);
@@ -968,7 +979,7 @@ protected:
   }
 
   void reset_tls_() {
-    ++m_tlsGen;
+    m_tlsGen.store_(m_tlsGen.load_() + 1);
     if (m_tls) {
       if (!asyncRetireTLS_())
 	ptls_free(m_tls);
@@ -1021,7 +1032,7 @@ private:
   };
 
   ptls_t		*m_tls = nullptr;
-  uint64_t		m_tlsGen = 0;
+  ZmAtomic<uint64_t>	m_tlsGen = 0;
   unsigned		m_headroom = 0;
   uint64_t		m_txSeqEst = 0;
   bool			m_txControlPending = false;
