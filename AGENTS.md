@@ -32,7 +32,8 @@ The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`
 - Avoid unnecessary casts among Z span/string/array types; these types usually interoperate directly.
 
 ## Layout and Naming
-- Follow existing file headers and nearby module style. Indentation uses hard tabs (`noet`, `ts=8`) with a 2-column logical C++ indent (`sw=2`); local code precedent wins when details disagree.
+- Follow existing file headers and nearby module style.
+- IMPORTANT - Indentation uses hard tabs (`noet`, `ts=8`) with a tab-stop of 8, with a 2-column logical C++ indent (`sw=2`); local code precedent wins when details disagree.
 - Library headers should follow the skeleton in `GUIDELINES.md`: editor modelines, copyright/license block, include guard, component library include, ordered direct dependencies, then body.
 - Keep names concise; 32 bytes is a hard upper limit. Use project abbreviations such as `pkt`, `cli`, `srv`, `prot`, and `res`.
 - Names are generally camelCase. `m_` is reserved for private data members of classes. Structs are all-public data without `m_`; classes have private data at the bottom.
