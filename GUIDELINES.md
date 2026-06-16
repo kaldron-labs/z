@@ -244,6 +244,10 @@ These guidelines extend `AGENTS.md`
   - 2. post a teardown continuation on the thread to drain any late callbacks
   - 3. (in the continuation) complete the teardown with late callbacks drained
 - do NOT block except in the main thread, this is async continuation code
+- as with I/O buffers, timer callbacks are short-lived objects owned by longer-lived objects
+  - short-lived objects should NOT introduce reference-counting cycles by holding reference counts back to their owners
+  - such back-pointers should be raw pointers
+  - owners are responsible for draining all activity using orderly teardown as described above, ensuring that objects with stale backpointers cannot outlive their owners
 
 ### I/O and system integration
 - Use `ZiIOBuf` for buffer management.
@@ -433,6 +437,10 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - 2. (in the rx thread continuation) post a teardown continuation on the tx thread to drain tx activity
 - 3. (in the tx thread continuation) complete the teardown and release object ownership
 - do NOT block except in the main thread, this is async continuation code
+- I/O buffers, queued lambdas etc. are populous short-lived objects owned by fewer longer-lived objects such as connections/links/sessions/streams
+  - populous short-lived objects should NOT introduce reference-counting cycles by holding reference counts back to their owners
+  - such back-pointers should be raw pointers (example: `ZiIOBuf::owner`)
+  - owners are responsible for draining all activity using orderly teardown as described above, ensuring that objects with stale backpointers cannot outlive their owners
 
 ## Naming
 ### Length and abbreviations
