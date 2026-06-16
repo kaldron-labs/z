@@ -12,6 +12,8 @@ Preconditions: plans 1 through 4 complete, especially ACK delay timer ownership 
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add per-space runtime ACK state based on `AckManager`, plus largest-received timestamps.
 
@@ -70,6 +72,20 @@ New or changed data stores: store per-space largest receive timestamp and delaye
 - Open question: exact immediate ACK thresholds for packet reordering; start with QUIC baseline behavior.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Tests verify delayed ACK emission, immediate ACK emission, ACK delay encoding, and ACK state commit after send.
 - ACK-only packets do not create retransmittable sent-packet entries.
 - ACK ranges remain correct across duplicates and reordering.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

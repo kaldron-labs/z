@@ -11,6 +11,8 @@ Preconditions: plans 1 through 19 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add test helpers for lossy datagrams, timer control, path migration, and malformed packet/frame injection.
 
@@ -69,5 +71,19 @@ New or changed data stores: no production data stores.
 - Open question: whether timer determinism requires a scheduler test mode; add one only if existing scheduler cannot be controlled reliably.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - New tests run as standalone `zquic/test/*` binaries.
 - Each P0-P5 feature has at least one regression test.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

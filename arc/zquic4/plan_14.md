@@ -11,6 +11,8 @@ Preconditions: plans 1 through 13 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add 1-RTT key phase state with current, next, and old receive secrets plus discard deadlines.
 
@@ -66,5 +68,19 @@ New or changed data stores: retain bounded old/new secrets and discard deadlines
 - Open question: exact discard duration should follow QUIC packet threshold/time guidance using existing RTT state.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Tests cover peer key update, old-key packet tolerance, invalid key phase, and key discard.
 - Existing packet protection tests still pass.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

@@ -14,6 +14,8 @@ The design is to add a small timer-management layer inside the connection/link r
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add typed timer members to `Link`/connection runtime state near the existing PTO timer.  Keep timers as concrete members, not heap nodes.
 
@@ -157,7 +159,21 @@ No timer in this plan is `Engine`-owned.  `Engine` provides scheduler access and
   - Resolution: per `Link`
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Unit tests cover timer priority ordering and cancellation.
 - Runtime tests show ACK delay, loss time, PTO, idle, draining/closing, key discard, PMTUD, and path-validation timers do not clobber each other.
 - Tests verify each timer callback is scoped to the owning `Cxn` or `Link` and cannot fire after owner teardown.
 - Existing runtime handshake/stream tests still pass.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

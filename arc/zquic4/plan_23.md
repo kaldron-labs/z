@@ -11,6 +11,8 @@ After the implementation stack, public examples and internal architecture notes 
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add or update documentation for timers, recovery, ACK management, path state, Retry, 0-RTT, qlog, and callbacks.
 
@@ -68,6 +70,20 @@ New or changed data stores: document runtime-owned recovery/path/CID/key state w
 - Open question: where project maintainers prefer API examples to live if no current examples directory exists.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Examples compile against the final API.
 - Timer, recovery, and path ownership are documented.
 - Stale comments/APIs from intermediate work are removed.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

@@ -11,6 +11,8 @@ Preconditions: plans 1 through 21 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: optional adaptive flow-window policy attached to receive flow state.
 
@@ -66,6 +68,20 @@ New or changed data stores: per-connection and per-stream window policy state if
 - Open question: default adaptive policy should depend on product workload expectations not yet encoded in repo.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Decision is documented with test/measurement rationale.
 - If adaptive windows are added, tests cover growth, caps, and unchanged violation handling.
 - Existing flow-control tests still pass.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`

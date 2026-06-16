@@ -11,6 +11,8 @@ Preconditions: plans 1 through 6 complete.
 ## Mandatory implementation guidelines
 IMPORTANT: Read `GUIDELINES.md` fully and align with it.
 
+Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
+
 ## Architecture Documentation
 New or changed components: add a packet assembly loop that fills `PktBuild` until packet, congestion, path, or flow budget is exhausted.
 
@@ -67,6 +69,20 @@ New or changed data stores: track largest acknowledged packet per space for pack
 - Open question: whether coalescing should be limited to handshake until path budgeting is complete.
 
 ## Acceptance Criteria
+- IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
+- `make -C zquic/test test` must `PASS`
+- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
 - Tests cover multiple frames in one protected packet.
 - Packet number length shrinks/grows correctly from ACK state.
 - Existing one-frame scheduling tests are updated to assert priority, not artificial packet count.
+
+## Completion
+- Append a change log to `arc/zquic4/log.md` in this format:
+    ```
+    ## [title]
+    [change log]
+    ```
+  - `[title]` is the `###` title of this plan in `arc/zquic4/backlog.md`, without the number
+    - example: `Replace PTO-only timing with explicit QUIC timers`
+  - the change log should be detailed for agents to establish the starting point for further work
+- `git commit` with one-line commit log `[title]`
