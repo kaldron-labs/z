@@ -2013,8 +2013,11 @@ protected:
   };
   struct AckSnapshot {
     CryptoLevel::T	level = CryptoLevel::Initial;
+    uint64_t		gen = 0;
     uint64_t		delay = 0;
+    uint64_t		largestRxTime = 0;
     unsigned		nRanges = 0;
+    bool		due = false;
     AckRange		ranges[Frame::MaxAckRanges];
   };
   struct TxCryptoSnapshot {
@@ -2508,9 +2511,8 @@ protected:
     for (auto &p : m_txProt) p.clear();
     memset(m_txPN, 0, sizeof(m_txPN));
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
-    for (auto &a : m_rxPkts) a.clear();
+    m_rxAcks.clear();
     for (auto &p : m_txPkts) p.clear();
-    memset(m_pendingAck, 0, sizeof(m_pendingAck));
     memset(m_rxSpaceDiscarded, 0, sizeof(m_rxSpaceDiscarded));
     memset(m_txSpaceDiscarded, 0, sizeof(m_txSpaceDiscarded));
     m_rtt = {};
@@ -2554,7 +2556,7 @@ protected:
     m_handshakeStarted = 0;
     m_streamQueue.clean();
     for (auto &p : m_txPkts) p.clear();
-    memset(m_pendingAck, 0, sizeof(m_pendingAck));
+    m_rxAcks.clear();
     ++m_rxDiag.failures;
     impl()->statelessReset();
     return true;
@@ -2778,28 +2780,76 @@ protected:
     return sent;
   }
 
-  void noteAck_(CryptoLevel::T level, uint64_t) {
-    m_pendingAck[level] = true;
+  static PktSpace::T pktSpace_(CryptoLevel::T level) {
+    return PktSpace::T(level);
+  }
+
+  uint64_t localMaxAckDelayUS_() const {
+    return uint64_t(m_transportParams.maxAckDelay) * 1000;
+  }
+
+  uint64_t nowUS_() const {
+    return uint64_t(runtimeNow_().microsecs());
+  }
+
+  bool immediateAck_(CryptoLevel::T level) const {
+    if (level != CryptoLevel::OneRTT) return true;
+    const AckTracker &tracker = m_rxAcks.tracker(pktSpace_(level));
+    return tracker.count() > 1;
+  }
+
+  void postAckSnapshot_(CryptoLevel::T level, ZiSockAddr addr) {
+    PktSpace::T space = pktSpace_(level);
+    if (!m_rxAcks.pending(space)) return;
     AckSnapshot ack;
     ack.level = level;
-    ack.nRanges = m_rxPkts[level].count();
+    ack.gen = m_rxAcks.gen(space);
+    ack.largestRxTime = m_rxAcks.largestRxTime(space);
+    ack.due = m_rxAcks.immediate(space);
+    const AckTracker &tracker = m_rxAcks.tracker(space);
+    ack.nRanges = tracker.count();
     if (ack.nRanges > Frame::MaxAckRanges)
       ack.nRanges = Frame::MaxAckRanges;
     for (unsigned i = 0; i < ack.nRanges; ++i)
-      m_rxPkts[level].range(i, ack.ranges[i]);
+      tracker.range(i, ack.ranges[i]);
     if (debugLog_())
       ZiLOG(Debug, "Zquic", ([level, n = ack.nRanges](auto &s) {
 	s << "ACK snapshot posted level=" << int(level) << " ranges=" << n;
       }));
-    app()->txRun([link = ZmMkRef(impl()), ack]() mutable {
+    bool immediate = m_rxAcks.immediate(space);
+    bool deadline = m_rxAcks.deadlineSet(space);
+    uint64_t deadlineUS = deadline ? m_rxAcks.deadline(space) : 0;
+    app()->txRun([
+      link = ZmMkRef(impl()),
+      ack, addr = ZuMv(addr), immediate, deadline, deadlineUS
+    ]() mutable {
       link->noteAckTx_(ack);
+      if (immediate) {
+	link->cancelAckDelayTimer_();
+	link->flushTx_(ZuMv(addr));
+      } else if (deadline) {
+	link->scheduleAckDelayTimer_(timeUS(deadlineUS));
+      }
     });
+  }
+
+  void noteAck_(
+    CryptoLevel::T level, uint64_t pn, bool ackEliciting, ZiSockAddr addr) {
+    PktSpace::T space = pktSpace_(level);
+    uint64_t now = nowUS_();
+    bool immediate = ackEliciting && immediateAck_(level);
+    if (ackEliciting)
+      m_rxAcks.ackEliciting(
+	space, pn, now, localMaxAckDelayUS_(), immediate);
+    postAckSnapshot_(level, ZuMv(addr));
   }
 
   void noteAckTx_(const AckSnapshot &ack) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK snapshot install outside Tx thread", return);
+    bool due = m_txAck[ack.level].due || ack.due;
     m_txAck[ack.level] = ack;
+    m_txAck[ack.level].due = due;
     if (debugLog_())
       ZiLOG(Debug, "Zquic", ([level = ack.level, n = ack.nRanges](auto &s) {
 	s << "ACK snapshot processed level=" << int(level) << " ranges=" << n;
@@ -2807,18 +2857,44 @@ protected:
   }
 
   bool appendPendingAck_(
-    CryptoLevel::T level, PktBuild &build) {
+    CryptoLevel::T level, PktBuild &build, bool ackOnly = false) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK append outside Tx thread", return false);
     AckSnapshot &ack = m_txAck[level];
     if (!ack.nRanges) return true;
+    if (ackOnly && !ack.due) return true;
+    uint64_t delay = 0;
+    if (level == CryptoLevel::OneRTT) {
+      uint64_t now = nowUS_();
+      if (now > ack.largestRxTime)
+	delay = (now - ack.largestRxTime) >>
+	  m_transportParams.ackDelayExponent;
+    }
     int n = FrameCodec::writeAckRanges(
       build.scratch(), build.scratchAvail(), ack.ranges, ack.nRanges,
-      ack.delay);
+      delay);
     if (n < 0) return false;
     if (!build.commitScratch(unsigned(n))) return false;
-    ack.nRanges = 0;
+    build.markAck(unsigned(level));
     return true;
+  }
+
+  void ackSentTx_(CryptoLevel::T level) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC ACK commit outside Tx thread", return);
+    AckSnapshot ack = m_txAck[level];
+    if (!ack.nRanges) return;
+    m_txAck[level].nRanges = 0;
+    m_txAck[level].due = false;
+    app()->rxRun([link = ZmMkRef(impl()), level, gen = ack.gen]() mutable {
+      link->ackSentRx_(level, gen);
+    });
+  }
+
+  void ackSentRx_(CryptoLevel::T level, uint64_t gen) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC ACK receive-state commit outside Rx thread", return);
+    m_rxAcks.sent(pktSpace_(level), gen);
   }
 
   void scheduleAckDelayTimer_(ZuTime out) {
@@ -3038,7 +3114,12 @@ protected:
     if (!closed()) impl()->pathExpired_();
   }
 
-  void ackDelayExpired_() { }
+  void ackDelayExpired_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC ACK delay expiry outside Tx thread", return);
+    m_txAck[CryptoLevel::OneRTT].due = true;
+    impl()->flushTx_();
+  }
   void lossTimeExpired_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC loss timer expired outside Tx thread", return);
@@ -3070,7 +3151,7 @@ protected:
     if (level == CryptoLevel::OneRTT) return;
     m_rxSpaceDiscarded[level] = true;
     m_rxCrypto[level].reset();
-    m_pendingAck[level] = false;
+    m_rxAcks.sent(PktSpace::T(level));
     app()->txRun([link = ZmMkRef(impl()), level]() mutable {
       link->discardTxPktSpace_(level);
     });
@@ -3167,8 +3248,9 @@ protected:
 
   bool recordRxPkt_(
     CryptoLevel::T level, uint64_t pn) {
-    if (m_rxPkts[level].contains(pn)) return false;
-    m_rxPkts[level].add(pn);
+    if (m_rxAcks.tracker(pktSpace_(level)).contains(pn)) return false;
+    m_rxAcks.received(
+      pktSpace_(level), pn, nowUS_(), localMaxAckDelayUS_(), false);
     if (pn > m_rxLargestPN[level])
       m_rxLargestPN[level] = pn;
     return true;
@@ -3404,6 +3486,7 @@ protected:
     buf->skip = 0;
     buf->length = unsigned(n);
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
+    if (payload.ack(CryptoLevel::Initial)) ackSentTx_(CryptoLevel::Initial);
     recordProtPktTx_(
       CryptoLevel::Initial, pn, unsigned(n), recordFrame, recordRef,
       ackEliciting);
@@ -3446,6 +3529,8 @@ protected:
     buf->skip = 0;
     buf->length = unsigned(n);
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
+    if (payload.ack(CryptoLevel::Handshake))
+      ackSentTx_(CryptoLevel::Handshake);
     recordProtPktTx_(
       CryptoLevel::Handshake, pn, unsigned(n), recordFrame, recordRef,
       ackEliciting);
@@ -3488,6 +3573,7 @@ protected:
     buf->skip = 0;
     buf->length = unsigned(n);
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
+    if (payload.ack(CryptoLevel::OneRTT)) ackSentTx_(CryptoLevel::OneRTT);
     recordProtPktTx_(
       CryptoLevel::OneRTT, pn, unsigned(n), recordFrame, recordRef,
       ackEliciting);
@@ -3643,6 +3729,7 @@ protected:
     new (&frame_[0]) Frame{};
     auto &frame = frame_[0];
     ZuGuard frameGuard{[&frame]() { frame.~Frame(); }};
+    bool ackEliciting = false;
 
     while (offset < frames.length()) {
       unsigned used = 0;
@@ -3653,7 +3740,7 @@ protected:
       ++m_rxDiag.framesRx;
       if (!packetFrameLegal_(level, frame)) return false;
       if (FrameCodec::ackEliciting(frame.type))
-	noteAck_(level, pn);
+	ackEliciting = true;
       switch (frame.type) {
 	case FrameType::Ack:
 	  processAckFrame_(level, frame);
@@ -3727,6 +3814,7 @@ protected:
 	}
       offset += used;
     }
+    noteAck_(level, pn, ackEliciting, ZuMv(addr));
     return true;
   }
 
@@ -4168,7 +4256,7 @@ private:
   LocalCIDs		m_localCIDs;
   PeerCIDs		m_peerCIDs;
   uint64_t		m_rxLargestPN[3]{};
-  AckTracker		m_rxPkts[3];
+  AckManager		m_rxAcks;
   RttEstimator		m_rtt;
   PTOBackoff		m_ptoBackoff;
   // Connection-owned timers; callbacks run on Tx.
@@ -4181,7 +4269,6 @@ private:
   // Active-path timers owned by this Link; callbacks run on Tx.
   ZmScheduler::Timer	m_pmtudTimer;
   ZmScheduler::Timer	m_pathTimer;
-  bool			m_pendingAck[3]{};
   bool			m_rxSpaceDiscarded[3]{};
   bool			m_timerTeardown = false;
   unsigned		m_handshakeStarted = 0;
@@ -4805,7 +4892,7 @@ private:
   bool flushPendingAck_(CryptoLevel::T level, ZiSockAddr addr) {
     PktBuild build;
     build.reset();
-    if (!appendPendingAck_(level, build)) return false;
+    if (!Base::appendPendingAck_(level, build, true)) return false;
     if (!build.bytes()) return true;
     if (level == CryptoLevel::Initial)
       return sendInitialPkt_(build, ZuMv(addr), {});
@@ -5410,7 +5497,7 @@ private:
   bool flushPendingAck_(CryptoLevel::T level, ZiSockAddr addr) {
     PktBuild build;
     build.reset();
-    if (!appendPendingAck_(level, build)) return false;
+    if (!Base::appendPendingAck_(level, build, true)) return false;
     if (!build.bytes()) return true;
     if (level == CryptoLevel::Initial)
       return sendInitialPkt_(build, ZuMv(addr), {});

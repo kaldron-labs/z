@@ -183,12 +183,47 @@ public:
 
   bool received(
     PktSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
-    bool ackEliciting = true)
+    bool ackEliciting = true, bool immediate = false)
   {
     unsigned i = index_(space);
+    uint64_t largest = 0;
+    bool haveLargest = m_ack[i].count();
+    if (haveLargest) largest = m_ack[i].largest();
+    if (m_ack[i].contains(pn)) return false;
     if (!m_ack[i].add(pn)) return false;
     m_pending[i] = true;
+    ++m_gen[i];
+    if (!haveLargest || pn >= largest) m_largestRxTime[i] = now;
     if (ackEliciting) {
+      m_ackEliciting[i] = true;
+      if (immediate) {
+	m_immediate[i] = true;
+	m_deadlineSet[i] = false;
+	m_deadline[i] = 0;
+      } else {
+	uint64_t deadline =
+	  maxAckDelay > uint64_t(-1) - now ? uint64_t(-1) : now + maxAckDelay;
+	if (!m_deadlineSet[i] || deadline < m_deadline[i])
+	  m_deadline[i] = deadline;
+	m_deadlineSet[i] = true;
+      }
+    }
+    return true;
+  }
+
+  bool ackEliciting(
+    PktSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
+    bool immediate = false)
+  {
+    unsigned i = index_(space);
+    if (!m_ack[i].contains(pn)) return false;
+    if (m_ack[i].largest() == pn) m_largestRxTime[i] = now;
+    m_ackEliciting[i] = true;
+    if (immediate) {
+      m_immediate[i] = true;
+      m_deadlineSet[i] = false;
+      m_deadline[i] = 0;
+    } else if (!m_immediate[i]) {
       uint64_t deadline =
 	maxAckDelay > uint64_t(-1) - now ? uint64_t(-1) : now + maxAckDelay;
       if (!m_deadlineSet[i] || deadline < m_deadline[i])
@@ -207,12 +242,25 @@ public:
   bool deadlineSet(PktSpace::T space) const {
     return m_deadlineSet[index_(space)];
   }
+  bool immediate(PktSpace::T space) const {
+    return m_immediate[index_(space)];
+  }
+  bool ackEliciting(PktSpace::T space) const {
+    return m_ackEliciting[index_(space)];
+  }
   uint64_t deadline(PktSpace::T space) const {
     return m_deadline[index_(space)];
   }
+  uint64_t largestRxTime(PktSpace::T space) const {
+    return m_largestRxTime[index_(space)];
+  }
+  uint64_t gen(PktSpace::T space) const {
+    return m_gen[index_(space)];
+  }
   bool due(PktSpace::T space, uint64_t now) const {
     unsigned i = index_(space);
-    return m_pending[i] && m_deadlineSet[i] && now >= m_deadline[i];
+    return m_pending[i] &&
+      (m_immediate[i] || (m_deadlineSet[i] && now >= m_deadline[i]));
   }
   int writeFrame(
     PktSpace::T space, uint8_t *out, unsigned len,
@@ -220,11 +268,26 @@ public:
   {
     return m_ack[index_(space)].writeFrame(out, len, delay);
   }
-  void sent(PktSpace::T space) {
+  void sent(PktSpace::T space, uint64_t gen = uint64_t(-1)) {
     unsigned i = index_(space);
+    if (gen != uint64_t(-1) && gen != m_gen[i]) return;
     m_pending[i] = false;
+    m_ackEliciting[i] = false;
+    m_immediate[i] = false;
     m_deadlineSet[i] = false;
     m_deadline[i] = 0;
+  }
+  void clear() {
+    for (unsigned i = 0; i < Spaces; ++i) {
+      m_ack[i].clear();
+      m_pending[i] = false;
+      m_ackEliciting[i] = false;
+      m_immediate[i] = false;
+      m_deadlineSet[i] = false;
+      m_deadline[i] = 0;
+      m_largestRxTime[i] = 0;
+      m_gen[i] = 0;
+    }
   }
 
 private:
@@ -236,8 +299,12 @@ private:
 
   AckTracker	m_ack[Spaces];
   bool		m_pending[Spaces] = {};
+  bool		m_ackEliciting[Spaces] = {};
+  bool		m_immediate[Spaces] = {};
   bool		m_deadlineSet[Spaces] = {};
   uint64_t	m_deadline[Spaces] = {};
+  uint64_t	m_largestRxTime[Spaces] = {};
+  uint64_t	m_gen[Spaces] = {};
 };
 
 class RttEstimator {

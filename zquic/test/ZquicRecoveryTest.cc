@@ -439,7 +439,7 @@ void testAckManager()
       acks.deadlineSet(Zquic::PktSpace::AppData) &&
       acks.deadline(Zquic::PktSpace::AppData) == 2025,
     "ACK manager AppData deadline mismatch");
-  ZuCHECK(acks.received(Zquic::PktSpace::AppData, 6, 2010, 50) &&
+  ZuCHECK(!acks.received(Zquic::PktSpace::AppData, 6, 2010, 50) &&
       acks.pending(Zquic::PktSpace::AppData) &&
       acks.deadlineSet(Zquic::PktSpace::AppData) &&
       acks.deadline(Zquic::PktSpace::AppData) == 2025 &&
@@ -453,6 +453,41 @@ void testAckManager()
       frame.offset == 6 &&
       frame.length == 1,
     "ACK manager AppData coalesced frame mismatch");
+
+  Zquic::AckManager runtime;
+  ZuCHECK(runtime.received(Zquic::PktSpace::Initial, 1, 1000, 25, true, true) &&
+      runtime.immediate(Zquic::PktSpace::Initial) &&
+      runtime.due(Zquic::PktSpace::Initial, 1000) &&
+      runtime.largestRxTime(Zquic::PktSpace::Initial) == 1000,
+    "ACK manager Initial immediate state mismatch");
+  uint64_t initialGen = runtime.gen(Zquic::PktSpace::Initial);
+  ZuCHECK(runtime.received(Zquic::PktSpace::Handshake, 7, 1100, 25, true, true) &&
+      runtime.immediate(Zquic::PktSpace::Handshake) &&
+      runtime.due(Zquic::PktSpace::Handshake, 1100),
+    "ACK manager Handshake immediate state mismatch");
+  runtime.sent(Zquic::PktSpace::Initial, initialGen - 1);
+  ZuCHECK(runtime.pending(Zquic::PktSpace::Initial),
+    "ACK manager stale generation cleared pending ACK");
+  runtime.sent(Zquic::PktSpace::Initial, initialGen);
+  ZuCHECK(!runtime.pending(Zquic::PktSpace::Initial) &&
+      runtime.pending(Zquic::PktSpace::Handshake),
+    "ACK manager generation commit mismatch");
+
+  ZuCHECK(runtime.received(Zquic::PktSpace::AppData, 10, 2000, 50) &&
+      runtime.deadlineSet(Zquic::PktSpace::AppData) &&
+      runtime.deadline(Zquic::PktSpace::AppData) == 2050 &&
+      !runtime.immediate(Zquic::PktSpace::AppData),
+    "ACK manager AppData delayed state mismatch");
+  uint64_t appGen = runtime.gen(Zquic::PktSpace::AppData);
+  ZuCHECK(runtime.received(Zquic::PktSpace::AppData, 12, 2010, 50, true, true) &&
+      runtime.gen(Zquic::PktSpace::AppData) == appGen + 1 &&
+      runtime.immediate(Zquic::PktSpace::AppData) &&
+      runtime.due(Zquic::PktSpace::AppData, 2010) &&
+      runtime.largestRxTime(Zquic::PktSpace::AppData) == 2010,
+    "ACK manager AppData immediate/reordered state mismatch");
+  ZuCHECK(!runtime.received(Zquic::PktSpace::AppData, 12, 2020, 50) &&
+      runtime.gen(Zquic::PktSpace::AppData) == appGen + 1,
+    "ACK manager duplicate changed generation");
 }
 
 int main(int argc, char **argv)
