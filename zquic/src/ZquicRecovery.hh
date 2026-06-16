@@ -545,7 +545,9 @@ public:
 
   unsigned ack(
     const AckRange *ranges, unsigned nRanges, unsigned *lost = nullptr,
-    unsigned packetThreshold = 3, ZuTime *latestSentTime = nullptr)
+    unsigned packetThreshold = 3, ZuTime *latestSentTime = nullptr,
+    unsigned *ackedBytes = nullptr, unsigned *lostBytes = nullptr,
+    ZuTime *latestLostSentTime = nullptr)
   {
     unsigned n = 0;
     uint64_t largest = 0;
@@ -553,6 +555,9 @@ public:
     bool have = false;
     bool haveAcked = false;
     if (latestSentTime) *latestSentTime = ZuTime{0};
+    if (ackedBytes) *ackedBytes = 0;
+    if (lostBytes) *lostBytes = 0;
+    if (latestLostSentTime) *latestLostSentTime = ZuTime{0};
     for (unsigned i = 0; i < nRanges; ++i) {
       const AckRange &range = ranges[i];
       if (range.first > range.largest) continue;
@@ -564,6 +569,7 @@ public:
 	if (p.pn > range.largest) break;
 	if (ack_(p)) {
 	  ++n;
+	  if (ackedBytes) *ackedBytes += p.bytes;
 	  if (latestSentTime && (!haveAcked || p.pn > largestAcked)) {
 	    largestAcked = p.pn;
 	    *latestSentTime = p.sentTime;
@@ -572,7 +578,9 @@ public:
 	}
       }
     }
-    unsigned l = have ? markPktThresholdLoss(largest, packetThreshold) : 0;
+    unsigned l = have ?
+      markPktThresholdLoss(
+	largest, packetThreshold, lostBytes, latestLostSentTime) : 0;
     if (lost) *lost = l;
     return n;
   }
@@ -582,26 +590,44 @@ public:
     return node && lose_(node->data());
   }
 
-  unsigned markPktThresholdLoss(uint64_t largestAcked, unsigned threshold = 3) {
+  unsigned markPktThresholdLoss(
+    uint64_t largestAcked, unsigned threshold = 3,
+    unsigned *lostBytes = nullptr, ZuTime *latestSentTime = nullptr) {
     unsigned n = 0;
+    if (lostBytes) *lostBytes = 0;
+    if (latestSentTime) *latestSentTime = ZuTime{0};
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
       if (p.acked || p.lost || p.pn + threshold > largestAcked) continue;
-      if (lose_(p)) ++n;
+      if (lose_(p)) {
+	++n;
+	if (lostBytes) *lostBytes += p.bytes;
+	if (latestSentTime && (!**latestSentTime || p.sentTime > *latestSentTime))
+	  *latestSentTime = p.sentTime;
+      }
     }
     return n;
   }
 
-  unsigned markTimeThresholdLoss(ZuTime now, ZuTime threshold) {
+  unsigned markTimeThresholdLoss(
+    ZuTime now, ZuTime threshold, unsigned *lostBytes = nullptr,
+    ZuTime *latestSentTime = nullptr) {
     unsigned n = 0;
+    if (lostBytes) *lostBytes = 0;
+    if (latestSentTime) *latestSentTime = ZuTime{0};
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
       if (p.acked || p.lost || !*p.sentTime || p.sentTime > now ||
 	  now - p.sentTime < threshold)
 	continue;
-      if (lose_(p)) ++n;
+      if (lose_(p)) {
+	++n;
+	if (lostBytes) *lostBytes += p.bytes;
+	if (latestSentTime && (!**latestSentTime || p.sentTime > *latestSentTime))
+	  *latestSentTime = p.sentTime;
+      }
     }
     return n;
   }
@@ -615,6 +641,18 @@ public:
       if (p.acked || p.lost || !p.inFlight || !p.ackEliciting)
 	continue;
       if (!*t || p.sentTime > t) t = p.sentTime;
+    }
+    return t;
+  }
+  ZuTime nextLossTime(ZuTime threshold) {
+    ZuTime t{0};
+    auto iter = m_packets.iter();
+    while (auto node = iter()) {
+      const SentPkt &p = node->data();
+      if (p.acked || p.lost || !*p.sentTime)
+	continue;
+      ZuTime lossTime = p.sentTime + threshold;
+      if (!*t || lossTime < t) t = lossTime;
     }
     return t;
   }

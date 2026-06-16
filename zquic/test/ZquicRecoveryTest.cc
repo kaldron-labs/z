@@ -271,6 +271,33 @@ void testPktSpaceAckLoss()
   }
 }
 
+void testTimeLossDeadline()
+{
+  ZuTestScope(testTimeLossDeadline);
+
+  Zquic::PktTxSpace tx;
+  ZuCHECK(tx.add(txPkt_(1, 1200)) &&
+      tx.add(txPkt_(4, 800)),
+    "time-loss sent packet setup failed");
+
+  unsigned lostBytes = 0;
+  ZuTime latestSentTime;
+  ZuCHECK(tx.markTimeThresholdLoss(
+	Zquic::timeUS(700), Zquic::timeUS(500),
+	&lostBytes, &latestSentTime) == 1 &&
+      lostBytes == 1200 &&
+      latestSentTime == Zquic::timeUS(100) &&
+      tx.lost() == 1 &&
+      tx.retransmitPending() == 1,
+    "time-threshold loss did not account lost packet metadata");
+  ZuCHECK(!tx.markTimeThresholdLoss(
+	Zquic::timeUS(700), Zquic::timeUS(500),
+	&lostBytes, &latestSentTime) &&
+      !lostBytes &&
+      tx.retransmitPending() == 1,
+    "duplicate time-threshold scan requeued loss");
+}
+
 void testPTOReclaimUsesRetransmitQueue()
 {
   ZuTestScope(testPTOReclaimUsesRetransmitQueue);
@@ -426,6 +453,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRecovery);
   ZuTestCall(testPktReorderDuplicateLoss);
   ZuTestCall(testPktSpaceAckLoss);
+  ZuTestCall(testTimeLossDeadline);
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);
   ZuTestCall(testAckCanLeaveOnlyRetransmitsPending);
   ZuTestCall(testTypedControlRefs);
