@@ -8,6 +8,9 @@ Preconditions: plans 1 through 3 complete.
 
 `zquic` already has a `NewReno` utility with cwnd, ssthresh, bytes-in-flight, loss, and persistent-congestion methods.  Runtime sends do not use it; budgets usually set congestion allowance to `app()->maxUDP()`.  This plan wires `NewReno` into runtime packet accounting without adding new congestion algorithms.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add a `NewReno` member to connection/link runtime state and a thin recovery facade that updates it.
 

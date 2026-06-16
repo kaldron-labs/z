@@ -8,6 +8,9 @@ Preconditions: plans 1 through 10 complete.
 
 `zquic` already parses and writes RESET_STREAM and STOP_SENDING, and receive-side stream tests cover peer reset/stop behavior.  The gap is local emission: application-initiated reset/stop must enqueue frames, record sent refs, and retransmit on loss while the state remains valid.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add control-frame queue entries for local stream reset and stop-sending.
 

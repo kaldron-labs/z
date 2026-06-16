@@ -8,6 +8,9 @@ Preconditions: plans 1 through 17 complete.
 
 `zquic` has diagnostics counters and debug log points but no qlog event stream.  This plan adds an optional structured event sink designed to compile and run with no hot-path allocation when disabled.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add qlog event structs and a CRTP/app-provided writer hook.
 

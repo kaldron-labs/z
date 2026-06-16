@@ -8,6 +8,9 @@ Preconditions: plans 1 through 21 complete.
 
 `zquic` already implements connection and stream receive credit, transmit credit, MAX_DATA, MAX_STREAM_DATA, MAX_STREAMS, and BLOCKED validation/queueing.  The audit divergence is policy: replenishment is fixed half-window, while ngtcp2 can scale windows.  This plan first evaluates whether adaptive scaling is worth the complexity, then implements it only if justified.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: optional adaptive flow-window policy attached to receive flow state.
 

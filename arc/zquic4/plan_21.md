@@ -8,6 +8,9 @@ Preconditions: plans 1 through 20 complete.
 
 `zquic` retransmission uses compact `SentFrameRef` records, including stream ranges and small payload copies for path response.  This is efficient, but the audit flagged shallow references and unbounded retransmit queue risk.  This plan validates lifetime assumptions after recovery/scheduler work and hardens stale retransmission filtering.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add retransmit queue bounds, stale checks, and possibly stronger frame-ref ownership for risky frame kinds.
 

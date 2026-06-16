@@ -7,6 +7,9 @@ Preconditions: plans 1 through 12 complete.
 
 `zquic` already uses CRTP hooks and no-op defaults in several places.  The application event surface is incomplete and some unsupported events disappear silently.  This plan expands the CRTP callback surface using local style: safe base defaults, direct `impl()` calls, and no virtual dispatch.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: extend base app/link/stream classes with event hooks and diagnostics counters.
 

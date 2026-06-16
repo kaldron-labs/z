@@ -8,6 +8,9 @@ Preconditions: plans 1 through 22 complete.
 
 After the implementation stack, public examples and internal architecture notes need to match the new runtime behavior.  This plan cleans up documentation and APIs after behavior is complete, with dependent compatibility explicitly not a goal.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add or update documentation for timers, recovery, ACK management, path state, Retry, 0-RTT, qlog, and callbacks.
 

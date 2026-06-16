@@ -8,6 +8,9 @@ Preconditions: plans 1 through 19 complete.
 
 `zquic` already has broad unit and runtime tests, including recovery, PMTUD, streams, handshake, packet protection, and endpoint tests.  This plan fills gaps left by feature work and organizes regressions as standalone `zquic/test/*` binaries consistent with repository practice.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add test helpers for lossy datagrams, timer control, path migration, and malformed packet/frame injection.
 

@@ -8,6 +8,9 @@ Preconditions: plans 1 through 18 complete, especially plan 4 congestion runtime
 
 `zquic` already has `NewReno` and a `Pacer` utility appears in flow tests, but runtime pacing and alternate controllers are not integrated.  This plan adds controller selection and scheduling delays without disturbing the established NewReno path.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add a static-dispatch congestion-controller wrapper for NewReno/CUBIC/future BBR and runtime pacer state.
 
