@@ -72,6 +72,9 @@ These guidelines extend `AGENTS.md`
 
 ### Enums
 - do not use `enum class`
+  - Z **intentionally** uses enums as fully convertible with integers
+    - enum values should be directly usable as compile-time array indexes, etc.
+    - if a type is integral and size <= `sizeof(int)`, enum values are used in preference to `static constexpr` constants
   - if the enum needs to be type-aliased by dependents, use `struct E { enum { ... } };`
   - otherwise use `namespace E { enum { ... } };` because this permits dependents to `using namespace E`
   - above `zm` use `ZtEnum`:
@@ -167,6 +170,9 @@ These guidelines extend `AGENTS.md`
 - Flag: casts to CRTP `impl()`/`app()` bases.
   Problem: they obscure name lookup and static dispatch.
   Fix: use `using T::function;` in bases that need constrained function lookup.
+- Flag: unnecessary chained-`if` or `switch` mapping between `enum` values and integers
+  Problem: inefficiency
+  Fix: use `enum` values directly as integers
 
 ### Scope and cleanup
 - Flag: code that does not align with the goal, these guidelines, or `AGENTS.md`.
