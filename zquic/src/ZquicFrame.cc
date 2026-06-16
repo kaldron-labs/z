@@ -69,10 +69,9 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
 	f.ackRanges[j] = tmp;
       }
       if (t == 0x03) {
-	uint64_t ecn = 0;
-	if (getVar_(in, o, ecn) < 0 ||
-	    getVar_(in, o, ecn) < 0 ||
-	    getVar_(in, o, ecn) < 0)
+	if (getVar_(in, o, f.ackECN.ect0) < 0 ||
+	    getVar_(in, o, f.ackECN.ect1) < 0 ||
+	    getVar_(in, o, f.ackECN.ce) < 0)
 	  return -1;
       }
       used = o;
@@ -292,9 +291,16 @@ int FrameCodec::writeAckRanges(
   uint8_t *out, unsigned len, const AckRange *ranges, unsigned nRanges,
   uint64_t delay)
 {
+  return writeAckECN(out, len, ranges, nRanges, delay, {});
+}
+
+int FrameCodec::writeAckECN(
+  uint8_t *out, unsigned len, const AckRange *ranges, unsigned nRanges,
+  uint64_t delay, const AckECN &ecn)
+{
   if (!len || !ranges || !nRanges) return -1;
   unsigned o = 0;
-  out[o++] = 0x02;
+  out[o++] = ecn.any() ? 0x03 : 0x02;
   const AckRange *range = &ranges[nRanges - 1];
   if (range->first > range->largest) return -1;
   if (VarInt::put(out, len, range->largest, o) < 0 ||
@@ -313,6 +319,11 @@ int FrameCodec::writeAckRanges(
       return -1;
     smallest = range->first;
   }
+  if (ecn.any() &&
+      (VarInt::put(out, len, ecn.ect0, o) < 0 ||
+       VarInt::put(out, len, ecn.ect1, o) < 0 ||
+       VarInt::put(out, len, ecn.ce, o) < 0))
+    return -1;
   return int(o);
 }
 

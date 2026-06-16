@@ -25,6 +25,18 @@ struct AckRange {
   uint64_t	first = 0;
 };
 
+struct AckECN {
+  uint64_t	ect0 = 0;
+  uint64_t	ect1 = 0;
+  uint64_t	ce = 0;
+
+  bool any() const { return ect0 || ect1 || ce; }
+  void reset() { ect0 = ect1 = ce = 0; }
+  bool operator ==(const AckECN &o) const {
+    return ect0 == o.ect0 && ect1 == o.ect1 && ce == o.ce;
+  }
+};
+
 struct Frame {
   static constexpr unsigned MaxAckRanges = 64;
   static constexpr unsigned BuiltinAckRanges = 32;
@@ -45,6 +57,7 @@ struct Frame {
   ResetToken		resetToken;
   ZuCSpan		payload;
   AckRanges		ackRanges;
+  AckECN		ackECN;
 
   void reset() {
     type = FrameType::Unknown;
@@ -58,6 +71,7 @@ struct Frame {
     resetToken = {};
     payload = {};
     ackRanges.length(0);
+    ackECN.reset();
   }
 };
 
@@ -75,6 +89,8 @@ struct FrameCodec {
   static int writeAck(uint8_t *, unsigned, uint64_t, uint64_t, uint64_t);
   static int writeAckRanges(
     uint8_t *, unsigned, const AckRange *, unsigned, uint64_t);
+  static int writeAckECN(
+    uint8_t *, unsigned, const AckRange *, unsigned, uint64_t, const AckECN &);
   static int writeResetStream(uint8_t *, unsigned, uint64_t, uint64_t, uint64_t);
   static int writeStopSending(uint8_t *, unsigned, uint64_t, uint64_t);
   static int writeMaxData(uint8_t *, unsigned, uint64_t);
