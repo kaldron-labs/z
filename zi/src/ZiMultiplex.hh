@@ -536,12 +536,9 @@ private:
   void errorDisconnect(int status, ZeError e);
   void executedDisconnect();
 
+  // immutable
   ZiMultiplex		*m_mx;
   ZiCxnInfo		m_info;
-
-#ifdef ZiMultiplex_IOCP
-  Zi_Overlapped	 	 m_discOverlapped;
-#endif
 
   // Rx thread exclusive
   ZmAtomic<unsigned>	m_rxUp;
@@ -549,6 +546,7 @@ private:
   uint64_t		m_rxBytes;
   ZiIOContext		m_rxContext;
 #ifdef ZiMultiplex_IOCP
+  Zi_Overlapped	 	m_discOverlapped;
   Zi_Overlapped		m_rxOverlapped;
   DWORD			m_rxFlags;		// flags for WSARecv()
 #endif
