@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdio.h>
+#include <time.h>
 
 #include <iostream>
 
@@ -29,6 +30,19 @@ using Zquic::Test::haveCaddy;
 
 ZuCSpan Path = "/zhttp-interop";
 ZuCSpan Body = "zhttp-interop-ok";
+
+uint64_t nowMS()
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t(ts.tv_sec) * 1000) + (uint64_t(ts.tv_nsec) / 1000000);
+}
+
+uint64_t &startMS()
+{
+  static uint64_t start = nowMS();
+  return start;
+}
 
 namespace Pair {
   enum T { ZhttpCaddy, ZhttpZhttpd, CurlZhttpd };
@@ -125,7 +139,7 @@ void caseName(ZtString<> &s, const Case &c)
 void usage(int code = 1)
 {
   std::cerr <<
-    "Usage: ZhttpInteropMatrixTest [OPTION]...\n\n"
+    "Usage: ZhttpMatrixTest [OPTION]...\n\n"
     "Options:\n"
     "  --pair=PAIR       all, zhttpCaddy, zhttpZhttpd, curlZhttpd\n"
     "  --proto=PROTO     all, h1tcp, h1tls, h3\n"
@@ -520,7 +534,7 @@ bool writeScript(
 bool runCase_(const Case &c)
 {
   TempDir temp;
-  if (!temp.init("ZhttpInteropMatrix")) {
+  if (!temp.init("ZhttpMatrix")) {
     std::cout << "# failed to create temporary directory\n";
     return false;
   }
@@ -566,12 +580,31 @@ bool runCase_(const Case &c)
   return false;
 }
 
+uint64_t printCaseStart(const Case &c)
+{
+  uint64_t t = nowMS();
+  std::cout << "# t=" << (t - startMS()) << "ms interop case: " <<
+    pairName(c.pair) << ' ' << protoName(c.proto) <<
+    " -j" << c.jobs << " -n" << c.requests << '\n';
+  return t;
+}
+
+void printCaseEnd(const Case &c, bool ok, uint64_t start)
+{
+  uint64_t t = nowMS();
+  std::cout << "# t=" << (t - startMS()) << "ms duration=" <<
+    (t - start) << "ms " << (ok ? "ok" : "not ok") << ": " <<
+    pairName(c.pair) << ' ' << protoName(c.proto) <<
+    " -j" << c.jobs << " -n" << c.requests << '\n';
+}
+
 void runCase(Case c)
 {
   ZuTestScopeRT(runCase);
-  std::cout << "# interop case: " << pairName(c.pair) << ' ' <<
-    protoName(c.proto) << " -j" << c.jobs << " -n" << c.requests << '\n';
-  ZuCheckRT(runCase_(c));
+  uint64_t start = printCaseStart(c);
+  bool ok = runCase_(c);
+  printCaseEnd(c, ok, start);
+  ZuCheckRT(ok);
 }
 
 void testPrerequisites()
@@ -633,9 +666,9 @@ bool prerequisitesOK()
     if (selected(c)) { \
       ZtString<> name; \
       caseName(name, c); \
-      std::cout << "# interop case: " << pairName(c.pair) << ' ' << \
-	protoName(c.proto) << " -j" << c.jobs << " -n" << c.requests << '\n'; \
+      uint64_t start = printCaseStart(c); \
       bool ok = prereqOK && runCase_(c); \
+      printCaseEnd(c, ok, start); \
       pass &= ok; \
       std::cout << (ok ? "ok " : "not ok ") << ++testNo << " - " << \
 	name << '\n'; \
