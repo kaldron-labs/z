@@ -85,7 +85,7 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
     sk = new T{rng};
   }
 
-  ZtBytes asn;
+  ZtBArray asn;
   {
     auto r = sk->save(asn);
     if (r.template is<ZeException>()) {
@@ -117,7 +117,7 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
   ZTLS_CHECK_RT(skTypeOK, type, " wrong SK type loaded");
   if (!skTypeOK) return;
   ZmRef<T> sk2{ZuMv(sk2_)};
-  ZtBytes asn2;
+  ZtBArray asn2;
   {
     auto r = sk2->save(asn2);
     if (r.template is<ZeException>()) {
@@ -136,7 +136,7 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
       return;
     }
     auto pk = ZuMv(r).template p<0>();
-    ZtBytes asn3;
+    ZtBArray asn3;
     pk->save(asn3);
     if (save) {
       ZiFile file;
@@ -164,7 +164,7 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
     ZTLS_CHECK_RT(pkTypeOK, type, " wrong PK type loaded");
     if (!pkTypeOK) return;
     ZmRef<PK> pk2{ZuMv(pk2_)};
-    ZtBytes asn4;
+    ZtBArray asn4;
     {
       auto r = pk2->save(asn4);
       if (r.template is<ZeException>()) {
