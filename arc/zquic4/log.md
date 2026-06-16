@@ -1,0 +1,10 @@
+## Replace PTO-only timing with explicit QUIC timers
+Implemented explicit QUIC runtime timer inventory while preserving the existing PTO timer instance.  `Link` now owns by-value `ZmScheduler::Timer` members for ACK delay, loss time, PTO, idle timeout, close/drain, key discard, PMTUD, and path validation; scheduler references remain raw pointers to those members.  Added typed schedule/cancel helpers and no-op semantic expiry handlers for timers whose full behavior is planned later.  Timer callbacks run on Tx and capture only the raw owning link pointer, avoiding `ZmRef` callback cycles.
+
+PTO scheduling was generalized from 1-RTT-only behavior to choose the earliest eligible packet number space.  `PktTxSpace` now exposes latest ACK-eliciting send time for PTO deadline calculation.  Timer cleanup was expanded across runtime reset, close, server link release, server link table clearing, and link destruction.  Server shutdown now marks app-held links shut down, cancels all timers, releases TLS state, and retires routes so outstanding scheduler nodes cannot reference freed link storage.
+
+Added `zquic/test/ZquicTimerTest.cc` and wired it into the test build.  Coverage arms all eight timer instances independently, verifies cancellation suppresses callbacks, verifies ACK delay can fire before PTO without PTO firing early, and verifies owner release with armed timers is safe under ASan.
+
+Fixed runtime regressions found during validation.  Endpoint receive shutdown now completes the I/O context instead of rearming receive after endpoint close, preventing reuse of a freed receive buffer.  zquic and ztls certificate cleanup now frees each `ptls_iovec_t::base` allocated by `ptls_load_certificates()` before freeing the certificate list.  `ZtlsPico` uses direct aligned allocation for picotls internal buffers under AddressSanitizer so LeakSanitizer observes real frees instead of Zi heap-cache retention; non-sanitized builds keep the Zi VHeap path.
+
+Validated the focused runtime path with `ZquicRuntimeTest`, `ZquicTimerTest`, `ZquicRecoveryTest`, and whitespace checks before completion.

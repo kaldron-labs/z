@@ -126,7 +126,11 @@ static bool initCipherSuites_(ptls_cipher_suite_t **suites, unsigned max)
 
 static void freeCertificates_(ptls_context_t &ctx)
 {
-  if (ctx.certificates.list) ::free(ctx.certificates.list);
+  if (ctx.certificates.list) {
+    for (unsigned i = 0; i < ctx.certificates.count; ++i)
+      ::free(ctx.certificates.list[i].base);
+    ::free(ctx.certificates.list);
+  }
   ctx.certificates.count = 0;
   ctx.certificates.list = nullptr;
 }

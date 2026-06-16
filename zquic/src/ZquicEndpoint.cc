@@ -103,7 +103,11 @@ private:
       auto buf = ZuMv(m_rxBuf);
       m_endpoint->received_(Datagram{ZuMv(buf), io.addr});
     }
-    if (!m_closing.load_()) armRecv_(io);
+    if (m_closing.load_()) {
+      io.complete();
+      return true;
+    }
+    armRecv_(io);
     return true;
   }
 
