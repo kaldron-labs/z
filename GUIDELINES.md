@@ -231,6 +231,13 @@ These guidelines extend `AGENTS.md`
 - Dedicate threads and their data to independent Rx and Tx in I/O.
 - Use `ZmRing` and `ZiRing` for inter-thread and inter-process communication.
 
+### Timers
+- `ZmScheduler::Timer` is used for timers
+  - each `Timer` instance should be used for a separate individual timer/timeout
+  - `Timer`s are intended to be contained by value as data members in owning structs/classes
+    - they are referenced by raw pointer from the scheduler
+  - `Timer`s must be cancelled with `del` before owner destruction during close/shutdown/stop to prevent stale pointer dereference
+
 ### I/O and system integration
 - Use `ZiIOBuf` for buffer management.
 - I/O buffers are the exception to "prefer stack over heap": pooled heap buffers are preferred, move between threads by reference without copying, and allow run-time pool tuning.
