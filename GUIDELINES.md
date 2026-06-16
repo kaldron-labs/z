@@ -81,88 +81,91 @@ These guidelines extend `AGENTS.md`
 
 ## Amber flags
 ### Storage and capacity
-- Anti-pattern: fixed-size arrays, especially with separately maintained lengths.
+- Flag: fixed-size arrays, especially with separately maintained lengths.
   Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
   Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, etc.; enforce any required hard upper limit in code.
-- Anti-pattern: fixed-size lookup tables.
+- Flag: fixed-size lookup tables.
   Problem: static sizing prevents run-time tuning and often misses required locking/hash-ID integration.
   Fix: use `ZmHash`/`ZmLHash` with appropriate locking and hash IDs.
-- Anti-pattern: hard-coded capacities such as `16`.
+- Flag: hard-coded capacities such as `16`.
   Problem: unexplained limits may impair scaling when too low, bloat stack/heap when too high, or leave mostly unused capacity.
   Fix: use prominently located, named library-defined compile-time constants with a maintenance comment: RFC/standard mandate, mainstream alignment, or measured scaling/footprint trade-off.
-- Anti-pattern: arrays on hot or cold paths without workload-aware storage.
+- Flag: arrays on hot or cold paths without workload-aware storage.
   Problem: the wrong storage choice adds allocation latency, stack pressure, or unused capacity.
   Fix: use `ZtBuiltin` sized for 95-99% of hot-path usage, plain `ZtArray` for cold paths, and `ZtLocalArray` for scratch hot-path storage with heap fallback.
 
 ### Heap allocation
-- Anti-pattern: heap allocation in hot paths or for scratch state.
+- Flag: heap allocation in hot paths or for scratch state.
   Problem: allocator latency and contention directly hurt tail latency and throughput.
   Fix: use stack scratch such as `ZtLocalArray` and pass it through callbacks; I/O buffers are the exception, see the I/O guidance below.
-- Anti-pattern: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
+- Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
   Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
   Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`.
-- Anti-pattern: separate allocations for object, refcount, and container nodes.
+- Flag: separate allocations for object, refcount, and container nodes.
   Problem: fragmented allocation adds memory overhead and pointer chasing.
   Fix: consolidate with intrusive reference counting and container nodes where practical; see `ZmPolyCache` nesting a hash node, list node, and refcount in one allocated node.
-- Anti-pattern: buffer or queue-node management bypassing optimized Z heap paths.
+- Flag: buffer or queue-node management bypassing optimized Z heap paths.
   Problem: common data-path allocations miss pooling and telemetry.
   Fix: use `ZmHeap`-optimized buffer and queue-node management.
 
 ### Data movement and initialization
-- Anti-pattern: copying string/byte data through temporaries.
+- Flag: copying string/byte data through temporaries.
   Problem: avoidable memory traffic dominates many encode/decode and crypto paths.
   Fix: operate in place on mutable buffers, or write directly into uninitialized destination storage when that elides a copy; copies are not legitimate in almost all other cases.
-- Anti-pattern: temporary contiguous copies.
+- Flag: temporary contiguous copies.
   Problem: they are usually hidden allocation/copy costs.
   Fix: allow them only for stack scratch passed to CRTP callbacks or for long-lived heap state that must retain data.
-- Anti-pattern: default/zero initialization or constructor churn before immediate overwrite.
+- Flag: default/zero initialization or constructor churn before immediate overwrite.
   Problem: it burns cycles and cache bandwidth for data that will not be read.
   Fix: use uninitialized storage and explicit placement new where appropriate; Z array containers are intentionally uninitialized until filled.
+- Flag: calling `ZiLOG` with a lambda that captures by reference.
+  Problem: the logger runs lambdas on a dedicated logger thread at a later time
+  Fix: capture by copy the specific data needed for the log trace
 
 ### Algorithm and control flow
-- Anti-pattern: algorithmic inefficiency, latency regression, throughput impairment, or avoidable work.
+- Flag: algorithmic inefficiency, latency regression, throughput impairment, or avoidable work.
   Problem: small local costs often become system-level throughput or tail-latency limits.
   Fix: choose the lower-complexity or lower-allocation design and validate hot paths.
-- Anti-pattern: chained `if` statements that should be `switch`.
+- Flag: chained `if` statements that should be `switch`.
   Problem: intent and dispatch shape are harder for both readers and compilers to see.
   Fix: use `switch` when branching on one discrete value.
-- Anti-pattern: highly nested logic.
+- Flag: highly nested logic.
   Problem: state and error handling become difficult to audit.
   Fix: flatten control flow with early exits, helper functions, or clearer state transitions.
-- Anti-pattern: near-identical repeated blocks.
+- Flag: near-identical repeated blocks.
   Problem: duplication hides divergent fixes and violates DRY.
   Fix: factor common code with templates, CRTP, or local helpers that preserve performance.
 
 ### Framework fit
-- Anti-pattern: reimplementing lower-level Z Framework capabilities.
+- Flag: reimplementing lower-level Z Framework capabilities.
   Problem: duplicate code misses established semantics, optimizations, and maintenance paths.
   Fix: use the existing `Zu*`, `Zm*`, `Zt*`, and `Zi*` facilities.
-- Anti-pattern: direct use of `FILE`, `syslog`, etc.
+- Flag: direct use of `FILE`, `syslog`, etc.
   Problem: it bypasses Z I/O and logging conventions.
   Fix: use `ZiFile`, `ZiLog`, etc.
-- Anti-pattern: `*printf` varargs formatting.
+- Flag: `*printf` varargs formatting.
   Problem: varargs are weakly typed and bypass Z formatting conventions.
   Fix: use Z framework types with `<<`, `ZuBox`, and `ZuFmt`.
-- Anti-pattern: separate `bool` flags for unset, uninitialized, or null state.
+- Flag: separate `bool` flags for unset, uninitialized, or null state.
   Problem: extra flags can diverge from the value they describe.
   Fix: use sentinel values.
 
 ### Type and API friction
-- Anti-pattern: unnecessary casts.
+- Flag: unnecessary casts.
   Problem: casts hide type-system mistakes and make ownership/aliasing harder to audit.
   Fix: rely on existing Z conversions and fix the type boundary.
-- Anti-pattern: casts among char-equivalent pointers.
+- Flag: casts among char-equivalent pointers.
   Problem: most Z types already convert equivalent primitive element types automatically.
   Fix: remove the cast unless a real representation change is required.
-- Anti-pattern: casts to CRTP `impl()`/`app()` bases.
+- Flag: casts to CRTP `impl()`/`app()` bases.
   Problem: they obscure name lookup and static dispatch.
   Fix: use `using T::function;` in bases that need constrained function lookup.
 
 ### Scope and cleanup
-- Anti-pattern: code that does not align with the goal, these guidelines, or `AGENTS.md`.
+- Flag: code that does not align with the goal, these guidelines, or `AGENTS.md`.
   Problem: local changes can erode project architecture and review expectations.
   Fix: realign the change or call out the required exception explicitly.
-- Anti-pattern: dead code or historical compatibility code.
+- Flag: dead code or historical compatibility code.
   Problem: unused code increases audit, test, and maintenance burden.
   Fix: delete it unless compatibility is explicitly required.
 
