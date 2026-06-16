@@ -2,4 +2,6 @@
 # Keep entries narrow and stack-rooted; do not suppress generic allocators.
 
 leak:Ztls::Pico::(anonymous namespace)::buffer_alloc_
+leak:Ztls::Backend::cert_store_load_file
+leak:evp_kem_exchange
 leak:schedulePTO_

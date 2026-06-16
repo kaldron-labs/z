@@ -1,28 +1,38 @@
 # TODO
 
-## Zhttp hardening
+Diagnose and fix this: There is a correctness smell in the zhttp debug response parse under --debug: header/body lengths are garbage, likely due debug logging or parser state after binary body handling, but it still completes.
 
-improve the automated `zhttp` interop test suite as follows:
-- client/server combinations:
-  - `zhttp`>`caddy`
-  - `zhttp`>`zhttpd`
-  - `curl`>`zhttpd`
-- workloads:
-  - `-j1 -n1` (smoke test)
-  - `-j1 -n1000` (serial test)
-  - `-j10 -n1000` (concurrent test)
-- protocols:
-  - H1/tcp (`http:` URL)
-  - H1/tls (`https:` URL)
-    - `zhttp`: `--http3=disable`
-    - `curl`: as appropriate
-  - H3/quic (`https:` URL)
-    - `zhttp`: `--http3=force`
-    - `curl`: as appropriate
-- timeout: 20s
-- with this, the interop test suite should run 3x3x3 combinations, i.e. 27 tests
-  - each of the 27 tests should complete within 20s
-- all 27 tests should complete reliably without failures or stalls
+ensure that rx-owned and tx-owned data members in `zquic` and `zhttp` are commented as such
+
+`Zquic.hh` `SrvLink`:
+- `m_` data members should not be public
+- which members are rx-owned, which tx-owned?
+
+use this format (example: `ZiMultiplex.hh`):
+```
+  // immutable
+  [type]        m_[member];
+
+  // Rx thread exclusive
+  [type]        m_[member];
+  ...
+
+  // Tx thread exclusive
+  [type]        m_[member];
+  ...
+
+  // shared
+  [atomic type] m_[atomic member];
+  [lock]        m_lock;
+    [type]        m_[guarded member];
+```
+Notes:
+- "immutable" here means immutable during lifetime
+  - i.e. from after construction to before destruction
+- the shared section only exists if there are shared members
+  - locked shared members are indented below the lock that guards them
+
+add command line option `--frag` and `--yield` to `zhttp` and `zhttpd` to configure `ZiMultiplex` `frag` for I/O fragmentation and `yield` for thread yielding, respectively
 
 ## ZiLog standardization
 
@@ -40,6 +50,9 @@ L-sized work:
 - rework slice 2 to align with completion of slice 1, 3 with cumulative 1+2, 4 with cumulative 1+2+3, etc.
 - split out phases from slices
   - ... then each phase within each slice is a bite-size incremental piece of work with acceptance criteria
+
+- start with a new working branch
+  - commit after each phase
 
 ## Zhttp
 - add `ZQUIC_LOSS` env var - `N%` to randomly drop N% of QUIC UDP packets
