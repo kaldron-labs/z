@@ -169,6 +169,9 @@ These guidelines extend `AGENTS.md`
 - Flag: dead code or historical compatibility code.
   Problem: unused code increases audit, test, and maintenance burden.
   Fix: delete it unless compatibility is explicitly required.
+- Flag: short-lived objects holding reference counts to longer-lived objects
+  Problem: causes reference-count churn in the owner and risks ownership cycles
+  Fix: short-lived objects should use raw pointers back to longer-lived owners; owners must teardown carefully to ensure that they cannot be outlived by short-lived objects that they own
 
 ## Leveraging Key Z Framework Capabilities
 ### Assertions and type mechanics
@@ -246,7 +249,9 @@ These guidelines extend `AGENTS.md`
 - the continuation needs to be posted on the same thread the timer callback would run on
 - do NOT block except in the main thread, this is async continuation code
 - as with I/O buffers, timer callbacks are short-lived objects owned by longer-lived objects
-  - short-lived objects should NOT introduce reference-counting cycles by holding reference counts back to their owners
+  - short-lived objects should hold reference counts back to their owners, this anti-pattern:
+    - causes reference-count churn in the owner
+    - risks ownership cycles
   - such back-pointers should be raw pointers
   - owners are responsible for draining all activity using orderly teardown as described above, ensuring that objects with stale backpointers cannot outlive their owners
 
@@ -439,7 +444,9 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - 3. (in the tx thread continuation) complete the teardown and release object ownership
 - do NOT block except in the main thread, this is async continuation code
 - I/O buffers, queued lambdas etc. are populous short-lived objects owned by fewer longer-lived objects such as connections/links/sessions/streams
-  - populous short-lived objects should NOT introduce reference-counting cycles by holding reference counts back to their owners
+  - populous short-lived objects should hold reference counts back to their owners, this anti-pattern:
+    - causes reference-count churn in the owner
+    - risks ownership cycles
   - such back-pointers should be raw pointers (example: `ZiIOBuf::owner`)
   - owners are responsible for draining all activity using orderly teardown as described above, ensuring that objects with stale backpointers cannot outlive their owners
 
