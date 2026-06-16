@@ -242,6 +242,7 @@ These guidelines extend `AGENTS.md`
   - 1. cancel the timer (`ZmScheduler::del`)
   - 2. post a teardown continuation on the thread to drain any late callbacks
   - 3. (in the continuation) complete the teardown with late callbacks drained
+- do NOT block except in the main thread, this is async continuation code
 
 ### I/O and system integration
 - Use `ZiIOBuf` for buffer management.
@@ -426,10 +427,11 @@ shutdown before destruction. Do not keep links alive by adding buffer-level refe
 churn unless the ownership model explicitly requires it.
 
 ### Teardown
-Sharded I/O teardown requires a 3-phase process:
+Sharded I/O teardown requires a 3-phase asynchronous process:
 - 1. stop ingress and post a teardown continuation on the rx thread to drain rx activity
 - 2. (in the rx thread continuation) post a teardown continuation on the tx thread to drain tx activity
 - 3. (in the tx thread continuation) complete the teardown and release object ownership
+- do NOT block except in the main thread, this is async continuation code
 
 ## Naming
 ### Length and abbreviations
