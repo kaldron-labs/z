@@ -71,8 +71,9 @@ New or changed data stores: sent frame refs need enough data to rebuild reset/st
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests cover local RESET_STREAM send, peer RESET_STREAM receive, local STOP_SENDING send, peer STOP_SENDING receive, and retransmission after loss.
 - Reset final-size validation remains intact.
 

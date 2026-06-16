@@ -71,8 +71,9 @@ New or changed data stores: add per-space persistent congestion episode tracking
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests cover ACK-triggered packet-threshold retransmit, time-threshold loss, and persistent-congestion collapse.
 - Loss processing enqueues retransmittable frames exactly once.
 - PTO and loss-time deadlines choose the same packet space ordering as ngtcp2.

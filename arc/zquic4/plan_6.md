@@ -70,8 +70,9 @@ New or changed data stores: per-space ECT0, ECT1, and CE counters plus validatio
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - ACK_ECN parse/write tests cover ECT0, ECT1, and CE counts.
 - ECN counters are surfaced to congestion/control logic.
 - Non-ECN behavior remains unchanged when ECN is disabled.

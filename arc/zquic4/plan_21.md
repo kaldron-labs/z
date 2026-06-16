@@ -70,8 +70,9 @@ New or changed data stores: bounded retransmit queue with counters for dropped s
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests prove stream retransmit refs remain valid or are skipped after stream close/reset/free.
 - Retransmit queue growth is bounded under repeated loss.
 - No ASAN/valgrind lifetime errors in retransmission tests.

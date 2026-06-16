@@ -72,8 +72,9 @@ New or changed data stores: active path stores local/remote addresses, validatio
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Server cannot send more than 3x received bytes before validation.
 - Active path MTU controls packet payload sizing.
 - Tests cover unvalidated path budget exhaustion and validation unlock.

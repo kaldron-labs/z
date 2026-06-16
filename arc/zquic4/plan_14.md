@@ -69,8 +69,9 @@ New or changed data stores: retain bounded old/new secrets and discard deadlines
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests cover peer key update, old-key packet tolerance, invalid key phase, and key discard.
 - Existing packet protection tests still pass.
 

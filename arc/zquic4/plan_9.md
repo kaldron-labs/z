@@ -72,8 +72,9 @@ New or changed data stores: maintain active, validating, and retired path/CID as
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests cover successful PATH_CHALLENGE/PATH_RESPONSE validation.
 - Tests cover validation timeout and retained old path.
 - Short packets on a new address do not silently replace the active path before validation.
