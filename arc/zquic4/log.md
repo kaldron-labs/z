@@ -20,3 +20,16 @@ Initial and Handshake discard is split by owner thread.  Establishment marks obs
 
 Added direct recovery coverage for ACK/loss/retransmit behavior in Initial, Handshake, and AppData `PktTxSpace` instances.  Added CRYPTO stream retention checks and runtime handshake-loss coverage that drops server Initial CRYPTO and multiple server Handshake CRYPTO packets, verifying PTO-driven retransmission completes the handshake.  Validated with ASan/LSan `make -C zquic/test test`, dependent `make -C zhttp/test test`, and `git diff --check`.
 
+## Wire time-threshold loss and persistent congestion into runtime
+
+Added runtime loss-time integration for ACK-threshold and RTT time-threshold recovery.
+
+`Link` now computes the next loss deadline from ACK-eliciting, in-flight packets across all non-discarded packet-number spaces via `PktTxSpace::nextLossTime()`, and schedules a dedicated loss timer from sends and ACK handling. The loss timer callback now runs time-based loss checks via `detectLoss_()`, retransmits lost work, schedules PTO, and reschedules to the next pending deadline.
+
+ACK processing continues to use existing packet-threshold recovery (`pktThreshold`), now followed by runtime persistent congestion checks and explicit `persistentCongestion_()` hook points, and always re-arms the loss timer.
+
+`RttEstimator::timeThreshold()` and `PktTxSpace::nextLossTime()` are now validated by `ZquicRecoveryTest` with explicit unit coverage of time-threshold loss and deadline advancement. `ZquicRuntimeTest` now verifies a dropped 1-RTT STREAM packet is recovered by the loss timer before PTO fires by asserting retransmission occurs without increasing the server PTO count.
+
+Runtime congestion state is now fed from ACK and loss processing instead of remaining diagnostic-only. ACKed packet bytes advance NewReno, lost bytes collapse the congestion state at the lost send time, persistent congestion increments runtime diagnostics, and the public runtime diagnostic snapshot exposes cwnd, ssthresh, bytes in flight, and persistent congestion count.
+
+Timer teardown now follows the asynchronous timer guidance. `Link` destruction asserts all scheduler timer nodes are already inactive; it no longer cancels timers itself. Owners that are about to release links call the continuation-based timer teardown path, which marks the link as tearing down, cancels timers, drains callbacks by posting the continuation on Tx, and only then lets dependent close/release work proceed. QUIC client disconnect also has a continuation overload, and the zhttp QUIC drivers use it before dropping their final link references.

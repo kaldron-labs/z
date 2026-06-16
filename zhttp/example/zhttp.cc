@@ -18,6 +18,7 @@
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmLock.hh>
+#include <zlib/ZmObject.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtCLI.hh>
@@ -1194,6 +1195,18 @@ struct QUICClient::Link :
   }
 };
 
+struct QUICDrain : public ZmObject {
+  ZmSemaphore sem;
+};
+
+template <typename Link>
+void disconnectDrained(Link *link)
+{
+  ZmRef<QUICDrain> drained = new QUICDrain;
+  link->disconnect([drained]() { drained->sem.post(); });
+  drained->sem.timedwait(Zm::now(2));
+}
+
 int QUICClient::Stream::process(Zquic::RxStream &)
 {
   if (Zquic::StreamID::uni(uint64_t(this->id()))) {
@@ -1527,6 +1540,9 @@ int run(
       link->disconnect();
       client.sem.timedwait(Zm::now(2));
     }
+    if constexpr (Client::Transport == Zi::Transport::QUIC) {
+      disconnectDrained(link.ptr());
+    }
   }
   if (result) {
     result->status = client.state.status;
@@ -1630,6 +1646,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     link->disconnect();
     client.sem.timedwait(Zm::now(2));
   }
+  disconnectDrained(link);
   {
     ZmGuard<ZmLock> guard(client.lock);
     run.complete = client.complete;

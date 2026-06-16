@@ -244,6 +244,8 @@ class RttEstimator {
 public:
   static constexpr ZuTime InitialRTT = timeUS(333000);
   static constexpr ZuTime Granularity = timeUS(1000);
+  static constexpr uint64_t TimeThresholdNumerator = 9;
+  static constexpr uint64_t TimeThresholdDenominator = 8;
 
   ZuTime latest() const { return m_latest; }
   ZuTime min() const { return m_min; }
@@ -275,6 +277,15 @@ public:
     if (var4 < Granularity) var4 = Granularity;
     ZuTime pto = smoothed + var4;
     return *maxAckDelay && maxAckDelay ? pto + maxAckDelay : pto;
+  }
+  ZuTime timeThreshold() const {
+    ZuTime rtt = m_latest ? m_latest : m_smoothed;
+    if (!*rtt) rtt = m_min;
+    if (!*rtt) rtt = InitialRTT;
+    if (*m_min && m_min > rtt) rtt = m_min;
+    ZuTime threshold = timeDiv(timeMul(rtt, TimeThresholdNumerator),
+      TimeThresholdDenominator);
+    return threshold < Granularity ? Granularity : threshold;
   }
 
 private:
@@ -545,14 +556,20 @@ public:
 
   unsigned ack(
     const AckRange *ranges, unsigned nRanges, unsigned *lost = nullptr,
-    unsigned packetThreshold = 3, ZuTime *latestSentTime = nullptr)
+    unsigned packetThreshold = 3, ZuTime *latestSentTime = nullptr,
+    uint64_t *ackedBytes = nullptr, uint64_t *lostBytes = nullptr,
+    ZuTime *lostSentTime = nullptr)
   {
     unsigned n = 0;
+    uint64_t ackedBytes_ = 0;
     uint64_t largest = 0;
     uint64_t largestAcked = 0;
     bool have = false;
     bool haveAcked = false;
     if (latestSentTime) *latestSentTime = ZuTime{0};
+    if (ackedBytes) *ackedBytes = 0;
+    if (lostBytes) *lostBytes = 0;
+    if (lostSentTime) *lostSentTime = ZuTime{0};
     for (unsigned i = 0; i < nRanges; ++i) {
       const AckRange &range = ranges[i];
       if (range.first > range.largest) continue;
@@ -564,6 +581,7 @@ public:
 	if (p.pn > range.largest) break;
 	if (ack_(p)) {
 	  ++n;
+	  ackedBytes_ += p.bytes;
 	  if (latestSentTime && (!haveAcked || p.pn > largestAcked)) {
 	    largestAcked = p.pn;
 	    *latestSentTime = p.sentTime;
@@ -572,7 +590,10 @@ public:
 	}
       }
     }
-    unsigned l = have ? markPktThresholdLoss(largest, packetThreshold) : 0;
+    unsigned l = have ?
+      markPktThresholdLoss(
+	largest, packetThreshold, lostBytes, lostSentTime) : 0;
+    if (ackedBytes) *ackedBytes = ackedBytes_;
     if (lost) *lost = l;
     return n;
   }
@@ -582,28 +603,64 @@ public:
     return node && lose_(node->data());
   }
 
-  unsigned markPktThresholdLoss(uint64_t largestAcked, unsigned threshold = 3) {
+  unsigned markPktThresholdLoss(
+    uint64_t largestAcked, unsigned threshold = 3,
+    uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr) {
     unsigned n = 0;
+    if (lostBytes) *lostBytes = 0;
+    if (lostSentTime) *lostSentTime = ZuTime{0};
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
       if (p.acked || p.lost || p.pn + threshold > largestAcked) continue;
-      if (lose_(p)) ++n;
+      if (lose_(p)) {
+	++n;
+	if (lostBytes) *lostBytes += p.bytes;
+	if (lostSentTime && p.sentTime > *lostSentTime)
+	  *lostSentTime = p.sentTime;
+      }
     }
     return n;
   }
 
-  unsigned markTimeThresholdLoss(ZuTime now, ZuTime threshold) {
+  unsigned markTimeThresholdLoss(
+    ZuTime now, ZuTime threshold,
+    uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr) {
     unsigned n = 0;
+    if (lostBytes) *lostBytes = 0;
+    if (lostSentTime) *lostSentTime = ZuTime{0};
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
       if (p.acked || p.lost || !*p.sentTime || p.sentTime > now ||
 	  now - p.sentTime < threshold)
 	continue;
-      if (lose_(p)) ++n;
+      if (lose_(p)) {
+	++n;
+	if (lostBytes) *lostBytes += p.bytes;
+	if (lostSentTime && p.sentTime > *lostSentTime)
+	  *lostSentTime = p.sentTime;
+      }
     }
     return n;
+  }
+  ZuTime nextLossTime(ZuTime threshold) const {
+    if (!*threshold) return ZuTime{0};
+    ZuTime out;
+    bool have = false;
+    auto iter = m_packets.citer();
+    while (auto node = iter()) {
+      const SentPkt &p = node->data();
+      if (p.acked || p.lost || !p.inFlight || !p.ackEliciting ||
+	  !*p.sentTime)
+	continue;
+      ZuTime deadline = p.sentTime + threshold;
+      if (!have || deadline < out) {
+	out = deadline;
+	have = true;
+      }
+    }
+    return have ? out : ZuTime{0};
   }
 
   uint64_t bytesInFlight() const { return m_bytesInFlight; }

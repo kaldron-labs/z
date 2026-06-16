@@ -506,6 +506,10 @@ struct RuntimeTxDiag {
   uint64_t	streamBytesTx = 0;
   uint64_t	ptoCount = 0;
   uint64_t	retransmittedFrames = 0;
+  uint64_t	congestionWindow = 0;
+  uint64_t	congestionSSThresh = 0;
+  uint64_t	congestionBytesInFlight = 0;
+  uint64_t	persistentCongestion = 0;
   uint64_t	failures = 0;
 };
 
@@ -527,6 +531,10 @@ struct RuntimeDiag {
     streamBytesTx = tx.streamBytesTx;
     ptoCount = tx.ptoCount;
     retransmittedFrames = tx.retransmittedFrames;
+    congestionWindow = tx.congestionWindow;
+    congestionSSThresh = tx.congestionSSThresh;
+    congestionBytesInFlight = tx.congestionBytesInFlight;
+    persistentCongestion = tx.persistentCongestion;
 
     failures = rx.failures + tx.failures;
   }
@@ -544,6 +552,10 @@ struct RuntimeDiag {
   uint64_t	streamBytesTx = 0;
   uint64_t	ptoCount = 0;
   uint64_t	retransmittedFrames = 0;
+  uint64_t	congestionWindow = 0;
+  uint64_t	congestionSSThresh = 0;
+  uint64_t	congestionBytesInFlight = 0;
+  uint64_t	persistentCongestion = 0;
   uint64_t	failures = 0;
   uint64_t	handshakeComplete = 0;
 };
@@ -1278,9 +1290,14 @@ private:
 
   void releaseLink_(Link *link) {
     if (!link) return;
-    link->cancelTimers();
     link->retireRoutes_(m_routes);
-    m_links->del(link);
+    LinkRef ref;
+    if (auto entry = m_links->findVal(link)) ref = entry->linkRef;
+    link->teardownTimers([this, link, ref = ZuMv(ref)]() mutable {
+      this->rxRun([this, link, ref = ZuMv(ref)]() mutable {
+	m_links->del(link);
+      });
+    });
   }
 
   void clearLinks_() {
@@ -1288,8 +1305,10 @@ private:
     while (auto node = i()) {
       auto entry = node->val();
       if (entry && entry->link) {
+	LinkRef ref = entry->linkRef;
 	entry->link->shutdown_();
 	entry->link->retireRoutes_(m_routes);
+	entry->link->teardownTimers([ref = ZuMv(ref)]() mutable { });
       }
     }
     m_routes.clear();
@@ -1806,6 +1825,8 @@ ZuDerive(Streams_,
 
 template <typename App, typename Impl, typename TxBufAlloc_, typename Stream_>
 class Link : public ZmPolymorph {
+template <typename, typename>
+friend class Server;
 public:
   using TxBufAlloc = TxBufAlloc_;
   using Stream = Stream_;
@@ -1824,7 +1845,7 @@ public:
   Link(App *app, bool isServer = false) :
     m_app{app}, m_isServer{isServer} { }
   ~Link() {
-    if (app() && app()->mx()) cancelTimers();
+    assert(!timersActive_());
   }
 
   App *app() const { return m_app; }
@@ -2138,9 +2159,15 @@ protected:
   }
 
   void resetRuntimeDiag_() { m_rxDiag = {}; m_txDiag = {}; }
+  void updateCongestionDiag_() {
+    m_txDiag.congestionWindow = m_congestion.cwnd();
+    m_txDiag.congestionSSThresh = m_congestion.ssthresh();
+    m_txDiag.congestionBytesInFlight = m_congestion.bytesInFlight();
+  }
   void resetRuntime_() {
     drainStreamsRx_();
     cancelTimers();
+    m_timerTeardown = false;
     resetLinkState_();
     m_established = 0;
     m_handshakeStarted = 0;
@@ -2159,6 +2186,8 @@ protected:
     m_crypto.resetTLS();
     m_controlQueue.clean();
     resetPktRuntime_();
+    m_congestion = NewReno{app()->maxUDP()};
+    updateCongestionDiag_();
   }
 
   void closeRuntime_(uint64_t errorCode = 0) {
@@ -2790,6 +2819,52 @@ protected:
       "loss time", out, ZmScheduler::Update, &m_lossTimer,
       [](auto link) { link->lossTime_(); });
   }
+  ZuTime lossThreshold_() const { return m_rtt.timeThreshold(); }
+  ZuTime persistentCongestionThreshold_() const {
+    return timeMul(ptoTimeout_(), 3);
+  }
+  ZuTime nextLossTime_() const {
+    ZuTime threshold = lossThreshold_();
+    ZuTime out;
+    bool have = false;
+    for (unsigned i = 0; i < 3; ++i) {
+      auto level = CryptoLevel::T(i);
+      if (m_txSpaceDiscarded[level]) continue;
+      ZuTime deadline = m_txPkts[level].nextLossTime(threshold);
+      if (!*deadline) continue;
+      if (!have || deadline < out) {
+	out = deadline;
+	have = true;
+      }
+    }
+    return out;
+  }
+  bool detectLoss_(CryptoLevel::T level, ZuTime now) {
+    if (m_txSpaceDiscarded[level]) return false;
+    ZuTime threshold = lossThreshold_();
+    if (!*threshold) return false;
+    uint64_t lostBytes = 0;
+    ZuTime lostSentTime;
+    if (!m_txPkts[level].markTimeThresholdLoss(
+	now, threshold, &lostBytes, &lostSentTime))
+      return false;
+    m_congestion.lostAt(lostBytes, uint64_t(lostSentTime.microsecs()));
+    if (m_txPkts[level].persistentCongestion(persistentCongestionThreshold_()))
+      persistentCongestion_();
+    updateCongestionDiag_();
+    return true;
+  }
+  void scheduleLossTimer_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC loss timer schedule outside Tx thread", return);
+    if (closed()) return;
+    ZuTime out = nextLossTime_();
+    if (!*out) {
+      cancelLossTimer_();
+      return;
+    }
+    scheduleLossTimer_(out);
+  }
   void cancelLossTimer_() { cancelTimer_("loss time", &m_lossTimer); }
 
   void schedulePTO() {
@@ -2877,6 +2952,18 @@ protected:
       "QUIC timer cancel before app initialization", return);
     cancelTimers_();
   }
+  template <typename Fn>
+  void teardownTimers(Fn fn) {
+    if (!app() || !app()->mx()) {
+      fn();
+      return;
+    }
+    m_timerTeardown = true;
+    cancelTimers_();
+    app()->txRun([link = ZmMkRef(impl()), fn = ZuMv(fn)]() mutable {
+      fn();
+    });
+  }
 
   void cancelTimers_() {
     cancelAckDelayTimer_();
@@ -2888,50 +2975,82 @@ protected:
     cancelPMTUDTimer_();
     cancelPathTimer_();
   }
+  bool timersActive_() const {
+    return m_ackDelayTimer || m_lossTimer || m_ptoTimer ||
+      m_idleTimer || m_closeTimer || m_keyDiscardTimer ||
+      m_pmtudTimer || m_pathTimer;
+  }
 
   void ackDelay_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK delay timer outside Tx thread", return);
+    if (m_timerTeardown) return;
     if (!closed()) impl()->ackDelayExpired_();
   }
   void lossTime_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC loss timer outside Tx thread", return);
+    if (m_timerTeardown) return;
     if (!closed()) impl()->lossTimeExpired_();
   }
   void idleTimeout_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC idle timer outside Tx thread", return);
+    if (m_timerTeardown) return;
     if (!closed()) impl()->idleExpired_();
   }
   void closeTimeout_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC close timer outside Tx thread", return);
+    if (m_timerTeardown) return;
     impl()->closeExpired_();
   }
   void keyDiscard_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC key discard timer outside Tx thread", return);
+    if (m_timerTeardown) return;
     if (!closed()) impl()->keyDiscardExpired_();
   }
   void pmtudTimeout_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD timer outside Tx thread", return);
+    if (m_timerTeardown) return;
     if (!closed()) impl()->pmtudExpired_();
   }
   void pathTimeout_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path-validation timer outside Tx thread", return);
+    if (m_timerTeardown) return;
     if (!closed()) impl()->pathExpired_();
   }
 
   void ackDelayExpired_() { }
-  void lossTimeExpired_() { }
+  void lossTimeExpired_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC loss timer expired outside Tx thread", return);
+    if (closed()) return;
+    ZuTime now = runtimeNow_();
+    bool lost = false;
+    for (unsigned i = 0; i < 3; ++i) {
+      CryptoLevel::T level = CryptoLevel::T(i);
+      lost |= detectLoss_(level, now);
+    }
+    if (lost) {
+      (void)impl()->retransmit_();
+      schedulePTO_();
+    }
+    scheduleLossTimer_();
+  }
   void idleExpired_() { }
   void closeExpired_() { }
   void keyDiscardExpired_() { }
   void pmtudExpired_() { }
   void pathExpired_() { }
+  void persistentCongestion_() {
+    m_congestion.persistentCongestion();
+    ++m_txDiag.persistentCongestion;
+    updateCongestionDiag_();
+  }
 
   void discardPktSpace_(CryptoLevel::T level) {
     if (level == CryptoLevel::OneRTT) return;
@@ -2951,6 +3070,7 @@ protected:
     m_txPkts[level].clear();
     m_txCrypto[level].reset();
     m_txAck[level].nRanges = 0;
+    scheduleLossTimer_();
   }
 
   bool reclaimPTO_() {
@@ -3061,6 +3181,11 @@ protected:
     packet.inFlight = ackEliciting;
     if (ref.kind != SentFrameKind::None) packet.addFrame(ref);
     m_txPkts[level].add(packet);
+    if (ackEliciting) {
+      m_congestion.sent(bytes);
+      updateCongestionDiag_();
+      scheduleLossTimer_();
+    }
   }
 
   void processAckFrame_(CryptoLevel::T level, const Frame &frame) {
@@ -3084,10 +3209,21 @@ protected:
     if (!ack.nRanges || m_txSpaceDiscarded[ack.level]) return;
     ZuTime sentTime;
     unsigned lost = 0;
+    uint64_t ackedBytes = 0;
+    uint64_t lostBytes = 0;
+    ZuTime lostSentTime;
     unsigned acked = m_txPkts[ack.level].ack(
       ack.ranges, ack.nRanges, &lost, 3,
-      ack.level == CryptoLevel::OneRTT ? &sentTime : nullptr);
-    if (lost) impl()->retransmit_();
+      ack.level == CryptoLevel::OneRTT ? &sentTime : nullptr,
+      &ackedBytes, &lostBytes, &lostSentTime);
+    if (ackedBytes) m_congestion.acked(ackedBytes);
+    if (lost) {
+      m_congestion.lostAt(lostBytes, uint64_t(lostSentTime.microsecs()));
+      if (m_txPkts[ack.level].persistentCongestion(
+	  persistentCongestionThreshold_()))
+	persistentCongestion_();
+      impl()->retransmit_();
+    }
     if (acked && ack.level == CryptoLevel::OneRTT) {
       ZuTime now = runtimeNow_();
       if (*sentTime && sentTime < now)
@@ -3096,7 +3232,9 @@ protected:
     } else if (acked) {
       m_ptoBackoff.reset();
     }
+    updateCongestionDiag_();
     schedulePTO_();
+    scheduleLossTimer_();
   }
 
   static ZuTime runtimeNow_() { return Zm::now(); }
@@ -3932,6 +4070,7 @@ private:
       "QUIC timer schedule outside Tx thread", return);
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC timer schedule before app initialization", return);
+    if (m_timerTeardown) return;
     if (debugLog_())
       ZiLOG(Debug, "Zquic", ([name](auto &s) {
 	s << "QUIC timer armed name=" << name;
@@ -4025,6 +4164,7 @@ private:
   ZmScheduler::Timer	m_pathTimer;
   bool			m_pendingAck[3]{};
   bool			m_rxSpaceDiscarded[3]{};
+  bool			m_timerTeardown = false;
   unsigned		m_handshakeStarted = 0;
   unsigned		m_established = 0;
   LinkState::T		m_linkState = LinkState::Starting;
@@ -4038,6 +4178,7 @@ private:
   TrafficSecret		m_txTrafficSecrets[3];
   PktProtState		m_txProt[3];
   RuntimeTxDiag		m_txDiag;
+  NewReno		m_congestion;
   uint64_t		m_txPN[3]{};
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
@@ -4065,9 +4206,7 @@ public:
   CliLink(App *app) : Base{app, false} { }
   CliLink(App *app, Host server, uint16_t port) :
     Base{app, false}, m_server{ZuMv(server)}, m_port{port} { }
-  ~CliLink() {
-    closeCurrent_(false);
-  }
+  ~CliLink() = default;
 
   void connect() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
@@ -4091,8 +4230,21 @@ public:
       return link;
     });
   }
+  template <typename Fn>
+  void disconnect(Fn fn) {
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC client disconnect before app initialization", return);
+    app()->rxInvoke(impl(), [link = impl(), fn = ZuMv(fn)]() mutable {
+      link->disconnect_(ZuMv(fn));
+      return link;
+    });
+  }
   void disconnect_() { // direct call from within rx thread
-    closeCurrent_(true);
+    disconnect_([]() { });
+  }
+  template <typename Fn>
+  void disconnect_(Fn fn) { // direct call from within rx thread
+    closeCurrent_(true, ZuMv(fn));
     Base::resetTLS_();
   }
 
@@ -4216,7 +4368,12 @@ public:
       return;
     }
 
-    closeCurrent_(false);
+    closeCurrent_(false, [link = ZmMkRef(impl()), ip]() mutable {
+      link->connectOpen_(ip);
+    });
+  }
+
+  void connectOpen_(ZiIP ip) {
     resetRuntimeState_();
     Base::resetRuntimeDiag_();
 
@@ -4265,29 +4422,52 @@ private:
   using RuntimeCID = typename Base::RuntimeCID;
 
   void closeCurrent_(bool notify) {
+    closeCurrent_(notify, []() { });
+  }
+
+  template <typename Fn>
+  void closeCurrent_(bool notify, Fn fn) {
     if (notify && app() && app()->mx() &&
 	Base::runtimeEstablished_() &&
 	m_endpoint.connected() && m_endpoint.remote()) {
-      closeAfterConnectionClose_(notify, m_endpoint.remote());
+      closeAfterConnectionClose_(notify, m_endpoint.remote(), ZuMv(fn));
       return;
     }
-    closeEndpoint_(notify);
+    closeEndpoint_(notify, ZuMv(fn));
   }
 
-  void closeAfterConnectionClose_(bool notify, ZiSockAddr addr) {
+  template <typename Fn>
+  void closeAfterConnectionClose_(bool notify, ZiSockAddr addr, Fn fn) {
     app()->txRun([
       link = ZmMkRef(impl()),
       notify,
-      addr = ZuMv(addr)
+      addr = ZuMv(addr),
+      fn = ZuMv(fn)
     ]() mutable {
       (void)link->sendConnectionClose_(ZuMv(addr));
-      link->app()->rxRun([link, notify]() mutable {
-	link->closeEndpoint_(notify);
+      link->app()->rxRun([link, notify, fn = ZuMv(fn)]() mutable {
+	link->closeEndpoint_(notify, ZuMv(fn));
       });
     });
   }
 
   void closeEndpoint_(bool notify) {
+    closeEndpoint_(notify, []() { });
+  }
+
+  template <typename Fn>
+  void closeEndpoint_(bool notify, Fn fn) {
+    Base::teardownTimers([
+      link = ZmMkRef(impl()), notify, fn = ZuMv(fn)
+    ]() mutable {
+      link->app()->rxRun([link, notify, fn = ZuMv(fn)]() mutable {
+	link->closeEndpointDrained_(notify);
+	fn();
+      });
+    });
+  }
+
+  void closeEndpointDrained_(bool notify) {
     m_udpReady = 0;
     m_notifyEndpointDown = notify;
     m_endpoint.closeUDP();

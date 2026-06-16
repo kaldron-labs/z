@@ -233,6 +233,42 @@ void testPktReorderDuplicateLoss()
     "duplicate ACK range mutated sent-packet state");
 }
 
+void testLossThresholds()
+{
+  ZuTestScope(testLossThresholds);
+
+  Zquic::RttEstimator rtt;
+  ZuCHECK(rtt.timeThreshold() == Zquic::timeUS(374625),
+    "initial RTT time-threshold mismatch");
+  rtt.sample(Zquic::timeUS(1000), ZuTime{0}, true);
+  ZuCHECK(rtt.timeThreshold() == Zquic::timeUS(1125),
+    "sampled RTT time-threshold mismatch");
+
+  Zquic::PktTxSpace tx;
+  ZuCHECK(tx.add(txPkt_(1)) && tx.add(txPkt_(2)) &&
+      tx.add(txPkt_(3)), "sent packet setup failed");
+  ZuTime threshold = Zquic::timeUS(150);
+  ZuCHECK(tx.nextLossTime(threshold) == Zquic::timeUS(250),
+    "next loss-deadline computation mismatch");
+  ZuCHECK(tx.markTimeThresholdLoss(Zquic::timeUS(270), threshold) == 1,
+    "time-threshold loss did not mark only oldest packet");
+  ZuCHECK(tx.nextLossTime(threshold) == Zquic::timeUS(350),
+    "next loss-deadline after a single oldest loss mismatch");
+  ZuCHECK(tx.markTimeThresholdLoss(Zquic::timeUS(350), threshold) == 1,
+    "time-threshold loss missed oldest remaining packet");
+  ZuCHECK(tx.nextLossTime(threshold) == Zquic::timeUS(450),
+    "next loss-deadline after two oldest losses mismatch");
+  ZuCHECK(tx.markTimeThresholdLoss(Zquic::timeUS(450), threshold) == 1,
+    "time-threshold loss missed final eligible packet");
+  ZuCHECK(!tx.nextLossTime(threshold),
+    "loss deadline remained after all eligible packets were lost");
+
+  Zquic::PktTxSpace ackOnly;
+  Zquic::SentPkt pkt = txPkt_(5, 100, false);
+  ZuCHECK(ackOnly.add(pkt) && !ackOnly.nextLossTime(threshold),
+    "non-ack-eliciting packet scheduled a loss deadline");
+}
+
 void testPktSpaceAckLoss()
 {
   ZuTestScope(testPktSpaceAckLoss);
@@ -425,6 +461,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRecovery);
   ZuTestCall(testPktReorderDuplicateLoss);
+  ZuTestCall(testLossThresholds);
   ZuTestCall(testPktSpaceAckLoss);
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);
   ZuTestCall(testAckCanLeaveOnlyRetransmitsPending);
