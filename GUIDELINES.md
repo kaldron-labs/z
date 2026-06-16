@@ -29,8 +29,14 @@ These guidelines extend `AGENTS.md`
 ## Build system
 - use the `configure` wrapper named `z.config` to reconfigure the build
   - usage: `z.config -h`
+- this is a hierarchy of Makefiles that **intentionally** do not automatically rebuild dependencies in other directories
+  - use a top-level `make -j8` to ensure all dependencies are rebuilt/refreshed
 - add external dependencies in `configure.ac`
   - use `PKG_CHECK_MODULES` if the dependency is in pkg-config, falling back to dependency-specific `m4` if not
+- always recompile with `make -j8`
+  - if not rebuilding everything, if library code has changed in a layer under development, always rebuild `src` before dependent `test`/`bench`/`example`, e.g. `make -C zquic/src -j8`
+  - always build default target `all` before `make test`, e.g. `make -C zquic/test -j8 && make -C zquic/test test`
+  - after build type has changed (release, debug, asan, etc.) do a top-level `make clean && make -j8` to rebuild
 
 ## Use of C++ language
 ### Language level
