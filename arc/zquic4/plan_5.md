@@ -9,6 +9,9 @@ Preconditions: plans 1 through 4 complete, especially ACK delay timer ownership 
 
 `AckTracker` and `AckManager` already exist and tests cover ACK range behavior.  Runtime ACK generation is still snapshot/immediate-flush oriented.  This work wires ACK management into receive processing and packet assembly while preserving existing range tracking.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add per-space runtime ACK state based on `AckManager`, plus largest-received timestamps.
 

@@ -8,6 +8,9 @@ Preconditions: plans 1 through 9 complete.
 
 `Path` already implements PMTUD state transitions, probe attempts, hints, blackhole fallback, and tests.  Runtime currently does not send PMTUD probes or classify probe packets.  This plan wires the existing `Path` PMTUD utility into packet sending, ACK/loss recovery, and socket hints.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add runtime PMTUD probe scheduling and sent-packet metadata for PMTUD probes.
 

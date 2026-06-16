@@ -10,6 +10,9 @@ Preconditions: plan 1 complete enough to provide explicit PTO/key-discard timer 
 
 The plan is to keep the existing packet-space array and extend runtime state transitions so every packet number space has the same ACK/loss/PTO bookkeeping, while preserving packet-space-specific frame legality and key discard.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: enhance `PktTxSpace` usage and add packet-space helpers for Initial, Handshake, and 1-RTT selection.
 

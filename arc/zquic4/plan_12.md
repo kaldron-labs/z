@@ -8,6 +8,9 @@ Preconditions: plans 1 through 11 complete.
 
 `zquic` already validates many stream frames and ordinary duplicate STREAM data is handled by the receive queue.  The missing behavior is classification and throttling of repeated invalid activity on closed streams or suspicious peer behavior.  This plan adds a bounded glitch/rate mechanism without penalizing valid duplicates.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add per-connection suspicious-activity counters and lightweight per-stream closed-state checks.
 

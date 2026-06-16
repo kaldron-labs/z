@@ -11,6 +11,9 @@ Preconditions: none.
 
 The design is to add a small timer-management layer inside the connection/link runtime that owns typed timers directly.  Each callback validates that it is running on the correct shard, checks that the owning object is still live, and delegates to one narrow handler.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add typed timer members to `Link`/connection runtime state near the existing PTO timer.  Keep timers as concrete members, not heap nodes.
 

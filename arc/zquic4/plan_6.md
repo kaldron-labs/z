@@ -8,6 +8,9 @@ Preconditions: plan 5 complete so ACK state has runtime ownership and commit sem
 
 `zquic` currently parses ACK_ECN only enough to skip the counters; `Frame` does not retain them.  `Path` already has an `ecnDisabled` flag.  This plan carries ECN counts through frame parsing, ACK generation, and minimal validation without adding a full ECN congestion response.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: extend `Frame` with ACK_ECN counters and add per-space ECN counters to ACK state.
 

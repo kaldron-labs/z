@@ -8,6 +8,9 @@ Preconditions: plans 1 through 14 complete.
 
 `zquic` already parses NEW_CONNECTION_ID/RETIRE_CONNECTION_ID, stores local/peer CIDs, and verifies stateless reset tokens.  The missing work is stronger lifecycle validation: uniqueness checks, path/DCID association, and timer-based cleanup of retired/tombstoned CIDs.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: enhance CID store entries with token uniqueness state, path association, and retire cleanup deadline.
 

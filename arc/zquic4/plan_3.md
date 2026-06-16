@@ -9,6 +9,9 @@ Preconditions: plans 1 and 2 complete.
 
 `zquic` already performs ACK-triggered packet-threshold loss for 1-RTT and immediately calls `retransmit_()` when loss is detected.  `PktTxSpace` also has utility behavior for time-threshold loss and retransmit queueing.  The remaining work is runtime integration: use a loss-time timer, apply loss detection across spaces, and connect persistent congestion to the congestion controller from plan 4.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add loss-deadline computation over the existing sent-packet spaces.
 

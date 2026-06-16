@@ -8,6 +8,9 @@ Preconditions: plans 1 through 8 complete.
 
 `zquic` already parses PATH_CHALLENGE/PATH_RESPONSE and queues PATH_RESPONSE on receive.  It also has CID tracking and reset tokens.  Missing behavior is the path-validation state machine: candidate paths, challenge generation, response matching, timeout, promotion, and safe fallback.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add candidate path state to `Link`, including challenge payload, validation deadline, associated CID, and previous active path.
 

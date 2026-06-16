@@ -9,6 +9,9 @@ Preconditions: plans 1 through 7 complete.
 
 `zquic` already has a `Path` utility with anti-amplification accounting, active max UDP, PMTUD state, and tests.  Runtime send/receive paths do not use it.  This plan wires one active path into `Link` runtime and uses it for packet budgets and byte accounting.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add active `Path` state to client and server links.
 

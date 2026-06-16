@@ -8,6 +8,9 @@ Preconditions: plans 1 through 13 complete.
 
 `zquic` supports traffic secret updates and attempts next receive keys when short-packet decrypt fails.  The current behavior is optimistic and lacks a full old/new retention window and validated key phase state machine.  This plan hardens key update behavior while reusing existing crypto primitives.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add 1-RTT key phase state with current, next, and old receive secrets plus discard deadlines.
 

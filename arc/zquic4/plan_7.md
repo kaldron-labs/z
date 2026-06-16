@@ -8,6 +8,9 @@ Preconditions: plans 1 through 6 complete.
 
 `zquic` already has packet builders, control queues, stream frame builders, and ACK appending.  Runtime packet assembly is conservative: one queued control frame and at most one stream frame per packet, with fixed packet number length.  This plan makes packet assembly budget-driven while preserving existing frame priority.
 
+## Mandatory implementation guidelines
+IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+
 ## Architecture Documentation
 New or changed components: add a packet assembly loop that fills `PktBuild` until packet, congestion, path, or flow budget is exhausted.
 
