@@ -2164,6 +2164,22 @@ protected:
     m_txDiag.congestionSSThresh = m_congestion.ssthresh();
     m_txDiag.congestionBytesInFlight = m_congestion.bytesInFlight();
   }
+  unsigned congestionAllowance_() const {
+    uint64_t cwnd = m_congestion.cwnd();
+    uint64_t inFlight = m_congestion.bytesInFlight();
+    if (inFlight >= cwnd) return 0;
+    uint64_t allowance = cwnd - inFlight;
+    return allowance > uint64_t(unsigned(-1)) ?
+      unsigned(-1) : unsigned(allowance);
+  }
+  PktBudget sendBudget_() const {
+    PktBudget budget;
+    unsigned maxUDP = app()->maxUDP();
+    budget.pmtu = budget.antiAmplification = maxUDP;
+    unsigned allowance = congestionAllowance_();
+    budget.congestion = allowance < maxUDP ? allowance : maxUDP;
+    return budget;
+  }
   void resetRuntime_() {
     drainStreamsRx_();
     cancelTimers();
@@ -2623,9 +2639,8 @@ protected:
       }
       PktBuild build;
       build.reset();
-      PktBudget budget;
-      budget.pmtu = budget.congestion = budget.antiAmplification =
-	app()->maxUDP();
+      PktBudget budget = sendBudget_();
+      if (!budget.congestion) return false;
       PktAssembly assembly;
       unsigned before = build.bytes();
       if (!appendAck(build)) return false;
@@ -2703,11 +2718,10 @@ protected:
 	    SendPkt sendPkt) {
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC stream packetization outside Tx thread", return false);
-	    PktBuild build;
+    PktBuild build;
     build.reset();
-    PktBudget budget;
-    budget.pmtu = budget.congestion = budget.antiAmplification =
-      app()->maxUDP();
+    PktBudget budget = sendBudget_();
+    if (!budget.congestion) return false;
     budget.flow = m_txDataCredit.available();
     PktAssembly assembly;
     if (stream->txRangeCount() && m_txDataCredit.blocked()) {
@@ -3216,7 +3230,11 @@ protected:
       ack.ranges, ack.nRanges, &lost, 3,
       ack.level == CryptoLevel::OneRTT ? &sentTime : nullptr,
       &ackedBytes, &lostBytes, &lostSentTime);
-    if (ackedBytes) m_congestion.acked(ackedBytes);
+    bool congestionOpened = false;
+    if (ackedBytes) {
+      m_congestion.acked(ackedBytes);
+      congestionOpened = true;
+    }
     if (lost) {
       m_congestion.lostAt(lostBytes, uint64_t(lostSentTime.microsecs()));
       if (m_txPkts[ack.level].persistentCongestion(
@@ -3235,6 +3253,7 @@ protected:
     updateCongestionDiag_();
     schedulePTO_();
     scheduleLossTimer_();
+    if (congestionOpened) impl()->queueTxFlush_();
   }
 
   static ZuTime runtimeNow_() { return Zm::now(); }
