@@ -103,6 +103,7 @@ public:
   }
 
 private:
+  // immutable
   LinkRef	m_link = nullptr;
 };
 
@@ -280,6 +281,7 @@ private:
     }
 
   private:
+    // immutable
     Link	*m_link;
   };
 
@@ -287,7 +289,7 @@ private:
 
 public:
   auto txStream() { return TxStream_<true>{*this}; }
-  auto txStream_() {
+  auto txStream_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztcp", (),
       "TCP txStream_ outside Tx thread", return TxStream_<false>{*this});
     return TxStream_<false>{*this};
@@ -304,7 +306,7 @@ public:
   }
 
 protected:
-  void send_(ZmRef<ZiIOBuf> buf) {
+  void send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztcp", (),
       "TCP send_ outside Tx thread", return);
     if (ZuUnlikely(!buf || !buf->length)) return;
@@ -318,7 +320,7 @@ public:
     m_disconnecting = 1;
     app()->rxInvoke([this]() { disconnect_(); });
   }
-  void disconnect_(bool notify = true) {
+  void disconnect_(bool notify = true) { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP disconnect outside Rx thread", return);
     m_disconnecting = 1;
@@ -335,10 +337,15 @@ public:
   }
 
 private:
+  // immutable
   App			*m_app = nullptr;
+
+  // Rx thread exclusive
   ZmScheduler::Timer	m_reconnTimer;
   CxnRef		m_cxn = nullptr;
   RxStream		m_rxStream;
+
+  // shared
   ZmAtomic<unsigned>	m_disconnecting = 0;
 };
 
@@ -386,7 +393,7 @@ template <typename> friend class Client;
   const Host &server() const { return m_server; }
   uint16_t port() const { return m_port; }
 
-  void connect_() {
+  void connect_() { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP connect outside Rx thread", return);
     ZiIP ip = m_server;
@@ -419,6 +426,7 @@ template <typename> friend class Client;
   }
 
 private:
+  // Rx thread exclusive
   ZmScheduler::Timer	m_reconnTimer;
   Host			m_server;
   uint16_t		m_port = 0;
@@ -563,11 +571,14 @@ protected:
   }
 
 private:
-  void final_() { m_errorFn = ErrorFn{}; }
+  void final_() { m_errorFn = ErrorFn{}; } // direct call from within rx thread
 
+  // immutable after init()
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
+
+  // Rx thread exclusive after init()
   ErrorFn		m_errorFn;
 };
 
@@ -652,6 +663,7 @@ protected:
   }
 
 private:
+  // Rx thread exclusive
   ZmScheduler::Timer	m_rebindTimer;
   bool			m_listening = false;
 };

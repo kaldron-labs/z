@@ -459,6 +459,7 @@ namespace H3 {
     QPackTxTable *qpackTx() { return nullptr; }
 
   private:
+    // Rx thread exclusive
     State::T		m_cxnState = State::Init;
     StreamState::T	m_streamState = StreamState::Type;
     uint64_t		m_streamType = -1;
@@ -1075,6 +1076,7 @@ namespace H3 {
     }
 
   private:
+    // Rx thread exclusive
     int64_t		m_contentLen = -1;
     uint64_t		m_bodyLen = 0;
     State::T		m_state = State::Initial;
@@ -1696,6 +1698,7 @@ namespace H3 {
     uint64_t streamID() const { return 0; }
 
   private:
+    // Tx thread exclusive
     QPackBuildFailure::T	m_qpackFailure = QPackBuildFailure::None;
   };
 

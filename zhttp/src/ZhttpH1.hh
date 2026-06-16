@@ -386,6 +386,7 @@ namespace H1 {
 	m_statusCode == 204 || m_statusCode == 304;
     }
 
+    // Rx thread exclusive
     int64_t	m_contentLength = -1;
     int64_t	m_chunkLength = -1;
     unsigned	m_statusCode = 0;
@@ -412,6 +413,7 @@ namespace H1 {
     }
 
   private:
+    // Tx thread exclusive
     uint64_t		m_contentLength;
   };
   template <typename Lower>

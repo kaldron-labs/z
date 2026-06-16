@@ -361,6 +361,7 @@ private:
     return best;
   }
 
+  // Rx thread exclusive
   ZmRef<Routes>	m_routes;
 };
 
@@ -996,7 +997,7 @@ private:
     return true;
   }
 
-  // Shared immutable/configuration after init_().
+  // immutable after init()
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
@@ -1293,6 +1294,7 @@ private:
     return sendPkt_(ZuMv(buf), ZuMv(addr));
   }
 
+  // Rx thread exclusive
   Endpoint		m_endpoint;
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
@@ -1302,11 +1304,11 @@ private:
 template <typename Link_, typename Impl, typename TxBufAlloc_>
 class Stream :
   public ZmPolymorph,
-  // Rx-owned base. Only the QUIC Rx thread may use ZmPQRx APIs/state.
+  // Rx thread exclusive base. Only the Rx thread may use ZmPQRx APIs/state.
   public ZmPQRx<
     Stream<Link_, Impl, TxBufAlloc_>,
     StreamRxPQueue, ZmPQRxGapIgnore<>>,
-  // Tx-owned base. Only the QUIC Tx thread may use ZmPQTx APIs/state.
+  // Tx thread exclusive base. Only the Tx thread may use ZmPQTx APIs/state.
   public ZmPQTx<
     Stream<Link_, Impl, TxBufAlloc_>,
     TxDataPQueue> {
@@ -1504,11 +1506,12 @@ public:
     }
 
   private:
+    // immutable
     Stream	*m_stream;
   };
 
   auto txStream() { return TxStream_<true>{*this}; }
-  auto txStream_() {
+  auto txStream_() { // direct call from within tx thread
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream txStream_ outside Tx thread",
       return TxStream_<false>{*this});
@@ -1693,7 +1696,7 @@ private:
     });
   }
 
-  void send_(ZmRef<ZiIOBuf> buf) {
+  void send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream send_ outside Tx thread", return);
     if (ZuUnlikely(!buf)) return;
@@ -1736,23 +1739,11 @@ private:
     if (m_link && m_id >= 0) m_link->streamWritable_(this);
   }
 
-  // Shared immutable identity/back-pointer. Link owns stream lifetime and must
-  // drain outstanding stream work before destruction; stream buffers keep raw
-  // back-pointers rather than Link refs.
+  // immutable
   Link			*m_link = nullptr;
   int64_t		m_id;
 
-  // Tx-owned stream state, including the complete ZmPQTx base state.
-  uint64_t		m_txBytes = 0;
-  uint64_t		m_txBufferedBytes = 0;
-  FlowCredit		m_txCredit;
-  bool			m_fin = false;
-  bool			m_finDequeued = false;
-  bool			m_resetSent = false;
-  bool			m_stopSent = false;
-  TxDataPQueue		m_txQueue{0};
-
-  // Rx-owned stream state, including the complete ZmPQRx base state.
+  // Rx thread exclusive
   FlowCredit		m_rxCredit;
   uint64_t		m_rxDelivered = 0;
   bool			m_resetReceived = false;
@@ -1761,12 +1752,19 @@ private:
   StreamRxState		m_rxState;
   RxStream		m_rx;
   StreamRxPQueue	m_rxQueue{0};
-
-  // Rx-owned stream control/error state. Tx-side stop/reset intent is mirrored
-  // above; protocol receive/error reporting remains Rx-owned.
   uint64_t		m_lastStreamDataBlocked = uint64_t(-1);
   uint64_t		m_appError = 0;
   StreamError::T	m_error = StreamError::None;
+
+  // Tx thread exclusive
+  uint64_t		m_txBytes = 0;
+  uint64_t		m_txBufferedBytes = 0;
+  FlowCredit		m_txCredit;
+  bool			m_fin = false;
+  bool			m_finDequeued = false;
+  bool			m_resetSent = false;
+  bool			m_stopSent = false;
+  TxDataPQueue		m_txQueue{0};
 };
 
 template <typename Link, typename Impl, typename TxBufAlloc_ = StreamTxBufAlloc<>>
@@ -3691,11 +3689,11 @@ private:
     return int64_t(id);
   }
 
-  // Shared immutable identity/back-pointer after construction.
+  // immutable
   App		*m_app = nullptr;
   bool		m_isServer = false;
 
-  // Rx-owned connection, flow-control, peer stream, CID, and receive state.
+  // Rx thread exclusive
   bool		m_closed = false;
   uint64_t	m_closeError = 0;
   FlowCredit	m_rxDataCredit;
@@ -3704,7 +3702,7 @@ private:
   StreamLimit	m_peerUniLimit{uint64_t(INT64_MAX) >> 2};
   Streams	m_streams;
 
-  // Tx-owned local send credit and local stream allocation state.
+  // Tx thread exclusive
   FlowCredit	m_txDataCredit;
   uint64_t	m_nextBidiOrdinal = 0;
   uint64_t	m_nextUniOrdinal = 0;
@@ -3715,8 +3713,6 @@ private:
   uint64_t	m_lastDataBlocked = uint64_t(-1);
   uint64_t	m_lastStreamsBlockedBidi = uint64_t(-1);
   uint64_t	m_lastStreamsBlockedUni = uint64_t(-1);
-
-  // Tx-owned scheduling and control packetization queues.
   StreamQueue	m_streamQueue;
   ControlQueue	m_controlQueue{ZmQueueParams{}.initial(8)};
 
@@ -3760,8 +3756,7 @@ private:
     return true;
   }
 
-  // Rx-owned runtime state. These members are read or mutated only on the
-  // QUIC Rx thread. Tx work must use snapshots or dispatch onto Rx.
+  // Rx thread exclusive
   RuntimeRxDiag		m_rxDiag;
   Crypto		m_crypto;
   TransportParams	m_transportParams;
@@ -3786,8 +3781,7 @@ private:
   unsigned		m_drainPTOs = 0;
   uint64_t		m_peerRetirePriorTo = 0;
 
-  // Tx-owned runtime state. This group must only be accessed on the QUIC Tx
-  // thread; Rx-side control prepares data and dispatches Tx work.
+  // Tx thread exclusive
   CryptoStream		m_txCrypto[3];
   TrafficSecret		m_txTrafficSecrets[3];
   PktProtState		m_txProt[3];
@@ -3796,7 +3790,6 @@ private:
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
   bool			m_txKeyPhase = false;
-
 };
 
 template <
@@ -3845,7 +3838,7 @@ public:
       return link;
     });
   }
-  void disconnect_() {
+  void disconnect_() { // direct call from within rx thread
     closeCurrent_(true);
   }
 
@@ -3888,23 +3881,24 @@ public:
     });
     return true;
   }
-	  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
-	    ZiAssert(app()->txInvoked(), "Zquic", (),
-	      "QUIC client send_ outside Tx thread", return false);
-	    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
-		(!payload.length() && !fin))
-	      return false;
-	    if (payload.length()) {
-	      auto tx = stream->txStream_();
-	      tx << payload;
-	      tx.flush();
-	    }
-	    if (fin) stream->fin();
-	    queueTxFlush_();
-	    return true;
-	  }
+  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
+    // direct call from within tx thread
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client send_ outside Tx thread", return false);
+    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
+	(!payload.length() && !fin))
+      return false;
+    if (payload.length()) {
+      auto tx = stream->txStream_();
+      tx << payload;
+      tx.flush();
+    }
+    if (fin) stream->fin();
+    queueTxFlush_();
+    return true;
+  }
 
-  void pto_() {
+  void pto_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client PTO outside Tx thread", return);
     if (Base::closed() || !Base::runtimeEstablished_() ||
@@ -3923,7 +3917,7 @@ public:
     });
   }
 
-  bool retransmit_() {
+  bool retransmit_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client retransmit outside Tx thread", return false);
     if (Base::closed() || !Base::runtimeEstablished_() ||
@@ -3944,7 +3938,7 @@ public:
     return sent;
   }
 
-  void connect_() {
+  void connect_() { // direct call from within rx thread
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client connect before app initialization", return);
     ZiIP ip = m_server;
@@ -4179,7 +4173,7 @@ private:
     });
   }
 
-  bool flushTx_() {
+  bool flushTx_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client flush outside Tx thread", return false);
     if (Base::closed() || !Base::runtimeEstablished_() ||
@@ -4187,7 +4181,7 @@ private:
       return false;
     return flushTx_(m_endpoint.remote());
   }
-  bool flushTx_(ZiSockAddr addr) {
+  bool flushTx_(ZiSockAddr addr) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client flush outside Tx thread", return false);
     if (Base::closed() || !addr) return false;
@@ -4480,12 +4474,15 @@ private:
     });
   }
 
+  // Rx thread exclusive
   Endpoint		m_endpoint;
   Host			m_server;
   uint16_t		m_port = 0;
   ClientBootstrap	m_bootstrap;
   bool			m_peerParamsValidated = false;
   bool			m_notifyEndpointDown = true;
+
+  // shared
   ZmAtomic<uint64_t>	m_udpReadyCount = 0;
   ZmAtomic<unsigned>	m_udpReady = 0;
 };
@@ -4537,23 +4534,24 @@ public:
     });
     return true;
   }
-	  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
-	    ZiAssert(app()->txInvoked(), "Zquic", (),
-	      "QUIC server send_ outside Tx thread", return false);
-	    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
-		(!payload.length() && !fin))
-	      return false;
-	    if (payload.length()) {
-	      auto tx = stream->txStream_();
-	      tx << payload;
-	      tx.flush();
-	    }
-	    if (fin) stream->fin();
-	    queueTxFlush_();
-	    return true;
-	  }
+  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
+    // direct call from within tx thread
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server send_ outside Tx thread", return false);
+    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
+	(!payload.length() && !fin))
+      return false;
+    if (payload.length()) {
+      auto tx = stream->txStream_();
+      tx << payload;
+      tx.flush();
+    }
+    if (fin) stream->fin();
+    queueTxFlush_();
+    return true;
+  }
 
-  void pto_() {
+  void pto_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server PTO outside Tx thread", return);
     if (Base::closed() || !Base::runtimeEstablished_() || !m_peerAddr)
@@ -4571,7 +4569,7 @@ public:
     });
   }
 
-  bool retransmit_() {
+  bool retransmit_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server retransmit outside Tx thread", return false);
     if (Base::closed() || !Base::runtimeEstablished_() || !m_peerAddr)
@@ -4739,7 +4737,7 @@ private:
 	return sendHandshakePkt_(build, ZuMv(addr_), frame_);
       },
       [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
-	  return sendShortPkt_(build, ZuMv(addr_), frame_);
+	return sendShortPkt_(build, ZuMv(addr_), frame_);
       });
   }
 
@@ -4763,14 +4761,14 @@ private:
     });
   }
 
-  bool flushTx_() {
+  bool flushTx_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server flush outside Tx thread", return false);
     if (Base::closed() || !Base::runtimeEstablished_() || !m_peerAddr)
       return false;
     return flushTx_(m_peerAddr);
   }
-  bool flushTx_(ZiSockAddr addr) {
+  bool flushTx_(ZiSockAddr addr) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server flush outside Tx thread", return false);
     if (Base::closed() || !addr) return false;
@@ -4949,8 +4947,8 @@ private:
       flushPendingAck_(CryptoLevel::OneRTT, ZuMv(addr));
   }
 
-	  bool received_(Datagram d) {
-	    ZiSockAddr addr = d.addr;
+  bool received_(Datagram d) {
+    ZiSockAddr addr = d.addr;
     Base::receiveDatagram_(
       ZuMv(d),
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
@@ -4958,11 +4956,11 @@ private:
       },
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
 	return receivedShort_(d_, packetOffset, packetLen);
-	      });
-	    if (m_releaseDeferred) return false;
-	    queueTxFlush_(ZuMv(addr));
-	    return true;
-	  }
+      });
+    if (m_releaseDeferred) return false;
+    queueTxFlush_(ZuMv(addr));
+    return true;
+  }
 
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
     return Base::receiveProtLongPkt_(
@@ -5010,14 +5008,14 @@ private:
     switch (frame.type) {
       case FrameType::MaxData:
       case FrameType::MaxStreamData:
-	      case FrameType::MaxStreams:
-		queueTxFlush_();
-		return true;
-	      case FrameType::PathChallenge: {
-		Base::queuePathResponse_(frame.payload);
-		queueTxFlush_(ZuMv(addr));
-		return true;
-	      }
+      case FrameType::MaxStreams:
+	queueTxFlush_();
+	return true;
+      case FrameType::PathChallenge: {
+	Base::queuePathResponse_(frame.payload);
+	queueTxFlush_(ZuMv(addr));
+	return true;
+      }
       case FrameType::PathResponse:
 	return true;
       case FrameType::ConnectionClose:
@@ -5031,18 +5029,18 @@ private:
     }
   }
 
-	  void dataBlocked_(uint64_t maximum) {
-	    Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
-	    queueTxFlush_();
-	  }
-	  void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
-	    Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
-	    queueTxFlush_();
-	  }
-	  void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
-	    Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
-	    queueTxFlush_();
-	  }
+  void dataBlocked_(uint64_t maximum) {
+    Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
+    queueTxFlush_();
+  }
+  void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
+    Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
+    queueTxFlush_();
+  }
+  void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
+    Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
+    queueTxFlush_();
+  }
 
   bool receivedRouted_(Datagram d) {
     return received_(ZuMv(d));
@@ -5058,16 +5056,18 @@ private:
     Base::tombstoneLocalCIDRoutes_(routes);
   }
 
-public:
   void retiredLocalCID_(uint64_t, const CxnID &id) {
     if (app())
       static_cast<Server<App, Impl> *>(app())->dissociateRoute_(id);
   }
 
+  // Rx thread exclusive
   ServerBootstrap	m_bootstrap;
   ZiSockAddr		m_peerAddr;
-  ZmAtomic<unsigned>	m_handshakeDoneSent = 0;
   bool			m_releaseDeferred = false;
+
+  // shared
+  ZmAtomic<unsigned>	m_handshakeDoneSent = 0;
 };
 
 } // namespace Zquic
