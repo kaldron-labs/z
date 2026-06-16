@@ -71,6 +71,8 @@ struct TimerLink :
     Base::schedulePathTimer_(out);
   }
   void cancelAll() { Base::cancelTimers_(); }
+  template <typename Fn>
+  void teardown(Fn fn) { Base::teardownTimers(ZuMv(fn)); }
   void armAckPTO(ZuTime ack, ZuTime pto) {
     Base::scheduleAckDelayTimer_(ack);
     Base::schedulePTOTimer_(pto);
@@ -158,10 +160,12 @@ void testTimerOwnerRelease()
   ZmRef<TimerLink> link = new TimerLink{&app};
 
   link->armAll(Zm::now() + Zquic::timeUS(200000));
+  bool drained = false;
+  link->teardown([&drained]() { drained = true; });
   link = nullptr;
   usleep(80000);
 
-  ZuCHECK(true, "timer owner release completed");
+  ZuCHECK(drained, "timer owner release did not drain callbacks");
 }
 
 int main(int argc, char **argv)

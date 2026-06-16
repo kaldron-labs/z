@@ -384,6 +384,7 @@ void testRuntimeEndpointOpen()
   auto serverBidi = serverLink->stream(Zi::StreamType::Duplex);
   auto serverUni = serverLink->stream(Zi::StreamType::Simplex);
   server.dropStreamID = serverUni->id();
+  uint64_t serverPTOs = serverLink->runtimeDiag().ptoCount;
   ZuCHECK(serverLink->send(serverBidi, "server-bidi") &&
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
@@ -402,6 +403,8 @@ void testRuntimeEndpointOpen()
     "runtime packet-loss shim did not drop a 1-RTT STREAM frame");
   ZuCHECK(serverLink->runtimeDiag().retransmittedFrames,
     "runtime recovery did not retransmit a dropped 1-RTT frame");
+  ZuCHECK(serverLink->runtimeDiag().ptoCount == serverPTOs,
+    "runtime loss timer recovery waited for PTO");
   ZuCHECK(clientLink->runtimeDiag().streamBytesTx == 21 &&
       serverLink->runtimeDiag().streamBytesTx == 21 &&
       clientLink->runtimeDiag().packetsTx >= 2 &&
@@ -470,8 +473,12 @@ void testRuntimeHandshakeCryptoLoss()
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime server init failed");
     ZuCHECK(server.listen(), "loss runtime server listen failed");
-    ZuCHECK(waitUntil([&server]() { return server.listening(); }),
-      "loss runtime server did not listen");
+    bool listening = waitUntil([&server]() { return server.listening(); });
+    ZuCHECK(listening, "loss runtime server did not listen");
+    if (!server.listening()) {
+      server.final();
+      continue;
+    }
     if (dropHandshake)
       server.dropNextHandshake = 4;
     else
@@ -507,9 +514,8 @@ void testRuntimeHandshakeCryptoLoss()
     ZuCHECK(dropHandshake ? server.droppedHandshake == 4 :
 	server.droppedInitial == 1,
       "loss runtime did not drop selected long-header packet");
-    ZuCHECK(serverLink && serverLink->runtimeDiag().ptoCount &&
-	serverLink->runtimeDiag().retransmittedFrames,
-      "loss runtime did not recover via PTO retransmit");
+    ZuCHECK(serverLink && serverLink->runtimeDiag().retransmittedFrames,
+      "loss runtime did not retransmit dropped handshake data");
 
     clientLink->disconnect();
     server.close();
@@ -610,6 +616,14 @@ void testRuntimeServerMultiConnection()
   ZuCHECK(server.acceptedCount == RuntimeServerMultiConnections &&
       !serverErrors,
     "server live-link table rejected connections past the old cap");
+  if (!established || !s0 || !s1) {
+    for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+      clients[i] = nullptr;
+    client.final();
+    server.final();
+    mx.stop();
+    return;
+  }
 
   auto c0s = c0->stream(Zi::StreamType::Duplex);
   auto c1s = c1->stream(Zi::StreamType::Duplex);
