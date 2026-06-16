@@ -4006,6 +4006,29 @@ private:
   using RuntimeCID = typename Base::RuntimeCID;
 
   void closeCurrent_(bool notify) {
+    if (notify && app() && app()->mx() &&
+	Base::runtimeEstablished_() &&
+	m_endpoint.connected() && m_endpoint.remote()) {
+      closeAfterConnectionClose_(notify, m_endpoint.remote());
+      return;
+    }
+    closeEndpoint_(notify);
+  }
+
+  void closeAfterConnectionClose_(bool notify, ZiSockAddr addr) {
+    app()->txRun([
+      link = ZmMkRef(impl()),
+      notify,
+      addr = ZuMv(addr)
+    ]() mutable {
+      (void)link->sendConnectionClose_(ZuMv(addr));
+      link->app()->rxRun([link, notify]() mutable {
+	link->closeEndpoint_(notify);
+      });
+    });
+  }
+
+  void closeEndpoint_(bool notify) {
     m_udpReady = 0;
     m_notifyEndpointDown = notify;
     m_endpoint.closeUDP();
@@ -4292,6 +4315,19 @@ private:
       [this](auto buf, ZiSockAddr addr_) {
 	return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
       });
+  }
+
+  bool sendConnectionClose_(ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client CONNECTION_CLOSE outside Tx thread", return false);
+    if (Base::closed() || !Base::runtimeEstablished_() ||
+	!m_endpoint.connected() || !addr)
+      return false;
+    PktBuild build;
+    int n = FrameCodec::writeConnectionClose(
+      build.scratch(), build.scratchAvail(), 0);
+    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    return sendShortPkt_(build, ZuMv(addr), {});
   }
 
   bool sendQueuedStreamPkt_(StreamRef stream, ZiSockAddr addr) {
