@@ -69,8 +69,9 @@ New or changed data stores: CID entries store sequence, CID, reset token, state,
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests cover duplicate sequence/CID/token combinations, retired CID routing, and stateless reset on unknown short CID.
 
 ## Completion

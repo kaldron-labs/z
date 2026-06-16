@@ -73,8 +73,9 @@ New or changed data stores: retain existing arrays where possible; add per-space
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Lost Initial/Handshake CRYPTO data is retransmitted by PTO/loss recovery.
 - ACK of Initial/Handshake packets updates sent-packet state and timer scheduling.
 - Tests cover dropped Initial and dropped Handshake CRYPTO packet recovery.

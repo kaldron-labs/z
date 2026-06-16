@@ -74,8 +74,9 @@ New or changed data stores: sent-packet entries may need byte length and PMTUD-p
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Congestion window gates normal stream/control sends.
 - ACK increases cwnd; loss reduces cwnd; PMTUD probe loss does not reduce cwnd.
 - Runtime tests include cwnd-limited send and loss recovery cases.

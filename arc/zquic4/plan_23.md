@@ -71,8 +71,9 @@ New or changed data stores: document runtime-owned recovery/path/CID/key state w
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Examples compile against the final API.
 - Timer, recovery, and path ownership are documented.
 - Stale comments/APIs from intermediate work are removed.

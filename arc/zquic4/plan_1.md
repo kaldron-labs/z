@@ -160,8 +160,9 @@ No timer in this plan is `Engine`-owned.  `Engine` provides scheduler access and
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Unit tests cover timer priority ordering and cancellation.
 - Runtime tests show ACK delay, loss time, PTO, idle, draining/closing, key discard, PMTUD, and path-validation timers do not clobber each other.
 - Tests verify each timer callback is scoped to the owning `Cxn` or `Link` and cannot fire after owner teardown.

@@ -72,8 +72,9 @@ New or changed data stores: sent-packet record needs a PMTUD-probe flag and prob
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests cover successful probe growth, failed probe retry, blackhole fallback, and send-too-big hint handling.
 - Active packet size follows PMTUD state.
 

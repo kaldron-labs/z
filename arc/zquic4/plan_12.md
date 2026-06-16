@@ -71,8 +71,9 @@ New or changed data stores: compact counters by error class; avoid per-offense h
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests cover closed-stream MAX_STREAM_DATA, RESET_STREAM, STREAM_DATA_BLOCKED, and duplicate-final-size cases.
 - Repeated invalid activity trips a deterministic internal/protocol error path.
 

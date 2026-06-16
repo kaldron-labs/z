@@ -69,8 +69,9 @@ New or changed data stores: per-connection and per-stream window policy state if
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Decision is documented with test/measurement rationale.
 - If adaptive windows are added, tests cover growth, caps, and unchanged violation handling.
 - Existing flow-control tests still pass.

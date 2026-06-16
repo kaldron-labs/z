@@ -73,8 +73,9 @@ New or changed data stores: store per-space largest receive timestamp and delaye
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests verify delayed ACK emission, immediate ACK emission, ACK delay encoding, and ACK state commit after send.
 - ACK-only packets do not create retransmittable sent-packet entries.
 - ACK ranges remain correct across duplicates and reordering.

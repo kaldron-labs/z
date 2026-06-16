@@ -68,8 +68,9 @@ New or changed data stores: optional writer state belongs to the app; runtime st
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests verify qlog emits parseable events for a handshake and stream transfer.
 - Disabled qlog adds no allocations in the packet hot path.
 

@@ -65,8 +65,9 @@ New or changed data stores: token secret/config and optional stateless token met
 
 ## Acceptance Criteria
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
-- `make -C zquic/test test` must `PASS`
-- `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - `make -C zquic/test test` must `PASS`
+  - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)
+  - test suites must run address and leak sanitized
 - Tests cover Retry required, valid retry, invalid token, and no-Retry policy.
 - Client Retry behavior remains compatible with current tests.
 
