@@ -72,27 +72,26 @@ public:
 private:
   friend Cxn_;
 
-  void connected_(Cxn_ *, ZiIOContext &);
-  void disconnected_(Cxn_ *);
-  void failed_(bool);
-  void received_(Datagram);
-  void sent_(unsigned);
-  void txDrained_();
-  void ioError_();
+  void connected_(Cxn_ *, ZiIOContext &);	// direct call from within rx thread
+  void disconnected_(Cxn_ *);			// direct call from within rx thread
+  void failed_(bool);				// direct call from within rx thread
+  void received_(Datagram);			// direct call from within rx thread
+  void sent_(unsigned);				// direct call from within tx thread
+  void txDrained_();				// direct call from within rx thread
+  void ioError_();				// direct call from within rx thread
   void closeUDP_(ZmSemaphore *);
   void clearFns_();
   ZmRef<ZiIOBuf> allocRxPkt_() {
     return new RxPktAlloc{this};
   }
 
-  // Shared immutable/configuration after openUDP(), read from Rx and Tx.
+  // immutable after openUDP()
   ZiMultiplex		*m_mx = nullptr;
   PathMode::T		m_mode = PathMode::ServerUnconnected;
   ZiSockAddr		m_local;
   ZiSockAddr		m_remote;
 
-  // Rx-owned endpoint lifecycle/callback state. Tx work must not retain Link
-  // ownership or depend on these callbacks after closeUDP() has begun draining.
+  // Rx thread exclusive
   Cxn_			*m_cxn = nullptr;
   DatagramFn		m_datagramFn;
   ReadyFn		m_readyFn;
@@ -103,13 +102,13 @@ private:
   ZmSemaphore		*m_closeWaiter = nullptr;
   unsigned		m_generation = 0;
   unsigned		m_closingGeneration = 0;
-  ZmAtomic<unsigned>	m_listening = 0;
-
-  // Rx-owned diagnostics.
   EndpointRxDiag	m_rxDiag;
 
-  // Tx-owned diagnostics.
+  // Tx thread exclusive
   EndpointTxDiag	m_txDiag;
+
+  // shared
+  ZmAtomic<unsigned>	m_listening = 0;
 };
 
 } // namespace Zquic

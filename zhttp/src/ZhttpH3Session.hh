@@ -113,6 +113,7 @@ private:
   }
 
 public:
+  // Rx thread exclusive
   State::T		state = State::Init;
   Link			*link_ = nullptr;
   StreamRef		control;
@@ -189,6 +190,7 @@ struct ServerStream {
   template <typename Stream>
   int request(Stream &, Parser &) { return 0; }
 
+  // Rx thread exclusive
   Parser	parser;
   bool		m_complete = false;
 };

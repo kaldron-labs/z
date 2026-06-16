@@ -74,6 +74,7 @@ struct Server {
   template <typename Link>
   int request(Link &, Parser &) { return 1; }
 
+  // Rx thread exclusive
   Parser	parser;
 };
 

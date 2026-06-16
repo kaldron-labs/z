@@ -202,6 +202,7 @@ public:
   }
 
 private:
+  // immutable
   LinkRef	m_link = nullptr;
 };
 
@@ -316,7 +317,8 @@ private:
     Rx::template recv<parseHdr<RxBufAlloc>, &Impl::recvRecord>(io);
   }
 
-  void connected_1(ZmRef<Cxn> cxn) { // runs on Ztls Rx thread
+  void connected_1(ZmRef<Cxn> cxn) {
+    // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS connected dispatch outside Rx thread", return);
     // idempotent
@@ -341,7 +343,8 @@ private:
     return n;
   }
 
-  void record_(ZmRef<ZiIOBuf> buf) { // runs on Ztls Rx thread
+  void record_(ZmRef<ZiIOBuf> buf) {
+    // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS record dispatch outside Rx thread", return);
     if (ZuUnlikely(!m_tls)) return;
@@ -353,7 +356,8 @@ private:
   }
 
 protected:
-  bool handshake_(ZmRef<ZiIOBuf> buf) { // Ztls Rx thread
+  bool handshake_(ZmRef<ZiIOBuf> buf) {
+    // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS handshake outside Rx thread", return false);
     const uint8_t *input = nullptr;
@@ -590,7 +594,8 @@ private:
       mx->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn)]() { });
     });
   }
-  void disconnected_(Cxn *cxn) { // Ztls Rx thread
+  void disconnected_(Cxn *cxn) {
+    // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnected dispatch outside Rx thread", return);
     if (m_cxn == cxn) m_cxn = nullptr;
@@ -647,6 +652,7 @@ private:
     }
 
   private:
+    // immutable
     Link	*m_link;
     uint64_t	m_gen = 0;
   };
@@ -655,14 +661,15 @@ public:
   auto txStream() { // App thread(s)
     return TxStream_<true>{*this};
   }
-  auto txStream_() { // Ztls Tx thread
+  auto txStream_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS txStream_ outside Tx thread", return TxStream_<false>{*this});
     return TxStream_<false>{*this};
   }
 
 protected:
-  bool updateKey_(bool requestUpdate = false) { // Ztls Rx thread
+  bool updateKey_(bool requestUpdate = false) {
+    // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS KeyUpdate outside Rx thread", return false);
     if (ZuUnlikely(!m_tls || !cipher_())) return false;
@@ -728,10 +735,11 @@ private:
   }
 
 protected:
-  void send_(ZmRef<ZiIOBuf> buf) { // Ztls Tx thread
+  void send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
     send_(ZuMv(buf), m_tlsGen.load_());
   }
-  void send_(ZmRef<ZiIOBuf> buf, uint64_t gen) { // Ztls Tx thread
+  void send_(ZmRef<ZiIOBuf> buf, uint64_t gen) {
+    // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS send_ outside Tx thread", return);
     if (ZuUnlikely(!buf || !buf->length)) return;
@@ -745,7 +753,8 @@ protected:
   }
 
 private:
-  void sendRx_(ZmRef<ZiIOBuf> buf, uint64_t gen) { // transitional legacy record path
+  void sendRx_(ZmRef<ZiIOBuf> buf, uint64_t gen) {
+    // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS legacy send outside Rx thread", return);
     if (ZuUnlikely(!buf || !buf->length)) return;
@@ -805,7 +814,8 @@ private:
     finalizeTxBuf_(pbuf, ZuMv(buf));
   }
 
-  int send_alert_(uint8_t level, uint8_t desc) { // Ztls Rx thread
+  int send_alert_(uint8_t level, uint8_t desc) {
+    // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS alert outside Rx thread", return PTLS_ERROR_LIBRARY);
     ptls_buffer_t pbuf;
@@ -939,7 +949,7 @@ public:
     m_disconnecting = 1;
     app()->rxInvoke([this]() { disconnect_(); });
   }
-  void disconnect_(bool notify = true) { // Ztls Rx thread
+  void disconnect_(bool notify = true) { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnect outside Rx thread", return);
     m_disconnecting = 1; // disconnect() might be bypassed
@@ -1001,11 +1011,13 @@ protected:
   }
 
 private:
+  // immutable
   App			*m_app = nullptr;
   bool			m_isServer = false;
+
+  // Rx thread exclusive
   ZmScheduler::Timer	m_reconnTimer;
 
-  // Ztls Rx thread
   struct AsyncJob : public ZmPolymorph {
     AsyncJob(
 	ZmRef<Impl> link_, ptls_t *tls_, ptls_async_job_t *job_,
@@ -1032,7 +1044,6 @@ private:
   };
 
   ptls_t		*m_tls = nullptr;
-  ZmAtomic<uint64_t>	m_tlsGen = 0;
   unsigned		m_headroom = 0;
   uint64_t		m_txSeqEst = 0;
   bool			m_txControlPending = false;
@@ -1042,7 +1053,8 @@ private:
   CxnRef		m_cxn = nullptr;
   RxStream		m_rxStream;
 
-  // Contended
+  // shared
+  ZmAtomic<uint64_t>	m_tlsGen = 0;
   ZmAtomic<unsigned>	m_disconnecting = 0;
 };
 
@@ -1099,7 +1111,7 @@ template <typename> friend class Client;
   const Host &server() const { return m_server; }
   uint16_t port() const { return m_port; }
 
-  void connect_() { // Ztls Rx thread
+  void connect_() { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS connect outside Rx thread", return);
     ZiIP ip = m_server;
@@ -1183,6 +1195,7 @@ public:
   }
 
 private:
+  // Rx thread exclusive
   ZmScheduler::Timer	m_reconnTimer;
   Ticket		m_ticket;
   size_t		m_maxEarlyData = 0;
@@ -1486,7 +1499,7 @@ private:
     }
   }
 
-  void final_() {
+  void final_() { // direct call from within rx thread
     stopAsyncLoop_();
     m_errorFn = ErrorFn{};
   }
@@ -1681,10 +1694,13 @@ private:
     m_cipherSuites[n] = nullptr;
   }
 
+  // immutable after init()
   ZiMultiplex			*m_mx = nullptr;
   unsigned			m_rxThread = 0;
   unsigned			m_txThread = 0;
   unsigned			m_asyncThread = 0;
+
+  // Rx thread exclusive after init()
   ZiEventLoop			m_eventLoop;
   bool				m_eventLoopInit = false;
   bool				m_eventLoopStarted = false;
@@ -1749,6 +1765,7 @@ protected:
   unsigned reconnFreq() const { return 0; } // default
 
 private:
+  // Rx thread exclusive
   Backend::PKey			*m_key = nullptr;
   Backend::SignCert		*m_sign = nullptr;
 };
@@ -1901,6 +1918,7 @@ protected:
   }
 
 private:
+  // Rx thread exclusive
   Backend::PKey			*m_key = nullptr;
   Backend::SignCert		*m_sign = nullptr;
   Backend::TicketKey		*m_ticketKey = nullptr;
