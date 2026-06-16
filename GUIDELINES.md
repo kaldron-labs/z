@@ -178,16 +178,25 @@ These guidelines extend `AGENTS.md`
 - Traits: `ZuTraits` provides the type traits used to distinguish string types, etc.
 
 ### Strings
-- arrays of chars trait as strings and interoperate
-- `ZuSpan`, `*Array`, and `*String` interoperate without explicit casts; avoid casts such as between `ZuCSpan` and `ZuBSpan`.
-- Z string types always cache length
-  - they will automatically `strlen` passed values if they trait as C strings
-- There are 3 groups of string types
-  - `*String`: by-value, potentially owning, null-terminated
-  - `*Array`: by-value, potentially owning, not null-terminated
-  - `ZtString` and `ZtArray` can shadow memory
-  - `ZtString` and `ZtBuiltin` have built-in storage
-  - `*Span`: by-reference, never owning, not-null-terminated
+- Z string types:
+  - always cache length
+  - all these types normally inter-convert without explicit casts
+    - they will automatically `strlen` a passed value if the value is a C string
+  - compile-time strings: `ZuString`
+  - string spans: `ZuSpan<const char>` aka `ZuCSpan`
+    - mutable spans are often used in Z: `ZuSpan<char>`
+  - fixed-width strings: `ZuArray<char, N>` aka `ZuCArray<N>`
+  - heap-allocated strings:
+    - `ZtString`: builtin size, null-terminated
+    - `ZtArray`: no builtin size, usually not null-terminated
+    - `ZtBuiltin`: `ZtArray` with builtin size
+  - bytes:
+    - spans: `ZuSpan<const uint8_t>` aka `ZuBSpan`.
+    - fixed-width: `ZuArray<uint8_t, N>` aka `ZuBArray<N>`
+    - heap-allocated: `ZtArray<uint8_t>` aka `ZtBArray`
+  - scratch strings/buffers:
+    - `ZtLocalString` (macro) - scratch on-stack null-terminated `ZtString` with heap fallback
+    - `ZtLocalArray` (macro) - scratch on-stack null-terminated `ZtArray` with heap fallback
 
 ### Compile-time data and matching
 - Use `ZuTypeList` and `ZuSeq` for compile-time tables, associative containers, and sequences.
