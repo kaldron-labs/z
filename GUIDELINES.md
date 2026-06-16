@@ -173,7 +173,7 @@ These guidelines extend `AGENTS.md`
 ### Assertions and type mechanics
 - Assertions: use `ZuAssert` at compile time; at run time use plain `assert` below `zm`, `ZmAssert` below `zi`, and `ZiAssert` in `zi` or above.
 - Use `ZiAssert` whenever run-time assertion failure needs graceful handling.
-- For complex template aliases, prefer `ZuDerive(x, ([complex template instantiation]))` over `using X = ...`; the explicit type ID helps compiler/linker symbol length handling.
+- For complex template aliases, prefer `ZuDerive(x, ([complex template instantiation]))` over `using X = ...`; the explicit type ID reduces compiler/linker symbol lengths and eases debugging.
 - Comparisons and sentinels: use `operator *` to detect sentinel null, use `ZuCmp` sentinel logic, and prefer `ZuCmp::cmp` over `operator <=>` because it returns plain `int`.
 - Traits: `ZuTraits` provides the type traits used to distinguish string types, etc.
 
@@ -197,6 +197,10 @@ These guidelines extend `AGENTS.md`
   - scratch strings/buffers:
     - `ZtLocalString` (macro) - scratch on-stack null-terminated `ZtString` with heap fallback
     - `ZtLocalArray` (macro) - scratch on-stack null-terminated `ZtArray` with heap fallback
+  - specific-purpose strings:
+    - `ZtString` and `ZtArray` can be tagged with a compile-time `ZmHeapID`
+    - certain types with specific heap IDs are re-used throughout the framework:
+      - `ZeString`: `ZtString` with heap ID for error messages, logs and diagnostics
 
 ### Compile-time data and matching
 - Use `ZuTypeList` and `ZuSeq` for compile-time tables, associative containers, and sequences.
