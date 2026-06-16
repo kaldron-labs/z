@@ -254,9 +254,9 @@ These guidelines extend `AGENTS.md`
   - `Timer`s must be cancelled with `del` before owner destruction during close/shutdown/stop to prevent stale pointer dereference
 #### Timer Teardown
 - timer teardown requires a 3-phase process, similar to I/O teardown (see below)
-  - 1. cancel the timer (`ZmScheduler::del`)
-  - 2. post a teardown continuation on the thread to drain any late callbacks
-  - 3. (in the continuation) complete the teardown with late callbacks drained
+  1. cancel the timer (`ZmScheduler::del`)
+  2. post a teardown continuation on the thread to drain any late callbacks
+  3. (in the continuation) complete the teardown with late callbacks drained
 - the continuation needs to be posted on the same thread the timer callback would run on
 - do NOT block except in the main thread
 - as with I/O buffers, timer callbacks are short-lived objects owned by longer-lived objects
