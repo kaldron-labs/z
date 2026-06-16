@@ -607,6 +607,17 @@ public:
   }
 
   uint64_t bytesInFlight() const { return m_bytesInFlight; }
+  ZuTime latestAckSentTime() const {
+    ZuTime t{0};
+    auto iter = m_packets.citer();
+    while (auto node = iter()) {
+      const SentPkt &p = node->data();
+      if (p.acked || p.lost || !p.inFlight || !p.ackEliciting)
+	continue;
+      if (!*t || p.sentTime > t) t = p.sentTime;
+    }
+    return t;
+  }
   unsigned acked() const { return m_acked; }
   unsigned lost() const { return m_lost; }
   unsigned retransmittable() const { return m_retransmittable; }

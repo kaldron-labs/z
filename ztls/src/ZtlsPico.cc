@@ -48,10 +48,42 @@ static_assert((ZiIOBuf_Align & (ZiIOBuf_Align - 1)) == 0,
 
 constexpr unsigned IOBufAlignBits = log2_align_(ZiIOBuf_Align);
 
+#if defined(__has_feature)
+# if __has_feature(address_sanitizer)
+#  define ZtlsPico_ASAN 1
+# endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+# define ZtlsPico_ASAN 1
+#endif
+#if !defined(ZtlsPico_ASAN)
+# define ZtlsPico_ASAN 0
+#endif
+
 #if Ztls_Fusion
 static_assert(IOBufAlignBits >= PTLS_X86_CACHE_LINE_ALIGN_BITS,
   "ZiIOBuf_Align must satisfy zpicotls fusion alignment");
 #endif
+
+static uint8_t *internal_alloc_(size_t capacity)
+{
+#if ZtlsPico_ASAN
+  if (ZuUnlikely(capacity > UINT32_MAX)) return nullptr;
+  return static_cast<uint8_t *>(
+    Zm::alignedAlloc<ZiIOBuf_Align>(unsigned(capacity)));
+#else
+  return static_cast<uint8_t *>(Zi::VHeap::valloc(capacity));
+#endif
+}
+
+static void internal_free_(void *ptr)
+{
+#if ZtlsPico_ASAN
+  Zm::alignedFree(ptr);
+#else
+  Zi::VHeap::vfree(ptr);
+#endif
+}
 
 static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
     uint8_t align_bits, int tx)
@@ -90,14 +122,14 @@ static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
     return pbuf->base;
   }
 
-  auto newp = static_cast<uint8_t *>(Zi::VHeap::valloc(capacity));
+  auto newp = internal_alloc_(capacity);
   if (ZuUnlikely(!newp)) {
     counters.internal_alloc_fail++;
     return nullptr;
   }
   if (pbuf->off) memcpy(newp, pbuf->base, pbuf->off);
   ptls_clear_memory(pbuf->base, pbuf->off);
-  if (pbuf->is_allocated) Zi::VHeap::vfree(pbuf->base);
+  if (pbuf->is_allocated) internal_free_(pbuf->base);
   pbuf->base = newp;
   pbuf->capacity = capacity;
   pbuf->is_allocated = 1;
@@ -114,7 +146,7 @@ static void buffer_free_(ptls_buffer_t *pbuf, int tx)
     counters.origin_free++;
     return;
   }
-  Zi::VHeap::vfree(pbuf->base);
+  internal_free_(pbuf->base);
   counters.internal_free++;
 }
 

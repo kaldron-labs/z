@@ -1278,7 +1278,11 @@ public:
     memset(&m_ctx, 0, sizeof(m_ctx));
   }
   ~Engine() {
-    if (m_ctx.certificates.list) ::free(m_ctx.certificates.list);
+    if (m_ctx.certificates.list) {
+      for (unsigned i = 0; i < m_ctx.certificates.count; ++i)
+	::free(m_ctx.certificates.list[i].base);
+      ::free(m_ctx.certificates.list);
+    }
     Backend::verify_cert_free(m_verify);
     Backend::cert_store_free(m_cacert);
   }

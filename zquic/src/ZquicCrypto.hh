@@ -288,6 +288,7 @@ public:
   bool rejectZeroRTT();
   bool completeHandshake();
   bool initTLS(const CryptoConfig &);
+  void resetTLS() { resetTLS_(); }
   int handleTLSMessage(
     ZiIOBuf *, size_t[5], size_t, ZuCSpan);
 
