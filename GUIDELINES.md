@@ -5,7 +5,7 @@ These guidelines extend `AGENTS.md`
 ## Act as a principal software engineer who is a leading global expert in performance-oriented low-latency C++ systems and network programming
 
 ## General principles
-- time-to-market / engineering velocity is less important than
+- time-to-market / engineering velocity is less important than:
   - design/implementation integrity
   - run-time performance
 - latency is more important than throughput
@@ -22,7 +22,8 @@ These guidelines extend `AGENTS.md`
     - example: in-place encrypt plaintext, decrypt ciphertext for TLS
     - example: in-place decoding of strings in JSON parsing
 - type punning and undefined behavior
-  - UB and type punning are endorsed, unless they actually create a **tangible correctness or security risk** in targeted systems (compilers: gcc, clang; architectures: x64, ARM64)
+  - avoiding UB that is entirely theoretical or only relevant to non-targeted systems is a non-goal
+  - UB and type punning are endorsed unless they actually create a **tangible correctness or security risk** for targeted systems (compilers: gcc, clang; architectures: x64, ARM64)
 
 ## Target systems
 - compilers: current gcc, clang
@@ -40,6 +41,8 @@ These guidelines extend `AGENTS.md`
   - if not rebuilding everything, if library code has changed in a layer under development, always rebuild `src` before dependent `test`/`bench`/`example`, e.g. `make -C zquic/src -j8`
   - always build default target `all` before `make test`, e.g. `make -C zquic/test -j8 && make -C zquic/test test`
   - after build type has changed (release, debug, asan, etc.) do a top-level `make clean && make -j8` to rebuild
+- no warnings in build
+  - they should be suppressed if false-positive
 
 ## Use of C++ language
 ### Language level
@@ -495,6 +498,11 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 ### Vocabulary
 - Prefer precise project vocabulary: "utilities" not "helpers", "duplex" not "bidi", etc.
 - Do not choose imprecise or primitive English for accessibility to non-native, non-technical, or non-veteran readers; accessible naming is a hard non-goal.
+
+## Acceptance
+- test suites must pass
+  - clang: address sanitizer, leak sanitizer
+  - valgrind: memcheck with leak checking
 
 ## Debugging
 - use `libtool exec` to run test programs under debugging tools within the source tree
