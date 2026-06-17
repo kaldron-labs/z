@@ -15,11 +15,11 @@ using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 struct App : public Zquic::Engine<App> {
   using Base = Zquic::Engine<App>;
 
-  App() : m_mx{mxParams_()} {
+  App(unsigned maxUDP = Zquic::MinUDPPayload) : m_mx{mxParams_()} {
     bool ok = m_mx.start();
     ZiAssert(ok, "Zquic", (), "stream test multiplexer start failed", return);
     if (ok)
-      ok = Base::init(Zquic::EngineParams(&m_mx, "3", "4"));
+      ok = Base::init(Zquic::EngineParams(&m_mx, "3", "4").maxUDP(maxUDP));
     ZiAssert(ok, "Zquic", (), "stream test app init failed", return);
   }
   ~App() {
@@ -226,6 +226,27 @@ struct TestLink :
   bool writePendingAck(Zquic::PktBuild &build) {
     return Base::appendPendingAck_(Zquic::CryptoLevel::OneRTT, build);
   }
+  Zquic::PktBudget sendBudget() const { return Base::sendBudget_(); }
+  void initServerPath() {
+    Base::initServerPathTx_(ZiSockAddr{}, ZiSockAddr{});
+  }
+  void pathReceived(unsigned bytes) { Base::recordPathRxTx_(bytes); }
+  bool pathSend(unsigned bytes) {
+    ZmRef<ZiIOBuf> buf = new Zquic::PktTxBufAlloc<>{nullptr};
+    buf->skip = 0;
+    buf->length = bytes;
+    return Base::sendPathPkt_(
+      ZuMv(buf), ZiSockAddr{},
+      [](ZmRef<ZiIOBuf>, ZiSockAddr) { return true; });
+  }
+  void validatePath() { Base::validatePathTx_(); }
+  void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
+  Zquic::PathDiag pathDiag() const { return Base::pathDiag_(); }
+  bool pathValidated() const { return Base::pathValidated_(); }
+  uint64_t pathAntiAmplification() const {
+    return Base::pathAntiAmplification_();
+  }
+  unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   Zquic::RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
   unsigned congestionAllowance() const { return Base::congestionAllowance_(); }
   bool ecnDisabled() const { return Base::ecnDisabled_(); }
@@ -825,6 +846,56 @@ void testCongestionBudgetGatesRuntimeSends()
   link.close();
 }
 
+void testActivePathRuntimeBudget()
+{
+  ZuTestScope(testActivePathRuntimeBudget);
+
+  {
+    App app{1360};
+    TestLink client{&app};
+    client.growActivePath(1360);
+    Zquic::PktBudget budget = client.sendBudget();
+    ZuCHECK(client.pathValidated() &&
+	client.activePathMaxUDP() == 1360 &&
+	budget.pmtu == 1360 &&
+	budget.limit() == 1360,
+      "active path max UDP did not drive runtime packet budget");
+    client.close();
+  }
+
+  App app;
+  TestLink server{&app, true};
+  server.initServerPath();
+  ZuCHECK(!server.pathValidated() &&
+      !server.pathAntiAmplification() &&
+      !server.pathSend(1),
+    "unvalidated server path sent without received bytes");
+
+  server.pathReceived(400);
+  ZuCHECK(server.pathAntiAmplification() == 1200 &&
+      server.pathSend(1000) &&
+      !server.pathSend(201) &&
+      server.pathSend(200) &&
+      !server.pathAntiAmplification(),
+    "unvalidated server path did not enforce 3x send budget");
+
+  Zquic::PathDiag diag = server.pathDiag();
+  ZuCHECK(diag.bytesRx == 400 && diag.bytesTx == 1200,
+    "active path byte accounting mismatch after budget exhaustion");
+
+  server.pathReceived(100);
+  ZuCHECK(server.pathAntiAmplification() == 300 &&
+      server.pathSend(300),
+    "received bytes did not expand server anti-amplification budget");
+
+  server.validatePath();
+  ZuCHECK(server.pathValidated() &&
+      server.pathAntiAmplification() == uint64_t(-1) &&
+      server.pathSend(Zquic::MinUDPPayload),
+    "address validation did not unlock active path send allowance");
+  server.close();
+}
+
 void testAckECNValidationDisablesECN()
 {
   ZuTestScope(testAckECNValidationDisablesECN);
@@ -1307,6 +1378,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRuntimePacketNumberLength);
   ZuTestCall(testLongHeaderCoalescing);
   ZuTestCall(testCongestionBudgetGatesRuntimeSends);
+  ZuTestCall(testActivePathRuntimeBudget);
   ZuTestCall(testAckECNValidationDisablesECN);
   ZuTestCall(testBlockedFrameDuplicateSuppression);
   ZuTestCall(testPeerStreamAcceptance);

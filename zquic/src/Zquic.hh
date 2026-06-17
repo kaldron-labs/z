@@ -2145,6 +2145,12 @@ protected:
   RuntimeDiag rxDiagSnapshot_() const { return {m_rxDiag, {}}; }
   RuntimeDiag txDiagSnapshot_() const { return {{}, m_txDiag}; }
   RuntimeDiag runtimeDiag_() const { return {m_rxDiag, m_txDiag}; }
+  PathDiag pathDiag_() const { return m_path.diag(); }
+  bool pathValidated_() const { return m_path.validated(); }
+  unsigned activePathMaxUDP_() const { return m_path.activeMaxUDP(); }
+  uint64_t pathAntiAmplification_() const {
+    return m_path.antiAmplificationRemaining();
+  }
   const Crypto &crypto_() const { return m_crypto; }
   void snapshotTxCrypto_(TxCryptoSnapshot &snapshot) const {
     for (unsigned i = 0; i < 3; ++i) {
@@ -2211,11 +2217,100 @@ protected:
   void setEcnDisabled_(bool b = true) { m_path.setEcnDisabled(b); }
   PktBudget sendBudget_() const {
     PktBudget budget;
-    unsigned maxUDP = app()->maxUDP();
-    budget.pmtu = budget.antiAmplification = maxUDP;
+    unsigned maxUDP = m_path.activeMaxUDP();
+    budget.pmtu = maxUDP;
+    budget.antiAmplification = m_path.sendAllowance();
     unsigned allowance = congestionAllowance_();
     budget.congestion = allowance < maxUDP ? allowance : maxUDP;
     return budget;
+  }
+  void resetPath_() {
+    m_path = m_isServer ?
+      Path::server(ZiSockAddr{}, ZiSockAddr{}) :
+      Path::client(ZiSockAddr{}, ZiSockAddr{});
+    m_path.configuredMaxUDP(app()->maxUDP());
+    m_path.peerMaxUDP(app()->maxUDP());
+    if (!m_isServer) m_path.validated();
+  }
+  void initClientPath_(ZiSockAddr local, ZiSockAddr remote) {
+    app()->txRun([
+      link = ZmMkRef(impl()),
+      local = ZuMv(local),
+      remote = ZuMv(remote)
+    ]() mutable {
+      link->initClientPathTx_(ZuMv(local), ZuMv(remote));
+    });
+  }
+  void initServerPath_(ZiSockAddr local, ZiSockAddr remote) {
+    app()->txRun([
+      link = ZmMkRef(impl()),
+      local = ZuMv(local),
+      remote = ZuMv(remote)
+    ]() mutable {
+      link->initServerPathTx_(ZuMv(local), ZuMv(remote));
+    });
+  }
+  void initClientPathTx_(ZiSockAddr local, ZiSockAddr remote) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC client path initialization outside Tx thread", return);
+    m_path = Path::client(ZuMv(local), ZuMv(remote));
+    m_path.configuredMaxUDP(app()->maxUDP());
+    m_path.peerMaxUDP(app()->maxUDP());
+    m_path.validated();
+  }
+  void initServerPathTx_(ZiSockAddr local, ZiSockAddr remote) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC server path initialization outside Tx thread", return);
+    m_path = Path::server(ZuMv(local), ZuMv(remote));
+    m_path.configuredMaxUDP(app()->maxUDP());
+    m_path.peerMaxUDP(app()->maxUDP());
+  }
+  void updatePeerPathMaxUDP_() {
+    if (!m_crypto.peerTransportParamsReceived()) return;
+    uint64_t maxUDP = m_crypto.peerTransportParams().maxUDPPayloadSize;
+    if (maxUDP > BufSize) maxUDP = BufSize;
+    app()->txRun([link = ZmMkRef(impl()), maxUDP = unsigned(maxUDP)]() mutable {
+      link->m_path.peerMaxUDP(maxUDP);
+    });
+  }
+  void validatePath_() {
+    app()->txRun([link = ZmMkRef(impl())]() mutable {
+      link->validatePathTx_();
+    });
+  }
+  void validatePathTx_() { m_path.validated(); }
+  void recordPathRx_(unsigned bytes) {
+    app()->txRun([link = ZmMkRef(impl()), bytes]() mutable {
+      link->recordPathRxTx_(bytes);
+    });
+  }
+  void recordPathRxTx_(unsigned bytes) { m_path.received(bytes); }
+#ifdef ZDEBUG
+  void growActivePathForTest_(unsigned size) {
+    m_path.startProbe(size);
+    m_path.probeAcked();
+  }
+#endif
+  template <typename SendPkt>
+  bool sendPathPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC path packet send outside Tx thread", return false);
+    if (!buf) return false;
+    unsigned bytes = buf->length;
+    if (!m_path.canSend(bytes)) return false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
+    return m_path.reserveSend(bytes);
+  }
+  template <typename SendPkt>
+  bool sendPathPktApp_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC path packet send outside Tx thread", return false);
+    if (!buf) return false;
+    unsigned bytes = buf->length;
+    if (!m_path.canSend(bytes)) return false;
+    bool sent = false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr), sent)) return false;
+    return !sent || m_path.reserveSend(bytes);
   }
   unsigned txPNLength_(CryptoLevel::T level) const {
     uint64_t largestAcked = m_txLargestAcked[level];
@@ -2250,6 +2345,7 @@ protected:
     m_controlQueue.clean();
     resetPktRuntime_();
     m_congestion = NewReno{app()->maxUDP()};
+    resetPath_();
     updateCongestionDiag_();
   }
 
@@ -2536,6 +2632,7 @@ protected:
       m_peerBidiLimit.set(params.initialMaxStreamsBidi);
       m_peerUniLimit.set(params.initialMaxStreamsUni);
     }
+    updatePeerPathMaxUDP_();
     m_established = 1;
     discardPktSpace_(CryptoLevel::Initial);
     discardPktSpace_(CryptoLevel::Handshake);
@@ -3813,6 +3910,7 @@ protected:
       return;
     }
     m_rxDiag.bytesRx += d.buf->length;
+    recordPathRx_(d.buf->length);
     bool ok = true;
     unsigned offset = 0;
     while (offset < d.buf->length) {
@@ -4601,6 +4699,12 @@ public:
   EndpointDiag cxnDiag() const { return m_endpoint.diag(); }
   EndpointDiag endpointDiag() const { return m_endpoint.diag(); }
   RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
+  PathDiag pathDiag() const { return Base::pathDiag_(); }
+  bool pathValidated() const { return Base::pathValidated_(); }
+  unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
+  uint64_t pathAntiAmplification() const {
+    return Base::pathAntiAmplification_();
+  }
   const Crypto &crypto() const { return Base::crypto_(); }
 
   bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
@@ -4855,6 +4959,7 @@ private:
       m_peerParamsValidated = true;
     }
     Base::establishRuntime_();
+    Base::validatePath_();
     impl()->connected(Zi::Connected{
       .transport = Zi::Transport::QUIC,
       .alpn = Base::negotiatedProtocol_(),
@@ -4917,7 +5022,11 @@ private:
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
     ok = Base::flushCoalescedInitial_([this](auto buf, ZiSockAddr addr_) {
-      return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
+      return Base::sendPathPkt_(
+	ZuMv(buf), ZuMv(addr_),
+	[this](auto buf_, ZiSockAddr addr__) {
+	  return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	});
     }) && ok;
     Base::endLongCoalesce_();
     return ok;
@@ -5062,7 +5171,11 @@ private:
 	return Base::holdInitialForCoalesce_(
 	  ZuMv(buf), ZuMv(addr_),
 	  [this](auto buf_, ZiSockAddr addr__) {
-	    return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	    return Base::sendPathPkt_(
+	      ZuMv(buf_), ZuMv(addr__),
+	      [this](auto buf__, ZiSockAddr addr___) {
+		return m_endpoint.send(ZuMv(buf__), ZuMv(addr___));
+	      });
 	  });
       });
   }
@@ -5095,7 +5208,11 @@ private:
 	return Base::sendHandshakeCoalesced_(
 	  ZuMv(buf), ZuMv(addr_),
 	  [this](auto buf_, ZiSockAddr addr__) {
-	    return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	    return Base::sendPathPkt_(
+	      ZuMv(buf_), ZuMv(addr__),
+	      [this](auto buf__, ZiSockAddr addr___) {
+		return m_endpoint.send(ZuMv(buf__), ZuMv(addr___));
+	      });
 	  });
       });
   }
@@ -5131,7 +5248,11 @@ private:
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return m_endpoint.allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
+	return Base::sendPathPkt_(
+	  ZuMv(buf), ZuMv(addr_),
+	  [this](auto buf_, ZiSockAddr addr__) {
+	    return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	  });
       });
   }
 
@@ -5275,6 +5396,7 @@ private:
     m_notifyEndpointDown = true;
     ++m_udpReadyCount;
     Base::endpointReady_();
+    Base::initClientPath_(ep->local(), ep->remote());
     startHandshake_();
   }
 
@@ -5334,6 +5456,12 @@ public:
 
   bool established() const { return Base::runtimeEstablished_(); }
   RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
+  PathDiag pathDiag() const { return Base::pathDiag_(); }
+  bool pathValidated() const { return Base::pathValidated_(); }
+  unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
+  uint64_t pathAntiAmplification() const {
+    return Base::pathAntiAmplification_();
+  }
   const Crypto &crypto() const { return Base::crypto_(); }
   const ZiSockAddr &peer() const { return m_peerAddr; }
 
@@ -5491,6 +5619,7 @@ private:
       return;
     }
     Base::establishRuntime_();
+    Base::validatePath_();
     impl()->connected(Zi::Connected{
       .transport = Zi::Transport::QUIC,
       .alpn = Base::negotiatedProtocol_(),
@@ -5559,7 +5688,11 @@ private:
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
     ok = Base::flushCoalescedInitial_([this](auto buf, ZiSockAddr addr_) {
-      return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
+      return Base::sendPathPktApp_(
+	ZuMv(buf), ZuMv(addr_),
+	[this](auto buf_, ZiSockAddr addr__, bool &sent) {
+	  return sendPktPath_(ZuMv(buf_), ZuMv(addr__), sent);
+	});
     }) && ok;
     Base::endLongCoalesce_();
     return ok;
@@ -5582,6 +5715,14 @@ private:
       [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
 	return sendShortPkt_(build, ZuMv(addr_), frame_);
       });
+  }
+
+  bool sendPktPath_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool &sent) {
+    sent = false;
+    if (!app()->sendPkt(buf)) return true;
+    sent = static_cast<Server<App, Impl> *>(app())->m_endpoint.send(
+      ZuMv(buf), ZuMv(addr));
+    return sent;
   }
 
   void txDrained_() {
@@ -5704,7 +5845,11 @@ private:
 	return Base::holdInitialForCoalesce_(
 	  ZuMv(buf), ZuMv(addr_),
 	  [this](auto buf_, ZiSockAddr addr__) {
-	    return app()->sendPkt_(ZuMv(buf_), ZuMv(addr__));
+	    return Base::sendPathPktApp_(
+	      ZuMv(buf_), ZuMv(addr__),
+	      [this](auto buf__, ZiSockAddr addr___, bool &sent) {
+		return sendPktPath_(ZuMv(buf__), ZuMv(addr___), sent);
+	      });
 	  });
       });
   }
@@ -5736,7 +5881,11 @@ private:
 	return Base::sendHandshakeCoalesced_(
 	  ZuMv(buf), ZuMv(addr_),
 	  [this](auto buf_, ZiSockAddr addr__) {
-	    return app()->sendPkt_(ZuMv(buf_), ZuMv(addr__));
+	    return Base::sendPathPktApp_(
+	      ZuMv(buf_), ZuMv(addr__),
+	      [this](auto buf__, ZiSockAddr addr___, bool &sent) {
+		return sendPktPath_(ZuMv(buf__), ZuMv(addr___), sent);
+	      });
 	  });
       });
   }
@@ -5773,7 +5922,11 @@ private:
 	if (recordRefs)
 	  for (unsigned i = 0; i < recordRefs->count(); ++i)
 	    if (!app()->sendFrame((*recordRefs)[i])) return true;
-	return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
+	return Base::sendPathPktApp_(
+	  ZuMv(buf), ZuMv(addr_),
+	  [this](auto buf_, ZiSockAddr addr__, bool &sent) {
+	    return sendPktPath_(ZuMv(buf_), ZuMv(addr__), sent);
+	  });
       });
   }
 
@@ -5830,6 +5983,8 @@ private:
 
   bool received_(Datagram d) {
     ZiSockAddr addr = d.addr;
+    if (!Base::runtimeHandshakeStarted_() && d.buf)
+      Base::initServerPath_(app()->local(), d.addr);
     Base::receiveDatagram_(
       ZuMv(d),
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
