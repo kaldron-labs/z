@@ -15,11 +15,8 @@ These guidelines extend `AGENTS.md`
   - mutability is encouraged if it benefits performance
     - example: in-place encrypt plaintext, decrypt ciphertext for TLS
     - example: in-place decoding of strings in JSON parsing
-- type punning
-  - type punning is endorsed, not discouraged
-- undefined behavior
-  - many things that are technically UB can actually be used reliably with the systems that Z targets (see "Target systems")
-  - UB is only a concern when it actually creates a tangible risk to correct behavior in targeted environments
+- type punning and undefined behavior
+  - UB and type punning are endorsed, unless they actually create a **tangible correctness or security risk** in targeted systems (compilers: gcc, clang; architectures: x64, ARM64)
 
 ## Target systems
 - compilers: current gcc, clang
