@@ -34,13 +34,15 @@ public:
   using TxDrainedFn = ZmFn<void()>;
 
   Endpoint() = default;
+  explicit Endpoint(ZiMultiplex *mx) : m_mx{mx} { }
   ~Endpoint() { closeUDP(); }
 
   Endpoint(const Endpoint &) = delete;
   Endpoint &operator =(const Endpoint &) = delete;
 
+  bool init(ZiMultiplex *);
+
   bool openUDP(
-    ZiMultiplex *mx,
     PathMode::T mode,
     ZiIP localIP, uint16_t localPort,
     ZiIP remoteIP, uint16_t remotePort,
@@ -59,6 +61,7 @@ public:
   const ZiSockAddr &remote() const { return m_remote; }
   PathMode::T mode() const { return m_mode; }
   EndpointDiag diag() const { return {m_rxDiag, m_txDiag}; }
+  SockDiag sockDiag() const { return m_sockDiag; }
   void failure() { ++m_rxDiag.failures; }
 
   void datagramFn(DatagramFn fn) { m_datagramFn = ZuMv(fn); }
@@ -66,6 +69,7 @@ public:
     return new TxPktAlloc{this};
   }
   bool send(ZmRef<ZiIOBuf>, ZiSockAddr);
+  PathHint pathHint();
 
   void inject(Datagram datagram) { received_(ZuMv(datagram)); }
 
@@ -85,11 +89,12 @@ private:
     return new RxPktAlloc{this};
   }
 
-  // immutable after openUDP()
+  // immutable after init()
   ZiMultiplex		*m_mx = nullptr;
   PathMode::T		m_mode = PathMode::ServerUnconnected;
   ZiSockAddr		m_local;
   ZiSockAddr		m_remote;
+  SockConfig		m_sockConfig;
 
   // Rx thread exclusive
   Cxn_			*m_cxn = nullptr;
@@ -103,12 +108,14 @@ private:
   unsigned		m_generation = 0;
   unsigned		m_closingGeneration = 0;
   EndpointRxDiag	m_rxDiag;
+  SockDiag		m_sockDiag;
 
   // Tx thread exclusive
   EndpointTxDiag	m_txDiag;
 
   // shared
   ZmAtomic<unsigned>	m_listening = 0;
+  ZmAtomic<unsigned>	m_open = 0;
 };
 
 } // namespace Zquic

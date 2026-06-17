@@ -17,6 +17,7 @@
 #endif
 
 #include <zlib/ZiDaemon.hh>
+#include <zlib/ZmRandom.hh>
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
 #include <zlib/Zquic.hh>
@@ -71,15 +72,40 @@ void usage(int code = 1)
     "  --debug                    enable ZiMultiplex and HTTP/3 debug logging\n"
     "  --frag                     fragment ZiMultiplex I/O in debug builds\n"
     "  --yield                    yield in ZiMultiplex in debug builds\n"
+#ifdef ZiMultiplex_DEBUG
+    "  --quic-rx-drop=N%          randomly drop N% of received QUIC UDP packets\n"
+    "  --quic-tx-drop=N%          randomly drop N% of transmitted QUIC UDP packets\n"
+    "  --quic-diag=N              print HTTP/3 QUIC counters every N seconds\n"
+#endif
     "  -h, --help                 show help\n" << std::flush;
   ::exit(code);
 }
+
+#ifdef ZiMultiplex_DEBUG
+bool parseDrop(ZuCSpan s, double &drop)
+{
+  drop = 0.0;
+  if (!s) return true;
+  if (s.length() < 2 || s[s.length() - 1] != '%') return false;
+  ZuBox<double> pct;
+  if (pct.scan(s.data(), s.length() - 1) != s.length() - 1) return false;
+  double v = pct;
+  if (v < 0.0 || v > 100.0) return false;
+  drop = v * 0.01;
+  return true;
+}
+#endif
 
 bool loadOptions(Options &options, int argc, char **argv)
 {
   bool help = false;
   if (!Zhttpd::loadOptions(options, argc, argv, help)) return false;
   if (help) usage(0);
+#ifdef ZiMultiplex_DEBUG
+  double drop;
+  if (!parseDrop(options.quicRxDrop, drop)) return false;
+  if (!parseDrop(options.quicTxDrop, drop)) return false;
+#endif
   return true;
 }
 
@@ -640,8 +666,45 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
   uint64_t maxStreamData() const { return H3StreamDataMax; }
   uint64_t maxStreamsBidi() const { return H3BidiMax; }
   uint64_t maxStreamsUni() const { return H3UniMax; }
+#ifdef ZiMultiplex_DEBUG
+  void dropRates() {
+    parseDrop(state->options.quicRxDrop, m_rxDrop);
+    parseDrop(state->options.quicTxDrop, m_txDrop);
+  }
+  void filters() {
+    auto mx = this->mx();
+    ZiAssert(mx, "zhttpd", (), "H3 server filters before initialization",
+      return);
+    if (m_rxDrop)
+      mx->rxFilter(FilterFn{this, [](H3Server *server,
+	  ZiConnection *cxn, uint8_t *data, unsigned len) {
+	(void)data; (void)len;
+	if (ZuUnlikely(!cxn->info().options.udp())) return false;
+	return server->m_rng.rand() < server->m_rxDrop;
+      }});
+    if (m_txDrop)
+      mx->txFilter(FilterFn{this, [](H3Server *server,
+	  ZiConnection *cxn, uint8_t *data, unsigned len) {
+	(void)data; (void)len;
+	if (ZuUnlikely(!cxn->info().options.udp())) return false;
+	return server->m_rng.rand() < server->m_txDrop;
+      }});
+  }
+  void clearFilters() {
+    auto mx = this->mx();
+    if (!mx) return;
+    if (m_rxDrop) mx->rxFilter({});
+    if (m_txDrop) mx->txFilter({});
+  }
+  void printDiag();
+#endif
 
   State	*state = nullptr;
+#ifdef ZiMultiplex_DEBUG
+  double m_rxDrop = 0.0;
+  double m_txDrop = 0.0;
+  ZmRandom m_rng;
+#endif
 };
 
 struct H3ServerStream :
@@ -731,6 +794,84 @@ ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &info)
   }));
   return new Link{this, state, remote};
 }
+
+#ifdef ZiMultiplex_DEBUG
+void H3Server::printDiag()
+{
+  Zquic::EndpointDiag diag = this->endpointDiag();
+  unsigned active = state ? state->active.load_() : 0;
+  uint64_t requests = state ? state->requests.load_() : 0;
+  uint64_t errors = state ? state->errors.load_() : 0;
+  unsigned links = 0;
+  uint64_t packetsRx = 0, packetsTx = 0;
+  uint64_t streamRx = 0, streamTx = 0;
+  uint64_t pto = 0, retx = 0, pc = 0;
+  uint64_t cwnd = 0, ssthresh = 0, bif = 0;
+  uint64_t pktIF = 0;
+  uint64_t sentPkts = 0, retxPend = 0, retxTotal = 0;
+  bool ptoTimer = false, lossTimer = false;
+  this->allLinks([&](const ZmRef<Link> &link) {
+    if (!link) return;
+    Zquic::RuntimeDiag d = link->runtimeDiag();
+    ++links;
+    packetsRx += d.packetsRx;
+    packetsTx += d.packetsTx;
+    streamRx += d.streamBytesRx;
+    streamTx += d.streamBytesTx;
+    pto += d.ptoCount;
+    retx += d.retransmittedFrames;
+    pc += d.persistentCongestion;
+    cwnd += d.congestionWindow;
+    ssthresh += d.congestionSSThresh;
+    bif += d.congestionBytesInFlight;
+    ptoTimer = ptoTimer || d.ptoTimerActive;
+    lossTimer = lossTimer || d.lossTimerActive;
+    for (unsigned i = 0; i < Zquic::RuntimeTxDiag::Spaces; ++i) {
+      pktIF += d.pktBytesInFlight[i];
+      sentPkts += d.sentPackets[i];
+      retxPend += d.retransmitPending[i];
+      retxTotal += d.retransmittable[i];
+    }
+  });
+  ZiLOG(Error, "zhttpd", ([
+    active, requests, errors, links,
+    datagramsRx = diag.datagramsRx, datagramsTx = diag.datagramsTx,
+    bytesRx = diag.bytesRx, bytesTx = diag.bytesTx,
+    txBackPressure = diag.txBackPressure,
+    failures = diag.failures,
+    packetsRx, packetsTx, streamRx, streamTx, pto, retx,
+    ptoTimer, lossTimer, pktIF, sentPkts, retxPend, retxTotal,
+    cwnd, ssthresh, pc, bif
+  ](auto &s) {
+    s << "h3 diag active=" << active <<
+      " requests=" << requests <<
+      " errors=" << errors <<
+      " links=" << links <<
+      " datagramsRx=" << datagramsRx <<
+      " datagramsTx=" << datagramsTx <<
+      " bytesRx=" << bytesRx <<
+      " bytesTx=" << bytesTx <<
+      " txBackPressure=" << txBackPressure <<
+      " failures=" << failures <<
+      " packetsRx=" << packetsRx <<
+      " packetsTx=" << packetsTx <<
+      " streamRx=" << streamRx <<
+      " streamTx=" << streamTx <<
+      " pto=" << pto <<
+      " retx=" << retx <<
+      " ptoTimer=" << unsigned(ptoTimer) <<
+      " lossTimer=" << unsigned(lossTimer) <<
+      " pktIF=" << pktIF <<
+      " sentPkts=" << sentPkts <<
+      " retxPend=" << retxPend <<
+      " retxTotal=" << retxTotal <<
+      " cwnd=" << cwnd <<
+      " ssthresh=" << ssthresh <<
+      " pc=" << pc <<
+      " bif=" << bif;
+  }));
+}
+#endif
 
 H3ServerStream::H3Cxn &H3ServerStream::h3Cxn() const
 {
@@ -886,6 +1027,9 @@ int main(int argc, char **argv)
     tlsInit = true;
   }
   if (state.options.http3) {
+#ifdef ZiMultiplex_DEBUG
+    h3.dropRates();
+#endif
     ZuCSpan alpn[] = { "h3" };
     if (!h3.init(
 	  Zquic::ServerParams(&mx, "3", "4")
@@ -900,6 +1044,9 @@ int main(int argc, char **argv)
       ZiLog::stop();
       return 1;
     }
+#ifdef ZiMultiplex_DEBUG
+    h3.filters();
+#endif
     h3Init = true;
   }
   if (!httpInit && !tlsInit && !h3Init) {
@@ -916,8 +1063,21 @@ int main(int argc, char **argv)
     state.errors = 1;
     state.done.post();
   }
-  state.done.wait();
-  if (h3Init) h3.final();
+#ifdef ZiMultiplex_DEBUG
+  if (h3Init && state.options.quicDiag) {
+    for (;;) {
+      if (!state.done.timedwait(Zm::now(state.options.quicDiag))) break;
+      h3.printDiag();
+    }
+  } else
+#endif
+    state.done.wait();
+  if (h3Init) {
+#ifdef ZiMultiplex_DEBUG
+    h3.clearFilters();
+#endif
+    h3.final();
+  }
   if (tlsInit) tls.final();
   if (httpInit) http.final();
   mx.stop();

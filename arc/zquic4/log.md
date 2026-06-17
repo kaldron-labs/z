@@ -109,3 +109,53 @@ CID handling remains conservative for this first migration step.  Runtime setup 
 `ZquicStreamTest` now covers the path-validation state machine directly: 8-byte challenge generation, candidate creation from a new remote address, active-path retention before validation, unmatched PATH_RESPONSE ignore, duplicate candidate observation suppression, matching PATH_RESPONSE promotion, and timeout retaining the old active path.  The direct unit fixture uses a test-only no-scheduler entry point so it exercises state transitions without arming raw-pointer scheduler timers on stack-owned links; runtime timer firing remains covered by the existing path-validation timer inventory test.
 
 Validation was performed with the configured AddressSanitizer/LeakSanitizer build: `git diff --check`, focused `ZquicStreamTest`, `make -C zquic/test test`, and dependent `make -C zhttp/test test`.  zhttp interop showed non-reproducing transient failures in `ZhttpMatrixTest` and `Zhttp3InteropTest`; direct/rerun evidence isolated one direct nonzero exit to missing out-of-Makefile LSan suppressions, and the final `make -C zhttp/test test` passed with the Makefile sanitizer environment.
+
+## Wire PMTUD into runtime
+
+Runtime PMTUD is now connected to protected packet sending and recovery.  Sent packet metadata carries a PMTUD probe size, ACK/loss processing reports probe outcomes back to the active `Path`, and NewReno accounting releases PMTUD probe bytes without using probe loss to reduce cwnd.  Packet threshold loss, time threshold loss, and ACK handling share the same `PktTxUpdate` path so probe ACK/loss handling remains aligned with normal sent-packet retirement.
+
+Tx now schedules PMTUD probes from the active path and emits padded ack-eliciting probe packets when path, anti-amplification, and congestion budgets allow.  Probe packets are marked at send time, padded to the target UDP payload size, and use the active path PMTUD state to grow or retry the usable payload size.  Runtime PMTUD timer expiry calls the path probe-expiry state machine and requeues work when another probe is due.
+
+Endpoint UDP setup now enables the socket diagnostics needed for path hints where supported, and runtime exposes endpoint path hints/diagnostics for tests and future production handling.  Send-too-big and kernel MTU hint plumbing feeds the active path PMTUD state without inventing a second PMTU algorithm.
+
+Coverage was added to `ZquicLoopTest` for successful probe growth, failed probe retry, blackhole fallback, send-too-big/kernel hint handling, and the rule that PMTUD probe loss must not collapse congestion state.  Focused validation covered `ZquicLoopTest`, `ZquicRecoveryTest`, and `ZquicPMTUDTest` before continuing to the later plans.
+
+## Emit RESET_STREAM and STOP_SENDING frames
+
+Local stream reset and stop-sending now use the normal scheduler, sent-frame, ACK, and loss machinery.  `ControlFrame` and `SentFrameRef` carry RESET_STREAM and STOP_SENDING fields, and sent-frame keys include enough control metadata to distinguish stream control obligations from other frames during ACK/loss filtering.
+
+Application-initiated `Stream::reset()` and `Stream::stop()` update stream state, queue the corresponding control frame, and suppress stale stream/FIN output once reset state makes normal stream data irrelevant.  Loss processing rebuilds reset/stop frames while they remain valid, and ACK processing clears the retransmission obligation through the existing sent-reference retirement path.
+
+The implementation keeps the frame writers in `FrameCodec` as the single encoding path and extends control retransmit building rather than adding a parallel stream-control sender.  This keeps local reset/stop behavior consistent with PATH_RESPONSE, MAX_DATA, and other retransmittable control frames.
+
+`ZquicStreamTest` now covers local RESET_STREAM send, local STOP_SENDING send, ACK clearing, loss-triggered requeue/retransmit, and preservation of peer RESET_STREAM final-size validation.
+
+## Add closed-stream and suspicious-remote rate limiting
+
+Receive-side stream validation now distinguishes ordinary duplicate stream data from suspicious closed-stream or invalid stream activity.  Duplicate STREAM frames still go through the existing receive-queue fast path and remain non-fatal, while closed-stream MAX_STREAM_DATA, STREAM_DATA_BLOCKED, duplicate RESET_STREAM, and invalid final-size cases are classified explicitly.
+
+Runtime diagnostics gained receive counters for invalid stream frames, closed-stream frames, and suspicious stream closes.  A small named threshold bounds repeated invalid remote activity so the connection emits one deterministic close/error path instead of repeatedly doing expensive work or queuing repeated closes for the same class of peer behavior.
+
+Closed local send-stream MAX_STREAM_DATA and STREAM_DATA_BLOCKED frames are ignored after counting.  Duplicate RESET_STREAM with the same final size is ignored after counting, while a duplicate reset that changes final size remains a transport `FinalSize` error.  Flow-control and final-size protocol errors still close immediately; the new classification does not hide real protocol violations.
+
+`ZquicStreamTest` now exercises closed-stream MAX_STREAM_DATA, closed-stream STREAM_DATA_BLOCKED, duplicate RESET_STREAM with matching and mismatched final size, ordinary duplicate STREAM data, and repeated suspicious activity tripping the deterministic close threshold.
+
+## Improve application callback/error surface
+
+The CRTP application surface now exposes explicit hooks for stream and connection events that previously disappeared into internal state transitions.  Base `Link` defaults were added for stream open, stream data, reset received/sent, stop-sending received/sent, flow-blocked notifications, transport close, stateless reset, path update, and migration failure.
+
+Default handlers are intentionally harmless but no longer silent: runtime diagnostics now include unhandled application-event counters so applications can discover when an event path is using the base default.  Concrete applications can override only the hooks they care about; no virtual dispatch or compatibility wrapper layer was added.
+
+Callbacks are wired after internal state has been updated and with stable metadata.  Stream callbacks receive stream references or stable stream IDs plus error/final-size data, flow-blocked callbacks identify the blocked frame class and limit, transport close callbacks report frame type and transport error, stateless reset detection calls the hook on detection, and path callbacks report promoted or failed local/remote addresses after validation state changes.
+
+`ZquicAPITest` now verifies callback coverage for local and peer stream open/data, peer reset and stop-sending, local reset and stop-sending, flow blocked, transport close, stateless reset, path promotion, migration failure, and default unhandled-event diagnostics.  Existing stream, loop, recovery, and runtime tests were rebuilt and run directly while this surface was integrated.
+
+## Harden HTTP/3 loss testing and scheduler fairness
+
+The remaining scheduler hot spots were bounded or moved back through the appropriate shard scheduler.  Stream receive queue continuations now post through `rxRun`, ACK/crypto dequeue callbacks are installed by runtime links, queued local stream opens are capped per turn and reposted, control-frame enqueue dedup scans are bounded, and recovery sent-packet scans process work in batches before rescheduling.  Test-only scheduler deficiencies were fixed in the mock scheduler instead of compromising runtime `Zquic.hh` paths.
+
+Debug-only QUIC packet-drop hooks now live on `ZiMultiplex` as mutable `rxFilter(FilterFn)` and `txFilter(FilterFn)` setters, with clearing done by passing `{}`.  `zhttp` and `zhttpd` expose `--quic-rx-drop=N%`, `--quic-tx-drop=N%`, and `--quic-diag=N`; client/server filters are installed after engine initialization using the stable engine mux from `this->mx()`, not by passing a mux through endpoint-specific code.
+
+The Caddy 5% receive-drop stall was reproduced with pcap and one-second QUIC diagnostics.  The stalled connection had active H3 requests, no packet movement, no local bytes in flight, no PTO timer, and no retransmit backlog, so the multi-request H3 client now treats that quiet state as a reconnectable stall before the 15s hard timeout.  The same diagnostic path prints active request counters and stream state so future stalls are visible without attaching a debugger.
+
+Validation was performed with the configured AddressSanitizer/LeakSanitizer build: `git diff --check`, focused `ZquicRecoveryTest`, `ZquicRuntimeTest`, and `ZquicStreamTest`, `zhttp`/`zhttpd` rebuilds, `ZhttpCaddy/H3/j10n1000` with 5% Rx drop, repeated Caddy 5% Rx+Tx drop, and `ZhttpZhttpd/H3/j10n1000` with 5% Rx-only and combined 5% Rx+Tx drops.  The Caddy combined-loss runs completed under 8s after reconnect handling.

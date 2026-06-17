@@ -243,11 +243,18 @@ int CryptoStream::receive(
 	}))
     return -1;
 
+  if (m_asyncDelivery) resumeReadyDequeue_();
   if (diag) diag->cryptoBytesRx += bytes;
-  if (m_delivery.length())
-    contiguous = ZuCSpan{
-      reinterpret_cast<const char *>(m_delivery.data()), m_delivery.length()};
+  if (!m_asyncDelivery && m_delivery.length())
+    contiguous = ZuCSpan{m_delivery.data(), m_delivery.length()};
   return 0;
+}
+
+void CryptoStream::resumeReadyDequeue_()
+{
+  if (!m_rxQueue.count_()) return;
+  if (!m_rxQueue.has(m_rxQueue.head())) return;
+  Rx::resumeDequeue();
 }
 
 void CryptoStream::appendDelivery_(const uint8_t *p, uint64_t length)
@@ -255,7 +262,7 @@ void CryptoStream::appendDelivery_(const uint8_t *p, uint64_t length)
   if (!p || !length) return;
   uint64_t n = m_delivery.length();
   ZiAssert(n + length <= MaxBuffered, "Zquic", (n, length),
-    "CRYPTO delivery overflow", return);
+	    "CRYPTO delivery overflow", return);
   m_delivery.append(p, length);
 }
 
@@ -266,6 +273,8 @@ void CryptoStream::process(Msg *node)
   if (!data.buf || !data.bytes) return;
   const uint8_t *p = data.buf->data_() + data.bufOffset;
   appendDelivery_(p, data.bytes);
+  if (m_asyncDelivery)
+    m_deliveryFn(ZuCSpan{p, unsigned(data.bytes)});
   m_rxOffset += data.bytes;
 }
 

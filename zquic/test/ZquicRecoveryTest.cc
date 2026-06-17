@@ -80,6 +80,26 @@ void testRecovery()
   ZuCHECK(!ack.count() && ack.writeFrame(b, sizeof(b)) < 0,
     "empty ACK tracker emitted a frame");
 
+  Zquic::AckTracker many;
+  bool manyOK = true;
+  for (unsigned i = 0; i < Zquic::Frame::MaxAckRanges + 8; ++i)
+    manyOK = many.add(i << 1) && manyOK;
+  ZuCHECK(manyOK, "many-range ACK setup failed");
+  Zquic::AckRange snapshot[Zquic::Frame::MaxAckRanges];
+  ZuCHECK(many.multipleRanges() &&
+      many.snapshot(snapshot, Zquic::Frame::MaxAckRanges) ==
+	Zquic::Frame::MaxAckRanges,
+    "many-range ACK snapshot did not cap ranges");
+  uint8_t manyBuf[1024];
+  n = many.writeFrame(manyBuf, sizeof(manyBuf));
+  ZuCHECK(n > 0 &&
+      !Zquic::FrameCodec::parse(
+	ZuCSpan{manyBuf, unsigned(n)},
+	frame, used) &&
+      used == unsigned(n) &&
+      frame.ackRanges.length() == Zquic::Frame::MaxAckRanges,
+    "many-range ACK frame was not emitted with capped ranges");
+
   ZuCHECK(ack.add(10) && ack.add(11) && ack.add(13) && ack.add(15),
     "disjoint ACK range setup failed");
   n = ack.writeFrame(b, sizeof(b), 3);
@@ -305,6 +325,32 @@ void testAckedFrameSuppressesLossReclaim()
     "duplicate outstanding frame was reclaimed from older lost packet");
   ZuCHECK(!dup.nextRetransmit(ref),
     "duplicate outstanding frame suppression mismatch");
+
+  Zquic::PktTxSpace lateLost;
+  ZuCHECK(lateLost.add(txCryptoPkt_(0, 0, 46)) &&
+      lateLost.add(txCryptoPkt_(1, 100, 10)) &&
+      lateLost.add(txCryptoPkt_(4, 400, 10)),
+    "late-ACK lost-packet setup failed");
+  ZuCHECK(lateLost.ack(lossRanges, 1, &lost) == 1 &&
+      lost == 2 &&
+      lateLost.retransmitPending() == 2,
+    "late-ACK lost-packet setup did not queue lost frames");
+  Zquic::AckRange lateAckRanges[] = { Zquic::AckRange{0, 0} };
+  Zquic::PktTxUpdate update;
+  uint64_t ackedBytes = 999;
+  ZuCHECK(lateLost.ack(
+	lateAckRanges, 1, nullptr, 99, nullptr, &ackedBytes, nullptr,
+	nullptr, &update) == 1 &&
+      !ackedBytes &&
+      !update.ackedBytes &&
+      update.lateAcked == 1,
+    "late ACK of lost packet changed congestion accounting");
+  ZuCHECK(lateLost.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 100 &&
+      ref.length == 10 &&
+      !lateLost.nextRetransmit(ref),
+    "late ACK of lost packet did not suppress queued retransmit");
 }
 
 void testLossThresholds()
@@ -494,6 +540,91 @@ void testTypedControlRefs()
     "typed HANDSHAKE_DONE control ref mismatch");
 }
 
+static Zquic::TxPkt txControlPkt_(
+  uint64_t pn, const Zquic::SentFrameRef &ref, unsigned bytes = 100)
+{
+  Zquic::TxPkt p = txPkt_(pn, bytes);
+  p.frameCount = 0;
+  p.addFrame(ref);
+  return p;
+}
+
+void testFlowControlRetransmit()
+{
+  ZuTestScope(testFlowControlRetransmit);
+
+  Zquic::PktTxSpace tx;
+  Zquic::FlowUpdate update{
+    Zquic::FrameType::MaxStreams, 0, 129, Zi::StreamType::Duplex};
+  ZuCHECK(tx.add(txControlPkt_(0, Zquic::SentFrameRef::flowUpdate(update))) &&
+      tx.add(txControlPkt_(1, Zquic::SentFrameRef::blocked(
+	Zquic::FrameType::StreamsBlocked, 0, 128,
+	Zi::StreamType::Duplex))) &&
+      tx.add(txPkt_(4)),
+    "flow-control retransmit packet setup failed");
+
+  Zquic::AckRange ranges[] = { Zquic::AckRange{4, 4} };
+  unsigned lost = 0;
+  ZuCHECK(tx.ack(ranges, 1, &lost) == 1 && lost == 2,
+    "flow-control retransmit setup did not mark packets lost");
+
+  Zquic::SentFrameRef ref;
+  ZuCHECK(tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Control &&
+      ref.controlType == Zquic::FrameType::MaxStreams &&
+      ref.value == 129,
+    "lost MAX_STREAMS was not queued for retransmit");
+  ZuCHECK(tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Control &&
+      ref.controlType == Zquic::FrameType::StreamsBlocked &&
+      ref.value == 128 &&
+      !tx.nextRetransmit(ref),
+	    "lost STREAMS_BLOCKED was not queued for retransmit");
+}
+
+void testPktSpaceBatchCursors()
+{
+  ZuTestScope(testPktSpaceBatchCursors);
+
+  Zquic::PktTxSpace tx;
+  for (uint64_t pn = 0; pn <= 5; ++pn)
+    ZuCHECK(tx.add(txPkt_(pn)), "batch cursor sent-packet add failed");
+
+  Zquic::AckRange ranges[] = { Zquic::AckRange{5, 5} };
+  Zquic::PktAckBatch ackBatch;
+  Zquic::PktTxUpdate ackUpdate0;
+  bool done = tx.ackBatch(
+    ranges, 1, ackBatch, 1, Zquic::CryptoLevel::OneRTT, &ackUpdate0);
+  Zquic::PktTxUpdate ackUpdate1;
+  done = done || tx.ackBatch(
+    ranges, 1, ackBatch, 1, Zquic::CryptoLevel::OneRTT, &ackUpdate1);
+  ZuCHECK(done && ackBatch.acked == 1 && ackUpdate0.ackedBytes == 100 &&
+      !ackUpdate1.ackedBytes &&
+      ackBatch.latestSentTime == Zquic::timeUS(500),
+    "batch ACK cursor failed");
+
+  Zquic::PktLossBatch lossBatch;
+  Zquic::PktTxUpdate lossUpdate0;
+  done = tx.markPktThresholdLossBatch(5, 3, lossBatch, 2, &lossUpdate0);
+  ZuCHECK(!done && lossBatch.lost == 2 && lossUpdate0.lostBytes == 200,
+    "first batch loss cursor failed");
+
+  Zquic::PktTxUpdate lossUpdate1;
+  done = tx.markPktThresholdLossBatch(5, 3, lossBatch, 2, &lossUpdate1);
+  ZuCHECK(!done && lossBatch.lost == 3 && lossUpdate1.lostBytes == 100,
+    "second batch loss cursor failed");
+
+  Zquic::PktTxUpdate lossUpdate2;
+  done = tx.markPktThresholdLossBatch(5, 3, lossBatch, 2, &lossUpdate2);
+  Zquic::PktTxUpdate lossUpdate3;
+  done = done || tx.markPktThresholdLossBatch(
+    5, 3, lossBatch, 2, &lossUpdate3);
+  ZuCHECK(done && lossBatch.lost == 3 && !lossUpdate2.lostBytes &&
+      !lossUpdate3.lostBytes &&
+      tx.lost() == 3 && tx.acked() == 1 && tx.retransmitPending() == 3,
+    "final batch loss cursor failed");
+}
+
 void testAckManager()
 {
   ZuTestScope(testAckManager);
@@ -620,5 +751,7 @@ int main(int argc, char **argv)
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);
   ZuTestCall(testAckCanLeaveOnlyRetransmitsPending);
   ZuTestCall(testTypedControlRefs);
+  ZuTestCall(testFlowControlRetransmit);
+  ZuTestCall(testPktSpaceBatchCursors);
   ZuTestCall(testAckManager);
 }

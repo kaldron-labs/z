@@ -45,8 +45,9 @@ void testEndpointReadyDownCallbacks()
   bool ready = false;
   bool down = false;
   bool failed = false;
+  ZuCHECK(ep.init(&mx), "endpoint init failed");
   ZuCHECK(ep.openUDP(
-      &mx, Zquic::PathMode::ServerUnconnected,
+      Zquic::PathMode::ServerUnconnected,
       ZiIP("127.0.0.1"), 0, ZiIP{}, 0,
       Zquic::Endpoint::DatagramFn{},
       Zquic::Endpoint::ReadyFn{[&ready](Zquic::Endpoint *) {

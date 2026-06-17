@@ -15,6 +15,8 @@
 
 #include <zpicotls.h>
 
+#include <zlib/ZmFn.hh>
+
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZtlsPico.hh>
@@ -178,6 +180,11 @@ public:
   using Rx = ZmPQRx<CryptoStream, Queue, CryptoStreamRxNTP>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
+  using DequeueFn = ZmFn<void()>;
+  using DeliveryFn = ZmFn<void(ZuCSpan)>;
+
+  CryptoStream() :
+    m_dequeueFn{this, [](CryptoStream *s) { s->dequeueRx_(); }} { }
 
   uint64_t txOffset() const { return m_txOffset; }
   uint64_t rxOffset() const { return m_rxOffset; }
@@ -194,23 +201,33 @@ public:
   Queue *rxQueue() { return &m_rxQueue; }
   void process(Msg *);
   void request(const Span &, const Span &) { }
-  void scheduleDequeue() { Rx::dequeue(); }
-  void rescheduleDequeue() { Rx::dequeue(); }
+  void scheduleDequeue() { m_dequeueFn(); }
+  void rescheduleDequeue() { m_dequeueFn(); }
   void idleDequeue() { }
+  void dequeueFn(DequeueFn fn) { m_dequeueFn = ZuMv(fn); }
+	  void deliveryFn(DeliveryFn fn) {
+	    m_deliveryFn = ZuMv(fn);
+	    m_asyncDelivery = true;
+	  }
+	  void dequeueRx_() { Rx::dequeue(); }
 
-private:
+	private:
   ZuDerive(Delivery,
     (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoDelivery">>));
   ZuDerive(TxData,
     (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoTx">>));
 
-  void appendDelivery_(const uint8_t *, uint64_t);
+	  void appendDelivery_(const uint8_t *, uint64_t);
+	  void resumeReadyDequeue_();
 
-  uint64_t		m_txOffset = 0;
+	  uint64_t		m_txOffset = 0;
   uint64_t		m_rxOffset = 0;
   CryptoRxPQueue	m_rxQueue{0};
   Delivery		m_delivery;
   TxData		m_txData;
+  DequeueFn		m_dequeueFn;
+  DeliveryFn		m_deliveryFn;
+  bool			m_asyncDelivery = false;
 };
 
 struct CryptoConfig {

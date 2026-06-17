@@ -123,9 +123,79 @@ struct TestLink :
   using Base = Zquic::Link<
     EngineApp, TestLink, StreamTxBufAlloc,
     TestStream>;
-  using Base::Base;
+  TestLink(EngineApp *app, bool isServer = false) : Base{app, isServer} {
+    Base::resetRuntime_();
+    Base::configureLocalTransportParams_(app);
+  }
 
   void streamed(ZmRef<TestStream>) { }
+  void streamOpen(ZmRef<TestStream> stream, bool local) {
+    lastOpened = ZuMv(stream);
+    local ? ++localStreamOpens : ++peerStreamOpens;
+    ++streamOpenCount;
+  }
+  void streamData(
+    ZmRef<TestStream> stream, uint64_t offset, ZuCSpan payload, bool fin) {
+    lastDataStream = ZuMv(stream);
+    lastDataOffset = offset;
+    lastDataLength = payload.length();
+    lastDataFin = fin;
+    ++streamDataCount;
+  }
+  void streamResetReceived(
+    ZmRef<TestStream> stream, uint64_t appError, uint64_t finalSize) {
+    lastResetStream = ZuMv(stream);
+    lastResetAppError = appError;
+    lastResetFinalSize = finalSize;
+    ++resetReceivedCount;
+  }
+  void streamResetSent(
+    uint64_t streamID, uint64_t appError, uint64_t finalSize) {
+    lastResetSentID = streamID;
+    lastResetSentAppError = appError;
+    lastResetSentFinalSize = finalSize;
+    ++resetSentCount;
+  }
+  void streamStopSendingReceived(
+    ZmRef<TestStream> stream, uint64_t appError) {
+    lastStopStream = ZuMv(stream);
+    lastStopAppError = appError;
+    ++stopReceivedCount;
+  }
+  void streamStopSendingSent(uint64_t streamID, uint64_t appError) {
+    lastStopSentID = streamID;
+    lastStopSentAppError = appError;
+    ++stopSentCount;
+  }
+  void flowBlocked(
+    Zquic::FrameType::T type, uint64_t streamID,
+    Zi::StreamType::T streamType, uint64_t maximum) {
+    lastFlowType = type;
+    lastFlowStreamID = streamID;
+    lastFlowStreamType = streamType;
+    lastFlowMaximum = maximum;
+    ++flowBlockedCount;
+  }
+  void transportClose(Zquic::FrameType::T type, uint64_t errorCode) {
+    lastCloseType = type;
+    lastCloseError = errorCode;
+    ++transportCloseCount;
+  }
+  void statelessReset() { ++statelessResetCount; }
+  void pathUpdate(
+    const ZiSockAddr &local, const ZiSockAddr &remote,
+    bool validated, unsigned maxUDP) {
+    lastPathLocal = local;
+    lastPathRemote = remote;
+    lastPathValidated = validated;
+    lastPathMaxUDP = maxUDP;
+    ++pathUpdateCount;
+  }
+  void migrationFailure(const ZiSockAddr &local, const ZiSockAddr &remote) {
+    lastMigrationLocal = local;
+    lastMigrationRemote = remote;
+    ++migrationFailureCount;
+  }
 	  void setPeerResetToken(const Zquic::ResetToken &token) {
 	    Base::setPeerResetToken_(token);
 	  }
@@ -162,9 +232,74 @@ struct TestLink :
 	    return Base::checkStatelessReset_(datagram);
 	  }
 	  bool draining() const { return Base::runtimeDraining_(); }
+  void dataBlockedForTest(uint64_t maximum) {
+    Base::dataBlocked_(maximum);
+  }
+  void closeTransportForTest(Zquic::FrameType::T type, uint64_t errorCode) {
+    Base::closeRuntime_(errorCode);
+    Base::transportClose_(type, errorCode);
+  }
+  void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
+    Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
+  }
+  void observePath(ZiSockAddr local, ZiSockAddr remote) {
+    Base::startPathValidationForTest_(ZuMv(local), ZuMv(remote));
+  }
+  ZuCSpan validatingChallenge() const {
+    return Base::validatingChallenge_();
+  }
+  bool pathResponse(ZuCSpan data) { return Base::onPathResponse_(data); }
+  void pathTimeout() { Base::pathExpired_(); }
+  void flushTx_() { ++txFlushQueued; }
+  void flushTx_(ZiSockAddr) { ++txFlushQueued; }
+  void queueTxFlush_() { ++txFlushQueued; }
+  void queueTxFlush_(ZiSockAddr) { ++txFlushQueued; }
+  Zquic::RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
+
+  ZmRef<TestStream> lastOpened;
+  ZmRef<TestStream> lastDataStream;
+  ZmRef<TestStream> lastResetStream;
+  ZmRef<TestStream> lastStopStream;
+  ZiSockAddr lastPathLocal;
+  ZiSockAddr lastPathRemote;
+  ZiSockAddr lastMigrationLocal;
+  ZiSockAddr lastMigrationRemote;
   uint64_t retiredSeq = 0;
+  uint64_t lastDataOffset = 0;
+  uint64_t lastResetAppError = 0;
+  uint64_t lastResetFinalSize = 0;
+  uint64_t lastResetSentID = 0;
+  uint64_t lastResetSentAppError = 0;
+  uint64_t lastResetSentFinalSize = 0;
+  uint64_t lastStopAppError = 0;
+  uint64_t lastStopSentID = 0;
+  uint64_t lastStopSentAppError = 0;
+  uint64_t lastFlowStreamID = 0;
+  uint64_t lastFlowMaximum = 0;
+  uint64_t lastCloseError = 0;
   Zquic::CxnID retiredCID;
+  Zquic::FrameType::T lastFlowType = Zquic::FrameType::Unknown;
+  Zquic::FrameType::T lastCloseType = Zquic::FrameType::Unknown;
+  Zi::StreamType::T lastFlowStreamType = Zi::StreamType::Duplex;
+  unsigned lastDataLength = 0;
+  unsigned lastPathMaxUDP = 0;
   unsigned retiredCount = 0;
+  unsigned streamOpenCount = 0;
+  unsigned localStreamOpens = 0;
+  unsigned peerStreamOpens = 0;
+  unsigned streamDataCount = 0;
+  unsigned resetReceivedCount = 0;
+  unsigned resetSentCount = 0;
+  unsigned stopReceivedCount = 0;
+  unsigned stopSentCount = 0;
+  unsigned flowBlockedCount = 0;
+  unsigned transportCloseCount = 0;
+  unsigned statelessResetCount = 0;
+  unsigned pathUpdateCount = 0;
+  unsigned migrationFailureCount = 0;
+  unsigned txFlushQueued = 0;
+  bool lastDataFin = false;
+  bool lastPathValidated = false;
 	};
 
 template <typename L>
@@ -200,6 +335,30 @@ struct EngineFixture {
   ZiMultiplex	mx;
   EngineApp	app;
 };
+
+static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
+{
+  unsigned used = 0;
+  return n > 0 && !Zquic::FrameCodec::parse(
+    ZuCSpan{b, unsigned(n)}, frame, used) &&
+    used == unsigned(n);
+}
+
+static ZmRef<ZiIOBuf> streamPkt_(
+  uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
+  Zquic::Frame &frame, unsigned &used)
+{
+  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
+  int n = Zquic::FrameCodec::writeStream(
+    packet->data_(), packet->size, id, offset, payload, fin);
+  if (n <= 0) return nullptr;
+  packet->skip = 0;
+  packet->length = unsigned(n);
+  if (Zquic::FrameCodec::parse(packet->cspan(), frame, used) ||
+      used != packet->length)
+    return nullptr;
+  return packet;
+}
 
 } // namespace
 
@@ -279,6 +438,8 @@ void testAlignedSurfaceShape()
   auto c0 = client.stream();
   ZuCHECK(c0 && c0->id() == 0 && c0->link() == &client && !client.isServer(),
     "client aligned link/stream shape mismatch");
+  ZuCHECK(client.runtimeDiag().unhandledAppEvents,
+    "default client stream-open hook was not visible in diagnostics");
 
   ServerShapeApp serverApp;
   ServerShapeLink server{&serverApp};
@@ -313,6 +474,102 @@ void testStatelessResetDetection()
   link.setPeerResetToken(token);
   ZuCHECK(link.checkStatelessReset(datagram) && link.draining(),
     "link did not enter draining on matching stateless reset");
+  ZuCHECK(link.statelessResetCount == 1,
+    "stateless reset callback did not fire");
+}
+
+void testApplicationCallbacks()
+{
+  ZuTestScope(testApplicationCallbacks);
+
+  EngineFixture fixture;
+  TestLink server{&fixture.app, true};
+  TestLink client{&fixture.app};
+  uint8_t b[128];
+  Zquic::Frame frame;
+  unsigned used = 0;
+
+  auto local = client.stream();
+  ZuCHECK(local && client.streamOpenCount == 1 &&
+      client.localStreamOpens == 1 && client.lastOpened == local,
+    "local stream-open callback mismatch");
+
+  auto packet = streamPkt_(0, 0, "abc", false, frame, used);
+  ZuCHECK(packet && server.receiveFrame(frame, packet) == 0,
+    "peer STREAM callback setup failed");
+  auto peer = server.findStream(0);
+  ZuCHECK(peer && server.streamOpenCount == 1 &&
+      server.peerStreamOpens == 1 &&
+      server.streamDataCount == 1 &&
+      server.lastDataStream == peer &&
+      !server.lastDataOffset &&
+      server.lastDataLength == 3 &&
+      !server.lastDataFin,
+    "peer stream/data callbacks mismatch");
+
+  int n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 3);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      server.receiveFrame(frame) == 0 &&
+      server.resetReceivedCount == 1 &&
+      server.lastResetStream == peer &&
+      server.lastResetAppError == 7 &&
+      server.lastResetFinalSize == 3,
+    "RESET_STREAM receive callback mismatch");
+
+  n = Zquic::FrameCodec::writeStopSending(b, sizeof(b), local->id(), 9);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      client.receiveFrame(frame) == 0 &&
+      client.stopReceivedCount == 1 &&
+      client.lastStopStream == local &&
+      client.lastStopAppError == 9,
+    "STOP_SENDING receive callback mismatch");
+
+  auto reset = client.stream();
+  reset->reset(11);
+  ZuCHECK(client.resetSentCount == 1 &&
+      client.lastResetSentID == uint64_t(reset->id()) &&
+      client.lastResetSentAppError == 11,
+    "local RESET_STREAM callback mismatch");
+
+  auto stop = client.stream();
+  stop->stop(12);
+  ZuCHECK(client.stopSentCount == 1 &&
+      client.lastStopSentID == uint64_t(stop->id()) &&
+      client.lastStopSentAppError == 12,
+    "local STOP_SENDING callback mismatch");
+
+  client.dataBlockedForTest(4096);
+  ZuCHECK(client.flowBlockedCount == 1 &&
+      client.lastFlowType == Zquic::FrameType::DataBlocked &&
+      client.lastFlowMaximum == 4096,
+    "flow blocked callback mismatch");
+
+  client.closeTransportForTest(Zquic::FrameType::ConnectionClose, 42);
+  ZuCHECK(client.transportCloseCount == 1 &&
+      client.lastCloseType == Zquic::FrameType::ConnectionClose &&
+      client.lastCloseError == 42,
+    "transport close callback mismatch");
+
+  TestLink path{&fixture.app, true};
+  ZiSockAddr localAddr{ZiIP{0x0a000001}, 4433};
+  ZiSockAddr oldRemote{ZiIP{0x0a000002}, 50000};
+  ZiSockAddr newRemote{ZiIP{0x0a000002}, 50001};
+  ZiSockAddr failRemote{ZiIP{0x0a000002}, 50002};
+  path.initServerPath(localAddr, oldRemote);
+  path.observePath(localAddr, newRemote);
+  ZuCSpan challenge = path.validatingChallenge();
+  uint8_t response[Zquic::PathChallenge::Length]{};
+  memcpy(response, challenge.data(), challenge.length());
+  ZuCHECK(path.pathResponse(ZuCSpan{response, sizeof(response)}) &&
+      path.pathUpdateCount == 1 &&
+      path.lastPathValidated &&
+      path.lastPathMaxUDP >= Zquic::MinUDPPayload,
+    "path update callback mismatch");
+
+  path.observePath(localAddr, failRemote);
+  path.pathTimeout();
+  ZuCHECK(path.migrationFailureCount == 1,
+    "migration failure callback mismatch");
 }
 
 void testConnectionIDFrameLifecycle()
@@ -373,8 +630,9 @@ void testCliLinkUDPConnect()
   Zquic::Endpoint sink;
   bool sinkReady = false;
   bool sinkFailed = false;
+  ZuCHECK(sink.init(&mx), "CliLink UDP sink init failed");
   ZuCHECK(sink.openUDP(
-      &mx, Zquic::PathMode::ServerUnconnected,
+      Zquic::PathMode::ServerUnconnected,
       ZiIP("127.0.0.1"), 0, ZiIP{}, 0,
       Zquic::Endpoint::DatagramFn{},
       Zquic::Endpoint::ReadyFn{[&sinkReady](Zquic::Endpoint *) {
@@ -555,6 +813,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamShape);
   ZuTestCall(testAlignedSurfaceShape);
   ZuTestCall(testStatelessResetDetection);
+  ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testConnectionIDFrameLifecycle);
   ZuTestCall(testCliLinkUDPConnect);
   ZuTestCall(testInitValidation);

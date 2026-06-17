@@ -88,6 +88,10 @@ struct ZiDebugBuf : public ZiDebugBuf_ {
 class ZiConnection;
 class ZiMultiplex;
 
+#ifdef ZiMultiplex_DEBUG
+using FilterFn = ZmFn<bool(ZiConnection *, uint8_t *, unsigned)>;
+#endif
+
 class ZiCxnOptions;
 struct ZiCxnInfo;
 
@@ -899,6 +903,8 @@ public:
   void frag(bool b) { m_frag = b; }
   bool yield() const { return m_yield; }
   void yield(bool b) { m_yield = b; }
+  void rxFilter(FilterFn fn) { m_rxFilter = ZuMv(fn); }
+  void txFilter(FilterFn fn) { m_txFilter = ZuMv(fn); }
 #endif
 
 #ifdef ZiMultiplex_EPoll
@@ -996,6 +1002,8 @@ private:
   bool			m_debug = false;
   bool			m_frag = false;
   bool			m_yield = false;
+  FilterFn		m_rxFilter;
+  FilterFn		m_txFilter;
 
   void traceCapture() { m_tracer.capture(1); }
 public:
