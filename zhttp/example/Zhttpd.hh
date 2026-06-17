@@ -135,6 +135,8 @@ struct Options {
   bool			https = false;
   bool			http3 = false;
   bool			debug = false;
+  bool			frag = false;
+  bool			yield = false;
   bool			help = false;
 };
 
@@ -172,6 +174,8 @@ ZtStruct((Options, CLI),
   (((https),           (CLI::Long<"https">)),                    (Bool)),
   (((http3),           (CLI::Long<"http3">)),                    (Bool)),
   (((debug),           (CLI::Long<"debug">)),                    (Bool)),
+  (((frag),            (CLI::Long<"frag">)),                     (Bool)),
+  (((yield),           (CLI::Long<"yield">)),                    (Bool)),
   (((help),            (CLI::Flag<'h'>, CLI::Long<"help">)),     (Bool)));
 
 struct RequestData {

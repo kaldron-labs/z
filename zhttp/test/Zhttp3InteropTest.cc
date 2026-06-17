@@ -38,10 +38,55 @@ using ResponseHeaders = ZhttpHeaders("content-type");
 
 ZuCSpan Path = "/zhttp-interop";
 ZuCSpan Host = "localhost";
+bool frag = false;
+bool yield = false;
+
+void usage(ZuCSpan name)
+{
+  std::cerr <<
+    "Usage: " << name << " [OPTION]...\n\n"
+    "Options:\n"
+    "  --frag    fragment ZiMultiplex I/O in debug builds\n"
+    "  --yield   yield in ZiMultiplex in debug builds\n"
+    "  -q        quiet output (default when test-harnessed)\n";
+  ::exit(1);
+}
+
+void parseArgs(int argc, char **argv)
+{
+  verbose = !::getenv("HARNESS_ACTIVE");
+  for (int i = 1; i < argc; ++i) {
+    if (!strcmp(argv[i], "-q")) {
+      verbose = false;
+      continue;
+    }
+    if (!strcmp(argv[i], "--frag")) {
+      frag = true;
+      continue;
+    }
+    if (!strcmp(argv[i], "--yield")) {
+      yield = true;
+      continue;
+    }
+    ZuCSpan argv0 = argv[0];
+    for (int j = argv0.length(); --j >= 0; ) {
+      auto c = argv0[j];
+      if (c == '/'
+#ifdef _WIN32
+	  || c == '\\'
+#endif
+	) {
+	argv0.offset(j + 1);
+	break;
+      }
+    }
+    usage(argv0);
+  }
+}
 
 ZiMxParams mxParams()
 {
-  return ZiMxParams()
+  auto params = ZiMxParams()
     .scheduler([](auto &s) {
       s.nThreads(5)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -50,6 +95,11 @@ ZiMxParams mxParams()
 	.thread(4, [](auto &t) { t.isolated(1); });
     })
     .rxThread(1).txThread(2);
+#ifdef ZiMultiplex_DEBUG
+  if (frag) params.frag(true);
+  if (yield) params.yield(true);
+#endif
+  return params;
 }
 
 bool validQUICInfo(Zi::Connected info)
@@ -1154,7 +1204,7 @@ void testInteropPrerequisites()
 
 int main(int argc, char **argv)
 {
-  parse(argc, argv);
+  parseArgs(argc, argv);
   ZuTestMain();
   ZuTestCall(testInteropPrerequisites);
   ZuTestCall(testZhttpClientCaddyHttp);
