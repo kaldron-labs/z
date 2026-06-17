@@ -69,6 +69,8 @@ void usage(int code = 1)
     "  --cert path                TLS certificate for --https/--http3\n"
     "  --key path                 TLS private key for --https/--http3\n"
     "  --debug                    enable ZiMultiplex and HTTP/3 debug logging\n"
+    "  --frag                     fragment ZiMultiplex I/O in debug builds\n"
+    "  --yield                    yield in ZiMultiplex in debug builds\n"
     "  -h, --help                 show help\n" << std::flush;
   ::exit(code);
 }
@@ -437,7 +439,7 @@ struct StaticH3Server :
   }
 };
 
-ZiMxParams mxParams(bool debug = false)
+ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
     .scheduler([](auto &s) {
@@ -449,9 +451,11 @@ ZiMxParams mxParams(bool debug = false)
     })
     .rxThread(1).txThread(2);
 #ifdef ZiMultiplex_DEBUG
-  if (debug) params.debug(true);
+  if (options.debug) params.debug(true);
+  if (options.frag) params.frag(true);
+  if (options.yield) params.yield(true);
 #else
-  (void)debug;
+  (void)options;
 #endif
   return params;
 }
@@ -843,7 +847,7 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  ZiMultiplex mx(mxParams(options.debug));
+  ZiMultiplex mx(mxParams(options));
   if (!mx.start()) {
     ZiLOG(Error, "zhttpd", "ZiMultiplex start failed");
     state.log.final();

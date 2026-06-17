@@ -75,6 +75,9 @@ struct Options {
   uint32_t	jobs = 0;
   uint32_t	requests = 0;
   OptString	caseName;
+  bool		debug = false;
+  bool		frag = false;
+  bool		yield = false;
   bool		quiet = false;
   bool		help = false;
 };
@@ -85,6 +88,9 @@ ZtStruct((Options, CLI),
   (((jobs),     (CLI::Opt<'j'>, CLI::Long<"jobs">)),             (UInt32, 0)),
   (((requests), (CLI::Opt<'n'>, CLI::Long<"requests">)),         (UInt32, 0)),
   (((caseName), (CLI::Long<"case">)),                            (String, "")),
+  (((debug),    (CLI::Long<"debug">)),                           (Bool, false)),
+  (((frag),     (CLI::Long<"frag">)),                            (Bool, false)),
+  (((yield),    (CLI::Long<"yield">)),                           (Bool, false)),
   (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),           (Bool, false)),
   (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),            (Bool, false)));
 
@@ -146,6 +152,9 @@ void usage(int code = 1)
     "  -j, --jobs=N      select workload concurrency\n"
     "  -n, --requests=N  select workload request count\n"
     "  --case=CASE       exact case, e.g. ZhttpZhttpd/H3/j10n1000\n"
+    "  --debug           debug zhttp/zhttpd and preserve case directories\n"
+    "  --frag            fragment zhttp/zhttpd ZiMultiplex I/O\n"
+    "  --yield           yield in zhttp/zhttpd ZiMultiplex\n"
     "  -q, --quiet       quiet output\n"
     "  -h, --help        show help\n" <<
     std::flush;
@@ -361,6 +370,9 @@ void appendZhttpCommand(
 {
   script <<
     "if ! timeout 20s \"$client\" -j " << c.jobs << " -n " << c.requests;
+  if (options.debug) script << " --debug";
+  if (options.frag) script << " --frag";
+  if (options.yield) script << " --yield";
   switch (c.proto) {
     case Proto::H1TCP:
       break;
@@ -500,6 +512,9 @@ bool writeScript(
       "done\n";
   else {
     script << "\"$server\" " << rootPath;
+    if (options.debug) script << " --debug";
+    if (options.frag) script << " --frag";
+    if (options.yield) script << " --yield";
     switch (c.proto) {
       case Proto::H1TCP:
 	script << " --http";
@@ -542,6 +557,14 @@ bool writeScript(
   return writeFile(path, cspan(script), 0777);
 }
 
+void preserveTemp(TempDir &temp)
+{
+  if (!options.debug || !temp.path[0]) return;
+  std::cout << "# preserved logs: " << static_cast<const char *>(temp.path) <<
+    '\n';
+  temp.path[0] = 0;
+}
+
 bool runCase_(const Case &c)
 {
   TempDir temp;
@@ -552,16 +575,19 @@ bool runCase_(const Case &c)
   ZtString<> rootPath;
   if (!writeRoot(temp, rootPath)) {
     std::cout << "# failed to create static root\n";
+    preserveTemp(temp);
     return false;
   }
   ZtString<> certPath, keyPath;
   if (!writeSelfSignedLocalhostCert(temp, certPath, keyPath)) {
     std::cout << "# failed to create TLS certificate\n";
+    preserveTemp(temp);
     return false;
   }
   unsigned port = loopbackPort();
   if (!port) {
     std::cout << "# failed to allocate loopback port\n";
+    preserveTemp(temp);
     return false;
   }
   auto caddyfile = temp.pathOf("Caddyfile");
@@ -569,18 +595,23 @@ bool runCase_(const Case &c)
       !writeCaddyfile(caddyfile, c.proto, port, cspan(rootPath),
 	cspan(certPath), cspan(keyPath))) {
     std::cout << "# failed to write Caddyfile\n";
+    preserveTemp(temp);
     return false;
   }
   auto script = temp.pathOf("matrix.sh");
   if (!writeScript(script, c, port, static_cast<const char *>(temp.path),
       cspan(rootPath), cspan(certPath), cspan(keyPath), cspan(caddyfile))) {
     std::cout << "# failed to write matrix script\n";
+    preserveTemp(temp);
     return false;
   }
 
   ZtString<> cmd;
   cmd << "sh " << script;
-  if (systemOK(::system(cmd.data()))) return true;
+  if (systemOK(::system(cmd.data()))) {
+    preserveTemp(temp);
+    return true;
+  }
 
   std::cout << "# failed case: " << pairName(c.pair) << ' ' <<
     protoName(c.proto) << " -j" << c.jobs << " -n" << c.requests << '\n';
@@ -588,6 +619,7 @@ bool runCase_(const Case &c)
   printFile("client stderr", temp.pathOf("client.err"));
   printFile("curl stderr", temp.pathOf("curl.err"));
   printFile("script", script);
+  preserveTemp(temp);
   return false;
 }
 

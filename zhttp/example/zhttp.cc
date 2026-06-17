@@ -41,6 +41,8 @@ struct Options {
  int8_t		http3 = Http3Mode::prefer;
  bool		verbose = false;
  bool		debug = false;
+ bool		frag = false;
+ bool		yield = false;
  bool		help = false;
 };
 
@@ -54,6 +56,8 @@ ZtStruct((Options, CLI),
 								 Http3Mode::prefer)),
   (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool)),
   (((debug),     (CLI::Long<"debug">)),                      (Bool)),
+  (((frag),      (CLI::Long<"frag">)),                       (Bool)),
+  (((yield),     (CLI::Long<"yield">)),                      (Bool)),
   (((url),       (CLI::Arg<1>)),                             (String)),
   (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool)));
 
@@ -71,6 +75,8 @@ void usage(int code = 1)
     "                      default prefer\n"
     "  -v, --verbose       show DNS and Alt-Svc probing\n"
     "  --debug             enable ZiMultiplex and HTTP/3 debug logging\n"
+    "  --frag              fragment ZiMultiplex I/O in debug builds\n"
+    "  --yield             yield in ZiMultiplex in debug builds\n"
     "  -h, --help          show help\n\n"
     "For N > 1, response bodies are written to PATH.0, PATH.1, ...\n" <<
     std::flush;
@@ -1656,7 +1662,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
   return run.failed ? 1 : 0;
 }
 
-ZiMxParams mxParams(bool debug = false)
+ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
     .scheduler([](auto &s) {
@@ -1667,9 +1673,11 @@ ZiMxParams mxParams(bool debug = false)
       .thread(4, [](auto &t) { t.isolated(1); }); })
     .rxThread(1).txThread(2);
 #ifdef ZiMultiplex_DEBUG
-  if (debug) params.debug(true);
+  if (options.debug) params.debug(true);
+  if (options.frag) params.frag(true);
+  if (options.yield) params.yield(true);
 #else
-  (void)debug;
+  (void)options;
 #endif
   return params;
 }
@@ -1901,7 +1909,7 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZiMultiplex mx(mxParams(options.debug));
+  ZiMultiplex mx(mxParams(options));
   if (!mx.start()) {
     ZiLOG(Error, "zhttp", "ZiMultiplex start failed");
     return 1;
