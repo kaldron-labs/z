@@ -271,7 +271,7 @@ These guidelines extend `AGENTS.md`
   - `Timer`s must be cancelled with `del` before owner destruction during close/shutdown/stop to prevent stale pointer dereference
 #### Timer Teardown
 - timer teardown requires a 3-phase process, similar to I/O teardown (see below)
-  1. cancel the timer (`ZmScheduler::del`)
+  1. cancel the timer (`ZmScheduler::del`) and set a flag preventing timer callbacks from doing further work
   2. post a teardown continuation on the thread to drain any late callbacks
   3. (in the continuation) complete the teardown with late callbacks drained
 - the continuation needs to be posted on the same thread the timer callback would run on
@@ -467,7 +467,7 @@ churn unless the ownership model explicitly requires it.
 
 ### Teardown
 Sharded I/O teardown requires a 3-phase asynchronous process:
-- 1. stop ingress and post a teardown continuation on the rx thread to drain rx activity
+- 1. prevent further ingress and post a teardown continuation on the rx thread to drain rx activity
 - 2. (in the rx thread continuation) post a teardown continuation on the tx thread to drain tx activity
 - 3. (in the tx thread continuation) complete the teardown and release object ownership
 - do NOT block except in the main thread, this is async continuation code
