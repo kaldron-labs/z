@@ -672,7 +672,7 @@ void ZiMultiplex::overlappedConnect(Connect *request,
 #endif
 
 #ifdef ZiMultiplex_EPoll
-void ZiMultiplex::executedConnect(Connect *request)
+void ZiMultiplex::completedConnect(Connect *request)
 {
   ZiCxnInfo &ci = request->info();
   Socket s = ci.socket;
@@ -759,7 +759,7 @@ retry:
     }
   }
 
-  executedConnect(request);
+  completedConnect(request);
 }
 #endif
 
@@ -2385,7 +2385,7 @@ void ZiMultiplex::rx()
 	if (ZuLikely(u64_is_connect(v))) {
 	  ZmRef<Connect> request = u64_ptr<Connect>(v);
 	  if (ZuLikely(!(events & EPOLLERR))) {
-	    executedConnect(request);
+	    completedConnect(request);
 	    continue;
 	  }
 	  int n;
