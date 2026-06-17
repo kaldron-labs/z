@@ -143,7 +143,8 @@ struct ControlFrame {
     if (type != o.type || streamID != o.streamID || value != o.value ||
 	streamType != o.streamType)
       return false;
-    if (type == FrameType::PathResponse)
+    if (type == FrameType::PathChallenge ||
+	type == FrameType::PathResponse)
       return !memcmp(payload, o.payload, sizeof(payload));
     return true;
   }
@@ -160,6 +161,13 @@ struct ControlFrame {
   static ControlFrame pathResponse(ZuCSpan data) {
     ControlFrame frame;
     frame.type = FrameType::PathResponse;
+    if (data.length() == sizeof(frame.payload))
+      memcpy(frame.payload, data.data(), sizeof(frame.payload));
+    return frame;
+  }
+  static ControlFrame pathChallenge(ZuCSpan data) {
+    ControlFrame frame;
+    frame.type = FrameType::PathChallenge;
     if (data.length() == sizeof(frame.payload))
       memcpy(frame.payload, data.data(), sizeof(frame.payload));
     return frame;
@@ -184,6 +192,9 @@ struct ControlFrame {
 	return FrameCodec::writeStreamDataBlocked(out, len, streamID, value);
       case FrameType::StreamsBlocked:
 	return FrameCodec::writeStreamsBlocked(out, len, streamType, value);
+      case FrameType::PathChallenge:
+	return FrameCodec::writePathChallenge(out, len, ZuCSpan{
+	  payload, sizeof(payload)});
       case FrameType::PathResponse:
 	return FrameCodec::writePathResponse(out, len, ZuCSpan{
 	  payload, sizeof(payload)});

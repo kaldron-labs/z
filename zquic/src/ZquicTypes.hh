@@ -55,6 +55,35 @@ private:
   bool		m_valid = false;
 };
 
+class PathChallenge {
+public:
+  static constexpr unsigned Length = 8;
+
+  PathChallenge() = default;
+  explicit PathChallenge(ZuCSpan data) { set(data); }
+
+  bool set(ZuCSpan);
+  bool generate();
+  bool valid() const { return m_valid; }
+  unsigned length() const { return m_valid ? Length : 0; }
+  const uint8_t *data() const { return m_data; }
+  ZuCSpan cspan() const {
+    return ZuCSpan{m_data, m_valid ? Length : 0};
+  }
+
+  bool equals(ZuCSpan) const;
+  bool equals(const PathChallenge &) const;
+
+  friend inline bool operator ==(
+    const PathChallenge &l, const PathChallenge &r) {
+    return l.equals(r);
+  }
+
+private:
+  uint8_t	m_data[Length] = {};
+  bool		m_valid = false;
+};
+
 inline constexpr uint32_t Version1 = 0x00000001U;
 inline constexpr unsigned MinUDPPayload = 1200;
 inline constexpr unsigned BufSize = 1472;

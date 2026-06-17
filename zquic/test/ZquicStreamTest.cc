@@ -230,6 +230,21 @@ struct TestLink :
   void initServerPath() {
     Base::initServerPathTx_(ZiSockAddr{}, ZiSockAddr{});
   }
+  void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
+    Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
+  }
+  void observePath(ZiSockAddr local, ZiSockAddr remote) {
+    Base::startPathValidationForTest_(ZuMv(local), ZuMv(remote));
+  }
+  bool validatingPath() const { return Base::validatingPath_(); }
+  ZuCSpan validatingChallenge() const {
+    return Base::validatingChallenge_();
+  }
+  bool pathResponse(ZuCSpan data) { return Base::onPathResponse_(data); }
+  void pathTimeout() { Base::pathExpired_(); }
+  const ZiSockAddr &activePathRemote() const {
+    return Base::activePathRemote_();
+  }
   void pathReceived(unsigned bytes) { Base::recordPathRxTx_(bytes); }
   bool pathSend(unsigned bytes) {
     ZmRef<ZiIOBuf> buf = new Zquic::PktTxBufAlloc<>{nullptr};
@@ -254,6 +269,7 @@ struct TestLink :
   void flushTx_() { ++txFlushQueued; }
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }
   void queueTxFlush_() { ++txFlushQueued; }
+  void queueTxFlush_(ZiSockAddr) { ++txFlushQueued; }
   void pto_() { ++ptos; }
   bool retransmit_() { ++retransmits; return false; }
 
@@ -308,6 +324,14 @@ static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuCSpan expected)
 	!memcmp(span.data(), expected.data(), expected.length());
     });
   return consumed == n && called && ok;
+}
+
+static bool sameAddr_(const ZiSockAddr &l, const ZiSockAddr &r)
+{
+  if (!l || !r) return !l && !r;
+  return l.m_sin.sin_family == r.m_sin.sin_family &&
+    l.m_sin.sin_port == r.m_sin.sin_port &&
+    l.m_sin.sin_addr.s_addr == r.m_sin.sin_addr.s_addr;
 }
 
 void testStreamIDs()
@@ -896,6 +920,68 @@ void testActivePathRuntimeBudget()
   server.close();
 }
 
+void testPathValidationStateMachine()
+{
+  ZuTestScope(testPathValidationStateMachine);
+
+  Zquic::PathChallenge challenge;
+  ZuCHECK(challenge.generate() &&
+      challenge.valid() &&
+      challenge.length() == Zquic::PathChallenge::Length &&
+      challenge.equals(challenge.cspan()),
+    "PATH_CHALLENGE value generation failed");
+
+  App app;
+  TestLink link{&app, true};
+  ZiSockAddr local{ZiIP{0x0a000001}, 4433};
+  ZiSockAddr oldRemote{ZiIP{0x0a000002}, 50000};
+  ZiSockAddr newRemote{ZiIP{0x0a000002}, 50001};
+  ZiSockAddr otherRemote{ZiIP{0x0a000002}, 50002};
+
+  link.initServerPath(local, oldRemote);
+  link.validatePath();
+  ZuCHECK(sameAddr_(link.activePathRemote(), oldRemote),
+    "active path remote setup failed");
+
+  link.observePath(local, newRemote);
+  ZuCSpan data = link.validatingChallenge();
+  uint8_t response[Zquic::PathChallenge::Length]{};
+  memcpy(response, data.data(), data.length());
+  ZuCHECK(link.validatingPath() &&
+      data.length() == Zquic::PathChallenge::Length &&
+      link.queuedControlFrames() == 1 &&
+      sameAddr_(link.activePathRemote(), oldRemote),
+    "new path replaced active remote before validation");
+
+  uint8_t bad[Zquic::PathChallenge::Length]{};
+  bad[0] = response[0] ^ 0xffU;
+  ZuCHECK(!link.pathResponse(ZuCSpan{bad, sizeof(bad)}) &&
+      link.validatingPath() &&
+      sameAddr_(link.activePathRemote(), oldRemote),
+    "unmatched PATH_RESPONSE changed path-validation state");
+
+  link.observePath(local, newRemote);
+  ZuCHECK(link.queuedControlFrames() == 1,
+    "repeated packet from validating path queued duplicate challenge");
+
+  ZuCHECK(link.pathResponse(ZuCSpan{response, sizeof(response)}) &&
+      !link.validatingPath() &&
+      link.pathValidated() &&
+      sameAddr_(link.activePathRemote(), newRemote),
+    "matching PATH_RESPONSE did not promote candidate path");
+
+  link.observePath(local, otherRemote);
+  ZuCHECK(link.validatingPath() &&
+      sameAddr_(link.activePathRemote(), newRemote),
+    "second candidate setup failed");
+  link.pathTimeout();
+  ZuCHECK(!link.validatingPath() &&
+      sameAddr_(link.activePathRemote(), newRemote),
+    "path-validation timeout did not retain active path");
+
+  link.close();
+}
+
 void testAckECNValidationDisablesECN()
 {
   ZuTestScope(testAckECNValidationDisablesECN);
@@ -1379,6 +1465,7 @@ int main(int argc, char **argv)
   ZuTestCall(testLongHeaderCoalescing);
   ZuTestCall(testCongestionBudgetGatesRuntimeSends);
   ZuTestCall(testActivePathRuntimeBudget);
+  ZuTestCall(testPathValidationStateMachine);
   ZuTestCall(testAckECNValidationDisablesECN);
   ZuTestCall(testBlockedFrameDuplicateSuppression);
   ZuTestCall(testPeerStreamAcceptance);

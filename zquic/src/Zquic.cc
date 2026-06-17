@@ -59,6 +59,35 @@ bool ResetToken::equals(const ResetToken &token) const
     (!m_valid || !memcmp(m_data, token.m_data, Length));
 }
 
+bool PathChallenge::set(ZuCSpan data)
+{
+  if (data.length() != Length) return false;
+  memcpy(m_data, data.data(), Length);
+  m_valid = true;
+  return true;
+}
+
+bool PathChallenge::generate()
+{
+  uint8_t bytes[Length];
+  if (!Ztls::Backend::init() ||
+      !Ztls::Backend::random_bytes(ZuSpan<uint8_t>{bytes, Length}))
+    return false;
+  return set(ZuCSpan{bytes, Length});
+}
+
+bool PathChallenge::equals(ZuCSpan data) const
+{
+  return m_valid && data.length() == Length &&
+    !memcmp(m_data, data.data(), Length);
+}
+
+bool PathChallenge::equals(const PathChallenge &challenge) const
+{
+  return m_valid == challenge.m_valid &&
+    (!m_valid || !memcmp(m_data, challenge.m_data, Length));
+}
+
 int StatelessReset::decode(ResetToken &token, ZuCSpan datagram)
 {
   if (!datagram || datagram.length() <= MinLength || Pkt::isLong(datagram))
