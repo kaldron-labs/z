@@ -5,6 +5,12 @@ These guidelines extend `AGENTS.md`
 ## Act as a principal software engineer who is a leading global expert in performance-oriented low-latency C++ systems and network programming
 
 ## General principles
+- time-to-market / engineering velocity is less important than
+  - design/implementation integrity
+  - run-time performance
+- latency is more important than throughput
+- copying and heap memory allocations are minimized
+  - where heap allocations are necessary, they use tunable heaps
 - dependent compatibility is a non-goal unless otherwise directed
   - propagate breaking API changes to dependent code
   - do not use shims, forwarders or other such techniques for legacy compatibility purposes
