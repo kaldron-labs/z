@@ -54,8 +54,9 @@ struct PktBudget {
 
 class PktAssembly {
 public:
-  bool streamAdded() const { return m_streamAdded; }
+  bool streamAdded() const { return m_streamFrames; }
   unsigned controlFrames() const { return m_controlFrames; }
+  unsigned streamFrames() const { return m_streamFrames; }
 
   bool addControl(PktBudget &budget, unsigned bytes) {
     if (!budget.add(bytes)) return false;
@@ -63,14 +64,14 @@ public:
     return true;
   }
   bool addStream(PktBudget &budget, unsigned bytes) {
-    if (m_streamAdded || !budget.add(bytes)) return false;
-    m_streamAdded = true;
+    if (!budget.add(bytes)) return false;
+    ++m_streamFrames;
     return true;
   }
 
 private:
-  bool		m_streamAdded = false;
   unsigned	m_controlFrames = 0;
+  unsigned	m_streamFrames = 0;
 };
 
 class Pacer {
@@ -204,7 +205,7 @@ public:
   {
     if (info) *info = {};
     int64_t id = stream.id();
-    if (!out || !len || id < 0 || assembly.streamAdded()) return -1;
+    if (!out || !len || id < 0) return -1;
     unsigned avail = budget.remaining();
     if (!avail) return -1;
 

@@ -15,6 +15,7 @@
 
 #include <string.h>
 
+#include <zlib/ZmHash.hh>
 #include <zlib/ZmQueue.hh>
 
 #include <zlib/ZquicSched.hh>
@@ -504,6 +505,80 @@ struct SentFrameRef {
   }
 };
 
+struct SentFrameKey {
+  SentFrameKind::T	kind = SentFrameKind::None;
+  uint64_t		streamID = 0;
+  uint64_t		offset = 0;
+  uint64_t		length = 0;
+  bool			fin = false;
+
+  SentFrameKey() = default;
+  explicit SentFrameKey(const SentFrameRef &ref) :
+    kind{ref.kind}, streamID{ref.streamID}, offset{ref.offset},
+    length{ref.length}, fin{ref.fin} { }
+
+  bool operator !() const { return kind == SentFrameKind::None; }
+  bool operator ==(const SentFrameKey &o) const {
+    return kind == o.kind && streamID == o.streamID && offset == o.offset &&
+      length == o.length && fin == o.fin;
+  }
+  int cmp(const SentFrameKey &o) const {
+    if (kind != o.kind) return int(kind) - int(o.kind);
+    if (streamID != o.streamID) return streamID < o.streamID ? -1 : 1;
+    if (offset != o.offset) return offset < o.offset ? -1 : 1;
+    if (length != o.length) return length < o.length ? -1 : 1;
+    if (fin != o.fin) return int(fin) - int(o.fin);
+    return 0;
+  }
+  uint32_t hash() const {
+    ZuHash_FNV::Value h = ZuHash_FNV::initial_();
+    h = ZuHash_FNV::hash_(h, unsigned(kind));
+    h = ZuHash_FNV::hash_(h, streamID);
+    h = ZuHash_FNV::hash_(h, offset);
+    h = ZuHash_FNV::hash_(h, length);
+    h = ZuHash_FNV::hash_(h, unsigned(fin));
+    return uint32_t(h);
+  }
+
+  static bool retransmittable(const SentFrameRef &ref) {
+    return ref.kind == SentFrameKind::Stream ||
+      ref.kind == SentFrameKind::Crypto;
+  }
+};
+
+} // namespace Zquic
+
+template <> struct ZuCmp<Zquic::SentFrameKey> {
+  static int cmp(const Zquic::SentFrameKey &l, const Zquic::SentFrameKey &r) {
+    return l.cmp(r);
+  }
+  static bool equals(
+    const Zquic::SentFrameKey &l, const Zquic::SentFrameKey &r) {
+    return l == r;
+  }
+  static bool null(const Zquic::SentFrameKey &key) { return !key; }
+  static Zquic::SentFrameKey null() { return {}; }
+};
+
+template <> struct ZuHash<Zquic::SentFrameKey> {
+  static uint32_t hash(const Zquic::SentFrameKey &key) {
+    return key.hash();
+  }
+};
+
+namespace Zquic {
+
+inline const SentFrameKey &SentFrameKey_IDAxor(const SentFrameKey &key)
+{
+  return key;
+}
+
+ZuDerive(SentFrameAckHash,
+  (ZmHash<SentFrameKey,
+    ZmHashNode<SentFrameKey,
+      ZmHashKey<SentFrameKey_IDAxor,
+	ZmHashHeapID<"Zquic.Pkt.AckedFrame">>>>));
+
 struct SentPkt {
   static constexpr unsigned MaxFrames = 8;
 
@@ -536,6 +611,7 @@ struct SentPkt {
   bool		pmtudProbe = false;
   bool		acked = false;
   bool		lost = false;
+  bool		ptoReclaimed = false;
   SentFrameRef	frames[MaxFrames];
   unsigned	frameCount = 0;
 };
@@ -644,9 +720,9 @@ public:
   {
     unsigned n = 0;
     uint64_t ackedBytes_ = 0;
-    uint64_t largest = 0;
-    uint64_t largestAcked = 0;
-    bool have = false;
+    uint64_t largestAckedForLoss = 0;
+    uint64_t latestAcked = 0;
+    bool haveAckForLoss = false;
     bool haveAcked = false;
     if (latestSentTime) *latestSentTime = ZuTime{0};
     if (ackedBytes) *ackedBytes = 0;
@@ -655,8 +731,6 @@ public:
     for (unsigned i = 0; i < nRanges; ++i) {
       const AckRange &range = ranges[i];
       if (range.first > range.largest) continue;
-      if (!have || range.largest > largest) largest = range.largest;
-      have = true;
       auto iter = m_packets.iter(range.first);
       while (auto node = iter()) {
 	SentPkt &p = node->data();
@@ -664,17 +738,21 @@ public:
 	if (ack_(p)) {
 	  ++n;
 	  ackedBytes_ += p.bytes;
-	  if (latestSentTime && (!haveAcked || p.pn > largestAcked)) {
-	    largestAcked = p.pn;
+	  if (!haveAckForLoss || p.pn > largestAckedForLoss) {
+	    largestAckedForLoss = p.pn;
+	    haveAckForLoss = true;
+	  }
+	  if (latestSentTime && (!haveAcked || p.pn > latestAcked)) {
+	    latestAcked = p.pn;
 	    *latestSentTime = p.sentTime;
 	    haveAcked = true;
 	  }
 	}
       }
     }
-    unsigned l = have ?
+    unsigned l = haveAckForLoss ?
       markPktThresholdLoss(
-	largest, packetThreshold, lostBytes, lostSentTime) : 0;
+	largestAckedForLoss, packetThreshold, lostBytes, lostSentTime) : 0;
     if (ackedBytes) *ackedBytes = ackedBytes_;
     if (lost) *lost = l;
     return n;
@@ -763,7 +841,9 @@ public:
   unsigned retransmitPending() const { return m_retransmit.count(); }
   unsigned retransmitDropped() const { return m_retransmit.dropped(); }
   bool nextRetransmit(SentFrameRef &frame) {
-    return m_retransmit.pop(frame);
+    while (m_retransmit.pop(frame))
+      if (!frameAcked_(frame)) return true;
+    return false;
   }
   unsigned reclaimOnPTO(unsigned limit) {
     unsigned n = 0;
@@ -772,10 +852,12 @@ public:
       auto node = iter();
       if (!node) break;
       SentPkt &p = node->data();
-      if (p.acked || p.lost || !p.inFlight || !p.ackEliciting)
+      if (p.acked || p.lost || p.ptoReclaimed || !p.inFlight ||
+	  !p.ackEliciting)
 	continue;
       Tx::resend(Span{p.pn, 1});
       Tx::resend();
+      p.ptoReclaimed = true;
       ++n;
     }
     return n;
@@ -784,6 +866,7 @@ public:
   void clear() {
     Tx::txReset(0);
     m_retransmit.clear();
+    m_ackedFrames.clean();
     m_bytesInFlight = 0;
     m_acked = 0;
     m_lost = 0;
@@ -815,6 +898,7 @@ private:
   bool ack_(SentPkt &p) {
     if (p.acked || p.lost) return false;
     p.acked = true;
+    ackFrames_(p);
     if (p.inFlight) release_(p);
     ++m_acked;
     return true;
@@ -839,12 +923,48 @@ private:
   }
 
   void enqueueRetransmit_(const SentPkt &p) {
+    for (unsigned i = 0; i < p.framesUsed(); ++i) {
+      const SentFrameRef &frame = p.frame(i);
+      if (frameAcked_(frame) || frameOutstanding_(frame, &p)) continue;
+      m_retransmit.push(frame);
+    }
+  }
+
+  void ackFrames_(const SentPkt &p) {
     for (unsigned i = 0; i < p.framesUsed(); ++i)
-      m_retransmit.push(p.frame(i));
+      ackFrame_(p.frame(i));
+  }
+
+  void ackFrame_(const SentFrameRef &frame) {
+    if (!SentFrameKey::retransmittable(frame)) return;
+    SentFrameKey key{frame};
+    if (m_ackedFrames.findPtr(key)) return;
+    m_ackedFrames.add(key);
+  }
+
+  bool frameAcked_(const SentFrameRef &frame) const {
+    if (!SentFrameKey::retransmittable(frame)) return false;
+    return m_ackedFrames.findPtr(SentFrameKey{frame});
+  }
+
+  bool frameOutstanding_(
+    const SentFrameRef &frame, const SentPkt *skip = nullptr) const {
+    if (!SentFrameKey::retransmittable(frame)) return false;
+    SentFrameKey key{frame};
+    auto iter = m_packets.citer();
+    while (auto node = iter()) {
+      const SentPkt &p = node->data();
+      if (&p == skip || p.acked || p.lost) continue;
+      for (unsigned i = 0; i < p.framesUsed(); ++i)
+	if (SentFrameKey{p.frame(i)} == key) return true;
+    }
+    return false;
   }
 
   Queue		m_packets{0};
   RetransmitQueue m_retransmit;
+  SentFrameAckHash m_ackedFrames{
+    ZmHashParams().bits(8).loadFactor(1).cBits(3)};
   uint64_t	m_bytesInFlight = 0;
   unsigned	m_acked = 0;
   unsigned	m_lost = 0;

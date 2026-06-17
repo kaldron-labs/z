@@ -2009,6 +2009,7 @@ public:
 protected:
   struct InitialKeyDir { enum T { Client, Server }; };
   struct RuntimeCID { enum T { Initial, Local, Peer }; };
+  enum { RuntimePNLength = 2 };
   // RFC9000 specifies only a minimum/default of 2 for active_connection_id_limit.
   // This is the local advertised policy cap for active peer-issued CIDs.
   static constexpr unsigned LocalActiveConnectionIDLimit = 8;
@@ -2033,6 +2034,19 @@ protected:
   struct TxCryptoSnapshot {
     TrafficSecret	secrets[3];
     bool		installed[3] = {};
+  };
+  struct TxPktRefs {
+    bool add(const SentFrameRef &ref) {
+      if (ref.kind == SentFrameKind::None || n >= SentPkt::MaxFrames)
+	return false;
+      refs[n++] = ref;
+      return true;
+    }
+    unsigned count() const { return n; }
+    const SentFrameRef &operator [](unsigned i) const { return refs[i]; }
+
+    SentFrameRef	refs[SentPkt::MaxFrames];
+    unsigned		n = 0;
   };
   using LocalCIDs =
     ZtArray<LinkCID, ZtArrayHeapID<"Zquic.Link.LocalCID">>;
@@ -2203,6 +2217,16 @@ protected:
     budget.congestion = allowance < maxUDP ? allowance : maxUDP;
     return budget;
   }
+  unsigned txPNLength_(CryptoLevel::T level) const {
+    uint64_t largestAcked = m_txLargestAcked[level];
+    if (largestAcked == uint64_t(-1)) return RuntimePNLength;
+    return PktNumber::encodedLength(m_txPN[level], largestAcked);
+  }
+#ifdef ZDEBUG
+  void setTxPNForTest_(CryptoLevel::T level, uint64_t pn) {
+    m_txPN[level] = pn;
+  }
+#endif
   void resetRuntime_() {
     drainStreamsRx_();
     cancelTimers();
@@ -2530,11 +2554,15 @@ protected:
     for (auto &s : m_txTrafficSecrets) s.clear();
     for (auto &p : m_txProt) p.clear();
     memset(m_txPN, 0, sizeof(m_txPN));
+    for (auto &pn : m_txLargestAcked) pn = uint64_t(-1);
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
     m_rxAcks.clear();
     for (auto &ack : m_txAck) ack = {};
     for (auto &ecn : m_peerAckECN) ecn.reset();
     for (auto &p : m_txPkts) p.clear();
+    m_coalesceInitial = nullptr;
+    m_coalesceAddr = {};
+    m_coalesceLong = false;
     memset(m_rxSpaceDiscarded, 0, sizeof(m_rxSpaceDiscarded));
     memset(m_txSpaceDiscarded, 0, sizeof(m_txSpaceDiscarded));
     m_rtt = {};
@@ -2655,28 +2683,53 @@ protected:
 	    ZiSockAddr addr, AppendAck appendAck, SendPkt sendPkt) {
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC control packetization outside Tx thread", return false);
-	    while (m_controlQueue.count_()) {
-	      ControlFrame frame = m_controlQueue.head();
-      if (!controlStillValid_(frame)) {
-	m_controlQueue.shift();
-	continue;
+    PktBuild build;
+    build.reset();
+    PktBudget budget = sendBudget_();
+    if (!budget.congestion) return false;
+    PktAssembly assembly;
+    TxPktRefs refs;
+    unsigned before = build.bytes();
+    if (!appendAck(build)) return false;
+    unsigned ackBytes = build.bytes() - before;
+    if (ackBytes && !budget.add(ackBytes)) return false;
+    ControlFrame sentControls[SentPkt::MaxFrames];
+    ControlFrame staleControls[SentPkt::MaxFrames];
+    unsigned nSentControls = 0;
+    unsigned nStaleControls = 0;
+    bool controlExhausted = false;
+    {
+      auto iter = m_controlQueue.iter();
+      while (refs.count() < SentPkt::MaxFrames &&
+	  nStaleControls < SentPkt::MaxFrames) {
+	const ControlFrame &queued = iter();
+	if (!queued) {
+	  controlExhausted = true;
+	  break;
+	}
+	ControlFrame frame = queued;
+	if (!controlStillValid_(frame)) {
+	  staleControls[nStaleControls++] = frame;
+	  continue;
+	}
+	int n = frame.write(build.scratch(), build.scratchAvail());
+	if (n <= 0 || !assembly.addControl(budget, unsigned(n)) ||
+	    !build.commitScratch(unsigned(n)))
+	  break;
+	if (!refs.add(controlRef_(frame))) return false;
+	sentControls[nSentControls++] = frame;
       }
-      PktBuild build;
-      build.reset();
-      PktBudget budget = sendBudget_();
-      if (!budget.congestion) return false;
-      PktAssembly assembly;
-      unsigned before = build.bytes();
-      if (!appendAck(build)) return false;
-      unsigned ackBytes = build.bytes() - before;
-      if (ackBytes && !assembly.addControl(budget, ackBytes)) return false;
-      int n = frame.write(build.scratch(), build.scratchAvail());
-      if (n <= 0 || !assembly.addControl(budget, unsigned(n)) ||
-	  !build.commitScratch(unsigned(n)))
-	return false;
-      SentFrameRef ref = controlRef_(frame);
-      if (!sendPkt(build, ZuMv(addr), ref)) return false;
-      m_controlQueue.shift();
+    }
+    for (unsigned i = 0; i < nStaleControls; ++i)
+      m_controlQueue.del(staleControls[i]);
+    if (refs.count()) {
+      if (!sendPkt(build, ZuMv(addr), refs)) return false;
+      for (unsigned i = 0; i < nSentControls; ++i) {
+	ControlFrame head = m_controlQueue.head();
+	if (head == sentControls[i]) (void)m_controlQueue.shift();
+	else m_controlQueue.del(sentControls[i]);
+      }
+      if (controlExhausted) m_controlQueue.clean();
       return true;
     }
     return false;
@@ -2692,8 +2745,8 @@ protected:
 	      [&appendAck](PktBuild &build) { return appendAck(build); },
 	      [&sendPkt](
 		  PktBuild &build, ZiSockAddr addr_,
-		  const SentFrameRef &ref) {
-		return sendPkt(build, ZuMv(addr_), ref);
+		  const TxPktRefs &refs) {
+		return sendPkt(build, ZuMv(addr_), refs);
 	      });
 	  }
 
@@ -2702,38 +2755,94 @@ protected:
 	    ZiSockAddr addr, AppendAck appendAck, SendPkt sendPkt) {
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC control/stream flush outside Tx thread", return false);
-	    bool sent = false;
-	    while (sendQueuedControlPkt_(
-	addr,
-	[&appendAck](PktBuild &build) { return appendAck(build); },
-	[&sendPkt](
-	    PktBuild &build, ZiSockAddr addr_,
-	    const SentFrameRef &ref) {
-	  return sendPkt(build, ZuMv(addr_), ref);
-	}))
-      sent = true;
-    bool streams = flushWritableStreams_(
-      addr,
-      [this, &appendAck, &sendPkt](StreamRef stream, ZiSockAddr addr_) {
-	return sendQueuedStreamPkt_(
-	  ZuMv(stream), ZuMv(addr_),
-	  [&appendAck](PktBuild &build) { return appendAck(build); },
-	  [&sendPkt](
-	      PktBuild &build, ZiSockAddr addr__,
-	      const SentFrameRef &ref) {
-	    return sendPkt(build, ZuMv(addr__), ref);
-	  });
-      });
-    while (sendQueuedControlPkt_(
-	addr,
-	[&appendAck](PktBuild &build) { return appendAck(build); },
-	[&sendPkt](
-	    PktBuild &build, ZiSockAddr addr_,
-	    const SentFrameRef &ref) {
-	  return sendPkt(build, ZuMv(addr_), ref);
-	}))
-      sent = true;
-    return sent || streams;
+    PktBuild build;
+    build.reset();
+    PktBudget budget = sendBudget_();
+    if (!budget.congestion) return false;
+    budget.flow = m_txDataCredit.available();
+    PktAssembly assembly;
+    TxPktRefs refs;
+    unsigned before = build.bytes();
+    if (!appendAck(build)) return false;
+    unsigned ackBytes = build.bytes() - before;
+    if (ackBytes && !budget.add(ackBytes)) return false;
+    ControlFrame sentControls[SentPkt::MaxFrames];
+    ControlFrame staleControls[SentPkt::MaxFrames];
+    unsigned nSentControls = 0;
+    unsigned nStaleControls = 0;
+    bool controlExhausted = false;
+    {
+      auto iter = m_controlQueue.iter();
+      while (refs.count() < SentPkt::MaxFrames &&
+	  nStaleControls < SentPkt::MaxFrames) {
+	const ControlFrame &queued = iter();
+	if (!queued) {
+	  controlExhausted = true;
+	  break;
+	}
+	ControlFrame frame = queued;
+	if (!controlStillValid_(frame)) {
+	  staleControls[nStaleControls++] = frame;
+	  continue;
+	}
+	int n = frame.write(build.scratch(), build.scratchAvail());
+	if (n <= 0 || !assembly.addControl(budget, unsigned(n)) ||
+	    !build.commitScratch(unsigned(n)))
+	  break;
+	if (!refs.add(controlRef_(frame))) return false;
+	sentControls[nSentControls++] = frame;
+      }
+    }
+    for (unsigned i = 0; i < nStaleControls; ++i)
+      m_controlQueue.del(staleControls[i]);
+    bool blocked = false;
+    while (scheduledStreamCount_() && refs.count() < SentPkt::MaxFrames) {
+      StreamRef stream = nextWritableStream_();
+      if (!stream || !streamTxPending_(stream)) continue;
+      if (stream->txRangeCount() && m_txDataCredit.blocked()) {
+	streamWritable_(stream);
+	queueBlocked_(FrameType::DataBlocked, 0, m_txDataCredit.limit());
+	blocked = true;
+	break;
+      }
+      if (stream->txRangeCount() && !stream->txCreditAvailable()) {
+	streamWritable_(stream);
+	queueBlocked_(
+	  FrameType::StreamDataBlocked, uint64_t(stream->id()),
+	  stream->txCreditLimit());
+	blocked = true;
+	break;
+      }
+      StreamFrameInfo info;
+      int n = StreamPktizer::writeNext(
+	build.scratch(), build.scratchAvail(),
+	budget, assembly, *stream, &info);
+      if (n <= 0) {
+	if (stream->id() >= 0) streamWritable_(stream);
+	break;
+      }
+      if (!build.commitScratch(unsigned(n)) || !build.add(info.range))
+	return false;
+      if (!refs.add(SentFrameRef::stream(
+	    info.streamID, info.range, info.fin)))
+	return false;
+      if (info.length && !m_txDataCredit.consume(info.length)) return false;
+      m_txDiag.streamBytesTx += info.length;
+      returnStreamCredit_(stream);
+      if (streamTxPending_(stream) && stream->id() >= 0)
+	streamWritable_(stream);
+    }
+    if (refs.count()) {
+      if (!sendPkt(build, ZuMv(addr), refs)) return false;
+      for (unsigned i = 0; i < nSentControls; ++i) {
+	ControlFrame head = m_controlQueue.head();
+	if (head == sentControls[i]) (void)m_controlQueue.shift();
+	else m_controlQueue.del(sentControls[i]);
+      }
+      if (controlExhausted) m_controlQueue.clean();
+      return true;
+    }
+    return blocked;
   }
 
 	  template <typename AppendAck, typename SendPkt>
@@ -2980,6 +3089,8 @@ protected:
       cancelLossTimer_();
       return;
     }
+    ZuTime now = runtimeNow_();
+    if (out <= now) out = now + RttEstimator::Granularity;
     scheduleLossTimer_(out);
   }
   void cancelLossTimer_() { cancelTimer_("loss time", &m_lossTimer); }
@@ -3297,7 +3408,16 @@ protected:
   void recordTxPkt_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes,
     const SentFrameRef &ref, bool ackEliciting) {
+    TxPktRefs refs;
+    if (ref.kind != SentFrameKind::None) refs.add(ref);
+    recordTxPkt_(level, pn, bytes, refs, ackEliciting);
+  }
+
+  void recordTxPkt_(
+    CryptoLevel::T level, uint64_t pn, unsigned bytes,
+    const TxPktRefs &refs, bool ackEliciting) {
     if (m_txSpaceDiscarded[level]) return;
+    if (!ackEliciting && !refs.count()) return;
     SentPkt packet;
     packet.pn = pn;
     packet.space = runtimePktSpace(level);
@@ -3305,7 +3425,8 @@ protected:
     packet.sentTime = runtimeNow_();
     packet.ackEliciting = ackEliciting;
     packet.inFlight = ackEliciting;
-    if (ref.kind != SentFrameKind::None) packet.addFrame(ref);
+    for (unsigned i = 0; i < refs.count(); ++i)
+      packet.addFrame(refs[i]);
     m_txPkts[level].add(packet);
     if (ackEliciting) {
       m_congestion.sent(bytes);
@@ -3335,6 +3456,12 @@ protected:
       "QUIC ACK sent-packet processing outside Tx thread", return);
     if (!ack.nRanges || m_txSpaceDiscarded[ack.level]) return;
     validateAckECN_(ack);
+    for (unsigned i = 0; i < ack.nRanges; ++i) {
+      uint64_t largest = ack.ranges[i].largest;
+      if (m_txLargestAcked[ack.level] == uint64_t(-1) ||
+	  largest > m_txLargestAcked[ack.level])
+	m_txLargestAcked[ack.level] = largest;
+    }
     ZuTime sentTime;
     unsigned lost = 0;
     uint64_t ackedBytes = 0;
@@ -3430,6 +3557,45 @@ protected:
       build.add(prefix) && build.add(payload);
   }
 
+  template <typename SendPkt>
+  bool holdInitialForCoalesce_(
+    ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
+    if (!m_coalesceLong || m_coalesceInitial)
+      return sendPkt(ZuMv(buf), ZuMv(addr));
+    m_coalesceInitial = ZuMv(buf);
+    m_coalesceAddr = ZuMv(addr);
+    return true;
+  }
+
+  template <typename SendPkt>
+  bool sendHandshakeCoalesced_(
+    ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
+    if (!m_coalesceInitial) return sendPkt(ZuMv(buf), ZuMv(addr));
+    ZmRef<ZiIOBuf> initial = ZuMv(m_coalesceInitial);
+    ZiSockAddr initialAddr = ZuMv(m_coalesceAddr);
+    unsigned initialEnd = initial->skip + initial->length;
+    if (initialEnd <= initial->size &&
+	initial->length <= initial->size - buf->length) {
+      memcpy(
+	initial->data_() + initialEnd,
+	buf->data_() + buf->skip, buf->length);
+      initial->length += buf->length;
+      return sendPkt(ZuMv(initial), ZuMv(initialAddr));
+    }
+    if (!sendPkt(ZuMv(initial), ZuMv(initialAddr))) return false;
+    return sendPkt(ZuMv(buf), ZuMv(addr));
+  }
+
+  template <typename SendPkt>
+  bool flushCoalescedInitial_(SendPkt sendPkt) {
+    if (!m_coalesceInitial) return true;
+    ZmRef<ZiIOBuf> initial = ZuMv(m_coalesceInitial);
+    ZiSockAddr addr = ZuMv(m_coalesceAddr);
+    return sendPkt(ZuMv(initial), ZuMv(addr));
+  }
+  void beginLongCoalesce_() { m_coalesceLong = true; }
+  void endLongCoalesce_() { m_coalesceLong = false; }
+
   template <typename SendCryptoPkt>
   bool sendCryptoFlights_(
     const uint8_t *data, unsigned len, const size_t offsets[5],
@@ -3480,9 +3646,9 @@ protected:
 
   void recordProtPktTx_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan recordFrame,
-    const SentFrameRef *recordRef, bool ackEliciting) {
-    if (recordRef)
-      recordTxPkt_(level, pn, bytes, *recordRef, ackEliciting);
+    const TxPktRefs *recordRefs, bool ackEliciting) {
+    if (recordRefs)
+      recordTxPkt_(level, pn, bytes, *recordRefs, ackEliciting);
     else
       recordTxPkt_(level, pn, bytes, recordFrame);
     ++m_txPN[level];
@@ -3508,7 +3674,7 @@ protected:
 	  bool sendProtInitialPkt_(
 	    InitialKeyDir::T keyDir, RuntimeCID::T dcid, RuntimeCID::T scid,
 	    unsigned pnLength, bool padInitial, PktBuild &payload, ZiSockAddr addr,
-	    ZuCSpan recordFrame, const SentFrameRef *recordRef, bool ackEliciting,
+	    ZuCSpan recordFrame, const TxPktRefs *recordRefs, bool ackEliciting,
 	    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC Initial packet protection outside Tx thread", return false);
@@ -3546,7 +3712,7 @@ protected:
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     if (payload.ack(CryptoLevel::Initial)) ackSentTx_(CryptoLevel::Initial);
     recordProtPktTx_(
-      CryptoLevel::Initial, pn, unsigned(n), recordFrame, recordRef,
+      CryptoLevel::Initial, pn, unsigned(n), recordFrame, recordRefs,
       ackEliciting);
     return true;
   }
@@ -3555,7 +3721,7 @@ protected:
 	  bool sendProtHandshakePkt_(
 	    RuntimeCID::T dcid, RuntimeCID::T scid, unsigned pnLength,
 	    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
-	    const SentFrameRef *recordRef, bool ackEliciting,
+	    const TxPktRefs *recordRefs, bool ackEliciting,
 	    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC Handshake packet protection outside Tx thread", return false);
@@ -3590,7 +3756,7 @@ protected:
     if (payload.ack(CryptoLevel::Handshake))
       ackSentTx_(CryptoLevel::Handshake);
     recordProtPktTx_(
-      CryptoLevel::Handshake, pn, unsigned(n), recordFrame, recordRef,
+      CryptoLevel::Handshake, pn, unsigned(n), recordFrame, recordRefs,
       ackEliciting);
     return true;
   }
@@ -3598,7 +3764,7 @@ protected:
   template <typename AllocTxPkt, typename SendPkt>
 	  bool sendProtShortPkt_(
 	    RuntimeCID::T dcid, unsigned pnLength, PktBuild &payload,
-	    ZiSockAddr addr, ZuCSpan recordFrame, const SentFrameRef *recordRef,
+	    ZiSockAddr addr, ZuCSpan recordFrame, const TxPktRefs *recordRefs,
 	    bool ackEliciting, AllocTxPkt allocTxPkt, SendPkt sendPkt) {
 	    ZiAssert(txInvoked_(), "Zquic", (),
 	      "QUIC Short packet protection outside Tx thread", return false);
@@ -3633,7 +3799,7 @@ protected:
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     if (payload.ack(CryptoLevel::OneRTT)) ackSentTx_(CryptoLevel::OneRTT);
     recordProtPktTx_(
-      CryptoLevel::OneRTT, pn, unsigned(n), recordFrame, recordRef,
+      CryptoLevel::OneRTT, pn, unsigned(n), recordFrame, recordRefs,
       ackEliciting);
     return true;
   }
@@ -4341,14 +4507,19 @@ private:
   CryptoStream		m_txCrypto[3];
   TrafficSecret		m_txTrafficSecrets[3];
   PktProtState		m_txProt[3];
+  ZmRef<ZiIOBuf>	m_coalesceInitial;
+  ZiSockAddr		m_coalesceAddr;
   RuntimeTxDiag		m_txDiag;
   NewReno		m_congestion;
   uint64_t		m_txPN[3]{};
+  uint64_t		m_txLargestAcked[3]{
+    uint64_t(-1), uint64_t(-1), uint64_t(-1)};
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
   AckECN		m_peerAckECN[3];
   Path			m_path;
   bool			m_txSpaceDiscarded[3]{};
+  bool			m_coalesceLong = false;
   bool			m_txKeyPhase = false;
 };
 
@@ -4736,7 +4907,8 @@ private:
     ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client crypto send outside Tx thread", return false);
-    return Base::sendCryptoFlights_(
+    Base::beginLongCoalesce_();
+    bool ok = Base::sendCryptoFlights_(
       data, len, offsets, RuntimeCryptoChunk, ZuMv(addr),
       [this](
 	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
@@ -4744,6 +4916,11 @@ private:
 	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
+    ok = Base::flushCoalescedInitial_([this](auto buf, ZiSockAddr addr_) {
+      return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
+    }) && ok;
+    Base::endLongCoalesce_();
+    return ok;
   }
 
   bool sendCryptoPkt_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
@@ -4806,8 +4983,8 @@ private:
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
-	  const SentFrameRef &ref) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
+	  const typename Base::TxPktRefs &refs) {
+	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true);
       });
   }
 
@@ -4870,13 +5047,23 @@ private:
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     if (!m_endpoint.connected()) return false;
+    typename Base::TxPktRefs refs;
+    const typename Base::TxPktRefs *recordRefs = nullptr;
+    if (recordRef) {
+      refs.add(*recordRef);
+      recordRefs = &refs;
+    }
     return Base::sendProtInitialPkt_(
       InitialKeyDir::Client, RuntimeCID::Initial, RuntimeCID::Local,
-      RuntimePNLength, true, payload, ZuMv(addr), recordFrame,
-      recordRef, ackEliciting,
+      Base::txPNLength_(CryptoLevel::Initial), true, payload, ZuMv(addr),
+      recordFrame, recordRefs, ackEliciting,
       [this]() { return m_endpoint.allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
+	return Base::holdInitialForCoalesce_(
+	  ZuMv(buf), ZuMv(addr_),
+	  [this](auto buf_, ZiSockAddr addr__) {
+	    return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	  });
       });
   }
 
@@ -4892,13 +5079,24 @@ private:
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     if (!m_endpoint.connected()) return false;
+    typename Base::TxPktRefs refs;
+    const typename Base::TxPktRefs *recordRefs = nullptr;
+    if (recordRef) {
+      refs.add(*recordRef);
+      recordRefs = &refs;
+    }
     return Base::sendProtHandshakePkt_(
-      RuntimeCID::Peer, RuntimeCID::Local, RuntimePNLength,
-      payload, ZuMv(addr), recordFrame, recordRef,
+      RuntimeCID::Peer, RuntimeCID::Local,
+      Base::txPNLength_(CryptoLevel::Handshake),
+      payload, ZuMv(addr), recordFrame, recordRefs,
       ackEliciting,
       [this]() { return m_endpoint.allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
+	return Base::sendHandshakeCoalesced_(
+	  ZuMv(buf), ZuMv(addr_),
+	  [this](auto buf_, ZiSockAddr addr__) {
+	    return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	  });
       });
   }
 
@@ -4914,9 +5112,23 @@ private:
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     if (!m_endpoint.connected()) return false;
+    typename Base::TxPktRefs refs;
+    const typename Base::TxPktRefs *recordRefs = nullptr;
+    if (recordRef) {
+      refs.add(*recordRef);
+      recordRefs = &refs;
+    }
+    return sendShortPkt_(payload, ZuMv(addr), recordFrame, recordRefs,
+      ackEliciting);
+  }
+
+  bool sendShortPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    const typename Base::TxPktRefs *recordRefs, bool ackEliciting) {
+    if (!m_endpoint.connected()) return false;
     return Base::sendProtShortPkt_(
-      RuntimeCID::Peer, RuntimePNLength, payload, ZuMv(addr), recordFrame,
-      recordRef, ackEliciting,
+      RuntimeCID::Peer, Base::txPNLength_(CryptoLevel::OneRTT),
+      payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return m_endpoint.allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
 	return m_endpoint.send(ZuMv(buf), ZuMv(addr_));
@@ -4944,8 +5156,8 @@ private:
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
-	  const SentFrameRef &ref) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
+	  const typename Base::TxPktRefs &refs) {
+	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true);
       });
   }
 
@@ -5337,7 +5549,8 @@ private:
     ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server crypto send outside Tx thread", return false);
-    return Base::sendCryptoFlights_(
+    Base::beginLongCoalesce_();
+    bool ok = Base::sendCryptoFlights_(
       data, len, offsets, RuntimeCryptoChunk, ZuMv(addr),
       [this](
 	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
@@ -5345,6 +5558,11 @@ private:
 	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
+    ok = Base::flushCoalescedInitial_([this](auto buf, ZiSockAddr addr_) {
+      return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
+    }) && ok;
+    Base::endLongCoalesce_();
+    return ok;
   }
 
   bool sendCryptoPkt_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
@@ -5406,8 +5624,8 @@ private:
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
-	  const SentFrameRef &ref) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
+	  const typename Base::TxPktRefs &refs) {
+	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true);
       });
   }
 
@@ -5468,14 +5686,26 @@ private:
   bool sendInitialPkt_(
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    typename Base::TxPktRefs refs;
+    const typename Base::TxPktRefs *recordRefs = nullptr;
+    if (recordRef) {
+      refs.add(*recordRef);
+      recordRefs = &refs;
+    }
     return Base::sendProtInitialPkt_(
       InitialKeyDir::Server, RuntimeCID::Peer, RuntimeCID::Local,
-      RuntimePNLength, false, payload, ZuMv(addr), recordFrame,
-      recordRef, ackEliciting,
+      Base::txPNLength_(CryptoLevel::Initial), false, payload, ZuMv(addr),
+      recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
-      [this, recordRef](auto buf, ZiSockAddr addr_) {
-	if (recordRef && !app()->sendFrame(*recordRef)) return true;
-	return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
+      [this, recordRefs](auto buf, ZiSockAddr addr_) {
+	if (recordRefs)
+	  for (unsigned i = 0; i < recordRefs->count(); ++i)
+	    if (!app()->sendFrame((*recordRefs)[i])) return true;
+	return Base::holdInitialForCoalesce_(
+	  ZuMv(buf), ZuMv(addr_),
+	  [this](auto buf_, ZiSockAddr addr__) {
+	    return app()->sendPkt_(ZuMv(buf_), ZuMv(addr__));
+	  });
       });
   }
 
@@ -5490,13 +5720,24 @@ private:
   bool sendHandshakePkt_(
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    typename Base::TxPktRefs refs;
+    const typename Base::TxPktRefs *recordRefs = nullptr;
+    if (recordRef) {
+      refs.add(*recordRef);
+      recordRefs = &refs;
+    }
     return Base::sendProtHandshakePkt_(
-      RuntimeCID::Peer, RuntimeCID::Local, RuntimePNLength,
-      payload, ZuMv(addr), recordFrame, recordRef,
+      RuntimeCID::Peer, RuntimeCID::Local,
+      Base::txPNLength_(CryptoLevel::Handshake),
+      payload, ZuMv(addr), recordFrame, recordRefs,
       ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
+	return Base::sendHandshakeCoalesced_(
+	  ZuMv(buf), ZuMv(addr_),
+	  [this](auto buf_, ZiSockAddr addr__) {
+	    return app()->sendPkt_(ZuMv(buf_), ZuMv(addr__));
+	  });
       });
   }
 
@@ -5511,12 +5752,27 @@ private:
   bool sendShortPkt_(
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    typename Base::TxPktRefs refs;
+    const typename Base::TxPktRefs *recordRefs = nullptr;
+    if (recordRef) {
+      refs.add(*recordRef);
+      recordRefs = &refs;
+    }
+    return sendShortPkt_(payload, ZuMv(addr), recordFrame, recordRefs,
+      ackEliciting);
+  }
+
+  bool sendShortPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    const typename Base::TxPktRefs *recordRefs, bool ackEliciting) {
     return Base::sendProtShortPkt_(
-      RuntimeCID::Peer, RuntimePNLength, payload, ZuMv(addr), recordFrame,
-      recordRef, ackEliciting,
+      RuntimeCID::Peer, Base::txPNLength_(CryptoLevel::OneRTT),
+      payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
-      [this, recordRef](auto buf, ZiSockAddr addr_) {
-	if (recordRef && !app()->sendFrame(*recordRef)) return true;
+      [this, recordRefs](auto buf, ZiSockAddr addr_) {
+	if (recordRefs)
+	  for (unsigned i = 0; i < recordRefs->count(); ++i)
+	    if (!app()->sendFrame((*recordRefs)[i])) return true;
 	return app()->sendPkt_(ZuMv(buf), ZuMv(addr_));
       });
   }
@@ -5532,8 +5788,8 @@ private:
 	},
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
-	    const SentFrameRef &ref) {
-	  return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
+	    const typename Base::TxPktRefs &refs) {
+	  return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true);
 	}))
       return false;
     m_handshakeDoneSent = 1;
