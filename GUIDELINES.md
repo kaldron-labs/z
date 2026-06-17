@@ -196,6 +196,11 @@ These guidelines extend `AGENTS.md`
   Problem: atomic operations and locking induce latency volatility
   Fix: use primitive types, do not guard with locks, permit unclean reads from other threads
 
+### Liveness
+- Flag: unbounded tight loops in threads that service mixed workloads, particularly I/O threads
+  Problem: under load, pending work in the scheduler queue is starved by synchronous looping
+  Fix: cap the work performed in each turn - batch it and post continuations for the remainder
+
 ## Leveraging Key Z Framework Capabilities
 ### Assertions and type mechanics
 - Assertions: use `ZuAssert` at compile time; at run time use plain `assert` below `zm`, `ZmAssert` below `zi`, and `ZiAssert` in `zi` or above.
