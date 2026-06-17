@@ -2021,6 +2021,15 @@ protected:
     CxnState::T		state = CxnState::Tombstone;
     bool			associated = false;
   };
+  struct PathState {
+    Path		path;
+    Path		prev;
+    CxnID		peerCID;
+    uint64_t		peerSeq = 0;
+    ZuTime		deadline;
+    PathChallenge	challenge;
+    bool		active = false;
+  };
   struct AckSnapshot {
     CryptoLevel::T	level = CryptoLevel::Initial;
     uint64_t		gen = 0;
@@ -2088,6 +2097,9 @@ protected:
   bool queuePathResponse_(ZuCSpan data) {
     return queueControl_(ControlFrame::pathResponse(data));
   }
+  bool queuePathChallenge_(ZuCSpan data) {
+    return queueControl_(ControlFrame::pathChallenge(data));
+  }
 	  bool queueHandshakeDone_() {
 	    return queueControl_(ControlFrame::handshakeDone());
 	  }
@@ -2148,6 +2160,7 @@ protected:
   PathDiag pathDiag_() const { return m_path.diag(); }
   bool pathValidated_() const { return m_path.validated(); }
   unsigned activePathMaxUDP_() const { return m_path.activeMaxUDP(); }
+  const ZiSockAddr &activePathRemote_() const { return m_path.remote(); }
   uint64_t pathAntiAmplification_() const {
     return m_path.antiAmplificationRemaining();
   }
@@ -2224,6 +2237,12 @@ protected:
     budget.congestion = allowance < maxUDP ? allowance : maxUDP;
     return budget;
   }
+  static bool sameAddr_(const ZiSockAddr &l, const ZiSockAddr &r) {
+    if (!l || !r) return !l && !r;
+    return l.m_sin.sin_family == r.m_sin.sin_family &&
+      l.m_sin.sin_port == r.m_sin.sin_port &&
+      l.m_sin.sin_addr.s_addr == r.m_sin.sin_addr.s_addr;
+  }
   void resetPath_() {
     m_path = m_isServer ?
       Path::server(ZiSockAddr{}, ZiSockAddr{}) :
@@ -2231,6 +2250,7 @@ protected:
     m_path.configuredMaxUDP(app()->maxUDP());
     m_path.peerMaxUDP(app()->maxUDP());
     if (!m_isServer) m_path.validated();
+    m_validatingPath = {};
   }
   void initClientPath_(ZiSockAddr local, ZiSockAddr remote) {
     app()->txRun([
@@ -2285,10 +2305,108 @@ protected:
     });
   }
   void recordPathRxTx_(unsigned bytes) { m_path.received(bytes); }
+  void observePathRx_(ZiSockAddr local, ZiSockAddr remote) {
+    app()->txRun([
+      link = ZmMkRef(impl()),
+      local = ZuMv(local),
+      remote = ZuMv(remote)
+    ]() mutable {
+      link->observePathRxTx_(ZuMv(local), ZuMv(remote));
+    });
+  }
+  void observePathRxTx_(ZiSockAddr local, ZiSockAddr remote) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC path receive observation outside Tx thread", return);
+    if (!remote || sameAddr_(remote, m_path.remote()))
+      return;
+    if (m_validatingPath.active &&
+	sameAddr_(remote, m_validatingPath.path.remote()))
+      return;
+    startPathValidation_(ZuMv(local), ZuMv(remote));
+  }
+  bool startPathValidation_(
+    ZiSockAddr local, ZiSockAddr remote, bool armTimer = true) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC path validation start outside Tx thread", return false);
+    if (!remote || sameAddr_(remote, m_path.remote())) return false;
+    PathState state;
+    state.prev = m_path;
+    state.path = m_isServer ?
+      Path::server(ZuMv(local), remote) :
+      Path::client(ZuMv(local), remote);
+    state.path.configuredMaxUDP(m_path.configuredMaxUDP());
+    state.path.peerMaxUDP(m_path.peerMaxUDP());
+    selectPathCID_(state);
+    if (!state.challenge.generate())
+      return false;
+    state.deadline = pathValidationDeadline_();
+    state.active = true;
+    m_validatingPath = state;
+    if (armTimer)
+      schedulePathTimer_(state.deadline);
+    txQueueControl_(ControlFrame::pathChallenge(
+      m_validatingPath.challenge.cspan()));
+    impl()->queueTxFlush_(m_validatingPath.path.remote());
+    return true;
+  }
+  bool onPathResponse_(ZuCSpan data) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC PATH_RESPONSE processing outside Tx thread", return false);
+    if (!m_validatingPath.active ||
+	!m_validatingPath.challenge.equals(data))
+      return false;
+    promotePath_();
+    return true;
+  }
+  void receivePathResponse_(ZuCSpan data) {
+    if (data.length() != PathChallenge::Length) return;
+    uint8_t payload[PathChallenge::Length];
+    memcpy(payload, data.data(), sizeof(payload));
+    app()->txRun([link = ZmMkRef(impl()), payload]() mutable {
+      link->onPathResponse_(byteSpan(payload, sizeof(payload)));
+    });
+  }
+  void promotePath_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC path promotion outside Tx thread", return);
+    if (!m_validatingPath.active) return;
+    m_path = m_validatingPath.path;
+    m_path.validated();
+    bindPromotedCID_();
+    m_validatingPath = {};
+    cancelPathTimer_();
+    impl()->pathPromoted_();
+    impl()->queueTxFlush_();
+  }
+  void failPathValidation_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC path-validation failure outside Tx thread", return);
+    if (!m_validatingPath.active) return;
+    m_validatingPath = {};
+    cancelPathTimer_();
+    impl()->queueTxFlush_();
+  }
+  void pathExpired_() { failPathValidation_(); }
 #ifdef ZDEBUG
   void growActivePathForTest_(unsigned size) {
     m_path.startProbe(size);
     m_path.probeAcked();
+  }
+  bool validatingPath_() const { return m_validatingPath.active; }
+  bool startPathValidationForTest_(ZiSockAddr local, ZiSockAddr remote) {
+    if (!remote || sameAddr_(remote, m_path.remote()))
+      return false;
+    if (m_validatingPath.active &&
+	sameAddr_(remote, m_validatingPath.path.remote()))
+      return false;
+    return startPathValidation_(ZuMv(local), ZuMv(remote), false);
+  }
+  const ZiSockAddr &validatingRemote_() const {
+    return m_validatingPath.path.remote();
+  }
+  ZuCSpan validatingChallenge_() const {
+    return m_validatingPath.active ?
+      m_validatingPath.challenge.cspan() : ZuCSpan{};
   }
 #endif
   template <typename SendPkt>
@@ -2374,6 +2492,7 @@ protected:
   void packetParseFailure_() { ++m_rxDiag.failures; }
   void tlsFailure_() { ++m_rxDiag.failures; }
   void handshakeDoneTx_() { }
+  void pathPromoted_() { }
   void dataBlocked_(uint64_t) { }
   void streamDataBlocked_(uint64_t, uint64_t) { }
   void streamsBlocked_(Zi::StreamType::T, uint64_t) { }
@@ -2392,6 +2511,8 @@ protected:
     m_peerCID = peerCID;
     addLocalCID_(localSCID, 0);
     addPeerCID_(peerCID, 0);
+    if (auto cid = findCID_(m_peerCIDs, peerCID))
+      cid->associated = true;
   }
 
   void setPeerCIDFromHdrSCID_(const LongHdr &h) {
@@ -2450,6 +2571,36 @@ protected:
     if (!retireLocalCID_(frame.value, id)) return false;
     impl()->retiredLocalCID_(frame.value, id);
     return true;
+  }
+  void selectPathCID_(PathState &state) {
+    state.peerCID = m_peerCID;
+    for (auto &cid : m_peerCIDs) {
+      if (cid.state != CxnState::Active || cid.associated)
+	continue;
+      state.peerCID = cid.id;
+      state.peerSeq = cid.sequence;
+      return;
+    }
+    if (auto cid = findCID_(m_peerCIDs, m_peerCID))
+      state.peerSeq = cid->sequence;
+  }
+  void bindPromotedCID_() {
+    for (auto &cid : m_peerCIDs)
+      cid.associated = false;
+    if (!m_validatingPath.peerCID.length()) return;
+    if (auto cid = findCID_(m_peerCIDs, m_validatingPath.peerSeq)) {
+      if (cid->id == m_validatingPath.peerCID) {
+	cid->associated = true;
+	m_peerCID = cid->id;
+      }
+    }
+  }
+  ZuTime pathValidationDeadline_() const {
+    ZuTime timeout = ptoTimeout_();
+    int64_t usec = timeout.microsecs();
+    if (usec < 1000000) usec = 1000000;
+    if (usec > int64_t(-1) / 3) usec = int64_t(-1) / 3;
+    return runtimeNow_() + timeUS(uint64_t(usec) * 3);
   }
   template <typename Routes>
   void installLocalCIDRoutes_(Routes &routes) {
@@ -2754,6 +2905,9 @@ protected:
       case FrameType::StreamsBlocked:
 	return SentFrameRef::blocked(
 	  frame.type, frame.streamID, frame.value, frame.streamType);
+      case FrameType::PathChallenge:
+	return SentFrameRef::pathChallenge(
+	  byteSpan(frame.payload, sizeof(frame.payload)));
       case FrameType::PathResponse:
 	return SentFrameRef::pathResponse(
 	  byteSpan(frame.payload, sizeof(frame.payload)));
@@ -2770,7 +2924,8 @@ protected:
     frame.streamID = ref.streamID;
     frame.value = ref.value;
     frame.streamType = ref.streamType;
-    if (ref.controlType == FrameType::PathResponse)
+    if (ref.controlType == FrameType::PathChallenge ||
+	ref.controlType == FrameType::PathResponse)
       memcpy(frame.payload, ref.payload, sizeof(frame.payload));
     return frame;
   }
@@ -3375,7 +3530,6 @@ protected:
   void closeExpired_() { }
   void keyDiscardExpired_() { }
   void pmtudExpired_() { }
-  void pathExpired_() { }
   void persistentCongestion_() {
     m_congestion.persistentCongestion();
     ++m_txDiag.persistentCongestion;
@@ -4331,7 +4485,8 @@ private:
 	  queued.streamID != frame.streamID ||
 	  queued.streamType != frame.streamType)
 	continue;
-      if (frame.type == FrameType::PathResponse) {
+      if (frame.type == FrameType::PathChallenge ||
+	  frame.type == FrameType::PathResponse) {
 	if (!memcmp(queued.payload, frame.payload, sizeof(frame.payload)))
 	  return true;
 	continue;
@@ -4364,6 +4519,10 @@ private:
       case FrameType::StreamsBlocked:
 	return queued_(frame.streamType) &&
 	  frame.value == localLimit_(frame.streamType).limit();
+      case FrameType::PathChallenge:
+	return m_validatingPath.active &&
+	  m_validatingPath.challenge.equals(byteSpan(
+	    frame.payload, sizeof(frame.payload)));
       case FrameType::PathResponse:
       case FrameType::HandshakeDone:
 	return true;
@@ -4616,6 +4775,7 @@ private:
   AckSnapshot		m_txAck[3];
   AckECN		m_peerAckECN[3];
   Path			m_path;
+  PathState		m_validatingPath;
   bool			m_txSpaceDiscarded[3]{};
   bool			m_coalesceLong = false;
   bool			m_txKeyPhase = false;
@@ -5340,7 +5500,8 @@ private:
   bool consumeFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf) {
-    return Base::consumeProtFrames_(
+    ZiSockAddr peer = addr;
+    bool ok = Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf,
       [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
@@ -5349,6 +5510,9 @@ private:
 	  CryptoLevel::T level_, const Frame &frame, ZiSockAddr addr_) {
 	return handleControlFrame_(level_, frame, ZuMv(addr_));
       });
+    if (ok && level == CryptoLevel::OneRTT && Base::runtimeEstablished_())
+      Base::observePathRx_(m_endpoint.local(), ZuMv(peer));
+    return ok;
   }
 
   bool handleControlFrame_(
@@ -5365,6 +5529,8 @@ private:
 	return true;
       }
       case FrameType::PathResponse:
+	Base::receivePathResponse_(frame.payload);
+	return true;
       case FrameType::HandshakeDone:
 	return true;
       case FrameType::ConnectionClose:
@@ -6028,7 +6194,8 @@ private:
   bool consumeFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf) {
-    return Base::consumeProtFrames_(
+    ZiSockAddr peer = addr;
+    bool ok = Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf,
       [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
@@ -6037,6 +6204,9 @@ private:
 	  CryptoLevel::T level_, const Frame &frame, ZiSockAddr addr_) {
 	return handleControlFrame_(level_, frame, ZuMv(addr_));
       });
+    if (ok && level == CryptoLevel::OneRTT && Base::runtimeEstablished_())
+      Base::observePathRx_(app()->local(), ZuMv(peer));
+    return ok;
   }
 
   bool handleControlFrame_(
@@ -6053,6 +6223,7 @@ private:
 	return true;
       }
       case FrameType::PathResponse:
+	Base::receivePathResponse_(frame.payload);
 	return true;
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
@@ -6076,6 +6247,10 @@ private:
   void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
     queueTxFlush_();
+  }
+
+  void pathPromoted_() {
+    m_peerAddr = Base::activePathRemote_();
   }
 
   bool receivedRouted_(Datagram d) {

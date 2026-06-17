@@ -497,6 +497,12 @@ struct SentFrameRef {
     if (data.length() == 8) memcpy(ref.payload, data.data(), 8);
     return ref;
   }
+  static SentFrameRef pathChallenge(ZuCSpan data) {
+    SentFrameRef ref = control();
+    ref.controlType = FrameType::PathChallenge;
+    if (data.length() == 8) memcpy(ref.payload, data.data(), 8);
+    return ref;
+  }
 
   static SentFrameRef handshakeDone() {
     SentFrameRef ref = control();
