@@ -954,6 +954,7 @@ private:
   void listenerDel(Socket);
 
   bool connectAdd(Connect *, Socket);
+  void executedConnect(Connect *);
   void connectDel(Socket);
 
 #ifdef ZiMultiplex_EPoll

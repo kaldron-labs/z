@@ -338,8 +338,9 @@ namespace H1 {
 	}
 	if (m_state == State::Complete ||
 	    m_state == State::Error) {
-	  impl()->complete(m_state);
-	  break;
+	  State::T state = m_state;
+	  impl()->complete(state);
+	  return state;
 	}
       } while (consumed);
       return m_state;

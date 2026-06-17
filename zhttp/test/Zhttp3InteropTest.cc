@@ -84,7 +84,7 @@ void parseArgs(int argc, char **argv)
   }
 }
 
-ZiMxParams mxParams()
+ZiMxParams mxParams(bool h3 = false)
 {
   auto params = ZiMxParams()
     .scheduler([](auto &s) {
@@ -96,7 +96,7 @@ ZiMxParams mxParams()
     })
     .rxThread(1).txThread(2);
 #ifdef ZiMultiplex_DEBUG
-  if (frag) params.frag(true);
+  if (frag && !h3) params.frag(true);
   if (yield) params.yield(true);
 #endif
   return params;
@@ -991,7 +991,7 @@ void testZhttpClientCaddyHttpsH3()
   ZuCHECK(runCurlH3Retry(temp, port, Path, "caddy-h3-ok"),
     "Zhttp client->Caddy HTTPS/H3 did not become H3-ready");
 
-  ZiMultiplex mx(mxParams());
+  ZiMultiplex mx(mxParams(true));
   bool mxStarted = mx.start();
   ZuCHECK(mxStarted, "Zhttp client->Caddy HTTPS/H3 multiplexer start failed");
   if (!mxStarted) return;
@@ -1163,7 +1163,7 @@ void testCurlZhttpHttpsH3Server()
     "curl->Zhttp HTTPS/H3 certificate generation failed");
   ServerState state;
   state.body = "server-h3-ok";
-  ZiMultiplex mx(mxParams());
+  ZiMultiplex mx(mxParams(true));
   bool mxStarted = mx.start();
   ZuCHECK(mxStarted, "curl->Zhttp HTTPS/H3 multiplexer start failed");
   if (!mxStarted) return;

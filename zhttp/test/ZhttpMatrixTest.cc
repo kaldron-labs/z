@@ -371,7 +371,7 @@ void appendZhttpCommand(
   script <<
     "if ! timeout 20s \"$client\" -j " << c.jobs << " -n " << c.requests;
   if (options.debug) script << " --debug";
-  if (options.frag) script << " --frag";
+  if (options.frag && c.proto != Proto::H3) script << " --frag";
   if (options.yield) script << " --yield";
   switch (c.proto) {
     case Proto::H1TCP:
@@ -513,7 +513,7 @@ bool writeScript(
   else {
     script << "\"$server\" " << rootPath;
     if (options.debug) script << " --debug";
-    if (options.frag) script << " --frag";
+    if (options.frag && c.proto != Proto::H3) script << " --frag";
     if (options.yield) script << " --yield";
     switch (c.proto) {
       case Proto::H1TCP:
