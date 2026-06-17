@@ -74,6 +74,11 @@ struct TestLink :
     static const char data[] = "response";
     return Base::queuePathResponse_(ZuCSpan{data, sizeof(data) - 1});
   }
+  bool queuePathResponse(unsigned seed) {
+    uint8_t data[8]{};
+    data[0] = uint8_t(seed);
+    return Base::queuePathResponse_(ZuCSpan{data, sizeof(data)});
+  }
   bool queueDataBlocked(uint64_t value) {
     return Base::queueBlocked_(Zquic::FrameType::DataBlocked, 0, value);
   }
@@ -85,11 +90,16 @@ struct TestLink :
     return Base::queueBlocked_(
       Zquic::FrameType::StreamsBlocked, 0, value, type);
   }
+  void scheduleStream(const ZmRef<TestStream> &stream) {
+    Base::streamWritable_(stream);
+  }
+  unsigned scheduledStreams() const { return Base::scheduledStreamCount_(); }
+  void grantDataCredit(uint64_t value) { Base::txApplyMaxData_(value); }
   bool flushControlSendFails() {
     return Base::flushControlAndStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
-      [](Zquic::PktBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
+      [](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &) {
 	return false;
       });
   }
@@ -97,9 +107,26 @@ struct TestLink :
     return Base::flushControlAndStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
-      [](Zquic::PktBuild &, ZiSockAddr, const Zquic::SentFrameRef &) {
+      [](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &) {
 	return true;
       });
+  }
+  unsigned flushFrameRefs(
+    Zquic::SentFrameKind::T *kinds, uint64_t *streamIDs,
+    unsigned capacity) {
+    unsigned refs = 0;
+    bool ok = Base::flushControlAndStreams_(
+      ZiSockAddr{},
+      [](Zquic::PktBuild &) { return true; },
+      [&](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &r) {
+	refs = r.count();
+	for (unsigned i = 0; i < refs && i < capacity; ++i) {
+	  kinds[i] = r[i].kind;
+	  streamIDs[i] = r[i].streamID;
+	}
+	return true;
+      });
+    return ok ? refs : 0;
   }
   bool flushCongestedStream(ZmRef<TestStream> stream) {
     return Base::sendQueuedStreamPkt_(
@@ -134,6 +161,47 @@ struct TestLink :
     ack.nRanges = 1;
     ack.ranges[0] = Zquic::AckRange{pn, 0};
     Base::processAckFrameTx_(ack);
+  }
+  void advancePN(unsigned n) {
+    for (unsigned i = 0; i < n; ++i)
+      Base::recordProtPktTx_(
+	Zquic::CryptoLevel::OneRTT, i, 1, {}, nullptr, false);
+  }
+  void forcePN(uint64_t pn) {
+    Base::setTxPNForTest_(Zquic::CryptoLevel::OneRTT, pn);
+  }
+  unsigned pnLength() const {
+    return Base::txPNLength_(Zquic::CryptoLevel::OneRTT);
+  }
+  bool coalesceProbe(unsigned &sends, unsigned &bytes) {
+    sends = bytes = 0;
+    ZmRef<ZiIOBuf> initial = new Zquic::PktTxBufAlloc<>{nullptr};
+    ZmRef<ZiIOBuf> handshake = new Zquic::PktTxBufAlloc<>{nullptr};
+    initial->skip = handshake->skip = 0;
+    initial->length = 100;
+    handshake->length = 40;
+    memset(initial->data_(), 0x11, initial->length);
+    memset(handshake->data_(), 0x22, handshake->length);
+    Base::beginLongCoalesce_();
+    bool ok = Base::holdInitialForCoalesce_(
+      ZuMv(initial), ZiSockAddr{},
+      [&](auto buf, ZiSockAddr) {
+	++sends;
+	bytes += buf->length;
+	return true;
+      });
+    ok = Base::sendHandshakeCoalesced_(
+      ZuMv(handshake), ZiSockAddr{},
+      [&](auto buf, ZiSockAddr) {
+	++sends;
+	bytes += buf->length;
+	return buf->length == 140 &&
+	  buf->data_()[99] == 0x11 &&
+	  buf->data_()[100] == 0x22 &&
+	  buf->data_()[139] == 0x22;
+      }) && ok;
+    Base::endLongCoalesce_();
+    return ok;
   }
   void sendAckEliciting(uint64_t pn, unsigned bytes = 1200) {
     Base::recordTxPkt_(
@@ -499,9 +567,10 @@ void testStreamPktizer()
       info.bytes == unsigned(n) + info.length &&
       info.range.length == 3 &&
       !memcmp(info.range.buf->data_() + info.range.offset, "abc", 3) &&
-      !info.fin &&
-      stream->txRangeCount() == 1,
-    "first packetized STREAM accounting mismatch");
+	  !info.fin &&
+	  stream->txRangeCount() == 1,
+	"first packetized STREAM accounting mismatch");
+  unsigned usedAfterFirst = budget.used;
 
   Zquic::Frame frame;
   unsigned used = 0;
@@ -519,17 +588,10 @@ void testStreamPktizer()
       frame.payload == "abc" &&
       !frame.fin,
     "first packetized STREAM parse mismatch");
-  ZuCHECK(Zquic::StreamPktizer::writeNext(
-      b, sizeof(b), budget, assembly, *stream, &info) < 0 &&
-      stream->txRangeCount() == 1,
-    "packetizer allowed a second STREAM frame in one packet");
-
-  budget = {};
-  assembly = {};
   n = Zquic::StreamPktizer::writeNext(
     b, sizeof(b), budget, assembly, *stream, &info);
   ZuCHECK(n > 0 &&
-      budget.used == info.bytes &&
+      budget.used == usedAfterFirst + info.bytes &&
       info.offset == 3 &&
       info.length == 3 &&
 	      info.bytes == unsigned(n) + info.length &&
@@ -550,10 +612,10 @@ void testStreamPktizer()
 	      frame.offset == 3 &&
 	      frame.length == 3 &&
 	      frame.payload == "def" &&
-	      frame.fin,
-	    "second packetized STREAM parse mismatch");
+      frame.fin,
+    "second packetized STREAM parse mismatch");
 
-	  budget = {};
+  budget = {};
 	  assembly = {};
 	  ZuCHECK(!Zquic::StreamPktizer::writeNext(
 	      b, sizeof(b), budget, assembly, *stream, &info),
@@ -634,6 +696,93 @@ void testQueuedControlSendFailureRetainsFrame()
     "successful control send did not dequeue frame");
 }
 
+void testRuntimeMultiFrameAssembly()
+{
+  ZuTestScope(testRuntimeMultiFrameAssembly);
+
+  App app;
+  TestLink controls{&app};
+  ZuCHECK(
+      controls.queuePathResponse(1) &&
+      controls.queuePathResponse(2) &&
+      controls.queuePathResponse(3),
+    "multi-control setup failed");
+  Zquic::SentFrameKind::T kinds[8]{};
+  uint64_t streamIDs[8]{};
+  unsigned refs = controls.flushFrameRefs(kinds, streamIDs, 8);
+  ZuCHECK(refs == 3 &&
+      kinds[0] == Zquic::SentFrameKind::Control &&
+      kinds[1] == Zquic::SentFrameKind::Control &&
+      kinds[2] == Zquic::SentFrameKind::Control &&
+      !controls.queuedControlFrames(),
+    "runtime did not assemble multiple control frames into one packet");
+
+  TestLink streams{&app};
+  auto s0 = streams.stream(Zi::StreamType::Duplex);
+  auto s1 = streams.stream(Zi::StreamType::Duplex);
+  streams.grantDataCredit(20000);
+  s0->txCredit(20000);
+  s1->txCredit(20000);
+  {
+    auto tx = s0->txStream_();
+    tx << "alpha" << Zi::flush();
+  }
+  {
+    auto tx = s1->txStream_();
+    tx << "bravo" << Zi::flush();
+  }
+  if (!streams.scheduledStreams()) {
+    streams.scheduleStream(s0);
+    streams.scheduleStream(s1);
+  }
+  refs = streams.flushFrameRefs(kinds, streamIDs, 8);
+  ZuCHECK(refs == 2 &&
+      kinds[0] == Zquic::SentFrameKind::Stream &&
+      kinds[1] == Zquic::SentFrameKind::Stream &&
+      streamIDs[0] == uint64_t(s0->id()) &&
+      streamIDs[1] == uint64_t(s1->id()),
+    "runtime did not assemble multiple stream frames into one packet");
+}
+
+void testRuntimePacketNumberLength()
+{
+  ZuTestScope(testRuntimePacketNumberLength);
+
+  App app;
+  TestLink link{&app};
+  ZuCHECK(link.pnLength() == 2,
+    "runtime PN length default before ACK changed");
+  link.advancePN(10);
+  link.ackThrough(9);
+  ZuCHECK(link.pnLength() == 1,
+    "runtime PN length did not shrink after near ACK");
+  link.advancePN(200);
+  ZuCHECK(link.pnLength() == 2,
+    "runtime PN length did not grow to two bytes");
+  link.forcePN(40000);
+  ZuCHECK(link.pnLength() == 3,
+    "runtime PN length did not grow to three bytes");
+  link.forcePN(9000000);
+  ZuCHECK(link.pnLength() == 4,
+    "runtime PN length did not grow to four bytes");
+  link.close();
+}
+
+void testLongHeaderCoalescing()
+{
+  ZuTestScope(testLongHeaderCoalescing);
+
+  App app;
+  TestLink link{&app};
+  unsigned sends = 0;
+  unsigned bytes = 0;
+  ZuCHECK(link.coalesceProbe(sends, bytes) &&
+      sends == 1 &&
+      bytes == 140,
+    "Initial/Handshake coalescing did not emit one combined datagram");
+  link.close();
+}
+
 void testCongestionBudgetGatesRuntimeSends()
 {
   ZuTestScope(testCongestionBudgetGatesRuntimeSends);
@@ -669,9 +818,10 @@ void testCongestionBudgetGatesRuntimeSends()
   ZuCHECK(diag.congestionBytesInFlight < diag.congestionWindow &&
       link.txFlushQueued == queued + 1,
     "runtime ACK did not reopen congestion window and queue Tx flush");
-  ZuCHECK(link.flushControlSends() &&
-      !link.queuedControlFrames(),
-    "runtime control send did not resume after ACK opened cwnd");
+  bool flushed = link.flushControlSends();
+  ZuCHECK(flushed, "runtime control send did not resume after ACK opened cwnd");
+  ZuCHECK(!link.queuedControlFrames(),
+    "runtime control queue did not drain after ACK opened cwnd");
   link.close();
 }
 
@@ -1153,6 +1303,9 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamTxRetention);
   ZuTestCall(testStreamPktizer);
   ZuTestCall(testQueuedControlSendFailureRetainsFrame);
+  ZuTestCall(testRuntimeMultiFrameAssembly);
+  ZuTestCall(testRuntimePacketNumberLength);
+  ZuTestCall(testLongHeaderCoalescing);
   ZuTestCall(testCongestionBudgetGatesRuntimeSends);
   ZuTestCall(testAckECNValidationDisablesECN);
   ZuTestCall(testBlockedFrameDuplicateSuppression);

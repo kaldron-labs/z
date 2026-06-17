@@ -119,8 +119,8 @@ inline ZuCSpan pktBuildSpan(const uint8_t *data, unsigned len)
 class PlainVec {
 public:
   // Current packet assembly uses at most: generated control, frame prefix,
-  // frame payload, and padding.
-  static constexpr unsigned Max = 4;
+  // frame payload, and padding for up to SentPkt::MaxFrames runtime frames.
+  enum { Max = 18 };
 
   const ptls_iovec_t *data() const { return m_vec; }
   unsigned count() const { return m_count; }

@@ -36,6 +36,16 @@ static Zquic::TxPkt txPkt_(
   return p;
 }
 
+static Zquic::TxPkt txCryptoPkt_(
+  uint64_t pn, uint64_t offset, uint64_t length,
+  unsigned bytes = 100)
+{
+  Zquic::TxPkt p = txPkt_(pn, bytes);
+  p.frameCount = 0;
+  p.addFrame(Zquic::SentFrameRef::crypto(offset, length));
+  return p;
+}
+
 void testRecovery()
 {
   ZuTestScope(testRecovery);
@@ -233,6 +243,70 @@ void testPktReorderDuplicateLoss()
     "duplicate ACK range mutated sent-packet state");
 }
 
+void testAckedFrameSuppressesLossReclaim()
+{
+  ZuTestScope(testAckedFrameSuppressesLossReclaim);
+
+  Zquic::PktTxSpace tx;
+  ZuCHECK(tx.add(txCryptoPkt_(0, 0, 46)) &&
+      tx.add(txCryptoPkt_(1, 100, 10)) &&
+      tx.add(txCryptoPkt_(2, 200, 10)) &&
+      tx.add(txCryptoPkt_(4, 0, 46)),
+    "duplicate-frame sent packet setup failed");
+
+  Zquic::AckRange ranges[] = { Zquic::AckRange{4, 4} };
+  unsigned lost = 0;
+  ZuCHECK(tx.ack(ranges, 1, &lost) == 1 &&
+      lost == 2 &&
+      tx.acked() == 1 &&
+      tx.lost() == 2,
+    "ACK/loss setup did not mark duplicate-frame packet lost");
+
+  Zquic::SentFrameRef ref;
+  ZuCHECK(tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 100 &&
+      ref.length == 10 &&
+      !tx.nextRetransmit(ref),
+    "loss reclaim retransmitted an already ACKed frame");
+
+  Zquic::PktTxSpace late;
+  ZuCHECK(late.add(txCryptoPkt_(0, 0, 46)) &&
+      late.add(txCryptoPkt_(1, 100, 10)) &&
+      late.add(txCryptoPkt_(2, 200, 10)) &&
+      late.add(txCryptoPkt_(4, 400, 10)) &&
+      late.add(txCryptoPkt_(5, 0, 46)),
+    "late-ACK duplicate-frame sent packet setup failed");
+  Zquic::AckRange lossRanges[] = { Zquic::AckRange{4, 4} };
+  ZuCHECK(late.ack(lossRanges, 1, &lost) == 1 &&
+      lost == 2 &&
+      late.retransmitPending() == 1,
+    "late-ACK setup did not queue lost duplicate frame");
+  Zquic::AckRange ackRanges[] = { Zquic::AckRange{5, 5} };
+  ZuCHECK(late.ack(ackRanges, 1, nullptr, 99) == 1,
+    "late duplicate frame ACK failed");
+  ZuCHECK(late.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 100 &&
+      ref.length == 10 &&
+      !late.nextRetransmit(ref),
+    "retransmit pop did not skip a late-ACKed frame");
+
+  Zquic::PktTxSpace dup;
+  ZuCHECK(dup.add(txCryptoPkt_(0, 0, 46)) &&
+      dup.add(txCryptoPkt_(1, 0, 46)) &&
+      dup.add(txCryptoPkt_(3, 300, 10)),
+    "duplicate outstanding frame setup failed");
+  Zquic::AckRange dupLoss[] = { Zquic::AckRange{3, 3} };
+  lost = 0;
+  ZuCHECK(dup.ack(dupLoss, 1, &lost) == 1 &&
+      lost == 1 &&
+      !dup.retransmitPending(),
+    "duplicate outstanding frame was reclaimed from older lost packet");
+  ZuCHECK(!dup.nextRetransmit(ref),
+    "duplicate outstanding frame suppression mismatch");
+}
+
 void testLossThresholds()
 {
   ZuTestScope(testLossThresholds);
@@ -267,6 +341,19 @@ void testLossThresholds()
   Zquic::SentPkt pkt = txPkt_(5, 100, false);
   ZuCHECK(ackOnly.add(pkt) && !ackOnly.nextLossTime(threshold),
     "non-ack-eliciting packet scheduled a loss deadline");
+
+  Zquic::PktTxSpace ackOnlyLargest;
+  ZuCHECK(ackOnlyLargest.add(txPkt_(1)) &&
+      ackOnlyLargest.add(txPkt_(2)) &&
+      ackOnlyLargest.add(txPkt_(3)),
+    "ACK-only largest setup failed");
+  Zquic::AckRange ranges[] = { Zquic::AckRange{100, 3} };
+  unsigned lost = 0;
+  ZuCHECK(ackOnlyLargest.ack(ranges, 1, &lost) == 1 &&
+      !lost &&
+      ackOnlyLargest.acked() == 1 &&
+      ackOnlyLargest.lost() == 0,
+    "ACK-only largest packet number caused spurious threshold loss");
 }
 
 void testPktSpaceAckLoss()
@@ -330,6 +417,15 @@ void testPTOReclaimUsesRetransmitQueue()
       ref.length == 9 &&
       !tx.nextRetransmit(ref),
     "PTO retransmit fallback did not choose newest outstanding packet");
+  ZuCHECK(tx.reclaimOnPTO(1) == 1 &&
+      tx.retransmitPending() == 1,
+    "PTO reclaim did not skip already reclaimed packet");
+  ZuCHECK(tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 70 &&
+      ref.length == 8 &&
+      !tx.nextRetransmit(ref),
+    "PTO retransmit fallback did not move to next outstanding packet");
 }
 
 void testAckCanLeaveOnlyRetransmitsPending()
@@ -518,6 +614,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRecovery);
   ZuTestCall(testPktReorderDuplicateLoss);
+  ZuTestCall(testAckedFrameSuppressesLossReclaim);
   ZuTestCall(testLossThresholds);
   ZuTestCall(testPktSpaceAckLoss);
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);

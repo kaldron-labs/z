@@ -281,9 +281,9 @@ void testScheduling()
   Zquic::PktAssembly packet;
   ZuCHECK(packet.addControl(budget, 10) &&
     packet.addStream(budget, 20) &&
-    !packet.addStream(budget, 1) &&
-    packet.addControl(budget, 20) &&
-    packet.controlFrames() == 2 && packet.streamAdded() &&
+    packet.addStream(budget, 1) &&
+    packet.addControl(budget, 19) &&
+    packet.controlFrames() == 2 && packet.streamFrames() == 2 &&
     !budget.remaining(), "packet assembly budget/STREAM rules mismatch");
 
   Zquic::ControlFrame control = Zquic::ControlFrame::blocked(
