@@ -11,10 +11,6 @@ template <typename T, ZuString S>
 using ZuIsStr = ZuIsSame<T, ZuStringT<S>>
 ```
 
-## Zhttp
-
-add command line option `--frag` and `--yield` to `zhttp` and `zhttpd` to configure `ZiMultiplex` `frag` for I/O fragmentation and `yield` for thread yielding, respectively
-
 ## ZiLog standardization
 
 standardize `ZiLog` configuration from command line / environment variables
@@ -34,14 +30,6 @@ L-sized work:
 
 - start with a new working branch
   - commit after each phase
-
-## Zhttp
-- add `ZQUIC_LOSS` env var - `N%` to randomly drop N% of QUIC UDP packets
-  - read by `zhttp` and `zhttpd` and added as a config to `Zhttp`
-- run benchmark with loss at 5%, 10%, 15%, 20% to check it works
-- audit against `GUIDELINES.md`
-- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
-  - see `plan.new.md`
 
 ## Zrest
 - figure out REST Rx -> ZvIOMsg
@@ -110,9 +98,18 @@ L-sized work:
 
 # Z Candidate Work
 
-## ZtStruct
-- yaml: `ZvYAML`
-- toml: `ZvTOML`
+## `ZvCf`
+- `ZvCf`:
+  - factor out cf-specific file format parsing/building from `ZvCf`
+  - cf-format becomes one of several
+  - `ZvCf` core becomes `ZvMap`
+  - `ZvCf` format becomes `ZvMapCf`
+- yaml: `ZvMapYAML`
+- toml: `ZvMapTOML`
+- json: `ZvMapJSON`
+- cf: `ZvMapCf`
+- (possibly later: xml)
+- core file handling dispatches to appropriate format based on file extension matching
 
 ## Documentation
 - doxygen + htags
