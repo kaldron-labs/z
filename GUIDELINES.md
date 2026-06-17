@@ -197,8 +197,8 @@ These guidelines extend `AGENTS.md`
   Fix: use primitive types, do not guard with locks, permit unclean reads from other threads
 
 ### Liveness
-- Flag: unbounded tight loops in threads that service mixed workloads, particularly I/O threads
-  Problem: under load, pending work in the scheduler queue is starved by synchronous looping
+- Flag: potentially long-running loops or container iterations in threads that service mixed workloads, particularly I/O threads
+  Problem: under load, pending work in the scheduler queue will be starved by a looping turn that does not return to the scheduler
   Fix: cap the work performed in each turn - batch it and post continuations for the remainder
 
 ## Leveraging Key Z Framework Capabilities
