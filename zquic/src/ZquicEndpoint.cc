@@ -55,11 +55,11 @@ public:
   unsigned generation() const { return m_generation; }
 
   bool sendPkt(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    if (m_closing.load_()) return false;
+    if (!buf) return false;
     ZiAssert(m_endpoint->m_mx &&
 	m_endpoint->m_mx->invoked(m_endpoint->m_mx->txThread()),
       "Zquic", (), "QUIC endpoint send outside Tx thread", return false);
-    if (m_closing.load_()) return false;
-    if (!buf) return false;
     if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr));
     m_txBuf = ZuMv(buf);
     m_txAddr = ZuMv(addr);
@@ -73,6 +73,7 @@ private:
   }
 
   void drainRx_() {
+    m_closing = true;
     m_rxBuf = nullptr;
   }
 
@@ -89,6 +90,13 @@ private:
     m_txBuf = ZuMv(node->buf);
     m_txAddr = ZuMv(node->addr);
     return true;
+  }
+
+  void scheduleTx_() {
+    m_endpoint->m_mx->txRun([cxn = ZmMkRef(this)]() mutable {
+      if (cxn->m_closing.load_() || !cxn->m_txBuf) return;
+      cxn->send(ZiIOFn{cxn.ptr(), ZmFnPtr<&Cxn_::sendStart_>{}});
+    });
   }
 
   bool recvDone_(ZiIOContext &io) {
@@ -132,7 +140,15 @@ private:
   bool sendDone_(ZiIOContext &io) {
     if (io.length < 0) {
       m_endpoint->ioError_();
+      bool hadQueue = m_txQueue.count_();
       m_txBuf = nullptr;
+      if (dequeueTx_()) {
+	if (hadQueue) m_endpoint->txDrained_();
+	io.complete();
+	scheduleTx_();
+	return true;
+      }
+      if (hadQueue) m_endpoint->txDrained_();
       io.complete();
       return true;
     }
@@ -141,10 +157,9 @@ private:
     m_endpoint->sent_(io.size);
     m_txBuf = nullptr;
     if (dequeueTx_()) {
-      io.init(
-	ZiIOFn{this, ZmFnPtr<&Cxn_::sendDone_>{}},
-	m_txBuf->data(), m_txBuf->length, 0, m_txAddr);
       if (hadQueue) m_endpoint->txDrained_();
+      io.complete();
+      scheduleTx_();
       return true;
     }
     if (hadQueue) m_endpoint->txDrained_();
@@ -181,8 +196,17 @@ void Endpoint::Cxn_::operator delete(void *p) noexcept
   Heap::operator delete(p);
 }
 
+bool Endpoint::init(ZiMultiplex *mx)
+{
+  ZiAssert(mx, "Zquic", (mx), "null endpoint multiplexer", return false);
+  ZiAssert(mx->running(), "Zquic", (mx),
+    "endpoint multiplexer is not running", return false);
+  if (m_mx) return m_mx == mx;
+  m_mx = mx;
+  return true;
+}
+
 bool Endpoint::openUDP(
-  ZiMultiplex *mx,
   PathMode::T mode,
   ZiIP localIP, uint16_t localPort,
   ZiIP remoteIP, uint16_t remotePort,
@@ -192,27 +216,31 @@ bool Endpoint::openUDP(
   DownFn downFn,
   TxDrainedFn txDrainedFn)
 {
-  ZiAssert(mx, "Zquic", (mx), "null endpoint multiplexer", return false);
-  ZiAssert(mx->running(), "Zquic", (mx),
+  ZiAssert(m_mx, "Zquic", (), "endpoint multiplexer is not initialized",
+    return false);
+  ZiAssert(m_mx->running(), "Zquic", (m_mx),
     "endpoint multiplexer is not running", return false);
-  if (m_cxn) return false;
+  if (m_open.load_() || m_cxn) return false;
 
-  m_mx = mx;
   m_mode = mode;
   m_local.init(localIP, localPort);
   if (!!remoteIP) m_remote.init(remoteIP, remotePort); else m_remote.null();
+  m_sockConfig = SockConfig{
+    IPFamily::IPv4, mode, true, true};
+  m_sockDiag = {};
   m_datagramFn = ZuMv(datagramFn);
   m_readyFn = ZuMv(readyFn);
   m_failFn = ZuMv(failFn);
   m_downFn = ZuMv(downFn);
   m_txDrainedFn = ZuMv(txDrainedFn);
   m_listening = false;
+  m_open = true;
   ++m_generation;
 
   ZiCxnOptions options;
   options.udp(true);
 
-  mx->udp(
+  m_mx->udp(
     ZiConnectFn{this, [](Endpoint *self, const ZiCxnInfo &ci) -> ZiConnection * {
       auto cxn = new Cxn_{self, ci, self->m_generation};
       self->m_cxn = cxn;
@@ -231,7 +259,8 @@ bool Endpoint::openUDP(
 
 void Endpoint::closeUDP()
 {
-  if (!m_mx || m_mx->invoked(m_mx->rxThread())) {
+  if (!m_open.load_()) return;
+  if (m_mx->invoked(m_mx->rxThread())) {
     closeUDP_(nullptr);
     return;
   }
@@ -265,13 +294,13 @@ void Endpoint::closeUDP_(ZmSemaphore *stopped)
     auto waiter = m_closeWaiter;
     m_closeWaiter = nullptr;
     clearFns_();
-    m_mx = nullptr;
+    m_open = false;
     waiter->post();
     return;
   }
   if (!m_closingCxn) {
     clearFns_();
-    m_mx = nullptr;
+    m_open = false;
   }
 }
 
@@ -288,9 +317,18 @@ bool Endpoint::send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
   return true;
 }
 
+PathHint Endpoint::pathHint()
+{
+  Cxn_ *cxn = m_cxn;
+  if (!cxn) return {};
+  return Sock::pathHint(cxn->info().socket, m_sockConfig, &m_sockDiag);
+}
+
 void Endpoint::connected_(Cxn_ *cxn, ZiIOContext &io)
 {
   if (cxn != m_cxn || cxn->generation() != m_generation) return;
+
+  Sock::initUDP(cxn->info().socket, m_sockConfig, &m_sockDiag);
 
 #ifndef _WIN32
   {
@@ -322,10 +360,10 @@ void Endpoint::disconnected_(Cxn_ *cxn)
     if (m_closeWaiter) {
       auto waiter = m_closeWaiter;
       m_closeWaiter = nullptr;
-      m_mx = nullptr;
+      m_open = false;
       waiter->post();
     } else {
-      m_mx = nullptr;
+      m_open = false;
     }
   }
 }
@@ -337,7 +375,7 @@ void Endpoint::failed_(bool transient)
   if (m_failFn) m_failFn(transient);
   if (m_downFn) m_downFn(this);
   clearFns_();
-  m_mx = nullptr;
+  m_open = false;
 }
 
 void Endpoint::received_(Datagram datagram)

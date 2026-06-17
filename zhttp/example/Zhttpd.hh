@@ -137,6 +137,11 @@ struct Options {
   bool			debug = false;
   bool			frag = false;
   bool			yield = false;
+#ifdef ZiMultiplex_DEBUG
+  HdrString		quicRxDrop;
+  HdrString		quicTxDrop;
+  uint32_t		quicDiag = 0;
+#endif
   bool			help = false;
 };
 
@@ -176,6 +181,11 @@ ZtStruct((Options, CLI),
   (((debug),           (CLI::Long<"debug">)),                    (Bool)),
   (((frag),            (CLI::Long<"frag">)),                     (Bool)),
   (((yield),           (CLI::Long<"yield">)),                    (Bool)),
+#ifdef ZiMultiplex_DEBUG
+  (((quicRxDrop),      (CLI::Long<"quic-rx-drop">)),             (String)),
+  (((quicTxDrop),      (CLI::Long<"quic-tx-drop">)),             (String)),
+  (((quicDiag),        (CLI::Long<"quic-diag">)),                (UInt32)),
+#endif
   (((help),            (CLI::Flag<'h'>, CLI::Long<"help">)),     (Bool)));
 
 struct RequestData {

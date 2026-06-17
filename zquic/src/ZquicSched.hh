@@ -135,13 +135,14 @@ struct ControlFrame {
   FrameType::T		type = FrameType::Unknown;
   uint64_t		streamID = 0;
   uint64_t		value = 0;
+  uint64_t		errorCode = 0;
   Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
   uint8_t		payload[8]{};
 
   bool operator !() const { return type == FrameType::Unknown; }
   bool operator ==(const ControlFrame &o) const {
     if (type != o.type || streamID != o.streamID || value != o.value ||
-	streamType != o.streamType)
+	errorCode != o.errorCode || streamType != o.streamType)
       return false;
     if (type == FrameType::PathChallenge ||
 	type == FrameType::PathResponse)
@@ -151,12 +152,23 @@ struct ControlFrame {
 
   static ControlFrame flowUpdate(const FlowUpdate &update) {
     return ControlFrame{
-      update.type, update.streamID, update.maximum, update.streamType, {}};
+      update.type, update.streamID, update.maximum, 0, update.streamType, {}};
   }
   static ControlFrame blocked(
     FrameType::T type_, uint64_t streamID_, uint64_t value_,
     Zi::StreamType::T streamType_ = Zi::StreamType::Duplex) {
-    return ControlFrame{type_, streamID_, value_, streamType_, {}};
+    return ControlFrame{type_, streamID_, value_, 0, streamType_, {}};
+  }
+  static ControlFrame resetStream(
+    uint64_t streamID_, uint64_t appError, uint64_t finalSize) {
+    return ControlFrame{
+      FrameType::ResetStream, streamID_, finalSize, appError,
+      Zi::StreamType::Duplex, {}};
+  }
+  static ControlFrame stopSending(uint64_t streamID_, uint64_t appError) {
+    return ControlFrame{
+      FrameType::StopSending, streamID_, 0, appError,
+      Zi::StreamType::Duplex, {}};
   }
   static ControlFrame pathResponse(ZuCSpan data) {
     ControlFrame frame;
@@ -192,6 +204,10 @@ struct ControlFrame {
 	return FrameCodec::writeStreamDataBlocked(out, len, streamID, value);
       case FrameType::StreamsBlocked:
 	return FrameCodec::writeStreamsBlocked(out, len, streamType, value);
+      case FrameType::ResetStream:
+	return FrameCodec::writeResetStream(out, len, streamID, errorCode, value);
+      case FrameType::StopSending:
+	return FrameCodec::writeStopSending(out, len, streamID, errorCode);
       case FrameType::PathChallenge:
 	return FrameCodec::writePathChallenge(out, len, ZuCSpan{
 	  payload, sizeof(payload)});
@@ -263,9 +279,7 @@ private:
     unsigned frameBytes = unsigned(n) + payloadLen;
     if (!assembly.addStream(budget, frameBytes)) return -1;
     TxRange consumed;
-    ZiAssert(stream.commitTxRange(consumed, payloadLen), "Zquic",
-      (id, payloadLen),
-      "stream Tx range disappeared during packetization", return -1);
+    if (!stream.commitTxRange(consumed, range, payloadLen)) return -1;
     ZiAssert(stream.consumeTxCredit(payloadLen), "Zquic",
       (id, payloadLen),
       "stream Tx exceeded MAX_STREAM_DATA", return -1);

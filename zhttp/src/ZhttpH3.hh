@@ -1003,8 +1003,7 @@ namespace H3 {
 		[this](ZuBSpan span) {
 		  return this->consumePayload_(span);
 		}, [this](ZuBSpan span) {
-		  ZuCSpan payload{
-		    reinterpret_cast<const char *>(span.data()), span.length()};
+		  ZuCSpan payload{span};
 		  if (!this->processDataPayload_(payload))
 		    m_state = State::Error;
 		  if (m_frameOff == m_frameLen) resetFrame_();
@@ -1016,8 +1015,7 @@ namespace H3 {
 	      [this](ZuBSpan span) {
 		return this->consumeFullPayload_(span);
 	      }, [this](ZuBSpan span) {
-		ZuCSpan payload{
-		  reinterpret_cast<const char *>(span.data()), span.length()};
+		ZuCSpan payload{span};
 		if (!this->processPayloadFrame_(m_frameType, payload))
 		  m_state = State::Error;
 		resetFrame_();

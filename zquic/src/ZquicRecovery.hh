@@ -15,6 +15,7 @@
 
 #include <string.h>
 
+#include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmQueue.hh>
 
@@ -53,6 +54,10 @@ public:
   using Rx = ZmPQRx<AckTracker, Queue, AckTrackerRxNTP>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
+  using DequeueFn = ZmFn<void()>;
+
+  AckTracker() :
+    m_dequeueFn{this, [](AckTracker *t) { t->dequeueRx_(); }} { }
 
   bool add(uint64_t pn) {
     if (contains(pn)) return true;
@@ -68,6 +73,16 @@ public:
     unsigned n = 0;
     ranges_([&n](const AckRange &) { ++n; return true; });
     return n;
+  }
+  bool multipleRanges() const {
+    unsigned n = 0;
+    bool stop = false;
+    bool ok = ranges_([&n, &stop](const AckRange &) {
+      if (++n < 2) return true;
+      stop = true;
+      return false;
+    });
+    return (ok || stop) && n > 1;
   }
   uint64_t first(unsigned i) const {
     uint64_t v = 0;
@@ -98,8 +113,7 @@ public:
     });
     return found;
   }
-  uint64_t largest() const {
-    uint64_t v = 0;
+  bool largest(uint64_t &v) const {
     bool found = false;
     m_packets.rspans([&v, &found](const auto &span) {
       v = span.key() + span.length() - 1;
@@ -110,21 +124,35 @@ public:
       v = m_ackHead - 1;
       found = true;
     }
-    if (!found) return 0;
+    return found;
+  }
+  uint64_t largest() const {
+    uint64_t v = 0;
+    if (!largest(v)) return 0;
     return v;
+  }
+  int snapshot(AckRange *ranges, unsigned max) const {
+    if (!ranges || !max) return 0;
+    unsigned n = 0;
+    bool stop = false;
+    bool ok = ranges_([ranges, max, &n, &stop](const AckRange &range) {
+      if (n >= max) {
+	stop = true;
+	return false;
+      }
+      ranges[n++] = range;
+      return true;
+    });
+    if (!ok && !stop) return -1;
+    return int(n);
   }
   int writeFrame(
     uint8_t *out, unsigned len, uint64_t delay = 0,
     const AckECN *ecn = nullptr) const
   {
     AckRange ranges[Max];
-    unsigned n = 0;
-    bool ok = ranges_([&ranges, &n](const AckRange &range) {
-      if (n >= Max) return false;
-      ranges[n++] = range;
-      return true;
-    });
-    if (!ok || !n) return -1;
+    int n = snapshot(ranges, Max);
+    if (n <= 0) return -1;
     return ecn ?
       FrameCodec::writeAckECN(out, len, ranges, n, delay, *ecn) :
       FrameCodec::writeAckRanges(out, len, ranges, n, delay);
@@ -148,9 +176,11 @@ public:
     m_ackGap = now;
   }
 
-  void scheduleDequeue() { Rx::dequeue(); }
-  void rescheduleDequeue() { Rx::dequeue(); }
+  void scheduleDequeue() { m_dequeueFn(); }
+  void rescheduleDequeue() { m_dequeueFn(); }
   void idleDequeue() { }
+  void dequeueFn(DequeueFn fn) { m_dequeueFn = ZuMv(fn); }
+  void dequeueRx_() { Rx::dequeue(); }
 
 private:
   void refreshGap_() {
@@ -181,6 +211,7 @@ private:
   Queue		m_packets{0};
   Span		m_ackGap;
   uint64_t	m_ackHead = 0;
+  DequeueFn	m_dequeueFn;
 };
 
 class AckManager {
@@ -194,8 +225,7 @@ public:
   {
     unsigned i = space;
     uint64_t largest = 0;
-    bool haveLargest = m_ack[i].count();
-    if (haveLargest) largest = m_ack[i].largest();
+    bool haveLargest = m_ack[i].largest(largest);
     if (m_ack[i].contains(pn)) return false;
     if (!m_ack[i].add(pn)) return false;
     noteECN_(i, ecn);
@@ -241,9 +271,12 @@ public:
     return true;
   }
 
-  const AckTracker &tracker(PktSpace::T space) const {
-    return m_ack[space];
-  }
+	  const AckTracker &tracker(PktSpace::T space) const {
+	    return m_ack[space];
+	  }
+	  AckTracker &tracker(PktSpace::T space) {
+	    return m_ack[space];
+	  }
   bool pending(PktSpace::T space) const {
     return m_pending[space];
   }
@@ -396,14 +429,22 @@ public:
     if (inFlight) m_bytesInFlight += bytes;
   }
   void acked(unsigned bytes) {
+    acked(bytes, false);
+  }
+  void acked(unsigned bytes, bool pmtudProbe) {
     if (bytes > m_bytesInFlight) m_bytesInFlight = 0;
     else m_bytesInFlight -= bytes;
+    if (pmtudProbe) return;
     if (m_cwnd < m_ssthresh)
       m_cwnd += bytes;
     else {
       uint64_t n = (uint64_t(m_maxDatagram) * bytes) / m_cwnd;
       m_cwnd += n ? n : 1;
     }
+  }
+  void release(uint64_t bytes) {
+    if (bytes > m_bytesInFlight) m_bytesInFlight = 0;
+    else m_bytesInFlight -= bytes;
   }
   void lost(unsigned bytes, bool pmtudProbe = false) {
     lostAt(bytes, 0, pmtudProbe);
@@ -509,46 +550,81 @@ struct SentFrameRef {
     ref.controlType = FrameType::HandshakeDone;
     return ref;
   }
+
+  static SentFrameRef resetStream(
+    uint64_t id, uint64_t appError, uint64_t finalSize) {
+    SentFrameRef ref = control();
+    ref.controlType = FrameType::ResetStream;
+    ref.streamID = id;
+    ref.value = appError;
+    ref.length = finalSize;
+    return ref;
+  }
+
+  static SentFrameRef stopSending(uint64_t id, uint64_t appError) {
+    SentFrameRef ref = control();
+    ref.controlType = FrameType::StopSending;
+    ref.streamID = id;
+    ref.value = appError;
+    return ref;
+  }
 };
 
 struct SentFrameKey {
   SentFrameKind::T	kind = SentFrameKind::None;
+  FrameType::T		controlType = FrameType::Unknown;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
   uint64_t		length = 0;
+  uint64_t		value = 0;
   bool			fin = false;
 
   SentFrameKey() = default;
   explicit SentFrameKey(const SentFrameRef &ref) :
-    kind{ref.kind}, streamID{ref.streamID}, offset{ref.offset},
-    length{ref.length}, fin{ref.fin} { }
+    kind{ref.kind}, controlType{ref.controlType}, streamID{ref.streamID},
+    offset{ref.offset}, length{ref.length}, value{ref.value}, fin{ref.fin} { }
 
   bool operator !() const { return kind == SentFrameKind::None; }
   bool operator ==(const SentFrameKey &o) const {
-    return kind == o.kind && streamID == o.streamID && offset == o.offset &&
-      length == o.length && fin == o.fin;
+    return kind == o.kind && controlType == o.controlType &&
+      streamID == o.streamID && offset == o.offset &&
+      length == o.length && value == o.value && fin == o.fin;
   }
   int cmp(const SentFrameKey &o) const {
     if (kind != o.kind) return int(kind) - int(o.kind);
+    if (controlType != o.controlType)
+      return int(controlType) - int(o.controlType);
     if (streamID != o.streamID) return streamID < o.streamID ? -1 : 1;
     if (offset != o.offset) return offset < o.offset ? -1 : 1;
     if (length != o.length) return length < o.length ? -1 : 1;
+    if (value != o.value) return value < o.value ? -1 : 1;
     if (fin != o.fin) return int(fin) - int(o.fin);
     return 0;
   }
   uint32_t hash() const {
     ZuHash_FNV::Value h = ZuHash_FNV::initial_();
     h = ZuHash_FNV::hash_(h, unsigned(kind));
+    h = ZuHash_FNV::hash_(h, unsigned(controlType));
     h = ZuHash_FNV::hash_(h, streamID);
     h = ZuHash_FNV::hash_(h, offset);
     h = ZuHash_FNV::hash_(h, length);
+    h = ZuHash_FNV::hash_(h, value);
     h = ZuHash_FNV::hash_(h, unsigned(fin));
     return uint32_t(h);
   }
 
   static bool retransmittable(const SentFrameRef &ref) {
     return ref.kind == SentFrameKind::Stream ||
-      ref.kind == SentFrameKind::Crypto;
+      ref.kind == SentFrameKind::Crypto ||
+      (ref.kind == SentFrameKind::Control &&
+	(ref.controlType == FrameType::MaxData ||
+	  ref.controlType == FrameType::MaxStreamData ||
+	  ref.controlType == FrameType::MaxStreams ||
+	  ref.controlType == FrameType::DataBlocked ||
+	  ref.controlType == FrameType::StreamDataBlocked ||
+	  ref.controlType == FrameType::StreamsBlocked ||
+	  ref.controlType == FrameType::ResetStream ||
+	  ref.controlType == FrameType::StopSending));
   }
 };
 
@@ -615,6 +691,7 @@ struct SentPkt {
   bool		ackEliciting = false;
   bool		inFlight = false;
   bool		pmtudProbe = false;
+  unsigned	pmtudSize = 0;
   bool		acked = false;
   bool		lost = false;
   bool		ptoReclaimed = false;
@@ -623,6 +700,64 @@ struct SentPkt {
 };
 
 using TxPkt = SentPkt;
+
+struct PktTxUpdate {
+  void acked(const SentPkt &p) {
+    if (p.lost) {
+      ++lateAcked;
+      return;
+    }
+    ackedBytes += p.bytes;
+    if (p.pmtudProbe) {
+      pmtudAckedBytes += p.bytes;
+      if (p.pmtudSize > pmtudAckedSize)
+	pmtudAckedSize = p.pmtudSize;
+    } else
+      normalAckedBytes += p.bytes;
+  }
+  void lost(const SentPkt &p) {
+    lostBytes += p.bytes;
+    if (p.pmtudProbe) {
+      pmtudLostBytes += p.bytes;
+      if (p.pmtudSize > pmtudLostSize)
+	pmtudLostSize = p.pmtudSize;
+      if (p.sentTime > pmtudLostSentTime)
+	pmtudLostSentTime = p.sentTime;
+    } else {
+      normalLostBytes += p.bytes;
+      if (p.sentTime > normalLostSentTime)
+	normalLostSentTime = p.sentTime;
+    }
+  }
+
+  uint64_t	ackedBytes = 0;
+  uint64_t	lateAcked = 0;
+  uint64_t	normalAckedBytes = 0;
+  uint64_t	pmtudAckedBytes = 0;
+  unsigned	pmtudAckedSize = 0;
+  uint64_t	lostBytes = 0;
+  uint64_t	normalLostBytes = 0;
+  uint64_t	pmtudLostBytes = 0;
+  unsigned	pmtudLostSize = 0;
+  ZuTime	normalLostSentTime;
+  ZuTime	pmtudLostSentTime;
+};
+
+struct PktAckBatch {
+  unsigned	range = 0;
+  uint64_t	nextPN = 0;
+  uint64_t	largestAckedForLoss = 0;
+  uint64_t	latestAcked = 0;
+  unsigned	acked = 0;
+  bool		haveAckForLoss = false;
+  bool		haveAcked = false;
+  ZuTime	latestSentTime;
+};
+
+struct PktLossBatch {
+  uint64_t	nextPN = 0;
+  unsigned	lost = 0;
+};
 
 using TxPktQueue =
   ZmPQueue<TxPkt,
@@ -639,6 +774,14 @@ public:
 
   bool push(const SentFrameRef &frame) {
     if (frame.kind == SentFrameKind::None) return false;
+    if (SentFrameKey::retransmittable(frame)) {
+      SentFrameKey key{frame};
+      if (m_pending.findPtr(key)) {
+	++m_dropped;
+	return false;
+      }
+      m_pending.add(key);
+    }
     m_frames.push(frame);
     return true;
   }
@@ -646,19 +789,25 @@ public:
   bool pop(SentFrameRef &frame) {
     if (!m_frames.count_()) return false;
     frame = m_frames.shift();
+    if (SentFrameKey::retransmittable(frame))
+      m_pending.del(SentFrameKey{frame});
     return true;
   }
 
   unsigned count() const { return m_frames.count_(); }
-  // No retransmit drop policy exists for this unbounded queue.
-  unsigned dropped() const { return 0; }
+  unsigned dropped() const { return m_dropped; }
   bool empty() const { return !m_frames.count_(); }
   void clear() {
     m_frames.clean();
+    m_pending.clean();
+    m_dropped = 0;
   }
 
 private:
   Queue		m_frames;
+  SentFrameAckHash m_pending{
+    ZmHashParams().bits(8).loadFactor(1).cBits(3)};
+  unsigned	m_dropped = 0;
 };
 
 class PktTxSpace :
@@ -696,7 +845,12 @@ public:
   bool add(const SentPkt &p) {
     if (m_packets.has(p.pn)) return false;
     Tx::send(new Queue::Node{p});
-    if (p.inFlight) m_bytesInFlight += p.bytes;
+    if (p.inFlight) {
+      m_bytesInFlight += p.bytes;
+      if (p.ackEliciting &&
+	  (!*m_latestAckSentTime || p.sentTime > m_latestAckSentTime))
+	m_latestAckSentTime = p.sentTime;
+    }
     return true;
   }
 
@@ -722,7 +876,7 @@ public:
     const AckRange *ranges, unsigned nRanges, unsigned *lost = nullptr,
     unsigned packetThreshold = 3, ZuTime *latestSentTime = nullptr,
     uint64_t *ackedBytes = nullptr, uint64_t *lostBytes = nullptr,
-    ZuTime *lostSentTime = nullptr)
+    ZuTime *lostSentTime = nullptr, PktTxUpdate *update = nullptr)
   {
     unsigned n = 0;
     uint64_t ackedBytes_ = 0;
@@ -738,17 +892,20 @@ public:
       const AckRange &range = ranges[i];
       if (range.first > range.largest) continue;
       auto iter = m_packets.iter(range.first);
-      while (auto node = iter()) {
+	while (auto node = iter()) {
 	SentPkt &p = node->data();
 	if (p.pn > range.largest) break;
+	bool wasLost = p.lost;
 	if (ack_(p)) {
 	  ++n;
-	  ackedBytes_ += p.bytes;
+	  if (!wasLost) ackedBytes_ += p.bytes;
+	  if (update) update->acked(p);
 	  if (!haveAckForLoss || p.pn > largestAckedForLoss) {
 	    largestAckedForLoss = p.pn;
 	    haveAckForLoss = true;
 	  }
-	  if (latestSentTime && (!haveAcked || p.pn > latestAcked)) {
+	  if (!wasLost &&
+	      latestSentTime && (!haveAcked || p.pn > latestAcked)) {
 	    latestAcked = p.pn;
 	    *latestSentTime = p.sentTime;
 	    haveAcked = true;
@@ -758,10 +915,56 @@ public:
     }
     unsigned l = haveAckForLoss ?
       markPktThresholdLoss(
-	largestAckedForLoss, packetThreshold, lostBytes, lostSentTime) : 0;
+	largestAckedForLoss, packetThreshold, lostBytes, lostSentTime,
+	update) : 0;
     if (ackedBytes) *ackedBytes = ackedBytes_;
     if (lost) *lost = l;
     return n;
+  }
+
+  bool ackBatch(
+    const AckRange *ranges, unsigned nRanges, PktAckBatch &batch,
+    unsigned budget, CryptoLevel::T level, PktTxUpdate *update = nullptr)
+  {
+    if (!budget) return false;
+    unsigned scanned = 0;
+    while (batch.range < nRanges) {
+      const AckRange &range = ranges[batch.range];
+      if (range.first > range.largest) {
+	++batch.range;
+	batch.nextPN = 0;
+	continue;
+      }
+      uint64_t start = batch.nextPN ? batch.nextPN : range.first;
+      auto iter = m_packets.iter(start);
+      while (auto node = iter()) {
+	SentPkt &p = node->data();
+	if (p.pn > range.largest) break;
+	uint64_t nextPN = p.pn + 1;
+	bool wasLost = p.lost;
+	if (ack_(p)) {
+	  ++batch.acked;
+	  if (update) update->acked(p);
+	  if (!batch.haveAckForLoss || p.pn > batch.largestAckedForLoss) {
+	    batch.largestAckedForLoss = p.pn;
+	    batch.haveAckForLoss = true;
+	  }
+	  if (!wasLost && level == CryptoLevel::OneRTT &&
+	      (!batch.haveAcked || p.pn > batch.latestAcked)) {
+	    batch.latestAcked = p.pn;
+	    batch.latestSentTime = p.sentTime;
+	    batch.haveAcked = true;
+	  }
+	}
+	if (++scanned >= budget) {
+	  batch.nextPN = nextPN;
+	  return false;
+	}
+      }
+      ++batch.range;
+      batch.nextPN = 0;
+    }
+    return true;
   }
 
   bool lose(uint64_t pn) {
@@ -771,7 +974,8 @@ public:
 
   unsigned markPktThresholdLoss(
     uint64_t largestAcked, unsigned threshold = 3,
-    uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr) {
+    uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr,
+    PktTxUpdate *update = nullptr) {
     unsigned n = 0;
     if (lostBytes) *lostBytes = 0;
     if (lostSentTime) *lostSentTime = ZuTime{0};
@@ -784,14 +988,37 @@ public:
 	if (lostBytes) *lostBytes += p.bytes;
 	if (lostSentTime && p.sentTime > *lostSentTime)
 	  *lostSentTime = p.sentTime;
+	if (update) update->lost(p);
       }
     }
     return n;
   }
 
+  bool markPktThresholdLossBatch(
+    uint64_t largestAcked, unsigned threshold, PktLossBatch &batch,
+    unsigned budget, PktTxUpdate *update = nullptr)
+  {
+    if (!budget) return false;
+    unsigned scanned = 0;
+    auto iter = m_packets.iter(batch.nextPN);
+    while (auto node = iter()) {
+      SentPkt &p = node->data();
+      batch.nextPN = p.pn + 1;
+      if (!p.acked && !p.lost && p.pn + threshold <= largestAcked &&
+	  lose_(p)) {
+	++batch.lost;
+	if (update) update->lost(p);
+      }
+      if (++scanned >= budget) return false;
+    }
+    batch.nextPN = 0;
+    return true;
+  }
+
   unsigned markTimeThresholdLoss(
     ZuTime now, ZuTime threshold,
-    uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr) {
+    uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr,
+    PktTxUpdate *update = nullptr) {
     unsigned n = 0;
     if (lostBytes) *lostBytes = 0;
     if (lostSentTime) *lostSentTime = ZuTime{0};
@@ -806,41 +1033,54 @@ public:
 	if (lostBytes) *lostBytes += p.bytes;
 	if (lostSentTime && p.sentTime > *lostSentTime)
 	  *lostSentTime = p.sentTime;
+	if (update) update->lost(p);
       }
     }
     return n;
   }
-  ZuTime nextLossTime(ZuTime threshold) const {
+  bool markTimeThresholdLossBatch(
+    ZuTime now, ZuTime threshold, PktLossBatch &batch,
+    unsigned budget, PktTxUpdate *update = nullptr)
+  {
+    if (!budget) return false;
+    unsigned scanned = 0;
+    auto iter = m_packets.iter(batch.nextPN);
+    while (auto node = iter()) {
+      SentPkt &p = node->data();
+      batch.nextPN = p.pn + 1;
+      if (!p.acked && !p.lost && *p.sentTime && p.sentTime <= now &&
+	  now - p.sentTime >= threshold && lose_(p)) {
+	++batch.lost;
+	if (update) update->lost(p);
+      }
+      if (++scanned >= budget) return false;
+    }
+    batch.nextPN = 0;
+    return true;
+  }
+  ZuTime nextLossTime(ZuTime threshold, unsigned budget = 256) const {
     if (!*threshold) return ZuTime{0};
     ZuTime out;
     bool have = false;
     auto iter = m_packets.citer();
+    unsigned scanned = 0;
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (p.acked || p.lost || !p.inFlight || !p.ackEliciting ||
-	  !*p.sentTime)
-	continue;
-      ZuTime deadline = p.sentTime + threshold;
-      if (!have || deadline < out) {
-	out = deadline;
-	have = true;
+      if (!p.acked && !p.lost && p.inFlight && p.ackEliciting &&
+	  *p.sentTime) {
+	ZuTime deadline = p.sentTime + threshold;
+	if (!have || deadline < out) {
+	  out = deadline;
+	  have = true;
+	}
       }
+      if (++scanned >= budget) break;
     }
     return have ? out : ZuTime{0};
   }
 
   uint64_t bytesInFlight() const { return m_bytesInFlight; }
-  ZuTime latestAckSentTime() const {
-    ZuTime t{0};
-    auto iter = m_packets.citer();
-    while (auto node = iter()) {
-      const SentPkt &p = node->data();
-      if (p.acked || p.lost || !p.inFlight || !p.ackEliciting)
-	continue;
-      if (!*t || p.sentTime > t) t = p.sentTime;
-    }
-    return t;
-  }
+  ZuTime latestAckSentTime() const { return m_latestAckSentTime; }
   unsigned acked() const { return m_acked; }
   unsigned lost() const { return m_lost; }
   unsigned retransmittable() const { return m_retransmittable; }
@@ -848,24 +1088,32 @@ public:
   unsigned retransmitDropped() const { return m_retransmit.dropped(); }
   bool nextRetransmit(SentFrameRef &frame) {
     while (m_retransmit.pop(frame))
-      if (!frameAcked_(frame)) return true;
+      if (!frameAcked_(frame) && !frameOutstanding_(frame)) return true;
     return false;
+  }
+  bool requeueRetransmit(const SentFrameRef &frame) {
+    if (frameAcked_(frame) || frameOutstanding_(frame)) return false;
+    return m_retransmit.push(frame);
   }
   unsigned reclaimOnPTO(unsigned limit) {
     unsigned n = 0;
-    auto iter = m_packets.riter();
-    while (n < limit) {
-      auto node = iter();
-      if (!node) break;
-      SentPkt &p = node->data();
-      if (p.acked || p.lost || p.ptoReclaimed || !p.inFlight ||
-	  !p.ackEliciting)
-	continue;
-      Tx::resend(Span{p.pn, 1});
-      Tx::resend();
-      p.ptoReclaimed = true;
-      ++n;
-    }
+    auto reclaim = [this, limit, &n](bool reclaimed) {
+      auto iter = m_packets.riter();
+      while (n < limit) {
+	auto node = iter();
+	if (!node) break;
+	SentPkt &p = node->data();
+	if (p.acked || p.lost || !p.inFlight || !p.ackEliciting ||
+	    (!reclaimed && p.ptoReclaimed))
+	  continue;
+	Tx::resend(Span{p.pn, 1});
+	Tx::resend();
+	p.ptoReclaimed = true;
+	++n;
+      }
+    };
+    reclaim(false);
+    if (!n) reclaim(true);
     return n;
   }
   unsigned count() const { return m_packets.count_(); }
@@ -874,37 +1122,47 @@ public:
     m_retransmit.clear();
     m_ackedFrames.clean();
     m_bytesInFlight = 0;
+    m_latestAckSentTime = {};
     m_acked = 0;
     m_lost = 0;
     m_retransmittable = 0;
   }
-  bool persistentCongestion(ZuTime threshold) const {
+  bool persistentCongestion(ZuTime threshold, unsigned budget = 256) const {
     bool have = false;
     ZuTime first, last;
     auto iter = m_packets.citer();
+    unsigned scanned = 0;
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (!p.lost || !p.ackEliciting || p.pmtudProbe) continue;
-      if (!have || p.sentTime < first) first = p.sentTime;
-      if (!have || p.sentTime > last) last = p.sentTime;
-      have = true;
+      if (p.lost && p.ackEliciting && !p.pmtudProbe) {
+	if (!have || p.sentTime < first) first = p.sentTime;
+	if (!have || p.sentTime > last) last = p.sentTime;
+	have = true;
+      }
+      if (++scanned >= budget) return false;
     }
     if (!have || last <= first || last - first < threshold) return false;
     iter.reset();
+    scanned = 0;
     while (auto node = iter()) {
       const SentPkt &p = node->data();
       if (p.acked && p.ackEliciting && !p.pmtudProbe &&
 	  p.sentTime >= first && p.sentTime <= last)
 	return false;
+      if (++scanned >= budget) return false;
     }
     return true;
   }
 
 private:
   bool ack_(SentPkt &p) {
-    if (p.acked || p.lost) return false;
+    if (p.acked) return false;
     p.acked = true;
     ackFrames_(p);
+    if (p.lost) {
+      ++m_acked;
+      return true;
+    }
     if (p.inFlight) release_(p);
     ++m_acked;
     return true;
@@ -960,7 +1218,7 @@ private:
     auto iter = m_packets.citer();
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (&p == skip || p.acked || p.lost) continue;
+      if (&p == skip || p.acked || p.lost || p.ptoReclaimed) continue;
       for (unsigned i = 0; i < p.framesUsed(); ++i)
 	if (SentFrameKey{p.frame(i)} == key) return true;
     }
@@ -972,6 +1230,7 @@ private:
   SentFrameAckHash m_ackedFrames{
     ZmHashParams().bits(8).loadFactor(1).cBits(3)};
   uint64_t	m_bytesInFlight = 0;
+  ZuTime	m_latestAckSentTime;
   unsigned	m_acked = 0;
   unsigned	m_lost = 0;
   unsigned	m_retransmittable = 0;

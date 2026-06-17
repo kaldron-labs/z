@@ -1918,6 +1918,17 @@ public:
     if (scheduleDequeue) impl->scheduleDequeue();
   }
 
+  void resumeDequeue() {
+    Impl *impl = static_cast<Impl *>(this);
+    bool scheduleDequeue;
+    {
+      Guard guard(m_lock);
+      scheduleDequeue = !(m_flags & Dequeuing) && impl->rxQueue()->count_();
+      if (scheduleDequeue) m_flags |= Dequeuing;
+    }
+    if (scheduleDequeue) impl->scheduleDequeue();
+  }
+
   // handle a received message (possibly out of order)
   void rcvd(ZmRef<Msg> msg) {
     Impl *impl = static_cast<Impl *>(this);

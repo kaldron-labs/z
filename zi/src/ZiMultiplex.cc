@@ -1374,6 +1374,9 @@ retry:
       return true;
     }
     if (e.errNo() == EINTR) goto retry;
+    if (m_info.options.udp() &&
+	(e.errNo() == ZiECONNREFUSED || e.errNo() == ZiECONNRESET))
+      return true;
     errorRecv(Zi::IOError, e);
     m_rxContext.completed();
     return false;
@@ -1433,6 +1436,17 @@ void ZiConnection::overlappedRecv(int status, unsigned n, ZeError e)
     return;
   }
 
+  ZiDEBUG(m_mx, ([
+    socket = ZuBoxed(m_info.socket),
+    n = ZuBoxed(n),
+    buf = ZmMkRef(new ZiDebugBuf(
+      m_rxContext.ptr + m_rxContext.offset, n))
+  ](auto &s) {
+    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+      << " WSARecv(" << n << ")\n"
+      << ZtHexDump_(buf->cspan());
+  }));
+
   executedRecv(n);
 
   if (ZuUnlikely(m_rxContext.completed())) {
@@ -1469,17 +1483,10 @@ void ZiConnection::executedRecv(unsigned n)
 
   ZmAssert(!m_rxContext.completed());
 
-#ifdef ZiMultiplex_IOCP
-  ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    n = ZuBoxed(n),
-    buf = ZmMkRef(new ZiDebugBuf(
-      m_rxContext.ptr + m_rxContext.offset, n))
-  ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
-      << " WSARecv(" << n << ")\n"
-      << ZtHexDump_(buf->cspan());
-  }));
+#ifdef ZiMultiplex_DEBUG
+  if (ZuUnlikely(m_mx->m_rxFilter(
+	  this, m_rxContext.ptr + m_rxContext.offset, n)))
+    return;
 #endif
 
   m_rxRequests++, m_rxBytes += n;
@@ -1520,11 +1527,34 @@ void ZiConnection::send()
 
   if (ZuLikely(m_txContext.completed())) return;
 
+  unsigned n;
 #ifdef ZiMultiplex_IOCP
   WSABUF wsaBuf;
   wsaBuf.buf = reinterpret_cast<char *>(m_txContext.ptr + m_txContext.offset);
   wsaBuf.len = m_txContext.size - m_txContext.offset;
 
+  ZeError e;
+  DWORD n_;
+#endif
+
+#ifdef ZiMultiplex_EPoll
+  auto buf = m_txContext.ptr + m_txContext.offset;
+  unsigned len = m_txContext.size - m_txContext.offset;
+
+  ZeError e;
+  int n_;
+#endif
+
+#ifdef ZiMultiplex_DEBUG
+  if (ZuUnlikely(m_mx->m_txFilter(
+	  this, m_txContext.ptr + m_txContext.offset,
+	  m_txContext.size - m_txContext.offset))) {
+    n = m_txContext.size - m_txContext.offset;
+    goto executed;
+  }
+#endif
+
+#ifdef ZiMultiplex_IOCP
 retry:
   ZiDEBUG(m_mx, ([
     socket = ZuBoxed(m_info.socket),
@@ -1538,15 +1568,14 @@ retry:
       << ZtHexDump_(buf->cspan());
   }));
 
-  ZeError e;
-  DWORD n;
   if (m_info.options.udp() && !!m_txContext.addr) {
-    if (ZuUnlikely(WSASendTo(m_info.socket, &wsaBuf, 1, &n, 0,
+    if (ZuUnlikely(WSASendTo(m_info.socket, &wsaBuf, 1, &n_, 0,
 	    m_txContext.addr.sa(), m_txContext.addr.len(),
 	    0, 0) == SOCKET_ERROR)) {
       errorSend(Zi::IOError, e);
       return;
     }
+    n = n_;
     ZiDEBUG(m_mx, ([
       socket = ZuBoxed(m_info.socket),
       len = ZuBoxed(wsaBuf.len),
@@ -1556,11 +1585,12 @@ retry:
 	<< " WSASendTo(" << len << "): " << n;
     }));
   } else {
-    if (ZuUnlikely(WSASend(m_info.socket, &wsaBuf, 1, &n, 0,
+    if (ZuUnlikely(WSASend(m_info.socket, &wsaBuf, 1, &n_, 0,
 	    0, 0) == SOCKET_ERROR)) {
       errorSend(Zi::IOError, e);
       return;
     }
+    n = n_;
     ZiDEBUG(m_mx, ([
       socket = ZuBoxed(m_info.socket),
       len = ZuBoxed(wsaBuf.len),
@@ -1573,12 +1603,6 @@ retry:
 #endif
 
 #ifdef ZiMultiplex_EPoll
-  auto buf = m_txContext.ptr + m_txContext.offset;
-  unsigned len = m_txContext.size - m_txContext.offset;
-
-  ZeError e;
-  int n;
-
 retry:
   ZiDEBUG(m_mx, ([
     socket = ZuBoxed(m_info.socket),
@@ -1593,21 +1617,21 @@ retry:
   }));
 
   if (m_info.options.udp())
-    n = ::sendto(
+    n_ = ::sendto(
 	m_info.socket, buf, len, 0,
 	m_txContext.addr.sa(), m_txContext.addr.len());
 #ifdef ZiMultiplex_Netlink
   else if (m_info.options.netlink())
-    n = ZiNetlink::send(m_info.socket, m_ci.familyID, m_ci.portID, buf, len);
+    n_ = ZiNetlink::send(m_info.socket, m_ci.familyID, m_ci.portID, buf, len);
 #endif
   else
-    n = ::send(m_info.socket, buf, len, 0);
-  if (ZuUnlikely(n < 0)) e = errno;
+    n_ = ::send(m_info.socket, buf, len, 0);
+  if (ZuUnlikely(n_ < 0)) e = errno;
 
   ZiDEBUG(m_mx, ([
     socket = ZuBoxed(m_info.socket),
     len = ZuBoxed(len),
-    n = ZuBoxed(n),
+    n = ZuBoxed(n_),
     errNo = ZuBoxed(int(e.errNo())),
     eagain = ZuBoxed(int(EAGAIN)),
     eintr = ZuBoxed(int(EINTR))
@@ -1617,7 +1641,7 @@ retry:
       << " (EAGAIN=" << eagain << " EINTR=" << eintr << ')';
   }));
 
-  if (ZuUnlikely(n < 0)) {
+  if (ZuUnlikely(n_ < 0)) {
     if (e.errNo() == EAGAIN) {
 #ifdef ZiMultiplex_DEBUG
       if (m_mx->yield()) Zm::yield();
@@ -1628,6 +1652,7 @@ retry:
     errorSend(Zi::IOError, e);
     return;
   }
+  n = n_;
 
   ZiDEBUG(m_mx, ([
     socket = ZuBoxed(m_info.socket),
@@ -1639,6 +1664,7 @@ retry:
   }));
 #endif
 
+executed:
   executedSend(n);
 
   if (ZuLikely(m_txContext.completed())) {
@@ -1668,6 +1694,9 @@ void ZiConnection::errorSend(int status, ZeError e)
 {
   m_txContext.length = -1;
   m_txContext();
+  if (m_info.options.udp() && status == Zi::IOError &&
+      (e.errNo() == ZiECONNREFUSED || e.errNo() == ZiECONNRESET))
+    return;
   close_1();
   if (status == Zi::IOError &&
       (e.errNo() == ZiENOTCONN || e.errNo() == ZiECONNRESET)) return;

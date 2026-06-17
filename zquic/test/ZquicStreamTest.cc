@@ -128,6 +128,30 @@ struct TestLink :
       });
     return ok ? refs : 0;
   }
+  unsigned flushSentRefs(Zquic::SentFrameRef *refs, unsigned capacity) {
+    unsigned n = 0;
+    bool ok = Base::flushControlAndStreams_(
+      ZiSockAddr{},
+      [](Zquic::PktBuild &) { return true; },
+      [&](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &r) {
+	n = r.count();
+	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
+	return true;
+      });
+    return ok ? n : 0;
+  }
+  bool rebuildControl(
+    const Zquic::SentFrameRef &ref, Zquic::Frame &frame) {
+    Zquic::PktBuild build;
+    if (!Base::buildRetransmitControl_(build, ref) || !build.count())
+      return false;
+    unsigned used = 0;
+    return !Zquic::FrameCodec::parse(
+      ZuCSpan{
+	reinterpret_cast<const char *>(build.data()[0].base),
+	unsigned(build.data()[0].len)},
+      frame, used) && used == build.data()[0].len;
+  }
   bool flushCongestedStream(ZmRef<TestStream> stream) {
     return Base::sendQueuedStreamPkt_(
       ZuMv(stream), ZiSockAddr{},
@@ -263,6 +287,9 @@ struct TestLink :
   }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   Zquic::RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
+  static constexpr unsigned suspiciousStreamThreshold() {
+    return Base::SuspiciousStreamThreshold;
+  }
   unsigned congestionAllowance() const { return Base::congestionAllowance_(); }
   bool ecnDisabled() const { return Base::ecnDisabled_(); }
   void enableECN() { Base::setEcnDisabled_(false); }
@@ -271,6 +298,7 @@ struct TestLink :
   void queueTxFlush_() { ++txFlushQueued; }
   void queueTxFlush_(ZiSockAddr) { ++txFlushQueued; }
   void pto_() { ++ptos; }
+  void queueRetransmit_() { ++retransmits; }
   bool retransmit_() { ++retransmits; return false; }
 
   ZmRef<TestStream>	lastStream;
@@ -787,6 +815,27 @@ void testRuntimeMultiFrameAssembly()
       streamIDs[0] == uint64_t(s0->id()) &&
       streamIDs[1] == uint64_t(s1->id()),
     "runtime did not assemble multiple stream frames into one packet");
+
+  TestLink finOnly{&app};
+  auto finStream = finOnly.stream(Zi::StreamType::Duplex);
+  finOnly.grantDataCredit(20000);
+  finStream->txCredit(20000);
+  {
+    auto tx = finStream->txStream_();
+    tx << "payload" << Zi::flush();
+  }
+  Zquic::SentFrameRef sentRefs[8];
+  refs = finOnly.flushSentRefs(sentRefs, 8);
+  ZuCHECK(refs == 1 && sentRefs[0].kind == Zquic::SentFrameKind::Stream &&
+      sentRefs[0].length == 7 && !sentRefs[0].fin,
+    "runtime did not send first stream data frame");
+  finStream->fin();
+  refs = finOnly.flushSentRefs(sentRefs, 8);
+  ZuCHECK(refs == 1 && sentRefs[0].kind == Zquic::SentFrameKind::Stream &&
+      sentRefs[0].streamID == uint64_t(finStream->id()) &&
+      sentRefs[0].offset == 7 && !sentRefs[0].length &&
+      sentRefs[0].fin,
+    "runtime lost FIN-only stream offset");
 }
 
 void testRuntimePacketNumberLength()
@@ -1083,7 +1132,12 @@ void testBlockedFrameDuplicateSuppression()
   (void)limitLink.flushControlSends();
   ZuCHECK(
       !limitLink.queuedControlFrames() &&
-      !limitLink.queueStreamsBlocked(Zi::StreamType::Duplex, 7) &&
+      limitLink.queueStreamsBlocked(Zi::StreamType::Duplex, 7) &&
+      limitLink.queuedControlFrames() == 1,
+    "sent STREAMS_BLOCKED was not requeued");
+  (void)limitLink.flushControlSends();
+  ZuCHECK(
+      !limitLink.queuedControlFrames() &&
       limitLink.queueStreamsBlocked(Zi::StreamType::Duplex, 8) &&
       limitLink.queuedControlFrames() == 1,
     "sent STREAMS_BLOCKED duplicate suppression mismatch");
@@ -1260,6 +1314,90 @@ void testResetStopFrames()
     "RESET_STREAM final-size violation was accepted");
 }
 
+void testLocalResetStopSend()
+{
+  ZuTestScope(testLocalResetStopSend);
+
+  App app;
+  TestLink link{&app};
+  Zquic::SentFrameRef refs[2];
+
+  auto reset = link.stream(Zi::StreamType::Duplex);
+  {
+    auto tx = reset->txStream_();
+    tx << "abc" << Zi::flush();
+  }
+  reset->reset(42);
+  ZuCHECK(reset->resetSent() &&
+      reset->error() == Zquic::StreamError::Reset &&
+      reset->appError() == 42 &&
+      link.queuedControlFrames() == 1,
+    "local RESET_STREAM did not queue control state");
+  unsigned n = link.flushSentRefs(refs, 2);
+  ZuCHECK(n == 1 &&
+      refs[0].kind == Zquic::SentFrameKind::Control &&
+      refs[0].controlType == Zquic::FrameType::ResetStream &&
+      refs[0].streamID == uint64_t(reset->id()) &&
+      refs[0].value == 42 &&
+      refs[0].length == 3 &&
+      !link.queuedControlFrames(),
+    "local RESET_STREAM sent ref mismatch");
+  Zquic::Frame rebuilt;
+  ZuCHECK(link.rebuildControl(refs[0], rebuilt) &&
+      rebuilt.type == Zquic::FrameType::ResetStream &&
+      rebuilt.streamID == uint64_t(reset->id()) &&
+      rebuilt.errorCode == 42 &&
+      rebuilt.length == 3,
+    "local RESET_STREAM retransmit rebuild failed");
+
+  auto stop = link.stream(Zi::StreamType::Duplex);
+  stop->stop(9);
+  ZuCHECK(stop->stopSent() &&
+      stop->error() == Zquic::StreamError::Stop &&
+      stop->appError() == 9 &&
+      link.queuedControlFrames() == 1,
+    "local STOP_SENDING did not queue control state");
+  n = link.flushSentRefs(refs, 2);
+  ZuCHECK(n == 1 &&
+      refs[0].kind == Zquic::SentFrameKind::Control &&
+      refs[0].controlType == Zquic::FrameType::StopSending &&
+      refs[0].streamID == uint64_t(stop->id()) &&
+      refs[0].value == 9,
+    "local STOP_SENDING sent ref mismatch");
+  ZuCHECK(link.rebuildControl(refs[0], rebuilt) &&
+      rebuilt.type == Zquic::FrameType::StopSending &&
+      rebuilt.streamID == uint64_t(stop->id()) &&
+      rebuilt.errorCode == 9,
+    "local STOP_SENDING retransmit rebuild failed");
+
+  Zquic::SentPktTracker acked;
+  Zquic::SentPkt p0{
+    1, Zquic::timeUS(1000), 100, Zquic::PktSpace::AppData,
+    true, true, false};
+  Zquic::SentPkt p1{
+    2, Zquic::timeUS(1001), 100, Zquic::PktSpace::AppData,
+    true, true, false};
+  ZuCHECK(p0.addFrame(refs[0]) && p1.addFrame(refs[0]) &&
+      acked.add(p0) && acked.add(p1) &&
+      acked.ack(1) && acked.lose(2),
+    "local STOP_SENDING ACK/loss tracker setup failed");
+  Zquic::SentFrameRef ref;
+  ZuCHECK(!acked.nextRetransmit(ref),
+    "ACKed STOP_SENDING was retransmitted after later loss");
+
+  Zquic::SentPktTracker lost;
+  Zquic::SentPkt p2{
+    3, Zquic::timeUS(1002), 100, Zquic::PktSpace::AppData,
+    true, true, false};
+  ZuCHECK(p2.addFrame(refs[0]) && lost.add(p2) && lost.lose(3) &&
+      lost.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Control &&
+      ref.controlType == Zquic::FrameType::StopSending &&
+      ref.streamID == uint64_t(stop->id()) &&
+      !lost.nextRetransmit(ref),
+    "lost STOP_SENDING did not queue one retransmit");
+}
+
 void testMaxAndBlockedFrameValidation()
 {
   ZuTestScope(testMaxAndBlockedFrameValidation);
@@ -1384,6 +1522,95 @@ void testStreamDataBlockedValidation()
     "STREAM_DATA_BLOCKED beyond connection receive limit was accepted");
 }
 
+void testInvalidClosedStreamActivity()
+{
+  ZuTestScope(testInvalidClosedStreamActivity);
+
+  App app;
+  uint8_t b[128];
+  Zquic::Frame frame;
+  unsigned used = 0;
+
+  TestLink maxLink{&app};
+  auto local = maxLink.stream(Zi::StreamType::Duplex);
+  local->reset(1);
+  int n = Zquic::FrameCodec::writeMaxStreamData(
+    b, sizeof(b), uint64_t(local->id()), 4096);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      maxLink.applyMaxStreamData(frame) &&
+      !maxLink.closeError(),
+    "closed-stream MAX_STREAM_DATA was not ignored");
+  Zquic::RuntimeDiag diag = maxLink.runtimeDiag();
+  ZuCHECK(diag.invalidStreamFrames == 1 &&
+      diag.closedStreamFrames == 1 &&
+      !diag.suspiciousStreamCloses,
+    "closed-stream MAX_STREAM_DATA diagnostics mismatch");
+
+  TestLink resetLink{&app, true};
+  n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      resetLink.receiveFrame(frame) == 0 &&
+      resetLink.receiveFrame(frame) == 0,
+    "duplicate RESET_STREAM final size was not ignored");
+  diag = resetLink.runtimeDiag();
+  ZuCHECK(diag.invalidStreamFrames == 1 &&
+      diag.closedStreamFrames == 1 &&
+      !resetLink.closeError(),
+    "duplicate RESET_STREAM diagnostics mismatch");
+  n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 1);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      resetLink.receiveFrame(frame) < 0 &&
+      resetLink.closeError() == Zquic::TransportError::FinalSize,
+    "duplicate RESET_STREAM final-size violation did not close");
+  diag = resetLink.runtimeDiag();
+  ZuCHECK(diag.suspiciousStreamCloses == 1,
+    "final-size violation close diagnostics mismatch");
+
+  TestLink blockedLink{&app, true};
+  n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      blockedLink.receiveFrame(frame) == 0,
+    "closed STREAM_DATA_BLOCKED reset setup failed");
+  n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 0, 0);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      blockedLink.receiveStreamDataBlocked(frame) &&
+      !blockedLink.closeError(),
+    "closed-stream STREAM_DATA_BLOCKED was not ignored");
+  diag = blockedLink.runtimeDiag();
+  ZuCHECK(diag.invalidStreamFrames == 1 &&
+      diag.closedStreamFrames == 1,
+    "closed-stream STREAM_DATA_BLOCKED diagnostics mismatch");
+
+  TestLink dupLink{&app};
+  auto dup = dupLink.stream(Zi::StreamType::Duplex);
+  auto packet = streamPkt_(dup->id(), 0, "dup", false, frame, used);
+  ZuCHECK(packet &&
+      dupLink.receiveFrame(frame, packet) == 0,
+    "duplicate STREAM setup failed");
+  packet = streamPkt_(dup->id(), 0, "dup", false, frame, used);
+  ZuCHECK(packet &&
+      dupLink.receiveFrame(frame, packet) == 0 &&
+      !dupLink.runtimeDiag().invalidStreamFrames,
+    "ordinary duplicate STREAM was treated as invalid");
+
+  TestLink threshold{&app};
+  auto noisy = threshold.stream(Zi::StreamType::Duplex);
+  noisy->reset(3);
+  n = Zquic::FrameCodec::writeMaxStreamData(
+    b, sizeof(b), uint64_t(noisy->id()), 4096);
+  ZuCHECK(parseFrame_(b, n, frame), "threshold frame setup failed");
+  for (unsigned i = 0; i < TestLink::suspiciousStreamThreshold(); ++i)
+    ZuCHECK(threshold.applyMaxStreamData(frame),
+      "closed-stream threshold frame was rejected");
+  diag = threshold.runtimeDiag();
+  ZuCHECK(threshold.closeError() == Zquic::TransportError::StreamState &&
+      diag.suspiciousStreamCloses == 1,
+    "closed-stream threshold did not close once");
+  ZuCHECK(threshold.applyMaxStreamData(frame) &&
+      threshold.runtimeDiag().suspiciousStreamCloses == 1,
+    "closed-stream threshold produced repeated close diagnostics");
+}
+
 void testFrameRoleAndSpaceLegality()
 {
   ZuTestScope(testFrameRoleAndSpaceLegality);
@@ -1471,7 +1698,9 @@ int main(int argc, char **argv)
   ZuTestCall(testPeerStreamAcceptance);
   ZuTestCall(testStreamCountLimits);
   ZuTestCall(testResetStopFrames);
+  ZuTestCall(testLocalResetStopSend);
   ZuTestCall(testMaxAndBlockedFrameValidation);
   ZuTestCall(testStreamDataBlockedValidation);
+  ZuTestCall(testInvalidClosedStreamActivity);
   ZuTestCall(testFrameRoleAndSpaceLegality);
 }

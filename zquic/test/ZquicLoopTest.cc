@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
+#include <errno.h>
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
@@ -27,7 +28,8 @@ struct App : public Zquic::Engine<App> {
     bool ok = m_mx.start();
     ZiAssert(ok, "Zquic", (), "loop test multiplexer start failed", return);
     if (ok)
-      ok = Base::init(Zquic::EngineParams(&m_mx, "3", "4"));
+      ok = Base::init(
+	Zquic::EngineParams(&m_mx, "3", "4").maxUDP(Zquic::BufSize));
     ZiAssert(ok, "Zquic", (), "loop test app init failed", return);
   }
   ~App() {
@@ -70,6 +72,37 @@ struct TestLink :
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
+  void queueTxFlush_() { }
+  void initPath(ZiSockAddr local, ZiSockAddr remote) {
+    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
+  }
+  void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
+  bool startPMTUDProbe(unsigned size) {
+    return Base::startPMTUDProbeForTest_(size);
+  }
+  void ackPMTUDProbe(unsigned size) {
+    Base::ackPMTUDProbeForTest_(size);
+  }
+  void losePMTUDProbe(unsigned size) {
+    Base::losePMTUDProbeForTest_(size);
+  }
+  void expirePMTUDProbe() { Base::expirePMTUDProbeForTest_(); }
+  void applyPathHint(Zquic::PathHint hint) {
+    Base::applyPathHintForTest_(hint);
+  }
+  unsigned activePathMaxUDP() const {
+    return Base::activePathMaxUDPForTest_();
+  }
+  unsigned pathProbeSize() const {
+    return Base::pathProbeSizeForTest_();
+  }
+  bool pathProbeRetryPending() const {
+    return Base::pathProbeRetryPendingForTest_();
+  }
+  const Zquic::PathDiag &pathDiag() const {
+    return Base::pathDiagForTest_();
+  }
+  Zquic::PktBudget sendBudget() const { return Base::sendBudgetForTest_(); }
 };
 
 ZuCSpan bytes_(const uint8_t *data, unsigned len)
@@ -204,6 +237,33 @@ void testRecoveryFlowAndPMTUD()
       sent.lost() == 2 && sent.retransmittable() == 2,
     "loop packet-threshold loss failed");
 
+  Zquic::SentPktTracker pmtudTx;
+  Zquic::SentPkt probeAck{
+    10, Zquic::timeUS(100), 1300, Zquic::PktSpace::AppData,
+    true, true, true, 1300};
+  ZuCHECK(pmtudTx.add(probeAck), "loop PMTUD sent-packet add failed");
+  Zquic::AckRange probeAckRange{10, 10};
+  Zquic::PktTxUpdate probeAckUpdate;
+  ZuCHECK(pmtudTx.ack(
+      &probeAckRange, 1, nullptr, 3, nullptr, nullptr, nullptr, nullptr,
+      &probeAckUpdate) == 1 &&
+      probeAckUpdate.pmtudAckedSize == 1300 &&
+      probeAckUpdate.normalAckedBytes == 0,
+    "loop PMTUD ACK accounting failed");
+
+  Zquic::SentPktTracker pmtudLossTx;
+  Zquic::SentPkt probeLoss{
+    11, Zquic::timeUS(100), 1400, Zquic::PktSpace::AppData,
+    true, true, true, 1400};
+  ZuCHECK(pmtudLossTx.add(probeLoss), "loop PMTUD loss add failed");
+  Zquic::PktTxUpdate probeLossUpdate;
+  ZuCHECK(pmtudLossTx.markTimeThresholdLoss(
+      Zquic::timeUS(500), Zquic::timeUS(100), nullptr, nullptr,
+      &probeLossUpdate) == 1 &&
+      probeLossUpdate.pmtudLostSize == 1400 &&
+      probeLossUpdate.normalLostBytes == 0,
+    "loop PMTUD loss accounting failed");
+
   Zquic::Path path = Zquic::Path::client(
     ZiSockAddr{ZiIP("127.0.0.1"), 10000},
     ZiSockAddr{ZiIP("127.0.0.1"), 10001});
@@ -253,6 +313,55 @@ void testRecoveryFlowAndPMTUD()
       blackhole.activeMaxUDP() == Zquic::MinUDPPayload &&
       blackhole.diag().blackholes == 1,
     "loop PMTUD active-size blackhole fallback failed");
+
+  App app;
+  TestLink link{&app};
+  link.initPath(
+    ZiSockAddr{ZiIP("127.0.0.1"), 10006},
+    ZiSockAddr{ZiIP("127.0.0.1"), 10007});
+  ZuCHECK(link.sendBudget().pmtu == Zquic::MinUDPPayload,
+    "runtime PMTUD initial budget mismatch");
+  ZuCHECK(link.startPMTUDProbe(1400) &&
+      link.pathProbeSize() == 1400,
+    "runtime PMTUD probe start failed");
+  link.ackPMTUDProbe(1400);
+  ZuCHECK(link.activePathMaxUDP() == 1400 &&
+      link.sendBudget().pmtu == 1400 &&
+      link.pathDiag().probesAcked == 1,
+    "runtime PMTUD ACK did not grow active size");
+  ZuCHECK(link.startPMTUDProbe(1500),
+    "runtime PMTUD loss probe start failed");
+  link.losePMTUDProbe(1500);
+  ZuCHECK(link.activePathMaxUDP() == 1400 &&
+      link.pathDiag().probesLost == 1,
+    "runtime PMTUD loss handling failed");
+
+  TestLink expiryLink{&app};
+  expiryLink.initPath(
+    ZiSockAddr{ZiIP("127.0.0.1"), 10008},
+    ZiSockAddr{ZiIP("127.0.0.1"), 10009});
+  ZuCHECK(expiryLink.startPMTUDProbe(1400),
+    "runtime PMTUD expiry probe start failed");
+  expiryLink.expirePMTUDProbe();
+  ZuCHECK(expiryLink.pathProbeRetryPending() &&
+      expiryLink.pathDiag().probesExpired == 1,
+    "runtime PMTUD expiry did not schedule retry");
+
+  TestLink hintLink{&app};
+  hintLink.initPath(
+    ZiSockAddr{ZiIP("127.0.0.1"), 10010},
+    ZiSockAddr{ZiIP("127.0.0.1"), 10011});
+  hintLink.growActivePath(1500);
+  hintLink.applyPathHint(
+    {Zquic::PathHintKind::SendTooBig, 1300, EMSGSIZE});
+  ZuCHECK(hintLink.activePathMaxUDP() == 1300 &&
+      hintLink.sendBudget().pmtu == 1300 &&
+      hintLink.pathDiag().sendTooBigHints == 1,
+    "runtime PMTUD send-too-big hint handling failed");
+  hintLink.applyPathHint({Zquic::PathHintKind::KernelMTU, 1250, 0});
+  ZuCHECK(hintLink.activePathMaxUDP() == 1250 &&
+      hintLink.pathDiag().kernelHints == 1,
+    "runtime PMTUD kernel hint handling failed");
 }
 
 int main(int argc, char **argv)

@@ -30,6 +30,8 @@ using Zquic::Test::haveCaddy;
 
 ZuCSpan Path = "/zhttp-interop";
 ZuCSpan Body = "zhttp-interop-ok";
+constexpr unsigned CaseTimeout = 15;
+constexpr unsigned ReadyAttempts = 15;
 
 uint64_t nowMS()
 {
@@ -75,12 +77,16 @@ struct Options {
   uint32_t	jobs = 0;
   uint32_t	requests = 0;
   OptString	caseName;
-  bool		debug = false;
-  bool		frag = false;
-  bool		yield = false;
-  bool		quiet = false;
-  bool		help = false;
-};
+	  bool		debug = false;
+	  bool		frag = false;
+	  bool		yield = false;
+	  bool		pcap = false;
+	  OptString	quicRxDrop;
+	  OptString	quicTxDrop;
+	  uint32_t	quicDiag = 0;
+	  bool		quiet = false;
+	  bool		help = false;
+	};
 
 ZtStruct((Options, CLI),
   (((pair),     (CLI::Long<"pair">)),                            (String, "all")),
@@ -88,11 +94,15 @@ ZtStruct((Options, CLI),
   (((jobs),     (CLI::Opt<'j'>, CLI::Long<"jobs">)),             (UInt32, 0)),
   (((requests), (CLI::Opt<'n'>, CLI::Long<"requests">)),         (UInt32, 0)),
   (((caseName), (CLI::Long<"case">)),                            (String, "")),
-  (((debug),    (CLI::Long<"debug">)),                           (Bool, false)),
-  (((frag),     (CLI::Long<"frag">)),                            (Bool, false)),
-  (((yield),    (CLI::Long<"yield">)),                           (Bool, false)),
-  (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),           (Bool, false)),
-  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),            (Bool, false)));
+	  (((debug),    (CLI::Long<"debug">)),                           (Bool, false)),
+	  (((frag),     (CLI::Long<"frag">)),                            (Bool, false)),
+	  (((yield),    (CLI::Long<"yield">)),                           (Bool, false)),
+	  (((pcap),     (CLI::Long<"pcap">)),                            (Bool, false)),
+	  (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),                  (String, "")),
+	  (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),                  (String, "")),
+	  (((quicDiag), (CLI::Long<"quic-diag">)),                       (UInt32, 0)),
+	  (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),           (Bool, false)),
+	  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),            (Bool, false)));
 
 Options options;
 
@@ -152,10 +162,14 @@ void usage(int code = 1)
     "  -j, --jobs=N      select workload concurrency\n"
     "  -n, --requests=N  select workload request count\n"
     "  --case=CASE       exact case, e.g. ZhttpZhttpd/H3/j10n1000\n"
-    "  --debug           debug zhttp/zhttpd and preserve case directories\n"
-    "  --frag            fragment zhttp/zhttpd ZiMultiplex I/O\n"
-    "  --yield           yield in zhttp/zhttpd ZiMultiplex\n"
-    "  -q, --quiet       quiet output\n"
+	    "  --debug           debug zhttp/zhttpd and preserve case directories\n"
+	    "  --frag            fragment zhttp/zhttpd ZiMultiplex I/O\n"
+	    "  --yield           yield in zhttp/zhttpd ZiMultiplex\n"
+	    "  --pcap            capture H3 UDP traffic and preserve case directories\n"
+	    "  --quic-rx-drop=N% pass QUIC receive packet drop rate to zhttp/zhttpd\n"
+	    "  --quic-tx-drop=N% pass QUIC transmit packet drop rate to zhttp/zhttpd\n"
+	    "  --quic-diag=N     pass QUIC diagnostic print interval in seconds\n"
+	    "  -q, --quiet       quiet output\n"
     "  -h, --help        show help\n" <<
     std::flush;
   ::exit(code);
@@ -333,14 +347,14 @@ void appendReadyCommand(
   switch (proto) {
     case Proto::H1TCP:
       script <<
-	"  if curl --http1.1 --fail -sS --connect-timeout 1 --max-time 2 "
+		"  if curl --http1.1 --fail -sS --connect-timeout 1 --max-time 1 "
 	"http://127.0.0.1:" << port << Path <<
 	" >/dev/null 2>&1; then\n";
       break;
     case Proto::H1TLS:
       script <<
 	"  if curl --http1.1 --cacert " << certPath <<
-	" --fail -sS --connect-timeout 1 --max-time 2 "
+		" --fail -sS --connect-timeout 1 --max-time 1 "
 	"--resolve localhost:" << port << ":127.0.0.1 "
 	"https://localhost:" << port << Path <<
 	" >/dev/null 2>&1; then\n";
@@ -348,7 +362,7 @@ void appendReadyCommand(
     case Proto::H3:
       script <<
 	"  if curl --http3-only --cacert " << certPath <<
-	" --fail -sS --connect-timeout 1 --max-time 2 "
+		" --fail -sS --connect-timeout 1 --max-time 1 "
 	"--resolve localhost:" << port << ":127.0.0.1 "
 	"https://localhost:" << port << Path <<
 	" >/dev/null 2>&1; then\n";
@@ -369,7 +383,8 @@ void appendZhttpCommand(
   ZuCSpan tempPath)
 {
   script <<
-    "if ! timeout 20s \"$client\" -j " << c.jobs << " -n " << c.requests;
+    "if ! timeout " << CaseTimeout << "s \"$client\" -j " << c.jobs <<
+      " -n " << c.requests;
   if (options.debug) script << " --debug";
   if (options.frag && c.proto != Proto::H3) script << " --frag";
   if (options.yield) script << " --yield";
@@ -381,18 +396,31 @@ void appendZhttpCommand(
       break;
     case Proto::H3:
       script << " --http3=force -c " << certPath;
+      if (options.quicRxDrop)
+	script << " --quic-rx-drop=" << options.quicRxDrop;
+      if (options.quicTxDrop)
+	script << " --quic-tx-drop=" << options.quicTxDrop;
+      if (options.quicDiag)
+	script << " --quic-diag=" << options.quicDiag;
       break;
   }
-  script << " -o " << tempPath << "/body ";
-  appendURL(script, c.proto, port);
-  script << " >" << tempPath << "/client.out 2>" << tempPath <<
-    "/client.err; then\n"
-    "  cat " << tempPath << "/client.err\n"
-    "  exit 1\n"
-    "fi\n"
-    "if [ " << c.requests << " -eq 1 ]; then\n"
-    "  grep -qx '" << Body << "' " << tempPath << "/body\n"
-    "else\n"
+	  script << " -o " << tempPath << "/body ";
+	  appendURL(script, c.proto, port);
+	  script << " >" << tempPath << "/client.out 2>" << tempPath <<
+	    "/client.err; then\n"
+	    "  stop_pcap\n"
+	    "  analyze_pcap\n"
+	    "  cat " << tempPath << "/client.err\n"
+	    "  exit 1\n"
+	    "fi\n";
+	  if ((options.debug || options.pcap) && c.proto == Proto::H3)
+	    script <<
+	      "stop_pcap\n"
+	      "analyze_pcap\n";
+	  script <<
+	    "if [ " << c.requests << " -eq 1 ]; then\n"
+	    "  grep -qx '" << Body << "' " << tempPath << "/body\n"
+	    "else\n"
     "  grep -qx '" << Body << "' " << tempPath << "/body.0\n"
     "  grep -qx '" << Body << "' " << tempPath << "/body." <<
       (c.requests - 1) << "\n"
@@ -414,7 +442,8 @@ void appendCurlCommand(
     "\"\\noutput = \"/dev/null\"\\n' >>\"$cfg\"\n"
     "  i=$((i + 1))\n"
     "done\n"
-    "curl_opts='--fail -sS --connect-timeout 2 --max-time 20'\n";
+    "curl_opts='--fail -sS --connect-timeout 2 --max-time " <<
+      CaseTimeout << "'\n";
   switch (c.proto) {
     case Proto::H1TCP:
       script << "curl_proto='--http1.1'\n";
@@ -433,12 +462,19 @@ void appendCurlCommand(
     "if [ " << c.jobs << " -gt 1 ]; then\n"
     "  curl_parallel='--parallel --parallel-max " << c.jobs << "'\n"
     "fi\n"
-    "if ! timeout 20s curl $curl_opts $curl_proto $curl_parallel "
-      "--config \"$cfg\" >" << tempPath << "/curl.out 2>" << tempPath <<
-      "/curl.err; then\n"
-    "  cat " << tempPath << "/curl.err\n"
-    "  exit 1\n"
-    "fi\n";
+	    "if ! timeout " << CaseTimeout <<
+	      "s curl $curl_opts $curl_proto $curl_parallel "
+	      "--config \"$cfg\" >" << tempPath << "/curl.out 2>" << tempPath <<
+	      "/curl.err; then\n"
+	    "  stop_pcap\n"
+	    "  analyze_pcap\n"
+	    "  cat " << tempPath << "/curl.err\n"
+	    "  exit 1\n"
+	    "fi\n";
+	  if ((options.debug || options.pcap) && c.proto == Proto::H3)
+	    script <<
+	      "stop_pcap\n"
+	      "analyze_pcap\n";
 }
 
 bool writeScript(
@@ -461,10 +497,37 @@ bool writeScript(
     "if [ -n \"$lsan_suppressions\" ]; then\n"
     "  LSAN_OPTIONS=\"${LSAN_OPTIONS:+$LSAN_OPTIONS:}suppressions=$lsan_suppressions\"\n"
     "  export LSAN_OPTIONS\n"
-    "fi\n"
-    "pid=\n"
-    "cleanup() {\n"
-    "  if [ -n \"$pid\" ]; then\n"
+	    "fi\n"
+	    "pid=\n"
+	    "pcap_pid=\n"
+	    "pcap_file=" << tempPath << "/traffic.pcapng\n"
+	    "pcap_tsv=" << tempPath << "/traffic.tsv\n"
+	    "pcap_summary=" << tempPath << "/pcap.summary\n"
+	    "stop_pcap() {\n"
+	    "  if [ -n \"$pcap_pid\" ]; then\n"
+	    "    kill -INT \"$pcap_pid\" 2>/dev/null || true\n"
+	    "    wait \"$pcap_pid\" 2>/dev/null || true\n"
+	    "    pcap_pid=\n"
+	    "  fi\n"
+	    "}\n"
+	    "analyze_pcap() {\n"
+	    "  [ -s \"$pcap_file\" ] || return 0\n"
+	    "  if command -v tshark >/dev/null 2>&1; then\n"
+	    "    tshark -r \"$pcap_file\" -Y 'udp.port == " << port << "' "
+	      "-T fields -e frame.time_epoch -e udp.srcport -e udp.dstport "
+	      "-e udp.length >\"$pcap_tsv\" 2>" << tempPath <<
+	      "/pcap.err || true\n"
+	    "    awk 'NR==1 { first=$1; last=$1; count=1; next } "
+	      "NF { gap=$1-last; if (gap > max) max=gap; last=$1; ++count } "
+	      "END { if (count) { printf(\"pcap packets=%u first=%.6f "
+	      "last=%.6f max_gap=%.3f\\n\", count, first, last, max); "
+	      "if (max >= 3.0) printf(\"pcap stall gap=%.3f\\n\", max); } }' "
+	      "\"$pcap_tsv\" >\"$pcap_summary\"\n"
+	    "  fi\n"
+	    "}\n"
+	    "cleanup() {\n"
+	    "  stop_pcap\n"
+	    "  if [ -n \"$pid\" ]; then\n"
     "    kill \"$pid\" 2>/dev/null || true\n"
     "    for i in $(seq 1 20); do\n"
     "      if ! kill -0 \"$pid\" 2>/dev/null; then\n"
@@ -522,10 +585,16 @@ bool writeScript(
       case Proto::H1TLS:
 	script << " --https --cert " << certPath << " --key " << keyPath;
 	break;
-      case Proto::H3:
-	script << " --http3 --cert " << certPath << " --key " << keyPath;
-	break;
-    }
+	  case Proto::H3:
+	    script << " --http3 --cert " << certPath << " --key " << keyPath;
+	    if (options.quicRxDrop)
+	      script << " --quic-rx-drop=" << options.quicRxDrop;
+	    if (options.quicTxDrop)
+	      script << " --quic-tx-drop=" << options.quicTxDrop;
+	    if (options.quicDiag)
+	      script << " --quic-diag=" << options.quicDiag;
+	    break;
+	}
     script <<
       " --addr 127.0.0.1 --port " << port <<
       " --timeout 0 --log " << tempPath << "/access.log"
@@ -533,8 +602,8 @@ bool writeScript(
       "pid=$!\n";
   }
   script <<
-    "ready=0\n"
-    "for i in $(seq 1 200); do\n";
+	    "ready=0\n"
+	    "for i in $(seq 1 " << ReadyAttempts << "); do\n";
   appendReadyCommand(script, c.proto, port, certPath);
   script <<
     "    ready=1\n"
@@ -546,24 +615,37 @@ bool writeScript(
     "  fi\n"
     "  sleep 0.1\n"
     "done\n"
-    "if [ \"$ready\" -ne 1 ]; then\n"
-    "  cat " << tempPath << "/server.err\n"
-    "  exit 1\n"
-    "fi\n";
-  if (zhttp)
-    appendZhttpCommand(script, c, port, certPath, tempPath);
-  else
-    appendCurlCommand(script, c, port, certPath, tempPath);
-  return writeFile(path, cspan(script), 0777);
-}
+	    "if [ \"$ready\" -ne 1 ]; then\n"
+	    "  cat " << tempPath << "/server.err\n"
+	    "  exit 1\n"
+	    "fi\n";
+	  if ((options.debug || options.pcap) && c.proto == Proto::H3)
+	    script <<
+	      "if command -v dumpcap >/dev/null 2>&1 && "
+		"command -v tshark >/dev/null 2>&1; then\n"
+	      "  dumpcap -q -i lo -f 'udp port " << port <<
+		"' -w \"$pcap_file\" >" << tempPath <<
+		"/pcap.out 2>" << tempPath << "/pcap.err &\n"
+	      "  pcap_pid=$!\n"
+	      "  sleep 0.2\n"
+	      "else\n"
+	      "  echo 'pcap unavailable: dumpcap/tshark not executable' "
+		">\"$pcap_summary\"\n"
+	      "fi\n";
+	  if (zhttp)
+	    appendZhttpCommand(script, c, port, certPath, tempPath);
+	  else
+	    appendCurlCommand(script, c, port, certPath, tempPath);
+	  return writeFile(path, cspan(script), 0777);
+	}
 
-void preserveTemp(TempDir &temp)
-{
-  if (!options.debug || !temp.path[0]) return;
-  std::cout << "# preserved logs: " << static_cast<const char *>(temp.path) <<
-    '\n';
-  temp.path[0] = 0;
-}
+	void preserveTemp(TempDir &temp)
+	{
+	  if ((!options.debug && !options.pcap) || !temp.path[0]) return;
+	  std::cout << "# preserved logs: " << static_cast<const char *>(temp.path) <<
+	    '\n';
+	  temp.path[0] = 0;
+	}
 
 bool runCase_(const Case &c)
 {
@@ -615,10 +697,12 @@ bool runCase_(const Case &c)
 
   std::cout << "# failed case: " << pairName(c.pair) << ' ' <<
     protoName(c.proto) << " -j" << c.jobs << " -n" << c.requests << '\n';
-  printFile("server stderr", temp.pathOf("server.err"));
-  printFile("client stderr", temp.pathOf("client.err"));
-  printFile("curl stderr", temp.pathOf("curl.err"));
-  printFile("script", script);
+	  printFile("server stderr", temp.pathOf("server.err"));
+	  printFile("client stderr", temp.pathOf("client.err"));
+	  printFile("curl stderr", temp.pathOf("curl.err"));
+	  printFile("pcap summary", temp.pathOf("pcap.summary"));
+	  printFile("pcap stderr", temp.pathOf("pcap.err"));
+	  printFile("script", script);
   preserveTemp(temp);
   return false;
 }
