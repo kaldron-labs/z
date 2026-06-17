@@ -81,3 +81,17 @@ The Caddy H3 stall was investigated with `zhttp --debug` against a preserved `-j
 `ZhttpMatrixTest` still uses `timeout 20s`; its Caddy cleanup now terminates politely, waits briefly, and then kills the fixture process so Caddy's own shutdown grace period does not mask a client timeout.  Added regression coverage for multi-frame stream assembly, dynamic packet-number length, long-header coalescing, duplicate retransmit suppression, PTO one-shot reclaim, and ACK-only largest-range handling.
 
 Validation was performed with the configured AddressSanitizer/LeakSanitizer build: `git diff --check`, focused `ZquicRecoveryTest`/`ZquicStreamTest`/`ZquicFlowTest`, `zhttp --debug -j10 -n1000 --http3=force` against Caddy in 458 ms with all 1000 bodies, 20 normal `ZhttpMatrixTest --case=ZhttpCaddy/H3/j10n1000` runs in 450-522 ms each, `make -C zquic/test test`, and `make -C zhttp/test test`.
+
+## Integrate `Path` into runtime send/receive budgets
+
+`Link` now owns and uses one active runtime `Path` for both client and server connections.  Runtime reset initializes a default active path using engine `maxUDP`; client endpoint readiness replaces it with the connected local/remote socket addresses and marks it validated, while server first-routed Initial installs an unvalidated path from the server local address and peer address.  Establishment validates the active path after transport parameter validation, and decoded peer `max_udp_payload_size` is posted to the Tx-owned path.
+
+Receive byte accounting is now datagram-scoped.  `receiveDatagram_()` records `Path::received()` once per UDP datagram by posting the fixed byte count to Tx before parsing coalesced packets, so coalesced Initial/Handshake packets do not multiply receive credit.
+
+Runtime send budgeting now derives PMTU and anti-amplification from the active path instead of using `app()->maxUDP()` directly.  `sendBudget_()` uses `Path::activeMaxUDP()` for packet assembly, `Path::sendAllowance()` for anti-amplification, and the existing NewReno allowance for congestion, preserving the minimum-of-path/congestion behavior introduced in plan 4.  Protected datagram sends are gated by `Path::canSend()` before the UDP send is queued and call `Path::reserveSend()` only after an actual endpoint send is accepted.
+
+Server sends now respect QUIC anti-amplification until validation without breaking the existing packet-loss test hooks.  The server path wrapper distinguishes application-level simulated packet drops from actual endpoint sends: suppressed test datagrams still produce sent-packet metadata for recovery, but only datagrams accepted by the endpoint are charged to `Path::bytesTx`.  This keeps runtime recovery tests representative while making path byte accounting match real sends.
+
+Added test hooks and public diagnostics for active path state on client and server links.  `ZquicStreamTest` now covers active path MTU controlling runtime packet budget, unvalidated server budget exhaustion at 3x received bytes, received-byte allowance growth, path byte diagnostics, and validation unlock to unlimited send allowance.
+
+Validation was performed with the configured AddressSanitizer/LeakSanitizer build: `git diff --check`, focused `ZquicRuntimeTest` and `ZquicStreamTest`, `make -C zquic/test test`, and dependent `make -C zhttp/test test`.
