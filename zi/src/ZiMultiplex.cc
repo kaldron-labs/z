@@ -565,7 +565,7 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
     return;
   }
 
-  {
+  if (!!localIP || localPort) {
 #ifndef _WIN32
 #ifdef ZiMultiplex_Netlink
     if (options.netlink()) {
@@ -672,6 +672,51 @@ void ZiMultiplex::overlappedConnect(Connect *request,
 #endif
 
 #ifdef ZiMultiplex_EPoll
+void ZiMultiplex::executedConnect(Connect *request)
+{
+  ZiCxnInfo &ci = request->info();
+  Socket s = ci.socket;
+
+  int errNo = 0;
+  socklen_t l = sizeof(int);
+  if (getsockopt(s, SOL_SOCKET, SO_ERROR, &errNo, &l) < 0) {
+    ZeError e{errno};
+    connectDel(s);
+    ::close(s);
+    Error("getsockopt(SO_ERROR)", Zi::IOError, e);
+    request->fail(false);
+    return;
+  }
+  if (errNo) {
+    connectDel(s);
+    ::close(s);
+    request->fail(true);
+    return;
+  }
+
+#ifdef ZiMultiplex_Netlink
+  if (!ci.options.netlink())
+#endif
+  {
+    ZiSockAddr local;
+    socklen_t len = local.len();
+    if (getsockname(s, local.sa(), &len) < 0) {
+      ZeError e{errno};
+      connectDel(s);
+      ::close(s);
+      Error("getsockname", Zi::IOError, e);
+      request->fail(false);
+      return;
+    }
+    ci.localIP = local.ip();
+    ci.localPort = local.port();
+  }
+
+  ZiConnectFn fn = ZuMv(request->fn());
+  connectDel(s);
+  executedConnect(ZuMv(fn), ci);
+}
+
 // attempt completion of non-blocking connect
 void ZiMultiplex::connect(Connect *request)
 {
@@ -714,29 +759,7 @@ retry:
     }
   }
 
-#ifdef ZiMultiplex_Netlink
-  if (!ci.options.netlink())
-#endif
-  {
-    ZiSockAddr local;
-    socklen_t len = local.len();
-    if (getsockname(s, local.sa(), &len) < 0) {
-      ZeError e{errno};
-      connectDel(s);
-      ::close(s);
-      Error("getsockname", Zi::IOError, e);
-      request->fail(false);
-      return;
-    }
-    ci.localIP = local.ip();
-    ci.localPort = local.port();
-  }
-
-  ZiConnectFn fn = ZuMv(request->fn());
-
-  connectDel(s);
-
-  executedConnect(ZuMv(fn), ci);
+  executedConnect(request);
 }
 #endif
 
@@ -1229,11 +1252,11 @@ void ZiConnection::recv()
   Zi_Overlapped &overlapped = m_rxOverlapped;
 
 #ifdef ZiMultiplex_DEBUG
-  if (m_mx->frag()) {
+  if (ZuUnlikely(!m_info.options.udp() && m_mx->frag())) {
     unsigned l = ((m_rxContext.offset + 8)>>1) + 1;
     if (len > l) len = l;
   }
-  if (m_mx->debug()) {
+  if (ZuUnlikely(m_mx->debug())) {
     unsigned long n;
     DWORD o;
     if (!WSAIoctl(
@@ -1298,11 +1321,11 @@ void ZiConnection::recv()
   int n;
 
 #ifdef ZiMultiplex_DEBUG
-  if (m_mx->frag()) {
+  if (ZuUnlikely(!m_info.options.udp() && m_mx->frag())) {
     unsigned l = ((m_rxContext.offset + 8)>>1) + 1;
     if (len > l) len = l;
   }
-  if (m_mx->debug()) {
+  if (ZuUnlikely(m_mx->debug())) {
     ioctl(m_info.socket, FIONREAD, &n);
     ZiDEBUG(m_mx, ([
       socket = ZuBoxed(m_info.socket),
@@ -1857,6 +1880,7 @@ bool ZiMultiplex::connectAdd(Connect *request, Socket s)
 
   return true;
 }
+
 #endif
 
 void ZiMultiplex::connectDel(Socket s)
@@ -2361,7 +2385,7 @@ void ZiMultiplex::rx()
 	if (ZuLikely(u64_is_connect(v))) {
 	  ZmRef<Connect> request = u64_ptr<Connect>(v);
 	  if (ZuLikely(!(events & EPOLLERR))) {
-	    connect(request);
+	    executedConnect(request);
 	    continue;
 	  }
 	  int n;
