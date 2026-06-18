@@ -1277,8 +1277,8 @@ public:
     return ret;
   }
 
-  // subtract an interval from retained items, leaving a gap in the queue
-  bool subtract(Key key, Length length) {
+  // clear an interval from retained items, leaving a gap in the queue
+  bool clear(Key key, Length length) {
     Key end;
     if (ZuUnlikely(!endOf_(key, length, end))) return false;
     if (ZuUnlikely(!length)) return false;

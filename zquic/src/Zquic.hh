@@ -1727,7 +1727,7 @@ public:
   }
   bool ackTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
     uint64_t n = length + (fin ? 1 : 0);
-    return n && m_txUnackd.subtract(offset, n);
+    return n && m_txUnackd.clear(offset, n);
   }
   bool txStillUnackd(uint64_t offset, uint64_t length, bool fin = false) const {
     uint64_t n = length + (fin ? 1 : 0);
@@ -2705,7 +2705,7 @@ protected:
 	return stream && stream->ackTxUnackd(ref.offset, ref.length, ref.fin);
       }
       case SentFrameKind::Crypto:
-	return m_txCryptoUnackd[level].subtract(ref.offset, ref.length);
+	return m_txCryptoUnackd[level].clear(ref.offset, ref.length);
       case SentFrameKind::Control: {
 	if (ref.streamID > uint64_t(INT64_MAX)) return false;
 	StreamRef stream = findStream(int64_t(ref.streamID));

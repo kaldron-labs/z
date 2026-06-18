@@ -462,13 +462,13 @@ void testSubtract()
   {
     PQueue q(0);
     q.add(new QMsg(ZuFwdTuple(2, 4)));
-    ZuCheck(q.subtract(2, 4) && !q.count_() && !q.length_() && q.verify());
+    ZuCheck(q.clear(2, 4) && !q.count_() && !q.length_() && q.verify());
   }
 
   {
     PQueue q(0);
     q.add(new QMsg(ZuFwdTuple(2, 6)));
-    ZuCheck(q.subtract(2, 2));
+    ZuCheck(q.clear(2, 2));
     ZmRef<QMsg> msg = q.find(4);
     ZuCheck(msg && msg->data().key() == 4 && msg->data().length() == 4 &&
       q.count_() == 1 && q.length_() == 4 && q.verify());
@@ -477,7 +477,7 @@ void testSubtract()
   {
     PQueue q(0);
     q.add(new QMsg(ZuFwdTuple(2, 6)));
-    ZuCheck(q.subtract(6, 2));
+    ZuCheck(q.clear(6, 2));
     ZmRef<QMsg> msg = q.find(2);
     ZuCheck(msg && msg->data().key() == 2 && msg->data().length() == 4 &&
       q.count_() == 1 && q.length_() == 4 && q.verify());
@@ -486,7 +486,7 @@ void testSubtract()
   {
     PlainPQueue q(0);
     q.add(new PlainQMsg(ZuFwdTuple(2, 8)));
-    ZuCheck(q.subtract(5, 2));
+    ZuCheck(q.clear(5, 2));
     auto head = q.find(2);
     auto tail = q.find(7);
     ZuCheck(head && tail &&
@@ -500,7 +500,7 @@ void testSubtract()
     q.add(new QMsg(ZuFwdTuple(2, 3)));
     q.add(new QMsg(ZuFwdTuple(6, 3)));
     q.add(new QMsg(ZuFwdTuple(10, 3)));
-    ZuCheck(q.subtract(4, 7));
+    ZuCheck(q.clear(4, 7));
     ZmRef<QMsg> head = q.find(2);
     ZmRef<QMsg> tail = q.find(11);
     ZuCheck(head && tail &&
@@ -513,7 +513,7 @@ void testSubtract()
   {
     PQueue q(0);
     q.add(new QMsg(ZuFwdTuple(2, 3)));
-    ZuCheck(!q.subtract(8, 2) &&
+    ZuCheck(!q.clear(8, 2) &&
       q.count_() == 1 && q.length_() == 3 && q.verify());
   }
 }
