@@ -18,6 +18,7 @@
 #include <zlib/ZmFn.hh>
 
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtBuiltin.hh>
 
 #include <zlib/ZtlsPico.hh>
 
@@ -175,7 +176,10 @@ using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
 class CryptoStream :
   public ZmPQRx<CryptoStream, CryptoRxPQueue, CryptoStreamRxNTP> {
 public:
-  static constexpr unsigned MaxBuffered = 64 * 1024;
+  static constexpr unsigned MaxBufSize = 64 * 1024;
+  // Covers mainstream TLS 1.3 handshakes without packet loss while avoiding
+  // heap allocation on the common path; larger certificate chains fall back.
+  static constexpr unsigned BuiltinBufSize = 8 * 1024;
   using Queue = CryptoRxPQueue;
   using Rx = ZmPQRx<CryptoStream, Queue, CryptoStreamRxNTP>;
   using Msg = Queue::Node;
@@ -205,22 +209,30 @@ public:
   void rescheduleDequeue() { m_dequeueFn(); }
   void idleDequeue() { }
   void dequeueFn(DequeueFn fn) { m_dequeueFn = ZuMv(fn); }
-	  void deliveryFn(DeliveryFn fn) {
-	    m_deliveryFn = ZuMv(fn);
-	    m_asyncDelivery = true;
-	  }
-	  void dequeueRx_() { Rx::dequeue(); }
+  void deliveryFn(DeliveryFn fn) {
+    m_deliveryFn = ZuMv(fn);
+    m_asyncDelivery = true;
+  }
+  void dequeueRx_() { Rx::dequeue(); }
 
-	private:
-  ZuDerive(Delivery,
-    (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoDelivery">>));
-  ZuDerive(TxData,
-    (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.CryptoTx">>));
+private:
+ZuDerive(Delivery,
+(ZtBuiltin<
+  ZtArray<uint8_t,
+    ZtArrayHeapMax<MaxBufSize,
+      ZtArrayHeapID<"Zquic.CryptoDelivery">>>,
+  BuiltinBufSize>));
+ZuDerive(TxData,
+(ZtBuiltin<
+  ZtArray<uint8_t,
+    ZtArrayHeapMax<MaxBufSize,
+      ZtArrayHeapID<"Zquic.CryptoTx">>>,
+  BuiltinBufSize>));
 
-	  void appendDelivery_(const uint8_t *, uint64_t);
-	  void resumeReadyDequeue_();
+  void appendDelivery_(const uint8_t *, uint64_t);
+  void resumeReadyDequeue_();
 
-	  uint64_t		m_txOffset = 0;
+  uint64_t		m_txOffset = 0;
   uint64_t		m_rxOffset = 0;
   CryptoRxPQueue	m_rxQueue{0};
   Delivery		m_delivery;
@@ -336,8 +348,8 @@ private:
   bool				m_secretInstalled[3] = {};
   TrafficSecret 		m_txTrafficSecrets[3];
   TrafficSecret 		m_rxTrafficSecrets[3];
-  PktProtState		m_txProt[3];
-  PktProtState		m_rxProt[3];
+  PktProtState			m_txProt[3];
+  PktProtState			m_rxProt[3];
   ParamString			m_alpn;
   Host				m_serverName;
   InitialKeyMaterial 		m_initialKeys;
