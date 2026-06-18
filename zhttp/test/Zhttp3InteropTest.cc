@@ -851,7 +851,7 @@ Zhttp::H3::QPackTxTable *H3Client::Stream::qpackTx()
 
 bool waitDone(ZmSemaphore &sem)
 {
-  return sem.timedwait(Zm::now(10)) == 0;
+  return sem.timedwait(Zm::now(15)) == 0;
 }
 
 bool writeHttpCaddyfile(ZuCSpan path, unsigned port, ZuCSpan body)

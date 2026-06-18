@@ -165,14 +165,14 @@ Validation was performed with the configured AddressSanitizer/LeakSanitizer buil
 Recovery no longer uses an ever-growing ackd-frame tombstone hash as the source
 of truth for STREAM and CRYPTO retransmission.  Sent STREAM data is tracked in a
 per-stream `StreamTxPQueue`, CRYPTO data is tracked in a crypto-level
-`CryptoTxPQueue`, and ACK processing subtracts acknowledged subranges from those
+`CryptoTxPQueue`, and ACK processing clears acknowledged subranges from those
 queues.  Loss and PTO retransmission now validate candidate sent-frame refs
 against the current queues, clipping or splitting retransmit work around ackd
 holes before requeueing it.  This makes "is the frame still needed?" a positive
 queue-membership question instead of a monotonic negative tombstone lookup.
 
 `ZmPQueue` gained the range operations needed by that model.  `clean()` exposes
-the existing internal cleanup path publicly, and `subtract()` removes, clips, or
+the existing internal cleanup path publicly, and `clear()` removes, clips, or
 splits queued ranges while preserving queue accounting.  The stream/crypto
 queues use those operations to handle partial ACKs, FIN sentinels, and
 retransmit clipping without adding a QUIC-specific interval container.
@@ -208,19 +208,44 @@ retired-CID grace period.  Route retirement also uses a PTO-based expiry so
 retired destination CIDs and migration routes do not remain reachable
 indefinitely after the protocol no longer needs them.
 
-The recovery naming was normalized to the framework spelling `ackd`, including
-packet recovery events, congestion callbacks, PMTUD diagnostics, ACK-of-ACK
-helpers, and tests.  Queue type names were shortened from
-`StreamTxUnackdPQueue`/`CryptoTxUnackdPQueue` to
-`StreamTxPQueue`/`CryptoTxPQueue`; the unacknowledged state is implied by the
-fact that these queues retain work only until it is acknowledged.  A raw
-`uint64_t(uint32_t(-1))` range-field guard in stream retransmit clipping was
-also replaced with a named `UINT32_MAX` limit to make the packet-buffer range
-constraint explicit.
+## Split endpoint Rx/Tx ownership and close teardown
 
-Validation was performed with the configured debug/sanitizer build using
-focused `zm/test` coverage, focused `zquic/test` coverage, and repeated full
-test targets: `make -C zm/test test`, `make -C zquic/test test`, and
-`make -C zhttp/test test`.  The final ZQUIC verification after the naming and
-range-limit cleanup was `make -C zquic/test -j8 test`, which passed all 20
-files and 121 tests.
+Endpoint UDP connection state is now split by shard: Rx owns the active receive
+connection pointer and callback state, while Tx owns the send-side connection
+reference and transmission diagnostics.  Public endpoint send and close entry
+points dispatch onto the `ZiMultiplex` shard that owns the low-level work, and
+the underscored variants assert the expected shard instead of conditionally
+falling back.  `m_mx` remains stable for the program lifetime once initialized.
+
+Endpoint close now drains Rx first, posts a Tx-side drain to release the send
+connection and Tx-drained callback, then completes back on Rx.  The production
+close path uses a continuation instead of blocking on a posted lambda; blocking
+is limited to destructor/test-style wait paths where the caller is known not to
+be one of the work threads.  Queued sends after close are dropped on Tx without
+reaching stale Rx connection state.
+
+The QUIC link callback boundary was audited for `ZiMultiplex` versus QUIC app
+shards.  Low-level endpoint callbacks still originate on `ZiMultiplex` Rx/Tx,
+then post to the higher-layer app Rx/Tx shard before touching link runtime
+state.  Stored endpoint callbacks and link-owned dequeue callbacks no longer
+retain `ZmRef`s back to their longer-lived link owners; callback cleanup is
+performed during closed teardown so short-lived callback objects cannot keep
+links alive or create ownership cycles.
+
+Diagnostics that need stable shard-owned snapshots now hop to the owning QUIC
+app shard before reading runtime/path state, while lightweight byte counters
+remain simple diagnostic reads.  Stream ACK/loss bookkeeping carries raw stream
+owner pointers through Tx packet refs so Tx no longer has to look up Rx-owned
+stream tables on the transmit shard.
+
+HTTP/3 interop tests now run the H3 interop binary under `timeout 15s`, with the
+internal wait helper using the same bound.  Under the AddressSanitizer build the
+focused interop run completes in about two seconds and no longer reports the
+link callback functor leak.
+
+Validation was performed with the configured AddressSanitizer/LeakSanitizer
+build: `make -C zquic/src -j8`, focused endpoint/runtime/stream/API/timer
+tests, `LSAN_OPTIONS=... timeout 15s ./Zhttp3InteropTest`, and the final gates
+`make -C zquic/test test` and `make -C zhttp/test test`.  The final ZQUIC gate
+passed all 20 files and 122 tests; the final ZHTTP gate passed its 10 `prove`
+tests plus the separately bounded HTTP/3 interop binary.

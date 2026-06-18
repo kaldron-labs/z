@@ -517,13 +517,16 @@ void testRuntimeHandshakeCryptoLoss()
     ZuCHECK(serverLink && serverLink->runtimeDiag().retransmittedFrames,
       "loss runtime did not retransmit dropped handshake data");
 
-    clientLink->disconnect();
+    ZmSemaphore clientClosed;
+    clientLink->disconnect([&clientClosed]() { clientClosed.post(); });
     server.close();
     ZuCHECK(waitUntil([&clientLink]() {
 	return !clientLink->cxn();
       }) && !server.connected(),
       "loss runtime endpoints remained connected after close");
+    clientClosed.wait();
     clientLink = nullptr;
+    serverLink = nullptr;
     client.final();
     server.final();
   }

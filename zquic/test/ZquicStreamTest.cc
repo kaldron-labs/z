@@ -169,9 +169,9 @@ struct TestLink :
       [](Zquic::PktBuild &) { return true; },
       [this](
 	  Zquic::PktBuild &build, ZiSockAddr,
-	  const Zquic::SentFrameRef &ref) {
+	  const typename Base::TxPktRefs &refs) {
 	Base::recordTxPkt_(
-	  Zquic::CryptoLevel::OneRTT, sentPkts, build.bytes(), ref, true);
+	  Zquic::CryptoLevel::OneRTT, sentPkts, build.bytes(), refs, true);
 	++sentPkts;
 	return true;
       });
@@ -234,13 +234,12 @@ struct TestLink :
   }
   bool rebuildCrypto(
     Zquic::CryptoLevel::T level, const Zquic::SentFrameRef &ref,
-    Zquic::Frame &frame) {
+    Zquic::Frame &frame, uint8_t *b, unsigned size) {
     Zquic::PktBuild build;
     if (!Base::buildRetransmitCrypto_(level, build, ref)) return false;
-    uint8_t b[Zquic::BufSize];
     unsigned n = 0;
     for (unsigned i = 0; i < build.count(); ++i) {
-      if (build.data()[i].len > sizeof(b) - n) return false;
+      if (build.data()[i].len > size - n) return false;
       memcpy(b + n, build.data()[i].base, build.data()[i].len);
       n += unsigned(build.data()[i].len);
     }
@@ -1050,12 +1049,13 @@ void testCryptoRetransmitClipsUnackd()
   Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
   Zquic::SentFrameRef ref;
   Zquic::Frame frame;
+  uint8_t frameBuf[Zquic::BufSize];
   ZuCHECK(link.nextRetransmitRef(level, ref) &&
       level == Zquic::CryptoLevel::OneRTT &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 0 &&
       ref.length == 2 &&
-      link.rebuildCrypto(level, ref, frame) &&
+      link.rebuildCrypto(level, ref, frame, frameBuf, sizeof(frameBuf)) &&
       frame.type == Zquic::FrameType::Crypto &&
       frame.offset == 0 &&
       frame.length == 2 &&
@@ -1066,7 +1066,7 @@ void testCryptoRetransmitClipsUnackd()
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 7 &&
       ref.length == 3 &&
-      link.rebuildCrypto(level, ref, frame) &&
+      link.rebuildCrypto(level, ref, frame, frameBuf, sizeof(frameBuf)) &&
       frame.type == Zquic::FrameType::Crypto &&
       frame.offset == 7 &&
       frame.length == 3 &&

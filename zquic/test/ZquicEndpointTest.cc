@@ -23,6 +23,13 @@ bool waitUntil(L l)
   return false;
 }
 
+void closeEndpoint(Zquic::Endpoint &ep)
+{
+  ZmSemaphore done;
+  ep.closeUDP(Zquic::Endpoint::CloseFn{[&done]() { done.post(); }});
+  done.wait();
+}
+
 void testEndpointReadyDownCallbacks()
 {
   ZuTestScope(testEndpointReadyDownCallbacks);
@@ -66,7 +73,7 @@ void testEndpointReadyDownCallbacks()
     "endpoint open did not fail cleanly");
 
   uint64_t failures = ep.diag().failures;
-  ep.closeUDP();
+  closeEndpoint(ep);
   ZuCHECK(waitUntil([&down]() { return down; }),
     "endpoint down callback did not fire");
   ZuCHECK(ep.diag().failures == failures,
@@ -92,12 +99,89 @@ void testDatagramOwnership()
   ZuCHECK(tx, "endpoint Tx packet allocation failed");
 
   ZmRef<ZiIOBuf> buf = new Zquic::PktRxBufAlloc<>{&ep};
-  buf->append(reinterpret_cast<const uint8_t *>("PING"), 4);
+  *buf << "PING";
   ep.inject(Zquic::Datagram{ZuMv(buf), ZiSockAddr{ZiIP("127.0.0.1"), 4433}});
 
   ZuCHECK(seen, "datagram callback not invoked");
   ZuCHECK(ep.diag().datagramsRx == 1, "datagram Rx counter mismatch");
   ZuCHECK(ep.diag().bytesRx == 4, "datagram byte counter mismatch");
+}
+
+void testCloseDrainsQueuedSend()
+{
+  ZuTestScope(testCloseDrainsQueuedSend);
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(4)
+	    .thread(1, [](auto &t) { t.isolated(1); })
+	    .thread(2, [](auto &t) { t.isolated(1); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "endpoint close-drain multiplexer start failed");
+  if (!mxStarted) return;
+
+  Zquic::Endpoint srv;
+  Zquic::Endpoint cli;
+  bool srvReady = false;
+  bool cliReady = false;
+  bool cliDown = false;
+  ZuCHECK(srv.init(&mx), "server endpoint init failed");
+  ZuCHECK(cli.init(&mx), "client endpoint init failed");
+  ZuCHECK(srv.openUDP(
+      Zquic::PathMode::ServerUnconnected,
+      ZiIP("127.0.0.1"), 0, ZiIP{}, 0,
+      Zquic::Endpoint::DatagramFn{},
+      Zquic::Endpoint::ReadyFn{[&srvReady](Zquic::Endpoint *) {
+	srvReady = true;
+      }}), "server endpoint open failed");
+  ZuCHECK(waitUntil([&srv, &srvReady]() {
+      return srvReady && srv.listening() && srv.local().port();
+    }), "server endpoint did not become ready");
+  ZuCHECK(cli.openUDP(
+      Zquic::PathMode::ClientConnected,
+      ZiIP{}, 0, srv.local().ip(), srv.local().port(),
+      Zquic::Endpoint::DatagramFn{},
+      Zquic::Endpoint::ReadyFn{[&cliReady](Zquic::Endpoint *) {
+	cliReady = true;
+      }},
+      Zquic::Endpoint::FailFn{},
+      Zquic::Endpoint::DownFn{[&cliDown](Zquic::Endpoint *) {
+	cliDown = true;
+      }}), "client endpoint open failed");
+  bool connected = waitUntil([&cliReady]() { return cliReady; });
+  ZuCHECK(connected, "client endpoint did not connect");
+  if (!connected) {
+    closeEndpoint(cli);
+    closeEndpoint(srv);
+    mx.stop();
+    return;
+  }
+
+  unsigned sent = 0;
+  for (unsigned i = 0; i < 256; ++i) {
+    auto buf = cli.allocTxPkt();
+    *buf << "PING";
+    if (cli.send(ZuMv(buf), srv.local())) ++sent;
+  }
+  ZuCHECK(sent, "client endpoint did not queue any sends");
+
+  closeEndpoint(cli);
+  ZuCHECK(!cli.connected(), "client endpoint remained connected after close");
+  ZuCHECK(waitUntil([&cliDown]() { return cliDown; }),
+    "client endpoint down callback did not fire during close");
+
+  auto buf = cli.allocTxPkt();
+  *buf << "PING";
+  ZuCHECK(!cli.send(ZuMv(buf), srv.local()),
+    "client endpoint accepted send after close drain");
+
+  closeEndpoint(srv);
+  mx.stop();
 }
 
 int main(int argc, char **argv)
@@ -110,5 +194,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testEndpointReadyDownCallbacks);
   ZuTestCall(testDatagramOwnership);
+  ZuTestCall(testCloseDrainsQueuedSend);
   ZiLog::stop();
 }
