@@ -125,7 +125,7 @@ public:
   // FIXME - need to have configurable pong sending
   // FIXME - need to have configurable pong timeout
   // FIXME - need additional state for graceful shutdown - sending of
-  //         close frame that is also acked by close frame
+  //         close frame that is also ackd by close frame
 
   // FIXME - look at ZvCSV.cc split() for example relevant to parsing
   // HTTP header (zero-copy of unquoted values)
