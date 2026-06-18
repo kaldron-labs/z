@@ -460,6 +460,13 @@ Avoid functions that are "mostly Rx" but opportunistically touch Tx queues, or
 "mostly Tx" but inspect Rx stream state. Split those into two functions with an
 explicit handoff.
 
+I/O functions should align with this convention:
+- `[function]` uses `rxInvoke` or `txInvoke` to call `[function]_`
+- `[function]_` uses `ZiAssert` to assert that it is on-shard and does the work
+  - in a release build, this elides `invoke`
+- callers use `[function]_` if they are already assured to be on-shard, `[function]` otherwise
+- `[function]` only exists if off-shard calling is supported (i.e. public app-facing functions)
+
 ### Cross-Shard Handoffs
 Small fixed-size information may be snapshotted and captured by value when
 posting to another shard. Examples include scalar counters, packet numbers, or
