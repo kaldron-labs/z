@@ -495,7 +495,7 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - 3. (in the tx thread continuation) complete the teardown and release object ownership
 - do NOT block except in the main thread, this is async continuation code
 - I/O buffers, queued lambdas etc. are populous short-lived objects owned by fewer longer-lived objects such as connections/links/sessions/streams
-  - populous short-lived objects should hold reference counts back to their owners, this anti-pattern:
+  - populous short-lived objects should not hold reference counts back to their owners, this anti-pattern:
     - causes reference-count churn in the owner
     - risks ownership cycles
   - such back-pointers should be raw pointers (example: `ZiIOBuf::owner`)
