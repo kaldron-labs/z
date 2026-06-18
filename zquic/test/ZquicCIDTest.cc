@@ -29,8 +29,8 @@ void testCxnRouter()
   ZuCHECK(router.find(cid) == &link1 && router.active() == 1,
     "CID lookup mismatch");
   ZuCHECK(router.retire(cid), "CID retire failed");
-  ZuCHECK(!router.find(cid) && router.state(cid) == Zquic::CxnState::Retired,
-    "retired CID still active");
+  ZuCHECK(!router.find(cid) && !router.count(),
+    "retired CID was retained");
   ZuCHECK(router.add(cid, 1, &link2), "CID reactivate failed");
   ZuCHECK(router.find(cid) == &link2, "reactivated CID mismatch");
   ZuCHECK(router.tombstone(cid), "CID tombstone failed");
@@ -39,31 +39,14 @@ void testCxnRouter()
     "CID tombstone state mismatch");
 }
 
-void testCxnRouterGC()
+void testCxnRouterTombstoneFIFO()
 {
-  ZuTestScope(testCxnRouterGC);
+  ZuTestScope(testCxnRouterTombstoneFIFO);
 
   TestRouteLink link;
   Zquic::CxnRouter<TestRouteLink> router;
   Zquic::CxnID active{"active01"};
   ZuCHECK(router.add(active, 0, &link), "active CID add failed");
-
-  char id[9] = "ret00000";
-  for (unsigned i = 0; i < Zquic::CxnRouter<TestRouteLink>::RetiredMax + 4;
-      ++i) {
-    id[3] = char('0' + ((i / 1000) % 10));
-    id[4] = char('0' + ((i / 100) % 10));
-    id[5] = char('0' + ((i / 10) % 10));
-    id[6] = char('0' + (i % 10));
-    Zquic::CxnID cid{ZuCSpan{id, 8}};
-    ZuCHECK(router.add(cid, i + 1, &link), "retired route add failed");
-    ZuCHECK(router.retire(cid), "retired route setup failed");
-  }
-  ZuCHECK(router.find(active) == &link && router.active() == 1,
-    "route GC disturbed active route");
-  Zquic::CxnID oldRetired{"ret00000"};
-  ZuCHECK(router.state(oldRetired) == Zquic::CxnState::Tombstone,
-    "oldest retired route was not GCed");
 
   char tomb[9] = "tmb00000";
   for (unsigned i = 0; i < Zquic::CxnRouter<TestRouteLink>::TombstoneMax + 4;
@@ -76,53 +59,17 @@ void testCxnRouterGC()
     ZuCHECK(router.tombstone(cid), "tombstone route setup failed");
   }
   Zquic::CxnID oldTombstone{"tmb00000"};
-  ZuCHECK(router.state(oldTombstone) == Zquic::CxnState::Tombstone,
-    "GCed tombstone should read as tombstoned");
-  ZuCHECK(router.count() <=
-      1 + Zquic::CxnRouter<TestRouteLink>::RetiredMax +
-      Zquic::CxnRouter<TestRouteLink>::TombstoneMax,
-    "route GC did not bound inactive routes");
-}
-
-void testCxnRouterExpiryGC()
-{
-  ZuTestScope(testCxnRouterExpiryGC);
-
-  TestRouteLink link;
-  Zquic::CxnRouter<TestRouteLink> router;
-  Zquic::CxnID cid{"expire01"};
-
-  ZuCHECK(router.add(cid, 1, &link), "expiring route add failed");
-  ZuCHECK(router.retire(cid, Zquic::timeUS(4000)),
-    "expiring route retire failed");
-  ZuCHECK(!router.gcRoutes(Zquic::timeUS(3000)) &&
-      router.state(cid) == Zquic::CxnState::Retired,
-    "retired route expired before deadline");
-  ZuCHECK(router.gcRoutes(Zquic::timeUS(4000)) == 1 &&
-      router.state(cid) == Zquic::CxnState::Tombstone,
-    "retired route did not expire at deadline");
-}
-
-void testCxnRouterNextGC()
-{
-  ZuTestScope(testCxnRouterNextGC);
-
-  TestRouteLink link;
-  Zquic::CxnRouter<TestRouteLink> router;
-  Zquic::CxnID late{"late0001"};
-  Zquic::CxnID early{"early001"};
-
-  ZuCHECK(router.add(late, 1, &link) &&
-      router.retire(late, Zquic::timeUS(9000)),
-    "late retired route setup failed");
-  ZuCHECK(router.add(early, 2, &link) &&
-      router.retire(early, Zquic::timeUS(4000)),
-    "early retired route setup failed");
-  ZuCHECK(router.nextGCTime(Zquic::timeUS(3000)) == Zquic::timeUS(4000),
-    "route GC did not select earliest cleanup deadline");
-  ZuCHECK(router.gcRoutes(Zquic::timeUS(4000)) == 1 &&
-      router.nextGCTime(Zquic::timeUS(4000)) == Zquic::timeUS(9000),
-    "route GC did not advance to next cleanup deadline");
+  ZuCHECK(router.add(oldTombstone, 1000, &link),
+    "oldest FIFO-evicted tombstone was retained");
+  char kept[9] = "tmb00000";
+  kept[6] = '4';
+  Zquic::CxnID newTombstone{ZuCSpan{kept, 8}};
+  ZuCHECK(!router.add(newTombstone, 1001, &link),
+    "retained tombstone was reactivated");
+  ZuCHECK(router.find(active) == &link && router.active() == 2,
+    "tombstone FIFO disturbed active routes");
+  ZuCHECK(router.tombstoneCount() == Zquic::CxnRouter<TestRouteLink>::TombstoneMax,
+    "tombstone FIFO exceeded retention bound");
 }
 
 void testStatelessReset()
@@ -142,10 +89,10 @@ void testStatelessReset()
   Zquic::ResetToken found;
   ZuCHECK(router.resetToken(cid, found) && found == resetToken,
     "CID stateless reset token lookup failed");
-  ZuCHECK(router.retire(cid) && router.resetToken(cid, found) &&
-      found == resetToken,
-    "retired CID did not retain stateless reset token");
-  ZuCHECK(router.tombstone(cid) && !router.resetToken(cid, found),
+  ZuCHECK(router.retire(cid) && !router.resetToken(cid, found),
+    "retired CID kept stateless reset token");
+  ZuCHECK(router.add(cid, 1, &link, resetToken) && router.tombstone(cid) &&
+      !router.resetToken(cid, found),
     "tombstoned CID kept stateless reset token");
 
   uint8_t packet[64] = {};
@@ -296,9 +243,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testCxnRouter);
-  ZuTestCall(testCxnRouterGC);
-  ZuTestCall(testCxnRouterExpiryGC);
-  ZuTestCall(testCxnRouterNextGC);
+  ZuTestCall(testCxnRouterTombstoneFIFO);
   ZuTestCall(testStatelessReset);
   ZuTestCall(testVariableShortCIDRouteMatch);
   ZuTestCall(testCxnIDGen);

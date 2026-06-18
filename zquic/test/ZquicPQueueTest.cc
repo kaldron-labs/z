@@ -241,9 +241,9 @@ static Zquic::TxPkt txPkt_(
   return p;
 }
 
-void testTxPktGC()
+void testTxPktAckDelete()
 {
-  ZuTestScope(testTxPktGC);
+  ZuTestScope(testTxPktAckDelete);
 
   Zquic::SentPktTracker tracker;
   for (uint64_t pn = 10; pn < 13; ++pn) {
@@ -258,17 +258,13 @@ void testTxPktGC()
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{11, 10} };
   ZuCHECK(tracker.ack(ranges, 1) == 2 &&
-      tracker.count() == 3 &&
-      tracker.gcPackets(1) == 1 &&
-      tracker.count() == 2 &&
-      tracker.gcPackets() == 1 &&
       tracker.count() == 1,
-    "sent packet GC did not remove ACKd packets");
+    "sent packet ACK did not remove exact packet nodes");
 }
 
-void testTxPktGCBoundsLostByCount()
+void testTxPktLossRetain()
 {
-  ZuTestScope(testTxPktGCBoundsLostByCount);
+  ZuTestScope(testTxPktLossRetain);
 
   Zquic::SentPktTracker tracker;
   for (uint64_t pn = 10; pn < 15; ++pn)
@@ -276,37 +272,16 @@ void testTxPktGCBoundsLostByCount()
   for (uint64_t pn = 10; pn < 15; ++pn)
     ZuCHECK(tracker.lose(pn), "lost packet setup failed");
 
-  unsigned retained = tracker.retainedLost();
-  unsigned gc = tracker.gcPackets(10, {}, {}, 2);
-  ZuCHECK(retained == 5 &&
-      gc == 3 &&
-      tracker.retainedLost() == 2 &&
-      tracker.count() == 2,
-    "sent packet GC did not enforce lost count bound");
+  ZuCHECK(tracker.count() == 5 &&
+      tracker.lost() == 5 &&
+      tracker.retainedLost() == 5 &&
+      tracker.retransmitPending() == 0,
+    "sent packet loss did not retain exact lost packet nodes");
 }
 
-void testTxPktGCBoundsLostByAge()
+void testTxPktRetainedLostAck()
 {
-  ZuTestScope(testTxPktGCBoundsLostByAge);
-
-  Zquic::SentPktTracker tracker;
-  ZuCHECK(tracker.add(txPkt_(10, Zquic::timeUS(1000))) &&
-      tracker.add(txPkt_(11, Zquic::timeUS(2000))) &&
-      tracker.add(txPkt_(12, Zquic::timeUS(5000))),
-    "aged lost packet add failed");
-  ZuCHECK(tracker.lose(10) && tracker.lose(11) && tracker.lose(12),
-    "aged lost packet setup failed");
-
-  ZuCHECK(tracker.gcPackets(
-	10, Zquic::timeUS(5000), Zquic::timeUS(2500)) == 2 &&
-      tracker.retainedLost() == 1 &&
-      tracker.count() == 1,
-    "sent packet GC did not enforce lost age bound");
-}
-
-void testTxPktGCRetainsAckdAroundLost()
-{
-  ZuTestScope(testTxPktGCRetainsAckdAroundLost);
+  ZuTestScope(testTxPktRetainedLostAck);
 
   Zquic::SentPktTracker tracker;
   for (uint64_t pn = 10; pn < 13; ++pn) {
@@ -319,23 +294,14 @@ void testTxPktGCRetainsAckdAroundLost()
     ZuCHECK(tracker.add(p), "sent packet add failed");
   }
 
-  bool lose10 = tracker.lose(10);
-  bool ack11 = tracker.ack(11);
-  unsigned gc0 = tracker.gcPackets();
-  ZuCHECK(lose10 &&
-      ack11 &&
-      tracker.retainedLost() == 1 &&
-      !gc0 &&
-      tracker.count() == 3,
-    "sent packet GC did not retain ACKd packet while loss is open");
-
-  bool ack10 = tracker.ack(10);
-  unsigned gc1 = tracker.gcPackets();
-  ZuCHECK(ack10 &&
+  ZuCHECK(tracker.lose(10) &&
+      tracker.ack(10) &&
+      tracker.ack(11) &&
+      tracker.lost() == 1 &&
+      tracker.ackd() == 1 &&
       !tracker.retainedLost() &&
-      gc1 == 2 &&
       tracker.count() == 1,
-    "sent packet GC did not release ACKd packets after late ACK");
+    "ACK of retained lost packet changed fresh ACK accounting");
 }
 
 void testTxUnackdRangeQueue()
@@ -415,10 +381,9 @@ int main(int argc, char **argv)
   ZuTestCall(testAckOfAckTrim);
   ZuTestCall(testTxPktLossRequeue);
   ZuTestCall(testTxPktAckRanges);
-  ZuTestCall(testTxPktGC);
-  ZuTestCall(testTxPktGCBoundsLostByCount);
-  ZuTestCall(testTxPktGCBoundsLostByAge);
-  ZuTestCall(testTxPktGCRetainsAckdAroundLost);
+  ZuTestCall(testTxPktAckDelete);
+  ZuTestCall(testTxPktLossRetain);
+  ZuTestCall(testTxPktRetainedLostAck);
   ZuTestCall(testTxUnackdRangeQueue);
   ZuTestCall(testTxUnackdFinSentinel);
 }

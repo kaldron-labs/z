@@ -30,6 +30,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmQueue.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtLocalArray.hh>
@@ -242,8 +243,6 @@ struct Cxn : public ZuObject {
   Link_			*link = nullptr;
   ResetToken		resetToken;
   CxnState::T		state = CxnState::Active;
-  uint64_t		gcSeq = 0;
-  ZuTime		gcTime;
 };
 
 template <typename Link_>
@@ -261,8 +260,9 @@ class CxnRouter {
 public:
   using Route = Cxn<Link_>;
   using Routes = CxnRoutes_<Link_>;
-  static constexpr unsigned RetiredMax = 64;
   static constexpr unsigned TombstoneMax = 64;
+  using Tombstones = ZmQueue<CxnID,
+    ZmQueueHeapID<"Zquic.Endpoint.CxnRouter.Tombstones">>;
 
   CxnRouter() : m_routes{new Routes{
       ZmHashParams().bits(5).loadFactor(1).cBits(3)}} { }
@@ -299,7 +299,7 @@ public:
   }
   bool resetToken(const CxnID &id, ResetToken &token) const {
     auto route = m_routes->findVal(id);
-    if (!route || route->state == CxnState::Tombstone ||
+    if (!route || route->state != CxnState::Active ||
 	!route->resetToken.valid())
       return false;
     token = route->resetToken;
@@ -312,32 +312,28 @@ public:
     return true;
   }
 
-  bool retire(const CxnID &id, ZuTime gcTime = {}) {
+  bool retire(const CxnID &id) {
     auto route = m_routes->findVal(id);
     if (!route || route->state != CxnState::Active) return false;
-    route->state = CxnState::Retired;
-    route->link = nullptr;
-    route->gcSeq = ++m_gcSeq;
-    route->gcTime = gcTime;
-    gcRoutes();
+    m_routes->del(id);
     return true;
   }
 
   bool tombstone(const CxnID &id) {
     if (!id.length()) return false;
     if (auto route = m_routes->findVal(id)) {
+      if (route->state == CxnState::Tombstone) return true;
       route->state = CxnState::Tombstone;
       route->link = nullptr;
       route->resetToken = {};
-      route->gcSeq = ++m_gcSeq;
-      route->gcTime = {};
-      gcRoutes();
+      m_tombstones.push(id);
+      trimTombstones_();
       return true;
     }
     auto route = new Route{id, 0, nullptr, {}, CxnState::Tombstone};
-    route->gcSeq = ++m_gcSeq;
     m_routes->add(route);
-    gcRoutes();
+    m_tombstones.push(id);
+    trimTombstones_();
     return true;
   }
 
@@ -348,31 +344,11 @@ public:
 
   void clear() {
     m_routes = new Routes{ZmHashParams().bits(5).loadFactor(1).cBits(3)};
+    m_tombstones.clean();
   }
 
   unsigned count() const { return m_routes->count_(); }
-  ZuTime nextGCTime(
-    ZuTime now = {}, CxnState::T state = CxnState::Retired) const {
-    ZuTime next;
-    auto i = m_routes->citer();
-    while (auto node = i()) {
-      const auto &route = *node->val();
-      if (route.state != state || !*route.gcTime ||
-	  (*now && route.gcTime <= now))
-	continue;
-      if (!*next || route.gcTime < next) next = route.gcTime;
-    }
-    return next;
-  }
-  unsigned gcRoutes(
-    ZuTime now = {}, unsigned retiredMax = RetiredMax,
-    unsigned tombstoneMax = TombstoneMax) {
-    unsigned n = 0;
-    if (*now) n += gcExpiredRoutes_(CxnState::Retired, now);
-    n += gcRoutes_(CxnState::Retired, retiredMax);
-    n += gcRoutes_(CxnState::Tombstone, tombstoneMax);
-    return n;
-  }
+  unsigned tombstoneCount() const { return m_tombstones.count_(); }
   unsigned active() const {
     unsigned n = 0;
     all([&n](const Route &) { ++n; });
@@ -388,53 +364,11 @@ public:
   }
 
 private:
-  unsigned gcExpiredRoutes_(CxnState::T state, ZuTime now) {
-    unsigned n = 0;
-    for (;;) {
-      CxnID expiredID;
-      {
-	auto i = m_routes->iter();
-	while (auto node = i()) {
-	  Route *route = node->val();
-	  if (route->state != state || !*route->gcTime ||
-	      route->gcTime > now)
-	    continue;
-	  expiredID = route->id;
-	  break;
-	}
-      }
-      if (!expiredID.length()) break;
-      m_routes->del(expiredID);
-      ++n;
+  void trimTombstones_() {
+    while (m_tombstones.count_() > TombstoneMax) {
+      CxnID id = m_tombstones.shift();
+      if (id.length()) m_routes->del(id);
     }
-    return n;
-  }
-  unsigned gcRoutes_(CxnState::T state, unsigned max) {
-    unsigned count = 0;
-    auto i = m_routes->citer();
-    while (auto node = i()) {
-      const auto &route = *node->val();
-      if (route.state == state) ++count;
-    }
-    unsigned n = 0;
-    while (count > max) {
-      CxnID oldID;
-      {
-	Route *old = nullptr;
-	auto j = m_routes->iter();
-	while (auto node = j()) {
-	  Route *route = node->val();
-	  if (route->state != state) continue;
-	  if (!old || route->gcSeq < old->gcSeq) old = route;
-	}
-	if (old) oldID = old->id;
-      }
-      if (!oldID.length()) break;
-      m_routes->del(oldID);
-      --count;
-      ++n;
-    }
-    return n;
   }
   const Route *matchShortRoute_(ZuCSpan packet, bool activeOnly) const {
     if (!packet || packet.length() < 2 || Pkt::isLong(packet)) return nullptr;
@@ -454,7 +388,7 @@ private:
 
   // Rx thread exclusive
   ZmRef<Routes>	m_routes;
-  uint64_t	m_gcSeq = 0;
+  Tombstones	m_tombstones{ZmQueueParams{}.initial(TombstoneMax)};
 };
 
 template <typename Link_>
@@ -1340,7 +1274,6 @@ friend class SrvLink;
   }
 
   void close_() {
-    cancelRouteGCTimer_();
     clearLinks_();
     m_endpoint.closeUDP(Endpoint::CloseFn{});
   }
@@ -1392,33 +1325,11 @@ friend class SrvLink;
     if (!this->app()->sendPkt(buf)) return true;
     return m_endpoint.send(ZuMv(buf), ZuMv(addr));
   }
-  void dissociateRoute_(const CxnID &id, ZuTime gcTime = {}) {
-    if (m_routes.retire(id, gcTime)) scheduleRouteGCTimer_(gcTime);
+  void dissociateRoute_(const CxnID &id) {
+    m_routes.retire(id);
   }
 
 private:
-  void scheduleRouteGCTimer_(ZuTime out) {
-    if (!*out || !this->mx()) return;
-    if (m_routeGCTimer && *m_routeGCDeadline && m_routeGCDeadline <= out)
-      return;
-    m_routeGCDeadline = out;
-    this->mx()->run(this->rxThread(),
-      [this]() { routeGCTimeout_(); },
-      out, ZmScheduler::Update, &m_routeGCTimer);
-  }
-  void cancelRouteGCTimer_() {
-    if (this->mx()) this->mx()->del(&m_routeGCTimer);
-    m_routeGCDeadline = {};
-  }
-  void routeGCTimeout_() {
-    ZiAssert(this->rxInvoked(), "Zquic", (),
-      "QUIC route GC outside Rx thread", return);
-    m_routeGCDeadline = {};
-    ZuTime now = Zm::now();
-    m_routes.gcRoutes(now);
-    scheduleRouteGCTimer_(m_routes.nextGCTime(now));
-  }
-
   void txDrained_() {
     auto links = m_links;
     auto i = links->citer();
@@ -1516,7 +1427,6 @@ private:
   }
 
   void clearLinks_() {
-    cancelRouteGCTimer_();
     auto i = m_links->citer();
     while (auto node = i()) {
       auto entry = node->val();
@@ -1550,8 +1460,6 @@ private:
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;
-  ZmScheduler::Timer	m_routeGCTimer;
-  ZuTime		m_routeGCDeadline;
 };
 
 template <typename Link_, typename Impl, typename TxBufAlloc_>
@@ -1646,6 +1554,89 @@ public:
   uint64_t lastStreamDataBlocked() const { return m_lastStreamDataBlocked; }
   void lastStreamDataBlocked(uint64_t n) { m_lastStreamDataBlocked = n; }
   void markStreamCreditReturned() { m_streamCreditReturned = true; }
+  unsigned queuedControlFrames() const {
+    unsigned n = 0;
+    if (m_maxStreamDataControl.queued) ++n;
+    if (m_streamDataBlockedControl.queued) ++n;
+    if (m_resetStreamControl.queued) ++n;
+    if (m_stopSendingControl.queued) ++n;
+    return n;
+  }
+  bool controlQueued() const { return queuedControlFrames(); }
+  bool queueMaxStreamData(uint64_t value) {
+    return queueControl_(
+      m_maxStreamDataControl,
+      ControlFrame::flowUpdate(FlowUpdate{
+	FrameType::MaxStreamData, uint64_t(m_id), value,
+	Zi::StreamType::Duplex}));
+  }
+  bool queueStreamDataBlocked(uint64_t value) {
+    return queueControl_(
+      m_streamDataBlockedControl,
+      ControlFrame::blocked(
+	FrameType::StreamDataBlocked, uint64_t(m_id), value));
+  }
+  bool queueResetStream(uint64_t appError, uint64_t finalSize) {
+    return queueControl_(
+      m_resetStreamControl,
+      ControlFrame::resetStream(uint64_t(m_id), appError, finalSize));
+  }
+  bool queueStopSending(uint64_t appError) {
+    return queueControl_(
+      m_stopSendingControl,
+      ControlFrame::stopSending(uint64_t(m_id), appError));
+  }
+  bool nextQueuedControl(ControlFrame &frame) const {
+    if (m_maxStreamDataControl.queued) {
+      frame = m_maxStreamDataControl.frame;
+      return true;
+    }
+    if (m_streamDataBlockedControl.queued) {
+      frame = m_streamDataBlockedControl.frame;
+      return true;
+    }
+    if (m_resetStreamControl.queued) {
+      frame = m_resetStreamControl.frame;
+      return true;
+    }
+    if (m_stopSendingControl.queued) {
+      frame = m_stopSendingControl.frame;
+      return true;
+    }
+    return false;
+  }
+  void controlSent(const ControlFrame &frame) {
+    PendingControl *slot = controlSlot_(frame.type);
+    if (slot && slot->frame == frame) slot->queued = false;
+  }
+  void clearControl(const SentFrameRef &ref) {
+    PendingControl *slot = controlSlot_(ref.controlType);
+    if (!slot) return;
+    ControlFrame frame = controlFrame_(ref);
+    if (slot->frame == frame) *slot = {};
+  }
+  void clearControls() {
+    m_maxStreamDataControl = {};
+    m_streamDataBlockedControl = {};
+    m_resetStreamControl = {};
+    m_stopSendingControl = {};
+  }
+  bool controlStillValid(const ControlFrame &frame) const {
+    const PendingControl *slot = controlSlot_(frame.type);
+    if (!slot || !(slot->frame == frame)) return false;
+    switch (frame.type) {
+      case FrameType::MaxStreamData:
+	return readOpen() && frame.value == rxCreditLimit();
+      case FrameType::StreamDataBlocked:
+	return !txCreditAvailable() && frame.value == txCreditLimit();
+      case FrameType::ResetStream:
+	return resetSent() && !resetAckd() && frame.value == txBytes();
+      case FrameType::StopSending:
+	return stopSent() && !stopAckd() && !resetReceived() && !rxComplete();
+      default:
+	return false;
+    }
+  }
 
   void process(RxMsg *msg) {
     ZiAssert(rxInvoked_(), "Zquic", (),
@@ -2083,6 +2074,53 @@ private:
   void notifyTx_() {
     if (m_link && m_id >= 0) m_link->streamWritable_(this);
   }
+  struct PendingControl {
+    ControlFrame	frame;
+    bool		queued = false;
+  };
+  bool queueControl_(PendingControl &slot, const ControlFrame &frame) {
+    if (m_id < 0 || !frame) return false;
+    if (slot.frame == frame) {
+      if (slot.queued) return false;
+      slot.queued = true;
+      return true;
+    }
+    if (slot.frame &&
+	frame.type != FrameType::ResetStream &&
+	frame.type != FrameType::StopSending &&
+	slot.frame.value >= frame.value)
+      return false;
+    slot.frame = frame;
+    slot.queued = true;
+    return true;
+  }
+  PendingControl *controlSlot_(FrameType::T type) {
+    switch (type) {
+      case FrameType::MaxStreamData: return &m_maxStreamDataControl;
+      case FrameType::StreamDataBlocked: return &m_streamDataBlockedControl;
+      case FrameType::ResetStream: return &m_resetStreamControl;
+      case FrameType::StopSending: return &m_stopSendingControl;
+      default: return nullptr;
+    }
+  }
+  const PendingControl *controlSlot_(FrameType::T type) const {
+    return const_cast<Stream *>(this)->controlSlot_(type);
+  }
+  static ControlFrame controlFrame_(const SentFrameRef &ref) {
+    ControlFrame frame;
+    frame.type = ref.controlType;
+    frame.streamID = ref.streamID;
+    frame.value = ref.value;
+    if (ref.controlType == FrameType::ResetStream) {
+      frame.errorCode = ref.value;
+      frame.value = ref.length;
+    } else if (ref.controlType == FrameType::StopSending) {
+      frame.errorCode = ref.value;
+      frame.value = 0;
+    }
+    frame.streamType = ref.streamType;
+    return frame;
+  }
 
   // immutable
   Link			*m_link = nullptr;
@@ -2098,6 +2136,8 @@ private:
   RxStream		m_rx;
   StreamRxPQueue	m_rxQueue{0};
   uint64_t		m_lastStreamDataBlocked = uint64_t(-1);
+  PendingControl	m_maxStreamDataControl;
+  PendingControl	m_streamDataBlockedControl;
   uint64_t		m_appError = 0;
   StreamError::T	m_error = StreamError::None;
 
@@ -2111,6 +2151,8 @@ private:
   bool			m_resetAckd = false;
   bool			m_stopSent = false;
   bool			m_stopAckd = false;
+  PendingControl	m_resetStreamControl;
+  PendingControl	m_stopSendingControl;
   bool			m_txQueued = false;
   TxDataPQueue		m_txQueue{0};
   StreamTxPQueue	m_txUnackd{0};
@@ -2140,30 +2182,6 @@ ZuDerive(Streams_,
       ZmHashKey<Stream_IDAxor<Stream_>,
 	ZmHashHeapID<"Zquic.Stream.ObjectHash">>>>));
 
-struct ClosedStream {
-  uint64_t		id = ZuCmp<uint64_t>::null();
-  uint64_t		finalSize = 0;
-  uint64_t		seqNo = 0;
-  bool			finalSizeKnown = false;
-  bool			resetReceived = false;
-  bool			rxComplete = false;
-  bool			resetSent = false;
-  bool			finDequeued = false;
-  bool			streamCreditReturned = false;
-
-  bool operator !() const { return !id; }
-  bool operator *() const { return !ZuCmp<uint64_t>::null(id); }
-  ZuOpBool
-};
-
-inline uint64_t ClosedStream_IDAxor(const ClosedStream &s) { return s.id; }
-
-ZuDerive(ClosedStreams,
-  (ZmHash<ClosedStream,
-    ZmHashNode<ClosedStream,
-      ZmHashKey<ClosedStream_IDAxor,
-	ZmHashHeapID<"Zquic.Stream.ClosedHash">>>>));
-
 template <typename App, typename Impl, typename TxBufAlloc_, typename Stream_>
 class Link : public ZmPolymorph {
 template <typename, typename>
@@ -2173,18 +2191,17 @@ public:
   using Stream = Stream_;
   using StreamRef = ZmRef<Stream>;
   using Streams = Streams_<Stream>;
-  using ControlQueue =
+  using PathResponses =
     ZmQueue<ControlFrame,
-      ZmQueueHeapID<"Zquic.Link.ControlQueue">>;
+      ZmQueueHeapID<"Zquic.Link.PathResponses">>;
   using StreamQueue =
     ZmQueue<StreamRef,
       ZmQueueHeapID<"Zquic.Link.StreamQueue">>;
   static constexpr unsigned OpenQueuedBatch = 32;
-  static constexpr unsigned ControlDedupScan = 64;
+  // PATH_RESPONSE frames are concrete replies; cap queued payloads at the
+  // per-packet sent-frame metadata limit.
+  static constexpr unsigned PathResponseMax = SentPkt::MaxFrames;
   static constexpr unsigned RecoveryScanBatch = 256;
-  static constexpr unsigned RetainedLostPktMax = 1024;
-  static constexpr unsigned ClosedStreamMax = 4096;
-
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
@@ -2240,7 +2257,6 @@ public:
   bool closed() const { return m_closed; }
   uint64_t closeError() const { return m_closeError; }
   uint64_t streamCount() const { return m_streams.count_(); }
-  uint64_t closedStreamCount() const { return m_closedStreams.count_(); }
   uint64_t peerStreamLimit(Zi::StreamType::T type) const {
     return localLimit_(type).limit();
   }
@@ -2262,7 +2278,20 @@ public:
   unsigned queuedControlFrames() const {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC control queue inspection outside Tx thread", return 0);
-    return m_controlQueue.count_();
+    unsigned n = 0;
+    if (m_maxDataControl.queued) ++n;
+    if (m_dataBlockedControl.queued) ++n;
+    if (m_handshakeDoneControl.queued) ++n;
+    if (m_pathChallengeControl.queued) ++n;
+    for (unsigned i = 0; i < 2; ++i) {
+      if (m_maxStreamsControl[i].queued) ++n;
+      if (m_streamsBlockedControl[i].queued) ++n;
+    }
+    n += m_pathResponses.count_();
+    auto iter = m_streams.citer();
+    while (auto node = iter())
+      n += node->data().queuedControlFrames();
+    return n;
   }
   uint64_t rxDataCreditUsed() const { return m_rxDataCredit.used(); }
   uint64_t rxDataCreditLimit() const { return m_rxDataCredit.limit(); }
@@ -2296,7 +2325,7 @@ public:
 	    TransportError::StreamState, true);
 	  return true;
 	}
-      } else if (*closedStream_(frame.streamID) &&
+      } else if (closedStreamID_(frame.streamID) &&
 	  canLocalSend_(frame.streamID)) {
 	noteInvalidStreamActivity_(TransportError::StreamState, true);
 	return true;
@@ -2338,7 +2367,7 @@ public:
     if (id > uint64_t(INT64_MAX)) return nullptr;
     if (StreamID::server(id) == m_isServer) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
-    if (*closedStream_(id)) return nullptr;
+    if (peerOpenedStreamID_(id)) return nullptr;
     Zi::StreamType::T type = StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
     uint64_t opened = StreamID::ordinal(id) + 1;
     if (!peerLimit_(type).allowsTo(opened)) return nullptr;
@@ -2363,8 +2392,10 @@ public:
       return -1;
     StreamRef stream = findOrAccept_(frame.streamID);
     if (!stream) {
-      int rc = receiveClosedControl_(frame);
-      if (rc) return rc > 0 ? 0 : -1;
+      if (frame.streamID <= uint64_t(INT64_MAX) &&
+	  closedStreamID_(frame.streamID)) {
+	return 0;
+      }
       noteInvalidStreamActivity_(TransportError::StreamState);
       return -1;
     }
@@ -2417,13 +2448,25 @@ public:
   }
 
   int receiveFrame(
-    const Frame &frame, ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr) {
+    const Frame &frame, ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr,
+    bool *immediateAck = nullptr) {
     if (frame.type != FrameType::Stream)
       return receiveFrame(frame, diag);
     StreamRef stream = findOrAccept_(frame.streamID);
-    if (!stream) return receiveClosedStream_(frame) ? 0 : -1;
+    if (!stream) {
+      if (frame.streamID > uint64_t(INT64_MAX) ||
+	  !closedStreamID_(frame.streamID) ||
+	  !canPeerSend_(frame.streamID)) {
+	noteInvalidStreamActivity_(TransportError::StreamState);
+	return -1;
+      }
+      if (immediateAck) *immediateAck = true;
+      return 0;
+    }
+    bool rxClosed = stream->rxComplete() || stream->resetReceived();
     int rc = stream->processFrame(frame, m_rxDataCredit, ZuMv(packet), diag);
     if (rc >= 0) {
+      if ((rxClosed || !rc) && immediateAck) *immediateAck = true;
       maybeExtendMaxData_();
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
@@ -2524,7 +2567,6 @@ protected:
     uint64_t			sequence = 0;
     ResetToken	resetToken;
     CxnState::T		state = CxnState::Tombstone;
-    ZuTime			cleanup;
     bool			associated = false;
   };
   struct PathState {
@@ -2576,6 +2618,10 @@ protected:
     Stream		*streams[SentPkt::MaxFrames] = {};
     unsigned		n = 0;
   };
+  struct PendingControl {
+    ControlFrame	frame;
+    bool		queued = false;
+  };
   using LocalCIDs =
     ZtArray<LinkCID, ZtArrayHeapID<"Zquic.Link.LocalCID">>;
   using PeerCIDs =
@@ -2583,9 +2629,6 @@ protected:
 
   unsigned scheduledStreamCount_() const {
     return m_streamQueue.count_();
-  }
-  unsigned gcControlsForTest_(unsigned budget = SentPkt::MaxFrames) {
-    return txGCStaleControls_(budget);
   }
 
   bool queueControl_(const ControlFrame &frame) {
@@ -2599,11 +2642,56 @@ protected:
   bool txQueueControl_(const ControlFrame &frame) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC control queue mutation outside Tx thread", return false);
-    (void)txGCStaleControls_();
-    if (!frame || txControlQueuedAtLeast_(frame)) return false;
-    txDropSupersededControls_(frame);
-    m_controlQueue.push(frame);
-    return true;
+    if (!frame) return false;
+    switch (frame.type) {
+      case FrameType::MaxData:
+	return queuePendingControl_(m_maxDataControl, frame);
+      case FrameType::MaxStreams:
+	return queuePendingControl_(
+	  m_maxStreamsControl[streamTypeIndex_(frame.streamType)], frame);
+      case FrameType::DataBlocked:
+	return queuePendingControl_(m_dataBlockedControl, frame);
+      case FrameType::StreamsBlocked:
+	return queuePendingControl_(
+	  m_streamsBlockedControl[streamTypeIndex_(frame.streamType)], frame);
+      case FrameType::PathChallenge:
+	return queuePendingControl_(m_pathChallengeControl, frame);
+      case FrameType::PathResponse:
+	m_pathResponses.push(frame);
+	while (m_pathResponses.count_() > PathResponseMax) m_pathResponses.shift();
+	return true;
+      case FrameType::HandshakeDone:
+	return queuePendingControl_(m_handshakeDoneControl, frame);
+      case FrameType::MaxStreamData:
+      case FrameType::StreamDataBlocked:
+      case FrameType::ResetStream:
+      case FrameType::StopSending: {
+	if (frame.streamID > uint64_t(INT64_MAX)) return false;
+	StreamRef stream = findStream(int64_t(frame.streamID));
+	if (!stream) return false;
+	bool queued = false;
+	switch (frame.type) {
+	  case FrameType::MaxStreamData:
+	    queued = stream->queueMaxStreamData(frame.value);
+	    break;
+	  case FrameType::StreamDataBlocked:
+	    queued = stream->queueStreamDataBlocked(frame.value);
+	    break;
+	  case FrameType::ResetStream:
+	    queued = stream->queueResetStream(frame.errorCode, frame.value);
+	    break;
+	  case FrameType::StopSending:
+	    queued = stream->queueStopSending(frame.errorCode);
+	    break;
+	  default:
+	    break;
+	}
+	if (queued) streamWritable_(stream);
+	return queued;
+      }
+      default:
+	return false;
+    }
   }
   bool queueFlowUpdate_(const FlowUpdate &update) {
     return update.needed() && queueControl_(ControlFrame::flowUpdate(update));
@@ -2676,6 +2764,7 @@ protected:
       "QUIC MAX_DATA processing outside Tx thread", return false);
     if (value <= m_txDataCredit.limit()) return true;
     m_txDataCredit.extend(value);
+    m_dataBlockedControl = {};
     return true;
   }
   bool txApplyMaxStreamData_(StreamRef stream, uint64_t value) {
@@ -2683,6 +2772,9 @@ protected:
       "QUIC MAX_STREAM_DATA processing outside Tx thread", return false);
     if (!stream) return false;
     stream->extendTxCredit(value);
+    stream->clearControl(SentFrameRef::blocked(
+      FrameType::StreamDataBlocked, uint64_t(stream->id()),
+      stream->lastStreamDataBlocked(), Zi::StreamType::Duplex));
     if (streamTxPending_(stream)) streamWritable_(stream);
     return true;
   }
@@ -2804,13 +2896,20 @@ protected:
     switch (ref.kind) {
       case SentFrameKind::Stream: {
 	if (ref.streamID > uint64_t(INT64_MAX)) return false;
-	if (stream)
+	if (stream) {
+	  if (stream->txStillUnackd(ref.offset, ref.length, ref.fin))
+	    return true;
 	  return stream->recordTxUnackd(ref.offset, ref.length, ref.fin);
+	}
 	StreamRef stream_ = findStream(int64_t(ref.streamID));
 	return stream_ &&
-	  stream_->recordTxUnackd(ref.offset, ref.length, ref.fin);
+	  (stream_->txStillUnackd(ref.offset, ref.length, ref.fin) ||
+	    stream_->recordTxUnackd(ref.offset, ref.length, ref.fin));
       }
       case SentFrameKind::Crypto:
+	if (txRangeStillUnackd_(
+	      m_txCryptoUnackd[level], ref.offset, ref.length))
+	  return true;
 	return m_txCryptoUnackd[level].add(
 	    new CryptoTxPQueue::Node{
 	      TxUnackdRange{ref.offset, ref.length}}) != ZmPQResult::Invalid;
@@ -2841,11 +2940,19 @@ protected:
 	  stream = stream_.ptr();
 	}
 	switch (ref.controlType) {
-	  case FrameType::ResetStream:
-	    return stream && stream->ackReset(ref.value, ref.length);
+	  case FrameType::ResetStream: {
+	    bool ackd = stream && stream->ackReset(ref.value, ref.length);
+	    if (ackd) stream->clearControl(ref);
+	    return ackd;
+	  }
 	  case FrameType::StopSending:
-	    return stream && stream->ackStop(ref.value);
+	    if (stream && stream->ackStop(ref.value)) {
+	      stream->clearControl(ref);
+	      return true;
+	    }
+	    return false;
 	  default:
+	    controlAckd_(ref);
 	    return true;
 	}
       }
@@ -3042,6 +3149,7 @@ protected:
     m_path.peerMaxUDP(app()->maxUDP());
     if (!m_isServer) m_path.validated();
     m_validatingPath = {};
+    m_pathChallengeControl = {};
   }
   void initClientPath_(ZiSockAddr local, ZiSockAddr remote) {
     app()->txRun([
@@ -3146,6 +3254,7 @@ protected:
     if (!m_validatingPath.active ||
 	!m_validatingPath.challenge.equals(data))
       return false;
+    m_pathChallengeControl = {};
     promotePath_();
     return true;
   }
@@ -3319,7 +3428,7 @@ protected:
       "QUIC Tx runtime reset outside Tx thread", return);
     ++m_txRuntimeGen;
     m_timerTeardown = false;
-    m_controlQueue.clean();
+    clearPendingControls_();
     resetPktRuntime_();
     m_congestion = NewReno{app()->maxUDP()};
     updateCongestionDiag_();
@@ -3448,7 +3557,6 @@ protected:
     if (!cid || cid->state == CxnState::Tombstone) return false;
     id = cid->id;
     cid->state = CxnState::Retired;
-    cid->cleanup = retiredCIDRouteGC_();
     cid->associated = false;
     return true;
   }
@@ -3568,7 +3676,6 @@ protected:
 	return false;
       cid->resetToken = resetToken;
       cid->state = CxnState::Active;
-      cid->cleanup = {};
       return true;
     }
     if (auto cid = findCID_(cids, id)) {
@@ -3578,7 +3685,6 @@ protected:
 	return false;
       cid->resetToken = resetToken;
       cid->state = CxnState::Active;
-      cid->cleanup = {};
       return true;
     }
     unsigned active = 0;
@@ -3595,7 +3701,7 @@ protected:
     if (!slot && cids.length() < limit)
       slot = cids.push();
     if (!slot) return false;
-    *slot = LinkCID{id, sequence, resetToken, CxnState::Active, {}, false};
+    *slot = LinkCID{id, sequence, resetToken, CxnState::Active, false};
     return true;
   }
   template <typename CIDs>
@@ -3615,7 +3721,6 @@ protected:
     for (auto &cid : m_peerCIDs)
       if (cid.state == CxnState::Active && cid.sequence < sequence) {
 	cid.state = CxnState::Retired;
-	cid.cleanup = retiredCIDRouteGC_();
       }
   }
 
@@ -3856,8 +3961,9 @@ protected:
   }
 
   bool streamTxPending_(const StreamRef &stream) const {
-    return stream && !stream->resetSent() &&
-      (stream->txRangeCount() || stream->finReady());
+    return stream &&
+      (stream->controlQueued() ||
+	(!stream->resetSent() && (stream->txRangeCount() || stream->finReady())));
   }
 
   SentFrameRef controlRef_(const ControlFrame &frame) const {
@@ -3898,13 +4004,186 @@ protected:
     if (ref.controlType == FrameType::ResetStream) {
       frame.errorCode = ref.value;
       frame.value = ref.length;
-    } else if (ref.controlType == FrameType::StopSending)
+    } else if (ref.controlType == FrameType::StopSending) {
       frame.errorCode = ref.value;
+      frame.value = 0;
+    }
     frame.streamType = ref.streamType;
     if (ref.controlType == FrameType::PathChallenge ||
 	ref.controlType == FrameType::PathResponse)
       memcpy(frame.payload, ref.payload, sizeof(frame.payload));
     return frame;
+  }
+
+  bool appendControl_(
+    const ControlFrame &frame, PktBuild &build, PktBudget &budget,
+    PktAssembly &assembly, TxPktRefs &refs,
+    ControlFrame *sentControls, unsigned &nSentControls) {
+    if (!controlStillValid_(frame)) return false;
+    int n = frame.write(build.scratch(), build.scratchAvail());
+    if (n <= 0 || !assembly.addControl(budget, unsigned(n)) ||
+	!build.commitScratch(unsigned(n)))
+      return false;
+    if (!refs.add(controlRef_(frame))) return false;
+    sentControls[nSentControls++] = frame;
+    return true;
+  }
+
+  bool appendQueuedControl_(
+    PendingControl &slot, PktBuild &build, PktBudget &budget,
+    PktAssembly &assembly, TxPktRefs &refs,
+    ControlFrame *sentControls, unsigned &nSentControls) {
+    if (!slot.queued) return true;
+    if (!controlStillValid_(slot.frame)) {
+      slot = {};
+      return true;
+    }
+    return appendControl_(
+      slot.frame, build, budget, assembly, refs,
+      sentControls, nSentControls);
+  }
+
+  bool appendQueuedControls_(
+    PktBuild &build, PktBudget &budget, PktAssembly &assembly,
+    TxPktRefs &refs, ControlFrame *sentControls,
+    unsigned &nSentControls) {
+    if (refs.count() >= SentPkt::MaxFrames) return true;
+    if (!appendQueuedControl_(
+	  m_maxDataControl, build, budget, assembly, refs,
+	  sentControls, nSentControls))
+      return false;
+    for (unsigned i = 0; i < 2 && refs.count() < SentPkt::MaxFrames; ++i)
+      if (!appendQueuedControl_(
+	    m_maxStreamsControl[i], build, budget, assembly, refs,
+	    sentControls, nSentControls))
+	return false;
+    if (refs.count() < SentPkt::MaxFrames &&
+	!appendQueuedControl_(
+	  m_dataBlockedControl, build, budget, assembly, refs,
+	  sentControls, nSentControls))
+      return false;
+    for (unsigned i = 0; i < 2 && refs.count() < SentPkt::MaxFrames; ++i)
+      if (!appendQueuedControl_(
+	    m_streamsBlockedControl[i], build, budget, assembly, refs,
+	    sentControls, nSentControls))
+	return false;
+    if (refs.count() < SentPkt::MaxFrames &&
+	!appendQueuedControl_(
+	  m_pathChallengeControl, build, budget, assembly, refs,
+	  sentControls, nSentControls))
+      return false;
+    if (refs.count() < SentPkt::MaxFrames &&
+	!appendQueuedControl_(
+	  m_handshakeDoneControl, build, budget, assembly, refs,
+	  sentControls, nSentControls))
+      return false;
+    auto iter = m_pathResponses.iter();
+    while (refs.count() < SentPkt::MaxFrames) {
+      ControlFrame frame = iter();
+      if (!frame) break;
+      if (!appendControl_(
+	    frame, build, budget, assembly, refs,
+	    sentControls, nSentControls))
+	return false;
+    }
+    return true;
+  }
+
+  bool appendStreamControls_(
+    const StreamRef &stream, PktBuild &build, PktBudget &budget,
+    PktAssembly &assembly, TxPktRefs &refs,
+    ControlFrame *sentControls, unsigned &nSentControls) {
+    while (stream && refs.count() < SentPkt::MaxFrames) {
+      ControlFrame frame;
+      if (!stream->nextQueuedControl(frame)) return true;
+      if (!stream->controlStillValid(frame)) {
+	stream->controlSent(frame);
+	continue;
+      }
+      if (!appendControl_(
+	    frame, build, budget, assembly, refs,
+	    sentControls, nSentControls))
+	return false;
+      stream->controlSent(frame);
+      return true;
+    }
+    return true;
+  }
+
+  void controlSent_(const ControlFrame &frame) {
+    switch (frame.type) {
+      case FrameType::MaxData:
+	m_maxDataControl.queued = false;
+	break;
+      case FrameType::MaxStreams:
+	m_maxStreamsControl[streamTypeIndex_(frame.streamType)].queued = false;
+	break;
+      case FrameType::DataBlocked:
+	m_dataBlockedControl.queued = false;
+	break;
+      case FrameType::StreamsBlocked:
+	m_streamsBlockedControl[streamTypeIndex_(frame.streamType)].queued = false;
+	break;
+      case FrameType::PathChallenge:
+	m_pathChallengeControl.queued = false;
+	break;
+      case FrameType::PathResponse:
+	m_pathResponses.shift();
+	break;
+      case FrameType::HandshakeDone:
+	m_handshakeDoneControl.queued = false;
+	break;
+      case FrameType::MaxStreamData:
+      case FrameType::StreamDataBlocked:
+      case FrameType::ResetStream:
+      case FrameType::StopSending:
+	if (frame.streamID <= uint64_t(INT64_MAX))
+	  if (StreamRef stream = findStream(int64_t(frame.streamID)))
+	    stream->controlSent(frame);
+	break;
+      default:
+	break;
+    }
+    noteControlDequeued_(frame);
+  }
+
+  void clearPendingControl_(PendingControl &slot, const ControlFrame &frame) {
+    if (slot.frame == frame) slot = {};
+  }
+  void controlAckd_(const SentFrameRef &ref) {
+    ControlFrame frame = controlFrame_(ref);
+    switch (ref.controlType) {
+      case FrameType::MaxData:
+	clearPendingControl_(m_maxDataControl, frame);
+	break;
+      case FrameType::MaxStreams:
+	clearPendingControl_(
+	  m_maxStreamsControl[streamTypeIndex_(ref.streamType)], frame);
+	break;
+      case FrameType::DataBlocked:
+	clearPendingControl_(m_dataBlockedControl, frame);
+	break;
+      case FrameType::StreamsBlocked:
+	clearPendingControl_(
+	  m_streamsBlockedControl[streamTypeIndex_(ref.streamType)], frame);
+	break;
+      case FrameType::PathChallenge:
+	clearPendingControl_(m_pathChallengeControl, frame);
+	break;
+      case FrameType::HandshakeDone:
+	clearPendingControl_(m_handshakeDoneControl, frame);
+	break;
+      case FrameType::MaxStreamData:
+      case FrameType::StreamDataBlocked:
+      case FrameType::ResetStream:
+      case FrameType::StopSending:
+	if (ref.streamID <= uint64_t(INT64_MAX))
+	  if (StreamRef stream = findStream(int64_t(ref.streamID)))
+	    stream->clearControl(ref);
+	break;
+      default:
+	break;
+    }
   }
 
   template <typename AppendAck, typename SendPkt>
@@ -3923,45 +4202,14 @@ protected:
     unsigned ackBytes = build.bytes() - before;
     if (ackBytes && !budget.add(ackBytes)) return false;
     ControlFrame sentControls[SentPkt::MaxFrames];
-    ControlFrame staleControls[SentPkt::MaxFrames];
     unsigned nSentControls = 0;
-    unsigned nStaleControls = 0;
-    bool controlExhausted = false;
-    {
-      auto iter = m_controlQueue.iter();
-      while (refs.count() < SentPkt::MaxFrames &&
-	  nStaleControls < SentPkt::MaxFrames) {
-	const ControlFrame &queued = iter();
-	if (!queued) {
-	  controlExhausted = true;
-	  break;
-	}
-	ControlFrame frame = queued;
-	if (!controlStillValid_(frame)) {
-	  staleControls[nStaleControls++] = frame;
-	  continue;
-	}
-	int n = frame.write(build.scratch(), build.scratchAvail());
-	if (n <= 0 || !assembly.addControl(budget, unsigned(n)) ||
-	    !build.commitScratch(unsigned(n)))
-	  break;
-	if (!refs.add(controlRef_(frame))) return false;
-	sentControls[nSentControls++] = frame;
-      }
-    }
-    for (unsigned i = 0; i < nStaleControls; ++i) {
-      m_controlQueue.del(staleControls[i]);
-      noteControlDequeued_(staleControls[i]);
-    }
+    if (!appendQueuedControls_(
+	  build, budget, assembly, refs, sentControls, nSentControls))
+      return false;
     if (refs.count()) {
       if (!sendPkt(build, ZuMv(addr), refs)) return false;
-      for (unsigned i = 0; i < nSentControls; ++i) {
-	ControlFrame head = m_controlQueue.head();
-	if (head == sentControls[i]) (void)m_controlQueue.shift();
-	else m_controlQueue.del(sentControls[i]);
-	noteControlDequeued_(sentControls[i]);
-      }
-      if (controlExhausted) m_controlQueue.clean();
+      for (unsigned i = 0; i < nSentControls; ++i)
+	controlSent_(sentControls[i]);
       return true;
     }
     return false;
@@ -3999,40 +4247,23 @@ protected:
     unsigned ackBytes = build.bytes() - before;
     if (ackBytes && !budget.add(ackBytes)) return false;
     ControlFrame sentControls[SentPkt::MaxFrames];
-    ControlFrame staleControls[SentPkt::MaxFrames];
     unsigned nSentControls = 0;
-    unsigned nStaleControls = 0;
-    bool controlExhausted = false;
-    {
-      auto iter = m_controlQueue.iter();
-      while (refs.count() < SentPkt::MaxFrames &&
-	  nStaleControls < SentPkt::MaxFrames) {
-	const ControlFrame &queued = iter();
-	if (!queued) {
-	  controlExhausted = true;
-	  break;
-	}
-	ControlFrame frame = queued;
-	if (!controlStillValid_(frame)) {
-	  staleControls[nStaleControls++] = frame;
-	  continue;
-	}
-	int n = frame.write(build.scratch(), build.scratchAvail());
-	if (n <= 0 || !assembly.addControl(budget, unsigned(n)) ||
-	    !build.commitScratch(unsigned(n)))
-	  break;
-	if (!refs.add(controlRef_(frame))) return false;
-	sentControls[nSentControls++] = frame;
-      }
-    }
-    for (unsigned i = 0; i < nStaleControls; ++i) {
-      m_controlQueue.del(staleControls[i]);
-      noteControlDequeued_(staleControls[i]);
-    }
+    if (!appendQueuedControls_(
+	  build, budget, assembly, refs, sentControls, nSentControls))
+      return false;
     bool blocked = false;
     while (scheduledStreamCount_() && refs.count() < SentPkt::MaxFrames) {
       StreamRef stream = nextWritableStream_();
       if (!stream || !streamTxPending_(stream)) continue;
+      if (stream->controlQueued()) {
+	if (!appendStreamControls_(
+	      stream, build, budget, assembly, refs,
+	      sentControls, nSentControls))
+	  return false;
+	if (streamTxPending_(stream) && stream->id() >= 0)
+	  streamWritable_(stream);
+	continue;
+      }
       if (stream->txRangeCount() && m_txDataCredit.blocked()) {
 	streamWritable_(stream);
 	queueBlocked_(FrameType::DataBlocked, 0, m_txDataCredit.limit());
@@ -4073,13 +4304,8 @@ protected:
     }
     if (refs.count()) {
       if (!sendPkt(build, ZuMv(addr), refs)) return false;
-      for (unsigned i = 0; i < nSentControls; ++i) {
-	ControlFrame head = m_controlQueue.head();
-	if (head == sentControls[i]) (void)m_controlQueue.shift();
-	else m_controlQueue.del(sentControls[i]);
-	noteControlDequeued_(sentControls[i]);
-      }
-      if (controlExhausted) m_controlQueue.clean();
+      for (unsigned i = 0; i < nSentControls; ++i)
+	controlSent_(sentControls[i]);
       return true;
     }
     return blocked;
@@ -4164,18 +4390,12 @@ protected:
     int nRanges = tracker.snapshot(ack.ranges, Frame::MaxAckRanges);
     if (nRanges < 0) return;
     ack.nRanges = unsigned(nRanges);
-    Zquic_DEBUG_LOG_(([level, n = ack.nRanges](auto &s) {
-	s << "ACK snapshot posted level=" << int(level) << " ranges=" << n;
-      }));
-    bool immediate = m_rxAcks.immediate(space);
     bool deadline = m_rxAcks.deadlineSet(space);
     uint64_t deadlineUS = deadline ? m_rxAcks.deadline(space) : 0;
     app()->txRun([
-      link = ZmMkRef(impl()),
-      ack, addr = ZuMv(addr), immediate, deadline, deadlineUS
+      link = ZmMkRef(impl()), ack, addr = ZuMv(addr), deadline, deadlineUS
     ]() mutable {
-      link->noteAckTx_(ack);
-      if (immediate) {
+      if (link->noteAckTx_(ack)) {
 	link->cancelAckDelayTimer_();
 	link->flushTx_(ZuMv(addr));
       } else if (deadline) {
@@ -4185,25 +4405,24 @@ protected:
   }
 
   void noteAck_(
-    CryptoLevel::T level, uint64_t pn, bool ackEliciting, ZiSockAddr addr) {
+    CryptoLevel::T level, uint64_t pn, bool ackEliciting, ZiSockAddr addr,
+    bool forceImmediate = false) {
     PktSpace::T space = pktSpace_(level);
     uint64_t now = nowUS_();
-    bool immediate = ackEliciting && immediateAck_(level);
+    bool immediate = ackEliciting && (forceImmediate || immediateAck_(level));
     if (ackEliciting)
       m_rxAcks.ackEliciting(
 	space, pn, now, localMaxAckDelayUS_(), immediate);
     postAckSnapshot_(level, ZuMv(addr));
   }
 
-  void noteAckTx_(const AckSnapshot &ack) {
+  bool noteAckTx_(const AckSnapshot &ack) {
     ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC ACK snapshot install outside Tx thread", return);
+      "QUIC ACK snapshot install outside Tx thread", return false);
     bool due = m_txAck[ack.level].due || ack.due;
     m_txAck[ack.level] = ack;
     m_txAck[ack.level].due = due;
-    Zquic_DEBUG_LOG_(([level = ack.level, n = ack.nRanges](auto &s) {
-	s << "ACK snapshot processed level=" << int(level) << " ranges=" << n;
-      }));
+    return due;
   }
 
   bool appendPendingAck_(
@@ -4680,7 +4899,8 @@ nextSpace:
 
   bool buildRetransmitControl_(PktBuild &build, const SentFrameRef &ref) {
     if (ref.kind != SentFrameKind::Control ||
-	ref.controlType == FrameType::Unknown)
+	ref.controlType == FrameType::Unknown ||
+	ref.controlType == FrameType::PathResponse)
       return false;
     ControlFrame frame = controlFrame_(ref);
     if (!controlStillValid_(frame)) return false;
@@ -4884,9 +5104,9 @@ nextSpace:
   void processAckFrameTx_(TxAckWork work) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK sent-packet processing outside Tx thread", return);
-	    AckSnapshot &ack = work.ack;
-	    if (work.gen != m_txRuntimeGen) return;
-	    if (!ack.nRanges || m_txSpaceDiscarded[ack.level]) return;
+    AckSnapshot &ack = work.ack;
+    if (work.gen != m_txRuntimeGen) return;
+    if (!ack.nRanges || m_txSpaceDiscarded[ack.level]) return;
     if (!work.ecnValidated) {
       validateAckECN_(ack);
       for (unsigned i = 0; i < ack.nRanges; ++i) {
@@ -4932,9 +5152,6 @@ nextSpace:
 	  persistentCongestionThreshold_(), RecoveryScanBatch))
 	persistentCongestion_();
     }
-    (void)m_txPkts[ack.level].gcPackets(
-      RecoveryScanBatch, runtimeNow_(), persistentCongestionThreshold_(),
-      RetainedLostPktMax);
     if (work.ackBatch.ackd && ack.level == CryptoLevel::OneRTT) {
       ZuTime now = runtimeNow_();
       if (*work.ackBatch.latestSentTime && work.ackBatch.latestSentTime < now)
@@ -5000,10 +5217,6 @@ nextSpace:
   ZuTime keyDiscardDeadline_() const {
     return runtimeNow_() + ptoTimeout_() * ZuDecimal{3};
   }
-  ZuTime retiredCIDRouteGC_() const {
-    return runtimeNow_() + ptoTimeout_() * ZuDecimal{3};
-  }
-
   bool buildPayload_(
     CryptoLevel::T level, PktBuild &build, ZuCSpan frame) {
     build.reset();
@@ -5245,7 +5458,7 @@ nextSpace:
   }
 
   template <typename AllocTxPkt, typename SendPkt>
-  bool sendProtShortPkt_(
+	  bool sendProtShortPkt_(
     RuntimeCID::T dcid, unsigned pnLength, PktBuild &payload,
     ZiSockAddr addr, ZuCSpan recordFrame, const TxPktRefs *recordRefs,
     bool ackEliciting, AllocTxPkt allocTxPkt, SendPkt sendPkt,
@@ -5462,6 +5675,7 @@ nextSpace:
     auto &frame = frame_[0];
     ZuGuard frameGuard{[&frame]() { frame.~Frame(); }};
     bool ackEliciting = false;
+    bool immediateAck = false;
 
     while (offset < frames.length()) {
       unsigned used = 0;
@@ -5492,7 +5706,8 @@ nextSpace:
 	}
 	case FrameType::Stream:
 	  m_rxDiag.streamBytesRx += frame.payload.length();
-	  if (receiveFrame(frame, ZmRef<ZiIOBuf>{packetBuf}) < 0)
+	  if (receiveFrame(
+	      frame, ZmRef<ZiIOBuf>{packetBuf}, nullptr, &immediateAck) < 0)
 	    return false;
 	  impl()->streamFrame(
 	    frame.streamID, frame.offset, frame.payload, frame.fin);
@@ -5547,7 +5762,7 @@ nextSpace:
 	}
       offset += used;
     }
-    noteAck_(level, pn, ackEliciting, ZuMv(addr));
+    noteAck_(level, pn, ackEliciting, ZuMv(addr), immediateAck);
     return true;
   }
 
@@ -5656,7 +5871,6 @@ private:
   StreamRef findOrAccept_(uint64_t id) {
     if (id > uint64_t(INT64_MAX)) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
-    if (*closedStream_(id)) return nullptr;
     if (StreamID::server(id) == m_isServer) return nullptr;
     return acceptPeerStream(id);
   }
@@ -5664,11 +5878,32 @@ private:
   static bool localInitiated_(uint64_t id, bool isServer) {
     return StreamID::server(id) == isServer;
   }
+  static unsigned streamTypeIndex_(Zi::StreamType::T type) {
+    return type == Zi::StreamType::Simplex ? 1 : 0;
+  }
   bool canPeerSend_(uint64_t id) const {
     return !StreamID::uni(id) || !localInitiated_(id, m_isServer);
   }
   bool canLocalSend_(uint64_t id) const {
     return !StreamID::uni(id) || localInitiated_(id, m_isServer);
+  }
+  bool peerOpenedStreamID_(uint64_t id) const {
+    if (id > uint64_t(INT64_MAX) || localInitiated_(id, m_isServer))
+      return false;
+    Zi::StreamType::T type =
+      StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
+    return StreamID::ordinal(id) < peerLimit_(type).opened();
+  }
+  bool localOpenedStreamID_(uint64_t id) const {
+    if (id > uint64_t(INT64_MAX) || !localInitiated_(id, m_isServer))
+      return false;
+    uint64_t opened = StreamID::uni(id) ? m_nextUniOrdinal : m_nextBidiOrdinal;
+    return StreamID::ordinal(id) < opened;
+  }
+  bool closedStreamID_(uint64_t id) const {
+    if (id > uint64_t(INT64_MAX)) return false;
+    if (peerOpenedStreamID_(id)) return true;
+    return localOpenedStreamID_(id);
   }
 
   bool validateMaxData_(const Frame &frame) const {
@@ -5717,7 +5952,7 @@ private:
 	  noteInvalidStreamActivity_(TransportError::StreamState, true);
 	  return true;
 	}
-      } else if (*closedStream_(frame.streamID) &&
+      } else if (closedStreamID_(frame.streamID) &&
 	  canPeerSend_(frame.streamID)) {
 	noteInvalidStreamActivity_(TransportError::StreamState, true);
 	return true;
@@ -5774,137 +6009,86 @@ private:
     }
   }
 
-  bool txControlQueuedAtLeast_(const ControlFrame &frame) {
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC control queue search outside Tx thread", return false);
-    auto iter = m_controlQueue.iter();
-    unsigned scanned = 0;
-    while (auto ptr = iter.ptr()) {
-      if (++scanned > ControlDedupScan) return false;
-      const ControlFrame &queued = *ptr;
-      if (queued.type != frame.type ||
-	  queued.streamID != frame.streamID ||
-	  queued.streamType != frame.streamType)
-	continue;
-      if (frame.type == FrameType::PathChallenge ||
-	  frame.type == FrameType::PathResponse) {
-	if (!memcmp(queued.payload, frame.payload, sizeof(frame.payload)))
-	  return true;
-	continue;
-      }
-      if (frame.type == FrameType::ResetStream ||
-	  frame.type == FrameType::StopSending)
-	return queued.value == frame.value &&
-	  queued.errorCode == frame.errorCode;
-      if (frame.type == FrameType::HandshakeDone) return true;
-      if (queued.value >= frame.value) return true;
+  bool queuePendingControl_(PendingControl &slot, const ControlFrame &frame) {
+    if (!frame) return false;
+    if (slot.frame == frame) {
+      if (slot.queued) return false;
+      slot.queued = true;
+      return true;
     }
-    return false;
-  }
-
-  static bool controlSupersedes_(const ControlFrame &frame,
-    const ControlFrame &queued) {
-    if (queued.type != frame.type ||
-	queued.streamID != frame.streamID ||
-	queued.streamType != frame.streamType)
-      return false;
-    switch (frame.type) {
-      case FrameType::MaxData:
-      case FrameType::MaxStreamData:
-      case FrameType::MaxStreams:
-      case FrameType::DataBlocked:
-      case FrameType::StreamDataBlocked:
-      case FrameType::StreamsBlocked:
-	return queued.value <= frame.value;
-      case FrameType::HandshakeDone:
-	return true;
-      default:
-	return false;
-    }
-  }
-  unsigned txDropSupersededControls_(const ControlFrame &frame) {
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC control queue GC outside Tx thread", return 0);
-    unsigned n = 0;
-    for (;;) {
-      ControlFrame drop;
-      {
-	auto iter = m_controlQueue.iter();
-	while (auto ptr = iter.ptr()) {
-	  if (!controlSupersedes_(frame, *ptr)) continue;
-	  drop = *ptr;
+    if (slot.frame) {
+      switch (frame.type) {
+	case FrameType::MaxData:
+	case FrameType::MaxStreams:
+	case FrameType::DataBlocked:
+	case FrameType::StreamsBlocked:
+	  if (slot.frame.value >= frame.value) return false;
 	  break;
-	}
+	case FrameType::HandshakeDone:
+	  return false;
+	default:
+	  break;
       }
-      if (!drop) return n;
-      m_controlQueue.del(drop);
-      noteControlDequeued_(drop);
-      ++n;
     }
+    slot.frame = frame;
+    slot.queued = true;
+    return true;
   }
-  unsigned txGCStaleControls_(unsigned budget = SentPkt::MaxFrames) {
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC control queue GC outside Tx thread", return 0);
-    if (!budget) return 0;
-    if (budget > SentPkt::MaxFrames) budget = SentPkt::MaxFrames;
-    ControlFrame stale[SentPkt::MaxFrames];
-    unsigned n = 0;
-    {
-      auto iter = m_controlQueue.iter();
-      while (n < budget) {
-	ControlFrame frame = iter();
-	if (!frame) break;
-	if (!controlStillValid_(frame)) stale[n++] = frame;
-      }
+  void clearPendingControls_() {
+    m_maxDataControl = {};
+    m_dataBlockedControl = {};
+    m_handshakeDoneControl = {};
+    m_pathChallengeControl = {};
+    for (unsigned i = 0; i < 2; ++i) {
+      m_maxStreamsControl[i] = {};
+      m_streamsBlockedControl[i] = {};
     }
-    for (unsigned i = 0; i < n; ++i) {
-      m_controlQueue.del(stale[i]);
-      noteControlDequeued_(stale[i]);
-    }
-    return n;
+    m_pathResponses.clean();
+    auto iter = m_streams.iter();
+    while (auto node = iter()) node->data().clearControls();
   }
 
   bool controlStillValid_(const ControlFrame &frame) const {
     switch (frame.type) {
       case FrameType::MaxData:
-	return frame.value == m_rxDataCredit.limit();
+	return m_maxDataControl.frame == frame &&
+	  frame.value == m_rxDataCredit.limit();
       case FrameType::MaxStreamData: {
 	StreamRef stream = findStream(int64_t(frame.streamID));
-	return stream && stream->readOpen() &&
-	  frame.value == stream->rxCreditLimit();
+	return stream && stream->controlStillValid(frame);
       }
       case FrameType::MaxStreams:
-	return frame.value == peerLimit_(frame.streamType).limit();
+	return m_maxStreamsControl[streamTypeIndex_(frame.streamType)].frame ==
+	  frame && frame.value == peerLimit_(frame.streamType).limit();
       case FrameType::DataBlocked:
-	return m_txDataCredit.blocked() &&
+	return m_dataBlockedControl.frame == frame &&
+	  m_txDataCredit.blocked() &&
 	  frame.value == m_txDataCredit.limit();
       case FrameType::StreamDataBlocked: {
 	StreamRef stream = findStream(int64_t(frame.streamID));
-	return stream && !stream->txCreditAvailable() &&
-	  frame.value == stream->txCreditLimit();
+	return stream && stream->controlStillValid(frame);
       }
       case FrameType::StreamsBlocked:
-	return queued_(frame.streamType) &&
+	return m_streamsBlockedControl[streamTypeIndex_(frame.streamType)].frame ==
+	  frame && queued_(frame.streamType) &&
 	  frame.value == localLimit_(frame.streamType).limit();
       case FrameType::ResetStream: {
 	StreamRef stream = findStream(int64_t(frame.streamID));
-	return stream && stream->resetSent() &&
-	  !stream->resetAckd() &&
-	  frame.value == stream->txBytes();
+	return stream && stream->controlStillValid(frame);
       }
       case FrameType::StopSending: {
 	StreamRef stream = findStream(int64_t(frame.streamID));
-	return stream && stream->stopSent() &&
-	  !stream->stopAckd() &&
-	  !stream->resetReceived() && !stream->rxComplete();
+	return stream && stream->controlStillValid(frame);
       }
       case FrameType::PathChallenge:
-	return m_validatingPath.active &&
+	return m_pathChallengeControl.frame == frame &&
+	  m_validatingPath.active &&
 	  m_validatingPath.challenge.equals(byteSpan(
 	    frame.payload, sizeof(frame.payload)));
       case FrameType::PathResponse:
-      case FrameType::HandshakeDone:
 	return true;
+      case FrameType::HandshakeDone:
+	return m_handshakeDoneControl.frame == frame;
       default:
 	return false;
     }
@@ -5977,7 +6161,6 @@ private:
   bool reapStream_(Stream *stream) {
     if (!streamReapable_(stream)) return false;
     int64_t id = stream->id();
-    recordClosedStream_(stream);
     return m_streams.del(id);
   }
   bool streamCreditSettled_(const Stream *stream) const {
@@ -5988,84 +6171,6 @@ private:
       StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
     return peerLimit_(type).limit() >= MaxStreamCount;
   }
-  void recordClosedStream_(const Stream *stream) {
-    if (!stream || stream->id() < 0) return;
-    uint64_t id = uint64_t(stream->id());
-    ClosedStream closed;
-    closed.id = id;
-    closed.finalSize = stream->finalSize();
-    closed.seqNo = ++m_closedStreamSeq;
-    closed.finalSizeKnown = stream->rxComplete() || stream->resetReceived();
-    closed.resetReceived = stream->resetReceived();
-    closed.rxComplete = stream->rxComplete();
-    closed.resetSent = stream->resetSent();
-    closed.finDequeued = stream->finDequeued();
-    closed.streamCreditReturned = stream->streamCreditReturned();
-    m_closedStreams.del(id);
-    m_closedStreams.add(closed);
-    trimClosedStreams_();
-  }
-  void trimClosedStreams_() {
-    while (m_closedStreams.count_() > ClosedStreamMax) {
-      auto i = m_closedStreams.iter();
-      ClosedStream *old = nullptr;
-      while (auto node = i()) {
-	ClosedStream *closed = &node->data();
-	if (!old || closed->seqNo < old->seqNo) old = closed;
-      }
-      if (!old) return;
-      m_closedStreams.del(old->id);
-    }
-  }
-  ClosedStream closedStream_(uint64_t id) const {
-    return m_closedStreams.findVal(id);
-  }
-  bool closedFrameFinalSizeOK_(const ClosedStream &closed,
-    uint64_t offset, uint64_t length, bool fin) const {
-    if (!closed.finalSizeKnown) return false;
-    uint64_t end = offset + length;
-    if (end < offset || end > closed.finalSize) return false;
-    return !fin || end == closed.finalSize;
-  }
-  bool receiveClosedStream_(const Frame &frame) {
-    if (frame.type != FrameType::Stream) return false;
-    if (frame.streamID > uint64_t(INT64_MAX)) {
-      noteInvalidStreamActivity_(TransportError::StreamState);
-      return false;
-    }
-    ClosedStream closed = closedStream_(frame.streamID);
-    if (!*closed) {
-      noteInvalidStreamActivity_(TransportError::StreamState);
-      return false;
-    }
-    if (!closedFrameFinalSizeOK_(
-	  closed, frame.offset, frame.length, frame.fin)) {
-      noteInvalidStreamActivity_(TransportError::FinalSize, true, true);
-      return false;
-    }
-    noteInvalidStreamActivity_(TransportError::StreamState, true);
-    return true;
-  }
-  int receiveClosedControl_(const Frame &frame) {
-    if (frame.streamID > uint64_t(INT64_MAX)) return 0;
-    ClosedStream closed = closedStream_(frame.streamID);
-    if (!*closed) return 0;
-    switch (frame.type) {
-      case FrameType::ResetStream:
-	if (closed.finalSizeKnown && frame.length == closed.finalSize) {
-	  noteInvalidStreamActivity_(TransportError::StreamState, true);
-	  return 1;
-	}
-	noteInvalidStreamActivity_(TransportError::FinalSize, true, true);
-	return -1;
-      case FrameType::StopSending:
-	noteInvalidStreamActivity_(TransportError::StreamState, true);
-	return 1;
-      default:
-	return 0;
-    }
-  }
-
   StreamRef newStream_(int64_t id) {
     auto node = new typename Streams::Node{impl(), id};
     StreamRef stream{node};
@@ -6117,9 +6222,6 @@ private:
   StreamLimit	m_peerBidiLimit{uint64_t(INT64_MAX) >> 2};
   StreamLimit	m_peerUniLimit{uint64_t(INT64_MAX) >> 2};
   Streams	m_streams;
-  ClosedStreams	m_closedStreams{
-    ZmHashParams().bits(8).loadFactor(1).cBits(3)};
-  uint64_t	m_closedStreamSeq = 0;
 
   // Tx thread exclusive
   FlowCredit	m_txDataCredit;
@@ -6134,7 +6236,13 @@ private:
   uint64_t	m_lastStreamsBlockedBidi = uint64_t(-1);
   uint64_t	m_lastStreamsBlockedUni = uint64_t(-1);
   StreamQueue	m_streamQueue;
-  ControlQueue	m_controlQueue{ZmQueueParams{}.initial(8)};
+  PendingControl	m_maxDataControl;
+  PendingControl	m_maxStreamsControl[2];
+  PendingControl	m_dataBlockedControl;
+  PendingControl	m_streamsBlockedControl[2];
+  PendingControl	m_handshakeDoneControl;
+  PendingControl	m_pathChallengeControl;
+  PathResponses	m_pathResponses{ZmQueueParams{}.initial(PathResponseMax)};
 
 private:
   bool rxInvoked_() const {
@@ -6834,7 +6942,8 @@ private:
   bool flushTx_(ZiSockAddr addr) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client flush outside Tx thread", return false);
-    if (Base::closed() || !addr) return false;
+    if (!addr) return flushTx_();
+    if (Base::closed()) return false;
     flushPendingAcks_(addr);
     if (!Base::runtimeEstablished_()) return false;
     bool sent = Base::flushControlAndStreams_(
@@ -7566,7 +7675,8 @@ private:
   bool flushTx_(ZiSockAddr addr) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server flush outside Tx thread", return false);
-    if (Base::closed() || !addr) return false;
+    if (!addr) return flushTx_();
+    if (Base::closed()) return false;
     flushPendingAcks_(addr);
     if (!Base::runtimeEstablished_()) return false;
     bool sent = Base::flushControlAndStreams_(
@@ -7932,8 +8042,7 @@ private:
 
   void retiredLocalCID_(uint64_t, const CxnID &id) {
     if (app())
-      static_cast<Server<App, Impl> *>(app())->dissociateRoute_(
-	id, Base::retiredCIDRouteGC_());
+      static_cast<Server<App, Impl> *>(app())->dissociateRoute_(id);
   }
 
   // Rx thread exclusive

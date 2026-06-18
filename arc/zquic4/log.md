@@ -665,3 +665,45 @@ Validation was performed with the configured AddressSanitizer/LeakSanitizer
 build: `git diff --check`, `make -C zquic/test test`, and
 `make -C zhttp/test test` all passed.  The zhttp run used its existing
 LeakSanitizer suppressions for external TLS/OpenSSL allocations.
+
+## Remove scan-based QUIC GC and fix retained-lost ACK behavior
+
+Recovery now follows the `../zngtcp2` model more closely: sent packet ACK
+processing removes packet records by exact packet number/range, retained lost
+packet ACKs still run frame-owner cleanup, and those late lost ACKs do not feed
+fresh RTT, congestion, or separate late-ACK accounting.  The scan-based packet
+GC path, late-ACK metric/update field, and associated scan/age-driven tests
+were removed.  Lost packet retention is now explicit in the packet space so a
+late ACK can clear stream/crypto owner state without reclassifying it as fresh
+progress.
+
+ACK scheduling was tightened across Rx/Tx sharding.  Rx still owns observed
+packet number state, but Tx now preserves already-due ACK state when installing
+a newer ACK snapshot; if the merged Tx-side snapshot is due, Tx cancels the ACK
+delay timer and flushes immediately.  ACK generation uses a two
+ack-eliciting-packet threshold matching the `zngtcp2` default behavior.
+
+Route, control, and closed-stream cleanup paths were adjusted to avoid
+scan-based garbage collection.  Server route retirement now deletes active
+routes directly, tombstones are FIFO bounded, generic control-frame GC scans
+were replaced with keyed pending control slots, and PATH_RESPONSE keeps only a
+small FIFO of concrete replies.  Closed stream tombstones were removed in favor
+of stream-ID accounting.
+
+The remaining H3 matrix regression was traced from preserved matrix logs rather
+than race speculation.  The failing run completed a prefix of requests and then
+the server repeatedly retransmitted a completed response stream while the
+client had stopped sending useful ACKs.  The root cause was valid duplicate
+STREAM frames for an already-opened, reaped peer stream being counted as
+suspicious closed-stream activity; after the threshold the client closed and no
+longer ACKed those retransmits.  Duplicate STREAM frames on closed peer streams
+are now compact-handled as harmless and ACK-immediate, while invalid
+closed-stream control activity keeps the existing diagnostic/close behavior.
+
+Temporary `stderr` diagnostics used to inspect stream ACK/retransmit ownership
+were removed before commit.  Validation passed with `git diff --check`,
+`make -C zquic/src -j8`, `make -C zquic/test -j8 ZquicStreamTest
+ZquicRecoveryTest ZquicPQueueTest`, direct runs of `ZquicRecoveryTest`,
+`ZquicStreamTest`, and `ZquicPQueueTest`, `make -C zhttp/test -j8
+ZhttpMatrixTest`, `make -C zhttp/example -j8`, and the exact regression case
+`ZhttpMatrixTest --case=ZhttpZhttpd/H3/j1n1000`, which passed in 735 ms.
