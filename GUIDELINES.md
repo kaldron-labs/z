@@ -14,6 +14,10 @@ These guidelines extend `AGENTS.md`
 - dependent compatibility is a non-goal unless otherwise directed
   - propagate breaking API changes to dependent code
   - do not use shims, forwarders or other such techniques for legacy compatibility purposes
+- assume software must be capable of running 24x7 indefinitely
+  - prohibit monotonically growing memory consumption
+  - all long-lived containers must be actively garbage collected
+- shutdown/teardown must be graceful and clean of leaks
 
 ## No dogma
 - immutability
