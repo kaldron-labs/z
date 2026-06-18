@@ -1483,7 +1483,7 @@ void ZiConnection::executedRecv(unsigned n)
 
   ZmAssert(!m_rxContext.completed());
 
-#ifdef ZiMultiplex_DEBUG
+#ifdef ZiMultiplex_FILTER
   if (ZuUnlikely(m_mx->m_rxFilter(
 	  this, m_rxContext.ptr + m_rxContext.offset, n)))
     return;
@@ -1545,7 +1545,7 @@ void ZiConnection::send()
   int n_;
 #endif
 
-#ifdef ZiMultiplex_DEBUG
+#ifdef ZiMultiplex_FILTER
   if (ZuUnlikely(m_mx->m_txFilter(
 	  this, m_txContext.ptr + m_txContext.offset,
 	  m_txContext.size - m_txContext.offset))) {
