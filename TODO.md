@@ -32,22 +32,6 @@ using ZuIsStr = ZuIsSame<T, ZuStringT<S>>
 
 standardize `ZiLog` configuration from command line / environment variables
 
-## devlayer
-
-L-sized work:
-- initial plan
-- vertically slice plan
-- split out slices
-- phase slices independently
-- iterate slices individually
-  - acceptance criteria from each phase to the next, and at end
-- rework slice 2 to align with completion of slice 1, 3 with cumulative 1+2, 4 with cumulative 1+2+3, etc.
-- split out phases from slices
-  - ... then each phase within each slice is a bite-size incremental piece of work with acceptance criteria
-
-- start with a new working branch
-  - commit after each phase
-
 ## Zrest
 fundamentally, a request is:
 - an operation
@@ -88,29 +72,30 @@ outdated:
 - migrate Zrest to ZvEngine
 - get zrclient up and running
 
-## Ztls
-- review and cleanup
-- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
+## devlayer
 
-## Zquic
-- review and cleanup
-- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
+L-sized work:
+- initial plan
+- vertically slice plan
+- split out slices
+- phase slices independently
+- iterate slices individually
+  - acceptance criteria from each phase to the next, and at end
+- rework slice 2 to align with completion of slice 1, 3 with cumulative 1+2, 4 with cumulative 1+2+3, etc.
+- split out phases from slices
+  - ... then each phase within each slice is a bite-size incremental piece of work with acceptance criteria
 
-## Ztcp
-- review and cleanup
-- add a stress test benchmark that runs a local client and server running 1000s of links, connections and streams
+- start with a new working branch
+  - commit after each phase
 
-## Z Framework
-- generate docs
+## build system
+- factor out fbs codegen into shell script
+  - used repeatedly in multiple Makefile.am
 
 ## ZvEngine
 - becomes `ZiEngine` / ...
 - type-erased telemetry + command/control APIs (not CRTP)
 - `Zquic` + `Ztcp` derive from `Zi*`, implement APIs
-
-## build system
-- factor out fbs codegen into shell script
-  - used repeatedly in multiple Makefile.am
 
 ## Zum
 - all flatbuffers -> ZtStruct FB
@@ -156,6 +141,7 @@ outdated:
 - core file handling dispatches to appropriate format based on file extension matching
 
 ## Documentation
+- internals docs
 - doxygen + htags
 - shields.io badges (see README.md for reflect-cpp)
 
