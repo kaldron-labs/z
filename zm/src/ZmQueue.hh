@@ -206,6 +206,7 @@ friend ZmQueue_Unlocked<ZmQueue>;
   ZmQueue &operator =(ZmQueue &&ring) noexcept {
     this->~ZmQueue();
     new (this) ZmQueue{ZuMv(ring)};
+    return *this;
   }
 
   unsigned maxFrag() const {
@@ -471,13 +472,13 @@ friend Iter;
     }
   };
   auto iter() { return Iter{*this}; }
-  class RevIter;
-friend RevIter;
-  class RevIter : private Iter_ {
+  class RIter;
+friend RIter;
+  class RIter : private Iter_ {
     using Iter_::m_ring;
     using Iter_::m_i;
   public:
-    RevIter(typename Iter_::Ring &ring) :
+    RIter(typename Iter_::Ring &ring) :
 	Iter_(ring, ring.m_length) { }
     T *ptr() {
       unsigned o;
@@ -496,7 +497,7 @@ friend RevIter;
       return m_ring.m_data[o];
     }
   };
-  auto revIter() { return RevIter{*this}; }
+  auto riter() { return RIter{*this}; }
 
 private:
   Lock		m_lock;
