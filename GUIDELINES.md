@@ -99,112 +99,115 @@ These guidelines extend `AGENTS.md`
 - use `Zu` alternatives to STL: example: `ZuIfT` instead of `enable_if`
 - maximally leverage `Zu*`, `Zm*`, `Zt*` and `Zi*`
 
-## Amber flags
+## Audit flags
 ### Storage and capacity
-- Flag: fixed-size arrays, especially with separately maintained lengths.
-  Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
-  Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, etc.; enforce any required hard upper limit in code.
-- Flag: fixed-size lookup tables.
-  Problem: static sizing prevents run-time tuning and often misses required locking/hash-ID integration.
-  Fix: use `ZmHash`/`ZmLHash` with appropriate locking and hash IDs.
-- Flag: hard-coded capacities such as `16`.
+- Red Flag: hard-coded capacities such as `16`.
   Problem: unexplained limits may impair scaling when too low, bloat stack/heap when too high, or leave mostly unused capacity.
   Fix: use prominently located, named library-defined compile-time constants with a maintenance comment: RFC/standard mandate, mainstream alignment, or measured scaling/footprint trade-off.
-- Flag: arrays on hot or cold paths without workload-aware storage.
+- Amber Flag: fixed-size arrays, especially with separately maintained lengths.
+  Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
+  Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, etc.; enforce any required hard upper limit in code.
+- Amber Flag: fixed-size lookup tables.
+  Problem: static sizing prevents run-time tuning and often misses required locking/hash-ID integration.
+  Fix: use `ZmHash`/`ZmLHash` with appropriate locking and hash IDs.
+- Amber Flag: arrays on hot or cold paths without workload-aware storage.
   Problem: the wrong storage choice adds allocation latency, stack pressure, or unused capacity.
   Fix: use `ZtBuiltin` sized for 95-99% of hot-path usage, plain `ZtArray` for cold paths, and `ZtLocalArray` for scratch hot-path storage with heap fallback.
 
 ### Heap allocation
-- Flag: heap allocation in hot paths or for scratch state.
-  Problem: allocator latency and contention directly hurt tail latency and throughput.
-  Fix: use stack scratch such as `ZtLocalArray` and pass it through callbacks; I/O buffers are the exception, see the I/O guidance below.
-- Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
-  Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
-  Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`.
-- Flag: separate allocations for object, refcount, and container nodes.
-  Problem: fragmented allocation adds memory overhead and pointer chasing.
-  Fix: consolidate with intrusive reference counting and container nodes where practical; see `ZmPolyCache` nesting a hash node, list node, and refcount in one allocated node.
-- Flag: buffer or queue-node management bypassing optimized Z heap paths.
+- Red Flag: buffer or queue-node management bypassing optimized Z heap paths.
   Problem: common data-path allocations miss pooling and telemetry.
   Fix: use `ZmHeap`-optimized buffer and queue-node management.
+- Amber Flag: heap allocation in hot paths or for scratch state.
+  Problem: allocator latency and contention directly hurt tail latency and throughput.
+  Fix: use stack scratch such as `ZtLocalArray` and pass it through callbacks; I/O buffers are the exception, see the I/O guidance below.
+- Red Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
+  Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
+  Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`.
+- Amber Flag: separate allocations for object, refcount, and container nodes.
+  Problem: fragmented allocation adds memory overhead and pointer chasing.
+  Fix: consolidate with intrusive reference counting and container nodes where practical; see `ZmPolyCache` nesting a hash node, list node, and refcount in one allocated node.
 
 ### Data movement and initialization
-- Flag: copying string/byte data through temporaries.
-  Problem: avoidable memory traffic dominates many encode/decode and crypto paths.
-  Fix: operate in place on mutable buffers, or write directly into uninitialized destination storage when that elides a copy; copies are not legitimate in almost all other cases.
-- Flag: temporary contiguous copies.
-  Problem: they are usually hidden allocation/copy costs.
-  Fix: allow them only for stack scratch passed to CRTP callbacks or for long-lived heap state that must retain data.
-- Flag: default/zero initialization or constructor churn before immediate overwrite.
-  Problem: it burns cycles and cache bandwidth for data that will not be read.
-  Fix: use uninitialized storage and explicit placement new where appropriate; Z array containers are intentionally uninitialized until filled.
-- Flag: calling `ZiLOG` with a lambda that captures pointers or by reference.
+- Red Flag: calling `ZiLOG` with a lambda that captures pointers or by reference.
   Problem: the logger runs lambdas on a dedicated logger thread at a later time
   Fix: capture by copy the specific data needed for the log trace; use `ZeString` for scratch strings
+- Amber Flag: copying string/byte data through temporaries.
+  Problem: avoidable memory traffic dominates many encode/decode and crypto paths.
+  Fix: operate in place on mutable buffers, or write directly into uninitialized destination storage when that elides a copy; copies are not legitimate in almost all other cases.
+- Amber Flag: temporary contiguous copies.
+  Problem: hidden allocation/copy costs.
+  Fix: allow them only for stack scratch passed to CRTP callbacks or for long-lived heap state that must retain data.
+- Amber Flag: default/zero initialization or constructor churn before immediate overwrite.
+  Problem: it burns cycles and cache bandwidth for data that will not be read.
+  Fix: use uninitialized storage and explicit placement new where appropriate; Z array containers are intentionally uninitialized until filled.
 
 ### Algorithm and control flow
-- Flag: algorithmic inefficiency, latency regression, throughput impairment, or avoidable work.
-  Problem: small local costs often become system-level throughput or tail-latency limits.
-  Fix: choose the lower-complexity or lower-allocation design and validate hot paths.
-- Flag: chained `if` statements that should be `switch`.
-  Problem: intent and dispatch shape are harder for both readers and compilers to see.
-  Fix: use `switch` when branching on one discrete value.
-- Flag: highly nested logic.
-  Problem: state and error handling become difficult to audit.
-  Fix: flatten control flow with early exits, helper functions, or clearer state transitions.
-- Flag: near-identical repeated blocks.
+- Red Flag: near-identical repeated blocks.
   Problem: duplication hides divergent fixes and violates DRY.
   Fix: factor common code with templates, CRTP, or local helpers that preserve performance.
-- Flag: mistakenly assuming that `ZmScheduler` `invoke` or `run` is blocking
+- Red Flag: mistakenly assuming that `ZmScheduler` `invoke` or `run` is blocking
   Problem: reading of results before work has been executed
   Fix: read results and execute followon code in a continuation of the posted function, not after the call to `run`/`invoke`
+- Red Flag: incorrect blocking using `ZmBlock` or `ZmSemaphore`
+  Problem: risks deadlock, causes latency hiccups
+  Fix: post work and use asynchronous continuations, do not block on synchronous returns
+- Amber Flag: algorithmic inefficiency, latency regression, throughput impairment, or avoidable work.
+  Problem: small local costs often become system-level throughput or tail-latency limits.
+  Fix: choose the lower-complexity or lower-allocation design and validate hot paths.
+- Amber Flag: chained `if` statements that should be `switch`.
+  Problem: intent and dispatch shape are harder for both readers and compilers to see.
+  Fix: use `switch` when branching on one discrete value.
+- Amber Flag: highly nested logic.
+  Problem: state and error handling become difficult to audit.
+  Fix: flatten control flow with early exits, helper functions, or clearer state transitions.
 
 ### Framework fit
-- Flag: reimplementing lower-level Z Framework capabilities.
+- Red Flag: reimplementing lower-level Z Framework capabilities.
   Problem: duplicate code misses established semantics, optimizations, and maintenance paths.
   Fix: use the existing `Zu*`, `Zm*`, `Zt*`, and `Zi*` facilities.
-- Flag: direct use of `FILE`, `syslog`, etc.
+- Amber Flag: direct use of `FILE`, `syslog`, etc.
   Problem: it bypasses Z I/O and logging conventions.
   Fix: use `ZiFile`, `ZiLog`, etc.
-- Flag: `*printf` varargs formatting.
+- Amber Flag: `*printf` varargs formatting.
   Problem: varargs are weakly typed and bypass Z formatting conventions.
   Fix: use Z framework types with `<<`, `ZuBox`, and `ZuFmt`.
-- Flag: separate `bool` flags for unset, uninitialized, or null state.
+- Amber Flag: separate `bool` flags for unset, uninitialized, or null state.
   Problem: extra flags can diverge from the value they describe.
   Fix: use sentinel values.
 
 ### Type and API friction
-- Flag: unnecessary casts.
+- Red Flag: unnecessary casts.
   Problem: casts hide type-system mistakes and make ownership/aliasing harder to audit.
   Fix: rely on existing Z conversions and fix the type boundary.
-- Flag: casts among char-equivalent pointers.
+- Red Flag: casts among char-equivalent pointers.
   Problem: most Z types already convert equivalent primitive element types automatically.
   Fix: remove the cast unless a real representation change is required.
-- Flag: casts to CRTP `impl()`/`app()` bases.
+- Red Flag: casts to CRTP `impl()`/`app()` bases.
   Problem: they obscure name lookup and static dispatch.
   Fix: use `using T::function;` in bases that need constrained function lookup.
-- Flag: unnecessary chained-`if` or `switch` mapping between `enum` values and integers
+- Red Flag: unnecessary chained-`if` or `switch` mapping between `enum` values and integers
   Problem: inefficiency
   Fix: use `enum` values directly as integers
 
 ### Scope and cleanup
-- Flag: code that does not align with the goal, these guidelines, or `AGENTS.md`.
+- Red Flag: code that does not align with the goal, these guidelines, or `AGENTS.md`.
   Problem: local changes can erode project architecture and review expectations.
   Fix: realign the change or call out the required exception explicitly.
-- Flag: dead code or historical compatibility code.
+- Red Flag: dead code or historical compatibility code.
   Problem: unused code increases audit, test, and maintenance burden.
   Fix: delete it unless compatibility is explicitly required.
-- Flag: short-lived objects holding reference counts to longer-lived objects
+- Red Flag: short-lived objects holding reference counts to longer-lived owners, either directly or indirectly via callback lambda captures
   Problem: causes reference-count churn in the owner and risks ownership cycles
   Fix: short-lived objects should use raw pointers back to longer-lived owners; owners must teardown carefully to ensure that they cannot be outlived by short-lived objects that they own; owners should not attempt to delete owned objects in their destructors, they should instead assert that no such objects remain
 
 ### Unnecessary atomic operations, locking and copies
-- Flag: diagnostic, statistics or telemetry data (e.g. counters) without any requirement for accuracy or stable reads are needlessly atomic or guarded by locks or snapshotted
+- Red Flag: diagnostic, statistics or telemetry data (e.g. counters) without any requirement for accuracy or stable reads are needlessly atomic or guarded by locks or snapshotted
   Problem: atomic operations and locking induce latency volatility
   Fix: use primitive types, do not guard with locks, permit unclean reads from other threads
 
 ### Liveness
-- Flag: potentially long-running loops or container iterations in threads that service mixed workloads, particularly I/O threads
+- Red Flag: potentially long-running loops or container iterations in threads that service mixed workloads, particularly I/O threads
   Problem: under load, pending work in the scheduler queue will be starved by a looping turn that does not return to the scheduler
   Fix: cap the work performed in each turn - batch it and post continuations for the remainder
 
