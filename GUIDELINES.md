@@ -242,6 +242,11 @@ These guidelines extend `AGENTS.md`
     - certain types with specific heap IDs are re-used throughout the framework:
       - `ZeString`: `ZtString` with heap ID for error messages, logs and diagnostics
 
+### Fixed and floating point
+- use CPU/GPU device-native types for quantitative analysis
+- use `ZuDecimal` for precise decimal calculations of financial values
+- use `ZuFixed` for consistent decimal printing/scanning
+
 ### Compile-time data and matching
 - Use `ZuTypeList` and `ZuSeq` for compile-time tables, associative containers, and sequences.
 - Use `ZuSwitch` instead of static lookup tables.
