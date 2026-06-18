@@ -247,8 +247,8 @@ void testRecoveryFlowAndPMTUD()
   ZuCHECK(pmtudTx.ack(
       &probeAckRange, 1, nullptr, 3, nullptr, nullptr, nullptr, nullptr,
       &probeAckUpdate) == 1 &&
-      probeAckUpdate.pmtudAckedSize == 1300 &&
-      probeAckUpdate.normalAckedBytes == 0,
+      probeAckUpdate.pmtudAckdSize == 1300 &&
+      probeAckUpdate.normalAckdBytes == 0,
     "loop PMTUD ACK accounting failed");
 
   Zquic::SentPktTracker pmtudLossTx;
@@ -272,7 +272,7 @@ void testRecoveryFlowAndPMTUD()
   ZuCHECK(path.canSend(1200), "loop anti-amplification budget failed");
   path.configuredMaxUDP(Zquic::BufSize);
   path.startProbe(1400);
-  path.probeAcked();
+  path.probeAckd();
   ZuCHECK(path.activeMaxUDP() == 1400, "loop PMTUD growth failed");
   path.startProbe(Zquic::BufSize);
   path.probeLost();
@@ -301,7 +301,7 @@ void testRecoveryFlowAndPMTUD()
     ZiSockAddr{ZiIP("127.0.0.1"), 10005});
   blackhole.validated();
   blackhole.startProbe(1400);
-  blackhole.probeAcked();
+  blackhole.probeAckd();
   blackhole.startProbe(1400);
   ZuCHECK(blackhole.probeExpired() &&
       blackhole.startNextProbe(64) &&
@@ -327,7 +327,7 @@ void testRecoveryFlowAndPMTUD()
   link.ackPMTUDProbe(1400);
   ZuCHECK(link.activePathMaxUDP() == 1400 &&
       link.sendBudget().pmtu == 1400 &&
-      link.pathDiag().probesAcked == 1,
+      link.pathDiag().probesAckd == 1,
     "runtime PMTUD ACK did not grow active size");
   ZuCHECK(link.startPMTUDProbe(1500),
     "runtime PMTUD loss probe start failed");

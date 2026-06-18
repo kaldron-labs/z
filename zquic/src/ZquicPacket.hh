@@ -39,7 +39,7 @@ inline constexpr unsigned CxnIDMax = 20;
 using CxnID = ZuBArray<CxnIDMax>;
 
 struct PktNumber {
-  static unsigned encodedLength(uint64_t pn, uint64_t largestAcked);
+  static unsigned encodedLength(uint64_t pn, uint64_t largestAckd);
   static int encode(uint8_t *, unsigned, uint64_t pn, unsigned length);
   static uint64_t decode(uint64_t largestPN, uint64_t truncated, unsigned bits);
 };

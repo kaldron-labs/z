@@ -49,7 +49,7 @@ void testPMTUD()
       path.probeSize() == 1360 &&
       path.probeAttempts() == 1,
     "PMTUD candidate probe setup mismatch");
-  path.probeAcked();
+  path.probeAckd();
   ZuCHECK(path.activeMaxUDP() == 1360 &&
       path.pmtudState() == Zquic::PMTUDState::SearchComplete &&
       !path.probeAttempts() &&
@@ -122,7 +122,7 @@ void testPMTUD()
   path.configuredMaxUDP(Zquic::BufSize);
   path.peerMaxUDP(Zquic::BufSize);
   path.startProbe(1400);
-  path.probeAcked();
+  path.probeAckd();
   ZuCHECK(path.activeMaxUDP() == 1400, "PMTUD probe success not applied");
   path.applyHint({Zquic::PathHintKind::PktTooBig, 1300, 0});
   ZuCHECK(path.activeMaxUDP() == 1300 &&
@@ -139,7 +139,7 @@ void testPMTUD()
     ZiSockAddr{ZiIP("127.0.0.1"), 10009});
   blackhole.validated();
   blackhole.startProbe(1400);
-  blackhole.probeAcked();
+  blackhole.probeAckd();
   ZuCHECK(blackhole.activeMaxUDP() == 1400,
     "blackhole setup did not grow active payload");
   blackhole.startProbe(1400);

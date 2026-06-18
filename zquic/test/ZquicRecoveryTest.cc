@@ -169,7 +169,7 @@ void testRecovery()
   Zquic::NewReno cc(1200);
   uint64_t cwnd = cc.cwnd();
   cc.sent(1200);
-  cc.acked(1200);
+  cc.ackd(1200);
   ZuCHECK(cc.cwnd() > cwnd, "NewReno did not grow in slow start");
   cwnd = cc.cwnd();
   cc.sent(1200);
@@ -235,7 +235,7 @@ void testPktReorderDuplicateLoss()
   unsigned lost = 0;
   ZuCHECK(tx.ack(ranges, 1, &lost) == 1 &&
       lost == 2 &&
-      tx.acked() == 1 &&
+      tx.ackd() == 1 &&
       tx.lost() == 2 &&
       tx.retransmittable() == 2 &&
       tx.bytesInFlight() == 300,
@@ -257,15 +257,15 @@ void testPktReorderDuplicateLoss()
 
   ZuCHECK(!tx.ack(ranges, 1, &lost) &&
       !lost &&
-      tx.acked() == 1 &&
+      tx.ackd() == 1 &&
       tx.lost() == 2 &&
       !tx.nextRetransmit(ref),
     "duplicate ACK range mutated sent-packet state");
 }
 
-void testAckedFrameSuppressesLossReclaim()
+void testAckdFrameSuppressesLossReclaim()
 {
-  ZuTestScope(testAckedFrameSuppressesLossReclaim);
+  ZuTestScope(testAckdFrameSuppressesLossReclaim);
 
   Zquic::PktTxSpace tx;
   ZuCHECK(tx.add(txCryptoPkt_(0, 0, 46)) &&
@@ -278,17 +278,28 @@ void testAckedFrameSuppressesLossReclaim()
   unsigned lost = 0;
   ZuCHECK(tx.ack(ranges, 1, &lost) == 1 &&
       lost == 2 &&
-      tx.acked() == 1 &&
+      tx.ackd() == 1 &&
       tx.lost() == 2,
     "ACK/loss setup did not mark duplicate-frame packet lost");
 
   Zquic::SentFrameRef ref;
-  ZuCHECK(tx.nextRetransmit(ref) &&
-      ref.kind == Zquic::SentFrameKind::Crypto &&
-      ref.offset == 100 &&
-      ref.length == 10 &&
+  uint64_t offsets[2] = {};
+  uint64_t lengths[2] = {};
+  bool refsOK = true;
+  for (unsigned i = 0; i < 2; ++i) {
+    refsOK = refsOK &&
+      tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Crypto;
+    offsets[i] = ref.offset;
+    lengths[i] = ref.length;
+  }
+  ZuCHECK(refsOK &&
+      ((offsets[0] == 0 && lengths[0] == 46 &&
+	offsets[1] == 100 && lengths[1] == 10) ||
+	(offsets[0] == 100 && lengths[0] == 10 &&
+	  offsets[1] == 0 && lengths[1] == 46)) &&
       !tx.nextRetransmit(ref),
-    "loss reclaim retransmitted an already ACKed frame");
+    "loss reclaim did not leave range-frame ACK filtering to owner");
 
   Zquic::PktTxSpace late;
   ZuCHECK(late.add(txCryptoPkt_(0, 0, 46)) &&
@@ -310,7 +321,7 @@ void testAckedFrameSuppressesLossReclaim()
       ref.offset == 100 &&
       ref.length == 10 &&
       !late.nextRetransmit(ref),
-    "retransmit pop did not skip a late-ACKed frame");
+    "retransmit pop did not skip a late-ACKd frame");
 
   Zquic::PktTxSpace dup;
   ZuCHECK(dup.add(txCryptoPkt_(0, 0, 46)) &&
@@ -337,20 +348,25 @@ void testAckedFrameSuppressesLossReclaim()
     "late-ACK lost-packet setup did not queue lost frames");
   Zquic::AckRange lateAckRanges[] = { Zquic::AckRange{0, 0} };
   Zquic::PktTxUpdate update;
-  uint64_t ackedBytes = 999;
+  uint64_t ackdBytes = 999;
   ZuCHECK(lateLost.ack(
-	lateAckRanges, 1, nullptr, 99, nullptr, &ackedBytes, nullptr,
+	lateAckRanges, 1, nullptr, 99, nullptr, &ackdBytes, nullptr,
 	nullptr, &update) == 1 &&
-      !ackedBytes &&
-      !update.ackedBytes &&
-      update.lateAcked == 1,
+      !ackdBytes &&
+      !update.ackdBytes &&
+      update.lateAckd == 1,
     "late ACK of lost packet changed congestion accounting");
+  ZuCHECK(lateLost.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 0 &&
+      ref.length == 46,
+    "late ACK range-frame filtering unexpectedly stayed in packet tracker");
   ZuCHECK(lateLost.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 100 &&
       ref.length == 10 &&
       !lateLost.nextRetransmit(ref),
-    "late ACK of lost packet did not suppress queued retransmit");
+    "late ACK of lost packet dropped unrelated range retransmit");
 }
 
 void testLossThresholds()
@@ -397,7 +413,7 @@ void testLossThresholds()
   unsigned lost = 0;
   ZuCHECK(ackOnlyLargest.ack(ranges, 1, &lost) == 1 &&
       !lost &&
-      ackOnlyLargest.acked() == 1 &&
+      ackOnlyLargest.ackd() == 1 &&
       ackOnlyLargest.lost() == 0,
     "ACK-only largest packet number caused spurious threshold loss");
 }
@@ -421,7 +437,7 @@ void testPktSpaceAckLoss()
     ZuTime sentTime;
     ZuCHECK(tx.ack(ranges, 1, &lost, 3, &sentTime) == 3 &&
 	lost == 3 &&
-	tx.acked() == 3 &&
+	tx.ackd() == 3 &&
 	tx.lost() == 3 &&
 	tx.bytesInFlight() == 0 &&
 	sentTime == Zquic::timeUS(500),
@@ -451,7 +467,7 @@ void testPTOReclaimUsesRetransmitQueue()
     "PTO packet setup failed");
   ZuCHECK(tx.reclaimOnPTO(1) == 1 &&
       !tx.lost() &&
-      !tx.acked() &&
+      !tx.ackd() &&
       tx.bytesInFlight() == 2400 &&
       tx.retransmitPending() == 1,
     "PTO reclaim did not enqueue through retransmit queue");
@@ -486,7 +502,7 @@ void testAckCanLeaveOnlyRetransmitsPending()
   unsigned lost = 0;
   ZuCHECK(tx.ack(ranges, 1, &lost) == 4 &&
       lost == 2 &&
-      tx.acked() == 4 &&
+      tx.ackd() == 4 &&
       tx.lost() == 2 &&
       tx.retransmittable() == 2 &&
       !tx.bytesInFlight() &&
@@ -598,8 +614,8 @@ void testPktSpaceBatchCursors()
   Zquic::PktTxUpdate ackUpdate1;
   done = done || tx.ackBatch(
     ranges, 1, ackBatch, 1, Zquic::CryptoLevel::OneRTT, &ackUpdate1);
-  ZuCHECK(done && ackBatch.acked == 1 && ackUpdate0.ackedBytes == 100 &&
-      !ackUpdate1.ackedBytes &&
+  ZuCHECK(done && ackBatch.ackd == 1 && ackUpdate0.ackdBytes == 100 &&
+      !ackUpdate1.ackdBytes &&
       ackBatch.latestSentTime == Zquic::timeUS(500),
     "batch ACK cursor failed");
 
@@ -621,7 +637,7 @@ void testPktSpaceBatchCursors()
     5, 3, lossBatch, 2, &lossUpdate3);
   ZuCHECK(done && lossBatch.lost == 3 && !lossUpdate2.lostBytes &&
       !lossUpdate3.lostBytes &&
-      tx.lost() == 3 && tx.acked() == 1 && tx.retransmitPending() == 3,
+      tx.lost() == 3 && tx.ackd() == 1 && tx.retransmitPending() == 3,
     "final batch loss cursor failed");
 }
 
@@ -745,7 +761,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRecovery);
   ZuTestCall(testPktReorderDuplicateLoss);
-  ZuTestCall(testAckedFrameSuppressesLossReclaim);
+  ZuTestCall(testAckdFrameSuppressesLossReclaim);
   ZuTestCall(testLossThresholds);
   ZuTestCall(testPktSpaceAckLoss);
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);

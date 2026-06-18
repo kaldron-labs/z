@@ -155,7 +155,7 @@ struct ServerPktAction {
 };
 
 struct RecoveryEvent {
-  ZtEnum(RecoveryEvent, int8_t, Acked, Lost, PTO, PersistentCongestion);
+  ZtEnum(RecoveryEvent, int8_t, Ackd, Lost, PTO, PersistentCongestion);
 };
 
 struct SentFrameKind {

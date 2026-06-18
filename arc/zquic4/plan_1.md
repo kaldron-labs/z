@@ -62,7 +62,7 @@ No timer in this plan is `Engine`-owned.  `Engine` provides scheduler access and
 - Started: when there is ack-eliciting in-flight data or handshake anti-deadlock probe obligation and no earlier loss-time action supersedes PTO.
 - Deadline calculation: `last_ack_eliciting_sent_time + smoothed_rtt + max(4*rttvar, granularity) + max_ack_delay` for 1-RTT, without max_ack_delay for Initial/Handshake, multiplied by PTO backoff.  Select the earliest eligible packet-space PTO deadline.
 - Expiry behavior: increment PTO/backoff state, reclaim or synthesize probe work for the selected packet space, enqueue retransmission/probe send work, and re-arm if probes remain outstanding.  It mutates recovery and send scheduling state, so it runs on the Tx thread.
-- Cancelled: when all ack-eliciting in-flight data is ACKed/lost/discarded, when packet spaces are discarded, when connection teardown begins, or when a loss-time timer is the only pending recovery action.
+- Cancelled: when all ack-eliciting in-flight data is ACKd/lost/discarded, when packet spaces are discarded, when connection teardown begins, or when a loss-time timer is the only pending recovery action.
 - Rescheduled: recompute after every packet send, ACK, loss event, packet-space discard, and PTO expiry.  Bring forward if a newly active packet space has an earlier PTO.  Push back only after ACK progress, backoff reset, or removal of the previous earliest deadline.
 
 ### Idle Timeout Timer
@@ -102,7 +102,7 @@ No timer in this plan is `Engine`-owned.  `Engine` provides scheduler access and
 - Started: when `Path::startProbe` or `Path::startProbeChecked` marks a PMTUD probe pending on the active path.
 - Deadline calculation: probe sent time plus PMTUD probe timeout, derived from PTO/RTT where available or a conservative configured path-probe timeout before RTT is valid.
 - Expiry behavior: call `Path::probeExpired()`, schedule retry probe work if requested, or apply black-hole/failure fallback.  It mutates `Path` PMTUD state and send scheduling for that link, so it runs on the Link Tx thread.
-- Cancelled: when the probe is ACKed, declared lost by recovery, invalidated by a packet-too-big/send-too-big hint, the active path is retired, or the link closes.
+- Cancelled: when the probe is ACKd, declared lost by recovery, invalidated by a packet-too-big/send-too-big hint, the active path is retired, or the link closes.
 - Rescheduled: after each new probe is sent.  Bring forward only if a new active probe has an earlier expiry.  Do not push back for unrelated traffic; PMTUD probe expiry is tied to the specific probe packet.
 
 ### Path Validation Timer

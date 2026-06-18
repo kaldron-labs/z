@@ -38,7 +38,7 @@ void testDiagAggregation()
 
   Zquic::PathDiag path;
   path.probesSent = 2;
-  path.probesAcked = 1;
+  path.probesAckd = 1;
   path.probesLost = 1;
   path.blackholes = 1;
   diag.add(path);

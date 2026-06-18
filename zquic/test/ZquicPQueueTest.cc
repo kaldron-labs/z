@@ -125,6 +125,52 @@ void testAckRanges()
     "packet Rx range export mismatch");
 }
 
+void testAckRangeBound()
+{
+  ZuTestScope(testAckRangeBound);
+
+  Zquic::AckTracker ack;
+  for (unsigned i = 0; i < Zquic::AckTracker::MaxRetained + 10; ++i)
+    ZuCHECK(ack.add((uint64_t(i) << 1) + 1),
+      "sparse packet Rx mark insertion failed");
+
+  ZuCHECK(ack.count() <= Zquic::AckTracker::MaxRetained,
+    "packet Rx sparse ACK range cap was not enforced");
+  ZuCHECK(!ack.contains(1),
+    "packet Rx sparse ACK range cap did not drop oldest range");
+  ZuCHECK(ack.contains(
+      ((uint64_t(Zquic::AckTracker::MaxRetained + 9)) << 1) + 1),
+    "packet Rx sparse ACK range cap did not retain newest range");
+}
+
+void testAckOfAckTrim()
+{
+  ZuTestScope(testAckOfAckTrim);
+
+  Zquic::AckTracker ack;
+  for (unsigned i = 0; i < 6; ++i)
+    ZuCHECK(ack.add(i), "contiguous packet Rx mark insertion failed");
+
+  ack.ackdByPeer(3);
+
+  Zquic::AckRange range;
+  ZuCHECK(ack.count() == 1 &&
+      ack.range(0, range) &&
+      range.first == 4 &&
+      range.largest == 5,
+    "ACK-of-ACK did not trim contiguous ACK range");
+
+  ZuCHECK(ack.add(8) && ack.add(10),
+    "sparse packet Rx mark insertion after ACK-of-ACK failed");
+  ack.ackdByPeer(8);
+
+  ZuCHECK(ack.count() == 2 &&
+      ack.range(0, range) &&
+      range.first == 8 &&
+      range.largest == 8,
+    "ACK-of-ACK incorrectly trimmed sparse ACK ranges");
+}
+
 void testTxPktLossRequeue()
 {
   ZuTestScope(testTxPktLossRequeue);
@@ -177,9 +223,184 @@ void testTxPktAckRanges()
   unsigned lost = 0;
   ZuCHECK(tracker.ack(ranges, 2, &lost) == 3 &&
       !lost &&
-      tracker.acked() == 3 &&
+      tracker.ackd() == 3 &&
       tracker.bytesInFlight() == 100,
     "sent packet ACK range processing mismatch");
+}
+
+static Zquic::TxPkt txPkt_(
+  uint64_t pn, ZuTime sentTime = {}, unsigned bytes = 100)
+{
+  Zquic::TxPkt p;
+  p.pn = pn;
+  p.sentTime = sentTime ? sentTime : Zquic::timeUS(pn * 100);
+  p.bytes = bytes;
+  p.space = Zquic::PktSpace::AppData;
+  p.ackEliciting = true;
+  p.inFlight = true;
+  return p;
+}
+
+void testTxPktGC()
+{
+  ZuTestScope(testTxPktGC);
+
+  Zquic::SentPktTracker tracker;
+  for (uint64_t pn = 10; pn < 13; ++pn) {
+    Zquic::TxPkt p;
+    p.pn = pn;
+    p.bytes = 100;
+    p.space = Zquic::PktSpace::AppData;
+    p.ackEliciting = true;
+    p.inFlight = true;
+    ZuCHECK(tracker.add(p), "sent packet add failed");
+  }
+
+  Zquic::AckRange ranges[] = { Zquic::AckRange{11, 10} };
+  ZuCHECK(tracker.ack(ranges, 1) == 2 &&
+      tracker.count() == 3 &&
+      tracker.gcPackets(1) == 1 &&
+      tracker.count() == 2 &&
+      tracker.gcPackets() == 1 &&
+      tracker.count() == 1,
+    "sent packet GC did not remove ACKd packets");
+}
+
+void testTxPktGCBoundsLostByCount()
+{
+  ZuTestScope(testTxPktGCBoundsLostByCount);
+
+  Zquic::SentPktTracker tracker;
+  for (uint64_t pn = 10; pn < 15; ++pn)
+    ZuCHECK(tracker.add(txPkt_(pn)), "lost packet add failed");
+  for (uint64_t pn = 10; pn < 15; ++pn)
+    ZuCHECK(tracker.lose(pn), "lost packet setup failed");
+
+  unsigned retained = tracker.retainedLost();
+  unsigned gc = tracker.gcPackets(10, {}, {}, 2);
+  ZuCHECK(retained == 5 &&
+      gc == 3 &&
+      tracker.retainedLost() == 2 &&
+      tracker.count() == 2,
+    "sent packet GC did not enforce lost count bound");
+}
+
+void testTxPktGCBoundsLostByAge()
+{
+  ZuTestScope(testTxPktGCBoundsLostByAge);
+
+  Zquic::SentPktTracker tracker;
+  ZuCHECK(tracker.add(txPkt_(10, Zquic::timeUS(1000))) &&
+      tracker.add(txPkt_(11, Zquic::timeUS(2000))) &&
+      tracker.add(txPkt_(12, Zquic::timeUS(5000))),
+    "aged lost packet add failed");
+  ZuCHECK(tracker.lose(10) && tracker.lose(11) && tracker.lose(12),
+    "aged lost packet setup failed");
+
+  ZuCHECK(tracker.gcPackets(
+	10, Zquic::timeUS(5000), Zquic::timeUS(2500)) == 2 &&
+      tracker.retainedLost() == 1 &&
+      tracker.count() == 1,
+    "sent packet GC did not enforce lost age bound");
+}
+
+void testTxPktGCRetainsAckdAroundLost()
+{
+  ZuTestScope(testTxPktGCRetainsAckdAroundLost);
+
+  Zquic::SentPktTracker tracker;
+  for (uint64_t pn = 10; pn < 13; ++pn) {
+    Zquic::TxPkt p;
+    p.pn = pn;
+    p.bytes = 100;
+    p.space = Zquic::PktSpace::AppData;
+    p.ackEliciting = true;
+    p.inFlight = true;
+    ZuCHECK(tracker.add(p), "sent packet add failed");
+  }
+
+  bool lose10 = tracker.lose(10);
+  bool ack11 = tracker.ack(11);
+  unsigned gc0 = tracker.gcPackets();
+  ZuCHECK(lose10 &&
+      ack11 &&
+      tracker.retainedLost() == 1 &&
+      !gc0 &&
+      tracker.count() == 3,
+    "sent packet GC did not retain ACKd packet while loss is open");
+
+  bool ack10 = tracker.ack(10);
+  unsigned gc1 = tracker.gcPackets();
+  ZuCHECK(ack10 &&
+      !tracker.retainedLost() &&
+      gc1 == 2 &&
+      tracker.count() == 1,
+    "sent packet GC did not release ACKd packets after late ACK");
+}
+
+void testTxUnackdRangeQueue()
+{
+  ZuTestScope(testTxUnackdRangeQueue);
+
+  Zquic::StreamTxPQueue q{0};
+  ZuCHECK(q.add(new Zquic::StreamTxPQueue::Node{
+	Zquic::TxUnackdRange{10, 10}}) == ZmPQResult::Inserted,
+    "stream unackd range insert failed");
+  ZuCHECK(q.subtract(13, 4),
+    "stream unackd range middle subtract failed");
+
+  ZmRef<Zquic::StreamTxPQueue::Node> head = q.find(10);
+  ZmRef<Zquic::StreamTxPQueue::Node> tail = q.find(17);
+  ZuCHECK(head && tail &&
+      head->data().key() == 10 &&
+      head->data().length() == 3 &&
+      tail->data().key() == 17 &&
+      tail->data().length() == 3 &&
+      q.count_() == 2 &&
+      q.length_() == 6 &&
+      q.verify(),
+    "stream unackd range subtract did not split retained ranges");
+
+  ZuCHECK(q.subtract(10, 3) &&
+      !q.find(10) &&
+      q.count_() == 1 &&
+      q.length_() == 3 &&
+      q.verify(),
+    "stream unackd range exact subtract failed");
+}
+
+void testTxUnackdFinSentinel()
+{
+  ZuTestScope(testTxUnackdFinSentinel);
+
+  Zquic::StreamTxPQueue dataFin{0};
+  ZuCHECK(dataFin.add(new Zquic::StreamTxPQueue::Node{
+	Zquic::TxUnackdRange{20, 5, true}}) == ZmPQResult::Inserted &&
+      dataFin.length_() == 6,
+    "stream unackd data+FIN range insert failed");
+  ZuCHECK(dataFin.subtract(20, 5) &&
+      dataFin.count_() == 1 &&
+      dataFin.length_() == 1,
+    "stream unackd data ACK did not leave FIN sentinel");
+  ZmRef<Zquic::StreamTxPQueue::Node> fin = dataFin.find(25);
+  ZuCHECK(fin &&
+      fin->data().key() == 25 &&
+      fin->data().bytes == 0 &&
+      fin->data().fin,
+    "stream unackd FIN sentinel has wrong offset/state");
+  ZuCHECK(dataFin.subtract(25, 1) &&
+      !dataFin.count_() &&
+      !dataFin.length_() &&
+      dataFin.verify(),
+    "stream unackd FIN sentinel subtract failed");
+
+  Zquic::StreamTxPQueue finOnly{0};
+  ZuCHECK(finOnly.add(new Zquic::StreamTxPQueue::Node{
+	Zquic::TxUnackdRange{30, 0, true}}) == ZmPQResult::Inserted &&
+      finOnly.subtract(30, 1) &&
+      !finOnly.count_() &&
+      finOnly.verify(),
+    "stream unackd FIN-only range subtract failed");
 }
 
 int main(int argc, char **argv)
@@ -190,6 +411,14 @@ int main(int argc, char **argv)
   ZuTestCall(testRxOverlapDrop);
   ZuTestCall(testOutOfOrderDrain);
   ZuTestCall(testAckRanges);
+  ZuTestCall(testAckRangeBound);
+  ZuTestCall(testAckOfAckTrim);
   ZuTestCall(testTxPktLossRequeue);
   ZuTestCall(testTxPktAckRanges);
+  ZuTestCall(testTxPktGC);
+  ZuTestCall(testTxPktGCBoundsLostByCount);
+  ZuTestCall(testTxPktGCBoundsLostByAge);
+  ZuTestCall(testTxPktGCRetainsAckdAroundLost);
+  ZuTestCall(testTxUnackdRangeQueue);
+  ZuTestCall(testTxUnackdFinSentinel);
 }

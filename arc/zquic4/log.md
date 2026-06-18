@@ -30,7 +30,7 @@ ACK processing continues to use existing packet-threshold recovery (`pktThreshol
 
 `RttEstimator::timeThreshold()` and `PktTxSpace::nextLossTime()` are now validated by `ZquicRecoveryTest` with explicit unit coverage of time-threshold loss and deadline advancement. `ZquicRuntimeTest` now verifies a dropped 1-RTT STREAM packet is recovered by the loss timer before PTO fires by asserting retransmission occurs without increasing the server PTO count.
 
-Runtime congestion state is now fed from ACK and loss processing instead of remaining diagnostic-only. ACKed packet bytes advance NewReno, lost bytes collapse the congestion state at the lost send time, persistent congestion increments runtime diagnostics, and the public runtime diagnostic snapshot exposes cwnd, ssthresh, bytes in flight, and persistent congestion count.
+Runtime congestion state is now fed from ACK and loss processing instead of remaining diagnostic-only. ACKd packet bytes advance NewReno, lost bytes collapse the congestion state at the lost send time, persistent congestion increments runtime diagnostics, and the public runtime diagnostic snapshot exposes cwnd, ssthresh, bytes in flight, and persistent congestion count.
 
 Timer teardown now follows the asynchronous timer guidance. `Link` destruction asserts all scheduler timer nodes are already inactive; it no longer cancels timers itself. Owners that are about to release links call the continuation-based timer teardown path, which marks the link as tearing down, cancels timers, drains callbacks by posting the continuation on Tx, and only then lets dependent close/release work proceed. QUIC client disconnect also has a continuation overload, and the zhttp QUIC drivers use it before dropping their final link references.
 
@@ -72,7 +72,7 @@ Tests now cover ACK_ECN codec round trips with ECT0, ECT1, and CE counts, `Frame
 
 Runtime packet assembly now fills a packet with multiple retransmittable frames instead of emitting one control or stream frame per UDP datagram.  `PktAssembly` counts stream frames, `StreamPktizer` permits multiple STREAM frames in one packet, `PlainVec` has enough iovecs for a full multi-frame runtime packet, and the runtime Tx path records all sent frame references in a single `SentPkt`.  Control and stream flushing share one packet budget so ACKs, control frames, and stream frames are coalesced until the congestion/UDP budget or sent-frame metadata cap is reached.
 
-Long-header send paths can now coalesce Initial and Handshake packets into one datagram when the address and long-header state match.  Runtime packet numbers now use the smallest safe packet-number encoding length derived from the largest peer-ACKed packet in that packet-number space, matching the reference behavior in ngtcp2/zngtcp2 rather than keeping the fixed runtime packet-number length forever.
+Long-header send paths can now coalesce Initial and Handshake packets into one datagram when the address and long-header state match.  Runtime packet numbers now use the smallest safe packet-number encoding length derived from the largest peer-ACKd packet in that packet-number space, matching the reference behavior in ngtcp2/zngtcp2 rather than keeping the fixed runtime packet-number length forever.
 
 Recovery now suppresses duplicate retransmission of frames already acknowledged or still outstanding in a newer packet.  `PktTxSpace` tracks acknowledged STREAM/CRYPTO frame keys, filters queued retransmits against that set, avoids queueing a lost frame when an equivalent frame is still in flight, and treats PTO reclaim as one-shot per sent packet like zngtcp2's `PTO_RECLAIMED` state.  ACK packet-threshold loss now uses the largest packet newly acknowledged by this ACK frame, not the peer's largest ACK range value when that packet was already processed earlier.
 
@@ -159,3 +159,68 @@ Debug-only QUIC packet-drop hooks now live on `ZiMultiplex` as mutable `rxFilter
 The Caddy 5% receive-drop stall was reproduced with pcap and one-second QUIC diagnostics.  The stalled connection had active H3 requests, no packet movement, no local bytes in flight, no PTO timer, and no retransmit backlog, so the multi-request H3 client now treats that quiet state as a reconnectable stall before the 15s hard timeout.  The same diagnostic path prints active request counters and stream state so future stalls are visible without attaching a debugger.
 
 Validation was performed with the configured AddressSanitizer/LeakSanitizer build: `git diff --check`, focused `ZquicRecoveryTest`, `ZquicRuntimeTest`, and `ZquicStreamTest`, `zhttp`/`zhttpd` rebuilds, `ZhttpCaddy/H3/j10n1000` with 5% Rx drop, repeated Caddy 5% Rx+Tx drop, and `ZhttpZhttpd/H3/j10n1000` with 5% Rx-only and combined 5% Rx+Tx drops.  The Caddy combined-loss runs completed under 8s after reconnect handling.
+
+## Bound recovery, ACK, stream, CID, and route retention
+
+Recovery no longer uses an ever-growing ackd-frame tombstone hash as the source
+of truth for STREAM and CRYPTO retransmission.  Sent STREAM data is tracked in a
+per-stream `StreamTxPQueue`, CRYPTO data is tracked in a crypto-level
+`CryptoTxPQueue`, and ACK processing subtracts acknowledged subranges from those
+queues.  Loss and PTO retransmission now validate candidate sent-frame refs
+against the current queues, clipping or splitting retransmit work around ackd
+holes before requeueing it.  This makes "is the frame still needed?" a positive
+queue-membership question instead of a monotonic negative tombstone lookup.
+
+`ZmPQueue` gained the range operations needed by that model.  `clean()` exposes
+the existing internal cleanup path publicly, and `subtract()` removes, clips, or
+splits queued ranges while preserving queue accounting.  The stream/crypto
+queues use those operations to handle partial ACKs, FIN sentinels, and
+retransmit clipping without adding a QUIC-specific interval container.
+
+Sent packet retention is now garbage-collected after ACK and loss processing
+has released bytes in flight, notified congestion, removed ackd frame ranges,
+and queued any loss retransmits.  Packets are retained only while they are still
+needed for loss detection, callbacks, or unresolved lost-packet ordering; fully
+ackd packets are removed once safe.  The recovery tests cover ACK removal,
+retention around open loss, late ACK cleanup, and preservation of retransmission
+behavior while packet nodes are reclaimed.
+
+Receive ACK range state is bounded by ACK-of-ACK feedback.  Sent packet metadata
+records the largest packet number included in any outbound ACK frame; when the
+peer acknowledges the packet carrying that ACK, the receive-side ACK tracker
+advances its peer-ackd watermark and trims ranges below it.  ACK receive range
+snapshots remain capped at the protocol builder limit, so a peer cannot force
+unbounded ACK range growth by sending sparse packet numbers forever.
+
+Outbound control queues now coalesce or discard obsolete obligations instead of
+accumulating stale retransmit work.  Flow-control updates keep only the newest
+value per key, PATH_RESPONSE keeps payload identity, one-shot frames such as
+HANDSHAKE_DONE use explicit pending/sent/ackd state, and stream control frames
+are dropped when stream terminal state makes them irrelevant.  Loss processing
+rechecks direct indexed control state before retransmitting, so older lost
+packet refs cannot resurrect superseded frames.
+
+Stream, CID, and route teardown now release dependent recovery state.  Closed
+streams are removed only after both directions are terminal and any reset, FIN,
+or queued Tx data obligation has been ackd or made obsolete.  CID retirement is
+bounded by active path use, stateless reset token requirements, and a PTO-based
+retired-CID grace period.  Route retirement also uses a PTO-based expiry so
+retired destination CIDs and migration routes do not remain reachable
+indefinitely after the protocol no longer needs them.
+
+The recovery naming was normalized to the framework spelling `ackd`, including
+packet recovery events, congestion callbacks, PMTUD diagnostics, ACK-of-ACK
+helpers, and tests.  Queue type names were shortened from
+`StreamTxUnackdPQueue`/`CryptoTxUnackdPQueue` to
+`StreamTxPQueue`/`CryptoTxPQueue`; the unacknowledged state is implied by the
+fact that these queues retain work only until it is acknowledged.  A raw
+`uint64_t(uint32_t(-1))` range-field guard in stream retransmit clipping was
+also replaced with a named `UINT32_MAX` limit to make the packet-buffer range
+constraint explicit.
+
+Validation was performed with the configured debug/sanitizer build using
+focused `zm/test` coverage, focused `zquic/test` coverage, and repeated full
+test targets: `make -C zm/test test`, `make -C zquic/test test`, and
+`make -C zhttp/test test`.  The final ZQUIC verification after the naming and
+range-limit cleanup was `make -C zquic/test -j8 test`, which passed all 20
+files and 121 tests.

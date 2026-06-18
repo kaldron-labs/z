@@ -55,7 +55,7 @@ New or changed data stores: bounded retransmit queue with counters for dropped s
 
 ## Detailed Test Plan
 - Unit-test each frame ref kind for valid and stale rebuild behavior.
-- Runtime-test stream buffer freed/acked before queued retransmit is skipped safely.
+- Runtime-test stream buffer freed/ackd before queued retransmit is skipped safely.
 - Runtime-test queue bound under repeated loss.
 - Runtime-test discarded Initial/Handshake crypto refs are not retransmitted.
 

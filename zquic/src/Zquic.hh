@@ -242,6 +242,8 @@ struct Cxn : public ZuObject {
   Link_			*link = nullptr;
   ResetToken		resetToken;
   CxnState::T		state = CxnState::Active;
+  uint64_t		gcSeq = 0;
+  ZuTime		gcTime;
 };
 
 template <typename Link_>
@@ -259,6 +261,8 @@ class CxnRouter {
 public:
   using Route = Cxn<Link_>;
   using Routes = CxnRoutes_<Link_>;
+  static constexpr unsigned RetiredMax = 64;
+  static constexpr unsigned TombstoneMax = 64;
 
   CxnRouter() : m_routes{new Routes{
       ZmHashParams().bits(5).loadFactor(1).cBits(3)}} { }
@@ -308,11 +312,14 @@ public:
     return true;
   }
 
-  bool retire(const CxnID &id) {
+  bool retire(const CxnID &id, ZuTime gcTime = {}) {
     auto route = m_routes->findVal(id);
     if (!route || route->state != CxnState::Active) return false;
     route->state = CxnState::Retired;
     route->link = nullptr;
+    route->gcSeq = ++m_gcSeq;
+    route->gcTime = gcTime;
+    gcRoutes();
     return true;
   }
 
@@ -322,9 +329,15 @@ public:
       route->state = CxnState::Tombstone;
       route->link = nullptr;
       route->resetToken = {};
+      route->gcSeq = ++m_gcSeq;
+      route->gcTime = {};
+      gcRoutes();
       return true;
     }
-    m_routes->add(new Route{id, 0, nullptr, {}, CxnState::Tombstone});
+    auto route = new Route{id, 0, nullptr, {}, CxnState::Tombstone};
+    route->gcSeq = ++m_gcSeq;
+    m_routes->add(route);
+    gcRoutes();
     return true;
   }
 
@@ -338,6 +351,15 @@ public:
   }
 
   unsigned count() const { return m_routes->count_(); }
+  unsigned gcRoutes(
+    ZuTime now = {}, unsigned retiredMax = RetiredMax,
+    unsigned tombstoneMax = TombstoneMax) {
+    unsigned n = 0;
+    if (*now) n += gcExpiredRoutes_(CxnState::Retired, now);
+    n += gcRoutes_(CxnState::Retired, retiredMax);
+    n += gcRoutes_(CxnState::Tombstone, tombstoneMax);
+    return n;
+  }
   unsigned active() const {
     unsigned n = 0;
     all([&n](const Route &) { ++n; });
@@ -353,6 +375,54 @@ public:
   }
 
 private:
+  unsigned gcExpiredRoutes_(CxnState::T state, ZuTime now) {
+    unsigned n = 0;
+    for (;;) {
+      CxnID expiredID;
+      {
+	auto i = m_routes->iter();
+	while (auto node = i()) {
+	  Route *route = node->val();
+	  if (route->state != state || !*route->gcTime ||
+	      route->gcTime > now)
+	    continue;
+	  expiredID = route->id;
+	  break;
+	}
+      }
+      if (!expiredID.length()) break;
+      m_routes->del(expiredID);
+      ++n;
+    }
+    return n;
+  }
+  unsigned gcRoutes_(CxnState::T state, unsigned max) {
+    unsigned count = 0;
+    auto i = m_routes->citer();
+    while (auto node = i()) {
+      const auto &route = *node->val();
+      if (route.state == state) ++count;
+    }
+    unsigned n = 0;
+    while (count > max) {
+      CxnID oldID;
+      {
+	Route *old = nullptr;
+	auto j = m_routes->iter();
+	while (auto node = j()) {
+	  Route *route = node->val();
+	  if (route->state != state) continue;
+	  if (!old || route->gcSeq < old->gcSeq) old = route;
+	}
+	if (old) oldID = old->id;
+      }
+      if (!oldID.length()) break;
+      m_routes->del(oldID);
+      --count;
+      ++n;
+    }
+    return n;
+  }
   const Route *matchShortRoute_(ZuCSpan packet, bool activeOnly) const {
     if (!packet || packet.length() < 2 || Pkt::isLong(packet)) return nullptr;
     unsigned max = packet.length() - 1;
@@ -371,6 +441,7 @@ private:
 
   // Rx thread exclusive
   ZmRef<Routes>	m_routes;
+  uint64_t	m_gcSeq = 0;
 };
 
 template <typename Link_>
@@ -1291,8 +1362,8 @@ friend class SrvLink;
     if (!this->app()->sendPkt(buf)) return true;
     return m_endpoint.send(ZuMv(buf), ZuMv(addr));
   }
-  void dissociateRoute_(const CxnID &id) {
-    m_routes.retire(id);
+  void dissociateRoute_(const CxnID &id, ZuTime gcTime = {}) {
+    m_routes.retire(id, gcTime);
   }
 
 private:
@@ -1451,6 +1522,7 @@ public:
   using TxMsg = TxDataPQueue::Node;
   using TxSpan = TxDataPQueue::Span;
   using TxKey = TxDataPQueue::Key;
+  using TxUnackdQueue = StreamTxPQueue;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -1467,6 +1539,8 @@ public:
   uint64_t rxCreditLimit() const { return m_rxCredit.limit(); }
   uint64_t rxCreditAvailable() const { return m_rxCredit.available(); }
   unsigned txRangeCount() const { return m_txQueue.count_(); }
+  unsigned txUnackdCount() const { return m_txUnackd.count_(); }
+  uint64_t txUnackdBytes() const { return m_txUnackd.length_(); }
   uint64_t rxBytes() const { return m_rxDelivered; }
   uint64_t finalSize() const { return m_rxState.finalSize(); }
   unsigned rxPending() const { return m_rxQueue.count_(); }
@@ -1481,6 +1555,8 @@ public:
   bool resetSent() const { return m_resetSent; }
   bool resetReceived() const { return m_resetReceived; }
   bool stopSent() const { return m_stopSent; }
+  bool resetAckd() const { return m_resetAckd; }
+  bool stopAckd() const { return m_stopAckd; }
   bool stopReceived() const { return m_stopReceived; }
   bool readOpen() const { return !m_resetReceived && !rxComplete(); }
   bool closedForStreamCredit() const {
@@ -1492,7 +1568,7 @@ public:
   bool rxComplete() const {
     return m_rxState.complete() && m_rxDelivered == m_rxState.finalSize();
   }
-  unsigned rxQueued() { return m_rx.count_(); }
+  unsigned rxQueued() const { return m_rx.count_(); }
 
   RxStream &rxStream() { return m_rx; }
 
@@ -1504,6 +1580,7 @@ public:
     m_rx.clean();
   }
   TxDataPQueue *txQueue() { return &m_txQueue; }
+  TxUnackdQueue *txUnackdQueue() { return &m_txUnackd; }
 
   void txCredit(uint64_t limit) { m_txCredit.set(limit); }
   void extendTxCredit(uint64_t limit) { m_txCredit.extend(limit); }
@@ -1641,6 +1718,35 @@ public:
     if (!finReady()) return false;
     offset = m_txBytes;
     m_finDequeued = true;
+    return true;
+  }
+  bool recordTxUnackd(uint64_t offset, uint64_t length, bool fin) {
+    if (!length && !fin) return false;
+    return m_txUnackd.add(new TxUnackdQueue::Node{
+      TxUnackdRange{offset, length, fin}}) != ZmPQResult::Invalid;
+  }
+  bool ackTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
+    uint64_t n = length + (fin ? 1 : 0);
+    return n && m_txUnackd.subtract(offset, n);
+  }
+  bool txStillUnackd(uint64_t offset, uint64_t length, bool fin = false) const {
+    uint64_t n = length + (fin ? 1 : 0);
+    if (!n) return false;
+    bool found = false;
+    (void)m_txUnackd.spans(offset, n, [&found](const auto &) {
+      found = true;
+      return false;
+    });
+    return found;
+  }
+  bool ackReset(uint64_t appError, uint64_t finalSize) {
+    if (!m_resetSent || m_txBytes != finalSize) return false;
+    m_resetAckd = true;
+    return true;
+  }
+  bool ackStop(uint64_t appError) {
+    if (!m_stopSent) return false;
+    m_stopAckd = true;
     return true;
   }
 
@@ -1947,9 +2053,12 @@ private:
   bool			m_fin = false;
   bool			m_finDequeued = false;
   bool			m_resetSent = false;
+  bool			m_resetAckd = false;
   bool			m_stopSent = false;
+  bool			m_stopAckd = false;
   bool			m_txQueued = false;
   TxDataPQueue		m_txQueue{0};
+  StreamTxPQueue	m_txUnackd{0};
 };
 
 template <typename Link, typename Impl, typename TxBufAlloc_ = StreamTxBufAlloc<>>
@@ -1976,6 +2085,30 @@ ZuDerive(Streams_,
       ZmHashKey<Stream_IDAxor<Stream_>,
 	ZmHashHeapID<"Zquic.Stream.ObjectHash">>>>));
 
+struct ClosedStream {
+  uint64_t		id = ZuCmp<uint64_t>::null();
+  uint64_t		finalSize = 0;
+  uint64_t		seqNo = 0;
+  bool			finalSizeKnown = false;
+  bool			resetReceived = false;
+  bool			rxComplete = false;
+  bool			resetSent = false;
+  bool			finDequeued = false;
+  bool			streamCreditReturned = false;
+
+  bool operator !() const { return !id; }
+  bool operator *() const { return !ZuCmp<uint64_t>::null(id); }
+  ZuOpBool
+};
+
+inline uint64_t ClosedStream_IDAxor(const ClosedStream &s) { return s.id; }
+
+ZuDerive(ClosedStreams,
+  (ZmHash<ClosedStream,
+    ZmHashNode<ClosedStream,
+      ZmHashKey<ClosedStream_IDAxor,
+	ZmHashHeapID<"Zquic.Stream.ClosedHash">>>>));
+
 template <typename App, typename Impl, typename TxBufAlloc_, typename Stream_>
 class Link : public ZmPolymorph {
 template <typename, typename>
@@ -1994,6 +2127,8 @@ public:
   static constexpr unsigned OpenQueuedBatch = 32;
   static constexpr unsigned ControlDedupScan = 64;
   static constexpr unsigned RecoveryScanBatch = 256;
+  static constexpr unsigned RetainedLostPktMax = 1024;
+  static constexpr unsigned ClosedStreamMax = 4096;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -2040,6 +2175,7 @@ public:
   bool closed() const { return m_closed; }
   uint64_t closeError() const { return m_closeError; }
   uint64_t streamCount() const { return m_streams.count_(); }
+  uint64_t closedStreamCount() const { return m_closedStreams.count_(); }
   uint64_t peerStreamLimit(Zi::StreamType::T type) const {
     return localLimit_(type).limit();
   }
@@ -2095,6 +2231,10 @@ public:
 	    TransportError::StreamState, true);
 	  return true;
 	}
+      } else if (*closedStream_(frame.streamID) &&
+	  canLocalSend_(frame.streamID)) {
+	noteInvalidStreamActivity_(TransportError::StreamState, true);
+	return true;
       }
     }
     StreamRef stream;
@@ -2133,6 +2273,7 @@ public:
     if (id > uint64_t(INT64_MAX)) return nullptr;
     if (StreamID::server(id) == m_isServer) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
+    if (*closedStream_(id)) return nullptr;
     Zi::StreamType::T type = StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
     uint64_t opened = StreamID::ordinal(id) + 1;
     if (!peerLimit_(type).allowsTo(opened)) return nullptr;
@@ -2157,6 +2298,8 @@ public:
       return -1;
     StreamRef stream = findOrAccept_(frame.streamID);
     if (!stream) {
+      int rc = receiveClosedControl_(frame);
+      if (rc) return rc > 0 ? 0 : -1;
       noteInvalidStreamActivity_(TransportError::StreamState);
       return -1;
     }
@@ -2211,7 +2354,7 @@ public:
     if (frame.type != FrameType::Stream)
       return receiveFrame(frame, diag);
     StreamRef stream = findOrAccept_(frame.streamID);
-    if (!stream) return -1;
+    if (!stream) return receiveClosedStream_(frame) ? 0 : -1;
     int rc = stream->processFrame(frame, m_rxDataCredit, ZuMv(packet), diag);
     if (rc >= 0) {
       maybeExtendMaxData_();
@@ -2366,6 +2509,12 @@ protected:
   unsigned scheduledStreamCount_() const {
     return m_streamQueue.count_();
   }
+  unsigned gcStreamsForTest_(unsigned budget = RecoveryScanBatch) {
+    return gcStreams_(budget);
+  }
+  unsigned gcControlsForTest_(unsigned budget = SentPkt::MaxFrames) {
+    return txGCStaleControls_(budget);
+  }
 
   bool queueControl_(const ControlFrame &frame) {
     if (!frame) return false;
@@ -2378,7 +2527,9 @@ protected:
   bool txQueueControl_(const ControlFrame &frame) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC control queue mutation outside Tx thread", return false);
+    (void)txGCStaleControls_();
     if (!frame || txControlQueuedAtLeast_(frame)) return false;
+    txDropSupersededControls_(frame);
     m_controlQueue.push(frame);
     return true;
   }
@@ -2524,6 +2675,177 @@ protected:
   }
   PktProtState &txProtState_(CryptoLevel::T level) {
     return m_txProt[level];
+  }
+
+  bool recordTxUnackd_(CryptoLevel::T level, const SentFrameRef &ref) {
+    switch (ref.kind) {
+      case SentFrameKind::Stream: {
+	if (ref.streamID > uint64_t(INT64_MAX)) return false;
+	StreamRef stream = findStream(int64_t(ref.streamID));
+	return stream &&
+	  stream->recordTxUnackd(ref.offset, ref.length, ref.fin);
+      }
+      case SentFrameKind::Crypto:
+	return m_txCryptoUnackd[level].add(
+	    new CryptoTxPQueue::Node{
+	      TxUnackdRange{ref.offset, ref.length}}) != ZmPQResult::Invalid;
+      default:
+	return true;
+    }
+  }
+  void recordTxUnackd_(CryptoLevel::T level, const TxPktRefs &refs) {
+    for (unsigned i = 0; i < refs.count(); ++i)
+      (void)recordTxUnackd_(level, refs[i]);
+  }
+  bool ackTxFrame_(CryptoLevel::T level, const SentFrameRef &ref) {
+    switch (ref.kind) {
+      case SentFrameKind::Stream: {
+	if (ref.streamID > uint64_t(INT64_MAX)) return false;
+	StreamRef stream = findStream(int64_t(ref.streamID));
+	return stream && stream->ackTxUnackd(ref.offset, ref.length, ref.fin);
+      }
+      case SentFrameKind::Crypto:
+	return m_txCryptoUnackd[level].subtract(ref.offset, ref.length);
+      case SentFrameKind::Control: {
+	if (ref.streamID > uint64_t(INT64_MAX)) return false;
+	StreamRef stream = findStream(int64_t(ref.streamID));
+	switch (ref.controlType) {
+	  case FrameType::ResetStream:
+	    return stream && stream->ackReset(ref.value, ref.length);
+	  case FrameType::StopSending:
+	    return stream && stream->ackStop(ref.value);
+	  default:
+	    return true;
+	}
+      }
+      default:
+	return true;
+    }
+  }
+  bool txRangeStillUnackd_(
+    const CryptoTxPQueue &queue, uint64_t offset, uint64_t length) const {
+    if (!length) return false;
+    bool found = false;
+    queue.spans(offset, length, [&found](const auto &) {
+      found = true;
+      return false;
+    });
+    return found;
+  }
+  bool frameStillUnackd_(
+    CryptoLevel::T level, const SentFrameRef &ref) const {
+    switch (ref.kind) {
+      case SentFrameKind::Stream: {
+	if (ref.streamID > uint64_t(INT64_MAX)) return false;
+	StreamRef stream = findStream(int64_t(ref.streamID));
+	return stream &&
+	  stream->txStillUnackd(ref.offset, ref.length, ref.fin);
+      }
+      case SentFrameKind::Crypto:
+	return txRangeStillUnackd_(
+	  m_txCryptoUnackd[level], ref.offset, ref.length);
+      case SentFrameKind::Control:
+	return controlStillValid_(controlFrame_(ref));
+      default:
+	return true;
+    }
+  }
+  static bool clipStreamRef_(
+    SentFrameRef &ref, uint64_t first, uint64_t end) {
+    constexpr uint64_t maxTxRangeField = UINT32_MAX;
+    uint64_t dataEnd = ref.offset + ref.length;
+    if (dataEnd < ref.offset) return false;
+    uint64_t oldOffset = ref.offset;
+    uint64_t oldLength = ref.length;
+    uint64_t oldRangeOffset = ref.range.offset;
+    if (first > dataEnd) first = dataEnd;
+    uint64_t dataFirst = first;
+    uint64_t dataLimit = end < dataEnd ? end : dataEnd;
+    uint64_t newLength = dataLimit > dataFirst ? dataLimit - dataFirst : 0;
+    if (newLength > maxTxRangeField) return false;
+    bool newFin = ref.fin && end > dataEnd;
+    ref.offset = dataFirst;
+    ref.length = newLength;
+    ref.fin = newFin;
+    ref.range.streamOffset = dataFirst;
+    ref.range.length = uint32_t(newLength);
+    if (dataFirst >= oldOffset && dataFirst <= oldOffset + oldLength) {
+      uint64_t advance = dataFirst - oldOffset;
+      if (oldRangeOffset + advance <= maxTxRangeField)
+	ref.range.offset = uint32_t(oldRangeOffset + advance);
+    }
+    return newLength || newFin;
+  }
+  bool clipStreamRetransmit_(SentFrameRef &ref, SentFrameRef &tail) {
+    tail = {};
+    if (ref.kind != SentFrameKind::Stream ||
+	ref.streamID > uint64_t(INT64_MAX))
+      return false;
+    StreamRef stream = findStream(int64_t(ref.streamID));
+    if (!stream) return false;
+    uint64_t n = ref.length + (ref.fin ? 1 : 0);
+    if (!n || n < ref.length) return false;
+    uint64_t first = 0;
+    uint64_t end = 0;
+    bool found = false;
+    stream->txUnackdQueue()->spans(
+      ref.offset, n, [&found, &first, &end](const auto &span) {
+	first = span.key();
+	end = span.key() + span.length();
+	found = end >= first;
+	return false;
+      });
+    if (!found) return false;
+    uint64_t oldEnd = ref.offset + n;
+    if (oldEnd < ref.offset) return false;
+    if (end < oldEnd) {
+      tail = ref;
+      if (!clipStreamRef_(tail, end, oldEnd)) tail = {};
+    }
+    return clipStreamRef_(ref, first, end);
+  }
+  bool clipCryptoRetransmit_(
+    CryptoLevel::T level, SentFrameRef &ref, SentFrameRef &tail) {
+    tail = {};
+    if (ref.kind != SentFrameKind::Crypto ||
+	m_txSpaceDiscarded[level] || !ref.length)
+      return false;
+    uint64_t first = 0;
+    uint64_t end = 0;
+    bool found = false;
+    m_txCryptoUnackd[level].spans(
+      ref.offset, ref.length, [&found, &first, &end](const auto &span) {
+	first = span.key();
+	end = span.key() + span.length();
+	found = end >= first;
+	return false;
+      });
+    if (!found) return false;
+    uint64_t oldEnd = ref.offset + ref.length;
+    if (oldEnd < ref.offset || end <= first) return false;
+    if (end < oldEnd) {
+      tail = ref;
+      tail.offset = end;
+      tail.length = oldEnd - end;
+    }
+    ref.offset = first;
+    ref.length = end - first;
+    return true;
+  }
+  bool clipRetransmit_(
+    CryptoLevel::T level, SentFrameRef &ref, SentFrameRef &tail) {
+    switch (ref.kind) {
+      case SentFrameKind::Stream:
+	return clipStreamRetransmit_(ref, tail);
+      case SentFrameKind::Crypto:
+	return clipCryptoRetransmit_(level, ref, tail);
+      case SentFrameKind::Control:
+	tail = {};
+	return controlStillValid_(controlFrame_(ref));
+      default:
+	tail = {};
+	return true;
+    }
   }
 
   void resetRuntimeDiag_() { m_rxDiag = {}; m_txDiag = {}; }
@@ -2731,13 +3053,13 @@ protected:
 #ifdef Zquic_DEBUG
   void growActivePathForTest_(unsigned size) {
     m_path.startProbe(size);
-    m_path.probeAcked();
+    m_path.probeAckd();
   }
   bool startPMTUDProbeForTest_(unsigned size) {
     return m_path.startProbeChecked(size);
   }
   void ackPMTUDProbeForTest_(unsigned size) {
-    onPMTUDProbeAcked_(size);
+    onPMTUDProbeAckd_(size);
   }
   void losePMTUDProbeForTest_(unsigned size) {
     onPMTUDProbeLost_(size);
@@ -2815,9 +3137,9 @@ protected:
     return true;
   }
   unsigned txPNLength_(CryptoLevel::T level) const {
-    uint64_t largestAcked = m_txLargestAcked[level];
-    if (largestAcked == uint64_t(-1)) return RuntimePNLength;
-    return PktNumber::encodedLength(m_txPN[level], largestAcked);
+    uint64_t largestAckd = m_txLargestAckd[level];
+    if (ZuCmp<uint64_t>::null(largestAckd)) return RuntimePNLength;
+    return PktNumber::encodedLength(m_txPN[level], largestAckd);
   }
 #ifdef Zquic_DEBUG
   void setTxPNForTest_(CryptoLevel::T level, uint64_t pn) {
@@ -3116,7 +3438,7 @@ protected:
     LinkCID *slot = nullptr;
     for (auto &cid : cids) {
       if (cid.state == CxnState::Active) ++active;
-      if (!slot && cid.state == CxnState::Tombstone) slot = &cid;
+      if (!slot && cid.state != CxnState::Active) slot = &cid;
     }
     uint64_t limit = local ?
       LocalActiveConnectionIDLimit :
@@ -3236,7 +3558,7 @@ protected:
     for (auto &s : m_txTrafficSecrets) s.clear();
     for (auto &p : m_txProt) p.clear();
     memset(m_txPN, 0, sizeof(m_txPN));
-    for (auto &pn : m_txLargestAcked) pn = uint64_t(-1);
+    for (auto &pn : m_txLargestAckd) pn = uint64_t(-1);
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
     m_rxAcks.clear();
     for (auto &ack : m_txAck) ack = {};
@@ -3364,11 +3686,11 @@ protected:
     frame.type = ref.controlType;
     frame.streamID = ref.streamID;
     frame.value = ref.value;
-    frame.errorCode =
-      (ref.controlType == FrameType::ResetStream ||
-	ref.controlType == FrameType::StopSending) ? ref.value : 0;
-    if (ref.controlType == FrameType::ResetStream)
+    if (ref.controlType == FrameType::ResetStream) {
+      frame.errorCode = ref.value;
       frame.value = ref.length;
+    } else if (ref.controlType == FrameType::StopSending)
+      frame.errorCode = ref.value;
     frame.streamType = ref.streamType;
     if (ref.controlType == FrameType::PathChallenge ||
 	ref.controlType == FrameType::PathResponse)
@@ -3732,7 +4054,7 @@ protected:
   }
   ZuTime lossThreshold_() const { return m_rtt.timeThreshold(); }
   ZuTime persistentCongestionThreshold_() const {
-    return timeMul(ptoTimeout_(), 3);
+    return ptoTimeout_() * ZuDecimal{3};
   }
   ZuTime nextLossTime_() const {
     ZuTime threshold = lossThreshold_();
@@ -4013,11 +4335,11 @@ protected:
     if (!m_path.probePending()) cancelPMTUDTimer_();
     schedulePMTUD_();
   }
-  void onPMTUDProbeAcked_(unsigned size) {
+  void onPMTUDProbeAckd_(unsigned size) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD ACK outside Tx thread", return);
     if (!size || !m_path.probePending()) return;
-    m_path.probeAcked();
+    m_path.probeAckd();
     cancelPMTUDTimer_();
     schedulePMTUD_();
   }
@@ -4053,6 +4375,7 @@ protected:
     m_congestion.release(m_txPkts[level].bytesInFlight());
     m_txPkts[level].clear();
     m_txCrypto[level].reset();
+    m_txCryptoUnackd[level].clean();
     m_txAck[level].nRanges = 0;
     updateCongestionDiag_();
     scheduleLossTimer_();
@@ -4079,9 +4402,14 @@ protected:
       "QUIC retransmit selection outside Tx thread", return false);
     for (unsigned i = 0; i < 3; ++i) {
       CryptoLevel::T l = CryptoLevel::T(i);
-      if (m_txSpaceDiscarded[l] ||
-	  !m_txPkts[l].nextRetransmit(ref))
-	continue;
+      if (m_txSpaceDiscarded[l]) continue;
+      do {
+	if (!m_txPkts[l].nextRetransmit(ref)) goto nextSpace;
+	SentFrameRef tail;
+	if (!clipRetransmit_(l, ref, tail)) continue;
+	if (tail) (void)requeueRetransmit_(l, tail);
+	break;
+      } while (true);
       level = l;
       ++m_txDiag.retransmittedFrames;
       Zquic_DEBUG_LOG_(([level, ref](auto &s) {
@@ -4090,8 +4418,10 @@ protected:
 	    " streamID=" << ref.streamID <<
 	    " offset=" << ref.offset <<
 	    " length=" << ref.length;
-	}));
+      }));
       return true;
+nextSpace:
+      continue;
     }
     return false;
   }
@@ -4100,6 +4430,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic",
       (), "QUIC retransmit requeue outside Tx thread", return false);
     if (m_txSpaceDiscarded[level]) return false;
+    if (!frameStillUnackd_(level, ref)) return false;
     return m_txPkts[level].requeueRetransmit(ref);
   }
 
@@ -4180,26 +4511,32 @@ protected:
   }
 
   void recordTxPkt_(
-    CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan frame) {
+    CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan frame,
+    uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
     SentFrameRef ref;
     bool ackEliciting = false;
     if (!runtimeFrameRef(frame, ref, ackEliciting)) return;
-    recordTxPkt_(level, pn, bytes, ref, ackEliciting);
+    recordTxPkt_(
+      level, pn, bytes, ref, ackEliciting, false, 0, ackLevel, ackLargest);
   }
 
   void recordTxPkt_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes,
     const SentFrameRef &ref, bool ackEliciting,
-    bool pmtudProbe = false, unsigned pmtudSize = 0) {
+    bool pmtudProbe = false, unsigned pmtudSize = 0,
+    uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
     TxPktRefs refs;
     if (ref.kind != SentFrameKind::None) refs.add(ref);
-    recordTxPkt_(level, pn, bytes, refs, ackEliciting, pmtudProbe, pmtudSize);
+    recordTxPkt_(
+      level, pn, bytes, refs, ackEliciting, pmtudProbe, pmtudSize,
+      ackLevel, ackLargest);
   }
 
   void recordTxPkt_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes,
     const TxPktRefs &refs, bool ackEliciting,
-    bool pmtudProbe = false, unsigned pmtudSize = 0) {
+    bool pmtudProbe = false, unsigned pmtudSize = 0,
+    uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
     if (m_txSpaceDiscarded[level]) return;
     if (!ackEliciting && !refs.count()) return;
     SentPkt packet;
@@ -4211,9 +4548,12 @@ protected:
     packet.inFlight = ackEliciting;
     packet.pmtudProbe = pmtudProbe;
     packet.pmtudSize = pmtudSize;
+    packet.ackLevel = ackLevel;
+    packet.ackLargest = ackLargest;
     for (unsigned i = 0; i < refs.count(); ++i)
       packet.addFrame(refs[i]);
-    m_txPkts[level].add(packet);
+    if (!m_txPkts[level].add(packet)) return;
+    recordTxUnackd_(level, refs);
     if (ackEliciting) {
       m_congestion.sent(bytes);
       updateCongestionDiag_();
@@ -4238,14 +4578,32 @@ protected:
   }
 
   void applyAckUpdateTx_(const PktTxUpdate &update, bool &congestionOpened) {
-    if (update.normalAckedBytes) {
-      m_congestion.acked(update.normalAckedBytes);
+    applyAckOfAckTx_(update);
+    for (unsigned i = 0; i < update.nAckdFrames; ++i)
+      (void)ackTxFrame_(update.level, update.ackdFrames[i]);
+    if (update.normalAckdBytes) {
+      m_congestion.ackd(update.normalAckdBytes);
       congestionOpened = true;
     }
-    if (update.pmtudAckedBytes) {
-      m_congestion.acked(update.pmtudAckedBytes, true);
-      onPMTUDProbeAcked_(update.pmtudAckedSize);
+    if (update.pmtudAckdBytes) {
+      m_congestion.ackd(update.pmtudAckdBytes, true);
+      onPMTUDProbeAckd_(update.pmtudAckdSize);
     }
+  }
+  void applyAckOfAckTx_(const PktTxUpdate &update) {
+    for (unsigned i = 0; i < 3; ++i) {
+      if (!update.ackdAck[i]) continue;
+      auto level = CryptoLevel::T(i);
+      uint64_t largest = update.ackLargest[i];
+      app()->rxRun([link = ZmMkRef(impl()), level, largest]() mutable {
+	link->ackAckdRx_(level, largest);
+      });
+    }
+  }
+  void ackAckdRx_(CryptoLevel::T level, uint64_t largest) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC ACK-of-ACK trim outside Rx thread", return);
+    m_rxAcks.tracker(pktSpace_(level)).ackdByPeer(largest);
   }
   void applyLossUpdateTx_(const PktTxUpdate &update) {
     if (update.normalLostBytes)
@@ -4278,9 +4636,9 @@ protected:
       validateAckECN_(ack);
       for (unsigned i = 0; i < ack.nRanges; ++i) {
 	uint64_t largest = ack.ranges[i].largest;
-	if (m_txLargestAcked[ack.level] == uint64_t(-1) ||
-	    largest > m_txLargestAcked[ack.level])
-	  m_txLargestAcked[ack.level] = largest;
+	if (ZuCmp<uint64_t>::null(m_txLargestAckd[ack.level]) ||
+	    largest > m_txLargestAckd[ack.level])
+	  m_txLargestAckd[ack.level] = largest;
       }
       work.ecnValidated = true;
     }
@@ -4302,7 +4660,7 @@ protected:
     if (work.ackBatch.haveAckForLoss) {
       PktTxUpdate lossUpdate;
       if (!m_txPkts[ack.level].markPktThresholdLossBatch(
-	  work.ackBatch.largestAckedForLoss, 3, work.lossBatch,
+	  work.ackBatch.largestAckdForLoss, 3, work.lossBatch,
 	  RecoveryScanBatch, &lossUpdate)) {
 	applyLossUpdateTx_(lossUpdate);
 	if (lossUpdate.lostBytes) work.retransmit = true;
@@ -4319,13 +4677,16 @@ protected:
 	  persistentCongestionThreshold_(), RecoveryScanBatch))
 	persistentCongestion_();
     }
-    if (work.ackBatch.acked && ack.level == CryptoLevel::OneRTT) {
+    (void)m_txPkts[ack.level].gcPackets(
+      RecoveryScanBatch, runtimeNow_(), persistentCongestionThreshold_(),
+      RetainedLostPktMax);
+    if (work.ackBatch.ackd && ack.level == CryptoLevel::OneRTT) {
       ZuTime now = runtimeNow_();
       if (*work.ackBatch.latestSentTime && work.ackBatch.latestSentTime < now)
 	m_rtt.sample(
 	  now - work.ackBatch.latestSentTime, ackDelay_(ack.delay), true);
       m_ptoBackoff.reset();
-    } else if (work.ackBatch.acked) {
+    } else if (work.ackBatch.ackd) {
       m_ptoBackoff.reset();
     }
     updateCongestionDiag_();
@@ -4380,6 +4741,9 @@ protected:
   }
   ZuTime ptoTimeout_() const {
     return m_ptoBackoff.timeout(m_rtt, maxAckDelay_());
+  }
+  ZuTime retiredCIDRouteGC_() const {
+    return runtimeNow_() + ptoTimeout_() * ZuDecimal{3};
   }
 
   bool buildPayload_(
@@ -4486,12 +4850,14 @@ protected:
   void recordProtPktTx_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan recordFrame,
     const TxPktRefs *recordRefs, bool ackEliciting,
-    bool pmtudProbe = false, unsigned pmtudSize = 0) {
+    bool pmtudProbe = false, unsigned pmtudSize = 0,
+    uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
     if (recordRefs)
       recordTxPkt_(
-	level, pn, bytes, *recordRefs, ackEliciting, pmtudProbe, pmtudSize);
+	level, pn, bytes, *recordRefs, ackEliciting, pmtudProbe, pmtudSize,
+	ackLevel, ackLargest);
     else
-      recordTxPkt_(level, pn, bytes, recordFrame);
+      recordTxPkt_(level, pn, bytes, recordFrame, ackLevel, ackLargest);
     ++m_txPN[level];
     ++m_txDiag.packetsTx;
     m_txDiag.bytesTx += bytes;
@@ -4502,6 +4868,19 @@ protected:
 	  " ackEliciting=" << ackEliciting;
       }));
     if (ackEliciting) schedulePTO();
+  }
+
+  bool txAckMeta_(
+    CryptoLevel::T level, PktBuild &payload,
+    uint8_t &ackLevel, uint64_t &ackLargest) const {
+    ackLevel = 3;
+    ackLargest = 0;
+    if (!payload.ack(level)) return false;
+    const AckSnapshot &ack = m_txAck[level];
+    if (!ack.nRanges) return false;
+    ackLevel = uint8_t(level);
+    ackLargest = ack.ranges[ack.nRanges - 1].largest;
+    return true;
   }
 
   const auto &initialKeys_(InitialKeyDir::T dir) const {
@@ -4550,10 +4929,13 @@ protected:
     buf->skip = 0;
     buf->length = unsigned(n);
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
-    if (payload.ack(CryptoLevel::Initial)) ackSentTx_(CryptoLevel::Initial);
+    uint8_t ackLevel;
+    uint64_t ackLargest;
+    txAckMeta_(CryptoLevel::Initial, payload, ackLevel, ackLargest);
     recordProtPktTx_(
       CryptoLevel::Initial, pn, unsigned(n), recordFrame, recordRefs,
-      ackEliciting);
+      ackEliciting, false, 0, ackLevel, ackLargest);
+    if (payload.ack(CryptoLevel::Initial)) ackSentTx_(CryptoLevel::Initial);
     return true;
   }
 
@@ -4593,11 +4975,14 @@ protected:
     buf->skip = 0;
     buf->length = unsigned(n);
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
-    if (payload.ack(CryptoLevel::Handshake))
-      ackSentTx_(CryptoLevel::Handshake);
+    uint8_t ackLevel;
+    uint64_t ackLargest;
+    txAckMeta_(CryptoLevel::Handshake, payload, ackLevel, ackLargest);
     recordProtPktTx_(
       CryptoLevel::Handshake, pn, unsigned(n), recordFrame, recordRefs,
-      ackEliciting);
+      ackEliciting, false, 0, ackLevel, ackLargest);
+    if (payload.ack(CryptoLevel::Handshake))
+      ackSentTx_(CryptoLevel::Handshake);
     return true;
   }
 
@@ -4644,10 +5029,13 @@ protected:
     buf->skip = 0;
     buf->length = unsigned(n);
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
-    if (payload.ack(CryptoLevel::OneRTT)) ackSentTx_(CryptoLevel::OneRTT);
+    uint8_t ackLevel;
+    uint64_t ackLargest;
+    txAckMeta_(CryptoLevel::OneRTT, payload, ackLevel, ackLargest);
     recordProtPktTx_(
       CryptoLevel::OneRTT, pn, unsigned(n), recordFrame, recordRefs,
-      ackEliciting, pmtudSize != 0, pmtudSize);
+      ackEliciting, pmtudSize != 0, pmtudSize, ackLevel, ackLargest);
+    if (payload.ack(CryptoLevel::OneRTT)) ackSentTx_(CryptoLevel::OneRTT);
     return true;
   }
 
@@ -4991,6 +5379,7 @@ private:
   StreamRef findOrAccept_(uint64_t id) {
     if (id > uint64_t(INT64_MAX)) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
+    if (*closedStream_(id)) return nullptr;
     if (StreamID::server(id) == m_isServer) return nullptr;
     return acceptPeerStream(id);
   }
@@ -5051,6 +5440,10 @@ private:
 	  noteInvalidStreamActivity_(TransportError::StreamState, true);
 	  return true;
 	}
+      } else if (*closedStream_(frame.streamID) &&
+	  canPeerSend_(frame.streamID)) {
+	noteInvalidStreamActivity_(TransportError::StreamState, true);
+	return true;
       }
     }
     StreamRef stream;
@@ -5132,6 +5525,68 @@ private:
     return false;
   }
 
+  static bool controlSupersedes_(const ControlFrame &frame,
+    const ControlFrame &queued) {
+    if (queued.type != frame.type ||
+	queued.streamID != frame.streamID ||
+	queued.streamType != frame.streamType)
+      return false;
+    switch (frame.type) {
+      case FrameType::MaxData:
+      case FrameType::MaxStreamData:
+      case FrameType::MaxStreams:
+      case FrameType::DataBlocked:
+      case FrameType::StreamDataBlocked:
+      case FrameType::StreamsBlocked:
+	return queued.value <= frame.value;
+      case FrameType::HandshakeDone:
+	return true;
+      default:
+	return false;
+    }
+  }
+  unsigned txDropSupersededControls_(const ControlFrame &frame) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC control queue GC outside Tx thread", return 0);
+    unsigned n = 0;
+    for (;;) {
+      ControlFrame drop;
+      {
+	auto iter = m_controlQueue.iter();
+	while (auto ptr = iter.ptr()) {
+	  if (!controlSupersedes_(frame, *ptr)) continue;
+	  drop = *ptr;
+	  break;
+	}
+      }
+      if (!drop) return n;
+      m_controlQueue.del(drop);
+      noteControlDequeued_(drop);
+      ++n;
+    }
+  }
+  unsigned txGCStaleControls_(unsigned budget = SentPkt::MaxFrames) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC control queue GC outside Tx thread", return 0);
+    if (!budget) return 0;
+    if (budget > SentPkt::MaxFrames) budget = SentPkt::MaxFrames;
+    ControlFrame stale[SentPkt::MaxFrames];
+    unsigned n = 0;
+    {
+      auto iter = m_controlQueue.iter();
+      while (n < budget) {
+	ControlFrame frame = iter();
+	if (!frame) break;
+	if (!controlStillValid_(frame)) stale[n++] = frame;
+      }
+    }
+    for (unsigned i = 0; i < n; ++i) {
+      m_controlQueue.del(stale[i]);
+      noteControlDequeued_(stale[i]);
+    }
+    return n;
+  }
+
   bool controlStillValid_(const ControlFrame &frame) const {
     switch (frame.type) {
       case FrameType::MaxData:
@@ -5157,11 +5612,13 @@ private:
       case FrameType::ResetStream: {
 	StreamRef stream = findStream(int64_t(frame.streamID));
 	return stream && stream->resetSent() &&
+	  !stream->resetAckd() &&
 	  frame.value == stream->txBytes();
       }
       case FrameType::StopSending: {
 	StreamRef stream = findStream(int64_t(frame.streamID));
 	return stream && stream->stopSent() &&
+	  !stream->stopAckd() &&
 	  !stream->resetReceived() && !stream->rxComplete();
       }
       case FrameType::PathChallenge:
@@ -5219,6 +5676,128 @@ private:
     queueFlowUpdate_(FlowUpdate{FrameType::MaxStreams, 0, limit.limit(), type});
   }
 
+  bool txClosed_(const Stream *stream) const {
+    if (!canLocalSend_(uint64_t(stream->id()))) return true;
+    if (stream->resetSent()) return stream->resetAckd();
+    if (!stream->finSent()) return false;
+    return stream->finDequeued() && !stream->txUnackdCount();
+  }
+  bool rxClosed_(const Stream *stream) const {
+    if (!canPeerSend_(uint64_t(stream->id()))) return true;
+    return stream->rxComplete() || stream->resetReceived();
+  }
+  bool streamReapable_(const Stream *stream) const {
+    if (!stream || stream->id() < 0) return false;
+    if (stream->refCount() > 1) return false;
+    if (stream->txQueued() || stream->txRangeCount() ||
+	stream->txBufferedBytes() || stream->txUnackdCount() ||
+	stream->rxPending() || stream->rxQueued())
+      return false;
+    if (!rxClosed_(stream) || !txClosed_(stream)) return false;
+    if (!streamCreditSettled_(stream))
+      return false;
+    return true;
+  }
+  bool streamCreditSettled_(const Stream *stream) const {
+    uint64_t id = uint64_t(stream->id());
+    if (localInitiated_(id, m_isServer)) return true;
+    if (stream->streamCreditReturned()) return true;
+    Zi::StreamType::T type =
+      StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
+    return peerLimit_(type).limit() >= MaxStreamCount;
+  }
+  void recordClosedStream_(const Stream *stream) {
+    if (!stream || stream->id() < 0) return;
+    uint64_t id = uint64_t(stream->id());
+    ClosedStream closed;
+    closed.id = id;
+    closed.finalSize = stream->finalSize();
+    closed.seqNo = ++m_closedStreamSeq;
+    closed.finalSizeKnown = stream->rxComplete() || stream->resetReceived();
+    closed.resetReceived = stream->resetReceived();
+    closed.rxComplete = stream->rxComplete();
+    closed.resetSent = stream->resetSent();
+    closed.finDequeued = stream->finDequeued();
+    closed.streamCreditReturned = stream->streamCreditReturned();
+    m_closedStreams.del(id);
+    m_closedStreams.add(closed);
+    trimClosedStreams_();
+  }
+  void trimClosedStreams_() {
+    while (m_closedStreams.count_() > ClosedStreamMax) {
+      auto i = m_closedStreams.iter();
+      ClosedStream *old = nullptr;
+      while (auto node = i()) {
+	ClosedStream *closed = &node->data();
+	if (!old || closed->seqNo < old->seqNo) old = closed;
+      }
+      if (!old) return;
+      m_closedStreams.del(old->id);
+    }
+  }
+  ClosedStream closedStream_(uint64_t id) const {
+    return m_closedStreams.findVal(id);
+  }
+  unsigned gcStreams_(unsigned budget = RecoveryScanBatch) {
+    unsigned n = 0;
+    auto i = m_streams.iter();
+    while (n < budget) {
+      auto node = i();
+      if (!node) break;
+      Stream *stream = &node->data();
+      if (!streamReapable_(stream)) continue;
+      recordClosedStream_(stream);
+      (void)i.del();
+      ++n;
+    }
+    return n;
+  }
+  bool closedFrameFinalSizeOK_(const ClosedStream &closed,
+    uint64_t offset, uint64_t length, bool fin) const {
+    if (!closed.finalSizeKnown) return false;
+    uint64_t end = offset + length;
+    if (end < offset || end > closed.finalSize) return false;
+    return !fin || end == closed.finalSize;
+  }
+  bool receiveClosedStream_(const Frame &frame) {
+    if (frame.type != FrameType::Stream) return false;
+    if (frame.streamID > uint64_t(INT64_MAX)) {
+      noteInvalidStreamActivity_(TransportError::StreamState);
+      return false;
+    }
+    ClosedStream closed = closedStream_(frame.streamID);
+    if (!*closed) {
+      noteInvalidStreamActivity_(TransportError::StreamState);
+      return false;
+    }
+    if (!closedFrameFinalSizeOK_(
+	  closed, frame.offset, frame.length, frame.fin)) {
+      noteInvalidStreamActivity_(TransportError::FinalSize, true, true);
+      return false;
+    }
+    noteInvalidStreamActivity_(TransportError::StreamState, true);
+    return true;
+  }
+  int receiveClosedControl_(const Frame &frame) {
+    if (frame.streamID > uint64_t(INT64_MAX)) return 0;
+    ClosedStream closed = closedStream_(frame.streamID);
+    if (!*closed) return 0;
+    switch (frame.type) {
+      case FrameType::ResetStream:
+	if (closed.finalSizeKnown && frame.length == closed.finalSize) {
+	  noteInvalidStreamActivity_(TransportError::StreamState, true);
+	  return 1;
+	}
+	noteInvalidStreamActivity_(TransportError::FinalSize, true, true);
+	return -1;
+      case FrameType::StopSending:
+	noteInvalidStreamActivity_(TransportError::StreamState, true);
+	return 1;
+      default:
+	return 0;
+    }
+  }
+
   StreamRef newStream_(int64_t id) {
     auto node = new typename Streams::Node{impl(), id};
     StreamRef stream{node};
@@ -5270,6 +5849,9 @@ private:
   StreamLimit	m_peerBidiLimit{uint64_t(INT64_MAX) >> 2};
   StreamLimit	m_peerUniLimit{uint64_t(INT64_MAX) >> 2};
   Streams	m_streams;
+  ClosedStreams	m_closedStreams{
+    ZmHashParams().bits(8).loadFactor(1).cBits(3)};
+  uint64_t	m_closedStreamSeq = 0;
 
   // Tx thread exclusive
   FlowCredit	m_txDataCredit;
@@ -5414,6 +5996,7 @@ private:
 
   // Tx thread exclusive
   CryptoStream		m_txCrypto[3];
+  CryptoTxPQueue m_txCryptoUnackd[3];
   TrafficSecret		m_txTrafficSecrets[3];
   PktProtState		m_txProt[3];
   ZmRef<ZiIOBuf>	m_coalesceInitial;
@@ -5422,7 +6005,7 @@ private:
   NewReno		m_congestion;
   uint64_t		m_txRuntimeGen = 0;
   uint64_t		m_txPN[3]{};
-  uint64_t		m_txLargestAcked[3]{
+  uint64_t		m_txLargestAckd[3]{
     uint64_t(-1), uint64_t(-1), uint64_t(-1)};
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
@@ -7065,7 +7648,8 @@ private:
 
   void retiredLocalCID_(uint64_t, const CxnID &id) {
     if (app())
-      static_cast<Server<App, Impl> *>(app())->dissociateRoute_(id);
+      static_cast<Server<App, Impl> *>(app())->dissociateRoute_(
+	id, Base::retiredCIDRouteGC_());
   }
 
   // Rx thread exclusive

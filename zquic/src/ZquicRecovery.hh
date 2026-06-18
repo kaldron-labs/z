@@ -34,11 +34,6 @@ inline constexpr ZuTime timePow2(ZuTime t, unsigned n)
   return ZuTime{ZuTime::Nano{t.nanosecs() << n}};
 }
 
-inline constexpr ZuTime timeMul(ZuTime t, uint64_t n)
-{
-  return ZuTime{ZuTime::Nano{t.nanosecs() * n}};
-}
-
 inline constexpr ZuTime timeDiv(ZuTime t, uint64_t n)
 {
   return ZuTime{ZuTime::Nano{t.nanosecs() / n}};
@@ -50,6 +45,7 @@ class AckTracker :
   public ZmPQRx<AckTracker, PktRxPQueue, AckTrackerRxNTP> {
 public:
   static constexpr unsigned Max = 64;
+  static constexpr unsigned MaxRetained = Max + 1;
   using Queue = PktRxPQueue;
   using Rx = ZmPQRx<AckTracker, Queue, AckTrackerRxNTP>;
   using Msg = Queue::Node;
@@ -62,6 +58,7 @@ public:
   bool add(uint64_t pn) {
     if (contains(pn)) return true;
     Rx::rcvd(new Queue::Node{RxPktMark{pn}});
+    trimSparseRanges_();
     return true;
   }
 
@@ -160,7 +157,16 @@ public:
   void clear() {
     Rx::rxReset(0);
     m_ackHead = 0;
+    m_ackBase = 0;
     m_ackGap = {};
+  }
+
+  void ackdByPeer(uint64_t largest) {
+    if (m_ackBase <= largest && m_ackHead > m_ackBase) {
+      uint64_t base =
+	ZuCmp<uint64_t>::null(largest) ? largest : largest + 1;
+      m_ackBase = base < m_ackHead ? base : m_ackHead;
+    }
   }
 
   Queue *rxQueue() { return &m_packets; }
@@ -188,10 +194,57 @@ private:
     m_ackGap = gap.length() ? gap : Span{};
   }
 
+  bool delRange_(uint64_t first, uint64_t largest) {
+    bool changed = false;
+    auto iter = m_packets.iter(first);
+    while (auto node = iter()) {
+      uint64_t pn = node->data().pn;
+      if (pn > largest) break;
+      (void)iter.del();
+      changed = true;
+    }
+    if (changed) refreshGap_();
+    return changed;
+  }
+
+  bool delThrough_(uint64_t largest) {
+    return delRange_(0, largest);
+  }
+
+  bool firstSparseRange_(AckRange &range) const {
+    Span ackGap = m_ackGap;
+    uint64_t gapEnd = 0;
+    bool haveGap =
+      ackGap.length() && Queue::endOf(ackGap.key(), ackGap.length(), gapEnd);
+    bool found = false;
+    (void)m_packets.spans([&range, haveGap, gapEnd, &found](
+	const auto &span) {
+      uint64_t first = span.key();
+      uint64_t end = 0;
+      if (!Queue::endOf(first, span.length(), end)) return false;
+      if (haveGap && first < gapEnd) {
+	if (end <= gapEnd) return true;
+	first = gapEnd;
+      }
+      range = AckRange{end - 1, first};
+      found = true;
+      return false;
+    });
+    return found;
+  }
+
+  void trimSparseRanges_() {
+    while (count() > MaxRetained) {
+      AckRange range;
+      if (!firstSparseRange_(range)) return;
+      if (!delRange_(range.first, range.largest)) return;
+    }
+  }
+
   template <typename L>
   bool ranges_(L &&l) const {
-    if (m_ackHead)
-      if (!l(AckRange{m_ackHead - 1, 0})) return false;
+    if (m_ackHead > m_ackBase)
+      if (!l(AckRange{m_ackHead - 1, m_ackBase})) return false;
     Span ackGap = m_ackGap;
     uint64_t gapEnd = 0;
     bool haveGap =
@@ -211,6 +264,7 @@ private:
   Queue		m_packets{0};
   Span		m_ackGap;
   uint64_t	m_ackHead = 0;
+  uint64_t	m_ackBase = 0;
   DequeueFn	m_dequeueFn;
 };
 
@@ -313,9 +367,9 @@ public:
     unsigned i = space;
     return m_ack[i].writeFrame(out, len, delay, ecn ? &m_ecn[i] : nullptr);
   }
-  void sent(PktSpace::T space, uint64_t gen = uint64_t(-1)) {
+  void sent(PktSpace::T space, uint64_t gen = ZuCmp<uint64_t>::null()) {
     unsigned i = space;
-    if (gen != uint64_t(-1) && gen != m_gen[i]) return;
+    if (!ZuCmp<uint64_t>::null(gen) && gen != m_gen[i]) return;
     m_pending[i] = false;
     m_ackEliciting[i] = false;
     m_immediate[i] = false;
@@ -382,8 +436,8 @@ public:
       return;
     }
     ZuTime diff = m_smoothed > rtt ? m_smoothed - rtt : rtt - m_smoothed;
-    m_variance = timeDiv(timeMul(m_variance, 3) + diff, 4);
-    m_smoothed = timeDiv(timeMul(m_smoothed, 7) + rtt, 8);
+    m_variance = (m_variance * ZuDecimal{3} + diff) / ZuDecimal{4};
+    m_smoothed = (m_smoothed * ZuDecimal{7} + rtt) / ZuDecimal{8};
   }
 
   ZuTime pto(ZuTime maxAckDelay) const {
@@ -399,8 +453,9 @@ public:
     if (!*rtt) rtt = m_min;
     if (!*rtt) rtt = InitialRTT;
     if (*m_min && m_min > rtt) rtt = m_min;
-    ZuTime threshold = timeDiv(timeMul(rtt, TimeThresholdNumerator),
-      TimeThresholdDenominator);
+    ZuTime threshold =
+      (rtt * ZuDecimal{TimeThresholdNumerator}) /
+	ZuDecimal{TimeThresholdDenominator};
     return threshold < Granularity ? Granularity : threshold;
   }
 
@@ -428,10 +483,10 @@ public:
   void sent(unsigned bytes, bool inFlight = true) {
     if (inFlight) m_bytesInFlight += bytes;
   }
-  void acked(unsigned bytes) {
-    acked(bytes, false);
+  void ackd(unsigned bytes) {
+    ackd(bytes, false);
   }
-  void acked(unsigned bytes, bool pmtudProbe) {
+  void ackd(unsigned bytes, bool pmtudProbe) {
     if (bytes > m_bytesInFlight) m_bytesInFlight = 0;
     else m_bytesInFlight -= bytes;
     if (pmtudProbe) return;
@@ -486,6 +541,7 @@ struct SentFrameRef {
   TxRange		range;
 
   bool operator !() const { return kind == SentFrameKind::None; }
+  ZuOpBool
 
   static SentFrameRef stream(uint64_t id, const TxRange &range_, bool fin_) {
     SentFrameRef ref;
@@ -585,6 +641,7 @@ struct SentFrameKey {
     offset{ref.offset}, length{ref.length}, value{ref.value}, fin{ref.fin} { }
 
   bool operator !() const { return kind == SentFrameKind::None; }
+  ZuOpBool
   bool operator ==(const SentFrameKey &o) const {
     return kind == o.kind && controlType == o.controlType &&
       streamID == o.streamID && offset == o.offset &&
@@ -659,7 +716,7 @@ ZuDerive(SentFrameAckHash,
   (ZmHash<SentFrameKey,
     ZmHashNode<SentFrameKey,
       ZmHashKey<SentFrameKey_IDAxor,
-	ZmHashHeapID<"Zquic.Pkt.AckedFrame">>>>));
+	ZmHashHeapID<"Zquic.Pkt.AckdFrame">>>>));
 
 struct SentPkt {
   static constexpr unsigned MaxFrames = 8;
@@ -692,9 +749,11 @@ struct SentPkt {
   bool		inFlight = false;
   bool		pmtudProbe = false;
   unsigned	pmtudSize = 0;
-  bool		acked = false;
+  bool		ackd = false;
   bool		lost = false;
   bool		ptoReclaimed = false;
+  uint8_t	ackLevel = 3;
+  uint64_t	ackLargest = 0;
   SentFrameRef	frames[MaxFrames];
   unsigned	frameCount = 0;
 };
@@ -702,20 +761,25 @@ struct SentPkt {
 using TxPkt = SentPkt;
 
 struct PktTxUpdate {
-  void acked(const SentPkt &p) {
+  static constexpr unsigned MaxFrames = 64;
+
+  void ackd(const SentPkt &p) {
+    ackdAck_(p);
+    ackdFrames_(p);
     if (p.lost) {
-      ++lateAcked;
+      ++lateAckd;
       return;
     }
-    ackedBytes += p.bytes;
+    ackdBytes += p.bytes;
     if (p.pmtudProbe) {
-      pmtudAckedBytes += p.bytes;
-      if (p.pmtudSize > pmtudAckedSize)
-	pmtudAckedSize = p.pmtudSize;
+      pmtudAckdBytes += p.bytes;
+      if (p.pmtudSize > pmtudAckdSize)
+	pmtudAckdSize = p.pmtudSize;
     } else
-      normalAckedBytes += p.bytes;
+      normalAckdBytes += p.bytes;
   }
   void lost(const SentPkt &p) {
+    lostFrames_(p);
     lostBytes += p.bytes;
     if (p.pmtudProbe) {
       pmtudLostBytes += p.bytes;
@@ -729,28 +793,50 @@ struct PktTxUpdate {
 	normalLostSentTime = p.sentTime;
     }
   }
+  void ackdAck_(const SentPkt &p) {
+    if (p.ackLevel >= 3) return;
+    if (!ackdAck[p.ackLevel] || p.ackLargest > ackLargest[p.ackLevel]) {
+      ackdAck[p.ackLevel] = true;
+      ackLargest[p.ackLevel] = p.ackLargest;
+    }
+  }
+  void ackdFrames_(const SentPkt &p) {
+    for (unsigned i = 0; i < p.framesUsed() && nAckdFrames < MaxFrames; ++i)
+      ackdFrames[nAckdFrames++] = p.frame(i);
+  }
+  void lostFrames_(const SentPkt &p) {
+    for (unsigned i = 0; i < p.framesUsed() && nLostFrames < MaxFrames; ++i)
+      lostFrames[nLostFrames++] = p.frame(i);
+  }
 
-  uint64_t	ackedBytes = 0;
-  uint64_t	lateAcked = 0;
-  uint64_t	normalAckedBytes = 0;
-  uint64_t	pmtudAckedBytes = 0;
-  unsigned	pmtudAckedSize = 0;
+  uint64_t	ackdBytes = 0;
+  CryptoLevel::T	level = CryptoLevel::Initial;
+  uint64_t	lateAckd = 0;
+  uint64_t	normalAckdBytes = 0;
+  uint64_t	pmtudAckdBytes = 0;
+  unsigned	pmtudAckdSize = 0;
   uint64_t	lostBytes = 0;
   uint64_t	normalLostBytes = 0;
   uint64_t	pmtudLostBytes = 0;
   unsigned	pmtudLostSize = 0;
   ZuTime	normalLostSentTime;
   ZuTime	pmtudLostSentTime;
+  bool		ackdAck[3] = {};
+  uint64_t	ackLargest[3] = {};
+  SentFrameRef	ackdFrames[MaxFrames];
+  SentFrameRef	lostFrames[MaxFrames];
+  unsigned	nAckdFrames = 0;
+  unsigned	nLostFrames = 0;
 };
 
 struct PktAckBatch {
   unsigned	range = 0;
   uint64_t	nextPN = 0;
-  uint64_t	largestAckedForLoss = 0;
-  uint64_t	latestAcked = 0;
-  unsigned	acked = 0;
+  uint64_t	largestAckdForLoss = 0;
+  uint64_t	latestAckd = 0;
+  unsigned	ackd = 0;
   bool		haveAckForLoss = false;
-  bool		haveAcked = false;
+  bool		haveAckd = false;
   ZuTime	latestSentTime;
 };
 
@@ -875,17 +961,17 @@ public:
   unsigned ack(
     const AckRange *ranges, unsigned nRanges, unsigned *lost = nullptr,
     unsigned packetThreshold = 3, ZuTime *latestSentTime = nullptr,
-    uint64_t *ackedBytes = nullptr, uint64_t *lostBytes = nullptr,
+    uint64_t *ackdBytes = nullptr, uint64_t *lostBytes = nullptr,
     ZuTime *lostSentTime = nullptr, PktTxUpdate *update = nullptr)
   {
     unsigned n = 0;
-    uint64_t ackedBytes_ = 0;
-    uint64_t largestAckedForLoss = 0;
-    uint64_t latestAcked = 0;
+    uint64_t ackdBytes_ = 0;
+    uint64_t largestAckdForLoss = 0;
+    uint64_t latestAckd = 0;
     bool haveAckForLoss = false;
-    bool haveAcked = false;
+    bool haveAckd = false;
     if (latestSentTime) *latestSentTime = ZuTime{0};
-    if (ackedBytes) *ackedBytes = 0;
+    if (ackdBytes) *ackdBytes = 0;
     if (lostBytes) *lostBytes = 0;
     if (lostSentTime) *lostSentTime = ZuTime{0};
     for (unsigned i = 0; i < nRanges; ++i) {
@@ -898,26 +984,26 @@ public:
 	bool wasLost = p.lost;
 	if (ack_(p)) {
 	  ++n;
-	  if (!wasLost) ackedBytes_ += p.bytes;
-	  if (update) update->acked(p);
-	  if (!haveAckForLoss || p.pn > largestAckedForLoss) {
-	    largestAckedForLoss = p.pn;
+	  if (!wasLost) ackdBytes_ += p.bytes;
+	  if (update) update->ackd(p);
+	  if (!haveAckForLoss || p.pn > largestAckdForLoss) {
+	    largestAckdForLoss = p.pn;
 	    haveAckForLoss = true;
 	  }
 	  if (!wasLost &&
-	      latestSentTime && (!haveAcked || p.pn > latestAcked)) {
-	    latestAcked = p.pn;
+	      latestSentTime && (!haveAckd || p.pn > latestAckd)) {
+	    latestAckd = p.pn;
 	    *latestSentTime = p.sentTime;
-	    haveAcked = true;
+	    haveAckd = true;
 	  }
 	}
       }
     }
     unsigned l = haveAckForLoss ?
       markPktThresholdLoss(
-	largestAckedForLoss, packetThreshold, lostBytes, lostSentTime,
+	largestAckdForLoss, packetThreshold, lostBytes, lostSentTime,
 	update) : 0;
-    if (ackedBytes) *ackedBytes = ackedBytes_;
+    if (ackdBytes) *ackdBytes = ackdBytes_;
     if (lost) *lost = l;
     return n;
   }
@@ -927,6 +1013,7 @@ public:
     unsigned budget, CryptoLevel::T level, PktTxUpdate *update = nullptr)
   {
     if (!budget) return false;
+    if (update) update->level = level;
     unsigned scanned = 0;
     while (batch.range < nRanges) {
       const AckRange &range = ranges[batch.range];
@@ -943,17 +1030,17 @@ public:
 	uint64_t nextPN = p.pn + 1;
 	bool wasLost = p.lost;
 	if (ack_(p)) {
-	  ++batch.acked;
-	  if (update) update->acked(p);
-	  if (!batch.haveAckForLoss || p.pn > batch.largestAckedForLoss) {
-	    batch.largestAckedForLoss = p.pn;
+	  ++batch.ackd;
+	  if (update) update->ackd(p);
+	  if (!batch.haveAckForLoss || p.pn > batch.largestAckdForLoss) {
+	    batch.largestAckdForLoss = p.pn;
 	    batch.haveAckForLoss = true;
 	  }
 	  if (!wasLost && level == CryptoLevel::OneRTT &&
-	      (!batch.haveAcked || p.pn > batch.latestAcked)) {
-	    batch.latestAcked = p.pn;
+	      (!batch.haveAckd || p.pn > batch.latestAckd)) {
+	    batch.latestAckd = p.pn;
 	    batch.latestSentTime = p.sentTime;
-	    batch.haveAcked = true;
+	    batch.haveAckd = true;
 	  }
 	}
 	if (++scanned >= budget) {
@@ -973,7 +1060,7 @@ public:
   }
 
   unsigned markPktThresholdLoss(
-    uint64_t largestAcked, unsigned threshold = 3,
+    uint64_t largestAckd, unsigned threshold = 3,
     uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr,
     PktTxUpdate *update = nullptr) {
     unsigned n = 0;
@@ -982,7 +1069,7 @@ public:
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
-      if (p.acked || p.lost || p.pn + threshold > largestAcked) continue;
+      if (p.ackd || p.lost || p.pn + threshold > largestAckd) continue;
       if (lose_(p)) {
 	++n;
 	if (lostBytes) *lostBytes += p.bytes;
@@ -995,7 +1082,7 @@ public:
   }
 
   bool markPktThresholdLossBatch(
-    uint64_t largestAcked, unsigned threshold, PktLossBatch &batch,
+    uint64_t largestAckd, unsigned threshold, PktLossBatch &batch,
     unsigned budget, PktTxUpdate *update = nullptr)
   {
     if (!budget) return false;
@@ -1004,7 +1091,7 @@ public:
     while (auto node = iter()) {
       SentPkt &p = node->data();
       batch.nextPN = p.pn + 1;
-      if (!p.acked && !p.lost && p.pn + threshold <= largestAcked &&
+      if (!p.ackd && !p.lost && p.pn + threshold <= largestAckd &&
 	  lose_(p)) {
 	++batch.lost;
 	if (update) update->lost(p);
@@ -1025,7 +1112,7 @@ public:
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
-      if (p.acked || p.lost || !*p.sentTime || p.sentTime > now ||
+      if (p.ackd || p.lost || !*p.sentTime || p.sentTime > now ||
 	  now - p.sentTime < threshold)
 	continue;
       if (lose_(p)) {
@@ -1048,7 +1135,7 @@ public:
     while (auto node = iter()) {
       SentPkt &p = node->data();
       batch.nextPN = p.pn + 1;
-      if (!p.acked && !p.lost && *p.sentTime && p.sentTime <= now &&
+      if (!p.ackd && !p.lost && *p.sentTime && p.sentTime <= now &&
 	  now - p.sentTime >= threshold && lose_(p)) {
 	++batch.lost;
 	if (update) update->lost(p);
@@ -1066,7 +1153,7 @@ public:
     unsigned scanned = 0;
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (!p.acked && !p.lost && p.inFlight && p.ackEliciting &&
+      if (!p.ackd && !p.lost && p.inFlight && p.ackEliciting &&
 	  *p.sentTime) {
 	ZuTime deadline = p.sentTime + threshold;
 	if (!have || deadline < out) {
@@ -1081,18 +1168,19 @@ public:
 
   uint64_t bytesInFlight() const { return m_bytesInFlight; }
   ZuTime latestAckSentTime() const { return m_latestAckSentTime; }
-  unsigned acked() const { return m_acked; }
+  unsigned ackd() const { return m_ackd; }
   unsigned lost() const { return m_lost; }
+  unsigned retainedLost() const { return m_retainedLost; }
   unsigned retransmittable() const { return m_retransmittable; }
   unsigned retransmitPending() const { return m_retransmit.count(); }
   unsigned retransmitDropped() const { return m_retransmit.dropped(); }
   bool nextRetransmit(SentFrameRef &frame) {
     while (m_retransmit.pop(frame))
-      if (!frameAcked_(frame) && !frameOutstanding_(frame)) return true;
+      if (!frameOutstanding_(frame)) return true;
     return false;
   }
   bool requeueRetransmit(const SentFrameRef &frame) {
-    if (frameAcked_(frame) || frameOutstanding_(frame)) return false;
+    if (frameOutstanding_(frame)) return false;
     return m_retransmit.push(frame);
   }
   unsigned reclaimOnPTO(unsigned limit) {
@@ -1103,7 +1191,7 @@ public:
 	auto node = iter();
 	if (!node) break;
 	SentPkt &p = node->data();
-	if (p.acked || p.lost || !p.inFlight || !p.ackEliciting ||
+	if (p.ackd || p.lost || !p.inFlight || !p.ackEliciting ||
 	    (!reclaimed && p.ptoReclaimed))
 	  continue;
 	Tx::resend(Span{p.pn, 1});
@@ -1117,15 +1205,55 @@ public:
     return n;
   }
   unsigned count() const { return m_packets.count_(); }
+  unsigned gcPackets(
+    unsigned budget = 256, ZuTime now = {}, ZuTime lostMaxAge = {},
+    unsigned lostMaxCount = 0) {
+    if (!budget) return 0;
+    unsigned n = 0;
+    unsigned scanned = 0;
+    bool wrapped = false;
+    while (scanned < budget) {
+      SentPkt p;
+      bool found = false;
+      {
+	auto iter = m_packets.iter(m_gcNextPN);
+	if (auto node = iter()) {
+	  p = node->data();
+	  found = true;
+	}
+      }
+      if (!found) {
+	if (wrapped || !m_gcNextPN) break;
+	m_gcNextPN = 0;
+	wrapped = true;
+	continue;
+      }
+      m_gcNextPN = p.pn + 1;
+      if (p.ackd && (p.lost || !m_retainedLost)) {
+	(void)m_packets.abort(p.pn);
+	++n;
+      } else if (p.lost && !p.ackd &&
+	  (lostOverCount_(lostMaxCount) ||
+	    lostOverAge_(p, now, lostMaxAge))) {
+	(void)m_packets.abort(p.pn);
+	if (m_retainedLost) --m_retainedLost;
+	++n;
+      }
+      ++scanned;
+    }
+    if (scanned < budget) m_gcNextPN = 0;
+    return n;
+  }
   void clear() {
     Tx::txReset(0);
     m_retransmit.clear();
-    m_ackedFrames.clean();
     m_bytesInFlight = 0;
     m_latestAckSentTime = {};
-    m_acked = 0;
+    m_ackd = 0;
     m_lost = 0;
+    m_retainedLost = 0;
     m_retransmittable = 0;
+    m_gcNextPN = 0;
   }
   bool persistentCongestion(ZuTime threshold, unsigned budget = 256) const {
     bool have = false;
@@ -1146,7 +1274,7 @@ public:
     scanned = 0;
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (p.acked && p.ackEliciting && !p.pmtudProbe &&
+      if (p.ackd && p.ackEliciting && !p.pmtudProbe &&
 	  p.sentTime >= first && p.sentTime <= last)
 	return false;
       if (++scanned >= budget) return false;
@@ -1156,21 +1284,22 @@ public:
 
 private:
   bool ack_(SentPkt &p) {
-    if (p.acked) return false;
-    p.acked = true;
-    ackFrames_(p);
+    if (p.ackd) return false;
+    p.ackd = true;
     if (p.lost) {
-      ++m_acked;
+      if (m_retainedLost) --m_retainedLost;
+      ++m_ackd;
       return true;
     }
     if (p.inFlight) release_(p);
-    ++m_acked;
+    ++m_ackd;
     return true;
   }
 
   bool lose_(SentPkt &p) {
-    if (p.acked || p.lost) return false;
+    if (p.ackd || p.lost) return false;
     p.lost = true;
+    ++m_retainedLost;
     if (p.inFlight) release_(p);
     if (p.ackEliciting && !p.pmtudProbe) {
       ++m_retransmittable;
@@ -1189,26 +1318,9 @@ private:
   void enqueueRetransmit_(const SentPkt &p) {
     for (unsigned i = 0; i < p.framesUsed(); ++i) {
       const SentFrameRef &frame = p.frame(i);
-      if (frameAcked_(frame) || frameOutstanding_(frame, &p)) continue;
+      if (frameOutstanding_(frame, &p)) continue;
       m_retransmit.push(frame);
     }
-  }
-
-  void ackFrames_(const SentPkt &p) {
-    for (unsigned i = 0; i < p.framesUsed(); ++i)
-      ackFrame_(p.frame(i));
-  }
-
-  void ackFrame_(const SentFrameRef &frame) {
-    if (!SentFrameKey::retransmittable(frame)) return;
-    SentFrameKey key{frame};
-    if (m_ackedFrames.findPtr(key)) return;
-    m_ackedFrames.add(key);
-  }
-
-  bool frameAcked_(const SentFrameRef &frame) const {
-    if (!SentFrameKey::retransmittable(frame)) return false;
-    return m_ackedFrames.findPtr(SentFrameKey{frame});
   }
 
   bool frameOutstanding_(
@@ -1218,22 +1330,30 @@ private:
     auto iter = m_packets.citer();
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (&p == skip || p.acked || p.lost || p.ptoReclaimed) continue;
+      if (&p == skip || p.ackd || p.lost || p.ptoReclaimed) continue;
       for (unsigned i = 0; i < p.framesUsed(); ++i)
 	if (SentFrameKey{p.frame(i)} == key) return true;
     }
     return false;
   }
+  bool lostOverCount_(unsigned maxCount) const {
+    return maxCount && m_retainedLost > maxCount;
+  }
+  static bool lostOverAge_(
+    const SentPkt &p, ZuTime now, ZuTime maxAge) {
+    return *now && *maxAge && *p.sentTime && now >= p.sentTime &&
+      now - p.sentTime >= maxAge;
+  }
 
   Queue		m_packets{0};
   RetransmitQueue m_retransmit;
-  SentFrameAckHash m_ackedFrames{
-    ZmHashParams().bits(8).loadFactor(1).cBits(3)};
   uint64_t	m_bytesInFlight = 0;
   ZuTime	m_latestAckSentTime;
-  unsigned	m_acked = 0;
+  unsigned	m_ackd = 0;
   unsigned	m_lost = 0;
+  unsigned	m_retainedLost = 0;
   unsigned	m_retransmittable = 0;
+  uint64_t	m_gcNextPN = 0;
 };
 
 using SentPktTracker = PktTxSpace;
