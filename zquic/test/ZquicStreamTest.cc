@@ -158,6 +158,22 @@ struct TestLink :
       });
     return ok ? n : 0;
   }
+  unsigned flushRecordedRefs(Zquic::SentFrameRef *refs, unsigned capacity) {
+    unsigned n = 0;
+    bool ok = Base::flushControlAndStreams_(
+      ZiSockAddr{},
+      [](Zquic::PktBuild &) { return true; },
+      [&](Zquic::PktBuild &build, ZiSockAddr,
+	  const typename Base::TxPktRefs &r) {
+	n = r.count();
+	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
+	Base::recordTxPkt_(
+	  Zquic::CryptoLevel::OneRTT, sentPkts, build.bytes(), r, true);
+	++sentPkts;
+	return true;
+      });
+    return ok ? n : 0;
+  }
   bool rebuildControl(
     const Zquic::SentFrameRef &ref, Zquic::Frame &frame) {
     Zquic::PktBuild build;
@@ -365,9 +381,6 @@ struct TestLink :
   void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
   Zquic::PathDiag pathDiag() const { return Base::pathDiag_(); }
   bool pathValidated() const { return Base::pathValidated_(); }
-  unsigned gcStreams(unsigned budget = Base::RecoveryScanBatch) {
-    return Base::gcStreamsForTest_(budget);
-  }
   unsigned gcControls(unsigned budget = Zquic::SentPkt::MaxFrames) {
     return Base::gcControlsForTest_(budget);
   }
@@ -1972,25 +1985,32 @@ void testStreamGC()
   live->fin();
   held.scheduleStream(live);
   Zquic::SentFrameRef refs[4];
-  ZuCHECK(held.flushSentRefs(refs, 4) == 1 && live->finDequeued(),
+  ZuCHECK(held.flushRecordedRefs(refs, 4) == 1 && live->finDequeued() &&
+      live->txUnackdCount(),
     "held stream terminal send setup failed");
-  ZuCHECK(!held.gcStreams() && held.findStream(int64_t(liveID)),
-    "stream GC reaped stream with external reference");
-  live = nullptr;
-  ZuCHECK(held.gcStreams() == 1 && !held.findStream(int64_t(liveID)) &&
-      held.closedStreams() == 1,
-    "stream GC did not reap terminal local stream");
+  ZuCHECK(held.findStream(int64_t(liveID)),
+    "stream was reaped before terminal ACK");
+  held.ackOnly(0);
+  ZuCHECK(!held.findStream(int64_t(liveID)) &&
+      held.closedStreams() == 1 &&
+      live && uint64_t(live->id()) == liveID,
+    "terminal ACK did not remove stream from active index");
+  held.cancelTimers();
 
   TestLink maxLink{&app};
   auto local = maxLink.stream(Zi::StreamType::Simplex);
   uint64_t localID = uint64_t(local->id());
   local->fin();
   maxLink.scheduleStream(local);
-  ZuCHECK(maxLink.flushSentRefs(refs, 4) == 1 && local->finDequeued(),
+  ZuCHECK(maxLink.flushRecordedRefs(refs, 4) == 1 && local->finDequeued() &&
+      local->txUnackdCount(),
     "closed MAX_STREAM_DATA setup failed");
   local = nullptr;
-  ZuCHECK(maxLink.gcStreams() == 1 && !maxLink.findStream(int64_t(localID)),
+  maxLink.ackOnly(0);
+  ZuCHECK(!maxLink.findStream(int64_t(localID)) &&
+      maxLink.closedStreams() == 1,
     "closed MAX_STREAM_DATA stream was not reaped");
+  maxLink.cancelTimers();
   uint8_t b[128];
   Zquic::Frame frame;
   int n = Zquic::FrameCodec::writeMaxStreamData(
@@ -2000,19 +2020,36 @@ void testStreamGC()
       maxLink.runtimeDiag().closedStreamFrames == 1,
     "closed MAX_STREAM_DATA after stream GC was not compact-handled");
 
+  TestLink ackLink{&app};
+  auto ackd = ackLink.stream(Zi::StreamType::Simplex);
+  uint64_t ackdID = uint64_t(ackd->id());
+  ackd->fin();
+  ackLink.scheduleStream(ackd);
+  ZuCHECK(ackLink.flushRecordedRefs(refs, 4) == 1 && ackd->finDequeued() &&
+      ackd->txUnackdCount(),
+    "ACK-driven stream GC setup failed");
+  ackd = nullptr;
+  ZuCHECK(ackLink.findStream(int64_t(ackdID)),
+    "stream was reaped before FIN ACK");
+  ackLink.ackOnly(0);
+  ZuCHECK(!ackLink.findStream(int64_t(ackdID)) &&
+      ackLink.closedStreams() == 1,
+    "ACK processing did not reap terminal local stream");
+  ackLink.cancelTimers();
+
   TestLink rxLink{&app, true};
   unsigned used = 0;
   auto packet = streamPkt_(2, 0, "", true, frame, used);
   ZuCHECK(packet && rxLink.receiveFrame(frame, packet) == 0,
     "peer unidirectional stream GC setup failed");
-  ZmRef<TestStream> rx = rxLink.findStream(2);
+  ZmRef<TestStream> rx = rxLink.lastStream;
   ZuCHECK(rx && rx->rxComplete(),
     "peer unidirectional stream did not reach terminal receive state");
+  ZuCHECK(!rxLink.findStream(2) &&
+      rxLink.closedStreams() == 1,
+    "terminal FIN did not remove peer stream from active index");
   rxLink.lastStream = nullptr;
   rx = nullptr;
-  ZuCHECK(rxLink.gcStreams() == 1 && !rxLink.findStream(2) &&
-      rxLink.closedStreams() == 1,
-    "stream GC did not reap terminal peer stream");
   packet = streamPkt_(2, 0, "", true, frame, used);
   ZuCHECK(packet && rxLink.receiveFrame(frame, packet) == 0 &&
       rxLink.runtimeDiag().closedStreamFrames == 1,
