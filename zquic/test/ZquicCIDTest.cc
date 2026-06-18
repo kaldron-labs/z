@@ -103,6 +103,28 @@ void testCxnRouterExpiryGC()
     "retired route did not expire at deadline");
 }
 
+void testCxnRouterNextGC()
+{
+  ZuTestScope(testCxnRouterNextGC);
+
+  TestRouteLink link;
+  Zquic::CxnRouter<TestRouteLink> router;
+  Zquic::CxnID late{"late0001"};
+  Zquic::CxnID early{"early001"};
+
+  ZuCHECK(router.add(late, 1, &link) &&
+      router.retire(late, Zquic::timeUS(9000)),
+    "late retired route setup failed");
+  ZuCHECK(router.add(early, 2, &link) &&
+      router.retire(early, Zquic::timeUS(4000)),
+    "early retired route setup failed");
+  ZuCHECK(router.nextGCTime(Zquic::timeUS(3000)) == Zquic::timeUS(4000),
+    "route GC did not select earliest cleanup deadline");
+  ZuCHECK(router.gcRoutes(Zquic::timeUS(4000)) == 1 &&
+      router.nextGCTime(Zquic::timeUS(4000)) == Zquic::timeUS(9000),
+    "route GC did not advance to next cleanup deadline");
+}
+
 void testStatelessReset()
 {
   ZuTestScope(testStatelessReset);
@@ -276,6 +298,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCxnRouter);
   ZuTestCall(testCxnRouterGC);
   ZuTestCall(testCxnRouterExpiryGC);
+  ZuTestCall(testCxnRouterNextGC);
   ZuTestCall(testStatelessReset);
   ZuTestCall(testVariableShortCIDRouteMatch);
   ZuTestCall(testCxnIDGen);

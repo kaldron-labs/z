@@ -351,6 +351,19 @@ public:
   }
 
   unsigned count() const { return m_routes->count_(); }
+  ZuTime nextGCTime(
+    ZuTime now = {}, CxnState::T state = CxnState::Retired) const {
+    ZuTime next;
+    auto i = m_routes->citer();
+    while (auto node = i()) {
+      const auto &route = *node->val();
+      if (route.state != state || !*route.gcTime ||
+	  (*now && route.gcTime <= now))
+	continue;
+      if (!*next || route.gcTime < next) next = route.gcTime;
+    }
+    return next;
+  }
   unsigned gcRoutes(
     ZuTime now = {}, unsigned retiredMax = RetiredMax,
     unsigned tombstoneMax = TombstoneMax) {
@@ -1327,6 +1340,7 @@ friend class SrvLink;
   }
 
   void close_() {
+    cancelRouteGCTimer_();
     clearLinks_();
     m_endpoint.closeUDP(Endpoint::CloseFn{});
   }
@@ -1379,10 +1393,32 @@ friend class SrvLink;
     return m_endpoint.send(ZuMv(buf), ZuMv(addr));
   }
   void dissociateRoute_(const CxnID &id, ZuTime gcTime = {}) {
-    m_routes.retire(id, gcTime);
+    if (m_routes.retire(id, gcTime)) scheduleRouteGCTimer_(gcTime);
   }
 
 private:
+  void scheduleRouteGCTimer_(ZuTime out) {
+    if (!*out || !this->mx()) return;
+    if (m_routeGCTimer && *m_routeGCDeadline && m_routeGCDeadline <= out)
+      return;
+    m_routeGCDeadline = out;
+    this->mx()->run(this->rxThread(),
+      [this]() { routeGCTimeout_(); },
+      out, ZmScheduler::Update, &m_routeGCTimer);
+  }
+  void cancelRouteGCTimer_() {
+    if (this->mx()) this->mx()->del(&m_routeGCTimer);
+    m_routeGCDeadline = {};
+  }
+  void routeGCTimeout_() {
+    ZiAssert(this->rxInvoked(), "Zquic", (),
+      "QUIC route GC outside Rx thread", return);
+    m_routeGCDeadline = {};
+    ZuTime now = Zm::now();
+    m_routes.gcRoutes(now);
+    scheduleRouteGCTimer_(m_routes.nextGCTime(now));
+  }
+
   void txDrained_() {
     auto links = m_links;
     auto i = links->citer();
@@ -1480,6 +1516,7 @@ private:
   }
 
   void clearLinks_() {
+    cancelRouteGCTimer_();
     auto i = m_links->citer();
     while (auto node = i()) {
       auto entry = node->val();
@@ -1513,6 +1550,8 @@ private:
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;
+  ZmScheduler::Timer	m_routeGCTimer;
+  ZuTime		m_routeGCDeadline;
 };
 
 template <typename Link_, typename Impl, typename TxBufAlloc_>
@@ -2479,6 +2518,7 @@ protected:
     uint64_t			sequence = 0;
     ResetToken	resetToken;
     CxnState::T		state = CxnState::Tombstone;
+    ZuTime			cleanup;
     bool			associated = false;
   };
   struct PathState {
@@ -3405,6 +3445,7 @@ protected:
     if (!cid || cid->state == CxnState::Tombstone) return false;
     id = cid->id;
     cid->state = CxnState::Retired;
+    cid->cleanup = retiredCIDRouteGC_();
     cid->associated = false;
     return true;
   }
@@ -3516,6 +3557,7 @@ protected:
     CIDs &cids, const CxnID &id, uint64_t sequence,
     const ResetToken &resetToken, bool local) {
     if (!id.length()) return false;
+    if (!local && !peerCIDTokenUnique_(cids, id, resetToken)) return false;
     if (auto cid = findCID_(cids, sequence)) {
       if (!(cid->id == id)) return false;
       if (resetToken.valid() && cid->resetToken.valid() &&
@@ -3523,6 +3565,7 @@ protected:
 	return false;
       cid->resetToken = resetToken;
       cid->state = CxnState::Active;
+      cid->cleanup = {};
       return true;
     }
     if (auto cid = findCID_(cids, id)) {
@@ -3532,6 +3575,7 @@ protected:
 	return false;
       cid->resetToken = resetToken;
       cid->state = CxnState::Active;
+      cid->cleanup = {};
       return true;
     }
     unsigned active = 0;
@@ -3548,14 +3592,28 @@ protected:
     if (!slot && cids.length() < limit)
       slot = cids.push();
     if (!slot) return false;
-    *slot = LinkCID{id, sequence, resetToken, CxnState::Active, false};
+    *slot = LinkCID{id, sequence, resetToken, CxnState::Active, {}, false};
+    return true;
+  }
+  template <typename CIDs>
+  bool peerCIDTokenUnique_(
+    const CIDs &cids, const CxnID &id, const ResetToken &resetToken) const {
+    if (!resetToken.valid()) return true;
+    for (const auto &cid : cids) {
+      if (cid.state == CxnState::Tombstone ||
+	  !cid.resetToken.valid() || !(cid.resetToken == resetToken))
+	continue;
+      if (!(cid.id == id)) return false;
+    }
     return true;
   }
   void retirePeerCIDsPriorTo_(uint64_t sequence) {
     m_peerRetirePriorTo = sequence;
     for (auto &cid : m_peerCIDs)
-      if (cid.state == CxnState::Active && cid.sequence < sequence)
+      if (cid.state == CxnState::Active && cid.sequence < sequence) {
 	cid.state = CxnState::Retired;
+	cid.cleanup = retiredCIDRouteGC_();
+      }
   }
 
   const CxnID &runtimeCID_(RuntimeCID::T cid) const {
