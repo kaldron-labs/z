@@ -346,8 +346,8 @@ void testTxUnackdRangeQueue()
   ZuCHECK(q.add(new Zquic::StreamTxPQueue::Node{
 	Zquic::TxUnackdRange{10, 10}}) == ZmPQResult::Inserted,
     "stream unackd range insert failed");
-  ZuCHECK(q.subtract(13, 4),
-    "stream unackd range middle subtract failed");
+  ZuCHECK(q.clear(13, 4),
+    "stream unackd range middle clear failed");
 
   ZmRef<Zquic::StreamTxPQueue::Node> head = q.find(10);
   ZmRef<Zquic::StreamTxPQueue::Node> tail = q.find(17);
@@ -359,14 +359,14 @@ void testTxUnackdRangeQueue()
       q.count_() == 2 &&
       q.length_() == 6 &&
       q.verify(),
-    "stream unackd range subtract did not split retained ranges");
+    "stream unackd range clear did not split retained ranges");
 
-  ZuCHECK(q.subtract(10, 3) &&
+  ZuCHECK(q.clear(10, 3) &&
       !q.find(10) &&
       q.count_() == 1 &&
       q.length_() == 3 &&
       q.verify(),
-    "stream unackd range exact subtract failed");
+    "stream unackd range exact clear failed");
 }
 
 void testTxUnackdFinSentinel()
@@ -378,7 +378,7 @@ void testTxUnackdFinSentinel()
 	Zquic::TxUnackdRange{20, 5, true}}) == ZmPQResult::Inserted &&
       dataFin.length_() == 6,
     "stream unackd data+FIN range insert failed");
-  ZuCHECK(dataFin.subtract(20, 5) &&
+  ZuCHECK(dataFin.clear(20, 5) &&
       dataFin.count_() == 1 &&
       dataFin.length_() == 1,
     "stream unackd data ACK did not leave FIN sentinel");
@@ -388,19 +388,19 @@ void testTxUnackdFinSentinel()
       fin->data().bytes == 0 &&
       fin->data().fin,
     "stream unackd FIN sentinel has wrong offset/state");
-  ZuCHECK(dataFin.subtract(25, 1) &&
+  ZuCHECK(dataFin.clear(25, 1) &&
       !dataFin.count_() &&
       !dataFin.length_() &&
       dataFin.verify(),
-    "stream unackd FIN sentinel subtract failed");
+    "stream unackd FIN sentinel clear failed");
 
   Zquic::StreamTxPQueue finOnly{0};
   ZuCHECK(finOnly.add(new Zquic::StreamTxPQueue::Node{
 	Zquic::TxUnackdRange{30, 0, true}}) == ZmPQResult::Inserted &&
-      finOnly.subtract(30, 1) &&
+      finOnly.clear(30, 1) &&
       !finOnly.count_() &&
       finOnly.verify(),
-    "stream unackd FIN-only range subtract failed");
+    "stream unackd FIN-only range clear failed");
 }
 
 int main(int argc, char **argv)
