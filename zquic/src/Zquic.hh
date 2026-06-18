@@ -2395,7 +2395,9 @@ public:
       }
       maybeExtendMaxData_();
       maybeExtendMaxStreamData_(stream);
+      returnStreamCredit_(stream);
       impl()->streamResetReceived(stream, frame.errorCode, frame.length);
+      reapStream_(stream.ptr());
       return 0;
     }
     if (stream->resetSent() || stream->finDequeued()) {
@@ -2426,6 +2428,7 @@ public:
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       impl()->streamData(stream, frame.offset, frame.payload, frame.fin);
+      if (frame.fin) reapStream_(stream.ptr());
     } else {
       TransportError::T error = stream->rxComplete() || stream->resetReceived() ?
 	TransportError::StreamState : TransportError::FinalSize;
@@ -2437,11 +2440,14 @@ public:
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx dequeue processing outside Rx thread", return);
     if (!stream) return;
+    bool wasRxQueued = stream->rxPending() || stream->rxQueued();
     int rc = stream->processRx_();
     if (rc >= 0) {
       maybeExtendMaxData_();
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
+      if (wasRxQueued && !stream->rxPending() && !stream->rxQueued())
+	reapStream_(stream.ptr());
       return;
     }
     TransportError::T error = stream->rxComplete() || stream->resetReceived() ?
@@ -2577,9 +2583,6 @@ protected:
 
   unsigned scheduledStreamCount_() const {
     return m_streamQueue.count_();
-  }
-  unsigned gcStreamsForTest_(unsigned budget = RecoveryScanBatch) {
-    return gcStreams_(budget);
   }
   unsigned gcControlsForTest_(unsigned budget = SentPkt::MaxFrames) {
     return txGCStaleControls_(budget);
@@ -4809,10 +4812,30 @@ nextSpace:
 
   void applyAckUpdateTx_(const PktTxUpdate &update, bool &congestionOpened) {
     applyAckOfAckTx_(update);
-    for (unsigned i = 0; i < update.nAckdFrames; ++i)
-      (void)ackTxFrame_(
-	update.level, update.ackdFrames[i],
-	static_cast<Stream *>(update.ackdOwners[i]));
+    for (unsigned i = 0; i < update.nAckdFrames; ++i) {
+      const SentFrameRef &ref = update.ackdFrames[i];
+      Stream *stream = static_cast<Stream *>(update.ackdOwners[i]);
+      StreamRef streamRef;
+      if (!stream &&
+	  (ref.kind == SentFrameKind::Stream ||
+	    ref.kind == SentFrameKind::Control) &&
+	  ref.streamID <= uint64_t(INT64_MAX)) {
+	streamRef = findStream(int64_t(ref.streamID));
+	stream = streamRef.ptr();
+      }
+      if (ackTxFrame_(update.level, ref, stream))
+	switch (ref.kind) {
+	  case SentFrameKind::Stream:
+	    if (ref.fin) reapStream_(stream);
+	    break;
+	  case SentFrameKind::Control:
+	    if (ref.controlType == FrameType::ResetStream)
+	      reapStream_(stream);
+	    break;
+	  default:
+	    break;
+	}
+    }
     if (update.normalAckdBytes) {
       m_congestion.ackd(update.normalAckdBytes);
       congestionOpened = true;
@@ -5942,7 +5965,6 @@ private:
   }
   bool streamReapable_(const Stream *stream) const {
     if (!stream || stream->id() < 0) return false;
-    if (stream->refCount() > 1) return false;
     if (stream->txQueued() || stream->txRangeCount() ||
 	stream->txBufferedBytes() || stream->txUnackdCount() ||
 	stream->rxPending() || stream->rxQueued())
@@ -5951,6 +5973,12 @@ private:
     if (!streamCreditSettled_(stream))
       return false;
     return true;
+  }
+  bool reapStream_(Stream *stream) {
+    if (!streamReapable_(stream)) return false;
+    int64_t id = stream->id();
+    recordClosedStream_(stream);
+    return m_streams.del(id);
   }
   bool streamCreditSettled_(const Stream *stream) const {
     uint64_t id = uint64_t(stream->id());
@@ -5991,20 +6019,6 @@ private:
   }
   ClosedStream closedStream_(uint64_t id) const {
     return m_closedStreams.findVal(id);
-  }
-  unsigned gcStreams_(unsigned budget = RecoveryScanBatch) {
-    unsigned n = 0;
-    auto i = m_streams.iter();
-    while (n < budget) {
-      auto node = i();
-      if (!node) break;
-      Stream *stream = &node->data();
-      if (!streamReapable_(stream)) continue;
-      recordClosedStream_(stream);
-      (void)i.del();
-      ++n;
-    }
-    return n;
   }
   bool closedFrameFinalSizeOK_(const ClosedStream &closed,
     uint64_t offset, uint64_t length, bool fin) const {
