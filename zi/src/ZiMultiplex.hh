@@ -43,6 +43,9 @@
 
 #if defined(ZDEBUG) && !defined(ZiMultiplex_DEBUG)
 #define ZiMultiplex_DEBUG	// enable testing / debugging
+#if !defined(ZiMultiplex_FILTER)
+#define ZiMultiplex_FILTER	// enable traffic filtering
+#endif
 #endif
 
 #ifdef ZiMultiplex_DEBUG
@@ -88,7 +91,7 @@ struct ZiDebugBuf : public ZiDebugBuf_ {
 class ZiConnection;
 class ZiMultiplex;
 
-#ifdef ZiMultiplex_DEBUG
+#ifdef ZiMultiplex_FILTER
 using FilterFn = ZmFn<bool(ZiConnection *, uint8_t *, unsigned)>;
 #endif
 
@@ -903,6 +906,8 @@ public:
   void frag(bool b) { m_frag = b; }
   bool yield() const { return m_yield; }
   void yield(bool b) { m_yield = b; }
+#endif
+#ifdef ZiMultiplex_FILTER
   void rxFilter(FilterFn fn) { m_rxFilter = ZuMv(fn); }
   void txFilter(FilterFn fn) { m_txFilter = ZuMv(fn); }
 #endif
@@ -1002,14 +1007,17 @@ private:
   bool			m_debug = false;
   bool			m_frag = false;
   bool			m_yield = false;
-  FilterFn		m_rxFilter;
-  FilterFn		m_txFilter;
 
   void traceCapture() { m_tracer.capture(1); }
 public:
   template <typename S> void traceDump(S &s) { m_tracer.dump(s); }
 private:
   ZmBackTracer<64>	m_tracer;
+#endif
+
+#ifdef ZiMultiplex_FILTER
+  FilterFn		m_rxFilter;
+  FilterFn		m_txFilter;
 #endif
 };
 
