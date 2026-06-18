@@ -18,7 +18,7 @@ New or changed components: add a `NewReno` member to connection/link runtime sta
 
 New or changed processes or threads: Tx thread owns congestion state because packet send, ACK, and loss are Tx-side events.
 
-New or changed interfaces: add internal helpers for `onPacketSent_`, `onPacketAcked_`, `onPacketLost_`, and `sendBudget_`.
+New or changed interfaces: add internal helpers for `onPacketSent_`, `onPacketAckd_`, `onPacketLost_`, and `sendBudget_`.
 
 New or changed data flows: sent-packet records must expose bytes sent and in-flight status to ACK/loss paths.
 

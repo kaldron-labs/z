@@ -942,6 +942,11 @@ public:
   // - use unshift() to prepend
   ZmPQResult::T add(NodeRef node) { return add_<false>(ZuMv(node)).template p<0>(); }
 
+  void clean() {
+    Guard guard(m_lock);
+    clean_();
+  }
+
   // immediately returns node if key == head (head is incremented)
   // returns nullptr if key < head or key is already present in queue
   // returns nullptr and enqueues node if key > head
@@ -1270,6 +1275,89 @@ public:
     --m_count;
 
     return ret;
+  }
+
+  // subtract an interval from retained items, leaving a gap in the queue
+  bool subtract(Key key, Length length) {
+    Key end;
+    if (ZuUnlikely(!endOf_(key, length, end))) return false;
+    if (ZuUnlikely(!length)) return false;
+
+    Guard guard(m_lock);
+
+    if (end <= m_headKey) return false;
+    if (key < m_headKey) key = m_headKey;
+
+    bool changed = false;
+    while (key < end) {
+      Node *node = firstNode_(key);
+      if (!node) break;
+
+      Fn item{node->Node::data()};
+      Key nodeKey = item.key();
+      Length nodeLength = item.length();
+      Key nodeEnd;
+      ZmAssert(endOf_(nodeKey, nodeLength, nodeEnd));
+      if (nodeKey >= end) break;
+      if (nodeEnd <= key) {
+	key = nodeEnd;
+	continue;
+      }
+
+      Key remFirst = nodeKey > key ? nodeKey : key;
+      Key remEnd = nodeEnd < end ? nodeEnd : end;
+      if (remEnd <= remFirst) {
+	key = nodeEnd;
+	continue;
+      }
+
+      if (remFirst == nodeKey && remEnd == nodeEnd) {
+	delNode_<0>(node);
+	nodeDeref(node);
+	nodeDelete(node);
+	m_length -= nodeLength;
+	--m_count;
+      } else if (remFirst == nodeKey) {
+	NodeMvRef keep{node};
+	delNode_<0>(node);
+	nodeDeref(node);
+	m_length -= nodeLength;
+	--m_count;
+	Fn keepItem{keep->Node::data()};
+	Length newLength = keepItem.clipHead(remEnd - nodeKey);
+	if (newLength) {
+	  Node *next[Levels];
+	  find_(keepItem.key(), next);
+	  addAt_<0>(ZuMv(keep).release(), next, m_addSeqNo++);
+	  m_length += newLength;
+	  ++m_count;
+	}
+      } else if (remEnd == nodeEnd) {
+	Length newLength = item.clipTail(nodeEnd - remFirst);
+	m_length -= nodeLength - newLength;
+      } else {
+	if constexpr (__is_constructible(Item, const Item &)) {
+	  NodeRef tail = new Node{node->Node::data()};
+	  Fn tailItem{tail->Node::data()};
+	  Length headLength = item.clipTail(nodeEnd - remFirst);
+	  m_length -= nodeLength - headLength;
+	  Length tailLength = tailItem.clipHead(remEnd - nodeKey);
+	  if (tailLength) {
+	    Node *next[Levels];
+	    find_(tailItem.key(), next);
+	    addAt_<0>(nodeRelease(ZuMv(tail)), next, m_addSeqNo++);
+	    m_length += tailLength;
+	    ++m_count;
+	  }
+	} else
+	  return changed;
+      }
+
+      changed = true;
+      key = remEnd;
+    }
+
+    return changed;
   }
 
   // find item containing key

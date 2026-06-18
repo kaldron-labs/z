@@ -72,7 +72,7 @@ void testAckRangeProcessing()
   unsigned lost = 0;
   ZuCHECK(tracker.ack(ranges, &lost) == 2 &&
       lost == 2 &&
-      tracker.acked() == 2 &&
+      tracker.ackd() == 2 &&
       tracker.lost() == 2 &&
       tracker.retransmittable() == 2 &&
       !tracker.bytesInFlight(),
@@ -114,11 +114,11 @@ void testPersistentCongestion()
     "interrupted persistent congestion setup failed");
   ZuCHECK(interrupted.lose(1) && interrupted.ack(2) && interrupted.lose(3) &&
       !interrupted.persistentCongestion(Zquic::timeUS(1500)),
-    "ACKed packet did not interrupt persistent congestion");
+    "ACKd packet did not interrupt persistent congestion");
 
   Zquic::NewReno cc(1200);
   cc.sent(1200);
-  cc.acked(1200);
+  cc.ackd(1200);
   ZuCHECK(cc.cwnd() > 2400, "NewReno setup did not grow cwnd");
   cc.persistentCongestion();
   ZuCHECK(cc.cwnd() == 2400 && cc.ssthresh() == 2400,

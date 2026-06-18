@@ -111,7 +111,7 @@ private:
     uint64_t n =
       bytes && srtt > uint64_t(-1) / bytes ? uint64_t(-1) :
       srtt * uint64_t(bytes);
-    if (n == uint64_t(-1)) return n;
+    if (ZuCmp<uint64_t>::null(n)) return n;
     if (n > uint64_t(-1) - (cwnd - 1)) return uint64_t(-1);
     n = (n + cwnd - 1) / cwnd;
     return n ? n : 1;
@@ -140,6 +140,7 @@ struct ControlFrame {
   uint8_t		payload[8]{};
 
   bool operator !() const { return type == FrameType::Unknown; }
+  ZuOpBool
   bool operator ==(const ControlFrame &o) const {
     if (type != o.type || streamID != o.streamID || value != o.value ||
 	errorCode != o.errorCode || streamType != o.streamType)

@@ -18,7 +18,7 @@ New or changed components: add runtime PMTUD probe scheduling and sent-packet me
 
 New or changed processes or threads: Tx starts probes and handles ACK/loss/expiry; Rx/socket path reports kernel hints as fixed data to Tx.
 
-New or changed interfaces: add internal `schedulePMTUD_`, `sendPMTUDProbe_`, `onPMTUDProbeAcked_`, and `onPMTUDProbeLost_` helpers.
+New or changed interfaces: add internal `schedulePMTUD_`, `sendPMTUDProbe_`, `onPMTUDProbeAckd_`, and `onPMTUDProbeLost_` helpers.
 
 New or changed data flows: active path chooses next probe size; send path emits padded ack-eliciting probe; recovery tags sent packet; ACK/loss updates path.
 
@@ -39,7 +39,7 @@ New or changed data stores: sent-packet record needs a PMTUD-probe flag and prob
 - Respect anti-amplification and cwnd/path budget.
 
 ### Phase 3: ACK/Loss/Expiry
-- On ACK of probe packet, call `Path::probeAcked()`.
+- On ACK of probe packet, call `Path::probeAckd()`.
 - On loss, call `Path::probeLost()`.
 - On PMTUD timer expiry, call `Path::probeExpired()` and schedule retry if requested.
 

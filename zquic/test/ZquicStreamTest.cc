@@ -82,6 +82,17 @@ struct TestLink :
   bool queueDataBlocked(uint64_t value) {
     return Base::queueBlocked_(Zquic::FrameType::DataBlocked, 0, value);
   }
+  bool queueMaxData(uint64_t value) {
+    return Base::queueFlowUpdate_(
+      Zquic::FlowUpdate{
+	Zquic::FrameType::MaxData, 0, value, Zi::StreamType::Duplex});
+  }
+  bool queueMaxStreamData(uint64_t streamID, uint64_t value) {
+    return Base::queueFlowUpdate_(
+      Zquic::FlowUpdate{
+	Zquic::FrameType::MaxStreamData, streamID, value,
+	Zi::StreamType::Duplex});
+  }
   bool queueStreamDataBlocked(uint64_t streamID, uint64_t value) {
     return Base::queueBlocked_(
       Zquic::FrameType::StreamDataBlocked, streamID, value);
@@ -186,6 +197,72 @@ struct TestLink :
     ack.ranges[0] = Zquic::AckRange{pn, 0};
     Base::processAckFrameTx_(ack);
   }
+  void ackOnly(uint64_t pn) {
+    Base::AckSnapshot ack;
+    ack.level = Zquic::CryptoLevel::OneRTT;
+    ack.nRanges = 1;
+    ack.ranges[0] = Zquic::AckRange{pn, pn};
+    Base::processAckFrameTx_(ack);
+  }
+  bool nextRetransmitRef(
+    Zquic::CryptoLevel::T &level, Zquic::SentFrameRef &ref) {
+    return Base::nextRetransmit_(level, ref);
+  }
+  bool sendCryptoBytes(ZuCSpan data) {
+    size_t offsets[5] = {0, 0, 0, 0, data.length()};
+    return Base::sendCryptoFlights_(
+      reinterpret_cast<const uint8_t *>(data.data()), data.length(),
+      offsets, 900, ZiSockAddr{},
+      [this](
+	  Zquic::CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+	  const Zquic::SentFrameRef &ref, ZiSockAddr) {
+	Base::recordTxPkt_(
+	  level, sentPkts, prefix.length() + payload.length(), ref, true);
+	++sentPkts;
+	return true;
+      });
+  }
+  void sendCryptoRef(
+    uint64_t pn, Zquic::CryptoLevel::T level,
+    uint64_t offset, uint64_t length) {
+    Base::recordTxPkt_(
+      level, pn, 100, Zquic::SentFrameRef::crypto(offset, length), true);
+  }
+  void sendControlRef(uint64_t pn, const Zquic::SentFrameRef &ref) {
+    Base::recordTxPkt_(
+      Zquic::CryptoLevel::OneRTT, pn, 100, ref, true);
+  }
+  bool rebuildCrypto(
+    Zquic::CryptoLevel::T level, const Zquic::SentFrameRef &ref,
+    Zquic::Frame &frame) {
+    Zquic::PktBuild build;
+    if (!Base::buildRetransmitCrypto_(level, build, ref)) return false;
+    uint8_t b[Zquic::BufSize];
+    unsigned n = 0;
+    for (unsigned i = 0; i < build.count(); ++i) {
+      if (build.data()[i].len > sizeof(b) - n) return false;
+      memcpy(b + n, build.data()[i].base, build.data()[i].len);
+      n += unsigned(build.data()[i].len);
+    }
+    unsigned used = 0;
+    return !Zquic::FrameCodec::parse(
+      ZuCSpan{reinterpret_cast<const char *>(b), n}, frame, used) &&
+      used == n;
+  }
+  void cancelTimers() { Base::cancelTimers_(); }
+  void sendStreamRef(
+    uint64_t pn, const ZmRef<TestStream> &stream,
+    uint64_t offset, uint64_t length, bool fin = false) {
+    Zquic::TxRange range{nullptr, 0, uint32_t(length), offset};
+    Zquic::SentFrameRef ref =
+      Zquic::SentFrameRef::stream(uint64_t(stream->id()), range, fin);
+    if (!length) {
+      ref.offset = offset;
+      ref.length = 0;
+    }
+    Base::recordTxPkt_(
+      Zquic::CryptoLevel::OneRTT, pn, 100, ref, true);
+  }
   void advancePN(unsigned n) {
     for (unsigned i = 0; i < n; ++i)
       Base::recordProtPktTx_(
@@ -282,6 +359,13 @@ struct TestLink :
   void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
   Zquic::PathDiag pathDiag() const { return Base::pathDiag_(); }
   bool pathValidated() const { return Base::pathValidated_(); }
+  unsigned gcStreams(unsigned budget = Base::RecoveryScanBatch) {
+    return Base::gcStreamsForTest_(budget);
+  }
+  unsigned gcControls(unsigned budget = Zquic::SentPkt::MaxFrames) {
+    return Base::gcControlsForTest_(budget);
+  }
+  uint64_t closedStreams() const { return Base::closedStreamCount(); }
   uint64_t pathAntiAmplification() const {
     return Base::pathAntiAmplification_();
   }
@@ -586,6 +670,84 @@ void testStreamTxRetention()
     "empty Tx range dequeue succeeded");
 }
 
+void testStreamTxUnackd()
+{
+  ZuTestScope(testStreamTxUnackd);
+
+  App app;
+  TestLink link{&app};
+  auto stream = link.stream(Zi::StreamType::Duplex);
+  ZuCHECK(stream &&
+      stream->recordTxUnackd(10, 10, false) &&
+      stream->txUnackdCount() == 1 &&
+      stream->txUnackdBytes() == 10,
+    "stream unackd range setup failed");
+
+  ZuCHECK(stream->ackTxUnackd(13, 4) &&
+      stream->txStillUnackd(10, 3, false) &&
+      !stream->txStillUnackd(13, 4, false) &&
+      stream->txStillUnackd(17, 3, false) &&
+      stream->txUnackdCount() == 2 &&
+      stream->txUnackdBytes() == 6,
+    "stream unackd partial ACK did not split state");
+
+  ZuCHECK(stream->ackTxUnackd(10, 3, false) &&
+      !stream->txStillUnackd(10, 3, false) &&
+      stream->txStillUnackd(17, 3, false) &&
+      stream->txUnackdCount() == 1 &&
+      stream->txUnackdBytes() == 3,
+    "stream unackd exact ACK did not remove range");
+}
+
+void testStreamTxUnackdFin()
+{
+  ZuTestScope(testStreamTxUnackdFin);
+
+  App app;
+  TestLink link{&app};
+  auto stream = link.stream(Zi::StreamType::Duplex);
+  ZuCHECK(stream &&
+      stream->recordTxUnackd(20, 5, true) &&
+      stream->txUnackdCount() == 1 &&
+      stream->txUnackdBytes() == 6,
+    "stream unackd data+FIN setup failed");
+
+  ZuCHECK(stream->ackTxUnackd(20, 5, false) &&
+      !stream->txStillUnackd(20, 5, false) &&
+      stream->txStillUnackd(25, 0, true) &&
+      stream->txUnackdCount() == 1 &&
+      stream->txUnackdBytes() == 1,
+    "stream unackd data ACK did not retain FIN");
+
+  ZuCHECK(stream->ackTxUnackd(25, 0, true) &&
+      !stream->txStillUnackd(25, 0, true) &&
+      !stream->txUnackdCount() &&
+      !stream->txUnackdBytes(),
+    "stream unackd FIN ACK did not clear sentinel");
+}
+
+void testLinkStreamTxUnackdAck()
+{
+  ZuTestScope(testLinkStreamTxUnackdAck);
+
+  App app;
+  TestLink link{&app};
+  auto stream = link.stream(Zi::StreamType::Duplex);
+
+  link.sendStreamRef(7, stream, 40, 5);
+  ZuCHECK(stream->txUnackdCount() == 1 &&
+      stream->txUnackdBytes() == 5 &&
+      stream->txStillUnackd(40, 5),
+    "sent STREAM ref did not populate unackd state");
+
+  link.ackThrough(7);
+  ZuCHECK(!stream->txUnackdCount() &&
+      !stream->txUnackdBytes() &&
+      !stream->txStillUnackd(40, 5),
+    "ACKd STREAM ref did not clear unackd state");
+  link.cancelTimers();
+}
+
 void testStreamPktizer()
 {
   ZuTestScope(testStreamPktizer);
@@ -838,6 +1000,83 @@ void testRuntimeMultiFrameAssembly()
     "runtime lost FIN-only stream offset");
 }
 
+void testStreamRetransmitClipsUnackd()
+{
+  ZuTestScope(testStreamRetransmitClipsUnackd);
+
+  App app;
+  TestLink link{&app};
+  auto stream = link.stream(Zi::StreamType::Duplex);
+  link.sendStreamRef(0, stream, 0, 10);
+  link.sendStreamRef(1, stream, 2, 5);
+  link.sendAckEliciting(4);
+  link.ackOnly(1);
+  link.ackOnly(4);
+
+  Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
+  Zquic::SentFrameRef ref;
+  ZuCHECK(link.nextRetransmitRef(level, ref) &&
+      level == Zquic::CryptoLevel::OneRTT &&
+      ref.kind == Zquic::SentFrameKind::Stream &&
+      ref.offset == 0 &&
+      ref.length == 2 &&
+      !ref.fin,
+    "stream retransmit did not clip before ACKd hole");
+  ZuCHECK(link.nextRetransmitRef(level, ref) &&
+      level == Zquic::CryptoLevel::OneRTT &&
+      ref.kind == Zquic::SentFrameKind::Stream &&
+      ref.offset == 7 &&
+      ref.length == 3 &&
+      !ref.fin,
+    "stream retransmit did not requeue after ACKd hole");
+  ZuCHECK(!link.nextRetransmitRef(level, ref),
+    "stream retransmit clipping left extra work");
+  link.cancelTimers();
+}
+
+void testCryptoRetransmitClipsUnackd()
+{
+  ZuTestScope(testCryptoRetransmitClipsUnackd);
+
+  App app;
+  TestLink link{&app};
+  ZuCHECK(link.sendCryptoBytes("0123456789"),
+    "crypto send setup failed");
+  link.sendCryptoRef(1, Zquic::CryptoLevel::OneRTT, 2, 5);
+  link.sendAckEliciting(4);
+  link.ackOnly(1);
+  link.ackOnly(4);
+
+  Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
+  Zquic::SentFrameRef ref;
+  Zquic::Frame frame;
+  ZuCHECK(link.nextRetransmitRef(level, ref) &&
+      level == Zquic::CryptoLevel::OneRTT &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 0 &&
+      ref.length == 2 &&
+      link.rebuildCrypto(level, ref, frame) &&
+      frame.type == Zquic::FrameType::Crypto &&
+      frame.offset == 0 &&
+      frame.length == 2 &&
+      frame.payload == "01",
+    "crypto retransmit did not clip before ACKd hole");
+  ZuCHECK(link.nextRetransmitRef(level, ref) &&
+      level == Zquic::CryptoLevel::OneRTT &&
+      ref.kind == Zquic::SentFrameKind::Crypto &&
+      ref.offset == 7 &&
+      ref.length == 3 &&
+      link.rebuildCrypto(level, ref, frame) &&
+      frame.type == Zquic::FrameType::Crypto &&
+      frame.offset == 7 &&
+      frame.length == 3 &&
+      frame.payload == "789",
+    "crypto retransmit did not requeue after ACKd hole");
+  ZuCHECK(!link.nextRetransmitRef(level, ref),
+    "crypto retransmit clipping left extra work");
+  link.cancelTimers();
+}
+
 void testRuntimePacketNumberLength()
 {
   ZuTestScope(testRuntimePacketNumberLength);
@@ -963,7 +1202,7 @@ void testActivePathRuntimeBudget()
 
   server.validatePath();
   ZuCHECK(server.pathValidated() &&
-      server.pathAntiAmplification() == uint64_t(-1) &&
+      ZuCmp<uint64_t>::null(server.pathAntiAmplification()) &&
       server.pathSend(Zquic::MinUDPPayload),
     "address validation did not unlock active path send allowance");
   server.close();
@@ -1141,6 +1380,49 @@ void testBlockedFrameDuplicateSuppression()
       limitLink.queueStreamsBlocked(Zi::StreamType::Duplex, 8) &&
       limitLink.queuedControlFrames() == 1,
     "sent STREAMS_BLOCKED duplicate suppression mismatch");
+}
+
+void testControlQueueSupersededGC()
+{
+  ZuTestScope(testControlQueueSupersededGC);
+
+  App app;
+  TestLink link{&app};
+  ZuCHECK(link.queueMaxData(1024), "initial MAX_DATA queue failed");
+  for (unsigned i = 0; i < Zquic::Link<App, TestLink,
+      StreamTxBufAlloc, TestStream>::ControlDedupScan + 8; ++i)
+    ZuCHECK(link.queuePathResponse(i + 1), "PATH_RESPONSE queue failed");
+  unsigned responses =
+    Zquic::Link<App, TestLink,
+      StreamTxBufAlloc, TestStream>::ControlDedupScan + 8;
+  ZuCHECK(link.queuedControlFrames() == responses,
+    "control queue superseded GC setup mismatch");
+
+  ZuCHECK(link.queueMaxData(2048) &&
+      link.queuedControlFrames() == responses + 1,
+    "control queue did not drop superseded MAX_DATA");
+}
+
+void testControlQueueStaleGC()
+{
+  ZuTestScope(testControlQueueStaleGC);
+
+  App app;
+  TestLink link{&app};
+  auto stream = link.stream(Zi::StreamType::Duplex);
+  ZuCHECK(stream &&
+      link.queueMaxStreamData(
+	uint64_t(stream->id()), stream->rxCreditLimit()) &&
+      link.queuedControlFrames() == 1,
+    "MAX_STREAM_DATA control setup failed");
+  uint8_t b[128];
+  Zquic::Frame frame;
+  int n = Zquic::FrameCodec::writeResetStream(
+    b, sizeof(b), uint64_t(stream->id()), 7, 0);
+  ZuCHECK(parseFrame_(b, n, frame) && link.receiveFrame(frame) == 0,
+    "stale-control stream close setup failed");
+  ZuCHECK(link.gcControls() == 1 && !link.queuedControlFrames(),
+    "stale stream control was not GCed without send");
 }
 
 void testPeerStreamAcceptance()
@@ -1370,32 +1652,35 @@ void testLocalResetStopSend()
       rebuilt.errorCode == 9,
     "local STOP_SENDING retransmit rebuild failed");
 
-  Zquic::SentPktTracker acked;
-  Zquic::SentPkt p0{
-    1, Zquic::timeUS(1000), 100, Zquic::PktSpace::AppData,
-    true, true, false};
-  Zquic::SentPkt p1{
-    2, Zquic::timeUS(1001), 100, Zquic::PktSpace::AppData,
-    true, true, false};
-  ZuCHECK(p0.addFrame(refs[0]) && p1.addFrame(refs[0]) &&
-      acked.add(p0) && acked.add(p1) &&
-      acked.ack(1) && acked.lose(2),
-    "local STOP_SENDING ACK/loss tracker setup failed");
+  link.sendControlRef(1, refs[0]);
+  link.sendControlRef(2, refs[0]);
+  link.sendAckEliciting(5);
+  link.ackOnly(1);
+  link.ackOnly(5);
   Zquic::SentFrameRef ref;
-  ZuCHECK(!acked.nextRetransmit(ref),
-    "ACKed STOP_SENDING was retransmitted after later loss");
+  Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
+  ZuCHECK(!link.nextRetransmitRef(level, ref),
+    "ACKd STOP_SENDING was retransmitted after later loss");
+  link.cancelTimers();
 
-  Zquic::SentPktTracker lost;
-  Zquic::SentPkt p2{
-    3, Zquic::timeUS(1002), 100, Zquic::PktSpace::AppData,
-    true, true, false};
-  ZuCHECK(p2.addFrame(refs[0]) && lost.add(p2) && lost.lose(3) &&
-      lost.nextRetransmit(ref) &&
+  TestLink lost{&app};
+  auto lostStop = lost.stream(Zi::StreamType::Duplex);
+  lostStop->stop(11);
+  n = lost.flushSentRefs(refs, 2);
+  ZuCHECK(n == 1 &&
+      refs[0].kind == Zquic::SentFrameKind::Control &&
+      refs[0].controlType == Zquic::FrameType::StopSending,
+    "lost STOP_SENDING sent ref setup failed");
+  lost.sendControlRef(2, refs[0]);
+  lost.sendAckEliciting(5);
+  lost.ackOnly(5);
+  ZuCHECK(lost.nextRetransmitRef(level, ref) &&
       ref.kind == Zquic::SentFrameKind::Control &&
       ref.controlType == Zquic::FrameType::StopSending &&
-      ref.streamID == uint64_t(stop->id()) &&
-      !lost.nextRetransmit(ref),
+      ref.streamID == uint64_t(lostStop->id()) &&
+      !lost.nextRetransmitRef(level, ref),
     "lost STOP_SENDING did not queue one retransmit");
+  lost.cancelTimers();
 }
 
 void testMaxAndBlockedFrameValidation()
@@ -1611,6 +1896,69 @@ void testInvalidClosedStreamActivity()
     "closed-stream threshold produced repeated close diagnostics");
 }
 
+void testStreamGC()
+{
+  ZuTestScope(testStreamGC);
+
+  App app;
+
+  TestLink held{&app};
+  auto live = held.stream(Zi::StreamType::Simplex);
+  uint64_t liveID = uint64_t(live->id());
+  live->fin();
+  held.scheduleStream(live);
+  Zquic::SentFrameRef refs[4];
+  ZuCHECK(held.flushSentRefs(refs, 4) == 1 && live->finDequeued(),
+    "held stream terminal send setup failed");
+  ZuCHECK(!held.gcStreams() && held.findStream(int64_t(liveID)),
+    "stream GC reaped stream with external reference");
+  live = nullptr;
+  ZuCHECK(held.gcStreams() == 1 && !held.findStream(int64_t(liveID)) &&
+      held.closedStreams() == 1,
+    "stream GC did not reap terminal local stream");
+
+  TestLink maxLink{&app};
+  auto local = maxLink.stream(Zi::StreamType::Simplex);
+  uint64_t localID = uint64_t(local->id());
+  local->fin();
+  maxLink.scheduleStream(local);
+  ZuCHECK(maxLink.flushSentRefs(refs, 4) == 1 && local->finDequeued(),
+    "closed MAX_STREAM_DATA setup failed");
+  local = nullptr;
+  ZuCHECK(maxLink.gcStreams() == 1 && !maxLink.findStream(int64_t(localID)),
+    "closed MAX_STREAM_DATA stream was not reaped");
+  uint8_t b[128];
+  Zquic::Frame frame;
+  int n = Zquic::FrameCodec::writeMaxStreamData(
+    b, sizeof(b), localID, 4096);
+  ZuCHECK(parseFrame_(b, n, frame) &&
+      maxLink.applyMaxStreamData(frame) &&
+      maxLink.runtimeDiag().closedStreamFrames == 1,
+    "closed MAX_STREAM_DATA after stream GC was not compact-handled");
+
+  TestLink rxLink{&app, true};
+  unsigned used = 0;
+  auto packet = streamPkt_(2, 0, "", true, frame, used);
+  ZuCHECK(packet && rxLink.receiveFrame(frame, packet) == 0,
+    "peer unidirectional stream GC setup failed");
+  ZmRef<TestStream> rx = rxLink.findStream(2);
+  ZuCHECK(rx && rx->rxComplete(),
+    "peer unidirectional stream did not reach terminal receive state");
+  rxLink.lastStream = nullptr;
+  rx = nullptr;
+  ZuCHECK(rxLink.gcStreams() == 1 && !rxLink.findStream(2) &&
+      rxLink.closedStreams() == 1,
+    "stream GC did not reap terminal peer stream");
+  packet = streamPkt_(2, 0, "", true, frame, used);
+  ZuCHECK(packet && rxLink.receiveFrame(frame, packet) == 0 &&
+      rxLink.runtimeDiag().closedStreamFrames == 1,
+    "duplicate STREAM after stream GC was not compact-handled");
+  packet = streamPkt_(2, 0, "long", true, frame, used);
+  ZuCHECK(packet && rxLink.receiveFrame(frame, packet) < 0 &&
+      rxLink.closeError() == Zquic::TransportError::FinalSize,
+    "invalid STREAM final size after stream GC did not close");
+}
+
 void testFrameRoleAndSpaceLegality()
 {
   ZuTestScope(testFrameRoleAndSpaceLegality);
@@ -1685,9 +2033,14 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamRxSliceDelivery);
   ZuTestCall(testOutOfOrderStreamDelivery);
   ZuTestCall(testStreamTxRetention);
+  ZuTestCall(testStreamTxUnackd);
+  ZuTestCall(testStreamTxUnackdFin);
+  ZuTestCall(testLinkStreamTxUnackdAck);
   ZuTestCall(testStreamPktizer);
   ZuTestCall(testQueuedControlSendFailureRetainsFrame);
   ZuTestCall(testRuntimeMultiFrameAssembly);
+  ZuTestCall(testStreamRetransmitClipsUnackd);
+  ZuTestCall(testCryptoRetransmitClipsUnackd);
   ZuTestCall(testRuntimePacketNumberLength);
   ZuTestCall(testLongHeaderCoalescing);
   ZuTestCall(testCongestionBudgetGatesRuntimeSends);
@@ -1695,6 +2048,8 @@ int main(int argc, char **argv)
   ZuTestCall(testPathValidationStateMachine);
   ZuTestCall(testAckECNValidationDisablesECN);
   ZuTestCall(testBlockedFrameDuplicateSuppression);
+  ZuTestCall(testControlQueueSupersededGC);
+  ZuTestCall(testControlQueueStaleGC);
   ZuTestCall(testPeerStreamAcceptance);
   ZuTestCall(testStreamCountLimits);
   ZuTestCall(testResetStopFrames);
@@ -1702,5 +2057,6 @@ int main(int argc, char **argv)
   ZuTestCall(testMaxAndBlockedFrameValidation);
   ZuTestCall(testStreamDataBlockedValidation);
   ZuTestCall(testInvalidClosedStreamActivity);
+  ZuTestCall(testStreamGC);
   ZuTestCall(testFrameRoleAndSpaceLegality);
 }

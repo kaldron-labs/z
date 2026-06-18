@@ -68,9 +68,9 @@ int VarInt::decode(ZuCSpan in, uint64_t &v, unsigned &n)
   return 0;
 }
 
-unsigned PktNumber::encodedLength(uint64_t pn, uint64_t largestAcked)
+unsigned PktNumber::encodedLength(uint64_t pn, uint64_t largestAckd)
 {
-  uint64_t n = pn - largestAcked;
+  uint64_t n = pn - largestAckd;
   if (n < (1ULL<<7)) return 1;
   if (n < (1ULL<<15)) return 2;
   if (n < (1ULL<<23)) return 3;

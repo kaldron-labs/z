@@ -63,7 +63,7 @@ struct Diag {
 
   void add(const PathDiag &diag) {
     pmtudProbes += diag.probesSent;
-    pmtudSuccess += diag.probesAcked;
+    pmtudSuccess += diag.probesAckd;
     pmtudFailure += diag.probesLost + diag.blackholes;
   }
 

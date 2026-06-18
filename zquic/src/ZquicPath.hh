@@ -32,7 +32,7 @@ struct PathDiag {
   uint64_t	bytesRx = 0;
   uint64_t	bytesTx = 0;
   uint64_t	probesSent = 0;
-  uint64_t	probesAcked = 0;
+  uint64_t	probesAckd = 0;
   uint64_t	probesExpired = 0;
   uint64_t	probesLost = 0;
   uint64_t	blackholes = 0;
@@ -188,7 +188,7 @@ public:
     startProbe(size);
     return true;
   }
-  void probeAcked() {
+  void probeAckd() {
     if (m_probeSize > m_activeMaxUDP) m_activeMaxUDP = m_probeSize;
     m_probeSize = 0;
     m_retryProbeSize = 0;
@@ -196,7 +196,7 @@ public:
     m_probeAttempts = 0;
     m_pmtudState =
       m_activeMaxUDP >= ceiling() ? PMTUDState::SearchComplete : PMTUDState::Base;
-    ++m_diag.probesAcked;
+    ++m_diag.probesAckd;
   }
   void probeLost() {
     if (!m_probeSize) return;

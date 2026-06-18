@@ -127,6 +127,53 @@ struct RxPktMark {
   void write(const I &) { }
 };
 
+struct TxUnackdRange {
+  uint64_t	offset = 0;
+  uint64_t	bytes = 0;
+  bool		fin = false;
+
+  TxUnackdRange() = default;
+  TxUnackdRange(uint64_t offset_, uint64_t bytes_, bool fin_ = false) :
+    offset{offset_}, bytes{bytes_}, fin{fin_} { }
+
+  uint64_t key() const { return offset; }
+  uint64_t length() const { return bytes + (fin ? 1 : 0); }
+
+  uint64_t clipHead(uint64_t length) {
+    uint64_t n = this->length();
+    if (length >= n) {
+      offset += n;
+      bytes = 0;
+      fin = false;
+      return 0;
+    }
+    offset += length;
+    if (length <= bytes)
+      bytes -= length;
+    else {
+      bytes = 0;
+      fin = false;
+    }
+    return this->length();
+  }
+  uint64_t clipTail(uint64_t length) {
+    uint64_t n = this->length();
+    if (length >= n) {
+      bytes = 0;
+      fin = false;
+      return 0;
+    }
+    if (fin && length) {
+      fin = false;
+      --length;
+    }
+    if (length) bytes -= length;
+    return this->length();
+  }
+  template <typename I>
+  void write(const I &) { }
+};
+
 using StreamRxPQueue =
   ZmPQueue<StreamRxData,
     ZmPQueueNode<StreamRxData,
@@ -149,6 +196,22 @@ using TxDataPQueue =
       ZmPQueueHeapID<"Zquic.Stream.TxNode",
 	ZmPQueueBits<2,
 	  ZmPQueueLevels<3>>>>>;
+
+using StreamTxPQueue =
+  ZmPQueue<TxUnackdRange,
+    ZmPQueueNode<ZuObject,
+      ZmPQueueHeapID<"Zquic.Stream.TxUnackdNode",
+	ZmPQueueOverwrite<false,
+	  ZmPQueueBits<2,
+	    ZmPQueueLevels<2>>>>>>;
+
+using CryptoTxPQueue =
+  ZmPQueue<TxUnackdRange,
+    ZmPQueueNode<ZuObject,
+      ZmPQueueHeapID<"Zquic.Crypto.TxUnackdNode",
+	ZmPQueueOverwrite<false,
+	  ZmPQueueBits<2,
+	    ZmPQueueLevels<2>>>>>>;
 
 using PktRxPQueue =
   ZmPQueue<RxPktMark,

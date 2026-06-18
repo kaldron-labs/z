@@ -595,6 +595,19 @@ void testConnectionIDFrameLifecycle()
       peerCID == Zquic::CxnID{"peerCID09"} && foundToken == peerToken,
     "NEW_CONNECTION_ID did not store peer CID and reset token");
 
+  Zquic::ResetToken peerToken2{"1234567890abcdef"};
+  f.value = 6;
+  f.offset = 6;
+  f.length = 9;
+  f.payload = "peerCID10";
+  f.resetToken = peerToken2;
+  ZuCHECK(link.receiveNewConnectionID(f) &&
+      !link.peerCID(5, peerCID, foundToken) &&
+      link.peerCID(6, peerCID, foundToken) &&
+      peerCID == Zquic::CxnID{"peerCID10"} &&
+      foundToken == peerToken2,
+    "retired peer CID slot was not reused for NEW_CONNECTION_ID");
+
   Zquic::CxnID localCID{"local003"};
   Zquic::ResetToken localToken{"fedcba9876543210"};
   ZuCHECK(link.addLocalCID(localCID, 3, localToken),

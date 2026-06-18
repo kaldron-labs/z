@@ -30,7 +30,7 @@ New or changed data stores: track largest acknowledged packet per space for pack
 
 ## Detailed Design and Implementation Plan
 ### Phase 1: Dynamic PN Length
-- Add helper to choose packet number length from current PN and largest ACKed PN.
+- Add helper to choose packet number length from current PN and largest ACKd PN.
 - Replace `RuntimePNLength = 2` use in runtime packet sends.
 - Test edge cases around PN length expansion.
 
