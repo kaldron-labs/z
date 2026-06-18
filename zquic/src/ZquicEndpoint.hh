@@ -32,10 +32,11 @@ public:
   using FailFn = ZmFn<void(bool)>;
   using DownFn = ZmFn<void(Endpoint *)>;
   using TxDrainedFn = ZmFn<void()>;
+  using CloseFn = ZmFn<void()>;
 
-  Endpoint() = default;
-  explicit Endpoint(ZiMultiplex *mx) : m_mx{mx} { }
-  ~Endpoint() { closeUDP(); }
+  Endpoint();
+  explicit Endpoint(ZiMultiplex *);
+  ~Endpoint();
 
   Endpoint(const Endpoint &) = delete;
   Endpoint &operator =(const Endpoint &) = delete;
@@ -52,16 +53,16 @@ public:
     DownFn downFn = {},
     TxDrainedFn txDrainedFn = {});
 
-  void closeUDP();
+  void closeUDP(CloseFn);
 
   bool listening() const { return m_listening; }
-  bool connected() const { return m_cxn; }
+  bool connected() const;
   ZiMultiplex *mx() const { return m_mx; }
   const ZiSockAddr &local() const { return m_local; }
   const ZiSockAddr &remote() const { return m_remote; }
   PathMode::T mode() const { return m_mode; }
-  EndpointDiag diag() const { return {m_rxDiag, m_txDiag}; }
-  SockDiag sockDiag() const { return m_sockDiag; }
+  EndpointDiag diag() const;
+  SockDiag sockDiag() const;
   void failure() { ++m_rxDiag.failures; }
 
   void datagramFn(DatagramFn fn) { m_datagramFn = ZuMv(fn); }
@@ -69,7 +70,6 @@ public:
     return new TxPktAlloc{this};
   }
   bool send(ZmRef<ZiIOBuf>, ZiSockAddr);
-  PathHint pathHint();
 
   void inject(Datagram datagram) { received_(ZuMv(datagram)); }
 
@@ -81,10 +81,18 @@ private:
   void failed_(bool);				// direct call from within rx thread
   void received_(Datagram);			// direct call from within rx thread
   void sent_(unsigned);				// direct call from within tx thread
-  void txDrained_();				// direct call from within rx thread
+  void txDrained_();				// direct call from within tx thread
   void ioError_();				// direct call from within rx thread
-  void closeUDP_(ZmSemaphore *);
+  void send_(ZmRef<ZiIOBuf>, ZiSockAddr);	// direct call from within tx thread
+  void closeUDPWait_();
+  void closeUDP_(ZmSemaphore *, CloseFn);
+  void beginCloseTx_(ZmRef<Cxn_> = {});
+  void closeTx_(unsigned, ZmRef<Cxn_>);
+  void closeTxDone_(unsigned);
+  void completeClose_();
   void clearFns_();
+  bool rxInvoked() const { return m_mx && m_mx->invoked(m_mx->rxThread()); }
+  bool txInvoked() const { return m_mx && m_mx->invoked(m_mx->txThread()); }
   ZmRef<ZiIOBuf> allocRxPkt_() {
     return new RxPktAlloc{this};
   }
@@ -102,18 +110,24 @@ private:
   ReadyFn		m_readyFn;
   FailFn		m_failFn;
   DownFn		m_downFn;
-  TxDrainedFn		m_txDrainedFn;
   Cxn_			*m_closingCxn = nullptr;
   ZmSemaphore		*m_closeWaiter = nullptr;
+  CloseFn		m_closeFn;
   unsigned		m_generation = 0;
   unsigned		m_closingGeneration = 0;
+  bool			m_closeTxPending = false;
   EndpointRxDiag	m_rxDiag;
   SockDiag		m_sockDiag;
 
   // Tx thread exclusive
+  ZmRef<Cxn_>		m_txCxn;
+  unsigned		m_txGeneration = 0;
+  bool			m_txClosing = false;
   EndpointTxDiag	m_txDiag;
+  TxDrainedFn		m_txDrainedFn;
 
   // shared
+  ZmAtomic<unsigned>	m_connected = 0;
   ZmAtomic<unsigned>	m_listening = 0;
   ZmAtomic<unsigned>	m_open = 0;
 };

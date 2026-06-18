@@ -124,7 +124,12 @@ struct TestLink :
     EngineApp, TestLink, StreamTxBufAlloc,
     TestStream>;
   TestLink(EngineApp *app, bool isServer = false) : Base{app, isServer} {
-    Base::resetRuntime_();
+    ZmSemaphore reset;
+    app->rxRun([this, &reset]() {
+      Base::resetRuntime_();
+      reset.post();
+    });
+    reset.wait();
     Base::configureLocalTransportParams_(app);
   }
 
@@ -660,7 +665,11 @@ void testCliLinkUDPConnect()
   if (sinkFailed) {
     ZuCHECK(!sink.listening() && sink.diag().failures,
       "CliLink UDP sink did not fail cleanly");
-    sink.closeUDP();
+    ZmSemaphore sinkClosed;
+    sink.closeUDP(Zquic::Endpoint::CloseFn{[&sinkClosed]() {
+      sinkClosed.post();
+    }});
+    sinkClosed.wait();
     mx.stop();
     return;
   }
@@ -697,7 +706,11 @@ void testCliLinkUDPConnect()
     "CliLink UDP socket did not disconnect");
 
   link = nullptr;
-  sink.closeUDP();
+  ZmSemaphore sinkClosed;
+  sink.closeUDP(Zquic::Endpoint::CloseFn{[&sinkClosed]() {
+    sinkClosed.post();
+  }});
+  sinkClosed.wait();
   app.final();
   mx.stop();
 }

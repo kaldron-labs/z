@@ -1284,10 +1284,14 @@ friend class SrvLink;
 	});
       }},
       Endpoint::ReadyFn{this, [](Server *self, Endpoint *) {
-	self->app()->listening();
+	self->rxRun([self]() {
+	  self->app()->listening();
+	});
       }},
       Endpoint::FailFn{this, [](Server *self, bool transient) {
-	self->failed_0(transient);
+	self->rxRun([self, transient]() {
+	  self->failed_0(transient);
+	});
       }},
       Endpoint::DownFn{},
       Endpoint::TxDrainedFn{this, [](Server *self) {
@@ -1312,7 +1316,7 @@ friend class SrvLink;
 
   void close_() {
     clearLinks_();
-    m_endpoint.closeUDP();
+    m_endpoint.closeUDP(Endpoint::CloseFn{});
   }
 
   bool listening() const { return m_endpoint.listening(); }
@@ -2138,7 +2142,7 @@ public:
     for (unsigned i = 0; i < 3; ++i) {
       CryptoStream *crypto = &m_rxCrypto[i];
       crypto->dequeueFn([this, crypto]() {
-	this->app()->rxRun([link = ZmMkRef(impl()), crypto]() {
+	this->app()->rxRun([crypto]() {
 	  crypto->dequeueRx_();
 	});
       });
@@ -2147,13 +2151,14 @@ public:
       auto space = PktSpace::T(i);
       AckTracker *tracker = &m_rxAcks.tracker(space);
       tracker->dequeueFn([this, tracker]() {
-	this->app()->rxRun([link = ZmMkRef(impl()), tracker]() {
+	this->app()->rxRun([tracker]() {
 	  tracker->dequeueRx_();
 	});
       });
     }
   }
   ~Link() {
+    clearCallbacks_();
     assert(!timersActive_());
   }
 
@@ -2168,6 +2173,15 @@ public:
 	  this->tlsFailure_();
       });
     }
+  }
+
+  void clearCallbacks_() {
+    for (auto &crypto : m_rxCrypto) {
+      crypto.dequeueFn({});
+      crypto.deliveryFn({});
+    }
+    for (unsigned i = 0; i < AckManager::Spaces; ++i)
+      m_rxAcks.tracker(PktSpace::T(i)).dequeueFn({});
   }
 
   App *app() const { return m_app; }
@@ -2489,16 +2503,19 @@ protected:
     bool		installed[3] = {};
   };
   struct TxPktRefs {
-    bool add(const SentFrameRef &ref) {
+    bool add(const SentFrameRef &ref, Stream *stream = nullptr) {
       if (ref.kind == SentFrameKind::None || n >= SentPkt::MaxFrames)
 	return false;
       refs[n++] = ref;
+      streams[n - 1] = stream;
       return true;
     }
     unsigned count() const { return n; }
     const SentFrameRef &operator [](unsigned i) const { return refs[i]; }
+    Stream *stream(unsigned i) const { return streams[i]; }
 
     SentFrameRef	refs[SentPkt::MaxFrames];
+    Stream		*streams[SentPkt::MaxFrames] = {};
     unsigned		n = 0;
   };
   using LocalCIDs =
@@ -2627,10 +2644,60 @@ protected:
     return m_runtimeCloseState == CloseState::Draining;
   }
   bool runtimeHandshakeStarted_() const { return m_handshakeStarted; }
-  RuntimeDiag rxDiagSnapshot_() const { return {m_rxDiag, {}}; }
-  RuntimeDiag txDiagSnapshot_() const { return {{}, txDiag_()}; }
-  RuntimeDiag runtimeDiag_() const { return {m_rxDiag, txDiag_()}; }
-  PathDiag pathDiag_() const { return m_path.diag(); }
+  RuntimeRxDiag rxDiagSnapshot_() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx diagnostic snapshot outside Rx thread", return {});
+    return m_rxDiag;
+  }
+  RuntimeTxDiag txDiagSnapshot_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx diagnostic snapshot outside Tx thread", return {});
+    return txDiag_();
+  }
+  RuntimeDiag runtimeDiag() const {
+    if (!app() || !app()->mx()) return runtimeDiag_();
+    ZiAssert(!rxInvoked_() && !txInvoked_(), "Zquic", (),
+      "QUIC runtime diagnostic snapshot from I/O thread", return {});
+    RuntimeRxDiag rx;
+    RuntimeTxDiag tx;
+    ZmSemaphore rxDone;
+    ZmSemaphore txDone;
+    auto link = const_cast<Link *>(this)->impl();
+    app()->rxRun([link, &rx, &rxDone]() {
+      rx = link->rxDiagSnapshot_();
+      rxDone.post();
+    });
+    app()->txRun([link, &tx, &txDone]() {
+      tx = link->txDiagSnapshot_();
+      txDone.post();
+    });
+    rxDone.wait();
+    txDone.wait();
+    return {rx, tx};
+  }
+  RuntimeDiag runtimeDiag_() const {
+    return {m_rxDiag, txDiag_()};
+  }
+  PathDiag pathDiag() const {
+    if (!app() || !app()->mx()) return pathDiag_();
+    ZiAssert(!rxInvoked_(), "Zquic", (),
+      "QUIC path diagnostic snapshot from Rx thread", return {});
+    if (txInvoked_()) return pathDiag_();
+    PathDiag diag;
+    ZmSemaphore done;
+    auto link = const_cast<Link *>(this)->impl();
+    app()->txRun([link, &diag, &done]() {
+      diag = link->pathDiag_();
+      done.post();
+    });
+    done.wait();
+    return diag;
+  }
+  PathDiag pathDiag_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC path diagnostic snapshot outside Tx thread", return {});
+    return m_path.diag();
+  }
   bool pathValidated_() const { return m_path.validated(); }
   unsigned activePathMaxUDP_() const { return m_path.activeMaxUDP(); }
   const ZiSockAddr &activePathRemote_() const { return m_path.remote(); }
@@ -2677,13 +2744,16 @@ protected:
     return m_txProt[level];
   }
 
-  bool recordTxUnackd_(CryptoLevel::T level, const SentFrameRef &ref) {
+  bool recordTxUnackd_(
+    CryptoLevel::T level, const SentFrameRef &ref, Stream *stream = nullptr) {
     switch (ref.kind) {
       case SentFrameKind::Stream: {
 	if (ref.streamID > uint64_t(INT64_MAX)) return false;
-	StreamRef stream = findStream(int64_t(ref.streamID));
-	return stream &&
-	  stream->recordTxUnackd(ref.offset, ref.length, ref.fin);
+	if (stream)
+	  return stream->recordTxUnackd(ref.offset, ref.length, ref.fin);
+	StreamRef stream_ = findStream(int64_t(ref.streamID));
+	return stream_ &&
+	  stream_->recordTxUnackd(ref.offset, ref.length, ref.fin);
       }
       case SentFrameKind::Crypto:
 	return m_txCryptoUnackd[level].add(
@@ -2695,20 +2765,26 @@ protected:
   }
   void recordTxUnackd_(CryptoLevel::T level, const TxPktRefs &refs) {
     for (unsigned i = 0; i < refs.count(); ++i)
-      (void)recordTxUnackd_(level, refs[i]);
+      (void)recordTxUnackd_(level, refs[i], refs.stream(i));
   }
-  bool ackTxFrame_(CryptoLevel::T level, const SentFrameRef &ref) {
+  bool ackTxFrame_(
+    CryptoLevel::T level, const SentFrameRef &ref, Stream *stream = nullptr) {
     switch (ref.kind) {
       case SentFrameKind::Stream: {
 	if (ref.streamID > uint64_t(INT64_MAX)) return false;
-	StreamRef stream = findStream(int64_t(ref.streamID));
-	return stream && stream->ackTxUnackd(ref.offset, ref.length, ref.fin);
+	if (stream) return stream->ackTxUnackd(ref.offset, ref.length, ref.fin);
+	StreamRef stream_ = findStream(int64_t(ref.streamID));
+	return stream_ && stream_->ackTxUnackd(ref.offset, ref.length, ref.fin);
       }
       case SentFrameKind::Crypto:
 	return m_txCryptoUnackd[level].clear(ref.offset, ref.length);
       case SentFrameKind::Control: {
 	if (ref.streamID > uint64_t(INT64_MAX)) return false;
-	StreamRef stream = findStream(int64_t(ref.streamID));
+	StreamRef stream_;
+	if (!stream) {
+	  stream_ = findStream(int64_t(ref.streamID));
+	  stream = stream_.ptr();
+	}
 	switch (ref.controlType) {
 	  case FrameType::ResetStream:
 	    return stream && stream->ackReset(ref.value, ref.length);
@@ -2848,7 +2924,10 @@ protected:
     }
   }
 
-  void resetRuntimeDiag_() { m_rxDiag = {}; m_txDiag = {}; }
+  void resetRuntimeDiag_() {
+    m_rxDiag = {};
+    m_txDiag = {};
+  }
   RuntimeTxDiag txDiag_() const {
     RuntimeTxDiag diag = m_txDiag;
     for (unsigned i = 0; i < RuntimeTxDiag::Spaces; ++i) {
@@ -3149,7 +3228,6 @@ protected:
   void resetRuntime_() {
     drainStreamsRx_();
     cancelTimers();
-    m_timerTeardown = false;
     resetLinkState_();
     m_established = 0;
     m_handshakeStarted = 0;
@@ -3176,6 +3254,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx runtime reset outside Tx thread", return);
     ++m_txRuntimeGen;
+    m_timerTeardown = false;
     m_controlQueue.clean();
     resetPktRuntime_();
     m_congestion = NewReno{app()->maxUDP()};
@@ -3854,7 +3933,7 @@ protected:
 	ref.offset = info.offset;
 	ref.length = 0;
       }
-      if (!refs.add(ref))
+      if (!refs.add(ref, stream.ptr()))
 	return false;
       if (info.length && !m_txDataCredit.consume(info.length)) return false;
       m_txDiag.streamBytesTx += info.length;
@@ -3916,7 +3995,9 @@ protected:
       ref.offset = info.offset;
       ref.length = 0;
     }
-    if (!sendPkt(build, ZuMv(addr), ref)) return false;
+    TxPktRefs refs;
+    if (!refs.add(ref, stream.ptr())) return false;
+    if (!sendPkt(build, ZuMv(addr), refs)) return false;
     if (info.length && !m_txDataCredit.consume(info.length)) return false;
     m_txDiag.streamBytesTx += info.length;
     return true;
@@ -4231,7 +4312,13 @@ protected:
   void cancelTimers() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC timer cancel before app initialization", return);
-    cancelTimers_();
+    if (txInvoked_()) {
+      cancelTimers_();
+      return;
+    }
+    app()->txRun([link = ZmMkRef(impl())]() mutable {
+      link->cancelTimers_();
+    });
   }
   template <typename Fn>
   void teardownTimers(Fn fn) {
@@ -4239,14 +4326,19 @@ protected:
       fn();
       return;
     }
-    m_timerTeardown = true;
-    cancelTimers_();
     app()->txRun([link = ZmMkRef(impl()), fn = ZuMv(fn)]() mutable {
-      fn();
+      link->m_timerTeardown = true;
+      link->cancelTimers_();
+      link->app()->txRun([link = ZuMv(link), fn = ZuMv(fn)]() mutable {
+	fn();
+      });
     });
   }
 
   void cancelTimers_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC timer cancel outside Tx thread", return);
+    // Live-state cleanup only; release/destruction paths use teardownTimers().
     cancelAckDelayTimer_();
     cancelLossTimer_();
     cancelPTO_();
@@ -4551,7 +4643,7 @@ nextSpace:
     packet.ackLevel = ackLevel;
     packet.ackLargest = ackLargest;
     for (unsigned i = 0; i < refs.count(); ++i)
-      packet.addFrame(refs[i]);
+      packet.addFrame(refs[i], refs.stream(i));
     if (!m_txPkts[level].add(packet)) return;
     recordTxUnackd_(level, refs);
     if (ackEliciting) {
@@ -4580,7 +4672,9 @@ nextSpace:
   void applyAckUpdateTx_(const PktTxUpdate &update, bool &congestionOpened) {
     applyAckOfAckTx_(update);
     for (unsigned i = 0; i < update.nAckdFrames; ++i)
-      (void)ackTxFrame_(update.level, update.ackdFrames[i]);
+      (void)ackTxFrame_(
+	update.level, update.ackdFrames[i],
+	static_cast<Stream *>(update.ackdOwners[i]));
     if (update.normalAckdBytes) {
       m_congestion.ackd(update.normalAckdBytes);
       congestionOpened = true;
@@ -5983,7 +6077,6 @@ private:
   ZmScheduler::Timer	m_pmtudTimer;
   ZmScheduler::Timer	m_pathTimer;
   bool			m_rxSpaceDiscarded[3]{};
-  bool			m_timerTeardown = false;
   unsigned		m_handshakeStarted = 0;
   unsigned		m_established = 0;
   LinkState::T		m_linkState = LinkState::Starting;
@@ -6004,6 +6097,7 @@ private:
   RuntimeTxDiag		m_txDiag;
   NewReno		m_congestion;
   uint64_t		m_txRuntimeGen = 0;
+  bool			m_timerTeardown = false;
   uint64_t		m_txPN[3]{};
   uint64_t		m_txLargestAckd[3]{
     uint64_t(-1), uint64_t(-1), uint64_t(-1)};
@@ -6103,9 +6197,7 @@ public:
   template <typename Fn>
   void abort_(Fn fn) {
     Base::close();
-    closeEndpointDrained_(true);
-    Base::resetTLS_();
-    fn();
+    closeEndpointDrained_(true, ZuMv(fn));
   }
 
   const Host &server() const { return m_server; }
@@ -6123,8 +6215,8 @@ public:
   const ZiSockAddr &remote() const { return m_endpoint.remote(); }
   EndpointDiag cxnDiag() const { return m_endpoint.diag(); }
   EndpointDiag endpointDiag() const { return m_endpoint.diag(); }
-  RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
-  PathDiag pathDiag() const { return Base::pathDiag_(); }
+  RuntimeDiag runtimeDiag() const { return Base::runtimeDiag(); }
+  PathDiag pathDiag() const { return Base::pathDiag(); }
   bool pathValidated() const { return Base::pathValidated_(); }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   uint64_t pathAntiAmplification() const {
@@ -6248,7 +6340,6 @@ public:
   }
 
   bool sendPMTUDProbe_(ZiSockAddr addr) {
-    Base::applyPathHint_(m_endpoint.pathHint());
     return Base::sendPMTUDProbe_(
       ZuMv(addr),
       [this](PktBuild &build, ZiSockAddr addr_, unsigned size) {
@@ -6286,25 +6377,27 @@ public:
     if (!m_endpoint.openUDP(
 	PathMode::ClientConnected,
 	ZiIP{}, 0, ip, m_port,
-	Endpoint::DatagramFn{[link = ZmMkRef(impl())](Datagram d) mutable {
-	  link->app()->rxInvoke([link, d = ZuMv(d)]() mutable {
+	Endpoint::DatagramFn{[link = impl()](Datagram d) mutable {
+	  link->app()->rxRun([link, d = ZuMv(d)]() mutable {
 	    link->received_(ZuMv(d));
 	  });
 	}},
-	Endpoint::ReadyFn{[link = ZmMkRef(impl())](Endpoint *ep) mutable {
-	  link->app()->rxInvoke([link, ep]() mutable {
+	Endpoint::ReadyFn{[link = impl()](Endpoint *ep) mutable {
+	  link->app()->rxRun([link, ep]() mutable {
 	    link->endpointReady_(ep);
 	  });
 	}},
-	Endpoint::FailFn{[link = ZmMkRef(impl())](bool transient) mutable {
-	  link->connectFailed_0(transient);
-	    }},
-	Endpoint::DownFn{[link = ZmMkRef(impl())](Endpoint *ep) mutable {
-	  link->app()->rxInvoke([link, ep]() mutable {
+	Endpoint::FailFn{[link = impl()](bool transient) mutable {
+	  link->app()->rxRun([link, transient]() mutable {
+	    link->connectFailed_0(transient);
+	  });
+	}},
+	Endpoint::DownFn{[link = impl()](Endpoint *ep) mutable {
+	  link->app()->rxRun([link, ep]() mutable {
 	    link->endpointDown_(ep);
 	  });
 	}},
-	Endpoint::TxDrainedFn{[link = ZmMkRef(impl())]() mutable {
+	Endpoint::TxDrainedFn{[link = impl()]() mutable {
 	  link->app()->txRun([link]() mutable {
 	    link->txDrained_();
 	  });
@@ -6352,8 +6445,7 @@ private:
     ]() mutable {
       (void)link->sendConnectionClose_(ZuMv(addr), true);
       link->app()->rxRun([link, notify, fn = ZuMv(fn)]() mutable {
-	link->closeEndpointDrained_(notify);
-	fn();
+	link->closeEndpointDrained_(notify, ZuMv(fn));
       });
       return link;
     });
@@ -6369,17 +6461,28 @@ private:
       link = ZmMkRef(impl()), notify, fn = ZuMv(fn)
     ]() mutable {
       link->app()->rxRun([link, notify, fn = ZuMv(fn)]() mutable {
-	link->closeEndpointDrained_(notify);
-	fn();
+	link->closeEndpointDrained_(notify, ZuMv(fn));
       });
     });
   }
 
   void closeEndpointDrained_(bool notify) {
+    closeEndpointDrained_(notify, []() { });
+  }
+  template <typename Fn>
+  void closeEndpointDrained_(bool notify, Fn fn) {
+    ZiAssert(app()->rxInvoked(), "Zquic", (),
+      "QUIC endpoint close drain outside Rx thread", return);
     m_udpReady = 0;
     m_notifyEndpointDown = notify;
-    m_endpoint.closeUDP();
+    if (Base::closed()) Base::clearCallbacks_();
     Base::resetTLS_();
+    m_endpoint.closeUDP(Endpoint::CloseFn{
+	[link = impl(), fn = ZuMv(fn)]() mutable {
+	  link->app()->rxRun([fn = ZuMv(fn)]() mutable {
+	    fn();
+	  });
+	}});
   }
 
   void resetRuntimeState_() {
@@ -6884,12 +6987,12 @@ private:
 
   void endpointReady_(Endpoint *ep) {
     if (ep != &m_endpoint) return;
-    m_udpReady = 1;
     m_notifyEndpointDown = true;
     ++m_udpReadyCount;
     Base::endpointReady_();
     Base::initClientPath_(ep->local(), ep->remote());
     startHandshake_();
+    m_udpReady = 1;
   }
 
   void endpointDown_(Endpoint *ep) {
@@ -6947,8 +7050,8 @@ public:
   SrvLink(App *app) : Base{app, true} { Base::initCryptoDelivery_(); }
 
   bool established() const { return Base::runtimeEstablished_(); }
-  RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
-  PathDiag pathDiag() const { return Base::pathDiag_(); }
+  RuntimeDiag runtimeDiag() const { return Base::runtimeDiag(); }
+  PathDiag pathDiag() const { return Base::pathDiag(); }
   bool pathValidated() const { return Base::pathValidated_(); }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   uint64_t pathAntiAmplification() const {

@@ -728,10 +728,11 @@ struct SentPkt {
   template <typename I>
   void write(const I &) { }
 
-  bool addFrame(const SentFrameRef &frame) {
+  bool addFrame(const SentFrameRef &frame, void *owner = nullptr) {
     if (frame.kind == SentFrameKind::None || frameCount >= MaxFrames)
       return false;
-    frames[frameCount++] = frame;
+    frames[frameCount] = frame;
+    frameOwners[frameCount++] = owner;
     return true;
   }
   unsigned framesUsed() const { return frameCount; }
@@ -739,6 +740,11 @@ struct SentPkt {
     ZiAssert(i < frameCount, "Zquic", (i, frameCount),
       "sent-packet frame index out of bounds", return frames[0]);
     return frames[i];
+  }
+  void *frameOwner(unsigned i) const {
+    ZiAssert(i < frameCount, "Zquic", (i, frameCount),
+      "sent-packet frame-owner index out of bounds", return nullptr);
+    return frameOwners[i];
   }
 
   uint64_t	pn = 0;
@@ -755,6 +761,7 @@ struct SentPkt {
   uint8_t	ackLevel = 3;
   uint64_t	ackLargest = 0;
   SentFrameRef	frames[MaxFrames];
+  void		*frameOwners[MaxFrames] = {};
   unsigned	frameCount = 0;
 };
 
@@ -801,12 +808,16 @@ struct PktTxUpdate {
     }
   }
   void ackdFrames_(const SentPkt &p) {
-    for (unsigned i = 0; i < p.framesUsed() && nAckdFrames < MaxFrames; ++i)
+    for (unsigned i = 0; i < p.framesUsed() && nAckdFrames < MaxFrames; ++i) {
       ackdFrames[nAckdFrames++] = p.frame(i);
+      ackdOwners[nAckdFrames - 1] = p.frameOwner(i);
+    }
   }
   void lostFrames_(const SentPkt &p) {
-    for (unsigned i = 0; i < p.framesUsed() && nLostFrames < MaxFrames; ++i)
+    for (unsigned i = 0; i < p.framesUsed() && nLostFrames < MaxFrames; ++i) {
       lostFrames[nLostFrames++] = p.frame(i);
+      lostOwners[nLostFrames - 1] = p.frameOwner(i);
+    }
   }
 
   uint64_t	ackdBytes = 0;
@@ -825,6 +836,8 @@ struct PktTxUpdate {
   uint64_t	ackLargest[3] = {};
   SentFrameRef	ackdFrames[MaxFrames];
   SentFrameRef	lostFrames[MaxFrames];
+  void		*ackdOwners[MaxFrames] = {};
+  void		*lostOwners[MaxFrames] = {};
   unsigned	nAckdFrames = 0;
   unsigned	nLostFrames = 0;
 };

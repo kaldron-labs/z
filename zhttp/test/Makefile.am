@@ -41,6 +41,8 @@ ZhttpDarkhttpdCompatTest_SOURCES = ZhttpDarkhttpdCompatTest.cc
 test: $(noinst_PROGRAMS)
 	LSAN_OPTIONS="$${LSAN_OPTIONS:+$$LSAN_OPTIONS:}suppressions=$(top_builddir)/.lsan-suppressions" \
 	prove ZhttpParserTest ZhttpHPackTest ZhttpQPackTest \
-		Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
+		ZhttpFallbackTest ZhttpQPackDynamicTest \
 		ZhttpAppTest ZhttpMultiRequestTest ZhttpMatrixTest \
 		ZhttpdTest ZhttpDarkhttpdCompatTest
+	LSAN_OPTIONS="$${LSAN_OPTIONS:+$$LSAN_OPTIONS:}suppressions=$(top_builddir)/.lsan-suppressions" \
+	timeout 15s ./Zhttp3InteropTest

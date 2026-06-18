@@ -72,6 +72,12 @@ private:
     m_closing = true;
   }
 
+  void drainTx_() {
+    m_closing = true;
+    m_txBuf = nullptr;
+    m_txQueue.clean();
+  }
+
   void drainRx_() {
     m_closing = true;
     m_rxBuf = nullptr;
@@ -196,6 +202,10 @@ void Endpoint::Cxn_::operator delete(void *p) noexcept
   Heap::operator delete(p);
 }
 
+Endpoint::Endpoint() = default;
+
+Endpoint::Endpoint(ZiMultiplex *mx) : m_mx{mx} { }
+
 bool Endpoint::init(ZiMultiplex *mx)
 {
   ZiAssert(mx, "Zquic", (mx), "null endpoint multiplexer", return false);
@@ -204,6 +214,16 @@ bool Endpoint::init(ZiMultiplex *mx)
   if (m_mx) return m_mx == mx;
   m_mx = mx;
   return true;
+}
+
+Endpoint::~Endpoint()
+{
+  if (!m_open.load_()) return;
+  if (rxInvoked() || txInvoked()) {
+    ZiAssert(false, "Zquic", (),
+      "QUIC endpoint destruction from I/O thread while open", return);
+  }
+  closeUDPWait_();
 }
 
 bool Endpoint::openUDP(
@@ -232,10 +252,19 @@ bool Endpoint::openUDP(
   m_readyFn = ZuMv(readyFn);
   m_failFn = ZuMv(failFn);
   m_downFn = ZuMv(downFn);
-  m_txDrainedFn = ZuMv(txDrainedFn);
   m_listening = false;
   m_open = true;
   ++m_generation;
+
+  m_mx->txInvoke([
+    this, generation = m_generation, txDrainedFn = ZuMv(txDrainedFn)
+  ]() mutable {
+    m_txCxn = nullptr;
+    m_txGeneration = generation;
+    m_txClosing = false;
+    m_txDiag = {};
+    m_txDrainedFn = ZuMv(txDrainedFn);
+  });
 
   ZiCxnOptions options;
   options.udp(true);
@@ -244,6 +273,12 @@ bool Endpoint::openUDP(
     ZiConnectFn{this, [](Endpoint *self, const ZiCxnInfo &ci) -> ZiConnection * {
       auto cxn = new Cxn_{self, ci, self->m_generation};
       self->m_cxn = cxn;
+      self->m_mx->txRun([
+	self, cxn = ZmMkRef(cxn), generation = self->m_generation
+      ]() mutable {
+	if (self->m_txGeneration != generation || self->m_txClosing) return;
+	self->m_txCxn = ZuMv(cxn);
+      });
       return cxn;
     }},
     ZiFailFn{this, [](Endpoint *self, bool transient) {
@@ -257,31 +292,56 @@ bool Endpoint::openUDP(
   return true;
 }
 
-void Endpoint::closeUDP()
+void Endpoint::closeUDPWait_()
 {
   if (!m_open.load_()) return;
-  if (m_mx->invoked(m_mx->rxThread())) {
-    closeUDP_(nullptr);
+  if (rxInvoked()) {
+    closeUDP_(nullptr, CloseFn{});
     return;
   }
-  if (m_mx->invoked(m_mx->txThread())) {
-    m_mx->rxRun([this]() { closeUDP_(nullptr); });
+  if (txInvoked()) {
+    m_mx->rxRun([this]() { closeUDP_(nullptr, CloseFn{}); });
     return;
   }
 
   ZmSemaphore stopped;
-  m_mx->rxInvoke([this, &stopped]() { closeUDP_(&stopped); });
+  m_mx->rxInvoke([this, &stopped]() {
+    closeUDP_(&stopped, CloseFn{});
+  });
   stopped.wait();
 }
 
-void Endpoint::closeUDP_(ZmSemaphore *stopped)
+void Endpoint::closeUDP(CloseFn fn)
+{
+  if (!m_open.load_()) {
+    if (!fn) return;
+    if (!m_mx || rxInvoked()) {
+      fn();
+      return;
+    }
+    m_mx->rxRun([fn = ZuMv(fn)]() mutable { fn(); });
+    return;
+  }
+  if (rxInvoked()) {
+    closeUDP_(nullptr, ZuMv(fn));
+    return;
+  }
+  m_mx->rxRun([this, fn = ZuMv(fn)]() mutable {
+    closeUDP_(nullptr, ZuMv(fn));
+  });
+}
+
+void Endpoint::closeUDP_(ZmSemaphore *stopped, CloseFn fn)
 {
   m_listening = false;
+  m_connected = false;
   m_datagramFn = DatagramFn{};
   m_readyFn = ReadyFn{};
   m_failFn = FailFn{};
-  m_txDrainedFn = TxDrainedFn{};
   if (stopped) m_closeWaiter = stopped;
+  if (fn) m_closeFn = ZuMv(fn);
+  if (m_cxn) beginCloseTx_(ZmMkRef(m_cxn));
+  else beginCloseTx_();
   if (m_cxn) {
     m_closingCxn = m_cxn;
     m_closingGeneration = m_cxn->generation();
@@ -290,38 +350,43 @@ void Endpoint::closeUDP_(ZmSemaphore *stopped)
     m_cxn = nullptr;
     return;
   }
-  if (!m_closingCxn && m_closeWaiter) {
-    auto waiter = m_closeWaiter;
-    m_closeWaiter = nullptr;
-    clearFns_();
-    m_open = false;
-    waiter->post();
-    return;
-  }
-  if (!m_closingCxn) {
-    clearFns_();
-    m_open = false;
-  }
+  completeClose_();
 }
 
 bool Endpoint::send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
 {
   if (!buf) return false;
-  Cxn_ *cxn = m_cxn;
-  if (!cxn) return false;
   ZiAssert(m_mx, "Zquic", (), "null endpoint multiplexer", return false);
-  m_mx->txInvoke([cxn = ZmMkRef(cxn), buf = ZuMv(buf), addr = ZuMv(addr)]()
-      mutable {
-    (void)cxn->sendPkt(ZuMv(buf), ZuMv(addr));
+  if (!m_open.load_()) return false;
+  m_mx->txRun([this, buf = ZuMv(buf), addr = ZuMv(addr)]() mutable {
+    send_(ZuMv(buf), ZuMv(addr));
   });
   return true;
 }
 
-PathHint Endpoint::pathHint()
+void Endpoint::send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
 {
-  Cxn_ *cxn = m_cxn;
-  if (!cxn) return {};
-  return Sock::pathHint(cxn->info().socket, m_sockConfig, &m_sockDiag);
+  ZiAssert(txInvoked(), "Zquic", (),
+    "QUIC endpoint send outside Tx thread", return);
+  if (!m_txCxn || m_txClosing) return;
+  auto cxn = m_txCxn;
+  if (cxn->generation() != m_txGeneration) return;
+  (void)cxn->sendPkt(ZuMv(buf), ZuMv(addr));
+}
+
+bool Endpoint::connected() const
+{
+  return m_connected.load_();
+}
+
+EndpointDiag Endpoint::diag() const
+{
+  return {m_rxDiag, m_txDiag};
+}
+
+SockDiag Endpoint::sockDiag() const
+{
+  return m_sockDiag;
 }
 
 void Endpoint::connected_(Cxn_ *cxn, ZiIOContext &io)
@@ -340,6 +405,7 @@ void Endpoint::connected_(Cxn_ *cxn, ZiIOContext &io)
 #endif
 
   m_listening = true;
+  m_connected = true;
   cxn->armRecv_(io);
   if (m_readyFn) m_readyFn(this);
 }
@@ -351,20 +417,15 @@ void Endpoint::disconnected_(Cxn_ *cxn)
     cxn->generation() == m_closingGeneration &&
     cxn->generation() == m_generation;
   if (active || closing) {
+    if (active) beginCloseTx_(ZmMkRef(cxn));
     cxn->drainRx_();
     m_cxn = nullptr;
     if (closing) m_closingCxn = nullptr;
     m_listening = false;
+    m_connected = false;
     if (m_downFn) m_downFn(this);
     clearFns_();
-    if (m_closeWaiter) {
-      auto waiter = m_closeWaiter;
-      m_closeWaiter = nullptr;
-      m_open = false;
-      waiter->post();
-    } else {
-      m_open = false;
-    }
+    completeClose_();
   }
 }
 
@@ -372,10 +433,12 @@ void Endpoint::failed_(bool transient)
 {
   ++m_rxDiag.failures;
   m_listening = false;
+  m_connected = false;
   if (m_failFn) m_failFn(transient);
   if (m_downFn) m_downFn(this);
+  beginCloseTx_();
   clearFns_();
-  m_open = false;
+  completeClose_();
 }
 
 void Endpoint::received_(Datagram datagram)
@@ -398,7 +461,7 @@ void Endpoint::txDrained_()
 
 void Endpoint::ioError_()
 {
-  if (m_mx && m_mx->invoked(m_mx->txThread()))
+  if (txInvoked())
     ++m_txDiag.failures;
   else
     ++m_rxDiag.failures;
@@ -410,7 +473,53 @@ void Endpoint::clearFns_()
   m_readyFn = ReadyFn{};
   m_failFn = FailFn{};
   m_downFn = DownFn{};
+}
+
+void Endpoint::beginCloseTx_(ZmRef<Cxn_> cxn)
+{
+  if (m_closeTxPending) return;
+  m_closeTxPending = true;
+  m_mx->txRun([
+    this, generation = m_generation, cxn = ZuMv(cxn)
+  ]() mutable {
+    closeTx_(generation, ZuMv(cxn));
+  });
+}
+
+void Endpoint::closeTx_(unsigned generation, ZmRef<Cxn_> cxn)
+{
+  if (m_txGeneration == generation) {
+    m_txClosing = true;
+    if (m_txCxn && m_txCxn->generation() == generation)
+      m_txCxn->drainTx_();
+    else if (cxn && cxn->generation() == generation)
+      cxn->drainTx_();
+    m_txCxn = nullptr;
+  }
   m_txDrainedFn = TxDrainedFn{};
+  m_mx->txRun([this, generation]() {
+    m_mx->rxRun([this, generation]() { closeTxDone_(generation); });
+  });
+}
+
+void Endpoint::closeTxDone_(unsigned generation)
+{
+  if (generation == m_generation) m_closeTxPending = false;
+  completeClose_();
+}
+
+void Endpoint::completeClose_()
+{
+  if (m_closingCxn || m_closeTxPending) return;
+  clearFns_();
+  m_open = false;
+  auto fn = ZuMv(m_closeFn);
+  if (m_closeWaiter) {
+    auto waiter = m_closeWaiter;
+    m_closeWaiter = nullptr;
+    waiter->post();
+  }
+  if (fn) fn();
 }
 
 } // namespace Zquic
