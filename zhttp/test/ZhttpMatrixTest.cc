@@ -83,7 +83,9 @@ struct Options {
 	  bool		pcap = false;
 	  OptString	quicRxDrop;
 	  OptString	quicTxDrop;
+#ifdef Zquic_DEBUG
 	  uint32_t	quicDiag = 0;
+#endif
 	  bool		quiet = false;
 	  bool		help = false;
 	};
@@ -100,7 +102,9 @@ ZtStruct((Options, CLI),
 	  (((pcap),     (CLI::Long<"pcap">)),                            (Bool, false)),
 	  (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),                  (String, "")),
 	  (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),                  (String, "")),
+#ifdef Zquic_DEBUG
 	  (((quicDiag), (CLI::Long<"quic-diag">)),                       (UInt32, 0)),
+#endif
 	  (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),           (Bool, false)),
 	  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),            (Bool, false)));
 
@@ -168,7 +172,9 @@ void usage(int code = 1)
 	    "  --pcap            capture H3 UDP traffic and preserve case directories\n"
 	    "  --quic-rx-drop=N% pass QUIC receive packet drop rate to zhttp/zhttpd\n"
 	    "  --quic-tx-drop=N% pass QUIC transmit packet drop rate to zhttp/zhttpd\n"
+#ifdef Zquic_DEBUG
 	    "  --quic-diag=N     pass QUIC diagnostic print interval in seconds\n"
+#endif
 	    "  -q, --quiet       quiet output\n"
     "  -h, --help        show help\n" <<
     std::flush;
@@ -400,8 +406,10 @@ void appendZhttpCommand(
 	script << " --quic-rx-drop=" << options.quicRxDrop;
       if (options.quicTxDrop)
 	script << " --quic-tx-drop=" << options.quicTxDrop;
+#ifdef Zquic_DEBUG
       if (options.quicDiag)
 	script << " --quic-diag=" << options.quicDiag;
+#endif
       break;
   }
 	  script << " -o " << tempPath << "/body ";
@@ -591,8 +599,10 @@ bool writeScript(
 	      script << " --quic-rx-drop=" << options.quicRxDrop;
 	    if (options.quicTxDrop)
 	      script << " --quic-tx-drop=" << options.quicTxDrop;
+#ifdef Zquic_DEBUG
 	    if (options.quicDiag)
 	      script << " --quic-diag=" << options.quicDiag;
+#endif
 	    break;
 	}
     script <<

@@ -35,7 +35,7 @@ namespace H1 {
   template <typename Impl>
   struct HasRuntimeHeader_<Impl,
     decltype(ZuDeclVal<Impl *>()->header(
-      ZuDeclVal<ZuCSpan>(), ZuDeclVal<ZuCSpan>()), void())> :
+      ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
       public ZuTrue { };
 
   template <typename Impl, typename L, typename = void>
@@ -115,7 +115,7 @@ namespace H1 {
 
     void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
       if constexpr (HasRuntimeHeader_<Impl>{})
-	impl()->header(ZuCSpan{key}, ZuCSpan{value});
+	impl()->header(key, value);
     }
 
     // process header key/value
@@ -374,7 +374,7 @@ namespace H1 {
     void status(unsigned) { }
     template <typename Key> void header(ZuBSpan) { }
     template <typename Key, typename Value> void header() { }
-    void header(ZuCSpan, ZuCSpan) { }
+    void header(ZuBSpan, ZuBSpan) { }
     void contentLength(uint64_t) { }
     void xferCompression(XferCompression::T) { }
     void chunked() { }

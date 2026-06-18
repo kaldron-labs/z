@@ -164,12 +164,12 @@ struct ParserStream :
       }
     }
   }
-  void header(ZuCSpan name, ZuCSpan value) {
+  void header(ZuBSpan name, ZuBSpan value) {
     ++runtimeCalls;
     runtimeName.length(0);
     runtimeValue.length(0);
-    runtimeName << name;
-    runtimeValue << value;
+    runtimeName << ZuCSpan{name};
+    runtimeValue << ZuCSpan{value};
   }
   void contentLength(uint64_t v) { contentLen = v; ++contentLenCalls; }
   void body(ZuBSpan) { ++bodyCalls; }

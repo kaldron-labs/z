@@ -1011,8 +1011,9 @@ void testZhttpClientCaddyHttpsH3()
   ZuCHECK(!state.errors && state.response.complete &&
       state.response.status == 200 && state.response.body == "caddy-h3-ok",
     "Zhttp client->Caddy HTTPS/H3 response mismatch");
-  link->disconnect();
-  ZuCHECK(waitDone(state.done),
+  ZmSemaphore disconnected;
+  link->disconnect([&disconnected]() { disconnected.post(); });
+  ZuCHECK(waitDone(disconnected),
     "Zhttp client->Caddy HTTPS/H3 disconnect timed out");
   link = nullptr;
   client.final();

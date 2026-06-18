@@ -74,12 +74,12 @@ struct ResponseParser :
     ++completeCalls;
   }
 
-  void header(ZuCSpan key, ZuCSpan value) {
+  void header(ZuBSpan key, ZuBSpan value) {
     ++runtimeCalls;
     runtimeKey.length(0);
     runtimeValue.length(0);
-    runtimeKey << key;
-    runtimeValue << value;
+    runtimeKey << ZuCSpan{key};
+    runtimeValue << ZuCSpan{value};
   }
 
   int				statusSeen = -1;

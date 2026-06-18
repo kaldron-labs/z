@@ -162,49 +162,49 @@ void testReceiveFlowControl()
 
   FlowApp app;
   FlowLink link{&app};
-  FlowStream stream{&link, 0};
+  ZmRef<FlowStream> stream = new FlowStream{&link, 0};
   Zquic::ReceiveFlow flow{8, 5};
-  auto packet = streamPkt_(stream.id(), 3, "de", false, frame, used);
+  auto packet = streamPkt_(stream->id(), 3, "de", false, frame, used);
   ZuCHECK(packet,
     "out-of-order flow STREAM setup failed");
-  ZuCHECK(stream.receiveFrame(frame, flow, packet, &diag) &&
+  ZuCHECK(stream->receiveFrame(frame, flow, packet, &diag) &&
       flow.dataUsed() == 2 &&
       flow.streamUsed() == 5 &&
-      stream.rxPending() == 1,
+      stream->rxPending() == 1,
     "out-of-order receive flow accounting mismatch");
 
-  packet = streamPkt_(stream.id(), 0, "abc", false, frame, used);
+  packet = streamPkt_(stream->id(), 0, "abc", false, frame, used);
   ZuCHECK(packet,
     "gap-filling flow STREAM setup failed");
-  ZuCHECK(stream.receiveFrame(frame, flow, packet, &diag) &&
+  ZuCHECK(stream->receiveFrame(frame, flow, packet, &diag) &&
       flow.dataUsed() == 5 &&
       flow.streamUsed() == 5 &&
-      stream.rxBytes() == 5,
+      stream->rxBytes() == 5,
     "gap-filling receive flow accounting mismatch");
 
-  ZuCHECK(stream.receiveFrame(frame, flow, packet, &diag) &&
+  ZuCHECK(stream->receiveFrame(frame, flow, packet, &diag) &&
       flow.dataUsed() == 5,
     "duplicate STREAM changed receive flow accounting");
 
-  packet = streamPkt_(stream.id(), 5, "x", false, frame, used);
+  packet = streamPkt_(stream->id(), 5, "x", false, frame, used);
   ZuCHECK(packet,
     "stream-limit flow violation setup failed");
-  ZuCHECK(!stream.receiveFrame(frame, flow, packet, &diag) &&
+  ZuCHECK(!stream->receiveFrame(frame, flow, packet, &diag) &&
       flow.error() == Zquic::TransportError::FlowControl &&
       flow.dataUsed() == 5 &&
       flow.streamUsed() == 5,
     "stream-level flow violation was not rejected cleanly");
 
-  FlowStream connLimited{&link, 4};
+  ZmRef<FlowStream> connLimited = new FlowStream{&link, 4};
   Zquic::ReceiveFlow connFlow{6, 20};
-  packet = streamPkt_(connLimited.id(), 0, "hello", false, frame, used);
+  packet = streamPkt_(connLimited->id(), 0, "hello", false, frame, used);
   ZuCHECK(packet &&
-      connLimited.receiveFrame(frame, connFlow, packet, &diag),
+      connLimited->receiveFrame(frame, connFlow, packet, &diag),
     "connection flow first receive failed");
-  packet = streamPkt_(connLimited.id(), 5, "!!", false, frame, used);
+  packet = streamPkt_(connLimited->id(), 5, "!!", false, frame, used);
   ZuCHECK(packet,
     "connection-limit flow violation setup failed");
-  ZuCHECK(!connLimited.receiveFrame(frame, connFlow, packet, &diag) &&
+  ZuCHECK(!connLimited->receiveFrame(frame, connFlow, packet, &diag) &&
       connFlow.error() == Zquic::TransportError::FlowControl &&
       connFlow.dataUsed() == 5 &&
       connFlow.streamUsed() == 5,

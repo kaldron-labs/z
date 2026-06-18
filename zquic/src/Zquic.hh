@@ -38,6 +38,16 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
+#if defined(ZDEBUG) && !defined(Zquic_DEBUG)
+#define Zquic_DEBUG	// enable testing / debugging
+#endif
+
+#ifdef Zquic_DEBUG
+#define Zquic_DEBUG_LOG_(e) do { if (debugLog_()) ZiLOG(Debug, "Zquic", (e)); } while (0)
+#else
+#define Zquic_DEBUG_LOG_(e) (void())
+#endif
+
 #include <zlib/ZquicBuf.hh>
 #include <zlib/ZquicStream.hh>
 #include <zlib/ZquicSched.hh>
@@ -2456,7 +2466,7 @@ protected:
 
   bool runtimeEstablished_() const { return m_established; }
   bool debugLog_() const {
-#ifdef ZiMultiplex_DEBUG
+#if defined(Zquic_DEBUG) && defined(ZiMultiplex_DEBUG)
     return app() && app()->mx() && app()->mx()->debug();
 #else
     return false;
@@ -2718,7 +2728,7 @@ protected:
     impl()->queueTxFlush_();
   }
   void pathExpired_() { failPathValidation_(); }
-#ifdef ZDEBUG
+#ifdef Zquic_DEBUG
   void growActivePathForTest_(unsigned size) {
     m_path.startProbe(size);
     m_path.probeAcked();
@@ -2809,7 +2819,7 @@ protected:
     if (largestAcked == uint64_t(-1)) return RuntimePNLength;
     return PktNumber::encodedLength(m_txPN[level], largestAcked);
   }
-#ifdef ZDEBUG
+#ifdef Zquic_DEBUG
   void setTxPNForTest_(CryptoLevel::T level, uint64_t pn) {
     m_txPN[level] = pn;
   }
@@ -3621,8 +3631,7 @@ protected:
     int nRanges = tracker.snapshot(ack.ranges, Frame::MaxAckRanges);
     if (nRanges < 0) return;
     ack.nRanges = unsigned(nRanges);
-    if (debugLog_())
-      ZiLOG(Debug, "Zquic", ([level, n = ack.nRanges](auto &s) {
+    Zquic_DEBUG_LOG_(([level, n = ack.nRanges](auto &s) {
 	s << "ACK snapshot posted level=" << int(level) << " ranges=" << n;
       }));
     bool immediate = m_rxAcks.immediate(space);
@@ -3659,8 +3668,7 @@ protected:
     bool due = m_txAck[ack.level].due || ack.due;
     m_txAck[ack.level] = ack;
     m_txAck[ack.level].due = due;
-    if (debugLog_())
-      ZiLOG(Debug, "Zquic", ([level = ack.level, n = ack.nRanges](auto &s) {
+    Zquic_DEBUG_LOG_(([level = ack.level, n = ack.nRanges](auto &s) {
 	s << "ACK snapshot processed level=" << int(level) << " ranges=" << n;
       }));
   }
@@ -3828,8 +3836,7 @@ protected:
     CryptoLevel::T level = CryptoLevel::Initial;
     if (!ptoLevel_(level)) return;
     ZuTime out = ptoDeadline_(level);
-    if (debugLog_())
-      ZiLOG(Debug, "Zquic", ([level, bif = m_txPkts[level].bytesInFlight()](auto &s) {
+    Zquic_DEBUG_LOG_(([level, bif = m_txPkts[level].bytesInFlight()](auto &s) {
 	s << "PTO armed level=" << int(level) << " bytesInFlight=" << bif;
       }));
     schedulePTOTimer_(out);
@@ -4060,8 +4067,7 @@ protected:
     if (n) {
       ++m_txDiag.ptoCount;
       m_ptoBackoff.expired();
-      if (debugLog_())
-	ZiLOG(Debug, "Zquic", ([level, n](auto &s) {
+      Zquic_DEBUG_LOG_(([level, n](auto &s) {
 	  s << "PTO fired level=" << int(level) << " probes=" << n;
 	}));
     }
@@ -4078,8 +4084,7 @@ protected:
 	continue;
       level = l;
       ++m_txDiag.retransmittedFrames;
-      if (debugLog_())
-	ZiLOG(Debug, "Zquic", ([level, ref](auto &s) {
+      Zquic_DEBUG_LOG_(([level, ref](auto &s) {
 	  s << "retransmit queued level=" << int(level) <<
 	    " kind=" << int(ref.kind) <<
 	    " streamID=" << ref.streamID <<
@@ -4490,8 +4495,7 @@ protected:
     ++m_txPN[level];
     ++m_txDiag.packetsTx;
     m_txDiag.bytesTx += bytes;
-    if (debugLog_())
-      ZiLOG(Debug, "Zquic", ([level, pn, bytes, ackEliciting](auto &s) {
+    Zquic_DEBUG_LOG_(([level, pn, bytes, ackEliciting](auto &s) {
 	s << "packet sent level=" << int(level) <<
 	  " pn=" << pn <<
 	  " bytes=" << bytes <<
@@ -5303,8 +5307,7 @@ private:
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC timer schedule before app initialization", return);
     if (m_timerTeardown) return;
-    if (debugLog_())
-      ZiLOG(Debug, "Zquic", ([name](auto &s) {
+    Zquic_DEBUG_LOG_(([name](auto &s) {
 	s << "QUIC timer armed name=" << name;
       }));
     app()->mx()->run(app()->txThread(),
@@ -7075,5 +7078,7 @@ private:
 };
 
 } // namespace Zquic
+
+#undef Zquic_DEBUG_LOG_
 
 #endif /* Zquic_HH */
