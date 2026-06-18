@@ -73,7 +73,11 @@ namespace XferCompression {
   ZtEnum(XferCompression, int8_t, compress, deflate, gzip);
 }
 
-// HTTP/1 Parser
+// HTTP Parser CRTP API
+// - consistent contract for H1::Parser and H3::Parser
+// - For HTTP/1 responses framed by connection close (no Content-Length and no
+//   transfer-encoding: chunked), call parser.eof() from the connection close path
+//   after all received bytes have been passed to parser.process().
 
 // CRTP - implementation may implement the following callbacks:
 #if 0
@@ -83,10 +87,10 @@ struct Impl : public Parser<Impl, ...> {
   // optional - if implemented, must call Base::reset()
   void reset();
 
-  // optional - requests
+  // optional - request callback
   void operation(Method::T method, ZuBSpan path);
 
-  // optional - responses
+  // optional - response callback
   void status(unsigned);
 
   // optional - header key
@@ -95,28 +99,97 @@ struct Impl : public Parser<Impl, ...> {
   // optional - header key+value
   template <typename Key, typename Value> void header();
 
+  // optional - run-time header key/value
+  void header(ZuBSpan key, ZuBSpan value);
+
   // optional - content-length header
   void contentLength(uint64_t);
-
-  // optional - transfer-encoding compression
-  // - this will only be called if compress/deflate/gzip is specified
-  // - this is HTTP 1.1 only and not mainstream
-  void xferCompression(XferCompression::T);
-
-  // optional - transfer-encoding: chunked
-  void chunked();
 
   // optional - body data
   void body(ZuBSpan);
 
-  // optional - end of message (end of body, or end of header if no body)
-void complete(ParserState::T);
+  // optional - end of stream/message
+  void complete(ParserState::T);
+
+  // optional - stream completion predicate
+  // - default calls impl()->finReceived()
+  bool rxComplete() const;
+
+  // required only when using Base::rxComplete()
+  bool finReceived() const;
+
+  // optional - H3/QPACK parameters, defaults to default Params
+  const Params &h3Params() const;
+
+  // optional - current stream ID, used for QPACK section acknowledgements
+  uint64_t streamID() const;
+
+  // optional - write to local QPACK decoder stream for section acks
+  bool qpackDecoderWrite(ZuBSpan);
+
+  // optional - peer dynamic table; nullptr disables dynamic QPACK decoding
+  QPackRxTable *qpackRx();
+
+  // optional - local Tx dynamic table, currently exposed for symmetry
+  QPackTxTable *qpackTx();
 };
 #endif
 
-// For HTTP/1 responses framed by connection close (no Content-Length and no
-// transfer-encoding: chunked), call parser.eof() from the connection close path
-// after all received bytes have been passed to parser.process().
+// HTTP Builder CRTP API
+// - consistent contract for H1::Builder and H3::Builder
+// - H1 chunked builders emit Trailers after finish(); H3 builders emit Trailers
+//   as a trailing HEADERS frame from finish().
+
+// CRTP - implementation may implement the following callbacks:
+#if 0
+struct Impl : public Builder<Impl, Headers, Trailers, HasBody, Chunked> {
+  using Base = Builder<Impl, Headers, Trailers, HasBody, Chunked>;
+
+  // optional - if implemented, must call Base::reset()
+  void reset();
+
+  // optional - request method/path/query
+  template <typename L> void operation(L &&l);
+  // l(Method::T method, ZuCSpan path, ZuCSpan query)
+
+  // optional - request host / HTTP/3 :authority
+  template <typename L> void host(L &&l);
+  // l(ZuCSpan host)
+
+  // optional - response status
+  unsigned status();
+
+  // optional - HTTP/1 response reason
+  template <typename L> void reason(L &&l);
+  // l(ZuCSpan reason)
+
+  // optional - static header key with run-time value
+  template <typename Key, typename L> void header(L &&l);
+  // l(ZuCSpan value)
+
+  // optional - run-time header key/value pairs
+  template <typename L> void header(L &&l);
+  // l(ZuCSpan key, ZuCSpan value)
+
+  // optional - body length when HasBody && !Chunked
+  uint64_t contentLength();
+
+  // optional - H3 QPACK dynamic table
+  H3::QPackTxTable *qpackTx();
+
+  // optional - H3 QPACK encoder-stream write
+  bool qpackEncoderWrite(ZuBSpan);
+
+  // optional - H3 QPACK build failure callback
+  void qpackFailure(H3::QPackBuildFailure::T);
+
+  // optional - H3 parameters
+  const H3::Params &h3Params() const;
+
+  // optional - H3 stream ID used for QPACK section tracking
+  uint64_t streamID() const;
+};
+#endif
 
 } // Zhttp
 
@@ -158,7 +231,6 @@ using H3ReqBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
 template <typename Impl, typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>, bool HasBody = false, bool Chunked = false>
 using H3RespBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
-
 
 } // Zhttp
 

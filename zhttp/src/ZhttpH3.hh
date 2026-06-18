@@ -90,7 +90,7 @@ namespace H3 {
   template <typename Impl>
   struct HasRuntimeHeader_<Impl,
     decltype(ZuDeclVal<Impl *>()->header(
-      ZuDeclVal<ZuCSpan>(), ZuDeclVal<ZuCSpan>()), void())> :
+      ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
       public ZuTrue { };
 
   template <typename Impl, typename L, typename = void>
@@ -489,61 +489,6 @@ namespace H3 {
     int		status = -1;
   };
 
-  // HTTP/3 request/response stream parser
-  //
-  // CRTP - implementation may implement the following callbacks:
-#if 0
-  struct Impl : public Parser<Impl, ...> {
-    using Base = Parser<Impl, ...>;
-
-    // optional - if implemented, must call Base::reset()
-    void reset();
-
-    // optional - request callback
-    void operation(Method::T method, ZuBSpan path);
-
-    // optional - response callback
-    void status(unsigned);
-
-    // optional - header key
-    template <typename Key> void header(ZuBSpan value);
-
-    // optional - header key+value
-    template <typename Key, typename Value> void header();
-
-    // optional - content-length header
-    void contentLength(uint64_t);
-
-    // optional - body data
-    void body(ZuBSpan);
-
-    // optional - end of stream/message
-    void complete(ParserState::T);
-
-    // optional - stream completion predicate
-    // - default calls impl()->finReceived()
-    bool rxComplete() const;
-
-    // required only when using Base::rxComplete()
-    bool finReceived() const;
-
-    // optional - H3/QPACK parameters, defaults to default Params
-    const Params &h3Params() const;
-
-    // optional - current stream ID, used for QPACK section acknowledgements
-    uint64_t streamID() const;
-
-    // optional - write to local QPACK decoder stream for section acks
-    bool qpackDecoderWrite(ZuBSpan);
-
-    // optional - peer dynamic table; nullptr disables dynamic QPACK decoding
-    QPackRxTable *qpackRx();
-
-    // optional - local Tx dynamic table, currently exposed for symmetry
-    QPackTxTable *qpackTx();
-  };
-#endif
-
   template <
     typename Impl,
     bool Request_ = false,
@@ -742,7 +687,7 @@ namespace H3 {
 
     void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
       if constexpr (HasRuntimeHeader_<Impl>{})
-	impl()->header(ZuCSpan{key}, ZuCSpan{value});
+	impl()->header(key, value);
     }
 
     void header_(ZuBSpan key, ZuBSpan value) {
@@ -1051,11 +996,12 @@ namespace H3 {
       m_frameType = m_frameLen = m_frameOff = 0;
     }
 
+    // CRTP defaults
     void operation(Method::T, ZuBSpan) { }
     void status(unsigned) { }
     template <typename Key> void header(ZuBSpan) { }
     template <typename Key, typename Value> void header() { }
-    void header(ZuCSpan, ZuCSpan) { }
+    void header(ZuBSpan, ZuBSpan) { }
     void contentLength(uint64_t) { }
     void body(ZuBSpan) { }
     void complete(State::T) { }

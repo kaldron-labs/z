@@ -34,22 +34,26 @@ namespace Http3Mode {
 }
 
 struct Options {
- ZuCSpan	ca;
- ZuCSpan	output{"index.html"};
- uint32_t	requests = 1;
- uint32_t	concurrency = 1;
- ZuCSpan	url;
- int8_t		http3 = Http3Mode::prefer;
- bool		verbose = false;
- bool		debug = false;
- bool		frag = false;
- bool		yield = false;
+  ZuCSpan	ca;
+  ZuCSpan	output{"index.html"};
+  uint32_t	requests = 1;
+  uint32_t	concurrency = 1;
+  ZuCSpan	url;
+  Http3Mode::T	http3 = Http3Mode::prefer;
+  bool		verbose = false;
 #ifdef ZiMultiplex_DEBUG
- ZuCSpan	quicRxDrop;
- ZuCSpan	quicTxDrop;
- uint32_t	quicDiag = 0;
+  bool		debug = false;
+  bool		frag = false;
+  bool		yield = false;
 #endif
- bool		help = false;
+#ifdef ZiMultiplex_FILTER
+  ZuCSpan	quicRxDrop;
+  ZuCSpan	quicTxDrop;
+#endif
+#ifdef Zquic_DEBUG
+  uint32_t	quicDiag = 0;
+#endif
+  bool		help = false;
 };
 
 ZtStruct((Options, CLI),
@@ -61,12 +65,16 @@ ZtStruct((Options, CLI),
 		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
 								 Http3Mode::prefer)),
   (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool)),
+#ifdef ZiMultiplex_DEBUG
   (((debug),     (CLI::Long<"debug">)),                      (Bool)),
   (((frag),      (CLI::Long<"frag">)),                       (Bool)),
   (((yield),     (CLI::Long<"yield">)),                      (Bool)),
-#ifdef ZiMultiplex_DEBUG
+#endif
+#ifdef ZiMultiplex_FILTER
   (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),              (String)),
   (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),              (String)),
+#endif
+#ifdef Zquic_DEBUG
   (((quicDiag),   (CLI::Long<"quic-diag">)),                 (UInt32)),
 #endif
   (((url),       (CLI::Arg<1>)),                             (String)),
@@ -85,12 +93,16 @@ void usage(int code = 1)
     "  -3, --http3=MODE   HTTP/3 mode for https: force, prefer, disable;\n"
     "                      default prefer\n"
     "  -v, --verbose       show DNS and Alt-Svc probing\n"
+#ifdef ZiMultiplex_DEBUG
     "  --debug             enable ZiMultiplex and HTTP/3 debug logging\n"
     "  --frag              fragment ZiMultiplex I/O in debug builds\n"
     "  --yield             yield in ZiMultiplex in debug builds\n"
-#ifdef ZiMultiplex_DEBUG
+#endif
+#ifdef ZiMultiplex_FILTER
     "  --quic-rx-drop=N%   randomly drop N% of received QUIC UDP packets\n"
     "  --quic-tx-drop=N%   randomly drop N% of transmitted QUIC UDP packets\n"
+#endif
+#ifdef Zquic_DEBUG
     "  --quic-diag=N       print HTTP/3 QUIC counters every N seconds\n"
 #endif
     "  -h, --help          show help\n\n"
@@ -99,7 +111,6 @@ void usage(int code = 1)
   ::exit(code);
 }
 
-#ifdef ZiMultiplex_DEBUG
 bool parseDrop(ZuCSpan s, double &drop)
 {
   drop = 0.0;
@@ -112,7 +123,6 @@ bool parseDrop(ZuCSpan s, double &drop)
   drop = v * 0.01;
   return true;
 }
-#endif
 
 bool validateOptions(Options &options, int argc)
 {
@@ -120,7 +130,7 @@ bool validateOptions(Options &options, int argc)
   if (!options.requests || !options.concurrency) return false;
   if (options.concurrency > options.requests) return false;
   if (options.http3 < 0 || options.http3 >= Http3Mode::N) return false;
-#ifdef ZiMultiplex_DEBUG
+#ifdef ZiMultiplex_FILTER
   double drop;
   if (!parseDrop(options.quicRxDrop, drop)) return false;
   if (!parseDrop(options.quicTxDrop, drop)) return false;
@@ -206,13 +216,11 @@ struct Req {
   bool		h3Active = false;
   bool		done = false;
   bool		failed = false;
-#ifdef ZiMultiplex_DEBUG
   uint64_t	h3RxBytes = 0;
   uint64_t	h3FinalSize = 0;
   unsigned	h3RxPending = 0;
   unsigned	h3RxQueued = 0;
   bool		h3FinReceived = false;
-#endif
 };
 
 using State = Req;
@@ -440,13 +448,11 @@ void resetAttempt(Req &req, bool truncateOutput)
   req.truncateOutput = truncateOutput;
   req.done = false;
   req.failed = false;
-#ifdef ZiMultiplex_DEBUG
   req.h3RxBytes = 0;
   req.h3FinalSize = 0;
   req.h3RxPending = 0;
   req.h3RxQueued = 0;
   req.h3FinReceived = false;
-#endif
 }
 
 template <typename S>
@@ -1152,7 +1158,7 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   struct Link;
   struct Stream;
 
-#ifdef ZiMultiplex_DEBUG
+#ifdef ZiMultiplex_FILTER
   double m_rxDrop = 0.0;
   double m_txDrop = 0.0;
   ZmRandom m_rng;
@@ -1174,12 +1180,16 @@ struct QUICClient : public Zquic::Client<QUICClient> {
 
   void done() { sem.post(); }
   unsigned reconnFreq() const { return 0; }
-#ifdef ZiMultiplex_DEBUG
   void dropRates(const Options &options) {
+#ifdef ZiMultiplex_FILTER
     parseDrop(options.quicRxDrop, m_rxDrop);
     parseDrop(options.quicTxDrop, m_txDrop);
+#else
+    (void)options;
+#endif
   }
   void filters() {
+#ifdef ZiMultiplex_FILTER
     auto mx = this->mx();
     ZiAssert(mx, "zhttp", (), "QUIC client filters before initialization",
       return);
@@ -1197,15 +1207,17 @@ struct QUICClient : public Zquic::Client<QUICClient> {
 	if (ZuUnlikely(!cxn->info().options.udp())) return false;
 	return client->m_rng.rand() < client->m_txDrop;
       }});
+#endif
   }
   void clearFilters() {
+#ifdef ZiMultiplex_FILTER
     auto mx = this->mx();
     if (!mx) return;
     if (m_rxDrop) mx->rxFilter({});
     if (m_txDrop) mx->txFilter({});
+#endif
   }
   void printDiag(Link *, ZuCSpan);
-#endif
   uint64_t maxStreamsBidi() const {
     return run && run->options.concurrency > H3BidiMax ?
       run->options.concurrency : H3BidiMax;
@@ -1313,9 +1325,9 @@ private:
   bool	m_countedUp = false;
 };
 
-#ifdef ZiMultiplex_DEBUG
 void QUICClient::printDiag(Link *link, ZuCSpan label)
 {
+#ifdef Zquic_DEBUG
   if (!link) return;
   Zquic::RuntimeDiag diag = link->runtimeDiag();
   unsigned complete, failed, scheduled, active, pending;
@@ -1327,7 +1339,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     active = this->active;
     pending = this->pending.length() - this->pendingHead;
   }
-  ZiLOG(Error, "zhttp", ([
+  ZiLOG(Info, "zhttp", ([
     label, complete, failed, scheduled, active, pending,
     streams = link->streamCount(),
     opened = link->localStreamsOpened(Zi::StreamType::Duplex),
@@ -1392,7 +1404,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     uint64_t txLimit = stream ? stream->txCreditLimit() : 0;
     bool finSent = stream && stream->finSent();
     bool finDequeued = stream && stream->finDequeued();
-    ZiLOG(Error, "zhttp", ([
+    ZiLOG(Info, "zhttp", ([
       label, id = req.id, streamID = req.responseStreamID,
       status = req.status, contentLength = req.contentLength,
       bodyBytes = req.bodyBytes, bodyChunks = req.bodyChunks,
@@ -1424,8 +1436,8 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
 	" finDequeued=" << int(finDequeued);
     }));
   }
-}
 #endif
+}
 
 struct QUICDrain : public ZmObject {
   ZmSemaphore sem;
@@ -1778,9 +1790,7 @@ int run(
     }
   } else if constexpr (Client::Transport == Zi::Transport::QUIC) {
     client.state.protocol = Protocol::H3;
-#ifdef ZiMultiplex_DEBUG
     client.dropRates(options);
-#endif
     ZuCSpan alpn[] = { "h3" };
     if (!client.init(
 	  Zquic::ClientParams(&mx, "3", "4")
@@ -1793,9 +1803,7 @@ int run(
       ZiLOG(Error, "zhttp", "QUIC client initialization failed");
       return 1;
     }
-#ifdef ZiMultiplex_DEBUG
     client.filters();
-#endif
   }
 
   {
@@ -1827,10 +1835,8 @@ int run(
   int rc = client.state.failed ? 1 : 0;
   closeBody(client.state);
   req = ZuMv(client.state);
-#ifdef ZiMultiplex_DEBUG
   if constexpr (Client::Transport == Zi::Transport::QUIC)
     client.clearFilters();
-#endif
   client.final();
   return rc;
 }
@@ -1915,9 +1921,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       run.failed = client.failed;
       return run.failed ? 1 : 0;
     }
-#ifdef ZiMultiplex_DEBUG
     client.dropRates(run.options);
-#endif
     ZuCSpan alpn[] = { "h3" };
     if (!client.init(
 	  Zquic::ClientParams(&mx, "3", "4")
@@ -1930,20 +1934,18 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       ZiLOG(Error, "zhttp", "QUIC client initialization failed");
       return 1;
     }
-#ifdef ZiMultiplex_DEBUG
     client.filters();
-#endif
 
     auto link = new QUICClient::Link(&client);
     client.link = link;
     link->connect(run.originalURL.host, run.originalURL.port);
     bool timedOut = false;
     bool stalled = false;
+#ifdef Zquic_DEBUG
     unsigned elapsed = 0;
     unsigned diagElapsed = 0;
     unsigned idle = 0;
     unsigned lastComplete = client.complete;
-#ifdef ZiMultiplex_DEBUG
     unsigned quiet = 0;
     Zquic::RuntimeDiag lastDiag = link->runtimeDiag();
     for (;;) {
@@ -1999,9 +2001,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       timedOut = true;
 #endif
     if (timedOut || stalled) {
-#ifdef ZiMultiplex_DEBUG
       client.printDiag(link, timedOut ? "timeout" : "stall");
-#endif
       ZiLOG(Error, "zhttp", ([attempt, stalled](auto &s) {
 	s << "h3 " << (stalled ? "stalled" : "timed out") <<
 	  ", reconnecting attempt=" << attempt + 1;
@@ -2014,9 +2014,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       run.complete = client.complete;
       run.failed = client.failed;
     }
-#ifdef ZiMultiplex_DEBUG
     client.clearFilters();
-#endif
     client.final();
     if (!timedOut && !stalled)
       return run.failed ? 1 : 0;
@@ -2272,8 +2270,11 @@ int main(int argc, char **argv)
   }
 
   ZiLog::init("zhttp");
-  ZiLog::level(options.debug ? Ze::Debug :
-    (options.verbose ? Ze::Info : Ze::Warning));
+  ZiLog::level(
+#ifdef ZiMultiplex_DEBUG
+    options.debug ? Ze::Debug :
+#endif
+    options.verbose ? Ze::Info : Ze::Warning);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
