@@ -584,3 +584,42 @@ app shard before reading runtime/path state, while lightweight byte counters
 remain simple diagnostic reads.  Stream ACK/loss bookkeeping carries raw
 stream owner pointers through Tx packet refs so Tx no longer has to look up
 Rx-owned stream tables on the transmit shard.
+
+## Harden key update handling
+
+Short-header packet handling now tracks QUIC 1-RTT key phase explicitly instead
+of committing peer receive keys as soon as a trial decrypt succeeds.  The short
+packet codec preserves the key phase bit, Tx writes it through `Pkt::writeShort`,
+and Rx validates the unprotected phase bit after deprotection before accepting
+the packet.
+
+`Link` now keeps bounded Rx key-update state: current receive keys remain in
+`Crypto`, while previous and candidate-next receive traffic secrets/protection
+contexts are retained in fixed link members.  On short-packet receive the runtime
+tries the current keys first, accepts retained old keys for reordered packets,
+and only trials next keys when current/old decrypt fail.  A peer update commits
+only when the key phase toggles, no old-key discard window is already active,
+and the packet number advances beyond the largest accepted 1-RTT packet.  This
+prevents rapid repeated toggles and invalid phase transitions from mutating the
+global receive key state.
+
+Committing a peer update moves the old current receive keys into the retained
+old slot, installs the next receive secret into `Crypto`, clears the candidate
+slot, flips the receive key phase, derives the matching Tx response update, and
+arms the existing key-discard timer for a three-PTO discard window.  The timer
+still fires on Tx, but now posts back to Rx to clear obsolete receive key state,
+preserving shard ownership.
+
+Runtime diagnostics now expose peer key updates, invalid key phases, old-key
+acceptance, and key discard counts.  `ZquicStreamTest` adds a direct protected
+short-packet key update test covering successful peer update, old-key packet
+tolerance during reordering, rejection of an invalid rapid second transition,
+and rejection after old-key discard.  The test uses real packet protection and
+the normal receive path with debug-only setup hooks.
+
+Validation was performed with the configured AddressSanitizer/LeakSanitizer
+build.  `git diff --check` passed.  `make -C zquic/test test` passed.  The first
+`make -C zhttp/test test` exposed stale `zhttp/example` binaries still linked
+against the old `Pkt::writeShort` symbol after the internal signature change;
+after rebuilding with `make -C zhttp/example -j8`, `make -C zhttp/test test`
+passed.
