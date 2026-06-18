@@ -140,7 +140,7 @@ AS_CASE([$CC],
   [*gcc*], [
     Z_WFLAGS="-Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare" # C and C++
     Z_CFLAGS="$Z_CFLAGS $Z_WFLAGS"
-    Z_CXXFLAGS="-std=gnu++2b -fstrict-aliasing -ftemplate-backtrace-limit=0 -Wno-non-template-friend -Wno-enum-compare -Wno-deprecated-enum-enum-conversion -Wno-int-in-bool-context -Wno-unused-value $Z_CXXFLAGS $Z_WFLAGS"
+    Z_CXXFLAGS="-std=gnu++2b -fstrict-aliasing -ftemplate-backtrace-limit=0 -Wno-non-template-friend -Wno-enum-compare -Wno-deprecated-enum-enum-conversion -Wno-int-in-bool-context -Wno-unused-value -Wno-sfinae-incomplete $Z_CXXFLAGS $Z_WFLAGS"
   ])
 
 AC_SUBST(Z_CPPFLAGS)

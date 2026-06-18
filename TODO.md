@@ -4,73 +4,26 @@
 
 complete remaining work from `arc/zquic4/plan_14.md` onwards
 
-## Zquic
-
-review the `zquic` hardening changes since e2081c1f2afb377075c4a4092ff5445189ada624 against the following reference implementations:
+reference implementations:
 - `../zngtcp2` (primary reference)
 - `../msquic` Microsoft QUIC
 - `../quiche` Google Quiche
 - `../mvfst` Facebook mvfst
-in each case, compare the `zquic` implementation with the reference in regard to the elements of `quic.md` and identify where `zquic` risks:
-- worse resilience than the reference
-- worse latency than the reference
-- worse throughput than the reference
-write findings to `zquic_review.md`
 
 ## Zu
 
 replace many occurrences of:
 `if constexpr (ZuIsSame<T, ZuStringT<S>>{})` with:
-`if constexpr (ZuIsStr<T, S>{})`
+`if constexpr (ZuIsSameStr<T, S>{})`
 using:
 ```
 template <typename T, ZuString S>
-using ZuIsStr = ZuIsSame<T, ZuStringT<S>>
+using ZuIsSameStr = ZuIsSame<T, ZuStringT<S>>
 ```
 
 ## ZiLog standardization
 
 standardize `ZiLog` configuration from command line / environment variables
-
-## Zrest
-fundamentally, a request is:
-- an operation
-- parameters
-- builder functionality for the request
-- parser functionality for the response
-```
-struct QueryParams { ... };
-ZtStruct(QueryParams, ...);
-struct ListStationTypes {
-  QueryParams	params;
-
-  template <template <typename> Builder_>
-  struct HttpBuilder : public Builder_<HttpBuilder> {
-    ListStationStypes	*request = nullptr;
-
-    template <typename L> void operation(L &&l) {
-      auto query = ZtLocalArray(...);
-      ZtURI::save(query, request->params);
-      l(Method::Get, "/station_types", query);
-    }
-  };
-  template <template <typename> Builder, typename Tx>
-  void http(Tx &tx) { HttpBuilder<Builder>{this}.request(tx); }
-};
-```
-
-outdated:
-- figure out REST Rx -> ZvIOMsg
-  - basically the same principle - store it after parse on receive,
-    save the object in the DB, queue the buffer for subsequent processing
-  - persisted state is Received but not Processed (mirror of Sent but not Ackd)
-- both ackd and processed are DB updates
-- all messages are idempotent, can be repeated (at least once)
-- these DB tables are persisted queues, no more and no less
-- actual stateful order, etc. tables are elsewhere and maintained
-  via application logic when these messages are applied
-- migrate Zrest to ZvEngine
-- get zrclient up and running
 
 ## devlayer
 
