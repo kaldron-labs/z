@@ -613,6 +613,29 @@ void testConnectionIDFrameLifecycle()
       foundToken == peerToken2,
     "retired peer CID slot was not reused for NEW_CONNECTION_ID");
 
+  ZuCHECK(link.receiveNewConnectionID(f) &&
+      link.peerCID(6, peerCID, foundToken) &&
+      peerCID == Zquic::CxnID{"peerCID10"} &&
+      foundToken == peerToken2,
+    "duplicate NEW_CONNECTION_ID tuple was not deterministic");
+
+  Zquic::Frame duplicate = f;
+  duplicate.payload = "peerCID11";
+  ZuCHECK(!link.receiveNewConnectionID(duplicate),
+    "duplicate NEW_CONNECTION_ID sequence with different CID was accepted");
+
+  duplicate = f;
+  duplicate.resetToken = peerToken;
+  ZuCHECK(!link.receiveNewConnectionID(duplicate),
+    "duplicate NEW_CONNECTION_ID sequence with different token was accepted");
+
+  duplicate = f;
+  duplicate.value = 7;
+  duplicate.payload = "peerCID11";
+  duplicate.resetToken = peerToken2;
+  ZuCHECK(!link.receiveNewConnectionID(duplicate),
+    "duplicate reset token for different peer CID was accepted");
+
   Zquic::CxnID localCID{"local003"};
   Zquic::ResetToken localToken{"fedcba9876543210"};
   ZuCHECK(link.addLocalCID(localCID, 3, localToken),

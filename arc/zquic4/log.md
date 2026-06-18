@@ -623,3 +623,45 @@ build.  `git diff --check` passed.  `make -C zquic/test test` passed.  The first
 against the old `Pkt::writeShort` symbol after the internal signature change;
 after rebuilding with `make -C zhttp/example -j8`, `make -C zhttp/test test`
 passed.
+
+## Complete stateless reset and CID token checks
+
+Peer-issued CID validation now rejects reset-token reuse across different
+connection IDs.  The existing small peer CID array remains the source of truth:
+NEW_CONNECTION_ID replays for the same sequence/CID/token tuple are accepted
+deterministically, sequence reuse with a different CID or token is rejected,
+CID reuse with a different sequence is rejected, and a reset token already
+bound to another non-tombstoned peer CID is rejected before any CID store
+mutation.  This keeps the RFC token uniqueness rule local to the peer CID path
+without introducing a heap-heavy token hash.
+
+CID entries now retain cleanup metadata when they move to retired state.
+Local CIDs retired by RETIRE_CONNECTION_ID and peer CIDs retired by
+Retire Prior To receive the same PTO-derived cleanup deadline used for retired
+server routes.  Re-activation of an existing CID clears that cleanup deadline,
+so active CID state cannot carry stale retirement metadata into later path
+selection.
+
+Server route cleanup is now timer-driven.  The Rx-owned server route table
+exposes the next retired-route cleanup deadline, and the server owns a
+by-value route GC timer that fires on the Rx thread, runs expired retired-route
+collection, and rearms itself to the next pending deadline.  Route teardown
+still retires routes first so late packets can match retained reset-token
+state, but cleanup no longer depends on a later route-table mutation.  The
+timer is cancelled during server close and route-table clearing to avoid stale
+scheduler callbacks.
+
+Stateless reset lookup continues to use the route table's longest matching
+short-header DCID route and therefore includes retired, non-tombstoned routes
+until their cleanup deadline expires.  Tombstoned routes still drop reset
+tokens, preventing stateless reset emission after the tombstone transition.
+
+Tests were extended in `ZquicAPITest` and `ZquicCIDTest` for duplicate
+NEW_CONNECTION_ID tuple behavior, duplicate sequence/CID/token rejection,
+duplicate reset token rejection across different peer CIDs, earliest retired
+route cleanup deadline selection, retired route expiry, retained reset tokens
+on retired routes, and stateless reset token lookup for unknown short CIDs.
+Validation was performed with the configured AddressSanitizer/LeakSanitizer
+build: `git diff --check`, `make -C zquic/test test`, and
+`make -C zhttp/test test` all passed.  The zhttp run used its existing
+LeakSanitizer suppressions for external TLS/OpenSSL allocations.
