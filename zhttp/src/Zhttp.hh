@@ -200,37 +200,57 @@ struct Impl : public Builder<Impl, Headers, Trailers, HasBody, Chunked> {
 
 namespace Zhttp {
 
-template <typename Impl, typename Headers = ZuTypeList<>,
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
 using H1ReqParser = H1::Parser<Impl, true, Headers, MaxBody>;
 
-template <typename Impl, typename Headers = ZuTypeList<>,
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
 using H1RespParser = H1::Parser<Impl, false, Headers, MaxBody>;
 
-template <typename Impl, typename Headers = ZuTypeList<>,
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
 using H3ReqParser = H3::Parser<Impl, true, Headers, MaxBody>;
 
-template <typename Impl, typename Headers = ZuTypeList<>,
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
 using H3RespParser = H3::Parser<Impl, false, Headers, MaxBody>;
 
-template <typename Impl, typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>, bool HasBody = false, bool Chunked = false>
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false, bool Chunked = false>
 using H1ReqBuilder = H1::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
 
-template <typename Impl, typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>, bool HasBody = false, bool Chunked = false>
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false, bool Chunked = false>
 using H1RespBuilder = H1::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
 
-template <typename Impl, typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>, bool HasBody = false, bool Chunked = false>
-using H3ReqBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false>
+using H3ReqBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
 
-template <typename Impl, typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>, bool HasBody = false, bool Chunked = false>
-using H3RespBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false>
+using H3RespBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
 
 } // Zhttp
 
