@@ -271,6 +271,7 @@ private:
 class AckManager {
 public:
   static constexpr unsigned Spaces = 3;
+  enum { ActiveAckThreshold = 2 };
 
   bool received(
     PktSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
@@ -286,20 +287,7 @@ public:
     m_pending[i] = true;
     ++m_gen[i];
     if (!haveLargest || pn >= largest) m_largestRxTime[i] = now;
-    if (ackEliciting) {
-      m_ackEliciting[i] = true;
-      if (immediate) {
-	m_immediate[i] = true;
-	m_deadlineSet[i] = false;
-	m_deadline[i] = 0;
-      } else {
-	uint64_t deadline =
-	  maxAckDelay > uint64_t(-1) - now ? uint64_t(-1) : now + maxAckDelay;
-	if (!m_deadlineSet[i] || deadline < m_deadline[i])
-	  m_deadline[i] = deadline;
-	m_deadlineSet[i] = true;
-      }
-    }
+    if (ackEliciting) noteAckEliciting_(i, now, maxAckDelay, immediate);
     return true;
   }
 
@@ -310,18 +298,7 @@ public:
     unsigned i = space;
     if (!m_ack[i].contains(pn)) return false;
     if (m_ack[i].largest() == pn) m_largestRxTime[i] = now;
-    m_ackEliciting[i] = true;
-    if (immediate) {
-      m_immediate[i] = true;
-      m_deadlineSet[i] = false;
-      m_deadline[i] = 0;
-    } else if (!m_immediate[i]) {
-      uint64_t deadline =
-	maxAckDelay > uint64_t(-1) - now ? uint64_t(-1) : now + maxAckDelay;
-      if (!m_deadlineSet[i] || deadline < m_deadline[i])
-	m_deadline[i] = deadline;
-      m_deadlineSet[i] = true;
-    }
+    noteAckEliciting_(i, now, maxAckDelay, immediate);
     return true;
   }
 
@@ -372,6 +349,7 @@ public:
     if (!ZuCmp<uint64_t>::null(gen) && gen != m_gen[i]) return;
     m_pending[i] = false;
     m_ackEliciting[i] = false;
+    m_activeAck[i] = 0;
     m_immediate[i] = false;
     m_deadlineSet[i] = false;
     m_deadline[i] = 0;
@@ -381,6 +359,7 @@ public:
       m_ack[i].clear();
       m_pending[i] = false;
       m_ackEliciting[i] = false;
+      m_activeAck[i] = 0;
       m_immediate[i] = false;
       m_deadlineSet[i] = false;
       m_deadline[i] = 0;
@@ -391,6 +370,25 @@ public:
   }
 
 private:
+  void noteAckEliciting_(
+    unsigned i, uint64_t now, uint64_t maxAckDelay, bool immediate)
+  {
+    m_ackEliciting[i] = true;
+    if (m_activeAck[i] < ActiveAckThreshold) ++m_activeAck[i];
+    immediate = immediate || m_activeAck[i] >= ActiveAckThreshold;
+    if (immediate) {
+      m_immediate[i] = true;
+      m_deadlineSet[i] = false;
+      m_deadline[i] = 0;
+    } else if (!m_immediate[i]) {
+      uint64_t deadline =
+	maxAckDelay > uint64_t(-1) - now ? uint64_t(-1) : now + maxAckDelay;
+      if (!m_deadlineSet[i] || deadline < m_deadline[i])
+	m_deadline[i] = deadline;
+      m_deadlineSet[i] = true;
+    }
+  }
+
   void noteECN_(unsigned i, EcnMark::T ecn) {
     switch (ecn) {
       case EcnMark::ECT0: ++m_ecn[i].ect0; break;
@@ -403,6 +401,7 @@ private:
   AckECN	m_ecn[Spaces];
   bool		m_pending[Spaces] = {};
   bool		m_ackEliciting[Spaces] = {};
+  unsigned	m_activeAck[Spaces] = {};
   bool		m_immediate[Spaces] = {};
   bool		m_deadlineSet[Spaces] = {};
   uint64_t	m_deadline[Spaces] = {};
@@ -773,10 +772,7 @@ struct PktTxUpdate {
   void ackd(const SentPkt &p) {
     ackdAck_(p);
     ackdFrames_(p);
-    if (p.lost) {
-      ++lateAckd;
-      return;
-    }
+    if (p.lost) return;
     ackdBytes += p.bytes;
     if (p.pmtudProbe) {
       pmtudAckdBytes += p.bytes;
@@ -822,7 +818,6 @@ struct PktTxUpdate {
 
   uint64_t	ackdBytes = 0;
   CryptoLevel::T	level = CryptoLevel::Initial;
-  uint64_t	lateAckd = 0;
   uint64_t	normalAckdBytes = 0;
   uint64_t	pmtudAckdBytes = 0;
   unsigned	pmtudAckdSize = 0;
@@ -912,7 +907,11 @@ private:
 class PktTxSpace :
   public ZmPQTx<PktTxSpace, TxPktQueue> {
 public:
+  static constexpr unsigned RetainedLostMax = 1024;
   using Queue = TxPktQueue;
+  using LostPNs =
+    ZmQueue<uint64_t,
+      ZmQueueHeapID<"Zquic.Pkt.TxLostPNs">>;
   using Tx = ZmPQTx<PktTxSpace, Queue>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
@@ -955,7 +954,9 @@ public:
 
   bool ack(uint64_t pn) {
     auto node = m_packets.find(pn);
-    return node && ack_(node->data());
+    if (!node || !ack_(node->data())) return false;
+    (void)m_packets.abort(pn);
+    return true;
   }
 
   unsigned ack(
@@ -964,8 +965,14 @@ public:
   {
     unsigned n = 0;
     auto iter = m_packets.iter();
-    while (auto node = iter())
-      if (ranges.contains(node->data().pn) && ack_(node->data())) ++n;
+    while (auto node = iter()) {
+      SentPkt &p = node->data();
+      bool wasLost = p.lost;
+      if (ranges.contains(p.pn) && ack_(p)) {
+	(void)iter.del();
+	if (!wasLost) ++n;
+      }
+    }
     unsigned l = markPktThresholdLoss(ranges.largest(), packetThreshold);
     if (lost) *lost = l;
     return n;
@@ -996,19 +1003,21 @@ public:
 	if (p.pn > range.largest) break;
 	bool wasLost = p.lost;
 	if (ack_(p)) {
-	  ++n;
 	  if (!wasLost) ackdBytes_ += p.bytes;
 	  if (update) update->ackd(p);
-	  if (!haveAckForLoss || p.pn > largestAckdForLoss) {
-	    largestAckdForLoss = p.pn;
-	    haveAckForLoss = true;
+	  if (!wasLost) {
+	    ++n;
+	    if (!haveAckForLoss || p.pn > largestAckdForLoss) {
+	      largestAckdForLoss = p.pn;
+	      haveAckForLoss = true;
+	    }
+	    if (latestSentTime && (!haveAckd || p.pn > latestAckd)) {
+	      latestAckd = p.pn;
+	      *latestSentTime = p.sentTime;
+	      haveAckd = true;
+	    }
 	  }
-	  if (!wasLost &&
-	      latestSentTime && (!haveAckd || p.pn > latestAckd)) {
-	    latestAckd = p.pn;
-	    *latestSentTime = p.sentTime;
-	    haveAckd = true;
-	  }
+	  (void)iter.del();
 	}
       }
     }
@@ -1043,18 +1052,21 @@ public:
 	uint64_t nextPN = p.pn + 1;
 	bool wasLost = p.lost;
 	if (ack_(p)) {
-	  ++batch.ackd;
 	  if (update) update->ackd(p);
-	  if (!batch.haveAckForLoss || p.pn > batch.largestAckdForLoss) {
-	    batch.largestAckdForLoss = p.pn;
-	    batch.haveAckForLoss = true;
+	  if (!wasLost) {
+	    ++batch.ackd;
+	    if (!batch.haveAckForLoss || p.pn > batch.largestAckdForLoss) {
+	      batch.largestAckdForLoss = p.pn;
+	      batch.haveAckForLoss = true;
+	    }
+	    if (level == CryptoLevel::OneRTT &&
+		(!batch.haveAckd || p.pn > batch.latestAckd)) {
+	      batch.latestAckd = p.pn;
+	      batch.latestSentTime = p.sentTime;
+	      batch.haveAckd = true;
+	    }
 	  }
-	  if (!wasLost && level == CryptoLevel::OneRTT &&
-	      (!batch.haveAckd || p.pn > batch.latestAckd)) {
-	    batch.latestAckd = p.pn;
-	    batch.latestSentTime = p.sentTime;
-	    batch.haveAckd = true;
-	  }
+	  (void)iter.del();
 	}
 	if (++scanned >= budget) {
 	  batch.nextPN = nextPN;
@@ -1218,55 +1230,16 @@ public:
     return n;
   }
   unsigned count() const { return m_packets.count_(); }
-  unsigned gcPackets(
-    unsigned budget = 256, ZuTime now = {}, ZuTime lostMaxAge = {},
-    unsigned lostMaxCount = 0) {
-    if (!budget) return 0;
-    unsigned n = 0;
-    unsigned scanned = 0;
-    bool wrapped = false;
-    while (scanned < budget) {
-      SentPkt p;
-      bool found = false;
-      {
-	auto iter = m_packets.iter(m_gcNextPN);
-	if (auto node = iter()) {
-	  p = node->data();
-	  found = true;
-	}
-      }
-      if (!found) {
-	if (wrapped || !m_gcNextPN) break;
-	m_gcNextPN = 0;
-	wrapped = true;
-	continue;
-      }
-      m_gcNextPN = p.pn + 1;
-      if (p.ackd && (p.lost || !m_retainedLost)) {
-	(void)m_packets.abort(p.pn);
-	++n;
-      } else if (p.lost && !p.ackd &&
-	  (lostOverCount_(lostMaxCount) ||
-	    lostOverAge_(p, now, lostMaxAge))) {
-	(void)m_packets.abort(p.pn);
-	if (m_retainedLost) --m_retainedLost;
-	++n;
-      }
-      ++scanned;
-    }
-    if (scanned < budget) m_gcNextPN = 0;
-    return n;
-  }
   void clear() {
     Tx::txReset(0);
     m_retransmit.clear();
+    m_lostPNs.clean();
     m_bytesInFlight = 0;
     m_latestAckSentTime = {};
     m_ackd = 0;
     m_lost = 0;
     m_retainedLost = 0;
     m_retransmittable = 0;
-    m_gcNextPN = 0;
   }
   bool persistentCongestion(ZuTime threshold, unsigned budget = 256) const {
     bool have = false;
@@ -1300,8 +1273,8 @@ private:
     if (p.ackd) return false;
     p.ackd = true;
     if (p.lost) {
+      m_lostPNs.del(p.pn);
       if (m_retainedLost) --m_retainedLost;
-      ++m_ackd;
       return true;
     }
     if (p.inFlight) release_(p);
@@ -1312,12 +1285,14 @@ private:
   bool lose_(SentPkt &p) {
     if (p.ackd || p.lost) return false;
     p.lost = true;
+    m_lostPNs.push(p.pn);
     ++m_retainedLost;
     if (p.inFlight) release_(p);
     if (p.ackEliciting && !p.pmtudProbe) {
       ++m_retransmittable;
       enqueueRetransmit_(p);
     }
+    trimLost_();
     ++m_lost;
     return true;
   }
@@ -1349,24 +1324,27 @@ private:
     }
     return false;
   }
-  bool lostOverCount_(unsigned maxCount) const {
-    return maxCount && m_retainedLost > maxCount;
-  }
-  static bool lostOverAge_(
-    const SentPkt &p, ZuTime now, ZuTime maxAge) {
-    return *now && *maxAge && *p.sentTime && now >= p.sentTime &&
-      now - p.sentTime >= maxAge;
+  void trimLost_() {
+    while (m_retainedLost > RetainedLostMax) {
+      uint64_t pn = m_lostPNs.shift();
+      auto node = m_packets.find(pn);
+      if (!node) continue;
+      SentPkt &p = node->data();
+      if (!p.lost || p.ackd) continue;
+      (void)m_packets.abort(pn);
+      --m_retainedLost;
+    }
   }
 
   Queue		m_packets{0};
   RetransmitQueue m_retransmit;
+  LostPNs	m_lostPNs{ZmQueueParams{}.initial(RetainedLostMax)};
   uint64_t	m_bytesInFlight = 0;
   ZuTime	m_latestAckSentTime;
   unsigned	m_ackd = 0;
   unsigned	m_lost = 0;
   unsigned	m_retainedLost = 0;
   unsigned	m_retransmittable = 0;
-  uint64_t	m_gcNextPN = 0;
 };
 
 using SentPktTracker = PktTxSpace;

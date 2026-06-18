@@ -351,22 +351,17 @@ void testAckdFrameSuppressesLossReclaim()
   uint64_t ackdBytes = 999;
   ZuCHECK(lateLost.ack(
 	lateAckRanges, 1, nullptr, 99, nullptr, &ackdBytes, nullptr,
-	nullptr, &update) == 1 &&
+	nullptr, &update) == 0 &&
       !ackdBytes &&
       !update.ackdBytes &&
-      update.lateAckd == 1,
-    "late ACK of lost packet changed congestion accounting");
-  ZuCHECK(lateLost.nextRetransmit(ref) &&
-      ref.kind == Zquic::SentFrameKind::Crypto &&
-      ref.offset == 0 &&
-      ref.length == 46,
-    "late ACK range-frame filtering unexpectedly stayed in packet tracker");
-  ZuCHECK(lateLost.nextRetransmit(ref) &&
-      ref.kind == Zquic::SentFrameKind::Crypto &&
-      ref.offset == 100 &&
-      ref.length == 10 &&
-      !lateLost.nextRetransmit(ref),
-    "late ACK of lost packet dropped unrelated range retransmit");
+      update.nAckdFrames == 1 &&
+      update.ackdFrames[0].kind == Zquic::SentFrameKind::Crypto &&
+      update.ackdFrames[0].offset == 0 &&
+      update.ackdFrames[0].length == 46 &&
+      lateLost.count() == 1 &&
+      lateLost.retainedLost() == 1 &&
+      lateLost.ackd() == 1,
+    "retained lost ACK did not clear exact owner state without fresh ACK accounting");
 }
 
 void testLossThresholds()
@@ -753,6 +748,23 @@ void testAckManager()
   ZuCHECK(!runtime.received(Zquic::PktSpace::AppData, 12, 2020, 50) &&
       runtime.gen(Zquic::PktSpace::AppData) == appGen + 1,
     "ACK manager duplicate changed generation");
+
+  Zquic::AckManager active;
+  ZuCHECK(active.received(Zquic::PktSpace::AppData, 1, 1000, 50) &&
+      active.deadlineSet(Zquic::PktSpace::AppData) &&
+      !active.immediate(Zquic::PktSpace::AppData),
+    "ACK manager active ACK first packet state mismatch");
+  ZuCHECK(active.received(Zquic::PktSpace::AppData, 2, 1001, 50) &&
+      active.immediate(Zquic::PktSpace::AppData) &&
+      active.due(Zquic::PktSpace::AppData, 1001) &&
+      !active.deadlineSet(Zquic::PktSpace::AppData),
+    "ACK manager active ACK threshold did not make ACK immediate");
+  uint64_t activeGen = active.gen(Zquic::PktSpace::AppData);
+  active.sent(Zquic::PktSpace::AppData, activeGen);
+  ZuCHECK(active.received(Zquic::PktSpace::AppData, 3, 1025, 50) &&
+      active.deadlineSet(Zquic::PktSpace::AppData) &&
+      !active.immediate(Zquic::PktSpace::AppData),
+    "ACK manager active ACK threshold did not reset after send");
 }
 
 int main(int argc, char **argv)
