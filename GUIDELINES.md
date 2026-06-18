@@ -508,6 +508,25 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - Prefer precise project vocabulary: "utilities" not "helpers", "duplex" not "bidi", etc.
 - Do not choose imprecise or primitive English for accessibility to non-native, non-technical, or non-veteran readers; accessible naming is a hard non-goal.
 
+### Standard function name vocabulary
+- `push()` - appends a value at tail
+- `unshift()` - prepends a value at head
+- `pop()` - removes a value from tail
+- `shift()` - removes a value from head
+- `add()` - inserts a value
+- `del()` - deletes a value
+- `find()` - finds a value
+- `iter()` - returns an iterator (`citer()` for const)
+- `riter()` - returns a reverse iterator (`criter()` for const)
+- `clear()` - clears to a default initial state
+- `clean()` - removes and frees data
+- `reset()` - both `clear` and `clean`
+- `null()` (as a mutable member function) - same as `reset` for objects with a semantic "null" value, with the postcondition that the object's value is "null"
+- `init()` - initializes an object post-constructor
+- `final()` - finalizes an object pre-destructor
+- `start()` - start running (should be idempotent)
+- `stop()` - stop running (should be idempotent)
+
 ## Acceptance
 - test suites must pass
   - clang: address sanitizer, leak sanitizer
