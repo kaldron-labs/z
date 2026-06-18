@@ -156,7 +156,7 @@ void CryptoStream::reset()
 bool CryptoStream::sent(uint64_t offset, ZuCSpan payload)
 {
   uint64_t end = offset + payload.length();
-  if (end < offset || end > MaxBuffered) return false;
+  if (end < offset || end > MaxBufSize) return false;
   if (offset < m_txData.length()) {
     if (end > m_txData.length()) return false;
     return !memcmp(m_txData.data() + offset, payload.data(), payload.length());
@@ -217,7 +217,7 @@ int CryptoStream::receive(
   contiguous = {};
   m_delivery.length(0);
   uint64_t end = offset + payload.length();
-  if (end < offset || end > MaxBuffered) return -1;
+  if (end < offset || end > MaxBufSize) return -1;
   if (!payload.length() || end <= m_rxOffset) return 0;
   uint64_t first = offset < m_rxOffset ? m_rxOffset : offset;
   if (first == m_rxOffset && !m_rxQueue.count_()) {
@@ -235,7 +235,7 @@ int CryptoStream::receive(
   uint64_t bytes = rxSpanBytes(spans);
   if (!queueRxSpans(spans, offset, payload,
 	[](unsigned) -> ZmRef<ZiIOBuf> {
-	  return new CryptoRxBufAlloc<BufSize, MaxBuffered>{nullptr};
+	  return new CryptoRxBufAlloc<BufSize, MaxBufSize>{nullptr};
 	},
 	[this](ZmRef<ZiIOBuf> buf, uint64_t offset, unsigned length) {
 	  Rx::rcvd(new CryptoRxPQueue::Node{
@@ -261,7 +261,7 @@ void CryptoStream::appendDelivery_(const uint8_t *p, uint64_t length)
 {
   if (!p || !length) return;
   uint64_t n = m_delivery.length();
-  ZiAssert(n + length <= MaxBuffered, "Zquic", (n, length),
+  ZiAssert(n + length <= MaxBufSize, "Zquic", (n, length),
 	    "CRYPTO delivery overflow", return);
   m_delivery.append(p, length);
 }
