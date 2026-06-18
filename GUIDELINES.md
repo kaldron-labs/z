@@ -529,8 +529,9 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - `find()` - finds a value
 - `iter()` - returns an iterator (`citer()` for const)
 - `riter()` - returns a reverse iterator (`criter()` for const)
-- `clear()` - clears to a default initial state
-- `clean()` - removes and frees data
+- `clear()`/`clr()` - clears to a default initial state
+  - containers: clears certain contained values
+- `clean()` - removes and frees **all** contained data
 - `reset()` - both `clear` and `clean`
 - `null()` (as a mutable member function) - same as `reset` for objects with a semantic "null" value, with the postcondition that the object's value is "null"
 - `init()` - initializes an object post-constructor
