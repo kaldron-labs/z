@@ -17,6 +17,11 @@
 extern "C" {
 #endif
 
+#if defined(__GNUC__) && !defined(__llvm__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+
 /* pragma pack() prevents compiler from relying on 16-byte alignment */
 #pragma pack(push, 8)
 typedef struct {
@@ -103,6 +108,10 @@ ZuExtern zu_bitmap *zu_bitmap_and(
   const zu_bitmap_allocator *, zu_bitmap *v, const zu_bitmap *p);
 ZuExtern zu_bitmap *zu_bitmap_xor(
   const zu_bitmap_allocator *, zu_bitmap *v, const zu_bitmap *p);
+
+#if defined(__GNUC__) && !defined(__llvm__)
+#pragma GCC diagnostic pop
+#endif
 
 #ifdef __cplusplus
 }

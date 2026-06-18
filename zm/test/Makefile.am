@@ -25,7 +25,7 @@ TESTPROGS = \
 	ZmTIDTest ZmAllocTest ZmDemangleTest \
 	ZmPQueueTest ZmPQRxTest ZmPQTxTest \
 	ZmQueueTest ZmRWLockTest ZmRingFnTest \
-	ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest
+	ZmStackTest ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest
 if MINGW
 bin_PROGRAMS = ZmBTTest
 noinst_PROGRAMS = ${TESTPROGS}
@@ -53,6 +53,7 @@ ZmPQueueTest_SOURCES = ZmPQueueTest.cc
 ZmPQRxTest_SOURCES = ZmPQRxTest.cc
 ZmPQTxTest_SOURCES = ZmPQTxTest.cc
 ZmQueueTest_SOURCES = ZmQueueTest.cc
+ZmStackTest_SOURCES = ZmStackTest.cc
 ZmRWLockTest_SOURCES = ZmRWLockTest.cc
 ZmRingTest2_SOURCES = ZmRingTest2.cc
 ZmRingFnTest_SOURCES = ZmRingFnTest.cc

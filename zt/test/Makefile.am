@@ -14,7 +14,7 @@ noinst_PROGRAMS = \
 	ZtArrayTest ZtASN1Test ZtBitWindowTest ZtBitmapTest ZtCLITest \
 	ZtCSVTest ZtDateTest ZtDateFixTest ZtDemangleTest ZtEnumTest \
 	ZtFmtTest ZtIconvTest ZtLocalBufferTest ZtPlatformTest \
-	ZtQuoteTest ZtRegexTest ZtScanBoolTest ZtStackTest \
+	ZtQuoteTest ZtRegexTest ZtScanBoolTest \
 	ZtStringHash ZtStringTest ZtStructTest ZtURITest ZtWindowTest
 .PHONY: test
 test: $(noinst_PROGRAMS)
@@ -36,7 +36,6 @@ ZtPlatformTest_SOURCES = ZtPlatformTest.cc
 ZtQuoteTest_SOURCES = ZtQuoteTest.cc
 ZtRegexTest_SOURCES = ZtRegexTest.cc
 ZtScanBoolTest_SOURCES = ZtScanBoolTest.cc
-ZtStackTest_SOURCES = ZtStackTest.cc
 ZtStringHash_SOURCES = ZtStringHash.cc
 ZtStringTest_SOURCES = ZtStringTest.cc
 ZtStructTest_SOURCES = ZtStructTest.cc

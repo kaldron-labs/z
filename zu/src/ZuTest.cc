@@ -106,7 +106,7 @@ void ZuTestMgr::indent_()
 void ZuTestMgr::begin_(ZuTest_Scope *scope)
 {
   start_();
-  unsigned n;
+  unsigned n = 0;
   if (!scope->name) { // root
     m_context->scope = scope;
     if (!scope->dynamic) n = scope->count;
