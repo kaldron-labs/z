@@ -18,6 +18,8 @@ These guidelines extend `AGENTS.md`
   - prohibit monotonically growing memory consumption
   - all long-lived containers must be actively garbage collected
 - shutdown/teardown must be graceful and clean of leaks
+- no background garbage collection or scanning for GC
+  - garbage collection must be deterministic, timely and not timer-based
 
 ## No dogma
 - immutability
@@ -104,6 +106,9 @@ These guidelines extend `AGENTS.md`
 - Red Flag: hard-coded capacities such as `16`.
   Problem: unexplained limits may impair scaling when too low, bloat stack/heap when too high, or leave mostly unused capacity.
   Fix: use prominently located, named library-defined compile-time constants with a maintenance comment: RFC/standard mandate, mainstream alignment, or measured scaling/footprint trade-off.
+- Red Flag: scanning containers for objects to garbage collect
+  Problem: garbage collection should be deterministic and immediate - zombie objects should not linger in containers - their memory should be made available to the recycling block allocator
+  Fix: delete such scans and ensure that short-lived objects are deterministically removed from their owners when their state becomes final
 - Amber Flag: fixed-size arrays, especially with separately maintained lengths.
   Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
   Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, etc.; enforce any required hard upper limit in code.
