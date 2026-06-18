@@ -155,6 +155,9 @@ These guidelines extend `AGENTS.md`
 - Flag: near-identical repeated blocks.
   Problem: duplication hides divergent fixes and violates DRY.
   Fix: factor common code with templates, CRTP, or local helpers that preserve performance.
+- Flag: mistakenly assuming that `ZmScheduler` `invoke` or `run` is blocking
+  Problem: reading of results before work has been executed
+  Fix: read results and execute followon code in a continuation of the posted function, not after the call to `run`/`invoke`
 
 ### Framework fit
 - Flag: reimplementing lower-level Z Framework capabilities.
