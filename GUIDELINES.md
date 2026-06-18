@@ -211,6 +211,9 @@ These guidelines extend `AGENTS.md`
 - Use `ZiAssert` whenever run-time assertion failure needs graceful handling.
 - For complex template aliases, prefer `ZuDerive(x, ([complex template instantiation]))` over `using X = ...`; the explicit type ID reduces compiler/linker symbol lengths and eases debugging.
 - Comparisons and sentinels: use `operator *` to detect sentinel null, use `ZuCmp` sentinel logic, and prefer `ZuCmp::cmp` over `operator <=>` because it returns plain `int`.
+  - some types have two different sentinel values: zero, and a default-constructed null value
+    - `bool operator !()` evaluates "is this false/zero": `!(T(0))` should be `true`
+    - `bool operator *()` evaluates "is this non-null": `*(T{})` should be `false`
   - Use `ZuOpBool` to add boolean evaluation to a type with `bool operator !()`
 - Traits: `ZuTraits` provides the type traits used to distinguish string types, etc.
 
