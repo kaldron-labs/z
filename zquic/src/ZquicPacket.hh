@@ -66,6 +66,7 @@ struct ShortHdr {
   CxnID	dcid;
   unsigned	pnLength = 0;
   unsigned	pnOffset = 0;
+  bool		keyPhase = false;
 };
 
 struct Pkt {
@@ -97,7 +98,8 @@ struct Pkt {
     uint8_t *, unsigned, const CxnID &, const CxnID &,
     ZuCSpan token, const CxnID &originalDCID);
   static int writeShort(
-    uint8_t *, unsigned, const CxnID &, uint64_t pn, unsigned pnLength);
+    uint8_t *, unsigned, const CxnID &, uint64_t pn, unsigned pnLength,
+    bool keyPhase = false);
   static int writeVersionNegotiation(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
     const uint32_t *, unsigned);

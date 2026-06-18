@@ -8,9 +8,16 @@
 #include <zlib/Zquic.hh>
 #include <zlib/ZquicSched.hh>
 
+#include <zpicotls/openssl.h>
+
 using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
+
+static ZuCSpan span_(const uint8_t *data, unsigned len)
+{
+  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+}
 
 struct App : public Zquic::Engine<App> {
   using Base = Zquic::Engine<App>;
@@ -376,6 +383,29 @@ struct TestLink :
   unsigned congestionAllowance() const { return Base::congestionAllowance_(); }
   bool ecnDisabled() const { return Base::ecnDisabled_(); }
   void enableECN() { Base::setEcnDisabled_(false); }
+  bool installOneRTT(
+    const Zquic::TrafficSecret &rx, const Zquic::TrafficSecret &tx,
+    const Zquic::CxnID &localCID) {
+    return Base::installOneRTTForTest_(rx, tx, localCID);
+  }
+  void discardPeerKeys() { Base::discardPeerKeysForTest_(); }
+  bool receiveShort(ZmRef<ZiIOBuf> buf) {
+    if (!buf) return false;
+    Zquic::Datagram d;
+    d.buf = ZuMv(buf);
+    return Base::receiveProtShortPkt_(
+      d, 0, d.buf->length,
+      [this](
+	  Zquic::CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
+	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf) {
+	return Base::consumeProtFrames_(
+	  level, pn, frames, ZuMv(addr), packetBuf,
+	  [](size_t, ZuCSpan, ZiSockAddr) { return true; },
+	  [](Zquic::CryptoLevel::T, const Zquic::Frame &, ZiSockAddr) {
+	    return true;
+	  });
+      });
+  }
   void flushTx_() { ++txFlushQueued; }
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }
   void queueTxFlush_() { ++txFlushQueued; }
@@ -391,6 +421,40 @@ struct TestLink :
   unsigned		ptos = 0;
   unsigned		retransmits = 0;
 };
+
+static bool trafficSecret_(
+  Zquic::TrafficSecret &secret, uint8_t seed)
+{
+  uint8_t bytes[32];
+  for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = seed + i;
+  return Zquic::PktProt::deriveTrafficSecret(
+    secret, &ptls_openssl_aes128gcmsha256, span_(bytes, sizeof(bytes)));
+}
+
+static ZmRef<ZiIOBuf> shortPing_(
+  const Zquic::CxnID &dcid, const Zquic::TrafficSecret &secret,
+  uint64_t pn, bool keyPhase)
+{
+  Zquic::PktProtState tx;
+  if (!tx.init(secret, Zquic::CryptoLevel::OneRTT, true)) return {};
+  ZmRef<ZiIOBuf> buf = new Zquic::PktTxBufAlloc<>{nullptr};
+  enum { PNLength = 2 };
+  int h = Zquic::Pkt::writeShort(
+    buf->data_(), buf->size, dcid, pn, PNLength, keyPhase);
+  if (h < 0) return {};
+  unsigned pnOffset = unsigned(h) - PNLength;
+  uint8_t payload[32] = {};
+  if (Zquic::FrameCodec::writePing(payload, sizeof(payload)) != 1)
+    return {};
+  int n = Zquic::PktProt::protectShort(
+    buf->data_(), buf->size, tx, pn,
+    span_(buf->data_(), unsigned(h)), span_(payload, sizeof(payload)),
+    pnOffset, PNLength);
+  if (n < 0) return {};
+  buf->skip = 0;
+  buf->length = unsigned(n);
+  return buf;
+}
 
 static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
 {
@@ -2024,6 +2088,52 @@ void testFrameRoleAndSpaceLegality()
     "unknown extension frame was accepted");
 }
 
+void testPeerKeyUpdateState()
+{
+  ZuTestScope(testPeerKeyUpdateState);
+
+  App app;
+  ZmRef<TestLink> link = new TestLink{&app};
+  Zquic::CxnID cid{"keycid01"};
+  Zquic::TrafficSecret initial;
+  Zquic::TrafficSecret next;
+  Zquic::TrafficSecret third;
+  ZuCHECK(trafficSecret_(initial, 7), "initial 1-RTT secret derivation failed");
+  ZuCHECK(Zquic::PktProt::deriveNextTrafficSecret(next, initial),
+    "next 1-RTT secret derivation failed");
+  ZuCHECK(Zquic::PktProt::deriveNextTrafficSecret(third, next),
+    "third 1-RTT secret derivation failed");
+  ZuCHECK(link->installOneRTT(initial, initial, cid),
+    "test 1-RTT secret install failed");
+
+  bool currentOK = link->receiveShort(shortPing_(cid, initial, 1, false));
+  bool updateOK = link->receiveShort(shortPing_(cid, next, 2, true));
+  Zquic::RuntimeDiag updateDiag = link->runtimeDiag();
+  bool oldOK = link->receiveShort(shortPing_(cid, initial, 0, false));
+  Zquic::RuntimeDiag oldDiag = link->runtimeDiag();
+  bool rapidOK = link->receiveShort(shortPing_(cid, third, 3, false));
+  Zquic::RuntimeDiag invalidDiag = link->runtimeDiag();
+  link->discardPeerKeys();
+  Zquic::RuntimeDiag discardDiag = link->runtimeDiag();
+  bool discardedOK = link->receiveShort(shortPing_(cid, initial, 4, false));
+  link->cancelTimers();
+
+  ZuCHECK(currentOK, "current key packet was rejected");
+  ZuCHECK(updateOK, "peer key update packet was rejected");
+  ZuCHECK(updateDiag.peerKeyUpdates == 1 && updateDiag.packetsRx == 2 &&
+      !updateDiag.invalidKeyPhases,
+    "peer key update diagnostics mismatch");
+  ZuCHECK(oldOK, "old key reorder packet was rejected");
+  ZuCHECK(oldDiag.oldKeysAccepted == 1 && oldDiag.peerKeyUpdates == 1,
+    "old key retention diagnostics mismatch");
+  ZuCHECK(!rapidOK, "rapid second key update was accepted");
+  ZuCHECK(invalidDiag.invalidKeyPhases == 1 &&
+      invalidDiag.peerKeyUpdates == 1,
+    "invalid key phase diagnostics mismatch");
+  ZuCHECK(discardDiag.keyDiscards == 1, "key discard diagnostic mismatch");
+  ZuCHECK(!discardedOK, "discarded old key packet was accepted");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -2059,4 +2169,5 @@ int main(int argc, char **argv)
   ZuTestCall(testInvalidClosedStreamActivity);
   ZuTestCall(testStreamGC);
   ZuTestCall(testFrameRoleAndSpaceLegality);
+  ZuTestCall(testPeerKeyUpdateState);
 }

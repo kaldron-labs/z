@@ -578,6 +578,10 @@ struct RuntimeRxDiag {
   uint64_t	closedStreamFrames = 0;
   uint64_t	suspiciousStreamCloses = 0;
   uint64_t	unhandledAppEvents = 0;
+  uint64_t	peerKeyUpdates = 0;
+  uint64_t	invalidKeyPhases = 0;
+  uint64_t	oldKeysAccepted = 0;
+  uint64_t	keyDiscards = 0;
   AckECN	ecnRx[3];
   uint64_t	failures = 0;
   uint64_t	handshakeComplete = 0;
@@ -622,6 +626,10 @@ struct RuntimeDiag {
     closedStreamFrames = rx.closedStreamFrames;
     suspiciousStreamCloses = rx.suspiciousStreamCloses;
     unhandledAppEvents = rx.unhandledAppEvents + tx.unhandledAppEvents;
+    peerKeyUpdates = rx.peerKeyUpdates;
+    invalidKeyPhases = rx.invalidKeyPhases;
+    oldKeysAccepted = rx.oldKeysAccepted;
+    keyDiscards = rx.keyDiscards;
     for (unsigned i = 0; i < 3; ++i) ecnRx[i] = rx.ecnRx[i];
     handshakeComplete = rx.handshakeComplete;
 
@@ -664,6 +672,10 @@ struct RuntimeDiag {
   uint64_t	closedStreamFrames = 0;
   uint64_t	suspiciousStreamCloses = 0;
   uint64_t	unhandledAppEvents = 0;
+  uint64_t	peerKeyUpdates = 0;
+  uint64_t	invalidKeyPhases = 0;
+  uint64_t	oldKeysAccepted = 0;
+  uint64_t	keyDiscards = 0;
   AckECN	ecnRx[3];
   uint64_t	ptoCount = 0;
   uint64_t	retransmittedFrames = 0;
@@ -3168,6 +3180,15 @@ protected:
     return m_validatingPath.active ?
       m_validatingPath.challenge.cspan() : ZuCSpan{};
   }
+  bool installOneRTTForTest_(
+    const TrafficSecret &rx, const TrafficSecret &tx, const CxnID &localCID) {
+    m_localSCID = localCID;
+    m_established = 1;
+    clearPeerKeyState_();
+    return m_crypto.updateRxTrafficSecret(CryptoLevel::OneRTT, rx) &&
+      txInstallTrafficSecret_(CryptoLevel::OneRTT, tx);
+  }
+  void discardPeerKeysForTest_() { discardOldPeerKeys_(); }
 #endif
   template <typename SendPkt>
   bool sendPathPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
@@ -3640,6 +3661,7 @@ protected:
     for (auto &pn : m_txLargestAckd) pn = uint64_t(-1);
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
     m_rxAcks.clear();
+    clearPeerKeyState_();
     for (auto &ack : m_txAck) ack = {};
     for (auto &ecn : m_peerAckECN) ecn.reset();
     for (auto &p : m_txPkts) p.clear();
@@ -3660,14 +3682,61 @@ protected:
     while (auto stream = i()) stream->drainRx_();
   }
 
-  bool installPeerKeyUpdate_(const TrafficSecret &nextRxSecret) {
+  void clearPeerKeyState_() {
+    m_rxOldTrafficSecret.clear();
+    m_rxOldProt.clear();
+    m_rxNextTrafficSecret.clear();
+    m_rxNextProt.clear();
+    m_rxOldKeyDiscard = {};
+    m_rxKeyPhase = false;
+    m_rxOldKeyPhase = false;
+  }
+  bool ensureNextPeerKey_() {
+    if (m_rxNextProt.valid()) return true;
+    if (!PktProt::deriveNextTrafficSecret(
+	  m_rxNextTrafficSecret,
+	  m_crypto.rxTrafficSecret(CryptoLevel::OneRTT)))
+      return false;
+    if (!m_rxNextProt.init(
+	  m_rxNextTrafficSecret, CryptoLevel::OneRTT, false)) {
+      m_rxNextTrafficSecret.clear();
+      return false;
+    }
+    return true;
+  }
+  bool commitPeerKeyUpdate_(const TrafficSecret &nextRxSecret) {
+    m_rxOldTrafficSecret = m_crypto.rxTrafficSecret(CryptoLevel::OneRTT);
+    if (!m_rxOldProt.init(
+	  m_rxOldTrafficSecret, CryptoLevel::OneRTT, false)) {
+      m_rxOldTrafficSecret.clear();
+      return false;
+    }
+    m_rxOldKeyPhase = m_rxKeyPhase;
     if (!m_crypto.updateRxTrafficSecret(CryptoLevel::OneRTT, nextRxSecret))
       return false;
+    m_rxKeyPhase = !m_rxKeyPhase;
+    m_rxNextTrafficSecret.clear();
+    m_rxNextProt.clear();
+    m_rxOldKeyDiscard = keyDiscardDeadline_();
+    ++m_rxDiag.peerKeyUpdates;
+    schedulePeerKeyDiscard_(m_rxOldKeyDiscard);
     app()->txInvoke(impl(), [link = impl()]() mutable {
       link->txInstallPeerKeyUpdate_();
       return link;
     });
     return true;
+  }
+  void schedulePeerKeyDiscard_(ZuTime deadline) {
+    app()->txRun([link = ZmMkRef(impl()), deadline]() mutable {
+      link->scheduleKeyDiscardTimer_(deadline);
+    });
+  }
+  void discardOldPeerKeys_() {
+    if (!m_rxOldProt.valid()) return;
+    m_rxOldTrafficSecret.clear();
+    m_rxOldProt.clear();
+    m_rxOldKeyDiscard = {};
+    ++m_rxDiag.keyDiscards;
   }
   bool txInstallPeerKeyUpdate_() {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -4412,7 +4481,18 @@ protected:
 	}
   void idleExpired_() { }
   void closeExpired_() { }
-  void keyDiscardExpired_() { }
+  void keyDiscardExpired_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC key discard expiry outside Tx thread", return);
+    app()->rxRun([link = ZmMkRef(impl())]() mutable {
+      link->clearExpiredKeysRx_();
+    });
+  }
+  void clearExpiredKeysRx_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC key discard outside Rx thread", return);
+    discardOldPeerKeys_();
+  }
   void pmtudExpired_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD expiry outside Tx thread", return);
@@ -4836,6 +4916,9 @@ nextSpace:
   ZuTime ptoTimeout_() const {
     return m_ptoBackoff.timeout(m_rtt, maxAckDelay_());
   }
+  ZuTime keyDiscardDeadline_() const {
+    return runtimeNow_() + ptoTimeout_() * ZuDecimal{3};
+  }
   ZuTime retiredCIDRouteGC_() const {
     return runtimeNow_() + ptoTimeout_() * ZuDecimal{3};
   }
@@ -5096,9 +5179,8 @@ nextSpace:
     ZmRef<ZiIOBuf> buf = allocTxPkt();
     int headerLen = Pkt::writeShort(
       buf->data_(), buf->size, runtimeCID_(dcid),
-      m_txPN[CryptoLevel::OneRTT], pnLength);
+      m_txPN[CryptoLevel::OneRTT], pnLength, m_txKeyPhase);
     if (headerLen < 0) return false;
-    if (m_txKeyPhase) buf->data_()[0] |= 0x04;
     if (!payload.padForProtSample(
 	  unsigned(headerLen) - pnLength, pnLength,
 	  txTrafficSecret_(CryptoLevel::OneRTT).tagLen))
@@ -5241,24 +5323,44 @@ nextSpace:
       m_rxLargestPN[CryptoLevel::OneRTT],
       h.pnOffset, pn, payloadOffset);
     if (plainLen < 0) {
-      TrafficSecret nextSecret;
-      PktProtState nextState;
-      if (PktProt::deriveNextTrafficSecret(
-	    nextSecret, m_crypto.rxTrafficSecret(CryptoLevel::OneRTT)) &&
-	  nextState.init(nextSecret, CryptoLevel::OneRTT, false)) {
+      if (m_rxOldProt.valid()) {
 	plainLen = PktProt::unprotectShort(
-	  base, packetLen, nextState,
+	  base, packetLen, m_rxOldProt,
 	  m_rxLargestPN[CryptoLevel::OneRTT],
 	  h.pnOffset, pn, payloadOffset);
-	if (plainLen >= 0 &&
-	    !installPeerKeyUpdate_(nextSecret))
-	  return false;
+	if (plainLen >= 0) {
+	  if (!((base[0] & 0x04) == (m_rxOldKeyPhase ? 0x04 : 0))) {
+	    ++m_rxDiag.invalidKeyPhases;
+	    return false;
+	  }
+	  ++m_rxDiag.oldKeysAccepted;
+	}
+      }
+      if (plainLen < 0 && ensureNextPeerKey_()) {
+	plainLen = PktProt::unprotectShort(
+	  base, packetLen, m_rxNextProt,
+	  m_rxLargestPN[CryptoLevel::OneRTT],
+	  h.pnOffset, pn, payloadOffset);
+	if (plainLen >= 0) {
+	  bool phase = base[0] & 0x04;
+	  if (phase == m_rxKeyPhase ||
+	      m_rxOldProt.valid() ||
+	      pn <= m_rxLargestPN[CryptoLevel::OneRTT]) {
+	    ++m_rxDiag.invalidKeyPhases;
+	    return false;
+	  }
+	  if (!commitPeerKeyUpdate_(m_rxNextTrafficSecret))
+	    return false;
+	}
       }
       if (plainLen < 0) {
 	if (checkStatelessReset_(datagram)) return true;
 	++m_rxDiag.failures;
 	return false;
       }
+    } else if ((base[0] & 0x04) != (m_rxKeyPhase ? 0x04 : 0)) {
+      ++m_rxDiag.invalidKeyPhases;
+      return false;
     }
     if (!recordRxPkt_(CryptoLevel::OneRTT, pn, d.ecn))
       return true;
@@ -6064,6 +6166,11 @@ private:
   PeerCIDs		m_peerCIDs;
   uint64_t		m_rxLargestPN[3]{};
   AckManager		m_rxAcks;
+  TrafficSecret		m_rxOldTrafficSecret;
+  PktProtState		m_rxOldProt;
+  TrafficSecret		m_rxNextTrafficSecret;
+  PktProtState		m_rxNextProt;
+  ZuTime		m_rxOldKeyDiscard;
   RttEstimator		m_rtt;
   PTOBackoff		m_ptoBackoff;
   // Connection-owned timers; callbacks run on Tx.
@@ -6086,6 +6193,8 @@ private:
   uint64_t		m_peerRetirePriorTo = 0;
   unsigned		m_suspiciousStreamFrames = 0;
   bool			m_suspiciousStreamClosed = false;
+  bool			m_rxKeyPhase = false;
+  bool			m_rxOldKeyPhase = false;
 
   // Tx thread exclusive
   CryptoStream		m_txCrypto[3];

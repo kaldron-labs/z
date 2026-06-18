@@ -241,6 +241,7 @@ int Pkt::parseShort(ZuCSpan p, unsigned cidLen, ShortHdr &h)
   h.dcid = ZuCSpan{p.data() + 1, cidLen};
   h.pnLength = (uint8_t(p[0]) & 0x03) + 1;
   h.pnOffset = 1 + cidLen;
+  h.keyPhase = uint8_t(p[0]) & 0x04;
   return int(h.pnOffset + h.pnLength);
 }
 
@@ -353,13 +354,13 @@ int Pkt::writeRetryAuthenticated(
 
 int Pkt::writeShort(
   uint8_t *out, unsigned len, const CxnID &dcid, uint64_t pn,
-  unsigned pnLength)
+  unsigned pnLength, bool keyPhase)
 {
   if (pnLength < 1 || pnLength > 4) return -1;
   unsigned need = 1 + dcid.length() + pnLength;
   if (len < need) return -1;
   unsigned o = 0;
-  out[o++] = uint8_t(0x40 | (pnLength - 1));
+  out[o++] = uint8_t(0x40 | (keyPhase ? 0x04 : 0) | (pnLength - 1));
   memcpy(out + o, dcid.data(), dcid.length()); o += dcid.length();
   if (PktNumber::encode(out + o, len - o, pn, pnLength) < 0) return -1;
   return int(o + pnLength);
