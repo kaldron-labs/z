@@ -1,5 +1,5 @@
 METASOURCES = AUTO
-SUBDIRS = src test #ext
+SUBDIRS = src #  = src test #ext
 
 .PHONY: test
 test: all
