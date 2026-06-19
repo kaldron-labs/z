@@ -64,6 +64,8 @@ void usage(int code = 1)
     "  --http3                    enable HTTP/3 over QUIC\n"
     "  --cert path                TLS certificate for --https/--http3\n"
     "  --key path                 TLS private key for --https/--http3\n"
+    "  --key-log path             append HTTP/3 TLS secrets for tshark/Wireshark;\n"
+    "                             defaults to SSLKEYLOGFILE when set\n"
     "  --debug                    enable ZiMultiplex and HTTP/3 debug logging\n"
     "  --frag                     fragment ZiMultiplex I/O in debug builds\n"
     "  --yield                    yield in ZiMultiplex in debug builds\n"
@@ -798,7 +800,7 @@ void H3Server::printDiag()
       retxTotal += d.retransmittable[i];
     }
   });
-  ZiLOG(Debug, "zhttpd", ([
+  ZiLOG(Info, "zhttpd", ([
     active, requests, errors, links,
     datagramsRx = diag.datagramsRx, datagramsTx = diag.datagramsTx,
     bytesRx = diag.bytesRx, bytesTx = diag.bytesTx,
@@ -928,9 +930,9 @@ int main(int argc, char **argv)
   }
 
   ZiLog::init("zhttpd", options.syslog ? "daemon" : "user");
-  ZiLog::level(options.debug ||
+  ZiLog::level(options.debug ? Ze::Debug :
 #ifdef Zquic_DEBUG
-      options.quicDiag ||
+      options.quicDiag ? Ze::Info :
 #endif
       options.memDiag ? Ze::Debug : Ze::Info);
   if (options.syslog)
@@ -1006,6 +1008,7 @@ int main(int argc, char **argv)
     if (!h3.init(
 	  Zquic::ServerParams(&mx, "3", "4")
 	    .certPath(state.options.cert).keyPath(state.options.key).alpn(alpn)
+	    .keyLogPath(state.options.keyLog)
 	    .maxData(H3DataMax).maxStreamData(H3StreamDataMax)
 	    .maxStreamsBidi(H3BidiMax).maxStreamsUni(H3UniMax))) {
       ZiLOG(Error, "zhttpd", "H3 server initialization failed");

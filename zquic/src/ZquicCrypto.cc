@@ -14,6 +14,7 @@
 
 #include <sys/stat.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <openssl/evp.h>
@@ -45,6 +46,19 @@ static bool hkdfExtract_(
   return hmacSHA256_(
     salt, saltLen, reinterpret_cast<const uint8_t *>(ikm.data()), ikm.length(),
     out, InitialSecret::SecretLen);
+}
+
+static char hexDigit_(unsigned v)
+{
+  return v < 10 ? char('0' + v) : char('a' + v - 10);
+}
+
+static void hexAppend_(ZtString<> &s, ZuCSpan data)
+{
+  for (unsigned i = 0, n = data.length(); i < n; ++i) {
+    unsigned c = uint8_t(data[i]);
+    s << hexDigit_(c >> 4) << hexDigit_(c & 0x0f);
+  }
 }
 
 static bool hkdfExpand_(
@@ -837,6 +851,10 @@ bool Crypto::init(const CryptoConfig &config)
   for (auto &state : m_rxProt) state.clear();
   m_alpn = ParamString{config.alpn};
   m_serverName = Host{config.serverName};
+  m_keyLogPath = ParamString{config.keyLogPath};
+  if (!m_keyLogPath)
+    if (auto path = ::getenv("SSLKEYLOGFILE"))
+      m_keyLogPath = ParamString{ZuCSpan{path}};
   m_localTransportParams = config.localTransportParams ?
     *config.localTransportParams : TransportParams{};
   m_peerTransportParams = {};
@@ -997,6 +1015,31 @@ int Crypto::onClientHelloCB_(
     PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_INTERNAL_ERROR);
 }
 
+void Crypto::keyLog_(int isEnc, CryptoLevel::T level, ZuCSpan secret)
+{
+  if (!m_keyLogPath || !m_tls || !secret) return;
+  if (level != CryptoLevel::Handshake && level != CryptoLevel::OneRTT) return;
+  ptls_iovec_t random = ptls_get_client_random(m_tls);
+  if (!random.base || random.len != 32) return;
+  bool clientSecret = isEnc ? !m_isServer : m_isServer;
+  const char *label =
+    level == CryptoLevel::Handshake ?
+      (clientSecret ?
+	"CLIENT_HANDSHAKE_TRAFFIC_SECRET" :
+	"SERVER_HANDSHAKE_TRAFFIC_SECRET") :
+      (clientSecret ? "CLIENT_TRAFFIC_SECRET_0" : "SERVER_TRAFFIC_SECRET_0");
+  ZtString<> line;
+  line << label << ' ';
+  hexAppend_(line, ZuCSpan{random.base, unsigned(random.len)});
+  line << ' ';
+  hexAppend_(line, secret);
+  line << '\n';
+  FILE *f = fopen(m_keyLogPath.data(), "a");
+  if (!f) return;
+  (void)fwrite(line.data(), 1, line.length(), f);
+  fclose(f);
+}
+
 int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
 {
   if (!secret) return 0;
@@ -1020,6 +1063,7 @@ int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
     traffic.clear();
     return -1;
   }
+  keyLog_(isEnc, level, secretSpan);
   installSecret(level, secretSpan);
   return 0;
 }

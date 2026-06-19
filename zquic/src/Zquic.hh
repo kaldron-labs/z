@@ -542,6 +542,8 @@ struct RuntimeTxDiag {
   uint64_t	cryptoBytesTx = 0;
   uint64_t	streamBytesTx = 0;
   uint64_t	ptoCount = 0;
+  uint32_t	ptoBackoff = 0;
+  uint64_t	ptoTimeoutUS = 0;
   uint64_t	retransmittedFrames = 0;
   uint64_t	pktBytesInFlight[Spaces] = {};
   uint32_t	sentPackets[Spaces] = {};
@@ -585,6 +587,8 @@ struct RuntimeDiag {
     cryptoBytesTx = tx.cryptoBytesTx;
     streamBytesTx = tx.streamBytesTx;
     ptoCount = tx.ptoCount;
+    ptoBackoff = tx.ptoBackoff;
+    ptoTimeoutUS = tx.ptoTimeoutUS;
     retransmittedFrames = tx.retransmittedFrames;
     for (unsigned i = 0; i < RuntimeTxDiag::Spaces; ++i) {
       pktBytesInFlight[i] = tx.pktBytesInFlight[i];
@@ -625,6 +629,8 @@ struct RuntimeDiag {
   uint64_t	keyDiscards = 0;
   AckECN	ecnRx[3];
   uint64_t	ptoCount = 0;
+  uint32_t	ptoBackoff = 0;
+  uint64_t	ptoTimeoutUS = 0;
   uint64_t	retransmittedFrames = 0;
   uint64_t	pktBytesInFlight[RuntimeTxDiag::Spaces] = {};
   uint32_t	sentPackets[RuntimeTxDiag::Spaces] = {};
@@ -794,6 +800,10 @@ struct EngineParams {
   EngineParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
   EngineParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
   EngineParams &&keyPath(ZuCSpan v) { m_keyPath = v; return ZuMv(*this); }
+  EngineParams &&keyLogPath(ZuCSpan v) {
+    m_keyLogPath = v;
+    return ZuMv(*this);
+  }
   EngineParams &&asyncThread(ZuCSpan v) {
     m_asyncThread = v;
     return ZuMv(*this);
@@ -834,6 +844,7 @@ struct EngineParams {
   ZuCSpan caPath() const { return m_caPath; }
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
+  ZuCSpan keyLogPath() const { return m_keyLogPath; }
   ZuCSpan asyncThread() const { return m_asyncThread; }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
@@ -851,6 +862,7 @@ private:
   ParamString	m_caPath;
   ParamString	m_certPath;
   ParamString	m_keyPath;
+  ParamString	m_keyLogPath;
   ParamString	m_asyncThread;
   uint64_t	m_maxData = DefaultMaxData;
   uint64_t	m_maxStreamData = DefaultMaxStreamData;
@@ -902,6 +914,7 @@ public:
     m_alpn.length(0);
     m_alpnData.length(0);
     m_caPath = m_certPath = m_keyPath = ParamString{};
+    m_keyLogPath = ParamString{};
     m_maxData = DefaultMaxData;
     m_maxStreamData = DefaultMaxStreamData;
     m_maxStreamsBidi = DefaultMaxStreamsBidi;
@@ -924,6 +937,7 @@ public:
   ZuCSpan caPath() const { return m_caPath; }
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
+  ZuCSpan keyLogPath() const { return m_keyLogPath; }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
   uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
@@ -986,6 +1000,7 @@ protected:
     m_caPath = params.caPath();
     m_certPath = params.certPath();
     m_keyPath = params.keyPath();
+    m_keyLogPath = params.keyLogPath();
     m_maxData = params.maxData();
     m_maxStreamData = params.maxStreamData();
     m_maxStreamsBidi = params.maxStreamsBidi();
@@ -1116,6 +1131,7 @@ private:
   ParamString		m_caPath;
   ParamString		m_certPath;
   ParamString		m_keyPath;
+  ParamString		m_keyLogPath;
   uint64_t		m_maxData = DefaultMaxData;
   uint64_t		m_maxStreamData = DefaultMaxStreamData;
   uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
@@ -1281,7 +1297,20 @@ friend class SrvLink;
   bool listening() const { return m_endpoint.listening(); }
   bool connected() const { return m_endpoint.connected(); }
   const ZiSockAddr &local() const { return m_endpoint.local(); }
-  EndpointDiag endpointDiag() const { return m_endpoint.diag(); }
+  EndpointDiag endpointDiag() const {
+    auto mx = this->mx();
+    if (!mx) return m_endpoint.diag();
+    if (mx->invoked(mx->txThread())) return m_endpoint.diag();
+    EndpointDiag diag;
+    ZmSemaphore done;
+    auto server = const_cast<Server *>(this);
+    mx->txRun([server, &diag, &done]() mutable {
+      diag = server->m_endpoint.diag();
+      done.post();
+    });
+    done.wait();
+    return diag;
+  }
   template <typename Fn>
   void allLinks(Fn fn) {
     ZiAssert(this->mx() && this->rxThread(), "Zquic", (),
@@ -1490,7 +1519,11 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  Stream(Link *link, int64_t id) : m_link{link}, m_id{id} { }
+  Stream(Link *link, int64_t id) : m_link{link}, m_id{id} {
+#ifdef ZmObject_DEBUG
+    this->debug();
+#endif
+  }
 
   Link *link() const { return m_link; }
   int64_t id() const { return m_id; }
@@ -2070,7 +2103,8 @@ private:
   }
 
   void notifyTx_() {
-    if (m_link && m_id >= 0) m_link->streamWritable_(this);
+    if (m_link && m_id >= 0)
+      m_link->streamWritable_(ZmRef<Impl>{impl()});
   }
   struct PendingControl {
     ControlFrame	frame;
@@ -2178,7 +2212,8 @@ ZuDerive(Streams_,
   (ZmHash<Stream_,
     ZmHashNode<Stream_,
       ZmHashKey<Stream_IDAxor<Stream_>,
-	ZmHashHeapID<"Zquic.Stream.ObjectHash">>>>));
+	ZmHashLock<ZmPLock,
+	  ZmHashHeapID<"Zquic.Stream.ObjectHash">>>>>));
 
 template <typename App, typename Impl, typename TxBufAlloc_, typename Stream_>
 class Link : public ZmPolymorph {
@@ -2303,11 +2338,14 @@ public:
     peerLimit_(type).set(limit);
   }
 
-  bool applyMaxStreams(const Frame &frame) {
+  bool rxApplyMaxStreams_(const Frame &frame) {
     if (!validateMaxStreams_(frame)) return false;
-    localLimit_(frame.streamType).extend(frame.value);
-    openQueued_(frame.streamType, OpenQueuedBatch);
-    scheduleOpenQueued_(frame.streamType);
+    uint64_t value = frame.value;
+    Zi::StreamType::T type = frame.streamType;
+    app()->txRun([link = ZmMkRef(impl()), type, value]() mutable {
+      link->txApplyMaxStreams_(type, value);
+      link->flushTx_();
+    });
     return true;
   }
   bool applyMaxData(const Frame &frame) {
@@ -2399,10 +2437,7 @@ public:
     }
     if (frame.type == FrameType::ResetStream) {
       if (stream->resetReceived()) {
-	if (stream->finalSize() == frame.length) {
-	  noteInvalidStreamActivity_(TransportError::StreamState, true);
-	  return 0;
-	}
+	if (stream->finalSize() == frame.length) return 0;
 	noteInvalidStreamActivity_(TransportError::FinalSize, true, true);
 	return -1;
       }
@@ -2426,17 +2461,11 @@ public:
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       impl()->streamResetReceived(stream, frame.errorCode, frame.length);
-      reapStream_(stream.ptr());
+      reapStream_(stream);
       return 0;
     }
-    if (stream->resetSent() || stream->finDequeued()) {
-      noteInvalidStreamActivity_(TransportError::StreamState, true);
-      return 0;
-    }
-    if (stream->stopReceived()) {
-      noteInvalidStreamActivity_(TransportError::StreamState, true);
-      return 0;
-    }
+    if (stream->resetSent()) return 0;
+    if (stream->stopReceived()) return 0;
     if (stream->receiveStop(frame)) {
       impl()->streamStopSendingReceived(stream, frame.errorCode);
       return 0;
@@ -2469,7 +2498,7 @@ public:
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       impl()->streamData(stream, frame.offset, frame.payload, frame.fin);
-      if (frame.fin) reapStream_(stream.ptr());
+      if (frame.fin) reapStream_(stream);
     } else {
       TransportError::T error = stream->rxComplete() || stream->resetReceived() ?
 	TransportError::StreamState : TransportError::FinalSize;
@@ -2488,7 +2517,7 @@ public:
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       if (wasRxQueued && !stream->rxPending() && !stream->rxQueued())
-	reapStream_(stream.ptr());
+	reapStream_(stream);
       return;
     }
     TransportError::T error = stream->rxComplete() || stream->resetReceived() ?
@@ -2776,6 +2805,14 @@ protected:
     if (streamTxPending_(stream)) streamWritable_(stream);
     return true;
   }
+  bool txApplyMaxStreams_(Zi::StreamType::T type, uint64_t value) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC MAX_STREAMS processing outside Tx thread", return false);
+    localLimit_(type).extend(value);
+    openQueued_(type, OpenQueuedBatch);
+    scheduleOpenQueued_(type);
+    return true;
+  }
 
   bool runtimeEstablished_() const { return m_established; }
   bool debugLog_() const {
@@ -2803,20 +2840,14 @@ protected:
     if (!app() || !app()->mx()) return runtimeDiag_();
     ZiAssert(!rxInvoked_() && !txInvoked_(), "Zquic", (),
       "QUIC runtime diagnostic snapshot from I/O thread", return {});
-    RuntimeRxDiag rx;
+    RuntimeRxDiag rx = m_rxDiag;
     RuntimeTxDiag tx;
-    ZmSemaphore rxDone;
     ZmSemaphore txDone;
     auto link = const_cast<Link *>(this)->impl();
-    app()->rxRun([link, &rx, &rxDone]() {
-      rx = link->rxDiagSnapshot_();
-      rxDone.post();
-    });
     app()->txRun([link, &tx, &txDone]() {
       tx = link->txDiagSnapshot_();
       txDone.post();
     });
-    rxDone.wait();
     txDone.wait();
     return {rx, tx};
   }
@@ -3099,6 +3130,9 @@ protected:
     }
     diag.ptoTimerActive = !!m_ptoTimer;
     diag.lossTimerActive = !!m_lossTimer;
+    diag.ptoBackoff = m_ptoBackoff.count();
+    diag.ptoTimeoutUS =
+      uint64_t(m_ptoBackoff.timeout(m_rtt, maxAckDelay_()).microsecs());
     return diag;
   }
   void updateCongestionDiag_() {
@@ -4864,6 +4898,21 @@ protected:
       } while (true);
       level = l;
       ++m_txDiag.retransmittedFrames;
+#ifdef Zquic_DEBUG
+      if (ref.kind == SentFrameKind::Stream)
+	ZiLOG(Info, "Zquic.retx", ([
+	  level, ref
+	](auto &s) {
+	  s << "stream retransmit selected level=" << int(level) <<
+	    " streamID=" << ref.streamID <<
+	    " offset=" << ref.offset <<
+	    " length=" << ref.length <<
+	    " fin=" << int(ref.fin) <<
+	    " rangeOffset=" << ref.range.offset <<
+	    " rangeLength=" << ref.range.length <<
+	    " hasBuf=" << int(!!ref.range.buf);
+	}));
+#endif
       Zquic_DEBUG_LOG_(([level, ref](auto &s) {
 	  s << "retransmit queued level=" << int(level) <<
 	    " kind=" << int(ref.kind) <<
@@ -5034,11 +5083,10 @@ nextSpace:
     applyAckOfAckTx_(update);
     for (unsigned i = 0; i < update.nAckdFrames; ++i) {
       const SentFrameRef &ref = update.ackdFrames[i];
-      Stream *stream = static_cast<Stream *>(update.ackdOwners[i]);
       StreamRef streamRef;
-      if (!stream &&
-	  (ref.kind == SentFrameKind::Stream ||
-	    ref.kind == SentFrameKind::Control) &&
+      Stream *stream = static_cast<Stream *>(update.ackdOwners[i]);
+      if ((ref.kind == SentFrameKind::Stream ||
+	  ref.kind == SentFrameKind::Control) &&
 	  ref.streamID <= uint64_t(INT64_MAX)) {
 	streamRef = findStream(int64_t(ref.streamID));
 	stream = streamRef.ptr();
@@ -5046,11 +5094,11 @@ nextSpace:
       if (ackTxFrame_(update.level, ref, stream))
 	switch (ref.kind) {
 	  case SentFrameKind::Stream:
-	    if (ref.fin) reapStream_(stream);
+	    if (ref.fin) reapStream_(streamRef);
 	    break;
 	  case SentFrameKind::Control:
 	    if (ref.controlType == FrameType::ResetStream)
-	      reapStream_(stream);
+	      reapStream_(streamRef);
 	    break;
 	  default:
 	    break;
@@ -5107,6 +5155,10 @@ nextSpace:
     AckSnapshot &ack = work.ack;
     if (work.gen != m_txRuntimeGen) return;
     if (!ack.nRanges || m_txSpaceDiscarded[ack.level]) return;
+    if (!ackFrameValidTx_(ack)) {
+      ++m_txDiag.failures;
+      return;
+    }
     if (!work.ecnValidated) {
       validateAckECN_(ack);
       for (unsigned i = 0; i < ack.nRanges; ++i) {
@@ -5167,6 +5219,12 @@ nextSpace:
     if (work.congestionOpened || congestionAllowance_())
       impl()->flushTx_();
     if (work.retransmit) impl()->queueRetransmit_();
+  }
+
+  bool ackFrameValidTx_(const AckSnapshot &ack) const {
+    for (unsigned i = 0; i < ack.nRanges; ++i)
+      if (ack.ranges[i].largest >= m_txPN[ack.level]) return false;
+    return true;
   }
 
   bool validateAckECN_(const AckSnapshot &ack) {
@@ -5731,7 +5789,7 @@ nextSpace:
 	      !handleControl(level, frame, addr)) return false;
 	  break;
 	case FrameType::MaxStreams:
-	  if (!applyMaxStreams(frame) ||
+	  if (!rxApplyMaxStreams_(frame) ||
 	      !handleControl(level, frame, addr)) return false;
 	  break;
 	case FrameType::DataBlocked:
@@ -5776,8 +5834,6 @@ private:
       case FrameType::ConnectionClose:
 	return true;
       case FrameType::Ack:
-	for (unsigned i = 0; i < frame.ackRanges.length(); ++i)
-	  if (frame.ackRanges[i].largest >= m_txPN[level]) return false;
 	return true;
       case FrameType::Crypto:
 	return level != CryptoLevel::OneRTT || m_established;
@@ -5851,17 +5907,23 @@ private:
       if (!stream) break;
       --queued;
       ++opened;
-      impl()->streamed(stream);
+      streamQueuedOpen_(stream);
       scheduleStreamWritable_(stream);
     }
     return opened;
+  }
+  void streamQueuedOpen_(StreamRef stream) {
+    if (!stream) return;
+    app()->rxRun([link = ZmMkRef(impl()), stream = ZuMv(stream)]() mutable {
+      link->streamed(ZuMv(stream));
+    });
   }
   void scheduleOpenQueued_(Zi::StreamType::T type) {
     unsigned i = type == Zi::StreamType::Simplex ? 1 : 0;
     if (!queued_(type) || localLimit_(type).blocked() || m_openQueuedPending[i])
       return;
     m_openQueuedPending[i] = true;
-    app()->rxRun([link = ZmMkRef(impl()), type, i]() mutable {
+    app()->txRun([link = ZmMkRef(impl()), type, i]() mutable {
       link->m_openQueuedPending[i] = false;
       link->openQueued_(type, OpenQueuedBatch);
       link->scheduleOpenQueued_(type);
@@ -6416,6 +6478,7 @@ public:
   using Base::app;
   using Base::impl;
   friend Base;
+  template <typename, typename, typename> friend class Zquic::Stream;
 
   CliLink(App *app) : Base{app, false} { Base::initCryptoDelivery_(); }
   CliLink(App *app, Host server, uint16_t port) :
@@ -6502,8 +6565,21 @@ public:
   }
   const ZiSockAddr &local() const { return m_endpoint.local(); }
   const ZiSockAddr &remote() const { return m_endpoint.remote(); }
-  EndpointDiag cxnDiag() const { return m_endpoint.diag(); }
-  EndpointDiag endpointDiag() const { return m_endpoint.diag(); }
+  EndpointDiag cxnDiag() const { return endpointDiag(); }
+  EndpointDiag endpointDiag() const {
+    if (!app() || !app()->mx()) return m_endpoint.diag();
+    auto mx = app()->mx();
+    if (mx->invoked(mx->txThread())) return m_endpoint.diag();
+    EndpointDiag diag;
+    ZmSemaphore done;
+    auto link = const_cast<CliLink *>(this)->impl();
+    mx->txRun([link, &diag, &done]() mutable {
+      diag = link->m_endpoint.diag();
+      done.post();
+    });
+    done.wait();
+    return diag;
+  }
   RuntimeDiag runtimeDiag() const { return Base::runtimeDiag(); }
   PathDiag pathDiag() const { return Base::pathDiag(); }
   bool pathValidated() const { return Base::pathValidated_(); }
@@ -6538,8 +6614,7 @@ public:
     // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client send_ outside Tx thread", return false);
-    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
-	(!payload.length() && !fin))
+    if (Base::closed() || !stream || (!payload.length() && !fin))
       return false;
     if (payload.length()) {
       auto tx = stream->txStream_();
@@ -6605,10 +6680,27 @@ public:
 	break;
       }
       if (ref.kind == SentFrameKind::Stream) {
-	if (!Base::buildRetransmitStream_(build, ref)) continue;
+	if (!Base::buildRetransmitStream_(build, ref)) {
+#ifdef Zquic_DEBUG
+	  ZiLOG(Info, "Zquic.retx", ([ref](auto &s) {
+	    s << "stream retransmit build failed streamID=" <<
+	      ref.streamID << " offset=" << ref.offset <<
+	      " length=" << ref.length << " fin=" << int(ref.fin);
+	  }));
+#endif
+	  continue;
+	}
       } else if (!Base::buildRetransmitControl_(build, ref))
 	continue;
       if (!sendShortPkt_(build, m_endpoint.remote(), {}, &ref, true)) {
+#ifdef Zquic_DEBUG
+	if (ref.kind == SentFrameKind::Stream)
+	  ZiLOG(Info, "Zquic.retx", ([ref](auto &s) {
+	    s << "stream retransmit send failed streamID=" <<
+	      ref.streamID << " offset=" << ref.offset <<
+	      " length=" << ref.length << " fin=" << int(ref.fin);
+	  }));
+#endif
 	Base::requeueRetransmit_(level, ref);
 	break;
       }
@@ -6792,7 +6884,7 @@ private:
     if (!Base::deriveInitial_()) return false;
     if (!Base::initTLS_(CryptoConfig{
 	false, false, app()->firstALPN(), app()->caPath(), {}, {},
-	m_server}))
+	app()->keyLogPath(), m_server}))
       return false;
     return true;
   }
@@ -6915,6 +7007,14 @@ private:
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client Tx drain outside Tx thread", return);
     flushTx_();
+  }
+
+  void flushStreamWritable_(StreamRef stream) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client stream Tx flush outside Tx thread", return);
+    if (!stream || stream->id() < 0) return;
+    Base::streamWritable_(stream);
+    if (!flushTx_()) queueTxFlush_();
   }
 
   void queueTxFlush_() {
@@ -7334,6 +7434,7 @@ public:
   using Base::app;
   using Base::impl;
   friend Base;
+  template <typename, typename, typename> friend class Zquic::Stream;
 
   template <typename, typename> friend class Server;
 
@@ -7375,8 +7476,7 @@ public:
     // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server send_ outside Tx thread", return false);
-    if (Base::closed() || !stream || !Base::runtimeEstablished_() ||
-	(!payload.length() && !fin))
+    if (Base::closed() || !stream || (!payload.length() && !fin))
       return false;
     if (payload.length()) {
       auto tx = stream->txStream_();
@@ -7442,10 +7542,27 @@ public:
 	break;
       }
       if (ref.kind == SentFrameKind::Stream) {
-	if (!Base::buildRetransmitStream_(build, ref)) continue;
+	if (!Base::buildRetransmitStream_(build, ref)) {
+#ifdef Zquic_DEBUG
+	  ZiLOG(Info, "Zquic.retx", ([ref](auto &s) {
+	    s << "stream retransmit build failed streamID=" <<
+	      ref.streamID << " offset=" << ref.offset <<
+	      " length=" << ref.length << " fin=" << int(ref.fin);
+	  }));
+#endif
+	  continue;
+	}
       } else if (!Base::buildRetransmitControl_(build, ref))
 	continue;
       if (!sendShortPkt_(build, m_peerAddr, {}, &ref, true)) {
+#ifdef Zquic_DEBUG
+	if (ref.kind == SentFrameKind::Stream)
+	  ZiLOG(Info, "Zquic.retx", ([ref](auto &s) {
+	    s << "stream retransmit send failed streamID=" <<
+	      ref.streamID << " offset=" << ref.offset <<
+	      " length=" << ref.length << " fin=" << int(ref.fin);
+	  }));
+#endif
 	Base::requeueRetransmit_(level, ref);
 	break;
       }
@@ -7522,7 +7639,7 @@ private:
     if (!Base::deriveInitial_()) return false;
     if (!Base::initTLS_(CryptoConfig{
 	true, false, app()->firstALPN(), {}, app()->certPath(), app()->keyPath(),
-	{}}))
+	app()->keyLogPath(), {}}))
       return false;
     if (!Base::startRuntimeHandshake_()) return false;
     return true;
@@ -7649,6 +7766,14 @@ private:
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Tx drain outside Tx thread", return);
     flushTx_();
+  }
+
+  void flushStreamWritable_(StreamRef stream) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server stream Tx flush outside Tx thread", return);
+    if (!stream || stream->id() < 0) return;
+    Base::streamWritable_(stream);
+    if (!flushTx_()) queueTxFlush_();
   }
 
   void queueTxFlush_() {

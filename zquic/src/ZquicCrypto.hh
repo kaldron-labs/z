@@ -249,6 +249,7 @@ struct CryptoConfig {
   ZuCSpan		caPath;
   ZuCSpan		certPath;
   ZuCSpan		keyPath;
+  ZuCSpan		keyLogPath;
   ZuCSpan		serverName;
   const TransportParams	*localTransportParams = nullptr;
 };
@@ -331,6 +332,7 @@ private:
   bool initTLSContext_(const CryptoConfig &);
   bool initTLSProperties_(const CryptoConfig &);
   int updateTrafficKey_(int, size_t, const void *);
+  void keyLog_(int, CryptoLevel::T, ZuCSpan);
   int onClientHello_(ptls_on_client_hello_parameters_t *);
   int collectedExtensions_(ptls_raw_extension_t *);
   static int updateTrafficKeyCB_(
@@ -352,6 +354,7 @@ private:
   PktProtState			m_rxProt[3];
   ParamString			m_alpn;
   Host				m_serverName;
+  ParamString			m_keyLogPath;
   InitialKeyMaterial 		m_initialKeys;
   CryptoDiag			m_diag;
   TransportParams 		m_localTransportParams;

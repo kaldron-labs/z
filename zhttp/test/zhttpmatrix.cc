@@ -81,9 +81,7 @@ struct Options {
   bool		discardResponse = false;
   OptString	quicRxDrop;
   OptString	quicTxDrop;
-#ifdef Zquic_DEBUG
   uint32_t	quicDiag = 0;
-#endif
   uint32_t	memDiag = 0;
   bool		quiet = false;
   bool		help = false;
@@ -104,9 +102,7 @@ ZtStruct((Options, CLI),
     (CLI::Long<"discard-response">)),                             (Bool, false)),
   (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),                   (String, "")),
   (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),                   (String, "")),
-#ifdef Zquic_DEBUG
   (((quicDiag), (CLI::Long<"quic-diag">)),                        (UInt32, 0)),
-#endif
   (((memDiag),  (CLI::Long<"mem-diag">)),                         (UInt32, 0)),
   (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),            (Bool, false)),
   (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),             (Bool, false)));
@@ -193,9 +189,7 @@ void usage(int code = 1)
 bool preserveLogs()
 {
   return options.debug || options.memDiag
-#ifdef Zquic_DEBUG
     || options.quicDiag
-#endif
     ;
 }
 
@@ -454,7 +448,6 @@ void appendZhttpCommand(
   ZuCSpan tempPath)
 {
   script << "if ! ";
-  if (c.timeout) script << "timeout " << c.timeout << "s ";
   script << "\"$client\" -j " << c.jobs << " -n " << c.requests;
 #ifdef ZiMultiplex_DEBUG
   if (options.debug) script << " --debug";
@@ -474,14 +467,14 @@ void appendZhttpCommand(
       break;
     case Proto::H3:
       script << " --http3=force -c " << certPath;
+      if (options.debug || options.pcap)
+	script << " --key-log=$key_log_file";
       if (options.quicRxDrop)
 	script << " --quic-rx-drop=" << options.quicRxDrop;
       if (options.quicTxDrop)
 	script << " --quic-tx-drop=" << options.quicTxDrop;
-#ifdef Zquic_DEBUG
       if (options.quicDiag)
 	script << " --quic-diag=" << options.quicDiag;
-#endif
       break;
   }
 	  script << " -o " << tempPath << "/body ";
@@ -587,6 +580,7 @@ bool writeScript(
 	    "pcap_file=" << tempPath << "/traffic.pcapng\n"
 	    "pcap_tsv=" << tempPath << "/traffic.tsv\n"
 	    "pcap_summary=" << tempPath << "/pcap.summary\n"
+	    "key_log_file=" << tempPath << "/keylog.txt\n"
 	    "stop_pcap() {\n"
 	    "  if [ -n \"$pcap_pid\" ]; then\n"
 	    "    kill -INT \"$pcap_pid\" 2>/dev/null || true\n"
@@ -597,7 +591,8 @@ bool writeScript(
 	    "analyze_pcap() {\n"
 	    "  [ -s \"$pcap_file\" ] || return 0\n"
 	    "  if command -v tshark >/dev/null 2>&1; then\n"
-	    "    tshark -r \"$pcap_file\" -Y 'udp.port == " << port << "' "
+	    "    tshark -o \"tls.keylog_file:$key_log_file\" "
+	      "-r \"$pcap_file\" -Y 'udp.port == " << port << "' "
 	      "-T fields -e frame.time_epoch -e udp.srcport -e udp.dstport "
 	      "-e udp.length >\"$pcap_tsv\" 2>" << tempPath <<
 	      "/pcap.err || true\n"
@@ -674,14 +669,14 @@ bool writeScript(
 	break;
 	  case Proto::H3:
 	    script << " --http3 --cert " << certPath << " --key " << keyPath;
+	    if (options.debug || options.pcap)
+	      script << " --key-log=$key_log_file";
 	    if (options.quicRxDrop)
 	      script << " --quic-rx-drop=" << options.quicRxDrop;
 	    if (options.quicTxDrop)
 	      script << " --quic-tx-drop=" << options.quicTxDrop;
-#ifdef Zquic_DEBUG
 	    if (options.quicDiag)
 	      script << " --quic-diag=" << options.quicDiag;
-#endif
 	    break;
 	}
     script <<

@@ -13,12 +13,14 @@
 #include <zlib/ZuICmp.hh>
 
 #include <zlib/ZmGuard.hh>
+#include <zlib/ZmBackTrace.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRandom.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmTime.hh>
 
 #include <zlib/ZtCLI.hh>
 
@@ -51,6 +53,7 @@ struct Options {
   uint32_t	timeout = ClientTimeout;
   uint32_t	stallTimeout = H3StallTimeout;
   uint32_t	quietTimeout = H3QuietTimeout;
+  ZuCSpan	keyLog;
   ZuCSpan	url;
   Http3Mode::T	http3 = Http3Mode::prefer;
   bool		verbose = false;
@@ -82,6 +85,7 @@ ZtStruct((Options, CLI),
     (CLI::Long<"stall-timeout">)),                            (UInt32, H3StallTimeout)),
   (((quietTimeout),
     (CLI::Long<"quiet-timeout">)),                            (UInt32, H3QuietTimeout)),
+  (((keyLog),    (CLI::Long<"key-log">)),                    (String)),
   (((http3),     (Enum<Http3Mode::Map>,
 		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
 								 Http3Mode::prefer)),
@@ -117,6 +121,8 @@ void usage(int code = 1)
     "                      0 disables; currently applies to HTTP/3\n"
     "  --quiet-timeout=N   quiet transport timeout in seconds, default 2,\n"
     "                      0 disables; currently applies to HTTP/3\n"
+    "  --key-log=PATH      append HTTP/3 TLS secrets for tshark/Wireshark;\n"
+    "                      defaults to SSLKEYLOGFILE when set\n"
     "  -3, --http3=MODE   HTTP/3 mode for https: force, prefer, disable;\n"
     "                      default prefer\n"
     "  -v, --verbose       show DNS and Alt-Svc probing\n"
@@ -700,6 +706,27 @@ template <typename Impl, typename Headers>
 using H1RequestBuilder_ = Zhttp::H1ReqBuilder<Impl, Headers>;
 using H1RequestBuilder = RequestBuilder<H1RequestBuilder_>;
 
+ZuDerive(H3ReqPayload,
+  (ZtArray<uint8_t, ZtArrayHeapID<"zhttp.H3ReqPayload">>));
+
+struct H3ReqTx {
+  H3ReqTx(H3ReqPayload &payload_) : payload{&payload_} { }
+
+  H3ReqTx &operator <<(ZuBSpan span) {
+    for (unsigned i = 0; i < span.length(); ++i)
+      payload->push(uint8_t(span[i]));
+    return *this;
+  }
+  H3ReqTx &operator <<(char c) {
+    payload->push(uint8_t(c));
+    return *this;
+  }
+  void flush() { }
+
+private:
+  H3ReqPayload	*payload = nullptr;
+};
+
 template <typename H3Cxn_>
 struct H3RequestBuilder :
   public Zhttp::H3ReqBuilder<H3RequestBuilder<H3Cxn_>, RequestHeaders>,
@@ -734,7 +761,6 @@ void sendH1Request(State &state, StreamRef stream)
 template <typename StreamRef>
 void sendH3Request(State &state, StreamRef stream)
 {
-  auto tx = stream->txStream();
   if (state.logResponse)
     ZiLOG(Debug, "zhttp.h3", ([
       reqID = state.id, requests = state.requests,
@@ -746,9 +772,20 @@ void sendH3Request(State &state, StreamRef stream)
   using H3Cxn = ZuDecay<decltype(stream->link()->h3)>;
   H3RequestBuilder<H3Cxn> builder{
     state, stream->link()->h3, uint64_t(stream->id())};
+  H3ReqPayload payload;
+  H3ReqTx tx{payload};
   builder.request(tx);
   builder.finish(tx);
-  stream->link()->send(stream, {}, true);
+  if (!payload.length() || !stream->link()->send(stream, payload, true))
+    ZiLOG(Error, "zhttp.h3", ([
+      reqID = state.id, id = stream->id(), bytes = payload.length(),
+      tx = stream->link()->app()->txInvoked()
+    ](auto &s) {
+      s << "send request req=" << reqID <<
+	" stream=" << id <<
+	" bytes=" << bytes <<
+	" tx=" << int(tx);
+    }));
 }
 
 void logFraming(State &state)
@@ -1471,11 +1508,37 @@ private:
   bool	m_countedUp = false;
 };
 
+#ifdef ZmObject_DEBUG
+struct H3StreamRefDumpCtx {
+  ZuCSpan	label;
+  unsigned	req = 0;
+  int64_t	streamID = -1;
+};
+
+void dumpH3StreamRef(void *ctx_, const void *referrer, const ZmBackTrace *bt)
+{
+  auto ctx = static_cast<H3StreamRefDumpCtx *>(ctx_);
+  ZiLOG(Info, "zhttp.stream.ref", ([
+    label = ctx->label,
+    req = ctx->req,
+    streamID = ctx->streamID,
+    referrer,
+    bt
+  ](auto &s) {
+    s << "h3 " << label <<
+      " stream ref req=" << req <<
+      " stream=" << streamID <<
+      " referrer=" << ZuBoxPtr(referrer).hex() << '\n' << *bt;
+  }));
+}
+#endif
+
 void QUICClient::printDiag(Link *link, ZuCSpan label)
 {
 #ifdef Zquic_DEBUG
   if (!link) return;
   Zquic::RuntimeDiag diag = link->runtimeDiag();
+  Zquic::EndpointDiag epDiag = link->endpointDiag();
   unsigned complete, failed, scheduled, active, pending;
   {
     ZmGuard<ZmLock> guard(lock);
@@ -1485,13 +1548,31 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     active = this->active;
     pending = this->pending.length() - this->pendingHead;
   }
-  ZiLOG(Debug, "zhttp", ([
+  ZiLOG(Info, "zhttp", ([
     label, complete, failed, scheduled, active, pending,
     streams = link->streamCount(),
     opened = link->localStreamsOpened(Zi::StreamType::Duplex),
     queued = link->queuedLocalStreams(Zi::StreamType::Duplex),
     packetsRx = diag.packetsRx, packetsTx = diag.packetsTx,
+    ptoBackoff = diag.ptoBackoff,
+    ptoTimeoutUS = diag.ptoTimeoutUS,
+    dgramsRx = epDiag.datagramsRx, dgramsTx = epDiag.datagramsTx,
+    epSendCalls = epDiag.sendCalls,
+    epDirect = epDiag.directCalls,
+    epAsync = epDiag.asyncCalls,
+    epSubmit = epDiag.submittedTx, epSubmitBytes = epDiag.submittedBytes,
+    epBytesRx = epDiag.bytesRx, epBytesTx = epDiag.bytesTx,
+    epBackPressure = epDiag.txBackPressure,
+    epDropped = epDiag.txDropped,
+    epPending = epDiag.txPending,
+    epQueued = epDiag.txQueued,
+    epFailures = epDiag.failures,
     streamRx = diag.streamBytesRx, streamTx = diag.streamBytesTx,
+    invalidStream = diag.invalidStreamFrames,
+    closedStream = diag.closedStreamFrames,
+    suspiciousCloses = diag.suspiciousStreamCloses,
+    invalidKeys = diag.invalidKeyPhases,
+    failures = diag.failures,
     pto = diag.ptoCount, retx = diag.retransmittedFrames,
     ptoTimer = diag.ptoTimerActive, lossTimer = diag.lossTimerActive,
     if0 = diag.pktBytesInFlight[0],
@@ -1522,8 +1603,29 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
       " queued=" << queued <<
       " packetsRx=" << packetsRx <<
       " packetsTx=" << packetsTx <<
+      " ptoBackoff=" << ptoBackoff <<
+      " ptoTimeoutUS=" << ptoTimeoutUS <<
+      " dgramsRx=" << dgramsRx <<
+      " dgramsTx=" << dgramsTx <<
+      " epSendCalls=" << epSendCalls <<
+      " epDirect=" << epDirect <<
+      " epAsync=" << epAsync <<
+      " epSubmit=" << epSubmit <<
+      " epSubmitBytes=" << epSubmitBytes <<
+      " epBytesRx=" << epBytesRx <<
+      " epBytesTx=" << epBytesTx <<
+      " epBackPressure=" << epBackPressure <<
+      " epDropped=" << epDropped <<
+      " epPending=" << epPending <<
+      " epQueued=" << epQueued <<
+      " epFailures=" << epFailures <<
       " streamRx=" << streamRx <<
       " streamTx=" << streamTx <<
+      " invalidStream=" << invalidStream <<
+      " closedStream=" << closedStream <<
+      " suspiciousCloses=" << suspiciousCloses <<
+      " invalidKeys=" << invalidKeys <<
+      " failures=" << failures <<
       " pto=" << pto <<
       " retx=" << retx <<
       " ptoTimer=" << int(ptoTimer) <<
@@ -1546,18 +1648,28 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     uint64_t txBytes = stream ? stream->txBytes() : 0;
     uint64_t txBuffered = stream ? stream->txBufferedBytes() : 0;
     unsigned txRanges = stream ? stream->txRangeCount() : 0;
+    unsigned txUnackd = stream ? stream->txUnackdCount() : 0;
+    uint64_t txUnackdBytes = stream ? stream->txUnackdBytes() : 0;
     uint64_t txCredit = stream ? stream->txCreditAvailable() : 0;
     uint64_t txLimit = stream ? stream->txCreditLimit() : 0;
+    uint64_t liveRxBytes = stream ? stream->rxBytes() : 0;
+    uint64_t liveFinalSize = stream ? stream->finalSize() : 0;
+    unsigned liveRxPending = stream ? stream->rxPending() : 0;
+    unsigned liveRxQueued = stream ? stream->rxQueued() : 0;
+    bool liveFinReceived = stream && stream->finReceived();
     bool finSent = stream && stream->finSent();
     bool finDequeued = stream && stream->finDequeued();
-    ZiLOG(Debug, "zhttp", ([
+    ZiLOG(Info, "zhttp", ([
       label, id = req.id, streamID = req.responseStreamID,
       status = req.status, contentLength = req.contentLength,
       bodyBytes = req.bodyBytes, bodyChunks = req.bodyChunks,
       rxBytes = req.h3RxBytes, finalSize = req.h3FinalSize,
       rxPending = req.h3RxPending, rxQueued = req.h3RxQueued,
       fin = req.h3FinReceived, haveStream = !!stream,
-      txBytes, txBuffered, txRanges, txCredit, txLimit,
+      txBytes, txBuffered, txRanges, txUnackd, txUnackdBytes,
+      txCredit, txLimit,
+      liveRxBytes, liveFinalSize, liveRxPending, liveRxQueued,
+      liveFinReceived,
       finSent, finDequeued
     ](auto &s) {
       s << "h3 " << label <<
@@ -1573,14 +1685,27 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
 	" rxQueued=" << rxQueued <<
 	" fin=" << int(fin) <<
 	" haveStream=" << int(haveStream) <<
+	" liveRxBytes=" << liveRxBytes <<
+	" liveFinalSize=" << liveFinalSize <<
+	" liveRxPending=" << liveRxPending <<
+	" liveRxQueued=" << liveRxQueued <<
+	" liveFin=" << int(liveFinReceived) <<
 	" txBytes=" << txBytes <<
 	" txBuffered=" << txBuffered <<
 	" txRanges=" << txRanges <<
+	" txUnackd=" << txUnackd <<
+	" txUnackdBytes=" << txUnackdBytes <<
 	" txCredit=" << txCredit <<
 	" txLimit=" << txLimit <<
 	" finSent=" << int(finSent) <<
 	" finDequeued=" << int(finDequeued);
     }));
+#ifdef ZmObject_DEBUG
+    if (stream && label != ZuCSpan{"diag"}) {
+      H3StreamRefDumpCtx ctx{label, req.id, req.responseStreamID};
+      stream->dump(&ctx, dumpH3StreamRef);
+    }
+#endif
   }
 #endif
 }
@@ -1594,7 +1719,15 @@ void disconnectDrained(Link *link)
 {
   ZmRef<QUICDrain> drained = new QUICDrain;
   link->disconnect([drained]() { drained->sem.post(); });
-  drained->sem.timedwait(Zm::now(2));
+  drained->sem.wait();
+}
+
+template <typename Link>
+void abortDrained(Link *link)
+{
+  ZmRef<QUICDrain> drained = new QUICDrain;
+  link->abort([drained]() { drained->sem.post(); });
+  drained->sem.wait();
 }
 
 int QUICClient::Stream::process(Zquic::RxStream &)
@@ -1669,7 +1802,7 @@ Zhttp::H3::QPackTxTable *QUICClient::Stream::qpackTx()
 void QUICClient::openH3Streams(Link *link_)
 {
   if (!link_) return;
-  this->rxInvoke([this, link = ZmMkRef(link_)]() mutable {
+  this->txInvoke([this, link = ZmMkRef(link_)]() mutable {
     openH3Streams_(link.ptr());
   });
 }
@@ -1681,42 +1814,42 @@ void QUICClient::openH3Streams_(Link *link_)
     Req *req = nullptr;
     {
       ZmGuard<ZmLock> guard(lock);
-	  if (!run || active >= run->options.concurrency ||
-		  scheduled >= run->options.requests)
-	    return;
-	  for (unsigned i = 0; i < run->reqs.length(); ++i) {
-	    if (run->reqs[i].h3Active) continue;
-	    req = &run->reqs[i];
-	    initReq(*req, *run, scheduled++);
-	    break;
-	  }
-	  if (!req) return;
-	  if (req->logResponse) {
-	auto ctx = reqLogCtx(*req);
-	ZiLOG(Debug, "zhttp.h3", ([
-	  ctx, scheduled = scheduled, active = active,
-	  concurrency = run->options.concurrency
-	](auto &s) {
-	  reqLogPrefix(ctx, s);
-	  s << "schedule h3 request scheduled=" << scheduled <<
-	    " active=" << active << " concurrency=" << concurrency;
-	}));
+      if (!run || active >= run->options.concurrency ||
+	  scheduled >= run->options.requests)
+	return;
+      for (unsigned i = 0; i < run->reqs.length(); ++i) {
+	if (run->reqs[i].h3Active) continue;
+	req = &run->reqs[i];
+	initReq(*req, *run, scheduled++);
+	break;
+      }
+      if (!req) return;
+      if (req->logResponse) {
+		auto ctx = reqLogCtx(*req);
+		ZiLOG(Debug, "zhttp.h3", ([
+		  ctx, scheduled = scheduled, active = active,
+		  concurrency = run->options.concurrency
+		](auto &s) {
+		  reqLogPrefix(ctx, s);
+		  s << "schedule h3 request scheduled=" << scheduled <<
+		    " active=" << active << " concurrency=" << concurrency;
+		}));
       }
     }
     resetAttempt(*req, true);
+    if (!activateH3Req(req)) return;
     auto stream = link_->stream(Zi::StreamType::Duplex);
     if (!stream) {
       if (req->logResponse) {
-	auto ctx = reqLogCtx(*req);
-	ZiLOG(Debug, "zhttp.h3", ([ctx](auto &s) {
-	  reqLogPrefix(ctx, s);
-	  s << "no stream credit, queue request";
-	}));
+		auto ctx = reqLogCtx(*req);
+		ZiLOG(Debug, "zhttp.h3", ([ctx](auto &s) {
+		  reqLogPrefix(ctx, s);
+		  s << "no stream credit, queue request";
+		}));
       }
       queueH3Req(req);
       return;
     }
-    if (!activateH3Req(req)) return;
     sendH3Req_(link_, ZuMv(stream), req);
   }
 }
@@ -1735,7 +1868,7 @@ bool QUICClient::activateH3Req(Req *req)
 
 void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
 {
-  this->rxInvoke([
+  this->txInvoke([
     this,
     link = link_ ? ZmMkRef(link_) : ZmRef<Link>{},
     stream = ZuMv(stream),
@@ -1806,7 +1939,7 @@ Req *QUICClient::popH3Req()
 void QUICClient::bindH3Stream(Link *link_, ZmRef<Stream> stream)
 {
   if (!link_) return;
-  this->rxInvoke([this, link = ZmMkRef(link_), stream = ZuMv(stream)]() mutable {
+  this->txInvoke([this, link = ZmMkRef(link_), stream = ZuMv(stream)]() mutable {
     bindH3Stream_(link.ptr(), ZuMv(stream));
   });
 }
@@ -1854,12 +1987,19 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
       ++req->redirects;
       resetAttempt(*req, true);
       if (!run) return;
-      auto stream = link_->stream(Zi::StreamType::Duplex);
-      if (!stream) {
-	queueH3Req(req);
-	return;
-      }
-      sendH3Req_(link_, ZuMv(stream), req);
+      this->txInvoke([
+	this,
+	link = link_ ? ZmMkRef(link_) : ZmRef<Link>{},
+	req
+      ]() mutable {
+	if (!link || !req || !run || req->done) return;
+	auto stream = link->stream(Zi::StreamType::Duplex);
+	if (!stream) {
+	  queueH3Req(req);
+	  return;
+	}
+	sendH3Req_(link.ptr(), ZuMv(stream), req);
+      });
       return;
     }
   }
@@ -1894,7 +2034,7 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
   if (done)
     sem.post();
   else
-    openH3Streams_(link_);
+    openH3Streams(link_);
 }
 
 void QUICClient::failH3Link()
@@ -1963,6 +2103,7 @@ int run(
 	  Zquic::ClientParams(&mx, "3", "4")
 	    .alpn(alpn)
 	    .caPath(options.ca)
+	    .keyLogPath(options.keyLog)
 	    .maxData(H3DataMax)
 	    .maxStreamData(H3StreamDataMax)
 	    .maxStreamsBidi(H3BidiMax)
@@ -2103,6 +2244,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	  Zquic::ClientParams(&mx, "3", "4")
 	    .alpn(alpn)
 	    .caPath(run.options.ca)
+	    .keyLogPath(run.options.keyLog)
 	    .maxData(H3DataMax)
 	    .maxStreamData(H3StreamDataMax)
 	    .maxStreamsBidi(client.maxStreamsBidi())
@@ -2117,6 +2259,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     link->connect(run.originalURL.host, run.originalURL.port);
     bool timedOut = false;
     bool stalled = false;
+    bool quietTimedOut = false;
     IntervalMonitor mon{
       run.options.timeout,
       run.options.memDiag
@@ -2140,11 +2283,6 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       bool pktMoved =
 	diag.packetsRx != lastDiag.packetsRx ||
 	diag.packetsTx != lastDiag.packetsTx;
-      bool txPending =
-	diag.congestionBytesInFlight || diag.ptoTimerActive ||
-	diag.retransmitPending[0] || diag.retransmitPending[1] ||
-	diag.retransmitPending[2] || diag.pktBytesInFlight[0] ||
-	diag.pktBytesInFlight[1] || diag.pktBytesInFlight[2];
       if (client.complete != lastComplete) {
 	lastComplete = client.complete;
 	idle = 0;
@@ -2164,9 +2302,10 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       mon.intervals([]() { printMemDiag(); });
 #endif
       if (run.options.quietTimeout && (client.scheduled || client.active) &&
-	  quiet >= run.options.quietTimeout && !txPending &&
+	  quiet >= run.options.quietTimeout &&
 	  client.complete < run.options.requests) {
 	stalled = true;
+	quietTimedOut = true;
 	break;
       }
       if (run.options.stallTimeout && (client.scheduled || client.active) &&
@@ -2186,14 +2325,24 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	s << "h3 " << (stalled ? "stalled" : "timed out") <<
 	  ", reconnecting attempt=" << attempt + 1;
       }));
+      if (quietTimedOut) {
+	ZiLOG(Error, "zhttp",
+	  "h3 quiet timeout tripped; sleeping forever for debugger attach");
+	for (;;) Zm::sleep(ZuTime(1));
+      }
     }
     client.stopping = true;
-    disconnectDrained(link);
+    if (timedOut || stalled)
+      abortDrained(link);
+    else
+      disconnectDrained(link);
     {
       ZmGuard<ZmLock> guard(client.lock);
       run.complete = client.complete;
       run.failed = client.failed;
     }
+    if (timedOut || stalled)
+      resetH3Incomplete(run);
     client.clearFilters();
     client.final();
     if (!timedOut && !stalled)
@@ -2454,7 +2603,7 @@ int main(int argc, char **argv)
     options.debug ? Ze::Debug :
 #endif
 #ifdef Zquic_DEBUG
-    options.quicDiag ? Ze::Debug :
+    options.quicDiag ? Ze::Info :
 #endif
     options.memDiag ? Ze::Debug :
     options.verbose ? Ze::Info : Ze::Warning);

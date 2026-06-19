@@ -103,6 +103,7 @@ struct Options {
   unsigned		port = 8080;
   HdrString		cert;
   HdrString		key;
+  HdrString		keyLog;
   HdrString		index{"index.html"};
   HdrString		mimetypes;
   HdrString		defaultMimetype{"application/octet-stream"};
@@ -148,6 +149,7 @@ ZtStruct((Options, CLI),
   (((port),            (CLI::Long<"port">)),                     (UInt32, 8080)),
   (((cert),            (CLI::Long<"cert">)),                     (String)),
   (((key),             (CLI::Long<"key">)),                      (String)),
+  (((keyLog),          (CLI::Long<"key-log">)),                  (String)),
   (((index),           (CLI::Long<"index">)),                    (String, "index.html")),
   (((mimetypes),       (CLI::Long<"mimetypes">)),                (String)),
   (((defaultMimetype),

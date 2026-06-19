@@ -54,6 +54,7 @@ public:
     TxDrainedFn txDrainedFn = {});
 
   void closeUDP(CloseFn);
+  void final(CloseFn = {});
 
   bool listening() const { return m_listening; }
   bool connected() const;
@@ -83,9 +84,8 @@ private:
   void sent_(unsigned);				// direct call from within tx thread
   void txDrained_();				// direct call from within tx thread
   void ioError_();				// direct call from within rx thread
-  void send_(ZmRef<ZiIOBuf>, ZiSockAddr);	// direct call from within tx thread
-  void closeUDPWait_();
-  void closeUDP_(ZmSemaphore *, CloseFn);
+  bool send_(ZmRef<ZiIOBuf>, ZiSockAddr);	// direct call from within tx thread
+  void closeUDP_(CloseFn);
   void beginCloseTx_(ZmRef<Cxn_> = {});
   void closeTx_(unsigned, ZmRef<Cxn_>);
   void closeTxDone_(unsigned);
@@ -111,7 +111,6 @@ private:
   FailFn		m_failFn;
   DownFn		m_downFn;
   Cxn_			*m_closingCxn = nullptr;
-  ZmSemaphore		*m_closeWaiter = nullptr;
   CloseFn		m_closeFn;
   unsigned		m_generation = 0;
   unsigned		m_closingGeneration = 0;
