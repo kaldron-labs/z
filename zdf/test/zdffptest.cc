@@ -390,10 +390,10 @@ int main(int argc_, char **argv)
     done.wait();
 
     if (options.hashTel)
-      ZiLOG(Debug, "zdffptest", (ZeString{} << '\n' << ZmHashMgr::csv()));
+      ZiLOG(Debug, "zdffptest", ([](auto &s) { s << '\n' << ZmHashMgr::csv(); }));
 
     if (options.heapTel)
-      ZiLOG(Debug, "zdffptest", (ZeString{} << '\n' << ZmHeapMgr::csv()));
+      ZiLOG(Debug, "zdffptest", ([](auto &s) { s << '\n' << ZmHeapMgr::csv(); }));
 
     db->stop(); // closes all tables
 
