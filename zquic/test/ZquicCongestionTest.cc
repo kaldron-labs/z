@@ -40,10 +40,10 @@ void testSentPktTracker()
     Zquic::PktSpace::AppData, true, true, false }),
     "timed sent packet add failed");
   ZuCHECK(!tracker.markTimeThresholdLoss(
-      Zquic::timeUS(2500), Zquic::timeUS(600)),
+      4, Zquic::timeUS(2500), Zquic::timeUS(600)),
     "time loss fired too early");
   ZuCHECK(tracker.markTimeThresholdLoss(
-      Zquic::timeUS(2600), Zquic::timeUS(600)) == 1 &&
+      4, Zquic::timeUS(2600), Zquic::timeUS(600)) == 1 &&
     tracker.lost() == 2 && tracker.retransmittable() == 1,
     "time threshold loss mismatch");
 }

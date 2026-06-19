@@ -169,6 +169,17 @@ void testAckOfAckTrim()
       range.first == 8 &&
       range.largest == 8,
     "ACK-of-ACK incorrectly trimmed sparse ACK ranges");
+
+  uint8_t b[64];
+  int n = ack.writeFrame(b, sizeof(b));
+  Zquic::Frame frame;
+  unsigned used = 0;
+  ZuCHECK(n > 0 &&
+      !Zquic::FrameCodec::parse(
+	ZuCSpan{b, unsigned(n)}, frame, used) &&
+      used == unsigned(n) &&
+      frame.offset == 10,
+    "ACK frame did not retain sparse largest after ACK-of-ACK trim");
 }
 
 void testTxPktLossRequeue()

@@ -130,17 +130,31 @@ public:
   }
   int snapshot(AckRange *ranges, unsigned max) const {
     if (!ranges || !max) return 0;
+    if (max > Max) max = Max;
+    AckRange retained[Max];
     unsigned n = 0;
-    bool stop = false;
-    bool ok = ranges_([ranges, max, &n, &stop](const AckRange &range) {
-      if (n >= max) {
-	stop = true;
-	return false;
+    Span ackGap = m_ackGap;
+    uint64_t gapEnd = 0;
+    bool haveGap =
+      ackGap.length() && Queue::endOf(ackGap.key(), ackGap.length(), gapEnd);
+    bool ok = m_packets.rspans([&retained, max, &n, haveGap, gapEnd](
+	const auto &span) {
+      if (n >= max) return false;
+      uint64_t first = span.key();
+      uint64_t end = 0;
+      if (!Queue::endOf(first, span.length(), end)) return false;
+      if (haveGap && first < gapEnd) {
+	if (end <= gapEnd) return true;
+	first = gapEnd;
       }
-      ranges[n++] = range;
+      retained[n++] = AckRange{end - 1, first};
       return true;
     });
-    if (!ok && !stop) return -1;
+    if (!ok && n < max) return -1;
+    if (n < max && m_ackHead > m_ackBase)
+      retained[n++] = AckRange{m_ackHead - 1, m_ackBase};
+    for (unsigned i = 0; i < n; ++i)
+      ranges[i] = retained[n - i - 1];
     return int(n);
   }
   int writeFrame(
@@ -1094,7 +1108,9 @@ public:
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
-      if (p.ackd || p.lost || p.pn + threshold > largestAckd) continue;
+      if (p.ackd || p.lost || !p.inFlight || !p.ackEliciting ||
+	  p.pn + threshold > largestAckd)
+	continue;
       if (lose_(p)) {
 	++n;
 	if (lostBytes) *lostBytes += p.bytes;
@@ -1116,8 +1132,8 @@ public:
     while (auto node = iter()) {
       SentPkt &p = node->data();
       batch.nextPN = p.pn + 1;
-      if (!p.ackd && !p.lost && p.pn + threshold <= largestAckd &&
-	  lose_(p)) {
+      if (!p.ackd && !p.lost && p.inFlight && p.ackEliciting &&
+	  p.pn + threshold <= largestAckd && lose_(p)) {
 	++batch.lost;
 	if (update) update->lost(p);
       }
@@ -1128,16 +1144,19 @@ public:
   }
 
   unsigned markTimeThresholdLoss(
-    ZuTime now, ZuTime threshold,
+    uint64_t largestAckd, ZuTime now, ZuTime threshold,
     uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr,
     PktTxUpdate *update = nullptr) {
     unsigned n = 0;
     if (lostBytes) *lostBytes = 0;
     if (lostSentTime) *lostSentTime = ZuTime{0};
+    if (ZuCmp<uint64_t>::null(largestAckd)) return 0;
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
-      if (p.ackd || p.lost || !*p.sentTime || p.sentTime > now ||
+      if (p.ackd || p.lost || !p.inFlight || !p.ackEliciting ||
+	  p.pn >= largestAckd ||
+	  !*p.sentTime || p.sentTime > now ||
 	  now - p.sentTime < threshold)
 	continue;
       if (lose_(p)) {
@@ -1151,16 +1170,19 @@ public:
     return n;
   }
   bool markTimeThresholdLossBatch(
-    ZuTime now, ZuTime threshold, PktLossBatch &batch,
+    uint64_t largestAckd, ZuTime now, ZuTime threshold, PktLossBatch &batch,
     unsigned budget, PktTxUpdate *update = nullptr)
   {
     if (!budget) return false;
+    if (ZuCmp<uint64_t>::null(largestAckd)) return true;
     unsigned scanned = 0;
     auto iter = m_packets.iter(batch.nextPN);
     while (auto node = iter()) {
       SentPkt &p = node->data();
       batch.nextPN = p.pn + 1;
-      if (!p.ackd && !p.lost && *p.sentTime && p.sentTime <= now &&
+      if (!p.ackd && !p.lost && p.inFlight && p.ackEliciting &&
+	  p.pn < largestAckd &&
+	  *p.sentTime && p.sentTime <= now &&
 	  now - p.sentTime >= threshold && lose_(p)) {
 	++batch.lost;
 	if (update) update->lost(p);
@@ -1170,16 +1192,18 @@ public:
     batch.nextPN = 0;
     return true;
   }
-  ZuTime nextLossTime(ZuTime threshold, unsigned budget = 256) const {
-    if (!*threshold) return ZuTime{0};
+  ZuTime nextLossTime(
+    uint64_t largestAckd, ZuTime threshold, unsigned budget = 256) const {
+    if (ZuCmp<uint64_t>::null(largestAckd) || !*threshold)
+      return ZuTime{0};
     ZuTime out;
     bool have = false;
     auto iter = m_packets.citer();
     unsigned scanned = 0;
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (!p.ackd && !p.lost && p.inFlight && p.ackEliciting &&
-	  *p.sentTime) {
+      if (!p.ackd && !p.lost && p.pn < largestAckd &&
+	  p.inFlight && p.ackEliciting && *p.sentTime) {
 	ZuTime deadline = p.sentTime + threshold;
 	if (!have || deadline < out) {
 	  out = deadline;

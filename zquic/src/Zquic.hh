@@ -4494,7 +4494,8 @@ protected:
       auto level = CryptoLevel::T(i);
       if (m_txSpaceDiscarded[level]) continue;
       ZuTime deadline =
-	m_txPkts[level].nextLossTime(threshold, RecoveryScanBatch);
+	m_txPkts[level].nextLossTime(
+	  m_txLargestAckd[level], threshold, RecoveryScanBatch);
       if (!*deadline) continue;
       if (!have || deadline < out) {
 	out = deadline;
@@ -4511,7 +4512,8 @@ protected:
     if (!*threshold) return false;
     PktTxUpdate update;
     complete = m_txPkts[level].markTimeThresholdLossBatch(
-      now, threshold, batch, RecoveryScanBatch, &update);
+      m_txLargestAckd[level], now, threshold, batch,
+      RecoveryScanBatch, &update);
     if (!update.lostBytes)
       return false;
     applyLossUpdateTx_(update);
