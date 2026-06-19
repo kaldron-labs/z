@@ -258,7 +258,7 @@ void testRecoveryFlowAndPMTUD()
   ZuCHECK(pmtudLossTx.add(probeLoss), "loop PMTUD loss add failed");
   Zquic::PktTxUpdate probeLossUpdate;
   ZuCHECK(pmtudLossTx.markTimeThresholdLoss(
-      Zquic::timeUS(500), Zquic::timeUS(100), nullptr, nullptr,
+      13, Zquic::timeUS(500), Zquic::timeUS(100), nullptr, nullptr,
       &probeLossUpdate) == 1 &&
       probeLossUpdate.pmtudLostSize == 1400 &&
       probeLossUpdate.normalLostBytes == 0,

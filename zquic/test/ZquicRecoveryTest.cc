@@ -97,8 +97,9 @@ void testRecovery()
 	ZuCSpan{manyBuf, unsigned(n)},
 	frame, used) &&
       used == unsigned(n) &&
-      frame.ackRanges.length() == Zquic::Frame::MaxAckRanges,
-    "many-range ACK frame was not emitted with capped ranges");
+      frame.ackRanges.length() == Zquic::Frame::MaxAckRanges &&
+      frame.offset == uint64_t((Zquic::Frame::MaxAckRanges + 7) << 1),
+    "many-range ACK frame did not retain newest capped ranges");
 
   ZuCHECK(ack.add(10) && ack.add(11) && ack.add(13) && ack.add(15),
     "disjoint ACK range setup failed");
@@ -379,25 +380,35 @@ void testLossThresholds()
   ZuCHECK(tx.add(txPkt_(1)) && tx.add(txPkt_(2)) &&
       tx.add(txPkt_(3)), "sent packet setup failed");
   ZuTime threshold = Zquic::timeUS(150);
-  ZuCHECK(tx.nextLossTime(threshold) == Zquic::timeUS(250),
+  ZuCHECK(!tx.nextLossTime(ZuCmp<uint64_t>::null(), threshold),
+    "loss deadline was scheduled before any largest ACKed packet");
+  ZuCHECK(tx.nextLossTime(4, threshold) == Zquic::timeUS(250),
     "next loss-deadline computation mismatch");
-  ZuCHECK(tx.markTimeThresholdLoss(Zquic::timeUS(270), threshold) == 1,
+  ZuCHECK(tx.markTimeThresholdLoss(4, Zquic::timeUS(270), threshold) == 1,
     "time-threshold loss did not mark only oldest packet");
-  ZuCHECK(tx.nextLossTime(threshold) == Zquic::timeUS(350),
+  ZuCHECK(tx.nextLossTime(4, threshold) == Zquic::timeUS(350),
     "next loss-deadline after a single oldest loss mismatch");
-  ZuCHECK(tx.markTimeThresholdLoss(Zquic::timeUS(350), threshold) == 1,
+  ZuCHECK(tx.markTimeThresholdLoss(4, Zquic::timeUS(350), threshold) == 1,
     "time-threshold loss missed oldest remaining packet");
-  ZuCHECK(tx.nextLossTime(threshold) == Zquic::timeUS(450),
+  ZuCHECK(tx.nextLossTime(4, threshold) == Zquic::timeUS(450),
     "next loss-deadline after two oldest losses mismatch");
-  ZuCHECK(tx.markTimeThresholdLoss(Zquic::timeUS(450), threshold) == 1,
+  ZuCHECK(tx.markTimeThresholdLoss(4, Zquic::timeUS(450), threshold) == 1,
     "time-threshold loss missed final eligible packet");
-  ZuCHECK(!tx.nextLossTime(threshold),
+  ZuCHECK(!tx.nextLossTime(4, threshold),
     "loss deadline remained after all eligible packets were lost");
 
   Zquic::PktTxSpace ackOnly;
   Zquic::SentPkt pkt = txPkt_(5, 100, false);
-  ZuCHECK(ackOnly.add(pkt) && !ackOnly.nextLossTime(threshold),
+  ZuCHECK(ackOnly.add(pkt) && !ackOnly.nextLossTime(6, threshold),
     "non-ack-eliciting packet scheduled a loss deadline");
+
+  Zquic::PktTxSpace sameLargest;
+  ZuCHECK(sameLargest.add(txPkt_(4)) &&
+      !sameLargest.nextLossTime(4, threshold),
+    "largest ACKed packet scheduled a loss deadline");
+  ZuCHECK(!sameLargest.markTimeThresholdLoss(
+      4, Zquic::timeUS(1000), threshold),
+    "largest ACKed packet was marked time-threshold lost");
 
   Zquic::PktTxSpace ackOnlyLargest;
   ZuCHECK(ackOnlyLargest.add(txPkt_(1)) &&
