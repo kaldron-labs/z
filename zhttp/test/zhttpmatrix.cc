@@ -168,6 +168,7 @@ void usage(int code = 1)
     "  -j, --jobs=N      select workload concurrency\n"
     "  -n, --requests=N  select workload request count\n"
     "  --case=CASE       exact case, e.g. ZhttpZhttpd/H3/j10n1000\n"
+    "                    optional: .../j10n1000000\n"
 	    "  --debug           debug zhttp/zhttpd and preserve case directories\n"
 	    "  --frag            fragment zhttp/zhttpd ZiMultiplex I/O\n"
 	    "  --yield           yield in zhttp/zhttpd ZiMultiplex\n"
@@ -271,10 +272,30 @@ void eachCase(L l)
 	l(Case{pair, proto, workload.jobs, workload.requests});
 }
 
+template <typename L>
+void eachExactCase(L l)
+{
+  eachCase(l);
+  if (!options.caseName) return;
+  Pair::T pairs[] = {
+    Pair::ZhttpCaddy,
+    Pair::ZhttpZhttpd,
+    Pair::CurlZhttpd
+  };
+  Proto::T protos[] = {
+    Proto::H1TCP,
+    Proto::H1TLS,
+    Proto::H3
+  };
+  for (auto pair : pairs)
+    for (auto proto : protos)
+      l(Case{pair, proto, 10, 1000000});
+}
+
 bool anySelected()
 {
   bool any = false;
-  eachCase([&any](const Case &c) {
+  eachExactCase([&any](const Case &c) {
     if (selected(c)) any = true;
   });
   return any;
@@ -283,7 +304,7 @@ bool anySelected()
 bool selectedNeedsCaddy()
 {
   bool need = false;
-  eachCase([&need](const Case &c) {
+  eachExactCase([&need](const Case &c) {
     if (selected(c) && c.pair == Pair::ZhttpCaddy) need = true;
   });
   return need;
@@ -292,7 +313,7 @@ bool selectedNeedsCaddy()
 bool selectedNeedsCurlH3()
 {
   bool need = false;
-  eachCase([&need](const Case &c) {
+  eachExactCase([&need](const Case &c) {
     if (selected(c) && c.proto == Proto::H3) need = true;
   });
   return need;
@@ -806,10 +827,18 @@ bool prerequisitesOK()
   ZHTTP_INTEROP_COUNT(pair_, proto_, 1, 1000); \
   ZHTTP_INTEROP_COUNT(pair_, proto_, 10, 1000)
 
+#define ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, proto_) \
+  ZHTTP_INTEROP_COUNT(pair_, proto_, 10, 1000000)
+
 #define ZHTTP_INTEROP_COUNT_PROTOCOLS(pair_) \
   ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H1TCP); \
   ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H1TLS); \
   ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H3)
+
+#define ZHTTP_INTEROP_COUNT_EXACT_PROTOCOLS(pair_) \
+  ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, H1TCP); \
+  ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, H1TLS); \
+  ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, H3)
 
 #define ZHTTP_INTEROP_RUN(pair_, proto_, j, n) \
   do { \
@@ -831,10 +860,18 @@ bool prerequisitesOK()
   ZHTTP_INTEROP_RUN(pair_, proto_, 1, 1000); \
   ZHTTP_INTEROP_RUN(pair_, proto_, 10, 1000)
 
+#define ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, proto_) \
+  ZHTTP_INTEROP_RUN(pair_, proto_, 10, 1000000)
+
 #define ZHTTP_INTEROP_RUN_PROTOCOLS(pair_) \
   ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H1TCP); \
   ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H1TLS); \
   ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H3)
+
+#define ZHTTP_INTEROP_RUN_EXACT_PROTOCOLS(pair_) \
+  ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, H1TCP); \
+  ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, H1TLS); \
+  ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, H3)
 
 int main(int argc, char **argv)
 {
@@ -847,6 +884,11 @@ int main(int argc, char **argv)
   ZHTTP_INTEROP_COUNT_PROTOCOLS(ZhttpCaddy);
   ZHTTP_INTEROP_COUNT_PROTOCOLS(ZhttpZhttpd);
   ZHTTP_INTEROP_COUNT_PROTOCOLS(CurlZhttpd);
+  if (options.caseName) {
+    ZHTTP_INTEROP_COUNT_EXACT_PROTOCOLS(ZhttpCaddy);
+    ZHTTP_INTEROP_COUNT_EXACT_PROTOCOLS(ZhttpZhttpd);
+    ZHTTP_INTEROP_COUNT_EXACT_PROTOCOLS(CurlZhttpd);
+  }
 
   std::cout << "TAP version 14\n1.." << nTests << '\n';
 
@@ -860,6 +902,11 @@ int main(int argc, char **argv)
   ZHTTP_INTEROP_RUN_PROTOCOLS(ZhttpCaddy);
   ZHTTP_INTEROP_RUN_PROTOCOLS(ZhttpZhttpd);
   ZHTTP_INTEROP_RUN_PROTOCOLS(CurlZhttpd);
+  if (options.caseName) {
+    ZHTTP_INTEROP_RUN_EXACT_PROTOCOLS(ZhttpCaddy);
+    ZHTTP_INTEROP_RUN_EXACT_PROTOCOLS(ZhttpZhttpd);
+    ZHTTP_INTEROP_RUN_EXACT_PROTOCOLS(CurlZhttpd);
+  }
 
   return pass ? 0 : 1;
 }
