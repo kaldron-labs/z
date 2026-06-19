@@ -407,6 +407,7 @@ void ZmHeapCache::telemetry(ZmHeapTelemetry &data) const
   data.cacheAllocs = m_stats.cacheAllocs;
   data.heapAllocs = m_stats.heapAllocs;
   data.frees = m_stats.frees;
+  data.maxAllocd = m_stats.maxAllocd;
   data.size = m_info.size;
   data.partition = m_info.partition;
   data.sharded = m_info.sharded;
