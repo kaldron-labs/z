@@ -86,6 +86,7 @@ struct Options {
 #ifdef Zquic_DEBUG
 	  uint32_t	quicDiag = 0;
 #endif
+	  uint32_t	memDiag = 0;
 	  bool		quiet = false;
 	  bool		help = false;
 	};
@@ -105,6 +106,7 @@ ZtStruct((Options, CLI),
 #ifdef Zquic_DEBUG
 	  (((quicDiag), (CLI::Long<"quic-diag">)),                       (UInt32, 0)),
 #endif
+	  (((memDiag),  (CLI::Long<"mem-diag">)),                        (UInt32, 0)),
 	  (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),           (Bool, false)),
 	  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),            (Bool, false)));
 
@@ -175,10 +177,20 @@ void usage(int code = 1)
 #ifdef Zquic_DEBUG
 	    "  --quic-diag=N     pass QUIC diagnostic print interval in seconds\n"
 #endif
+	    "  --mem-diag=N      pass memory diagnostic print interval in seconds\n"
 	    "  -q, --quiet       quiet output\n"
     "  -h, --help        show help\n" <<
     std::flush;
   ::exit(code);
+}
+
+bool preserveLogs()
+{
+  return options.debug || options.memDiag
+#ifdef Zquic_DEBUG
+    || options.quicDiag
+#endif
+    ;
 }
 
 bool validOptions()
@@ -394,6 +406,7 @@ void appendZhttpCommand(
   if (options.debug) script << " --debug";
   if (options.frag && c.proto != Proto::H3) script << " --frag";
   if (options.yield) script << " --yield";
+  if (options.memDiag) script << " --mem-diag=" << options.memDiag;
   switch (c.proto) {
     case Proto::H1TCP:
       break;
@@ -586,6 +599,7 @@ bool writeScript(
     if (options.debug) script << " --debug";
     if (options.frag && c.proto != Proto::H3) script << " --frag";
     if (options.yield) script << " --yield";
+    if (options.memDiag) script << " --mem-diag=" << options.memDiag;
     switch (c.proto) {
       case Proto::H1TCP:
 	script << " --http";
@@ -651,7 +665,7 @@ bool writeScript(
 
 	void preserveTemp(TempDir &temp)
 	{
-	  if ((!options.debug && !options.pcap) || !temp.path[0]) return;
+	  if ((!preserveLogs() && !options.pcap) || !temp.path[0]) return;
 	  std::cout << "# preserved logs: " << static_cast<const char *>(temp.path) <<
 	    '\n';
 	  temp.path[0] = 0;
