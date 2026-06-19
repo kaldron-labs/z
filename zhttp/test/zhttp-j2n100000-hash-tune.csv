@@ -1,0 +1,9 @@
+id,bits,loadFactor,cBits
+Zhttp.Discovery,2,1,
+Zhttp.H3.QPackTx,7,1,
+Zhttp.H3.QPackTx.Sections,6,1,
+ZiMultiplex.Connect,5,1,
+ZiMultiplex.Connection,8,1,
+ZiMultiplex.Listener,4,1,
+Zquic.Pkt.AckdFrame,8,1,
+Zquic.Stream.ObjectHash,4,1,
