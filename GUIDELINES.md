@@ -109,6 +109,9 @@ These guidelines extend `AGENTS.md`
 - Red Flag: scanning containers for objects to garbage collect
   Problem: garbage collection should be deterministic and immediate - zombie objects should not linger in containers - their memory should be made available to the recycling block allocator
   Fix: delete such scans and ensure that short-lived objects are deterministically removed from their owners when their state becomes final
+- Red Flag: intrusively reference-counted objects as values
+  Problem: intrusively reference-counted objects should only be destroyed by a corresponding smart pointer to prevent multiple destruction / double-free
+  Fix: store/pass by reference: replace the object value with the corresponding smart pointer
 - Amber Flag: fixed-size arrays, especially with separately maintained lengths.
   Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
   Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, etc.; enforce any required hard upper limit in code.
