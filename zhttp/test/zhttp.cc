@@ -1284,7 +1284,7 @@ struct QUICClient::Link :
     if (m_countedUp) {
       m_countedUp = false;
       up = --this->app()->up;
-      ZiAssert(up >= 0, "zhttp", (up),
+      ZiAssert(up >= 0, "zhttp", (),
 	"QUIC client link up counter underflow", return);
     }
     if (this->app()->stopping.load_()) {
