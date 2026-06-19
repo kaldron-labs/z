@@ -2189,6 +2189,7 @@ public:
   using Stream = Stream_;
   using StreamRef = ZmRef<Stream>;
   using Streams = Streams_<Stream>;
+  using StreamsRef = ZmRef<Streams>;
   using PathResponses =
     ZmQueue<ControlFrame,
       ZmQueueHeapID<"Zquic.Link.PathResponses">>;
@@ -2204,7 +2205,7 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   Link(App *app, bool isServer = false) :
-    m_app{app}, m_isServer{isServer} {
+    m_app{app}, m_isServer{isServer}, m_streams{new Streams} {
     for (unsigned i = 0; i < 3; ++i) {
       CryptoStream *crypto = &m_rxCrypto[i];
       crypto->dequeueFn([this, crypto]() {
@@ -2254,7 +2255,7 @@ public:
   bool isServer() const { return m_isServer; }
   bool closed() const { return m_closed; }
   uint64_t closeError() const { return m_closeError; }
-  uint64_t streamCount() const { return m_streams.count_(); }
+  uint64_t streamCount() const { return m_streams->count_(); }
   uint64_t peerStreamLimit(Zi::StreamType::T type) const {
     return localLimit_(type).limit();
   }
@@ -2286,7 +2287,7 @@ public:
       if (m_streamsBlockedControl[i].queued) ++n;
     }
     n += m_pathResponses.count_();
-    auto iter = m_streams.citer();
+    auto iter = m_streams->citer();
     while (auto node = iter())
       n += node->data().queuedControlFrames();
     return n;
@@ -2380,7 +2381,7 @@ public:
   }
 
   StreamRef findStream(int64_t id) const {
-    return m_streams.find(id);
+    return m_streams->find(id);
   }
 
   int receiveFrame(const Frame &frame, BufDiag *diag = nullptr) {
@@ -3841,7 +3842,7 @@ protected:
   void drainStreamsRx_() {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream table Rx drain outside Rx thread", return);
-    auto i = m_streams.iter();
+    auto i = m_streams->iter();
     while (auto stream = i()) stream->drainRx_();
   }
 
@@ -6043,7 +6044,7 @@ private:
       m_streamsBlockedControl[i] = {};
     }
     m_pathResponses.clean();
-    auto iter = m_streams.iter();
+    auto iter = m_streams->iter();
     while (auto node = iter()) node->data().clearControls();
   }
 
@@ -6160,7 +6161,7 @@ private:
   bool reapStream_(Stream *stream) {
     if (!streamReapable_(stream)) return false;
     int64_t id = stream->id();
-    return m_streams.del(id);
+    return m_streams->del(id);
   }
   bool streamCreditSettled_(const Stream *stream) const {
     uint64_t id = uint64_t(stream->id());
@@ -6175,7 +6176,7 @@ private:
     StreamRef stream{node};
     stream->txCredit(initialStreamTxCredit_(uint64_t(id)));
     stream->rxCredit(initialStreamRxCredit_(uint64_t(id)));
-    m_streams.addNode(node);
+    m_streams->addNode(node);
     impl()->streamOpen(
       stream, StreamID::server(uint64_t(id)) == m_isServer);
     return stream;
@@ -6220,7 +6221,7 @@ private:
   uint64_t	m_rxDataWindow = 0;
   StreamLimit	m_peerBidiLimit{uint64_t(INT64_MAX) >> 2};
   StreamLimit	m_peerUniLimit{uint64_t(INT64_MAX) >> 2};
-  Streams	m_streams;
+  StreamsRef	m_streams;
 
   // Tx thread exclusive
   FlowCredit	m_txDataCredit;
