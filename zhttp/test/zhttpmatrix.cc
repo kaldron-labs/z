@@ -30,7 +30,10 @@ using Zquic::Test::haveCaddy;
 
 ZuCSpan Path = "/zhttp-interop";
 ZuCSpan Body = "zhttp-interop-ok";
-constexpr unsigned CaseTimeout = 15;
+constexpr unsigned DefaultCaseTimeout = 15;
+constexpr unsigned DefaultStallTimeout = 15;
+constexpr unsigned DefaultQuietTimeout = 5;
+constexpr unsigned InfiniteCaseTimeout = 0;
 constexpr unsigned ReadyAttempts = 15;
 
 uint64_t nowMS()
@@ -59,6 +62,9 @@ struct Case {
   Proto::T	proto;
   unsigned	jobs;
   unsigned	requests;
+  unsigned	timeout;
+  unsigned	stallTimeout;
+  unsigned	quietTimeout;
 };
 
 using OptString = ZtString<ZtStringHeapID<"ZtCLI.Option">>;
@@ -209,7 +215,8 @@ void eachCase(L l)
   for (auto pair : pairs)
     for (auto proto : protos)
       for (auto workload : workloads)
-	l(Case{pair, proto, workload.jobs, workload.requests});
+	l(Case{pair, proto, workload.jobs, workload.requests,
+	    DefaultCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout});
 }
 
 template <typename L>
@@ -229,7 +236,8 @@ void eachExactCase(L l)
   };
   for (auto pair : pairs)
     for (auto proto : protos)
-      l(Case{pair, proto, 10, 1000000});
+      l(Case{pair, proto, 10, 1000000,
+	  InfiniteCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout});
 }
 
 bool anySelected()
@@ -361,13 +369,16 @@ void appendZhttpCommand(
   ZtString<> &script, const Case &c, unsigned port, ZuCSpan certPath,
   ZuCSpan tempPath)
 {
-  script <<
-    "if ! timeout " << CaseTimeout << "s \"$client\" -j " << c.jobs <<
-      " -n " << c.requests;
+  script << "if ! ";
+  if (c.timeout) script << "timeout " << c.timeout << "s ";
+  script << "\"$client\" -j " << c.jobs << " -n " << c.requests;
   if (options.debug) script << " --debug";
   if (options.frag && c.proto != Proto::H3) script << " --frag";
   if (options.yield) script << " --yield";
   if (options.memDiag) script << " --mem-diag=" << options.memDiag;
+  script << " --timeout=" << c.timeout <<
+    " --stall-timeout=" << c.stallTimeout <<
+    " --quiet-timeout=" << c.quietTimeout;
   switch (c.proto) {
     case Proto::H1TCP:
       break;
@@ -424,8 +435,9 @@ void appendCurlCommand(
     "\"\\noutput = \"/dev/null\"\\n' >>\"$cfg\"\n"
     "  i=$((i + 1))\n"
     "done\n"
-    "curl_opts='--fail -sS --connect-timeout 2 --max-time " <<
-      CaseTimeout << "'\n";
+    "curl_opts='--fail -sS --connect-timeout 2";
+  if (c.timeout) script << " --max-time " << c.timeout;
+  script << "'\n";
   switch (c.proto) {
     case Proto::H1TCP:
       script << "curl_proto='--http1.1'\n";
@@ -444,8 +456,10 @@ void appendCurlCommand(
     "if [ " << c.jobs << " -gt 1 ]; then\n"
     "  curl_parallel='--parallel --parallel-max " << c.jobs << "'\n"
     "fi\n"
-	    "if ! timeout " << CaseTimeout <<
-	      "s curl $curl_opts $curl_proto $curl_parallel "
+	    "if ! ";
+  if (c.timeout) script << "timeout " << c.timeout << "s ";
+  script <<
+	      "curl $curl_opts $curl_proto $curl_parallel "
 	      "--config \"$cfg\" >" << tempPath << "/curl.out 2>" << tempPath <<
 	      "/curl.err; then\n"
 	    "  stop_pcap\n"
@@ -741,7 +755,8 @@ bool prerequisitesOK()
 
 #define ZHTTP_INTEROP_COUNT(pair_, proto_, j, n) \
   do { \
-    Case c{Pair::pair_, Proto::proto_, j, n}; \
+    Case c{Pair::pair_, Proto::proto_, j, n, \
+      DefaultCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout}; \
     if (selected(c)) ++nTests; \
   } while (0)
 
@@ -751,7 +766,11 @@ bool prerequisitesOK()
   ZHTTP_INTEROP_COUNT(pair_, proto_, 10, 1000)
 
 #define ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, proto_) \
-  ZHTTP_INTEROP_COUNT(pair_, proto_, 10, 1000000)
+  do { \
+    Case c{Pair::pair_, Proto::proto_, 10, 1000000, \
+      InfiniteCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout}; \
+    if (selected(c)) ++nTests; \
+  } while (0)
 
 #define ZHTTP_INTEROP_COUNT_PROTOCOLS(pair_) \
   ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H1TCP); \
@@ -765,7 +784,8 @@ bool prerequisitesOK()
 
 #define ZHTTP_INTEROP_RUN(pair_, proto_, j, n) \
   do { \
-    Case c{Pair::pair_, Proto::proto_, j, n}; \
+    Case c{Pair::pair_, Proto::proto_, j, n, \
+      DefaultCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout}; \
     if (selected(c)) { \
       ZtString<> name; \
       caseName(name, c); \
@@ -784,7 +804,20 @@ bool prerequisitesOK()
   ZHTTP_INTEROP_RUN(pair_, proto_, 10, 1000)
 
 #define ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, proto_) \
-  ZHTTP_INTEROP_RUN(pair_, proto_, 10, 1000000)
+  do { \
+    Case c{Pair::pair_, Proto::proto_, 10, 1000000, \
+      InfiniteCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout}; \
+    if (selected(c)) { \
+      ZtString<> name; \
+      caseName(name, c); \
+      uint64_t start = printCaseStart(c); \
+      bool ok = prereqOK && runCase_(c); \
+      printCaseEnd(c, ok, start); \
+      pass &= ok; \
+      std::cout << (ok ? "ok " : "not ok ") << ++testNo << " - " << \
+	name << '\n'; \
+    } \
+  } while (0)
 
 #define ZHTTP_INTEROP_RUN_PROTOCOLS(pair_) \
   ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H1TCP); \
