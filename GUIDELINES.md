@@ -20,6 +20,12 @@ These guidelines extend `AGENTS.md`
 - shutdown/teardown must be graceful and clean of leaks
 - no background garbage collection or scanning for GC
   - garbage collection must be deterministic, timely and not timer-based
+- intrusive reference counting and container nodes
+- sharding:
+  - controlled thread creation
+  - threads dedicated to specific work and thread-affined data
+  - fast inter-thread communication with ring buffers
+- asynchronous continuation-based functional style
 
 ## No dogma
 - immutability
@@ -275,6 +281,16 @@ These guidelines extend `AGENTS.md`
 - Use `ZmAlloc` for large single-object stack allocations with heap fallback.
 - Use `ZmSpecific` instead of `thread_local`.
 - Use `ZmSingleton` for global singletons.
+- Intrusive reference-counting:
+  - Non-atomic reference-counted thread-affined objects:
+    - Use `ZuObject` for non-polymorphic types (no vtbl)
+    - Use `ZuPolymorph` for polymorphic types (with vtbl)
+  - Atomic reference-counted shared objects:
+    - Use `ZmObject` for non-polymorphic types (no vtbl)
+    - Use `ZmPolymorph` for polymorphic types (with vtbl)
+- Smart pointers:
+  - use `ZmRef` for potentially shared objects
+  - use `ZuRef` for thread-affined objects
 
 ### Formatting
 - Use `ZuBox`, `ZuFmt`, and `ZuPrint` for printing.
