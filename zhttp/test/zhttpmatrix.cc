@@ -159,7 +159,7 @@ void caseName(ZtString<> &s, const Case &c)
 void usage(int code = 1)
 {
   std::cerr <<
-    "Usage: ZhttpMatrixTest [OPTION]...\n\n"
+    "Usage: zhttpmatrix [OPTION]...\n\n"
     "Options:\n"
     "  --pair=PAIR       all, zhttpCaddy, zhttpZhttpd, curlZhttpd\n"
     "  --proto=PROTO     all, h1tcp, h1tls, h3\n"
@@ -552,10 +552,10 @@ bool writeScript(
     "  fi\n"
     "}\n"
     "trap cleanup EXIT INT TERM\n"
-    "server=../example/zhttpd\n"
-    "client=../example/zhttp\n"
-    "[ -x \"$server\" ] || server=./zhttp/example/zhttpd\n"
-    "[ -x \"$client\" ] || client=./zhttp/example/zhttp\n";
+    "server=gzhttpd\n"
+    "client=gzhttp\n"
+    "[ -x \"$server\" ] || server=./zhttp/test/zhttpd\n"
+    "[ -x \"$client\" ] || client=./zhttp/test/zhttp\n";
   if (caddy)
     script <<
       "export XDG_DATA_HOME=" << tempPath << "/caddy-data\n"
@@ -660,7 +660,7 @@ bool writeScript(
 bool runCase_(const Case &c)
 {
   TempDir temp;
-  if (!temp.init("ZhttpMatrix")) {
+  if (!temp.init("zhttpmatrix")) {
     std::cout << "# failed to create temporary directory\n";
     return false;
   }

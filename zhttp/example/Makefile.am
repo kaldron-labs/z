@@ -17,7 +17,3 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zhttp zhttpd
-noinst_HEADERS = Zhttpd.hh
-zhttp_SOURCES = zhttp.cc
-zhttpd_SOURCES = zhttpd.cc

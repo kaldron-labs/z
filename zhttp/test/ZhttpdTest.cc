@@ -5,13 +5,14 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <cstdint>
-#include <zlib/ZuTestUtil.hh>
 
 #ifndef _WIN32
 #include <unistd.h>
 #endif
 
-#include "../example/Zhttpd.hh"
+#include <zlib/ZuTestUtil.hh>
+
+#include "Zhttpd.hh"
 #include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
