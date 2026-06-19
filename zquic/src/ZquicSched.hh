@@ -339,17 +339,18 @@ ZuDerive(StreamScheduleHash,
 
 class StreamScheduler {
 public:
-  StreamScheduler() = default;
-  StreamScheduler(const ZmHashParams &params) : m_hash{params} { }
+  StreamScheduler() : m_hash{new StreamScheduleHash} { }
+  StreamScheduler(const ZmHashParams &params) :
+    m_hash{new StreamScheduleHash{params}} { }
 
   bool add(uint64_t id) {
-    if (m_hash.findPtr(id)) return true;
-    link_(m_hash.add(id));
+    if (m_hash->findPtr(id)) return true;
+    link_(m_hash->add(id));
     return true;
   }
-  bool empty() const { return !m_hash.count_(); }
-  unsigned count() const { return m_hash.count_(); }
-  bool contains(uint64_t id) const { return m_hash.findPtr(id); }
+  bool empty() const { return !m_hash->count_(); }
+  unsigned count() const { return m_hash->count_(); }
+  bool contains(uint64_t id) const { return m_hash->findPtr(id); }
 
   uint64_t next() {
     if (!m_next) return uint64_t(-1);
@@ -359,10 +360,10 @@ public:
   }
 
   void remove(uint64_t id) {
-    auto node = m_hash.findPtr(id);
+    auto node = m_hash->findPtr(id);
     if (!node) return;
     unlink_(node);
-    m_hash.delNode(node);
+    m_hash->delNode(node);
   }
 
   void clear() {
@@ -400,7 +401,7 @@ private:
     node->rrPrev = node->rrNext = nullptr;
   }
 
-  StreamScheduleHash	m_hash;
+  ZmRef<StreamScheduleHash> m_hash;
   Node			*m_next = nullptr;
 };
 

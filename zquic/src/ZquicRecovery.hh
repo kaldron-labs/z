@@ -884,11 +884,11 @@ public:
     if (frame.kind == SentFrameKind::None) return false;
     if (SentFrameKey::retransmittable(frame)) {
       SentFrameKey key{frame};
-      if (m_pending.findPtr(key)) {
+      if (m_pending->findPtr(key)) {
 	++m_dropped;
 	return false;
       }
-      m_pending.add(key);
+      m_pending->add(key);
     }
     m_frames.push(frame);
     return true;
@@ -898,7 +898,7 @@ public:
     if (!m_frames.count_()) return false;
     frame = m_frames.shift();
     if (SentFrameKey::retransmittable(frame))
-      m_pending.del(SentFrameKey{frame});
+      m_pending->del(SentFrameKey{frame});
     return true;
   }
 
@@ -907,14 +907,14 @@ public:
   bool empty() const { return !m_frames.count_(); }
   void clear() {
     m_frames.clean();
-    m_pending.clean();
+    m_pending->clean();
     m_dropped = 0;
   }
 
 private:
   Queue		m_frames;
-  SentFrameAckHash m_pending{
-    ZmHashParams().bits(8).loadFactor(1).cBits(3)};
+  ZmRef<SentFrameAckHash> m_pending{
+    new SentFrameAckHash{ZmHashParams().bits(8).loadFactor(1).cBits(3)}};
   unsigned	m_dropped = 0;
 };
 
