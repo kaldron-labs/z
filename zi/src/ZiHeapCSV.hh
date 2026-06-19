@@ -6,11 +6,11 @@
 
 // heap configuration
 
-#ifndef ZvHeapCSV_HH
-#define ZvHeapCSV_HH
+#ifndef ZiHeapCSV_HH
+#define ZiHeapCSV_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZiLib_HH
+#include <zlib/ZiLib.hh>
 #endif
 
 #include <zlib/ZuArray.hh>
@@ -21,7 +21,7 @@
 
 #include <zlib/ZiCSV.hh>
 
-namespace ZvHeapCSV {
+namespace ZiHeapCSV {
 
 struct Data {
   ZmIDString	id;
@@ -60,6 +60,6 @@ inline void init(ZuCSpan file) {
   if (file) CSV{}.read(file);
 }
 
-} // ZvHeapCSV
+} // ZiHeapCSV
 
-#endif /* ZvHeapCSV_HH */
+#endif /* ZiHeapCSV_HH */

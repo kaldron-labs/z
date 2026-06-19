@@ -10,8 +10,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 pkginclude_HEADERS = ZvLib.hh \
-	ZvCf.hh ZvHashCSV.hh \
-	ZvHeapCSV.hh \
+	ZvCf.hh  \
 	ZvRingParams.hh ZvThreadParams.hh \
 	ZvMxParams.hh ZvQueue.hh \
 	ZvIOQueue.hh ZvEngine.hh ZvRAG.hh
