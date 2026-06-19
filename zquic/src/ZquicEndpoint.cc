@@ -53,14 +53,24 @@ public:
   }
 
   unsigned generation() const { return m_generation; }
+  bool txPending() const { return !!m_txBuf; }
+  uint64_t txQueued() const { return m_txQueue.count_(); }
 
   bool sendPkt(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
-    if (m_closing.load_()) return false;
-    if (!buf) return false;
+    if (m_closing.load_()) {
+      ++m_endpoint->m_txDiag.txDropped;
+      return false;
+    }
+    if (!buf) {
+      ++m_endpoint->m_txDiag.txDropped;
+      return false;
+    }
     ZiAssert(m_endpoint->m_mx &&
 	m_endpoint->m_mx->invoked(m_endpoint->m_mx->txThread()),
       "Zquic", (), "QUIC endpoint send outside Tx thread", return false);
     if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr));
+    ++m_endpoint->m_txDiag.submittedTx;
+    m_endpoint->m_txDiag.submittedBytes += buf->length;
     m_txBuf = ZuMv(buf);
     m_txAddr = ZuMv(addr);
     send(ZiIOFn{this, ZmFnPtr<&Cxn_::sendStart_>{}});
@@ -86,6 +96,8 @@ private:
   bool enqueueTx_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (m_txQueue.count_() >= EndpointTxQueueLimit)
       ++m_endpoint->m_txDiag.txBackPressure;
+    ++m_endpoint->m_txDiag.submittedTx;
+    m_endpoint->m_txDiag.submittedBytes += buf->length;
     m_txQueue.push(new TxNode{ZuMv(buf), ZuMv(addr)});
     return true;
   }
@@ -219,11 +231,8 @@ bool Endpoint::init(ZiMultiplex *mx)
 Endpoint::~Endpoint()
 {
   if (!m_open.load_()) return;
-  if (rxInvoked() || txInvoked()) {
-    ZiAssert(false, "Zquic", (),
-      "QUIC endpoint destruction from I/O thread while open", return);
-  }
-  closeUDPWait_();
+  ZiAssert(false, "Zquic", (),
+    "QUIC endpoint destroyed before finalization", return);
 }
 
 bool Endpoint::openUDP(
@@ -293,25 +302,6 @@ bool Endpoint::openUDP(
   return true;
 }
 
-void Endpoint::closeUDPWait_()
-{
-  if (!m_open.load_()) return;
-  if (rxInvoked()) {
-    closeUDP_(nullptr, CloseFn{});
-    return;
-  }
-  if (txInvoked()) {
-    m_mx->rxRun([this]() { closeUDP_(nullptr, CloseFn{}); });
-    return;
-  }
-
-  ZmSemaphore stopped;
-  m_mx->rxInvoke([this, &stopped]() {
-    closeUDP_(&stopped, CloseFn{});
-  });
-  stopped.wait();
-}
-
 void Endpoint::closeUDP(CloseFn fn)
 {
   if (!m_open.load_()) {
@@ -324,22 +314,26 @@ void Endpoint::closeUDP(CloseFn fn)
     return;
   }
   if (rxInvoked()) {
-    closeUDP_(nullptr, ZuMv(fn));
+    closeUDP_(ZuMv(fn));
     return;
   }
   m_mx->rxRun([this, fn = ZuMv(fn)]() mutable {
-    closeUDP_(nullptr, ZuMv(fn));
+    closeUDP_(ZuMv(fn));
   });
 }
 
-void Endpoint::closeUDP_(ZmSemaphore *stopped, CloseFn fn)
+void Endpoint::final(CloseFn fn)
+{
+  closeUDP(ZuMv(fn));
+}
+
+void Endpoint::closeUDP_(CloseFn fn)
 {
   m_listening = false;
   m_connected = false;
   m_datagramFn = DatagramFn{};
   m_readyFn = ReadyFn{};
   m_failFn = FailFn{};
-  if (stopped) m_closeWaiter = stopped;
   if (fn) m_closeFn = ZuMv(fn);
   if (m_cxn) beginCloseTx_(ZmMkRef(m_cxn));
   else beginCloseTx_();
@@ -359,20 +353,32 @@ bool Endpoint::send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
   if (!buf) return false;
   ZiAssert(m_mx, "Zquic", (), "null endpoint multiplexer", return false);
   if (!m_open.load_()) return false;
+  ++m_txDiag.sendCalls;
+  if (txInvoked()) {
+    ++m_txDiag.directCalls;
+    return send_(ZuMv(buf), ZuMv(addr));
+  }
+  ++m_txDiag.asyncCalls;
   m_mx->txRun([this, buf = ZuMv(buf), addr = ZuMv(addr)]() mutable {
-    send_(ZuMv(buf), ZuMv(addr));
+    (void)send_(ZuMv(buf), ZuMv(addr));
   });
   return true;
 }
 
-void Endpoint::send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
+bool Endpoint::send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr)
 {
   ZiAssert(txInvoked(), "Zquic", (),
-    "QUIC endpoint send outside Tx thread", return);
-  if (!m_txCxn || m_txClosing) return;
+    "QUIC endpoint send outside Tx thread", return false);
+  if (!m_txCxn || m_txClosing) {
+    ++m_txDiag.txDropped;
+    return false;
+  }
   auto cxn = m_txCxn;
-  if (cxn->generation() != m_txGeneration) return;
-  (void)cxn->sendPkt(ZuMv(buf), ZuMv(addr));
+  if (cxn->generation() != m_txGeneration) {
+    ++m_txDiag.txDropped;
+    return false;
+  }
+  return cxn->sendPkt(ZuMv(buf), ZuMv(addr));
 }
 
 bool Endpoint::connected() const
@@ -382,7 +388,13 @@ bool Endpoint::connected() const
 
 EndpointDiag Endpoint::diag() const
 {
-  return {m_rxDiag, m_txDiag};
+  uint64_t txPending = 0;
+  uint64_t txQueued = 0;
+  if (m_txCxn && m_txCxn->generation() == m_txGeneration) {
+    txPending = m_txCxn->txPending();
+    txQueued = m_txCxn->txQueued();
+  }
+  return {m_rxDiag, m_txDiag, txPending, txQueued};
 }
 
 SockDiag Endpoint::sockDiag() const
@@ -515,11 +527,6 @@ void Endpoint::completeClose_()
   clearFns_();
   m_open = false;
   auto fn = ZuMv(m_closeFn);
-  if (m_closeWaiter) {
-    auto waiter = m_closeWaiter;
-    m_closeWaiter = nullptr;
-    waiter->post();
-  }
   if (fn) fn();
 }
 

@@ -158,6 +158,18 @@ struct TestLink :
       });
     return ok ? n : 0;
   }
+  void recordSentPkt(
+    Zquic::CryptoLevel::T level, uint64_t pn, unsigned bytes,
+    const Zquic::SentFrameRef &ref, bool ackEliciting) {
+    Base::recordTxPkt_(level, pn, bytes, ref, ackEliciting);
+    Base::setTxPNForTest_(level, pn + 1);
+  }
+  void recordSentPkt(
+    Zquic::CryptoLevel::T level, uint64_t pn, unsigned bytes,
+    const typename Base::TxPktRefs &refs, bool ackEliciting) {
+    Base::recordTxPkt_(level, pn, bytes, refs, ackEliciting);
+    Base::setTxPNForTest_(level, pn + 1);
+  }
   unsigned flushRecordedRefs(Zquic::SentFrameRef *refs, unsigned capacity) {
     unsigned n = 0;
     bool ok = Base::flushControlAndStreams_(
@@ -167,7 +179,7 @@ struct TestLink :
 	  const typename Base::TxPktRefs &r) {
 	n = r.count();
 	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
-	Base::recordTxPkt_(
+	recordSentPkt(
 	  Zquic::CryptoLevel::OneRTT, sentPkts, build.bytes(), r, true);
 	++sentPkts;
 	return true;
@@ -193,7 +205,7 @@ struct TestLink :
       [this](
 	  Zquic::PktBuild &build, ZiSockAddr,
 	  const typename Base::TxPktRefs &refs) {
-	Base::recordTxPkt_(
+	recordSentPkt(
 	  Zquic::CryptoLevel::OneRTT, sentPkts, build.bytes(), refs, true);
 	++sentPkts;
 	return true;
@@ -206,7 +218,7 @@ struct TestLink :
 	diag.congestionWindow - diag.congestionBytesInFlight;
       unsigned bytes = remaining > app()->maxUDP() ?
 	app()->maxUDP() : unsigned(remaining);
-      Base::recordTxPkt_(
+      recordSentPkt(
 	Zquic::CryptoLevel::OneRTT, sentPkts, bytes,
 	Zquic::SentFrameRef::control(), true);
       ++sentPkts;
@@ -239,7 +251,7 @@ struct TestLink :
       [this](
 	  Zquic::CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
 	  const Zquic::SentFrameRef &ref, ZiSockAddr) {
-	Base::recordTxPkt_(
+	recordSentPkt(
 	  level, sentPkts, prefix.length() + payload.length(), ref, true);
 	++sentPkts;
 	return true;
@@ -248,11 +260,11 @@ struct TestLink :
   void sendCryptoRef(
     uint64_t pn, Zquic::CryptoLevel::T level,
     uint64_t offset, uint64_t length) {
-    Base::recordTxPkt_(
+    recordSentPkt(
       level, pn, 100, Zquic::SentFrameRef::crypto(offset, length), true);
   }
   void sendControlRef(uint64_t pn, const Zquic::SentFrameRef &ref) {
-    Base::recordTxPkt_(
+    recordSentPkt(
       Zquic::CryptoLevel::OneRTT, pn, 100, ref, true);
   }
   bool rebuildCrypto(
@@ -282,7 +294,7 @@ struct TestLink :
       ref.offset = offset;
       ref.length = 0;
     }
-    Base::recordTxPkt_(
+    recordSentPkt(
       Zquic::CryptoLevel::OneRTT, pn, 100, ref, true);
   }
   void advancePN(unsigned n) {
@@ -327,11 +339,12 @@ struct TestLink :
     return ok;
   }
   void sendAckEliciting(uint64_t pn, unsigned bytes = 1200) {
-    Base::recordTxPkt_(
+    recordSentPkt(
       Zquic::CryptoLevel::OneRTT, pn, bytes,
       Zquic::SentFrameRef::control(), true);
   }
   void ackECN(uint64_t largest, uint64_t ect0, uint64_t ect1, uint64_t ce) {
+    Base::setTxPNForTest_(Zquic::CryptoLevel::OneRTT, largest + 1);
     Base::AckSnapshot ack;
     ack.level = Zquic::CryptoLevel::OneRTT;
     ack.nRanges = 1;
@@ -392,6 +405,14 @@ struct TestLink :
   unsigned congestionAllowance() const { return Base::congestionAllowance_(); }
   bool ecnDisabled() const { return Base::ecnDisabled_(); }
   void enableECN() { Base::setEcnDisabled_(false); }
+  bool ackValid(
+    Zquic::CryptoLevel::T level, uint64_t first, uint64_t largest) const {
+    Base::AckSnapshot ack;
+    ack.level = level;
+    ack.nRanges = 1;
+    ack.ranges[0] = Zquic::AckRange{largest, first};
+    return Base::ackFrameValidTx_(ack);
+  }
   bool installOneRTT(
     const Zquic::TrafficSecret &rx, const Zquic::TrafficSecret &tx,
     const Zquic::CxnID &localCID) {
@@ -2157,8 +2178,10 @@ void testFrameRoleAndSpaceLegality()
   frame.reset();
   frame.type = Zquic::FrameType::Ack;
   frame.ackRanges.push(Zquic::AckRange{0, 0});
-  ZuCHECK(!client.frameLegal(Zquic::CryptoLevel::Initial, frame),
-    "ACK for unsent packet number was accepted");
+  ZuCHECK(client.frameLegal(Zquic::CryptoLevel::Initial, frame),
+    "ACK frame-space legality mismatch");
+  ZuCHECK(!client.ackValid(Zquic::CryptoLevel::Initial, 0, 0),
+    "ACK for unsent packet number was accepted by Tx validation");
 
   frame.reset();
   frame.type = Zquic::FrameType::NewToken;

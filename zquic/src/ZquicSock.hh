@@ -39,27 +39,51 @@ struct EndpointRxDiag {
 };
 
 struct EndpointTxDiag {
+  uint64_t	sendCalls = 0;
+  uint64_t	directCalls = 0;
+  uint64_t	asyncCalls = 0;
+  uint64_t	submittedTx = 0;
+  uint64_t	submittedBytes = 0;
   uint64_t	datagramsTx = 0;
   uint64_t	bytesTx = 0;
   uint64_t	txBackPressure = 0;
+  uint64_t	txDropped = 0;
   uint64_t	failures = 0;
 };
 
 struct EndpointDiag {
   EndpointDiag() = default;
-  EndpointDiag(const EndpointRxDiag &rx, const EndpointTxDiag &tx) :
+  EndpointDiag(
+    const EndpointRxDiag &rx, const EndpointTxDiag &tx,
+    uint64_t txPending_ = 0, uint64_t txQueued_ = 0) :
     datagramsRx{rx.datagramsRx},
+    sendCalls{tx.sendCalls},
+    directCalls{tx.directCalls},
+    asyncCalls{tx.asyncCalls},
+    submittedTx{tx.submittedTx},
+    submittedBytes{tx.submittedBytes},
     datagramsTx{tx.datagramsTx},
     bytesRx{rx.bytesRx},
     bytesTx{tx.bytesTx},
     txBackPressure{tx.txBackPressure},
+    txDropped{tx.txDropped},
+    txPending{txPending_},
+    txQueued{txQueued_},
     failures{rx.failures + tx.failures} { }
 
   uint64_t	datagramsRx = 0;
+  uint64_t	sendCalls = 0;
+  uint64_t	directCalls = 0;
+  uint64_t	asyncCalls = 0;
+  uint64_t	submittedTx = 0;
+  uint64_t	submittedBytes = 0;
   uint64_t	datagramsTx = 0;
   uint64_t	bytesRx = 0;
   uint64_t	bytesTx = 0;
   uint64_t	txBackPressure = 0;
+  uint64_t	txDropped = 0;
+  uint64_t	txPending = 0;
+  uint64_t	txQueued = 0;
   uint64_t	failures = 0;
 };
 
