@@ -1266,30 +1266,33 @@ public:
     m_retransmittable = 0;
   }
   bool persistentCongestion(ZuTime threshold, unsigned budget = 256) const {
-    bool have = false;
+    bool havePN = false, haveTime = false;
+    uint64_t lastPN = 0;
     ZuTime first, last;
     auto iter = m_packets.citer();
     unsigned scanned = 0;
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (p.lost && p.ackEliciting && !p.pmtudProbe) {
-	if (!have || p.sentTime < first) first = p.sentTime;
-	if (!have || p.sentTime > last) last = p.sentTime;
-	have = true;
+      if (p.ackd && p.ackEliciting && !p.pmtudProbe) {
+	havePN = haveTime = false;
+      } else if (p.lost && p.ackEliciting) {
+	if (havePN && p.pn != lastPN + 1) haveTime = false;
+	havePN = true;
+	lastPN = p.pn;
+	if (!p.pmtudProbe) {
+	  if (!haveTime) {
+	    first = last = p.sentTime;
+	    haveTime = true;
+	  } else {
+	    if (p.sentTime < first) first = p.sentTime;
+	    if (p.sentTime > last) last = p.sentTime;
+	  }
+	  if (last > first && last - first >= threshold) return true;
+	}
       }
       if (++scanned >= budget) return false;
     }
-    if (!have || last <= first || last - first < threshold) return false;
-    iter.reset();
-    scanned = 0;
-    while (auto node = iter()) {
-      const SentPkt &p = node->data();
-      if (p.ackd && p.ackEliciting && !p.pmtudProbe &&
-	  p.sentTime >= first && p.sentTime <= last)
-	return false;
-      if (++scanned >= budget) return false;
-    }
-    return true;
+    return false;
   }
 
 private:
