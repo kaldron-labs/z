@@ -40,18 +40,14 @@ class CSV : public ZiCSV::Reader<Data> {
 public:
   template <typename Path>
   void read(const Path &file) {
-    this->readFile(file,
-	[this]() { return &m_data; },
-	[](Data *data) {
-	  ZmHashMgr::init(data->id, ZmHashParams{}.
-	      bits(data->bits).
-	      loadFactor(data->loadFactor).
-	      cBits(data->cBits));
-	});
+    this->readFile(file, [](const auto &scan) {
+      Data data = scan.ctor();
+      ZmHashMgr::init(data.id, ZmHashParams{}.
+	  bits(data.bits).
+	  loadFactor(data.loadFactor).
+	  cBits(data.cBits));
+    });
   }
-
-private:
-  Data	m_data;
 };
 
 inline void init(ZuCSpan file) {
