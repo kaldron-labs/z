@@ -171,28 +171,82 @@ void printMemDiag()
   }));
 }
 
-bool waitWithMemDiag(ZmSemaphore &sem, unsigned timeout, uint32_t memDiag)
+struct IntervalMonitor {
+  bool active() const {
+    return timeout || memDiag
+#ifdef Zquic_DEBUG
+      || quicDiag
+#endif
+      ;
+  }
+  unsigned nextStep(unsigned cap = 0) const {
+    unsigned step = cap;
+    auto limit = [&step](unsigned v) {
+      if (!step || v < step) step = v;
+    };
+    if (timeout) limit(timeout - elapsed);
+    if (memDiag) limit(memDiag - memElapsed);
+#ifdef Zquic_DEBUG
+    if (quicDiag) limit(quicDiag - quicElapsed);
+#endif
+    return step;
+  }
+  void advance(unsigned step) {
+    if (timeout) elapsed += step;
+    if (memDiag) memElapsed += step;
+#ifdef Zquic_DEBUG
+    if (quicDiag) quicElapsed += step;
+#endif
+  }
+  template <typename MemFn>
+  void intervals(MemFn memFn) {
+    if (memDiag && memElapsed >= memDiag) {
+      memElapsed = 0;
+      memFn();
+    }
+  }
+#ifdef Zquic_DEBUG
+  template <typename MemFn, typename QuicFn>
+  void intervals(MemFn memFn, QuicFn quicFn) {
+    if (quicDiag && quicElapsed >= quicDiag) {
+      quicElapsed = 0;
+      quicFn();
+    }
+    intervals(memFn);
+  }
+#endif
+  bool timedOut() const { return timeout && elapsed >= timeout; }
+
+  uint32_t	timeout = 0;
+  uint32_t	memDiag = 0;
+#ifdef Zquic_DEBUG
+  uint32_t	quicDiag = 0;
+#endif
+  unsigned	elapsed = 0;
+  unsigned	memElapsed = 0;
+#ifdef Zquic_DEBUG
+  unsigned	quicElapsed = 0;
+#endif
+};
+
+bool waitMonitored(ZmSemaphore &sem, uint32_t timeout, uint32_t memDiag)
 {
-  if (!timeout && !memDiag) {
+  IntervalMonitor mon{timeout, memDiag
+#ifdef Zquic_DEBUG
+    , 0
+#endif
+  };
+  if (!mon.active()) {
     sem.wait();
     return true;
   }
-  unsigned elapsed = 0;
-  unsigned memElapsed = 0;
   for (;;) {
-    unsigned step = memDiag ? 1 : timeout;
-    if (timeout && step > timeout - elapsed) step = timeout - elapsed;
+    unsigned step = mon.nextStep();
     if (!step) return false;
     if (sem.timedwait(Zm::now(step)) == 0) return true;
-    if (timeout) elapsed += step;
-    if (memDiag) {
-      memElapsed += step;
-      if (memElapsed >= memDiag) {
-	memElapsed = 0;
-	printMemDiag();
-      }
-    }
-    if (timeout && elapsed >= timeout) return false;
+    mon.advance(step);
+    mon.intervals([]() { printMemDiag(); });
+    if (mon.timedOut()) return false;
   }
 }
 
@@ -327,12 +381,13 @@ struct OriginDiscovery {
 
 using DiscoveryCache = ZmHashKV<Origin, OriginDiscovery,
   ZmHashHeapID<"Zhttp.Discovery">>;
+using DiscoveryCacheRef = ZmRef<DiscoveryCache>;
 
 struct Run {
   Options	options;
   URL		originalURL;
   ZtArray<Req, ZtArrayHeapID<"Zhttp.Req">> reqs;
-  DiscoveryCache discovery;
+  DiscoveryCacheRef discovery{new DiscoveryCache};
   ZmSemaphore	done;
   unsigned	scheduled = 0;
   unsigned	active = 0;
@@ -1006,9 +1061,9 @@ Origin originOf(const URL &url)
 OriginDiscovery &discoveryFor(Run &run, const URL &url)
 {
   Origin origin = originOf(url);
-  if (auto node = run.discovery.find(origin)) return node->val();
-  run.discovery.add(origin, OriginDiscovery{});
-  return run.discovery.find(origin)->val();
+  if (auto node = run.discovery->find(origin)) return node->val();
+  run.discovery->add(origin, OriginDiscovery{});
+  return run.discovery->find(origin)->val();
 }
 
 template <typename App_, typename Base_>
@@ -1866,7 +1921,7 @@ int run(
     ZmRef<Link> link = new Link(&client);
     link->connect(client.state.url.host, client.state.url.port);
     bool disconnected = false;
-    if (!waitWithMemDiag(client.sem, options.timeout, options.memDiag)) {
+    if (!waitMonitored(client.sem, options.timeout, options.memDiag)) {
       ZiLOG(Error, "zhttp", "timed out");
       client.state.failed = true;
       link->disconnect();
@@ -1929,7 +1984,7 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
     link->connect(req->url.host, req->url.port);
   }
 
-  if (!waitWithMemDiag(client.sem, run.options.timeout, run.options.memDiag)) {
+  if (!waitMonitored(client.sem, run.options.timeout, run.options.memDiag)) {
     ZiLOG(Error, "zhttp", "timed out");
     client.stopping = true;
     for (unsigned i = 0; i < client.links.length(); ++i)
@@ -1997,19 +2052,20 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     bool timedOut = false;
     bool stalled = false;
 #ifdef Zquic_DEBUG
-    unsigned elapsed = 0;
-    unsigned diagElapsed = 0;
-    unsigned memElapsed = 0;
+    IntervalMonitor mon{run.options.timeout, run.options.memDiag,
+      run.options.quicDiag};
     unsigned idle = 0;
     unsigned lastComplete = client.complete;
     unsigned quiet = 0;
     Zquic::RuntimeDiag lastDiag = link->runtimeDiag();
     for (;;) {
-      unsigned step = 1;
-      if (run.options.timeout && step > run.options.timeout - elapsed)
-	step = run.options.timeout - elapsed;
+      unsigned step = mon.nextStep(1);
+      if (!step) {
+	timedOut = true;
+	break;
+      }
       if (client.sem.timedwait(Zm::now(step)) == 0) break;
-      elapsed += step;
+      mon.advance(step);
       Zquic::RuntimeDiag diag = link->runtimeDiag();
       bool pktMoved =
 	diag.packetsRx != lastDiag.packetsRx ||
@@ -2030,20 +2086,9 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	quiet = 0;
       } else
 	quiet += step;
-      if (run.options.quicDiag) {
-	diagElapsed += step;
-	if (diagElapsed >= run.options.quicDiag) {
-	  diagElapsed = 0;
-	  client.printDiag(link, "diag");
-	}
-      }
-      if (run.options.memDiag) {
-	memElapsed += step;
-	if (memElapsed >= run.options.memDiag) {
-	  memElapsed = 0;
-	  printMemDiag();
-	}
-      }
+      mon.intervals(
+	[]() { printMemDiag(); },
+	[&]() { client.printDiag(link, "diag"); });
       if (run.options.quietTimeout && (client.scheduled || client.active) &&
 	  quiet >= run.options.quietTimeout && !txPending &&
 	  client.complete < run.options.requests) {
@@ -2056,13 +2101,13 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	stalled = true;
 	break;
       }
-      if (run.options.timeout && elapsed >= run.options.timeout) {
+      if (mon.timedOut()) {
 	timedOut = true;
 	break;
       }
     }
 #else
-    if (!waitWithMemDiag(client.sem, run.options.timeout, run.options.memDiag))
+    if (!waitMonitored(client.sem, run.options.timeout, run.options.memDiag))
       timedOut = true;
 #endif
     if (timedOut || stalled) {

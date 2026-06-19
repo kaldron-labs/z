@@ -210,7 +210,7 @@ bool QPackTxTable::setCapacity(uint32_t capacity)
 
 const QPackTxEntry *QPackTxTable::find(ZuCSpan name, ZuCSpan value) const
 {
-  auto h = hash.find(QPackFieldKey{name, value});
+  auto h = hash->find(QPackFieldKey{name, value});
   if (!h || h->index < orderHead_ || h->index >= order.length())
     return nullptr;
   const auto &e = order[h->index];
@@ -270,7 +270,7 @@ bool QPackTxTable::insert(
   QPackTxHashEntry hashEntry;
   hashEntry.index = uint32_t(order.length() - 1);
   hashEntry.key = {entry->name, entry->value};
-  if (!hash.add(hashEntry)) {
+  if (!hash->add(hashEntry)) {
     order.length(order.length() - 1);
     return false;
   }
@@ -293,7 +293,7 @@ bool QPackTxTable::dropOldest()
   const auto &old = order[orderHead_];
   if (old.refcnt) return false;
   usedBytes_ -= old.size;
-  hash.del(QPackFieldKey{old.name, old.value});
+  hash->del(QPackFieldKey{old.name, old.value});
   ++orderHead_;
   if (orderHead_ == order.length()) {
     order.length(0);
@@ -313,12 +313,12 @@ void QPackTxTable::compactOrder()
 
 void QPackTxTable::rebuildHash()
 {
-  hash.clean();
+  hash->clean();
   for (unsigned i = orderHead_; i < order.length(); ++i) {
     QPackTxHashEntry h;
     h.index = i;
     h.key = {order[i].name, order[i].value};
-    hash.add(h);
+    hash->add(h);
   }
 }
 
@@ -341,11 +341,11 @@ bool QPackTxTable::trackSection(uint64_t streamID, ZuSpan<uint64_t> refs)
 bool QPackTxTable::trackSection(uint64_t streamID, QPackTxRefs refs)
 {
   if (!refs.length()) return true;
-  if (sections.find(streamID)) return false;
+  if (sections->find(streamID)) return false;
   QPackTxSection section_;
   section_.streamID = streamID;
   section_.refs = ZuMv(refs);
-  auto section = const_cast<QPackTxSection *>(sections.add(ZuMv(section_)));
+  auto section = const_cast<QPackTxSection *>(sections->add(ZuMv(section_)));
   if (!section) return false;
   for (unsigned i = 0; i < section->refs.length(); ++i) {
     if (auto e = findAbs(section->refs[i]))
@@ -356,13 +356,13 @@ bool QPackTxTable::trackSection(uint64_t streamID, QPackTxRefs refs)
 
 bool QPackTxTable::sectionAck(uint64_t streamID)
 {
-  auto section = sections.find(streamID);
+  auto section = sections->find(streamID);
   if (!section) return false;
   for (unsigned i = 0; i < section->refs.length(); ++i) {
     if (auto e = findAbs(section->refs[i]))
       if (e->refcnt) const_cast<QPackTxEntry *>(e)->refcnt--;
   }
-  sections.del(streamID);
+  sections->del(streamID);
   return true;
 }
 

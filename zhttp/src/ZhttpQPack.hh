@@ -265,7 +265,9 @@ using QPackTxSections =
 struct QPackTxTable {
   // Connection-affine Tx state. Callers must serialize access from the owning
   // transmit path.
-  QPackTxTable() : hash{ZmHashParams{128}}, sections{ZmHashParams{64}} { }
+  QPackTxTable() :
+    hash{new QPackTxHash{ZmHashParams{128}}},
+    sections{new QPackTxSections{ZmHashParams{64}}} { }
 
   bool setCapacity(uint32_t);
   bool setMaxCapacity(uint32_t);
@@ -290,9 +292,9 @@ struct QPackTxTable {
   uint32_t maxCapacity() const { return maxCapacityBytes_; }
   uint32_t used() const { return usedBytes_; }
 
-  QPackTxHash	hash;
+  ZmRef<QPackTxHash> hash;
   QPackTxOrder	order;
-  QPackTxSections sections;
+  ZmRef<QPackTxSections> sections;
   uint32_t	orderHead_ = 0;
   uint64_t	insertCount_ = 0;
   uint64_t	knownReceivedCount_ = 0;

@@ -115,6 +115,59 @@ void printMemDiag()
   }));
 }
 
+struct IntervalMonitor {
+  bool active() const {
+    return memDiag
+#ifdef Zquic_DEBUG
+      || quicDiag
+#endif
+      ;
+  }
+  unsigned nextStep() const {
+    unsigned step = 0;
+    auto limit = [&step](unsigned v) {
+      if (!step || v < step) step = v;
+    };
+    if (memDiag) limit(memDiag - memElapsed);
+#ifdef Zquic_DEBUG
+    if (quicDiag) limit(quicDiag - quicElapsed);
+#endif
+    return step;
+  }
+  void advance(unsigned step) {
+    if (memDiag) memElapsed += step;
+#ifdef Zquic_DEBUG
+    if (quicDiag) quicElapsed += step;
+#endif
+  }
+  template <typename MemFn>
+  void intervals(MemFn memFn) {
+    if (memDiag && memElapsed >= memDiag) {
+      memElapsed = 0;
+      memFn();
+    }
+  }
+#ifdef Zquic_DEBUG
+  template <typename MemFn, typename QuicFn>
+  void intervals(MemFn memFn, QuicFn quicFn) {
+    if (quicDiag && quicElapsed >= quicDiag) {
+      quicElapsed = 0;
+      quicFn();
+    }
+    intervals(memFn);
+  }
+#endif
+
+  uint32_t	memDiag = 0;
+#ifdef Zquic_DEBUG
+  uint32_t	quicDiag = 0;
+#endif
+  unsigned	memElapsed = 0;
+#ifdef Zquic_DEBUG
+  unsigned	quicElapsed = 0;
+#endif
+};
+
 bool prepareProcess(Options &options)
 {
   const char *pidfile = options.pidfile ? options.pidfile.data() : nullptr;
@@ -980,31 +1033,23 @@ int main(int argc, char **argv)
     state.errors = 1;
     state.done.post();
   }
-  if (state.options.memDiag
+  IntervalMonitor mon{state.options.memDiag
 #ifdef Zquic_DEBUG
-      || (h3Init && state.options.quicDiag)
+    , h3Init ? state.options.quicDiag : 0
 #endif
-      ) {
-    unsigned quicElapsed = 0;
-    unsigned memElapsed = 0;
+  };
+  if (mon.active()) {
     for (;;) {
-      if (!state.done.timedwait(Zm::now(1))) break;
+      unsigned step = mon.nextStep();
+      if (!step) break;
+      if (!state.done.timedwait(Zm::now(step))) break;
+      mon.advance(step);
+      mon.intervals(
+	[]() { printMemDiag(); }
 #ifdef Zquic_DEBUG
-      if (h3Init && state.options.quicDiag) {
-	++quicElapsed;
-	if (quicElapsed >= state.options.quicDiag) {
-	  quicElapsed = 0;
-	  h3.printDiag();
-	}
-      }
+	, [&]() { h3.printDiag(); }
 #endif
-      if (state.options.memDiag) {
-	++memElapsed;
-	if (memElapsed >= state.options.memDiag) {
-	  memElapsed = 0;
-	  printMemDiag();
-	}
-      }
+      );
     }
   } else
     state.done.wait();

@@ -267,13 +267,13 @@ struct ResponsePlan {
 struct MimeMap {
   using String = ZtString<ZtStringHeapID<"Zhttpd.Mime.String">>;
   using Map = ZmHashKV<String, String, ZmHashHeapID<"Zhttpd.Mime">>;
-  Map			map;
+  ZmRef<Map>		map{new Map};
 
   void add(ZuCSpan ext, ZuCSpan mime) {
     String ext_;
     lower(ext_, ext);
-    map.del(ext_);
-    map.add(ZuMv(ext_), String{mime});
+    map->del(ext_);
+    map->add(ZuMv(ext_), String{mime});
   }
 
   void init(const Options &options) {
@@ -336,7 +336,7 @@ struct MimeMap {
     String ext;
     lower(ext, ZuCSpan{path.data() + dot + 1,
       path.length() - unsigned(dot) - 1});
-    if (auto node = map.find(ext)) return ZuCSpan{node->val()};
+    if (auto node = map->find(ext)) return ZuCSpan{node->val()};
     return options.defaultMimetype;
   }
 };
