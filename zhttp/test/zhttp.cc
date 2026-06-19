@@ -38,11 +38,18 @@ namespace Http3Mode {
   ZtEnum(Http3Mode, int8_t, force, prefer, disable);
 }
 
+constexpr unsigned ClientTimeout = 15;
+constexpr unsigned H3StallTimeout = 15;
+constexpr unsigned H3QuietTimeout = 2;
+
 struct Options {
   ZuCSpan	ca;
   ZuCSpan	output{"index.html"};
   uint32_t	requests = 1;
   uint32_t	concurrency = 1;
+  uint32_t	timeout = ClientTimeout;
+  uint32_t	stallTimeout = H3StallTimeout;
+  uint32_t	quietTimeout = H3QuietTimeout;
   ZuCSpan	url;
   Http3Mode::T	http3 = Http3Mode::prefer;
   bool		verbose = false;
@@ -67,6 +74,11 @@ ZtStruct((Options, CLI),
   (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
   (((requests),  (CLI::Opt<'n'>,  CLI::Long<"requests">)),   (UInt32, 1)),
   (((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),       (UInt32, 1)),
+  (((timeout),   (CLI::Long<"timeout">)),                    (UInt32, ClientTimeout)),
+  (((stallTimeout),
+    (CLI::Long<"stall-timeout">)),                            (UInt32, H3StallTimeout)),
+  (((quietTimeout),
+    (CLI::Long<"quiet-timeout">)),                            (UInt32, H3QuietTimeout)),
   (((http3),     (Enum<Http3Mode::Map>,
 		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
 								 Http3Mode::prefer)),
@@ -97,6 +109,11 @@ void usage(int code = 1)
     "  -n, --requests=N    submit N GET requests, default 1\n"
     "  -j, --jobs=M        run up to M requests concurrently, default 1;\n"
     "                      valid only when N > 1; M must be <= N\n"
+    "  --timeout=N         completion timeout in seconds, default 15, 0 disables\n"
+    "  --stall-timeout=N   no-progress stall timeout in seconds, default 15,\n"
+    "                      0 disables; currently applies to HTTP/3\n"
+    "  --quiet-timeout=N   quiet transport timeout in seconds, default 2,\n"
+    "                      0 disables; currently applies to HTTP/3\n"
     "  -3, --http3=MODE   HTTP/3 mode for https: force, prefer, disable;\n"
     "                      default prefer\n"
     "  -v, --verbose       show DNS and Alt-Svc probing\n"
@@ -156,14 +173,18 @@ void printMemDiag()
 
 bool waitWithMemDiag(ZmSemaphore &sem, unsigned timeout, uint32_t memDiag)
 {
+  if (!timeout && !memDiag) {
+    sem.wait();
+    return true;
+  }
   unsigned elapsed = 0;
   unsigned memElapsed = 0;
   for (;;) {
     unsigned step = memDiag ? 1 : timeout;
-    if (step > timeout - elapsed) step = timeout - elapsed;
+    if (timeout && step > timeout - elapsed) step = timeout - elapsed;
     if (!step) return false;
     if (sem.timedwait(Zm::now(step)) == 0) return true;
-    elapsed += step;
+    if (timeout) elapsed += step;
     if (memDiag) {
       memElapsed += step;
       if (memElapsed >= memDiag) {
@@ -171,7 +192,7 @@ bool waitWithMemDiag(ZmSemaphore &sem, unsigned timeout, uint32_t memDiag)
 	printMemDiag();
       }
     }
-    if (elapsed >= timeout) return false;
+    if (timeout && elapsed >= timeout) return false;
   }
 }
 
@@ -208,9 +229,6 @@ namespace Protocol {
   ZtEnum(Protocol, int8_t, H1, H3);
 }
 
-constexpr unsigned ClientTimeout = 15;
-constexpr unsigned H3StallTimeout = 15;
-constexpr unsigned H3QuietTimeout = 2;
 constexpr unsigned H3MaxAttempts = 8;
 constexpr unsigned MaxRedirects = 8;
 constexpr uint64_t RespBodyMax = 100<<20;
@@ -1848,7 +1866,7 @@ int run(
     ZmRef<Link> link = new Link(&client);
     link->connect(client.state.url.host, client.state.url.port);
     bool disconnected = false;
-    if (!waitWithMemDiag(client.sem, ClientTimeout, options.memDiag)) {
+    if (!waitWithMemDiag(client.sem, options.timeout, options.memDiag)) {
       ZiLOG(Error, "zhttp", "timed out");
       client.state.failed = true;
       link->disconnect();
@@ -1911,7 +1929,7 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
     link->connect(req->url.host, req->url.port);
   }
 
-  if (!waitWithMemDiag(client.sem, ClientTimeout, run.options.memDiag)) {
+  if (!waitWithMemDiag(client.sem, run.options.timeout, run.options.memDiag)) {
     ZiLOG(Error, "zhttp", "timed out");
     client.stopping = true;
     for (unsigned i = 0; i < client.links.length(); ++i)
@@ -1988,7 +2006,8 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     Zquic::RuntimeDiag lastDiag = link->runtimeDiag();
     for (;;) {
       unsigned step = 1;
-      if (step > ClientTimeout - elapsed) step = ClientTimeout - elapsed;
+      if (run.options.timeout && step > run.options.timeout - elapsed)
+	step = run.options.timeout - elapsed;
       if (client.sem.timedwait(Zm::now(step)) == 0) break;
       elapsed += step;
       Zquic::RuntimeDiag diag = link->runtimeDiag();
@@ -2025,24 +2044,25 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	  printMemDiag();
 	}
       }
-      if ((client.scheduled || client.active) &&
-	  quiet >= H3QuietTimeout && !txPending &&
+      if (run.options.quietTimeout && (client.scheduled || client.active) &&
+	  quiet >= run.options.quietTimeout && !txPending &&
 	  client.complete < run.options.requests) {
 	stalled = true;
 	break;
       }
-      if ((client.scheduled || client.active) &&
-	  idle >= H3StallTimeout && client.complete < run.options.requests) {
+      if (run.options.stallTimeout && (client.scheduled || client.active) &&
+	  idle >= run.options.stallTimeout &&
+	  client.complete < run.options.requests) {
 	stalled = true;
 	break;
       }
-      if (elapsed >= ClientTimeout) {
+      if (run.options.timeout && elapsed >= run.options.timeout) {
 	timedOut = true;
 	break;
       }
     }
 #else
-    if (!waitWithMemDiag(client.sem, ClientTimeout, run.options.memDiag))
+    if (!waitWithMemDiag(client.sem, run.options.timeout, run.options.memDiag))
       timedOut = true;
 #endif
     if (timedOut || stalled) {
