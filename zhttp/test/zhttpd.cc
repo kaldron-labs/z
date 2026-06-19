@@ -862,13 +862,18 @@ void H3ServerStream::sendResponse(ResponsePlan resp)
 
 int main(int argc, char **argv)
 {
+  ZiHeapCSV::init(::getenv("Z_HEAPTUNE"));
+  ZiHashCSV::init(::getenv("Z_HASHTUNE"));
+
   Options options;
   if (!loadOptions(options, argc, argv)) usage();
+
   ZeString error;
   if (!validate(options, error)) {
     std::cerr << "zhttpd: " << error << '\n' << std::flush;
     return 1;
   }
+
   ZiLog::init("zhttpd", options.syslog ? "daemon" : "user");
   ZiLog::level(options.debug ||
 #ifdef Zquic_DEBUG

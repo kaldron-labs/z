@@ -27,33 +27,26 @@ struct Data {
   ZmIDString	id;
   uint64_t	cacheSize;
   uint16_t	partition;
-  uint8_t	alignment;
   ZmBitmap	cpuset;
 };
 
 ZtStruct(Data,
     (((id),		(Ctor<0>, Keys<0>, Group<0>)),	(String)),
     (((partition),	(Ctor<2>, Keys<0>)),		(UInt16)),
-    (((alignment),	(Ctor<3>)),			(UInt8)),
     (((cacheSize),	(Ctor<1>)),			(UInt64)),
-    (((cpuset),		(Ctor<4>)),			(String)));
+    (((cpuset),		(Ctor<3>)),			(String)));
 
 class CSV : public ZiCSV::Reader<Data> {
 public:
   template <typename Path>
   void read(const Path &file) {
-    this->readFile(file,
-	[this]() { return &m_data; },
-	[](Data *data) {
-	  ZmHeapMgr::init(data->id, data->partition, ZmHeapConfig{
-	      data->alignment,
-	      data->cacheSize,
-	      data->cpuset});
-	});
+    this->readFile(file, [](const auto &scan) {
+      Data data = scan.ctor();
+      ZmHeapMgr::init(data.id, data.partition, ZmHeapConfig{
+	  data.cacheSize,
+	  data.cpuset});
+    });
   }
-
-private:
-  Data	m_data;
 };
 
 inline void init(ZuCSpan file) {

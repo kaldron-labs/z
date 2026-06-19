@@ -2301,6 +2301,9 @@ int runReqSerial(ZiMultiplex &mx, Run &run_, Req &req)
 
 int main(int argc, char **argv)
 {
+  ZiHeapCSV::init(::getenv("Z_HEAPTUNE"));
+  ZiHashCSV::init(::getenv("Z_HASHTUNE"));
+
   Options options;
   argc = ZtCLI::load(options, argc, argv);
   if (options.help) usage(0);
