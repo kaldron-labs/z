@@ -14,6 +14,8 @@
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZmThread.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmHashMgr.hh>
 
 using namespace ZuTestUtil;
 
@@ -492,8 +494,7 @@ struct Test {
   static bool run(unsigned size) {
     enum { MR = 1 };
 
-    if (verbose) std::cerr << '\n';
-    log("test run MW=", MW, " MR=", MR, " V=", V);
+    log("\ntest run MW=", MW, " MR=", MR, " V=", V);
 
     if (!app()->start(2 + MR + MW,
 	  ZiRingParams{g_ringName, size})) {
