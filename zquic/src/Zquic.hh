@@ -2372,10 +2372,8 @@ public:
 
     StreamRef stream = newStream_(int64_t(id));
     if (!stream) return nullptr;
-    uint64_t limit = peerLimit_(type).limit();
     ZiAssert(peerLimit_(type).openTo(opened), "Zquic",
-      (id, opened, limit),
-      "peer stream count advanced past local limit", return nullptr);
+      (), "peer stream count advanced past local limit", return nullptr);
     impl()->streamed(stream);
     scheduleStreamWritable_(stream);
     return stream;
