@@ -254,11 +254,10 @@ private:
     PktAssembly &assembly, Stream &stream, uint64_t id,
     StreamFrameInfo *info, const TxRange &range)
   {
-    ZiAssert(range.buf && range.length, "Zquic",
-      (range.buf, range.length),
+    ZiAssert(range.buf && range.length, "Zquic", (range),
       "empty stream Tx range selected for packetization", return -1);
     ZiAssert(range.offset + range.length <= range.buf->size, "Zquic",
-      (range.offset, range.length, range.buf->size),
+      (range),
       "stream Tx range exceeds buffer capacity", return -1);
     unsigned payloadLen = range.length;
     if (payloadLen > len) payloadLen = len;
@@ -288,7 +287,7 @@ private:
       uint64_t dequeuedOffset = 0;
       ZiAssert(stream.dequeueFin(dequeuedOffset) &&
 	  dequeuedOffset == range.streamOffset + payloadLen,
-	"Zquic", (id, dequeuedOffset, range.streamOffset, payloadLen),
+	"Zquic", (id, dequeuedOffset, range, payloadLen),
 	"stream FIN disappeared during data packetization", return -1);
     }
     if (info)

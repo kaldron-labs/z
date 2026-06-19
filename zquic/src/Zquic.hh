@@ -1644,8 +1644,7 @@ public:
     if (!msg) return;
     StreamRxData &data = msg->data();
     if (!data.bytes) return;
-    ZiAssert(data.bufOffset + data.bytes <= data.size,
-      "Zquic", (data.bufOffset, data.bytes, data.size),
+    ZiAssert(data.bufOffset + data.bytes <= data.size, "Zquic", (data),
       "stream Rx queued slice exceeds packet-backed range", return);
     data.skip = unsigned(data.bufOffset);
     data.ZiIOBuf::length = unsigned(data.bytes);
@@ -2030,8 +2029,7 @@ private:
     if (ZuUnlikely(!buf)) return;
     if (m_resetSent) return;
     if (!buf->length) return;
-    ZiAssert(buf->skip + buf->length <= buf->size, "Zquic",
-      (buf->skip, buf->length, buf->size),
+    ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (buf),
       "stream Tx buffer range violation", return);
     uint32_t offset = buf->skip;
     uint32_t length = buf->length;
@@ -2374,8 +2372,9 @@ public:
 
     StreamRef stream = newStream_(int64_t(id));
     if (!stream) return nullptr;
+    uint64_t limit = peerLimit_(type).limit();
     ZiAssert(peerLimit_(type).openTo(opened), "Zquic",
-      (id, opened, peerLimit_(type).limit()),
+      (id, opened, limit),
       "peer stream count advanced past local limit", return nullptr);
     impl()->streamed(stream);
     scheduleStreamWritable_(stream);

@@ -750,12 +750,12 @@ struct SentPkt {
   }
   unsigned framesUsed() const { return frameCount; }
   const SentFrameRef &frame(unsigned i) const {
-    ZiAssert(i < frameCount, "Zquic", (i, frameCount),
+    ZiAssert(i < frameCount, "Zquic", (i, frameCount = this->frameCount),
       "sent-packet frame index out of bounds", return frames[0]);
     return frames[i];
   }
   void *frameOwner(unsigned i) const {
-    ZiAssert(i < frameCount, "Zquic", (i, frameCount),
+    ZiAssert(i < frameCount, "Zquic", (i, frameCount = this->frameCount),
       "sent-packet frame-owner index out of bounds", return nullptr);
     return frameOwners[i];
   }
