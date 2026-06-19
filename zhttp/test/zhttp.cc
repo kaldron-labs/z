@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// basic test HTTP client
+// test HTTP client
 
 #include <iostream>
 #include <string.h>
@@ -12,9 +12,6 @@
 #include <zlib/ZuLib.hh>
 #include <zlib/ZuICmp.hh>
 
-#include <zlib/ZiFile.hh>
-#include <zlib/ZiLog.hh>
-#include <zlib/ZiResolver.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
@@ -24,6 +21,13 @@
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtCLI.hh>
+
+#include <zlib/ZiFile.hh>
+#include <zlib/ZiLog.hh>
+#include <zlib/ZiResolver.hh>
+#include <zlib/ZiHashCSV.hh>
+#include <zlib/ZiHeapCSV.hh>
+
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
 #include <zlib/Zquic.hh>
