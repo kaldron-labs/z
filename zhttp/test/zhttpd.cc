@@ -79,6 +79,7 @@ void usage(int code = 1)
 #ifdef Zquic_DEBUG
     "  --quic-diag=N              print HTTP/3 QUIC counters every N seconds\n"
 #endif
+    "  --mem-diag=N               print memory counters every N seconds\n"
     "  -h, --help                 show help\n" << std::flush;
   ::exit(code);
 }
@@ -109,6 +110,14 @@ bool loadOptions(Options &options, int argc, char **argv)
   if (!parseDrop(options.quicTxDrop, drop)) return false;
 #endif
   return true;
+}
+
+void printMemDiag()
+{
+  ZiLOG(Debug, "zhttpd", ([](auto &s) {
+    s << "Hash Tables:\n" << ZmHashMgr::csv();
+    s << "Heaps:\n" << ZmHeapMgr::csv();
+  }));
 }
 
 #ifndef _WIN32
@@ -839,7 +848,7 @@ void H3Server::printDiag()
       retxTotal += d.retransmittable[i];
     }
   });
-  ZiLOG(Info, "zhttpd", ([
+  ZiLOG(Debug, "zhttpd", ([
     active, requests, errors, links,
     datagramsRx = diag.datagramsRx, datagramsTx = diag.datagramsTx,
     bytesRx = diag.bytesRx, bytesTx = diag.bytesTx,
@@ -964,7 +973,11 @@ int main(int argc, char **argv)
     return 1;
   }
   ZiLog::init("zhttpd", options.syslog ? "daemon" : "user");
-  ZiLog::level(options.debug ? Ze::Debug : Ze::Info);
+  ZiLog::level(options.debug ||
+#ifdef Zquic_DEBUG
+      options.quicDiag ||
+#endif
+      options.memDiag ? Ze::Debug : Ze::Info);
   if (options.syslog)
     ZiLog::sink(ZiLog::sysSink());
   else if (options.logPath && options.logPath != "-")
@@ -1065,14 +1078,33 @@ int main(int argc, char **argv)
     state.errors = 1;
     state.done.post();
   }
+  if (state.options.memDiag
 #ifdef Zquic_DEBUG
-  if (h3Init && state.options.quicDiag) {
+      || (h3Init && state.options.quicDiag)
+#endif
+      ) {
+    unsigned quicElapsed = 0;
+    unsigned memElapsed = 0;
     for (;;) {
-      if (!state.done.timedwait(Zm::now(state.options.quicDiag))) break;
-      h3.printDiag();
+      if (!state.done.timedwait(Zm::now(1))) break;
+#ifdef Zquic_DEBUG
+      if (h3Init && state.options.quicDiag) {
+	++quicElapsed;
+	if (quicElapsed >= state.options.quicDiag) {
+	  quicElapsed = 0;
+	  h3.printDiag();
+	}
+      }
+#endif
+      if (state.options.memDiag) {
+	++memElapsed;
+	if (memElapsed >= state.options.memDiag) {
+	  memElapsed = 0;
+	  printMemDiag();
+	}
+      }
     }
   } else
-#endif
     state.done.wait();
   if (h3Init) {
     h3.clearFilters();

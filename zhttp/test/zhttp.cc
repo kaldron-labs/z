@@ -17,6 +17,7 @@
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRandom.hh>
@@ -53,6 +54,7 @@ struct Options {
 #ifdef Zquic_DEBUG
   uint32_t	quicDiag = 0;
 #endif
+  uint32_t	memDiag = 0;
   bool		help = false;
 };
 
@@ -77,6 +79,7 @@ ZtStruct((Options, CLI),
 #ifdef Zquic_DEBUG
   (((quicDiag),   (CLI::Long<"quic-diag">)),                 (UInt32)),
 #endif
+  (((memDiag),    (CLI::Long<"mem-diag">)),                  (UInt32)),
   (((url),       (CLI::Arg<1>)),                             (String)),
   (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool)));
 
@@ -105,6 +108,7 @@ void usage(int code = 1)
 #ifdef Zquic_DEBUG
     "  --quic-diag=N       print HTTP/3 QUIC counters every N seconds\n"
 #endif
+    "  --mem-diag=N        print memory counters every N seconds\n"
     "  -h, --help          show help\n\n"
     "For N > 1, response bodies are written to PATH.0, PATH.1, ...\n" <<
     std::flush;
@@ -136,6 +140,35 @@ bool validateOptions(Options &options, int argc)
   if (!parseDrop(options.quicTxDrop, drop)) return false;
 #endif
   return true;
+}
+
+void printMemDiag()
+{
+  ZiLOG(Debug, "zhttp", ([](auto &s) {
+    s << "Hash Tables:\n" << ZmHashMgr::csv();
+    s << "Heaps:\n" << ZmHeapMgr::csv();
+  }));
+}
+
+bool waitWithMemDiag(ZmSemaphore &sem, unsigned timeout, uint32_t memDiag)
+{
+  unsigned elapsed = 0;
+  unsigned memElapsed = 0;
+  for (;;) {
+    unsigned step = memDiag ? 1 : timeout;
+    if (step > timeout - elapsed) step = timeout - elapsed;
+    if (!step) return false;
+    if (sem.timedwait(Zm::now(step)) == 0) return true;
+    elapsed += step;
+    if (memDiag) {
+      memElapsed += step;
+      if (memElapsed >= memDiag) {
+	memElapsed = 0;
+	printMemDiag();
+      }
+    }
+    if (elapsed >= timeout) return false;
+  }
 }
 
 ZuDerive(HdrString, ZtString<ZtStringHeapID<"zhttp.HdrString">>);
@@ -1339,7 +1372,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     active = this->active;
     pending = this->pending.length() - this->pendingHead;
   }
-  ZiLOG(Info, "zhttp", ([
+  ZiLOG(Debug, "zhttp", ([
     label, complete, failed, scheduled, active, pending,
     streams = link->streamCount(),
     opened = link->localStreamsOpened(Zi::StreamType::Duplex),
@@ -1404,7 +1437,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     uint64_t txLimit = stream ? stream->txCreditLimit() : 0;
     bool finSent = stream && stream->finSent();
     bool finDequeued = stream && stream->finDequeued();
-    ZiLOG(Info, "zhttp", ([
+    ZiLOG(Debug, "zhttp", ([
       label, id = req.id, streamID = req.responseStreamID,
       status = req.status, contentLength = req.contentLength,
       bodyBytes = req.bodyBytes, bodyChunks = req.bodyChunks,
@@ -1811,7 +1844,7 @@ int run(
     ZmRef<Link> link = new Link(&client);
     link->connect(client.state.url.host, client.state.url.port);
     bool disconnected = false;
-    if (client.sem.timedwait(Zm::now(ClientTimeout)) != 0) {
+    if (!waitWithMemDiag(client.sem, ClientTimeout, options.memDiag)) {
       ZiLOG(Error, "zhttp", "timed out");
       client.state.failed = true;
       link->disconnect();
@@ -1874,7 +1907,7 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
     link->connect(req->url.host, req->url.port);
   }
 
-  if (client.sem.timedwait(Zm::now(ClientTimeout)) != 0) {
+  if (!waitWithMemDiag(client.sem, ClientTimeout, run.options.memDiag)) {
     ZiLOG(Error, "zhttp", "timed out");
     client.stopping = true;
     for (unsigned i = 0; i < client.links.length(); ++i)
@@ -1944,6 +1977,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 #ifdef Zquic_DEBUG
     unsigned elapsed = 0;
     unsigned diagElapsed = 0;
+    unsigned memElapsed = 0;
     unsigned idle = 0;
     unsigned lastComplete = client.complete;
     unsigned quiet = 0;
@@ -1980,6 +2014,13 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	  client.printDiag(link, "diag");
 	}
       }
+      if (run.options.memDiag) {
+	memElapsed += step;
+	if (memElapsed >= run.options.memDiag) {
+	  memElapsed = 0;
+	  printMemDiag();
+	}
+      }
       if ((client.scheduled || client.active) &&
 	  quiet >= H3QuietTimeout && !txPending &&
 	  client.complete < run.options.requests) {
@@ -1997,7 +2038,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       }
     }
 #else
-    if (client.sem.timedwait(Zm::now(ClientTimeout)) != 0)
+    if (!waitWithMemDiag(client.sem, ClientTimeout, run.options.memDiag))
       timedOut = true;
 #endif
     if (timedOut || stalled) {
@@ -2274,6 +2315,10 @@ int main(int argc, char **argv)
 #ifdef ZiMultiplex_DEBUG
     options.debug ? Ze::Debug :
 #endif
+#ifdef Zquic_DEBUG
+    options.quicDiag ? Ze::Debug :
+#endif
+    options.memDiag ? Ze::Debug :
     options.verbose ? Ze::Info : Ze::Warning);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();

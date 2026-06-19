@@ -24,6 +24,7 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtArray.hh>
@@ -144,6 +145,7 @@ struct Options {
 #ifdef Zquic_DEBUG
   uint32_t		quicDiag = 0;
 #endif
+  uint32_t		memDiag = 0;
   bool			help = false;
 };
 
@@ -190,6 +192,7 @@ ZtStruct((Options, CLI),
 #ifdef Zquic_DEBUG
   (((quicDiag),        (CLI::Long<"quic-diag">)),                (UInt32)),
 #endif
+  (((memDiag),         (CLI::Long<"mem-diag">)),                 (UInt32)),
   (((help),            (CLI::Flag<'h'>, CLI::Long<"help">)),     (Bool)));
 
 struct RequestData {
