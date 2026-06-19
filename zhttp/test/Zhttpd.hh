@@ -14,10 +14,6 @@
 #include <stdlib.h>
 #include <time.h>
 
-#ifndef _WIN32
-#include <unistd.h>
-#endif
-
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuPercent.hh>
 #include <zlib/ZuSort.hh>
@@ -118,15 +114,12 @@ struct Options {
   HdrString		authPass;
   HdrString		logPath{"-"};
   HdrString		pidfile;
-  HdrString		uid;
-  HdrString		gid;
   unsigned		maxconn = 0;
   unsigned		timeout = 30;
   bool			ipv6 = false;
   bool			daemon = false;
   bool			syslog = false;
   bool			noListing = false;
-  bool			chroot = false;
   bool			noKeepalive = false;
   bool			singleFile = false;
   bool			hideDotfiles = false;
@@ -165,15 +158,12 @@ ZtStruct((Options, CLI),
   (((auth),            (CLI::Long<"auth">)),                     (String)),
   (((logPath),         (CLI::Long<"log">)),                      (String, "-")),
   (((pidfile),         (CLI::Long<"pidfile">)),                  (String)),
-  (((uid),             (CLI::Long<"uid">)),                      (String)),
-  (((gid),             (CLI::Long<"gid">)),                      (String)),
   (((maxconn),         (CLI::Long<"maxconn">)),                  (UInt32)),
   (((timeout),         (CLI::Long<"timeout">)),                  (UInt32, 30)),
   (((ipv6),            (CLI::Long<"ipv6">)),                     (Bool)),
   (((daemon),          (CLI::Long<"daemon">)),                   (Bool)),
   (((syslog),          (CLI::Long<"syslog">)),                   (Bool)),
   (((noListing),       (CLI::Long<"no-listing">)),               (Bool)),
-  (((chroot),          (CLI::Long<"chroot">)),                   (Bool)),
   (((noKeepalive),     (CLI::Long<"no-keepalive">)),             (Bool)),
   (((singleFile),      (CLI::Long<"single-file">)),              (Bool)),
   (((hideDotfiles),    (CLI::Long<"hide-dotfiles">)),            (Bool)),
@@ -1003,9 +993,6 @@ inline bool loadOptions(Options &options, int argc, char **argv, bool &help) {
   for (unsigned i = 0, n = options.forward.length(); i < n; ++i)
     if (!parseForward(options, options.forward[i])) return false;
   if (options.auth && !parseAuth(options, options.auth)) return false;
-#ifndef _WIN32
-  if (options.port == 8080 && !geteuid()) options.port = 80;
-#endif
   if (!httpSet && (options.https || options.http3)) options.http = false;
   return true;
 }
@@ -1045,12 +1032,6 @@ inline bool validate(Options &options, S &error) {
     error = "--https/--http3 require --cert and --key";
     return false;
   }
-#ifdef _WIN32
-  if (options.chroot || options.uid || options.gid) {
-    error = "--chroot/--uid/--gid are unsupported on Windows";
-    return false;
-  }
-#endif
   ZiFile root;
   ZiFile::Stat stat;
   if (options.singleFile) {

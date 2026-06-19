@@ -9,18 +9,16 @@
 #include <iostream>
 #include <string.h>
 
-#ifndef _WIN32
-#include <grp.h>
-#include <pwd.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif
+#include <zlib/ZmRandom.hh>
 
 #include <zlib/ZiDaemon.hh>
-#include <zlib/ZmRandom.hh>
+#include <zlib/ZiHashCSV.hh>
+#include <zlib/ZiHeapCSV.hh>
+
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
 #include <zlib/Zquic.hh>
+
 #include <zlib/Zhttp.hh>
 
 #include "Zhttpd.hh"
@@ -40,7 +38,7 @@ void usage(int code = 1)
   std::cerr <<
     "Usage: zhttpd /path/to/wwwroot [OPTION]...\n\n"
     "Options:\n"
-    "  --port number              listen port, default 8080 or 80 if root\n"
+    "  --port number              listen port, default 8080\n"
     "  --addr ip                  listen address, default all interfaces\n"
     "  --ipv6                     listen on IPv6 address\n"
     "  --daemon                   detach and run in background\n"
@@ -52,9 +50,6 @@ void usage(int code = 1)
     "  --no-listing               disable generated directory listings\n"
     "  --mimetypes filename       extension to MIME map\n"
     "  --default-mimetype string  default MIME type, application/octet-stream\n"
-    "  --uid uid/uname            drop user privileges after initialization\n"
-    "  --gid gid/gname            drop group privileges after initialization\n"
-    "  --chroot                   chroot to wwwroot after initialization\n"
     "  --no-keepalive             disable HTTP keep-alive\n"
     "  --single-file              serve only the specified file\n"
     "  --hide-dotfiles            reject dotfiles\n"
@@ -120,92 +115,6 @@ void printMemDiag()
   }));
 }
 
-#ifndef _WIN32
-bool parseID(ZuCSpan s, unsigned &id)
-{
-  if (!s) return false;
-  unsigned n = 0;
-  for (unsigned i = 0; i < s.length(); ++i) {
-    if (s[i] < '0' || s[i] > '9') return false;
-    n = (n * 10) + (s[i] - '0');
-  }
-  id = n;
-  return true;
-}
-
-bool resolveUID(ZuCSpan user, uid_t &uid, gid_t &gid, HdrString &name)
-{
-  unsigned id;
-  if (parseID(user, id)) {
-    uid = id;
-    return true;
-  }
-  HdrString s{user};
-  struct passwd *pw = getpwnam(s.ndata());
-  if (!pw) return false;
-  uid = pw->pw_uid;
-  gid = pw->pw_gid;
-  name = user;
-  return true;
-}
-
-bool resolveGID(ZuCSpan group, gid_t &gid)
-{
-  unsigned id;
-  if (parseID(group, id)) {
-    gid = id;
-    return true;
-  }
-  HdrString s{group};
-  struct group *gr = getgrnam(s.ndata());
-  if (!gr) return false;
-  gid = gr->gr_gid;
-  return true;
-}
-
-bool chrootRoot(Options &options)
-{
-  Zi::Path root = options.root;
-  if (!ZiFile::absolute(root))
-    root = ZiFile::append(ZiFile::cwd(), root);
-  if (options.singleFile) {
-    Zi::Path dir = ZiFile::dirname(root);
-    Zi::Path leaf = ZiFile::leafname(root);
-    if (!dir || !leaf) return false;
-    if (::chdir(dir.ndata()) < 0 || ::chroot(dir.ndata()) < 0 ||
-	::chdir("/") < 0)
-      return false;
-    options.root = leaf;
-    return true;
-  }
-  if (::chdir(root.ndata()) < 0 || ::chroot(root.ndata()) < 0 ||
-      ::chdir("/") < 0)
-    return false;
-  options.root = "/";
-  return true;
-}
-
-bool dropPrivileges(const Options &options)
-{
-  if (!options.uid && !options.gid) return true;
-  uid_t uid = getuid();
-  gid_t gid = getgid();
-  HdrString userName;
-  if (options.uid && !resolveUID(options.uid, uid, gid, userName))
-    return false;
-  if (options.gid && !resolveGID(options.gid, gid))
-    return false;
-  if (userName) {
-    if (initgroups(userName.ndata(), gid) < 0) return false;
-  } else {
-    if (setgroups(0, nullptr) < 0 && errno != EPERM) return false;
-  }
-  if (setgid(gid) < 0) return false;
-  if (setuid(uid) < 0) return false;
-  return true;
-}
-#endif
-
 bool prepareProcess(Options &options)
 {
   const char *pidfile = options.pidfile ? options.pidfile.data() : nullptr;
@@ -218,18 +127,6 @@ bool prepareProcess(Options &options)
     ZiLOG(Error, "zhttpd", "daemon initialization failed");
     return false;
   }
-#ifndef _WIN32
-  if (options.chroot && !chrootRoot(options)) {
-    ZiLOG(Error, "zhttpd", "chroot failed");
-    return false;
-  }
-  if (!dropPrivileges(options)) {
-    ZiLOG(Error, "zhttpd", "privilege drop failed");
-    return false;
-  }
-#else
-  if (options.chroot || options.uid || options.gid) return false;
-#endif
   return true;
 }
 
