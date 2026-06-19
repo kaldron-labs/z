@@ -101,11 +101,13 @@ private:
     }
     while (tbl) {
       fn(tbl);
+      ZmRef<ZmAnyHash> next;
       {
 	ZmGuard<ZmPLock> guard(m_lock);
-	tbl = m_tables.citer<ZmRBTreeGreater>(
+	next = m_tables.citer<ZmRBTreeGreater>(
 	  ZmAnyHash_PtrAxor(*tbl))();
       }
+      tbl = ZuMv(next);
     }
   }
 
