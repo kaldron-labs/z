@@ -6,11 +6,11 @@
 
 // hash table configuration
 
-#ifndef ZvHashCSV_HH
-#define ZvHashCSV_HH
+#ifndef ZiHashCSV_HH
+#define ZiHashCSV_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZiLib_HH
+#include <zlib/ZiLib.hh>
 #endif
 
 #include <zlib/ZuArray.hh>
@@ -21,7 +21,7 @@
 
 #include <zlib/ZiCSV.hh>
 
-namespace ZvHashCSV {
+namespace ZiHashCSV {
 
 struct Data {
   ZmIDString	id;
@@ -58,6 +58,6 @@ inline void init(ZuCSpan file) {
   if (file) CSV{}.read(file);
 }
 
-} // ZvHashCSV
+} // ZiHashCSV
 
-#endif /* ZvHashCSV_HH */
+#endif /* ZiHashCSV_HH */
