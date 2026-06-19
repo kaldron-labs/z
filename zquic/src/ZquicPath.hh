@@ -163,7 +163,7 @@ public:
   }
 
   void startProbe(unsigned size) {
-    ZiAssert(!m_probeSize, "Zquic", (probeSize = m_probeSize, size),
+    ZiAssert(!m_probeSize, "Zquic", (),
       "PMTUD probe started while another probe is pending", return);
     unsigned c = ceiling();
     if (size > c) size = c;
