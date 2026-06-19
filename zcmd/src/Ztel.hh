@@ -134,15 +134,16 @@ struct Heap : public Heap_ {
 };
 ZfbStruct(Heap,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
-    (((size),		(Ctor<6>, Keys<0>)),			(UInt32)),
-    (((alignment),	(Ctor<9>)),				(UInt8)),
-    (((partition),	(Ctor<7>, Keys<0>)),			(UInt16)),
-    (((sharded),	(Ctor<8>)),				(Bool)),
+    (((size),		(Ctor<7>, Keys<0>)),			(UInt32)),
+    (((alignment),	(Ctor<10>)),				(UInt8)),
+    (((partition),	(Ctor<8>, Keys<0>)),			(UInt16)),
+    (((sharded),	(Ctor<9>)),				(Bool)),
     (((cacheSize),	(Ctor<1>)),				(UInt64)),
     (((cpuset),		(Ctor<2>)),				(Bitmap)),
     (((cacheAllocs),	(Ctor<3>, Mutable, Series, Delta)),	(UInt64)),
     (((heapAllocs),	(Ctor<4>, Mutable, Series, Delta)),	(UInt64)),
     (((frees),		(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
+    (((maxAllocd),	(Ctor<6>, Mutable, Series, Delta)),	(UInt64)),
     (((allocated, RdFn), (Synthetic, Series)),			(UInt64)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
