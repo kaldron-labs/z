@@ -78,11 +78,13 @@ struct ZmHeapStats {
   uint64_t	heapAllocs;
   uint64_t	cacheAllocs;
   uint64_t	frees;
+  uint64_t	maxAllocd;
 };
 
 // display sequence:
 //   id, size, alignment, partition, sharded,
-//   cacheSize, cpuset, cacheAllocs, heapAllocs, frees, allocated (*)
+//   cacheSize, cpuset, cacheAllocs, heapAllocs,
+//   frees, allocated (*), maxAllocd
 // derived display fields:
 //   allocated = (heapAllocs + cacheAllocs) - frees
 struct ZmHeapTelemetry {
@@ -92,6 +94,7 @@ struct ZmHeapTelemetry {
   uint64_t	cacheAllocs = 0;// graphable (*)
   uint64_t	heapAllocs = 0;	// graphable (*)
   uint64_t	frees = 0;	// graphable
+  uint64_t	maxAllocd = 0;	// graphable (*)
   uint32_t	size = 0;
   uint16_t	partition = 0;
   uint8_t	sharded = 0;
@@ -172,6 +175,10 @@ private:
       if (ZuUnlikely(fn = m_traceAllocFn)) (*fn)(m_info.id, m_info.size);
     }
 #endif
+    {
+      auto allocd = (stats.cacheAllocs + stats.heapAllocs + 1) - stats.frees;
+      if (stats.maxAllocd < allocd) stats.maxAllocd = allocd;
+    }
     void *ptr;
     if (ZuLikely(ptr = alloc_())) {
       ++stats.cacheAllocs;
@@ -223,6 +230,7 @@ private:
     m_stats.heapAllocs += s.heapAllocs;
     m_stats.cacheAllocs += s.cacheAllocs;
     m_stats.frees += s.frees;
+    m_stats.maxAllocd += s.maxAllocd;
   }
 
   void histStats(const ZmHeapStats &stats) const;
@@ -267,7 +275,7 @@ friend class ZmHeapCacheT;
     void print() {
       m_stream <<
 	"ID,size,partition,sharded,alignment,cacheSize,cpuset,"
-	"cacheAllocs,heapAllocs,frees\n";
+	"cacheAllocs,heapAllocs,frees,maxAllocd\n";
       ZmHeapMgr::all({this, ZmFnPtr<&CSV_::print_>{}});
     }
     void print_(ZmHeapCache *cache) {
@@ -284,7 +292,8 @@ friend class ZmHeapCacheT;
 	data.cpuset << ',' <<
 	ZuBoxed(data.cacheAllocs) << ',' <<
 	ZuBoxed(data.heapAllocs) << ',' <<
-	ZuBoxed(data.frees) << '\n';
+	ZuBoxed(data.frees) << ',' <<
+	ZuBoxed(data.maxAllocd) << '\n';
     }
 
   private:
