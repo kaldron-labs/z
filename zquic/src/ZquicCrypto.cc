@@ -261,7 +261,7 @@ void CryptoStream::appendDelivery_(const uint8_t *p, uint64_t length)
 {
   if (!p || !length) return;
   uint64_t n = m_delivery.length();
-  ZiAssert(n + length <= MaxBufSize, "Zquic", (n, length),
+  ZiAssert(n + length <= MaxBufSize, "Zquic", (),
 	    "CRYPTO delivery overflow", return);
   m_delivery.append(p, length);
 }
@@ -1138,8 +1138,8 @@ int Crypto::decodeTransportParams(ZuCSpan in, TransportParams &params)
 void Crypto::installSecret(CryptoLevel::T level, ZuCSpan secret)
 {
   ZiAssert(level >= CryptoLevel::Initial && level <= CryptoLevel::OneRTT,
-    "Zquic", (level), "invalid crypto level", return);
-  ZiAssert(secret.length(), "Zquic", (level),
+    "Zquic", (), "invalid crypto level", return);
+  ZiAssert(secret.length(), "Zquic", (),
     "empty traffic secret", return);
   if (!m_secretInstalled[level]) ++m_diag.secretsInstalled;
   m_secretInstalled[level] = true;
@@ -1148,7 +1148,7 @@ void Crypto::installSecret(CryptoLevel::T level, ZuCSpan secret)
 bool Crypto::discardSecret(CryptoLevel::T level)
 {
   ZiAssert(level >= CryptoLevel::Initial && level <= CryptoLevel::OneRTT,
-    "Zquic", (level), "invalid crypto level", return false);
+    "Zquic", (), "invalid crypto level", return false);
   if (!m_secretInstalled[level]) return false;
   m_secretInstalled[level] = false;
   if (level == CryptoLevel::Initial)

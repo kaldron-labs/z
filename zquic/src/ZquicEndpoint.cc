@@ -208,8 +208,8 @@ Endpoint::Endpoint(ZiMultiplex *mx) : m_mx{mx} { }
 
 bool Endpoint::init(ZiMultiplex *mx)
 {
-  ZiAssert(mx, "Zquic", (mx), "null endpoint multiplexer", return false);
-  ZiAssert(mx->running(), "Zquic", (mx),
+  ZiAssert(mx, "Zquic", (), "null endpoint multiplexer", return false);
+  ZiAssert(mx->running(), "Zquic", (),
     "endpoint multiplexer is not running", return false);
   if (m_mx) return m_mx == mx;
   m_mx = mx;
@@ -239,7 +239,7 @@ bool Endpoint::openUDP(
   ZiAssert(m_mx, "Zquic", (), "endpoint multiplexer is not initialized",
     return false);
   ZiMultiplex *mx = m_mx;
-  ZiAssert(mx->running(), "Zquic", (mx),
+  ZiAssert(mx->running(), "Zquic", (),
     "endpoint multiplexer is not running", return false);
   if (m_open.load_() || m_cxn) return false;
 

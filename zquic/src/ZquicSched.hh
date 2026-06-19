@@ -254,10 +254,10 @@ private:
     PktAssembly &assembly, Stream &stream, uint64_t id,
     StreamFrameInfo *info, const TxRange &range)
   {
-    ZiAssert(range.buf && range.length, "Zquic", (range),
+    ZiAssert(range.buf && range.length, "Zquic", (),
       "empty stream Tx range selected for packetization", return -1);
     ZiAssert(range.offset + range.length <= range.buf->size, "Zquic",
-      (range),
+      (),
       "stream Tx range exceeds buffer capacity", return -1);
     unsigned payloadLen = range.length;
     if (payloadLen > len) payloadLen = len;
@@ -281,13 +281,13 @@ private:
     TxRange consumed;
     if (!stream.commitTxRange(consumed, range, payloadLen)) return -1;
     ZiAssert(stream.consumeTxCredit(payloadLen), "Zquic",
-      (id, payloadLen),
+      (),
       "stream Tx exceeded MAX_STREAM_DATA", return -1);
     if (fin) {
       uint64_t dequeuedOffset = 0;
       ZiAssert(stream.dequeueFin(dequeuedOffset) &&
 	  dequeuedOffset == range.streamOffset + payloadLen,
-	"Zquic", (id, dequeuedOffset, range, payloadLen),
+	"Zquic", (),
 	"stream FIN disappeared during data packetization", return -1);
     }
     if (info)
@@ -308,7 +308,7 @@ private:
     if (!assembly.addStream(budget, unsigned(n))) return -1;
     uint64_t dequeuedOffset = 0;
     ZiAssert(stream.dequeueFin(dequeuedOffset) && dequeuedOffset == offset,
-      "Zquic", (id, dequeuedOffset, offset),
+      "Zquic", (),
       "stream FIN disappeared during packetization", return -1);
     if (info)
       *info = StreamFrameInfo{id, offset, 0, unsigned(n), true, {}};

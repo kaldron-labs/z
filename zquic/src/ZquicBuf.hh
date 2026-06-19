@@ -94,14 +94,14 @@ struct TxRange {
 
 inline void assertPktCapacity(const ZiIOBuf *buf, unsigned required)
 {
-  ZiAssert(buf && buf->size >= required, "Zquic", (buf, required),
+  ZiAssert(buf && buf->size >= required, "Zquic", (required),
     "packet buffer capacity violation required=" << required,
     return);
 }
 
 inline void assertStreamCapacity(const ZiIOBuf *buf, unsigned required)
 {
-  ZiAssert(buf && buf->size >= required, "Zquic", (buf, required),
+  ZiAssert(buf && buf->size >= required, "Zquic", (required),
     "stream buffer capacity violation required=" << required,
     return);
 }

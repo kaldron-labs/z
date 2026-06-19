@@ -1644,7 +1644,7 @@ public:
     if (!msg) return;
     StreamRxData &data = msg->data();
     if (!data.bytes) return;
-    ZiAssert(data.bufOffset + data.bytes <= data.size, "Zquic", (data),
+    ZiAssert(data.bufOffset + data.bytes <= data.size, "Zquic", (),
       "stream Rx queued slice exceeds packet-backed range", return);
     data.skip = unsigned(data.bufOffset);
     data.ZiIOBuf::length = unsigned(data.bytes);
@@ -2029,7 +2029,7 @@ private:
     if (ZuUnlikely(!buf)) return;
     if (m_resetSent) return;
     if (!buf->length) return;
-    ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (buf),
+    ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (),
       "stream Tx buffer range violation", return);
     uint32_t offset = buf->skip;
     uint32_t length = buf->length;
