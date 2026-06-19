@@ -2,7 +2,11 @@
 
 ## Zquic
 
-complete remaining work from `arc/zquic4/plan_14.md` onwards
+recheck rx drop 5%
+recheck tx drop 5%
+recheck rx+tx drop 5%
+
+complete remaining work from `arc/zquic4/plan_15.md` onwards
 
 reference implementations:
 - `../zngtcp2` (primary reference)
@@ -12,18 +16,10 @@ reference implementations:
 
 ## Zu
 
-replace many occurrences of:
-`if constexpr (ZuIsSame<T, ZuStringT<S>>{})` with:
-`if constexpr (ZuIsSameStr<T, S>{})`
-using:
-```
-template <typename T, ZuString S>
-using ZuIsSameStr = ZuIsSame<T, ZuStringT<S>>
-```
-
-## ZiLog standardization
-
-standardize `ZiLog` configuration from command line / environment variables
+replace occurrences of:
+`if constexpr (ZuIsSame<T, ZuStringT<"S">>{})`
+with:
+`if constexpr (T{} == "S")`
 
 ## devlayer
 
