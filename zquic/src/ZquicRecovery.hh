@@ -39,31 +39,26 @@ inline constexpr ZuTime timeDiv(ZuTime t, uint64_t n)
   return ZuTime{ZuTime::Nano{t.nanosecs() / n}};
 }
 
-using AckTrackerRxNTP = ZmPQRxGapObserve<>;
-
-class AckTracker :
-  public ZmPQRx<AckTracker, PktRxPQueue, AckTrackerRxNTP> {
+class AckTracker {
 public:
   static constexpr unsigned Max = 64;
   static constexpr unsigned MaxRetained = Max + 1;
-  using Queue = PktRxPQueue;
-  using Rx = ZmPQRx<AckTracker, Queue, AckTrackerRxNTP>;
-  using Msg = Queue::Node;
-  using Span = Queue::Span;
   using DequeueFn = ZmFn<void()>;
-
-  AckTracker() :
-    m_dequeueFn{this, [](AckTracker *t) { t->dequeueRx_(); }} { }
 
   bool add(uint64_t pn) {
     if (contains(pn)) return true;
-    Rx::rcvd(new Queue::Node{RxPktMark{pn}});
+    if (pn == m_ackHead)
+      advanceHead_(pn + 1);
+    else
+      insertSparse_(pn);
     trimSparseRanges_();
     return true;
   }
 
   bool contains(uint64_t pn) const {
-    return pn < m_ackHead || m_packets.has(pn);
+    if (pn < m_ackHead) return true;
+    unsigned i = findSparse_(pn);
+    return i < m_sparseN && m_sparse[i].first <= pn;
   }
 
   unsigned count() const {
@@ -112,11 +107,10 @@ public:
   }
   bool largest(uint64_t &v) const {
     bool found = false;
-    m_packets.rspans([&v, &found](const auto &span) {
-      v = span.key() + span.length() - 1;
+    if (m_sparseN) {
+      v = m_sparse[m_sparseN - 1].largest;
       found = true;
-      return false;
-    });
+    }
     if (m_ackHead && (!found || m_ackHead - 1 > v)) {
       v = m_ackHead - 1;
       found = true;
@@ -133,24 +127,8 @@ public:
     if (max > Max) max = Max;
     AckRange retained[Max];
     unsigned n = 0;
-    Span ackGap = m_ackGap;
-    uint64_t gapEnd = 0;
-    bool haveGap =
-      ackGap.length() && Queue::endOf(ackGap.key(), ackGap.length(), gapEnd);
-    bool ok = m_packets.rspans([&retained, max, &n, haveGap, gapEnd](
-	const auto &span) {
-      if (n >= max) return false;
-      uint64_t first = span.key();
-      uint64_t end = 0;
-      if (!Queue::endOf(first, span.length(), end)) return false;
-      if (haveGap && first < gapEnd) {
-	if (end <= gapEnd) return true;
-	first = gapEnd;
-      }
-      retained[n++] = AckRange{end - 1, first};
-      return true;
-    });
-    if (!ok && n < max) return -1;
+    for (unsigned i = m_sparseN; i-- && n < max; )
+      retained[n++] = m_sparse[i];
     if (n < max && m_ackHead > m_ackBase)
       retained[n++] = AckRange{m_ackHead - 1, m_ackBase};
     for (unsigned i = 0; i < n; ++i)
@@ -169,10 +147,9 @@ public:
       FrameCodec::writeAckRanges(out, len, ranges, n, delay);
   }
   void clear() {
-    Rx::rxReset(0);
     m_ackHead = 0;
     m_ackBase = 0;
-    m_ackGap = {};
+    m_sparseN = 0;
   }
 
   void ackdByPeer(uint64_t largest) {
@@ -183,102 +160,87 @@ public:
     }
   }
 
-  Queue *rxQueue() { return &m_packets; }
-
-  void process(Msg *msg) {
-    if (!msg) return;
-    uint64_t pn = msg->data().pn;
-    if (pn >= m_ackHead) m_ackHead = pn + 1;
-    refreshGap_();
-  }
-
-  void request(const Span &, const Span &now) {
-    m_ackGap = now;
-  }
-
-  void scheduleDequeue() { m_dequeueFn(); }
-  void rescheduleDequeue() { m_dequeueFn(); }
-  void idleDequeue() { }
   void dequeueFn(DequeueFn fn) { m_dequeueFn = ZuMv(fn); }
-  void dequeueRx_() { Rx::dequeue(); }
+  void dequeueRx_() { }
 
 private:
-  void refreshGap_() {
-    Span gap = m_packets.gap();
-    m_ackGap = gap.length() ? gap : Span{};
+  static bool before_(uint64_t largest, uint64_t first) {
+    return largest < first && first - largest > 1;
   }
 
-  bool delRange_(uint64_t first, uint64_t largest) {
-    bool changed = false;
-    auto iter = m_packets.iter(first);
-    while (auto node = iter()) {
-      uint64_t pn = node->data().pn;
-      if (pn > largest) break;
-      (void)iter.del();
-      changed = true;
+  unsigned findSparse_(uint64_t pn) const {
+    unsigned l = 0, r = m_sparseN;
+    while (l < r) {
+      unsigned m = (l + r) >> 1;
+      if (m_sparse[m].largest < pn)
+	l = m + 1;
+      else
+	r = m;
     }
-    if (changed) refreshGap_();
-    return changed;
+    return l;
   }
 
-  bool delThrough_(uint64_t largest) {
-    return delRange_(0, largest);
+  void removeSparse_(unsigned i) {
+    --m_sparseN;
+    while (i < m_sparseN) {
+      m_sparse[i] = m_sparse[i + 1];
+      ++i;
+    }
   }
 
-  bool firstSparseRange_(AckRange &range) const {
-    Span ackGap = m_ackGap;
-    uint64_t gapEnd = 0;
-    bool haveGap =
-      ackGap.length() && Queue::endOf(ackGap.key(), ackGap.length(), gapEnd);
-    bool found = false;
-    (void)m_packets.spans([&range, haveGap, gapEnd, &found](
-	const auto &span) {
-      uint64_t first = span.key();
-      uint64_t end = 0;
-      if (!Queue::endOf(first, span.length(), end)) return false;
-      if (haveGap && first < gapEnd) {
-	if (end <= gapEnd) return true;
-	first = gapEnd;
-      }
-      range = AckRange{end - 1, first};
-      found = true;
-      return false;
-    });
-    return found;
+  void insertSparse_(uint64_t pn) {
+    AckRange range{pn, pn};
+    unsigned i = findSparse_(pn);
+    if (i && !before_(m_sparse[i - 1].largest, range.first)) {
+      --i;
+      range.first = m_sparse[i].first;
+      if (m_sparse[i].largest > range.largest)
+	range.largest = m_sparse[i].largest;
+      removeSparse_(i);
+    }
+    while (i < m_sparseN && !before_(range.largest, m_sparse[i].first)) {
+      if (m_sparse[i].largest > range.largest)
+	range.largest = m_sparse[i].largest;
+      removeSparse_(i);
+    }
+    if (m_sparseN >= MaxRetained) {
+      removeSparse_(0);
+      if (i) --i;
+    }
+    if (i > m_sparseN) i = m_sparseN;
+    for (unsigned j = m_sparseN; j > i; --j)
+      m_sparse[j] = m_sparse[j - 1];
+    m_sparse[i] = range;
+    ++m_sparseN;
+  }
+
+  void advanceHead_(uint64_t head) {
+    m_ackHead = head;
+    while (m_sparseN && m_sparse[0].first <= m_ackHead) {
+      if (m_sparse[0].largest >= m_ackHead)
+	m_ackHead = m_sparse[0].largest + 1;
+      removeSparse_(0);
+    }
   }
 
   void trimSparseRanges_() {
-    while (count() > MaxRetained) {
-      AckRange range;
-      if (!firstSparseRange_(range)) return;
-      if (!delRange_(range.first, range.largest)) return;
-    }
+    while (count() > MaxRetained && m_sparseN)
+      removeSparse_(0);
   }
 
   template <typename L>
   bool ranges_(L &&l) const {
     if (m_ackHead > m_ackBase)
       if (!l(AckRange{m_ackHead - 1, m_ackBase})) return false;
-    Span ackGap = m_ackGap;
-    uint64_t gapEnd = 0;
-    bool haveGap =
-      ackGap.length() && Queue::endOf(ackGap.key(), ackGap.length(), gapEnd);
-    return m_packets.spans([&l, haveGap, gapEnd](const auto &span) {
-      uint64_t first = span.key();
-      uint64_t end = 0;
-      if (!Queue::endOf(first, span.length(), end)) return false;
-      if (haveGap && first < gapEnd) {
-	if (end <= gapEnd) return true;
-	first = gapEnd;
-      }
-      return l(AckRange{end - 1, first});
-    });
+    for (unsigned i = 0; i < m_sparseN; ++i)
+      if (!l(m_sparse[i])) return false;
+    return true;
   }
 
-  Queue		m_packets{0};
-  Span		m_ackGap;
   uint64_t	m_ackHead = 0;
   uint64_t	m_ackBase = 0;
+  unsigned	m_sparseN = 0;
+  AckRange	m_sparse[MaxRetained];
   DequeueFn	m_dequeueFn;
 };
 

@@ -174,6 +174,151 @@ struct TxUnackdRange {
   void write(const I &) { }
 };
 
+class TxUnackdRanges {
+public:
+  static constexpr unsigned Max = 128;
+
+  class Node : public ZuObject {
+  public:
+    Node() = default;
+    explicit Node(const TxUnackdRange &range) : m_range{range} { }
+
+    TxUnackdRange &data() { return m_range; }
+    const TxUnackdRange &data() const { return m_range; }
+
+  private:
+    TxUnackdRange	m_range;
+  };
+
+  explicit TxUnackdRanges(uint64_t = 0) { }
+
+  ZmPQResult::T add(Node *node) {
+    ZmRef<Node> node_{node};
+    if (!node_) return ZmPQResult::Invalid;
+    return add(node_->data());
+  }
+  ZmPQResult::T add(const TxUnackdRange &range) {
+    uint64_t length = range.length();
+    if (!length) return ZmPQResult::Invalid;
+    uint64_t first = range.offset;
+    uint64_t end = first + length;
+    bool fin = range.fin;
+    unsigned i = 0;
+    while (i < m_count) {
+      uint64_t rangeFirst = m_ranges[i].offset;
+      uint64_t rangeEnd = rangeFirst + m_ranges[i].length();
+      if (rangeEnd < first) { ++i; continue; }
+      if (end < rangeFirst) break;
+      if (rangeFirst < first) first = rangeFirst;
+      if (rangeEnd > end) {
+	end = rangeEnd;
+	fin = m_ranges[i].fin;
+      } else if (rangeEnd == end)
+	fin = fin || m_ranges[i].fin;
+      remove_(i);
+    }
+    if (m_count >= Max) return ZmPQResult::Invalid;
+    insert_(i, makeRange_(first, end, fin));
+    return ZmPQResult::Inserted;
+  }
+  bool clear(uint64_t offset, uint64_t length) {
+    if (!length) return false;
+    uint64_t end = offset + length;
+    bool changed = false;
+    unsigned i = 0;
+    while (i < m_count) {
+      TxUnackdRange range = m_ranges[i];
+      uint64_t first = range.offset;
+      uint64_t rangeEnd = first + range.length();
+      if (rangeEnd <= offset) { ++i; continue; }
+      if (first >= end) break;
+      changed = true;
+      remove_(i);
+      if (first < offset)
+	insert_(i++, slice_(range, first, offset));
+      if (rangeEnd > end)
+	insert_(i++, slice_(range, end, rangeEnd));
+    }
+    return changed;
+  }
+  template <typename Fn>
+  bool spans(uint64_t offset, uint64_t length, Fn fn) const {
+    if (!length) return true;
+    uint64_t end = offset + length;
+    for (unsigned i = 0; i < m_count; ++i) {
+      uint64_t first = m_ranges[i].offset;
+      uint64_t rangeEnd = first + m_ranges[i].length();
+      if (rangeEnd <= offset) continue;
+      if (first >= end) break;
+      if (!fn(m_ranges[i])) return false;
+    }
+    return true;
+  }
+  ZmRef<Node> find(uint64_t offset) const {
+    for (unsigned i = 0; i < m_count; ++i)
+      if (m_ranges[i].offset == offset)
+	return new Node{m_ranges[i]};
+    return nullptr;
+  }
+  void clear() {
+    m_count = 0;
+    m_length = 0;
+  }
+  void clean() { clear(); }
+  unsigned count_() const { return m_count; }
+  uint64_t length_() const { return m_length; }
+  bool verify() const {
+    uint64_t length = 0;
+    for (unsigned i = 0; i < m_count; ++i) {
+      if (!m_ranges[i].length()) return false;
+      if (i && m_ranges[i - 1].offset + m_ranges[i - 1].length() >=
+	  m_ranges[i].offset)
+	return false;
+      length += m_ranges[i].length();
+    }
+    return length == m_length;
+  }
+
+private:
+  static TxUnackdRange makeRange_(
+    uint64_t first, uint64_t end, bool fin) {
+    if (fin) return TxUnackdRange{first, end - first - 1, true};
+    return TxUnackdRange{first, end - first, false};
+  }
+  static TxUnackdRange slice_(
+    const TxUnackdRange &range, uint64_t first, uint64_t end) {
+    uint64_t dataEnd = range.offset + range.bytes;
+    bool fin = range.fin && end == dataEnd + 1;
+    uint64_t bytes = 0;
+    if (first < dataEnd) {
+      uint64_t bytesEnd = end < dataEnd ? end : dataEnd;
+      bytes = bytesEnd - first;
+    }
+    return TxUnackdRange{first, bytes, fin};
+  }
+  void insert_(unsigned i, const TxUnackdRange &range) {
+    unsigned j = m_count++;
+    while (j > i) {
+      m_ranges[j] = m_ranges[j - 1];
+      --j;
+    }
+    m_ranges[i] = range;
+    m_length += range.length();
+  }
+  void remove_(unsigned i) {
+    m_length -= m_ranges[i].length();
+    --m_count;
+    while (i < m_count) {
+      m_ranges[i] = m_ranges[i + 1];
+      ++i;
+    }
+  }
+
+  TxUnackdRange	m_ranges[Max];
+  unsigned	m_count = 0;
+  uint64_t	m_length = 0;
+};
+
 using StreamRxPQueue =
   ZmPQueue<StreamRxData,
     ZmPQueueNode<StreamRxData,
@@ -197,21 +342,8 @@ using TxDataPQueue =
 	ZmPQueueBits<2,
 	  ZmPQueueLevels<3>>>>>;
 
-using StreamTxPQueue =
-  ZmPQueue<TxUnackdRange,
-    ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zquic.Stream.TxUnackdNode",
-	ZmPQueueOverwrite<false,
-	  ZmPQueueBits<2,
-	    ZmPQueueLevels<2>>>>>>;
-
-using CryptoTxPQueue =
-  ZmPQueue<TxUnackdRange,
-    ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zquic.Crypto.TxUnackdNode",
-	ZmPQueueOverwrite<false,
-	  ZmPQueueBits<2,
-	    ZmPQueueLevels<2>>>>>>;
+using StreamTxPQueue = TxUnackdRanges;
+using CryptoTxPQueue = TxUnackdRanges;
 
 using PktRxPQueue =
   ZmPQueue<RxPktMark,

@@ -45,6 +45,7 @@ constexpr unsigned H3QuietTimeout = 2;
 struct Options {
   ZuCSpan	ca;
   ZuCSpan	output{"index.html"};
+  bool		discardResponse = false;
   uint32_t	requests = 1;
   uint32_t	concurrency = 1;
   uint32_t	timeout = ClientTimeout;
@@ -72,6 +73,8 @@ struct Options {
 ZtStruct((Options, CLI),
   (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
   (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
+  (((discardResponse),
+    (CLI::Long<"discard-response">)),                         (Bool, false)),
   (((requests),  (CLI::Opt<'n'>,  CLI::Long<"requests">)),   (UInt32, 1)),
   (((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),       (UInt32, 1)),
   (((timeout),   (CLI::Long<"timeout">)),                    (UInt32, ClientTimeout)),
@@ -82,22 +85,22 @@ ZtStruct((Options, CLI),
   (((http3),     (Enum<Http3Mode::Map>,
 		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
 								 Http3Mode::prefer)),
-  (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool)),
+  (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool, false)),
 #ifdef ZiMultiplex_DEBUG
-  (((debug),     (CLI::Long<"debug">)),                      (Bool)),
-  (((frag),      (CLI::Long<"frag">)),                       (Bool)),
-  (((yield),     (CLI::Long<"yield">)),                      (Bool)),
+  (((debug),     (CLI::Long<"debug">)),                      (Bool, false)),
+  (((frag),      (CLI::Long<"frag">)),                       (Bool, false)),
+  (((yield),     (CLI::Long<"yield">)),                      (Bool, false)),
 #endif
 #ifdef ZiMultiplex_FILTER
   (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),              (String)),
   (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),              (String)),
 #endif
 #ifdef Zquic_DEBUG
-  (((quicDiag),   (CLI::Long<"quic-diag">)),                 (UInt32)),
+  (((quicDiag),   (CLI::Long<"quic-diag">)),                 (UInt32, 0)),
 #endif
-  (((memDiag),    (CLI::Long<"mem-diag">)),                  (UInt32)),
+  (((memDiag),    (CLI::Long<"mem-diag">)),                  (UInt32, 0)),
   (((url),       (CLI::Arg<1>)),                             (String)),
-  (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool)));
+  (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool, false)));
 
 void usage(int code = 1)
 {
@@ -106,9 +109,9 @@ void usage(int code = 1)
     "Options:\n"
     "  -c, --ca=PATH       CA path for https:\n"
     "  -o, --output=PATH   response body output path\n"
+    "  --discard-response  discard response bodies instead of writing files\n"
     "  -n, --requests=N    submit N GET requests, default 1\n"
-    "  -j, --jobs=M        run up to M requests concurrently, default 1;\n"
-    "                      valid only when N > 1; M must be <= N\n"
+    "  -j, --jobs=M        run up to M requests concurrently, default 1\n"
     "  --timeout=N         completion timeout in seconds, default 15, 0 disables\n"
     "  --stall-timeout=N   no-progress stall timeout in seconds, default 15,\n"
     "                      0 disables; currently applies to HTTP/3\n"
@@ -153,7 +156,6 @@ bool validateOptions(Options &options, int argc)
 {
   if (argc < 0 || argc != 2) return false;
   if (!options.requests || !options.concurrency) return false;
-  if (options.concurrency > options.requests) return false;
   if (options.http3 < 0 || options.http3 >= Http3Mode::N) return false;
 #ifdef ZiMultiplex_FILTER
   double drop;
@@ -165,7 +167,7 @@ bool validateOptions(Options &options, int argc)
 
 void printMemDiag()
 {
-  ZiLOG(Debug, "zhttp", ([](auto &s) {
+  ZiLOG(Info, "zhttp", ([](auto &s) {
     s << "Hash Tables:\n" << ZmHashMgr::csv();
     s << "Heaps:\n" << ZmHeapMgr::csv();
   }));
@@ -266,10 +268,7 @@ using RequestHeaders = ZhttpHeaders(
 using ResponseHeaders = ZhttpHeaders(
   "alt-svc",
   "connection",
-  "content-length",
-  "content-type",
-  "location",
-  "server");
+  "location");
 
 struct URL {
   ZuCSpan	scheme;
@@ -302,6 +301,8 @@ struct Req {
   Protocol::T	protocol = Protocol::H1;
   H3CxnState::T h3State = Zhttp::H3::CxnState::Init;
   HdrString	output;
+  bool		discardResponse = false;
+  bool		logResponse = false;
   HdrString	altSvcHost;
   uint16_t	altSvcPort = 0;
   HdrString	location;
@@ -333,6 +334,15 @@ struct Req {
 };
 
 using State = Req;
+
+bool hotLog(const Options &options)
+{
+  return options.verbose
+#ifdef ZiMultiplex_DEBUG
+    || options.debug
+#endif
+    ;
+}
 
 struct ReqLogCtx {
   unsigned	id = 0;
@@ -565,6 +575,18 @@ void resetAttempt(Req &req, bool truncateOutput)
   req.h3FinReceived = false;
 }
 
+void initReq(Req &req, const Run &run, unsigned id)
+{
+  req = {};
+  req.id = id;
+  req.requests = run.options.requests;
+  req.url = run.originalURL;
+  if (!run.options.discardResponse)
+    req.output = outputPath(run.options.output, id, run.options.requests);
+  req.discardResponse = run.options.discardResponse;
+  req.logResponse = hotLog(run.options);
+}
+
 template <typename S>
 void reqLogPrefix(const Req &req, S &s)
 {
@@ -578,6 +600,7 @@ void reqLogPrefix(const ReqLogCtx &ctx, S &s)
 
 bool truncateOutputPath(Req &req)
 {
+  if (req.discardResponse) return true;
   if (!req.truncateOutput) return true;
   ZiFile f{req.output, ZiFile::Write | ZiFile::GC};
   if (!f) {
@@ -712,13 +735,14 @@ template <typename StreamRef>
 void sendH3Request(State &state, StreamRef stream)
 {
   auto tx = stream->txStream();
-  ZiLOG(Debug, "zhttp.h3", ([
-    reqID = state.id, requests = state.requests,
-    target = ZeString(state.url.target), id = stream->id()
-  ](auto &s) mutable {
-    if (requests > 1) s << "req=" << reqID << ' ';
-    s << "send request stream=" << id << " target=" << target;
-  }));
+  if (state.logResponse)
+    ZiLOG(Debug, "zhttp.h3", ([
+      reqID = state.id, requests = state.requests,
+      target = ZeString(state.url.target), id = stream->id()
+    ](auto &s) mutable {
+      if (requests > 1) s << "req=" << reqID << ' ';
+      s << "send request stream=" << id << " target=" << target;
+    }));
   using H3Cxn = ZuDecay<decltype(stream->link()->h3)>;
   H3RequestBuilder<H3Cxn> builder{
     state, stream->link()->h3, uint64_t(stream->id())};
@@ -730,6 +754,8 @@ void sendH3Request(State &state, StreamRef stream)
 void logFraming(State &state)
 {
   if (state.framingLogged) return;
+  state.framingLogged = true;
+  if (!state.logResponse) return;
   auto ctx = reqLogCtx(state);
   auto chunked = state.chunked;
   auto contentLength = state.contentLength;
@@ -743,7 +769,6 @@ void logFraming(State &state)
     else
       s << "no content-length";
   }));
-  state.framingLogged = true;
 }
 
 template <typename Link>
@@ -758,7 +783,9 @@ struct ResponseSink {
   void status(unsigned status) {
     state->status = status;
     state->redirecting = redirectStatus(status);
-    if (!state->redirecting && !truncateOutputPath(*state)) return;
+    if (!state->redirecting && !state->discardResponse &&
+	!truncateOutputPath(*state)) return;
+    if (!state->logResponse) return;
     auto ctx = reqLogCtx(*state);
     ZiLOG(Info, "zhttp.response", ([ctx, status](auto &s) {
       reqLogPrefix(ctx, s);
@@ -777,14 +804,16 @@ struct ResponseSink {
   void header(ZuBSpan value) {
     if constexpr (ZuIsSame<Key, ZuStringT<"alt-svc">>{}) {
       if (parseAltSvc(*state, ZuCSpan(value))) {
-	auto ctx = reqLogCtx(*state);
-	ZeString host;
-	host << state->altSvcHost;
-	auto port = state->altSvcPort;
-	ZiLOG(Info, "zhttp.response", ([ctx, host = ZuMv(host), port](auto &s) {
-	  reqLogPrefix(ctx, s);
-	  s << "alt-svc: h3=\"" << host << ':' << port << '"';
-	}));
+	if (state->logResponse) {
+	  auto ctx = reqLogCtx(*state);
+	  ZeString host;
+	  host << state->altSvcHost;
+	  auto port = state->altSvcPort;
+	  ZiLOG(Info, "zhttp.response", ([ctx, host = ZuMv(host), port](auto &s) {
+	    reqLogPrefix(ctx, s);
+	    s << "alt-svc: h3=\"" << host << ':' << port << '"';
+	  }));
+	}
       }
     } else if constexpr (ZuIsSame<Key, ZuStringT<"connection">>{}) {
       if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "close"))
@@ -794,6 +823,7 @@ struct ResponseSink {
     } else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{}) {
       state->location = ZuCSpan(value);
     }
+    if (!state->logResponse) return;
     auto ctx = reqLogCtx(*state);
     ZeString value_;
     value_ << ZuCSpan(value);
@@ -806,6 +836,9 @@ struct ResponseSink {
   void body(ZuBSpan span) {
     logFraming(*state);
     if (!span || state->redirecting) return;
+    state->bodyBytes += span.length();
+    ++state->bodyChunks;
+    if (state->discardResponse) return;
     if (!truncateOutputPath(*state)) return;
     if (!state->bodyFileOpen) {
       state->bodyFile = ZiFile(state->output, ZiFile::Write | ZiFile::GC);
@@ -831,8 +864,6 @@ struct ResponseSink {
       state->done = true;
       return;
     }
-    state->bodyBytes += span.length();
-    ++state->bodyChunks;
   }
 
   template <typename ParserState>
@@ -840,13 +871,15 @@ struct ResponseSink {
     if (state->done) return;
     auto ctx = reqLogCtx(*state);
     if (parserState == ParserState::Complete) {
-      auto bodyBytes = state->bodyBytes;
-      auto bodyChunks = state->bodyChunks;
-      ZiLOG(Info, "zhttp.response", ([ctx, bodyBytes, bodyChunks](auto &s) {
-	reqLogPrefix(ctx, s);
-	s << "body complete: " << bodyBytes << " bytes in " << bodyChunks <<
-	  " chunks";
-      }));
+      if (state->logResponse) {
+	auto bodyBytes = state->bodyBytes;
+	auto bodyChunks = state->bodyChunks;
+	ZiLOG(Info, "zhttp.response", ([ctx, bodyBytes, bodyChunks](auto &s) {
+	  reqLogPrefix(ctx, s);
+	  s << "body complete: " << bodyBytes << " bytes in " << bodyChunks <<
+	    " chunks";
+	}));
+      }
     } else
       ZiLOG(Error, "zhttp.response", ([ctx, parserState](auto &s) {
 	reqLogPrefix(ctx, s);
@@ -1165,7 +1198,7 @@ struct H1PoolLink : public Base_ {
     }
     bool reuse = ok && reusable();
     this->app()->finishReq(req, ok);
-    req = this->app()->nextReq();
+    req = this->app()->nextReq(id);
     if (!req) {
       stopping = true;
       this->disconnect();
@@ -1189,6 +1222,7 @@ struct H1PoolLink : public Base_ {
   }
 
   unsigned	id = 0;
+  Req		reqSlot;
   Req		*req = nullptr;
   bool		connectedFlag = false;
   bool		closing = false;
@@ -1223,9 +1257,11 @@ struct H1PoolClient : public Client_<App> {
   unsigned		stopped = 0;
   bool			stopping = false;
 
-  Req *nextReq() {
+  Req *nextReq(unsigned slot) {
     if (!run || next >= run->options.requests) return nullptr;
-    return &run->reqs[next++];
+    auto &req = links[slot]->reqSlot;
+    initReq(req, *run, next++);
+    return &req;
   }
   void finishReq(Req *req, bool ok) {
     if (!req) return;
@@ -1235,7 +1271,7 @@ struct H1PoolClient : public Client_<App> {
     if (!ok) ++failed;
   }
   void workerIdle(Link *link, bool reconnect) {
-    Req *req = nextReq();
+    Req *req = nextReq(link->id);
     if (!req) {
       link->stopping = true;
       if (link->connectedFlag)
@@ -1379,7 +1415,7 @@ struct QUICClient::Link :
     if (!this->app()->multi()) return Base::connected(info);
     ++this->app()->up;
     m_countedUp = true;
-    logConnected(this->app()->run->reqs[0], info);
+    logConnected(this->app()->state, info);
     if (!this->h3.openLocal(*this)) {
       this->app()->failH3Link();
       return;
@@ -1503,7 +1539,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
   }));
   if (!run) return;
   ZmGuard<ZmLock> guard(lock);
-  for (unsigned i = 0; i < run->options.requests; ++i) {
+  for (unsigned i = 0; i < run->reqs.length(); ++i) {
     const Req &req = run->reqs[i];
     if (!req.h3Active || req.done) continue;
     auto stream = link->findStream(req.responseStreamID);
@@ -1645,31 +1681,38 @@ void QUICClient::openH3Streams_(Link *link_)
     Req *req = nullptr;
     {
       ZmGuard<ZmLock> guard(lock);
-      while (run && scheduled < run->options.requests &&
-	  run->reqs[scheduled].done)
-	++scheduled;
-      if (!run || active >= run->options.concurrency ||
-	  scheduled >= run->options.requests)
-	return;
-      req = &run->reqs[scheduled++];
-      auto ctx = reqLogCtx(*req);
-      ZiLOG(Debug, "zhttp.h3", ([
-	ctx, scheduled = scheduled, active = active,
-	concurrency = run->options.concurrency
-      ](auto &s) {
-	reqLogPrefix(ctx, s);
-	s << "schedule h3 request scheduled=" << scheduled <<
-	  " active=" << active << " concurrency=" << concurrency;
-      }));
+	  if (!run || active >= run->options.concurrency ||
+		  scheduled >= run->options.requests)
+	    return;
+	  for (unsigned i = 0; i < run->reqs.length(); ++i) {
+	    if (run->reqs[i].h3Active) continue;
+	    req = &run->reqs[i];
+	    initReq(*req, *run, scheduled++);
+	    break;
+	  }
+	  if (!req) return;
+	  if (req->logResponse) {
+	auto ctx = reqLogCtx(*req);
+	ZiLOG(Debug, "zhttp.h3", ([
+	  ctx, scheduled = scheduled, active = active,
+	  concurrency = run->options.concurrency
+	](auto &s) {
+	  reqLogPrefix(ctx, s);
+	  s << "schedule h3 request scheduled=" << scheduled <<
+	    " active=" << active << " concurrency=" << concurrency;
+	}));
+      }
     }
     resetAttempt(*req, true);
     auto stream = link_->stream(Zi::StreamType::Duplex);
     if (!stream) {
-      auto ctx = reqLogCtx(*req);
-      ZiLOG(Debug, "zhttp.h3", ([ctx](auto &s) {
-	reqLogPrefix(ctx, s);
-	s << "no stream credit, queue request";
-      }));
+      if (req->logResponse) {
+	auto ctx = reqLogCtx(*req);
+	ZiLOG(Debug, "zhttp.h3", ([ctx](auto &s) {
+	  reqLogPrefix(ctx, s);
+	  s << "no stream credit, queue request";
+	}));
+      }
       queueH3Req(req);
       return;
     }
@@ -1706,12 +1749,14 @@ void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
 void QUICClient::sendH3Req_(Link *link_, ZmRef<Stream> stream, Req *req)
 {
   if (!link_ || !stream || !req) {
-    auto haveReq = !!req;
-    auto ctx = haveReq ? reqLogCtx(*req) : ReqLogCtx{};
-    ZiLOG(Debug, "zhttp.h3", ([haveReq, ctx](auto &s) {
-      if (haveReq) reqLogPrefix(ctx, s);
-      s << "send h3 request failed before send";
-    }));
+    if (!req || req->logResponse) {
+      auto haveReq = !!req;
+      auto ctx = haveReq ? reqLogCtx(*req) : ReqLogCtx{};
+      ZiLOG(Debug, "zhttp.h3", ([haveReq, ctx](auto &s) {
+	if (haveReq) reqLogPrefix(ctx, s);
+	s << "send h3 request failed before send";
+      }));
+    }
     finishH3Req_(link_, req, false);
     return;
   }
@@ -1720,11 +1765,13 @@ void QUICClient::sendH3Req_(Link *link_, ZmRef<Stream> stream, Req *req)
   stream->req = req;
   stream->parser.bind(link_, req);
   stream->parser.reset();
-  auto ctx = reqLogCtx(*req);
-  ZiLOG(Debug, "zhttp.h3", ([ctx, id = stream->id()](auto &s) {
-    reqLogPrefix(ctx, s);
-    s << "activate stream=" << id;
-  }));
+  if (req->logResponse) {
+    auto ctx = reqLogCtx(*req);
+    ZiLOG(Debug, "zhttp.h3", ([ctx, id = stream->id()](auto &s) {
+      reqLogPrefix(ctx, s);
+      s << "activate stream=" << id;
+    }));
+  }
   sendH3Request(*req, stream);
 }
 
@@ -1733,11 +1780,15 @@ void QUICClient::queueH3Req(Req *req)
   if (!req) return;
   ZmGuard<ZmLock> guard(lock);
   pending.push(req);
-  auto ctx = reqLogCtx(*req);
-  ZiLOG(Debug, "zhttp.h3", ([ctx, n = pending.length() - pendingHead](auto &s) {
-    reqLogPrefix(ctx, s);
-    s << "queued pending=" << n;
-  }));
+  if (req->logResponse) {
+    auto ctx = reqLogCtx(*req);
+    ZiLOG(Debug, "zhttp.h3", ([
+      ctx, n = pending.length() - pendingHead
+    ](auto &s) {
+      reqLogPrefix(ctx, s);
+      s << "queued pending=" << n;
+    }));
+  }
 }
 
 Req *QUICClient::popH3Req()
@@ -1766,11 +1817,13 @@ void QUICClient::bindH3Stream_(Link *link_, ZmRef<Stream> stream)
   Req *req = popH3Req();
   if (!req) return;
   if (!activateH3Req(req)) return;
-  auto ctx = reqLogCtx(*req);
-  ZiLOG(Debug, "zhttp.h3", ([ctx, id = stream->id()](auto &s) {
-    reqLogPrefix(ctx, s);
-    s << "bind returned stream=" << id;
-  }));
+  if (req->logResponse) {
+    auto ctx = reqLogCtx(*req);
+    ZiLOG(Debug, "zhttp.h3", ([ctx, id = stream->id()](auto &s) {
+      reqLogPrefix(ctx, s);
+      s << "bind returned stream=" << id;
+    }));
+  }
   sendH3Req_(link_, ZuMv(stream), req);
 }
 
@@ -1824,17 +1877,19 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
     ++complete;
     if (!ok) ++failed;
     done = !run || complete >= run->options.requests;
-    auto haveReq = !!req;
-    auto ctx = haveReq ? reqLogCtx(*req) : ReqLogCtx{};
-    ZiLOG(Debug, "zhttp.h3", ([
-      haveReq, ctx, ok, active = active, complete = complete,
-      failed = failed, done
-    ](auto &s) {
-      if (haveReq) reqLogPrefix(ctx, s);
-      s << "finish h3 request ok=" << ok <<
-	" active=" << active << " complete=" << complete <<
-	" failed=" << failed << " done=" << done;
-    }));
+    if (!req || req->logResponse) {
+      auto haveReq = !!req;
+      auto ctx = haveReq ? reqLogCtx(*req) : ReqLogCtx{};
+      ZiLOG(Debug, "zhttp.h3", ([
+	haveReq, ctx, ok, active = active, complete = complete,
+	failed = failed, done
+      ](auto &s) {
+	if (haveReq) reqLogPrefix(ctx, s);
+	s << "finish h3 request ok=" << ok <<
+	  " active=" << active << " complete=" << complete <<
+	  " failed=" << failed << " done=" << done;
+      }));
+    }
   }
   if (done)
     sem.post();
@@ -1859,9 +1914,9 @@ void QUICClient::failH3Link()
       " active=" << active << " complete=" << complete <<
       " failed=" << failed;
   }));
-  for (unsigned i = 0; i < run->options.requests; ++i) {
+  for (unsigned i = 0; i < run->reqs.length(); ++i) {
     auto &req = run->reqs[i];
-    if (req.done) continue;
+    if (!req.h3Active || req.done) continue;
     closeBody(req);
     req.done = true;
     req.failed = true;
@@ -1883,6 +1938,8 @@ int run(
   client.state.requests = req.requests;
   client.state.url = req.url;
   client.state.output = req.output;
+  client.state.discardResponse = req.discardResponse;
+  client.state.logResponse = req.logResponse;
 
   if constexpr (Client::Transport == Zi::Transport::TCP) {
     client.state.protocol = Protocol::H1;
@@ -1978,7 +2035,7 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
   for (unsigned i = 0; i < n; ++i) {
     auto link = new typename Client::Link(&client, i);
     client.links[i] = link;
-    Req *req = client.nextReq();
+    Req *req = client.nextReq(i);
     if (!req) continue;
     link->assign(req);
     link->connect(req->url.host, req->url.port);
@@ -2002,7 +2059,7 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
 void h3RunCounts(Run &run, unsigned &complete, unsigned &failed)
 {
   complete = failed = 0;
-  for (unsigned i = 0; i < run.options.requests; ++i) {
+  for (unsigned i = 0; i < run.reqs.length(); ++i) {
     Req &req = run.reqs[i];
     if (!req.done) continue;
     ++complete;
@@ -2012,7 +2069,7 @@ void h3RunCounts(Run &run, unsigned &complete, unsigned &failed)
 
 void resetH3Incomplete(Run &run)
 {
-  for (unsigned i = 0; i < run.options.requests; ++i) {
+  for (unsigned i = 0; i < run.reqs.length(); ++i) {
     Req &req = run.reqs[i];
     if (req.done) continue;
     resetAttempt(req, true);
@@ -2022,10 +2079,19 @@ void resetH3Incomplete(Run &run)
 
 int runH3Multi(ZiMultiplex &mx, Run &run)
 {
+  unsigned n = run.options.concurrency;
+  if (n > run.options.requests) n = run.options.requests;
+  run.reqs.length(n);
   for (unsigned attempt = 0; attempt < H3MaxAttempts; ++attempt) {
     QUICClient client;
     client.run = &run;
-    h3RunCounts(run, client.complete, client.failed);
+    client.complete = run.complete;
+    client.failed = run.failed;
+    client.scheduled = run.complete;
+    client.state.requests = run.options.requests;
+    client.state.url = run.originalURL;
+    client.state.discardResponse = run.options.discardResponse;
+    client.state.logResponse = hotLog(run.options);
     if (client.complete >= run.options.requests) {
       run.complete = client.complete;
       run.failed = client.failed;
@@ -2051,9 +2117,13 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     link->connect(run.originalURL.host, run.originalURL.port);
     bool timedOut = false;
     bool stalled = false;
+    IntervalMonitor mon{
+      run.options.timeout,
+      run.options.memDiag
 #ifdef Zquic_DEBUG
-    IntervalMonitor mon{run.options.timeout, run.options.memDiag,
-      run.options.quicDiag};
+      , run.options.quicDiag
+#endif
+    };
     unsigned idle = 0;
     unsigned lastComplete = client.complete;
     unsigned quiet = 0;
@@ -2086,9 +2156,13 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	quiet = 0;
       } else
 	quiet += step;
+#ifdef Zquic_DEBUG
       mon.intervals(
 	[]() { printMemDiag(); },
 	[&]() { client.printDiag(link, "diag"); });
+#else
+      mon.intervals([]() { printMemDiag(); });
+#endif
       if (run.options.quietTimeout && (client.scheduled || client.active) &&
 	  quiet >= run.options.quietTimeout && !txPending &&
 	  client.complete < run.options.requests) {
@@ -2106,10 +2180,6 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	break;
       }
     }
-#else
-    if (!waitMonitored(client.sem, run.options.timeout, run.options.memDiag))
-      timedOut = true;
-#endif
     if (timedOut || stalled) {
       client.printDiag(link, timedOut ? "timeout" : "stall");
       ZiLOG(Error, "zhttp", ([attempt, stalled](auto &s) {
@@ -2128,12 +2198,9 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     client.final();
     if (!timedOut && !stalled)
       return run.failed ? 1 : 0;
-    h3RunCounts(run, run.complete, run.failed);
     if (run.complete >= run.options.requests)
       return run.failed ? 1 : 0;
-    resetH3Incomplete(run);
   }
-  h3RunCounts(run, run.complete, run.failed);
   run.failed += run.options.requests - run.complete;
   return 1;
 }
@@ -2373,7 +2440,6 @@ int main(int argc, char **argv)
   argc = ZtCLI::load(options, argc, argv);
   if (options.help) usage(0);
   if (!validateOptions(options, argc)) usage();
-  if (options.requests == 1) options.concurrency = 1;
 
   URL url;
   ZeException error;
@@ -2404,27 +2470,18 @@ int main(int argc, char **argv)
   Run run;
   run.options = options;
   run.originalURL = url;
-  run.reqs.length(options.requests);
-  for (unsigned i = 0; i < options.requests; ++i) {
-    auto &req = run.reqs[i];
-    req.id = i;
-    req.requests = options.requests;
-    req.url = url;
-    req.output = outputPath(options.output, i, options.requests);
-  }
-
   int rc = 0;
-  if (options.requests > 1 &&
-      options.http3 == Http3Mode::force && url.scheme == "https") {
+  if (options.http3 == Http3Mode::force && url.scheme == "https") {
     rc = runH3Multi(mx, run);
-  } else if (options.requests > 1 && url.scheme == "http") {
+  } else if (url.scheme == "http") {
     rc = runH1Pool<H1TCPClient>(mx, run);
-  } else if (options.requests > 1 &&
-      options.http3 == Http3Mode::disable && url.scheme == "https") {
+  } else if (options.http3 == Http3Mode::disable && url.scheme == "https") {
     rc = runH1Pool<H1TLSClient>(mx, run);
   } else {
+    Req req;
     for (unsigned i = 0; i < options.requests; ++i) {
-      if (runReqSerial(mx, run, run.reqs[i])) {
+      initReq(req, run, i);
+      if (runReqSerial(mx, run, req)) {
 	++run.failed;
 	rc = 1;
       }
