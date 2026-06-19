@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 #include <iostream>
@@ -33,7 +34,6 @@ ZuCSpan Body = "zhttp-interop-ok";
 constexpr unsigned DefaultCaseTimeout = 15;
 constexpr unsigned DefaultStallTimeout = 15;
 constexpr unsigned DefaultQuietTimeout = 5;
-constexpr unsigned InfiniteCaseTimeout = 0;
 constexpr unsigned ReadyAttempts = 15;
 
 uint64_t nowMS()
@@ -50,7 +50,7 @@ uint64_t &startMS()
 }
 
 namespace Pair {
-  enum T { ZhttpCaddy, ZhttpZhttpd, CurlZhttpd };
+  enum T { ZhttpCaddy, ZhttpZhttpd, CurlCaddy, CurlZhttpd };
 }
 
 namespace Proto {
@@ -71,34 +71,45 @@ using OptString = ZtString<ZtStringHeapID<"ZtCLI.Option">>;
 
 struct Options {
   OptString	caseName;
-	  bool		debug = false;
-	  bool		frag = false;
-	  bool		yield = false;
-	  bool		pcap = false;
-	  OptString	quicRxDrop;
-	  OptString	quicTxDrop;
+  uint32_t	timeout = DefaultCaseTimeout;
+  uint32_t	stallTimeout = DefaultStallTimeout;
+  uint32_t	quietTimeout = DefaultQuietTimeout;
+  bool		debug = false;
+  bool		frag = false;
+  bool		yield = false;
+  bool		pcap = false;
+  bool		discardResponse = false;
+  OptString	quicRxDrop;
+  OptString	quicTxDrop;
 #ifdef Zquic_DEBUG
-	  uint32_t	quicDiag = 0;
+  uint32_t	quicDiag = 0;
 #endif
-	  uint32_t	memDiag = 0;
-	  bool		quiet = false;
-	  bool		help = false;
-	};
+  uint32_t	memDiag = 0;
+  bool		quiet = false;
+  bool		help = false;
+};
 
 ZtStruct((Options, CLI),
   (((caseName), (CLI::Long<"case">)),                            (String, "")),
-	  (((debug),    (CLI::Long<"debug">)),                           (Bool, false)),
-	  (((frag),     (CLI::Long<"frag">)),                            (Bool, false)),
-	  (((yield),    (CLI::Long<"yield">)),                           (Bool, false)),
-	  (((pcap),     (CLI::Long<"pcap">)),                            (Bool, false)),
-	  (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),                  (String, "")),
-	  (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),                  (String, "")),
+  (((timeout),  (CLI::Long<"timeout">)),                         (UInt32, DefaultCaseTimeout)),
+  (((stallTimeout),
+    (CLI::Long<"stall-timeout">)),                                (UInt32, DefaultStallTimeout)),
+  (((quietTimeout),
+    (CLI::Long<"quiet-timeout">)),                                (UInt32, DefaultQuietTimeout)),
+  (((debug),    (CLI::Long<"debug">)),                            (Bool, false)),
+  (((frag),     (CLI::Long<"frag">)),                             (Bool, false)),
+  (((yield),    (CLI::Long<"yield">)),                            (Bool, false)),
+  (((pcap),     (CLI::Long<"pcap">)),                             (Bool, false)),
+  (((discardResponse),
+    (CLI::Long<"discard-response">)),                             (Bool, false)),
+  (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),                   (String, "")),
+  (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),                   (String, "")),
 #ifdef Zquic_DEBUG
-	  (((quicDiag), (CLI::Long<"quic-diag">)),                       (UInt32, 0)),
+  (((quicDiag), (CLI::Long<"quic-diag">)),                        (UInt32, 0)),
 #endif
-	  (((memDiag),  (CLI::Long<"mem-diag">)),                        (UInt32, 0)),
-	  (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),           (Bool, false)),
-	  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),            (Bool, false)));
+  (((memDiag),  (CLI::Long<"mem-diag">)),                         (UInt32, 0)),
+  (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),            (Bool, false)),
+  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),             (Bool, false)));
 
 Options options;
 
@@ -107,6 +118,7 @@ const char *pairName(Pair::T pair)
   switch (pair) {
     case Pair::ZhttpCaddy: return "zhttp>caddy";
     case Pair::ZhttpZhttpd: return "zhttp>zhttpd";
+    case Pair::CurlCaddy: return "curl>caddy";
     case Pair::CurlZhttpd: return "curl>zhttpd";
   }
   return "unknown";
@@ -117,6 +129,7 @@ const char *pairCaseName(Pair::T pair)
   switch (pair) {
     case Pair::ZhttpCaddy: return "zhttp-caddy";
     case Pair::ZhttpZhttpd: return "zhttp-zhttpd";
+    case Pair::CurlCaddy: return "curl-caddy";
     case Pair::CurlZhttpd: return "curl-zhttpd";
   }
   return "unknown";
@@ -153,19 +166,25 @@ void usage(int code = 1)
   std::cerr <<
     "Usage: zhttpmatrix [OPTION]...\n\n"
     "Options:\n"
-    "  --case=CASE       exact case, e.g. zhttp-zhttpd/h3/j10n1000\n"
-    "                    optional: .../j10n1000000\n"
-	    "  --debug           debug zhttp/zhttpd and preserve case directories\n"
-	    "  --frag            fragment zhttp/zhttpd ZiMultiplex I/O\n"
-	    "  --yield           yield in zhttp/zhttpd ZiMultiplex\n"
-	    "  --pcap            capture H3 UDP traffic and preserve case directories\n"
-	    "  --quic-rx-drop=N% pass QUIC receive packet drop rate to zhttp/zhttpd\n"
-	    "  --quic-tx-drop=N% pass QUIC transmit packet drop rate to zhttp/zhttpd\n"
+    "  --case=CASE       exact case, e.g. zhttp-caddy/h3/j10n100000\n"
+    "                    default matrix excludes curl-caddy; explicit cases may use it\n"
+    "  --timeout=N       client timeout in seconds, default 15, 0 disables\n"
+    "  --stall-timeout=N no-progress stall timeout in seconds, default 15,\n"
+    "                    0 disables; zhttp only\n"
+    "  --quiet-timeout=N quiet transport timeout in seconds, default 5,\n"
+    "                    0 disables; zhttp only\n"
+    "  --debug           debug zhttp/zhttpd and preserve case directories\n"
+    "  --frag            fragment zhttp/zhttpd ZiMultiplex\n"
+    "  --yield           yield in zhttp/zhttpd ZiMultiplex\n"
+    "  --pcap            capture H3 UDP traffic and preserve case directories\n"
+    "  --discard-response discard zhttp response bodies\n"
+    "  --quic-rx-drop=N% pass QUIC receive packet drop rate to zhttp/zhttpd\n"
+    "  --quic-tx-drop=N% pass QUIC transmit packet drop rate to zhttp/zhttpd\n"
 #ifdef Zquic_DEBUG
-	    "  --quic-diag=N     pass QUIC diagnostic print interval in seconds\n"
+    "  --quic-diag=N     pass QUIC diagnostic print interval in seconds\n"
 #endif
-	    "  --mem-diag=N      pass memory diagnostic print interval in seconds\n"
-	    "  -q, --quiet       quiet output\n"
+    "  --mem-diag=N      pass memory diagnostic print interval in seconds\n"
+    "  -q, --quiet       quiet output\n"
     "  -h, --help        show help\n" <<
     std::flush;
   ::exit(code);
@@ -182,17 +201,107 @@ bool preserveLogs()
 
 bool selected(const Case &c)
 {
-  if (options.caseName) {
-    ZtString<> name;
-    caseName(name, c);
-    return name == options.caseName;
+  if (options.caseName) return true;
+  if (c.pair == Pair::CurlCaddy) return false;
+  return true;
+}
+
+bool parsePair(ZuCSpan name, Pair::T &pair)
+{
+  if (name == "zhttp-caddy") {
+    pair = Pair::ZhttpCaddy;
+    return true;
   }
+  if (name == "zhttp-zhttpd") {
+    pair = Pair::ZhttpZhttpd;
+    return true;
+  }
+  if (name == "curl-caddy") {
+    pair = Pair::CurlCaddy;
+    return true;
+  }
+  if (name == "curl-zhttpd") {
+    pair = Pair::CurlZhttpd;
+    return true;
+  }
+  return false;
+}
+
+bool parseProto(ZuCSpan name, Proto::T &proto)
+{
+  if (name == "h1-tcp") {
+    proto = Proto::H1TCP;
+    return true;
+  }
+  if (name == "h1-tls") {
+    proto = Proto::H1TLS;
+    return true;
+  }
+  if (name == "h3") {
+    proto = Proto::H3;
+    return true;
+  }
+  return false;
+}
+
+int findChar(ZuCSpan s, char c, unsigned off = 0)
+{
+  for (unsigned i = off, n = s.length(); i < n; ++i)
+    if (s[i] == c) return int(i);
+  return -1;
+}
+
+bool parseUInt(ZuCSpan s, unsigned &v)
+{
+  if (!s) return false;
+  unsigned v_ = 0;
+  for (unsigned i = 0, n = s.length(); i < n; ++i) {
+    unsigned c = s[i] - '0';
+    if (c > 9) return false;
+    v_ = (v_ * 10) + c;
+  }
+  v = v_;
+  return true;
+}
+
+bool parseCase(Case &c)
+{
+  ZuCSpan s{options.caseName.data(), options.caseName.length()};
+  int pairEnd = findChar(s, '/');
+  if (pairEnd <= 0) return false;
+  int protoEnd = findChar(s, '/', pairEnd + 1);
+  if (protoEnd <= pairEnd + 1) return false;
+  unsigned workload = unsigned(protoEnd + 1);
+  if (workload + 1 >= s.length() || s[workload] != 'j') return false;
+  int nOff = findChar(s, 'n', workload + 1);
+  if (nOff <= int(workload + 1) || nOff + 1 >= int(s.length()))
+    return false;
+  unsigned jobs, requests;
+  if (!parseUInt(ZuCSpan{s.data() + workload + 1,
+	  unsigned(nOff) - workload - 1}, jobs) ||
+      !parseUInt(ZuCSpan{s.data() + nOff + 1,
+	  s.length() - unsigned(nOff) - 1}, requests))
+    return false;
+  Pair::T pair;
+  Proto::T proto;
+  if (!parsePair(ZuCSpan{s.data(), unsigned(pairEnd)}, pair) ||
+      !parseProto(ZuCSpan{s.data() + pairEnd + 1,
+	unsigned(protoEnd - pairEnd - 1)}, proto))
+    return false;
+  if (!jobs || !requests) return false;
+  c = {pair, proto, jobs, requests,
+    options.timeout, options.stallTimeout, options.quietTimeout};
   return true;
 }
 
 template <typename L>
 void eachCase(L l)
 {
+  if (options.caseName) {
+    Case c;
+    if (parseCase(c)) l(c);
+    return;
+  }
   Pair::T pairs[] = {
     Pair::ZhttpCaddy,
     Pair::ZhttpZhttpd,
@@ -203,47 +312,20 @@ void eachCase(L l)
     Proto::H1TLS,
     Proto::H3
   };
-  struct Workload {
-    unsigned jobs;
-    unsigned requests;
-  };
-  Workload workloads[] = {
-    {1, 1},
-    {1, 1000},
-    {10, 1000}
-  };
+  unsigned jobs[] = {1, 5};
+  unsigned requests[] = {1, 10, 1000};
   for (auto pair : pairs)
     for (auto proto : protos)
-      for (auto workload : workloads)
-	l(Case{pair, proto, workload.jobs, workload.requests,
-	    DefaultCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout});
-}
-
-template <typename L>
-void eachExactCase(L l)
-{
-  eachCase(l);
-  if (!options.caseName) return;
-  Pair::T pairs[] = {
-    Pair::ZhttpCaddy,
-    Pair::ZhttpZhttpd,
-    Pair::CurlZhttpd
-  };
-  Proto::T protos[] = {
-    Proto::H1TCP,
-    Proto::H1TLS,
-    Proto::H3
-  };
-  for (auto pair : pairs)
-    for (auto proto : protos)
-      l(Case{pair, proto, 10, 1000000,
-	  InfiniteCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout});
+      for (auto job : jobs)
+	for (auto request : requests)
+	  l(Case{pair, proto, job, request,
+	      options.timeout, options.stallTimeout, options.quietTimeout});
 }
 
 bool anySelected()
 {
   bool any = false;
-  eachExactCase([&any](const Case &c) {
+  eachCase([&any](const Case &c) {
     if (selected(c)) any = true;
   });
   return any;
@@ -252,8 +334,10 @@ bool anySelected()
 bool selectedNeedsCaddy()
 {
   bool need = false;
-  eachExactCase([&need](const Case &c) {
-    if (selected(c) && c.pair == Pair::ZhttpCaddy) need = true;
+  eachCase([&need](const Case &c) {
+    if (selected(c) &&
+	(c.pair == Pair::ZhttpCaddy || c.pair == Pair::CurlCaddy))
+      need = true;
   });
   return need;
 }
@@ -261,7 +345,7 @@ bool selectedNeedsCaddy()
 bool selectedNeedsCurlH3()
 {
   bool need = false;
-  eachExactCase([&need](const Case &c) {
+  eachCase([&need](const Case &c) {
     if (selected(c) && c.proto == Proto::H3) need = true;
   });
   return need;
@@ -372,9 +456,12 @@ void appendZhttpCommand(
   script << "if ! ";
   if (c.timeout) script << "timeout " << c.timeout << "s ";
   script << "\"$client\" -j " << c.jobs << " -n " << c.requests;
+#ifdef ZiMultiplex_DEBUG
   if (options.debug) script << " --debug";
   if (options.frag && c.proto != Proto::H3) script << " --frag";
   if (options.yield) script << " --yield";
+#endif
+  if (options.discardResponse) script << " --discard-response";
   if (options.memDiag) script << " --mem-diag=" << options.memDiag;
   script << " --timeout=" << c.timeout <<
     " --stall-timeout=" << c.stallTimeout <<
@@ -410,7 +497,8 @@ void appendZhttpCommand(
 	    script <<
 	      "stop_pcap\n"
 	      "analyze_pcap\n";
-	  script <<
+	  if (!options.discardResponse)
+	    script <<
 	    "if [ " << c.requests << " -eq 1 ]; then\n"
 	    "  grep -qx '" << Body << "' " << tempPath << "/body\n"
 	    "else\n"
@@ -477,8 +565,8 @@ bool writeScript(
   ZuCSpan path, const Case &c, unsigned port, ZuCSpan tempPath,
   ZuCSpan rootPath, ZuCSpan certPath, ZuCSpan keyPath, ZuCSpan caddyfile)
 {
-  bool caddy = c.pair == Pair::ZhttpCaddy;
-  bool zhttp = c.pair != Pair::CurlZhttpd;
+  bool caddy = c.pair == Pair::ZhttpCaddy || c.pair == Pair::CurlCaddy;
+  bool zhttp = c.pair == Pair::ZhttpCaddy || c.pair == Pair::ZhttpZhttpd;
   ZtString<> script;
   script <<
     "#!/bin/sh\n"
@@ -571,9 +659,11 @@ bool writeScript(
       "done\n";
   else {
     script << "\"$server\" " << rootPath;
+#ifdef ZiMultiplex_DEBUG
     if (options.debug) script << " --debug";
     if (options.frag && c.proto != Proto::H3) script << " --frag";
     if (options.yield) script << " --yield";
+#endif
     if (options.memDiag) script << " --mem-diag=" << options.memDiag;
     switch (c.proto) {
       case Proto::H1TCP:
@@ -672,7 +762,7 @@ bool runCase_(const Case &c)
     return false;
   }
   auto caddyfile = temp.pathOf("Caddyfile");
-  if (c.pair == Pair::ZhttpCaddy &&
+  if ((c.pair == Pair::ZhttpCaddy || c.pair == Pair::CurlCaddy) &&
       !writeCaddyfile(caddyfile, c.proto, port, cspan(rootPath),
 	cspan(certPath), cspan(keyPath))) {
     std::cout << "# failed to write Caddyfile\n";
@@ -753,82 +843,6 @@ bool prerequisitesOK()
 
 } // namespace
 
-#define ZHTTP_INTEROP_COUNT(pair_, proto_, j, n) \
-  do { \
-    Case c{Pair::pair_, Proto::proto_, j, n, \
-      DefaultCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout}; \
-    if (selected(c)) ++nTests; \
-  } while (0)
-
-#define ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, proto_) \
-  ZHTTP_INTEROP_COUNT(pair_, proto_, 1, 1); \
-  ZHTTP_INTEROP_COUNT(pair_, proto_, 1, 1000); \
-  ZHTTP_INTEROP_COUNT(pair_, proto_, 10, 1000)
-
-#define ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, proto_) \
-  do { \
-    Case c{Pair::pair_, Proto::proto_, 10, 1000000, \
-      InfiniteCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout}; \
-    if (selected(c)) ++nTests; \
-  } while (0)
-
-#define ZHTTP_INTEROP_COUNT_PROTOCOLS(pair_) \
-  ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H1TCP); \
-  ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H1TLS); \
-  ZHTTP_INTEROP_COUNT_WORKLOADS(pair_, H3)
-
-#define ZHTTP_INTEROP_COUNT_EXACT_PROTOCOLS(pair_) \
-  ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, H1TCP); \
-  ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, H1TLS); \
-  ZHTTP_INTEROP_COUNT_EXACT_WORKLOADS(pair_, H3)
-
-#define ZHTTP_INTEROP_RUN(pair_, proto_, j, n) \
-  do { \
-    Case c{Pair::pair_, Proto::proto_, j, n, \
-      DefaultCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout}; \
-    if (selected(c)) { \
-      ZtString<> name; \
-      caseName(name, c); \
-      uint64_t start = printCaseStart(c); \
-      bool ok = prereqOK && runCase_(c); \
-      printCaseEnd(c, ok, start); \
-      pass &= ok; \
-      std::cout << (ok ? "ok " : "not ok ") << ++testNo << " - " << \
-	name << '\n'; \
-    } \
-  } while (0)
-
-#define ZHTTP_INTEROP_RUN_WORKLOADS(pair_, proto_) \
-  ZHTTP_INTEROP_RUN(pair_, proto_, 1, 1); \
-  ZHTTP_INTEROP_RUN(pair_, proto_, 1, 1000); \
-  ZHTTP_INTEROP_RUN(pair_, proto_, 10, 1000)
-
-#define ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, proto_) \
-  do { \
-    Case c{Pair::pair_, Proto::proto_, 10, 1000000, \
-      InfiniteCaseTimeout, DefaultStallTimeout, DefaultQuietTimeout}; \
-    if (selected(c)) { \
-      ZtString<> name; \
-      caseName(name, c); \
-      uint64_t start = printCaseStart(c); \
-      bool ok = prereqOK && runCase_(c); \
-      printCaseEnd(c, ok, start); \
-      pass &= ok; \
-      std::cout << (ok ? "ok " : "not ok ") << ++testNo << " - " << \
-	name << '\n'; \
-    } \
-  } while (0)
-
-#define ZHTTP_INTEROP_RUN_PROTOCOLS(pair_) \
-  ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H1TCP); \
-  ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H1TLS); \
-  ZHTTP_INTEROP_RUN_WORKLOADS(pair_, H3)
-
-#define ZHTTP_INTEROP_RUN_EXACT_PROTOCOLS(pair_) \
-  ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, H1TCP); \
-  ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, H1TLS); \
-  ZHTTP_INTEROP_RUN_EXACT_WORKLOADS(pair_, H3)
-
 int main(int argc, char **argv)
 {
   argc = ZtCLI::load(options, argc, const_cast<const char *const *>(argv));
@@ -837,14 +851,9 @@ int main(int argc, char **argv)
   verbose = !options.quiet && !::getenv("HARNESS_ACTIVE");
 
   unsigned nTests = 1;
-  ZHTTP_INTEROP_COUNT_PROTOCOLS(ZhttpCaddy);
-  ZHTTP_INTEROP_COUNT_PROTOCOLS(ZhttpZhttpd);
-  ZHTTP_INTEROP_COUNT_PROTOCOLS(CurlZhttpd);
-  if (options.caseName) {
-    ZHTTP_INTEROP_COUNT_EXACT_PROTOCOLS(ZhttpCaddy);
-    ZHTTP_INTEROP_COUNT_EXACT_PROTOCOLS(ZhttpZhttpd);
-    ZHTTP_INTEROP_COUNT_EXACT_PROTOCOLS(CurlZhttpd);
-  }
+  eachCase([&nTests](const Case &c) {
+    if (selected(c)) ++nTests;
+  });
 
   std::cout << "TAP version 14\n1.." << nTests << '\n';
 
@@ -855,14 +864,17 @@ int main(int argc, char **argv)
   std::cout << (prereqOK ? "ok " : "not ok ") << testNo <<
     " - testPrerequisites\n";
 
-  ZHTTP_INTEROP_RUN_PROTOCOLS(ZhttpCaddy);
-  ZHTTP_INTEROP_RUN_PROTOCOLS(ZhttpZhttpd);
-  ZHTTP_INTEROP_RUN_PROTOCOLS(CurlZhttpd);
-  if (options.caseName) {
-    ZHTTP_INTEROP_RUN_EXACT_PROTOCOLS(ZhttpCaddy);
-    ZHTTP_INTEROP_RUN_EXACT_PROTOCOLS(ZhttpZhttpd);
-    ZHTTP_INTEROP_RUN_EXACT_PROTOCOLS(CurlZhttpd);
-  }
+  eachCase([&pass, prereqOK, &testNo](const Case &c) {
+    if (!selected(c)) return;
+    ZtString<> name;
+    caseName(name, c);
+    uint64_t start = printCaseStart(c);
+    bool ok = prereqOK && runCase_(c);
+    printCaseEnd(c, ok, start);
+    pass &= ok;
+    std::cout << (ok ? "ok " : "not ok ") << ++testNo << " - " <<
+      name << '\n';
+  });
 
   return pass ? 0 : 1;
 }

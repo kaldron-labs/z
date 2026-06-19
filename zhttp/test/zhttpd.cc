@@ -109,7 +109,7 @@ bool loadOptions(Options &options, int argc, char **argv)
 
 void printMemDiag()
 {
-  ZiLOG(Debug, "zhttpd", ([](auto &s) {
+  ZiLOG(Info, "zhttpd", ([](auto &s) {
     s << "Hash Tables:\n" << ZmHashMgr::csv();
     s << "Heaps:\n" << ZmHeapMgr::csv();
   }));
