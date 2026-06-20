@@ -2301,16 +2301,16 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 #else
       mon.intervals([]() { printMemDiag(); });
 #endif
+      bool incomplete = client.complete < run.options.requests;
       if (run.options.quietTimeout && (client.scheduled || client.active) &&
 	  quiet >= run.options.quietTimeout &&
-	  client.complete < run.options.requests) {
+	  incomplete) {
 	stalled = true;
 	quietTimedOut = true;
 	break;
       }
-      if (run.options.stallTimeout && (client.scheduled || client.active) &&
-	  idle >= run.options.stallTimeout &&
-	  client.complete < run.options.requests) {
+      if (run.options.stallTimeout && incomplete &&
+	  idle >= run.options.stallTimeout) {
 	stalled = true;
 	break;
       }
@@ -2321,6 +2321,43 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     }
     if (timedOut || stalled) {
       client.printDiag(link, timedOut ? "timeout" : "stall");
+      Zquic::RuntimeDiag diag = link->runtimeDiag();
+      unsigned complete, failed, scheduled, active, pending;
+      {
+	ZmGuard<ZmLock> guard(client.lock);
+	complete = client.complete;
+	failed = client.failed;
+	scheduled = client.scheduled;
+	active = client.active;
+	pending = client.pending.length() - client.pendingHead;
+      }
+      ZiLOG(Error, "zhttp", ([
+	complete, failed, scheduled, active, pending,
+	streams = link->streamCount(),
+	opened = link->localStreamsOpened(Zi::StreamType::Duplex),
+	queued = link->queuedLocalStreams(Zi::StreamType::Duplex),
+	packetsRx = diag.packetsRx,
+	packetsTx = diag.packetsTx,
+	pto = diag.ptoCount,
+	retx = diag.retransmittedFrames,
+	ptoBackoff = diag.ptoBackoff,
+	ptoTimeoutUS = diag.ptoTimeoutUS
+      ](auto &s) {
+	s << "h3 timeout state complete=" << complete <<
+	  " failed=" << failed <<
+	  " scheduled=" << scheduled <<
+	  " active=" << active <<
+	  " pending=" << pending <<
+	  " streams=" << streams <<
+	  " opened=" << opened <<
+	  " queued=" << queued <<
+	  " packetsRx=" << packetsRx <<
+	  " packetsTx=" << packetsTx <<
+	  " pto=" << pto <<
+	  " retx=" << retx <<
+	  " ptoBackoff=" << ptoBackoff <<
+	  " ptoTimeoutUS=" << ptoTimeoutUS;
+      }));
       ZiLOG(Error, "zhttp", ([attempt, stalled](auto &s) {
 	s << "h3 " << (stalled ? "stalled" : "timed out") <<
 	  ", reconnecting attempt=" << attempt + 1;
