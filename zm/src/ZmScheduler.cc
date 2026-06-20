@@ -9,7 +9,6 @@
 #include <zlib/ZuBox.hh>
 
 #include <zlib/ZmScheduler.hh>
-#include <zlib/ZmTrap.hh>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -204,7 +203,7 @@ void ZmScheduler::timer()
 	  m_schedule.addNode(timer);
 	  schedGuard.unlock();
 	  Zm::sleep(m_params.quantum());
-	  return;
+	  break;
 	}
 	timer->fn = Fn{};
 	timer->timeout = ZuTime{};
@@ -308,35 +307,10 @@ bool ZmScheduler::tryRun_(Thread *thread, Fn &fn)
 
 bool ZmScheduler::push_(Thread *thread, Fn &fn)
 {
-  // Note: the MPSC requirement is to serialize each producing thread's work
-  if (ZuLikely(!thread->queueCount.load_())) goto push;
-overflow:
-  ++thread->queueCount;
+  if (ZuLikely(tryPush_(thread, fn))) return true;
   thread->queue.push(ZuMv(fn));
+  ++thread->queueCount;
   return true;
-push:
-  {
-    unsigned size = fn.pushSize();
-    void *ptr;
-    if (ZuLikely(ptr = thread->ring.tryPush(size))) {
-      fn.push(ptr);
-      thread->ring.push2(ptr, size);
-      return true;
-    }
-  }
-  int status = thread->ring.writeStatus();
-  if (status == Zu::EndOfFile || status >= 0) goto overflow;
-  // should never happen - the enqueuing thread will normally
-  // be forced to wait for the dequeuing thread to drain the ring,
-  // i.e. a slower consumer will apply back-pressure to the producer
-  ZuCArray<120> s;
-  s << "FATAL - Thread Dispatch Failure - push() failed: ";
-  if (status <= 0)
-    s << Zu::IOResult{status};
-  else
-    s << ZuBoxed(status) << " bytes remaining";
-  ZmTrap::log(s);
-  return false;
 }
 
 bool ZmScheduler::tryPush_(Thread *thread, Fn &fn)
