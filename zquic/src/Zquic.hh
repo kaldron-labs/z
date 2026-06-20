@@ -26,9 +26,11 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmAlloc.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmGuard.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
+#include <zlib/ZmPLock.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmQueue.hh>
 
@@ -519,11 +521,29 @@ struct RuntimeRxDiag {
   uint64_t	bytesRx = 0;
   uint64_t	packetsRx = 0;
   uint64_t	framesRx = 0;
+  uint64_t	duplicatePacketsRx = 0;
+  uint64_t	ackCommitsRx = 0;
+  uint64_t	ackElicitingRx = 0;
+  uint64_t	ackImmediateRx = 0;
+  uint64_t	ackSnapshotPostsRx = 0;
+  uint64_t	streamNoDataRx = 0;
   uint64_t	cryptoBytesRx = 0;
   uint64_t	streamBytesRx = 0;
   uint64_t	invalidStreamFrames = 0;
   uint64_t	closedStreamFrames = 0;
   uint64_t	suspiciousStreamCloses = 0;
+  uint64_t	streamMaxClosedRx = 0;
+  uint64_t	streamMaxInvalidRx = 0;
+  uint64_t	streamCtlClosedRx = 0;
+  uint64_t	streamCtlInvalidRx = 0;
+  uint64_t	streamDataInvalidRx = 0;
+  uint64_t	streamDataStateRx = 0;
+  uint64_t	streamDataFinalRx = 0;
+  uint64_t	streamRxDeqStateRx = 0;
+  uint64_t	streamRxDeqFinalRx = 0;
+  uint64_t	streamBlockedClosedRx = 0;
+  uint64_t	streamBlockedInvalidRx = 0;
+  uint64_t	streamBlockedFinalRx = 0;
   uint64_t	unhandledAppEvents = 0;
   uint64_t	peerKeyUpdates = 0;
   uint64_t	invalidKeyPhases = 0;
@@ -544,6 +564,12 @@ struct RuntimeTxDiag {
   uint64_t	ackOnlyPacketsTx = 0;
   uint64_t	streamOnlyPacketsTx = 0;
   uint64_t	ackStreamPacketsTx = 0;
+  uint64_t	ackSnapshotInstallsTx = 0;
+  uint64_t	ackDueInstallsTx = 0;
+  uint64_t	ackAppendTx = 0;
+  uint64_t	ackAppendEmptyTx = 0;
+  uint64_t	ackAppendNotDueTx = 0;
+  uint64_t	ackSentTx = 0;
   uint64_t	controlOnlyPacketsTx = 0;
   uint64_t	ackControlPacketsTx = 0;
   uint64_t	streamControlPacketsTx = 0;
@@ -599,11 +625,29 @@ struct RuntimeDiag {
     bytesRx = rx.bytesRx;
     packetsRx = rx.packetsRx;
     framesRx = rx.framesRx;
+    duplicatePacketsRx = rx.duplicatePacketsRx;
+    ackCommitsRx = rx.ackCommitsRx;
+    ackElicitingRx = rx.ackElicitingRx;
+    ackImmediateRx = rx.ackImmediateRx;
+    ackSnapshotPostsRx = rx.ackSnapshotPostsRx;
+    streamNoDataRx = rx.streamNoDataRx;
     cryptoBytesRx = rx.cryptoBytesRx;
     streamBytesRx = rx.streamBytesRx;
     invalidStreamFrames = rx.invalidStreamFrames;
     closedStreamFrames = rx.closedStreamFrames;
     suspiciousStreamCloses = rx.suspiciousStreamCloses;
+    streamMaxClosedRx = rx.streamMaxClosedRx;
+    streamMaxInvalidRx = rx.streamMaxInvalidRx;
+    streamCtlClosedRx = rx.streamCtlClosedRx;
+    streamCtlInvalidRx = rx.streamCtlInvalidRx;
+    streamDataInvalidRx = rx.streamDataInvalidRx;
+    streamDataStateRx = rx.streamDataStateRx;
+    streamDataFinalRx = rx.streamDataFinalRx;
+    streamRxDeqStateRx = rx.streamRxDeqStateRx;
+    streamRxDeqFinalRx = rx.streamRxDeqFinalRx;
+    streamBlockedClosedRx = rx.streamBlockedClosedRx;
+    streamBlockedInvalidRx = rx.streamBlockedInvalidRx;
+    streamBlockedFinalRx = rx.streamBlockedFinalRx;
     unhandledAppEvents = rx.unhandledAppEvents + tx.unhandledAppEvents;
     peerKeyUpdates = rx.peerKeyUpdates;
     invalidKeyPhases = rx.invalidKeyPhases;
@@ -619,6 +663,12 @@ struct RuntimeDiag {
     ackOnlyPacketsTx = tx.ackOnlyPacketsTx;
     streamOnlyPacketsTx = tx.streamOnlyPacketsTx;
     ackStreamPacketsTx = tx.ackStreamPacketsTx;
+    ackSnapshotInstallsTx = tx.ackSnapshotInstallsTx;
+    ackDueInstallsTx = tx.ackDueInstallsTx;
+    ackAppendTx = tx.ackAppendTx;
+    ackAppendEmptyTx = tx.ackAppendEmptyTx;
+    ackAppendNotDueTx = tx.ackAppendNotDueTx;
+    ackSentTx = tx.ackSentTx;
     controlOnlyPacketsTx = tx.controlOnlyPacketsTx;
     ackControlPacketsTx = tx.ackControlPacketsTx;
     streamControlPacketsTx = tx.streamControlPacketsTx;
@@ -673,6 +723,12 @@ struct RuntimeDiag {
   uint64_t	bytesRx = 0;
   uint64_t	packetsRx = 0;
   uint64_t	framesRx = 0;
+  uint64_t	duplicatePacketsRx = 0;
+  uint64_t	ackCommitsRx = 0;
+  uint64_t	ackElicitingRx = 0;
+  uint64_t	ackImmediateRx = 0;
+  uint64_t	ackSnapshotPostsRx = 0;
+  uint64_t	streamNoDataRx = 0;
   uint64_t	packetsTx = 0;
   uint64_t	bytesTx = 0;
   uint64_t	cryptoBytesRx = 0;
@@ -682,6 +738,12 @@ struct RuntimeDiag {
   uint64_t	ackOnlyPacketsTx = 0;
   uint64_t	streamOnlyPacketsTx = 0;
   uint64_t	ackStreamPacketsTx = 0;
+  uint64_t	ackSnapshotInstallsTx = 0;
+  uint64_t	ackDueInstallsTx = 0;
+  uint64_t	ackAppendTx = 0;
+  uint64_t	ackAppendEmptyTx = 0;
+  uint64_t	ackAppendNotDueTx = 0;
+  uint64_t	ackSentTx = 0;
   uint64_t	controlOnlyPacketsTx = 0;
   uint64_t	ackControlPacketsTx = 0;
   uint64_t	streamControlPacketsTx = 0;
@@ -712,6 +774,18 @@ struct RuntimeDiag {
   uint64_t	invalidStreamFrames = 0;
   uint64_t	closedStreamFrames = 0;
   uint64_t	suspiciousStreamCloses = 0;
+  uint64_t	streamMaxClosedRx = 0;
+  uint64_t	streamMaxInvalidRx = 0;
+  uint64_t	streamCtlClosedRx = 0;
+  uint64_t	streamCtlInvalidRx = 0;
+  uint64_t	streamDataInvalidRx = 0;
+  uint64_t	streamDataStateRx = 0;
+  uint64_t	streamDataFinalRx = 0;
+  uint64_t	streamRxDeqStateRx = 0;
+  uint64_t	streamRxDeqFinalRx = 0;
+  uint64_t	streamBlockedClosedRx = 0;
+  uint64_t	streamBlockedInvalidRx = 0;
+  uint64_t	streamBlockedFinalRx = 0;
   uint64_t	unhandledAppEvents = 0;
   uint64_t	peerKeyUpdates = 0;
   uint64_t	invalidKeyPhases = 0;
@@ -2282,6 +2356,11 @@ public:
   using StreamRef = ZmRef<Stream>;
   using Streams = Streams_<Stream>;
   using StreamsRef = ZmRef<Streams>;
+  using ClosedStreams =
+    ZmHashKV<uint64_t, bool,
+      ZmHashLock<ZmPLock,
+	ZmHashHeapID<"Zquic.Stream.ClosedHash">>>;
+  using ClosedStreamsRef = ZmRef<ClosedStreams>;
   using PathResponses =
     ZmQueue<ControlFrame,
       ZmQueueHeapID<"Zquic.Link.PathResponses">>;
@@ -2297,7 +2376,8 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   Link(App *app, bool isServer = false) :
-    m_app{app}, m_isServer{isServer}, m_streams{new Streams} {
+    m_app{app}, m_isServer{isServer},
+    m_streams{new Streams}, m_closedStreams{new ClosedStreams} {
     for (unsigned i = 0; i < 3; ++i) {
       CryptoStream *crypto = &m_rxCrypto[i];
       crypto->dequeueFn([this, crypto]() {
@@ -2416,18 +2496,18 @@ public:
 	frame.streamID <= uint64_t(INT64_MAX)) {
       if (StreamRef stream = findStream(int64_t(frame.streamID))) {
 	if (stream->resetSent() || stream->finDequeued()) {
-	  noteInvalidStreamActivity_(
-	    TransportError::StreamState, true);
+	  ++m_rxDiag.streamMaxClosedRx;
 	  return true;
 	}
       } else if (closedStreamID_(frame.streamID) &&
 	  canLocalSend_(frame.streamID)) {
-	noteInvalidStreamActivity_(TransportError::StreamState, true);
+	++m_rxDiag.streamMaxClosedRx;
 	return true;
       }
     }
     StreamRef stream;
     if (!validateMaxStreamData_(frame, stream)) {
+      ++m_rxDiag.streamMaxInvalidRx;
       noteInvalidStreamActivity_(TransportError::StreamState);
       return false;
     }
@@ -2462,15 +2542,16 @@ public:
     if (id > uint64_t(INT64_MAX)) return nullptr;
     if (StreamID::server(id) == m_isServer) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
-    if (peerOpenedStreamID_(id)) return nullptr;
+    if (closedStreamID_(id)) return nullptr;
     Zi::StreamType::T type = StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
     uint64_t opened = StreamID::ordinal(id) + 1;
     if (!peerLimit_(type).allowsTo(opened)) return nullptr;
 
     StreamRef stream = newStream_(int64_t(id));
     if (!stream) return nullptr;
-    ZiAssert(peerLimit_(type).openTo(opened), "Zquic",
-      (), "peer stream count advanced past local limit", return nullptr);
+    if (!peerOpenedStreamID_(id))
+      ZiAssert(peerLimit_(type).openTo(opened), "Zquic",
+	(), "peer stream count advanced past local limit", return nullptr);
     impl()->streamed(stream);
     scheduleStreamWritable_(stream);
     return stream;
@@ -2488,14 +2569,17 @@ public:
     if (!stream) {
       if (frame.streamID <= uint64_t(INT64_MAX) &&
 	  closedStreamID_(frame.streamID)) {
+	++m_rxDiag.streamCtlClosedRx;
 	return 0;
       }
+      ++m_rxDiag.streamCtlInvalidRx;
       noteInvalidStreamActivity_(TransportError::StreamState);
       return -1;
     }
     if (frame.type == FrameType::ResetStream) {
       if (stream->resetReceived()) {
 	if (stream->finalSize() == frame.length) return 0;
+	++m_rxDiag.streamDataFinalRx;
 	noteInvalidStreamActivity_(TransportError::FinalSize, true, true);
 	return -1;
       }
@@ -2503,15 +2587,18 @@ public:
       uint64_t novel = frame.length > old ? frame.length - old : 0;
       if (frame.length > stream->rxCreditLimit() ||
 	  novel > m_rxDataCredit.available()) {
+	++m_rxDiag.streamDataFinalRx;
 	noteInvalidStreamActivity_(TransportError::FlowControl, false, true);
 	return -1;
       }
       if (!stream->receiveReset(frame)) {
+	++m_rxDiag.streamDataFinalRx;
 	noteInvalidStreamActivity_(TransportError::FinalSize, false, true);
 	return -1;
       }
       if (!stream->consumeRxCreditTo(frame.length) ||
 	  !m_rxDataCredit.consume(novel)) {
+	++m_rxDiag.streamDataFinalRx;
 	noteInvalidStreamActivity_(TransportError::FlowControl, false, true);
 	return -1;
       }
@@ -2528,6 +2615,7 @@ public:
       impl()->streamStopSendingReceived(stream, frame.errorCode);
       return 0;
     }
+    ++m_rxDiag.streamCtlInvalidRx;
     noteInvalidStreamActivity_(TransportError::StreamState);
     return -1;
   }
@@ -2542,6 +2630,7 @@ public:
       if (frame.streamID > uint64_t(INT64_MAX) ||
 	  !closedStreamID_(frame.streamID) ||
 	  !canPeerSend_(frame.streamID)) {
+	++m_rxDiag.streamDataInvalidRx;
 	noteInvalidStreamActivity_(TransportError::StreamState);
 	return -1;
       }
@@ -2551,6 +2640,7 @@ public:
     bool rxClosed = stream->rxComplete() || stream->resetReceived();
     int rc = stream->processFrame(frame, m_rxDataCredit, ZuMv(packet), diag);
     if (rc >= 0) {
+      if (!rc) ++m_rxDiag.streamNoDataRx;
       if ((rxClosed || !rc) && immediateAck) *immediateAck = true;
       maybeExtendMaxData_();
       maybeExtendMaxStreamData_(stream);
@@ -2560,6 +2650,10 @@ public:
     } else {
       TransportError::T error = stream->rxComplete() || stream->resetReceived() ?
 	TransportError::StreamState : TransportError::FinalSize;
+      if (error == TransportError::StreamState)
+	++m_rxDiag.streamDataStateRx;
+      else
+	++m_rxDiag.streamDataFinalRx;
       noteInvalidStreamActivity_(error, false, true);
     }
     return rc;
@@ -2580,6 +2674,10 @@ public:
     }
     TransportError::T error = stream->rxComplete() || stream->resetReceived() ?
       TransportError::StreamState : TransportError::FinalSize;
+    if (error == TransportError::StreamState)
+      ++m_rxDiag.streamRxDeqStateRx;
+    else
+      ++m_rxDiag.streamRxDeqFinalRx;
     noteInvalidStreamActivity_(error, false, true);
   }
 
@@ -2675,6 +2773,10 @@ protected:
     unsigned		nRanges = 0;
     bool		due = false;
     AckRange		ranges[Frame::MaxAckRanges];
+  };
+  struct RxAckMeta {
+    bool		ackEliciting = false;
+    bool		immediateAck = false;
   };
   struct TxAckWork {
     AckSnapshot		ack;
@@ -2827,14 +2929,18 @@ protected:
 	frame.streamID <= uint64_t(INT64_MAX)) {
       if (StreamRef stream = findStream(int64_t(frame.streamID))) {
 	if (stream->resetSent() || stream->finDequeued()) {
-	  noteInvalidStreamActivity_(
-	    TransportError::StreamState, true);
+	  ++m_rxDiag.streamMaxClosedRx;
 	  return true;
 	}
+      } else if (closedStreamID_(frame.streamID) &&
+	  canLocalSend_(frame.streamID)) {
+	++m_rxDiag.streamMaxClosedRx;
+	return true;
       }
     }
     StreamRef stream;
     if (!validateMaxStreamData_(frame, stream)) {
+      ++m_rxDiag.streamMaxInvalidRx;
       noteInvalidStreamActivity_(TransportError::StreamState);
       return false;
     }
@@ -4523,6 +4629,7 @@ protected:
     bool deadline = m_rxAcks.deadlineSet(space);
     uint64_t deadlineUS = deadline ? m_rxAcks.deadline(space) : 0;
     if (!m_rxAcks.post(space)) return;
+    ++m_rxDiag.ackSnapshotPostsRx;
     app()->txRun([
       link = impl(), ack, addr = ZuMv(addr), deadline, deadlineUS
     ]() mutable {
@@ -4538,13 +4645,19 @@ protected:
 
   void noteAck_(
     CryptoLevel::T level, uint64_t pn, bool ackEliciting, ZiSockAddr addr,
-    bool forceImmediate = false) {
+    bool forceImmediate = false, EcnMark::T ecn = EcnMark::NotECT) {
     PktSpace::T space = pktSpace_(level);
     uint64_t now = nowUS_();
     bool immediate = ackEliciting && (forceImmediate || immediateAck_(level));
-    if (ackEliciting)
-      m_rxAcks.ackEliciting(
-	space, pn, now, localMaxAckDelayUS_(), immediate);
+    if (!m_rxAcks.received(
+	space, pn, now, localMaxAckDelayUS_(), ackEliciting, immediate, ecn))
+      return;
+    ++m_rxDiag.ackCommitsRx;
+    if (ackEliciting) ++m_rxDiag.ackElicitingRx;
+    if (immediate) ++m_rxDiag.ackImmediateRx;
+    noteRxECN_(level, ecn);
+    if (pn > m_rxLargestPN[level])
+      m_rxLargestPN[level] = pn;
     postAckSnapshot_(level, ZuMv(addr));
   }
 
@@ -4554,6 +4667,8 @@ protected:
     bool due = m_txAck[ack.level].due || ack.due;
     m_txAck[ack.level] = ack;
     m_txAck[ack.level].due = due;
+    ++m_txDiag.ackSnapshotInstallsTx;
+    if (due) ++m_txDiag.ackDueInstallsTx;
     return due;
   }
 
@@ -4562,8 +4677,15 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK append outside Tx thread", return false);
     AckSnapshot &ack = m_txAck[level];
-    if (!ack.nRanges) return true;
-    if (ackOnly && !ack.due) return true;
+    ++m_txDiag.ackAppendTx;
+    if (!ack.nRanges) {
+      ++m_txDiag.ackAppendEmptyTx;
+      return true;
+    }
+    if (ackOnly && !ack.due) {
+      ++m_txDiag.ackAppendNotDueTx;
+      return true;
+    }
     uint64_t delay = 0;
     if (level == CryptoLevel::OneRTT) {
       uint64_t now = nowUS_();
@@ -4589,6 +4711,7 @@ protected:
       "QUIC ACK commit outside Tx thread", return);
     AckSnapshot ack = m_txAck[level];
     if (!ack.nRanges) return;
+    ++m_txDiag.ackSentTx;
     m_txAck[level].nRanges = 0;
     m_txAck[level].due = false;
     app()->rxRun([link = ZmMkRef(impl()), level, gen = ack.gen]() mutable {
@@ -5095,17 +5218,8 @@ nextSpace:
     return build.add(payload);
   }
 
-  bool recordRxPkt_(
-    CryptoLevel::T level, uint64_t pn,
-    EcnMark::T ecn = EcnMark::NotECT) {
-    if (m_rxAcks.tracker(pktSpace_(level)).contains(pn)) return false;
-    m_rxAcks.received(
-      pktSpace_(level), pn, nowUS_(), localMaxAckDelayUS_(), false, false,
-      ecn);
-    noteRxECN_(level, ecn);
-    if (pn > m_rxLargestPN[level])
-      m_rxLargestPN[level] = pn;
-    return true;
+  bool rxPktSeen_(CryptoLevel::T level, uint64_t pn) const {
+    return m_rxAcks.tracker(pktSpace_(level)).contains(pn);
   }
 
   void recordTxPkt_(
@@ -5808,11 +5922,20 @@ nextSpace:
       ++m_rxDiag.failures;
       return false;
     }
-    if (!recordRxPkt_(level, pn, d.ecn)) return true;
+    if (rxPktSeen_(level, pn)) {
+      ++m_rxDiag.duplicatePacketsRx;
+      return true;
+    }
     ++m_rxDiag.packetsRx;
-    return consumeFrames(
+    RxAckMeta ack;
+    ZiSockAddr ackAddr = d.addr;
+    if (!consumeFrames(
       level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
-      d.addr, d.buf);
+      d.addr, d.buf, ack))
+      return false;
+    noteAck_(
+      level, pn, ack.ackEliciting, ZuMv(ackAddr), ack.immediateAck, d.ecn);
+    return true;
   }
 
   template <typename ConsumeFrames>
@@ -5879,18 +6002,27 @@ nextSpace:
       ++m_rxDiag.invalidKeyPhases;
       return false;
     }
-    if (!recordRxPkt_(CryptoLevel::OneRTT, pn, d.ecn))
+    if (rxPktSeen_(CryptoLevel::OneRTT, pn)) {
+      ++m_rxDiag.duplicatePacketsRx;
       return true;
+    }
     ++m_rxDiag.packetsRx;
-    return consumeFrames(
+    RxAckMeta ack;
+    ZiSockAddr ackAddr = d.addr;
+    if (!consumeFrames(
       CryptoLevel::OneRTT, pn,
-      byteSpan(base + payloadOffset, unsigned(plainLen)), d.addr, d.buf);
+      byteSpan(base + payloadOffset, unsigned(plainLen)), d.addr, d.buf, ack))
+      return false;
+    noteAck_(
+      CryptoLevel::OneRTT, pn, ack.ackEliciting, ZuMv(ackAddr),
+      ack.immediateAck, d.ecn);
+    return true;
   }
 
   template <typename EmitTLS, typename HandleControl>
   bool consumeProtFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
-    const ZmRef<ZiIOBuf> &packetBuf, EmitTLS emitTLS,
+    const ZmRef<ZiIOBuf> &packetBuf, RxAckMeta &ackMeta, EmitTLS emitTLS,
     HandleControl handleControl) {
     unsigned offset = 0;
     auto frame_ = ZmAlloc(Frame, 1);
@@ -5985,7 +6117,8 @@ nextSpace:
 	}
       offset += used;
     }
-    noteAck_(level, pn, ackEliciting, ZuMv(addr), immediateAck);
+    ackMeta.ackEliciting = ackEliciting;
+    ackMeta.immediateAck = immediateAck;
     return true;
   }
 
@@ -6131,8 +6264,28 @@ private:
   }
   bool closedStreamID_(uint64_t id) const {
     if (id > uint64_t(INT64_MAX)) return false;
-    if (peerOpenedStreamID_(id)) return true;
-    return localOpenedStreamID_(id);
+    ZmGuard guard(m_closedStreamsLock);
+    unsigned i = unsigned(id & 3);
+    uint64_t ordinal = StreamID::ordinal(id);
+    if (ordinal < m_closedStreamBase[i]) return true;
+    return m_closedStreams->find(id);
+  }
+  void closeStreamID_(uint64_t id) {
+    ZmGuard guard(m_closedStreamsLock);
+    unsigned i = unsigned(id & 3);
+    uint64_t ordinal = StreamID::ordinal(id);
+    uint64_t &base = m_closedStreamBase[i];
+    if (ordinal < base) return;
+    if (ordinal > base) {
+      m_closedStreams->add(id, true);
+      return;
+    }
+    ++base;
+    for (;;) {
+      uint64_t next = (base << 2) | i;
+      if (!m_closedStreams->del(next)) return;
+      ++base;
+    }
   }
 
   bool validateMaxData_(const Frame &frame) const {
@@ -6178,21 +6331,25 @@ private:
 	frame.streamID <= uint64_t(INT64_MAX)) {
       if (StreamRef stream = findStream(int64_t(frame.streamID))) {
 	if (stream->resetReceived() || stream->rxComplete()) {
+	  ++m_rxDiag.streamBlockedClosedRx;
 	  noteInvalidStreamActivity_(TransportError::StreamState, true);
 	  return true;
 	}
       } else if (closedStreamID_(frame.streamID) &&
 	  canPeerSend_(frame.streamID)) {
+	++m_rxDiag.streamBlockedClosedRx;
 	noteInvalidStreamActivity_(TransportError::StreamState, true);
 	return true;
       }
     }
     StreamRef stream;
     if (!validateStreamDataBlocked_(frame, stream)) {
+      ++m_rxDiag.streamBlockedInvalidRx;
       noteInvalidStreamActivity_(TransportError::StreamState);
       return false;
     }
     if (!stream->receiveBlocked(frame)) {
+      ++m_rxDiag.streamBlockedFinalRx;
       noteInvalidStreamActivity_(TransportError::FinalSize, false, true);
       return false;
     }
@@ -6391,6 +6548,7 @@ private:
   bool reapStream_(Stream *stream) {
     if (!streamReapable_(stream)) return false;
     int64_t id = stream->id();
+    closeStreamID_(uint64_t(id));
     return m_streams->del(id);
   }
   bool streamCreditSettled_(const Stream *stream) const {
@@ -6455,6 +6613,9 @@ private:
   StreamLimit	m_peerBidiLimit{uint64_t(INT64_MAX) >> 2};
   StreamLimit	m_peerUniLimit{uint64_t(INT64_MAX) >> 2};
   StreamsRef	m_streams;
+  uint64_t	m_closedStreamBase[4] = {};
+  mutable ZmPLock	m_closedStreamsLock;
+  ClosedStreamsRef	m_closedStreams;
 
   // Tx thread exclusive
   FlowCredit	m_txDataCredit;
@@ -7479,8 +7640,9 @@ private:
       },
       [this](
 	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
-	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf) {
-	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf);
+	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+	  typename Base::RxAckMeta &ack) {
+	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf, ack);
       });
   }
 
@@ -7489,17 +7651,18 @@ private:
       d, packetOffset, packetLen,
       [this](
 	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
-	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf) {
-	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf);
+	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+	  typename Base::RxAckMeta &ack) {
+	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf, ack);
       });
   }
 
   bool consumeFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
-    const ZmRef<ZiIOBuf> &packetBuf) {
+    const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack) {
     ZiSockAddr peer = addr;
     bool ok = Base::consumeProtFrames_(
-      level, pn, frames, ZuMv(addr), packetBuf,
+      level, pn, frames, ZuMv(addr), packetBuf, ack,
       [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
       },
@@ -8257,8 +8420,9 @@ private:
       },
       [this](
 	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
-	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf) {
-	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf);
+	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+	  typename Base::RxAckMeta &ack) {
+	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf, ack);
       });
   }
 
@@ -8267,17 +8431,18 @@ private:
       d, packetOffset, packetLen,
       [this](
 	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
-	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf) {
-	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf);
+	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+	  typename Base::RxAckMeta &ack) {
+	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf, ack);
       });
   }
 
   bool consumeFrames_(
     CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
-    const ZmRef<ZiIOBuf> &packetBuf) {
+    const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack) {
     ZiSockAddr peer = addr;
     bool ok = Base::consumeProtFrames_(
-      level, pn, frames, ZuMv(addr), packetBuf,
+      level, pn, frames, ZuMv(addr), packetBuf, ack,
       [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
       },
