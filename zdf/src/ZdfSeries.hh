@@ -1392,7 +1392,7 @@ inline void Reader<Decoder>::loadBlk()
     this_->loaded(blk);
   });
 
-#ifdef NDEBUG
+#ifndef ZDEBUG
   return;
 fail:
   m_failed = true;
@@ -1459,7 +1459,7 @@ inline void Reader<Decoder>::loaded(const Blk *blk)
 
   nextValue();
 
-#ifdef NDEBUG
+#ifndef ZDEBUG
   return;
 fail:
   m_failed = true;
@@ -1559,7 +1559,7 @@ again:
     goLive();
   }
 
-#ifdef NDEBUG
+#ifndef ZDEBUG
   return;
 fail:
   m_failed = true;
