@@ -36,14 +36,15 @@
 
 #include <zlib/ZiLog.hh>
 
-#ifdef NDEBUG
-#define ZiAssert(assertion, component, captures, msg, return_) \
-  do { if (ZuUnlikely(!(assertion))) { \
-    ZiLOGBT(Fatal, component, ([ZuPP_Strip(captures)](auto &s) { \
-      s << " Assertion '" #assertion "' failed " << msg; \
-    })); ZuPP_Strip(return_); } } while (0)
+#ifdef ZDEBUG
+#define ZiAssert(x, captures, component, msg, fallback) \
+  ZmAssert(x, fallback)
 #else
-#define ZiAssert(assertion, captures, component, msg, return_) ZmAssert(assertion)
+#define ZiAssert(x, component, captures, msg, fallback) \
+  do { if (ZuUnlikely(!(x))) { \
+    ZiLOGBT(Fatal, component, ([ZuPP_Strip(captures)](auto &s) { \
+      s << " Assertion '" #x "' failed " << msg; \
+    })); ZuPP_Strip(fallback); } } while (0)
 #endif
 
 #endif /* ZiAssert_HH */

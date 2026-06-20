@@ -1664,7 +1664,9 @@ retry:
   }));
 #endif
 
+#ifdef ZiMultiplex_FILTER
 executed:
+#endif
   executedSend(n);
 
   if (ZuLikely(m_txContext.completed())) {
