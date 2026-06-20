@@ -143,7 +143,7 @@ ZfbStruct(Heap,
     (((cacheAllocs),	(Ctor<3>, Mutable, Series, Delta)),	(UInt64)),
     (((heapAllocs),	(Ctor<4>, Mutable, Series, Delta)),	(UInt64)),
     (((frees),		(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
-    (((maxAllocd),	(Ctor<6>, Mutable, Series, Delta)),	(UInt64)),
+    (((crossFrees),	(Ctor<6>, Mutable, Series, Delta)),	(UInt64)),
     (((allocated, RdFn), (Synthetic, Series)),			(UInt64)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
