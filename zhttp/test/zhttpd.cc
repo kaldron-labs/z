@@ -795,6 +795,9 @@ void H3Server::printDiag()
   uint64_t streamRx = 0, streamTx = 0;
   uint64_t peerOpened = 0, localLimit = 0;
   uint64_t pto = 0, retx = 0, pc = 0;
+  uint64_t ptoSched = 0, ptoNoLevel = 0, ptoArmed = 0;
+  uint64_t ptoExpired = 0, ptoFlush = 0, ptoRetx = 0, ptoProbe = 0;
+  uint64_t lossArmed = 0, lossCanceled = 0, lossExpired = 0;
   uint64_t cwnd = 0, ssthresh = 0, bif = 0;
   uint64_t pktIF = 0;
   uint64_t sentPkts = 0, retxPend = 0, retxTotal = 0;
@@ -870,8 +873,18 @@ void H3Server::printDiag()
     streamTx += d.streamBytesTx;
     peerOpened += link->peerStreamsOpened(Zi::StreamType::Duplex);
     localLimit += link->localStreamLimit(Zi::StreamType::Duplex);
+    ptoSched += d.ptoSched;
+    ptoNoLevel += d.ptoNoLevel;
+    ptoArmed += d.ptoArmed;
+    ptoExpired += d.ptoExpired;
+    ptoFlush += d.ptoFlush;
+    ptoRetx += d.ptoRetx;
+    ptoProbe += d.ptoProbe;
     pto += d.ptoCount;
     retx += d.retransmittedFrames;
+    lossArmed += d.lossArmed;
+    lossCanceled += d.lossCanceled;
+    lossExpired += d.lossExpired;
     pc += d.persistentCongestion;
     cwnd += d.congestionWindow;
     ssthresh += d.congestionSSThresh;
@@ -907,8 +920,9 @@ void H3Server::printDiag()
     pathChallenge, pathResponse, handshakeDone,
     pathObserved, pathSame, pathNull, pathActive, pathStarted, pathPromoted,
     pathUnknown,
+    ptoSched, ptoNoLevel, ptoArmed, ptoExpired, ptoFlush, ptoRetx, ptoProbe,
     ptoTimer, lossTimer, pktIF, sentPkts, retxPend, retxTotal,
-    cwnd, ssthresh, pc, bif
+    lossArmed, lossCanceled, lossExpired, cwnd, ssthresh, pc, bif
   ](auto &s) {
     s << "h3 diag active=" << active <<
       " requests=" << requests <<
@@ -953,6 +967,9 @@ void H3Server::printDiag()
       " streamTx=" << streamTx <<
       " peerOpened=" << peerOpened <<
       " localLimit=" << localLimit <<
+      " ptoDiag=[" << ptoSched << ',' << ptoNoLevel << ',' <<
+	ptoArmed << ',' << ptoExpired << ',' << ptoFlush << ',' <<
+	ptoRetx << ',' << ptoProbe << ']' <<
       " pto=" << pto <<
       " retx=" << retx <<
       " ptoTimer=" << unsigned(ptoTimer) <<
@@ -961,6 +978,8 @@ void H3Server::printDiag()
       " sentPkts=" << sentPkts <<
       " retxPend=" << retxPend <<
       " retxTotal=" << retxTotal <<
+      " lossDiag=[" << lossArmed << ',' << lossCanceled << ',' <<
+	lossExpired << ']' <<
       " cwnd=" << cwnd <<
       " ssthresh=" << ssthresh <<
       " pc=" << pc <<

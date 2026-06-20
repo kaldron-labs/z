@@ -311,12 +311,12 @@ void testMessageLevelTLSHandshake()
   Zquic::Crypto client;
   Zquic::Crypto server;
   ZuCHECK(client.initTLS(Zquic::CryptoConfig{
-      false, false, "h3", cspan_(temp.certPath), {}, {}, "localhost",
+      false, false, "h3", cspan_(temp.certPath), {}, {}, {}, "localhost",
       &clientParams}),
     "client TLS init failed");
   ZuCHECK(server.initTLS(Zquic::CryptoConfig{
       true, true, "h3", {}, cspan_(temp.certPath), cspan_(temp.keyPath), {},
-      &serverParams}),
+      {}, &serverParams}),
     "server TLS init failed");
   ZuCHECK(!client.earlyDataEnabled() && !server.earlyDataEnabled(),
     "0-RTT enabled in TLS message path");

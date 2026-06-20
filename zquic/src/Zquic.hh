@@ -597,10 +597,20 @@ struct RuntimeTxDiag {
   uint64_t	pathValidationStarted = 0;
   uint64_t	pathValidationPromoted = 0;
   uint64_t	pathResponseUnknown = 0;
+  uint64_t	ptoSched = 0;
+  uint64_t	ptoNoLevel = 0;
+  uint64_t	ptoArmed = 0;
+  uint64_t	ptoExpired = 0;
+  uint64_t	ptoFlush = 0;
+  uint64_t	ptoRetx = 0;
+  uint64_t	ptoProbe = 0;
   uint64_t	ptoCount = 0;
   uint32_t	ptoBackoff = 0;
   uint64_t	ptoTimeoutUS = 0;
   uint64_t	retransmittedFrames = 0;
+  uint64_t	lossArmed = 0;
+  uint64_t	lossCanceled = 0;
+  uint64_t	lossExpired = 0;
   uint64_t	pktBytesInFlight[Spaces] = {};
   uint32_t	sentPackets[Spaces] = {};
   uint32_t	retransmitPending[Spaces] = {};
@@ -696,10 +706,20 @@ struct RuntimeDiag {
     pathValidationStarted = tx.pathValidationStarted;
     pathValidationPromoted = tx.pathValidationPromoted;
     pathResponseUnknown = tx.pathResponseUnknown;
+    ptoSched = tx.ptoSched;
+    ptoNoLevel = tx.ptoNoLevel;
+    ptoArmed = tx.ptoArmed;
+    ptoExpired = tx.ptoExpired;
+    ptoFlush = tx.ptoFlush;
+    ptoRetx = tx.ptoRetx;
+    ptoProbe = tx.ptoProbe;
     ptoCount = tx.ptoCount;
     ptoBackoff = tx.ptoBackoff;
     ptoTimeoutUS = tx.ptoTimeoutUS;
     retransmittedFrames = tx.retransmittedFrames;
+    lossArmed = tx.lossArmed;
+    lossCanceled = tx.lossCanceled;
+    lossExpired = tx.lossExpired;
     for (unsigned i = 0; i < RuntimeTxDiag::Spaces; ++i) {
       pktBytesInFlight[i] = tx.pktBytesInFlight[i];
       sentPackets[i] = tx.sentPackets[i];
@@ -792,10 +812,20 @@ struct RuntimeDiag {
   uint64_t	oldKeysAccepted = 0;
   uint64_t	keyDiscards = 0;
   AckECN	ecnRx[3];
+  uint64_t	ptoSched = 0;
+  uint64_t	ptoNoLevel = 0;
+  uint64_t	ptoArmed = 0;
+  uint64_t	ptoExpired = 0;
+  uint64_t	ptoFlush = 0;
+  uint64_t	ptoRetx = 0;
+  uint64_t	ptoProbe = 0;
   uint64_t	ptoCount = 0;
   uint32_t	ptoBackoff = 0;
   uint64_t	ptoTimeoutUS = 0;
   uint64_t	retransmittedFrames = 0;
+  uint64_t	lossArmed = 0;
+  uint64_t	lossCanceled = 0;
+  uint64_t	lossExpired = 0;
   uint64_t	pktBytesInFlight[RuntimeTxDiag::Spaces] = {};
   uint32_t	sentPackets[RuntimeTxDiag::Spaces] = {};
   uint32_t	retransmitPending[RuntimeTxDiag::Spaces] = {};
@@ -4811,11 +4841,13 @@ protected:
     if (closed()) return;
     ZuTime out = nextLossTime_();
     if (!*out) {
+      ++m_txDiag.lossCanceled;
       cancelLossTimer_();
       return;
     }
     ZuTime now = runtimeNow_();
     if (out <= now) out = now + RttEstimator::Granularity;
+    ++m_txDiag.lossArmed;
     scheduleLossTimer_(out);
   }
   void cancelLossTimer_() { cancelTimer_("loss time", &m_lossTimer); }
@@ -4846,18 +4878,25 @@ protected:
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC PTO schedule before app initialization", return);
     if (closed()) return;
+    ++m_txDiag.ptoSched;
     CryptoLevel::T level = CryptoLevel::Initial;
-    if (!ptoLevel_(level)) return;
+    if (!ptoLevel_(level)) {
+      ++m_txDiag.ptoNoLevel;
+      return;
+    }
     ZuTime out = ptoDeadline_(level);
     Zquic_DEBUG_LOG_(([level, bif = m_txPkts[level].bytesInFlight()](auto &s) {
 	s << "PTO armed level=" << int(level) << " bytesInFlight=" << bif;
       }));
+    ++m_txDiag.ptoArmed;
     schedulePTOTimer_(out);
   }
 
   void schedulePTOTimer_(ZuTime out) {
+    ZuTime now = runtimeNow_();
+    if (out <= now) out = now + RttEstimator::Granularity;
     scheduleCxnTimer_(
-      "PTO", out, ZmScheduler::Advance, &m_ptoTimer,
+      "PTO", out, ZmScheduler::Update, &m_ptoTimer,
       [](auto link) { link->pto_(); });
   }
 
@@ -5008,10 +5047,11 @@ protected:
   void lossTimeExpired_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC loss timer expired outside Tx thread", return);
-	  if (closed()) return;
-	  ZuTime now = runtimeNow_();
-	  detectLossTx_(0, now, {}, false);
-	}
+    if (closed()) return;
+    ++m_txDiag.lossExpired;
+    ZuTime now = runtimeNow_();
+    detectLossTx_(0, now, {}, false);
+  }
   void idleExpired_() { }
   void closeExpired_() { }
   void keyDiscardExpired_() {
@@ -5103,6 +5143,11 @@ protected:
     }
     return n;
   }
+  void notePTOExpired_() { ++m_txDiag.ptoExpired; }
+  void notePTOFlush_() { ++m_txDiag.ptoFlush; }
+  void notePTORetx_() { ++m_txDiag.ptoRetx; }
+  void notePTOProbe_() { ++m_txDiag.ptoProbe; }
+  uint64_t txPackets_() const { return m_txDiag.packetsTx; }
 
   bool nextRetransmit_(CryptoLevel::T &level, SentFrameRef &ref) {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -6966,10 +7011,24 @@ public:
       "QUIC client PTO outside Tx thread", return);
     if (Base::closed() || !m_endpoint.connected())
       return;
-    if (flushTx_()) return;
+    Base::notePTOExpired_();
+    uint64_t packetsTx = Base::txPackets_();
+    if (flushTx_()) {
+      Base::notePTOFlush_();
+      if (Base::txPackets_() != packetsTx) {
+	Base::schedulePTO_();
+	return;
+      }
+    }
     bool probe = Base::reclaimPTO_();
-    if (retransmit_()) return;
-    if (probe) (void)sendPingProbe_();
+    if (retransmit_()) {
+      Base::notePTORetx_();
+      return;
+    }
+    if (probe) {
+      Base::notePTOProbe_();
+      (void)sendPingProbe_();
+    }
   }
 
   void queueRetransmit_() {
@@ -7842,10 +7901,24 @@ public:
       "QUIC server PTO outside Tx thread", return);
     if (Base::closed() || !m_peerAddr)
       return;
-    if (flushTx_()) return;
+    Base::notePTOExpired_();
+    uint64_t packetsTx = Base::txPackets_();
+    if (flushTx_()) {
+      Base::notePTOFlush_();
+      if (Base::txPackets_() != packetsTx) {
+	Base::schedulePTO_();
+	return;
+      }
+    }
     bool probe = Base::reclaimPTO_();
-    if (retransmit_()) return;
-    if (probe) (void)sendPingProbe_();
+    if (retransmit_()) {
+      Base::notePTORetx_();
+      return;
+    }
+    if (probe) {
+      Base::notePTOProbe_();
+      (void)sendPingProbe_();
+    }
   }
 
   void queueRetransmit_() {

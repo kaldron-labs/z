@@ -1609,8 +1609,18 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     pathStarted = diag.pathValidationStarted,
     pathPromoted = diag.pathValidationPromoted,
     pathUnknown = diag.pathResponseUnknown,
+    ptoSched = diag.ptoSched,
+    ptoNoLevel = diag.ptoNoLevel,
+    ptoArmed = diag.ptoArmed,
+    ptoExpired = diag.ptoExpired,
+    ptoFlush = diag.ptoFlush,
+    ptoRetx = diag.ptoRetx,
+    ptoProbe = diag.ptoProbe,
     ptoBackoff = diag.ptoBackoff,
     ptoTimeoutUS = diag.ptoTimeoutUS,
+    lossArmed = diag.lossArmed,
+    lossCanceled = diag.lossCanceled,
+    lossExpired = diag.lossExpired,
     dgramsRx = epDiag.datagramsRx, dgramsTx = epDiag.datagramsTx,
     epSendCalls = epDiag.sendCalls,
     epDirect = epDiag.directCalls,
@@ -1686,8 +1696,13 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
       " pathDiag=[" << pathObserved << ',' << pathSame << ',' <<
 	pathNull << ',' << pathActive << ',' << pathStarted << ',' <<
 	pathPromoted << ',' << pathUnknown << ']' <<
+      " ptoDiag=[" << ptoSched << ',' << ptoNoLevel << ',' <<
+	ptoArmed << ',' << ptoExpired << ',' << ptoFlush << ',' <<
+	ptoRetx << ',' << ptoProbe << ']' <<
       " ptoBackoff=" << ptoBackoff <<
       " ptoTimeoutUS=" << ptoTimeoutUS <<
+      " lossDiag=[" << lossArmed << ',' << lossCanceled << ',' <<
+	lossExpired << ']' <<
       " dgramsRx=" << dgramsRx <<
       " dgramsTx=" << dgramsTx <<
       " epSendCalls=" << epSendCalls <<
