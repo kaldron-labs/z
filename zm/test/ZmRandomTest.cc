@@ -47,11 +47,50 @@ void testRanges()
   }
 }
 
+void testRandExcDist()
+{
+  ZuTestScope(testRandExcDist);
+
+  enum { Samples = 65536, Bins = 16 };
+  uint32_t bins[Bins] = {};
+
+  ZmRandom r(123456789U);
+  unsigned rangeErrors = 0;
+  unsigned binErrors = 0;
+  for (unsigned i = 0; i < Samples; i++) {
+    double x = r.randExc();
+    if (x < 0.0 || x >= 1.0) {
+      ++rangeErrors;
+      continue;
+    }
+
+    unsigned bin = unsigned(x * double(Bins));
+    if (bin < Bins)
+      ++bins[bin];
+    else
+      ++binErrors;
+  }
+
+  ZuCHECK(!rangeErrors, "rangeErrors=", rangeErrors);
+  ZuCHECK(!binErrors, "binErrors=", binErrors);
+
+  constexpr unsigned expected = Samples / Bins;
+  constexpr unsigned limit = expected / 12;	// +/-8.3%
+
+  for (unsigned i = 0; i < Bins; i++) {
+    unsigned n = bins[i];
+    unsigned diff = n > expected ? n - expected : expected - n;
+    ZuCHECK(diff <= limit,
+      "bin=", i, " count=", n, " expected=", expected, " diff=", diff);
+  }
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testDeterministicSeed);
   ZuTestCall(testRanges);
+  ZuTestCall(testRandExcDist);
   return 0;
 }
