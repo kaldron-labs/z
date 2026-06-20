@@ -881,6 +881,8 @@ public:
       ZiIP remoteIP, uint16_t remotePort,
       ZiCxnOptions options = ZiCxnOptions());
 
+  bool stop();
+
   unsigned rxThread() const { return m_rxThread; }
   unsigned txThread() const { return m_txThread; }
 
