@@ -46,6 +46,20 @@ static Zquic::TxPkt txCryptoPkt_(
   return p;
 }
 
+static Zquic::TxPkt txStreamPkt_(
+  uint64_t pn, uint64_t streamID, uint64_t offset, uint32_t length,
+  bool fin = false, unsigned bytes = 100)
+{
+  Zquic::TxPkt p = txPkt_(pn, bytes);
+  p.frameCount = 0;
+  Zquic::TxRange range;
+  range.offset = uint32_t(offset);
+  range.length = length;
+  range.streamOffset = offset;
+  p.addFrame(Zquic::SentFrameRef::stream(streamID, range, fin));
+  return p;
+}
+
 void testRecovery()
 {
   ZuTestScope(testRecovery);
@@ -529,6 +543,35 @@ void testAckCanLeaveOnlyRetransmitsPending()
     "second zero-flight retransmit ref mismatch");
 }
 
+void testRetransmitSkipsOutstandingStreamBytes()
+{
+  ZuTestScope(testRetransmitSkipsOutstandingStreamBytes);
+
+  Zquic::PktTxSpace tx;
+  ZuCHECK(tx.add(txStreamPkt_(1, 7, 0, 100)) &&
+      tx.add(txStreamPkt_(2, 7, 0, 50)) &&
+      tx.add(txPkt_(4)),
+    "overlapping stream sent-packet setup failed");
+  Zquic::AckRange ranges[] = { Zquic::AckRange{4, 4} };
+  unsigned lost = 0;
+  ZuCHECK(tx.ack(ranges, 1, &lost) == 1 &&
+      lost == 1 &&
+      tx.retransmitPending() == 1,
+    "overlapping stream loss setup failed");
+  Zquic::SentFrameRef ref;
+  ZuCHECK(tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Stream &&
+      ref.streamID == 7 &&
+      ref.offset == 50 &&
+      ref.length == 50 &&
+      ref.range.streamOffset == 50 &&
+      ref.range.offset == 50 &&
+      ref.range.length == 50 &&
+      !ref.fin &&
+      !tx.nextRetransmit(ref),
+    "stream retransmit did not skip outstanding prefix");
+}
+
 void testTypedControlRefs()
 {
   ZuTestScope(testTypedControlRefs);
@@ -661,10 +704,21 @@ void testAckManager()
       !acks.due(Zquic::PktSpace::Initial, 1024) &&
       acks.due(Zquic::PktSpace::Initial, 1025),
     "ACK manager Initial deadline mismatch");
-  ZuCHECK(acks.pending(Zquic::PktSpace::AppData) &&
+  ZuCHECK(!acks.pending(Zquic::PktSpace::AppData) &&
       !acks.deadlineSet(Zquic::PktSpace::AppData) &&
       !acks.due(Zquic::PktSpace::AppData, 2000),
-    "ACK-only AppData packet set an ACK deadline");
+    "ACK-only AppData packet created pending ACK work");
+  ZuCHECK(!acks.post(Zquic::PktSpace::AppData),
+    "ACK manager posted ACK-only packet");
+
+  Zquic::AckManager postAcks;
+  ZuCHECK(postAcks.received(Zquic::PktSpace::AppData, 5, 1000, 25, false) &&
+      postAcks.ackEliciting(
+      Zquic::PktSpace::AppData, 5, 1500, 25) &&
+      postAcks.pending(Zquic::PktSpace::AppData) &&
+      postAcks.post(Zquic::PktSpace::AppData) &&
+      !postAcks.post(Zquic::PktSpace::AppData),
+    "ACK manager did not post/suppress ack-eliciting packet");
 
   uint8_t b[64];
   int n = acks.writeFrame(Zquic::PktSpace::Initial, b, sizeof(b), 4);
@@ -681,13 +735,15 @@ void testAckManager()
     "ACK manager Initial frame mismatch");
   acks.sent(Zquic::PktSpace::Initial);
   ZuCHECK(!acks.pending(Zquic::PktSpace::Initial) &&
-      acks.pending(Zquic::PktSpace::AppData),
+      !acks.pending(Zquic::PktSpace::AppData),
     "ACK manager sent cleared wrong packet space");
 
   ZuCHECK(acks.received(Zquic::PktSpace::AppData, 6, 2000, 25) &&
+      acks.post(Zquic::PktSpace::AppData) &&
+      !acks.post(Zquic::PktSpace::AppData) &&
       acks.deadlineSet(Zquic::PktSpace::AppData) &&
       acks.deadline(Zquic::PktSpace::AppData) == 2025,
-    "ACK manager AppData deadline mismatch");
+    "ACK manager AppData post/deadline mismatch");
   ZuCHECK(!acks.received(Zquic::PktSpace::AppData, 6, 2010, 50) &&
       acks.pending(Zquic::PktSpace::AppData) &&
       acks.deadlineSet(Zquic::PktSpace::AppData) &&
@@ -750,6 +806,13 @@ void testAckManager()
       !runtime.immediate(Zquic::PktSpace::AppData),
     "ACK manager AppData delayed state mismatch");
   uint64_t appGen = runtime.gen(Zquic::PktSpace::AppData);
+  ZuCHECK(runtime.post(Zquic::PktSpace::AppData),
+    "ACK manager did not post initial pending ACK work");
+  ZuCHECK(runtime.received(
+	Zquic::PktSpace::AppData, 11, 2005, 50, false, false) &&
+      runtime.gen(Zquic::PktSpace::AppData) == appGen &&
+      !runtime.post(Zquic::PktSpace::AppData),
+    "ACK manager ACK-only packet posted pending ACK work");
   ZuCHECK(runtime.received(Zquic::PktSpace::AppData, 12, 2010, 50, true, true) &&
       runtime.gen(Zquic::PktSpace::AppData) == appGen + 1 &&
       runtime.immediate(Zquic::PktSpace::AppData) &&
@@ -789,6 +852,7 @@ int main(int argc, char **argv)
   ZuTestCall(testPktSpaceAckLoss);
   ZuTestCall(testPTOReclaimUsesRetransmitQueue);
   ZuTestCall(testAckCanLeaveOnlyRetransmitsPending);
+  ZuTestCall(testRetransmitSkipsOutstandingStreamBytes);
   ZuTestCall(testTypedControlRefs);
   ZuTestCall(testFlowControlRetransmit);
   ZuTestCall(testPktSpaceBatchCursors);
