@@ -365,6 +365,7 @@ void ZmHeapCache::free(ZmHeapStats &stats, void *ptr)
   }
   if (auto lookup = this->lookup())
     if (auto other = lookup->find(this, ptr)) {
+      ++stats.crossFrees;
       other->free_(ptr);
       return;
     }
@@ -396,6 +397,7 @@ void ZmHeapCache::histStats(const ZmHeapStats &s) const
   m_histStats.heapAllocs += s.heapAllocs;
   m_histStats.cacheAllocs += s.cacheAllocs;
   m_histStats.frees += s.frees;
+  m_histStats.crossFrees += s.crossFrees;
 }
 
 void ZmHeapCache::telemetry(ZmHeapTelemetry &data) const
@@ -407,7 +409,7 @@ void ZmHeapCache::telemetry(ZmHeapTelemetry &data) const
   data.cacheAllocs = m_stats.cacheAllocs;
   data.heapAllocs = m_stats.heapAllocs;
   data.frees = m_stats.frees;
-  data.maxAllocd = m_stats.maxAllocd;
+  data.crossFrees = m_stats.crossFrees;
   data.size = m_info.size;
   data.partition = m_info.partition;
   data.sharded = m_info.sharded;
