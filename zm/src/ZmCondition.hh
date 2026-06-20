@@ -85,7 +85,7 @@ public:
   ZmCondition &operator =(const ZmCondition &) = delete; // prevent mis-use
 
   void wait() {
-    Wait wait{this->wait_()};
+    [[maybe_unused]] Wait wait{this->wait_()};
     Thread *thread = ZmSpecific<Thread>::instance();
     thread->next = nullptr;
     thread->waiting = true;
@@ -103,7 +103,7 @@ public:
     lock_();
   }
   int timedWait(ZuTime timeout) {
-    Wait wait{this->wait_()};
+    [[maybe_unused]] Wait wait{this->wait_()};
     Thread *thread = ZmSpecific<Thread>::instance();
     thread->next = nullptr;
     thread->waiting = true;

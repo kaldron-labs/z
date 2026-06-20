@@ -673,15 +673,15 @@ int main(int argc, char **argv)
       0x7fd2c42a2500, 0x7fd2c42a2570, 0x7fd2c4295a00, 0x7fd230005610,
       0x7fd2300056b0, 0x7fd230005c70, 0x7fd230005d70
     };
-#ifndef NDEBUG
     uint64_t del[] = {
       0x7fd2c4296870, 0x7fd2c4296800, 0x7fd2c4296790, 0x7fd2c4297640,
       0x7fd2c42975d0, 0x7fd2c42a2f80, 0x7fd2c42a2500, 0x7fd2c42a2490,
       0x7fd2c429a870, 0x7fd2c4295a00, 0x7fd2c42a2570, 0x7fd230005610
     };
-#endif
     for (unsigned i = 0; i < 15; i++) tree2.add(add[i]);
-    for (unsigned i = 0; i < 12; i++) ZmAssert(tree2.del(del[i]));
+    bool deleted = true;
+    for (unsigned i = 0; i < 12; i++) deleted &= bool(tree2.del(del[i]));
+    ZuCheck(deleted);
     ZuCheck(tree2.count_() == 3);
   }
 }

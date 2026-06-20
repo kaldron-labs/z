@@ -833,7 +833,7 @@ private:
   }
 
   static Length lengthOf_(Key key, Key end) {
-    ZmAssert(end >= key);
+    ZmAssert(end >= key, return {});
     return Length(end - key);
   }
 
@@ -871,8 +871,7 @@ public:
       Key key = item.key();
       if (key > tail) return Span(tail, key - tail);
       Key end;
-      bool ok = endOf_(key, item.length(), end);
-      ZmAssert(ok);
+      ZmAssert(endOf_(key, item.length(), end), return Span());
       if (end > tail) tail = end;
       node = node->NodeExt::next(0);
     }
@@ -888,8 +887,7 @@ private:
       Key key_ = item.key();
       if (key_ >= key) return clipped;
       Key end_;
-      bool ok = endOf_(key_, item.length(), end_);
-      ZmAssert(ok);
+      ZmAssert(endOf_(key_, item.length(), end_), return clipped);
       if (end_ > key) {
 	if constexpr (Overlap)
 	  if (Length length = item.clipHead(key - key_)) {
@@ -976,8 +974,7 @@ public:
       if (ZuUnlikely(end > m_headKey)) { // clip tail
 	length = item.clipTail(end - m_headKey);
 	clipped = true;
-	bool ok = endOf_(key, length, end);
-	ZmAssert(ok);
+	ZmAssert(endOf_(key, length, end), return ZmPQResult::Invalid);
       }
 
     if (ZuUnlikely(!length)) return ZmPQResult::Duplicate;
@@ -1057,10 +1054,9 @@ private:
 	Fn item_(node_->Node::data());
 	Key key_ = item_.key();
 	Key end_;
-	bool ok = endOf_(key_, item_.length(), end_);
-	ZmAssert(ok);
+	ZmAssert(endOf_(key_, item_.length(), end_), goto error);
 
-	ZmAssert(key_ >= key);
+	ZmAssert(key_ >= key, goto error);
 
 	// if the following item spans the new item, overwrite it and return
 	if (key_ == key && end_ >= end) {
@@ -1083,10 +1079,9 @@ private:
 	Fn item_(node_->Node::data());
 	Key key_ = item_.key();
 	Key end_;
-	bool ok = endOf_(key_, item_.length(), end_);
-	ZmAssert(ok);
+	ZmAssert(endOf_(key_, item_.length(), end_), goto error);
 
-	ZmAssert(key_ < key);
+	ZmAssert(key_ < key, goto error);
 
 	// if the preceding item spans the new item, overwrite it and return
 	if (end_ >= end) {
@@ -1109,10 +1104,9 @@ private:
 	Fn item_(node_->Node::data());
 	Key key_ = item_.key();
 	Key end_;
-	bool ok = endOf_(key_, item_.length(), end_);
-	ZmAssert(ok);
+	ZmAssert(endOf_(key_, item_.length(), end_), goto error);
 
-	ZmAssert(key_ >= key);
+	ZmAssert(key_ >= key, goto error);
 
 	// existing item follows new item, finish search
 	if (key_ >= end) break;
@@ -1143,6 +1137,9 @@ private:
     ++m_count;
 
     return {clipped ? ZmPQResult::Clipped : ZmPQResult::Inserted, nullptr};
+
+  error:
+    return {ZmPQResult::Invalid, nullptr};
   }
   template <bool Dequeue>
   ZuIfT<Dequeue, AddResult> addTail_(NodeRef node,
@@ -1196,7 +1193,7 @@ private:
     if (!node) return nullptr;
     Fn item{node->Node::data()};
     Key key = item.key();
-    ZmAssert(key >= m_headKey);
+    ZmAssert(key >= m_headKey, return nullptr);
     if (key != m_headKey) return nullptr;
     Length length = item.length();
     delHead_<0>();
@@ -1207,8 +1204,7 @@ private:
       goto loop;
     }
     Key end;
-    bool ok = endOf_(key, length, end);
-    ZmAssert(ok);
+    ZmAssert(endOf_(key, length, end), (void()));
     m_headKey = end;
     if constexpr (Stats) this->outCount(length);
     return nodeAcquire(node);
@@ -1240,8 +1236,7 @@ private:
     --m_count;
     if (!length) goto loop;
     Key end;
-    bool ok = endOf_(item.key(), length, end);
-    ZmAssert(ok);
+    ZmAssert(endOf_(item.key(), length, end), return nullptr);
     m_headKey = end;
     if constexpr (Stats) this->outCount(length);
     return ret;
@@ -1305,8 +1300,7 @@ public:
       Key nodeKey = item.key();
       Length nodeLength = item.length();
       Key nodeEnd;
-      bool ok = endOf_(nodeKey, nodeLength, nodeEnd);
-      ZmAssert(ok);
+      ZmAssert(endOf_(nodeKey, nodeLength, nodeEnd), return false);
       if (nodeKey >= end) break;
       if (nodeEnd <= key) {
 	key = nodeEnd;
@@ -1446,9 +1440,7 @@ private:
       if (prev) {
 	Fn prevItem{prev->Node::data()};
 	Key prevEnd;
-	bool ok =
-	  endOf_(prevItem.key(), prevItem.length(), prevEnd);
-	ZmAssert(ok);
+	ZmAssert(endOf_(prevItem.key(), prevItem.length(), prevEnd), return nullptr);
 	if (key < prevEnd) return prev;
       }
       return node;
@@ -1457,9 +1449,7 @@ private:
     if (Node *prev = m_tail[0]) {
       Fn prevItem{prev->Node::data()};
       Key prevEnd;
-      bool ok =
-	endOf_(prevItem.key(), prevItem.length(), prevEnd);
-      ZmAssert(ok);
+      ZmAssert(endOf_(prevItem.key(), prevItem.length(), prevEnd), return nullptr);
       if (key < prevEnd) return prev;
     }
 
@@ -1474,8 +1464,7 @@ private:
     Key nodeKey = item.key();
     if (nodeKey > key) return nullptr;
     Key nodeEnd;
-    bool ok = endOf_(nodeKey, item.length(), nodeEnd);
-    ZmAssert(ok);
+    ZmAssert(endOf_(nodeKey, item.length(), nodeEnd), return nullptr);
     return nodeEnd > key ? node : nullptr;
   }
 
@@ -1493,8 +1482,7 @@ private:
       if (!length) continue;
       if (key >= limit) break;
       Key end;
-      bool ok = endOf_(key, length, end);
-      ZmAssert(ok);
+      ZmAssert(endOf_(key, length, end), return false);
       if (end <= begin) continue;
       if (key < begin) key = begin;
       if (end > limit) end = limit;
@@ -1536,8 +1524,7 @@ private:
       node = node->NodeExt::prev(0);
       if (!length) continue;
       Key end;
-      bool ok = endOf_(key, length, end);
-      ZmAssert(ok);
+      ZmAssert(endOf_(key, length, end), return false);
       if (end <= begin) break;
       if (key >= limit) continue;
       if (key < begin) key = begin;
@@ -1579,16 +1566,14 @@ private:
 	if (prev) {
 	  Fn prevItem{prev->Node::data()};
 	  Key prevEnd;
-	  bool ok = endOf_(prevItem.key(), prevItem.length(), prevEnd);
-	  ZmAssert(ok);
+	  ZmAssert(endOf_(prevItem.key(), prevItem.length(), prevEnd), return false);
 	  if (key < prevEnd) node = prev;
 	}
       }
     } else if (Node *prev = m_tail[0]) {
       Fn prevItem{prev->Node::data()};
       Key prevEnd;
-      bool ok = endOf_(prevItem.key(), prevItem.length(), prevEnd);
-      ZmAssert(ok);
+      ZmAssert(endOf_(prevItem.key(), prevItem.length(), prevEnd), return false);
       if (key < prevEnd) node = prev;
     }
 
@@ -1601,8 +1586,7 @@ private:
 	continue;
       }
       Key nodeEnd;
-      bool ok = endOf_(nodeKey, length, nodeEnd);
-      ZmAssert(ok);
+      ZmAssert(endOf_(nodeKey, length, nodeEnd), return false);
       if (nodeEnd <= key) {
 	node = node->NodeExt::next(0);
 	continue;
@@ -1648,8 +1632,7 @@ private:
 	if (prev) {
 	  Fn prevItem{prev->Node::data()};
 	  Key prevEnd;
-	  bool ok = endOf_(prevItem.key(), prevItem.length(), prevEnd);
-	  ZmAssert(ok);
+	  ZmAssert(endOf_(prevItem.key(), prevItem.length(), prevEnd), return);
 	  if (key < prevEnd) node = prev;
 	}
 	if (!node) node = next[0];
@@ -1657,8 +1640,7 @@ private:
     } else if (Node *prev = m_tail[0]) {
       Fn prevItem{prev->Node::data()};
       Key prevEnd;
-      bool ok = endOf_(prevItem.key(), prevItem.length(), prevEnd);
-      ZmAssert(ok);
+      ZmAssert(endOf_(prevItem.key(), prevItem.length(), prevEnd), return);
       if (key < prevEnd) node = prev;
     }
 
