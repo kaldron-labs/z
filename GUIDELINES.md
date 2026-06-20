@@ -517,9 +517,9 @@ churn unless the ownership model explicitly requires it.
 
 ### Teardown
 Sharded I/O teardown requires a 3-phase asynchronous process:
-- 1. prevent further ingress and post a teardown continuation on the rx thread to drain rx activity
-- 2. (in the rx thread continuation) post a teardown continuation on the tx thread to drain tx activity
-- 3. (in the tx thread continuation) complete the teardown and release object ownership
+1. prevent further ingress, timer and I/O work (e.g. `m_up = false`), and post a teardown continuation on the rx thread to drain rx activity
+2. (in the rx thread continuation) post a teardown continuation on the tx thread to drain tx activity
+3. (in the tx thread continuation) complete the teardown and release object ownership
 - do NOT block except in the main thread, this is async continuation code
 - I/O buffers, queued lambdas etc. are populous short-lived objects owned by fewer longer-lived objects such as connections/links/sessions/streams
   - populous short-lived objects should not hold reference counts back to their owners, this anti-pattern:
