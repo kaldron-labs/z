@@ -76,6 +76,7 @@ struct TestLink :
   void initPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
   }
+#ifdef Zquic_DEBUG
   void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
   bool startPMTUDProbe(unsigned size) {
     return Base::startPMTUDProbeForTest_(size);
@@ -103,6 +104,7 @@ struct TestLink :
     return Base::pathDiagForTest_();
   }
   Zquic::PktBudget sendBudget() const { return Base::sendBudgetForTest_(); }
+#endif
 };
 
 ZuCSpan bytes_(const uint8_t *data, unsigned len)
@@ -314,6 +316,7 @@ void testRecoveryFlowAndPMTUD()
       blackhole.diag().blackholes == 1,
     "loop PMTUD active-size blackhole fallback failed");
 
+#ifdef Zquic_DEBUG
   App app;
   ZmRef<TestLink> link = new TestLink{&app};
   link->initPath(
@@ -362,6 +365,7 @@ void testRecoveryFlowAndPMTUD()
   ZuCHECK(hintLink.activePathMaxUDP() == 1250 &&
       hintLink.pathDiag().kernelHints == 1,
     "runtime PMTUD kernel hint handling failed");
+#endif
 }
 
 int main(int argc, char **argv)

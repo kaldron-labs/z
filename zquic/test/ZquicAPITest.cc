@@ -241,12 +241,14 @@ struct TestLink :
   void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
   }
+#ifdef Zquic_DEBUG
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
     Base::startPathValidationForTest_(ZuMv(local), ZuMv(remote));
   }
   ZuCSpan validatingChallenge() const {
     return Base::validatingChallenge_();
   }
+#endif
   bool pathResponse(ZuCSpan data) { return Base::onPathResponse_(data); }
   void pathTimeout() { Base::pathExpired_(); }
   void flushTx_() { ++txFlushQueued; }
@@ -581,9 +583,12 @@ void testApplicationCallbacks()
   ZmRef<TestLink> path = new TestLink{&fixture.app, true};
   ZiSockAddr localAddr{ZiIP{0x0a000001}, 4433};
   ZiSockAddr oldRemote{ZiIP{0x0a000002}, 50000};
+#ifdef Zquic_DEBUG
   ZiSockAddr newRemote{ZiIP{0x0a000002}, 50001};
   ZiSockAddr failRemote{ZiIP{0x0a000002}, 50002};
+#endif
   path->initServerPath(localAddr, oldRemote);
+#ifdef Zquic_DEBUG
   path->observePath(localAddr, newRemote);
   ZuCSpan challenge = path->validatingChallenge();
   uint8_t response[Zquic::PathChallenge::Length]{};
@@ -598,6 +603,7 @@ void testApplicationCallbacks()
   path->pathTimeout();
   ZuCHECK(path->migrationFailureCount == 1,
     "migration failure callback mismatch");
+#endif
 }
 
 void testConnectionIDFrameLifecycle()
