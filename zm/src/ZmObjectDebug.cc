@@ -48,7 +48,7 @@ void ZmObject_ref(const ZmObjectDebug *o, const void *referrer)
 
 void ZmObject_deref(const ZmObjectDebug *o, const void *referrer)
 {
-  DebugTree::NodeRef n =
+  auto n =
     (static_cast<DebugTree *>(o->m_debug.operator void *()))->del(referrer);
   if (n) delete n->val();
 }

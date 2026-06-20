@@ -777,8 +777,12 @@ void H3Server::printDiag()
   uint64_t pktIF = 0;
   uint64_t sentPkts = 0, retxPend = 0, retxTotal = 0;
   bool ptoTimer = false, lossTimer = false;
+  ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttpd.H3Diag">> diagLinks;
   this->allLinks([&](const ZmRef<Link> &link) {
     if (!link) return;
+    diagLinks.push(link);
+  });
+  for (auto link : diagLinks) {
     Zquic::RuntimeDiag d = link->runtimeDiag();
     ++links;
     packetsRx += d.packetsRx;
@@ -799,7 +803,7 @@ void H3Server::printDiag()
       retxPend += d.retransmitPending[i];
       retxTotal += d.retransmittable[i];
     }
-  });
+  }
   ZiLOG(Info, "zhttpd", ([
     active, requests, errors, links,
     datagramsRx = diag.datagramsRx, datagramsTx = diag.datagramsTx,

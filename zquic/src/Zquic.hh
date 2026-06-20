@@ -1519,11 +1519,7 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  Stream(Link *link, int64_t id) : m_link{link}, m_id{id} {
-#ifdef ZmObject_DEBUG
-    this->debug();
-#endif
-  }
+  Stream(Link *link, int64_t id) : m_link{link}, m_id{id} { }
 
   Link *link() const { return m_link; }
   int64_t id() const { return m_id; }

@@ -129,8 +129,10 @@ public:
 	using Cache = ZmHeapCacheT<HeapID, sizeof(L), alignof(L), Sharded>;
 	auto src = static_cast<L *>(src_);
 	new (dst) L{ZuMv(*src)};
-	src->~L();
-	if (ZuUnlikely(onHeap)) Cache::free(src);
+	if (ZuUnlikely(onHeap)) {
+	  src->~L();
+	  Cache::free(src);
+	}
       }},
       m_allocFn{[](uintptr_t ptr_) -> uintptr_t {
 	using Cache = ZmHeapCacheT<HeapID, sizeof(L), alignof(L), Sharded>;
