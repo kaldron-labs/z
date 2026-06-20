@@ -129,7 +129,7 @@
 
 #define ZuUnreachable() __builtin_unreachable()
 
-#else
+#else /* __GNUC__ */
 
 #define ZuLikely(x) (x)
 #define ZuUnlikely(x) (x)
@@ -145,7 +145,7 @@
 #define ZuUnreachable() __assume(false)
 #endif
 
-#endif
+#endif /* __GNUC__ */
 
 #if defined(linux) || defined(__mips64)
 #include <endian.h>
