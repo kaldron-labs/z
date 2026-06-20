@@ -1555,6 +1555,36 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     opened = link->localStreamsOpened(Zi::StreamType::Duplex),
     queued = link->queuedLocalStreams(Zi::StreamType::Duplex),
     packetsRx = diag.packetsRx, packetsTx = diag.packetsTx,
+    ackOnly = diag.ackOnlyPacketsTx,
+    streamOnly = diag.streamOnlyPacketsTx,
+    ackStream = diag.ackStreamPacketsTx,
+    controlOnly = diag.controlOnlyPacketsTx,
+    ackControl = diag.ackControlPacketsTx,
+    streamControl = diag.streamControlPacketsTx,
+    ackStreamControl = diag.ackStreamControlPacketsTx,
+    cryptoPkts = diag.cryptoPacketsTx,
+    otherPkts = diag.otherPacketsTx,
+    streamFrames = diag.streamFramesTx,
+    controlFrames = diag.controlFramesTx,
+    cryptoFrames = diag.cryptoFramesTx,
+    maxData = diag.maxDataTx,
+    maxStreamData = diag.maxStreamDataTx,
+    maxStreams = diag.maxStreamsTx,
+    dataBlocked = diag.dataBlockedTx,
+    streamDataBlocked = diag.streamDataBlockedTx,
+    streamsBlocked = diag.streamsBlockedTx,
+    resetStream = diag.resetStreamTx,
+    stopSending = diag.stopSendingTx,
+    pathChallenge = diag.pathChallengeTx,
+    pathResponse = diag.pathResponseTx,
+    handshakeDone = diag.handshakeDoneTx,
+    pathObserved = diag.pathRxObserved,
+    pathSame = diag.pathRxSame,
+    pathNull = diag.pathRxNull,
+    pathActive = diag.pathValidationActive,
+    pathStarted = diag.pathValidationStarted,
+    pathPromoted = diag.pathValidationPromoted,
+    pathUnknown = diag.pathResponseUnknown,
     ptoBackoff = diag.ptoBackoff,
     ptoTimeoutUS = diag.ptoTimeoutUS,
     dgramsRx = epDiag.datagramsRx, dgramsTx = epDiag.datagramsTx,
@@ -1605,6 +1635,20 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
       " queued=" << queued <<
       " packetsRx=" << packetsRx <<
       " packetsTx=" << packetsTx <<
+      " pktMix=[" << ackOnly << ',' << streamOnly << ',' << ackStream <<
+	',' << controlOnly << ',' << ackControl << ',' <<
+	streamControl << ',' << ackStreamControl << ',' << cryptoPkts <<
+	',' << otherPkts << ']' <<
+      " frameMix=[" << streamFrames << ',' << controlFrames << ',' <<
+	cryptoFrames << ']' <<
+      " ctrlTx=[" << maxData << ',' << maxStreamData << ',' <<
+	maxStreams << ',' << dataBlocked << ',' << streamDataBlocked <<
+	',' << streamsBlocked << ',' << resetStream << ',' <<
+	stopSending << ',' << pathChallenge << ',' << pathResponse << ',' <<
+	handshakeDone << ']' <<
+      " pathDiag=[" << pathObserved << ',' << pathSame << ',' <<
+	pathNull << ',' << pathActive << ',' << pathStarted << ',' <<
+	pathPromoted << ',' << pathUnknown << ']' <<
       " ptoBackoff=" << ptoBackoff <<
       " ptoTimeoutUS=" << ptoTimeoutUS <<
       " dgramsRx=" << dgramsRx <<

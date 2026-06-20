@@ -541,6 +541,36 @@ struct RuntimeTxDiag {
   uint64_t	bytesTx = 0;
   uint64_t	cryptoBytesTx = 0;
   uint64_t	streamBytesTx = 0;
+  uint64_t	ackOnlyPacketsTx = 0;
+  uint64_t	streamOnlyPacketsTx = 0;
+  uint64_t	ackStreamPacketsTx = 0;
+  uint64_t	controlOnlyPacketsTx = 0;
+  uint64_t	ackControlPacketsTx = 0;
+  uint64_t	streamControlPacketsTx = 0;
+  uint64_t	ackStreamControlPacketsTx = 0;
+  uint64_t	cryptoPacketsTx = 0;
+  uint64_t	otherPacketsTx = 0;
+  uint64_t	streamFramesTx = 0;
+  uint64_t	controlFramesTx = 0;
+  uint64_t	cryptoFramesTx = 0;
+  uint64_t	maxDataTx = 0;
+  uint64_t	maxStreamDataTx = 0;
+  uint64_t	maxStreamsTx = 0;
+  uint64_t	dataBlockedTx = 0;
+  uint64_t	streamDataBlockedTx = 0;
+  uint64_t	streamsBlockedTx = 0;
+  uint64_t	resetStreamTx = 0;
+  uint64_t	stopSendingTx = 0;
+  uint64_t	pathChallengeTx = 0;
+  uint64_t	pathResponseTx = 0;
+  uint64_t	handshakeDoneTx = 0;
+  uint64_t	pathRxObserved = 0;
+  uint64_t	pathRxSame = 0;
+  uint64_t	pathRxNull = 0;
+  uint64_t	pathValidationActive = 0;
+  uint64_t	pathValidationStarted = 0;
+  uint64_t	pathValidationPromoted = 0;
+  uint64_t	pathResponseUnknown = 0;
   uint64_t	ptoCount = 0;
   uint32_t	ptoBackoff = 0;
   uint64_t	ptoTimeoutUS = 0;
@@ -586,6 +616,36 @@ struct RuntimeDiag {
     bytesTx = tx.bytesTx;
     cryptoBytesTx = tx.cryptoBytesTx;
     streamBytesTx = tx.streamBytesTx;
+    ackOnlyPacketsTx = tx.ackOnlyPacketsTx;
+    streamOnlyPacketsTx = tx.streamOnlyPacketsTx;
+    ackStreamPacketsTx = tx.ackStreamPacketsTx;
+    controlOnlyPacketsTx = tx.controlOnlyPacketsTx;
+    ackControlPacketsTx = tx.ackControlPacketsTx;
+    streamControlPacketsTx = tx.streamControlPacketsTx;
+    ackStreamControlPacketsTx = tx.ackStreamControlPacketsTx;
+    cryptoPacketsTx = tx.cryptoPacketsTx;
+    otherPacketsTx = tx.otherPacketsTx;
+    streamFramesTx = tx.streamFramesTx;
+    controlFramesTx = tx.controlFramesTx;
+    cryptoFramesTx = tx.cryptoFramesTx;
+    maxDataTx = tx.maxDataTx;
+    maxStreamDataTx = tx.maxStreamDataTx;
+    maxStreamsTx = tx.maxStreamsTx;
+    dataBlockedTx = tx.dataBlockedTx;
+    streamDataBlockedTx = tx.streamDataBlockedTx;
+    streamsBlockedTx = tx.streamsBlockedTx;
+    resetStreamTx = tx.resetStreamTx;
+    stopSendingTx = tx.stopSendingTx;
+    pathChallengeTx = tx.pathChallengeTx;
+    pathResponseTx = tx.pathResponseTx;
+    handshakeDoneTx = tx.handshakeDoneTx;
+    pathRxObserved = tx.pathRxObserved;
+    pathRxSame = tx.pathRxSame;
+    pathRxNull = tx.pathRxNull;
+    pathValidationActive = tx.pathValidationActive;
+    pathValidationStarted = tx.pathValidationStarted;
+    pathValidationPromoted = tx.pathValidationPromoted;
+    pathResponseUnknown = tx.pathResponseUnknown;
     ptoCount = tx.ptoCount;
     ptoBackoff = tx.ptoBackoff;
     ptoTimeoutUS = tx.ptoTimeoutUS;
@@ -619,6 +679,36 @@ struct RuntimeDiag {
   uint64_t	cryptoBytesTx = 0;
   uint64_t	streamBytesRx = 0;
   uint64_t	streamBytesTx = 0;
+  uint64_t	ackOnlyPacketsTx = 0;
+  uint64_t	streamOnlyPacketsTx = 0;
+  uint64_t	ackStreamPacketsTx = 0;
+  uint64_t	controlOnlyPacketsTx = 0;
+  uint64_t	ackControlPacketsTx = 0;
+  uint64_t	streamControlPacketsTx = 0;
+  uint64_t	ackStreamControlPacketsTx = 0;
+  uint64_t	cryptoPacketsTx = 0;
+  uint64_t	otherPacketsTx = 0;
+  uint64_t	streamFramesTx = 0;
+  uint64_t	controlFramesTx = 0;
+  uint64_t	cryptoFramesTx = 0;
+  uint64_t	maxDataTx = 0;
+  uint64_t	maxStreamDataTx = 0;
+  uint64_t	maxStreamsTx = 0;
+  uint64_t	dataBlockedTx = 0;
+  uint64_t	streamDataBlockedTx = 0;
+  uint64_t	streamsBlockedTx = 0;
+  uint64_t	resetStreamTx = 0;
+  uint64_t	stopSendingTx = 0;
+  uint64_t	pathChallengeTx = 0;
+  uint64_t	pathResponseTx = 0;
+  uint64_t	handshakeDoneTx = 0;
+  uint64_t	pathRxObserved = 0;
+  uint64_t	pathRxSame = 0;
+  uint64_t	pathRxNull = 0;
+  uint64_t	pathValidationActive = 0;
+  uint64_t	pathValidationStarted = 0;
+  uint64_t	pathValidationPromoted = 0;
+  uint64_t	pathResponseUnknown = 0;
   uint64_t	invalidStreamFrames = 0;
   uint64_t	closedStreamFrames = 0;
   uint64_t	suspiciousStreamCloses = 0;
@@ -3133,7 +3223,8 @@ protected:
   PktBudget sendBudget_() const {
     PktBudget budget;
     unsigned maxUDP = m_path.activeMaxUDP();
-    budget.pmtu = maxUDP;
+    budget.pmtu = maxUDP > TxStreamPktReserve ?
+      maxUDP - TxStreamPktReserve : 0;
     budget.antiAmplification = m_path.sendAllowance();
     unsigned allowance = congestionAllowance_();
     budget.congestion = allowance < maxUDP ? allowance : maxUDP;
@@ -3226,11 +3317,20 @@ protected:
   void observePathRxTx_(ZiSockAddr local, ZiSockAddr remote) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path receive observation outside Tx thread", return);
-    if (!remote || sameAddr_(remote, m_path.remote()))
+    ++m_txDiag.pathRxObserved;
+    if (!remote) {
+      ++m_txDiag.pathRxNull;
       return;
+    }
+    if (sameAddr_(remote, m_path.remote())) {
+      ++m_txDiag.pathRxSame;
+      return;
+    }
     if (m_validatingPath.active &&
-	sameAddr_(remote, m_validatingPath.path.remote()))
+	sameAddr_(remote, m_validatingPath.path.remote())) {
+      ++m_txDiag.pathValidationActive;
       return;
+    }
     startPathValidation_(ZuMv(local), ZuMv(remote));
   }
   bool startPathValidation_(
@@ -3251,6 +3351,7 @@ protected:
     state.deadline = pathValidationDeadline_();
     state.active = true;
     m_validatingPath = state;
+    ++m_txDiag.pathValidationStarted;
     if (armTimer)
       schedulePathTimer_(state.deadline);
     txQueueControl_(ControlFrame::pathChallenge(
@@ -3262,8 +3363,10 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PATH_RESPONSE processing outside Tx thread", return false);
     if (!m_validatingPath.active ||
-	!m_validatingPath.challenge.equals(data))
+	!m_validatingPath.challenge.equals(data)) {
+      ++m_txDiag.pathResponseUnknown;
       return false;
+    }
     m_pathChallengeControl = {};
     promotePath_();
     return true;
@@ -3285,6 +3388,7 @@ protected:
     m_path.validated();
     bindPromotedCID_();
     m_validatingPath = {};
+    ++m_txDiag.pathValidationPromoted;
     cancelPathTimer_();
     impl()->pathPromoted_();
     const Path &path = m_path;
@@ -5372,6 +5476,70 @@ nextSpace:
     return sendShort(build, ZuMv(addr), {}, &ref, true);
   }
 
+  void noteTxControlFrame_(FrameType::T type) {
+    switch (type) {
+      case FrameType::MaxData: ++m_txDiag.maxDataTx; break;
+      case FrameType::MaxStreamData: ++m_txDiag.maxStreamDataTx; break;
+      case FrameType::MaxStreams: ++m_txDiag.maxStreamsTx; break;
+      case FrameType::DataBlocked: ++m_txDiag.dataBlockedTx; break;
+      case FrameType::StreamDataBlocked: ++m_txDiag.streamDataBlockedTx; break;
+      case FrameType::StreamsBlocked: ++m_txDiag.streamsBlockedTx; break;
+      case FrameType::ResetStream: ++m_txDiag.resetStreamTx; break;
+      case FrameType::StopSending: ++m_txDiag.stopSendingTx; break;
+      case FrameType::PathChallenge: ++m_txDiag.pathChallengeTx; break;
+      case FrameType::PathResponse: ++m_txDiag.pathResponseTx; break;
+      case FrameType::HandshakeDone: ++m_txDiag.handshakeDoneTx; break;
+      default: break;
+    }
+  }
+
+  void noteTxPktDiag_(const TxPktRefs *refs, uint8_t ackLevel) {
+    bool hasAck = ackLevel < 3;
+    bool hasStream = false;
+    bool hasControl = false;
+    bool hasCrypto = false;
+    if (refs) {
+      for (unsigned i = 0, n = refs->count(); i < n; ++i) {
+	const SentFrameRef &ref = (*refs)[i];
+	switch (ref.kind) {
+	  case SentFrameKind::Stream:
+	    ++m_txDiag.streamFramesTx;
+	    hasStream = true;
+	    break;
+	  case SentFrameKind::Control:
+	    ++m_txDiag.controlFramesTx;
+	    hasControl = true;
+	    noteTxControlFrame_(ref.controlType);
+	    break;
+	  case SentFrameKind::Crypto:
+	    ++m_txDiag.cryptoFramesTx;
+	    hasCrypto = true;
+	    break;
+	  default:
+	    break;
+	}
+      }
+    }
+    if (hasStream && hasControl && hasAck)
+      ++m_txDiag.ackStreamControlPacketsTx;
+    else if (hasStream && hasControl)
+      ++m_txDiag.streamControlPacketsTx;
+    else if (hasStream && hasAck)
+      ++m_txDiag.ackStreamPacketsTx;
+    else if (hasControl && hasAck)
+      ++m_txDiag.ackControlPacketsTx;
+    else if (hasStream)
+      ++m_txDiag.streamOnlyPacketsTx;
+    else if (hasControl)
+      ++m_txDiag.controlOnlyPacketsTx;
+    else if (hasAck)
+      ++m_txDiag.ackOnlyPacketsTx;
+    else if (hasCrypto)
+      ++m_txDiag.cryptoPacketsTx;
+    else
+      ++m_txDiag.otherPacketsTx;
+  }
+
   void recordProtPktTx_(
     CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan recordFrame,
     const TxPktRefs *recordRefs, bool ackEliciting,
@@ -5386,6 +5554,7 @@ nextSpace:
     ++m_txPN[level];
     ++m_txDiag.packetsTx;
     m_txDiag.bytesTx += bytes;
+    noteTxPktDiag_(recordRefs, ackLevel);
     Zquic_DEBUG_LOG_(([level, pn, bytes, ackEliciting](auto &s) {
 	s << "packet sent level=" << int(level) <<
 	  " pn=" << pn <<
@@ -6903,6 +7072,7 @@ private:
   bool startHandshake_() {
     if (Base::runtimeHandshakeStarted_()) return true;
     resetRuntimeState_();
+    Base::initClientPath_(m_endpoint.local(), m_endpoint.remote());
     if (!initRuntimeCrypto_()) return false;
     if (!Base::startRuntimeHandshake_()) return false;
     return emitTLS_(0, {}, m_endpoint.remote());
@@ -7058,8 +7228,10 @@ private:
       "QUIC client flush outside Tx thread", return false);
     if (!addr) return flushTx_();
     if (Base::closed()) return false;
-    flushPendingAcks_(addr);
-    if (!Base::runtimeEstablished_()) return false;
+    if (!Base::runtimeEstablished_()) {
+      flushPendingAcks_(addr);
+      return false;
+    }
     bool sent = Base::flushControlAndStreams_(
       addr,
       [this](PktBuild &build) {
@@ -7071,6 +7243,7 @@ private:
 	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
     sent |= sendPMTUDProbe_(ZuMv(addr));
+    if (!sent) sent = flushPendingAcks_(ZuMv(addr));
     return sent;
   }
 
@@ -7392,7 +7565,6 @@ private:
     m_notifyEndpointDown = true;
     ++m_udpReadyCount;
     Base::endpointReady_();
-    Base::initClientPath_(ep->local(), ep->remote());
     startHandshake_();
     m_udpReady = 1;
   }
@@ -7819,8 +7991,10 @@ private:
       "QUIC server flush outside Tx thread", return false);
     if (!addr) return flushTx_();
     if (Base::closed()) return false;
-    flushPendingAcks_(addr);
-    if (!Base::runtimeEstablished_()) return false;
+    if (!Base::runtimeEstablished_()) {
+      flushPendingAcks_(addr);
+      return false;
+    }
     bool sent = Base::flushControlAndStreams_(
       addr,
       [this](PktBuild &build) {
@@ -7832,6 +8006,7 @@ private:
 	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
     sent |= sendPMTUDProbe_(ZuMv(addr));
+    if (!sent) sent = flushPendingAcks_(ZuMv(addr));
     return sent;
   }
 
