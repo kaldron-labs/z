@@ -771,6 +771,16 @@ void H3Server::printDiag()
   uint64_t errors = state ? state->errors.load_() : 0;
   unsigned links = 0;
   uint64_t packetsRx = 0, packetsTx = 0;
+  uint64_t ackOnly = 0, streamOnly = 0, ackStream = 0;
+  uint64_t controlOnly = 0, ackControl = 0, streamControl = 0;
+  uint64_t ackStreamControl = 0, cryptoPkts = 0, otherPkts = 0;
+  uint64_t streamFrames = 0, controlFrames = 0, cryptoFrames = 0;
+  uint64_t maxData = 0, maxStreamData = 0, maxStreams = 0;
+  uint64_t dataBlocked = 0, streamDataBlocked = 0, streamsBlocked = 0;
+  uint64_t resetStream = 0, stopSending = 0, pathChallenge = 0;
+  uint64_t pathResponse = 0, handshakeDone = 0;
+  uint64_t pathObserved = 0, pathSame = 0, pathNull = 0, pathActive = 0;
+  uint64_t pathStarted = 0, pathPromoted = 0, pathUnknown = 0;
   uint64_t streamRx = 0, streamTx = 0;
   uint64_t peerOpened = 0, localLimit = 0;
   uint64_t pto = 0, retx = 0, pc = 0;
@@ -788,6 +798,36 @@ void H3Server::printDiag()
     ++links;
     packetsRx += d.packetsRx;
     packetsTx += d.packetsTx;
+    ackOnly += d.ackOnlyPacketsTx;
+    streamOnly += d.streamOnlyPacketsTx;
+    ackStream += d.ackStreamPacketsTx;
+    controlOnly += d.controlOnlyPacketsTx;
+    ackControl += d.ackControlPacketsTx;
+    streamControl += d.streamControlPacketsTx;
+    ackStreamControl += d.ackStreamControlPacketsTx;
+    cryptoPkts += d.cryptoPacketsTx;
+    otherPkts += d.otherPacketsTx;
+    streamFrames += d.streamFramesTx;
+    controlFrames += d.controlFramesTx;
+    cryptoFrames += d.cryptoFramesTx;
+    maxData += d.maxDataTx;
+    maxStreamData += d.maxStreamDataTx;
+    maxStreams += d.maxStreamsTx;
+    dataBlocked += d.dataBlockedTx;
+    streamDataBlocked += d.streamDataBlockedTx;
+    streamsBlocked += d.streamsBlockedTx;
+    resetStream += d.resetStreamTx;
+    stopSending += d.stopSendingTx;
+    pathChallenge += d.pathChallengeTx;
+    pathResponse += d.pathResponseTx;
+    handshakeDone += d.handshakeDoneTx;
+    pathObserved += d.pathRxObserved;
+    pathSame += d.pathRxSame;
+    pathNull += d.pathRxNull;
+    pathActive += d.pathValidationActive;
+    pathStarted += d.pathValidationStarted;
+    pathPromoted += d.pathValidationPromoted;
+    pathUnknown += d.pathResponseUnknown;
     streamRx += d.streamBytesRx;
     streamTx += d.streamBytesTx;
     peerOpened += link->peerStreamsOpened(Zi::StreamType::Duplex);
@@ -814,6 +854,13 @@ void H3Server::printDiag()
     txBackPressure = diag.txBackPressure,
     failures = diag.failures,
     packetsRx, packetsTx, streamRx, streamTx, peerOpened, localLimit, pto, retx,
+    ackOnly, streamOnly, ackStream, controlOnly, ackControl, streamControl,
+    ackStreamControl, cryptoPkts, otherPkts, streamFrames, controlFrames,
+    cryptoFrames, maxData, maxStreamData, maxStreams, dataBlocked,
+    streamDataBlocked, streamsBlocked, resetStream, stopSending,
+    pathChallenge, pathResponse, handshakeDone,
+    pathObserved, pathSame, pathNull, pathActive, pathStarted, pathPromoted,
+    pathUnknown,
     ptoTimer, lossTimer, pktIF, sentPkts, retxPend, retxTotal,
     cwnd, ssthresh, pc, bif
   ](auto &s) {
@@ -829,6 +876,20 @@ void H3Server::printDiag()
       " failures=" << failures <<
       " packetsRx=" << packetsRx <<
       " packetsTx=" << packetsTx <<
+      " pktMix=[" << ackOnly << ',' << streamOnly << ',' << ackStream <<
+	',' << controlOnly << ',' << ackControl << ',' <<
+	streamControl << ',' << ackStreamControl << ',' << cryptoPkts <<
+	',' << otherPkts << ']' <<
+      " frameMix=[" << streamFrames << ',' << controlFrames << ',' <<
+	cryptoFrames << ']' <<
+      " ctrlTx=[" << maxData << ',' << maxStreamData << ',' <<
+	maxStreams << ',' << dataBlocked << ',' << streamDataBlocked <<
+	',' << streamsBlocked << ',' << resetStream << ',' <<
+	stopSending << ',' << pathChallenge << ',' << pathResponse << ',' <<
+	handshakeDone << ']' <<
+      " pathDiag=[" << pathObserved << ',' << pathSame << ',' <<
+	pathNull << ',' << pathActive << ',' << pathStarted << ',' <<
+	pathPromoted << ',' << pathUnknown << ']' <<
       " streamRx=" << streamRx <<
       " streamTx=" << streamTx <<
       " peerOpened=" << peerOpened <<

@@ -23,6 +23,12 @@
 
 namespace Zquic {
 
+// Reserve a round 64 bytes when sizing stream plaintext against the
+// runtime-discovered UDP MTU: short header (~13), AEAD tag (16), STREAM prefix
+// (~8), and room for a coalesced ACK/control frame.  Sub-8-byte precision is
+// intentionally not a hot-path goal here.
+inline constexpr unsigned TxStreamPktReserve = 64;
+
 struct PktBudget {
   unsigned	pmtu = MinUDPPayload;
   unsigned	congestion = MinUDPPayload;
