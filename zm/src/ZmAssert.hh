@@ -25,12 +25,19 @@ extern "C" {
   ZmExtern void ZmAssert_failed();
 }
 
-#ifdef NDEBUG
-#define ZmAssert(x) (void())
-#else
+#ifdef ZDEBUG
 #include <zlib/ZuFnName.hh>
-#define ZmAssert(x) \
+#define ZmAssert(x, ...) \
   ((x) ? void() : ZmAssert_fail(#x, __FILE__, __LINE__, ZuFnName))
-#endif
+#else /* ZDEBUG */
+#define ZmAssert_1(x) (void())
+#define ZmAssert_2(x, fallback) \
+  do { if (ZuUnlikely(!(x))) { ZuPP_Strip(fallback); } } while (0)
+#define ZmAssert_N(_0, _1, Fn, ...) Fn
+#define ZmAssert(...) \
+  ZmAssert_N(__VA_ARGS__, \
+    ZmAssert_2(__VA_ARGS__), \
+    ZmAssert_1(__VA_ARGS__))
+#endif /* ZDEBUG */
 
 #endif /* ZmAssert_HH */
