@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -108,6 +109,7 @@ ZtStruct((Options, CLI),
   (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),             (Bool, false)));
 
 Options options;
+ZtString<> matrixDir;
 
 const char *pairName(Pair::T pair)
 {
@@ -243,6 +245,110 @@ int findChar(ZuCSpan s, char c, unsigned off = 0)
   for (unsigned i = off, n = s.length(); i < n; ++i)
     if (s[i] == c) return int(i);
   return -1;
+}
+
+bool hasDirSep(ZuCSpan s)
+{
+  for (unsigned i = 0, n = s.length(); i < n; ++i)
+    if (s[i] == '/' || s[i] == '\\') return true;
+  return false;
+}
+
+ZtString<> pathAbs(ZuCSpan path)
+{
+#ifndef _WIN32
+  ZiFile::Path p;
+  p << path;
+  if (ZiFile::absolute(p)) return p;
+  return ZiFile::append(ZiFile::cwd(), p);
+#else
+  ZtString<> p;
+  p << path;
+  return p;
+#endif
+}
+
+bool pathExists(ZuCSpan path)
+{
+#ifndef _WIN32
+  ZiFile::Path p;
+  p << path;
+  return ZiFile::exists(p);
+#else
+  return bool(path);
+#endif
+}
+
+ZtString<> pathDirname(ZuCSpan path)
+{
+#ifndef _WIN32
+  ZiFile::Path p;
+  p << path;
+  return ZiFile::dirname(p);
+#else
+  int off = -1;
+  for (unsigned i = 0, n = path.length(); i < n; ++i)
+    if (path[i] == '/' || path[i] == '\\') off = int(i);
+  if (off < 0) return ".";
+  if (!off) return "/";
+  ZtString<> dir;
+  dir << ZuCSpan{path.data(), unsigned(off)};
+  return dir;
+#endif
+}
+
+ZtString<> executableBinDir(ZuCSpan dir)
+{
+#ifndef _WIN32
+  ZiFile::Path p;
+  p << dir;
+  if (ZiFile::leafname(p) == ".libs") return ZiFile::dirname(p);
+#endif
+  ZtString<> out;
+  out << dir;
+  return out;
+}
+
+ZtString<> executableDir(const char *argv0)
+{
+  if (!argv0 || !argv0[0]) return ".";
+
+  ZuCSpan arg0{argv0};
+  if (hasDirSep(arg0))
+    return executableBinDir(cspan(pathDirname(cspan(pathAbs(arg0)))));
+
+  if (const char *path_ = ::getenv("PATH")) {
+    ZuCSpan path{path_};
+    unsigned begin = 0;
+    for (unsigned i = 0, n = path.length(); i <= n; ++i) {
+      if (i < n && path[i] != ':') continue;
+      ZtString<> dir;
+      if (i > begin)
+	dir << ZuCSpan{path.data() + begin, i - begin};
+      else
+	dir << '.';
+      ZtString<> candidate;
+      candidate << dir << '/' << arg0;
+      ZtString<> abs = pathAbs(cspan(candidate));
+      if (pathExists(cspan(abs)))
+	return executableBinDir(cspan(pathDirname(cspan(abs))));
+      begin = i + 1;
+    }
+  }
+
+  return ".";
+}
+
+void appendShellQuote(ZtString<> &s, ZuCSpan v)
+{
+  s << '\'';
+  for (unsigned i = 0, n = v.length(); i < n; ++i) {
+    if (v[i] == '\'')
+      s << "'\\''";
+    else
+      s << v[i];
+  }
+  s << '\'';
 }
 
 bool parseUInt(ZuCSpan s, unsigned &v)
@@ -556,7 +662,8 @@ void appendCurlCommand(
 
 bool writeScript(
   ZuCSpan path, const Case &c, unsigned port, ZuCSpan tempPath,
-  ZuCSpan rootPath, ZuCSpan certPath, ZuCSpan keyPath, ZuCSpan caddyfile)
+  ZuCSpan rootPath, ZuCSpan certPath, ZuCSpan keyPath, ZuCSpan caddyfile,
+  ZuCSpan exeDir)
 {
   bool caddy = c.pair == Pair::ZhttpCaddy || c.pair == Pair::CurlCaddy;
   bool zhttp = c.pair == Pair::ZhttpCaddy || c.pair == Pair::ZhttpZhttpd;
@@ -623,10 +730,14 @@ bool writeScript(
     "  fi\n"
     "}\n"
     "trap cleanup EXIT INT TERM\n"
+    "bin_dir=";
+  appendShellQuote(script, exeDir);
+  script <<
+    "\n"
     "server=gzhttpd\n"
     "client=gzhttp\n"
-    "[ -x \"$server\" ] || server=./zhttp/test/zhttpd\n"
-    "[ -x \"$client\" ] || client=./zhttp/test/zhttp\n";
+    "[ -x \"$server\" ] || server=\"$bin_dir/zhttpd\"\n"
+    "[ -x \"$client\" ] || client=\"$bin_dir/zhttp\"\n";
   if (caddy)
     script <<
       "export XDG_DATA_HOME=" << tempPath << "/caddy-data\n"
@@ -723,9 +834,10 @@ bool writeScript(
 	  return writeFile(path, cspan(script), 0777);
 	}
 
-	void preserveTemp(TempDir &temp)
+	void preserveTemp(TempDir &temp, bool force = false)
 	{
-	  if ((!preserveLogs() && !options.pcap) || !temp.path[0]) return;
+	  if ((!force && !preserveLogs() && !options.pcap) || !temp.path[0])
+	    return;
 	  std::cout << "# preserved logs: " << static_cast<const char *>(temp.path) <<
 	    '\n';
 	  temp.path[0] = 0;
@@ -766,7 +878,8 @@ bool runCase_(const Case &c)
   }
   auto script = temp.pathOf("matrix.sh");
   if (!writeScript(script, c, port, static_cast<const char *>(temp.path),
-      cspan(rootPath), cspan(certPath), cspan(keyPath), cspan(caddyfile))) {
+      cspan(rootPath), cspan(certPath), cspan(keyPath), cspan(caddyfile),
+      cspan(matrixDir))) {
     std::cout << "# failed to write matrix script\n";
     preserveTemp(temp);
     return false;
@@ -774,8 +887,10 @@ bool runCase_(const Case &c)
 
   ZtString<> cmd;
   cmd << "sh " << script;
+  uint64_t runStart = nowMS();
   if (systemOK(::system(cmd.data()))) {
-    preserveTemp(temp);
+    uint64_t duration = nowMS() - runStart;
+    preserveTemp(temp, c.timeout && duration > uint64_t(c.timeout) * 1000);
     return true;
   }
 
@@ -840,6 +955,7 @@ bool prerequisitesOK()
 
 int main(int argc, char **argv)
 {
+  matrixDir = executableDir(argv[0]);
   argc = ZtCLI::load(options, argc, const_cast<const char *const *>(argv));
   if (options.help) usage(0);
   if (argc != 1) usage();
