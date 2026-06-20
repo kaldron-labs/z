@@ -260,10 +260,12 @@ public:
     if (m_ack[i].contains(pn)) return false;
     if (!m_ack[i].add(pn)) return false;
     noteECN_(i, ecn);
-    m_pending[i] = true;
-    ++m_gen[i];
     if (!haveLargest || pn >= largest) m_largestRxTime[i] = now;
-    if (ackEliciting) noteAckEliciting_(i, now, maxAckDelay, immediate);
+    if (ackEliciting) {
+      ++m_gen[i];
+      m_pending[i] = true;
+      noteAckEliciting_(i, now, maxAckDelay, immediate);
+    }
     return true;
   }
 
@@ -273,19 +275,27 @@ public:
   {
     unsigned i = space;
     if (!m_ack[i].contains(pn)) return false;
+    ++m_gen[i];
     if (m_ack[i].largest() == pn) m_largestRxTime[i] = now;
+    m_pending[i] = true;
     noteAckEliciting_(i, now, maxAckDelay, immediate);
     return true;
   }
 
-	  const AckTracker &tracker(PktSpace::T space) const {
-	    return m_ack[space];
-	  }
-	  AckTracker &tracker(PktSpace::T space) {
-	    return m_ack[space];
-	  }
+  const AckTracker &tracker(PktSpace::T space) const {
+    return m_ack[space];
+  }
+  AckTracker &tracker(PktSpace::T space) {
+    return m_ack[space];
+  }
   bool pending(PktSpace::T space) const {
     return m_pending[space];
+  }
+  bool post(PktSpace::T space) {
+    unsigned i = space;
+    if (!m_pending[i] || m_postedGen[i] == m_gen[i]) return false;
+    m_postedGen[i] = m_gen[i];
+    return true;
   }
   bool deadlineSet(PktSpace::T space) const {
     return m_deadlineSet[space];
@@ -341,6 +351,7 @@ public:
       m_deadline[i] = 0;
       m_largestRxTime[i] = 0;
       m_gen[i] = 0;
+      m_postedGen[i] = 0;
       m_ecn[i].reset();
     }
   }
@@ -383,6 +394,7 @@ private:
   uint64_t	m_deadline[Spaces] = {};
   uint64_t	m_largestRxTime[Spaces] = {};
   uint64_t	m_gen[Spaces] = {};
+  uint64_t	m_postedGen[Spaces] = {};
 };
 
 class RttEstimator {
@@ -1187,7 +1199,7 @@ public:
   unsigned retransmitDropped() const { return m_retransmit.dropped(); }
   bool nextRetransmit(SentFrameRef &frame) {
     while (m_retransmit.pop(frame))
-      if (!frameOutstanding_(frame)) return true;
+      if (clipOutstanding_(frame)) return true;
     return false;
   }
   bool requeueRetransmit(const SentFrameRef &frame) {
@@ -1298,6 +1310,96 @@ private:
       if (frameOutstanding_(frame, &p)) continue;
       m_retransmit.push(frame);
     }
+  }
+
+  static bool rangeEnd_(const SentFrameRef &frame, uint64_t &end) {
+    end = frame.offset + frame.length;
+    return end >= frame.offset;
+  }
+  static bool sameRangeRef_(
+    const SentFrameRef &l, const SentFrameRef &r) {
+    if (l.kind != r.kind) return false;
+    switch (l.kind) {
+      case SentFrameKind::Stream:
+	return l.streamID == r.streamID;
+      case SentFrameKind::Crypto:
+	return true;
+      default:
+	return false;
+    }
+  }
+  static bool clipFrameRef_(
+    SentFrameRef &frame, uint64_t first, uint64_t end, bool fin) {
+    if (end < first) return false;
+    uint64_t length = end - first;
+    if (frame.kind == SentFrameKind::Stream) {
+      if (first < frame.offset || length > uint64_t(uint32_t(-1)))
+	return false;
+      uint64_t advance = first - frame.offset;
+      uint64_t rangeOffset = uint64_t(frame.range.offset) + advance;
+      if (rangeOffset > uint64_t(uint32_t(-1))) return false;
+      frame.range.offset = uint32_t(rangeOffset);
+      frame.range.length = uint32_t(length);
+      frame.range.streamOffset = first;
+      frame.fin = fin;
+    }
+    frame.offset = first;
+    frame.length = length;
+    return length || frame.fin;
+  }
+  bool finOutstanding_(const SentFrameRef &frame, uint64_t end) const {
+    if (frame.kind != SentFrameKind::Stream || !frame.fin) return false;
+    auto iter = m_packets.citer();
+    while (auto node = iter()) {
+      const SentPkt &p = node->data();
+      if (p.ackd || p.lost || p.ptoReclaimed) continue;
+      for (unsigned i = 0; i < p.framesUsed(); ++i) {
+	const SentFrameRef &f = p.frame(i);
+	uint64_t fEnd = 0;
+	if (!f.fin || f.streamID != frame.streamID || !rangeEnd_(f, fEnd))
+	  continue;
+	if (fEnd == end) return true;
+      }
+    }
+    return false;
+  }
+  bool clipOutstanding_(SentFrameRef &frame) {
+    if (frame.kind != SentFrameKind::Stream &&
+	frame.kind != SentFrameKind::Crypto)
+      return !frameOutstanding_(frame);
+    uint64_t first = frame.offset;
+    uint64_t end = 0;
+    if (!rangeEnd_(frame, end)) return false;
+    bool fin = frame.fin;
+restart:
+    auto iter = m_packets.citer();
+    while (auto node = iter()) {
+      const SentPkt &p = node->data();
+      if (p.ackd || p.lost || p.ptoReclaimed) continue;
+      for (unsigned i = 0; i < p.framesUsed(); ++i) {
+	const SentFrameRef &f = p.frame(i);
+	if (!sameRangeRef_(frame, f)) continue;
+	uint64_t fEnd = 0;
+	if (!rangeEnd_(f, fEnd)) continue;
+	if (f.offset <= first && fEnd > first) {
+	  first = fEnd < end ? fEnd : end;
+	  goto restart;
+	}
+	if (f.offset > first && f.offset < end) {
+	  if (fEnd < end || (fin && !(f.fin && fEnd == end))) {
+	    SentFrameRef tail = frame;
+	    uint64_t tailFirst = fEnd < end ? fEnd : end;
+	    if (clipFrameRef_(tail, tailFirst, end, fin))
+	      m_retransmit.push(tail);
+	  }
+	  return clipFrameRef_(frame, first, f.offset, false);
+	}
+      }
+    }
+    if (first >= end)
+      return fin && !finOutstanding_(frame, end) &&
+	clipFrameRef_(frame, end, end, true);
+    return clipFrameRef_(frame, first, end, fin);
   }
 
   bool frameOutstanding_(

@@ -902,24 +902,7 @@ public:
       ZmSemaphore stopped;
       rxInvoke([this, &stopped]() { stop_1(&stopped); });
       stopped.wait();
-      return;
     }
-    clear_();
-  }
-
-  void clear_() {
-    m_mx = nullptr;
-    m_rxThread = m_txThread = m_asyncThread = 0;
-    m_errorFn = ErrorFn{};
-    m_alpn.length(0);
-    m_alpnData.length(0);
-    m_caPath = m_certPath = m_keyPath = ParamString{};
-    m_keyLogPath = ParamString{};
-    m_maxData = DefaultMaxData;
-    m_maxStreamData = DefaultMaxStreamData;
-    m_maxStreamsBidi = DefaultMaxStreamsBidi;
-    m_maxStreamsUni = DefaultMaxStreamsUni;
-    m_maxUDP = MinUDPPayload;
   }
 
   ZiMultiplex *mx() const { return m_mx; }
@@ -971,19 +954,6 @@ protected:
   }
 
   void stop_2(ZmSemaphore *stopped) {
-    rxInvoke([this, stopped]() {
-      stop_3(stopped);
-    });
-  }
-
-  void stop_3(ZmSemaphore *stopped) {
-    txInvoke([this, stopped]() {
-      stop_4(stopped);
-    });
-  }
-
-  void stop_4(ZmSemaphore *stopped) {
-    clear_();
     stopped->post();
   }
 
@@ -1445,6 +1415,7 @@ private:
 
   void releaseLink_(Link *link) {
     if (!link) return;
+    link->shutdown_();
     link->retireRoutes_(m_routes);
     LinkRef ref;
     if (auto entry = m_links->findVal(link)) ref = entry->linkRef;
@@ -2339,6 +2310,7 @@ public:
     uint64_t value = frame.value;
     Zi::StreamType::T type = frame.streamType;
     app()->txRun([link = ZmMkRef(impl()), type, value]() mutable {
+      if (!link->up_()) return;
       link->txApplyMaxStreams_(type, value);
       link->flushTx_();
     });
@@ -2532,6 +2504,7 @@ public:
       link = impl(),
       stream = ZuMv(stream)
     ]() mutable {
+      if (!link->up_()) return link;
       if (link->streamTxPending_(stream)) {
 	link->streamWritable_(stream);
 	link->flushTx_();
@@ -2560,8 +2533,10 @@ public:
   void close(uint64_t errorCode = 0) {
     m_closeError = errorCode;
     m_closed = true;
-    if (app() && app()->mx()) cancelTimers();
+    cancelTimers();
   }
+  void up_(bool up) { m_up = unsigned(up); }
+  bool up_() const { return m_up; }
   void closeForStreamActivity_(TransportError::T error) {
     ++m_rxDiag.suspiciousStreamCloses;
     m_suspiciousStreamClosed = true;
@@ -2655,8 +2630,9 @@ protected:
   }
 
   bool queueControl_(const ControlFrame &frame) {
-    if (!frame) return false;
+    if (!frame || !up_()) return false;
     app()->txInvoke(impl(), [link = impl(), frame]() mutable {
+      if (!link->up_()) return link;
       link->txQueueControl_(frame);
       return link;
     });
@@ -2750,6 +2726,7 @@ protected:
     if (!validateMaxData_(frame)) return false;
     uint64_t value = frame.value;
     app()->txRun([link = ZmMkRef(impl()), value]() mutable {
+      if (!link->up_()) return;
       link->txApplyMaxData_(value);
       link->flushTx_();
     });
@@ -2773,10 +2750,11 @@ protected:
     }
     uint64_t value = frame.value;
     app()->txRun([
-      link = ZmMkRef(impl()),
+      link = impl(),
       stream = ZuMv(stream),
       value
     ]() mutable {
+      if (!link->up_()) return;
       link->txApplyMaxStreamData_(ZuMv(stream), value);
       link->flushTx_();
     });
@@ -2813,7 +2791,7 @@ protected:
   bool runtimeEstablished_() const { return m_established; }
   bool debugLog_() const {
 #if defined(Zquic_DEBUG) && defined(ZiMultiplex_DEBUG)
-    return app() && app()->mx() && app()->mx()->debug();
+    return app()->mx()->debug();
 #else
     return false;
 #endif
@@ -2833,7 +2811,6 @@ protected:
     return txDiag_();
   }
   RuntimeDiag runtimeDiag() const {
-    if (!app() || !app()->mx()) return runtimeDiag_();
     ZiAssert(!rxInvoked_() && !txInvoked_(), "Zquic", (),
       "QUIC runtime diagnostic snapshot from I/O thread", return {});
     RuntimeRxDiag rx = m_rxDiag;
@@ -2851,7 +2828,6 @@ protected:
     return {m_rxDiag, txDiag_()};
   }
   PathDiag pathDiag() const {
-    if (!app() || !app()->mx()) return pathDiag_();
     ZiAssert(!rxInvoked_(), "Zquic", (),
       "QUIC path diagnostic snapshot from Rx thread", return {});
     if (txInvoked_()) return pathDiag_();
@@ -3026,7 +3002,7 @@ protected:
     uint64_t dataLimit = end < dataEnd ? end : dataEnd;
     uint64_t newLength = dataLimit > dataFirst ? dataLimit - dataFirst : 0;
     if (newLength > maxTxRangeField) return false;
-    bool newFin = ref.fin && end > dataEnd;
+    bool newFin = ref.fin && end > dataEnd && dataLimit == dataEnd;
     ref.offset = dataFirst;
     ref.length = newLength;
     ref.fin = newFin;
@@ -3181,19 +3157,21 @@ protected:
   }
   void initClientPath_(ZiSockAddr local, ZiSockAddr remote) {
     app()->txRun([
-      link = ZmMkRef(impl()),
+      link = impl(),
       local = ZuMv(local),
       remote = ZuMv(remote)
     ]() mutable {
+      if (!link->up_()) return;
       link->initClientPathTx_(ZuMv(local), ZuMv(remote));
     });
   }
   void initServerPath_(ZiSockAddr local, ZiSockAddr remote) {
     app()->txRun([
-      link = ZmMkRef(impl()),
+      link = impl(),
       local = ZuMv(local),
       remote = ZuMv(remote)
     ]() mutable {
+      if (!link->up_()) return;
       link->initServerPathTx_(ZuMv(local), ZuMv(remote));
     });
   }
@@ -3217,17 +3195,20 @@ protected:
     uint64_t maxUDP = m_crypto.peerTransportParams().maxUDPPayloadSize;
     if (maxUDP > BufSize) maxUDP = BufSize;
     app()->txRun([link = ZmMkRef(impl()), maxUDP = unsigned(maxUDP)]() mutable {
+      if (!link->up_()) return;
       link->m_path.peerMaxUDP(maxUDP);
     });
   }
   void validatePath_() {
     app()->txRun([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
       link->validatePathTx_();
     });
   }
   void validatePathTx_() { m_path.validated(); }
   void recordPathRx_(unsigned bytes) {
     app()->txRun([link = ZmMkRef(impl()), bytes]() mutable {
+      if (!link->up_()) return;
       link->recordPathRxTx_(bytes);
     });
   }
@@ -3238,6 +3219,7 @@ protected:
       local = ZuMv(local),
       remote = ZuMv(remote)
     ]() mutable {
+      if (!link->up_()) return;
       link->observePathRxTx_(ZuMv(local), ZuMv(remote));
     });
   }
@@ -3291,6 +3273,7 @@ protected:
     uint8_t payload[PathChallenge::Length];
     memcpy(payload, data.data(), sizeof(payload));
     app()->txRun([link = ZmMkRef(impl()), payload]() mutable {
+      if (!link->up_()) return;
       link->onPathResponse_(byteSpan(payload, sizeof(payload)));
     });
   }
@@ -3427,6 +3410,7 @@ protected:
   }
 #endif
   void resetRuntime_() {
+    up_(true);
     drainStreamsRx_();
     cancelTimers();
     resetLinkState_();
@@ -3447,6 +3431,7 @@ protected:
     m_crypto.resetTLS();
     resetPath_();
     app()->txInvoke(impl(), [link = impl()]() mutable {
+      if (!link->up_()) return link;
       link->resetTxRuntime_();
       return link;
     });
@@ -3475,6 +3460,7 @@ protected:
   }
 
   void shutdown_() {
+    up_(false);
     cancelTimers();
     closeLinkState_(0);
     m_established = 0;
@@ -3775,6 +3761,8 @@ protected:
     m_transportParams.activeConnectionIDLimit = LocalActiveConnectionIDLimit;
     m_rxDataCredit.set(m_transportParams.initialMaxData);
     m_rxDataWindow = m_transportParams.initialMaxData;
+    m_localBidiLimit.set(m_transportParams.initialMaxStreamsBidi);
+    m_localUniLimit.set(m_transportParams.initialMaxStreamsUni);
   }
 
   bool loadServerTransportParams_(const ServerBootstrap &bootstrap) {
@@ -3915,6 +3903,7 @@ protected:
     ++m_rxDiag.peerKeyUpdates;
     schedulePeerKeyDiscard_(m_rxOldKeyDiscard);
     app()->txInvoke(impl(), [link = impl()]() mutable {
+      if (!link->up_()) return link;
       link->txInstallPeerKeyUpdate_();
       return link;
     });
@@ -3922,6 +3911,7 @@ protected:
   }
   void schedulePeerKeyDiscard_(ZuTime deadline) {
     app()->txRun([link = ZmMkRef(impl()), deadline]() mutable {
+      if (!link->up_()) return;
       link->scheduleKeyDiscardTimer_(deadline);
     });
   }
@@ -4141,25 +4131,27 @@ protected:
   void controlSent_(const ControlFrame &frame) {
     switch (frame.type) {
       case FrameType::MaxData:
-	m_maxDataControl.queued = false;
+	pendingControlSent_(m_maxDataControl, frame);
 	break;
       case FrameType::MaxStreams:
-	m_maxStreamsControl[streamTypeIndex_(frame.streamType)].queued = false;
+	pendingControlSent_(
+	  m_maxStreamsControl[streamTypeIndex_(frame.streamType)], frame);
 	break;
       case FrameType::DataBlocked:
-	m_dataBlockedControl.queued = false;
+	pendingControlSent_(m_dataBlockedControl, frame);
 	break;
       case FrameType::StreamsBlocked:
-	m_streamsBlockedControl[streamTypeIndex_(frame.streamType)].queued = false;
+	pendingControlSent_(
+	  m_streamsBlockedControl[streamTypeIndex_(frame.streamType)], frame);
 	break;
       case FrameType::PathChallenge:
-	m_pathChallengeControl.queued = false;
+	pendingControlSent_(m_pathChallengeControl, frame);
 	break;
       case FrameType::PathResponse:
 	m_pathResponses.shift();
 	break;
       case FrameType::HandshakeDone:
-	m_handshakeDoneControl.queued = false;
+	pendingControlSent_(m_handshakeDoneControl, frame);
 	break;
       case FrameType::MaxStreamData:
       case FrameType::StreamDataBlocked:
@@ -4175,6 +4167,9 @@ protected:
     noteControlDequeued_(frame);
   }
 
+  void pendingControlSent_(PendingControl &slot, const ControlFrame &frame) {
+    if (slot.frame == frame) slot.queued = false;
+  }
   void clearPendingControl_(PendingControl &slot, const ControlFrame &frame) {
     if (slot.frame == frame) slot = {};
   }
@@ -4280,6 +4275,7 @@ protected:
 	  build, budget, assembly, refs, sentControls, nSentControls))
       return false;
     bool blocked = false;
+    bool flushQueuedControls = false;
     while (scheduledStreamCount_() && refs.count() < SentPkt::MaxFrames) {
       StreamRef stream = nextWritableStream_();
       if (!stream || !streamTxPending_(stream)) continue;
@@ -4326,7 +4322,7 @@ protected:
 	return false;
       if (info.length && !m_txDataCredit.consume(info.length)) return false;
       m_txDiag.streamBytesTx += info.length;
-      returnStreamCredit_(stream);
+      flushQueuedControls |= returnStreamCredit_(stream);
       if (streamTxPending_(stream) && stream->id() >= 0)
 	streamWritable_(stream);
     }
@@ -4334,6 +4330,7 @@ protected:
       if (!sendPkt(build, ZuMv(addr), refs)) return false;
       for (unsigned i = 0; i < nSentControls; ++i)
 	controlSent_(sentControls[i]);
+      if (flushQueuedControls) impl()->flushTx_();
       return true;
     }
     return blocked;
@@ -4384,6 +4381,7 @@ protected:
     if (!sendPkt(build, ZuMv(addr), refs)) return false;
     if (info.length && !m_txDataCredit.consume(info.length)) return false;
     m_txDiag.streamBytesTx += info.length;
+    if (returnStreamCredit_(stream)) impl()->flushTx_();
     return true;
   }
 
@@ -4420,9 +4418,11 @@ protected:
     ack.nRanges = unsigned(nRanges);
     bool deadline = m_rxAcks.deadlineSet(space);
     uint64_t deadlineUS = deadline ? m_rxAcks.deadline(space) : 0;
+    if (!m_rxAcks.post(space)) return;
     app()->txRun([
-      link = ZmMkRef(impl()), ack, addr = ZuMv(addr), deadline, deadlineUS
+      link = impl(), ack, addr = ZuMv(addr), deadline, deadlineUS
     ]() mutable {
+      if (!link->up_()) return;
       if (link->noteAckTx_(ack)) {
 	link->cancelAckDelayTimer_();
 	link->flushTx_(ZuMv(addr));
@@ -4488,6 +4488,7 @@ protected:
     m_txAck[level].nRanges = 0;
     m_txAck[level].due = false;
     app()->rxRun([link = ZmMkRef(impl()), level, gen = ack.gen]() mutable {
+      if (!link->up_()) return;
       link->ackSentRx_(level, gen);
     });
   }
@@ -4561,8 +4562,9 @@ protected:
       lost |= detectLoss_(cryptoLevel, now, batch, complete);
       if (!complete) {
 	app()->txRun([
-	  link = ZmMkRef(impl()), level, now, batch, lost
+	  link = impl(), level, now, batch, lost
 	]() mutable {
+	  if (!link->up_()) return;
 	  link->detectLossTx_(level, now, batch, lost);
 	});
 	return;
@@ -4596,6 +4598,7 @@ protected:
       "QUIC PTO schedule before app initialization", return);
     if (closed()) return;
     app()->txInvoke([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
       link->schedulePTO_();
     });
   }
@@ -4605,6 +4608,7 @@ protected:
       "QUIC PMTUD schedule before app initialization", return);
     if (closed()) return;
     app()->txInvoke([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
       link->schedulePMTUD_();
     });
   }
@@ -4637,7 +4641,7 @@ protected:
   }
 
   void cancelPTO_() {
-    if (app() && app()->mx()) app()->mx()->del(&m_ptoTimer);
+    app()->mx()->del(&m_ptoTimer);
   }
 
   void scheduleIdleTimer_(ZuTime out) {
@@ -4691,20 +4695,12 @@ protected:
   void cancelTimers() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC timer cancel before app initialization", return);
-    if (txInvoked_()) {
-      cancelTimers_();
-      return;
-    }
-    app()->txRun([link = ZmMkRef(impl())]() mutable {
+    app()->txInvoke([link = ZmMkRef(impl())]() mutable {
       link->cancelTimers_();
     });
   }
   template <typename Fn>
   void teardownTimers(Fn fn) {
-    if (!app() || !app()->mx()) {
-      fn();
-      return;
-    }
     app()->txRun([link = ZmMkRef(impl()), fn = ZuMv(fn)]() mutable {
       link->m_timerTeardown = true;
       link->cancelTimers_();
@@ -4795,6 +4791,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC key discard expiry outside Tx thread", return);
     app()->rxRun([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
       link->clearExpiredKeysRx_();
     });
   }
@@ -4845,6 +4842,7 @@ protected:
     m_rxCrypto[level].reset();
     m_rxAcks.sent(PktSpace::T(level));
     app()->txRun([link = ZmMkRef(impl()), level]() mutable {
+      if (!link->up_()) return;
       link->discardTxPktSpace_(level);
     });
   }
@@ -4894,9 +4892,8 @@ protected:
       } while (true);
       level = l;
       ++m_txDiag.retransmittedFrames;
-#ifdef Zquic_DEBUG
       if (ref.kind == SentFrameKind::Stream)
-	ZiLOG(Info, "Zquic.retx", ([
+	Zquic_DEBUG_LOG_(([
 	  level, ref
 	](auto &s) {
 	  s << "stream retransmit selected level=" << int(level) <<
@@ -4908,7 +4905,6 @@ protected:
 	    " rangeLength=" << ref.range.length <<
 	    " hasBuf=" << int(!!ref.range.buf);
 	}));
-#endif
       Zquic_DEBUG_LOG_(([level, ref](auto &s) {
 	  s << "retransmit queued level=" << int(level) <<
 	    " kind=" << int(ref.kind) <<
@@ -5071,6 +5067,7 @@ nextSpace:
     for (unsigned i = 0; i < ack.nRanges; ++i)
       ack.ranges[i] = frame.ackRanges[i];
     app()->txRun([link = ZmMkRef(impl()), ack]() mutable {
+      if (!link->up_()) return;
       link->processAckFrameTx_(ack);
     });
   }
@@ -5115,6 +5112,7 @@ nextSpace:
       auto level = CryptoLevel::T(i);
       uint64_t largest = update.ackLargest[i];
       app()->rxRun([link = ZmMkRef(impl()), level, largest]() mutable {
+	if (!link->up_()) return;
 	link->ackAckdRx_(level, largest);
       });
     }
@@ -5172,6 +5170,7 @@ nextSpace:
 	  ack.level, &update)) {
 	applyAckUpdateTx_(update, work.congestionOpened);
 	app()->txRun([link = ZmMkRef(impl()), work = ZuMv(work)]() mutable {
+	  if (!link->up_()) return;
 	  link->processAckFrameTx_(ZuMv(work));
 	});
 	return;
@@ -5188,6 +5187,7 @@ nextSpace:
 	applyLossUpdateTx_(lossUpdate);
 	if (lossUpdate.lostBytes) work.retransmit = true;
 	app()->txRun([link = ZmMkRef(impl()), work = ZuMv(work)]() mutable {
+	  if (!link->up_()) return;
 	  link->processAckFrameTx_(ZuMv(work));
 	});
 	return;
@@ -5415,13 +5415,13 @@ nextSpace:
   }
 
   template <typename AllocTxPkt, typename SendPkt>
-	  bool sendProtInitialPkt_(
-	    InitialKeyDir::T keyDir, RuntimeCID::T dcid, RuntimeCID::T scid,
-	    unsigned pnLength, bool padInitial, PktBuild &payload, ZiSockAddr addr,
-	    ZuCSpan recordFrame, const TxPktRefs *recordRefs, bool ackEliciting,
-	    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
-	    ZiAssert(txInvoked_(), "Zquic", (),
-	      "QUIC Initial packet protection outside Tx thread", return false);
+  bool sendProtInitialPkt_(
+    InitialKeyDir::T keyDir, RuntimeCID::T dcid, RuntimeCID::T scid,
+    unsigned pnLength, bool padInitial, PktBuild &payload, ZiSockAddr addr,
+    ZuCSpan recordFrame, const TxPktRefs *recordRefs, bool ackEliciting,
+    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Initial packet protection outside Tx thread", return false);
     ZmRef<ZiIOBuf> buf = allocTxPkt();
     const auto &initialKeys = initialKeys_(keyDir);
     int headerLen = -1;
@@ -5465,17 +5465,17 @@ nextSpace:
   }
 
   template <typename AllocTxPkt, typename SendPkt>
-	  bool sendProtHandshakePkt_(
-	    RuntimeCID::T dcid, RuntimeCID::T scid, unsigned pnLength,
-	    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
-	    const TxPktRefs *recordRefs, bool ackEliciting,
-	    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
-	    ZiAssert(txInvoked_(), "Zquic", (),
-	      "QUIC Handshake packet protection outside Tx thread", return false);
-	    if (!txTrafficSecretInstalled_(CryptoLevel::Handshake)) {
-	      ++m_txDiag.failures;
-	      return false;
-	    }
+  bool sendProtHandshakePkt_(
+    RuntimeCID::T dcid, RuntimeCID::T scid, unsigned pnLength,
+    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    const TxPktRefs *recordRefs, bool ackEliciting,
+    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Handshake packet protection outside Tx thread", return false);
+    if (!txTrafficSecretInstalled_(CryptoLevel::Handshake)) {
+      ++m_txDiag.failures;
+      return false;
+    }
     ZmRef<ZiIOBuf> buf = allocTxPkt();
     int headerLen = Pkt::writeHandshake(
       buf->data_(), buf->size, runtimeCID_(dcid), runtimeCID_(scid),
@@ -5512,7 +5512,7 @@ nextSpace:
   }
 
   template <typename AllocTxPkt, typename SendPkt>
-	  bool sendProtShortPkt_(
+  bool sendProtShortPkt_(
     RuntimeCID::T dcid, unsigned pnLength, PktBuild &payload,
     ZiSockAddr addr, ZuCSpan recordFrame, const TxPktRefs *recordRefs,
     bool ackEliciting, AllocTxPkt allocTxPkt, SendPkt sendPkt,
@@ -5911,6 +5911,7 @@ private:
   void streamQueuedOpen_(StreamRef stream) {
     if (!stream) return;
     app()->rxRun([link = ZmMkRef(impl()), stream = ZuMv(stream)]() mutable {
+      if (!link->up_()) return;
       link->streamed(ZuMv(stream));
     });
   }
@@ -5920,6 +5921,7 @@ private:
       return;
     m_openQueuedPending[i] = true;
     app()->txRun([link = ZmMkRef(impl()), type, i]() mutable {
+      if (!link->up_()) return;
       link->m_openQueuedPending[i] = false;
       link->openQueued_(type, OpenQueuedBatch);
       link->scheduleOpenQueued_(type);
@@ -6177,22 +6179,23 @@ private:
       FrameType::MaxStreamData, uint64_t(stream->id()), maximum,
       Zi::StreamType::Duplex});
   }
-  void returnStreamCredit_(const StreamRef &stream) {
+  bool returnStreamCredit_(const StreamRef &stream) {
     if (!stream || stream->id() < 0 || stream->streamCreditReturned())
-      return;
+      return false;
     uint64_t id = uint64_t(stream->id());
-    if (localInitiated_(id, m_isServer)) return;
-    if (!stream->rxComplete() && !stream->resetReceived()) return;
+    if (localInitiated_(id, m_isServer)) return false;
+    if (!stream->rxComplete() && !stream->resetReceived()) return false;
     if (!StreamID::uni(id) && !stream->finDequeued() && !stream->resetSent())
-      return;
+      return false;
     Zi::StreamType::T type =
       StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
     StreamLimit &limit = peerLimit_(type);
-    if (limit.limit() >= MaxStreamCount) return;
+    if (limit.limit() >= MaxStreamCount) return false;
     uint64_t next = limit.limit() + 1;
     limit.extend(next);
     stream->markStreamCreditReturned();
     queueFlowUpdate_(FlowUpdate{FrameType::MaxStreams, 0, limit.limit(), type});
+    return true;
   }
 
   bool txClosed_(const Stream *stream) const {
@@ -6272,6 +6275,9 @@ private:
   App		*m_app = nullptr;
   bool		m_isServer = false;
 
+  // shared
+  ZmAtomic<unsigned>	m_up = 1;
+
   // Rx thread exclusive
   bool		m_closed = false;
   uint64_t	m_closeError = 0;
@@ -6322,17 +6328,20 @@ private:
       "QUIC timer schedule outside Tx thread", return);
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC timer schedule before app initialization", return);
-    if (m_timerTeardown) return;
+    if (m_timerTeardown || !m_up) return;
     Zquic_DEBUG_LOG_(([name](auto &s) {
 	s << "QUIC timer armed name=" << name;
       }));
     app()->mx()->run(app()->txThread(),
-      [link = impl(), fn]() mutable { fn(link); },
+      [link = ZmMkRef(impl()), fn]() mutable {
+	if (!link->up_()) return;
+	fn(link);
+      },
       out, mode, timer);
   }
 
   void cancelTimer_(const char *, ZmScheduler::Timer *timer) {
-    if (app() && app()->mx()) app()->mx()->del(timer);
+    app()->mx()->del(timer);
   }
 
   bool ptoLevel_(CryptoLevel::T &level) const {
@@ -6563,7 +6572,6 @@ public:
   const ZiSockAddr &remote() const { return m_endpoint.remote(); }
   EndpointDiag cxnDiag() const { return endpointDiag(); }
   EndpointDiag endpointDiag() const {
-    if (!app() || !app()->mx()) return m_endpoint.diag();
     auto mx = app()->mx();
     if (mx->invoked(mx->txThread())) return m_endpoint.diag();
     EndpointDiag diag;
@@ -6586,7 +6594,7 @@ public:
   const Crypto &crypto() const { return Base::crypto_(); }
 
   bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
-    if (!app() || !app()->mx()) return false;
+    if (!Base::up_()) return false;
     if (!stream || (!payload.length() && !fin))
       return false;
     AsyncSendPayload payload_;
@@ -6594,11 +6602,12 @@ public:
     if (payload.length())
       memcpy(payload_.data(), payload.data(), payload.length());
     app()->txInvoke([
-      link = ZmMkRef(this->impl()),
+      link = this->impl(),
       stream = ZuMv(stream),
       payload = ZuMv(payload_),
       fin
     ]() mutable {
+      if (!link->up_()) return;
       link->send_(
 	ZuMv(stream),
 	ZuCSpan{payload.data(), payload.length()},
@@ -6637,6 +6646,7 @@ public:
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client retransmit before app initialization", return);
     app()->txRun([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
       link->retransmit_();
     });
   }
@@ -6677,26 +6687,24 @@ public:
       }
       if (ref.kind == SentFrameKind::Stream) {
 	if (!Base::buildRetransmitStream_(build, ref)) {
-#ifdef Zquic_DEBUG
-	  ZiLOG(Info, "Zquic.retx", ([ref](auto &s) {
-	    s << "stream retransmit build failed streamID=" <<
-	      ref.streamID << " offset=" << ref.offset <<
-	      " length=" << ref.length << " fin=" << int(ref.fin);
-	  }));
-#endif
+	  if (Base::debugLog_())
+	    ZiLOG(Debug, "Zquic", ([ref](auto &s) {
+	      s << "stream retransmit build failed streamID=" <<
+		ref.streamID << " offset=" << ref.offset <<
+		" length=" << ref.length << " fin=" << int(ref.fin);
+	    }));
 	  continue;
 	}
       } else if (!Base::buildRetransmitControl_(build, ref))
 	continue;
       if (!sendShortPkt_(build, m_endpoint.remote(), {}, &ref, true)) {
-#ifdef Zquic_DEBUG
 	if (ref.kind == SentFrameKind::Stream)
-	  ZiLOG(Info, "Zquic.retx", ([ref](auto &s) {
-	    s << "stream retransmit send failed streamID=" <<
-	      ref.streamID << " offset=" << ref.offset <<
-	      " length=" << ref.length << " fin=" << int(ref.fin);
-	  }));
-#endif
+	  if (Base::debugLog_())
+	    ZiLOG(Debug, "Zquic", ([ref](auto &s) {
+	      s << "stream retransmit send failed streamID=" <<
+		ref.streamID << " offset=" << ref.offset <<
+		" length=" << ref.length << " fin=" << int(ref.fin);
+	    }));
 	Base::requeueRetransmit_(level, ref);
 	break;
       }
@@ -6738,7 +6746,7 @@ public:
       return;
     }
 
-    closeCurrent_(false, [link = ZmMkRef(impl()), ip]() mutable {
+    closeCurrent_(false, [link = impl(), ip]() mutable {
       link->connectOpen_(ip);
     });
   }
@@ -6755,27 +6763,37 @@ public:
 	PathMode::ClientConnected,
 	ZiIP{}, 0, ip, m_port,
 	Endpoint::DatagramFn{[link = impl()](Datagram d) mutable {
+	  if (!link->up_()) return;
 	  link->app()->rxRun([link, d = ZuMv(d)]() mutable {
+	    if (!link->up_()) return;
 	    link->received_(ZuMv(d));
 	  });
 	}},
 	Endpoint::ReadyFn{[link = impl()](Endpoint *ep) mutable {
+	  if (!link->up_()) return;
 	  link->app()->rxRun([link, ep]() mutable {
+	    if (!link->up_()) return;
 	    link->endpointReady_(ep);
 	  });
 	}},
 	Endpoint::FailFn{[link = impl()](bool transient) mutable {
+	  if (!link->up_()) return;
 	  link->app()->rxRun([link, transient]() mutable {
+	    if (!link->up_()) return;
 	    link->connectFailed_0(transient);
 	  });
 	}},
 	Endpoint::DownFn{[link = impl()](Endpoint *ep) mutable {
+	  if (!link->up_()) return;
 	  link->app()->rxRun([link, ep]() mutable {
+	    if (!link->up_()) return;
 	    link->endpointDown_(ep);
 	  });
 	}},
 	Endpoint::TxDrainedFn{[link = impl()]() mutable {
+	  if (!link->up_()) return;
 	  link->app()->txRun([link]() mutable {
+	    if (!link->up_()) return;
 	    link->txDrained_();
 	  });
 	}}))
@@ -6786,10 +6804,7 @@ public:
     auto e = ZeEXCEPT(Error, "Zquic", ([transient](auto &s) {
       s << "QUIC UDP connect failed transient=" << transient;
     }));
-    if (app())
-      app()->error_(ZuMv(e));
-    else
-      ZiLogEvent(ZuMv(e));
+    app()->error_(ZuMv(e));
   }
 
 private:
@@ -6802,8 +6817,7 @@ private:
 
   template <typename Fn>
   void closeCurrent_(bool notify, Fn fn) {
-    if (notify && app() && app()->mx() &&
-	Base::runtimeEstablished_() &&
+    if (notify && Base::runtimeEstablished_() &&
 	m_endpoint.connected() && m_endpoint.remote()) {
       closeAfterConnectionClose_(notify, m_endpoint.remote(), ZuMv(fn));
       return;
@@ -6835,7 +6849,7 @@ private:
   template <typename Fn>
   void closeEndpoint_(bool notify, Fn fn) {
     Base::teardownTimers([
-      link = ZmMkRef(impl()), notify, fn = ZuMv(fn)
+      link = impl(), notify, fn = ZuMv(fn)
     ]() mutable {
       link->app()->rxRun([link, notify, fn = ZuMv(fn)]() mutable {
 	link->closeEndpointDrained_(notify, ZuMv(fn));
@@ -6850,6 +6864,7 @@ private:
   void closeEndpointDrained_(bool notify, Fn fn) {
     ZiAssert(app()->rxInvoked(), "Zquic", (),
       "QUIC endpoint close drain outside Rx thread", return);
+    Base::up_(false);
     m_udpReady = 0;
     m_notifyEndpointDown = notify;
     if (Base::closed()) Base::clearCallbacks_();
@@ -6941,12 +6956,13 @@ private:
     size_t offset3 = offsets[3];
     size_t offset4 = offsets[4];
     app()->txRun([
-      link = ZmMkRef(impl()),
+      link = impl(),
       txCrypto,
       payload = ZuMv(payload),
       offset0, offset1, offset2, offset3, offset4,
       addr = ZuMv(addr)
     ]() mutable {
+      if (!link->up_()) return;
       size_t offsets_[5] = {offset0, offset1, offset2, offset3, offset4};
       if (!link->installTxCrypto_(txCrypto)) return;
       (void)link->sendCryptoFlightsTx_(
@@ -7015,6 +7031,7 @@ private:
 
   void queueTxFlush_() {
     app()->txRun([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
       link->flushTx_();
     });
   }
@@ -7023,6 +7040,7 @@ private:
       link = ZmMkRef(impl()),
       addr = ZuMv(addr)
     ]() mutable {
+      if (!link->up_()) return;
       link->flushTx_(ZuMv(addr));
     });
   }
@@ -7050,7 +7068,7 @@ private:
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
 	  const typename Base::TxPktRefs &refs) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true);
+	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
     sent |= sendPMTUDProbe_(ZuMv(addr));
     return sent;
@@ -7246,7 +7264,7 @@ private:
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
 	  const typename Base::TxPktRefs &refs) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true);
+	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
   }
 
@@ -7269,7 +7287,6 @@ private:
   }
 
   void received_(Datagram d) {
-    ZiSockAddr addr = d.addr;
     Base::receiveDatagram_(
       ZuMv(d),
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
@@ -7278,7 +7295,6 @@ private:
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
 	return receivedShort_(d_, packetOffset, packetLen);
       });
-    queueTxFlush_(ZuMv(addr));
   }
 
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
@@ -7397,6 +7413,7 @@ private:
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client connect failure before app initialization", return);
     app()->rxRun([link = ZmMkRef(impl()), transient]() {
+      if (!link->up_()) return;
       link->connectFailed(transient);
     });
   }
@@ -7448,7 +7465,7 @@ public:
   const ZiSockAddr &peer() const { return m_peerAddr; }
 
   bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
-    if (!app() || !app()->mx()) return false;
+    if (!Base::up_()) return false;
     if (!stream || (!payload.length() && !fin))
       return false;
     AsyncSendPayload payload_;
@@ -7456,11 +7473,12 @@ public:
     if (payload.length())
       memcpy(payload_.data(), payload.data(), payload.length());
     app()->txInvoke([
-      link = ZmMkRef(this->impl()),
+      link = this->impl(),
       stream = ZuMv(stream),
       payload = ZuMv(payload_),
       fin
     ]() mutable {
+      if (!link->up_()) return;
       link->send_(
 	ZuMv(stream),
 	ZuCSpan{payload.data(), payload.length()},
@@ -7499,6 +7517,7 @@ public:
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC server retransmit before app initialization", return);
     app()->txRun([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
       link->retransmit_();
     });
   }
@@ -7539,26 +7558,24 @@ public:
       }
       if (ref.kind == SentFrameKind::Stream) {
 	if (!Base::buildRetransmitStream_(build, ref)) {
-#ifdef Zquic_DEBUG
-	  ZiLOG(Info, "Zquic.retx", ([ref](auto &s) {
-	    s << "stream retransmit build failed streamID=" <<
-	      ref.streamID << " offset=" << ref.offset <<
-	      " length=" << ref.length << " fin=" << int(ref.fin);
-	  }));
-#endif
+	  if (Base::debugLog_())
+	    ZiLOG(Debug, "Zquic", ([ref](auto &s) {
+	      s << "stream retransmit build failed streamID=" <<
+		ref.streamID << " offset=" << ref.offset <<
+		" length=" << ref.length << " fin=" << int(ref.fin);
+	    }));
 	  continue;
 	}
       } else if (!Base::buildRetransmitControl_(build, ref))
 	continue;
       if (!sendShortPkt_(build, m_peerAddr, {}, &ref, true)) {
-#ifdef Zquic_DEBUG
 	if (ref.kind == SentFrameKind::Stream)
-	  ZiLOG(Info, "Zquic.retx", ([ref](auto &s) {
-	    s << "stream retransmit send failed streamID=" <<
-	      ref.streamID << " offset=" << ref.offset <<
-	      " length=" << ref.length << " fin=" << int(ref.fin);
-	  }));
-#endif
+	  if (Base::debugLog_())
+	    ZiLOG(Debug, "Zquic", ([ref](auto &s) {
+	      s << "stream retransmit send failed streamID=" <<
+		ref.streamID << " offset=" << ref.offset <<
+		" length=" << ref.length << " fin=" << int(ref.fin);
+	    }));
 	Base::requeueRetransmit_(level, ref);
 	break;
       }
@@ -7602,9 +7619,9 @@ private:
 
   void close_(
     uint64_t errorCode = 0, bool notify = false, bool deferRelease = false) {
+    Base::up_(false);
     Base::closeRuntime_(errorCode);
     if (notify) impl()->disconnected();
-    if (!app()) return;
     if (deferRelease) {
       m_releaseDeferred = true;
       return;
@@ -7672,6 +7689,7 @@ private:
       [this](ZiSockAddr addr_) {
 	if (Base::runtimeEstablished_() && !m_handshakeDoneSent)
 	  app()->txRun([link = ZmMkRef(impl()), addr = ZuMv(addr_)]() mutable {
+	    if (!link->up_()) return;
 	    (void)link->sendHandshakeDone_(ZuMv(addr));
 	  });
 	return true;
@@ -7692,12 +7710,13 @@ private:
     size_t offset3 = offsets[3];
     size_t offset4 = offsets[4];
     app()->txRun([
-      link = ZmMkRef(impl()),
+      link = impl(),
       txCrypto,
       payload = ZuMv(payload),
       offset0, offset1, offset2, offset3, offset4,
       addr = ZuMv(addr)
     ]() mutable {
+      if (!link->up_()) return;
       size_t offsets_[5] = {offset0, offset1, offset2, offset3, offset4};
       if (!link->installTxCrypto_(txCrypto)) return;
       (void)link->sendCryptoFlightsTx_(
@@ -7774,6 +7793,7 @@ private:
 
   void queueTxFlush_() {
     app()->txRun([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
       link->flushTx_();
     });
   }
@@ -7782,6 +7802,7 @@ private:
       link = ZmMkRef(impl()),
       addr = ZuMv(addr)
     ]() mutable {
+      if (!link->up_()) return;
       link->flushTx_(ZuMv(addr));
     });
   }
@@ -7808,7 +7829,7 @@ private:
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
 	  const typename Base::TxPktRefs &refs) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true);
+	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
     sent |= sendPMTUDProbe_(ZuMv(addr));
     return sent;
@@ -7885,7 +7906,7 @@ private:
       [this, recordRefs](auto buf, ZiSockAddr addr_) {
 	if (recordRefs)
 	  for (unsigned i = 0; i < recordRefs->count(); ++i)
-	    if (!app()->sendFrame((*recordRefs)[i])) return true;
+	    if (!app()->sendFrame((*recordRefs)[i])) return false;
 	return Base::holdInitialForCoalesce_(
 	  ZuMv(buf), ZuMv(addr_),
 	  [this](auto buf_, ZiSockAddr addr__) {
@@ -7967,7 +7988,7 @@ private:
       [this, recordRefs, pmtudSize](auto buf, ZiSockAddr addr_) {
 	if (recordRefs)
 	  for (unsigned i = 0; i < recordRefs->count(); ++i)
-	    if (!app()->sendFrame((*recordRefs)[i])) return true;
+	    if (!app()->sendFrame((*recordRefs)[i])) return false;
 	if (pmtudSize)
 	  return Base::sendPathProbePktApp_(
 	    ZuMv(buf), ZuMv(addr_),
@@ -7995,7 +8016,7 @@ private:
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
 	    const typename Base::TxPktRefs &refs) {
-	  return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true);
+	  return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	}))
       return false;
     m_handshakeDoneSent = 1;
@@ -8011,8 +8032,8 @@ private:
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
-	  const SentFrameRef &ref) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &ref, true);
+	  const typename Base::TxPktRefs &refs) {
+	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
   }
 
@@ -8035,7 +8056,6 @@ private:
   }
 
   bool received_(Datagram d) {
-    ZiSockAddr addr = d.addr;
     if (!Base::runtimeHandshakeStarted_() && d.buf)
       Base::initServerPath_(app()->local(), d.addr);
     Base::receiveDatagram_(
@@ -8047,7 +8067,6 @@ private:
 	return receivedShort_(d_, packetOffset, packetLen);
       });
     if (m_releaseDeferred) return false;
-    queueTxFlush_(ZuMv(addr));
     return true;
   }
 
@@ -8162,8 +8181,7 @@ private:
   }
 
   void retiredLocalCID_(uint64_t, const CxnID &id) {
-    if (app())
-      static_cast<Server<App, Impl> *>(app())->dissociateRoute_(id);
+    static_cast<Server<App, Impl> *>(app())->dissociateRoute_(id);
   }
 
   // Rx thread exclusive

@@ -124,12 +124,6 @@ struct TestLink :
     EngineApp, TestLink, StreamTxBufAlloc,
     TestStream>;
   TestLink(EngineApp *app, bool isServer = false) : Base{app, isServer} {
-    ZmSemaphore reset;
-    app->rxRun([this, &reset]() {
-      Base::resetRuntime_();
-      reset.post();
-    });
-    reset.wait();
     Base::configureLocalTransportParams_(app);
   }
 
@@ -403,21 +397,21 @@ void testStreamShape()
   ZuTestScope(testStreamShape);
 
   EngineFixture fixture;
-  TestLink client{&fixture.app, false};
-  TestLink server{&fixture.app, true};
+  ZmRef<TestLink> client = new TestLink{&fixture.app, false};
+  ZmRef<TestLink> server = new TestLink{&fixture.app, true};
 
-  auto c0 = client.stream();
-  auto c1 = client.stream(Zi::StreamType::Simplex);
-  auto s0 = server.stream();
+  auto c0 = client->stream();
+  auto c1 = client->stream(Zi::StreamType::Simplex);
+  auto s0 = server->stream();
 
   ZuCHECK(c0 && c0->id() == 0, "client bidi stream ID mismatch");
   ZuCHECK(c1 && c1->id() == 2, "client uni stream ID mismatch");
   ZuCHECK(s0 && s0->id() == 1, "server bidi stream ID mismatch");
-  ZuCHECK(c0->link() == &client && c1->link() == &client,
+  ZuCHECK(c0->link() == client.ptr() && c1->link() == client.ptr(),
     "client stream owner link mismatch");
-  ZuCHECK(s0->link() == &server, "server stream owner link mismatch");
-  ZuCHECK(client.streamCount() == 2, "client stream count mismatch");
-  ZuCHECK(client.findStream(0) == c0, "stream hash lookup failed");
+  ZuCHECK(s0->link() == server.ptr(), "server stream owner link mismatch");
+  ZuCHECK(client->streamCount() == 2, "client stream count mismatch");
+  ZuCHECK(client->findStream(0) == c0, "stream hash lookup failed");
 
   {
     auto tx = c0->txStream_();
@@ -429,8 +423,8 @@ void testStreamShape()
   c0->stop(9);
   ZuCHECK(c0->finSent(), "FIN state was not recorded");
 
-  client.close(42);
-  ZuCHECK(client.closed() && client.closeError() == 42,
+  client->close(42);
+  ZuCHECK(client->closed() && client->closeError() == 42,
     "link close state mismatch");
 }
 
@@ -438,19 +432,48 @@ void testAlignedSurfaceShape()
 {
   ZuTestScope(testAlignedSurfaceShape);
 
+  ZiMultiplex mx{EngineFixture::mxParams_()};
+  bool mxOK = mx.start();
+  ZuCHECK(mxOK, "aligned shape multiplexer start failed");
+  if (!mxOK) return;
+
   ClientShapeApp clientApp;
-  ClientShapeLink client{&clientApp};
-  auto c0 = client.stream();
-  ZuCHECK(c0 && c0->id() == 0 && c0->link() == &client && !client.isServer(),
+  bool clientOK = clientApp.init(
+    Zquic::ClientParams(&mx, "3", "4").alpn(ZuSpan<ZuCSpan>{"h3"}));
+  ZuCHECK(clientOK, "aligned client app init failed");
+  if (!clientOK) {
+    mx.stop();
+    return;
+  }
+  ZmRef<ClientShapeLink> client = new ClientShapeLink{&clientApp};
+  auto c0 = client->stream();
+  ZuCHECK(c0 && c0->id() == 0 && c0->link() == client.ptr() &&
+      !client->isServer(),
     "client aligned link/stream shape mismatch");
-  ZuCHECK(client.runtimeDiag().unhandledAppEvents,
+  ZuCHECK(client->runtimeDiag().unhandledAppEvents,
     "default client stream-open hook was not visible in diagnostics");
 
   ServerShapeApp serverApp;
-  ServerShapeLink server{&serverApp};
-  auto s0 = server.stream();
-  ZuCHECK(s0 && s0->id() == 1 && s0->link() == &server && server.isServer(),
+  bool serverOK = serverApp.init(
+    Zquic::ServerParams(&mx, "3", "4")
+      .certPath("server.pem")
+      .keyPath("server.key")
+      .alpn(ZuSpan<ZuCSpan>{"h3"}));
+  ZuCHECK(serverOK, "aligned server app init failed");
+  if (!serverOK) {
+    clientApp.final();
+    mx.stop();
+    return;
+  }
+  ZmRef<ServerShapeLink> server = new ServerShapeLink{&serverApp};
+  auto s0 = server->stream();
+  ZuCHECK(s0 && s0->id() == 1 && s0->link() == server.ptr() &&
+      server->isServer(),
     "server aligned link/stream shape mismatch");
+
+  serverApp.final();
+  clientApp.final();
+  mx.stop();
 }
 
 void testStatelessResetDetection()
@@ -458,7 +481,7 @@ void testStatelessResetDetection()
   ZuTestScope(testStatelessResetDetection);
 
   EngineFixture fixture;
-  TestLink link{&fixture.app};
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
   Zquic::ResetToken token{"0123456789abcdef"};
   uint8_t packet[64] = {};
   memset(packet, 0xa5, sizeof(packet));
@@ -474,12 +497,12 @@ void testStatelessResetDetection()
     "stateless reset token decode mismatch");
   ZuCHECK(Zquic::StatelessReset::verify(datagram, token),
     "stateless reset token verify failed");
-  ZuCHECK(!link.checkStatelessReset(datagram) && !link.draining(),
+  ZuCHECK(!link->checkStatelessReset(datagram) && !link->draining(),
     "link accepted stateless reset before peer token was known");
-  link.setPeerResetToken(token);
-  ZuCHECK(link.checkStatelessReset(datagram) && link.draining(),
+  link->setPeerResetToken(token);
+  ZuCHECK(link->checkStatelessReset(datagram) && link->draining(),
     "link did not enter draining on matching stateless reset");
-  ZuCHECK(link.statelessResetCount == 1,
+  ZuCHECK(link->statelessResetCount == 1,
     "stateless reset callback did not fire");
 }
 
@@ -488,92 +511,92 @@ void testApplicationCallbacks()
   ZuTestScope(testApplicationCallbacks);
 
   EngineFixture fixture;
-  TestLink server{&fixture.app, true};
-  TestLink client{&fixture.app};
+  ZmRef<TestLink> server = new TestLink{&fixture.app, true};
+  ZmRef<TestLink> client = new TestLink{&fixture.app};
   uint8_t b[128];
   Zquic::Frame frame;
   unsigned used = 0;
 
-  auto local = client.stream();
-  ZuCHECK(local && client.streamOpenCount == 1 &&
-      client.localStreamOpens == 1 && client.lastOpened == local,
+  auto local = client->stream();
+  ZuCHECK(local && client->streamOpenCount == 1 &&
+      client->localStreamOpens == 1 && client->lastOpened == local,
     "local stream-open callback mismatch");
 
   auto packet = streamPkt_(0, 0, "abc", false, frame, used);
-  ZuCHECK(packet && server.receiveFrame(frame, packet) == 0,
+  ZuCHECK(packet && server->receiveFrame(frame, packet) == 0,
     "peer STREAM callback setup failed");
-  auto peer = server.findStream(0);
-  ZuCHECK(peer && server.streamOpenCount == 1 &&
-      server.peerStreamOpens == 1 &&
-      server.streamDataCount == 1 &&
-      server.lastDataStream == peer &&
-      !server.lastDataOffset &&
-      server.lastDataLength == 3 &&
-      !server.lastDataFin,
+  auto peer = server->findStream(0);
+  ZuCHECK(peer && server->streamOpenCount == 1 &&
+      server->peerStreamOpens == 1 &&
+      server->streamDataCount == 1 &&
+      server->lastDataStream == peer &&
+      !server->lastDataOffset &&
+      server->lastDataLength == 3 &&
+      !server->lastDataFin,
     "peer stream/data callbacks mismatch");
 
   int n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 3);
   ZuCHECK(parseFrame_(b, n, frame) &&
-      server.receiveFrame(frame) == 0 &&
-      server.resetReceivedCount == 1 &&
-      server.lastResetStream == peer &&
-      server.lastResetAppError == 7 &&
-      server.lastResetFinalSize == 3,
+      server->receiveFrame(frame) == 0 &&
+      server->resetReceivedCount == 1 &&
+      server->lastResetStream == peer &&
+      server->lastResetAppError == 7 &&
+      server->lastResetFinalSize == 3,
     "RESET_STREAM receive callback mismatch");
 
   n = Zquic::FrameCodec::writeStopSending(b, sizeof(b), local->id(), 9);
   ZuCHECK(parseFrame_(b, n, frame) &&
-      client.receiveFrame(frame) == 0 &&
-      client.stopReceivedCount == 1 &&
-      client.lastStopStream == local &&
-      client.lastStopAppError == 9,
+      client->receiveFrame(frame) == 0 &&
+      client->stopReceivedCount == 1 &&
+      client->lastStopStream == local &&
+      client->lastStopAppError == 9,
     "STOP_SENDING receive callback mismatch");
 
-  auto reset = client.stream();
+  auto reset = client->stream();
   reset->reset(11);
-  ZuCHECK(client.resetSentCount == 1 &&
-      client.lastResetSentID == uint64_t(reset->id()) &&
-      client.lastResetSentAppError == 11,
+  ZuCHECK(client->resetSentCount == 1 &&
+      client->lastResetSentID == uint64_t(reset->id()) &&
+      client->lastResetSentAppError == 11,
     "local RESET_STREAM callback mismatch");
 
-  auto stop = client.stream();
+  auto stop = client->stream();
   stop->stop(12);
-  ZuCHECK(client.stopSentCount == 1 &&
-      client.lastStopSentID == uint64_t(stop->id()) &&
-      client.lastStopSentAppError == 12,
+  ZuCHECK(client->stopSentCount == 1 &&
+      client->lastStopSentID == uint64_t(stop->id()) &&
+      client->lastStopSentAppError == 12,
     "local STOP_SENDING callback mismatch");
 
-  client.dataBlockedForTest(4096);
-  ZuCHECK(client.flowBlockedCount == 1 &&
-      client.lastFlowType == Zquic::FrameType::DataBlocked &&
-      client.lastFlowMaximum == 4096,
+  client->dataBlockedForTest(4096);
+  ZuCHECK(client->flowBlockedCount == 1 &&
+      client->lastFlowType == Zquic::FrameType::DataBlocked &&
+      client->lastFlowMaximum == 4096,
     "flow blocked callback mismatch");
 
-  client.closeTransportForTest(Zquic::FrameType::ConnectionClose, 42);
-  ZuCHECK(client.transportCloseCount == 1 &&
-      client.lastCloseType == Zquic::FrameType::ConnectionClose &&
-      client.lastCloseError == 42,
+  client->closeTransportForTest(Zquic::FrameType::ConnectionClose, 42);
+  ZuCHECK(client->transportCloseCount == 1 &&
+      client->lastCloseType == Zquic::FrameType::ConnectionClose &&
+      client->lastCloseError == 42,
     "transport close callback mismatch");
 
-  TestLink path{&fixture.app, true};
+  ZmRef<TestLink> path = new TestLink{&fixture.app, true};
   ZiSockAddr localAddr{ZiIP{0x0a000001}, 4433};
   ZiSockAddr oldRemote{ZiIP{0x0a000002}, 50000};
   ZiSockAddr newRemote{ZiIP{0x0a000002}, 50001};
   ZiSockAddr failRemote{ZiIP{0x0a000002}, 50002};
-  path.initServerPath(localAddr, oldRemote);
-  path.observePath(localAddr, newRemote);
-  ZuCSpan challenge = path.validatingChallenge();
+  path->initServerPath(localAddr, oldRemote);
+  path->observePath(localAddr, newRemote);
+  ZuCSpan challenge = path->validatingChallenge();
   uint8_t response[Zquic::PathChallenge::Length]{};
   memcpy(response, challenge.data(), challenge.length());
-  ZuCHECK(path.pathResponse(ZuCSpan{response, sizeof(response)}) &&
-      path.pathUpdateCount == 1 &&
-      path.lastPathValidated &&
-      path.lastPathMaxUDP >= Zquic::MinUDPPayload,
+  ZuCHECK(path->pathResponse(ZuCSpan{response, sizeof(response)}) &&
+      path->pathUpdateCount == 1 &&
+      path->lastPathValidated &&
+      path->lastPathMaxUDP >= Zquic::MinUDPPayload,
     "path update callback mismatch");
 
-  path.observePath(localAddr, failRemote);
-  path.pathTimeout();
-  ZuCHECK(path.migrationFailureCount == 1,
+  path->observePath(localAddr, failRemote);
+  path->pathTimeout();
+  ZuCHECK(path->migrationFailureCount == 1,
     "migration failure callback mismatch");
 }
 
@@ -582,7 +605,7 @@ void testConnectionIDFrameLifecycle()
   ZuTestScope(testConnectionIDFrameLifecycle);
 
   EngineFixture fixture;
-  TestLink link{&fixture.app};
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
   Zquic::ResetToken peerToken{"0123456789abcdef"};
   Zquic::Frame f;
   f.type = Zquic::FrameType::NewConnectionID;
@@ -591,12 +614,12 @@ void testConnectionIDFrameLifecycle()
   f.length = 9;
   f.payload = "peerCID09";
   f.resetToken = peerToken;
-  ZuCHECK(link.receiveNewConnectionID(f),
+  ZuCHECK(link->receiveNewConnectionID(f),
     "NEW_CONNECTION_ID frame was rejected");
 
   Zquic::CxnID peerCID;
   Zquic::ResetToken foundToken;
-  ZuCHECK(link.peerCID(5, peerCID, foundToken) &&
+  ZuCHECK(link->peerCID(5, peerCID, foundToken) &&
       peerCID == Zquic::CxnID{"peerCID09"} && foundToken == peerToken,
     "NEW_CONNECTION_ID did not store peer CID and reset token");
 
@@ -606,47 +629,47 @@ void testConnectionIDFrameLifecycle()
   f.length = 9;
   f.payload = "peerCID10";
   f.resetToken = peerToken2;
-  ZuCHECK(link.receiveNewConnectionID(f) &&
-      !link.peerCID(5, peerCID, foundToken) &&
-      link.peerCID(6, peerCID, foundToken) &&
+  ZuCHECK(link->receiveNewConnectionID(f) &&
+      !link->peerCID(5, peerCID, foundToken) &&
+      link->peerCID(6, peerCID, foundToken) &&
       peerCID == Zquic::CxnID{"peerCID10"} &&
       foundToken == peerToken2,
     "retired peer CID slot was not reused for NEW_CONNECTION_ID");
 
-  ZuCHECK(link.receiveNewConnectionID(f) &&
-      link.peerCID(6, peerCID, foundToken) &&
+  ZuCHECK(link->receiveNewConnectionID(f) &&
+      link->peerCID(6, peerCID, foundToken) &&
       peerCID == Zquic::CxnID{"peerCID10"} &&
       foundToken == peerToken2,
     "duplicate NEW_CONNECTION_ID tuple was not deterministic");
 
   Zquic::Frame duplicate = f;
   duplicate.payload = "peerCID11";
-  ZuCHECK(!link.receiveNewConnectionID(duplicate),
+  ZuCHECK(!link->receiveNewConnectionID(duplicate),
     "duplicate NEW_CONNECTION_ID sequence with different CID was accepted");
 
   duplicate = f;
   duplicate.resetToken = peerToken;
-  ZuCHECK(!link.receiveNewConnectionID(duplicate),
+  ZuCHECK(!link->receiveNewConnectionID(duplicate),
     "duplicate NEW_CONNECTION_ID sequence with different token was accepted");
 
   duplicate = f;
   duplicate.value = 7;
   duplicate.payload = "peerCID11";
   duplicate.resetToken = peerToken2;
-  ZuCHECK(!link.receiveNewConnectionID(duplicate),
+  ZuCHECK(!link->receiveNewConnectionID(duplicate),
     "duplicate reset token for different peer CID was accepted");
 
   Zquic::CxnID localCID{"local003"};
   Zquic::ResetToken localToken{"fedcba9876543210"};
-  ZuCHECK(link.addLocalCID(localCID, 3, localToken),
+  ZuCHECK(link->addLocalCID(localCID, 3, localToken),
     "local CID setup failed");
   Zquic::Frame retire;
   retire.type = Zquic::FrameType::RetireConnectionID;
   retire.value = 3;
-  ZuCHECK(link.receiveRetireConnectionID(retire),
+  ZuCHECK(link->receiveRetireConnectionID(retire),
     "RETIRE_CONNECTION_ID frame was rejected");
-  ZuCHECK(link.localCIDRetired(3) && link.retiredCount == 1 &&
-      link.retiredSeq == 3 && link.retiredCID == localCID,
+  ZuCHECK(link->localCIDRetired(3) && link->retiredCount == 1 &&
+      link->retiredSeq == 3 && link->retiredCID == localCID,
     "RETIRE_CONNECTION_ID did not retire local CID and notify hook");
 }
 

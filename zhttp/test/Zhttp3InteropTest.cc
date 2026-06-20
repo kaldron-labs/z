@@ -185,7 +185,7 @@ void sendH3Response(Stream &stream, ZuCSpan body)
   if (!ref) return;
   ZtString<> body_{body};
   stream.link()->app()->txInvoke([
-    link = ZmMkRef(stream.link()), ref, body_ = ZuMv(body_)
+    link = stream.link(), ref, body_ = ZuMv(body_)
   ]() mutable {
     auto tx = ref->txStream_();
     H3ResponseBuilder builder{ZuCSpan{body_}};
@@ -347,7 +347,7 @@ void sendH3Request(Stream &stream, ZuCSpan body)
   if (!ref) return;
   ZtString<> body_{body};
   stream.link()->app()->txInvoke([
-    link = ZmMkRef(stream.link()), ref, body_ = ZuMv(body_)
+    link = stream.link(), ref, body_ = ZuMv(body_)
   ]() mutable {
     auto tx = ref->txStream_();
     H3RequestBuilder builder{ZuCSpan{body_}};

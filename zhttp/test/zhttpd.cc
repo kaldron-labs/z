@@ -772,6 +772,7 @@ void H3Server::printDiag()
   unsigned links = 0;
   uint64_t packetsRx = 0, packetsTx = 0;
   uint64_t streamRx = 0, streamTx = 0;
+  uint64_t peerOpened = 0, localLimit = 0;
   uint64_t pto = 0, retx = 0, pc = 0;
   uint64_t cwnd = 0, ssthresh = 0, bif = 0;
   uint64_t pktIF = 0;
@@ -789,6 +790,8 @@ void H3Server::printDiag()
     packetsTx += d.packetsTx;
     streamRx += d.streamBytesRx;
     streamTx += d.streamBytesTx;
+    peerOpened += link->peerStreamsOpened(Zi::StreamType::Duplex);
+    localLimit += link->localStreamLimit(Zi::StreamType::Duplex);
     pto += d.ptoCount;
     retx += d.retransmittedFrames;
     pc += d.persistentCongestion;
@@ -810,7 +813,7 @@ void H3Server::printDiag()
     bytesRx = diag.bytesRx, bytesTx = diag.bytesTx,
     txBackPressure = diag.txBackPressure,
     failures = diag.failures,
-    packetsRx, packetsTx, streamRx, streamTx, pto, retx,
+    packetsRx, packetsTx, streamRx, streamTx, peerOpened, localLimit, pto, retx,
     ptoTimer, lossTimer, pktIF, sentPkts, retxPend, retxTotal,
     cwnd, ssthresh, pc, bif
   ](auto &s) {
@@ -828,6 +831,8 @@ void H3Server::printDiag()
       " packetsTx=" << packetsTx <<
       " streamRx=" << streamRx <<
       " streamTx=" << streamTx <<
+      " peerOpened=" << peerOpened <<
+      " localLimit=" << localLimit <<
       " pto=" << pto <<
       " retx=" << retx <<
       " ptoTimer=" << unsigned(ptoTimer) <<
@@ -894,7 +899,7 @@ void H3ServerStream::sendResponse(ResponsePlan resp)
     return;
   }
   this->link()->app()->txInvoke([
-    link = ZmMkRef(this->link()), ref, resp = ZuMv(resp)
+    link = this->link(), ref, resp = ZuMv(resp)
   ]() mutable {
     auto tx = ref->txStream_();
     H3RespBuilder builder{&resp};

@@ -1551,6 +1551,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
   ZiLOG(Info, "zhttp", ([
     label, complete, failed, scheduled, active, pending,
     streams = link->streamCount(),
+    limit = link->peerStreamLimit(Zi::StreamType::Duplex),
     opened = link->localStreamsOpened(Zi::StreamType::Duplex),
     queued = link->queuedLocalStreams(Zi::StreamType::Duplex),
     packetsRx = diag.packetsRx, packetsTx = diag.packetsTx,
@@ -1599,6 +1600,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
       " active=" << active <<
       " pending=" << pending <<
       " streams=" << streams <<
+      " limit=" << limit <<
       " opened=" << opened <<
       " queued=" << queued <<
       " packetsRx=" << packetsRx <<
@@ -1802,8 +1804,8 @@ Zhttp::H3::QPackTxTable *QUICClient::Stream::qpackTx()
 void QUICClient::openH3Streams(Link *link_)
 {
   if (!link_) return;
-  this->txInvoke([this, link = ZmMkRef(link_)]() mutable {
-    openH3Streams_(link.ptr());
+  this->txInvoke([this, link = link_]() mutable {
+    openH3Streams_(link);
   });
 }
 
@@ -1870,12 +1872,12 @@ void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
 {
   this->txInvoke([
     this,
-    link = link_ ? ZmMkRef(link_) : ZmRef<Link>{},
+    link = link_,
     stream = ZuMv(stream),
     req
   ]() mutable {
     if (!run || (req && req->done)) return;
-    sendH3Req_(link.ptr(), ZuMv(stream), req);
+    sendH3Req_(link, ZuMv(stream), req);
   });
 }
 
@@ -1939,8 +1941,8 @@ Req *QUICClient::popH3Req()
 void QUICClient::bindH3Stream(Link *link_, ZmRef<Stream> stream)
 {
   if (!link_) return;
-  this->txInvoke([this, link = ZmMkRef(link_), stream = ZuMv(stream)]() mutable {
-    bindH3Stream_(link.ptr(), ZuMv(stream));
+  this->txInvoke([this, link = link_, stream = ZuMv(stream)]() mutable {
+    bindH3Stream_(link, ZuMv(stream));
   });
 }
 
@@ -1964,11 +1966,11 @@ void QUICClient::finishH3Req(Link *link_, Req *req, bool ok)
 {
   this->rxInvoke([
     this,
-    link = link_ ? ZmMkRef(link_) : ZmRef<Link>{},
+    link = link_,
     req,
     ok
   ]() mutable {
-    finishH3Req_(link.ptr(), req, ok);
+    finishH3Req_(link, req, ok);
   });
 }
 
@@ -1989,7 +1991,7 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
       if (!run) return;
       this->txInvoke([
 	this,
-	link = link_ ? ZmMkRef(link_) : ZmRef<Link>{},
+	link = link_,
 	req
       ]() mutable {
 	if (!link || !req || !run || req->done) return;
@@ -1998,7 +2000,7 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
 	  queueH3Req(req);
 	  return;
 	}
-	sendH3Req_(link.ptr(), ZuMv(stream), req);
+	sendH3Req_(link, ZuMv(stream), req);
       });
       return;
     }
@@ -2334,6 +2336,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       ZiLOG(Error, "zhttp", ([
 	complete, failed, scheduled, active, pending,
 	streams = link->streamCount(),
+	limit = link->peerStreamLimit(Zi::StreamType::Duplex),
 	opened = link->localStreamsOpened(Zi::StreamType::Duplex),
 	queued = link->queuedLocalStreams(Zi::StreamType::Duplex),
 	packetsRx = diag.packetsRx,
@@ -2349,6 +2352,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	  " active=" << active <<
 	  " pending=" << pending <<
 	  " streams=" << streams <<
+	  " limit=" << limit <<
 	  " opened=" << opened <<
 	  " queued=" << queued <<
 	  " packetsRx=" << packetsRx <<

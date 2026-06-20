@@ -149,11 +149,11 @@ void testHandshakeStreamsAndClose()
     "loop 1-RTT readiness failed");
 
   App app;
-  TestLink client{&app};
-  TestLink server{&app, true};
-  auto c0 = client.stream(Zi::StreamType::Duplex);
-  auto c1 = client.stream(Zi::StreamType::Simplex);
-  auto s0 = server.stream(Zi::StreamType::Duplex);
+  ZmRef<TestLink> client = new TestLink{&app};
+  ZmRef<TestLink> server = new TestLink{&app, true};
+  auto c0 = client->stream(Zi::StreamType::Duplex);
+  auto c1 = client->stream(Zi::StreamType::Simplex);
+  auto s0 = server->stream(Zi::StreamType::Duplex);
   ZuCHECK(c0->id() == 0 && c1->id() == 2 && s0->id() == 1,
     "loop stream IDs mismatch");
   {
@@ -162,8 +162,8 @@ void testHandshakeStreamsAndClose()
   }
   ZuCHECK(c0->txBytes() == 12, "loop stream Tx accounting mismatch");
 
-  client.close(Zquic::TransportError::NoError);
-  ZuCHECK(client.closed() && !client.closeError(), "loop graceful close failed");
+  client->close(Zquic::TransportError::NoError);
+  ZuCHECK(client->closed() && !client->closeError(), "loop graceful close failed");
 }
 
 void testSplitReorderedStreamFrames()
@@ -177,8 +177,8 @@ void testSplitReorderedStreamFrames()
   Zquic::Frame f;
   unsigned used = 0;
   App app;
-  TestLink client{&app};
-  auto stream = client.stream(Zi::StreamType::Duplex);
+  ZmRef<TestLink> client = new TestLink{&app};
+  auto stream = client->stream(Zi::StreamType::Duplex);
 
   auto packet = streamPkt_(
     stream->id(), sizeof(p0), bytes_(p1, sizeof(p1)), false, f, used);
@@ -315,25 +315,25 @@ void testRecoveryFlowAndPMTUD()
     "loop PMTUD active-size blackhole fallback failed");
 
   App app;
-  TestLink link{&app};
-  link.initPath(
+  ZmRef<TestLink> link = new TestLink{&app};
+  link->initPath(
     ZiSockAddr{ZiIP("127.0.0.1"), 10006},
     ZiSockAddr{ZiIP("127.0.0.1"), 10007});
-  ZuCHECK(link.sendBudget().pmtu == Zquic::MinUDPPayload,
+  ZuCHECK(link->sendBudget().pmtu == Zquic::MinUDPPayload,
     "runtime PMTUD initial budget mismatch");
-  ZuCHECK(link.startPMTUDProbe(1400) &&
-      link.pathProbeSize() == 1400,
+  ZuCHECK(link->startPMTUDProbe(1400) &&
+      link->pathProbeSize() == 1400,
     "runtime PMTUD probe start failed");
-  link.ackPMTUDProbe(1400);
-  ZuCHECK(link.activePathMaxUDP() == 1400 &&
-      link.sendBudget().pmtu == 1400 &&
-      link.pathDiag().probesAckd == 1,
+  link->ackPMTUDProbe(1400);
+  ZuCHECK(link->activePathMaxUDP() == 1400 &&
+      link->sendBudget().pmtu == 1400 &&
+      link->pathDiag().probesAckd == 1,
     "runtime PMTUD ACK did not grow active size");
-  ZuCHECK(link.startPMTUDProbe(1500),
+  ZuCHECK(link->startPMTUDProbe(1500),
     "runtime PMTUD loss probe start failed");
-  link.losePMTUDProbe(1500);
-  ZuCHECK(link.activePathMaxUDP() == 1400 &&
-      link.pathDiag().probesLost == 1,
+  link->losePMTUDProbe(1500);
+  ZuCHECK(link->activePathMaxUDP() == 1400 &&
+      link->pathDiag().probesLost == 1,
     "runtime PMTUD loss handling failed");
 
   TestLink expiryLink{&app};
