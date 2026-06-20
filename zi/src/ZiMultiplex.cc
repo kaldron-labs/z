@@ -2192,6 +2192,12 @@ bool ZiMultiplex::start__()
   return true;
 }
 
+bool ZiMultiplex::stop()
+{
+  wake();
+  return ZmScheduler::stop();
+}
+
 // the scheduler's control thread synchronously blocks on shutdown
 bool ZiMultiplex::stop__()
 {
