@@ -36,8 +36,8 @@ private:
 public:
   void capture(unsigned skip = 0) {
     Guard guard(m_lock);
-    unsigned i = m_offset;
-    m_offset = (i + 1) & 63;
+    unsigned i;
+    if (ZuUnlikely((i = ++m_offset) >= N)) i = m_offset = 0;
     Data *data = new (m_captures[i].template new_<1>()) Data();
     ZmThreadContext *self = ZmSelf();
     data->p<0>() = self->tid();
@@ -49,8 +49,9 @@ public:
     ReadGuard guard(m_lock);
     bool first = true;
     for (unsigned i = 0; i < N; i++) {
-      unsigned j = (m_offset + (N - 1) - i) % N;
-      if (m_captures[j].is<Data>()) {
+      unsigned j = (m_offset + (N - 1) - i);
+      if (j >= N) j -= N;
+      if (m_captures[j].template is<Data>()) {
 	const auto &data = m_captures[j].template p<Data>();
 	if (!first) s << "---\n";
 	first = false;
@@ -63,8 +64,8 @@ public:
 
 private:
   ZmPLock		m_lock;
-  ZuBox0(unsigned)	  m_offset;
-  Capture		  m_captures[64];
+    ZuBox0(unsigned)	  m_offset;
+    Capture		  m_captures[N];
 };
 
 #endif /* ZmBackTracer_HH */
