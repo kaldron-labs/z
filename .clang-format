@@ -4,11 +4,15 @@ BasedOnStyle: LLVM
 ColumnLimit: 80
 IndentWidth: 2
 ContinuationIndentWidth: 2
+TabWidth: 8
 UseTab: ForContinuationAndIndentation # different than LLVM
+Standard: Latest
 
 # various specific indents
+AccessModifierOffset: -2
 ConstructorInitializerIndentWidth: 2
 LambdaBodyIndentation: OuterScope
+IndentAccessModifiers: false
 IndentGotoLabels: false
 IndentExternBlock: Indent
 IndentRequiresClause: true
@@ -29,12 +33,16 @@ PenaltyExcessCharacter: 1000000
 # everything below is different than LLVM
 AlignAfterOpenBracket: BlockIndent
 AlignArrayOfStructures: Right
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AlignFunctionDeclarations: false
+  AlignFunctionPointers: false
 AlignConsecutiveShortCaseStatements:
   Enabled: true
 AlignEscapedNewlines: DontAlign
 AlignOperands: DontAlign
 
-AllowShortBlocksOnASingleLine: Always
+AllowShortBlocksOnASingleLine: Never
 AllowShortFunctionsOnASingleLine: All
 AllowShortIfStatementsOnASingleLine: WithoutElse
 AllowShortLoopsOnASingleLine: true
@@ -43,11 +51,14 @@ BitFieldColonSpacing: None
 
 BreakBeforeBraces: Custom
 BraceWrapping:
+  AfterFunction: true
   SplitEmptyFunction: false
   SplitEmptyRecord: false
   SplitEmptyNamespace: false
 
 AlwaysBreakBeforeMultilineStrings: true
+BreakAfterOpenBracketFunction: true
+BreakBeforeCloseBracketFunction: false
 BreakBeforeConceptDeclarations: Allowed
 BreakBeforeTernaryOperators: false
 BreakConstructorInitializers: AfterColon
@@ -58,9 +69,12 @@ AlwaysBreakTemplateDeclarations: MultiLine
 
 
 CompactNamespaces: true
-ShortNamespaceLines: 10
+NamespaceIndentation: None
+ShortNamespaceLines: 20
 FixNamespaceComments: true
 
+EmptyLineAfterAccessModifier: Never
+EmptyLineBeforeAccessModifier: Never
 KeepEmptyLinesAtTheStartOfBlocks: false
 
 PackConstructorInitializers: BinPack
