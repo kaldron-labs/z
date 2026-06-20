@@ -1047,8 +1047,7 @@ public:
 	      batch.largestAckdForLoss = p.pn;
 	      batch.haveAckForLoss = true;
 	    }
-	    if (level == CryptoLevel::OneRTT &&
-		(!batch.haveAckd || p.pn > batch.latestAckd)) {
+	    if (!batch.haveAckd || p.pn > batch.latestAckd) {
 	      batch.latestAckd = p.pn;
 	      batch.latestSentTime = p.sentTime;
 	      batch.haveAckd = true;
@@ -1383,6 +1382,9 @@ restart:
 	if (!rangeEnd_(f, fEnd)) continue;
 	if (f.offset <= first && fEnd > first) {
 	  first = fEnd < end ? fEnd : end;
+	  if (first >= end)
+	    return fin && !finOutstanding_(frame, end) &&
+	      clipFrameRef_(frame, end, end, true);
 	  goto restart;
 	}
 	if (f.offset > first && f.offset < end) {

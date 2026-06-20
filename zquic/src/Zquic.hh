@@ -3223,6 +3223,7 @@ protected:
     uint64_t oldOffset = ref.offset;
     uint64_t oldLength = ref.length;
     uint64_t oldRangeOffset = ref.range.offset;
+    if (first < oldOffset) first = oldOffset;
     if (first > dataEnd) first = dataEnd;
     uint64_t dataFirst = first;
     uint64_t dataLimit = end < dataEnd ? end : dataEnd;
@@ -5463,13 +5464,13 @@ nextSpace:
 	  persistentCongestionThreshold_(), RecoveryScanBatch))
 	persistentCongestion_();
     }
-    if (work.ackBatch.ackd && ack.level == CryptoLevel::OneRTT) {
+    if (work.ackBatch.ackd) {
       ZuTime now = runtimeNow_();
       if (*work.ackBatch.latestSentTime && work.ackBatch.latestSentTime < now)
 	m_rtt.sample(
-	  now - work.ackBatch.latestSentTime, ackDelay_(ack.delay), true);
-      m_ptoBackoff.reset();
-    } else if (work.ackBatch.ackd) {
+	  now - work.ackBatch.latestSentTime,
+	  ack.level == CryptoLevel::OneRTT ? ackDelay_(ack.delay) : ZuTime{0},
+	  ack.level == CryptoLevel::OneRTT);
       m_ptoBackoff.reset();
     }
     updateCongestionDiag_();
