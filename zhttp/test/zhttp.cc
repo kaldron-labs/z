@@ -1555,9 +1555,21 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     opened = link->localStreamsOpened(Zi::StreamType::Duplex),
     queued = link->queuedLocalStreams(Zi::StreamType::Duplex),
     packetsRx = diag.packetsRx, packetsTx = diag.packetsTx,
+    duplicatePackets = diag.duplicatePacketsRx,
+    ackCommits = diag.ackCommitsRx,
+    ackEliciting = diag.ackElicitingRx,
+    ackImmediate = diag.ackImmediateRx,
+    ackPosts = diag.ackSnapshotPostsRx,
+    streamNoData = diag.streamNoDataRx,
     ackOnly = diag.ackOnlyPacketsTx,
     streamOnly = diag.streamOnlyPacketsTx,
     ackStream = diag.ackStreamPacketsTx,
+    ackInstalls = diag.ackSnapshotInstallsTx,
+    ackDueInstalls = diag.ackDueInstallsTx,
+    ackAppend = diag.ackAppendTx,
+    ackAppendEmpty = diag.ackAppendEmptyTx,
+    ackAppendNotDue = diag.ackAppendNotDueTx,
+    ackSent = diag.ackSentTx,
     controlOnly = diag.controlOnlyPacketsTx,
     ackControl = diag.ackControlPacketsTx,
     streamControl = diag.streamControlPacketsTx,
@@ -1567,6 +1579,18 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     streamFrames = diag.streamFramesTx,
     controlFrames = diag.controlFramesTx,
     cryptoFrames = diag.cryptoFramesTx,
+    streamMaxClosed = diag.streamMaxClosedRx,
+    streamMaxInvalid = diag.streamMaxInvalidRx,
+    streamCtlClosed = diag.streamCtlClosedRx,
+    streamCtlInvalid = diag.streamCtlInvalidRx,
+    streamDataInvalid = diag.streamDataInvalidRx,
+    streamDataState = diag.streamDataStateRx,
+    streamDataFinal = diag.streamDataFinalRx,
+    streamRxDeqState = diag.streamRxDeqStateRx,
+    streamRxDeqFinal = diag.streamRxDeqFinalRx,
+    streamBlockedClosed = diag.streamBlockedClosedRx,
+    streamBlockedInvalid = diag.streamBlockedInvalidRx,
+    streamBlockedFinal = diag.streamBlockedFinalRx,
     maxData = diag.maxDataTx,
     maxStreamData = diag.maxStreamDataTx,
     maxStreams = diag.maxStreamsTx,
@@ -1635,12 +1659,25 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
       " queued=" << queued <<
       " packetsRx=" << packetsRx <<
       " packetsTx=" << packetsTx <<
+      " ackDiag=[" << duplicatePackets << ',' << ackCommits << ',' <<
+	ackEliciting << ',' << ackImmediate << ',' << ackPosts << ',' <<
+	streamNoData << ',' << ackInstalls << ',' << ackDueInstalls << ',' <<
+	ackAppend << ',' << ackAppendEmpty << ',' << ackAppendNotDue << ',' <<
+	ackSent << ']' <<
       " pktMix=[" << ackOnly << ',' << streamOnly << ',' << ackStream <<
 	',' << controlOnly << ',' << ackControl << ',' <<
 	streamControl << ',' << ackStreamControl << ',' << cryptoPkts <<
 	',' << otherPkts << ']' <<
       " frameMix=[" << streamFrames << ',' << controlFrames << ',' <<
 	cryptoFrames << ']' <<
+      " streamFault=[" << invalidStream << ',' << closedStream << ',' <<
+	suspiciousCloses << ',' << streamMaxClosed << ',' <<
+	streamMaxInvalid << ',' << streamCtlClosed << ',' <<
+	streamCtlInvalid << ',' << streamDataInvalid << ',' <<
+	streamDataState << ',' << streamDataFinal << ',' <<
+	streamRxDeqState << ',' << streamRxDeqFinal << ',' <<
+	streamBlockedClosed << ',' << streamBlockedInvalid << ',' <<
+	streamBlockedFinal << ']' <<
       " ctrlTx=[" << maxData << ',' << maxStreamData << ',' <<
 	maxStreams << ',' << dataBlocked << ',' << streamDataBlocked <<
 	',' << streamsBlocked << ',' << resetStream << ',' <<

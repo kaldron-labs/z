@@ -169,13 +169,17 @@ struct TestLink :
     Zquic::CryptoLevel::T level, uint64_t pn, unsigned bytes,
     const Zquic::SentFrameRef &ref, bool ackEliciting) {
     Base::recordTxPkt_(level, pn, bytes, ref, ackEliciting);
+#ifdef Zquic_DEBUG
     Base::setTxPNForTest_(level, pn + 1);
+#endif
   }
   void recordSentPkt(
     Zquic::CryptoLevel::T level, uint64_t pn, unsigned bytes,
     const typename Base::TxPktRefs &refs, bool ackEliciting) {
     Base::recordTxPkt_(level, pn, bytes, refs, ackEliciting);
+#ifdef Zquic_DEBUG
     Base::setTxPNForTest_(level, pn + 1);
+#endif
   }
   unsigned flushRecordedRefs(Zquic::SentFrameRef *refs, unsigned capacity) {
     unsigned n = 0;
@@ -309,9 +313,11 @@ struct TestLink :
       Base::recordProtPktTx_(
 	Zquic::CryptoLevel::OneRTT, i, 1, {}, nullptr, false);
   }
+#ifdef Zquic_DEBUG
   void forcePN(uint64_t pn) {
     Base::setTxPNForTest_(Zquic::CryptoLevel::OneRTT, pn);
   }
+#endif
   unsigned pnLength() const {
     return Base::txPNLength_(Zquic::CryptoLevel::OneRTT);
   }
@@ -350,6 +356,7 @@ struct TestLink :
       Zquic::CryptoLevel::OneRTT, pn, bytes,
       Zquic::SentFrameRef::control(), true);
   }
+#ifdef Zquic_DEBUG
   void ackECN(uint64_t largest, uint64_t ect0, uint64_t ect1, uint64_t ce) {
     Base::setTxPNForTest_(Zquic::CryptoLevel::OneRTT, largest + 1);
     Base::AckSnapshot ack;
@@ -361,13 +368,13 @@ struct TestLink :
     ack.ecn.ce = ce;
     Base::processAckFrameTx_(ack);
   }
+#endif
   bool receiveMarked(
     uint64_t pn, Zquic::EcnMark::T ecn, bool ackEliciting = true) {
-    bool ok = Base::recordRxPkt_(Zquic::CryptoLevel::OneRTT, pn, ecn);
-    if (ok)
-      Base::noteAck_(
-	Zquic::CryptoLevel::OneRTT, pn, ackEliciting, ZiSockAddr{});
-    return ok;
+    if (Base::rxPktSeen_(Zquic::CryptoLevel::OneRTT, pn)) return false;
+    Base::noteAck_(
+      Zquic::CryptoLevel::OneRTT, pn, ackEliciting, ZiSockAddr{}, false, ecn);
+    return true;
   }
   bool writePendingAck(Zquic::PktBuild &build) {
     return Base::appendPendingAck_(Zquic::CryptoLevel::OneRTT, build);
@@ -379,6 +386,7 @@ struct TestLink :
   void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
   }
+#ifdef Zquic_DEBUG
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
     Base::startPathValidationForTest_(ZuMv(local), ZuMv(remote));
   }
@@ -386,6 +394,7 @@ struct TestLink :
   ZuCSpan validatingChallenge() const {
     return Base::validatingChallenge_();
   }
+#endif
   bool pathResponse(ZuCSpan data) { return Base::onPathResponse_(data); }
   void pathTimeout() { Base::pathExpired_(); }
   const ZiSockAddr &activePathRemote() const {
@@ -401,7 +410,9 @@ struct TestLink :
       [](ZmRef<ZiIOBuf>, ZiSockAddr) { return true; });
   }
   void validatePath() { Base::validatePathTx_(); }
+#ifdef Zquic_DEBUG
   void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
+#endif
   Zquic::PathDiag pathDiag() const { return Base::pathDiag_(); }
   bool pathValidated() const { return Base::pathValidated_(); }
   uint64_t pathAntiAmplification() const {
@@ -423,12 +434,14 @@ struct TestLink :
     ack.ranges[0] = Zquic::AckRange{largest, first};
     return Base::ackFrameValidTx_(ack);
   }
+#ifdef Zquic_DEBUG
   bool installOneRTT(
     const Zquic::TrafficSecret &rx, const Zquic::TrafficSecret &tx,
     const Zquic::CxnID &localCID) {
     return Base::installOneRTTForTest_(rx, tx, localCID);
   }
   void discardPeerKeys() { Base::discardPeerKeysForTest_(); }
+#endif
   bool receiveShort(ZmRef<ZiIOBuf> buf) {
     if (!buf) return false;
     Zquic::Datagram d;
@@ -437,9 +450,10 @@ struct TestLink :
       d, 0, d.buf->length,
       [this](
 	  Zquic::CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
-	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf) {
+	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+	  typename Base::RxAckMeta &ack) {
 	return Base::consumeProtFrames_(
-	  level, pn, frames, ZuMv(addr), packetBuf,
+	  level, pn, frames, ZuMv(addr), packetBuf, ack,
 	  [](size_t, ZuCSpan, ZiSockAddr) { return true; },
 	  [](Zquic::CryptoLevel::T, const Zquic::Frame &, ZiSockAddr) {
 	    return true;
@@ -1287,12 +1301,14 @@ void testRuntimePacketNumberLength()
   link->advancePN(200);
   ZuCHECK(link->pnLength() == 2,
     "runtime PN length did not grow to two bytes");
+#ifdef Zquic_DEBUG
   link->forcePN(40000);
   ZuCHECK(link->pnLength() == 3,
     "runtime PN length did not grow to three bytes");
   link->forcePN(9000000);
   ZuCHECK(link->pnLength() == 4,
     "runtime PN length did not grow to four bytes");
+#endif
   link->close();
 }
 
@@ -1358,6 +1374,7 @@ void testActivePathRuntimeBudget()
 {
   ZuTestScope(testActivePathRuntimeBudget);
 
+#ifdef Zquic_DEBUG
   {
     App app{1360};
     ZmRef<TestLink> client = testLink(&app);
@@ -1365,11 +1382,12 @@ void testActivePathRuntimeBudget()
     Zquic::PktBudget budget = client->sendBudget();
     ZuCHECK(client->pathValidated() &&
 	client->activePathMaxUDP() == 1360 &&
-	budget.pmtu == 1360 &&
-	budget.limit() == 1360,
+	budget.pmtu == 1360 - Zquic::TxStreamPktReserve &&
+	budget.limit() == 1360 - Zquic::TxStreamPktReserve,
       "active path max UDP did not drive runtime packet budget");
     client->close();
   }
+#endif
 
   App app;
   ZmRef<TestLink> server = testLink(&app, true);
@@ -1415,6 +1433,7 @@ void testPathValidationStateMachine()
       challenge.equals(challenge.cspan()),
     "PATH_CHALLENGE value generation failed");
 
+#ifdef Zquic_DEBUG
   App app;
   ZmRef<TestLink> link = testLink(&app, true);
   ZiSockAddr local{ZiIP{0x0a000001}, 4433};
@@ -1464,8 +1483,10 @@ void testPathValidationStateMachine()
     "path-validation timeout did not retain active path");
 
   link->close();
+#endif
 }
 
+#ifdef Zquic_DEBUG
 void testAckECNValidationDisablesECN()
 {
   ZuTestScope(testAckECNValidationDisablesECN);
@@ -1525,6 +1546,7 @@ void testAckECNValidationDisablesECN()
     "impossible ACK_ECN did not disable ECN while preserving ACK processing");
   impossible->close();
 }
+#endif
 
 void testBlockedFrameDuplicateSuppression()
 {
@@ -1678,6 +1700,22 @@ void testPeerStreamAcceptance()
     "local-origin STREAM setup failed");
   ZuCHECK(server->receiveFrame(frame, packet, &diag) < 0 && !server->findStream(1),
     "server accepted local-origin peer stream ID");
+
+  ZmRef<TestLink> gap = testLink(&app, true);
+  gap->setLocalStreamLimit(Zi::StreamType::Duplex, 3);
+  packet = streamPkt_(8, 0, "hi", true, frame, used);
+  ZuCHECK(packet && gap->receiveFrame(frame, packet) == 0 &&
+      gap->peerStreamsOpened(Zi::StreamType::Duplex) == 3 &&
+      gap->findStream(8),
+    "higher peer stream was not accepted");
+  packet = streamPkt_(4, 0, "lo", true, frame, used);
+  ZuCHECK(packet && gap->receiveFrame(frame, packet) == 0,
+    "implicit lower peer stream was rejected after higher stream");
+  auto lower = gap->findStream(4);
+  ZuCHECK(lower && lower->processed == 1 && lower->rxComplete() &&
+      !gap->runtimeDiag().closedStreamFrames &&
+      !gap->runtimeDiag().invalidStreamFrames,
+    "implicit lower peer stream was treated as closed or invalid");
 }
 
 void testStreamCountLimits()
@@ -2076,8 +2114,9 @@ void testInvalidClosedStreamActivity()
       !maxLink->closeError(),
     "closed-stream MAX_STREAM_DATA was not ignored");
   Zquic::RuntimeDiag diag = maxLink->runtimeDiag();
-  ZuCHECK(diag.invalidStreamFrames == 1 &&
-      diag.closedStreamFrames == 1 &&
+  ZuCHECK(!diag.invalidStreamFrames &&
+      !diag.closedStreamFrames &&
+      diag.streamMaxClosedRx == 1 &&
       !diag.suspiciousStreamCloses,
     "closed-stream MAX_STREAM_DATA diagnostics mismatch");
 
@@ -2138,12 +2177,15 @@ void testInvalidClosedStreamActivity()
     ZuCHECK(threshold->applyMaxStreamData(frame),
       "closed-stream threshold frame was rejected");
   diag = threshold->runtimeDiag();
-  ZuCHECK(threshold->closeError() == Zquic::TransportError::StreamState &&
-      diag.suspiciousStreamCloses == 1,
-    "closed-stream threshold did not close once");
+  ZuCHECK(!threshold->closeError() &&
+      diag.streamMaxClosedRx == TestLink::suspiciousStreamThreshold() &&
+      !diag.suspiciousStreamCloses,
+    "closed-stream MAX_STREAM_DATA was not tracked as benign");
   ZuCHECK(threshold->applyMaxStreamData(frame) &&
-      threshold->runtimeDiag().suspiciousStreamCloses == 1,
-    "closed-stream threshold produced repeated close diagnostics");
+      threshold->runtimeDiag().streamMaxClosedRx ==
+	TestLink::suspiciousStreamThreshold() + 1 &&
+      !threshold->runtimeDiag().suspiciousStreamCloses,
+    "closed-stream MAX_STREAM_DATA produced suspicious close diagnostics");
 }
 
 void testStreamGC()
@@ -2188,7 +2230,7 @@ void testStreamGC()
     b, sizeof(b), localID, 4096);
   ZuCHECK(parseFrame_(b, n, frame) &&
       maxLink->applyMaxStreamData(frame) &&
-      maxLink->runtimeDiag().closedStreamFrames == 1,
+      maxLink->runtimeDiag().streamMaxClosedRx == 1,
     "closed MAX_STREAM_DATA after stream GC was not compact-handled");
 
   ZmRef<TestLink> ackLink = testLink(&app);
@@ -2296,6 +2338,7 @@ void testFrameRoleAndSpaceLegality()
     "unknown extension frame was accepted");
 }
 
+#ifdef Zquic_DEBUG
 void testPeerKeyUpdateState()
 {
   ZuTestScope(testPeerKeyUpdateState);
@@ -2341,6 +2384,7 @@ void testPeerKeyUpdateState()
   ZuCHECK(discardDiag.keyDiscards == 1, "key discard diagnostic mismatch");
   ZuCHECK(!discardedOK, "discarded old key packet was accepted");
 }
+#endif
 
 int main(int argc, char **argv)
 {
@@ -2366,7 +2410,9 @@ int main(int argc, char **argv)
   ZuTestCall(testCongestionBudgetGatesRuntimeSends);
   ZuTestCall(testActivePathRuntimeBudget);
   ZuTestCall(testPathValidationStateMachine);
+#ifdef Zquic_DEBUG
   ZuTestCall(testAckECNValidationDisablesECN);
+#endif
   ZuTestCall(testBlockedFrameDuplicateSuppression);
   ZuTestCall(testKeyedControlReplacement);
   ZuTestCall(testControlInvalidation);
@@ -2379,5 +2425,7 @@ int main(int argc, char **argv)
   ZuTestCall(testInvalidClosedStreamActivity);
   ZuTestCall(testStreamGC);
   ZuTestCall(testFrameRoleAndSpaceLegality);
+#ifdef Zquic_DEBUG
   ZuTestCall(testPeerKeyUpdateState);
+#endif
 }

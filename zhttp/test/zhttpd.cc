@@ -772,6 +772,10 @@ void H3Server::printDiag()
   unsigned links = 0;
   uint64_t packetsRx = 0, packetsTx = 0;
   uint64_t ackOnly = 0, streamOnly = 0, ackStream = 0;
+  uint64_t duplicatePackets = 0, ackCommits = 0, ackEliciting = 0;
+  uint64_t ackImmediate = 0, ackPosts = 0, streamNoData = 0;
+  uint64_t ackInstalls = 0, ackDueInstalls = 0, ackAppend = 0;
+  uint64_t ackAppendEmpty = 0, ackAppendNotDue = 0, ackSent = 0;
   uint64_t controlOnly = 0, ackControl = 0, streamControl = 0;
   uint64_t ackStreamControl = 0, cryptoPkts = 0, otherPkts = 0;
   uint64_t streamFrames = 0, controlFrames = 0, cryptoFrames = 0;
@@ -779,6 +783,13 @@ void H3Server::printDiag()
   uint64_t dataBlocked = 0, streamDataBlocked = 0, streamsBlocked = 0;
   uint64_t resetStream = 0, stopSending = 0, pathChallenge = 0;
   uint64_t pathResponse = 0, handshakeDone = 0;
+  uint64_t invalidStream = 0, closedStream = 0, suspiciousCloses = 0;
+  uint64_t streamMaxClosed = 0, streamMaxInvalid = 0;
+  uint64_t streamCtlClosed = 0, streamCtlInvalid = 0;
+  uint64_t streamDataInvalid = 0, streamDataState = 0, streamDataFinal = 0;
+  uint64_t streamRxDeqState = 0, streamRxDeqFinal = 0;
+  uint64_t streamBlockedClosed = 0, streamBlockedInvalid = 0;
+  uint64_t streamBlockedFinal = 0;
   uint64_t pathObserved = 0, pathSame = 0, pathNull = 0, pathActive = 0;
   uint64_t pathStarted = 0, pathPromoted = 0, pathUnknown = 0;
   uint64_t streamRx = 0, streamTx = 0;
@@ -798,9 +809,21 @@ void H3Server::printDiag()
     ++links;
     packetsRx += d.packetsRx;
     packetsTx += d.packetsTx;
+    duplicatePackets += d.duplicatePacketsRx;
+    ackCommits += d.ackCommitsRx;
+    ackEliciting += d.ackElicitingRx;
+    ackImmediate += d.ackImmediateRx;
+    ackPosts += d.ackSnapshotPostsRx;
+    streamNoData += d.streamNoDataRx;
     ackOnly += d.ackOnlyPacketsTx;
     streamOnly += d.streamOnlyPacketsTx;
     ackStream += d.ackStreamPacketsTx;
+    ackInstalls += d.ackSnapshotInstallsTx;
+    ackDueInstalls += d.ackDueInstallsTx;
+    ackAppend += d.ackAppendTx;
+    ackAppendEmpty += d.ackAppendEmptyTx;
+    ackAppendNotDue += d.ackAppendNotDueTx;
+    ackSent += d.ackSentTx;
     controlOnly += d.controlOnlyPacketsTx;
     ackControl += d.ackControlPacketsTx;
     streamControl += d.streamControlPacketsTx;
@@ -810,6 +833,21 @@ void H3Server::printDiag()
     streamFrames += d.streamFramesTx;
     controlFrames += d.controlFramesTx;
     cryptoFrames += d.cryptoFramesTx;
+    invalidStream += d.invalidStreamFrames;
+    closedStream += d.closedStreamFrames;
+    suspiciousCloses += d.suspiciousStreamCloses;
+    streamMaxClosed += d.streamMaxClosedRx;
+    streamMaxInvalid += d.streamMaxInvalidRx;
+    streamCtlClosed += d.streamCtlClosedRx;
+    streamCtlInvalid += d.streamCtlInvalidRx;
+    streamDataInvalid += d.streamDataInvalidRx;
+    streamDataState += d.streamDataStateRx;
+    streamDataFinal += d.streamDataFinalRx;
+    streamRxDeqState += d.streamRxDeqStateRx;
+    streamRxDeqFinal += d.streamRxDeqFinalRx;
+    streamBlockedClosed += d.streamBlockedClosedRx;
+    streamBlockedInvalid += d.streamBlockedInvalidRx;
+    streamBlockedFinal += d.streamBlockedFinalRx;
     maxData += d.maxDataTx;
     maxStreamData += d.maxStreamDataTx;
     maxStreams += d.maxStreamsTx;
@@ -854,9 +892,17 @@ void H3Server::printDiag()
     txBackPressure = diag.txBackPressure,
     failures = diag.failures,
     packetsRx, packetsTx, streamRx, streamTx, peerOpened, localLimit, pto, retx,
+    duplicatePackets, ackCommits, ackEliciting, ackImmediate, ackPosts,
+    streamNoData, ackInstalls, ackDueInstalls, ackAppend, ackAppendEmpty,
+    ackAppendNotDue, ackSent,
     ackOnly, streamOnly, ackStream, controlOnly, ackControl, streamControl,
     ackStreamControl, cryptoPkts, otherPkts, streamFrames, controlFrames,
-    cryptoFrames, maxData, maxStreamData, maxStreams, dataBlocked,
+    cryptoFrames, invalidStream, closedStream, suspiciousCloses,
+    streamMaxClosed, streamMaxInvalid, streamCtlClosed, streamCtlInvalid,
+    streamDataInvalid, streamDataState, streamDataFinal, streamRxDeqState,
+    streamRxDeqFinal, streamBlockedClosed, streamBlockedInvalid,
+    streamBlockedFinal,
+    maxData, maxStreamData, maxStreams, dataBlocked,
     streamDataBlocked, streamsBlocked, resetStream, stopSending,
     pathChallenge, pathResponse, handshakeDone,
     pathObserved, pathSame, pathNull, pathActive, pathStarted, pathPromoted,
@@ -876,12 +922,25 @@ void H3Server::printDiag()
       " failures=" << failures <<
       " packetsRx=" << packetsRx <<
       " packetsTx=" << packetsTx <<
+      " ackDiag=[" << duplicatePackets << ',' << ackCommits << ',' <<
+	ackEliciting << ',' << ackImmediate << ',' << ackPosts << ',' <<
+	streamNoData << ',' << ackInstalls << ',' << ackDueInstalls << ',' <<
+	ackAppend << ',' << ackAppendEmpty << ',' << ackAppendNotDue << ',' <<
+	ackSent << ']' <<
       " pktMix=[" << ackOnly << ',' << streamOnly << ',' << ackStream <<
 	',' << controlOnly << ',' << ackControl << ',' <<
 	streamControl << ',' << ackStreamControl << ',' << cryptoPkts <<
 	',' << otherPkts << ']' <<
       " frameMix=[" << streamFrames << ',' << controlFrames << ',' <<
 	cryptoFrames << ']' <<
+      " streamFault=[" << invalidStream << ',' << closedStream << ',' <<
+	suspiciousCloses << ',' << streamMaxClosed << ',' <<
+	streamMaxInvalid << ',' << streamCtlClosed << ',' <<
+	streamCtlInvalid << ',' << streamDataInvalid << ',' <<
+	streamDataState << ',' << streamDataFinal << ',' <<
+	streamRxDeqState << ',' << streamRxDeqFinal << ',' <<
+	streamBlockedClosed << ',' << streamBlockedInvalid << ',' <<
+	streamBlockedFinal << ']' <<
       " ctrlTx=[" << maxData << ',' << maxStreamData << ',' <<
 	maxStreams << ',' << dataBlocked << ',' << streamDataBlocked <<
 	',' << streamsBlocked << ',' << resetStream << ',' <<
@@ -979,8 +1038,28 @@ void H3ServerStream::sendResponse(ResponsePlan resp)
       s << "send response stream=" << id << " ok=" << ok;
     }));
     if (!ok)
-      ZiLOG(Error, "zhttpd", ([id = ref->id()](auto &s) {
-	s << "H3 response send failed: " << id;
+      ZiLOG(Error, "zhttpd", ([
+	id = ref->id(),
+	closed = link->closed(),
+	closeError = link->closeError(),
+	rxComplete = ref->rxComplete(),
+	finReceived = ref->finReceived(),
+	finSent = ref->finSent(),
+	finDequeued = ref->finDequeued(),
+	txRanges = ref->txRangeCount(),
+	txBuffered = ref->txBufferedBytes(),
+	txUnackd = ref->txUnackdCount()
+      ](auto &s) {
+	s << "H3 response send failed: " << id <<
+	  " closed=" << unsigned(closed) <<
+	  " closeError=" << closeError <<
+	  " rxComplete=" << unsigned(rxComplete) <<
+	  " finReceived=" << unsigned(finReceived) <<
+	  " finSent=" << unsigned(finSent) <<
+	  " finDequeued=" << unsigned(finDequeued) <<
+	  " txRanges=" << txRanges <<
+	  " txBuffered=" << txBuffered <<
+	  " txUnackd=" << txUnackd;
       }));
   });
 }
