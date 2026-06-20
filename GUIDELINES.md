@@ -393,7 +393,14 @@ These guidelines extend `AGENTS.md`
 ### Indentation
 - Match prevailing style in `{zu,zm,zt,ze,zi}/src/*.{hh,cc}`; when these rules, editor `cino`, and local precedent disagree, code precedent wins.
 - Use hard tabs for indentation (`noet`, `ts=8`) and a 2-column logical C++ indent (`sw=2`); do not replace leading tabs with spaces.
-- Indent namespace/class/struct/function bodies, control-flow bodies, and lambda bodies one logical level.
+- Indent class/struct/function bodies, control-flow bodies, and lambda bodies one logical level.
+- Namespaces:
+  - Large namespace bodies (>20 lines):
+    - not indented
+    - closing braces are commented with `// [namespace]`
+  - Small namespace bodies (<= 20 lines):
+    - indented
+    - closing braces are uncommented
 - Keep `public:`, `protected:`, and `private:` flush with the class declaration body; indent following members one logical level.
 - Keep `friend` declarations flush with the class declaration body, at the top in the default private section.
 - Follow local switch style for `case`/`default`; indent statements one logical level from the label.
