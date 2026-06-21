@@ -101,10 +101,6 @@ struct PktType {
   ZtEnum(PktType, int8_t, Initial, ZeroRTT, Handshake, Retry, Short);
 };
 
-struct CloseState {
-  ZtEnum(CloseState, int8_t, Open, Closing, Draining, Closed);
-};
-
 struct LinkState {
   ZtEnum(LinkState, int8_t,
     Starting, Handshaking, Established, Closing, Draining, Closed);
