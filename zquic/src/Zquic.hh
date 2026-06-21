@@ -870,11 +870,11 @@ private:
   const Impl *impl() const { return static_cast<const Impl *>(this); }
   Impl *impl() { return static_cast<Impl *>(this); }
 
-  ZiMultiplex	*m_mx = nullptr;
-  PathMode::T	m_mode = PathMode::ServerUnconnected;
-  ZiSockAddr	m_local;
-  ZiSockAddr	m_remote;
-  SockConfig	m_sockConfig;
+  ZiMultiplex		*m_mx = nullptr;
+  PathMode::T		m_mode = PathMode::ServerUnconnected;
+  ZiSockAddr		m_local;
+  ZiSockAddr		m_remote;
+  SockConfig		m_sockConfig;
 
   Cxn_			*m_cxn = nullptr;
   Cxn_			*m_closingCxn = nullptr;
