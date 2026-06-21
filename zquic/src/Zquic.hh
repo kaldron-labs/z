@@ -2930,8 +2930,8 @@ public:
 
   App *app() const { return m_app; }
   bool isServer() const { return m_isServer; }
-  bool closed() const { return m_closed; }
-  uint64_t closeError() const { return m_closeError; }
+  bool closed() const { return m_appClose.closed; }
+  uint64_t closeError() const { return m_appClose.error; }
   uint64_t streamCount() const { return m_streams->count_(); }
   uint64_t peerStreamLimit(Zi::StreamType::T type) const {
     return m_peerLimit[type].limit();
@@ -3224,8 +3224,8 @@ public:
   }
 
   void close(uint64_t errorCode = 0) {
-    m_closeError = errorCode;
-    m_closed = true;
+    m_appClose.error = errorCode;
+    m_appClose.closed = true;
     cancelTimers();
   }
   void up_(bool up) { m_up = unsigned(up); }
@@ -3233,7 +3233,7 @@ public:
   void closeForStreamActivity_(TransportError::T error) {
     ++m_rxDiag.suspiciousStreamCloses;
     m_suspiciousStreamClosed = true;
-    if (!m_closed) close(error);
+    if (!m_appClose.closed) close(error);
   }
   void noteInvalidStreamActivity_(
     TransportError::T error, bool closedStream = false, bool immediate = false) {
@@ -3268,6 +3268,10 @@ protected:
     ZuTime		deadline;
     PathChallenge	challenge;
     bool		active = false;
+  };
+  struct AppClose {
+    bool		closed = false;
+    uint64_t		error = 0;
   };
   struct AckSnapshot {
     CryptoLevel::T	level = CryptoLevel::Initial;
@@ -3507,7 +3511,9 @@ protected:
     return true;
   }
 
-  bool runtimeEstablished_() const { return m_established; }
+  bool runtimeEstablished_() const {
+    return m_linkState == LinkState::Established;
+  }
   bool debugLog_() const {
 #if defined(Zquic_DEBUG) && defined(ZiMultiplex_DEBUG)
     return app()->mx()->debug();
@@ -3516,9 +3522,12 @@ protected:
 #endif
   }
   bool runtimeDraining_() const {
-    return m_runtimeCloseState == CloseState::Draining;
+    return m_linkState == LinkState::Draining;
   }
-  bool runtimeHandshakeStarted_() const { return m_handshakeStarted; }
+  bool runtimeHandshakeStarted_() const {
+    return m_linkState == LinkState::Handshaking ||
+      m_linkState == LinkState::Established;
+  }
   RuntimeRxDiag rxDiagSnapshot_() const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC Rx diagnostic snapshot outside Rx thread", return {});
@@ -3585,9 +3594,8 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx traffic secret install outside Tx thread", return false);
     if (!secret.valid()) return false;
-    m_txTrafficSecrets[level] = secret;
-    if (!m_txProt[level].init(m_txTrafficSecrets[level], level, true)) {
-      m_txTrafficSecrets[level].clear();
+    if (!m_txProt[level].init(secret, level, true)) {
+      m_txProt[level].clear();
       return false;
     }
     return true;
@@ -3602,10 +3610,10 @@ protected:
     return true;
   }
   bool txTrafficSecretInstalled_(CryptoLevel::T level) const {
-    return m_txTrafficSecrets[level].valid();
+    return m_txProt[level].valid();
   }
   const TrafficSecret &txTrafficSecret_(CryptoLevel::T level) const {
-    return m_txTrafficSecrets[level];
+    return m_txProt[level].secret;
   }
   PktProtState &txProtState_(CryptoLevel::T level) {
     return m_txProt[level];
@@ -4080,7 +4088,7 @@ protected:
   bool installOneRTTForTest_(
     const TrafficSecret &rx, const TrafficSecret &tx, const CxnID &localCID) {
     m_localSCID = localCID;
-    m_established = 1;
+    m_linkState = LinkState::Established;
     clearPeerKeyState_();
     return m_crypto.updateRxTrafficSecret(CryptoLevel::OneRTT, rx) &&
       txInstallTrafficSecret_(CryptoLevel::OneRTT, tx);
@@ -4149,8 +4157,6 @@ protected:
     cancelTimers();
     resetAckPosts_();
     resetLinkState_();
-    m_established = 0;
-    m_handshakeStarted = 0;
     m_initialDCID = {};
     m_localSCID = {};
     m_peerCID = {};
@@ -4159,7 +4165,6 @@ protected:
     m_transportParams = {};
     m_txDataCredit = {};
     m_rxDataCredit = {};
-    m_rxDataWindow = 0;
     m_lastDataBlocked = U64Null;
     m_lastStreamsBlocked[Zi::StreamType::Duplex] = U64Null;
     m_lastStreamsBlocked[Zi::StreamType::Simplex] = U64Null;
@@ -4185,11 +4190,10 @@ protected:
     updateCongestionDiag_();
   }
 
-  void closeRuntime_(uint64_t errorCode = 0) {
+  void closeRuntime_(uint64_t = 0) {
     drainStreamsRx_();
     cancelTimers();
-    closeLinkState_(errorCode);
-    m_established = 0;
+    closeLinkState_();
     m_crypto.resetTLS();
   }
 
@@ -4200,9 +4204,7 @@ protected:
   void shutdown_() {
     up_(false);
     cancelTimers();
-    closeLinkState_(0);
-    m_established = 0;
-    m_handshakeStarted = 0;
+    closeLinkState_();
     m_crypto.resetTLS();
   }
 
@@ -4498,7 +4500,6 @@ protected:
     m_transportParams.initialMaxStreamsUni = app->maxStreamsUni();
     m_transportParams.activeConnectionIDLimit = LocalActiveConnectionIDLimit;
     m_rxDataCredit.set(m_transportParams.initialMaxData);
-    m_rxDataWindow = m_transportParams.initialMaxData;
     m_localLimit[Zi::StreamType::Duplex].set(
       m_transportParams.initialMaxStreamsBidi);
     m_localLimit[Zi::StreamType::Simplex].set(
@@ -4525,14 +4526,11 @@ protected:
   }
 
   bool startRuntimeHandshake_() {
-    if (m_handshakeStarted) return false;
-    m_handshakeStarted = 1;
-    startHandshakeState_();
-    return true;
+    return startHandshakeState_();
   }
 
   bool runtimeReadyToEstablish_() const {
-    return !m_established &&
+    return m_linkState == LinkState::Handshaking &&
       m_crypto.oneRTTReady() &&
       m_crypto.txTrafficSecretInstalled(CryptoLevel::OneRTT) &&
       m_crypto.rxTrafficSecretInstalled(CryptoLevel::OneRTT);
@@ -4562,10 +4560,9 @@ protected:
       m_peerLimit[Zi::StreamType::Simplex].set(params.initialMaxStreamsUni);
     }
     updatePeerPathMaxUDP_();
-    m_established = 1;
+    establishState_();
     discardPktSpace_(CryptoLevel::Initial);
     discardPktSpace_(CryptoLevel::Handshake);
-    establishState_();
     ++m_rxDiag.handshakeComplete;
   }
 
@@ -4577,7 +4574,6 @@ protected:
     cancelTimers();
     for (auto &s : m_txCrypto) s.reset();
     for (auto &s : m_rxCrypto) s.reset();
-    for (auto &s : m_txTrafficSecrets) s.clear();
     for (auto &p : m_txProt) p.clear();
     memset(m_txPN, 0, sizeof(m_txPN));
     for (auto &pn : m_txLargestAckd) pn = U64Null;
@@ -4676,10 +4672,7 @@ protected:
 
   bool checkStatelessReset_(ZuCSpan datagram) {
     if (!StatelessReset::verify(datagram, m_peerResetToken)) return false;
-    m_runtimeCloseState = CloseState::Draining;
     m_linkState = LinkState::Draining;
-    m_established = 0;
-    m_handshakeStarted = 0;
     m_streamQueue.clean();
     for (auto &p : m_txPkts) p.clear();
     m_rxAcks.clear();
@@ -5495,7 +5488,8 @@ protected:
   void schedulePMTUD_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD schedule outside Tx thread", return);
-    if (closed() || !m_established || m_path.probePending() || m_pmtudTimer)
+    if (closed() || !runtimeEstablished_() ||
+	m_path.probePending() || m_pmtudTimer)
       return;
     if (!m_path.nextProbeSize()) return;
     impl()->queueTxFlush_();
@@ -5791,7 +5785,7 @@ nextSpace:
   bool sendPMTUDProbe_(ZiSockAddr addr, SendProbe sendProbe) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD probe send outside Tx thread", return false);
-    if (!m_established || m_path.probePending()) return false;
+    if (!runtimeEstablished_() || m_path.probePending()) return false;
     unsigned size = m_path.nextProbeSize();
     if (!size || !m_path.canSendProbe(size) || !m_congestion.canSend(size))
       return false;
@@ -6404,7 +6398,7 @@ nextSpace:
     unsigned pmtudSize = 0) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Short packet protection outside Tx thread", return false);
-    if (!m_established &&
+    if (!runtimeEstablished_() &&
 	!txTrafficSecretInstalled_(CryptoLevel::OneRTT)) {
       ++m_txDiag.failures;
       return false;
@@ -6736,7 +6730,7 @@ private:
       case FrameType::Ack:
 	return true;
       case FrameType::Crypto:
-	return level != CryptoLevel::OneRTT || m_established;
+	return level != CryptoLevel::OneRTT || runtimeEstablished_();
       case FrameType::Stream:
       case FrameType::ResetStream:
       case FrameType::StopSending:
@@ -7051,8 +7045,7 @@ private:
   }
 
   void maybeExtendMaxData_() {
-    uint64_t window = m_rxDataWindow ? m_rxDataWindow :
-      m_transportParams.initialMaxData;
+    uint64_t window = m_transportParams.initialMaxData;
     if (!window || m_rxDataCredit.available() > window / 2) return;
     uint64_t maximum =
       m_rxDataCredit.used() > U64Null - window ? U64Null :
@@ -7255,8 +7248,6 @@ private:
 
   void resetLinkState_() {
     m_linkState = LinkState::Starting;
-    m_runtimeCloseState = CloseState::Open;
-    m_runtimeCloseError = 0;
     m_drainPTOs = 0;
     m_suspiciousStreamFrames = 0;
     m_suspiciousStreamClosed = false;
@@ -7274,10 +7265,8 @@ private:
     return true;
   }
 
-  bool closeLinkState_(uint64_t error = 0) {
+  bool closeLinkState_() {
     if (m_linkState == LinkState::Closed) return false;
-    m_runtimeCloseError = error;
-    m_runtimeCloseState = CloseState::Closing;
     m_linkState = LinkState::Closing;
     m_drainPTOs = 0;
     return true;
@@ -7291,10 +7280,8 @@ private:
   ZmAtomic<unsigned>	m_up = 1;
 
   // Rx thread exclusive
-  bool			m_closed = false;
-  uint64_t		m_closeError = 0;
+  AppClose		m_appClose;
   FlowCredit		m_rxDataCredit;
-  uint64_t		m_rxDataWindow = 0;
   StreamLimit		m_peerLimit[2] = {
     StreamLimit(MaxStreamCount),
     StreamLimit(MaxStreamCount)
@@ -7338,11 +7325,7 @@ private:
   ZuTime		m_ptoTimerOut;
   CryptoLevel::T	m_ptoTimerLevel = CryptoLevel::Initial;
   bool			m_rxSpaceDiscarded[3]{};
-  unsigned		m_handshakeStarted = 0;
-  unsigned		m_established = 0;
   LinkState::T		m_linkState = LinkState::Starting;
-  CloseState::T		m_runtimeCloseState = CloseState::Open;
-  uint64_t		m_runtimeCloseError = 0;
   unsigned		m_drainPTOs = 0;
   uint64_t		m_peerRetirePriorTo = 0;
   unsigned		m_suspiciousStreamFrames = 0;
@@ -7373,7 +7356,6 @@ private:
 
   CryptoStream		m_txCrypto[3];
   CryptoTxPQueue	m_txCryptoUnackd[3];
-  TrafficSecret		m_txTrafficSecrets[3];
   PktProtState		m_txProt[3];
   ZmRef<ZiIOBuf>	m_coalesceInitial;
   ZiSockAddr		m_coalesceAddr;

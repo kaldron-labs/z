@@ -1358,6 +1358,7 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   unsigned active = 0;
   unsigned complete = 0;
   unsigned failed = 0;
+  bool linkFailed = false;
   ZtArray<Req *, ZtArrayHeapID<"Zhttp.H3Pending">> pending;
   unsigned pendingHead = 0;
 
@@ -2144,6 +2145,7 @@ void QUICClient::failH3Link()
     done();
     return;
   }
+  linkFailed = true;
   ZiLOG(Debug, "zhttp.h3", ([
     complete = complete, failed = failed, active = active,
     scheduled = scheduled
@@ -2156,13 +2158,13 @@ void QUICClient::failH3Link()
     auto &req = run->reqs[i];
     if (!req.h3Active || req.done) continue;
     closeBody(req);
-    req.done = true;
-    req.failed = true;
+    req.done = false;
+    req.failed = false;
     req.h3Active = false;
-    ++failed;
-    ++complete;
   }
   active = 0;
+  pending.length(0);
+  pendingHead = 0;
   sem.post();
 }
 
@@ -2327,6 +2329,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     client.complete = run.complete;
     client.failed = run.failed;
     client.scheduled = run.complete;
+    client.linkFailed = false;
     client.state.requests = run.options.requests;
     client.state.url = run.originalURL;
     client.state.discardResponse = run.options.discardResponse;
@@ -2473,15 +2476,21 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       abortDrained(link);
     else
       disconnectDrained(link);
+    bool linkFailed = false;
     {
       ZmGuard<ZmLock> guard(client.lock);
       run.complete = client.complete;
       run.failed = client.failed;
+      linkFailed = client.linkFailed;
     }
+    if (linkFailed && run.complete < run.options.requests)
+      resetH3Incomplete(run);
     if (timedOut || stalled)
       resetH3Incomplete(run);
     client.clearFilters();
     client.final();
+    if (linkFailed && run.complete < run.options.requests)
+      continue;
     if (!timedOut && !stalled)
       return run.failed ? 1 : 0;
     if (run.complete >= run.options.requests)

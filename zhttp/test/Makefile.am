@@ -41,7 +41,7 @@ ZhttpDarkhttpdCompatTest_SOURCES = ZhttpDarkhttpdCompatTest.cc
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	LSAN_OPTIONS="$${LSAN_OPTIONS:+$$LSAN_OPTIONS:}suppressions=$(top_builddir)/.lsan-suppressions" \
-	prove ZhttpParserTest ZhttpHPackTest ZhttpQPackTest \
+	prove -j1 ZhttpParserTest ZhttpHPackTest ZhttpQPackTest \
 		ZhttpFallbackTest ZhttpQPackDynamicTest \
 		ZhttpAppTest ZhttpMultiRequestTest zhttpmatrix \
 		ZhttpdTest ZhttpDarkhttpdCompatTest
