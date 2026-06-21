@@ -250,11 +250,11 @@ public:
 
   template <typename ...Args>
   void run(Args &&...args) const {
-    m_mx->run(m_thread, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_thread);
   }
   template <typename ...Args>
   void invoke(Args &&...args) const {
-    m_mx->invoke(m_thread, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_thread);
   }
   bool invoked() const { return m_mx->invoked(m_thread); }
 
@@ -467,12 +467,15 @@ private:
   }
   template <auto Fn>
   void reschedule_(WatchList &list) {
-    run([list = &list]() {
-      ZuInvoke<Fn>(list->server);
-      list->server->template reschedule_<Fn>(*list);
-    },
-    Zm::now(ZuTime{ZuTime::Nano{int128_t(list.interval) * 1000000}}),
-    ZmScheduler::Advance, &list.timer);
+    m_mx->add(&list.timer,
+	Zm::now(ZuTime{ZuTime::Nano{int128_t(list.interval) * 1000000}}),
+	ZmScheduler::Advance,
+	[list = &list](auto &&arm) {
+	  return arm([list]() {
+	    ZuInvoke<Fn>(list->server);
+	    list->server->template reschedule_<Fn>(*list);
+	  });
+	}, m_thread);
   }
 
   void unsubscribe(WatchList &list, Link *link, ZuCSpan filter) {

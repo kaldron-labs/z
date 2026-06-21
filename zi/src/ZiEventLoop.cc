@@ -58,7 +58,7 @@ void Loop::start(StartFn fn)
 {
   // ZiLOG(Debug, "ZiEventLoop", ([](auto &s) { }));
 
-  m_sched->push(m_sid, [this, fn = ZuMv(fn)]() mutable {
+  m_sched->push([this, fn = ZuMv(fn)]() mutable {
     m_stopping = false;
     m_startFn = ZuMv(fn);
     m_stopFn = StopFn{};
@@ -68,7 +68,7 @@ void Loop::start(StartFn fn)
     }
     m_sched->wakeFn(m_sid, ZmFn<>{this, [](Loop *loop) { loop->wake(); }});
     run_();
-  });
+  }, m_sid);
 }
 
 bool Loop::start_()
@@ -143,12 +143,12 @@ void Loop::stop(StopFn fn)
   m_stopping = true; // inhibits further application requests
 
   m_sched->wakeFn(m_sid, ZmFn<>{});
-  m_sched->push(m_sid, [this]() mutable {
+  m_sched->push([this]() mutable {
     stop_2();
     StopFn stopFn = ZuMv(m_stopFn);
     m_stopFn = StopFn{};
     if (stopFn) stopFn(StopResult{});
-  });
+  }, m_sid);
   wake_();
 }
 
@@ -200,7 +200,7 @@ void Loop::wake()
 {
   // ZiLOG(Debug, "ZiEventLoop", ([](auto &s) { s << "pushing run_()"; }));
 
-  m_sched->push(m_sid, [this]{ run_(); });
+  m_sched->push([this]{ run_(); }, m_sid);
   wake_();
 }
 

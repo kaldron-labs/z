@@ -887,16 +887,16 @@ public:
   unsigned txThread() const { return m_txThread; }
 
   template <typename ...Args> void rxRun(Args &&...args) {
-    run(m_rxThread, ZuFwd<Args>(args)...);
+    run(ZuFwd<Args>(args)..., m_rxThread);
   }
   template <typename ...Args> void rxInvoke(Args &&...args) {
-    invoke(m_rxThread, ZuFwd<Args>(args)...);
+    invoke(ZuFwd<Args>(args)..., m_rxThread);
   }
   template <typename ...Args> void txRun(Args &&...args) {
-    run(m_txThread, ZuFwd<Args>(args)...);
+    run(ZuFwd<Args>(args)..., m_txThread);
   }
   template <typename ...Args> void txInvoke(Args &&...args) {
-    invoke(m_txThread, ZuFwd<Args>(args)...);
+    invoke(ZuFwd<Args>(args)..., m_txThread);
   }
 
 #ifdef ZiMultiplex_DEBUG

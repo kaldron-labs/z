@@ -115,10 +115,10 @@ public:
   bool stopping() const { return m_stopping; }
 
   template <typename ...Args> void run(Args &&...args) {
-    m_sched->run(m_sid, ZuFwd<Args>(args)...);
+    m_sched->run(ZuFwd<Args>(args)..., m_sid);
   }
   template <typename ...Args> void invoke(Args &&...args) {
-    m_sched->invoke(m_sid, ZuFwd<Args>(args)...);
+    m_sched->invoke(ZuFwd<Args>(args)..., m_sid);
   }
 
   // use unblock() if sockets are not already set to non-blocking

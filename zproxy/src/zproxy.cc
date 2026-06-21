@@ -220,6 +220,9 @@ private:
   uint32_t		m_frag;
   uint32_t		m_pack;
   ZuTime		m_delay;
+  ZmScheduler::Timer	m_recvTimer;
+  ZmScheduler::Timer	m_discTimer;
+  ZmScheduler::Timer	m_sendTimer;
 };
 
 class Proxy : public ZmPolymorph {
@@ -268,6 +271,7 @@ private:
   ZmRef<Connection>	m_in;
   ZmRef<Connection>	m_out;
   ZuCSpan		m_tag;
+  ZmScheduler::Timer	m_connectTimer;
 };
 
 template <typename S> inline void Connection::print(S &s) const
@@ -1187,7 +1191,7 @@ Connection::Connection(Proxy *proxy, uint32_t flags,
 void Connection::connected(ZiIOContext &io)
 {
   io.complete();
-  m_mx->add([this]() { connected_(); });
+  m_mx->run([this]() { connected_(); });
 }
 
 void Connection::connected_()
@@ -1201,7 +1205,10 @@ void Connection::disconnected()
     if (m_latency) {
       // double the latency to avoid overtaking pending delayed sends
       ZuTime next = Zm::now(m_latency * ZuDecimal{2});
-      m_mx->add([peer = ZmMkRef(m_peer)]() { peer->disconnect(); }, next);
+      m_mx->add(&m_discTimer, next, ZmScheduler::Update,
+	  [this](auto &&arm) {
+	    return arm([peer = ZmMkRef(m_peer)]() { peer->disconnect(); });
+	  });
     } else
       m_peer->disconnect();
   }
@@ -1219,7 +1226,8 @@ void Connection::recv(ZiIOContext *io)
 
   if (ZuUnlikely(m_delay)) {
     if (io) io->complete();
-    m_mx->add([this]() { recv(); }, Zm::now(m_delay));
+    m_mx->add(&m_recvTimer, Zm::now(m_delay), ZmScheduler::Update,
+	[this](auto &&arm) { return arm([this]() { recv(); }); });
     return;
   }
 
@@ -1261,7 +1269,8 @@ void Connection::send(ZmRef<IOBuf> ioBuf)
     ZuTime next = m_queue.tail()->stamp() + m_latency;
     if (next > now) {
       m_sendPending = true;
-      m_mx->add([this]() { delayedSend(); }, next);
+      m_mx->add(&m_sendTimer, next, ZmScheduler::Update,
+	  [this](auto &&arm) { return arm([this]() { delayedSend(); }); });
       return;
     }
   }
@@ -1385,8 +1394,9 @@ void Proxy::connect2()
 void Proxy::failed2(bool transient)
 {
   if (transient) {
-    m_mx->add([this]() { connect2(); },
-	Zm::now(m_listener->reconnectFreq()));
+    m_mx->add(&m_connectTimer, Zm::now(m_listener->reconnectFreq()),
+	ZmScheduler::Update,
+	[this](auto &&arm) { return arm([this]() { connect2(); }); });
   } else {
     if (m_app->verbose()) { ZiLOG(Info, "zproxy", status()); }
     m_in->proxy(0);

@@ -439,8 +439,10 @@ void ZvAnyLink::reconnect(bool immediate)
     if (immediate)
       engine()->rxRun([this]() { this->reconnect_(); });
     else
-      engine()->rxRun([this]() { this->reconnect_(); },
-	  reconnTime, &m_reconnTimer);
+      engine()->mx()->add(&m_reconnTimer, reconnTime, ZmScheduler::Update,
+	  [this](auto &&arm) {
+	    return arm([this]() { this->reconnect_(); });
+	  }, engine()->rxThread());
   }
   if (disconnect) engine()->rxRun([this]() { this->disconnect(); });
 }

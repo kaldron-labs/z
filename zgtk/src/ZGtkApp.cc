@@ -37,7 +37,7 @@ void App::attach(ZmScheduler *sched, unsigned sid)
   m_sched = sched;
   m_sid = sid;
 
-  m_sched->run(m_sid, [this]() { attach_(); });
+  m_sched->run([this]() { attach_(); }, m_sid);
 }
 
 void App::attach_()
@@ -71,16 +71,17 @@ void App::attach_()
   m_source = g_source_new(&funcs, sizeof(GSource));
   g_source_attach(m_source, nullptr);
 
-  m_sched->push(m_sid, [this]{
+  m_sched->push([this]{
     m_sched->wakeFn(m_sid, ZmFn<>{this, [](App *app) { app->wake(); }});
     run_();
-  });
+  }, m_sid);
 }
 
 void App::detach(ZmFn<> fn)
 {
   m_sched->wakeFn(m_sid, ZmFn<>{});
-  m_sched->push(m_sid, [this, fn = ZuMv(fn)]() mutable { detach_(ZuMv(fn)); });
+  m_sched->push([this, fn = ZuMv(fn)]() mutable { detach_(ZuMv(fn)); },
+      m_sid);
   wake_();
 }
 
@@ -96,7 +97,7 @@ void App::detach_(ZmFn<> fn)
 
 void App::wake()
 {
-  m_sched->push(m_sid, []{ run_(); });
+  m_sched->push([]{ run_(); }, m_sid);
   wake_();
 }
 

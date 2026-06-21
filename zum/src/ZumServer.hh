@@ -94,11 +94,11 @@ public:
   // user DB thread
   template <typename ...Args>
   void run(Args &&...args) const {
-    m_mx->run(m_sid, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_sid);
   }
   template <typename ...Args>
   void invoke(Args &&...args) const {
-    m_mx->invoke(m_sid, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_sid);
   }
   bool invoked() const { return m_mx->invoked(m_sid); }
 

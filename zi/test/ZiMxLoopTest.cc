@@ -61,11 +61,14 @@ public:
 
   void failed(bool transient)
   {
-    if (transient && m_listenPort && m_retries < 3) {
-      ++m_retries;
-      add([this]() { connectLoopback(); }, Zm::now(1));
-      return;
-    }
+	    if (transient && m_listenPort && m_retries < 3) {
+	      ++m_retries;
+	      add(&m_retryTimer, Zm::now(1), ZmScheduler::Update,
+		  [this](auto &&arm) {
+		    return arm([this]() { connectLoopback(); });
+		  });
+	      return;
+	    }
     m_failKind = 1;
     m_failed = 1;
     m_done.post();
@@ -145,8 +148,9 @@ private:
   }
 
 private:
-  ZmSemaphore		m_done;
-  unsigned		m_listenPort = 0;
+	  ZmSemaphore		m_done;
+	  ZmScheduler::Timer	m_retryTimer;
+	  unsigned		m_listenPort = 0;
   unsigned		m_retries = 0;
   ZmAtomic<unsigned>	m_failed = 0;
   ZmAtomic<unsigned>	m_failKind = 0;

@@ -166,9 +166,6 @@ int main(int argc, char **argv)
   for (i = 0; i < 10; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
     char *buf = message_(j);
-    // jobs[j - 1] = new Job(buf, t + ZuTime(((double)j) / 10.0));
-    // fns[j - 1] = ZmFn<>{jobs[j - 1].ptr(), ZmFnPtr<&Job::operator()>{}};
-    // s.add(&timers[j - 1], fns[j - 1], jobs[j - 1]->timeout());
     ZuTime out = t + ZuTime(((double)j) / 10.0);
     s.add(&timers[j - 1], out, ZmScheduler::Update,
       [buf, out](auto &&arm) {
@@ -180,25 +177,12 @@ int main(int argc, char **argv)
     log("Hello World ", j);
   }
 
-#if 0
-  for (i = 5; i < 10; i++) {
-    int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
-    if (timers[j - 1]) log("Disabling ", j);
-    timers[j - 1].fn = ZmFn<>{};
-    // fns[j - 1] = ZmFn<>();
-    // jobs[j - 1] = 0;
-  }
-#endif
-
   for (i = 0; i < 5; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
     if (timers[j - 1]) log("Deleting ", j);
     log("Delete World ", j);
     if (s.del(&timers[j - 1]))
       log("Found and deleted ", j);
-    // timers[j - 1] = 0;
-    // fns[j - 1] = ZmFn<>();
-    // jobs[j - 1] = 0;
     Zm::sleep(ZuTime(.1));
   }
 
@@ -215,8 +199,6 @@ int main(int argc, char **argv)
   for (i = 0; i < 10; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
     char *buf = message_(j);
-    // jobs[j - 1] = new Job(buf, t + ZuTime(((double)j) / 10.0));
-    // fns[j - 1] = ZmFn<>{jobs[j - 1].ptr(), ZmFnPtr<&Job::operator()>{}};
     ZuTime out = t + ZuTime(((double)j) / 10.0);
     s.add(&timers[j - 1], out, ZmScheduler::Update,
       [buf, out](auto &&arm) {
