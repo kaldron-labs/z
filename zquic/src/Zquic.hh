@@ -3293,6 +3293,24 @@ protected:
     bool		congestionOpened = false;
     bool		retransmit = false;
   };
+  struct AckPost {
+    mutable ZmPLock	lock;
+    AckSnapshot		ack;
+    ZiSockAddr		addr;
+    uint64_t		deadlineUS = 0;
+    bool		deadline = false;
+    bool		posted = false;
+    bool		ready = false;
+  };
+  enum class CxnTimer {
+    AckDelay,
+    Loss,
+    PTO,
+    Close,
+    KeyDiscard,
+    PMTUD,
+    Path
+  };
   struct TxCryptoSnapshot {
     TrafficSecret	secrets[3];
     bool		installed[3] = {};
@@ -4129,6 +4147,7 @@ protected:
     up_(true);
     drainStreamsRx_();
     cancelTimers();
+    resetAckPosts_();
     resetLinkState_();
     m_established = 0;
     m_handshakeStarted = 0;
@@ -4157,6 +4176,9 @@ protected:
       "QUIC Tx runtime reset outside Tx thread", return);
     ++m_txRuntimeGen;
     m_timerTeardown = false;
+    m_lossTimerOut = {};
+    m_ptoTimerOut = {};
+    m_ptoTimerLevel = CryptoLevel::Initial;
     clearPendingControls_();
     resetPktRuntime_();
     m_congestion = NewReno{app()->maxUDP()};
@@ -5136,18 +5158,24 @@ protected:
     ack.nRanges = unsigned(nRanges);
     bool deadline = m_rxAcks.deadlineSet(space);
     uint64_t deadlineUS = deadline ? m_rxAcks.deadline(space) : 0;
-    if (!m_rxAcks.post(space)) return;
+    bool post;
+    AckPost &ackPost = m_ackPost[level];
+    {
+      ZmGuard guard(ackPost.lock);
+      post = !ackPost.posted;
+      if (post && !m_rxAcks.post(space)) return;
+      ackPost.ack = ack;
+      ackPost.addr = ZuMv(addr);
+      ackPost.deadline = deadline;
+      ackPost.deadlineUS = deadlineUS;
+      ackPost.ready = true;
+      if (post) ackPost.posted = true;
+    }
+    if (!post) return;
     ++m_rxDiag.ackSnapshotPostsRx;
-    app()->txRun([
-      link = impl(), ack, addr = ZuMv(addr), deadline, deadlineUS
-    ]() mutable {
+    app()->txRun([link = impl(), level]() mutable {
       if (!link->up_()) return;
-      if (link->noteAckTx_(ack)) {
-	link->cancelAckDelayTimer_();
-	link->flushTx_(ZuMv(addr));
-      } else if (deadline) {
-	link->scheduleAckDelayTimer_(timeUS(deadlineUS));
-      }
+      link->consumeAckSnapshotTx_(level);
     });
   }
 
@@ -5178,6 +5206,48 @@ protected:
     ++m_txDiag.ackSnapshotInstallsTx;
     if (due) ++m_txDiag.ackDueInstallsTx;
     return due;
+  }
+
+  void resetAckPosts_() {
+    for (unsigned i = 0; i < 3; ++i) {
+      AckPost &ackPost = m_ackPost[i];
+      ZmGuard guard(ackPost.lock);
+      ackPost.ack = {};
+      ackPost.addr.null();
+      ackPost.deadlineUS = 0;
+      ackPost.deadline = false;
+      ackPost.posted = false;
+      ackPost.ready = false;
+    }
+  }
+
+  void consumeAckSnapshotTx_(CryptoLevel::T level) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC ACK snapshot consume outside Tx thread", return);
+    AckSnapshot ack;
+    ZiSockAddr addr;
+    bool deadline = false;
+    uint64_t deadlineUS = 0;
+    AckPost &ackPost = m_ackPost[level];
+    {
+      ZmGuard guard(ackPost.lock);
+      if (!ackPost.ready) {
+	ackPost.posted = false;
+	return;
+      }
+      ack = ackPost.ack;
+      addr = ZuMv(ackPost.addr);
+      deadline = ackPost.deadline;
+      deadlineUS = ackPost.deadlineUS;
+      ackPost.ready = false;
+      ackPost.posted = false;
+    }
+    if (noteAckTx_(ack)) {
+      cancelAckDelayTimer_();
+      impl()->flushTx_(ZuMv(addr));
+    } else if (deadline) {
+      scheduleAckDelayTimer_(timeUS(deadlineUS));
+    }
   }
 
   bool appendPendingAck_(
@@ -5236,15 +5306,15 @@ protected:
 
   void scheduleAckDelayTimer_(ZuTime out) {
     scheduleCxnTimer_(
-      "ACK delay", out, ZmScheduler::Advance, &m_ackDelayTimer,
-      [](auto link) { link->ackDelay_(); });
+      "ACK delay", CxnTimer::AckDelay,
+      out, ZmScheduler::Advance, &m_ackDelayTimer);
   }
   void cancelAckDelayTimer_() { cancelTimer_("ACK delay", &m_ackDelayTimer); }
 
   void scheduleLossTimer_(ZuTime out) {
     scheduleCxnTimer_(
-      "loss time", out, ZmScheduler::Update, &m_lossTimer,
-      [](auto link) { link->lossTime_(); });
+      "loss time", CxnTimer::Loss,
+      out, ZmScheduler::Update, &m_lossTimer);
   }
   ZuTime lossThreshold_() const { return m_rtt.timeThreshold(); }
   ZuTime persistentCongestionThreshold_() const {
@@ -5325,10 +5395,15 @@ protected:
     }
     ZuTime now = runtimeNow_();
     if (out <= now) out = now + RttEstimator::Granularity;
+    if (m_lossTimer && m_lossTimerOut == out) return;
     ++m_txDiag.lossArmed;
+    m_lossTimerOut = out;
     scheduleLossTimer_(out);
   }
-  void cancelLossTimer_() { cancelTimer_("loss time", &m_lossTimer); }
+  void cancelLossTimer_() {
+    m_lossTimerOut = {};
+    cancelTimer_("loss time", &m_lossTimer);
+  }
 
   void schedulePTO() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
@@ -5360,22 +5435,27 @@ protected:
     CryptoLevel::T level = CryptoLevel::Initial;
     if (!ptoLevel_(level)) {
       ++m_txDiag.ptoNoLevel;
+      cancelPTO_();
       return;
     }
     ZuTime out = ptoDeadline_(level);
+    ZuTime now = runtimeNow_();
+    if (out <= now) out = now + RttEstimator::Granularity;
+    if (m_ptoTimer && m_ptoTimerOut == out && m_ptoTimerLevel == level)
+      return;
     Zquic_DEBUG_LOG_(([level, bif = m_txPkts[level].bytesInFlight()](auto &s) {
 	s << "PTO armed level=" << int(level) << " bytesInFlight=" << bif;
       }));
     ++m_txDiag.ptoArmed;
+    m_ptoTimerOut = out;
+    m_ptoTimerLevel = level;
     schedulePTOTimer_(out);
   }
 
   void schedulePTOTimer_(ZuTime out) {
-    ZuTime now = runtimeNow_();
-    if (out <= now) out = now + RttEstimator::Granularity;
     scheduleCxnTimer_(
-      "PTO", out, ZmScheduler::Update, &m_ptoTimer,
-      [](auto link) { link->pto_(); });
+      "PTO", CxnTimer::PTO,
+      out, ZmScheduler::Update, &m_ptoTimer);
   }
 
   void cancelPTO() {
@@ -5385,20 +5465,21 @@ protected:
   }
 
   void cancelPTO_() {
-    app()->mx()->del(&m_ptoTimer);
+    m_ptoTimerOut = {};
+    app()->mx()->cancel(&m_ptoTimer);
   }
 
   void scheduleCloseTimer_(ZuTime out) {
     scheduleCxnTimer_(
-      "close", out, ZmScheduler::Update, &m_closeTimer,
-      [](auto link) { link->closeTimeout_(); });
+      "close", CxnTimer::Close,
+      out, ZmScheduler::Update, &m_closeTimer);
   }
   void cancelCloseTimer_() { cancelTimer_("close", &m_closeTimer); }
 
   void scheduleKeyDiscardTimer_(ZuTime out) {
     scheduleCxnTimer_(
-      "key discard", out, ZmScheduler::Advance, &m_keyDiscardTimer,
-      [](auto link) { link->keyDiscard_(); });
+      "key discard", CxnTimer::KeyDiscard,
+      out, ZmScheduler::Advance, &m_keyDiscardTimer);
   }
   void cancelKeyDiscardTimer_() {
     cancelTimer_("key discard", &m_keyDiscardTimer);
@@ -5406,8 +5487,8 @@ protected:
 
   void schedulePMTUDTimer_(ZuTime out) {
     scheduleCxnTimer_(
-      "PMTUD", out, ZmScheduler::Advance, &m_pmtudTimer,
-      [](auto link) { link->pmtudTimeout_(); });
+      "PMTUD", CxnTimer::PMTUD,
+      out, ZmScheduler::Advance, &m_pmtudTimer);
   }
   void cancelPMTUDTimer_() { cancelTimer_("PMTUD", &m_pmtudTimer); }
 
@@ -5422,8 +5503,8 @@ protected:
 
   void schedulePathTimer_(ZuTime out) {
     scheduleCxnTimer_(
-      "path validation", out, ZmScheduler::Update, &m_pathTimer,
-      [](auto link) { link->pathTimeout_(); });
+      "path validation", CxnTimer::Path,
+      out, ZmScheduler::Update, &m_pathTimer);
   }
   void cancelPathTimer_() {
     cancelTimer_("path validation", &m_pathTimer);
@@ -5440,7 +5521,7 @@ protected:
   void teardownTimers(Fn fn) {
     app()->txRun([link = ZmMkRef(impl()), fn = ZuMv(fn)]() mutable {
       link->m_timerTeardown = true;
-      link->cancelTimers_();
+      link->delTimers_();
       link->app()->txRun([link = ZuMv(link), fn = ZuMv(fn)]() mutable {
 	fn();
       });
@@ -5458,6 +5539,19 @@ protected:
     cancelKeyDiscardTimer_();
     cancelPMTUDTimer_();
     cancelPathTimer_();
+  }
+  void delTimers_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC timer teardown outside Tx thread", return);
+    m_lossTimerOut = {};
+    m_ptoTimerOut = {};
+    app()->mx()->del(&m_ackDelayTimer);
+    app()->mx()->del(&m_lossTimer);
+    app()->mx()->del(&m_ptoTimer);
+    app()->mx()->del(&m_closeTimer);
+    app()->mx()->del(&m_keyDiscardTimer);
+    app()->mx()->del(&m_pmtudTimer);
+    app()->mx()->del(&m_pathTimer);
   }
   bool timersActive_() const {
     return m_ackDelayTimer || m_lossTimer || m_ptoTimer ||
@@ -7083,10 +7177,9 @@ private:
     return m_app->txInvoked();
   }
 
-  template <typename Fn>
   void scheduleCxnTimer_(
-    const char *name, ZuTime out, int mode, ZmScheduler::Timer *timer,
-    Fn &&fn) {
+    const char *name, CxnTimer action,
+    ZuTime out, int mode, ZmScheduler::Timer *timer) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC timer schedule outside Tx thread", return);
     ZiAssert(app() && app()->mx(), "Zquic", (),
@@ -7095,16 +7188,44 @@ private:
     Zquic_DEBUG_LOG_(([name](auto &s) {
       s << "QUIC timer armed name=" << name;
     }));
-    app()->mx()->add(timer, out, mode, [this, fn](auto &&arm) {
-      return arm([link = ZmMkRef(impl()), fn]() mutable {
+    app()->mx()->add(timer, out, mode, [link = impl(), action](auto &&arm) {
+      return arm([link = ZmMkRef(link), action]() mutable {
 	if (!link->up_()) return;
-	fn(link);
+	link->cxnTimer_(action);
       });
     }, app()->txThread());
   }
 
   void cancelTimer_(const char *, ZmScheduler::Timer *timer) {
-    app()->mx()->del(timer);
+    app()->mx()->cancel(timer);
+  }
+
+  void cxnTimer_(CxnTimer action) {
+    switch (action) {
+      case CxnTimer::AckDelay:
+	ackDelay_();
+	break;
+      case CxnTimer::Loss:
+	m_lossTimerOut = {};
+	lossTime_();
+	break;
+      case CxnTimer::PTO:
+	m_ptoTimerOut = {};
+	impl()->pto_();
+	break;
+      case CxnTimer::Close:
+	closeTimeout_();
+	break;
+      case CxnTimer::KeyDiscard:
+	keyDiscard_();
+	break;
+      case CxnTimer::PMTUD:
+	pmtudTimeout_();
+	break;
+      case CxnTimer::Path:
+	pathTimeout_();
+	break;
+    }
   }
 
   bool ptoLevel_(CryptoLevel::T &level) const {
@@ -7203,6 +7324,7 @@ private:
   ZuTime		m_rxOldKeyDiscard;
   RttEstimator		m_rtt;
   PTOBackoff		m_ptoBackoff;
+  AckPost		m_ackPost[3];
   // Connection-owned timers; callbacks run on Tx.
   ZmScheduler::Timer	m_ackDelayTimer;
   ZmScheduler::Timer	m_lossTimer;
@@ -7212,6 +7334,9 @@ private:
   // Active-path timers owned by this Link; callbacks run on Tx.
   ZmScheduler::Timer	m_pmtudTimer;
   ZmScheduler::Timer	m_pathTimer;
+  ZuTime		m_lossTimerOut;
+  ZuTime		m_ptoTimerOut;
+  CryptoLevel::T	m_ptoTimerLevel = CryptoLevel::Initial;
   bool			m_rxSpaceDiscarded[3]{};
   unsigned		m_handshakeStarted = 0;
   unsigned		m_established = 0;

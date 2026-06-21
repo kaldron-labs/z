@@ -179,6 +179,8 @@ struct TestLink :
     lastCloseError = errorCode;
     ++transportCloseCount;
   }
+  void pto_() { }
+  void queueRetransmit_() { }
   void statelessReset() { ++statelessResetCount; }
   void pathUpdate(
     const ZiSockAddr &local, const ZiSockAddr &remote,
