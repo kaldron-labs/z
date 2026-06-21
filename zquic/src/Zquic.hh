@@ -85,6 +85,7 @@ inline constexpr uint64_t DefaultMaxStreamData = 1U * 1024U * 1024U;
 inline constexpr uint64_t DefaultMaxStreamsBidi = 128;
 inline constexpr uint64_t DefaultMaxStreamsUni = 16;
 inline constexpr uint64_t MaxStreamCount = uint64_t(INT64_MAX) >> 2;
+inline constexpr uint64_t U64Null = ZuCmp<uint64_t>::null();
 
 inline ErrorFn defaultErrorFn()
 {
@@ -1123,20 +1124,20 @@ public:
 
   template <typename ...Args>
   void rxRun(Args &&...args) {
-    m_mx->run(m_rxThread, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_rxThread);
   }
   template <typename ...Args>
   void rxInvoke(Args &&...args) {
-    m_mx->invoke(m_rxThread, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_rxThread);
   }
   bool rxInvoked() { return m_mx && m_rxThread && m_mx->invoked(m_rxThread); }
   template <typename ...Args>
   void txRun(Args &&...args) {
-    m_mx->run(m_txThread, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_txThread);
   }
   template <typename ...Args>
   void txInvoke(Args &&...args) {
-    m_mx->invoke(m_txThread, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_txThread);
   }
   bool txInvoked() { return m_mx && m_txThread && m_mx->invoked(m_txThread); }
 
@@ -2328,7 +2329,7 @@ private:
   StreamRxState		m_rxState;
   RxStream		m_rx;
   StreamRxPQueue	m_rxQueue{0};
-  uint64_t		m_lastStreamDataBlocked = uint64_t(-1);
+  uint64_t		m_lastStreamDataBlocked = U64Null;
   PendingControl	m_maxStreamDataControl;
   PendingControl	m_streamDataBlockedControl;
   uint64_t		m_appError = 0;
@@ -2459,22 +2460,22 @@ public:
   uint64_t closeError() const { return m_closeError; }
   uint64_t streamCount() const { return m_streams->count_(); }
   uint64_t peerStreamLimit(Zi::StreamType::T type) const {
-    return localLimit_(type).limit();
+    return m_peerLimit[type].limit();
   }
   uint64_t localStreamsOpened(Zi::StreamType::T type) const {
-    return localLimit_(type).opened();
+    return m_peerLimit[type].opened();
   }
   uint64_t queuedLocalStreams(Zi::StreamType::T type) const {
-    return queued_(type);
+    return m_queued[type];
   }
   uint64_t localStreamLimit(Zi::StreamType::T type) const {
-    return peerLimit_(type).limit();
+    return m_localLimit[type].limit();
   }
   uint64_t peerStreamsOpened(Zi::StreamType::T type) const {
-    return peerLimit_(type).opened();
+    return m_localLimit[type].opened();
   }
   bool localStreamsBlocked(Zi::StreamType::T type) const {
-    return queued_(type) != 0;
+    return m_queued[type] != 0;
   }
   unsigned queuedControlFrames() const {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -2499,10 +2500,10 @@ public:
   uint64_t rxDataCreditAvailable() const { return m_rxDataCredit.available(); }
 
   void setPeerStreamLimit(Zi::StreamType::T type, uint64_t limit) {
-    localLimit_(type).set(limit);
+    m_peerLimit[type].set(limit);
   }
   void setLocalStreamLimit(Zi::StreamType::T type, uint64_t limit) {
-    peerLimit_(type).set(limit);
+    m_localLimit[type].set(limit);
   }
 
   bool rxApplyMaxStreams_(const Frame &frame) {
@@ -2558,11 +2559,11 @@ public:
   }
 
   StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
-    if (!localLimit_(type).open()) {
-      ++queued_(type);
+    if (!m_peerLimit[type].open()) {
+      ++m_queued[type];
       queueBlocked_(
-	FrameType::StreamsBlocked, 0, localLimit_(type).limit(), type);
-      impl()->streamsBlocked_(type, localLimit_(type).limit());
+	FrameType::StreamsBlocked, 0, m_peerLimit[type].limit(), type);
+      impl()->streamsBlocked_(type, m_peerLimit[type].limit());
       return nullptr;
     }
     return openLocalStream_(type);
@@ -2573,14 +2574,14 @@ public:
     if (StreamID::server(id) == m_isServer) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
     if (closedStreamID_(id)) return nullptr;
-    Zi::StreamType::T type = StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
+    Zi::StreamType::T type = StreamID::uni(id);
     uint64_t opened = StreamID::ordinal(id) + 1;
-    if (!peerLimit_(type).allowsTo(opened)) return nullptr;
+    if (!m_localLimit[type].allowsTo(opened)) return nullptr;
 
     StreamRef stream = newStream_(int64_t(id));
     if (!stream) return nullptr;
     if (!peerOpenedStreamID_(id))
-      ZiAssert(peerLimit_(type).openTo(opened), "Zquic",
+      ZiAssert(m_localLimit[type].openTo(opened), "Zquic",
 	(), "peer stream count advanced past local limit", return nullptr);
     impl()->streamed(stream);
     scheduleStreamWritable_(stream);
@@ -3008,7 +3009,7 @@ protected:
   bool txApplyMaxStreams_(Zi::StreamType::T type, uint64_t value) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC MAX_STREAMS processing outside Tx thread", return false);
-    localLimit_(type).extend(value);
+    m_peerLimit[type].extend(value);
     openQueued_(type, OpenQueuedBatch);
     scheduleOpenQueued_(type);
     return true;
@@ -3666,9 +3667,9 @@ protected:
     m_txDataCredit = {};
     m_rxDataCredit = {};
     m_rxDataWindow = 0;
-    m_lastDataBlocked = uint64_t(-1);
-    m_lastStreamsBlockedBidi = uint64_t(-1);
-    m_lastStreamsBlockedUni = uint64_t(-1);
+    m_lastDataBlocked = U64Null;
+    m_lastStreamsBlocked[Zi::StreamType::Duplex] = U64Null;
+    m_lastStreamsBlocked[Zi::StreamType::Simplex] = U64Null;
     m_crypto.resetTLS();
     resetPath_();
     app()->txInvoke(impl(), [link = impl()]() mutable {
@@ -4002,8 +4003,10 @@ protected:
     m_transportParams.activeConnectionIDLimit = LocalActiveConnectionIDLimit;
     m_rxDataCredit.set(m_transportParams.initialMaxData);
     m_rxDataWindow = m_transportParams.initialMaxData;
-    m_localBidiLimit.set(m_transportParams.initialMaxStreamsBidi);
-    m_localUniLimit.set(m_transportParams.initialMaxStreamsUni);
+    m_localLimit[Zi::StreamType::Duplex].set(
+      m_transportParams.initialMaxStreamsBidi);
+    m_localLimit[Zi::StreamType::Simplex].set(
+      m_transportParams.initialMaxStreamsUni);
   }
 
   bool loadServerTransportParams_(const ServerBootstrap &bootstrap) {
@@ -4059,8 +4062,8 @@ protected:
     if (m_crypto.peerTransportParamsReceived()) {
       const auto &params = m_crypto.peerTransportParams();
       m_txDataCredit.set(params.initialMaxData);
-      m_peerBidiLimit.set(params.initialMaxStreamsBidi);
-      m_peerUniLimit.set(params.initialMaxStreamsUni);
+      m_peerLimit[Zi::StreamType::Duplex].set(params.initialMaxStreamsBidi);
+      m_peerLimit[Zi::StreamType::Simplex].set(params.initialMaxStreamsUni);
     }
     updatePeerPathMaxUDP_();
     m_established = 1;
@@ -4081,7 +4084,7 @@ protected:
     for (auto &s : m_txTrafficSecrets) s.clear();
     for (auto &p : m_txProt) p.clear();
     memset(m_txPN, 0, sizeof(m_txPN));
-    for (auto &pn : m_txLargestAckd) pn = uint64_t(-1);
+    for (auto &pn : m_txLargestAckd) pn = U64Null;
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
     m_rxAcks.clear();
     clearPeerKeyState_();
@@ -4911,13 +4914,6 @@ protected:
     app()->mx()->del(&m_ptoTimer);
   }
 
-  void scheduleIdleTimer_(ZuTime out) {
-    scheduleCxnTimer_(
-      "idle", out, ZmScheduler::Update, &m_idleTimer,
-      [](auto link) { link->idleTimeout_(); });
-  }
-  void cancelIdleTimer_() { cancelTimer_("idle", &m_idleTimer); }
-
   void scheduleCloseTimer_(ZuTime out) {
     scheduleCxnTimer_(
       "close", out, ZmScheduler::Update, &m_closeTimer,
@@ -4984,7 +4980,6 @@ protected:
     cancelAckDelayTimer_();
     cancelLossTimer_();
     cancelPTO_();
-    cancelIdleTimer_();
     cancelCloseTimer_();
     cancelKeyDiscardTimer_();
     cancelPMTUDTimer_();
@@ -4992,7 +4987,7 @@ protected:
   }
   bool timersActive_() const {
     return m_ackDelayTimer || m_lossTimer || m_ptoTimer ||
-      m_idleTimer || m_closeTimer || m_keyDiscardTimer ||
+      m_closeTimer || m_keyDiscardTimer ||
       m_pmtudTimer || m_pathTimer;
   }
 
@@ -5007,12 +5002,6 @@ protected:
       "QUIC loss timer outside Tx thread", return);
     if (m_timerTeardown) return;
     if (!closed()) impl()->lossTimeExpired_();
-  }
-  void idleTimeout_() {
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC idle timer outside Tx thread", return);
-    if (m_timerTeardown) return;
-    if (!closed()) impl()->idleExpired_();
   }
   void closeTimeout_() {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -5053,7 +5042,6 @@ protected:
     ZuTime now = runtimeNow_();
     detectLossTx_(0, now, {}, false);
   }
-  void idleExpired_() { }
   void closeExpired_() { }
   void keyDiscardExpired_() {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -6207,46 +6195,14 @@ private:
     }
   }
 
-  const StreamLimit &localLimit_(Zi::StreamType::T type) const {
-    return type == Zi::StreamType::Simplex ? m_peerUniLimit : m_peerBidiLimit;
-  }
-
-  StreamLimit &localLimit_(Zi::StreamType::T type) {
-    return type == Zi::StreamType::Simplex ? m_peerUniLimit : m_peerBidiLimit;
-  }
-
-  const StreamLimit &peerLimit_(Zi::StreamType::T type) const {
-    return type == Zi::StreamType::Simplex ? m_localUniLimit : m_localBidiLimit;
-  }
-
-  StreamLimit &peerLimit_(Zi::StreamType::T type) {
-    return type == Zi::StreamType::Simplex ? m_localUniLimit : m_localBidiLimit;
-  }
-
-  const uint64_t &queued_(Zi::StreamType::T type) const {
-    return type == Zi::StreamType::Simplex ? m_queuedUni : m_queuedBidi;
-  }
-
-  uint64_t &queued_(Zi::StreamType::T type) {
-    return type == Zi::StreamType::Simplex ? m_queuedUni : m_queuedBidi;
-  }
-  const uint64_t &lastStreamsBlocked_(Zi::StreamType::T type) const {
-    return type == Zi::StreamType::Simplex ?
-      m_lastStreamsBlockedUni : m_lastStreamsBlockedBidi;
-  }
-  uint64_t &lastStreamsBlocked_(Zi::StreamType::T type) {
-    return type == Zi::StreamType::Simplex ?
-      m_lastStreamsBlockedUni : m_lastStreamsBlockedBidi;
-  }
-
   StreamRef openLocalStream_(Zi::StreamType::T type) {
     return newStream_(nextStreamID_(type));
   }
 
   unsigned openQueued_(Zi::StreamType::T type, unsigned limit) {
-    uint64_t &queued = queued_(type);
+    uint64_t &queued = m_queued[type];
     unsigned opened = 0;
-    while (queued && opened < limit && localLimit_(type).open()) {
+    while (queued && opened < limit && m_peerLimit[type].open()) {
       StreamRef stream = openLocalStream_(type);
       if (!stream) break;
       --queued;
@@ -6265,7 +6221,8 @@ private:
   }
   void scheduleOpenQueued_(Zi::StreamType::T type) {
     unsigned i = type == Zi::StreamType::Simplex ? 1 : 0;
-    if (!queued_(type) || localLimit_(type).blocked() || m_openQueuedPending[i])
+    if (!m_queued[type] || m_peerLimit[type].blocked() ||
+	m_openQueuedPending[i])
       return;
     m_openQueuedPending[i] = true;
     app()->txRun([link = ZmMkRef(impl()), type, i]() mutable {
@@ -6298,9 +6255,8 @@ private:
   bool peerOpenedStreamID_(uint64_t id) const {
     if (id > uint64_t(INT64_MAX) || localInitiated_(id, m_isServer))
       return false;
-    Zi::StreamType::T type =
-      StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
-    return StreamID::ordinal(id) < peerLimit_(type).opened();
+    Zi::StreamType::T type = StreamID::uni(id);
+    return StreamID::ordinal(id) < m_localLimit[type].opened();
   }
   bool localOpenedStreamID_(uint64_t id) const {
     if (id > uint64_t(INT64_MAX) || !localInitiated_(id, m_isServer))
@@ -6369,7 +6325,7 @@ private:
   }
   bool validateStreamsBlocked_(const Frame &frame) const {
     return frame.type == FrameType::StreamsBlocked &&
-      frame.value <= peerLimit_(frame.streamType).limit();
+      frame.value <= m_localLimit[frame.streamType].limit();
   }
 
   bool receiveStreamDataBlocked_(const Frame &frame) {
@@ -6410,7 +6366,7 @@ private:
 	return !stream || stream->lastStreamDataBlocked() != frame.value;
       }
       case FrameType::StreamsBlocked:
-	return lastStreamsBlocked_(frame.streamType) != frame.value;
+	return m_lastStreamsBlocked[frame.streamType] != frame.value;
       default:
 	return true;
     }
@@ -6425,7 +6381,7 @@ private:
 	  stream->lastStreamDataBlocked(frame.value);
 	break;
       case FrameType::StreamsBlocked:
-	lastStreamsBlocked_(frame.streamType) = frame.value;
+	m_lastStreamsBlocked[frame.streamType] = frame.value;
 	break;
       default:
 	break;
@@ -6434,7 +6390,7 @@ private:
   void noteControlDequeued_(const ControlFrame &frame) {
     switch (frame.type) {
       case FrameType::StreamsBlocked:
-	lastStreamsBlocked_(frame.streamType) = uint64_t(-1);
+	m_lastStreamsBlocked[frame.streamType] = U64Null;
 	break;
       default:
 	break;
@@ -6491,7 +6447,7 @@ private:
       }
       case FrameType::MaxStreams:
 	return m_maxStreamsControl[streamTypeIndex_(frame.streamType)].frame ==
-	  frame && frame.value == peerLimit_(frame.streamType).limit();
+	  frame && frame.value == m_localLimit[frame.streamType].limit();
       case FrameType::DataBlocked:
 	return m_dataBlockedControl.frame == frame &&
 	  m_txDataCredit.blocked() &&
@@ -6502,8 +6458,8 @@ private:
       }
       case FrameType::StreamsBlocked:
 	return m_streamsBlockedControl[streamTypeIndex_(frame.streamType)].frame ==
-	  frame && queued_(frame.streamType) &&
-	  frame.value == localLimit_(frame.streamType).limit();
+	  frame && m_queued[frame.streamType] &&
+	  frame.value == m_peerLimit[frame.streamType].limit();
       case FrameType::ResetStream: {
 	StreamRef stream = findStream(int64_t(frame.streamID));
 	return stream && stream->controlStillValid(frame);
@@ -6531,7 +6487,7 @@ private:
       m_transportParams.initialMaxData;
     if (!window || m_rxDataCredit.available() > window / 2) return;
     uint64_t maximum =
-      m_rxDataCredit.used() > uint64_t(-1) - window ? uint64_t(-1) :
+      m_rxDataCredit.used() > U64Null - window ? U64Null :
       m_rxDataCredit.used() + window;
     if (maximum <= m_rxDataCredit.limit()) return;
     m_rxDataCredit.extend(maximum);
@@ -6543,7 +6499,7 @@ private:
     uint64_t window = initialStreamRxCredit_(uint64_t(stream->id()));
     if (!window || stream->rxCreditAvailable() > window / 2) return;
     uint64_t maximum =
-      stream->rxCreditUsed() > uint64_t(-1) - window ? uint64_t(-1) :
+      stream->rxCreditUsed() > U64Null - window ? U64Null :
       stream->rxCreditUsed() + window;
     if (maximum <= stream->rxCreditLimit()) return;
     stream->extendRxCredit(maximum);
@@ -6559,9 +6515,8 @@ private:
     if (!stream->rxComplete() && !stream->resetReceived()) return false;
     if (!StreamID::uni(id) && !stream->finDequeued() && !stream->resetSent())
       return false;
-    Zi::StreamType::T type =
-      StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
-    StreamLimit &limit = peerLimit_(type);
+    Zi::StreamType::T type = StreamID::uni(id);
+    StreamLimit &limit = m_localLimit[type];
     if (limit.limit() >= MaxStreamCount) return false;
     uint64_t next = limit.limit() + 1;
     limit.extend(next);
@@ -6601,9 +6556,8 @@ private:
     uint64_t id = uint64_t(stream->id());
     if (localInitiated_(id, m_isServer)) return true;
     if (stream->streamCreditReturned()) return true;
-    Zi::StreamType::T type =
-      StreamID::uni(id) ? Zi::StreamType::Simplex : Zi::StreamType::Duplex;
-    return peerLimit_(type).limit() >= MaxStreamCount;
+    Zi::StreamType::T type = StreamID::uni(id);
+    return m_localLimit[type].limit() >= MaxStreamCount;
   }
   StreamRef newStream_(int64_t id) {
     auto node = new typename Streams::Node{impl(), id};
@@ -6644,47 +6598,6 @@ private:
     return int64_t(id);
   }
 
-  // immutable
-  App		*m_app = nullptr;
-  bool		m_isServer = false;
-
-  // shared
-  ZmAtomic<unsigned>	m_up = 1;
-
-  // Rx thread exclusive
-  bool		m_closed = false;
-  uint64_t	m_closeError = 0;
-  FlowCredit	m_rxDataCredit;
-  uint64_t	m_rxDataWindow = 0;
-  StreamLimit	m_peerBidiLimit{uint64_t(INT64_MAX) >> 2};
-  StreamLimit	m_peerUniLimit{uint64_t(INT64_MAX) >> 2};
-  StreamsRef	m_streams;
-  uint64_t	m_closedStreamBase[4] = {};
-  mutable ZmPLock	m_closedStreamsLock;
-  ClosedStreamsRef	m_closedStreams;
-
-  // Tx thread exclusive
-  FlowCredit	m_txDataCredit;
-  uint64_t	m_nextBidiOrdinal = 0;
-  uint64_t	m_nextUniOrdinal = 0;
-  StreamLimit	m_localBidiLimit{uint64_t(INT64_MAX) >> 2};
-  StreamLimit	m_localUniLimit{uint64_t(INT64_MAX) >> 2};
-  uint64_t	m_queuedBidi = 0;
-  uint64_t	m_queuedUni = 0;
-  bool		m_openQueuedPending[2] = {};
-  uint64_t	m_lastDataBlocked = uint64_t(-1);
-  uint64_t	m_lastStreamsBlockedBidi = uint64_t(-1);
-  uint64_t	m_lastStreamsBlockedUni = uint64_t(-1);
-  StreamQueue	m_streamQueue;
-  PendingControl	m_maxDataControl;
-  PendingControl	m_maxStreamsControl[2];
-  PendingControl	m_dataBlockedControl;
-  PendingControl	m_streamsBlockedControl[2];
-  PendingControl	m_handshakeDoneControl;
-  PendingControl	m_pathChallengeControl;
-  PathResponses	m_pathResponses{ZmQueueParams{}.initial(PathResponseMax)};
-
-private:
   bool rxInvoked_() const {
     ZiAssert(m_app && m_app->mx(), "Zquic", (),
       "QUIC link Rx access before app initialization", return false);
@@ -6699,21 +6612,21 @@ private:
   template <typename Fn>
   void scheduleCxnTimer_(
     const char *name, ZuTime out, int mode, ZmScheduler::Timer *timer,
-    Fn fn) {
+    Fn &&fn) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC timer schedule outside Tx thread", return);
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC timer schedule before app initialization", return);
     if (m_timerTeardown || !m_up) return;
     Zquic_DEBUG_LOG_(([name](auto &s) {
-	s << "QUIC timer armed name=" << name;
-      }));
-    app()->mx()->run(app()->txThread(),
-      [link = ZmMkRef(impl()), fn]() mutable {
+      s << "QUIC timer armed name=" << name;
+    }));
+    app()->mx()->add(timer, out, mode, [this, fn](auto &&arm) {
+      return arm([link = ZmMkRef(impl()), fn]() mutable {
 	if (!link->up_()) return;
 	fn(link);
-      },
-      out, mode, timer);
+      });
+    }, app()->txThread());
   }
 
   void cancelTimer_(const char *, ZmScheduler::Timer *timer) {
@@ -6775,7 +6688,27 @@ private:
     return true;
   }
 
+  // immutable
+  App			*m_app = nullptr;
+  bool			m_isServer = false;
+
+  // shared
+  ZmAtomic<unsigned>	m_up = 1;
+
   // Rx thread exclusive
+  bool			m_closed = false;
+  uint64_t		m_closeError = 0;
+  FlowCredit		m_rxDataCredit;
+  uint64_t		m_rxDataWindow = 0;
+  StreamLimit		m_peerLimit[2] = {
+    StreamLimit(MaxStreamCount),
+    StreamLimit(MaxStreamCount)
+  };
+  StreamsRef		m_streams;
+  uint64_t		m_closedStreamBase[4] = {};
+  mutable ZmPLock	m_closedStreamsLock;
+  ClosedStreamsRef	m_closedStreams;
+
   RuntimeRxDiag		m_rxDiag;
   Crypto		m_crypto;
   TransportParams	m_transportParams;
@@ -6800,7 +6733,6 @@ private:
   ZmScheduler::Timer	m_ackDelayTimer;
   ZmScheduler::Timer	m_lossTimer;
   ZmScheduler::Timer	m_ptoTimer;
-  ZmScheduler::Timer	m_idleTimer;
   ZmScheduler::Timer	m_closeTimer;
   ZmScheduler::Timer	m_keyDiscardTimer;
   // Active-path timers owned by this Link; callbacks run on Tx.
@@ -6820,8 +6752,28 @@ private:
   bool			m_rxOldKeyPhase = false;
 
   // Tx thread exclusive
+  FlowCredit		m_txDataCredit;
+  uint64_t		m_nextBidiOrdinal = 0;
+  uint64_t		m_nextUniOrdinal = 0;
+  StreamLimit		m_localLimit[2] = {
+    StreamLimit(MaxStreamCount),
+    StreamLimit(MaxStreamCount)
+  };
+  uint64_t		m_queued[2] = {};
+  bool			m_openQueuedPending[2] = {};
+  uint64_t		m_lastDataBlocked = U64Null;
+  uint64_t		m_lastStreamsBlocked[2] = {U64Null, U64Null};
+  StreamQueue		m_streamQueue;
+  PendingControl	m_maxDataControl;
+  PendingControl	m_maxStreamsControl[2];
+  PendingControl	m_dataBlockedControl;
+  PendingControl	m_streamsBlockedControl[2];
+  PendingControl	m_handshakeDoneControl;
+  PendingControl	m_pathChallengeControl;
+  PathResponses		m_pathResponses{ZmQueueParams{}.initial(PathResponseMax)};
+
   CryptoStream		m_txCrypto[3];
-  CryptoTxPQueue m_txCryptoUnackd[3];
+  CryptoTxPQueue	m_txCryptoUnackd[3];
   TrafficSecret		m_txTrafficSecrets[3];
   PktProtState		m_txProt[3];
   ZmRef<ZiIOBuf>	m_coalesceInitial;
@@ -6831,8 +6783,7 @@ private:
   uint64_t		m_txRuntimeGen = 0;
   bool			m_timerTeardown = false;
   uint64_t		m_txPN[3]{};
-  uint64_t		m_txLargestAckd[3]{
-    uint64_t(-1), uint64_t(-1), uint64_t(-1)};
+  uint64_t		m_txLargestAckd[3]{U64Null, U64Null, U64Null};
   PktTxSpace		m_txPkts[3];
   AckSnapshot		m_txAck[3];
   AckECN		m_peerAckECN[3];
