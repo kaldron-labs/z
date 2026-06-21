@@ -489,8 +489,10 @@ struct HTTPServer::Link :
   void touch() {
     auto timeout = app()->state->options.timeout;
     if (!timeout) return;
-    app()->mx()->add([link = ZmMkRef(this)]() { link->disconnect(); },
-      Zm::now(timeout), ZmScheduler::Update, &idleTimer);
+    app()->mx()->add(&idleTimer, Zm::now(timeout), ZmScheduler::Update,
+      [this](auto &&arm) {
+	return arm([link = ZmMkRef(this)]() { link->disconnect(); });
+      });
   }
 
   void sendResponse(const ResponsePlan &resp) {
@@ -569,8 +571,10 @@ struct TLSServer::Link :
   void touch() {
     auto timeout = app()->state->options.timeout;
     if (!timeout) return;
-    app()->mx()->add([link = ZmMkRef(this)]() { link->disconnect(); },
-      Zm::now(timeout), ZmScheduler::Update, &idleTimer);
+    app()->mx()->add(&idleTimer, Zm::now(timeout), ZmScheduler::Update,
+      [this](auto &&arm) {
+	return arm([link = ZmMkRef(this)]() { link->disconnect(); });
+      });
   }
 
   void sendResponse(const ResponsePlan &resp) {

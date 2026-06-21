@@ -64,7 +64,6 @@ struct TimerLink :
     Base::scheduleAckDelayTimer_(out);
     Base::scheduleLossTimer_(out);
     Base::schedulePTOTimer_(out);
-    Base::scheduleIdleTimer_(out);
     Base::scheduleCloseTimer_(out);
     Base::scheduleKeyDiscardTimer_(out);
     Base::schedulePMTUDTimer_(out);
@@ -81,21 +80,18 @@ struct TimerLink :
   void ackDelayExpired_() { ++ackDelay; }
   void lossTimeExpired_() { ++lossTime; }
   void pto_() { ++pto; }
-  void idleExpired_() { ++idle; }
   void closeExpired_() { ++close; }
   void keyDiscardExpired_() { ++keyDiscard; }
   void pmtudExpired_() { ++pmtud; }
   void pathExpired_() { ++path; }
 
   unsigned fired() const {
-    return ackDelay + lossTime + pto + idle +
-      close + keyDiscard + pmtud + path;
+    return ackDelay + lossTime + pto + close + keyDiscard + pmtud + path;
   }
 
   ZmAtomic<unsigned>	ackDelay = 0;
   ZmAtomic<unsigned>	lossTime = 0;
   ZmAtomic<unsigned>	pto = 0;
-  ZmAtomic<unsigned>	idle = 0;
   ZmAtomic<unsigned>	close = 0;
   ZmAtomic<unsigned>	keyDiscard = 0;
   ZmAtomic<unsigned>	pmtud = 0;
@@ -115,7 +111,6 @@ void testTimerInventory()
   ZuCHECK(link->ackDelay == 1, "ACK delay timer did not fire once");
   ZuCHECK(link->lossTime == 1, "loss timer did not fire once");
   ZuCHECK(link->pto == 1, "PTO timer did not fire once");
-  ZuCHECK(link->idle == 1, "idle timer did not fire once");
   ZuCHECK(link->close == 1, "close timer did not fire once");
   ZuCHECK(link->keyDiscard == 1, "key discard timer did not fire once");
   ZuCHECK(link->pmtud == 1, "PMTUD timer did not fire once");
