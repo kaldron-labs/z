@@ -395,28 +395,10 @@ private:
 };
 
 template <typename Link_>
-struct ServerLinkEntry : public ZuObject {
-  using LinkRef = ZmRef<Link_>;
-
-  ServerLinkEntry() = default;
-  ServerLinkEntry(LinkRef ref_) : link{ref_.ptr()}, linkRef{ZuMv(ref_)} { }
-
-  Link_		*link = nullptr;
-  LinkRef	linkRef;
-};
-
-template <typename Link_>
-inline Link_ *ServerLinkEntry_LinkAxor(
-  const ServerLinkEntry<Link_> *entry) {
-  return entry->link;
-}
-
-template <typename Link_>
 ZuDerive(ServerLinks_,
-  (ZmHash<ZmRef<ServerLinkEntry<Link_>>,
-    ZmHashKey<ServerLinkEntry_LinkAxor<Link_>,
-      ZmHashLock<ZmPLock,
-	ZmHashHeapID<"Zquic.Server.LinkTable">>>>));
+  (ZmHash<ZmRef<Link_>,
+    ZmHashLock<ZmPLock,
+      ZmHashHeapID<"Zquic.Server.LinkHash">>>));
 
 struct CxnIDGen {
   static constexpr unsigned InitialLength = MinCIDLength;
@@ -1380,7 +1362,6 @@ public:
   using App = App_;
   using Link = Link_;
   using LinkRef = ZmRef<Link>;
-  using LinkEntry = ServerLinkEntry<Link>;
   using LinkTable = ServerLinks_<Link>;
   using Base = Engine<App>;
   using Base::app;
@@ -1486,10 +1467,8 @@ friend class SrvLink;
     this->rxInvoke([this, &fn, &done]() {
       auto links = m_links;
       auto i = links->citer();
-      while (auto node = i()) {
-	auto entry = node->val();
-	if (entry && entry->linkRef) fn(entry->linkRef);
-      }
+      while (LinkRef ref = i.val())
+	if (ref) fn(ref);
       done.post();
     });
     done.wait();
@@ -1527,13 +1506,11 @@ private:
   void txDrained_() {
     auto links = m_links;
     auto i = links->citer();
-    while (auto node = i()) {
-      auto entry = node->val();
-      if (entry && entry->link)
-	entry->link->app()->txRun([link = entry->linkRef]() mutable {
+    while (LinkRef ref = i.val())
+      if (ref)
+	ref->app()->txRun([link = ZuMv(ref)]() mutable {
 	  link->txDrained_();
 	});
-    }
   }
 
   void failed_0(bool transient) {
@@ -1604,7 +1581,7 @@ private:
     if (!link) return false;
     Link *ptr = link.ptr();
     if (m_links->findVal(ptr)) return true;
-    m_links->add(new LinkEntry{ZuMv(link)});
+    m_links->add(ZuMv(link));
     return true;
   }
 
@@ -1612,8 +1589,7 @@ private:
     if (!link) return;
     link->shutdown_();
     link->retireRoutes_(m_routes);
-    LinkRef ref;
-    if (auto entry = m_links->findVal(link)) ref = entry->linkRef;
+    LinkRef ref = m_links->findVal(link);
     link->teardownTimers([this, link, ref = ZuMv(ref)]() mutable {
       this->rxRun([this, link, ref = ZuMv(ref)]() mutable {
 	m_links->del(link);
@@ -1623,11 +1599,9 @@ private:
 
   void clearLinks_() {
     auto i = m_links->citer();
-    while (auto node = i()) {
-      auto entry = node->val();
-      if (entry && entry->link) {
-	LinkRef ref = entry->linkRef;
-	auto link = entry->link;
+    while (LinkRef ref = i.val()) {
+      if (ref) {
+	auto link = ref.ptr();
 	link->shutdown_();
 	link->retireRoutes_(m_routes);
 	link->teardownTimers([this, link, ref = ZuMv(ref)]() mutable {
