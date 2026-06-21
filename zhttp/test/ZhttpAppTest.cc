@@ -52,8 +52,8 @@ bool writeHTTPAppScript(
     "trap cleanup EXIT INT TERM\n"
     "server=../example/zhttpd\n"
     "client=../example/zhttp\n"
-    "[ -x \"$server\" ] || server=./zhttp/example/zhttpd\n"
-    "[ -x \"$client\" ] || client=./zhttp/example/zhttp\n";
+    "[ -x \"$server\" ] || server=./zhttpd\n"
+    "[ -x \"$client\" ] || client=./zhttp\n";
   if (transport == "http")
     script << "\"$server\" " << rootPath <<
       " --http --addr 127.0.0.1 --port " << port;

@@ -322,14 +322,15 @@ void testRecoveryFlowAndPMTUD()
   link->initPath(
     ZiSockAddr{ZiIP("127.0.0.1"), 10006},
     ZiSockAddr{ZiIP("127.0.0.1"), 10007});
-  ZuCHECK(link->sendBudget().pmtu == Zquic::MinUDPPayload,
+  ZuCHECK(link->sendBudget().pmtu ==
+      Zquic::MinUDPPayload - Zquic::TxStreamPktReserve,
     "runtime PMTUD initial budget mismatch");
   ZuCHECK(link->startPMTUDProbe(1400) &&
       link->pathProbeSize() == 1400,
     "runtime PMTUD probe start failed");
   link->ackPMTUDProbe(1400);
   ZuCHECK(link->activePathMaxUDP() == 1400 &&
-      link->sendBudget().pmtu == 1400 &&
+      link->sendBudget().pmtu == 1400 - Zquic::TxStreamPktReserve &&
       link->pathDiag().probesAckd == 1,
     "runtime PMTUD ACK did not grow active size");
   ZuCHECK(link->startPMTUDProbe(1500),
@@ -358,7 +359,7 @@ void testRecoveryFlowAndPMTUD()
   hintLink.applyPathHint(
     {Zquic::PathHintKind::SendTooBig, 1300, EMSGSIZE});
   ZuCHECK(hintLink.activePathMaxUDP() == 1300 &&
-      hintLink.sendBudget().pmtu == 1300 &&
+      hintLink.sendBudget().pmtu == 1300 - Zquic::TxStreamPktReserve &&
       hintLink.pathDiag().sendTooBigHints == 1,
     "runtime PMTUD send-too-big hint handling failed");
   hintLink.applyPathHint({Zquic::PathHintKind::KernelMTU, 1250, 0});

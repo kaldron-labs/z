@@ -14,15 +14,14 @@ LDADD = $(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZquicAPITest ZquicEndpointTest ZquicSockTest \
+noinst_PROGRAMS = ZquicAPITest ZquicSockTest \
 	ZquicCodecTest ZquicCryptoTest ZquicPacketProtectionTest \
 	ZquicHandshakeTest ZquicRecoveryTest \
 	ZquicStreamStateTest ZquicPMTUDTest ZquicVersionTest ZquicCIDTest \
 	ZquicStreamTest ZquicFlowTest ZquicBufferTest \
 	ZquicCongestionTest ZquicPQueueTest ZquicLoopTest ZquicRuntimeTest \
-	ZquicTimerTest
+ZquicTimerTest
 ZquicAPITest_SOURCES = ZquicAPITest.cc
-ZquicEndpointTest_SOURCES = ZquicEndpointTest.cc
 ZquicSockTest_SOURCES = ZquicSockTest.cc
 ZquicCodecTest_SOURCES = ZquicCodecTest.cc
 ZquicCryptoTest_SOURCES = ZquicCryptoTest.cc

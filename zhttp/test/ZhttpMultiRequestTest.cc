@@ -48,8 +48,8 @@ bool writeScript(ZuCSpan path, const char *tempPath_, unsigned port)
     "trap cleanup EXIT INT TERM\n"
     "server=../example/zhttpd\n"
     "client=../example/zhttp\n"
-    "[ -x \"$server\" ] || server=./zhttp/example/zhttpd\n"
-    "[ -x \"$client\" ] || client=./zhttp/example/zhttp\n"
+    "[ -x \"$server\" ] || server=./zhttpd\n"
+    "[ -x \"$client\" ] || client=./zhttp\n"
     "\"$client\" -n 2 -j 3 http://127.0.0.1:" << port <<
       "/zhttp-multi >/dev/null 2>" << tempPath << "/bad-gt.err && exit 1\n"
     "\"$client\" -n 0 http://127.0.0.1:" << port <<

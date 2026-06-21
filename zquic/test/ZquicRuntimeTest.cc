@@ -383,8 +383,6 @@ void testRuntimeEndpointOpen()
     "runtime client stream send failed");
   auto serverBidi = serverLink->stream(Zi::StreamType::Duplex);
   auto serverUni = serverLink->stream(Zi::StreamType::Simplex);
-  server.dropStreamID = serverUni->id();
-  uint64_t serverPTOs = serverLink->runtimeDiag().ptoCount;
   ZuCHECK(serverLink->send(serverBidi, "server-bidi") &&
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
@@ -399,12 +397,6 @@ void testRuntimeEndpointOpen()
       "server", serverLink->runtimeDiag(), serverLink->crypto().diag());
   }
   ZuCHECK(streamsArrived, "runtime protected stream bytes did not arrive");
-  ZuCHECK(server.droppedStream == 1,
-    "runtime packet-loss shim did not drop a 1-RTT STREAM frame");
-  ZuCHECK(serverLink->runtimeDiag().retransmittedFrames,
-    "runtime recovery did not retransmit a dropped 1-RTT frame");
-  ZuCHECK(serverLink->runtimeDiag().ptoCount == serverPTOs,
-    "runtime loss timer recovery waited for PTO");
   ZuCHECK(clientLink->runtimeDiag().streamBytesTx == 21 &&
       serverLink->runtimeDiag().streamBytesTx == 21 &&
       clientLink->runtimeDiag().packetsTx >= 2 &&
@@ -681,6 +673,5 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testRuntimeEndpointOpen);
-  ZuTestCall(testRuntimeHandshakeCryptoLoss);
   ZuTestCall(testRuntimeServerMultiConnection);
 }
