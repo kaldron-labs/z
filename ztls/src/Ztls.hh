@@ -1187,9 +1187,11 @@ public:
   void connectFailed(bool transient) {
     unsigned reconnFreq = app()->reconnFreq();
     if (transient && reconnFreq > 0)
-	app()->rxRun(
-	  ZmFn<>{this, [](CliLink *link) { link->connect_(); }},
-	  Zm::now(reconnFreq), ZmScheduler::Update, &m_reconnTimer);
+	app()->mx()->add(
+	  &m_reconnTimer, Zm::now(reconnFreq), ZmScheduler::Update,
+	  [this](auto &&arm) {
+	    return arm(ZmFn<>{this, [](CliLink *link) { link->connect_(); }});
+	  }, app()->rxThread());
     else
       app()->error_(ZeEXCEPT(Error, "Ztls", "connect failed"));
   }
@@ -1432,20 +1434,20 @@ public:
 
   template <typename ...Args>
   void rxRun(Args &&...args) {
-    m_mx->run(m_rxThread, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_rxThread);
   }
   template <typename ...Args>
   void rxInvoke(Args &&...args) {
-    m_mx->invoke(m_rxThread, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_rxThread);
   }
   bool rxInvoked() { return m_mx->invoked(m_rxThread); }
   template <typename ...Args>
   void txRun(Args &&...args) {
-    m_mx->run(m_txThread, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_txThread);
   }
   template <typename ...Args>
   void txInvoke(Args &&...args) {
-    m_mx->invoke(m_txThread, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_txThread);
   }
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
@@ -1913,8 +1915,10 @@ protected:
   void listenFailed(bool transient) { // default
     unsigned rebindFreq = app()->rebindFreq();
     if (transient && rebindFreq > 0)
-      app()->rxRun([this]() { listen(); },
-	  Zm::now(rebindFreq), ZmScheduler::Update, &m_rebindTimer);
+      app()->mx()->add(
+	  &m_rebindTimer, Zm::now(rebindFreq), ZmScheduler::Update,
+	  [this](auto &&arm) { return arm([this]() { listen(); }); },
+	  app()->rxThread());
     else
       app()->error_(ZeEXCEPT(Error, "Ztls", ([transient](auto &s) {
 	s << "listen() failed " << (transient ? "(transient)" : "");
