@@ -44,6 +44,4 @@ test: $(noinst_PROGRAMS)
 	prove -j1 ZhttpParserTest ZhttpHPackTest ZhttpQPackTest \
 		ZhttpFallbackTest ZhttpQPackDynamicTest \
 		ZhttpAppTest ZhttpMultiRequestTest zhttpmatrix \
-		ZhttpdTest ZhttpDarkhttpdCompatTest
-	LSAN_OPTIONS="$${LSAN_OPTIONS:+$$LSAN_OPTIONS:}suppressions=$(top_builddir)/.lsan-suppressions" \
-	timeout 15s ./Zhttp3InteropTest
+		ZhttpdTest ZhttpDarkhttpdCompatTest Zhttp3InteropTest
