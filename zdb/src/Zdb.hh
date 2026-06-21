@@ -1666,12 +1666,6 @@ private:
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
-private:
-  ZuDerive(CxnHash,
-    (ZmHash<ZmRef<Cxn>,
-      ZmHashLock<ZmPLock,
-	ZmHashHeapID<"Zdb.CxnHash">>>));
-
 public:
 #if Zdb_DEBUG
   bool debug() const { return m_cf.debug; }
