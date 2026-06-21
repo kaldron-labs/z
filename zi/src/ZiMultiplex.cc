@@ -2224,7 +2224,7 @@ void ZiMultiplex::stop_1()
 {
   if (!m_cxns->count_()) { stop_2(); return; }
 
-  CxnHash::CIter i(*m_cxns);
+  auto i = m_cxns->citer();
   while (ZmRef<ZiConnection> cxn = i.val())
     cxn->disconnect();
 }
