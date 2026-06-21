@@ -46,7 +46,8 @@ private:
     m_count = 0;
     m_interval = m_backoff.initial();
     m_scheduler->add(
-	[this]() { work(); }, Zm::now() + m_interval, &m_timer);
+      &m_timer, Zm::now() + m_interval, ZmScheduler::Update,
+      [this](auto &&arm) { return arm([this]() { work(); }); });
   }
 
 public:
@@ -73,7 +74,8 @@ public:
       if (m_retryFn) m_retryFn();
       m_interval = m_backoff.backoff(m_interval);
       m_scheduler->add(
-	  [this]() { work(); }, Zm::now() + m_interval, &m_timer);
+	&m_timer, Zm::now() + m_interval, ZmScheduler::Update,
+	[this](auto &&arm) { return arm([this]() { work(); }); });
     } else {
       m_retryFn = ZmFn<>();
       m_finalFn();

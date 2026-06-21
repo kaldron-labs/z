@@ -207,7 +207,6 @@ void ZmScheduler::timer()
 	}
 	timer->fn = Fn{};
 	timer->timeout = ZuTime{};
-	if (timer->transient) delete timer;
       }
     }
   }
@@ -225,51 +224,6 @@ bool ZmScheduler::timerAdd(Fn &fn)
   return false;
 }
 
-void ZmScheduler::schedule_(
-    unsigned sid, Fn &fn, ZuTime timeout, int mode, Timer *timer)
-{
-  ZmAssert(sid <= m_params.nThreads());
-
-  bool kick = true;
-
-  if (!timer) timer = new Timer{true};
-
-  {
-    SchedGuard schedGuard(m_schedLock);
-
-    if (ZuLikely(*timer)) {
-      switch (mode) {
-	case Advance:
-	  if (ZuUnlikely(timer->timeout <= timeout)) return;
-	  break;
-	case Defer:
-	  if (ZuUnlikely(timer->timeout >= timeout)) return;
-	  break;
-      }
-      m_schedule.delNode(timer);
-      timer->timeout = ZuTime{};
-    }
-
-    if (ZuUnlikely(timeout <= Zm::now())) {
-      if (ZuLikely(sid)) {
-	if (ZuLikely(tryRun_(&m_threads[sid - 1], fn))) return;
-      } else {
-	if (ZuLikely(timerAdd(fn))) return;
-      }
-    }
-
-    if (Timer *first = m_schedule.minimum())
-      kick = timeout < first->timeout;
-
-    timer->timeout = timeout;
-    timer->sid = sid;
-    timer->fn = ZuMv(fn);
-    m_schedule.addNode(timer);
-  }
-
-  if (kick) wake();
-}
-
 bool ZmScheduler::del(Timer *timer)
 {
   SchedGuard schedGuard(m_schedLock);
@@ -278,11 +232,10 @@ bool ZmScheduler::del(Timer *timer)
   bool found = !!m_schedule.delNode(timer);
   if (found) timer->fn = Fn{};
   timer->timeout = ZuTime{};
-  if (timer->transient) delete timer;
   return found;
 }
 
-void ZmScheduler::add_(Fn &fn)
+void ZmScheduler::run_(Fn &fn)
 {
   if (ZuUnlikely(!m_nWorkers)) return;
   unsigned first = m_next++;
