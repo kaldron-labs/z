@@ -224,7 +224,7 @@ bool ZmScheduler::timerAdd(Fn &fn)
   return false;
 }
 
-bool ZmScheduler::disarm_(Timer *timer)
+bool ZmScheduler::cancel_(Timer *timer)
 {
   if (!*timer) return false;
   bool found = !!m_schedule.delNode(timer);
@@ -232,16 +232,16 @@ bool ZmScheduler::disarm_(Timer *timer)
   return found;
 }
 
-bool ZmScheduler::disarm(Timer *timer)
+bool ZmScheduler::cancel(Timer *timer)
 {
   SchedGuard schedGuard(m_schedLock);
-  return disarm_(timer);
+  return cancel_(timer);
 }
 
 bool ZmScheduler::del(Timer *timer)
 {
   SchedGuard schedGuard(m_schedLock);
-  bool found = disarm_(timer);
+  bool found = cancel_(timer);
   timer->fn = Fn{};
   return found;
 }
