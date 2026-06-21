@@ -434,7 +434,7 @@ public:
     run_(thread, fn);
   }
 
-  // invoke(sid, object, lambda) is a specialized version of invoke()
+  // invoke(object, lambda, sid) is a specialized version of invoke()
   // that avoids unnecessary calls to ref/deref the object if the lambda is
   // directly called - the lambda must not capture an object ref, and must
   // return a pointer to the object which can be used to deref if needed
@@ -447,10 +447,10 @@ public:
   //     // until foo() completes, whether synchronously or asynchronously
   //
   //     // less efficient
-  //     sched->invoke(sid, [self = ZmMkRef(this)]() { self->foo(); });
+  //     sched->invoke([self = ZmMkRef(this)]() { self->foo(); }, sid);
   //
   //     // more efficient, with more natural capture of this
-  //     sched->invoke(sid, this, [this]() { foo(); return this; });
+  //     sched->invoke(this, [this]() { foo(); return this; }, sid);
   //   }
   // };
 private:
@@ -470,7 +470,7 @@ private:
   using IsObjectLambda = ZuIfT<IsObjectLambda_<O, L>{}, R>;
 public:
   template <typename O, typename L>
-  IsObjectLambda<O, L> invoke(unsigned sid, O *o, L l) {
+  IsObjectLambda<O, L> invoke(O *o, L l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
     Thread *thread = &m_threads[sid - 1];
     if (ZuLikely(Zm::getTID() == thread->tid)) {
