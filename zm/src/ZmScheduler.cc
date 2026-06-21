@@ -224,14 +224,25 @@ bool ZmScheduler::timerAdd(Fn &fn)
   return false;
 }
 
+bool ZmScheduler::disarm_(Timer *timer)
+{
+  if (!*timer) return false;
+  bool found = !!m_schedule.delNode(timer);
+  timer->timeout = ZuTime{};
+  return found;
+}
+
+bool ZmScheduler::disarm(Timer *timer)
+{
+  SchedGuard schedGuard(m_schedLock);
+  return disarm_(timer);
+}
+
 bool ZmScheduler::del(Timer *timer)
 {
   SchedGuard schedGuard(m_schedLock);
-
-  if (!*timer) return false;
-  bool found = !!m_schedule.delNode(timer);
-  if (found) timer->fn = Fn{};
-  timer->timeout = ZuTime{};
+  bool found = disarm_(timer);
+  timer->fn = Fn{};
   return found;
 }
 
