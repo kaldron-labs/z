@@ -67,13 +67,13 @@ int main(int argc, char **argv)
   ZuTime start = Zm::now();
   for (int j = 0; j < count; j++)
     for (int i = 0; i < nthr; i++)
-      sched->run(i + 1, [i, j]() {
+      sched->run([i, j]() {
 	auto s = new S{i + j};
-	sched->run(((i + 1) % nthr) + 1, [s]() {
+	sched->run([s]() {
 	  delete s;
 	  sem.post();
-	});
-      });
+	}, ((i + 1) % nthr) + 1);
+      }, i + 1);
   for (int k = 0, n = count * nthr; k < n; k++) sem.wait();
   sched->stop();
   ZuTime end = Zm::now();

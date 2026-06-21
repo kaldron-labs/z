@@ -89,6 +89,7 @@ char *message_(int j)
   ZuCArray<32> s;
   s << "Goodbye World " << j;
   auto n = s.length() + 1;
+  s[n - 1] = 0;
   auto *buf = static_cast<char *>(malloc(n));
   if (!buf) return buf;
   for (unsigned k = 0; k < n; k++) buf[k] = s.data()[k];
@@ -169,12 +170,13 @@ int main(int argc, char **argv)
     // fns[j - 1] = ZmFn<>{jobs[j - 1].ptr(), ZmFnPtr<&Job::operator()>{}};
     // s.add(&timers[j - 1], fns[j - 1], jobs[j - 1]->timeout());
     ZuTime out = t + ZuTime(((double)j) / 10.0);
-    s.add([
-      job = ZmMkRef(new Job(buf, out))
-    ](this const auto &self) {
-      log("operator()() this=", ZuBoxPtr(&self).hex());
-      (*job)();
-    }, out, &timers[j - 1]);
+    s.add(&timers[j - 1], out, ZmScheduler::Update,
+      [buf, out](auto &&arm) {
+	return arm([job = ZmMkRef(new Job(buf, out))](this const auto &self) {
+	  log("operator()() this=", ZuBoxPtr(&self).hex());
+	  (*job)();
+	});
+      });
     log("Hello World ", j);
   }
 
@@ -216,8 +218,10 @@ int main(int argc, char **argv)
     // jobs[j - 1] = new Job(buf, t + ZuTime(((double)j) / 10.0));
     // fns[j - 1] = ZmFn<>{jobs[j - 1].ptr(), ZmFnPtr<&Job::operator()>{}};
     ZuTime out = t + ZuTime(((double)j) / 10.0);
-    s.add([job = ZmMkRef(new Job(buf, out))]() { (*job)(); },
-	out, &timers[j - 1]);
+    s.add(&timers[j - 1], out, ZmScheduler::Update,
+      [buf, out](auto &&arm) {
+	return arm([job = ZmMkRef(new Job(buf, out))]() { (*job)(); });
+      });
     log("Hello World ", j);
     if (j == 2) breakpoint(&timers[j - 1]);
   }
@@ -225,7 +229,7 @@ int main(int argc, char **argv)
   for (i = 0; i < 5; i++) {
     int j = (i & 1) ? ((i>>1) + 6) : (5 - (i>>1));
 
-    timers[j - 1].fn = []{ };
+    s.del(&timers[j - 1]);
 
     // fns[j - 1] = ZmFn<>();
     // jobs[j - 1] = 0;

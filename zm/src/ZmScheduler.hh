@@ -271,7 +271,6 @@ private:
     Fn		fn;
     unsigned	sid = 0;
     ZuTime	timeout;
-    bool	transient = false;
 
     Timer_() { }
     Timer_(const Timer_ &) = delete;
@@ -279,8 +278,6 @@ private:
     Timer_(Timer_ &&) = delete;
     Timer_ &operator =(Timer_ &&) = delete;
     ~Timer_() = default;
-
-    Timer_(bool transient_) : transient{transient_} { }
 
     bool operator !() const { return !*timeout; }
     ZuOpBool
@@ -316,71 +313,83 @@ public:
 
   // sid is "slot ID" - array index of a specific thread in the pool [0,n)
   //
-  // add(fn) - immediate execution (asynchronous) on any worker thread
-  // run(sid, fn) - immediate execution (asynchronous) on a specific thread
-  // push(sid, fn) - enqueue without waking a specific thread
-  // invoke(sid, fn) - immediate execution on a specific thread
+  // run(fn) - immediate execution (asynchronous) on any worker thread
+  // run(fn, sid) - immediate execution (asynchronous) on a specific thread
+  // push(fn, sid) - enqueue without waking a specific thread
+  // invoke(fn, sid) - immediate execution on a specific thread
   //   unlike run(), invoke() will execute synchronously if the caller is
   //   already running on the specified thread
 
-  // run(sid, fn, timeout)
-  // run(sid, fn, timeout, mode)
-  // run(sid, fn, timeout, mode, timer) - deferred execution
+  // add(timer, timeout, mode, armFn, sid) - deferred execution
   //   sid == 0 - run on any worker thread
   //   mode:
   //     Update - (re)schedule regardless
   //     Advance - reschedule unless outstanding timeout is sooner
   //     Defer - reschedule unless outstanding timeout is later
-
-  // add(fn, timeout) -
-  //   forwards to run(0, fn, timeout, Update, nullptr)
-  // add(fn, timeout, timer) -
-  //   forwards to run(0, fn, timeout, Update, timer)
-  // add(fn, timeout, mode, timer) -
-  //   forwards to run(0, fn, timeout, mode, timer)
-  // add(fn, timeout, mode, timer) -
-  //   forwards to run(0, fn, timeout, mode, timer)
+  //   armFn: used to arm timer with callback, e.g.
+  //     [](auto &&arm) { return arm([this]() { this->fire(); }); }
 
   // del(timer) - cancel timer
 
-  template <typename L>
-  void add(L l) { Fn fn{l}; add_(fn); }
+  template <typename ArmFn>
+  void add(
+      Timer *timer,
+      ZuTime timeout, int mode,
+      ArmFn &&armFn, unsigned sid = 0)
+  {
+    ZmAssert(sid <= m_params.nThreads());
 
-  template <typename L>
-  void add(L l, ZuTime timeout) {
-    Fn fn{l};
-    schedule_(0, fn, timeout, Update, nullptr);
-  }
-  template <typename L>
-  void add(L l, ZuTime timeout, Timer *timer) {
-    Fn fn{l};
-    schedule_(0, fn, timeout, Update, timer);
-  }
-  template <typename L>
-  void add(L l, ZuTime timeout, int mode, Timer *timer) {
-    Fn fn{l};
-    schedule_(0, fn, timeout, mode, timer);
-  }
+    bool kick = true;
 
-  template <typename L>
-  void run(unsigned sid, L l, ZuTime timeout) {
-    Fn fn{l};
-    schedule_(sid, fn, timeout, Update, nullptr);
-  }
-  template <typename L>
-  void run(unsigned sid, L l, ZuTime timeout, Timer *timer) {
-    Fn fn{l};
-    schedule_(sid, fn, timeout, Update, timer);
-  }
+    {
+      SchedGuard schedGuard(m_schedLock);
 
-  template <typename L>
-  void run(unsigned sid, L l, ZuTime timeout, int mode, Timer *timer) {
-    Fn fn{l};
-    schedule_(sid, fn, timeout, mode, timer);
-  }
+      if (ZuLikely(*timer)) {
+	switch (mode) {
+	  case Advance:
+	    if (ZuUnlikely(timer->timeout <= timeout)) return;
+	    break;
+	  case Defer:
+	    if (ZuUnlikely(timer->timeout >= timeout)) return;
+	    break;
+	}
+	m_schedule.delNode(timer);
+	timer->timeout = ZuTime{};
+      }
 
-private:
-  void schedule_(unsigned sid, Fn &, ZuTime timeout, int mode, Timer *);
+      if (timer->fn) {
+	if (ZuUnlikely(timeout <= Zm::now())) {
+	  if (ZuLikely(sid)) {
+	    if (ZuLikely(tryRun_(&m_threads[sid - 1], timer->fn))) return;
+	  } else {
+	    if (ZuLikely(timerAdd(timer->fn))) return;
+	  }
+	}
+      } else {
+	if (armFn([this, timer, timeout, sid](auto fn_) {
+	  Fn fn(fn_);
+	  if (ZuUnlikely(timeout <= Zm::now())) {
+	    if (ZuLikely(sid)) {
+	      if (ZuLikely(tryRun_(&m_threads[sid - 1], fn))) return true;
+	    } else {
+	      if (ZuLikely(timerAdd(fn))) return true;
+	    }
+	  }
+	  timer->fn = ZuMv(fn);
+	  return false;
+	})) return;
+      }
+
+      if (Timer *first = m_schedule.minimum())
+	kick = timeout < first->timeout;
+
+      timer->timeout = timeout;
+      timer->sid = sid;
+      m_schedule.addNode(timer);
+    }
+
+    if (kick) wake();
+  }
 
 public:
   bool del(Timer *);		// cancel job - returns true if found
@@ -392,17 +401,24 @@ public:
     return Zm::getTID() == thread->tid;
   }
 
-  // run and wake thread
+  // run and wake any available thread
   template <typename L>
-  void run(unsigned sid, L l) {
+  void run(L l) {
+    Fn fn{l};
+    run_(fn);
+  }
+
+  // run and wake specific thread
+  template <typename L>
+  void run(L l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
     Fn fn{l}; // l is on-stack
     run_(&m_threads[sid - 1], fn);
   }
 
-  // enqueue for thread without waking it
+  // enqueue for specific thread without waking it
   template <typename L>
-  void push(unsigned sid, L l) {
+  void push(L l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
     Fn fn{l}; // l is on-stack
     push_(&m_threads[sid - 1], fn);
@@ -410,7 +426,7 @@ public:
 
   // run and wake thread, unless already on-thread, in which case direct call
   template <typename L>
-  void invoke(unsigned sid, L l) {
+  void invoke(L l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
     Thread *thread = &m_threads[sid - 1];
     if (ZuLikely(Zm::getTID() == thread->tid)) { l(); return; }
@@ -545,7 +561,7 @@ private:
   void timer();
   bool timerAdd(Fn &fn);
 
-  void add_(Fn &fn);
+  void run_(Fn &fn);
   void run_(Thread *thread, Fn &fn);
   bool tryRun_(Thread *thread, Fn &fn);
   bool push_(Thread *thread, Fn &fn);
