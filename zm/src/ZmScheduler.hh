@@ -392,10 +392,10 @@ public:
   }
 
 private:
-  bool disarm_(Timer *);
+  bool cancel_(Timer *);
 public:
-  bool disarm(Timer *);		// disarm timer - returns true if found
-  bool del(Timer *);		// delete timer (clears timer->fn) - ''
+  bool cancel(Timer *);		// cancels timer - returns true if found
+  bool del(Timer *);		// cancel and disarm timer (clears timer->fn)
 
   // returns true if caller is running on thread slot sid
   bool invoked(unsigned sid) const {
