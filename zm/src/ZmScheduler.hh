@@ -391,8 +391,11 @@ public:
     if (kick) wake();
   }
 
+private:
+  bool disarm_(Timer *);
 public:
-  bool del(Timer *);		// cancel job - returns true if found
+  bool disarm(Timer *);		// disarm timer - returns true if found
+  bool del(Timer *);		// delete timer (clears timer->fn) - ''
 
   // returns true if caller is running on thread slot sid
   bool invoked(unsigned sid) const {
