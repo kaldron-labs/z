@@ -194,11 +194,11 @@ public:
 
   template <typename ...Args>
   void run(Args &&...args) const {
-    m_sched->invoke(m_thread, ZuFwd<Args>(args)...);
+    m_sched->invoke(ZuFwd<Args>(args)..., m_thread);
   }
   template <typename ...Args>
   void invoke(Args &&...args) const {
-    m_sched->invoke(m_thread, ZuFwd<Args>(args)...);
+    m_sched->invoke(ZuFwd<Args>(args)..., m_thread);
   }
   bool invoked() const { return m_sched->invoked(m_thread); }
 

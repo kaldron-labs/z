@@ -178,7 +178,7 @@ void Terminal::close(CloseFn fn) // async
 void Terminal::start(StartFn startFn, KeyFn keyFn) // async
 {
   Guard guard(m_lock);
-  m_sched->push(m_thread, [
+  m_sched->push([
     this, startFn = ZuMv(startFn), keyFn = ZuMv(keyFn)
   ]() mutable {
     if (!start_()) return;
@@ -188,7 +188,7 @@ void Terminal::start(StartFn startFn, KeyFn keyFn) // async
       this_->wake();
     }});
     read();
-  });
+  }, m_thread);
 }
 
 bool Terminal::running() const // synchronous
@@ -205,7 +205,7 @@ void Terminal::stop() // async
   if (!isOpen_()) return;
   Guard guard(m_lock);
   m_sched->wakeFn(m_thread, {});
-  m_sched->push(m_thread, [this]() { stop_(); });
+  m_sched->push([this]() { stop_(); }, m_thread);
   wake_();
 }
 
@@ -887,7 +887,7 @@ void Terminal::bell()
 
 void Terminal::wake()
 {
-  m_sched->push(m_thread, [this]() { read(); });
+  m_sched->push([this]() { read(); }, m_thread);
   wake_();
 }
 

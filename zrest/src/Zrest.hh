@@ -496,9 +496,13 @@ template <typename, typename> friend class Client;
 private:
   void scheduleTimeout() {
     if (this->app()->timeout())
-      this->app()->mx()->add([link = ZmMkRef(impl())]() {
-	link->disconnect();
-      }, Zm::now(this->app()->timeout()), &m_timer);
+      this->app()->mx()->add(&m_timer, Zm::now(this->app()->timeout()),
+	  ZmScheduler::Update,
+	  [this](auto &&arm) {
+	    return arm([link = ZmMkRef(impl())]() {
+	      link->disconnect();
+	    });
+	  });
   }
   void cancelTimeout() {
     this->app()->mx()->del(&m_timer);
