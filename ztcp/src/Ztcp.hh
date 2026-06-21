@@ -342,7 +342,7 @@ private:
 
   // Rx thread exclusive
   ZmScheduler::Timer	m_reconnTimer;
-  CxnRef		m_cxn = nullptr;
+  CxnRef		m_cxn;		// read by Tx thread while stable
   RxStream		m_rxStream;
 
   // shared
