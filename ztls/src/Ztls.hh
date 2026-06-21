@@ -1050,7 +1050,7 @@ private:
   bool			m_handshook = false;
   ptls_handshake_properties_t m_props{};
   AsyncJob		*m_asyncJob = nullptr;
-  CxnRef		m_cxn = nullptr;
+  CxnRef		m_cxn = nullptr;	// read by Tx thread
   RxStream		m_rxStream;
 
   // shared
