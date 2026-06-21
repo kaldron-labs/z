@@ -1138,7 +1138,9 @@ private:
 
     return {clipped ? ZmPQResult::Clipped : ZmPQResult::Inserted, nullptr};
 
+#ifndef ZDEBUG
   error:
+#endif
     return {ZmPQResult::Invalid, nullptr};
   }
   template <bool Dequeue>
