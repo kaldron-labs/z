@@ -639,8 +639,8 @@ int main(int argc, char **argv)
     sizeof(std::optional<uintptr_t>));
 
   {
-    using A = ZuSpan<ZuTuple<ZuCSpan, ZuCSpan>>;
-    A a = { { "foo", "bar" }, { "baz", "bah" } };
+    using A = ZuArray<ZuTuple<ZuCSpan, ZuCSpan>, 2>;
+    A a{{ "foo", "bar" }, { "baz", "bah" }};
     ZuCHECK(a[0].p<0>() == "foo");
     ZuCHECK(a[0].p<1>() == "bar");
     ZuCHECK(a[1].p<0>() == "baz");

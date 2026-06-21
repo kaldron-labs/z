@@ -1020,7 +1020,7 @@ public:
 	cf->get("dataDir", DATADIR));
 
     attach(mx, gtkTID);
-    mx->run(gtkTID, [this]() { gtkInit(); });
+    mx->run([this]() { gtkInit(); }, gtkTID);
   }
 
   void final() {
@@ -1165,8 +1165,13 @@ public:
     }
     if (m_telRing->push(cliLink, {data, len}))
       if (!m_telCount++)
-	gtkRun(ZmFn<>{this, [](App *this_) { this_->gtkRefresh(); }},
-	    Zm::now() + m_refreshRate, ZmScheduler::Advance, &m_refreshTimer);
+	ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
+	    ZmScheduler::Advance,
+	    [this](auto &&arm) {
+	      return arm(ZmFn<>{this, [](App *this_) {
+		this_->gtkRefresh();
+	      }});
+	    }, ZGtk::App::sid());
     return len;
   }
 
@@ -1374,8 +1379,11 @@ private:
     // FIXME - restore sort col, thaw
 
     if (n)
-      gtkRun(ZmFn<>{this, [](App *this_) { this_->gtkRefresh(); }},
-	  Zm::now() + m_refreshRate, ZmScheduler::Defer, &m_refreshTimer);
+      ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
+	  ZmScheduler::Defer,
+	  [this](auto &&arm) {
+	    return arm(ZmFn<>{this, [](App *this_) { this_->gtkRefresh(); }});
+	  }, ZGtk::App::sid());
   }
   void processTel2(CliLink_ *cliLink, const ZuBSpan &msg_) {
     if (ZuUnlikely(!msg_)) {

@@ -36,10 +36,10 @@ public:
 
   template <typename ...Args>
   ZuInline void run(Args &&...args)
-    { m_sched->run(m_sid, ZuFwd<Args>(args)...); }
+    { m_sched->run(ZuFwd<Args>(args)..., m_sid); }
   template <typename ...Args>
   ZuInline void invoke(Args &&...args)
-    { m_sched->invoke(m_sid, ZuFwd<Args>(args)...); }
+    { m_sched->invoke(ZuFwd<Args>(args)..., m_sid); }
 
 private:
   void attach_();	// runs on Gtk thread

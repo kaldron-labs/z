@@ -106,7 +106,7 @@ void Store::start(StartFn fn)
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
-  m_mx->push(m_sid, [this, fn = ZuMv(fn)]() mutable {
+  m_mx->push([this, fn = ZuMv(fn)]() mutable {
     m_stopping = false;
     m_startState.reset();
     m_startFn = ZuMv(fn);
@@ -137,7 +137,7 @@ void Store::start(StartFn fn)
 	  }
 	  store->getOIDs();
 	}});
-  });
+  }, m_sid);
 }
 
 static ZeString connError(PGconn *conn)

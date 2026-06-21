@@ -1926,10 +1926,10 @@ public:
   void enqueue(Work::Task task);
 
   template <typename ...Args> void run(Args &&...args) {
-    m_mx->run(m_sid, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_sid);
   }
   template <typename ...Args> void invoke(Args &&...args) {
-    m_mx->invoke(m_sid, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_sid);
   }
 
   const OIDs &oids() const { return m_oids; }

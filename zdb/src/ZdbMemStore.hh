@@ -1166,10 +1166,10 @@ public:
   }
 
   template <typename ...Args> void run(Args &&...args) {
-    m_mx->run(m_sid, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_sid);
   }
   template <typename ...Args> void invoke(Args &&...args) {
-    m_mx->invoke(m_sid, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_sid);
   }
 
 private:

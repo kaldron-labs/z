@@ -49,11 +49,11 @@ public:
   // dataframe threads (may be shared by app workloads)
   template <typename ...Args>
   void run(Shard shard, Args &&...args) const {
-    m_mx->run(sid(shard), ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., sid(shard));
   }
   template <typename ...Args>
   void invoke(Shard shard, Args &&...args) const {
-    m_mx->invoke(sid(shard), ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., sid(shard));
   }
   bool invoked(Shard shard) const { return m_mx->invoked(sid(shard)); }
 

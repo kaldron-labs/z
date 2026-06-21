@@ -609,11 +609,11 @@ public:
   // DB thread (may be shared)
   template <typename ...Args>
   void run(Shard shard, Args &&...args) const {
-    m_mx->run(sid(shard), ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., sid(shard));
   }
   template <typename ...Args>
   void invoke(Shard shard, Args &&...args) const {
-    m_mx->invoke(sid(shard), ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., sid(shard));
   }
   bool invoked(Shard shard) const {
     return m_mx->invoked(sid(shard));
@@ -1706,11 +1706,11 @@ private:
 public:
   template <typename ...Args>
   void run(Args &&...args) const {
-    m_mx->run(m_cf.sid, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_cf.sid);
   }
   template <typename ...Args>
   void invoke(Args &&...args) const {
-    m_mx->invoke(m_cf.sid, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_cf.sid);
   }
   bool invoked() const { return m_mx->invoked(m_cf.sid); }
 
@@ -1786,7 +1786,7 @@ private:
   template <typename L>
   bool spawn(L l) {
     if (!m_mx || !m_mx->running()) return false;
-    m_mx->run(m_cf.sid, ZuMv(l));
+    m_mx->run(ZuMv(l), m_cf.sid);
     return true;
   }
   void wake();

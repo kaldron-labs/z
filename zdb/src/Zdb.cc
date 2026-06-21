@@ -273,10 +273,13 @@ void DB::start_2()
     return;
   }
 
-  run([this]() { hbSend(); },
-      m_hbSendTime = Zm::now(), &m_hbSendTimer);
-  run([this]() { holdElection(); },
-      Zm::now(int(m_cf.electionTimeout)), &m_electTimer);
+  mx()->add(&m_hbSendTimer, m_hbSendTime = Zm::now(), ZmScheduler::Update,
+      [this](auto &&arm) { return arm([this]() { hbSend(); }); },
+      sid());
+  mx()->add(&m_electTimer, Zm::now(int(m_cf.electionTimeout)),
+      ZmScheduler::Update,
+      [this](auto &&arm) { return arm([this]() { holdElection(); }); },
+      sid());
 
   listen();
 
@@ -755,9 +758,11 @@ void Cxn_::connected(ZiIOContext &io)
     db->connected(ZuMv(self));
   });
 
-  m_db->run([self = ZmMkRef(this)]() { self->hbTimeout(); },
-      Zm::now(int(m_db->config().heartbeatTimeout)),
-      ZmScheduler::Defer, &m_hbTimer);
+  m_db->mx()->add(&m_hbTimer, Zm::now(int(m_db->config().heartbeatTimeout)),
+      ZmScheduler::Defer,
+      [this](auto &&arm) {
+	return arm([self = ZmMkRef(this)]() mutable { self->hbTimeout(); });
+      }, m_db->sid());
 
   msgRead(io);
 }
@@ -830,9 +835,10 @@ void Host::associate(Cxn *cxn)
 
 void Host::reconnect()
 {
-  m_db->run([this]() { connect(); },
-      Zm::now(int(m_db->config().reconnectFreq)),
-      ZmScheduler::Defer, &m_connectTimer);
+  m_mx->add(&m_connectTimer, Zm::now(int(m_db->config().reconnectFreq)),
+      ZmScheduler::Defer,
+      [this](auto &&arm) { return arm([this]() { connect(); }); },
+      m_db->sid());
 }
 
 void Host::cancelConnect()
@@ -1250,9 +1256,11 @@ int Cxn_::msgRead2(ZmRef<IOBuf> buf)
 	break;
     }
 
-    m_db->run([this]() { hbTimeout(); },
+    m_db->mx()->add(&m_hbTimer,
 	Zm::now(int(m_db->config().heartbeatTimeout)),
-	ZmScheduler::Defer, &m_hbTimer);
+	ZmScheduler::Defer,
+	[this](auto &&arm) { return arm([this]() { hbTimeout(); }); },
+	m_db->sid());
 
     return length;
   });
@@ -1374,9 +1382,10 @@ void DB::hbSend()
 
   hbSend_();
 
-  run([this]() { hbSend(); },
-    m_hbSendTime += (time_t)m_cf.heartbeatFreq,
-    ZmScheduler::Defer, &m_hbSendTimer);
+  mx()->add(&m_hbSendTimer, m_hbSendTime += (time_t)m_cf.heartbeatFreq,
+    ZmScheduler::Defer,
+    [this](auto &&arm) { return arm([this]() { hbSend(); }); },
+    sid());
 }
 
 // send heartbeat (broadcast)

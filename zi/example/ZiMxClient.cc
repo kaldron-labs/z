@@ -169,7 +169,8 @@ public:
     if (transient && m_reconnInterval > 0) {
       std::cerr << "connect to " << m_ip << ':' << ZuBoxed(m_port) <<
 	" failed, retrying...\n" << std::flush;
-      add([this]() { connect(); }, Zm::now(m_reconnInterval));
+      add(&m_reconnTimer, Zm::now(m_reconnInterval), ZmScheduler::Update,
+	  [this](auto &&arm) { return arm([this]() { connect(); }); });
     } else if (++m_nDisconnects >= m_nConnections) {
       std::cerr << "connect failed\n" << std::flush;
       Global::post();
@@ -193,6 +194,7 @@ private:
   unsigned		m_nConcurrent;
   unsigned		m_maxRecv;
   int			m_reconnInterval;
+  ZmScheduler::Timer	m_reconnTimer;
   ZmAtomic<unsigned>	m_nDisconnects;
 };
 

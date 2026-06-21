@@ -269,23 +269,23 @@ public:
 
   template <typename ...Args>
   void rxRun(Args &&...args) {
-    m_mx->run(m_rxThread, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_rxThread);
   }
   template <typename ...Args>
   void rxPush(Args &&...args) {
-    m_mx->push(m_rxThread, ZuFwd<Args>(args)...);
+    m_mx->push(ZuFwd<Args>(args)..., m_rxThread);
   }
   template <typename ...Args>
   void rxInvoke(Args &&...args) {
-    m_mx->invoke(m_rxThread, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_rxThread);
   }
   template <typename ...Args>
   void txRun(Args &&...args) {
-    m_mx->run(m_txThread, ZuFwd<Args>(args)...);
+    m_mx->run(ZuFwd<Args>(args)..., m_txThread);
   }
   template <typename ...Args>
   void txInvoke(Args &&...args) {
-    m_mx->invoke(m_txThread, ZuFwd<Args>(args)...);
+    m_mx->invoke(ZuFwd<Args>(args)..., m_txThread);
   }
 
   void mgrAddEngine() { mgr()->addEngine(this); }
@@ -635,7 +635,10 @@ public:
     m_rrTime = Zm::now();
     ZuTime rrTime = (m_rrTime += interval);
     guard.unlock();
-    rxRun([](Rx *rx) { rx->reRequest(); }, rrTime, &m_rrTimer);
+    mx()->add(&m_rrTimer, rrTime, ZmScheduler::Update,
+	[this](auto &&arm) {
+	  return arm(ZmFn<>{rx(), [](Rx *rx) { rx->reRequest(); }});
+	}, engine()->rxThread());
   }
   void cancelReRequest() {
     mx()->del(&m_rrTimer);

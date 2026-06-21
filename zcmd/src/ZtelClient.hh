@@ -367,9 +367,13 @@ private:
 
   void scheduleTimeout() {
     if (app()->timeout())
-      app()->mx()->add([link = ZmMkRef(impl())]() {
-	link->disconnect();
-      }, Zm::now(app()->timeout()), &m_timer);
+      app()->mx()->add(&m_timer, Zm::now(app()->timeout()),
+	  ZmScheduler::Update,
+	  [this](auto &&arm) {
+	    return arm([link = ZmMkRef(impl())]() {
+	      link->disconnect();
+	    });
+	  });
   }
   void cancelTimeout() {
     app()->mx()->del(&m_timer);

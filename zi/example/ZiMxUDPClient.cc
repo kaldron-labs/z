@@ -104,12 +104,13 @@ public:
 	m_localIP, m_localPort, remoteIP, remotePort, m_options);
   }
 
-  void failed(bool transient) {
-    if (transient)
-      add([this]() { udp(); }, Zm::now(1));
-    else
-      Global::post();
-  }
+	  void failed(bool transient) {
+	    if (transient)
+	      add(&m_retryTimer, Zm::now(1), ZmScheduler::Update,
+		  [this](auto &&arm) { return arm([this]() { udp(); }); });
+	    else
+	      Global::post();
+	  }
 
   unsigned nMessages() const { return m_nMessages; }
 
@@ -119,10 +120,11 @@ private:
   ZiIP		m_remoteIP;
   unsigned	m_remotePort;
   bool		m_connect;
-  ZiCxnOptions	m_options;
-  unsigned	m_nMessages;
-  ZiSockAddr	m_dest;
-};
+	  ZiCxnOptions	m_options;
+	  unsigned	m_nMessages;
+	  ZiSockAddr	m_dest;
+	  ZmScheduler::Timer	m_retryTimer;
+	};
 
 void usage()
 {
