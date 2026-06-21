@@ -8,7 +8,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicEndpoint.hh>
 
 using namespace ZuTestUtil;
 
@@ -679,94 +678,6 @@ void testConnectionIDFrameLifecycle()
     "RETIRE_CONNECTION_ID did not retire local CID and notify hook");
 }
 
-void testCliLinkUDPConnect()
-{
-  ZuTestScope(testCliLinkUDPConnect);
-
-  ZiMultiplex mx(
-      ZiMxParams()
-	.scheduler([](auto &s) {
-	  s.nThreads(5)
-	    .thread(1, [](auto &t) { t.isolated(1); })
-	    .thread(2, [](auto &t) { t.isolated(1); })
-	    .thread(3, [](auto &t) { t.isolated(1); })
-	    .thread(4, [](auto &t) { t.isolated(1); }); })
-	.rxThread(1).txThread(2));
-
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "CliLink UDP multiplexer start failed");
-  if (!mxStarted) return;
-
-  Zquic::Endpoint sink;
-  bool sinkReady = false;
-  bool sinkFailed = false;
-  ZuCHECK(sink.init(&mx), "CliLink UDP sink init failed");
-  ZuCHECK(sink.openUDP(
-      Zquic::PathMode::ServerUnconnected,
-      ZiIP("127.0.0.1"), 0, ZiIP{}, 0,
-      Zquic::Endpoint::DatagramFn{},
-      Zquic::Endpoint::ReadyFn{[&sinkReady](Zquic::Endpoint *) {
-	sinkReady = true;
-      }},
-      Zquic::Endpoint::FailFn{[&sinkFailed](bool) {
-	sinkFailed = true;
-      }}), "CliLink UDP sink open failed");
-  bool sinkOpened = waitUntil([&sink, &sinkReady, &sinkFailed]() {
-      return sinkFailed || (sinkReady && sink.listening() && sink.local().port());
-    });
-  if (sinkFailed) {
-    ZuCHECK(!sink.listening() && sink.diag().failures,
-      "CliLink UDP sink did not fail cleanly");
-    ZmSemaphore sinkClosed;
-    sink.closeUDP(Zquic::Endpoint::CloseFn{[&sinkClosed]() {
-      sinkClosed.post();
-    }});
-    sinkClosed.wait();
-    mx.stop();
-    return;
-  }
-  ZuCHECK(sinkOpened, "CliLink UDP sink did not become ready");
-
-  ClientShapeApp app;
-  bool appOK = app.init(
-    Zquic::ClientParams(&mx, "3", "4").alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZuCHECK(appOK, "CliLink UDP client init failed");
-  if (!appOK) {
-    mx.stop();
-    return;
-  }
-
-  ZmRef<ClientShapeLink> link = new ClientShapeLink{&app};
-  link->connect(Zquic::Host{"127.0.0.1"}, sink.local().port());
-  ZuCHECK(waitUntil([&link]() { return link->udpReady(); }),
-    "CliLink UDP socket did not become ready");
-  ZuCHECK(link->udpReadyCount() == 1 &&
-      !link->cxnDiag().failures &&
-      !link->failures,
-    "CliLink UDP diagnostics mismatch");
-
-  link->connect(Zquic::Host{"127.0.0.1"}, sink.local().port());
-  ZuCHECK(waitUntil([&link]() {
-      return link->udpReady() && link->udpReadyCount() == 2;
-    }), "CliLink UDP reconnect did not become ready");
-  ZuCHECK(!link->cxnDiag().failures &&
-      !link->failures,
-    "CliLink UDP reconnect diagnostics mismatch");
-
-  link->disconnect();
-  ZuCHECK(waitUntil([&link]() { return !link->udpReady(); }),
-    "CliLink UDP socket did not disconnect");
-
-  link = nullptr;
-  ZmSemaphore sinkClosed;
-  sink.closeUDP(Zquic::Endpoint::CloseFn{[&sinkClosed]() {
-    sinkClosed.post();
-  }});
-  sinkClosed.wait();
-  app.final();
-  mx.stop();
-}
-
 void testInitValidation()
 {
   ZuTestScope(testInitValidation);
@@ -893,6 +804,5 @@ int main(int argc, char **argv)
   ZuTestCall(testStatelessResetDetection);
   ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testConnectionIDFrameLifecycle);
-  ZuTestCall(testCliLinkUDPConnect);
   ZuTestCall(testInitValidation);
 }

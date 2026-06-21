@@ -29,10 +29,12 @@
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmList.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmQueue.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtLocalArray.hh>
@@ -57,7 +59,6 @@
 #include <zlib/ZquicFrame.hh>
 #include <zlib/ZquicTransport.hh>
 #include <zlib/ZquicCrypto.hh>
-#include <zlib/ZquicEndpoint.hh>
 #include <zlib/ZquicRecovery.hh>
 #include <zlib/ZquicSock.hh>
 
@@ -399,6 +400,500 @@ ZuDerive(ServerLinks_,
   (ZmHash<ZmRef<Link_>,
     ZmHashLock<ZmPLock,
       ZmHashHeapID<"Zquic.Server.LinkHash">>>));
+
+template <typename Impl_>
+class Endpoint_ {
+  class Cxn_ : public ZiConnection {
+  friend Endpoint_;
+
+  public:
+    static constexpr unsigned EndpointTxQueueLimit = 4096;
+
+    struct TxNode : public ZuObject {
+      TxNode() = default;
+      TxNode(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_) :
+	buf{ZuMv(buf_)}, addr{ZuMv(addr_)} { }
+
+      ZmRef<ZiIOBuf>	buf;
+      ZiSockAddr		addr;
+    };
+    ZuDerive(TxQueue,
+      (ZmList<ZmRef<TxNode>,
+	ZmListNode<ZmRef<TxNode>,
+	  ZmListHeapID<"Zquic.Endpoint.TxQueue">>>));
+
+    void *operator new(size_t s) {
+      using Heap = ZmHeap<"Zquic.Endpoint.Cxn", Cxn_>;
+      return Heap::operator new(s);
+    }
+    void operator delete(void *p) noexcept {
+      using Heap = ZmHeap<"Zquic.Endpoint.Cxn", Cxn_>;
+      Heap::operator delete(p);
+    }
+
+    Cxn_(Endpoint_ *endpoint, const ZiCxnInfo &ci, unsigned generation) :
+	ZiConnection(endpoint->m_mx, ci),
+	m_endpoint{endpoint},
+	m_generation{generation} { }
+
+    void connected(ZiIOContext &io) override {
+      m_endpoint->connected_(this, io);
+    }
+    void disconnected() override {
+      m_endpoint->disconnected_(this);
+    }
+
+    unsigned generation() const { return m_generation; }
+    bool txPending() const { return !!m_txBuf; }
+    uint64_t txQueued() const { return m_txQueue.count_(); }
+
+    bool sendPkt(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+      if (m_closing.load_()) {
+	++m_endpoint->m_txDiag.txDropped;
+	return false;
+      }
+      if (!buf) {
+	++m_endpoint->m_txDiag.txDropped;
+	return false;
+      }
+      ZiAssert(m_endpoint->m_mx &&
+	  m_endpoint->m_mx->invoked(m_endpoint->m_mx->txThread()),
+	"Zquic", (), "QUIC endpoint send outside Tx thread", return false);
+      if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr));
+      ++m_endpoint->m_txDiag.submittedTx;
+      m_endpoint->m_txDiag.submittedBytes += buf->length;
+      m_txBuf = ZuMv(buf);
+      m_txAddr = ZuMv(addr);
+      send(ZiIOFn{this, ZmFnPtr<&Cxn_::sendStart_>{}});
+      return true;
+    }
+
+  private:
+    void beginCloseRx_() {
+      m_closing = true;
+    }
+
+    void drainTx_() {
+      m_closing = true;
+      m_txBuf = nullptr;
+      m_txQueue.clean();
+    }
+
+    void drainRx_() {
+      m_closing = true;
+      m_rxBuf = nullptr;
+    }
+
+    bool enqueueTx_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+      if (m_txQueue.count_() >= EndpointTxQueueLimit)
+	++m_endpoint->m_txDiag.txBackPressure;
+      ++m_endpoint->m_txDiag.submittedTx;
+      m_endpoint->m_txDiag.submittedBytes += buf->length;
+      m_txQueue.push(new TxNode{ZuMv(buf), ZuMv(addr)});
+      return true;
+    }
+
+    bool dequeueTx_() {
+      auto node = m_txQueue.shiftVal();
+      if (!node) return false;
+      m_txBuf = ZuMv(node->buf);
+      m_txAddr = ZuMv(node->addr);
+      return true;
+    }
+
+    void scheduleTx_() {
+      m_endpoint->m_mx->txRun([cxn = ZmMkRef(this)]() mutable {
+	if (cxn->m_closing.load_() || !cxn->m_txBuf) return;
+	cxn->send(ZiIOFn{cxn.ptr(), ZmFnPtr<&Cxn_::sendStart_>{}});
+      });
+    }
+
+    bool recvDone_(ZiIOContext &io) {
+      if (io.length < 0) {
+	m_endpoint->ioError_();
+	io.disconnect();
+	return true;
+      }
+      if (io.length > 0 && m_rxBuf) {
+	m_rxBuf->skip = 0;
+	m_rxBuf->length = unsigned(io.length);
+	auto buf = ZuMv(m_rxBuf);
+	m_endpoint->received_(Datagram{ZuMv(buf), io.addr});
+      }
+      if (m_closing.load_()) {
+	io.complete();
+	return true;
+      }
+      armRecv_(io);
+      return true;
+    }
+
+    void armRecv_(ZiIOContext &io) {
+      m_rxBuf = m_endpoint->allocRxPkt_();
+      io.init(
+	ZiIOFn{this, ZmFnPtr<&Cxn_::recvDone_>{}},
+	m_rxBuf->data_(), m_rxBuf->size, 0);
+    }
+
+    bool sendStart_(ZiIOContext &io) {
+      if (!m_txBuf) {
+	io.complete();
+	return true;
+      }
+      io.init(
+	ZiIOFn{this, ZmFnPtr<&Cxn_::sendDone_>{}},
+	m_txBuf->data(), m_txBuf->length, 0, m_txAddr);
+      return true;
+    }
+
+    bool sendDone_(ZiIOContext &io) {
+      if (io.length < 0) {
+	m_endpoint->ioError_();
+	bool hadQueue = m_txQueue.count_();
+	m_txBuf = nullptr;
+	if (dequeueTx_()) {
+	  if (hadQueue) m_endpoint->txDrained_();
+	  io.complete();
+	  scheduleTx_();
+	  return true;
+	}
+	if (hadQueue) m_endpoint->txDrained_();
+	io.complete();
+	return true;
+      }
+      if ((io.offset += io.length) < io.size) return true;
+      bool hadQueue = m_txQueue.count_();
+      m_endpoint->sent_(io.size);
+      m_txBuf = nullptr;
+      if (dequeueTx_()) {
+	if (hadQueue) m_endpoint->txDrained_();
+	io.complete();
+	scheduleTx_();
+	return true;
+      }
+      if (hadQueue) m_endpoint->txDrained_();
+      io.complete();
+      return true;
+    }
+
+  private:
+    Endpoint_		*m_endpoint = nullptr;
+    unsigned		m_generation = 0;
+    ZmAtomic<unsigned>	m_closing = 0;
+
+    ZmRef<ZiIOBuf>	m_rxBuf;
+
+    ZmRef<ZiIOBuf>	m_txBuf;
+    ZiSockAddr		m_txAddr;
+    TxQueue		m_txQueue;
+  };
+
+public:
+  using Impl = Impl_;
+  using RxPktAlloc = PktRxBufAlloc<>;
+  using TxPktAlloc = PktTxBufAlloc<>;
+
+  Endpoint_() = default;
+  ~Endpoint_() {
+    if (!m_open.load_()) return;
+    ZiAssert(false, "Zquic", (),
+      "QUIC endpoint destroyed before finalization", return);
+  }
+
+  Endpoint_(const Endpoint_ &) = delete;
+  Endpoint_ &operator =(const Endpoint_ &) = delete;
+
+  bool init(ZiMultiplex *mx) {
+    ZiAssert(mx, "Zquic", (), "null endpoint multiplexer", return false);
+    ZiAssert(mx->running(), "Zquic", (),
+      "endpoint multiplexer is not running", return false);
+    if (m_mx) return m_mx == mx;
+    m_mx = mx;
+    return true;
+  }
+
+  bool openUDP(
+      PathMode::T mode,
+      ZiIP localIP, uint16_t localPort,
+      ZiIP remoteIP = {}, uint16_t remotePort = 0)
+  {
+    ZiAssert(m_mx, "Zquic", (), "endpoint multiplexer is not initialized",
+      return false);
+    ZiMultiplex *mx = m_mx;
+    ZiAssert(mx->running(), "Zquic", (),
+      "endpoint multiplexer is not running", return false);
+    if (m_open.load_() || m_cxn) return false;
+
+    m_mode = mode;
+    m_local.init(localIP, localPort);
+    if (!!remoteIP) m_remote.init(remoteIP, remotePort); else m_remote.null();
+    m_sockConfig = SockConfig{IPFamily::IPv4, mode, true, true};
+    m_sockDiag = {};
+    m_listening = false;
+    m_open = true;
+    ++m_generation;
+
+    m_mx->txInvoke([this, generation = m_generation]() mutable {
+      m_txCxn = nullptr;
+      m_txGeneration = generation;
+      m_txClosing = false;
+      m_txDiag = {};
+    });
+
+    ZiCxnOptions options;
+    options.udp(true);
+
+    m_mx->udp(
+      ZiConnectFn{this, [](Endpoint_ *self, const ZiCxnInfo &ci) -> ZiConnection * {
+	auto cxn = new Cxn_{self, ci, self->m_generation};
+	self->m_cxn = cxn;
+	self->m_mx->txRun([
+	  self, cxn = ZmMkRef(cxn), generation = self->m_generation
+	]() mutable {
+	  if (self->m_txGeneration != generation || self->m_txClosing) return;
+	  self->m_txCxn = ZuMv(cxn);
+	});
+	return cxn;
+      }},
+      ZiFailFn{this, [](Endpoint_ *self, bool transient) {
+	self->failed_(transient);
+      }},
+      localIP, localPort,
+      mode == PathMode::ClientConnected ? remoteIP : ZiIP{},
+      mode == PathMode::ClientConnected ? remotePort : 0,
+      options);
+
+    return true;
+  }
+
+  void closeUDP() { closeUDP([]() { }); }
+  template <typename Fn>
+  void closeUDP(Fn fn) {
+    if (!m_open.load_()) {
+      if (!m_mx || endpointRxInvoked_()) {
+	fn();
+	return;
+      }
+      m_mx->rxRun([fn = ZuMv(fn)]() mutable { fn(); });
+      return;
+    }
+    if (endpointRxInvoked_()) {
+      closeUDP_(ZuMv(fn));
+      return;
+    }
+    m_mx->rxRun([this, fn = ZuMv(fn)]() mutable {
+      closeUDP_(ZuMv(fn));
+    });
+  }
+
+  bool listening() const { return m_listening; }
+  bool connected() const { return m_connected.load_(); }
+  const ZiSockAddr &local() const { return m_local; }
+  const ZiSockAddr &remote() const { return m_remote; }
+  PathMode::T mode() const { return m_mode; }
+  EndpointDiag diag() const {
+    uint64_t txPending = 0;
+    uint64_t txQueued = 0;
+    if (m_txCxn && m_txCxn->generation() == m_txGeneration) {
+      txPending = m_txCxn->txPending();
+      txQueued = m_txCxn->txQueued();
+    }
+    return {m_rxDiag, m_txDiag, txPending, txQueued};
+  }
+  SockDiag sockDiag() const { return m_sockDiag; }
+  void failure() { ++m_rxDiag.failures; }
+  ZmRef<ZiIOBuf> allocTxPkt() { return new TxPktAlloc{this}; }
+
+  bool send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    if (!buf) return false;
+    ZiAssert(m_mx, "Zquic", (), "null endpoint multiplexer", return false);
+    if (!m_open.load_()) return false;
+    ++m_txDiag.sendCalls;
+    if (endpointTxInvoked_()) {
+      ++m_txDiag.directCalls;
+      return send_(ZuMv(buf), ZuMv(addr));
+    }
+    ++m_txDiag.asyncCalls;
+    m_mx->txRun([this, buf = ZuMv(buf), addr = ZuMv(addr)]() mutable {
+      (void)send_(ZuMv(buf), ZuMv(addr));
+    });
+    return true;
+  }
+
+private:
+  void connected_(Cxn_ *cxn, ZiIOContext &io) {
+    if (cxn != m_cxn || cxn->generation() != m_generation) return;
+
+    Sock::initUDP(cxn->info().socket, m_sockConfig, &m_sockDiag);
+
+#ifndef _WIN32
+    {
+      ZiSockAddr local;
+      socklen_t len = local.len();
+      if (::getsockname(cxn->info().socket, local.sa(), &len) == 0)
+	m_local = local;
+    }
+#endif
+
+    m_listening = true;
+    m_connected = true;
+    cxn->armRecv_(io);
+    impl()->endpointReady_(this);
+  }
+
+  void disconnected_(Cxn_ *cxn) {
+    bool active = cxn == m_cxn && cxn->generation() == m_generation;
+    bool closing = cxn == m_closingCxn &&
+      cxn->generation() == m_closingGeneration &&
+      cxn->generation() == m_generation;
+    if (active || closing) {
+      if (active) beginCloseTx_(ZmMkRef(cxn));
+      cxn->drainRx_();
+      m_cxn = nullptr;
+      if (closing) m_closingCxn = nullptr;
+      m_listening = false;
+      m_connected = false;
+      impl()->endpointDown_(this);
+      completeClose_();
+    }
+  }
+
+  void failed_(bool transient) {
+    ++m_rxDiag.failures;
+    m_listening = false;
+    m_connected = false;
+    impl()->endpointFailed_(transient);
+    impl()->endpointDown_(this);
+    beginCloseTx_();
+    completeClose_();
+  }
+
+  void received_(Datagram datagram) {
+    ++m_rxDiag.datagramsRx;
+    if (datagram.buf) m_rxDiag.bytesRx += datagram.buf->length;
+    impl()->endpointDatagram_(ZuMv(datagram));
+  }
+
+  void sent_(unsigned bytes) {
+    ++m_txDiag.datagramsTx;
+    m_txDiag.bytesTx += bytes;
+  }
+
+  void txDrained_() {
+    impl()->endpointTxDrained_();
+  }
+
+  void ioError_() {
+    if (endpointTxInvoked_())
+      ++m_txDiag.failures;
+    else
+      ++m_rxDiag.failures;
+  }
+
+  bool send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(endpointTxInvoked_(), "Zquic", (),
+      "QUIC endpoint send outside Tx thread", return false);
+    if (!m_txCxn || m_txClosing) {
+      ++m_txDiag.txDropped;
+      return false;
+    }
+    auto cxn = m_txCxn;
+    if (cxn->generation() != m_txGeneration) {
+      ++m_txDiag.txDropped;
+      return false;
+    }
+    return cxn->sendPkt(ZuMv(buf), ZuMv(addr));
+  }
+
+  template <typename Fn>
+  void closeUDP_(Fn fn) {
+    m_listening = false;
+    m_connected = false;
+    m_closeFn = ZuMv(fn);
+    if (m_cxn) beginCloseTx_(ZmMkRef(m_cxn));
+    else beginCloseTx_();
+    if (m_cxn) {
+      m_closingCxn = m_cxn;
+      m_closingGeneration = m_cxn->generation();
+      m_cxn->beginCloseRx_();
+      m_cxn->close();
+      m_cxn = nullptr;
+      return;
+    }
+    completeClose_();
+  }
+
+  void beginCloseTx_(ZmRef<Cxn_> cxn = {}) {
+    if (m_closeTxPending) return;
+    m_closeTxPending = true;
+    m_mx->txRun([
+      this, generation = m_generation, cxn = ZuMv(cxn)
+    ]() mutable {
+      closeTx_(generation, ZuMv(cxn));
+    });
+  }
+
+  void closeTx_(unsigned generation, ZmRef<Cxn_> cxn) {
+    if (m_txGeneration == generation) {
+      m_txClosing = true;
+      if (m_txCxn && m_txCxn->generation() == generation)
+	m_txCxn->drainTx_();
+      else if (cxn && cxn->generation() == generation)
+	cxn->drainTx_();
+      m_txCxn = nullptr;
+    }
+    m_mx->txRun([this, generation]() {
+      m_mx->rxRun([this, generation]() { closeTxDone_(generation); });
+    });
+  }
+
+  void closeTxDone_(unsigned generation) {
+    if (generation == m_generation) m_closeTxPending = false;
+    completeClose_();
+  }
+
+  void completeClose_() {
+    if (m_closingCxn || m_closeTxPending) return;
+    m_open = false;
+    auto fn = ZuMv(m_closeFn);
+    m_closeFn = ZmFn<>{};
+    fn();
+  }
+
+  bool endpointRxInvoked_() const {
+    return m_mx && m_mx->invoked(m_mx->rxThread());
+  }
+  bool endpointTxInvoked_() const {
+    return m_mx && m_mx->invoked(m_mx->txThread());
+  }
+  ZmRef<ZiIOBuf> allocRxPkt_() { return new RxPktAlloc{this}; }
+  const Impl *impl() const { return static_cast<const Impl *>(this); }
+  Impl *impl() { return static_cast<Impl *>(this); }
+
+  ZiMultiplex	*m_mx = nullptr;
+  PathMode::T	m_mode = PathMode::ServerUnconnected;
+  ZiSockAddr	m_local;
+  ZiSockAddr	m_remote;
+  SockConfig	m_sockConfig;
+
+  Cxn_			*m_cxn = nullptr;
+  Cxn_			*m_closingCxn = nullptr;
+  ZmFn<>		m_closeFn;
+  unsigned		m_generation = 0;
+  unsigned		m_closingGeneration = 0;
+  bool			m_closeTxPending = false;
+  EndpointRxDiag	m_rxDiag;
+  SockDiag		m_sockDiag;
+
+  ZmRef<Cxn_>		m_txCxn;
+  unsigned		m_txGeneration = 0;
+  bool			m_txClosing = false;
+  EndpointTxDiag	m_txDiag;
+
+  ZmAtomic<unsigned>	m_connected = 0;
+  ZmAtomic<unsigned>	m_listening = 0;
+  ZmAtomic<unsigned>	m_open = 0;
+};
 
 struct CxnIDGen {
   static constexpr unsigned InitialLength = MinCIDLength;
@@ -1059,6 +1554,8 @@ template <typename, typename, typename, typename>
 friend class CliLink;
 template <typename, typename, typename, typename>
 friend class SrvLink;
+template <typename>
+friend class Endpoint_;
 
 public:
   using App = App_;
@@ -1357,13 +1854,16 @@ struct AppLink : public Zquic::SrvLink<App, AppLink, AppStream> {
   void streamed(ZmRef<Stream>); // Zquic Rx thread
 };
 #endif
-template <typename App_, typename Link_> class Server : public Engine<App_> {
+template <typename App_, typename Link_> class Server :
+  public Engine<App_>,
+  public Endpoint_<Server<App_, Link_>> {
 public:
   using App = App_;
   using Link = Link_;
   using LinkRef = ZmRef<Link>;
   using LinkTable = ServerLinks_<Link>;
   using Base = Engine<App>;
+  using Endpoint = Endpoint_<Server>;
   using Base::app;
   static constexpr unsigned TLSBufSize = Client<App>::TLSBufSize;
   static constexpr unsigned RuntimePNLength = Client<App>::RuntimePNLength;
@@ -1381,7 +1881,7 @@ friend class SrvLink;
     }
     if (!this->init_(ZuMv(params), [](const ServerParams &) { return true; }))
       return false;
-    return m_endpoint.init(this->mx());
+    return Endpoint::init(this->mx());
   }
 
   void final() {
@@ -1395,31 +1895,8 @@ friend class SrvLink;
     close();
     ZiIP localIP = this->app()->localIP();
     uint16_t localPort = this->app()->localPort();
-    return m_endpoint.openUDP(
-      PathMode::ServerUnconnected,
-      localIP, localPort,
-      ZiIP{}, 0,
-      Endpoint::DatagramFn{this, [](Server *self, Datagram d) {
-	self->rxRun([self, d = ZuMv(d)]() mutable {
-	  self->received_(ZuMv(d));
-	});
-      }},
-      Endpoint::ReadyFn{this, [](Server *self, Endpoint *) {
-	self->rxRun([self]() {
-	  self->app()->listening();
-	});
-      }},
-      Endpoint::FailFn{this, [](Server *self, bool transient) {
-	self->rxRun([self, transient]() {
-	  self->failed_0(transient);
-	});
-      }},
-      Endpoint::DownFn{},
-      Endpoint::TxDrainedFn{this, [](Server *self) {
-	self->rxRun([self]() {
-	  self->txDrained_();
-	});
-      }});
+    if (!Endpoint::init(this->mx())) return false;
+    return Endpoint::openUDP(PathMode::ServerUnconnected, localIP, localPort);
   }
 
   void close() {
@@ -1437,21 +1914,21 @@ friend class SrvLink;
 
   void close_() {
     clearLinks_();
-    m_endpoint.closeUDP(Endpoint::CloseFn{});
+    Endpoint::closeUDP();
   }
 
-  bool listening() const { return m_endpoint.listening(); }
-  bool connected() const { return m_endpoint.connected(); }
-  const ZiSockAddr &local() const { return m_endpoint.local(); }
+  bool listening() const { return Endpoint::listening(); }
+  bool connected() const { return Endpoint::connected(); }
+  const ZiSockAddr &local() const { return Endpoint::local(); }
   EndpointDiag endpointDiag() const {
     auto mx = this->mx();
-    if (!mx) return m_endpoint.diag();
-    if (mx->invoked(mx->txThread())) return m_endpoint.diag();
+    if (!mx) return Endpoint::diag();
+    if (mx->invoked(mx->txThread())) return Endpoint::diag();
     EndpointDiag diag;
     ZmSemaphore done;
     auto server = const_cast<Server *>(this);
     mx->txRun([server, &diag, &done]() mutable {
-      diag = server->m_endpoint.diag();
+      diag = server->Endpoint::diag();
       done.post();
     });
     done.wait();
@@ -1492,14 +1969,38 @@ friend class SrvLink;
   }
 
   ZmRef<ZiIOBuf> allocTxPkt_() {
-    return m_endpoint.allocTxPkt();
+    return Endpoint::allocTxPkt();
   }
   bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (!this->app()->sendPkt(buf)) return true;
-    return m_endpoint.send(ZuMv(buf), ZuMv(addr));
+    return Endpoint::send(ZuMv(buf), ZuMv(addr));
+  }
+  bool sendPktRaw_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    return Endpoint::send(ZuMv(buf), ZuMv(addr));
   }
   void dissociateRoute_(const CxnID &id) {
     m_routes.retire(id);
+  }
+
+public:
+  void endpointDatagram_(Datagram d) {
+    this->rxRun([this, d = ZuMv(d)]() mutable {
+      received_(ZuMv(d));
+    });
+  }
+  void endpointReady_(Endpoint *) {
+    this->rxRun([this]() {
+      this->app()->listening();
+    });
+  }
+  void endpointFailed_(bool transient) {
+    this->rxRun([this, transient]() {
+      failed_0(transient);
+    });
+  }
+  void endpointDown_(Endpoint *) { }
+  void endpointTxDrained_() {
+    this->rxRun([this]() { txDrained_(); });
   }
 
 private:
@@ -1521,7 +2022,7 @@ private:
     Link *link = route_(d);
     if (!link) {
       sendStatelessReset_(d);
-      m_endpoint.failure();
+      Endpoint::failure();
       return;
     }
     if (link->receivedRouted_(ZuMv(d)))
@@ -1625,7 +2126,6 @@ private:
   }
 
   // Rx thread exclusive
-  Endpoint		m_endpoint;
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;
@@ -6772,11 +7272,13 @@ template <
   typename App, typename Impl, typename Stream_,
   typename TxBufAlloc_ = StreamTxBufAlloc<>>
 class CliLink :
-  public Link<App, Impl, TxBufAlloc_, Stream_> {
+  public Link<App, Impl, TxBufAlloc_, Stream_>,
+  public Endpoint_<CliLink<App, Impl, Stream_, TxBufAlloc_>> {
 public:
   using Base = Link<App, Impl, TxBufAlloc_, Stream_>;
   using Stream = Stream_;
   using StreamRef = ZmRef<Stream>;
+  using Endpoint = Endpoint_<CliLink>;
   static constexpr unsigned TLSBufSize = 64 * 1024;
   static constexpr unsigned RuntimePNLength = 2;
   static constexpr unsigned RuntimeCryptoChunk = 900;
@@ -6784,6 +7286,7 @@ public:
   using Base::app;
   using Base::impl;
   friend Base;
+  friend Endpoint;
   template <typename, typename, typename> friend class Zquic::Stream;
 
   CliLink(App *app) : Base{app, false} { Base::initCryptoDelivery_(); }
@@ -6864,22 +7367,18 @@ public:
   uint64_t udpReadyCount() const { return m_udpReadyCount; }
   bool ready() const { return m_udpReady; }
   bool established() const { return Base::runtimeEstablished_(); }
-  Endpoint *endpoint() { return &m_endpoint; }
-  const Endpoint *endpoint() const { return &m_endpoint; }
-  Endpoint *cxn() const {
-    return m_endpoint.connected() ? const_cast<Endpoint *>(&m_endpoint) : nullptr;
-  }
-  const ZiSockAddr &local() const { return m_endpoint.local(); }
-  const ZiSockAddr &remote() const { return m_endpoint.remote(); }
+  bool cxn() const { return Endpoint::connected(); }
+  const ZiSockAddr &local() const { return Endpoint::local(); }
+  const ZiSockAddr &remote() const { return Endpoint::remote(); }
   EndpointDiag cxnDiag() const { return endpointDiag(); }
   EndpointDiag endpointDiag() const {
     auto mx = app()->mx();
-    if (mx->invoked(mx->txThread())) return m_endpoint.diag();
+    if (mx->invoked(mx->txThread())) return Endpoint::diag();
     EndpointDiag diag;
     ZmSemaphore done;
     auto link = const_cast<CliLink *>(this)->impl();
     mx->txRun([link, &diag, &done]() mutable {
-      diag = link->m_endpoint.diag();
+      diag = link->Endpoint::diag();
       done.post();
     });
     done.wait();
@@ -6935,7 +7434,7 @@ public:
   void pto_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client PTO outside Tx thread", return);
-    if (Base::closed() || !m_endpoint.connected())
+    if (Base::closed() || !Endpoint::connected())
       return;
     Base::notePTOExpired_();
     uint64_t packetsTx = Base::txPackets_();
@@ -6969,7 +7468,7 @@ public:
   bool retransmit_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client retransmit outside Tx thread", return false);
-    if (Base::closed() || !m_endpoint.connected())
+    if (Base::closed() || !Endpoint::connected())
       return false;
     SentFrameRef ref;
     bool sent = false;
@@ -6983,10 +7482,10 @@ public:
 	if (!Base::buildRetransmitCrypto_(level, build, ref)) continue;
 	bool ok =
 	  level == CryptoLevel::Initial ?
-	    sendInitialPkt_(build, m_endpoint.remote(), {}, &ref, true) :
+	    sendInitialPkt_(build, Endpoint::remote(), {}, &ref, true) :
 	  level == CryptoLevel::Handshake ?
-	    sendHandshakePkt_(build, m_endpoint.remote(), {}, &ref, true) :
-	    sendShortPkt_(build, m_endpoint.remote(), {}, &ref, true);
+	    sendHandshakePkt_(build, Endpoint::remote(), {}, &ref, true) :
+	    sendShortPkt_(build, Endpoint::remote(), {}, &ref, true);
 	if (!ok) {
 	  Base::requeueRetransmit_(level, ref);
 	  break;
@@ -7012,7 +7511,7 @@ public:
 	}
       } else if (!Base::buildRetransmitControl_(build, ref))
 	continue;
-      if (!sendShortPkt_(build, m_endpoint.remote(), {}, &ref, true)) {
+      if (!sendShortPkt_(build, Endpoint::remote(), {}, &ref, true)) {
 	if (ref.kind == SentFrameKind::Stream)
 	  if (Base::debugLog_())
 	    ZiLOG(Debug, "Zquic", ([ref](auto &s) {
@@ -7035,7 +7534,7 @@ public:
     if (!Base::buildPingProbe_(build)) return false;
     typename Base::TxPktRefs refs;
     return sendShortPkt_(
-      build, m_endpoint.remote(), {},
+      build, Endpoint::remote(), {},
       &refs, true);
   }
 
@@ -7070,48 +7569,13 @@ public:
     resetRuntimeState_();
     Base::resetRuntimeDiag_();
 
-    if (!m_endpoint.init(app()->mx())) {
+    if (!Endpoint::init(app()->mx())) {
       connectFailed_0(false);
       return;
     }
-    if (!m_endpoint.openUDP(
+    if (!Endpoint::openUDP(
 	PathMode::ClientConnected,
-	ZiIP{}, 0, ip, m_port,
-	Endpoint::DatagramFn{[link = impl()](Datagram d) mutable {
-	  if (!link->up_()) return;
-	  link->app()->rxRun([link, d = ZuMv(d)]() mutable {
-	    if (!link->up_()) return;
-	    link->received_(ZuMv(d));
-	  });
-	}},
-	Endpoint::ReadyFn{[link = impl()](Endpoint *ep) mutable {
-	  if (!link->up_()) return;
-	  link->app()->rxRun([link, ep]() mutable {
-	    if (!link->up_()) return;
-	    link->endpointReady_(ep);
-	  });
-	}},
-	Endpoint::FailFn{[link = impl()](bool transient) mutable {
-	  if (!link->up_()) return;
-	  link->app()->rxRun([link, transient]() mutable {
-	    if (!link->up_()) return;
-	    link->connectFailed_0(transient);
-	  });
-	}},
-	Endpoint::DownFn{[link = impl()](Endpoint *ep) mutable {
-	  if (!link->up_()) return;
-	  link->app()->rxRun([link, ep]() mutable {
-	    if (!link->up_()) return;
-	    link->endpointDown_(ep);
-	  });
-	}},
-	Endpoint::TxDrainedFn{[link = impl()]() mutable {
-	  if (!link->up_()) return;
-	  link->app()->txRun([link]() mutable {
-	    if (!link->up_()) return;
-	    link->txDrained_();
-	  });
-	}}))
+	ZiIP{}, 0, ip, m_port))
       connectFailed_0(false);
   }
 
@@ -7133,8 +7597,8 @@ private:
   template <typename Fn>
   void closeCurrent_(bool notify, Fn fn) {
     if (notify && Base::runtimeEstablished_() &&
-	m_endpoint.connected() && m_endpoint.remote()) {
-      closeAfterConnectionClose_(notify, m_endpoint.remote(), ZuMv(fn));
+	Endpoint::connected() && Endpoint::remote()) {
+      closeAfterConnectionClose_(notify, Endpoint::remote(), ZuMv(fn));
       return;
     }
     closeEndpoint_(notify, ZuMv(fn));
@@ -7181,15 +7645,13 @@ private:
       "QUIC endpoint close drain outside Rx thread", return);
     Base::up_(false);
     m_udpReady = 0;
-    m_notifyEndpointDown = notify;
+    m_notifyEndpointDown = false;
+    if (notify) impl()->disconnected();
     if (Base::closed()) Base::clearCallbacks_();
     Base::resetTLS_();
-    m_endpoint.closeUDP(Endpoint::CloseFn{
-	[link = impl(), fn = ZuMv(fn)]() mutable {
-	  link->app()->rxRun([fn = ZuMv(fn)]() mutable {
-	    fn();
-	  });
-	}});
+    Endpoint::closeUDP([link = impl(), fn = ZuMv(fn)]() mutable {
+      link->app()->rxRun([fn = ZuMv(fn)]() mutable { fn(); });
+    });
   }
 
   void resetRuntimeState_() {
@@ -7218,10 +7680,10 @@ private:
   bool startHandshake_() {
     if (Base::runtimeHandshakeStarted_()) return true;
     resetRuntimeState_();
-    Base::initClientPath_(m_endpoint.local(), m_endpoint.remote());
+    Base::initClientPath_(Endpoint::local(), Endpoint::remote());
     if (!initRuntimeCrypto_()) return false;
     if (!Base::startRuntimeHandshake_()) return false;
-    return emitTLS_(0, {}, m_endpoint.remote());
+    return emitTLS_(0, {}, Endpoint::remote());
   }
 
   void markEstablished_() {
@@ -7305,7 +7767,7 @@ private:
       return Base::sendPathPkt_(
 	ZuMv(buf), ZuMv(addr_),
 	[this](auto buf_, ZiSockAddr addr__) {
-	  return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	  return Endpoint::send(ZuMv(buf_), ZuMv(addr__));
 	});
     }) && ok;
     Base::endLongCoalesce_();
@@ -7365,9 +7827,9 @@ private:
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client flush outside Tx thread", return false);
     if (Base::closed() || !Base::runtimeEstablished_() ||
-	!m_endpoint.remote())
+	!Endpoint::remote())
       return false;
-    return flushTx_(m_endpoint.remote());
+    return flushTx_(Endpoint::remote());
   }
   bool flushTx_(ZiSockAddr addr) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
@@ -7451,7 +7913,7 @@ private:
   bool sendInitialPkt_(
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
-    if (!m_endpoint.connected()) return false;
+    if (!Endpoint::connected()) return false;
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
     if (recordRef) {
@@ -7462,7 +7924,7 @@ private:
       InitialKeyDir::Client, RuntimeCID::Initial, RuntimeCID::Local,
       Base::txPNLength_(CryptoLevel::Initial), true, payload, ZuMv(addr),
       recordFrame, recordRefs, ackEliciting,
-      [this]() { return m_endpoint.allocTxPkt(); },
+      [this]() { return Endpoint::allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
 	return Base::holdInitialForCoalesce_(
 	  ZuMv(buf), ZuMv(addr_),
@@ -7470,7 +7932,7 @@ private:
 	    return Base::sendPathPkt_(
 	      ZuMv(buf_), ZuMv(addr__),
 	      [this](auto buf__, ZiSockAddr addr___) {
-		return m_endpoint.send(ZuMv(buf__), ZuMv(addr___));
+		return Endpoint::send(ZuMv(buf__), ZuMv(addr___));
 	      });
 	  });
       });
@@ -7487,7 +7949,7 @@ private:
   bool sendHandshakePkt_(
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
-    if (!m_endpoint.connected()) return false;
+    if (!Endpoint::connected()) return false;
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
     if (recordRef) {
@@ -7499,7 +7961,7 @@ private:
       Base::txPNLength_(CryptoLevel::Handshake),
       payload, ZuMv(addr), recordFrame, recordRefs,
       ackEliciting,
-      [this]() { return m_endpoint.allocTxPkt(); },
+      [this]() { return Endpoint::allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
 	return Base::sendHandshakeCoalesced_(
 	  ZuMv(buf), ZuMv(addr_),
@@ -7507,7 +7969,7 @@ private:
 	    return Base::sendPathPkt_(
 	      ZuMv(buf_), ZuMv(addr__),
 	      [this](auto buf__, ZiSockAddr addr___) {
-		return m_endpoint.send(ZuMv(buf__), ZuMv(addr___));
+		return Endpoint::send(ZuMv(buf__), ZuMv(addr___));
 	      });
 	  });
       });
@@ -7525,7 +7987,7 @@ private:
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
     unsigned pmtudSize = 0) {
-    if (!m_endpoint.connected()) return false;
+    if (!Endpoint::connected()) return false;
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
     if (recordRef) {
@@ -7540,22 +8002,22 @@ private:
     PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
     const typename Base::TxPktRefs *recordRefs, bool ackEliciting,
     unsigned pmtudSize = 0) {
-    if (!m_endpoint.connected()) return false;
+    if (!Endpoint::connected()) return false;
     return Base::sendProtShortPkt_(
       RuntimeCID::Peer, Base::txPNLength_(CryptoLevel::OneRTT),
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
-      [this]() { return m_endpoint.allocTxPkt(); },
+      [this]() { return Endpoint::allocTxPkt(); },
       [this, pmtudSize](auto buf, ZiSockAddr addr_) {
 	if (pmtudSize)
 	  return Base::sendPathProbePkt_(
 	    ZuMv(buf), ZuMv(addr_),
 	    [this](auto buf_, ZiSockAddr addr__) {
-	      return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	      return Endpoint::send(ZuMv(buf_), ZuMv(addr__));
 	    });
 	return Base::sendPathPkt_(
 	  ZuMv(buf), ZuMv(addr_),
 	  [this](auto buf_, ZiSockAddr addr__) {
-	    return m_endpoint.send(ZuMv(buf_), ZuMv(addr__));
+	    return Endpoint::send(ZuMv(buf_), ZuMv(addr__));
 	  });
       },
       pmtudSize);
@@ -7565,7 +8027,7 @@ private:
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client CONNECTION_CLOSE outside Tx thread", return false);
     if ((!closing && Base::closed()) || !Base::runtimeEstablished_() ||
-	!m_endpoint.connected() || !addr)
+	!Endpoint::connected() || !addr)
       return false;
     PktBuild build;
     int n = FrameCodec::writeConnectionClose(
@@ -7656,7 +8118,7 @@ private:
 	return handleControlFrame_(level_, frame, ZuMv(addr_));
       });
     if (ok && level == CryptoLevel::OneRTT && Base::runtimeEstablished_())
-      Base::observePathRx_(m_endpoint.local(), ZuMv(peer));
+      Base::observePathRx_(Endpoint::local(), ZuMv(peer));
     return ok;
   }
 
@@ -7708,17 +8170,55 @@ private:
     queueTxFlush_();
   }
 
+public:
+  void endpointDatagram_(Datagram d) {
+    if (!Base::up_()) return;
+    app()->rxRun([link = ZmMkRef(impl()), d = ZuMv(d)]() mutable {
+      if (!link->up_()) return;
+      link->received_(ZuMv(d));
+    });
+  }
   void endpointReady_(Endpoint *ep) {
-    if (ep != &m_endpoint) return;
+    if (!Base::up_()) return;
+    app()->rxRun([link = ZmMkRef(impl()), ep]() mutable {
+      if (!link->up_()) return;
+      link->endpointReadyRx_(ep);
+    });
+  }
+
+  void endpointFailed_(bool transient) {
+    if (!Base::up_()) return;
+    app()->rxRun([link = ZmMkRef(impl()), transient]() mutable {
+      if (!link->up_()) return;
+      link->connectFailed_0(transient);
+    });
+  }
+  void endpointDown_(Endpoint *ep) {
+    if (!Base::up_()) return;
+    app()->rxRun([link = ZmMkRef(impl()), ep]() mutable {
+      if (!link->up_()) return;
+      link->endpointDownRx_(ep);
+    });
+  }
+  void endpointTxDrained_() {
+    if (!Base::up_()) return;
+    app()->txRun([link = ZmMkRef(impl())]() mutable {
+      if (!link->up_()) return;
+      link->txDrained_();
+    });
+  }
+
+private:
+  void endpointReadyRx_(Endpoint *ep) {
+    if (ep != static_cast<Endpoint *>(this)) return;
     m_notifyEndpointDown = true;
     ++m_udpReadyCount;
     Base::endpointReady_();
     startHandshake_();
     m_udpReady = 1;
   }
-
-  void endpointDown_(Endpoint *ep) {
-    if (ep != &m_endpoint) return;
+  void endpointDownRx_(Endpoint *ep) {
+    if (ep != static_cast<Endpoint *>(this)) return;
     m_udpReady = 0;
     bool notify = m_notifyEndpointDown;
     m_notifyEndpointDown = true;
@@ -7739,7 +8239,6 @@ private:
   }
 
   // Rx thread exclusive
-  Endpoint		m_endpoint;
   Host			m_server;
   uint16_t		m_port = 0;
   ClientBootstrap	m_bootstrap;
@@ -8106,7 +8605,7 @@ private:
   bool sendPktPath_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool &sent) {
     sent = false;
     if (!app()->sendPkt(buf)) return true;
-    sent = static_cast<Server<App, Impl> *>(app())->m_endpoint.send(
+    sent = static_cast<Server<App, Impl> *>(app())->sendPktRaw_(
       ZuMv(buf), ZuMv(addr));
     return sent;
   }
