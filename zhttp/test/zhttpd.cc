@@ -714,8 +714,10 @@ struct H3ServerLink :
       s << "connected remote=" << remote <<
 	" version=" << info.version << " alpn=" << info.alpn;
     }));
+    touch();
   }
   void disconnected() {
+    app()->mx()->del(&idleTimer);
     unsigned active = state ? state->active.load_() : 0;
     uint64_t requests = state ? state->requests.load_() : 0;
     uint64_t errors = state ? state->errors.load_() : 0;
@@ -735,6 +737,15 @@ struct H3ServerLink :
       counted = false;
     }
   }
+  void touch() {
+    auto timeout = state ? state->options.timeout : 0;
+    if (!timeout) return;
+    app()->mx()->add(&idleTimer, Zm::now(timeout), ZmScheduler::Update,
+      [this](auto &&arm) {
+	return arm([link = ZmMkRef(this)]() { link->disconnect(); });
+      });
+  }
+  void disconnect() { close(); }
   void streamed(ZmRef<Stream> stream) {
     ZiLOG(Debug, "zhttpd.h3", ([id = stream ? stream->id() : -1](auto &s) {
       s << "streamed stream=" << id;
@@ -742,6 +753,7 @@ struct H3ServerLink :
   }
 
   H3Cxn		h3;
+  ZmScheduler::Timer	idleTimer;
   State		*state = nullptr;
   HdrString		remote;
   bool		counted = true;
@@ -1009,6 +1021,7 @@ int H3ServerStream::process(Zquic::RxStream &rx)
       return -1;
     }
     (void)rx;
+    this->link()->touch();
     return 0;
   }
 
@@ -1023,6 +1036,7 @@ int H3ServerStream::process(Zquic::RxStream &rx)
   ZiLOG(Debug, "zhttpd.h3", ([id = this->id(), rc](auto &s) {
     s << "process request stream=" << id << " rc=" << rc;
   }));
+  if (rc >= 0) this->link()->touch();
   return rc;
 }
 
