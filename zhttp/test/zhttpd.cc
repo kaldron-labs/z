@@ -745,7 +745,7 @@ struct H3ServerLink :
 	return arm([link = ZmMkRef(this)]() { link->disconnect(); });
       });
   }
-  void disconnect() { close(); }
+  bool disconnect() { return Base::disconnect(); }
   void streamed(ZmRef<Stream> stream) {
     ZiLOG(Debug, "zhttpd.h3", ([id = stream ? stream->id() : -1](auto &s) {
       s << "streamed stream=" << id;
@@ -1217,10 +1217,14 @@ int main(int argc, char **argv)
   }
   if (httpInit) http.listen();
   if (tlsInit) tls.listen();
-  if (h3Init && !h3.listen()) {
-    ZiLOG(Error, "zhttpd", "H3 server listen failed");
-    state.errors = 1;
-    state.done.post();
+  bool h3Started = false;
+  if (h3Init) {
+    h3Started = h3.start();
+    if (!h3Started) {
+      ZiLOG(Error, "zhttpd", "H3 server listen failed");
+      state.errors = 1;
+      state.done.post();
+    }
   }
   IntervalMonitor mon{state.options.memDiag
 #ifdef Zquic_DEBUG
@@ -1244,6 +1248,7 @@ int main(int argc, char **argv)
     state.done.wait();
   if (h3Init) {
     h3.clearFilters();
+    if (h3Started) h3.stop();
     h3.final();
   }
   if (tlsInit) tls.final();
