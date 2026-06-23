@@ -1373,7 +1373,6 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   State state;
   Run *run = nullptr;
   ZmLock lock;
-  ZmAtomic<unsigned> stopping = 0;
   ZmAtomic<int> up = 0;
   unsigned scheduled = 0;
   unsigned active = 0;
@@ -1491,7 +1490,7 @@ struct QUICClient::Link :
       ZiAssert(up >= 0, "zhttp", (),
 	"QUIC client link up counter underflow", return);
     }
-    if (this->app()->stopping.load_()) {
+    if (!peer) {
       if (!up) this->app()->done();
       return;
     }
@@ -2524,7 +2523,6 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	for (;;) Zm::sleep(ZuTime(1));
       }
     }
-    client.stopping = true;
     if (timedOut || stalled)
       abortDrained(link.ptr());
     else
