@@ -82,7 +82,7 @@ public:
       << Zi::flush();
   }
 
-  void disconnected() {
+  void disconnected(bool) {
     m_state = State::Down;
 
     cancelTimeout();

@@ -413,7 +413,7 @@ struct TCPServer::Link :
 
   Link(TCPServer *app) : Base{app} { }
   void connected(Zi::Connected) { }
-  void disconnected() { }
+  void disconnected(bool) { }
   int process(Ztcp::RxStream &rx) {
     auto s = parser.process(rx);
     if (s == RequestParser<false>::State::Error) {
@@ -466,7 +466,7 @@ struct TLSServer::Link :
 
   Link(TLSServer *app) : Base{app} { }
   void connected(Zi::Connected) { }
-  void disconnected() { }
+  void disconnected(bool) { }
   int process(Ztls::RxStream &rx) {
     auto s = parser.process(rx);
     if (s == RequestParser<false>::State::Error) {
@@ -537,7 +537,7 @@ struct H3ServerLink :
     if (!h3.openLocal(*this))
       app()->state->errors = 1;
   }
-  void disconnected() { }
+  void disconnected(bool) { }
   void streamed(ZmRef<Stream>) { }
 
   H3Cxn	h3;
@@ -665,7 +665,7 @@ struct H1ClientLinkOps : public Base {
   H1ClientLinkOps(App *app) : Base{app} { }
 
   void connected(Zi::Connected) { sendH1Request(*this, this->app()->state->body); }
-  void disconnected() {
+  void disconnected(bool) {
     auto state = this->app()->state;
     if (!state->response.complete) {
       auto s = parser.eof();
@@ -775,7 +775,7 @@ struct H3Client::Link :
     app()->responseStreamID = request->id();
     sendH3Request(*request, app()->state->body);
   }
-  void disconnected() {
+  void disconnected(bool) {
     auto state = app()->state;
     if (!state->response.complete)
       state->errors = 1;

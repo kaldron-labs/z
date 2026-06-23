@@ -1051,7 +1051,7 @@ struct CliLink : public Base_ {
     else
       sendH1Request(this->app()->state, stream);
   }
-  void disconnected() {
+  void disconnected(bool) {
     ZiLOG(Info, "zhttp", "disconnected");
     if (!this->app()->state.done) {
       if constexpr (!H3)
@@ -1161,23 +1161,25 @@ struct H1PoolLink : public Base_ {
     sendH1Request(*req, this->stream());
   }
   void connected(Zi::Connected info) {
-    connectedFlag = true;
     if (req) logConnected(*req, info);
+    if (!this->app()->running()) {
+      this->disconnect_();
+      return;
+    }
     sendCurrent();
   }
-  void disconnected() {
-    connectedFlag = false;
+  void disconnected(bool) {
     ZiLOG(Info, "zhttp", ([id = id](auto &s) {
       s << "worker=" << id << " disconnected";
     }));
-    if (closing) {
+    if (!this->app()->running() || !req) {
       closing = false;
-      if (req) this->connect(req->url.host, req->url.port);
+      this->app()->workerStopped(this->impl());
       return;
     }
-    if (stopping) {
-      stopping = false;
-      this->app()->workerStopped(this->impl());
+    if (closing) {
+      closing = false;
+      this->connect(req->url.host, req->url.port);
       return;
     }
     if (req && !req->done) {
@@ -1185,7 +1187,7 @@ struct H1PoolLink : public Base_ {
 	++retryConnects;
 	parser.bind(this, req);
 	parser.reset();
-	this->connect(req->url.host, req->url.port);
+	connectCurrent();
 	return;
       }
       req->closeDelimited = true;
@@ -1201,6 +1203,10 @@ struct H1PoolLink : public Base_ {
       s << "worker=" << id << " failed to connect";
       if (transient) s << " (transient)";
     }));
+    if (!this->app()->running()) {
+      this->app()->workerStopped(this->impl());
+      return;
+    }
     if (req) {
       req->failed = true;
       req->done = true;
@@ -1228,7 +1234,7 @@ struct H1PoolLink : public Base_ {
 	  sendCurrent();
 	else {
 	  closing = true;
-	  this->disconnect();
+	  this->disconnect_();
 	}
 	return;
       }
@@ -1237,8 +1243,7 @@ struct H1PoolLink : public Base_ {
     this->app()->finishReq(req, ok);
     req = this->app()->nextReq(id);
     if (!req) {
-      stopping = true;
-      this->disconnect();
+      this->disconnect_();
       return;
     }
     assign(req);
@@ -1246,7 +1251,7 @@ struct H1PoolLink : public Base_ {
       sendCurrent();
     else {
       closing = true;
-      this->disconnect();
+      this->disconnect_();
     }
   }
   template <typename Rx>
@@ -1257,13 +1262,16 @@ struct H1PoolLink : public Base_ {
     return req && !req->connectionClose && !req->closeDelimited &&
       (!req->http10 || req->connectionKeepAlive) && !req->failed;
   }
+  void connectCurrent() {
+    if (!req) return;
+    this->connect(req->url.host, req->url.port);
+  }
 
   unsigned	id = 0;
   Req		reqSlot;
   Req		*req = nullptr;
-  bool		connectedFlag = false;
   bool		closing = false;
-  bool		stopping = false;
+  bool		stopped = false;
   unsigned	retryConnects = 0;
   Parser	parser;
 };
@@ -1275,6 +1283,8 @@ template <
 struct H1PoolClient : public Client_<App> {
   auto impl() const { return static_cast<const App *>(this); }
   auto impl() { return static_cast<App *>(this); }
+
+  using BaseClient = Client_<App>;
 
   using RxBufAlloc = Ztcp::RxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
   using TxBufAlloc = Ztcp::TxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
@@ -1292,7 +1302,6 @@ struct H1PoolClient : public Client_<App> {
   unsigned		complete = 0;
   unsigned		failed = 0;
   unsigned		stopped = 0;
-  bool			stopping = false;
 
   Req *nextReq(unsigned slot) {
     if (!run || next >= run->options.requests) return nullptr;
@@ -1310,24 +1319,37 @@ struct H1PoolClient : public Client_<App> {
   void workerIdle(Link *link, bool reconnect) {
     Req *req = nextReq(link->id);
     if (!req) {
-      link->stopping = true;
-      if (link->connectedFlag)
-	link->disconnect();
-      else
-	workerStopped(link);
+      link->disconnect();
       return;
     }
     link->assign(req);
     if (reconnect)
-      link->connect(req->url.host, req->url.port);
+      link->connectCurrent();
     else
       link->sendCurrent();
   }
-  void workerStopped(Link *) {
+  void workerStopped(Link *link) {
+    if (link) {
+      if (link->stopped) return;
+      link->stopped = true;
+    }
     ++stopped;
-    if ((stopping || complete >= run->options.requests) &&
+    if ((!this->running() || complete >= run->options.requests) &&
 	stopped >= links.length())
       sem.post();
+    if (!this->running() && stopped >= links.length())
+      BaseClient::stop_();
+  }
+  void stop_() {
+    if (!links.length() || stopped >= links.length()) {
+      BaseClient::stop_();
+      return;
+    }
+    for (unsigned i = 0; i < links.length(); ++i) {
+      auto link = links[i];
+      if (!link) continue;
+      link->disconnect_();
+    }
   }
   unsigned reconnFreq() const { return 0; }
 };
@@ -1350,7 +1372,6 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   ZmSemaphore sem;
   State state;
   Run *run = nullptr;
-  ZmRef<Link> link;
   ZmLock lock;
   ZmAtomic<unsigned> stopping = 0;
   ZmAtomic<int> up = 0;
@@ -1458,11 +1479,10 @@ struct QUICClient::Link :
       this->app()->failH3Link();
       return;
     }
-    this->app()->link = ZmMkRef(this);
     this->app()->openH3Streams(this);
   }
-  void disconnected() {
-    if (!this->app()->multi()) return Base::disconnected();
+  void disconnected(bool peer) {
+    if (!this->app()->multi()) return Base::disconnected(peer);
     ZiLOG(Info, "zhttp", "disconnected");
     int up = this->app()->up.load_();
     if (m_countedUp) {
@@ -2227,6 +2247,13 @@ int run(
     }
     client.filters();
   }
+  if (!client.start()) {
+    ZiLOG(Error, "zhttp", "client start failed");
+    if constexpr (Client::Transport == Zi::Transport::QUIC)
+      client.clearFilters();
+    client.final();
+    return 1;
+  }
 
   {
     using Link = typename Client::Link;
@@ -2258,6 +2285,7 @@ int run(
   int rc = client.state.failed ? 1 : 0;
   closeBody(client.state);
   req = ZuMv(client.state);
+  client.stop();
   if constexpr (Client::Transport == Zi::Transport::QUIC)
     client.clearFilters();
   client.final();
@@ -2284,6 +2312,11 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
       return 1;
     }
   }
+  if (!client.start()) {
+    ZiLOG(Error, "zhttp", "client start failed");
+    client.final();
+    return 1;
+  }
 
   unsigned n = run.options.concurrency;
   if (n > run.options.requests) n = run.options.requests;
@@ -2294,18 +2327,18 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
     Req *req = client.nextReq(i);
     if (!req) continue;
     link->assign(req);
-    link->connect(req->url.host, req->url.port);
+    link->connectCurrent();
   }
 
+  bool timedOut = false;
   if (!waitMonitored(client.sem, run.options.timeout, run.options.memDiag)) {
     ZiLOG(Error, "zhttp", "timed out");
-    client.stopping = true;
-    for (unsigned i = 0; i < client.links.length(); ++i)
-      if (client.links[i]) client.links[i]->disconnect();
-    client.sem.timedwait(Zm::now(2));
-    client.failed += run.options.requests - client.complete;
+    timedOut = true;
   }
 
+  client.stop();
+  if (timedOut)
+    client.failed += run.options.requests - client.complete;
   run.complete = client.complete;
   run.failed = client.failed;
   client.final();
@@ -2369,9 +2402,14 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       return 1;
     }
     client.filters();
+    if (!client.start()) {
+      ZiLOG(Error, "zhttp", "QUIC client start failed");
+      client.clearFilters();
+      client.final();
+      return 1;
+    }
 
-    auto link = new QUICClient::Link(&client);
-    client.link = link;
+    ZmRef<QUICClient::Link> link = new QUICClient::Link(&client);
     link->connect(run.originalURL.host, run.originalURL.port);
     bool timedOut = false;
     bool stalled = false;
@@ -2487,12 +2525,12 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       }
     }
     client.stopping = true;
-	    if (timedOut || stalled)
-	      abortDrained(link);
-	    else
-	      disconnectDrained(link);
-	    waitDisconnect(mx);
-	    bool linkFailed = false;
+    if (timedOut || stalled)
+      abortDrained(link.ptr());
+    else
+      disconnectDrained(link.ptr());
+    waitDisconnect(mx);
+    bool linkFailed = false;
     {
       ZmGuard<ZmLock> guard(client.lock);
       run.complete = client.complete;
@@ -2501,11 +2539,11 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     }
     if (linkFailed && run.complete < run.options.requests)
       resetH3Incomplete(run);
-	    if (timedOut || stalled)
-	      resetH3Incomplete(run);
-	    client.clearFilters();
-	    client.link = nullptr;
-	    client.final();
+    if (timedOut || stalled)
+      resetH3Incomplete(run);
+    client.stop();
+    client.clearFilters();
+    client.final();
     if (linkFailed && run.complete < run.options.requests)
       continue;
     if (!timedOut && !stalled)

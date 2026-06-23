@@ -26,7 +26,7 @@ public:
   ~LoopCxn() = default;
 
   void connected(ZiIOContext &io) override;
-  void disconnected() override;
+  void disconnected(bool) override;
 
 private:
   bool sendClient(ZiIOContext &io);
@@ -50,7 +50,12 @@ public:
 
   ZiConnection *connected(const ZiCxnInfo &ci)
   {
-    return new LoopCxn(this, ci);
+    auto cxn = new LoopCxn(this, ci);
+    if (ci.type == ZiCxnType::TCPOut)
+      m_clientCxn = cxn;
+    else
+      m_serverCxn = cxn;
+    return cxn;
   }
 
   void listening(const ZiListenInfo &info)
@@ -88,6 +93,25 @@ public:
   {
     return m_done.timedwait(Zm::now(seconds)) == 0;
   }
+  bool waitDisconnections(unsigned n, int seconds)
+  {
+    ZuTime timeout = Zm::now(seconds);
+    while (m_disconnects.load_() < n)
+      if (m_discDone.timedwait(timeout) != 0) return false;
+    return true;
+  }
+
+  void repeatDisconnects()
+  {
+    if (m_clientCxn) {
+      m_clientCxn->disconnect();
+      m_clientCxn->disconnect();
+    }
+    if (m_serverCxn) {
+      m_serverCxn->disconnect();
+      m_serverCxn->disconnect();
+    }
+  }
 
   void markClientEcho(bool ok)
   {
@@ -101,14 +125,16 @@ public:
     maybeDone();
   }
 
-  void markClientDisconnected()
+  void markClientDisconnected(bool peer)
   {
+    markDisconnected(peer);
     m_clientDisc = 1;
     maybeDone();
   }
 
-  void markServerDisconnected()
+  void markServerDisconnected(bool peer)
   {
+    markDisconnected(peer);
     m_serverDisc = 1;
     maybeDone();
   }
@@ -125,6 +151,9 @@ public:
   bool clientEcho_() const { return m_clientEcho.load_(); }
   bool clientDisc_() const { return m_clientDisc.load_(); }
   bool serverDisc_() const { return m_serverDisc.load_(); }
+  unsigned disconnects_() const { return m_disconnects.load_(); }
+  unsigned peerDisconnects_() const { return m_peerDisconnects.load_(); }
+  unsigned localDisconnects_() const { return m_localDisconnects.load_(); }
 
 private:
   void connectLoopback()
@@ -146,17 +175,32 @@ private:
     if (m_clientEcho.load_() && m_clientDisc.load_() && m_serverDisc.load_())
       m_done.post();
   }
+  void markDisconnected(bool peer)
+  {
+    ++m_disconnects;
+    if (peer)
+      ++m_peerDisconnects;
+    else
+      ++m_localDisconnects;
+    m_discDone.post();
+  }
 
 private:
 	  ZmSemaphore		m_done;
+	  ZmSemaphore		m_discDone;
 	  ZmScheduler::Timer	m_retryTimer;
 	  unsigned		m_listenPort = 0;
   unsigned		m_retries = 0;
+  ZmRef<LoopCxn>	m_clientCxn;
+  ZmRef<LoopCxn>	m_serverCxn;
   ZmAtomic<unsigned>	m_failed = 0;
   ZmAtomic<unsigned>	m_failKind = 0;
   ZmAtomic<unsigned>	m_clientEcho = 0;
   ZmAtomic<unsigned>	m_clientDisc = 0;
   ZmAtomic<unsigned>	m_serverDisc = 0;
+  ZmAtomic<unsigned>	m_disconnects = 0;
+  ZmAtomic<unsigned>	m_peerDisconnects = 0;
+  ZmAtomic<unsigned>	m_localDisconnects = 0;
 };
 
 LoopCxn::LoopCxn(LoopMx *mx, const ZiCxnInfo &ci) :
@@ -180,12 +224,12 @@ void LoopCxn::connected(ZiIOContext &io)
   }
 }
 
-void LoopCxn::disconnected()
+void LoopCxn::disconnected(bool peer)
 {
   if (m_client)
-    m_owner->markClientDisconnected();
+    m_owner->markClientDisconnected(peer);
   else
-    m_owner->markServerDisconnected();
+    m_owner->markServerDisconnected(peer);
 }
 
 bool LoopCxn::sendClient(ZiIOContext &io)
@@ -285,6 +329,14 @@ void testTcpLoopbackAndTelemetry()
   ZuCheck(mx.clientEcho_());
   ZuCheck(mx.clientDisc_());
   ZuCheck(mx.serverDisc_());
+  unsigned disconnects = mx.disconnects_();
+  unsigned peerDisconnects = mx.peerDisconnects_();
+  unsigned localDisconnects = mx.localDisconnects_();
+  mx.repeatDisconnects();
+  ZuCheck(mx.waitDisconnections(disconnects + 4, 5));
+  ZuCheck(mx.disconnects_() >= disconnects + 4);
+  ZuCheck(mx.peerDisconnects_() == peerDisconnects);
+  ZuCheck(mx.localDisconnects_() >= localDisconnects + 4);
 }
 
 } // namespace

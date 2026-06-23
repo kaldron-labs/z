@@ -42,7 +42,7 @@ public:
 
   void timeout() { disconnect(); }
 
-  void disconnected();
+  void disconnected(bool);
 
   void connected(ZiIOContext &io) {
     m_request.size(4096);
@@ -181,7 +181,7 @@ private:
   ZmAtomic<unsigned>	m_nDisconnects;
 };
 
-void Connection::disconnected()
+void Connection::disconnected(bool)
 {
   mx()->disconnected(this);
 }

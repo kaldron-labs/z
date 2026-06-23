@@ -17,6 +17,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmEngine.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
@@ -98,8 +99,8 @@ public:
     ZiConnection(link->app()->mx(), ci), m_link(ZuMv(link)) { }
 
   void connected(ZiIOContext &io) { m_link->connected_0(this, io); }
-  void disconnected() {
-    if (Link *link = m_link) link->disconnected_0(this, ZuMv(m_link));
+  void disconnected(bool peer) {
+    if (Link *link = m_link) link->disconnected_0(this, ZuMv(m_link), peer);
   }
 
 private:
@@ -214,22 +215,22 @@ private:
   }
 
   template <typename ImplRef_>
-  void disconnected_0(Cxn *cxn, ImplRef_ impl_) {
+  void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMv(impl_)};
-    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn)]() {
-      impl->disconnected_(cxn.ptr());
+    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn), peer]() {
+      impl->disconnected_(cxn.ptr(), peer);
       auto mx = cxn->mx();
       mx->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn)]() { });
     });
   }
 
-  void disconnected_(Cxn *cxn) {
+  void disconnected_(Cxn *cxn, bool peer) {
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP disconnected dispatch outside Rx thread", return);
     if (m_cxn == cxn) m_cxn = nullptr;
     m_disconnecting = 0;
     m_rxStream.clean();
-    impl()->disconnected();
+    impl()->disconnected(peer);
   }
 
   void rcvd_(Cxn *cxn, ZmRef<ZiIOBuf> buf) {
@@ -455,7 +456,8 @@ template <typename> friend class Server;
   SrvLink(App *app) : Base(app) { }
 };
 
-template <typename App_> class Engine {
+template <typename App_> class Engine : public ZmEngine<App_> {
+friend ZmEngine<App_>;
 template <typename, typename, typename, typename, typename, typename>
 friend class Link;
 template <typename, typename, typename, typename> friend class CliLink;
@@ -463,6 +465,11 @@ template <typename, typename, typename, typename> friend class SrvLink;
 
 public:
   using App = App_;
+  using EngineCtl = ZmEngine<App>;
+
+  using EngineCtl::start;
+  using EngineCtl::stop;
+  using EngineCtl::state;
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
@@ -526,19 +533,12 @@ private:
 
 public:
   void final() {
-    if (!m_mx || !m_rxThread) return;
-    if (m_mx->running()) {
-      if (rxInvoked())
-	final_();
-      else
-	ZmBlock<>{}([this](auto wake) mutable {
-	  rxInvoke([this, wake = ZuMv(wake)]() mutable {
-	    final_();
-	    wake();
-	  });
-	});
-    } else
+    bool ok = EngineCtl::lock(ZmEngineState::Stopped, [this]() {
       final_();
+      return true;
+    });
+    ZiAssert(ok, "Ztcp", (),
+      "TCP engine finalization while not stopped", return);
   }
 
   ZiMultiplex *mx() const { return m_mx; }
@@ -565,6 +565,28 @@ public:
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
 protected:
+  void start_() {
+    this->started(true);
+  }
+
+  void stop_() {
+    txRun([this]() {
+      rxRun([this]() { this->stopped(true); });
+    });
+  }
+
+  template <typename L>
+  bool spawn(L l) {
+    if (!m_mx || !m_mx->running()) return false;
+    rxRun(ZuMv(l));
+    return true;
+  }
+
+  void wake() {
+    if (!m_mx || !m_mx->running()) return;
+    rxRun([this]() { this->stopped(); });
+  }
+
   void error_(ZeException e) {
     if (m_errorFn)
       m_errorFn(ZuMv(e));

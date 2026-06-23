@@ -828,7 +828,7 @@ public:
   CliLink_(App_Cli *, ID, Server &&server, uint16_t port, SrvLink *);
 
   void loggedIn();
-  void disconnected();
+  void disconnected(bool);
   void connectFailed(bool transient);
 
   int processTelemetry(const uint8_t *data, unsigned len);
@@ -1608,10 +1608,10 @@ inline void CliLink_::loggedIn()
 {
   static_cast<ZDash::App *>(this->app())->loggedIn(this);
 }
-inline void CliLink_::disconnected()
+inline void CliLink_::disconnected(bool peer)
 {
   static_cast<ZDash::App *>(this->app())->disconnected(this);
-  Base::disconnected();
+  Base::disconnected(peer);
 }
 inline void CliLink_::connectFailed(bool transient)
 {

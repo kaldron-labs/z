@@ -153,7 +153,7 @@ public:
   Link(ZCmd *app, Server &&server, uint16_t port);
 
   void loggedIn();
-  void disconnected();
+  void disconnected(bool);
   void connectFailed(bool transient);
 
   int processTelemetry(ZmRef<ZiIOBuf>);
@@ -433,7 +433,7 @@ private:
     return buf->length;
   }
 
-  void disconnected() {
+  void disconnected(bool) {
     m_executed.post();
     if (m_interactive) {
       m_cli.stop();
@@ -1719,10 +1719,10 @@ inline void Link::loggedIn()
 {
   this->app()->loggedIn();
 }
-inline void Link::disconnected()
+inline void Link::disconnected(bool peer)
 {
   this->app()->disconnected();
-  Base::disconnected();
+  Base::disconnected(peer);
 }
 inline void Link::connectFailed(bool transient)
 {

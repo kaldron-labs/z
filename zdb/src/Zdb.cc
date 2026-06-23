@@ -858,7 +858,7 @@ void Cxn_::hbTimeout()
   disconnect();
 }
 
-void Cxn_::disconnected()
+void Cxn_::disconnected(bool)
 {
   ZiLOG(Info, "Zdb",
       ([id = m_host ? m_host->id() : ZuID{"unknown"},

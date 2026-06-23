@@ -504,7 +504,7 @@ public:
 
   // low-frequency - vtbl dispatch overhead is fine
   virtual void connected(ZiIOContext &rxContext) = 0;
-  virtual void disconnected() = 0;
+  virtual void disconnected(bool peer) = 0;
 
   bool up() const {
     return m_rxUp.load_() && m_txUp.load_();
@@ -533,15 +533,18 @@ private:
   void errorSend(int status, ZeError e);
   void executedSend(unsigned n);
 
-  void disconnect_1();
-  void disconnect_2();
-  void close_1();
-  void close_2();
+  void disconnect(bool peer);
+  void disconnect_1(bool peer);
+  void disconnect_2(bool peer);
+  void close(bool peer);
+  void close_1(bool peer);
+  void close_2(bool peer);
 #ifdef ZiMultiplex_IOCP
   void overlappedDisconnect(int status, unsigned n, ZeError e);
 #endif
-  void errorDisconnect(int status, ZeError e);
-  void executedDisconnect();
+  void errorDisconnect(int status, ZeError e, bool peer);
+  void executedDisconnect(bool peer);
+  void notifyDisconnected(bool peer);
 
   // immutable
   ZiMultiplex		*m_mx;
@@ -556,6 +559,7 @@ private:
   Zi_Overlapped	 	m_discOverlapped;
   Zi_Overlapped		m_rxOverlapped;
   DWORD			m_rxFlags;		// flags for WSARecv()
+  bool			m_discPeer = false;
 #endif
 
   // Tx thread exclusive

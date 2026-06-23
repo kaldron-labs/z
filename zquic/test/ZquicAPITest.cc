@@ -82,7 +82,7 @@ struct ClientShapeLink :
   void connected(Zi::Connected) { }
   void streamed(ZmRef<ClientShapeStream>) { }
   void connectFailed(bool) { ++failures; }
-  void disconnected() { ++disconnects; }
+  void disconnected(bool) { ++disconnects; }
 
   ZmAtomic<unsigned> failures = 0;
   ZmAtomic<unsigned> disconnects = 0;

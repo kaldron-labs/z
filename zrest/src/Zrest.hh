@@ -338,7 +338,7 @@ Impl : public CliLink {
       // send initial request
     }
   }
-  void disconnected() {	// optional
+  void disconnected(bool) {	// optional
     CliLink::disconnected();
     // ...
   }
@@ -458,7 +458,7 @@ template <typename, typename> friend class Client;
     }
     Link::connected();
   }
-  void disconnected() {
+  void disconnected(bool) {
     Link::disconnected();
   }
   bool up() const {
@@ -585,7 +585,7 @@ template <typename, typename> friend class Server;
   SrvLink(App *app) : Base(app) { }
 
   // void connected(Zi::Connected);
-  // void disconnected();
+  // void disconnected(bool);
 
   // int process(const uint8_t *data, unsigned len);
 };

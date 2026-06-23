@@ -257,7 +257,7 @@ public:
     send(Zcmd::saveHdr(fbb.buf(), Zcmd::Type::login()));
   }
 
-  void disconnected() {
+  void disconnected(bool) {
     m_userDBReqs.clean();
     m_cmdReqs.clean();
     m_telReqs.clean();

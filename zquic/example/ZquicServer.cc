@@ -76,7 +76,7 @@ struct AppLink :
       << " alpn=" << info.alpn << '\n' << std::flush;
   }
 
-  void disconnected() { }
+  void disconnected(bool) { }
   void streamed(ZmRef<Stream>) { }
 
   void streamFrame(uint64_t streamID, uint64_t, ZuCSpan payload, bool fin) {

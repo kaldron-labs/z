@@ -58,7 +58,7 @@ struct App : public Ztls::Client<App> {
 	tx << Zi::flush();
       }
     }
-    void disconnected() {
+    void disconnected(bool) {
       std::cerr << "disconnected\n" << std::flush;
       close();
       if (round < app()->repeats())
