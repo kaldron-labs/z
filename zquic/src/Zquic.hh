@@ -3277,7 +3277,7 @@ protected:
     return n > 0 && build.commitScratch(unsigned(n));
   }
   bool appCloseOnDisconnect_() const {
-    return app()->stopping();
+    return static_cast<const ZmEngine<App> *>(app())->stopping();
   }
 
 public:
@@ -7957,13 +7957,10 @@ private:
 	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
-    ok = Base::flushCoalescedInitial_([this](auto buf, ZiSockAddr addr_) {
-      return Base::sendPathPkt_(
-	ZuMv(buf), ZuMv(addr_),
-	[this](auto buf_, ZiSockAddr addr__) {
-	  return Endpoint::send(ZuMv(buf_), ZuMv(addr__));
-	});
-    }) && ok;
+    ok = Base::flushCoalescedInitial_(
+      [this](auto buf, ZiSockAddr addr_) {
+	return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
+      }) && ok;
     Base::endLongCoalesce_();
     return ok;
   }
@@ -8096,6 +8093,54 @@ private:
     return Base::buildPayload_(level, build, prefix, payload);
   }
 
+  bool sendPathBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client path send outside Tx thread", return false);
+    return Base::sendPathPkt_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_) {
+	return Endpoint::send(ZuMv(buf_), ZuMv(addr_));
+      });
+  }
+
+  bool sendPathProbeBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client path probe send outside Tx thread", return false);
+    return Base::sendPathProbePkt_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_) {
+	return Endpoint::send(ZuMv(buf_), ZuMv(addr_));
+      });
+  }
+
+  bool sendInitialBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client Initial buffer send outside Tx thread", return false);
+    return Base::holdInitialForCoalesce_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_) {
+	return sendPathBuf_(ZuMv(buf_), ZuMv(addr_));
+      });
+  }
+
+  bool sendHandshakeBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client Handshake buffer send outside Tx thread", return false);
+    return Base::sendHandshakeCoalesced_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_) {
+	return sendPathBuf_(ZuMv(buf_), ZuMv(addr_));
+      });
+  }
+
+  bool sendShortBuf_(
+    ZmRef<ZiIOBuf> buf, ZiSockAddr addr, unsigned pmtudSize = 0) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client Short buffer send outside Tx thread", return false);
+    if (pmtudSize) return sendPathProbeBuf_(ZuMv(buf), ZuMv(addr));
+    return sendPathBuf_(ZuMv(buf), ZuMv(addr));
+  }
+
   bool sendInitialPkt_(ZuCSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client Initial send outside Tx thread", return false);
@@ -8120,15 +8165,7 @@ private:
       recordFrame, recordRefs, ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return Base::holdInitialForCoalesce_(
-	  ZuMv(buf), ZuMv(addr_),
-	  [this](auto buf_, ZiSockAddr addr__) {
-	    return Base::sendPathPkt_(
-	      ZuMv(buf_), ZuMv(addr__),
-	      [this](auto buf__, ZiSockAddr addr___) {
-		return Endpoint::send(ZuMv(buf__), ZuMv(addr___));
-	      });
-	  });
+	return sendInitialBuf_(ZuMv(buf), ZuMv(addr_));
       });
   }
 
@@ -8157,15 +8194,7 @@ private:
       ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return Base::sendHandshakeCoalesced_(
-	  ZuMv(buf), ZuMv(addr_),
-	  [this](auto buf_, ZiSockAddr addr__) {
-	    return Base::sendPathPkt_(
-	      ZuMv(buf_), ZuMv(addr__),
-	      [this](auto buf__, ZiSockAddr addr___) {
-		return Endpoint::send(ZuMv(buf__), ZuMv(addr___));
-	      });
-	  });
+	return sendHandshakeBuf_(ZuMv(buf), ZuMv(addr_));
       });
   }
 
@@ -8202,17 +8231,7 @@ private:
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
       [this, pmtudSize](auto buf, ZiSockAddr addr_) {
-	if (pmtudSize)
-	  return Base::sendPathProbePkt_(
-	    ZuMv(buf), ZuMv(addr_),
-	    [this](auto buf_, ZiSockAddr addr__) {
-	      return Endpoint::send(ZuMv(buf_), ZuMv(addr__));
-	    });
-	return Base::sendPathPkt_(
-	  ZuMv(buf), ZuMv(addr_),
-	  [this](auto buf_, ZiSockAddr addr__) {
-	    return Endpoint::send(ZuMv(buf_), ZuMv(addr__));
-	  });
+	return sendShortBuf_(ZuMv(buf), ZuMv(addr_), pmtudSize);
       },
       pmtudSize);
   }
@@ -8758,13 +8777,10 @@ private:
 	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
-    ok = Base::flushCoalescedInitial_([this](auto buf, ZiSockAddr addr_) {
-      return Base::sendPathPktApp_(
-	ZuMv(buf), ZuMv(addr_),
-	[this](auto buf_, ZiSockAddr addr__, bool &sent) {
-	  return sendPktPath_(ZuMv(buf_), ZuMv(addr__), sent);
-	});
-    }) && ok;
+    ok = Base::flushCoalescedInitial_(
+      [this](auto buf, ZiSockAddr addr_) {
+	return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
+      }) && ok;
     Base::endLongCoalesce_();
     return ok;
   }
@@ -8903,6 +8919,69 @@ private:
     return Base::buildPayload_(level, build, prefix, payload);
   }
 
+  bool sendFrameRefs_(const typename Base::TxPktRefs *recordRefs) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server frame gating outside Tx thread", return false);
+    if (!recordRefs) return true;
+    for (unsigned i = 0; i < recordRefs->count(); ++i)
+      if (!app()->sendFrame((*recordRefs)[i])) return false;
+    return true;
+  }
+
+  bool sendPathBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server path send outside Tx thread", return false);
+    return Base::sendPathPktApp_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_, bool &sent) {
+	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), sent);
+      });
+  }
+
+  bool sendPathProbeBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server path probe send outside Tx thread", return false);
+    return Base::sendPathProbePktApp_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_, bool &sent) {
+	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), sent);
+      });
+  }
+
+  bool sendInitialBuf_(
+    ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
+    const typename Base::TxPktRefs *recordRefs) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server Initial buffer send outside Tx thread", return false);
+    if (!sendFrameRefs_(recordRefs)) return false;
+    return Base::holdInitialForCoalesce_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_) {
+	return sendPathBuf_(ZuMv(buf_), ZuMv(addr_));
+      });
+  }
+
+  bool sendHandshakeBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server Handshake buffer send outside Tx thread", return false);
+    return Base::sendHandshakeCoalesced_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_) {
+	return sendPathBuf_(ZuMv(buf_), ZuMv(addr_));
+      });
+  }
+
+  bool sendShortBuf_(
+    ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
+    const typename Base::TxPktRefs *recordRefs,
+    unsigned pmtudSize = 0) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server Short buffer send outside Tx thread", return false);
+    if (!sendFrameRefs_(recordRefs)) return false;
+    if (pmtudSize) return sendPathProbeBuf_(ZuMv(buf), ZuMv(addr));
+    return sendPathBuf_(ZuMv(buf), ZuMv(addr));
+  }
+
   bool sendInitialPkt_(ZuCSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Initial send outside Tx thread", return false);
@@ -8926,18 +9005,7 @@ private:
       recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs](auto buf, ZiSockAddr addr_) {
-	if (recordRefs)
-	  for (unsigned i = 0; i < recordRefs->count(); ++i)
-	    if (!app()->sendFrame((*recordRefs)[i])) return false;
-	return Base::holdInitialForCoalesce_(
-	  ZuMv(buf), ZuMv(addr_),
-	  [this](auto buf_, ZiSockAddr addr__) {
-	    return Base::sendPathPktApp_(
-	      ZuMv(buf_), ZuMv(addr__),
-	      [this](auto buf__, ZiSockAddr addr___, bool &sent) {
-		return sendPktPath_(ZuMv(buf__), ZuMv(addr___), sent);
-	      });
-	  });
+	return sendInitialBuf_(ZuMv(buf), ZuMv(addr_), recordRefs);
       });
   }
 
@@ -8965,15 +9033,7 @@ private:
       ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return Base::sendHandshakeCoalesced_(
-	  ZuMv(buf), ZuMv(addr_),
-	  [this](auto buf_, ZiSockAddr addr__) {
-	    return Base::sendPathPktApp_(
-	      ZuMv(buf_), ZuMv(addr__),
-	      [this](auto buf__, ZiSockAddr addr___, bool &sent) {
-		return sendPktPath_(ZuMv(buf__), ZuMv(addr___), sent);
-	      });
-	  });
+	return sendHandshakeBuf_(ZuMv(buf), ZuMv(addr_));
       });
   }
 
@@ -9008,20 +9068,7 @@ private:
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs, pmtudSize](auto buf, ZiSockAddr addr_) {
-	if (recordRefs)
-	  for (unsigned i = 0; i < recordRefs->count(); ++i)
-	    if (!app()->sendFrame((*recordRefs)[i])) return false;
-	if (pmtudSize)
-	  return Base::sendPathProbePktApp_(
-	    ZuMv(buf), ZuMv(addr_),
-	    [this](auto buf_, ZiSockAddr addr__, bool &sent) {
-	      return sendPktPath_(ZuMv(buf_), ZuMv(addr__), sent);
-	    });
-	return Base::sendPathPktApp_(
-	  ZuMv(buf), ZuMv(addr_),
-	  [this](auto buf_, ZiSockAddr addr__, bool &sent) {
-	    return sendPktPath_(ZuMv(buf_), ZuMv(addr__), sent);
-	  });
+	return sendShortBuf_(ZuMv(buf), ZuMv(addr_), recordRefs, pmtudSize);
       },
       pmtudSize);
   }
