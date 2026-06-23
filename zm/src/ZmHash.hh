@@ -334,19 +334,28 @@ public:
   using LockMgr::cBits;
 
   struct Node;
-  using Node_ = ZmNode<
-    T, KeyAxor, ValAxor, NodeBase, ZmHash_NodeExt<Node>, HeapID, Sharded>;
-  ZuDerive(Node, Node_);
+private:
   using NodeExt = ZmHash_NodeExt<Node>;
+  using Node_ = ZmNode<
+    T, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
+public:
+  struct Node : public Node_ {
+    friend ZmHash;
+    ZuDerive_(Node, Node_)
+  private:
+    using NodeExt::next;
+  };
   using NodeRef = typename NodeFn::template Ref<Node>;
   using NodeMvRef = typename NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
 
+private:
   using NodeFn::nodeRef;
   using NodeFn::nodeDeref;
   using NodeFn::nodeAcquire;
   using NodeFn::nodeDelete;
 
+public:
   static KeyRet key(const Node *node) {
     if (ZuLikely(node)) return node->key();
     return ZuNullRef<Key, Cmp>();

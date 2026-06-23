@@ -136,13 +136,20 @@ private:
   template <typename I> class Iter_;
 template <typename> friend class Iter_;
 
-private:
 public:
   struct Node;
-  using Node_ = ZmNode<
-    T, KeyAxor, ValAxor, NodeBase, ZmList_NodeExt<Node>, HeapID, Sharded>;
-  ZuDerive(Node, Node_);
+private:
   using NodeExt = ZmList_NodeExt<Node>;
+  using Node_ = ZmNode<
+    T, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
+public:
+  struct Node : public Node_ {
+    friend ZmList;
+    ZuDerive_(Node, Node_)
+  private:
+    using NodeExt::next;
+    using NodeExt::prev;
+  };
   using NodeRef = typename NodeFn::template Ref<Node>;
   using NodeMvRef = typename NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
