@@ -43,6 +43,8 @@ void testIdempotenceAndCallbacks()
 
   TestEngine e;
   ZuCheck(e.state() == Stopped);
+  ZuCheck(!e.running());
+  ZuCheck(!e.stopping());
 
   int startCb = 0;
   e.start(ZmFn<void(bool)>{[&](bool ok) {
@@ -50,10 +52,14 @@ void testIdempotenceAndCallbacks()
     ++startCb;
   }});
   ZuCheck(e.state() == Starting);
+  ZuCheck(e.running());
+  ZuCheck(!e.stopping());
   ZuCheck(e.startCalls == 1);
 
   e.completeStart(true);
   ZuCheck(e.state() == Running);
+  ZuCheck(e.running());
+  ZuCheck(!e.stopping());
   ZuCheck(startCb == 1);
 
   int startCb2 = 0;
@@ -70,10 +76,14 @@ void testIdempotenceAndCallbacks()
     ++stopCb;
   }});
   ZuCheck(e.state() == Stopping);
+  ZuCheck(!e.running());
+  ZuCheck(e.stopping());
   ZuCheck(e.stopCalls == 1);
 
   e.completeStop(true);
   ZuCheck(e.state() == Stopped);
+  ZuCheck(!e.running());
+  ZuCheck(!e.stopping());
   ZuCheck(stopCb == 1);
 
   int stopCb2 = 0;
@@ -106,9 +116,13 @@ void testStopPendingTransition()
     ++stopCb;
   }});
   ZuCheck(e.state() == StopPending);
+  ZuCheck(!e.running());
+  ZuCheck(!e.stopping());
 
   e.completeStart(true); // should immediately queue stop path
   ZuCheck(e.state() == Stopping);
+  ZuCheck(!e.running());
+  ZuCheck(e.stopping());
   ZuCheck(e.startCalls == 1);
   ZuCheck(e.stopCalls == 1);
   ZuCheck(startCb == 1);
@@ -141,12 +155,16 @@ void testStartPendingTransition()
     ++stopCb;
   }});
   ZuCheck(e.state() == Stopping);
+  ZuCheck(!e.running());
+  ZuCheck(e.stopping());
 
   e.start(ZmFn<void(bool)>{[&](bool ok) {
     ZuCheck(ok);
     ++startCb2;
   }});
   ZuCheck(e.state() == StartPending);
+  ZuCheck(!e.running());
+  ZuCheck(e.stopping());
 
   e.completeStop(true); // should trigger restart
   ZuCheck(e.state() == Starting);

@@ -487,7 +487,7 @@ class Endpoint_ {
       m_closing = true;
     }
 
-    void drainTx_() {
+    void closeTx_() {
       m_closing = true;
       m_txBuf = nullptr;
       m_txQueue.clean();
@@ -822,8 +822,10 @@ private:
     CxnRef cxn = m_cxn;
     if (!cxn) return;
     cxn->beginCloseRx_();
-    cxn->drainTx_();
-    cxn->disconnect();
+    m_mx->txRun([cxn = ZuMv(cxn)]() mutable {
+      cxn->closeTx_();
+      cxn->disconnect();
+    });
   }
 
   bool endpointRxInvoked_() const {
@@ -1653,8 +1655,8 @@ protected:
   }
 
   void stop_() {
-    txRun([this]() {
-      rxRun([this]() { this->stopped(true); });
+    rxRun([this]() {
+      txRun([this]() { this->stopped(true); });
     });
   }
 
@@ -1676,15 +1678,6 @@ protected:
   void retireLinkRoutes_(Link *) { }
 
 private:
-  bool stopping_() const {
-    switch (state()) {
-      case ZmEngineState::Stopping:
-      case ZmEngineState::StartPending:
-	return true;
-    }
-    return false;
-  }
-
   unsigned thread_(const ParamString &id, unsigned deflt) const {
     return id ? m_mx->sid(id) : deflt;
   }
@@ -2113,7 +2106,7 @@ private:
 
 public:
 	void disconnected(Link *link, bool) {
-	  if (stopping_()) {
+	  if (Base::stopping()) {
 	    if (m_stopCount && !--m_stopCount) {
 	      m_links->clean();
 	      this->stopped(true);
@@ -2129,15 +2122,6 @@ public:
   }
 
 private:
-  bool stopping_() const {
-    switch (this->state()) {
-      case ZmEngineState::Stopping:
-      case ZmEngineState::StartPending:
-	return true;
-    }
-    return false;
-  }
-
   void start_() {
     if (!m_links)
       m_links = new LinkTable{
@@ -3283,6 +3267,17 @@ protected:
     m_appClose.error = errorCode;
     m_appClose.closed = true;
     cancelTimers();
+  }
+  bool writeCloseFrame_(PktBuild &build, bool appClose) const {
+    int n = appClose ?
+      FrameCodec::writeApplicationClose(
+	build.scratch(), build.scratchAvail(), m_appClose.error) :
+      FrameCodec::writeConnectionClose(
+	build.scratch(), build.scratchAvail(), m_appClose.error);
+    return n > 0 && build.commitScratch(unsigned(n));
+  }
+  bool appCloseOnDisconnect_() const {
+    return app()->stopping();
   }
 
 public:
@@ -7805,7 +7800,7 @@ private:
       addr = ZuMv(addr),
       fn = ZuMv(fn)
     ]() mutable {
-      (void)link->sendConnectionClose_(ZuMv(addr), true);
+      (void)link->sendCloseFrame_(ZuMv(addr), true);
       link->app()->rxRun([
 	link, notify, peer, fn = ZuMv(fn)
       ]() mutable {
@@ -8222,16 +8217,16 @@ private:
       pmtudSize);
   }
 
-  bool sendConnectionClose_(ZiSockAddr addr, bool closing = false) {
+  bool sendCloseFrame_(ZiSockAddr addr, bool closing = false) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
-      "QUIC client CONNECTION_CLOSE outside Tx thread", return false);
+      "QUIC client close frame outside Tx thread", return false);
     if ((!closing && Base::closed()) || !Base::runtimeEstablished_() ||
 	!Endpoint::connected() || !addr)
       return false;
     PktBuild build;
-    int n = FrameCodec::writeConnectionClose(
-      build.scratch(), build.scratchAvail(), 0);
-    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    if (!Base::writeCloseFrame_(
+	build, Base::appCloseOnDisconnect_()))
+      return false;
     return sendShortPkt_(build, ZuMv(addr), {});
   }
 
@@ -8637,6 +8632,15 @@ public:
 
   bool disconnect(uint64_t errorCode = 0) {
     if (!Base::closed()) Base::closeState_(errorCode);
+    if (Base::runtimeEstablished_() && m_peerAddr) {
+      app()->txRun([
+	link = impl(),
+	addr = m_peerAddr
+      ]() mutable {
+	if (link->disconnecting_()) return;
+	(void)link->sendCloseFrame_(ZuMv(addr), true);
+      });
+    }
     return Base::disconnect();
   }
 
@@ -9020,6 +9024,19 @@ private:
 	  });
       },
       pmtudSize);
+  }
+
+  bool sendCloseFrame_(ZiSockAddr addr, bool closing = false) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server close frame outside Tx thread", return false);
+    if ((!closing && Base::closed()) || !Base::runtimeEstablished_() ||
+	!m_peerAddr || !addr)
+      return false;
+    PktBuild build;
+    if (!Base::writeCloseFrame_(
+	build, Base::appCloseOnDisconnect_()))
+      return false;
+    return sendShortPkt_(build, ZuMv(addr), {});
   }
 
   bool sendHandshakeDone_(ZiSockAddr addr) {
