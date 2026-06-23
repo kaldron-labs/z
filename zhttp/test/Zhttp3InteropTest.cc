@@ -500,6 +500,7 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
 
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   ZmRef<Link> link() const { return link_; }
+  void clearLink() { link_ = nullptr; }
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
 
   ServerState	*state = nullptr;
@@ -854,6 +855,20 @@ bool waitDone(ZmSemaphore &sem)
   return sem.timedwait(Zm::now(15)) == 0;
 }
 
+void waitThread(ZiMultiplex &mx, unsigned thread)
+{
+  ZmSemaphore done;
+  mx.invoke([&done]() { done.post(); }, thread);
+  done.wait();
+}
+
+void waitDisconnect(ZiMultiplex &mx)
+{
+  waitThread(mx, mx.txThread());
+  waitThread(mx, mx.rxThread());
+  waitThread(mx, mx.txThread());
+}
+
 bool writeHttpCaddyfile(ZuCSpan path, unsigned port, ZuCSpan body)
 {
   ZtString<> filePath;
@@ -1015,6 +1030,7 @@ void testZhttpClientCaddyHttpsH3()
   link->disconnect([&disconnected]() { disconnected.post(); });
   ZuCHECK(waitDone(disconnected),
     "Zhttp client->Caddy HTTPS/H3 disconnect timed out");
+  waitDisconnect(mx);
   link = nullptr;
   client.final();
   mx.stop();
@@ -1175,7 +1191,7 @@ void testCurlZhttpHttpsH3Server()
 	.certPath(cspan(certPath)).keyPath(cspan(keyPath)).alpn(alpn)
 	.maxData(32768).maxStreamData(8192).maxStreamsBidi(8).maxStreamsUni(8)),
     "curl->Zhttp HTTPS/H3 server init failed");
-  ZuCHECK(server.listen(), "curl->Zhttp HTTPS/H3 server listen failed");
+  ZuCHECK(server.start(), "curl->Zhttp HTTPS/H3 server listen failed");
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "curl->Zhttp HTTPS/H3 server did not become ready");
   ZuCHECK(runCurlH3Retry(temp, server.local().port(), Path, state.body),
@@ -1188,6 +1204,9 @@ void testCurlZhttpHttpsH3Server()
       state.request.method == Zhttp::Method::GET &&
       state.request.path == Path,
     "curl->Zhttp HTTPS/H3 decoded request mismatch");
+  server.stop();
+  waitDisconnect(mx);
+  server.clearLink();
   server.final();
   mx.stop();
 }

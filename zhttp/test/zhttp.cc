@@ -1821,6 +1821,20 @@ void disconnectDrained(Link *link)
   drained->sem.wait();
 }
 
+void waitThread(ZiMultiplex &mx, unsigned thread)
+{
+  ZmSemaphore done;
+  mx.invoke([&done]() { done.post(); }, thread);
+  done.wait();
+}
+
+void waitDisconnect(ZiMultiplex &mx)
+{
+  waitThread(mx, mx.txThread());
+  waitThread(mx, mx.rxThread());
+  waitThread(mx, mx.txThread());
+}
+
 template <typename Link>
 void abortDrained(Link *link)
 {
@@ -2225,11 +2239,12 @@ int run(
       link->disconnect();
       disconnected = true;
       client.sem.timedwait(Zm::now(2));
-    }
-    if constexpr (Client::Transport == Zi::Transport::QUIC) {
-      if (!disconnected) disconnectDrained(link.ptr());
-    }
-  }
+	    }
+	    if constexpr (Client::Transport == Zi::Transport::QUIC) {
+	      if (!disconnected) disconnectDrained(link.ptr());
+	      waitDisconnect(mx);
+	    }
+	  }
   if (result) {
     result->status = client.state.status;
     result->location = client.state.location;
@@ -2472,11 +2487,12 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       }
     }
     client.stopping = true;
-    if (timedOut || stalled)
-      abortDrained(link);
-    else
-      disconnectDrained(link);
-    bool linkFailed = false;
+	    if (timedOut || stalled)
+	      abortDrained(link);
+	    else
+	      disconnectDrained(link);
+	    waitDisconnect(mx);
+	    bool linkFailed = false;
     {
       ZmGuard<ZmLock> guard(client.lock);
       run.complete = client.complete;
@@ -2485,10 +2501,11 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     }
     if (linkFailed && run.complete < run.options.requests)
       resetH3Incomplete(run);
-    if (timedOut || stalled)
-      resetH3Incomplete(run);
-    client.clearFilters();
-    client.final();
+	    if (timedOut || stalled)
+	      resetH3Incomplete(run);
+	    client.clearFilters();
+	    client.link = nullptr;
+	    client.final();
     if (linkFailed && run.complete < run.options.requests)
       continue;
     if (!timedOut && !stalled)
