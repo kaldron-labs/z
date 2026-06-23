@@ -72,10 +72,13 @@ struct TestLink :
   TestLink(App *app, bool isServer = false) : Base{app, isServer} {
     Base::configureLocalTransportParams_(app);
   }
-  void resetRuntimeForTest() {
-    Base::resetRuntime_();
-    Base::configureLocalTransportParams_(app());
-  }
+	  void resetRuntimeForTest() {
+	    Base::resetRuntime_();
+	    Base::configureLocalTransportParams_(app());
+	  }
+	  void closeForTest(uint64_t errorCode = 0) {
+	    Base::closeState_(errorCode);
+	  }
   void streamed(ZmRef<TestStream> stream) {
     lastStream = ZuMv(stream);
     ++streamedCount;
@@ -1309,7 +1312,7 @@ void testRuntimePacketNumberLength()
   ZuCHECK(link->pnLength() == 4,
     "runtime PN length did not grow to four bytes");
 #endif
-  link->close();
+  link->closeForTest();
 }
 
 void testLongHeaderCoalescing()
@@ -1324,7 +1327,7 @@ void testLongHeaderCoalescing()
       sends == 1 &&
       bytes == 140,
     "Initial/Handshake coalescing did not emit one combined datagram");
-  link->close();
+  link->closeForTest();
 }
 
 void testCongestionBudgetGatesRuntimeSends()
@@ -1367,7 +1370,7 @@ void testCongestionBudgetGatesRuntimeSends()
   ZuCHECK(flushed, "runtime control send did not resume after ACK opened cwnd");
   ZuCHECK(!link->queuedControlFrames(),
     "runtime control queue did not drain after ACK opened cwnd");
-  link->close();
+  link->closeForTest();
 }
 
 void testActivePathRuntimeBudget()
@@ -1385,7 +1388,7 @@ void testActivePathRuntimeBudget()
 	budget.pmtu == 1360 - Zquic::TxStreamPktReserve &&
 	budget.limit() == 1360 - Zquic::TxStreamPktReserve,
       "active path max UDP did not drive runtime packet budget");
-    client->close();
+    client->closeForTest();
   }
 #endif
 
@@ -1419,7 +1422,7 @@ void testActivePathRuntimeBudget()
       ZuCmp<uint64_t>::null(server->pathAntiAmplification()) &&
       server->pathSend(Zquic::MinUDPPayload),
     "address validation did not unlock active path send allowance");
-  server->close();
+  server->closeForTest();
 }
 
 void testPathValidationStateMachine()
@@ -1482,7 +1485,7 @@ void testPathValidationStateMachine()
       sameAddr_(link->activePathRemote(), newRemote),
     "path-validation timeout did not retain active path");
 
-  link->close();
+  link->closeForTest();
 #endif
 }
 
@@ -1529,7 +1532,7 @@ void testAckECNValidationDisablesECN()
   diag = link->runtimeDiag();
   ZuCHECK(link->ecnDisabled() && diag.ecnValidationFailures == 1,
     "regressing ACK_ECN did not disable ECN");
-  link->close();
+  link->closeForTest();
 
   ZmRef<TestLink> impossible = testLink(&app);
   impossible->enableECN();
@@ -1544,7 +1547,7 @@ void testAckECNValidationDisablesECN()
       diag.congestionBytesInFlight < inFlight &&
       impossible->txFlushQueued == queued + 1,
     "impossible ACK_ECN did not disable ECN while preserving ACK processing");
-  impossible->close();
+  impossible->closeForTest();
 }
 #endif
 

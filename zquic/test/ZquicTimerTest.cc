@@ -32,6 +32,7 @@ struct TimerApp : public Zquic::Engine<TimerApp> {
   bool txInvoked() const { return true; }
   template <typename L> void rxRun(L l) { l(); }
   template <typename L> void rxInvoke(L l) { l(); }
+  template <typename O, typename L> void rxInvoke(O *, L l) { l(); }
   template <typename L> void txRun(L l) { l(); }
   template <typename L> void txInvoke(L l) { l(); }
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
@@ -70,8 +71,6 @@ struct TimerLink :
     Base::schedulePathTimer_(out);
   }
   void cancelAll() { Base::cancelTimers_(); }
-  template <typename Fn>
-  void teardown(Fn fn) { Base::teardownTimers(ZuMv(fn)); }
   void armAckPTO(ZuTime ack, ZuTime pto) {
     Base::scheduleAckDelayTimer_(ack);
     Base::schedulePTOTimer_(pto);
@@ -115,6 +114,7 @@ void testTimerInventory()
   ZuCHECK(link->keyDiscard == 1, "key discard timer did not fire once");
   ZuCHECK(link->pmtud == 1, "PMTUD timer did not fire once");
   ZuCHECK(link->path == 1, "path-validation timer did not fire once");
+  link->disconnect();
 }
 
 void testTimerCancel()
@@ -129,6 +129,7 @@ void testTimerCancel()
   usleep(80000);
 
   ZuCHECK(!link->fired(), "cancelled timer callback fired");
+  link->disconnect();
 }
 
 void testTimerPriority()
@@ -144,23 +145,21 @@ void testTimerPriority()
 
   ZuCHECK(link->ackDelay == 1, "earlier ACK timer did not fire");
   ZuCHECK(!link->pto, "later PTO timer fired early");
-  link->cancelAll();
+  link->disconnect();
 }
 
-void testTimerOwnerRelease()
+void testTimerDisconnect()
 {
-  ZuTestScope(testTimerOwnerRelease);
+  ZuTestScope(testTimerDisconnect);
 
   TimerApp app;
   ZmRef<TimerLink> link = new TimerLink{&app};
 
   link->armAll(Zm::now() + Zquic::timeUS(200000));
-  bool drained = false;
-  link->teardown([&drained]() { drained = true; });
-  link = nullptr;
+  link->disconnect();
   usleep(80000);
 
-  ZuCHECK(drained, "timer owner release did not drain callbacks");
+  ZuCHECK(!link->fired(), "disconnect-disarmed timer callback fired");
 }
 
 int main(int argc, char **argv)
@@ -171,5 +170,5 @@ int main(int argc, char **argv)
   ZuTestCall(testTimerInventory);
   ZuTestCall(testTimerCancel);
   ZuTestCall(testTimerPriority);
-  ZuTestCall(testTimerOwnerRelease);
+  ZuTestCall(testTimerDisconnect);
 }

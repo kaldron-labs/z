@@ -37,6 +37,7 @@ struct RuntimeServer :
 
   ZmRef<Link> link(unsigned i = unsigned(-1));
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
+  void clearLinks();
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
     if (!buf || !buf->length) return true;
@@ -165,6 +166,13 @@ ZmRef<RuntimeServer::Link> RuntimeServer::accepted(const Zquic::InitialInfo &)
   return link_;
 }
 
+void RuntimeServer::clearLinks()
+{
+  link_ = nullptr;
+  for (unsigned i = 0; i < RuntimeServerLinkCapacity; ++i)
+    links_[i] = nullptr;
+}
+
 template <typename L>
 bool waitUntil(L l)
 {
@@ -173,6 +181,20 @@ bool waitUntil(L l)
     usleep(1000);
   }
   return false;
+}
+
+void waitThread(ZiMultiplex &mx, unsigned thread)
+{
+  ZmSemaphore done;
+  mx.invoke([&done]() { done.post(); }, thread);
+  done.wait();
+}
+
+void waitDisconnect(ZiMultiplex &mx)
+{
+  waitThread(mx, mx.txThread());
+  waitThread(mx, mx.rxThread());
+  waitThread(mx, mx.txThread());
 }
 
 ZuCSpan cspan_(const ZtString<> &s)
@@ -291,7 +313,7 @@ void testRuntimeEndpointOpen()
 	.maxStreamsUni(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "runtime server init failed");
-  ZuCHECK(server.listen(),
+  ZuCHECK(server.start(),
     "runtime server listen failed");
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "runtime server endpoint did not become ready");
@@ -299,11 +321,12 @@ void testRuntimeEndpointOpen()
       !server.endpointDiag().failures &&
       server.local().port(),
     "runtime server endpoint diagnostics mismatch");
-  if (!server.listening()) {
-    server.final();
-    mx.stop();
-    return;
-  }
+	  if (!server.listening()) {
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
 
   RuntimeClient client;
   ZuCHECK(client.init(
@@ -323,12 +346,13 @@ void testRuntimeEndpointOpen()
       !clientLink->runtimeDiag().failures &&
       !clientLink->cxnDiag().failures,
     "runtime client link diagnostics mismatch");
-  if (!clientLink->ready()) {
-    client.final();
-    server.final();
-    mx.stop();
-    return;
-  }
+	  if (!clientLink->ready()) {
+	    client.final();
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
 
   ZmRef<RuntimeServer::Link> serverLink;
   bool established = waitUntil([&server, &clientLink, &serverLink]() {
@@ -344,12 +368,13 @@ void testRuntimeEndpointOpen()
 	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
   }
   ZuCHECK(established, "runtime UDP QUIC handshake did not establish");
-  if (!established || !serverLink) {
-    client.final();
-    server.final();
-    mx.stop();
-    return;
-  }
+	  if (!established || !serverLink) {
+	    client.final();
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
   ZuCHECK(server.acceptedCount == 1, "runtime server accept count mismatch");
   ZuCHECK(clientLink->crypto().oneRTTReady() &&
       serverLink->crypto().oneRTTReady() &&
@@ -419,13 +444,20 @@ void testRuntimeEndpointOpen()
     "runtime stream objects did not process received STREAM frames");
 
   clientLink->disconnect();
-  server.close();
+  server.stop();
   ZuCHECK(waitUntil([&clientLink]() {
       return !clientLink->cxn() && clientLink->disconnectedCount == 1;
     }) && !server.connected(),
     "runtime endpoints remained connected after close");
+  waitDisconnect(mx);
 
+  serverRxBidi = nullptr;
+  serverRxUni = nullptr;
+  clientRxBidi = nullptr;
+  clientRxUni = nullptr;
   clientLink = nullptr;
+  serverLink = nullptr;
+  server.clearLinks();
   client.final();
   server.final();
   mx.stop();
@@ -464,13 +496,14 @@ void testRuntimeHandshakeCryptoLoss()
 	  .maxStreamsUni(8)
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime server init failed");
-    ZuCHECK(server.listen(), "loss runtime server listen failed");
+    ZuCHECK(server.start(), "loss runtime server listen failed");
     bool listening = waitUntil([&server]() { return server.listening(); });
     ZuCHECK(listening, "loss runtime server did not listen");
-    if (!server.listening()) {
-      server.final();
-      continue;
-    }
+	    if (!server.listening()) {
+	      server.stop();
+	      server.final();
+	      continue;
+	    }
     if (dropHandshake)
       server.dropNextHandshake = 4;
     else
@@ -511,12 +544,13 @@ void testRuntimeHandshakeCryptoLoss()
 
     ZmSemaphore clientClosed;
     clientLink->disconnect([&clientClosed]() { clientClosed.post(); });
-    server.close();
+    server.stop();
     ZuCHECK(waitUntil([&clientLink]() {
 	return !clientLink->cxn();
       }) && !server.connected(),
       "loss runtime endpoints remained connected after close");
     clientClosed.wait();
+    waitDisconnect(mx);
     clientLink = nullptr;
     serverLink = nullptr;
     client.final();
@@ -562,7 +596,7 @@ void testRuntimeServerMultiConnection()
 	  ++serverErrors;
 	}})),
     "multi runtime server init failed");
-  ZuCHECK(server.listen(), "multi runtime server listen failed");
+  ZuCHECK(server.start(), "multi runtime server listen failed");
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "multi runtime server did not become ready");
 
@@ -579,41 +613,58 @@ void testRuntimeServerMultiConnection()
 
   ZmRef<RuntimeClient::Link> clients[RuntimeServerMultiConnections];
   ZmRef<RuntimeServer::Link> serverLinks[RuntimeServerMultiConnections];
+  bool established = true;
   for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
     clients[i] = new RuntimeClient::Link{&client};
     clients[i]->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+    if (!waitUntil([&server, &clients, &serverLinks, i]() {
+	if (!serverLinks[i]) serverLinks[i] = server.link(i);
+	return serverLinks[i] && clients[i]->established() &&
+	  serverLinks[i]->established();
+      })) {
+      established = false;
+      break;
+    }
   }
   auto &c0 = clients[0];
   auto &c1 = clients[1];
   auto &s0 = serverLinks[0];
   auto &s1 = serverLinks[1];
 
-  bool established = waitUntil([&server, &clients, &serverLinks]() {
-      if (server.acceptedCount != RuntimeServerMultiConnections) return false;
-      for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
-	if (!serverLinks[i]) serverLinks[i] = server.link(i);
-	if (!serverLinks[i] || !clients[i]->established() ||
-	    !serverLinks[i]->established())
-	  return false;
-      }
-      return true;
-    });
+  if (established)
+    established = waitUntil([&server]() {
+	return server.acceptedCount == RuntimeServerMultiConnections;
+      });
   if (!established) {
     for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
-      dumpRuntimeDiag("client", clients[i]->runtimeDiag(), clients[i]->crypto().diag());
+      if (clients[i])
+	dumpRuntimeDiag(
+	  "client", clients[i]->runtimeDiag(), clients[i]->crypto().diag());
       if (serverLinks[i])
 	dumpRuntimeDiag(
 	  "server", serverLinks[i]->runtimeDiag(), serverLinks[i]->crypto().diag());
     }
   }
   ZuCHECK(established,
-    "17 simultaneous runtime connections did not establish");
+    "17 runtime connections did not establish");
   ZuCHECK(server.acceptedCount == RuntimeServerMultiConnections &&
       !serverErrors,
     "server live-link table rejected connections past the old cap");
   if (!established || !s0 || !s1) {
     for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+      if (clients[i]) clients[i]->disconnect();
+    (void)waitUntil([&clients]() {
+	for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+	  if (clients[i] && clients[i]->cxn()) return false;
+	return true;
+      });
+    server.stop();
+    waitDisconnect(mx);
+    for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
       clients[i] = nullptr;
+    for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+      serverLinks[i] = nullptr;
+    server.clearLinks();
     client.final();
     server.final();
     mx.stop();
@@ -633,7 +684,7 @@ void testRuntimeServerMultiConnection()
   uint64_t s1Bytes = s1->runtimeDiag().streamBytesRx;
   uint64_t failures = server.endpointDiag().failures;
   unsigned errors = serverErrors;
-  s0->close();
+  s0->disconnect();
   ZuCHECK(waitUntil([&s0]() {
       return s0->closed() && !s0->established();
     }), "multi runtime server link did not close logically");
@@ -653,16 +704,24 @@ void testRuntimeServerMultiConnection()
 
   for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
     clients[i]->disconnect();
-  server.close();
+  server.stop();
   ZuCHECK(waitUntil([&clients]() {
       for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
 	if (clients[i]->cxn()) return false;
       return true;
     }) && !server.connected(),
     "multi runtime endpoints remained connected after close");
+  waitDisconnect(mx);
 
+  c0s = nullptr;
+  c1s = nullptr;
+  c0Stale = nullptr;
+  c1Live = nullptr;
   for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
     clients[i] = nullptr;
+  for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+    serverLinks[i] = nullptr;
+  server.clearLinks();
   client.final();
   server.final();
   mx.stop();
