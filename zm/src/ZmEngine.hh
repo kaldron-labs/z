@@ -88,6 +88,15 @@ public:
     }
     return false;
   }
+  bool stopping() const {
+    using namespace ZmEngineState;
+    switch (m_state) {
+      case Stopping:
+      case StartPending:
+	return true;
+    }
+    return false;
+  }
 
   bool stopped();		// returns true if engine has stopped
 

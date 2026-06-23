@@ -570,8 +570,8 @@ protected:
   }
 
   void stop_() {
-    txRun([this]() {
-      rxRun([this]() { this->stopped(true); });
+    rxRun([this]() {
+      txRun([this]() { this->stopped(true); });
     });
   }
 
