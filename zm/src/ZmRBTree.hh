@@ -135,10 +135,10 @@ private:
 };
 template <typename Node>
 struct ZmRBTree_NodeExt_Unique {
-  constexpr Node * const dup() const { return nullptr; }
-  void dup(Node *) { }
+  ZuInline Node *dup() const { return nullptr; }
+  ZuInline void dup(Node *) { }
 
-  void clear() { }
+  ZuInline void clear() { }
 };
 template <typename Node, bool Unique>
 struct ZmRBTree_NodeExt :
@@ -353,10 +353,14 @@ public:
   using CIter = ZmRBTreeCIter<ZmRBTree, Direction>;
 
   struct Node;
+private:
   using NodeExt = ZmRBTree_NodeExt<Node, Unique>;
   using Node_ = ZmNode<T, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
+public:
   struct Node : public Node_ {
+  friend ZmRBTree;
     ZuDerive_(Node, Node_)
+  private:
     using NodeExt::black;
     using NodeExt::setBlack;
     using NodeExt::clrBlack;

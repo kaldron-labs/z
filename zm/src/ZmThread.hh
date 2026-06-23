@@ -222,8 +222,9 @@ class ZmAPI ZmThreadContext : public ZmObject, public ZmThreadContext_ {
 #endif
   friend ZmThread;
 
-  ZmThreadContext() noexcept // only called via self() for unmanaged threads
-    { init(); }
+  ZmThreadContext() noexcept { // only called via self() for unmanaged threads
+    init();
+  }
 
   template <
     typename L,

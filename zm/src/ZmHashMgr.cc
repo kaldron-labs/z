@@ -26,28 +26,23 @@ friend ZmHashMgr;
 public:
   ZmHashMgr_() { }
   ~ZmHashMgr_() {
-    for (;;) {
-      unsigned n = m_tables.count_();
-      if (ZuLikely(!n)) return;
-      auto buf = ZmAlloc(ZmAnyHash *, n);
-      if (!buf) return;
-      unsigned j = 0;
-      bool overflow = false;
+    // ZmAssert(!m_tables.count_(), return);
+    ZmGuard<ZmPLock> guard(m_lock);
+    auto i = m_tables.iter();
+    if (ZuLikely(!i.count())) return;
+    ZuCArray<80> buf;
+    buf << "\nleaked hash tables:\n";
+    std::cerr << buf << std::flush;
+    while (auto tbl = i()) {
       {
-	ZmGuard<ZmPLock> guard(m_lock);
-	auto i = m_tables.iter();
-	while (ZmAnyHash *tbl = i()) {
-	  if (ZuUnlikely(j >= n)) {
-	    overflow = true;
-	    break;
-	  }
-	  tbl->ref2_();
-	  buf[j++] = tbl;
-	  i.del(tbl);
-	}
+	ZmHashTelemetry data;
+	tbl->telemetry(data);
+	buf.length(0);
+	buf << ZuBoxPtr(tbl).hex() << ' ' << data.id << '\n';
+	std::cerr << buf << std::flush;
       }
-      for (unsigned k = 0; k < j; ++k) buf[k]->deref_();
-      if (!overflow) return;
+      tbl->ref2_();
+      (i.del(tbl))->deref_();
     }
   }
 

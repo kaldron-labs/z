@@ -305,11 +305,20 @@ private:
 
 public:
   struct Node;
-  using Node_ = ZmNode<
-    Item, KeyAxor, ZuDefaultAxor(), NodeBase, ZmPQueue_NodeExt<Node, Levels>,
-    HeapID, Sharded>;
-  ZuDerive(Node, Node_);
+private:
   using NodeExt = ZmPQueue_NodeExt<Node, Levels>;
+  using Node_ = ZmNode<
+    Item, KeyAxor, ZuDefaultAxor(), NodeBase, NodeExt, HeapID, Sharded>;
+public:
+  struct Node : public Node_ {
+    friend ZmPQueue;
+    ZuDerive_(Node, Node_)
+  private:
+    using NodeExt::next;
+    using NodeExt::prev;
+    using NodeExt::m_next;
+    using NodeExt::m_prev;
+  };
   using NodeRef = typename NodeFn::template Ref<Node>;
   using NodeMvRef = typename NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
