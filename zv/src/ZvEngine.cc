@@ -330,7 +330,7 @@ void ZvAnyLink::connected()
   if (disconnect) engine()->rxRun([this]() { this->disconnect(); });
 }
 
-void ZvAnyLink::disconnected()
+void ZvAnyLink::disconnected(bool)
 {
   int prev, next;
   bool connect = false;

@@ -110,7 +110,7 @@ struct RuntimeClient::Link :
   Link(RuntimeClient *app) : Base{app} { }
 
   void connected(Zi::Connected) { ++connectedCount; }
-  void disconnected() { ++disconnectedCount; }
+  void disconnected(bool) { ++disconnectedCount; }
   void connectFailed(bool) { ++connectFailures; }
   void streamed(ZmRef<Stream>) { ++streamedCount; }
 
@@ -141,7 +141,7 @@ struct RuntimeServerLink :
   RuntimeServerLink(RuntimeServer *app) : Base{app} { }
 
   void connected(Zi::Connected) { ++connectedCount; }
-  void disconnected() { ++disconnectedCount; }
+  void disconnected(bool) { ++disconnectedCount; }
   void streamed(ZmRef<Stream>) { ++streamedCount; }
 
   ZmAtomic<unsigned> connectedCount = 0;

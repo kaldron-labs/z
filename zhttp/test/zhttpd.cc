@@ -478,9 +478,9 @@ struct HTTPServer::Link :
 
   Link(HTTPServer *app, ZuCSpan remote_) : Base{app}, remote{remote_} { }
   void connected(Zi::Connected) { h1.connected(*this); touch(); }
-  void disconnected() {
+  void disconnected(bool peer) {
     app()->mx()->del(&idleTimer);
-    h1.disconnected(*this);
+    h1.disconnected(*this, peer);
     if (counted) {
       --app()->state->active;
       counted = false;
@@ -560,9 +560,9 @@ struct TLSServer::Link :
 
   Link(TLSServer *app, ZuCSpan remote_) : Base{app}, remote{remote_} { }
   void connected(Zi::Connected) { h1.connected(*this); touch(); }
-  void disconnected() {
+  void disconnected(bool peer) {
     app()->mx()->del(&idleTimer);
-    h1.disconnected(*this);
+    h1.disconnected(*this, peer);
     if (counted) {
       --app()->state->active;
       counted = false;
@@ -716,7 +716,7 @@ struct H3ServerLink :
     }));
     touch();
   }
-  void disconnected() {
+  void disconnected(bool) {
     app()->mx()->del(&idleTimer);
     unsigned active = state ? state->active.load_() : 0;
     uint64_t requests = state ? state->requests.load_() : 0;
@@ -818,12 +818,8 @@ void H3Server::printDiag()
   uint64_t pktIF = 0;
   uint64_t sentPkts = 0, retxPend = 0, retxTotal = 0;
   bool ptoTimer = false, lossTimer = false;
-  ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttpd.H3Diag">> diagLinks;
   this->allLinks([&](const ZmRef<Link> &link) {
     if (!link) return;
-    diagLinks.push(link);
-  });
-  for (auto link : diagLinks) {
     Zquic::RuntimeDiag d = link->runtimeDiag();
     ++links;
     packetsRx += d.packetsRx;
@@ -913,7 +909,7 @@ void H3Server::printDiag()
       retxPend += d.retransmitPending[i];
       retxTotal += d.retransmittable[i];
     }
-  }
+  });
   ZiLOG(Info, "zhttpd", ([
     active, requests, errors, links,
     datagramsRx = diag.datagramsRx, datagramsTx = diag.datagramsTx,

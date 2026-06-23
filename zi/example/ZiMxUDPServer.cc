@@ -43,7 +43,7 @@ public:
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
 
-  void disconnected() { Global::post(); }
+  void disconnected(bool) { Global::post(); }
 
   void connected(ZiIOContext &io) { recvEcho(io); }
 

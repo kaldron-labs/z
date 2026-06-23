@@ -449,7 +449,7 @@ class Endpoint_ {
     void connected(ZiIOContext &io) override {
       m_endpoint->connected_(this, io);
     }
-    void disconnected() override {
+    void disconnected(bool) override {
       auto impl = m_endpoint->impl();
       if constexpr (Impl::EndpointRef)
 	m_endpoint->disconnected_0(this, ZmMkRef(impl));
@@ -1671,7 +1671,7 @@ protected:
   }
 
   template <typename Link>
-  void disconnected(Link *) { }
+  void disconnected(Link *, bool) { }
   template <typename Link>
   void retireLinkRoutes_(Link *) { }
 
@@ -1817,7 +1817,7 @@ struct App::Link : public Zquic::CliLink<App, Link, App::Stream> {
   Link(App *, Zquic::Host server, uint16_t port);
 
   void connected(Zi::Connected); // Zquic Rx thread
-  void disconnected(); // Zquic Rx thread
+  void disconnected(bool peer); // Zquic Rx thread
   void connectFailed(bool transient); // Zquic Rx thread
   void streamed(ZmRef<Stream>); // Zquic Rx thread
 
@@ -1867,7 +1867,7 @@ struct AppLink : public Zquic::SrvLink<App, AppLink, AppStream> {
   AppLink(App *);
 
   void connected(Zi::Connected); // Zquic Rx thread
-  void disconnected(); // Zquic Rx thread
+  void disconnected(bool peer); // Zquic Rx thread
   void streamed(ZmRef<Stream>); // Zquic Rx thread
 };
 #endif
@@ -1930,22 +1930,29 @@ friend ZmEngine<App>;
       "QUIC server link iteration before app initialization", return);
     ZiAssert(!this->rxInvoked() && !this->txInvoked(), "Zquic", (),
       "QUIC server link iteration from I/O thread", return);
+    using Snapshot =
+      ZtArray<LinkRef, ZtArrayHeapID<"Zquic.Server.LinkSnapshot">>;
+    unsigned nLinks = 0;
     ZmSemaphore done;
-    this->rxInvoke([this, &fn, &done]() {
-      using Snapshot =
-	ZtArray<LinkRef, ZtArrayHeapID<"Zquic.Server.LinkSnapshot">>;
-      auto snapshot = ZtLocalArray(Snapshot, unsigned(m_links->count_()));
+    this->rxInvoke([this, &nLinks, &done]() {
+      if (this->state() == ZmEngineState::Running)
+	nLinks = unsigned(m_links->count_());
+      done.post();
+    });
+    done.wait();
+    auto snapshot = ZtLocalArray(Snapshot, nLinks);
+    this->rxInvoke([this, &snapshot, &done]() {
       if (this->state() == ZmEngineState::Running) {
 	auto links = m_links;
 	auto i = links->citer();
 	while (LinkRef ref = i.val())
 	  if (ref) snapshot.push(ZuMv(ref));
       }
-      for (auto &ref : snapshot)
-	if (ref) fn(ref);
       done.post();
     });
     done.wait();
+    for (auto &ref : snapshot)
+      if (ref) fn(ref);
   }
 
   ZiIP localIP() const { return ZiIP{}; }
@@ -2105,7 +2112,7 @@ private:
   }
 
 public:
-	void disconnected(Link *link) {
+	void disconnected(Link *link, bool) {
 	  if (stopping_()) {
 	    if (m_stopCount && !--m_stopCount) {
 	      m_links->clean();
@@ -3283,7 +3290,7 @@ public:
     if (m_disconnecting.xch(1)) return false;
     app()->txRun([link = impl()]() mutable {
       link->delTimers_();
-      static_cast<Link *>(link)->disconnected();
+      static_cast<Link *>(link)->disconnected(false);
     });
     return true;
   }
@@ -4315,13 +4322,12 @@ protected:
     uint64_t, uint64_t, ZuCSpan, bool) { }
   void retiredLocalCID_(uint64_t, const CxnID &) { }
   void statelessReset() { ++m_rxDiag.unhandledAppEvents; }
-  void disconnected() {
-    app()->rxInvoke(impl(), [impl = impl()]() {
-      impl->Self::disconnected_0();
-      return impl;
+  void disconnected(bool peer) {
+    app()->rxRun([link = impl(), peer]() {
+      link->Self::disconnected_0(peer);
     });
   }
-  void disconnected_0() {
+  void disconnected_0(bool peer) {
     auto mx = app()->mx();
     if (mx && mx->running() && app()->txThread()) {
       ZiAssert(rxInvoked_(), "Zquic", (),
@@ -4330,9 +4336,9 @@ protected:
       closeLinkState_();
       m_crypto.resetTLS();
       app()->retireLinkRoutes_(impl());
-      app()->txRun([link = impl()]() mutable {
-	link->app()->rxRun([link]() mutable {
-	  link->Self::disconnected_();
+      app()->txRun([link = impl(), peer]() mutable {
+	link->app()->rxRun([link, peer]() mutable {
+	  link->Self::disconnected_(peer);
 	});
       });
       return;
@@ -4341,8 +4347,8 @@ protected:
       m_crypto.resetTLS();
     }
   }
-  void disconnected_() {
-    app()->disconnected(impl());
+  void disconnected_(bool peer) {
+    app()->disconnected(impl(), peer);
   }
 
   void setRuntimeCIDs_(
@@ -4751,7 +4757,7 @@ protected:
     return true;
   }
 
-  bool checkStatelessReset_(ZuCSpan datagram) {
+  bool checkStatelessReset_(ZuCSpan datagram, bool notify = false) {
     if (!StatelessReset::verify(datagram, m_peerResetToken)) return false;
     m_linkState = LinkState::Draining;
     m_streamQueue.clean();
@@ -4759,6 +4765,7 @@ protected:
     m_rxAcks.clear();
     ++m_rxDiag.failures;
     impl()->statelessReset();
+    if (notify) impl()->disconnected(true);
     return true;
   }
 
@@ -6585,7 +6592,7 @@ nextSpace:
 	m_rxLargestPN[level], h.pnOffset, pn, payloadOffset);
     }
     if (plainLen < 0) {
-      if (checkStatelessReset_(datagram)) return true;
+      if (checkStatelessReset_(datagram, true)) return true;
       ++m_rxDiag.failures;
       return false;
     }
@@ -6613,13 +6620,13 @@ nextSpace:
     ZuCSpan packet{base, packetLen};
     ZuCSpan datagram{d.buf->data_(), d.buf->length};
     if (!m_crypto.rxTrafficSecretInstalled(CryptoLevel::OneRTT)) {
-      if (checkStatelessReset_(datagram)) return true;
+      if (checkStatelessReset_(datagram, true)) return true;
       return false;
     }
     ShortHdr h;
     if (Pkt::parseShort(packet, m_localSCID.length(), h) < 0 ||
 	!(h.dcid == m_localSCID)) {
-      if (checkStatelessReset_(datagram)) return true;
+      if (checkStatelessReset_(datagram, true)) return true;
       return false;
     }
     uint64_t pn = 0;
@@ -6661,7 +6668,7 @@ nextSpace:
 	}
       }
       if (plainLen < 0) {
-	if (checkStatelessReset_(datagram)) return true;
+	if (checkStatelessReset_(datagram, true)) return true;
 	++m_rxDiag.failures;
 	return false;
       }
@@ -7510,7 +7517,7 @@ public:
   }
   template <typename Fn>
   void disconnect_(Fn fn) { // direct call from within rx thread
-    closeCurrent_(true, ZuMv(fn));
+    closeCurrent_(true, false, ZuMv(fn));
     Base::resetTLS_();
   }
   void abort() {
@@ -7769,61 +7776,77 @@ private:
   using RuntimeCID = typename Base::RuntimeCID;
 
   void closeCurrent_(bool notify) {
-    closeCurrent_(notify, []() { });
+    closeCurrent_(notify, false, []() { });
   }
 
   template <typename Fn>
   void closeCurrent_(bool notify, Fn fn) {
-    if (notify && Base::runtimeEstablished_() &&
-	Endpoint::connected() && Endpoint::remote()) {
-      closeAfterConnectionClose_(notify, Endpoint::remote(), ZuMv(fn));
-      return;
-    }
-    closeEndpoint_(notify, ZuMv(fn));
+    closeCurrent_(notify, false, ZuMv(fn));
   }
 
   template <typename Fn>
-  void closeAfterConnectionClose_(bool notify, ZiSockAddr addr, Fn fn) {
+  void closeCurrent_(bool notify, bool peer, Fn fn) {
+    if (notify && Base::runtimeEstablished_() &&
+	Endpoint::connected() && Endpoint::remote()) {
+      closeAfterConnectionClose_(notify, peer, Endpoint::remote(), ZuMv(fn));
+      return;
+    }
+    closeEndpoint_(notify, peer, ZuMv(fn));
+  }
+
+  template <typename Fn>
+  void closeAfterConnectionClose_(
+      bool notify, bool peer, ZiSockAddr addr, Fn fn) {
     Base::closeState_();
     app()->txInvoke(impl(), [
       link = impl(),
       notify,
+      peer,
       addr = ZuMv(addr),
       fn = ZuMv(fn)
     ]() mutable {
       (void)link->sendConnectionClose_(ZuMv(addr), true);
       link->app()->rxRun([
-	link, notify, fn = ZuMv(fn)
+	link, notify, peer, fn = ZuMv(fn)
       ]() mutable {
-	link->closeEndpointDrained_(notify, ZuMv(fn));
+	link->closeEndpointDrained_(notify, peer, ZuMv(fn));
       });
       return link;
     });
   }
 
   void closeEndpoint_(bool notify) {
-    closeEndpoint_(notify, []() { });
+    closeEndpoint_(notify, false, []() { });
   }
 
   template <typename Fn>
   void closeEndpoint_(bool notify, Fn fn) {
+    closeEndpoint_(notify, false, ZuMv(fn));
+  }
+
+  template <typename Fn>
+  void closeEndpoint_(bool notify, bool peer, Fn fn) {
     app()->rxRun([
-      link = impl(), notify, fn = ZuMv(fn)
+      link = impl(), notify, peer, fn = ZuMv(fn)
     ]() mutable {
-      link->closeEndpointDrained_(notify, ZuMv(fn));
+      link->closeEndpointDrained_(notify, peer, ZuMv(fn));
     });
   }
 
   void closeEndpointDrained_(bool notify) {
-    closeEndpointDrained_(notify, []() { });
+    closeEndpointDrained_(notify, false, []() { });
   }
   template <typename Fn>
   void closeEndpointDrained_(bool notify, Fn fn) {
+    closeEndpointDrained_(notify, false, ZuMv(fn));
+  }
+  template <typename Fn>
+  void closeEndpointDrained_(bool notify, bool peer, Fn fn) {
     ZiAssert(app()->rxInvoked(), "Zquic", (),
       "QUIC endpoint close drain outside Rx thread", return);
     m_udpReady = 0;
     m_notifyEndpointDown = false;
-    if (notify) impl()->disconnected();
+    if (notify) impl()->disconnected(peer);
     if (Base::closed()) Base::clearCallbacks_();
     Endpoint::disconnect();
     Base::disconnect();
@@ -8320,7 +8343,7 @@ private:
 	      case FrameType::ApplicationClose:
 		Base::closeRuntime_(frame.errorCode);
 		Base::transportClose_(frame.type, frame.errorCode);
-		closeCurrent_(true);
+		closeCurrent_(true, true, []() { });
 		return true;
       default:
 	return true;
@@ -8400,7 +8423,7 @@ private:
     m_notifyEndpointDown = true;
     resetRuntimeState_();
     if (notify) {
-      impl()->disconnected();
+      impl()->disconnected(true);
     }
   }
 
@@ -9130,7 +9153,7 @@ private:
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
 	Base::closeRuntime_(frame.errorCode);
-	impl()->disconnected();
+	impl()->disconnected(true);
 	Base::transportClose_(frame.type, frame.errorCode);
 	Base::disconnect();
 	return true;

@@ -43,7 +43,7 @@ struct App : public Ztls::Server<App> {
 	  << " ALPN: " << info.alpn << ")\n")
 	<< std::flush;
     }
-    void disconnected() {
+    void disconnected(bool) {
       std::cerr << "disconnected\n" << std::flush;
       app()->done();
     }

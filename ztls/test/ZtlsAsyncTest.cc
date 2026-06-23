@@ -18,7 +18,7 @@ struct ClientApp : public Ztls::Client<ClientApp> {
     using Base = Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc>;
     Link(ClientApp *app) : Base(app) { }
     void connected(Zi::Connected) { }
-    void disconnected() { }
+    void disconnected(bool) { }
     void connectFailed(bool) { }
     int process(Ztls::RxStream &) { return 0; }
   };
@@ -31,7 +31,7 @@ struct ServerApp : public Ztls::Server<ServerApp> {
     using Base = Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc>;
     Link(ServerApp *app) : Base(app) { }
     void connected(Zi::Connected) { }
-    void disconnected() { }
+    void disconnected(bool) { }
     int process(Ztls::RxStream &) { return 0; }
   };
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }

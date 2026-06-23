@@ -145,7 +145,7 @@ protected:
   virtual void disconnect() = 0;
 
   void connected();
-  void disconnected();
+  void disconnected(bool);
   void reconnecting();	// transition direct from Up to Connecting
   void reconnect(bool immediate);
 

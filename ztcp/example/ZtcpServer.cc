@@ -50,7 +50,7 @@ struct App::Link :
   void connected(Zi::Connected) {
     std::cerr << "TCP accepted\n" << std::flush;
   }
-  void disconnected() {
+  void disconnected(bool) {
     std::cerr << "TCP disconnected\n" << std::flush;
   }
   int process(Ztcp::RxStream &rx) {

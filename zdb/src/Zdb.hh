@@ -176,7 +176,7 @@ private:
   Host *host() const { return m_host; }
 
   void connected(ZiIOContext &);
-  void disconnected();
+  void disconnected(bool);
 
   void msgRead(ZiIOContext &);
   int msgRead2(ZmRef<IOBuf>);

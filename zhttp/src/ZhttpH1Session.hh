@@ -21,7 +21,7 @@ struct Session {
   auto impl() { return static_cast<Impl *>(this); }
 
   void connected(Link &link) { impl()->send(link); }
-  void disconnected(Link &link) { impl()->closed(link); }
+  void disconnected(Link &link, bool peer) { impl()->closed(link, peer); }
 
   template <typename Rx>
   int process(Link &link, Rx &rx) {
@@ -29,7 +29,7 @@ struct Session {
   }
 
   void send(Link &) { }
-  void closed(Link &) { }
+  void closed(Link &, bool) { }
 };
 
 template <typename Stream, typename Builder>
@@ -55,7 +55,7 @@ struct Server {
   auto impl() { return static_cast<Impl *>(this); }
 
   void connected(auto &) { }
-  void disconnected(auto &) { }
+  void disconnected(auto &, bool) { }
 
   template <typename Link, typename Rx>
   int process(Link &link, Rx &rx) {

@@ -72,7 +72,7 @@ struct App::Link :
     }
   }
 
-  void disconnected() {
+  void disconnected(bool) {
     if (!m_responseSeen) {
       app()->setError("disconnected before response");
       app()->done();

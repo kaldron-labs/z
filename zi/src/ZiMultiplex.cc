@@ -501,12 +501,8 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
 
   cxn->connected();
 
-  ZiDEBUG(this, ([
-    socket = ZuBoxed(s),
-    ip = remoteIP,
-    port = ZuBoxed(unsigned(remotePort))
-  ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+  ZiDEBUG(this, ([socket = s, ip = remoteIP, port = remotePort](auto &s) {
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " UDP CONNECTED to " << ip << ':' << port;
   }));
 
@@ -601,12 +597,8 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
 #endif
   }
 
-  ZiDEBUG(this, ([
-    socket = ZuBoxed(s),
-    ip = remoteIP,
-    port = ZuBoxed(unsigned(remotePort))
-  ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+  ZiDEBUG(this, ([socket = s, ip = remoteIP, port = remotePort](auto &s) {
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " CONNECTING to " << ip << ':' << port;
   }));
 
@@ -777,11 +769,11 @@ void ZiMultiplex::executedConnect(ZiConnectFn fn, const ZiCxnInfo &ci)
   cxn->connected();
 
   ZiDEBUG(this, ([
-    socket = ZuBoxed(ci.socket),
+    socket = ci.socket,
     ip = ci.remoteIP,
-    port = ZuBoxed(unsigned(ci.remotePort))
+    port = ci.remotePort
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " TCP CONNECTED to " << ip << ':' << port;
   }));
 }
@@ -1089,11 +1081,11 @@ retry:
   }
 
   ZiDEBUG(this, ([
-    socket = ZuBoxed(s),
+    socket = s,
     ip = remote.ip(),
-    port = ZuBoxed(unsigned(ntohs(remote.port())))
+    port = ntohs(remote.port())
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " ACCEPTING from " << ip << ':' << port;
   }));
 
@@ -1262,17 +1254,17 @@ void ZiConnection::recv()
     if (!WSAIoctl(
 	m_info.socket, FIONREAD, 0, 0, &n, sizeof(unsigned long), &o, 0, 0)) {
       ZiDEBUG(m_mx, ([
-	socket = ZuBoxed(m_info.socket),
-	len = ZuBoxed(len),
-	size = ZuBoxed(m_rxContext.size),
-	offset = ZuBoxed(m_rxContext.offset),
-	buffered = ZuBoxed(n),
-	overlapped = ZuBoxPtr(&overlapped).hex<false, ZuFmt::Alt<>>()
+	socket = m_info.socket,
+	len,
+	size = m_rxContext.size,
+	offset = m_rxContext.offset,
+	buffered = n,
+	overlapped,
       ](auto &s) {
-	s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+	s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
 	  << " WSARecv(" << len << ") size: " << size
 	  << " offset: " << offset << " buffered: " << buffered
-	  << " overlapped: " << overlapped;
+	  << " overlapped: " << ZuBoxPtr(overlapped).hex<false, ZuFmt::Alt<>>();
       }));
     }
   }
@@ -1328,13 +1320,13 @@ void ZiConnection::recv()
   if (ZuUnlikely(m_mx->debug())) {
     ioctl(m_info.socket, FIONREAD, &n);
     ZiDEBUG(m_mx, ([
-      socket = ZuBoxed(m_info.socket),
-      len = ZuBoxed(len),
-      size = ZuBoxed(m_rxContext.size),
-      offset = ZuBoxed(m_rxContext.offset),
-      buffered = ZuBoxed(n)
+      socket = m_info.socket,
+      len,
+      size = m_rxContext.size,
+      offset = m_rxContext.offset,
+      buffered = n
     ](auto &s) {
-      s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+      s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
 	<< " recv(" << len << ") size: " << size
 	<< " offset: " << offset << " buffered: " << buffered;
     }));
@@ -1354,16 +1346,14 @@ retry:
   if (ZuUnlikely(n < 0)) e = errno;
 
   ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    len = ZuBoxed(len),
-    n = ZuBoxed(n),
-    errNo = ZuBoxed(int(e.errNo())),
-    eagain = ZuBoxed(int(EAGAIN)),
-    eintr = ZuBoxed(int(EINTR))
+    socket = m_info.socket,
+    len,
+    n,
+    errNo = int(e.errNo())
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " recv(" << len << "): " << n << " errno: " << errNo
-      << " (EAGAIN=" << eagain << " EINTR=" << eintr << ')';
+      << " (EAGAIN=" << EAGAIN << " EINTR=" << EINTR << ')';
   }));
 
   if (ZuUnlikely(n < 0)) {
@@ -1383,12 +1373,12 @@ retry:
   }
 
   ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    len = ZuBoxed(len),
-    n = ZuBoxed(n),
+    socket = m_info.socket,
+    len,
+    n,
     buf = ZmMkRef(new ZiDebugBuf(buf, n))
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " recv(" << len << "): " << n << '\n'
       << ZtHexDump_(buf->cspan());
   }));
@@ -1396,7 +1386,7 @@ retry:
   if (ZuUnlikely(!n)) {
     if (m_info.options.udp()) return true;
     m_rxContext.completed();
-    disconnect();
+    disconnect(true);
     return false;
   }
 
@@ -1404,7 +1394,7 @@ retry:
 
   if (ZuUnlikely(m_rxContext.completed())) {
     if (m_rxContext.disconnected()) {
-      disconnect();
+      disconnect(false);
       return false;
     } else {
       m_mx->epollRecv(this, m_info.socket, 0);
@@ -1432,17 +1422,17 @@ void ZiConnection::overlappedRecv(int status, unsigned n, ZeError e)
     return;
   }
   if (ZuUnlikely(!n && !m_info.options.udp())) {
-    if (m_rxUp.load_()) disconnect();
+    if (m_rxUp.load_()) disconnect(true);
     return;
   }
 
   ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    n = ZuBoxed(n),
+    socket = m_info.socket,
+    n,
     buf = ZmMkRef(new ZiDebugBuf(
       m_rxContext.ptr + m_rxContext.offset, n))
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " WSARecv(" << n << ")\n"
       << ZtHexDump_(buf->cspan());
   }));
@@ -1450,7 +1440,7 @@ void ZiConnection::overlappedRecv(int status, unsigned n, ZeError e)
   executedRecv(n);
 
   if (ZuUnlikely(m_rxContext.completed())) {
-    if (m_rxContext.disconnected()) disconnect();
+    if (m_rxContext.disconnected()) disconnect(false);
     return;
   }
 
@@ -1465,7 +1455,9 @@ void ZiConnection::overlappedRecv(int status, unsigned n, ZeError e)
 
 void ZiConnection::errorRecv(int status, ZeError e)
 {
-  if (m_rxUp.load_()) close();
+  bool peer = status == Zi::IOError &&
+    (e.errNo() == ZiENOTCONN || e.errNo() == ZiECONNRESET);
+  if (m_rxUp.load_()) close(peer);
   if (status == Zi::IOError &&
       (e.errNo() == ZiENOTCONN || e.errNo() == ZiECONNRESET)) return;
   Error(
@@ -1557,14 +1549,14 @@ void ZiConnection::send()
 #ifdef ZiMultiplex_IOCP
 retry:
   ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    size = ZuBoxed(m_txContext.size),
-    offset = ZuBoxed(m_txContext.offset),
+    socket = m_info.socket,
+    size = m_txContext.size,
+    offset = m_txContext.offset,
     buf = ZmMkRef(new ZiDebugBuf(wsaBuf.buf, wsaBuf.len))
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
-      << " WSASend(" << buf->length
-      << ") size: " << size << " offset: " << offset << '\n'
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
+      << " WSASend(" << buf->length << ") size: " << size
+      << " offset: " << offset << '\n'
       << ZtHexDump_(buf->cspan());
   }));
 
@@ -1577,11 +1569,11 @@ retry:
     }
     n = n_;
     ZiDEBUG(m_mx, ([
-      socket = ZuBoxed(m_info.socket),
-      len = ZuBoxed(wsaBuf.len),
-      n = ZuBoxed(n)
+      socket = m_info.socket,
+      len = wsaBuf.len,
+      n
     ](auto &s) {
-      s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+      s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
 	<< " WSASendTo(" << len << "): " << n;
     }));
   } else {
@@ -1592,11 +1584,11 @@ retry:
     }
     n = n_;
     ZiDEBUG(m_mx, ([
-      socket = ZuBoxed(m_info.socket),
-      len = ZuBoxed(wsaBuf.len),
-      n = ZuBoxed(n)
+      socket = m_info.socket,
+      len = wsaBuf.len,
+      n
     ](auto &s) {
-      s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+      s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
 	<< " WSASend(" << len << "): " << n;
     }));
   }
@@ -1605,14 +1597,14 @@ retry:
 #ifdef ZiMultiplex_EPoll
 retry:
   ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    size = ZuBoxed(m_txContext.size),
-    offset = ZuBoxed(m_txContext.offset),
+    socket = m_info.socket,
+    size = m_txContext.size,
+    offset = m_txContext.offset,
     buf = ZmMkRef(new ZiDebugBuf(buf, len))
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
-      << " send(" << buf->length
-      << ") size: " << size << " offset: " << offset << '\n'
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
+      << " send(" << buf->length << ") size: " << size
+      << " offset: " << offset << '\n'
       << ZtHexDump_(buf->cspan());
   }));
 
@@ -1629,16 +1621,14 @@ retry:
   if (ZuUnlikely(n_ < 0)) e = errno;
 
   ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    len = ZuBoxed(len),
-    n = ZuBoxed(n_),
-    errNo = ZuBoxed(int(e.errNo())),
-    eagain = ZuBoxed(int(EAGAIN)),
-    eintr = ZuBoxed(int(EINTR))
+    socket = m_info.socket,
+    len,
+    n = n_,
+    e
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
-      << " send(" << len << "): " << n << " errno: " << errNo
-      << " (EAGAIN=" << eagain << " EINTR=" << eintr << ')';
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
+      << " send(" << len << "): " << n << " errno: " << e
+      << " (EAGAIN=" << EAGAIN << " EINTR=" << EINTR << ')';
   }));
 
   if (ZuUnlikely(n_ < 0)) {
@@ -1655,11 +1645,11 @@ retry:
   n = n_;
 
   ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    len = ZuBoxed(len),
-    n = ZuBoxed(n)
+    socket = m_info.socket,
+    len,
+    n
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " send(" << len << "): " << n;
   }));
 #endif
@@ -1670,7 +1660,7 @@ executed:
   executedSend(n);
 
   if (ZuLikely(m_txContext.completed())) {
-    if (m_txContext.disconnected()) disconnect();
+    if (m_txContext.disconnected()) disconnect(false);
     return;
   }
 
@@ -1699,7 +1689,9 @@ void ZiConnection::errorSend(int status, ZeError e)
   if (m_info.options.udp() && status == Zi::IOError &&
       (e.errNo() == ZiECONNREFUSED || e.errNo() == ZiECONNRESET))
     return;
-  close_1();
+  bool peer = status == Zi::IOError &&
+    (e.errNo() == ZiENOTCONN || e.errNo() == ZiECONNRESET);
+  close_1(peer);
   if (status == Zi::IOError &&
       (e.errNo() == ZiENOTCONN || e.errNo() == ZiECONNRESET)) return;
   Error(
@@ -1717,10 +1709,10 @@ void ZiConnection::executedSend(unsigned n)
 
 #ifdef ZiMultiplex_IOCP
   ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket),
-    n = ZuBoxed(n)
+    socket = m_info.socket,
+    n
   ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>()
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " WSASend(" << n << ')';
   }));
 #endif
@@ -1927,21 +1919,34 @@ void ZiMultiplex::connectDel(Socket s)
 
 void ZiConnection::disconnect()
 {
-  m_mx->txInvoke(this, [this]() { disconnect_1(); return this; });
+  disconnect(false);
 }
 
-void ZiConnection::disconnect_1()
+void ZiConnection::disconnect(bool peer)
 {
-  if (!m_txUp.load_()) return;
+  m_mx->txInvoke(this, [this, peer]() { disconnect_1(peer); return this; });
+}
+
+void ZiConnection::disconnect_1(bool peer)
+{
+  if (!m_txUp.load_()) {
+    m_mx->rxRun([cxn = ZmMkRef(this), peer]() {
+      cxn->notifyDisconnected(peer);
+    });
+    return;
+  }
   
   m_txUp = false;
 
-  m_mx->rxRun([cxn = ZmMkRef(this)]() { cxn->disconnect_2(); });
+  m_mx->rxRun([cxn = ZmMkRef(this), peer]() { cxn->disconnect_2(peer); });
 }
 
-void ZiConnection::disconnect_2()
+void ZiConnection::disconnect_2(bool peer)
 {
-  if (!m_rxUp.load_()) return;
+  if (!m_rxUp.load_()) {
+    notifyDisconnected(peer);
+    return;
+  }
 
   m_rxUp = 0;
 
@@ -1950,26 +1955,26 @@ void ZiConnection::disconnect_2()
       || m_info.options.netlink()
 #endif
       ) {
-    executedDisconnect();
+    executedDisconnect(peer);
     return;
   }
 
-  ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket)
-  ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>() << " disconnect()";
+  ZiDEBUG(m_mx, ([socket = m_info.socket](auto &s) {
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>() <<
+      " disconnect()";
   }));
   
 #ifdef ZiMultiplex_IOCP
   using Executed = Zi_Overlapped::Executed;
   Zi_Overlapped &overlapped = m_discOverlapped;
   ZeError e;
+  m_discPeer = peer;
   overlapped.init(
       Executed::Member<&ZiConnection::overlappedDisconnect>::fn(this));
   if (ZuLikely(DisconnectEx(m_info.socket, (OVERLAPPED *)&overlapped, 0, 0) ||
 	(e = WSAGetLastError()).errNo() == WSA_IO_PENDING))
     return;
-  errorDisconnect(Zi::IOError, e);
+  errorDisconnect(Zi::IOError, e, peer);
 #endif
 
 #ifdef ZiMultiplex_EPoll
@@ -1982,9 +1987,9 @@ retry:
     e = errno;
     if (e.errNo() == EAGAIN) return;
     if (e.errNo() == EINTR) goto retry;
-    errorDisconnect(Zi::IOError, e);
+    errorDisconnect(Zi::IOError, e, peer);
   }
-  executedDisconnect();
+  executedDisconnect(peer);
 #endif
 }
 
@@ -1992,17 +1997,16 @@ retry:
 void ZiConnection::overlappedDisconnect(int status, unsigned n, ZeError e)
 {
   if (ZuUnlikely(status != Zi::OK)) {
-    errorDisconnect(status, e);
+    errorDisconnect(status, e, m_discPeer);
     return;
   }
-  executedDisconnect();
+  executedDisconnect(m_discPeer);
 }
 #endif
 
-void ZiConnection::errorDisconnect(int status, ZeError e)
+void ZiConnection::errorDisconnect(int status, ZeError e, bool peer)
 {
-  ZmRef<ZiConnection> this_{this}; // maintain +ve ref count in scope
-  m_mx->disconnected(this);
+  notifyDisconnected(peer);
   if (e.errNo() != ZiENOTCONN)
     Error(
 #ifndef _WIN32
@@ -2011,32 +2015,31 @@ void ZiConnection::errorDisconnect(int status, ZeError e)
       "DisconnectEx",
 #endif
       status, e);
-  if (!Zi::nullSocket(m_info.socket)) {
-    Zi::closeSocket(m_info.socket);
-    m_info.socket = Zi::nullSocket();
-  }
-  disconnected();
 }
 
-void ZiConnection::executedDisconnect()
+void ZiConnection::executedDisconnect(bool peer)
+{
+  notifyDisconnected(peer);
+}
+
+void ZiConnection::notifyDisconnected(bool peer)
 {
   ZmRef<ZiConnection> this_{this}; // maintain +ve ref count in scope
-  m_mx->disconnected(this);
   if (!Zi::nullSocket(m_info.socket)) {
+    m_mx->disconnected(this);
     Zi::closeSocket(m_info.socket);
     m_info.socket = Zi::nullSocket();
   }
-  disconnected();
+  disconnected(peer);
 }
 
 void ZiMultiplex::disconnected(ZiConnection *cxn)
 {
   Socket s = cxn->info().socket;
 
-  ZiDEBUG(this, ([
-    socket = ZuBoxed(s)
-  ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>() << " disconnected()";
+  ZiDEBUG(this, ([socket = s](auto &s) {
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>() <<
+      " disconnected()";
   }));
 
   cxnDel(s);
@@ -2046,31 +2049,42 @@ void ZiMultiplex::disconnected(ZiConnection *cxn)
 
 void ZiConnection::close()
 {
-  m_mx->txInvoke(this, [this]() { close_1(); return this; });
+  close(false);
 }
 
-void ZiConnection::close_1()
+void ZiConnection::close(bool peer)
 {
-  if (!m_txUp.load_()) return;
+  m_mx->txInvoke(this, [this, peer]() { close_1(peer); return this; });
+}
+
+void ZiConnection::close_1(bool peer)
+{
+  if (!m_txUp.load_()) {
+    m_mx->rxRun([cxn = ZmMkRef(this), peer]() {
+      cxn->notifyDisconnected(peer);
+    });
+    return;
+  }
   
   m_txUp = false;
 
-  m_mx->rxRun([cxn = ZmMkRef(this)]() { cxn->close_2(); });
+  m_mx->rxRun([cxn = ZmMkRef(this), peer]() { cxn->close_2(peer); });
 }
 
-void ZiConnection::close_2()
+void ZiConnection::close_2(bool peer)
 {
-  if (!m_rxUp.load_()) return;
+  if (!m_rxUp.load_()) {
+    notifyDisconnected(peer);
+    return;
+  }
   
   m_rxUp = 0;
 
-  ZiDEBUG(m_mx, ([
-    socket = ZuBoxed(m_info.socket)
-  ](auto &s) {
-    s << "FD: " << socket.fmt<ZuFmt::Right<3>>() << " close()";
+  ZiDEBUG(m_mx, ([socket = m_info.socket](auto &s) {
+    s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>() << " close()";
   }));
 
-  executedDisconnect();
+  executedDisconnect(peer);
 }
 
 ZiMultiplex::ZiMultiplex(ZiMxParams mxParams) :
@@ -2297,22 +2311,25 @@ void ZiMultiplex::rx()
 
   for (;;) {
     ZiDEBUG(this, ([
-      nThreads = ZuBoxed(params().nThreads()),
-      nConnections = ZuBoxed(m_cxns->count_()),
-      nListeners = ZuBoxed(m_listeners->count_())
+      nThreads = params().nThreads(),
+      nConnections = m_cxns->count_(),
+      nListeners = m_listeners->count_()
     ](auto &s) {
-      s << "wait() nThreads: " << nThreads.fmt<ZuFmt::Right<2>>()
-	<< " nConnections: " << nConnections.fmt<ZuFmt::Right<4>>()
-	<< " nListeners: " << nListeners.fmt<ZuFmt::Right<3>>();
+      s << "wait() nThreads: " << ZuBoxed(nThreads).fmt<ZuFmt::Right<2>>()
+	<< " nConnections: " <<
+	  ZuBoxed(nConnections).fmt<ZuFmt::Right<4>>()
+	<< " nListeners: " << ZuBoxed(nListeners).fmt<ZuFmt::Right<3>>();
     }));
     if (!GetQueuedCompletionStatus(
 	  m_completionPort, &len, &key, (OVERLAPPED **)&overlapped, INFINITE)) {
       e = GetLastError();
       ZiDEBUG(this, ([
-	overlapped = ZuBoxPtr(overlapped).hex<false, ZuFmt::Alt<>>(),
-	errNo = ZuBoxed(int(e.errNo()))
+	overlapped,
+	errNo = int(e.errNo())
       ](auto &s) {
-	s << "wait() overlapped: " << overlapped << " errNo: " << errNo;
+	s << "wait() overlapped: " <<
+	  ZuBoxPtr(overlapped).hex<false, ZuFmt::Alt<>>() <<
+	  " errNo: " << errNo;
       }));
       if (!overlapped) {
 	Error("GetQueuedCompletionStatus", Zi::IOError, e);
@@ -2320,10 +2337,9 @@ void ZiMultiplex::rx()
       }
       overlapped->complete(Zi::IOError, 0, e);
     } else {
-      ZiDEBUG(this, ([
-	overlapped = ZuBoxPtr(overlapped).hex<false, ZuFmt::Alt<>>()
-      ](auto &s) {
-	s << "wait() overlapped: " << overlapped;
+      ZiDEBUG(this, ([overlapped](auto &s) {
+	s << "wait() overlapped: " <<
+	  ZuBoxPtr(overlapped).hex<false, ZuFmt::Alt<>>();
       }));
       if (!overlapped) { // PostQueuedCompletionStatus() called
 	ZiDEBUG(this, "wait() woken by PostQueuedCompletionStatus()");
@@ -2345,19 +2361,20 @@ void ZiMultiplex::rx()
 
   for (;;) {
     ZiDEBUG(this, ([
-      nThreads = ZuBoxed(params().nThreads()),
-      nConnections = ZuBoxed(m_cxns->count_()),
-      epollFD = ZuBoxed(m_epollFD),
-      wakeFD = ZuBoxed(m_wakeFD),
-      wakeFD2 = ZuBoxed(m_wakeFD2),
-      nListeners = ZuBoxed(m_listeners->count_())
+      nThreads = params().nThreads(),
+      nConnections = m_cxns->count_(),
+      epollFD = m_epollFD,
+      wakeFD = m_wakeFD,
+      wakeFD2 = m_wakeFD2,
+      nListeners = m_listeners->count_()
     ](auto &s) {
-      s << "wait() nThreads: " << nThreads.fmt<ZuFmt::Right<2>>()
-	<< " nConnections: " << nConnections.fmt<ZuFmt::Right<4>>()
-	<< " epollFD: " << epollFD.fmt<ZuFmt::Right<3>>()
-	<< " wakeFD: " << wakeFD.fmt<ZuFmt::Right<3>>()
-	<< " wakeFD2: " << wakeFD2.fmt<ZuFmt::Right<3>>()
-	<< " nListeners: " << nListeners.fmt<ZuFmt::Right<3>>();
+      s << "wait() nThreads: " << ZuBoxed(nThreads).fmt<ZuFmt::Right<2>>()
+	<< " nConnections: " <<
+	  ZuBoxed(nConnections).fmt<ZuFmt::Right<4>>()
+	<< " epollFD: " << ZuBoxed(epollFD).fmt<ZuFmt::Right<3>>()
+	<< " wakeFD: " << ZuBoxed(wakeFD).fmt<ZuFmt::Right<3>>()
+	<< " wakeFD2: " << ZuBoxed(wakeFD2).fmt<ZuFmt::Right<3>>()
+	<< " nListeners: " << ZuBoxed(nListeners).fmt<ZuFmt::Right<3>>();
     }));
 
 #if 0
@@ -2372,7 +2389,7 @@ void ZiMultiplex::rx()
 #ifdef ZiMultiplex_DEBUG
     now = Zm::now() - now;
     if (now.microsecs() > 1000) {
-      ZiLOG(Info, "ZiMultiplex", ([usecs = ZuBoxed(now.microsecs())](auto &s) {
+      ZiLOG(Info, "ZiMultiplex", ([usecs = now.microsecs()](auto &s) {
 	s << "slow epoll_wait(): " << usecs << " us";
       }));
     }
@@ -2472,10 +2489,8 @@ void ZiMultiplex::wakeRx()
 #ifdef ZiMultiplex_EPoll
 bool ZiMultiplex::readWake()
 {
-  ZiDEBUG(this, ([
-    wakeFD = ZuBoxed(m_wakeFD)
-  ](auto &s) {
-    s << "FD: " << wakeFD.fmt<ZuFmt::Right<3>>() << " readWake";
+  ZiDEBUG(this, ([wakeFD = m_wakeFD](auto &s) {
+    s << "FD: " << ZuBoxed(wakeFD).fmt<ZuFmt::Right<3>>() << " readWake";
   }));
 
   char c;
@@ -2484,10 +2499,8 @@ bool ZiMultiplex::readWake()
 
 void ZiMultiplex::writeWake()
 {
-  ZiDEBUG(this, ([
-    wakeFD = ZuBoxed(m_wakeFD2)
-  ](auto &s) {
-    s << "FD: " << wakeFD.fmt<ZuFmt::Right<3>>() << " writeWake";
+  ZiDEBUG(this, ([wakeFD = m_wakeFD2](auto &s) {
+    s << "FD: " << ZuBoxed(wakeFD).fmt<ZuFmt::Right<3>>() << " writeWake";
   }));
 
   char c = 0;

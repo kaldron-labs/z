@@ -176,7 +176,7 @@ public:
 
   void connected(ZiIOContext &io);
   void connected_();
-  void disconnected();
+  void disconnected(bool);
 
   void send(ZmRef<IOBuf> ioBuf);
 
@@ -1199,7 +1199,7 @@ void Connection::connected_()
   if (ZmRef<Proxy> proxy = m_proxy) proxy->connected(this);
 }
 
-void Connection::disconnected()
+void Connection::disconnected(bool)
 {
   if (m_peer && m_peer->up() && !(m_peer->m_flags & Hold)) {
     if (m_latency) {

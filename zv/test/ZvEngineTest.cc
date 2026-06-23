@@ -62,7 +62,7 @@ public:
 
   void connected() { m_connected.post(); }
   void waitConnected() { m_connected.wait(); }
-  void disconnected() { m_disconnected.post(); }
+  void disconnected(bool) { m_disconnected.post(); }
   void waitDisconnected() { m_disconnected.wait(); }
   void reconnect() { m_reconnect.post(); }
   void waitReconnect() { m_reconnect.wait(); }
@@ -107,8 +107,8 @@ public:
 	engine()->connected();
 	break;
       case Disconnected:
-	disconnected();
-	engine()->disconnected();
+	disconnected(false);
+	engine()->disconnected(false);
 	break;
       case Reconnect:
 	reconnect(false);
@@ -118,8 +118,8 @@ public:
   }
   void disconnect() {
     linkINFO("disconnect(): " << id);
-    disconnected();
-    engine()->disconnected();
+    disconnected(false);
+    engine()->disconnected(false);
   }
 
   // ZvLink Rx CRTP

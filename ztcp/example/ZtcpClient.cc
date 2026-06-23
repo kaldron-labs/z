@@ -45,7 +45,7 @@ struct App::Link :
     std::cerr << "TCP connected\n" << std::flush;
     sendPing();
   }
-  void disconnected() {
+  void disconnected(bool) {
     std::cerr << "disconnected\n" << std::flush;
     app()->done();
   }

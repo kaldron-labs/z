@@ -307,7 +307,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
       }
       send_payload(this, state.clientPayload);
     }
-    void disconnected() { this->app()->state.done_one(); }
+    void disconnected(bool) { this->app()->state.done_one(); }
     void connectFailed(bool) { this->app()->state.fail("connect failed"); }
     int process(Ztls::RxStream &rx) {
       auto &state = this->app()->state;
@@ -350,7 +350,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
       state.server_tlsver = unsigned(info.version);
       state.server_cipher = this->tlsInfo().cipherID;
     }
-    void disconnected() { this->app()->state.done_one(); }
+    void disconnected(bool) { this->app()->state.done_one(); }
     int process(Ztls::RxStream &rx) {
       auto &state = this->app()->state;
       while (!rx.empty()) {

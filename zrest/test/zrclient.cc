@@ -61,7 +61,7 @@ public:
 
   void connected(Zi::Connected);
   void connectFailed(bool transient);
-  void disconnected();
+  void disconnected(bool);
 
   bool rcvd();
 
@@ -117,9 +117,9 @@ void Link::connectFailed(bool transient)
   if (!transient || !app()->reconnFreq()) app()->done();
 }
 
-void Link::disconnected()
+void Link::disconnected(bool peer)
 {
-  Base::disconnected();
+  Base::disconnected(peer);
   app()->done();
 }
 

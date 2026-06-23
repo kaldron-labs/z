@@ -131,7 +131,7 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
     app()->state->clientConnected = 1;
     sendBytes(*this, Ping);
   }
-  void disconnected() { }
+  void disconnected(bool) { }
 
   int process(Ztcp::RxStream &rx) {
     if (!consume(rx, Pong)) return 0;
@@ -181,7 +181,7 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
     (void)tx;
     app()->state->serverConnected = 1;
   }
-  void disconnected() { }
+  void disconnected(bool) { }
 
   int process(Ztcp::RxStream &rx) {
     if (!consume(rx, Ping)) return 0;

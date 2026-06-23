@@ -16,6 +16,7 @@
 
 #include <zlib/ZmList.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZiLog.hh>
@@ -197,8 +198,8 @@ public:
     ZiConnection(link->app()->mx(), ci), m_link(ZuMv(link)) { }
 
   void connected(ZiIOContext &io) { m_link->connected_0(this, io); }
-  void disconnected() {
-    if (Link *link = m_link) link->disconnected_0(this, ZuMv(m_link));
+  void disconnected(bool peer) {
+    if (Link *link = m_link) link->disconnected_0(this, ZuMv(m_link), peer);
   }
 
 private:
@@ -585,22 +586,22 @@ private:
   }
 
   template <typename ImplRef_>
-  void disconnected_0(Cxn *cxn, ImplRef_ impl_) {
+  void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMv(impl_)};
-    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn)]() {
-      impl->disconnected_(cxn);
+    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn), peer]() {
+      impl->disconnected_(cxn, peer);
       auto mx = cxn->mx();
       // drain Tx while keeping cxn/impl referenced
       mx->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn)]() { });
     });
   }
-  void disconnected_(Cxn *cxn) {
+  void disconnected_(Cxn *cxn, bool peer) {
     // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnected dispatch outside Rx thread", return);
     if (m_cxn == cxn) m_cxn = nullptr;
     reset_tls_();
-    impl()->disconnected();
+    impl()->disconnected(peer);
   }
 
 private:
@@ -1262,7 +1263,10 @@ private:
   }
 };
 
-template <typename App_> class Engine : public Random {
+template <typename App_> class Engine :
+  public Random,
+  public ZmEngine<App_> {
+friend ZmEngine<App_>;
 template <typename, typename, typename, typename, typename, typename>
 friend class Link;
 template <typename, typename, typename, typename> friend class CliLink;
@@ -1270,6 +1274,11 @@ template <typename, typename, typename, typename> friend class SrvLink;
 
 public:
   using App = App_;
+  using EngineCtl = ZmEngine<App>;
+
+  using EngineCtl::start;
+  using EngineCtl::stop;
+  using EngineCtl::state;
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
@@ -1412,19 +1421,12 @@ private:
 
 public:
   void final() {
-    if (!m_mx || !m_rxThread) return;
-    if (m_mx->running()) {
-      if (rxInvoked())
-	final_();
-      else
-	ZmBlock<>{}([this](auto wake) mutable {
-	  rxInvoke([this, wake = ZuMv(wake)]() mutable {
-	    final_();
-	    wake();
-	  });
-	});
-    } else
+    bool ok = EngineCtl::lock(ZmEngineState::Stopped, [this]() {
       final_();
+      return true;
+    });
+    ZiAssert(ok, "Ztls", (),
+      "TLS engine finalization while not stopped", return);
   }
 
   ZiMultiplex *mx() const { return m_mx; }
@@ -1551,6 +1553,28 @@ private:
   }
 
 protected:
+  void start_() {
+    this->started(true);
+  }
+
+  void stop_() {
+    txRun([this]() {
+      rxRun([this]() { this->stopped(true); });
+    });
+  }
+
+  template <typename L>
+  bool spawn(L l) {
+    if (!m_mx || !m_mx->running()) return false;
+    rxRun(ZuMv(l));
+    return true;
+  }
+
+  void wake() {
+    if (!m_mx || !m_mx->running()) return;
+    rxRun([this]() { this->stopped(); });
+  }
+
   // Ztls Rx thread
   ptls_context_t *ctx() { return &m_ctx; }
   const ptls_context_t *ctx() const { return &m_ctx; }
@@ -1732,7 +1756,7 @@ struct App : public Client<App> {
     // Ztls Rx thread - handshake completed
     void connected(Zi::Connected);
 
-    void disconnected(); // Ztls Rx thread
+    void disconnected(bool peer); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread
 
     // process() should return:
@@ -1833,7 +1857,7 @@ struct App : public Server<App> {
     // Ztls Rx thread - handshake completed
     void connected(Zi::Connected);
 
-    void disconnected(); // Ztls Rx thread
+    void disconnected(bool peer); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread
     
     // process() should return:
