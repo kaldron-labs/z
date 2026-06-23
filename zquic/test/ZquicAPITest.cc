@@ -235,10 +235,13 @@ struct TestLink :
   void dataBlockedForTest(uint64_t maximum) {
     Base::dataBlocked_(maximum);
   }
-  void closeTransportForTest(Zquic::FrameType::T type, uint64_t errorCode) {
-    Base::closeRuntime_(errorCode);
-    Base::transportClose_(type, errorCode);
-  }
+	  void closeTransportForTest(Zquic::FrameType::T type, uint64_t errorCode) {
+	    Base::closeRuntime_(errorCode);
+	    Base::transportClose_(type, errorCode);
+	  }
+	  void closeForTest(uint64_t errorCode = 0) {
+	    Base::closeState_(errorCode);
+	  }
   void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
   }
@@ -426,7 +429,7 @@ void testStreamShape()
   c0->stop(9);
   ZuCHECK(c0->finSent(), "FIN state was not recorded");
 
-  client->close(42);
+  client->closeForTest(42);
   ZuCHECK(client->closed() && client->closeError() == 42,
     "link close state mismatch");
 }

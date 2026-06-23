@@ -156,7 +156,7 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if (!app.listen()) {
+  if (!app.start()) {
     std::cerr << "QUIC server listen failed\n" << std::flush;
     app.final();
     mx.stop();
@@ -166,6 +166,7 @@ int main(int argc, char **argv)
 
   app.wait();
 
+  app.stop();
   app.final();
   mx.stop();
   ZiLog::stop();

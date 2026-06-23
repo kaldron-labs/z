@@ -73,9 +73,12 @@ struct TestLink :
     StreamTxBufAlloc, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
   void queueTxFlush_() { }
-  void initPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
-  }
+	  void initPath(ZiSockAddr local, ZiSockAddr remote) {
+	    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
+	  }
+	  void closeForTest(uint64_t errorCode = 0) {
+	    Base::closeState_(errorCode);
+	  }
 #ifdef Zquic_DEBUG
   void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
   bool startPMTUDProbe(unsigned size) {
@@ -164,7 +167,7 @@ void testHandshakeStreamsAndClose()
   }
   ZuCHECK(c0->txBytes() == 12, "loop stream Tx accounting mismatch");
 
-  client->close(Zquic::TransportError::NoError);
+  client->closeForTest(Zquic::TransportError::NoError);
   ZuCHECK(client->closed() && !client->closeError(), "loop graceful close failed");
 }
 
