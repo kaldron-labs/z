@@ -5,7 +5,7 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
 	ZmAssert.hh ZmAtomic.hh \
-	ZmAlloc.hh ZmAllocator.hh ZmHeap.hh ZmVHeap.hh \
+	ZmAlloc.hh ZmAllocator.hh ZmHeap.hh ZmVAlloc.hh ZmVHeap.hh \
 	ZmBackTrace.hh ZmBackTrace_.hh ZmBackTrace_print.hh \
 	ZmBackTracer.hh ZmBackoff.hh ZmBitmap.hh ZmBlock.hh \
 	ZmCleanup.hh ZmCondition.hh ZmQueue.hh \

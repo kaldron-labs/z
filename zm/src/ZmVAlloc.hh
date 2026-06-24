@@ -7,22 +7,22 @@
 // safe alloca() smart pointer that stack allocates if requested size
 // is less than 50% of the remaining stack space, falling back to ZmVHeap
 //
-// WARNING: ZtAlloc(T, N) is a macro that evaluates N multiple times
+// WARNING: ZmVAlloc(T, N) is a macro that evaluates N multiple times
 
-#ifndef ZtAlloc_HH
-#define ZtAlloc_HH
+#ifndef ZmVAlloc_HH
+#define ZmVAlloc_HH
 
-#ifndef ZtLib_HH
-#include <zlib/ZtLib.hh>
+#ifndef ZmLib_HH
+#include <zlib/ZmLib.hh>
 #endif
 
 #include <zlib/ZmAlloc.hh>
 #include <zlib/ZmVHeap.hh>
 
-#define ZtAlloc(A, T, n) \
+#define ZmVAlloc(A, T, n) \
   ZmAlloc_<T>{static_cast<T *>(!(n) ? nullptr : \
     (((ZmStackAvail()>>1) < ((n) * sizeof(T) + alignof(T))) ? \
       A::VHeap::valloc((n) * sizeof(T)) : \
 	ZuAlloca((n) * sizeof(T), alignof(T))))}
 
-#endif /* ZtAlloc_HH */
+#endif /* ZmVAlloc_HH */
