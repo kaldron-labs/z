@@ -112,11 +112,11 @@ struct TestLink :
 
 ZuCSpan bytes_(const uint8_t *data, unsigned len)
 {
-  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+  return ZuBSpan{data, len};
 }
 
 static ZmRef<ZiIOBuf> streamPkt_(
-  uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
+  uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
   ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
@@ -126,8 +126,7 @@ static ZmRef<ZiIOBuf> streamPkt_(
   packet->skip = 0;
   packet->length = unsigned(n);
   if (Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(packet->data_()),
-	packet->length}, frame, used) ||
+      ZuBSpan{packet->data(), packet->length}, frame, used) ||
       used != packet->length)
     return nullptr;
   return packet;

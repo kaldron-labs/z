@@ -176,7 +176,7 @@ void testAckOfAckTrim()
   unsigned used = 0;
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{b, unsigned(n)}, frame, used) &&
+	ZuBSpan{b, unsigned(n)}, frame, used) &&
       used == unsigned(n) &&
       frame.offset == 10,
     "ACK frame did not retain sparse largest after ACK-of-ACK trim");

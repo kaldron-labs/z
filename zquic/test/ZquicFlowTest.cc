@@ -64,7 +64,7 @@ struct FlowLink :
 };
 
 static ZmRef<ZiIOBuf> streamPkt_(
-  uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
+  uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
   ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
@@ -73,7 +73,8 @@ static ZmRef<ZiIOBuf> streamPkt_(
   if (n <= 0) return nullptr;
   packet->skip = 0;
   packet->length = unsigned(n);
-  if (Zquic::FrameCodec::parse(packet->cspan(), frame, used) ||
+  if (Zquic::FrameCodec::parse(
+      ZuBSpan{packet->data(), packet->length}, frame, used) ||
       used != packet->length)
     return nullptr;
   return packet;
@@ -114,13 +115,13 @@ void testFlowControlFrames()
 
   int n = Zquic::FrameCodec::writeDataBlocked(b, sizeof(b), 100);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-    ZuCSpan{b, unsigned(n)}, f, used) &&
+    ZuBSpan{b, unsigned(n)}, f, used) &&
     f.type == Zquic::FrameType::DataBlocked && f.value == 100,
     "DATA_BLOCKED frame mismatch");
 
   n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 4, 200);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-    ZuCSpan{b, unsigned(n)}, f, used) &&
+    ZuBSpan{b, unsigned(n)}, f, used) &&
     f.type == Zquic::FrameType::StreamDataBlocked &&
     f.streamID == 4 && f.value == 200,
 	    "STREAM_DATA_BLOCKED frame mismatch");
@@ -228,7 +229,7 @@ void testReceiveFlowUpdates()
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{b, unsigned(n)}, frame, used) &&
+      ZuBSpan{b, unsigned(n)}, frame, used) &&
       frame.type == Zquic::FrameType::MaxData &&
       frame.value == 16,
     "MAX_DATA update frame mismatch");
@@ -241,7 +242,7 @@ void testReceiveFlowUpdates()
     "MAX_STREAM_DATA update decision mismatch");
   n = update.write(b, sizeof(b));
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{b, unsigned(n)}, frame, used) &&
+      ZuBSpan{b, unsigned(n)}, frame, used) &&
       frame.type == Zquic::FrameType::MaxStreamData &&
       frame.streamID == 4 &&
       frame.value == 18,
@@ -293,7 +294,7 @@ void testScheduling()
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{b, unsigned(n)}, frame, used) &&
+      ZuBSpan{b, unsigned(n)}, frame, used) &&
       frame.type == Zquic::FrameType::StreamDataBlocked &&
       frame.streamID == 4 &&
       frame.value == 1024,
@@ -304,7 +305,7 @@ void testScheduling()
       Zquic::FrameType::MaxStreams, 0, 8, Zi::StreamType::Simplex});
   n = control.write(b, sizeof(b));
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{b, unsigned(n)}, frame, used) &&
+      ZuBSpan{b, unsigned(n)}, frame, used) &&
       frame.type == Zquic::FrameType::MaxStreams &&
       frame.streamType == Zi::StreamType::Simplex &&
       frame.value == 8,

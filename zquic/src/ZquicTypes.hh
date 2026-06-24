@@ -32,15 +32,15 @@ public:
   static constexpr unsigned Length = 16;
 
   ResetToken() = default;
-  explicit ResetToken(ZuCSpan token) { set(token); }
+  explicit ResetToken(ZuBSpan token) { set(token); }
 
-  bool set(ZuCSpan);
+  bool set(ZuBSpan);
   bool generate();
   bool valid() const { return m_valid; }
   unsigned length() const { return m_valid ? Length : 0; }
   const uint8_t *data() const { return m_data; }
-  ZuCSpan cspan() const {
-    return ZuCSpan{m_data, m_valid ? Length : 0};
+  ZuBSpan bspan() const {
+    return ZuBSpan{m_data, m_valid ? Length : 0};
   }
 
   bool equals(const ResetToken &) const;
@@ -60,18 +60,18 @@ public:
   static constexpr unsigned Length = 8;
 
   PathChallenge() = default;
-  explicit PathChallenge(ZuCSpan data) { set(data); }
+  explicit PathChallenge(ZuBSpan data) { set(data); }
 
-  bool set(ZuCSpan);
+  bool set(ZuBSpan);
   bool generate();
   bool valid() const { return m_valid; }
   unsigned length() const { return m_valid ? Length : 0; }
   const uint8_t *data() const { return m_data; }
-  ZuCSpan cspan() const {
-    return ZuCSpan{m_data, m_valid ? Length : 0};
+  ZuBSpan bspan() const {
+    return ZuBSpan{m_data, m_valid ? Length : 0};
   }
 
-  bool equals(ZuCSpan) const;
+  bool equals(ZuBSpan) const;
   bool equals(const PathChallenge &) const;
 
   friend inline bool operator ==(

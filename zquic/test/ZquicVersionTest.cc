@@ -30,7 +30,7 @@ void testVersionNegotiation()
   uint32_t parsed[2] = {};
   unsigned nVersions = 0;
   ZuCHECK(!Zquic::VersionNegotiation::parse(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)},
+    ZuBSpan{b, unsigned(n)},
     parsed, 2, nVersions), "version negotiation parse failed");
   ZuCHECK(nVersions == 1 && parsed[0] == Zquic::Version1,
     "version negotiation parse mismatch");
@@ -49,7 +49,7 @@ void testServerVersionDecision()
 
   uint8_t response[128];
   Zquic::ServerPktDecision d = Zquic::ServerPkt::routeLongHdr(
-    ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
+    ZuBSpan{b, unsigned(n)},
     response, sizeof(response));
   ZuCHECK(d.action == Zquic::ServerPktAction::AcceptInitial &&
       d.header.dcid == dcid && d.header.scid == scid &&
@@ -58,7 +58,7 @@ void testServerVersionDecision()
 
   b[1] = 0xff; b[2] = 0x00; b[3] = 0x00; b[4] = 0x1d;
   d = Zquic::ServerPkt::routeLongHdr(
-    ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
+    ZuBSpan{b, unsigned(n)},
     response, sizeof(response));
   ZuCHECK(d.action == Zquic::ServerPktAction::VersionNegotiation &&
       d.responseLength > 0,
@@ -83,7 +83,7 @@ void testServerVersionDecision()
     "Version Negotiation response version list mismatch");
 
   d = Zquic::ServerPkt::routeLongHdr(
-    ZuCSpan{reinterpret_cast<const char *>(response), unsigned(d.responseLength)},
+    ZuBSpan{response, unsigned(d.responseLength)},
     response, sizeof(response));
   ZuCHECK(d.action == Zquic::ServerPktAction::Drop,
     "server accepted a Version Negotiation packet");
@@ -91,7 +91,7 @@ void testServerVersionDecision()
   n = Zquic::Pkt::writeHandshake(b, sizeof(b), dcid, scid, 0, 1);
   ZuCHECK(n > 0, "Handshake write failed");
   d = Zquic::ServerPkt::routeLongHdr(
-    ZuCSpan{reinterpret_cast<const char *>(b), unsigned(n)},
+    ZuBSpan{b, unsigned(n)},
     response, sizeof(response));
   ZuCHECK(d.action == Zquic::ServerPktAction::Drop,
     "server accepted non-Initial bootstrap packet");
@@ -111,14 +111,14 @@ void testRetryHdr()
 
   Zquic::LongHdr h;
   ZuCHECK(Zquic::Pkt::parseLong(
-    ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, h) > 0,
+    ZuBSpan{b, unsigned(n)}, h) > 0,
     "Retry parse failed");
   ZuCHECK(h.type == Zquic::PktType::Retry && h.dcid == dcid && h.scid == scid,
     "Retry header mismatch");
 
   Zquic::RetryPkt retry;
   ZuCHECK(Zquic::Pkt::parseRetry(
-      ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, retry) == n,
+      ZuBSpan{b, unsigned(n)}, retry) == n,
     "Retry packet parse failed");
   ZuCHECK(retry.token == "retry-token" && retry.integrityTag == Tag,
     "Retry token/tag parse mismatch");
@@ -128,16 +128,16 @@ void testRetryHdr()
     b, sizeof(b), dcid, scid, "retry-token", odcid);
   ZuCHECK(n > 0, "authenticated Retry write failed");
   ZuCHECK(Zquic::Pkt::parseRetry(
-      ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, retry) == n &&
+      ZuBSpan{b, unsigned(n)}, retry) == n &&
       retry.token == "retry-token" &&
       retry.integrityTag.length() == 16,
     "authenticated Retry parse failed");
   ZuCHECK(Zquic::Pkt::validateRetryIntegrity(
-      ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, odcid),
+      ZuBSpan{b, unsigned(n)}, odcid),
     "authenticated Retry integrity validation failed");
   b[n - 1] ^= 1;
   ZuCHECK(!Zquic::Pkt::validateRetryIntegrity(
-      ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, odcid),
+      ZuBSpan{b, unsigned(n)}, odcid),
     "mutated Retry integrity tag was accepted");
 }
 
@@ -160,7 +160,7 @@ void testRetryTransportParameterValidation()
     b, sizeof(b), initialSCID, retrySCID, "retry-token", Tag);
   Zquic::RetryPkt retry;
   ZuCHECK(n > 0 && Zquic::Pkt::parseRetry(
-      ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}, retry) == n,
+      ZuBSpan{b, unsigned(n)}, retry) == n,
     "Retry packet setup failed");
   ZuCHECK(bootstrap.onRetry(retry) && bootstrap.retried() &&
       bootstrap.retrySCID() == retrySCID &&
@@ -173,7 +173,7 @@ void testRetryTransportParameterValidation()
   n = Zquic::Pkt::writeRetryAuthenticated(
     b, sizeof(b), initialSCID, retrySCID, "retry-token", initialDCID);
   ZuCHECK(n > 0 && checkedBootstrap.onRetry(
-      ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}) &&
+      ZuBSpan{b, unsigned(n)}) &&
       checkedBootstrap.retried() &&
       checkedBootstrap.retrySCID() == retrySCID,
     "authenticated Retry bootstrap validation failed");
@@ -183,7 +183,7 @@ void testRetryTransportParameterValidation()
     "bad Retry bootstrap start failed");
   b[n - 1] ^= 1;
   ZuCHECK(!badBootstrap.onRetry(
-      ZuCSpan{reinterpret_cast<char *>(b), unsigned(n)}),
+      ZuBSpan{b, unsigned(n)}),
     "mutated Retry bootstrap was accepted");
 
   Zquic::TransportParams params;

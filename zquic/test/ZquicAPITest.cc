@@ -228,7 +228,7 @@ struct TestLink :
     retiredCID = id;
     ++retiredCount;
   }
-	  bool checkStatelessReset(ZuCSpan datagram) {
+	  bool checkStatelessReset(ZuBSpan datagram) {
 	    return Base::checkStatelessReset_(datagram);
 	  }
 	  bool draining() const { return Base::runtimeDraining_(); }
@@ -345,12 +345,12 @@ static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
 {
   unsigned used = 0;
   return n > 0 && !Zquic::FrameCodec::parse(
-    ZuCSpan{b, unsigned(n)}, frame, used) &&
+    ZuBSpan{b, unsigned(n)}, frame, used) &&
     used == unsigned(n);
 }
 
 static ZmRef<ZiIOBuf> streamPkt_(
-  uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
+  uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
   ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
@@ -359,7 +359,8 @@ static ZmRef<ZiIOBuf> streamPkt_(
   if (n <= 0) return nullptr;
   packet->skip = 0;
   packet->length = unsigned(n);
-  if (Zquic::FrameCodec::parse(packet->cspan(), frame, used) ||
+  if (Zquic::FrameCodec::parse(
+      ZuBSpan{packet->data(), packet->length}, frame, used) ||
       used != packet->length)
     return nullptr;
   return packet;
@@ -495,7 +496,7 @@ void testStatelessResetDetection()
   memcpy(
     packet + sizeof(packet) - Zquic::ResetToken::Length,
     token.data(), Zquic::ResetToken::Length);
-  ZuCSpan datagram{reinterpret_cast<const char *>(packet), sizeof(packet)};
+  ZuBSpan datagram{packet, sizeof(packet)};
 
   Zquic::ResetToken decoded;
   ZuCHECK(!Zquic::StatelessReset::decode(decoded, datagram) &&
@@ -594,10 +595,10 @@ void testApplicationCallbacks()
   path->initServerPath(localAddr, oldRemote);
 #ifdef Zquic_DEBUG
   path->observePath(localAddr, newRemote);
-  ZuCSpan challenge = path->validatingChallenge();
+  ZuBSpan challenge = path->validatingChallenge();
   uint8_t response[Zquic::PathChallenge::Length]{};
   memcpy(response, challenge.data(), challenge.length());
-  ZuCHECK(path->pathResponse(ZuCSpan{response, sizeof(response)}) &&
+  ZuCHECK(path->pathResponse(ZuBSpan{response, sizeof(response)}) &&
       path->pathUpdateCount == 1 &&
       path->lastPathValidated &&
       path->lastPathMaxUDP >= Zquic::MinUDPPayload,

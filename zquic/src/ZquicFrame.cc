@@ -13,16 +13,16 @@ bool FrameCodec::ackEliciting(FrameType::T t)
   return t != FrameType::Padding && t != FrameType::Ack;
 }
 
-static int getVar_(ZuCSpan in, unsigned &o, uint64_t &v)
+static int getVar_(ZuBSpan in, unsigned &o, uint64_t &v)
 {
   unsigned n = 0;
-  if (VarInt::decode(ZuCSpan{in.data() + o, in.length() - o}, v, n) < 0)
+  if (VarInt::decode(ZuBSpan{in.data() + o, in.length() - o}, v, n) < 0)
     return -1;
   o += n;
   return 0;
 }
 
-int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
+int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
 {
   used = 0;
   if (!in.length()) return -1;
@@ -98,14 +98,14 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
 	  getVar_(in, o, f.length) < 0)
 	return -1;
       if (in.length() < o + f.length) return -1;
-      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
       used = o + f.length;
       return 0;
     case 0x07:
       f.type = FrameType::NewToken;
       if (getVar_(in, o, f.length) < 0) return -1;
       if (in.length() < o + f.length) return -1;
-      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
       used = o + f.length;
       return 0;
     case 0x08 ... 0x0f:
@@ -118,7 +118,7 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
 	if (in.length() < o + f.length) return -1;
       } else
 	f.length = in.length() - o;
-      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
       used = o + f.length;
       return 0;
     case 0x10:
@@ -170,9 +170,9 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
       f.length = uint8_t(in[o++]);
       if (f.length > CxnIDMax || in.length() < o + f.length + 16)
 	return -1;
-      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
       if (!f.resetToken.set(
-	    ZuCSpan{in.data() + o + unsigned(f.length), 16}))
+	    ZuBSpan{in.data() + o + unsigned(f.length), 16}))
 	return -1;
       used = o + f.length + 16;
       return 0;
@@ -186,7 +186,7 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
       f.type = t == 0x1a ?
 	FrameType::PathChallenge : FrameType::PathResponse;
       if (in.length() < o + 8) return -1;
-      f.payload = ZuCSpan{in.data() + o, 8};
+      f.payload = ZuBSpan{in.data() + o, 8};
       used = o + 8;
       return 0;
     case 0x1c:
@@ -196,7 +196,7 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
 	  getVar_(in, o, f.length) < 0)
 	return -1;
       if (in.length() < o + f.length) return -1;
-      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
       used = o + f.length;
       return 0;
     case 0x1d:
@@ -205,7 +205,7 @@ int FrameCodec::parse(ZuCSpan in, Frame &f, unsigned &used)
 	  getVar_(in, o, f.length) < 0)
 	return -1;
       if (in.length() < o + f.length) return -1;
-      f.payload = ZuCSpan{in.data() + o, unsigned(f.length)};
+      f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
       used = o + f.length;
       return 0;
     case 0x1e:
@@ -233,7 +233,7 @@ int FrameCodec::writePing(uint8_t *out, unsigned len)
   return 1;
 }
 
-int FrameCodec::writeCrypto(uint8_t *out, unsigned len, uint64_t offset, ZuCSpan p)
+int FrameCodec::writeCrypto(uint8_t *out, unsigned len, uint64_t offset, ZuBSpan p)
 {
   int n = writeCryptoPrefix(out, len, offset, p.length());
   if (n < 0 || len - unsigned(n) < p.length()) return -1;
@@ -250,6 +250,18 @@ int FrameCodec::writeCryptoPrefix(
   if (VarInt::put(out, len, offset, o) < 0 ||
       VarInt::put(out, len, payloadLen, o) < 0)
     return -1;
+  return int(o);
+}
+
+int FrameCodec::writeNewToken(uint8_t *out, unsigned len, ZuBSpan token)
+{
+  if (!len || !token) return -1;
+  unsigned o = 0;
+  out[o++] = 0x07;
+  if (VarInt::put(out, len, token.length(), o) < 0) return -1;
+  if (len < o + token.length()) return -1;
+  memcpy(out + o, token.data(), token.length());
+  o += token.length();
   return int(o);
 }
 
@@ -270,7 +282,7 @@ int FrameCodec::writeStreamPrefix(
 
 int FrameCodec::writeStream(
   uint8_t *out, unsigned len, uint64_t streamID, uint64_t offset,
-  ZuCSpan p, bool fin)
+  ZuBSpan p, bool fin)
 {
   int n = writeStreamPrefix(out, len, streamID, offset, p.length(), fin);
   if (n < 0 || len - unsigned(n) < p.length()) return -1;
@@ -446,7 +458,7 @@ int FrameCodec::writeRetireConnectionID(
   return int(o);
 }
 
-int FrameCodec::writePathChallenge(uint8_t *out, unsigned len, ZuCSpan data)
+int FrameCodec::writePathChallenge(uint8_t *out, unsigned len, ZuBSpan data)
 {
   if (data.length() != 8 || len < 9) return -1;
   out[0] = 0x1a;
@@ -454,7 +466,7 @@ int FrameCodec::writePathChallenge(uint8_t *out, unsigned len, ZuCSpan data)
   return 9;
 }
 
-int FrameCodec::writePathResponse(uint8_t *out, unsigned len, ZuCSpan data)
+int FrameCodec::writePathResponse(uint8_t *out, unsigned len, ZuBSpan data)
 {
   if (data.length() != 8 || len < 9) return -1;
   out[0] = 0x1b;
@@ -474,7 +486,7 @@ int FrameCodec::writeConnectionClose(uint8_t *out, unsigned len, uint64_t err)
 }
 
 int FrameCodec::writeApplicationClose(
-  uint8_t *out, unsigned len, uint64_t err, ZuCSpan reason)
+  uint8_t *out, unsigned len, uint64_t err, ZuBSpan reason)
 {
   if (!len) return -1;
   unsigned o = 0;

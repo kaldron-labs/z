@@ -14,9 +14,9 @@ using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-static ZuCSpan span_(const uint8_t *data, unsigned len)
+static ZuBSpan span_(const uint8_t *data, unsigned len)
 {
-  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+  return ZuBSpan{data, len};
 }
 
 struct App : public Zquic::Engine<App> {
@@ -207,9 +207,7 @@ struct TestLink :
       return false;
     unsigned used = 0;
     return !Zquic::FrameCodec::parse(
-      ZuCSpan{
-	reinterpret_cast<const char *>(build.data()[0].base),
-	unsigned(build.data()[0].len)},
+      ZuBSpan{build.data()[0].base, unsigned(build.data()[0].len)},
       frame, used) && used == build.data()[0].len;
   }
   bool flushCongestedStream(ZmRef<TestStream> stream) {
@@ -257,13 +255,13 @@ struct TestLink :
     Zquic::CryptoLevel::T &level, Zquic::SentFrameRef &ref) {
     return Base::nextRetransmit_(level, ref);
   }
-  bool sendCryptoBytes(ZuCSpan data) {
+  bool sendCryptoBytes(ZuBSpan data) {
     size_t offsets[5] = {0, 0, 0, 0, data.length()};
     return Base::sendCryptoFlights_(
-      reinterpret_cast<const uint8_t *>(data.data()), data.length(),
+      data.data(), data.length(),
       offsets, 900, ZiSockAddr{},
       [this](
-	  Zquic::CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+	  Zquic::CryptoLevel::T level, ZuBSpan prefix, ZuBSpan payload,
 	  const Zquic::SentFrameRef &ref, ZiSockAddr) {
 	recordSentPkt(
 	  level, sentPkts, prefix.length() + payload.length(), ref, true);
@@ -294,7 +292,7 @@ struct TestLink :
     }
     unsigned used = 0;
     return !Zquic::FrameCodec::parse(
-      ZuCSpan{reinterpret_cast<const char *>(b), n}, frame, used) &&
+      ZuBSpan{b, n}, frame, used) &&
       used == n;
   }
   void cancelTimers() { Base::cancelTimers_(); }
@@ -452,12 +450,12 @@ struct TestLink :
     return Base::receiveProtShortPkt_(
       d, 0, d.buf->length,
       [this](
-	  Zquic::CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
+	  Zquic::CryptoLevel::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
 	  typename Base::RxAckMeta &ack) {
 	return Base::consumeProtFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack,
-	  [](size_t, ZuCSpan, ZiSockAddr) { return true; },
+	  [](size_t, ZuBSpan, ZiSockAddr) { return true; },
 	  [](Zquic::CryptoLevel::T, const Zquic::Frame &, ZiSockAddr) {
 	    return true;
 	  });
@@ -524,12 +522,12 @@ static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
 {
   unsigned used = 0;
   return n > 0 && !Zquic::FrameCodec::parse(
-    ZuCSpan{b, unsigned(n)}, frame, used) &&
+    ZuBSpan{b, unsigned(n)}, frame, used) &&
     used == unsigned(n);
 }
 
 static ZmRef<ZiIOBuf> streamPkt_(
-  uint64_t id, uint64_t offset, ZuCSpan payload, bool fin,
+  uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
   ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
@@ -538,7 +536,8 @@ static ZmRef<ZiIOBuf> streamPkt_(
   if (n <= 0) return nullptr;
   packet->skip = 0;
   packet->length = unsigned(n);
-  if (Zquic::FrameCodec::parse(packet->cspan(), frame, used) ||
+  if (Zquic::FrameCodec::parse(
+      ZuBSpan{packet->data(), packet->length}, frame, used) ||
       used != packet->length)
     return nullptr;
   return packet;
@@ -651,7 +650,8 @@ void testStreamRxSliceDelivery()
 
   Zquic::Frame frame;
   unsigned used = 0;
-  ZuCHECK(!Zquic::FrameCodec::parse(packet->cspan(), frame, used) &&
+  ZuCHECK(!Zquic::FrameCodec::parse(
+      ZuBSpan{packet->data(), packet->length}, frame, used) &&
       used == packet->length,
     "packet-backed STREAM frame parse failed");
 
@@ -935,7 +935,7 @@ void testStreamPktizer()
 
   uint8_t prefix[32];
   uint8_t assembled[64];
-  ZuCSpan prefixPayload{"prefix-payload", 14};
+  ZuBSpan prefixPayload{"prefix-payload"};
   int prefixLen = Zquic::FrameCodec::writeStreamPrefix(
     prefix, sizeof(prefix), 5, 9, prefixPayload.length(), true);
   ZuCHECK(prefixLen > 0 &&
@@ -1433,7 +1433,7 @@ void testPathValidationStateMachine()
   ZuCHECK(challenge.generate() &&
       challenge.valid() &&
       challenge.length() == Zquic::PathChallenge::Length &&
-      challenge.equals(challenge.cspan()),
+      challenge.equals(challenge.bspan()),
     "PATH_CHALLENGE value generation failed");
 
 #ifdef Zquic_DEBUG
@@ -1470,7 +1470,7 @@ void testPathValidationStateMachine()
   ZuCHECK(link->queuedControlFrames() == 1,
     "repeated packet from validating path queued duplicate challenge");
 
-  ZuCHECK(link->pathResponse(ZuCSpan{response, sizeof(response)}) &&
+  ZuCHECK(link->pathResponse(ZuBSpan{response, sizeof(response)}) &&
       !link->validatingPath() &&
       link->pathValidated() &&
       sameAddr_(link->activePathRemote(), newRemote),
@@ -1513,9 +1513,7 @@ void testAckECNValidationDisablesECN()
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{
-	reinterpret_cast<const char *>(build.data()[0].base),
-	unsigned(build.data()[0].len)},
+      ZuBSpan{build.data()[0].base, unsigned(build.data()[0].len)},
       frame, used) &&
       frame.type == Zquic::FrameType::Ack &&
       frame.ackECN.ect0 == 1 &&
@@ -1747,7 +1745,7 @@ void testStreamCountLimits()
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{b, unsigned(n)}, frame, used),
+      ZuBSpan{b, unsigned(n)}, frame, used),
     "MAX_STREAMS setup failed");
   ZuCHECK(client->applyMaxStreams(frame) &&
       !client->queuedLocalStreams(Zi::StreamType::Duplex) &&
@@ -1849,7 +1847,7 @@ void testResetStopFrames()
   ZmRef<TestLink> server = testLink(&app, true);
   int n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{b, unsigned(n)}, frame, used),
+      ZuBSpan{b, unsigned(n)}, frame, used),
     "RESET_STREAM setup failed");
   ZuCHECK(server->receiveFrame(frame) == 0, "server rejected peer RESET_STREAM");
   auto reset = server->findStream(0);
@@ -1866,7 +1864,7 @@ void testResetStopFrames()
   auto local = client->stream(Zi::StreamType::Duplex);
   n = Zquic::FrameCodec::writeStopSending(b, sizeof(b), local->id(), 9);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{b, unsigned(n)}, frame, used),
+      ZuBSpan{b, unsigned(n)}, frame, used),
     "STOP_SENDING setup failed");
   ZuCHECK(client->receiveFrame(frame) == 0 &&
       local->stopReceived() &&
@@ -1881,7 +1879,7 @@ void testResetStopFrames()
     "delivered STREAM setup failed");
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), delivered->id(), 1, 3);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
-      ZuCSpan{b, unsigned(n)}, frame, used),
+      ZuBSpan{b, unsigned(n)}, frame, used),
     "final-size violating RESET_STREAM setup failed");
   ZuCHECK(!delivered->receiveReset(frame),
     "RESET_STREAM final-size violation was accepted");
@@ -2313,7 +2311,7 @@ void testFrameRoleAndSpaceLegality()
 
   frame.reset();
   frame.type = Zquic::FrameType::NewToken;
-  frame.payload = ZuCSpan{"token", 5};
+  frame.payload = ZuBSpan{"token"};
   ZuCHECK(client->frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
       !server->frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
       !client->frameLegal(Zquic::CryptoLevel::Handshake, frame),

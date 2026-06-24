@@ -32,7 +32,7 @@ namespace VarInt {
   unsigned length(uint64_t);
   int encode(uint8_t *, unsigned, uint64_t);
   int put(uint8_t *, unsigned, uint64_t, unsigned &);
-  int decode(ZuCSpan, uint64_t &, unsigned &);
+  int decode(ZuBSpan, uint64_t &, unsigned &);
 }
 
 inline constexpr unsigned CxnIDMax = 20;
@@ -51,6 +51,7 @@ struct LongHdr {
   CxnID		scid;
   uint64_t	tokenLength = 0;
   uint64_t	length = 0;
+  unsigned	tokenOffset = 0;
   unsigned	pnLength = 0;
   unsigned	pnOffset = 0;
   unsigned	payloadOffset = 0;
@@ -58,8 +59,8 @@ struct LongHdr {
 
 struct RetryPkt {
   LongHdr	header;
-  ZuCSpan	token;
-  ZuCSpan	integrityTag;
+  ZuBSpan	token;
+  ZuBSpan	integrityTag;
 };
 
 struct ShortHdr {
@@ -70,33 +71,36 @@ struct ShortHdr {
 };
 
 struct Pkt {
-  static bool isLong(ZuCSpan);
-  static bool isVersionNegotiation(ZuCSpan);
-  static int parseLong(ZuCSpan, LongHdr &);
-  static int parseRetry(ZuCSpan, RetryPkt &);
+  static bool isLong(ZuBSpan);
+  static bool isVersionNegotiation(ZuBSpan);
+  static int parseLong(ZuBSpan, LongHdr &);
+  static int parseRetry(ZuBSpan, RetryPkt &);
   static int retryIntegrityTag(
-    uint8_t *, unsigned, ZuCSpan retryWithoutTag,
+    uint8_t *, unsigned, ZuBSpan retryWithoutTag,
     const CxnID &originalDCID);
-  static bool validateRetryIntegrity(ZuCSpan, const CxnID &originalDCID);
-  static int parseShort(ZuCSpan, unsigned cidLen, ShortHdr &);
+  static bool validateRetryIntegrity(ZuBSpan, const CxnID &originalDCID);
+  static int parseShort(ZuBSpan, unsigned cidLen, ShortHdr &);
   static int parseVersionNegotiation(
-    ZuCSpan, uint32_t *, unsigned capacity, unsigned &nVersions);
+    ZuBSpan, uint32_t *, unsigned capacity, unsigned &nVersions);
   static int writeLong(
     uint8_t *, unsigned, PktType::T,
     const CxnID &, const CxnID &,
-    uint64_t payloadLength, unsigned pnLength);
+    uint64_t payloadLength, unsigned pnLength, ZuBSpan token = {});
   static int writeInitial(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
     uint64_t payloadLength, unsigned pnLength);
+  static int writeInitial(
+    uint8_t *, unsigned, const CxnID &, const CxnID &,
+    ZuBSpan token, uint64_t payloadLength, unsigned pnLength);
   static int writeHandshake(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
     uint64_t payloadLength, unsigned pnLength);
   static int writeRetry(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
-    ZuCSpan token, ZuCSpan retryIntegrityTag = {});
+    ZuBSpan token, ZuBSpan retryIntegrityTag = {});
   static int writeRetryAuthenticated(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
-    ZuCSpan token, const CxnID &originalDCID);
+    ZuBSpan token, const CxnID &originalDCID);
   static int writeShort(
     uint8_t *, unsigned, const CxnID &, uint64_t pn, unsigned pnLength,
     bool keyPhase = false);
@@ -113,9 +117,9 @@ inline constexpr unsigned PktBuildScratchSize =
   1 + (7 * 8) + ((PktBuildMaxAckRanges - 1) * 2 * 8) +
   1 + (3 * 8);
 
-inline ZuCSpan pktBuildSpan(const uint8_t *data, unsigned len)
+inline ZuBSpan pktBuildSpan(const uint8_t *data, unsigned len)
 {
-  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+  return ZuBSpan{data, len};
 }
 
 class PlainVec {
@@ -133,7 +137,7 @@ public:
     m_bytes = 0;
   }
 
-  bool add(ZuCSpan span) {
+  bool add(ZuBSpan span) {
     if (!span.length()) return true;
     if (m_count >= Max || span.length() > UINT_MAX - m_bytes) return false;
     m_vec[m_count++] = ptls_iovec_init(span.data(), span.length());
@@ -177,7 +181,7 @@ public:
     return m_plain.add(pktBuildSpan(m_scratch + off, len));
   }
 
-  bool add(ZuCSpan span) { return m_plain.add(span); }
+  bool add(ZuBSpan span) { return m_plain.add(span); }
   bool add(const TxRange &range) {
     if (!range.length) return true;
     if (!range.buf || range.offset + range.length > range.buf->size)

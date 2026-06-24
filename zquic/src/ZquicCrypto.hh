@@ -57,23 +57,23 @@ struct InitialKeyMaterial {
 struct InitialCrypto {
   static bool derive(InitialKeyMaterial &, const CxnID &);
   static int encrypt(
-    uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuCSpan, ZuCSpan);
+    uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan, ZuBSpan);
   static int encryptV(
-    uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuCSpan,
+    uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan,
     const ptls_iovec_t *, unsigned);
   static int decrypt(
-    uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuCSpan, ZuCSpan);
+    uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan, ZuBSpan);
   static bool headerMask(
-    uint8_t *, unsigned, const InitialSecret &, ZuCSpan);
+    uint8_t *, unsigned, const InitialSecret &, ZuBSpan);
 };
 
 struct InitialPktProt {
   static int protectLong(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
-    ZuCSpan, ZuCSpan, unsigned, unsigned);
+    ZuBSpan, ZuBSpan, unsigned, unsigned);
   static int protectLongV(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
-    ZuCSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
+    ZuBSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
   static int unprotectLong(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
@@ -124,16 +124,16 @@ struct PktProtState {
 
 struct PktProt {
   static bool deriveTrafficSecret(
-    TrafficSecret &, ptls_cipher_suite_t *, ZuCSpan);
+    TrafficSecret &, ptls_cipher_suite_t *, ZuBSpan);
   static int protectLongV(
     uint8_t *, unsigned, PktProtState &, uint64_t,
-    ZuCSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
+    ZuBSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
   static int protectLong(
     uint8_t *, unsigned, PktProtState &, uint64_t,
-    ZuCSpan, ZuCSpan, unsigned, unsigned);
+    ZuBSpan, ZuBSpan, unsigned, unsigned);
   static int protectLong(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
-    ZuCSpan, ZuCSpan, unsigned, unsigned);
+    ZuBSpan, ZuBSpan, unsigned, unsigned);
   static int unprotectLong(
     uint8_t *, unsigned, PktProtState &, uint64_t,
     unsigned, uint64_t &, unsigned &);
@@ -142,13 +142,13 @@ struct PktProt {
     unsigned, uint64_t &, unsigned &);
   static int protectShortV(
     uint8_t *, unsigned, PktProtState &, uint64_t,
-    ZuCSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
+    ZuBSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
   static int protectShort(
     uint8_t *, unsigned, PktProtState &, uint64_t,
-    ZuCSpan, ZuCSpan, unsigned, unsigned);
+    ZuBSpan, ZuBSpan, unsigned, unsigned);
   static int protectShort(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
-    ZuCSpan, ZuCSpan, unsigned, unsigned);
+    ZuBSpan, ZuBSpan, unsigned, unsigned);
   static int unprotectShort(
     uint8_t *, unsigned, PktProtState &, uint64_t,
     unsigned, uint64_t &, unsigned &);
@@ -185,7 +185,7 @@ public:
   using Msg = Queue::Node;
   using Span = Queue::Span;
   using DequeueFn = ZmFn<void()>;
-  using DeliveryFn = ZmFn<void(ZuCSpan)>;
+  using DeliveryFn = ZmFn<void(ZuBSpan)>;
 
   CryptoStream() :
     m_dequeueFn{this, [](CryptoStream *s) { s->dequeueRx_(); }} { }
@@ -195,12 +195,12 @@ public:
   unsigned rangeCount() const { return m_rxQueue.count_(); }
 
   void reset();
-  bool sent(uint64_t, ZuCSpan);
-  bool txPayload(uint64_t, uint64_t, ZuCSpan &) const;
+  bool sent(uint64_t, ZuBSpan);
+  bool txPayload(uint64_t, uint64_t, ZuBSpan &) const;
   int writeFramePrefix(uint8_t *, unsigned, unsigned, CryptoDiag * = nullptr);
-  int writeFrame(uint8_t *, unsigned, ZuCSpan, CryptoDiag * = nullptr);
-  int receiveFrame(const Frame &, ZuCSpan &, CryptoDiag * = nullptr);
-  int receive(uint64_t, ZuCSpan, ZuCSpan &, CryptoDiag * = nullptr);
+  int writeFrame(uint8_t *, unsigned, ZuBSpan, CryptoDiag * = nullptr);
+  int receiveFrame(const Frame &, ZuBSpan &, CryptoDiag * = nullptr);
+  int receive(uint64_t, ZuBSpan, ZuBSpan &, CryptoDiag * = nullptr);
 
   Queue *rxQueue() { return &m_rxQueue; }
   void process(Msg *);
@@ -315,8 +315,8 @@ public:
   }
 
   int encodeTransportParams(uint8_t *, unsigned, const TransportParams &);
-  int decodeTransportParams(ZuCSpan, TransportParams &);
-  void installSecret(CryptoLevel::T, ZuCSpan);
+  int decodeTransportParams(ZuBSpan, TransportParams &);
+  void installSecret(CryptoLevel::T, ZuBSpan);
   bool discardSecret(CryptoLevel::T);
   bool deriveInitial(const CxnID &);
   const InitialKeyMaterial &initialKeys() const { return m_initialKeys; }
@@ -325,14 +325,14 @@ public:
   bool initTLS(const CryptoConfig &);
   void resetTLS() { resetTLS_(); }
   int handleTLSMessage(
-    ZiIOBuf *, size_t[5], size_t, ZuCSpan);
+    ZiIOBuf *, size_t[5], size_t, ZuBSpan);
 
 private:
   void resetTLS_();
   bool initTLSContext_(const CryptoConfig &);
   bool initTLSProperties_(const CryptoConfig &);
   int updateTrafficKey_(int, size_t, const void *);
-  void keyLog_(int, CryptoLevel::T, ZuCSpan);
+  void keyLog_(int, CryptoLevel::T, ZuBSpan);
   int onClientHello_(ptls_on_client_hello_parameters_t *);
   int collectedExtensions_(ptls_raw_extension_t *);
   static int updateTrafficKeyCB_(

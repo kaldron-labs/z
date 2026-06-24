@@ -42,14 +42,14 @@ bool hexEquals_(const uint8_t (&actual)[N], const char *expected)
   return hexDecode_(b, N, expected) && !memcmp(actual, b, N);
 }
 
-ZuCSpan bytes_(const uint8_t *data, unsigned len)
+ZuBSpan bytes_(const uint8_t *data, unsigned len)
 {
-  return ZuCSpan{data, len};
+  return ZuBSpan{data, len};
 }
 
-ZuCSpan text_(const char *s)
+ZuBSpan text_(const char *s)
 {
-  return ZuCSpan{s, unsigned(strlen(s))};
+  return ZuBSpan{s};
 }
 
 } // namespace
