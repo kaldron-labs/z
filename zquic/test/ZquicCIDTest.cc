@@ -55,7 +55,7 @@ void testCxnRouterTombstoneFIFO()
     tomb[4] = char('0' + ((i / 100) % 10));
     tomb[5] = char('0' + ((i / 10) % 10));
     tomb[6] = char('0' + (i % 10));
-    Zquic::CxnID cid{ZuCSpan{tomb, 8}};
+    Zquic::CxnID cid{ZuBSpan{tomb, 8}};
     ZuCHECK(router.tombstone(cid), "tombstone route setup failed");
   }
   Zquic::CxnID oldTombstone{"tmb00000"};
@@ -63,7 +63,7 @@ void testCxnRouterTombstoneFIFO()
     "oldest FIFO-evicted tombstone was retained");
   char kept[9] = "tmb00000";
   kept[6] = '4';
-  Zquic::CxnID newTombstone{ZuCSpan{kept, 8}};
+  Zquic::CxnID newTombstone{ZuBSpan{kept, 8}};
   ZuCHECK(!router.add(newTombstone, 1001, &link),
     "retained tombstone was reactivated");
   ZuCHECK(router.find(active) == &link && router.active() == 2,
