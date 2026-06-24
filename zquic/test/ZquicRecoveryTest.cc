@@ -82,7 +82,7 @@ void testRecovery()
   unsigned used = 0;
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{b, unsigned(n)},
+	ZuBSpan{b, unsigned(n)},
 	frame, used) &&
       used == unsigned(n) &&
       frame.type == Zquic::FrameType::Ack &&
@@ -153,7 +153,7 @@ void testRecovery()
   n = reordered.writeFrame(b, sizeof(b));
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{b, unsigned(n)},
+	ZuBSpan{b, unsigned(n)},
 	frame, used) &&
       frame.ackRanges.length() == 2 &&
       frame.ackRanges[0].first == 0 &&
@@ -726,7 +726,7 @@ void testAckManager()
   unsigned used = 0;
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{b, unsigned(n)},
+	ZuBSpan{b, unsigned(n)},
 	frame, used) &&
       frame.type == Zquic::FrameType::Ack &&
       frame.offset == 1 &&
@@ -753,7 +753,7 @@ void testAckManager()
   n = acks.writeFrame(Zquic::PktSpace::AppData, b, sizeof(b));
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{b, unsigned(n)},
+	ZuBSpan{b, unsigned(n)},
 	frame, used) &&
       frame.offset == 6 &&
       frame.length == 1,
@@ -775,7 +775,7 @@ void testAckManager()
     "ACK manager ECN receive accounting failed");
   n = ecnAcks.writeFrame(Zquic::PktSpace::AppData, b, sizeof(b), 0, true);
   ZuCHECK(n > 0 && b[0] == 0x03 &&
-      !Zquic::FrameCodec::parse(ZuCSpan{b, unsigned(n)}, frame, used) &&
+      !Zquic::FrameCodec::parse(ZuBSpan{b, unsigned(n)}, frame, used) &&
       frame.ackECN.ect0 == 1 &&
       frame.ackECN.ect1 == 1 &&
       frame.ackECN.ce == 1,

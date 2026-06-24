@@ -382,7 +382,7 @@ inline uint64_t rxSpanBytes(const RxSpans &spans)
 
 template <typename Alloc, typename Enqueue>
 inline bool queueRxSpans(
-  const RxSpans &spans, uint64_t srcOffset, ZuCSpan payload,
+  const RxSpans &spans, uint64_t srcOffset, ZuBSpan payload,
   Alloc alloc, Enqueue enqueue)
 {
   for (unsigned i = 0; i < spans.length(); ++i) {

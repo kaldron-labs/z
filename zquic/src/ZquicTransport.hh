@@ -41,7 +41,7 @@ struct TransportParams {
   bool validate() const;
   unsigned encodedLength() const;
   int encode(uint8_t *, unsigned) const;
-  int decode(ZuCSpan);
+  int decode(ZuBSpan);
 };
 
 } // namespace Zquic

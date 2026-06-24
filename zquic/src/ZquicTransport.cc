@@ -49,7 +49,7 @@ static int putParamVar_(uint8_t *out, unsigned len, uint64_t id, uint64_t v,
   return 0;
 }
 
-static int putParamBytes_(uint8_t *out, unsigned len, uint64_t id, ZuCSpan v,
+static int putParamBytes_(uint8_t *out, unsigned len, uint64_t id, ZuBSpan v,
     unsigned &o)
 {
   if (VarInt::put(out, len, id, o) < 0 ||
@@ -67,7 +67,7 @@ static unsigned paramVarLen_(uint64_t id, uint64_t v)
   return VarInt::length(id) + VarInt::length(n) + n;
 }
 
-static unsigned paramBytesLen_(uint64_t id, ZuCSpan v)
+static unsigned paramBytesLen_(uint64_t id, ZuBSpan v)
 {
   return VarInt::length(id) + VarInt::length(v.length()) + v.length();
 }
@@ -78,7 +78,7 @@ unsigned TransportParams::encodedLength() const
   if (originalDCID.length())
     n += paramBytesLen_(TPOriginalDCID, originalDCID);
   if (statelessResetTokenPresent)
-    n += paramBytesLen_(TPStatelessResetToken, statelessResetToken.cspan());
+    n += paramBytesLen_(TPStatelessResetToken, statelessResetToken.bspan());
   n +=
     paramVarLen_(TPMaxIdleTimeout, maxIdleTimeout) +
     paramVarLen_(TPMaxUDPPayloadSize, maxUDPPayloadSize) +
@@ -112,7 +112,7 @@ int TransportParams::encode(uint8_t *out, unsigned len) const
     return -1;
   if (statelessResetTokenPresent &&
       putParamBytes_(
-	out, len, TPStatelessResetToken, statelessResetToken.cspan(), o) < 0)
+	out, len, TPStatelessResetToken, statelessResetToken.bspan(), o) < 0)
     return -1;
   if (putParamVar_(out, len, TPMaxIdleTimeout, maxIdleTimeout, o) < 0 ||
       putParamVar_(out, len, TPMaxUDPPayloadSize, maxUDPPayloadSize, o) < 0 ||
@@ -147,28 +147,28 @@ int TransportParams::encode(uint8_t *out, unsigned len) const
   return int(o);
 }
 
-static int getParamVar_(ZuCSpan v, uint64_t &out)
+static int getParamVar_(ZuBSpan v, uint64_t &out)
 {
   unsigned n = 0;
   if (VarInt::decode(v, out, n) < 0 || n != v.length()) return -1;
   return 0;
 }
 
-int TransportParams::decode(ZuCSpan in)
+int TransportParams::decode(ZuBSpan in)
 {
   *this = {};
   unsigned o = 0;
   while (o < in.length()) {
     uint64_t id = 0, len = 0;
     unsigned n = 0;
-    if (VarInt::decode(ZuCSpan{in.data() + o, in.length() - o}, id, n) < 0)
+    if (VarInt::decode(ZuBSpan{in.data() + o, in.length() - o}, id, n) < 0)
       return -1;
     o += n;
-    if (VarInt::decode(ZuCSpan{in.data() + o, in.length() - o}, len, n) < 0)
+    if (VarInt::decode(ZuBSpan{in.data() + o, in.length() - o}, len, n) < 0)
       return -1;
     o += n;
     if (in.length() < o + len) return -1;
-    ZuCSpan value{in.data() + o, unsigned(len)};
+    ZuBSpan value{in.data() + o, unsigned(len)};
     o += len;
 
     switch (id) {

@@ -73,12 +73,20 @@ struct InitialInfo {
   LongHdr	header;
   ZiSockAddr	peer;
   unsigned	datagramLength = 0;
+  CxnID		originalDCID;
+  CxnID		retrySCID;
+  bool		addressValidated = false;
+  int8_t	tokenKind = 0;
 };
 
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.ALPNData">>));
 ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Zquic.ALPN">>));
 ZuDerive(AsyncSendPayload,
   (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.AsyncSendPayload">>));
+ZuDerive(TokenBytes,
+  (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.TokenBytes">>));
+ZuDerive(TokenSecret,
+  (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.TokenSecret">>));
 
 using ErrorFn = ZmFn<void(ZeException)>;
 
@@ -88,6 +96,40 @@ inline constexpr uint64_t DefaultMaxStreamsBidi = 128;
 inline constexpr uint64_t DefaultMaxStreamsUni = 16;
 inline constexpr uint64_t MaxStreamCount = uint64_t(INT64_MAX) >> 2;
 inline constexpr uint64_t U64Null = ZuCmp<uint64_t>::null();
+inline constexpr uint64_t DefaultTokenLifetime = 600;
+
+struct TokenKind {
+  ZtEnum(TokenKind, int8_t, Retry = 1, NewToken = 2);
+};
+
+struct TokenStatus {
+  ZtEnum(TokenStatus, int8_t,
+    OK, Malformed, Expired, Kind, Address, ODCID, Auth);
+};
+
+struct TokenInfo {
+  TokenKind::T	kind = TokenKind::Retry;
+  CxnID		originalDCID;
+  CxnID		serverCID;
+};
+
+struct AddressToken {
+  enum {
+    SecretLength = 32,
+    NonceLength = 16,
+    TagLength = 16,
+    MaxLength = 128
+  };
+
+  static bool generateSecret(TokenSecret &);
+  static bool encode(
+    TokenBytes &, TokenKind::T, ZuBSpan secret, const ZiSockAddr &,
+    const CxnID &originalDCID, const CxnID &serverCID,
+    uint64_t nowSec, bool bindPort);
+  static TokenStatus::T validate(
+    TokenInfo &, ZuBSpan token, ZuBSpan secret, const ZiSockAddr &,
+    uint64_t nowSec, uint64_t lifetimeSec, bool bindPort);
+};
 
 inline ErrorFn defaultErrorFn()
 {
@@ -116,9 +158,9 @@ inline PktSpace::T runtimePktSpace(CryptoLevel::T level)
   return PktSpace::AppData;
 }
 
-inline ZuCSpan byteSpan(const uint8_t *data, unsigned len)
+inline ZuBSpan byteSpan(const uint8_t *data, unsigned len)
 {
-  return ZuCSpan{data, len};
+  return ZuBSpan{data, len};
 }
 
 inline bool cryptoLevelFromEpoch(size_t epoch, CryptoLevel::T &level)
@@ -139,7 +181,7 @@ inline bool cryptoLevelFromEpoch(size_t epoch, CryptoLevel::T &level)
 }
 
 inline bool runtimeFrameRef(
-  ZuCSpan bytes, SentFrameRef &ref, bool &ackEliciting)
+  ZuBSpan bytes, SentFrameRef &ref, bool &ackEliciting)
 {
   ref = {};
   ackEliciting = false;
@@ -205,7 +247,7 @@ struct VersionNegotiation {
   }
 
   static int parse(
-    ZuCSpan in, uint32_t *versions, unsigned capacity, unsigned &nVersions) {
+    ZuBSpan in, uint32_t *versions, unsigned capacity, unsigned &nVersions) {
     return Pkt::parseVersionNegotiation(in, versions, capacity, nVersions);
   }
 };
@@ -218,17 +260,30 @@ struct ServerPktDecision {
 
 struct ServerPkt {
   static ServerPktDecision routeLongHdr(
-    ZuCSpan, uint8_t *response, unsigned responseLen);
+    ZuBSpan, uint8_t *response, unsigned responseLen);
+};
+
+struct AddressValidationDiag {
+  uint64_t	retrySent = 0;
+  uint64_t	retryAccepted = 0;
+  uint64_t	retryRejected = 0;
+  uint64_t	newTokenAccepted = 0;
+  uint64_t	tokenExpired = 0;
+  uint64_t	tokenAuthFailure = 0;
+  uint64_t	tokenAddressMismatch = 0;
+  uint64_t	tokenMalformed = 0;
+  uint64_t	tokenKindMismatch = 0;
+  uint64_t	tokenODCIDMismatch = 0;
 };
 
 struct StatelessReset {
   static constexpr unsigned TokenLength = ResetToken::Length;
   static constexpr unsigned MinLength = 21;
 
-  static int decode(ResetToken &, ZuCSpan datagram);
-  static bool verify(ZuCSpan datagram, const ResetToken &);
+  static int decode(ResetToken &, ZuBSpan datagram);
+  static bool verify(ZuBSpan datagram, const ResetToken &);
   static int writeForUnknownCID(
-    uint8_t *, unsigned, ZuCSpan receivedPkt, const ResetToken &);
+    uint8_t *, unsigned, ZuBSpan receivedPkt, const ResetToken &);
 };
 
 template <typename Link_>
@@ -300,7 +355,7 @@ public:
     if (!route || route->state != CxnState::Active) return nullptr;
     return route->link;
   }
-  Link_ *matchShort(ZuCSpan packet, CxnID *id = nullptr) const {
+  Link_ *matchShort(ZuBSpan packet, CxnID *id = nullptr) const {
     const Route *route = matchShortRoute_(packet, true);
     if (!route) return nullptr;
     if (id) *id = route->id;
@@ -314,7 +369,7 @@ public:
     token = route->resetToken;
     return true;
   }
-  bool resetTokenForShort(ZuCSpan packet, ResetToken &token) const {
+  bool resetTokenForShort(ZuBSpan packet, ResetToken &token) const {
     const Route *route = matchShortRoute_(packet, false);
     if (!route || !route->resetToken.valid()) return false;
     token = route->resetToken;
@@ -384,12 +439,12 @@ private:
       if (id.length()) m_routes->del(id);
     }
   }
-  const Route *matchShortRoute_(ZuCSpan packet, bool activeOnly) const {
+  const Route *matchShortRoute_(ZuBSpan packet, bool activeOnly) const {
     if (!packet || packet.length() < 2 || Pkt::isLong(packet)) return nullptr;
     unsigned max = packet.length() - 1;
     if (max > CxnIDMax) max = CxnIDMax;
     while (max) {
-      CxnID id{ZuCSpan{packet.data() + 1, max}};
+      CxnID id{ZuBSpan{packet.data() + 1, max}};
       if (auto route = m_routes->findVal(id)) {
 	if (route->state != CxnState::Tombstone &&
 	    (!activeOnly || route->state == CxnState::Active))
@@ -431,6 +486,8 @@ class Endpoint_ {
       (ZmList<ZmRef<TxNode>,
 	ZmListNode<ZmRef<TxNode>,
 	  ZmListHeapID<"Zquic.Endpoint.TxQueue">>>));
+    ZuDerive(DrainFns,
+      (ZmQueue<ZmFn<>, ZmQueueHeapID<"Zquic.Endpoint.DrainFns">>));
 
     void *operator new(size_t s) {
       using Heap = ZmHeap<"Zquic.Endpoint.Cxn", Cxn_>;
@@ -673,17 +730,22 @@ public:
   }
 
   void disconnect() {
+    disconnect([]() { });
+  }
+  template <typename Fn>
+  void disconnect(Fn fn) {
     if (!m_mx) {
       m_listening = false;
       m_connected = false;
       m_open = false;
+      fn();
       return;
     }
     if (endpointRxInvoked_()) {
-      disconnect_();
+      disconnect_(ZuMv(fn));
       return;
     }
-    m_mx->rxRun([this]() { disconnect_(); });
+    m_mx->rxRun([this, fn = ZuMv(fn)]() mutable { disconnect_(ZuMv(fn)); });
   }
 
   bool listening() const { return m_listening; }
@@ -752,13 +814,20 @@ private:
   template <typename ImplRef_>
   void disconnected_0(Cxn_ *cxn, ImplRef_ impl_) {
     m_mx->rxRun([impl = ZuMv(impl_), cxn = ZmMkRef(cxn)]() mutable {
-      static_cast<Impl *>(impl)->Endpoint_::disconnected_(cxn.ptr());
+      auto fns = static_cast<Impl *>(impl)->
+	Endpoint_::disconnected_(cxn.ptr());
       auto mx = cxn->mx();
-      mx->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn)]() mutable { });
+      mx->txRun([
+	impl = ZuMv(impl), cxn = ZuMv(cxn), fns = ZuMv(fns)
+      ]() mutable {
+	if constexpr (Impl::EndpointRef) impl = nullptr;
+	cxn = nullptr;
+	Endpoint_::runDrainFns_(fns);
+      });
     });
   }
 
-  void disconnected_(Cxn_ *cxn) {
+  typename Cxn_::DrainFns disconnected_(Cxn_ *cxn) {
     if (m_cxn == cxn && cxn->generation() == m_generation) {
       cxn->closeRx_();
       m_cxn = nullptr;
@@ -766,7 +835,10 @@ private:
       m_connected = false;
       m_open = false;
       impl()->endpointDown_(this);
+      return takeDrainFns_();
     }
+    if (!m_cxn) return takeDrainFns_();
+    return {};
   }
 
   void failed_(bool transient) {
@@ -815,17 +887,36 @@ private:
     return cxn->sendPkt(ZuMv(buf), ZuMv(addr));
   }
 
-  void disconnect_() {
+  template <typename Fn>
+  void disconnect_(Fn fn) {
+    m_drainFns.push(ZmFn<>{ZuMv(fn)});
     m_listening = false;
     m_connected = false;
     m_open = false;
     CxnRef cxn = m_cxn;
-    if (!cxn) return;
+    if (!cxn) {
+      drainFns_();
+      return;
+    }
     cxn->beginCloseRx_();
     m_mx->txRun([cxn = ZuMv(cxn)]() mutable {
       cxn->closeTx_();
       cxn->disconnect();
     });
+  }
+  typename Cxn_::DrainFns takeDrainFns_() {
+    auto fns = ZuMv(m_drainFns);
+    m_drainFns.clean();
+    return fns;
+  }
+  void drainFns_() {
+    auto fns = takeDrainFns_();
+    m_mx->txRun([fns = ZuMv(fns)]() mutable {
+      Endpoint_::runDrainFns_(fns);
+    });
+  }
+  static void runDrainFns_(typename Cxn_::DrainFns &fns) {
+    while (auto fn = fns.shift()) fn();
   }
 
   bool endpointRxInvoked_() const {
@@ -845,6 +936,7 @@ private:
   SockConfig		m_sockConfig;
 
   CxnRef		m_cxn;
+  typename Cxn_::DrainFns m_drainFns;
   unsigned		m_generation = 0;
   EndpointRxDiag	m_rxDiag;
   SockDiag		m_sockDiag;
@@ -870,6 +962,7 @@ public:
   bool started() const { return m_started; }
   bool retried() const { return m_retried; }
   uint64_t retryTokenLength() const { return m_retryTokenLength; }
+  ZuBSpan retryToken() const { return m_retryToken; }
   const CxnID &initialDCID() const { return m_initialDCID; }
   const CxnID &initialSCID() const { return m_initialSCID; }
   const CxnID &retrySCID() const { return m_retrySCID; }
@@ -882,6 +975,7 @@ public:
     m_initialSCID = initialSCID;
     m_retrySCID = {};
     m_retryTokenLength = 0;
+    m_retryToken.length(0);
     m_started = true;
     m_retried = false;
     return true;
@@ -890,7 +984,7 @@ public:
     unsigned dcidLength = CxnIDGen::InitialLength,
     unsigned scidLength = CxnIDGen::InitialLength);
 
-  bool onRetry(ZuCSpan packet) {
+  bool onRetry(ZuBSpan packet) {
     RetryPkt retry;
     if (!m_started ||
 	Pkt::parseRetry(packet, retry) < 0 ||
@@ -901,6 +995,7 @@ public:
 
   bool onRetry(const RetryPkt &retry) {
     if (!m_started ||
+	m_retried ||
 	retry.header.type != PktType::Retry ||
 	retry.header.scid.length() < MinCIDLength ||
 	!retry.token ||
@@ -908,6 +1003,8 @@ public:
       return false;
     m_retrySCID = retry.header.scid;
     m_retryTokenLength = retry.token.length();
+    m_retryToken.length(retry.token.length());
+    memcpy(m_retryToken.data(), retry.token.data(), retry.token.length());
     m_retried = true;
     return true;
   }
@@ -928,6 +1025,7 @@ private:
   CxnID		m_initialDCID;
   CxnID		m_initialSCID;
   CxnID		m_retrySCID;
+  TokenBytes	m_retryToken;
   uint64_t	m_retryTokenLength = 0;
   bool		m_started = false;
   bool		m_retried = false;
@@ -936,6 +1034,7 @@ private:
 class ServerBootstrap {
 public:
   bool accepted() const { return m_accepted; }
+  const CxnID &initialDCID() const { return m_initialDCID; }
   const CxnID &originalDCID() const { return m_originalDCID; }
   const CxnID &clientInitialSCID() const { return m_clientInitialSCID; }
   const CxnID &localInitialSCID() const { return m_localInitialSCID; }
@@ -944,14 +1043,19 @@ public:
   }
 
   bool acceptInitial(const LongHdr &, unsigned datagramLength);
+  bool acceptInitial(
+    const InitialInfo &, const LongHdr &, unsigned datagramLength);
   bool transportParams(TransportParams &) const;
 
 private:
+  CxnID		m_initialDCID;
   CxnID		m_originalDCID;
   CxnID		m_clientInitialSCID;
   CxnID		m_localInitialSCID;
+  CxnID		m_retrySCID;
   ResetToken	m_statelessResetToken;
   bool		m_accepted = false;
+  bool		m_retried = false;
 };
 
 struct RuntimeRxDiag {
@@ -988,6 +1092,7 @@ struct RuntimeRxDiag {
   uint64_t	invalidKeyPhases = 0;
   uint64_t	oldKeysAccepted = 0;
   uint64_t	keyDiscards = 0;
+  uint64_t	newTokenRx = 0;
   AckECN	ecnRx[3];
   uint64_t	failures = 0;
   uint64_t	handshakeComplete = 0;
@@ -1029,6 +1134,7 @@ struct RuntimeTxDiag {
   uint64_t	pathChallengeTx = 0;
   uint64_t	pathResponseTx = 0;
   uint64_t	handshakeDoneTx = 0;
+  uint64_t	newTokenTx = 0;
   uint64_t	pathRxObserved = 0;
   uint64_t	pathRxSame = 0;
   uint64_t	pathRxNull = 0;
@@ -1102,6 +1208,7 @@ struct RuntimeDiag {
     invalidKeyPhases = rx.invalidKeyPhases;
     oldKeysAccepted = rx.oldKeysAccepted;
     keyDiscards = rx.keyDiscards;
+    newTokenRx = rx.newTokenRx;
     for (unsigned i = 0; i < 3; ++i) ecnRx[i] = rx.ecnRx[i];
     handshakeComplete = rx.handshakeComplete;
 
@@ -1138,6 +1245,7 @@ struct RuntimeDiag {
     pathChallengeTx = tx.pathChallengeTx;
     pathResponseTx = tx.pathResponseTx;
     handshakeDoneTx = tx.handshakeDoneTx;
+    newTokenTx = tx.newTokenTx;
     pathRxObserved = tx.pathRxObserved;
     pathRxSame = tx.pathRxSame;
     pathRxNull = tx.pathRxNull;
@@ -1223,6 +1331,7 @@ struct RuntimeDiag {
   uint64_t	pathChallengeTx = 0;
   uint64_t	pathResponseTx = 0;
   uint64_t	handshakeDoneTx = 0;
+  uint64_t	newTokenTx = 0;
   uint64_t	pathRxObserved = 0;
   uint64_t	pathRxSame = 0;
   uint64_t	pathRxNull = 0;
@@ -1250,6 +1359,7 @@ struct RuntimeDiag {
   uint64_t	invalidKeyPhases = 0;
   uint64_t	oldKeysAccepted = 0;
   uint64_t	keyDiscards = 0;
+  uint64_t	newTokenRx = 0;
   AckECN	ecnRx[3];
   uint64_t	ptoSched = 0;
   uint64_t	ptoNoLevel = 0;
@@ -1338,7 +1448,7 @@ inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
   diag.bytesRx += d.buf->length;
 
   LongHdr h;
-  if (Pkt::parseLong(d.buf->cspan(), h) < 0) {
+  if (Pkt::parseLong(byteSpan(d.buf->data(), d.buf->length), h) < 0) {
     ++diag.failures;
     return;
   }
@@ -1361,7 +1471,7 @@ inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
     return;
   }
 
-  ZuCSpan payload{d.buf->data() + payloadOffset, payloadLength};
+  ZuBSpan payload{d.buf->data() + payloadOffset, payloadLength};
   unsigned offset = 0;
   auto frame_ = ZmAlloc(Frame, 1);
   new (&frame_[0]) Frame{};
@@ -1370,7 +1480,7 @@ inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
   while (offset < payloadLength) {
     unsigned used = 0;
     if (FrameCodec::parse(
-	  ZuCSpan{payload.data() + offset, payloadLength - offset},
+	  ZuBSpan{payload.data() + offset, payloadLength - offset},
 	  frame, used) < 0 || !used) {
       ++diag.failures;
       return;
@@ -1459,6 +1569,27 @@ struct EngineParams {
     return ZuMv(*this);
   }
   EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
+  EngineParams &&addressValidationSecret(ZuBSpan v) {
+    m_tokenSecret.length(v.length());
+    if (v) memcpy(m_tokenSecret.data(), v.data(), v.length());
+    return ZuMv(*this);
+  }
+  EngineParams &&retryAddressValidation(bool v) {
+    m_retryAddressValidation = v;
+    return ZuMv(*this);
+  }
+  EngineParams &&newTokenAddressValidation(bool v) {
+    m_newTokenAddressValidation = v;
+    return ZuMv(*this);
+  }
+  EngineParams &&addressValidationLifetime(uint64_t v) {
+    m_tokenLifetime = v;
+    return ZuMv(*this);
+  }
+  EngineParams &&addressValidationBindPort(bool v) {
+    m_tokenBindPort = v;
+    return ZuMv(*this);
+  }
   EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
     m_alpn.length(0);
     m_alpn.ensure(v.length());
@@ -1489,6 +1620,15 @@ struct EngineParams {
   uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   unsigned maxUDP() const { return m_maxUDP; }
+  ZuBSpan addressValidationSecret() const {
+    return m_tokenSecret;
+  }
+  bool retryAddressValidation() const { return m_retryAddressValidation; }
+  bool newTokenAddressValidation() const {
+    return m_newTokenAddressValidation;
+  }
+  uint64_t addressValidationLifetime() const { return m_tokenLifetime; }
+  bool addressValidationBindPort() const { return m_tokenBindPort; }
   const ErrorFn &errorFn() const { return m_errorFn; }
   ErrorFn &errorFn() { return m_errorFn; }
 
@@ -1508,6 +1648,11 @@ private:
   uint64_t	m_maxStreamsUni = DefaultMaxStreamsUni;
   uint64_t	m_maxIdleTimeout = 0;
   unsigned	m_maxUDP = MinUDPPayload;
+  TokenSecret	m_tokenSecret;
+  uint64_t	m_tokenLifetime = DefaultTokenLifetime;
+  bool		m_retryAddressValidation = false;
+  bool		m_newTokenAddressValidation = false;
+  bool		m_tokenBindPort = false;
   ErrorFn	m_errorFn;
 };
 
@@ -1563,6 +1708,11 @@ public:
       m_maxStreamsUni = DefaultMaxStreamsUni;
       m_maxIdleTimeout = 0;
       m_maxUDP = MinUDPPayload;
+      m_tokenSecret.length(0);
+      m_tokenLifetime = DefaultTokenLifetime;
+      m_retryAddressValidation = false;
+      m_newTokenAddressValidation = false;
+      m_tokenBindPort = false;
       return true;
     });
     ZiAssert(ok, "Zquic", (),
@@ -1591,6 +1741,15 @@ public:
   uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   unsigned maxUDP() const { return m_maxUDP; }
+  ZuBSpan addressValidationSecret() const {
+    return m_tokenSecret;
+  }
+  bool retryAddressValidation() const { return m_retryAddressValidation; }
+  bool newTokenAddressValidation() const {
+    return m_newTokenAddressValidation;
+  }
+  uint64_t addressValidationLifetime() const { return m_tokenLifetime; }
+  bool addressValidationBindPort() const { return m_tokenBindPort; }
 
   template <typename ...Args>
   void rxRun(Args &&...args) {
@@ -1635,6 +1794,19 @@ protected:
       m_maxStreamsUni = params.maxStreamsUni();
       m_maxIdleTimeout = params.maxIdleTimeout();
       m_maxUDP = params.maxUDP();
+      {
+	ZuBSpan secret = params.addressValidationSecret();
+	m_tokenSecret.length(secret.length());
+	if (secret) memcpy(m_tokenSecret.data(), secret.data(), secret.length());
+      }
+      m_tokenLifetime = params.addressValidationLifetime();
+      m_retryAddressValidation = params.retryAddressValidation();
+      m_newTokenAddressValidation = params.newTokenAddressValidation();
+      m_tokenBindPort = params.addressValidationBindPort();
+      if ((m_retryAddressValidation || m_newTokenAddressValidation) &&
+	  !m_tokenSecret.length() &&
+	  !AddressToken::generateSecret(m_tokenSecret))
+	return false;
       if (!init_alpn_(params.alpn())) return false;
       return l(params);
     });
@@ -1801,6 +1973,11 @@ private:
   uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
   uint64_t		m_maxIdleTimeout = 0;
   unsigned		m_maxUDP = MinUDPPayload;
+  TokenSecret		m_tokenSecret;
+  uint64_t		m_tokenLifetime = DefaultTokenLifetime;
+  bool			m_retryAddressValidation = false;
+  bool			m_newTokenAddressValidation = false;
+  bool			m_tokenBindPort = false;
 };
 
 // CRTP - aligned client implementation should conform to this interface:
@@ -1922,6 +2099,20 @@ friend ZmEngine<App>;
     auto server = const_cast<Server *>(this);
     mx->txRun([server, &diag, &done]() mutable {
       diag = server->Endpoint::diag();
+      done.post();
+    });
+    done.wait();
+    return diag;
+  }
+  AddressValidationDiag addressValidationDiag() const {
+    auto mx = this->mx();
+    if (!mx) return {};
+    auto server = const_cast<Server *>(this);
+    if (server->rxInvoked()) return m_addressValidationDiag;
+    AddressValidationDiag diag;
+    ZmSemaphore done;
+    mx->rxRun([server, &diag, &done]() mutable {
+      diag = server->m_addressValidationDiag;
       done.post();
     });
     done.wait();
@@ -2060,12 +2251,12 @@ private:
 
   Link *route_(const Datagram &d) {
     if (!d.buf || !d.buf->length) return nullptr;
-    ZuCSpan packet{d.buf->data_(), d.buf->length};
+    ZuBSpan packet{d.buf->data_(), d.buf->length};
     if (Pkt::isLong(packet)) return routeLong_(d, packet);
     return routeShort_(d, packet);
   }
 
-  Link *routeLong_(const Datagram &d, ZuCSpan packet) {
+  Link *routeLong_(const Datagram &d, ZuBSpan packet) {
     LongHdr h;
     if (Pkt::parseLong(packet, h) < 0) return nullptr;
     if (!VersionNegotiation::supported(h.version)) {
@@ -2074,16 +2265,22 @@ private:
     }
     if (Link *link = m_routes.find(h.dcid)) return link;
     if (h.type != PktType::Initial) return nullptr;
-    return accept_(InitialInfo{h, d.addr, d.buf->length});
+    InitialInfo info{h, d.addr, d.buf->length};
+    if (!validateInitial_(info, packet)) {
+      if (app()->retryAddressValidation())
+	sendRetry_(h, d.addr);
+      return nullptr;
+    }
+    return accept_(info);
   }
 
-  Link *routeShort_(const Datagram &, ZuCSpan packet) {
+  Link *routeShort_(const Datagram &, ZuBSpan packet) {
     return m_routes.matchShort(packet);
   }
 
   bool sendStatelessReset_(const Datagram &d) {
     if (!d.buf || !d.buf->length) return false;
-    ZuCSpan packet{d.buf->data_(), d.buf->length};
+    ZuBSpan packet{d.buf->data_(), d.buf->length};
     if (Pkt::isLong(packet)) return false;
     ResetToken token;
     if (!m_routes.resetTokenForShort(packet, token)) return false;
@@ -2101,6 +2298,7 @@ private:
     link = this->app()->accepted(info);
     if (!link) return nullptr;
     Link *ptr = link.ptr();
+    ptr->acceptInitialInfo_(info);
     if (!addLink_(ZuMv(link))) return nullptr;
     return ptr;
   }
@@ -2171,10 +2369,97 @@ private:
     return sendPkt_(ZuMv(buf), ZuMv(addr));
   }
 
+  ZuBSpan initialToken_(ZuBSpan packet, const LongHdr &h) const {
+    if (!h.tokenLength) return {};
+    return ZuBSpan{packet.data() + h.tokenOffset, unsigned(h.tokenLength)};
+  }
+
+  bool validateInitial_(InitialInfo &info, ZuBSpan packet) {
+    if (!app()->retryAddressValidation()) return true;
+    ZuBSpan token = initialToken_(packet, info.header);
+    if (!token) {
+      ++m_addressValidationDiag.retryRejected;
+      return false;
+    }
+    TokenInfo tokenInfo;
+    TokenStatus::T status = AddressToken::validate(
+      tokenInfo, token, app()->addressValidationSecret(), info.peer,
+      uint64_t(Zm::now().sec()), app()->addressValidationLifetime(),
+      app()->addressValidationBindPort());
+    if (status != TokenStatus::OK) {
+      ++m_addressValidationDiag.retryRejected;
+      switch (status) {
+	case TokenStatus::Expired: ++m_addressValidationDiag.tokenExpired; break;
+	case TokenStatus::Auth: ++m_addressValidationDiag.tokenAuthFailure; break;
+	case TokenStatus::Address:
+	  ++m_addressValidationDiag.tokenAddressMismatch;
+	  break;
+	case TokenStatus::Malformed:
+	  ++m_addressValidationDiag.tokenMalformed;
+	  break;
+	case TokenStatus::Kind: ++m_addressValidationDiag.tokenKindMismatch; break;
+	case TokenStatus::ODCID: ++m_addressValidationDiag.tokenODCIDMismatch; break;
+	default: break;
+      }
+      return false;
+    }
+    switch (tokenInfo.kind) {
+      case TokenKind::Retry:
+	if (!(tokenInfo.serverCID == info.header.dcid)) {
+	  ++m_addressValidationDiag.retryRejected;
+	  ++m_addressValidationDiag.tokenODCIDMismatch;
+	  return false;
+	}
+	info.retrySCID = info.header.dcid;
+	info.originalDCID = tokenInfo.originalDCID.length() ?
+	  tokenInfo.originalDCID : info.header.dcid;
+	++m_addressValidationDiag.retryAccepted;
+	break;
+      case TokenKind::NewToken:
+	if (!app()->newTokenAddressValidation() || tokenInfo.serverCID.length()) {
+	  ++m_addressValidationDiag.retryRejected;
+	  ++m_addressValidationDiag.tokenKindMismatch;
+	  return false;
+	}
+	info.originalDCID = info.header.dcid;
+	++m_addressValidationDiag.newTokenAccepted;
+	break;
+      default:
+	++m_addressValidationDiag.retryRejected;
+	++m_addressValidationDiag.tokenKindMismatch;
+	return false;
+    }
+    info.addressValidated = true;
+    info.tokenKind = int8_t(tokenInfo.kind);
+    return true;
+  }
+
+  bool sendRetry_(const LongHdr &h, ZiSockAddr addr) {
+    CxnID retrySCID;
+    TokenBytes token;
+    if (!CxnIDGen::random(retrySCID) ||
+	!AddressToken::encode(
+	  token, TokenKind::Retry, app()->addressValidationSecret(), addr,
+	  h.dcid, retrySCID, uint64_t(Zm::now().sec()),
+	  app()->addressValidationBindPort()))
+      return false;
+    ZmRef<ZiIOBuf> buf = allocTxPkt_();
+    int n = Pkt::writeRetryAuthenticated(
+      buf->data_(), buf->size, h.scid, retrySCID,
+      token, h.dcid);
+    if (n < 0) return false;
+    buf->skip = 0;
+    buf->length = unsigned(n);
+    bool sent = sendPkt_(ZuMv(buf), ZuMv(addr));
+    if (sent) ++m_addressValidationDiag.retrySent;
+    return sent;
+  }
+
   // Rx thread exclusive
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;
+  AddressValidationDiag	m_addressValidationDiag;
   unsigned		m_stopCount = 0;
 };
 
@@ -3271,6 +3556,7 @@ public:
   void transportClose_(FrameType::T type, uint64_t errorCode) {
     impl()->transportClose(type, errorCode);
   }
+  void newToken_(ZuCSpan) { }
 
 protected:
   void closeState_(uint64_t errorCode = 0) {
@@ -4072,11 +4358,11 @@ protected:
     if (armTimer)
       schedulePathTimer_(state.deadline);
     txQueueControl_(ControlFrame::pathChallenge(
-      m_validatingPath.challenge.cspan()));
+      m_validatingPath.challenge.bspan()));
     impl()->queueTxFlush_(m_validatingPath.path.remote());
     return true;
   }
-  bool onPathResponse_(ZuCSpan data) {
+  bool onPathResponse_(ZuBSpan data) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PATH_RESPONSE processing outside Tx thread", return false);
     if (!m_validatingPath.active ||
@@ -4088,7 +4374,7 @@ protected:
     promotePath_();
     return true;
   }
-  void receivePathResponse_(ZuCSpan data) {
+  void receivePathResponse_(ZuBSpan data) {
     if (data.length() != PathChallenge::Length) return;
     uint8_t payload[PathChallenge::Length];
     memcpy(payload, data.data(), sizeof(payload));
@@ -4160,9 +4446,9 @@ protected:
   const ZiSockAddr &validatingRemote_() const {
     return m_validatingPath.path.remote();
   }
-  ZuCSpan validatingChallenge_() const {
+  ZuBSpan validatingChallenge_() const {
     return m_validatingPath.active ?
-      m_validatingPath.challenge.cspan() : ZuCSpan{};
+      m_validatingPath.challenge.bspan() : ZuBSpan{};
   }
   bool installOneRTTForTest_(
     const TrafficSecret &rx, const TrafficSecret &tx, const CxnID &localCID) {
@@ -4290,6 +4576,8 @@ protected:
   void packetParseFailure_() { ++m_rxDiag.failures; }
   void tlsFailure_() { ++m_rxDiag.failures; }
   void handshakeDoneTx_() { }
+  void newTokenRx_() { ++m_rxDiag.newTokenRx; }
+  void newTokenTx_() { ++m_txDiag.newTokenTx; }
   void pathPromoted_() { }
   void dataBlocked_(uint64_t maximum) {
     impl()->flowBlocked(
@@ -4776,7 +5064,7 @@ protected:
     return true;
   }
 
-  bool checkStatelessReset_(ZuCSpan datagram, bool notify = false) {
+  bool checkStatelessReset_(ZuBSpan datagram, bool notify = false) {
     if (!StatelessReset::verify(datagram, m_peerResetToken)) return false;
     m_linkState = LinkState::Draining;
     m_streamQueue.clean();
@@ -4792,7 +5080,7 @@ protected:
     unsigned TLSBufSize_, typename SendFlights,
     typename MarkEstablished, typename AfterEstablished>
   bool advanceTLS_(
-    size_t inEpoch, ZuCSpan input, ZiSockAddr addr,
+    size_t inEpoch, ZuBSpan input, ZiSockAddr addr,
     SendFlights sendFlights, MarkEstablished markEstablished,
     AfterEstablished afterEstablished) {
     ZmRef<ZiIOBuf> out =
@@ -6071,7 +6359,7 @@ nextSpace:
     CryptoLevel::T level, PktBuild &build, const SentFrameRef &ref) {
     if (ref.kind != SentFrameKind::Crypto || m_txSpaceDiscarded[level])
       return false;
-    ZuCSpan payload;
+    ZuBSpan payload;
     if (!m_txCrypto[level].txPayload(ref.offset, ref.length, payload))
       return false;
     build.reset();
@@ -6087,7 +6375,7 @@ nextSpace:
   }
 
   void recordTxPkt_(
-    CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan frame,
+    CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuBSpan frame,
     uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
     SentFrameRef ref;
     bool ackEliciting = false;
@@ -6370,14 +6658,14 @@ nextSpace:
     return runtimeNow_() + closeDrainDelay_();
   }
   bool buildPayload_(
-    CryptoLevel::T level, PktBuild &build, ZuCSpan frame) {
+    CryptoLevel::T level, PktBuild &build, ZuBSpan frame) {
     build.reset();
     return appendPendingAck_(level, build) && build.add(frame);
   }
 
   bool buildPayload_(
     CryptoLevel::T level, PktBuild &build,
-    ZuCSpan prefix, ZuCSpan payload) {
+    ZuBSpan prefix, ZuBSpan payload) {
     build.reset();
     return appendPendingAck_(level, build) &&
       build.add(prefix) && build.add(payload);
@@ -6430,7 +6718,7 @@ nextSpace:
       m_txCrypto, m_txDiag,
       data, len, offsets, chunkMax, ZuMv(addr),
       [sendCryptoPkt](
-	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+	  CryptoLevel::T level, ZuBSpan prefix, ZuBSpan payload,
 	  const SentFrameRef &ref, ZiSockAddr addr_) mutable {
 	return sendCryptoPkt(
 	  level, prefix, payload, ref, ZuMv(addr_));
@@ -6441,7 +6729,7 @@ nextSpace:
     typename BuildPayload,
     typename SendInitial, typename SendHandshake, typename SendShort>
   bool sendCryptoPkt_(
-    CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr,
+    CryptoLevel::T level, ZuBSpan frame, ZiSockAddr addr,
     BuildPayload buildPayload,
     SendInitial sendInitial, SendHandshake sendHandshake, SendShort sendShort) {
     PktBuild build;
@@ -6457,7 +6745,7 @@ nextSpace:
     typename BuildPayload,
     typename SendInitial, typename SendHandshake, typename SendShort>
   bool sendCryptoPkt_(
-    CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+    CryptoLevel::T level, ZuBSpan prefix, ZuBSpan payload,
     const SentFrameRef &ref, ZiSockAddr addr,
     BuildPayload buildPayload,
     SendInitial sendInitial, SendHandshake sendHandshake, SendShort sendShort) {
@@ -6535,7 +6823,7 @@ nextSpace:
   }
 
   void recordProtPktTx_(
-    CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuCSpan recordFrame,
+    CryptoLevel::T level, uint64_t pn, unsigned bytes, ZuBSpan recordFrame,
     const TxPktRefs *recordRefs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
     uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
@@ -6584,9 +6872,9 @@ nextSpace:
   template <typename AllocTxPkt, typename SendPkt>
   bool sendProtInitialPkt_(
     InitialKeyDir::T keyDir, RuntimeCID::T dcid, RuntimeCID::T scid,
-    unsigned pnLength, bool padInitial, PktBuild &payload, ZiSockAddr addr,
-    ZuCSpan recordFrame, const TxPktRefs *recordRefs, bool ackEliciting,
-    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
+    unsigned pnLength, ZuBSpan token, bool padInitial, PktBuild &payload,
+    ZiSockAddr addr, ZuBSpan recordFrame, const TxPktRefs *recordRefs,
+    bool ackEliciting, AllocTxPkt allocTxPkt, SendPkt sendPkt) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Initial packet protection outside Tx thread", return false);
     ZmRef<ZiIOBuf> buf = allocTxPkt();
@@ -6596,7 +6884,7 @@ nextSpace:
     for (unsigned i = 0; i < 4; ++i) {
       headerLen = Pkt::writeInitial(
 	buf->data_(), buf->size, runtimeCID_(dcid), runtimeCID_(scid),
-	targetPlainLen + InitialSecret::TagLen, pnLength);
+	token, targetPlainLen + InitialSecret::TagLen, pnLength);
       if (headerLen < 0) return false;
       if (!padInitial) break;
       unsigned minPlainLen = MinUDPPayload -
@@ -6634,7 +6922,7 @@ nextSpace:
   template <typename AllocTxPkt, typename SendPkt>
   bool sendProtHandshakePkt_(
     RuntimeCID::T dcid, RuntimeCID::T scid, unsigned pnLength,
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const TxPktRefs *recordRefs, bool ackEliciting,
     AllocTxPkt allocTxPkt, SendPkt sendPkt) {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -6681,7 +6969,7 @@ nextSpace:
   template <typename AllocTxPkt, typename SendPkt>
   bool sendProtShortPkt_(
     RuntimeCID::T dcid, unsigned pnLength, PktBuild &payload,
-    ZiSockAddr addr, ZuCSpan recordFrame, const TxPktRefs *recordRefs,
+    ZiSockAddr addr, ZuBSpan recordFrame, const TxPktRefs *recordRefs,
     bool ackEliciting, AllocTxPkt allocTxPkt, SendPkt sendPkt,
     unsigned pmtudSize = 0) {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -6743,7 +7031,7 @@ nextSpace:
     bool ok = true;
     unsigned offset = 0;
     while (offset < d.buf->length) {
-      ZuCSpan packet{
+      ZuBSpan packet{
 	d.buf->data_() + offset, d.buf->length - offset};
       if (Pkt::isLong(packet)) {
 	LongHdr h;
@@ -6772,8 +7060,8 @@ nextSpace:
     InitialKeyDir::T keyDir, Datagram &d, unsigned packetOffset, unsigned packetLen,
     PrepareLong prepareLong, ConsumeFrames consumeFrames) {
     uint8_t *base = d.buf->data_() + packetOffset;
-    ZuCSpan packet{base, packetLen};
-    ZuCSpan datagram{d.buf->data_(), d.buf->length};
+    ZuBSpan packet{base, packetLen};
+    ZuBSpan datagram{d.buf->data_(), d.buf->length};
     LongHdr h;
     if (Pkt::parseLong(packet, h) < 0) return false;
     if (!prepareLong(h, d)) return false;
@@ -6832,8 +7120,8 @@ nextSpace:
     Datagram &d, unsigned packetOffset, unsigned packetLen,
     ConsumeFrames consumeFrames) {
     uint8_t *base = d.buf->data_() + packetOffset;
-    ZuCSpan packet{base, packetLen};
-    ZuCSpan datagram{d.buf->data_(), d.buf->length};
+    ZuBSpan packet{base, packetLen};
+    ZuBSpan datagram{d.buf->data_(), d.buf->length};
     if (!m_crypto.rxTrafficSecretInstalled(CryptoLevel::OneRTT)) {
       if (checkStatelessReset_(datagram, true)) return true;
       return false;
@@ -6915,7 +7203,7 @@ nextSpace:
 
   template <typename EmitTLS, typename HandleControl>
   bool consumeProtFrames_(
-    CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
+    CryptoLevel::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf, RxAckMeta &ackMeta, EmitTLS emitTLS,
     HandleControl handleControl) {
     unsigned offset = 0;
@@ -6929,7 +7217,7 @@ nextSpace:
     while (offset < frames.length()) {
       unsigned used = 0;
       if (FrameCodec::parse(
-	  ZuCSpan{frames.data() + offset, frames.length() - offset},
+	  ZuBSpan{frames.data() + offset, frames.length() - offset},
 	  frame, used) < 0 || !used)
 	return false;
       ++m_rxDiag.framesRx;
@@ -6941,7 +7229,7 @@ nextSpace:
 	  processAckFrame_(level, frame);
 	  break;
 	case FrameType::Crypto: {
-	  ZuCSpan contiguous;
+	  ZuBSpan contiguous;
 	  m_rxCryptoAddr[level] = addr;
 	  if (m_rxCrypto[level].receiveFrame(frame, contiguous) < 0)
 	    return false;
@@ -7004,7 +7292,9 @@ nextSpace:
 	  break;
 	case FrameType::Padding:
 	case FrameType::Ping:
+	  break;
 	case FrameType::NewToken:
+	  impl()->newToken_(frame.payload);
 	  break;
 	default:
 	  return false;
@@ -7819,7 +8109,7 @@ public:
   }
   const Crypto &crypto() const { return Base::crypto_(); }
 
-  bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
+  bool send(StreamRef stream, ZuBSpan payload, bool fin = true) {
     if (Base::disconnecting_()) return false;
     if (!stream || (!payload.length() && !fin))
       return false;
@@ -7836,12 +8126,12 @@ public:
       if (link->disconnecting_()) return;
       link->send_(
 	ZuMv(stream),
-	ZuCSpan{payload.data(), payload.length()},
+	payload,
 	fin);
     });
     return true;
   }
-  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
+  bool send_(StreamRef stream, ZuBSpan payload, bool fin = true) {
     // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client send_ outside Tx thread", return false);
@@ -8114,15 +8404,14 @@ private:
     m_notifyEndpointDown = false;
     if (notify) impl()->disconnected(peer);
     if (Base::closed()) Base::clearCallbacks_();
-    Endpoint::disconnect();
     Base::disconnect(peer);
-    app()->rxRun([
+    Endpoint::disconnect([
       link = impl(), fn = ZuMv(fn)
     ]() mutable {
       link->app()->txRun([
 	link, fn = ZuMv(fn)
       ]() mutable {
-	(void)link;
+	link = nullptr;
 	fn();
       });
     });
@@ -8160,6 +8449,23 @@ private:
     return emitTLS_(0, {}, Endpoint::remote());
   }
 
+  bool restartHandshakeAfterRetry_() {
+    Base::resetRuntime_();
+    m_peerParamsValidated = false;
+    Base::initClientPath_(Endpoint::local(), Endpoint::remote());
+    Base::setRuntimeCIDs_(
+      m_bootstrap.retrySCID(), m_bootstrap.initialSCID(),
+      m_bootstrap.retrySCID());
+    Base::configureLocalTransportParams_(app());
+    if (!Base::deriveInitial_()) return false;
+    if (!Base::initTLS_(CryptoConfig{
+	false, false, app()->firstALPN(), app()->caPath(), {}, {},
+	app()->keyLogPath(), m_server}))
+      return false;
+    if (!Base::startRuntimeHandshake_()) return false;
+    return emitTLS_(0, {}, Endpoint::remote());
+  }
+
   void markEstablished_() {
     if (!Base::runtimeReadyToEstablish_())
       return;
@@ -8182,7 +8488,7 @@ private:
     });
   }
 
-  bool emitTLS_(size_t inEpoch, ZuCSpan input, ZiSockAddr addr) {
+  bool emitTLS_(size_t inEpoch, ZuBSpan input, ZiSockAddr addr) {
     return Base::template advanceTLS_<TLSBufSize>(
       inEpoch, input, ZuMv(addr),
       [this](
@@ -8232,7 +8538,7 @@ private:
     bool ok = Base::sendCryptoFlights_(
       data, len, offsets, RuntimeCryptoChunk, ZuMv(addr),
       [this](
-	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+	  CryptoLevel::T level, ZuBSpan prefix, ZuBSpan payload,
 	  const SentFrameRef &ref, ZiSockAddr addr_) {
 	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
@@ -8245,21 +8551,21 @@ private:
     return ok;
   }
 
-  bool sendCryptoPkt_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
+  bool sendCryptoPkt_(CryptoLevel::T level, ZuBSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client crypto packet send outside Tx thread", return false);
     return Base::sendCryptoPkt_(
       level, frame, ZuMv(addr),
-      [this](CryptoLevel::T level_, PktBuild &build, ZuCSpan frame_) {
+      [this](CryptoLevel::T level_, PktBuild &build, ZuBSpan frame_) {
 	return buildPayload_(level_, build, frame_);
       },
-      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+      [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
 	return sendInitialPkt_(build, ZuMv(addr_), frame_);
       },
-      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+      [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
 	return sendHandshakePkt_(build, ZuMv(addr_), frame_);
       },
-      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+      [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
 	  return sendShortPkt_(build, ZuMv(addr_), frame_);
       });
   }
@@ -8327,7 +8633,7 @@ private:
   }
 
   bool sendCryptoPkt_(
-    CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+    CryptoLevel::T level, ZuBSpan prefix, ZuBSpan payload,
     const SentFrameRef &ref, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client crypto packet send outside Tx thread", return false);
@@ -8335,23 +8641,23 @@ private:
       level, prefix, payload, ref, ZuMv(addr),
       [this](
 	  CryptoLevel::T level_, PktBuild &build,
-	  ZuCSpan prefix_, ZuCSpan payload_) {
+	  ZuBSpan prefix_, ZuBSpan payload_) {
 	return buildPayload_(level_, build, prefix_, payload_);
       },
       [this](
-	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
 	return sendInitialPkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
-	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
 	return sendHandshakePkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
-	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
 	return sendShortPkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
@@ -8363,14 +8669,26 @@ private:
     return Base::appendPendingAck_(level, build);
   }
 
-  bool buildPayload_(CryptoLevel::T level, PktBuild &build, ZuCSpan frame) {
+  bool buildPayload_(CryptoLevel::T level, PktBuild &build, ZuBSpan frame) {
     return Base::buildPayload_(level, build, frame);
   }
 
   bool buildPayload_(
     CryptoLevel::T level, PktBuild &build,
-    ZuCSpan prefix, ZuCSpan payload) {
+    ZuBSpan prefix, ZuBSpan payload) {
     return Base::buildPayload_(level, build, prefix, payload);
+  }
+
+  ZuBSpan initialToken_() const {
+    if (m_bootstrap.retried()) return m_bootstrap.retryToken();
+    return m_newToken;
+  }
+
+  void newToken_(ZuCSpan token) {
+    if (!token || token.length() > AddressToken::MaxLength) return;
+    m_newToken.length(token.length());
+    memcpy(m_newToken.data(), token.data(), token.length());
+    Base::newTokenRx_();
   }
 
   bool sendPathBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
@@ -8421,7 +8739,7 @@ private:
     return sendPathBuf_(ZuMv(buf), ZuMv(addr));
   }
 
-  bool sendInitialPkt_(ZuCSpan frame, ZiSockAddr addr) {
+  bool sendInitialPkt_(ZuBSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client Initial send outside Tx thread", return false);
     PktBuild payload;
@@ -8430,7 +8748,7 @@ private:
   }
 
   bool sendInitialPkt_(
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     if (!Endpoint::connected()) return false;
     typename Base::TxPktRefs refs;
@@ -8441,7 +8759,8 @@ private:
     }
     return Base::sendProtInitialPkt_(
       InitialKeyDir::Client, RuntimeCID::Initial, RuntimeCID::Local,
-      Base::txPNLength_(CryptoLevel::Initial), true, payload, ZuMv(addr),
+      Base::txPNLength_(CryptoLevel::Initial), initialToken_(), true,
+      payload, ZuMv(addr),
       recordFrame, recordRefs, ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
@@ -8449,7 +8768,7 @@ private:
       });
   }
 
-  bool sendHandshakePkt_(ZuCSpan frame, ZiSockAddr addr) {
+  bool sendHandshakePkt_(ZuBSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client Handshake send outside Tx thread", return false);
     PktBuild payload;
@@ -8458,7 +8777,7 @@ private:
   }
 
   bool sendHandshakePkt_(
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     if (!Endpoint::connected()) return false;
     typename Base::TxPktRefs refs;
@@ -8478,7 +8797,7 @@ private:
       });
   }
 
-  bool sendShortPkt_(ZuCSpan payload, ZiSockAddr addr) {
+  bool sendShortPkt_(ZuBSpan payload, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client Short send outside Tx thread", return false);
     PktBuild build;
@@ -8487,7 +8806,7 @@ private:
   }
 
   bool sendShortPkt_(
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
     unsigned pmtudSize = 0) {
     if (!Endpoint::connected()) return false;
@@ -8502,7 +8821,7 @@ private:
   }
 
   bool sendShortPkt_(
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const typename Base::TxPktRefs *recordRefs, bool ackEliciting,
     unsigned pmtudSize = 0) {
     if (!Endpoint::connected()) return false;
@@ -8563,6 +8882,7 @@ private:
   }
 
   void received_(Datagram d) {
+    if (handleRetry_(d)) return;
     Base::receiveDatagram_(
       ZuMv(d),
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
@@ -8573,6 +8893,21 @@ private:
       });
   }
 
+  bool handleRetry_(const Datagram &d) {
+    if (!d.buf || !d.buf->length || Base::runtimeEstablished_())
+      return false;
+    ZuBSpan packet{d.buf->data_(), d.buf->length};
+    RetryPkt retry;
+    if (Pkt::parseRetry(packet, retry) < 0) return false;
+    if (!m_bootstrap.onRetry(retry)) {
+      Base::packetParseFailure_();
+      return true;
+    }
+    if (!restartHandshakeAfterRetry_())
+      Base::tlsFailure_();
+    return true;
+  }
+
   bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
     return Base::receiveProtLongPkt_(
       InitialKeyDir::Server, d, packetOffset, packetLen,
@@ -8581,7 +8916,7 @@ private:
 	return true;
       },
       [this](
-	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
+	  CryptoLevel::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
 	  typename Base::RxAckMeta &ack) {
 	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf, ack);
@@ -8592,7 +8927,7 @@ private:
     return Base::receiveProtShortPkt_(
       d, packetOffset, packetLen,
       [this](
-	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
+	  CryptoLevel::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
 	  typename Base::RxAckMeta &ack) {
 	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf, ack);
@@ -8600,12 +8935,12 @@ private:
   }
 
   bool consumeFrames_(
-    CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
+    CryptoLevel::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack) {
     ZiSockAddr peer = addr;
     bool ok = Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf, ack,
-      [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
+      [this](size_t epoch, ZuBSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
       },
       [this](
@@ -8742,6 +9077,7 @@ private:
   Host			m_server;
   uint16_t		m_port = 0;
   ClientBootstrap	m_bootstrap;
+  TokenBytes		m_newToken;
   bool			m_peerParamsValidated = false;
   bool			m_notifyEndpointDown = true;
 
@@ -8786,7 +9122,7 @@ public:
   const Crypto &crypto() const { return Base::crypto_(); }
   const ZiSockAddr &peer() const { return m_peerAddr; }
 
-  bool send(StreamRef stream, ZuCSpan payload, bool fin = true) {
+  bool send(StreamRef stream, ZuBSpan payload, bool fin = true) {
     if (Base::disconnecting_()) return false;
     if (!stream || (!payload.length() && !fin))
       return false;
@@ -8803,12 +9139,12 @@ public:
       if (link->disconnecting_()) return;
       link->send_(
 	ZuMv(stream),
-	ZuCSpan{payload.data(), payload.length()},
+	payload,
 	fin);
     });
     return true;
   }
-  bool send_(StreamRef stream, ZuCSpan payload, bool fin = true) {
+  bool send_(StreamRef stream, ZuBSpan payload, bool fin = true) {
     // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server send_ outside Tx thread", return false);
@@ -8975,6 +9311,10 @@ private:
   using InitialKeyDir = typename Base::InitialKeyDir;
   using RuntimeCID = typename Base::RuntimeCID;
 
+  void acceptInitialInfo_(const InitialInfo &info) {
+    m_initialInfo = info;
+  }
+
   void resetRuntimeState_() {
     Base::resetRuntime_();
     m_peerAddr.null();
@@ -8984,12 +9324,12 @@ private:
 
   bool initRuntimeCrypto_(const LongHdr &h, unsigned datagramLen) {
     if (h.type != PktType::Initial ||
-	!m_bootstrap.acceptInitial(h, datagramLen)) {
+	!m_bootstrap.acceptInitial(m_initialInfo, h, datagramLen)) {
       Base::packetParseFailure_();
       return false;
     }
     Base::setRuntimeCIDs_(
-      m_bootstrap.originalDCID(), m_bootstrap.localInitialSCID(),
+      m_bootstrap.initialDCID(), m_bootstrap.localInitialSCID(),
       m_bootstrap.clientInitialSCID());
     Base::addLocalCID_(
       m_bootstrap.localInitialSCID(), 0, m_bootstrap.statelessResetToken());
@@ -9016,6 +9356,8 @@ private:
     Base::establishRuntime_();
     Base::validatePath_();
     Base::schedulePMTUD();
+    if (app()->newTokenAddressValidation())
+      queueNewToken_();
     impl()->connected(Zi::Connected{
       .transport = Zi::Transport::QUIC,
       .alpn = Base::negotiatedProtocol_(),
@@ -9023,7 +9365,7 @@ private:
     });
   }
 
-  bool emitTLS_(size_t inEpoch, ZuCSpan input, ZiSockAddr addr) {
+  bool emitTLS_(size_t inEpoch, ZuBSpan input, ZiSockAddr addr) {
     return Base::template advanceTLS_<TLSBufSize>(
       inEpoch, input, ZuMv(addr),
       [this](
@@ -9080,7 +9422,7 @@ private:
     bool ok = Base::sendCryptoFlights_(
       data, len, offsets, RuntimeCryptoChunk, ZuMv(addr),
       [this](
-	  CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+	  CryptoLevel::T level, ZuBSpan prefix, ZuBSpan payload,
 	  const SentFrameRef &ref, ZiSockAddr addr_) {
 	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
@@ -9093,21 +9435,21 @@ private:
     return ok;
   }
 
-  bool sendCryptoPkt_(CryptoLevel::T level, ZuCSpan frame, ZiSockAddr addr) {
+  bool sendCryptoPkt_(CryptoLevel::T level, ZuBSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server crypto packet send outside Tx thread", return false);
     return Base::sendCryptoPkt_(
       level, frame, ZuMv(addr),
-      [this](CryptoLevel::T level_, PktBuild &build, ZuCSpan frame_) {
+      [this](CryptoLevel::T level_, PktBuild &build, ZuBSpan frame_) {
 	return buildPayload_(level_, build, frame_);
       },
-      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+      [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
 	return sendInitialPkt_(build, ZuMv(addr_), frame_);
       },
-      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+      [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
 	return sendHandshakePkt_(build, ZuMv(addr_), frame_);
       },
-      [this](PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_) {
+      [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
 	return sendShortPkt_(build, ZuMv(addr_), frame_);
       });
   }
@@ -9182,7 +9524,7 @@ private:
   }
 
   bool sendCryptoPkt_(
-    CryptoLevel::T level, ZuCSpan prefix, ZuCSpan payload,
+    CryptoLevel::T level, ZuBSpan prefix, ZuBSpan payload,
     const SentFrameRef &ref, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server crypto packet send outside Tx thread", return false);
@@ -9190,23 +9532,23 @@ private:
       level, prefix, payload, ref, ZuMv(addr),
       [this](
 	  CryptoLevel::T level_, PktBuild &build,
-	  ZuCSpan prefix_, ZuCSpan payload_) {
+	  ZuBSpan prefix_, ZuBSpan payload_) {
 	return buildPayload_(level_, build, prefix_, payload_);
       },
       [this](
-	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
 	return sendInitialPkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
-	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
 	return sendHandshakePkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
-	  PktBuild &build, ZiSockAddr addr_, ZuCSpan frame_,
+	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
 	return sendShortPkt_(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
@@ -9217,13 +9559,13 @@ private:
     return Base::appendPendingAck_(level, build);
   }
 
-  bool buildPayload_(CryptoLevel::T level, PktBuild &build, ZuCSpan frame) {
+  bool buildPayload_(CryptoLevel::T level, PktBuild &build, ZuBSpan frame) {
     return Base::buildPayload_(level, build, frame);
   }
 
   bool buildPayload_(
     CryptoLevel::T level, PktBuild &build,
-    ZuCSpan prefix, ZuCSpan payload) {
+    ZuBSpan prefix, ZuBSpan payload) {
     return Base::buildPayload_(level, build, prefix, payload);
   }
 
@@ -9290,7 +9632,7 @@ private:
     return sendPathBuf_(ZuMv(buf), ZuMv(addr));
   }
 
-  bool sendInitialPkt_(ZuCSpan frame, ZiSockAddr addr) {
+  bool sendInitialPkt_(ZuBSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Initial send outside Tx thread", return false);
     PktBuild payload;
@@ -9299,7 +9641,7 @@ private:
   }
 
   bool sendInitialPkt_(
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
@@ -9309,7 +9651,7 @@ private:
     }
     return Base::sendProtInitialPkt_(
       InitialKeyDir::Server, RuntimeCID::Peer, RuntimeCID::Local,
-      Base::txPNLength_(CryptoLevel::Initial), false, payload, ZuMv(addr),
+      Base::txPNLength_(CryptoLevel::Initial), {}, false, payload, ZuMv(addr),
       recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs](auto buf, ZiSockAddr addr_) {
@@ -9317,7 +9659,7 @@ private:
       });
   }
 
-  bool sendHandshakePkt_(ZuCSpan frame, ZiSockAddr addr) {
+  bool sendHandshakePkt_(ZuBSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Handshake send outside Tx thread", return false);
     PktBuild payload;
@@ -9326,7 +9668,7 @@ private:
   }
 
   bool sendHandshakePkt_(
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
@@ -9345,7 +9687,7 @@ private:
       });
   }
 
-  bool sendShortPkt_(ZuCSpan payload, ZiSockAddr addr) {
+  bool sendShortPkt_(ZuBSpan payload, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Short send outside Tx thread", return false);
     PktBuild build;
@@ -9354,7 +9696,7 @@ private:
   }
 
   bool sendShortPkt_(
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
     unsigned pmtudSize = 0) {
     typename Base::TxPktRefs refs;
@@ -9368,7 +9710,7 @@ private:
   }
 
   bool sendShortPkt_(
-    PktBuild &payload, ZiSockAddr addr, ZuCSpan recordFrame,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const typename Base::TxPktRefs *recordRefs, bool ackEliciting,
     unsigned pmtudSize = 0) {
     return Base::sendProtShortPkt_(
@@ -9414,6 +9756,39 @@ private:
     m_handshakeDoneSent = 1;
     Base::handshakeDoneTx_();
     return true;
+  }
+
+  void queueNewToken_() {
+    if (!m_peerAddr) return;
+    TokenBytes token;
+    if (!AddressToken::encode(
+	  token, TokenKind::NewToken, app()->addressValidationSecret(),
+	  m_peerAddr, m_bootstrap.originalDCID(), {},
+	  uint64_t(Zm::now().sec()), app()->addressValidationBindPort()))
+      return;
+    app()->txRun([
+      link = impl(),
+      addr = m_peerAddr,
+      token = ZuMv(token)
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      (void)link->sendNewToken_(ZuMv(token), ZuMv(addr));
+    });
+  }
+
+  bool sendNewToken_(TokenBytes token, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server NEW_TOKEN outside Tx thread", return false);
+    if (!Base::runtimeEstablished_() || !addr) return false;
+    PktBuild build;
+    build.reset();
+    int n = FrameCodec::writeNewToken(
+      build.scratch(), build.scratchAvail(), token);
+    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    const typename Base::TxPktRefs *refs = nullptr;
+    bool sent = sendShortPkt_(build, ZuMv(addr), {}, refs, true);
+    if (sent) Base::newTokenTx_();
+    return sent;
   }
 
   bool sendQueuedStreamPkt_(StreamRef stream, ZiSockAddr addr) {
@@ -9472,7 +9847,7 @@ private:
 	return true;
       },
       [this](
-	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
+	  CryptoLevel::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
 	  typename Base::RxAckMeta &ack) {
 	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf, ack);
@@ -9483,7 +9858,7 @@ private:
     return Base::receiveProtShortPkt_(
       d, packetOffset, packetLen,
       [this](
-	  CryptoLevel::T level, uint64_t pn, ZuCSpan frames,
+	  CryptoLevel::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
 	  typename Base::RxAckMeta &ack) {
 	return consumeFrames_(level, pn, frames, ZuMv(addr), packetBuf, ack);
@@ -9491,12 +9866,12 @@ private:
   }
 
   bool consumeFrames_(
-    CryptoLevel::T level, uint64_t pn, ZuCSpan frames, ZiSockAddr addr,
+    CryptoLevel::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack) {
     ZiSockAddr peer = addr;
     bool ok = Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf, ack,
-      [this](size_t epoch, ZuCSpan input, ZiSockAddr addr_) {
+      [this](size_t epoch, ZuBSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
       },
       [this](
@@ -9580,6 +9955,7 @@ private:
 
   // Rx thread exclusive
   ServerBootstrap	m_bootstrap;
+  InitialInfo		m_initialInfo;
   ZiSockAddr		m_peerAddr;
   // shared
   ZmAtomic<unsigned>	m_handshakeDoneSent = 0;

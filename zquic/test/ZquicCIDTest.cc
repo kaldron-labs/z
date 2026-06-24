@@ -99,7 +99,7 @@ void testStatelessReset()
   packet[0] = 0x40;
   uint8_t out[64] = {};
   int n = Zquic::StatelessReset::writeForUnknownCID(
-    out, sizeof(out), ZuCSpan{reinterpret_cast<const char *>(packet), 64},
+    out, sizeof(out), ZuBSpan{packet, 64},
     resetToken);
   ZuCHECK(n == 63, "stateless reset size mismatch");
   ZuCHECK(!(out[0] & 0x80) && (out[0] & 0x40),
@@ -111,17 +111,16 @@ void testStatelessReset()
 
   packet[0] = 0xc0;
   ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
-      out, sizeof(out), ZuCSpan{reinterpret_cast<const char *>(packet), 64},
+      out, sizeof(out), ZuBSpan{packet, 64},
       resetToken) < 0, "long-header packet produced stateless reset");
   packet[0] = 0x40;
   ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
       out, sizeof(out),
-      ZuCSpan{reinterpret_cast<const char *>(packet),
-	unsigned(Zquic::StatelessReset::MinLength)},
+      ZuBSpan{packet, unsigned(Zquic::StatelessReset::MinLength)},
       resetToken) < 0, "too-short packet produced stateless reset");
   Zquic::ResetToken invalid;
   ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
-      out, sizeof(out), ZuCSpan{reinterpret_cast<const char *>(packet), 64},
+      out, sizeof(out), ZuBSpan{packet, 64},
       invalid) < 0, "invalid token produced stateless reset");
 }
 
@@ -144,7 +143,7 @@ void testVariableShortCIDRouteMatch()
   uint8_t packet[64] = {};
   packet[0] = 0x40;
   memcpy(packet + 1, longCID.data(), longCID.length());
-  ZuCSpan datagram{reinterpret_cast<const char *>(packet), sizeof(packet)};
+  ZuBSpan datagram{packet, sizeof(packet)};
 
   Zquic::CxnID matched;
   ZuCHECK(router.matchShort(datagram, &matched) == &longLink &&

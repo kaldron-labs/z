@@ -575,13 +575,13 @@ struct SentFrameRef {
     return ref;
   }
 
-  static SentFrameRef pathResponse(ZuCSpan data) {
+  static SentFrameRef pathResponse(ZuBSpan data) {
     SentFrameRef ref = control();
     ref.controlType = FrameType::PathResponse;
     if (data.length() == 8) memcpy(ref.payload, data.data(), 8);
     return ref;
   }
-  static SentFrameRef pathChallenge(ZuCSpan data) {
+  static SentFrameRef pathChallenge(ZuBSpan data) {
     SentFrameRef ref = control();
     ref.controlType = FrameType::PathChallenge;
     if (data.length() == 8) memcpy(ref.payload, data.data(), 8);

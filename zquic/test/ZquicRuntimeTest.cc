@@ -41,11 +41,14 @@ struct RuntimeServer :
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
     if (!buf || !buf->length) return true;
-    ZuCSpan packet{
-      reinterpret_cast<const char *>(buf->data_()), buf->length};
+    ZuBSpan packet{buf->data_(), buf->length};
     if (Zquic::Pkt::isLong(packet)) {
       Zquic::LongHdr h;
       if (Zquic::Pkt::parseLong(packet, h) < 0) return true;
+      if (h.type == Zquic::PktType::Retry) {
+	++retryPkts;
+	return true;
+      }
       if (h.type == Zquic::PktType::Initial && dropNextInitial) {
 	--dropNextInitial;
 	++droppedInitial;
@@ -77,6 +80,7 @@ struct RuntimeServer :
   ZmRef<Link> link_;
   ZmRef<Link> links_[RuntimeServerLinkCapacity];
   ZmAtomic<unsigned> acceptedCount = 0;
+  ZmAtomic<unsigned> retryPkts = 0;
   ZmAtomic<unsigned> dropNextInitial = 0;
   ZmAtomic<unsigned> droppedInitial = 0;
   ZmAtomic<unsigned> dropNextHandshake = 0;
@@ -727,10 +731,167 @@ void testRuntimeServerMultiConnection()
   mx.stop();
 }
 
+void testRuntimeRetryAddressValidation()
+{
+  ZuTestScope(testRuntimeRetryAddressValidation);
+
+  TempDir temp;
+  ZuCHECK(temp.init(), "retry runtime temporary TLS certificate failed");
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(5)
+	    .thread(1, [](auto &t) { t.isolated(1); })
+	    .thread(2, [](auto &t) { t.isolated(1); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "retry runtime multiplexer start failed");
+  if (!mxStarted) return;
+
+  RuntimeServer server;
+  ZuCHECK(server.init(
+      Zquic::ServerParams(&mx, "3", "4")
+	.certPath(cspan_(temp.certPath))
+	.keyPath(cspan_(temp.keyPath))
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsBidi(8)
+	.maxStreamsUni(8)
+	.retryAddressValidation(true)
+	.newTokenAddressValidation(true)
+	.addressValidationLifetime(60)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "retry runtime server init failed");
+  ZuCHECK(server.start(), "retry runtime server listen failed");
+  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+    "retry runtime server did not listen");
+	  if (!server.listening()) {
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+
+  RuntimeClient client;
+  ZuCHECK(client.init(
+      Zquic::ClientParams(&mx, "3", "4")
+	.caPath(cspan_(temp.certPath))
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsBidi(8)
+	.maxStreamsUni(8)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "retry runtime client init failed");
+  ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+
+  ZmRef<RuntimeServer::Link> serverLink;
+  bool established = waitUntil([&server, &clientLink, &serverLink]() {
+      if (!serverLink) serverLink = server.link();
+      return serverLink && clientLink->established() &&
+	serverLink->established();
+    });
+  if (!established) {
+    dumpRuntimeDiag(
+      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+    if (serverLink)
+      dumpRuntimeDiag(
+	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+  }
+  ZuCHECK(established, "retry runtime handshake did not establish");
+	  if (!established || !serverLink) {
+	    client.final();
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+  ZuCHECK(server.retryPkts >= 1,
+    "retry runtime server did not emit Retry");
+  Zquic::AddressValidationDiag av = server.addressValidationDiag();
+  ZuCHECK(av.retrySent >= 1 && av.retryAccepted == 1 &&
+      av.retryRejected >= 1,
+    "retry runtime address-validation diagnostics mismatch");
+  ZuCHECK(server.acceptedCount == 1,
+    "retry runtime server accepted before validated Initial");
+  const auto &params = clientLink->crypto().peerTransportParams();
+  ZuCHECK(params.originalDCID.length() >= Zquic::MinCIDLength &&
+      params.initialSCID.length() >= Zquic::MinCIDLength &&
+      params.retrySCID.length() >= Zquic::MinCIDLength,
+    "retry runtime transport parameters missing Retry CIDs");
+  ZuCHECK(!clientLink->runtimeDiag().failures &&
+      !serverLink->runtimeDiag().failures,
+    "retry runtime failure diagnostics mismatch");
+  ZuCHECK(waitUntil([&clientLink, &serverLink]() {
+      return clientLink->runtimeDiag().newTokenRx >= 1 &&
+	serverLink->runtimeDiag().newTokenTx >= 1;
+    }), "retry runtime NEW_TOKEN was not exchanged");
+
+  unsigned retryPkts = server.retryPkts;
+  clientLink->disconnect();
+  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+    "retry runtime first connection did not close");
+  waitDisconnect(mx);
+
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+  ZmRef<RuntimeServer::Link> serverLink2;
+  bool established2 = waitUntil([&server, &clientLink, &serverLink2]() {
+      if (!serverLink2) serverLink2 = server.link(1);
+      return serverLink2 && clientLink->established() &&
+	serverLink2->established();
+    });
+  if (!established2) {
+    dumpRuntimeDiag(
+      "client2", clientLink->runtimeDiag(), clientLink->crypto().diag());
+    if (serverLink2)
+      dumpRuntimeDiag(
+	"server2", serverLink2->runtimeDiag(), serverLink2->crypto().diag());
+  }
+  ZuCHECK(established2,
+    "retry runtime NEW_TOKEN reconnect did not establish");
+	  if (!established2 || !serverLink2) {
+	    client.final();
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+  ZuCHECK(server.acceptedCount == 2,
+    "retry runtime server did not accept NEW_TOKEN reconnect");
+  ZuCHECK(server.retryPkts == retryPkts,
+    "retry runtime NEW_TOKEN reconnect unexpectedly used Retry");
+  av = server.addressValidationDiag();
+  ZuCHECK(av.newTokenAccepted == 1,
+    "retry runtime NEW_TOKEN acceptance diagnostics mismatch");
+  ZuCHECK(!clientLink->runtimeDiag().failures &&
+      !serverLink2->runtimeDiag().failures,
+    "retry runtime NEW_TOKEN reconnect diagnostics mismatch");
+
+  clientLink->disconnect();
+  server.stop();
+  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }) &&
+      !server.connected(),
+    "retry runtime endpoints remained connected after close");
+  waitDisconnect(mx);
+
+  clientLink = nullptr;
+  serverLink = nullptr;
+  serverLink2 = nullptr;
+  server.clearLinks();
+  client.final();
+  server.final();
+  mx.stop();
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testRuntimeEndpointOpen);
   ZuTestCall(testRuntimeServerMultiConnection);
+  ZuTestCall(testRuntimeRetryAddressValidation);
 }

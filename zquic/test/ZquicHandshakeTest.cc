@@ -28,9 +28,9 @@ ZuCSpan cspan_(const ZtString<> &s)
   return ZuCSpan{s.data(), s.length()};
 }
 
-ZuCSpan bytes_(const uint8_t *data, unsigned len)
+ZuBSpan bytes_(const uint8_t *data, unsigned len)
 {
-  return ZuCSpan{reinterpret_cast<const char *>(data), len};
+  return ZuBSpan{data, len};
 }
 
 struct TempDir {
@@ -141,7 +141,7 @@ bool handleTLS_(
   ZmRef<ZiIOBuf> buf =
     new Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>{nullptr};
   size_t offsets[5] = {};
-  ZuCSpan in;
+  ZuBSpan in;
   size_t inEpoch = msg ? msg->epoch : 0;
   if (msg) {
     Zquic::Frame frame;
@@ -244,7 +244,7 @@ void testCryptoStreamFrames()
       parsed.type == Zquic::FrameType::Crypto &&
       parsed.offset == 0 && parsed.payload == "abc",
     "CRYPTO Tx frame parse failed");
-  ZuCSpan txPayload;
+  ZuBSpan txPayload;
   ZuCHECK(tx.txPayload(0, 3, txPayload) && txPayload == "abc",
     "CRYPTO Tx payload retention failed");
   ZuCHECK(!tx.txPayload(2, 3, txPayload),
@@ -253,8 +253,8 @@ void testCryptoStreamFrames()
   Zquic::CryptoStream directRx;
   Zquic::CryptoDiag directDiag;
   static const char directPayload[] = "direct";
-  ZuCSpan directIn{directPayload, unsigned(sizeof(directPayload) - 1)};
-  ZuCSpan directOut;
+  ZuBSpan directIn{directPayload, unsigned(sizeof(directPayload) - 1)};
+  ZuBSpan directOut;
   ZuCHECK(!directRx.receive(0, directIn, directOut, &directDiag) &&
       directOut.data() == directIn.data() &&
       directOut.length() == directIn.length() &&
@@ -270,7 +270,7 @@ void testCryptoStreamFrames()
   ZuCHECK(f1 > 0 && f2 > 0, "CRYPTO frame setup failed");
 
   Zquic::CryptoStream rx;
-  ZuCSpan contiguous;
+  ZuBSpan contiguous;
   ZuCHECK(!Zquic::FrameCodec::parse(bytes_(second, unsigned(f2)),
       parsed, used) &&
       !rx.receiveFrame(parsed, contiguous, &diag) &&
@@ -407,7 +407,7 @@ void testZeroRTTPktDrop()
 
   Zquic::LongHdr h;
   ZuCHECK(Zquic::Pkt::parseLong(
-      ZuCSpan{reinterpret_cast<char *>(packet), unsigned(n)}, h) > 0,
+      ZuBSpan{packet, unsigned(n)}, h) > 0,
     "0-RTT packet parse failed");
   ZuCHECK(h.type == Zquic::PktType::ZeroRTT, "0-RTT type not recognized");
 

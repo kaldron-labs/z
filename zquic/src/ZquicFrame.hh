@@ -55,7 +55,7 @@ struct Frame {
   Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
   bool			fin = false;
   ResetToken		resetToken;
-  ZuCSpan		payload;
+  ZuBSpan		payload;
   AckRanges		ackRanges;
   AckECN		ackECN;
 
@@ -77,13 +77,14 @@ struct Frame {
 
 struct FrameCodec {
   static bool ackEliciting(FrameType::T);
-  static int parse(ZuCSpan, Frame &, unsigned &);
+  static int parse(ZuBSpan, Frame &, unsigned &);
   static int writePadding(uint8_t *, unsigned, unsigned);
   static int writePing(uint8_t *, unsigned);
-  static int writeCrypto(uint8_t *, unsigned, uint64_t, ZuCSpan);
+  static int writeCrypto(uint8_t *, unsigned, uint64_t, ZuBSpan);
   static int writeCryptoPrefix(uint8_t *, unsigned, uint64_t, unsigned);
+  static int writeNewToken(uint8_t *, unsigned, ZuBSpan);
   static int writeStream(
-    uint8_t *, unsigned, uint64_t, uint64_t, ZuCSpan, bool);
+    uint8_t *, unsigned, uint64_t, uint64_t, ZuBSpan, bool);
   static int writeStreamPrefix(
     uint8_t *, unsigned, uint64_t, uint64_t, unsigned, bool);
   static int writeAck(uint8_t *, unsigned, uint64_t, uint64_t, uint64_t);
@@ -103,10 +104,10 @@ struct FrameCodec {
     uint8_t *, unsigned, uint64_t sequence, uint64_t retirePriorTo,
     const CxnID &, const ResetToken &);
   static int writeRetireConnectionID(uint8_t *, unsigned, uint64_t sequence);
-  static int writePathChallenge(uint8_t *, unsigned, ZuCSpan);
-  static int writePathResponse(uint8_t *, unsigned, ZuCSpan);
+  static int writePathChallenge(uint8_t *, unsigned, ZuBSpan);
+  static int writePathResponse(uint8_t *, unsigned, ZuBSpan);
   static int writeConnectionClose(uint8_t *, unsigned, uint64_t);
-  static int writeApplicationClose(uint8_t *, unsigned, uint64_t, ZuCSpan = {});
+  static int writeApplicationClose(uint8_t *, unsigned, uint64_t, ZuBSpan = {});
   static int writeHandshakeDone(uint8_t *, unsigned);
 };
 

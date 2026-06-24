@@ -177,14 +177,14 @@ struct ControlFrame {
       FrameType::StopSending, streamID_, 0, appError,
       Zi::StreamType::Duplex, {}};
   }
-  static ControlFrame pathResponse(ZuCSpan data) {
+  static ControlFrame pathResponse(ZuBSpan data) {
     ControlFrame frame;
     frame.type = FrameType::PathResponse;
     if (data.length() == sizeof(frame.payload))
       memcpy(frame.payload, data.data(), sizeof(frame.payload));
     return frame;
   }
-  static ControlFrame pathChallenge(ZuCSpan data) {
+  static ControlFrame pathChallenge(ZuBSpan data) {
     ControlFrame frame;
     frame.type = FrameType::PathChallenge;
     if (data.length() == sizeof(frame.payload))
@@ -216,10 +216,10 @@ struct ControlFrame {
       case FrameType::StopSending:
 	return FrameCodec::writeStopSending(out, len, streamID, errorCode);
       case FrameType::PathChallenge:
-	return FrameCodec::writePathChallenge(out, len, ZuCSpan{
+	return FrameCodec::writePathChallenge(out, len, ZuBSpan{
 	  payload, sizeof(payload)});
       case FrameType::PathResponse:
-	return FrameCodec::writePathResponse(out, len, ZuCSpan{
+	return FrameCodec::writePathResponse(out, len, ZuBSpan{
 	  payload, sizeof(payload)});
       case FrameType::HandshakeDone:
 	return FrameCodec::writeHandshakeDone(out, len);
