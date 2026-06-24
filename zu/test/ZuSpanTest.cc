@@ -450,5 +450,12 @@ int main()
   ZuTestCall(testSpanSpliceRuntimePaths);
   ZuTestCall(testSpanSpliceVariantPaths);
 
+  {
+    ZuBSpan foo("foo");
+    ZuCSpan bar("bar");
+    ZuCheck(foo == "foo");
+    ZuCheck(foo != bar);
+  }
+
   return 0;
 }

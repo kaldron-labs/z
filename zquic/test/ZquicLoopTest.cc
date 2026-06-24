@@ -110,7 +110,7 @@ struct TestLink :
 #endif
 };
 
-ZuCSpan bytes_(const uint8_t *data, unsigned len)
+ZuBSpan bytes_(const uint8_t *data, unsigned len)
 {
   return ZuBSpan{data, len};
 }

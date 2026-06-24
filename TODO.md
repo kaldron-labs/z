@@ -1,12 +1,8 @@
 # TODO
 
+generally implement CRTP layer masking to reduce conflicts and inadvertent access from higher layers
+
 ## Zquic
-
-recheck rx drop 5%
-recheck tx drop 5%
-recheck rx+tx drop 5%
-
-complete remaining work from `arc/zquic4/plan_15.md` onwards
 
 reference implementations:
 - `../zngtcp2` (primary reference)

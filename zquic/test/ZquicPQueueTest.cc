@@ -10,14 +10,14 @@
 
 using namespace ZuTestUtil;
 
-void fill_(ZiIOBuf *buf, ZuCSpan data)
+void fill_(ZiIOBuf *buf, ZuBSpan data)
 {
   memcpy(buf->data_(), data.data(), data.length());
   buf->skip = 0;
   buf->length = data.length();
 }
 
-ZmRef<ZiIOBuf> packet_(ZuCSpan data)
+ZmRef<ZiIOBuf> packet_(ZuBSpan data)
 {
   ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
   fill_(packet, data);

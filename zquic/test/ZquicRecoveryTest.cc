@@ -15,7 +15,7 @@ static bool getVar_(const uint8_t *b, unsigned len, unsigned &o, uint64_t &v)
 {
   unsigned n = 0;
   if (Zquic::VarInt::decode(
-      ZuCSpan{b + o, len - o}, v, n) < 0)
+      ZuBSpan{b + o, len - o}, v, n) < 0)
     return false;
   o += n;
   return true;
@@ -108,7 +108,7 @@ void testRecovery()
   n = many.writeFrame(manyBuf, sizeof(manyBuf));
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(
-	ZuCSpan{manyBuf, unsigned(n)},
+	ZuBSpan{manyBuf, unsigned(n)},
 	frame, used) &&
       used == unsigned(n) &&
       frame.ackRanges.length() == Zquic::Frame::MaxAckRanges &&

@@ -699,11 +699,3 @@ suspicious closed-stream activity; after the threshold the client closed and no
 longer ACKed those retransmits.  Duplicate STREAM frames on closed peer streams
 are now compact-handled as harmless and ACK-immediate, while invalid
 closed-stream control activity keeps the existing diagnostic/close behavior.
-
-Temporary `stderr` diagnostics used to inspect stream ACK/retransmit ownership
-were removed before commit.  Validation passed with `git diff --check`,
-`make -C zquic/src -j8`, `make -C zquic/test -j8 ZquicStreamTest
-ZquicRecoveryTest ZquicPQueueTest`, direct runs of `ZquicRecoveryTest`,
-`ZquicStreamTest`, and `ZquicPQueueTest`, `make -C zhttp/test -j8
-ZhttpMatrixTest`, `make -C zhttp/example -j8`, and the exact regression case
-`ZhttpMatrixTest --case=ZhttpZhttpd/H3/j1n1000`, which passed in 735 ms.

@@ -133,7 +133,7 @@ struct TestLink :
     ++streamOpenCount;
   }
   void streamData(
-    ZmRef<TestStream> stream, uint64_t offset, ZuCSpan payload, bool fin) {
+    ZmRef<TestStream> stream, uint64_t offset, ZuBSpan payload, bool fin) {
     lastDataStream = ZuMv(stream);
     lastDataOffset = offset;
     lastDataLength = payload.length();
@@ -249,11 +249,11 @@ struct TestLink :
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
     Base::startPathValidationForTest_(ZuMv(local), ZuMv(remote));
   }
-  ZuCSpan validatingChallenge() const {
+  ZuBSpan validatingChallenge() const {
     return Base::validatingChallenge_();
   }
 #endif
-  bool pathResponse(ZuCSpan data) { return Base::onPathResponse_(data); }
+  bool pathResponse(ZuBSpan data) { return Base::onPathResponse_(data); }
   void pathTimeout() { Base::pathExpired_(); }
   void flushTx_() { ++txFlushQueued; }
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }

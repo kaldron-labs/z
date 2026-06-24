@@ -66,19 +66,16 @@ void testServerVersionDecision()
 
   Zquic::LongHdr h;
   ZuCHECK(Zquic::Pkt::parseLong(
-      ZuCSpan{reinterpret_cast<const char *>(response),
-	unsigned(d.responseLength)}, h) > 0 &&
+      ZuBSpan{response, unsigned(d.responseLength)}, h) > 0 &&
       Zquic::Pkt::isVersionNegotiation(
-	ZuCSpan{reinterpret_cast<const char *>(response),
-	  unsigned(d.responseLength)}) &&
+	ZuBSpan{response, unsigned(d.responseLength)}) &&
       h.dcid == scid && h.scid == dcid,
     "Version Negotiation response CID mapping mismatch");
 
   uint32_t versions[1] = {};
   unsigned nVersions = 0;
   ZuCHECK(!Zquic::Pkt::parseVersionNegotiation(
-      ZuCSpan{reinterpret_cast<const char *>(response),
-	unsigned(d.responseLength)}, versions, 1, nVersions) &&
+      ZuBSpan{response, unsigned(d.responseLength)}, versions, 1, nVersions) &&
       nVersions == 1 && versions[0] == Zquic::Version1,
     "Version Negotiation response version list mismatch");
 

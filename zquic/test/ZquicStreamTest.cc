@@ -84,13 +84,12 @@ struct TestLink :
     ++streamedCount;
   }
   bool queuePathResponse() {
-    static const char data[] = "response";
-    return Base::queuePathResponse_(ZuCSpan{data, sizeof(data) - 1});
+    return Base::queuePathResponse_(ZuBSpan{"response"});
   }
   bool queuePathResponse(unsigned seed) {
     uint8_t data[8]{};
     data[0] = uint8_t(seed);
-    return Base::queuePathResponse_(ZuCSpan{data, sizeof(data)});
+    return Base::queuePathResponse_(ZuBSpan{data, sizeof(data)});
   }
   bool queueDataBlocked(uint64_t value) {
     return Base::queueBlocked_(Zquic::FrameType::DataBlocked, 0, value);
@@ -392,11 +391,11 @@ struct TestLink :
     Base::startPathValidationForTest_(ZuMv(local), ZuMv(remote));
   }
   bool validatingPath() const { return Base::validatingPath_(); }
-  ZuCSpan validatingChallenge() const {
+  ZuBSpan validatingChallenge() const {
     return Base::validatingChallenge_();
   }
 #endif
-  bool pathResponse(ZuCSpan data) { return Base::onPathResponse_(data); }
+  bool pathResponse(ZuBSpan data) { return Base::onPathResponse_(data); }
   void pathTimeout() { Base::pathExpired_(); }
   const ZiSockAddr &activePathRemote() const {
     return Base::activePathRemote_();
@@ -543,7 +542,7 @@ static ZmRef<ZiIOBuf> streamPkt_(
   return packet;
 }
 
-static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuCSpan expected)
+static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
 {
   unsigned remaining = n;
   bool called = false;
@@ -946,7 +945,7 @@ void testStreamPktizer()
   Zquic::Frame prefixFrame;
   unsigned prefixUsed = 0;
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{assembled, unsigned(prefixLen) + prefixPayload.length()},
+      ZuBSpan{assembled, unsigned(prefixLen) + prefixPayload.length()},
       prefixFrame, prefixUsed) &&
       prefixUsed == unsigned(prefixLen) + prefixPayload.length() &&
       prefixFrame.type == Zquic::FrameType::Stream &&
@@ -994,7 +993,7 @@ void testStreamPktizer()
   memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
     info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{assembled, info.bytes},
+      ZuBSpan{assembled, info.bytes},
       frame, used) &&
       used == info.bytes &&
       frame.type == Zquic::FrameType::Stream &&
@@ -1022,7 +1021,7 @@ void testStreamPktizer()
   memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
     info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{assembled, info.bytes},
+      ZuBSpan{assembled, info.bytes},
       frame, used) &&
       used == info.bytes &&
 	      frame.offset == 3 &&
@@ -1079,7 +1078,7 @@ void testStreamPktizer()
   memcpy(assembled + n, info.range.buf->data_() + info.range.offset,
     info.range.length);
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuCSpan{assembled, info.bytes},
+      ZuBSpan{assembled, info.bytes},
       frame, used) &&
       used == info.bytes &&
       frame.streamID == uint64_t(split->id()) &&
@@ -1450,7 +1449,7 @@ void testPathValidationStateMachine()
     "active path remote setup failed");
 
   link->observePath(local, newRemote);
-  ZuCSpan data = link->validatingChallenge();
+  ZuBSpan data = link->validatingChallenge();
   uint8_t response[Zquic::PathChallenge::Length]{};
   memcpy(response, data.data(), data.length());
   ZuCHECK(link->validatingPath() &&
@@ -1461,7 +1460,7 @@ void testPathValidationStateMachine()
 
   uint8_t bad[Zquic::PathChallenge::Length]{};
   bad[0] = response[0] ^ 0xffU;
-  ZuCHECK(!link->pathResponse(ZuCSpan{bad, sizeof(bad)}) &&
+  ZuCHECK(!link->pathResponse(ZuBSpan{bad, sizeof(bad)}) &&
       link->validatingPath() &&
       sameAddr_(link->activePathRemote(), oldRemote),
     "unmatched PATH_RESPONSE changed path-validation state");
