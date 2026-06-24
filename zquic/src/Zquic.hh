@@ -62,6 +62,7 @@
 #include <zlib/ZquicCrypto.hh>
 #include <zlib/ZquicRecovery.hh>
 #include <zlib/ZquicSock.hh>
+#include <zlib/ZquicLog.hh>
 
 namespace Zquic {
 
@@ -1547,6 +1548,22 @@ struct EngineParams {
     m_keyLogPath = v;
     return ZuMv(*this);
   }
+  EngineParams &&qlog(bool v) {
+    m_qlogParams.enabled(v);
+    return ZuMv(*this);
+  }
+  EngineParams &&qlogPath(ZuCSpan v) {
+    m_qlogParams.path(v);
+    return ZuMv(*this);
+  }
+  EngineParams &&qlogThread(ZuCSpan v) {
+    m_qlogParams.thread(v);
+    return ZuMv(*this);
+  }
+  EngineParams &&qlogRingSize(unsigned v) {
+    m_qlogParams.ringSize(v);
+    return ZuMv(*this);
+  }
   EngineParams &&asyncThread(ZuCSpan v) {
     m_asyncThread = v;
     return ZuMv(*this);
@@ -1613,6 +1630,7 @@ struct EngineParams {
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
   ZuCSpan keyLogPath() const { return m_keyLogPath; }
+  const ZquicLogParams &qlogParams() const { return m_qlogParams; }
   ZuCSpan asyncThread() const { return m_asyncThread; }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
@@ -1641,6 +1659,7 @@ private:
   ParamString	m_certPath;
   ParamString	m_keyPath;
   ParamString	m_keyLogPath;
+  ZquicLogParams	m_qlogParams;
   ParamString	m_asyncThread;
   uint64_t	m_maxData = DefaultMaxData;
   uint64_t	m_maxStreamData = DefaultMaxStreamData;
@@ -1691,6 +1710,7 @@ public:
 
   void final() {
     bool ok = EngineCtl::lock(ZmEngineState::Stopped, [this]() {
+      if (m_qlogParams.enabled()) ZquicLog::final();
       m_mx = nullptr;
       m_rxThread = 0;
       m_txThread = 0;
@@ -1702,6 +1722,7 @@ public:
       m_certPath = ParamString{};
       m_keyPath = ParamString{};
       m_keyLogPath = ParamString{};
+      m_qlogParams = {};
       m_maxData = DefaultMaxData;
       m_maxStreamData = DefaultMaxStreamData;
       m_maxStreamsBidi = DefaultMaxStreamsBidi;
@@ -1735,6 +1756,7 @@ public:
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
   ZuCSpan keyLogPath() const { return m_keyLogPath; }
+  ZquicLogDiag qlogDiag() const { return ZquicLog::diag(); }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
   uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
@@ -1788,6 +1810,7 @@ protected:
       m_certPath = params.certPath();
       m_keyPath = params.keyPath();
       m_keyLogPath = params.keyLogPath();
+      m_qlogParams = params.qlogParams();
       m_maxData = params.maxData();
       m_maxStreamData = params.maxStreamData();
       m_maxStreamsBidi = params.maxStreamsBidi();
@@ -1808,6 +1831,8 @@ protected:
 	  !AddressToken::generateSecret(m_tokenSecret))
 	return false;
       if (!init_alpn_(params.alpn())) return false;
+      if (m_qlogParams.enabled() && !ZquicLog::init(m_qlogParams))
+	return false;
       return l(params);
     });
   }
@@ -1831,13 +1856,17 @@ protected:
   }
 
   void start_() {
+    startQLog_();
     warmup_();
     this->started(true);
   }
 
   void stop_() {
     rxRun([this]() {
-      txRun([this]() { this->stopped(true); });
+      txRun([this]() {
+	stopQLog_();
+	this->stopped(true);
+      });
     });
   }
 
@@ -1851,6 +1880,18 @@ protected:
   void wake() {
     if (!mx() || !mx()->running()) return;
     rxRun([this]() { this->stopped(); });
+  }
+
+  void startQLog_() {
+    if (!m_qlogParams.enabled()) return;
+    ZquicLog::start();
+    ZquicLog::event("connection_started", "transport");
+  }
+
+  void stopQLog_() {
+    if (!m_qlogParams.enabled()) return;
+    ZquicLog::event("connection_closed", "transport");
+    ZquicLog::stop();
   }
 
   template <typename Link>
@@ -1966,6 +2007,7 @@ private:
   ParamString		m_certPath;
   ParamString		m_keyPath;
   ParamString		m_keyLogPath;
+  ZquicLogParams		m_qlogParams;
   uint64_t		m_maxData = DefaultMaxData;
   uint64_t		m_maxStreamData = DefaultMaxStreamData;
   uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
@@ -2316,6 +2358,7 @@ public:
 	  if (Base::stopping()) {
 	    if (m_stopCount && !--m_stopCount) {
 	      m_links->clean();
+	      Base::stopQLog_();
 	      this->stopped(true);
       }
       return;
@@ -2335,11 +2378,13 @@ private:
 	ZmHashParams().bits(5).loadFactor(1).cBits(3)};
     m_routes.init();
     m_stopCount = 0;
+    Base::startQLog_();
     Base::warmup_();
     ZiIP localIP = this->app()->localIP();
     uint16_t localPort = this->app()->localPort();
     if (!Endpoint::init(this->mx()) ||
 	!Endpoint::openUDP(PathMode::ServerUnconnected, localIP, localPort)) {
+      Base::stopQLog_();
       this->started(false);
     }
   }
@@ -2354,6 +2399,7 @@ private:
     m_routes.clear();
     if (!m_stopCount) {
       m_links->clean();
+      Base::stopQLog_();
       this->stopped(true);
     }
   }
