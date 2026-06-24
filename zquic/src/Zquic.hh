@@ -493,7 +493,7 @@ class Endpoint_ {
       m_txQueue.clean();
     }
 
-    void drainRx_() {
+    void closeRx_() {
       m_closing = true;
       m_rxBuf = nullptr;
     }
@@ -760,7 +760,7 @@ private:
 
   void disconnected_(Cxn_ *cxn) {
     if (m_cxn == cxn && cxn->generation() == m_generation) {
-      cxn->drainRx_();
+      cxn->closeRx_();
       m_cxn = nullptr;
       m_listening = false;
       m_connected = false;
@@ -1454,6 +1454,10 @@ struct EngineParams {
     m_maxStreamsUni = v;
     return ZuMv(*this);
   }
+  EngineParams &&maxIdleTimeout(uint64_t v) {
+    m_maxIdleTimeout = v;
+    return ZuMv(*this);
+  }
   EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
   EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
     m_alpn.length(0);
@@ -1483,6 +1487,7 @@ struct EngineParams {
   uint64_t maxStreamData() const { return m_maxStreamData; }
   uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
   uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
+  uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   unsigned maxUDP() const { return m_maxUDP; }
   const ErrorFn &errorFn() const { return m_errorFn; }
   ErrorFn &errorFn() { return m_errorFn; }
@@ -1501,6 +1506,7 @@ private:
   uint64_t	m_maxStreamData = DefaultMaxStreamData;
   uint64_t	m_maxStreamsBidi = DefaultMaxStreamsBidi;
   uint64_t	m_maxStreamsUni = DefaultMaxStreamsUni;
+  uint64_t	m_maxIdleTimeout = 0;
   unsigned	m_maxUDP = MinUDPPayload;
   ErrorFn	m_errorFn;
 };
@@ -1555,6 +1561,7 @@ public:
       m_maxStreamData = DefaultMaxStreamData;
       m_maxStreamsBidi = DefaultMaxStreamsBidi;
       m_maxStreamsUni = DefaultMaxStreamsUni;
+      m_maxIdleTimeout = 0;
       m_maxUDP = MinUDPPayload;
       return true;
     });
@@ -1582,6 +1589,7 @@ public:
   uint64_t maxStreamData() const { return m_maxStreamData; }
   uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
   uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
+  uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   unsigned maxUDP() const { return m_maxUDP; }
 
   template <typename ...Args>
@@ -1625,6 +1633,7 @@ protected:
       m_maxStreamData = params.maxStreamData();
       m_maxStreamsBidi = params.maxStreamsBidi();
       m_maxStreamsUni = params.maxStreamsUni();
+      m_maxIdleTimeout = params.maxIdleTimeout();
       m_maxUDP = params.maxUDP();
       if (!init_alpn_(params.alpn())) return false;
       return l(params);
@@ -1790,6 +1799,7 @@ private:
   uint64_t		m_maxStreamData = DefaultMaxStreamData;
   uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
   uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
+  uint64_t		m_maxIdleTimeout = 0;
   unsigned		m_maxUDP = MinUDPPayload;
 };
 
@@ -2242,10 +2252,10 @@ public:
   RxStream &rxStream() { return m_rx; }
 
   StreamRxPQueue *rxQueue() { return &m_rxQueue; }
-  void drainRx_() {
+  void closeRx_() {
     if (m_link && m_link->app() && m_link->app()->mx())
       ZiAssert(rxInvoked_(), "Zquic", (),
-	"QUIC stream Rx drain outside Rx thread", return);
+	"QUIC stream Rx close outside Rx thread", return);
     while (m_rxQueue.shift());
     m_rx.clean();
   }
@@ -3266,6 +3276,7 @@ protected:
   void closeState_(uint64_t errorCode = 0) {
     m_appClose.error = errorCode;
     m_appClose.closed = true;
+    closeLinkState_();
     cancelTimers();
   }
   bool writeCloseFrame_(PktBuild &build, bool appClose) const {
@@ -3279,13 +3290,14 @@ protected:
   bool appCloseOnDisconnect_() const {
     return static_cast<const ZmEngine<App> *>(app())->stopping();
   }
+  bool sendCloseFrame_(ZiSockAddr, bool = false) { return false; }
 
 public:
-  bool disconnect() {
+  bool disconnect(bool peer = false) {
     if (m_disconnecting.xch(1)) return false;
-    app()->txRun([link = impl()]() mutable {
+    app()->txRun([link = impl(), peer]() mutable {
       link->delTimers_();
-      static_cast<Link *>(link)->disconnected(false);
+      static_cast<Link *>(link)->disconnected(peer);
     });
     return true;
   }
@@ -3373,6 +3385,7 @@ protected:
     AckDelay,
     Loss,
     PTO,
+    Idle,
     Close,
     KeyDiscard,
     PMTUD,
@@ -3576,6 +3589,9 @@ protected:
 
   bool runtimeEstablished_() const {
     return m_linkState == LinkState::Established;
+  }
+  bool runtimeClosing_() const {
+    return m_linkState == LinkState::Closing;
   }
   bool debugLog_() const {
 #if defined(Zquic_DEBUG) && defined(ZiMultiplex_DEBUG)
@@ -4216,7 +4232,7 @@ protected:
 #endif
   void resetRuntime_() {
     disconnecting_(false);
-    drainStreamsRx_();
+    closeStreamsRx_();
     cancelTimers();
     resetAckPosts_();
     resetLinkState_();
@@ -4246,6 +4262,12 @@ protected:
     m_lossTimerOut = {};
     m_ptoTimerOut = {};
     m_ptoTimerLevel = CryptoLevel::Initial;
+    m_idleTimeout = {};
+    m_idleTimerOut = {};
+    m_idleBase = {};
+    m_idleAckElicitingSent = false;
+    m_closeTimerOut = {};
+    m_closeNextResponse = {};
     clearPendingControls_();
     resetPktRuntime_();
     m_congestion = NewReno{app()->maxUDP()};
@@ -4253,7 +4275,7 @@ protected:
   }
 
   void closeRuntime_(uint64_t = 0) {
-    drainStreamsRx_();
+    closeStreamsRx_();
     cancelTimers();
     closeLinkState_();
     m_crypto.resetTLS();
@@ -4327,8 +4349,8 @@ protected:
     if (mx && mx->running() && app()->txThread()) {
       ZiAssert(rxInvoked_(), "Zquic", (),
 	"QUIC link disconnect completion outside Rx thread", return);
-      drainStreamsRx_();
-      closeLinkState_();
+      closeStreamsRx_();
+      closedLinkState_();
       m_crypto.resetTLS();
       app()->retireLinkRoutes_(impl());
       app()->txRun([link = impl(), peer]() mutable {
@@ -4338,7 +4360,7 @@ protected:
       });
       return;
     } else {
-      closeLinkState_();
+      closedLinkState_();
       m_crypto.resetTLS();
     }
   }
@@ -4580,6 +4602,7 @@ protected:
     m_transportParams.initialMaxStreamDataUni = app->maxStreamData();
     m_transportParams.initialMaxStreamsBidi = app->maxStreamsBidi();
     m_transportParams.initialMaxStreamsUni = app->maxStreamsUni();
+    m_transportParams.maxIdleTimeout = app->maxIdleTimeout();
     m_transportParams.activeConnectionIDLimit = LocalActiveConnectionIDLimit;
     m_rxDataCredit.set(m_transportParams.initialMaxData);
     m_localLimit[Zi::StreamType::Duplex].set(
@@ -4643,6 +4666,7 @@ protected:
     }
     updatePeerPathMaxUDP_();
     establishState_();
+    startIdleTimer_();
     discardPktSpace_(CryptoLevel::Initial);
     discardPktSpace_(CryptoLevel::Handshake);
     ++m_rxDiag.handshakeComplete;
@@ -4675,11 +4699,11 @@ protected:
     m_txKeyPhase = false;
   }
 
-  void drainStreamsRx_() {
+  void closeStreamsRx_() {
     ZiAssert(rxInvoked_(), "Zquic", (),
-      "QUIC stream table Rx drain outside Rx thread", return);
+      "QUIC stream table Rx close outside Rx thread", return);
     auto i = m_streams->iter();
-    while (auto stream = i()) stream->drainRx_();
+    while (auto stream = i()) stream->closeRx_();
   }
 
   void clearPeerKeyState_() {
@@ -5271,6 +5295,8 @@ protected:
     if (pn > m_rxLargestPN[level])
       m_rxLargestPN[level] = pn;
     postAckSnapshot_(level, ZuMv(addr));
+    if (level == CryptoLevel::OneRTT && runtimeEstablished_())
+      notePeerPacketProcessed_();
   }
 
   bool noteAckTx_(const AckSnapshot &ack) {
@@ -5526,6 +5552,7 @@ protected:
     m_ptoTimerOut = out;
     m_ptoTimerLevel = level;
     schedulePTOTimer_(out);
+    if (*m_idleTimeout) scheduleIdleTimer_();
   }
 
   void schedulePTOTimer_(ZuTime out) {
@@ -5545,12 +5572,158 @@ protected:
     app()->mx()->cancel(&m_ptoTimer);
   }
 
+  void startIdleTimer_() {
+    ZuTime timeout = negotiatedIdleTimeout_();
+    app()->txRun([link = impl(), timeout]() mutable {
+      if (link->disconnecting_()) return;
+      link->startIdleTimerTx_(timeout);
+    });
+  }
+  void startIdleTimerTx_(ZuTime timeout) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC idle timer start outside Tx thread", return);
+    m_idleTimeout = timeout;
+    m_idleBase = runtimeNow_();
+    m_idleAckElicitingSent = false;
+    scheduleIdleTimer_();
+  }
+  ZuTime effectiveIdleTimeout_() const {
+    if (!*m_idleTimeout) return {};
+    ZuTime minTimeout = closeDrainDelay_();
+    return m_idleTimeout < minTimeout ? minTimeout : m_idleTimeout;
+  }
+  ZuTime idleDeadline_() const {
+    ZuTime timeout = effectiveIdleTimeout_();
+    if (!*timeout) return {};
+    return m_idleBase + timeout;
+  }
+  void scheduleIdleTimer_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC idle timer schedule outside Tx thread", return);
+    if (closed() || !runtimeEstablished_() || !*m_idleTimeout) {
+      cancelIdleTimer_();
+      return;
+    }
+    ZuTime out = idleDeadline_();
+    if (!*out) {
+      cancelIdleTimer_();
+      return;
+    }
+    ZuTime now = runtimeNow_();
+    if (out <= now) out = now + RttEstimator::Granularity;
+    if (m_idleTimer && m_idleTimerOut == out) return;
+    m_idleTimerOut = out;
+    scheduleCxnTimer_(
+      "idle", CxnTimer::Idle,
+      out, ZmScheduler::Update, &m_idleTimer);
+  }
+  void scheduleIdleTimer_(ZuTime out) {
+    scheduleCxnTimer_(
+      "idle", CxnTimer::Idle,
+      out, ZmScheduler::Update, &m_idleTimer);
+  }
+  void cancelIdleTimer_() {
+    m_idleTimerOut = {};
+    cancelTimer_("idle", &m_idleTimer);
+  }
+  void notePeerPacketProcessed_() {
+    app()->txRun([link = impl()]() mutable {
+      if (link->disconnecting_()) return;
+      link->notePeerPacketProcessedTx_();
+    });
+  }
+  void notePeerPacketProcessedTx_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC peer activity outside Tx thread", return);
+    if (closed() || !runtimeEstablished_() || !*m_idleTimeout) return;
+    m_idleBase = runtimeNow_();
+    m_idleAckElicitingSent = false;
+    scheduleIdleTimer_();
+  }
+  void noteAckElicitingSentTx_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC ack-eliciting send activity outside Tx thread", return);
+    if (closed() || !runtimeEstablished_() || !*m_idleTimeout) return;
+    if (!m_idleAckElicitingSent) {
+      m_idleBase = runtimeNow_();
+      m_idleAckElicitingSent = true;
+    }
+    scheduleIdleTimer_();
+  }
+
   void scheduleCloseTimer_(ZuTime out) {
+    ZuTime now = runtimeNow_();
+    if (out <= now) out = now + RttEstimator::Granularity;
+    m_closeTimerOut = out;
     scheduleCxnTimer_(
       "close", CxnTimer::Close,
       out, ZmScheduler::Update, &m_closeTimer);
   }
-  void cancelCloseTimer_() { cancelTimer_("close", &m_closeTimer); }
+  void cancelCloseTimer_() {
+    m_closeTimerOut = {};
+    cancelTimer_("close", &m_closeTimer);
+  }
+
+  ZuTime peerCloseDeadline_() const {
+    return runtimeNow_() + closeDrainDelay_();
+  }
+  void enterLocalClosingTx_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC local closing outside Tx thread", return);
+    cancelAckDelayTimer_();
+    cancelLossTimer_();
+    cancelPTO_();
+    cancelIdleTimer_();
+    cancelKeyDiscardTimer_();
+    cancelPMTUDTimer_();
+    cancelPathTimer_();
+    m_closeNextResponse = {};
+    scheduleCloseTimer_(runtimeNow_());
+  }
+  void enterPeerDraining_(uint64_t errorCode) {
+    closeStreamsRx_();
+    m_appClose.error = errorCode;
+    m_appClose.closed = true;
+    drainLinkState_();
+    m_crypto.resetTLS();
+    app()->txRun([link = impl()]() mutable {
+      if (link->disconnecting_()) return;
+      link->enterPeerDrainingTx_();
+    });
+  }
+  void enterPeerDrainingTx_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC peer draining outside Tx thread", return);
+    cancelAckDelayTimer_();
+    cancelLossTimer_();
+    cancelPTO_();
+    cancelIdleTimer_();
+    cancelKeyDiscardTimer_();
+    cancelPMTUDTimer_();
+    cancelPathTimer_();
+    m_streamQueue.clean();
+    for (auto &p : m_txPkts) p.clear();
+    if (!m_closeTimerOut)
+      scheduleCloseTimer_(peerCloseDeadline_());
+  }
+  void noteClosingPacket_(ZiSockAddr addr) {
+    app()->txRun([
+      link = impl(),
+      addr = ZuMv(addr)
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      link->sendCloseResponseTx_(ZuMv(addr));
+    });
+  }
+  void sendCloseResponseTx_(ZiSockAddr addr) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC close response outside Tx thread", return);
+    if (!runtimeClosing_() || !addr) return;
+    ZuTime now = runtimeNow_();
+    if (*m_closeNextResponse && now < m_closeNextResponse) return;
+    m_closeNextResponse = now + RttEstimator::Granularity;
+    (void)impl()->sendCloseFrame_(ZuMv(addr), true);
+  }
 
   void scheduleKeyDiscardTimer_(ZuTime out) {
     scheduleCxnTimer_(
@@ -5602,6 +5775,7 @@ protected:
     cancelAckDelayTimer_();
     cancelLossTimer_();
     cancelPTO_();
+    cancelIdleTimer_();
     cancelCloseTimer_();
     cancelKeyDiscardTimer_();
     cancelPMTUDTimer_();
@@ -5612,9 +5786,13 @@ protected:
       "QUIC timer teardown outside Tx thread", return);
     m_lossTimerOut = {};
     m_ptoTimerOut = {};
+    m_idleTimerOut = {};
+    m_closeTimerOut = {};
+    m_closeNextResponse = {};
     app()->mx()->del(&m_ackDelayTimer);
     app()->mx()->del(&m_lossTimer);
     app()->mx()->del(&m_ptoTimer);
+    app()->mx()->del(&m_idleTimer);
     app()->mx()->del(&m_closeTimer);
     app()->mx()->del(&m_keyDiscardTimer);
     app()->mx()->del(&m_pmtudTimer);
@@ -5622,7 +5800,7 @@ protected:
   }
   bool timersActive_() const {
     return m_ackDelayTimer || m_lossTimer || m_ptoTimer ||
-      m_closeTimer || m_keyDiscardTimer ||
+      m_idleTimer || m_closeTimer || m_keyDiscardTimer ||
       m_pmtudTimer || m_pathTimer;
   }
 
@@ -5642,7 +5820,23 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC close timer outside Tx thread", return);
     if (disconnecting_()) return;
+    m_closeTimerOut = {};
     impl()->closeExpired_();
+  }
+  void idleTimeout_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC idle timer outside Tx thread", return);
+    if (disconnecting_()) return;
+    if (*m_idleTimeout) {
+      if (closed() || !runtimeEstablished_()) return;
+      ZuTime out = idleDeadline_();
+      ZuTime now = runtimeNow_();
+      if (*out && out > now) {
+	scheduleIdleTimer_();
+	return;
+      }
+    }
+    impl()->idleExpired_();
   }
   void keyDiscard_() {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -5678,6 +5872,7 @@ protected:
     detectLossTx_(0, now, {}, false);
   }
   void closeExpired_() { }
+  void idleExpired_() { impl()->closeExpired_(); }
   void keyDiscardExpired_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC key discard expiry outside Tx thread", return);
@@ -6141,6 +6336,19 @@ nextSpace:
     if (!m_crypto.peerTransportParamsReceived()) return ZuTime{0};
     return timeUS(m_crypto.peerTransportParams().maxAckDelay * 1000);
   }
+  static ZuTime transportParamMS_(uint64_t ms) {
+    if (!ms) return ZuTime{0};
+    if (ms > UINT64_MAX / 1000) ms = UINT64_MAX / 1000;
+    return timeUS(ms * 1000);
+  }
+  ZuTime negotiatedIdleTimeout_() const {
+    uint64_t local = m_transportParams.maxIdleTimeout;
+    uint64_t peer = m_crypto.peerTransportParamsReceived() ?
+      m_crypto.peerTransportParams().maxIdleTimeout : 0;
+    if (!local) return transportParamMS_(peer);
+    if (!peer) return transportParamMS_(local);
+    return transportParamMS_(local < peer ? local : peer);
+  }
   ZuTime ackDelay_(uint64_t delay) const {
     if (!m_crypto.peerTransportParamsReceived()) return ZuTime{0};
     const auto &params = m_crypto.peerTransportParams();
@@ -6155,8 +6363,11 @@ nextSpace:
   ZuTime ptoTimeout_() const {
     return m_ptoBackoff.timeout(m_rtt, maxAckDelay_());
   }
+  ZuTime closeDrainDelay_() const {
+    return ptoTimeout_() * ZuDecimal{3};
+  }
   ZuTime keyDiscardDeadline_() const {
-    return runtimeNow_() + ptoTimeout_() * ZuDecimal{3};
+    return runtimeNow_() + closeDrainDelay_();
   }
   bool buildPayload_(
     CryptoLevel::T level, PktBuild &build, ZuCSpan frame) {
@@ -6344,7 +6555,11 @@ nextSpace:
 	  " bytes=" << bytes <<
 	  " ackEliciting=" << ackEliciting;
       }));
-    if (ackEliciting) schedulePTO();
+    if (ackEliciting) {
+      if (level == CryptoLevel::OneRTT && runtimeEstablished_())
+	noteAckElicitingSentTx_();
+      schedulePTO();
+    }
   }
 
   bool txAckMeta_(
@@ -6596,6 +6811,11 @@ nextSpace:
       return true;
     }
     ++m_rxDiag.packetsRx;
+    if (runtimeDraining_()) return true;
+    if (runtimeClosing_()) {
+      noteClosingPacket_(d.addr);
+      return true;
+    }
     RxAckMeta ack;
     ZiSockAddr ackAddr = d.addr;
     if (!consumeFrames(
@@ -6676,6 +6896,11 @@ nextSpace:
       return true;
     }
     ++m_rxDiag.packetsRx;
+    if (runtimeDraining_()) return true;
+    if (runtimeClosing_()) {
+      noteClosingPacket_(d.addr);
+      return true;
+    }
     RxAckMeta ack;
     ZiSockAddr ackAddr = d.addr;
     if (!consumeFrames(
@@ -7279,6 +7504,10 @@ private:
 	m_ptoTimerOut = {};
 	impl()->pto_();
 	break;
+      case CxnTimer::Idle:
+	m_idleTimerOut = {};
+	idleTimeout_();
+	break;
       case CxnTimer::Close:
 	closeTimeout_();
 	break;
@@ -7344,6 +7573,16 @@ private:
     m_drainPTOs = 0;
     return true;
   }
+  bool drainLinkState_() {
+    if (m_linkState == LinkState::Closed) return false;
+    m_linkState = LinkState::Draining;
+    m_drainPTOs = 0;
+    return true;
+  }
+  void closedLinkState_() {
+    m_linkState = LinkState::Closed;
+    m_drainPTOs = 0;
+  }
 
   // immutable
   App			*m_app = nullptr;
@@ -7389,6 +7628,7 @@ private:
   ZmScheduler::Timer	m_ackDelayTimer;
   ZmScheduler::Timer	m_lossTimer;
   ZmScheduler::Timer	m_ptoTimer;
+  ZmScheduler::Timer	m_idleTimer;
   ZmScheduler::Timer	m_closeTimer;
   ZmScheduler::Timer	m_keyDiscardTimer;
   // Active-path timers owned by this Link; callbacks run on Tx.
@@ -7396,7 +7636,13 @@ private:
   ZmScheduler::Timer	m_pathTimer;
   ZuTime		m_lossTimerOut;
   ZuTime		m_ptoTimerOut;
+  ZuTime		m_idleTimeout;
+  ZuTime		m_idleTimerOut;
+  ZuTime		m_idleBase;
+  ZuTime		m_closeTimerOut;
+  ZuTime		m_closeNextResponse;
   CryptoLevel::T	m_ptoTimerLevel = CryptoLevel::Initial;
+  bool			m_idleAckElicitingSent = false;
   bool			m_rxSpaceDiscarded[3]{};
   LinkState::T		m_linkState = LinkState::Starting;
   unsigned		m_drainPTOs = 0;
@@ -7741,7 +7987,9 @@ public:
     }
 
     closeCurrent_(false, [link = impl(), ip]() mutable {
-      link->connectOpen_(ip);
+      link->app()->rxRun([link, ip]() mutable {
+	link->connectOpen_(ip);
+      });
     });
   }
 
@@ -7801,13 +8049,36 @@ private:
       fn = ZuMv(fn)
     ]() mutable {
       (void)link->sendCloseFrame_(ZuMv(addr), true);
-      link->app()->rxRun([
-	link, notify, peer, fn = ZuMv(fn)
-      ]() mutable {
-	link->closeEndpointDrained_(notify, peer, ZuMv(fn));
-      });
+      link->m_closeNotify = notify;
+      link->m_closePeer = peer;
+      link->m_closeFn = ZmFn<>{ZuMv(fn)};
+      link->enterLocalClosingTx_();
       return link;
     });
+  }
+
+  void closeExpired_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client close expiry outside Tx thread", return);
+    bool notify = m_closeNotify;
+    bool peer = m_closePeer;
+    ZmFn<> fn = ZuMv(m_closeFn);
+    m_closeNotify = false;
+    m_closePeer = false;
+    app()->rxRun([
+      link = impl(), notify, peer, fn = ZuMv(fn)
+    ]() mutable {
+      link->closeEndpointDrained_(notify, peer, ZuMv(fn));
+    });
+  }
+  void idleExpired_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client idle expiry outside Tx thread", return);
+    Base::cancelTimers_();
+    m_closeNotify = true;
+    m_closePeer = false;
+    m_closeFn = ZmFn<>{[]() { }};
+    closeExpired_();
   }
 
   void closeEndpoint_(bool notify) {
@@ -7844,8 +8115,17 @@ private:
     if (notify) impl()->disconnected(peer);
     if (Base::closed()) Base::clearCallbacks_();
     Endpoint::disconnect();
-    Base::disconnect();
-    app()->rxRun([fn = ZuMv(fn)]() mutable { fn(); });
+    Base::disconnect(peer);
+    app()->rxRun([
+      link = impl(), fn = ZuMv(fn)
+    ]() mutable {
+      link->app()->txRun([
+	link, fn = ZuMv(fn)
+      ]() mutable {
+	(void)link;
+	fn();
+      });
+    });
   }
 
   void resetRuntimeState_() {
@@ -8239,7 +8519,9 @@ private:
   bool sendCloseFrame_(ZiSockAddr addr, bool closing = false) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client close frame outside Tx thread", return false);
-    if ((!closing && Base::closed()) || !Base::runtimeEstablished_() ||
+    if ((!closing && Base::closed()) ||
+	(!Base::runtimeEstablished_() &&
+	  !(closing && Base::runtimeClosing_())) ||
 	!Endpoint::connected() || !addr)
       return false;
     PktBuild build;
@@ -8353,12 +8635,17 @@ private:
 	return true;
       case FrameType::HandshakeDone:
 	return true;
-	      case FrameType::ConnectionClose:
-	      case FrameType::ApplicationClose:
-		Base::closeRuntime_(frame.errorCode);
-		Base::transportClose_(frame.type, frame.errorCode);
-		closeCurrent_(true, true, []() { });
-		return true;
+      case FrameType::ConnectionClose:
+      case FrameType::ApplicationClose:
+	Base::transportClose_(frame.type, frame.errorCode);
+	app()->txRun([link = impl()]() mutable {
+	  if (link->disconnecting_()) return;
+	  link->m_closeNotify = true;
+	  link->m_closePeer = true;
+	  link->m_closeFn = ZmFn<>{[]() { }};
+	});
+	Base::enterPeerDraining_(frame.errorCode);
+	return true;
       default:
 	return true;
     }
@@ -8461,6 +8748,9 @@ private:
   // shared
   ZmAtomic<uint64_t>	m_udpReadyCount = 0;
   ZmAtomic<unsigned>	m_udpReady = 0;
+  bool			m_closeNotify = false;
+  bool			m_closePeer = false;
+  ZmFn<>		m_closeFn;
 };
 
 template <
@@ -8658,9 +8948,27 @@ public:
       ]() mutable {
 	if (link->disconnecting_()) return;
 	(void)link->sendCloseFrame_(ZuMv(addr), true);
+	link->m_closePeer = false;
+	link->enterLocalClosingTx_();
       });
+      return true;
     }
-    return Base::disconnect();
+    return Base::disconnect(false);
+  }
+
+  void closeExpired_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server close expiry outside Tx thread", return);
+    bool peer = m_closePeer;
+    m_closePeer = false;
+    Base::disconnect(peer);
+  }
+  void idleExpired_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server idle expiry outside Tx thread", return);
+    Base::cancelTimers_();
+    m_closePeer = false;
+    Base::disconnect(false);
   }
 
 private:
@@ -9076,7 +9384,9 @@ private:
   bool sendCloseFrame_(ZiSockAddr addr, bool closing = false) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server close frame outside Tx thread", return false);
-    if ((!closing && Base::closed()) || !Base::runtimeEstablished_() ||
+    if ((!closing && Base::closed()) ||
+	(!Base::runtimeEstablished_() &&
+	  !(closing && Base::runtimeClosing_())) ||
 	!m_peerAddr || !addr)
       return false;
     PktBuild build;
@@ -9216,10 +9526,9 @@ private:
 	return true;
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
-	Base::closeRuntime_(frame.errorCode);
-	impl()->disconnected(true);
 	Base::transportClose_(frame.type, frame.errorCode);
-	Base::disconnect();
+	m_closePeer = true;
+	Base::enterPeerDraining_(frame.errorCode);
 	return true;
       case FrameType::HandshakeDone:
 	return false;
@@ -9274,6 +9583,7 @@ private:
   ZiSockAddr		m_peerAddr;
   // shared
   ZmAtomic<unsigned>	m_handshakeDoneSent = 0;
+  bool			m_closePeer = false;
 };
 
 } // namespace Zquic

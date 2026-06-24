@@ -1199,6 +1199,13 @@ struct H1PoolLink : public Base_ {
     }
   }
   void connectFailed(bool transient) {
+    this->app()->rxRun([
+      link = ZmMkRef(this->impl()), transient
+    ]() mutable {
+      link->connectFailed_(transient);
+    });
+  }
+  void connectFailed_(bool transient) {
     ZiLOG(Error, "zhttp", ([id = id, transient](auto &s) {
       s << "worker=" << id << " failed to connect";
       if (transient) s << " (transient)";
@@ -1232,10 +1239,11 @@ struct H1PoolLink : public Base_ {
 	resetAttempt(*req, true);
 	if (reuse)
 	  sendCurrent();
-	else {
+	else if (this->cxn()) {
 	  closing = true;
 	  this->disconnect_();
-	}
+	} else
+	  connectCurrent();
 	return;
       }
     }
@@ -1243,16 +1251,20 @@ struct H1PoolLink : public Base_ {
     this->app()->finishReq(req, ok);
     req = this->app()->nextReq(id);
     if (!req) {
-      this->disconnect_();
+      if (this->cxn())
+	this->disconnect_();
+      else
+	this->app()->workerStopped(this->impl());
       return;
     }
     assign(req);
     if (reuse)
       sendCurrent();
-    else {
+    else if (this->cxn()) {
       closing = true;
       this->disconnect_();
-    }
+    } else
+      connectCurrent();
   }
   template <typename Rx>
   int process(Rx &rx) {
@@ -1348,7 +1360,7 @@ struct H1PoolClient : public Client_<App> {
     for (unsigned i = 0; i < links.length(); ++i) {
       auto link = links[i];
       if (!link) continue;
-      link->disconnect_();
+      link->disconnect();
     }
   }
   unsigned reconnFreq() const { return 0; }
