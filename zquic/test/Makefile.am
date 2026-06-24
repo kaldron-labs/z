@@ -20,7 +20,7 @@ noinst_PROGRAMS = ZquicAPITest ZquicSockTest \
 	ZquicStreamStateTest ZquicPMTUDTest ZquicVersionTest ZquicCIDTest \
 	ZquicStreamTest ZquicFlowTest ZquicBufferTest \
 	ZquicCongestionTest ZquicPQueueTest ZquicLoopTest ZquicRuntimeTest \
-ZquicTimerTest
+	ZquicTimerTest ZquicLogTest
 ZquicAPITest_SOURCES = ZquicAPITest.cc
 ZquicSockTest_SOURCES = ZquicSockTest.cc
 ZquicCodecTest_SOURCES = ZquicCodecTest.cc
@@ -40,6 +40,7 @@ ZquicPQueueTest_SOURCES = ZquicPQueueTest.cc
 ZquicLoopTest_SOURCES = ZquicLoopTest.cc
 ZquicRuntimeTest_SOURCES = ZquicRuntimeTest.cc
 ZquicTimerTest_SOURCES = ZquicTimerTest.cc
+ZquicLogTest_SOURCES = ZquicLogTest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)

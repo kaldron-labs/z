@@ -437,12 +437,12 @@ bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
   };
 
   ZuCSpan rest;
-  if (input.starts("http://")) {
+  if (input.match("http://")) {
     url.scheme = "http";
     url.port = 80;
     rest = input;
     rest.offset(7);
-  } else if (input.starts("https://")) {
+  } else if (input.match("https://")) {
     url.scheme = "https";
     url.port = 443;
     rest = input;
@@ -502,7 +502,7 @@ bool parsePort(ZuCSpan s, uint16_t &port)
 
 bool parseAltSvc(State &state, ZuCSpan value)
 {
-  if (value.starts("clear")) return false;
+  if (value.match("clear")) return false;
   int h = -1;
   for (unsigned i = 0; i + 3 <= value.length(); ++i) {
     if (value[i] == 'h' && value[i + 1] == '3' && value[i + 2] == '=') {
@@ -633,15 +633,15 @@ bool redirectStatus(unsigned status)
 bool parseLocation(const URL &base, ZuCSpan location, URL &url)
 {
   ZeException error;
-  if (location.starts("http://") || location.starts("https://"))
+  if (location.match("http://") || location.match("https://"))
     return parseURL(location, url, &error);
   url = base;
-  if (location.starts("//")) {
+  if (location.match("//")) {
     HdrString absolute;
     absolute << base.scheme << ':' << location;
     return parseURL(absolute, url, &error);
   }
-  if (location.starts("/")) {
+  if (location.match("/")) {
     url.target = location;
     return true;
   }

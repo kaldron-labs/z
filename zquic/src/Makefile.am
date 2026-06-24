@@ -8,7 +8,7 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZquicLib.hh ZquicTypes.hh ZquicBuf.hh ZquicPQueue.hh Zquic.hh \
 	ZquicPath.hh ZquicSock.hh ZquicPacket.hh \
 	ZquicFrame.hh ZquicTransport.hh \
-	ZquicCrypto.hh ZquicStream.hh ZquicSched.hh \
+	ZquicCrypto.hh ZquicStream.hh ZquicSched.hh ZquicLog.hh \
 	ZquicRecovery.hh ZquicDiag.hh
 noinst_HEADERS = ZquicOpenSSL.hh
 lib_LTLIBRARIES = libZquic.la
@@ -17,7 +17,7 @@ libZquic_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@
 libZquic_la_SOURCES = ZquicLib.cc ZquicPath.cc \
 	ZquicSock.cc ZquicPacket.cc ZquicFrame.cc \
 	ZquicTransport.cc ZquicCrypto.cc Zquic.cc ZquicStream.cc \
-	ZquicSched.cc ZquicRecovery.cc ZquicDiag.cc
+	ZquicSched.cc ZquicRecovery.cc ZquicDiag.cc ZquicLog.cc
 libZquic_la_LIBADD = \
 	$(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zi/src/libZi.la \
