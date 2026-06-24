@@ -35,6 +35,67 @@ namespace VarInt {
   int decode(ZuBSpan, uint64_t &, unsigned &);
 }
 
+class PktWriter {
+public:
+  PktWriter(uint8_t *data, unsigned length) : m_data{data}, m_length{length} { }
+
+  unsigned offset() const { return m_offset; }
+  unsigned avail() const {
+    return m_offset <= m_length ? m_length - m_offset : 0;
+  }
+  uint8_t *data() const { return m_data; }
+  uint8_t *ptr() const { return m_data + m_offset; }
+  bool ok() const { return m_ok; }
+  int finish() const { return m_ok ? int(m_offset) : -1; }
+
+  bool put(uint8_t v) {
+    if (!m_ok || !avail()) return fail_();
+    m_data[m_offset++] = v;
+    return true;
+  }
+  bool put(ZuBSpan data) {
+    if (!m_ok || data.length() > avail()) return fail_();
+    unsigned n = data.length();
+    if (n) memcpy(m_data + m_offset, data.data(), n);
+    m_offset += n;
+    return true;
+  }
+  bool put16(uint16_t v) {
+    return put(uint8_t(v >> 8)) && put(uint8_t(v));
+  }
+  bool put32(uint32_t v) {
+    return put(uint8_t(v >> 24)) && put(uint8_t(v >> 16)) &&
+      put(uint8_t(v >> 8)) && put(uint8_t(v));
+  }
+  bool putVar(uint64_t v) {
+    if (!m_ok) return false;
+    int n = VarInt::encode(m_data + m_offset, avail(), v);
+    if (n < 0) return fail_();
+    m_offset += unsigned(n);
+    return true;
+  }
+  uint8_t *reserve(unsigned n) {
+    if (!m_ok || n > avail()) {
+      fail_();
+      return nullptr;
+    }
+    auto ptr = m_data + m_offset;
+    m_offset += n;
+    return ptr;
+  }
+
+private:
+  bool fail_() {
+    m_ok = false;
+    return false;
+  }
+
+  uint8_t	*m_data = nullptr;
+  unsigned	m_length = 0;
+  unsigned	m_offset = 0;
+  bool		m_ok = true;
+};
+
 inline constexpr unsigned CxnIDMax = 20;
 using CxnID = ZuBArray<CxnIDMax>;
 

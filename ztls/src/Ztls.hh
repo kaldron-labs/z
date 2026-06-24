@@ -1154,8 +1154,8 @@ private:
       m_ticket.clear();
       return;
     }
-    m_ticket.length(input.len);
-    memcpy(m_ticket.data(), input.base, input.len);
+    m_ticket.length(0);
+    m_ticket.append(input.base, input.len);
   }
 
   // client connected variant - initiate new handshake
@@ -1674,15 +1674,14 @@ protected:
     if (!alpn.length()) return true;
     unsigned bytes = 0;
     for (auto &s : alpn) bytes += s.length();
-    m_alpnData.length(bytes);
+    if (bytes && !m_alpnData.ensure(bytes)) return false;
     m_alpn.ensure(alpn.length());
-    unsigned offset = 0;
     for (auto &s : alpn) {
-      memcpy(m_alpnData.data() + offset, s.data(), s.length());
+      unsigned offset = m_alpnData.length();
+      m_alpnData << ZuBSpan{s};
       m_alpn.push(ptls_iovec_t{
 	m_alpnData.data() + offset,
 	s.length()});
-      offset += s.length();
     }
     return true;
   }

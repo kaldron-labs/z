@@ -578,13 +578,17 @@ struct SentFrameRef {
   static SentFrameRef pathResponse(ZuBSpan data) {
     SentFrameRef ref = control();
     ref.controlType = FrameType::PathResponse;
-    if (data.length() == 8) memcpy(ref.payload, data.data(), 8);
+    if (data.length() == sizeof(ref.payload))
+      for (unsigned i = 0; i < sizeof(ref.payload); ++i)
+	ref.payload[i] = data[i];
     return ref;
   }
   static SentFrameRef pathChallenge(ZuBSpan data) {
     SentFrameRef ref = control();
     ref.controlType = FrameType::PathChallenge;
-    if (data.length() == 8) memcpy(ref.payload, data.data(), 8);
+    if (data.length() == sizeof(ref.payload))
+      for (unsigned i = 0; i < sizeof(ref.payload); ++i)
+	ref.payload[i] = data[i];
     return ref;
   }
 

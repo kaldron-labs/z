@@ -228,66 +228,68 @@ int FrameCodec::writePadding(uint8_t *out, unsigned len, unsigned n)
 
 int FrameCodec::writePing(uint8_t *out, unsigned len)
 {
-  if (!len) return -1;
-  out[0] = 0x01;
-  return 1;
+  PktWriter w{out, len};
+  w.put(0x01);
+  return w.finish();
 }
 
 int FrameCodec::writeCrypto(uint8_t *out, unsigned len, uint64_t offset, ZuBSpan p)
 {
-  int n = writeCryptoPrefix(out, len, offset, p.length());
-  if (n < 0 || len - unsigned(n) < p.length()) return -1;
-  memcpy(out + n, p.data(), p.length());
-  return n + int(p.length());
+  PktWriter w{out, len};
+  w.put(0x06);
+  w.putVar(offset);
+  w.putVar(p.length());
+  w.put(p);
+  return w.finish();
 }
 
 int FrameCodec::writeCryptoPrefix(
   uint8_t *out, unsigned len, uint64_t offset, unsigned payloadLen)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x06;
-  if (VarInt::put(out, len, offset, o) < 0 ||
-      VarInt::put(out, len, payloadLen, o) < 0)
-    return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x06);
+  w.putVar(offset);
+  w.putVar(payloadLen);
+  return w.finish();
 }
 
 int FrameCodec::writeNewToken(uint8_t *out, unsigned len, ZuBSpan token)
 {
-  if (!len || !token) return -1;
-  unsigned o = 0;
-  out[o++] = 0x07;
-  if (VarInt::put(out, len, token.length(), o) < 0) return -1;
-  if (len < o + token.length()) return -1;
-  memcpy(out + o, token.data(), token.length());
-  o += token.length();
-  return int(o);
+  if (!token) return -1;
+  PktWriter w{out, len};
+  w.put(0x07);
+  w.putVar(token.length());
+  w.put(token);
+  return w.finish();
 }
 
 int FrameCodec::writeStreamPrefix(
   uint8_t *out, unsigned len, uint64_t streamID, uint64_t offset,
   unsigned payloadLen, bool fin)
 {
-  if (!len) return -1;
-  unsigned o = 0;
   uint8_t t = 0x0a | (fin ? 0x01 : 0);
   if (offset) t |= 0x04;
-  out[o++] = t;
-  if (VarInt::put(out, len, streamID, o) < 0) return -1;
-  if (offset && VarInt::put(out, len, offset, o) < 0) return -1;
-  if (VarInt::put(out, len, payloadLen, o) < 0) return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(t);
+  w.putVar(streamID);
+  if (offset) w.putVar(offset);
+  w.putVar(payloadLen);
+  return w.finish();
 }
 
 int FrameCodec::writeStream(
   uint8_t *out, unsigned len, uint64_t streamID, uint64_t offset,
   ZuBSpan p, bool fin)
 {
-  int n = writeStreamPrefix(out, len, streamID, offset, p.length(), fin);
-  if (n < 0 || len - unsigned(n) < p.length()) return -1;
-  memcpy(out + n, p.data(), p.length());
-  return n + int(p.length());
+  uint8_t t = 0x0a | (fin ? 0x01 : 0);
+  if (offset) t |= 0x04;
+  PktWriter w{out, len};
+  w.put(t);
+  w.putVar(streamID);
+  if (offset) w.putVar(offset);
+  w.putVar(p.length());
+  w.put(p);
+  return w.finish();
 }
 
 int FrameCodec::writeAck(
@@ -311,120 +313,106 @@ int FrameCodec::writeAckECN(
   uint64_t delay, const AckECN &ecn)
 {
   if (!len || !ranges || !nRanges) return -1;
-  unsigned o = 0;
-  out[o++] = ecn.any() ? 0x03 : 0x02;
+  PktWriter w{out, len};
+  w.put(ecn.any() ? 0x03 : 0x02);
   const AckRange *range = &ranges[nRanges - 1];
   if (range->first > range->largest) return -1;
-  if (VarInt::put(out, len, range->largest, o) < 0 ||
-      VarInt::put(out, len, delay, o) < 0 ||
-      VarInt::put(out, len, nRanges - 1, o) < 0 ||
-      VarInt::put(out, len, range->largest - range->first, o) < 0)
-    return -1;
+  w.putVar(range->largest);
+  w.putVar(delay);
+  w.putVar(nRanges - 1);
+  w.putVar(range->largest - range->first);
   uint64_t smallest = range->first;
   for (unsigned i = nRanges - 1; i--;) {
     range = &ranges[i];
     if (range->first > range->largest || range->largest > smallest ||
 	smallest - range->largest < 2)
       return -1;
-    if (VarInt::put(out, len, smallest - range->largest - 2, o) < 0 ||
-	VarInt::put(out, len, range->largest - range->first, o) < 0)
-      return -1;
+    w.putVar(smallest - range->largest - 2);
+    w.putVar(range->largest - range->first);
     smallest = range->first;
   }
-  if (ecn.any() &&
-      (VarInt::put(out, len, ecn.ect0, o) < 0 ||
-       VarInt::put(out, len, ecn.ect1, o) < 0 ||
-       VarInt::put(out, len, ecn.ce, o) < 0))
-    return -1;
-  return int(o);
+  if (ecn.any()) {
+    w.putVar(ecn.ect0);
+    w.putVar(ecn.ect1);
+    w.putVar(ecn.ce);
+  }
+  return w.finish();
 }
 
 int FrameCodec::writeResetStream(
   uint8_t *out, unsigned len, uint64_t streamID, uint64_t appError,
   uint64_t finalSize)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x04;
-  if (VarInt::put(out, len, streamID, o) < 0 ||
-      VarInt::put(out, len, appError, o) < 0 ||
-      VarInt::put(out, len, finalSize, o) < 0)
-    return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x04);
+  w.putVar(streamID);
+  w.putVar(appError);
+  w.putVar(finalSize);
+  return w.finish();
 }
 
 int FrameCodec::writeStopSending(
   uint8_t *out, unsigned len, uint64_t streamID, uint64_t appError)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x05;
-  if (VarInt::put(out, len, streamID, o) < 0 ||
-      VarInt::put(out, len, appError, o) < 0)
-    return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x05);
+  w.putVar(streamID);
+  w.putVar(appError);
+  return w.finish();
 }
 
 int FrameCodec::writeMaxData(uint8_t *out, unsigned len, uint64_t maximum)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x10;
-  if (VarInt::put(out, len, maximum, o) < 0) return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x10);
+  w.putVar(maximum);
+  return w.finish();
 }
 
 int FrameCodec::writeMaxStreamData(
   uint8_t *out, unsigned len, uint64_t streamID, uint64_t maximum)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x11;
-  if (VarInt::put(out, len, streamID, o) < 0 ||
-      VarInt::put(out, len, maximum, o) < 0)
-    return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x11);
+  w.putVar(streamID);
+  w.putVar(maximum);
+  return w.finish();
 }
 
 int FrameCodec::writeMaxStreams(
   uint8_t *out, unsigned len, Zi::StreamType::T type, uint64_t maximum)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = type == Zi::StreamType::Duplex ? 0x12 : 0x13;
-  if (VarInt::put(out, len, maximum, o) < 0) return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(type == Zi::StreamType::Duplex ? 0x12 : 0x13);
+  w.putVar(maximum);
+  return w.finish();
 }
 
 int FrameCodec::writeDataBlocked(uint8_t *out, unsigned len, uint64_t maximum)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x14;
-  if (VarInt::put(out, len, maximum, o) < 0) return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x14);
+  w.putVar(maximum);
+  return w.finish();
 }
 
 int FrameCodec::writeStreamDataBlocked(
   uint8_t *out, unsigned len, uint64_t streamID, uint64_t maximum)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x15;
-  if (VarInt::put(out, len, streamID, o) < 0 ||
-      VarInt::put(out, len, maximum, o) < 0)
-    return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x15);
+  w.putVar(streamID);
+  w.putVar(maximum);
+  return w.finish();
 }
 
 int FrameCodec::writeStreamsBlocked(
   uint8_t *out, unsigned len, Zi::StreamType::T type, uint64_t maximum)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = type == Zi::StreamType::Duplex ? 0x16 : 0x17;
-  if (VarInt::put(out, len, maximum, o) < 0) return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(type == Zi::StreamType::Duplex ? 0x16 : 0x17);
+  w.putVar(maximum);
+  return w.finish();
 }
 
 int FrameCodec::writeNewConnectionID(
@@ -433,78 +421,69 @@ int FrameCodec::writeNewConnectionID(
 {
   if (!len || !cid.length() || cid.length() > CxnIDMax || !token.valid())
     return -1;
-  unsigned o = 0;
-  out[o++] = 0x18;
-  if (VarInt::put(out, len, sequence, o) < 0 ||
-      VarInt::put(out, len, retirePriorTo, o) < 0)
-    return -1;
-  if (len < o + 1 + cid.length() + ResetToken::Length)
-    return -1;
-  out[o++] = uint8_t(cid.length());
-  memcpy(out + o, cid.data(), cid.length());
-  o += cid.length();
-  memcpy(out + o, token.data(), ResetToken::Length);
-  o += ResetToken::Length;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x18);
+  w.putVar(sequence);
+  w.putVar(retirePriorTo);
+  w.put(uint8_t(cid.length()));
+  w.put(cid);
+  w.put(ZuBSpan{token.data(), ResetToken::Length});
+  return w.finish();
 }
 
 int FrameCodec::writeRetireConnectionID(
   uint8_t *out, unsigned len, uint64_t sequence)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x19;
-  if (VarInt::put(out, len, sequence, o) < 0) return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x19);
+  w.putVar(sequence);
+  return w.finish();
 }
 
 int FrameCodec::writePathChallenge(uint8_t *out, unsigned len, ZuBSpan data)
 {
-  if (data.length() != 8 || len < 9) return -1;
-  out[0] = 0x1a;
-  memcpy(out + 1, data.data(), 8);
-  return 9;
+  if (data.length() != 8) return -1;
+  PktWriter w{out, len};
+  w.put(0x1a);
+  w.put(data);
+  return w.finish();
 }
 
 int FrameCodec::writePathResponse(uint8_t *out, unsigned len, ZuBSpan data)
 {
-  if (data.length() != 8 || len < 9) return -1;
-  out[0] = 0x1b;
-  memcpy(out + 1, data.data(), 8);
-  return 9;
+  if (data.length() != 8) return -1;
+  PktWriter w{out, len};
+  w.put(0x1b);
+  w.put(data);
+  return w.finish();
 }
 
 int FrameCodec::writeConnectionClose(uint8_t *out, unsigned len, uint64_t err)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x1c;
-  if (VarInt::put(out, len, err, o) < 0) return -1;
-  if (VarInt::put(out, len, 0, o) < 0) return -1;
-  if (VarInt::put(out, len, 0, o) < 0) return -1;
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x1c);
+  w.putVar(err);
+  w.putVar(0);
+  w.putVar(0);
+  return w.finish();
 }
 
 int FrameCodec::writeApplicationClose(
   uint8_t *out, unsigned len, uint64_t err, ZuBSpan reason)
 {
-  if (!len) return -1;
-  unsigned o = 0;
-  out[o++] = 0x1d;
-  if (VarInt::put(out, len, err, o) < 0 ||
-      VarInt::put(out, len, reason.length(), o) < 0)
-    return -1;
-  if (len < o + reason.length()) return -1;
-  memcpy(out + o, reason.data(), reason.length());
-  o += reason.length();
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x1d);
+  w.putVar(err);
+  w.putVar(reason.length());
+  w.put(reason);
+  return w.finish();
 }
 
 int FrameCodec::writeHandshakeDone(uint8_t *out, unsigned len)
 {
-  if (!len) return -1;
-  out[0] = 0x1e;
-  return 1;
+  PktWriter w{out, len};
+  w.put(0x1e);
+  return w.finish();
 }
 
 } // namespace Zquic
