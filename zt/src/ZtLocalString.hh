@@ -23,7 +23,7 @@
 #include <zlib/ZmAlloc.hh>
 
 #include <zlib/ZtString.hh>
-#include <zlib/ZtAlloc.hh>
+#include <zlib/ZmVAlloc.hh>
 
 template <typename String>
 struct ZtLocalString_ : private ZmAlloc_<typename String::Char>, public String {
@@ -46,9 +46,9 @@ struct ZtLocalString_ : private ZmAlloc_<typename String::Char>, public String {
 };
 
 #define ZtLocalString_1(T, size) \
-  ZtLocalString_<T>(ZtAlloc(T, typename T::Char, size), size)
+  ZtLocalString_<T>(ZmVAlloc(T, typename T::Char, size), size)
 #define ZtLocalString_2(T, length, size) \
-  ZtLocalString_<T>(ZtAlloc(T, typename T::Char, size), length, size)
+  ZtLocalString_<T>(ZmVAlloc(T, typename T::Char, size), length, size)
 #define ZtLocalString_N(_0, _1, Fn, ...) Fn
 #define ZtLocalString__(T, ...) \
   ZtLocalString_N(__VA_ARGS__, \
