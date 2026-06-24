@@ -280,26 +280,19 @@ int Pkt::writeLong(
   if (type != PktType::Initial && token) return -1;
   if (len < 7 + dcid.length() + scid.length() + token.length() + 8)
     return -1;
-  unsigned o = 0;
-  out[o++] = uint8_t(0xc0 | (typeBits << 4) | (pnLength - 1));
-  store32_(out + o, Version1); o += 4;
-  out[o++] = dcid.length();
-  memcpy(out + o, dcid.data(), dcid.length()); o += dcid.length();
-  out[o++] = scid.length();
-  memcpy(out + o, scid.data(), scid.length()); o += scid.length();
+  PktWriter w{out, len};
+  w.put(uint8_t(0xc0 | (typeBits << 4) | (pnLength - 1)));
+  w.put32(Version1);
+  w.put(uint8_t(dcid.length()));
+  w.put(dcid);
+  w.put(uint8_t(scid.length()));
+  w.put(scid);
   if (type == PktType::Initial) {
-    int n = VarInt::encode(out + o, len - o, token.length());
-    if (n < 0) return -1;
-    o += n;
-    if (token) {
-      memcpy(out + o, token.data(), token.length());
-      o += token.length();
-    }
+    w.putVar(token.length());
+    w.put(token);
   }
-  int n = VarInt::encode(out + o, len - o, payloadLength + pnLength);
-  if (n < 0) return -1;
-  o += n;
-  return int(o);
+  w.putVar(payloadLength + pnLength);
+  return w.finish();
 }
 
 int Pkt::writeInitial(
@@ -335,22 +328,16 @@ int Pkt::writeRetry(
     7 + dcid.length() + scid.length() + token.length() +
     retryIntegrityTag.length();
   if (len < need) return -1;
-  unsigned o = 0;
-  out[o++] = 0xf0;
-  store32_(out + o, Version1); o += 4;
-  out[o++] = dcid.length();
-  memcpy(out + o, dcid.data(), dcid.length()); o += dcid.length();
-  out[o++] = scid.length();
-  memcpy(out + o, scid.data(), scid.length()); o += scid.length();
-  if (token.length()) {
-    memcpy(out + o, token.data(), token.length());
-    o += token.length();
-  }
-  if (retryIntegrityTag.length()) {
-    memcpy(out + o, retryIntegrityTag.data(), retryIntegrityTag.length());
-    o += retryIntegrityTag.length();
-  }
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0xf0);
+  w.put32(Version1);
+  w.put(uint8_t(dcid.length()));
+  w.put(dcid);
+  w.put(uint8_t(scid.length()));
+  w.put(scid);
+  w.put(token);
+  w.put(retryIntegrityTag);
+  return w.finish();
 }
 
 int Pkt::writeRetryAuthenticated(
@@ -374,11 +361,13 @@ int Pkt::writeShort(
   if (pnLength < 1 || pnLength > 4) return -1;
   unsigned need = 1 + dcid.length() + pnLength;
   if (len < need) return -1;
-  unsigned o = 0;
-  out[o++] = uint8_t(0x40 | (keyPhase ? 0x04 : 0) | (pnLength - 1));
-  memcpy(out + o, dcid.data(), dcid.length()); o += dcid.length();
-  if (PktNumber::encode(out + o, len - o, pn, pnLength) < 0) return -1;
-  return int(o + pnLength);
+  PktWriter w{out, len};
+  w.put(uint8_t(0x40 | (keyPhase ? 0x04 : 0) | (pnLength - 1)));
+  w.put(dcid);
+  auto pnOut = w.reserve(pnLength);
+  if (!pnOut || PktNumber::encode(pnOut, pnLength, pn, pnLength) < 0)
+    return -1;
+  return w.finish();
 }
 
 int Pkt::writeVersionNegotiation(
@@ -387,18 +376,15 @@ int Pkt::writeVersionNegotiation(
 {
   unsigned need = 7 + dcid.length() + scid.length() + nVersions*4;
   if (len < need) return -1;
-  unsigned o = 0;
-  out[o++] = 0x80;
-  store32_(out + o, 0); o += 4;
-  out[o++] = dcid.length();
-  memcpy(out + o, dcid.data(), dcid.length()); o += dcid.length();
-  out[o++] = scid.length();
-  memcpy(out + o, scid.data(), scid.length()); o += scid.length();
-  for (unsigned i = 0; i < nVersions; ++i) {
-    store32_(out + o, versions[i]);
-    o += 4;
-  }
-  return int(o);
+  PktWriter w{out, len};
+  w.put(0x80);
+  w.put32(0);
+  w.put(uint8_t(dcid.length()));
+  w.put(dcid);
+  w.put(uint8_t(scid.length()));
+  w.put(scid);
+  for (unsigned i = 0; i < nVersions; ++i) w.put32(versions[i]);
+  return w.finish();
 }
 
 } // namespace Zquic

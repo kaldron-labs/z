@@ -1003,8 +1003,8 @@ public:
       return false;
     m_retrySCID = retry.header.scid;
     m_retryTokenLength = retry.token.length();
-    m_retryToken.length(retry.token.length());
-    memcpy(m_retryToken.data(), retry.token.data(), retry.token.length());
+    m_retryToken.length(0);
+    m_retryToken.append(retry.token.data(), retry.token.length());
     m_retried = true;
     return true;
   }
@@ -1570,8 +1570,8 @@ struct EngineParams {
   }
   EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
   EngineParams &&addressValidationSecret(ZuBSpan v) {
-    m_tokenSecret.length(v.length());
-    if (v) memcpy(m_tokenSecret.data(), v.data(), v.length());
+    m_tokenSecret.length(0);
+    m_tokenSecret.append(v.data(), v.length());
     return ZuMv(*this);
   }
   EngineParams &&retryAddressValidation(bool v) {
@@ -1796,8 +1796,8 @@ protected:
       m_maxUDP = params.maxUDP();
       {
 	ZuBSpan secret = params.addressValidationSecret();
-	m_tokenSecret.length(secret.length());
-	if (secret) memcpy(m_tokenSecret.data(), secret.data(), secret.length());
+	m_tokenSecret.length(0);
+	m_tokenSecret.append(secret.data(), secret.length());
       }
       m_tokenLifetime = params.addressValidationLifetime();
       m_retryAddressValidation = params.retryAddressValidation();
@@ -1944,13 +1944,12 @@ private:
     if (!alpn.length()) return true;
     unsigned bytes = 0;
     for (auto &s : alpn) bytes += s.length();
-    m_alpnData.length(bytes);
+    if (bytes && !m_alpnData.ensure(bytes)) return false;
     m_alpn.ensure(alpn.length());
-    unsigned offset = 0;
     for (auto &s : alpn) {
-      memcpy(m_alpnData.data() + offset, s.data(), s.length());
+      unsigned offset = m_alpnData.length();
+      m_alpnData << ZuBSpan{s};
       m_alpn.push(ptls_iovec_t{m_alpnData.data() + offset, s.length()});
-      offset += s.length();
     }
     return true;
   }
@@ -3244,7 +3243,7 @@ public:
     for (unsigned i = 0; i < 3; ++i) {
       auto level = CryptoLevel::T(i);
       CryptoStream *crypto = &m_rxCrypto[i];
-      crypto->deliveryFn([this, level](ZuCSpan span) {
+      crypto->deliveryFn([this, level](ZuBSpan span) {
 	size_t epoch = level == CryptoLevel::Initial ? 0 :
 	  level == CryptoLevel::Handshake ? 2 : 3;
 	if (!this->impl()->emitTLS_(epoch, span, m_rxCryptoAddr[level]))
@@ -3556,7 +3555,7 @@ public:
   void transportClose_(FrameType::T type, uint64_t errorCode) {
     impl()->transportClose(type, errorCode);
   }
-  void newToken_(ZuCSpan) { }
+  void newToken_(ZuBSpan) { }
 
 protected:
   void closeState_(uint64_t errorCode = 0) {
@@ -3786,10 +3785,10 @@ protected:
     noteBlockedQueued_(frame);
     return true;
   }
-  bool queuePathResponse_(ZuCSpan data) {
+  bool queuePathResponse_(ZuBSpan data) {
     return queueControl_(ControlFrame::pathResponse(data));
   }
-  bool queuePathChallenge_(ZuCSpan data) {
+  bool queuePathChallenge_(ZuBSpan data) {
     return queueControl_(ControlFrame::pathChallenge(data));
   }
   bool queueHandshakeDone_() {
@@ -4377,7 +4376,7 @@ protected:
   void receivePathResponse_(ZuBSpan data) {
     if (data.length() != PathChallenge::Length) return;
     uint8_t payload[PathChallenge::Length];
-    memcpy(payload, data.data(), sizeof(payload));
+    for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = data[i];
     app()->txRun([link = impl(), payload]() mutable {
       if (link->disconnecting_()) return;
       link->onPathResponse_(byteSpan(payload, sizeof(payload)));
@@ -4593,7 +4592,7 @@ protected:
   }
   void streamOpen(StreamRef, bool) { ++m_rxDiag.unhandledAppEvents; }
   void streamData(
-    StreamRef, uint64_t, ZuCSpan, bool) {
+    StreamRef, uint64_t, ZuBSpan, bool) {
     ++m_rxDiag.unhandledAppEvents;
   }
   void streamResetReceived(
@@ -4624,7 +4623,7 @@ protected:
     ++m_txDiag.unhandledAppEvents;
   }
   void streamFrame(
-    uint64_t, uint64_t, ZuCSpan, bool) { }
+    uint64_t, uint64_t, ZuBSpan, bool) { }
   void retiredLocalCID_(uint64_t, const CxnID &) { }
   void statelessReset() { ++m_rxDiag.unhandledAppEvents; }
   void disconnected(bool peer) {
@@ -5157,7 +5156,8 @@ protected:
     frame.streamType = ref.streamType;
     if (ref.controlType == FrameType::PathChallenge ||
 	ref.controlType == FrameType::PathResponse)
-      memcpy(frame.payload, ref.payload, sizeof(frame.payload));
+      for (unsigned i = 0; i < sizeof(frame.payload); ++i)
+	frame.payload[i] = ref.payload[i];
     return frame;
   }
 
@@ -6687,13 +6687,8 @@ nextSpace:
     if (!m_coalesceInitial) return sendPkt(ZuMv(buf), ZuMv(addr));
     ZmRef<ZiIOBuf> initial = ZuMv(m_coalesceInitial);
     ZiSockAddr initialAddr = ZuMv(m_coalesceAddr);
-    unsigned initialEnd = initial->skip + initial->length;
-    if (initialEnd <= initial->size &&
-	initial->length <= initial->size - buf->length) {
-      memcpy(
-	initial->data_() + initialEnd,
-	buf->data_() + buf->skip, buf->length);
-      initial->length += buf->length;
+    if (initial->avail() >= buf->length) {
+      initial->append(buf->cspan());
       return sendPkt(ZuMv(initial), ZuMv(initialAddr));
     }
     if (!sendPkt(ZuMv(initial), ZuMv(initialAddr))) return false;
@@ -8114,9 +8109,7 @@ public:
     if (!stream || (!payload.length() && !fin))
       return false;
     AsyncSendPayload payload_;
-    payload_.length(payload.length());
-    if (payload.length())
-      memcpy(payload_.data(), payload.data(), payload.length());
+    payload_.append(payload.data(), payload.length());
     app()->txInvoke([
       link = this->impl(),
       stream = ZuMv(stream),
@@ -8506,8 +8499,7 @@ private:
     typename Base::TxCryptoSnapshot txCrypto;
     Base::snapshotTxCrypto_(txCrypto);
     AsyncSendPayload payload;
-    payload.length(len);
-    if (len) memcpy(payload.data(), data, len);
+    payload.append(data, len);
     size_t offset0 = offsets[0];
     size_t offset1 = offsets[1];
     size_t offset2 = offsets[2];
@@ -8684,10 +8676,10 @@ private:
     return m_newToken;
   }
 
-  void newToken_(ZuCSpan token) {
+  void newToken_(ZuBSpan token) {
     if (!token || token.length() > AddressToken::MaxLength) return;
-    m_newToken.length(token.length());
-    memcpy(m_newToken.data(), token.data(), token.length());
+    m_newToken.length(0);
+    m_newToken.append(token.data(), token.length());
     Base::newTokenRx_();
   }
 
@@ -9127,9 +9119,7 @@ public:
     if (!stream || (!payload.length() && !fin))
       return false;
     AsyncSendPayload payload_;
-    payload_.length(payload.length());
-    if (payload.length())
-      memcpy(payload_.data(), payload.data(), payload.length());
+    payload_.append(payload.data(), payload.length());
     app()->txInvoke([
       link = this->impl(),
       stream = ZuMv(stream),
@@ -9390,8 +9380,7 @@ private:
     typename Base::TxCryptoSnapshot txCrypto;
     Base::snapshotTxCrypto_(txCrypto);
     AsyncSendPayload payload;
-    payload.length(len);
-    if (len) memcpy(payload.data(), data, len);
+    payload.append(data, len);
     size_t offset0 = offsets[0];
     size_t offset1 = offsets[1];
     size_t offset2 = offsets[2];

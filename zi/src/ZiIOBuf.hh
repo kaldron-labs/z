@@ -27,6 +27,7 @@
 
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuSpan.hh>
 
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmHeap.hh>
@@ -190,6 +191,7 @@ public:
   // ensure at least newSize bytes in buffer, preserving any existing data
   template <auto Grow = ZmGrow>
   uint8_t *ensure(unsigned newSize) {
+    newSize += skip;
     if (ZuLikely(newSize <= size)) return data();
     newSize = Grow(size, newSize);
     auto old = data_();
@@ -235,9 +237,12 @@ public:
 
   void append(const uint8_t *data, unsigned length_) {
     unsigned total = length + length_;
-    memcpy(ensure(total) + length, data, length_);
+    auto ptr = ensure(total);
+    if (ZuUnlikely(!ptr)) return;
+    memcpy(ptr + length, data, length_);
     length = total;
   }
+  void append(ZuBSpan data) { append(data.data(), data.length()); }
 
 private:
   template <typename U, typename R = void>
@@ -273,7 +278,7 @@ private:
 public:
   // ZuBSpan will match any string/span type
   IOBuf &operator <<(ZuBSpan buf) {
-    append(buf.data(), buf.length());
+    append(buf);
     return *this;
   }
   template <typename C>

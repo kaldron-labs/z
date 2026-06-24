@@ -394,11 +394,7 @@ inline bool queueRxSpans(
     unsigned length = unsigned(length64);
     ZmRef<ZiIOBuf> buf = alloc(length);
     if (ZuUnlikely(!buf)) return false;
-    if (ZuUnlikely(buf->size < length))
-      if (ZuUnlikely(!buf->ensure(length))) return false;
-    buf->skip = 0;
-    buf->length = length;
-    if (length) memcpy(buf->data_(), payload.data() + payloadOffset, length);
+    buf->append(ZuBSpan{payload.data() + payloadOffset, length});
     enqueue(ZuMv(buf), spans[i].first, length);
   }
   return true;

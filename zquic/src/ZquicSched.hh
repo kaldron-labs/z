@@ -181,14 +181,16 @@ struct ControlFrame {
     ControlFrame frame;
     frame.type = FrameType::PathResponse;
     if (data.length() == sizeof(frame.payload))
-      memcpy(frame.payload, data.data(), sizeof(frame.payload));
+      for (unsigned i = 0; i < sizeof(frame.payload); ++i)
+	frame.payload[i] = data[i];
     return frame;
   }
   static ControlFrame pathChallenge(ZuBSpan data) {
     ControlFrame frame;
     frame.type = FrameType::PathChallenge;
     if (data.length() == sizeof(frame.payload))
-      memcpy(frame.payload, data.data(), sizeof(frame.payload));
+      for (unsigned i = 0; i < sizeof(frame.payload); ++i)
+	frame.payload[i] = data[i];
     return frame;
   }
   static ControlFrame handshakeDone() {

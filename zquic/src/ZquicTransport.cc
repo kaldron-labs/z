@@ -37,27 +37,29 @@ bool TransportParams::validate() const
 static int putParamVar_(uint8_t *out, unsigned len, uint64_t id, uint64_t v,
     unsigned &o)
 {
+  if (o > len) return -1;
   uint8_t tmp[8];
   int n = VarInt::encode(tmp, sizeof(tmp), v);
   if (n < 0) return -1;
-  if (VarInt::put(out, len, id, o) < 0 ||
-      VarInt::put(out, len, unsigned(n), o) < 0 ||
-      len < o + unsigned(n))
-    return -1;
-  memcpy(out + o, tmp, n);
-  o += n;
+  PktWriter w{out + o, len - o};
+  w.putVar(id);
+  w.putVar(unsigned(n));
+  w.put(ZuBSpan{tmp, unsigned(n)});
+  if (!w.ok()) return -1;
+  o += w.offset();
   return 0;
 }
 
 static int putParamBytes_(uint8_t *out, unsigned len, uint64_t id, ZuBSpan v,
     unsigned &o)
 {
-  if (VarInt::put(out, len, id, o) < 0 ||
-      VarInt::put(out, len, v.length(), o) < 0 ||
-      len < o + v.length())
-    return -1;
-  if (v.length()) memcpy(out + o, v.data(), v.length());
-  o += v.length();
+  if (o > len) return -1;
+  PktWriter w{out + o, len - o};
+  w.putVar(id);
+  w.putVar(v.length());
+  w.put(v);
+  if (!w.ok()) return -1;
+  o += w.offset();
   return 0;
 }
 
