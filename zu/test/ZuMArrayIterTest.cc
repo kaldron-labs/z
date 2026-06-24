@@ -86,15 +86,15 @@ void testFindStarts()
 
   ZuCheck(a.find([](auto v) { return int(v) == 6; }) == 2);
   ZuCheck(a.find([](auto v) { return int(v) == 9; }) < 0);
-  ZuCheck(a.starts(prefix));
-  ZuCheck(!a.starts(mismatch));
+  ZuCheck(a.match(prefix));
+  ZuCheck(!a.match(mismatch));
 
   const ScaledArray ca{raw};
   ZuVArray<int, false> v{ca};
   ZuCheck(v.find([](auto e) { return int(e) == 8; }) == 3);
   ZuCheck(v.find([](auto e) { return int(e) == 10; }) < 0);
-  ZuCheck(v.starts(prefix));
-  ZuCheck(!v.starts(mismatch));
+  ZuCheck(v.match(prefix));
+  ZuCheck(!v.match(mismatch));
 }
 
 int main(int argc, char **argv)

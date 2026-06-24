@@ -98,7 +98,7 @@ template <unsigned N_> struct ZuString {
   }
 
   template <typename A>
-  ZuInline constexpr bool starts(const A &a) const {
+  ZuInline constexpr bool match(const A &a) const {
     if (ZuConstEval()) {
       unsigned l = length();
       unsigned n = ZuTraits<A>::length(a);
@@ -107,7 +107,7 @@ template <unsigned N_> struct ZuString {
 	if (data_[i] != a[i]) return false;
       return true;
     } else {
-      return cspan().starts(a);
+      return cspan().match(a);
     }
   }
 

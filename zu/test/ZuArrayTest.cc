@@ -60,6 +60,27 @@ struct AppendSink {
   }
 };
 
+template <typename S, typename R, typename = void>
+struct HasSubFind : public ZuFalse { };
+template <typename S, typename R>
+struct HasSubFind<S, R,
+  decltype(ZuDeclVal<const S &>().find(ZuDeclVal<const R &>()), void())> :
+    public ZuTrue { };
+
+template <typename S, typename = void>
+struct HasFixedFind : public ZuFalse { };
+template <typename S>
+struct HasFixedFind<S,
+  decltype(ZuDeclVal<const S &>().template find<"ab">(), void())> :
+    public ZuTrue { };
+
+template <typename S, typename = void>
+struct HasFixedMatch : public ZuFalse { };
+template <typename S>
+struct HasFixedMatch<S,
+  decltype(ZuDeclVal<const S &>().template match<"ab">(), void())> :
+    public ZuTrue { };
+
 constexpr bool spliceConstevalBasic()
 {
   ZuArray<int, 6> a;
@@ -143,8 +164,16 @@ static_assert(spliceConstevalRemoved());
 static_assert(spliceConstevalOffsetOnly());
 static_assert(spliceConstevalReplaceShrink());
 static_assert(spliceConstevalCase1Replace());
+static_assert(HasSubFind<ZuCSpan, ZuCSpan>{});
+static_assert(!HasSubFind<ZuSpan<const double>, ZuSpan<const double>>{});
+static_assert(HasFixedFind<ZuCSpan>{});
+static_assert(HasFixedFind<ZuBSpan>{});
+static_assert(!HasFixedFind<ZuSpan<const double>>{});
+static_assert(HasFixedMatch<ZuCSpan>{});
+static_assert(HasFixedMatch<ZuBSpan>{});
+static_assert(!HasFixedMatch<ZuSpan<const double>>{});
 
-constexpr bool findStartsConsteval()
+constexpr bool findMatchConsteval()
 {
   ZuArray<int, 6> a;
   a << 1 << 2 << 3 << 4;
@@ -153,18 +182,30 @@ constexpr bool findStartsConsteval()
   ZuArray<int, 3> mismatch;
   mismatch << 1 << 3;
   constexpr ZuString s{"abcdef"};
+  ZuCSpan span{"abcdef"};
   return
     a.find([](int v) { return v == 3; }) == 2 &&
     a.find([](int v) { return v == 9; }) < 0 &&
-    a.starts(prefix) &&
-    !a.starts(mismatch) &&
+    a.match(prefix) &&
+    !a.match(mismatch) &&
     s.find([](char c) { return c == 'd'; }) == 3 &&
     s.find([](char c) { return c == 'x'; }) < 0 &&
-    s.starts("abc") &&
-    !s.starts("abd");
+    span.find("cd") == 2 &&
+    span.find("gh") < 0 &&
+    span.find("") == 0 &&
+    span.find<"cd">() == 2 &&
+    span.find<"gh">() < 0 &&
+    span.find<"">() == 0 &&
+    span.match("abc") &&
+    !span.match("abd") &&
+    span.match<"abc">() &&
+    !span.match<"abd">() &&
+    span.match<"">() &&
+    s.match("abc") &&
+    !s.match("abd");
 }
 
-static_assert(findStartsConsteval());
+static_assert(findMatchConsteval());
 
 void testSpliceBasicPaths()
 {
@@ -525,14 +566,41 @@ void testFindStarts()
 
   ZuCheck(a.find([](int v) { return v == 30; }) == 2);
   ZuCheck(a.find([](int v) { return v == 99; }) < 0);
-  ZuCheck(a.starts(prefix));
-  ZuCheck(!a.starts(mismatch));
+  ZuCheck(a.match(prefix));
+  ZuCheck(!a.match(mismatch));
 
   constexpr ZuString s{"hello"};
   ZuCheck(s.find([](char c) { return c == 'l'; }) == 2);
   ZuCheck(s.find([](char c) { return c == 'z'; }) < 0);
-  ZuCheck(s.starts("he"));
-  ZuCheck(!s.starts("ha"));
+  ZuCheck(s.match("he"));
+  ZuCheck(!s.match("ha"));
+
+  ZuCSpan cs{"hello world"};
+  ZuCheck(cs.find("lo") == 3);
+  ZuCheck(cs.find("world") == 6);
+  ZuCheck(cs.find("x") < 0);
+  ZuCheck(cs.find("") == 0);
+  ZuCheck(cs.find<"lo">() == 3);
+  ZuCheck(cs.find<"world">() == 6);
+  ZuCheck(cs.find<"x">() < 0);
+  ZuCheck(cs.find<"">() == 0);
+  ZuCheck(ZuCSpan{"ababc"}.find<"abc">() == 2);
+  ZuCheck(ZuCSpan{"aaaaab"}.find<"aaab">() == 2);
+
+  const uint8_t bytes[] = { 'a', 'b', 'c', 'd', 'e' };
+  ZuBSpan bs{bytes, sizeof(bytes)};
+  ZuCheck(bs.find("bcd") == 1);
+  ZuCheck(bs.find("xyz") < 0);
+  ZuCheck(bs.find<"bcd">() == 1);
+  ZuCheck(bs.find<"xyz">() < 0);
+  ZuCheck(bs.match("abc"));
+  ZuCheck(!bs.match("abd"));
+  ZuCheck(bs.match<"abc">());
+  ZuCheck(!bs.match<"abd">());
+  ZuCheck(bs.match<"">());
+
+  const signed char signedNeedle[] = { 'c', 'd' };
+  ZuCheck(bs.find(ZuSpan<const signed char>{signedNeedle, 2}) == 2);
 }
 
 int main()
