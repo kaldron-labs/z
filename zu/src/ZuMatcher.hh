@@ -382,6 +382,8 @@ struct Matcher {
   // prefix match of keys at the beginning of the passed string
   // - returns the index of the matched key or -1 if no match
   static constexpr int match(ZuCSpan s) {
+    if constexpr (Keys::N == 1)
+      return s.template match<ZuType<0, Keys>{}()>() ? 0 : -1;
     uint16_t current = 0;
     for (unsigned i = 0, n = s.length(); i < n; i++) {
       uint8_t c = s[i];
@@ -395,6 +397,10 @@ struct Matcher {
   // substring match of keys anywhere in the passed string
   // - returns {offset, index} of the matched key or {-1, -1} if no match
   static constexpr ZuTuple<int, int> find(ZuCSpan s) {
+    if constexpr (Keys::N == 1) {
+      int offset = s.template find<ZuType<0, Keys>{}()>();
+      return {offset, offset >= 0 ? 0 : -1};
+    }
     uint16_t current = 0;
     for (unsigned i = 0, n = s.length(); i < n; i++) {
       uint8_t c = s[i];

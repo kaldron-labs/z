@@ -97,6 +97,9 @@ int main(int argc, char **argv)
     constexpr auto &x = "x";
     constexpr auto matcher = ZuMatcher<x>();
     ZuCHECK((matcher.match("x") == 0));
+    ZuCHECK((matcher.match("y") == -1));
+    ZuCHECK((matcher.find("abcx") == ZuTuple<int, int>{3, 0}));
+    ZuCHECK((matcher.find("abc") == ZuTuple<int, int>{-1, -1}));
   }
   {
     constexpr auto matcher = ZuMatcher<ZuFieldProp::JSON::GetIDs<Foo::B>>();

@@ -21,6 +21,7 @@
 #include <initializer_list>
 
 #include <stdlib.h>
+#include <string.h>
 
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuCmp.hh>
@@ -29,11 +30,48 @@
 #include <zlib/ZuArrayFn.hh>
 #include <zlib/ZuEquiv.hh>
 #include <zlib/ZuElem.hh>
+#include <zlib/ZuSwitch.hh>
 
 template <typename T> struct ZuSpan_ { };
 template <> struct ZuSpan_<char> {
   friend ZuPrintString ZuPrintType(ZuSpan_ *);
 };
+
+template <unsigned> struct ZuString;
+
+namespace Zu_::Span {
+
+template <typename Seq, unsigned J> struct AppendSeq_;
+template <unsigned ...I, unsigned J>
+struct AppendSeq_<ZuSeq<I...>, J> { using T = ZuSeq<I..., J>; };
+template <unsigned J>
+struct AppendSeq_<ZuSeq<>, J> { using T = ZuSeq<J>; };
+template <typename Seq, unsigned J>
+using AppendSeq = typename AppendSeq_<Seq, J>::T;
+
+template <auto String, unsigned N> struct MkSeq_;
+template <auto String>
+struct MkSeq_<String, 1> { using T = ZuSeq<uint8_t(String[0])>; };
+template <auto String>
+struct MkSeq_<String, 0> { using T = ZuSeq<>; };
+template <auto String, unsigned N>
+struct MkSeq_ {
+  using T = AppendSeq<typename MkSeq_<String, N - 1>::T,
+    uint8_t(String[N - 1])>;
+};
+template <auto String, unsigned N = String.length()>
+using MkSeq = typename MkSeq_<String, N>::T;
+
+template <auto String, unsigned C>
+consteval unsigned bmhSkip() {
+  constexpr unsigned N = String.length();
+  unsigned skip = N;
+  for (unsigned i = 0; i + 1 < N; i++)
+    if (uint8_t(String[i]) == C) skip = N - 1 - i;
+  return skip;
+}
+
+} // Zu_::Span
 
 template <typename T_>
 class ZuSpan : public ZuSpan_<ZuStrip<T_>> {
@@ -525,9 +563,123 @@ public:
     for (uint64_t i = 0, n = length(); i < n; i++) ZuFwd<L>(l)(m_data[i]);
   }
 
+private:
+  template <typename R>
+  struct IsFindString : public ZuBool<
+    ZuTraits<ZuSpan>::IsString &&
+    ZuTraits<R>::IsString &&
+    bool(ZuEquiv<T, typename ZuTraits<R>::Elem>{})> { };
+
+  template <auto S>
+  static constexpr unsigned bmhSkip_(uint8_t c) {
+    constexpr unsigned N = S.length();
+    if constexpr (N <= 1) {
+      return 1;
+    } else {
+      using Chars = Zu_::Span::MkSeq<S, N - 1>;
+      return ZuSwitch::dispatch<Chars>(c, [](auto C) {
+	return Zu_::Span::bmhSkip<S, C>();
+      }, N);
+    }
+  }
+
+  template <typename R>
+  constexpr int64_t find_(const R &r) const {
+    using RT = typename R::T;
+    uint64_t n = length();
+    uint64_t rn = r.length();
+    if (ZuUnlikely(!rn)) return 0;
+    if (ZuUnlikely(n < rn)) return -1;
+    const T *data = this->data();
+    const RT *rdata = r.data();
+    if (!ZuConstEval()) {
+#if defined(__GNUC__) && !defined(_WIN32)
+      if constexpr (ZuTraits<T>::IsPrimitive && ZuTraits<RT>::IsPrimitive) {
+	const auto *bytes = reinterpret_cast<const char *>(data);
+	const auto *rbytes = reinterpret_cast<const char *>(rdata);
+	uint64_t len = n * sizeof(T);
+	uint64_t rlen = rn * sizeof(RT);
+	uint64_t off = 0;
+	while (auto ptr = static_cast<const char *>(
+	    memmem(bytes + off, len - off, rbytes, rlen))) {
+	  off = ptr - bytes;
+	  if (!(off % sizeof(T))) return off / sizeof(T);
+	  ++off;
+	}
+	return -1;
+      }
+#endif
+    }
+    n -= rn;
+    for (uint64_t i = 0; i <= n; i++) {
+      uint64_t j = 0;
+      while (j < rn && Cmp::equals(data[i + j], rdata[j])) ++j;
+      if (j >= rn) return i;
+    }
+    return -1;
+  }
+
+  template <typename R>
+  constexpr bool match_(const R &r) const {
+    using RT = typename R::T;
+    uint64_t n = length();
+    uint64_t rn = r.length();
+    if (n < rn) return false;
+    const T *data = this->data();
+    const RT *rdata = r.data();
+    if (!ZuConstEval()) {
+#if defined(__GNUC__) && !defined(_WIN32)
+      if constexpr (
+	  ZuTraits<T>::IsPrimitive && ZuTraits<RT>::IsPrimitive &&
+	  sizeof(T) == sizeof(RT))
+	return !memcmp(data, rdata, rn * sizeof(T));
+#endif
+    }
+    for (uint64_t i = 0; i < rn; i++)
+      if (!Cmp::equals(data[i], rdata[i])) return false;
+    return true;
+  }
+
+public:
+// find subspan
+  template <typename R>
+  constexpr ZuIfT<IsFindString<R>{}, int64_t>
+  find(const R &r_) const {
+    using RT = ZuStrip<typename ZuTraits<R>::Elem>;
+    ZuSpan<const RT> r(r_);
+    return find_(r);
+  }
+
+// find compile-time string using Boyer-Moore-Horspool
+  template <
+    ZuString S, typename U = T,
+    decltype(ZuIfT<ZuEquiv<U, char>{}>(), int()) = 0>
+  constexpr int64_t
+  find() const {
+    constexpr uint64_t rn = S.length();
+    if constexpr (!rn) return 0;
+    uint64_t n = length();
+    if (ZuUnlikely(n < rn)) return -1;
+    const T *data = this->data();
+    constexpr uint64_t last = rn - 1;
+    uint64_t end = n - rn;
+    uint64_t i = 0;
+    do {
+      uint64_t j = last;
+      while (Cmp::equals(data[i + j], S[j])) {
+	if (!j) return i;
+	--j;
+      }
+      i += bmhSkip_<S>(uint8_t(data[i + last]));
+    } while (i <= end);
+    return -1;
+  }
+
 // find element - lambda should return true on match
   template <typename L>
-  constexpr int64_t find(L &&l) const {
+  constexpr ZuIfT<
+    !ZuTraits<L>::IsArray && !ZuTraits<L>::IsString, int64_t>
+  find(L &&l) const {
     for (uint64_t i = 0, n = length(); i < n; i++)
       if (ZuFwd<L>(l)(m_data[i])) return i;
     return -1;
@@ -535,12 +687,32 @@ public:
 
 // match at start
   template <typename R>
-  constexpr ZuIfT<ZuIsConstructible<R, ZuSpan>{}, bool>
-  starts(const R &r_) const {
+  constexpr ZuIfT<IsFindString<R>{}, bool>
+  match(const R &r_) const {
+    using RT = ZuStrip<typename ZuTraits<R>::Elem>;
+    ZuSpan<const RT> r(r_);
+    return match_(r);
+  }
+  template <typename R>
+  constexpr ZuIfT<
+    !ZuTraits<R>::IsString && ZuIsConstructible<R, ZuSpan>{}, bool>
+  match(const R &r_) const {
     ZuSpan r(r_);
-    auto n = length(), nr = r.length();
-    if (n < nr) return false;
-    return Ops::equals(this->data(), r.data(), nr);
+    return match_(r);
+  }
+
+// match compile-time string at start
+  template <
+    ZuString S, typename U = T,
+    decltype(ZuIfT<ZuEquiv<U, char>{}>(), int()) = 0>
+  constexpr bool
+  match() const {
+    constexpr uint64_t rn = S.length();
+    if (length() < rn) return false;
+    const T *data = this->data();
+    for (uint64_t i = 0; i < rn; i++)
+      if (!Cmp::equals(data[i], S[i])) return false;
+    return true;
   }
 
 // traits
@@ -549,9 +721,9 @@ public:
     enum {
       IsArray = 1, IsPrimitive = 0,
       IsString =
-	bool(ZuIsSame<ZuDecay<Elem>, char>{}) ||
-	bool(ZuIsSame<ZuDecay<Elem>, wchar_t>{}),
-      IsWString = bool(ZuIsSame<ZuDecay<Elem>, wchar_t>{})
+	bool(ZuEquiv<Elem, char>{}) ||
+	bool(ZuEquiv<Elem, wchar_t>{}),
+      IsWString = bool(ZuEquiv<Elem, wchar_t>{})
     };
     static constexpr Elem *data(ZuSpan &a) { return a.data(); }
     static constexpr const Elem *data(const ZuSpan &a) { return a.data(); }

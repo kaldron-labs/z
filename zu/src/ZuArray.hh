@@ -567,7 +567,7 @@ public:
 
 // match at start
   template <typename A>
-  constexpr bool starts(const A &a) const {
+  constexpr bool match(const A &a) const {
     if (ZuConstEval()) {
       unsigned l = length();
       unsigned n = ZuTraits<A>::length(a);
@@ -576,7 +576,7 @@ public:
 	if (!Cmp::equals((*this)[i], a[i])) return false;
       return true;
     } else {
-      return cspan().starts(a);
+      return cspan().match(a);
     }
   }
 

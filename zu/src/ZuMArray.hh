@@ -153,7 +153,7 @@ friend Elem;
 
 // match at start
   template <typename A>
-  bool starts(const A &a) const {
+  bool match(const A &a) const {
     uint64_t l = impl()->length();
     uint64_t n = ZuTraits<A>::length(a);
     if (l < n) return false;
