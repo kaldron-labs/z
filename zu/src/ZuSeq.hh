@@ -15,22 +15,28 @@
 
 #include <zlib/ZuTL.hh>
 
+template <unsigned> struct ZuString;
+
 // main template
 template <unsigned ...I> struct ZuSeq {
   enum { N = sizeof...(I) };
+  template <unsigned ...I_>
+  using Unshift = ZuSeq<I_..., I...>;
+  template <unsigned ...I_>
+  using Push = ZuSeq<I..., I_...>;
 };
 
 // generate unsigned sequence [0, N)
-template <typename T_, unsigned, bool> struct ZuPushSeq_ {
+template <typename T_, unsigned, bool> struct ZuMkSeq__ {
   using T = T_;
 };
 template <unsigned ...I, unsigned N>
-struct ZuPushSeq_<ZuSeq<I...>, N, true> {
+struct ZuMkSeq__<ZuSeq<I...>, N, true> {
   enum { J = sizeof...(I) };
-  using T = typename ZuPushSeq_<ZuSeq<I..., J>, N, (J < N - 1)>::T;
+  using T = typename ZuMkSeq__<ZuSeq<I..., J>, N, (J < N - 1)>::T;
 };
 template <unsigned N> struct ZuMkSeq_ {
-  using T = typename ZuPushSeq_<ZuSeq<>, N, (N > 0)>::T;
+  using T = typename ZuMkSeq__<ZuSeq<>, N, (N > 0)>::T;
 };
 template <unsigned N> using ZuMkSeq = typename ZuMkSeq_<N>::T;
 
@@ -67,8 +73,8 @@ struct ZuBitmapSeq_<ZuSeq<Seq...>, Bit, V, true> {
   using T = typename ZuBitmapSeq_<
     ZuSeq<Seq..., Bit>, Bit + 1, V & ~(uint64_t(1)<<Bit)>::T;
 };
-template <typename Seq, uint64_t V>
-using ZuBitmapSeq = typename ZuBitmapSeq_<Seq, 0, V>::T;
+template <uint64_t V>
+using ZuBitmapSeq = typename ZuBitmapSeq_<ZuSeq<>, 0, V>::T;
 
 // convert ZuSeq to typelist
 template <typename> struct ZuSeqTL_;
@@ -87,6 +93,27 @@ template <typename ...Seq> struct ZuTLSeq_ { using T = ZuSeq<Seq{}...>; };
 template <typename ...Seq>
 struct ZuTLSeq_<ZuTypeList<Seq...>> : public ZuTLSeq_<Seq...> { };
 template <typename ...Seq> using ZuTLSeq = typename ZuTLSeq_<Seq...>::T;
+
+// convert ZuSeq to ZuString
+template <typename> struct ZuSeqString_;
+template <unsigned ...Seq>
+struct ZuSeqString_<ZuSeq<Seq...>> {
+  static constexpr auto string() {
+    return ZuString<sizeof...(Seq) + 1>({ Seq..., 0 });
+  }
+};
+template <typename Seq>
+constexpr auto ZuSeqString() { return ZuSeqString_<Seq>::string(); }
+// ... and back again
+template <auto, unsigned> struct ZuStringSeq_;
+template <auto S> struct ZuStringSeq_<S, 0> { using T = ZuSeq<>; };
+template <auto S> struct ZuStringSeq_<S, 1> { using T = ZuSeq<>; };
+template <auto S> struct ZuStringSeq_<S, 2> { using T = ZuSeq<S[0]>; };
+template <auto S, unsigned N> struct ZuStringSeq_ {
+  using T = typename ZuStringSeq_<S, N - 1>::T::template Push<S[N - 2]>;
+};
+template <ZuString S>
+using ZuStringSeq = typename ZuStringSeq_<S, S.length()>::T;
 
 // min/max of a numerical sequence
 template <typename> struct ZuMin;

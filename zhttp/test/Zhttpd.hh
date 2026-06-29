@@ -838,7 +838,7 @@ struct StaticPlanner {
     ZuCSpan range_, uint64_t size, uint64_t &first, uint64_t &length,
     bool &ranged, bool &unsat) {
     ZuCSpan range{range_};
-    if (!range.match("bytes=")) return;
+    if (!range.match<"bytes=">()) return;
     ZuCSpan spec{range.data() + 6, range.length() - 6};
     if (spec.find([](auto c) { return c == ','; }) >= 0) return;
     auto dash = spec.find([](auto c) { return c == '-'; });

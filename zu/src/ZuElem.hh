@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // structural element wrapper for ZuArray (and ZuSpan)
+// - permits compile-time uninitialized data
 
 #ifndef ZuElem_HH
 #define ZuElem_HH

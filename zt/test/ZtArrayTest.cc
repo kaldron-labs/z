@@ -580,9 +580,9 @@ void testNonStringArrays()
     ZuCheck(o == "foo.bar.baz.bah");
     ZuCheck(a.find([](const ZtString<> &s) { return s == "baz"; }) == 2);
     ZuCheck(a.find([](const ZtString<> &s) { return s == "qux"; }) < 0);
-    ZuCheck(a.starts(ZuSpan<ZtString<>>(a.data(), 2)));
+    ZuCheck(a.match(ZuSpan<ZtString<>>(a.data(), 2)));
     ZtArray<ZtString<>> b = { "foo", "baz" };
-    ZuCheck(!a.starts(b));
+    ZuCheck(!a.match(b));
   }
 
   {

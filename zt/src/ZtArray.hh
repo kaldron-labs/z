@@ -964,7 +964,7 @@ public:
     for (uint64_t i = 0, n = length(); i < n; i++) ZuFwd<L>(l)(m_data[i]);
   }
 
-// find element - lambda should return true on match
+// find - lambda should return true on match
   template <typename L>
   int64_t find(L &&l) const {
     return cspan().find(ZuFwd<L>(l));
@@ -972,8 +972,8 @@ public:
 
 // match at start
   template <typename A>
-  bool starts(const A &a) const {
-    return cspan().starts(a);
+  bool match(A &&a) const {
+    return cspan().match(ZuFwd<A>(a));
   }
 
 protected:
