@@ -58,29 +58,6 @@
 
 namespace Zu_::AhoCorasick {
 
-#if ZuMatcher_Switch
-// compile-time conversion of a structural ZuString into a ZuSeq
-template <typename Seq, unsigned J> struct AppendSeq_;
-template <unsigned ...I, unsigned J>
-struct AppendSeq_<ZuSeq<I...>, J> { using T = ZuSeq<I..., J>; };
-template <unsigned J>
-struct AppendSeq_<ZuSeq<>, J> { using T = ZuSeq<J>; };
-template <typename Seq, unsigned J>
-using AppendSeq = typename AppendSeq_<Seq, J>::T;
-
-template <auto String, unsigned N> struct MkSeq_;
-template <auto String>
-struct MkSeq_<String, 1> { using T = ZuSeq<String[0]>; };
-template <auto String>
-struct MkSeq_<String, 0> { using T = ZuSeq<>; };
-template <auto String, unsigned N>
-struct MkSeq_ {
-  using T = AppendSeq<typename MkSeq_<String, N - 1>::T, String[N - 1]>;
-};
-template <auto String, unsigned N = String.length()>
-using MkSeq = typename MkSeq_<String, N>::T;
-#endif
-
 // a node in the automaton (i.e. a state in the FSM)
 // - each node contains a map from a matched character to the
 //   corresponding next node in the automaton
@@ -345,7 +322,7 @@ struct Matcher {
 #if ZuMatcher_Switch
     auto next = ZuSwitch::dispatch<length()>(index, [c](auto I) {
       constexpr uint16_t Index = I;
-      using Chars = MkSeq<automaton.nodes[Index].chars>;
+      using Chars = ZuStringSeq<automaton.nodes[Index].chars>;
       return ZuSwitch::dispatch<Chars>(c, [](auto Char) {
 	constexpr uint16_t Next = automaton.nodes[Index].next(Char);
 	return Next;
