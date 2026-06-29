@@ -6,6 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuString.hh>
 
 struct IntSink {
   enum { Cap = 8 };
@@ -143,6 +144,28 @@ static_assert(spliceConstevalRemoved());
 static_assert(spliceConstevalReplaceShrink());
 static_assert(spliceConstevalRLengthClamp());
 static_assert(spliceConstevalCase1NoOp());
+
+constexpr bool spanFindMatchConsteval()
+{
+  const char text[] = "aababc";
+  ZuCSpan s{text, 6};
+  return
+    s.find("ab") == 1 &&
+    s.find("abc") == 3 &&
+    s.find("x") < 0 &&
+    s.find("") == 0 &&
+    s.find<"ab">() == 1 &&
+    s.find<"abc">() == 3 &&
+    s.find<"x">() < 0 &&
+    s.find<"">() == 0 &&
+    s.match("aa") &&
+    !s.match("ab") &&
+    s.match<"aa">() &&
+    !s.match<"ab">() &&
+    s.match<"">();
+}
+
+static_assert(spanFindMatchConsteval());
 
 void testSpanSpliceRuntimePaths()
 {
@@ -437,6 +460,72 @@ void testSpanSplice()
   }
 }
 
+void testSpanFindMatch()
+{
+  ZuTestScope(span_find_match);
+
+  {
+    ZuCSpan s{"hello world"};
+    ZuCheck(s.find("hello") == 0);
+    ZuCheck(s.find("world") == 6);
+    ZuCheck(s.find("lo") == 3);
+    ZuCheck(s.find("x") < 0);
+    ZuCheck(s.find("") == 0);
+    ZuCheck(s.match("hello"));
+    ZuCheck(s.match("hello world"));
+    ZuCheck(!s.match("world"));
+    ZuCheck(!s.match("hello world!"));
+    ZuCheck(s.match(""));
+  }
+
+  {
+    ZuCSpan s{"aababc"};
+    ZuCheck(s.find<"ab">() == 1);
+    ZuCheck(s.find<"abc">() == 3);
+    ZuCheck(s.find<"aababc">() == 0);
+    ZuCheck(s.find<"aababc!">() < 0);
+    ZuCheck(s.find<"x">() < 0);
+    ZuCheck(s.find<"">() == 0);
+    ZuCheck(s.match<"aab">());
+    ZuCheck(!s.match<"ab">());
+    ZuCheck(s.match<"">());
+  }
+
+  {
+    const uint8_t data[] = {'a', 'b', 'c', 'd', 'e'};
+    ZuBSpan s{data, sizeof(data)};
+    ZuCheck(s.find("bcd") == 1);
+    ZuCheck(s.find<"bcd">() == 1);
+    ZuCheck(s.find("xyz") < 0);
+    ZuCheck(s.find<"xyz">() < 0);
+    ZuCheck(s.match("abc"));
+    ZuCheck(s.match<"abc">());
+    ZuCheck(!s.match("abd"));
+    ZuCheck(!s.match<"abd">());
+
+    const signed char needle[] = {'c', 'd'};
+    ZuCheck(s.find(ZuSpan<const signed char>{needle, 2}) == 2);
+    ZuCheck(s.match(ZuSpan<const signed char>{needle, 2}) == false);
+  }
+
+  {
+    const int data[] = {10, 20, 30, 40, 20, 30};
+    const int needle[] = {20, 30};
+    ZuSpan<const int> s{data, 6};
+    ZuCheck(s.find(ZuSpan<const int>{needle, 2}) == 1);
+    ZuCheck(s.match(ZuSpan<const int>{data, 3}));
+    ZuCheck(!s.match(ZuSpan<const int>{needle, 2}));
+  }
+
+  {
+    const float data[] = {-0.0F, 1.0F, 2.0F};
+    const float needle[] = {0.0F, 1.0F};
+    ZuSpan<const float> s{data, 3};
+    ZuCheck(s.find(ZuSpan<const float>{needle, 2}) == 0);
+    ZuCheck(s.match(ZuSpan<const float>{needle, 2}));
+  }
+}
+
 int main()
 {
   ZuTestMain();
@@ -449,6 +538,7 @@ int main()
   ZuTestCall(testSpanSplice);
   ZuTestCall(testSpanSpliceRuntimePaths);
   ZuTestCall(testSpanSpliceVariantPaths);
+  ZuTestCall(testSpanFindMatch);
 
   {
     ZuBSpan foo("foo");

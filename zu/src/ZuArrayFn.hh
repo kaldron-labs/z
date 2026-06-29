@@ -294,7 +294,7 @@ public:
 
 // array comparison
 
-template <typename T, class Cmp, class DefltCmp, bool IsIntegral, uint64_t Size>
+template <typename T, class Cmp, class DefltCmp, bool IsIntegralPOD>
 struct ZuArrayFn_Cmp {
   ZuInline static constexpr int cmp(
     const T *dst, const T *src, uint64_t length)
@@ -312,12 +312,12 @@ struct ZuArrayFn_Cmp {
   }
 };
 
-template <typename T, class Cmp> struct ZuArrayFn_Cmp<T, Cmp, Cmp, true, 1> {
+template <typename T, class Cmp> struct ZuArrayFn_Cmp<T, Cmp, Cmp, true> {
   ZuInline static constexpr int cmp(
     const T *dst, const T *src, uint64_t length)
   {
     if (ZuUnlikely(!length || dst == src)) return 0;
-    if (ZuConstEval()) {
+    if (ZuConstEval() || sizeof(T) > 1) {
       while (ZuLikely(length--))
 	if (int i = Cmp::cmp(*dst++, *src++)) return i;
       return 0;
@@ -363,7 +363,7 @@ struct ZuArrayFn_Hash<wchar_t> : public ZuArrayFn_StringHash<wchar_t> { };
 
 template <typename T, class Cmp = ZuCmp<T>> class ZuArrayFn :
   public ZuArrayFn_Ops<T, Cmp, ZuTraits<T>::IsPOD>,
-  public ZuArrayFn_Cmp<T, Cmp, ZuCmp<T>, ZuTraits<T>::IsIntegral, sizeof(T)>,
+  public ZuArrayFn_Cmp<T, Cmp, ZuCmp<T>, ZuTraits<T>::IsPOD && ZuTraits<T>::IsIntegral>,
   public ZuArrayFn_Hash<T> { };
 
 template <typename T> class ZuArrayFn_Null {

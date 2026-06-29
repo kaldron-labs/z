@@ -856,17 +856,20 @@ public:
   MatchString<S, ZuSpan<const Char>> prefix(const S &s) {
     if constexpr (ZuIsSame<S, String>{})
       if (this == &s) return cspan();
-    return cspan().prefix(s.cspan());
+    if (null__()) return {};
+    return ZuSpan(data_(), cspan().prefix(s.cspan()));
   }
   template <typename S>
   MatchAnyCString<S &&, ZuSpan<const Char>> prefix(S &&s_) {
     ZuSpan<const Char> s(s_);
-    return cspan().prefix(s);
+    if (null__()) return {};
+    return ZuSpan(data_(), cspan().prefix(s));
   }
   template <typename S>
   MatchOtherString<S &&, ZuSpan<const Char>> prefix(S &&s_) {
     ZuSpan<const Char> s(s_);
-    return cspan().prefix(s);
+    if (null__()) return {};
+    return ZuSpan(data_(), cspan().prefix(s));
   }
 
 public:
@@ -878,9 +881,9 @@ public:
 
 // match at start
   template <typename S>
-  bool starts(const S &s_) const {
+  bool match(const S &s_) const {
     ZuSpan<const Char> s(s_);
-    return cspan().starts(s);
+    return cspan().match(s);
   }
 
 // hash()
