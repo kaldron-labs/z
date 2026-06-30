@@ -16,6 +16,7 @@
 #include <zlib/ZuTL.hh>
 
 template <unsigned> struct ZuString;
+namespace Zu_ { template <typename, unsigned> struct Array; }
 
 // main template
 template <unsigned ...I> struct ZuSeq {
@@ -114,6 +115,26 @@ template <auto S, unsigned N> struct ZuStringSeq_ {
 };
 template <ZuString S>
 using ZuStringSeq = typename ZuStringSeq_<S, S.length()>::T;
+
+// convert ZuSeq to ZuArray
+template <typename, typename> struct ZuSeqArray_;
+template <unsigned ...Seq, typename Elem>
+struct ZuSeqArray_<ZuSeq<Seq...>, Elem> {
+  static constexpr auto array() {
+    return Zu_::Array<Elem, sizeof...(Seq)>({ Seq... });
+  }
+};
+template <typename Seq, typename Elem>
+constexpr auto ZuSeqArray() { return ZuSeqArray_<Seq, Elem>::array(); }
+// ... and back again
+template <auto, unsigned> struct ZuArraySeq_;
+template <auto A> struct ZuArraySeq_<A, 0> { using T = ZuSeq<>; };
+template <auto A> struct ZuArraySeq_<A, 1> { using T = ZuSeq<A[0]>; };
+template <auto A, unsigned N> struct ZuArraySeq_ {
+  using T = typename ZuArraySeq_<A, N - 1>::T::template Push<A[N - 1]>;
+};
+template <Zu_::Array A>
+using ZuArraySeq = typename ZuArraySeq_<A, A.length()>::T;
 
 // min/max of a numerical sequence
 template <typename> struct ZuMin;
