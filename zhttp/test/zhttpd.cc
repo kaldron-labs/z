@@ -214,19 +214,19 @@ struct ReqSink {
   }
   void version(ZuBSpan version_) { req.http10 = ZuCSpan{version_} == "HTTP/1.0"; }
   template <typename Key> void header(ZuBSpan value) {
-    if constexpr (ZuIsSame<Key, ZuStringT<"host">>{})
+    if constexpr (Key{}() == "host")
       req.host = ZuCSpan{value};
-    else if constexpr (ZuIsSame<Key, ZuStringT<"authorization">>{})
+    else if constexpr (Key{}() == "authorization")
       req.authorization = ZuCSpan{value};
-    else if constexpr (ZuIsSame<Key, ZuStringT<"range">>{})
+    else if constexpr (Key{}() == "range")
       req.range = ZuCSpan{value};
-    else if constexpr (ZuIsSame<Key, ZuStringT<"if-modified-since">>{})
+    else if constexpr (Key{}() == "if-modified-since")
       req.ifModifiedSince = ZuCSpan{value};
-    else if constexpr (ZuIsSame<Key, ZuStringT<"connection">>{})
+    else if constexpr (Key{}() == "connection")
       req.connection = ZuCSpan{value};
-    else if constexpr (ZuIsSame<Key, ZuStringT<"referer">>{})
+    else if constexpr (Key{}() == "referer")
       req.referer = ZuCSpan{value};
-    else if constexpr (ZuIsSame<Key, ZuStringT<"user-agent">>{})
+    else if constexpr (Key{}() == "user-agent")
       req.userAgent = ZuCSpan{value};
   }
   void contentLength(uint64_t) { }
@@ -284,25 +284,25 @@ struct RespOps {
   uint64_t contentLength() const { return plan->contentLength; }
   template <typename Key, typename L>
   void header(L &&l) const {
-    if constexpr (ZuIsSame<Key, ZuStringT<"content-type">>{})
+    if constexpr (Key{}() == "content-type")
       l(plan->contentType);
-    else if constexpr (ZuIsSame<Key, ZuStringT<"date">>{})
+    else if constexpr (Key{}() == "date")
       l(plan->date);
-    else if constexpr (ZuIsSame<Key, ZuStringT<"server">>{})
+    else if constexpr (Key{}() == "server")
       l(plan->server);
-    else if constexpr (ZuIsSame<Key, ZuStringT<"last-modified">>{})
+    else if constexpr (Key{}() == "last-modified")
       l(plan->lastModified);
-    else if constexpr (ZuIsSame<Key, ZuStringT<"accept-ranges">>{})
+    else if constexpr (Key{}() == "accept-ranges")
       l(plan->file ? ZuCSpan{"bytes"} : ZuCSpan{});
-    else if constexpr (ZuIsSame<Key, ZuStringT<"content-range">>{})
+    else if constexpr (Key{}() == "content-range")
       l(plan->contentRange);
-    else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{})
+    else if constexpr (Key{}() == "location")
       l(plan->location);
-    else if constexpr (ZuIsSame<Key, ZuStringT<"www-authenticate">>{})
+    else if constexpr (Key{}() == "www-authenticate")
       l(plan->wwwAuthenticate);
-    else if constexpr (ZuIsSame<Key, ZuStringT<"allow">>{})
+    else if constexpr (Key{}() == "allow")
       l(plan->allow);
-    else if constexpr (ZuIsSame<Key, ZuStringT<"connection">>{})
+    else if constexpr (Key{}() == "connection")
       l(plan->connection);
     else
       l("");

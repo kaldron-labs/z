@@ -142,7 +142,7 @@ struct ResponseBuilder : public Builder_<ResponseBuilder<Builder_>> {
   uint64_t streamID() const { return streamID_; }
   template <typename Key, typename L>
   void header(L &&l) const {
-    if constexpr (ZuIsSame<Key, ZuStringT<"content-type">>{})
+    if constexpr (Key{}() == "content-type")
       l("text/plain");
     else
       l("");

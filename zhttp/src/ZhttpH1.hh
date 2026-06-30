@@ -66,7 +66,7 @@ namespace H1 {
   private:
     // process header with variable value
     template <typename Key> void header_(ZuBSpan value) {
-      if constexpr (ZuIsSame<Key, ZuStringT<"transfer-encoding">>{}) {
+      if constexpr (Key{}() == "transfer-encoding") {
 	bool invalid = false;
 	split(value, [this, &invalid](unsigned i, ZuBSpan token) -> bool {
 	  // chunked must come last, anything else must be first
@@ -92,7 +92,7 @@ namespace H1 {
 	  m_state = State::Error;
 	  ZiLOG(Error, "Zhttp", "invalid transfer-encoding");
 	}
-      } else if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
+      } else if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength;
 	if (!parseUInt64Full_(value, contentLength) ||
 	    contentLength > MaxBody) {
