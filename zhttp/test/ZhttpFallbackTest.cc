@@ -93,7 +93,7 @@ struct RequestRx :
 
   template <typename Key>
   void header(ZuBSpan value) {
-    if constexpr (ZuIsSame<Key, ZuStringT<"host">>{}) {
+    if constexpr (Key{}() == "host") {
       host.length(0);
       host << ZuCSpan{
 	reinterpret_cast<const char *>(value.data()), value.length()};

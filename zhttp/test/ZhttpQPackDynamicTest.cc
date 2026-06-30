@@ -112,7 +112,7 @@ struct BuilderState :
   template <typename L> void host(L &&l) const { l("example.com"); }
   template <typename Key, typename L>
   void header(L &&l) const {
-    if constexpr (ZuIsSame<Key, ZuStringT<"accept">>{})
+    if constexpr (Key{}() == "accept")
       l("application/json");
     else
       l("");
@@ -155,7 +155,7 @@ struct ParserStream :
     path << ZuCSpan{path_};
   }
   template <typename Key> void header(ZuBSpan value) {
-    if constexpr (ZuIsSame<Key, ZuStringT<"x-test">>{}) {
+    if constexpr (Key{}() == "x-test") {
       ++xTestCalls;
       xTestLen = value.length();
       if (value.length() <= 4096) {

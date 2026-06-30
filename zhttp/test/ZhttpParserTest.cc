@@ -54,10 +54,10 @@ struct ResponseParser :
 
   template <typename Key>
   void header(ZuBSpan value) {
-    if constexpr (ZuIsSame<Key, ZuStringT<"key">>{}) {
+    if constexpr (Key{}() == "key") {
       ++keyCalls;
       keyValue = spanEq(value, "Value");
-    } else if constexpr (ZuIsSame<Key, ZuStringT<"x-empty">>{}) {
+    } else if constexpr (Key{}() == "x-empty") {
       ++emptyCalls;
       emptyLen = value.length();
     }
@@ -112,7 +112,7 @@ struct RequestParser :
 
   template <typename Key>
   void header(ZuBSpan value) {
-    if constexpr (ZuIsSame<Key, ZuStringT<"host">>{}) {
+    if constexpr (Key{}() == "host") {
       ++hostCalls;
       host.length(0);
       host << ZuCSpan{

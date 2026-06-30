@@ -670,7 +670,7 @@ namespace H3 {
     }
 
     template <typename Key> void header_(ZuBSpan value) {
-      if constexpr (ZuIsSame<Key, ZuStringT<"content-length">>{}) {
+      if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength;
 	if (!parseUInt64Full_(value, contentLength) ||
 	    contentLength > MaxBody) {

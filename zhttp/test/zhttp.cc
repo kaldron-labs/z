@@ -678,9 +678,9 @@ struct RequestOps {
   void host(L &&l) { l(ZuCSpan{state->url.host}); }
   template <typename Key, typename L>
   void header(L &&l) {
-    if constexpr (ZuIsSame<Key, ZuStringT<"user-agent">>{})
+    if constexpr (Key{}() == "user-agent")
       l("zhttp/1.0");
-    else if constexpr (ZuIsSame<Key, ZuStringT<"accept">>{})
+    else if constexpr (Key{}() == "accept")
       l("*/*");
     else
       l("");
@@ -839,7 +839,7 @@ struct ResponseSink {
 
   template <typename Key>
   void header(ZuBSpan value) {
-    if constexpr (ZuIsSame<Key, ZuStringT<"alt-svc">>{}) {
+    if constexpr (Key{}() == "alt-svc") {
       if (parseAltSvc(*state, ZuCSpan(value))) {
 	if (state->logResponse) {
 	  auto ctx = reqLogCtx(*state);
@@ -852,12 +852,12 @@ struct ResponseSink {
 	  }));
 	}
       }
-    } else if constexpr (ZuIsSame<Key, ZuStringT<"connection">>{}) {
+    } else if constexpr (Key{}() == "connection") {
       if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "close"))
 	state->connectionClose = true;
       else if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "keep-alive"))
 	state->connectionKeepAlive = true;
-    } else if constexpr (ZuIsSame<Key, ZuStringT<"location">>{}) {
+    } else if constexpr (Key{}() == "location") {
       state->location = ZuCSpan(value);
     }
     if (!state->logResponse) return;
