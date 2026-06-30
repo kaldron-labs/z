@@ -873,18 +873,21 @@ public:
   }
 
 public:
-// find character - lambda should return true on match
-  template <typename L>
-  int64_t find(L &&l) const {
-    return cspan().find(ZuFwd<L>(l));
+// find (forwards to ZuSpan)
+  template <typename Arg>
+  auto find(Arg &&arg) const {
+    return cspan().find(ZuFwd<Arg>(arg));
   }
+  template <auto S>
+  auto find() const { return cspan().template find<S>(); }
 
-// match at start
-  template <typename S>
-  bool match(const S &s_) const {
-    ZuSpan<const Char> s(s_);
-    return cspan().match(s);
+// match at start (forwards to ZuSpan)
+  template <typename Arg>
+  auto match(Arg &&arg) const {
+    return cspan().match(ZuFwd<Arg>(arg));
   }
+  template <auto S>
+  auto match() const { return cspan().template match<S>(); }
 
 // hash()
   uint64_t hash() const { return ZuHash<String>::hash(*this); }

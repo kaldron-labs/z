@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// fixed-size arrays for use in structs and passing by value
+// fixed-size structural arrays for use in structs and passing by value
 // - structural - can be used as a string template parameter, e.g.
 //   - template <ZuArray S> struct Foo { }; Foo<"bar"> baz;
 // - deduces from T (&)[N]
@@ -56,7 +56,7 @@ template <> struct Array_<char> {
   friend ZuPrintString ZuPrintType(Array_ *);
 };
 
-// implementation notes
+// implementation notes:
 // - structural implies POD (not in terms of C++ standards conformance,
 //   but in the sense of "plain ole' data" - i.e. "can I memcpy it?")
 //   (this is also the meaning of ZuTraits<T>::IsPOD)
@@ -278,9 +278,9 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
     return *this;
   }
 
-  // no attempt is made here to reproduce std::vector's troublesome behavior
-  // that depends on the noexcept qualification of the underlying type's
-  // move constructor
+  // no attempt is made here to reproduce std::vector's troublesome
+  // implementation (it dogmatically checks the noexcept qualification
+  // of the element type's move constructor)
   constexpr Array(Array &&a)
     noexcept(ZuNXMove<T>{}) : length_{a.length()}
   {

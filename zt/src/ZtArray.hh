@@ -964,17 +964,21 @@ public:
     for (uint64_t i = 0, n = length(); i < n; i++) ZuFwd<L>(l)(m_data[i]);
   }
 
-// find - lambda should return true on match
-  template <typename L>
-  int64_t find(L &&l) const {
-    return cspan().find(ZuFwd<L>(l));
+// find (forwards to ZuSpan)
+  template <typename Arg>
+  auto find(Arg &&arg) const {
+    return cspan().find(ZuFwd<Arg>(arg));
   }
+  template <auto S>
+  auto find() const { return cspan().template find<S>(); }
 
-// match at start
-  template <typename A>
-  bool match(A &&a) const {
-    return cspan().match(ZuFwd<A>(a));
+// match at start (forwards to ZuSpan)
+  template <typename Arg>
+  auto match(Arg &&arg) const {
+    return cspan().match(ZuFwd<Arg>(arg));
   }
+  template <auto S>
+  auto match() const { return cspan().template match<S>(); }
 
 protected:
   void length_(uint64_t v) {

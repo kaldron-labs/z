@@ -322,7 +322,7 @@ struct Matcher {
 #if ZuMatcher_Switch
     auto next = ZuSwitch::dispatch<length()>(index, [c](auto I) {
       constexpr uint16_t Index = I;
-      using Chars = ZuStringSeq<automaton.nodes[Index].chars>;
+      using Chars = ZuArraySeq<automaton.nodes[Index].chars>;
       return ZuSwitch::dispatch<Chars>(c, [](auto Char) {
 	constexpr uint16_t Next = automaton.nodes[Index].next(Char);
 	return Next;
