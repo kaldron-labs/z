@@ -214,12 +214,12 @@ void testDeterministicHandshakeProfile()
       Zquic::InitialSecret::KeyLen),
     "server Initial keys differ across peers");
 
-  client.installSecret(Zquic::CryptoLevel::Initial, "client-initial");
-  server.installSecret(Zquic::CryptoLevel::Initial, "server-initial");
-  client.installSecret(Zquic::CryptoLevel::Handshake, "client-hs");
-  server.installSecret(Zquic::CryptoLevel::Handshake, "server-hs");
-  client.installSecret(Zquic::CryptoLevel::OneRTT, "client-app");
-  server.installSecret(Zquic::CryptoLevel::OneRTT, "server-app");
+  client.installSecret(Zquic::PktNumSpace::Initial, "client-initial");
+  server.installSecret(Zquic::PktNumSpace::Initial, "server-initial");
+  client.installSecret(Zquic::PktNumSpace::Handshake, "client-hs");
+  server.installSecret(Zquic::PktNumSpace::Handshake, "server-hs");
+  client.installSecret(Zquic::PktNumSpace::AppData, "client-app");
+  server.installSecret(Zquic::PktNumSpace::AppData, "server-app");
   ZuCHECK(client.completeHandshake() && server.completeHandshake(),
     "1-RTT readiness not reached");
 }
@@ -325,18 +325,18 @@ void testMessageLevelTLSHandshake()
     "message-level TLS handshake did not complete");
   ZuCHECK(client.oneRTTReady() && server.oneRTTReady(),
     "1-RTT readiness not set after TLS handshake");
-  ZuCHECK(client.secretInstalled(Zquic::CryptoLevel::Handshake) &&
-      client.secretInstalled(Zquic::CryptoLevel::OneRTT) &&
-      server.secretInstalled(Zquic::CryptoLevel::Handshake) &&
-      server.secretInstalled(Zquic::CryptoLevel::OneRTT),
+  ZuCHECK(client.secretInstalled(Zquic::PktNumSpace::Handshake) &&
+      client.secretInstalled(Zquic::PktNumSpace::AppData) &&
+      server.secretInstalled(Zquic::PktNumSpace::Handshake) &&
+      server.secretInstalled(Zquic::PktNumSpace::AppData),
     "TLS traffic secrets not recorded");
-  ZuCHECK(client.txTrafficSecretInstalled(Zquic::CryptoLevel::OneRTT) &&
-      client.rxTrafficSecretInstalled(Zquic::CryptoLevel::OneRTT) &&
-      server.txTrafficSecretInstalled(Zquic::CryptoLevel::OneRTT) &&
-      server.rxTrafficSecretInstalled(Zquic::CryptoLevel::OneRTT),
+  ZuCHECK(client.txTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      client.rxTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      server.txTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      server.rxTrafficSecretInstalled(Zquic::PktNumSpace::AppData),
     "TLS traffic keys not derived");
-  ZuCHECK(client.txTrafficSecret(Zquic::CryptoLevel::OneRTT).tagLen == 16 &&
-      server.rxTrafficSecret(Zquic::CryptoLevel::OneRTT).tagLen == 16,
+  ZuCHECK(client.txTrafficSecret(Zquic::PktNumSpace::AppData).tagLen == 16 &&
+      server.rxTrafficSecret(Zquic::PktNumSpace::AppData).tagLen == 16,
     "TLS traffic key metadata mismatch");
 
   uint8_t payload[32] = {};
@@ -350,14 +350,14 @@ void testMessageLevelTLSHandshake()
   uint8_t packet[256];
   ptls_iovec_t plain = ptls_iovec_init(payload, sizeof(payload));
   int n = Zquic::PktProt::protectShortV(
-    packet, sizeof(packet), client.txProtState(Zquic::CryptoLevel::OneRTT),
+    packet, sizeof(packet), client.txProtState(Zquic::PktNumSpace::AppData),
     3, bytes_(header, unsigned(h)), &plain, 1, pnOffset, 2);
   ZuCHECK(n == int(unsigned(h) + sizeof(payload) + 16),
     "1-RTT traffic probe protection failed");
   uint64_t pn = 0;
   unsigned payloadOffset = 0;
   int plainLen = Zquic::PktProt::unprotectShort(
-    packet, unsigned(n), server.rxProtState(Zquic::CryptoLevel::OneRTT),
+    packet, unsigned(n), server.rxProtState(Zquic::PktNumSpace::AppData),
     0, pnOffset, pn, payloadOffset);
   ZuCHECK(plainLen == int(sizeof(payload)) &&
       pn == 3 && payloadOffset == unsigned(h) &&

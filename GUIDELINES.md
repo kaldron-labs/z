@@ -53,6 +53,8 @@ These guidelines extend `AGENTS.md`
   - if not rebuilding everything, if library code has changed in a layer under development, always rebuild `src` before dependent `test`/`bench`/`example`, e.g. `make -C zquic/src -j8`
   - always build default target `all` before `make test`, e.g. `make -C zquic/test -j8 && make -C zquic/test test`
   - after build type has changed (release, debug, asan, etc.) do a top-level `make clean && make -j8` to rebuild
+  - release-build verification must be configured through `z.config`; after configuring the release build, run top-level `make clean` and then top-level `make -j8` so all dependent Z libraries and tests are rebuilt consistently
+  - do not verify a release build by manually compiling selected modules or by rebuilding only dependent subdirectories; that can mix stale objects, stale generated dependency files, or libraries built under a different build type
 - no warnings in build
   - they should be suppressed if false-positive
 
@@ -354,6 +356,8 @@ These guidelines extend `AGENTS.md`
   - use `ZmBackTracer` to efficiently capture/log a ring of backtraces
 - demangling: below `zm`, use `ZuDemangle`, otherwise use `ZmDemangle`
   - demangling post-processing can be extended with `ZtDemangle`
+- use `ZiLOG(Debug, ...)` for debug text logging
+- keep module-specific structured trace guidance in module docs
 
 ### Persistence
 - Use `Zdb` for relational data persistency; use sagas for transactional integrity.
@@ -538,7 +542,16 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 ## Naming
 ### Length and abbreviations
 - Names must be concise; 32 bytes is the hard upper limit.
-- Use standard in-code abbreviations for long names: `reserve` -> `res`, `packet` -> `pkt`, `client` -> `cli`, `server` -> `srv`, `protection` -> `prot`, `generation` -> `gen`, etc.
+- Use industry standard in-code abbreviations for long names:
+  - `reserve` -> `res`
+  - `packet` -> `pkt`
+  - `client` -> `cli`
+  - `server` -> `srv`
+  - `protection` -> `prot`
+  - `generation` -> `gen`
+  - `security` -> `sec`
+  - `connection` -> `cxn`
+  - ... and so on (this is not an exhaustive list)
 - Example: `packet` is fine; `reservePacketProtection` is too long; use `resPktProt`.
 - use "ack" and "ackd", not "ackd"; example: `packetAckd`
 - use "nak and "nakd", not "nack", "nackd" or "nacked"; example: `packetNakd`

@@ -966,19 +966,21 @@ public:
 
 // find (forwards to ZuSpan)
   template <typename Arg>
-  auto find(Arg &&arg) const {
+  int64_t find(Arg &&arg) const {
     return cspan().find(ZuFwd<Arg>(arg));
   }
-  template <auto S>
-  auto find() const { return cspan().template find<S>(); }
+  template <ZuString S, typename V = T>
+  ZuIfT<ZuEquiv<V, char>{}, int64_t>
+  find() const { return cspan().template find<S>(); }
 
 // match at start (forwards to ZuSpan)
   template <typename Arg>
   auto match(Arg &&arg) const {
     return cspan().match(ZuFwd<Arg>(arg));
   }
-  template <auto S>
-  auto match() const { return cspan().template match<S>(); }
+  template <ZuString S, typename V = T>
+  ZuIfT<ZuEquiv<V, char>{}, bool>
+  match() const { return cspan().template match<S>(); }
 
 protected:
   void length_(uint64_t v) {

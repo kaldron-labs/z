@@ -299,12 +299,12 @@ void testTrafficSecretProt()
   Zquic::PktProtState txShort;
   Zquic::PktProtState txShortSplit;
   Zquic::PktProtState rxShort;
-  ZuCHECK(txLong.init(secret, Zquic::CryptoLevel::Handshake, true) &&
-      txLongSplit.init(secret, Zquic::CryptoLevel::Handshake, true) &&
-      rxLong.init(secret, Zquic::CryptoLevel::Handshake, false) &&
-      txShort.init(secret, Zquic::CryptoLevel::OneRTT, true) &&
-      txShortSplit.init(secret, Zquic::CryptoLevel::OneRTT, true) &&
-      rxShort.init(secret, Zquic::CryptoLevel::OneRTT, false),
+  ZuCHECK(txLong.init(secret, Zquic::PktNumSpace::Handshake, true) &&
+      txLongSplit.init(secret, Zquic::PktNumSpace::Handshake, true) &&
+      rxLong.init(secret, Zquic::PktNumSpace::Handshake, false) &&
+      txShort.init(secret, Zquic::PktNumSpace::AppData, true) &&
+      txShortSplit.init(secret, Zquic::PktNumSpace::AppData, true) &&
+      rxShort.init(secret, Zquic::PktNumSpace::AppData, false),
     "traffic packet protection state init failed");
   auto txLongAead = txLong.aead.get();
   auto txLongHP = txLong.hp.get();
@@ -393,8 +393,8 @@ void testTrafficSecretProt()
 	  Zquic::PktProtState retryRx;
 	  uint8_t retry[256];
 	  memcpy(retry, packetV, unsigned(nv));
-	  ZuCHECK(wrongRx.init(wrongSecret, Zquic::CryptoLevel::OneRTT, false) &&
-	      retryRx.init(secret, Zquic::CryptoLevel::OneRTT, false),
+	  ZuCHECK(wrongRx.init(wrongSecret, Zquic::PktNumSpace::AppData, false) &&
+	      retryRx.init(secret, Zquic::PktNumSpace::AppData, false),
 	    "traffic short retry state init failed");
 	  plainLen = Zquic::PktProt::unprotectShort(
 	    retry, unsigned(nv), wrongRx, 0, pnOffset, pn, payloadOffset);
@@ -424,7 +424,7 @@ void testTrafficSecretProt()
     "traffic packet protection contexts were not reused");
 
   Zquic::PktProtState txZero;
-  ZuCHECK(txZero.init(secret, Zquic::CryptoLevel::Handshake, true),
+  ZuCHECK(txZero.init(secret, Zquic::PktNumSpace::Handshake, true),
     "traffic zero-vector state init failed");
   static constexpr unsigned ZeroPNLength = 4;
   int zh = Zquic::Pkt::writeHandshake(

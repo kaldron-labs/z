@@ -109,7 +109,7 @@ struct PktProtState {
   PktProtState(const PktProtState &) = delete;
   PktProtState &operator =(const PktProtState &) = delete;
 
-  bool init(const TrafficSecret &, CryptoLevel::T, bool);
+  bool init(const TrafficSecret &, PktNumSpace::T, bool);
   void clear();
   bool valid() const { return installed; }
 
@@ -117,7 +117,7 @@ struct PktProtState {
   Ztls::Pico::CipherCtx hp;
   Ztls::Pico::CipherCtx hpSupp;
   TrafficSecret		secret;
-  CryptoLevel::T	level = CryptoLevel::Initial;
+  PktNumSpace::T	level = PktNumSpace::Initial;
   bool			tx = false;
   bool			installed = false;
 };
@@ -278,29 +278,29 @@ public:
   bool tlsReady() const { return m_tls; }
   ZuCSpan alpn() const { return m_alpn; }
   ZuCSpan negotiatedProtocol() const;
-  bool secretInstalled(CryptoLevel::T level) const {
+  bool secretInstalled(PktNumSpace::T level) const {
     return m_secretInstalled[level];
   }
-  bool txTrafficSecretInstalled(CryptoLevel::T level) const {
+  bool txTrafficSecretInstalled(PktNumSpace::T level) const {
     return m_txTrafficSecrets[level].valid();
   }
-  bool rxTrafficSecretInstalled(CryptoLevel::T level) const {
+  bool rxTrafficSecretInstalled(PktNumSpace::T level) const {
     return m_rxTrafficSecrets[level].valid();
   }
-  const TrafficSecret &txTrafficSecret(CryptoLevel::T level) const {
+  const TrafficSecret &txTrafficSecret(PktNumSpace::T level) const {
     return m_txTrafficSecrets[level];
   }
-  const TrafficSecret &rxTrafficSecret(CryptoLevel::T level) const {
+  const TrafficSecret &rxTrafficSecret(PktNumSpace::T level) const {
     return m_rxTrafficSecrets[level];
   }
-  PktProtState &txProtState(CryptoLevel::T level) {
+  PktProtState &txProtState(PktNumSpace::T level) {
     return m_txProt[level];
   }
-  PktProtState &rxProtState(CryptoLevel::T level) {
+  PktProtState &rxProtState(PktNumSpace::T level) {
     return m_rxProt[level];
   }
-  bool updateTxTrafficSecret(CryptoLevel::T, const TrafficSecret &);
-  bool updateRxTrafficSecret(CryptoLevel::T, const TrafficSecret &);
+  bool updateTxTrafficSecret(PktNumSpace::T, const TrafficSecret &);
+  bool updateRxTrafficSecret(PktNumSpace::T, const TrafficSecret &);
   const CryptoDiag &diag() const { return m_diag; }
   int tlsResult() const { return m_tlsResult; }
   size_t tlsReadEpoch() const;
@@ -316,8 +316,8 @@ public:
 
   int encodeTransportParams(uint8_t *, unsigned, const TransportParams &);
   int decodeTransportParams(ZuBSpan, TransportParams &);
-  void installSecret(CryptoLevel::T, ZuBSpan);
-  bool discardSecret(CryptoLevel::T);
+  void installSecret(PktNumSpace::T, ZuBSpan);
+  bool discardSecret(PktNumSpace::T);
   bool deriveInitial(const CxnID &);
   const InitialKeyMaterial &initialKeys() const { return m_initialKeys; }
   bool rejectZeroRTT();
@@ -332,7 +332,7 @@ private:
   bool initTLSContext_(const CryptoConfig &);
   bool initTLSProperties_(const CryptoConfig &);
   int updateTrafficKey_(int, size_t, const void *);
-  void keyLog_(int, CryptoLevel::T, ZuBSpan);
+  void keyLog_(int, PktNumSpace::T, ZuBSpan);
   int onClientHello_(ptls_on_client_hello_parameters_t *);
   int collectedExtensions_(ptls_raw_extension_t *);
   static int updateTrafficKeyCB_(

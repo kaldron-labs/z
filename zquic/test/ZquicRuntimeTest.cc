@@ -27,6 +27,58 @@ static constexpr unsigned RuntimeServerMultiConnections = 17;
 struct RuntimeClient : public Zquic::Client<RuntimeClient> {
   struct Link;
   struct Stream;
+
+  enum TokenRewrite {
+    TokenNone,
+    TokenMalformed,
+    TokenAuth,
+    TokenExpired,
+    TokenAddress,
+    TokenPolicy,
+    TokenKind
+  };
+
+  bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
+    unsigned rewrite = tokenRewrite;
+    if (!rewrite || !buf || !buf->length) return true;
+    ZuBSpan packet{buf->data_(), buf->length};
+    if (!Zquic::Pkt::isLong(packet)) return true;
+    Zquic::LongHdr h;
+    if (Zquic::Pkt::parseLong(packet, h) < 0 ||
+	h.type != Zquic::PktType::Initial ||
+	!h.tokenLength)
+      return true;
+
+    ZiSockAddr addr{
+      rewrite == TokenAddress ? ZiIP("127.0.0.2") : ZiIP("127.0.0.1"),
+      12345
+    };
+    Zquic::TokenKind::T kind = rewrite == TokenKind ?
+      Zquic::TokenKind::T(3) : Zquic::TokenKind::NewToken;
+    Zquic::TokenBytes token;
+    if (!Zquic::AddressToken::encode(
+	  token, kind, tokenSecret, addr, h.dcid, {},
+	  rewrite == TokenExpired ? tokenNow - 120 : tokenNow, false))
+      return true;
+    if (rewrite == TokenMalformed)
+      token[0] = 'X';
+    else if (rewrite == TokenAuth)
+      token[token.length() - 1] ^= 1;
+    if (token.length() != h.tokenLength) {
+      ++tokenRewriteLengthMismatch;
+      return true;
+    }
+    memcpy(buf->data_() + h.tokenOffset, token.data(), token.length());
+    tokenRewrite = TokenNone;
+    ++tokenRewritesApplied;
+    return true;
+  }
+
+  Zquic::TokenSecret tokenSecret;
+  uint64_t tokenNow = 0;
+  ZmAtomic<unsigned> tokenRewrite = TokenNone;
+  ZmAtomic<unsigned> tokenRewritesApplied = 0;
+  ZmAtomic<unsigned> tokenRewriteLengthMismatch = 0;
 };
 struct RuntimeServerLink;
 struct RuntimeServerStream;
@@ -117,6 +169,12 @@ struct RuntimeClient::Link :
   void disconnected(bool) { ++disconnectedCount; }
   void connectFailed(bool) { ++connectFailures; }
   void streamed(ZmRef<Stream>) { ++streamedCount; }
+  void forceCloseTimeout() {
+    app()->txInvoke(this, [link = ZmRef<Link>{this}]() mutable {
+      link->Base::closeTimeout_();
+      return link;
+    });
+  }
 
   ZmAtomic<unsigned> connectedCount = 0;
   ZmAtomic<unsigned> disconnectedCount = 0;
@@ -147,6 +205,12 @@ struct RuntimeServerLink :
   void connected(Zi::Connected) { ++connectedCount; }
   void disconnected(bool) { ++disconnectedCount; }
   void streamed(ZmRef<Stream>) { ++streamedCount; }
+  void forceCloseTimeout() {
+    app()->txInvoke(this, [link = ZmRef<RuntimeServerLink>{this}]() mutable {
+      link->Base::closeTimeout_();
+      return link;
+    });
+  }
 
   ZmAtomic<unsigned> connectedCount = 0;
   ZmAtomic<unsigned> disconnectedCount = 0;
@@ -204,6 +268,22 @@ void waitDisconnect(ZiMultiplex &mx)
 ZuCSpan cspan_(const ZtString<> &s)
 {
   return ZuCSpan{s.data(), s.length()};
+}
+
+ZtString<> readFile_(ZuCSpan path)
+{
+  ZtString<> data;
+  ZiFile file{Zi::Path{path}, ZiFile::ReadOnly | ZiFile::GC};
+  if (!file) return data;
+  auto size = file.size();
+  if (size <= 0 || size > (1<<20)) return data;
+  data.length(unsigned(size));
+  int n = file.read(data.data(), data.length());
+  if (n <= 0)
+    data.length(0);
+  else
+    data.length(unsigned(n));
+  return data;
 }
 
 void dumpRuntimeDiag(
@@ -273,7 +353,10 @@ struct TempDir {
   void cleanup()
   {
     if (!path[0]) return;
-    const char *names[] = { "cert.pem", "key.pem", nullptr };
+    const char *names[] = {
+      "cert.pem", "key.pem", "endpoint.sqlog", "retry.sqlog",
+      "rejected-token.sqlog", "policy-token.sqlog",
+      "idle.sqlog", nullptr };
     for (auto name = names; *name; ++name) {
       auto p = pathOf(*name);
       unlink(p.data());
@@ -291,6 +374,7 @@ void testRuntimeEndpointOpen()
 
   TempDir temp;
   ZuCHECK(temp.init(), "runtime temporary TLS certificate generation failed");
+  ZtString<> qlogPath = temp.pathOf("endpoint.sqlog");
 
   ZiMultiplex mx(
       ZiMxParams()
@@ -311,6 +395,10 @@ void testRuntimeEndpointOpen()
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(cspan_(temp.certPath))
 	.keyPath(cspan_(temp.keyPath))
+	.qlog(true)
+	.qlogPath(cspan_(qlogPath))
+	.qlogThread("zquic-endpoint-qlog")
+	.qlogRingSize(1<<16)
 	.maxData(32768)
 	.maxStreamData(8192)
 	.maxStreamsBidi(8)
@@ -448,6 +536,7 @@ void testRuntimeEndpointOpen()
     "runtime stream objects did not process received STREAM frames");
 
   clientLink->disconnect();
+  serverLink->forceCloseTimeout();
   server.stop();
   ZuCHECK(waitUntil([&clientLink]() {
       return !clientLink->cxn() && clientLink->disconnectedCount == 1;
@@ -464,6 +553,58 @@ void testRuntimeEndpointOpen()
   server.clearLinks();
   client.final();
   server.final();
+
+#ifdef Zquic_DEBUG
+  ZtString<> qlog = readFile_(cspan_(qlogPath));
+  ZuCHECK(qlog, "endpoint runtime qlog output missing");
+  ZuCHECK(qlog.find<"\"type\":\"server\"">() >= 0,
+    "endpoint runtime qlog missing server vantage point");
+  ZuCHECK(qlog.find<"common_fields">() >= 0 &&
+      qlog.find<"ODCID">() >= 0 &&
+      qlog.find<"group_id">() >= 0 &&
+      qlog.find<"DCID">() >= 0 &&
+      qlog.find<"SCID">() >= 0,
+    "endpoint runtime qlog missing connection metadata fields");
+  ZuCHECK(qlog.find<"\"ODCID\":\"\"">() < 0 &&
+      qlog.find<"\"group_id\":\"\"">() < 0 &&
+      qlog.find<"\"DCID\":\"\"">() < 0 &&
+      qlog.find<"\"SCID\":\"\"">() < 0,
+    "endpoint runtime qlog has empty connection metadata");
+  ZuCHECK(qlog.find<"transport:stream_state_updated">() >= 0,
+    "endpoint runtime qlog missing stream_state_updated");
+  ZuCHECK(qlog.find<"transport:datagrams_sent">() >= 0,
+    "endpoint runtime qlog missing datagrams_sent");
+  ZuCHECK(qlog.find<"transport:stream_data_moved">() >= 0,
+    "endpoint runtime qlog missing stream_data_moved");
+  ZuCHECK(qlog.find<"stream_id">() >= 0,
+    "endpoint runtime qlog missing stream_id");
+  ZuCHECK(qlog.find<"application">() >= 0 &&
+      qlog.find<"transport">() >= 0 &&
+      qlog.find<"network">() >= 0,
+    "endpoint runtime qlog missing stream data movement locations");
+  ZuCHECK(qlog.find<"\"from\":\"transport\"">() >= 0 &&
+      qlog.find<"\"to\":\"application\"">() >= 0,
+    "endpoint runtime qlog missing transport-to-application movement");
+  ZuCHECK(qlog.find<"raw">() >= 0 && qlog.find<"length">() >= 0,
+    "endpoint runtime qlog missing stream data raw length");
+  ZuCHECK(qlog.find<"client-bidi">() < 0 &&
+      qlog.find<"client-uni">() < 0 &&
+      qlog.find<"server-bidi">() < 0 &&
+      qlog.find<"server-uni">() < 0,
+    "endpoint runtime qlog leaked application payload");
+  ZuCHECK(qlog.find<"local_open">() >= 0 || qlog.find<"peer_open">() >= 0,
+    "endpoint runtime qlog missing stream open reason");
+  ZuCHECK(qlog.find<"connectivity:connection_closed">() >= 0,
+    "endpoint runtime qlog missing connection_closed");
+  ZuCHECK(qlog.find<"peer_close_frame">() >= 0 ||
+      qlog.find<"local_close">() >= 0,
+    "endpoint runtime qlog missing close reason");
+  ZuCHECK(qlog.find<"drain_expired">() >= 0 &&
+      qlog.find<"aborted">() >= 0,
+    "endpoint runtime qlog missing close/drain expiry");
+  unlink(qlogPath.data());
+#endif
+
   mx.stop();
 }
 
@@ -728,6 +869,7 @@ void testRuntimeServerMultiConnection()
   server.clearLinks();
   client.final();
   server.final();
+
   mx.stop();
 }
 
@@ -753,10 +895,16 @@ void testRuntimeRetryAddressValidation()
   if (!mxStarted) return;
 
   RuntimeServer server;
+  ZtString<> qlogPath = temp.pathOf("retry.sqlog");
+  unlink(qlogPath.data());
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(cspan_(temp.certPath))
 	.keyPath(cspan_(temp.keyPath))
+	.qlog(true)
+	.qlogPath(cspan_(qlogPath))
+	.qlogThread("zquic-retry-qlog")
+	.qlogRingSize(1<<16)
 	.maxData(32768)
 	.maxStreamData(8192)
 	.maxStreamsBidi(8)
@@ -884,6 +1032,362 @@ void testRuntimeRetryAddressValidation()
   server.clearLinks();
   client.final();
   server.final();
+
+#ifdef Zquic_DEBUG
+  ZtString<> qlog = readFile_(cspan_(qlogPath));
+  ZuCHECK(qlog, "retry runtime qlog output missing");
+  ZuCHECK(qlog.find<"security:retry_sent">() >= 0,
+    "retry runtime qlog missing retry_sent");
+  ZuCHECK(qlog.find<"security:retry_validated">() >= 0,
+    "retry runtime qlog missing retry_validated");
+  ZuCHECK(qlog.find<"security:token_issued">() >= 0,
+    "retry runtime qlog missing token_issued");
+  ZuCHECK(qlog.find<"security:token_validated">() >= 0,
+    "retry runtime qlog missing token_validated");
+  ZuCHECK(qlog.find<"security:token_rejected">() >= 0,
+    "retry runtime qlog missing token_rejected");
+  ZuCHECK(qlog.find<"transport:packet_buffered">() >= 0,
+    "retry runtime qlog missing packet_buffered");
+  ZuCHECK(qlog.find<"address_validation">() >= 0,
+    "retry runtime qlog missing address-validation reason");
+  ZuCHECK(qlog.find<"missing_token">() >= 0,
+    "retry runtime qlog missing missing-token rejection reason");
+  ZuCHECK(qlog.find<"new_token">() >= 0,
+    "retry runtime qlog missing NEW_TOKEN reason");
+  ZuCHECK(qlog.find<"coalescing">() >= 0,
+    "retry runtime qlog missing coalescing reason");
+  unlink(qlogPath.data());
+#endif
+
+  mx.stop();
+}
+
+void testRuntimeRejectedTokenQLog()
+{
+  ZuTestScope(testRuntimeRejectedTokenQLog);
+
+  TempDir temp;
+  ZuCHECK(temp.init(), "rejected-token runtime temporary TLS certificate failed");
+  ZtString<> qlogPath = temp.pathOf("rejected-token.sqlog");
+  ZtString<> policyQlogPath = temp.pathOf("policy-token.sqlog");
+  unlink(qlogPath.data());
+  unlink(policyQlogPath.data());
+
+  Zquic::TokenSecret secret;
+  secret.length(Zquic::AddressToken::SecretLength);
+  for (unsigned i = 0; i < secret.length(); ++i) secret[i] = uint8_t(i + 1);
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(5)
+	    .thread(1, [](auto &t) { t.isolated(1); })
+	    .thread(2, [](auto &t) { t.isolated(1); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "rejected-token runtime multiplexer start failed");
+  if (!mxStarted) return;
+
+  RuntimeServer server;
+  ZuCHECK(server.init(
+      Zquic::ServerParams(&mx, "3", "4")
+	.certPath(cspan_(temp.certPath))
+	.keyPath(cspan_(temp.keyPath))
+	.qlog(true)
+	.qlogPath(cspan_(qlogPath))
+	.qlogThread("zquic-rejected-token-qlog")
+	.qlogRingSize(1<<16)
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsBidi(8)
+	.maxStreamsUni(8)
+	.retryAddressValidation(true)
+	.newTokenAddressValidation(true)
+	.addressValidationSecret(secret)
+	.addressValidationLifetime(60)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "rejected-token runtime server init failed");
+  ZuCHECK(server.start(), "rejected-token runtime server listen failed");
+  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+    "rejected-token runtime server did not listen");
+	  if (!server.listening()) {
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+
+  RuntimeClient client;
+  client.tokenSecret = secret;
+  client.tokenNow = uint64_t(Zm::now().sec());
+  ZuCHECK(client.init(
+	Zquic::ClientParams(&mx, "3", "4")
+	  .caPath(cspan_(temp.certPath))
+	  .maxData(32768)
+	  .maxStreamData(8192)
+	  .maxStreamsBidi(8)
+	  .maxStreamsUni(8)
+	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "rejected-token runtime client init failed");
+  ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+  ZmRef<RuntimeServer::Link> serverLink;
+  bool established = waitUntil([&server, &clientLink, &serverLink]() {
+      if (!serverLink) serverLink = server.link(0);
+      return serverLink && clientLink->established() &&
+	serverLink->established();
+    });
+  if (!established) {
+    dumpRuntimeDiag(
+      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+    if (serverLink)
+      dumpRuntimeDiag(
+	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+  }
+  ZuCHECK(established,
+    "rejected-token runtime initial handshake did not establish");
+	  if (!established || !serverLink) {
+	    client.final();
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+  ZuCHECK(waitUntil([&clientLink, &serverLink]() {
+      return clientLink->runtimeDiag().newTokenRx >= 1 &&
+	serverLink->runtimeDiag().newTokenTx >= 1;
+    }), "rejected-token runtime NEW_TOKEN was not exchanged");
+  clientLink->disconnect();
+  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+    "rejected-token runtime initial connection did not close");
+  waitDisconnect(mx);
+
+  unsigned accepted = 1;
+  unsigned modes[] = {
+    RuntimeClient::TokenMalformed,
+    RuntimeClient::TokenAuth,
+    RuntimeClient::TokenExpired,
+    RuntimeClient::TokenAddress,
+    RuntimeClient::TokenKind
+  };
+  for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+    client.tokenNow = uint64_t(Zm::now().sec());
+    client.tokenRewrite = modes[i];
+    clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+
+    serverLink = nullptr;
+    established = waitUntil([&server, &clientLink, &serverLink, accepted]() {
+	if (!serverLink) serverLink = server.link(accepted);
+	return serverLink && clientLink->established() &&
+	  serverLink->established();
+      });
+    if (!established) {
+      dumpRuntimeDiag(
+	"client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+      if (serverLink)
+	dumpRuntimeDiag(
+	  "server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+    }
+    ZuCHECK(established, "rejected-token runtime handshake did not establish");
+	    if (!established || !serverLink) {
+	      break;
+    }
+    ++accepted;
+    clientLink->disconnect();
+    ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+      "rejected-token runtime connection did not close");
+    waitDisconnect(mx);
+  }
+  server.stop();
+  ZuCHECK(waitUntil([&server]() { return !server.connected(); }),
+    "rejected-token runtime server remained connected");
+  waitDisconnect(mx);
+  server.clearLinks();
+  server.final();
+
+  RuntimeServer policyServer;
+  ZuCHECK(policyServer.init(
+      Zquic::ServerParams(&mx, "3", "4")
+	.certPath(cspan_(temp.certPath))
+	.keyPath(cspan_(temp.keyPath))
+	.qlog(true)
+	.qlogPath(cspan_(policyQlogPath))
+	.qlogThread("zquic-rejected-token-qlog")
+	.qlogRingSize(1<<16)
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsBidi(8)
+	.maxStreamsUni(8)
+	.retryAddressValidation(true)
+	.newTokenAddressValidation(false)
+	.addressValidationSecret(secret)
+	.addressValidationLifetime(60)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "rejected-token policy server init failed");
+  ZuCHECK(policyServer.start(), "rejected-token policy server listen failed");
+  ZuCHECK(waitUntil([&policyServer]() { return policyServer.listening(); }),
+    "rejected-token policy server did not listen");
+  client.tokenNow = uint64_t(Zm::now().sec());
+  client.tokenRewrite = RuntimeClient::TokenPolicy;
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, policyServer.local().port());
+  ZmRef<RuntimeServer::Link> policyLink;
+  established = waitUntil([&policyServer, &clientLink, &policyLink]() {
+      if (!policyLink) policyLink = policyServer.link(0);
+      return policyLink && clientLink->established() &&
+	policyLink->established();
+    });
+  ZuCHECK(established, "rejected-token policy handshake did not establish");
+  clientLink->disconnect();
+  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+    "rejected-token policy connection did not close");
+  policyServer.stop();
+  waitDisconnect(mx);
+  policyLink = nullptr;
+  policyServer.clearLinks();
+  policyServer.final();
+  clientLink = nullptr;
+  client.final();
+
+#ifdef Zquic_DEBUG
+  ZtString<> qlog = readFile_(cspan_(qlogPath));
+  ZtString<> policyQlog = readFile_(cspan_(policyQlogPath));
+  ZuCHECK(qlog, "rejected-token runtime qlog output missing");
+  ZuCHECK(policyQlog, "rejected-token policy qlog output missing");
+  ZuCHECK(qlog.find<"security:token_rejected">() >= 0,
+    "rejected-token runtime qlog missing token_rejected");
+  ZuCHECK(qlog.find<"malformed">() >= 0,
+    "rejected-token runtime qlog missing malformed reason");
+  ZuCHECK(qlog.find<"auth">() >= 0,
+    "rejected-token runtime qlog missing auth reason");
+  ZuCHECK(qlog.find<"expired">() >= 0,
+    "rejected-token runtime qlog missing expired reason");
+  ZuCHECK(qlog.find<"address">() >= 0,
+    "rejected-token runtime qlog missing address reason");
+  ZuCHECK(qlog.find<"kind">() >= 0,
+    "rejected-token runtime qlog missing kind reason");
+  ZuCHECK(policyQlog.find<"new_token_policy">() >= 0,
+    "rejected-token runtime qlog missing NEW_TOKEN policy reason");
+  unlink(qlogPath.data());
+  unlink(policyQlogPath.data());
+#endif
+
+  mx.stop();
+}
+
+void testRuntimeIdleTimeoutQLog()
+{
+  ZuTestScope(testRuntimeIdleTimeoutQLog);
+
+  TempDir temp;
+  ZuCHECK(temp.init(), "idle runtime temporary TLS certificate failed");
+  ZtString<> qlogPath = temp.pathOf("idle.sqlog");
+  unlink(qlogPath.data());
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(5)
+	    .thread(1, [](auto &t) { t.isolated(1); })
+	    .thread(2, [](auto &t) { t.isolated(1); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "idle runtime multiplexer start failed");
+  if (!mxStarted) return;
+
+  RuntimeServer server;
+  ZuCHECK(server.init(
+      Zquic::ServerParams(&mx, "3", "4")
+	.certPath(cspan_(temp.certPath))
+	.keyPath(cspan_(temp.keyPath))
+	.qlog(true)
+	.qlogPath(cspan_(qlogPath))
+	.qlogThread("zquic-idle-qlog")
+	.qlogRingSize(1<<16)
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsBidi(8)
+	.maxStreamsUni(8)
+	.maxIdleTimeout(1)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "idle runtime server init failed");
+  ZuCHECK(server.start(), "idle runtime server listen failed");
+  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+    "idle runtime server did not listen");
+	  if (!server.listening()) {
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+
+  RuntimeClient client;
+  ZuCHECK(client.init(
+      Zquic::ClientParams(&mx, "3", "4")
+	.caPath(cspan_(temp.certPath))
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsBidi(8)
+	.maxStreamsUni(8)
+	.maxIdleTimeout(1)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "idle runtime client init failed");
+  ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+
+  ZmRef<RuntimeServer::Link> serverLink;
+  bool established = waitUntil([&server, &clientLink, &serverLink]() {
+      if (!serverLink) serverLink = server.link();
+      return serverLink && clientLink->established() &&
+	serverLink->established();
+    });
+  if (!established) {
+    dumpRuntimeDiag(
+      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+    if (serverLink)
+      dumpRuntimeDiag(
+	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+  }
+  ZuCHECK(established, "idle runtime handshake did not establish");
+	  if (!established || !serverLink) {
+	    client.final();
+	    server.stop();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+
+  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+    "idle runtime client did not close on idle timeout");
+  server.stop();
+  waitDisconnect(mx);
+
+  clientLink = nullptr;
+  serverLink = nullptr;
+  server.clearLinks();
+  client.final();
+  server.final();
+
+#ifdef Zquic_DEBUG
+  ZtString<> qlog = readFile_(cspan_(qlogPath));
+  ZuCHECK(qlog, "idle runtime qlog output missing");
+  ZuCHECK(qlog.find<"connectivity:connection_closed">() >= 0,
+    "idle runtime qlog missing connection_closed");
+  ZuCHECK(qlog.find<"idle_timeout">() >= 0,
+    "idle runtime qlog missing idle_timeout trigger");
+  ZuCHECK(qlog.find<"idle">() >= 0,
+    "idle runtime qlog missing idle reason");
+  ZuCHECK(qlog.find<"no_error">() >= 0,
+    "idle runtime qlog missing no_error close code");
+  unlink(qlogPath.data());
+#endif
+
   mx.stop();
 }
 
@@ -894,4 +1398,6 @@ int main(int argc, char **argv)
   ZuTestCall(testRuntimeEndpointOpen);
   ZuTestCall(testRuntimeServerMultiConnection);
   ZuTestCall(testRuntimeRetryAddressValidation);
+  ZuTestCall(testRuntimeRejectedTokenQLog);
+  ZuTestCall(testRuntimeIdleTimeoutQLog);
 }

@@ -474,7 +474,7 @@ void TrafficSecret::clear()
 }
 
 bool PktProtState::init(
-  const TrafficSecret &secret_, CryptoLevel::T level_, bool tx_)
+  const TrafficSecret &secret_, PktNumSpace::T level_, bool tx_)
 {
   clear();
   if (!secret_.valid() || !secret_.aead || !secret_.hpCipher ||
@@ -502,7 +502,7 @@ void PktProtState::clear()
   hp.clear();
   hpSupp.clear();
   secret.clear();
-  level = CryptoLevel::Initial;
+  level = PktNumSpace::Initial;
   tx = false;
   installed = false;
 }
@@ -606,7 +606,7 @@ bool PktProt::deriveNextTrafficSecret(
 }
 
 bool Crypto::updateTxTrafficSecret(
-  CryptoLevel::T level, const TrafficSecret &secret)
+  PktNumSpace::T level, const TrafficSecret &secret)
 {
   if (level < 0 || level >= 3 || !secret.valid()) return false;
   m_txTrafficSecrets[level] = secret;
@@ -614,7 +614,7 @@ bool Crypto::updateTxTrafficSecret(
 }
 
 bool Crypto::updateRxTrafficSecret(
-  CryptoLevel::T level, const TrafficSecret &secret)
+  PktNumSpace::T level, const TrafficSecret &secret)
 {
   if (level < 0 || level >= 3 || !secret.valid()) return false;
   m_rxTrafficSecrets[level] = secret;
@@ -753,7 +753,7 @@ int PktProt::protectLong(
   ZuBSpan header, ZuBSpan plaintext, unsigned pnOffset, unsigned pnLength)
 {
   PktProtState state;
-  if (!state.init(secret, CryptoLevel::Handshake, true)) return -1;
+  if (!state.init(secret, PktNumSpace::Handshake, true)) return -1;
   return protectLong(out, len, state, pn, header, plaintext,
     pnOffset, pnLength);
 }
@@ -773,7 +773,7 @@ int PktProt::unprotectLong(
   unsigned &payloadOffset)
 {
   PktProtState state;
-  if (!state.init(secret, CryptoLevel::Handshake, false)) return -1;
+  if (!state.init(secret, PktNumSpace::Handshake, false)) return -1;
   return unprotectLong(packet, len, state, largestPN, pnOffset, pn,
     payloadOffset);
 }
@@ -802,7 +802,7 @@ int PktProt::protectShort(
   ZuBSpan header, ZuBSpan plaintext, unsigned pnOffset, unsigned pnLength)
 {
   PktProtState state;
-  if (!state.init(secret, CryptoLevel::OneRTT, true)) return -1;
+  if (!state.init(secret, PktNumSpace::AppData, true)) return -1;
   return protectShort(out, len, state, pn, header, plaintext,
     pnOffset, pnLength);
 }
@@ -822,7 +822,7 @@ int PktProt::unprotectShort(
   unsigned &payloadOffset)
 {
   PktProtState state;
-  if (!state.init(secret, CryptoLevel::OneRTT, false)) return -1;
+  if (!state.init(secret, PktNumSpace::AppData, false)) return -1;
   return unprotectShort(packet, len, state, largestPN, pnOffset, pn,
     payloadOffset);
 }
@@ -1010,15 +1010,15 @@ int Crypto::onClientHelloCB_(
     PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_INTERNAL_ERROR);
 }
 
-void Crypto::keyLog_(int isEnc, CryptoLevel::T level, ZuBSpan secret)
+void Crypto::keyLog_(int isEnc, PktNumSpace::T level, ZuBSpan secret)
 {
   if (!m_keyLogPath || !m_tls || !secret) return;
-  if (level != CryptoLevel::Handshake && level != CryptoLevel::OneRTT) return;
+  if (level != PktNumSpace::Handshake && level != PktNumSpace::AppData) return;
   ptls_iovec_t random = ptls_get_client_random(m_tls);
   if (!random.base || random.len != 32) return;
   bool clientSecret = isEnc ? !m_isServer : m_isServer;
   const char *label =
-    level == CryptoLevel::Handshake ?
+    level == PktNumSpace::Handshake ?
       (clientSecret ?
 	"CLIENT_HANDSHAKE_TRAFFIC_SECRET" :
 	"SERVER_HANDSHAKE_TRAFFIC_SECRET") :
@@ -1038,9 +1038,9 @@ void Crypto::keyLog_(int isEnc, CryptoLevel::T level, ZuBSpan secret)
 int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
 {
   if (!secret) return 0;
-  CryptoLevel::T level =
-    epoch == 2 ? CryptoLevel::Handshake :
-    epoch >= 3 ? CryptoLevel::OneRTT : CryptoLevel::Initial;
+  PktNumSpace::T level =
+    epoch == 2 ? PktNumSpace::Handshake :
+    epoch >= 3 ? PktNumSpace::AppData : PktNumSpace::Initial;
   if (epoch < 2) return 0;
 
   ptls_cipher_suite_t *cipher = ptls_get_cipher(m_tls);
@@ -1172,23 +1172,23 @@ int Crypto::decodeTransportParams(ZuBSpan in, TransportParams &params)
   return n;
 }
 
-void Crypto::installSecret(CryptoLevel::T level, ZuBSpan secret)
+void Crypto::installSecret(PktNumSpace::T level, ZuBSpan secret)
 {
-  ZiAssert(level >= CryptoLevel::Initial && level <= CryptoLevel::OneRTT,
-    "Zquic", (), "invalid crypto level", return);
+  ZiAssert(level >= PktNumSpace::Initial && level <= PktNumSpace::AppData,
+    "Zquic", (), "invalid packet space", return);
   ZiAssert(secret.length(), "Zquic", (),
     "empty traffic secret", return);
   if (!m_secretInstalled[level]) ++m_diag.secretsInstalled;
   m_secretInstalled[level] = true;
 }
 
-bool Crypto::discardSecret(CryptoLevel::T level)
+bool Crypto::discardSecret(PktNumSpace::T level)
 {
-  ZiAssert(level >= CryptoLevel::Initial && level <= CryptoLevel::OneRTT,
-    "Zquic", (), "invalid crypto level", return false);
+  ZiAssert(level >= PktNumSpace::Initial && level <= PktNumSpace::AppData,
+    "Zquic", (), "invalid packet space", return false);
   if (!m_secretInstalled[level]) return false;
   m_secretInstalled[level] = false;
-  if (level == CryptoLevel::Initial)
+  if (level == PktNumSpace::Initial)
     memset(&m_initialKeys, 0, sizeof(m_initialKeys));
   m_txTrafficSecrets[level].clear();
   m_rxTrafficSecrets[level].clear();
@@ -1213,10 +1213,10 @@ bool Crypto::rejectZeroRTT()
 
 bool Crypto::completeHandshake()
 {
-  m_oneRTTReady = m_secretInstalled[CryptoLevel::OneRTT];
+  m_oneRTTReady = m_secretInstalled[PktNumSpace::AppData];
   if (m_oneRTTReady) {
-    discardSecret(CryptoLevel::Initial);
-    discardSecret(CryptoLevel::Handshake);
+    discardSecret(PktNumSpace::Initial);
+    discardSecret(PktNumSpace::Handshake);
   }
   return m_oneRTTReady;
 }
