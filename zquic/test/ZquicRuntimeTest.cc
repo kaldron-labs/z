@@ -276,7 +276,7 @@ ZtString<> readFile_(ZuCSpan path)
   ZiFile file{Zi::Path{path}, ZiFile::ReadOnly | ZiFile::GC};
   if (!file) return data;
   auto size = file.size();
-  if (size <= 0 || size > (1<<20)) return data;
+  if (size <= 0 || size > (4<<20)) return data;
   data.length(unsigned(size));
   int n = file.read(data.data(), data.length());
   if (n <= 0)
@@ -319,6 +319,11 @@ struct TempDir {
 
   ~TempDir() { cleanup(); }
 
+  static bool keep()
+  {
+    return !!getenv("ZQUIC_TEST_KEEP");
+  }
+
   bool init()
   {
     strcpy(path, "/tmp/ZquicRuntimeTest.XXXXXX");
@@ -353,6 +358,7 @@ struct TempDir {
   void cleanup()
   {
     if (!path[0]) return;
+    if (keep()) return;
     const char *names[] = {
       "cert.pem", "key.pem", "endpoint.sqlog", "retry.sqlog",
       "rejected-token.sqlog", "policy-token.sqlog",
@@ -602,7 +608,7 @@ void testRuntimeEndpointOpen()
   ZuCHECK(qlog.find<"drain_expired">() >= 0 &&
       qlog.find<"aborted">() >= 0,
     "endpoint runtime qlog missing close/drain expiry");
-  unlink(qlogPath.data());
+  if (!TempDir::keep()) unlink(qlogPath.data());
 #endif
 
   mx.stop();
@@ -1056,7 +1062,7 @@ void testRuntimeRetryAddressValidation()
     "retry runtime qlog missing NEW_TOKEN reason");
   ZuCHECK(qlog.find<"coalescing">() >= 0,
     "retry runtime qlog missing coalescing reason");
-  unlink(qlogPath.data());
+  if (!TempDir::keep()) unlink(qlogPath.data());
 #endif
 
   mx.stop();
@@ -1271,8 +1277,10 @@ void testRuntimeRejectedTokenQLog()
     "rejected-token runtime qlog missing kind reason");
   ZuCHECK(policyQlog.find<"new_token_policy">() >= 0,
     "rejected-token runtime qlog missing NEW_TOKEN policy reason");
-  unlink(qlogPath.data());
-  unlink(policyQlogPath.data());
+  if (!TempDir::keep()) {
+    unlink(qlogPath.data());
+    unlink(policyQlogPath.data());
+  }
 #endif
 
   mx.stop();
@@ -1385,7 +1393,7 @@ void testRuntimeIdleTimeoutQLog()
     "idle runtime qlog missing idle reason");
   ZuCHECK(qlog.find<"no_error">() >= 0,
     "idle runtime qlog missing no_error close code");
-  unlink(qlogPath.data());
+  if (!TempDir::keep()) unlink(qlogPath.data());
 #endif
 
   mx.stop();

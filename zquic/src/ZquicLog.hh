@@ -49,17 +49,20 @@ struct ZquicLogParams {
   ZquicLogParams &path(ZuCSpan v) { m_path = v; return *this; }
   ZquicLogParams &thread(ZuCSpan v) { m_thread = v; return *this; }
   ZquicLogParams &ringSize(unsigned v) { m_ringSize = v; return *this; }
+  ZquicLogParams &age(unsigned v) { m_age = v; return *this; }
 
   bool enabled() const { return m_enabled; }
   ZuCSpan path() const { return m_path; }
   ZuCSpan thread() const { return m_thread; }
   unsigned ringSize() const { return m_ringSize; }
+  unsigned age() const { return m_age; }
 
 private:
   bool		m_enabled = false;
   ZtString<>	m_path;
   ZtString<>	m_thread;
   unsigned	m_ringSize = (1<<20);
+  unsigned	m_age = 8;
 };
 
 struct ZquicLogMetadata {
@@ -444,7 +447,7 @@ struct ZquicLogLifecycle {
 
 class ZquicAPI ZquicLogSink {
 public:
-  bool init(ZuCSpan);
+  bool init(ZuCSpan, unsigned);
   void final();
   bool write(ZuCSpan);
 

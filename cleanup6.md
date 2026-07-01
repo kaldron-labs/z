@@ -13,13 +13,17 @@ Current state
 
 Implemented:
 
-- `ZquicLogParams` exposes `qlog`, `qlogPath`, `qlogThread`, and
-  `qlogRingSize` through engine parameters.
+- `ZquicLogParams` exposes `qlog`, `qlogPath`, `qlogThread`, `qlogRingSize`,
+  and `qlogAge` through engine parameters.
 - `ZquicLogger` is the internal writer-thread object.  `ZquicLog(lambda)` is
   the qlog function, and `ZquicLOG((lambda))` is the source marker macro used
   by runtime qlog instrumentation.
 - `ZquicLog` starts/stops with the engine and writes JSON-SEQ records through
   the qlog writer thread.
+- qlog file output now follows the `ZiLog` file-sink aging precedent: an
+  existing configured `.sqlog` path is archived through the configured age
+  depth before the new sink is opened.  `ZquicLogTest::testQLogFileOutput`
+  seeds an old qlog file and verifies it is moved to `.1`.
 - diagnostics count records enqueued, written, dropped, ring pressure, writer
   failures, and bytes written.
 - non-debug builds compile the qlog API to no-op stubs.
@@ -387,6 +391,12 @@ Implemented:
   `make -j8`.  Generated makefiles show `-O3 -g -DNDEBUG` for `zquic` and
   downstream `zhttp`, with no `Zquic_DEBUG`, so all dependent Z libraries,
   generated dependency files, examples, and tests were rebuilt consistently.
+- external qlog parser validation now passes for representative retained
+  runtime traces.  `ZQUIC_TEST_KEEP=1 timeout 240s libtool exec
+  ./zquic/test/ZquicRuntimeTest` preserves endpoint, Retry/token,
+  token-rejection/policy, and idle-timeout `.sqlog` files under
+  `/tmp/ZquicRuntimeTest.*`; `jq --seq -e .` accepts each retained file, and
+  `blazingqlog -p name` loads the same files and extracts event names.
 
 Paused implementation state:
 
@@ -400,6 +410,10 @@ Paused implementation state:
   `ZquicLOG` must perform the qlog runtime-enabled check before evaluating its
   macro argument, so lambda capture initializers are skipped when qlog is
   configured off.
+- qlog output files must be aged before opening, matching the `ZiLog` file sink
+  precedent.  Use `qlogAge` to configure the retained archive depth.  Automated
+  tests may honor `ZQUIC_TEST_KEEP` to retain temporary qlog files for external
+  parser/viewer checks; this is test artifact retention, not a library control.
 - qlog macro arguments that contain lambda capture-list commas must be wrapped
   at call sites as `ZquicLOG(([...] { ... }))` or `ZquicLOG(([...](...) {
   ... }))`; do not make `ZquicLOG` variadic for this.
@@ -486,12 +500,15 @@ Still missing or incomplete:
   and covered by runtime endpoint tests for the server trace.  Remaining gaps
   are broader stream/application-facing coverage, any future receive-side
   packet buffering for undecryptable packets, multi-connection trace identity
-  expectations for mainstream qlog consumers, and external qlog-tool
-  validation.  Local JSON-SEQ scanning is stricter now, but it is not a
-  substitute for loading representative traces in mainstream qlog tooling.  The
-  current implementation drops missing-key packets instead of buffering them,
-  and logs those decisions as packet drops plus packet-protection failure
-  events.
+  expectations for mainstream qlog consumers, and latest-draft schema parity.
+  Local JSON-SEQ scanning is stricter now, and representative traces also load
+  in `jq --seq` plus the `blazingqlog` JSON-SEQ qlog parser.  The current
+  implementation drops missing-key packets instead of buffering them, and logs
+  those decisions as packet drops plus packet-protection failure events.
+  Remaining schema deviation is documented in `audit.md`: current output uses
+  the older `qlog_version`/`qlog_format` header and category event namespaces,
+  while the latest qlog drafts define `QlogFileSeq` `file_schema` /
+  `serialization_format` fields and the registered `quic:*` event namespace.
 
 Goals
 -----
@@ -828,9 +845,13 @@ Resume checklist before adding more event coverage:
 12. Validate with qlog tooling.
     - Generate traces from handshake, stream transfer, loss/retransmission,
       Retry/token reuse, close, and PMTUD scenarios.
-    - Confirm the output can be loaded by mainstream qlog viewers without
-      custom parsing.
-    - Keep any known schema deviations documented in `audit.md` until fixed.
+    - Confirm the output can be loaded by mainstream qlog parsers/viewers
+      without custom parsing.  Representative endpoint, Retry/token,
+      token-rejection/policy, and idle-timeout traces now pass `jq --seq` and
+      `blazingqlog -p name`.
+    - Keep the latest-draft schema deviation documented in `audit.md` until the
+      header/event namespace migration is implemented or the older category
+      namespace target is explicitly retained.
 
 Review points
 -------------

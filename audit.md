@@ -272,10 +272,11 @@ Remaining gaps:
 `zquic` has structured runtime diagnostics, counters for packet/frame/control
 activity, RTT/loss/congestion/path metrics, ECN counters, debug logs, and a
 debug-gated qlog writer.  The qlog path is configured from `EngineParams`
-(`qlog`, `qlogPath`, `qlogThread`, `qlogRingSize`), starts/stops with the engine,
-writes JSON-SEQ records, maintains enqueue/write/drop diagnostics, and has tests
-for file output and ring back-pressure.  `Zquic_DEBUG` gating is intentional:
-non-debug builds compile this path to no-op stubs.
+(`qlog`, `qlogPath`, `qlogThread`, `qlogRingSize`, `qlogAge`), starts/stops
+with the engine, writes JSON-SEQ records, ages existing output files before
+opening the new sink, maintains enqueue/write/drop diagnostics, and has tests
+for file output, archive aging, and ring back-pressure.  `Zquic_DEBUG` gating
+is intentional: non-debug builds compile this path to no-op stubs.
 
 Current qlog state:
 
@@ -296,6 +297,9 @@ Current qlog state:
 - Header metadata now includes qlog version/format, implementation identity,
   vantage point, and connection identity/CID data where available.  Runtime
   tests cover server trace metadata and redaction of application payload data.
+  This remains a known schema-shape deviation from the latest qlog main draft,
+  which uses `file_schema`, `serialization_format`, `trace.event_schemas`, and
+  `trace.common_fields` in `QlogFileSeq`.
 - Local tests validate JSON-SEQ framing strictly enough to reject malformed
   records and trailing data.  Writer tests cover typed transport, recovery,
   security, path/CID, stream, and close events; runtime tests cover representative
@@ -308,9 +312,16 @@ Remaining gaps:
   `./z.config -L /usr`; generated makefiles show `-O3 -g -DNDEBUG` for
   `zquic` and downstream `zhttp`, with no `Zquic_DEBUG`; top-level
   `make clean` followed by top-level `make -j8` completed successfully.
-- External qlog-tool validation is still outstanding.  Representative `.sqlog`
-  files need to be loaded in mainstream qlog tooling, or any schema/tooling
-  deviations must remain documented until fixed.
+- External qlog-tool validation has been performed on representative retained
+  runtime traces generated with `ZQUIC_TEST_KEEP=1`.  Endpoint, Retry/token,
+  token-rejection/policy, and idle-timeout `.sqlog` files parse with
+  `jq --seq`; `blazingqlog` also loads those JSON-SEQ files and extracts event
+  names from them.  Remaining mainstream-parity deviations are schema shape, not
+  parseability: the latest qlog main/QUIC drafts use `QlogFileSeq` header fields
+  such as `file_schema` and `serialization_format`, and the registered QUIC
+  event namespace is `quic:*`; current zquic output still uses the older
+  `qlog_version`/`qlog_format` header style and category event names such as
+  `transport:*`, `recovery:*`, `security:*`, `path:*`, and `connectivity:*`.
 - Connection-level MAX_DATA unblocked coverage now has an end-to-end runtime
   scenario in `ZquicStreamTest::testFlowControlQLog`: a real stream send first
   fails on exhausted connection data credit and queues DATA_BLOCKED, then
@@ -333,8 +344,10 @@ Remaining gaps:
 
 ## Priority work
 
-1. Finish qlog parity signoff: validate representative traces in mainstream
-   qlog tooling, and close or document any remaining schema/tooling deviations.
+1. Finish qlog schema parity: migrate the JSON-SEQ header to the latest
+   `QlogFileSeq` shape and either adopt the registered `quic:*` event namespace
+   or explicitly retain/document the current category namespaces as a deliberate
+   compatibility target.
 2. Integrate pacing and consider CUBIC/BBR selection if production WAN behavior
    matters.
 3. Finish ECN as a path feature: socket marking, validation state, fallback, and

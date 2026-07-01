@@ -272,10 +272,21 @@ void testQLogFileOutput()
 
 #ifdef Zquic_DEBUG
   Zi::Path path = testPath_("ZquicLogTest.sqlog");
+  Zi::Path agedPath;
+  agedPath << path << ".1";
   ZiFile::remove(path);
+  ZiFile::remove(agedPath);
+
+  {
+    ZiFile old{path, ZiFile::Write | ZiFile::GC};
+    ZuCHECK(!!old, "qlog aging seed open failed");
+    ZuCHECK(old.write("old-qlog\n", 9) == Zi::OK,
+      "qlog aging seed write failed");
+  }
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-test").ringSize(1<<15);
+  params.enabled(true).path(path).thread("zquic-qlog-test").ringSize(1<<15).
+    age(2);
   ZuCHECK(ZquicLogger::init(params), "qlog init failed");
   uint8_t odcid[] = { 0xde, 0xad, 0xbe, 0xef };
   uint8_t groupID[] = { 0x01, 0x02, 0x03, 0x04 };
@@ -315,7 +326,11 @@ void testQLogFileOutput()
     "qlog header missing connection metadata");
   ZuCHECK(containsPacketSent_(data), "qlog event missing packet_sent");
   ZuCHECK(!containsZiLogPrefix_(data), "qlog contains ZiLog text prefix");
+
+  ZtString<> aged = readFile_(agedPath);
+  ZuCHECK(aged.find<"old-qlog">() >= 0, "qlog output was not aged");
   ZiFile::remove(path);
+  ZiFile::remove(agedPath);
 #else
   ZquicLogParams params;
   params.enabled(true).path("ZquicLogTest.sqlog");

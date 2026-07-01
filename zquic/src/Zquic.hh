@@ -1535,6 +1535,10 @@ struct EngineParams {
     m_qlogParams.ringSize(v);
     return ZuMv(*this);
   }
+  EngineParams &&qlogAge(unsigned v) {
+    m_qlogParams.age(v);
+    return ZuMv(*this);
+  }
   EngineParams &&asyncThread(ZuCSpan v) {
     m_asyncThread = v;
     return ZuMv(*this);
