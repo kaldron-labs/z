@@ -5,7 +5,10 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZtJSON.hh>
+#include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
+#include <zlib/ZquicLog.hh>
 #include <zlib/ZquicSched.hh>
 
 #include <zpicotls/openssl.h>
@@ -118,6 +121,9 @@ struct TestLink :
   }
   unsigned scheduledStreams() const { return Base::scheduledStreamCount_(); }
   void grantDataCredit(uint64_t value) { Base::txApplyMaxData_(value); }
+  void grantStreamCredit(const ZmRef<TestStream> &stream, uint64_t value) {
+    Base::txApplyMaxStreamData_(stream, value);
+  }
   bool applyMaxStreams(const Zquic::Frame &frame) {
     return frame.type == Zquic::FrameType::MaxStreams &&
       Base::txApplyMaxStreams_(frame.streamType, frame.value);
@@ -168,7 +174,7 @@ struct TestLink :
     return ok ? n : 0;
   }
   void recordSentPkt(
-    Zquic::CryptoLevel::T level, uint64_t pn, unsigned bytes,
+    Zquic::PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const Zquic::SentFrameRef &ref, bool ackEliciting) {
     Base::recordTxPkt_(level, pn, bytes, ref, ackEliciting);
 #ifdef Zquic_DEBUG
@@ -176,7 +182,7 @@ struct TestLink :
 #endif
   }
   void recordSentPkt(
-    Zquic::CryptoLevel::T level, uint64_t pn, unsigned bytes,
+    Zquic::PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const typename Base::TxPktRefs &refs, bool ackEliciting) {
     Base::recordTxPkt_(level, pn, bytes, refs, ackEliciting);
 #ifdef Zquic_DEBUG
@@ -193,7 +199,7 @@ struct TestLink :
 	n = r.count();
 	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
 	recordSentPkt(
-	  Zquic::CryptoLevel::OneRTT, sentPkts, build.bytes(), r, true);
+	  Zquic::PktNumSpace::AppData, sentPkts, build.bytes(), r, true);
 	++sentPkts;
 	return true;
       });
@@ -217,7 +223,7 @@ struct TestLink :
 	  Zquic::PktBuild &build, ZiSockAddr,
 	  const typename Base::TxPktRefs &refs) {
 	recordSentPkt(
-	  Zquic::CryptoLevel::OneRTT, sentPkts, build.bytes(), refs, true);
+	  Zquic::PktNumSpace::AppData, sentPkts, build.bytes(), refs, true);
 	++sentPkts;
 	return true;
       });
@@ -230,7 +236,7 @@ struct TestLink :
       unsigned bytes = remaining > app()->maxUDP() ?
 	app()->maxUDP() : unsigned(remaining);
       recordSentPkt(
-	Zquic::CryptoLevel::OneRTT, sentPkts, bytes,
+	Zquic::PktNumSpace::AppData, sentPkts, bytes,
 	Zquic::SentFrameRef::control(), true);
       ++sentPkts;
       diag = Base::runtimeDiag_();
@@ -238,29 +244,37 @@ struct TestLink :
   }
   void ackThrough(uint64_t pn) {
     Base::AckSnapshot ack;
-    ack.level = Zquic::CryptoLevel::OneRTT;
+    ack.level = Zquic::PktNumSpace::AppData;
     ack.nRanges = 1;
     ack.ranges[0] = Zquic::AckRange{pn, 0};
     Base::processAckFrameTx_(ack);
   }
   void ackOnly(uint64_t pn) {
     Base::AckSnapshot ack;
-    ack.level = Zquic::CryptoLevel::OneRTT;
+    ack.level = Zquic::PktNumSpace::AppData;
     ack.nRanges = 1;
     ack.ranges[0] = Zquic::AckRange{pn, pn};
     Base::processAckFrameTx_(ack);
   }
-  bool nextRetransmitRef(
-    Zquic::CryptoLevel::T &level, Zquic::SentFrameRef &ref) {
-    return Base::nextRetransmit_(level, ref);
-  }
-  bool sendCryptoBytes(ZuBSpan data) {
-    size_t offsets[5] = {0, 0, 0, 0, data.length()};
-    return Base::sendCryptoFlights_(
+	  bool nextRetransmitRef(
+	    Zquic::PktNumSpace::T &level, Zquic::SentFrameRef &ref) {
+	    return Base::nextRetransmit_(level, ref);
+	  }
+	  bool forcePTOReclaimQLog(
+	    Zquic::PktNumSpace::T &level, unsigned &probes) {
+	    Base::notePTOExpired_();
+	    return Base::reclaimPTO_(level, probes);
+	  }
+	  void forcePTOProbeQLog(Zquic::PktNumSpace::T level, unsigned probes) {
+	    Base::notePTOProbe_(level, probes);
+	  }
+	  bool sendCryptoBytes(ZuBSpan data) {
+	    size_t offsets[5] = {0, 0, 0, 0, data.length()};
+	    return Base::sendCryptoFlights_(
       data.data(), data.length(),
       offsets, 900, ZiSockAddr{},
       [this](
-	  Zquic::CryptoLevel::T level, ZuBSpan prefix, ZuBSpan payload,
+	  Zquic::PktNumSpace::T level, ZuBSpan prefix, ZuBSpan payload,
 	  const Zquic::SentFrameRef &ref, ZiSockAddr) {
 	recordSentPkt(
 	  level, sentPkts, prefix.length() + payload.length(), ref, true);
@@ -269,17 +283,17 @@ struct TestLink :
       });
   }
   void sendCryptoRef(
-    uint64_t pn, Zquic::CryptoLevel::T level,
+    uint64_t pn, Zquic::PktNumSpace::T level,
     uint64_t offset, uint64_t length) {
     recordSentPkt(
       level, pn, 100, Zquic::SentFrameRef::crypto(offset, length), true);
   }
   void sendControlRef(uint64_t pn, const Zquic::SentFrameRef &ref) {
     recordSentPkt(
-      Zquic::CryptoLevel::OneRTT, pn, 100, ref, true);
+      Zquic::PktNumSpace::AppData, pn, 100, ref, true);
   }
   bool rebuildCrypto(
-    Zquic::CryptoLevel::T level, const Zquic::SentFrameRef &ref,
+    Zquic::PktNumSpace::T level, const Zquic::SentFrameRef &ref,
     Zquic::Frame &frame, uint8_t *b, unsigned size) {
     Zquic::PktBuild build;
     if (!Base::buildRetransmitCrypto_(level, build, ref)) return false;
@@ -306,20 +320,20 @@ struct TestLink :
       ref.length = 0;
     }
     recordSentPkt(
-      Zquic::CryptoLevel::OneRTT, pn, 100, ref, true);
+      Zquic::PktNumSpace::AppData, pn, 100, ref, true);
   }
   void advancePN(unsigned n) {
     for (unsigned i = 0; i < n; ++i)
       Base::recordProtPktTx_(
-	Zquic::CryptoLevel::OneRTT, i, 1, {}, nullptr, false);
+	Zquic::PktNumSpace::AppData, i, 1, {}, nullptr, false);
   }
 #ifdef Zquic_DEBUG
   void forcePN(uint64_t pn) {
-    Base::setTxPNForTest_(Zquic::CryptoLevel::OneRTT, pn);
+    Base::setTxPNForTest_(Zquic::PktNumSpace::AppData, pn);
   }
 #endif
   unsigned pnLength() const {
-    return Base::txPNLength_(Zquic::CryptoLevel::OneRTT);
+    return Base::txPNLength_(Zquic::PktNumSpace::AppData);
   }
   bool coalesceProbe(unsigned &sends, unsigned &bytes) {
     sends = bytes = 0;
@@ -353,14 +367,14 @@ struct TestLink :
   }
   void sendAckEliciting(uint64_t pn, unsigned bytes = 1200) {
     recordSentPkt(
-      Zquic::CryptoLevel::OneRTT, pn, bytes,
+      Zquic::PktNumSpace::AppData, pn, bytes,
       Zquic::SentFrameRef::control(), true);
   }
 #ifdef Zquic_DEBUG
   void ackECN(uint64_t largest, uint64_t ect0, uint64_t ect1, uint64_t ce) {
-    Base::setTxPNForTest_(Zquic::CryptoLevel::OneRTT, largest + 1);
+    Base::setTxPNForTest_(Zquic::PktNumSpace::AppData, largest + 1);
     Base::AckSnapshot ack;
-    ack.level = Zquic::CryptoLevel::OneRTT;
+    ack.level = Zquic::PktNumSpace::AppData;
     ack.nRanges = 1;
     ack.ranges[0] = Zquic::AckRange{largest, 0};
     ack.ecn.ect0 = ect0;
@@ -371,13 +385,13 @@ struct TestLink :
 #endif
   bool receiveMarked(
     uint64_t pn, Zquic::EcnMark::T ecn, bool ackEliciting = true) {
-    if (Base::rxPktSeen_(Zquic::CryptoLevel::OneRTT, pn)) return false;
+    if (Base::rxPktSeen_(Zquic::PktNumSpace::AppData, pn)) return false;
     Base::noteAck_(
-      Zquic::CryptoLevel::OneRTT, pn, ackEliciting, ZiSockAddr{}, false, ecn);
+      Zquic::PktNumSpace::AppData, pn, ackEliciting, ZiSockAddr{}, false, ecn);
     return true;
   }
   bool writePendingAck(Zquic::PktBuild &build) {
-    return Base::appendPendingAck_(Zquic::CryptoLevel::OneRTT, build);
+    return Base::appendPendingAck_(Zquic::PktNumSpace::AppData, build);
   }
   Zquic::PktBudget sendBudget() const { return Base::sendBudget_(); }
   void initServerPath() {
@@ -427,7 +441,7 @@ struct TestLink :
   bool ecnDisabled() const { return Base::ecnDisabled_(); }
   void enableECN() { Base::setEcnDisabled_(false); }
   bool ackValid(
-    Zquic::CryptoLevel::T level, uint64_t first, uint64_t largest) const {
+    Zquic::PktNumSpace::T level, uint64_t first, uint64_t largest) const {
     Base::AckSnapshot ack;
     ack.level = level;
     ack.nRanges = 1;
@@ -442,20 +456,21 @@ struct TestLink :
   }
   void discardPeerKeys() { Base::discardPeerKeysForTest_(); }
 #endif
-  bool receiveShort(ZmRef<ZiIOBuf> buf) {
+  bool receiveShort(ZmRef<ZiIOBuf> buf, bool *qlogSeen = nullptr) {
     if (!buf) return false;
     Zquic::Datagram d;
     d.buf = ZuMv(buf);
     return Base::receiveProtShortPkt_(
       d, 0, d.buf->length,
-      [this](
-	  Zquic::CryptoLevel::T level, uint64_t pn, ZuBSpan frames,
+      [this, qlogSeen](
+	  Zquic::PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack) {
+	  typename Base::RxAckMeta &ack, ZquicLogPacketEvent *qlog) {
+	if (qlogSeen) *qlogSeen = qlog != nullptr;
 	return Base::consumeProtFrames_(
-	  level, pn, frames, ZuMv(addr), packetBuf, ack,
+	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
 	  [](size_t, ZuBSpan, ZiSockAddr) { return true; },
-	  [](Zquic::CryptoLevel::T, const Zquic::Frame &, ZiSockAddr) {
+	  [](Zquic::PktNumSpace::T, const Zquic::Frame &, ZiSockAddr) {
 	    return true;
 	  });
       });
@@ -497,7 +512,7 @@ static ZmRef<ZiIOBuf> shortPing_(
   uint64_t pn, bool keyPhase)
 {
   Zquic::PktProtState tx;
-  if (!tx.init(secret, Zquic::CryptoLevel::OneRTT, true)) return {};
+  if (!tx.init(secret, Zquic::PktNumSpace::AppData, true)) return {};
   ZmRef<ZiIOBuf> buf = new Zquic::PktTxBufAlloc<>{nullptr};
   enum { PNLength = 2 };
   int h = Zquic::Pkt::writeShort(
@@ -569,6 +584,50 @@ static bool sameAddr_(const ZiSockAddr &l, const ZiSockAddr &r)
   return l.m_sin.sin_family == r.m_sin.sin_family &&
     l.m_sin.sin_port == r.m_sin.sin_port &&
     l.m_sin.sin_addr.s_addr == r.m_sin.sin_addr.s_addr;
+}
+
+static Zi::Path testPath_(ZuCSpan name)
+{
+  Zi::Path path;
+  path << name;
+  return path;
+}
+
+static ZtString<> readFile_(const Zi::Path &path)
+{
+  ZtString<> data;
+  ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
+  if (!file) return data;
+  auto size = file.size();
+  if (size <= 0 || size > (1<<20)) return data;
+  data.length(unsigned(size));
+  int n = file.read(data.data(), data.length());
+  if (n <= 0)
+    data.length(0);
+  else
+    data.length(unsigned(n));
+  return data;
+}
+
+static unsigned parseJSONSeq_(ZuCSpan data)
+{
+  unsigned n = 0;
+  unsigned i = 0;
+  while (i < data.length()) {
+    ZuCSpan rest{data.data() + i, data.length() - i};
+    if (!rest.match<"\x1e">()) return 0;
+    ++i;
+    unsigned start = i;
+    while (i < data.length() && data[i] != '\n') ++i;
+    if (i >= data.length()) return 0;
+    ZtString<> json;
+    json << ZuCSpan{data.data() + start, i - start};
+    auto scan = ZtJSON::scan(json);
+    if (scan.p<0>() != int(json.length())) return 0;
+    ++n;
+    ++i;
+  }
+  return n;
 }
 
 void testStreamIDs()
@@ -891,10 +950,10 @@ void testLinkStreamRetransmitUnackdIdempotent()
   link->sendAckEliciting(4);
   link->ackOnly(4);
 
-  Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
+  Zquic::PktNumSpace::T level = Zquic::PktNumSpace::Initial;
   Zquic::SentFrameRef ref;
   ZuCHECK(link->nextRetransmitRef(level, ref) &&
-      level == Zquic::CryptoLevel::OneRTT &&
+      level == Zquic::PktNumSpace::AppData &&
       ref.kind == Zquic::SentFrameKind::Stream &&
       ref.streamID == uint64_t(stream->id()) &&
       ref.offset == 40 &&
@@ -1193,17 +1252,17 @@ void testStreamRetransmitClipsUnackd()
   link->ackOnly(1);
   link->ackOnly(4);
 
-  Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
+  Zquic::PktNumSpace::T level = Zquic::PktNumSpace::Initial;
   Zquic::SentFrameRef ref;
   ZuCHECK(link->nextRetransmitRef(level, ref) &&
-      level == Zquic::CryptoLevel::OneRTT &&
+      level == Zquic::PktNumSpace::AppData &&
       ref.kind == Zquic::SentFrameKind::Stream &&
       ref.offset == 0 &&
       ref.length == 2 &&
       !ref.fin,
     "stream retransmit did not clip before ACKd hole");
   ZuCHECK(link->nextRetransmitRef(level, ref) &&
-      level == Zquic::CryptoLevel::OneRTT &&
+      level == Zquic::PktNumSpace::AppData &&
       ref.kind == Zquic::SentFrameKind::Stream &&
       ref.offset == 7 &&
       ref.length == 3 &&
@@ -1229,10 +1288,10 @@ void testStreamRetransmitClipsUnackdFin()
   link->sendAckEliciting(4);
   link->ackOnly(4);
 
-  Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
+  Zquic::PktNumSpace::T level = Zquic::PktNumSpace::Initial;
   Zquic::SentFrameRef ref;
   ZuCHECK(link->nextRetransmitRef(level, ref) &&
-      level == Zquic::CryptoLevel::OneRTT &&
+      level == Zquic::PktNumSpace::AppData &&
       ref.kind == Zquic::SentFrameKind::Stream &&
       ref.streamID == uint64_t(stream->id()) &&
       ref.offset == 10 &&
@@ -1252,17 +1311,17 @@ void testCryptoRetransmitClipsUnackd()
   ZmRef<TestLink> link = testLink(&app);
   ZuCHECK(link->sendCryptoBytes("0123456789"),
     "crypto send setup failed");
-  link->sendCryptoRef(1, Zquic::CryptoLevel::OneRTT, 2, 5);
+  link->sendCryptoRef(1, Zquic::PktNumSpace::AppData, 2, 5);
   link->sendAckEliciting(4);
   link->ackOnly(1);
   link->ackOnly(4);
 
-  Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
+  Zquic::PktNumSpace::T level = Zquic::PktNumSpace::Initial;
   Zquic::SentFrameRef ref;
   Zquic::Frame frame;
   uint8_t frameBuf[Zquic::BufSize];
   ZuCHECK(link->nextRetransmitRef(level, ref) &&
-      level == Zquic::CryptoLevel::OneRTT &&
+      level == Zquic::PktNumSpace::AppData &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 0 &&
       ref.length == 2 &&
@@ -1273,7 +1332,7 @@ void testCryptoRetransmitClipsUnackd()
       frame.payload == "01",
     "crypto retransmit did not clip before ACKd hole");
   ZuCHECK(link->nextRetransmitRef(level, ref) &&
-      level == Zquic::CryptoLevel::OneRTT &&
+      level == Zquic::PktNumSpace::AppData &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 7 &&
       ref.length == 3 &&
@@ -1389,6 +1448,13 @@ void testActivePathRuntimeBudget()
       "active path max UDP did not drive runtime packet budget");
     client->closeForTest();
   }
+  Zi::Path path = testPath_("ZquicStreamPathBudgetQLog.sqlog");
+  ZiFile::remove(path);
+  ZquicLogParams params;
+  params.enabled(true).path(path).thread("zquic-path-budget-qlog").
+    ringSize(1<<15);
+  ZuCHECK(ZquicLogger::init(params), "path-budget qlog init failed");
+  ZquicLogger::start();
 #endif
 
   App app;
@@ -1422,6 +1488,25 @@ void testActivePathRuntimeBudget()
       server->pathSend(Zquic::MinUDPPayload),
     "address validation did not unlock active path send allowance");
   server->closeForTest();
+
+#ifdef Zquic_DEBUG
+  ZquicLogger::stop();
+  ZquicLogDiag qdiag = ZquicLogger::diag();
+  ZquicLogger::final();
+  ZuCHECK(qdiag.recordsEnqueued >= 4, "path-budget qlog enqueue mismatch");
+  ZuCHECK(qdiag.recordsWritten >= 5, "path-budget qlog write mismatch");
+  ZuCHECK(qdiag.writerFailures == 0, "path-budget qlog writer failure");
+
+  ZtString<> data = readFile_(path);
+  ZuCHECK(data, "path-budget qlog output was not written");
+  ZuCHECK(parseJSONSeq_(data) >= 5,
+    "path-budget qlog JSON-SEQ parse failed");
+  ZuCHECK(data.find<"transport:packet_dropped">() >= 0,
+    "path-budget qlog missing packet_dropped");
+  ZuCHECK(data.find<"anti_amplification">() >= 0,
+    "path-budget qlog missing anti_amplification reason");
+  ZiFile::remove(path);
+#endif
 }
 
 void testPathValidationStateMachine()
@@ -1501,8 +1586,8 @@ void testAckECNValidationDisablesECN()
       link->receiveMarked(2, Zquic::EcnMark::CE),
     "runtime ECN receive marking failed");
   Zquic::RuntimeDiag diag = link->runtimeDiag();
-  ZuCHECK(diag.ecnRx[Zquic::CryptoLevel::OneRTT].ect0 == 1 &&
-      diag.ecnRx[Zquic::CryptoLevel::OneRTT].ce == 1,
+  ZuCHECK(diag.ecnRx[Zquic::PktNumSpace::AppData].ect0 == 1 &&
+      diag.ecnRx[Zquic::PktNumSpace::AppData].ce == 1,
     "runtime ECN receive diagnostics mismatch");
   Zquic::PktBuild build;
   ZuCHECK(link->writePendingAck(build) &&
@@ -1522,8 +1607,8 @@ void testAckECNValidationDisablesECN()
   link->ackECN(9, 2, 1, 0);
   diag = link->runtimeDiag();
   ZuCHECK(!link->ecnDisabled() &&
-      diag.peerAckECN[Zquic::CryptoLevel::OneRTT].ect0 == 2 &&
-      diag.peerAckECN[Zquic::CryptoLevel::OneRTT].ect1 == 1,
+      diag.peerAckECN[Zquic::PktNumSpace::AppData].ect0 == 2 &&
+      diag.peerAckECN[Zquic::PktNumSpace::AppData].ect1 == 1,
     "valid ACK_ECN did not update runtime diagnostics");
   link->ackECN(9, 1, 1, 0);
   diag = link->runtimeDiag();
@@ -1946,7 +2031,7 @@ void testLocalResetStopSend()
   link->ackOnly(1);
   link->ackOnly(5);
   Zquic::SentFrameRef ref;
-  Zquic::CryptoLevel::T level = Zquic::CryptoLevel::Initial;
+  Zquic::PktNumSpace::T level = Zquic::PktNumSpace::Initial;
   ZuCHECK(!link->nextRetransmitRef(level, ref),
     "ACKd STOP_SENDING was retransmitted after later loss");
   link->cancelTimers();
@@ -2281,64 +2366,234 @@ void testFrameRoleAndSpaceLegality()
   Zquic::Frame frame;
 
   frame.type = Zquic::FrameType::Ping;
-  ZuCHECK(client->frameLegal(Zquic::CryptoLevel::Initial, frame) &&
-      client->frameLegal(Zquic::CryptoLevel::Handshake, frame) &&
-      client->frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+  ZuCHECK(client->frameLegal(Zquic::PktNumSpace::Initial, frame) &&
+      client->frameLegal(Zquic::PktNumSpace::Handshake, frame) &&
+      client->frameLegal(Zquic::PktNumSpace::AppData, frame),
     "PING frame-space legality mismatch");
 
   frame.reset();
   frame.type = Zquic::FrameType::Stream;
-  ZuCHECK(!client->frameLegal(Zquic::CryptoLevel::Initial, frame) &&
-      !client->frameLegal(Zquic::CryptoLevel::Handshake, frame) &&
-      client->frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+  ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::Initial, frame) &&
+      !client->frameLegal(Zquic::PktNumSpace::Handshake, frame) &&
+      client->frameLegal(Zquic::PktNumSpace::AppData, frame),
     "STREAM frame-space legality mismatch");
 
   frame.reset();
   frame.type = Zquic::FrameType::Crypto;
-  ZuCHECK(client->frameLegal(Zquic::CryptoLevel::Initial, frame) &&
-      client->frameLegal(Zquic::CryptoLevel::Handshake, frame) &&
-      !client->frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+  ZuCHECK(client->frameLegal(Zquic::PktNumSpace::Initial, frame) &&
+      client->frameLegal(Zquic::PktNumSpace::Handshake, frame) &&
+      !client->frameLegal(Zquic::PktNumSpace::AppData, frame),
     "CRYPTO frame-space legality mismatch");
 
   frame.reset();
   frame.type = Zquic::FrameType::Ack;
   frame.ackRanges.push(Zquic::AckRange{0, 0});
-  ZuCHECK(client->frameLegal(Zquic::CryptoLevel::Initial, frame),
+  ZuCHECK(client->frameLegal(Zquic::PktNumSpace::Initial, frame),
     "ACK frame-space legality mismatch");
-  ZuCHECK(!client->ackValid(Zquic::CryptoLevel::Initial, 0, 0),
+  ZuCHECK(!client->ackValid(Zquic::PktNumSpace::Initial, 0, 0),
     "ACK for unsent packet number was accepted by Tx validation");
 
   frame.reset();
   frame.type = Zquic::FrameType::NewToken;
   frame.payload = ZuBSpan{"token"};
-  ZuCHECK(client->frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
-      !server->frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
-      !client->frameLegal(Zquic::CryptoLevel::Handshake, frame),
+  ZuCHECK(client->frameLegal(Zquic::PktNumSpace::AppData, frame) &&
+      !server->frameLegal(Zquic::PktNumSpace::AppData, frame) &&
+      !client->frameLegal(Zquic::PktNumSpace::Handshake, frame),
     "NEW_TOKEN role/space legality mismatch");
   frame.payload = {};
-  ZuCHECK(!client->frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+  ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::AppData, frame),
     "empty NEW_TOKEN was accepted");
 
   frame.reset();
   frame.type = Zquic::FrameType::HandshakeDone;
-  ZuCHECK(client->frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
-      !server->frameLegal(Zquic::CryptoLevel::OneRTT, frame) &&
-      !client->frameLegal(Zquic::CryptoLevel::Handshake, frame),
+  ZuCHECK(client->frameLegal(Zquic::PktNumSpace::AppData, frame) &&
+      !server->frameLegal(Zquic::PktNumSpace::AppData, frame) &&
+      !client->frameLegal(Zquic::PktNumSpace::Handshake, frame),
     "HANDSHAKE_DONE role/space legality mismatch");
 
   frame.reset();
   frame.type = Zquic::FrameType::ApplicationClose;
-  ZuCHECK(!client->frameLegal(Zquic::CryptoLevel::Initial, frame) &&
-      client->frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+  ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::Initial, frame) &&
+      client->frameLegal(Zquic::PktNumSpace::AppData, frame),
     "APPLICATION_CLOSE frame-space legality mismatch");
 
   frame.reset();
   frame.type = Zquic::FrameType::Unknown;
-  ZuCHECK(!client->frameLegal(Zquic::CryptoLevel::OneRTT, frame),
+  ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::AppData, frame),
     "unknown extension frame was accepted");
 }
 
 #ifdef Zquic_DEBUG
+void testRuntimeReceiveQLog()
+{
+  ZuTestScope(testRuntimeReceiveQLog);
+
+  Zi::Path path = testPath_("ZquicStreamRuntimeQLog.sqlog");
+  ZiFile::remove(path);
+
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  Zquic::CxnID cid{"qlogcid1"};
+  Zquic::TrafficSecret secret;
+  ZuCHECK(trafficSecret_(secret, 11), "1-RTT secret derivation failed");
+  ZuCHECK(link->installOneRTT(secret, secret, cid),
+    "test 1-RTT secret install failed");
+
+  bool disabledSeen = true;
+  ZuCHECK(link->receiveShort(shortPing_(cid, secret, 1, false), &disabledSeen),
+    "disabled-qlog receive packet was rejected");
+  ZuCHECK(!disabledSeen, "disabled qlog constructed receive accumulator");
+
+  ZquicLogParams params;
+  params.enabled(true).path(path).thread("zquic-runtime-qlog").ringSize(1<<15);
+  ZuCHECK(ZquicLogger::init(params), "runtime qlog init failed");
+  ZquicLogger::start();
+  ZuCHECK(ZquicLogger::enabled(), "runtime qlog did not enable");
+
+  bool enabledSeen = false;
+  ZuCHECK(link->receiveShort(shortPing_(cid, secret, 2, false), &enabledSeen),
+    "enabled-qlog receive packet was rejected");
+  ZuCHECK(enabledSeen, "enabled qlog did not construct receive accumulator");
+
+  ZmRef<ZiIOBuf> bad = shortPing_(cid, secret, 3, false);
+  ZuCHECK(bad && bad->length, "runtime qlog corrupt packet setup failed");
+  bad->data_()[bad->length - 1] ^= 0x01;
+  ZuCHECK(!link->receiveShort(ZuMv(bad)),
+    "runtime qlog corrupt packet was accepted");
+
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final();
+  link->cancelTimers();
+
+  ZuCHECK(diag.recordsEnqueued >= 2, "runtime qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 4, "runtime qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "runtime qlog writer failure");
+
+  ZtString<> data = readFile_(path);
+  ZuCHECK(data, "runtime qlog output was not written");
+  ZuCHECK(parseJSONSeq_(data) >= 2, "runtime qlog JSON-SEQ parse failed");
+  ZuCHECK(data.find<"transport:packet_received">() >= 0,
+    "runtime packet_received qlog missing");
+  ZuCHECK(data.find<"\"packet_number\":2">() >= 0,
+    "runtime packet number qlog missing");
+  ZuCHECK(data.find<"\"type\":\"ping\"">() >= 0,
+    "runtime PING frame qlog missing");
+  ZuCHECK(data.find<"\"frame_count\":">() >= 0,
+    "runtime frame count qlog missing");
+  ZuCHECK(data.find<"\"frames_truncated\":">() >= 0,
+    "runtime frame truncation qlog missing");
+  ZuCHECK(data.find<"transport:packet_dropped">() >= 0,
+    "runtime packet_dropped qlog missing");
+  ZuCHECK(data.find<"security:packet_protection_failed">() >= 0,
+    "runtime packet protection failure qlog missing");
+  ZuCHECK(data.find<"protection">() >= 0,
+    "runtime packet protection failure reason missing");
+
+  ZiFile::remove(path);
+}
+
+void testFlowControlQLog()
+{
+  ZuTestScope(testFlowControlQLog);
+
+  Zi::Path path = testPath_("ZquicStreamFlowControlQLog.sqlog");
+  ZiFile::remove(path);
+
+  ZquicLogParams params;
+  params.enabled(true).path(path).
+    thread("zquic-flow-control-qlog").ringSize(1<<15);
+  ZuCHECK(ZquicLogger::init(params), "flow-control qlog init failed");
+  ZquicLogger::start();
+  ZuCHECK(ZquicLogger::enabled(), "flow-control qlog did not enable");
+
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  ZuCHECK(link->queueDataBlocked(1024),
+    "flow-control qlog DATA_BLOCKED queue failed");
+  ZmRef<TestStream> stream = link->stream(Zi::StreamType::Duplex);
+  ZuCHECK(stream, "flow-control qlog stream open failed");
+  ZuCHECK(link->queueStreamDataBlocked(uint64_t(stream->id()), 64),
+    "flow-control qlog STREAM_DATA_BLOCKED queue failed");
+  stream->txCredit(0);
+  {
+    auto tx = stream->txStream_();
+    tx << "blocked" << Zi::flush();
+  }
+  link->grantStreamCredit(stream, 7);
+
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final();
+  link->cancelTimers();
+
+  ZuCHECK(diag.recordsEnqueued >= 4, "flow-control qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 5, "flow-control qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "flow-control qlog writer failure");
+
+  ZtString<> data = readFile_(path);
+  ZuCHECK(data, "flow-control qlog output was not written");
+  ZuCHECK(parseJSONSeq_(data) >= 5, "flow-control qlog JSON-SEQ parse failed");
+  ZuCHECK(data.find<"transport:connection_data_blocked_updated">() >= 0,
+    "flow-control qlog missing connection_data_blocked_updated");
+  ZuCHECK(data.find<"transport:stream_data_blocked_updated">() >= 0,
+    "flow-control qlog missing stream_data_blocked_updated");
+  ZuCHECK(data.find<"connection_flow_control">() >= 0,
+    "flow-control qlog missing connection blocked reason");
+  ZuCHECK(data.find<"stream_flow_control">() >= 0,
+    "flow-control qlog missing stream flow reason");
+  ZuCHECK(data.find<"\"new\":\"blocked\"">() >= 0,
+    "flow-control qlog missing blocked state");
+  ZuCHECK(data.find<"\"old\":\"blocked\"">() >= 0 &&
+      data.find<"\"new\":\"unblocked\"">() >= 0,
+    "flow-control qlog missing unblocked state");
+
+  ZiFile::remove(path);
+}
+
+void testPTOQLog()
+{
+  ZuTestScope(testPTOQLog);
+
+  Zi::Path path = testPath_("ZquicStreamPTOQLog.sqlog");
+  ZiFile::remove(path);
+
+  ZquicLogParams params;
+  params.enabled(true).path(path).thread("zquic-pto-qlog").ringSize(1<<15);
+  ZuCHECK(ZquicLogger::init(params), "PTO qlog init failed");
+  ZquicLogger::start();
+
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  link->recordSentPkt(
+    Zquic::PktNumSpace::AppData, 7, Zquic::MinUDPPayload,
+    Zquic::SentFrameRef::control(), true);
+  Zquic::PktNumSpace::T level = Zquic::PktNumSpace::Initial;
+  unsigned probes = 0;
+  ZuCHECK(link->forcePTOReclaimQLog(level, probes) && probes,
+    "PTO qlog reclaim did not fire");
+  link->forcePTOProbeQLog(level, probes);
+  link->cancelTimers();
+
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final();
+
+  ZuCHECK(diag.recordsEnqueued >= 3, "PTO qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 4, "PTO qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "PTO qlog writer failure");
+
+  ZtString<> data = readFile_(path);
+  ZuCHECK(data, "PTO qlog output was not written");
+  ZuCHECK(parseJSONSeq_(data) >= 4, "PTO qlog JSON-SEQ parse failed");
+  ZuCHECK(data.find<"recovery:loss_timer_updated">() >= 0,
+    "PTO qlog missing loss_timer_updated");
+  ZuCHECK(data.find<"expired">() >= 0, "PTO qlog missing expiry");
+  ZuCHECK(data.find<"backoff">() >= 0, "PTO qlog missing backoff");
+  ZuCHECK(data.find<"probe">() >= 0, "PTO qlog missing probe");
+  ZiFile::remove(path);
+}
+
 void testPeerKeyUpdateState()
 {
   ZuTestScope(testPeerKeyUpdateState);
@@ -2412,6 +2667,9 @@ int main(int argc, char **argv)
   ZuTestCall(testPathValidationStateMachine);
 #ifdef Zquic_DEBUG
   ZuTestCall(testAckECNValidationDisablesECN);
+  ZuTestCall(testRuntimeReceiveQLog);
+  ZuTestCall(testFlowControlQLog);
+  ZuTestCall(testPTOQLog);
 #endif
   ZuTestCall(testBlockedFrameDuplicateSuppression);
   ZuTestCall(testKeyedControlReplacement);

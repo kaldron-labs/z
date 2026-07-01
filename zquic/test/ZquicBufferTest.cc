@@ -26,7 +26,7 @@ void testDiagAggregation()
   diag.noteStreamRx(30);
   diag.noteStreamTx(40);
   diag.noteLoss(Zquic::SentPkt{
-    1, ZuTime{0}, 100, Zquic::PktSpace::AppData, true, true, false });
+    1, ZuTime{0}, 100, Zquic::PktNumSpace::AppData, true, true, false });
   diag.notePTO();
   diag.noteRetransmit(Zquic::SentFrameRef::control());
   diag.setRecovery(12000, 500);
@@ -66,7 +66,7 @@ void testDiagAggregation()
       diag.pmtudFailure == 2,
     "diagnostic aggregation mismatch");
 
-  ZuCHECK(Zquic::Diag::packetSpaceName(Zquic::PktSpace::AppData) ==
+  ZuCHECK(Zquic::Diag::packetSpaceName(Zquic::PktNumSpace::AppData) ==
       "AppData" &&
       Zquic::Diag::frameTypeName(Zquic::FrameType::Stream) == "Stream" &&
       Zquic::Diag::streamTypeName(Zi::StreamType::Simplex) == "Simplex",

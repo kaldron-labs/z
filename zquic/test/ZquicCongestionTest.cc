@@ -18,15 +18,15 @@ void testSentPktTracker()
   Zquic::SentPktTracker tracker;
   ZuCHECK(tracker.add(Zquic::SentPkt{
     1, Zquic::timeUS(1000), 1200,
-    Zquic::PktSpace::AppData, true, true, false }),
+    Zquic::PktNumSpace::AppData, true, true, false }),
     "sent packet add failed");
   ZuCHECK(tracker.add(Zquic::SentPkt{
     2, Zquic::timeUS(1001), 1200,
-    Zquic::PktSpace::AppData, true, true, true }),
+    Zquic::PktNumSpace::AppData, true, true, true }),
     "PMTUD sent packet add failed");
   ZuCHECK(!tracker.add(Zquic::SentPkt{
     2, Zquic::timeUS(1002), 1200,
-    Zquic::PktSpace::AppData, true, true, false }),
+    Zquic::PktNumSpace::AppData, true, true, false }),
     "duplicate packet number accepted");
   ZuCHECK(tracker.bytesInFlight() == 2400, "bytes-in-flight mismatch");
   ZuCHECK(tracker.ack(1) && tracker.bytesInFlight() == 1200,
@@ -37,7 +37,7 @@ void testSentPktTracker()
 
   ZuCHECK(tracker.add(Zquic::SentPkt{
     3, Zquic::timeUS(2000), 1200,
-    Zquic::PktSpace::AppData, true, true, false }),
+    Zquic::PktNumSpace::AppData, true, true, false }),
     "timed sent packet add failed");
   ZuCHECK(!tracker.markTimeThresholdLoss(
       4, Zquic::timeUS(2500), Zquic::timeUS(600)),
@@ -55,16 +55,16 @@ void testAckRangeProcessing()
   Zquic::SentPktTracker tracker;
   ZuCHECK(tracker.add(Zquic::SentPkt{
       1, Zquic::timeUS(1000), 1200,
-      Zquic::PktSpace::AppData, true, true, false }) &&
+      Zquic::PktNumSpace::AppData, true, true, false }) &&
       tracker.add(Zquic::SentPkt{
       2, Zquic::timeUS(1001), 1200,
-      Zquic::PktSpace::AppData, true, true, false }) &&
+      Zquic::PktNumSpace::AppData, true, true, false }) &&
       tracker.add(Zquic::SentPkt{
       3, Zquic::timeUS(1002), 1200,
-      Zquic::PktSpace::AppData, true, true, false }) &&
+      Zquic::PktNumSpace::AppData, true, true, false }) &&
       tracker.add(Zquic::SentPkt{
       6, Zquic::timeUS(1003), 1200,
-      Zquic::PktSpace::AppData, true, true, false }),
+      Zquic::PktNumSpace::AppData, true, true, false }),
     "sent packet range setup failed");
 
   Zquic::AckTracker ranges;
@@ -86,13 +86,13 @@ void testPersistentCongestion()
   Zquic::SentPktTracker tracker;
   ZuCHECK(tracker.add(Zquic::SentPkt{
       1, Zquic::timeUS(1000), 1200,
-      Zquic::PktSpace::AppData, true, true, false }) &&
+      Zquic::PktNumSpace::AppData, true, true, false }) &&
       tracker.add(Zquic::SentPkt{
       2, Zquic::timeUS(1800), 1200,
-      Zquic::PktSpace::AppData, true, true, true }) &&
+      Zquic::PktNumSpace::AppData, true, true, true }) &&
       tracker.add(Zquic::SentPkt{
       3, Zquic::timeUS(2600), 1200,
-      Zquic::PktSpace::AppData, true, true, false }),
+      Zquic::PktNumSpace::AppData, true, true, false }),
     "persistent congestion setup failed");
   ZuCHECK(tracker.lose(1) && tracker.lose(2) && tracker.lose(3),
     "persistent congestion loss setup failed");
@@ -104,13 +104,13 @@ void testPersistentCongestion()
   Zquic::SentPktTracker interrupted;
   ZuCHECK(interrupted.add(Zquic::SentPkt{
       1, Zquic::timeUS(1000), 1200,
-      Zquic::PktSpace::AppData, true, true, false }) &&
+      Zquic::PktNumSpace::AppData, true, true, false }) &&
       interrupted.add(Zquic::SentPkt{
       2, Zquic::timeUS(1800), 1200,
-      Zquic::PktSpace::AppData, true, true, false }) &&
+      Zquic::PktNumSpace::AppData, true, true, false }) &&
       interrupted.add(Zquic::SentPkt{
       3, Zquic::timeUS(2600), 1200,
-      Zquic::PktSpace::AppData, true, true, false }),
+      Zquic::PktNumSpace::AppData, true, true, false }),
     "interrupted persistent congestion setup failed");
   ZuCHECK(interrupted.lose(1) && interrupted.ack(2) && interrupted.lose(3) &&
       !interrupted.persistentCongestion(Zquic::timeUS(1500)),
@@ -136,7 +136,7 @@ void testRetransmitQueue()
   Zquic::TxRange range{buf, 0, 4, 12};
   Zquic::SentPkt packet{
     9, Zquic::timeUS(3000), 64,
-    Zquic::PktSpace::AppData, true, true, false };
+    Zquic::PktNumSpace::AppData, true, true, false };
   ZuCHECK(packet.addFrame(Zquic::SentFrameRef::stream(4, range, true)) &&
       packet.addFrame(Zquic::SentFrameRef::control()),
     "sent packet frame references were not retained");
@@ -163,7 +163,7 @@ void testRetransmitQueue()
 
   Zquic::SentPkt pmtud{
     10, Zquic::timeUS(4000), 1200,
-    Zquic::PktSpace::AppData, true, true, true };
+    Zquic::PktNumSpace::AppData, true, true, true };
   ZuCHECK(pmtud.addFrame(Zquic::SentFrameRef::stream(4, range, false)) &&
       tracker.add(pmtud) && tracker.lose(10) &&
       !tracker.retransmitPending(),

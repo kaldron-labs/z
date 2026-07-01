@@ -25,7 +25,7 @@ using DiagText = ZtString<
     ZtStringHeapMax<4096>>>;
 
 struct Diag {
-  static ZuCSpan packetSpaceName(PktSpace::T);
+  static ZuCSpan packetSpaceName(PktNumSpace::T);
   static ZuCSpan frameTypeName(FrameType::T);
   static ZuCSpan streamTypeName(Zi::StreamType::T);
 

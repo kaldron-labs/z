@@ -21,14 +21,14 @@ void testCryptoPosture()
   ZuCHECK(!crypto.earlyDataEnabled(), "0-RTT must remain disabled");
   ZuCHECK(crypto.diag().zeroRTTRejected == 1, "0-RTT rejection not counted");
 
-  crypto.installSecret(Zquic::CryptoLevel::Initial, "initial-secret");
-  crypto.installSecret(Zquic::CryptoLevel::Handshake, "hs-secret");
-  crypto.installSecret(Zquic::CryptoLevel::OneRTT, "app-secret");
+  crypto.installSecret(Zquic::PktNumSpace::Initial, "initial-secret");
+  crypto.installSecret(Zquic::PktNumSpace::Handshake, "hs-secret");
+  crypto.installSecret(Zquic::PktNumSpace::AppData, "app-secret");
   ZuCHECK(crypto.completeHandshake(), "1-RTT readiness not reached");
-  ZuCHECK(!crypto.secretInstalled(Zquic::CryptoLevel::Initial) &&
-      !crypto.secretInstalled(Zquic::CryptoLevel::Handshake),
+  ZuCHECK(!crypto.secretInstalled(Zquic::PktNumSpace::Initial) &&
+      !crypto.secretInstalled(Zquic::PktNumSpace::Handshake),
     "lower-level secrets were not discarded");
-  ZuCHECK(crypto.secretInstalled(Zquic::CryptoLevel::OneRTT),
+  ZuCHECK(crypto.secretInstalled(Zquic::PktNumSpace::AppData),
     "1-RTT secret not recorded");
   ZuCHECK(crypto.diag().secretsInstalled == 3 &&
       crypto.diag().secretsDiscarded == 2,

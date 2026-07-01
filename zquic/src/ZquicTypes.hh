@@ -93,12 +93,15 @@ struct StreamError {
   ZtEnum(StreamError, int8_t, None, Reset, Stop);
 };
 
-struct PktSpace {
-  ZtEnum(PktSpace, int8_t, Initial, Handshake, AppData);
+struct PktNumSpace {
+  ZtEnum(PktNumSpace, int8_t, Initial, Handshake, AppData);
+  ZtEnumMap(PktNumSpace, JSON, "initial", "handshake", "1RTT", "unknown");
 };
 
 struct PktType {
   ZtEnum(PktType, int8_t, Initial, ZeroRTT, Handshake, Retry, Short);
+  ZtEnumMap(PktType, JSON,
+    "initial", "0RTT", "handshake", "retry", "1RTT", "unknown");
 };
 
 struct LinkState {
@@ -120,6 +123,13 @@ struct FrameType {
     ResetStream, StopSending, NewToken, NewConnectionID, RetireConnectionID,
     PathChallenge, PathResponse, ConnectionClose, ApplicationClose,
     HandshakeDone, Unknown);
+  ZtEnumMap(FrameType, JSON,
+    "padding", "ping", "ack", "crypto", "stream", "max_data",
+    "max_stream_data", "max_streams", "data_blocked",
+    "stream_data_blocked", "streams_blocked", "reset_stream",
+    "stop_sending", "new_token", "new_connection_id",
+    "retire_connection_id", "path_challenge", "path_response",
+    "connection_close", "application_close", "handshake_done", "unknown");
 };
 
 struct CxnState {
@@ -144,6 +154,7 @@ struct PathHintKind {
 
 struct EcnMark {
   ZtEnum(EcnMark, int8_t, NotECT, ECT0, ECT1, CE);
+  ZtEnumMap(EcnMark, JSON, "Not-ECT", "ECT0", "ECT1", "CE", "unknown");
 };
 
 struct ServerPktAction {
@@ -156,10 +167,6 @@ struct RecoveryEvent {
 
 struct SentFrameKind {
   ZtEnum(SentFrameKind, int8_t, None, Stream, Crypto, Control);
-};
-
-struct CryptoLevel {
-  ZtEnum(CryptoLevel, int8_t, Initial, Handshake, OneRTT);
 };
 
 } // namespace Zquic

@@ -190,7 +190,7 @@ void testTxPktLossRequeue()
   p.pn = 7;
   p.sentTime = Zquic::timeUS(100);
   p.bytes = 1200;
-  p.space = Zquic::PktSpace::AppData;
+  p.space = Zquic::PktNumSpace::AppData;
   p.ackEliciting = true;
   p.inFlight = true;
   p.addFrame(Zquic::SentFrameRef::crypto(3, 9));
@@ -221,7 +221,7 @@ void testTxPktAckRanges()
     Zquic::TxPkt p;
     p.pn = pn;
     p.bytes = 100;
-    p.space = Zquic::PktSpace::AppData;
+    p.space = Zquic::PktNumSpace::AppData;
     p.ackEliciting = true;
     p.inFlight = true;
     ZuCHECK(tracker.add(p), "sent packet add failed");
@@ -246,7 +246,7 @@ static Zquic::TxPkt txPkt_(
   p.pn = pn;
   p.sentTime = sentTime ? sentTime : Zquic::timeUS(pn * 100);
   p.bytes = bytes;
-  p.space = Zquic::PktSpace::AppData;
+  p.space = Zquic::PktNumSpace::AppData;
   p.ackEliciting = true;
   p.inFlight = true;
   return p;
@@ -261,7 +261,7 @@ void testTxPktAckDelete()
     Zquic::TxPkt p;
     p.pn = pn;
     p.bytes = 100;
-    p.space = Zquic::PktSpace::AppData;
+    p.space = Zquic::PktNumSpace::AppData;
     p.ackEliciting = true;
     p.inFlight = true;
     ZuCHECK(tracker.add(p), "sent packet add failed");
@@ -299,7 +299,7 @@ void testTxPktRetainedLostAck()
     Zquic::TxPkt p;
     p.pn = pn;
     p.bytes = 100;
-    p.space = Zquic::PktSpace::AppData;
+    p.space = Zquic::PktNumSpace::AppData;
     p.ackEliciting = true;
     p.inFlight = true;
     ZuCHECK(tracker.add(p), "sent packet add failed");

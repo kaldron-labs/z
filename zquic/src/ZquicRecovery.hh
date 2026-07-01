@@ -250,7 +250,7 @@ public:
   enum { ActiveAckThreshold = 2 };
 
   bool received(
-    PktSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
+    PktNumSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
     bool ackEliciting = true, bool immediate = false,
     EcnMark::T ecn = EcnMark::NotECT)
   {
@@ -270,7 +270,7 @@ public:
   }
 
   bool ackEliciting(
-    PktSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
+    PktNumSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
     bool immediate = false)
   {
     unsigned i = space;
@@ -282,55 +282,55 @@ public:
     return true;
   }
 
-  const AckTracker &tracker(PktSpace::T space) const {
+  const AckTracker &tracker(PktNumSpace::T space) const {
     return m_ack[space];
   }
-  AckTracker &tracker(PktSpace::T space) {
+  AckTracker &tracker(PktNumSpace::T space) {
     return m_ack[space];
   }
-  bool pending(PktSpace::T space) const {
+  bool pending(PktNumSpace::T space) const {
     return m_pending[space];
   }
-  bool post(PktSpace::T space) {
+  bool post(PktNumSpace::T space) {
     unsigned i = space;
     if (!m_pending[i] || m_postedGen[i] == m_gen[i]) return false;
     m_postedGen[i] = m_gen[i];
     return true;
   }
-  bool deadlineSet(PktSpace::T space) const {
+  bool deadlineSet(PktNumSpace::T space) const {
     return m_deadlineSet[space];
   }
-  bool immediate(PktSpace::T space) const {
+  bool immediate(PktNumSpace::T space) const {
     return m_immediate[space];
   }
-  bool ackEliciting(PktSpace::T space) const {
+  bool ackEliciting(PktNumSpace::T space) const {
     return m_ackEliciting[space];
   }
-  uint64_t deadline(PktSpace::T space) const {
+  uint64_t deadline(PktNumSpace::T space) const {
     return m_deadline[space];
   }
-  uint64_t largestRxTime(PktSpace::T space) const {
+  uint64_t largestRxTime(PktNumSpace::T space) const {
     return m_largestRxTime[space];
   }
-  uint64_t gen(PktSpace::T space) const {
+  uint64_t gen(PktNumSpace::T space) const {
     return m_gen[space];
   }
-  const AckECN &ackECN(PktSpace::T space) const {
+  const AckECN &ackECN(PktNumSpace::T space) const {
     return m_ecn[space];
   }
-  bool due(PktSpace::T space, uint64_t now) const {
+  bool due(PktNumSpace::T space, uint64_t now) const {
     unsigned i = space;
     return m_pending[i] &&
       (m_immediate[i] || (m_deadlineSet[i] && now >= m_deadline[i]));
   }
   int writeFrame(
-    PktSpace::T space, uint8_t *out, unsigned len,
+    PktNumSpace::T space, uint8_t *out, unsigned len,
     uint64_t delay = 0, bool ecn = false) const
   {
     unsigned i = space;
     return m_ack[i].writeFrame(out, len, delay, ecn ? &m_ecn[i] : nullptr);
   }
-  void sent(PktSpace::T space, uint64_t gen = ZuCmp<uint64_t>::null()) {
+  void sent(PktNumSpace::T space, uint64_t gen = ZuCmp<uint64_t>::null()) {
     unsigned i = space;
     if (!ZuCmp<uint64_t>::null(gen) && gen != m_gen[i]) return;
     m_pending[i] = false;
@@ -741,7 +741,7 @@ struct SentPkt {
   uint64_t	pn = 0;
   ZuTime	sentTime;
   unsigned	bytes = 0;
-  PktSpace::T space = PktSpace::AppData;
+  PktNumSpace::T space = PktNumSpace::AppData;
   bool		ackEliciting = false;
   bool		inFlight = false;
   bool		pmtudProbe = false;
@@ -809,7 +809,7 @@ struct PktTxUpdate {
   }
 
   uint64_t	ackdBytes = 0;
-  CryptoLevel::T	level = CryptoLevel::Initial;
+  PktNumSpace::T	level = PktNumSpace::Initial;
   uint64_t	normalAckdBytes = 0;
   uint64_t	pmtudAckdBytes = 0;
   unsigned	pmtudAckdSize = 0;
@@ -1030,7 +1030,7 @@ public:
 
   bool ackBatch(
     const AckRange *ranges, unsigned nRanges, PktAckBatch &batch,
-    unsigned budget, CryptoLevel::T level, PktTxUpdate *update = nullptr)
+    unsigned budget, PktNumSpace::T level, PktTxUpdate *update = nullptr)
   {
     if (!budget) return false;
     if (update) update->level = level;

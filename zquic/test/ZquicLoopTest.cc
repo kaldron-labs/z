@@ -147,8 +147,8 @@ void testHandshakeStreamsAndClose()
   ZuCHECK(clientCrypto.deriveInitial(dcid) && serverCrypto.deriveInitial(dcid),
     "loop Initial key derivation failed");
 
-  clientCrypto.installSecret(Zquic::CryptoLevel::OneRTT, "client-app");
-  serverCrypto.installSecret(Zquic::CryptoLevel::OneRTT, "server-app");
+  clientCrypto.installSecret(Zquic::PktNumSpace::AppData, "client-app");
+  serverCrypto.installSecret(Zquic::PktNumSpace::AppData, "server-app");
   ZuCHECK(clientCrypto.completeHandshake() && serverCrypto.completeHandshake(),
     "loop 1-RTT readiness failed");
 
@@ -229,11 +229,11 @@ void testRecoveryFlowAndPMTUD()
     "loop flow unblock failed");
 
   Zquic::SentPktTracker sent;
-  ZuCHECK(sent.add({1, 100, 1200, Zquic::PktSpace::AppData,
+  ZuCHECK(sent.add({1, 100, 1200, Zquic::PktNumSpace::AppData,
       true, true, false}) &&
-      sent.add({2, 110, 1200, Zquic::PktSpace::AppData,
+      sent.add({2, 110, 1200, Zquic::PktNumSpace::AppData,
       true, true, false}) &&
-      sent.add({5, 120, 1200, Zquic::PktSpace::AppData,
+      sent.add({5, 120, 1200, Zquic::PktNumSpace::AppData,
       true, true, false}),
     "loop sent-packet add failed");
   ZuCHECK(sent.ack(5), "loop ACK failed");
@@ -243,7 +243,7 @@ void testRecoveryFlowAndPMTUD()
 
   Zquic::SentPktTracker pmtudTx;
   Zquic::SentPkt probeAck{
-    10, Zquic::timeUS(100), 1300, Zquic::PktSpace::AppData,
+    10, Zquic::timeUS(100), 1300, Zquic::PktNumSpace::AppData,
     true, true, true, 1300};
   ZuCHECK(pmtudTx.add(probeAck), "loop PMTUD sent-packet add failed");
   Zquic::AckRange probeAckRange{10, 10};
@@ -257,7 +257,7 @@ void testRecoveryFlowAndPMTUD()
 
   Zquic::SentPktTracker pmtudLossTx;
   Zquic::SentPkt probeLoss{
-    11, Zquic::timeUS(100), 1400, Zquic::PktSpace::AppData,
+    11, Zquic::timeUS(100), 1400, Zquic::PktNumSpace::AppData,
     true, true, true, 1400};
   ZuCHECK(pmtudLossTx.add(probeLoss), "loop PMTUD loss add failed");
   Zquic::PktTxUpdate probeLossUpdate;
