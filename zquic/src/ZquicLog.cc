@@ -559,13 +559,14 @@ static uint64_t qlogTime_(ZuTime time)
   return uint64_t(time.sec()) * 1000000 + uint64_t(time.nsec() / 1000);
 }
 
-bool ZquicLogSink::init(ZuCSpan path)
+bool ZquicLogSink::init(ZuCSpan path, unsigned age)
 {
   final();
   if (path)
     m_path = path;
   else
     m_path = "zquic.sqlog";
+  ZiFile::age(m_path, age);
   m_file.open(m_path, ZiFile::Write | ZiFile::GC);
   return !!m_file;
 }
@@ -1042,7 +1043,7 @@ void ZquicLogger::connectionClosed_(ZquicLogCloseEvent event)
 
 void ZquicLogger::work_()
 {
-  if (!m_sink.init(m_params.path())) {
+  if (!m_sink.init(m_params.path(), m_params.age())) {
     ++m_writerFailures;
   } else {
     for (;;) {
