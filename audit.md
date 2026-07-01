@@ -304,15 +304,17 @@ Current qlog state:
 
 Remaining gaps:
 
-- Final non-debug/no-op signoff is still outstanding.  Per `GUIDELINES.md`, this
-  must be done with `z.config`, top-level `make clean`, and top-level `make -j8`
-  so all dependent Z libraries are rebuilt consistently.
+- Final non-debug/no-op signoff has passed.  The tree was configured with
+  `./z.config -L /usr`; generated makefiles show `-O3 -g -DNDEBUG` for
+  `zquic` and downstream `zhttp`, with no `Zquic_DEBUG`; top-level
+  `make clean` followed by top-level `make -j8` completed successfully.
 - External qlog-tool validation is still outstanding.  Representative `.sqlog`
   files need to be loaded in mainstream qlog tooling, or any schema/tooling
   deviations must remain documented until fixed.
-- Connection-level MAX_DATA unblocked coverage still needs an end-to-end runtime
-  scenario proving the connection was genuinely data-credit blocked before
-  MAX_DATA arrived.
+- Connection-level MAX_DATA unblocked coverage now has an end-to-end runtime
+  scenario in `ZquicStreamTest::testFlowControlQLog`: a real stream send first
+  fails on exhausted connection data credit and queues DATA_BLOCKED, then
+  MAX_DATA clears the queued control and allows the stream send to proceed.
 - Multi-connection trace identity expectations for mainstream qlog consumers are
   not yet validated.  Current tests cover single-process metadata and a server
   endpoint trace.
@@ -331,9 +333,8 @@ Remaining gaps:
 
 ## Priority work
 
-1. Finish qlog parity signoff: run the required non-debug full rebuild, validate
-   representative traces in mainstream qlog tooling, and close or document any
-   remaining schema/tooling deviations.
+1. Finish qlog parity signoff: validate representative traces in mainstream
+   qlog tooling, and close or document any remaining schema/tooling deviations.
 2. Integrate pacing and consider CUBIC/BBR selection if production WAN behavior
    matters.
 3. Finish ECN as a path feature: socket marking, validation state, fallback, and

@@ -13,6 +13,7 @@
 #include <zlib/ZquicLib.hh>
 #endif
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <zlib/ZuDerive.hh>
@@ -103,6 +104,51 @@ struct PktType {
   ZtEnumMap(PktType, JSON,
     "initial", "0RTT", "handshake", "retry", "1RTT", "unknown");
 };
+
+// TLS epochs are not packet number spaces: 0-RTT and 1-RTT both use AppData.
+inline bool pktNumSpaceFromTLSEpoch(size_t epoch, PktNumSpace::T &space)
+{
+  if (epoch == 0) {
+    space = PktNumSpace::Initial;
+    return true;
+  }
+  if (epoch == 2) {
+    space = PktNumSpace::Handshake;
+    return true;
+  }
+  if (epoch >= 3) {
+    space = PktNumSpace::AppData;
+    return true;
+  }
+  return false;
+}
+
+inline bool tlsEpochFromPktNumSpace(PktNumSpace::T space, size_t &epoch)
+{
+  switch (space) {
+    case PktNumSpace::Initial:
+      epoch = 0;
+      return true;
+    case PktNumSpace::Handshake:
+      epoch = 2;
+      return true;
+    case PktNumSpace::AppData:
+      epoch = 3;
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline PktType::T pktTypeFromPktNumSpace(PktNumSpace::T space)
+{
+  switch (space) {
+    case PktNumSpace::Initial: return PktType::Initial;
+    case PktNumSpace::Handshake: return PktType::Handshake;
+    case PktNumSpace::AppData: return PktType::Short;
+    default: return PktType::N;
+  }
+}
 
 struct LinkState {
   ZtEnum(LinkState, int8_t,

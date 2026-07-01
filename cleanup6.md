@@ -359,11 +359,34 @@ Implemented:
   `ZquicStreamTest::testPTOQLog` drives the protected `Zquic.hh` PTO reclaim
   and probe-generation code paths and asserts runtime JSON-SEQ output contains
   `recovery:loss_timer_updated`, `expired`, `backoff`, and `probe`.
-- prior focused non-debug qlog no-op checks in a disposable release build are
-  useful smoke evidence only.  They are not final release verification.  Final
-  release signoff must be configured through `z.config` and then use top-level
-  `make clean` followed by top-level `make -j8` so all dependent Z libraries,
-  generated dependency files, and tests are rebuilt consistently.
+- current packet-number-space terminology and TLS epoch boundary cleanup passes:
+  `make -C zquic/src -j8`,
+  `make -C zquic/test -j8 ZquicCryptoTest ZquicHandshakeTest
+  ZquicPacketProtectionTest ZquicLogTest ZquicStreamTest`,
+  `ZquicCryptoTest`, `ZquicHandshakeTest`, `ZquicPacketProtectionTest`,
+  `ZquicLogTest`, and `ZquicStreamTest`.  The obsolete `CryptoLevel` and
+  `PktSpace` names are gone.  Runtime QUIC code uses `PktNumSpace` for the RFC
+  packet number spaces; TLS `epoch` remains a TLS boundary value because 0-RTT
+  and 1-RTT both map to the QUIC application-data packet number space.  The
+  epoch/packet-number-space mappings are centralized in `ZquicTypes.hh`, with
+  call sites no longer open-coding epoch ternaries.
+- current end-to-end flow-control qlog verification passes:
+  `make -C zquic/src -j8`,
+  `make -C zquic/test -j8 ZquicStreamTest ZquicLogTest ZquicRecoveryTest`,
+  `ZquicStreamTest`, `ZquicLogTest`, and `ZquicRecoveryTest`.
+  `ZquicStreamTest::testFlowControlQLog` now drives the real send path to prove
+  a stream with queued data first fails because connection data credit is
+  exhausted and queues DATA_BLOCKED; applying MAX_DATA clears DATA_BLOCKED and
+  the same stream then sends.  The same test drives the stream-credit blocked
+  path through packetization, verifies MAX_STREAM_DATA clears the queued
+  STREAM_DATA_BLOCKED control, and still asserts JSON-SEQ output contains the
+  connection/stream blocked event names, enum-mapped flow-control reasons, and
+  blocked/unblocked state transitions.
+- final non-debug qlog no-op signoff passes in the current release
+  configuration: `./z.config -L /usr`, top-level `make clean`, and top-level
+  `make -j8`.  Generated makefiles show `-O3 -g -DNDEBUG` for `zquic` and
+  downstream `zhttp`, with no `Zquic_DEBUG`, so all dependent Z libraries,
+  generated dependency files, examples, and tests were rebuilt consistently.
 
 Paused implementation state:
 
@@ -430,11 +453,10 @@ Still missing or incomplete:
   for closed vocabularies so JSON string conversion occurs in `ZtJSON` on the
   logger thread; keep `ZeString` only for genuinely arbitrary detailed text or
   protocol strings, such as ALPN, that must cross the logger boundary.
-- focused non-debug library/test rebuilds from the earlier disposable release
-  tree are smoke evidence only.  They do not satisfy final release
-  verification.  A final non-debug/no-op pass must be configured through
-  `z.config` and then rebuilt with top-level `make clean` followed by
-  top-level `make -j8`.
+- final non-debug/no-op verification now passes in the current release
+  configuration: `./z.config -L /usr`, top-level `make clean`, and top-level
+  `make -j8`.  Generated makefiles show `-O3 -g -DNDEBUG` for `zquic` and
+  downstream `zhttp`, with no `Zquic_DEBUG`.
 - stream/application-facing qlog coverage is partial:
   `transport:stream_state_updated` now covers stream `idle` -> `open` creation
   and `open` -> `closed` reaping with stream id/type/side and enum-mapped
@@ -446,10 +468,10 @@ Still missing or incomplete:
   received STREAM frame data accepted into transport buffers, and delivery from
   transport buffers to application reads, with `raw.length` and without payload
   bytes.
-  Connection-level unblocked coverage still needs an end-to-end scenario that
-  reaches a genuinely blocked connection data-credit state before MAX_DATA is
-  applied; the current MAX_DATA unblocked emission is instrumented and covered
-  indirectly through focused flow-control tests.  Close/drain expiry runtime
+  Connection-level unblocked coverage now has an end-to-end runtime scenario
+  that reaches a genuinely blocked connection data-credit state before MAX_DATA
+  is applied; the test also proves the blocked control is cleared and the
+  stream send proceeds after the credit update.  Close/drain expiry runtime
   qlog coverage exists for the peer-close drain path, and idle-timeout runtime
   qlog coverage exists for the normal negotiated idle-timeout path.
 - Retry/VN/stateless reset/token/protection-failure qlog coverage is partial:
@@ -651,10 +673,10 @@ Resume checklist before adding more event coverage:
    `ZquicStreamTest`, `ZquicPMTUDTest`, `ZquicCIDTest`, plus handshake/recovery
    smoke tests before continuing to new stream/security/header coverage.
    Current debug build/test pass is complete for this checklist item.
-6. Add a non-debug compile/no-op verification pass for `Zquic_DEBUG`-off
-   builds before treating macro/API cleanup as complete.  Earlier disposable
-   `-DNDEBUG` checks are smoke evidence only; final release verification must
-   use `z.config`, top-level `make clean`, and top-level `make -j8`.
+6. Non-debug compile/no-op verification for `Zquic_DEBUG`-off builds is
+   complete: `./z.config -L /usr`, top-level `make clean`, and top-level
+   `make -j8` pass with generated `zquic` and downstream `zhttp` makefiles
+   using `-O3 -g -DNDEBUG` and no `Zquic_DEBUG`.
 
 1. Introduce typed qlog data structs.
    - Add compact structs for packet, datagram, frame, recovery, congestion,
@@ -769,11 +791,10 @@ Resume checklist before adding more event coverage:
       stream state machine.
     - Emit flow-control blocked/unblocked where blocked state changes.  The
       send-side BLOCKED/MAX_DATA/MAX_STREAM_DATA paths now emit and test
-      spec-aligned connection/stream blocked qlog; add a connection-level
-      MAX_DATA unblocked end-to-end runtime scenario that proves the connection
-      data-credit state was genuinely blocked before MAX_DATA arrived, plus
-      any receive/application-visible flow state transitions that are made
-      explicit later.
+      spec-aligned connection/stream blocked qlog; the connection-level
+      MAX_DATA unblocked test now proves the connection data-credit state was
+      genuinely blocked before MAX_DATA arrived.  Add any receive/application-
+      visible flow state transitions that are made explicit later.
     - Emit `transport:stream_data_moved` for application data movement.
       Application -> transport, transport -> network, network -> transport,
       and transport -> application are now implemented and tested.
@@ -872,7 +893,8 @@ are true:
    churn for disabled qlog, no cross-shard locking to read trace metadata, and
    no writer closures capturing references into live packet/runtime state.
 2. `Zquic_DEBUG` remains the only active qlog build mode.  Non-debug qlog calls
-   remain no-op stubs and compile cleanly.
+   remain no-op stubs and compile cleanly; current release verification is
+   `./z.config -L /usr`, top-level `make clean`, and top-level `make -j8`.
 3. qlog disabled is a cheap branch.  Disabled qlog does not build frame-summary
    arrays, format JSON, allocate, or copy packet payloads.
 4. The trace header includes qlog version/format, implementation identity,
