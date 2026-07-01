@@ -152,34 +152,6 @@ inline ZuBSpan byteSpan(const uint8_t *data, unsigned len)
   return ZuBSpan{data, len};
 }
 
-// TLS epochs are not packet number spaces: 0-RTT and 1-RTT both use AppData.
-inline bool pktNumSpaceFromTLSEpoch(size_t epoch, PktNumSpace::T &space)
-{
-  if (epoch == 0) {
-    space = PktNumSpace::Initial;
-    return true;
-  }
-  if (epoch == 2) {
-    space = PktNumSpace::Handshake;
-    return true;
-  }
-  if (epoch >= 3) {
-    space = PktNumSpace::AppData;
-    return true;
-  }
-  return false;
-}
-
-inline PktType::T pktTypeFromPktNumSpace(PktNumSpace::T space)
-{
-  switch (space) {
-    case PktNumSpace::Initial: return PktType::Initial;
-    case PktNumSpace::Handshake: return PktType::Handshake;
-    case PktNumSpace::AppData: return PktType::Short;
-    default: return PktType::N;
-  }
-}
-
 inline bool runtimeFrameRef(
   ZuBSpan bytes, SentFrameRef &ref, bool &ackEliciting)
 {
@@ -8121,35 +8093,28 @@ nextSpace:
     unsigned i = unsigned(ack.level);
     const AckECN &last = m_peerAckECN[i];
     bool fail = false;
-    auto reason = ZquicLogECNReason::AckECN;
     if (ack.ecn.ect0 < last.ect0) {
       fail = true;
-      reason = ZquicLogECNReason::ECT0Decrease;
     }
     if (ack.ecn.ect1 < last.ect1) {
       fail = true;
-      reason = ZquicLogECNReason::ECT1Decrease;
     }
     if (ack.ecn.ce < last.ce) {
       fail = true;
-      reason = ZquicLogECNReason::CEDecrease;
     }
     uint64_t total = ack.ecn.ect0 + ack.ecn.ect1;
     if (total < ack.ecn.ect0) {
       fail = true;
-      reason = ZquicLogECNReason::ECTOverflow;
     }
     uint64_t withCE = total + ack.ecn.ce;
     if (withCE < total) {
       fail = true;
-      reason = ZquicLogECNReason::CEOverflow;
     }
     uint64_t largest = 0;
     if (ack.nRanges) {
       largest = ack.ranges[ack.nRanges - 1].largest;
       if (withCE > largest + 1) {
 	fail = true;
-	reason = ZquicLogECNReason::CounterExceedsAck;
       }
     }
     if (fail) {
@@ -8158,7 +8123,6 @@ nextSpace:
       ZquicLOG(([
 	level = ack.level,
 	state = ZquicLogECNState::Disabled,
-	reason,
 	ect0 = ack.ecn.ect0,
 	ect1 = ack.ecn.ect1,
 	ce = ack.ecn.ce,
@@ -8168,10 +8132,25 @@ nextSpace:
 	largestAcked = largest,
 	disabled = true
       ](auto &o, ZuTime time) {
+	ZquicLogECNReason::T reason = ZquicLogECNReason::AckECN;
+	if (ect0 < previousECT0)
+	  reason = ZquicLogECNReason::ECT0Decrease;
+	if (ect1 < previousECT1)
+	  reason = ZquicLogECNReason::ECT1Decrease;
+	if (ce < previousCE)
+	  reason = ZquicLogECNReason::CEDecrease;
+	uint64_t total_ = ect0 + ect1;
+	if (total_ < ect0)
+	  reason = ZquicLogECNReason::ECTOverflow;
+	uint64_t withCE_ = total_ + ce;
+	if (withCE_ < total_)
+	  reason = ZquicLogECNReason::CEOverflow;
+	if (withCE_ > largestAcked + 1)
+	  reason = ZquicLogECNReason::CounterExceedsAck;
 	ZquicLogECNEvent event{
 	  .packetSpace = level,
 	  .state = ZquicLogECNState::T(state),
-	  .reason = ZquicLogECNReason::T(reason),
+	  .reason = reason,
 	  .ect0 = ect0,
 	  .ect1 = ect1,
 	  .ce = ce,
@@ -8191,7 +8170,6 @@ nextSpace:
     ZquicLOG(([
       level = ack.level,
       state = ZquicLogECNState::Validated,
-      reason,
       ect0 = ack.ecn.ect0,
       ect1 = ack.ecn.ect1,
       ce = ack.ecn.ce,
@@ -8204,7 +8182,7 @@ nextSpace:
       ZquicLogECNEvent event{
 	  .packetSpace = level,
 	  .state = ZquicLogECNState::T(state),
-	  .reason = ZquicLogECNReason::T(reason),
+	  .reason = ZquicLogECNReason::AckECN,
 	.ect0 = ect0,
 	.ect1 = ect1,
 	.ce = ce,
@@ -9356,8 +9334,8 @@ nextSpace:
 	    return false;
 	  m_rxDiag.cryptoBytesRx += frame.payload.length();
 	  if (contiguous) {
-	    size_t epoch = level == PktNumSpace::Initial ? 0 :
-	      level == PktNumSpace::Handshake ? 2 : 3;
+	    size_t epoch = 0;
+	    if (!tlsEpochFromPktNumSpace(level, epoch)) return false;
 	    if (!emitTLS(epoch, contiguous, addr)) return false;
 	  }
 	  break;

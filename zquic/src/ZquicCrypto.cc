@@ -1038,10 +1038,10 @@ void Crypto::keyLog_(int isEnc, PktNumSpace::T level, ZuBSpan secret)
 int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
 {
   if (!secret) return 0;
-  PktNumSpace::T level =
-    epoch == 2 ? PktNumSpace::Handshake :
-    epoch >= 3 ? PktNumSpace::AppData : PktNumSpace::Initial;
-  if (epoch < 2) return 0;
+  PktNumSpace::T level = PktNumSpace::Initial;
+  if (!pktNumSpaceFromTLSEpoch(epoch, level) ||
+      level == PktNumSpace::Initial)
+    return 0;
 
   ptls_cipher_suite_t *cipher = ptls_get_cipher(m_tls);
   if (!cipher || !cipher->hash) return -1;

@@ -2509,18 +2509,37 @@ void testFlowControlQLog()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  ZuCHECK(link->queueDataBlocked(1024),
-    "flow-control qlog DATA_BLOCKED queue failed");
   ZmRef<TestStream> stream = link->stream(Zi::StreamType::Duplex);
   ZuCHECK(stream, "flow-control qlog stream open failed");
-  ZuCHECK(link->queueStreamDataBlocked(uint64_t(stream->id()), 64),
-    "flow-control qlog STREAM_DATA_BLOCKED queue failed");
-  stream->txCredit(0);
+  stream->txCredit(32);
   {
     auto tx = stream->txStream_();
+    tx << "connection-blocked" << Zi::flush();
+  }
+  ZuCHECK(!link->flushCongestedStream(stream) &&
+      stream->txRangeCount() &&
+      link->queuedControlFrames() == 1,
+    "flow-control qlog connection data-credit block not reached");
+  link->grantDataCredit(32);
+  ZuCHECK(!link->queuedControlFrames(),
+    "flow-control qlog MAX_DATA did not clear DATA_BLOCKED");
+  ZuCHECK(link->flushCongestedStream(stream),
+    "flow-control qlog stream did not send after MAX_DATA");
+
+  ZmRef<TestStream> streamBlocked = link->stream(Zi::StreamType::Duplex);
+  ZuCHECK(streamBlocked, "flow-control qlog blocked stream open failed");
+  streamBlocked->txCredit(0);
+  {
+    auto tx = streamBlocked->txStream_();
     tx << "blocked" << Zi::flush();
   }
-  link->grantStreamCredit(stream, 7);
+  ZuCHECK(!link->flushCongestedStream(streamBlocked) &&
+      streamBlocked->txRangeCount() &&
+      link->queuedControlFrames() == 1,
+    "flow-control qlog stream data-credit block not reached");
+  link->grantStreamCredit(streamBlocked, 7);
+  ZuCHECK(!link->queuedControlFrames(),
+    "flow-control qlog MAX_STREAM_DATA did not clear STREAM_DATA_BLOCKED");
 
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
