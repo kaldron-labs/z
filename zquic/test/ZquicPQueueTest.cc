@@ -30,18 +30,20 @@ void testRxDataClipping()
 
   ZmRef<ZiIOBuf> buf = new Zquic::CryptoRxBufAlloc<>{nullptr};
   fill_(buf, "abcdef");
+  buf->skip = 1;
+  buf->length = 4;
 
-  Zquic::RxData data{buf, 10, 1, 4};
+  Zquic::RxData data{buf, 10};
   ZuCHECK(data.key() == 10 && data.length() == 4,
     "RxData initial key/length mismatch");
   ZuCHECK(data.clipHead(2) == 2 &&
       data.key() == 12 &&
-      data.bufOffset == 3 &&
+      data.buf->skip == 3 &&
       data.length() == 2,
     "RxData head clipping mismatch");
   ZuCHECK(data.clipTail(1) == 1 &&
       data.key() == 12 &&
-      data.bufOffset == 3 &&
+      data.buf->skip == 3 &&
       data.length() == 1,
     "RxData tail clipping mismatch");
 }

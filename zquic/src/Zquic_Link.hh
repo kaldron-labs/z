@@ -291,7 +291,7 @@ public:
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       impl()->streamResetReceived(stream, frame.errorCode, frame.length);
-      reapStream_(stream);
+      reapStreamFromRx_(stream);
       return 0;
     }
     if (stream->resetSent()) return 0;
@@ -331,7 +331,7 @@ public:
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       impl()->streamData(stream, frame.offset, frame.payload, frame.fin);
-      if (frame.fin) reapStream_(stream);
+      if (frame.fin) reapStreamFromRx_(stream);
     } else {
       TransportError::T error = stream->rxComplete() || stream->resetReceived() ?
 	TransportError::StreamState : TransportError::FinalSize;
@@ -354,7 +354,7 @@ public:
       maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       if (wasRxQueued && !stream->rxPending() && !stream->rxQueued())
-	reapStream_(stream);
+	reapStreamFromRx_(stream);
       return;
     }
     TransportError::T error = stream->rxComplete() || stream->resetReceived() ?
@@ -928,6 +928,41 @@ protected:
   void recordTxUnackd_(PktNumSpace::T level, const TxPktRefs &refs) {
     for (unsigned i = 0; i < refs.count(); ++i)
       (void)recordTxUnackd_(level, refs[i], refs.stream(i));
+  }
+  void discardTxUnackd_(
+    PktNumSpace::T level, const SentFrameRef &ref, Stream *stream = nullptr) {
+    switch (ref.kind) {
+      case SentFrameKind::Stream: {
+	if (ref.streamID > uint64_t(INT64_MAX)) return;
+	if (stream) {
+	  (void)stream->ackTxUnackd(ref.offset, ref.length, ref.fin);
+	  return;
+	}
+	if (StreamRef stream_ = findStream(int64_t(ref.streamID)))
+	  (void)stream_->ackTxUnackd(ref.offset, ref.length, ref.fin);
+	break;
+      }
+      case SentFrameKind::Crypto:
+	(void)m_txCryptoUnackd[level].clear(ref.offset, ref.length);
+	break;
+      default:
+	break;
+    }
+  }
+  void discardTxUnackd_(PktNumSpace::T level, const TxPktRefs &refs) {
+    for (unsigned i = 0; i < refs.count(); ++i)
+      discardTxUnackd_(level, refs[i], refs.stream(i));
+  }
+  void discardTxUnackd_(
+    PktNumSpace::T level, ZuBSpan frame, const TxPktRefs *refs) {
+    if (refs) {
+      discardTxUnackd_(level, *refs);
+      return;
+    }
+    SentFrameRef ref;
+    bool ackEliciting = false;
+    if (runtimeFrameRef(frame, ref, ackEliciting))
+      discardTxUnackd_(level, ref);
   }
   bool ackTxFrame_(
     PktNumSpace::T level, const SentFrameRef &ref, Stream *stream = nullptr) {
@@ -4536,35 +4571,35 @@ nextSpace:
     return m_rxAcks.tracker(level).contains(pn);
   }
 
-  void recordTxPkt_(
+  bool recordTxPkt_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes, ZuBSpan frame,
     uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
     SentFrameRef ref;
     bool ackEliciting = false;
-    if (!runtimeFrameRef(frame, ref, ackEliciting)) return;
-    recordTxPkt_(
+    if (!runtimeFrameRef(frame, ref, ackEliciting)) return true;
+    return recordTxPkt_(
       level, pn, bytes, ref, ackEliciting, false, 0, ackLevel, ackLargest);
   }
 
-  void recordTxPkt_(
+  bool recordTxPkt_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const SentFrameRef &ref, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
     uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
     TxPktRefs refs;
     if (ref.kind != SentFrameKind::None) refs.add(ref);
-    recordTxPkt_(
+    return recordTxPkt_(
       level, pn, bytes, refs, ackEliciting, pmtudProbe, pmtudSize,
       ackLevel, ackLargest);
   }
 
-  void recordTxPkt_(
+  bool recordTxPkt_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const TxPktRefs &refs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
     uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
-    if (m_txSpaceDiscarded[level]) return;
-    if (!ackEliciting && !refs.count()) return;
+    if (m_txSpaceDiscarded[level]) return true;
+    if (!ackEliciting && !refs.count()) return true;
     SentPkt packet;
     packet.pn = pn;
     packet.space = level;
@@ -4578,13 +4613,14 @@ nextSpace:
     packet.ackLargest = ackLargest;
     for (unsigned i = 0; i < refs.count(); ++i)
       packet.addFrame(refs[i], refs.stream(i));
-    if (!m_txPkts[level].add(packet)) return;
+    if (!m_txPkts[level].add(packet)) return false;
     recordTxUnackd_(level, refs);
     if (ackEliciting) {
       m_congestion.sent(bytes);
       updateCongestionDiag_();
       scheduleLossTimer_();
     }
+    return true;
   }
 
   void processAckFrame_(PktNumSpace::T level, const Frame &frame) {
@@ -4604,7 +4640,39 @@ nextSpace:
     });
   }
 
-  void applyAckUpdateTx_(const PktTxUpdate &update, bool &congestionOpened) {
+  void queueAckReap_(
+    Stream **streams, unsigned &nStreams, Stream *stream) {
+    if (!stream) return;
+    for (unsigned i = 0; i < nStreams; ++i)
+      if (streams[i] == stream) return;
+    if (nStreams < PktTxUpdate::MaxFrames) streams[nStreams++] = stream;
+  }
+  void reapAckedStreams_(PktTxUpdate &update, Stream **streams, unsigned n) {
+    update.clearAckdFrames();
+    for (unsigned i = 0; i < n; ++i)
+      reapStream_(streams[i]);
+  }
+  void reapStreamFromRx_(const StreamRef &stream) {
+    if (!stream || stream->id() < 0) return;
+    int64_t id = stream->id();
+    app()->txRun([link = impl(), id]() mutable {
+      if (link->disconnecting_()) return;
+      link->reapStreamByIDTx_(id);
+    });
+  }
+  bool reapStreamByIDTx_(int64_t id) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream reap outside Tx thread", return false);
+    Stream *stream = nullptr;
+    {
+      StreamRef streamRef = findStream(id);
+      stream = streamRef.ptr();
+    }
+    return reapStream_(stream);
+  }
+  void applyAckUpdateTx_(
+    const PktTxUpdate &update, bool &congestionOpened,
+    Stream **reapStreams, unsigned &nReapStreams) {
     applyAckOfAckTx_(update);
     for (unsigned i = 0; i < update.nAckdFrames; ++i) {
       const SentFrameRef &ref = update.ackdFrames[i];
@@ -4619,11 +4687,11 @@ nextSpace:
       if (ackTxFrame_(update.level, ref, stream))
 	switch (ref.kind) {
 	  case SentFrameKind::Stream:
-	    if (ref.fin) reapStream_(streamRef);
+	    if (ref.fin) queueAckReap_(reapStreams, nReapStreams, stream);
 	    break;
 	  case SentFrameKind::Control:
 	    if (ref.controlType == FrameType::ResetStream)
-	      reapStream_(streamRef);
+	      queueAckReap_(reapStreams, nReapStreams, stream);
 	    break;
 	  default:
 	    break;
@@ -4772,13 +4840,16 @@ nextSpace:
       }
       work.ecnValidated = true;
     }
-    PktTxUpdate update;
-    if (!work.lossPhase) {
-      if (!m_txPkts[ack.level].ackBatch(
-	  ack.ranges, ack.nRanges, work.ackBatch, RecoveryScanBatch,
-	  ack.level, &update)) {
-	applyAckUpdateTx_(update, work.congestionOpened);
-	ZquicLOG(app()->qlogTrace(), ([
+	    PktTxUpdate update;
+	    Stream *reapStreams[PktTxUpdate::MaxFrames] = {};
+	    unsigned nReapStreams = 0;
+	    if (!work.lossPhase) {
+	      if (!m_txPkts[ack.level].ackBatch(
+		  ack.ranges, ack.nRanges, work.ackBatch, RecoveryScanBatch,
+		  ack.level, &update)) {
+		applyAckUpdateTx_(
+		  update, work.congestionOpened, reapStreams, nReapStreams);
+		ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
 	  largestAcked = ack.nRanges ? ack.ranges[ack.nRanges - 1].largest : 0,
 	  ackDelayUS = ack.level == PktNumSpace::AppData ?
@@ -4805,17 +4876,19 @@ nextSpace:
 	    .packetNumbers = ZuMv(packetNumbers),
 	    .linkInfo = linkInfo
 	  };
-	  event.packetSpace = level;
-	  o.logPktsAcked(event, time);
-	}));
-	app()->txRun([link = impl(), work = ZuMv(work)]() mutable {
-	  if (link->disconnecting_()) return;
-	  link->processAckFrameTx_(ZuMv(work));
-	});
-	return;
-      }
-      applyAckUpdateTx_(update, work.congestionOpened);
-      ZquicLOG(app()->qlogTrace(), ([
+		  event.packetSpace = level;
+		  o.logPktsAcked(event, time);
+		}));
+		reapAckedStreams_(update, reapStreams, nReapStreams);
+		app()->txRun([link = impl(), work = ZuMv(work)]() mutable {
+		  if (link->disconnecting_()) return;
+		  link->processAckFrameTx_(ZuMv(work));
+		});
+		return;
+	      }
+	      applyAckUpdateTx_(
+		update, work.congestionOpened, reapStreams, nReapStreams);
+	      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
 	largestAcked = ack.nRanges ? ack.ranges[ack.nRanges - 1].largest : 0,
 	ackDelayUS = ack.level == PktNumSpace::AppData ?
@@ -4842,12 +4915,16 @@ nextSpace:
 	  .packetNumbers = ZuMv(packetNumbers),
 	  .linkInfo = linkInfo
 		};
-	event.packetSpace = level;
-	o.logPktsAcked(event, time);
-      }));
-      work.lossPhase = true;
-    } else
-      applyAckUpdateTx_(update, work.congestionOpened);
+		event.packetSpace = level;
+		o.logPktsAcked(event, time);
+	      }));
+	      reapAckedStreams_(update, reapStreams, nReapStreams);
+	      work.lossPhase = true;
+	    } else {
+	      applyAckUpdateTx_(
+		update, work.congestionOpened, reapStreams, nReapStreams);
+	      reapAckedStreams_(update, reapStreams, nReapStreams);
+	    }
     if (work.ackBatch.haveAckForLoss) {
       PktTxUpdate lossUpdate;
       if (!m_txPkts[ack.level].markPktThresholdLossBatch(
@@ -5299,17 +5376,17 @@ nextSpace:
       ++m_txDiag.otherPacketsTx;
   }
 
-  void recordProtPktTx_(
+  bool recordProtPktTx_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes, ZuBSpan recordFrame,
     const TxPktRefs *recordRefs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
     uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
-    if (recordRefs)
+    bool recorded = recordRefs ?
       recordTxPkt_(
 	level, pn, bytes, *recordRefs, ackEliciting, pmtudProbe, pmtudSize,
-	ackLevel, ackLargest);
-    else
+	ackLevel, ackLargest) :
       recordTxPkt_(level, pn, bytes, recordFrame, ackLevel, ackLargest);
+    if (!recorded) return false;
     ++m_txPN[level];
     ++m_txDiag.packetsTx;
     m_txDiag.bytesTx += bytes;
@@ -5355,6 +5432,18 @@ nextSpace:
       if (level == PktNumSpace::AppData && runtimeEstablished_())
 	noteAckElicitingSentTx_();
       schedulePTO();
+    }
+    return true;
+  }
+
+  void discardProtPktTx_(
+    PktNumSpace::T level, uint64_t pn, unsigned bytes, bool ackEliciting,
+    ZuBSpan recordFrame, const TxPktRefs *recordRefs) {
+    m_txPkts[level].discard(pn);
+    discardTxUnackd_(level, recordFrame, recordRefs);
+    if (ackEliciting) {
+      m_congestion.release(bytes);
+      updateCongestionDiag_();
     }
   }
 
@@ -5613,13 +5702,19 @@ nextSpace:
     }
     buf->skip = 0;
     buf->length = unsigned(n);
-    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     uint8_t ackLevel;
     uint64_t ackLargest;
     txAckMeta_(PktNumSpace::Initial, payload, ackLevel, ackLargest);
-    recordProtPktTx_(
-      PktNumSpace::Initial, pn, unsigned(n), recordFrame, recordRefs,
-      ackEliciting, false, 0, ackLevel, ackLargest);
+    if (!recordProtPktTx_(
+	  PktNumSpace::Initial, pn, unsigned(n), recordFrame, recordRefs,
+	  ackEliciting, false, 0, ackLevel, ackLargest))
+      return false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr))) {
+      discardProtPktTx_(
+	PktNumSpace::Initial, pn, unsigned(n), ackEliciting,
+	recordFrame, recordRefs);
+      return false;
+    }
     if (payload.ack(PktNumSpace::Initial)) ackSentTx_(PktNumSpace::Initial);
     return true;
   }
@@ -5687,13 +5782,19 @@ nextSpace:
     }
     buf->skip = 0;
     buf->length = unsigned(n);
-    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     uint8_t ackLevel;
     uint64_t ackLargest;
     txAckMeta_(PktNumSpace::Handshake, payload, ackLevel, ackLargest);
-    recordProtPktTx_(
-      PktNumSpace::Handshake, pn, unsigned(n), recordFrame, recordRefs,
-      ackEliciting, false, 0, ackLevel, ackLargest);
+    if (!recordProtPktTx_(
+	  PktNumSpace::Handshake, pn, unsigned(n), recordFrame, recordRefs,
+	  ackEliciting, false, 0, ackLevel, ackLargest))
+      return false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr))) {
+      discardProtPktTx_(
+	PktNumSpace::Handshake, pn, unsigned(n), ackEliciting,
+	recordFrame, recordRefs);
+      return false;
+    }
     if (payload.ack(PktNumSpace::Handshake))
       ackSentTx_(PktNumSpace::Handshake);
     return true;
@@ -5768,13 +5869,19 @@ nextSpace:
     }
     buf->skip = 0;
     buf->length = unsigned(n);
-    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     uint8_t ackLevel;
     uint64_t ackLargest;
     txAckMeta_(PktNumSpace::AppData, payload, ackLevel, ackLargest);
-    recordProtPktTx_(
-      PktNumSpace::AppData, pn, unsigned(n), recordFrame, recordRefs,
-      ackEliciting, pmtudSize != 0, pmtudSize, ackLevel, ackLargest);
+    if (!recordProtPktTx_(
+	  PktNumSpace::AppData, pn, unsigned(n), recordFrame, recordRefs,
+	  ackEliciting, pmtudSize != 0, pmtudSize, ackLevel, ackLargest))
+      return false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr))) {
+      discardProtPktTx_(
+	PktNumSpace::AppData, pn, unsigned(n), ackEliciting,
+	recordFrame, recordRefs);
+      return false;
+    }
     if (payload.ack(PktNumSpace::AppData)) ackSentTx_(PktNumSpace::AppData);
     return true;
   }

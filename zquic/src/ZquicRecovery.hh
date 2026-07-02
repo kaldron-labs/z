@@ -812,6 +812,13 @@ struct PktTxUpdate {
       lostOwners[nLostFrames - 1] = p.frameOwner(i);
     }
   }
+  void clearAckdFrames() {
+    for (unsigned i = 0; i < nAckdFrames; ++i) {
+      ackdFrames[i] = {};
+      ackdOwners[i] = nullptr;
+    }
+    nAckdFrames = 0;
+  }
 
   uint64_t	ackdBytes = 0;
   uint64_t	ackedPNs[MaxAckedPNs] = {};
@@ -955,6 +962,15 @@ public:
 	  (!*m_latestAckSentTime || p.sentTime > m_latestAckSentTime))
 	m_latestAckSentTime = p.sentTime;
     }
+    return true;
+  }
+
+  bool discard(uint64_t pn) {
+    auto node = m_packets.find(pn);
+    if (!node) return false;
+    SentPkt &p = node->data();
+    if (p.inFlight) release_(p);
+    (void)m_packets.abort(pn);
     return true;
   }
 
