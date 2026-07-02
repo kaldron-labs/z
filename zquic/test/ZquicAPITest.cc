@@ -490,7 +490,7 @@ void testAlignedSurfaceShape()
   ZuCHECK(c0 && c0->id() == 0 && c0->link() == client.ptr() &&
       !client->isServer(),
     "client aligned link/stream shape mismatch");
-  ZuCHECK(client->runtimeDiag().unhandledAppEvents,
+  ZuCHECK(client->runtimeDiag().unhandledAppEvents(),
     "default client stream-open hook was not visible in diagnostics");
 
   ServerShapeApp serverApp;
