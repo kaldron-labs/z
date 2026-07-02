@@ -177,10 +177,10 @@ using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
 class CryptoStream :
   public ZmPQRx<CryptoStream, CryptoRxPQueue, CryptoStreamRxNTP> {
 public:
-  static constexpr unsigned MaxBufSize = 64 * 1024;
+  static constexpr unsigned MaxBufSize = (64<<10); // 64K
   // Covers mainstream TLS 1.3 handshakes without packet loss while avoiding
   // heap allocation on the common path; larger certificate chains fall back.
-  static constexpr unsigned BuiltinBufSize = 8 * 1024;
+  static constexpr unsigned BuiltinBufSize = (8<<10); // 8K
   using Queue = CryptoRxPQueue;
   using Rx = ZmPQRx<CryptoStream, Queue, CryptoStreamRxNTP>;
   using Msg = Queue::Node;
@@ -261,7 +261,7 @@ ZuDerive(TLSTransportParams,
 
 class Crypto {
 public:
-  static constexpr unsigned TLSOutputMax = 64 * 1024;
+  static constexpr unsigned TLSOutputMax = (64<<10); // 64K
   // QUIC uses TLS 1.3 cipher suites with defined header protection. TLS 1.3
   // currently has a small suite set; keep one extra slot for picotls' null
   // terminator.

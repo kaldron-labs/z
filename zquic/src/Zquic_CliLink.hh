@@ -31,7 +31,7 @@ public:
   using StreamRef = ZmRef<Stream>;
   using Endpoint = Endpoint_<CliLink>;
   static constexpr bool EndpointRef = true;
-  static constexpr unsigned TLSBufSize = 64 * 1024;
+  static constexpr unsigned TLSBufSize = (64<<10); // 64K
   static constexpr unsigned RuntimePNLength = 2;
   static constexpr unsigned RuntimeCryptoChunk = 900;
   using Base::Base;

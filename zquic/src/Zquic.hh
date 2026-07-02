@@ -84,8 +84,8 @@ ZuDerive(TokenSecret,
 
 using ErrorFn = ZmFn<void(ZeException)>;
 
-inline constexpr uint64_t DefaultMaxData = 16U * 1024U * 1024U;
-inline constexpr uint64_t DefaultMaxStreamData = 1U * 1024U * 1024U;
+inline constexpr uint64_t DefaultMaxData = (16<<20); // 16M
+inline constexpr uint64_t DefaultMaxStreamData = (1<<20); // 1M
 inline constexpr uint64_t DefaultMaxStreamsBidi = 128;
 inline constexpr uint64_t DefaultMaxStreamsUni = 16;
 inline constexpr uint64_t MaxStreamCount = uint64_t(INT64_MAX) >> 2;
@@ -1092,7 +1092,7 @@ template <typename App_> class Client : public Engine<App_> {
 public:
   using App = App_;
   using Base = Engine<App>;
-  static constexpr unsigned TLSBufSize = 64 * 1024;
+  static constexpr unsigned TLSBufSize = (64<<10); // 64K
   static constexpr unsigned RuntimePNLength = 2;
   static constexpr unsigned RuntimeCryptoChunk = 900;
 
