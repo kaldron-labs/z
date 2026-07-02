@@ -57,6 +57,16 @@ using BufAlloc =
 
 } // namespace Ztls_
 
+template <>
+struct ZuTraits<ptls_iovec_t> : public ZuBaseTraits<ptls_iovec_t> {
+  enum { IsArray = 1, IsSpan = 1, IsPrimitive = 0 };
+  using Elem = uint8_t;
+
+  static uint8_t *data(ptls_iovec_t &v) { return v.base; }
+  static const uint8_t *data(const ptls_iovec_t &v) { return v.base; }
+  static size_t length(const ptls_iovec_t &v) { return v.len; }
+};
+
 namespace Ztls {
 
 // heap-allocated vocabulary types
@@ -92,7 +102,7 @@ struct EngineParams {
     return ZuMv(*this);
   }
   EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
-    m_alpn.length(0);
+    m_alpn = {};
     m_alpn.ensure(v.length());
     for (auto &s : v) m_alpn.push(ParamString{s});
     return ZuMv(*this);
@@ -1151,11 +1161,10 @@ template <typename> friend class Client;
 private:
   void save_ticket(ptls_iovec_t input) {
     if (!input.len || !input.base) {
-      m_ticket.clear();
+      m_ticket = {};
       return;
     }
-    m_ticket.length(0);
-    m_ticket.append(input.base, input.len);
+    m_ticket = input;
   }
 
   // client connected variant - initiate new handshake
@@ -1675,8 +1684,8 @@ protected:
 
 protected:
   bool init_alpn_(const ParamStrings &alpn) {
-    m_alpn.length(0);
-    m_alpnData.length(0);
+    m_alpn = {};
+    m_alpnData = {};
     if (!alpn.length()) return true;
     unsigned bytes = 0;
     for (auto &s : alpn) bytes += s.length();

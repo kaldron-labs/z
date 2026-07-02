@@ -1004,7 +1004,7 @@ void Crypto::resetTLS_()
   memset(m_tlsCipherSuites, 0, sizeof(m_tlsCipherSuites));
   memset(&m_tlsProps, 0, sizeof(m_tlsProps));
   memset(m_tlsExtensions, 0, sizeof(m_tlsExtensions));
-  m_tlsTransportParams.length(0);
+  m_tlsTransportParams = {};
   m_alpnVec = {};
   m_maxEarlyData = 0;
   m_tlsResult = PTLS_ERROR_IN_PROGRESS;

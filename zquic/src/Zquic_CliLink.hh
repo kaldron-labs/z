@@ -783,8 +783,7 @@ private:
       event.trigger = SecTrigger::Received;
       o.logSecEvent(EventName::TokenIssued, event, time);
     }));
-    m_newToken.length(0);
-    m_newToken.append(token.data(), token.length());
+    m_newToken = token;
     Base::newTokenRx_();
   }
 

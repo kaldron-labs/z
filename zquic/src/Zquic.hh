@@ -268,7 +268,7 @@ class ClientBootstrap {
 public:
   bool started() const { return m_started; }
   bool retried() const { return m_retried; }
-  uint64_t retryTokenLength() const { return m_retryTokenLength; }
+  uint64_t retryTokenLength() const { return m_retryToken.length(); }
   ZuBSpan retryToken() const { return m_retryToken; }
   const CxnID &initialDCID() const { return m_initialDCID; }
   const CxnID &initialSCID() const { return m_initialSCID; }
@@ -281,8 +281,7 @@ public:
     m_initialDCID = initialDCID;
     m_initialSCID = initialSCID;
     m_retrySCID = {};
-    m_retryTokenLength = 0;
-    m_retryToken.length(0);
+    m_retryToken = {};
     m_started = true;
     m_retried = false;
     return true;
@@ -309,9 +308,7 @@ public:
 	retry.integrityTag.length() != 16)
       return false;
     m_retrySCID = retry.header.scid;
-    m_retryTokenLength = retry.token.length();
-    m_retryToken.length(0);
-    m_retryToken.append(retry.token.data(), retry.token.length());
+    m_retryToken = retry.token;
     m_retried = true;
     return true;
   }
@@ -333,7 +330,6 @@ private:
   CxnID		m_initialSCID;
   CxnID		m_retrySCID;
   TokenBytes	m_retryToken;
-  uint64_t	m_retryTokenLength = 0;
   bool		m_started = false;
   bool		m_retried = false;
 };
@@ -618,8 +614,7 @@ struct EngineParams {
   }
   EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
   EngineParams &&addressValidationSecret(ZuBSpan v) {
-    m_tokenSecret.length(0);
-    m_tokenSecret.append(v.data(), v.length());
+    m_tokenSecret = v;
     return ZuMv(*this);
   }
   EngineParams &&retryAddressValidation(bool v) {
@@ -639,13 +634,13 @@ struct EngineParams {
     return ZuMv(*this);
   }
   EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
-    m_alpn.length(0);
+    m_alpn = {};
     m_alpn.ensure(v.length());
     for (auto &s : v) m_alpn.push(ParamString{s});
     return ZuMv(*this);
   }
   EngineParams &&alpn(ZuSpan<const ptls_iovec_t> v) {
-    m_alpn.length(0);
+    m_alpn = {};
     m_alpn.ensure(v.length());
     for (auto &p : v)
       m_alpn.push(ParamString{ZuCSpan{p.base, unsigned(p.len)}});
@@ -748,8 +743,8 @@ public:
       m_txThread = 0;
       m_asyncThread = 0;
       m_errorFn = ErrorFn{};
-      m_alpnData.length(0);
-      m_alpn.length(0);
+      m_alpnData = {};
+      m_alpn = {};
       m_caPath = ParamString{};
       m_certPath = ParamString{};
       m_keyPath = ParamString{};
@@ -761,7 +756,7 @@ public:
       m_maxStreamsUni = DefaultMaxStreamsUni;
       m_maxIdleTimeout = 0;
       m_maxUDP = MinUDPPayload;
-      m_tokenSecret.length(0);
+      m_tokenSecret = {};
       m_tokenLifetime = DefaultTokenLifetime;
       m_retryAddressValidation = false;
       m_newTokenAddressValidation = false;
@@ -852,8 +847,7 @@ protected:
       m_maxUDP = params.maxUDP();
       {
 	ZuBSpan secret = params.addressValidationSecret();
-	m_tokenSecret.length(0);
-	m_tokenSecret.append(secret.data(), secret.length());
+	m_tokenSecret = secret;
       }
       m_tokenLifetime = params.addressValidationLifetime();
       m_retryAddressValidation = params.retryAddressValidation();
@@ -1022,8 +1016,8 @@ private:
   }
 
   bool init_alpn_(const ParamStrings &alpn) {
-    m_alpn.length(0);
-    m_alpnData.length(0);
+    m_alpn = {};
+    m_alpnData = {};
     if (!alpn) return true;
     unsigned bytes = 0;
     for (auto &s : alpn) bytes += s.length();

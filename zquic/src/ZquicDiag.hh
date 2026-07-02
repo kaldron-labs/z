@@ -51,8 +51,7 @@ struct Diag {
     bytesInFlight = bytesInFlight_;
   }
   void setHandshakeState(ZuCSpan state) {
-    handshakeState.length(0);
-    handshakeState << state;
+    handshakeState = state;
   }
   void setStreamCounts(uint64_t open, uint64_t closed) {
     openStreams = open;
