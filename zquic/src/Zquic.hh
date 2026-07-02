@@ -132,21 +132,6 @@ inline ErrorFn defaultErrorFn()
   return ErrorFn{[](ZeException e) { ZiLogEvent(ZuMv(e)); }};
 }
 
-inline bool padForProtSample(
-  unsigned pnOffset, unsigned pnLength, unsigned tagLen,
-  uint8_t *payload, unsigned len, unsigned &payloadLen)
-{
-  unsigned headerLen = pnOffset + pnLength;
-  unsigned minPktLen = pnOffset + 4 + 16;
-  unsigned minPayloadLen = minPktLen > headerLen + tagLen ?
-    minPktLen - headerLen - tagLen : 0;
-  if (payloadLen >= minPayloadLen) return true;
-  if (minPayloadLen > len) return false;
-  memset(payload + payloadLen, 0, minPayloadLen - payloadLen);
-  payloadLen = minPayloadLen;
-  return true;
-}
-
 inline ZuBSpan byteSpan(const uint8_t *data, unsigned len)
 {
   return ZuBSpan{data, len};
@@ -1220,48 +1205,6 @@ inline bool sendRuntimeCryptoFlights(
       remaining -= chunk;
     }
   }
-  return true;
-}
-
-inline bool writeInitialPingProbe(ZiIOBuf *buf, uint64_t packetNumber)
-{
-  if (!buf) return false;
-  if (buf->size < MinUDPPayload && !buf->ensure(MinUDPPayload)) return false;
-
-  CxnID dcid{"zqserv01"};
-  CxnID scid{"zqcli001"};
-  static constexpr unsigned PNLength = 1;
-  uint8_t *out = buf->data_();
-  unsigned payloadLength = 1;
-  int headerLength = -1;
-
-  for (unsigned i = 0; i < 4; ++i) {
-    headerLength = Pkt::writeInitial(
-      out, buf->size, dcid, scid, payloadLength, PNLength);
-    if (headerLength < 0 ||
-	MinUDPPayload < unsigned(headerLength) + PNLength + 1)
-      return false;
-    unsigned nextPayloadLength =
-      MinUDPPayload - unsigned(headerLength) - PNLength;
-    if (nextPayloadLength == payloadLength) break;
-    payloadLength = nextPayloadLength;
-  }
-  if (headerLength < 0) return false;
-
-  int pnLength = PktNumber::encode(
-    out + headerLength, buf->size - unsigned(headerLength),
-    packetNumber, PNLength);
-  if (pnLength != int(PNLength)) return false;
-  int pingLength = FrameCodec::writePing(
-    out + headerLength + PNLength,
-    buf->size - unsigned(headerLength) - PNLength);
-  if (pingLength != 1) return false;
-
-  unsigned offset = unsigned(headerLength) + PNLength + unsigned(pingLength);
-  if (offset > MinUDPPayload) return false;
-  memset(out + offset, 0, MinUDPPayload - offset);
-  buf->skip = 0;
-  buf->length = MinUDPPayload;
   return true;
 }
 
@@ -4703,30 +4646,24 @@ protected:
   }
   void pathExpired_() { failPathValid_(); }
 #ifdef Zquic_DEBUG
-  void growActivePathForTest_(unsigned size) {
+  void forceActivePathMTU_(unsigned size) {
     m_path.startProbe(size);
     m_path.probeAckd();
   }
-  bool startPMTUDProbeForTest_(unsigned size) {
+  bool startPMTUDProbeChecked_(unsigned size) {
     return m_path.startProbeChecked(size);
   }
-  void ackPMTUDProbeForTest_(unsigned size) {
+  void ackPMTUDProbe_(unsigned size) {
     onPMTUDProbeAckd_(size);
   }
-  void losePMTUDProbeForTest_(unsigned size) {
+  void losePMTUDProbe_(unsigned size) {
     onPMTUDProbeLost_(size);
   }
-  void expirePMTUDProbeForTest_() { pmtudExpired_(); }
-  void applyPathHintForTest_(PathHint hint) { applyPathHint_(hint); }
-  unsigned activePathMaxUDPForTest_() const { return m_path.activeMaxUDP(); }
-  unsigned pathProbeSizeForTest_() const { return m_path.probeSize(); }
-  bool pathProbeRetryPendingForTest_() const {
-    return m_path.probeRetryPending();
-  }
-  const PathDiag &pathDiagForTest_() const { return m_path.diag(); }
-  PktBudget sendBudgetForTest_() const { return sendBudget_(); }
+  void expirePMTUDProbe_() { pmtudExpired_(); }
+  unsigned pathProbeSize_() const { return m_path.probeSize(); }
+  bool pathProbeRetryPending_() const { return m_path.probeRetryPending(); }
   bool validatingPath_() const { return m_validatingPath.active; }
-  bool startPathValidForTest_(ZiSockAddr local, ZiSockAddr remote) {
+  bool startPathValidation_(ZiSockAddr local, ZiSockAddr remote) {
     if (!remote || sameAddr_(remote, m_path.remote()))
       return false;
     if (m_validatingPath.active &&
@@ -4741,7 +4678,7 @@ protected:
     return m_validatingPath.active ?
       m_validatingPath.challenge.bspan() : ZuBSpan{};
   }
-  bool installOneRTTForTest_(
+  bool installAppDataKeys_(
     const TrafficSecret &rx, const TrafficSecret &tx, const CxnID &localCID) {
     m_localSCID = localCID;
     m_linkState = LinkState::Established;
@@ -4749,7 +4686,7 @@ protected:
     return m_crypto.updateRxTrafficSecret(PktNumSpace::AppData, rx) &&
       txInstallTrafficSecret_(PktNumSpace::AppData, tx);
   }
-  void discardPeerKeysForTest_() { discardOldPeerKeys_(); }
+  void discardPeerKeys_() { discardOldPeerKeys_(); }
 #endif
   template <typename SendPkt>
   bool sendPathPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
@@ -4971,7 +4908,7 @@ protected:
     return PktNumber::encodedLength(m_txPN[level], largestAckd);
   }
 #ifdef Zquic_DEBUG
-  void setTxPNForTest_(PktNumSpace::T level, uint64_t pn) {
+  void setTxPN_(PktNumSpace::T level, uint64_t pn) {
     m_txPN[level] = pn;
   }
 #endif

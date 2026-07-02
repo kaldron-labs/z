@@ -280,7 +280,7 @@ struct TestLink :
   }
 #ifdef Zquic_DEBUG
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::startPathValidForTest_(ZuMv(local), ZuMv(remote));
+    Base::startPathValidation_(ZuMv(local), ZuMv(remote));
   }
   ZuBSpan validatingChallenge() const {
     return Base::validatingChallenge_();
