@@ -39,6 +39,11 @@ static ZtString<> readFile_(const Zi::Path &path)
   return data;
 }
 
+static void removeTestLog_(const Zi::Path &path)
+{
+  if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(path);
+}
+
 static unsigned parseJSONSeq_(ZuCSpan data)
 {
   unsigned n = 0;
@@ -60,16 +65,25 @@ static unsigned parseJSONSeq_(ZuCSpan data)
   return n;
 }
 
-static bool containsQLogVersion_(ZuCSpan data)
+static bool containsQLogFileSchema_(ZuCSpan data)
 {
-  return data.find<"qlog_version">() >= 0;
+  return
+    data.find<"file_schema">() >= 0 &&
+    data.find<"urn:ietf:params:qlog:file:sequential">() >= 0 &&
+    data.find<"serialization_format">() >= 0 &&
+    data.find<"application/qlog+json-seq">() >= 0;
 }
 
 static bool containsQLogHeaderMetadata_(ZuCSpan data)
 {
   return
-    data.find<"qlog_format">() >= 0 &&
     data.find<"vantage_point">() >= 0 &&
+    data.find<"event_schemas">() >= 0 &&
+    data.find<"urn:ietf:params:qlog:events:quic-12">() >= 0 &&
+    data.find<"urn:zlib:zquic:qlog:events:zquic">() >= 0 &&
+    data.find<"time_format">() >= 0 &&
+    data.find<"relative_to_epoch">() >= 0 &&
+    data.find<"reference_time">() >= 0 &&
     data.find<"implementation">() >= 0 &&
     data.find<"version">() >= 0 &&
     data.find<"zquic">() >= 0;
@@ -103,131 +117,154 @@ static bool containsPacketSent_(ZuCSpan data)
 
 static bool containsTransportPacketSent_(ZuCSpan data)
 {
-  return data.find<"transport:packet_sent">() >= 0;
+  return data.find<"quic:packet_sent">() >= 0;
 }
 
 static bool containsTransportPacketReceived_(ZuCSpan data)
 {
-  return data.find<"transport:packet_received">() >= 0;
+  return data.find<"quic:packet_received">() >= 0;
 }
 
 static bool containsTransportPacketBuffered_(ZuCSpan data)
 {
-  return data.find<"transport:packet_buffered">() >= 0;
+  return data.find<"quic:packet_buffered">() >= 0;
 }
 
 static bool containsTransportPacketDropped_(ZuCSpan data)
 {
-  return data.find<"transport:packet_dropped">() >= 0;
+  return data.find<"quic:packet_dropped">() >= 0;
 }
 
 static bool containsDatagramReceived_(ZuCSpan data)
 {
-  return data.find<"transport:datagrams_received">() >= 0;
+  return data.find<"quic:udp_datagrams_received">() >= 0;
 }
 
 static bool containsDatagramSent_(ZuCSpan data)
 {
-  return data.find<"transport:datagrams_sent">() >= 0;
+  return data.find<"quic:udp_datagrams_sent">() >= 0;
 }
 
 static bool containsTypedPacketFields_(ZuCSpan data)
 {
   return
+    data.find<"header">() >= 0 &&
     data.find<"packet_type">() >= 0 &&
-    data.find<"packet_space">() >= 0 &&
-    data.find<"packet_number">() >= 0 &&
-    data.find<"bytes_in_flight">() >= 0 &&
-    data.find<"frames">() >= 0 &&
-    data.find<"frames_truncated">() >= 0 &&
+    data.find<"packet_number_space">() >= 0 &&
+	    data.find<"packet_number">() >= 0 &&
+	    data.find<"raw">() >= 0 &&
+	    data.find<"payload_length">() >= 0 &&
+	    data.find<"trigger">() >= 0 &&
+	    data.find<"bytes_in_flight">() >= 0 &&
+	    data.find<"frames">() >= 0 &&
+	    data.find<"frames_truncated">() >= 0 &&
     data.find<"ack_eliciting">() >= 0;
+}
+
+static bool containsTypedDatagramFields_(ZuCSpan data)
+{
+  return
+    data.find<"\"count\":1">() >= 0 &&
+    data.find<"\"raw\":[{">() >= 0 &&
+    data.find<"\"payload_length\":1234">() >= 0 &&
+    data.find<"\"payload_length\":1200">() >= 0 &&
+    data.find<"\"ecn\":[\"ECT0\"">() >= 0;
 }
 
 static bool containsRecoveryEvents_(ZuCSpan data)
 {
   return
-    data.find<"transport:packets_acked">() >= 0 &&
-    data.find<"transport:packet_lost">() >= 0 &&
-    data.find<"recovery:packet_lost">() >= 0 &&
-    data.find<"recovery:marked_for_retransmit">() >= 0 &&
-    data.find<"recovery:metrics_updated">() >= 0 &&
-    data.find<"recovery:loss_timer_updated">() >= 0 &&
-    data.find<"recovery:congestion_state_updated">() >= 0 &&
-    data.find<"recovery:ecn_state_updated">() >= 0;
+    data.find<"quic:packets_acked">() >= 0 &&
+    data.find<"quic:packet_lost">() >= 0 &&
+    data.find<"quic:packet_lost">() >= 0 &&
+    data.find<"quic:marked_for_retransmit">() >= 0 &&
+    data.find<"quic:recovery_metrics_updated">() >= 0 &&
+    data.find<"quic:timer_updated">() >= 0 &&
+    data.find<"quic:congestion_state_updated">() >= 0 &&
+    data.find<"quic:ecn_state_updated">() >= 0;
 }
 
 static bool containsRecoveryFields_(ZuCSpan data)
 {
   return
-    data.find<"largest_acked">() >= 0 &&
-    data.find<"ack_delay_us">() >= 0 &&
-    data.find<"acked_bytes">() >= 0 &&
-    data.find<"lost_bytes">() >= 0 &&
-    data.find<"deadline_us">() >= 0 &&
-    data.find<"smoothed_rtt_us">() >= 0 &&
-    data.find<"rtt_variance_us">() >= 0 &&
-    data.find<"cwnd">() >= 0 &&
+    data.find<"packet_number_space">() >= 0 &&
+    data.find<"packet_numbers">() >= 0 &&
+    data.find<"\"packet_numbers\":[97,98,99]">() >= 0 &&
+    data.find<"\"name\":\"quic:packet_lost\",\"data\":{\"header\":{">() >= 0 &&
+    data.find<"\"trigger\":\"reordering_threshold\"">() >= 0 &&
+    data.find<"\"name\":\"quic:marked_for_retransmit\"">() >= 0 &&
+    data.find<"\"frame_type\":\"crypto\"">() >= 0 &&
+    data.find<"latest_rtt">() >= 0 &&
+    data.find<"smoothed_rtt">() >= 0 &&
+    data.find<"rtt_variance">() >= 0 &&
+    data.find<"min_rtt">() >= 0 &&
+    data.find<"congestion_window">() >= 0 &&
+    data.find<"timer_type">() >= 0 &&
+    data.find<"event_type">() >= 0 &&
+    data.find<"delta">() >= 0 &&
     data.find<"ssthresh">() >= 0 &&
-    data.find<"previous_ect0">() >= 0 &&
-    data.find<"previous_ect1">() >= 0 &&
-    data.find<"previous_ce">() >= 0 &&
-    data.find<"disabled">() >= 0;
+    data.find<"\"name\":\"quic:congestion_state_updated\",\"data\":{\"new\":"
+      "\"slow_start\",\"trigger\":\"ack\"">() >= 0 &&
+    data.find<"\"name\":\"quic:ecn_state_updated\",\"data\":{\"old\":"
+      "\"unknown\",\"new\":\"capable\"">() >= 0 &&
+    data.find<"\"name\":\"quic:ecn_state_updated\",\"data\":{\"old\":"
+      "\"unknown\",\"new\":\"failed\"">() >= 0;
 }
 
 static bool containsSecurityEvents_(ZuCSpan data)
 {
   return
-    data.find<"security:key_updated">() >= 0 &&
-    data.find<"security:key_retired">() >= 0 &&
-    data.find<"security:transport_parameters_set">() >= 0 &&
-    data.find<"security:alpn_information">() >= 0 &&
-    data.find<"security:tls_alert">() >= 0 &&
-    data.find<"security:retry_sent">() >= 0 &&
-    data.find<"security:retry_validated">() >= 0 &&
-    data.find<"security:token_issued">() >= 0 &&
-    data.find<"security:token_validated">() >= 0 &&
-    data.find<"security:token_rejected">() >= 0 &&
-    data.find<"security:version_negotiation">() >= 0 &&
-    data.find<"security:stateless_reset">() >= 0 &&
-    data.find<"security:packet_protection_failed">() >= 0;
+    data.find<"quic:key_updated">() >= 0 &&
+    data.find<"quic:key_discarded">() >= 0 &&
+    data.find<"quic:parameters_set">() >= 0 &&
+    data.find<"quic:alpn_information">() >= 0 &&
+    data.find<"zquic:tls_alert">() >= 0 &&
+    data.find<"zquic:retry_sent">() >= 0 &&
+    data.find<"zquic:retry_validated">() >= 0 &&
+    data.find<"zquic:token_issued">() >= 0 &&
+    data.find<"zquic:token_validated">() >= 0 &&
+    data.find<"zquic:token_rejected">() >= 0 &&
+    data.find<"quic:version_information">() >= 0 &&
+    data.find<"zquic:stateless_reset">() >= 0 &&
+    data.find<"zquic:packet_protection_failed">() >= 0;
 }
 
 static bool containsSecurityFields_(ZuCSpan data)
 {
-  return
-    data.find<"key_type">() >= 0 &&
-    data.find<"trigger">() >= 0 &&
-    data.find<"alpn">() >= 0 &&
-    data.find<"success">() >= 0;
+	  return
+	    data.find<"key_type">() >= 0 &&
+	    data.find<"packet_number_space">() >= 0 &&
+	    data.find<"trigger">() >= 0 &&
+	    data.find<"alpn">() >= 0 &&
+	    data.find<"success">() >= 0;
 }
 
 static bool containsPathCIDEvents_(ZuCSpan data)
 {
   return
-    data.find<"path:path_updated">() >= 0 &&
-    data.find<"path:path_validation_updated">() >= 0 &&
-    data.find<"path:pmtud_updated">() >= 0 &&
-    data.find<"connectivity:connection_id_updated">() >= 0;
+    data.find<"quic:tuple_assigned">() >= 0 &&
+    data.find<"quic:path_validated">() >= 0 &&
+    data.find<"quic:mtu_updated">() >= 0 &&
+    data.find<"quic:connection_id_updated">() >= 0;
 }
 
 static bool containsPathCIDFields_(ZuCSpan data)
 {
   return
-    data.find<"anti_amplification">() >= 0 &&
-    data.find<"deadline_us">() >= 0 &&
-    data.find<"mtu">() >= 0 &&
-    data.find<"validated">() >= 0 &&
-    data.find<"sequence">() >= 0 &&
-    data.find<"reset_token">() >= 0 &&
-    data.find<"associated">() >= 0;
+    data.find<"tuple_id">() >= 0 &&
+    data.find<"success">() >= 0 &&
+    data.find<"vantagePoint">() >= 0 &&
+    data.find<"\"success\":false">() >= 0 &&
+    data.find<"initiator">() >= 0 &&
+    data.find<"new">() >= 0;
 }
 
 static bool containsStreamEvents_(ZuCSpan data)
 {
-  return data.find<"transport:stream_state_updated">() >= 0 &&
-    data.find<"transport:stream_data_moved">() >= 0 &&
-    data.find<"transport:connection_data_blocked_updated">() >= 0 &&
-    data.find<"transport:stream_data_blocked_updated">() >= 0;
+  return data.find<"quic:stream_state_updated">() >= 0 &&
+    data.find<"quic:stream_data_moved">() >= 0 &&
+    data.find<"quic:connection_data_blocked_updated">() >= 0 &&
+    data.find<"quic:stream_data_blocked_updated">() >= 0;
 }
 
 static bool containsStreamFields_(ZuCSpan data)
@@ -248,7 +285,7 @@ static bool containsStreamFields_(ZuCSpan data)
 
 static bool containsCloseEvents_(ZuCSpan data)
 {
-  return data.find<"connectivity:connection_closed">() >= 0;
+  return data.find<"quic:connection_closed">() >= 0;
 }
 
 static bool containsCloseFields_(ZuCSpan data)
@@ -288,16 +325,25 @@ void testQLogFileOutput()
   params.enabled(true).path(path).thread("zquic-qlog-test").ringSize(1<<15).
     age(2);
   ZuCHECK(ZquicLogger::init(params), "qlog init failed");
-  uint8_t odcid[] = { 0xde, 0xad, 0xbe, 0xef };
-  uint8_t groupID[] = { 0x01, 0x02, 0x03, 0x04 };
-  uint8_t dcid[] = { 0x11, 0x12, 0x13, 0x14 };
-  uint8_t scid[] = { 0x21, 0x22, 0x23, 0x24 };
+  auto id4 = [](uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+    Zquic::CxnID id;
+    id.length(4);
+    id[0] = a;
+    id[1] = b;
+    id[2] = c;
+    id[3] = d;
+    return id;
+  };
+  Zquic::CxnID odcid = id4(0xde, 0xad, 0xbe, 0xef);
+  Zquic::CxnID groupID = id4(0x01, 0x02, 0x03, 0x04);
+  Zquic::CxnID dcid = id4(0x11, 0x12, 0x13, 0x14);
+  Zquic::CxnID scid = id4(0x21, 0x22, 0x23, 0x24);
   ZuCHECK(ZquicLogger::metadata(ZquicLogMetadata{
       .vantagePoint = "client",
-      .originalDCID = ZuBSpan{odcid, sizeof(odcid)},
-      .groupID = ZuBSpan{groupID, sizeof(groupID)},
-      .dcid = ZuBSpan{dcid, sizeof(dcid)},
-      .scid = ZuBSpan{scid, sizeof(scid)}
+      .originalDCID = odcid,
+      .groupID = groupID,
+      .dcid = dcid,
+      .scid = scid
     }), "qlog metadata failed");
   ZquicLogger::start();
   ZuCHECK(ZquicLogger::enabled(), "qlog did not enable");
@@ -305,8 +351,27 @@ void testQLogFileOutput()
   packet.packetType = PktType::Initial;
   packet.packetSpace = PktNumSpace::Initial;
   packet.packetSize = 1200;
+  packet.metadata = ZquicLogCIDMeta{
+    .origDCID = odcid,
+    .groupID = groupID,
+    .dcid = dcid,
+    .scid = scid
+  };
   ZquicLogger::packetSent(ZuMv(packet));
-  ZquicLogger::lifecycle(ZquicLogLifecycle::Closed);
+  Zquic::CxnID odcid2 = id4(0xca, 0xfe, 0xba, 0xbe);
+  Zquic::CxnID groupID2 = id4(0x05, 0x06, 0x07, 0x08);
+  Zquic::CxnID dcid2 = id4(0x31, 0x32, 0x33, 0x34);
+  Zquic::CxnID scid2 = id4(0x41, 0x42, 0x43, 0x44);
+  ZquicLogger::connectionStarted(ZquicLogConnectionStartedEvent{
+    .local = ZiSockAddr{ZiIP{"127.0.0.1"}, 4443},
+    .remote = ZiSockAddr{ZiIP{"127.0.0.1"}, 5555},
+    .metadata = ZquicLogCIDMeta{
+      .origDCID = odcid2,
+      .groupID = groupID2,
+      .dcid = dcid2,
+      .scid = scid2
+    }
+  });
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final();
@@ -318,19 +383,28 @@ void testQLogFileOutput()
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "qlog output was not written");
   ZuCHECK(parseJSONSeq_(data) >= 3, "qlog JSON-SEQ parse failed");
-  ZuCHECK(containsQLogVersion_(data), "qlog header missing version");
+  ZuCHECK(containsQLogFileSchema_(data), "qlog header missing file schema");
   ZuCHECK(containsQLogHeaderMetadata_(data), "qlog header metadata missing");
   ZuCHECK(containsQLogVantage_(data, "client"),
     "qlog header missing client vantage point");
   ZuCHECK(containsQLogConnectionMetadata_(data),
     "qlog header missing connection metadata");
+  ZuCHECK(data.find<"CAFEBABE">() >= 0 &&
+      data.find<"05060708">() >= 0 &&
+      data.find<"31323334">() >= 0 &&
+      data.find<"41424344">() >= 0,
+    "qlog event metadata did not carry replacement connection metadata");
+  ZuCHECK(data.find<"\"name\":\"quic:connection_started\",\"data\":{"
+    "\"local\":{\"ip_v4\":\"127.0.0.1\",\"port_v4\":4443},"
+    "\"remote\":{\"ip_v4\":\"127.0.0.1\",\"port_v4\":5555}}">() >= 0,
+    "connection_started endpoint data missing");
   ZuCHECK(containsPacketSent_(data), "qlog event missing packet_sent");
   ZuCHECK(!containsZiLogPrefix_(data), "qlog contains ZiLog text prefix");
 
   ZtString<> aged = readFile_(agedPath);
   ZuCHECK(aged.find<"old-qlog">() >= 0, "qlog output was not aged");
-  ZiFile::remove(path);
-  ZiFile::remove(agedPath);
+  removeTestLog_(path);
+  removeTestLog_(agedPath);
 #else
   ZquicLogParams params;
   params.enabled(true).path("ZquicLogTest.sqlog");
@@ -373,7 +447,7 @@ void testQLogBackPressure()
 
   ZuCHECK(diag.recordsDropped || diag.ringBackPressure,
     "qlog tiny-ring event was not dropped");
-  ZiFile::remove(path);
+  removeTestLog_(path);
 #endif
 }
 
@@ -407,7 +481,7 @@ void testQLogTypedTransportEvents()
   packet.payloadSize = 1180;
   packet.ecn = EcnMark::ECT0;
   packet.bytesInFlight = 2400;
-  packet.frameCount = 2;
+  packet.frameCount = 7;
   packet.ackEliciting = true;
   ZquicLogFrameEvent crypto;
   crypto.type = FrameType::Crypto;
@@ -421,6 +495,22 @@ void testQLogTypedTransportEvents()
   stream.length = 32;
   stream.fin = true;
   packet.frames.push(stream);
+  ZquicLogFrameEvent maxStreams;
+  maxStreams.type = FrameType::MaxStreams;
+  maxStreams.value = 16;
+  maxStreams.streamType = ZquicLogStreamType::Unidirectional;
+  packet.frames.push(maxStreams);
+  ZquicLogFrameEvent streamsBlocked;
+  streamsBlocked.type = FrameType::StreamsBlocked;
+  streamsBlocked.value = 8;
+  streamsBlocked.streamType = ZquicLogStreamType::Bidirectional;
+  packet.frames.push(streamsBlocked);
+  packet.frames.push(ZquicLogFrameEvent{.type = FrameType::PathResponse});
+  packet.frames.push(ZquicLogFrameEvent{
+    .type = FrameType::NewToken,
+    .length = 16
+  });
+  packet.frames.push(ZquicLogFrameEvent{.type = FrameType::HandshakeDone});
   ZquicLogger::packetSent(ZuMv(packet));
 
   ZquicLogPacketEvent rx;
@@ -437,6 +527,8 @@ void testQLogTypedTransportEvents()
   ack.largestAcked = 40;
   ack.ackDelayUS = 25;
   ack.rangeCount = 2;
+  new (ack.ackRanges.push()) ZquicLogAckRange{.first = 32, .largest = 35};
+  new (ack.ackRanges.push()) ZquicLogAckRange{.first = 38, .largest = 40};
   ack.ect0 = 10;
   ack.ect1 = 2;
   ack.ce = 1;
@@ -483,6 +575,8 @@ void testQLogTypedTransportEvents()
   newCID.offset = 3;
   newCID.value = 4;
   newCID.length = 8;
+  newCID.connectionID = CxnID{"qlogcid1"};
+  newCID.resetToken = ResetToken{"0123456789abcdef"};
   rxControl.frames.push(newCID);
 
   ZquicLogFrameEvent retireCID;
@@ -537,6 +631,7 @@ void testQLogTypedTransportEvents()
   ZuCHECK(parseJSONSeq_(data) >= 8, "typed qlog JSON-SEQ parse failed");
   ZuCHECK(containsDatagramReceived_(data), "datagram event missing");
   ZuCHECK(containsDatagramSent_(data), "datagram sent event missing");
+  ZuCHECK(containsTypedDatagramFields_(data), "typed datagram fields missing");
   ZuCHECK(containsTransportPacketSent_(data), "packet_sent event missing");
   ZuCHECK(containsTransportPacketReceived_(data), "packet_received event missing");
   ZuCHECK(containsTransportPacketBuffered_(data),
@@ -547,24 +642,59 @@ void testQLogTypedTransportEvents()
   ZuCHECK(data.find<"stop_sending">() >= 0, "STOP_SENDING summary missing");
   ZuCHECK(data.find<"max_stream_data">() >= 0,
     "MAX_STREAM_DATA summary missing");
+  ZuCHECK(data.find<"max_streams">() >= 0, "MAX_STREAMS summary missing");
+  ZuCHECK(data.find<"streams_blocked">() >= 0,
+    "STREAMS_BLOCKED summary missing");
+  ZuCHECK(data.find<"\"stream_type\":\"unidirectional\"">() >= 0,
+    "MAX_STREAMS stream type missing");
   ZuCHECK(data.find<"new_connection_id">() >= 0,
     "NEW_CONNECTION_ID summary missing");
+  ZuCHECK(data.find<"\"connection_id\":\"716C6F6763696431\"">() >= 0,
+    "NEW_CONNECTION_ID connection ID missing");
+  ZuCHECK(data.find<
+    "\"stateless_reset_token\":\"30313233343536373839616263646566\"">() >= 0,
+    "NEW_CONNECTION_ID reset token missing");
+  ZuCHECK(data.find<"\"connection_id\":\"\"">() < 0,
+    "empty frame connection ID leaked");
+  ZuCHECK(data.find<"\"stateless_reset_token\":\"\"">() < 0,
+    "empty frame reset token leaked");
   ZuCHECK(data.find<"retire_connection_id">() >= 0,
     "RETIRE_CONNECTION_ID summary missing");
   ZuCHECK(data.find<"path_challenge">() >= 0,
     "PATH_CHALLENGE summary missing");
+  ZuCHECK(data.find<"path_response">() >= 0,
+    "PATH_RESPONSE summary missing");
+  ZuCHECK(data.find<"new_token">() >= 0,
+    "NEW_TOKEN summary missing");
+  ZuCHECK(data.find<"handshake_done">() >= 0,
+    "HANDSHAKE_DONE summary missing");
   ZuCHECK(data.find<"connection_close">() >= 0,
     "CONNECTION_CLOSE summary missing");
   ZuCHECK(data.find<"error_code">() >= 0, "frame error code missing");
-  ZuCHECK(data.find<"value">() >= 0, "frame value missing");
+  ZuCHECK(data.find<"maximum">() >= 0, "frame maximum missing");
+  ZuCHECK(data.find<"limit">() >= 0, "frame limit missing");
   ZuCHECK(data.find<"crypto">() >= 0, "crypto frame summary missing");
   ZuCHECK(data.find<"stream_id">() >= 0, "stream frame summary missing");
-  ZuCHECK(data.find<"ack_delay_us">() >= 0, "ACK delay missing");
-  ZuCHECK(data.find<"ect0">() >= 0, "ACK_ECN ECT0 missing");
-  ZuCHECK(data.find<"ce">() >= 0, "ACK_ECN CE missing");
-  ZuCHECK(data.find<"coalescing">() >= 0, "buffer reason missing");
-  ZuCHECK(data.find<"parse_long">() >= 0, "drop reason missing");
-  ZiFile::remove(path);
+  ZuCHECK(data.find<"ack_delay">() >= 0, "ACK delay missing");
+  ZuCHECK(data.find<"ack_delay_us">() < 0, "old ACK delay field leaked");
+  ZuCHECK(data.find<"acked_ranges">() >= 0, "ACK ranges missing");
+  ZuCHECK(data.find<"\"acked_ranges\":[]">() < 0,
+    "empty ACK ranges leaked");
+	  ZuCHECK(data.find<"[[32,35],[38,40]]">() >= 0,
+	    "ACK range encoding missing");
+	  ZuCHECK(data.find<"packet_space">() < 0,
+	    "old packet_space field leaked");
+	  ZuCHECK(data.find<"ect0">() >= 0, "ACK_ECN ECT0 missing");
+	  ZuCHECK(data.find<"ce">() >= 0, "ACK_ECN CE missing");
+	  ZuCHECK(data.find<"\"trigger\":\"invalid\"">() >= 0,
+	    "drop trigger missing");
+	  ZuCHECK(data.find<"\"reason\"">() < 0,
+	    "old packet reason field leaked");
+	  ZuCHECK(data.find<"coalescing">() < 0,
+	    "private coalescing reason leaked into packet event");
+	  ZuCHECK(data.find<"parse_long">() < 0,
+	    "private parse_long reason leaked into packet event");
+  removeTestLog_(path);
 #endif
 }
 
@@ -577,7 +707,7 @@ void testQLogTypedRecoveryEvents()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-recovery").ringSize(1<<15);
+  params.enabled(true).path(path).thread("zquic-qlog-recovery").ringSize(1<<18);
   ZuCHECK(ZquicLogger::init(params), "recovery qlog init failed");
   ZquicLogger::start();
 
@@ -589,6 +719,9 @@ void testQLogTypedRecoveryEvents()
   ack.lostBytes = 0;
   ack.rangeCount = 2;
   ack.ackedFrames = 3;
+  new (ack.packetNumbers.push()) uint64_t(97);
+  new (ack.packetNumbers.push()) uint64_t(98);
+  new (ack.packetNumbers.push()) uint64_t(99);
   ZquicLogger::packetsAcked(ZuMv(ack));
 
   ZquicLogRecoveryEvent loss{
@@ -600,6 +733,12 @@ void testQLogTypedRecoveryEvents()
     .bytesInFlight = 2400,
     .frameCount = 1
   };
+  ZquicLogFrameEvent lostCrypto{
+    .type = FrameType::Crypto,
+    .offset = 8,
+    .length = 12
+  };
+  loss.frames.push(lostCrypto);
   ZquicLogger::packetLost(loss);
   ZquicLogger::recoveryPacketLost(loss);
   ZquicLogger::markedForRetransmit(loss);
@@ -624,6 +763,14 @@ void testQLogTypedRecoveryEvents()
 	    .deadlineUS = 123456
 	  };
 	  ZquicLogger::lossTimerUpdated(ZuMv(timer));
+
+	  ZquicLogRecoveryEvent lossTimer{
+	    .kind = ZquicLogRecoveryKind::Loss,
+	    .packetSpace = PktNumSpace::AppData,
+	    .reason = ZquicLogRecoveryReason::Armed,
+	    .deadlineUS = 123456
+	  };
+	  ZquicLogger::lossTimerUpdated(ZuMv(lossTimer));
 
 	  ZquicLogRecoveryEvent ptoExpired{
 	    .kind = ZquicLogRecoveryKind::PTO,
@@ -665,7 +812,7 @@ void testQLogTypedRecoveryEvents()
 
   ZquicLogECNEvent ecn{
     .packetSpace = PktNumSpace::AppData,
-    .state = ZquicLogECNState::Validated,
+    .state = ZquicLogECNState::Capable,
     .reason = ZquicLogECNReason::AckECN,
     .ect0 = 7,
     .ect1 = 1,
@@ -679,7 +826,7 @@ void testQLogTypedRecoveryEvents()
 
   ZquicLogECNEvent fallback{
     .packetSpace = PktNumSpace::AppData,
-    .state = ZquicLogECNState::Disabled,
+    .state = ZquicLogECNState::Failed,
     .reason = ZquicLogECNReason::CounterExceedsAck,
     .ect0 = 20,
     .ce = 1,
@@ -704,12 +851,38 @@ void testQLogTypedRecoveryEvents()
 	  ZuCHECK(parseJSONSeq_(data) >= 13, "recovery qlog JSON-SEQ parse failed");
 	  ZuCHECK(containsRecoveryEvents_(data), "recovery event coverage missing");
 	  ZuCHECK(containsRecoveryFields_(data), "recovery fields missing");
-	  ZuCHECK(data.find<"packet_threshold">() >= 0, "loss reason missing");
-	  ZuCHECK(data.find<"expired">() >= 0, "PTO expiry reason missing");
-	  ZuCHECK(data.find<"backoff">() >= 0, "PTO backoff reason missing");
-	  ZuCHECK(data.find<"probe">() >= 0, "PTO probe reason missing");
-	  ZuCHECK(data.find<"counter_exceeds_ack">() >= 0, "ECN reason missing");
-  ZiFile::remove(path);
+	  ZuCHECK(data.find<"smoothed_rtt_us">() < 0,
+	    "old recovery metric smoothed_rtt_us emitted");
+	  ZuCHECK(data.find<"rtt_variance_us">() < 0,
+	    "old recovery metric rtt_variance_us emitted");
+	  ZuCHECK(data.find<"cwnd">() < 0, "old recovery metric cwnd emitted");
+	  ZuCHECK(data.find<"\"packet_type\":\"1RTT\"">() >= 0,
+	    "packet_lost packet type missing");
+	  ZuCHECK(data.find<"\"packet_number\":77">() >= 0,
+	    "packet_lost packet number missing");
+	  ZuCHECK(data.find<"\"trigger\":\"reordering_threshold\"">() >= 0,
+	    "packet_lost trigger missing");
+	  ZuCHECK(data.find<"\"timer_type\":\"pto\"">() >= 0,
+	    "PTO timer type missing");
+	  ZuCHECK(data.find<"\"timer_type\":\"loss_timeout\"">() >= 0,
+	    "loss timer type missing");
+	  ZuCHECK(data.find<"\"event_type\":\"set\"">() >= 0,
+	    "timer set event missing");
+	  ZuCHECK(data.find<"\"event_type\":\"expired\"">() >= 0,
+	    "timer expired event missing");
+	  ZuCHECK(data.find<"\"new\":\"capable\"">() >= 0,
+	    "ECN capable state missing");
+	  ZuCHECK(data.find<"\"new\":\"failed\"">() >= 0,
+	    "ECN failed state missing");
+	  ZuCHECK(data.find<"counter_exceeds_ack">() < 0,
+	    "ECN private reason leaked into standard event");
+	  ZuCHECK(data.find<"\"name\":\"quic:congestion_state_updated\","
+	    "\"data\":{\"kind\"">() < 0,
+	    "generic recovery fields leaked into congestion event");
+	  ZuCHECK(data.find<"\"name\":\"quic:marked_for_retransmit\","
+	    "\"data\":{\"kind\"">() < 0,
+	    "generic recovery fields leaked into retransmit event");
+  removeTestLog_(path);
 #endif
 }
 
@@ -724,6 +897,11 @@ void testQLogTypedSecurityEvents()
   ZquicLogParams params;
   params.enabled(true).path(path).thread("zquic-qlog-security").ringSize(1<<15);
   ZuCHECK(ZquicLogger::init(params), "security qlog init failed");
+  Zquic::CxnID odcid{"QLOG"};
+  ZuCHECK(ZquicLogger::metadata(ZquicLogMetadata{
+    .vantagePoint = "client",
+    .originalDCID = odcid
+  }), "security qlog metadata failed");
   ZquicLogger::start();
 
   ZquicLogSecurityEvent key{
@@ -731,7 +909,8 @@ void testQLogTypedSecurityEvents()
     .packetSpace = PktNumSpace::AppData,
     .keyType = ZquicLogSecurityKeyType::RX,
     .trigger = ZquicLogSecurityTrigger::Remote,
-    .reason = ZquicLogSecurityReason::KeyPhase
+    .reason = ZquicLogSecurityReason::KeyPhase,
+    .value = 1
   };
   ZquicLogger::keyUpdated(ZuMv(key));
 
@@ -744,10 +923,20 @@ void testQLogTypedSecurityEvents()
   };
   ZquicLogger::keyRetired(ZuMv(retired));
 
-  ZquicLogSecurityEvent paramsSet{
-    .kind = ZquicLogSecurityKind::TransportParameters,
-    .trigger = ZquicLogSecurityTrigger::Peer,
-    .value = 1350
+  ZquicLogTransportParamsEvent paramsSet{
+    .initiator = ZquicLogQInitiator::Remote,
+    .maxIdleTimeout = 42,
+    .maxUDPPayloadSize = 1350,
+    .ackDelayExponent = 3,
+    .maxAckDelay = 25,
+    .activeConnectionIDLimit = 4,
+    .initialMaxData = 65536,
+    .initialMaxStreamDataBidiLocal = 4096,
+    .initialMaxStreamDataBidiRemote = 8192,
+    .initialMaxStreamDataUni = 2048,
+    .initialMaxStreamsBidi = 8,
+    .initialMaxStreamsUni = 4,
+    .disableActiveMigration = true
   };
   ZquicLogger::transportParametersSet(ZuMv(paramsSet));
 
@@ -771,9 +960,9 @@ void testQLogTypedSecurityEvents()
     .reason = ZquicLogSecurityReason::AddressValidation,
     .value = 42
   };
-  ZquicLogger::securityEvent("security:retry_sent", retry);
+  ZquicLogger::securityEvent(ZquicLogEventName::RetrySent, retry);
 
-  ZquicLogger::securityEvent("security:retry_validated",
+  ZquicLogger::securityEvent(ZquicLogEventName::RetryValid,
     ZquicLogSecurityEvent{
       .kind = ZquicLogSecurityKind::Retry,
       .trigger = ZquicLogSecurityTrigger::Received,
@@ -787,9 +976,9 @@ void testQLogTypedSecurityEvents()
     .reason = ZquicLogSecurityReason::OK,
     .value = 38
   };
-  ZquicLogger::securityEvent("security:token_validated", token);
+  ZquicLogger::securityEvent(ZquicLogEventName::TokenValid, token);
 
-  ZquicLogger::securityEvent("security:token_issued",
+  ZquicLogger::securityEvent(ZquicLogEventName::TokenIssued,
     ZquicLogSecurityEvent{
       .kind = ZquicLogSecurityKind::Token,
       .trigger = ZquicLogSecurityTrigger::Sent,
@@ -797,7 +986,7 @@ void testQLogTypedSecurityEvents()
       .value = 38
     });
 
-  ZquicLogger::securityEvent("security:token_rejected",
+  ZquicLogger::securityEvent(ZquicLogEventName::TokenReject,
     ZquicLogSecurityEvent{
       .kind = ZquicLogSecurityKind::Token,
       .trigger = ZquicLogSecurityTrigger::Validated,
@@ -806,13 +995,10 @@ void testQLogTypedSecurityEvents()
       .success = false
     });
 
-  ZquicLogSecurityEvent vn{
-    .kind = ZquicLogSecurityKind::VersionNegotiation,
-    .trigger = ZquicLogSecurityTrigger::Sent,
-    .reason = ZquicLogSecurityReason::UnsupportedVersion,
-    .value = 0x1a2a3a4a
-  };
-  ZquicLogger::securityEvent("security:version_negotiation", ZuMv(vn));
+  ZquicLogVersionEvent vn;
+  new (vn.serverVersions.push()) uint32_t(Version1);
+  new (vn.clientVersions.push()) uint32_t(0x1a2a3a4a);
+  ZquicLogger::versionInformation(ZuMv(vn));
 
   ZquicLogSecurityEvent reset{
     .kind = ZquicLogSecurityKind::StatelessReset,
@@ -820,7 +1006,7 @@ void testQLogTypedSecurityEvents()
     .reason = ZquicLogSecurityReason::TokenMatch,
     .value = 43
   };
-  ZquicLogger::securityEvent("security:stateless_reset", ZuMv(reset));
+  ZquicLogger::securityEvent(ZquicLogEventName::StatelessReset, ZuMv(reset));
 
   ZquicLogSecurityEvent protection{
     .kind = ZquicLogSecurityKind::PacketProtection,
@@ -830,32 +1016,88 @@ void testQLogTypedSecurityEvents()
     .success = false
   };
   ZquicLogger::securityEvent(
-    "security:packet_protection_failed", ZuMv(protection));
+    ZquicLogEventName::PktProtectFail, ZuMv(protection));
+
+  ZquicLogger::securityEvent(ZquicLogEventName::ZeroRTTReject,
+    ZquicLogSecurityEvent{
+      .kind = ZquicLogSecurityKind::TLS,
+      .trigger = ZquicLogSecurityTrigger::Received,
+      .reason = ZquicLogSecurityReason::ZeroRTT,
+      .success = false
+    });
 
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final();
 
-  ZuCHECK(diag.recordsEnqueued >= 13, "security qlog enqueue mismatch");
-  ZuCHECK(diag.recordsWritten >= 14, "security qlog write mismatch");
+  ZuCHECK(diag.recordsEnqueued >= 14, "security qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 15, "security qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "security qlog writer failure");
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "security qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 14, "security qlog JSON-SEQ parse failed");
+  ZuCHECK(parseJSONSeq_(data) >= 15, "security qlog JSON-SEQ parse failed");
   ZuCHECK(containsSecurityEvents_(data), "security event coverage missing");
   ZuCHECK(containsSecurityFields_(data), "security fields missing");
-  ZuCHECK(data.find<"key_phase">() >= 0, "key update reason missing");
-  ZuCHECK(data.find<"h3">() >= 0, "ALPN value missing");
+  ZuCHECK(data.find<"\"name\":\"quic:key_updated\",\"data\":{\"key_type\":"
+    "\"server_1rtt_secret\",\"key_phase\":1,\"trigger\":\"remote_update\"}">()
+      >= 0, "key update fields missing");
+  ZuCHECK(data.find<"\"name\":\"quic:key_discarded\",\"data\":{\"key_type\":"
+    "\"client_handshake_secret\",\"trigger\":\"tls\"}">()
+      >= 0, "key discarded fields missing");
+  ZuCHECK(data.find<"\"name\":\"quic:key_updated\","
+    "\"data\":{\"kind\"">() < 0,
+    "generic security fields leaked into key_updated");
+  ZuCHECK(data.find<"\"name\":\"quic:key_discarded\","
+    "\"data\":{\"kind\"">() < 0,
+    "generic security fields leaked into key_discarded");
+  ZuCHECK(data.find<"\"name\":\"quic:key_discarded\"">() >= 0 &&
+    data.find<"\"name\":\"quic:key_discarded\",\"data\":{\"key_type\":"
+    "\"client_handshake_secret\",\"key_phase\"">() < 0,
+    "handshake key discard emitted key_phase");
+  ZuCHECK(data.find<"\"name\":\"quic:parameters_set\",\"data\":{"
+    "\"initiator\":\"remote\"">() >= 0,
+    "parameters_set initiator missing");
+  ZuCHECK(data.find<"max_udp_payload_size">() >= 0,
+    "parameters_set max UDP payload missing");
+  ZuCHECK(data.find<"initial_max_data">() >= 0,
+    "parameters_set max data missing");
+  ZuCHECK(data.find<"initial_max_streams_bidi">() >= 0,
+    "parameters_set stream limit missing");
+  ZuCHECK(data.find<"disable_active_migration">() >= 0,
+    "parameters_set migration flag missing");
+  ZuCHECK(data.find<"\"name\":\"quic:parameters_set\","
+    "\"data\":{\"kind\"">() < 0,
+    "generic security fields leaked into parameters_set");
+  ZuCHECK(data.find<"\"name\":\"quic:alpn_information\",\"data\":{"
+    "\"chosen_alpn\":{\"string_value\":\"h3\"}}">() >= 0,
+    "ALPN chosen_alpn missing");
+  ZuCHECK(data.find<"\"name\":\"quic:alpn_information\","
+    "\"data\":{\"kind\"">() < 0,
+    "generic security fields leaked into alpn_information");
   ZuCHECK(data.find<"address_validation">() >= 0,
     "Retry qlog reason missing");
-  ZuCHECK(data.find<"unsupported_version">() >= 0,
-    "Version Negotiation qlog reason missing");
-  ZuCHECK(data.find<"token_match">() >= 0,
-    "stateless reset qlog reason missing");
-  ZuCHECK(data.find<"invalid_key_phase">() >= 0,
-    "packet protection qlog reason missing");
-  ZiFile::remove(path);
+  ZuCHECK(data.find<"\"name\":\"quic:version_information\",\"data\":{"
+    "\"server_versions\":[\"00000001\"],"
+    "\"client_versions\":[\"1a2a3a4a\"]}">() >= 0,
+    "version_information fields missing");
+  ZuCHECK(data.find<"\"name\":\"quic:version_information\","
+    "\"data\":{\"kind\"">() < 0,
+    "generic security fields leaked into version_information");
+  ZuCHECK(data.find<"unsupported_version">() < 0,
+    "old version_information reason leaked");
+	  ZuCHECK(data.find<"token_match">() >= 0,
+	    "stateless reset qlog reason missing");
+	  ZuCHECK(data.find<"invalid_key_phase">() >= 0,
+	    "packet protection qlog reason missing");
+	  ZuCHECK(data.find<"\"name\":\"zquic:zero_rtt_rejected\","
+	    "\"data\":{\"kind\":\"tls\",\"packet_number_space\":\"initial\","
+	    "\"key_type\":\"\",\"trigger\":\"received\",\"alpn\":\"\","
+	    "\"reason\":\"0rtt\",\"value\":0,\"success\":false}">() >= 0,
+	    "0-RTT rejection qlog event missing");
+	  ZuCHECK(data.find<"\"packet_space\"">() < 0,
+	    "old security packet_space field leaked");
+	  removeTestLog_(path);
 #endif
 }
 
@@ -876,6 +1118,7 @@ void testQLogTypedPathCIDEvents()
     .kind = ZquicLogPathKind::Path,
     .action = ZquicLogPathAction::Updated,
     .reason = ZquicLogPathReason::Promoted,
+    .tupleID = 7,
     .bytes = 1200,
     .antiAmplification = 2400,
     .deadlineUS = 1000000,
@@ -906,6 +1149,7 @@ void testQLogTypedPathCIDEvents()
     .kind = ZquicLogCIDKind::ConnectionID,
     .action = ZquicLogCIDAction::RouteBound,
     .reason = ZquicLogCIDReason::PathPromoted,
+    .connectionID = CxnID{"cidpath1"},
     .sequence = 7,
     .length = 8,
     .local = false,
@@ -927,9 +1171,32 @@ void testQLogTypedPathCIDEvents()
   ZuCHECK(parseJSONSeq_(data) >= 5, "path qlog JSON-SEQ parse failed");
   ZuCHECK(containsPathCIDEvents_(data), "path/CID event coverage missing");
   ZuCHECK(containsPathCIDFields_(data), "path/CID fields missing");
-  ZuCHECK(data.find<"path_promoted">() >= 0, "CID reason missing");
-  ZuCHECK(data.find<"probe">() >= 0, "PMTUD reason missing");
-  ZiFile::remove(path);
+	  ZuCHECK(data.find<"\"name\":\"quic:tuple_assigned\",\"data\":{"
+	    "\"tuple_id\":\"7\"}">() >= 0, "tuple_assigned fields missing");
+	  ZuCHECK(data.find<"\"name\":\"quic:path_validated\",\"data\":{"
+	    "\"success\":false,\"vantagePoint\":\"unknown\"}">() >= 0,
+	    "path_validated fields missing");
+	  ZuCHECK(data.find<"\"name\":\"quic:tuple_assigned\","
+	    "\"data\":{\"kind\"">() < 0,
+	    "generic path fields leaked into tuple_assigned");
+  ZuCHECK(data.find<"deadline_us">() < 0,
+    "old path deadline leaked into standard tuple_assigned");
+  ZuCHECK(data.find<"\"name\":\"quic:connection_id_updated\",\"data\":{"
+    "\"initiator\":\"remote\",\"new\":\"6369647061746831\"}">() >= 0,
+    "connection_id_updated fields missing");
+  ZuCHECK(data.find<"\"name\":\"quic:connection_id_updated\","
+    "\"data\":{\"kind\"">() < 0,
+    "generic CID fields leaked into connection_id_updated");
+  ZuCHECK(data.find<"path_promoted">() < 0,
+    "old CID reason leaked into standard event");
+  ZuCHECK(data.find<"reset_token">() < 0,
+    "old CID reset token flag leaked into standard event");
+  ZuCHECK(data.find<"\"name\":\"quic:mtu_updated\",\"data\":{\"new\":1400,"
+    "\"done\":true}">() >= 0, "MTU update fields missing");
+  ZuCHECK(data.find<"\"name\":\"quic:mtu_updated\","
+    "\"data\":{\"kind\"">() < 0,
+    "generic path fields leaked into mtu_updated");
+  removeTestLog_(path);
 #endif
 }
 
@@ -1020,7 +1287,7 @@ void testQLogTypedStreamEvents()
   ZuCHECK(data.find<"application">() >= 0, "stream data source missing");
   ZuCHECK(data.find<"network">() >= 0, "stream data destination missing");
   ZuCHECK(data.find<"fin_set">() >= 0, "stream data FIN info missing");
-  ZiFile::remove(path);
+  removeTestLog_(path);
 #endif
 }
 
@@ -1042,9 +1309,7 @@ void testQLogTypedCloseEvents()
     .trigger = ZquicLogCloseTrigger::Application,
     .reason = ZquicLogCloseReason::LocalClose,
     .applicationError = ZquicLogCloseError::Unknown,
-    .errorCode = 42,
-    .application = true,
-    .frame = true
+    .errorCode = 42
   };
   ZquicLogger::connectionClosed(ZuMv(local));
 
@@ -1057,22 +1322,43 @@ void testQLogTypedCloseEvents()
   };
   ZquicLogger::connectionClosed(ZuMv(idle));
 
+  ZquicLogCloseEvent frameEncoding{
+    .initiator = ZquicLogCloseInitiator::Remote,
+    .trigger = ZquicLogCloseTrigger::Error,
+    .reason = ZquicLogCloseReason::PeerCloseFrame,
+    .connectionError = ZquicLogCloseError::Unknown,
+    .errorCode = TransportError::FrameEncoding
+  };
+  ZquicLogger::connectionClosed(ZuMv(frameEncoding));
+
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final();
 
-  ZuCHECK(diag.recordsEnqueued >= 2, "close qlog enqueue mismatch");
-  ZuCHECK(diag.recordsWritten >= 3, "close qlog write mismatch");
+  ZuCHECK(diag.recordsEnqueued >= 3, "close qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 4, "close qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "close qlog writer failure");
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "close qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 3, "close qlog JSON-SEQ parse failed");
+  ZuCHECK(parseJSONSeq_(data) >= 4, "close qlog JSON-SEQ parse failed");
   ZuCHECK(containsCloseEvents_(data), "close event coverage missing");
   ZuCHECK(containsCloseFields_(data), "close fields missing");
   ZuCHECK(data.find<"local_close">() >= 0, "local close reason missing");
   ZuCHECK(data.find<"idle_timeout">() >= 0, "idle close trigger missing");
-  ZiFile::remove(path);
+  ZuCHECK(data.find<"frame_encoding_error">() >= 0,
+    "known transport close error missing");
+  ZuCHECK(data.find<"\"connection_error\":\"unknown\",\"error_code\":8">() <
+      0, "known transport close error emitted as unknown");
+  ZuCHECK(data.find<"\"error_code\":0">() < 0,
+    "close event emitted default error_code");
+  ZuCHECK(data.find<"\"reason\":\"\"">() < 0,
+    "close event emitted empty reason");
+  ZuCHECK(data.find<"\"application\":">() < 0,
+    "close event leaked local application flag");
+  ZuCHECK(data.find<"\"frame\":">() < 0,
+    "close event leaked local frame flag");
+  removeTestLog_(path);
 #endif
 }
 

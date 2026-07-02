@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZquicCrypto.hh>
+#include <zlib/ZquicLog.hh>
 
 #include "ZquicOpenSSL.hh"
 
@@ -256,7 +257,7 @@ int CryptoStream::receive(
   if (m_asyncDelivery) resumeReadyDequeue_();
   if (diag) diag->cryptoBytesRx += bytes;
   if (!m_asyncDelivery && m_delivery.length())
-    contiguous = ZuBSpan{m_delivery.data(), m_delivery.length()};
+    contiguous = m_delivery.cspan();
   return 0;
 }
 
@@ -854,7 +855,18 @@ bool Crypto::init(const CryptoConfig &config)
     *config.localTransportParams : TransportParams{};
   m_peerTransportParams = {};
   m_peerTransportParamsReceived = false;
-  if (config.enable0RTT) ++m_diag.zeroRTTRejected;
+  if (config.enable0RTT) {
+    ++m_diag.zeroRTTRejected;
+    ZquicLOG(([](auto &o, ZuTime time) {
+      ZquicLogSecurityEvent event{
+	.kind = ZquicLogSecurityKind::TLS,
+	.trigger = ZquicLogSecurityTrigger::Local,
+	.reason = ZquicLogSecurityReason::ZeroRTT,
+	.success = false
+      };
+      o.logSecurityEvent(ZquicLogEventName::ZeroRTTReject, event, time);
+    }));
+  }
   return true;
 }
 
@@ -1208,6 +1220,15 @@ bool Crypto::deriveInitial(const CxnID &dcid)
 bool Crypto::rejectZeroRTT()
 {
   ++m_diag.zeroRTTRejected;
+  ZquicLOG(([](auto &o, ZuTime time) {
+    ZquicLogSecurityEvent event{
+      .kind = ZquicLogSecurityKind::TLS,
+      .trigger = ZquicLogSecurityTrigger::Received,
+      .reason = ZquicLogSecurityReason::ZeroRTT,
+      .success = false
+    };
+    o.logSecurityEvent(ZquicLogEventName::ZeroRTTReject, event, time);
+  }));
   return true;
 }
 

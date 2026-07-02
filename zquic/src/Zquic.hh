@@ -1864,7 +1864,6 @@ protected:
 
   void stopQLog_() {
     if (!m_qlogParams.enabled()) return;
-    ZquicLogger::lifecycle(ZquicLogLifecycle::Closed);
     ZquicLogger::stop();
   }
 
@@ -2272,7 +2271,7 @@ private:
 
   Link *route_(const Datagram &d) {
     if (!d.buf || !d.buf->length) return nullptr;
-    ZuBSpan packet{d.buf->data_(), d.buf->length};
+    auto packet = d.buf->cspan();
     if (Pkt::isLong(packet)) return routeLong_(d, packet);
     return routeShort_(d, packet);
   }
@@ -2301,7 +2300,7 @@ private:
 
   bool sendStatelessReset_(const Datagram &d) {
     if (!d.buf || !d.buf->length) return false;
-    ZuBSpan packet{d.buf->data_(), d.buf->length};
+    auto packet = d.buf->cspan();
     if (Pkt::isLong(packet)) return false;
     ResetToken token;
     if (!m_routes.resetTokenForShort(packet, token)) return false;
@@ -2323,7 +2322,7 @@ private:
 	};
 	event.trigger = ZquicLogSecurityTrigger::Sent;
 	event.reason = ZquicLogSecurityReason::UnknownCID;
-	o.logSecurityEvent("security:stateless_reset", event, time);
+	o.logSecurityEvent(ZquicLogEventName::StatelessReset, event, time);
       }));
     }
     return sent;
@@ -2334,7 +2333,7 @@ private:
     link = this->app()->accepted(info);
     if (!link) return nullptr;
     if (ZquicLogger::enabled()) {
-      ZuBSpan originalDCID = info.originalDCID.length() ?
+      CxnID originalDCID = info.originalDCID.length() ?
 	info.originalDCID : info.header.dcid;
       ZquicLogger::metadata(ZquicLogMetadata{
 	.vantagePoint = "server",
@@ -2343,7 +2342,16 @@ private:
 	.dcid = info.header.dcid,
 	.scid = info.header.scid
       });
-      ZquicLogger::lifecycle(ZquicLogLifecycle::Started);
+      ZquicLogger::connectionStarted(ZquicLogConnectionStartedEvent{
+	.local = local(),
+	.remote = info.peer,
+	.metadata = ZquicLogCIDMeta{
+	  .origDCID = originalDCID,
+	  .groupID = originalDCID,
+	  .dcid = info.header.dcid,
+	  .scid = info.header.scid
+	}
+      });
     }
     Link *ptr = link.ptr();
     ptr->acceptInitialInfo_(info);
@@ -2423,14 +2431,10 @@ private:
       ZquicLOG(([
 	version = h.version
       ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::VersionNegotiation,
-	  .value = version,
-	  .success = true
-	};
-	event.trigger = ZquicLogSecurityTrigger::Sent;
-	event.reason = ZquicLogSecurityReason::UnsupportedVersion;
-	o.logSecurityEvent("security:version_negotiation", event, time);
+	ZquicLogVersionEvent event;
+	new (event.serverVersions.push()) uint32_t(Version1);
+	new (event.clientVersions.push()) uint32_t(version);
+	o.logVersionInformation(event, time);
       }));
     }
     return sent;
@@ -2456,9 +2460,9 @@ private:
 	  .success = false
 	};
 	event.trigger = ZquicLogSecurityTrigger::Validated;
-	o.logSecurityEvent("security:retry_validated", event, time);
+	o.logSecurityEvent(ZquicLogEventName::RetryValid, event, time);
 	event.kind = ZquicLogSecurityKind::Token;
-	o.logSecurityEvent("security:token_rejected", event, time);
+	o.logSecurityEvent(ZquicLogEventName::TokenReject, event, time);
       }));
       return false;
     }
@@ -2505,7 +2509,7 @@ private:
 	  .success = false
 	};
 	event.trigger = ZquicLogSecurityTrigger::Validated;
-	o.logSecurityEvent("security:token_rejected", event, time);
+	o.logSecurityEvent(ZquicLogEventName::TokenReject, event, time);
       }));
       return false;
     }
@@ -2524,9 +2528,9 @@ private:
 	      .success = false
 	    };
 	    event.trigger = ZquicLogSecurityTrigger::Validated;
-	    o.logSecurityEvent("security:retry_validated", event, time);
+	    o.logSecurityEvent(ZquicLogEventName::RetryValid, event, time);
 	    event.kind = ZquicLogSecurityKind::Token;
-	    o.logSecurityEvent("security:token_rejected", event, time);
+	    o.logSecurityEvent(ZquicLogEventName::TokenReject, event, time);
 	  }));
 	  return false;
 	}
@@ -2544,9 +2548,9 @@ private:
 	    .success = true
 	  };
 	  event.trigger = ZquicLogSecurityTrigger::Validated;
-	  o.logSecurityEvent("security:retry_validated", event, time);
+	  o.logSecurityEvent(ZquicLogEventName::RetryValid, event, time);
 	  event.kind = ZquicLogSecurityKind::Token;
-	  o.logSecurityEvent("security:token_validated", event, time);
+	  o.logSecurityEvent(ZquicLogEventName::TokenValid, event, time);
 	}));
 	break;
       case TokenKind::NewToken:
@@ -2563,7 +2567,7 @@ private:
 	      .success = false
 	    };
 	    event.trigger = ZquicLogSecurityTrigger::Validated;
-	    o.logSecurityEvent("security:token_rejected", event, time);
+	    o.logSecurityEvent(ZquicLogEventName::TokenReject, event, time);
 	  }));
 	  return false;
 	}
@@ -2579,7 +2583,7 @@ private:
 	    .success = true
 	  };
 	  event.trigger = ZquicLogSecurityTrigger::Validated;
-	  o.logSecurityEvent("security:token_validated", event, time);
+	  o.logSecurityEvent(ZquicLogEventName::TokenValid, event, time);
 	}));
 	break;
       default:
@@ -2595,7 +2599,7 @@ private:
 	    .success = false
 	  };
 	  event.trigger = ZquicLogSecurityTrigger::Validated;
-	  o.logSecurityEvent("security:token_rejected", event, time);
+	  o.logSecurityEvent(ZquicLogEventName::TokenReject, event, time);
 	}));
 	return false;
     }
@@ -2634,10 +2638,10 @@ private:
 	};
 	event.trigger = ZquicLogSecurityTrigger::Sent;
 	event.reason = ZquicLogSecurityReason::AddressValidation;
-	o.logSecurityEvent("security:retry_sent", event, time);
+	o.logSecurityEvent(ZquicLogEventName::RetrySent, event, time);
 	event.kind = ZquicLogSecurityKind::Token;
 	event.value = packetBytes;
-	o.logSecurityEvent("security:token_issued", event, time);
+	o.logSecurityEvent(ZquicLogEventName::TokenIssued, event, time);
       }));
     }
     return sent;
@@ -2846,7 +2850,8 @@ public:
     ZquicLOG(([
       streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
       streamOffset = data.offset,
-      length = uint64_t(data.bytes)
+      length = uint64_t(data.bytes),
+      metadata = m_link ? m_link->qlogCIDMeta() : ZquicLogCIDMeta{}
     ](auto &o, ZuTime time) mutable {
       if (streamID == U64Null) return;
       ZquicLogStreamDataEvent event{
@@ -2854,7 +2859,8 @@ public:
 	.to = ZquicLogStreamDataLoc::Application,
 	.streamID = streamID,
 	.offset = streamOffset,
-	.length = length
+	.length = length,
+	.metadata = metadata
       };
       o.logStreamDataMoved(event, time);
     }));
@@ -3244,7 +3250,8 @@ private:
     ZquicLOG(([
       streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
       streamOffset = m_txBytes,
-      length = uint64_t(length)
+      length = uint64_t(length),
+      metadata = m_link ? m_link->qlogCIDMeta() : ZquicLogCIDMeta{}
     ](auto &o, ZuTime time) {
       if (streamID == U64Null) return;
       ZquicLogStreamDataEvent event{
@@ -3252,7 +3259,8 @@ private:
 	.to = ZquicLogStreamDataLoc::Transport,
 	.streamID = streamID,
 	.offset = streamOffset,
-	.length = length
+	.length = length,
+	.metadata = metadata
       };
       o.logStreamDataMoved(event, time);
     }));
@@ -3822,6 +3830,7 @@ public:
     if (immediate || ++m_suspiciousStreamFrames >= SuspiciousStreamThreshold)
       closeForStreamActivity_(error);
   }
+  ZquicLogCIDMeta qlogCIDMeta() const { return qlogCIDMeta_(); }
 
 protected:
   struct InitialKeyDir { enum T { Client, Server }; };
@@ -4002,40 +4011,44 @@ protected:
     if (!blockedFrameNeeded_(frame)) return false;
     if (!queueControl_(frame)) return false;
     noteBlockedQueued_(frame);
-    ZquicLOG(([
-      type,
-      streamID
-    ](auto &o, ZuTime time) {
-      switch (type) {
-	case FrameType::DataBlocked:
-	  o.logConnectionDataBlockedUpdated(
-	    ZquicLogBlockedEvent{
-	      .oldState = ZquicLogBlockedState::Unblocked,
-	      .newState = ZquicLogBlockedState::Blocked,
-	      .reason = ZquicLogBlockedReason::ConnectionFlowControl
-	    },
-	    time);
-	  break;
+	    ZquicLOG(([
+	      type,
+	      streamID,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      switch (type) {
+		case FrameType::DataBlocked:
+		  o.logConnectionDataBlockedUpdated(
+		    ZquicLogBlockedEvent{
+		      .oldState = ZquicLogBlockedState::Unblocked,
+		      .newState = ZquicLogBlockedState::Blocked,
+		      .reason = ZquicLogBlockedReason::ConnectionFlowControl,
+		      .metadata = metadata
+		    },
+		    time);
+		  break;
 	case FrameType::StreamDataBlocked:
 	  o.logStreamDataBlockedUpdated(
 	    ZquicLogBlockedEvent{
 	      .oldState = ZquicLogBlockedState::Unblocked,
-	      .newState = ZquicLogBlockedState::Blocked,
-	      .reason = ZquicLogBlockedReason::StreamFlowControl,
-	      .streamID = streamID
-	    },
-	    time);
-	  break;
+		      .newState = ZquicLogBlockedState::Blocked,
+		      .reason = ZquicLogBlockedReason::StreamFlowControl,
+		      .streamID = streamID,
+		      .metadata = metadata
+		    },
+		    time);
+		  break;
 	case FrameType::StreamsBlocked:
 	  o.logStreamDataBlockedUpdated(
 	    ZquicLogBlockedEvent{
 	      .oldState = ZquicLogBlockedState::Unblocked,
-	      .newState = ZquicLogBlockedState::Blocked,
-	      .reason = ZquicLogBlockedReason::StreamID,
-	      .streamID = streamID
-	    },
-	    time);
-	  break;
+		      .newState = ZquicLogBlockedState::Blocked,
+		      .reason = ZquicLogBlockedReason::StreamID,
+		      .streamID = streamID,
+		      .metadata = metadata
+		    },
+		    time);
+		  break;
 	default:
 	  break;
       }
@@ -4104,19 +4117,21 @@ protected:
   bool txApplyMaxData_(uint64_t value) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC MAX_DATA processing outside Tx thread", return false);
-    if (value <= m_txDataCredit.limit()) return true;
-    ZquicLOG(([
-      wasBlocked = m_txDataCredit.blocked()
-    ](auto &o, ZuTime time) {
-      if (wasBlocked) {
-	o.logConnectionDataBlockedUpdated(
-	  ZquicLogBlockedEvent{
-	    .oldState = ZquicLogBlockedState::Blocked,
-	    .newState = ZquicLogBlockedState::Unblocked,
-	    .reason = ZquicLogBlockedReason::ConnectionFlowControl
-	  },
-	  time);
-      }
+	    if (value <= m_txDataCredit.limit()) return true;
+	    ZquicLOG(([
+	      wasBlocked = m_txDataCredit.blocked(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      if (wasBlocked) {
+		o.logConnectionDataBlockedUpdated(
+		  ZquicLogBlockedEvent{
+		    .oldState = ZquicLogBlockedState::Blocked,
+		    .newState = ZquicLogBlockedState::Unblocked,
+		    .reason = ZquicLogBlockedReason::ConnectionFlowControl,
+		    .metadata = metadata
+		  },
+		  time);
+	      }
     }));
     m_txDataCredit.extend(value);
     m_dataBlockedControl = {};
@@ -4126,21 +4141,23 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC MAX_STREAM_DATA processing outside Tx thread", return false);
     if (!stream) return false;
-    uint64_t streamID = uint64_t(stream->id());
-    ZquicLOG(([
-      streamID,
-      wasBlocked = stream->txRangeCount() && !stream->txCreditAvailable()
-    ](auto &o, ZuTime time) {
-      if (wasBlocked) {
-	o.logStreamDataBlockedUpdated(
-	  ZquicLogBlockedEvent{
-	    .oldState = ZquicLogBlockedState::Blocked,
-	    .newState = ZquicLogBlockedState::Unblocked,
-	    .reason = ZquicLogBlockedReason::StreamFlowControl,
-	    .streamID = streamID
-	  },
-	  time);
-      }
+	    uint64_t streamID = uint64_t(stream->id());
+	    ZquicLOG(([
+	      streamID,
+	      wasBlocked = stream->txRangeCount() && !stream->txCreditAvailable(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      if (wasBlocked) {
+		o.logStreamDataBlockedUpdated(
+		  ZquicLogBlockedEvent{
+		    .oldState = ZquicLogBlockedState::Blocked,
+		    .newState = ZquicLogBlockedState::Unblocked,
+		    .reason = ZquicLogBlockedReason::StreamFlowControl,
+		    .streamID = streamID,
+		    .metadata = metadata
+		  },
+		  time);
+	      }
     }));
     stream->extendTxCredit(value);
     stream->clearControl(SentFrameRef::blocked(
@@ -4563,19 +4580,21 @@ protected:
     m_path.validated();
     ZquicLOG(([
       action = ZquicLogPathAction::Created,
-      reason = ZquicLogPathReason::Client,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = true
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::Path,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      reason = ZquicLogPathReason::Client,
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = true,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::Path,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathUpdated(event, time);
     }));
@@ -4588,19 +4607,21 @@ protected:
     m_path.peerMaxUDP(app()->maxUDP());
     ZquicLOG(([
       action = ZquicLogPathAction::Created,
-      reason = ZquicLogPathReason::Server,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = false
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::Path,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      reason = ZquicLogPathReason::Server,
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = false,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::Path,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathUpdated(event, time);
     }));
@@ -4624,19 +4645,21 @@ protected:
     m_path.validated();
     ZquicLOG(([
       action = ZquicLogPathAction::Validated,
-      reason = ZquicLogPathReason::Initial,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = true
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::Path,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      reason = ZquicLogPathReason::Initial,
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = true,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::Path,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathUpdated(event, time);
     }));
@@ -4652,20 +4675,22 @@ protected:
     ZquicLOG(([
       action = ZquicLogPathAction::Received,
       reason = ZquicLogPathReason::Datagram,
-      bytes,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
+		bytes,
+		antiAmplification = m_path.antiAmplificationRemaining(),
+		mtu = m_path.activeMaxUDP(),
+		validated = pathValidated_(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
       ZquicLogPathEvent event{
         .kind = ZquicLogPathKind::Path,
         .action = ZquicLogPathAction::T(action),
         .reason = ZquicLogPathReason::T(reason),
-	.bytes = bytes,
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+		  .bytes = bytes,
+		  .antiAmplification = antiAmplification,
+		  .mtu = mtu,
+		  .validated = validated,
+		  .metadata = metadata
+		};
 
       o.logPathUpdated(event, time);
     }));
@@ -4699,19 +4724,21 @@ protected:
     }
     ZquicLOG(([
       action = ZquicLogPathAction::Observed,
-      reason = ZquicLogPathReason::PeerAddressChange,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::Path,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      reason = ZquicLogPathReason::PeerAddressChange,
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::Path,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathUpdated(event, time);
     }));
@@ -4743,20 +4770,22 @@ protected:
     ZquicLOG(([
       action = ZquicLogPathAction::ChallengeSent,
       reason = ZquicLogPathReason::PeerAddressChange,
-      deadlineUS = qlogUS_(state.deadline),
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::PathValidation,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.deadlineUS = deadlineUS,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      deadlineUS = qlogUS_(state.deadline),
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::PathValidation,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.deadlineUS = deadlineUS,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathValidationUpdated(event, time);
     }));
@@ -4771,19 +4800,21 @@ protected:
       ++m_txDiag.pathResponseUnknown;
       ZquicLOG(([
 	action = ZquicLogPathAction::ResponseUnknown,
-	reason = ZquicLogPathReason::Mismatch,
-	antiAmplification = m_path.antiAmplificationRemaining(),
-	mtu = m_path.activeMaxUDP(),
-	validated = pathValidated_()
-      ](auto &o, ZuTime time) {
-	ZquicLogPathEvent event{
-	  .kind = ZquicLogPathKind::PathValidation,
-	  .action = ZquicLogPathAction::T(action),
-	  .reason = ZquicLogPathReason::T(reason),
-	  .antiAmplification = antiAmplification,
-	  .mtu = mtu,
-	  .validated = validated
-	};
+		reason = ZquicLogPathReason::Mismatch,
+		antiAmplification = m_path.antiAmplificationRemaining(),
+		mtu = m_path.activeMaxUDP(),
+		validated = pathValidated_(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPathEvent event{
+		  .kind = ZquicLogPathKind::PathValidation,
+		  .action = ZquicLogPathAction::T(action),
+		  .reason = ZquicLogPathReason::T(reason),
+		  .antiAmplification = antiAmplification,
+		  .mtu = mtu,
+		  .validated = validated,
+		  .metadata = metadata
+		};
 
 	o.logPathValidationUpdated(event, time);
       }));
@@ -4792,19 +4823,21 @@ protected:
     m_pathChallengeControl = {};
     ZquicLOG(([
       action = ZquicLogPathAction::ResponseReceived,
-      reason = ZquicLogPathReason::Matched,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::PathValidation,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      reason = ZquicLogPathReason::Matched,
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::PathValidation,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathValidationUpdated(event, time);
     }));
@@ -4832,37 +4865,41 @@ protected:
     cancelPathTimer_();
     ZquicLOG(([
       action = ZquicLogPathAction::Validated,
-      reason = ZquicLogPathReason::Response,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::PathValidation,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      reason = ZquicLogPathReason::Response,
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::PathValidation,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathValidationUpdated(event, time);
     }));
     ZquicLOG(([
       action = ZquicLogPathAction::Updated,
-      reason = ZquicLogPathReason::Promoted,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = true
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::Path,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      reason = ZquicLogPathReason::Promoted,
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = true,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::Path,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathUpdated(event, time);
     }));
@@ -4882,19 +4919,21 @@ protected:
     cancelPathTimer_();
     ZquicLOG(([
       action = ZquicLogPathAction::Failed,
-      reason = ZquicLogPathReason::Timeout,
-      antiAmplification = m_path.antiAmplificationRemaining(),
-      mtu = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
-      ZquicLogPathEvent event{
-        .kind = ZquicLogPathKind::PathValidation,
-        .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.antiAmplification = antiAmplification,
-	.mtu = mtu,
-	.validated = validated
-      };
+	      reason = ZquicLogPathReason::Timeout,
+	      antiAmplification = m_path.antiAmplificationRemaining(),
+	      mtu = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogPathEvent event{
+	        .kind = ZquicLogPathKind::PathValidation,
+	        .action = ZquicLogPathAction::T(action),
+	        .reason = ZquicLogPathReason::T(reason),
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPathValidationUpdated(event, time);
     }));
@@ -4961,34 +5000,37 @@ protected:
       ZquicLOG(([
 	action = ZquicLogPathAction::Blocked,
 	reason = ZquicLogPathReason::AntiAmplification,
-	bytes,
-	antiAmplification = m_path.antiAmplificationRemaining(),
-	mtu = m_path.activeMaxUDP(),
-	validated = pathValidated_()
+		bytes,
+		antiAmplification = m_path.antiAmplificationRemaining(),
+		mtu = m_path.activeMaxUDP(),
+		validated = pathValidated_(),
+		metadata = qlogCIDMeta_()
       ](auto &o, ZuTime time) {
 	ZquicLogPathEvent event{
 	  .kind = ZquicLogPathKind::Path,
 	  .action = ZquicLogPathAction::T(action),
 	  .reason = ZquicLogPathReason::T(reason),
-	  .bytes = bytes,
-	  .antiAmplification = antiAmplification,
-	  .mtu = mtu,
-	  .validated = validated
-	};
+		  .bytes = bytes,
+		  .antiAmplification = antiAmplification,
+		  .mtu = mtu,
+		  .validated = validated,
+		  .metadata = metadata
+		};
 
 	o.logPathUpdated(event, time);
 	o.logPacketDropped(
-	  ZquicLogPacketEvent{
-	    .packetSize = bytes,
-	    .reason = ZquicLogPacketEvent::Reason::AntiAmplification
-	  },
+		  ZquicLogPacketEvent{
+		    .packetSize = bytes,
+		    .reason = ZquicLogPacketEvent::Reason::AntiAmplification,
+		    .metadata = metadata
+		  },
 	  time);
       }));
       return false;
     }
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
-    ZquicLOG(([bytes](auto &o, ZuTime time) {
-      ZquicLogDatagramEvent event{.size = bytes};
+	    ZquicLOG(([bytes, metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogDatagramEvent event{.size = bytes, .metadata = metadata};
       event.ecn = EcnMark::N;
       o.logDatagramSent(event, time);
     }));
@@ -5005,35 +5047,38 @@ protected:
       ZquicLOG(([
 	action = ZquicLogPathAction::Blocked,
 	reason = ZquicLogPathReason::ProbeAdmission,
-	bytes,
-	antiAmplification = m_path.antiAmplificationRemaining(),
-	mtu = m_path.activeMaxUDP(),
-	validated = pathValidated_()
-      ](auto &o, ZuTime time) {
+		bytes,
+		antiAmplification = m_path.antiAmplificationRemaining(),
+		mtu = m_path.activeMaxUDP(),
+		validated = pathValidated_(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogPathEvent event{
 	  .kind = ZquicLogPathKind::Path,
 	  .action = ZquicLogPathAction::T(action),
 	  .reason = ZquicLogPathReason::T(reason),
-	  .bytes = bytes,
-	  .antiAmplification = antiAmplification,
-	  .mtu = mtu,
-	  .validated = validated
-	};
+		  .bytes = bytes,
+		  .antiAmplification = antiAmplification,
+		  .mtu = mtu,
+		  .validated = validated,
+		  .metadata = metadata
+		};
 
 	o.logPathUpdated(event, time);
 	o.logPacketDropped(
-	  ZquicLogPacketEvent{
-	    .packetSize = bytes,
-	    .reason = ZquicLogPacketEvent::Reason::ProbeAdmission
-	  },
+		  ZquicLogPacketEvent{
+		    .packetSize = bytes,
+		    .reason = ZquicLogPacketEvent::Reason::ProbeAdmission,
+		    .metadata = metadata
+		  },
 	  time);
       }));
       return false;
     }
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     m_path.sent(bytes);
-    ZquicLOG(([bytes](auto &o, ZuTime time) {
-      ZquicLogDatagramEvent event{.size = bytes};
+	    ZquicLOG(([bytes, metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogDatagramEvent event{.size = bytes, .metadata = metadata};
       event.ecn = EcnMark::N;
       o.logDatagramSent(event, time);
     }));
@@ -5049,27 +5094,30 @@ protected:
       ZquicLOG(([
 	action = ZquicLogPathAction::Blocked,
 	reason = ZquicLogPathReason::AntiAmplification,
-	bytes,
-	antiAmplification = m_path.antiAmplificationRemaining(),
-	mtu = m_path.activeMaxUDP(),
-	validated = pathValidated_()
-      ](auto &o, ZuTime time) {
+		bytes,
+		antiAmplification = m_path.antiAmplificationRemaining(),
+		mtu = m_path.activeMaxUDP(),
+		validated = pathValidated_(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogPathEvent event{
 	  .kind = ZquicLogPathKind::Path,
 	  .action = ZquicLogPathAction::T(action),
 	  .reason = ZquicLogPathReason::T(reason),
-	  .bytes = bytes,
-	  .antiAmplification = antiAmplification,
-	  .mtu = mtu,
-	  .validated = validated
-	};
+		  .bytes = bytes,
+		  .antiAmplification = antiAmplification,
+		  .mtu = mtu,
+		  .validated = validated,
+		  .metadata = metadata
+		};
 
 	o.logPathUpdated(event, time);
 	o.logPacketDropped(
-	  ZquicLogPacketEvent{
-	    .packetSize = bytes,
-	    .reason = ZquicLogPacketEvent::Reason::AntiAmplification
-	  },
+		  ZquicLogPacketEvent{
+		    .packetSize = bytes,
+		    .reason = ZquicLogPacketEvent::Reason::AntiAmplification,
+		    .metadata = metadata
+		  },
 	  time);
       }));
       return false;
@@ -5077,18 +5125,19 @@ protected:
     bool sent = false;
     if (!sendPkt(ZuMv(buf), ZuMv(addr), sent)) return false;
     if (!sent) {
-      ZquicLOG(([bytes](auto &o, ZuTime time) {
-	o.logPacketDropped(
-	  ZquicLogPacketEvent{
-	    .packetSize = bytes,
-	    .reason = ZquicLogPacketEvent::Reason::AppSend
-	  },
+	      ZquicLOG(([bytes, metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+		o.logPacketDropped(
+		  ZquicLogPacketEvent{
+		    .packetSize = bytes,
+		    .reason = ZquicLogPacketEvent::Reason::AppSend,
+		    .metadata = metadata
+		  },
 	  time);
       }));
       return true;
     }
-    ZquicLOG(([bytes](auto &o, ZuTime time) {
-      ZquicLogDatagramEvent event{.size = bytes};
+	    ZquicLOG(([bytes, metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogDatagramEvent event{.size = bytes, .metadata = metadata};
       event.ecn = EcnMark::N;
       o.logDatagramSent(event, time);
     }));
@@ -5105,27 +5154,30 @@ protected:
       ZquicLOG(([
 	action = ZquicLogPathAction::Blocked,
 	reason = ZquicLogPathReason::ProbeAdmission,
-	bytes,
-	antiAmplification = m_path.antiAmplificationRemaining(),
-	mtu = m_path.activeMaxUDP(),
-	validated = pathValidated_()
-      ](auto &o, ZuTime time) {
+		bytes,
+		antiAmplification = m_path.antiAmplificationRemaining(),
+		mtu = m_path.activeMaxUDP(),
+		validated = pathValidated_(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogPathEvent event{
 	  .kind = ZquicLogPathKind::Path,
 	  .action = ZquicLogPathAction::T(action),
 	  .reason = ZquicLogPathReason::T(reason),
-	  .bytes = bytes,
-	  .antiAmplification = antiAmplification,
-	  .mtu = mtu,
-	  .validated = validated
-	};
+		  .bytes = bytes,
+		  .antiAmplification = antiAmplification,
+		  .mtu = mtu,
+		  .validated = validated,
+		  .metadata = metadata
+		};
 
 	o.logPathUpdated(event, time);
 	o.logPacketDropped(
-	  ZquicLogPacketEvent{
-	    .packetSize = bytes,
-	    .reason = ZquicLogPacketEvent::Reason::ProbeAdmission
-	  },
+		  ZquicLogPacketEvent{
+		    .packetSize = bytes,
+		    .reason = ZquicLogPacketEvent::Reason::ProbeAdmission,
+		    .metadata = metadata
+		  },
 	  time);
       }));
       return false;
@@ -5133,19 +5185,20 @@ protected:
     bool sent = false;
     if (!sendPkt(ZuMv(buf), ZuMv(addr), sent)) return false;
     if (!sent) {
-      ZquicLOG(([bytes](auto &o, ZuTime time) {
-	o.logPacketDropped(
-	  ZquicLogPacketEvent{
-	    .packetSize = bytes,
-	    .reason = ZquicLogPacketEvent::Reason::AppSend
-	  },
+	      ZquicLOG(([bytes, metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+		o.logPacketDropped(
+		  ZquicLogPacketEvent{
+		    .packetSize = bytes,
+		    .reason = ZquicLogPacketEvent::Reason::AppSend,
+		    .metadata = metadata
+		  },
 	  time);
       }));
       return true;
     }
     m_path.sent(bytes);
-    ZquicLOG(([bytes](auto &o, ZuTime time) {
-      ZquicLogDatagramEvent event{.size = bytes};
+	    ZquicLOG(([bytes, metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogDatagramEvent event{.size = bytes, .metadata = metadata};
       event.ecn = EcnMark::N;
       o.logDatagramSent(event, time);
     }));
@@ -5168,6 +5221,8 @@ protected:
     resetAckPosts_();
     resetLinkState_();
     m_initialDCID = {};
+    m_originalDCID = {};
+    m_groupID = {};
     m_localSCID = {};
     m_peerCID = {};
     m_peerResetToken = {};
@@ -5219,14 +5274,15 @@ protected:
   void endpointReady_() { ++m_rxDiag.endpointReady; }
   void endpointFailure_() { ++m_rxDiag.failures; }
   void packetParseFailure_() { ++m_rxDiag.failures; }
-  void tlsFailure_() {
-    ++m_rxDiag.failures;
-    ZquicLOG(([](auto &o, ZuTime time) {
-      ZquicLogSecurityEvent event{
-	.kind = ZquicLogSecurityKind::TLS,
-	.reason = ZquicLogSecurityReason::Handshake,
-	.success = false
-      };
+	  void tlsFailure_() {
+	    ++m_rxDiag.failures;
+	    ZquicLOG(([metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogSecurityEvent event{
+		.kind = ZquicLogSecurityKind::TLS,
+		.reason = ZquicLogSecurityReason::Handshake,
+		.success = false,
+		.metadata = metadata
+	      };
       o.logTLSAlert(event, time);
     }));
   }
@@ -5315,6 +5371,17 @@ protected:
     const CxnID &initialDCID,
     const CxnID &localSCID,
     const CxnID &peerCID) {
+    setRuntimeCIDs_(initialDCID, localSCID, peerCID, initialDCID, initialDCID);
+  }
+
+  void setRuntimeCIDs_(
+    const CxnID &initialDCID,
+    const CxnID &localSCID,
+    const CxnID &peerCID,
+    const CxnID &originalDCID,
+    const CxnID &groupID) {
+    m_originalDCID = originalDCID;
+    m_groupID = groupID;
     m_initialDCID = initialDCID;
     m_localSCID = localSCID;
     m_peerCID = peerCID;
@@ -5362,22 +5429,26 @@ protected:
     ZquicLOG(([
       action = ZquicLogCIDAction::Retired,
       reason = ZquicLogCIDReason::PeerRequest,
-      sequence = cid->sequence,
-      length = qlogCount_(cid->id.length()),
-      local = true,
-      associated = cid->associated,
-      resetToken = cid->resetToken.valid()
-    ](auto &o, ZuTime time) {
-      ZquicLogCIDEvent event{
-        .kind = ZquicLogCIDKind::ConnectionID,
+      connectionID = cid->id,
+	      sequence = cid->sequence,
+	      length = qlogCount_(cid->id.length()),
+	      local = true,
+	      associated = cid->associated,
+	      resetToken = cid->resetToken.valid(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogCIDEvent event{
+	        .kind = ZquicLogCIDKind::ConnectionID,
         .action = ZquicLogCIDAction::T(action),
         .reason = ZquicLogCIDReason::T(reason),
+	.connectionID = connectionID,
 	.sequence = sequence,
-	.length = length,
-	.local = local,
-	.associated = associated,
-	.resetToken = resetToken
-      };
+		.length = length,
+		.local = local,
+		.associated = associated,
+		.resetToken = resetToken,
+		.metadata = metadata
+	      };
 
       o.logCIDUpdated(event, time);
     }));
@@ -5426,22 +5497,26 @@ protected:
 	ZquicLOG(([
 	  action = ZquicLogCIDAction::RouteBound,
 	  reason = ZquicLogCIDReason::PathPromoted,
+	  connectionID = cid->id,
 	  sequence = cid->sequence,
-	  length = qlogCount_(cid->id.length()),
-	  local = false,
-	  associated = cid->associated,
-	  resetToken = cid->resetToken.valid()
-	](auto &o, ZuTime time) {
-	  ZquicLogCIDEvent event{
+		  length = qlogCount_(cid->id.length()),
+		  local = false,
+		  associated = cid->associated,
+		  resetToken = cid->resetToken.valid(),
+		  metadata = qlogCIDMeta_()
+		](auto &o, ZuTime time) {
+		  ZquicLogCIDEvent event{
 	    .kind = ZquicLogCIDKind::ConnectionID,
 	    .action = ZquicLogCIDAction::T(action),
 	    .reason = ZquicLogCIDReason::T(reason),
+	    .connectionID = connectionID,
 	    .sequence = sequence,
-	    .length = length,
-	    .local = local,
-	    .associated = associated,
-	    .resetToken = resetToken
-	  };
+		    .length = length,
+		    .local = local,
+		    .associated = associated,
+		    .resetToken = resetToken,
+		    .metadata = metadata
+		  };
 
 	  o.logCIDUpdated(event, time);
 	}));
@@ -5464,22 +5539,26 @@ protected:
       ZquicLOG(([
 	action = ZquicLogCIDAction::RouteBound,
 	reason = ZquicLogCIDReason::RouteInstall,
+	connectionID = cid.id,
 	sequence = cid.sequence,
-	length = qlogCount_(cid.id.length()),
-	local = true,
-	associated = cid.associated,
-	resetToken = cid.resetToken.valid()
-      ](auto &o, ZuTime time) {
-	ZquicLogCIDEvent event{
+		length = qlogCount_(cid.id.length()),
+		local = true,
+		associated = cid.associated,
+		resetToken = cid.resetToken.valid(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogCIDEvent event{
 	  .kind = ZquicLogCIDKind::ConnectionID,
 	  .action = ZquicLogCIDAction::T(action),
 	  .reason = ZquicLogCIDReason::T(reason),
+	  .connectionID = connectionID,
 	  .sequence = sequence,
-	  .length = length,
-	  .local = local,
-	  .associated = associated,
-	  .resetToken = resetToken
-	};
+		  .length = length,
+		  .local = local,
+		  .associated = associated,
+		  .resetToken = resetToken,
+		  .metadata = metadata
+		};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -5495,22 +5574,26 @@ protected:
       ZquicLOG(([
 	action = ZquicLogCIDAction::Retired,
 	reason = ZquicLogCIDReason::RouteRetire,
+	connectionID = cid.id,
 	sequence = cid.sequence,
-	length = qlogCount_(cid.id.length()),
-	local = true,
-	associated = cid.associated,
-	resetToken = cid.resetToken.valid()
-      ](auto &o, ZuTime time) {
-	ZquicLogCIDEvent event{
+		length = qlogCount_(cid.id.length()),
+		local = true,
+		associated = cid.associated,
+		resetToken = cid.resetToken.valid(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogCIDEvent event{
 	  .kind = ZquicLogCIDKind::ConnectionID,
 	  .action = ZquicLogCIDAction::T(action),
 	  .reason = ZquicLogCIDReason::T(reason),
+	  .connectionID = connectionID,
 	  .sequence = sequence,
-	  .length = length,
-	  .local = local,
-	  .associated = associated,
-	  .resetToken = resetToken
-	};
+		  .length = length,
+		  .local = local,
+		  .associated = associated,
+		  .resetToken = resetToken,
+		  .metadata = metadata
+		};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -5526,22 +5609,26 @@ protected:
       ZquicLOG(([
 	action = ZquicLogCIDAction::Tombstone,
 	reason = ZquicLogCIDReason::RouteTombstone,
+	connectionID = cid.id,
 	sequence = cid.sequence,
-	length = qlogCount_(cid.id.length()),
-	local = true,
-	associated = cid.associated,
-	resetToken = cid.resetToken.valid()
-      ](auto &o, ZuTime time) {
-	ZquicLogCIDEvent event{
+		length = qlogCount_(cid.id.length()),
+		local = true,
+		associated = cid.associated,
+		resetToken = cid.resetToken.valid(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogCIDEvent event{
 	  .kind = ZquicLogCIDKind::ConnectionID,
 	  .action = ZquicLogCIDAction::T(action),
 	  .reason = ZquicLogCIDReason::T(reason),
+	  .connectionID = connectionID,
 	  .sequence = sequence,
-	  .length = length,
-	  .local = local,
-	  .associated = associated,
-	  .resetToken = resetToken
-	};
+		  .length = length,
+		  .local = local,
+		  .associated = associated,
+		  .resetToken = resetToken,
+		  .metadata = metadata
+		};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -5590,22 +5677,26 @@ protected:
       ZquicLOG(([
 	action = ZquicLogCIDAction::Updated,
 	reason = ZquicLogCIDReason::Sequence,
+	connectionID = cid->id,
 	sequence = cid->sequence,
-	length = qlogCount_(cid->id.length()),
-	local,
-	associated = cid->associated,
-	resetToken = cid->resetToken.valid()
-      ](auto &o, ZuTime time) {
-	ZquicLogCIDEvent event{
+		length = qlogCount_(cid->id.length()),
+		local,
+		associated = cid->associated,
+		resetToken = cid->resetToken.valid(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogCIDEvent event{
 	  .kind = ZquicLogCIDKind::ConnectionID,
 	  .action = ZquicLogCIDAction::T(action),
 	  .reason = ZquicLogCIDReason::T(reason),
+	  .connectionID = connectionID,
 	  .sequence = sequence,
-	  .length = length,
-	  .local = local,
-	  .associated = associated,
-	  .resetToken = resetToken
-	};
+		  .length = length,
+		  .local = local,
+		  .associated = associated,
+		  .resetToken = resetToken,
+		  .metadata = metadata
+		};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -5621,22 +5712,26 @@ protected:
       ZquicLOG(([
 	action = ZquicLogCIDAction::Updated,
 	reason = ZquicLogCIDReason::ID,
+	connectionID = cid->id,
 	sequence = cid->sequence,
-	length = qlogCount_(cid->id.length()),
-	local,
-	associated = cid->associated,
-	resetToken = cid->resetToken.valid()
-      ](auto &o, ZuTime time) {
-	ZquicLogCIDEvent event{
+		length = qlogCount_(cid->id.length()),
+		local,
+		associated = cid->associated,
+		resetToken = cid->resetToken.valid(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogCIDEvent event{
 	  .kind = ZquicLogCIDKind::ConnectionID,
 	  .action = ZquicLogCIDAction::T(action),
 	  .reason = ZquicLogCIDReason::T(reason),
+	  .connectionID = connectionID,
 	  .sequence = sequence,
-	  .length = length,
-	  .local = local,
-	  .associated = associated,
-	  .resetToken = resetToken
-	};
+		  .length = length,
+		  .local = local,
+		  .associated = associated,
+		  .resetToken = resetToken,
+		  .metadata = metadata
+		};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -5660,22 +5755,26 @@ protected:
     ZquicLOG(([
       action = ZquicLogCIDAction::Issued,
       reason = resetToken.valid() ? ZquicLogCIDReason::ResetToken : ZquicLogCIDReason::None,
+      connectionID = slot->id,
       sequence = slot->sequence,
-      length = qlogCount_(slot->id.length()),
-      local,
-      associated = slot->associated,
-      resetToken = slot->resetToken.valid()
-    ](auto &o, ZuTime time) {
-      ZquicLogCIDEvent event{
+	      length = qlogCount_(slot->id.length()),
+	      local,
+	      associated = slot->associated,
+	      resetToken = slot->resetToken.valid(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogCIDEvent event{
         .kind = ZquicLogCIDKind::ConnectionID,
         .action = ZquicLogCIDAction::T(action),
         .reason = ZquicLogCIDReason::T(reason),
+	.connectionID = connectionID,
 	.sequence = sequence,
-	.length = length,
-	.local = local,
-	.associated = associated,
-	.resetToken = resetToken
-      };
+		.length = length,
+		.local = local,
+		.associated = associated,
+		.resetToken = resetToken,
+		.metadata = metadata
+	      };
 
       o.logCIDUpdated(event, time);
     }));
@@ -5701,22 +5800,26 @@ protected:
 	ZquicLOG(([
 	  action = ZquicLogCIDAction::Retired,
 	  reason = ZquicLogCIDReason::RetirePriorTo,
+	  connectionID = cid.id,
 	  sequence = cid.sequence,
-	  length = qlogCount_(cid.id.length()),
-	  local = false,
-	  associated = cid.associated,
-	  resetToken = cid.resetToken.valid()
-	](auto &o, ZuTime time) {
-	  ZquicLogCIDEvent event{
+		  length = qlogCount_(cid.id.length()),
+		  local = false,
+		  associated = cid.associated,
+		  resetToken = cid.resetToken.valid(),
+		  metadata = qlogCIDMeta_()
+		](auto &o, ZuTime time) {
+		  ZquicLogCIDEvent event{
 	    .kind = ZquicLogCIDKind::ConnectionID,
 	    .action = ZquicLogCIDAction::T(action),
 	    .reason = ZquicLogCIDReason::T(reason),
+	    .connectionID = connectionID,
 	    .sequence = sequence,
-	    .length = length,
-	    .local = local,
-	    .associated = associated,
-	    .resetToken = resetToken
-	  };
+		    .length = length,
+		    .local = local,
+		    .associated = associated,
+		    .resetToken = resetToken,
+		    .metadata = metadata
+		  };
 
 	  o.logCIDUpdated(event, time);
 	}));
@@ -5729,6 +5832,15 @@ protected:
       case RuntimeCID::Local: return m_localSCID;
       default: return m_peerCID;
     }
+  }
+
+  ZquicLogCIDMeta qlogCIDMeta_() const {
+    return ZquicLogCIDMeta{
+      .origDCID = m_originalDCID.length() ? m_originalDCID : m_initialDCID,
+      .groupID = m_groupID.length() ? m_groupID : m_initialDCID,
+      .dcid = m_initialDCID,
+      .scid = m_localSCID
+    };
   }
 
   template <typename AppLike>
@@ -5768,14 +5880,49 @@ protected:
     config.localTransportParams = &m_transportParams;
     if (m_crypto.initTLS(config)) {
       ZquicLOG(([
-	value = m_transportParams.maxUDPPayloadSize
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::TransportParameters,
-	  .trigger = ZquicLogSecurityTrigger::Local,
-	  .value = value,
-	  .success = true
-	};
+	originalDCID = m_transportParams.originalDCID,
+	initialSCID = m_transportParams.initialSCID,
+	retrySCID = m_transportParams.retrySCID,
+	statelessResetToken = m_transportParams.statelessResetToken,
+	statelessResetTokenPresent =
+	  m_transportParams.statelessResetTokenPresent,
+	maxIdleTimeout = m_transportParams.maxIdleTimeout,
+	maxUDPPayloadSize = m_transportParams.maxUDPPayloadSize,
+	ackDelayExponent = m_transportParams.ackDelayExponent,
+	maxAckDelay = m_transportParams.maxAckDelay,
+	activeConnectionIDLimit = m_transportParams.activeConnectionIDLimit,
+	initialMaxData = m_transportParams.initialMaxData,
+	initialMaxStreamDataBidiLocal =
+	  m_transportParams.initialMaxStreamDataBidiLocal,
+	initialMaxStreamDataBidiRemote =
+	  m_transportParams.initialMaxStreamDataBidiRemote,
+		initialMaxStreamDataUni = m_transportParams.initialMaxStreamDataUni,
+		initialMaxStreamsBidi = m_transportParams.initialMaxStreamsBidi,
+		initialMaxStreamsUni = m_transportParams.initialMaxStreamsUni,
+		disableActiveMigration = m_transportParams.disableActiveMigration,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+	ZquicLogTransportParamsEvent event{
+	  .initiator = ZquicLogQInitiator::Local,
+	  .originalDCID = originalDCID,
+	  .initialSCID = initialSCID,
+	  .retrySCID = retrySCID,
+	  .statelessResetToken = statelessResetToken,
+	  .maxIdleTimeout = maxIdleTimeout,
+	  .maxUDPPayloadSize = maxUDPPayloadSize,
+	  .ackDelayExponent = ackDelayExponent,
+	  .maxAckDelay = maxAckDelay,
+	  .activeConnectionIDLimit = activeConnectionIDLimit,
+	  .initialMaxData = initialMaxData,
+	  .initialMaxStreamDataBidiLocal = initialMaxStreamDataBidiLocal,
+	  .initialMaxStreamDataBidiRemote = initialMaxStreamDataBidiRemote,
+	  .initialMaxStreamDataUni = initialMaxStreamDataUni,
+	  .initialMaxStreamsBidi = initialMaxStreamsBidi,
+		  .initialMaxStreamsUni = initialMaxStreamsUni,
+		  .statelessResetTokenPresent = statelessResetTokenPresent,
+		  .disableActiveMigration = disableActiveMigration,
+		  .metadata = metadata
+		};
 	o.logTransportParametersSet(event, time);
       }));
       return true;
@@ -5818,26 +5965,63 @@ protected:
       m_peerLimit[Zi::StreamType::Duplex].set(params.initialMaxStreamsBidi);
       m_peerLimit[Zi::StreamType::Simplex].set(params.initialMaxStreamsUni);
       ZquicLOG(([
-	value = m_transportParams.maxUDPPayloadSize
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::TransportParameters,
-	  .trigger = ZquicLogSecurityTrigger::Peer,
-	  .value = value,
-	  .success = true
-	};
+	originalDCID = params.originalDCID,
+	initialSCID = params.initialSCID,
+	retrySCID = params.retrySCID,
+	statelessResetToken = params.statelessResetToken,
+	statelessResetTokenPresent = params.statelessResetTokenPresent,
+	maxIdleTimeout = params.maxIdleTimeout,
+	maxUDPPayloadSize = params.maxUDPPayloadSize,
+	ackDelayExponent = params.ackDelayExponent,
+	maxAckDelay = params.maxAckDelay,
+	activeConnectionIDLimit = params.activeConnectionIDLimit,
+	initialMaxData = params.initialMaxData,
+	initialMaxStreamDataBidiLocal =
+	  params.initialMaxStreamDataBidiLocal,
+	initialMaxStreamDataBidiRemote =
+	  params.initialMaxStreamDataBidiRemote,
+		initialMaxStreamDataUni = params.initialMaxStreamDataUni,
+		initialMaxStreamsBidi = params.initialMaxStreamsBidi,
+		initialMaxStreamsUni = params.initialMaxStreamsUni,
+		disableActiveMigration = params.disableActiveMigration,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+	ZquicLogTransportParamsEvent event{
+	  .initiator = ZquicLogQInitiator::Remote,
+	  .originalDCID = originalDCID,
+	  .initialSCID = initialSCID,
+	  .retrySCID = retrySCID,
+	  .statelessResetToken = statelessResetToken,
+	  .maxIdleTimeout = maxIdleTimeout,
+	  .maxUDPPayloadSize = maxUDPPayloadSize,
+	  .ackDelayExponent = ackDelayExponent,
+	  .maxAckDelay = maxAckDelay,
+	  .activeConnectionIDLimit = activeConnectionIDLimit,
+	  .initialMaxData = initialMaxData,
+	  .initialMaxStreamDataBidiLocal = initialMaxStreamDataBidiLocal,
+	  .initialMaxStreamDataBidiRemote = initialMaxStreamDataBidiRemote,
+	  .initialMaxStreamDataUni = initialMaxStreamDataUni,
+	  .initialMaxStreamsBidi = initialMaxStreamsBidi,
+		  .initialMaxStreamsUni = initialMaxStreamsUni,
+		  .statelessResetTokenPresent = statelessResetTokenPresent,
+		  .disableActiveMigration = disableActiveMigration,
+		  .metadata = metadata
+		};
 	o.logTransportParametersSet(event, time);
       }));
     }
-    ZquicLOG(([alpn = ZeString{m_crypto.negotiatedProtocol()}
-    ](auto &o, ZuTime time) {
+	    ZquicLOG(([
+	      alpn = ZeString{m_crypto.negotiatedProtocol()},
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       if (!alpn) return;
       ZquicLogSecurityEvent event{
 	.kind = ZquicLogSecurityKind::ALPN,
-	.trigger = ZquicLogSecurityTrigger::Selected,
-	.alpn = ZuMv(alpn),
-	.success = true
-      };
+		.trigger = ZquicLogSecurityTrigger::Selected,
+		.alpn = ZuMv(alpn),
+		.success = true,
+		.metadata = metadata
+	      };
       o.logALPNInformation(event, time);
     }));
     updatePeerPathMaxUDP_();
@@ -5919,16 +6103,21 @@ protected:
     m_rxNextProt.clear();
     m_rxOldKeyDiscard = keyDiscardDeadline_();
     ++m_rxDiag.peerKeyUpdates;
-    ZquicLOG(([level = PktNumSpace::AppData
-    ](auto &o, ZuTime time) {
+	    ZquicLOG(([
+	      level = PktNumSpace::T(PktNumSpace::AppData),
+	      keyPhase = uint64_t(m_rxKeyPhase),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogSecurityEvent event{
 	.kind = ZquicLogSecurityKind::KeyUpdated,
+	.packetSpace = level,
 	.keyType = ZquicLogSecurityKeyType::RX,
 	.trigger = ZquicLogSecurityTrigger::Remote,
-	.reason = ZquicLogSecurityReason::KeyPhase,
-	.success = true
-      };
-      event.packetSpace = level;
+		.reason = ZquicLogSecurityReason::KeyPhase,
+		.value = keyPhase,
+		.success = true,
+		.metadata = metadata
+	      };
       o.logKeyUpdated(event, time);
     }));
     schedulePeerKeyDiscard_(m_rxOldKeyDiscard);
@@ -5951,16 +6140,21 @@ protected:
     m_rxOldProt.clear();
     m_rxOldKeyDiscard = {};
     ++m_rxDiag.keyDiscards;
-    ZquicLOG(([level = PktNumSpace::AppData
-    ](auto &o, ZuTime time) {
+	    ZquicLOG(([
+	      level = PktNumSpace::T(PktNumSpace::AppData),
+	      oldKeyPhase = uint64_t(m_rxOldKeyPhase),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogSecurityEvent event{
 	.kind = ZquicLogSecurityKind::KeyRetired,
+	.packetSpace = level,
 	.keyType = ZquicLogSecurityKeyType::RXOld,
-	.trigger = ZquicLogSecurityTrigger::Timer,
-	.reason = ZquicLogSecurityReason::KeyUpdate,
-	.success = true
-      };
-      event.packetSpace = level;
+	.trigger = ZquicLogSecurityTrigger::Remote,
+		.reason = ZquicLogSecurityReason::KeyUpdate,
+		.value = oldKeyPhase,
+		.success = true,
+		.metadata = metadata
+	      };
       o.logKeyRetired(event, time);
     }));
   }
@@ -5973,16 +6167,21 @@ protected:
 	!txInstallTrafficSecret_(PktNumSpace::AppData, nextTxSecret))
       return false;
     m_txKeyPhase = !m_txKeyPhase;
-    ZquicLOG(([level = PktNumSpace::AppData
-    ](auto &o, ZuTime time) {
+	    ZquicLOG(([
+	      level = PktNumSpace::T(PktNumSpace::AppData),
+	      keyPhase = uint64_t(m_txKeyPhase),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogSecurityEvent event{
 	.kind = ZquicLogSecurityKind::KeyUpdated,
+	.packetSpace = level,
 	.keyType = ZquicLogSecurityKeyType::TX,
 	.trigger = ZquicLogSecurityTrigger::Local,
-	.reason = ZquicLogSecurityReason::PeerUpdate,
-	.success = true
-      };
-      event.packetSpace = level;
+		.reason = ZquicLogSecurityReason::PeerUpdate,
+		.value = keyPhase,
+		.success = true,
+		.metadata = metadata
+	      };
       o.logKeyUpdated(event, time);
     }));
     return true;
@@ -5990,17 +6189,19 @@ protected:
 
   bool checkStatelessReset_(ZuBSpan datagram, bool notify = false) {
     if (!StatelessReset::verify(datagram, m_peerResetToken)) return false;
-    ZquicLOG(([
-      bytes = datagram.length()
-    ](auto &o, ZuTime time) {
-      ZquicLogSecurityEvent event{
-	.kind = ZquicLogSecurityKind::StatelessReset,
-	.value = bytes,
-	.success = true
-      };
+	    ZquicLOG(([
+	      bytes = datagram.length(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogSecurityEvent event{
+		.kind = ZquicLogSecurityKind::StatelessReset,
+		.value = bytes,
+		.success = true,
+		.metadata = metadata
+	      };
       event.trigger = ZquicLogSecurityTrigger::Received;
       event.reason = ZquicLogSecurityReason::TokenMatch;
-      o.logSecurityEvent("security:stateless_reset", event, time);
+      o.logSecurityEvent(ZquicLogEventName::StatelessReset, event, time);
     }));
     m_linkState = LinkState::Draining;
     m_streamQueue.clean();
@@ -6388,11 +6589,12 @@ protected:
       if (info.length && !m_txDataCredit.consume(info.length)) return false;
       m_txDiag.streamBytesTx += info.length;
       ZquicLOG(([
-	streamID = info.streamID,
-	offset = info.offset,
-	length = info.length,
-	fin = info.fin
-      ](auto &o, ZuTime time) {
+		streamID = info.streamID,
+		offset = info.offset,
+		length = info.length,
+		fin = info.fin,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	if (!length && !fin) return;
 	ZquicLogStreamDataEvent event{
 	  .from = ZquicLogStreamDataLoc::Transport,
@@ -6400,10 +6602,11 @@ protected:
 	  .additionalInfo = fin ?
 	    ZquicLogStreamDataInfo::T(ZquicLogStreamDataInfo::FinSet) :
 	    ZquicLogStreamDataInfo::T(ZquicLogStreamDataInfo::None),
-	  .streamID = streamID,
-	  .offset = offset,
-	  .length = length
-	};
+		  .streamID = streamID,
+		  .offset = offset,
+		  .length = length,
+		  .metadata = metadata
+		};
 	o.logStreamDataMoved(event, time);
       }));
       flushQueuedControls |= returnStreamCredit_(stream);
@@ -6466,11 +6669,12 @@ protected:
     if (info.length && !m_txDataCredit.consume(info.length)) return false;
     m_txDiag.streamBytesTx += info.length;
     ZquicLOG(([
-      streamID = info.streamID,
-      offset = info.offset,
-      length = info.length,
-      fin = info.fin
-    ](auto &o, ZuTime time) {
+	      streamID = info.streamID,
+	      offset = info.offset,
+	      length = info.length,
+	      fin = info.fin,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       if (!length && !fin) return;
       ZquicLogStreamDataEvent event{
 	.from = ZquicLogStreamDataLoc::Transport,
@@ -6478,10 +6682,11 @@ protected:
 	.additionalInfo = fin ?
 	  ZquicLogStreamDataInfo::T(ZquicLogStreamDataInfo::FinSet) :
 	  ZquicLogStreamDataInfo::T(ZquicLogStreamDataInfo::None),
-	.streamID = streamID,
-	.offset = offset,
-	.length = length
-      };
+		.streamID = streamID,
+		.offset = offset,
+		.length = length,
+		.metadata = metadata
+	      };
       o.logStreamDataMoved(event, time);
     }));
     if (returnStreamCredit_(stream)) impl()->flushTx_();
@@ -6716,22 +6921,27 @@ protected:
       level,
       lostBytes = update.lostBytes,
       bytesInFlight = m_congestion.bytesInFlight(),
-      nLostFrames = update.nLostFrames,
-      reason = ZquicLogRecoveryReason::TimeThreshold
-    ](auto &o, ZuTime time) {
+	      lostFrames = update.lostFrames,
+	      nLostFrames = update.nLostFrames,
+	      reason = ZquicLogRecoveryReason::TimeThreshold,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       if (!lostBytes) return;
       ZquicLogRecoveryEvent event{
 	.kind = ZquicLogRecoveryKind::Aggregate,
 	.packetSpace = level,
 	.reason = ZquicLogRecoveryReason::T(reason),
-	.bytes = lostBytes,
-	.bytesInFlight = bytesInFlight,
-	.frameCount = qlogCount_(nLostFrames)
-      };
+		.bytes = lostBytes,
+		.bytesInFlight = bytesInFlight,
+		.frameCount = qlogCount_(nLostFrames),
+		.metadata = metadata
+	      };
+      for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
+	qlogAddTxFrame_(event, lostFrames[i]);
 
       o.logPacketLost(event, time);
       o.logRecoveryPacketLost(event, time);
-      if (event.frameCount)
+      if (event.frames.length())
 	o.logMarkedForRetransmit(event, time);
     }));
     if (complete && m_txPkts[level].persistentCongestion(
@@ -6778,19 +6988,21 @@ protected:
 	space = PktNumSpace::N,
 	reason = ZquicLogRecoveryReason::Canceled,
 	deadlineUS = uint64_t{0},
-	cwnd = m_congestion.cwnd(),
-	ssthresh = m_congestion.ssthresh(),
-	bytesInFlight = m_congestion.bytesInFlight()
-      ](auto &o, ZuTime time) {
+	      cwnd = m_congestion.cwnd(),
+	      ssthresh = m_congestion.ssthresh(),
+	      bytesInFlight = m_congestion.bytesInFlight(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::T(kind),
 	  .packetSpace = PktNumSpace::T(space),
 	  .reason = ZquicLogRecoveryReason::T(reason),
-	  .deadlineUS = deadlineUS,
-	  .cwnd = cwnd,
-	  .ssthresh = ssthresh,
-	  .bytesInFlight = bytesInFlight
-	};
+		  .deadlineUS = deadlineUS,
+		  .cwnd = cwnd,
+		  .ssthresh = ssthresh,
+		  .bytesInFlight = bytesInFlight,
+		  .metadata = metadata
+		};
 
 	o.logLossTimerUpdated(event, time);
       }));
@@ -6806,20 +7018,22 @@ protected:
       kind = ZquicLogRecoveryKind::Loss,
       space = PktNumSpace::N,
       reason = ZquicLogRecoveryReason::Armed,
-      deadlineUS = qlogUS_(out),
-      cwnd = m_congestion.cwnd(),
-      ssthresh = m_congestion.ssthresh(),
-      bytesInFlight = m_congestion.bytesInFlight()
-    ](auto &o, ZuTime time) {
+	      deadlineUS = qlogUS_(out),
+	      cwnd = m_congestion.cwnd(),
+	      ssthresh = m_congestion.ssthresh(),
+	      bytesInFlight = m_congestion.bytesInFlight(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::T(kind),
 	  .packetSpace = PktNumSpace::T(space),
 	  .reason = ZquicLogRecoveryReason::T(reason),
-	.deadlineUS = deadlineUS,
-	.cwnd = cwnd,
-	.ssthresh = ssthresh,
-	.bytesInFlight = bytesInFlight
-      };
+		.deadlineUS = deadlineUS,
+		.cwnd = cwnd,
+		.ssthresh = ssthresh,
+		.bytesInFlight = bytesInFlight,
+		.metadata = metadata
+	      };
 
       o.logLossTimerUpdated(event, time);
     }));
@@ -6864,20 +7078,22 @@ protected:
 	kind = ZquicLogRecoveryKind::PTO,
 	space = PktNumSpace::N,
 	reason = ZquicLogRecoveryReason::NoLevel,
-	deadlineUS = uint64_t{0},
-	cwnd = m_congestion.cwnd(),
-	ssthresh = m_congestion.ssthresh(),
-	bytesInFlight = m_congestion.bytesInFlight()
-      ](auto &o, ZuTime time) {
+	      deadlineUS = uint64_t{0},
+	      cwnd = m_congestion.cwnd(),
+	      ssthresh = m_congestion.ssthresh(),
+	      bytesInFlight = m_congestion.bytesInFlight(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::T(kind),
 	  .packetSpace = PktNumSpace::T(space),
 	  .reason = ZquicLogRecoveryReason::T(reason),
-	  .deadlineUS = deadlineUS,
-	  .cwnd = cwnd,
-	  .ssthresh = ssthresh,
-	  .bytesInFlight = bytesInFlight
-	};
+		  .deadlineUS = deadlineUS,
+		  .cwnd = cwnd,
+		  .ssthresh = ssthresh,
+		  .bytesInFlight = bytesInFlight,
+		  .metadata = metadata
+		};
 
 	o.logLossTimerUpdated(event, time);
       }));
@@ -6900,20 +7116,22 @@ protected:
       kind = ZquicLogRecoveryKind::PTO,
       level,
       reason = ZquicLogRecoveryReason::Armed,
-      deadlineUS = qlogUS_(out),
-      cwnd = m_congestion.cwnd(),
-      ssthresh = m_congestion.ssthresh(),
-      bytesInFlight = m_congestion.bytesInFlight()
-    ](auto &o, ZuTime time) {
+	      deadlineUS = qlogUS_(out),
+	      cwnd = m_congestion.cwnd(),
+	      ssthresh = m_congestion.ssthresh(),
+	      bytesInFlight = m_congestion.bytesInFlight(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::T(kind),
 	  .packetSpace = level,
 	  .reason = ZquicLogRecoveryReason::T(reason),
-	.deadlineUS = deadlineUS,
-	.cwnd = cwnd,
-	.ssthresh = ssthresh,
-	.bytesInFlight = bytesInFlight
-      };
+		.deadlineUS = deadlineUS,
+		.cwnd = cwnd,
+		.ssthresh = ssthresh,
+		.bytesInFlight = bytesInFlight,
+		.metadata = metadata
+	      };
 
       o.logLossTimerUpdated(event, time);
     }));
@@ -6939,20 +7157,22 @@ protected:
 	kind = ZquicLogRecoveryKind::PTO,
 	level = m_ptoTimerLevel,
 	reason = ZquicLogRecoveryReason::Canceled,
-	deadlineUS = uint64_t{0},
-	cwnd = m_congestion.cwnd(),
-	ssthresh = m_congestion.ssthresh(),
-	bytesInFlight = m_congestion.bytesInFlight()
-      ](auto &o, ZuTime time) {
+		deadlineUS = uint64_t{0},
+		cwnd = m_congestion.cwnd(),
+		ssthresh = m_congestion.ssthresh(),
+		bytesInFlight = m_congestion.bytesInFlight(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::T(kind),
 	  .packetSpace = level,
 	  .reason = ZquicLogRecoveryReason::T(reason),
-	  .deadlineUS = deadlineUS,
-	  .cwnd = cwnd,
-	  .ssthresh = ssthresh,
-	  .bytesInFlight = bytesInFlight
-	};
+		  .deadlineUS = deadlineUS,
+		  .cwnd = cwnd,
+		  .ssthresh = ssthresh,
+		  .bytesInFlight = bytesInFlight,
+		  .metadata = metadata
+		};
 
 	o.logLossTimerUpdated(event, time);
       }));
@@ -7280,18 +7500,20 @@ protected:
     if (!m_path.probeExpired()) return;
     ZquicLOG(([
       action = ZquicLogPathAction::Expired,
-      size = m_path.probeSize(),
-      reason = ZquicLogPathReason::Timeout,
-      activeMaxUDP = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
+	      size = m_path.probeSize(),
+	      reason = ZquicLogPathReason::Timeout,
+	      activeMaxUDP = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogPathEvent event{
         .kind = ZquicLogPathKind::PMTUD,
         .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.mtu = size ? size : activeMaxUDP,
-	.validated = validated
-      };
+		.reason = ZquicLogPathReason::T(reason),
+		.mtu = size ? size : activeMaxUDP,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -7304,18 +7526,20 @@ protected:
     m_path.applyHint(hint);
     ZquicLOG(([
       action = ZquicLogPathAction::Hint,
-      size = m_path.activeMaxUDP(),
-      reason = ZquicLogPathReason::PathHint,
-      activeMaxUDP = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
+	      size = m_path.activeMaxUDP(),
+	      reason = ZquicLogPathReason::PathHint,
+	      activeMaxUDP = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogPathEvent event{
         .kind = ZquicLogPathKind::PMTUD,
         .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.mtu = size ? size : activeMaxUDP,
-	.validated = validated
-      };
+		.reason = ZquicLogPathReason::T(reason),
+		.mtu = size ? size : activeMaxUDP,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -7329,18 +7553,20 @@ protected:
     m_path.probeAckd();
     ZquicLOG(([
       action = ZquicLogPathAction::Acked,
-      size,
-      reason = ZquicLogPathReason::Probe,
-      activeMaxUDP = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
+	      size,
+	      reason = ZquicLogPathReason::Probe,
+	      activeMaxUDP = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogPathEvent event{
         .kind = ZquicLogPathKind::PMTUD,
         .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.mtu = size ? size : activeMaxUDP,
-	.validated = validated
-      };
+		.reason = ZquicLogPathReason::T(reason),
+		.mtu = size ? size : activeMaxUDP,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -7354,18 +7580,20 @@ protected:
     m_path.probeLost();
     ZquicLOG(([
       action = ZquicLogPathAction::Lost,
-      size,
-      reason = ZquicLogPathReason::Probe,
-      activeMaxUDP = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
+	      size,
+	      reason = ZquicLogPathReason::Probe,
+	      activeMaxUDP = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogPathEvent event{
         .kind = ZquicLogPathKind::PMTUD,
         .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.mtu = size ? size : activeMaxUDP,
-	.validated = validated
-      };
+		.reason = ZquicLogPathReason::T(reason),
+		.mtu = size ? size : activeMaxUDP,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -7383,14 +7611,15 @@ protected:
     m_rxSpaceDiscarded[level] = true;
     m_rxCrypto[level].reset();
     m_rxAcks.sent(PktNumSpace::T(level));
-    ZquicLOG(([level](auto &o, ZuTime time) {
-      ZquicLogSecurityEvent event{
-	.kind = ZquicLogSecurityKind::KeyRetired,
-	.keyType = ZquicLogSecurityKeyType::RX,
-	.trigger = ZquicLogSecurityTrigger::HandshakeComplete,
-	.reason = ZquicLogSecurityReason::PacketSpace,
-	.success = true
-      };
+	    ZquicLOG(([level, metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogSecurityEvent event{
+		.kind = ZquicLogSecurityKind::KeyRetired,
+		.keyType = ZquicLogSecurityKeyType::RX,
+		.trigger = ZquicLogSecurityTrigger::HandshakeComplete,
+		.reason = ZquicLogSecurityReason::PacketSpace,
+		.success = true,
+		.metadata = metadata
+	      };
       event.packetSpace = level;
       o.logKeyRetired(event, time);
     }));
@@ -7410,14 +7639,15 @@ protected:
     m_txCrypto[level].reset();
     m_txCryptoUnackd[level].clean();
     m_txAck[level].nRanges = 0;
-    ZquicLOG(([level](auto &o, ZuTime time) {
-      ZquicLogSecurityEvent event{
-	.kind = ZquicLogSecurityKind::KeyRetired,
-	.keyType = ZquicLogSecurityKeyType::TX,
-	.trigger = ZquicLogSecurityTrigger::HandshakeComplete,
-	.reason = ZquicLogSecurityReason::PacketSpace,
-	.success = true
-      };
+	    ZquicLOG(([level, metadata = qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogSecurityEvent event{
+		.kind = ZquicLogSecurityKind::KeyRetired,
+		.keyType = ZquicLogSecurityKeyType::TX,
+		.trigger = ZquicLogSecurityTrigger::HandshakeComplete,
+		.reason = ZquicLogSecurityReason::PacketSpace,
+		.success = true,
+		.metadata = metadata
+	      };
       event.packetSpace = level;
       o.logKeyRetired(event, time);
     }));
@@ -7438,21 +7668,23 @@ protected:
       ZquicLOG(([
 	level,
 	probes = n,
-	backoff = m_ptoBackoff.count(),
-	cwnd = m_congestion.cwnd(),
-	ssthresh = m_congestion.ssthresh(),
-	bytesInFlight = m_congestion.bytesInFlight()
-      ](auto &o, ZuTime time) {
+		backoff = m_ptoBackoff.count(),
+		cwnd = m_congestion.cwnd(),
+		ssthresh = m_congestion.ssthresh(),
+		bytesInFlight = m_congestion.bytesInFlight(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::PTO,
 	  .packetSpace = level,
 	  .reason = ZquicLogRecoveryReason::Backoff,
 	  .value = backoff,
-	  .bytes = probes,
-	  .cwnd = cwnd,
-	  .ssthresh = ssthresh,
-	  .bytesInFlight = bytesInFlight
-	};
+		  .bytes = probes,
+		  .cwnd = cwnd,
+		  .ssthresh = ssthresh,
+		  .bytesInFlight = bytesInFlight,
+		  .metadata = metadata
+		};
 	o.logLossTimerUpdated(event, time);
       }));
       if (debugLog_()) ZiLOG(Debug, "Zquic", ([level, n](auto &s) {
@@ -7473,20 +7705,22 @@ protected:
 	PktNumSpace::T level_ = PktNumSpace::Initial;
 	return ptoLevel_(level_) ? level_ : PktNumSpace::N;
       }(),
-      backoff = m_ptoBackoff.count(),
-      cwnd = m_congestion.cwnd(),
-      ssthresh = m_congestion.ssthresh(),
-      bytesInFlight = m_congestion.bytesInFlight()
-    ](auto &o, ZuTime time) {
+	      backoff = m_ptoBackoff.count(),
+	      cwnd = m_congestion.cwnd(),
+	      ssthresh = m_congestion.ssthresh(),
+	      bytesInFlight = m_congestion.bytesInFlight(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogRecoveryEvent event{
 	.kind = ZquicLogRecoveryKind::PTO,
 	.packetSpace = level,
 	.reason = ZquicLogRecoveryReason::Expired,
-	.value = backoff,
-	.cwnd = cwnd,
-	.ssthresh = ssthresh,
-	.bytesInFlight = bytesInFlight
-      };
+		.value = backoff,
+		.cwnd = cwnd,
+		.ssthresh = ssthresh,
+		.bytesInFlight = bytesInFlight,
+		.metadata = metadata
+	      };
       o.logLossTimerUpdated(event, time);
     }));
   }
@@ -7497,21 +7731,23 @@ protected:
     ZquicLOG(([
       level,
       probes,
-      backoff = m_ptoBackoff.count(),
-      cwnd = m_congestion.cwnd(),
-      ssthresh = m_congestion.ssthresh(),
-      bytesInFlight = m_congestion.bytesInFlight()
-    ](auto &o, ZuTime time) {
+	      backoff = m_ptoBackoff.count(),
+	      cwnd = m_congestion.cwnd(),
+	      ssthresh = m_congestion.ssthresh(),
+	      bytesInFlight = m_congestion.bytesInFlight(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogRecoveryEvent event{
 	.kind = ZquicLogRecoveryKind::PTO,
 	.packetSpace = level,
 	.reason = ZquicLogRecoveryReason::Probe,
 	.value = backoff,
-	.bytes = probes,
-	.cwnd = cwnd,
-	.ssthresh = ssthresh,
-	.bytesInFlight = bytesInFlight
-      };
+		.bytes = probes,
+		.cwnd = cwnd,
+		.ssthresh = ssthresh,
+		.bytesInFlight = bytesInFlight,
+		.metadata = metadata
+	      };
       o.logLossTimerUpdated(event, time);
     }));
   }
@@ -7607,18 +7843,20 @@ nextSpace:
     if (!size || !m_path.canSendProbe(size) || !m_congestion.canSend(size)) {
       ZquicLOG(([
 	action = ZquicLogPathAction::Blocked,
-	size,
-	reason = ZquicLogPathReason::Admission,
-	activeMaxUDP = m_path.activeMaxUDP(),
-	validated = pathValidated_()
-      ](auto &o, ZuTime time) {
+		size,
+		reason = ZquicLogPathReason::Admission,
+		activeMaxUDP = m_path.activeMaxUDP(),
+		validated = pathValidated_(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogPathEvent event{
 	  .kind = ZquicLogPathKind::PMTUD,
 	  .action = ZquicLogPathAction::T(action),
-	  .reason = ZquicLogPathReason::T(reason),
-	  .mtu = size ? size : activeMaxUDP,
-	  .validated = validated
-	};
+		  .reason = ZquicLogPathReason::T(reason),
+		  .mtu = size ? size : activeMaxUDP,
+		  .validated = validated,
+		  .metadata = metadata
+		};
 
 	o.logPMTUDUpdated(event, time);
       }));
@@ -7627,18 +7865,20 @@ nextSpace:
     m_path.startProbe(size);
     ZquicLOG(([
       action = ZquicLogPathAction::Sent,
-      size,
-      reason = ZquicLogPathReason::Probe,
-      activeMaxUDP = m_path.activeMaxUDP(),
-      validated = pathValidated_()
-    ](auto &o, ZuTime time) {
+	      size,
+	      reason = ZquicLogPathReason::Probe,
+	      activeMaxUDP = m_path.activeMaxUDP(),
+	      validated = pathValidated_(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogPathEvent event{
         .kind = ZquicLogPathKind::PMTUD,
         .action = ZquicLogPathAction::T(action),
-        .reason = ZquicLogPathReason::T(reason),
-	.mtu = size ? size : activeMaxUDP,
-	.validated = validated
-      };
+		.reason = ZquicLogPathReason::T(reason),
+		.mtu = size ? size : activeMaxUDP,
+		.validated = validated,
+		.metadata = metadata
+	      };
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -7647,18 +7887,20 @@ nextSpace:
       m_path.probeLost();
       ZquicLOG(([
 	action = ZquicLogPathAction::Lost,
-	size,
-	reason = ZquicLogPathReason::SendFailure,
-	activeMaxUDP = m_path.activeMaxUDP(),
-	validated = pathValidated_()
-      ](auto &o, ZuTime time) {
+		size,
+		reason = ZquicLogPathReason::SendFailure,
+		activeMaxUDP = m_path.activeMaxUDP(),
+		validated = pathValidated_(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogPathEvent event{
 	  .kind = ZquicLogPathKind::PMTUD,
 	  .action = ZquicLogPathAction::T(action),
-	  .reason = ZquicLogPathReason::T(reason),
-	  .mtu = size ? size : activeMaxUDP,
-	  .validated = validated
-	};
+		  .reason = ZquicLogPathReason::T(reason),
+		  .mtu = size ? size : activeMaxUDP,
+		  .validated = validated,
+		  .metadata = metadata
+		};
 
 	o.logPMTUDUpdated(event, time);
       }));
@@ -7784,19 +8026,21 @@ nextSpace:
       m_congestion.ackd(update.normalAckdBytes);
       congestionOpened = true;
       ZquicLOG(([
-	reason = ZquicLogRecoveryReason::Ack,
-	cwnd = m_congestion.cwnd(),
-	ssthresh = m_congestion.ssthresh(),
-	bytesInFlight = m_congestion.bytesInFlight()
-      ](auto &o, ZuTime time) {
+	      reason = ZquicLogRecoveryReason::Ack,
+	      cwnd = m_congestion.cwnd(),
+	      ssthresh = m_congestion.ssthresh(),
+	      bytesInFlight = m_congestion.bytesInFlight(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::NewReno,
 	  .packetSpace = PktNumSpace::AppData,
-	  .reason = ZquicLogRecoveryReason::T(reason),
-	  .cwnd = cwnd,
-	  .ssthresh = ssthresh,
-	  .bytesInFlight = bytesInFlight
-	};
+		  .reason = ZquicLogRecoveryReason::T(reason),
+		  .cwnd = cwnd,
+		  .ssthresh = ssthresh,
+		  .bytesInFlight = bytesInFlight,
+		  .metadata = metadata
+		};
 
 	o.logCongestionStateUpdated(event, time);
       }));
@@ -7805,19 +8049,21 @@ nextSpace:
       m_congestion.ackd(update.pmtudAckdBytes, true);
       onPMTUDProbeAckd_(update.pmtudAckdSize);
       ZquicLOG(([
-	reason = ZquicLogRecoveryReason::PMTUDAck,
-	cwnd = m_congestion.cwnd(),
-	ssthresh = m_congestion.ssthresh(),
-	bytesInFlight = m_congestion.bytesInFlight()
-      ](auto &o, ZuTime time) {
+		reason = ZquicLogRecoveryReason::PMTUDAck,
+		cwnd = m_congestion.cwnd(),
+		ssthresh = m_congestion.ssthresh(),
+		bytesInFlight = m_congestion.bytesInFlight(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::NewReno,
 	  .packetSpace = PktNumSpace::AppData,
-	  .reason = ZquicLogRecoveryReason::T(reason),
-	  .cwnd = cwnd,
-	  .ssthresh = ssthresh,
-	  .bytesInFlight = bytesInFlight
-	};
+		  .reason = ZquicLogRecoveryReason::T(reason),
+		  .cwnd = cwnd,
+		  .ssthresh = ssthresh,
+		  .bytesInFlight = bytesInFlight,
+		  .metadata = metadata
+		};
 
 	o.logCongestionStateUpdated(event, time);
       }));
@@ -7845,19 +8091,21 @@ nextSpace:
 	update.normalLostBytes,
 	uint64_t(update.normalLostSentTime.microsecs()));
       ZquicLOG(([
-	reason = ZquicLogRecoveryReason::Loss,
-	cwnd = m_congestion.cwnd(),
-	ssthresh = m_congestion.ssthresh(),
-	bytesInFlight = m_congestion.bytesInFlight()
-      ](auto &o, ZuTime time) {
+		reason = ZquicLogRecoveryReason::Loss,
+		cwnd = m_congestion.cwnd(),
+		ssthresh = m_congestion.ssthresh(),
+		bytesInFlight = m_congestion.bytesInFlight(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::NewReno,
 	  .packetSpace = PktNumSpace::AppData,
-	  .reason = ZquicLogRecoveryReason::T(reason),
-	  .cwnd = cwnd,
-	  .ssthresh = ssthresh,
-	  .bytesInFlight = bytesInFlight
-	};
+		  .reason = ZquicLogRecoveryReason::T(reason),
+		  .cwnd = cwnd,
+		  .ssthresh = ssthresh,
+		  .bytesInFlight = bytesInFlight,
+		  .metadata = metadata
+		};
 
 	o.logCongestionStateUpdated(event, time);
       }));
@@ -7868,19 +8116,21 @@ nextSpace:
 	uint64_t(update.pmtudLostSentTime.microsecs()), true);
       onPMTUDProbeLost_(update.pmtudLostSize);
       ZquicLOG(([
-	reason = ZquicLogRecoveryReason::PMTUDLoss,
-	cwnd = m_congestion.cwnd(),
-	ssthresh = m_congestion.ssthresh(),
-	bytesInFlight = m_congestion.bytesInFlight()
-      ](auto &o, ZuTime time) {
+		reason = ZquicLogRecoveryReason::PMTUDLoss,
+		cwnd = m_congestion.cwnd(),
+		ssthresh = m_congestion.ssthresh(),
+		bytesInFlight = m_congestion.bytesInFlight(),
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::NewReno,
 	  .packetSpace = PktNumSpace::AppData,
-	  .reason = ZquicLogRecoveryReason::T(reason),
-	  .cwnd = cwnd,
-	  .ssthresh = ssthresh,
-	  .bytesInFlight = bytesInFlight
-	};
+		  .reason = ZquicLogRecoveryReason::T(reason),
+		  .cwnd = cwnd,
+		  .ssthresh = ssthresh,
+		  .bytesInFlight = bytesInFlight,
+		  .metadata = metadata
+		};
 
 	o.logCongestionStateUpdated(event, time);
       }));
@@ -7930,9 +8180,12 @@ nextSpace:
 	  lostBytes = update.lostBytes,
 	  nRanges = ack.nRanges,
 	  nAckdFrames = update.nAckdFrames,
-	  nLostFrames = update.nLostFrames
-	](auto &o, ZuTime time) {
-	  if (!ackedBytes) return;
+		  nLostFrames = update.nLostFrames,
+		  packetNumbers = qlogAckedPNs_(update),
+		  packetNumbersTruncated = update.ackedPNsTruncated,
+		  metadata = qlogCIDMeta_()
+		](auto &o, ZuTime time) mutable {
+	  if (!packetNumbers.length()) return;
 	  ZquicLogAckEvent event{
 	    .largestAcked = largestAcked,
 	    .ackDelayUS = ackDelayUS,
@@ -7940,8 +8193,11 @@ nextSpace:
 	    .lostBytes = lostBytes,
 	    .rangeCount = qlogCount_(nRanges),
 	    .ackedFrames = qlogCount_(nAckdFrames),
-	    .lostFrames = qlogCount_(nLostFrames)
-	  };
+		    .lostFrames = qlogCount_(nLostFrames),
+		    .packetNumbersTruncated = packetNumbersTruncated,
+		    .packetNumbers = ZuMv(packetNumbers),
+		    .metadata = metadata
+		  };
 	  event.packetSpace = level;
 	  o.logPacketsAcked(event, time);
 	}));
@@ -7961,9 +8217,12 @@ nextSpace:
 	lostBytes = update.lostBytes,
 	nRanges = ack.nRanges,
 	nAckdFrames = update.nAckdFrames,
-	nLostFrames = update.nLostFrames
-      ](auto &o, ZuTime time) {
-	if (!ackedBytes) return;
+		nLostFrames = update.nLostFrames,
+		packetNumbers = qlogAckedPNs_(update),
+		packetNumbersTruncated = update.ackedPNsTruncated,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) mutable {
+	if (!packetNumbers.length()) return;
 	ZquicLogAckEvent event{
 	  .largestAcked = largestAcked,
 	  .ackDelayUS = ackDelayUS,
@@ -7971,8 +8230,11 @@ nextSpace:
 	  .lostBytes = lostBytes,
 	  .rangeCount = qlogCount_(nRanges),
 	  .ackedFrames = qlogCount_(nAckdFrames),
-	  .lostFrames = qlogCount_(nLostFrames)
-	};
+		  .lostFrames = qlogCount_(nLostFrames),
+		  .packetNumbersTruncated = packetNumbersTruncated,
+		  .packetNumbers = ZuMv(packetNumbers),
+		  .metadata = metadata
+		};
 	event.packetSpace = level;
 	o.logPacketsAcked(event, time);
       }));
@@ -7988,23 +8250,28 @@ nextSpace:
 	ZquicLOG(([
 	  level = ack.level,
 	  lostBytes = lossUpdate.lostBytes,
-	  bytesInFlight = m_congestion.bytesInFlight(),
-	  nLostFrames = lossUpdate.nLostFrames,
-	  reason = ZquicLogRecoveryReason::PacketThreshold
-	](auto &o, ZuTime time) {
+		  bytesInFlight = m_congestion.bytesInFlight(),
+		  lostFrames = lossUpdate.lostFrames,
+		  nLostFrames = lossUpdate.nLostFrames,
+		  reason = ZquicLogRecoveryReason::PacketThreshold,
+		  metadata = qlogCIDMeta_()
+		](auto &o, ZuTime time) {
 	  if (!lostBytes) return;
 	  ZquicLogRecoveryEvent event{
 	    .kind = ZquicLogRecoveryKind::Aggregate,
 	    .packetSpace = level,
-	    .reason = ZquicLogRecoveryReason::T(reason),
-	    .bytes = lostBytes,
-	    .bytesInFlight = bytesInFlight,
-	    .frameCount = qlogCount_(nLostFrames)
-	  };
+		    .reason = ZquicLogRecoveryReason::T(reason),
+		    .bytes = lostBytes,
+		    .bytesInFlight = bytesInFlight,
+		    .frameCount = qlogCount_(nLostFrames),
+		    .metadata = metadata
+		  };
+	  for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
+	    qlogAddTxFrame_(event, lostFrames[i]);
 
 	  o.logPacketLost(event, time);
 	  o.logRecoveryPacketLost(event, time);
-	  if (event.frameCount)
+	  if (event.frames.length())
 	    o.logMarkedForRetransmit(event, time);
 	}));
 	if (lossUpdate.lostBytes) work.retransmit = true;
@@ -8018,23 +8285,28 @@ nextSpace:
       ZquicLOG(([
 	level = ack.level,
 	lostBytes = lossUpdate.lostBytes,
-	bytesInFlight = m_congestion.bytesInFlight(),
-	nLostFrames = lossUpdate.nLostFrames,
-	reason = ZquicLogRecoveryReason::PacketThreshold
-      ](auto &o, ZuTime time) {
+		bytesInFlight = m_congestion.bytesInFlight(),
+		lostFrames = lossUpdate.lostFrames,
+		nLostFrames = lossUpdate.nLostFrames,
+		reason = ZquicLogRecoveryReason::PacketThreshold,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	if (!lostBytes) return;
 	ZquicLogRecoveryEvent event{
 	  .kind = ZquicLogRecoveryKind::Aggregate,
 	  .packetSpace = level,
-	  .reason = ZquicLogRecoveryReason::T(reason),
-	  .bytes = lostBytes,
-	  .bytesInFlight = bytesInFlight,
-	  .frameCount = qlogCount_(nLostFrames)
-	};
+		  .reason = ZquicLogRecoveryReason::T(reason),
+		  .bytes = lostBytes,
+		  .bytesInFlight = bytesInFlight,
+		  .frameCount = qlogCount_(nLostFrames),
+		  .metadata = metadata
+		};
+	for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
+	  qlogAddTxFrame_(event, lostFrames[i]);
 
 	o.logPacketLost(event, time);
 	o.logRecoveryPacketLost(event, time);
-	if (event.frameCount)
+	if (event.frames.length())
 	  o.logMarkedForRetransmit(event, time);
       }));
       if (lossUpdate.lostBytes) work.retransmit = true;
@@ -8057,21 +8329,23 @@ nextSpace:
 	  smoothedRTTUS = qlogUS_(m_rtt.smoothed()),
 	  rttVarianceUS = qlogUS_(m_rtt.variance()),
 	  minRTTUS = qlogUS_(m_rtt.min()),
-	  cwnd = m_congestion.cwnd(),
-	  ssthresh = m_congestion.ssthresh(),
-	  bytesInFlight = m_congestion.bytesInFlight()
-	](auto &o, ZuTime time) {
+		  cwnd = m_congestion.cwnd(),
+		  ssthresh = m_congestion.ssthresh(),
+		  bytesInFlight = m_congestion.bytesInFlight(),
+		  metadata = qlogCIDMeta_()
+		](auto &o, ZuTime time) {
 	  ZquicLogRecoveryEvent event{
 	    .kind = ZquicLogRecoveryKind::RTT,
 	    .packetSpace = level,
 	    .latestRTTUS = latestRTTUS,
 	    .smoothedRTTUS = smoothedRTTUS,
 	    .rttVarianceUS = rttVarianceUS,
-	    .minRTTUS = minRTTUS,
-	    .cwnd = cwnd,
-	    .ssthresh = ssthresh,
-	    .bytesInFlight = bytesInFlight
-	  };
+		    .minRTTUS = minRTTUS,
+		    .cwnd = cwnd,
+		    .ssthresh = ssthresh,
+		    .bytesInFlight = bytesInFlight,
+		    .metadata = metadata
+		  };
 
 	  o.logMetricsUpdated(event, time);
 	}));
@@ -8126,16 +8400,17 @@ nextSpace:
       ++m_txDiag.ecnValidationFailures;
       ZquicLOG(([
 	level = ack.level,
-	state = ZquicLogECNState::Disabled,
+	state = ZquicLogECNState::Failed,
 	ect0 = ack.ecn.ect0,
 	ect1 = ack.ecn.ect1,
 	ce = ack.ecn.ce,
 	previousECT0 = last.ect0,
-	previousECT1 = last.ect1,
-	previousCE = last.ce,
-	largestAcked = largest,
-	disabled = true
-      ](auto &o, ZuTime time) {
+		previousECT1 = last.ect1,
+		previousCE = last.ce,
+		largestAcked = largest,
+		disabled = true,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
 	ZquicLogECNReason::T reason = ZquicLogECNReason::AckECN;
 	if (ect0 < previousECT0)
 	  reason = ZquicLogECNReason::ECT0Decrease;
@@ -8160,10 +8435,11 @@ nextSpace:
 	  .ce = ce,
 	  .previousECT0 = previousECT0,
 	  .previousECT1 = previousECT1,
-	  .previousCE = previousCE,
-	  .largestAcked = largestAcked,
-	  .disabled = disabled
-	};
+		  .previousCE = previousCE,
+		  .largestAcked = largestAcked,
+		  .disabled = disabled,
+		  .metadata = metadata
+		};
 
 	o.logECNStateUpdated(event, time);
       }));
@@ -8173,16 +8449,17 @@ nextSpace:
     m_txDiag.peerAckECN[i] = ack.ecn;
     ZquicLOG(([
       level = ack.level,
-      state = ZquicLogECNState::Validated,
+      state = ZquicLogECNState::Capable,
       ect0 = ack.ecn.ect0,
       ect1 = ack.ecn.ect1,
       ce = ack.ecn.ce,
       previousECT0 = last.ect0,
-      previousECT1 = last.ect1,
-      previousCE = last.ce,
-      largestAcked = largest,
-      disabled = false
-    ](auto &o, ZuTime time) {
+	      previousECT1 = last.ect1,
+	      previousCE = last.ce,
+	      largestAcked = largest,
+	      disabled = false,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogECNEvent event{
 	  .packetSpace = level,
 	  .state = ZquicLogECNState::T(state),
@@ -8192,10 +8469,11 @@ nextSpace:
 	.ce = ce,
 	.previousECT0 = previousECT0,
 	.previousECT1 = previousECT1,
-	.previousCE = previousCE,
-	.largestAcked = largestAcked,
-	.disabled = disabled
-      };
+		.previousCE = previousCE,
+		.largestAcked = largestAcked,
+		.disabled = disabled,
+		.metadata = metadata
+	      };
 
       o.logECNStateUpdated(event, time);
     }));
@@ -8259,18 +8537,20 @@ nextSpace:
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
     if (!m_coalesceLong || m_coalesceInitial)
       return sendPkt(ZuMv(buf), ZuMv(addr));
-    ZquicLOG(([
-      packetBytes = buf->length,
-      reason = ZquicLogPacketEvent::Reason::Coalescing
-    ](auto &o, ZuTime time) {
+	    ZquicLOG(([
+	      packetBytes = buf->length,
+	      reason = ZquicLogPacketEvent::Reason::Coalescing,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogPacketEvent event{
 	.packetSize = packetBytes
       };
-      event.packetType = PktType::Initial;
-      event.packetSpace = PktNumSpace::Initial;
-      event.reason = reason;
-      o.logPacketBuffered(event, time);
-    }));
+	      event.packetType = PktType::Initial;
+	      event.packetSpace = PktNumSpace::Initial;
+	      event.reason = reason;
+	      event.metadata = metadata;
+	      o.logPacketBuffered(event, time);
+	    }));
     m_coalesceInitial = ZuMv(buf);
     m_coalesceAddr = ZuMv(addr);
     return true;
@@ -8432,23 +8712,26 @@ nextSpace:
       packetBytes = bytes,
       bytesInFlight = m_congestion.bytesInFlight(),
       ackEliciting,
-      ackLevel, ackLargest,
-      hasRecordRefs = bool(recordRefs),
-      recordRefs = recordRefs ? *recordRefs : TxPktRefs{}
-    ](auto &o, ZuTime time) mutable {
+	      ackLevel, ackLargest,
+	      ackRanges = qlogAckRanges_(ackLevel),
+	      hasRecordRefs = bool(recordRefs),
+	      recordRefs = recordRefs ? *recordRefs : TxPktRefs{},
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) mutable {
       unsigned frameCount = hasRecordRefs ? recordRefs.count() : 0;
       if (ackLevel < 3) ++frameCount;
       ZquicLogPacketEvent event{
 	.packetNumber = pn,
-	.packetSize = packetBytes,
-	.bytesInFlight = bytesInFlight,
-	.frameCount = qlogCount_(frameCount),
-	.ackEliciting = ackEliciting
-      };
+		.packetSize = packetBytes,
+		.bytesInFlight = bytesInFlight,
+		.frameCount = qlogCount_(frameCount),
+		.ackEliciting = ackEliciting,
+		.metadata = metadata
+	      };
       event.packetType = pktTypeFromPktNumSpace(level);
       event.packetSpace = level;
       event.ecn = EcnMark::N;
-      qlogAddAckFrame_(event, ackLevel, ackLargest);
+      qlogAddAckFrame_(event, ackLevel, ackLargest, ackRanges);
       if (hasRecordRefs)
 	for (unsigned i = 0, n = recordRefs.count(); i < n; ++i)
 	  qlogAddTxFrame_(event, recordRefs[i]);
@@ -8476,6 +8759,15 @@ nextSpace:
     return n > 255 ? 255 : uint8_t(n);
   }
 
+  static void qlogAddAckRange_(
+    ZquicLogFrameEvent &frame, uint64_t first, uint64_t largest) {
+    if (frame.ackRanges.length() >= ZquicLogAckRangeMax) return;
+    new (frame.ackRanges.push()) ZquicLogAckRange{
+      .first = first,
+      .largest = largest
+    };
+  }
+
   static void qlogAddFrame_(
     ZquicLogPacketEvent &event, const ZquicLogFrameEvent &frame) {
     if (event.frames.length() >= ZquicLogFrameMax) {
@@ -8485,28 +8777,69 @@ nextSpace:
     event.frames.push(frame);
   }
 
+  static void qlogAddFrame_(
+    ZquicLogRecoveryEvent &event, const ZquicLogFrameEvent &frame) {
+    if (event.frames.length() < ZquicLogFrameMax)
+      event.frames.push(frame);
+  }
+
+  static ZuArray<uint64_t, ZquicLogAckPacketMax> qlogAckedPNs_(
+    const PktTxUpdate &update) {
+    ZuArray<uint64_t, ZquicLogAckPacketMax> packetNumbers;
+    for (unsigned i = 0; i < update.nAckedPNs; ++i)
+      new (packetNumbers.push()) uint64_t(update.ackedPNs[i]);
+    return packetNumbers;
+  }
+
+  ZuArray<ZquicLogAckRange, ZquicLogAckRangeMax> qlogAckRanges_(
+    uint8_t ackLevel) const {
+    ZuArray<ZquicLogAckRange, ZquicLogAckRangeMax> ranges;
+    if (ackLevel >= 3) return ranges;
+    const AckSnapshot &ack = m_txAck[ackLevel];
+    for (unsigned i = 0, n = ack.nRanges; i < n; ++i) {
+      if (ranges.length() >= ZquicLogAckRangeMax) break;
+      new (ranges.push()) ZquicLogAckRange{
+	.first = ack.ranges[i].first,
+	.largest = ack.ranges[i].largest
+      };
+    }
+    return ranges;
+  }
+
   static void qlogAddAckFrame_(
-    ZquicLogPacketEvent &event, uint8_t ackLevel, uint64_t ackLargest) {
+    ZquicLogPacketEvent &event, uint8_t ackLevel, uint64_t ackLargest,
+    const ZuArray<ZquicLogAckRange, ZquicLogAckRangeMax> &ackRanges) {
     if (ackLevel >= 3) return;
-    ZquicLogFrameEvent frame;
-    frame.type = FrameType::Ack;
-    frame.largestAcked = ackLargest;
-    frame.rangeCount = 1;
+    ZquicLogFrameEvent frame{
+      .type = FrameType::Ack,
+      .largestAcked = ackLargest,
+      .rangeCount = qlogCount_(ackRanges.length())
+    };
+    for (unsigned i = 0, n = ackRanges.length(); i < n; ++i)
+      qlogAddAckRange_(frame, ackRanges[i].first, ackRanges[i].largest);
     qlogAddFrame_(event, frame);
+  }
+
+  static ZquicLogStreamType::T qlogStreamType_(Zi::StreamType::T type) {
+    return type == Zi::StreamType::Simplex ?
+      ZquicLogStreamType::Unidirectional :
+      ZquicLogStreamType::Bidirectional;
   }
 
   void qlogAddRxFrame_(
     ZquicLogPacketEvent &event, PktNumSpace::T level, const Frame &frame_) {
     event.frameCount = qlogCount_(event.frameCount + 1);
 
-    ZquicLogFrameEvent frame;
-    frame.type = frame_.type;
+    ZquicLogFrameEvent frame{.type = frame_.type};
     switch (frame_.type) {
       case FrameType::Ack:
 	frame.largestAcked = frame_.offset;
 	frame.ackDelayUS =
 	  level == PktNumSpace::AppData ? qlogUS_(ackDelay_(frame_.value)) : 0;
 	frame.rangeCount = qlogCount_(frame_.ackRanges.length());
+	for (unsigned i = 0, n = frame_.ackRanges.length(); i < n; ++i)
+	  qlogAddAckRange_(
+	    frame, frame_.ackRanges[i].first, frame_.ackRanges[i].largest);
 	frame.ect0 = frame_.ackECN.ect0;
 	frame.ect1 = frame_.ackECN.ect1;
 	frame.ce = frame_.ackECN.ce;
@@ -8536,16 +8869,21 @@ nextSpace:
 	frame.value = frame_.value;
 	break;
       case FrameType::MaxData:
-      case FrameType::MaxStreams:
       case FrameType::DataBlocked:
-      case FrameType::StreamsBlocked:
       case FrameType::RetireConnectionID:
 	frame.value = frame_.value;
+	break;
+      case FrameType::MaxStreams:
+      case FrameType::StreamsBlocked:
+	frame.value = frame_.value;
+	frame.streamType = qlogStreamType_(frame_.streamType);
 	break;
       case FrameType::NewConnectionID:
 	frame.offset = frame_.offset;
 	frame.value = frame_.value;
 	frame.length = frame_.length;
+	frame.connectionID = Zquic::CxnID{frame_.payload};
+	frame.resetToken = frame_.resetToken;
 	break;
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
@@ -8563,36 +8901,41 @@ nextSpace:
     qlogAddFrame_(event, frame);
   }
 
-  static void qlogAddTxFrame_(
-    ZquicLogPacketEvent &event, const SentFrameRef &ref) {
-    ZquicLogFrameEvent frame;
+  template <typename Event>
+  static void qlogAddTxFrame_(Event &event, const SentFrameRef &ref) {
     switch (ref.kind) {
       case SentFrameKind::Stream:
-	frame.type = FrameType::Stream;
-	frame.streamID = ref.streamID;
-	frame.offset = ref.offset;
-	frame.length = ref.length;
-	frame.fin = ref.fin;
-	break;
+	qlogAddFrame_(event, ZquicLogFrameEvent{
+	  .type = FrameType::Stream,
+	  .streamID = ref.streamID,
+	  .offset = ref.offset,
+	  .length = ref.length,
+	  .fin = ref.fin
+	});
+	return;
       case SentFrameKind::Crypto:
-	frame.type = FrameType::Crypto;
-	frame.offset = ref.offset;
-	frame.length = ref.length;
-	break;
+	qlogAddFrame_(event, ZquicLogFrameEvent{
+	  .type = FrameType::Crypto,
+	  .offset = ref.offset,
+	  .length = ref.length
+	});
+	return;
       case SentFrameKind::Control:
-	frame.type = ref.controlType;
-	frame.streamID = ref.streamID;
-	frame.offset = ref.offset;
-	frame.length = ref.length;
-	frame.value = ref.value;
-	if (ref.controlType == FrameType::ResetStream ||
-	    ref.controlType == FrameType::StopSending)
-	  frame.errorCode = ref.value;
-	break;
+	qlogAddFrame_(event, ZquicLogFrameEvent{
+	  .type = ref.controlType,
+	  .streamID = ref.streamID,
+	  .offset = ref.offset,
+	  .length = ref.length,
+	  .value = ref.value,
+	  .errorCode =
+	    ref.controlType == FrameType::ResetStream ||
+	    ref.controlType == FrameType::StopSending ? ref.value : 0,
+	  .streamType = qlogStreamType_(ref.streamType)
+	});
+	return;
       default:
 	return;
     }
-    qlogAddFrame_(event, frame);
   }
 
   bool txAckMeta_(
@@ -8647,19 +8990,21 @@ nextSpace:
       buf->data_(), buf->size, initialKeys, pn,
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
-    if (n < 0) {
-      ++m_txDiag.failures;
-      ZquicLOG(([
-	level = PktNumSpace::Initial
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::PacketProtection,
-	  .reason = ZquicLogSecurityReason::Protect,
-	  .success = false
-	};
+	    if (n < 0) {
+	      ++m_txDiag.failures;
+	      ZquicLOG(([
+		level = PktNumSpace::Initial,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogSecurityEvent event{
+		  .kind = ZquicLogSecurityKind::PacketProtection,
+		  .reason = ZquicLogSecurityReason::Protect,
+		  .success = false,
+		  .metadata = metadata
+		};
 	event.packetSpace = level;
 	event.trigger = ZquicLogSecurityTrigger::TX;
-	o.logSecurityEvent("security:packet_protection_failed", event, time);
+	o.logSecurityEvent(ZquicLogEventName::PktProtectFail, event, time);
       }));
       return false;
     }
@@ -8684,19 +9029,21 @@ nextSpace:
     AllocTxPkt allocTxPkt, SendPkt sendPkt) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Handshake packet protection outside Tx thread", return false);
-    if (!txTrafficSecretInstalled_(PktNumSpace::Handshake)) {
-      ++m_txDiag.failures;
-      ZquicLOG(([
-	level = PktNumSpace::Handshake
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::PacketProtection,
-	  .reason = ZquicLogSecurityReason::MissingKeys,
-	  .success = false
-	};
+	    if (!txTrafficSecretInstalled_(PktNumSpace::Handshake)) {
+	      ++m_txDiag.failures;
+	      ZquicLOG(([
+		level = PktNumSpace::Handshake,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogSecurityEvent event{
+		  .kind = ZquicLogSecurityKind::PacketProtection,
+		  .reason = ZquicLogSecurityReason::MissingKeys,
+		  .success = false,
+		  .metadata = metadata
+		};
 	event.packetSpace = level;
 	event.trigger = ZquicLogSecurityTrigger::TX;
-	o.logSecurityEvent("security:packet_protection_failed", event, time);
+	o.logSecurityEvent(ZquicLogEventName::PktProtectFail, event, time);
       }));
       return false;
     }
@@ -8717,19 +9064,21 @@ nextSpace:
       txProtState_(PktNumSpace::Handshake), pn,
       byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
-    if (n < 0) {
-      ++m_txDiag.failures;
-      ZquicLOG(([
-	level = PktNumSpace::Handshake
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::PacketProtection,
-	  .reason = ZquicLogSecurityReason::Protect,
-	  .success = false
-	};
+	    if (n < 0) {
+	      ++m_txDiag.failures;
+	      ZquicLOG(([
+		level = PktNumSpace::Handshake,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogSecurityEvent event{
+		  .kind = ZquicLogSecurityKind::PacketProtection,
+		  .reason = ZquicLogSecurityReason::Protect,
+		  .success = false,
+		  .metadata = metadata
+		};
 	event.packetSpace = level;
 	event.trigger = ZquicLogSecurityTrigger::TX;
-	o.logSecurityEvent("security:packet_protection_failed", event, time);
+	o.logSecurityEvent(ZquicLogEventName::PktProtectFail, event, time);
       }));
       return false;
     }
@@ -8755,20 +9104,22 @@ nextSpace:
     unsigned pmtudSize = 0) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Short packet protection outside Tx thread", return false);
-    if (!runtimeEstablished_() &&
-	!txTrafficSecretInstalled_(PktNumSpace::AppData)) {
-      ++m_txDiag.failures;
-      ZquicLOG(([
-	level = PktNumSpace::AppData
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::PacketProtection,
-	  .reason = ZquicLogSecurityReason::MissingKeys,
-	  .success = false
-	};
+	    if (!runtimeEstablished_() &&
+		!txTrafficSecretInstalled_(PktNumSpace::AppData)) {
+	      ++m_txDiag.failures;
+	      ZquicLOG(([
+		level = PktNumSpace::AppData,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogSecurityEvent event{
+		  .kind = ZquicLogSecurityKind::PacketProtection,
+		  .reason = ZquicLogSecurityReason::MissingKeys,
+		  .success = false,
+		  .metadata = metadata
+		};
 	event.packetSpace = level;
 	event.trigger = ZquicLogSecurityTrigger::TX;
-	o.logSecurityEvent("security:packet_protection_failed", event, time);
+	o.logSecurityEvent(ZquicLogEventName::PktProtectFail, event, time);
       }));
       return false;
     }
@@ -8794,19 +9145,21 @@ nextSpace:
       byteSpan(buf->data_(), unsigned(headerLen)),
       payload.data(), payload.count(),
       unsigned(headerLen) - pnLength, pnLength);
-    if (n < 0) {
-      ++m_txDiag.failures;
-      ZquicLOG(([
-	level = PktNumSpace::AppData
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::PacketProtection,
-	  .reason = ZquicLogSecurityReason::Protect,
-	  .success = false
-	};
+	    if (n < 0) {
+	      ++m_txDiag.failures;
+	      ZquicLOG(([
+		level = PktNumSpace::AppData,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogSecurityEvent event{
+		  .kind = ZquicLogSecurityKind::PacketProtection,
+		  .reason = ZquicLogSecurityReason::Protect,
+		  .success = false,
+		  .metadata = metadata
+		};
 	event.packetSpace = level;
 	event.trigger = ZquicLogSecurityTrigger::TX;
-	o.logSecurityEvent("security:packet_protection_failed", event, time);
+	o.logSecurityEvent(ZquicLogEventName::PktProtectFail, event, time);
       }));
       return false;
     }
@@ -8841,17 +9194,19 @@ nextSpace:
       if (Pkt::isLong(packet)) {
 	LongHdr h;
 	if (Pkt::parseLong(packet, h) < 0) {
-	  ZquicLOG(([
-	    level = PktNumSpace::Initial,
-	    packetBytes = packet.length()
-	  ](auto &o, ZuTime time) {
-	    ZquicLogPacketEvent event{.packetSize = packetBytes};
-	    event.packetType = PktType::N;
-	    event.packetSpace = level;
-	    event.ecn = EcnMark::N;
-	    event.reason = ZquicLogPacketEvent::Reason::ParseLong;
-	    o.logPacketDropped(event, time);
-	  }));
+		  ZquicLOG(([
+		    level = PktNumSpace::Initial,
+		    packetBytes = packet.length(),
+		    metadata = qlogCIDMeta_()
+		  ](auto &o, ZuTime time) {
+		    ZquicLogPacketEvent event{.packetSize = packetBytes};
+		    event.packetType = PktType::N;
+		    event.packetSpace = level;
+		    event.ecn = EcnMark::N;
+		    event.reason = ZquicLogPacketEvent::Reason::ParseLong;
+		    event.metadata = metadata;
+		    o.logPacketDropped(event, time);
+		  }));
 	  ok = false;
 	  break;
 	}
@@ -8859,17 +9214,19 @@ nextSpace:
 	if (packetLen > packet.length() || packetLen < h.payloadOffset ||
 	    packetLen > UINT_MAX) {
 	  ZquicLOG(([
-	    packetType = h.type,
-	    level = PktNumSpace::Initial,
-	    packetBytes = packet.length()
-	  ](auto &o, ZuTime time) {
-	    ZquicLogPacketEvent event{.packetSize = packetBytes};
-	    event.packetType = packetType;
-	    event.packetSpace = level;
-	    event.ecn = EcnMark::N;
-	    event.reason = ZquicLogPacketEvent::Reason::PacketLength;
-	    o.logPacketDropped(event, time);
-	  }));
+		    packetType = h.type,
+		    level = PktNumSpace::Initial,
+		    packetBytes = packet.length(),
+		    metadata = qlogCIDMeta_()
+		  ](auto &o, ZuTime time) {
+		    ZquicLogPacketEvent event{.packetSize = packetBytes};
+		    event.packetType = packetType;
+		    event.packetSpace = level;
+		    event.ecn = EcnMark::N;
+		    event.reason = ZquicLogPacketEvent::Reason::PacketLength;
+		    event.metadata = metadata;
+		    o.logPacketDropped(event, time);
+		  }));
 	  ok = false;
 	  break;
 	}
@@ -8881,14 +9238,15 @@ nextSpace:
       break;
     }
     if (!ok) ++m_rxDiag.failures;
-    ZquicLOG(([
-      bytes = d.buf->length,
-      ecn = d.ecn
-    ](auto &o, ZuTime time) {
-      ZquicLogDatagramEvent event{.size = bytes};
-      event.ecn = ecn;
-      o.logDatagramReceived(event, time);
-    }));
+	    ZquicLOG(([
+	      bytes = d.buf->length,
+	      ecn = d.ecn,
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogDatagramEvent event{.size = bytes, .metadata = metadata};
+	      event.ecn = ecn;
+	      o.logDatagramReceived(event, time);
+	    }));
   }
 
   template <typename PrepareLong, typename ConsumeFrames>
@@ -8897,35 +9255,39 @@ nextSpace:
     PrepareLong prepareLong, ConsumeFrames consumeFrames) {
     uint8_t *base = d.buf->data_() + packetOffset;
     ZuBSpan packet{base, packetLen};
-    ZuBSpan datagram{d.buf->data_(), d.buf->length};
+    auto datagram = d.buf->cspan();
     LongHdr h;
-    if (Pkt::parseLong(packet, h) < 0) {
-      ZquicLOG(([
-	level = PktNumSpace::Initial,
-	packetBytes = packetLen
-      ](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = PktType::N;
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::ParseLong;
-	o.logPacketDropped(event, time);
-      }));
+	    if (Pkt::parseLong(packet, h) < 0) {
+	      ZquicLOG(([
+		level = PktNumSpace::Initial,
+		packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = PktType::N;
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::ParseLong;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+	      }));
       return false;
     }
     if (!prepareLong(h, d)) {
-      ZquicLOG(([
-	packetType = h.type,
-	level = PktNumSpace::Initial,
-	packetBytes = packetLen
-      ](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = packetType;
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::PrepareLong;
-	o.logPacketDropped(event, time);
-      }));
+	      ZquicLOG(([
+		packetType = h.type,
+		level = PktNumSpace::Initial,
+		packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = packetType;
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::PrepareLong;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+	      }));
       return false;
     }
     PktNumSpace::T level =
@@ -8933,30 +9295,36 @@ nextSpace:
       h.type == PktType::Handshake ? PktNumSpace::Handshake :
       PktNumSpace::AppData;
     if (h.type != PktType::Initial && h.type != PktType::Handshake) {
-      ZquicLOG(([
-	packetType = h.type,
-	packetSpace = h.type == PktType::ZeroRTT ?
-	  PktNumSpace::AppData : PktNumSpace::N,
-	packetBytes = packetLen
-      ](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = packetType;
-	event.packetSpace = packetSpace;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::UnsupportedLongType;
-	o.logPacketDropped(event, time);
-      }));
+	      ZquicLOG(([
+		packetType = h.type,
+		packetSpace = h.type == PktType::ZeroRTT ?
+		  PktNumSpace::AppData : PktNumSpace::N,
+		packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = packetType;
+		event.packetSpace = packetSpace;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::UnsupportedLongType;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+	      }));
       return false;
     }
-    if (m_rxSpaceDiscarded[level]) {
-      ZquicLOG(([level, packetBytes = packetLen](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = pktTypeFromPktNumSpace(level);
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::DiscardedSpace;
-	o.logPacketDropped(event, time);
-      }));
+	    if (m_rxSpaceDiscarded[level]) {
+	      ZquicLOG(([
+		level, packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = pktTypeFromPktNumSpace(level);
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::DiscardedSpace;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+	      }));
       return true;
     }
     uint64_t pn = 0;
@@ -8969,22 +9337,27 @@ nextSpace:
     else {
       if (!m_crypto.rxTrafficSecretInstalled(PktNumSpace::Handshake)) {
 	++m_rxDiag.failures;
-	ZquicLOG(([level, packetBytes = packetLen](auto &o, ZuTime time) {
-	  ZquicLogPacketEvent event{.packetSize = packetBytes};
-	  event.packetType = pktTypeFromPktNumSpace(level);
-	  event.packetSpace = level;
-	  event.ecn = EcnMark::N;
-	  event.reason = ZquicLogPacketEvent::Reason::MissingKeys;
-	  o.logPacketDropped(event, time);
-	  ZquicLogSecurityEvent security{
-	    .kind = ZquicLogSecurityKind::PacketProtection,
-	    .reason = ZquicLogSecurityReason::MissingKeys,
-	    .success = false
-	  };
+		ZquicLOG(([
+		  level, packetBytes = packetLen,
+		  metadata = qlogCIDMeta_()
+		](auto &o, ZuTime time) {
+		  ZquicLogPacketEvent event{.packetSize = packetBytes};
+		  event.packetType = pktTypeFromPktNumSpace(level);
+		  event.packetSpace = level;
+		  event.ecn = EcnMark::N;
+		  event.reason = ZquicLogPacketEvent::Reason::MissingKeys;
+		  event.metadata = metadata;
+		  o.logPacketDropped(event, time);
+		  ZquicLogSecurityEvent security{
+		    .kind = ZquicLogSecurityKind::PacketProtection,
+		    .reason = ZquicLogSecurityReason::MissingKeys,
+		    .success = false,
+		    .metadata = metadata
+		  };
 	  security.packetSpace = level;
 	  security.trigger = ZquicLogSecurityTrigger::RX;
 	  o.logSecurityEvent(
-	    "security:packet_protection_failed", security, time);
+	    ZquicLogEventName::PktProtectFail, security, time);
 	}));
 	return false;
       }
@@ -8996,35 +9369,44 @@ nextSpace:
     if (plainLen < 0) {
       if (checkStatelessReset_(datagram, true)) return true;
       ++m_rxDiag.failures;
-      ZquicLOG(([level, packetBytes = packetLen](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = pktTypeFromPktNumSpace(level);
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::Protection;
-	o.logPacketDropped(event, time);
-	ZquicLogSecurityEvent security{
-	  .kind = ZquicLogSecurityKind::PacketProtection,
-	  .reason = ZquicLogSecurityReason::Protection,
-	  .success = false
-	};
+	      ZquicLOG(([
+		level, packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = pktTypeFromPktNumSpace(level);
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::Protection;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+		ZquicLogSecurityEvent security{
+		  .kind = ZquicLogSecurityKind::PacketProtection,
+		  .reason = ZquicLogSecurityReason::Protection,
+		  .success = false,
+		  .metadata = metadata
+		};
 	security.packetSpace = level;
 	security.trigger = ZquicLogSecurityTrigger::RX;
 	o.logSecurityEvent(
-	  "security:packet_protection_failed", security, time);
+	  ZquicLogEventName::PktProtectFail, security, time);
       }));
       return false;
     }
     if (rxPktSeen_(level, pn)) {
       ++m_rxDiag.duplicatePacketsRx;
-      ZquicLOG(([level, packetBytes = packetLen](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = pktTypeFromPktNumSpace(level);
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::Duplicate;
-	o.logPacketDropped(event, time);
-      }));
+	      ZquicLOG(([
+		level, packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = pktTypeFromPktNumSpace(level);
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::Duplicate;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+	      }));
       return true;
     }
     ++m_rxDiag.packetsRx;
@@ -9051,18 +9433,20 @@ nextSpace:
     ZquicLOG(([
       level, pn,
       packetBytes = packetLen,
-      payloadBytes = unsigned(plainLen),
-      ecn = d.ecn,
-      event = qlog_ ? ZuMv(*qlog_) : ZquicLogPacketEvent{}
-    ](auto &o, ZuTime time) mutable {
-      event.packetType = pktTypeFromPktNumSpace(level);
-      event.packetSpace = level;
-      event.ecn = ecn;
-      event.packetNumber = pn;
-      event.packetSize = packetBytes;
-      event.payloadSize = payloadBytes;
-      o.logPacketReceived(event, time);
-    }));
+	      payloadBytes = unsigned(plainLen),
+	      ecn = d.ecn,
+	      event = qlog_ ? ZuMv(*qlog_) : ZquicLogPacketEvent{},
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) mutable {
+	      event.packetType = pktTypeFromPktNumSpace(level);
+	      event.packetSpace = level;
+	      event.ecn = ecn;
+	      event.packetNumber = pn;
+	      event.packetSize = packetBytes;
+	      event.payloadSize = payloadBytes;
+	      event.metadata = metadata;
+	      o.logPacketReceived(event, time);
+	    }));
     noteAck_(
       level, pn, ack.ackEliciting, ZuMv(ackAddr), ack.immediateAck, d.ecn);
     return true;
@@ -9074,46 +9458,51 @@ nextSpace:
     ConsumeFrames consumeFrames) {
     uint8_t *base = d.buf->data_() + packetOffset;
     ZuBSpan packet{base, packetLen};
-    ZuBSpan datagram{d.buf->data_(), d.buf->length};
-    if (!m_crypto.rxTrafficSecretInstalled(PktNumSpace::AppData)) {
-      if (checkStatelessReset_(datagram, true)) return true;
-      ZquicLOG(([
-	level = PktNumSpace::AppData,
-	packetBytes = packetLen
-      ](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = pktTypeFromPktNumSpace(level);
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::MissingKeys;
-	o.logPacketDropped(event, time);
-	ZquicLogSecurityEvent security{
-	  .kind = ZquicLogSecurityKind::PacketProtection,
-	  .reason = ZquicLogSecurityReason::MissingKeys,
-	  .success = false
-	};
+    auto datagram = d.buf->cspan();
+	    if (!m_crypto.rxTrafficSecretInstalled(PktNumSpace::AppData)) {
+	      if (checkStatelessReset_(datagram, true)) return true;
+	      ZquicLOG(([
+		level = PktNumSpace::AppData,
+		packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = pktTypeFromPktNumSpace(level);
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::MissingKeys;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+		ZquicLogSecurityEvent security{
+		  .kind = ZquicLogSecurityKind::PacketProtection,
+		  .reason = ZquicLogSecurityReason::MissingKeys,
+		  .success = false,
+		  .metadata = metadata
+		};
 	security.packetSpace = level;
 	security.trigger = ZquicLogSecurityTrigger::RX;
 	o.logSecurityEvent(
-	  "security:packet_protection_failed", security, time);
+	  ZquicLogEventName::PktProtectFail, security, time);
       }));
       return false;
     }
     ShortHdr h;
-    if (Pkt::parseShort(packet, m_localSCID.length(), h) < 0 ||
-	!(h.dcid == m_localSCID)) {
-      if (checkStatelessReset_(datagram, true)) return true;
-      ZquicLOG(([
-	level = PktNumSpace::AppData,
-	packetBytes = packetLen
-      ](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = pktTypeFromPktNumSpace(level);
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::ParseShort;
-	o.logPacketDropped(event, time);
-      }));
+	    if (Pkt::parseShort(packet, m_localSCID.length(), h) < 0 ||
+		!(h.dcid == m_localSCID)) {
+	      if (checkStatelessReset_(datagram, true)) return true;
+	      ZquicLOG(([
+		level = PktNumSpace::AppData,
+		packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = pktTypeFromPktNumSpace(level);
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::ParseShort;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+	      }));
       return false;
     }
     uint64_t pn = 0;
@@ -9132,25 +9521,28 @@ nextSpace:
 	if (plainLen >= 0) {
 	  if (!((base[0] & 0x04) == (m_rxOldKeyPhase ? 0x04 : 0))) {
 	    ++m_rxDiag.invalidKeyPhases;
-	    ZquicLOG(([
-	      level = PktNumSpace::AppData,
-	      packetBytes = packetLen
-	    ](auto &o, ZuTime time) {
-	      ZquicLogPacketEvent event{.packetSize = packetBytes};
-	      event.packetType = pktTypeFromPktNumSpace(level);
-	      event.packetSpace = level;
-	      event.ecn = EcnMark::N;
-	      event.reason = ZquicLogPacketEvent::Reason::InvalidKeyPhase;
-	      o.logPacketDropped(event, time);
-	      ZquicLogSecurityEvent security{
-		.kind = ZquicLogSecurityKind::PacketProtection,
-		.reason = ZquicLogSecurityReason::InvalidKeyPhase,
-		.success = false
-	      };
+		    ZquicLOG(([
+		      level = PktNumSpace::AppData,
+		      packetBytes = packetLen,
+		      metadata = qlogCIDMeta_()
+		    ](auto &o, ZuTime time) {
+		      ZquicLogPacketEvent event{.packetSize = packetBytes};
+		      event.packetType = pktTypeFromPktNumSpace(level);
+		      event.packetSpace = level;
+		      event.ecn = EcnMark::N;
+		      event.reason = ZquicLogPacketEvent::Reason::InvalidKeyPhase;
+		      event.metadata = metadata;
+		      o.logPacketDropped(event, time);
+		      ZquicLogSecurityEvent security{
+			.kind = ZquicLogSecurityKind::PacketProtection,
+			.reason = ZquicLogSecurityReason::InvalidKeyPhase,
+			.success = false,
+			.metadata = metadata
+		      };
 	      security.packetSpace = level;
 	      security.trigger = ZquicLogSecurityTrigger::RX;
 	      o.logSecurityEvent(
-		"security:packet_protection_failed", security, time);
+		ZquicLogEventName::PktProtectFail, security, time);
 	    }));
 	    return false;
 	  }
@@ -9168,25 +9560,28 @@ nextSpace:
 	      m_rxOldProt.valid() ||
 	      pn <= m_rxLargestPN[PktNumSpace::AppData]) {
 	    ++m_rxDiag.invalidKeyPhases;
-	    ZquicLOG(([
-	      level = PktNumSpace::AppData,
-	      packetBytes = packetLen
-	    ](auto &o, ZuTime time) {
-	      ZquicLogPacketEvent event{.packetSize = packetBytes};
-	      event.packetType = pktTypeFromPktNumSpace(level);
-	      event.packetSpace = level;
-	      event.ecn = EcnMark::N;
-	      event.reason = ZquicLogPacketEvent::Reason::InvalidKeyPhase;
-	      o.logPacketDropped(event, time);
-	      ZquicLogSecurityEvent security{
-		.kind = ZquicLogSecurityKind::PacketProtection,
-		.reason = ZquicLogSecurityReason::InvalidKeyPhase,
-		.success = false
-	      };
+		    ZquicLOG(([
+		      level = PktNumSpace::AppData,
+		      packetBytes = packetLen,
+		      metadata = qlogCIDMeta_()
+		    ](auto &o, ZuTime time) {
+		      ZquicLogPacketEvent event{.packetSize = packetBytes};
+		      event.packetType = pktTypeFromPktNumSpace(level);
+		      event.packetSpace = level;
+		      event.ecn = EcnMark::N;
+		      event.reason = ZquicLogPacketEvent::Reason::InvalidKeyPhase;
+		      event.metadata = metadata;
+		      o.logPacketDropped(event, time);
+		      ZquicLogSecurityEvent security{
+			.kind = ZquicLogSecurityKind::PacketProtection,
+			.reason = ZquicLogSecurityReason::InvalidKeyPhase,
+			.success = false,
+			.metadata = metadata
+		      };
 	      security.packetSpace = level;
 	      security.trigger = ZquicLogSecurityTrigger::RX;
 	      o.logSecurityEvent(
-		"security:packet_protection_failed", security, time);
+		ZquicLogEventName::PktProtectFail, security, time);
 	    }));
 	    return false;
 	  }
@@ -9197,65 +9592,73 @@ nextSpace:
       if (plainLen < 0) {
 	if (checkStatelessReset_(datagram, true)) return true;
 	++m_rxDiag.failures;
-	ZquicLOG(([
-	  level = PktNumSpace::AppData,
-	  packetBytes = packetLen
-	](auto &o, ZuTime time) {
-	  ZquicLogPacketEvent event{.packetSize = packetBytes};
-	  event.packetType = pktTypeFromPktNumSpace(level);
-	  event.packetSpace = level;
-	  event.ecn = EcnMark::N;
-	  event.reason = ZquicLogPacketEvent::Reason::Protection;
-	  o.logPacketDropped(event, time);
-	  ZquicLogSecurityEvent security{
-	    .kind = ZquicLogSecurityKind::PacketProtection,
-	    .reason = ZquicLogSecurityReason::Protection,
-	    .success = false
-	  };
+		ZquicLOG(([
+		  level = PktNumSpace::AppData,
+		  packetBytes = packetLen,
+		  metadata = qlogCIDMeta_()
+		](auto &o, ZuTime time) {
+		  ZquicLogPacketEvent event{.packetSize = packetBytes};
+		  event.packetType = pktTypeFromPktNumSpace(level);
+		  event.packetSpace = level;
+		  event.ecn = EcnMark::N;
+		  event.reason = ZquicLogPacketEvent::Reason::Protection;
+		  event.metadata = metadata;
+		  o.logPacketDropped(event, time);
+		  ZquicLogSecurityEvent security{
+		    .kind = ZquicLogSecurityKind::PacketProtection,
+		    .reason = ZquicLogSecurityReason::Protection,
+		    .success = false,
+		    .metadata = metadata
+		  };
 	  security.packetSpace = level;
 	  security.trigger = ZquicLogSecurityTrigger::RX;
 	  o.logSecurityEvent(
-	    "security:packet_protection_failed", security, time);
+	    ZquicLogEventName::PktProtectFail, security, time);
 	}));
 	return false;
       }
     } else if ((base[0] & 0x04) != (m_rxKeyPhase ? 0x04 : 0)) {
       ++m_rxDiag.invalidKeyPhases;
-      ZquicLOG(([
-	level = PktNumSpace::AppData,
-	packetBytes = packetLen
-      ](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = pktTypeFromPktNumSpace(level);
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::InvalidKeyPhase;
-	o.logPacketDropped(event, time);
-	ZquicLogSecurityEvent security{
-	  .kind = ZquicLogSecurityKind::PacketProtection,
-	  .reason = ZquicLogSecurityReason::InvalidKeyPhase,
-	  .success = false
-	};
+	      ZquicLOG(([
+		level = PktNumSpace::AppData,
+		packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = pktTypeFromPktNumSpace(level);
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::InvalidKeyPhase;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+		ZquicLogSecurityEvent security{
+		  .kind = ZquicLogSecurityKind::PacketProtection,
+		  .reason = ZquicLogSecurityReason::InvalidKeyPhase,
+		  .success = false,
+		  .metadata = metadata
+		};
 	security.packetSpace = level;
 	security.trigger = ZquicLogSecurityTrigger::RX;
 	o.logSecurityEvent(
-	  "security:packet_protection_failed", security, time);
+	  ZquicLogEventName::PktProtectFail, security, time);
       }));
       return false;
     }
     if (rxPktSeen_(PktNumSpace::AppData, pn)) {
       ++m_rxDiag.duplicatePacketsRx;
-      ZquicLOG(([
-	level = PktNumSpace::AppData,
-	packetBytes = packetLen
-      ](auto &o, ZuTime time) {
-	ZquicLogPacketEvent event{.packetSize = packetBytes};
-	event.packetType = pktTypeFromPktNumSpace(level);
-	event.packetSpace = level;
-	event.ecn = EcnMark::N;
-	event.reason = ZquicLogPacketEvent::Reason::Duplicate;
-	o.logPacketDropped(event, time);
-      }));
+	      ZquicLOG(([
+		level = PktNumSpace::AppData,
+		packetBytes = packetLen,
+		metadata = qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogPacketEvent event{.packetSize = packetBytes};
+		event.packetType = pktTypeFromPktNumSpace(level);
+		event.packetSpace = level;
+		event.ecn = EcnMark::N;
+		event.reason = ZquicLogPacketEvent::Reason::Duplicate;
+		event.metadata = metadata;
+		o.logPacketDropped(event, time);
+	      }));
       return true;
     }
     ++m_rxDiag.packetsRx;
@@ -9284,18 +9687,20 @@ nextSpace:
       level = PktNumSpace::AppData,
       pn,
       packetBytes = packetLen,
-      payloadBytes = unsigned(plainLen),
-      ecn = d.ecn,
-      event = qlog_ ? ZuMv(*qlog_) : ZquicLogPacketEvent{}
-    ](auto &o, ZuTime time) mutable {
-      event.packetType = pktTypeFromPktNumSpace(level);
-      event.packetSpace = level;
-      event.ecn = ecn;
-      event.packetNumber = pn;
-      event.packetSize = packetBytes;
-      event.payloadSize = payloadBytes;
-      o.logPacketReceived(event, time);
-    }));
+	      payloadBytes = unsigned(plainLen),
+	      ecn = d.ecn,
+	      event = qlog_ ? ZuMv(*qlog_) : ZquicLogPacketEvent{},
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) mutable {
+	      event.packetType = pktTypeFromPktNumSpace(level);
+	      event.packetSpace = level;
+	      event.ecn = ecn;
+	      event.packetNumber = pn;
+	      event.packetSize = packetBytes;
+	      event.payloadSize = payloadBytes;
+	      event.metadata = metadata;
+	      o.logPacketReceived(event, time);
+	    }));
     noteAck_(
       PktNumSpace::AppData, pn, ack.ackEliciting, ZuMv(ackAddr),
       ack.immediateAck, d.ecn);
@@ -9349,23 +9754,25 @@ nextSpace:
 	  if (receiveFrame(
 	      frame, ZmRef<ZiIOBuf>{packetBuf}, nullptr, &immediateAck) < 0)
 	    return false;
-	  ZquicLOG(([
-	    streamID = frame.streamID,
-	    offset = frame.offset,
-	    length = uint64_t(frame.payload.length()),
-	    fin = frame.fin
-	  ](auto &o, ZuTime time) {
-	    if (!length && !fin) return;
-	    ZquicLogStreamDataEvent event{
+		  ZquicLOG(([
+		    streamID = frame.streamID,
+		    offset = frame.offset,
+		    length = uint64_t(frame.payload.length()),
+		    fin = frame.fin,
+		    metadata = qlogCIDMeta_()
+		  ](auto &o, ZuTime time) {
+		    if (!length && !fin) return;
+		    ZquicLogStreamDataEvent event{
 	      .from = ZquicLogStreamDataLoc::Network,
 	      .to = ZquicLogStreamDataLoc::Transport,
 	      .additionalInfo = fin ?
 		ZquicLogStreamDataInfo::T(ZquicLogStreamDataInfo::FinSet) :
 		ZquicLogStreamDataInfo::T(ZquicLogStreamDataInfo::None),
-	      .streamID = streamID,
-	      .offset = offset,
-	      .length = length
-	    };
+		      .streamID = streamID,
+		      .offset = offset,
+		      .length = length,
+		      .metadata = metadata
+		    };
 	    o.logStreamDataMoved(event, time);
 	  }));
 	  impl()->streamFrame(
@@ -9828,24 +10235,26 @@ private:
       streamSide = localInitiated_(uint64_t(id), m_isServer) ?
 	ZquicLogStreamSide::T(ZquicLogStreamSide::Sending) :
 	ZquicLogStreamSide::T(ZquicLogStreamSide::Receiving),
-      reason = ZquicLogStreamReason::T(ZquicLogStreamReason::Reaped),
-      offset = stream->rxBytes(),
-      length = stream->txBytes(),
-      errorCode = stream->appError(),
-      fin = stream->finReceived() || stream->finSent()
-    ](auto &o, ZuTime time) {
-      ZquicLogStreamEvent event{
-	.streamType = streamType,
+	      reason = ZquicLogStreamReason::T(ZquicLogStreamReason::Reaped),
+	      offset = stream->rxBytes(),
+	      length = stream->txBytes(),
+	      errorCode = stream->appError(),
+	      fin = stream->finReceived() || stream->finSent(),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogStreamEvent event{
+		.streamType = streamType,
 	.oldState = ZquicLogStreamState::Open,
 	.newState = ZquicLogStreamState::Closed,
 	.streamSide = streamSide,
 	.reason = reason,
 	.streamID = streamID,
-	.offset = offset,
-	.length = length,
-	.errorCode = errorCode,
-	.fin = fin
-      };
+		.offset = offset,
+		.length = length,
+		.errorCode = errorCode,
+		.fin = fin,
+		.metadata = metadata
+	      };
       o.logStreamStateUpdated(event, time);
     }));
     closeStreamID_(uint64_t(id));
@@ -9869,21 +10278,23 @@ private:
       streamType = StreamID::uni(uint64_t(id)) ?
 	ZquicLogStreamType::T(ZquicLogStreamType::Unidirectional) :
 	ZquicLogStreamType::T(ZquicLogStreamType::Bidirectional),
-      streamSide = localInitiated_(uint64_t(id), m_isServer) ?
-	ZquicLogStreamSide::T(ZquicLogStreamSide::Sending) :
-	ZquicLogStreamSide::T(ZquicLogStreamSide::Receiving),
-      reason = localInitiated_(uint64_t(id), m_isServer) ?
-	ZquicLogStreamReason::T(ZquicLogStreamReason::LocalOpen) :
-	ZquicLogStreamReason::T(ZquicLogStreamReason::PeerOpen)
-    ](auto &o, ZuTime time) {
-      ZquicLogStreamEvent event{
-	.streamType = streamType,
+	      streamSide = localInitiated_(uint64_t(id), m_isServer) ?
+		ZquicLogStreamSide::T(ZquicLogStreamSide::Sending) :
+		ZquicLogStreamSide::T(ZquicLogStreamSide::Receiving),
+	      reason = localInitiated_(uint64_t(id), m_isServer) ?
+		ZquicLogStreamReason::T(ZquicLogStreamReason::LocalOpen) :
+		ZquicLogStreamReason::T(ZquicLogStreamReason::PeerOpen),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogStreamEvent event{
+		.streamType = streamType,
 	.oldState = ZquicLogStreamState::Idle,
-	.newState = ZquicLogStreamState::Open,
-	.streamSide = streamSide,
-	.reason = reason,
-	.streamID = streamID
-      };
+		.newState = ZquicLogStreamState::Open,
+		.streamSide = streamSide,
+		.reason = reason,
+		.streamID = streamID,
+		.metadata = metadata
+	      };
       o.logStreamStateUpdated(event, time);
     }));
     impl()->streamOpen(
@@ -10017,33 +10428,116 @@ private:
     m_suspiciousStreamClosed = false;
   }
 
+  static ZquicLogConnectionState::T qlogConnectionState_(
+    LinkState::T state) {
+    switch (state) {
+      case LinkState::Starting:
+	return ZquicLogConnectionState::Attempted;
+      case LinkState::Handshaking:
+	return ZquicLogConnectionState::HandshakeStarted;
+      case LinkState::Established:
+	return ZquicLogConnectionState::HandshakeComplete;
+      case LinkState::Closing:
+	return ZquicLogConnectionState::Closing;
+      case LinkState::Draining:
+	return ZquicLogConnectionState::Draining;
+      default:
+	return ZquicLogConnectionState::Closed;
+    }
+  }
+
   bool startHandshakeState_() {
     if (m_linkState != LinkState::Starting) return false;
-    m_linkState = LinkState::Handshaking;
+    LinkState::T oldState = m_linkState;
+	    m_linkState = LinkState::Handshaking;
+	    ZquicLOG(([
+	      oldState = qlogConnectionState_(oldState),
+	      newState = qlogConnectionState_(m_linkState),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogConnectionStateEvent event{
+		.oldState = oldState,
+		.newState = newState,
+		.metadata = metadata
+	      };
+      o.logConnectionStateUpdated(event, time);
+    }));
     return true;
   }
 
   bool establishState_() {
     if (m_linkState != LinkState::Handshaking) return false;
-    m_linkState = LinkState::Established;
+    LinkState::T oldState = m_linkState;
+	    m_linkState = LinkState::Established;
+	    ZquicLOG(([
+	      oldState = qlogConnectionState_(oldState),
+	      newState = qlogConnectionState_(m_linkState),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogConnectionStateEvent event{
+		.oldState = oldState,
+		.newState = newState,
+		.metadata = metadata
+	      };
+      o.logConnectionStateUpdated(event, time);
+    }));
     return true;
   }
 
   bool closeLinkState_() {
     if (m_linkState == LinkState::Closed) return false;
+    LinkState::T oldState = m_linkState;
     m_linkState = LinkState::Closing;
-    m_drainPTOs = 0;
+	    m_drainPTOs = 0;
+	    ZquicLOG(([
+	      oldState = qlogConnectionState_(oldState),
+	      newState = qlogConnectionState_(m_linkState),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogConnectionStateEvent event{
+		.oldState = oldState,
+		.newState = newState,
+		.metadata = metadata
+	      };
+      o.logConnectionStateUpdated(event, time);
+    }));
     return true;
   }
   bool drainLinkState_() {
     if (m_linkState == LinkState::Closed) return false;
+    LinkState::T oldState = m_linkState;
     m_linkState = LinkState::Draining;
-    m_drainPTOs = 0;
+	    m_drainPTOs = 0;
+	    ZquicLOG(([
+	      oldState = qlogConnectionState_(oldState),
+	      newState = qlogConnectionState_(m_linkState),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogConnectionStateEvent event{
+		.oldState = oldState,
+		.newState = newState,
+		.metadata = metadata
+	      };
+      o.logConnectionStateUpdated(event, time);
+    }));
     return true;
   }
   void closedLinkState_() {
+    LinkState::T oldState = m_linkState;
     m_linkState = LinkState::Closed;
-    m_drainPTOs = 0;
+	    m_drainPTOs = 0;
+	    ZquicLOG(([
+	      oldState = qlogConnectionState_(oldState),
+	      newState = qlogConnectionState_(m_linkState),
+	      metadata = qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogConnectionStateEvent event{
+		.oldState = oldState,
+		.newState = newState,
+		.metadata = metadata
+	      };
+      o.logConnectionStateUpdated(event, time);
+    }));
   }
 
   // immutable
@@ -10071,6 +10565,8 @@ private:
   CryptoStream		m_rxCrypto[3];
   ZiSockAddr		m_rxCryptoAddr[3];
   CxnID			m_initialDCID;
+  CxnID			m_originalDCID;
+  CxnID			m_groupID;
   CxnID			m_localSCID;
   CxnID			m_peerCID;
   ResetToken		m_peerResetToken;
@@ -10527,18 +11023,20 @@ private:
     ZmFn<> fn = ZuMv(m_closeFn);
     m_closeNotify = false;
     m_closePeer = false;
-    if (drain) {
-      ZquicLOG(([
-      peer
-    ](auto &o, ZuTime time) {
-	ZquicLogCloseInitiator::T initiator = peer ?
-	  ZquicLogCloseInitiator::T(ZquicLogCloseInitiator::Remote) :
+	    if (drain) {
+	      ZquicLOG(([
+	      peer,
+	      metadata = Base::qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+		ZquicLogCloseInitiator::T initiator = peer ?
+		  ZquicLogCloseInitiator::T(ZquicLogCloseInitiator::Remote) :
 	  ZquicLogCloseInitiator::T(ZquicLogCloseInitiator::Local);
-	ZquicLogCloseEvent event{
-	  .initiator = initiator,
-	  .trigger = ZquicLogCloseTrigger::Aborted,
-	  .reason = ZquicLogCloseReason::DrainExpired
-	};
+		ZquicLogCloseEvent event{
+		  .initiator = initiator,
+		  .trigger = ZquicLogCloseTrigger::Aborted,
+		  .reason = ZquicLogCloseReason::DrainExpired,
+		  .metadata = metadata
+		};
 	o.logConnectionClosed(event, time);
       }));
     }
@@ -10552,16 +11050,17 @@ private:
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client idle expiry outside Tx thread", return);
     Base::cancelTimers_();
-    m_closeNotify = true;
-    m_closePeer = false;
-    m_closeFn = ZmFn<>{[]() { }};
-    ZquicLOG(([](auto &o, ZuTime time) {
-      ZquicLogCloseEvent event{
-	.initiator = ZquicLogCloseInitiator::Local,
-	.trigger = ZquicLogCloseTrigger::IdleTimeout,
-	.reason = ZquicLogCloseReason::Idle,
-	.connectionError = ZquicLogCloseError::NoError
-      };
+	    m_closeNotify = true;
+	    m_closePeer = false;
+	    m_closeFn = ZmFn<>{[]() { }};
+	    ZquicLOG(([metadata = Base::qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogCloseEvent event{
+		.initiator = ZquicLogCloseInitiator::Local,
+		.trigger = ZquicLogCloseTrigger::IdleTimeout,
+		.reason = ZquicLogCloseReason::Idle,
+		.connectionError = ZquicLogCloseError::NoError,
+		.metadata = metadata
+	      };
       o.logConnectionClosed(event, time);
     }));
     closeExpired_(false);
@@ -10626,7 +11125,8 @@ private:
     }
     Base::setRuntimeCIDs_(
       m_bootstrap.initialDCID(), m_bootstrap.initialSCID(),
-      m_bootstrap.initialDCID());
+      m_bootstrap.initialDCID(),
+      m_bootstrap.initialDCID(), m_bootstrap.initialDCID());
     if (ZquicLogger::enabled()) {
       ZquicLogger::metadata(ZquicLogMetadata{
 	.vantagePoint = "client",
@@ -10635,7 +11135,11 @@ private:
 	.dcid = m_bootstrap.initialDCID(),
 	.scid = m_bootstrap.initialSCID()
       });
-      ZquicLogger::lifecycle(ZquicLogLifecycle::Started);
+      ZquicLogger::connectionStarted(ZquicLogConnectionStartedEvent{
+	.local = Endpoint::local(),
+	.remote = Endpoint::remote(),
+	.metadata = Base::qlogCIDMeta_()
+      });
     }
     Base::configureLocalTransportParams_(app());
     if (!Base::deriveInitial_()) return false;
@@ -10661,7 +11165,8 @@ private:
     Base::initClientPath_(Endpoint::local(), Endpoint::remote());
     Base::setRuntimeCIDs_(
       m_bootstrap.retrySCID(), m_bootstrap.initialSCID(),
-      m_bootstrap.retrySCID());
+      m_bootstrap.retrySCID(),
+      m_bootstrap.initialDCID(), m_bootstrap.initialDCID());
     if (ZquicLogger::enabled()) {
       ZquicLogger::metadata(ZquicLogMetadata{
 	.vantagePoint = "client",
@@ -10898,19 +11403,21 @@ private:
     return m_newToken;
   }
 
-  void newToken_(ZuBSpan token) {
-    if (!token || token.length() > AddressToken::MaxLength) return;
-    ZquicLOG(([
-      tokenLength = token.length()
-    ](auto &o, ZuTime time) {
-      ZquicLogSecurityEvent event{
-	.kind = ZquicLogSecurityKind::Token,
-	.reason = ZquicLogSecurityReason::NewToken,
-	.value = tokenLength,
-	.success = true
-      };
+	  void newToken_(ZuBSpan token) {
+	    if (!token || token.length() > AddressToken::MaxLength) return;
+	    ZquicLOG(([
+	      tokenLength = token.length(),
+	      metadata = Base::qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogSecurityEvent event{
+		.kind = ZquicLogSecurityKind::Token,
+		.reason = ZquicLogSecurityReason::NewToken,
+		.value = tokenLength,
+		.success = true,
+		.metadata = metadata
+	      };
       event.trigger = ZquicLogSecurityTrigger::Received;
-      o.logSecurityEvent("security:token_issued", event, time);
+      o.logSecurityEvent(ZquicLogEventName::TokenIssued, event, time);
     }));
     m_newToken.length(0);
     m_newToken.append(token.data(), token.length());
@@ -11078,28 +11585,28 @@ private:
     bool sent = sendShortPkt_(build, ZuMv(addr), {});
     if (sent) {
       ZquicLOG(([
-	appClose,
-	errorCode = Base::closeError(),
-	closeError = Base::closeError() ?
-	  ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
-	  ZquicLogCloseError::T(ZquicLogCloseError::NoError)
-      ](auto &o, ZuTime time) {
-	ZquicLogCloseTrigger::T trigger = appClose ?
-	  ZquicLogCloseTrigger::T(ZquicLogCloseTrigger::Application) :
+	      appClose,
+	      errorCode = Base::closeError(),
+	      closeError = Base::closeError() ?
+		ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
+		ZquicLogCloseError::T(ZquicLogCloseError::NoError),
+	      metadata = Base::qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+		ZquicLogCloseTrigger::T trigger = appClose ?
+		  ZquicLogCloseTrigger::T(ZquicLogCloseTrigger::Application) :
 	  ZquicLogCloseTrigger::T(ZquicLogCloseTrigger::Error);
 	ZquicLogCloseEvent event{
 	  .initiator = ZquicLogCloseInitiator::Local,
 	  .trigger = trigger,
 	  .reason = ZquicLogCloseReason::LocalClose,
 	  .connectionError = appClose ?
-	    ZquicLogCloseError::T(ZquicLogCloseError::None) : closeError,
-	  .applicationError = appClose ?
-	    ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
-	    ZquicLogCloseError::T(ZquicLogCloseError::None),
-	  .errorCode = errorCode,
-	  .application = appClose,
-	  .frame = true
-	};
+		  ZquicLogCloseError::T(ZquicLogCloseError::None) : closeError,
+		.applicationError = appClose ?
+		  ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
+		  ZquicLogCloseError::T(ZquicLogCloseError::None),
+		.errorCode = errorCode,
+		.metadata = metadata
+	      };
 	o.logConnectionClosed(event, time);
       }));
     }
@@ -11152,38 +11659,42 @@ private:
   bool handleRetry_(const Datagram &d) {
     if (!d.buf || !d.buf->length || Base::runtimeEstablished_())
       return false;
-    ZuBSpan packet{d.buf->data_(), d.buf->length};
+    auto packet = d.buf->cspan();
     RetryPkt retry;
     if (Pkt::parseRetry(packet, retry) < 0) return false;
-    if (!m_bootstrap.onRetry(retry)) {
-      ZquicLOG(([
-	tokenLength = retry.token.length()
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::Retry,
-	  .reason = ZquicLogSecurityReason::Validation,
-	  .value = tokenLength,
-	  .success = false
-	};
+	    if (!m_bootstrap.onRetry(retry)) {
+	      ZquicLOG(([
+		tokenLength = retry.token.length(),
+		metadata = Base::qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogSecurityEvent event{
+		  .kind = ZquicLogSecurityKind::Retry,
+		  .reason = ZquicLogSecurityReason::Validation,
+		  .value = tokenLength,
+		  .success = false,
+		  .metadata = metadata
+		};
 	event.trigger = ZquicLogSecurityTrigger::Received;
-	o.logSecurityEvent("security:retry_validated", event, time);
+	o.logSecurityEvent(ZquicLogEventName::RetryValid, event, time);
       }));
       Base::packetParseFailure_();
       return true;
     }
-    ZquicLOG(([
-      tokenLength = retry.token.length()
-    ](auto &o, ZuTime time) {
-      ZquicLogSecurityEvent event{
-	.kind = ZquicLogSecurityKind::Retry,
-	.reason = ZquicLogSecurityReason::OK,
-	.value = tokenLength,
-	.success = true
-      };
+	    ZquicLOG(([
+	      tokenLength = retry.token.length(),
+	      metadata = Base::qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
+	      ZquicLogSecurityEvent event{
+		.kind = ZquicLogSecurityKind::Retry,
+		.reason = ZquicLogSecurityReason::OK,
+		.value = tokenLength,
+		.success = true,
+		.metadata = metadata
+	      };
       event.trigger = ZquicLogSecurityTrigger::Received;
-      o.logSecurityEvent("security:retry_validated", event, time);
+      o.logSecurityEvent(ZquicLogEventName::RetryValid, event, time);
       event.kind = ZquicLogSecurityKind::Token;
-      o.logSecurityEvent("security:token_validated", event, time);
+      o.logSecurityEvent(ZquicLogEventName::TokenValid, event, time);
     }));
     if (!restartHandshakeAfterRetry_())
       Base::tlsFailure_();
@@ -11258,12 +11769,13 @@ private:
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
 	Base::transportClose_(frame.type, frame.errorCode);
-	ZquicLOG(([
-	  type = frame.type,
-	  errorCode = frame.errorCode,
-	  closeError = frame.errorCode ?
-	    ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
-	    ZquicLogCloseError::T(ZquicLogCloseError::NoError)
+	  ZquicLOG(([
+	    type = frame.type,
+	    errorCode = frame.errorCode,
+	    closeError = frame.errorCode ?
+	      ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
+	      ZquicLogCloseError::T(ZquicLogCloseError::NoError),
+	    metadata = Base::qlogCIDMeta_()
 	](auto &o, ZuTime time) {
 	  bool appClose = type == FrameType::ApplicationClose;
 	  ZquicLogCloseEvent event{
@@ -11276,8 +11788,7 @@ private:
 	      ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
 	      ZquicLogCloseError::T(ZquicLogCloseError::None),
 	    .errorCode = errorCode,
-	    .application = appClose,
-	    .frame = true
+	    .metadata = metadata
 	  };
 	  o.logConnectionClosed(event, time);
 	}));
@@ -11605,17 +12116,19 @@ public:
       "QUIC server close expiry outside Tx thread", return);
     bool peer = m_closePeer;
     m_closePeer = false;
-    ZquicLOG(([
-      peer
-    ](auto &o, ZuTime time) {
+	    ZquicLOG(([
+	      peer,
+	      metadata = Base::qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
       ZquicLogCloseInitiator::T initiator = peer ?
 	ZquicLogCloseInitiator::T(ZquicLogCloseInitiator::Remote) :
 	ZquicLogCloseInitiator::T(ZquicLogCloseInitiator::Local);
-      ZquicLogCloseEvent event{
-	.initiator = initiator,
-	.trigger = ZquicLogCloseTrigger::Aborted,
-	.reason = ZquicLogCloseReason::DrainExpired
-      };
+	      ZquicLogCloseEvent event{
+		.initiator = initiator,
+		.trigger = ZquicLogCloseTrigger::Aborted,
+		.reason = ZquicLogCloseReason::DrainExpired,
+		.metadata = metadata
+	      };
       o.logConnectionClosed(event, time);
     }));
     Base::disconnect(peer);
@@ -11623,15 +12136,16 @@ public:
   void idleExpired_() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server idle expiry outside Tx thread", return);
-    Base::cancelTimers_();
-    m_closePeer = false;
-    ZquicLOG(([](auto &o, ZuTime time) {
-      ZquicLogCloseEvent event{
-	.initiator = ZquicLogCloseInitiator::Local,
-	.trigger = ZquicLogCloseTrigger::IdleTimeout,
-	.reason = ZquicLogCloseReason::Idle,
-	.connectionError = ZquicLogCloseError::NoError
-      };
+	    Base::cancelTimers_();
+	    m_closePeer = false;
+	    ZquicLOG(([metadata = Base::qlogCIDMeta_()](auto &o, ZuTime time) {
+	      ZquicLogCloseEvent event{
+		.initiator = ZquicLogCloseInitiator::Local,
+		.trigger = ZquicLogCloseTrigger::IdleTimeout,
+		.reason = ZquicLogCloseReason::Idle,
+		.connectionError = ZquicLogCloseError::NoError,
+		.metadata = metadata
+	      };
       o.logConnectionClosed(event, time);
     }));
     Base::disconnect(false);
@@ -11660,7 +12174,8 @@ private:
     }
     Base::setRuntimeCIDs_(
       m_bootstrap.initialDCID(), m_bootstrap.localInitialSCID(),
-      m_bootstrap.clientInitialSCID());
+      m_bootstrap.clientInitialSCID(),
+      m_bootstrap.originalDCID(), m_bootstrap.originalDCID());
     if (ZquicLogger::enabled()) {
       ZquicLogger::metadata(ZquicLogMetadata{
 	.vantagePoint = "server",
@@ -12076,12 +12591,13 @@ private:
     bool sent = sendShortPkt_(build, ZuMv(addr), {});
     if (sent) {
       ZquicLOG(([
-	appClose,
-	errorCode = Base::closeError(),
-	closeError = Base::closeError() ?
-	  ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
-	  ZquicLogCloseError::T(ZquicLogCloseError::NoError)
-      ](auto &o, ZuTime time) {
+	      appClose,
+	      errorCode = Base::closeError(),
+	      closeError = Base::closeError() ?
+		ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
+		ZquicLogCloseError::T(ZquicLogCloseError::NoError),
+	      metadata = Base::qlogCIDMeta_()
+	    ](auto &o, ZuTime time) {
 	ZquicLogCloseTrigger::T trigger = appClose ?
 	  ZquicLogCloseTrigger::T(ZquicLogCloseTrigger::Application) :
 	  ZquicLogCloseTrigger::T(ZquicLogCloseTrigger::Error);
@@ -12090,14 +12606,13 @@ private:
 	  .trigger = trigger,
 	  .reason = ZquicLogCloseReason::LocalClose,
 	  .connectionError = appClose ?
-	    ZquicLogCloseError::T(ZquicLogCloseError::None) : closeError,
-	  .applicationError = appClose ?
-	    ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
-	    ZquicLogCloseError::T(ZquicLogCloseError::None),
-	  .errorCode = errorCode,
-	  .application = appClose,
-	  .frame = true
-	};
+		  ZquicLogCloseError::T(ZquicLogCloseError::None) : closeError,
+		.applicationError = appClose ?
+		  ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
+		  ZquicLogCloseError::T(ZquicLogCloseError::None),
+		.errorCode = errorCode,
+		.metadata = metadata
+	      };
 	o.logConnectionClosed(event, time);
       }));
     }
@@ -12152,19 +12667,21 @@ private:
       build.scratch(), build.scratchAvail(), token);
     if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
     const typename Base::TxPktRefs *refs = nullptr;
-    bool sent = sendShortPkt_(build, ZuMv(addr), {}, refs, true);
-    if (sent) {
-      ZquicLOG(([
-	tokenLength = token.length()
-      ](auto &o, ZuTime time) {
-	ZquicLogSecurityEvent event{
-	  .kind = ZquicLogSecurityKind::Token,
-	  .reason = ZquicLogSecurityReason::NewToken,
-	  .value = tokenLength,
-	  .success = true
-	};
+	    bool sent = sendShortPkt_(build, ZuMv(addr), {}, refs, true);
+	    if (sent) {
+	      ZquicLOG(([
+		tokenLength = token.length(),
+		metadata = Base::qlogCIDMeta_()
+	      ](auto &o, ZuTime time) {
+		ZquicLogSecurityEvent event{
+		  .kind = ZquicLogSecurityKind::Token,
+		  .reason = ZquicLogSecurityReason::NewToken,
+		  .value = tokenLength,
+		  .success = true,
+		  .metadata = metadata
+		};
 	event.trigger = ZquicLogSecurityTrigger::Sent;
-	o.logSecurityEvent("security:token_issued", event, time);
+	o.logSecurityEvent(ZquicLogEventName::TokenIssued, event, time);
       }));
       Base::newTokenTx_();
     }
@@ -12285,12 +12802,13 @@ private:
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
 	Base::transportClose_(frame.type, frame.errorCode);
-	ZquicLOG(([
-	  type = frame.type,
-	  errorCode = frame.errorCode,
-	  closeError = frame.errorCode ?
-	    ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
-	    ZquicLogCloseError::T(ZquicLogCloseError::NoError)
+	  ZquicLOG(([
+	    type = frame.type,
+	    errorCode = frame.errorCode,
+	    closeError = frame.errorCode ?
+	      ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
+	      ZquicLogCloseError::T(ZquicLogCloseError::NoError),
+	    metadata = Base::qlogCIDMeta_()
 	](auto &o, ZuTime time) {
 	  bool appClose = type == FrameType::ApplicationClose;
 	  ZquicLogCloseEvent event{
@@ -12303,8 +12821,7 @@ private:
 	      ZquicLogCloseError::T(ZquicLogCloseError::Unknown) :
 	      ZquicLogCloseError::T(ZquicLogCloseError::None),
 	    .errorCode = errorCode,
-	    .application = appClose,
-	    .frame = true
+	    .metadata = metadata
 	  };
 	  o.logConnectionClosed(event, time);
 	}));

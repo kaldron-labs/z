@@ -66,6 +66,26 @@ struct TestStream :
 
   unsigned processed = 0;
 };
+struct TestCIDRoutes {
+  bool add(
+    const Zquic::CxnID &, uint64_t, TestLink *,
+    const Zquic::ResetToken & = {}) {
+    ++adds;
+    return true;
+  }
+  bool retire(const Zquic::CxnID &) {
+    ++retires;
+    return true;
+  }
+  bool tombstone(const Zquic::CxnID &) {
+    ++tombstones;
+    return true;
+  }
+
+  unsigned	adds = 0;
+  unsigned	retires = 0;
+  unsigned	tombstones = 0;
+};
 struct TestLink :
   public Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>
@@ -331,6 +351,26 @@ struct TestLink :
   void forcePN(uint64_t pn) {
     Base::setTxPNForTest_(Zquic::PktNumSpace::AppData, pn);
   }
+  bool addLocalCIDForQLog(
+    const Zquic::CxnID &id, uint64_t sequence,
+    const Zquic::ResetToken &token = {}) {
+    return Base::addLocalCID_(id, sequence, token);
+  }
+  bool receiveNewConnectionIDForQLog(const Zquic::Frame &frame) {
+    return Base::receiveNewConnectionID_(frame);
+  }
+  bool receiveRetireConnectionIDForQLog(const Zquic::Frame &frame) {
+    return Base::receiveRetireConnectionID_(frame);
+  }
+  void installLocalCIDRoutesForQLog(TestCIDRoutes &routes) {
+    Base::installLocalCIDRoutes_(routes);
+  }
+  void retireLocalCIDRoutesForQLog(TestCIDRoutes &routes) {
+    Base::retireLocalCIDRoutes_(routes);
+  }
+  void tombstoneLocalCIDRoutesForQLog(TestCIDRoutes &routes) {
+    Base::tombstoneLocalCIDRoutes_(routes);
+  }
 #endif
   unsigned pnLength() const {
     return Base::txPNLength_(Zquic::PktNumSpace::AppData);
@@ -426,6 +466,15 @@ struct TestLink :
   void validatePath() { Base::validatePathTx_(); }
 #ifdef Zquic_DEBUG
   void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
+  bool startPMTUDProbe(unsigned size) {
+    return Base::startPMTUDProbeForTest_(size);
+  }
+  void ackPMTUDProbe(unsigned size) {
+    Base::ackPMTUDProbeForTest_(size);
+  }
+  void losePMTUDProbe(unsigned size) {
+    Base::losePMTUDProbeForTest_(size);
+  }
 #endif
   Zquic::PathDiag pathDiag() const { return Base::pathDiag_(); }
   bool pathValidated() const { return Base::pathValidated_(); }
@@ -607,6 +656,11 @@ static ZtString<> readFile_(const Zi::Path &path)
   else
     data.length(unsigned(n));
   return data;
+}
+
+static void removeTestLog_(const Zi::Path &path)
+{
+  if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(path);
 }
 
 static unsigned parseJSONSeq_(ZuCSpan data)
@@ -1501,10 +1555,10 @@ void testActivePathRuntimeBudget()
   ZuCHECK(data, "path-budget qlog output was not written");
   ZuCHECK(parseJSONSeq_(data) >= 5,
     "path-budget qlog JSON-SEQ parse failed");
-  ZuCHECK(data.find<"transport:packet_dropped">() >= 0,
-    "path-budget qlog missing packet_dropped");
-  ZuCHECK(data.find<"anti_amplification">() >= 0,
-    "path-budget qlog missing anti_amplification reason");
+	  ZuCHECK(data.find<"quic:packet_dropped">() >= 0,
+	    "path-budget qlog missing packet_dropped");
+	  ZuCHECK(data.find<"\"trigger\":\"rejected\"">() >= 0,
+	    "path-budget qlog missing rejected trigger");
   ZiFile::remove(path);
 #endif
 }
@@ -1521,6 +1575,14 @@ void testPathValidationStateMachine()
     "PATH_CHALLENGE value generation failed");
 
 #ifdef Zquic_DEBUG
+  Zi::Path path = testPath_("ZquicStreamPathValidationQLog.sqlog");
+  ZiFile::remove(path);
+  ZquicLogParams params;
+  params.enabled(true).path(path).thread("zquic-path-validation-qlog").
+    ringSize(1<<15);
+  ZuCHECK(ZquicLogger::init(params), "path-validation qlog init failed");
+  ZquicLogger::start();
+
   App app;
   ZmRef<TestLink> link = testLink(&app, true);
   ZiSockAddr local{ZiIP{0x0a000001}, 4433};
@@ -1570,13 +1632,175 @@ void testPathValidationStateMachine()
     "path-validation timeout did not retain active path");
 
   link->closeForTest();
+
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final();
+  ZuCHECK(diag.recordsEnqueued >= 6,
+    "path-validation qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 7,
+    "path-validation qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0,
+    "path-validation qlog writer failure");
+
+  ZtString<> qlog = readFile_(path);
+  ZuCHECK(qlog, "path-validation qlog output missing");
+  ZuCHECK(parseJSONSeq_(qlog) >= 7,
+    "path-validation qlog JSON-SEQ parse failed");
+  ZuCHECK(qlog.find<"quic:path_validated">() >= 0,
+    "path-validation qlog event missing");
+  ZuCHECK(qlog.find<"\"success\":true">() >= 0,
+    "path-validation qlog success missing");
+  ZuCHECK(qlog.find<"\"success\":false">() >= 0,
+    "path-validation qlog failure missing");
+  ZuCHECK(qlog.find<"\"vantagePoint\":\"unknown\"">() >= 0,
+    "path-validation qlog vantage point missing");
+  removeTestLog_(path);
+#endif
+}
+
+void testPMTUDQLog()
+{
+  ZuTestScope(testPMTUDQLog);
+
+#ifdef Zquic_DEBUG
+  Zi::Path path = testPath_("ZquicStreamPMTUDQLog.sqlog");
+  ZiFile::remove(path);
+  ZquicLogParams params;
+  params.enabled(true).path(path).thread("zquic-pmtud-qlog").ringSize(1<<15);
+  ZuCHECK(ZquicLogger::init(params), "PMTUD qlog init failed");
+  ZquicLogger::start();
+
+  App app{Zquic::BufSize};
+  ZmRef<TestLink> link = testLink(&app, true);
+  link->initServerPath(
+    ZiSockAddr{ZiIP{0x0a000001}, 4433},
+    ZiSockAddr{ZiIP{0x0a000002}, 50000});
+  link->validatePath();
+  ZuCHECK(link->pathValidated(), "PMTUD qlog path validation setup failed");
+
+  ZuCHECK(link->startPMTUDProbe(1400),
+    "PMTUD qlog ACK probe setup failed");
+  link->ackPMTUDProbe(1400);
+  ZuCHECK(link->activePathMaxUDP() == 1400,
+    "PMTUD qlog ACK did not grow active path");
+
+  ZuCHECK(link->startPMTUDProbe(1500),
+    "PMTUD qlog loss probe setup failed");
+  link->losePMTUDProbe(1500);
+  link->closeForTest();
+
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final();
+  ZuCHECK(diag.recordsEnqueued >= 2, "PMTUD qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 3, "PMTUD qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "PMTUD qlog writer failure");
+
+  ZtString<> qlog = readFile_(path);
+  ZuCHECK(qlog, "PMTUD qlog output missing");
+  ZuCHECK(parseJSONSeq_(qlog) >= 3, "PMTUD qlog JSON-SEQ parse failed");
+  ZuCHECK(qlog.find<"quic:mtu_updated">() >= 0,
+    "PMTUD qlog missing mtu_updated");
+  ZuCHECK(qlog.find<"\"new\":1400">() >= 0,
+    "PMTUD qlog missing ACKed MTU");
+  ZuCHECK(qlog.find<"\"new\":1500">() >= 0,
+    "PMTUD qlog missing lost probe MTU");
+  ZuCHECK(qlog.find<"\"done\":true">() >= 0,
+    "PMTUD qlog missing completion flag");
+  removeTestLog_(path);
 #endif
 }
 
 #ifdef Zquic_DEBUG
+void testCIDQLog()
+{
+  ZuTestScope(testCIDQLog);
+
+  Zi::Path path = testPath_("ZquicStreamCIDQLog.sqlog");
+  ZiFile::remove(path);
+
+  ZquicLogParams params;
+  params.enabled(true).path(path).thread("zquic-cid-qlog").ringSize(1<<15);
+  ZuCHECK(ZquicLogger::init(params), "CID qlog init failed");
+  ZquicLogger::start();
+
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  Zquic::ResetToken token{"0123456789abcdef"};
+  Zquic::CxnID localCID{"localcid"};
+  ZuCHECK(link->addLocalCIDForQLog(localCID, 1, token),
+    "CID qlog local issue setup failed");
+
+  TestCIDRoutes routes;
+  link->installLocalCIDRoutesForQLog(routes);
+  ZuCHECK(routes.adds >= 1, "CID qlog route install did not bind route");
+
+  Zquic::Frame retire;
+  retire.type = Zquic::FrameType::RetireConnectionID;
+  retire.value = 1;
+  ZuCHECK(link->receiveRetireConnectionIDForQLog(retire),
+    "CID qlog retire setup failed");
+
+  Zquic::CxnID peerCID0{"peercid0"};
+  Zquic::CxnID peerCID1{"peercid1"};
+  Zquic::ResetToken token1{"123456789abcdef0"};
+  Zquic::Frame peer;
+  peer.type = Zquic::FrameType::NewConnectionID;
+  peer.value = 0;
+  peer.length = peerCID0.length();
+  peer.payload = peerCID0;
+  peer.resetToken = token;
+  ZuCHECK(link->receiveNewConnectionIDForQLog(peer),
+    "CID qlog peer CID 0 setup failed");
+  peer.value = 1;
+  peer.offset = 1;
+  peer.length = peerCID1.length();
+  peer.payload = peerCID1;
+  peer.resetToken = token1;
+  ZuCHECK(link->receiveNewConnectionIDForQLog(peer),
+    "CID qlog peer CID retire-prior-to setup failed");
+
+  link->closeForTest();
+
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final();
+
+  ZuCHECK(diag.recordsEnqueued >= 5, "CID qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 6, "CID qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "CID qlog writer failure");
+
+  ZtString<> qlog = readFile_(path);
+  ZuCHECK(qlog, "CID qlog output missing");
+  ZuCHECK(parseJSONSeq_(qlog) >= 6, "CID qlog JSON-SEQ parse failed");
+  ZuCHECK(qlog.find<"quic:connection_id_updated">() >= 0,
+    "CID qlog event missing");
+  ZuCHECK(qlog.find<"\"initiator\":\"local\"">() >= 0,
+    "CID qlog missing local initiator");
+  ZuCHECK(qlog.find<"\"initiator\":\"remote\"">() >= 0,
+    "CID qlog missing remote initiator");
+  ZuCHECK(qlog.find<"\"new\":\"6C6F63616C636964\"">() >= 0,
+    "CID qlog missing issued local CID");
+  ZuCHECK(qlog.find<"\"old\":\"6C6F63616C636964\"">() >= 0,
+    "CID qlog missing retired local CID");
+  ZuCHECK(qlog.find<"\"new\":\"7065657263696430\"">() >= 0 &&
+      qlog.find<"\"old\":\"7065657263696430\"">() >= 0 &&
+      qlog.find<"\"new\":\"7065657263696431\"">() >= 0,
+    "CID qlog missing peer issue/retire sequence");
+  removeTestLog_(path);
+}
+
 void testAckECNValidationDisablesECN()
 {
   ZuTestScope(testAckECNValidationDisablesECN);
+
+  Zi::Path path = testPath_("ZquicStreamECNQLog.sqlog");
+  ZiFile::remove(path);
+  ZquicLogParams params;
+  params.enabled(true).path(path).thread("zquic-ecn-qlog").ringSize(1<<15);
+  ZuCHECK(ZquicLogger::init(params), "ECN qlog init failed");
+  ZquicLogger::start();
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
@@ -1630,6 +1854,29 @@ void testAckECNValidationDisablesECN()
       impossible->txFlushQueued == queued + 1,
     "impossible ACK_ECN did not disable ECN while preserving ACK processing");
   impossible->closeForTest();
+
+  ZquicLogger::stop();
+  ZquicLogDiag qdiag = ZquicLogger::diag();
+  ZquicLogger::final();
+
+  ZuCHECK(qdiag.recordsEnqueued >= 3, "ECN qlog enqueue mismatch");
+  ZuCHECK(qdiag.recordsWritten >= 4, "ECN qlog write mismatch");
+  ZuCHECK(qdiag.writerFailures == 0, "ECN qlog writer failure");
+
+  ZtString<> qlog = readFile_(path);
+  ZuCHECK(qlog, "ECN qlog output missing");
+  ZuCHECK(parseJSONSeq_(qlog) >= 4, "ECN qlog JSON-SEQ parse failed");
+  ZuCHECK(qlog.find<"quic:ecn_state_updated">() >= 0,
+    "ECN qlog event missing");
+  ZuCHECK(qlog.find<"\"old\":\"unknown\"">() >= 0 &&
+      qlog.find<"\"new\":\"capable\"">() >= 0,
+    "ECN qlog missing capable state");
+  ZuCHECK(qlog.find<"\"old\":\"unknown\"">() >= 0 &&
+      qlog.find<"\"new\":\"failed\"">() >= 0,
+    "ECN qlog missing failed state");
+  ZuCHECK(qlog.find<"counter_exceeds_ack">() < 0,
+    "ECN qlog leaked private validation reason");
+  removeTestLog_(path);
 }
 #endif
 
@@ -2473,19 +2720,19 @@ void testRuntimeReceiveQLog()
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "runtime qlog output was not written");
   ZuCHECK(parseJSONSeq_(data) >= 2, "runtime qlog JSON-SEQ parse failed");
-  ZuCHECK(data.find<"transport:packet_received">() >= 0,
+  ZuCHECK(data.find<"quic:packet_received">() >= 0,
     "runtime packet_received qlog missing");
   ZuCHECK(data.find<"\"packet_number\":2">() >= 0,
     "runtime packet number qlog missing");
-  ZuCHECK(data.find<"\"type\":\"ping\"">() >= 0,
+  ZuCHECK(data.find<"\"frame_type\":\"ping\"">() >= 0,
     "runtime PING frame qlog missing");
   ZuCHECK(data.find<"\"frame_count\":">() >= 0,
     "runtime frame count qlog missing");
   ZuCHECK(data.find<"\"frames_truncated\":">() >= 0,
     "runtime frame truncation qlog missing");
-  ZuCHECK(data.find<"transport:packet_dropped">() >= 0,
+  ZuCHECK(data.find<"quic:packet_dropped">() >= 0,
     "runtime packet_dropped qlog missing");
-  ZuCHECK(data.find<"security:packet_protection_failed">() >= 0,
+  ZuCHECK(data.find<"zquic:packet_protection_failed">() >= 0,
     "runtime packet protection failure qlog missing");
   ZuCHECK(data.find<"protection">() >= 0,
     "runtime packet protection failure reason missing");
@@ -2553,9 +2800,9 @@ void testFlowControlQLog()
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "flow-control qlog output was not written");
   ZuCHECK(parseJSONSeq_(data) >= 5, "flow-control qlog JSON-SEQ parse failed");
-  ZuCHECK(data.find<"transport:connection_data_blocked_updated">() >= 0,
+  ZuCHECK(data.find<"quic:connection_data_blocked_updated">() >= 0,
     "flow-control qlog missing connection_data_blocked_updated");
-  ZuCHECK(data.find<"transport:stream_data_blocked_updated">() >= 0,
+  ZuCHECK(data.find<"quic:stream_data_blocked_updated">() >= 0,
     "flow-control qlog missing stream_data_blocked_updated");
   ZuCHECK(data.find<"connection_flow_control">() >= 0,
     "flow-control qlog missing connection blocked reason");
@@ -2587,6 +2834,12 @@ void testPTOQLog()
   link->recordSentPkt(
     Zquic::PktNumSpace::AppData, 7, Zquic::MinUDPPayload,
     Zquic::SentFrameRef::control(), true);
+  link->sendAckEliciting(10);
+  link->ackOnly(10);
+
+  link->recordSentPkt(
+    Zquic::PktNumSpace::AppData, 20, Zquic::MinUDPPayload,
+    Zquic::SentFrameRef::control(), true);
   Zquic::PktNumSpace::T level = Zquic::PktNumSpace::Initial;
   unsigned probes = 0;
   ZuCHECK(link->forcePTOReclaimQLog(level, probes) && probes,
@@ -2605,12 +2858,19 @@ void testPTOQLog()
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "PTO qlog output was not written");
   ZuCHECK(parseJSONSeq_(data) >= 4, "PTO qlog JSON-SEQ parse failed");
-  ZuCHECK(data.find<"recovery:loss_timer_updated">() >= 0,
+  ZuCHECK(data.find<"quic:packet_lost">() >= 0,
+    "PTO qlog missing packet_lost");
+  ZuCHECK(data.find<"quic:marked_for_retransmit">() >= 0,
+    "PTO qlog missing marked_for_retransmit");
+  ZuCHECK(data.find<"quic:timer_updated">() >= 0,
     "PTO qlog missing loss_timer_updated");
-  ZuCHECK(data.find<"expired">() >= 0, "PTO qlog missing expiry");
-  ZuCHECK(data.find<"backoff">() >= 0, "PTO qlog missing backoff");
-  ZuCHECK(data.find<"probe">() >= 0, "PTO qlog missing probe");
-  ZiFile::remove(path);
+  ZuCHECK(data.find<"\"trigger\":\"reordering_threshold\"">() >= 0,
+    "PTO qlog missing reordering-threshold loss trigger");
+  ZuCHECK(data.find<"\"timer_type\":\"pto\"">() >= 0,
+    "PTO qlog missing timer type");
+  ZuCHECK(data.find<"\"event_type\":\"expired\"">() >= 0,
+    "PTO qlog missing expired event type");
+  removeTestLog_(path);
 }
 
 void testPeerKeyUpdateState()
@@ -2685,6 +2945,8 @@ int main(int argc, char **argv)
   ZuTestCall(testActivePathRuntimeBudget);
   ZuTestCall(testPathValidationStateMachine);
 #ifdef Zquic_DEBUG
+  ZuTestCall(testPMTUDQLog);
+  ZuTestCall(testCIDQLog);
   ZuTestCall(testAckECNValidationDisablesECN);
   ZuTestCall(testRuntimeReceiveQLog);
   ZuTestCall(testFlowControlQLog);

@@ -5,15 +5,48 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZtString.hh>
+#include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
+#include <zlib/ZquicLog.hh>
 
 using namespace ZuTestUtil;
 
 namespace {
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
+
+static Zi::Path testPath_(ZuCSpan name)
+{
+  Zi::Path path;
+  path << name;
+  return path;
+}
+
+static ZtString<> readFile_(const Zi::Path &path)
+{
+  ZtString<> data;
+  ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
+  if (!file) return data;
+  auto size = file.size();
+  if (size <= 0 || size > (1<<20)) return data;
+  data.length(unsigned(size));
+  int n = file.read(data.data(), data.length());
+  if (n <= 0)
+    data.length(0);
+  else
+    data.length(unsigned(n));
+  return data;
+}
+
+static void removeTestLog_(const Zi::Path &path)
+{
+  if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(path);
+}
 
 struct TestLink;
 struct TestStream :
@@ -487,6 +520,15 @@ void testStatelessResetDetection()
 {
   ZuTestScope(testStatelessResetDetection);
 
+#ifdef Zquic_DEBUG
+  Zi::Path qlogPath = testPath_("ZquicAPIStatelessReset.sqlog");
+  ZiFile::remove(qlogPath);
+  ZquicLogParams params;
+  params.enabled(true).path(qlogPath).thread("zquic-qlog-api-reset");
+  ZuCHECK(ZquicLogger::init(params), "stateless reset qlog init failed");
+  ZquicLogger::start();
+#endif
+
   EngineFixture fixture;
   ZmRef<TestLink> link = new TestLink{&fixture.app};
   Zquic::ResetToken token{"0123456789abcdef"};
@@ -511,6 +553,27 @@ void testStatelessResetDetection()
     "link did not enter draining on matching stateless reset");
   ZuCHECK(link->statelessResetCount == 1,
     "stateless reset callback did not fire");
+
+#ifdef Zquic_DEBUG
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final();
+  ZuCHECK(diag.recordsEnqueued >= 1,
+    "stateless reset qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 1,
+    "stateless reset qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0,
+    "stateless reset qlog writer failure");
+  ZtString<> qlog = readFile_(qlogPath);
+  ZuCHECK(qlog, "stateless reset qlog output missing");
+  ZuCHECK(qlog.find<"zquic:stateless_reset">() >= 0,
+    "stateless reset qlog event missing");
+  ZuCHECK(qlog.find<"\"trigger\":\"received\"">() >= 0,
+    "stateless reset qlog trigger missing");
+  ZuCHECK(qlog.find<"\"reason\":\"token_match\"">() >= 0,
+    "stateless reset qlog reason missing");
+  removeTestLog_(qlogPath);
+#endif
 }
 
 void testApplicationCallbacks()

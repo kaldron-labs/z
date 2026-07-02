@@ -760,8 +760,13 @@ using TxPkt = SentPkt;
 
 struct PktTxUpdate {
   static constexpr unsigned MaxFrames = 64;
+  static constexpr unsigned MaxAckedPNs = 64;
 
   void ackd(const SentPkt &p) {
+    if (nAckedPNs < MaxAckedPNs)
+      ackedPNs[nAckedPNs++] = p.pn;
+    else
+      ackedPNsTruncated = true;
     ackdAck_(p);
     ackdFrames_(p);
     if (p.lost) return;
@@ -809,6 +814,7 @@ struct PktTxUpdate {
   }
 
   uint64_t	ackdBytes = 0;
+  uint64_t	ackedPNs[MaxAckedPNs] = {};
   PktNumSpace::T	level = PktNumSpace::Initial;
   uint64_t	normalAckdBytes = 0;
   uint64_t	pmtudAckdBytes = 0;
@@ -827,6 +833,8 @@ struct PktTxUpdate {
   void		*lostOwners[MaxFrames] = {};
   unsigned	nAckdFrames = 0;
   unsigned	nLostFrames = 0;
+  unsigned	nAckedPNs = 0;
+  bool		ackedPNsTruncated = false;
 };
 
 struct PktAckBatch {

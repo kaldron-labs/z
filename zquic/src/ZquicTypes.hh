@@ -96,7 +96,8 @@ struct StreamError {
 
 struct PktNumSpace {
   ZtEnum(PktNumSpace, int8_t, Initial, Handshake, AppData);
-  ZtEnumMap(PktNumSpace, JSON, "initial", "handshake", "1RTT", "unknown");
+  ZtEnumMap(PktNumSpace, JSON,
+    "initial", "handshake", "application_data", "unknown");
 };
 
 struct PktType {

@@ -2,7 +2,29 @@
 
 ## Zquic
 
-fix local variables named `level` or `*Level` due to historical use with the removed `CryptoLevel` enum that should now be named `space` or `*Space` to align with `PktSpace`; do this for the examples in `zquic/GUIDELINES.md`
+---
+
+cascade these renames to call sites:
+- `metadata` (referring to `ZquicLogMetadata`) ->  `linkInfo`
+- `qlogCIDMeta_()` -> `linkInfo()`
+- `ZquicLogCIDMeta` -> `Zquic::LinkInfo` (and move into `Zquic.hh`)
+unify `ZquicLogMetadata` with `Zquic::LinkInfo`
+- `LinkInfo::vantage` (renamed from `vantagePoint`) should be an enum
+
+---
+
+audit `zquic` qlog code for proper use of `ZtJSON` capabilities for mapping enums,
+printing/parsing UDTs such as `ZiIP` and `ZiSockAddr`, and so on.
+
+---
+
+audit `zquic` for redundant helpers and update call sites:
+- enum ordinal mapping where simply using the ordinal would suffice
+- enum/name mapping where `ZtEnum` already provides the requisite functionality
+
+---
+
+fix local variables named `level` or `*Level` due to historical association with the removed `CryptoLevel` enum: these should now be named `space` or `*Space` to align with `PktSpace`; do this for the examples in `zquic/GUIDELINES.md`
 
 ---
 
@@ -35,7 +57,7 @@ rename all diagnostic `struct`s to align with the `*Diag` convention:
 
 ---
 
-align naming with `GUIDELINES.md`, example: `ZquicLogSecurityTrigger` is too long. In any case all such should be in an internal namespace (suggest: `ZquicLog_`), used with a `using namespace` directive, and called `SecTrigger`. Similarly `ZquicLogSecurityEvent`: `using namespace ZquicLog_; ... SecEvent ... `. `ConnectionID` should be `CxnID`
+align naming with `GUIDELINES.md`, example: `ZquicLogSecurityTrigger` is too long. In any case all such should be in an internal namespace (suggest: `ZquicLog_`), used with a `using namespace` directive, and called `SecTrigger`. Similarly `ZquicLogSecurityEvent`: `using namespace ZquicLog_; ... SecEvent ... `. `ConnectionID` should be `CxnID`, `ZquicLogStreamType` should be `ZquicLog_::StreamType` (i.e. plain `StreamType` in code), `Unidirectional` should be `Simplex` and so on. other examples: `connectionStarted` should be `cxnStarted`.
 
 ---
 
@@ -76,7 +98,7 @@ redundant diagnostic counters.
 
 CRTP layer masking to reduce conflicts and inadvertent access from higher layers
 
-## Zquic
+---
 
 reference implementations:
 - `../zngtcp2` (primary reference)
