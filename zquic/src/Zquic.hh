@@ -1398,7 +1398,7 @@ private:
 	.dcid = info.header.dcid,
 	.scid = info.header.scid
       });
-      ZquicLogger::cxnStarted(CxnStartedEvent{
+	      ZquicLogger::cxnStarted(ZquicLog_::CxnStartedEvent{
 	.local = local(),
 	.remote = info.peer,
 	.linkInfo = Zquic::LinkInfo{

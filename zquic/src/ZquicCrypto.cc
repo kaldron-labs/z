@@ -24,6 +24,8 @@
 
 namespace Zquic {
 
+using namespace ZquicLog_;
+
 namespace {
 
 static constexpr uint8_t InitialSaltV1_[] = {
