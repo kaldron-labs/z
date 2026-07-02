@@ -33,7 +33,9 @@
 #include <zlib/ZuSpan.hh>
 
 #include <zlib/ZmBackTrace.hh>
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmCleanup.hh>
+#include <zlib/ZmQueue.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZuTime.hh>
@@ -207,6 +209,32 @@ class ZeAPI ZiLog {
 
   ZuDerive(Ring, (ZmRing<ZmRingMW<true>>));
   using Fn = ZmRingFn<ZiLog *>;
+  ZuDerive(Queue_, (ZmQueue<Fn, ZmQueueHeapID<"ZiLog.Queue">>));
+  struct Queue : public Queue_ {
+    using Lock = ZmPLock;
+    using Guard = ZmGuard<Lock>;
+
+    void push(Fn fn) {
+      Guard guard(m_lock);
+      Queue_::push(ZuMv(fn));
+      ++m_count;
+    }
+    void unshift(Fn fn) {
+      Guard guard(m_lock);
+      Queue_::unshift(ZuMv(fn));
+      ++m_count;
+    }
+    Fn shift() {
+      Guard guard(m_lock);
+      Fn fn = Queue_::shift();
+      if (fn) --m_count;
+      return fn;
+    }
+    unsigned count() const { return m_count.load_(); }
+
+    mutable Lock		m_lock;
+    ZmAtomic<unsigned>	m_count = 0;
+  };
 
   ZiLog();
 
@@ -313,6 +341,7 @@ private:
   void work_();
 
   void log__(Fn &fn);
+  bool tryPush_(Fn &fn);
 
   void age_();
 
@@ -324,6 +353,7 @@ private:
 
   ZmThread		m_thread;
   Ring			m_ring;
+  Queue			m_queue;
 
   Lock			m_lock;
     ZmRef<ZiSink>	  m_sink;

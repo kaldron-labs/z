@@ -95,6 +95,13 @@ FIXME from here
 
 ---
 
+audit `zquic` for cross-thread sharing:
+- almost all data should be sharded: thread-dedicated, only accessed by the owning thread
+- use of `ZmLock`/`ZmPLock`/`ZmGuard`/`ZmAtomic` etc. is a red flag
+  - contended sharing of data should be limited to exception cases
+
+---
+
 What is the use case for `U64Null`?
 
 ---
@@ -105,12 +112,6 @@ use `(N<<20)` instead of `N * 1024U * 1024U` and `(N<<10)` instead of `N * 1024U
 
 audit `zquic` qlog code for proper use of `ZtJSON` capabilities for mapping enums,
 printing/parsing UDTs such as `ZiIP` and `ZiSockAddr`, and so on.
-
----
-
-audit `zquic/GUIDELINES.md` for unnecessary repetition of the same guideline (e.g. 
-"Debug text logging is unrelated to qlog and should use `ZiLOG(Debug, ...)`"); improve
-the guideline document's organization and readability
 
 ---
 

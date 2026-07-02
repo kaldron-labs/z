@@ -23,6 +23,7 @@
 #include <zlib/ZtlsPico.hh>
 
 #include <zlib/ZquicFrame.hh>
+#include <zlib/ZquicLog.hh>
 #include <zlib/ZquicPQueue.hh>
 #include <zlib/ZquicTransport.hh>
 
@@ -252,6 +253,7 @@ struct CryptoConfig {
   ZuCSpan		keyLogPath;
   ZuCSpan		serverName;
   const TransportParams	*localTransportParams = nullptr;
+  ZquicLogger::Trace	*qlogTrace = nullptr;
 };
 
 ZuDerive(TLSTransportParams,
@@ -355,6 +357,7 @@ private:
   ParamString			m_alpn;
   Host				m_serverName;
   ParamString			m_keyLogPath;
+  ZquicLogger::Trace		*m_qlogTrace = nullptr;
   InitialKeyMaterial 		m_initialKeys;
   CryptoDiag			m_diag;
   TransportParams 		m_localTransportParams;

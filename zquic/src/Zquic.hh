@@ -736,12 +736,13 @@ public:
   enum { Transport = Zi::Transport::QUIC };
 
   bool init(EngineParams params) {
-    return init_(ZuMv(params), [](const EngineParams &) { return true; });
+    return init_(ZuMv(params), Zquic::Vantage::Unknown,
+      [](const EngineParams &) { return true; });
   }
 
   void final() {
     bool ok = EngineCtl::lock(ZmEngineState::Stopped, [this]() {
-      if (m_qlogParams.enabled()) ZquicLogger::final();
+      ZquicLogger::final(m_qlogTrace);
       m_mx = nullptr;
       m_rxThread = 0;
       m_txThread = 0;
@@ -787,6 +788,7 @@ public:
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
   ZuCSpan keyLogPath() const { return m_keyLogPath; }
+  ZquicLogger::Trace &qlogTrace() { return m_qlogTrace; }
   ZquicLogDiag qlogDiag() const { return ZquicLogger::diag(); }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
@@ -825,10 +827,10 @@ public:
 
 protected:
   template <typename Params, typename L>
-  bool init_(Params params, L l) {
+  bool init_(Params params, Zquic::Vantage::T vantage, L l) {
     return EngineCtl::lock(
 	ZmEngineState::Stopped,
-	[this, params = ZuMv(params), l = ZuMv(l)]() mutable -> bool {
+	[this, params = ZuMv(params), vantage, l = ZuMv(l)]() mutable -> bool {
       m_errorFn = ZuMv(params.errorFn());
       if (!m_errorFn) m_errorFn = defaultErrorFn();
       if (!validate_(params)) return false;
@@ -862,7 +864,8 @@ protected:
 	  !AddressToken::generateSecret(m_tokenSecret))
 	return false;
       if (!init_alpn_(params.alpn())) return false;
-      if (m_qlogParams.enabled() && !ZquicLogger::init(m_qlogParams))
+      if (m_qlogParams.enabled() &&
+	  !ZquicLogger::init(m_qlogTrace, m_qlogParams, vantage))
 	return false;
       return l(params);
     });
@@ -893,12 +896,19 @@ protected:
   }
 
   void stop_() {
-    rxRun([this]() {
-      txRun([this]() {
-	stopQLog_();
-	this->stopped(true);
-      });
-    });
+    rxRun([this]() { stop_1(); });
+  }
+
+  void stop_1() {
+    txRun([this]() { stop_2(); });
+  }
+
+  void stop_2() {
+    stopQLog_([this]() { stop_3(true); });
+  }
+
+  void stop_3(bool ok) {
+    this->stopped(ok);
   }
 
   template <typename L>
@@ -918,9 +928,12 @@ protected:
     ZquicLogger::start();
   }
 
-  void stopQLog_() {
-    if (!m_qlogParams.enabled()) return;
-    ZquicLogger::stop();
+  template <typename L>
+  void stopQLog_(L l) {
+    if (!m_qlogParams.enabled()) { l(); return; }
+    ZquicLogger::close(m_qlogTrace, [this, l = ZuMv(l)]() mutable {
+      rxRun(ZuMv(l));
+    });
   }
 
   template <typename Link>
@@ -1037,6 +1050,7 @@ private:
   ParamString		m_keyPath;
   ParamString		m_keyLogPath;
   ZquicLogParams		m_qlogParams;
+  ZquicLogger::Trace	m_qlogTrace;
   uint64_t		m_maxData = DefaultMaxData;
   uint64_t		m_maxStreamData = DefaultMaxStreamData;
   uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
@@ -1089,8 +1103,8 @@ public:
 	"client certPath and keyPath must be configured together"));
       return false;
     }
-    return this->init_(
-      ZuMv(params), [](const ClientParams &) { return true; });
+    return this->init_(ZuMv(params), Zquic::Vantage::Client,
+      [](const ClientParams &) { return true; });
   }
 
   void final() {
@@ -1151,8 +1165,8 @@ friend ZmEngine<App>;
 	"server certPath and keyPath are required"));
       return false;
     }
-    return this->init_(
-      ZuMv(params), [](const ServerParams &) { return true; });
+    return this->init_(ZuMv(params), Zquic::Vantage::Server,
+      [](const ServerParams &) { return true; });
   }
 
   void final() {
@@ -1366,7 +1380,7 @@ private:
     buf->length = unsigned(n);
     bool sent = sendPkt_(ZuMv(buf), d.addr);
     if (sent) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	resetBytes = unsigned(n)
       ](auto &o, ZuTime time) {
 	SecEvent event{
@@ -1386,7 +1400,7 @@ private:
     LinkRef link;
     link = this->app()->accepted(info);
     if (!link) return nullptr;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       local = local(),
       remote = info.peer,
       origDCID = info.origDCID.length() ? info.origDCID : info.header.dcid,
@@ -1420,13 +1434,10 @@ private:
   }
 
 public:
-	void disconnected(Link *link, bool) {
-	  if (Base::stopping()) {
-	    if (m_stopCount && !--m_stopCount) {
-	      m_links->clean();
-	      Base::stopQLog_();
-	      this->stopped(true);
-      }
+  void disconnected(Link *link, bool) {
+    if (Base::stopping()) {
+      if (m_stopCount && !--m_stopCount)
+	stop_1();
       return;
     }
     m_links->del(link);
@@ -1450,8 +1461,7 @@ private:
     uint16_t localPort = this->app()->localPort();
     if (!Endpoint::init(this->mx()) ||
 	!Endpoint::openUDP(PathMode::ServerUnconnected, localIP, localPort)) {
-      Base::stopQLog_();
-      this->started(false);
+      Base::stopQLog_([this]() { this->started(false); });
     }
   }
 
@@ -1463,11 +1473,16 @@ private:
     while (LinkRef ref = i.val())
       if (ref) ref->disconnect();
     m_routes.clear();
-    if (!m_stopCount) {
-      m_links->clean();
-      Base::stopQLog_();
-      this->stopped(true);
-    }
+    if (!m_stopCount) stop_1();
+  }
+
+  void stop_1() {
+    m_links->clean();
+    Base::stopQLog_([this]() { stop_2(); });
+  }
+
+  void stop_2() {
+    this->stopped(true);
   }
 
   bool sendVersionNegotiation_(const LongHdr &h, ZiSockAddr addr) {
@@ -1479,7 +1494,7 @@ private:
     buf->length = unsigned(n);
     bool sent = sendPkt_(ZuMv(buf), ZuMv(addr));
     if (sent) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	version = h.version
       ](auto &o, ZuTime time) {
 	VersionEvent event;
@@ -1501,7 +1516,7 @@ private:
     ZuBSpan token = initialToken_(packet, info.header);
     if (!token) {
       ++m_addressValidationDiag.retryRejected;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	tokenLength = 0U
       ](auto &o, ZuTime time) {
 	SecEvent event{
@@ -1537,7 +1552,7 @@ private:
 	case TokenStatus::ODCID: ++m_addressValidationDiag.tokenODCIDMismatch; break;
 	default: break;
       }
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	status,
 	tokenLength = token.length()
       ](auto &o, ZuTime time) {
@@ -1569,7 +1584,7 @@ private:
 	if (!(tokenInfo.serverCID == info.header.dcid)) {
 	  ++m_addressValidationDiag.retryRejected;
 	  ++m_addressValidationDiag.tokenODCIDMismatch;
-	  ZquicLOG(([
+	  ZquicLOG(app()->qlogTrace(), ([
 	    tokenLength = token.length()
 	  ](auto &o, ZuTime time) {
 	    SecEvent event{
@@ -1589,7 +1604,7 @@ private:
 	info.origDCID = tokenInfo.origDCID.length() ?
 	  tokenInfo.origDCID : info.header.dcid;
 	++m_addressValidationDiag.retryAccepted;
-	ZquicLOG(([
+	ZquicLOG(app()->qlogTrace(), ([
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
 	  SecEvent event{
@@ -1608,7 +1623,7 @@ private:
 	if (!app()->newTokenAddressValidation() || tokenInfo.serverCID.length()) {
 	  ++m_addressValidationDiag.retryRejected;
 	  ++m_addressValidationDiag.tokenKindMismatch;
-	  ZquicLOG(([
+	  ZquicLOG(app()->qlogTrace(), ([
 	    tokenLength = token.length()
 	  ](auto &o, ZuTime time) {
 	    SecEvent event{
@@ -1624,7 +1639,7 @@ private:
 	}
 	info.origDCID = info.header.dcid;
 	++m_addressValidationDiag.newTokenAccepted;
-	ZquicLOG(([
+	ZquicLOG(app()->qlogTrace(), ([
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
 	  SecEvent event{
@@ -1640,7 +1655,7 @@ private:
       default:
 	++m_addressValidationDiag.retryRejected;
 	++m_addressValidationDiag.tokenKindMismatch;
-	ZquicLOG(([
+	ZquicLOG(app()->qlogTrace(), ([
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
 	  SecEvent event{
@@ -1678,7 +1693,7 @@ private:
     bool sent = sendPkt_(ZuMv(buf), ZuMv(addr));
     if (sent) {
       ++m_addressValidationDiag.retrySent;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	tokenLength = token.length(),
 	packetBytes = unsigned(n)
       ](auto &o, ZuTime time) {

@@ -59,6 +59,10 @@ struct Foo {
   friend ZtStructPrint ZuPrintType(Foo *);
 };
 
+#define FooFloatFields \
+  (((float_),		(Ctor<8>)),	(Float)), \
+  (((float_ranged),	(Ctor<9>)),	(Float, 0.42, 0.0, 1))
+
 ZtStruct((Foo, JSON),
   (((string, Rd),	(Ctor<0>)),	(CString, "hello \"world\"")),
   (((bytes),		(Ctor<1>)),	(Bytes, ZuBSpan{"bytes"})),
@@ -71,8 +75,7 @@ ZtStruct((Foo, JSON),
     					(Int32, Values::Normal)),
   (((daFlags),		(Ctor<7>, Flags<Flags::Map>)),
     					(UInt128, Flags::Bit1())),
-  (((float_),		(Ctor<8>)),	(Float)),
-  (((float_ranged),	(Ctor<9>)),	(Float, 0.42, 0.0, 1)),
+  FooFloatFields,
   (((fixed),		(Ctor<10>)),	(Fixed)),
   (((decimal),		(Ctor<11>)),	(Decimal)),
   (((time_),		(Ctor<12>)),	(Time)),
