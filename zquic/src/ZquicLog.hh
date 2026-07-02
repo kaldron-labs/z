@@ -605,14 +605,6 @@ public:
   static bool init(const ZquicLogParams &params) {
     return instance()->init_(params);
   }
-  static bool linkInfo(Zquic::Vantage::T vantage) {
-    return instance()->linkInfo_(Zquic::LinkInfo{
-      .vantage = vantage
-    });
-  }
-  static bool linkInfo(const Zquic::LinkInfo &linkInfo) {
-    return instance()->linkInfo_(linkInfo);
-  }
   static void start() { instance()->start_(); }
   static void stop() { instance()->stop_(); }
   static void final() { instance()->final_(); }
@@ -839,7 +831,6 @@ private:
 
   bool enabled_() const { return m_enabled.load_(); }
   bool init_(const ZquicLogParams &);
-  bool linkInfo_(const Zquic::LinkInfo &);
   void start_();
   void stop_();
   void final_();
@@ -947,11 +938,6 @@ private:
   bool			m_started = false;
   bool			m_headerWritten = false;
   ZquicLogParams		m_params;
-  Zquic::Vantage::T	m_vantage = Zquic::Vantage::Unknown;
-  ZtBArray<>		m_origDCID;
-  ZtBArray<>		m_groupID;
-  ZtBArray<>		m_dcid;
-  ZtBArray<>		m_scid;
   ZmThread		m_thread;
   Ring			m_ring;
   ZquicLogSink		m_sink;
@@ -970,8 +956,6 @@ private:
 struct ZquicLogger {
   static constexpr bool enabled() { return false; }
   static bool init(const ZquicLogParams &) { return true; }
-  static bool linkInfo(Zquic::Vantage::T) { return true; }
-  static bool linkInfo(const Zquic::LinkInfo &) { return true; }
   static void start() { }
   static void stop() { }
   static void final() { }

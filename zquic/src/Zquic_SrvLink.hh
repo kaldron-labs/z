@@ -287,15 +287,6 @@ private:
       m_bootstrap.initialDCID(), m_bootstrap.localInitialSCID(),
       m_bootstrap.clientInitialSCID(),
       m_bootstrap.origDCID(), m_bootstrap.origDCID());
-    if (ZquicLogger::enabled()) {
-      ZquicLogger::linkInfo(Zquic::LinkInfo{
-	.vantage = Zquic::Vantage::Server,
-	.origDCID = m_bootstrap.origDCID(),
-	.groupID = m_bootstrap.origDCID(),
-	.dcid = m_bootstrap.initialDCID(),
-	.scid = m_bootstrap.localInitialSCID()
-      });
-    }
     Base::addLocalCID_(
       m_bootstrap.localInitialSCID(), 0, m_bootstrap.statelessResetToken());
     if (!Base::loadServerTransportParams_(m_bootstrap)) return false;

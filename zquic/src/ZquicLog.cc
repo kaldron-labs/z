@@ -906,11 +906,6 @@ bool ZquicLogger::init_(const ZquicLogParams &params)
   Guard guard(m_lock);
   if (m_started) return false;
   m_params = params;
-  m_vantage = Zquic::Vantage::Unknown;
-  m_origDCID.length(0);
-  m_groupID.length(0);
-  m_dcid.length(0);
-  m_scid.length(0);
   m_headerWritten = false;
   m_configured = params.enabled();
   m_enabled.store_(false);
@@ -920,35 +915,6 @@ bool ZquicLogger::init_(const ZquicLogParams &params)
   m_ringBackPressure.store_(0);
   m_writerFailures.store_(0);
   m_bytesWritten.store_(0);
-  return true;
-}
-
-bool ZquicLogger::linkInfo_(const Zquic::LinkInfo &linkInfo)
-{
-  Guard guard(m_lock);
-  if (m_headerWritten) return false;
-  if (linkInfo.vantage != Zquic::Vantage::Unknown) {
-    if (m_vantage != Zquic::Vantage::Unknown &&
-	linkInfo.vantage != m_vantage)
-      return false;
-    m_vantage = linkInfo.vantage;
-  }
-  if (linkInfo.origDCID) {
-    m_origDCID.length(0);
-    m_origDCID = linkInfo.origDCID;
-  }
-  if (linkInfo.groupID) {
-    m_groupID.length(0);
-    m_groupID = linkInfo.groupID;
-  }
-  if (linkInfo.dcid) {
-    m_dcid.length(0);
-    m_dcid = linkInfo.dcid;
-  }
-  if (linkInfo.scid) {
-    m_scid.length(0);
-    m_scid = linkInfo.scid;
-  }
   return true;
 }
 
@@ -993,11 +959,6 @@ void ZquicLogger::final_()
   m_enabled.store_(false);
   m_configured = false;
   m_params = {};
-  m_vantage = Zquic::Vantage::Unknown;
-  m_origDCID.length(0);
-  m_groupID.length(0);
-  m_dcid.length(0);
-  m_scid.length(0);
   m_headerWritten = false;
 }
 
@@ -1362,33 +1323,16 @@ void ZquicLogger::work_()
 
 bool ZquicLogger::writeHeader_()
 {
-  Zquic::Vantage::T vantage;
-  ZtBArray<> origDCID;
-  ZtBArray<> groupID;
-  ZtBArray<> dcid;
-  ZtBArray<> scid;
-  {
-    Guard guard(m_lock);
-    if (m_headerWritten) return true;
-    vantage = m_vantage;
-    origDCID = m_origDCID;
-    groupID = m_groupID;
-    dcid = m_dcid;
-    scid = m_scid;
-    m_headerWritten = true;
-  }
+  if (m_headerWritten) return true;
+  m_headerWritten = true;
   QLogHeader header{
     "urn:ietf:params:qlog:file:sequential",
     "application/qlog+json-seq",
     "zquic",
     QLogImplementation{"zquic", Z_VERNAME},
     QLogTrace{
-      QLogVantage{vantage},
+      QLogVantage{Zquic::Vantage::Unknown},
       QLogCommonFields{
-	.origDCID = origDCID,
-	.groupID = groupID,
-	.dcid = dcid,
-	.scid = scid,
 	.timeFormat = "relative_to_epoch",
 	.referenceTime = QLogReferenceTime{
 	  .clockType = "system",
@@ -2384,16 +2328,11 @@ static KeyTrigger::T qlogKeyTrigger_(
 bool ZquicLogger::writeKeyEvent_(
   EventName::T name, const SecEvent &event, ZuTime time)
 {
-  Zquic::Vantage::T vantage;
-  {
-    Guard guard(m_lock);
-    vantage = m_vantage;
-  }
   QLogKeyEvent qevent{
     qlogTime_(time),
     name,
     QLogKeyData{
-      qlogKeyType_(event, vantage),
+      qlogKeyType_(event, event.linkInfo.vantage),
       event.packetSpace == Zquic::PktNumSpace::AppData ?
 	event.value : QLogKeyPhaseNull,
       qlogKeyTrigger_(event)
@@ -2587,17 +2526,12 @@ bool ZquicLogger::writePathValid_(
   bool success = event.validated &&
     event.action != PathAction::Failed &&
     event.action != PathAction::Expired;
-  Zquic::Vantage::T vantage;
-  {
-    Guard guard(m_lock);
-    vantage = m_vantage;
-  }
   QLogPathValidEvent qevent{
     qlogTime_(time),
     EventName::PathValidated,
     QLogPathValidData{
       success,
-      vantage
+      event.linkInfo.vantage
     },
     event.linkInfo
   };

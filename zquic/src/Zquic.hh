@@ -1089,9 +1089,8 @@ public:
 	"client certPath and keyPath must be configured together"));
       return false;
     }
-    return this->init_(ZuMv(params), [](const ClientParams &params) {
-      return !params.qlogParams().enabled() || ZquicLogger::linkInfo(Zquic::Vantage::Client);
-    });
+    return this->init_(
+      ZuMv(params), [](const ClientParams &) { return true; });
   }
 
   void final() {
@@ -1152,9 +1151,8 @@ friend ZmEngine<App>;
 	"server certPath and keyPath are required"));
       return false;
     }
-    return this->init_(ZuMv(params), [](const ServerParams &params) {
-      return !params.qlogParams().enabled() || ZquicLogger::linkInfo(Zquic::Vantage::Server);
-    });
+    return this->init_(
+      ZuMv(params), [](const ServerParams &) { return true; });
   }
 
   void final() {
@@ -1388,27 +1386,24 @@ private:
     LinkRef link;
     link = this->app()->accepted(info);
     if (!link) return nullptr;
-    if (ZquicLogger::enabled()) {
-      CxnID origDCID = info.origDCID.length() ?
-	info.origDCID : info.header.dcid;
-      ZquicLogger::linkInfo(Zquic::LinkInfo{
+    ZquicLOG(([
+      local = local(),
+      remote = info.peer,
+      origDCID = info.origDCID.length() ? info.origDCID : info.header.dcid,
+      dcid = info.header.dcid,
+      scid = info.header.scid
+    ](auto &o, ZuTime time) {
+      Zquic::LinkInfo linkInfo{
 	.vantage = Zquic::Vantage::Server,
 	.origDCID = origDCID,
 	.groupID = origDCID,
-	.dcid = info.header.dcid,
-	.scid = info.header.scid
-      });
-	      ZquicLogger::cxnStarted(ZquicLog_::CxnStartedEvent{
-	.local = local(),
-	.remote = info.peer,
-	.linkInfo = Zquic::LinkInfo{
-	  .origDCID = origDCID,
-	  .groupID = origDCID,
-	  .dcid = info.header.dcid,
-	  .scid = info.header.scid
-	}
-      });
-    }
+	.dcid = dcid,
+	.scid = scid
+      };
+      o.logCxnStarted(
+	CxnStartedEvent{.local = local, .remote = remote, .linkInfo = linkInfo},
+	time);
+    }));
     Link *ptr = link.ptr();
     ptr->acceptInitialInfo_(info);
     if (!addLink_(ZuMv(link))) return nullptr;

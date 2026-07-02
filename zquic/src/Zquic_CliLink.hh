@@ -495,20 +495,21 @@ private:
       m_bootstrap.initialDCID(), m_bootstrap.initialSCID(),
       m_bootstrap.initialDCID(),
       m_bootstrap.initialDCID(), m_bootstrap.initialDCID());
-    if (ZquicLogger::enabled()) {
-      ZquicLogger::linkInfo(Zquic::LinkInfo{
+    ZquicLOG(([
+      local = Endpoint::local(),
+      remote = Endpoint::remote(),
+      linkInfo = Zquic::LinkInfo{
 	.vantage = Zquic::Vantage::Client,
 	.origDCID = m_bootstrap.initialDCID(),
 	.groupID = m_bootstrap.initialDCID(),
 	.dcid = m_bootstrap.initialDCID(),
 	.scid = m_bootstrap.initialSCID()
-      });
-      ZquicLogger::cxnStarted(ZquicLog_::CxnStartedEvent{
-	.local = Endpoint::local(),
-	.remote = Endpoint::remote(),
-	.linkInfo = Base::linkInfo_()
-      });
-    }
+      }
+    ](auto &o, ZuTime time) {
+      o.logCxnStarted(
+	CxnStartedEvent{.local = local, .remote = remote, .linkInfo = linkInfo},
+	time);
+    }));
     Base::configureLocalTransportParams_(app());
     if (!Base::deriveInitial_()) return false;
     if (!Base::initTLS_(CryptoConfig{
@@ -535,15 +536,6 @@ private:
       m_bootstrap.retrySCID(), m_bootstrap.initialSCID(),
       m_bootstrap.retrySCID(),
       m_bootstrap.initialDCID(), m_bootstrap.initialDCID());
-    if (ZquicLogger::enabled()) {
-      ZquicLogger::linkInfo(Zquic::LinkInfo{
-	.vantage = Zquic::Vantage::Client,
-	.origDCID = m_bootstrap.initialDCID(),
-	.groupID = m_bootstrap.initialDCID(),
-	.dcid = m_bootstrap.retrySCID(),
-	.scid = m_bootstrap.initialSCID()
-      });
-    }
     Base::configureLocalTransportParams_(app());
     if (!Base::deriveInitial_()) return false;
     if (!Base::initTLS_(CryptoConfig{
