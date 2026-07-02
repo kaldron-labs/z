@@ -14,7 +14,6 @@ using namespace ZuTestUtil;
 namespace {
 
 using Zhttp::Test::TempDir;
-using Zhttp::Test::cspan;
 using Zhttp::Test::loopbackPort;
 using Zhttp::Test::printFile;
 using Zhttp::Test::systemOK;

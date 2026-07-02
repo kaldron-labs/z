@@ -12,7 +12,6 @@
 namespace Zhttp::Test {
 
 using Zquic::Test::TempDir;
-using Zquic::Test::cspan;
 using Zquic::Test::haveCurlH3;
 using Zquic::Test::loopbackPort;
 using Zquic::Test::printFile;

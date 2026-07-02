@@ -10118,96 +10118,91 @@ private:
 
   bool startHandshakeState_() {
     if (m_linkState != LinkState::Starting) return false;
-    LinkState::T oldState = m_linkState;
-	    m_linkState = LinkState::Handshaking;
-	    ZquicLOG(([
-	      oldState,
-	      newState = m_linkState,
-	      linkInfo = linkInfo_()
-	    ](auto &o, ZuTime time) {
-	      CxnStateEvent event{
-		.oldState = oldState,
-		.newState = newState,
-		.linkInfo = linkInfo
-	      };
+    ZquicLOG(([
+      oldState = m_linkState,
+      newState = LinkState::Handshaking,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      CxnStateEvent event{
+	.oldState = oldState,
+	.newState = newState,
+	.linkInfo = linkInfo
+      };
       o.logCxnStateUpd(event, time);
     }));
+    m_linkState = LinkState::Handshaking;
     return true;
   }
 
   bool establishState_() {
     if (m_linkState != LinkState::Handshaking) return false;
-    LinkState::T oldState = m_linkState;
-	    m_linkState = LinkState::Established;
-	    ZquicLOG(([
-	      oldState,
-	      newState = m_linkState,
-	      linkInfo = linkInfo_()
-	    ](auto &o, ZuTime time) {
-	      CxnStateEvent event{
-		.oldState = oldState,
-		.newState = newState,
-		.linkInfo = linkInfo
-	      };
+    ZquicLOG(([
+      oldState = m_linkState,
+      newState = LinkState::Established,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      CxnStateEvent event{
+	.oldState = oldState,
+	.newState = newState,
+	.linkInfo = linkInfo
+      };
       o.logCxnStateUpd(event, time);
     }));
+    m_linkState = LinkState::Established;
     return true;
   }
 
   bool closeLinkState_() {
     if (m_linkState == LinkState::Closed) return false;
-    LinkState::T oldState = m_linkState;
-    m_linkState = LinkState::Closing;
-	    m_drainPTOs = 0;
-	    ZquicLOG(([
-	      oldState,
-	      newState = m_linkState,
-	      linkInfo = linkInfo_()
-	    ](auto &o, ZuTime time) {
-	      CxnStateEvent event{
-		.oldState = oldState,
-		.newState = newState,
-		.linkInfo = linkInfo
-	      };
+    ZquicLOG(([
+      oldState = m_linkState,
+      newState = LinkState::Closing,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      CxnStateEvent event{
+	.oldState = oldState,
+	.newState = newState,
+	.linkInfo = linkInfo
+      };
       o.logCxnStateUpd(event, time);
     }));
+    m_linkState = LinkState::Closing;
+    m_drainPTOs = 0;
     return true;
   }
   bool drainLinkState_() {
     if (m_linkState == LinkState::Closed) return false;
-    LinkState::T oldState = m_linkState;
-    m_linkState = LinkState::Draining;
-	    m_drainPTOs = 0;
-	    ZquicLOG(([
-	      oldState,
-	      newState = m_linkState,
-	      linkInfo = linkInfo_()
-	    ](auto &o, ZuTime time) {
-	      CxnStateEvent event{
-		.oldState = oldState,
-		.newState = newState,
-		.linkInfo = linkInfo
-	      };
+    ZquicLOG(([
+      oldState = m_linkState,
+      newState = LinkState::Draining,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      CxnStateEvent event{
+	.oldState = oldState,
+	.newState = newState,
+	.linkInfo = linkInfo
+      };
       o.logCxnStateUpd(event, time);
     }));
+    m_linkState = LinkState::Draining;
+    m_drainPTOs = 0;
     return true;
   }
   void closedLinkState_() {
-    LinkState::T oldState = m_linkState;
-    m_linkState = LinkState::Closed;
-	    m_drainPTOs = 0;
-	    ZquicLOG(([
-	      oldState,
-	      newState = m_linkState,
-	      linkInfo = linkInfo_()
-	    ](auto &o, ZuTime time) {
-	      CxnStateEvent event{
-		.oldState = oldState,
-		.newState = newState,
-		.linkInfo = linkInfo
-	      };
+    ZquicLOG(([
+      oldState = m_linkState,
+      newState = LinkState::Closed,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      CxnStateEvent event{
+	.oldState = oldState,
+	.newState = newState,
+	.linkInfo = linkInfo
+      };
       o.logCxnStateUpd(event, time);
     }));
+    m_linkState = LinkState::Closed;
+    m_drainPTOs = 0;
   }
 
   // immutable

@@ -19,7 +19,6 @@ using namespace ZuTestUtil;
 namespace {
 
 using Zhttp::Test::TempDir;
-using Zhttp::Test::cspan;
 using Zhttp::Test::haveCurlH3;
 using Zhttp::Test::loopbackPort;
 using Zhttp::Test::printFile;
@@ -913,7 +912,7 @@ void testZhttpClientCaddyHttp()
   ZuCHECK(writeHttpCaddyfile(caddyfile, port, "caddy-http-ok"),
     "Zhttp client->Caddy HTTP Caddyfile generation failed");
   CaddyProcess caddy;
-  ZuCHECK(caddy.start(temp, cspan(caddyfile)),
+  ZuCHECK(caddy.start(temp, caddyfile.cspan()),
     "Zhttp client->Caddy HTTP start failed");
   ZuCHECK(waitHttpCaddyReady(port),
     "Zhttp client->Caddy HTTP did not become ready");
@@ -955,7 +954,7 @@ void testZhttpClientCaddyHttpsH1()
       caddyfile, port, certPath, keyPath, Path, "caddy-h1-ok"),
     "Zhttp client->Caddy HTTPS/H1 Caddyfile generation failed");
   CaddyProcess caddy;
-  ZuCHECK(caddy.start(temp, cspan(caddyfile)),
+  ZuCHECK(caddy.start(temp, caddyfile.cspan()),
     "Zhttp client->Caddy HTTPS/H1 start failed");
   ZuCHECK(waitCaddyReady(port, Path),
     "Zhttp client->Caddy HTTPS/H1 did not become ready");
@@ -969,7 +968,7 @@ void testZhttpClientCaddyHttpsH1()
   TLSClient client{&state};
   ZuCSpan alpn[] = { "http/1.1" };
   ZuCHECK(client.init(
-      Ztls::ClientParams(&mx, "3", "4").caPath(cspan(certPath)).alpn(alpn)),
+      Ztls::ClientParams(&mx, "3", "4").caPath(certPath.cspan()).alpn(alpn)),
     "Zhttp client->Caddy HTTPS/H1 client init failed");
   ZmRef<TLSClient::Link> link = new TLSClient::Link{&client};
   link->connect("localhost", port);
@@ -999,7 +998,7 @@ void testZhttpClientCaddyHttpsH3()
       caddyfile, port, certPath, keyPath, Path, "caddy-h3-ok"),
     "Zhttp client->Caddy HTTPS/H3 Caddyfile generation failed");
   CaddyProcess caddy;
-  ZuCHECK(caddy.start(temp, cspan(caddyfile)),
+  ZuCHECK(caddy.start(temp, caddyfile.cspan()),
     "Zhttp client->Caddy HTTPS/H3 start failed");
   ZuCHECK(waitCaddyReady(port, Path),
     "Zhttp client->Caddy HTTPS/H3 did not become ready");
@@ -1015,7 +1014,7 @@ void testZhttpClientCaddyHttpsH3()
   H3Client client{&state};
   ZuCSpan alpn[] = { "h3" };
   ZuCHECK(client.init(
-      Zquic::ClientParams(&mx, "3", "4").caPath(cspan(certPath)).alpn(alpn)
+      Zquic::ClientParams(&mx, "3", "4").caPath(certPath.cspan()).alpn(alpn)
 	.maxData(32768).maxStreamData(8192).maxStreamsBidi(8).maxStreamsUni(8)),
     "Zhttp client->Caddy HTTPS/H3 client init failed");
   ZmRef<H3Client::Link> link = new H3Client::Link{&client};
@@ -1153,11 +1152,11 @@ void testCurlZhttpHttpsH1Server()
   ZuCSpan alpn[] = { "http/1.1" };
   ZuCHECK(server.init(
       Ztls::ServerParams(&mx, "3", "4")
-	.certPath(cspan(certPath)).keyPath(cspan(keyPath)).alpn(alpn)),
+	.certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn)),
     "curl->Zhttp HTTPS/H1 server init failed");
   server.listen();
   ZuCHECK(waitDone(state.listening), "curl->Zhttp HTTPS/H1 listen timed out");
-  ZuCHECK(curlHTTPSH1(state.port, cspan(certPath), state.body),
+  ZuCHECK(curlHTTPSH1(state.port, certPath.cspan(), state.body),
     "curl HTTPS/H1 request to local Zhttp server failed");
   ZuCHECK(waitDone(state.done), "curl->Zhttp HTTPS/H1 server timed out");
   ZuCHECK(!state.errors && state.request.complete &&
@@ -1188,7 +1187,7 @@ void testCurlZhttpHttpsH3Server()
   ZuCSpan alpn[] = { "h3" };
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
-	.certPath(cspan(certPath)).keyPath(cspan(keyPath)).alpn(alpn)
+	.certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn)
 	.maxData(32768).maxStreamData(8192).maxStreamsBidi(8).maxStreamsUni(8)),
     "curl->Zhttp HTTPS/H3 server init failed");
   ZuCHECK(server.start(), "curl->Zhttp HTTPS/H3 server listen failed");
