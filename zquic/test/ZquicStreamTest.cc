@@ -513,8 +513,8 @@ struct TestLink :
       d, 0, d.buf->length,
       [this, qlogSeen](
 	  Zquic::PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
-	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, PktEvent *qlog) {
+		  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+		  typename Base::RxAckMeta &ack, auto *qlog) {
 	if (qlogSeen) *qlogSeen = qlog != nullptr;
 	return Base::consumeProtFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,

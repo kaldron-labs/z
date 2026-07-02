@@ -15,6 +15,8 @@
 
 #ifdef Zquic_DEBUG
 
+using namespace ZquicLog_;
+
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props = ZuTypeList<>,

@@ -503,7 +503,7 @@ private:
 	.dcid = m_bootstrap.initialDCID(),
 	.scid = m_bootstrap.initialSCID()
       });
-      ZquicLogger::cxnStarted(CxnStartedEvent{
+      ZquicLogger::cxnStarted(ZquicLog_::CxnStartedEvent{
 	.local = Endpoint::local(),
 	.remote = Endpoint::remote(),
 	.linkInfo = Base::linkInfo_()
@@ -1079,7 +1079,7 @@ private:
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, PktEvent *qlog) {
+	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvent *qlog) {
 	return consumeFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog);
       });
@@ -1091,7 +1091,7 @@ private:
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, PktEvent *qlog) {
+	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvent *qlog) {
 	return consumeFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog);
       });
@@ -1100,7 +1100,7 @@ private:
   bool consumeFrames_(
     PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack,
-    PktEvent *qlog) {
+    ZquicLog_::PktEvent *qlog) {
     ZiSockAddr peer = addr;
     bool ok = Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,

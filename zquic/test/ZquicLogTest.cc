@@ -15,6 +15,7 @@
 
 using namespace ZuTestUtil;
 using namespace Zquic;
+using namespace ZquicLog_;
 
 static Zi::Path testPath_(ZuCSpan name)
 {
