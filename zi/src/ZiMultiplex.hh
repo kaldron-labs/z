@@ -931,9 +931,9 @@ private:
   bool start__();
   bool stop__();
 
-  void stop_1();	// Rx thread - disconnect all connections
-  void stop_2();	// Rx thread - stop connecting / listening / accepting
-  void stop_3();	// App thread - clean up
+  void stop_0();	// Rx thread - disconnect all connections
+  void stop_1();	// Rx thread - stop connecting / listening / accepting
+  void stop_2();	// App thread - clean up
 
   void busy() { ZmScheduler::busy(); }
   void idle() { ZmScheduler::idle(); }

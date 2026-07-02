@@ -303,7 +303,7 @@ void DB::stop_()
     case Active:
     case Inactive:
       break;
-    case Electing:	// holdElection will resume stop_1() at completion
+    case Electing:	// holdElection will resume stop_0() at completion
       return;
     default:
       ZiLOG(Fatal, "Zdb", "DB::stop_ called out of order");
@@ -313,10 +313,10 @@ void DB::stop_()
 
   ZiLOG(Info, "Zdb", "stopping");
 
-  stop_1();
+  stop_0();
 }
 
-void DB::stop_1()
+void DB::stop_0()
 {
   ZdbDEBUG(this, ([hostID = m_cf.hostID, state = this->state()](auto &s) {
     s << hostID << " state=" << HostState::name(state);
@@ -324,7 +324,7 @@ void DB::stop_1()
 
   ZmAssert(invoked());
 
-  // re-check state, stop_1() is resumed via holdElection()
+  // re-check state, stop_0() is resumed via holdElection()
 
   using namespace HostState;
 
@@ -350,10 +350,10 @@ void DB::stop_1()
   stopListening();
 
   // close all connections (and wait for them to be disconnected)
-  if (!disconnectAll()) stop_2();
+  if (!disconnectAll()) stop_1();
 }
 
-void DB::stop_2()
+void DB::stop_1()
 {
   ZdbDEBUG(this, ([hostID = m_cf.hostID, state = this->state()](auto &s) {
     s << hostID << " state=" << HostState::name(state);
@@ -365,11 +365,11 @@ void DB::stop_2()
   all([](AnyTable *table, ZmFn<void(bool)> done) {
     table->close([done = ZuMv(done)]() mutable { done(true); });
   }, [](DB *db, bool) {
-    db->stop_3();
+    db->stop_2();
   });
 }
 
-void DB::stop_3()
+void DB::stop_2()
 {
   ZdbDEBUG(this, ([hostID = m_cf.hostID, state = this->state()](auto &s) {
     s << hostID << " state=" << HostState::name(state);
@@ -426,7 +426,11 @@ void DB::listening(const ZiListenInfo &)
 void DB::listenFailed(bool transient)
 {
   bool retry = transient && running();
-  if (retry) run([this]() { listen(); }, Zm::now((int)m_cf.reconnectFreq));
+  if (retry)
+    m_mx->add(&m_listenTimer, Zm::now(int(m_cf.reconnectFreq)),
+	ZmScheduler::Update,
+	[this](auto &&arm) { return arm([this]() { listen(); }); },
+	m_cf.sid);
   ZiLOG(Warning, "Zdb", ([ip = m_self->ip(), port = m_self->port(), retry](auto &s) {
     s << "listen failed on (" << ip << ':' << port << ')';
     if (retry) s << " - retrying...";
@@ -435,6 +439,7 @@ void DB::listenFailed(bool transient)
 
 void DB::stopListening()
 {
+  m_mx->del(&m_listenTimer);
   if (!m_self->standalone()) {
     ZiLOG(Info, "Zdb", "stop listening");
     m_mx->stopListening(m_self->ip(), m_self->port());
@@ -489,7 +494,7 @@ void DB::holdElection()
       break;
     case ZmEngineState::Stopping:
     case ZmEngineState::StartPending:
-      run([this]() { stop_1(); });
+      run([this]() { stop_0(); });
       break;
   }
 }
@@ -894,7 +899,7 @@ void DB::disconnected(ZmRef<Cxn> cxn)
   switch (ZmEngine::state()) {
     case ZmEngineState::Stopping:
     case ZmEngineState::StartPending:
-      if (--m_nPeers <= 0) run([this]() { stop_2(); });
+      if (--m_nPeers <= 0) run([this]() { stop_1(); });
       break;
   }
 

@@ -1557,10 +1557,16 @@ protected:
     this->started(true);
   }
 
-  void stop_() {
-    rxRun([this]() {
-      txRun([this]() { this->stopped(true); });
-    });
+  void stop_() {		// engine callback - enter Rx thread
+    rxRun([this]() { stop_0(); });
+  }
+
+  void stop_0() {		// Rx thread - enter Tx thread
+    txRun([this]() { stop_1(); });
+  }
+
+  void stop_1() {		// Tx thread - complete stop
+    this->stopped(true);
   }
 
   template <typename L>

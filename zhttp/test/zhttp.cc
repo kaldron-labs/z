@@ -1379,7 +1379,7 @@ struct H1PoolClient : public Client_<App> {
     if (!this->running() && stopped >= links.length())
       BaseClient::stop_();
   }
-  void stop_() {
+  void stop_() {		// client thread - disconnect links before base stop
     if (!links.length() || stopped >= links.length()) {
       BaseClient::stop_();
       return;

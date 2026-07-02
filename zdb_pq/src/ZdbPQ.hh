@@ -1946,8 +1946,8 @@ public:
 private:
   bool start_();
   void stop_();
+  void stop_0();
   void stop_1();
-  void stop_2();
 
   void wake();
   void run_();
