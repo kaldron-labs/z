@@ -217,23 +217,17 @@ class ZeAPI ZiLog {
     void push(Fn fn) {
       Guard guard(m_lock);
       Queue_::push(ZuMv(fn));
-      ++m_count;
     }
     void unshift(Fn fn) {
       Guard guard(m_lock);
       Queue_::unshift(ZuMv(fn));
-      ++m_count;
     }
     Fn shift() {
       Guard guard(m_lock);
-      Fn fn = Queue_::shift();
-      if (fn) --m_count;
-      return fn;
+      return Queue_::shift();
     }
-    unsigned count() const { return m_count.load_(); }
 
-    mutable Lock		m_lock;
-    ZmAtomic<unsigned>	m_count = 0;
+    Lock	m_lock;
   };
 
   ZiLog();
@@ -354,6 +348,7 @@ private:
   ZmThread		m_thread;
   Ring			m_ring;
   Queue			m_queue;
+  ZmAtomic<unsigned>	m_queueCount = 0;
 
   Lock			m_lock;
     ZmRef<ZiSink>	  m_sink;
