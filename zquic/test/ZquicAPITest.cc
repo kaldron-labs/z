@@ -521,16 +521,20 @@ void testStatelessResetDetection()
   ZuTestScope(testStatelessResetDetection);
 
 #ifdef Zquic_DEBUG
-  Zi::Path qlogPath = testPath_("ZquicAPIStatelessReset.sqlog");
-  ZiFile::remove(qlogPath);
-  ZquicLogParams params;
-  params.enabled(true).path(qlogPath).thread("zquic-qlog-api-reset");
-  ZuCHECK(ZquicLogger::init(params), "stateless reset qlog init failed");
-  ZquicLogger::start();
+	Zi::Path qlogPath = testPath_("ZquicAPIStatelessReset.sqlog");
+	ZiFile::remove(qlogPath);
+	ZquicLogParams params;
+	params.enabled(true).path(qlogPath).thread("zquic-qlog-api-reset");
 #endif
 
-  EngineFixture fixture;
-  ZmRef<TestLink> link = new TestLink{&fixture.app};
+	EngineFixture fixture;
+#ifdef Zquic_DEBUG
+	ZuCHECK(ZquicLogger::init(
+	    fixture.app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "stateless reset qlog init failed");
+	ZquicLogger::start();
+#endif
+	ZmRef<TestLink> link = new TestLink{&fixture.app};
   Zquic::ResetToken token{"0123456789abcdef"};
   uint8_t packet[64] = {};
   memset(packet, 0xa5, sizeof(packet));
@@ -555,9 +559,9 @@ void testStatelessResetDetection()
     "stateless reset callback did not fire");
 
 #ifdef Zquic_DEBUG
-  ZquicLogger::stop();
-  ZquicLogDiag diag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag diag = ZquicLogger::diag();
+	ZquicLogger::final(fixture.app.qlogTrace());
   ZuCHECK(diag.recordsEnqueued >= 1,
     "stateless reset qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 1,
