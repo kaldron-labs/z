@@ -13,9 +13,10 @@
 
 #include <zlib/ZtLocalArray.hh>
 
+#include <zlib/ZiFile.hh>
+
 #include <sys/stat.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <openssl/evp.h>
@@ -1045,10 +1046,10 @@ void Crypto::keyLog_(int isEnc, PktNumSpace::T level, ZuBSpan secret)
   line << ' ';
   hexAppend_(line, secret);
   line << '\n';
-  FILE *f = fopen(m_keyLogPath.data(), "a");
-  if (!f) return;
-  (void)fwrite(line.data(), 1, line.length(), f);
-  fclose(f);
+  ZiFile file;
+  if (file.open(m_keyLogPath, ZiFile::Append | ZiFile::GC) != Zi::OK) return;
+  (void)file.write(line.data(), line.length());
+  file.close();
 }
 
 int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
