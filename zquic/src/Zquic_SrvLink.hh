@@ -28,7 +28,7 @@ public:
   using Base = Link<App, Impl, TxBufAlloc_, Stream_>;
   using Stream = Stream_;
   using StreamRef = ZmRef<Stream>;
-  static constexpr unsigned TLSBufSize = 64 * 1024;
+  static constexpr unsigned TLSBufSize = (64<<10); // 64K
   static constexpr unsigned RuntimePNLength = 2;
   static constexpr unsigned RuntimeCryptoChunk = 900;
   using Base::Base;

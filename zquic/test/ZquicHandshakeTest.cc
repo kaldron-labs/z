@@ -20,7 +20,7 @@ using namespace ZuTestUtil;
 
 namespace {
 
-constexpr unsigned TLSBufSize = 64 * 1024;
+constexpr unsigned TLSBufSize = (64<<10); // 64K
 constexpr unsigned MaxTLSMessages = 32;
 
 static ZtString<> readFile_(const Zi::Path &path)
