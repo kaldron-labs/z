@@ -22,7 +22,6 @@ using namespace ZuTestUtil;
 namespace {
 
 using Zhttp::Test::TempDir;
-using Zhttp::Test::cspan;
 using Zhttp::Test::haveCurlH3;
 using Zhttp::Test::loopbackPort;
 using Zhttp::Test::printFile;
@@ -315,7 +314,7 @@ ZtString<> executableDir(const char *argv0)
 
   ZuCSpan arg0{argv0};
   if (hasDirSep(arg0))
-    return executableBinDir(cspan(pathDirname(cspan(pathAbs(arg0)))));
+    return executableBinDir(pathDirname(pathAbs(arg0).cspan()).cspan());
 
   if (const char *path_ = ::getenv("PATH")) {
     ZuCSpan path{path_};
@@ -329,9 +328,9 @@ ZtString<> executableDir(const char *argv0)
 	dir << '.';
       ZtString<> candidate;
       candidate << dir << '/' << arg0;
-      ZtString<> abs = pathAbs(cspan(candidate));
-      if (pathExists(cspan(abs)))
-	return executableBinDir(cspan(pathDirname(cspan(abs))));
+      ZtString<> abs = pathAbs(candidate.cspan());
+      if (pathExists(abs.cspan()))
+	return executableBinDir(pathDirname(abs.cspan()).cspan());
       begin = i + 1;
     }
   }
@@ -478,19 +477,19 @@ void analyzePcap(unsigned port, TempDir &temp)
     "#!/bin/sh\n"
     "set -eu\n"
     "pcap_file=";
-  appendShellQuote(script, cspan(pcapPath));
+  appendShellQuote(script, pcapPath.cspan());
   script << "\n"
     "pcap_tsv=";
-  appendShellQuote(script, cspan(tsvPath));
+  appendShellQuote(script, tsvPath.cspan());
   script << "\n"
     "pcap_summary=";
-  appendShellQuote(script, cspan(summaryPath));
+  appendShellQuote(script, summaryPath.cspan());
   script << "\n"
     "pcap_err=";
-  appendShellQuote(script, cspan(errPath));
+  appendShellQuote(script, errPath.cspan());
   script << "\n"
     "key_log_file=";
-  appendShellQuote(script, cspan(keyLogPath));
+  appendShellQuote(script, keyLogPath.cspan());
   script << "\n"
     "[ -s \"$pcap_file\" ] || exit 0\n"
     "if command -v tshark >/dev/null 2>&1; then\n"
@@ -505,10 +504,10 @@ void analyzePcap(unsigned port, TempDir &temp)
       "if (max >= 3.0) printf(\"pcap stall gap=%.3f\\n\", max); } }' "
       "\"$pcap_tsv\" >\"$pcap_summary\"\n"
     "fi\n";
-  if (!writeFile(cspan(scriptPath), cspan(script), 0777)) return;
+  if (!writeFile(scriptPath.cspan(), script.cspan(), 0777)) return;
   ZtString<> cmd;
   cmd << "sh ";
-  appendShellQuote(cmd, cspan(scriptPath));
+  appendShellQuote(cmd, scriptPath.cspan());
   (void)::system(cmd.data());
 }
 
@@ -520,7 +519,7 @@ bool writeRoot(TempDir &temp, ZtString<> &rootPath)
   filePath << rootPath << Path;
   ZtString<> body;
   body << Body << '\n';
-  return writeFile(filePath, cspan(body));
+  return writeFile(filePath, body.cspan());
 }
 
 bool writeCaddyfile(
@@ -861,7 +860,7 @@ bool writeScript(
     appendZhttpCommand(script, c, port, certPath, tempPath);
   else
     appendCurlCommand(script, c, port, certPath, tempPath);
-  return writeFile(path, cspan(script), 0777);
+  return writeFile(path, script.cspan(), 0777);
 }
 
 void preserveTemp(TempDir &temp, bool force = false)
@@ -901,16 +900,16 @@ bool runCase_(const Case &c, uint64_t &duration)
   }
   auto caddyfile = temp.pathOf("Caddyfile");
   if ((c.pair == Pair::ZhttpCaddy || c.pair == Pair::CurlCaddy) &&
-      !writeCaddyfile(caddyfile, c.proto, port, cspan(rootPath),
-	cspan(certPath), cspan(keyPath))) {
+      !writeCaddyfile(caddyfile, c.proto, port, rootPath.cspan(),
+	certPath.cspan(), keyPath.cspan())) {
     std::cout << "# failed to write Caddyfile\n";
     preserveTemp(temp);
     return false;
   }
   auto script = temp.pathOf("matrix.sh");
   if (!writeScript(script, c, port, static_cast<const char *>(temp.path),
-      cspan(rootPath), cspan(certPath), cspan(keyPath), cspan(caddyfile),
-      cspan(matrixDir))) {
+      rootPath.cspan(), certPath.cspan(), keyPath.cspan(), caddyfile.cspan(),
+      matrixDir.cspan())) {
     std::cout << "# failed to write matrix script\n";
     preserveTemp(temp);
     return false;
