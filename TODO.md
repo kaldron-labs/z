@@ -1,6 +1,80 @@
 # TODO
 
-generally implement CRTP layer masking to reduce conflicts and inadvertent access from higher layers
+## Zquic
+
+fix local variables named `level` or `*Level` due to historical use with the removed `CryptoLevel` enum that should now be named `space` or `*Space` to align with `PktSpace`; do this for the examples in `zquic/GUIDELINES.md`
+
+---
+
+audit `zquic/GUIDELINES.md` for unnecessary repetition of the same guideline (e.g. 
+"Debug text logging is unrelated to qlog and should use `ZiLOG(Debug, ...)`"); improve
+the guideline document's organization and readability
+
+---
+
+Very few qlog fields, if any, are genuinely arbitrary strings. `ZeString` is overused. Almost all qlog data relates to QUIC protocol field values which are fixed-size scalars, IP addresses, ports, enumerated values or other closed vocabularies. Reasons that are in the code as short string literals should also be enumerations (aligning with system error codes). Detailed arbitrary string reasons are a rare exception. Almost all string conversions should occur via the JSON mapping, which is performed exclusively by the logger thread in logged lambda bodies.
+
+---
+
+do not `if (m_dcid.length() ...` this should be `if (m_dcid ...`; audit the code for
+unnecessary use of `.length()` in a boolean context
+
+---
+
+What is the use case for `U64Null`?
+
+---
+
+rename all diagnostic `struct`s to align with the `*Diag` convention:
+`*Stats` -> `*Diag`, (examples: `ZmHeapStats` -> `ZmHeapDiag`) (DO NOT rename `Zdf::Stats`, it is not diagnostic)
+`*Telemetry` -> `*Diag`, (examples: `ZiCxnTelemetry` -> `ZiCxnDiag`)
+
+---
+
+`...Bidi` and `...Uni` names still appear in the source code (e.g. `DefaultMaxStreamsBidi`). These should be `...Duplex` and `...Simplex` respectively.
+
+---
+
+align naming with `GUIDELINES.md`, example: `ZquicLogSecurityTrigger` is too long. In any case all such should be in an internal namespace (suggest: `ZquicLog_`), used with a `using namespace` directive, and called `SecTrigger`. Similarly `ZquicLogSecurityEvent`: `using namespace ZquicLog_; ... SecEvent ... `. `ConnectionID` should be `CxnID`
+
+---
+
+use `(N<<20)` instead of `N * 1024U * 1024U` and `(N<<10)` instead of `N * 1024U`, examples include `DefaultMaxData`; a trailing comment should explain, e.g. `inline constexpr uint64_t Foo = (1<<20); // 1M`
+
+---
+
+RuntimeDiag looks completely wrong. Why is it even needed? It should not explicitly
+perform individual member-wise copying, which is fragile and duplicative. Given:
+```
+struct A { ...data members... };
+struct B { ...data members... };
+struct C { A a; B b; };
+```
+`A(const A &)`, `B(const B &)`, and `C(const C &)` are all defaulted and can be used without specifying individual member-wise copies.
+
+---
+
+the `*Diag` structs look excessively large. Maintaining all these counters is
+overburdening the hot paths in the implementation. Reduce these structs to the minimum
+required, and use conditional compilation to exclude test-only and qlog-only members from 
+the run-time. Production release builds without qlog enabled should not be maintaining
+redundant diagnostic counters.
+
+---
+
+`Zquic.hh` is a generic protocol implementation header for many different QUIC client and/or server applications, it should not include test-only or test-specific functions:
+- why are hard-coded `"zqserv01"` and `"zqcli001"`in `writeInitialPingProbe` in this header?
+- functions like `padForProtSample` also seem to be wrongly placed in this header
+- audit `Zquic.hh` for all code that is test-only or specific to a particular application use case and factor out such code into the appropriate files
+  - test code should be under `zquic/test`, not `zquic/src`
+
+---
+
+`Zquic.hh` is too large. Suggest how to logically decompose it into a single master header and multiple additional subsidiary headers. Dependent code should continue to include `Zquic.hh`. The key dependent-facing API types that should be in `Zquic.hh` are `Engine`, `App`, `Client`, `Server`, `*Link`
+
+## Z generic
+
+CRTP layer masking to reduce conflicts and inadvertent access from higher layers
 
 ## Zquic
 
@@ -9,13 +83,6 @@ reference implementations:
 - `../msquic` Microsoft QUIC
 - `../quiche` Google Quiche
 - `../mvfst` Facebook mvfst
-
-## Zu
-
-replace occurrences of:
-`if constexpr (ZuIsSame<T, ZuStringT<"S">>{})`
-with:
-`if constexpr (T{} == "S")`
 
 ## devlayer
 

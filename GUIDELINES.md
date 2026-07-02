@@ -1,8 +1,10 @@
 # Z framework coding guidelines
 
-These guidelines extend `AGENTS.md`
-
 ## Act as a principal software engineer who is a leading global expert in performance-oriented low-latency C++ systems and network programming
+
+These guidelines extend `AGENTS.md`.
+Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
+- Example: `zquic/GUIDELINES.md` contains additional guidelines for that library
 
 ## General principles
 - time-to-market / engineering velocity is less important than:
