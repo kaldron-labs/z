@@ -339,13 +339,6 @@ void testQLogFileOutput()
   Zquic::CxnID groupID = id4(0x01, 0x02, 0x03, 0x04);
   Zquic::CxnID dcid = id4(0x11, 0x12, 0x13, 0x14);
   Zquic::CxnID scid = id4(0x21, 0x22, 0x23, 0x24);
-  ZuCHECK(ZquicLogger::linkInfo(Zquic::LinkInfo{
-      .vantage = Zquic::Vantage::Client,
-      .origDCID = odcid,
-      .groupID = groupID,
-      .dcid = dcid,
-      .scid = scid
-    }), "qlog linkInfo failed");
   ZquicLogger::start();
   ZuCHECK(ZquicLogger::enabled(), "qlog did not enable");
   PktEvent packet;
@@ -353,6 +346,7 @@ void testQLogFileOutput()
   packet.packetSpace = PktNumSpace::Initial;
   packet.packetSize = 1200;
   packet.linkInfo = Zquic::LinkInfo{
+    .vantage = Zquic::Vantage::Client,
     .origDCID = odcid,
     .groupID = groupID,
     .dcid = dcid,
@@ -367,6 +361,7 @@ void testQLogFileOutput()
     .local = ZiSockAddr{ZiIP{"127.0.0.1"}, 4443},
     .remote = ZiSockAddr{ZiIP{"127.0.0.1"}, 5555},
     .linkInfo = Zquic::LinkInfo{
+      .vantage = Zquic::Vantage::Server,
       .origDCID = odcid2,
       .groupID = groupID2,
       .dcid = dcid2,
@@ -386,10 +381,10 @@ void testQLogFileOutput()
   ZuCHECK(parseJSONSeq_(data) >= 3, "qlog JSON-SEQ parse failed");
   ZuCHECK(containsQLogFileSchema_(data), "qlog header missing file schema");
   ZuCHECK(containsQLogHeaderMetadata_(data), "qlog header linkInfo missing");
-  ZuCHECK(containsQLogVantage_(data, "client"),
-    "qlog header missing client vantage point");
+  ZuCHECK(containsQLogVantage_(data, "unknown"),
+    "qlog header should not assume a process-wide vantage point");
   ZuCHECK(containsQLogConnectionMetadata_(data),
-    "qlog header missing connection linkInfo");
+    "qlog packet event missing connection linkInfo");
   ZuCHECK(data.find<"CAFEBABE">() >= 0 &&
       data.find<"05060708">() >= 0 &&
       data.find<"31323334">() >= 0 &&
@@ -899,10 +894,10 @@ void testQLogTypedSecEvents()
   params.enabled(true).path(path).thread("zquic-qlog-security").ringSize(1<<15);
   ZuCHECK(ZquicLogger::init(params), "security qlog init failed");
   Zquic::CxnID odcid{"QLOG"};
-  ZuCHECK(ZquicLogger::linkInfo(Zquic::LinkInfo{
+  Zquic::LinkInfo linkInfo{
     .vantage = Zquic::Vantage::Client,
     .origDCID = odcid
-  }), "security qlog linkInfo failed");
+  };
   ZquicLogger::start();
 
   SecEvent key{
@@ -911,7 +906,8 @@ void testQLogTypedSecEvents()
     .keyType = SecKeyType::RX,
     .trigger = SecTrigger::Remote,
     .reason = SecReason::KeyPhase,
-    .value = 1
+    .value = 1,
+    .linkInfo = linkInfo
   };
   ZquicLogger::keyUpdated(ZuMv(key));
 
@@ -920,7 +916,8 @@ void testQLogTypedSecEvents()
     .packetSpace = PktNumSpace::Handshake,
     .keyType = SecKeyType::TX,
     .trigger = SecTrigger::HSComplete,
-    .reason = SecReason::PacketSpace
+    .reason = SecReason::PacketSpace,
+    .linkInfo = linkInfo
   };
   ZquicLogger::keyRetired(ZuMv(retired));
 
