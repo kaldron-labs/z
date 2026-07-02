@@ -58,8 +58,7 @@ template <typename Link_>
 ZuDerive(CxnRoutes_,
   (ZmHash<ZmRef<Cxn<Link_>>,
     ZmHashKey<Cxn_IDAxor<Link_>,
-      ZmHashLock<ZmPLock,
-	ZmHashHeapID<"Zquic.Endpoint.CxnRouter">>>>));
+      ZmHashHeapID<"Zquic.Endpoint.CxnRouter">>>));
 
 template <typename Link_>
 class CxnRouter {
@@ -209,8 +208,7 @@ private:
 template <typename Link_>
 ZuDerive(ServerLinks_,
   (ZmHash<ZmRef<Link_>,
-    ZmHashLock<ZmPLock,
-      ZmHashHeapID<"Zquic.Server.LinkHash">>>));
+    ZmHashHeapID<"Zquic.Server.LinkHash">>));
 
 template <typename Impl_>
 class Endpoint_ {
@@ -413,7 +411,7 @@ public:
 
   Endpoint_() = default;
   ~Endpoint_() {
-    if (!m_open.load_()) return;
+    if (!m_open) return;
     ZiAssert(false, "Zquic", (),
       "QUIC endpoint destroyed before finalization", return);
   }
@@ -440,7 +438,7 @@ public:
     ZiMultiplex *mx = m_mx;
     ZiAssert(mx->running(), "Zquic", (),
       "endpoint multiplexer is not running", return false);
-    if (m_open.load_() || m_cxn) return false;
+    if (m_open || m_cxn) return false;
 
     m_mode = mode;
     m_local.init(localIP, localPort);
@@ -495,7 +493,7 @@ public:
   }
 
   bool listening() const { return m_listening; }
-  bool connected() const { return m_connected.load_(); }
+  bool connected() const { return m_connected; }
   const ZiSockAddr &local() const { return m_local; }
   const ZiSockAddr &remote() const { return m_remote; }
   PathMode::T mode() const { return m_mode; }
@@ -516,22 +514,14 @@ public:
   bool send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (!buf) return false;
     ZiAssert(m_mx, "Zquic", (), "null endpoint multiplexer", return false);
-    if (!m_open.load_()) return false;
-    ++m_txDiag.sendCalls;
-    CxnRef cxn = m_cxn;
-    if (!cxn) return false;
-    if (endpointTxInvoked_()) {
-      ++m_txDiag.directCalls;
-      return send_(ZuMv(cxn), ZuMv(buf), ZuMv(addr));
-    }
-    ++m_txDiag.asyncCalls;
+    if (endpointTxInvoked_())
+      return send_(ZuMv(buf), ZuMv(addr), true);
     m_mx->txRun([
       this,
-      cxn = ZuMv(cxn),
       buf = ZuMv(buf),
       addr = ZuMv(addr)
     ]() mutable {
-      (void)send_(ZuMv(cxn), ZuMv(buf), ZuMv(addr));
+      (void)send_(ZuMv(buf), ZuMv(addr), false);
     });
     return true;
   }
@@ -619,10 +609,16 @@ private:
       ++m_rxDiag.failures;
   }
 
-  bool send_(CxnRef cxn, ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+  bool send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool direct) {
     ZiAssert(endpointTxInvoked_(), "Zquic", (),
       "QUIC endpoint send outside Tx thread", return false);
-    if (!cxn || m_cxn != cxn.ptr()) {
+    ++m_txDiag.sendCalls;
+    if (direct)
+      ++m_txDiag.directCalls;
+    else
+      ++m_txDiag.asyncCalls;
+    CxnRef cxn = m_cxn;
+    if (!cxn) {
       ++m_txDiag.txDropped;
       return false;
     }
@@ -689,9 +685,10 @@ private:
 
   EndpointTxDiag	m_txDiag;
 
-  ZmAtomic<unsigned>	m_connected = 0;
-  ZmAtomic<unsigned>	m_listening = 0;
-  ZmAtomic<unsigned>	m_open = 0;
+  // Advisory status snapshots; protocol decisions stay on Rx/Tx owners.
+  bool			m_connected = false;
+  bool			m_listening = false;
+  bool			m_open = false;
 };
 
 } // namespace Zquic_

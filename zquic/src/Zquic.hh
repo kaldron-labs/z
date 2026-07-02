@@ -386,6 +386,8 @@ struct RuntimeDiagCounter {
 #endif
 
 struct RuntimeRxDiag {
+  AckECN	ecnRx[3];
+
   [[no_unique_address]] RuntimeDiagCounter endpointReady = 0;
   [[no_unique_address]] RuntimeDiagCounter datagramsRx = 0;
   [[no_unique_address]] RuntimeDiagCounter bytesRx = 0;
@@ -420,7 +422,6 @@ struct RuntimeRxDiag {
   [[no_unique_address]] RuntimeDiagCounter oldKeysAccepted = 0;
   [[no_unique_address]] RuntimeDiagCounter keyDiscards = 0;
   [[no_unique_address]] RuntimeDiagCounter newTokenRx = 0;
-  AckECN	ecnRx[3];
   [[no_unique_address]] RuntimeDiagCounter failures = 0;
   [[no_unique_address]] RuntimeDiagCounter handshakeComplete = 0;
 };
@@ -429,6 +430,10 @@ struct RuntimeTxDiag {
   static constexpr unsigned Spaces = 3;
 
   uint64_t	packetsTx = 0;
+  bool		ptoTimerActive = false;
+  bool		lossTimerActive = false;
+  AckECN	peerAckECN[3];
+
   [[no_unique_address]] RuntimeDiagCounter bytesTx = 0;
   [[no_unique_address]] RuntimeDiagCounter cryptoBytesTx = 0;
   [[no_unique_address]] RuntimeDiagCounter streamBytesTx = 0;
@@ -491,9 +496,6 @@ struct RuntimeTxDiag {
   [[no_unique_address]] RuntimeDiagCounter congestionSSThresh = 0;
   [[no_unique_address]] RuntimeDiagCounter congestionBytesInFlight = 0;
   [[no_unique_address]] RuntimeDiagCounter persistentCongestion = 0;
-  bool		ptoTimerActive = false;
-  bool		lossTimerActive = false;
-  AckECN	peerAckECN[3];
   [[no_unique_address]] RuntimeDiagCounter ecnValidationFailures = 0;
   [[no_unique_address]] RuntimeDiagCounter unhandledAppEvents = 0;
   [[no_unique_address]] RuntimeDiagCounter failures = 0;

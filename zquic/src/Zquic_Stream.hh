@@ -769,8 +769,7 @@ ZuDerive(Streams_,
   (ZmHash<Stream_,
     ZmHashNode<Stream_,
       ZmHashKey<Stream_IDAxor<Stream_>,
-	ZmHashLock<ZmPLock,
-	  ZmHashHeapID<"Zquic.Stream.ObjectHash">>>>>));
+	ZmHashHeapID<"Zquic.Stream.ObjectHash">>>>));
 
 } // namespace Zquic
 
