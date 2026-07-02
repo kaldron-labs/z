@@ -44,8 +44,7 @@ public:
   using StreamsRef = ZmRef<Streams>;
   using ClosedStreams =
     ZmHashKV<uint64_t, bool,
-      ZmHashLock<ZmPLock,
-	ZmHashHeapID<"Zquic.Stream.ClosedHash">>>;
+      ZmHashHeapID<"Zquic.Stream.ClosedHash">>;
   using ClosedStreamsRef = ZmRef<ClosedStreams>;
   using PathResponses =
     ZmQueue<ControlFrame,
@@ -6546,14 +6545,12 @@ private:
   }
   bool closedStreamID_(uint64_t id) const {
     if (id > uint64_t(INT64_MAX)) return false;
-    ZmGuard guard(m_closedStreamsLock);
     unsigned i = unsigned(id & 3);
     uint64_t ordinal = StreamID::ordinal(id);
     if (ordinal < m_closedStreamBase[i]) return true;
     return m_closedStreams->find(id);
   }
   void closeStreamID_(uint64_t id) {
-    ZmGuard guard(m_closedStreamsLock);
     unsigned i = unsigned(id & 3);
     uint64_t ordinal = StreamID::ordinal(id);
     uint64_t &base = m_closedStreamBase[i];
@@ -7125,7 +7122,6 @@ private:
   };
   StreamsRef		m_streams;
   uint64_t		m_closedStreamBase[4] = {};
-  mutable ZmPLock	m_closedStreamsLock;
   ClosedStreamsRef	m_closedStreams;
 
   RuntimeRxDiag		m_rxDiag;
