@@ -427,20 +427,29 @@ void testZeroRTTPktDrop()
   Zi::Path qlogPath;
   qlogPath << "ZquicHandshakeZeroRTT.sqlog";
   ZiFile::remove(qlogPath);
-  ZquicLogParams params;
-  params.enabled(true).path(qlogPath).thread("zquic-qlog-0rtt");
-  ZuCHECK(ZquicLogger::init(params), "0-RTT qlog init failed");
-  ZquicLogger::start();
+	ZquicLogParams params;
+	params.enabled(true).path(qlogPath).thread("zquic-qlog-0rtt");
+	ZquicLogger::Trace trace;
+	ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Server),
+	  "0-RTT qlog init failed");
+	ZquicLogger::start();
 #endif
-  ZuCHECK(server.init(Zquic::CryptoConfig{true, true, "h3"}),
-    "server crypto init failed");
+	ZuCHECK(server.init(Zquic::CryptoConfig{
+	    .isServer = true,
+	    .enable0RTT = true,
+	    .alpn = "h3",
+#ifdef Zquic_DEBUG
+	    .qlogTrace = &trace
+#endif
+	  }),
+	  "server crypto init failed");
   ZuCHECK(server.rejectZeroRTT(), "0-RTT reject failed");
   ZuCHECK(!server.oneRTTReady() && server.diag().zeroRTTRejected == 2,
     "0-RTT reject affected handshake readiness");
 #ifdef Zquic_DEBUG
-  ZquicLogger::stop();
-  ZquicLogger::final();
-  ZtString<> qlog = readFile_(qlogPath);
+	ZquicLogger::stop();
+	ZquicLogger::final(trace);
+	ZtString<> qlog = readFile_(qlogPath);
   ZuCHECK(qlog.find<"zquic:zero_rtt_rejected">() >= 0 &&
       qlog.find<"\"reason\":\"0rtt\"">() >= 0 &&
       qlog.find<"\"success\":false">() >= 0,

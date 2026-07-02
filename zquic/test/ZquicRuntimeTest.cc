@@ -15,6 +15,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtString.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
@@ -203,8 +204,8 @@ struct RuntimeServerLink :
   RuntimeServerLink(RuntimeServer *app) : Base{app} { }
 
   void connected(Zi::Connected) { ++connectedCount; }
-  void disconnected(bool) { ++disconnectedCount; }
-  void streamed(ZmRef<Stream>) { ++streamedCount; }
+	void disconnected(bool) { ++disconnectedCount; }
+	void streamed(ZmRef<Stream>) { ++streamedCount; }
   void forceCloseTimeout() {
     app()->txInvoke(this, [link = ZmRef<RuntimeServerLink>{this}]() mutable {
       link->Base::closeTimeout_();
@@ -212,9 +213,9 @@ struct RuntimeServerLink :
     });
   }
 
-  ZmAtomic<unsigned> connectedCount = 0;
-  ZmAtomic<unsigned> disconnectedCount = 0;
-  ZmAtomic<unsigned> streamedCount = 0;
+	ZmAtomic<unsigned> connectedCount = 0;
+	ZmAtomic<unsigned> disconnectedCount = 0;
+	ZmAtomic<unsigned> streamedCount = 0;
 };
 
 ZmRef<RuntimeServer::Link> RuntimeServer::link(unsigned i)
@@ -253,9 +254,9 @@ bool waitUntil(L l)
 
 void waitThread(ZiMultiplex &mx, unsigned thread)
 {
-  ZmSemaphore done;
-  mx.invoke([&done]() { done.post(); }, thread);
-  done.wait();
+	ZmBlock<>{}([&mx, thread](auto wake) {
+	  mx.invoke([wake = ZuMv(wake)]() mutable { wake(); }, thread);
+	});
 }
 
 void waitDisconnect(ZiMultiplex &mx)
@@ -536,13 +537,17 @@ void testRuntimeEndpointOpen()
       clientLink->streamedCount == 2,
     "runtime stream objects did not process received STREAM frames");
 
-  clientLink->disconnect();
-  serverLink->forceCloseTimeout();
-  server.stop();
-  ZuCHECK(waitUntil([&clientLink]() {
-      return !clientLink->cxn() && clientLink->disconnectedCount == 1;
-    }) && !server.connected(),
-    "runtime endpoints remained connected after close");
+	ZmBlock<>{}([&clientLink](auto wake) {
+	  clientLink->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
+	});
+	waitDisconnect(mx);
+	ZuCHECK(serverLink->closed(), "runtime server did not observe client close");
+	serverLink->forceCloseTimeout();
+	ZuCHECK(server.stop(), "runtime server stop failed");
+	waitDisconnect(mx);
+	ZuCHECK(!clientLink->cxn() && clientLink->disconnectedCount == 1 &&
+	    !server.connected(),
+	  "runtime endpoints remained connected after close");
   waitDisconnect(mx);
 
   serverRxBidi = nullptr;

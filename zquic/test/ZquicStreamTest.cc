@@ -1504,15 +1504,19 @@ void testActivePathRuntimeBudget()
   }
   Zi::Path path = testPath_("ZquicStreamPathBudgetQLog.sqlog");
   ZiFile::remove(path);
-  ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-path-budget-qlog").
-    ringSize(1<<15);
-  ZuCHECK(ZquicLogger::init(params), "path-budget qlog init failed");
-  ZquicLogger::start();
+	ZquicLogParams params;
+	params.enabled(true).path(path).thread("zquic-path-budget-qlog").
+	  ringSize(1<<15);
 #endif
 
-  App app;
-  ZmRef<TestLink> server = testLink(&app, true);
+	App app;
+#ifdef Zquic_DEBUG
+	ZuCHECK(ZquicLogger::init(
+	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "path-budget qlog init failed");
+	ZquicLogger::start();
+#endif
+	ZmRef<TestLink> server = testLink(&app, true);
   server->initServerPath();
   ZuCHECK(!server->pathValidated() &&
       !server->pathAntiAmplification() &&
@@ -1544,9 +1548,9 @@ void testActivePathRuntimeBudget()
   server->closeForTest();
 
 #ifdef Zquic_DEBUG
-  ZquicLogger::stop();
-  ZquicLogDiag qdiag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag qdiag = ZquicLogger::diag();
+	ZquicLogger::final(app.qlogTrace());
   ZuCHECK(qdiag.recordsEnqueued >= 4, "path-budget qlog enqueue mismatch");
   ZuCHECK(qdiag.recordsWritten >= 5, "path-budget qlog write mismatch");
   ZuCHECK(qdiag.writerFailures == 0, "path-budget qlog writer failure");
@@ -1577,14 +1581,16 @@ void testPathValidationStateMachine()
 #ifdef Zquic_DEBUG
   Zi::Path path = testPath_("ZquicStreamPathValidationQLog.sqlog");
   ZiFile::remove(path);
-  ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-path-validation-qlog").
-    ringSize(1<<15);
-  ZuCHECK(ZquicLogger::init(params), "path-validation qlog init failed");
-  ZquicLogger::start();
+	ZquicLogParams params;
+	params.enabled(true).path(path).thread("zquic-path-validation-qlog").
+	  ringSize(1<<15);
 
-  App app;
-  ZmRef<TestLink> link = testLink(&app, true);
+	App app;
+	ZuCHECK(ZquicLogger::init(
+	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "path-validation qlog init failed");
+	ZquicLogger::start();
+	ZmRef<TestLink> link = testLink(&app, true);
   ZiSockAddr local{ZiIP{0x0a000001}, 4433};
   ZiSockAddr oldRemote{ZiIP{0x0a000002}, 50000};
   ZiSockAddr newRemote{ZiIP{0x0a000002}, 50001};
@@ -1633,9 +1639,9 @@ void testPathValidationStateMachine()
 
   link->closeForTest();
 
-  ZquicLogger::stop();
-  ZquicLogDiag diag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag diag = ZquicLogger::diag();
+	ZquicLogger::final(app.qlogTrace());
   ZuCHECK(diag.recordsEnqueued >= 6,
     "path-validation qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 7,
@@ -1665,14 +1671,16 @@ void testPMTUDQLog()
 
 #ifdef Zquic_DEBUG
   Zi::Path path = testPath_("ZquicStreamPMTUDQLog.sqlog");
-  ZiFile::remove(path);
-  ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-pmtud-qlog").ringSize(1<<15);
-  ZuCHECK(ZquicLogger::init(params), "PMTUD qlog init failed");
-  ZquicLogger::start();
+	ZiFile::remove(path);
+	ZquicLogParams params;
+	params.enabled(true).path(path).thread("zquic-pmtud-qlog").ringSize(1<<15);
 
-  App app{Zquic::BufSize};
-  ZmRef<TestLink> link = testLink(&app, true);
+	App app{Zquic::BufSize};
+	ZuCHECK(ZquicLogger::init(
+	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "PMTUD qlog init failed");
+	ZquicLogger::start();
+	ZmRef<TestLink> link = testLink(&app, true);
   link->initServerPath(
     ZiSockAddr{ZiIP{0x0a000001}, 4433},
     ZiSockAddr{ZiIP{0x0a000002}, 50000});
@@ -1690,9 +1698,9 @@ void testPMTUDQLog()
   link->losePMTUDProbe(1500);
   link->closeForTest();
 
-  ZquicLogger::stop();
-  ZquicLogDiag diag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag diag = ZquicLogger::diag();
+	ZquicLogger::final(app.qlogTrace());
   ZuCHECK(diag.recordsEnqueued >= 2, "PMTUD qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 3, "PMTUD qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "PMTUD qlog writer failure");
@@ -1720,13 +1728,15 @@ void testCIDQLog()
   Zi::Path path = testPath_("ZquicStreamCIDQLog.sqlog");
   ZiFile::remove(path);
 
-  ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-cid-qlog").ringSize(1<<15);
-  ZuCHECK(ZquicLogger::init(params), "CID qlog init failed");
-  ZquicLogger::start();
+	ZquicLogParams params;
+	params.enabled(true).path(path).thread("zquic-cid-qlog").ringSize(1<<15);
 
-  App app;
-  ZmRef<TestLink> link = testLink(&app);
+	App app;
+	ZuCHECK(ZquicLogger::init(
+	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "CID qlog init failed");
+	ZquicLogger::start();
+	ZmRef<TestLink> link = testLink(&app);
   Zquic::ResetToken token{"0123456789abcdef"};
   Zquic::CxnID localCID{"localcid"};
   ZuCHECK(link->addLocalCIDForQLog(localCID, 1, token),
@@ -1763,9 +1773,9 @@ void testCIDQLog()
 
   link->closeForTest();
 
-  ZquicLogger::stop();
-  ZquicLogDiag diag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag diag = ZquicLogger::diag();
+	ZquicLogger::final(app.qlogTrace());
 
   ZuCHECK(diag.recordsEnqueued >= 5, "CID qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 6, "CID qlog write mismatch");
@@ -1796,14 +1806,16 @@ void testAckECNValidationDisablesECN()
   ZuTestScope(testAckECNValidationDisablesECN);
 
   Zi::Path path = testPath_("ZquicStreamECNQLog.sqlog");
-  ZiFile::remove(path);
-  ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-ecn-qlog").ringSize(1<<15);
-  ZuCHECK(ZquicLogger::init(params), "ECN qlog init failed");
-  ZquicLogger::start();
+	ZiFile::remove(path);
+	ZquicLogParams params;
+	params.enabled(true).path(path).thread("zquic-ecn-qlog").ringSize(1<<15);
 
-  App app;
-  ZmRef<TestLink> link = testLink(&app);
+	App app;
+	ZuCHECK(ZquicLogger::init(
+	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "ECN qlog init failed");
+	ZquicLogger::start();
+	ZmRef<TestLink> link = testLink(&app);
   link->enableECN();
   ZuCHECK(!link->ecnDisabled(), "ECN did not enable for validation test");
   ZuCHECK(link->receiveMarked(1, Zquic::EcnMark::ECT0) &&
@@ -1855,9 +1867,9 @@ void testAckECNValidationDisablesECN()
     "impossible ACK_ECN did not disable ECN while preserving ACK processing");
   impossible->closeForTest();
 
-  ZquicLogger::stop();
-  ZquicLogDiag qdiag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag qdiag = ZquicLogger::diag();
+	ZquicLogger::final(app.qlogTrace());
 
   ZuCHECK(qdiag.recordsEnqueued >= 3, "ECN qlog enqueue mismatch");
   ZuCHECK(qdiag.recordsWritten >= 4, "ECN qlog write mismatch");
@@ -2691,10 +2703,12 @@ void testRuntimeReceiveQLog()
     "disabled-qlog receive packet was rejected");
   ZuCHECK(!disabledSeen, "disabled qlog constructed receive accumulator");
 
-  ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-runtime-qlog").ringSize(1<<15);
-  ZuCHECK(ZquicLogger::init(params), "runtime qlog init failed");
-  ZquicLogger::start();
+	ZquicLogParams params;
+	params.enabled(true).path(path).thread("zquic-runtime-qlog").ringSize(1<<15);
+	ZuCHECK(ZquicLogger::init(
+	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "runtime qlog init failed");
+	ZquicLogger::start();
   ZuCHECK(ZquicLogger::enabled(), "runtime qlog did not enable");
 
   bool enabledSeen = false;
@@ -2708,9 +2722,9 @@ void testRuntimeReceiveQLog()
   ZuCHECK(!link->receiveShort(ZuMv(bad)),
     "runtime qlog corrupt packet was accepted");
 
-  ZquicLogger::stop();
-  ZquicLogDiag diag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag diag = ZquicLogger::diag();
+	ZquicLogger::final(app.qlogTrace());
   link->cancelTimers();
 
   ZuCHECK(diag.recordsEnqueued >= 2, "runtime qlog enqueue mismatch");
@@ -2747,15 +2761,17 @@ void testFlowControlQLog()
   Zi::Path path = testPath_("ZquicStreamFlowControlQLog.sqlog");
   ZiFile::remove(path);
 
-  ZquicLogParams params;
-  params.enabled(true).path(path).
-    thread("zquic-flow-control-qlog").ringSize(1<<15);
-  ZuCHECK(ZquicLogger::init(params), "flow-control qlog init failed");
-  ZquicLogger::start();
-  ZuCHECK(ZquicLogger::enabled(), "flow-control qlog did not enable");
+	ZquicLogParams params;
+	params.enabled(true).path(path).
+	  thread("zquic-flow-control-qlog").ringSize(1<<15);
 
-  App app;
-  ZmRef<TestLink> link = testLink(&app);
+	App app;
+	ZuCHECK(ZquicLogger::init(
+	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "flow-control qlog init failed");
+	ZquicLogger::start();
+	ZuCHECK(ZquicLogger::enabled(), "flow-control qlog did not enable");
+	ZmRef<TestLink> link = testLink(&app);
   ZmRef<TestStream> stream = link->stream(Zi::StreamType::Duplex);
   ZuCHECK(stream, "flow-control qlog stream open failed");
   stream->txCredit(32);
@@ -2788,9 +2804,9 @@ void testFlowControlQLog()
   ZuCHECK(!link->queuedControlFrames(),
     "flow-control qlog MAX_STREAM_DATA did not clear STREAM_DATA_BLOCKED");
 
-  ZquicLogger::stop();
-  ZquicLogDiag diag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag diag = ZquicLogger::diag();
+	ZquicLogger::final(app.qlogTrace());
   link->cancelTimers();
 
   ZuCHECK(diag.recordsEnqueued >= 4, "flow-control qlog enqueue mismatch");
@@ -2824,13 +2840,15 @@ void testPTOQLog()
   Zi::Path path = testPath_("ZquicStreamPTOQLog.sqlog");
   ZiFile::remove(path);
 
-  ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-pto-qlog").ringSize(1<<15);
-  ZuCHECK(ZquicLogger::init(params), "PTO qlog init failed");
-  ZquicLogger::start();
+	ZquicLogParams params;
+	params.enabled(true).path(path).thread("zquic-pto-qlog").ringSize(1<<15);
 
-  App app;
-  ZmRef<TestLink> link = testLink(&app);
+	App app;
+	ZuCHECK(ZquicLogger::init(
+	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
+	  "PTO qlog init failed");
+	ZquicLogger::start();
+	ZmRef<TestLink> link = testLink(&app);
   link->recordSentPkt(
     Zquic::PktNumSpace::AppData, 7, Zquic::MinUDPPayload,
     Zquic::SentFrameRef::control(), true);
@@ -2847,9 +2865,9 @@ void testPTOQLog()
   link->forcePTOProbeQLog(level, probes);
   link->cancelTimers();
 
-  ZquicLogger::stop();
-  ZquicLogDiag diag = ZquicLogger::diag();
-  ZquicLogger::final();
+	ZquicLogger::stop();
+	ZquicLogDiag diag = ZquicLogger::diag();
+	ZquicLogger::final(app.qlogTrace());
 
   ZuCHECK(diag.recordsEnqueued >= 3, "PTO qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 4, "PTO qlog write mismatch");
