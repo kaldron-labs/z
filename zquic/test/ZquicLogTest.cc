@@ -500,6 +500,98 @@ void testQLogAppTrace()
 #endif
 }
 
+void testQLogMultiTraceGroups()
+{
+  ZuTestScope(testQLogMultiTraceGroups);
+
+#ifdef Zquic_DEBUG
+  Zi::Path path1 = testPath_("ZquicLogMultiTrace1.sqlog");
+  Zi::Path path2 = testPath_("ZquicLogMultiTrace2.sqlog");
+  ZiFile::remove(path1);
+  ZiFile::remove(path2);
+
+  auto id4 = [](uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+    Zquic::CxnID id;
+    id.length(4);
+    id[0] = a;
+    id[1] = b;
+    id[2] = c;
+    id[3] = d;
+    return id;
+  };
+  auto pkt = [](const Zquic::CxnID &groupID, uint64_t pn) {
+    PktEvent packet;
+    packet.packetType = PktType::Short;
+    packet.packetSpace = PktNumSpace::AppData;
+    packet.packetNumber = pn;
+    packet.packetSize = 1200;
+    packet.linkInfo = Zquic::LinkInfo{
+      .vantage = Zquic::Vantage::Client,
+      .groupID = groupID,
+      .dcid = groupID,
+      .scid = groupID
+    };
+    return packet;
+  };
+
+  ZquicLogParams params1;
+  params1.enabled(true).path(path1).thread("zquic-qlog-multi").ringSize(1<<15);
+  ZquicLogParams params2;
+  params2.enabled(true).path(path2).thread("zquic-qlog-multi").ringSize(1<<15);
+  ZquicLogger::Trace trace1;
+  ZquicLogger::Trace trace2;
+  ZuCHECK(ZquicLogger::init(trace1, params1, Zquic::Vantage::Client),
+    "multi trace 1 qlog init failed");
+  ZuCHECK(ZquicLogger::init(trace2, params2, Zquic::Vantage::Server),
+    "multi trace 2 qlog init failed");
+  ZquicLogger::start();
+  ZquicLogger::start();
+
+  Zquic::CxnID group1 = id4(0x10, 0x11, 0x12, 0x13);
+  Zquic::CxnID group2 = id4(0x20, 0x21, 0x22, 0x23);
+  Zquic::CxnID group3 = id4(0x30, 0x31, 0x32, 0x33);
+  ZquicLogger::pktSent(trace1, pkt(group1, 1));
+  ZquicLogger::pktSent(trace1, pkt(group2, 2));
+  ZquicLogger::pktSent(trace2, pkt(group3, 3));
+
+  closeQLog_(trace1);
+  closeQLog_(trace2);
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final(trace1);
+  ZquicLogger::final(trace2);
+
+  ZuCHECK(diag.recordsEnqueued >= 3, "multi trace qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 5, "multi trace qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "multi trace qlog writer failure");
+
+  ZtString<> data1 = readFile_(path1);
+  ZtString<> data2 = readFile_(path2);
+  ZuCHECK(data1, "multi trace 1 output was not written");
+  ZuCHECK(data2, "multi trace 2 output was not written");
+  ZuCHECK(parseJSONSeq_(data1) >= 3,
+    "multi trace 1 qlog JSON-SEQ parse failed");
+  ZuCHECK(parseJSONSeq_(data2) >= 2,
+    "multi trace 2 qlog JSON-SEQ parse failed");
+  ZuCHECK(containsQLogVantage_(data1, "client"),
+    "multi trace 1 missing client vantage");
+  ZuCHECK(containsQLogVantage_(data2, "server"),
+    "multi trace 2 missing server vantage");
+  ZuCHECK(data1.find<"10111213">() >= 0 &&
+      data1.find<"20212223">() >= 0,
+    "multi trace 1 missing per-link group IDs");
+  ZuCHECK(data1.find<"30313233">() < 0,
+    "multi trace 1 leaked trace 2 group ID");
+  ZuCHECK(data2.find<"30313233">() >= 0,
+    "multi trace 2 missing group ID");
+  ZuCHECK(data2.find<"10111213">() < 0 &&
+      data2.find<"20212223">() < 0,
+    "multi trace 2 leaked trace 1 group IDs");
+  removeTestLog_(path1);
+  removeTestLog_(path2);
+#endif
+}
+
 void testQLogTypedTransportEvents()
 {
   ZuTestScope(testQLogTypedTransportEvents);
@@ -1432,6 +1524,7 @@ int main(int argc, char **argv)
   ZuTestCall(testQLogFileOutput);
   ZuTestCall(testQLogBackPressure);
   ZuTestCall(testQLogAppTrace);
+  ZuTestCall(testQLogMultiTraceGroups);
   ZuTestCall(testQLogTypedTransportEvents);
   ZuTestCall(testQLogTypedRecoveryEvents);
   ZuTestCall(testQLogTypedSecEvents);

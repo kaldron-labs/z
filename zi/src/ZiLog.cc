@@ -271,7 +271,7 @@ void ZiLog::stop_()
     m_thread = {};
   }
   if (!thread) return;
-  while (m_queue.count()) Zm::yield();
+  while (m_queueCount.load_()) Zm::yield();
   m_ring.eof(true);
   thread.join();		// wait for ring buffer to drain
   m_ring.close();
@@ -280,12 +280,14 @@ void ZiLog::stop_()
 void ZiLog::work_()
 {
   for (;;) {
-    if (m_queue.count()) {
-      if (Fn fn = m_queue.shift()) {
-	if (!tryPush_(fn))
-	  m_queue.unshift(ZuMv(fn));
-      }
+    if (ZuLikely(!m_queueCount.load_())) goto shift;
+    if (Fn fn = m_queue.shift()) {
+      if (ZuLikely(tryPush_(fn)))
+	--m_queueCount;
+      else
+	m_queue.unshift(ZuMv(fn));
     }
+shift:
     if (void *ptr = m_ring.shift()) {
       m_ring.shift2(Fn::invoke(ptr, this));
     } else {
@@ -318,6 +320,7 @@ void ZiLog::log__(Fn &fn)
   }
   if (ZuLikely(tryPush_(fn))) return;
   m_queue.push(ZuMv(fn));
+  ++m_queueCount;
 }
 
 bool ZiLog::tryPush_(Fn &fn)

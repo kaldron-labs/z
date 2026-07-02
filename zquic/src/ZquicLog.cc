@@ -966,7 +966,7 @@ void ZquicLogger::stop_()
     m_startedRefs = 0;
   }
   if (thread) {
-    while (m_queue.count()) Zm::yield();
+    while (m_queueCount.load_()) Zm::yield();
     m_ring.eof(true);
     thread.join();
   }
@@ -1393,12 +1393,14 @@ void ZquicLogger::cxnStateUpd_(Trace &trace,
 void ZquicLogger::work_()
 {
   for (;;) {
-    if (m_queue.count()) {
-      if (Fn fn = m_queue.shift()) {
-	if (!tryPush_(fn))
-	  m_queue.unshift(ZuMv(fn));
-      }
+    if (ZuLikely(!m_queueCount.load_())) goto shift;
+    if (Fn fn = m_queue.shift()) {
+      if (ZuLikely(tryPush_(fn)))
+	--m_queueCount;
+      else
+	m_queue.unshift(ZuMv(fn));
     }
+shift:
     if (void *ptr = m_ring.shift()) {
       m_activeTrace = nullptr;
       m_ring.shift2(Fn::invoke(ptr, this));
