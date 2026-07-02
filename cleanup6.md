@@ -782,47 +782,42 @@ Still missing or incomplete:
   the current schema/reference implementations for events zquic actually
   emits; non-mainstream zquic detail should stay private or be omitted.
 
-Remaining in-scope parity work:
+Completed mainstream-parity signoff:
 
-1. Produce and retain representative zquic `.sqlog` traces for the mainstream
-   scenarios zquic already implements: handshake, Retry/NEW_TOKEN, 1-RTT stream
-   transfer with ACK ranges, packet loss plus PTO retransmission, path
-   validation, PMTUD success/loss, CID issue/retire/route binding, idle
-   timeout, and close/drain.  Compare those traces against current qlog schema
-   examples and mainstream implementation output for the same behavior.  Treat
-   a difference as required work only when it affects mainstream parser/viewer
-   behavior or omits fields that references commonly provide for the same
-   implemented behavior.
-2. Finish event/data-shape alignment only for `quic:*` events zquic already
-   emits.  Any remaining zquic-local fields on standard events must either be
-   mapped to the current qlog schema, matched to a documented
-   reference-implementation extension shape, moved to `zquic:*`, or omitted.
-   Do not add new standard events just to cover local diagnostics.
-3. Validate trace identity expectations for mainstream tools: JSON-SEQ header
-   fields, `trace.event_schemas`, connection/CID metadata, vantage point,
-   group/connection identity, and per-event CID linkInfo behavior when records
-   from multiple connection identity sources are interleaved.  Direct tests now
-   prove event linkInfo can differ per record, runtime tests prove non-empty
-   per-event CID fields are emitted for link-owned traces, and static audit
-   confirms pre-link endpoint-only events are the intentional no-linkInfo
-   exception.
-4. Keep external qlog-tool validation current for the retained
-   mainstream-equivalence traces.  The current endpoint, Retry/token,
-   token-rejection/policy, idle-timeout, path-validation, PMTUD, CID, ECN, and
-   loss/PTO traces pass `jq --seq` and `blazingqlog <file> -p name`; rerun
-   this signoff when event shape or trace identity changes.  Add another
+1. Representative zquic `.sqlog` traces have been produced and retained for the
+   mainstream scenarios zquic currently implements: handshake/endpoint open,
+   Retry/NEW_TOKEN, token rejection and policy rejection, 1-RTT stream transfer
+   with ACK ranges and stream data movement, packet protection failure, packet
+   loss plus PTO retransmission, path validation success/failure, PMTUD
+   success/loss, CID issue/retire/route binding, stateless reset detection,
+   idle timeout, and close/drain expiry.
+2. Event/data-shape alignment for currently emitted `quic:*` events is complete
+   to the cleanup scope: zquic-local fields on standard events have been mapped
+   to the current draft qlog shape, matched to a documented mainstream extension
+   precedent, moved to `zquic:*`, or omitted.  New standard events should not be
+   added only to expose local diagnostics.
+3. Trace identity expectations are validated for JSON-SEQ header fields,
+   `trace.event_schemas`, connection/CID metadata, vantage point, group/
+   connection identity, and per-event CID linkInfo.  Direct tests prove event
+   linkInfo can differ per record, runtime tests prove non-empty per-event CID
+   fields are emitted for link-owned traces, and static audit confirms
+   pre-link endpoint-only events are the intentional no-linkInfo exception.
+4. External qlog-tool validation currently passes for retained direct writer,
+   stream runtime, API stateless-reset, and runtime endpoint/Retry/token/idle
+   traces with `jq --seq -e .` and `blazingqlog <file> -p name`.
+   Rerun this signoff when event shape or trace identity changes.  Add another
    mainstream parser/viewer only if it catches real compatibility issues rather
    than draft-completeness gaps.
-5. Add TLS alert/handshake failure, ECN path-marking/congestion-response
-   diagnostics, peer address migration, or preferred-address qlog only when
-   zquic exposes bounded scalar state for the behavior and mainstream
-   references emit equivalent information.  These are conditional parity items,
-   not required coverage targets in the absence of comparable zquic behavior.
-6. Keep private diagnostics intentionally private.  Retry validation, token
+5. TLS alert/handshake failure detail, ECN path-marking/congestion-response
+   diagnostics, peer address migration, and preferred-address qlog remain
+   conditional future items.  They should be added only when zquic exposes
+   bounded scalar state for the behavior and mainstream references emit
+   equivalent information.
+6. Private diagnostics remain intentionally private.  Retry validation, token
    policy, packet-protection reasons, unsupported 0-RTT rejection, and zquic
-   path/CID details that are not in the current schema should remain under
-   `zquic:*` unless reference implementations establish compatible `quic:*`
-   extension fields.
+   path/CID details that are not in the current schema remain under `zquic:*`
+   unless reference implementations establish compatible `quic:*` extension
+   fields.
 
 Explicit non-goals for this cleanup:
 

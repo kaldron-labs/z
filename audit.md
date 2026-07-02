@@ -12,9 +12,8 @@ ECN accounting, reset/stop retransmission, path validation, PMTUD, dynamic
 packet-number length, and Initial/Handshake coalescing are now present.
 
 `zquic` is still not feature-equivalent to the references.  The main remaining
-gaps are 0-RTT, qlog tooling/schema signoff, richer migration/preferred-address
-handling, pacing and alternate congestion controllers, and a more complete ECN
-path response.
+gaps are 0-RTT, richer migration/preferred-address handling, pacing and
+alternate congestion controllers, and a more complete ECN path response.
 
 ## Connection lifecycle
 
@@ -320,7 +319,7 @@ Current qlog state:
   endpoint, stream, token, retry, packet-protection, close, idle, path-admission,
   flow-control, and PTO traces.
 
-Remaining gaps:
+Completed qlog signoff:
 
 - Final non-debug/no-op signoff has passed.  The tree was configured with
   `./z.config -L /usr`; generated makefiles show `-O3 -g -DNDEBUG` for
@@ -332,12 +331,13 @@ Remaining gaps:
   `jq --seq`; `blazingqlog` also loads those JSON-SEQ files and extracts event
   names from them.  Retained `ZquicStreamTest` qlog traces for path validation,
   PMTUD, CID issue/retire, ECN validation, and loss/PTO also pass `jq --seq -e .` and
-  `blazingqlog <file> -p name`.  Remaining mainstream-parity deviations are
-  now event data shape details, not parseability or file-header shape: current
-  draft QUIC events should keep converging on the exact qlog field model, and any
-  event/field extending beyond that model should either follow mainstream
-  reference implementation precedent, including both extension event names and
-  data fields, or remain under the private `zquic:*` event schema.  The
+  `blazingqlog <file> -p name`.  The same signoff now covers direct writer
+  traces and `ZquicAPITest` stateless-reset qlog output.  Event/data-shape
+  alignment for currently emitted `quic:*` events is complete to the
+  mainstream-equivalence scope: current draft QUIC events use the qlog field
+  model where zquic has comparable scalar state, and event/field data extending
+  beyond that model either follows mainstream reference implementation
+  precedent or remains under the private `zquic:*` event schema.  The
   `quic:path_validated` extension now keeps a minimal `success` / `vantage`
   payload shape rather than carrying zquic-local path detail
   fields under the `quic:*` namespace; `vantage` is enum-mapped on the
@@ -376,12 +376,11 @@ Remaining gaps:
   Private `zquic:zero_rtt_rejected` coverage now records the current
   unsupported-0-RTT posture from the crypto rejection path, using enum-mapped
   security reason data and no claim of 0-RTT packet processing support.
-  Remaining event data-shape work is concentrated in ACK detail expansion,
-  TLS failure/path endpoint metadata, client-side VN received coverage
-  if implemented, PMTUD/private path or CID diagnostics if needed, richer close
-  diagnostics for crypto/stateless-reset/internal-code cases, and optional
-  packet metadata such as CIDs and datagram IDs where zquic has not yet plumbed
-  those scalar snapshots.
+  Future event data-shape work should be limited to behavior zquic exposes but
+  does not yet implement in comparable form, such as TLS alert/handshake failure
+  details, client-side Version Negotiation received coverage if implemented,
+  richer migration/preferred-address events, and optional packet metadata such
+  as datagram IDs where zquic later plumbs those scalar snapshots.
 - `quic:packets_acked` now uses the draft `packet_number_space` and
   `packet_numbers` field names, and runtime ACK processing now snapshots the
   bounded set of newly acknowledged packet numbers from `PktTxUpdate` inside
@@ -443,12 +442,9 @@ Remaining gaps:
 
 ## Priority work
 
-1. Finish qlog event-schema parity: map remaining zquic event type names and
-   data objects to the exact latest QUIC qlog draft definitions, or explicitly
-   move zquic-specific events to a private event schema.
-2. Integrate pacing and consider CUBIC/BBR selection if production WAN behavior
+1. Integrate pacing and consider CUBIC/BBR selection if production WAN behavior
    matters.
-3. Finish ECN as a path feature: socket marking, validation state, fallback, and
+2. Finish ECN as a path feature: socket marking, validation state, fallback, and
    congestion response.
-4. Extend migration/preferred-address/CID lifecycle if mobile/NAT-rebinding
+3. Extend migration/preferred-address/CID lifecycle if mobile/NAT-rebinding
    behavior is a target.
