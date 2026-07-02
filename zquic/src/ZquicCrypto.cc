@@ -251,9 +251,9 @@ int CryptoStream::receive(
 	[](unsigned) -> ZmRef<ZiIOBuf> {
 	  return new CryptoRxBufAlloc<BufSize, MaxBufSize>{nullptr};
 	},
-	[this](ZmRef<ZiIOBuf> buf, uint64_t offset, unsigned length) {
+	[this](ZmRef<ZiIOBuf> buf, uint64_t offset, unsigned) {
 	  Rx::rcvd(new CryptoRxPQueue::Node{
-	    RxData{ZuMv(buf), offset, 0, length}});
+	    RxData{ZuMv(buf), offset}});
 	}))
     return -1;
 
@@ -284,12 +284,12 @@ void CryptoStream::process(Msg *node)
 {
   if (!node) return;
   RxData &data = node->data();
-  if (!data.buf || !data.bytes) return;
-  const uint8_t *p = data.buf->data_() + data.bufOffset;
-  appendDelivery_(p, data.bytes);
+  if (!data.buf || !data.buf->length) return;
+  const uint8_t *p = data.buf->data();
+  appendDelivery_(p, data.buf->length);
   if (m_asyncDelivery)
-    m_deliveryFn(ZuBSpan{p, unsigned(data.bytes)});
-  m_rxOffset += data.bytes;
+    m_deliveryFn(ZuBSpan{p, data.buf->length});
+  m_rxOffset += data.buf->length;
 }
 
 bool InitialCrypto::derive(InitialKeyMaterial &out, const CxnID &dcid)

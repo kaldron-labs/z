@@ -197,12 +197,10 @@ public:
       "QUIC stream process outside Rx thread", return);
     if (!msg) return;
     StreamRxData &data = msg->data();
-    if (!data.bytes) return;
-    ZiAssert(data.bufOffset + data.bytes <= data.size, "Zquic", (),
+    if (!data.length) return;
+    ZiAssert(data.skip + data.length <= data.size, "Zquic", (),
       "stream Rx queued slice exceeds packet-backed range", return);
-    data.skip = unsigned(data.bufOffset);
-    data.ZiIOBuf::length = unsigned(data.bytes);
-    m_rxDelivered += data.bytes;
+    m_rxDelivered += data.length;
     m_rxState.delivered(m_rxDelivered);
     ZmRef<Zquic_::IOQueue::Node> buf =
       static_cast<Zquic_::IOQueue::Node *>(msg);
@@ -211,7 +209,7 @@ public:
       ZquicLOG(m_link->app()->qlogTrace(), ([
 	streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
 	streamOffset = data.offset,
-	length = uint64_t(data.bytes),
+	length = uint64_t(data.length),
 	linkInfo = m_link->linkInfo()
       ](auto &o, ZuTime time) mutable {
 	if (streamID == U64Null) return;
@@ -260,7 +258,7 @@ public:
       if (!i--) {
 	const auto &data = node->data();
 	range = TxRange{
-	  node, uint32_t(data.bufOffset), uint32_t(data.bytes),
+	  node, uint32_t(data.skip), uint32_t(data.length),
 	  data.streamOffset};
 	return true;
       }
@@ -280,7 +278,7 @@ public:
     auto iter = m_txQueue.citer();
     auto node = iter();
     if (!node) return false;
-    return consumeTxRange(range, uint32_t(node->data().length()));
+    return consumeTxRange(range, uint32_t(node->data().length));
   }
   bool commitTxRange(TxRange &range, uint32_t length) {
     return consumeTxRange(range, length);
@@ -290,8 +288,8 @@ public:
     auto first = iter();
     if (!first) return false;
     return consumeTxRange(range, TxRange{
-      first, uint32_t(first->data().bufOffset),
-      uint32_t(first->data().bytes), first->data().streamOffset}, length);
+      first, uint32_t(first->data().skip),
+      uint32_t(first->data().length), first->data().streamOffset}, length);
   }
   bool commitTxRange(
     TxRange &range, const TxRange &selected, uint32_t length) {
@@ -307,25 +305,25 @@ public:
     ZiIOBuf *currentBuf = current.ptr();
     if (selected.buf.ptr() != currentBuf) return false;
     const auto &selectedData = current->data();
-    if (selected.offset != selectedData.bufOffset ||
+    if (selected.offset != selectedData.skip ||
 	selected.streamOffset != selectedData.streamOffset ||
-	selected.length != selectedData.bytes ||
-	length > selectedData.length())
+	selected.length != selectedData.length ||
+	length > selectedData.length)
       return false;
     auto node = Tx::abort(key);
     if (!node || node.ptr() != current.ptr()) return false;
     auto &data = node->data();
-    if (selected.offset != data.bufOffset ||
+    if (selected.offset != data.skip ||
 	selected.streamOffset != data.streamOffset ||
-	selected.length != data.bytes ||
-	length > data.length())
+	selected.length != data.length ||
+	length > data.length)
       return false;
     range = TxRange{
-      node, uint32_t(data.bufOffset), length, data.streamOffset};
+      node, uint32_t(data.skip), length, data.streamOffset};
     range.length = length;
     if (length > m_txBufferedBytes) m_txBufferedBytes = 0;
     else m_txBufferedBytes -= length;
-    if (length < data.length()) {
+    if (length < data.length) {
       data.clipHead(length);
       Tx::send(ZuMv(node));
     }
@@ -580,7 +578,7 @@ private:
     auto iter = m_rxQueue.citer();
     while (auto node = iter()) {
       const StreamRxData &data = node->data();
-      if (data.offset > finalSize || data.bytes > finalSize - data.offset)
+      if (data.offset > finalSize || data.length > finalSize - data.offset)
 	return true;
     }
     return false;
@@ -595,7 +593,7 @@ private:
     });
   }
 
-  void send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
+  void send_(ZmRef<TxMsg> buf) { // direct call from within tx thread
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream send_ outside Tx thread", return);
     if (ZuUnlikely(!buf)) return;
@@ -605,9 +603,8 @@ private:
       "stream Tx buffer range violation", return);
     uint32_t offset = buf->skip;
     uint32_t length = buf->length;
-    auto node = static_cast<TxMsg *>(buf.ptr());
-    node->data().publish(offset, length, m_txBytes);
-    Tx::send(node);
+    buf->data().publish(offset, length, m_txBytes);
+    Tx::send(ZuMv(buf));
     if (m_link)
       ZquicLOG(m_link->app()->qlogTrace(), ([
 	streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,

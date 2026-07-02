@@ -23,28 +23,27 @@ namespace Zquic {
 struct RxData {
   ZmRef<ZiIOBuf>	buf;
   uint64_t		offset = 0;
-  uint64_t		bufOffset = 0;
-  uint64_t		bytes = 0;
 
   RxData() = default;
-  RxData(
-    ZmRef<ZiIOBuf> buf_, uint64_t offset_, uint64_t bufOffset_,
-    uint64_t bytes_) :
-    buf{ZuMv(buf_)}, offset{offset_}, bufOffset{bufOffset_}, bytes{bytes_}
-    { }
+  RxData(ZmRef<ZiIOBuf> buf_, uint64_t offset_) :
+    buf{ZuMv(buf_)}, offset{offset_} { }
 
   uint64_t key() const { return offset; }
-  uint64_t length() const { return bytes; }
+  uint64_t length() const { return buf ? buf->length : 0; }
 
-  uint64_t clipHead(uint64_t length) {
-    if (length > bytes) length = bytes;
-    offset += length;
-    bufOffset += length;
-    return bytes -= length;
+  uint64_t clipHead(uint64_t n) {
+    uint64_t length = this->length();
+    if (!length) return 0;
+    if (n > length) n = length;
+    offset += n;
+    buf->skip += n;
+    return buf->length -= n;
   }
-  uint64_t clipTail(uint64_t length) {
-    if (length > bytes) length = bytes;
-    return bytes -= length;
+  uint64_t clipTail(uint64_t n) {
+    uint64_t length = this->length();
+    if (!length) return 0;
+    if (n > length) n = length;
+    return buf->length -= n;
   }
   template <typename I>
   void write(const I &) { }
@@ -55,63 +54,71 @@ struct StreamRxData : public Zquic_::IOQueue::Node {
 
   ZmRef<ZiIOBuf>	packet;
   uint64_t		offset = 0;
-  uint64_t		bufOffset = 0;
-  uint64_t		bytes = 0;
 
   StreamRxData() : Base{nullptr, 0, nullptr, 0} { }
   StreamRxData(
     ZmRef<ZiIOBuf> packet_, const uint8_t *data_, unsigned length_,
     void *owner_, uint64_t offset_) :
     Base{const_cast<uint8_t *>(data_), length_, owner_, length_},
-    packet{ZuMv(packet_)}, offset{offset_}, bytes{length_} { }
+    packet{ZuMv(packet_)}, offset{offset_} { }
 
   uint64_t key() const { return offset; }
-  uint64_t length() const { return bytes; }
 
-  uint64_t clipHead(uint64_t length) {
-    if (length > bytes) length = bytes;
-    offset += length;
-    bufOffset += length;
-    return bytes -= length;
+  uint64_t clipHead(uint64_t n) {
+    if (n > length) n = length;
+    offset += n;
+    skip += n;
+    return length -= n;
   }
-  uint64_t clipTail(uint64_t length) {
-    if (length > bytes) length = bytes;
-    return bytes -= length;
+  uint64_t clipTail(uint64_t n) {
+    if (n > length) n = length;
+    return length -= n;
   }
   template <typename I>
   void write(const I &) { }
 };
+
+constexpr auto ZquicPQueueBufLenAxor() {
+  return []<typename T>(const T &v) -> uint64_t { return v.length; };
+}
+
+using StreamRxPQueueFn =
+  ZmPQueueDefaultFn<StreamRxData,
+    ZmPQueueDefaultKeyAxor(),
+    ZquicPQueueBufLenAxor()>;
 
 struct StreamTxData : public ZiIOBuf {
   alignas(ZiIOBuf_Align) uint8_t data_[BufSize];
   uint64_t		streamOffset = 0;
-  uint64_t		bufOffset = 0;
-  uint64_t		bytes = 0;
 
   StreamTxData() : ZiIOBuf{data_, BufSize, nullptr} { }
   explicit StreamTxData(void *owner_) : ZiIOBuf{data_, BufSize, owner_} { }
 
-  void publish(uint32_t offset_, uint32_t bytes_, uint64_t streamOffset_) {
-    bufOffset = offset_;
-    bytes = bytes_;
+  void publish(uint32_t offset_, uint32_t length_, uint64_t streamOffset_) {
+    skip = offset_;
+    length = length_;
     streamOffset = streamOffset_;
   }
   uint64_t key() const { return streamOffset; }
-  uint64_t length() const { return bytes; }
 
-  uint64_t clipHead(uint64_t length) {
-    if (length > bytes) length = bytes;
-    bufOffset += length;
-    streamOffset += length;
-    return bytes -= length;
+  uint64_t clipHead(uint64_t n) {
+    if (n > length) n = length;
+    skip += n;
+    streamOffset += n;
+    return length -= n;
   }
-  uint64_t clipTail(uint64_t length) {
-    if (length > bytes) length = bytes;
-    return bytes -= length;
+  uint64_t clipTail(uint64_t n) {
+    if (n > length) n = length;
+    return length -= n;
   }
   template <typename I>
   void write(const I &) { }
 };
+
+using StreamTxPQueueFn =
+  ZmPQueueDefaultFn<StreamTxData,
+    ZmPQueueDefaultKeyAxor(),
+    ZquicPQueueBufLenAxor()>;
 
 struct RxPktMark {
   uint64_t	pn = 0;
@@ -325,9 +332,10 @@ using StreamRxPQueue =
   ZmPQueue<StreamRxData,
     ZmPQueueNode<StreamRxData,
       ZmPQueueHeapID<"Zquic.Stream.RxNode",
-	ZmPQueueOverwrite<false,
-	  ZmPQueueBits<2,
-	    ZmPQueueLevels<2>>>>>>;
+	ZmPQueueFn<StreamRxPQueueFn,
+	  ZmPQueueOverwrite<false,
+	    ZmPQueueBits<2,
+	      ZmPQueueLevels<2>>>>>>>;
 
 using CryptoRxPQueue =
   ZmPQueue<RxData,
@@ -341,8 +349,9 @@ using TxDataPQueue =
   ZmPQueue<StreamTxData,
     ZmPQueueNode<StreamTxData,
       ZmPQueueHeapID<"Zquic.Stream.TxNode",
-	ZmPQueueBits<2,
-	  ZmPQueueLevels<3>>>>>;
+	ZmPQueueFn<StreamTxPQueueFn,
+	  ZmPQueueBits<2,
+	    ZmPQueueLevels<3>>>>>>;
 
 using StreamTxPQueue = TxUnackdRanges;
 using CryptoTxPQueue = TxUnackdRanges;
