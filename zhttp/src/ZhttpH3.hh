@@ -435,7 +435,7 @@ namespace H3 {
       m_streamState = StreamState::Type;
       m_streamType = -1;
       m_settings = false;
-      m_settingsKeys.length(0);
+      m_settingsKeys = {};
       m_qpackEncoderParser.reset();
       m_qpackDecoderParser.reset();
       resetFrame_();

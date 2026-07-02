@@ -874,7 +874,7 @@ bool ZquicLogSink::init(ZuCSpan path, unsigned age)
 void ZquicLogSink::final()
 {
   if (m_file) m_file.close();
-  m_path.length(0);
+  m_path = {};
 }
 
 bool ZquicLogSink::write(ZuCSpan s)

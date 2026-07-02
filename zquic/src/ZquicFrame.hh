@@ -70,7 +70,7 @@ struct Frame {
     fin = false;
     resetToken = {};
     payload = {};
-    ackRanges.length(0);
+    ackRanges = {};
     ackECN.reset();
   }
 };
