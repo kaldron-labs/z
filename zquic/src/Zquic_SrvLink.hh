@@ -42,8 +42,10 @@ public:
   SrvLink(App *app) : Base{app, true} { Base::initCryptoDelivery_(); }
 
   bool established() const { return Base::runtimeEstablished_(); }
-  RuntimeDiag runtimeDiag() const { return Base::runtimeDiag(); }
-  PathDiag pathDiag() const { return Base::pathDiag(); }
+  template <typename Fn>
+  void runtimeDiag(Fn fn) const { Base::runtimeDiag(ZuMv(fn)); }
+  template <typename Fn>
+  void pathDiag(Fn fn) const { Base::pathDiag(ZuMv(fn)); }
   bool pathValidated() const { return Base::pathValidated_(); }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   uint64_t pathAntiAmplification() const {

@@ -9,7 +9,10 @@
 #include <iostream>
 #include <string.h>
 
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmRandom.hh>
+
+#include <zlib/ZtLocalArray.hh>
 
 #include <zlib/ZiDaemon.hh>
 #include <zlib/ZiHashCSV.hh>
@@ -32,6 +35,21 @@ constexpr uint64_t H3DataMax = 100<<20;
 constexpr uint64_t H3StreamDataMax = 16<<20;
 constexpr uint64_t H3BidiMax = 4096;
 constexpr uint64_t H3UniMax = 16;
+constexpr unsigned H3DiagLinkSnapshot = 64;
+
+template <typename Server>
+Zquic::EndpointDiag h3EndpointDiag(Server *server)
+{
+  return ZmBlock<Zquic::EndpointDiag>{}(
+    [server](auto wake) { server->endpointDiag(ZuMv(wake)); });
+}
+
+template <typename Link>
+Zquic::RuntimeDiag h3RuntimeDiag(const ZmRef<Link> &link)
+{
+  return ZmBlock<Zquic::RuntimeDiag>{}(
+    [&link](auto wake) { link->runtimeDiag(ZuMv(wake)); });
+}
 
 void usage(int code = 1)
 {
@@ -781,7 +799,7 @@ ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &info)
 void H3Server::printDiag()
 {
 #ifdef Zquic_DEBUG
-  Zquic::EndpointDiag diag = this->endpointDiag();
+  Zquic::EndpointDiag diag = h3EndpointDiag(this);
   unsigned active = state ? state->active.load_() : 0;
   uint64_t requests = state ? state->requests.load_() : 0;
   uint64_t errors = state ? state->errors.load_() : 0;
@@ -818,9 +836,18 @@ void H3Server::printDiag()
   uint64_t pktIF = 0;
   uint64_t sentPkts = 0, retxPend = 0, retxTotal = 0;
   bool ptoTimer = false, lossTimer = false;
-  this->allLinks([&](const ZmRef<Link> &link) {
-    if (!link) return;
-    Zquic::RuntimeDiag d = link->runtimeDiag();
+  using LinkSnapshot =
+    ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttpd.H3.LinkSnapshot">>;
+  auto snapshot = ZtLocalArray(LinkSnapshot,
+    state && state->options.maxconn ? state->options.maxconn :
+      H3DiagLinkSnapshot);
+  ZmBlock<>{}([&](auto wake) {
+    this->allLinks([&](const ZmRef<Link> &link) {
+      snapshot.push(link);
+    }, ZuMv(wake));
+  });
+  for (const auto &link : snapshot) {
+    Zquic::RuntimeDiag d = h3RuntimeDiag(link);
     ++links;
     packetsRx += d.rx.packetsRx;
     packetsTx += d.tx.packetsTx;
@@ -909,7 +936,7 @@ void H3Server::printDiag()
       retxPend += d.tx.retransmitPending[i];
       retxTotal += d.tx.retransmittable[i];
     }
-  });
+  }
   ZiLOG(Info, "zhttpd", ([
     active, requests, errors, links,
     datagramsRx = diag.datagramsRx, datagramsTx = diag.datagramsTx,

@@ -25,6 +25,34 @@ namespace {
 static constexpr unsigned RuntimeServerLinkCapacity = 20;
 static constexpr unsigned RuntimeServerMultiConnections = 17;
 
+template <typename Link>
+Zquic::RuntimeDiag runtimeDiag(const Link &link)
+{
+  return ZmBlock<Zquic::RuntimeDiag>{}(
+    [&link](auto wake) { link->runtimeDiag(ZuMv(wake)); });
+}
+
+template <typename Link>
+Zquic::EndpointDiag cxnDiag(const Link &link)
+{
+  return ZmBlock<Zquic::EndpointDiag>{}(
+    [&link](auto wake) { link->cxnDiag(ZuMv(wake)); });
+}
+
+template <typename Server>
+Zquic::EndpointDiag endpointDiag(Server &server)
+{
+  return ZmBlock<Zquic::EndpointDiag>{}(
+    [&server](auto wake) { server.endpointDiag(ZuMv(wake)); });
+}
+
+template <typename Server>
+Zquic::AddressValidationDiag addressValidationDiag(Server &server)
+{
+  return ZmBlock<Zquic::AddressValidationDiag>{}(
+    [&server](auto wake) { server.addressValidationDiag(ZuMv(wake)); });
+}
+
 struct RuntimeClient : public Zquic::Client<RuntimeClient> {
   struct Link;
   struct Stream;
@@ -412,7 +440,7 @@ void testRuntimeEndpointOpen()
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "runtime server endpoint did not become ready");
   ZuCHECK(server.listening() &&
-      !server.endpointDiag().failures &&
+      !endpointDiag(server).failures &&
       server.local().port(),
     "runtime server endpoint diagnostics mismatch");
 	  if (!server.listening()) {
@@ -436,9 +464,9 @@ void testRuntimeEndpointOpen()
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
   ZuCHECK(waitUntil([&clientLink]() { return clientLink->ready(); }),
     "runtime client link did not become ready");
-  ZuCHECK(clientLink->runtimeDiag().rx.endpointReady == 1 &&
-      !clientLink->runtimeDiag().failures() &&
-      !clientLink->cxnDiag().failures,
+  ZuCHECK(runtimeDiag(clientLink).rx.endpointReady == 1 &&
+      !runtimeDiag(clientLink).failures() &&
+      !cxnDiag(clientLink).failures,
     "runtime client link diagnostics mismatch");
 	  if (!clientLink->ready()) {
 	    client.final();
@@ -456,10 +484,10 @@ void testRuntimeEndpointOpen()
     });
   if (!established) {
     dumpRuntimeDiag(
-      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
     if (serverLink)
       dumpRuntimeDiag(
-	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+	"server", runtimeDiag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(established, "runtime UDP QUIC handshake did not establish");
 	  if (!established || !serverLink) {
@@ -475,24 +503,24 @@ void testRuntimeEndpointOpen()
       clientLink->crypto().negotiatedProtocol() == "h3" &&
       serverLink->crypto().negotiatedProtocol() == "h3",
     "runtime TLS/ALPN state mismatch");
-  ZuCHECK(clientLink->runtimeDiag().rx.handshakeComplete == 1 &&
+  ZuCHECK(runtimeDiag(clientLink).rx.handshakeComplete == 1 &&
       clientLink->connectedCount == 1,
     "runtime client handshake completion diagnostics mismatch");
-  ZuCHECK(serverLink->runtimeDiag().rx.handshakeComplete == 1,
+  ZuCHECK(runtimeDiag(serverLink).rx.handshakeComplete == 1,
     "runtime server handshake completion diagnostics mismatch");
-  ZuCHECK(clientLink->runtimeDiag().tx.packetsTx &&
-      clientLink->runtimeDiag().rx.packetsRx &&
-      serverLink->runtimeDiag().tx.packetsTx &&
-      serverLink->runtimeDiag().rx.packetsRx,
+  ZuCHECK(runtimeDiag(clientLink).tx.packetsTx &&
+      runtimeDiag(clientLink).rx.packetsRx &&
+      runtimeDiag(serverLink).tx.packetsTx &&
+      runtimeDiag(serverLink).rx.packetsRx,
     "runtime packet diagnostics mismatch");
-  ZuCHECK(clientLink->runtimeDiag().tx.cryptoBytesTx &&
-      clientLink->runtimeDiag().rx.cryptoBytesRx &&
-      serverLink->runtimeDiag().tx.cryptoBytesTx &&
-      serverLink->runtimeDiag().rx.cryptoBytesRx,
+  ZuCHECK(runtimeDiag(clientLink).tx.cryptoBytesTx &&
+      runtimeDiag(clientLink).rx.cryptoBytesRx &&
+      runtimeDiag(serverLink).tx.cryptoBytesTx &&
+      runtimeDiag(serverLink).rx.cryptoBytesRx,
     "runtime CRYPTO byte diagnostics mismatch");
-  ZuCHECK(!clientLink->runtimeDiag().failures(),
+  ZuCHECK(!runtimeDiag(clientLink).failures(),
     "runtime client failure diagnostics mismatch");
-  ZuCHECK(!serverLink->runtimeDiag().failures(),
+  ZuCHECK(!runtimeDiag(serverLink).failures(),
     "runtime server failure diagnostics mismatch");
 
   auto clientBidi = clientLink->stream(Zi::StreamType::Duplex);
@@ -506,20 +534,20 @@ void testRuntimeEndpointOpen()
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
   bool streamsArrived = waitUntil([&clientLink, &serverLink]() {
-      return serverLink->runtimeDiag().rx.streamBytesRx >= 21 &&
-	clientLink->runtimeDiag().rx.streamBytesRx >= 21;
+      return runtimeDiag(serverLink).rx.streamBytesRx >= 21 &&
+	runtimeDiag(clientLink).rx.streamBytesRx >= 21;
     });
   if (!streamsArrived) {
     dumpRuntimeDiag(
-      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
     dumpRuntimeDiag(
-      "server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+      "server", runtimeDiag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(streamsArrived, "runtime protected stream bytes did not arrive");
-  ZuCHECK(clientLink->runtimeDiag().tx.streamBytesTx == 21 &&
-      serverLink->runtimeDiag().tx.streamBytesTx == 21 &&
-      clientLink->runtimeDiag().tx.packetsTx >= 2 &&
-      serverLink->runtimeDiag().tx.packetsTx >= 2,
+  ZuCHECK(runtimeDiag(clientLink).tx.streamBytesTx == 21 &&
+      runtimeDiag(serverLink).tx.streamBytesTx == 21 &&
+      runtimeDiag(clientLink).tx.packetsTx >= 2 &&
+      runtimeDiag(serverLink).tx.packetsTx >= 2,
     "runtime stream diagnostics mismatch");
   auto serverRxBidi = serverLink->findStream(0);
   auto serverRxUni = serverLink->findStream(2);
@@ -694,16 +722,16 @@ void testRuntimeHandshakeCryptoLoss()
       });
     if (!established) {
       dumpRuntimeDiag(
-	"client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+	"client", runtimeDiag(clientLink), clientLink->crypto().diag());
       if (serverLink)
 	dumpRuntimeDiag(
-	  "server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+	  "server", runtimeDiag(serverLink), serverLink->crypto().diag());
     }
     ZuCHECK(established, "loss runtime handshake did not recover");
     ZuCHECK(dropHandshake ? server.droppedHandshake == 4 :
 	server.droppedInitial == 1,
       "loss runtime did not drop selected long-header packet");
-    ZuCHECK(serverLink && serverLink->runtimeDiag().tx.retransmittedFrames,
+    ZuCHECK(serverLink && runtimeDiag(serverLink).tx.retransmittedFrames,
       "loss runtime did not retransmit dropped handshake data");
 
     ZmSemaphore clientClosed;
@@ -803,10 +831,10 @@ void testRuntimeServerMultiConnection()
     for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
       if (clients[i])
 	dumpRuntimeDiag(
-	  "client", clients[i]->runtimeDiag(), clients[i]->crypto().diag());
+	  "client", runtimeDiag(clients[i]), clients[i]->crypto().diag());
       if (serverLinks[i])
 	dumpRuntimeDiag(
-	  "server", serverLinks[i]->runtimeDiag(), serverLinks[i]->crypto().diag());
+	  "server", runtimeDiag(serverLinks[i]), serverLinks[i]->crypto().diag());
     }
   }
   ZuCHECK(established,
@@ -840,13 +868,13 @@ void testRuntimeServerMultiConnection()
   ZuCHECK(c0->send(c0s, "zero") && c1->send(c1s, "one"),
     "multi runtime client stream sends failed");
   ZuCHECK(waitUntil([&s0, &s1]() {
-      return s0->runtimeDiag().rx.streamBytesRx == 4 &&
-	s1->runtimeDiag().rx.streamBytesRx == 3;
+      return runtimeDiag(s0).rx.streamBytesRx == 4 &&
+	runtimeDiag(s1).rx.streamBytesRx == 3;
     }), "multi runtime routed stream bytes did not arrive independently");
 
-  uint64_t s0Bytes = s0->runtimeDiag().rx.streamBytesRx;
-  uint64_t s1Bytes = s1->runtimeDiag().rx.streamBytesRx;
-  uint64_t failures = server.endpointDiag().failures;
+  uint64_t s0Bytes = runtimeDiag(s0).rx.streamBytesRx;
+  uint64_t s1Bytes = runtimeDiag(s1).rx.streamBytesRx;
+  uint64_t failures = endpointDiag(server).failures;
   unsigned errors = serverErrors;
   s0->disconnect();
   ZuCHECK(waitUntil([&s0]() {
@@ -858,10 +886,10 @@ void testRuntimeServerMultiConnection()
   ZuCHECK(c0->send(c0Stale, "drop") && c1->send(c1Live, "alive"),
     "multi runtime post-close client stream sends failed");
   ZuCHECK(waitUntil([&server, &s1, failures, s1Bytes]() {
-      return server.endpointDiag().failures > failures &&
-	s1->runtimeDiag().rx.streamBytesRx >= s1Bytes + 5;
+      return endpointDiag(server).failures > failures &&
+	runtimeDiag(s1).rx.streamBytesRx >= s1Bytes + 5;
     }), "multi runtime stale route drop or sibling delivery did not happen");
-  ZuCHECK(s0->runtimeDiag().rx.streamBytesRx == s0Bytes,
+  ZuCHECK(runtimeDiag(s0).rx.streamBytesRx == s0Bytes,
     "closed server link received stale routed data");
   ZuCHECK(serverErrors == errors,
     "stale routed datagram used ErrorFn instead of diagnostics");
@@ -964,10 +992,10 @@ void testRuntimeRetryAddressValidation()
     });
   if (!established) {
     dumpRuntimeDiag(
-      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
     if (serverLink)
       dumpRuntimeDiag(
-	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+	"server", runtimeDiag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(established, "retry runtime handshake did not establish");
 	  if (!established || !serverLink) {
@@ -979,7 +1007,7 @@ void testRuntimeRetryAddressValidation()
 	  }
   ZuCHECK(server.retryPkts >= 1,
     "retry runtime server did not emit Retry");
-  Zquic::AddressValidationDiag av = server.addressValidationDiag();
+  Zquic::AddressValidationDiag av = addressValidationDiag(server);
   ZuCHECK(av.retrySent >= 1 && av.retryAccepted == 1 &&
       av.retryRejected >= 1,
     "retry runtime address-validation diagnostics mismatch");
@@ -990,12 +1018,12 @@ void testRuntimeRetryAddressValidation()
       params.initialSCID.length() >= Zquic::MinCIDLength &&
       params.retrySCID.length() >= Zquic::MinCIDLength,
     "retry runtime transport parameters missing Retry CIDs");
-  ZuCHECK(!clientLink->runtimeDiag().failures() &&
-      !serverLink->runtimeDiag().failures(),
+  ZuCHECK(!runtimeDiag(clientLink).failures() &&
+      !runtimeDiag(serverLink).failures(),
     "retry runtime failure diagnostics mismatch");
   ZuCHECK(waitUntil([&clientLink, &serverLink]() {
-      return clientLink->runtimeDiag().rx.newTokenRx >= 1 &&
-	serverLink->runtimeDiag().tx.newTokenTx >= 1;
+      return runtimeDiag(clientLink).rx.newTokenRx >= 1 &&
+	runtimeDiag(serverLink).tx.newTokenTx >= 1;
     }), "retry runtime NEW_TOKEN was not exchanged");
 
   unsigned retryPkts = server.retryPkts;
@@ -1013,10 +1041,10 @@ void testRuntimeRetryAddressValidation()
     });
   if (!established2) {
     dumpRuntimeDiag(
-      "client2", clientLink->runtimeDiag(), clientLink->crypto().diag());
+      "client2", runtimeDiag(clientLink), clientLink->crypto().diag());
     if (serverLink2)
       dumpRuntimeDiag(
-	"server2", serverLink2->runtimeDiag(), serverLink2->crypto().diag());
+	"server2", runtimeDiag(serverLink2), serverLink2->crypto().diag());
   }
   ZuCHECK(established2,
     "retry runtime NEW_TOKEN reconnect did not establish");
@@ -1031,11 +1059,11 @@ void testRuntimeRetryAddressValidation()
     "retry runtime server did not accept NEW_TOKEN reconnect");
   ZuCHECK(server.retryPkts == retryPkts,
     "retry runtime NEW_TOKEN reconnect unexpectedly used Retry");
-  av = server.addressValidationDiag();
+  av = addressValidationDiag(server);
   ZuCHECK(av.newTokenAccepted == 1,
     "retry runtime NEW_TOKEN acceptance diagnostics mismatch");
-  ZuCHECK(!clientLink->runtimeDiag().failures() &&
-      !serverLink2->runtimeDiag().failures(),
+  ZuCHECK(!runtimeDiag(clientLink).failures() &&
+      !runtimeDiag(serverLink2).failures(),
     "retry runtime NEW_TOKEN reconnect diagnostics mismatch");
 
   clientLink->disconnect();
@@ -1162,10 +1190,10 @@ void testRuntimeRejectedTokenQLog()
     });
   if (!established) {
     dumpRuntimeDiag(
-      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
     if (serverLink)
       dumpRuntimeDiag(
-	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+	"server", runtimeDiag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(established,
     "rejected-token runtime initial handshake did not establish");
@@ -1177,8 +1205,8 @@ void testRuntimeRejectedTokenQLog()
 	    return;
 	  }
   ZuCHECK(waitUntil([&clientLink, &serverLink]() {
-      return clientLink->runtimeDiag().rx.newTokenRx >= 1 &&
-	serverLink->runtimeDiag().tx.newTokenTx >= 1;
+      return runtimeDiag(clientLink).rx.newTokenRx >= 1 &&
+	runtimeDiag(serverLink).tx.newTokenTx >= 1;
     }), "rejected-token runtime NEW_TOKEN was not exchanged");
   clientLink->disconnect();
   ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
@@ -1206,10 +1234,10 @@ void testRuntimeRejectedTokenQLog()
       });
     if (!established) {
       dumpRuntimeDiag(
-	"client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+	"client", runtimeDiag(clientLink), clientLink->crypto().diag());
       if (serverLink)
 	dumpRuntimeDiag(
-	  "server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+	  "server", runtimeDiag(serverLink), serverLink->crypto().diag());
     }
     ZuCHECK(established, "rejected-token runtime handshake did not establish");
 	    if (!established || !serverLink) {
@@ -1370,10 +1398,10 @@ void testRuntimeIdleTimeoutQLog()
     });
   if (!established) {
     dumpRuntimeDiag(
-      "client", clientLink->runtimeDiag(), clientLink->crypto().diag());
+      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
     if (serverLink)
       dumpRuntimeDiag(
-	"server", serverLink->runtimeDiag(), serverLink->crypto().diag());
+	"server", runtimeDiag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(established, "idle runtime handshake did not establish");
 	  if (!established || !serverLink) {

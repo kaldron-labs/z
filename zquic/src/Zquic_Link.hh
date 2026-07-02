@@ -818,36 +818,43 @@ protected:
       "QUIC Tx diagnostic snapshot outside Tx thread", return {});
     return txDiag_();
   }
-  RuntimeDiag runtimeDiag() const {
-    ZiAssert(!rxInvoked_() && !txInvoked_(), "Zquic", (),
-      "QUIC runtime diagnostic snapshot from I/O thread", return {});
-    RuntimeRxDiag rx = m_rxDiag;
-    RuntimeTxDiag tx;
-    ZmSemaphore txDone;
+  template <typename Fn>
+  void runtimeDiag(Fn fn) const {
     auto link = const_cast<Link *>(this)->impl();
-    app()->txRun([link, &tx, &txDone]() {
-      tx = link->txDiagSnapshot_();
-      txDone.post();
+    if (rxInvoked_()) {
+      runtimeDiagRx_(ZuMv(fn));
+      return;
+    }
+    app()->rxRun([link, fn = ZuMv(fn)]() mutable {
+      link->runtimeDiagRx_(ZuMv(fn));
     });
-    txDone.wait();
-    return {rx, tx};
+  }
+  template <typename Fn>
+  void runtimeDiagRx_(Fn fn) const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx diagnostic snapshot outside Rx thread", return);
+    auto link = const_cast<Link *>(this)->impl();
+    RuntimeRxDiag rx = m_rxDiag;
+    app()->txRun([link, rx, fn = ZuMv(fn)]() mutable {
+      RuntimeDiag diag{rx, link->txDiagSnapshot_()};
+      fn(diag);
+    });
   }
   RuntimeDiag runtimeDiag_() const {
     return {m_rxDiag, txDiag_()};
   }
-  PathDiag pathDiag() const {
-    ZiAssert(!rxInvoked_(), "Zquic", (),
-      "QUIC path diagnostic snapshot from Rx thread", return {});
-    if (txInvoked_()) return pathDiag_();
-    PathDiag diag;
-    ZmSemaphore done;
+  template <typename Fn>
+  void pathDiag(Fn fn) const {
+    if (txInvoked_()) {
+      PathDiag diag = pathDiag_();
+      fn(diag);
+      return;
+    }
     auto link = const_cast<Link *>(this)->impl();
-    app()->txRun([link, &diag, &done]() {
-      diag = link->pathDiag_();
-      done.post();
+    app()->txRun([link, fn = ZuMv(fn)]() mutable {
+      PathDiag diag = link->pathDiag_();
+      fn(diag);
     });
-    done.wait();
-    return diag;
   }
   PathDiag pathDiag_() const {
     ZiAssert(txInvoked_(), "Zquic", (),
