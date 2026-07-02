@@ -186,6 +186,18 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: incorrect blocking using `ZmBlock` or `ZmSemaphore`
   Problem: risks deadlock, causes latency hiccups
   Fix: post work and use asynchronous continuations, do not block on synchronous returns
+- Red Flag: container iterators whose lifetime extends beyond the logical traversal
+  Problem: iterators may hold locks, pin container state, or obscure later code that mutates or clears the container
+  Fix: limit iterator scope with a block; finish traversal before follow-on state changes, cleanup, callbacks, or cross-thread posts that do not require the iterator
+- Red Flag: snapshotting a container count before iterating when the count is meant to describe traversed elements
+  Problem: the snapshot can drift from actual iteration semantics and becomes wrong if filtering, tombstones, mutation, or callback side effects are introduced
+  Fix: initialize the count to zero and increment it while successfully visiting each element
+- Amber Flag: needless local aliases for member containers immediately before iteration
+  Problem: aliases obscure ownership/lifetime and can hide stale snapshots or lock-holding iterator lifetimes
+  Fix: iterate the member container directly unless the local variable transfers ownership or materially shortens a complex expression
+- Amber Flag: redundant null checks on values obtained from iterator conditions such as `while (Ref ref = i.val())`
+  Problem: the loop condition already proves the value is non-null, and the extra branch hides the traversal invariant
+  Fix: remove the redundant check; if null values are valid elements, use an explicit loop shape that documents that invariant
 - Amber Flag: algorithmic inefficiency, latency regression, throughput impairment, or avoidable work.
   Problem: small local costs often become system-level throughput or tail-latency limits.
   Fix: choose the lower-complexity or lower-allocation design and validate hot paths.

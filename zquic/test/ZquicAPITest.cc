@@ -116,6 +116,7 @@ struct ClientShapeLink :
   void streamed(ZmRef<ClientShapeStream>) { }
   void connectFailed(bool) { ++failures; }
   void disconnected(bool) { ++disconnects; }
+  Zquic::RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
 
   ZmAtomic<unsigned> failures = 0;
   ZmAtomic<unsigned> disconnects = 0;
@@ -490,8 +491,10 @@ void testAlignedSurfaceShape()
   ZuCHECK(c0 && c0->id() == 0 && c0->link() == client.ptr() &&
       !client->isServer(),
     "client aligned link/stream shape mismatch");
+#ifdef Zquic_DEBUG
   ZuCHECK(client->runtimeDiag().unhandledAppEvents(),
     "default client stream-open hook was not visible in diagnostics");
+#endif
 
   ServerShapeApp serverApp;
   bool serverOK = serverApp.init(

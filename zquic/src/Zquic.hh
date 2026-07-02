@@ -36,8 +36,6 @@
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmQueue.hh>
-#include <zlib/ZmSemaphore.hh>
-
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtLocalArray.hh>
 #include <zlib/ZtString.hh>
@@ -1180,63 +1178,53 @@ friend ZmEngine<App>;
   bool listening() const { return Endpoint::listening(); }
   bool connected() const { return Endpoint::connected(); }
   const ZiSockAddr &local() const { return Endpoint::local(); }
-  EndpointDiag endpointDiag() const {
+  template <typename Fn>
+  void endpointDiag(Fn fn) const {
     auto mx = this->mx();
-    if (!mx) return Endpoint::diag();
-    if (mx->invoked(mx->txThread())) return Endpoint::diag();
-    EndpointDiag diag;
-    ZmSemaphore done;
+    if (!mx || mx->invoked(mx->txThread())) {
+      EndpointDiag diag = Endpoint::diag();
+      fn(diag);
+      return;
+    }
     auto server = const_cast<Server *>(this);
-    mx->txRun([server, &diag, &done]() mutable {
-      diag = server->Endpoint::diag();
-      done.post();
+    mx->txRun([server, fn = ZuMv(fn)]() mutable {
+      EndpointDiag diag = server->Endpoint::diag();
+      fn(diag);
     });
-    done.wait();
-    return diag;
-  }
-  AddressValidationDiag addressValidationDiag() const {
-    auto mx = this->mx();
-    if (!mx) return {};
-    auto server = const_cast<Server *>(this);
-    if (server->rxInvoked()) return m_addressValidationDiag;
-    AddressValidationDiag diag;
-    ZmSemaphore done;
-    mx->rxRun([server, &diag, &done]() mutable {
-      diag = server->m_addressValidationDiag;
-      done.post();
-    });
-    done.wait();
-    return diag;
   }
   template <typename Fn>
-  void allLinks(Fn fn) {
+  void addressValidationDiag(Fn fn) const {
+    auto mx = this->mx();
+    if (!mx) {
+      AddressValidationDiag diag;
+      fn(diag);
+      return;
+    }
+    auto server = const_cast<Server *>(this);
+    if (server->rxInvoked()) {
+      fn(server->m_addressValidationDiag);
+      return;
+    }
+    mx->rxRun([server, fn = ZuMv(fn)]() mutable {
+      fn(server->m_addressValidationDiag);
+    });
+  }
+  template <typename Fn, typename Done>
+  void allLinks(Fn fn, Done done) {
     ZiAssert(this->mx() && this->rxThread(), "Zquic", (),
       "QUIC server link iteration before app initialization", return);
-    ZiAssert(!this->rxInvoked() && !this->txInvoked(), "Zquic", (),
-      "QUIC server link iteration from I/O thread", return);
-    using Snapshot =
-      ZtArray<LinkRef, ZtArrayHeapID<"Zquic.Server.LinkSnapshot">>;
-    unsigned nLinks = 0;
-    ZmSemaphore done;
-    this->rxInvoke([this, &nLinks, &done]() {
-      if (this->state() == ZmEngineState::Running)
-	nLinks = unsigned(m_links->count_());
-      done.post();
-    });
-    done.wait();
-    auto snapshot = ZtLocalArray(Snapshot, nLinks);
-    this->rxInvoke([this, &snapshot, &done]() {
+    if (this->rxInvoked()) {
       if (this->state() == ZmEngineState::Running) {
-	auto links = m_links;
-	auto i = links->citer();
+	auto i = m_links->citer();
 	while (LinkRef ref = i.val())
-	  if (ref) snapshot.push(ZuMv(ref));
+	  fn(ZuMv(ref));
       }
-      done.post();
+      done();
+      return;
+    }
+    this->rxInvoke([this, fn = ZuMv(fn), done = ZuMv(done)]() mutable {
+      allLinks(ZuMv(fn), ZuMv(done));
     });
-    done.wait();
-    for (auto &ref : snapshot)
-      if (ref) fn(ref);
   }
 
   ZiIP localIP() const { return ZiIP{}; }
@@ -1301,13 +1289,11 @@ public:
 
 private:
   void txDrained_() {
-    auto links = m_links;
-    auto i = links->citer();
+    auto i = m_links->citer();
     while (LinkRef ref = i.val())
-      if (ref)
-	ref->app()->txRun([link = ZuMv(ref)]() mutable {
-	  link->txDrained_();
-	});
+      ref->app()->txRun([link = ZuMv(ref)]() mutable {
+	link->txDrained_();
+      });
   }
 
   void failed_0(bool transient) {
@@ -1469,11 +1455,14 @@ private:
 
   void stop_() {
     Endpoint::disconnect();
-    auto links = m_links;
-    m_stopCount = links->count_();
-    auto i = links->citer();
-    while (LinkRef ref = i.val())
-      if (ref) ref->disconnect();
+    m_stopCount = 0;
+    {
+      auto i = m_links->citer();
+      while (LinkRef ref = i.val()) {
+	ref->disconnect();
+	++m_stopCount;
+      }
+    }
     m_routes.clear();
     if (!m_stopCount) stop_1();
   }

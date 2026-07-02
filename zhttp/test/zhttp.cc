@@ -19,6 +19,7 @@
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRandom.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
 
@@ -43,6 +44,32 @@ namespace Http3Mode {
 constexpr unsigned ClientTimeout = 15;
 constexpr unsigned H3StallTimeout = 15;
 constexpr unsigned H3QuietTimeout = 2;
+
+template <typename Link>
+Zquic::RuntimeDiag runtimeDiag(Link *link)
+{
+  return ZmBlock<Zquic::RuntimeDiag>{}(
+    [link](auto wake) { link->runtimeDiag(ZuMv(wake)); });
+}
+
+template <typename Link>
+Zquic::RuntimeDiag runtimeDiag(const ZmRef<Link> &link)
+{
+  return runtimeDiag(link.ptr());
+}
+
+template <typename Link>
+Zquic::EndpointDiag endpointDiag(Link *link)
+{
+  return ZmBlock<Zquic::EndpointDiag>{}(
+    [link](auto wake) { link->endpointDiag(ZuMv(wake)); });
+}
+
+template <typename Link>
+Zquic::EndpointDiag endpointDiag(const ZmRef<Link> &link)
+{
+  return endpointDiag(link.ptr());
+}
 
 struct Options {
   ZuCSpan	ca;
@@ -1569,8 +1596,8 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
 {
 #ifdef Zquic_DEBUG
   if (!link) return;
-  Zquic::RuntimeDiag diag = link->runtimeDiag();
-  Zquic::EndpointDiag epDiag = link->endpointDiag();
+  Zquic::RuntimeDiag diag = runtimeDiag(link);
+  Zquic::EndpointDiag epDiag = endpointDiag(link);
   unsigned complete, failed, scheduled, active, pending;
   {
     ZmGuard<ZmLock> guard(lock);
@@ -2435,7 +2462,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     unsigned idle = 0;
     unsigned lastComplete = client.complete;
     unsigned quiet = 0;
-    Zquic::RuntimeDiag lastDiag = link->runtimeDiag();
+    Zquic::RuntimeDiag lastDiag = runtimeDiag(link);
     for (;;) {
       unsigned step = mon.nextStep(1);
       if (!step) {
@@ -2444,7 +2471,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       }
       if (client.sem.timedwait(Zm::now(step)) == 0) break;
       mon.advance(step);
-      Zquic::RuntimeDiag diag = link->runtimeDiag();
+      Zquic::RuntimeDiag diag = runtimeDiag(link);
       bool pktMoved =
 	diag.rx.packetsRx != lastDiag.rx.packetsRx ||
 	diag.tx.packetsTx != lastDiag.tx.packetsTx;
@@ -2486,7 +2513,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     }
     if (timedOut || stalled) {
       client.printDiag(link, timedOut ? "timeout" : "stall");
-      Zquic::RuntimeDiag diag = link->runtimeDiag();
+      Zquic::RuntimeDiag diag = runtimeDiag(link);
       unsigned complete, failed, scheduled, active, pending;
       {
 	ZmGuard<ZmLock> guard(client.lock);

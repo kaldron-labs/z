@@ -22,7 +22,6 @@
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmRing.hh>
 #include <zlib/ZmRingFn.hh>
-#include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
 
 #include <zlib/ZtString.hh>

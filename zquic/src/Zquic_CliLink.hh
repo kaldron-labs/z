@@ -122,22 +122,26 @@ public:
   bool cxn() const { return Endpoint::connected(); }
   const ZiSockAddr &local() const { return Endpoint::local(); }
   const ZiSockAddr &remote() const { return Endpoint::remote(); }
-  EndpointDiag cxnDiag() const { return endpointDiag(); }
-  EndpointDiag endpointDiag() const {
+  template <typename Fn>
+  void cxnDiag(Fn fn) const { endpointDiag(ZuMv(fn)); }
+  template <typename Fn>
+  void endpointDiag(Fn fn) const {
     auto mx = app()->mx();
-    if (mx->invoked(mx->txThread())) return Endpoint::diag();
-    EndpointDiag diag;
-    ZmSemaphore done;
+    if (mx->invoked(mx->txThread())) {
+      EndpointDiag diag = Endpoint::diag();
+      fn(diag);
+      return;
+    }
     auto link = const_cast<CliLink *>(this)->impl();
-    mx->txRun([link, &diag, &done]() mutable {
-      diag = link->Endpoint::diag();
-      done.post();
+    mx->txRun([link, fn = ZuMv(fn)]() mutable {
+      EndpointDiag diag = link->Endpoint::diag();
+      fn(diag);
     });
-    done.wait();
-    return diag;
   }
-  RuntimeDiag runtimeDiag() const { return Base::runtimeDiag(); }
-  PathDiag pathDiag() const { return Base::pathDiag(); }
+  template <typename Fn>
+  void runtimeDiag(Fn fn) const { Base::runtimeDiag(ZuMv(fn)); }
+  template <typename Fn>
+  void pathDiag(Fn fn) const { Base::pathDiag(ZuMv(fn)); }
   bool pathValidated() const { return Base::pathValidated_(); }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   uint64_t pathAntiAmplification() const {
