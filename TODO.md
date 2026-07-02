@@ -91,14 +91,48 @@ audit `zquic` for redundant helpers and update call sites:
 
 ---
 
+`zquic/src/Zquic_.hh:18` uses `using namespace Zquic;` inside the private
+implementation namespace.  It is less severe than the global qlog
+using-directive, but it still blurs the intended separation between
+`Zquic` dependent-facing API and `Zquic_` private implementation.  Prefer
+explicit qualification or narrow `using` declarations for the public
+protocol types needed.
+
+---
+
+what's special about `ecnRx` and `packetsTx` in `*Diag`? group all the mandatory release-build-included diagnostic fields together at top of each struct, with the debug-build-only fields below
+
+---
+
+audit `zquic` for redundant or unsafe cross-thread sharing:
+- almost all data should be sharded: thread-dedicated, only accessed by the owning thread
+- use of `ZmLock`/`ZmPLock`/`ZmGuard`/`ZmAtomic` etc. is an amber flag
+  - contended sharing of data should be limited to **exceptional** cases
+
+---
+
+Fix this finding:
+Endpoint_ uses atomics as convenience state sharing.
+zquic/src/Zquic_.hh:692 has m_connected, m_listening, m_open as atomics. They are mutated
+from Rx callbacks and read synchronously from arbitrary callers/destructor/open paths. This
+is an amber flag: it avoids races mechanically but preserves shared state. Fix: clarify which
+status reads are public cross-thread snapshots; otherwise route through Rx/Tx or collapse to
+owning-thread state.
+
+---
+
+AckPost is an intentional Rx-to-Tx shared slot, but it is still a contended shared object.
+zquic/src/Zquic_Link.hh:509 uses ZmPLock around ACK snapshot handoff from Rx to Tx at zquic/
+src/Zquic_Link.hh:3315. This may be acceptable as an exceptional coalescing slot, but it
+should be documented as such or replaced with value snapshots posted to Tx.
+
+---
+
 FIXME from here
 
 ---
 
-audit `zquic` for cross-thread sharing:
-- almost all data should be sharded: thread-dedicated, only accessed by the owning thread
-- use of `ZmLock`/`ZmPLock`/`ZmGuard`/`ZmAtomic` etc. is a red flag
-  - contended sharing of data should be limited to exception cases
+`make clean && make -j8`; verify `make -C zquic/test test` and `make -C zhttp/test test`, diagnose and root-cause-analyze any regressions, fix root causes, cascade breaking changes to dependent code; historical compatibility remains a non-goal
 
 ---
 

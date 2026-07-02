@@ -177,6 +177,12 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: mistakenly assuming that `ZmScheduler` `invoke` or `run` is blocking
   Problem: reading of results before work has been executed
   Fix: read results and execute followon code in a continuation of the posted function, not after the call to `run`/`invoke`
+- Red Flag: polling, blocking manually
+  Problem: inefficient, introduces stochastic delays
+  Fix: use `ZmBlock` or (if not a good fit) `ZmSemaphore`
+- Red Flag: tests relying on time intervals for completion of concurrent work
+  Problem: non-deterministic, leads to "flaky" tests
+  Fix: use `ZmBlock` or (if not a good fit) `ZmSemaphore`
 - Red Flag: incorrect blocking using `ZmBlock` or `ZmSemaphore`
   Problem: risks deadlock, causes latency hiccups
   Fix: post work and use asynchronous continuations, do not block on synchronous returns
@@ -362,6 +368,8 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ### Tests
 - Use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests.
+- Use `ZmBlock` or (if not a good fit) `ZmSemaphore` to block on concurrent work
+  - do not rely on polling or time intervals
 
 ### Tracing and debug logging
 - use `ZmBackTrace` for backtracing
