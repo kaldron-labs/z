@@ -237,11 +237,11 @@ struct TestLink :
     const Zquic::ResetToken &token = {}) {
     return Base::addLocalCID_(id, sequence, token);
   }
-  bool receiveNewConnectionID(const Zquic::Frame &frame) {
-    return Base::receiveNewConnectionID_(frame);
+  bool receiveNewCxnID(const Zquic::Frame &frame) {
+    return Base::receiveNewCxnID_(frame);
   }
-  bool receiveRetireConnectionID(const Zquic::Frame &frame) {
-    return Base::receiveRetireConnectionID_(frame);
+  bool receiveRetireCxnID(const Zquic::Frame &frame) {
+    return Base::receiveRetireCxnID_(frame);
   }
   bool peerCID(
     uint64_t sequence, Zquic::CxnID &id,
@@ -280,7 +280,7 @@ struct TestLink :
   }
 #ifdef Zquic_DEBUG
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::startPathValidationForTest_(ZuMv(local), ZuMv(remote));
+    Base::startPathValidForTest_(ZuMv(local), ZuMv(remote));
   }
   ZuBSpan validatingChallenge() const {
     return Base::validatingChallenge_();
@@ -541,10 +541,10 @@ void testStatelessResetDetection()
   ZuBSpan datagram{packet, sizeof(packet)};
 
   Zquic::ResetToken decoded;
-  ZuCHECK(!Zquic::StatelessReset::decode(decoded, datagram) &&
+  ZuCHECK(!Zquic::StatelessRst::decode(decoded, datagram) &&
       decoded == token,
     "stateless reset token decode mismatch");
-  ZuCHECK(Zquic::StatelessReset::verify(datagram, token),
+  ZuCHECK(Zquic::StatelessRst::verify(datagram, token),
     "stateless reset token verify failed");
   ZuCHECK(!link->checkStatelessReset(datagram) && !link->draining(),
     "link accepted stateless reset before peer token was known");
@@ -674,21 +674,21 @@ void testApplicationCallbacks()
 #endif
 }
 
-void testConnectionIDFrameLifecycle()
+void testCxnIDFrameLifecycle()
 {
-  ZuTestScope(testConnectionIDFrameLifecycle);
+  ZuTestScope(testCxnIDFrameLifecycle);
 
   EngineFixture fixture;
   ZmRef<TestLink> link = new TestLink{&fixture.app};
   Zquic::ResetToken peerToken{"0123456789abcdef"};
   Zquic::Frame f;
-  f.type = Zquic::FrameType::NewConnectionID;
+  f.type = Zquic::FrameType::NewCxnID;
   f.value = 5;
   f.offset = 0;
   f.length = 9;
   f.payload = "peerCID09";
   f.resetToken = peerToken;
-  ZuCHECK(link->receiveNewConnectionID(f),
+  ZuCHECK(link->receiveNewCxnID(f),
     "NEW_CONNECTION_ID frame was rejected");
 
   Zquic::CxnID peerCID;
@@ -703,14 +703,14 @@ void testConnectionIDFrameLifecycle()
   f.length = 9;
   f.payload = "peerCID10";
   f.resetToken = peerToken2;
-  ZuCHECK(link->receiveNewConnectionID(f) &&
+  ZuCHECK(link->receiveNewCxnID(f) &&
       !link->peerCID(5, peerCID, foundToken) &&
       link->peerCID(6, peerCID, foundToken) &&
       peerCID == Zquic::CxnID{"peerCID10"} &&
       foundToken == peerToken2,
     "retired peer CID slot was not reused for NEW_CONNECTION_ID");
 
-  ZuCHECK(link->receiveNewConnectionID(f) &&
+  ZuCHECK(link->receiveNewCxnID(f) &&
       link->peerCID(6, peerCID, foundToken) &&
       peerCID == Zquic::CxnID{"peerCID10"} &&
       foundToken == peerToken2,
@@ -718,19 +718,19 @@ void testConnectionIDFrameLifecycle()
 
   Zquic::Frame duplicate = f;
   duplicate.payload = "peerCID11";
-  ZuCHECK(!link->receiveNewConnectionID(duplicate),
+  ZuCHECK(!link->receiveNewCxnID(duplicate),
     "duplicate NEW_CONNECTION_ID sequence with different CID was accepted");
 
   duplicate = f;
   duplicate.resetToken = peerToken;
-  ZuCHECK(!link->receiveNewConnectionID(duplicate),
+  ZuCHECK(!link->receiveNewCxnID(duplicate),
     "duplicate NEW_CONNECTION_ID sequence with different token was accepted");
 
   duplicate = f;
   duplicate.value = 7;
   duplicate.payload = "peerCID11";
   duplicate.resetToken = peerToken2;
-  ZuCHECK(!link->receiveNewConnectionID(duplicate),
+  ZuCHECK(!link->receiveNewCxnID(duplicate),
     "duplicate reset token for different peer CID was accepted");
 
   Zquic::CxnID localCID{"local003"};
@@ -738,9 +738,9 @@ void testConnectionIDFrameLifecycle()
   ZuCHECK(link->addLocalCID(localCID, 3, localToken),
     "local CID setup failed");
   Zquic::Frame retire;
-  retire.type = Zquic::FrameType::RetireConnectionID;
+  retire.type = Zquic::FrameType::RetireCxnID;
   retire.value = 3;
-  ZuCHECK(link->receiveRetireConnectionID(retire),
+  ZuCHECK(link->receiveRetireCxnID(retire),
     "RETIRE_CONNECTION_ID frame was rejected");
   ZuCHECK(link->localCIDRetired(3) && link->retiredCount == 1 &&
       link->retiredSeq == 3 && link->retiredCID == localCID,
@@ -872,6 +872,6 @@ int main(int argc, char **argv)
   ZuTestCall(testAlignedSurfaceShape);
   ZuTestCall(testStatelessResetDetection);
   ZuTestCall(testApplicationCallbacks);
-  ZuTestCall(testConnectionIDFrameLifecycle);
+  ZuTestCall(testCxnIDFrameLifecycle);
   ZuTestCall(testInitValidation);
 }

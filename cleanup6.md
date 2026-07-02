@@ -43,7 +43,7 @@ Implemented:
 - arbitrary qlog string fields now own their data with `ZeString`; borrowed
   `ZuCSpan` is reserved for static non-event literals such as header metadata.
 - qlog header emission now snapshots endpoint role and connection identity
-  metadata.  `ZquicLogger` is the process-wide `ZmSingleton` initialized once
+  `LinkInfo`.  `ZquicLogger` is the process-wide `ZmSingleton` initialized once
   by the owning app during application `init` and finalized after protocol
   machinery is drained during application `final`; after initialization,
   `ZquicLogger::enabled()` is the single runtime availability check.  Direct
@@ -55,12 +55,12 @@ Implemented:
   SCID in event `common_fields`.
 - protocol-derived enum fields use `ZtEnumMap` JSON mappings instead of
   helper functions that convert enums to strings before serialization.
-- qlog event names now use the `ZquicLogEventName` closed vocabulary with a
+- qlog event names now use the `EventName` closed vocabulary with a
   `ZtEnumMap` JSON mapping.  Runtime and direct writer call sites pass enum
   values, so event-name strings are confined to the map and output assertions.
 - typed event structs and writer helpers exist for datagram, packet/frame
   summary, ACK, recovery, ECN, security, path, and CID events.
-- `ZquicLogFrameEvent` is marked as a Z POD/plain snapshot type so bounded
+- `FrameEvent` is marked as a Z POD/plain snapshot type so bounded
   frame arrays survive by-value lambda/ring movement without invoking
   destructive string moves.
 - runtime emission has been added for datagrams, packet sent/received/dropped,
@@ -151,7 +151,7 @@ Implemented:
   zquic-local PMTUD probe/loss reasons should move to private diagnostics if
   needed instead of leaking into the standard event.
 - packet buffering/drop call sites capture the local closed
-  `ZquicLogPacketEvent::Reason` vocabulary inside `ZquicLOG((...))`, but
+  `PktEvent::Reason` vocabulary inside `ZquicLOG((...))`, but
   standard `quic:packet_dropped` / `quic:packet_buffered` output now maps that
   internal classification to qlog `trigger` values on the logger thread.
   Standard packet output no longer emits the old zquic-local `reason` field or
@@ -392,19 +392,19 @@ Implemented:
   `make -C zquic/test -j8 ZquicLogTest ZquicRuntimeTest`,
   `ZquicLogTest`, and
   `timeout 240s libtool exec ./zquic/test/ZquicRuntimeTest`.
-  `ZquicLogger::metadata()` records the configured endpoint role and owned
+  `ZquicLogger::linkInfo()` records the configured endpoint role and owned
   header byte snapshots, rejects later opposite-role metadata for the same
   process-wide logger instance before the header is emitted, writes the role as
   `trace.vantage_point.type`, and writes connection identity bytes as hex
   through `ZtStruct`/`ZtJSON` `JSON::Hex` mappings rather than manual JSON.
-  Per-event connection identity metadata is a CID-only `ZquicLogCIDMeta`
+  Per-event connection identity linkInfo is a CID-only `Zquic::LinkInfo`
   value (`origDCID`, `groupID`, `dcid`, `scid`) carried by events that have
   link identity available, serialized as a `ZtStruct` UDT under
   `common_fields`, and omitted by sentinel-null behavior when empty.  Event
-  metadata is submitted with each event, so events from different metadata
+  linkInfo is submitted with each event, so events from different linkInfo
   sources can be interleaved without relying on a frozen global event identity.
   `ZquicLogTest::testQLogFileOutput` asserts two event records carry distinct
-  CID metadata snapshots.
+  CID linkInfo snapshots.
   The server accept path now falls back from absent stored ODCID to the Initial
   header DCID before posting `connection_started`, so the first emitted header
   has non-empty ODCID/group/DCID/SCID in the endpoint runtime test.
@@ -516,8 +516,8 @@ Implemented:
   `jq --seq -e .` and `blazingqlog <file> -p name`.
 - extension event/field use has been tightened: event data outside the current
   qlog draft schema must match mainstream reference implementation precedent,
-  not merely reuse a `quic:*` event name.  `quic:path_validated` now follows
-  mvfst's extension shape with `success` and `vantagePoint`; the vantage point
+  not merely reuse a `quic:*` event name.  `quic:path_validated` now keeps a
+  minimal reference-shape payload with `success` and `vantage`; the vantage point
   value is a closed `ZtEnumMap`-backed qlog enum serialized by `ZtJSON`, not
   owned arbitrary string event data.  zquic-local path action/reason/deadline
   details must stay on schema-defined events or move to private `zquic:*`
@@ -636,7 +636,7 @@ Paused implementation state:
   for qlog instrumentation style and must be followed before further runtime
   qlog edits.
 - receive packet frame-summary accumulation uses the documented
-  `ZquicLogger::enabled()` exception and `ZuElem<ZquicLogPacketEvent>` storage
+  `ZquicLogger::enabled()` exception and `ZuElem<PktEvent>` storage
   so disabled qlog avoids default-constructing the packet event accumulator.
   `ZquicLogger::enabled()` is the conditionally compiled API: a runtime qlog
   enabled check in `Zquic_DEBUG` builds and a `constexpr false` stub otherwise.
@@ -658,16 +658,16 @@ Paused implementation state:
   event values into the single `ZquicLogger::post_()` enqueue path.  Frame
   summary data remains scalar POD snapshot data with JSON enum mapping for
   frame type.
-- per-event CID metadata is now submitted with runtime events rather than
+- per-event CID linkInfo is now submitted with runtime events rather than
   depending on mutable process-wide event identity.  Runtime link-owned qlog
-  call sites capture `qlogCIDMeta_()` by value inside `ZquicLOG((...))` and set
-  the event `metadata` field; stream-owned runtime events use the public
-  `Link::qlogCIDMeta()` wrapper from inside the macro argument for the same
+  call sites capture `linkInfo_()` by value inside `ZquicLOG((...))` and set
+  the event `linkInfo` field; stream-owned runtime events use the public
+  `Link::linkInfo()` wrapper from inside the macro argument for the same
   by-value snapshot.  The static audit for link-owned call sites at line 4500
   and later currently finds no standard qlog event construction without
-  metadata.  The remaining no-metadata call sites are pre-link endpoint
-  security/address-validation events that cannot have link CID metadata and
-  should not capture empty metadata needlessly.
+  linkInfo.  The remaining no-linkInfo call sites are pre-link endpoint
+  security/address-validation events that cannot have link CID linkInfo and
+  should not capture empty linkInfo needlessly.
 - retained qlog artifacts from the current direct and runtime tests validate
   with `jq --seq -e .` and `blazingqlog <file> -p name`: direct writer traces
   `ZquicLog*.sqlog`, stream runtime qlog traces `ZquicStream*QLog.sqlog`, and
@@ -680,8 +680,8 @@ Still missing or incomplete:
   the former event-wrapper helper layer for existing qlog families.  Remaining
   audit work is to keep frame-summary support helpers confined to
   `ZquicLOG((...))` lambdas or the receive accumulator exception, to keep
-  per-event metadata captures only at call sites that can actually have link
-  metadata, and to apply the same style to all new qlog coverage.
+  per-event linkInfo captures only at call sites that can actually have link
+  identity, and to apply the same style to all new qlog coverage.
 - direct unit tests still call `ZquicLogger::typedEvent(...)` style APIs.  This
   is acceptable for writer tests, but runtime instrumentation should use
   `ZquicLOG`.
@@ -725,8 +725,8 @@ Still missing or incomplete:
   reference traces would normally expose for the same QUIC behavior.
 - Path validation now has retained runtime `.sqlog` assertions in
   `ZquicStreamTest::testPathValidationStateMachine`, covering
-  `quic:path_validated` success and failure states plus the mvfst-compatible
-  `vantagePoint` field shape.
+  `quic:path_validated` success and failure states plus the minimal
+  `vantage` field shape.
 - PMTUD now has retained runtime `.sqlog` assertions in
   `ZquicStreamTest::testPMTUDQLog`, covering `quic:mtu_updated` for ACKed and
   lost probe paths through the current draft `new` / `done` data shape.
@@ -768,8 +768,8 @@ Still missing or incomplete:
 - top-level connection metadata now uses the current JSON-SEQ `QlogFileSeq`
   header shape at the writer layer and is covered by runtime endpoint tests for
   the server trace.  Event identity is carried with each event as by-value
-  CID metadata when link identity is available, so interleaved events from
-  different metadata sources do not depend on a process-wide mutable event
+  CID linkInfo when link identity is available, so interleaved events from
+  different linkInfo sources do not depend on a process-wide mutable event
   identity.  Remaining gaps are reference-shape review for the runtime traces
   zquic can currently generate, and any future
   receive-side packet buffering event only if the implementation begins buffering undecryptable
@@ -800,11 +800,11 @@ Remaining in-scope parity work:
    Do not add new standard events just to cover local diagnostics.
 3. Validate trace identity expectations for mainstream tools: JSON-SEQ header
    fields, `trace.event_schemas`, connection/CID metadata, vantage point,
-   group/connection identity, and per-event CID metadata behavior when records
+   group/connection identity, and per-event CID linkInfo behavior when records
    from multiple connection identity sources are interleaved.  Direct tests now
-   prove event metadata can differ per record, runtime tests prove non-empty
+   prove event linkInfo can differ per record, runtime tests prove non-empty
    per-event CID fields are emitted for link-owned traces, and static audit
-   confirms pre-link endpoint-only events are the intentional no-metadata
+   confirms pre-link endpoint-only events are the intentional no-linkInfo
    exception.
 4. Keep external qlog-tool validation current for the retained
    mainstream-equivalence traces.  The current endpoint, Retry/token,
@@ -991,7 +991,7 @@ Parity target for path/CID events:
   validation success, and validation failure/timeout, following mvfst's
   reference-implementation precedent for this extension event.  Because this is
   outside the current draft schema, the `quic:*` payload should remain limited
-  to mvfst-compatible `success` and `vantagePoint`; additional zquic-specific
+  to `success` and `vantage`; additional zquic-specific
   diagnostics require a private `zquic:*` event;
 - `quic:mtu_updated` for PMTUD probe sent, ACKed, lost, blackhole detected, and
   MTU updated;
@@ -1036,7 +1036,7 @@ Resume checklist before adding more event coverage:
    Remaining helper audit is limited to the frame-summary support helpers and
    the receive accumulator exception.
 4. Review and test the receive packet/frame-summary path that now uses
-   `ZquicLogger::enabled()` and `ZuElem<ZquicLogPacketEvent>`; confirm disabled
+   `ZquicLogger::enabled()` and `ZuElem<PktEvent>`; confirm disabled
    qlog does not allocate, default-construct, or populate qlog event state,
    while enabled qlog still records bounded frame summaries.  This now has
    direct runtime coverage in `ZquicStreamTest::testRuntimeReceiveQLog`.
@@ -1060,15 +1060,15 @@ Resume checklist before adding more event coverage:
    - Keep the old generic `event()` helper only for tests or remove it after
      typed emitters replace all callers.
 
-2. Keep the qlog metadata snapshot layer event-owned.
+2. Keep the qlog linkInfo snapshot layer event-owned.
    - Closed qlog vocabularies should remain `ZtEnumMap`-backed enums for
      packet space, packet type, frame type, drop reason, loss trigger, timer
      type, redaction category, and similar short labels.
-   - Snapshot connection identity as by-value `ZquicLogCIDMeta`
+   - Snapshot connection identity as by-value `Zquic::LinkInfo`
      (`origDCID`, `groupID`, `dcid`, `scid`) in `ZquicLOG` capture
      initializers wherever link identity is available.
-   - Make event helpers accept already-owned metadata; they should not inspect
-     non-owner state from the writer side or rely on global current metadata.
+   - Make event helpers accept already-owned linkInfo; they should not inspect
+     non-owner state from the writer side or rely on global current linkInfo.
 
 3. Instrument datagram and packet receive.
    - Emit `quic:udp_datagrams_received` when a UDP datagram enters the QUIC
@@ -1220,8 +1220,8 @@ Resume checklist before adding more event coverage:
       in qlog output.
     - Add tests for truncated frame-summary behavior when a packet carries more
       frames than the qlog per-packet summary cap.
-    - Add tests for trace and event metadata: vantage point, header
-      connection/CID fields, per-event CID metadata, `file_schema`,
+    - Add tests for trace and event linkInfo: vantage point, header
+      connection/CID fields, per-event CID linkInfo, `file_schema`,
       `serialization_format`, `trace.event_schemas`, and monotonically valid
       event timestamps.
     - Keep tests tolerant of event ordering where scheduling legitimately
@@ -1317,7 +1317,7 @@ are true:
    arrays, format JSON, allocate, or copy packet payloads.
 4. The trace header includes `file_schema`, `serialization_format`,
    implementation identity, `trace.event_schemas`, vantage point, relative time
-   metadata, and per-connection identity/CID metadata where available.
+   metadata, and per-connection identity/CID linkInfo where available.
 5. The mainstream-equivalent transport, frame, recovery/congestion,
    TLS/security, path/CID, and stream/application-facing event families for
    implemented zquic behavior are emitted from runtime code, not only from

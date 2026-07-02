@@ -270,7 +270,7 @@ public:
   bool verify() const {
     uint64_t length = 0;
     for (unsigned i = 0; i < m_count; ++i) {
-      if (!m_ranges[i].length()) return false;
+      if (!m_ranges[i]) return false;
       if (i && m_ranges[i - 1].offset + m_ranges[i - 1].length() >=
 	  m_ranges[i].offset)
 	return false;

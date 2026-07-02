@@ -24,6 +24,8 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuArray.hh>
 
+#include <zlib/ZtEnum.hh>
+
 #include <zlib/ZquicBuf.hh>
 
 namespace Zquic {
@@ -99,6 +101,25 @@ private:
 inline constexpr unsigned CxnIDMax = 20;
 using CxnID = ZuBArray<CxnIDMax>;
 
+struct Vantage {
+  ZtEnum(Vantage, int8_t, Unknown, Client, Server);
+  ZtEnumMap(Vantage, JSON, "unknown", "client", "server");
+};
+
+struct LinkInfo {
+  Vantage::T	vantage = Vantage::Unknown;
+  CxnID		origDCID;
+  CxnID		groupID;
+  CxnID		dcid;
+  CxnID		scid;
+
+  bool operator !() const {
+    return !origDCID && !groupID &&
+      !dcid && !scid;
+  }
+  ZuOpBool
+};
+
 struct PktNumber {
   static unsigned encodedLength(uint64_t pn, uint64_t largestAckd);
   static int encode(uint8_t *, unsigned, uint64_t pn, unsigned length);
@@ -138,8 +159,8 @@ struct Pkt {
   static int parseRetry(ZuBSpan, RetryPkt &);
   static int retryIntegrityTag(
     uint8_t *, unsigned, ZuBSpan retryWithoutTag,
-    const CxnID &originalDCID);
-  static bool validateRetryIntegrity(ZuBSpan, const CxnID &originalDCID);
+    const CxnID &origDCID);
+  static bool validateRetryIntegrity(ZuBSpan, const CxnID &origDCID);
   static int parseShort(ZuBSpan, unsigned cidLen, ShortHdr &);
   static int parseVersionNegotiation(
     ZuBSpan, uint32_t *, unsigned capacity, unsigned &nVersions);
@@ -161,7 +182,7 @@ struct Pkt {
     ZuBSpan token, ZuBSpan retryIntegrityTag = {});
   static int writeRetryAuthenticated(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
-    ZuBSpan token, const CxnID &originalDCID);
+    ZuBSpan token, const CxnID &origDCID);
   static int writeShort(
     uint8_t *, unsigned, const CxnID &, uint64_t pn, unsigned pnLength,
     bool keyPhase = false);
@@ -199,7 +220,7 @@ public:
   }
 
   bool add(ZuBSpan span) {
-    if (!span.length()) return true;
+    if (!span) return true;
     if (m_count >= Max || span.length() > UINT_MAX - m_bytes) return false;
     m_vec[m_count++] = ptls_iovec_init(span.data(), span.length());
     m_bytes += span.length();

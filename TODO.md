@@ -13,6 +13,39 @@ unify `ZquicLogMetadata` with `Zquic::LinkInfo`
 
 ---
 
+fix local variables named `level` or `*Level` due to historical association with the removed `CryptoLevel` enum: these should now be named `space` or `*Space` to align with `PktSpace`; do this for the examples in `zquic/GUIDELINES.md`
+
+---
+
+Align naming with `GUIDELINES.md`, example: `ZquicLogSecurityTrigger` is too long.
+- All such names should be in an internal namespace (suggest: `ZquicLog_`) to permit
+  eliding the `ZquicLog` prefix in code by using a `using namespace ZquicLog_` directive
+- Do a full audit and align, cascading changes to dependent code
+- Examples of overlong verbose names that should be renamed (not exhaustive):
+  - `ZquicLogSecurityTrigger` -> `SecTrigger`
+  - `ZquicLogSecurityEvent` -> `SecEvent`
+  - `ConnectionID` -> `CxnID`
+  - `ZquicLogStreamType` -> `StreamType`
+  - `connectionStarted` -> `cxnStarted`
+  - `Unidirectional` -> `Simplex`
+  - `vantagePoint` -> `vantage` (`Point` is redundant)
+
+---
+
+`...Bidi` and `...Uni` names still appear in the source code (e.g. `DefaultMaxStreamsBidi`). These should be `...Duplex` and `...Simplex` respectively.
+
+---
+
+FIXME from here
+
+---
+
+audit `zquic` for redundant boolean context evaluation code, for example:
+- `if (m_dcid.length() ...` -> `if (m_dcid ...`
+any value of a type that uses `ZuOpBool` is intended to be boolean-evaluated without decoration
+
+---
+
 audit `zquic` qlog code for proper use of `ZtJSON` capabilities for mapping enums,
 printing/parsing UDTs such as `ZiIP` and `ZiSockAddr`, and so on.
 
@@ -21,10 +54,6 @@ printing/parsing UDTs such as `ZiIP` and `ZiSockAddr`, and so on.
 audit `zquic` for redundant helpers and update call sites:
 - enum ordinal mapping where simply using the ordinal would suffice
 - enum/name mapping where `ZtEnum` already provides the requisite functionality
-
----
-
-fix local variables named `level` or `*Level` due to historical association with the removed `CryptoLevel` enum: these should now be named `space` or `*Space` to align with `PktSpace`; do this for the examples in `zquic/GUIDELINES.md`
 
 ---
 
@@ -38,11 +67,6 @@ Very few qlog fields, if any, are genuinely arbitrary strings. `ZeString` is ove
 
 ---
 
-do not `if (m_dcid.length() ...` this should be `if (m_dcid ...`; audit the code for
-unnecessary use of `.length()` in a boolean context
-
----
-
 What is the use case for `U64Null`?
 
 ---
@@ -50,14 +74,6 @@ What is the use case for `U64Null`?
 rename all diagnostic `struct`s to align with the `*Diag` convention:
 `*Stats` -> `*Diag`, (examples: `ZmHeapStats` -> `ZmHeapDiag`) (DO NOT rename `Zdf::Stats`, it is not diagnostic)
 `*Telemetry` -> `*Diag`, (examples: `ZiCxnTelemetry` -> `ZiCxnDiag`)
-
----
-
-`...Bidi` and `...Uni` names still appear in the source code (e.g. `DefaultMaxStreamsBidi`). These should be `...Duplex` and `...Simplex` respectively.
-
----
-
-align naming with `GUIDELINES.md`, example: `ZquicLogSecurityTrigger` is too long. In any case all such should be in an internal namespace (suggest: `ZquicLog_`), used with a `using namespace` directive, and called `SecTrigger`. Similarly `ZquicLogSecurityEvent`: `using namespace ZquicLog_; ... SecEvent ... `. `ConnectionID` should be `CxnID`, `ZquicLogStreamType` should be `ZquicLog_::StreamType` (i.e. plain `StreamType` in code), `Unidirectional` should be `Simplex` and so on. other examples: `connectionStarted` should be `cxnStarted`.
 
 ---
 

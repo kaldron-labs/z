@@ -79,20 +79,20 @@ Correct pattern:
 
 ```c++
 ZquicLOG(([
-  level,
+  space,
   pn,
   bytes,
   bytesInFlight = m_congestion.bytesInFlight(),
   latestRTT = m_rtt.latest()
 ](auto &o, ZuTime time) mutable {
-  ZquicLogPacketEvent event{
-    .packetSpace = level,
+  PktEvent event{
+    .packetSpace = space,
     .packetNumber = pn,
     .packetSize = bytes,
     .bytesInFlight = bytesInFlight,
     .latestRTTUS = uint64_t(latestRTT.microsecs())
   };
-  o.logPacketSent(event, time);
+  o.logPktSent(event, time);
 }));
 ```
 
@@ -100,10 +100,10 @@ Incorrect pattern:
 
 ```c++
 uint64_t bytesInFlight = m_congestion.bytesInFlight();
-ZquicLogPacketEvent event;
-event.packetSpace = level;
+PktEvent event;
+event.packetSpace = space;
 ZquicLOG(([event, bytesInFlight](auto &o, ZuTime time) mutable {
-  o.logPacketSent(event, time);
+  o.logPktSent(event, time);
 }));
 ```
 
@@ -259,7 +259,7 @@ ZquicLOG(([
   antiAmplification = m_path.antiAmplificationRemaining(),
   validated = pathValidated_()
 ](auto &o, ZuTime time) {
-  ZquicLogPathEvent event{
+  PathEvent event{
     .action = action,
     .reason = reason,
     .mtu = mtu,
@@ -275,7 +275,7 @@ initialized directly from captured values.  Prefer aggregate/member
 initialization over default construction followed by assignment:
 
 ```c++
-ZquicLogPathEvent event{
+PathEvent event{
   .action = action,
   .reason = reason,
   .mtu = mtu,
@@ -286,7 +286,7 @@ ZquicLogPathEvent event{
 Avoid this pattern unless there is a real dependency between assignments:
 
 ```c++
-ZquicLogPathEvent event;
+PathEvent event;
 event.action = action;
 event.reason = reason;
 event.mtu = mtu;
@@ -312,7 +312,7 @@ Event names and field shapes must track the current qlog draft schema for
 `quic:*` events.  When an event or field extends beyond that schema, align it
 with mainstream reference implementation precedent where one exists, such as
 mvfst's `quic:path_validated` extension event and its `success` /
-`vantagePoint` payload shape.  Reference precedent covers both the event name
+`vantage` payload shape.  Reference precedent covers both the event name
 and the data fields; do not add zquic-specific detail fields to a
 reference-backed `quic:*` extension event unless the reference implementation
 does the same.  If no clear reference precedent exists, keep the event or

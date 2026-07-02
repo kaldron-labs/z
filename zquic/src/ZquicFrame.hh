@@ -100,10 +100,10 @@ struct FrameCodec {
   static int writeDataBlocked(uint8_t *, unsigned, uint64_t);
   static int writeStreamDataBlocked(uint8_t *, unsigned, uint64_t, uint64_t);
   static int writeStreamsBlocked(uint8_t *, unsigned, Zi::StreamType::T, uint64_t);
-  static int writeNewConnectionID(
+  static int writeNewCxnID(
     uint8_t *, unsigned, uint64_t sequence, uint64_t retirePriorTo,
     const CxnID &, const ResetToken &);
-  static int writeRetireConnectionID(uint8_t *, unsigned, uint64_t sequence);
+  static int writeRetireCxnID(uint8_t *, unsigned, uint64_t sequence);
   static int writePathChallenge(uint8_t *, unsigned, ZuBSpan);
   static int writePathResponse(uint8_t *, unsigned, ZuBSpan);
   static int writeConnectionClose(uint8_t *, unsigned, uint64_t);

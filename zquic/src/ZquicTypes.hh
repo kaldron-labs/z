@@ -158,16 +158,16 @@ struct LinkState {
 
 struct TransportError {
   ZtEnum(TransportError, uint16_t,
-    NoError, InternalError, ConnectionRefused, FlowControl,
+    NoError, InternalError, CxnRefused, FlowControl,
     StreamLimit, StreamState, FinalSize, FrameEncoding,
-    TransportParameter, ConnectionIDLimit, ProtocolViolation);
+    TransportParam, CxnIDLimit, ProtViolation);
 };
 
 struct FrameType {
   ZtEnum(FrameType, int8_t,
     Padding, Ping, Ack, Crypto, Stream, MaxData, MaxStreamData,
     MaxStreams, DataBlocked, StreamDataBlocked, StreamsBlocked,
-    ResetStream, StopSending, NewToken, NewConnectionID, RetireConnectionID,
+    ResetStream, StopSending, NewToken, NewCxnID, RetireCxnID,
     PathChallenge, PathResponse, ConnectionClose, ApplicationClose,
     HandshakeDone, Unknown);
   ZtEnumMap(FrameType, JSON,
@@ -205,11 +205,11 @@ struct EcnMark {
 };
 
 struct ServerPktAction {
-  ZtEnum(ServerPktAction, int8_t, Drop, AcceptInitial, VersionNegotiation);
+  ZtEnum(ServerPktAction, int8_t, Drop, AcceptInitial, VersionNeg);
 };
 
-struct RecoveryEvent {
-  ZtEnum(RecoveryEvent, int8_t, Ackd, Lost, PTO, PersistentCongestion);
+struct RecEvt {
+  ZtEnum(RecEvt, int8_t, Ackd, Lost, PTO, PersistCong);
 };
 
 struct SentFrameKind {

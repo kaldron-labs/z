@@ -60,7 +60,7 @@ int VarInt::put(uint8_t *out, unsigned len, uint64_t v, unsigned &o)
 
 int VarInt::decode(ZuBSpan in, uint64_t &v, unsigned &n)
 {
-  if (!in.length()) return -1;
+  if (!in) return -1;
   n = 1U << ((in[0] & 0xc0) >> 6);
   if (in.length() < n) return -1;
   v = in[0] & 0x3fU;
@@ -99,7 +99,7 @@ uint64_t PktNumber::decode(uint64_t largestPN, uint64_t truncated, unsigned bits
 
 bool Pkt::isLong(ZuBSpan p)
 {
-  return p.length() && (p[0] & 0x80);
+  return p && (p[0] & 0x80);
 }
 
 bool Pkt::isVersionNegotiation(ZuBSpan p)
@@ -185,7 +185,7 @@ int Pkt::parseRetry(ZuBSpan p, RetryPkt &retry)
 
 int Pkt::retryIntegrityTag(
   uint8_t *tag, unsigned len, ZuBSpan retryWithoutTag,
-  const CxnID &originalDCID)
+  const CxnID &origDCID)
 {
   static constexpr uint8_t Key[16] = {
     0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a,
@@ -196,7 +196,7 @@ int Pkt::retryIntegrityTag(
     0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb
   };
 
-  if (!tag || len < 16 || !retryWithoutTag || originalDCID.length() > 20)
+  if (!tag || len < 16 || !retryWithoutTag || origDCID.length() > 20)
     return -1;
 
   EVP_CIPHER_CTX *ctx = opensslCipherCtx();
@@ -204,14 +204,14 @@ int Pkt::retryIntegrityTag(
 
   int ok = 0;
   int outLen = 0;
-  uint8_t odcidLen = originalDCID.length();
+  uint8_t odcidLen = origDCID.length();
   if (EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) == 1 &&
       EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, sizeof(Nonce), nullptr) == 1 &&
       EVP_EncryptInit_ex(ctx, nullptr, nullptr, Key, Nonce) == 1 &&
       EVP_EncryptUpdate(ctx, nullptr, &outLen, &odcidLen, 1) == 1 &&
-      (!originalDCID.length() ||
+      (!origDCID ||
 	EVP_EncryptUpdate(ctx, nullptr, &outLen,
-	  originalDCID.data(), int(originalDCID.length())) == 1) &&
+	  origDCID.data(), int(origDCID.length())) == 1) &&
       EVP_EncryptUpdate(ctx, nullptr, &outLen,
 	retryWithoutTag.data(), int(retryWithoutTag.length())) == 1 &&
       EVP_EncryptFinal_ex(ctx, nullptr, &outLen) == 1 &&
@@ -221,7 +221,7 @@ int Pkt::retryIntegrityTag(
   return ok ? 16 : -1;
 }
 
-bool Pkt::validateRetryIntegrity(ZuBSpan p, const CxnID &originalDCID)
+bool Pkt::validateRetryIntegrity(ZuBSpan p, const CxnID &origDCID)
 {
   RetryPkt retry;
   if (parseRetry(p, retry) < 0) return false;
@@ -229,7 +229,7 @@ bool Pkt::validateRetryIntegrity(ZuBSpan p, const CxnID &originalDCID)
   if (retryIntegrityTag(
 	tag, sizeof(tag),
 	ZuBSpan{p.data(), p.length() - retry.integrityTag.length()},
-	originalDCID) < 0)
+	origDCID) < 0)
     return false;
   return !CRYPTO_memcmp(tag, retry.integrityTag.data(), sizeof(tag));
 }
@@ -342,14 +342,14 @@ int Pkt::writeRetry(
 
 int Pkt::writeRetryAuthenticated(
   uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
-  ZuBSpan token, const CxnID &originalDCID)
+  ZuBSpan token, const CxnID &origDCID)
 {
   int n = writeRetry(out, len, dcid, scid, token);
   if (n < 0 || len < unsigned(n) + 16) return -1;
   if (retryIntegrityTag(
 	out + n, len - unsigned(n),
 	ZuBSpan{out, unsigned(n)},
-	originalDCID) < 0)
+	origDCID) < 0)
     return -1;
   return n + 16;
 }

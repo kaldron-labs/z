@@ -77,7 +77,7 @@ bool AddressToken::generateSecret(TokenSecret &secret)
 
 bool AddressToken::encode(
   TokenBytes &token, TokenKind::T kind, ZuBSpan secret,
-  const ZiSockAddr &addr, const CxnID &originalDCID, const CxnID &serverCID,
+  const ZiSockAddr &addr, const CxnID &origDCID, const CxnID &serverCID,
   uint64_t nowSec, bool bindPort)
 {
   enum {
@@ -86,11 +86,11 @@ bool AddressToken::encode(
       MagicLength + 1 + 1 + 1 + 1 + 1 + 8 + 4 + 2 + NonceLength
   };
   if (!addr ||
-      originalDCID.length() > CxnIDMax ||
+      origDCID.length() > CxnIDMax ||
       serverCID.length() > CxnIDMax)
     return false;
   unsigned len =
-    FixedLength + originalDCID.length() + serverCID.length() + TagLength;
+    FixedLength + origDCID.length() + serverCID.length() + TagLength;
   if (len > MaxLength) return false;
   token.length(len);
   uint8_t *out = token.data();
@@ -102,7 +102,7 @@ bool AddressToken::encode(
   out[o++] = 1;
   out[o++] = uint8_t(kind);
   out[o++] = bindPort ? 1 : 0;
-  out[o++] = originalDCID.length();
+  out[o++] = origDCID.length();
   out[o++] = serverCID.length();
   tokenPut64_(out + o, nowSec ? nowSec : tokenNowSec_()); o += 8;
   tokenPut32_(out + o, uint32_t(addr.ip())); o += 4;
@@ -113,11 +113,11 @@ bool AddressToken::encode(
 	ZuSpan<uint8_t>{out + o, NonceLength}))
     return false;
   o += NonceLength;
-  if (originalDCID.length()) {
-    memcpy(out + o, originalDCID.data(), originalDCID.length());
-    o += originalDCID.length();
+  if (origDCID) {
+    memcpy(out + o, origDCID.data(), origDCID.length());
+    o += origDCID.length();
   }
-  if (serverCID.length()) {
+  if (serverCID) {
     memcpy(out + o, serverCID.data(), serverCID.length());
     o += serverCID.length();
   }
@@ -179,7 +179,7 @@ TokenStatus::T AddressToken::validate(
   if (ip != uint32_t(addr.ip()) || (bindPort && port != addr.port()))
     return TokenStatus::Address;
   if (odcidLen) {
-    info.originalDCID = ZuBSpan{token.data() + o, odcidLen};
+    info.origDCID = ZuBSpan{token.data() + o, odcidLen};
     o += odcidLen;
   }
   if (scidLen)
@@ -196,12 +196,12 @@ ServerPktDecision ServerPkt::routeLongHdr(
 
   if (Pkt::parseLong(datagram, decision.header) < 0) return decision;
 
-  if (!VersionNegotiation::supported(decision.header.version)) {
-    int n = VersionNegotiation::write(
+  if (!VersionNeg::supported(decision.header.version)) {
+    int n = VersionNeg::write(
       response, responseLen, decision.header.scid, decision.header.dcid);
     if (n > 0) {
       decision.responseLength = unsigned(n);
-      decision.action = ServerPktAction::VersionNegotiation;
+      decision.action = ServerPktAction::VersionNeg;
     }
     return decision;
   }
@@ -263,7 +263,7 @@ bool PathChallenge::equals(const PathChallenge &challenge) const
     (!m_valid || !memcmp(m_data, challenge.m_data, Length));
 }
 
-int StatelessReset::decode(ResetToken &token, ZuBSpan datagram)
+int StatelessRst::decode(ResetToken &token, ZuBSpan datagram)
 {
   if (!datagram || datagram.length() <= MinLength || Pkt::isLong(datagram))
     return -1;
@@ -272,7 +272,7 @@ int StatelessReset::decode(ResetToken &token, ZuBSpan datagram)
   return token.set(suffix) ? 0 : -1;
 }
 
-bool StatelessReset::verify(ZuBSpan datagram, const ResetToken &token)
+bool StatelessRst::verify(ZuBSpan datagram, const ResetToken &token)
 {
   if (!token.valid()) return false;
   ResetToken decoded;
@@ -283,7 +283,7 @@ bool StatelessReset::verify(ZuBSpan datagram, const ResetToken &token)
   return !diff;
 }
 
-int StatelessReset::writeForUnknownCID(
+int StatelessRst::writeForUnknownCID(
   uint8_t *out, unsigned len, ZuBSpan receivedPkt,
   const ResetToken &token)
 {
@@ -355,7 +355,7 @@ bool ServerBootstrap::acceptInitial(
 {
   if (m_accepted ||
       initial.type != PktType::Initial ||
-      !VersionNegotiation::supported(initial.version) ||
+      !VersionNeg::supported(initial.version) ||
       initial.dcid.length() < CxnIDGen::InitialLength ||
       initial.scid.length() < CxnIDGen::InitialLength ||
       datagramLength < MinUDPPayload)
@@ -363,14 +363,14 @@ bool ServerBootstrap::acceptInitial(
 
   CxnID localSCID;
   ResetToken resetToken;
-  if (info.addressValidated && info.retrySCID.length())
+  if (info.addressValidated && info.retrySCID)
     localSCID = info.retrySCID;
   else if (!CxnIDGen::random(localSCID))
     return false;
   if (!resetToken.generate()) return false;
 
   m_initialDCID = initial.dcid;
-  m_originalDCID = info.originalDCID.length() ? info.originalDCID : initial.dcid;
+  m_origDCID = info.origDCID.length() ? info.origDCID : initial.dcid;
   m_clientInitialSCID = initial.scid;
   m_localInitialSCID = localSCID;
   m_retrySCID = info.retrySCID;
@@ -383,7 +383,7 @@ bool ServerBootstrap::acceptInitial(
 bool ServerBootstrap::transportParams(TransportParams &params) const
 {
   if (!m_accepted) return false;
-  params.originalDCID = m_originalDCID;
+  params.origDCID = m_origDCID;
   params.initialSCID = m_localInitialSCID;
   if (m_retried) params.retrySCID = m_retrySCID;
   params.statelessResetToken = m_statelessResetToken;

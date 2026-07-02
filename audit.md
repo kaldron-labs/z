@@ -338,9 +338,9 @@ Remaining gaps:
   event/field extending beyond that model should either follow mainstream
   reference implementation precedent, including both extension event names and
   data fields, or remain under the private `zquic:*` event schema.  The
-  `quic:path_validated` extension now follows mvfst's `success` /
-  `vantagePoint` payload shape rather than carrying zquic-local path detail
-  fields under the `quic:*` namespace; `vantagePoint` is enum-mapped on the
+  `quic:path_validated` extension now keeps a minimal `success` / `vantage`
+  payload shape rather than carrying zquic-local path detail
+  fields under the `quic:*` namespace; `vantage` is enum-mapped on the
   logger thread rather than carried as arbitrary string event data.
 - Packet and UDP datagram writer payloads now use the current qlog
   `header`/`raw` and datagram `count`/`raw[]`/`ecn[]` structure; where packet
@@ -362,7 +362,7 @@ Remaining gaps:
   server Version Negotiation no-overlap case, with versions serialized as qlog
   `QuicVersion` hex strings instead of generic security `kind` / `reason` /
   `value` fields.  Qlog event names are enum-mapped through
-  `ZquicLogEventName`.  `quic:connection_closed` no longer carries the former
+  `EventName`.  `quic:connection_closed` no longer carries the former
   zquic-local `application` and `frame` boolean fields in its standard payload;
   known zquic transport close codes now map to qlog `$TransportError` strings
   such as `frame_encoding_error`, empty close reasons are omitted, and
@@ -421,12 +421,12 @@ Remaining gaps:
   fails on exhausted connection data credit and queues DATA_BLOCKED, then
   MAX_DATA clears the queued control and allows the stream send to proceed.
 - Multi-connection trace identity no longer relies on a mutable global event
-  metadata slot.  The trace header keeps its configured role/header identity,
-  while event identity is carried as by-value `ZquicLogCIDMeta`
+  linkInfo slot.  The trace header keeps its configured role/header identity,
+  while event identity is carried as by-value `Zquic::LinkInfo`
   (`origDCID`, `groupID`, `dcid`, `scid`) on each event that has link identity
-  available.  The qlog writer serializes that metadata as a `ZtStruct` UDT
+  available.  The qlog writer serializes that linkInfo as a `ZtStruct` UDT
   under `common_fields` and omits it when the sentinel-null value is empty.
-  `ZquicLogTest` covers distinct per-event CID metadata snapshots and runtime
+  `ZquicLogTest` covers distinct per-event CID linkInfo snapshots and runtime
   tests cover the server endpoint trace metadata.
 - Receive-side buffered-packet qlog coverage is not applicable to the current
   implementation because undecryptable/missing-key packets are dropped and
