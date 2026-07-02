@@ -154,6 +154,9 @@ inline PktType::T pktTypeFromPktNumSpace(PktNumSpace::T space)
 struct LinkState {
   ZtEnum(LinkState, int8_t,
     Starting, Handshaking, Established, Closing, Draining, Closed);
+  ZtEnumMap(LinkState, JSON,
+    "attempted", "handshake_started", "handshake_complete",
+    "closing", "draining", "closed");
 };
 
 struct TransportError {

@@ -510,14 +510,14 @@ struct CloseReason {
 
 struct CloseError {
   ZtEnum(CloseError, int8_t,
-    None, Unknown, NoError, Internal, CxnRefused, FlowControl,
+    NoError, InternalError, CxnRefused, FlowControl,
     StreamLimit, StreamState, FinalSize, FrameEncoding, TransportParam,
-    CxnIDLimit, ProtViolation);
+    CxnIDLimit, ProtViolation, None, Unknown);
   ZtEnumMap(CloseError, JSON,
-    "", "unknown", "no_error", "internal_error", "connection_refused",
+    "no_error", "internal_error", "connection_refused",
     "flow_control_error", "stream_limit_error", "stream_state_error",
     "final_size_error", "frame_encoding_error", "transport_parameter_error",
-    "connection_id_limit_error", "protocol_violation");
+    "connection_id_limit_error", "protocol_violation", "", "unknown");
 };
 
 struct CloseEvent {
@@ -530,18 +530,9 @@ struct CloseEvent {
   Zquic::LinkInfo linkInfo;
 };
 
-struct CxnStatus {
-  ZtEnum(CxnStatus, int8_t,
-    Attempted, HSStarted, HSComplete, Closing, Draining, Closed);
-  ZtEnumMap(CxnStatus, JSON,
-    "attempted", "handshake_started", "handshake_complete",
-    "closing", "draining", "closed");
-};
-
 struct CxnStateEvent {
-  CxnStatus::T oldState = CxnStatus::Attempted;
-  CxnStatus::T newState =
-    CxnStatus::HSStarted;
+  Zquic::LinkState::T oldState = Zquic::LinkState::Starting;
+  Zquic::LinkState::T newState = Zquic::LinkState::Handshaking;
   Zquic::LinkInfo linkInfo;
 };
 

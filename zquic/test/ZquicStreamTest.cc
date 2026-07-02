@@ -250,9 +250,9 @@ struct TestLink :
   }
   void fillCwnd() {
     Zquic::RuntimeDiag diag = Base::runtimeDiag_();
-    while (diag.congestionBytesInFlight < diag.congestionWindow) {
+    while (diag.tx.congestionBytesInFlight < diag.tx.congestionWindow) {
       uint64_t remaining =
-	diag.congestionWindow - diag.congestionBytesInFlight;
+	diag.tx.congestionWindow - diag.tx.congestionBytesInFlight;
       unsigned bytes = remaining > app()->maxUDP() ?
 	app()->maxUDP() : unsigned(remaining);
       recordSentPkt(
@@ -1459,7 +1459,7 @@ void testCongestionBudgetGatesRuntimeSends()
 
   link->fillCwnd();
   Zquic::RuntimeDiag diag = link->runtimeDiag();
-  ZuCHECK(diag.congestionBytesInFlight >= diag.congestionWindow &&
+  ZuCHECK(diag.tx.congestionBytesInFlight >= diag.tx.congestionWindow &&
       !link->flushCongestedStream(stream) &&
       stream->txBufferedBytes(),
     "runtime stream send bypassed closed congestion window");
@@ -1475,7 +1475,7 @@ void testCongestionBudgetGatesRuntimeSends()
   unsigned queued = link->txFlushQueued;
   link->ackThrough(link->sentPkts - 1);
   diag = link->runtimeDiag();
-  ZuCHECK(diag.congestionBytesInFlight < diag.congestionWindow &&
+  ZuCHECK(diag.tx.congestionBytesInFlight < diag.tx.congestionWindow &&
       link->txFlushQueued == queued + 1,
     "runtime ACK did not reopen congestion window and queue Tx flush");
   bool flushed = link->flushControlSends();
@@ -1810,8 +1810,8 @@ void testAckECNValidationDisablesECN()
       link->receiveMarked(2, Zquic::EcnMark::CE),
     "runtime ECN receive marking failed");
   Zquic::RuntimeDiag diag = link->runtimeDiag();
-  ZuCHECK(diag.ecnRx[Zquic::PktNumSpace::AppData].ect0 == 1 &&
-      diag.ecnRx[Zquic::PktNumSpace::AppData].ce == 1,
+  ZuCHECK(diag.rx.ecnRx[Zquic::PktNumSpace::AppData].ect0 == 1 &&
+      diag.rx.ecnRx[Zquic::PktNumSpace::AppData].ce == 1,
     "runtime ECN receive diagnostics mismatch");
   Zquic::PktBuild build;
   ZuCHECK(link->writePendingAck(build) &&
@@ -1831,12 +1831,12 @@ void testAckECNValidationDisablesECN()
   link->ackECN(9, 2, 1, 0);
   diag = link->runtimeDiag();
   ZuCHECK(!link->ecnDisabled() &&
-      diag.peerAckECN[Zquic::PktNumSpace::AppData].ect0 == 2 &&
-      diag.peerAckECN[Zquic::PktNumSpace::AppData].ect1 == 1,
+      diag.tx.peerAckECN[Zquic::PktNumSpace::AppData].ect0 == 2 &&
+      diag.tx.peerAckECN[Zquic::PktNumSpace::AppData].ect1 == 1,
     "valid ACK_ECN did not update runtime diagnostics");
   link->ackECN(9, 1, 1, 0);
   diag = link->runtimeDiag();
-  ZuCHECK(link->ecnDisabled() && diag.ecnValidationFailures == 1,
+  ZuCHECK(link->ecnDisabled() && diag.tx.ecnValidationFailures == 1,
     "regressing ACK_ECN did not disable ECN");
   link->closeForTest();
 
@@ -1844,13 +1844,13 @@ void testAckECNValidationDisablesECN()
   impossible->enableECN();
   impossible->sendAckEliciting(0);
   diag = impossible->runtimeDiag();
-  uint64_t inFlight = diag.congestionBytesInFlight;
+  uint64_t inFlight = diag.tx.congestionBytesInFlight;
   unsigned queued = impossible->txFlushQueued;
   impossible->ackECN(0, 2, 0, 0);
   diag = impossible->runtimeDiag();
   ZuCHECK(impossible->ecnDisabled() &&
-      diag.ecnValidationFailures == 1 &&
-      diag.congestionBytesInFlight < inFlight &&
+      diag.tx.ecnValidationFailures == 1 &&
+      diag.tx.congestionBytesInFlight < inFlight &&
       impossible->txFlushQueued == queued + 1,
     "impossible ACK_ECN did not disable ECN while preserving ACK processing");
   impossible->closeForTest();
@@ -2045,8 +2045,8 @@ void testPeerStreamAcceptance()
     "implicit lower peer stream was rejected after higher stream");
   auto lower = gap->findStream(4);
   ZuCHECK(lower && lower->processed == 1 && lower->rxComplete() &&
-      !gap->runtimeDiag().closedStreamFrames &&
-      !gap->runtimeDiag().invalidStreamFrames,
+      !gap->runtimeDiag().rx.closedStreamFrames &&
+      !gap->runtimeDiag().rx.invalidStreamFrames,
     "implicit lower peer stream was treated as closed or invalid");
 }
 
@@ -2446,10 +2446,10 @@ void testInvalidClosedStreamActivity()
       !maxLink->closeError(),
     "closed-stream MAX_STREAM_DATA was not ignored");
   Zquic::RuntimeDiag diag = maxLink->runtimeDiag();
-  ZuCHECK(!diag.invalidStreamFrames &&
-      !diag.closedStreamFrames &&
-      diag.streamMaxClosedRx == 1 &&
-      !diag.suspiciousStreamCloses,
+  ZuCHECK(!diag.rx.invalidStreamFrames &&
+      !diag.rx.closedStreamFrames &&
+      diag.rx.streamMaxClosedRx == 1 &&
+      !diag.rx.suspiciousStreamCloses,
     "closed-stream MAX_STREAM_DATA diagnostics mismatch");
 
   ZmRef<TestLink> resetLink = testLink(&app, true);
@@ -2459,8 +2459,8 @@ void testInvalidClosedStreamActivity()
       resetLink->receiveFrame(frame) == 0,
     "duplicate RESET_STREAM final size was not ignored");
   diag = resetLink->runtimeDiag();
-  ZuCHECK(!diag.invalidStreamFrames &&
-      !diag.closedStreamFrames &&
+  ZuCHECK(!diag.rx.invalidStreamFrames &&
+      !diag.rx.closedStreamFrames &&
       !resetLink->closeError(),
     "duplicate RESET_STREAM diagnostics mismatch");
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 1);
@@ -2469,7 +2469,7 @@ void testInvalidClosedStreamActivity()
       resetLink->closeError() == Zquic::TransportError::FinalSize,
     "active duplicate RESET_STREAM final-size violation did not close");
   diag = resetLink->runtimeDiag();
-  ZuCHECK(diag.suspiciousStreamCloses == 1,
+  ZuCHECK(diag.rx.suspiciousStreamCloses == 1,
     "final-size violation close diagnostics mismatch");
 
   ZmRef<TestLink> blockedLink = testLink(&app, true);
@@ -2483,8 +2483,8 @@ void testInvalidClosedStreamActivity()
       !blockedLink->closeError(),
     "closed-stream STREAM_DATA_BLOCKED was not ignored");
   diag = blockedLink->runtimeDiag();
-  ZuCHECK(diag.invalidStreamFrames == 1 &&
-      diag.closedStreamFrames == 1,
+  ZuCHECK(diag.rx.invalidStreamFrames == 1 &&
+      diag.rx.closedStreamFrames == 1,
     "closed-stream STREAM_DATA_BLOCKED diagnostics mismatch");
 
   ZmRef<TestLink> dupLink = testLink(&app);
@@ -2496,7 +2496,7 @@ void testInvalidClosedStreamActivity()
   packet = streamPkt_(dup->id(), 0, "dup", false, frame, used);
   ZuCHECK(packet &&
       dupLink->receiveFrame(frame, packet) == 0 &&
-      !dupLink->runtimeDiag().invalidStreamFrames,
+      !dupLink->runtimeDiag().rx.invalidStreamFrames,
     "ordinary duplicate STREAM was treated as invalid");
 
   ZmRef<TestLink> threshold = testLink(&app);
@@ -2510,13 +2510,13 @@ void testInvalidClosedStreamActivity()
       "closed-stream threshold frame was rejected");
   diag = threshold->runtimeDiag();
   ZuCHECK(!threshold->closeError() &&
-      diag.streamMaxClosedRx == TestLink::suspiciousStreamThreshold() &&
-      !diag.suspiciousStreamCloses,
+      diag.rx.streamMaxClosedRx == TestLink::suspiciousStreamThreshold() &&
+      !diag.rx.suspiciousStreamCloses,
     "closed-stream MAX_STREAM_DATA was not tracked as benign");
   ZuCHECK(threshold->applyMaxStreamData(frame) &&
-      threshold->runtimeDiag().streamMaxClosedRx ==
+      threshold->runtimeDiag().rx.streamMaxClosedRx ==
 	TestLink::suspiciousStreamThreshold() + 1 &&
-      !threshold->runtimeDiag().suspiciousStreamCloses,
+      !threshold->runtimeDiag().rx.suspiciousStreamCloses,
     "closed-stream MAX_STREAM_DATA produced suspicious close diagnostics");
 }
 
@@ -2562,7 +2562,7 @@ void testStreamGC()
     b, sizeof(b), localID, 4096);
   ZuCHECK(parseFrame_(b, n, frame) &&
       maxLink->applyMaxStreamData(frame) &&
-      maxLink->runtimeDiag().streamMaxClosedRx == 1,
+      maxLink->runtimeDiag().rx.streamMaxClosedRx == 1,
     "closed MAX_STREAM_DATA after stream GC was not compact-handled");
 
   ZmRef<TestLink> ackLink = testLink(&app);
@@ -2595,7 +2595,7 @@ void testStreamGC()
   rx = nullptr;
   packet = streamPkt_(2, 0, "", true, frame, used);
   ZuCHECK(packet && rxLink->receiveFrame(frame, packet) == 0 &&
-      !rxLink->runtimeDiag().closedStreamFrames,
+      !rxLink->runtimeDiag().rx.closedStreamFrames,
     "duplicate STREAM after stream GC was not compact-handled");
   packet = streamPkt_(2, 0, "long", true, frame, used);
   ZuCHECK(packet && rxLink->receiveFrame(frame, packet) == 0 &&
@@ -2905,17 +2905,17 @@ void testPeerKeyUpdateState()
 
   ZuCHECK(currentOK, "current key packet was rejected");
   ZuCHECK(updateOK, "peer key update packet was rejected");
-  ZuCHECK(updateDiag.peerKeyUpdates == 1 && updateDiag.packetsRx == 2 &&
-      !updateDiag.invalidKeyPhases,
+  ZuCHECK(updateDiag.rx.peerKeyUpdates == 1 && updateDiag.rx.packetsRx == 2 &&
+      !updateDiag.rx.invalidKeyPhases,
     "peer key update diagnostics mismatch");
   ZuCHECK(oldOK, "old key reorder packet was rejected");
-  ZuCHECK(oldDiag.oldKeysAccepted == 1 && oldDiag.peerKeyUpdates == 1,
+  ZuCHECK(oldDiag.rx.oldKeysAccepted == 1 && oldDiag.rx.peerKeyUpdates == 1,
     "old key retention diagnostics mismatch");
   ZuCHECK(!rapidOK, "rapid second key update was accepted");
-  ZuCHECK(invalidDiag.invalidKeyPhases == 1 &&
-      invalidDiag.peerKeyUpdates == 1,
+  ZuCHECK(invalidDiag.rx.invalidKeyPhases == 1 &&
+      invalidDiag.rx.peerKeyUpdates == 1,
     "invalid key phase diagnostics mismatch");
-  ZuCHECK(discardDiag.keyDiscards == 1, "key discard diagnostic mismatch");
+  ZuCHECK(discardDiag.rx.keyDiscards == 1, "key discard diagnostic mismatch");
   ZuCHECK(!discardedOK, "discarded old key packet was accepted");
 }
 #endif

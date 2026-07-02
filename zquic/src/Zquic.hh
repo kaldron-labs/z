@@ -1030,337 +1030,150 @@ private:
   bool		m_retried = false;
 };
 
+#ifdef Zquic_DEBUG
+using RuntimeDiagCounter = uint64_t;
+#else
+struct RuntimeDiagCounter {
+  RuntimeDiagCounter() = default;
+  RuntimeDiagCounter(uint64_t) { }
+
+  RuntimeDiagCounter &operator =(uint64_t) { return *this; }
+  RuntimeDiagCounter &operator =(uint32_t) { return *this; }
+  RuntimeDiagCounter &operator =(bool) { return *this; }
+  RuntimeDiagCounter &operator ++() { return *this; }
+  RuntimeDiagCounter operator ++(int) { return {}; }
+  RuntimeDiagCounter &operator +=(uint64_t) { return *this; }
+  RuntimeDiagCounter &operator +=(uint32_t) { return *this; }
+  operator uint64_t() const { return 0; }
+};
+#endif
+
 struct RuntimeRxDiag {
-  uint64_t	endpointReady = 0;
-  uint64_t	datagramsRx = 0;
-  uint64_t	bytesRx = 0;
-  uint64_t	packetsRx = 0;
-  uint64_t	framesRx = 0;
-  uint64_t	duplicatePacketsRx = 0;
-  uint64_t	ackCommitsRx = 0;
-  uint64_t	ackElicitingRx = 0;
-  uint64_t	ackImmediateRx = 0;
-  uint64_t	ackSnapshotPostsRx = 0;
-  uint64_t	streamNoDataRx = 0;
-  uint64_t	cryptoBytesRx = 0;
-  uint64_t	streamBytesRx = 0;
-  uint64_t	invalidStreamFrames = 0;
-  uint64_t	closedStreamFrames = 0;
-  uint64_t	suspiciousStreamCloses = 0;
-  uint64_t	streamMaxClosedRx = 0;
-  uint64_t	streamMaxInvalidRx = 0;
-  uint64_t	streamCtlClosedRx = 0;
-  uint64_t	streamCtlInvalidRx = 0;
-  uint64_t	streamDataInvalidRx = 0;
-  uint64_t	streamDataStateRx = 0;
-  uint64_t	streamDataFinalRx = 0;
-  uint64_t	streamRxDeqStateRx = 0;
-  uint64_t	streamRxDeqFinalRx = 0;
-  uint64_t	streamBlockedClosedRx = 0;
-  uint64_t	streamBlockedInvalidRx = 0;
-  uint64_t	streamBlockedFinalRx = 0;
-  uint64_t	unhandledAppEvents = 0;
-  uint64_t	peerKeyUpdates = 0;
-  uint64_t	invalidKeyPhases = 0;
-  uint64_t	oldKeysAccepted = 0;
-  uint64_t	keyDiscards = 0;
-  uint64_t	newTokenRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter endpointReady = 0;
+  [[no_unique_address]] RuntimeDiagCounter datagramsRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter bytesRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter packetsRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter framesRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter duplicatePacketsRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackCommitsRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackElicitingRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackImmediateRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackSnapshotPostsRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamNoDataRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter cryptoBytesRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamBytesRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter invalidStreamFrames = 0;
+  [[no_unique_address]] RuntimeDiagCounter closedStreamFrames = 0;
+  [[no_unique_address]] RuntimeDiagCounter suspiciousStreamCloses = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamMaxClosedRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamMaxInvalidRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamCtlClosedRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamCtlInvalidRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamDataInvalidRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamDataStateRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamDataFinalRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamRxDeqStateRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamRxDeqFinalRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamBlockedClosedRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamBlockedInvalidRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamBlockedFinalRx = 0;
+  [[no_unique_address]] RuntimeDiagCounter unhandledAppEvents = 0;
+  [[no_unique_address]] RuntimeDiagCounter peerKeyUpdates = 0;
+  [[no_unique_address]] RuntimeDiagCounter invalidKeyPhases = 0;
+  [[no_unique_address]] RuntimeDiagCounter oldKeysAccepted = 0;
+  [[no_unique_address]] RuntimeDiagCounter keyDiscards = 0;
+  [[no_unique_address]] RuntimeDiagCounter newTokenRx = 0;
   AckECN	ecnRx[3];
-  uint64_t	failures = 0;
-  uint64_t	handshakeComplete = 0;
+  [[no_unique_address]] RuntimeDiagCounter failures = 0;
+  [[no_unique_address]] RuntimeDiagCounter handshakeComplete = 0;
 };
 
 struct RuntimeTxDiag {
   static constexpr unsigned Spaces = 3;
 
   uint64_t	packetsTx = 0;
-  uint64_t	bytesTx = 0;
-  uint64_t	cryptoBytesTx = 0;
-  uint64_t	streamBytesTx = 0;
-  uint64_t	ackOnlyPacketsTx = 0;
-  uint64_t	streamOnlyPacketsTx = 0;
-  uint64_t	ackStreamPacketsTx = 0;
-  uint64_t	ackSnapshotInstallsTx = 0;
-  uint64_t	ackDueInstallsTx = 0;
-  uint64_t	ackAppendTx = 0;
-  uint64_t	ackAppendEmptyTx = 0;
-  uint64_t	ackAppendNotDueTx = 0;
-  uint64_t	ackSentTx = 0;
-  uint64_t	controlOnlyPacketsTx = 0;
-  uint64_t	ackControlPacketsTx = 0;
-  uint64_t	streamControlPacketsTx = 0;
-  uint64_t	ackStreamControlPacketsTx = 0;
-  uint64_t	cryptoPacketsTx = 0;
-  uint64_t	otherPacketsTx = 0;
-  uint64_t	streamFramesTx = 0;
-  uint64_t	controlFramesTx = 0;
-  uint64_t	cryptoFramesTx = 0;
-  uint64_t	maxDataTx = 0;
-  uint64_t	maxStreamDataTx = 0;
-  uint64_t	maxStreamsTx = 0;
-  uint64_t	dataBlockedTx = 0;
-  uint64_t	streamDataBlockedTx = 0;
-  uint64_t	streamsBlockedTx = 0;
-  uint64_t	resetStreamTx = 0;
-  uint64_t	stopSendingTx = 0;
-  uint64_t	pathChallengeTx = 0;
-  uint64_t	pathResponseTx = 0;
-  uint64_t	handshakeDoneTx = 0;
-  uint64_t	newTokenTx = 0;
-  uint64_t	pathRxObserved = 0;
-  uint64_t	pathRxSame = 0;
-  uint64_t	pathRxNull = 0;
-  uint64_t	pathValidationActive = 0;
-  uint64_t	pathValidationStarted = 0;
-  uint64_t	pathValidationPromoted = 0;
-  uint64_t	pathResponseUnknown = 0;
-  uint64_t	ptoSched = 0;
-  uint64_t	ptoNoLevel = 0;
-  uint64_t	ptoArmed = 0;
-  uint64_t	ptoExpired = 0;
-  uint64_t	ptoFlush = 0;
-  uint64_t	ptoRetx = 0;
-  uint64_t	ptoProbe = 0;
-  uint64_t	ptoCount = 0;
-  uint32_t	ptoBackoff = 0;
-  uint64_t	ptoTimeoutUS = 0;
-  uint64_t	retransmittedFrames = 0;
-  uint64_t	lossArmed = 0;
-  uint64_t	lossCanceled = 0;
-  uint64_t	lossExpired = 0;
-  uint64_t	pktBytesInFlight[Spaces] = {};
-  uint32_t	sentPackets[Spaces] = {};
-  uint32_t	retransmitPending[Spaces] = {};
-  uint32_t	retransmittable[Spaces] = {};
-  uint64_t	congestionWindow = 0;
-  uint64_t	congestionSSThresh = 0;
-  uint64_t	congestionBytesInFlight = 0;
-  uint64_t	persistentCongestion = 0;
+  [[no_unique_address]] RuntimeDiagCounter bytesTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter cryptoBytesTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamBytesTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackOnlyPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamOnlyPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackStreamPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackSnapshotInstallsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackDueInstallsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackAppendTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackAppendEmptyTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackAppendNotDueTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackSentTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter controlOnlyPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackControlPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamControlPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ackStreamControlPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter cryptoPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter otherPacketsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamFramesTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter controlFramesTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter cryptoFramesTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter maxDataTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter maxStreamDataTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter maxStreamsTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter dataBlockedTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamDataBlockedTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter streamsBlockedTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter resetStreamTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter stopSendingTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathChallengeTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathResponseTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter handshakeDoneTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter newTokenTx = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathRxObserved = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathRxSame = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathRxNull = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathValidationActive = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathValidationStarted = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathValidationPromoted = 0;
+  [[no_unique_address]] RuntimeDiagCounter pathResponseUnknown = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoSched = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoNoLevel = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoArmed = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoExpired = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoFlush = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoRetx = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoProbe = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoCount = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoBackoff = 0;
+  [[no_unique_address]] RuntimeDiagCounter ptoTimeoutUS = 0;
+  [[no_unique_address]] RuntimeDiagCounter retransmittedFrames = 0;
+  [[no_unique_address]] RuntimeDiagCounter lossArmed = 0;
+  [[no_unique_address]] RuntimeDiagCounter lossCanceled = 0;
+  [[no_unique_address]] RuntimeDiagCounter lossExpired = 0;
+  [[no_unique_address]] RuntimeDiagCounter pktBytesInFlight[Spaces] = {};
+  [[no_unique_address]] RuntimeDiagCounter sentPackets[Spaces] = {};
+  [[no_unique_address]] RuntimeDiagCounter retransmitPending[Spaces] = {};
+  [[no_unique_address]] RuntimeDiagCounter retransmittable[Spaces] = {};
+  [[no_unique_address]] RuntimeDiagCounter congestionWindow = 0;
+  [[no_unique_address]] RuntimeDiagCounter congestionSSThresh = 0;
+  [[no_unique_address]] RuntimeDiagCounter congestionBytesInFlight = 0;
+  [[no_unique_address]] RuntimeDiagCounter persistentCongestion = 0;
   bool		ptoTimerActive = false;
   bool		lossTimerActive = false;
   AckECN	peerAckECN[3];
-  uint64_t	ecnValidationFailures = 0;
-  uint64_t	unhandledAppEvents = 0;
-  uint64_t	failures = 0;
+  [[no_unique_address]] RuntimeDiagCounter ecnValidationFailures = 0;
+  [[no_unique_address]] RuntimeDiagCounter unhandledAppEvents = 0;
+  [[no_unique_address]] RuntimeDiagCounter failures = 0;
 };
 
 struct RuntimeDiag {
   RuntimeDiag() = default;
-  RuntimeDiag(const RuntimeRxDiag &rx, const RuntimeTxDiag &tx) {
-    endpointReady = rx.endpointReady;
-    datagramsRx = rx.datagramsRx;
-    bytesRx = rx.bytesRx;
-    packetsRx = rx.packetsRx;
-    framesRx = rx.framesRx;
-    duplicatePacketsRx = rx.duplicatePacketsRx;
-    ackCommitsRx = rx.ackCommitsRx;
-    ackElicitingRx = rx.ackElicitingRx;
-    ackImmediateRx = rx.ackImmediateRx;
-    ackSnapshotPostsRx = rx.ackSnapshotPostsRx;
-    streamNoDataRx = rx.streamNoDataRx;
-    cryptoBytesRx = rx.cryptoBytesRx;
-    streamBytesRx = rx.streamBytesRx;
-    invalidStreamFrames = rx.invalidStreamFrames;
-    closedStreamFrames = rx.closedStreamFrames;
-    suspiciousStreamCloses = rx.suspiciousStreamCloses;
-    streamMaxClosedRx = rx.streamMaxClosedRx;
-    streamMaxInvalidRx = rx.streamMaxInvalidRx;
-    streamCtlClosedRx = rx.streamCtlClosedRx;
-    streamCtlInvalidRx = rx.streamCtlInvalidRx;
-    streamDataInvalidRx = rx.streamDataInvalidRx;
-    streamDataStateRx = rx.streamDataStateRx;
-    streamDataFinalRx = rx.streamDataFinalRx;
-    streamRxDeqStateRx = rx.streamRxDeqStateRx;
-    streamRxDeqFinalRx = rx.streamRxDeqFinalRx;
-    streamBlockedClosedRx = rx.streamBlockedClosedRx;
-    streamBlockedInvalidRx = rx.streamBlockedInvalidRx;
-    streamBlockedFinalRx = rx.streamBlockedFinalRx;
-    unhandledAppEvents = rx.unhandledAppEvents + tx.unhandledAppEvents;
-    peerKeyUpdates = rx.peerKeyUpdates;
-    invalidKeyPhases = rx.invalidKeyPhases;
-    oldKeysAccepted = rx.oldKeysAccepted;
-    keyDiscards = rx.keyDiscards;
-    newTokenRx = rx.newTokenRx;
-    for (unsigned i = 0; i < 3; ++i) ecnRx[i] = rx.ecnRx[i];
-    handshakeComplete = rx.handshakeComplete;
+  RuntimeDiag(const RuntimeRxDiag &rx_, const RuntimeTxDiag &tx_) :
+    rx{rx_}, tx{tx_} { }
 
-    packetsTx = tx.packetsTx;
-    bytesTx = tx.bytesTx;
-    cryptoBytesTx = tx.cryptoBytesTx;
-    streamBytesTx = tx.streamBytesTx;
-    ackOnlyPacketsTx = tx.ackOnlyPacketsTx;
-    streamOnlyPacketsTx = tx.streamOnlyPacketsTx;
-    ackStreamPacketsTx = tx.ackStreamPacketsTx;
-    ackSnapshotInstallsTx = tx.ackSnapshotInstallsTx;
-    ackDueInstallsTx = tx.ackDueInstallsTx;
-    ackAppendTx = tx.ackAppendTx;
-    ackAppendEmptyTx = tx.ackAppendEmptyTx;
-    ackAppendNotDueTx = tx.ackAppendNotDueTx;
-    ackSentTx = tx.ackSentTx;
-    controlOnlyPacketsTx = tx.controlOnlyPacketsTx;
-    ackControlPacketsTx = tx.ackControlPacketsTx;
-    streamControlPacketsTx = tx.streamControlPacketsTx;
-    ackStreamControlPacketsTx = tx.ackStreamControlPacketsTx;
-    cryptoPacketsTx = tx.cryptoPacketsTx;
-    otherPacketsTx = tx.otherPacketsTx;
-    streamFramesTx = tx.streamFramesTx;
-    controlFramesTx = tx.controlFramesTx;
-    cryptoFramesTx = tx.cryptoFramesTx;
-    maxDataTx = tx.maxDataTx;
-    maxStreamDataTx = tx.maxStreamDataTx;
-    maxStreamsTx = tx.maxStreamsTx;
-    dataBlockedTx = tx.dataBlockedTx;
-    streamDataBlockedTx = tx.streamDataBlockedTx;
-    streamsBlockedTx = tx.streamsBlockedTx;
-    resetStreamTx = tx.resetStreamTx;
-    stopSendingTx = tx.stopSendingTx;
-    pathChallengeTx = tx.pathChallengeTx;
-    pathResponseTx = tx.pathResponseTx;
-    handshakeDoneTx = tx.handshakeDoneTx;
-    newTokenTx = tx.newTokenTx;
-    pathRxObserved = tx.pathRxObserved;
-    pathRxSame = tx.pathRxSame;
-    pathRxNull = tx.pathRxNull;
-    pathValidationActive = tx.pathValidationActive;
-    pathValidationStarted = tx.pathValidationStarted;
-    pathValidationPromoted = tx.pathValidationPromoted;
-    pathResponseUnknown = tx.pathResponseUnknown;
-    ptoSched = tx.ptoSched;
-    ptoNoLevel = tx.ptoNoLevel;
-    ptoArmed = tx.ptoArmed;
-    ptoExpired = tx.ptoExpired;
-    ptoFlush = tx.ptoFlush;
-    ptoRetx = tx.ptoRetx;
-    ptoProbe = tx.ptoProbe;
-    ptoCount = tx.ptoCount;
-    ptoBackoff = tx.ptoBackoff;
-    ptoTimeoutUS = tx.ptoTimeoutUS;
-    retransmittedFrames = tx.retransmittedFrames;
-    lossArmed = tx.lossArmed;
-    lossCanceled = tx.lossCanceled;
-    lossExpired = tx.lossExpired;
-    for (unsigned i = 0; i < RuntimeTxDiag::Spaces; ++i) {
-      pktBytesInFlight[i] = tx.pktBytesInFlight[i];
-      sentPackets[i] = tx.sentPackets[i];
-      retransmitPending[i] = tx.retransmitPending[i];
-      retransmittable[i] = tx.retransmittable[i];
-    }
-    congestionWindow = tx.congestionWindow;
-    congestionSSThresh = tx.congestionSSThresh;
-    congestionBytesInFlight = tx.congestionBytesInFlight;
-    persistentCongestion = tx.persistentCongestion;
-    ptoTimerActive = tx.ptoTimerActive;
-    lossTimerActive = tx.lossTimerActive;
-    for (unsigned i = 0; i < 3; ++i) peerAckECN[i] = tx.peerAckECN[i];
-    ecnValidationFailures = tx.ecnValidationFailures;
-
-    failures = rx.failures + tx.failures;
+  uint64_t failures() const { return rx.failures + tx.failures; }
+  uint64_t unhandledAppEvents() const {
+    return rx.unhandledAppEvents + tx.unhandledAppEvents;
   }
 
-  uint64_t	endpointReady = 0;
-  uint64_t	datagramsRx = 0;
-  uint64_t	bytesRx = 0;
-  uint64_t	packetsRx = 0;
-  uint64_t	framesRx = 0;
-  uint64_t	duplicatePacketsRx = 0;
-  uint64_t	ackCommitsRx = 0;
-  uint64_t	ackElicitingRx = 0;
-  uint64_t	ackImmediateRx = 0;
-  uint64_t	ackSnapshotPostsRx = 0;
-  uint64_t	streamNoDataRx = 0;
-  uint64_t	packetsTx = 0;
-  uint64_t	bytesTx = 0;
-  uint64_t	cryptoBytesRx = 0;
-  uint64_t	cryptoBytesTx = 0;
-  uint64_t	streamBytesRx = 0;
-  uint64_t	streamBytesTx = 0;
-  uint64_t	ackOnlyPacketsTx = 0;
-  uint64_t	streamOnlyPacketsTx = 0;
-  uint64_t	ackStreamPacketsTx = 0;
-  uint64_t	ackSnapshotInstallsTx = 0;
-  uint64_t	ackDueInstallsTx = 0;
-  uint64_t	ackAppendTx = 0;
-  uint64_t	ackAppendEmptyTx = 0;
-  uint64_t	ackAppendNotDueTx = 0;
-  uint64_t	ackSentTx = 0;
-  uint64_t	controlOnlyPacketsTx = 0;
-  uint64_t	ackControlPacketsTx = 0;
-  uint64_t	streamControlPacketsTx = 0;
-  uint64_t	ackStreamControlPacketsTx = 0;
-  uint64_t	cryptoPacketsTx = 0;
-  uint64_t	otherPacketsTx = 0;
-  uint64_t	streamFramesTx = 0;
-  uint64_t	controlFramesTx = 0;
-  uint64_t	cryptoFramesTx = 0;
-  uint64_t	maxDataTx = 0;
-  uint64_t	maxStreamDataTx = 0;
-  uint64_t	maxStreamsTx = 0;
-  uint64_t	dataBlockedTx = 0;
-  uint64_t	streamDataBlockedTx = 0;
-  uint64_t	streamsBlockedTx = 0;
-  uint64_t	resetStreamTx = 0;
-  uint64_t	stopSendingTx = 0;
-  uint64_t	pathChallengeTx = 0;
-  uint64_t	pathResponseTx = 0;
-  uint64_t	handshakeDoneTx = 0;
-  uint64_t	newTokenTx = 0;
-  uint64_t	pathRxObserved = 0;
-  uint64_t	pathRxSame = 0;
-  uint64_t	pathRxNull = 0;
-  uint64_t	pathValidationActive = 0;
-  uint64_t	pathValidationStarted = 0;
-  uint64_t	pathValidationPromoted = 0;
-  uint64_t	pathResponseUnknown = 0;
-  uint64_t	invalidStreamFrames = 0;
-  uint64_t	closedStreamFrames = 0;
-  uint64_t	suspiciousStreamCloses = 0;
-  uint64_t	streamMaxClosedRx = 0;
-  uint64_t	streamMaxInvalidRx = 0;
-  uint64_t	streamCtlClosedRx = 0;
-  uint64_t	streamCtlInvalidRx = 0;
-  uint64_t	streamDataInvalidRx = 0;
-  uint64_t	streamDataStateRx = 0;
-  uint64_t	streamDataFinalRx = 0;
-  uint64_t	streamRxDeqStateRx = 0;
-  uint64_t	streamRxDeqFinalRx = 0;
-  uint64_t	streamBlockedClosedRx = 0;
-  uint64_t	streamBlockedInvalidRx = 0;
-  uint64_t	streamBlockedFinalRx = 0;
-  uint64_t	unhandledAppEvents = 0;
-  uint64_t	peerKeyUpdates = 0;
-  uint64_t	invalidKeyPhases = 0;
-  uint64_t	oldKeysAccepted = 0;
-  uint64_t	keyDiscards = 0;
-  uint64_t	newTokenRx = 0;
-  AckECN	ecnRx[3];
-  uint64_t	ptoSched = 0;
-  uint64_t	ptoNoLevel = 0;
-  uint64_t	ptoArmed = 0;
-  uint64_t	ptoExpired = 0;
-  uint64_t	ptoFlush = 0;
-  uint64_t	ptoRetx = 0;
-  uint64_t	ptoProbe = 0;
-  uint64_t	ptoCount = 0;
-  uint32_t	ptoBackoff = 0;
-  uint64_t	ptoTimeoutUS = 0;
-  uint64_t	retransmittedFrames = 0;
-  uint64_t	lossArmed = 0;
-  uint64_t	lossCanceled = 0;
-  uint64_t	lossExpired = 0;
-  uint64_t	pktBytesInFlight[RuntimeTxDiag::Spaces] = {};
-  uint32_t	sentPackets[RuntimeTxDiag::Spaces] = {};
-  uint32_t	retransmitPending[RuntimeTxDiag::Spaces] = {};
-  uint32_t	retransmittable[RuntimeTxDiag::Spaces] = {};
-  uint64_t	congestionWindow = 0;
-  uint64_t	congestionSSThresh = 0;
-  uint64_t	congestionBytesInFlight = 0;
-  uint64_t	persistentCongestion = 0;
-  bool		ptoTimerActive = false;
-  bool		lossTimerActive = false;
-  AckECN	peerAckECN[3];
-  uint64_t	ecnValidationFailures = 0;
-  uint64_t	failures = 0;
-  uint64_t	handshakeComplete = 0;
+  RuntimeRxDiag	rx;
+  RuntimeTxDiag	tx;
 };
 
 template <typename Send>
@@ -1408,58 +1221,6 @@ inline bool sendRuntimeCryptoFlights(
     }
   }
   return true;
-}
-
-inline void inspectRuntimeDatagram(RuntimeDiag &diag, const Datagram &d)
-{
-  ++diag.datagramsRx;
-  if (!d.buf) {
-    ++diag.failures;
-    return;
-  }
-  diag.bytesRx += d.buf->length;
-
-  LongHdr h;
-  if (Pkt::parseLong(byteSpan(d.buf->data(), d.buf->length), h) < 0) {
-    ++diag.failures;
-    return;
-  }
-  ++diag.packetsRx;
-
-  if (h.length < h.pnLength || h.length > d.buf->length) {
-    ++diag.failures;
-    return;
-  }
-  unsigned packetLength = h.length;
-  if (h.pnOffset > d.buf->length - packetLength) {
-    ++diag.failures;
-    return;
-  }
-  unsigned payloadLength = packetLength - h.pnLength;
-  unsigned payloadOffset = h.payloadOffset;
-  if (payloadOffset > d.buf->length ||
-      payloadLength > d.buf->length - payloadOffset) {
-    ++diag.failures;
-    return;
-  }
-
-  ZuBSpan payload{d.buf->data() + payloadOffset, payloadLength};
-  unsigned offset = 0;
-  auto frame_ = ZmAlloc(Frame, 1);
-  new (&frame_[0]) Frame{};
-  auto &frame = frame_[0];
-  ZuGuard frameGuard{[&frame]() { frame.~Frame(); }};
-  while (offset < payloadLength) {
-    unsigned used = 0;
-    if (FrameCodec::parse(
-	  ZuBSpan{payload.data() + offset, payloadLength - offset},
-	  frame, used) < 0 || !used) {
-      ++diag.failures;
-      return;
-    }
-    ++diag.framesRx;
-    offset += used;
-  }
 }
 
 inline bool writeInitialPingProbe(ZiIOBuf *buf, uint64_t packetNumber)
@@ -8820,12 +8581,6 @@ nextSpace:
     qlogAddFrame_(event, frame);
   }
 
-  static StreamType::T qlogStreamType_(Zi::StreamType::T type) {
-    return type == Zi::StreamType::Simplex ?
-      StreamType::Simplex :
-      StreamType::Duplex;
-  }
-
   void qlogAddRxFrame_(
     PktEvent &event, PktNumSpace::T level, const Frame &frame_) {
     event.frameCount = qlogCount_(event.frameCount + 1);
@@ -8876,7 +8631,7 @@ nextSpace:
       case FrameType::MaxStreams:
       case FrameType::StreamsBlocked:
 	frame.value = frame_.value;
-	frame.streamType = qlogStreamType_(frame_.streamType);
+	frame.streamType = StreamType::T(frame_.streamType);
 	break;
       case FrameType::NewCxnID:
 	frame.offset = frame_.offset;
@@ -8930,7 +8685,7 @@ nextSpace:
 	  .errorCode =
 	    ref.controlType == FrameType::ResetStream ||
 	    ref.controlType == FrameType::StopSending ? ref.value : 0,
-	  .streamType = qlogStreamType_(ref.streamType)
+	  .streamType = StreamType::T(ref.streamType)
 	});
 	return;
       default:
@@ -10229,9 +9984,7 @@ private:
     int64_t id = stream->id();
     ZquicLOG(([
       streamID = uint64_t(id),
-      streamType = StreamID::uni(uint64_t(id)) ?
-	StreamType::T(StreamType::Simplex) :
-	StreamType::T(StreamType::Duplex),
+      streamType = StreamType::T(StreamID::uni(uint64_t(id))),
       streamSide = localInitiated_(uint64_t(id), m_isServer) ?
 	StreamSide::T(StreamSide::Sending) :
 	StreamSide::T(StreamSide::Receiving),
@@ -10275,9 +10028,7 @@ private:
     m_streams->addNode(node);
     ZquicLOG(([
       streamID = uint64_t(id),
-      streamType = StreamID::uni(uint64_t(id)) ?
-	StreamType::T(StreamType::Simplex) :
-	StreamType::T(StreamType::Duplex),
+      streamType = StreamType::T(StreamID::uni(uint64_t(id))),
 	      streamSide = localInitiated_(uint64_t(id), m_isServer) ?
 		StreamSide::T(StreamSide::Sending) :
 		StreamSide::T(StreamSide::Receiving),
@@ -10428,31 +10179,13 @@ private:
     m_suspiciousStreamClosed = false;
   }
 
-  static CxnStatus::T qlogCxnState_(
-    LinkState::T state) {
-    switch (state) {
-      case LinkState::Starting:
-	return CxnStatus::Attempted;
-      case LinkState::Handshaking:
-	return CxnStatus::HSStarted;
-      case LinkState::Established:
-	return CxnStatus::HSComplete;
-      case LinkState::Closing:
-	return CxnStatus::Closing;
-      case LinkState::Draining:
-	return CxnStatus::Draining;
-      default:
-	return CxnStatus::Closed;
-    }
-  }
-
   bool startHandshakeState_() {
     if (m_linkState != LinkState::Starting) return false;
     LinkState::T oldState = m_linkState;
 	    m_linkState = LinkState::Handshaking;
 	    ZquicLOG(([
-	      oldState = qlogCxnState_(oldState),
-	      newState = qlogCxnState_(m_linkState),
+	      oldState,
+	      newState = m_linkState,
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      CxnStateEvent event{
@@ -10470,8 +10203,8 @@ private:
     LinkState::T oldState = m_linkState;
 	    m_linkState = LinkState::Established;
 	    ZquicLOG(([
-	      oldState = qlogCxnState_(oldState),
-	      newState = qlogCxnState_(m_linkState),
+	      oldState,
+	      newState = m_linkState,
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      CxnStateEvent event{
@@ -10490,8 +10223,8 @@ private:
     m_linkState = LinkState::Closing;
 	    m_drainPTOs = 0;
 	    ZquicLOG(([
-	      oldState = qlogCxnState_(oldState),
-	      newState = qlogCxnState_(m_linkState),
+	      oldState,
+	      newState = m_linkState,
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      CxnStateEvent event{
@@ -10509,8 +10242,8 @@ private:
     m_linkState = LinkState::Draining;
 	    m_drainPTOs = 0;
 	    ZquicLOG(([
-	      oldState = qlogCxnState_(oldState),
-	      newState = qlogCxnState_(m_linkState),
+	      oldState,
+	      newState = m_linkState,
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      CxnStateEvent event{
@@ -10527,8 +10260,8 @@ private:
     m_linkState = LinkState::Closed;
 	    m_drainPTOs = 0;
 	    ZquicLOG(([
-	      oldState = qlogCxnState_(oldState),
-	      newState = qlogCxnState_(m_linkState),
+	      oldState,
+	      newState = m_linkState,
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      CxnStateEvent event{

@@ -185,16 +185,15 @@ struct QLogCxnStartedEvent {
 QLogEventFmt(QLogCxnStartedEvent);
 
 struct QLogCxnStateData {
-  CxnStatus::T oldState = CxnStatus::Attempted;
-  CxnStatus::T newState =
-    CxnStatus::HSStarted;
+  Zquic::LinkState::T oldState = Zquic::LinkState::Starting;
+  Zquic::LinkState::T newState = Zquic::LinkState::Handshaking;
 };
 
 ZtStruct((QLogCxnStateData, JSON),
   (((oldState), (JSON::ID<"old">,
-    Enum<CxnStatus::JSON>)), (Int8)),
+    Enum<Zquic::LinkState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">,
-    Enum<CxnStatus::JSON>)), (Int8)));
+    Enum<Zquic::LinkState::JSON>)), (Int8)));
 
 struct QLogCxnStateEvent {
   uint64_t	time = 0;
@@ -1869,43 +1868,6 @@ struct QLogCIDDataJSON {
   };
 };
 
-static CloseError::T qlogCloseError_(uint64_t code)
-{
-  switch (code) {
-    case Zquic::TransportError::NoError:
-      return CloseError::NoError;
-    case Zquic::TransportError::InternalError:
-      return CloseError::Internal;
-    case Zquic::TransportError::CxnRefused:
-      return CloseError::CxnRefused;
-    case Zquic::TransportError::FlowControl:
-      return CloseError::FlowControl;
-    case Zquic::TransportError::StreamLimit:
-      return CloseError::StreamLimit;
-    case Zquic::TransportError::StreamState:
-      return CloseError::StreamState;
-    case Zquic::TransportError::FinalSize:
-      return CloseError::FinalSize;
-    case Zquic::TransportError::FrameEncoding:
-      return CloseError::FrameEncoding;
-    case Zquic::TransportError::TransportParam:
-      return CloseError::TransportParam;
-    case Zquic::TransportError::CxnIDLimit:
-      return CloseError::CxnIDLimit;
-    case Zquic::TransportError::ProtViolation:
-      return CloseError::ProtViolation;
-    default:
-      return CloseError::Unknown;
-  }
-}
-
-static CloseError::T qlogCloseError_(
-  CloseError::T error, uint64_t code)
-{
-  return error == CloseError::Unknown ?
-    qlogCloseError_(code) : error;
-}
-
 struct QLogCloseDataJSON {
   template <typename O, typename Facet>
   struct Handler {
@@ -1921,8 +1883,10 @@ struct QLogCloseDataJSON {
       using ErrorProps =
 	ZuTypeList<ZuFieldProp::Enum<CloseError::JSON>>;
 
-      CloseError::T connectionError =
-	qlogCloseError_(close.connectionError, close.errorCode);
+      CloseError::T connectionError = close.connectionError;
+      if (connectionError == CloseError::Unknown &&
+	  close.errorCode <= Zquic::TransportError::ProtViolation)
+	connectionError = CloseError::T(close.errorCode);
       CloseError::T applicationError = close.applicationError;
 
       bool comma = false;

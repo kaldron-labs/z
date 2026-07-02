@@ -138,6 +138,8 @@ struct TxUnackdRange {
 
   uint64_t key() const { return offset; }
   uint64_t length() const { return bytes + (fin ? 1 : 0); }
+  bool operator !() const { return !length(); }
+  ZuOpBool
 
   uint64_t clipHead(uint64_t length) {
     uint64_t n = this->length();
