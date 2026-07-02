@@ -80,33 +80,33 @@ struct TestLink :
 	    Base::closeState_(errorCode);
 	  }
 #ifdef Zquic_DEBUG
-  void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
+  void growActivePath(unsigned size) { Base::forceActivePathMTU_(size); }
   bool startPMTUDProbe(unsigned size) {
-    return Base::startPMTUDProbeForTest_(size);
+    return Base::startPMTUDProbeChecked_(size);
   }
   void ackPMTUDProbe(unsigned size) {
-    Base::ackPMTUDProbeForTest_(size);
+    Base::ackPMTUDProbe_(size);
   }
   void losePMTUDProbe(unsigned size) {
-    Base::losePMTUDProbeForTest_(size);
+    Base::losePMTUDProbe_(size);
   }
-  void expirePMTUDProbe() { Base::expirePMTUDProbeForTest_(); }
+  void expirePMTUDProbe() { Base::expirePMTUDProbe_(); }
   void applyPathHint(Zquic::PathHint hint) {
-    Base::applyPathHintForTest_(hint);
+    Base::applyPathHint_(hint);
   }
   unsigned activePathMaxUDP() const {
-    return Base::activePathMaxUDPForTest_();
+    return Base::activePathMaxUDP_();
   }
   unsigned pathProbeSize() const {
-    return Base::pathProbeSizeForTest_();
+    return Base::pathProbeSize_();
   }
   bool pathProbeRetryPending() const {
-    return Base::pathProbeRetryPendingForTest_();
+    return Base::pathProbeRetryPending_();
   }
-  const Zquic::PathDiag &pathDiag() const {
-    return Base::pathDiagForTest_();
+  Zquic::PathDiag pathDiag() const {
+    return Base::pathDiag_();
   }
-  Zquic::PktBudget sendBudget() const { return Base::sendBudgetForTest_(); }
+  Zquic::PktBudget sendBudget() const { return Base::sendBudget_(); }
 #endif
 };
 

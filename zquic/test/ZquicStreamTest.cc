@@ -198,7 +198,7 @@ struct TestLink :
     const Zquic::SentFrameRef &ref, bool ackEliciting) {
     Base::recordTxPkt_(level, pn, bytes, ref, ackEliciting);
 #ifdef Zquic_DEBUG
-    Base::setTxPNForTest_(level, pn + 1);
+    Base::setTxPN_(level, pn + 1);
 #endif
   }
   void recordSentPkt(
@@ -206,7 +206,7 @@ struct TestLink :
     const typename Base::TxPktRefs &refs, bool ackEliciting) {
     Base::recordTxPkt_(level, pn, bytes, refs, ackEliciting);
 #ifdef Zquic_DEBUG
-    Base::setTxPNForTest_(level, pn + 1);
+    Base::setTxPN_(level, pn + 1);
 #endif
   }
   unsigned flushRecordedRefs(Zquic::SentFrameRef *refs, unsigned capacity) {
@@ -349,7 +349,7 @@ struct TestLink :
   }
 #ifdef Zquic_DEBUG
   void forcePN(uint64_t pn) {
-    Base::setTxPNForTest_(Zquic::PktNumSpace::AppData, pn);
+    Base::setTxPN_(Zquic::PktNumSpace::AppData, pn);
   }
   bool addLocalCIDForQLog(
     const Zquic::CxnID &id, uint64_t sequence,
@@ -412,7 +412,7 @@ struct TestLink :
   }
 #ifdef Zquic_DEBUG
   void ackECN(uint64_t largest, uint64_t ect0, uint64_t ect1, uint64_t ce) {
-    Base::setTxPNForTest_(Zquic::PktNumSpace::AppData, largest + 1);
+    Base::setTxPN_(Zquic::PktNumSpace::AppData, largest + 1);
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
     ack.nRanges = 1;
@@ -442,7 +442,7 @@ struct TestLink :
   }
 #ifdef Zquic_DEBUG
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::startPathValidForTest_(ZuMv(local), ZuMv(remote));
+    Base::startPathValidation_(ZuMv(local), ZuMv(remote));
   }
   bool validatingPath() const { return Base::validatingPath_(); }
   ZuBSpan validatingChallenge() const {
@@ -465,15 +465,15 @@ struct TestLink :
   }
   void validatePath() { Base::validatePathTx_(); }
 #ifdef Zquic_DEBUG
-  void growActivePath(unsigned size) { Base::growActivePathForTest_(size); }
+  void growActivePath(unsigned size) { Base::forceActivePathMTU_(size); }
   bool startPMTUDProbe(unsigned size) {
-    return Base::startPMTUDProbeForTest_(size);
+    return Base::startPMTUDProbeChecked_(size);
   }
   void ackPMTUDProbe(unsigned size) {
-    Base::ackPMTUDProbeForTest_(size);
+    Base::ackPMTUDProbe_(size);
   }
   void losePMTUDProbe(unsigned size) {
-    Base::losePMTUDProbeForTest_(size);
+    Base::losePMTUDProbe_(size);
   }
 #endif
   Zquic::PathDiag pathDiag() const { return Base::pathDiag_(); }
@@ -501,9 +501,9 @@ struct TestLink :
   bool installOneRTT(
     const Zquic::TrafficSecret &rx, const Zquic::TrafficSecret &tx,
     const Zquic::CxnID &localCID) {
-    return Base::installOneRTTForTest_(rx, tx, localCID);
+    return Base::installAppDataKeys_(rx, tx, localCID);
   }
-  void discardPeerKeys() { Base::discardPeerKeysForTest_(); }
+  void discardPeerKeys() { Base::discardPeerKeys_(); }
 #endif
   bool receiveShort(ZmRef<ZiIOBuf> buf, bool *qlogSeen = nullptr) {
     if (!buf) return false;
