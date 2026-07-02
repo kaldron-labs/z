@@ -16,7 +16,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - dependent compatibility is a non-goal unless otherwise directed
   - propagate breaking API changes to dependent code
   - do not use shims, forwarders or other such techniques for legacy compatibility purposes
-- assume software must be capable of running 24x7 indefinitely
+- software must be capable of running 24x7 indefinitely without process kill
   - prohibit monotonically growing memory consumption
   - all long-lived containers must be actively garbage collected
 - shutdown/teardown must be graceful and clean of leaks
@@ -38,6 +38,10 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - type punning and undefined behavior
   - avoiding UB that is entirely theoretical or only relevant to non-targeted systems is a non-goal
   - UB and type punning are endorsed unless they actually create a **tangible correctness or security risk** for targeted systems (compilers: gcc, clang; architectures: x64, ARM64)
+- header-only
+  - intentionally not header-only
+  - Z libraries are hybrid builds
+    - headers with accompanying binary versioned shared libraries / DLLs
 
 ## Target systems
 - compilers: current gcc, clang
@@ -58,14 +62,15 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - release-build verification must be configured through `z.config`; after configuring the release build, run top-level `make clean` and then top-level `make -j8` so all dependent Z libraries and tests are rebuilt consistently
   - do not verify a release build by manually compiling selected modules or by rebuilding only dependent subdirectories; that can mix stale objects, stale generated dependency files, or libraries built under a different build type
 - no warnings in build
-  - they should be suppressed if false-positive
+  - they should be suppressed in the code if false-positive
 
 ## Use of C++ language
 ### Language level
 - Compile as GNU C++2b, but do not use C++ concepts or `requires`.
-- Use advanced C++ where it is expressive and efficient; where C and C++ offer the same facility, prefer the C form.
-  - Example: `#include <string.h>`, not `<cstring>`.
-  - Where C99 conflicts, use the GNU C++2b form.
+- Use advanced C++ where it is expressive and efficient
+  - Where C and C++ offer the same facility, prefer the C form:
+      - Example: `#include <string.h>`, not `<cstring>`.
+      - Where C99 conflicts with C++, use the GNU C++2b form.
 
 ### Static polymorphism and constraints
 - Prefer CRTP, templates, and compile-time dispatch over virtual polymorphism.

@@ -36,24 +36,75 @@ Align naming with `GUIDELINES.md`, example: `ZquicLogSecurityTrigger` is too lon
 
 ---
 
-FIXME from here
-
----
-
 audit `zquic` for redundant boolean context evaluation code, for example:
 - `if (m_dcid.length() ...` -> `if (m_dcid ...`
 any value of a type that uses `ZuOpBool` is intended to be boolean-evaluated without decoration
 
 ---
 
-audit `zquic` qlog code for proper use of `ZtJSON` capabilities for mapping enums,
-printing/parsing UDTs such as `ZiIP` and `ZiSockAddr`, and so on.
-
----
-
 audit `zquic` for redundant helpers and update call sites:
 - enum ordinal mapping where simply using the ordinal would suffice
 - enum/name mapping where `ZtEnum` already provides the requisite functionality
+
+---
+
+`RuntimeDiag` looks completely wrong:
+- Why does it need to repeat all the rx and tx data members when it can be composed from them?
+- It should not explicitly perform individual member-wise copying, which is fragile and duplicative. Given:
+  ```
+  struct A { ...data members... };
+  struct B { ...data members... };
+  struct C { A a; B b; };
+  ```
+  `A(const A &)`, `B(const B &)`, and `C(const C &)` are all defaulted and can be
+  used without specifying individual member-wise copies.
+  - Apply this principle to all such structures.
+- `RuntimeDiag` looks too large, with too many fields; audit `*Diag*` for little-used or unused fields and delete them
+  - Use `Zquic_DEBUG` conditional compilation to reduce the size of these structures to a bare minimum for release builds
+
+---
+
+`Zquic.hh` is a generic protocol implementation header for many different QUIC client and/or server applications, it should not include test-only or test-specific functions:
+- why are hard-coded `"zqserv01"` and `"zqcli001"`in `writeInitialPingProbe` in this header?
+- functions like `padForProtSample` also seem to be wrongly placed in this header
+- audit `Zquic.hh` for all code that is test-only or specific to a particular application use case and factor out such code into the appropriate files
+  - test code should be under `zquic/test`, not `zquic/src`
+
+---
+
+`Zquic.hh` is too large. It needs to be logically decomposed into additional subsidiary headers:
+- Dependent code should continue to include `Zquic.hh`
+- The key dependent-facing API types that should be in `Zquic.hh` are `Engine`, `App`, `Client`, `Server`, `Link`, `CliLink`, `SrvLink`
+- Private implementation code should be in a `Zquic_` namespace distinct from the dependent-facing `Zquic`.
+  - Implementation-only helpers and code should be moved wholesale into `Zquic_.hh`
+- IMPORTANT - all headers must align with `GUIDELINES.md`:
+  - include guards
+  - overall structure
+  - comments, indentation and formatting
+  - ordering and grouping of includes by layer
+- `Zquic_.hh` can be included at the tail end of `Zquic.hh` for private implementation code
+- `Zquic_.hh` can be further decomposed into `Zquic_Link.hh` etc. if necessary
+  - be careful about dependencies
+  - `zquic` private headers should be named `Zquic_*.hh` not `Zquic*.hh`
+- If private implementation code is bloating `Zquic.hh`, it can be moved out of the containing `struct`/`class` and relocated out-of-line to `Zquic_.hh`
+  - Simple functions (accessors, etc.) that are only a few lines should remain in-line in `Zquic.hh`
+
+---
+
+FIXME from here
+
+---
+
+What is the use case for `U64Null`?
+
+---
+
+use `(N<<20)` instead of `N * 1024U * 1024U` and `(N<<10)` instead of `N * 1024U`, examples include `DefaultMaxData`; a trailing comment should explain, e.g. `inline constexpr uint64_t Foo = (1<<20); // 1M`
+
+---
+
+audit `zquic` qlog code for proper use of `ZtJSON` capabilities for mapping enums,
+printing/parsing UDTs such as `ZiIP` and `ZiSockAddr`, and so on.
 
 ---
 
@@ -67,48 +118,9 @@ Very few qlog fields, if any, are genuinely arbitrary strings. `ZeString` is ove
 
 ---
 
-What is the use case for `U64Null`?
-
----
-
 rename all diagnostic `struct`s to align with the `*Diag` convention:
 `*Stats` -> `*Diag`, (examples: `ZmHeapStats` -> `ZmHeapDiag`) (DO NOT rename `Zdf::Stats`, it is not diagnostic)
 `*Telemetry` -> `*Diag`, (examples: `ZiCxnTelemetry` -> `ZiCxnDiag`)
-
----
-
-use `(N<<20)` instead of `N * 1024U * 1024U` and `(N<<10)` instead of `N * 1024U`, examples include `DefaultMaxData`; a trailing comment should explain, e.g. `inline constexpr uint64_t Foo = (1<<20); // 1M`
-
----
-
-RuntimeDiag looks completely wrong. Why is it even needed? It should not explicitly
-perform individual member-wise copying, which is fragile and duplicative. Given:
-```
-struct A { ...data members... };
-struct B { ...data members... };
-struct C { A a; B b; };
-```
-`A(const A &)`, `B(const B &)`, and `C(const C &)` are all defaulted and can be used without specifying individual member-wise copies.
-
----
-
-the `*Diag` structs look excessively large. Maintaining all these counters is
-overburdening the hot paths in the implementation. Reduce these structs to the minimum
-required, and use conditional compilation to exclude test-only and qlog-only members from 
-the run-time. Production release builds without qlog enabled should not be maintaining
-redundant diagnostic counters.
-
----
-
-`Zquic.hh` is a generic protocol implementation header for many different QUIC client and/or server applications, it should not include test-only or test-specific functions:
-- why are hard-coded `"zqserv01"` and `"zqcli001"`in `writeInitialPingProbe` in this header?
-- functions like `padForProtSample` also seem to be wrongly placed in this header
-- audit `Zquic.hh` for all code that is test-only or specific to a particular application use case and factor out such code into the appropriate files
-  - test code should be under `zquic/test`, not `zquic/src`
-
----
-
-`Zquic.hh` is too large. Suggest how to logically decompose it into a single master header and multiple additional subsidiary headers. Dependent code should continue to include `Zquic.hh`. The key dependent-facing API types that should be in `Zquic.hh` are `Engine`, `App`, `Client`, `Server`, `*Link`
 
 ## Z generic
 
