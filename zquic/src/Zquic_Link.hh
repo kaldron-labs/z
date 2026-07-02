@@ -505,6 +505,9 @@ protected:
     bool		congestionOpened = false;
     bool		retransmit = false;
   };
+  // Intentional Rx-to-Tx shared coalescing slot.  Rx overwrites this with
+  // the latest ACK snapshot while one Tx post per packet space is pending.
+  // Tx consumes the final value, avoiding one scheduler post per ACK update.
   struct AckPost {
     mutable ZmPLock	lock;
     AckSnapshot		ack;
