@@ -15,7 +15,22 @@
 
 namespace Zquic_ {
 
-using namespace Zquic;
+using Zquic::CxnID;
+using Zquic::CxnIDMax;
+using Zquic::CxnState;
+using Zquic::Datagram;
+using Zquic::EndpointDiag;
+using Zquic::EndpointRxDiag;
+using Zquic::EndpointTxDiag;
+using Zquic::IPFamily;
+using Zquic::PathMode;
+using Zquic::Pkt;
+using Zquic::PktRxBufAlloc;
+using Zquic::PktTxBufAlloc;
+using Zquic::ResetToken;
+using Zquic::Sock;
+using Zquic::SockConfig;
+using Zquic::SockDiag;
 
 template <typename Link_>
 struct Cxn : public ZuObject {
