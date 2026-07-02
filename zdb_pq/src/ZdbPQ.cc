@@ -220,24 +220,24 @@ void Store::stop_()	// called after dequeuing Stop
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
-  if (!m_sent.count_()) { stop_1(); return; }
+  if (!m_sent.count_()) { stop_0(); return; }
 }
 
-void Store::stop_1()
+void Store::stop_0()
 {
   m_eventLoop.stop(ZmFn<void(ZiEvent::StopResult)>{
     this,
     [](Store *store, ZiEvent::StopResult) {
-      // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing stop_2()"; }));
+      // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing stop_1()"; }));
 
-      store->stop_2();
+      store->stop_1();
       StopFn stopFn = ZuMv(store->m_stopFn);
       store->m_stopFn = StopFn{};
       if (stopFn) stopFn(StopResult{});
     }});
 }
 
-void Store::stop_2()
+void Store::stop_1()
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
@@ -351,7 +351,7 @@ void Store::recv()
     }
   } while (consumed);
 
-  if (stop) stop_1();
+  if (stop) stop_0();
 }
 
 void Store::rcvd(Work::Queue::Node *work, PGresult *res)
@@ -565,7 +565,7 @@ void Store::start_failed(bool running, ZeException e)
 
 void Store::start_failed_(ZeException e)
 {
-  stop_2();
+  stop_1();
 
   auto startFn = ZuMv(m_startFn);
 

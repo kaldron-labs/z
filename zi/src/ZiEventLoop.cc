@@ -144,7 +144,7 @@ void Loop::stop(StopFn fn)
 
   m_sched->wakeFn(m_sid, ZmFn<>{});
   m_sched->push([this]() mutable {
-    stop_2();
+    stop_0();
     StopFn stopFn = ZuMv(m_stopFn);
     m_stopFn = StopFn{};
     if (stopFn) stopFn(StopResult{});
@@ -152,7 +152,7 @@ void Loop::stop(StopFn fn)
   wake_();
 }
 
-void Loop::stop_2()
+void Loop::stop_0()
 {
   // ZiLOG(Debug, "ZiEventLoop", ([](auto &s) { }));
 
@@ -588,7 +588,7 @@ void Loop::start_failed(ZeException e)
 {
   // ZiLOG(Debug, "ZiEventLoop", ([](auto &s) { }));
 
-  stop_2();
+  stop_0();
 
   auto startFn = ZuMv(m_startFn);
 

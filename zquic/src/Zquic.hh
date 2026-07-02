@@ -895,19 +895,19 @@ protected:
     this->started(true);
   }
 
-  void stop_() {
-    rxRun([this]() { stop_1(); });
+  void stop_() {		// engine callback - enter Rx thread
+    rxRun([this]() { stop_0(); });
   }
 
-  void stop_1() {
-    txRun([this]() { stop_2(); });
+  void stop_0() {		// Rx thread - enter Tx thread
+    txRun([this]() { stop_1(); });
   }
 
-  void stop_2() {
-    stopQLog_([this]() { stop_3(true); });
+  void stop_1() {		// Tx thread - stop qlog
+    stopQLog_([this]() { stop_2(true); });
   }
 
-  void stop_3(bool ok) {
+  void stop_2(bool ok) {	// qlog callback - complete stop
     this->stopped(ok);
   }
 
@@ -1453,7 +1453,11 @@ private:
     }
   }
 
-  void stop_() {
+  void stop_() {		// engine callback - enter Rx thread
+    Base::rxRun([this]() { stop_0(); });
+  }
+
+  void stop_0() {		// Rx thread - disconnect endpoint and links
     Endpoint::disconnect();
     m_stopCount = 0;
     {
@@ -1467,13 +1471,9 @@ private:
     if (!m_stopCount) stop_1();
   }
 
-  void stop_1() {
+  void stop_1() {		// Rx thread - clean links / resume engine stop
     m_links->clean();
-    Base::stopQLog_([this]() { stop_2(); });
-  }
-
-  void stop_2() {
-    this->stopped(true);
+    Base::stop_0();
   }
 
   bool sendVersionNegotiation_(const LongHdr &h, ZiSockAddr addr) {

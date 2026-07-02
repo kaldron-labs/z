@@ -1787,9 +1787,9 @@ private:
 
   void start_1();
   void start_2();
+  void stop_0();
   void stop_1();
   void stop_2();
-  void stop_3();
 
   // leader election and activation/deactivation
   void holdElection();		// elect new leader
@@ -1887,6 +1887,7 @@ private:
 
   bool			m_standalone = false;
 
+  ZmScheduler::Timer	m_listenTimer;
   ZmScheduler::Timer	m_hbSendTimer;
   ZmScheduler::Timer	m_electTimer;
 

@@ -2044,7 +2044,7 @@ void ZiMultiplex::disconnected(ZiConnection *cxn)
 
   cxnDel(s);
   
-  if (ZuUnlikely(m_stopping && !m_cxns->count_())) stop_2();
+  if (ZuUnlikely(m_stopping && !m_cxns->count_())) stop_1();
 }
 
 void ZiConnection::close()
@@ -2221,29 +2221,29 @@ bool ZiMultiplex::stop__()
 
   m_stopping = &stopping;
 
-  rxInvoke([this]() { stop_1(); });
+  rxInvoke([this]() { stop_0(); });
 
   stopping.wait();
 
   wake();
 
-  stop_3();
+  stop_2();
 
   m_stopping = nullptr;
 
   return ZmScheduler::stop__();
 }
 
-void ZiMultiplex::stop_1()
+void ZiMultiplex::stop_0()
 {
-  if (!m_cxns->count_()) { stop_2(); return; }
+  if (!m_cxns->count_()) { stop_1(); return; }
 
   auto i = m_cxns->citer();
   while (ZmRef<ZiConnection> cxn = i.val())
     cxn->disconnect();
 }
 
-void ZiMultiplex::stop_2()
+void ZiMultiplex::stop_1()
 {
 #ifdef ZiMultiplex_EPoll
   {
@@ -2281,7 +2281,7 @@ void ZiMultiplex::stop_2()
     m_stopping->post();
 }
 
-void ZiMultiplex::stop_3()
+void ZiMultiplex::stop_2()
 {
   // close down underlying I/O platform
 
