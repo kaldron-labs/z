@@ -98,7 +98,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Target Linux and Windows via msys2/mingw 64-bit; use `_WIN32` for Windows-specific paths.
 
 ### Enums
-- do not use `enum class`
+- do not use `enum class` or `enum T`
   - Z **intentionally** uses enums as fully convertible with integers
     - enum values should be directly usable as compile-time array indexes, etc.
     - if a type is integral and size <= `sizeof(int)`, enum values are used in preference to `static constexpr` constants
