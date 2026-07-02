@@ -28,8 +28,11 @@
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiIP.hh>
 
+#include <zlib/ZquicPacket.hh>
 #include <zlib/ZquicTypes.hh>
+#include <zlib/ZquicTransport.hh>
 
 #if defined(ZDEBUG) && !defined(Zquic_DEBUG)
 #define Zquic_DEBUG	// enable testing / debugging
@@ -67,17 +70,54 @@ private:
 
 struct ZquicLogMetadata {
   ZuCSpan	vantagePoint;
-  ZuBSpan	originalDCID;
-  ZuBSpan	groupID;
-  ZuBSpan	dcid;
-  ZuBSpan	scid;
+  Zquic::CxnID	originalDCID;
+  Zquic::CxnID	groupID;
+  Zquic::CxnID	dcid;
+  Zquic::CxnID	scid;
 };
 
-enum { ZquicLogFrameMax = 8 };
+struct ZquicLogCIDMeta {
+  Zquic::CxnID	origDCID;
+  Zquic::CxnID	groupID;
+  Zquic::CxnID	dcid;
+  Zquic::CxnID	scid;
+
+  bool operator !() const {
+    return !origDCID.length() && !groupID.length() &&
+      !dcid.length() && !scid.length();
+  }
+  ZuOpBool
+};
+
+enum {
+  ZquicLogFrameMax = 8,
+  ZquicLogAckRangeMax = 16,
+  ZquicLogAckPacketMax = 64,
+  ZquicLogVersionMax = 8
+};
+
+ZuDerive(ZquicLogVersionArray,
+  (ZuArray<uint32_t, ZquicLogVersionMax>));
+
+struct ZquicLogAckRange {
+  uint64_t	first = 0;
+  uint64_t	largest = 0;
+
+  struct Traits : public ZuBaseTraits<ZquicLogAckRange> {
+    enum { IsPOD = 1 };
+  };
+  friend Traits ZuTraitsType(ZquicLogAckRange *);
+};
 
 struct ZquicLogDatagramEvent {
 	uint64_t	size = 0;
 	Zquic::EcnMark::T ecn = Zquic::EcnMark::N;
+	ZquicLogCIDMeta metadata;
+};
+
+struct ZquicLogStreamType {
+  ZtEnum(ZquicLogStreamType, int8_t, Bidirectional, Unidirectional);
+  ZtEnumMap(ZquicLogStreamType, JSON, "bidirectional", "unidirectional");
 };
 
 struct ZquicLogFrameEvent {
@@ -92,6 +132,10 @@ struct ZquicLogFrameEvent {
   uint64_t	ect0 = 0;
   uint64_t	ect1 = 0;
   uint64_t	ce = 0;
+  ZuArray<ZquicLogAckRange, ZquicLogAckRangeMax> ackRanges;
+  ZquicLogStreamType::T streamType = ZquicLogStreamType::Bidirectional;
+  Zquic::CxnID	connectionID;
+  Zquic::ResetToken resetToken;
   uint8_t	rangeCount = 0;
   bool		fin = false;
 
@@ -126,6 +170,7 @@ struct ZquicLogPacketEvent {
   bool		framesTruncated = false;
   ZuArray<ZquicLogFrameEvent, ZquicLogFrameMax> frames;
   bool		ackEliciting = false;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogAckEvent {
@@ -137,6 +182,9 @@ struct ZquicLogAckEvent {
   uint8_t	rangeCount = 0;
   uint8_t	ackedFrames = 0;
   uint8_t	lostFrames = 0;
+  bool		packetNumbersTruncated = false;
+  ZuArray<uint64_t, ZquicLogAckPacketMax> packetNumbers;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogRecoveryKind {
@@ -172,11 +220,13 @@ struct ZquicLogRecoveryEvent {
   uint64_t	ssthresh = 0;
   uint64_t	bytesInFlight = 0;
   uint8_t	frameCount = 0;
+  ZuArray<ZquicLogFrameEvent, ZquicLogFrameMax> frames;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogECNState {
-  ZtEnum(ZquicLogECNState, int8_t, Validated, Disabled);
-  ZtEnumMap(ZquicLogECNState, JSON, "validated", "disabled");
+  ZtEnum(ZquicLogECNState, int8_t, Unknown, Capable, Failed);
+  ZtEnumMap(ZquicLogECNState, JSON, "unknown", "capable", "failed");
 };
 
 struct ZquicLogECNReason {
@@ -190,7 +240,7 @@ struct ZquicLogECNReason {
 
 struct ZquicLogECNEvent {
 	Zquic::PktNumSpace::T packetSpace = Zquic::PktNumSpace::Initial;
-  ZquicLogECNState::T state = ZquicLogECNState::Validated;
+  ZquicLogECNState::T state = ZquicLogECNState::Capable;
   ZquicLogECNReason::T reason = ZquicLogECNReason::AckECN;
   uint64_t	ect0 = 0;
   uint64_t	ect1 = 0;
@@ -200,6 +250,7 @@ struct ZquicLogECNEvent {
   uint64_t	previousCE = 0;
   uint64_t	largestAcked = 0;
   bool		disabled = false;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogSecurityKind {
@@ -217,6 +268,17 @@ struct ZquicLogSecurityKeyType {
   ZtEnumMap(ZquicLogSecurityKeyType, JSON, "", "rx", "rx_old", "tx");
 };
 
+struct ZquicLogQKeyType {
+  ZtEnum(ZquicLogQKeyType, int8_t,
+    ServerInitial, ClientInitial, ServerHandshake, ClientHandshake,
+    Server0RTT, Client0RTT, Server1RTT, Client1RTT);
+  ZtEnumMap(ZquicLogQKeyType, JSON,
+    "server_initial_secret", "client_initial_secret",
+    "server_handshake_secret", "client_handshake_secret",
+    "server_0rtt_secret", "client_0rtt_secret",
+    "server_1rtt_secret", "client_1rtt_secret");
+};
+
 struct ZquicLogSecurityTrigger {
   ZtEnum(ZquicLogSecurityTrigger, int8_t,
     None, Sent, Received, Validated, Local, Remote, Peer, Selected, Timer,
@@ -226,20 +288,31 @@ struct ZquicLogSecurityTrigger {
     "selected", "timer", "handshake_complete", "rx", "tx");
 };
 
+struct ZquicLogQKeyTrigger {
+  ZtEnum(ZquicLogQKeyTrigger, int8_t, TLS, RemoteUpdate, LocalUpdate);
+  ZtEnumMap(ZquicLogQKeyTrigger, JSON,
+    "tls", "remote_update", "local_update");
+};
+
+struct ZquicLogQInitiator {
+  ZtEnum(ZquicLogQInitiator, int8_t, Local, Remote);
+  ZtEnumMap(ZquicLogQInitiator, JSON, "local", "remote");
+};
+
 struct ZquicLogSecurityReason {
   ZtEnum(ZquicLogSecurityReason, int8_t,
     None, Unknown, OK, Handshake, KeyPhase, KeyUpdate, PeerUpdate,
     PacketSpace, AddressValidation, MissingToken, NewToken, NewTokenPolicy,
     UnsupportedVersion, UnknownCID, TokenMatch, Validation, RetrySCID, Expired,
     Auth, Address, Malformed, Kind, ODCID, Protect, MissingKeys, Protection,
-    InvalidKeyPhase);
+    InvalidKeyPhase, ZeroRTT);
   ZtEnumMap(ZquicLogSecurityReason, JSON,
     "", "unknown", "ok", "handshake", "key_phase", "key_update",
     "peer_update", "packet_space", "address_validation", "missing_token",
     "new_token", "new_token_policy", "unsupported_version", "unknown_cid",
     "token_match", "validation", "retry_scid", "expired", "auth", "address",
     "malformed", "kind", "odcid", "protect", "missing_keys", "protection",
-    "invalid_key_phase");
+    "invalid_key_phase", "0rtt");
 };
 
 struct ZquicLogSecurityEvent {
@@ -251,6 +324,37 @@ struct ZquicLogSecurityEvent {
   ZquicLogSecurityReason::T reason = ZquicLogSecurityReason::None;
   uint64_t	value = 0;
   bool		success = true;
+  ZquicLogCIDMeta metadata;
+};
+
+struct ZquicLogTransportParamsEvent {
+  ZquicLogQInitiator::T initiator = ZquicLogQInitiator::Local;
+  Zquic::CxnID	originalDCID;
+  Zquic::CxnID	initialSCID;
+  Zquic::CxnID	retrySCID;
+  Zquic::ResetToken statelessResetToken;
+  uint64_t	maxIdleTimeout = 0;
+  uint64_t	maxUDPPayloadSize = 0;
+  uint64_t	ackDelayExponent = 0;
+  uint64_t	maxAckDelay = 0;
+  uint64_t	activeConnectionIDLimit = 0;
+  uint64_t	initialMaxData = 0;
+  uint64_t	initialMaxStreamDataBidiLocal = 0;
+  uint64_t	initialMaxStreamDataBidiRemote = 0;
+  uint64_t	initialMaxStreamDataUni = 0;
+  uint64_t	initialMaxStreamsBidi = 0;
+  uint64_t	initialMaxStreamsUni = 0;
+  bool		statelessResetTokenPresent = false;
+  bool		disableActiveMigration = false;
+  ZquicLogCIDMeta metadata;
+};
+
+struct ZquicLogVersionEvent {
+  ZquicLogVersionArray serverVersions;
+  ZquicLogVersionArray clientVersions;
+  uint32_t	chosenVersion = 0;
+  bool		chosenVersionPresent = false;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogPathKind {
@@ -286,11 +390,13 @@ struct ZquicLogPathEvent {
   ZquicLogPathKind::T kind = ZquicLogPathKind::Path;
   ZquicLogPathAction::T action = ZquicLogPathAction::Updated;
   ZquicLogPathReason::T reason = ZquicLogPathReason::None;
+  uint64_t	tupleID = 0;
   uint64_t	bytes = 0;
   uint64_t	antiAmplification = 0;
   uint64_t	deadlineUS = 0;
   uint32_t	mtu = 0;
   bool		validated = false;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogCIDKind {
@@ -318,16 +424,13 @@ struct ZquicLogCIDEvent {
   ZquicLogCIDKind::T kind = ZquicLogCIDKind::ConnectionID;
   ZquicLogCIDAction::T action = ZquicLogCIDAction::Updated;
   ZquicLogCIDReason::T reason = ZquicLogCIDReason::None;
+  Zquic::CxnID	connectionID;
   uint64_t	sequence = 0;
   uint8_t	length = 0;
   bool		local = false;
   bool		associated = false;
   bool		resetToken = false;
-};
-
-struct ZquicLogStreamType {
-  ZtEnum(ZquicLogStreamType, int8_t, Bidirectional, Unidirectional);
-  ZtEnumMap(ZquicLogStreamType, JSON, "bidirectional", "unidirectional");
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogStreamState {
@@ -357,6 +460,7 @@ struct ZquicLogStreamEvent {
   uint64_t	length = 0;
   uint64_t	errorCode = 0;
   bool		fin = false;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogStreamDataLoc {
@@ -377,6 +481,7 @@ struct ZquicLogStreamDataEvent {
   uint64_t	streamID = 0;
   uint64_t	offset = 0;
   uint64_t	length = 0;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogBlockedState {
@@ -400,6 +505,7 @@ struct ZquicLogBlockedEvent {
   ZquicLogBlockedReason::T reason =
     ZquicLogBlockedReason::ConnectionFlowControl;
   uint64_t	streamID = 0;
+  ZquicLogCIDMeta metadata;
 };
 
 struct ZquicLogCloseInitiator {
@@ -422,8 +528,15 @@ struct ZquicLogCloseReason {
 };
 
 struct ZquicLogCloseError {
-  ZtEnum(ZquicLogCloseError, int8_t, None, Unknown, NoError);
-  ZtEnumMap(ZquicLogCloseError, JSON, "", "unknown", "no_error");
+  ZtEnum(ZquicLogCloseError, int8_t,
+    None, Unknown, NoError, Internal, ConnectionRefused, FlowControl,
+    StreamLimit, StreamState, FinalSize, FrameEncoding, TransportParameter,
+    ConnectionIDLimit, ProtocolViolation);
+  ZtEnumMap(ZquicLogCloseError, JSON,
+    "", "unknown", "no_error", "internal_error", "connection_refused",
+    "flow_control_error", "stream_limit_error", "stream_state_error",
+    "final_size_error", "frame_encoding_error", "transport_parameter_error",
+    "connection_id_limit_error", "protocol_violation");
 };
 
 struct ZquicLogCloseEvent {
@@ -433,14 +546,57 @@ struct ZquicLogCloseEvent {
   ZquicLogCloseError::T connectionError = ZquicLogCloseError::None;
   ZquicLogCloseError::T applicationError = ZquicLogCloseError::None;
   uint64_t	errorCode = 0;
-  bool		application = false;
-	bool		frame = false;
+  ZquicLogCIDMeta metadata;
 };
 
-struct ZquicLogLifecycle {
-  ZtEnum(ZquicLogLifecycle, int8_t, Started, Closed);
-  ZtEnumMap(ZquicLogLifecycle, JSON,
-    "connectivity:connection_started", "connectivity:connection_closed");
+struct ZquicLogConnectionState {
+  ZtEnum(ZquicLogConnectionState, int8_t,
+    Attempted, HandshakeStarted, HandshakeComplete, Closing, Draining, Closed);
+  ZtEnumMap(ZquicLogConnectionState, JSON,
+    "attempted", "handshake_started", "handshake_complete",
+    "closing", "draining", "closed");
+};
+
+struct ZquicLogConnectionStateEvent {
+  ZquicLogConnectionState::T oldState = ZquicLogConnectionState::Attempted;
+  ZquicLogConnectionState::T newState =
+    ZquicLogConnectionState::HandshakeStarted;
+  ZquicLogCIDMeta metadata;
+};
+
+struct ZquicLogConnectionStartedEvent {
+  ZiSockAddr	local;
+  ZiSockAddr	remote;
+  ZquicLogCIDMeta metadata;
+};
+
+struct ZquicLogEventName {
+  ZtEnum(ZquicLogEventName, int8_t,
+    ConnStarted, UDPTx, UDPRx, PktSent, PktRecv, PktBuf, PktDrop, PktsAcked,
+    PktLost, MarkRetrans, MetricsUpd, TimerUpd, CongestionUpd, ECNUpd, KeyUpd,
+    KeyDiscarded, ParamsSet, ALPNInfo, TLSAlert, RetrySent, RetryValid,
+    TokenIssued, TokenValid, TokenReject, VersionInfo, StatelessReset,
+    PktProtectFail, ZeroRTTReject, TupleAssigned, PathValidated, MTUUpd, CIDUpd,
+    StreamStateUpd, StreamDataMoved, ConnDataBlockedUpd,
+    StreamDataBlockedUpd, ConnClosed, ConnStateUpd);
+  ZtEnumMap(ZquicLogEventName, JSON,
+    "quic:connection_started", "quic:udp_datagrams_sent",
+    "quic:udp_datagrams_received", "quic:packet_sent",
+    "quic:packet_received", "quic:packet_buffered", "quic:packet_dropped",
+    "quic:packets_acked", "quic:packet_lost",
+    "quic:marked_for_retransmit", "quic:recovery_metrics_updated",
+    "quic:timer_updated", "quic:congestion_state_updated",
+    "quic:ecn_state_updated", "quic:key_updated", "quic:key_discarded",
+    "quic:parameters_set", "quic:alpn_information", "zquic:tls_alert",
+    "zquic:retry_sent", "zquic:retry_validated", "zquic:token_issued",
+    "zquic:token_validated", "zquic:token_rejected",
+    "quic:version_information", "zquic:stateless_reset",
+    "zquic:packet_protection_failed", "zquic:zero_rtt_rejected",
+    "quic:tuple_assigned", "quic:path_validated", "quic:mtu_updated",
+    "quic:connection_id_updated", "quic:stream_state_updated",
+    "quic:stream_data_moved", "quic:connection_data_blocked_updated",
+    "quic:stream_data_blocked_updated", "quic:connection_closed",
+    "quic:connection_state_updated");
 };
 
 #ifdef Zquic_DEBUG
@@ -487,8 +643,8 @@ public:
   static void final() { instance()->final_(); }
   static ZquicLogDiag diag() { return instance()->diag_(); }
 
-  static void lifecycle(ZquicLogLifecycle::T event) {
-    instance()->lifecycle_(event);
+  static void connectionStarted(ZquicLogConnectionStartedEvent event) {
+    instance()->connectionStarted_(ZuMv(event));
   }
   static void datagramSent(ZquicLogDatagramEvent event) {
     instance()->datagramSent_(ZuMv(event));
@@ -538,18 +694,21 @@ public:
   static void keyRetired(ZquicLogSecurityEvent event) {
     instance()->keyRetired_(ZuMv(event));
   }
-  static void transportParametersSet(ZquicLogSecurityEvent event) {
+  static void transportParametersSet(ZquicLogTransportParamsEvent event) {
     instance()->transportParametersSet_(ZuMv(event));
   }
   static void alpnInformation(ZquicLogSecurityEvent event) {
     instance()->alpnInformation_(ZuMv(event));
   }
+  static void versionInformation(ZquicLogVersionEvent event) {
+    instance()->versionInformation_(ZuMv(event));
+  }
   static void tlsAlert(ZquicLogSecurityEvent event) {
     instance()->tlsAlert_(ZuMv(event));
   }
   static void securityEvent(
-    ZuCSpan name, ZquicLogSecurityEvent event) {
-    instance()->securityEvent_(ZeString{name}, ZuMv(event));
+    ZquicLogEventName::T name, ZquicLogSecurityEvent event) {
+    instance()->securityEvent_(name, ZuMv(event));
   }
   static void pathUpdated(ZquicLogPathEvent event) {
     instance()->pathUpdated_(ZuMv(event));
@@ -579,112 +738,125 @@ public:
   static void connectionClosed(ZquicLogCloseEvent event) {
     instance()->connectionClosed_(ZuMv(event));
   }
+  static void connectionStateUpdated(ZquicLogConnectionStateEvent event) {
+    instance()->connectionStateUpdated_(ZuMv(event));
+  }
   template <typename L>
   static void log(L l) {
     instance()->log_(ZuMv(l));
   }
 
-  void logLifecycle(ZquicLogLifecycle::T event, ZuTime time) {
-    writeLifecycle_(event, time);
+  void logConnectionStarted(
+    const ZquicLogConnectionStartedEvent &event, ZuTime time) {
+    writeConnectionStartedEvent_(event, time);
   }
   void logDatagramSent(const ZquicLogDatagramEvent &event, ZuTime time) {
-    writeDatagramEvent_("transport:datagrams_sent", event, time);
+    writeDatagramEvent_(ZquicLogEventName::UDPTx, event, time);
   }
   void logDatagramReceived(const ZquicLogDatagramEvent &event, ZuTime time) {
-    writeDatagramEvent_("transport:datagrams_received", event, time);
+    writeDatagramEvent_(ZquicLogEventName::UDPRx, event, time);
   }
   void logPacketSent(const ZquicLogPacketEvent &event, ZuTime time) {
-    writePacketEvent_("transport:packet_sent", event, time);
+    writePacketEvent_(ZquicLogEventName::PktSent, event, time);
   }
   void logPacketReceived(const ZquicLogPacketEvent &event, ZuTime time) {
-    writePacketEvent_("transport:packet_received", event, time);
+    writePacketEvent_(ZquicLogEventName::PktRecv, event, time);
   }
   void logPacketBuffered(const ZquicLogPacketEvent &event, ZuTime time) {
-    writePacketEvent_("transport:packet_buffered", event, time);
+    writePacketEvent_(ZquicLogEventName::PktBuf, event, time);
   }
   void logPacketDropped(const ZquicLogPacketEvent &event, ZuTime time) {
-    writePacketEvent_("transport:packet_dropped", event, time);
+    writePacketEvent_(ZquicLogEventName::PktDrop, event, time);
   }
   void logPacketsAcked(const ZquicLogAckEvent &event, ZuTime time) {
-    writeAckEvent_("transport:packets_acked", event, time);
+    writeAckEvent_(ZquicLogEventName::PktsAcked, event, time);
   }
   void logPacketLost(const ZquicLogRecoveryEvent &event, ZuTime time) {
-    writeRecoveryEvent_("transport:packet_lost", event, time);
+    writePacketLostEvent_(event, time);
   }
   void logRecoveryPacketLost(const ZquicLogRecoveryEvent &event, ZuTime time) {
-    writeRecoveryEvent_("recovery:packet_lost", event, time);
+    writePacketLostEvent_(event, time);
   }
   void logMarkedForRetransmit(
     const ZquicLogRecoveryEvent &event, ZuTime time) {
-    writeRecoveryEvent_("recovery:marked_for_retransmit", event, time);
+    writeMarkedForRetransmitEvent_(event, time);
   }
   void logMetricsUpdated(const ZquicLogRecoveryEvent &event, ZuTime time) {
-    writeRecoveryEvent_("recovery:metrics_updated", event, time);
+    writeRecoveryMetricsEvent_(event, time);
   }
   void logLossTimerUpdated(const ZquicLogRecoveryEvent &event, ZuTime time) {
-    writeRecoveryEvent_("recovery:loss_timer_updated", event, time);
+    writeTimerEvent_(event, time);
   }
   void logCongestionStateUpdated(
     const ZquicLogRecoveryEvent &event, ZuTime time) {
-    writeRecoveryEvent_("recovery:congestion_state_updated", event, time);
+    writeCongestionStateEvent_(event, time);
   }
   void logECNStateUpdated(const ZquicLogECNEvent &event, ZuTime time) {
-    writeECNEvent_("recovery:ecn_state_updated", event, time);
+    writeECNEvent_(event, time);
   }
   void logKeyUpdated(const ZquicLogSecurityEvent &event, ZuTime time) {
-    writeSecurityEvent_("security:key_updated", event, time);
+    writeKeyEvent_(ZquicLogEventName::KeyUpd, event, time);
   }
   void logKeyRetired(const ZquicLogSecurityEvent &event, ZuTime time) {
-    writeSecurityEvent_("security:key_retired", event, time);
+    writeKeyEvent_(ZquicLogEventName::KeyDiscarded, event, time);
   }
   void logTransportParametersSet(
-    const ZquicLogSecurityEvent &event, ZuTime time) {
-    writeSecurityEvent_("security:transport_parameters_set", event, time);
+    const ZquicLogTransportParamsEvent &event, ZuTime time) {
+    writeTransportParamsEvent_(event, time);
   }
   void logALPNInformation(const ZquicLogSecurityEvent &event, ZuTime time) {
-    writeSecurityEvent_("security:alpn_information", event, time);
+    writeALPNEvent_(event, time);
+  }
+  void logVersionInformation(
+    const ZquicLogVersionEvent &event, ZuTime time) {
+    writeVersionEvent_(event, time);
   }
   void logTLSAlert(const ZquicLogSecurityEvent &event, ZuTime time) {
-    writeSecurityEvent_("security:tls_alert", event, time);
+    writeSecurityEvent_(ZquicLogEventName::TLSAlert, event, time);
   }
   void logSecurityEvent(
-    ZuCSpan name, const ZquicLogSecurityEvent &event, ZuTime time) {
+    ZquicLogEventName::T name,
+    const ZquicLogSecurityEvent &event, ZuTime time) {
     writeSecurityEvent_(name, event, time);
   }
   void logPathUpdated(const ZquicLogPathEvent &event, ZuTime time) {
-    writePathEvent_("path:path_updated", event, time);
+    writePathEvent_(ZquicLogEventName::TupleAssigned, event, time);
   }
   void logPathValidationUpdated(
     const ZquicLogPathEvent &event, ZuTime time) {
-    writePathEvent_("path:path_validation_updated", event, time);
+    writePathValidationEvent_(event, time);
   }
   void logPMTUDUpdated(const ZquicLogPathEvent &event, ZuTime time) {
-    writePathEvent_("path:pmtud_updated", event, time);
+    writeMTUEvent_(event, time);
   }
   void logCIDUpdated(const ZquicLogCIDEvent &event, ZuTime time) {
-    writeCIDEvent_("connectivity:connection_id_updated", event, time);
+    writeCIDEvent_(ZquicLogEventName::CIDUpd, event, time);
   }
   void logStreamStateUpdated(
     const ZquicLogStreamEvent &event, ZuTime time) {
-    writeStreamEvent_("transport:stream_state_updated", event, time);
+    writeStreamEvent_(ZquicLogEventName::StreamStateUpd, event, time);
   }
   void logStreamDataMoved(
     const ZquicLogStreamDataEvent &event, ZuTime time) {
-    writeStreamDataEvent_("transport:stream_data_moved", event, time);
+    writeStreamDataEvent_(ZquicLogEventName::StreamDataMoved, event, time);
   }
   void logConnectionDataBlockedUpdated(
     const ZquicLogBlockedEvent &event, ZuTime time) {
     writeConnectionBlockedEvent_(
-      "transport:connection_data_blocked_updated", event, time);
+      ZquicLogEventName::ConnDataBlockedUpd, event, time);
   }
   void logStreamDataBlockedUpdated(
     const ZquicLogBlockedEvent &event, ZuTime time) {
     writeStreamBlockedEvent_(
-      "transport:stream_data_blocked_updated", event, time);
+      ZquicLogEventName::StreamDataBlockedUpd, event, time);
   }
   void logConnectionClosed(
     const ZquicLogCloseEvent &event, ZuTime time) {
-    writeCloseEvent_("connectivity:connection_closed", event, time);
+    writeCloseEvent_(ZquicLogEventName::ConnClosed, event, time);
+  }
+  void logConnectionStateUpdated(
+    const ZquicLogConnectionStateEvent &event, ZuTime time) {
+    writeConnectionStateEvent_(ZquicLogEventName::ConnStateUpd, event, time);
   }
 
 private:
@@ -697,7 +869,7 @@ private:
   void stop_();
   void final_();
   ZquicLogDiag diag_() const;
-  void lifecycle_(ZquicLogLifecycle::T);
+  void connectionStarted_(ZquicLogConnectionStartedEvent);
   void datagramSent_(ZquicLogDatagramEvent);
   void datagramReceived_(ZquicLogDatagramEvent);
   void packetSent_(ZquicLogPacketEvent);
@@ -714,10 +886,11 @@ private:
   void ecnStateUpdated_(ZquicLogECNEvent);
   void keyUpdated_(ZquicLogSecurityEvent);
   void keyRetired_(ZquicLogSecurityEvent);
-  void transportParametersSet_(ZquicLogSecurityEvent);
+  void transportParametersSet_(ZquicLogTransportParamsEvent);
   void alpnInformation_(ZquicLogSecurityEvent);
+  void versionInformation_(ZquicLogVersionEvent);
   void tlsAlert_(ZquicLogSecurityEvent);
-  void securityEvent_(ZeString, ZquicLogSecurityEvent);
+  void securityEvent_(ZquicLogEventName::T, ZquicLogSecurityEvent);
   void pathUpdated_(ZquicLogPathEvent);
   void pathValidationUpdated_(ZquicLogPathEvent);
   void pmtudUpdated_(ZquicLogPathEvent);
@@ -727,6 +900,7 @@ private:
   void connectionDataBlockedUpdated_(ZquicLogBlockedEvent);
   void streamDataBlockedUpdated_(ZquicLogBlockedEvent);
   void connectionClosed_(ZquicLogCloseEvent);
+  void connectionStateUpdated_(ZquicLogConnectionStateEvent);
   template <typename L>
   void post_(L &l) {
     Fn fn{l};
@@ -751,36 +925,52 @@ private:
   }
 
   void work_();
-  bool headerReady_(bool) const;
   bool writeHeader_();
-  bool writeLifecycle_(ZquicLogLifecycle::T, ZuTime);
+  bool writeConnectionStartedEvent_(
+    const ZquicLogConnectionStartedEvent &, ZuTime);
   bool writeDatagramEvent_(
-    ZuCSpan name, const ZquicLogDatagramEvent &, ZuTime);
+    ZquicLogEventName::T, const ZquicLogDatagramEvent &, ZuTime);
   bool writePacketEvent_(
-    ZuCSpan name, const ZquicLogPacketEvent &, ZuTime);
-  bool writeAckEvent_(ZuCSpan name, const ZquicLogAckEvent &, ZuTime);
-  bool writeRecoveryEvent_(
-    ZuCSpan name, const ZquicLogRecoveryEvent &, ZuTime);
-  bool writeECNEvent_(ZuCSpan name, const ZquicLogECNEvent &, ZuTime);
+    ZquicLogEventName::T, const ZquicLogPacketEvent &, ZuTime);
+  bool writeAckEvent_(
+    ZquicLogEventName::T, const ZquicLogAckEvent &, ZuTime);
+  bool writePacketLostEvent_(const ZquicLogRecoveryEvent &, ZuTime);
+  bool writeMarkedForRetransmitEvent_(const ZquicLogRecoveryEvent &, ZuTime);
+  bool writeRecoveryMetricsEvent_(const ZquicLogRecoveryEvent &, ZuTime);
+  bool writeCongestionStateEvent_(const ZquicLogRecoveryEvent &, ZuTime);
+  bool writeTimerEvent_(const ZquicLogRecoveryEvent &, ZuTime);
+  bool writeECNEvent_(const ZquicLogECNEvent &, ZuTime);
+  bool writeKeyEvent_(
+    ZquicLogEventName::T, const ZquicLogSecurityEvent &, ZuTime);
+  bool writeTransportParamsEvent_(
+    const ZquicLogTransportParamsEvent &, ZuTime);
+  bool writeALPNEvent_(const ZquicLogSecurityEvent &, ZuTime);
+  bool writeVersionEvent_(const ZquicLogVersionEvent &, ZuTime);
   bool writeSecurityEvent_(
-    ZuCSpan name, const ZquicLogSecurityEvent &, ZuTime);
-  bool writePathEvent_(ZuCSpan name, const ZquicLogPathEvent &, ZuTime);
-  bool writeCIDEvent_(ZuCSpan name, const ZquicLogCIDEvent &, ZuTime);
-  bool writeStreamEvent_(ZuCSpan name, const ZquicLogStreamEvent &, ZuTime);
+    ZquicLogEventName::T, const ZquicLogSecurityEvent &, ZuTime);
+  bool writePathEvent_(
+    ZquicLogEventName::T, const ZquicLogPathEvent &, ZuTime);
+  bool writeMTUEvent_(const ZquicLogPathEvent &, ZuTime);
+  bool writePathValidationEvent_(const ZquicLogPathEvent &, ZuTime);
+  bool writeCIDEvent_(ZquicLogEventName::T, const ZquicLogCIDEvent &, ZuTime);
+  bool writeStreamEvent_(
+    ZquicLogEventName::T, const ZquicLogStreamEvent &, ZuTime);
   bool writeStreamDataEvent_(
-    ZuCSpan name, const ZquicLogStreamDataEvent &, ZuTime);
+    ZquicLogEventName::T, const ZquicLogStreamDataEvent &, ZuTime);
   bool writeConnectionBlockedEvent_(
-    ZuCSpan name, const ZquicLogBlockedEvent &, ZuTime);
+    ZquicLogEventName::T, const ZquicLogBlockedEvent &, ZuTime);
   bool writeStreamBlockedEvent_(
-    ZuCSpan name, const ZquicLogBlockedEvent &, ZuTime);
-  bool writeCloseEvent_(ZuCSpan name, const ZquicLogCloseEvent &, ZuTime);
+    ZquicLogEventName::T, const ZquicLogBlockedEvent &, ZuTime);
+  bool writeCloseEvent_(
+    ZquicLogEventName::T, const ZquicLogCloseEvent &, ZuTime);
+  bool writeConnectionStateEvent_(
+    ZquicLogEventName::T, const ZquicLogConnectionStateEvent &, ZuTime);
 
 private:
   ZmAtomic<int>		m_enabled = 0;
   bool			m_configured = false;
   bool			m_started = false;
   bool			m_headerWritten = false;
-  bool			m_waitForMetadata = false;
   ZquicLogParams		m_params;
   ZeString		m_vantagePoint;
   ZtBArray<>		m_originalDCID;
@@ -811,7 +1001,7 @@ struct ZquicLogger {
   static void stop() { }
   static void final() { }
   static ZquicLogDiag diag() { return {}; }
-  static void lifecycle(ZquicLogLifecycle::T) { }
+  static void connectionStarted(ZquicLogConnectionStartedEvent) { }
   static void datagramSent(ZquicLogDatagramEvent) { }
   static void datagramReceived(ZquicLogDatagramEvent) { }
   static void packetSent(ZquicLogPacketEvent) { }
@@ -828,10 +1018,11 @@ struct ZquicLogger {
   static void ecnStateUpdated(ZquicLogECNEvent) { }
   static void keyUpdated(ZquicLogSecurityEvent) { }
   static void keyRetired(ZquicLogSecurityEvent) { }
-  static void transportParametersSet(ZquicLogSecurityEvent) { }
+  static void transportParametersSet(ZquicLogTransportParamsEvent) { }
   static void alpnInformation(ZquicLogSecurityEvent) { }
+  static void versionInformation(ZquicLogVersionEvent) { }
   static void tlsAlert(ZquicLogSecurityEvent) { }
-  static void securityEvent(ZuCSpan, ZquicLogSecurityEvent) { }
+  static void securityEvent(ZquicLogEventName::T, ZquicLogSecurityEvent) { }
   static void pathUpdated(ZquicLogPathEvent) { }
   static void pathValidationUpdated(ZquicLogPathEvent) { }
   static void pmtudUpdated(ZquicLogPathEvent) { }
@@ -841,6 +1032,7 @@ struct ZquicLogger {
   static void connectionDataBlockedUpdated(ZquicLogBlockedEvent) { }
   static void streamDataBlockedUpdated(ZquicLogBlockedEvent) { }
   static void connectionClosed(ZquicLogCloseEvent) { }
+  static void connectionStateUpdated(ZquicLogConnectionStateEvent) { }
   template <typename L>
   static void log(L) { }
 };

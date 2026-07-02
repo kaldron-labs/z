@@ -140,6 +140,13 @@ code for qlog reasons, triggers, actions, states, packet labels, or frame
 labels should be modeled as enum values, aligning with system error-code style
 classification.  Do not capture those literals as strings.
 
+Use existing Z framework printing and JSON facilities for Z network value
+types.  `ZiIP` already knows how to print itself, and qlog endpoint/address
+JSON should be expressed as `ZtJSON` / `ZtStruct` mappings over `ZiIP`,
+`ZiSockAddr`, ports, and enum/scalar fields.  Do not add qlog-local IP address
+formatters, byte shifting, `{data(), length()}` span reconstruction, or string
+parsing helpers for functionality the Z types already provide.
+
 Do not capture `ZuCSpan` for arbitrary string data unless it points at static
 storage that will outlive the logger thread.  If the data is genuinely
 arbitrary or detailed at run time, capture it as an owning `ZeString` and move
@@ -292,11 +299,25 @@ call sites and writer helpers can initialize only the emitted fields.
 
 Prefer typed event fields over string fields.  If a value is derived at run
 time, first model it as a scalar, fixed-size value, error code, or enum with
-`ZtEnumMap`.  Event string fields must own their data only when the string is
+`ZtEnumMap`.  Qlog event names are closed vocabulary values: model them as a
+`ZtEnumMap`-backed enum and serialize them through `ZtJSON`; do not pass qlog
+event names around as `ZuCSpan`, `ZeString`, or string literals outside the
+enum map.  Event string fields must own their data only when the string is
 genuinely arbitrary free-form text; in that rare case use `ZeString`, move it
 into the event with `ZuMv`, and let the logger thread serialize from owned
-data.  Use borrowed `ZuCSpan` only for static event names or other static
-literals with process lifetime.
+data.  Use borrowed `ZuCSpan` only for static non-event literals with process
+lifetime.
+
+Event names and field shapes must track the current qlog draft schema for
+`quic:*` events.  When an event or field extends beyond that schema, align it
+with mainstream reference implementation precedent where one exists, such as
+mvfst's `quic:path_validated` extension event and its `success` /
+`vantagePoint` payload shape.  Reference precedent covers both the event name
+and the data fields; do not add zquic-specific detail fields to a
+reference-backed `quic:*` extension event unless the reference implementation
+does the same.  If no clear reference precedent exists, keep the event or
+field under the private zquic schema instead of presenting it as standard QUIC
+qlog output.
 
 For packet/frame summaries, reduce payload data to bounded metadata only:
 

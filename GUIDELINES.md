@@ -546,13 +546,15 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - Names must be concise; 32 bytes is the hard upper limit.
 - Use industry standard in-code abbreviations for long names:
   - `reserve` -> `res`
-  - `packet` -> `pkt`
   - `client` -> `cli`
   - `server` -> `srv`
-  - `protection` -> `prot`
-  - `generation` -> `gen`
-  - `security` -> `sec`
   - `connection` -> `cxn`
+  - `packet` -> `pkt`
+  - `protection` -> `prot`
+  - `security` -> `sec`
+  - `generation` -> `gen`
+  - `original` -> `orig`
+  - `previous` -> `prev`
   - ... and so on (this is not an exhaustive list)
 - Example: `packet` is fine; `reservePacketProtection` is too long; use `resPktProt`.
 - use "ack" and "ackd", not "ackd"; example: `packetAckd`

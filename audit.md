@@ -224,6 +224,10 @@ Closed or improved:
 - Server-side Retry and NEW_TOKEN address-validation tokens are generated and
   validated against authenticated payloads, peer address, token kind, expiry,
   and original destination CID.
+- qlog key-update/key-discard writer payloads now use the current draft key
+  event shape instead of generic security fields: qlog `$KeyType`, optional
+  AppData `key_phase`, and standard key triggers are serialized through
+  `ZtEnumMap` / `ZtJSON` on the logger thread.
 
 Remaining gaps:
 
@@ -293,13 +297,23 @@ Current qlog state:
   TLS/security events, Retry/NEW_TOKEN/token-rejection/protection failures,
   path validation/PMTUD/path-admission events, CID issue/retire/route binding,
   stream state, stream data movement, flow-control blocked/unblocked, local and
-  peer close, drain expiry, and idle timeout.
-- Header metadata now includes qlog version/format, implementation identity,
-  vantage point, and connection identity/CID data where available.  Runtime
-  tests cover server trace metadata and redaction of application payload data.
-  This remains a known schema-shape deviation from the latest qlog main draft,
-  which uses `file_schema`, `serialization_format`, `trace.event_schemas`, and
-  `trace.common_fields` in `QlogFileSeq`.
+  peer close, drain expiry, and idle timeout.  Qlog frame summary objects now
+  use current-draft field names for the generic scalar data already captured
+  by zquic, including bounded ACK frame `acked_ranges` emitted as nested
+  numeric arrays, stream-type fields for MAX_STREAMS / STREAMS_BLOCKED, and
+  NEW_CONNECTION_ID `connection_id` / `stateless_reset_token` fields for
+  parsed Rx and direct writer frame data.  The logger-thread frame serializer
+  now emits only fields applicable to each frame type instead of default-zero
+  placeholders.  Remaining frame-detail work is limited to plumbing
+  NEW_CONNECTION_ID CID/token bytes through Tx control frame references if
+  locally sent NEW_CONNECTION_ID frames are added.
+- Header metadata now uses the current JSON-SEQ `QlogFileSeq` shape:
+  `file_schema`, `serialization_format`, `trace.common_fields`,
+  `trace.vantage_point`, and `trace.event_schemas`.  It advertises the
+  current draft QUIC event schema URI plus a private zquic extension schema URI
+  and includes implementation identity, vantage point, relative time metadata,
+  and connection identity/CID data where available.  Runtime tests cover server
+  trace metadata and redaction of application payload data.
 - Local tests validate JSON-SEQ framing strictly enough to reject malformed
   records and trailing data.  Writer tests cover typed transport, recovery,
   security, path/CID, stream, and close events; runtime tests cover representative
@@ -316,19 +330,104 @@ Remaining gaps:
   runtime traces generated with `ZQUIC_TEST_KEEP=1`.  Endpoint, Retry/token,
   token-rejection/policy, and idle-timeout `.sqlog` files parse with
   `jq --seq`; `blazingqlog` also loads those JSON-SEQ files and extracts event
-  names from them.  Remaining mainstream-parity deviations are schema shape, not
-  parseability: the latest qlog main/QUIC drafts use `QlogFileSeq` header fields
-  such as `file_schema` and `serialization_format`, and the registered QUIC
-  event namespace is `quic:*`; current zquic output still uses the older
-  `qlog_version`/`qlog_format` header style and category event names such as
-  `transport:*`, `recovery:*`, `security:*`, `path:*`, and `connectivity:*`.
+  names from them.  Retained `ZquicStreamTest` qlog traces for path validation,
+  PMTUD, CID issue/retire, ECN validation, and loss/PTO also pass `jq --seq -e .` and
+  `blazingqlog <file> -p name`.  Remaining mainstream-parity deviations are
+  now event data shape details, not parseability or file-header shape: current
+  draft QUIC events should keep converging on the exact qlog field model, and any
+  event/field extending beyond that model should either follow mainstream
+  reference implementation precedent, including both extension event names and
+  data fields, or remain under the private `zquic:*` event schema.  The
+  `quic:path_validated` extension now follows mvfst's `success` /
+  `vantagePoint` payload shape rather than carrying zquic-local path detail
+  fields under the `quic:*` namespace; `vantagePoint` is enum-mapped on the
+  logger thread rather than carried as arbitrary string event data.
+- Packet and UDP datagram writer payloads now use the current qlog
+  `header`/`raw` and datagram `count`/`raw[]`/`ecn[]` structure; where packet
+  events keep an explicit packet-number-space scalar, it uses the
+  `packet_number_space` spelling and qlog `$PacketNumberSpace` enum values;
+  private packet-protection diagnostics use the same field spelling.  Standard
+  packet drop/buffer output maps zquic's internal packet classifications to
+  qlog `trigger` values and no longer emits private `reason` strings such as
+  `parse_long` or `anti_amplification` under `quic:*` packet events.
+  Recovery metrics, congestion-state, loss, timer, and ECN events now have
+  dedicated standard-shape writers, and standard `quic:key_updated` /
+  `quic:key_discarded` events now emit qlog `$KeyType`, optional AppData
+  `key_phase`, and qlog key-update triggers rather than the generic zquic
+  security payload.  `quic:parameters_set` now emits bounded current-draft
+  transport parameter fields with `initiator`, and `quic:alpn_information`
+  emits `chosen_alpn.string_value` instead of generic security fields.
+  `quic:version_information` now emits the current draft version-array payload
+  (`server_versions`, `client_versions`, optional `chosen_version`) for the
+  server Version Negotiation no-overlap case, with versions serialized as qlog
+  `QuicVersion` hex strings instead of generic security `kind` / `reason` /
+  `value` fields.  Qlog event names are enum-mapped through
+  `ZquicLogEventName`.  `quic:connection_closed` no longer carries the former
+  zquic-local `application` and `frame` boolean fields in its standard payload;
+  known zquic transport close codes now map to qlog `$TransportError` strings
+  such as `frame_encoding_error`, empty close reasons are omitted, and
+  `error_code` is retained only for unknown close errors.
+  `quic:mtu_updated` now emits the draft `new` / `done` payload instead of the
+  generic zquic path event object.  `quic:tuple_assigned` now emits the draft
+  `tuple_id` payload instead of zquic-local path `kind` / `action` / `reason`
+  and deadline fields.  `quic:connection_id_updated` now emits the draft
+  `initiator` plus `old` or `new` CID payload instead of zquic-local
+  `kind` / `action` / `reason` / sequence / reset-token flag fields.
+  Private `zquic:zero_rtt_rejected` coverage now records the current
+  unsupported-0-RTT posture from the crypto rejection path, using enum-mapped
+  security reason data and no claim of 0-RTT packet processing support.
+  Remaining event data-shape work is concentrated in ACK detail expansion,
+  TLS failure/path endpoint metadata, client-side VN received coverage
+  if implemented, PMTUD/private path or CID diagnostics if needed, richer close
+  diagnostics for crypto/stateless-reset/internal-code cases, and optional
+  packet metadata such as CIDs and datagram IDs where zquic has not yet plumbed
+  those scalar snapshots.
+- `quic:packets_acked` now uses the draft `packet_number_space` and
+  `packet_numbers` field names, and runtime ACK processing now snapshots the
+  bounded set of newly acknowledged packet numbers from `PktTxUpdate` inside
+  `ZquicLOG((...))` instead of fabricating a singleton from largest ACKed.
+  ACK frame summaries now include bounded `acked_ranges` as draft-shaped nested
+  numeric arrays, populated from parsed Rx ACK frames and from the Tx ACK
+  snapshot inside the `ZquicLOG((...))` capture path.  Richer ACK event detail
+  remains to be added only where it matches current qlog or reference-
+  implementation expectations; any local counters such as acked/lost byte
+  totals should be private extension data if they are retained.  Packet-
+  number space JSON now uses the current `$PacketNumberSpace` value
+  `application_data` for the QUIC application-data packet number space.
+- `quic:recovery_metrics_updated` now uses the current draft field names and
+  units for RTT/congestion snapshots: `latest_rtt`, `smoothed_rtt`,
+  `rtt_variance`, `min_rtt` in milliseconds, plus `congestion_window`,
+  `ssthresh`, and `bytes_in_flight`.  The generic recovery writer no longer
+  emits the old `_us` RTT fields or `cwnd` default fields into unrelated
+  recovery events.
+- `quic:timer_updated` now uses the current draft timer data shape:
+  `timer_type`, `packet_number_space`, `event_type`, and `delta`.  Zquic-local
+  PTO backoff/probe details are not emitted as extra fields on this standard
+  event; if those diagnostics are kept, they should be represented as a
+  reference-backed `quic:*` extension or a private `zquic:*` event.
+- `quic:packet_lost` now uses a dedicated current-draft data object with
+  `header.packet_type`, `header.packet_number`, and enum-mapped `trigger`
+  values (`reordering_threshold`, `time_threshold`, `pto_expired`).  The event
+  name itself is also enum-mapped through `ZtJSON`; the generic recovery writer
+  is no longer used for packet-lost records.
+- `quic:ecn_state_updated` now uses the current draft `old` / `new` ECN state
+  shape with qlog ECN states (`unknown`, `capable`, `failed`).  Zquic-local ECN
+  validation reasons and counters are not emitted as extra fields on this
+  standard event; add a private `zquic:*` diagnostic event if those details are
+  needed by tooling.  Runtime qlog coverage now drives ACK_ECN validation
+  success and failure and asserts the standard state transition output.
 - Connection-level MAX_DATA unblocked coverage now has an end-to-end runtime
   scenario in `ZquicStreamTest::testFlowControlQLog`: a real stream send first
   fails on exhausted connection data credit and queues DATA_BLOCKED, then
   MAX_DATA clears the queued control and allows the stream send to proceed.
-- Multi-connection trace identity expectations for mainstream qlog consumers are
-  not yet validated.  Current tests cover single-process metadata and a server
-  endpoint trace.
+- Multi-connection trace identity no longer relies on a mutable global event
+  metadata slot.  The trace header keeps its configured role/header identity,
+  while event identity is carried as by-value `ZquicLogCIDMeta`
+  (`origDCID`, `groupID`, `dcid`, `scid`) on each event that has link identity
+  available.  The qlog writer serializes that metadata as a `ZtStruct` UDT
+  under `common_fields` and omits it when the sentinel-null value is empty.
+  `ZquicLogTest` covers distinct per-event CID metadata snapshots and runtime
+  tests cover the server endpoint trace metadata.
 - Receive-side buffered-packet qlog coverage is not applicable to the current
   implementation because undecryptable/missing-key packets are dropped and
   logged as packet drops plus packet-protection failures, rather than buffered.
@@ -344,10 +443,9 @@ Remaining gaps:
 
 ## Priority work
 
-1. Finish qlog schema parity: migrate the JSON-SEQ header to the latest
-   `QlogFileSeq` shape and either adopt the registered `quic:*` event namespace
-   or explicitly retain/document the current category namespaces as a deliberate
-   compatibility target.
+1. Finish qlog event-schema parity: map remaining zquic event type names and
+   data objects to the exact latest QUIC qlog draft definitions, or explicitly
+   move zquic-specific events to a private event schema.
 2. Integrate pacing and consider CUBIC/BBR selection if production WAN behavior
    matters.
 3. Finish ECN as a path feature: socket marking, validation state, fallback, and

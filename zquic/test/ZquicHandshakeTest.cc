@@ -23,9 +23,20 @@ namespace {
 constexpr unsigned TLSBufSize = 64 * 1024;
 constexpr unsigned MaxTLSMessages = 32;
 
-ZuCSpan cspan_(const ZtString<> &s)
+static ZtString<> readFile_(const Zi::Path &path)
 {
-  return ZuCSpan{s.data(), s.length()};
+  ZtString<> data;
+  ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
+  if (!file) return data;
+  auto size = file.size();
+  if (size <= 0 || size > (1<<20)) return data;
+  data.length(unsigned(size));
+  int n = file.read(data.data(), data.length());
+  if (n <= 0)
+    data.length(0);
+  else
+    data.length(unsigned(n));
+  return data;
 }
 
 ZuBSpan bytes_(const uint8_t *data, unsigned len)
@@ -311,11 +322,11 @@ void testMessageLevelTLSHandshake()
   Zquic::Crypto client;
   Zquic::Crypto server;
   ZuCHECK(client.initTLS(Zquic::CryptoConfig{
-      false, false, "h3", cspan_(temp.certPath), {}, {}, {}, "localhost",
+      false, false, "h3", temp.certPath.cspan(), {}, {}, {}, "localhost",
       &clientParams}),
     "client TLS init failed");
   ZuCHECK(server.initTLS(Zquic::CryptoConfig{
-      true, true, "h3", {}, cspan_(temp.certPath), cspan_(temp.keyPath), {},
+      true, true, "h3", {}, temp.certPath.cspan(), temp.keyPath.cspan(), {},
       {}, &serverParams}),
     "server TLS init failed");
   ZuCHECK(!client.earlyDataEnabled() && !server.earlyDataEnabled(),
@@ -412,11 +423,30 @@ void testZeroRTTPktDrop()
   ZuCHECK(h.type == Zquic::PktType::ZeroRTT, "0-RTT type not recognized");
 
   Zquic::Crypto server;
-  ZuCHECK(server.init(Zquic::CryptoConfig{true, false, "h3"}),
+#ifdef Zquic_DEBUG
+  Zi::Path qlogPath;
+  qlogPath << "ZquicHandshakeZeroRTT.sqlog";
+  ZiFile::remove(qlogPath);
+  ZquicLogParams params;
+  params.enabled(true).path(qlogPath).thread("zquic-qlog-0rtt");
+  ZuCHECK(ZquicLogger::init(params), "0-RTT qlog init failed");
+  ZquicLogger::start();
+#endif
+  ZuCHECK(server.init(Zquic::CryptoConfig{true, true, "h3"}),
     "server crypto init failed");
   ZuCHECK(server.rejectZeroRTT(), "0-RTT reject failed");
-  ZuCHECK(!server.oneRTTReady() && server.diag().zeroRTTRejected == 1,
+  ZuCHECK(!server.oneRTTReady() && server.diag().zeroRTTRejected == 2,
     "0-RTT reject affected handshake readiness");
+#ifdef Zquic_DEBUG
+  ZquicLogger::stop();
+  ZquicLogger::final();
+  ZtString<> qlog = readFile_(qlogPath);
+  ZuCHECK(qlog.find<"zquic:zero_rtt_rejected">() >= 0 &&
+      qlog.find<"\"reason\":\"0rtt\"">() >= 0 &&
+      qlog.find<"\"success\":false">() >= 0,
+    "0-RTT rejection qlog output missing");
+  if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(qlogPath);
+#endif
 }
 
 int main(int argc, char **argv)

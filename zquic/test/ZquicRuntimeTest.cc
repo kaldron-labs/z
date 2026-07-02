@@ -41,7 +41,7 @@ struct RuntimeClient : public Zquic::Client<RuntimeClient> {
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
     unsigned rewrite = tokenRewrite;
     if (!rewrite || !buf || !buf->length) return true;
-    ZuBSpan packet{buf->data_(), buf->length};
+    auto packet = buf->cspan();
     if (!Zquic::Pkt::isLong(packet)) return true;
     Zquic::LongHdr h;
     if (Zquic::Pkt::parseLong(packet, h) < 0 ||
@@ -93,7 +93,7 @@ struct RuntimeServer :
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
     if (!buf || !buf->length) return true;
-    ZuBSpan packet{buf->data_(), buf->length};
+    auto packet = buf->cspan();
     if (Zquic::Pkt::isLong(packet)) {
       Zquic::LongHdr h;
       if (Zquic::Pkt::parseLong(packet, h) < 0) return true;
@@ -265,11 +265,6 @@ void waitDisconnect(ZiMultiplex &mx)
   waitThread(mx, mx.txThread());
 }
 
-ZuCSpan cspan_(const ZtString<> &s)
-{
-  return ZuCSpan{s.data(), s.length()};
-}
-
 ZtString<> readFile_(ZuCSpan path)
 {
   ZtString<> data;
@@ -399,10 +394,10 @@ void testRuntimeEndpointOpen()
   RuntimeServer server;
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
-	.certPath(cspan_(temp.certPath))
-	.keyPath(cspan_(temp.keyPath))
+	.certPath(temp.certPath.cspan())
+	.keyPath(temp.keyPath.cspan())
 	.qlog(true)
-	.qlogPath(cspan_(qlogPath))
+	.qlogPath(qlogPath.cspan())
 	.qlogThread("zquic-endpoint-qlog")
 	.qlogRingSize(1<<16)
 	.maxData(32768)
@@ -429,7 +424,7 @@ void testRuntimeEndpointOpen()
   RuntimeClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
-	.caPath(cspan_(temp.certPath))
+	.caPath(temp.certPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
 	.maxStreamsBidi(8)
@@ -561,7 +556,7 @@ void testRuntimeEndpointOpen()
   server.final();
 
 #ifdef Zquic_DEBUG
-  ZtString<> qlog = readFile_(cspan_(qlogPath));
+  ZtString<> qlog = readFile_(qlogPath.cspan());
   ZuCHECK(qlog, "endpoint runtime qlog output missing");
   ZuCHECK(qlog.find<"\"type\":\"server\"">() >= 0,
     "endpoint runtime qlog missing server vantage point");
@@ -576,11 +571,24 @@ void testRuntimeEndpointOpen()
       qlog.find<"\"DCID\":\"\"">() < 0 &&
       qlog.find<"\"SCID\":\"\"">() < 0,
     "endpoint runtime qlog has empty connection metadata");
-  ZuCHECK(qlog.find<"transport:stream_state_updated">() >= 0,
+  ZuCHECK(qlog.find<"quic:stream_state_updated">() >= 0,
     "endpoint runtime qlog missing stream_state_updated");
-  ZuCHECK(qlog.find<"transport:datagrams_sent">() >= 0,
+  ZuCHECK(qlog.find<"quic:udp_datagrams_sent">() >= 0,
     "endpoint runtime qlog missing datagrams_sent");
-  ZuCHECK(qlog.find<"transport:stream_data_moved">() >= 0,
+  ZuCHECK(qlog.find<"quic:packets_acked">() >= 0,
+    "endpoint runtime qlog missing packets_acked");
+  ZuCHECK(qlog.find<"quic:parameters_set">() >= 0 &&
+      qlog.find<"max_udp_payload_size">() >= 0 &&
+      qlog.find<"initial_max_data">() >= 0,
+    "endpoint runtime qlog missing transport parameters");
+  ZuCHECK(qlog.find<"quic:alpn_information">() >= 0 &&
+      qlog.find<"\"chosen_alpn\":{\"string_value\":\"h3\"}">() >= 0,
+    "endpoint runtime qlog missing ALPN selection");
+  ZuCHECK(qlog.find<"packet_number_space">() >= 0,
+    "endpoint runtime qlog missing ACK packet_number_space");
+  ZuCHECK(qlog.find<"packet_numbers">() >= 0,
+    "endpoint runtime qlog missing ACK packet_numbers");
+  ZuCHECK(qlog.find<"quic:stream_data_moved">() >= 0,
     "endpoint runtime qlog missing stream_data_moved");
   ZuCHECK(qlog.find<"stream_id">() >= 0,
     "endpoint runtime qlog missing stream_id");
@@ -600,7 +608,7 @@ void testRuntimeEndpointOpen()
     "endpoint runtime qlog leaked application payload");
   ZuCHECK(qlog.find<"local_open">() >= 0 || qlog.find<"peer_open">() >= 0,
     "endpoint runtime qlog missing stream open reason");
-  ZuCHECK(qlog.find<"connectivity:connection_closed">() >= 0,
+  ZuCHECK(qlog.find<"quic:connection_closed">() >= 0,
     "endpoint runtime qlog missing connection_closed");
   ZuCHECK(qlog.find<"peer_close_frame">() >= 0 ||
       qlog.find<"local_close">() >= 0,
@@ -639,8 +647,8 @@ void testRuntimeHandshakeCryptoLoss()
     RuntimeServer server;
     ZuCHECK(server.init(
 	Zquic::ServerParams(&mx, "3", "4")
-	  .certPath(cspan_(temp.certPath))
-	  .keyPath(cspan_(temp.keyPath))
+	  .certPath(temp.certPath.cspan())
+	  .keyPath(temp.keyPath.cspan())
 	  .maxData(32768)
 	  .maxStreamData(8192)
 	  .maxStreamsBidi(8)
@@ -663,7 +671,7 @@ void testRuntimeHandshakeCryptoLoss()
     RuntimeClient client;
     ZuCHECK(client.init(
 	Zquic::ClientParams(&mx, "3", "4")
-	  .caPath(cspan_(temp.certPath))
+	  .caPath(temp.certPath.cspan())
 	  .maxData(32768)
 	  .maxStreamData(8192)
 	  .maxStreamsBidi(8)
@@ -736,8 +744,8 @@ void testRuntimeServerMultiConnection()
   RuntimeServer server;
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
-	.certPath(cspan_(temp.certPath))
-	.keyPath(cspan_(temp.keyPath))
+	.certPath(temp.certPath.cspan())
+	.keyPath(temp.keyPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
 	.maxStreamsBidi(8)
@@ -754,7 +762,7 @@ void testRuntimeServerMultiConnection()
   RuntimeClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
-	.caPath(cspan_(temp.certPath))
+	.caPath(temp.certPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
 	.maxStreamsBidi(8)
@@ -905,10 +913,10 @@ void testRuntimeRetryAddressValidation()
   unlink(qlogPath.data());
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
-	.certPath(cspan_(temp.certPath))
-	.keyPath(cspan_(temp.keyPath))
+	.certPath(temp.certPath.cspan())
+	.keyPath(temp.keyPath.cspan())
 	.qlog(true)
-	.qlogPath(cspan_(qlogPath))
+	.qlogPath(qlogPath.cspan())
 	.qlogThread("zquic-retry-qlog")
 	.qlogRingSize(1<<16)
 	.maxData(32768)
@@ -933,7 +941,7 @@ void testRuntimeRetryAddressValidation()
   RuntimeClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
-	.caPath(cspan_(temp.certPath))
+	.caPath(temp.certPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
 	.maxStreamsBidi(8)
@@ -1040,28 +1048,28 @@ void testRuntimeRetryAddressValidation()
   server.final();
 
 #ifdef Zquic_DEBUG
-  ZtString<> qlog = readFile_(cspan_(qlogPath));
+  ZtString<> qlog = readFile_(qlogPath.cspan());
   ZuCHECK(qlog, "retry runtime qlog output missing");
-  ZuCHECK(qlog.find<"security:retry_sent">() >= 0,
+  ZuCHECK(qlog.find<"zquic:retry_sent">() >= 0,
     "retry runtime qlog missing retry_sent");
-  ZuCHECK(qlog.find<"security:retry_validated">() >= 0,
+  ZuCHECK(qlog.find<"zquic:retry_validated">() >= 0,
     "retry runtime qlog missing retry_validated");
-  ZuCHECK(qlog.find<"security:token_issued">() >= 0,
+  ZuCHECK(qlog.find<"zquic:token_issued">() >= 0,
     "retry runtime qlog missing token_issued");
-  ZuCHECK(qlog.find<"security:token_validated">() >= 0,
+  ZuCHECK(qlog.find<"zquic:token_validated">() >= 0,
     "retry runtime qlog missing token_validated");
-  ZuCHECK(qlog.find<"security:token_rejected">() >= 0,
+  ZuCHECK(qlog.find<"zquic:token_rejected">() >= 0,
     "retry runtime qlog missing token_rejected");
-  ZuCHECK(qlog.find<"transport:packet_buffered">() >= 0,
+  ZuCHECK(qlog.find<"quic:packet_buffered">() >= 0,
     "retry runtime qlog missing packet_buffered");
   ZuCHECK(qlog.find<"address_validation">() >= 0,
     "retry runtime qlog missing address-validation reason");
   ZuCHECK(qlog.find<"missing_token">() >= 0,
     "retry runtime qlog missing missing-token rejection reason");
-  ZuCHECK(qlog.find<"new_token">() >= 0,
-    "retry runtime qlog missing NEW_TOKEN reason");
-  ZuCHECK(qlog.find<"coalescing">() >= 0,
-    "retry runtime qlog missing coalescing reason");
+	  ZuCHECK(qlog.find<"new_token">() >= 0,
+	    "retry runtime qlog missing NEW_TOKEN reason");
+	  ZuCHECK(qlog.find<"coalescing">() < 0,
+	    "retry runtime qlog leaked private coalescing reason");
   if (!TempDir::keep()) unlink(qlogPath.data());
 #endif
 
@@ -1100,10 +1108,10 @@ void testRuntimeRejectedTokenQLog()
   RuntimeServer server;
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
-	.certPath(cspan_(temp.certPath))
-	.keyPath(cspan_(temp.keyPath))
+	.certPath(temp.certPath.cspan())
+	.keyPath(temp.keyPath.cspan())
 	.qlog(true)
-	.qlogPath(cspan_(qlogPath))
+	.qlogPath(qlogPath.cspan())
 	.qlogThread("zquic-rejected-token-qlog")
 	.qlogRingSize(1<<16)
 	.maxData(32768)
@@ -1131,7 +1139,7 @@ void testRuntimeRejectedTokenQLog()
   client.tokenNow = uint64_t(Zm::now().sec());
   ZuCHECK(client.init(
 	Zquic::ClientParams(&mx, "3", "4")
-	  .caPath(cspan_(temp.certPath))
+	  .caPath(temp.certPath.cspan())
 	  .maxData(32768)
 	  .maxStreamData(8192)
 	  .maxStreamsBidi(8)
@@ -1218,10 +1226,10 @@ void testRuntimeRejectedTokenQLog()
   RuntimeServer policyServer;
   ZuCHECK(policyServer.init(
       Zquic::ServerParams(&mx, "3", "4")
-	.certPath(cspan_(temp.certPath))
-	.keyPath(cspan_(temp.keyPath))
+	.certPath(temp.certPath.cspan())
+	.keyPath(temp.keyPath.cspan())
 	.qlog(true)
-	.qlogPath(cspan_(policyQlogPath))
+	.qlogPath(policyQlogPath.cspan())
 	.qlogThread("zquic-rejected-token-qlog")
 	.qlogRingSize(1<<16)
 	.maxData(32768)
@@ -1259,11 +1267,11 @@ void testRuntimeRejectedTokenQLog()
   client.final();
 
 #ifdef Zquic_DEBUG
-  ZtString<> qlog = readFile_(cspan_(qlogPath));
-  ZtString<> policyQlog = readFile_(cspan_(policyQlogPath));
+  ZtString<> qlog = readFile_(qlogPath.cspan());
+  ZtString<> policyQlog = readFile_(policyQlogPath.cspan());
   ZuCHECK(qlog, "rejected-token runtime qlog output missing");
   ZuCHECK(policyQlog, "rejected-token policy qlog output missing");
-  ZuCHECK(qlog.find<"security:token_rejected">() >= 0,
+  ZuCHECK(qlog.find<"zquic:token_rejected">() >= 0,
     "rejected-token runtime qlog missing token_rejected");
   ZuCHECK(qlog.find<"malformed">() >= 0,
     "rejected-token runtime qlog missing malformed reason");
@@ -1312,10 +1320,10 @@ void testRuntimeIdleTimeoutQLog()
   RuntimeServer server;
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
-	.certPath(cspan_(temp.certPath))
-	.keyPath(cspan_(temp.keyPath))
+	.certPath(temp.certPath.cspan())
+	.keyPath(temp.keyPath.cspan())
 	.qlog(true)
-	.qlogPath(cspan_(qlogPath))
+	.qlogPath(qlogPath.cspan())
 	.qlogThread("zquic-idle-qlog")
 	.qlogRingSize(1<<16)
 	.maxData(32768)
@@ -1338,7 +1346,7 @@ void testRuntimeIdleTimeoutQLog()
   RuntimeClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
-	.caPath(cspan_(temp.certPath))
+	.caPath(temp.certPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
 	.maxStreamsBidi(8)
@@ -1383,9 +1391,9 @@ void testRuntimeIdleTimeoutQLog()
   server.final();
 
 #ifdef Zquic_DEBUG
-  ZtString<> qlog = readFile_(cspan_(qlogPath));
+  ZtString<> qlog = readFile_(qlogPath.cspan());
   ZuCHECK(qlog, "idle runtime qlog output missing");
-  ZuCHECK(qlog.find<"connectivity:connection_closed">() >= 0,
+  ZuCHECK(qlog.find<"quic:connection_closed">() >= 0,
     "idle runtime qlog missing connection_closed");
   ZuCHECK(qlog.find<"idle_timeout">() >= 0,
     "idle runtime qlog missing idle_timeout trigger");

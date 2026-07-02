@@ -56,11 +56,6 @@ bool waitUntil(L l, unsigned iterations = 2000)
   return false;
 }
 
-inline ZuCSpan cspan(const ZtString<> &s)
-{
-  return ZuCSpan{s.data(), s.length()};
-}
-
 inline void printFile(const char *label, const ZtString<> &path)
 {
   FILE *f = fopen(path.data(), "r");
@@ -111,7 +106,7 @@ struct TempDir {
   bool init()
   {
     return init("ZquicInteropTest") &&
-      writeSelfSignedLocalhostCert_(cspan(certPath), cspan(keyPath));
+      writeSelfSignedLocalhostCert_(certPath.cspan(), keyPath.cspan());
   }
 
   ZtString<> pathOf(const char *name) const
@@ -138,7 +133,7 @@ inline bool writeSelfSignedLocalhostCert(
   keyPath = temp.pathOf("key.pem");
   temp.certPath = certPath;
   temp.keyPath = keyPath;
-  return writeSelfSignedLocalhostCert_(cspan(certPath), cspan(keyPath));
+  return writeSelfSignedLocalhostCert_(certPath.cspan(), keyPath.cspan());
 }
 
 inline bool haveCurlH3()
