@@ -25,7 +25,7 @@ static int getVar_(ZuBSpan in, unsigned &o, uint64_t &v)
 int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
 {
   used = 0;
-  if (!in.length()) return -1;
+  if (!in) return -1;
   uint8_t t = uint8_t(in[0]);
   unsigned o = 1;
   f.reset();
@@ -162,7 +162,7 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       used = o;
       return 0;
     case 0x18:
-      f.type = FrameType::NewConnectionID;
+      f.type = FrameType::NewCxnID;
       if (getVar_(in, o, f.value) < 0 ||
 	  getVar_(in, o, f.offset) < 0)
 	return -1;
@@ -177,7 +177,7 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       used = o + f.length + 16;
       return 0;
     case 0x19:
-      f.type = FrameType::RetireConnectionID;
+      f.type = FrameType::RetireCxnID;
       if (getVar_(in, o, f.value) < 0) return -1;
       used = o;
       return 0;
@@ -415,11 +415,11 @@ int FrameCodec::writeStreamsBlocked(
   return w.finish();
 }
 
-int FrameCodec::writeNewConnectionID(
+int FrameCodec::writeNewCxnID(
   uint8_t *out, unsigned len, uint64_t sequence, uint64_t retirePriorTo,
   const CxnID &cid, const ResetToken &token)
 {
-  if (!len || !cid.length() || cid.length() > CxnIDMax || !token.valid())
+  if (!len || !cid || cid.length() > CxnIDMax || !token.valid())
     return -1;
   PktWriter w{out, len};
   w.put(0x18);
@@ -431,7 +431,7 @@ int FrameCodec::writeNewConnectionID(
   return w.finish();
 }
 
-int FrameCodec::writeRetireConnectionID(
+int FrameCodec::writeRetireCxnID(
   uint8_t *out, unsigned len, uint64_t sequence)
 {
   PktWriter w{out, len};

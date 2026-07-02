@@ -16,20 +16,20 @@ void testVersionNegotiation()
   ZuTestScope(testVersionNegotiation);
 
   uint32_t offered[] = { 0xff00001dU, Zquic::Version1 };
-  ZuCHECK(Zquic::VersionNegotiation::choose(offered, 2) == Zquic::Version1,
+  ZuCHECK(Zquic::VersionNeg::choose(offered, 2) == Zquic::Version1,
     "version chooser did not select v1");
-  ZuCHECK(!Zquic::VersionNegotiation::supported(0xff00001dU),
+  ZuCHECK(!Zquic::VersionNeg::supported(0xff00001dU),
     "unsupported version accepted");
 
   Zquic::CxnID dcid{"client01"};
   Zquic::CxnID scid{"server01"};
   uint8_t b[128];
-  int n = Zquic::VersionNegotiation::write(b, sizeof(b), dcid, scid);
+  int n = Zquic::VersionNeg::write(b, sizeof(b), dcid, scid);
   ZuCHECK(n > 0, "version negotiation write failed");
 
   uint32_t parsed[2] = {};
   unsigned nVersions = 0;
-  ZuCHECK(!Zquic::VersionNegotiation::parse(
+  ZuCHECK(!Zquic::VersionNeg::parse(
     ZuBSpan{b, unsigned(n)},
     parsed, 2, nVersions), "version negotiation parse failed");
   ZuCHECK(nVersions == 1 && parsed[0] == Zquic::Version1,
@@ -60,7 +60,7 @@ void testServerVersionDecision()
   d = Zquic::ServerPkt::routeLongHdr(
     ZuBSpan{b, unsigned(n)},
     response, sizeof(response));
-  ZuCHECK(d.action == Zquic::ServerPktAction::VersionNegotiation &&
+  ZuCHECK(d.action == Zquic::ServerPktAction::VersionNeg &&
       d.responseLength > 0,
     "unsupported Initial did not produce Version Negotiation");
 
@@ -184,7 +184,7 @@ void testRetryTransportParameterValidation()
     "mutated Retry bootstrap was accepted");
 
   Zquic::TransportParams params;
-  params.originalDCID = initialDCID;
+  params.origDCID = initialDCID;
   params.initialSCID = serverInitialSCID;
   params.retrySCID = retrySCID;
   ZuCHECK(bootstrap.validateServerTransportParams(params, serverInitialSCID),

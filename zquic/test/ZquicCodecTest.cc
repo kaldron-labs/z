@@ -510,21 +510,21 @@ void testControlFrameCoverage()
 
   Zquic::CxnID ncid{"server01"};
   Zquic::ResetToken ncidToken{"0123456789abcdef"};
-  n = Zquic::FrameCodec::writeNewConnectionID(
+  n = Zquic::FrameCodec::writeNewCxnID(
     b, sizeof(b), 7, 2, ncid, ncidToken);
   ZuCHECK(n > 0, "NEW_CONNECTION_ID setup failed");
   ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
-      f.type == Zquic::FrameType::NewConnectionID &&
+      f.type == Zquic::FrameType::NewCxnID &&
       f.value == 7 && f.offset == 2 &&
       f.length == 8 && f.payload == "server01" &&
       f.resetToken == ncidToken && used == unsigned(n),
     "NEW_CONNECTION_ID parse mismatch");
 
-  n = Zquic::FrameCodec::writeRetireConnectionID(b, sizeof(b), 7);
+  n = Zquic::FrameCodec::writeRetireCxnID(b, sizeof(b), 7);
   ZuCHECK(n > 0,
     "RETIRE_CONNECTION_ID setup failed");
   ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
-      f.type == Zquic::FrameType::RetireConnectionID && f.value == 7,
+      f.type == Zquic::FrameType::RetireCxnID && f.value == 7,
     "RETIRE_CONNECTION_ID parse mismatch");
 
   n = Zquic::FrameCodec::writeApplicationClose(b, sizeof(b), 42, "fail");
@@ -621,7 +621,7 @@ void testTransportParamCoverage()
 
   uint8_t b[512];
   Zquic::TransportParams p;
-  p.originalDCID = "orig-dcid";
+  p.origDCID = "orig-dcid";
   p.initialSCID = "init-scid";
   p.retrySCID = "retrycid";
   p.maxIdleTimeout = 16363;
@@ -634,7 +634,7 @@ void testTransportParamCoverage()
   p.initialMaxStreamsUni = 16383;
   p.ackDelayExponent = 20;
   p.maxAckDelay = 63;
-  p.activeConnectionIDLimit = 1073741824;
+  p.activeCxnIDLimit = 1073741824;
   p.statelessResetToken = Zquic::ResetToken{"0123456789abcdef"};
   p.statelessResetTokenPresent = true;
   p.disableActiveMigration = true;
@@ -644,7 +644,7 @@ void testTransportParamCoverage()
   Zquic::TransportParams q;
   ZuCHECK(!q.decode(bytes_(b, unsigned(n))),
     "full transport parameter decode failed");
-  ZuCHECK(q.originalDCID == p.originalDCID &&
+  ZuCHECK(q.origDCID == p.origDCID &&
       q.initialSCID == p.initialSCID &&
       q.retrySCID == p.retrySCID &&
       q.maxIdleTimeout == p.maxIdleTimeout &&
@@ -659,7 +659,7 @@ void testTransportParamCoverage()
       q.initialMaxStreamsUni == p.initialMaxStreamsUni &&
       q.ackDelayExponent == p.ackDelayExponent &&
       q.maxAckDelay == p.maxAckDelay &&
-      q.activeConnectionIDLimit == p.activeConnectionIDLimit &&
+      q.activeCxnIDLimit == p.activeCxnIDLimit &&
       q.statelessResetTokenPresent == p.statelessResetTokenPresent &&
       q.statelessResetToken == p.statelessResetToken &&
       q.disableActiveMigration == p.disableActiveMigration,
@@ -746,7 +746,7 @@ void testAddressTokenCodec()
       info, token, secret, addr, 1001, 60, false) == Zquic::TokenStatus::OK,
     "Retry address token validate failed");
   ZuCHECK(info.kind == Zquic::TokenKind::Retry &&
-      info.originalDCID == odcid &&
+      info.origDCID == odcid &&
       info.serverCID == retrySCID,
     "Retry address token contents mismatch");
   ZuCHECK(Zquic::AddressToken::validate(
@@ -775,7 +775,7 @@ void testAddressTokenCodec()
       info, token, secret, addr, 1001, 60, true) ==
       Zquic::TokenStatus::OK &&
       info.kind == Zquic::TokenKind::NewToken &&
-      !info.serverCID.length(),
+      !info.serverCID,
     "NEW_TOKEN address token validate failed");
   ZuCHECK(Zquic::AddressToken::validate(
       info, token, secret, otherPort, 1001, 60, true) ==

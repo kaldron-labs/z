@@ -356,11 +356,11 @@ struct TestLink :
     const Zquic::ResetToken &token = {}) {
     return Base::addLocalCID_(id, sequence, token);
   }
-  bool receiveNewConnectionIDForQLog(const Zquic::Frame &frame) {
-    return Base::receiveNewConnectionID_(frame);
+  bool receiveNewCxnIDForQLog(const Zquic::Frame &frame) {
+    return Base::receiveNewCxnID_(frame);
   }
-  bool receiveRetireConnectionIDForQLog(const Zquic::Frame &frame) {
-    return Base::receiveRetireConnectionID_(frame);
+  bool receiveRetireCxnIDForQLog(const Zquic::Frame &frame) {
+    return Base::receiveRetireCxnID_(frame);
   }
   void installLocalCIDRoutesForQLog(TestCIDRoutes &routes) {
     Base::installLocalCIDRoutes_(routes);
@@ -442,7 +442,7 @@ struct TestLink :
   }
 #ifdef Zquic_DEBUG
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::startPathValidationForTest_(ZuMv(local), ZuMv(remote));
+    Base::startPathValidForTest_(ZuMv(local), ZuMv(remote));
   }
   bool validatingPath() const { return Base::validatingPath_(); }
   ZuBSpan validatingChallenge() const {
@@ -514,7 +514,7 @@ struct TestLink :
       [this, qlogSeen](
 	  Zquic::PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, ZquicLogPacketEvent *qlog) {
+	  typename Base::RxAckMeta &ack, PktEvent *qlog) {
 	if (qlogSeen) *qlogSeen = qlog != nullptr;
 	return Base::consumeProtFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
@@ -1653,7 +1653,7 @@ void testPathValidationStateMachine()
     "path-validation qlog success missing");
   ZuCHECK(qlog.find<"\"success\":false">() >= 0,
     "path-validation qlog failure missing");
-  ZuCHECK(qlog.find<"\"vantagePoint\":\"unknown\"">() >= 0,
+  ZuCHECK(qlog.find<"\"vantage\":\"unknown\"">() >= 0,
     "path-validation qlog vantage point missing");
   removeTestLog_(path);
 #endif
@@ -1737,28 +1737,28 @@ void testCIDQLog()
   ZuCHECK(routes.adds >= 1, "CID qlog route install did not bind route");
 
   Zquic::Frame retire;
-  retire.type = Zquic::FrameType::RetireConnectionID;
+  retire.type = Zquic::FrameType::RetireCxnID;
   retire.value = 1;
-  ZuCHECK(link->receiveRetireConnectionIDForQLog(retire),
+  ZuCHECK(link->receiveRetireCxnIDForQLog(retire),
     "CID qlog retire setup failed");
 
   Zquic::CxnID peerCID0{"peercid0"};
   Zquic::CxnID peerCID1{"peercid1"};
   Zquic::ResetToken token1{"123456789abcdef0"};
   Zquic::Frame peer;
-  peer.type = Zquic::FrameType::NewConnectionID;
+  peer.type = Zquic::FrameType::NewCxnID;
   peer.value = 0;
   peer.length = peerCID0.length();
   peer.payload = peerCID0;
   peer.resetToken = token;
-  ZuCHECK(link->receiveNewConnectionIDForQLog(peer),
+  ZuCHECK(link->receiveNewCxnIDForQLog(peer),
     "CID qlog peer CID 0 setup failed");
   peer.value = 1;
   peer.offset = 1;
   peer.length = peerCID1.length();
   peer.payload = peerCID1;
   peer.resetToken = token1;
-  ZuCHECK(link->receiveNewConnectionIDForQLog(peer),
+  ZuCHECK(link->receiveNewCxnIDForQLog(peer),
     "CID qlog peer CID retire-prior-to setup failed");
 
   link->closeForTest();

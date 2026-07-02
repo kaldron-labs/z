@@ -98,7 +98,7 @@ void testStatelessReset()
   uint8_t packet[64] = {};
   packet[0] = 0x40;
   uint8_t out[64] = {};
-  int n = Zquic::StatelessReset::writeForUnknownCID(
+  int n = Zquic::StatelessRst::writeForUnknownCID(
     out, sizeof(out), ZuBSpan{packet, 64},
     resetToken);
   ZuCHECK(n == 63, "stateless reset size mismatch");
@@ -110,16 +110,16 @@ void testStatelessReset()
     "stateless reset token suffix mismatch");
 
   packet[0] = 0xc0;
-  ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
+  ZuCHECK(Zquic::StatelessRst::writeForUnknownCID(
       out, sizeof(out), ZuBSpan{packet, 64},
       resetToken) < 0, "long-header packet produced stateless reset");
   packet[0] = 0x40;
-  ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
+  ZuCHECK(Zquic::StatelessRst::writeForUnknownCID(
       out, sizeof(out),
-      ZuBSpan{packet, unsigned(Zquic::StatelessReset::MinLength)},
+      ZuBSpan{packet, unsigned(Zquic::StatelessRst::MinLength)},
       resetToken) < 0, "too-short packet produced stateless reset");
   Zquic::ResetToken invalid;
-  ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
+  ZuCHECK(Zquic::StatelessRst::writeForUnknownCID(
       out, sizeof(out), ZuBSpan{packet, 64},
       invalid) < 0, "invalid token produced stateless reset");
 }
@@ -202,7 +202,7 @@ void testServerInitialBootstrap()
   ZuCHECK(server.acceptInitial(initial, Zquic::MinUDPPayload),
     "server Initial accept failed");
   ZuCHECK(server.accepted() &&
-      server.originalDCID() == initial.dcid &&
+      server.origDCID() == initial.dcid &&
       server.clientInitialSCID() == initial.scid &&
       server.localInitialSCID().length() >= Zquic::CxnIDGen::InitialLength,
     "server Initial CID state mismatch");
@@ -211,7 +211,7 @@ void testServerInitialBootstrap()
 
   Zquic::TransportParams params;
   ZuCHECK(server.transportParams(params) &&
-      params.originalDCID == initial.dcid &&
+      params.origDCID == initial.dcid &&
       params.initialSCID == server.localInitialSCID(),
     "server transport parameter fill failed");
 

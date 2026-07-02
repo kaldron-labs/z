@@ -229,7 +229,7 @@ int CryptoStream::receive(
   m_delivery.length(0);
   uint64_t end = offset + payload.length();
   if (end < offset || end > MaxBufSize) return -1;
-  if (!payload.length() || end <= m_rxOffset) return 0;
+  if (!payload || end <= m_rxOffset) return 0;
   uint64_t first = offset < m_rxOffset ? m_rxOffset : offset;
   if (first == m_rxOffset && !m_rxQueue.count_()) {
     unsigned payloadOffset = unsigned(first - offset);
@@ -256,7 +256,7 @@ int CryptoStream::receive(
 
   if (m_asyncDelivery) resumeReadyDequeue_();
   if (diag) diag->cryptoBytesRx += bytes;
-  if (!m_asyncDelivery && m_delivery.length())
+  if (!m_asyncDelivery && m_delivery)
     contiguous = m_delivery.cspan();
   return 0;
 }
@@ -330,7 +330,7 @@ int InitialCrypto::encryptV(
     EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) == 1 &&
     EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, sizeof(nonce), nullptr) == 1 &&
     EVP_EncryptInit_ex(ctx, nullptr, nullptr, secret.key, nonce) == 1 &&
-    (!aad.length() || EVP_EncryptUpdate(ctx, nullptr, &n,
+    (!aad || EVP_EncryptUpdate(ctx, nullptr, &n,
       aad.data(), aad.length()) == 1);
   for (unsigned i = 0; ok && i < plainCount; ++i) {
     if (!plain[i].len) continue;
@@ -362,7 +362,7 @@ int InitialCrypto::decrypt(
     EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) == 1 &&
     EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, sizeof(nonce), nullptr) == 1 &&
     EVP_DecryptInit_ex(ctx, nullptr, nullptr, secret.key, nonce) == 1 &&
-    (!aad.length() || EVP_DecryptUpdate(ctx, nullptr, &n,
+    (!aad || EVP_DecryptUpdate(ctx, nullptr, &n,
       aad.data(), aad.length()) == 1) &&
     (!plainLen || EVP_DecryptUpdate(ctx, out, &n,
       ciphertext.data(), plainLen) == 1);
@@ -858,13 +858,13 @@ bool Crypto::init(const CryptoConfig &config)
   if (config.enable0RTT) {
     ++m_diag.zeroRTTRejected;
     ZquicLOG(([](auto &o, ZuTime time) {
-      ZquicLogSecurityEvent event{
-	.kind = ZquicLogSecurityKind::TLS,
-	.trigger = ZquicLogSecurityTrigger::Local,
-	.reason = ZquicLogSecurityReason::ZeroRTT,
+      SecEvent event{
+	.kind = SecKind::TLS,
+	.trigger = SecTrigger::Local,
+	.reason = SecReason::ZeroRTT,
 	.success = false
       };
-      o.logSecurityEvent(ZquicLogEventName::ZeroRTTReject, event, time);
+      o.logSecEvent(EventName::ZeroRTTReject, event, time);
     }));
   }
   return true;
@@ -1154,7 +1154,7 @@ int Crypto::handleTLSMessage(
       m_tls, &pbuf, epochOffsets, inEpoch,
       inputData, input.length(), &m_tlsProps);
   m_tlsResult = n;
-  if (input.length()) ++m_diag.tlsMessagesHandled;
+  if (input) ++m_diag.tlsMessagesHandled;
   if (pbuf.off) ++m_diag.tlsMessagesEmitted;
   bool ok =
     pbuf.base == out->data_() && pbuf.off <= out->size && !pbuf.is_allocated;
@@ -1221,13 +1221,13 @@ bool Crypto::rejectZeroRTT()
 {
   ++m_diag.zeroRTTRejected;
   ZquicLOG(([](auto &o, ZuTime time) {
-    ZquicLogSecurityEvent event{
-      .kind = ZquicLogSecurityKind::TLS,
-      .trigger = ZquicLogSecurityTrigger::Received,
-      .reason = ZquicLogSecurityReason::ZeroRTT,
+    SecEvent event{
+      .kind = SecKind::TLS,
+      .trigger = SecTrigger::Received,
+      .reason = SecReason::ZeroRTT,
       .success = false
     };
-    o.logSecurityEvent(ZquicLogEventName::ZeroRTTReject, event, time);
+    o.logSecEvent(EventName::ZeroRTTReject, event, time);
   }));
   return true;
 }

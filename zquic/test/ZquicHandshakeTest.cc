@@ -348,7 +348,7 @@ void testMessageLevelTLSHandshake()
     "TLS traffic keys not derived");
   ZuCHECK(client.txTrafficSecret(Zquic::PktNumSpace::AppData).tagLen == 16 &&
       server.rxTrafficSecret(Zquic::PktNumSpace::AppData).tagLen == 16,
-    "TLS traffic key metadata mismatch");
+    "TLS traffic key linkInfo mismatch");
 
   uint8_t payload[32] = {};
   ZuCHECK(Zquic::FrameCodec::writePing(payload, sizeof(payload)) == 1,

@@ -8,7 +8,7 @@
 
 namespace Zquic {
 
-static constexpr uint64_t TPOriginalDCID = 0x00;
+static constexpr uint64_t TPOrigDCID = 0x00;
 static constexpr uint64_t TPMaxIdleTimeout = 0x01;
 static constexpr uint64_t TPStatelessResetToken = 0x02;
 static constexpr uint64_t TPMaxUDPPayloadSize = 0x03;
@@ -21,7 +21,7 @@ static constexpr uint64_t TPInitialMaxStreamsUni = 0x09;
 static constexpr uint64_t TPAckDelayExponent = 0x0a;
 static constexpr uint64_t TPMaxAckDelay = 0x0b;
 static constexpr uint64_t TPDisableActiveMigration = 0x0c;
-static constexpr uint64_t TPActiveConnectionIDLimit = 0x0e;
+static constexpr uint64_t TPActiveCxnIDLimit = 0x0e;
 static constexpr uint64_t TPInitialSCID = 0x0f;
 static constexpr uint64_t TPRetrySCID = 0x10;
 
@@ -31,7 +31,7 @@ bool TransportParams::validate() const
     maxUDPPayloadSize <= BufSize &&
     ackDelayExponent <= 20 &&
     maxAckDelay < (1ULL<<14) &&
-    activeConnectionIDLimit >= 2;
+    activeCxnIDLimit >= 2;
 }
 
 static int putParamVar_(uint8_t *out, unsigned len, uint64_t id, uint64_t v,
@@ -77,8 +77,8 @@ static unsigned paramBytesLen_(uint64_t id, ZuBSpan v)
 unsigned TransportParams::encodedLength() const
 {
   unsigned n = 0;
-  if (originalDCID.length())
-    n += paramBytesLen_(TPOriginalDCID, originalDCID);
+  if (origDCID)
+    n += paramBytesLen_(TPOrigDCID, origDCID);
   if (statelessResetTokenPresent)
     n += paramBytesLen_(TPStatelessResetToken, statelessResetToken.bspan());
   n +=
@@ -96,12 +96,12 @@ unsigned TransportParams::encodedLength() const
     paramVarLen_(TPInitialMaxStreamsUni, initialMaxStreamsUni) +
     paramVarLen_(TPAckDelayExponent, ackDelayExponent) +
     paramVarLen_(TPMaxAckDelay, maxAckDelay) +
-    paramVarLen_(TPActiveConnectionIDLimit, activeConnectionIDLimit);
+    paramVarLen_(TPActiveCxnIDLimit, activeCxnIDLimit);
   if (disableActiveMigration)
     n += VarInt::length(TPDisableActiveMigration) + VarInt::length(0);
-  if (initialSCID.length())
+  if (initialSCID)
     n += paramBytesLen_(TPInitialSCID, initialSCID);
-  if (retrySCID.length())
+  if (retrySCID)
     n += paramBytesLen_(TPRetrySCID, retrySCID);
   return n;
 }
@@ -109,8 +109,8 @@ unsigned TransportParams::encodedLength() const
 int TransportParams::encode(uint8_t *out, unsigned len) const
 {
   unsigned o = 0;
-  if (originalDCID.length() &&
-      putParamBytes_(out, len, TPOriginalDCID, originalDCID, o) < 0)
+  if (origDCID &&
+      putParamBytes_(out, len, TPOrigDCID, origDCID, o) < 0)
     return -1;
   if (statelessResetTokenPresent &&
       putParamBytes_(
@@ -134,16 +134,16 @@ int TransportParams::encode(uint8_t *out, unsigned len) const
       putParamVar_(out, len, TPAckDelayExponent, ackDelayExponent, o) < 0 ||
       putParamVar_(out, len, TPMaxAckDelay, maxAckDelay, o) < 0 ||
       putParamVar_(
-	out, len, TPActiveConnectionIDLimit, activeConnectionIDLimit, o) < 0)
+	out, len, TPActiveCxnIDLimit, activeCxnIDLimit, o) < 0)
     return -1;
   if (disableActiveMigration &&
       (VarInt::put(out, len, TPDisableActiveMigration, o) < 0 ||
        VarInt::put(out, len, 0, o) < 0))
     return -1;
-  if (initialSCID.length() &&
+  if (initialSCID &&
       putParamBytes_(out, len, TPInitialSCID, initialSCID, o) < 0)
     return -1;
-  if (retrySCID.length() &&
+  if (retrySCID &&
       putParamBytes_(out, len, TPRetrySCID, retrySCID, o) < 0)
     return -1;
   return int(o);
@@ -174,9 +174,9 @@ int TransportParams::decode(ZuBSpan in)
     o += len;
 
     switch (id) {
-      case TPOriginalDCID:
+      case TPOrigDCID:
 	if (value.length() > CxnIDMax) return -1;
-	originalDCID = value;
+	origDCID = value;
 	break;
       case TPStatelessResetToken:
 	if (value.length() != ResetToken::Length) return -1;
@@ -219,8 +219,8 @@ int TransportParams::decode(ZuBSpan in)
 	if (len) return -1;
 	disableActiveMigration = true;
 	break;
-      case TPActiveConnectionIDLimit:
-	if (getParamVar_(value, activeConnectionIDLimit) < 0) return -1;
+      case TPActiveCxnIDLimit:
+	if (getParamVar_(value, activeCxnIDLimit) < 0) return -1;
 	break;
       case TPInitialSCID:
 	if (value.length() > CxnIDMax) return -1;

@@ -565,12 +565,12 @@ void testRuntimeEndpointOpen()
       qlog.find<"group_id">() >= 0 &&
       qlog.find<"DCID">() >= 0 &&
       qlog.find<"SCID">() >= 0,
-    "endpoint runtime qlog missing connection metadata fields");
+    "endpoint runtime qlog missing connection linkInfo fields");
   ZuCHECK(qlog.find<"\"ODCID\":\"\"">() < 0 &&
       qlog.find<"\"group_id\":\"\"">() < 0 &&
       qlog.find<"\"DCID\":\"\"">() < 0 &&
       qlog.find<"\"SCID\":\"\"">() < 0,
-    "endpoint runtime qlog has empty connection metadata");
+    "endpoint runtime qlog has empty connection linkInfo");
   ZuCHECK(qlog.find<"quic:stream_state_updated">() >= 0,
     "endpoint runtime qlog missing stream_state_updated");
   ZuCHECK(qlog.find<"quic:udp_datagrams_sent">() >= 0,
@@ -981,7 +981,7 @@ void testRuntimeRetryAddressValidation()
   ZuCHECK(server.acceptedCount == 1,
     "retry runtime server accepted before validated Initial");
   const auto &params = clientLink->crypto().peerTransportParams();
-  ZuCHECK(params.originalDCID.length() >= Zquic::MinCIDLength &&
+  ZuCHECK(params.origDCID.length() >= Zquic::MinCIDLength &&
       params.initialSCID.length() >= Zquic::MinCIDLength &&
       params.retrySCID.length() >= Zquic::MinCIDLength,
     "retry runtime transport parameters missing Retry CIDs");

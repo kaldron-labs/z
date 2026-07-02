@@ -20,7 +20,7 @@ namespace Zquic {
 static constexpr uint16_t TLSExtQUICTransportParamsV1 = 0x39;
 
 struct TransportParams {
-  CxnID		originalDCID;
+  CxnID		origDCID;
   CxnID		initialSCID;
   CxnID		retrySCID;
   uint64_t	maxIdleTimeout = 0;
@@ -33,7 +33,7 @@ struct TransportParams {
   uint64_t	initialMaxStreamsUni = 0;
   uint64_t	ackDelayExponent = 3;
   uint64_t	maxAckDelay = 25;
-  uint64_t	activeConnectionIDLimit = 2;
+  uint64_t	activeCxnIDLimit = 2;
   ResetToken	statelessResetToken;
   bool		statelessResetTokenPresent = false;
   bool		disableActiveMigration = true;
