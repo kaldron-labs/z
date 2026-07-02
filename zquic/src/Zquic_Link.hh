@@ -622,7 +622,7 @@ protected:
     if (!blockedFrameNeeded_(frame)) return false;
     if (!queueControl_(frame)) return false;
     noteBlockedQueued_(frame);
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       type,
       streamID,
       linkInfo = linkInfo_()
@@ -729,7 +729,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC MAX_DATA processing outside Tx thread", return false);
     if (value <= m_txDataCredit.limit()) return true;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       wasBlocked = m_txDataCredit.blocked(),
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
@@ -753,7 +753,7 @@ protected:
       "QUIC MAX_STREAM_DATA processing outside Tx thread", return false);
     if (!stream) return false;
     uint64_t streamID = uint64_t(stream->id());
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       streamID,
       wasBlocked = stream->txRangeCount() && !stream->txCreditAvailable(),
       linkInfo = linkInfo_()
@@ -1189,7 +1189,7 @@ protected:
     m_path.configuredMaxUDP(app()->maxUDP());
     m_path.peerMaxUDP(app()->maxUDP());
     m_path.validated();
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Created,
       reason = PathReason::Client,
       antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1216,7 +1216,7 @@ protected:
     m_path = Path::server(ZuMv(local), ZuMv(remote));
     m_path.configuredMaxUDP(app()->maxUDP());
     m_path.peerMaxUDP(app()->maxUDP());
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Created,
       reason = PathReason::Server,
       antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1254,7 +1254,7 @@ protected:
   }
   void validatePathTx_() {
     m_path.validated();
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Validated,
       reason = PathReason::Initial,
       antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1283,7 +1283,7 @@ protected:
   }
   void recordPathRxTx_(unsigned bytes) {
     m_path.received(bytes);
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Received,
       reason = PathReason::Datagram,
 		bytes,
@@ -1333,7 +1333,7 @@ protected:
       ++m_txDiag.pathValidationActive;
       return;
     }
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Observed,
       reason = PathReason::PeerAddrChange,
       antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1378,7 +1378,7 @@ protected:
       schedulePathTimer_(state.deadline);
     txQueueControl_(ControlFrame::pathChallenge(
       m_validatingPath.challenge.bspan()));
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::ChallengeTx,
       reason = PathReason::PeerAddrChange,
       deadlineUS = qlogUS_(state.deadline),
@@ -1409,7 +1409,7 @@ protected:
     if (!m_validatingPath.active ||
 	!m_validatingPath.challenge.equals(data)) {
       ++m_txDiag.pathResponseUnknown;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = PathAction::ResponseUnk,
 		reason = PathReason::Mismatch,
 		antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1432,7 +1432,7 @@ protected:
       return false;
     }
     m_pathChallengeControl = {};
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::ResponseRx,
       reason = PathReason::Matched,
       antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1474,7 +1474,7 @@ protected:
     m_validatingPath = {};
     ++m_txDiag.pathValidationPromoted;
     cancelPathTimer_();
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Validated,
       reason = PathReason::Response,
       antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1494,7 +1494,7 @@ protected:
 
       o.logPathValid(event, time);
     }));
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Updated,
       reason = PathReason::Promoted,
       antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1528,7 +1528,7 @@ protected:
     ZiSockAddr remote = m_validatingPath.path.remote();
     m_validatingPath = {};
     cancelPathTimer_();
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Failed,
       reason = PathReason::Timeout,
       antiAmplification = m_path.antiAmplificationRemaining(),
@@ -1602,7 +1602,7 @@ protected:
     if (!buf) return false;
     unsigned bytes = buf->length;
     if (!m_path.canSend(bytes)) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = PathAction::Blocked,
 	reason = PathReason::AntiAmp,
 		bytes,
@@ -1634,7 +1634,7 @@ protected:
       return false;
     }
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
-    ZquicLOG(([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+    ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
       DgramEvent event{.size = bytes, .linkInfo = linkInfo};
       event.ecn = EcnMark::N;
       o.logDgramSent(event, time);
@@ -1649,7 +1649,7 @@ protected:
     if (!buf) return false;
     unsigned bytes = buf->length;
     if (!m_path.canSendProbe(bytes)) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = PathAction::Blocked,
 	reason = PathReason::ProbeAdmit,
 		bytes,
@@ -1682,7 +1682,7 @@ protected:
     }
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     m_path.sent(bytes);
-    ZquicLOG(([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+    ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
       DgramEvent event{.size = bytes, .linkInfo = linkInfo};
       event.ecn = EcnMark::N;
       o.logDgramSent(event, time);
@@ -1696,7 +1696,7 @@ protected:
     if (!buf) return false;
     unsigned bytes = buf->length;
     if (!m_path.canSend(bytes)) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = PathAction::Blocked,
 	reason = PathReason::AntiAmp,
 		bytes,
@@ -1730,7 +1730,7 @@ protected:
     bool sent = false;
     if (!sendPkt(ZuMv(buf), ZuMv(addr), sent)) return false;
     if (!sent) {
-      ZquicLOG(([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+      ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 		o.logPktDrop(
 	  PktEvent{
 	    .packetSize = bytes,
@@ -1741,7 +1741,7 @@ protected:
       }));
       return true;
     }
-    ZquicLOG(([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+    ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
       DgramEvent event{.size = bytes, .linkInfo = linkInfo};
       event.ecn = EcnMark::N;
       o.logDgramSent(event, time);
@@ -1756,7 +1756,7 @@ protected:
     if (!buf) return false;
     unsigned bytes = buf->length;
     if (!m_path.canSendProbe(bytes)) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = PathAction::Blocked,
 	reason = PathReason::ProbeAdmit,
 		bytes,
@@ -1790,7 +1790,7 @@ protected:
     bool sent = false;
     if (!sendPkt(ZuMv(buf), ZuMv(addr), sent)) return false;
     if (!sent) {
-      ZquicLOG(([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+      ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 		o.logPktDrop(
 	  PktEvent{
 	    .packetSize = bytes,
@@ -1802,7 +1802,7 @@ protected:
       return true;
     }
     m_path.sent(bytes);
-    ZquicLOG(([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+    ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
       DgramEvent event{.size = bytes, .linkInfo = linkInfo};
       event.ecn = EcnMark::N;
       o.logDgramSent(event, time);
@@ -1881,7 +1881,7 @@ protected:
   void packetParseFailure_() { ++m_rxDiag.failures; }
 	  void tlsFailure_() {
 	    ++m_rxDiag.failures;
-	    ZquicLOG(([linkInfo = linkInfo_()](auto &o, ZuTime time) {
+	    ZquicLOG(app()->qlogTrace(), ([linkInfo = linkInfo_()](auto &o, ZuTime time) {
 	      SecEvent event{
 		.kind = SecKind::TLS,
 		.reason = SecReason::Handshake,
@@ -2031,7 +2031,7 @@ protected:
     id = cid->id;
     cid->state = CxnState::Retired;
     cid->associated = false;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = CIDAction::Retired,
       reason = CIDReason::PeerRequest,
       cxnID = cid->id,
@@ -2099,7 +2099,7 @@ protected:
       if (cid->id == m_validatingPath.peerCID) {
 	cid->associated = true;
 	m_peerCID = cid->id;
-	ZquicLOG(([
+	ZquicLOG(app()->qlogTrace(), ([
 	  action = CIDAction::RouteBound,
 	  reason = CIDReason::PathPromoted,
 	  cxnID = cid->id,
@@ -2141,7 +2141,7 @@ protected:
       if (cid.state != CxnState::Active || cid.associated) continue;
       if (!routes.add(cid.id, cid.sequence, impl(), cid.resetToken)) continue;
       cid.associated = true;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = CIDAction::RouteBound,
 	reason = CIDReason::RouteInstall,
 	cxnID = cid.id,
@@ -2176,7 +2176,7 @@ protected:
       routes.retire(cid.id);
       cid.associated = false;
       cid.state = CxnState::Retired;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = CIDAction::Retired,
 	reason = CIDReason::RouteRetire,
 	cxnID = cid.id,
@@ -2211,7 +2211,7 @@ protected:
       routes.tombstone(cid.id);
       cid.associated = false;
       cid.state = CxnState::Tombstone;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = CIDAction::Tombstone,
 	reason = CIDReason::RouteTombstone,
 	cxnID = cid.id,
@@ -2279,7 +2279,7 @@ protected:
 	return false;
       cid->resetToken = resetToken;
       cid->state = CxnState::Active;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = CIDAction::Updated,
 	reason = CIDReason::Sequence,
 	cxnID = cid->id,
@@ -2314,7 +2314,7 @@ protected:
 	return false;
       cid->resetToken = resetToken;
       cid->state = CxnState::Active;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = CIDAction::Updated,
 	reason = CIDReason::ID,
 	cxnID = cid->id,
@@ -2357,7 +2357,7 @@ protected:
       slot = cids.push();
     if (!slot) return false;
     *slot = LinkCID{id, sequence, resetToken, CxnState::Active, false};
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = CIDAction::Issued,
       reason = resetToken.valid() ? CIDReason::ResetToken : CIDReason::None,
       cxnID = slot->id,
@@ -2402,7 +2402,7 @@ protected:
     for (auto &cid : m_peerCIDs)
       if (cid.state == CxnState::Active && cid.sequence < sequence) {
 	cid.state = CxnState::Retired;
-	ZquicLOG(([
+	ZquicLOG(app()->qlogTrace(), ([
 	  action = CIDAction::Retired,
 	  reason = CIDReason::RetirePrior,
 	  cxnID = cid.id,
@@ -2484,7 +2484,7 @@ protected:
   bool initTLS_(CryptoConfig config) {
     config.localTransportParams = &m_transportParams;
     if (m_crypto.initTLS(config)) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	origDCID = m_transportParams.origDCID,
 	initialSCID = m_transportParams.initialSCID,
 	retrySCID = m_transportParams.retrySCID,
@@ -2569,7 +2569,7 @@ protected:
       m_txDataCredit.set(params.initialMaxData);
       m_peerLimit[Zi::StreamType::Duplex].set(params.initialMaxStreamsBidi);
       m_peerLimit[Zi::StreamType::Simplex].set(params.initialMaxStreamsUni);
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	origDCID = params.origDCID,
 	initialSCID = params.initialSCID,
 	retrySCID = params.retrySCID,
@@ -2615,7 +2615,7 @@ protected:
 	o.logParamsSet(event, time);
       }));
     }
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      alpn = ZeString{m_crypto.negotiatedProtocol()},
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
@@ -2708,7 +2708,7 @@ protected:
     m_rxNextProt.clear();
     m_rxOldKeyDiscard = keyDiscardDeadline_();
     ++m_rxDiag.peerKeyUpdates;
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      level = PktNumSpace::T(PktNumSpace::AppData),
 	      keyPhase = uint64_t(m_rxKeyPhase),
 	      linkInfo = linkInfo_()
@@ -2745,7 +2745,7 @@ protected:
     m_rxOldProt.clear();
     m_rxOldKeyDiscard = {};
     ++m_rxDiag.keyDiscards;
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      level = PktNumSpace::T(PktNumSpace::AppData),
 	      oldKeyPhase = uint64_t(m_rxOldKeyPhase),
 	      linkInfo = linkInfo_()
@@ -2772,7 +2772,7 @@ protected:
 	!txInstallTrafficSecret_(PktNumSpace::AppData, nextTxSecret))
       return false;
     m_txKeyPhase = !m_txKeyPhase;
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      level = PktNumSpace::T(PktNumSpace::AppData),
 	      keyPhase = uint64_t(m_txKeyPhase),
 	      linkInfo = linkInfo_()
@@ -2794,7 +2794,7 @@ protected:
 
   bool checkStatelessReset_(ZuBSpan datagram, bool notify = false) {
     if (!StatelessRst::verify(datagram, m_peerResetToken)) return false;
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      bytes = datagram.length(),
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
@@ -3193,7 +3193,7 @@ protected:
 	return false;
       if (info.length && !m_txDataCredit.consume(info.length)) return false;
       m_txDiag.streamBytesTx += info.length;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		streamID = info.streamID,
 		offset = info.offset,
 		length = info.length,
@@ -3273,7 +3273,7 @@ protected:
     if (!sendPkt(build, ZuMv(addr), refs)) return false;
     if (info.length && !m_txDataCredit.consume(info.length)) return false;
     m_txDiag.streamBytesTx += info.length;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
 	      streamID = info.streamID,
 	      offset = info.offset,
 	      length = info.length,
@@ -3522,7 +3522,7 @@ protected:
     if (!update.lostBytes)
       return false;
     applyLossUpdateTx_(update);
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       level,
       lostBytes = update.lostBytes,
       bytesInFlight = m_congestion.bytesInFlight(),
@@ -3588,7 +3588,7 @@ protected:
     ZuTime out = nextLossTime_();
     if (!*out) {
       ++m_txDiag.lossCanceled;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	kind = RecKind::Loss,
 	space = PktNumSpace::N,
 	reason = RecReason::Canceled,
@@ -3619,7 +3619,7 @@ protected:
     if (m_lossTimer && m_lossTimerOut == out) return;
     ++m_txDiag.lossArmed;
     m_lossTimerOut = out;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       kind = RecKind::Loss,
       space = PktNumSpace::N,
       reason = RecReason::Armed,
@@ -3679,7 +3679,7 @@ protected:
     PktNumSpace::T level = PktNumSpace::Initial;
     if (!ptoLevel_(level)) {
       ++m_txDiag.ptoNoLevel;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	kind = RecKind::PTO,
 	space = PktNumSpace::N,
 	reason = RecReason::NoLevel,
@@ -3717,7 +3717,7 @@ protected:
     ++m_txDiag.ptoArmed;
     m_ptoTimerOut = out;
     m_ptoTimerLevel = level;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       kind = RecKind::PTO,
       level,
       reason = RecReason::Armed,
@@ -3758,7 +3758,7 @@ protected:
 
   void cancelPTO_() {
     if (*m_ptoTimerOut)
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	kind = RecKind::PTO,
 	level = m_ptoTimerLevel,
 	reason = RecReason::Canceled,
@@ -4103,7 +4103,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD expiry outside Tx thread", return);
     if (!m_path.probeExpired()) return;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Expired,
 	      size = m_path.probeSize(),
 	      reason = PathReason::Timeout,
@@ -4129,7 +4129,7 @@ protected:
       "QUIC path hint outside Tx thread", return);
     if (!hint) return;
     m_path.applyHint(hint);
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Hint,
 	      size = m_path.activeMaxUDP(),
 	      reason = PathReason::PathHint,
@@ -4156,7 +4156,7 @@ protected:
       "QUIC PMTUD ACK outside Tx thread", return);
     if (!size || !m_path.probePending()) return;
     m_path.probeAckd();
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Acked,
 	      size,
 	      reason = PathReason::Probe,
@@ -4183,7 +4183,7 @@ protected:
       "QUIC PMTUD loss outside Tx thread", return);
     if (!size || !m_path.probePending()) return;
     m_path.probeLost();
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Lost,
 	      size,
 	      reason = PathReason::Probe,
@@ -4216,7 +4216,7 @@ protected:
     m_rxSpaceDiscarded[level] = true;
     m_rxCrypto[level].reset();
     m_rxAcks.sent(PktNumSpace::T(level));
-	    ZquicLOG(([level, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+	    ZquicLOG(app()->qlogTrace(), ([level, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 	      SecEvent event{
 		.kind = SecKind::KeyRetired,
 		.keyType = SecKeyType::RX,
@@ -4244,7 +4244,7 @@ protected:
     m_txCrypto[level].reset();
     m_txCryptoUnackd[level].clean();
     m_txAck[level].nRanges = 0;
-	    ZquicLOG(([level, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+	    ZquicLOG(app()->qlogTrace(), ([level, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 	      SecEvent event{
 		.kind = SecKind::KeyRetired,
 		.keyType = SecKeyType::TX,
@@ -4270,7 +4270,7 @@ protected:
       probes = n;
       ++m_txDiag.ptoCount;
       m_ptoBackoff.expired();
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	level,
 	probes = n,
 		backoff = m_ptoBackoff.count(),
@@ -4305,7 +4305,7 @@ protected:
   }
   void notePTOExpired_() {
     ++m_txDiag.ptoExpired;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       level = [this]() -> PktNumSpace::T {
 	PktNumSpace::T level_ = PktNumSpace::Initial;
 	return ptoLevel_(level_) ? level_ : PktNumSpace::N;
@@ -4333,7 +4333,7 @@ protected:
   void notePTORetx_() { ++m_txDiag.ptoRetx; }
   void notePTOProbe_(PktNumSpace::T level, unsigned probes) {
     ++m_txDiag.ptoProbe;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       level,
       probes,
       backoff = m_ptoBackoff.count(),
@@ -4446,7 +4446,7 @@ nextSpace:
     if (!runtimeEstablished_() || m_path.probePending()) return false;
     unsigned size = m_path.nextProbeSize();
     if (!size || !m_path.canSendProbe(size) || !m_congestion.canSend(size)) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = PathAction::Blocked,
 		size,
 		reason = PathReason::Admission,
@@ -4468,7 +4468,7 @@ nextSpace:
       return false;
     }
     m_path.startProbe(size);
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Sent,
       size,
       reason = PathReason::Probe,
@@ -4490,7 +4490,7 @@ nextSpace:
     PktBuild build;
     if (!buildPingProbe_(build) || !sendProbe(build, ZuMv(addr), size)) {
       m_path.probeLost();
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	action = PathAction::Lost,
 		size,
 		reason = PathReason::SendFail,
@@ -4630,7 +4630,7 @@ nextSpace:
     if (update.normalAckdBytes) {
       m_congestion.ackd(update.normalAckdBytes);
       congestionOpened = true;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
       reason = RecReason::Ack,
       cwnd = m_congestion.cwnd(),
       ssthresh = m_congestion.ssthresh(),
@@ -4653,7 +4653,7 @@ nextSpace:
     if (update.pmtudAckdBytes) {
       m_congestion.ackd(update.pmtudAckdBytes, true);
       onPMTUDProbeAckd_(update.pmtudAckdSize);
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		reason = RecReason::PMTUDAck,
 		cwnd = m_congestion.cwnd(),
 		ssthresh = m_congestion.ssthresh(),
@@ -4695,7 +4695,7 @@ nextSpace:
       m_congestion.lostAt(
 	update.normalLostBytes,
 	uint64_t(update.normalLostSentTime.microsecs()));
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		reason = RecReason::Loss,
 		cwnd = m_congestion.cwnd(),
 		ssthresh = m_congestion.ssthresh(),
@@ -4720,7 +4720,7 @@ nextSpace:
 	update.pmtudLostBytes,
 	uint64_t(update.pmtudLostSentTime.microsecs()), true);
       onPMTUDProbeLost_(update.pmtudLostSize);
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		reason = RecReason::PMTUDLoss,
 		cwnd = m_congestion.cwnd(),
 		ssthresh = m_congestion.ssthresh(),
@@ -4776,7 +4776,7 @@ nextSpace:
 	  ack.ranges, ack.nRanges, work.ackBatch, RecoveryScanBatch,
 	  ack.level, &update)) {
 	applyAckUpdateTx_(update, work.congestionOpened);
-	ZquicLOG(([
+	ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
 	  largestAcked = ack.nRanges ? ack.ranges[ack.nRanges - 1].largest : 0,
 	  ackDelayUS = ack.level == PktNumSpace::AppData ?
@@ -4813,7 +4813,7 @@ nextSpace:
 	return;
       }
       applyAckUpdateTx_(update, work.congestionOpened);
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
 	largestAcked = ack.nRanges ? ack.ranges[ack.nRanges - 1].largest : 0,
 	ackDelayUS = ack.level == PktNumSpace::AppData ?
@@ -4852,7 +4852,7 @@ nextSpace:
 	  work.ackBatch.largestAckdForLoss, 3, work.lossBatch,
 	  RecoveryScanBatch, &lossUpdate)) {
 	applyLossUpdateTx_(lossUpdate);
-	ZquicLOG(([
+	ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
 	  lostBytes = lossUpdate.lostBytes,
 	  bytesInFlight = m_congestion.bytesInFlight(),
@@ -4887,7 +4887,7 @@ nextSpace:
 	return;
       }
       applyLossUpdateTx_(lossUpdate);
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
 	lostBytes = lossUpdate.lostBytes,
 		bytesInFlight = m_congestion.bytesInFlight(),
@@ -4928,7 +4928,7 @@ nextSpace:
 	  now - work.ackBatch.latestSentTime,
 	  ack.level == PktNumSpace::AppData ? ackDelay_(ack.delay) : ZuTime{0},
 	  ack.level == PktNumSpace::AppData);
-	ZquicLOG(([
+	ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
 	  latestRTTUS = qlogUS_(m_rtt.latest()),
 	  smoothedRTTUS = qlogUS_(m_rtt.smoothed()),
@@ -5003,7 +5003,7 @@ nextSpace:
     if (fail) {
       m_path.setEcnDisabled();
       ++m_txDiag.ecnValidationFailures;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
 	state = ECNState::Failed,
 	ect0 = ack.ecn.ect0,
@@ -5052,7 +5052,7 @@ nextSpace:
     }
     m_peerAckECN[i] = ack.ecn;
     m_txDiag.peerAckECN[i] = ack.ecn;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       level = ack.level,
       state = ECNState::Capable,
       ect0 = ack.ecn.ect0,
@@ -5142,7 +5142,7 @@ nextSpace:
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
     if (!m_coalesceLong || m_coalesceInitial)
       return sendPkt(ZuMv(buf), ZuMv(addr));
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       packetBytes = buf->length,
       reason = PktEvent::Reason::Coalescing,
       linkInfo = linkInfo_()
@@ -5312,7 +5312,7 @@ nextSpace:
     ++m_txDiag.packetsTx;
     m_txDiag.bytesTx += bytes;
     noteTxPktDiag_(recordRefs, ackLevel);
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       level, pn,
       packetBytes = bytes,
       bytesInFlight = m_congestion.bytesInFlight(),
@@ -5593,7 +5593,7 @@ nextSpace:
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
       ++m_txDiag.failures;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::Initial,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -5632,7 +5632,7 @@ nextSpace:
       "QUIC Handshake packet protection outside Tx thread", return false);
     if (!txTrafficSecretInstalled_(PktNumSpace::Handshake)) {
       ++m_txDiag.failures;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::Handshake,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -5667,7 +5667,7 @@ nextSpace:
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
       ++m_txDiag.failures;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::Handshake,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -5708,7 +5708,7 @@ nextSpace:
     if (!runtimeEstablished_() &&
 		!txTrafficSecretInstalled_(PktNumSpace::AppData)) {
       ++m_txDiag.failures;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::AppData,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -5748,7 +5748,7 @@ nextSpace:
       unsigned(headerLen) - pnLength, pnLength);
     if (n < 0) {
       ++m_txDiag.failures;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::AppData,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -5795,7 +5795,7 @@ nextSpace:
       if (Pkt::isLong(packet)) {
 	LongHdr h;
 	if (Pkt::parseLong(packet, h) < 0) {
-	  ZquicLOG(([
+	  ZquicLOG(app()->qlogTrace(), ([
 	    level = PktNumSpace::Initial,
 	    packetBytes = packet.length(),
 	    linkInfo = linkInfo_()
@@ -5814,7 +5814,7 @@ nextSpace:
 	uint64_t packetLen = uint64_t(h.pnOffset) + h.length;
 	if (packetLen > packet.length() || packetLen < h.payloadOffset ||
     packetLen > UINT_MAX) {
-	  ZquicLOG(([
+	  ZquicLOG(app()->qlogTrace(), ([
 	    packetType = h.type,
 	    level = PktNumSpace::Initial,
 	    packetBytes = packet.length(),
@@ -5839,7 +5839,7 @@ nextSpace:
       break;
     }
     if (!ok) ++m_rxDiag.failures;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       bytes = d.buf->length,
       ecn = d.ecn,
       linkInfo = linkInfo_()
@@ -5859,7 +5859,7 @@ nextSpace:
     auto datagram = d.buf->cspan();
     LongHdr h;
     if (Pkt::parseLong(packet, h) < 0) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::Initial,
 		packetBytes = packetLen,
 		linkInfo = linkInfo_()
@@ -5875,7 +5875,7 @@ nextSpace:
       return false;
     }
     if (!prepareLong(h, d)) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		packetType = h.type,
 		level = PktNumSpace::Initial,
 		packetBytes = packetLen,
@@ -5896,7 +5896,7 @@ nextSpace:
       h.type == PktType::Handshake ? PktNumSpace::Handshake :
       PktNumSpace::AppData;
     if (h.type != PktType::Initial && h.type != PktType::Handshake) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		packetType = h.type,
 		packetSpace = h.type == PktType::ZeroRTT ?
 	  PktNumSpace::AppData : PktNumSpace::N,
@@ -5914,7 +5914,7 @@ nextSpace:
       return false;
     }
     if (m_rxSpaceDiscarded[level]) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level, packetBytes = packetLen,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -5938,7 +5938,7 @@ nextSpace:
     else {
       if (!m_crypto.rxTrafficSecretInstalled(PktNumSpace::Handshake)) {
 	++m_rxDiag.failures;
-		ZquicLOG(([
+		ZquicLOG(app()->qlogTrace(), ([
 	  level, packetBytes = packetLen,
 	  linkInfo = linkInfo_()
 		](auto &o, ZuTime time) {
@@ -5970,7 +5970,7 @@ nextSpace:
     if (plainLen < 0) {
       if (checkStatelessReset_(datagram, true)) return true;
       ++m_rxDiag.failures;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level, packetBytes = packetLen,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -5996,7 +5996,7 @@ nextSpace:
     }
     if (rxPktSeen_(level, pn)) {
       ++m_rxDiag.duplicatePacketsRx;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level, packetBytes = packetLen,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -6031,7 +6031,7 @@ nextSpace:
       level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
       d.addr, d.buf, ack, qlog_))
       return false;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       level, pn,
       packetBytes = packetLen,
       payloadBytes = unsigned(plainLen),
@@ -6062,7 +6062,7 @@ nextSpace:
     auto datagram = d.buf->cspan();
     if (!m_crypto.rxTrafficSecretInstalled(PktNumSpace::AppData)) {
       if (checkStatelessReset_(datagram, true)) return true;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::AppData,
 		packetBytes = packetLen,
 		linkInfo = linkInfo_()
@@ -6091,7 +6091,7 @@ nextSpace:
     if (Pkt::parseShort(packet, m_localSCID.length(), h) < 0 ||
 		!(h.dcid == m_localSCID)) {
       if (checkStatelessReset_(datagram, true)) return true;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::AppData,
 		packetBytes = packetLen,
 		linkInfo = linkInfo_()
@@ -6122,7 +6122,7 @@ nextSpace:
 	if (plainLen >= 0) {
 	  if (!((base[0] & 0x04) == (m_rxOldKeyPhase ? 0x04 : 0))) {
     ++m_rxDiag.invalidKeyPhases;
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      level = PktNumSpace::AppData,
 	      packetBytes = packetLen,
 	      linkInfo = linkInfo_()
@@ -6161,7 +6161,7 @@ nextSpace:
       m_rxOldProt.valid() ||
       pn <= m_rxLargestPN[PktNumSpace::AppData]) {
     ++m_rxDiag.invalidKeyPhases;
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      level = PktNumSpace::AppData,
 	      packetBytes = packetLen,
 	      linkInfo = linkInfo_()
@@ -6193,7 +6193,7 @@ nextSpace:
       if (plainLen < 0) {
 	if (checkStatelessReset_(datagram, true)) return true;
 	++m_rxDiag.failures;
-		ZquicLOG(([
+		ZquicLOG(app()->qlogTrace(), ([
 	  level = PktNumSpace::AppData,
 	  packetBytes = packetLen,
 	  linkInfo = linkInfo_()
@@ -6220,7 +6220,7 @@ nextSpace:
       }
     } else if ((base[0] & 0x04) != (m_rxKeyPhase ? 0x04 : 0)) {
       ++m_rxDiag.invalidKeyPhases;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::AppData,
 		packetBytes = packetLen,
 		linkInfo = linkInfo_()
@@ -6247,7 +6247,7 @@ nextSpace:
     }
     if (rxPktSeen_(PktNumSpace::AppData, pn)) {
       ++m_rxDiag.duplicatePacketsRx;
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::AppData,
 		packetBytes = packetLen,
 		linkInfo = linkInfo_()
@@ -6284,7 +6284,7 @@ nextSpace:
       byteSpan(base + payloadOffset, unsigned(plainLen)),
       d.addr, d.buf, ack, qlog_))
       return false;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       level = PktNumSpace::AppData,
       pn,
       packetBytes = packetLen,
@@ -6355,7 +6355,7 @@ nextSpace:
 	  if (receiveFrame(
       frame, ZmRef<ZiIOBuf>{packetBuf}, nullptr, &immediateAck) < 0)
     return false;
-	  ZquicLOG(([
+	  ZquicLOG(app()->qlogTrace(), ([
 	    streamID = frame.streamID,
 	    offset = frame.offset,
 	    length = uint64_t(frame.payload.length()),
@@ -6828,7 +6828,7 @@ private:
   bool reapStream_(Stream *stream) {
     if (!streamReapable_(stream)) return false;
     int64_t id = stream->id();
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       streamID = uint64_t(id),
       streamType = StreamType::T(StreamID::uni(uint64_t(id))),
       streamSide = localInitiated_(uint64_t(id), m_isServer) ?
@@ -6872,7 +6872,7 @@ private:
     stream->txCredit(initialStreamTxCredit_(uint64_t(id)));
     stream->rxCredit(initialStreamRxCredit_(uint64_t(id)));
     m_streams->addNode(node);
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       streamID = uint64_t(id),
       streamType = StreamType::T(StreamID::uni(uint64_t(id))),
       streamSide = localInitiated_(uint64_t(id), m_isServer) ?
@@ -7027,7 +7027,7 @@ private:
 
   bool startHandshakeState_() {
     if (m_linkState != LinkState::Starting) return false;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       oldState = m_linkState,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
@@ -7044,7 +7044,7 @@ private:
 
   bool establishState_() {
     if (m_linkState != LinkState::Handshaking) return false;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       oldState = m_linkState,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
@@ -7061,7 +7061,7 @@ private:
 
   bool closeLinkState_() {
     if (m_linkState == LinkState::Closed) return false;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       oldState = m_linkState,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
@@ -7078,7 +7078,7 @@ private:
   }
   bool drainLinkState_() {
     if (m_linkState == LinkState::Closed) return false;
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       oldState = m_linkState,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
@@ -7094,7 +7094,7 @@ private:
     return true;
   }
   void closedLinkState_() {
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       oldState = m_linkState,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {

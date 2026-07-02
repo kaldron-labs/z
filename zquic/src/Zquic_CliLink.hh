@@ -392,7 +392,7 @@ private:
     m_closeNotify = false;
     m_closePeer = false;
 	    if (drain) {
-	      ZquicLOG(([
+	      ZquicLOG(app()->qlogTrace(), ([
 	      peer,
 	      linkInfo = Base::linkInfo_()
 	    ](auto &o, ZuTime time) {
@@ -421,7 +421,7 @@ private:
 	    m_closeNotify = true;
 	    m_closePeer = false;
 	    m_closeFn = ZmFn<>{[]() { }};
-	    ZquicLOG(([linkInfo = Base::linkInfo_()](auto &o, ZuTime time) {
+	    ZquicLOG(app()->qlogTrace(), ([linkInfo = Base::linkInfo_()](auto &o, ZuTime time) {
 	      CloseEvent event{
 		.initiator = CloseInitiator::Local,
 		.trigger = CloseTrigger::IdleTimeout,
@@ -495,7 +495,7 @@ private:
       m_bootstrap.initialDCID(), m_bootstrap.initialSCID(),
       m_bootstrap.initialDCID(),
       m_bootstrap.initialDCID(), m_bootstrap.initialDCID());
-    ZquicLOG(([
+    ZquicLOG(app()->qlogTrace(), ([
       local = Endpoint::local(),
       remote = Endpoint::remote(),
       linkInfo = Zquic::LinkInfo{
@@ -514,7 +514,7 @@ private:
     if (!Base::deriveInitial_()) return false;
     if (!Base::initTLS_(CryptoConfig{
 	false, false, app()->firstALPN(), app()->caPath(), {}, {},
-	app()->keyLogPath(), m_server}))
+	app()->keyLogPath(), m_server, nullptr, &app()->qlogTrace()}))
       return false;
     return true;
   }
@@ -540,7 +540,7 @@ private:
     if (!Base::deriveInitial_()) return false;
     if (!Base::initTLS_(CryptoConfig{
 	false, false, app()->firstALPN(), app()->caPath(), {}, {},
-	app()->keyLogPath(), m_server}))
+	app()->keyLogPath(), m_server, nullptr, &app()->qlogTrace()}))
       return false;
     if (!Base::startRuntimeHandshake_()) return false;
     return emitTLS_(0, {}, Endpoint::remote());
@@ -765,7 +765,7 @@ private:
 
 	  void newToken_(ZuBSpan token) {
 	    if (!token || token.length() > AddressToken::MaxLength) return;
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      tokenLength = token.length(),
 	      linkInfo = Base::linkInfo_()
 	    ](auto &o, ZuTime time) {
@@ -944,7 +944,7 @@ private:
       return false;
     bool sent = sendShortPkt_(build, ZuMv(addr), {});
     if (sent) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	      appClose,
 	      errorCode = Base::closeError(),
 	      closeError = Base::closeError() ?
@@ -1023,7 +1023,7 @@ private:
     RetryPkt retry;
     if (Pkt::parseRetry(packet, retry) < 0) return false;
 	    if (!m_bootstrap.onRetry(retry)) {
-	      ZquicLOG(([
+	      ZquicLOG(app()->qlogTrace(), ([
 		tokenLength = retry.token.length(),
 		linkInfo = Base::linkInfo_()
 	      ](auto &o, ZuTime time) {
@@ -1040,7 +1040,7 @@ private:
       Base::packetParseFailure_();
       return true;
     }
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      tokenLength = retry.token.length(),
 	      linkInfo = Base::linkInfo_()
 	    ](auto &o, ZuTime time) {
@@ -1129,7 +1129,7 @@ private:
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
 	Base::transportClose_(frame.type, frame.errorCode);
-	  ZquicLOG(([
+	  ZquicLOG(app()->qlogTrace(), ([
 	    type = frame.type,
 	    errorCode = frame.errorCode,
 	    closeError = frame.errorCode ?

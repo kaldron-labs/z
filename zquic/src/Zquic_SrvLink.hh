@@ -227,7 +227,7 @@ public:
       "QUIC server close expiry outside Tx thread", return);
     bool peer = m_closePeer;
     m_closePeer = false;
-	    ZquicLOG(([
+	    ZquicLOG(app()->qlogTrace(), ([
 	      peer,
 	      linkInfo = Base::linkInfo_()
 	    ](auto &o, ZuTime time) {
@@ -249,7 +249,7 @@ public:
       "QUIC server idle expiry outside Tx thread", return);
 	    Base::cancelTimers_();
 	    m_closePeer = false;
-	    ZquicLOG(([linkInfo = Base::linkInfo_()](auto &o, ZuTime time) {
+	    ZquicLOG(app()->qlogTrace(), ([linkInfo = Base::linkInfo_()](auto &o, ZuTime time) {
 	      CloseEvent event{
 		.initiator = CloseInitiator::Local,
 		.trigger = CloseTrigger::IdleTimeout,
@@ -294,7 +294,7 @@ private:
     if (!Base::deriveInitial_()) return false;
     if (!Base::initTLS_(CryptoConfig{
 	true, false, app()->firstALPN(), {}, app()->certPath(), app()->keyPath(),
-	app()->keyLogPath(), {}}))
+	app()->keyLogPath(), {}, nullptr, &app()->qlogTrace()}))
       return false;
     if (!Base::startRuntimeHandshake_()) return false;
     return true;
@@ -692,7 +692,7 @@ private:
       return false;
     bool sent = sendShortPkt_(build, ZuMv(addr), {});
     if (sent) {
-      ZquicLOG(([
+      ZquicLOG(app()->qlogTrace(), ([
 	      appClose,
 	      errorCode = Base::closeError(),
 	      closeError = Base::closeError() ?
@@ -771,7 +771,7 @@ private:
     const typename Base::TxPktRefs *refs = nullptr;
 	    bool sent = sendShortPkt_(build, ZuMv(addr), {}, refs, true);
 	    if (sent) {
-	      ZquicLOG(([
+	      ZquicLOG(app()->qlogTrace(), ([
 		tokenLength = token.length(),
 		linkInfo = Base::linkInfo_()
 	      ](auto &o, ZuTime time) {
@@ -904,7 +904,7 @@ private:
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
 	Base::transportClose_(frame.type, frame.errorCode);
-	  ZquicLOG(([
+	  ZquicLOG(app()->qlogTrace(), ([
 	    type = frame.type,
 	    errorCode = frame.errorCode,
 	    closeError = frame.errorCode ?

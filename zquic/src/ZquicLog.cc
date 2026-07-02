@@ -889,7 +889,6 @@ ZquicLogger::ZquicLogger()
 ZquicLogger::~ZquicLogger()
 {
   stop_();
-  final_();
 }
 
 ZquicLogger *ZquicLogger::instance()
@@ -901,27 +900,40 @@ ZquicLogger *ZquicLogger::instance()
 	ZmSingletonCleanup<ZmCleanup::Library>>>::instance();
 }
 
-bool ZquicLogger::init_(const ZquicLogParams &params)
+bool ZquicLogger::init_(
+  Trace &trace, const ZquicLogParams &params, Zquic::Vantage::T vantage)
 {
   Guard guard(m_lock);
-  if (m_started) return false;
-  m_params = params;
-  m_headerWritten = false;
-  m_configured = params.enabled();
-  m_enabled.store_(false);
-  m_recordsEnqueued.store_(0);
-  m_recordsWritten.store_(0);
-  m_recordsDropped.store_(0);
-  m_ringBackPressure.store_(0);
-  m_writerFailures.store_(0);
-  m_bytesWritten.store_(0);
+  if (!params.enabled()) return true;
+  if (!m_configured) {
+    m_params = params;
+    m_enabled.store_(false);
+    m_recordsEnqueued.store_(0);
+    m_recordsWritten.store_(0);
+    m_recordsDropped.store_(0);
+    m_ringBackPressure.store_(0);
+    m_writerFailures.store_(0);
+    m_bytesWritten.store_(0);
+  }
+  if (!trace.configured) ++m_configured;
+  trace.sink.final();
+  trace.configured = true;
+  trace.sinkOpened = false;
+  trace.headerWritten = false;
+  trace.vantage = vantage;
+  trace.params = params;
   return true;
 }
 
 void ZquicLogger::start_()
 {
   Guard guard(m_lock);
-  if (!m_configured || m_started) return;
+  if (!m_configured) return;
+  if (m_started) {
+    ++m_startedRefs;
+    m_enabled.store_(true);
+    return;
+  }
   m_ring.init(ZmRingParams{m_params.ringSize()});
   if (m_ring.open(Ring::Read | Ring::Write) != Zu::OK) {
     ++m_writerFailures;
@@ -929,10 +941,12 @@ void ZquicLogger::start_()
   }
   m_enabled.store_(true);
   ZmThreadParams threadParams;
-  threadParams.name(m_params.thread() ? m_params.thread() : ZuCSpan{"zquic-qlog"});
+  ZuCSpan threadName = m_params.thread();
+  threadParams.name(threadName ? threadName : ZuCSpan{"zquic-qlog"});
   threadParams.priority(ZmThreadPriority::Low);
   m_thread = ZmThread{[this]() { work_(); }, threadParams};
   m_started = true;
+  m_startedRefs = 1;
 }
 
 void ZquicLogger::stop_()
@@ -940,26 +954,34 @@ void ZquicLogger::stop_()
   ZmThread thread;
   {
     Guard guard(m_lock);
+    if (m_startedRefs > 1) {
+      --m_startedRefs;
+      return;
+    }
     m_enabled.store_(false);
     if (!m_started) return;
     thread = m_thread;
     m_thread = {};
     m_started = false;
+    m_startedRefs = 0;
   }
   if (thread) {
+    while (m_queue.count()) Zm::yield();
     m_ring.eof(true);
     thread.join();
   }
   m_ring.close();
+  m_activeTrace = nullptr;
 }
 
-void ZquicLogger::final_()
+void ZquicLogger::final_(Trace &trace)
 {
-  Guard guard(m_lock);
-  m_enabled.store_(false);
-  m_configured = false;
-  m_params = {};
-  m_headerWritten = false;
+  trace.sink.final();
+  trace.configured = false;
+  trace.sinkOpened = false;
+  trace.headerWritten = false;
+  trace.vantage = Zquic::Vantage::Unknown;
+  trace.params = {};
 }
 
 ZquicLogDiag ZquicLogger::diag_() const
@@ -974,364 +996,484 @@ ZquicLogDiag ZquicLogger::diag_() const
   };
 }
 
-void ZquicLogger::cxnStarted_(CxnStartedEvent event)
+void ZquicLogger::cxnStarted_(Trace &trace, CxnStartedEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeCxnStarted_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::dgramSent_(DgramEvent event)
+void ZquicLogger::dgramSent_(Trace &trace, DgramEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeDatagramEvent_(EventName::UDPTx, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::dgramRecv_(DgramEvent event)
+void ZquicLogger::dgramRecv_(Trace &trace, DgramEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeDatagramEvent_(EventName::UDPRx, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pktSent_(PktEvent event)
+void ZquicLogger::pktSent_(Trace &trace, PktEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writePktEvent_(EventName::PktSent, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pktRecv_(PktEvent event)
+void ZquicLogger::pktRecv_(Trace &trace, PktEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writePktEvent_(EventName::PktRecv, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pktBuf_(PktEvent event)
+void ZquicLogger::pktBuf_(Trace &trace, PktEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writePktEvent_(EventName::PktBuf, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pktDrop_(PktEvent event)
+void ZquicLogger::pktDrop_(Trace &trace, PktEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writePktEvent_(EventName::PktDrop, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pktsAcked_(AckEvent event)
+void ZquicLogger::pktsAcked_(Trace &trace, AckEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeAckEvent_(EventName::PktsAcked, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pktLost_(RecEvent event)
+void ZquicLogger::pktLost_(Trace &trace, RecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writePktLost_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::recPktLost_(RecEvent event)
+void ZquicLogger::recPktLost_(Trace &trace, RecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writePktLost_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::markRetrans_(RecEvent event)
+void ZquicLogger::markRetrans_(Trace &trace, RecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeMarkRetrans_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::metricsUpd_(RecEvent event)
+void ZquicLogger::metricsUpd_(Trace &trace, RecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeRecMetrics_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::lossTimerUpd_(RecEvent event)
+void ZquicLogger::lossTimerUpd_(Trace &trace, RecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeTimerEvent_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::congStateUpd_(RecEvent event)
+void ZquicLogger::congStateUpd_(Trace &trace, RecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeCongState_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::ecnStateUpd_(ECNEvent event)
+void ZquicLogger::ecnStateUpd_(Trace &trace, ECNEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeECNEvent_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::keyUpdated_(SecEvent event)
+void ZquicLogger::keyUpdated_(Trace &trace, SecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeKeyEvent_(EventName::KeyUpd, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::keyRetired_(SecEvent event)
+void ZquicLogger::keyRetired_(Trace &trace, SecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeKeyEvent_(EventName::KeyDiscarded, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::paramsSet_(ParamsEvent event)
+void ZquicLogger::paramsSet_(Trace &trace, ParamsEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeParams_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::alpnInfo_(SecEvent event)
+void ZquicLogger::alpnInfo_(Trace &trace, SecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeALPNEvent_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::versionInfo_(VersionEvent event)
+void ZquicLogger::versionInfo_(Trace &trace, VersionEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeVersion_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::tlsAlert_(SecEvent event)
+void ZquicLogger::tlsAlert_(Trace &trace, SecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeSecEvent_(EventName::TLSAlert, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
 void ZquicLogger::secEvent_(
-  EventName::T name, SecEvent event)
+  Trace &trace, EventName::T name, SecEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [name_ = name, event_ = ZuMv(event), time](
+  auto fn_ = [trace = &trace, name_ = name, event_ = ZuMv(event), time](
     ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeSecEvent_(name_, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pathUpdated_(PathEvent event)
+void ZquicLogger::pathUpdated_(Trace &trace, PathEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writePathEvent_(EventName::TupleAssigned, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pathValidUpd_(PathEvent event)
+void ZquicLogger::pathValidUpd_(Trace &trace, PathEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writePathValid_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::pmtudUpdated_(PathEvent event)
+void ZquicLogger::pmtudUpdated_(Trace &trace, PathEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeMTUEvent_(event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::cidUpdated_(CIDEvent event)
+void ZquicLogger::cidUpdated_(Trace &trace, CIDEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeCIDEvent_(EventName::CIDUpd, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::streamStateUpd_(StreamEvent event)
+void ZquicLogger::streamStateUpd_(Trace &trace, StreamEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeStreamEvent_(
       EventName::StreamStateUpd, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::streamDataMoved_(StreamDataEvent event)
+void ZquicLogger::streamDataMoved_(Trace &trace, StreamDataEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeStreamData_(
       EventName::StreamDataMoved, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::cxnDataBlockedUpd_(
+void ZquicLogger::cxnDataBlockedUpd_(Trace &trace,
   BlockedEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeCxnBlocked_(
       EventName::CxnDataBlockedUpd, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::streamDataBlockedUpd_(
+void ZquicLogger::streamDataBlockedUpd_(Trace &trace,
   BlockedEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeStreamBlocked_(
       EventName::StreamDataBlockedUpd, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::cxnClosed_(CloseEvent event)
+void ZquicLogger::cxnClosed_(Trace &trace, CloseEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeCloseEvent_(EventName::CxnClosed, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
-void ZquicLogger::cxnStateUpd_(
+void ZquicLogger::cxnStateUpd_(Trace &trace,
   CxnStateEvent event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
-  auto fn_ = [event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
     this_->writeCxnState_(
       EventName::CxnStateUpd, event_, time);
   };
-  post_(fn_);
+  Fn fn{fn_};
+  log__(fn);
 }
 
 void ZquicLogger::work_()
 {
-  if (!m_sink.init(m_params.path(), m_params.age())) {
-    ++m_writerFailures;
-  } else {
-    for (;;) {
-      if (void *ptr = m_ring.shift()) {
-	if (!writeHeader_()) break;
-	m_ring.shift2(Fn::invoke(ptr, this));
-      } else {
-	if (m_ring.readStatus() == Zu::EndOfFile) break;
+  for (;;) {
+    if (m_queue.count()) {
+      if (Fn fn = m_queue.shift()) {
+	if (!tryPush_(fn))
+	  m_queue.unshift(ZuMv(fn));
       }
     }
+    if (void *ptr = m_ring.shift()) {
+      m_activeTrace = nullptr;
+      m_ring.shift2(Fn::invoke(ptr, this));
+    } else {
+      if (m_ring.readStatus() == Zu::EndOfFile) break;
+    }
   }
-  m_sink.final();
+  m_activeTrace = nullptr;
 }
 
-bool ZquicLogger::writeHeader_()
+bool ZquicLogger::tryPush_(Fn &fn)
 {
-  if (m_headerWritten) return true;
-  m_headerWritten = true;
+  unsigned size = fn.pushSize();
+  if (void *ptr = m_ring.tryPush(size)) {
+    fn.push(ptr);
+    m_ring.push2(ptr, size);
+    return true;
+  }
+  return false;
+}
+
+bool ZquicLogger::useTrace_(Trace *trace)
+{
+  if (!trace || !trace->configured) return false;
+  if (!trace->sinkOpened) {
+    if (!trace->sink.init(trace->params.path(), trace->params.age())) {
+      ++m_writerFailures;
+      return false;
+    }
+    trace->sinkOpened = true;
+  }
+  m_activeTrace = trace;
+  return true;
+}
+
+void ZquicLogger::closeTrace_(Trace &trace)
+{
+  if (trace.sinkOpened)
+    trace.sink.final();
+  Guard guard(m_lock);
+  if (trace.configured && m_configured) --m_configured;
+  if (m_startedRefs) --m_startedRefs;
+  trace.configured = false;
+  trace.sinkOpened = false;
+  trace.headerWritten = false;
+  trace.vantage = Zquic::Vantage::Unknown;
+  trace.params = {};
+  if (!m_configured) {
+    m_enabled.store_(false);
+    m_params = {};
+  }
+}
+
+bool ZquicLogger::write_(Trace *trace, ZuCSpan data)
+{
+  if (!useTrace_(trace)) return false;
+  if (!writeHeader_(trace)) return false;
+  if (!trace->sink.write(data)) {
+    ++m_writerFailures;
+    return false;
+  }
+  return true;
+}
+
+bool ZquicLogger::writeHeader_(Trace *trace)
+{
+  if (!trace || trace->headerWritten) return true;
+  trace->headerWritten = true;
   QLogHeader header{
     "urn:ietf:params:qlog:file:sequential",
     "application/qlog+json-seq",
     "zquic",
     QLogImplementation{"zquic", Z_VERNAME},
     QLogTrace{
-      QLogVantage{Zquic::Vantage::Unknown},
+      QLogVantage{trace->vantage},
       QLogCommonFields{
 	.timeFormat = "relative_to_epoch",
 	.referenceTime = QLogReferenceTime{
@@ -1345,16 +1487,16 @@ bool ZquicLogger::writeHeader_()
       }
     }
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, header);
-  m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  ZeLogBuf buf;
+  buf << char(0x1e);
+  ZtJSON::save<ZuFacet::JSON>(buf, header);
+  buf << '\n';
+  if (!trace->sink.write(buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
   return true;
 }
 
@@ -1397,7 +1539,7 @@ bool ZquicLogger::writeCxnStarted_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -1423,7 +1565,7 @@ bool ZquicLogger::writeDatagramEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2009,7 +2151,7 @@ bool ZquicLogger::writePktEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2039,7 +2181,7 @@ bool ZquicLogger::writeAckEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2080,7 +2222,7 @@ bool ZquicLogger::writePktLost_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2105,7 +2247,7 @@ bool ZquicLogger::writeMarkRetrans_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2135,7 +2277,7 @@ bool ZquicLogger::writeRecMetrics_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2189,7 +2331,7 @@ bool ZquicLogger::writeCongState_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2251,7 +2393,7 @@ bool ZquicLogger::writeTimerEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2276,7 +2418,7 @@ bool ZquicLogger::writeECNEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2343,7 +2485,7 @@ bool ZquicLogger::writeKeyEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2384,7 +2526,7 @@ bool ZquicLogger::writeParams_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2406,7 +2548,7 @@ bool ZquicLogger::writeALPNEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2433,7 +2575,7 @@ bool ZquicLogger::writeVersion_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2464,7 +2606,7 @@ bool ZquicLogger::writeSecEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2486,7 +2628,7 @@ bool ZquicLogger::writePathEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2511,7 +2653,7 @@ bool ZquicLogger::writeMTUEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2539,7 +2681,7 @@ bool ZquicLogger::writePathValid_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2570,7 +2712,7 @@ bool ZquicLogger::writeCIDEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2603,7 +2745,7 @@ bool ZquicLogger::writeStreamEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2632,7 +2774,7 @@ bool ZquicLogger::writeStreamData_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2658,7 +2800,7 @@ bool ZquicLogger::writeCxnBlocked_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2685,7 +2827,7 @@ bool ZquicLogger::writeStreamBlocked_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2714,7 +2856,7 @@ bool ZquicLogger::writeCloseEvent_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }
@@ -2740,7 +2882,7 @@ bool ZquicLogger::writeCxnState_(
   m_buf << char(0x1e);
   ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
-  if (!m_sink.write(m_buf.cspan())) {
+  if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
     return false;
   }

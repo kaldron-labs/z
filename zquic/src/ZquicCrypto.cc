@@ -850,6 +850,7 @@ bool Crypto::init(const CryptoConfig &config)
   m_alpn = ParamString{config.alpn};
   m_serverName = Host{config.serverName};
   m_keyLogPath = ParamString{config.keyLogPath};
+  m_qlogTrace = config.qlogTrace;
   if (!m_keyLogPath)
     if (auto path = ::getenv("SSLKEYLOGFILE"))
       m_keyLogPath = ParamString{ZuCSpan{path}};
@@ -859,15 +860,16 @@ bool Crypto::init(const CryptoConfig &config)
   m_peerTransportParamsReceived = false;
   if (config.enable0RTT) {
     ++m_diag.zeroRTTRejected;
-    ZquicLOG(([](auto &o, ZuTime time) {
-      SecEvent event{
-	.kind = SecKind::TLS,
-	.trigger = SecTrigger::Local,
-	.reason = SecReason::ZeroRTT,
-	.success = false
-      };
-      o.logSecEvent(EventName::ZeroRTTReject, event, time);
-    }));
+    if (m_qlogTrace)
+      ZquicLOG(*m_qlogTrace, ([](auto &o, ZuTime time) {
+	SecEvent event{
+	  .kind = SecKind::TLS,
+	  .trigger = SecTrigger::Local,
+	  .reason = SecReason::ZeroRTT,
+	  .success = false
+	};
+	o.logSecEvent(EventName::ZeroRTTReject, event, time);
+      }));
   }
   return true;
 }
@@ -1222,15 +1224,16 @@ bool Crypto::deriveInitial(const CxnID &dcid)
 bool Crypto::rejectZeroRTT()
 {
   ++m_diag.zeroRTTRejected;
-  ZquicLOG(([](auto &o, ZuTime time) {
-    SecEvent event{
-      .kind = SecKind::TLS,
-      .trigger = SecTrigger::Received,
-      .reason = SecReason::ZeroRTT,
-      .success = false
-    };
-    o.logSecEvent(EventName::ZeroRTTReject, event, time);
-  }));
+  if (m_qlogTrace)
+    ZquicLOG(*m_qlogTrace, ([](auto &o, ZuTime time) {
+      SecEvent event{
+	.kind = SecKind::TLS,
+	.trigger = SecTrigger::Received,
+	.reason = SecReason::ZeroRTT,
+	.success = false
+      };
+      o.logSecEvent(EventName::ZeroRTTReject, event, time);
+    }));
   return true;
 }
 

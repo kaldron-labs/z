@@ -207,23 +207,24 @@ public:
     ZmRef<Zquic_::IOQueue::Node> buf =
       static_cast<Zquic_::IOQueue::Node *>(msg);
     m_rx.push(ZuMv(buf));
-    ZquicLOG(([
-      streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
-      streamOffset = data.offset,
-      length = uint64_t(data.bytes),
-      linkInfo = m_link ? m_link->linkInfo() : Zquic::LinkInfo{}
-    ](auto &o, ZuTime time) mutable {
-      if (streamID == U64Null) return;
-      StreamDataEvent event{
-	.from = StreamDataLoc::Transport,
-	.to = StreamDataLoc::Application,
-	.streamID = streamID,
-	.offset = streamOffset,
-	.length = length,
-	.linkInfo = linkInfo
-      };
-      o.logStreamDataMoved(event, time);
-    }));
+    if (m_link)
+      ZquicLOG(m_link->app()->qlogTrace(), ([
+	streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
+	streamOffset = data.offset,
+	length = uint64_t(data.bytes),
+	linkInfo = m_link->linkInfo()
+      ](auto &o, ZuTime time) mutable {
+	if (streamID == U64Null) return;
+	StreamDataEvent event{
+	  .from = StreamDataLoc::Transport,
+	  .to = StreamDataLoc::Application,
+	  .streamID = streamID,
+	  .offset = streamOffset,
+	  .length = length,
+	  .linkInfo = linkInfo
+	};
+	o.logStreamDataMoved(event, time);
+      }));
   }
   void request(const RxQueueSpan &, const RxQueueSpan &) { }
   void scheduleDequeue() { rxRun_([stream = ZmRef<Self>{impl()}]() {
@@ -607,23 +608,24 @@ private:
     auto node = static_cast<TxMsg *>(buf.ptr());
     node->data().publish(offset, length, m_txBytes);
     Tx::send(node);
-    ZquicLOG(([
-      streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
-      streamOffset = m_txBytes,
-      length = uint64_t(length),
-      linkInfo = m_link ? m_link->linkInfo() : Zquic::LinkInfo{}
-    ](auto &o, ZuTime time) {
-      if (streamID == U64Null) return;
-      StreamDataEvent event{
-	.from = StreamDataLoc::Application,
-	.to = StreamDataLoc::Transport,
-	.streamID = streamID,
-	.offset = streamOffset,
-	.length = length,
-	.linkInfo = linkInfo
-      };
-      o.logStreamDataMoved(event, time);
-    }));
+    if (m_link)
+      ZquicLOG(m_link->app()->qlogTrace(), ([
+	streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
+	streamOffset = m_txBytes,
+	length = uint64_t(length),
+	linkInfo = m_link->linkInfo()
+      ](auto &o, ZuTime time) {
+	if (streamID == U64Null) return;
+	StreamDataEvent event{
+	  .from = StreamDataLoc::Application,
+	  .to = StreamDataLoc::Transport,
+	  .streamID = streamID,
+	  .offset = streamOffset,
+	  .length = length,
+	  .linkInfo = linkInfo
+	};
+	o.logStreamDataMoved(event, time);
+      }));
     m_txBytes += length;
     m_txBufferedBytes += length;
     notifyTx_();

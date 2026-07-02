@@ -117,6 +117,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - maximally leverage `Zu*`, `Zm*`, `Zt*` and `Zi*`
 
 ## Audit flags
+### Code structure
+- Red Flag: declarations nested inside templates, that do not depend on template parameters
+  Problem: bloats debug info and linker symbol space with template noise
+  Fix: move these declarations out of the enclosing template
+
 ### Storage and capacity
 - Red Flag: hard-coded capacities such as `16`.
   Problem: unexplained limits may impair scaling when too low, bloat stack/heap when too high, or leave mostly unused capacity.

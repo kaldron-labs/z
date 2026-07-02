@@ -271,6 +271,7 @@ void ZiLog::stop_()
     m_thread = {};
   }
   if (!thread) return;
+  while (m_queue.count()) Zm::yield();
   m_ring.eof(true);
   thread.join();		// wait for ring buffer to drain
   m_ring.close();
@@ -279,6 +280,12 @@ void ZiLog::stop_()
 void ZiLog::work_()
 {
   for (;;) {
+    if (m_queue.count()) {
+      if (Fn fn = m_queue.shift()) {
+	if (!tryPush_(fn))
+	  m_queue.unshift(ZuMv(fn));
+      }
+    }
     if (void *ptr = m_ring.shift()) {
       m_ring.shift2(Fn::invoke(ptr, this));
     } else {
@@ -309,12 +316,20 @@ void ZiLog::log__(Fn &fn)
       throw ZeEXCEPT(Fatal, "ZiLog", "start failed!");
     }
   }
+  if (ZuLikely(tryPush_(fn))) return;
+  m_queue.push(ZuMv(fn));
+}
+
+bool ZiLog::tryPush_(Fn &fn)
+{
   unsigned size = fn.pushSize();
   void *ptr;
-  if (ZuLikely(ptr = m_ring.push(size))) {
+  if (ZuLikely(ptr = m_ring.tryPush(size))) {
     fn.push(ptr);
     m_ring.push2(ptr, size);
+    return true;
   }
+  return false;
 }
 
 void ZiLog::age_()
