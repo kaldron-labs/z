@@ -941,10 +941,10 @@ void H3Server::printDiag()
   }
   ZiLOG(Info, "zhttpd", ([
     active, requests, errors, links,
-    datagramsRx = diag.datagramsRx, datagramsTx = diag.datagramsTx,
-    bytesRx = diag.bytesRx, bytesTx = diag.bytesTx,
-    txBackPressure = diag.txBackPressure,
-    failures = diag.failures,
+    datagramsRx = diag.rx.datagramsRx, datagramsTx = diag.tx.datagramsTx,
+    bytesRx = diag.rx.bytesRx, bytesTx = diag.tx.bytesTx,
+    txBackPressure = diag.tx.txBackPressure,
+    failures = diag.failures(),
     packetsRx, packetsTx, streamRx, streamTx, peerOpened, localLimit, pto, retx,
     duplicatePackets, ackCommits, ackEliciting, ackImmediate, ackPosts,
     streamNoData, ackInstalls, ackDueInstalls, ackAppend, ackAppendEmpty,
