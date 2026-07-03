@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZmPQueue.hh>
+
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZquicBuf.hh>
@@ -331,7 +332,7 @@ private:
 using StreamRxPQueue =
   ZmPQueue<StreamRxData,
     ZmPQueueNode<StreamRxData,
-      ZmPQueueHeapID<"Zquic.Stream.RxNode",
+      ZmPQueueHeapID<"Zquic.Stream.RxQueue",
 	ZmPQueueFn<StreamRxPQueueFn,
 	  ZmPQueueOverwrite<false,
 	    ZmPQueueBits<2,
@@ -340,7 +341,7 @@ using StreamRxPQueue =
 using CryptoRxPQueue =
   ZmPQueue<RxData,
     ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zquic.Crypto.RxNode",
+      ZmPQueueHeapID<"Zquic.Crypto.RxQueue",
 	ZmPQueueOverwrite<false,
 	  ZmPQueueBits<2,
 	    ZmPQueueLevels<2>>>>>>;
@@ -348,7 +349,7 @@ using CryptoRxPQueue =
 using TxDataPQueue =
   ZmPQueue<StreamTxData,
     ZmPQueueNode<StreamTxData,
-      ZmPQueueHeapID<"Zquic.Stream.TxNode",
+      ZmPQueueHeapID<"Zquic.Stream.TxQueue",
 	ZmPQueueFn<StreamTxPQueueFn,
 	  ZmPQueueBits<2,
 	    ZmPQueueLevels<3>>>>>>;
@@ -359,7 +360,7 @@ using CryptoTxPQueue = TxUnackdRanges;
 using PktRxPQueue =
   ZmPQueue<RxPktMark,
     ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zquic.Pkt.RxNode",
+      ZmPQueueHeapID<"Zquic.Pkt.RxQueue",
 	ZmPQueueOverwrite<false,
 	  ZmPQueueBits<4,
 	    ZmPQueueLevels<4>>>>>>;
