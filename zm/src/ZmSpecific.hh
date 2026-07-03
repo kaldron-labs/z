@@ -251,7 +251,7 @@ public:
     // the same underlying T
     qsort(objects, n, sizeof(Object *),
 	[](const void *o1, const void *o2) -> int {
-	  return ZuCmp<Zm::ThreadID>::cmp(
+	  return ZuCompare(
 	      (*(Object **)o1)->tid, (*(Object **)o2)->tid);
 	});
     {

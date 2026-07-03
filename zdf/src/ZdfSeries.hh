@@ -541,7 +541,7 @@ public:
     return [
       vec = ZuMv(vec), n, fn = ZuMv(fn), i = 0
     ](auto &rc, Value value) mutable -> bool {
-      if (ZuUnlikely(ZuCmp<Value>::null(value))) {
+      if (ZuUnlikely(ZuNull(value))) {
 	if constexpr (Live) return true;
       } else {
 	vec[i++] = value;

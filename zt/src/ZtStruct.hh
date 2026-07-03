@@ -990,7 +990,7 @@ VGet::print(
 ) const {
   ZuBox<double> v = get_.float_(o);
   auto ndp = field->ndp;
-  if (!ZuCmp<decltype(ndp)>::null(ndp))
+  if (!ZuNull(ndp))
     s << v.vfmt(fmt.scalar).fp(ndp);
   else
     s << v.vfmt(fmt.scalar);
@@ -1002,7 +1002,7 @@ VGet::print(
 ) const {
   ZuFixed v = get_.fixed(o);
   auto ndp = field->ndp;
-  if (!ZuCmp<decltype(ndp)>::null(ndp))
+  if (!ZuNull(ndp))
     s << v.vfmt(fmt.scalar).fp(ndp);
   else
     s << v.vfmt(fmt.scalar);
@@ -1014,7 +1014,7 @@ VGet::print(
 ) const {
   ZuDecimal v = get_.decimal(o);
   auto ndp = field->ndp;
-  if (!ZuCmp<decltype(ndp)>::null(ndp))
+  if (!ZuNull(ndp))
     s << v.vfmt(fmt.scalar).fp(ndp);
   else
     s << v.vfmt(fmt.scalar);
@@ -1131,7 +1131,7 @@ VGet::print(
   FloatVec vec{get_.floatVec(o)};
   auto ndp = field->ndp;
   bool first = true;
-  if (!ZuCmp<decltype(ndp)>::null(ndp))
+  if (!ZuNull(ndp))
     vec.all([&s, &fmt, ndp, &first](ZuBox<double> v) {
       if (!first) s << fmt.vecDelim; else first = false;
       s << v.vfmt(fmt.scalar).fp(ndp);
@@ -1152,7 +1152,7 @@ VGet::print(
   bool first = true;
   FixedVec vec{get_.fixedVec(o)};
   auto ndp = field->ndp;
-  if (!ZuCmp<decltype(ndp)>::null(ndp))
+  if (!ZuNull(ndp))
     vec.all([&s, &fmt, ndp, &first](const ZuFixed &v) {
       if (!first) s << fmt.vecDelim; else first = false;
       s << v.vfmt(fmt.scalar).fp(ndp);
@@ -1173,7 +1173,7 @@ VGet::print(
   DecimalVec vec{get_.decimalVec(o)};
   auto ndp = field->ndp;
   bool first = true;
-  if (!ZuCmp<decltype(ndp)>::null(ndp))
+  if (!ZuNull(ndp))
     vec.all([&s, &fmt, ndp, &first](const ZuDecimal &v) {
       if (!first) s << fmt.vecDelim; else first = false;
       s << v.vfmt(fmt.scalar).fp(ndp);

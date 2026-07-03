@@ -769,7 +769,7 @@ inline void saveValue_(S &s, const T_ &v_)
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     double v = v_;
     if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
-      if (ZuCmp<double>::null(v)) { s << "null"; return; }
+      if (ZuNull(v)) { s << "null"; return; }
     if constexpr (Fmt::String) s << '"';
     bool negative = v < 0;
     if (negative) { s << '-'; v = -v; }
@@ -923,10 +923,10 @@ inline bool saveField(S &s, const O &o, bool first)
 	TypeCode == ZtFieldTC::Fixed ||
 	TypeCode == ZtFieldTC::Decimal ||
 	TypeCode == ZtFieldTC::Time ||
-	TypeCode == ZtFieldTC::DateTime) {
-      using T = ZtFieldTC::Type<TypeCode>;
-      T v = Field::get(o);
-      if (ZuCmp<T>::null(v)) return false;
+	TypeCode == ZtFieldTC::DateTime ||
+	TypeCode == ZtFieldTC::UDT) {
+      auto &&v = Field::get(o);
+      if (ZuNull(v)) return false;
       return save(v);
     } else
       return save(Field::get(o));

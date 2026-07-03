@@ -91,7 +91,7 @@ public:
 
   bool equals(const ZiIP &a) const { return s_addr == a.s_addr; }
   int cmp(const ZiIP &a) const {
-    return ZuCmp<uint32_t>::cmp(s_addr, a.s_addr);
+    return ZuCompare(s_addr, a.s_addr);
   }
   friend inline bool operator ==(const ZiIP &l, const ZiIP &r) {
     return l.equals(r);

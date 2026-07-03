@@ -265,7 +265,7 @@ inline void saveValue_(S &s, const T_ &v_)
       s << ZtFieldPrintInt<Props, Fmt, typename B::T>(v);
   } else if constexpr (TypeCode == ZtFieldTC::Float) {
     double v = v_;
-    if (ZuUnlikely(ZuCmp<double>::null(v))) return;
+    if (ZuUnlikely(ZuNull(v))) return;
     bool negative = v < 0;
     if (negative) v = -v;
     if (ZuUnlikely(v == ZuCmp<double>::inf())) {

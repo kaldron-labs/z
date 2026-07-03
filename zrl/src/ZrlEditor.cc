@@ -691,7 +691,7 @@ void Map_printMode(unsigned i, const Mode &mode, ZuVStream &s)
 	    auto order = [](int32_t vkey) -> int32_t {
 	      return vkey < 0 ? ((-vkey) - INT_MAX) : vkey;
 	    };
-	    return ZuCmp<int32_t>::cmp(order(b1->vkey), order(b2->vkey));
+	    return ZuCompare(order(b1->vkey), order(b2->vkey));
 	  });
       bindings.all([&s](const Binding *binding) {
 	Map_printIndent(s); s << *binding << "\r\n";

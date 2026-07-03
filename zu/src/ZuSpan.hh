@@ -493,7 +493,7 @@ private:
     uint64_t l = length();
     uint64_t n = v.length();
     if (int i = Ops::cmp(data(), v.data(), l < n ? l : n)) return i;
-    return ZuCmp<uint64_t>::cmp(l, n);
+    return ZuCompare(l, n);
   }
 public:
   constexpr int cmp(const ZuSpan &v) const {

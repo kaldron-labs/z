@@ -497,7 +497,7 @@ public:
     return tid() == t.tid();
   }
   int cmp(const ZmThread &t) const {
-    return ZuCmp<ID>::cmp(tid(), t.tid());
+    return ZuCompare(tid(), t.tid());
   }
   friend inline bool operator ==(const ZmThread &l, const ZmThread &r) {
     return l.equals(r);

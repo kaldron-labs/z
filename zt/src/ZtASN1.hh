@@ -1087,7 +1087,7 @@ inline void saveValue1_(SaveValue &sv, const T &v_)
       TypeCode == ZtFieldTC::UInt128) {
     using U = ZtFieldTC::Type<TypeCode>;
     U v{v_};
-    if (Optional && ZuCmp<U>::null(v)) { sv.length = 0; return; }
+    if (Optional && ZuNull(v)) { sv.length = 0; return; }
     if constexpr (ASNType{} == Integer) {
       sv.integer.n = len_int(v);
       sv.length = lenTL<Tag>(sv.integer.n);

@@ -63,7 +63,7 @@ public:
   template <typename T, typename = MatchInt<T>>
   constexpr ZuTime(T v) noexcept : tv_sec{v}, tv_nsec{0} { }
   constexpr ZuTime(ldouble v) noexcept {
-    if (ZuCmp<ldouble>::null(v) ||
+    if (ZuNull(v) ||
 	v >= ldouble(ZuCmp<int64_t>::maximum()) ||
 	v <= ldouble(ZuCmp<int64_t>::minimum())) {
       null();
@@ -281,8 +281,8 @@ public:
   }
   constexpr int cmp(const ZuTime &t) const {
     // note that ZuCmp<int64_t>::null() is the most negative value
-    if (int i = ZuCmp<int64_t>::cmp(tv_sec, t.tv_sec)) return i;
-    return ZuCmp<int32_t>::cmp(tv_nsec, t.tv_nsec);
+    if (int i = ZuCompare(tv_sec, t.tv_sec)) return i;
+    return ZuCompare(tv_nsec, t.tv_nsec);
   }
   template <typename L, typename R>
   friend constexpr ZuIfT<
@@ -316,7 +316,7 @@ public:
     !ZuIsSame<R, ZuTime>{}, int>
   operator <=>(const L &l, const R &r) { return l.cmp(ZuTime{r}); }
 
-  constexpr bool operator *() const { return !ZuCmp<int64_t>::null(tv_sec); }
+  constexpr bool operator *() const { return !ZuNull(tv_sec); }
   constexpr bool operator !() const { return !tv_sec && !tv_nsec; }
   constexpr operator bool() const { return tv_sec || tv_nsec; }
 

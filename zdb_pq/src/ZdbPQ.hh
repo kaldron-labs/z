@@ -707,7 +707,7 @@ public:
   }
   unsigned oid(ZuCSpan name) const {
     int8_t i = m_lookup.findVal(name);
-    if (ZuCmp<int8_t>::null(i)) return ZuCmp<unsigned>::null();
+    if (ZuNull(i)) return ZuCmp<unsigned>::null();
     ZmAssert(i >= 1 && i < Value::N);
     return m_oids[i - 1];
   }

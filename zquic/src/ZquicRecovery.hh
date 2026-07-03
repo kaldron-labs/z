@@ -155,7 +155,7 @@ public:
   void ackdByPeer(uint64_t largest) {
     if (m_ackBase <= largest && m_ackHead > m_ackBase) {
       uint64_t base =
-	ZuCmp<uint64_t>::null(largest) ? largest : largest + 1;
+	ZuNull(largest) ? largest : largest + 1;
       m_ackBase = base < m_ackHead ? base : m_ackHead;
     }
   }
@@ -331,7 +331,7 @@ public:
   }
   void sent(PktNumSpace::T space, uint64_t gen = ZuCmp<uint64_t>::null()) {
     unsigned i = space;
-    if (!ZuCmp<uint64_t>::null(gen) && gen != m_gen[i]) return;
+    if (!ZuNull(gen) && gen != m_gen[i]) return;
     m_pending[i] = false;
     m_ackEliciting[i] = false;
     m_activeAck[i] = 0;
@@ -1184,7 +1184,7 @@ public:
     unsigned n = 0;
     if (lostBytes) *lostBytes = 0;
     if (lostSentTime) *lostSentTime = ZuTime{0};
-    if (ZuCmp<uint64_t>::null(largestAckd)) return 0;
+    if (ZuNull(largestAckd)) return 0;
     auto iter = m_packets.iter();
     while (auto node = iter()) {
       SentPkt &p = node->data();
@@ -1208,7 +1208,7 @@ public:
     unsigned budget, PktTxUpdate *update = nullptr)
   {
     if (!budget) return false;
-    if (ZuCmp<uint64_t>::null(largestAckd)) return true;
+    if (ZuNull(largestAckd)) return true;
     unsigned scanned = 0;
     auto iter = m_packets.iter(batch.nextPN);
     while (auto node = iter()) {
@@ -1228,7 +1228,7 @@ public:
   }
   ZuTime nextLossTime(
     uint64_t largestAckd, ZuTime threshold, unsigned budget = 256) const {
-    if (ZuCmp<uint64_t>::null(largestAckd) || !*threshold)
+    if (ZuNull(largestAckd) || !*threshold)
       return ZuTime{0};
     ZuTime out;
     bool have = false;

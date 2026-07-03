@@ -1141,9 +1141,9 @@ public:
   }
   int cmp(const ZuDateTime &v) const {
     // note that ZuCmp<int32_t>::null() is the most negative value
-    if (int i = ZuCmp<int32_t>::cmp(m_julian, v.m_julian)) return i;
-    if (int i = ZuCmp<int32_t>::cmp(m_sec, v.m_sec)) return i;
-    return ZuCmp<int32_t>::cmp(m_nsec, v.m_nsec);
+    if (int i = ZuCompare(m_julian, v.m_julian)) return i;
+    if (int i = ZuCompare(m_sec, v.m_sec)) return i;
+    return ZuCompare(m_nsec, v.m_nsec);
   }
   friend inline bool operator ==(const ZuDateTime &l, const ZuDateTime &r) {
     return l.equals(r);
@@ -1153,7 +1153,7 @@ public:
   }
 
   constexpr bool operator *() const {
-    return !ZuCmp<int32_t>::null(m_julian);
+    return !ZuNull(m_julian);
   }
 
 // utility functions
@@ -1216,7 +1216,7 @@ public:
   }
 
   void init(int64_t t) {
-    if (ZuUnlikely(ZuCmp<time_t>::null(t))) {
+    if (ZuUnlikely(ZuNull(t))) {
       null();
     } else {
       if (ZuLikely(t >= 0)) {
