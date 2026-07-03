@@ -43,6 +43,8 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
+#include <zlib/ZtlsBackend.hh>
+
 #if defined(ZDEBUG) && !defined(Zquic_DEBUG)
 #define Zquic_DEBUG	// enable testing / debugging
 #endif
@@ -941,6 +943,8 @@ protected:
     return !params;
   }
   template <typename Link>
+  void saveEarlyDataSession(Link *, ZuBSpan, const TransportParams &) { }
+  template <typename Link>
   uint32_t maxEarlyData(Link *) { return 0; }
   template <typename Link>
   bool allowEarlyStream(Link *, uint64_t, bool) { return false; }
@@ -1166,6 +1170,8 @@ template <typename, typename, typename, typename>
 friend class SrvLink;
 friend ZmEngine<App>;
 
+  ~Server() { finalTicketKey_(); }
+
   bool init(ServerParams params) {
     if (!params.certPath() || !params.keyPath()) {
       auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
@@ -1174,13 +1180,17 @@ friend ZmEngine<App>;
       return false;
     }
     return this->init_(ZuMv(params), Zquic::Vantage::Server,
-      [](const ServerParams &) { return true; });
+      [this](const ServerParams &) {
+	if (!m_ticketKey) m_ticketKey = Ztls::Backend::ticket_key_new();
+	return m_ticketKey;
+      });
   }
 
   void final() {
     m_links = nullptr;
     m_routes.final();
     Base::final();
+    finalTicketKey_();
   }
 
   bool listening() const { return Endpoint::listening(); }
@@ -1254,6 +1264,9 @@ friend ZmEngine<App>;
 
   ZmRef<ZiIOBuf> allocTxPkt_() {
     return Endpoint::allocTxPkt();
+  }
+  ptls_encrypt_ticket_t *ticketEncryptCB_() {
+    return Ztls::Backend::ticket_encrypt_cb(m_ticketKey);
   }
   bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (!this->app()->sendPkt(buf)) return true;
@@ -1712,11 +1725,18 @@ private:
     return sent;
   }
 
+  void finalTicketKey_() {
+    if (!m_ticketKey) return;
+    Ztls::Backend::ticket_key_free(m_ticketKey);
+    m_ticketKey = nullptr;
+  }
+
   // Rx thread exclusive
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;
   AddressValidationDiag	m_addressValidationDiag;
+  Ztls::Backend::TicketKey *m_ticketKey	= nullptr;
   unsigned		m_stopCount = 0;
 };
 

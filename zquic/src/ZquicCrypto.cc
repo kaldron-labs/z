@@ -900,6 +900,8 @@ bool Crypto::init(const CryptoConfig &config)
   m_serverName = Host{config.serverName};
   m_keyLogPath = ParamString{config.keyLogPath};
   m_qlogTrace = config.qlogTrace;
+  m_saveSessionTicketArg = config.saveSessionTicketArg;
+  m_saveSessionTicket = config.saveSessionTicket;
   if (!m_keyLogPath)
     if (auto path = ::getenv("SSLKEYLOGFILE"))
       m_keyLogPath = ParamString{ZuCSpan{path}};
@@ -935,8 +937,7 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
   if (!initCipherSuites_(m_tlsCipherSuites, TLSMaxCiphers)) return false;
   m_tlsCtx.cipher_suites = m_tlsCipherSuites;
   m_tlsCtx.server_cipher_preference = 1;
-  m_tlsCtx.max_early_data_size =
-    config.enable0RTT ? config.maxEarlyData : 0;
+  m_tlsCtx.max_early_data_size = config.enable0RTT ? UINT32_MAX : 0;
   m_tlsCtx.omit_end_of_early_data = 1;
 
   static ptls_update_traffic_key_t updateTrafficKey{
@@ -957,18 +958,30 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
       .cb = &Crypto::onClientHelloCB_
     };
     m_tlsCtx.on_client_hello = &onClientHello;
-  } else if (config.caPath) {
-    m_certStore = Ztls::Backend::cert_store_new();
-    if (!m_certStore) return false;
-    bool ok = isDir_(config.caPath) ?
-      Ztls::Backend::cert_store_load_path(
-	m_certStore, config.caPath.data()) :
-      Ztls::Backend::cert_store_load_file(
-	m_certStore, config.caPath.data());
-    if (!ok) return false;
-    m_verify = Ztls::Backend::verify_cert_new(m_certStore);
-    if (!m_verify) return false;
-    m_tlsCtx.verify_certificate = Ztls::Backend::verify_cert_cb(m_verify);
+    if (config.encryptTicket) {
+      m_tlsCtx.ticket_lifetime = 86400;
+      m_tlsCtx.encrypt_ticket = config.encryptTicket;
+    }
+  } else {
+    if (m_saveSessionTicket) {
+      static ptls_save_ticket_t saveSessionTicket{
+	.cb = &Crypto::saveSessionTicketCB_
+      };
+      m_tlsCtx.save_ticket = &saveSessionTicket;
+    }
+    if (config.caPath) {
+      m_certStore = Ztls::Backend::cert_store_new();
+      if (!m_certStore) return false;
+      bool ok = isDir_(config.caPath) ?
+	Ztls::Backend::cert_store_load_path(
+	  m_certStore, config.caPath.data()) :
+	Ztls::Backend::cert_store_load_file(
+	  m_certStore, config.caPath.data());
+      if (!ok) return false;
+      m_verify = Ztls::Backend::verify_cert_new(m_certStore);
+      if (!m_verify) return false;
+      m_tlsCtx.verify_certificate = Ztls::Backend::verify_cert_cb(m_verify);
+    }
   }
 
   m_tls = ptls_new(&m_tlsCtx, m_isServer ? 1 : 0);
@@ -1070,6 +1083,13 @@ int Crypto::onClientHelloCB_(
     PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_INTERNAL_ERROR);
 }
 
+int Crypto::saveSessionTicketCB_(
+  ptls_save_ticket_t *, ptls_t *tls, ptls_iovec_t input)
+{
+  auto crypto = static_cast<Crypto *>(*ptls_get_data_ptr(tls));
+  return crypto ? crypto->saveSessionTicket_(input) : 0;
+}
+
 void Crypto::keyLog_(int isEnc, PktKeyLevel::T level, ZuBSpan secret)
 {
   if (!m_keyLogPath || !m_tls || !secret) return;
@@ -1169,6 +1189,17 @@ int Crypto::onClientHello_(ptls_on_client_hello_parameters_t *params)
       m_tls, m_alpn.data(), m_alpn.length());
   }
   return PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_NO_APPLICATION_PROTOCOL);
+}
+
+int Crypto::saveSessionTicket_(ptls_iovec_t input)
+{
+  if (m_saveSessionTicket) {
+    ZuBSpan ticket;
+    if (input.base && input.len <= UINT_MAX)
+      ticket = ZuBSpan{input.base, unsigned(input.len)};
+    m_saveSessionTicket(m_saveSessionTicketArg, ticket);
+  }
+  return 0;
 }
 
 int Crypto::collectExtensionCB_(

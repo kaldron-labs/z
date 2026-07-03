@@ -31,6 +31,7 @@ namespace Ztls { namespace Backend {
 struct PKey;
 struct CertStore;
 struct SignCert;
+struct TicketKey;
 struct VerifyCert;
 } }
 
@@ -254,8 +255,10 @@ struct CryptoConfig {
   ZuCSpan		serverName;
   const TransportParams	*localTransportParams = nullptr;
   ZquicLogger::Trace	*qlogTrace = nullptr;
+  ptls_encrypt_ticket_t	*encryptTicket = nullptr;
+  void			*saveSessionTicketArg = nullptr;
+  void			(*saveSessionTicket)(void *, ZuBSpan) = nullptr;
   ZuBSpan		sessionTicket;
-  uint32_t		maxEarlyData = 0;
 };
 
 ZuDerive(TLSTransportParams,
@@ -378,11 +381,14 @@ private:
   void keyLog_(int, PktKeyLevel::T, ZuBSpan);
   void syncEarlyDataState_();
   int onClientHello_(ptls_on_client_hello_parameters_t *);
+  int saveSessionTicket_(ptls_iovec_t);
   int collectedExtensions_(ptls_raw_extension_t *);
   static int updateTrafficKeyCB_(
     ptls_update_traffic_key_t *, ptls_t *, int, size_t, const void *);
   static int onClientHelloCB_(
     ptls_on_client_hello_t *, ptls_t *, ptls_on_client_hello_parameters_t *);
+  static int saveSessionTicketCB_(
+    ptls_save_ticket_t *, ptls_t *, ptls_iovec_t);
   static int collectExtensionCB_(
     ptls_t *, ptls_handshake_properties_t *, uint16_t);
   static int collectedExtensionsCB_(
@@ -405,6 +411,8 @@ private:
   Host				m_serverName;
   ParamString			m_keyLogPath;
   ZquicLogger::Trace		*m_qlogTrace = nullptr;
+  void				*m_saveSessionTicketArg = nullptr;
+  void				(*m_saveSessionTicket)(void *, ZuBSpan) = nullptr;
   InitialKeyMaterial 		m_initialKeys;
   CryptoDiag			m_diag;
   TransportParams 		m_localTransportParams;

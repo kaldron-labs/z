@@ -528,7 +528,11 @@ private:
       .caPath = app()->caPath(),
       .keyLogPath = app()->keyLogPath(),
       .serverName = m_server,
-      .qlogTrace = &app()->qlogTrace()
+      .qlogTrace = &app()->qlogTrace(),
+      .saveSessionTicketArg = impl(),
+      .saveSessionTicket = [](void *arg, ZuBSpan ticket) {
+	static_cast<Impl *>(arg)->saveEarlyDataSession_(ticket);
+      }
     };
     ZuBSpan sessionTicket;
     ZuBSpan appParams;
@@ -544,6 +548,16 @@ private:
 	Base::clearZeroRTTParams_();
     }
     return Base::initTLS_(config);
+  }
+
+  void saveEarlyDataSession_(ZuBSpan ticket) {
+    if (!ticket) {
+      app()->saveEarlyDataSession(impl(), {}, {});
+      return;
+    }
+    if (!Base::crypto_().peerTransportParamsReceived()) return;
+    app()->saveEarlyDataSession(
+      impl(), ticket, Base::crypto_().peerTransportParams());
   }
 
   bool startHandshake_() {
