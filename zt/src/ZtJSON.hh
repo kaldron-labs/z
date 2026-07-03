@@ -67,6 +67,7 @@ template <ZuString ID_> struct ID { }; // defaults to field ID
 template <uint8_t I> struct BytesFmt { };
 template <typename Fmt> struct NumberFmt { using T = Fmt; };
 template <typename Fmt> struct TimeFmt { using T = Fmt; };
+template <bool> struct Optional { };
 
 // shorthand
 using Base64 = BytesFmt<ZtJSON::Base64>;
@@ -88,6 +89,9 @@ template <uint8_t Scale, int8_t NDP>
 using CSV = TimeFmt<ZtJSON::TimeFmt<ZtJSON::CSV, Scale, NDP>>;
 template <uint8_t Scale, int8_t NDP>
 using Unix = TimeFmt<ZtJSON::TimeFmt<ZtJSON::Unix, Scale, NDP>>;
+
+// shorthand for Optional<true>
+using Opt = Optional<true>;
 
 // GetID<Field> - ZuStringT
 // - gets the JSON-specific ID for the field
@@ -147,6 +151,20 @@ template <typename Props>
 struct GetTimeFmt_<Props, true> { using T = GetType<Props, TimeFmt>; };
 template <typename Props>
 using GetTimeFmt = typename GetTimeFmt_<Props>::T;
+
+// GetOptional
+template <
+  typename Props,
+  bool = HasValue<Props, Optional>{}>
+struct GetOptional_ {
+  using T = ZuFalse; // default
+};
+template <typename Props>
+struct GetOptional_<Props, true> {
+  using T = GetValue<Props, Optional>;
+};
+template <typename Props>
+using GetOptional = typename GetOptional_<Props>::T;
 
 } // ZuFieldProp::JSON
 
@@ -392,7 +410,7 @@ using As = decltype(ZtJSON_Fmt(ZuDeclVal<O *>()));
 template <
   typename Facet, template <typename> class Filter, typename Field,
   typename S, typename O>
-void saveField(S &s, const O &o);
+bool saveField(S &s, const O &o, bool first);
 
 // save an individual value
 template <
@@ -429,10 +447,9 @@ struct AsObject {
     static void save(S &s, const O &o) {
       using Fields = ZuTypeGrep<Filter, AllFields>;
       s << '{';
-      ZuUnroll::all<Fields>([&s, &o]<typename Field>() {
-	enum { I = ZuTypeIndex<Field, Fields>{} };
-	if constexpr (I) s << ',';
-	saveField<Facet, Filter, Field>(s, o);
+      bool first = true;
+      ZuUnroll::all<Fields>([&s, &o, &first]<typename Field>() {
+	if (saveField<Facet, Filter, Field>(s, o, first)) first = false;
       });
       s << '}';
     }
@@ -736,7 +753,8 @@ inline void saveValue_(S &s, const T_ &v_)
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
     auto v = B{v_};
-    if (!*v) { s << "null"; return; }
+    if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
+      if (!*v) { s << "null"; return; }
     if constexpr (
 	Fmt::String ||
 	bool(ZuFieldProp::HasEnum<Props>{}) ||
@@ -750,7 +768,8 @@ inline void saveValue_(S &s, const T_ &v_)
   } else if constexpr (TypeCode == ZtFieldTC::Float) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     double v = v_;
-    if (ZuUnlikely(ZuCmp<double>::null(v))) { s << "null"; return; }
+    if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
+      if (ZuCmp<double>::null(v)) { s << "null"; return; }
     if constexpr (Fmt::String) s << '"';
     bool negative = v < 0;
     if (negative) { s << '-'; v = -v; }
@@ -768,14 +787,16 @@ inline void saveValue_(S &s, const T_ &v_)
   } else if constexpr (TypeCode == ZtFieldTC::Fixed) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     ZuFixed v = v_;
-    if (ZuUnlikely(!*v)) { s << "null"; return; }
+    if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
+      if (!*v) { s << "null"; return; }
     if constexpr (Fmt::String) s << '"';
     s << v.fmt<typename Fmt::Fmt>();
     if constexpr (Fmt::String) s << '"';
   } else if constexpr (TypeCode == ZtFieldTC::Decimal) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     ZuDecimal v = v_;
-    if (ZuUnlikely(!*v)) { s << "null"; return; }
+    if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
+      if (!*v) { s << "null"; return; }
     if constexpr (Fmt::String) s << '"';
     s << v.fmt<typename Fmt::Fmt>();
     if constexpr (Fmt::String) s << '"';
@@ -785,7 +806,8 @@ inline void saveValue_(S &s, const T_ &v_)
     using Fmt = ZuFieldProp::JSON::GetTimeFmt<Props>;
     if constexpr (Fmt::Fmt == ZtJSON::Unix) {
       ZuTime v{v_};
-      if (!*v) { s << "null"; return; }
+      if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
+	if (!*v) { s << "null"; return; }
       if constexpr (Fmt::Unit == ZtJSON::Sec) {
 	s << '"' << ZuBoxed(v.sec());
 	if constexpr (Fmt::NDP)
@@ -816,18 +838,21 @@ inline void saveValue_(S &s, const T_ &v_)
       }
     } else if constexpr (Fmt::Fmt == ZtJSON::CSV) {
       ZuDateTime v{v_};
-      if (!*v) { s << "null"; return; }
+      if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
+	if (!*v) { s << "null"; return; }
       auto &fmt = ZmTLS<ZuDateTimeFmt::CSV, (int Props::*){}>();
       s << '"' << v.fmt(fmt) << '"';
     } else if constexpr (Fmt::Fmt == ZtJSON::FIX) {
       auto &fmt = ZmTLS<ZuDateTimeFmt::FIX<Fmt::NDP>, (int Props::*){}>();
       ZuDateTime v{v_};
-      if (!*v) { s << "null"; return; }
+      if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
+	if (!*v) { s << "null"; return; }
       s << '"' << v.fmt(fmt) << '"';
     } else if constexpr (Fmt::Fmt == ZtJSON::ISO) {
       auto &fmt = ZmTLS<ZuDateTimeFmt::ISO, (int Props::*){}>();
       ZuDateTime v{v_};
-      if (!*v) { s << "null"; return; }
+      if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
+	if (!*v) { s << "null"; return; }
       s << '"' << v.fmt(fmt) << '"';
     }
   } else if constexpr (TypeCode == ZtFieldTC::UDT) {
@@ -860,13 +885,53 @@ template <
   typename Facet, template <typename> class Filter,
   typename Field,
   typename S, typename O>
-inline void saveField(S &s, const O &o)
+inline bool saveField(S &s, const O &o, bool first)
 {
-  auto fieldID = ZuFieldProp::JSON::GetID<Field>{}().cspan();
-  s << '"' << fieldID << "\":";
   enum { TypeCode = Field::Type::Code };
   using Props = typename Field::Props;
-  saveValue<Facet, Filter, TypeCode, Props>(s, Field::get(o));
+  auto save = [&s, first](const auto &v) mutable -> bool {
+    auto fieldID = ZuFieldProp::JSON::GetID<Field>{}().cspan();
+    if (!first) s << ',';
+    s << '"' << fieldID << "\":";
+    saveValue<Facet, Filter, TypeCode, Props>(s, v);
+    return true;
+  };
+  if constexpr (ZuFieldProp::JSON::GetOptional<Props>{}) {
+    if constexpr (
+	TypeCode == ZtFieldTC::CString ||
+	TypeCode == ZtFieldTC::String) {
+      ZuCSpan v = Field::get(o);
+      if (!v) return false;
+      return save(v);
+    } else if constexpr (
+	TypeCode == ZtFieldTC::Bytes) {
+      ZuBSpan v = Field::get(o);
+      if (!v) return false;
+      return save(v);
+    } else if constexpr (
+	TypeCode == ZtFieldTC::Int8 ||
+	TypeCode == ZtFieldTC::Int16 ||
+	TypeCode == ZtFieldTC::Int32 ||
+	TypeCode == ZtFieldTC::Int64 ||
+	TypeCode == ZtFieldTC::Int128 ||
+	TypeCode == ZtFieldTC::UInt8 ||
+	TypeCode == ZtFieldTC::UInt16 ||
+	TypeCode == ZtFieldTC::UInt32 ||
+	TypeCode == ZtFieldTC::UInt64 ||
+	TypeCode == ZtFieldTC::UInt128 ||
+	TypeCode == ZtFieldTC::Float ||
+	TypeCode == ZtFieldTC::Fixed ||
+	TypeCode == ZtFieldTC::Decimal ||
+	TypeCode == ZtFieldTC::Time ||
+	TypeCode == ZtFieldTC::DateTime) {
+      using T = ZtFieldTC::Type<TypeCode>;
+      T v = Field::get(o);
+      if (ZuCmp<T>::null(v)) return false;
+      return save(v);
+    } else
+      return save(Field::get(o));
+  } else
+    return save(Field::get(o));
 }
 
 template <

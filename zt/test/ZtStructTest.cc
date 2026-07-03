@@ -136,6 +136,18 @@ ZtStruct(Bazz,
   (((baz), (Ctor<0>)), (UDT)),
   (((bazArray), (Ctor<1>)), (UDT)));
 
+struct OptFoo {
+  const char *head = nullptr;
+  const char *req = "";
+  const char *mid = nullptr;
+  const char *tail = "tail";
+};
+ZtStruct((OptFoo, JSON),
+  (((head),	(Ctor<0>, JSON::Opt)),	(CString)),
+  (((req),	(Ctor<1>)),		(CString)),
+  (((mid),	(Ctor<2>, JSON::Opt)),	(CString)),
+  (((tail),	(Ctor<3>)),		(CString)));
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -268,5 +280,37 @@ int main(int argc, char **argv)
       ZuCheck(foo.enum_ == Values::Normal);
     }
   }
+
+  {
+    OptFoo opt;
+    ZtString<> json;
+
+    ZtJSON::save(json, opt);
+    ZuCheck(json == "{\"req\":\"\",\"tail\":\"tail\"}");
+    {
+      auto scan = ZtJSON::scan(json);
+      ZuCheck(scan.p<0>() >= 0);
+      if (scan.p<0>() >= 0) {
+	auto in = ZtJSON::handler<OptFoo>(scan.p<1>()).ctor();
+	ZuCheck(!in.head);
+	ZuCheck(!in.req[0]);
+	ZuCheck(!in.mid);
+	ZuCheck(!strcmp(in.tail, "tail"));
+      }
+    }
+
+    json.length(0);
+    opt.head = "head";
+    opt.mid = "mid";
+    ZtJSON::save(json, opt);
+    ZuCheck(json ==
+	"{\"head\":\"head\",\"req\":\"\",\"mid\":\"mid\",\"tail\":\"tail\"}");
+
+    json.length(0);
+    opt.head = nullptr;
+    ZtJSON::save(json, opt);
+    ZuCheck(json == "{\"req\":\"\",\"mid\":\"mid\",\"tail\":\"tail\"}");
+  }
+
   return 0;
 }
