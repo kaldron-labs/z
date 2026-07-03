@@ -934,7 +934,7 @@ protected:
   template <typename Link>
   void retireLinkRoutes_(Link *) { }
   template <typename Link>
-  bool earlyDataSession(
+  bool earlyData(
     Link *, ZuBSpan &, const TransportParams *&, ZuBSpan &) {
     return false;
   }
@@ -943,7 +943,7 @@ protected:
     return !params;
   }
   template <typename Link>
-  void saveEarlyDataSession(Link *, ZuBSpan, const TransportParams &) { }
+  void saveEarlyData(Link *, ZuBSpan, const TransportParams &) { }
   template <typename Link>
   uint32_t maxEarlyData(Link *) { return 0; }
   template <typename Link>

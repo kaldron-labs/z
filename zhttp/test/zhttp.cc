@@ -1489,9 +1489,9 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   void finishH3Req(Link *, Req *, bool);
   void finishH3Req_(Link *, Req *, bool);
   void failH3Link();
-  bool earlyDataSession(
+  bool earlyData(
     Link *, ZuBSpan &, const Zquic::TransportParams *&, ZuBSpan &);
-  void saveEarlyDataSession(Link *, ZuBSpan, const Zquic::TransportParams &);
+  void saveEarlyData(Link *, ZuBSpan, const Zquic::TransportParams &);
   bool allowEarlyStream(Link *, uint64_t, bool);
 };
 
@@ -2072,7 +2072,7 @@ bool QUICClient::allowEarlyStream(Link *link, uint64_t streamID, bool fin)
     !req->done && !req->failed;
 }
 
-bool QUICClient::earlyDataSession(
+bool QUICClient::earlyData(
   Link *, ZuBSpan &ticket, const Zquic::TransportParams *&params,
   ZuBSpan &appParams)
 {
@@ -2085,7 +2085,7 @@ bool QUICClient::earlyDataSession(
   return true;
 }
 
-void QUICClient::saveEarlyDataSession(
+void QUICClient::saveEarlyData(
   Link *, ZuBSpan ticket, const Zquic::TransportParams &params)
 {
   ZmGuard<ZmLock> guard(lock);
