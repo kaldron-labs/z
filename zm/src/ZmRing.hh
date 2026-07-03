@@ -241,22 +241,20 @@ protected:
 };
 
 template <bool MR> struct Ctrl {
+  alignas(Zm::CacheLineSize)
   ZmAtomic<uint32_t>		head;
-  uint32_t			pad_1;
   ZmAtomic<uint64_t>		inCount;
   ZmAtomic<uint64_t>		inBytes;
-  char				pad_2[Zm::CacheLineSize - 24];
 
+  alignas(Zm::CacheLineSize)
   ZmAtomic<uint32_t>		tail;
-  uint32_t			pad_3;
   ZmAtomic<uint64_t>		outCount;
   ZmAtomic<uint64_t>		outBytes;
-  char				pad_4[Zm::CacheLineSize - 24];
 };
 
 template <> struct Ctrl<true> : public Ctrl<false> {
+  alignas(Zm::CacheLineSize)
   ZmAtomic<uint32_t>		rdrCount; // reader count
-  uint32_t			pad_5;
   ZmAtomic<uint64_t>		rdrMask;  // active readers
   ZmAtomic<uint64_t>		attMask;  // readers pending attach
   ZmAtomic<uint64_t>		attSeqNo; // attach/detach seqNo
