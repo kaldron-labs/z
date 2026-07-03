@@ -6,15 +6,10 @@
 
 // Z QUIC stream utilities
 
-#ifndef ZquicStreamUtil_HH
-#define ZquicStreamUtil_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
-#include <zlib/ZquicFrame.hh>
-#include <zlib/ZquicPQueue.hh>
 
 namespace Zquic {
 
@@ -250,5 +245,3 @@ private:
 };
 
 } // namespace Zquic
-
-#endif /* ZquicStreamUtil_HH */

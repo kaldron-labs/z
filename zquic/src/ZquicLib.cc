@@ -6,7 +6,7 @@
 
 // Z QUIC library
 
-#include <zlib/ZquicLib.hh>
+#include <zlib/Zquic.hh>
 
 #include "ZquicOpenSSL.hh"
 

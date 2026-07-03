@@ -6,16 +6,12 @@
 
 // Z QUIC path state
 
-#ifndef ZquicPath_HH
-#define ZquicPath_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <zlib/ZiIP.hh>
 
-#include <zlib/ZquicBuf.hh>
 
 namespace Zquic {
 
@@ -287,5 +283,3 @@ private:
 };
 
 } // namespace Zquic
-
-#endif /* ZquicPath_HH */

@@ -6,15 +6,8 @@
 
 // Z QUIC link API implementation
 
-#ifndef ZquicLink_HH
-#define ZquicLink_HH
-
 #ifndef Zquic_HH
-#include <zlib/Zquic.hh>
-#endif
-
-#ifndef ZquicStream_HH
-#include <zlib/ZquicStream.hh>
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 namespace Zquic {
@@ -4575,6 +4568,21 @@ protected:
     auto iter = m_streams->iter();
     while (auto node = iter()) node->data().earlyData(false);
     app()->earlyDataAccepted(impl());
+    ZquicLOG(app()->qlogTrace(), ([
+      isServer = m_isServer,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      if (!isServer) return;
+      SecEvent event{
+	.linkInfo = linkInfo
+      ,
+	.kind = SecKind::TLS,
+	.packetSpace = PktNumSpace::AppData,
+	.trigger = SecTrigger::Received,
+	.reason = SecReason::ZeroRTT,
+	.success = true};
+      o.logSecEvent(EventName::ZeroRTTAccept, event, time);
+    }));
     return true;
   }
 
@@ -4589,6 +4597,21 @@ protected:
     m_txEarlyData.state = LinkEarlyState::Accepted;
     m_txEarlyProt.clear();
     app()->earlyDataAccepted(impl());
+    ZquicLOG(app()->qlogTrace(), ([
+      isServer = m_isServer,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      if (isServer) return;
+      SecEvent event{
+	.linkInfo = linkInfo
+      ,
+	.kind = SecKind::TLS,
+	.packetSpace = PktNumSpace::AppData,
+	.trigger = SecTrigger::Received,
+	.reason = SecReason::ZeroRTT,
+	.success = true};
+      o.logSecEvent(EventName::ZeroRTTAccept, event, time);
+    }));
     return true;
   }
 
@@ -7809,5 +7832,3 @@ private:
 };
 
 } // namespace Zquic
-
-#endif /* ZquicLink_HH */

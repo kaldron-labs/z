@@ -8,7 +8,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicSched.hh>
 
 using namespace ZuTestUtil;
 

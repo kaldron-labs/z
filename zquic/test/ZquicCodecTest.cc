@@ -8,8 +8,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicFrame.hh>
-#include <zlib/ZquicTransport.hh>
 
 using namespace ZuTestUtil;
 

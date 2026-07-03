@@ -5,8 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZquicPQueue.hh>
-#include <zlib/ZquicRecovery.hh>
+#include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
 

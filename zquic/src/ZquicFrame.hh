@@ -6,17 +6,13 @@
 
 // Z QUIC frame codec
 
-#ifndef ZquicFrame_HH
-#define ZquicFrame_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
 
-#include <zlib/ZquicPacket.hh>
 
 namespace Zquic {
 
@@ -112,5 +108,3 @@ struct FrameCodec {
 };
 
 } // namespace Zquic
-
-#endif /* ZquicFrame_HH */

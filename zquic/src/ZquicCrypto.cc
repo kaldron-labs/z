@@ -4,8 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZquicCrypto.hh>
-#include <zlib/ZquicLog.hh>
+#include <zlib/Zquic.hh>
 
 #include "ZquicOpenSSL.hh"
 

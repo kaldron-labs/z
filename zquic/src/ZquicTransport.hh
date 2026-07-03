@@ -6,14 +6,10 @@
 
 // Z QUIC transport
 
-#ifndef ZquicTransport_HH
-#define ZquicTransport_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
-#include <zlib/ZquicPacket.hh>
 
 namespace Zquic {
 
@@ -48,5 +44,3 @@ ZeroRTTReason::T validateZeroRTTParams(
   const TransportParams &remembered, const TransportParams &current);
 
 } // namespace Zquic
-
-#endif /* ZquicTransport_HH */

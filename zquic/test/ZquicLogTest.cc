@@ -11,7 +11,6 @@
 #include <zlib/ZiFile.hh>
 
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicLog.hh>
 
 using namespace ZuTestUtil;
 using namespace Zquic;
@@ -227,7 +226,8 @@ static bool containsSecEvents_(ZuCSpan data)
     data.find<"zquic:token_rejected">() >= 0 &&
     data.find<"quic:version_information">() >= 0 &&
     data.find<"zquic:stateless_reset">() >= 0 &&
-    data.find<"zquic:packet_protection_failed">() >= 0;
+    data.find<"zquic:packet_protection_failed">() >= 0 &&
+    data.find<"zquic:zero_rtt_accepted">() >= 0;
 }
 
 static bool containsSecFields_(ZuCSpan data)
@@ -330,7 +330,7 @@ void testQLogFileOutput()
   }
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-test").ringSize(1<<15).
+  params.enabled(true).path(path).ringSize(1<<15).
     age(2);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "qlog init failed");
@@ -437,7 +437,7 @@ void testQLogBackPressure()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-drop").ringSize(256);
+  params.enabled(true).path(path).ringSize(256);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "qlog drop init failed");
   ZquicLogger::start();
@@ -469,7 +469,7 @@ void testQLogAppTrace()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-app").ringSize(1<<15);
+  params.enabled(true).path(path).ringSize(1<<15);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Client),
     "app trace qlog init failed");
@@ -535,9 +535,9 @@ void testQLogMultiTraceGroups()
   };
 
   ZquicLogParams params1;
-  params1.enabled(true).path(path1).thread("zquic-qlog-multi").ringSize(1<<15);
+  params1.enabled(true).path(path1).ringSize(1<<15);
   ZquicLogParams params2;
-  params2.enabled(true).path(path2).thread("zquic-qlog-multi").ringSize(1<<15);
+  params2.enabled(true).path(path2).ringSize(1<<15);
   ZquicLogger::Trace trace1;
   ZquicLogger::Trace trace2;
   ZuCHECK(ZquicLogger::init(trace1, params1, Zquic::Vantage::Client),
@@ -601,7 +601,7 @@ void testQLogTypedTransportEvents()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-typed").ringSize(1<<15);
+  params.enabled(true).path(path).ringSize(1<<15);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "typed qlog init failed");
   ZquicLogger::start();
@@ -850,7 +850,7 @@ void testQLogTypedRecoveryEvents()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-recovery").ringSize(1<<18);
+  params.enabled(true).path(path).ringSize(1<<18);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "recovery qlog init failed");
   ZquicLogger::start();
@@ -1040,7 +1040,7 @@ void testQLogTypedSecEvents()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-security").ringSize(1<<15);
+  params.enabled(true).path(path).ringSize(1<<15);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "security qlog init failed");
   Zquic::CxnID odcid{"QLOG"};
@@ -1060,6 +1060,17 @@ void testQLogTypedSecEvents()
     .reason = SecReason::KeyPhase
   };
   ZquicLogger::keyUpdated(trace, ZuMv(key));
+
+  SecEvent earlyKey{
+    .linkInfo = linkInfo,
+    .kind = SecKind::KeyUpdated,
+    .packetSpace = PktNumSpace::AppData,
+    .keyLevel = PktKeyLevel::ZeroRTT,
+    .keyType = SecKeyType::TX,
+    .trigger = SecTrigger::HSComplete,
+    .reason = SecReason::ZeroRTT
+  };
+  ZquicLogger::keyUpdated(trace, ZuMv(earlyKey));
 
   SecEvent retired{
     .linkInfo = linkInfo,
@@ -1166,9 +1177,19 @@ void testQLogTypedSecEvents()
   ZquicLogger::secEvent(trace,
     EventName::PktProtectFail, ZuMv(protection));
 
+  ZquicLogger::secEvent(trace, EventName::ZeroRTTAccept,
+    SecEvent{
+      .kind = SecKind::TLS,
+      .packetSpace = PktNumSpace::AppData,
+      .trigger = SecTrigger::Received,
+      .reason = SecReason::ZeroRTT,
+      .success = true
+    });
+
   ZquicLogger::secEvent(trace, EventName::ZeroRTTReject,
     SecEvent{
       .kind = SecKind::TLS,
+      .packetSpace = PktNumSpace::AppData,
       .trigger = SecTrigger::Received,
       .reason = SecReason::ZeroRTT,
       .success = false
@@ -1179,13 +1200,13 @@ void testQLogTypedSecEvents()
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
 
-  ZuCHECK(diag.recordsEnqueued >= 14, "security qlog enqueue mismatch");
-  ZuCHECK(diag.recordsWritten >= 15, "security qlog write mismatch");
+  ZuCHECK(diag.recordsEnqueued >= 16, "security qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 17, "security qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "security qlog writer failure");
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "security qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 15, "security qlog JSON-SEQ parse failed");
+  ZuCHECK(parseJSONSeq_(data) >= 17, "security qlog JSON-SEQ parse failed");
   ZuCHECK(containsSecEvents_(data), "security event coverage missing");
   ZuCHECK(containsSecFields_(data), "security fields missing");
   ZuCHECK(data.find<"\"name\":\"quic:key_updated\",\"data\":{\"key_type\":"
@@ -1197,6 +1218,12 @@ void testQLogTypedSecEvents()
   ZuCHECK(data.find<"\"name\":\"quic:key_updated\","
     "\"data\":{\"kind\"">() < 0,
     "generic security fields leaked into key_updated");
+  ZuCHECK(data.find<"\"name\":\"quic:key_updated\",\"data\":{\"key_type\":"
+    "\"client_0rtt_secret\",\"trigger\":\"tls\"}">() >= 0,
+    "0-RTT key update fields missing");
+  ZuCHECK(data.find<"\"name\":\"quic:key_updated\",\"data\":{\"key_type\":"
+    "\"client_0rtt_secret\",\"key_phase\"">() < 0,
+    "0-RTT key update emitted key_phase");
   ZuCHECK(data.find<"\"name\":\"quic:key_discarded\","
     "\"data\":{\"kind\"">() < 0,
     "generic security fields leaked into key_discarded");
@@ -1239,8 +1266,15 @@ void testQLogTypedSecEvents()
 	    "stateless reset qlog reason missing");
 	  ZuCHECK(data.find<"invalid_key_phase">() >= 0,
 	    "packet protection qlog reason missing");
+	  ZuCHECK(data.find<"\"name\":\"zquic:zero_rtt_accepted\","
+	    "\"data\":{\"kind\":\"tls\","
+	    "\"packet_number_space\":\"application_data\","
+	    "\"key_type\":\"\",\"trigger\":\"received\",\"alpn\":\"\","
+	    "\"reason\":\"0rtt\",\"value\":0,\"success\":true}">() >= 0,
+	    "0-RTT acceptance qlog event missing");
 	  ZuCHECK(data.find<"\"name\":\"zquic:zero_rtt_rejected\","
-	    "\"data\":{\"kind\":\"tls\",\"packet_number_space\":\"initial\","
+	    "\"data\":{\"kind\":\"tls\","
+	    "\"packet_number_space\":\"application_data\","
 	    "\"key_type\":\"\",\"trigger\":\"received\",\"alpn\":\"\","
 	    "\"reason\":\"0rtt\",\"value\":0,\"success\":false}">() >= 0,
 	    "0-RTT rejection qlog event missing");
@@ -1259,7 +1293,7 @@ void testQLogTypedPathCIDEvents()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-path").ringSize(1<<15);
+  params.enabled(true).path(path).ringSize(1<<15);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "path qlog init failed");
   ZquicLogger::start();
@@ -1360,7 +1394,7 @@ void testQLogTypedStreamEvents()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-stream").ringSize(1<<15);
+  params.enabled(true).path(path).ringSize(1<<15);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "stream qlog init failed");
   ZquicLogger::start();
@@ -1453,7 +1487,7 @@ void testQLogTypedCloseEvents()
   ZiFile::remove(path);
 
   ZquicLogParams params;
-  params.enabled(true).path(path).thread("zquic-qlog-close").ringSize(1<<15);
+  params.enabled(true).path(path).ringSize(1<<15);
   ZquicLogger::Trace trace;
   ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "close qlog init failed");
   ZquicLogger::start();

@@ -5,10 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZquicFrame.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicSched.hh>
-#include <zlib/ZquicStream.hh>
 
 using namespace ZuTestUtil;
 

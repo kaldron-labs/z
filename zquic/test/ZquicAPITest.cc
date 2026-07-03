@@ -9,10 +9,10 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicLog.hh>
 
 using namespace ZuTestUtil;
 
@@ -46,6 +46,13 @@ static ZtString<> readFile_(const Zi::Path &path)
 static void removeTestLog_(const Zi::Path &path)
 {
   if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(path);
+}
+
+static void closeQLog_(ZquicLogger::Trace &trace)
+{
+  ZmBlock<>{}([&trace](auto wake) {
+    ZquicLogger::close(trace, ZuMv(wake));
+  });
 }
 
 struct TestLink;
@@ -527,7 +534,7 @@ void testStatelessResetDetection()
 	Zi::Path qlogPath = testPath_("ZquicAPIStatelessReset.sqlog");
 	ZiFile::remove(qlogPath);
 	ZquicLogParams params;
-	params.enabled(true).path(qlogPath).thread("zquic-qlog-api-reset");
+	params.enabled(true).path(qlogPath);
 #endif
 
 	EngineFixture fixture;
@@ -562,6 +569,7 @@ void testStatelessResetDetection()
     "stateless reset callback did not fire");
 
 #ifdef Zquic_DEBUG
+	closeQLog_(fixture.app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(fixture.app.qlogTrace());

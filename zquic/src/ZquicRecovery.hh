@@ -6,11 +6,8 @@
 
 // Z QUIC recovery utilities
 
-#ifndef ZquicRecovery_HH
-#define ZquicRecovery_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <string.h>
@@ -19,7 +16,6 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmQueue.hh>
 
-#include <zlib/ZquicSched.hh>
 
 namespace Zquic {
 
@@ -1541,5 +1537,3 @@ private:
 };
 
 } // namespace Zquic
-
-#endif /* ZquicRecovery_HH */

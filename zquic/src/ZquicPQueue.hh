@@ -6,18 +6,14 @@
 
 // Z QUIC priority-queue item contracts
 
-#ifndef ZquicPQueue_HH
-#define ZquicPQueue_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <zlib/ZmPQueue.hh>
 
 #include <zlib/ZtArray.hh>
 
-#include <zlib/ZquicBuf.hh>
 
 namespace Zquic {
 
@@ -413,5 +409,3 @@ inline bool queueRxSpans(
 }
 
 } // namespace Zquic
-
-#endif /* ZquicPQueue_HH */

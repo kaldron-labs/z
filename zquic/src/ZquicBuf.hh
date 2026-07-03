@@ -6,11 +6,8 @@
 
 // Z QUIC buffer ownership
 
-#ifndef ZquicBuf_HH
-#define ZquicBuf_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <string.h>
@@ -23,11 +20,8 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
 
-#include <zlib/ZquicTypes.hh>
 
 namespace Zquic_ {
-
-using namespace Zquic;
 
 ZuDerive(IOQueue,
   // intrusive base only; Zi::IOBufAlloc supplies the role heap.
@@ -109,5 +103,3 @@ inline void assertStreamCapacity(const ZiIOBuf *buf, unsigned required)
 }
 
 } // namespace Zquic
-
-#endif /* ZquicBuf_HH */

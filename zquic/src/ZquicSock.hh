@@ -6,17 +6,12 @@
 
 // Z QUIC socket controls
 
-#ifndef ZquicSock_HH
-#define ZquicSock_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZquicBuf.hh>
-#include <zlib/ZquicPath.hh>
 
 namespace Zquic {
 
@@ -92,5 +87,3 @@ struct Sock {
 };
 
 } // namespace Zquic
-
-#endif /* ZquicSock_HH */
