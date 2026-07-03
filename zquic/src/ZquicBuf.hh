@@ -30,7 +30,7 @@ namespace Zquic_ {
 using namespace Zquic;
 
 ZuDerive(IOQueue,
-  // Intrusive base only; Zi::IOBufAlloc supplies the role heap.
+  // intrusive base only; Zi::IOBufAlloc supplies the role heap.
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
 
 using RxStream = ZiRxStream<IOQueue>;

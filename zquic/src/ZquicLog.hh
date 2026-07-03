@@ -84,7 +84,7 @@ enum {
   VersionMax = 8
 };
 
-ZuDerive(VersionArray, (ZuArray<uint32_t, VersionMax>));
+ZuDerive(Versions, (ZuArray<uint32_t, VersionMax>));
 
 struct QAckRange {
   uint64_t	first = 0;
@@ -100,8 +100,8 @@ ZuDerive(QAckRanges, (ZuArray<QAckRange, AckRangeMax>));
 
 struct DgramEvent {
   uint64_t		size = 0;
-  Zquic::EcnMark::T	ecn = Zquic::EcnMark::N;
-  Zquic::LinkInfo	linkInfo;
+  EcnMark::T		ecn = EcnMark::N;
+  LinkInfo		linkInfo;
 };
 
 struct StreamType {
@@ -110,7 +110,7 @@ struct StreamType {
 };
 
 struct FrameEvent {
-  Zquic::FrameType::T	type = Zquic::FrameType::Unknown;
+  FrameType::T		type = FrameType::Unknown;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
   uint64_t		length = 0;
@@ -123,8 +123,8 @@ struct FrameEvent {
   uint64_t		ce = 0;
   QAckRanges		ackRanges;
   StreamType::T		streamType = StreamType::Duplex;
-  Zquic::CxnID		cxnID;
-  Zquic::ResetToken	resetToken;
+  CxnID			cxnID;
+  ResetToken		resetToken;
   uint8_t		rangeCount = 0;
   bool			fin = false;
 
@@ -135,12 +135,6 @@ struct FrameEvent {
 };
 
 struct PktEvent {
-	Zquic::PktType::T packetType = Zquic::PktType::Initial;
-	Zquic::PktNumSpace::T packetSpace = Zquic::PktNumSpace::Initial;
-	uint64_t	packetNumber = 0;
-	uint64_t	packetSize = 0;
-	uint64_t	payloadSize = 0;
-	Zquic::EcnMark::T ecn = Zquic::EcnMark::N;
   struct Reason {
     ZtEnum(Reason, int8_t,
       None, Coalescing, ParseLong, PacketLength, PrepareLong,
@@ -153,27 +147,37 @@ struct PktEvent {
       "protection", "duplicate", "parse_short", "invalid_key_phase",
       "anti_amplification", "probe_admission", "app_send");
   };
-  Reason::T	reason = Reason::None;
-  uint64_t	bytesInFlight = 0;
-  uint8_t	frameCount = 0;
-  bool		framesTruncated = false;
-  ZuArray<FrameEvent, FrameMax> frames;
-  bool		ackEliciting = false;
-  Zquic::LinkInfo linkInfo;
+  using Frames = ZuArray<FrameEvent, FrameMax>;
+
+  PktType::T		packetType = PktType::Initial;
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  uint64_t		packetNumber = 0;
+  uint64_t		packetSize = 0;
+  uint64_t		payloadSize = 0;
+  EcnMark::T		ecn = EcnMark::N;
+  Reason::T		reason = Reason::None;
+  uint64_t		bytesInFlight = 0;
+  uint8_t		frameCount = 0;
+  bool			framesTruncated = false;
+  Frames		frames;
+  bool			ackEliciting = false;
+  LinkInfo		linkInfo;
 };
 
 struct AckEvent {
-	Zquic::PktNumSpace::T packetSpace = Zquic::PktNumSpace::Initial;
-  uint64_t	largestAcked = 0;
-  uint64_t	ackDelayUS = 0;
-  uint64_t	ackedBytes = 0;
-  uint64_t	lostBytes = 0;
-  uint8_t	rangeCount = 0;
-  uint8_t	ackedFrames = 0;
-  uint8_t	lostFrames = 0;
-  bool		packetNumbersTruncated = false;
-  ZuArray<uint64_t, AckPacketMax> packetNumbers;
-  Zquic::LinkInfo linkInfo;
+  using PacketNumbers = ZuArray<uint64_t, AckPacketMax>;
+
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  uint64_t		largestAcked = 0;
+  uint64_t		ackDelayUS = 0;
+  uint64_t		ackedBytes = 0;
+  uint64_t		lostBytes = 0;
+  uint8_t		rangeCount = 0;
+  uint8_t		ackedFrames = 0;
+  uint8_t		lostFrames = 0;
+  bool			packetNumbersTruncated = false;
+  PacketNumbers		packetNumbers;
+  LinkInfo		linkInfo;
 };
 
 struct RecKind {
@@ -194,23 +198,25 @@ struct RecReason {
 };
 
 struct RecEvent {
-	RecKind::T kind = RecKind::Aggregate;
-	Zquic::PktNumSpace::T packetSpace = Zquic::PktNumSpace::Initial;
-  RecReason::T reason = RecReason::None;
-  uint64_t	value = 0;
-  uint64_t	packetNumber = 0;
-  uint64_t	bytes = 0;
-  uint64_t	deadlineUS = 0;
-  uint64_t	latestRTTUS = 0;
-  uint64_t	smoothedRTTUS = 0;
-  uint64_t	rttVarianceUS = 0;
-  uint64_t	minRTTUS = 0;
-  uint64_t	cwnd = 0;
-  uint64_t	ssthresh = 0;
-  uint64_t	bytesInFlight = 0;
-  uint8_t	frameCount = 0;
-  ZuArray<FrameEvent, FrameMax> frames;
-  Zquic::LinkInfo linkInfo;
+  using Frames = ZuArray<FrameEvent, FrameMax>;
+
+  RecKind::T		kind = RecKind::Aggregate;
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  RecReason::T		reason = RecReason::None;
+  uint64_t		value = 0;
+  uint64_t		packetNumber = 0;
+  uint64_t		bytes = 0;
+  uint64_t		deadlineUS = 0;
+  uint64_t		latestRTTUS = 0;
+  uint64_t		smoothedRTTUS = 0;
+  uint64_t		rttVarianceUS = 0;
+  uint64_t		minRTTUS = 0;
+  uint64_t		cwnd = 0;
+  uint64_t		ssthresh = 0;
+  uint64_t		bytesInFlight = 0;
+  uint8_t		frameCount = 0;
+  Frames		frames;
+  LinkInfo		linkInfo;
 };
 
 struct ECNState {
@@ -228,18 +234,18 @@ struct ECNReason {
 };
 
 struct ECNEvent {
-	Zquic::PktNumSpace::T packetSpace = Zquic::PktNumSpace::Initial;
-  ECNState::T state = ECNState::Capable;
-  ECNReason::T reason = ECNReason::AckECN;
-  uint64_t	ect0 = 0;
-  uint64_t	ect1 = 0;
-  uint64_t	ce = 0;
-  uint64_t	previousECT0 = 0;
-  uint64_t	previousECT1 = 0;
-  uint64_t	previousCE = 0;
-  uint64_t	largestAcked = 0;
-  bool		disabled = false;
-  Zquic::LinkInfo linkInfo;
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  ECNState::T		state = ECNState::Capable;
+  ECNReason::T		reason = ECNReason::AckECN;
+  uint64_t		ect0 = 0;
+  uint64_t		ect1 = 0;
+  uint64_t		ce = 0;
+  uint64_t		previousECT0 = 0;
+  uint64_t		previousECT1 = 0;
+  uint64_t		previousCE = 0;
+  uint64_t		largestAcked = 0;
+  bool			disabled = false;
+  LinkInfo		linkInfo;
 };
 
 struct SecKind {
@@ -305,45 +311,45 @@ struct SecReason {
 };
 
 struct SecEvent {
-	SecKind::T kind = SecKind::TLS;
-	Zquic::PktNumSpace::T packetSpace = Zquic::PktNumSpace::Initial;
-  SecKeyType::T keyType = SecKeyType::None;
-  SecTrigger::T trigger = SecTrigger::None;
-  ZeString	alpn;
-  SecReason::T reason = SecReason::None;
-  uint64_t	value = 0;
-  bool		success = true;
-  Zquic::LinkInfo linkInfo;
+  SecKind::T		kind = SecKind::TLS;
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  SecKeyType::T		keyType = SecKeyType::None;
+  SecTrigger::T		trigger = SecTrigger::None;
+  ZeString		alpn;
+  SecReason::T		reason = SecReason::None;
+  uint64_t		value = 0;
+  bool			success = true;
+  LinkInfo		linkInfo;
 };
 
 struct ParamsEvent {
-  Initiator::T initiator = Initiator::Local;
-  Zquic::CxnID	origDCID;
-  Zquic::CxnID	initialSCID;
-  Zquic::CxnID	retrySCID;
-  Zquic::ResetToken statelessResetToken;
-  uint64_t	maxIdleTimeout = 0;
-  uint64_t	maxUDPPayloadSize = 0;
-  uint64_t	ackDelayExponent = 0;
-  uint64_t	maxAckDelay = 0;
-  uint64_t	activeCxnIDLimit = 0;
-  uint64_t	initialMaxData = 0;
-  uint64_t	initialMaxStreamDataBidiLocal = 0;
-  uint64_t	initialMaxStreamDataBidiRemote = 0;
-  uint64_t	initialMaxStreamDataUni = 0;
-  uint64_t	initialMaxStreamsBidi = 0;
-  uint64_t	initialMaxStreamsUni = 0;
-  bool		statelessResetTokenPresent = false;
-  bool		disableActiveMigration = false;
-  Zquic::LinkInfo linkInfo;
+  Initiator::T		initiator = Initiator::Local;
+  CxnID			origDCID;
+  CxnID			initialSCID;
+  CxnID			retrySCID;
+  ResetToken		statelessResetToken;
+  uint64_t		maxIdleTimeout = 0;
+  uint64_t		maxUDPPayloadSize = 0;
+  uint64_t		ackDelayExponent = 0;
+  uint64_t		maxAckDelay = 0;
+  uint64_t		activeCxnIDLimit = 0;
+  uint64_t		initialMaxData = 0;
+  uint64_t		initialMaxStreamDataBidiLocal = 0;
+  uint64_t		initialMaxStreamDataBidiRemote = 0;
+  uint64_t		initialMaxStreamDataUni = 0;
+  uint64_t		initialMaxStreamsBidi = 0;
+  uint64_t		initialMaxStreamsUni = 0;
+  bool			statelessResetTokenPresent = false;
+  bool			disableActiveMigration = false;
+  LinkInfo		linkInfo;
 };
 
 struct VersionEvent {
-  VersionArray serverVersions;
-  VersionArray clientVersions;
-  uint32_t	chosenVersion = 0;
-  bool		chosenVersionPresent = false;
-  Zquic::LinkInfo linkInfo;
+  Versions		serverVersions;
+  Versions		clientVersions;
+  uint32_t		chosenVersion = 0;
+  bool			chosenVersionPresent = false;
+  LinkInfo		linkInfo;
 };
 
 struct PathKind {
@@ -376,16 +382,16 @@ struct PathReason {
 };
 
 struct PathEvent {
-  PathKind::T kind = PathKind::Path;
-  PathAction::T action = PathAction::Updated;
-  PathReason::T reason = PathReason::None;
-  uint64_t	tupleID = 0;
-  uint64_t	bytes = 0;
-  uint64_t	antiAmplification = 0;
-  uint64_t	deadlineUS = 0;
-  uint32_t	mtu = 0;
-  bool		validated = false;
-  Zquic::LinkInfo linkInfo;
+  PathKind::T		kind = PathKind::Path;
+  PathAction::T		action = PathAction::Updated;
+  PathReason::T		reason = PathReason::None;
+  uint64_t		tupleID = 0;
+  uint64_t		bytes = 0;
+  uint64_t		antiAmplification = 0;
+  uint64_t		deadlineUS = 0;
+  uint32_t		mtu = 0;
+  bool			validated = false;
+  LinkInfo		linkInfo;
 };
 
 struct CIDKind {
@@ -410,16 +416,16 @@ struct CIDReason {
 };
 
 struct CIDEvent {
-  CIDKind::T kind = CIDKind::CxnID;
-  CIDAction::T action = CIDAction::Updated;
-  CIDReason::T reason = CIDReason::None;
-  Zquic::CxnID	cxnID;
-  uint64_t	sequence = 0;
-  uint8_t	length = 0;
-  bool		local = false;
-  bool		associated = false;
-  bool		resetToken = false;
-  Zquic::LinkInfo linkInfo;
+  CIDKind::T		kind = CIDKind::CxnID;
+  CIDAction::T		action = CIDAction::Updated;
+  CIDReason::T		reason = CIDReason::None;
+  CxnID			cxnID;
+  uint64_t		sequence = 0;
+  uint8_t		length = 0;
+  bool			local = false;
+  bool			associated = false;
+  bool			resetToken = false;
+  LinkInfo		linkInfo;
 };
 
 struct StreamState {
@@ -439,17 +445,17 @@ struct StreamReason {
 };
 
 struct StreamEvent {
-  StreamType::T streamType = StreamType::Duplex;
-  StreamState::T oldState = StreamState::Idle;
-  StreamState::T newState = StreamState::Open;
-  StreamSide::T streamSide = StreamSide::Sending;
-  StreamReason::T reason = StreamReason::None;
-  uint64_t	streamID = 0;
-  uint64_t	offset = 0;
-  uint64_t	length = 0;
-  uint64_t	errorCode = 0;
-  bool		fin = false;
-  Zquic::LinkInfo linkInfo;
+  StreamType::T		streamType = StreamType::Duplex;
+  StreamState::T	oldState = StreamState::Idle;
+  StreamState::T	newState = StreamState::Open;
+  StreamSide::T		streamSide = StreamSide::Sending;
+  StreamReason::T	reason = StreamReason::None;
+  uint64_t		streamID = 0;
+  uint64_t		offset = 0;
+  uint64_t		length = 0;
+  uint64_t		errorCode = 0;
+  bool			fin = false;
+  LinkInfo		linkInfo;
 };
 
 struct StreamDataLoc {
@@ -464,13 +470,13 @@ struct StreamDataInfo {
 };
 
 struct StreamDataEvent {
-  StreamDataLoc::T from = StreamDataLoc::Transport;
-  StreamDataLoc::T to = StreamDataLoc::Application;
-  StreamDataInfo::T additionalInfo = StreamDataInfo::None;
-  uint64_t	streamID = 0;
-  uint64_t	offset = 0;
-  uint64_t	length = 0;
-  Zquic::LinkInfo linkInfo;
+  StreamDataLoc::T	from = StreamDataLoc::Transport;
+  StreamDataLoc::T	to = StreamDataLoc::Application;
+  StreamDataInfo::T	additionalInfo = StreamDataInfo::None;
+  uint64_t		streamID = 0;
+  uint64_t		offset = 0;
+  uint64_t		length = 0;
+  LinkInfo		linkInfo;
 };
 
 struct BlockedState {
@@ -489,12 +495,12 @@ struct BlockedReason {
 };
 
 struct BlockedEvent {
-  BlockedState::T oldState = BlockedState::Unblocked;
-  BlockedState::T newState = BlockedState::Blocked;
-  BlockedReason::T reason =
+  BlockedState::T	oldState = BlockedState::Unblocked;
+  BlockedState::T	newState = BlockedState::Blocked;
+  BlockedReason::T	reason =
     BlockedReason::CxnFlowCtrl;
-  uint64_t	streamID = 0;
-  Zquic::LinkInfo linkInfo;
+  uint64_t		streamID = 0;
+  LinkInfo		linkInfo;
 };
 
 struct CloseInitiator {
@@ -529,25 +535,25 @@ struct CloseError {
 };
 
 struct CloseEvent {
-	CloseInitiator::T initiator = CloseInitiator::Local;
-	CloseTrigger::T trigger = CloseTrigger::Error;
-  CloseReason::T reason = CloseReason::None;
-  CloseError::T connectionError = CloseError::None;
-  CloseError::T applicationError = CloseError::None;
-  uint64_t	errorCode = 0;
-  Zquic::LinkInfo linkInfo;
+  CloseInitiator::T	initiator = CloseInitiator::Local;
+  CloseTrigger::T	trigger = CloseTrigger::Error;
+  CloseReason::T	reason = CloseReason::None;
+  CloseError::T		connectionError = CloseError::None;
+  CloseError::T		applicationError = CloseError::None;
+  uint64_t		errorCode = 0;
+  LinkInfo		linkInfo;
 };
 
 struct CxnStateEvent {
-  Zquic::LinkState::T oldState = Zquic::LinkState::Starting;
-  Zquic::LinkState::T newState = Zquic::LinkState::Handshaking;
-  Zquic::LinkInfo linkInfo;
+  LinkState::T		oldState = LinkState::Starting;
+  LinkState::T		newState = LinkState::Handshaking;
+  LinkInfo		linkInfo;
 };
 
 struct CxnStartedEvent {
   ZiSockAddr	local;
   ZiSockAddr	remote;
-  Zquic::LinkInfo linkInfo;
+  LinkInfo	linkInfo;
 };
 
 struct EventName {

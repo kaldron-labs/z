@@ -632,32 +632,60 @@ struct SentFrameKey {
 
   bool operator !() const { return kind == SentFrameKind::None; }
   ZuOpBool
-  bool operator ==(const SentFrameKey &o) const {
+  bool equals(const SentFrameKey &o) const {
     return kind == o.kind && controlType == o.controlType &&
       streamID == o.streamID && offset == o.offset &&
       length == o.length && value == o.value && fin == o.fin;
   }
   int cmp(const SentFrameKey &o) const {
-    if (kind != o.kind) return int(kind) - int(o.kind);
-    if (controlType != o.controlType)
-      return int(controlType) - int(o.controlType);
-    if (streamID != o.streamID) return streamID < o.streamID ? -1 : 1;
-    if (offset != o.offset) return offset < o.offset ? -1 : 1;
-    if (length != o.length) return length < o.length ? -1 : 1;
-    if (value != o.value) return value < o.value ? -1 : 1;
-    if (fin != o.fin) return int(fin) - int(o.fin);
-    return 0;
+    int i;
+    if (i = ZuCompare(kind, o.kind)) return i;
+    if (i = ZuCompare(controlType, o.controlType)) return i;
+    if (i = ZuCompare(streamID, o.streamID)) return i;
+    if (i = ZuCompare(offset, o.offset)) return i;
+    if (i = ZuCompare(length, o.length)) return i;
+    if (i = ZuCompare(value, o.value)) return i;
+    return ZuCompare(fin, o.fin);
+  }
+  friend inline bool operator ==(
+    const SentFrameKey &l, const SentFrameKey &r) {
+    return l.equals(r);
+  }
+  friend inline int operator <=>(
+    const SentFrameKey &l, const SentFrameKey &r) {
+    return l.cmp(r);
   }
   uint32_t hash() const {
-    ZuHash_FNV::Value h = ZuHash_FNV::initial_();
-    h = ZuHash_FNV::hash_(h, unsigned(kind));
-    h = ZuHash_FNV::hash_(h, unsigned(controlType));
-    h = ZuHash_FNV::hash_(h, streamID);
-    h = ZuHash_FNV::hash_(h, offset);
-    h = ZuHash_FNV::hash_(h, length);
-    h = ZuHash_FNV::hash_(h, value);
-    h = ZuHash_FNV::hash_(h, unsigned(fin));
-    return uint32_t(h);
+    uint32_t h = ZuHash<unsigned>::hash(unsigned(kind));
+    switch (kind) {
+      case SentFrameKind::Stream:
+	return h ^ ZuHash<uint64_t>::hash(streamID) ^
+	  ZuHash<uint64_t>::hash(offset);
+      case SentFrameKind::Crypto:
+	return h ^ ZuHash<uint64_t>::hash(offset);
+      case SentFrameKind::Control:
+	h ^= ZuHash<unsigned>::hash(unsigned(controlType));
+	switch (controlType) {
+	  case FrameType::MaxData:
+	  case FrameType::DataBlocked:
+	    return h ^ ZuHash<uint64_t>::hash(value);
+	  case FrameType::MaxStreamData:
+	  case FrameType::MaxStreams:
+	  case FrameType::StreamDataBlocked:
+	  case FrameType::StreamsBlocked:
+	  case FrameType::StopSending:
+	    return h ^ ZuHash<uint64_t>::hash(streamID) ^
+	      ZuHash<uint64_t>::hash(value);
+	  case FrameType::ResetStream:
+	    return h ^ ZuHash<uint64_t>::hash(streamID) ^
+	      ZuHash<uint64_t>::hash(value) ^
+	      ZuHash<uint64_t>::hash(length);
+	  default:
+	    return h;
+	}
+      default:
+	return h;
+    }
   }
 
   static bool retransmittable(const SentFrameRef &ref) {
@@ -683,7 +711,7 @@ template <> struct ZuCmp<Zquic::SentFrameKey> {
   }
   static bool equals(
     const Zquic::SentFrameKey &l, const Zquic::SentFrameKey &r) {
-    return l == r;
+    return l.equals(r);
   }
   static bool null(const Zquic::SentFrameKey &key) { return !key; }
   static Zquic::SentFrameKey null() { return {}; }

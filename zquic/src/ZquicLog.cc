@@ -630,8 +630,8 @@ struct QLogALPNEvent {
 QLogEventFmt(QLogALPNEvent);
 
 struct QLogVersionData {
-  VersionArray serverVersions;
-  VersionArray clientVersions;
+  Versions	serverVersions;
+  Versions	clientVersions;
   uint32_t	chosenVersion = 0;
   bool		chosenVersionPresent = false;
 };
@@ -1874,7 +1874,7 @@ static void qlogJSONVersion_(S &s, uint32_t version)
 }
 
 template <typename S>
-static void qlogJSONVersionArray_(S &s, const VersionArray &versions)
+static void qlogJSONVersionArray_(S &s, const Versions &versions)
 {
   s << '[';
   for (unsigned i = 0, n = versions.length(); i < n; ++i) {
