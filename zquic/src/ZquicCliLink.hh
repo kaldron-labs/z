@@ -404,11 +404,11 @@ private:
 		  CloseInitiator::T(CloseInitiator::Remote) :
 	  CloseInitiator::T(CloseInitiator::Local);
 		CloseEvent event{
+		  .linkInfo = linkInfo
+		,
 		  .initiator = initiator,
 		  .trigger = CloseTrigger::Aborted,
-		  .reason = CloseReason::DrainExpired,
-		  .linkInfo = linkInfo
-		};
+		  .reason = CloseReason::DrainExpired};
 	o.logCxnClosed(event, time);
       }));
     }
@@ -427,12 +427,12 @@ private:
 	    m_closeFn = ZmFn<>{[]() { }};
 	    ZquicLOG(app()->qlogTrace(), ([linkInfo = Base::linkInfo_()](auto &o, ZuTime time) {
 	      CloseEvent event{
+		.linkInfo = linkInfo
+	      ,
 		.initiator = CloseInitiator::Local,
 		.trigger = CloseTrigger::IdleTimeout,
 		.reason = CloseReason::Idle,
-		.connectionError = CloseError::NoError,
-		.linkInfo = linkInfo
-	      };
+		.connectionError = CloseError::NoError};
       o.logCxnClosed(event, time);
     }));
     closeExpired_(false);
@@ -815,12 +815,12 @@ private:
 	      linkInfo = Base::linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      SecEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.value = tokenLength,
 		.kind = SecKind::Token,
 		.reason = SecReason::NewToken,
-		.value = tokenLength,
-		.success = true,
-		.linkInfo = linkInfo
-	      };
+		.success = true};
       event.trigger = SecTrigger::Received;
       o.logSecEvent(EventName::TokenIssued, event, time);
     }));
@@ -1037,6 +1037,9 @@ private:
 		  CloseTrigger::T(CloseTrigger::Application) :
 	  CloseTrigger::T(CloseTrigger::Error);
 	CloseEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.errorCode = errorCode,
 	  .initiator = CloseInitiator::Local,
 	  .trigger = trigger,
 	  .reason = CloseReason::LocalClose,
@@ -1044,10 +1047,7 @@ private:
 		  CloseError::T(CloseError::None) : closeError,
 		.applicationError = appClose ?
 		  CloseError::T(CloseError::Unknown) :
-		  CloseError::T(CloseError::None),
-		.errorCode = errorCode,
-		.linkInfo = linkInfo
-	      };
+		  CloseError::T(CloseError::None)};
 	o.logCxnClosed(event, time);
       }));
     }
@@ -1109,12 +1109,12 @@ private:
 		linkInfo = Base::linkInfo_()
 	      ](auto &o, ZuTime time) {
 		SecEvent event{
+		  .linkInfo = linkInfo
+		,
+		  .value = tokenLength,
 		  .kind = SecKind::Retry,
 		  .reason = SecReason::Validation,
-		  .value = tokenLength,
-		  .success = false,
-		  .linkInfo = linkInfo
-		};
+		  .success = false};
 	event.trigger = SecTrigger::Received;
 	o.logSecEvent(EventName::RetryValid, event, time);
       }));
@@ -1126,12 +1126,12 @@ private:
 	      linkInfo = Base::linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      SecEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.value = tokenLength,
 		.kind = SecKind::Retry,
 		.reason = SecReason::OK,
-		.value = tokenLength,
-		.success = true,
-		.linkInfo = linkInfo
-	      };
+		.success = true};
       event.trigger = SecTrigger::Received;
       o.logSecEvent(EventName::RetryValid, event, time);
       event.kind = SecKind::Token;
@@ -1222,6 +1222,9 @@ private:
 	](auto &o, ZuTime time) {
 	  bool appClose = type == FrameType::ApplicationClose;
 	  CloseEvent event{
+	    .linkInfo = linkInfo
+	  ,
+	    .errorCode = errorCode,
 	    .initiator = CloseInitiator::Remote,
 	    .trigger = CloseTrigger::Error,
 	    .reason = CloseReason::PeerCloseFrame,
@@ -1229,10 +1232,7 @@ private:
 	      CloseError::T(CloseError::None) : closeError,
 	    .applicationError = appClose ?
 	      CloseError::T(CloseError::Unknown) :
-	      CloseError::T(CloseError::None),
-	    .errorCode = errorCode,
-	    .linkInfo = linkInfo
-	  };
+	      CloseError::T(CloseError::None)};
 	  o.logCxnClosed(event, time);
 	}));
 	app()->txRun([link = impl()]() mutable {
@@ -1335,20 +1335,21 @@ private:
     });
   }
 
-  // Rx thread exclusive
-  Host			m_server;
-  uint16_t		m_port = 0;
-  ClientBootstrap	m_bootstrap;
-  TokenBytes		m_newToken;
-  bool			m_peerParamsValidated = false;
-  bool			m_notifyEndpointDown = true;
-
   // shared
   ZmAtomic<uint64_t>	m_udpReadyCount = 0;
   ZmAtomic<unsigned>	m_udpReady = 0;
   bool			m_closeNotify = false;
   bool			m_closePeer = false;
   ZmFn<>		m_closeFn;
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  Host			m_server;
+  ClientBootstrap	m_bootstrap;
+  TokenBytes		m_newToken;
+  uint16_t		m_port = 0;
+  bool			m_peerParamsValidated = false;
+  bool			m_notifyEndpointDown = true;
 };
 
 } // namespace Zquic

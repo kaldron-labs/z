@@ -1026,7 +1026,12 @@ private:
   App			*m_app = nullptr;
   bool			m_isServer = false;
 
+  // shared
+  ZmAtomic<uint64_t>	m_tlsGen = 0;
+  ZmAtomic<unsigned>	m_disconnecting = 0;
+
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
 
   struct AsyncJob : public ZmPolymorph {
@@ -1063,10 +1068,6 @@ private:
   AsyncJob		*m_asyncJob = nullptr;
   CxnRef		m_cxn = nullptr;	// read by Tx thread
   RxStream		m_rxStream;
-
-  // shared
-  ZmAtomic<uint64_t>	m_tlsGen = 0;
-  ZmAtomic<unsigned>	m_disconnecting = 0;
 };
 
 // client links are persistent, own the (transient) connection
@@ -1208,6 +1209,7 @@ public:
 
 private:
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
   Ticket		m_ticket;
   size_t		m_maxEarlyData = 0;
@@ -1745,6 +1747,7 @@ private:
   unsigned			m_asyncThread = 0;
 
   // Rx thread exclusive after init()
+  alignas(Zm::CacheLineSize)
   ZiEventLoop			m_eventLoop;
   bool				m_eventLoopInit = false;
   bool				m_eventLoopStarted = false;
@@ -1810,6 +1813,7 @@ protected:
 
 private:
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   Backend::PKey			*m_key = nullptr;
   Backend::SignCert		*m_sign = nullptr;
 };
@@ -1965,6 +1969,7 @@ protected:
 
 private:
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   Backend::PKey			*m_key = nullptr;
   Backend::SignCert		*m_sign = nullptr;
   Backend::TicketKey		*m_ticketKey = nullptr;

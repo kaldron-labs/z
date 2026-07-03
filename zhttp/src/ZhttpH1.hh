@@ -386,6 +386,7 @@ namespace H1 {
     }
 
     // Rx thread exclusive
+    alignas(Zm::CacheLineSize)
     int64_t	m_contentLength = -1;
     int64_t	m_chunkLength = -1;
     unsigned	m_statusCode = 0;
@@ -413,6 +414,7 @@ namespace H1 {
 
   private:
     // Tx thread exclusive
+    alignas(Zm::CacheLineSize)
     uint64_t		m_contentLength;
   };
   template <typename Lower>

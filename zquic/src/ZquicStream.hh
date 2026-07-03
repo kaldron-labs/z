@@ -216,13 +216,13 @@ public:
       ](auto &o, ZuTime time) mutable {
 	if (streamID == U64Null) return;
 	StreamDataEvent event{
-	  .from = StreamDataLoc::Transport,
-	  .to = StreamDataLoc::Application,
+	  .linkInfo = linkInfo
+	,
 	  .streamID = streamID,
 	  .offset = streamOffset,
 	  .length = length,
-	  .linkInfo = linkInfo
-	};
+	  .from = StreamDataLoc::Transport,
+	  .to = StreamDataLoc::Application};
 	o.logStreamDataMoved(event, time);
       }));
   }
@@ -616,13 +616,13 @@ private:
       ](auto &o, ZuTime time) {
 	if (streamID == U64Null) return;
 	StreamDataEvent event{
-	  .from = StreamDataLoc::Application,
-	  .to = StreamDataLoc::Transport,
+	  .linkInfo = linkInfo
+	,
 	  .streamID = streamID,
 	  .offset = streamOffset,
 	  .length = length,
-	  .linkInfo = linkInfo
-	};
+	  .from = StreamDataLoc::Application,
+	  .to = StreamDataLoc::Transport};
 	o.logStreamDataMoved(event, time);
       }));
     m_txBytes += length;
@@ -715,6 +715,7 @@ private:
   int64_t		m_id;
 
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   FlowCredit		m_rxCredit;
   uint64_t		m_rxDelivered = 0;
   bool			m_resetReceived = false;
@@ -731,6 +732,7 @@ private:
   StreamError::T	m_error = StreamError::None;
 
   // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
   uint64_t		m_txBytes = 0;
   uint64_t		m_txBufferedBytes = 0;
   FlowCredit		m_txCredit;
