@@ -237,11 +237,11 @@ public:
 	CloseInitiator::T(CloseInitiator::Remote) :
 	CloseInitiator::T(CloseInitiator::Local);
 	      CloseEvent event{
+		.linkInfo = linkInfo
+	      ,
 		.initiator = initiator,
 		.trigger = CloseTrigger::Aborted,
-		.reason = CloseReason::DrainExpired,
-		.linkInfo = linkInfo
-	      };
+		.reason = CloseReason::DrainExpired};
       o.logCxnClosed(event, time);
     }));
     Base::disconnect(peer);
@@ -253,12 +253,12 @@ public:
 	    m_closePeer = false;
 	    ZquicLOG(app()->qlogTrace(), ([linkInfo = Base::linkInfo_()](auto &o, ZuTime time) {
 	      CloseEvent event{
+		.linkInfo = linkInfo
+	      ,
 		.initiator = CloseInitiator::Local,
 		.trigger = CloseTrigger::IdleTimeout,
 		.reason = CloseReason::Idle,
-		.connectionError = CloseError::NoError,
-		.linkInfo = linkInfo
-	      };
+		.connectionError = CloseError::NoError};
       o.logCxnClosed(event, time);
     }));
     Base::disconnect(false);
@@ -742,6 +742,9 @@ private:
 	  CloseTrigger::T(CloseTrigger::Application) :
 	  CloseTrigger::T(CloseTrigger::Error);
 	CloseEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.errorCode = errorCode,
 	  .initiator = CloseInitiator::Local,
 	  .trigger = trigger,
 	  .reason = CloseReason::LocalClose,
@@ -749,10 +752,7 @@ private:
 		  CloseError::T(CloseError::None) : closeError,
 		.applicationError = appClose ?
 		  CloseError::T(CloseError::Unknown) :
-		  CloseError::T(CloseError::None),
-		.errorCode = errorCode,
-		.linkInfo = linkInfo
-	      };
+		  CloseError::T(CloseError::None)};
 	o.logCxnClosed(event, time);
       }));
     }
@@ -814,12 +814,12 @@ private:
 		linkInfo = Base::linkInfo_()
 	      ](auto &o, ZuTime time) {
 		SecEvent event{
+		  .linkInfo = linkInfo
+		,
+		  .value = tokenLength,
 		  .kind = SecKind::Token,
 		  .reason = SecReason::NewToken,
-		  .value = tokenLength,
-		  .success = true,
-		  .linkInfo = linkInfo
-		};
+		  .success = true};
 	event.trigger = SecTrigger::Sent;
 	o.logSecEvent(EventName::TokenIssued, event, time);
       }));
@@ -954,6 +954,9 @@ private:
 	](auto &o, ZuTime time) {
 	  bool appClose = type == FrameType::ApplicationClose;
 	  CloseEvent event{
+	    .linkInfo = linkInfo
+	  ,
+	    .errorCode = errorCode,
 	    .initiator = CloseInitiator::Remote,
 	    .trigger = CloseTrigger::Error,
 	    .reason = CloseReason::PeerCloseFrame,
@@ -961,10 +964,7 @@ private:
 	      CloseError::T(CloseError::None) : closeError,
 	    .applicationError = appClose ?
 	      CloseError::T(CloseError::Unknown) :
-	      CloseError::T(CloseError::None),
-	    .errorCode = errorCode,
-	    .linkInfo = linkInfo
-	  };
+	      CloseError::T(CloseError::None)};
 	  o.logCxnClosed(event, time);
 	}));
 	m_closePeer = true;
@@ -1018,13 +1018,15 @@ private:
     static_cast<Server<App, Impl> *>(app())->dissociateRoute_(id);
   }
 
-  // Rx thread exclusive
-  ServerBootstrap	m_bootstrap;
-  InitialInfo		m_initialInfo;
-  ZiSockAddr		m_peerAddr;
   // shared
   ZmAtomic<unsigned>	m_handshakeDoneSent = 0;
   bool			m_closePeer = false;
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  ServerBootstrap	m_bootstrap;
+  InitialInfo		m_initialInfo;
+  ZiSockAddr		m_peerAddr;
 };
 
 } // namespace Zquic

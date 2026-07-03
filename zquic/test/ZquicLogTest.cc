@@ -649,8 +649,8 @@ void testQLogTypedTransportEvents()
   packet.frames.push(streamsBlocked);
   packet.frames.push(FrameEvent{.type = FrameType::PathResponse});
   packet.frames.push(FrameEvent{
-    .type = FrameType::NewToken,
-    .length = 16
+    .length = 16,
+    .type = FrameType::NewToken
   });
   packet.frames.push(FrameEvent{.type = FrameType::HandshakeDone});
   ZquicLogger::pktSent(trace, ZuMv(packet));
@@ -869,18 +869,18 @@ void testQLogTypedRecoveryEvents()
   ZquicLogger::pktsAcked(trace, ZuMv(ack));
 
   RecEvent loss{
-    .kind = RecKind::Aggregate,
-    .packetSpace = PktNumSpace::AppData,
-    .reason = RecReason::PacketThreshold,
     .packetNumber = 77,
     .bytes = 1200,
     .bytesInFlight = 2400,
+    .kind = RecKind::Aggregate,
+    .packetSpace = PktNumSpace::AppData,
+    .reason = RecReason::PacketThreshold,
     .frameCount = 1
   };
   FrameEvent lostCrypto{
-    .type = FrameType::Crypto,
     .offset = 8,
-    .length = 12
+    .length = 12,
+    .type = FrameType::Crypto
   };
   loss.frames.push(lostCrypto);
   ZquicLogger::pktLost(trace, loss);
@@ -888,96 +888,96 @@ void testQLogTypedRecoveryEvents()
   ZquicLogger::markRetrans(trace, loss);
 
   RecEvent metrics{
-    .kind = RecKind::RTT,
-    .packetSpace = PktNumSpace::AppData,
     .latestRTTUS = 18000,
     .smoothedRTTUS = 20000,
     .rttVarianceUS = 3000,
     .minRTTUS = 16000,
     .cwnd = 12000,
     .ssthresh = 64000,
-    .bytesInFlight = 3600
+    .bytesInFlight = 3600,
+    .kind = RecKind::RTT,
+    .packetSpace = PktNumSpace::AppData
   };
   ZquicLogger::metricsUpd(trace, ZuMv(metrics));
 
 	  RecEvent timer{
+	    .deadlineUS = 123456,
 	    .kind = RecKind::PTO,
 	    .packetSpace = PktNumSpace::Handshake,
-	    .reason = RecReason::Armed,
-	    .deadlineUS = 123456
+	    .reason = RecReason::Armed
 	  };
 	  ZquicLogger::lossTimerUpd(trace, ZuMv(timer));
 
 	  RecEvent lossTimer{
+	    .deadlineUS = 123456,
 	    .kind = RecKind::Loss,
 	    .packetSpace = PktNumSpace::AppData,
-	    .reason = RecReason::Armed,
-	    .deadlineUS = 123456
+	    .reason = RecReason::Armed
 	  };
 	  ZquicLogger::lossTimerUpd(trace, ZuMv(lossTimer));
 
 	  RecEvent ptoExpired{
+	    .value = 2,
+	    .bytesInFlight = 2400,
 	    .kind = RecKind::PTO,
 	    .packetSpace = PktNumSpace::AppData,
-	    .reason = RecReason::Expired,
-	    .value = 2,
-	    .bytesInFlight = 2400
+	    .reason = RecReason::Expired
 	  };
 	  ZquicLogger::lossTimerUpd(trace, ZuMv(ptoExpired));
 
 	  RecEvent ptoBackoff{
-	    .kind = RecKind::PTO,
-	    .packetSpace = PktNumSpace::AppData,
-	    .reason = RecReason::Backoff,
 	    .value = 3,
 	    .bytes = 2,
-	    .bytesInFlight = 2400
+	    .bytesInFlight = 2400,
+	    .kind = RecKind::PTO,
+	    .packetSpace = PktNumSpace::AppData,
+	    .reason = RecReason::Backoff
 	  };
 	  ZquicLogger::lossTimerUpd(trace, ZuMv(ptoBackoff));
 
 	  RecEvent ptoProbe{
+	    .value = 3,
+	    .bytes = 2,
 	    .kind = RecKind::PTO,
 	    .packetSpace = PktNumSpace::AppData,
-	    .reason = RecReason::Probe,
-	    .value = 3,
-	    .bytes = 2
+	    .reason = RecReason::Probe
 	  };
 	  ZquicLogger::lossTimerUpd(trace, ZuMv(ptoProbe));
 
   RecEvent congestion{
-    .kind = RecKind::NewReno,
-    .packetSpace = PktNumSpace::AppData,
-    .reason = RecReason::Ack,
     .cwnd = 13200,
     .ssthresh = 64000,
-    .bytesInFlight = 1200
+    .bytesInFlight = 1200,
+    .kind = RecKind::NewReno,
+    .packetSpace = PktNumSpace::AppData,
+    .reason = RecReason::Ack
   };
   ZquicLogger::congStateUpd(trace, ZuMv(congestion));
 
   ECNEvent ecn{
-    .packetSpace = PktNumSpace::AppData,
-    .state = ECNState::Capable,
-    .reason = ECNReason::AckECN,
     .ect0 = 7,
     .ect1 = 1,
     .ce = 2,
     .previousECT0 = 6,
     .previousECT1 = 1,
     .previousCE = 1,
-    .largestAcked = 12
+    .largestAcked = 12,
+    .packetSpace = PktNumSpace::AppData,
+    .state = ECNState::Capable,
+    .reason = ECNReason::AckECN
   };
   ZquicLogger::ecnStateUpd(trace, ZuMv(ecn));
 
   ECNEvent fallback{
-    .packetSpace = PktNumSpace::AppData,
-    .state = ECNState::Failed,
-    .reason = ECNReason::CounterExceedsAck,
     .ect0 = 20,
     .ce = 1,
     .previousECT0 = 7,
     .previousECT1 = 1,
     .previousCE = 2,
     .largestAcked = 12,
+    .packetSpace = PktNumSpace::AppData,
+    .state = ECNState::Failed,
+    .reason = ECNReason::CounterExceedsAck,
     .disabled = true
   };
   ZquicLogger::ecnStateUpd(trace, ZuMv(fallback));
@@ -1051,28 +1051,27 @@ void testQLogTypedSecEvents()
   ZquicLogger::start();
 
   SecEvent key{
+    .linkInfo = linkInfo,
+    .value = 1,
     .kind = SecKind::KeyUpdated,
     .packetSpace = PktNumSpace::AppData,
     .keyType = SecKeyType::RX,
     .trigger = SecTrigger::Remote,
-    .reason = SecReason::KeyPhase,
-    .value = 1,
-    .linkInfo = linkInfo
+    .reason = SecReason::KeyPhase
   };
   ZquicLogger::keyUpdated(trace, ZuMv(key));
 
   SecEvent retired{
+    .linkInfo = linkInfo,
     .kind = SecKind::KeyRetired,
     .packetSpace = PktNumSpace::Handshake,
     .keyType = SecKeyType::TX,
     .trigger = SecTrigger::HSComplete,
-    .reason = SecReason::PacketSpace,
-    .linkInfo = linkInfo
+    .reason = SecReason::PacketSpace
   };
   ZquicLogger::keyRetired(trace, ZuMv(retired));
 
   ParamsEvent paramsSet{
-    .initiator = Initiator::Remote,
     .maxIdleTimeout = 42,
     .maxUDPPayloadSize = 1350,
     .ackDelayExponent = 3,
@@ -1084,14 +1083,15 @@ void testQLogTypedSecEvents()
     .initialMaxStreamDataUni = 2048,
     .initialMaxStreamsBidi = 8,
     .initialMaxStreamsUni = 4,
+    .initiator = Initiator::Remote,
     .disableActiveMigration = true
   };
   ZquicLogger::paramsSet(trace, ZuMv(paramsSet));
 
   SecEvent alpn{
+    .alpn = "h3",
     .kind = SecKind::ALPN,
-    .trigger = SecTrigger::Selected,
-    .alpn = "h3"
+    .trigger = SecTrigger::Selected
   };
   ZquicLogger::alpnInfo(trace, ZuMv(alpn));
 
@@ -1103,43 +1103,43 @@ void testQLogTypedSecEvents()
   ZquicLogger::tlsAlert(trace, ZuMv(alert));
 
   SecEvent retry{
+    .value = 42,
     .kind = SecKind::Retry,
     .trigger = SecTrigger::Sent,
-    .reason = SecReason::AddrValid,
-    .value = 42
+    .reason = SecReason::AddrValid
   };
   ZquicLogger::secEvent(trace, EventName::RetrySent, retry);
 
   ZquicLogger::secEvent(trace, EventName::RetryValid,
     SecEvent{
+      .value = 42,
       .kind = SecKind::Retry,
       .trigger = SecTrigger::Received,
-      .reason = SecReason::OK,
-      .value = 42
+      .reason = SecReason::OK
     });
 
   SecEvent token{
+    .value = 38,
     .kind = SecKind::Token,
     .trigger = SecTrigger::Validated,
-    .reason = SecReason::OK,
-    .value = 38
+    .reason = SecReason::OK
   };
   ZquicLogger::secEvent(trace, EventName::TokenValid, token);
 
   ZquicLogger::secEvent(trace, EventName::TokenIssued,
     SecEvent{
+      .value = 38,
       .kind = SecKind::Token,
       .trigger = SecTrigger::Sent,
-      .reason = SecReason::NewToken,
-      .value = 38
+      .reason = SecReason::NewToken
     });
 
   ZquicLogger::secEvent(trace, EventName::TokenReject,
     SecEvent{
+      .value = 38,
       .kind = SecKind::Token,
       .trigger = SecTrigger::Validated,
       .reason = SecReason::Expired,
-      .value = 38,
       .success = false
     });
 
@@ -1149,10 +1149,10 @@ void testQLogTypedSecEvents()
   ZquicLogger::versionInfo(trace, ZuMv(vn));
 
   SecEvent reset{
+    .value = 43,
     .kind = SecKind::StatelessRst,
     .trigger = SecTrigger::Received,
-    .reason = SecReason::TokenMatch,
-    .value = 43
+    .reason = SecReason::TokenMatch
   };
   ZquicLogger::secEvent(trace, EventName::StatelessRst, ZuMv(reset));
 
@@ -1265,42 +1265,42 @@ void testQLogTypedPathCIDEvents()
   ZquicLogger::start();
 
   PathEvent pathEvent{
-    .kind = PathKind::Path,
-    .action = PathAction::Updated,
-    .reason = PathReason::Promoted,
     .tupleID = 7,
     .bytes = 1200,
     .antiAmplification = 2400,
     .deadlineUS = 1000000,
     .mtu = 1350,
+    .kind = PathKind::Path,
+    .action = PathAction::Updated,
+    .reason = PathReason::Promoted,
     .validated = true
   };
   ZquicLogger::pathUpdated(trace, ZuMv(pathEvent));
 
   PathEvent validation{
+    .deadlineUS = 2000000,
+    .mtu = 1350,
     .kind = PathKind::PathValid,
     .action = PathAction::ChallengeTx,
-    .reason = PathReason::PeerAddrChange,
-    .deadlineUS = 2000000,
-    .mtu = 1350
+    .reason = PathReason::PeerAddrChange
   };
   ZquicLogger::pathValidUpd(trace, ZuMv(validation));
 
   PathEvent pmtud{
+    .mtu = 1400,
     .kind = PathKind::PMTUD,
     .action = PathAction::Sent,
     .reason = PathReason::Probe,
-    .mtu = 1400,
     .validated = true
   };
   ZquicLogger::pmtudUpdated(trace, ZuMv(pmtud));
 
   CIDEvent cid{
+    .cxnID = CxnID{"cidpath1"},
+    .sequence = 7,
     .kind = CIDKind::CxnID,
     .action = CIDAction::RouteBound,
     .reason = CIDReason::PathPromoted,
-    .cxnID = CxnID{"cidpath1"},
-    .sequence = 7,
     .length = 8,
     .local = false,
     .associated = true,
@@ -1366,44 +1366,44 @@ void testQLogTypedStreamEvents()
   ZquicLogger::start();
 
   StreamEvent open{
+    .streamID = 4,
     .streamType = StreamType::Duplex,
     .oldState = StreamState::Idle,
     .newState = StreamState::Open,
     .streamSide = StreamSide::Sending,
-    .reason = StreamReason::LocalOpen,
-    .streamID = 4
+    .reason = StreamReason::LocalOpen
   };
   ZquicLogger::streamStateUpd(trace, ZuMv(open));
 
   StreamEvent closed{
+    .streamID = 4,
+    .offset = 128,
+    .length = 32,
     .streamType = StreamType::Duplex,
     .oldState = StreamState::Open,
     .newState = StreamState::Closed,
     .streamSide = StreamSide::Receiving,
     .reason = StreamReason::Reaped,
-    .streamID = 4,
-    .offset = 128,
-    .length = 32,
     .fin = true
   };
   ZquicLogger::streamStateUpd(trace, ZuMv(closed));
 
   StreamDataEvent moved{
-    .from = StreamDataLoc::Application,
-    .to = StreamDataLoc::Transport,
     .streamID = 4,
     .offset = 64,
-    .length = 32
+    .length = 32,
+    .from = StreamDataLoc::Application,
+    .to = StreamDataLoc::Transport
   };
   ZquicLogger::streamDataMoved(trace, ZuMv(moved));
 
   StreamDataEvent sent{
-    .from = StreamDataLoc::Transport,
-    .to = StreamDataLoc::Network,
-    .additionalInfo = StreamDataInfo::FinSet,
     .streamID = 4,
     .offset = 64,
-    .length = 32
+    .length = 32,
+    .from = StreamDataLoc::Transport,
+    .to = StreamDataLoc::Network,
+    .additionalInfo = StreamDataInfo::FinSet
   };
   ZquicLogger::streamDataMoved(trace, ZuMv(sent));
 
@@ -1415,10 +1415,10 @@ void testQLogTypedStreamEvents()
     });
   ZquicLogger::streamDataBlockedUpd(trace,
     BlockedEvent{
+      .streamID = 4,
       .oldState = BlockedState::Blocked,
       .newState = BlockedState::Unblocked,
-      .reason = BlockedReason::StreamFlowCtrl,
-      .streamID = 4
+      .reason = BlockedReason::StreamFlowCtrl
     });
 
   closeQLog_(trace);
@@ -1459,29 +1459,29 @@ void testQLogTypedCloseEvents()
   ZquicLogger::start();
 
   CloseEvent local{
+    .errorCode = 42,
     .initiator = CloseInitiator::Local,
     .trigger = CloseTrigger::Application,
     .reason = CloseReason::LocalClose,
-    .applicationError = CloseError::Unknown,
-    .errorCode = 42
+    .applicationError = CloseError::Unknown
   };
   ZquicLogger::cxnClosed(trace, ZuMv(local));
 
   CloseEvent idle{
+    .errorCode = 0,
     .initiator = CloseInitiator::Local,
     .trigger = CloseTrigger::IdleTimeout,
     .reason = CloseReason::Idle,
-    .connectionError = CloseError::NoError,
-    .errorCode = 0
+    .connectionError = CloseError::NoError
   };
   ZquicLogger::cxnClosed(trace, ZuMv(idle));
 
   CloseEvent frameEncoding{
+    .errorCode = TransportError::FrameEncoding,
     .initiator = CloseInitiator::Remote,
     .trigger = CloseTrigger::Error,
     .reason = CloseReason::PeerCloseFrame,
-    .connectionError = CloseError::Unknown,
-    .errorCode = TransportError::FrameEncoding
+    .connectionError = CloseError::Unknown
   };
   ZquicLogger::cxnClosed(trace, ZuMv(frameEncoding));
 

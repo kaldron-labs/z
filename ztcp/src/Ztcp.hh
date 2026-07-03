@@ -341,13 +341,14 @@ private:
   // immutable
   App			*m_app = nullptr;
 
+  // shared
+  ZmAtomic<unsigned>	m_disconnecting = 0;
+
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
   CxnRef		m_cxn = nullptr;	// read by Tx thread
   RxStream		m_rxStream;
-
-  // shared
-  ZmAtomic<unsigned>	m_disconnecting = 0;
 };
 
 template <
@@ -430,6 +431,7 @@ template <typename> friend class Client;
 
 private:
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
   Host			m_server;
   uint16_t		m_port = 0;
@@ -609,6 +611,7 @@ private:
   unsigned		m_txThread = 0;
 
   // Rx thread exclusive after init()
+  alignas(Zm::CacheLineSize)
   ErrorFn		m_errorFn;
 };
 
@@ -696,6 +699,7 @@ protected:
 
 private:
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_rebindTimer;
   bool			m_listening = false;
 };

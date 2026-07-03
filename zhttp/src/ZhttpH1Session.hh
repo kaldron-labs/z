@@ -75,6 +75,7 @@ struct Server {
   int request(Link &, Parser &) { return 1; }
 
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   Parser	parser;
 };
 

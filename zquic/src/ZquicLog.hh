@@ -99,9 +99,9 @@ struct QAckRange {
 ZuDerive(QAckRanges, (ZuArray<QAckRange, AckRangeMax>));
 
 struct DgramEvent {
+  LinkInfo		linkInfo;
   uint64_t		size = 0;
   EcnMark::T		ecn = EcnMark::N;
-  LinkInfo		linkInfo;
 };
 
 struct StreamType {
@@ -110,7 +110,9 @@ struct StreamType {
 };
 
 struct FrameEvent {
-  FrameType::T		type = FrameType::Unknown;
+  QAckRanges		ackRanges;
+  CxnID			cxnID;
+  ResetToken		resetToken;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
   uint64_t		length = 0;
@@ -121,10 +123,8 @@ struct FrameEvent {
   uint64_t		ect0 = 0;
   uint64_t		ect1 = 0;
   uint64_t		ce = 0;
-  QAckRanges		ackRanges;
+  FrameType::T		type = FrameType::Unknown;
   StreamType::T		streamType = StreamType::Duplex;
-  CxnID			cxnID;
-  ResetToken		resetToken;
   uint8_t		rangeCount = 0;
   bool			fin = false;
 
@@ -150,35 +150,35 @@ struct PktEvent {
   };
   using Frames = ZuArray<FrameEvent, FrameMax>;
 
-  PktType::T		packetType = PktType::Initial;
-  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  Frames		frames;
+  LinkInfo		linkInfo;
   uint64_t		packetNumber = 0;
   uint64_t		packetSize = 0;
   uint64_t		payloadSize = 0;
+  uint64_t		bytesInFlight = 0;
+  PktType::T		packetType = PktType::Initial;
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
   EcnMark::T		ecn = EcnMark::N;
   Reason::T		reason = Reason::None;
-  uint64_t		bytesInFlight = 0;
   uint8_t		frameCount = 0;
   bool			framesTruncated = false;
-  Frames		frames;
   bool			ackEliciting = false;
-  LinkInfo		linkInfo;
 };
 
 struct AckEvent {
   using PacketNumbers = ZuArray<uint64_t, AckPacketMax>;
 
-  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  PacketNumbers		packetNumbers;
+  LinkInfo		linkInfo;
   uint64_t		largestAcked = 0;
   uint64_t		ackDelayUS = 0;
   uint64_t		ackedBytes = 0;
   uint64_t		lostBytes = 0;
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
   uint8_t		rangeCount = 0;
   uint8_t		ackedFrames = 0;
   uint8_t		lostFrames = 0;
   bool			packetNumbersTruncated = false;
-  PacketNumbers		packetNumbers;
-  LinkInfo		linkInfo;
 };
 
 struct RecKind {
@@ -201,9 +201,8 @@ struct RecReason {
 struct RecEvent {
   using Frames = ZuArray<FrameEvent, FrameMax>;
 
-  RecKind::T		kind = RecKind::Aggregate;
-  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
-  RecReason::T		reason = RecReason::None;
+  Frames		frames;
+  LinkInfo		linkInfo;
   uint64_t		value = 0;
   uint64_t		packetNumber = 0;
   uint64_t		bytes = 0;
@@ -215,9 +214,10 @@ struct RecEvent {
   uint64_t		cwnd = 0;
   uint64_t		ssthresh = 0;
   uint64_t		bytesInFlight = 0;
+  RecKind::T		kind = RecKind::Aggregate;
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  RecReason::T		reason = RecReason::None;
   uint8_t		frameCount = 0;
-  Frames		frames;
-  LinkInfo		linkInfo;
 };
 
 struct ECNState {
@@ -235,9 +235,7 @@ struct ECNReason {
 };
 
 struct ECNEvent {
-  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
-  ECNState::T		state = ECNState::Capable;
-  ECNReason::T		reason = ECNReason::AckECN;
+  LinkInfo		linkInfo;
   uint64_t		ect0 = 0;
   uint64_t		ect1 = 0;
   uint64_t		ce = 0;
@@ -245,8 +243,10 @@ struct ECNEvent {
   uint64_t		previousECT1 = 0;
   uint64_t		previousCE = 0;
   uint64_t		largestAcked = 0;
+  PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  ECNState::T		state = ECNState::Capable;
+  ECNReason::T		reason = ECNReason::AckECN;
   bool			disabled = false;
-  LinkInfo		linkInfo;
 };
 
 struct SecKind {
@@ -341,23 +341,23 @@ inline SecReason::T zeroRTTSecReason(ZeroRTTReason::T reason)
 }
 
 struct SecEvent {
+  ZeString		alpn;
+  LinkInfo		linkInfo;
+  uint64_t		value = 0;
   SecKind::T		kind = SecKind::TLS;
   PktNumSpace::T	packetSpace = PktNumSpace::Initial;
   SecKeyType::T		keyType = SecKeyType::None;
   SecTrigger::T		trigger = SecTrigger::None;
-  ZeString		alpn;
   SecReason::T		reason = SecReason::None;
-  uint64_t		value = 0;
   bool			success = true;
-  LinkInfo		linkInfo;
 };
 
 struct ParamsEvent {
-  Initiator::T		initiator = Initiator::Local;
   CxnID			origDCID;
   CxnID			initialSCID;
   CxnID			retrySCID;
   ResetToken		statelessResetToken;
+  LinkInfo		linkInfo;
   uint64_t		maxIdleTimeout = 0;
   uint64_t		maxUDPPayloadSize = 0;
   uint64_t		ackDelayExponent = 0;
@@ -369,17 +369,17 @@ struct ParamsEvent {
   uint64_t		initialMaxStreamDataUni = 0;
   uint64_t		initialMaxStreamsBidi = 0;
   uint64_t		initialMaxStreamsUni = 0;
+  Initiator::T		initiator = Initiator::Local;
   bool			statelessResetTokenPresent = false;
   bool			disableActiveMigration = false;
-  LinkInfo		linkInfo;
 };
 
 struct VersionEvent {
   Versions		serverVersions;
   Versions		clientVersions;
+  LinkInfo		linkInfo;
   uint32_t		chosenVersion = 0;
   bool			chosenVersionPresent = false;
-  LinkInfo		linkInfo;
 };
 
 struct PathKind {
@@ -412,16 +412,16 @@ struct PathReason {
 };
 
 struct PathEvent {
-  PathKind::T		kind = PathKind::Path;
-  PathAction::T		action = PathAction::Updated;
-  PathReason::T		reason = PathReason::None;
+  LinkInfo		linkInfo;
   uint64_t		tupleID = 0;
   uint64_t		bytes = 0;
   uint64_t		antiAmplification = 0;
   uint64_t		deadlineUS = 0;
   uint32_t		mtu = 0;
+  PathKind::T		kind = PathKind::Path;
+  PathAction::T		action = PathAction::Updated;
+  PathReason::T		reason = PathReason::None;
   bool			validated = false;
-  LinkInfo		linkInfo;
 };
 
 struct CIDKind {
@@ -446,16 +446,16 @@ struct CIDReason {
 };
 
 struct CIDEvent {
+  CxnID			cxnID;
+  LinkInfo		linkInfo;
+  uint64_t		sequence = 0;
   CIDKind::T		kind = CIDKind::CxnID;
   CIDAction::T		action = CIDAction::Updated;
   CIDReason::T		reason = CIDReason::None;
-  CxnID			cxnID;
-  uint64_t		sequence = 0;
   uint8_t		length = 0;
   bool			local = false;
   bool			associated = false;
   bool			resetToken = false;
-  LinkInfo		linkInfo;
 };
 
 struct StreamState {
@@ -475,17 +475,17 @@ struct StreamReason {
 };
 
 struct StreamEvent {
+  LinkInfo		linkInfo;
+  uint64_t		streamID = 0;
+  uint64_t		offset = 0;
+  uint64_t		length = 0;
+  uint64_t		errorCode = 0;
   StreamType::T		streamType = StreamType::Duplex;
   StreamState::T	oldState = StreamState::Idle;
   StreamState::T	newState = StreamState::Open;
   StreamSide::T		streamSide = StreamSide::Sending;
   StreamReason::T	reason = StreamReason::None;
-  uint64_t		streamID = 0;
-  uint64_t		offset = 0;
-  uint64_t		length = 0;
-  uint64_t		errorCode = 0;
   bool			fin = false;
-  LinkInfo		linkInfo;
 };
 
 struct StreamDataLoc {
@@ -500,13 +500,13 @@ struct StreamDataInfo {
 };
 
 struct StreamDataEvent {
-  StreamDataLoc::T	from = StreamDataLoc::Transport;
-  StreamDataLoc::T	to = StreamDataLoc::Application;
-  StreamDataInfo::T	additionalInfo = StreamDataInfo::None;
+  LinkInfo		linkInfo;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
   uint64_t		length = 0;
-  LinkInfo		linkInfo;
+  StreamDataLoc::T	from = StreamDataLoc::Transport;
+  StreamDataLoc::T	to = StreamDataLoc::Application;
+  StreamDataInfo::T	additionalInfo = StreamDataInfo::None;
 };
 
 struct BlockedState {
@@ -525,12 +525,12 @@ struct BlockedReason {
 };
 
 struct BlockedEvent {
+  LinkInfo		linkInfo;
+  uint64_t		streamID = 0;
   BlockedState::T	oldState = BlockedState::Unblocked;
   BlockedState::T	newState = BlockedState::Blocked;
   BlockedReason::T	reason =
     BlockedReason::CxnFlowCtrl;
-  uint64_t		streamID = 0;
-  LinkInfo		linkInfo;
 };
 
 struct CloseInitiator {
@@ -565,19 +565,19 @@ struct CloseError {
 };
 
 struct CloseEvent {
+  LinkInfo		linkInfo;
+  uint64_t		errorCode = 0;
   CloseInitiator::T	initiator = CloseInitiator::Local;
   CloseTrigger::T	trigger = CloseTrigger::Error;
   CloseReason::T	reason = CloseReason::None;
   CloseError::T		connectionError = CloseError::None;
   CloseError::T		applicationError = CloseError::None;
-  uint64_t		errorCode = 0;
-  LinkInfo		linkInfo;
 };
 
 struct CxnStateEvent {
+  LinkInfo		linkInfo;
   LinkState::T		oldState = LinkState::Starting;
   LinkState::T		newState = LinkState::Handshaking;
-  LinkInfo		linkInfo;
 };
 
 struct CxnStartedEvent {

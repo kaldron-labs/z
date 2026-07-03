@@ -85,6 +85,7 @@ struct Diag {
     return out;
   }
 
+  DiagText	handshakeState;
   uint64_t	packetsRx = 0;
   uint64_t	packetsTx = 0;
   uint64_t	bytesRx = 0;
@@ -100,7 +101,6 @@ struct Diag {
   uint64_t	retransmittedFrames = 0;
   uint64_t	cwnd = 0;
   uint64_t	bytesInFlight = 0;
-  DiagText	handshakeState;
   uint64_t	openStreams = 0;
   uint64_t	closedStreams = 0;
   uint64_t	pmtudProbes = 0;

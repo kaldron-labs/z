@@ -419,10 +419,10 @@ struct RuntimeRxDiag {
 };
 
 struct RuntimeTxDiag {
+  AckECN	peerAckECN[PktNumSpace::N];
   uint64_t	packetsTx = 0;
   bool		ptoTimerActive = false;
   bool		lossTimerActive = false;
-  AckECN	peerAckECN[PktNumSpace::N];
 
   [[no_unique_address]] RuntimeDiagCounter bytesTx = 0;
   [[no_unique_address]] RuntimeDiagCounter cryptoBytesTx = 0;
@@ -1393,8 +1393,8 @@ private:
 	resetBytes = unsigned(n)
       ](auto &o, ZuTime time) {
 	SecEvent event{
-	  .kind = SecKind::StatelessRst,
 	  .value = resetBytes,
+	  .kind = SecKind::StatelessRst,
 	  .success = true
 	};
 	event.trigger = SecTrigger::Sent;
@@ -1532,9 +1532,9 @@ private:
 	tokenLength = 0U
       ](auto &o, ZuTime time) {
 	SecEvent event{
+	  .value = tokenLength,
 	  .kind = SecKind::Retry,
 	  .reason = SecReason::MissingToken,
-	  .value = tokenLength,
 	  .success = false
 	};
 	event.trigger = SecTrigger::Validated;
@@ -1581,9 +1581,9 @@ private:
 	  default: break;
 	}
 	SecEvent event{
+	  .value = tokenLength,
 	  .kind = SecKind::Token,
 	  .reason = reason,
-	  .value = tokenLength,
 	  .success = false
 	};
 	event.trigger = SecTrigger::Validated;
@@ -1600,9 +1600,9 @@ private:
 	    tokenLength = token.length()
 	  ](auto &o, ZuTime time) {
 	    SecEvent event{
+	      .value = tokenLength,
 	      .kind = SecKind::Retry,
 	      .reason = SecReason::RetrySCID,
-	      .value = tokenLength,
 	      .success = false
 	    };
 	    event.trigger = SecTrigger::Validated;
@@ -1620,9 +1620,9 @@ private:
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
 	  SecEvent event{
+	    .value = tokenLength,
 	    .kind = SecKind::Retry,
 	    .reason = SecReason::OK,
-	    .value = tokenLength,
 	    .success = true
 	  };
 	  event.trigger = SecTrigger::Validated;
@@ -1639,9 +1639,9 @@ private:
 	    tokenLength = token.length()
 	  ](auto &o, ZuTime time) {
 	    SecEvent event{
+	      .value = tokenLength,
 	      .kind = SecKind::Token,
 	      .reason = SecReason::NewTokenPolicy,
-	      .value = tokenLength,
 	      .success = false
 	    };
 	    event.trigger = SecTrigger::Validated;
@@ -1655,9 +1655,9 @@ private:
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
 	  SecEvent event{
+	    .value = tokenLength,
 	    .kind = SecKind::Token,
 	    .reason = SecReason::OK,
-	    .value = tokenLength,
 	    .success = true
 	  };
 	  event.trigger = SecTrigger::Validated;
@@ -1671,9 +1671,9 @@ private:
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
 	  SecEvent event{
+	    .value = tokenLength,
 	    .kind = SecKind::Token,
 	    .reason = SecReason::Kind,
-	    .value = tokenLength,
 	    .success = false
 	  };
 	  event.trigger = SecTrigger::Validated;
@@ -1710,8 +1710,8 @@ private:
 	packetBytes = unsigned(n)
       ](auto &o, ZuTime time) {
 	SecEvent event{
-	  .kind = SecKind::Retry,
 	  .value = tokenLength,
+	  .kind = SecKind::Retry,
 	  .success = true
 	};
 	event.trigger = SecTrigger::Sent;
@@ -1732,6 +1732,7 @@ private:
   }
 
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;

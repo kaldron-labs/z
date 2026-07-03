@@ -647,33 +647,33 @@ protected:
 	case FrameType::DataBlocked:
 	  o.logCxnDataBlockedUpd(
 	    BlockedEvent{
+	      .linkInfo = linkInfo
+	    ,
 	      .oldState = BlockedState::Unblocked,
 	      .newState = BlockedState::Blocked,
-	      .reason = BlockedReason::CxnFlowCtrl,
-	      .linkInfo = linkInfo
-	    },
+	      .reason = BlockedReason::CxnFlowCtrl},
 	    time);
 	  break;
 	case FrameType::StreamDataBlocked:
 	  o.logStreamDataBlockedUpd(
 	    BlockedEvent{
+	      .linkInfo = linkInfo
+	    ,
+	      .streamID = streamID,
 	      .oldState = BlockedState::Unblocked,
 	      .newState = BlockedState::Blocked,
-	      .reason = BlockedReason::StreamFlowCtrl,
-	      .streamID = streamID,
-	      .linkInfo = linkInfo
-	    },
+	      .reason = BlockedReason::StreamFlowCtrl},
 	    time);
 	  break;
 	case FrameType::StreamsBlocked:
 	  o.logStreamDataBlockedUpd(
 	    BlockedEvent{
+	      .linkInfo = linkInfo
+	    ,
+	      .streamID = streamID,
 	      .oldState = BlockedState::Unblocked,
 	      .newState = BlockedState::Blocked,
-	      .reason = BlockedReason::StreamID,
-	      .streamID = streamID,
-	      .linkInfo = linkInfo
-	    },
+	      .reason = BlockedReason::StreamID},
 	    time);
 	  break;
 	default:
@@ -752,11 +752,11 @@ protected:
       if (wasBlocked) {
 	o.logCxnDataBlockedUpd(
 	  BlockedEvent{
+	    .linkInfo = linkInfo
+	  ,
 	    .oldState = BlockedState::Blocked,
 	    .newState = BlockedState::Unblocked,
-	    .reason = BlockedReason::CxnFlowCtrl,
-	    .linkInfo = linkInfo
-	  },
+	    .reason = BlockedReason::CxnFlowCtrl},
 	  time);
       }
     }));
@@ -777,12 +777,12 @@ protected:
       if (wasBlocked) {
 	o.logStreamDataBlockedUpd(
 	  BlockedEvent{
+	    .linkInfo = linkInfo
+	  ,
+	    .streamID = streamID,
 	    .oldState = BlockedState::Blocked,
 	    .newState = BlockedState::Unblocked,
-	    .reason = BlockedReason::StreamFlowCtrl,
-	    .streamID = streamID,
-	    .linkInfo = linkInfo
-	  },
+	    .reason = BlockedReason::StreamFlowCtrl},
 	  time);
       }
     }));
@@ -1334,14 +1334,14 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
         .kind = PathKind::Path,
         .action = PathAction::T(action),
         .reason = PathReason::T(reason),
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1361,14 +1361,14 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
         .kind = PathKind::Path,
         .action = PathAction::T(action),
         .reason = PathReason::T(reason),
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1399,14 +1399,14 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
         .kind = PathKind::Path,
         .action = PathAction::T(action),
         .reason = PathReason::T(reason),
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1429,15 +1429,15 @@ protected:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
       PathEvent event{
-        .kind = PathKind::Path,
-        .action = PathAction::T(action),
-        .reason = PathReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .bytes = bytes,
 	  .antiAmplification = antiAmplification,
 	  .mtu = mtu,
-	  .validated = validated,
-	  .linkInfo = linkInfo
-		};
+        .kind = PathKind::Path,
+        .action = PathAction::T(action),
+        .reason = PathReason::T(reason),
+	  .validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1478,14 +1478,14 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
         .kind = PathKind::Path,
         .action = PathAction::T(action),
         .reason = PathReason::T(reason),
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1524,15 +1524,15 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
-        .kind = PathKind::PathValid,
-        .action = PathAction::T(action),
-        .reason = PathReason::T(reason),
+		.linkInfo = linkInfo
+      ,
 		.antiAmplification = antiAmplification,
 		.deadlineUS = deadlineUS,
 		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+        .kind = PathKind::PathValid,
+        .action = PathAction::T(action),
+        .reason = PathReason::T(reason),
+		.validated = validated};
 
       o.logPathValid(event, time);
     }));
@@ -1554,14 +1554,14 @@ protected:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 		PathEvent event{
+	  .linkInfo = linkInfo
+		,
+	  .antiAmplification = antiAmplification,
+	  .mtu = mtu,
 	  .kind = PathKind::PathValid,
 	  .action = PathAction::T(action),
 	  .reason = PathReason::T(reason),
-	  .antiAmplification = antiAmplification,
-	  .mtu = mtu,
-	  .validated = validated,
-	  .linkInfo = linkInfo
-		};
+	  .validated = validated};
 
 	o.logPathValid(event, time);
       }));
@@ -1577,14 +1577,14 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
         .kind = PathKind::PathValid,
         .action = PathAction::T(action),
         .reason = PathReason::T(reason),
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPathValid(event, time);
     }));
@@ -1619,14 +1619,14 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
         .kind = PathKind::PathValid,
         .action = PathAction::T(action),
         .reason = PathReason::T(reason),
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPathValid(event, time);
     }));
@@ -1639,14 +1639,14 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
         .kind = PathKind::Path,
         .action = PathAction::T(action),
         .reason = PathReason::T(reason),
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1673,14 +1673,14 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.antiAmplification = antiAmplification,
+		.mtu = mtu,
         .kind = PathKind::PathValid,
         .action = PathAction::T(action),
         .reason = PathReason::T(reason),
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPathValid(event, time);
     }));
@@ -1748,30 +1748,30 @@ protected:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	PathEvent event{
-	  .kind = PathKind::Path,
-	  .action = PathAction::T(action),
-	  .reason = PathReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .bytes = bytes,
 	  .antiAmplification = antiAmplification,
 	  .mtu = mtu,
-	  .validated = validated,
-	  .linkInfo = linkInfo
-		};
+	  .kind = PathKind::Path,
+	  .action = PathAction::T(action),
+	  .reason = PathReason::T(reason),
+	  .validated = validated};
 
 	o.logPathUpdated(event, time);
 	o.logPktDrop(
 	  PktEvent{
-	    .packetSize = bytes,
-	    .reason = PktEvent::Reason::AntiAmp,
 	    .linkInfo = linkInfo
-	  },
+	  ,
+	    .packetSize = bytes,
+	    .reason = PktEvent::Reason::AntiAmp},
 	  time);
       }));
       return false;
     }
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
-      DgramEvent event{.size = bytes, .linkInfo = linkInfo};
+      DgramEvent event{.linkInfo = linkInfo, .size = bytes};
       event.ecn = EcnMark::N;
       o.logDgramSent(event, time);
     }));
@@ -1795,23 +1795,23 @@ protected:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	PathEvent event{
-	  .kind = PathKind::Path,
-	  .action = PathAction::T(action),
-	  .reason = PathReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .bytes = bytes,
 	  .antiAmplification = antiAmplification,
 	  .mtu = mtu,
-	  .validated = validated,
-	  .linkInfo = linkInfo
-		};
+	  .kind = PathKind::Path,
+	  .action = PathAction::T(action),
+	  .reason = PathReason::T(reason),
+	  .validated = validated};
 
 	o.logPathUpdated(event, time);
 	o.logPktDrop(
 	  PktEvent{
-	    .packetSize = bytes,
-	    .reason = PktEvent::Reason::ProbeAdmit,
 	    .linkInfo = linkInfo
-	  },
+	  ,
+	    .packetSize = bytes,
+	    .reason = PktEvent::Reason::ProbeAdmit},
 	  time);
       }));
       return false;
@@ -1819,7 +1819,7 @@ protected:
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
     m_path.sent(bytes);
     ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
-      DgramEvent event{.size = bytes, .linkInfo = linkInfo};
+      DgramEvent event{.linkInfo = linkInfo, .size = bytes};
       event.ecn = EcnMark::N;
       o.logDgramSent(event, time);
     }));
@@ -1842,23 +1842,23 @@ protected:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	PathEvent event{
-	  .kind = PathKind::Path,
-	  .action = PathAction::T(action),
-	  .reason = PathReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .bytes = bytes,
 	  .antiAmplification = antiAmplification,
 	  .mtu = mtu,
-	  .validated = validated,
-	  .linkInfo = linkInfo
-		};
+	  .kind = PathKind::Path,
+	  .action = PathAction::T(action),
+	  .reason = PathReason::T(reason),
+	  .validated = validated};
 
 	o.logPathUpdated(event, time);
 	o.logPktDrop(
 	  PktEvent{
-	    .packetSize = bytes,
-	    .reason = PktEvent::Reason::AntiAmp,
 	    .linkInfo = linkInfo
-	  },
+	  ,
+	    .packetSize = bytes,
+	    .reason = PktEvent::Reason::AntiAmp},
 	  time);
       }));
       return false;
@@ -1869,16 +1869,16 @@ protected:
       ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 		o.logPktDrop(
 	  PktEvent{
-	    .packetSize = bytes,
-	    .reason = PktEvent::Reason::AppSend,
 	    .linkInfo = linkInfo
-	  },
+	  ,
+	    .packetSize = bytes,
+	    .reason = PktEvent::Reason::AppSend},
 	  time);
       }));
       return true;
     }
     ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
-      DgramEvent event{.size = bytes, .linkInfo = linkInfo};
+      DgramEvent event{.linkInfo = linkInfo, .size = bytes};
       event.ecn = EcnMark::N;
       o.logDgramSent(event, time);
     }));
@@ -1902,23 +1902,23 @@ protected:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	PathEvent event{
-	  .kind = PathKind::Path,
-	  .action = PathAction::T(action),
-	  .reason = PathReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .bytes = bytes,
 	  .antiAmplification = antiAmplification,
 	  .mtu = mtu,
-	  .validated = validated,
-	  .linkInfo = linkInfo
-		};
+	  .kind = PathKind::Path,
+	  .action = PathAction::T(action),
+	  .reason = PathReason::T(reason),
+	  .validated = validated};
 
 	o.logPathUpdated(event, time);
 	o.logPktDrop(
 	  PktEvent{
-	    .packetSize = bytes,
-	    .reason = PktEvent::Reason::ProbeAdmit,
 	    .linkInfo = linkInfo
-	  },
+	  ,
+	    .packetSize = bytes,
+	    .reason = PktEvent::Reason::ProbeAdmit},
 	  time);
       }));
       return false;
@@ -1929,17 +1929,17 @@ protected:
       ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 		o.logPktDrop(
 	  PktEvent{
-	    .packetSize = bytes,
-	    .reason = PktEvent::Reason::AppSend,
 	    .linkInfo = linkInfo
-	  },
+	  ,
+	    .packetSize = bytes,
+	    .reason = PktEvent::Reason::AppSend},
 	  time);
       }));
       return true;
     }
     m_path.sent(bytes);
     ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
-      DgramEvent event{.size = bytes, .linkInfo = linkInfo};
+      DgramEvent event{.linkInfo = linkInfo, .size = bytes};
       event.ecn = EcnMark::N;
       o.logDgramSent(event, time);
     }));
@@ -2019,11 +2019,11 @@ protected:
 	    ++m_rxDiag.failures;
 	    ZquicLOG(app()->qlogTrace(), ([linkInfo = linkInfo_()](auto &o, ZuTime time) {
 	      SecEvent event{
+		.linkInfo = linkInfo
+	      ,
 		.kind = SecKind::TLS,
 		.reason = SecReason::Handshake,
-		.success = false,
-		.linkInfo = linkInfo
-	      };
+		.success = false};
       o.logTLSAlert(event, time);
     }));
   }
@@ -2179,17 +2179,17 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      CIDEvent event{
+	.cxnID = cxnID,
+		.linkInfo = linkInfo
+	      ,
+	.sequence = sequence,
 	        .kind = CIDKind::CxnID,
         .action = CIDAction::T(action),
         .reason = CIDReason::T(reason),
-	.cxnID = cxnID,
-	.sequence = sequence,
 		.length = length,
 		.local = local,
 		.associated = associated,
-		.resetToken = resetToken,
-		.linkInfo = linkInfo
-	      };
+		.resetToken = resetToken};
 
       o.logCIDUpdated(event, time);
     }));
@@ -2247,17 +2247,17 @@ protected:
 		  linkInfo = linkInfo_()
 		](auto &o, ZuTime time) {
 		  CIDEvent event{
+	    .cxnID = cxnID,
+		    .linkInfo = linkInfo
+		  ,
+	    .sequence = sequence,
 	    .kind = CIDKind::CxnID,
 	    .action = CIDAction::T(action),
 	    .reason = CIDReason::T(reason),
-	    .cxnID = cxnID,
-	    .sequence = sequence,
 		    .length = length,
 		    .local = local,
 		    .associated = associated,
-		    .resetToken = resetToken,
-		    .linkInfo = linkInfo
-		  };
+		    .resetToken = resetToken};
 
 	  o.logCIDUpdated(event, time);
 	}));
@@ -2289,17 +2289,17 @@ protected:
 		linkInfo = linkInfo_()
 	      ](auto &o, ZuTime time) {
 		CIDEvent event{
+	  .cxnID = cxnID,
+		  .linkInfo = linkInfo
+		,
+	  .sequence = sequence,
 	  .kind = CIDKind::CxnID,
 	  .action = CIDAction::T(action),
 	  .reason = CIDReason::T(reason),
-	  .cxnID = cxnID,
-	  .sequence = sequence,
 		  .length = length,
 		  .local = local,
 		  .associated = associated,
-		  .resetToken = resetToken,
-		  .linkInfo = linkInfo
-		};
+		  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -2324,17 +2324,17 @@ protected:
 		linkInfo = linkInfo_()
 	      ](auto &o, ZuTime time) {
 		CIDEvent event{
+	  .cxnID = cxnID,
+		  .linkInfo = linkInfo
+		,
+	  .sequence = sequence,
 	  .kind = CIDKind::CxnID,
 	  .action = CIDAction::T(action),
 	  .reason = CIDReason::T(reason),
-	  .cxnID = cxnID,
-	  .sequence = sequence,
 		  .length = length,
 		  .local = local,
 		  .associated = associated,
-		  .resetToken = resetToken,
-		  .linkInfo = linkInfo
-		};
+		  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -2359,17 +2359,17 @@ protected:
 		linkInfo = linkInfo_()
 	      ](auto &o, ZuTime time) {
 		CIDEvent event{
+	  .cxnID = cxnID,
+		  .linkInfo = linkInfo
+		,
+	  .sequence = sequence,
 	  .kind = CIDKind::CxnID,
 	  .action = CIDAction::T(action),
 	  .reason = CIDReason::T(reason),
-	  .cxnID = cxnID,
-	  .sequence = sequence,
 		  .length = length,
 		  .local = local,
 		  .associated = associated,
-		  .resetToken = resetToken,
-		  .linkInfo = linkInfo
-		};
+		  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -2427,17 +2427,17 @@ protected:
 		linkInfo = linkInfo_()
 	      ](auto &o, ZuTime time) {
 		CIDEvent event{
+	  .cxnID = cxnID,
+		  .linkInfo = linkInfo
+		,
+	  .sequence = sequence,
 	  .kind = CIDKind::CxnID,
 	  .action = CIDAction::T(action),
 	  .reason = CIDReason::T(reason),
-	  .cxnID = cxnID,
-	  .sequence = sequence,
 		  .length = length,
 		  .local = local,
 		  .associated = associated,
-		  .resetToken = resetToken,
-		  .linkInfo = linkInfo
-		};
+		  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -2462,17 +2462,17 @@ protected:
 		linkInfo = linkInfo_()
 	      ](auto &o, ZuTime time) {
 		CIDEvent event{
+	  .cxnID = cxnID,
+		  .linkInfo = linkInfo
+		,
+	  .sequence = sequence,
 	  .kind = CIDKind::CxnID,
 	  .action = CIDAction::T(action),
 	  .reason = CIDReason::T(reason),
-	  .cxnID = cxnID,
-	  .sequence = sequence,
 		  .length = length,
 		  .local = local,
 		  .associated = associated,
-		  .resetToken = resetToken,
-		  .linkInfo = linkInfo
-		};
+		  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -2505,17 +2505,17 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      CIDEvent event{
+	.cxnID = cxnID,
+		.linkInfo = linkInfo
+	      ,
+	.sequence = sequence,
         .kind = CIDKind::CxnID,
         .action = CIDAction::T(action),
         .reason = CIDReason::T(reason),
-	.cxnID = cxnID,
-	.sequence = sequence,
 		.length = length,
 		.local = local,
 		.associated = associated,
-		.resetToken = resetToken,
-		.linkInfo = linkInfo
-	      };
+		.resetToken = resetToken};
 
       o.logCIDUpdated(event, time);
     }));
@@ -2550,17 +2550,17 @@ protected:
 		  linkInfo = linkInfo_()
 		](auto &o, ZuTime time) {
 		  CIDEvent event{
+	    .cxnID = cxnID,
+		    .linkInfo = linkInfo
+		  ,
+	    .sequence = sequence,
 	    .kind = CIDKind::CxnID,
 	    .action = CIDAction::T(action),
 	    .reason = CIDReason::T(reason),
-	    .cxnID = cxnID,
-	    .sequence = sequence,
 		    .length = length,
 		    .local = local,
 		    .associated = associated,
-		    .resetToken = resetToken,
-		    .linkInfo = linkInfo
-		  };
+		    .resetToken = resetToken};
 
 	  o.logCIDUpdated(event, time);
 	}));
@@ -2644,11 +2644,12 @@ protected:
 		linkInfo = linkInfo_()
 	      ](auto &o, ZuTime time) {
 	ParamsEvent event{
-	  .initiator = Initiator::Local,
 	  .origDCID = origDCID,
 	  .initialSCID = initialSCID,
 	  .retrySCID = retrySCID,
 	  .statelessResetToken = statelessResetToken,
+		  .linkInfo = linkInfo
+		,
 	  .maxIdleTimeout = maxIdleTimeout,
 	  .maxUDPPayloadSize = maxUDPPayloadSize,
 	  .ackDelayExponent = ackDelayExponent,
@@ -2660,10 +2661,9 @@ protected:
 	  .initialMaxStreamDataUni = initialMaxStreamDataUni,
 	  .initialMaxStreamsBidi = initialMaxStreamsBidi,
 		  .initialMaxStreamsUni = initialMaxStreamsUni,
+	  .initiator = Initiator::Local,
 		  .statelessResetTokenPresent = statelessResetTokenPresent,
-		  .disableActiveMigration = disableActiveMigration,
-		  .linkInfo = linkInfo
-		};
+		  .disableActiveMigration = disableActiveMigration};
 	o.logParamsSet(event, time);
       }));
       return true;
@@ -2731,11 +2731,12 @@ protected:
 		linkInfo = linkInfo_()
 	      ](auto &o, ZuTime time) {
 	ParamsEvent event{
-	  .initiator = Initiator::Remote,
 	  .origDCID = origDCID,
 	  .initialSCID = initialSCID,
 	  .retrySCID = retrySCID,
 	  .statelessResetToken = statelessResetToken,
+		  .linkInfo = linkInfo
+		,
 	  .maxIdleTimeout = maxIdleTimeout,
 	  .maxUDPPayloadSize = maxUDPPayloadSize,
 	  .ackDelayExponent = ackDelayExponent,
@@ -2747,10 +2748,9 @@ protected:
 	  .initialMaxStreamDataUni = initialMaxStreamDataUni,
 	  .initialMaxStreamsBidi = initialMaxStreamsBidi,
 		  .initialMaxStreamsUni = initialMaxStreamsUni,
+	  .initiator = Initiator::Remote,
 		  .statelessResetTokenPresent = statelessResetTokenPresent,
-		  .disableActiveMigration = disableActiveMigration,
-		  .linkInfo = linkInfo
-		};
+		  .disableActiveMigration = disableActiveMigration};
 	o.logParamsSet(event, time);
       }));
     }
@@ -2760,12 +2760,12 @@ protected:
 	    ](auto &o, ZuTime time) {
       if (!alpn) return;
       SecEvent event{
+		.alpn = ZuMv(alpn),
+		.linkInfo = linkInfo
+	      ,
 	.kind = SecKind::ALPN,
 		.trigger = SecTrigger::Selected,
-		.alpn = ZuMv(alpn),
-		.success = true,
-		.linkInfo = linkInfo
-	      };
+		.success = true};
       o.logALPNInfo(event, time);
     }));
 	    updatePeerPathMaxUDP_();
@@ -2863,15 +2863,15 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
       SecEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.value = keyPhase,
 	.kind = SecKind::KeyUpdated,
 	.packetSpace = level,
 	.keyType = SecKeyType::RX,
 	.trigger = SecTrigger::Remote,
 		.reason = SecReason::KeyPhase,
-		.value = keyPhase,
-		.success = true,
-		.linkInfo = linkInfo
-	      };
+		.success = true};
       o.logKeyUpdated(event, time);
     }));
     schedulePeerKeyDiscard_(m_rxOldKeyDiscard);
@@ -2900,15 +2900,15 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
       SecEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.value = oldKeyPhase,
 	.kind = SecKind::KeyRetired,
 	.packetSpace = level,
 	.keyType = SecKeyType::RXOld,
 	.trigger = SecTrigger::Remote,
 		.reason = SecReason::KeyUpdate,
-		.value = oldKeyPhase,
-		.success = true,
-		.linkInfo = linkInfo
-	      };
+		.success = true};
       o.logKeyRetired(event, time);
     }));
   }
@@ -2927,15 +2927,15 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
       SecEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.value = keyPhase,
 	.kind = SecKind::KeyUpdated,
 	.packetSpace = level,
 	.keyType = SecKeyType::TX,
 	.trigger = SecTrigger::Local,
 		.reason = SecReason::PeerUpdate,
-		.value = keyPhase,
-		.success = true,
-		.linkInfo = linkInfo
-	      };
+		.success = true};
       o.logKeyUpdated(event, time);
     }));
     return true;
@@ -2948,11 +2948,11 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
 	      SecEvent event{
-		.kind = SecKind::StatelessRst,
-		.value = bytes,
-		.success = true,
 		.linkInfo = linkInfo
-	      };
+	      ,
+		.value = bytes,
+		.kind = SecKind::StatelessRst,
+		.success = true};
       event.trigger = SecTrigger::Received;
       event.reason = SecReason::TokenMatch;
       o.logSecEvent(EventName::StatelessRst, event, time);
@@ -3361,16 +3361,16 @@ protected:
 	      ](auto &o, ZuTime time) {
 	if (!length && !fin) return;
 	StreamDataEvent event{
+		  .linkInfo = linkInfo
+		,
+		  .streamID = streamID,
+		  .offset = offset,
+		  .length = length,
 	  .from = StreamDataLoc::Transport,
 	  .to = StreamDataLoc::Network,
 	  .additionalInfo = fin ?
 	    StreamDataInfo::T(StreamDataInfo::FinSet) :
-	    StreamDataInfo::T(StreamDataInfo::None),
-		  .streamID = streamID,
-		  .offset = offset,
-		  .length = length,
-		  .linkInfo = linkInfo
-		};
+	    StreamDataInfo::T(StreamDataInfo::None)};
 	o.logStreamDataMoved(event, time);
       }));
       flushQueuedControls |= returnStreamCredit_(stream);
@@ -3453,16 +3453,16 @@ protected:
       ](auto &o, ZuTime time) {
 	if (!length && !fin) return;
 	StreamDataEvent event{
+	  .linkInfo = linkInfo
+	,
+	  .streamID = streamID,
+	  .offset = offset,
+	  .length = length,
 	  .from = StreamDataLoc::Transport,
 	  .to = StreamDataLoc::Network,
 	  .additionalInfo = fin ?
 	    StreamDataInfo::T(StreamDataInfo::FinSet) :
-	    StreamDataInfo::T(StreamDataInfo::None),
-	  .streamID = streamID,
-	  .offset = offset,
-	  .length = length,
-	  .linkInfo = linkInfo
-	};
+	    StreamDataInfo::T(StreamDataInfo::None)};
 	o.logStreamDataMoved(event, time);
       }));
       flushQueuedControls |= returnStreamCredit_(stream);
@@ -3531,16 +3531,16 @@ protected:
 	    ](auto &o, ZuTime time) {
       if (!length && !fin) return;
       StreamDataEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.streamID = streamID,
+		.offset = offset,
+		.length = length,
 	.from = StreamDataLoc::Transport,
 	.to = StreamDataLoc::Network,
 	.additionalInfo = fin ?
 	  StreamDataInfo::T(StreamDataInfo::FinSet) :
-	  StreamDataInfo::T(StreamDataInfo::None),
-		.streamID = streamID,
-		.offset = offset,
-		.length = length,
-		.linkInfo = linkInfo
-	      };
+	  StreamDataInfo::T(StreamDataInfo::None)};
       o.logStreamDataMoved(event, time);
     }));
     if (returnStreamCredit_(stream)) impl()->flushTx_();
@@ -3782,14 +3782,14 @@ protected:
     ](auto &o, ZuTime time) {
       if (!lostBytes) return;
       RecEvent event{
+		.linkInfo = linkInfo
+      ,
+		.bytes = lostBytes,
+		.bytesInFlight = bytesInFlight,
 	.kind = RecKind::Aggregate,
 	.packetSpace = level,
 	.reason = RecReason::T(reason),
-		.bytes = lostBytes,
-		.bytesInFlight = bytesInFlight,
-		.frameCount = qlogCount_(nLostFrames),
-		.linkInfo = linkInfo
-      };
+		.frameCount = qlogCount_(nLostFrames)};
       for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
 	qlogAddTxFrame_(event, lostFrames[i]);
 
@@ -3848,15 +3848,15 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
 	RecEvent event{
-	  .kind = RecKind::T(kind),
-	  .packetSpace = PktNumSpace::T(space),
-	  .reason = RecReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .deadlineUS = deadlineUS,
 	  .cwnd = cwnd,
 	  .ssthresh = ssthresh,
 	  .bytesInFlight = bytesInFlight,
-	  .linkInfo = linkInfo
-		};
+	  .kind = RecKind::T(kind),
+	  .packetSpace = PktNumSpace::T(space),
+	  .reason = RecReason::T(reason)};
 
 	o.logLossTimerUpd(event, time);
       }));
@@ -3879,15 +3879,15 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       RecEvent event{
-	  .kind = RecKind::T(kind),
-	  .packetSpace = PktNumSpace::T(space),
-	  .reason = RecReason::T(reason),
+		.linkInfo = linkInfo
+      ,
 		.deadlineUS = deadlineUS,
 		.cwnd = cwnd,
 		.ssthresh = ssthresh,
 		.bytesInFlight = bytesInFlight,
-		.linkInfo = linkInfo
-      };
+	  .kind = RecKind::T(kind),
+	  .packetSpace = PktNumSpace::T(space),
+	  .reason = RecReason::T(reason)};
 
       o.logLossTimerUpd(event, time);
     }));
@@ -3939,15 +3939,15 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
 	RecEvent event{
-	  .kind = RecKind::T(kind),
-	  .packetSpace = PktNumSpace::T(space),
-	  .reason = RecReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .deadlineUS = deadlineUS,
 	  .cwnd = cwnd,
 	  .ssthresh = ssthresh,
 	  .bytesInFlight = bytesInFlight,
-	  .linkInfo = linkInfo
-		};
+	  .kind = RecKind::T(kind),
+	  .packetSpace = PktNumSpace::T(space),
+	  .reason = RecReason::T(reason)};
 
 	o.logLossTimerUpd(event, time);
       }));
@@ -3977,15 +3977,15 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       RecEvent event{
-	  .kind = RecKind::T(kind),
-	  .packetSpace = level,
-	  .reason = RecReason::T(reason),
+		.linkInfo = linkInfo
+      ,
 		.deadlineUS = deadlineUS,
 		.cwnd = cwnd,
 		.ssthresh = ssthresh,
 		.bytesInFlight = bytesInFlight,
-		.linkInfo = linkInfo
-      };
+	  .kind = RecKind::T(kind),
+	  .packetSpace = level,
+	  .reason = RecReason::T(reason)};
 
       o.logLossTimerUpd(event, time);
     }));
@@ -4018,15 +4018,15 @@ protected:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	RecEvent event{
-	  .kind = RecKind::T(kind),
-	  .packetSpace = level,
-	  .reason = RecReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .deadlineUS = deadlineUS,
 	  .cwnd = cwnd,
 	  .ssthresh = ssthresh,
 	  .bytesInFlight = bytesInFlight,
-	  .linkInfo = linkInfo
-		};
+	  .kind = RecKind::T(kind),
+	  .packetSpace = level,
+	  .reason = RecReason::T(reason)};
 
 	o.logLossTimerUpd(event, time);
       }));
@@ -4361,13 +4361,13 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.mtu = size ? size : activeMaxUDP,
         .kind = PathKind::PMTUD,
         .action = PathAction::T(action),
 		.reason = PathReason::T(reason),
-		.mtu = size ? size : activeMaxUDP,
-		.validated = validated,
-		.linkInfo = linkInfo
-	      };
+		.validated = validated};
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -4387,13 +4387,13 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.mtu = size ? size : activeMaxUDP,
         .kind = PathKind::PMTUD,
         .action = PathAction::T(action),
 		.reason = PathReason::T(reason),
-		.mtu = size ? size : activeMaxUDP,
-		.validated = validated,
-		.linkInfo = linkInfo
-	      };
+		.validated = validated};
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -4414,13 +4414,13 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.mtu = size ? size : activeMaxUDP,
         .kind = PathKind::PMTUD,
         .action = PathAction::T(action),
 		.reason = PathReason::T(reason),
-		.mtu = size ? size : activeMaxUDP,
-		.validated = validated,
-		.linkInfo = linkInfo
-	      };
+		.validated = validated};
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -4441,13 +4441,13 @@ protected:
 	      linkInfo = linkInfo_()
 	    ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+	      ,
+		.mtu = size ? size : activeMaxUDP,
         .kind = PathKind::PMTUD,
         .action = PathAction::T(action),
 		.reason = PathReason::T(reason),
-		.mtu = size ? size : activeMaxUDP,
-		.validated = validated,
-		.linkInfo = linkInfo
-	      };
+		.validated = validated};
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -4467,13 +4467,13 @@ protected:
     m_rxAcks.sent(PktNumSpace::T(level));
 	    ZquicLOG(app()->qlogTrace(), ([level, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 	      SecEvent event{
+		.linkInfo = linkInfo
+	      ,
 		.kind = SecKind::KeyRetired,
 		.keyType = SecKeyType::RX,
 		.trigger = SecTrigger::HSComplete,
 		.reason = SecReason::PacketSpace,
-		.success = true,
-		.linkInfo = linkInfo
-	      };
+		.success = true};
       event.packetSpace = level;
       o.logKeyRetired(event, time);
     }));
@@ -4498,13 +4498,13 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       SecEvent event{
+	.linkInfo = linkInfo
+      ,
 	.kind = SecKind::KeyRetired,
 	.keyType = SecKeyType::TX,
 	.trigger = SecTrigger::HSComplete,
 	.reason = SecReason::PacketSpace,
-	.success = true,
-	.linkInfo = linkInfo
-      };
+	.success = true};
       event.packetSpace = level;
       o.logKeyRetired(event, time);
     }));
@@ -4539,12 +4539,12 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       SecEvent event{
+	.linkInfo = linkInfo
+      ,
 	.kind = SecKind::PktProtect,
 	.trigger = SecTrigger::RX,
 	.reason = reason,
-	.success = false,
-	.linkInfo = linkInfo
-      };
+	.success = false};
       event.packetSpace = PktNumSpace::AppData;
       o.logSecEvent(EventName::ZeroRTTReject, event, time);
     }));
@@ -4653,16 +4653,16 @@ protected:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	RecEvent event{
-	  .kind = RecKind::PTO,
-	  .packetSpace = level,
-	  .reason = RecReason::Backoff,
+	  .linkInfo = linkInfo
+		,
 	  .value = backoff,
 	  .bytes = probes,
 	  .cwnd = cwnd,
 	  .ssthresh = ssthresh,
 	  .bytesInFlight = bytesInFlight,
-	  .linkInfo = linkInfo
-		};
+	  .kind = RecKind::PTO,
+	  .packetSpace = level,
+	  .reason = RecReason::Backoff};
 	o.logLossTimerUpd(event, time);
       }));
       if (debugLog_()) ZiLOG(Debug, "Zquic", ([level, n](auto &s) {
@@ -4690,15 +4690,15 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       RecEvent event{
-	.kind = RecKind::PTO,
-	.packetSpace = level,
-	.reason = RecReason::Expired,
+		.linkInfo = linkInfo
+      ,
 		.value = backoff,
 		.cwnd = cwnd,
 		.ssthresh = ssthresh,
 		.bytesInFlight = bytesInFlight,
-		.linkInfo = linkInfo
-      };
+	.kind = RecKind::PTO,
+	.packetSpace = level,
+	.reason = RecReason::Expired};
       o.logLossTimerUpd(event, time);
     }));
   }
@@ -4716,16 +4716,16 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       RecEvent event{
-	.kind = RecKind::PTO,
-	.packetSpace = level,
-	.reason = RecReason::Probe,
+		.linkInfo = linkInfo
+      ,
 	.value = backoff,
 		.bytes = probes,
 		.cwnd = cwnd,
 		.ssthresh = ssthresh,
 		.bytesInFlight = bytesInFlight,
-		.linkInfo = linkInfo
-      };
+	.kind = RecKind::PTO,
+	.packetSpace = level,
+	.reason = RecReason::Probe};
       o.logLossTimerUpd(event, time);
     }));
   }
@@ -4828,13 +4828,13 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	PathEvent event{
+	  .linkInfo = linkInfo
+		,
+	  .mtu = size ? size : activeMaxUDP,
 	  .kind = PathKind::PMTUD,
 	  .action = PathAction::T(action),
 	  .reason = PathReason::T(reason),
-	  .mtu = size ? size : activeMaxUDP,
-	  .validated = validated,
-	  .linkInfo = linkInfo
-		};
+	  .validated = validated};
 
 	o.logPMTUDUpdated(event, time);
       }));
@@ -4850,13 +4850,13 @@ nextSpace:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
+		.linkInfo = linkInfo
+      ,
+		.mtu = size ? size : activeMaxUDP,
         .kind = PathKind::PMTUD,
         .action = PathAction::T(action),
 		.reason = PathReason::T(reason),
-		.mtu = size ? size : activeMaxUDP,
-		.validated = validated,
-		.linkInfo = linkInfo
-      };
+		.validated = validated};
 
       o.logPMTUDUpdated(event, time);
     }));
@@ -4872,13 +4872,13 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	PathEvent event{
+	  .linkInfo = linkInfo
+		,
+	  .mtu = size ? size : activeMaxUDP,
 	  .kind = PathKind::PMTUD,
 	  .action = PathAction::T(action),
 	  .reason = PathReason::T(reason),
-	  .mtu = size ? size : activeMaxUDP,
-	  .validated = validated,
-	  .linkInfo = linkInfo
-		};
+	  .validated = validated};
 
 	o.logPMTUDUpdated(event, time);
       }));
@@ -5050,14 +5050,14 @@ nextSpace:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
 	RecEvent event{
-	  .kind = RecKind::NewReno,
-	  .packetSpace = PktNumSpace::AppData,
-	  .reason = RecReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .cwnd = cwnd,
 	  .ssthresh = ssthresh,
 	  .bytesInFlight = bytesInFlight,
-	  .linkInfo = linkInfo
-		};
+	  .kind = RecKind::NewReno,
+	  .packetSpace = PktNumSpace::AppData,
+	  .reason = RecReason::T(reason)};
 
 	o.logCongStateUpd(event, time);
       }));
@@ -5073,14 +5073,14 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	RecEvent event{
-	  .kind = RecKind::NewReno,
-	  .packetSpace = PktNumSpace::AppData,
-	  .reason = RecReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .cwnd = cwnd,
 	  .ssthresh = ssthresh,
 	  .bytesInFlight = bytesInFlight,
-	  .linkInfo = linkInfo
-		};
+	  .kind = RecKind::NewReno,
+	  .packetSpace = PktNumSpace::AppData,
+	  .reason = RecReason::T(reason)};
 
 	o.logCongStateUpd(event, time);
       }));
@@ -5115,14 +5115,14 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	RecEvent event{
-	  .kind = RecKind::NewReno,
-	  .packetSpace = PktNumSpace::AppData,
-	  .reason = RecReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .cwnd = cwnd,
 	  .ssthresh = ssthresh,
 	  .bytesInFlight = bytesInFlight,
-	  .linkInfo = linkInfo
-		};
+	  .kind = RecKind::NewReno,
+	  .packetSpace = PktNumSpace::AppData,
+	  .reason = RecReason::T(reason)};
 
 	o.logCongStateUpd(event, time);
       }));
@@ -5140,14 +5140,14 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	RecEvent event{
-	  .kind = RecKind::NewReno,
-	  .packetSpace = PktNumSpace::AppData,
-	  .reason = RecReason::T(reason),
+	  .linkInfo = linkInfo
+		,
 	  .cwnd = cwnd,
 	  .ssthresh = ssthresh,
 	  .bytesInFlight = bytesInFlight,
-	  .linkInfo = linkInfo
-		};
+	  .kind = RecKind::NewReno,
+	  .packetSpace = PktNumSpace::AppData,
+	  .reason = RecReason::T(reason)};
 
 	o.logCongStateUpd(event, time);
       }));
@@ -5207,6 +5207,9 @@ nextSpace:
 		](auto &o, ZuTime time) mutable {
 	  if (!packetNumbers) return;
 	  AckEvent event{
+	    .packetNumbers = ZuMv(packetNumbers),
+	    .linkInfo = linkInfo
+	  ,
     .largestAcked = largestAcked,
     .ackDelayUS = ackDelayUS,
     .ackedBytes = ackedBytes,
@@ -5214,10 +5217,7 @@ nextSpace:
     .rangeCount = qlogCount_(nRanges),
     .ackedFrames = qlogCount_(nAckdFrames),
 	    .lostFrames = qlogCount_(nLostFrames),
-	    .packetNumbersTruncated = packetNumbersTruncated,
-	    .packetNumbers = ZuMv(packetNumbers),
-	    .linkInfo = linkInfo
-	  };
+	    .packetNumbersTruncated = packetNumbersTruncated};
 		  event.packetSpace = level;
 		  o.logPktsAcked(event, time);
 		}));
@@ -5246,6 +5246,9 @@ nextSpace:
       ](auto &o, ZuTime time) mutable {
 	if (!packetNumbers) return;
 	AckEvent event{
+	  .packetNumbers = ZuMv(packetNumbers),
+	  .linkInfo = linkInfo
+		,
 	  .largestAcked = largestAcked,
 	  .ackDelayUS = ackDelayUS,
 	  .ackedBytes = ackedBytes,
@@ -5253,10 +5256,7 @@ nextSpace:
 	  .rangeCount = qlogCount_(nRanges),
 	  .ackedFrames = qlogCount_(nAckdFrames),
 	  .lostFrames = qlogCount_(nLostFrames),
-	  .packetNumbersTruncated = packetNumbersTruncated,
-	  .packetNumbers = ZuMv(packetNumbers),
-	  .linkInfo = linkInfo
-		};
+	  .packetNumbersTruncated = packetNumbersTruncated};
 		event.packetSpace = level;
 		o.logPktsAcked(event, time);
 	      }));
@@ -5284,14 +5284,14 @@ nextSpace:
 		](auto &o, ZuTime time) {
 	  if (!lostBytes) return;
 	  RecEvent event{
+	    .linkInfo = linkInfo
+	  ,
+	    .bytes = lostBytes,
+	    .bytesInFlight = bytesInFlight,
     .kind = RecKind::Aggregate,
     .packetSpace = level,
 	    .reason = RecReason::T(reason),
-	    .bytes = lostBytes,
-	    .bytesInFlight = bytesInFlight,
-	    .frameCount = qlogCount_(nLostFrames),
-	    .linkInfo = linkInfo
-	  };
+	    .frameCount = qlogCount_(nLostFrames)};
 	  for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
     qlogAddTxFrame_(event, lostFrames[i]);
 
@@ -5319,14 +5319,14 @@ nextSpace:
       ](auto &o, ZuTime time) {
 	if (!lostBytes) return;
 	RecEvent event{
+	  .linkInfo = linkInfo
+		,
+	  .bytes = lostBytes,
+	  .bytesInFlight = bytesInFlight,
 	  .kind = RecKind::Aggregate,
 	  .packetSpace = level,
 	  .reason = RecReason::T(reason),
-	  .bytes = lostBytes,
-	  .bytesInFlight = bytesInFlight,
-	  .frameCount = qlogCount_(nLostFrames),
-	  .linkInfo = linkInfo
-		};
+	  .frameCount = qlogCount_(nLostFrames)};
 	for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
 	  qlogAddTxFrame_(event, lostFrames[i]);
 
@@ -5361,8 +5361,8 @@ nextSpace:
 	  linkInfo = linkInfo_()
 		](auto &o, ZuTime time) {
 	  RecEvent event{
-    .kind = RecKind::RTT,
-    .packetSpace = level,
+	    .linkInfo = linkInfo
+	  ,
     .latestRTTUS = latestRTTUS,
     .smoothedRTTUS = smoothedRTTUS,
     .rttVarianceUS = rttVarianceUS,
@@ -5370,8 +5370,8 @@ nextSpace:
 	    .cwnd = cwnd,
 	    .ssthresh = ssthresh,
 	    .bytesInFlight = bytesInFlight,
-	    .linkInfo = linkInfo
-	  };
+    .kind = RecKind::RTT,
+    .packetSpace = level};
 
 	  o.logMetricsUpd(event, time);
 	}));
@@ -5453,9 +5453,8 @@ nextSpace:
 	if (withCE_ > largestAcked + 1)
 	  reason = ECNReason::CounterExceedsAck;
 	ECNEvent event{
-	  .packetSpace = level,
-	  .state = ECNState::T(state),
-	  .reason = reason,
+	  .linkInfo = linkInfo
+		,
 	  .ect0 = ect0,
 	  .ect1 = ect1,
 	  .ce = ce,
@@ -5463,9 +5462,10 @@ nextSpace:
 	  .previousECT1 = previousECT1,
 	  .previousCE = previousCE,
 	  .largestAcked = largestAcked,
-	  .disabled = disabled,
-	  .linkInfo = linkInfo
-		};
+	  .packetSpace = level,
+	  .state = ECNState::T(state),
+	  .reason = reason,
+	  .disabled = disabled};
 
 	o.logECNStateUpd(event, time);
       }));
@@ -5487,9 +5487,8 @@ nextSpace:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       ECNEvent event{
-	  .packetSpace = level,
-	  .state = ECNState::T(state),
-	  .reason = ECNReason::AckECN,
+		.linkInfo = linkInfo
+      ,
 	.ect0 = ect0,
 	.ect1 = ect1,
 	.ce = ce,
@@ -5497,9 +5496,10 @@ nextSpace:
 	.previousECT1 = previousECT1,
 		.previousCE = previousCE,
 		.largestAcked = largestAcked,
-		.disabled = disabled,
-		.linkInfo = linkInfo
-      };
+	  .packetSpace = level,
+	  .state = ECNState::T(state),
+	  .reason = ECNReason::AckECN,
+		.disabled = disabled};
 
       o.logECNStateUpd(event, time);
     }));
@@ -5750,13 +5750,13 @@ nextSpace:
       unsigned frameCount = hasRecordRefs ? recordRefs.count() : 0;
       if (ackLevel < PktNumSpace::N) ++frameCount;
       PktEvent event{
+		.linkInfo = linkInfo
+      ,
 	.packetNumber = pn,
 		.packetSize = packetBytes,
 		.bytesInFlight = bytesInFlight,
 		.frameCount = qlogCount_(frameCount),
-		.ackEliciting = ackEliciting,
-		.linkInfo = linkInfo
-      };
+		.ackEliciting = ackEliciting};
       event.packetType = packetType == PktType::N ?
 	pktTypeFromPktNumSpace(level) : packetType;
       event.packetSpace = level;
@@ -5854,8 +5854,8 @@ nextSpace:
       &ackRanges) {
     if (ackLevel >= PktNumSpace::N) return;
     ZquicLog_::FrameEvent frame{
-      .type = FrameType::Ack,
       .largestAcked = ackLargest,
+      .type = FrameType::Ack,
       .rangeCount = qlogCount_(ackRanges.length())
     };
     for (unsigned i = 0, n = ackRanges.length(); i < n; ++i)
@@ -5944,23 +5944,22 @@ nextSpace:
     switch (ref.kind) {
       case SentFrameKind::Stream:
 	qlogAddFrame_(event, ZquicLog_::FrameEvent{
-	  .type = FrameType::Stream,
 	  .streamID = ref.streamID,
 	  .offset = ref.offset,
 	  .length = ref.length,
+	  .type = FrameType::Stream,
 	  .fin = ref.fin
 	});
 	return;
       case SentFrameKind::Crypto:
 	qlogAddFrame_(event, ZquicLog_::FrameEvent{
-	  .type = FrameType::Crypto,
 	  .offset = ref.offset,
-	  .length = ref.length
+	  .length = ref.length,
+	  .type = FrameType::Crypto
 	});
 	return;
       case SentFrameKind::Control:
 	qlogAddFrame_(event, ZquicLog_::FrameEvent{
-	  .type = ref.controlType,
 	  .streamID = ref.streamID,
 	  .offset = ref.offset,
 	  .length = ref.length,
@@ -5968,6 +5967,7 @@ nextSpace:
 	  .errorCode =
     ref.controlType == FrameType::ResetStream ||
     ref.controlType == FrameType::StopSending ? ref.value : 0,
+	  .type = ref.controlType,
 	  .streamType = ZquicLog_::StreamType::T(ref.streamType)
 	});
 	return;
@@ -6035,11 +6035,11 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 		SecEvent event{
+	  .linkInfo = linkInfo
+		,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::Protect,
-	  .success = false,
-	  .linkInfo = linkInfo
-		};
+	  .success = false};
 	event.packetSpace = level;
 	event.trigger = SecTrigger::TX;
 	o.logSecEvent(EventName::PktProtectFail, event, time);
@@ -6080,11 +6080,11 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 		SecEvent event{
+	  .linkInfo = linkInfo
+		,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::MissingKeys,
-	  .success = false,
-	  .linkInfo = linkInfo
-		};
+	  .success = false};
 	event.packetSpace = level;
 	event.trigger = SecTrigger::TX;
 	o.logSecEvent(EventName::PktProtectFail, event, time);
@@ -6115,11 +6115,11 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 		SecEvent event{
+	  .linkInfo = linkInfo
+		,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::Protect,
-	  .success = false,
-	  .linkInfo = linkInfo
-		};
+	  .success = false};
 	event.packetSpace = level;
 	event.trigger = SecTrigger::TX;
 	o.logSecEvent(EventName::PktProtectFail, event, time);
@@ -6161,11 +6161,11 @@ nextSpace:
 	linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	SecEvent event{
+	  .linkInfo = linkInfo
+	,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::MissingKeys,
-	  .success = false,
-	  .linkInfo = linkInfo
-	};
+	  .success = false};
 	event.packetSpace = level;
 	event.trigger = SecTrigger::TX;
 	o.logSecEvent(EventName::PktProtectFail, event, time);
@@ -6200,11 +6200,11 @@ nextSpace:
 	linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	SecEvent event{
+	  .linkInfo = linkInfo
+	,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::Protect,
-	  .success = false,
-	  .linkInfo = linkInfo
-	};
+	  .success = false};
 	event.packetSpace = level;
 	event.trigger = SecTrigger::TX;
 	o.logSecEvent(EventName::PktProtectFail, event, time);
@@ -6248,11 +6248,11 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 		SecEvent event{
+	  .linkInfo = linkInfo
+		,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::MissingKeys,
-	  .success = false,
-	  .linkInfo = linkInfo
-		};
+	  .success = false};
 	event.packetSpace = level;
 	event.trigger = SecTrigger::TX;
 	o.logSecEvent(EventName::PktProtectFail, event, time);
@@ -6288,11 +6288,11 @@ nextSpace:
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 		SecEvent event{
+	  .linkInfo = linkInfo
+		,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::Protect,
-	  .success = false,
-	  .linkInfo = linkInfo
-		};
+	  .success = false};
 	event.packetSpace = level;
 	event.trigger = SecTrigger::TX;
 	o.logSecEvent(EventName::PktProtectFail, event, time);
@@ -6385,7 +6385,7 @@ nextSpace:
       ecn = d.ecn,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
-      DgramEvent event{.size = bytes, .linkInfo = linkInfo};
+      DgramEvent event{.linkInfo = linkInfo, .size = bytes};
       event.ecn = ecn;
       o.logDgramRecv(event, time);
     }));
@@ -6513,11 +6513,11 @@ nextSpace:
 	  event.linkInfo = linkInfo;
 	  o.logPktDrop(event, time);
 	  SecEvent security{
+	    .linkInfo = linkInfo
+	  ,
 	    .kind = SecKind::PktProtect,
 	    .reason = SecReason::MissingKeys,
-	    .success = false,
-	    .linkInfo = linkInfo
-	  };
+	    .success = false};
 	  security.packetSpace = level;
 	  security.trigger = SecTrigger::RX;
 	  o.logSecEvent(EventName::PktProtectFail, security, time);
@@ -6544,11 +6544,11 @@ nextSpace:
 	event.linkInfo = linkInfo;
 	o.logPktDrop(event, time);
 	SecEvent security{
+	  .linkInfo = linkInfo
+	,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::Protection,
-	  .success = false,
-	  .linkInfo = linkInfo
-	};
+	  .success = false};
 	security.packetSpace = level;
 	security.trigger = SecTrigger::RX;
 	o.logSecEvent(EventName::PktProtectFail, security, time);
@@ -6642,11 +6642,11 @@ nextSpace:
 		event.linkInfo = linkInfo;
 		o.logPktDrop(event, time);
 		SecEvent security{
+	  .linkInfo = linkInfo
+		,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::MissingKeys,
-	  .success = false,
-	  .linkInfo = linkInfo
-		};
+	  .success = false};
 	security.packetSpace = level;
 	security.trigger = SecTrigger::RX;
 	o.logSecEvent(
@@ -6702,11 +6702,11 @@ nextSpace:
 	      event.linkInfo = linkInfo;
 	      o.logPktDrop(event, time);
 	      SecEvent security{
+			.linkInfo = linkInfo
+	      ,
 			.kind = SecKind::PktProtect,
 			.reason = SecReason::BadKeyPhase,
-			.success = false,
-			.linkInfo = linkInfo
-	      };
+			.success = false};
       security.packetSpace = level;
       security.trigger = SecTrigger::RX;
       o.logSecEvent(
@@ -6741,11 +6741,11 @@ nextSpace:
 	      event.linkInfo = linkInfo;
 	      o.logPktDrop(event, time);
 	      SecEvent security{
+			.linkInfo = linkInfo
+	      ,
 			.kind = SecKind::PktProtect,
 			.reason = SecReason::BadKeyPhase,
-			.success = false,
-			.linkInfo = linkInfo
-	      };
+			.success = false};
       security.packetSpace = level;
       security.trigger = SecTrigger::RX;
       o.logSecEvent(
@@ -6773,11 +6773,11 @@ nextSpace:
 	  event.linkInfo = linkInfo;
 	  o.logPktDrop(event, time);
 	  SecEvent security{
+	    .linkInfo = linkInfo
+	  ,
 	    .kind = SecKind::PktProtect,
 	    .reason = SecReason::Protection,
-	    .success = false,
-	    .linkInfo = linkInfo
-	  };
+	    .success = false};
 	  security.packetSpace = level;
 	  security.trigger = SecTrigger::RX;
 	  o.logSecEvent(
@@ -6800,11 +6800,11 @@ nextSpace:
 		event.linkInfo = linkInfo;
 		o.logPktDrop(event, time);
 		SecEvent security{
+	  .linkInfo = linkInfo
+		,
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::BadKeyPhase,
-	  .success = false,
-	  .linkInfo = linkInfo
-		};
+	  .success = false};
 	security.packetSpace = level;
 	security.trigger = SecTrigger::RX;
 	o.logSecEvent(
@@ -6936,16 +6936,16 @@ nextSpace:
 	  ](auto &o, ZuTime time) {
 	    if (!length && !fin) return;
 	    StreamDataEvent event{
+	      .linkInfo = linkInfo
+	    ,
+	      .streamID = streamID,
+	      .offset = offset,
+	      .length = length,
       .from = StreamDataLoc::Network,
       .to = StreamDataLoc::Transport,
       .additionalInfo = fin ?
 		StreamDataInfo::T(StreamDataInfo::FinSet) :
-		StreamDataInfo::T(StreamDataInfo::None),
-	      .streamID = streamID,
-	      .offset = offset,
-	      .length = length,
-	      .linkInfo = linkInfo
-	    };
+		StreamDataInfo::T(StreamDataInfo::None)};
     o.logStreamDataMoved(event, time);
 	  }));
 	  impl()->streamFrame(
@@ -7424,18 +7424,18 @@ private:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       StreamEvent event{
+		.linkInfo = linkInfo
+      ,
+	.streamID = streamID,
+		.offset = offset,
+		.length = length,
+		.errorCode = errorCode,
 		.streamType = streamType,
 	.oldState = StreamState::Open,
 	.newState = StreamState::Closed,
 	.streamSide = streamSide,
 	.reason = reason,
-	.streamID = streamID,
-		.offset = offset,
-		.length = length,
-		.errorCode = errorCode,
-		.fin = fin,
-		.linkInfo = linkInfo
-      };
+		.fin = fin};
       o.logStreamStateUpd(event, time);
     }));
     closeStreamID_(uint64_t(id));
@@ -7466,14 +7466,14 @@ private:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       StreamEvent event{
+		.linkInfo = linkInfo
+      ,
+		.streamID = streamID,
 		.streamType = streamType,
 	.oldState = StreamState::Idle,
 		.newState = StreamState::Open,
 		.streamSide = streamSide,
-		.reason = reason,
-		.streamID = streamID,
-		.linkInfo = linkInfo
-      };
+		.reason = reason};
       o.logStreamStateUpd(event, time);
     }));
     impl()->streamOpen(
@@ -7614,10 +7614,10 @@ private:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       CxnStateEvent event{
-	.oldState = oldState,
-	.newState = LinkState::Handshaking,
 	.linkInfo = linkInfo
-      };
+      ,
+	.oldState = oldState,
+	.newState = LinkState::Handshaking};
       o.logCxnStateUpd(event, time);
     }));
     m_linkState = LinkState::Handshaking;
@@ -7631,10 +7631,10 @@ private:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       CxnStateEvent event{
-	.oldState = oldState,
-	.newState = LinkState::Established,
 	.linkInfo = linkInfo
-      };
+      ,
+	.oldState = oldState,
+	.newState = LinkState::Established};
       o.logCxnStateUpd(event, time);
     }));
     m_linkState = LinkState::Established;
@@ -7648,10 +7648,10 @@ private:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       CxnStateEvent event{
-	.oldState = oldState,
-	.newState = LinkState::Closing,
 	.linkInfo = linkInfo
-      };
+      ,
+	.oldState = oldState,
+	.newState = LinkState::Closing};
       o.logCxnStateUpd(event, time);
     }));
     m_linkState = LinkState::Closing;
@@ -7665,10 +7665,10 @@ private:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       CxnStateEvent event{
-	.oldState = oldState,
-	.newState = LinkState::Draining,
 	.linkInfo = linkInfo
-      };
+      ,
+	.oldState = oldState,
+	.newState = LinkState::Draining};
       o.logCxnStateUpd(event, time);
     }));
     m_linkState = LinkState::Draining;
@@ -7681,10 +7681,10 @@ private:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       CxnStateEvent event{
-	.oldState = oldState,
-	.newState = LinkState::Closed,
 	.linkInfo = linkInfo
-      };
+      ,
+	.oldState = oldState,
+	.newState = LinkState::Closed};
       o.logCxnStateUpd(event, time);
     }));
     m_linkState = LinkState::Closed;
@@ -7699,6 +7699,7 @@ private:
   ZmAtomic<unsigned>	m_disconnecting = 0;
 
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   AppClose		m_appClose;
   FlowCredit		m_rxDataCredit;
   StreamLimit		m_peerLimit[2] = {
@@ -7764,6 +7765,7 @@ private:
   bool			m_rxOldKeyPhase = false;
 
   // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
   FlowCredit		m_txDataCredit;
   uint64_t		m_nextBidiOrdinal = 0;
   uint64_t		m_nextUniOrdinal = 0;

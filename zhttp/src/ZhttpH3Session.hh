@@ -114,6 +114,7 @@ private:
 
 public:
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   State::T		state = State::Init;
   Link			*link_ = nullptr;
   StreamRef		control;
@@ -191,6 +192,7 @@ struct ServerStream {
   int request(Stream &, Parser &) { return 0; }
 
   // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   Parser	parser;
   bool		m_complete = false;
 };
