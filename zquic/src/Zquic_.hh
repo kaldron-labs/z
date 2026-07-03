@@ -6,8 +6,8 @@
 
 // Z QUIC private implementation helpers
 
-#ifndef Zquic_Private_HH
-#define Zquic_Private_HH
+#ifndef Zquic__HH
+#define Zquic__HH
 
 #ifndef Zquic_HH
 #include <zlib/Zquic.hh>
@@ -679,4 +679,4 @@ private:
 
 } // namespace Zquic_
 
-#endif /* Zquic_Private_HH */
+#endif /* Zquic__HH */
