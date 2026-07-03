@@ -415,6 +415,10 @@ struct ZiCxnInfo { // pure aggregate, no ctor
 struct ZiCxnTelemetry {
   ZuID		mxID;		// multiplexer ID
   uint64_t	socket = 0;	// Unix file descriptor / Winsock SOCKET
+  uint64_t	rxCalls = 0;	// graphable
+  uint64_t	rxBytes = 0;	// graphable
+  uint64_t	txCalls = 0;	// graphable
+  uint64_t	txBytes = 0;	// graphable
   uint32_t	rxBufSize = 0;	// graphable - getsockopt(..., SO_RCVBUF, ...)
   uint32_t	rxBufLen = 0;	// graphable (*) - ioctl(..., SIOCINQ, ...)
   uint32_t	txBufSize = 0;	// graphable - getsockopt(..., SO_SNDBUF, ...)
@@ -550,7 +554,7 @@ private:
 
   // Rx thread exclusive
   ZmAtomic<unsigned>	m_rxUp;
-  uint64_t		m_rxRequests;
+  uint64_t		m_rxCalls;
   uint64_t		m_rxBytes;
   ZiIOContext		m_rxContext;
 #ifdef ZiMultiplex_IOCP
@@ -562,7 +566,7 @@ private:
 
   // Tx thread exclusive
   ZmAtomic<unsigned>	m_txUp;
-  uint64_t		m_txRequests;
+  uint64_t		m_txCalls;
   uint64_t		m_txBytes;
   ZiIOContext		m_txContext;
 };

@@ -234,11 +234,11 @@ inline T *u64_ptr(uint64_t v) {
 
 ZiConnection::ZiConnection(ZiMultiplex *mx, const ZiCxnInfo &info) :
   m_mx(mx), m_info(info), m_rxUp(1),
-  m_rxRequests(0), m_rxBytes(0),
+  m_rxCalls(0), m_rxBytes(0),
 #ifdef ZiMultiplex_IOCP
   m_rxFlags(0),
 #endif
-  m_txUp(1), m_txRequests(0), m_txBytes(0)
+  m_txUp(1), m_txCalls(0), m_txBytes(0)
 {
   m_rxContext.cxn = m_txContext.cxn = this;
 }
@@ -808,6 +808,10 @@ void ZiConnection::telemetry(ZiCxnTelemetry &data) const
   }
   data.mxID = m_mx->id();
   data.socket = m_info.socket;
+  data.rxCalls = m_rxCalls;
+  data.rxBytes = m_rxBytes;
+  data.txCalls = m_txCalls;
+  data.txBytes = m_txBytes;
   data.rxBufSize = rxBufSize;
   data.rxBufLen = rxBufLen;
   data.txBufSize = txBufSize;
@@ -1481,7 +1485,7 @@ void ZiConnection::executedRecv(unsigned n)
     return;
 #endif
 
-  m_rxRequests++, m_rxBytes += n;
+  m_rxCalls++, m_rxBytes += n;
   m_rxContext.length = n;
   while (!m_rxContext());
 }
@@ -1717,7 +1721,7 @@ void ZiConnection::executedSend(unsigned n)
   }));
 #endif
 
-  m_txRequests++, m_txBytes += n;
+  m_txCalls++, m_txBytes += n;
 
   m_txContext.length = n;
   // the completion may synchronously call send_() for the next message
