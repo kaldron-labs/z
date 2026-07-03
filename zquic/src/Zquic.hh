@@ -49,15 +49,23 @@
 #define Zquic_DEBUG	// enable testing / debugging
 #endif
 
+namespace Zquic { }
+namespace Zquic_ { using namespace Zquic; }
+
+#include <zlib/ZquicTypes.hh>
 #include <zlib/ZquicBuf.hh>
+#include <zlib/ZquicPacket.hh>
+#include <zlib/ZquicFrame.hh>
+#include <zlib/ZquicPQueue.hh>
 #include <zlib/ZquicStreamUtil.hh>
 #include <zlib/ZquicSched.hh>
-#include <zlib/ZquicFrame.hh>
 #include <zlib/ZquicTransport.hh>
+#include <zlib/ZquicLog.hh>
 #include <zlib/ZquicCrypto.hh>
 #include <zlib/ZquicRecovery.hh>
+#include <zlib/ZquicPath.hh>
 #include <zlib/ZquicSock.hh>
-#include <zlib/ZquicLog.hh>
+#include <zlib/ZquicDiag.hh>
 
 namespace Zquic {
 
@@ -239,12 +247,9 @@ struct StatelessRst {
     uint8_t *, unsigned, ZuBSpan receivedPkt, const ResetToken &);
 };
 
-
 } // namespace Zquic
 
-#ifndef Zquic_Private_HH
 #include <zlib/Zquic_.hh>
-#endif
 
 namespace Zquic {
 
@@ -576,10 +581,6 @@ struct EngineParams {
   }
   EngineParams &&qlogPath(ZuCSpan v) {
     m_qlogParams.path(v);
-    return ZuMv(*this);
-  }
-  EngineParams &&qlogThread(ZuCSpan v) {
-    m_qlogParams.thread(v);
     return ZuMv(*this);
   }
   EngineParams &&qlogRingSize(unsigned v) {
@@ -1741,23 +1742,11 @@ private:
   unsigned		m_stopCount = 0;
 };
 
-
 } // namespace Zquic
 
-#ifndef ZquicStream_HH
 #include <zlib/ZquicStream.hh>
-#endif
-
-#ifndef ZquicLink_HH
 #include <zlib/ZquicLink.hh>
-#endif
-
-#ifndef ZquicCliLink_HH
 #include <zlib/ZquicCliLink.hh>
-#endif
-
-#ifndef ZquicSrvLink_HH
 #include <zlib/ZquicSrvLink.hh>
-#endif
 
 #endif /* Zquic_HH */

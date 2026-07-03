@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZquicCrypto.hh>
+#include <zlib/Zquic.hh>
 
 #include <zpicotls/openssl.h>
 

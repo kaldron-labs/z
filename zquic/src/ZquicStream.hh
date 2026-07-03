@@ -6,11 +6,8 @@
 
 // Z QUIC stream API implementation
 
-#ifndef ZquicStream_HH
-#define ZquicStream_HH
-
 #ifndef Zquic_HH
-#include <zlib/Zquic.hh>
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 namespace Zquic {
@@ -774,5 +771,3 @@ ZuDerive(Streams_,
 	ZmHashHeapID<"Zquic.Stream.ObjectHash">>>>));
 
 } // namespace Zquic
-
-#endif /* ZquicStream_HH */

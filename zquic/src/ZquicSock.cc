@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZquicSock.hh>
+#include <zlib/Zquic.hh>
 
 #ifndef _WIN32
 #include <errno.h>

@@ -7,8 +7,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZquicBuf.hh>
-#include <zlib/ZquicDiag.hh>
+#include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
 

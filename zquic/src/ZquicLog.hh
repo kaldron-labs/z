@@ -6,11 +6,8 @@
 
 // Z QUIC qlog
 
-#ifndef ZquicLog_HH
-#define ZquicLog_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <zlib/ZuTime.hh>
@@ -31,19 +28,11 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiIP.hh>
 
-#include <zlib/ZquicPacket.hh>
-#include <zlib/ZquicTypes.hh>
-#include <zlib/ZquicTransport.hh>
+namespace ZquicLog_ {
 
-#if defined(ZDEBUG) && !defined(Zquic_DEBUG)
-#define Zquic_DEBUG	// enable testing / debugging
-#endif
+using namespace Zquic_;
 
-namespace Zquic_ {
-using namespace Zquic;
-}
-
-struct ZquicLogDiag {
+struct Diag {
   uint64_t	recordsEnqueued = 0;
   uint64_t	recordsWritten = 0;
   uint64_t	recordsDropped = 0;
@@ -52,30 +41,23 @@ struct ZquicLogDiag {
   uint64_t	bytesWritten = 0;
 };
 
-struct ZquicLogParams {
-  ZquicLogParams &enabled(bool v) { m_enabled = v; return *this; }
-  ZquicLogParams &path(ZuCSpan v) { m_path = v; return *this; }
-  ZquicLogParams &thread(ZuCSpan v) { m_thread = v; return *this; }
-  ZquicLogParams &ringSize(unsigned v) { m_ringSize = v; return *this; }
-  ZquicLogParams &age(unsigned v) { m_age = v; return *this; }
+struct Params {
+  Params &enabled(bool v) { m_enabled = v; return *this; }
+  Params &path(ZuCSpan v) { m_path = v; return *this; }
+  Params &ringSize(unsigned v) { m_ringSize = v; return *this; }
+  Params &age(unsigned v) { m_age = v; return *this; }
 
   bool enabled() const { return m_enabled; }
   ZuCSpan path() const { return m_path; }
-  ZuCSpan thread() const { return m_thread; }
   unsigned ringSize() const { return m_ringSize; }
   unsigned age() const { return m_age; }
 
 private:
   bool		m_enabled = false;
-  ZtString<>	m_path;
-  ZtString<>	m_thread;
+  ParamString	m_path;
   unsigned	m_ringSize = (1<<20);
   unsigned	m_age = 8;
 };
-
-namespace ZquicLog_ {
-
-using namespace Zquic_;
 
 enum {
   FrameMax = 8,
@@ -346,6 +328,7 @@ struct SecEvent {
   uint64_t		value = 0;
   SecKind::T		kind = SecKind::TLS;
   PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  PktKeyLevel::T	keyLevel = PktKeyLevel::OneRTT;
   SecKeyType::T		keyType = SecKeyType::None;
   SecTrigger::T		trigger = SecTrigger::None;
   SecReason::T		reason = SecReason::None;
@@ -592,8 +575,9 @@ struct EventName {
     PktLost, MarkRetrans, MetricsUpd, TimerUpd, CongestionUpd, ECNUpd, KeyUpd,
     KeyDiscarded, ParamsSet, ALPNInfo, TLSAlert, RetrySent, RetryValid,
     TokenIssued, TokenValid, TokenReject, VersionInfo, StatelessRst,
-    PktProtectFail, ZeroRTTReject, TupleAssigned, PathValidated, MTUUpd, CIDUpd,
-    StreamStateUpd, StreamDataMoved, CxnDataBlockedUpd,
+    PktProtectFail, ZeroRTTAccept, ZeroRTTReject, TupleAssigned,
+    PathValidated, MTUUpd, CIDUpd, StreamStateUpd, StreamDataMoved,
+    CxnDataBlockedUpd,
     StreamDataBlockedUpd, CxnClosed, CxnStateUpd);
   ZtEnumMap(EventName, JSON,
     "quic:connection_started", "quic:udp_datagrams_sent",
@@ -607,7 +591,8 @@ struct EventName {
     "zquic:retry_sent", "zquic:retry_validated", "zquic:token_issued",
     "zquic:token_validated", "zquic:token_rejected",
     "quic:version_information", "zquic:stateless_reset",
-    "zquic:packet_protection_failed", "zquic:zero_rtt_rejected",
+    "zquic:packet_protection_failed", "zquic:zero_rtt_accepted",
+    "zquic:zero_rtt_rejected",
     "quic:tuple_assigned", "quic:path_validated", "quic:mtu_updated",
     "quic:connection_id_updated", "quic:stream_state_updated",
     "quic:stream_data_moved", "quic:connection_data_blocked_updated",
@@ -617,6 +602,8 @@ struct EventName {
 
 } // namespace ZquicLog_
 
+using ZquicLogDiag = ZquicLog_::Diag;
+using ZquicLogParams = ZquicLog_::Params;
 
 #ifdef Zquic_DEBUG
 
@@ -1035,8 +1022,6 @@ private:
 
 private:
   ZmAtomic<int>		m_enabled = 0;
-  bool			m_started = false;
-  unsigned		m_startedRefs = 0;
   unsigned		m_configured = 0;
   ZquicLogParams	m_params;
   ZmThread		m_thread;
@@ -1124,5 +1109,3 @@ inline void ZquicLog(ZquicLogger::Trace &trace, L l) {
 #else
 #define ZquicLOG(trace, msg) do { } while (0)
 #endif
-
-#endif /* ZquicLog_HH */

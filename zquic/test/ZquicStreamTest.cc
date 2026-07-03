@@ -5,11 +5,10 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZtJSON.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicLog.hh>
-#include <zlib/ZquicSched.hh>
 
 #include <zpicotls/openssl.h>
 
@@ -20,6 +19,13 @@ using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 static ZuBSpan span_(const uint8_t *data, unsigned len)
 {
   return ZuBSpan{data, len};
+}
+
+static void closeQLog_(ZquicLogger::Trace &trace)
+{
+  ZmBlock<>{}([&trace](auto wake) {
+    ZquicLogger::close(trace, ZuMv(wake));
+  });
 }
 
 struct App : public Zquic::Engine<App> {
@@ -531,6 +537,8 @@ struct TestLink :
 	  Zquic::LinkEarlyState::T txEarlyState() const {
 	    return Base::txEarlyDataState_();
 	  }
+	  bool acceptZeroRTTRx() { return Base::acceptEarlyDataRx_(); }
+	  bool acceptZeroRTTTx() { return Base::acceptEarlyDataTx_(); }
 	  bool rxOneRTTSeen() const { return Base::rxOneRTTSeen_(); }
 	  bool flushEarlyStreamRefs(Zquic::SentFrameRef *refs, unsigned capacity) {
     unsigned n = 0;
@@ -1605,7 +1613,7 @@ void testActivePathRuntimeBudget()
   Zi::Path path = testPath_("ZquicStreamPathBudgetQLog.sqlog");
   ZiFile::remove(path);
 	ZquicLogParams params;
-	params.enabled(true).path(path).thread("zquic-path-budget-qlog").
+	params.enabled(true).path(path).
 	  ringSize(1<<15);
 #endif
 
@@ -1648,6 +1656,7 @@ void testActivePathRuntimeBudget()
   server->closeForTest();
 
 #ifdef Zquic_DEBUG
+	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag qdiag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
@@ -1682,7 +1691,7 @@ void testPathValidationStateMachine()
   Zi::Path path = testPath_("ZquicStreamPathValidationQLog.sqlog");
   ZiFile::remove(path);
 	ZquicLogParams params;
-	params.enabled(true).path(path).thread("zquic-path-validation-qlog").
+	params.enabled(true).path(path).
 	  ringSize(1<<15);
 
 	App app;
@@ -1739,6 +1748,7 @@ void testPathValidationStateMachine()
 
   link->closeForTest();
 
+	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
@@ -1773,7 +1783,7 @@ void testPMTUDQLog()
   Zi::Path path = testPath_("ZquicStreamPMTUDQLog.sqlog");
 	ZiFile::remove(path);
 	ZquicLogParams params;
-	params.enabled(true).path(path).thread("zquic-pmtud-qlog").ringSize(1<<15);
+	params.enabled(true).path(path).ringSize(1<<15);
 
 	App app{Zquic::BufSize};
 	ZuCHECK(ZquicLogger::init(
@@ -1798,6 +1808,7 @@ void testPMTUDQLog()
   link->losePMTUDProbe(1500);
   link->closeForTest();
 
+	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
@@ -1829,7 +1840,7 @@ void testCIDQLog()
   ZiFile::remove(path);
 
 	ZquicLogParams params;
-	params.enabled(true).path(path).thread("zquic-cid-qlog").ringSize(1<<15);
+	params.enabled(true).path(path).ringSize(1<<15);
 
 	App app;
 	ZuCHECK(ZquicLogger::init(
@@ -1873,6 +1884,7 @@ void testCIDQLog()
 
   link->closeForTest();
 
+	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
@@ -1908,7 +1920,7 @@ void testAckECNValidationDisablesECN()
   Zi::Path path = testPath_("ZquicStreamECNQLog.sqlog");
 	ZiFile::remove(path);
 	ZquicLogParams params;
-	params.enabled(true).path(path).thread("zquic-ecn-qlog").ringSize(1<<15);
+	params.enabled(true).path(path).ringSize(1<<15);
 
 	App app;
 	ZuCHECK(ZquicLogger::init(
@@ -1967,6 +1979,7 @@ void testAckECNValidationDisablesECN()
     "impossible ACK_ECN did not disable ECN while preserving ACK processing");
   impossible->closeForTest();
 
+	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag qdiag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
@@ -2924,16 +2937,92 @@ void testZeroRTTEarlyStreamPolicy()
 }
 
 #ifdef Zquic_DEBUG
+void testZeroRTTAcceptQLog()
+{
+  ZuTestScope(testZeroRTTAcceptQLog);
+
+  Zi::Path path = testPath_("ZquicStreamZeroRTTAcceptQLog.sqlog");
+  ZiFile::remove(path);
+
+  ZquicLogParams params;
+  params.enabled(true).path(path).ringSize(1<<15);
+
+  App app;
+  ZuCHECK(ZquicLogger::init(
+      app.qlogTrace(), params, Zquic::Vantage::Unknown),
+    "0-RTT accept qlog init failed");
+  ZquicLogger::start();
+
+  Zquic::TrafficSecret secret;
+  ZuCHECK(trafficSecret_(secret, 0xd0),
+    "0-RTT accept traffic secret derivation failed");
+
+  ZmRef<TestLink> client = testLink(&app);
+  ZmRef<TestLink> server = testLink(&app, true);
+  ZuCHECK(client->installZeroRTTTx(secret),
+    "0-RTT accept client Tx key install failed");
+  ZuCHECK(server->installZeroRTTRx(secret),
+    "0-RTT accept server Rx key install failed");
+
+  ZmRef<ZiIOBuf> sent;
+  ZuCHECK(client->sendZeroRTTProbe(sent) && sent && sent->length,
+    "0-RTT accept probe send failed");
+  ZuCHECK(client->txEarlyState() == Zquic::LinkEarlyState::Offered,
+    "0-RTT accept client did not enter offered state");
+  ZuCHECK(server->receiveZeroRTT(ZuMv(sent)) &&
+      server->rxEarlyState() == Zquic::LinkEarlyState::Recv,
+    "0-RTT accept server did not record received early data");
+
+  ZuCHECK(server->acceptZeroRTTRx() &&
+      server->rxEarlyState() == Zquic::LinkEarlyState::Accepted,
+    "0-RTT accept server Rx transition failed");
+  ZuCHECK(client->acceptZeroRTTTx() &&
+      client->txEarlyState() == Zquic::LinkEarlyState::Accepted,
+    "0-RTT accept client Tx transition failed");
+
+  closeQLog_(app.qlogTrace());
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final(app.qlogTrace());
+  client->cancelTimers();
+  server->cancelTimers();
+
+  ZuCHECK(diag.recordsEnqueued >= 3, "0-RTT accept qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 4, "0-RTT accept qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "0-RTT accept qlog writer failure");
+
+  ZtString<> qlog = readFile_(path);
+  ZuCHECK(qlog, "0-RTT accept qlog output missing");
+  ZuCHECK(parseJSONSeq_(qlog) >= 4,
+    "0-RTT accept qlog JSON-SEQ parse failed");
+  ZuCHECK(qlog.find<"zquic:zero_rtt_accepted">() >= 0 &&
+      qlog.find<"\"reason\":\"0rtt\"">() >= 0 &&
+      qlog.find<"\"success\":true">() >= 0,
+    "0-RTT accept qlog event missing");
+  removeTestLog_(path);
+}
+
 void testZeroRTTAfterOneRTTRejected()
 {
   ZuTestScope(testZeroRTTAfterOneRTTRejected);
+
+  Zi::Path path = testPath_("ZquicStreamZeroRTTRejectQLog.sqlog");
+  ZiFile::remove(path);
+
+  ZquicLogParams params;
+  params.enabled(true).path(path).ringSize(1<<15);
+
+  App app;
+  ZuCHECK(ZquicLogger::init(
+      app.qlogTrace(), params, Zquic::Vantage::Unknown),
+    "0-RTT reject qlog init failed");
+  ZquicLogger::start();
 
   Zquic::TrafficSecret rx;
   Zquic::TrafficSecret tx;
   ZuCHECK(trafficSecret_(rx, 0xb0) && trafficSecret_(tx, 0xc0),
     "1-RTT traffic secret derivation failed");
 
-  App app;
   ZmRef<TestLink> link = testLink(&app);
   Zquic::CxnID dcid{"server01"};
   ZuCHECK(link->installOneRTT(rx, tx, dcid),
@@ -2949,7 +3038,29 @@ void testZeroRTTAfterOneRTTRejected()
       link->txEarlyState() == Zquic::LinkEarlyState::Rejected &&
       link->runtimeDiag().rx.packetsRx == packets,
     "late 0-RTT was not rejected before decrypt/accounting");
+
+  closeQLog_(app.qlogTrace());
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final(app.qlogTrace());
   link->cancelTimers();
+
+  ZuCHECK(diag.recordsEnqueued >= 3, "0-RTT reject qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 4, "0-RTT reject qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "0-RTT reject qlog writer failure");
+
+  ZtString<> qlog = readFile_(path);
+  ZuCHECK(qlog, "0-RTT reject qlog output missing");
+  ZuCHECK(parseJSONSeq_(qlog) >= 4,
+    "0-RTT reject qlog JSON-SEQ parse failed");
+  ZuCHECK(qlog.find<"zquic:zero_rtt_rejected">() >= 0 &&
+      qlog.find<"\"reason\":\"0rtt_after_1rtt\"">() >= 0 &&
+      qlog.find<"\"success\":false">() >= 0,
+    "0-RTT reject qlog event missing");
+  ZuCHECK(qlog.find<"quic:packet_dropped">() >= 0 &&
+      qlog.find<"0rtt_after_1rtt">() >= 0,
+    "late 0-RTT packet drop qlog event missing");
+  removeTestLog_(path);
 }
 
 void testRuntimeReceiveQLog()
@@ -2973,7 +3084,7 @@ void testRuntimeReceiveQLog()
   ZuCHECK(!disabledSeen, "disabled qlog constructed receive accumulator");
 
 	ZquicLogParams params;
-	params.enabled(true).path(path).thread("zquic-runtime-qlog").ringSize(1<<15);
+	params.enabled(true).path(path).ringSize(1<<15);
 	ZuCHECK(ZquicLogger::init(
 	    app.qlogTrace(), params, Zquic::Vantage::Unknown),
 	  "runtime qlog init failed");
@@ -2991,6 +3102,7 @@ void testRuntimeReceiveQLog()
   ZuCHECK(!link->receiveShort(ZuMv(bad)),
     "runtime qlog corrupt packet was accepted");
 
+	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
@@ -3031,8 +3143,7 @@ void testFlowControlQLog()
   ZiFile::remove(path);
 
 	ZquicLogParams params;
-	params.enabled(true).path(path).
-	  thread("zquic-flow-control-qlog").ringSize(1<<15);
+	params.enabled(true).path(path).ringSize(1<<15);
 
 	App app;
 	ZuCHECK(ZquicLogger::init(
@@ -3073,6 +3184,7 @@ void testFlowControlQLog()
   ZuCHECK(!link->queuedControlFrames(),
     "flow-control qlog MAX_STREAM_DATA did not clear STREAM_DATA_BLOCKED");
 
+	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
@@ -3110,7 +3222,7 @@ void testPTOQLog()
   ZiFile::remove(path);
 
 	ZquicLogParams params;
-	params.enabled(true).path(path).thread("zquic-pto-qlog").ringSize(1<<15);
+	params.enabled(true).path(path).ringSize(1<<15);
 
 	App app;
 	ZuCHECK(ZquicLogger::init(
@@ -3134,6 +3246,7 @@ void testPTOQLog()
   link->forcePTOProbeQLog(level, probes);
   link->cancelTimers();
 
+	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
@@ -3253,8 +3366,9 @@ int main(int argc, char **argv)
   ZuTestCall(testFrameRoleAndSpaceLegality);
   ZuTestCall(testZeroRTTProtectedSend);
   ZuTestCall(testZeroRTTEarlyStreamPolicy);
-	#ifdef Zquic_DEBUG
+#ifdef Zquic_DEBUG
+  ZuTestCall(testZeroRTTAcceptQLog);
   ZuTestCall(testZeroRTTAfterOneRTTRejected);
   ZuTestCall(testPeerKeyUpdateState);
-	#endif
+#endif
 }

@@ -6,11 +6,8 @@
 
 // Z QUIC OpenSSL internal utilities
 
-#ifndef ZquicOpenSSL_HH
-#define ZquicOpenSSL_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <openssl/evp.h>
@@ -38,5 +35,3 @@ inline EVP_CIPHER_CTX *opensslCipherCtx()
 }
 
 } // namespace Zquic
-
-#endif /* ZquicOpenSSL_HH */

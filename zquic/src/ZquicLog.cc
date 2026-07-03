@@ -11,7 +11,7 @@
 #include <zlib/ZtJSON.hh>
 #include <zlib/ZtBuiltin.hh>
 
-#include <zlib/ZquicLog.hh>
+#include <zlib/Zquic.hh>
 
 #ifdef Zquic_DEBUG
 
@@ -929,24 +929,15 @@ void ZquicLogger::start_()
 {
   Guard guard(m_lock);
   if (!m_configured) return;
-  if (m_started) {
-    ++m_startedRefs;
-    m_enabled.store_(true);
-    return;
-  }
+  if (m_thread) return;
   m_ring.init(ZmRingParams{m_params.ringSize()});
   if (m_ring.open(Ring::Read | Ring::Write) != Zu::OK) {
     ++m_writerFailures;
     return;
   }
+  m_thread = ZmThread{[this]() { work_(); },
+    ZmThreadParams().name("zquic-qlog").priority(ZmThreadPriority::Low)};
   m_enabled.store_(true);
-  ZmThreadParams threadParams;
-  ZuCSpan threadName = m_params.thread();
-  threadParams.name(threadName ? threadName : ZuCSpan{"zquic-qlog"});
-  threadParams.priority(ZmThreadPriority::Low);
-  m_thread = ZmThread{[this]() { work_(); }, threadParams};
-  m_started = true;
-  m_startedRefs = 1;
 }
 
 void ZquicLogger::stop_()
@@ -954,22 +945,14 @@ void ZquicLogger::stop_()
   ZmThread thread;
   {
     Guard guard(m_lock);
-    if (m_startedRefs > 1) {
-      --m_startedRefs;
-      return;
-    }
     m_enabled.store_(false);
-    if (!m_started) return;
-    thread = m_thread;
+    thread = ZuMv(m_thread);
     m_thread = {};
-    m_started = false;
-    m_startedRefs = 0;
   }
-  if (thread) {
-    while (m_queueCount.load_()) Zm::yield();
-    m_ring.eof(true);
-    thread.join();
-  }
+  if (!thread) return;
+  while (m_queueCount.load_()) Zm::yield();
+  m_ring.eof(true);
+  thread.join();
   m_ring.close();
   m_activeTrace = nullptr;
 }
@@ -1442,7 +1425,6 @@ void ZquicLogger::closeTrace_(Trace &trace)
     trace.sink.final();
   Guard guard(m_lock);
   if (trace.configured && m_configured) --m_configured;
-  if (m_startedRefs) --m_startedRefs;
   trace.configured = false;
   trace.sinkOpened = false;
   trace.headerWritten = false;
@@ -2451,6 +2433,10 @@ static KeyType::T qlogKeyType_(
 	KeyType::ClientHS :
 	KeyType::ServerHS;
     default:
+      if (event.keyLevel == Zquic::PktKeyLevel::ZeroRTT)
+	return client ?
+	  KeyType::Client0RTT :
+	  KeyType::Server0RTT;
       return client ?
 	KeyType::Client1RTT :
 	KeyType::Server1RTT;
@@ -2480,7 +2466,8 @@ bool ZquicLogger::writeKeyEvent_(
     name,
     QLogKeyData{
       qlogKeyType_(event, event.linkInfo.vantage),
-      event.packetSpace == Zquic::PktNumSpace::AppData ?
+      event.packetSpace == Zquic::PktNumSpace::AppData &&
+	  event.keyLevel != Zquic::PktKeyLevel::ZeroRTT ?
 	event.value : QLogKeyPhaseNull,
       qlogKeyTrigger_(event)
     },

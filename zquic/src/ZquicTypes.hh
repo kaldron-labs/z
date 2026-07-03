@@ -6,11 +6,8 @@
 
 // Z QUIC protocol vocabulary
 
-#ifndef ZquicTypes_HH
-#define ZquicTypes_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <stddef.h>
@@ -302,5 +299,3 @@ ZtEnumStruct(RecEvt, int8_t, Ackd, Lost, PTO, PersistCong);
 ZtEnumStruct(SentFrameKind, int8_t, None, Stream, Crypto, Control);
 
 } // namespace Zquic
-
-#endif /* ZquicTypes_HH */

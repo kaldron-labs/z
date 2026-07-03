@@ -6,16 +6,11 @@
 
 // Z QUIC private implementation helpers
 
-#ifndef Zquic__HH
-#define Zquic__HH
-
 #ifndef Zquic_HH
-#include <zlib/Zquic.hh>
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 namespace Zquic_ {
-
-using namespace Zquic;
 
 template <typename Link_>
 struct Cxn : public ZuObject {
@@ -679,5 +674,3 @@ private:
 };
 
 } // namespace Zquic_
-
-#endif /* Zquic__HH */

@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZquicCrypto.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZtlsPico.hh>
 
 #include <zpicotls/openssl.h>

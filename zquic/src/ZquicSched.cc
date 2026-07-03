@@ -4,4 +4,4 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZquicSched.hh>
+#include <zlib/Zquic.hh>

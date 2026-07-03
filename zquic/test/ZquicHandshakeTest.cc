@@ -12,9 +12,9 @@
 #include <unistd.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZquicCrypto.hh>
 
 using namespace ZuTestUtil;
 
@@ -37,6 +37,13 @@ static ZtString<> readFile_(const Zi::Path &path)
   else
     data.length(unsigned(n));
   return data;
+}
+
+static void closeQLog_(ZquicLogger::Trace &trace)
+{
+  ZmBlock<>{}([&trace](auto wake) {
+    ZquicLogger::close(trace, ZuMv(wake));
+  });
 }
 
 ZuBSpan bytes_(const uint8_t *data, unsigned len)
@@ -428,7 +435,7 @@ void testZeroRTTPktDrop()
   qlogPath << "ZquicHandshakeZeroRTT.sqlog";
   ZiFile::remove(qlogPath);
 	ZquicLogParams params;
-	params.enabled(true).path(qlogPath).thread("zquic-qlog-0rtt");
+	params.enabled(true).path(qlogPath);
 	ZquicLogger::Trace trace;
 	ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Server),
 	  "0-RTT qlog init failed");
@@ -450,6 +457,7 @@ void testZeroRTTPktDrop()
       server.diag().zeroRTTRejected == 1,
     "0-RTT reject affected handshake readiness");
 #ifdef Zquic_DEBUG
+	closeQLog_(trace);
 	ZquicLogger::stop();
 	ZquicLogger::final(trace);
 	ZtString<> qlog = readFile_(qlogPath);

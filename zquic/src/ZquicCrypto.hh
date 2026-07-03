@@ -6,11 +6,8 @@
 
 // Z QUIC crypto integration shell
 
-#ifndef ZquicCrypto_HH
-#define ZquicCrypto_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <zpicotls.h>
@@ -22,10 +19,6 @@
 
 #include <zlib/ZtlsPico.hh>
 
-#include <zlib/ZquicFrame.hh>
-#include <zlib/ZquicLog.hh>
-#include <zlib/ZquicPQueue.hh>
-#include <zlib/ZquicTransport.hh>
 
 namespace Ztls { namespace Backend {
 struct PKey;
@@ -434,5 +427,3 @@ private:
 };
 
 } // namespace Zquic
-
-#endif /* ZquicCrypto_HH */

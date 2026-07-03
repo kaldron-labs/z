@@ -6,11 +6,8 @@
 
 // Z QUIC Tx scheduling utilities
 
-#ifndef ZquicSched_HH
-#define ZquicSched_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <string.h>
@@ -18,8 +15,6 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmQueue.hh>
 
-#include <zlib/ZquicBuf.hh>
-#include <zlib/ZquicStreamUtil.hh>
 
 namespace Zquic {
 
@@ -438,5 +433,3 @@ private:
 };
 
 } // namespace Zquic
-
-#endif /* ZquicSched_HH */

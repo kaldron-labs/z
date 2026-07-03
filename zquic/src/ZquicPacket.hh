@@ -6,11 +6,8 @@
 
 // Z QUIC packet codec
 
-#ifndef ZquicPkt_HH
-#define ZquicPkt_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <string.h>
@@ -26,7 +23,6 @@
 
 #include <zlib/ZtEnum.hh>
 
-#include <zlib/ZquicBuf.hh>
 
 namespace Zquic {
 
@@ -301,5 +297,3 @@ private:
 };
 
 } // namespace Zquic
-
-#endif /* ZquicPkt_HH */

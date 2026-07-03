@@ -6,17 +6,12 @@
 
 // Z QUIC diagnostics
 
-#ifndef ZquicDiag_HH
-#define ZquicDiag_HH
-
-#ifndef ZquicLib_HH
-#include <zlib/ZquicLib.hh>
+#ifndef Zquic_HH
+#error "include zlib/Zquic.hh before this header"
 #endif
 
 #include <zlib/ZtString.hh>
 
-#include <zlib/ZquicPath.hh>
-#include <zlib/ZquicRecovery.hh>
 
 namespace Zquic {
 
@@ -109,5 +104,3 @@ struct Diag {
 };
 
 } // namespace Zquic
-
-#endif /* ZquicDiag_HH */
