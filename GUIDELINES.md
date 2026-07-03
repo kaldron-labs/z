@@ -132,6 +132,13 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: intrusively reference-counted objects as values (including all Z hash tables)
   Problem: intrusively reference-counted objects should only be destroyed by a corresponding smart pointer to prevent multiple destruction / double-free
   Fix: store/pass by reference: replace the object value with the corresponding smart pointer
+- Red Flag: disorderly structs
+  Problem: disordered members induce unnecessary padding due to alignment
+  Fix: strike a balance between organizing members into logical groups and ordering by size from largest-to-smallest; immutable members should still come first, followed by mutable shared members, then groups of thread-exclusive members
+  Note: C++ member order is storage layout, while `ZuStruct`/`ZtStruct`/`ZfbStruct` metadata is intentionally schema/logical ordering
+- Red Flag: cache line contended structs
+  Problem: multiple threads contend for data shared in the same cache line
+  Fix: begin thread-exclusive groups of data members with `alignas(Zm::CacheLineSize)`
 - Amber Flag: fixed-size arrays, especially with separately maintained lengths.
   Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
   Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, etc.; enforce any required hard upper limit in code.
