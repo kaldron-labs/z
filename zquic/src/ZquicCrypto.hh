@@ -349,11 +349,11 @@ private:
   bool				m_isServer = false;
   bool				m_earlyDataEnabled = false;
   bool				m_oneRTTReady = false;
-  bool				m_secretInstalled[3] = {};
-  TrafficSecret 		m_txTrafficSecrets[3];
-  TrafficSecret 		m_rxTrafficSecrets[3];
-  PktProtState			m_txProt[3];
-  PktProtState			m_rxProt[3];
+  bool				m_secretInstalled[PktNumSpace::N] = {};
+  TrafficSecret 		m_txTrafficSecrets[PktNumSpace::N];
+  TrafficSecret 		m_rxTrafficSecrets[PktNumSpace::N];
+  PktProtState			m_txProt[PktNumSpace::N];
+  PktProtState			m_rxProt[PktNumSpace::N];
   ParamString			m_alpn;
   Host				m_serverName;
   ParamString			m_keyLogPath;

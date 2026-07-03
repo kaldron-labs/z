@@ -246,7 +246,6 @@ private:
 
 class AckManager {
 public:
-  static constexpr unsigned Spaces = 3;
   enum { ActiveAckThreshold = 2 };
 
   bool received(
@@ -341,7 +340,7 @@ public:
     m_deadline[i] = 0;
   }
   void clear() {
-    for (unsigned i = 0; i < Spaces; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       m_ack[i].clear();
       m_pending[i] = false;
       m_ackEliciting[i] = false;
@@ -384,17 +383,17 @@ private:
     }
   }
 
-  AckTracker	m_ack[Spaces];
-  AckECN	m_ecn[Spaces];
-  bool		m_pending[Spaces] = {};
-  bool		m_ackEliciting[Spaces] = {};
-  unsigned	m_activeAck[Spaces] = {};
-  bool		m_immediate[Spaces] = {};
-  bool		m_deadlineSet[Spaces] = {};
-  uint64_t	m_deadline[Spaces] = {};
-  uint64_t	m_largestRxTime[Spaces] = {};
-  uint64_t	m_gen[Spaces] = {};
-  uint64_t	m_postedGen[Spaces] = {};
+  AckTracker	m_ack[PktNumSpace::N];
+  AckECN	m_ecn[PktNumSpace::N];
+  bool		m_pending[PktNumSpace::N] = {};
+  bool		m_ackEliciting[PktNumSpace::N] = {};
+  unsigned	m_activeAck[PktNumSpace::N] = {};
+  bool		m_immediate[PktNumSpace::N] = {};
+  bool		m_deadlineSet[PktNumSpace::N] = {};
+  uint64_t	m_deadline[PktNumSpace::N] = {};
+  uint64_t	m_largestRxTime[PktNumSpace::N] = {};
+  uint64_t	m_gen[PktNumSpace::N] = {};
+  uint64_t	m_postedGen[PktNumSpace::N] = {};
 };
 
 class RttEstimator {
@@ -749,7 +748,7 @@ struct SentPkt {
   bool		ackd = false;
   bool		lost = false;
   bool		ptoReclaimed = false;
-  uint8_t	ackLevel = 3;
+  uint8_t	ackLevel = PktNumSpace::N;
   uint64_t	ackLargest = 0;
   SentFrameRef	frames[MaxFrames];
   void		*frameOwners[MaxFrames] = {};
@@ -794,7 +793,7 @@ struct PktTxUpdate {
     }
   }
   void ackdAck_(const SentPkt &p) {
-    if (p.ackLevel >= 3) return;
+    if (p.ackLevel >= PktNumSpace::N) return;
     if (!ackdAck[p.ackLevel] || p.ackLargest > ackLargest[p.ackLevel]) {
       ackdAck[p.ackLevel] = true;
       ackLargest[p.ackLevel] = p.ackLargest;
@@ -832,8 +831,8 @@ struct PktTxUpdate {
   unsigned	pmtudLostSize = 0;
   ZuTime	normalLostSentTime;
   ZuTime	pmtudLostSentTime;
-  bool		ackdAck[3] = {};
-  uint64_t	ackLargest[3] = {};
+  bool		ackdAck[PktNumSpace::N] = {};
+  uint64_t	ackLargest[PktNumSpace::N] = {};
   SentFrameRef	ackdFrames[MaxFrames];
   SentFrameRef	lostFrames[MaxFrames];
   void		*ackdOwners[MaxFrames] = {};

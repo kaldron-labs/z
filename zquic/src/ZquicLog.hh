@@ -39,6 +39,10 @@
 #define Zquic_DEBUG	// enable testing / debugging
 #endif
 
+namespace Zquic_ {
+using namespace Zquic;
+}
+
 struct ZquicLogDiag {
   uint64_t	recordsEnqueued = 0;
   uint64_t	recordsWritten = 0;
@@ -71,6 +75,8 @@ private:
 
 namespace ZquicLog_ {
 
+using namespace Zquic_;
+
 enum {
   FrameMax = 8,
   AckRangeMax = 16,
@@ -78,8 +84,7 @@ enum {
   VersionMax = 8
 };
 
-ZuDerive(VersionArray,
-  (ZuArray<uint32_t, VersionMax>));
+ZuDerive(VersionArray, (ZuArray<uint32_t, VersionMax>));
 
 struct QAckRange {
   uint64_t	first = 0;
@@ -91,10 +96,12 @@ struct QAckRange {
   friend Traits ZuTraitsType(QAckRange *);
 };
 
+ZuDerive(QAckRanges, (ZuArray<QAckRange, AckRangeMax>));
+
 struct DgramEvent {
-	uint64_t	size = 0;
-	Zquic::EcnMark::T ecn = Zquic::EcnMark::N;
-	Zquic::LinkInfo linkInfo;
+  uint64_t		size = 0;
+  Zquic::EcnMark::T	ecn = Zquic::EcnMark::N;
+  Zquic::LinkInfo	linkInfo;
 };
 
 struct StreamType {
@@ -103,23 +110,23 @@ struct StreamType {
 };
 
 struct FrameEvent {
-	Zquic::FrameType::T type = Zquic::FrameType::Unknown;
-  uint64_t	streamID = 0;
-  uint64_t	offset = 0;
-  uint64_t	length = 0;
-  uint64_t	value = 0;
-  uint64_t	errorCode = 0;
-  uint64_t	largestAcked = 0;
-  uint64_t	ackDelayUS = 0;
-  uint64_t	ect0 = 0;
-  uint64_t	ect1 = 0;
-  uint64_t	ce = 0;
-  ZuArray<QAckRange, AckRangeMax> ackRanges;
-  StreamType::T streamType = StreamType::Duplex;
-  Zquic::CxnID	cxnID;
-  Zquic::ResetToken resetToken;
-  uint8_t	rangeCount = 0;
-  bool		fin = false;
+  Zquic::FrameType::T	type = Zquic::FrameType::Unknown;
+  uint64_t		streamID = 0;
+  uint64_t		offset = 0;
+  uint64_t		length = 0;
+  uint64_t		value = 0;
+  uint64_t		errorCode = 0;
+  uint64_t		largestAcked = 0;
+  uint64_t		ackDelayUS = 0;
+  uint64_t		ect0 = 0;
+  uint64_t		ect1 = 0;
+  uint64_t		ce = 0;
+  QAckRanges		ackRanges;
+  StreamType::T		streamType = StreamType::Duplex;
+  Zquic::CxnID		cxnID;
+  Zquic::ResetToken	resetToken;
+  uint8_t		rangeCount = 0;
+  bool			fin = false;
 
   struct Traits : public ZuBaseTraits<FrameEvent> {
     enum { IsPOD = 1 };

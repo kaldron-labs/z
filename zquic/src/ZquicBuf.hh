@@ -27,6 +27,8 @@
 
 namespace Zquic_ {
 
+using namespace Zquic;
+
 ZuDerive(IOQueue,
   // Intrusive base only; Zi::IOBufAlloc supplies the role heap.
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
@@ -34,7 +36,7 @@ ZuDerive(IOQueue,
 using RxStream = ZiRxStream<IOQueue>;
 
 template <
-  unsigned Size = Zquic::BufSize,
+  unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Zquic.Buf">
 using BufAlloc =
