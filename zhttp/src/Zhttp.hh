@@ -66,6 +66,23 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 ZtEnumNS(Method, int8_t,
   GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
 
+inline bool earlyDataSafeMethod(Method::T method)
+{
+  switch (method) {
+    case Method::GET:
+    case Method::HEAD:
+    case Method::OPTIONS:
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
+{
+  return !hasBody && earlyDataSafeMethod(method);
+}
+
 // deprecated transfer-encoding compression
 ZtEnumNS(XferCompression, int8_t, compress, deflate, gzip);
 

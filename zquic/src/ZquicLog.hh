@@ -137,15 +137,16 @@ struct FrameEvent {
 struct PktEvent {
   struct Reason {
     ZtEnum(Reason, int8_t,
-      None, Coalescing, ParseLong, PacketLength, PrepareLong,
-      UnsupportedLongType, DiscardedSpace, MissingKeys, Protection, Duplicate,
-      ParseShort, BadKeyPhase, AntiAmp, ProbeAdmit,
-      AppSend);
-    ZtEnumMap(Reason, JSON,
-      "", "coalescing", "parse_long", "packet_length", "prepare_long",
-      "unsupported_long_type", "discarded_space", "missing_keys",
-      "protection", "duplicate", "parse_short", "invalid_key_phase",
-      "anti_amplification", "probe_admission", "app_send");
+	      None, Coalescing, ParseLong, PacketLength, PrepareLong,
+	      UnsupportedLongType, DiscardedSpace, MissingKeys, Protection, Duplicate,
+	      ParseShort, BadKeyPhase, AntiAmp, ProbeAdmit,
+	      AppSend, AfterOneRTT, FramePolicy);
+	  ZtEnumMap(Reason, JSON,
+	    "", "coalescing", "parse_long", "packet_length", "prepare_long",
+	    "unsupported_long_type", "discarded_space", "missing_keys",
+	    "protection", "duplicate", "parse_short", "invalid_key_phase",
+	    "anti_amplification", "probe_admission", "app_send",
+	    "0rtt_after_1rtt", "frame_policy");
   };
   using Frames = ZuArray<FrameEvent, FrameMax>;
 
@@ -300,15 +301,44 @@ struct SecReason {
     PacketSpace, AddrValid, MissingToken, NewToken, NewTokenPolicy,
     UnsupVersion, UnknownCID, TokenMatch, Validation, RetrySCID, Expired,
     Auth, Address, Malformed, Kind, ODCID, Protect, MissingKeys, Protection,
-    BadKeyPhase, ZeroRTT);
+    BadKeyPhase, ZeroRTT, ZeroRTTAppParams, ZeroRTTTransportParams,
+    ZeroRTTFlowLimit, ZeroRTTStreamLimit, ZeroRTTActiveCIDLimit,
+    ZeroRTTFramePolicy, ZeroRTTMissingKeys, ZeroRTTAfterOneRTT);
   ZtEnumMap(SecReason, JSON,
     "", "unknown", "ok", "handshake", "key_phase", "key_update",
     "peer_update", "packet_space", "address_validation", "missing_token",
     "new_token", "new_token_policy", "unsupported_version", "unknown_cid",
     "token_match", "validation", "retry_scid", "expired", "auth", "address",
     "malformed", "kind", "odcid", "protect", "missing_keys", "protection",
-    "invalid_key_phase", "0rtt");
+    "invalid_key_phase", "0rtt", "0rtt_app_params",
+    "0rtt_transport_params", "0rtt_flow_limit", "0rtt_stream_limit",
+    "0rtt_active_connection_id_limit", "0rtt_frame_policy",
+    "0rtt_missing_keys", "0rtt_after_1rtt");
 };
+
+inline SecReason::T zeroRTTSecReason(ZeroRTTReason::T reason)
+{
+  switch (reason) {
+    case ZeroRTTReason::AppParams:
+      return SecReason::ZeroRTTAppParams;
+    case ZeroRTTReason::TransportParams:
+      return SecReason::ZeroRTTTransportParams;
+    case ZeroRTTReason::FlowLimit:
+      return SecReason::ZeroRTTFlowLimit;
+    case ZeroRTTReason::StreamLimit:
+      return SecReason::ZeroRTTStreamLimit;
+    case ZeroRTTReason::ActiveCIDLimit:
+      return SecReason::ZeroRTTActiveCIDLimit;
+    case ZeroRTTReason::FramePolicy:
+      return SecReason::ZeroRTTFramePolicy;
+    case ZeroRTTReason::MissingKeys:
+      return SecReason::ZeroRTTMissingKeys;
+    case ZeroRTTReason::AfterOneRTT:
+      return SecReason::ZeroRTTAfterOneRTT;
+    default:
+      return SecReason::ZeroRTT;
+  }
+}
 
 struct SecEvent {
   SecKind::T		kind = SecKind::TLS;

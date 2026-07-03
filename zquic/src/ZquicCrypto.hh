@@ -254,6 +254,8 @@ struct CryptoConfig {
   ZuCSpan		serverName;
   const TransportParams	*localTransportParams = nullptr;
   ZquicLogger::Trace	*qlogTrace = nullptr;
+  ZuBSpan		sessionTicket;
+  uint32_t		maxEarlyData = 0;
 };
 
 ZuDerive(TLSTransportParams,
@@ -276,6 +278,17 @@ public:
   bool init(const CryptoConfig &);
 
   bool earlyDataEnabled() const { return m_earlyDataEnabled; }
+  EarlyDataState::T earlyDataState() const { return m_earlyDataState; }
+  bool earlyDataOffered() const {
+    return m_earlyDataState == EarlyDataState::Offered;
+  }
+  bool earlyDataAccepted() const {
+    return m_earlyDataState == EarlyDataState::Accepted;
+  }
+  bool earlyDataRejected() const {
+    return m_earlyDataState == EarlyDataState::Rejected;
+  }
+  size_t maxEarlyData() const { return m_maxEarlyData; }
   bool oneRTTReady() const { return m_oneRTTReady; }
   bool tlsReady() const { return m_tls; }
   ZuCSpan alpn() const { return m_alpn; }
@@ -289,11 +302,29 @@ public:
   bool rxTrafficSecretInstalled(PktNumSpace::T level) const {
     return m_rxTrafficSecrets[level].valid();
   }
+  bool txKeyTrafficSecretInstalled(PktKeyLevel::T level) const {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_txEarlyTrafficSecret.valid() :
+      txTrafficSecretInstalled(pktNumSpaceFromKeyLevel(level));
+  }
+  bool rxKeyTrafficSecretInstalled(PktKeyLevel::T level) const {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_rxEarlyTrafficSecret.valid() :
+      rxTrafficSecretInstalled(pktNumSpaceFromKeyLevel(level));
+  }
   const TrafficSecret &txTrafficSecret(PktNumSpace::T level) const {
     return m_txTrafficSecrets[level];
   }
   const TrafficSecret &rxTrafficSecret(PktNumSpace::T level) const {
     return m_rxTrafficSecrets[level];
+  }
+  const TrafficSecret &txKeyTrafficSecret(PktKeyLevel::T level) const {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_txEarlyTrafficSecret : txTrafficSecret(pktNumSpaceFromKeyLevel(level));
+  }
+  const TrafficSecret &rxKeyTrafficSecret(PktKeyLevel::T level) const {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_rxEarlyTrafficSecret : rxTrafficSecret(pktNumSpaceFromKeyLevel(level));
   }
   PktProtState &txProtState(PktNumSpace::T level) {
     return m_txProt[level];
@@ -301,8 +332,18 @@ public:
   PktProtState &rxProtState(PktNumSpace::T level) {
     return m_rxProt[level];
   }
+  PktProtState &txKeyProtState(PktKeyLevel::T level) {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_txEarlyProt : txProtState(pktNumSpaceFromKeyLevel(level));
+  }
+  PktProtState &rxKeyProtState(PktKeyLevel::T level) {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_rxEarlyProt : rxProtState(pktNumSpaceFromKeyLevel(level));
+  }
   bool updateTxTrafficSecret(PktNumSpace::T, const TrafficSecret &);
   bool updateRxTrafficSecret(PktNumSpace::T, const TrafficSecret &);
+  bool updateTxKeyTrafficSecret(PktKeyLevel::T, const TrafficSecret &);
+  bool updateRxKeyTrafficSecret(PktKeyLevel::T, const TrafficSecret &);
   const CryptoDiag &diag() const { return m_diag; }
   int tlsResult() const { return m_tlsResult; }
   size_t tlsReadEpoch() const;
@@ -334,7 +375,8 @@ private:
   bool initTLSContext_(const CryptoConfig &);
   bool initTLSProperties_(const CryptoConfig &);
   int updateTrafficKey_(int, size_t, const void *);
-  void keyLog_(int, PktNumSpace::T, ZuBSpan);
+  void keyLog_(int, PktKeyLevel::T, ZuBSpan);
+  void syncEarlyDataState_();
   int onClientHello_(ptls_on_client_hello_parameters_t *);
   int collectedExtensions_(ptls_raw_extension_t *);
   static int updateTrafficKeyCB_(
@@ -348,12 +390,17 @@ private:
 
   bool				m_isServer = false;
   bool				m_earlyDataEnabled = false;
+  EarlyDataState::T		m_earlyDataState = EarlyDataState::Disabled;
   bool				m_oneRTTReady = false;
   bool				m_secretInstalled[PktNumSpace::N] = {};
   TrafficSecret 		m_txTrafficSecrets[PktNumSpace::N];
   TrafficSecret 		m_rxTrafficSecrets[PktNumSpace::N];
+  TrafficSecret 		m_txEarlyTrafficSecret;
+  TrafficSecret 		m_rxEarlyTrafficSecret;
   PktProtState			m_txProt[PktNumSpace::N];
   PktProtState			m_rxProt[PktNumSpace::N];
+  PktProtState			m_txEarlyProt;
+  PktProtState			m_rxEarlyProt;
   ParamString			m_alpn;
   Host				m_serverName;
   ParamString			m_keyLogPath;

@@ -8,7 +8,14 @@
 #include <zlib/ZquicCrypto.hh>
 #include <zlib/ZtlsPico.hh>
 
+#include <zpicotls/openssl.h>
+
 using namespace ZuTestUtil;
+
+static ZuBSpan bytes_(const uint8_t *data, unsigned len)
+{
+  return ZuBSpan{data, len};
+}
 
 void testCryptoPosture()
 {
@@ -18,8 +25,11 @@ void testCryptoPosture()
   ZuCHECK(crypto.init(Zquic::CryptoConfig{false, true, "h3"}),
     "crypto init failed");
   ZuCHECK(crypto.alpn() == "h3", "ALPN not retained");
-  ZuCHECK(!crypto.earlyDataEnabled(), "0-RTT must remain disabled");
-  ZuCHECK(crypto.diag().zeroRTTRejected == 1, "0-RTT rejection not counted");
+  ZuCHECK(crypto.earlyDataEnabled() &&
+      crypto.earlyDataState() == Zquic::EarlyDataState::Enabled,
+    "0-RTT enablement not retained");
+  ZuCHECK(!crypto.diag().zeroRTTRejected,
+    "0-RTT enablement was counted as rejection");
 
   crypto.installSecret(Zquic::PktNumSpace::Initial, "initial-secret");
   crypto.installSecret(Zquic::PktNumSpace::Handshake, "hs-secret");
@@ -33,6 +43,79 @@ void testCryptoPosture()
   ZuCHECK(crypto.diag().secretsInstalled == 3 &&
       crypto.diag().secretsDiscarded == 2,
     "secret lifecycle diagnostics mismatch");
+}
+
+void testEarlyDataTLSProperties()
+{
+  ZuTestScope(testEarlyDataTLSProperties);
+
+  Zquic::Crypto crypto;
+  ZuCHECK(crypto.initTLS(Zquic::CryptoConfig{
+      .isServer = false,
+      .enable0RTT = true,
+      .alpn = "h3",
+      .serverName = "localhost"
+    }),
+    "client TLS init with 0-RTT failed");
+  ZuCHECK(crypto.earlyDataEnabled() &&
+      crypto.earlyDataState() == Zquic::EarlyDataState::Enabled,
+    "0-RTT TLS init did not retain enabled state");
+
+  ZmRef<ZiIOBuf> out =
+    new Zquic::CryptoTxBufAlloc<
+      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr};
+  size_t offsets[5] = {};
+  int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
+  ZuCHECK(n > 0, "client TLS initial output failed");
+  ZuCHECK(!crypto.earlyDataEnabled() &&
+      crypto.earlyDataState() == Zquic::EarlyDataState::Rejected &&
+      !crypto.maxEarlyData() &&
+      crypto.diag().zeroRTTRejected == 1,
+    "missing 0-RTT ticket did not settle as rejected");
+}
+
+void testEarlyTrafficSecretState()
+{
+  ZuTestScope(testEarlyTrafficSecretState);
+
+  uint8_t secretBytes[32];
+  for (unsigned i = 0; i < sizeof(secretBytes); ++i) secretBytes[i] = uint8_t(i);
+  Zquic::TrafficSecret secret;
+  ZuCHECK(Zquic::PktProt::deriveTrafficSecret(
+      secret, &ptls_openssl_aes128gcmsha256,
+      bytes_(secretBytes, sizeof(secretBytes))),
+    "0-RTT traffic secret derivation failed");
+
+  Zquic::Crypto crypto;
+  ZuCHECK(crypto.init(Zquic::CryptoConfig{false, false, "h3"}),
+    "crypto init failed");
+  ZuCHECK(crypto.updateTxKeyTrafficSecret(Zquic::PktKeyLevel::ZeroRTT, secret) &&
+      crypto.updateRxKeyTrafficSecret(Zquic::PktKeyLevel::ZeroRTT, secret),
+    "0-RTT traffic secret install failed");
+  ZuCHECK(crypto.earlyDataEnabled(),
+    "0-RTT key install did not enable early data state");
+  ZuCHECK(crypto.earlyDataOffered(),
+    "0-RTT key install did not enter offered state");
+  ZuCHECK(crypto.txKeyTrafficSecretInstalled(Zquic::PktKeyLevel::ZeroRTT) &&
+      crypto.rxKeyTrafficSecretInstalled(Zquic::PktKeyLevel::ZeroRTT),
+    "0-RTT key-level traffic secrets not recorded");
+  ZuCHECK(!crypto.txTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      !crypto.rxTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      !crypto.secretInstalled(Zquic::PktNumSpace::AppData),
+    "0-RTT keys contaminated 1-RTT AppData state");
+
+  ZuCHECK(crypto.rejectZeroRTT(), "0-RTT reject failed");
+  ZuCHECK(!crypto.earlyDataEnabled() &&
+      !crypto.txKeyTrafficSecretInstalled(Zquic::PktKeyLevel::ZeroRTT) &&
+      !crypto.rxKeyTrafficSecretInstalled(Zquic::PktKeyLevel::ZeroRTT),
+    "0-RTT reject did not clear early traffic state");
+  ZuCHECK(crypto.diag().zeroRTTRejected == 1 &&
+      crypto.diag().secretsDiscarded == 1,
+    "0-RTT reject diagnostics mismatch");
+  ZuCHECK(crypto.rejectZeroRTT() &&
+      crypto.diag().zeroRTTRejected == 1 &&
+      crypto.diag().secretsDiscarded == 1,
+    "0-RTT reject was not idempotent");
 }
 
 void testTLSOutputBuffer()
@@ -66,5 +149,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testCryptoPosture);
+  ZuTestCall(testEarlyDataTLSProperties);
+  ZuTestCall(testEarlyTrafficSecretState);
   ZuTestCall(testTLSOutputBuffer);
 }

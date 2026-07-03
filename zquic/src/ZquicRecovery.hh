@@ -769,6 +769,7 @@ struct SentPkt {
   ZuTime	sentTime;
   unsigned	bytes = 0;
   PktNumSpace::T space = PktNumSpace::AppData;
+  PktType::T	packetType = PktType::N;
   bool		ackEliciting = false;
   bool		inFlight = false;
   bool		pmtudProbe = false;
@@ -1247,6 +1248,29 @@ public:
       if (++scanned >= budget) break;
     }
     return have ? out : ZuTime{0};
+  }
+
+  unsigned reject(
+    PktType::T packetType, uint64_t *releasedBytes = nullptr,
+    PktTxUpdate *update = nullptr)
+  {
+    unsigned n = 0;
+    if (releasedBytes) *releasedBytes = 0;
+    auto iter = m_packets.iter();
+    while (auto node = iter()) {
+      SentPkt &p = node->data();
+      if (p.packetType != packetType) continue;
+      bool wasInFlight = p.inFlight;
+      if (!p.ackd && !p.lost && lose_(p) && update) update->lost(p);
+      if (wasInFlight && releasedBytes) *releasedBytes += p.bytes;
+      if (p.lost) {
+	m_lostPNs.del(p.pn);
+	if (m_retainedLost) --m_retainedLost;
+      }
+      (void)iter.del();
+      ++n;
+    }
+    return n;
   }
 
   uint64_t bytesInFlight() const { return m_bytesInFlight; }

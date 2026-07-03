@@ -489,6 +489,26 @@ void testNoBodyStatusWithoutLengthCompletesAtHeaders()
   ZuCHECK(!stream, "stream still has data after no-body status response");
 }
 
+void testEarlyDataSafeRequestPolicy()
+{
+  ZuTestScope(testEarlyDataSafeRequestPolicy);
+
+  ZuCHECK(Zhttp::earlyDataSafeRequest(Zhttp::Method::GET, false),
+    "GET without body should be 0-RTT eligible");
+  ZuCHECK(Zhttp::earlyDataSafeRequest(Zhttp::Method::HEAD, false),
+    "HEAD without body should be 0-RTT eligible");
+  ZuCHECK(Zhttp::earlyDataSafeRequest(Zhttp::Method::OPTIONS, false),
+    "OPTIONS without body should be 0-RTT eligible");
+  ZuCHECK(!Zhttp::earlyDataSafeRequest(Zhttp::Method::GET, true),
+    "body-bearing request should not be 0-RTT eligible by default");
+  ZuCHECK(!Zhttp::earlyDataSafeRequest(Zhttp::Method::POST, false),
+    "POST should not be 0-RTT eligible by default");
+  ZuCHECK(!Zhttp::earlyDataSafeRequest(Zhttp::Method::PUT, false),
+    "PUT should not be 0-RTT eligible by default");
+  ZuCHECK(!Zhttp::earlyDataSafeRequest(Zhttp::Method::DELETE, false),
+    "DELETE should not be 0-RTT eligible by default");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -507,5 +527,6 @@ int main(int argc, char **argv)
   ZuTestCall(testCloseDelimitedResponseBody);
   ZuTestCall(testCloseDelimitedResponseTooLarge);
   ZuTestCall(testNoBodyStatusWithoutLengthCompletesAtHeaders);
+  ZuTestCall(testEarlyDataSafeRequestPolicy);
   return 0;
 }

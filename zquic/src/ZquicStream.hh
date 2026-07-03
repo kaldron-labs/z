@@ -79,6 +79,8 @@ public:
     return (rxComplete() || m_resetReceived) && (m_finDequeued || m_resetSent);
   }
   bool streamCreditReturned() const { return m_streamCreditReturned; }
+  bool earlyData() const { return m_earlyData; }
+  void earlyData(bool v) { m_earlyData = v; }
   bool txQueued() const { return m_txQueued; }
   void txQueued(bool v) { m_txQueued = v; }
   bool rxComplete() const {
@@ -718,6 +720,7 @@ private:
   bool			m_resetReceived = false;
   bool			m_stopReceived = false;
   bool			m_streamCreditReturned = false;
+  bool			m_earlyData = false;
   StreamRxState		m_rxState;
   RxStream		m_rx;
   StreamRxPQueue	m_rxQueue{0};

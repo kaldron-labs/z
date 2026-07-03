@@ -1,19 +1,21 @@
 # zquic QUIC Implementation Audit
 
-This audit compares the current `zquic` implementation against the functional
-breakdown in `arc/zquic4/quic.md`.  The primary reference is `../zngtcp2`;
-`../msquic`, `../quiche`, and `../mvfst` were used as secondary checks for
-common production behavior.
+This audit compares the current `zquic` implementation against QUIC v1
+transport behavior, the live `zquic` code/tests, and mainstream production
+stacks.  The primary reference is `../zngtcp2`; `../msquic`, `../quiche`, and
+`../mvfst` were used as secondary checks for common production behavior.
 
-The previous `arc/zquic4/audit.md` is now substantially stale.  `zquic` is no
-longer just a compact handshake/stream prototype: packet tracking,
-multi-space PTO selection, ACK delay and loss timers, NewReno integration,
-ECN accounting, reset/stop retransmission, path validation, PMTUD, dynamic
-packet-number length, and Initial/Handshake coalescing are now present.
+`zquic` is no longer just a compact handshake/stream prototype: packet
+tracking, multi-space PTO selection, ACK delay and loss timers, NewReno
+integration, ECN receive accounting and ACK_ECN validation, reset/stop
+retransmission, path validation, PMTUD, dynamic packet-number length, and
+Initial/Handshake coalescing are now present.
 
 `zquic` is still not feature-equivalent to the references.  The main remaining
-gaps are 0-RTT, richer migration/preferred-address handling, pacing and
-alternate congestion controllers, and a more complete ECN path response.
+gaps are richer migration/preferred-address handling, pacing and alternate
+congestion controllers, a more complete ECN path response, production
+application session-cache integrations for 0-RTT, and extension features such
+as QUIC DATAGRAM/WebTransport.
 
 ## Connection lifecycle
 
@@ -22,7 +24,7 @@ transport parameters, Version Negotiation response, client Retry parsing and
 Retry integrity validation, stateless reset detection, and application/transport
 close frames.
 
-Closed or improved relative to the old audit:
+Current implemented behavior:
 
 - Key discard, ACK delay, loss, PTO, PMTUD, and path-validation timers now exist
   in the runtime.
@@ -45,9 +47,9 @@ Closed or improved relative to the old audit:
 
 Remaining gaps:
 
-- 0-RTT is not implemented as a runtime packet space.  `PktType::ZeroRTT` and
-  crypto configuration names exist, but protected long-packet receive accepts
-  only Initial and Handshake.
+- 0-RTT packet processing now exists, but persistent session-ticket storage,
+  cache eviction, and application-specific remembered-parameter policy remain
+  outside zquic's core runtime hooks.
 
 ## Packet processing
 
@@ -61,19 +63,24 @@ Closed or improved:
 - Runtime packet-number length is selected from largest acknowledged state
   rather than remaining fixed.
 - Initial/Handshake send coalescing now exists.
-- ACK_ECN frames are parsed and written; received ECN marks are recorded.
+- ACK_ECN frames are parsed and written; received ECN marks are recorded, and
+  peer ACK_ECN counters are validated for monotonicity and impossible totals.
 - Long datagram receive walks coalesced long packets before a terminal short
   packet.
 
 Remaining gaps:
 
-- 0-RTT packets are parsed at header level but not decrypted or dispatched.
-- ECN is partial.  The implementation tracks counters and validates monotonic
-  ACK_ECN growth, but it does not yet expose the full reference behavior around
-  path ECN validation, marking policy, fallback disablement, and congestion
-  response.
+- 0-RTT packets are protected and dispatched, but undecryptable/reordered 0-RTT
+  received before usable Initial processing is still dropped rather than
+  buffered.
+- ECN is partial.  The implementation tracks counters, emits ACK_ECN, validates
+  peer ACK_ECN growth, and disables ECN on invalid peer counters, but it does
+  not yet expose the full reference behavior around active socket marking, ECN
+  probing policy, and CE-driven congestion response.
 - Packet builder policy is still simpler than the references: fewer packet
   composition modes and no pacing-driven write loop.
+- QUIC DATAGRAM frames are intentionally unsupported unless a future extension
+  negotiates them; WebTransport is outside the current `zquic` transport API.
 
 ## Streams
 
@@ -83,9 +90,8 @@ handling, and closed-stream diagnostics are present.
 
 Closed or improved:
 
-- The old audit's reset/stop emission gap is closed.  RESET_STREAM and
-  STOP_SENDING are represented as retransmittable control frame refs and are
-  queued, ACKed, lost, and retransmitted.
+- RESET_STREAM and STOP_SENDING are represented as retransmittable control
+  frame refs and are queued, ACKed, lost, and retransmitted.
 - Closed-stream control/data accounting is now explicit in diagnostics.
 - Receive reassembly remains one of the stronger areas of the implementation.
 
@@ -111,9 +117,8 @@ Remaining gaps:
 
 ## Congestion control
 
-`zquic` now integrates NewReno into send budgeting, bytes-in-flight accounting,
-ACK processing, loss processing, and persistent congestion handling.  This
-closes the earlier audit's "utility only, not runtime integrated" finding.
+`zquic` integrates NewReno into send budgeting, bytes-in-flight accounting,
+ACK processing, loss processing, and persistent congestion handling.
 
 Remaining gaps:
 
@@ -121,8 +126,8 @@ Remaining gaps:
   all have richer congestion-controller selection.
 - Pacing is not integrated into the runtime send loop.  `ZquicSched.hh` has a
   `Pacer` utility, but runtime sends are not paced like the production stacks.
-- ECN congestion response is incomplete because ECN itself is only partially
-  integrated.
+- ECN congestion response is incomplete: invalid ACK_ECN disables ECN, but
+  outgoing ECN marking and CE-driven congestion reaction are not integrated.
 
 ## Retransmission
 
@@ -203,8 +208,9 @@ Remaining gaps:
 
 - NAT rebinding and migration handling are limited.  Path observation exists,
   but there is no full active migration policy comparable to the references.
-- Preferred address, disable-active-migration policy, and path-bound CID
-  lifecycle are not complete.
+- Preferred address and path-bound CID lifecycle are not complete.
+- `disable_active_migration` is parsed and advertised, but enforcement is not a
+  full migration policy comparable to the reference stacks.
 - Multipath is not supported.
 
 ## Security
@@ -243,7 +249,7 @@ path diagnostics, active path MTU inspection, and test hooks.
 
 Remaining gaps:
 
-- No rich migration/path event API.
+- No rich migration/path event API beyond validation and failure hooks.
 - Error reporting and callback coverage are thinner than the reference stacks.
 - Several base callbacks are no-ops by design, so applications must override the
   hooks they care about.
@@ -373,9 +379,9 @@ Completed qlog signoff:
   and deadline fields.  `quic:connection_id_updated` now emits the draft
   `initiator` plus `old` or `new` CID payload instead of zquic-local
   `kind` / `action` / `reason` / sequence / reset-token flag fields.
-  Private `zquic:zero_rtt_rejected` coverage now records the current
-  unsupported-0-RTT posture from the crypto rejection path, using enum-mapped
-  security reason data and no claim of 0-RTT packet processing support.
+  Private `zquic:zero_rtt_rejected` coverage now records runtime 0-RTT
+  rejection causes from TLS, transport-parameter, frame-policy, missing-key, and
+  late-after-1RTT paths using enum-mapped security reason data.
   Future event data-shape work should be limited to behavior zquic exposes but
   does not yet implement in comparable form, such as TLS alert/handshake failure
   details, client-side Version Negotiation received coverage if implemented,
@@ -439,12 +445,20 @@ Completed qlog signoff:
 2. Server address-validation policy is implemented: Retry token
    generation/validation, NEW_TOKEN emission, client token reuse, address/ODCID
    binding, diagnostics, and codec/runtime tests are present.
+3. 0-RTT packet processing is implemented: separate early traffic-key state,
+   transport-parameter compatibility checks, default-deny application hooks,
+   conservative zhttp request policy, early stream marking, rejection cleanup,
+   and qlog diagnostics are covered by focused zquic/zhttp tests.
 
 ## Priority work
 
 1. Integrate pacing and consider CUBIC/BBR selection if production WAN behavior
    matters.
-2. Finish ECN as a path feature: socket marking, validation state, fallback, and
-   congestion response.
+2. Finish ECN as a path feature: active socket marking, probing policy, and
+   CE-driven congestion response.
 3. Extend migration/preferred-address/CID lifecycle if mobile/NAT-rebinding
    behavior is a target.
+4. Add production 0-RTT session-cache integrations in applications that need
+   persisted resumption tickets, remembered HTTP/3 settings, and cache eviction.
+5. Add QUIC DATAGRAM/WebTransport extension support only if those extension
+   use cases become targets.

@@ -625,6 +625,38 @@ bool Crypto::updateRxTrafficSecret(
   return m_rxProt[level].init(m_rxTrafficSecrets[level], level, false);
 }
 
+bool Crypto::updateTxKeyTrafficSecret(
+  PktKeyLevel::T level, const TrafficSecret &secret)
+{
+  PktNumSpace::T space = pktNumSpaceFromKeyLevel(level);
+  if (space == PktNumSpace::N || !secret.valid()) return false;
+  if (level != PktKeyLevel::ZeroRTT)
+    return updateTxTrafficSecret(space, secret);
+  m_txEarlyTrafficSecret = secret;
+  m_earlyDataEnabled = true;
+  if (m_earlyDataState == EarlyDataState::Disabled ||
+      m_earlyDataState == EarlyDataState::Enabled)
+    m_earlyDataState = EarlyDataState::Offered;
+  return m_txEarlyProt.init(m_txEarlyTrafficSecret, space, true);
+}
+
+bool Crypto::updateRxKeyTrafficSecret(
+  PktKeyLevel::T level, const TrafficSecret &secret)
+{
+  PktNumSpace::T space = pktNumSpaceFromKeyLevel(level);
+  if (space == PktNumSpace::N || !secret.valid()) return false;
+  if (level != PktKeyLevel::ZeroRTT)
+    return updateRxTrafficSecret(space, secret);
+  m_rxEarlyTrafficSecret = secret;
+  m_earlyDataEnabled = true;
+  if (m_isServer)
+    m_earlyDataState = EarlyDataState::Accepted;
+  else if (m_earlyDataState == EarlyDataState::Disabled ||
+      m_earlyDataState == EarlyDataState::Enabled)
+    m_earlyDataState = EarlyDataState::Offered;
+  return m_rxEarlyProt.init(m_rxEarlyTrafficSecret, space, false);
+}
+
 static bool trafficMask_(
   uint8_t *mask, unsigned len, PktProtState &state, ZuBSpan sample)
 {
@@ -683,6 +715,7 @@ static int protect_(
   return int(packetLen);
 }
 
+template <bool PreserveCiphertext>
 static int unprotect_(
   uint8_t *packet, unsigned len, PktProtState &state,
   uint64_t largestPN, unsigned pnOffset, uint64_t &pn,
@@ -719,17 +752,26 @@ static int unprotect_(
   payloadOffset = pnOffset + pnLength;
 
   ptls_aead_context_t *ctx = state.aead.get();
-  using Plain = ZtArray<
-    uint8_t, ZtArrayHeapID<"Zquic.PktProt.Plain">>;
   unsigned cipherLen = len - payloadOffset;
-  auto plain = ZtLocalArray(Plain, cipherLen, cipherLen);
-  if (cipherLen && !plain) return fail();
-  size_t n = ptls_aead_decrypt(
-    ctx, plain.data(), packet + payloadOffset,
-    len - payloadOffset, pn, packet, payloadOffset);
-  if (n == SIZE_MAX) return fail();
-  if (n > cipherLen) return fail();
-  if (n) memcpy(packet + payloadOffset, plain.data(), n);
+  size_t n = 0;
+  if constexpr (PreserveCiphertext) {
+    using Plain = ZtArray<
+      uint8_t, ZtArrayHeapID<"Zquic.PktProt.Plain">>;
+    auto plain = ZtLocalArray(Plain, cipherLen, cipherLen);
+    if (cipherLen && !plain) return fail();
+    n = ptls_aead_decrypt(
+      ctx, plain.data(), packet + payloadOffset,
+      cipherLen, pn, packet, payloadOffset);
+    if (n == SIZE_MAX) return fail();
+    if (n > cipherLen) return fail();
+    if (n) memcpy(packet + payloadOffset, plain.data(), n);
+  } else {
+    n = ptls_aead_decrypt(
+      ctx, packet + payloadOffset, packet + payloadOffset,
+      cipherLen, pn, packet, payloadOffset);
+    if (n == SIZE_MAX) return fail();
+    if (n > cipherLen) return fail();
+  }
   return int(n);
 }
 
@@ -767,7 +809,7 @@ int PktProt::unprotectLong(
   uint64_t largestPN, unsigned pnOffset, uint64_t &pn,
   unsigned &payloadOffset)
 {
-  return unprotect_(packet, len, state, largestPN, pnOffset, pn,
+  return unprotect_<false>(packet, len, state, largestPN, pnOffset, pn,
     payloadOffset, 0x0f);
 }
 
@@ -816,7 +858,7 @@ int PktProt::unprotectShort(
   uint64_t largestPN, unsigned pnOffset, uint64_t &pn,
   unsigned &payloadOffset)
 {
-  return unprotect_(packet, len, state, largestPN, pnOffset, pn,
+  return unprotect_<true>(packet, len, state, largestPN, pnOffset, pn,
     payloadOffset, 0x1f);
 }
 
@@ -841,13 +883,19 @@ bool Crypto::init(const CryptoConfig &config)
   resetTLS_();
   if (config.alpn.length() > 255) return false;
   m_isServer = config.isServer;
-  m_earlyDataEnabled = false;
+  m_earlyDataEnabled = config.enable0RTT;
+  m_earlyDataState =
+    config.enable0RTT ? EarlyDataState::Enabled : EarlyDataState::Disabled;
   m_oneRTTReady = false;
   memset(m_secretInstalled, 0, sizeof(m_secretInstalled));
   for (auto &secret : m_txTrafficSecrets) secret.clear();
   for (auto &secret : m_rxTrafficSecrets) secret.clear();
+  m_txEarlyTrafficSecret.clear();
+  m_rxEarlyTrafficSecret.clear();
   for (auto &state : m_txProt) state.clear();
   for (auto &state : m_rxProt) state.clear();
+  m_txEarlyProt.clear();
+  m_rxEarlyProt.clear();
   m_alpn = ParamString{config.alpn};
   m_serverName = Host{config.serverName};
   m_keyLogPath = ParamString{config.keyLogPath};
@@ -859,19 +907,6 @@ bool Crypto::init(const CryptoConfig &config)
     *config.localTransportParams : TransportParams{};
   m_peerTransportParams = {};
   m_peerTransportParamsReceived = false;
-  if (config.enable0RTT) {
-    ++m_diag.zeroRTTRejected;
-    if (m_qlogTrace)
-      ZquicLOG(*m_qlogTrace, ([](auto &o, ZuTime time) {
-	SecEvent event{
-	  .kind = SecKind::TLS,
-	  .trigger = SecTrigger::Local,
-	  .reason = SecReason::ZeroRTT,
-	  .success = false
-	};
-	o.logSecEvent(EventName::ZeroRTTReject, event, time);
-      }));
-  }
   return true;
 }
 
@@ -900,7 +935,8 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
   if (!initCipherSuites_(m_tlsCipherSuites, TLSMaxCiphers)) return false;
   m_tlsCtx.cipher_suites = m_tlsCipherSuites;
   m_tlsCtx.server_cipher_preference = 1;
-  m_tlsCtx.max_early_data_size = 0;
+  m_tlsCtx.max_early_data_size =
+    config.enable0RTT ? config.maxEarlyData : 0;
   m_tlsCtx.omit_end_of_early_data = 1;
 
   static ptls_update_traffic_key_t updateTrafficKey{
@@ -944,7 +980,7 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
   return true;
 }
 
-bool Crypto::initTLSProperties_(const CryptoConfig &)
+bool Crypto::initTLSProperties_(const CryptoConfig &config)
 {
   memset(&m_tlsProps, 0, sizeof(m_tlsProps));
   unsigned transportParamsLen =
@@ -970,9 +1006,16 @@ bool Crypto::initTLSProperties_(const CryptoConfig &)
   }
   if (!m_isServer) {
     m_maxEarlyData = 0;
-    m_tlsProps.client.max_early_data_size = &m_maxEarlyData;
-    m_tlsProps.client.early_data_acceptance =
-      PTLS_EARLY_DATA_ACCEPTANCE_UNKNOWN;
+    if (config.sessionTicket)
+      m_tlsProps.client.session_ticket =
+	ptls_iovec_init(config.sessionTicket.data(), config.sessionTicket.length());
+    if (config.enable0RTT) {
+      m_tlsProps.client.max_early_data_size = &m_maxEarlyData;
+      m_tlsProps.client.early_data_acceptance =
+	PTLS_EARLY_DATA_ACCEPTANCE_UNKNOWN;
+      if (config.sessionTicket)
+	m_earlyDataState = EarlyDataState::Offered;
+    }
   }
   return true;
 }
@@ -1027,19 +1070,33 @@ int Crypto::onClientHelloCB_(
     PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_INTERNAL_ERROR);
 }
 
-void Crypto::keyLog_(int isEnc, PktNumSpace::T level, ZuBSpan secret)
+void Crypto::keyLog_(int isEnc, PktKeyLevel::T level, ZuBSpan secret)
 {
   if (!m_keyLogPath || !m_tls || !secret) return;
-  if (level != PktNumSpace::Handshake && level != PktNumSpace::AppData) return;
+  if (level != PktKeyLevel::ZeroRTT &&
+      level != PktKeyLevel::Handshake &&
+      level != PktKeyLevel::OneRTT)
+    return;
   ptls_iovec_t random = ptls_get_client_random(m_tls);
   if (!random.base || random.len != 32) return;
   bool clientSecret = isEnc ? !m_isServer : m_isServer;
-  const char *label =
-    level == PktNumSpace::Handshake ?
-      (clientSecret ?
+  const char *label = nullptr;
+  switch (level) {
+    case PktKeyLevel::ZeroRTT:
+      label = "CLIENT_EARLY_TRAFFIC_SECRET";
+      break;
+    case PktKeyLevel::Handshake:
+      label = clientSecret ?
 	"CLIENT_HANDSHAKE_TRAFFIC_SECRET" :
-	"SERVER_HANDSHAKE_TRAFFIC_SECRET") :
-      (clientSecret ? "CLIENT_TRAFFIC_SECRET_0" : "SERVER_TRAFFIC_SECRET_0");
+	"SERVER_HANDSHAKE_TRAFFIC_SECRET";
+      break;
+    case PktKeyLevel::OneRTT:
+      label = clientSecret ?
+	"CLIENT_TRAFFIC_SECRET_0" : "SERVER_TRAFFIC_SECRET_0";
+      break;
+    default:
+      return;
+  }
   ZtString<> line;
   line << label << ' ';
   hexAppend_(line, ZuBSpan{random.base, unsigned(random.len)});
@@ -1055,28 +1112,43 @@ void Crypto::keyLog_(int isEnc, PktNumSpace::T level, ZuBSpan secret)
 int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
 {
   if (!secret) return 0;
-  PktNumSpace::T level = PktNumSpace::Initial;
-  if (!pktNumSpaceFromTLSEpoch(epoch, level) ||
-      level == PktNumSpace::Initial)
+  PktKeyLevel::T keyLevel = PktKeyLevel::Initial;
+  if (!pktKeyLevelFromTLSEpoch(epoch, keyLevel) ||
+      keyLevel == PktKeyLevel::Initial)
     return 0;
+  PktNumSpace::T space = pktNumSpaceFromKeyLevel(keyLevel);
+  if (space == PktNumSpace::N) return 0;
 
   ptls_cipher_suite_t *cipher = ptls_get_cipher(m_tls);
   if (!cipher || !cipher->hash) return -1;
   ZuBSpan secretSpan{
     static_cast<const uint8_t *>(secret),
     unsigned(cipher->hash->digest_size)};
-  TrafficSecret &traffic =
-    isEnc ? m_txTrafficSecrets[level] : m_rxTrafficSecrets[level];
+  TrafficSecret &traffic = keyLevel == PktKeyLevel::ZeroRTT ?
+    (isEnc ? m_txEarlyTrafficSecret : m_rxEarlyTrafficSecret) :
+    (isEnc ? m_txTrafficSecrets[space] : m_rxTrafficSecrets[space]);
+  bool installed = traffic.valid();
   if (!PktProt::deriveTrafficSecret(traffic, cipher, secretSpan))
     return -1;
-  PktProtState &state =
-    isEnc ? m_txProt[level] : m_rxProt[level];
-  if (!state.init(traffic, level, isEnc)) {
+  PktProtState &state = keyLevel == PktKeyLevel::ZeroRTT ?
+    (isEnc ? m_txEarlyProt : m_rxEarlyProt) :
+    (isEnc ? m_txProt[space] : m_rxProt[space]);
+  if (!state.init(traffic, space, isEnc)) {
     traffic.clear();
     return -1;
   }
-  keyLog_(isEnc, level, secretSpan);
-  installSecret(level, secretSpan);
+  keyLog_(isEnc, keyLevel, secretSpan);
+  if (keyLevel == PktKeyLevel::ZeroRTT) {
+    m_earlyDataEnabled = true;
+    if (m_isServer)
+      m_earlyDataState = EarlyDataState::Accepted;
+    else if (m_earlyDataState == EarlyDataState::Disabled ||
+	m_earlyDataState == EarlyDataState::Enabled)
+      m_earlyDataState = EarlyDataState::Offered;
+    if (!installed) ++m_diag.secretsInstalled;
+  } else {
+    installSecret(space, secretSpan);
+  }
   return 0;
 }
 
@@ -1168,10 +1240,36 @@ int Crypto::handleTLSMessage(
   if (pbuf.is_allocated)
     ptls_buffer_dispose(&pbuf);
   if (!ok) return -1;
+  syncEarlyDataState_();
   if (!n && ptls_handshake_is_complete(m_tls)) m_oneRTTReady = true;
   if (n == PTLS_ERROR_IN_PROGRESS || n == PTLS_ERROR_ASYNC_OPERATION || !n)
     return int(outLen);
   return -1;
+}
+
+void Crypto::syncEarlyDataState_()
+{
+  if (m_isServer || !m_earlyDataEnabled) return;
+  switch (m_tlsProps.client.early_data_acceptance) {
+    case PTLS_EARLY_DATA_ACCEPTED:
+      m_earlyDataState = EarlyDataState::Accepted;
+      break;
+    case PTLS_EARLY_DATA_REJECTED:
+      if (m_earlyDataState != EarlyDataState::Rejected) {
+	m_txEarlyTrafficSecret.clear();
+	m_rxEarlyTrafficSecret.clear();
+	m_txEarlyProt.clear();
+	m_rxEarlyProt.clear();
+	m_earlyDataEnabled = false;
+	m_earlyDataState = EarlyDataState::Rejected;
+	++m_diag.zeroRTTRejected;
+      }
+      break;
+    default:
+      if (m_earlyDataState == EarlyDataState::Enabled && m_maxEarlyData)
+	m_earlyDataState = EarlyDataState::Offered;
+      break;
+  }
 }
 
 int Crypto::encodeTransportParams(
@@ -1224,13 +1322,23 @@ bool Crypto::deriveInitial(const CxnID &dcid)
 
 bool Crypto::rejectZeroRTT()
 {
-  ++m_diag.zeroRTTRejected;
+  bool wasRejected = m_earlyDataState == EarlyDataState::Rejected;
+  bool hadEarly =
+    m_txEarlyTrafficSecret.valid() || m_rxEarlyTrafficSecret.valid();
+  m_txEarlyTrafficSecret.clear();
+  m_rxEarlyTrafficSecret.clear();
+  m_txEarlyProt.clear();
+  m_rxEarlyProt.clear();
+  m_earlyDataEnabled = false;
+  m_earlyDataState = EarlyDataState::Rejected;
+  if (hadEarly) ++m_diag.secretsDiscarded;
+  if (!wasRejected) ++m_diag.zeroRTTRejected;
   if (m_qlogTrace)
     ZquicLOG(*m_qlogTrace, ([](auto &o, ZuTime time) {
       SecEvent event{
 	.kind = SecKind::TLS,
 	.trigger = SecTrigger::Received,
-	.reason = SecReason::ZeroRTT,
+	.reason = zeroRTTSecReason(ZeroRTTReason::TLSRejected),
 	.success = false
       };
       o.logSecEvent(EventName::ZeroRTTReject, event, time);

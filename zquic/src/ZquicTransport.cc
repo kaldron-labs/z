@@ -34,6 +34,32 @@ bool TransportParams::validate() const
     activeCxnIDLimit >= 2;
 }
 
+ZeroRTTReason::T validateZeroRTTParams(
+  const TransportParams &remembered, const TransportParams &current)
+{
+  if (!remembered.validate() || !current.validate())
+    return ZeroRTTReason::TransportParams;
+  if (remembered.initialMaxData > current.initialMaxData ||
+      remembered.initialMaxStreamDataBidiLocal >
+	current.initialMaxStreamDataBidiLocal ||
+      remembered.initialMaxStreamDataBidiRemote >
+	current.initialMaxStreamDataBidiRemote ||
+      remembered.initialMaxStreamDataUni > current.initialMaxStreamDataUni)
+    return ZeroRTTReason::FlowLimit;
+  if (remembered.initialMaxStreamsBidi > current.initialMaxStreamsBidi ||
+      remembered.initialMaxStreamsUni > current.initialMaxStreamsUni)
+    return ZeroRTTReason::StreamLimit;
+  if (remembered.activeCxnIDLimit > current.activeCxnIDLimit)
+    return ZeroRTTReason::ActiveCIDLimit;
+  if (remembered.maxUDPPayloadSize > current.maxUDPPayloadSize ||
+      remembered.maxIdleTimeout != current.maxIdleTimeout ||
+      remembered.ackDelayExponent != current.ackDelayExponent ||
+      remembered.maxAckDelay != current.maxAckDelay ||
+      remembered.disableActiveMigration != current.disableActiveMigration)
+    return ZeroRTTReason::TransportParams;
+  return ZeroRTTReason::None;
+}
+
 static int putParamVar_(uint8_t *out, unsigned len, uint64_t id, uint64_t v,
     unsigned &o)
 {

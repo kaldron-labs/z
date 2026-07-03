@@ -931,6 +931,23 @@ protected:
   void disconnected(Link *, bool) { }
   template <typename Link>
   void retireLinkRoutes_(Link *) { }
+  template <typename Link>
+  bool earlyDataSession(
+    Link *, ZuBSpan &, const TransportParams *&, ZuBSpan &) {
+    return false;
+  }
+  template <typename Link>
+  bool validateEarlyDataParams(Link *, ZuBSpan params) {
+    return !params;
+  }
+  template <typename Link>
+  uint32_t maxEarlyData(Link *) { return 0; }
+  template <typename Link>
+  bool allowEarlyStream(Link *, uint64_t, bool) { return false; }
+  template <typename Link>
+  void earlyDataAccepted(Link *) { }
+  template <typename Link>
+  void earlyDataRejected(Link *, ZeroRTTReason::T) { }
 
 private:
   unsigned thread_(const ParamString &id, unsigned deflt) const {

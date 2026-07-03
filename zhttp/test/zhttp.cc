@@ -353,6 +353,7 @@ struct Req {
   bool		framingLogged = false;
   bool		truncateOutput = false;
   bool		h3Active = false;
+  bool		h3EarlyData = false;
   bool		done = false;
   bool		failed = false;
   uint64_t	h3RxBytes = 0;
@@ -602,6 +603,7 @@ void resetAttempt(Req &req, bool truncateOutput)
   req.h3RxPending = 0;
   req.h3RxQueued = 0;
   req.h3FinReceived = false;
+  req.h3EarlyData = false;
 }
 
 void initReq(Req &req, const Run &run, unsigned id)
@@ -1475,6 +1477,7 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   void finishH3Req(Link *, Req *, bool);
   void finishH3Req_(Link *, Req *, bool);
   void failH3Link();
+  bool allowEarlyStream(Link *, uint64_t, bool);
 };
 
 struct QUICClient::Stream :
@@ -2034,6 +2037,26 @@ bool QUICClient::activateH3Req(Req *req)
   return true;
 }
 
+bool QUICClient::allowEarlyStream(Link *link, uint64_t streamID, bool fin)
+{
+  if (!fin || streamID > uint64_t(INT64_MAX)) return false;
+  int64_t id = int64_t(streamID);
+  Req *req = nullptr;
+  if (!run) {
+    if (state.responseStreamID != id) return false;
+    req = &state;
+  } else {
+    if (!link) return false;
+    auto stream = link->findStream(id);
+    if (!stream) return false;
+    req = stream->req;
+  }
+  if (!req) return false;
+  ZmGuard<ZmLock> guard(lock);
+  return req->h3EarlyData && (!run || req->h3Active) &&
+    !req->done && !req->failed;
+}
+
 void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
 {
   this->txInvoke([
@@ -2063,6 +2086,8 @@ void QUICClient::sendH3Req_(Link *link_, ZmRef<Stream> stream, Req *req)
   }
   req->protocol = Protocol::H3;
   req->responseStreamID = stream->id();
+  req->h3EarlyData =
+    Zhttp::earlyDataSafeRequest(Zhttp::Method::GET, false);
   stream->req = req;
   stream->parser.bind(link_, req);
   stream->parser.reset();
