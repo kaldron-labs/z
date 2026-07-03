@@ -195,6 +195,9 @@ ZuDerive(ServerLinks_,
   (ZmHash<ZmRef<Link_>,
     ZmHashHeapID<"Zquic.Server.LinkHash">>));
 
+ZuDerive(EndpointDrainFns,
+  (ZmQueue<ZmFn<>, ZmQueueHeapID<"Zquic.Endpoint.DrainFns">>));
+
 template <typename Impl_>
 class Endpoint_ {
   class Cxn_ : public ZiConnection {
@@ -215,8 +218,6 @@ class Endpoint_ {
       (ZmList<ZmRef<TxNode>,
 	ZmListNode<ZmRef<TxNode>,
 	  ZmListHeapID<"Zquic.Endpoint.TxQueue">>>));
-    ZuDerive(DrainFns,
-      (ZmQueue<ZmFn<>, ZmQueueHeapID<"Zquic.Endpoint.DrainFns">>));
 
     void *operator new(size_t s) {
       using Heap = ZmHeap<"Zquic.Endpoint.Cxn", Cxn_>;
@@ -548,7 +549,7 @@ private:
     });
   }
 
-  typename Cxn_::DrainFns disconnected_(Cxn_ *cxn) {
+  EndpointDrainFns disconnected_(Cxn_ *cxn) {
     if (m_cxn == cxn && cxn->generation() == m_generation) {
       cxn->closeRx_();
       m_cxn = nullptr;
@@ -631,7 +632,7 @@ private:
       cxn->disconnect();
     });
   }
-  typename Cxn_::DrainFns takeDrainFns_() {
+  EndpointDrainFns takeDrainFns_() {
     auto fns = ZuMv(m_drainFns);
     m_drainFns.clean();
     return fns;
@@ -642,7 +643,7 @@ private:
       Endpoint_::runDrainFns_(fns);
     });
   }
-  static void runDrainFns_(typename Cxn_::DrainFns &fns) {
+  static void runDrainFns_(EndpointDrainFns &fns) {
     while (auto fn = fns.shift()) fn();
   }
 
@@ -663,7 +664,7 @@ private:
   SockConfig		m_sockConfig;
 
   CxnRef		m_cxn;
-  typename Cxn_::DrainFns m_drainFns;
+  EndpointDrainFns	m_drainFns;
   unsigned		m_generation = 0;
   EndpointRxDiag	m_rxDiag;
   SockDiag		m_sockDiag;
