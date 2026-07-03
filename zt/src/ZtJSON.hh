@@ -862,7 +862,7 @@ template <
   typename S, typename O>
 inline void saveField(S &s, const O &o)
 {
-  ZuCSpan fieldID = ZuFieldProp::JSON::GetID<Field>{}().cspan();
+  auto fieldID = ZuFieldProp::JSON::GetID<Field>{}().cspan();
   s << '"' << fieldID << "\":";
   enum { TypeCode = Field::Type::Code };
   using Props = typename Field::Props;
