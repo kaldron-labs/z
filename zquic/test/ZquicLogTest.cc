@@ -236,7 +236,6 @@ static bool containsSecFields_(ZuCSpan data)
 	    data.find<"key_type">() >= 0 &&
 	    data.find<"packet_number_space">() >= 0 &&
 	    data.find<"trigger">() >= 0 &&
-	    data.find<"alpn">() >= 0 &&
 	    data.find<"success">() >= 0;
 }
 
@@ -1269,15 +1268,23 @@ void testQLogTypedSecEvents()
 	  ZuCHECK(data.find<"\"name\":\"zquic:zero_rtt_accepted\","
 	    "\"data\":{\"kind\":\"tls\","
 	    "\"packet_number_space\":\"application_data\","
-	    "\"key_type\":\"\",\"trigger\":\"received\",\"alpn\":\"\","
+	    "\"trigger\":\"received\","
 	    "\"reason\":\"0rtt\",\"value\":0,\"success\":true}">() >= 0,
 	    "0-RTT acceptance qlog event missing");
 	  ZuCHECK(data.find<"\"name\":\"zquic:zero_rtt_rejected\","
 	    "\"data\":{\"kind\":\"tls\","
 	    "\"packet_number_space\":\"application_data\","
-	    "\"key_type\":\"\",\"trigger\":\"received\",\"alpn\":\"\","
+	    "\"trigger\":\"received\","
 	    "\"reason\":\"0rtt\",\"value\":0,\"success\":false}">() >= 0,
 	    "0-RTT rejection qlog event missing");
+	  ZuCHECK(data.find<"\"key_type\":\"\"">() < 0,
+	    "security qlog emitted empty key_type");
+	  ZuCHECK(data.find<"\"trigger\":\"\"">() < 0,
+	    "security qlog emitted empty trigger");
+	  ZuCHECK(data.find<"\"reason\":\"\"">() < 0,
+	    "security qlog emitted empty reason");
+	  ZuCHECK(data.find<"\"alpn\":\"\"">() < 0,
+	    "security qlog emitted empty alpn");
 	  ZuCHECK(data.find<"\"packet_space\"">() < 0,
 	    "old security packet_space field leaked");
 	  removeTestLog_(path);
@@ -1474,6 +1481,10 @@ void testQLogTypedStreamEvents()
   ZuCHECK(data.find<"application">() >= 0, "stream data source missing");
   ZuCHECK(data.find<"network">() >= 0, "stream data destination missing");
   ZuCHECK(data.find<"fin_set">() >= 0, "stream data FIN info missing");
+  ZuCHECK(data.find<"\"reason\":\"\"">() < 0,
+    "stream qlog emitted empty reason");
+  ZuCHECK(data.find<"\"additional_info\":\"\"">() < 0,
+    "stream qlog emitted empty additional_info");
   removeTestLog_(path);
 #endif
 }

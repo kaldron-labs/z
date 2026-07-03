@@ -267,7 +267,7 @@ void ZiLog::stop_()
   ZmThread thread;
   {
     Guard guard(m_lock);
-    thread = m_thread;
+    thread = ZuMv(m_thread);
     m_thread = {};
   }
   if (!thread) return;

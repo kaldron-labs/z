@@ -242,8 +242,9 @@ struct SecKind {
 };
 
 struct SecKeyType {
-  ZtEnum(SecKeyType, int8_t, None, RX, RXOld, TX);
-  ZtEnumMap(SecKeyType, JSON, "", "rx", "rx_old", "tx");
+  ZtEnum(SecKeyType, int8_t, None = -1, RX, RXOld, TX);
+  ZtEnumMap(SecKeyType, JSON, "rx", "rx_old", "tx",
+    "unknown", "none");
 };
 
 struct KeyType {
@@ -259,11 +260,12 @@ struct KeyType {
 
 struct SecTrigger {
   ZtEnum(SecTrigger, int8_t,
-    None, Sent, Received, Validated, Local, Remote, Peer, Selected, Timer,
+    None = -1, Sent, Received, Validated, Local, Remote, Peer, Selected, Timer,
     HSComplete, RX, TX);
   ZtEnumMap(SecTrigger, JSON,
-    "", "sent", "received", "validated", "local", "remote", "peer",
-    "selected", "timer", "handshake_complete", "rx", "tx");
+    "sent", "received", "validated", "local", "remote", "peer",
+    "selected", "timer", "handshake_complete", "rx", "tx",
+    "unknown", "none");
 };
 
 struct KeyTrigger {
@@ -279,7 +281,7 @@ struct Initiator {
 
 struct SecReason {
   ZtEnum(SecReason, int8_t,
-    None, Unknown, OK, Handshake, KeyPhase, KeyUpdate, PeerUpdate,
+    None = -1, Unknown, OK, Handshake, KeyPhase, KeyUpdate, PeerUpdate,
     PacketSpace, AddrValid, MissingToken, NewToken, NewTokenPolicy,
     UnsupVersion, UnknownCID, TokenMatch, Validation, RetrySCID, Expired,
     Auth, Address, Malformed, Kind, ODCID, Protect, MissingKeys, Protection,
@@ -287,7 +289,7 @@ struct SecReason {
     ZeroRTTFlowLimit, ZeroRTTStreamLimit, ZeroRTTActiveCIDLimit,
     ZeroRTTFramePolicy, ZeroRTTMissingKeys, ZeroRTTAfterOneRTT);
   ZtEnumMap(SecReason, JSON,
-    "", "unknown", "ok", "handshake", "key_phase", "key_update",
+    "unknown", "ok", "handshake", "key_phase", "key_update",
     "peer_update", "packet_space", "address_validation", "missing_token",
     "new_token", "new_token_policy", "unsupported_version", "unknown_cid",
     "token_match", "validation", "retry_scid", "expired", "auth", "address",
@@ -295,7 +297,7 @@ struct SecReason {
     "invalid_key_phase", "0rtt", "0rtt_app_params",
     "0rtt_transport_params", "0rtt_flow_limit", "0rtt_stream_limit",
     "0rtt_active_connection_id_limit", "0rtt_frame_policy",
-    "0rtt_missing_keys", "0rtt_after_1rtt");
+    "0rtt_missing_keys", "0rtt_after_1rtt", "unknown", "none");
 };
 
 inline SecReason::T zeroRTTSecReason(ZeroRTTReason::T reason)
@@ -452,9 +454,9 @@ struct StreamSide {
 };
 
 struct StreamReason {
-  ZtEnum(StreamReason, int8_t, None, LocalOpen, PeerOpen, Reaped);
+  ZtEnum(StreamReason, int8_t, None = -1, LocalOpen, PeerOpen, Reaped);
   ZtEnumMap(StreamReason, JSON,
-    "", "local_open", "peer_open", "reaped");
+    "local_open", "peer_open", "reaped", "unknown", "none");
 };
 
 struct StreamEvent {
@@ -478,8 +480,8 @@ struct StreamDataLoc {
 };
 
 struct StreamDataInfo {
-  ZtEnum(StreamDataInfo, int8_t, None, FinSet);
-  ZtEnumMap(StreamDataInfo, JSON, "", "fin_set");
+  ZtEnum(StreamDataInfo, int8_t, None = -1, FinSet);
+  ZtEnumMap(StreamDataInfo, JSON, "fin_set", "unknown", "none");
 };
 
 struct StreamDataEvent {
