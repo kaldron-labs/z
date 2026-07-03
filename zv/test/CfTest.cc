@@ -50,9 +50,7 @@ static const char testdata[] =
 "%define FAT artma\n"
 "key7 { foo { bah 1 } } key8 C${FAT}n\n";
 
-namespace Values {
-  ZtEnum(Values, int8_t, High, Low, Normal);
-}
+ZtEnumNS(Values, int8_t, High, Low, Normal);
 
 int main()
 {

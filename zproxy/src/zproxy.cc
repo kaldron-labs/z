@@ -440,13 +440,9 @@ void parseAddr(const S &s, ZiIP &ip, uint16_t &port) {
 #pragma warning(disable:4800)
 #endif
 
-namespace Side {
-  ZtEnum(Side, int8_t, In, Out, Both);
-}
+ZtEnumNS(Side, int8_t, In, Out, Both);
 
-namespace IOOp {
-  ZtEnum(IOOp, int8_t, Send, Recv, Both);
-}
+ZtEnumNS(IOOp, int8_t, Send, Recv, Both);
 
 class App : public ZmPolymorph, public ZcmdHost {
 

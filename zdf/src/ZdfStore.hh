@@ -26,10 +26,8 @@
 namespace Zdf {
 
 // data store state
-namespace StoreState {
-  ZtEnum(StoreState, int8_t,
-    Uninitialized, Initialized, Opening, Opened, OpenFailed);
-}
+ZtEnumNS(StoreState, int8_t,
+  Uninitialized, Initialized, Opening, Opened, OpenFailed);
 
 using OpenFn = ZmFn<void(bool)>;	// (bool ok)
 

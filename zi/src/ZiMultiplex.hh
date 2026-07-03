@@ -373,9 +373,7 @@ struct ZiListenInfo {
 };
 
 // cxn information (direction, socket, local & remote IP/port, options)
-namespace ZiCxnType {
-  ZtEnum(ZiCxnType, int8_t, TCPIn, TCPOut, UDP);
-}
+ZtEnumNS(ZiCxnType, int8_t, TCPIn, TCPOut, UDP);
 
 struct ZiCxnInfo { // pure aggregate, no ctor
   int			type = -1;	// ZiCxnType

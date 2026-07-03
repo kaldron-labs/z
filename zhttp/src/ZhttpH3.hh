@@ -18,49 +18,41 @@ namespace Zhttp {
 namespace H3 {
 
   // HTTP/3 connection state
-  struct CxnState {
-    ZtEnum(CxnState, int8_t,
-      Init,
-      LocalControlOpen,
-      LocalQPackOpen,
-      PeerControlOpen,
-      PeerSettingsReceived,
-      Ready,
-      Goaway,
-      Draining,
-      Error);
-  };
+  ZtEnumStruct(CxnState, int8_t,
+    Init,
+    LocalControlOpen,
+    LocalQPackOpen,
+    PeerControlOpen,
+    PeerSettingsReceived,
+    Ready,
+    Goaway,
+    Draining,
+    Error);
 
-  struct ParserState {
-    ZtEnum(ParserState, int8_t,
-      Initial,		// expecting first HEADERS frame
-      Body,		// after initial HEADERS; accepting DATA or trailers
-      Trailers,		// trailing HEADERS received; no more frames allowed
-      Complete,		// stream FIN / closed cleanly
-      Cancelled,	// RESET_STREAM / STOP_SENDING / app cancellation
-      Error);		// invalid frame sequence or decode failure
-  };
+  ZtEnumStruct(ParserState, int8_t,
+    Initial,		// expecting first HEADERS frame
+    Body,		// after initial HEADERS; accepting DATA or trailers
+    Trailers,		// trailing HEADERS received; no more frames allowed
+    Complete,		// stream FIN / closed cleanly
+    Cancelled,	// RESET_STREAM / STOP_SENDING / app cancellation
+    Error);		// invalid frame sequence or decode failure
 
-  namespace FrameState {
-    ZtEnum(FrameState, int8_t,
-      Type = 0,		// expecting frame type prefix
-      TypeCont,		// reading remaining frame type bytes
-      Length,		// expecting frame length prefix
-      LengthCont,	// reading remaining frame length bytes
-      Payload);		// reading frame payload bytes
-  }
+  ZtEnumNS(FrameState, int8_t,
+    Type = 0,		// expecting frame type prefix
+    TypeCont,		// reading remaining frame type bytes
+    Length,		// expecting frame length prefix
+    LengthCont,	// reading remaining frame length bytes
+    Payload);		// reading frame payload bytes
 
-  struct CxnStreamState {
-    ZtEnum(CxnStreamState, int8_t,
-      Type,		// reading stream type
-      Control,		// HTTP/3 control stream frames
-      QPackEncoder,	// peer QPACK encoder stream bytes
-      QPackDecoder,	// peer QPACK decoder stream bytes
-      Extension,	// unknown extension stream bytes
-      Complete,		// stream FIN / closed cleanly
-      Cancelled,	// RESET_STREAM / STOP_SENDING
-      Error);		// invalid connection stream
-  };
+  ZtEnumStruct(CxnStreamState, int8_t,
+    Type,		// reading stream type
+    Control,		// HTTP/3 control stream frames
+    QPackEncoder,	// peer QPACK encoder stream bytes
+    QPackDecoder,	// peer QPACK decoder stream bytes
+    Extension,	// unknown extension stream bytes
+    Complete,		// stream FIN / closed cleanly
+    Cancelled,	// RESET_STREAM / STOP_SENDING
+    Error);		// invalid connection stream
 
   using SettingsKeys =
     ZtArray<uint64_t, ZtArrayHeapID<"Zhttp.H3.SettingsKeys">>;

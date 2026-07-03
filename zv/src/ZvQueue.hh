@@ -18,9 +18,7 @@
 
 #include <zlib/ZtEnum.hh>
 
-namespace ZvQueueType {
-  ZtEnum(ZvQueueType, int8_t, Thread, IPC, Rx, Tx);
-}
+ZtEnumNS(ZvQueueType, int8_t, Thread, IPC, Rx, Tx);
 
 struct ZvQueueTelemetry {
   ZmIDString	id;		// primary key

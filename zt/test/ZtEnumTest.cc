@@ -11,9 +11,7 @@
 
 using namespace ZuTestUtil;
 
-namespace Color {
-  ZtEnum(Color, int8_t, Red, Green, Blue);
-}
+ZtEnumNS(Color, int8_t, Red, Green, Blue);
 
 namespace Perm {
   ZtFlags(Perm, uint8_t, Read, Write, Exec);

@@ -20,9 +20,7 @@ namespace ZtURI {
   ZuTuple<int, int, char> eoc(ZuSpan<char>);
 }
 
-namespace Values {
-  ZtEnum(Values, int8_t, High, Low, Normal);
-}
+ZtEnumNS(Values, int8_t, High, Low, Normal);
 
 namespace Flags {
   ZtFlags(Flags, uint8_t, Bit0, Bit1, Bit2);

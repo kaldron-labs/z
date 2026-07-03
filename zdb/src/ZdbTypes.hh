@@ -69,15 +69,13 @@ namespace HostState {
     Stopping)
 }
 
-namespace ObjState {
-  ZtEnum(ObjState, int8_t,
-    Undefined,
-    Insert,
-    Update,
-    Committed,
-    Delete,
-    Deleted);
-}
+ZtEnumNS(ObjState, int8_t,
+  Undefined,
+  Insert,
+  Update,
+  Committed,
+  Delete,
+  Deleted);
 
 } // Zdb_
 

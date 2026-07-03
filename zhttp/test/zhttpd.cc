@@ -35,7 +35,9 @@ constexpr uint64_t H3DataMax = 100<<20;
 constexpr uint64_t H3StreamDataMax = 16<<20;
 constexpr uint64_t H3BidiMax = 4096;
 constexpr uint64_t H3UniMax = 16;
+#ifdef Zquic_DEBUG
 constexpr unsigned H3DiagLinkSnapshot = 64;
+#endif
 
 template <typename Server>
 Zquic::EndpointDiag h3EndpointDiag(Server *server)

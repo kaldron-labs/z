@@ -92,14 +92,10 @@ inline constexpr uint64_t MaxStreamCount = uint64_t(INT64_MAX) >> 2;
 inline constexpr uint64_t U64Null = ZuCmp<uint64_t>::null();
 inline constexpr uint64_t DefaultTokenLifetime = 600;
 
-struct TokenKind {
-  ZtEnum(TokenKind, int8_t, Retry = 1, NewToken = 2);
-};
+ZtEnumStruct(TokenKind, int8_t, Retry = 1, NewToken = 2);
 
-struct TokenStatus {
-  ZtEnum(TokenStatus, int8_t,
-    OK, Malformed, Expired, Kind, Address, ODCID, Auth);
-};
+ZtEnumStruct(TokenStatus, int8_t,
+  OK, Malformed, Expired, Kind, Address, ODCID, Auth);
 
 struct TokenInfo {
   TokenKind::T	kind = TokenKind::Retry;
