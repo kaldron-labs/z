@@ -612,7 +612,7 @@ skip:
   }
   {
     auto oid = m_oids.oid(name);
-    if (!ZuCmp<unsigned>::null(oid)) {
+    if (!ZuNull(oid)) {
       if (type != Value::Index<String>{}) m_oids.init(type, oid);
       m_startState.incType();
       if (++type >= Value::N) {
@@ -1292,19 +1292,19 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
       type = Value::Index<Int64>{};
     } else {
       field = m_fieldMap.findVal(id);
-      if (!ZuCmp<unsigned>::null(field)) {
+      if (!ZuNull(field)) {
 	m_openState.incField();
 	type = m_xFields[field].type;
       }
     }
     bool match = false;
-    if (!ZuCmp<unsigned>::null(type))
+    if (!ZuNull(type))
       match = m_store->oids().match(oid, type);
 
     /* ZiLOG(Debug, "ZdbPQ", ([
       id = ZeString{id}, oid, field, match, state = m_openState.v
     ](auto &s) {
-      int field_ = ZuCmp<unsigned>::null(field) ? -1 : int(field);
+      int field_ = ZuNull(field) ? -1 : int(field);
       s << "id=" << id << " oid=" << oid
 	<< " field=" << field_ << " match=" << (match ? 'T' : 'F')
 	<< " openState=" << ZuBoxed(state).hex();
@@ -1436,7 +1436,7 @@ void StoreTbl::mkIndices_rcvd(PGresult *res)
     /* ZiLOG(Debug, "ZdbPQ", ([
       id = ZeString{id}, oid, field, match, state = m_openState.v
     ](auto &s) {
-      int field_ = ZuCmp<unsigned>::null(field) ? -1 : int(field);
+      int field_ = ZuNull(field) ? -1 : int(field);
       s << "id=" << id << " oid=" << oid
 	<< " field=" << field_ << " match=" << (match ? 'T' : 'F')
 	<< " openState=" << ZuBoxed(state).hex();

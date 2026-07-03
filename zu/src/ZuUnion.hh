@@ -110,7 +110,7 @@ namespace Union_ { // internal
   template <> struct OpBool<bool> { using T = void; };
   template <typename T, typename = void> struct OpStar {
     ZuInline static constexpr bool star(const T &p) {
-      return !ZuCmp<T>::null(p);
+      return !ZuNull(p);
     }
   };
   template <typename T>
@@ -123,7 +123,7 @@ namespace Union_ { // internal
   template <typename T>
   struct OpBang<T, typename OpBool<decltype(!(ZuDeclVal<const T &>()))>::T> {
     ZuInline static constexpr bool bang(const T &p) {
-      return ZuCmp<T>::null(p);
+      return ZuNull(p);
     }
   };
 
@@ -147,7 +147,7 @@ namespace Union_ { // internal
     ZuInline static constexpr void ctor(T *p, V &&v) { *p = ZuFwd<V>(v); }
     ZuInline static constexpr void dtor(T *p) { }
     ZuInline static constexpr bool star(const T &p) {
-      return !ZuCmp<T>::null(p);
+      return !ZuNull(p);
     }
     ZuInline static constexpr bool bang(const T &p) { return !p; }
   };
@@ -171,11 +171,11 @@ namespace Union_ { // internal
     }
     template <typename V>
     ZuInline static constexpr bool equals(const T &p, const V &v) {
-      return ZuCmp<T>::equals(p, v);
+      return ZuEquals(p, v);
     }
     template <typename V>
     ZuInline static constexpr int cmp(const T &p, const V &v) {
-      return ZuCmp<T>::cmp(p, v);
+      return ZuCompare(p, v);
     }
     ZuInline static uint32_t hash(const T &p) {
       return ZuHash<T>::hash(p);
@@ -497,7 +497,7 @@ public:
   template <typename P>
   constexpr ZuIs<P, Union, int> cmp(const P &p) const {
     if (this == &p) return 0;
-    if (int i = ZuCmp<uint8_t>::cmp(m_type, p.m_type)) return i;
+    if (int i = ZuCompare(m_type, p.m_type)) return i;
     return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> int {
       using namespace Union_;
       using T = Type<I>;

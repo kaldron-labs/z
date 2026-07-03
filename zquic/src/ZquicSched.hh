@@ -117,7 +117,7 @@ private:
     uint64_t n =
       bytes && srtt > uint64_t(-1) / bytes ? uint64_t(-1) :
       srtt * uint64_t(bytes);
-    if (ZuCmp<uint64_t>::null(n)) return n;
+    if (ZuNull(n)) return n;
     if (n > uint64_t(-1) - (cwnd - 1)) return uint64_t(-1);
     n = (n + cwnd - 1) / cwnd;
     return n ? n : 1;

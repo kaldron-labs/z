@@ -5,8 +5,8 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // good ole' plain enum wrapper
-// - intentionally diverges from `enum class`
-// - intentionally uses int-convertible ordinals
+// - intentionally the path not taken by C++ with `enum class`
+// - plain integer ordinals
 // - most use cases are satisfied by ZtEnumNS or ZtEnumStruct
 // - the enum is wrapped in a containing namespace or
 //   struct and accompanied by compile-time machinery to

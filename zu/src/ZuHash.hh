@@ -105,7 +105,7 @@ template <typename T> struct ZuHash_Floating;
 template <> struct ZuHash_Floating<float> {
   static uint32_t hash(float v) {
     if (v == 0) return 0; // signed zero ambiguity
-    if (ZuCmp<float>::null(v)) return uint32_t(1)<<31; // NaN ambiguity
+    if (ZuNull(v)) return uint32_t(1)<<31; // NaN ambiguity
     double d = v;
     return ZuHash_FNV::hash(
       reinterpret_cast<const uint8_t *>(&d), sizeof(double));
@@ -114,7 +114,7 @@ template <> struct ZuHash_Floating<float> {
 template <> struct ZuHash_Floating<double> {
   static uint32_t hash(double v) {
     if (v == 0) return 0; // signed zero ambiguity
-    if (ZuCmp<double>::null(v)) return uint32_t(1)<<31; // NaN ambiguity
+    if (ZuNull(v)) return uint32_t(1)<<31; // NaN ambiguity
     return ZuHash_FNV::hash(
       reinterpret_cast<const uint8_t *>(&v), sizeof(double));
   }
@@ -122,7 +122,7 @@ template <> struct ZuHash_Floating<double> {
 template <> struct ZuHash_Floating<long double> {
   static uint32_t hash(long double v) {
     if (v == 0) return 0; // signed zero ambiguity
-    if (ZuCmp<long double>::null(v)) return uint32_t(1)<<31; // NaN ambiguity
+    if (ZuNull(v)) return uint32_t(1)<<31; // NaN ambiguity
     double d = v;
     return ZuHash_FNV::hash(
       reinterpret_cast<const uint8_t *>(&d), sizeof(double));

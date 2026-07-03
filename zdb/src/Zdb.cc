@@ -970,7 +970,7 @@ Host *DB::setMaster()
 	if (host != m_self) ++m_nPeers;
 	if (!m_leader) { m_leader = host; continue; }
 	int diff = host->cmp(m_leader);
-	if (ZuCmp<int>::null(diff)) {
+	if (ZuNull(diff)) {
 	  m_leader = nullptr;
 	  break;
 	} else if (diff > 0)

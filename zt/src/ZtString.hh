@@ -898,9 +898,9 @@ public:
   bool operator !() const { return !length(); }
 
   template <typename S>
-  bool equals(const S &s) const { return ZuCmp<String>::equals(*this, s); }
+  bool equals(const S &s) const { return ZuEquals(*this, s); }
   template <typename S>
-  int cmp(const S &s) const { return ZuCmp<String>::cmp(*this, s); }
+  int cmp(const S &s) const { return ZuCompare(*this, s); }
   template <typename L, typename R>
   friend inline
   ZuIfT<ZuIs_<L, String>{} && ZuTraits<R>::IsString, bool>

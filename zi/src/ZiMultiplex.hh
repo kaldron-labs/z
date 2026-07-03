@@ -301,14 +301,14 @@ public:
   int cmp(const ZiCxnOptions &o) const {
     using namespace ZiCxnFlags;
     int i;
-    if (i = ZuCmp<uint32_t>::cmp(m_flags, o.m_flags)) return i;
+    if (i = ZuCompare(m_flags, o.m_flags)) return i;
 #ifdef ZiMultiplex_Netlink
     if ((m_flags & NetLink())) return m_familyName.cmp(o.m_familyName);
 #endif
     if (!(m_flags & Multicast())) return i;
     if (i = m_mreqs.cmp(o.m_mreqs)) return i;
     if (i = m_mif.cmp(o.m_mif)) return i;
-    return ZuBoxed(m_ttl).cmp(o.m_ttl);
+    return ZuCompare(m_ttl, o.m_ttl);
   }
   friend inline bool operator ==(const ZiCxnOptions &l, const ZiCxnOptions &r) {
     return l.equals(r);

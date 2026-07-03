@@ -307,7 +307,7 @@ retry:
   {
     ZmGuard<ZmLock> guard(m_lock);
     int n = m_driveBlkSizes.findVal(dl);
-    return ZuCmp<int>::null(n) ? 512 : n;
+    return ZuNull(n) ? 512 : n;
   }
 }
 

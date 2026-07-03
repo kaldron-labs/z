@@ -50,7 +50,7 @@ public:
 
   ZuInline bool equals(const Bit &r) const { return get() == r.get(); }
   ZuInline int cmp(const Bit &r) const {
-    return ZuCmp<bool>::cmp(get(), r.get());
+    return ZuCompare(get(), r.get());
   }
   friend ZuInline bool
   operator ==(const Bit &l, const Bit &r) { return l.equals(r); }

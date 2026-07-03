@@ -1142,7 +1142,7 @@ template <typename T = Tuple> struct TupleCmp {
 	return j;
       }
     }
-    return ZuCmp<int>::cmp(ln, rn);
+    return ZuCompare(ln, rn);
   }
   static bool equals(const T &l, const T &r) {
     unsigned ln = l.length();

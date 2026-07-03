@@ -121,7 +121,7 @@ public:
     return m_object == c.m_object;
   }
   int cmp(const ZmContext &c) const {
-    return ZuCmp<uintptr_t>::cmp(m_object, c.m_object);
+    return ZuCompare(m_object, c.m_object);
   }
   friend inline bool operator ==(const ZmContext &l, const ZmContext &r) {
     return l.equals(r);

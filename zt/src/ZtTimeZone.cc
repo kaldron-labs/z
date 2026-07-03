@@ -93,7 +93,7 @@ int Zt::tzOffset(ZuDateTime value, const char *tz)
 
     time_t t_ = value.as_time_t();
 
-    if (ZuUnlikely(ZuCmp<time_t>::null(t_)))
+    if (ZuUnlikely(ZuNull(t_)))
       return {int(-timezone), false};
 
     return {int(t_ - t), tm_.tm_isdst > 0};

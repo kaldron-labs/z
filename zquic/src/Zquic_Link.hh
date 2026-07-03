@@ -1854,7 +1854,7 @@ protected:
   }
   unsigned txPNLength_(PktNumSpace::T level) const {
     uint64_t largestAckd = m_txLargestAckd[level];
-    if (ZuCmp<uint64_t>::null(largestAckd)) return RuntimePNLength;
+    if (ZuNull(largestAckd)) return RuntimePNLength;
     return PktNumber::encodedLength(m_txPN[level], largestAckd);
   }
 #ifdef Zquic_DEBUG
@@ -4840,8 +4840,8 @@ nextSpace:
       validateAckECN_(ack);
       for (unsigned i = 0; i < ack.nRanges; ++i) {
 	uint64_t largest = ack.ranges[i].largest;
-	if (ZuCmp<uint64_t>::null(m_txLargestAckd[ack.level]) ||
-    largest > m_txLargestAckd[ack.level])
+	if (ZuNull(m_txLargestAckd[ack.level]) ||
+	    largest > m_txLargestAckd[ack.level])
 	  m_txLargestAckd[ack.level] = largest;
       }
       work.ecnValidated = true;

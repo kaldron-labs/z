@@ -1523,8 +1523,8 @@ private:
     if (ZuUnlikely(host == this)) return 0;
     int i;
     if (i = m_dbState.cmp(host->m_dbState)) return i;
-    if (i = ZuCmp<bool>::cmp(active(), host->active())) return i;
-    return ZuCmp<int>::cmp(priority(), host->priority());
+    if (i = ZuCompare(active(), host->active())) return i;
+    return ZuCompare(priority(), host->priority());
   }
 
   void voted(bool v) { m_voted = v; }

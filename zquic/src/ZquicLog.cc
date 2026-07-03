@@ -1656,7 +1656,7 @@ struct QLogFrameDataJSON {
 
       switch (frame.frameType) {
 	case Zquic::FrameType::Ack:
-	  if (!ZuCmp<double>::null(frame.ackDelay) && frame.ackDelay)
+	  if (!ZuNull(frame.ackDelay) && frame.ackDelay)
 	    qlogJSONField_<Facet, Filter, ZtFieldTC::Float>(
 	      s, comma, "ack_delay", frame.ackDelay);
 	  if (frame.ackedRanges)

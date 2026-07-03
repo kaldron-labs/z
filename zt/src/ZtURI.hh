@@ -1083,7 +1083,7 @@ inline void saveValue_(S &s, const T &v_, L &&l)
   } else if constexpr (TypeCode == ZtFieldTC::Float) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
     double v = v_;
-    if (ZuUnlikely(ZuCmp<double>::null(v))) return;
+    if (ZuUnlikely(ZuNull(v))) return;
     l(s);
     bool negative = v < 0;
     if (negative) { s << '-'; v = -v; }
