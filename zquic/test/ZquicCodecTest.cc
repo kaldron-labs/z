@@ -114,6 +114,47 @@ void testVarIntAndPkt()
     "short header parse failed");
 }
 
+void testPktKeyLevels()
+{
+  ZuTestScope(testPktKeyLevels);
+
+  ZuCHECK(Zquic::pktNumSpaceFromKeyLevel(Zquic::PktKeyLevel::Initial) ==
+      Zquic::PktNumSpace::Initial &&
+      Zquic::pktTypeFromKeyLevel(Zquic::PktKeyLevel::Initial) ==
+      Zquic::PktType::Initial,
+    "Initial key level mapping mismatch");
+  ZuCHECK(Zquic::pktNumSpaceFromKeyLevel(Zquic::PktKeyLevel::Handshake) ==
+      Zquic::PktNumSpace::Handshake &&
+      Zquic::pktTypeFromKeyLevel(Zquic::PktKeyLevel::Handshake) ==
+      Zquic::PktType::Handshake,
+    "Handshake key level mapping mismatch");
+  ZuCHECK(Zquic::pktNumSpaceFromKeyLevel(Zquic::PktKeyLevel::ZeroRTT) ==
+      Zquic::PktNumSpace::AppData &&
+      Zquic::pktTypeFromKeyLevel(Zquic::PktKeyLevel::ZeroRTT) ==
+      Zquic::PktType::ZeroRTT &&
+      Zquic::isAppDataKeyLevel(Zquic::PktKeyLevel::ZeroRTT),
+    "0-RTT key level mapping mismatch");
+  ZuCHECK(Zquic::pktNumSpaceFromKeyLevel(Zquic::PktKeyLevel::OneRTT) ==
+      Zquic::PktNumSpace::AppData &&
+      Zquic::pktTypeFromKeyLevel(Zquic::PktKeyLevel::OneRTT) ==
+      Zquic::PktType::Short &&
+      Zquic::isAppDataKeyLevel(Zquic::PktKeyLevel::OneRTT),
+    "1-RTT key level mapping mismatch");
+  ZuCHECK(!Zquic::isAppDataKeyLevel(Zquic::PktKeyLevel::Handshake),
+    "Handshake misclassified as AppData key level");
+
+  Zquic::PktKeyLevel::T level = Zquic::PktKeyLevel::N;
+  size_t epoch = 0;
+  ZuCHECK(Zquic::pktKeyLevelFromTLSEpoch(1, level) &&
+      level == Zquic::PktKeyLevel::ZeroRTT &&
+      Zquic::tlsEpochFromPktKeyLevel(level, epoch) && epoch == 1,
+    "0-RTT TLS epoch mapping mismatch");
+  ZuCHECK(Zquic::pktKeyLevelFromTLSEpoch(3, level) &&
+      level == Zquic::PktKeyLevel::OneRTT &&
+      Zquic::tlsEpochFromPktKeyLevel(level, epoch) && epoch == 3,
+    "1-RTT TLS epoch mapping mismatch");
+}
+
 void testVarIntBoundariesAndPktNumbers()
 {
   ZuTestScope(testVarIntBoundariesAndPktNumbers);
@@ -724,6 +765,73 @@ void testTransportParamCoverage()
     "truncated transport parameter accepted");
 }
 
+void testZeroRTTTransportParams()
+{
+  ZuTestScope(testZeroRTTTransportParams);
+
+  Zquic::TransportParams remembered;
+  remembered.maxIdleTimeout = 120;
+  remembered.maxUDPPayloadSize = 1280;
+  remembered.initialMaxData = 1000;
+  remembered.initialMaxStreamDataBidiLocal = 2000;
+  remembered.initialMaxStreamDataBidiRemote = 3000;
+  remembered.initialMaxStreamDataUni = 4000;
+  remembered.initialMaxStreamsBidi = 5;
+  remembered.initialMaxStreamsUni = 6;
+  remembered.ackDelayExponent = 3;
+  remembered.maxAckDelay = 25;
+  remembered.activeCxnIDLimit = 4;
+  remembered.disableActiveMigration = true;
+
+  Zquic::TransportParams current = remembered;
+  ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
+      Zquic::ZeroRTTReason::None,
+    "matching 0-RTT transport parameters rejected");
+
+  current.initialMaxData += 1;
+  current.initialMaxStreamDataBidiLocal += 1;
+  current.initialMaxStreamDataBidiRemote += 1;
+  current.initialMaxStreamDataUni += 1;
+  current.initialMaxStreamsBidi += 1;
+  current.initialMaxStreamsUni += 1;
+  current.activeCxnIDLimit += 1;
+  current.maxUDPPayloadSize += 1;
+  ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
+      Zquic::ZeroRTTReason::None,
+    "compatible 0-RTT transport parameter increases rejected");
+
+  current = remembered;
+  current.initialMaxData -= 1;
+  ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
+      Zquic::ZeroRTTReason::FlowLimit,
+    "0-RTT flow limit reduction not rejected");
+  current = remembered;
+  current.initialMaxStreamsBidi -= 1;
+  ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
+      Zquic::ZeroRTTReason::StreamLimit,
+    "0-RTT stream limit reduction not rejected");
+  current = remembered;
+  current.activeCxnIDLimit -= 1;
+  ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
+      Zquic::ZeroRTTReason::ActiveCIDLimit,
+    "0-RTT active CID limit reduction not rejected");
+  current = remembered;
+  current.maxUDPPayloadSize -= 1;
+  ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
+      Zquic::ZeroRTTReason::TransportParams,
+    "0-RTT max UDP reduction not rejected");
+  current = remembered;
+  current.ackDelayExponent += 1;
+  ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
+      Zquic::ZeroRTTReason::TransportParams,
+    "0-RTT ACK delay exponent change not rejected");
+  current = remembered;
+  current.disableActiveMigration = !current.disableActiveMigration;
+  ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
+      Zquic::ZeroRTTReason::TransportParams,
+    "0-RTT migration policy change not rejected");
+}
+
 void testAddressTokenCodec()
 {
   ZuTestScope(testAddressTokenCodec);
@@ -792,11 +900,13 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testVarIntAndPkt);
+  ZuTestCall(testPktKeyLevels);
   ZuTestCall(testVarIntBoundariesAndPktNumbers);
   ZuTestCall(testPktParserRejections);
   ZuTestCall(testFramesAndParams);
   ZuTestCall(testControlFrameCoverage);
   ZuTestCall(testMalformedFrameCoverage);
   ZuTestCall(testTransportParamCoverage);
+  ZuTestCall(testZeroRTTTransportParams);
   ZuTestCall(testAddressTokenCodec);
 }

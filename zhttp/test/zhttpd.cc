@@ -932,7 +932,7 @@ void H3Server::printDiag()
     bif += d.tx.congestionBytesInFlight;
     ptoTimer = ptoTimer || d.tx.ptoTimerActive;
     lossTimer = lossTimer || d.tx.lossTimerActive;
-    for (unsigned i = 0; i < Zquic::RuntimeTxDiag::Spaces; ++i) {
+    for (unsigned i = 0; i < Zquic::PktNumSpace::N; ++i) {
       pktIF += d.tx.pktBytesInFlight[i];
       sentPkts += d.tx.sentPackets[i];
       retxPend += d.tx.retransmitPending[i];

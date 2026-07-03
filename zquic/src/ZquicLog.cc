@@ -2113,11 +2113,14 @@ static PktTrigger::T qlogPktTrigger_(
 	  return PktTrigger::Invalid;
 	case PktEvent::Reason::MissingKeys:
 	  return PktTrigger::KeyUnavailable;
-	case PktEvent::Reason::Protection:
-	  return PktTrigger::DecryptionFailure;
-	case PktEvent::Reason::Duplicate:
-	  return PktTrigger::Duplicate;
-	case PktEvent::Reason::AntiAmp:
+		case PktEvent::Reason::Protection:
+		  return PktTrigger::DecryptionFailure;
+		case PktEvent::Reason::Duplicate:
+		  return PktTrigger::Duplicate;
+		case PktEvent::Reason::AfterOneRTT:
+		case PktEvent::Reason::FramePolicy:
+		  return PktTrigger::Invalid;
+		case PktEvent::Reason::AntiAmp:
 	case PktEvent::Reason::ProbeAdmit:
 	case PktEvent::Reason::AppSend:
 	  return PktTrigger::Rejected;

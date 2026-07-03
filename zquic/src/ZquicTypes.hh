@@ -104,6 +104,38 @@ struct PktType {
     "initial", "0RTT", "handshake", "retry", "1RTT", "unknown");
 };
 
+struct PktKeyLevel {
+  ZtEnum(PktKeyLevel, int8_t, Initial, Handshake, ZeroRTT, OneRTT);
+  ZtEnumMap(PktKeyLevel, JSON,
+    "initial", "handshake", "0RTT", "1RTT", "unknown");
+};
+
+struct ZeroRTTReason {
+  ZtEnum(ZeroRTTReason, int8_t,
+    None, Disabled, MissingTicket, TLSRejected, AppParams,
+    TransportParams, FlowLimit, StreamLimit, ActiveCIDLimit,
+    FramePolicy, MissingKeys, AfterOneRTT);
+  ZtEnumMap(ZeroRTTReason, JSON,
+    "none", "disabled", "missing_ticket", "tls_rejected", "app_params",
+    "transport_params", "flow_limit", "stream_limit",
+    "active_connection_id_limit", "frame_policy", "missing_keys",
+    "after_1rtt", "unknown");
+};
+
+struct EarlyDataState {
+  ZtEnum(EarlyDataState, int8_t,
+    Disabled, Enabled, Offered, Accepted, Rejected, Done);
+  ZtEnumMap(EarlyDataState, JSON,
+    "disabled", "enabled", "offered", "accepted", "rejected", "done",
+    "unknown");
+};
+
+struct LinkEarlyState {
+  ZtEnum(LinkEarlyState, int8_t, None, Offered, Recv, Accepted, Rejected, Done);
+  ZtEnumMap(LinkEarlyState, JSON,
+    "none", "offered", "received", "accepted", "rejected", "done", "unknown");
+};
+
 // TLS epochs are not packet number spaces: 0-RTT and 1-RTT both use AppData.
 inline bool pktNumSpaceFromTLSEpoch(size_t epoch, PktNumSpace::T &space)
 {
@@ -117,6 +149,27 @@ inline bool pktNumSpaceFromTLSEpoch(size_t epoch, PktNumSpace::T &space)
   }
   if (epoch >= 3) {
     space = PktNumSpace::AppData;
+    return true;
+  }
+  return false;
+}
+
+inline bool pktKeyLevelFromTLSEpoch(size_t epoch, PktKeyLevel::T &level)
+{
+  if (epoch == 0) {
+    level = PktKeyLevel::Initial;
+    return true;
+  }
+  if (epoch == 1) {
+    level = PktKeyLevel::ZeroRTT;
+    return true;
+  }
+  if (epoch == 2) {
+    level = PktKeyLevel::Handshake;
+    return true;
+  }
+  if (epoch >= 3) {
+    level = PktKeyLevel::OneRTT;
     return true;
   }
   return false;
@@ -139,12 +192,61 @@ inline bool tlsEpochFromPktNumSpace(PktNumSpace::T space, size_t &epoch)
   }
 }
 
+inline bool tlsEpochFromPktKeyLevel(PktKeyLevel::T level, size_t &epoch)
+{
+  switch (level) {
+    case PktKeyLevel::Initial:
+      epoch = 0;
+      return true;
+    case PktKeyLevel::ZeroRTT:
+      epoch = 1;
+      return true;
+    case PktKeyLevel::Handshake:
+      epoch = 2;
+      return true;
+    case PktKeyLevel::OneRTT:
+      epoch = 3;
+      return true;
+    default:
+      return false;
+  }
+}
+
 inline PktType::T pktTypeFromPktNumSpace(PktNumSpace::T space)
 {
   switch (space) {
     case PktNumSpace::Initial: return PktType::Initial;
     case PktNumSpace::Handshake: return PktType::Handshake;
     case PktNumSpace::AppData: return PktType::Short;
+    default: return PktType::N;
+  }
+}
+
+inline PktNumSpace::T pktNumSpaceFromKeyLevel(PktKeyLevel::T level)
+{
+  switch (level) {
+    case PktKeyLevel::Initial: return PktNumSpace::Initial;
+    case PktKeyLevel::Handshake: return PktNumSpace::Handshake;
+    case PktKeyLevel::ZeroRTT:
+    case PktKeyLevel::OneRTT:
+      return PktNumSpace::AppData;
+    default:
+      return PktNumSpace::N;
+  }
+}
+
+inline bool isAppDataKeyLevel(PktKeyLevel::T level)
+{
+  return level == PktKeyLevel::ZeroRTT || level == PktKeyLevel::OneRTT;
+}
+
+inline PktType::T pktTypeFromKeyLevel(PktKeyLevel::T level)
+{
+  switch (level) {
+    case PktKeyLevel::Initial: return PktType::Initial;
+    case PktKeyLevel::Handshake: return PktType::Handshake;
+    case PktKeyLevel::ZeroRTT: return PktType::ZeroRTT;
+    case PktKeyLevel::OneRTT: return PktType::Short;
     default: return PktType::N;
   }
 }

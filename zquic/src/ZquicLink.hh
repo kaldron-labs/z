@@ -207,8 +207,9 @@ public:
   bool receiveStreamsBlocked(const Frame &frame) {
     return validateStreamsBlocked_(frame);
   }
-  bool frameLegal(PktNumSpace::T level, const Frame &frame) const {
-    return packetFrameLegal_(level, frame);
+  bool frameLegal(
+    PktNumSpace::T level, const Frame &frame, bool earlyData = false) const {
+    return packetFrameLegal_(level, frame, earlyData);
   }
 
   StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
@@ -306,7 +307,7 @@ public:
 
   int receiveFrame(
     const Frame &frame, ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr,
-    bool *immediateAck = nullptr) {
+    bool *immediateAck = nullptr, bool earlyData = false) {
     if (frame.type != FrameType::Stream)
       return receiveFrame(frame, diag);
     StreamRef stream = findOrAccept_(frame.streamID);
@@ -321,6 +322,7 @@ public:
       if (immediateAck) *immediateAck = true;
       return 0;
     }
+    if (earlyData) stream->earlyData(true);
     bool rxClosed = stream->rxComplete() || stream->resetReceived();
     int rc = stream->processFrame(frame, m_rxDataCredit, ZuMv(packet), diag);
     if (rc >= 0) {
@@ -518,7 +520,9 @@ protected:
   };
   struct TxCryptoSnapshot {
     TrafficSecret	secrets[PktNumSpace::N];
+    TrafficSecret	earlySecret;
     bool		installed[PktNumSpace::N] = {};
+    bool		earlyInstalled = false;
   };
   struct TxPktRefs {
     bool add(const SentFrameRef &ref, Stream *stream = nullptr) {
@@ -539,6 +543,17 @@ protected:
   struct PendingControl {
     ControlFrame	frame;
     bool		queued = false;
+  };
+  struct RxEarlyData {
+    LinkEarlyState::T	state = LinkEarlyState::None;
+    ZeroRTTReason::T	reason = ZeroRTTReason::None;
+    uint64_t		bytes = 0;
+    bool		oneRTTSeen = false;
+  };
+  struct TxEarlyData {
+    LinkEarlyState::T	state = LinkEarlyState::None;
+    ZeroRTTReason::T	reason = ZeroRTTReason::None;
+    uint64_t		bytes = 0;
   };
   using LocalCIDs =
     ZtArray<LinkCID, ZtArrayHeapID<"Zquic.Link.LocalCID">>;
@@ -874,14 +889,38 @@ protected:
       if (snapshot.installed[i])
 	snapshot.secrets[i] = m_crypto.txTrafficSecret(level);
     }
+    snapshot.earlyInstalled =
+      m_crypto.txKeyTrafficSecretInstalled(PktKeyLevel::ZeroRTT);
+    if (snapshot.earlyInstalled)
+      snapshot.earlySecret =
+	m_crypto.txKeyTrafficSecret(PktKeyLevel::ZeroRTT);
   }
-  bool txInstallTrafficSecret_(
-    PktNumSpace::T level, const TrafficSecret &secret) {
+	  bool txInstallTrafficSecret_(
+	    PktNumSpace::T level, const TrafficSecret &secret) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx traffic secret install outside Tx thread", return false);
     if (!secret.valid()) return false;
     if (!m_txProt[level].init(secret, level, true)) {
       m_txProt[level].clear();
+      return false;
+    }
+    return true;
+  }
+  bool rxInstallKeyTrafficSecret_(
+    PktKeyLevel::T level, const TrafficSecret &secret) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx key traffic secret install outside Rx thread", return false);
+    return m_crypto.updateRxKeyTrafficSecret(level, secret);
+  }
+  bool txInstallKeyTrafficSecret_(
+    PktKeyLevel::T level, const TrafficSecret &secret) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx key traffic secret install outside Tx thread", return false);
+    if (level != PktKeyLevel::ZeroRTT)
+      return txInstallTrafficSecret_(pktNumSpaceFromKeyLevel(level), secret);
+    if (!secret.valid()) return false;
+    if (!m_txEarlyProt.init(secret, PktNumSpace::AppData, true)) {
+      m_txEarlyProt.clear();
       return false;
     }
     return true;
@@ -893,16 +932,70 @@ protected:
       if (snapshot.installed[i] &&
 	  !txInstallTrafficSecret_(PktNumSpace::T(i), snapshot.secrets[i]))
 	return false;
+    if (snapshot.earlyInstalled &&
+	!txInstallKeyTrafficSecret_(
+	  PktKeyLevel::ZeroRTT, snapshot.earlySecret))
+      return false;
     return true;
   }
   bool txTrafficSecretInstalled_(PktNumSpace::T level) const {
     return m_txProt[level].valid();
   }
+  bool txKeyTrafficSecretInstalled_(PktKeyLevel::T level) const {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_txEarlyProt.valid() :
+      txTrafficSecretInstalled_(pktNumSpaceFromKeyLevel(level));
+  }
+  bool canTxZeroRTT_() const {
+    return !runtimeEstablished_() &&
+      txKeyTrafficSecretInstalled_(PktKeyLevel::ZeroRTT);
+  }
+  bool rxEarlyDataAccepted_() const {
+    return m_rxEarlyData.state == LinkEarlyState::Accepted ||
+      m_rxEarlyData.state == LinkEarlyState::Done;
+  }
+  bool rxEarlyDataRejected_() const {
+    return m_rxEarlyData.state == LinkEarlyState::Rejected;
+  }
+  bool txEarlyDataRejected_() const {
+    return m_txEarlyData.state == LinkEarlyState::Rejected;
+  }
+  LinkEarlyState::T rxEarlyDataState_() const {
+    return m_rxEarlyData.state;
+  }
+  LinkEarlyState::T txEarlyDataState_() const {
+    return m_txEarlyData.state;
+  }
+  bool rxOneRTTSeen_() const { return m_rxEarlyData.oneRTTSeen; }
+  void rememberZeroRTTParams_(const TransportParams &params) {
+    m_zeroRTTParams = params;
+    m_zeroRTTParamsSet = true;
+  }
+  void clearZeroRTTParams_() {
+    m_zeroRTTParamsSet = false;
+    m_zeroRTTParams = {};
+  }
+  ZeroRTTReason::T validateZeroRTTPeerParams_() const {
+    if (!m_zeroRTTParamsSet) return ZeroRTTReason::None;
+    if (!m_crypto.peerTransportParamsReceived())
+      return ZeroRTTReason::TransportParams;
+    return validateZeroRTTParams(
+      m_zeroRTTParams, m_crypto.peerTransportParams());
+  }
   const TrafficSecret &txTrafficSecret_(PktNumSpace::T level) const {
     return m_txProt[level].secret;
   }
+  const TrafficSecret &txKeyTrafficSecret_(PktKeyLevel::T level) const {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_txEarlyProt.secret :
+      txTrafficSecret_(pktNumSpaceFromKeyLevel(level));
+  }
   PktProtState &txProtState_(PktNumSpace::T level) {
     return m_txProt[level];
+  }
+  PktProtState &txKeyProtState_(PktKeyLevel::T level) {
+    return level == PktKeyLevel::ZeroRTT ?
+      m_txEarlyProt : txProtState_(pktNumSpaceFromKeyLevel(level));
   }
 
   bool recordTxUnackd_(
@@ -1857,11 +1950,9 @@ protected:
     if (ZuNull(largestAckd)) return RuntimePNLength;
     return PktNumber::encodedLength(m_txPN[level], largestAckd);
   }
-#ifdef Zquic_DEBUG
   void setTxPN_(PktNumSpace::T level, uint64_t pn) {
     m_txPN[level] = pn;
   }
-#endif
   void resetRuntime_() {
     disconnecting_(false);
     closeStreamsRx_();
@@ -1879,9 +1970,11 @@ protected:
     m_txDataCredit = {};
     m_rxDataCredit = {};
     m_lastDataBlocked = U64Null;
-    m_lastStreamsBlocked[Zi::StreamType::Duplex] = U64Null;
-    m_lastStreamsBlocked[Zi::StreamType::Simplex] = U64Null;
-    m_crypto.resetTLS();
+	    m_lastStreamsBlocked[Zi::StreamType::Duplex] = U64Null;
+	    m_lastStreamsBlocked[Zi::StreamType::Simplex] = U64Null;
+	    m_rxEarlyData = {};
+	    clearZeroRTTParams_();
+	    m_crypto.resetTLS();
     resetPath_();
     app()->txInvoke(impl(), [link = impl()]() mutable {
       if (link->disconnecting_()) return link;
@@ -2596,6 +2689,9 @@ protected:
 	  m_crypto.peerTransportParams(), m_peerCID))
       return false;
     const auto &params = m_crypto.peerTransportParams();
+    ZeroRTTReason::T reason = validateZeroRTTPeerParams_();
+    if (reason != ZeroRTTReason::None)
+      rejectEarlyData_(reason);
     if (params.statelessResetTokenPresent)
       m_peerResetToken = params.statelessResetToken;
     return true;
@@ -2672,10 +2768,18 @@ protected:
 	      };
       o.logALPNInfo(event, time);
     }));
-    updatePeerPathMaxUDP_();
-    establishState_();
-    startIdleTimer_();
-    discardPktNumSpace_(PktNumSpace::Initial);
+	    updatePeerPathMaxUDP_();
+	    establishState_();
+	    if (m_rxEarlyData.state == LinkEarlyState::Recv ||
+		m_rxEarlyData.state == LinkEarlyState::Offered) {
+	      acceptEarlyDataRx_();
+	      app()->txRun([link = impl()]() mutable {
+		if (link->disconnecting_()) return;
+		link->acceptEarlyDataTx_();
+	      });
+	    }
+	    startIdleTimer_();
+	    discardPktNumSpace_(PktNumSpace::Initial);
     discardPktNumSpace_(PktNumSpace::Handshake);
     ++m_rxDiag.handshakeComplete;
   }
@@ -2686,9 +2790,11 @@ protected:
 
   void resetPktRuntime_() {
     cancelTimers();
-    for (auto &s : m_txCrypto) s.reset();
-    for (auto &s : m_rxCrypto) s.reset();
-    for (auto &p : m_txProt) p.clear();
+	    for (auto &s : m_txCrypto) s.reset();
+	    for (auto &s : m_rxCrypto) s.reset();
+	    for (auto &p : m_txProt) p.clear();
+	    m_txEarlyProt.clear();
+	    m_txEarlyData = {};
     memset(m_txPN, 0, sizeof(m_txPN));
     for (auto &pn : m_txLargestAckd) pn = U64Null;
     memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
@@ -2877,6 +2983,7 @@ protected:
       tlsFailure_();
       return false;
     }
+    syncEarlyDataTLS_();
     if (!sendFlights(out->data(), unsigned(n), offsets, addr))
       return false;
     markEstablished();
@@ -2895,6 +3002,15 @@ protected:
     return stream &&
       (stream->controlQueued() ||
 	(!stream->resetSent() && (stream->txRangeCount() || stream->finReady())));
+  }
+  bool streamEarlyTxPending_(const StreamRef &stream) const {
+    return stream && stream->id() >= 0 && !stream->resetSent() &&
+      (stream->txRangeCount() || stream->finReady());
+  }
+  bool streamEarlyTxAllowed_(const StreamRef &stream) {
+    if (!streamEarlyTxPending_(stream)) return false;
+    return app()->allowEarlyStream(
+      impl(), uint64_t(stream->id()), stream->finReady());
   }
 
   SentFrameRef controlRef_(const ControlFrame &frame) const {
@@ -3265,6 +3381,96 @@ protected:
       if (!sendPkt(build, ZuMv(addr), refs)) return false;
       for (unsigned i = 0; i < nSentControls; ++i)
 	controlSent_(sentControls[i]);
+      if (flushQueuedControls) impl()->flushTx_();
+      return true;
+    }
+    return blocked;
+  }
+
+  template <typename SendPkt>
+  bool flushEarlyStreams_(ZiSockAddr addr, SendPkt sendPkt) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC 0-RTT stream flush outside Tx thread", return false);
+    if (!canTxZeroRTT_()) return false;
+    PktBuild build;
+    build.reset();
+    PktBudget budget = sendBudget_();
+    if (!budget.congestion) return false;
+    budget.flow = m_txDataCredit.available();
+    PktAssembly assembly;
+    TxPktRefs refs;
+    bool blocked = false;
+    bool flushQueuedControls = false;
+    unsigned checked = scheduledStreamCount_();
+    while (checked-- && scheduledStreamCount_() &&
+	refs.count() < SentPkt::MaxFrames) {
+      StreamRef stream = nextWritableStream_();
+      if (!stream) continue;
+      if (!streamEarlyTxPending_(stream)) {
+	if (streamTxPending_(stream)) streamWritable_(stream);
+	continue;
+      }
+      if (!streamEarlyTxAllowed_(stream)) {
+	streamWritable_(stream);
+	continue;
+      }
+      if (stream->txRangeCount() && m_txDataCredit.blocked()) {
+	streamWritable_(stream);
+	blocked = true;
+	break;
+      }
+      if (stream->txRangeCount() && !stream->txCreditAvailable()) {
+	streamWritable_(stream);
+	blocked = true;
+	break;
+      }
+      StreamFrameInfo info;
+      int n = StreamPktizer::writeNext(
+	build.scratch(), build.scratchAvail(),
+	budget, assembly, *stream, &info);
+      if (n <= 0) {
+	if (stream->id() >= 0) streamWritable_(stream);
+	break;
+      }
+      if (!build.commitScratch(unsigned(n)) || !build.add(info.range))
+	return false;
+      SentFrameRef ref =
+	SentFrameRef::stream(info.streamID, info.range, info.fin);
+      if (!info.length) {
+	ref.offset = info.offset;
+	ref.length = 0;
+      }
+      if (!refs.add(ref, stream.ptr()))
+	return false;
+      if (info.length && !m_txDataCredit.consume(info.length)) return false;
+      m_txDiag.streamBytesTx += info.length;
+      ZquicLOG(app()->qlogTrace(), ([
+	streamID = info.streamID,
+	offset = info.offset,
+	length = info.length,
+	fin = info.fin,
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	if (!length && !fin) return;
+	StreamDataEvent event{
+	  .from = StreamDataLoc::Transport,
+	  .to = StreamDataLoc::Network,
+	  .additionalInfo = fin ?
+	    StreamDataInfo::T(StreamDataInfo::FinSet) :
+	    StreamDataInfo::T(StreamDataInfo::None),
+	  .streamID = streamID,
+	  .offset = offset,
+	  .length = length,
+	  .linkInfo = linkInfo
+	};
+	o.logStreamDataMoved(event, time);
+      }));
+      flushQueuedControls |= returnStreamCredit_(stream);
+      if (streamEarlyTxPending_(stream))
+	streamWritable_(stream);
+    }
+    if (refs.count()) {
+      if (!sendPkt(build, ZuMv(addr), refs)) return false;
       if (flushQueuedControls) impl()->flushTx_();
       return true;
     }
@@ -4277,7 +4483,7 @@ protected:
     });
   }
 
-  void discardTxPktNumSpace_(PktNumSpace::T level) {
+	  void discardTxPktNumSpace_(PktNumSpace::T level) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC sent-packet discard outside Tx thread", return);
     if (level == PktNumSpace::AppData) return;
@@ -4287,20 +4493,144 @@ protected:
     m_txCrypto[level].reset();
     m_txCryptoUnackd[level].clean();
     m_txAck[level].nRanges = 0;
-	    ZquicLOG(app()->qlogTrace(), ([level, linkInfo = linkInfo_()](auto &o, ZuTime time) {
-	      SecEvent event{
-		.kind = SecKind::KeyRetired,
-		.keyType = SecKeyType::TX,
-		.trigger = SecTrigger::HSComplete,
-		.reason = SecReason::PacketSpace,
-		.success = true,
-		.linkInfo = linkInfo
-	      };
+    ZquicLOG(app()->qlogTrace(), ([
+      level,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      SecEvent event{
+	.kind = SecKind::KeyRetired,
+	.keyType = SecKeyType::TX,
+	.trigger = SecTrigger::HSComplete,
+	.reason = SecReason::PacketSpace,
+	.success = true,
+	.linkInfo = linkInfo
+      };
       event.packetSpace = level;
       o.logKeyRetired(event, time);
     }));
     updateCongestionDiag_();
     scheduleLossTimer_();
+  }
+
+  void rejectEarlyData_(ZeroRTTReason::T reason) {
+    if (rxInvoked_()) {
+      rejectEarlyDataRx_(reason);
+      app()->txRun([link = impl(), reason]() mutable {
+	if (link->disconnecting_()) return;
+	link->rejectEarlyDataTx_(reason);
+      });
+      return;
+    }
+    if (txInvoked_()) rejectEarlyDataTx_(reason);
+  }
+
+  bool rejectEarlyDataRx_(ZeroRTTReason::T reason) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC 0-RTT Rx rejection outside Rx thread", return false);
+    if (m_rxEarlyData.state == LinkEarlyState::Rejected ||
+	m_rxEarlyData.state == LinkEarlyState::Done)
+      return false;
+    m_rxEarlyData.state = LinkEarlyState::Rejected;
+    m_rxEarlyData.reason = reason;
+    m_crypto.rejectZeroRTT();
+    app()->earlyDataRejected(impl(), reason);
+    ZquicLOG(app()->qlogTrace(), ([
+      reason = zeroRTTSecReason(reason),
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      SecEvent event{
+	.kind = SecKind::PktProtect,
+	.trigger = SecTrigger::RX,
+	.reason = reason,
+	.success = false,
+	.linkInfo = linkInfo
+      };
+      event.packetSpace = PktNumSpace::AppData;
+      o.logSecEvent(EventName::ZeroRTTReject, event, time);
+    }));
+    return true;
+  }
+
+  bool rejectEarlyDataTx_(ZeroRTTReason::T reason) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC 0-RTT Tx rejection outside Tx thread", return false);
+    if (m_txEarlyData.state != LinkEarlyState::Rejected) {
+      m_txEarlyData.state = LinkEarlyState::Rejected;
+      m_txEarlyData.reason = reason;
+    }
+    app()->earlyDataRejected(impl(), reason);
+    rejectZeroRTTTx_(reason);
+    return true;
+  }
+
+  bool acceptEarlyDataRx_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC 0-RTT Rx acceptance outside Rx thread", return false);
+    if (m_rxEarlyData.state == LinkEarlyState::Rejected ||
+	m_rxEarlyData.state == LinkEarlyState::Done)
+      return false;
+    if (m_rxEarlyData.state == LinkEarlyState::None)
+      return false;
+    m_rxEarlyData.state = LinkEarlyState::Accepted;
+    auto iter = m_streams->iter();
+    while (auto node = iter()) node->data().earlyData(false);
+    app()->earlyDataAccepted(impl());
+    return true;
+  }
+
+  bool acceptEarlyDataTx_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC 0-RTT Tx acceptance outside Tx thread", return false);
+    if (m_txEarlyData.state == LinkEarlyState::Rejected ||
+	m_txEarlyData.state == LinkEarlyState::Done)
+      return false;
+    if (m_txEarlyData.state == LinkEarlyState::None)
+      return false;
+    m_txEarlyData.state = LinkEarlyState::Accepted;
+    m_txEarlyProt.clear();
+    app()->earlyDataAccepted(impl());
+    return true;
+  }
+
+  void syncEarlyDataTLS_() {
+    if (m_crypto.earlyDataRejected()) {
+      rejectEarlyData_(ZeroRTTReason::TLSRejected);
+      return;
+    }
+    if (!m_crypto.earlyDataAccepted()) return;
+    if (rxInvoked_()) {
+      if (m_rxEarlyData.state == LinkEarlyState::Recv ||
+	  m_rxEarlyData.state == LinkEarlyState::Offered)
+	acceptEarlyDataRx_();
+      app()->txRun([link = impl()]() mutable {
+	if (link->disconnecting_()) return;
+	link->acceptEarlyDataTx_();
+      });
+      return;
+    }
+    if (txInvoked_()) acceptEarlyDataTx_();
+  }
+
+	  unsigned rejectZeroRTTTx_(
+	    ZeroRTTReason::T reason = ZeroRTTReason::TLSRejected) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC 0-RTT rejection outside Tx thread", return 0);
+    (void)reason;
+    m_txEarlyProt.clear();
+    PktTxUpdate update;
+    update.level = PktNumSpace::AppData;
+    uint64_t releasedBytes = 0;
+    unsigned n = m_txPkts[PktNumSpace::AppData].reject(
+      PktType::ZeroRTT, &releasedBytes, &update);
+    if (!n) return 0;
+    if (releasedBytes) {
+      m_congestion.release(releasedBytes);
+      updateCongestionDiag_();
+    }
+    schedulePTO_();
+    scheduleLossTimer_();
+    if (update.nLostFrames) impl()->queueRetransmit_();
+    return n;
   }
 
   bool reclaimPTO_(PktNumSpace::T &level, unsigned &probes) {
@@ -4579,36 +4909,42 @@ nextSpace:
 
   bool recordTxPkt_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes, ZuBSpan frame,
-    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0) {
+    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0,
+    PktType::T packetType = PktType::N) {
     SentFrameRef ref;
     bool ackEliciting = false;
     if (!runtimeFrameRef(frame, ref, ackEliciting)) return true;
     return recordTxPkt_(
-      level, pn, bytes, ref, ackEliciting, false, 0, ackLevel, ackLargest);
+      level, pn, bytes, ref, ackEliciting, false, 0, ackLevel, ackLargest,
+      packetType);
   }
 
   bool recordTxPkt_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const SentFrameRef &ref, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
-    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0) {
+    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0,
+    PktType::T packetType = PktType::N) {
     TxPktRefs refs;
     if (ref.kind != SentFrameKind::None) refs.add(ref);
     return recordTxPkt_(
       level, pn, bytes, refs, ackEliciting, pmtudProbe, pmtudSize,
-      ackLevel, ackLargest);
+      ackLevel, ackLargest, packetType);
   }
 
   bool recordTxPkt_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const TxPktRefs &refs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
-    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0) {
+    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0,
+    PktType::T packetType = PktType::N) {
     if (m_txSpaceDiscarded[level]) return true;
     if (!ackEliciting && !refs.count()) return true;
     SentPkt packet;
     packet.pn = pn;
     packet.space = level;
+    packet.packetType = packetType == PktType::N ?
+      pktTypeFromPktNumSpace(level) : packetType;
     packet.bytes = bytes;
     packet.sentTime = runtimeNow_();
     packet.ackEliciting = ackEliciting;
@@ -5386,12 +5722,14 @@ nextSpace:
     PktNumSpace::T level, uint64_t pn, unsigned bytes, ZuBSpan recordFrame,
     const TxPktRefs *recordRefs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
-    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0) {
+    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0,
+    PktType::T packetType = PktType::N) {
     bool recorded = recordRefs ?
       recordTxPkt_(
 	level, pn, bytes, *recordRefs, ackEliciting, pmtudProbe, pmtudSize,
-	ackLevel, ackLargest) :
-      recordTxPkt_(level, pn, bytes, recordFrame, ackLevel, ackLargest);
+	ackLevel, ackLargest, packetType) :
+      recordTxPkt_(
+	level, pn, bytes, recordFrame, ackLevel, ackLargest, packetType);
     if (!recorded) return false;
     ++m_txPN[level];
     ++m_txDiag.packetsTx;
@@ -5404,6 +5742,7 @@ nextSpace:
       ackEliciting,
       ackLevel, ackLargest,
       ackRanges = qlogAckRanges_(ackLevel),
+      packetType,
       hasRecordRefs = bool(recordRefs),
       recordRefs = recordRefs ? *recordRefs : TxPktRefs{},
       linkInfo = linkInfo_()
@@ -5418,7 +5757,8 @@ nextSpace:
 		.ackEliciting = ackEliciting,
 		.linkInfo = linkInfo
       };
-      event.packetType = pktTypeFromPktNumSpace(level);
+      event.packetType = packetType == PktType::N ?
+	pktTypeFromPktNumSpace(level) : packetType;
       event.packetSpace = level;
       event.ecn = EcnMark::N;
       qlogAddAckFrame_(event, ackLevel, ackLargest, ackRanges);
@@ -5807,6 +6147,92 @@ nextSpace:
   }
 
   template <typename AllocTxPkt, typename SendPkt>
+  bool sendProtZeroRTTPkt_(
+    RuntimeCID::T dcid, RuntimeCID::T scid, unsigned pnLength,
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
+    const TxPktRefs *recordRefs, bool ackEliciting,
+    AllocTxPkt allocTxPkt, SendPkt sendPkt) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC 0-RTT packet protection outside Tx thread", return false);
+    if (!txKeyTrafficSecretInstalled_(PktKeyLevel::ZeroRTT)) {
+      ++m_txDiag.failures;
+      ZquicLOG(app()->qlogTrace(), ([
+	level = PktNumSpace::AppData,
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	SecEvent event{
+	  .kind = SecKind::PktProtect,
+	  .reason = SecReason::MissingKeys,
+	  .success = false,
+	  .linkInfo = linkInfo
+	};
+	event.packetSpace = level;
+	event.trigger = SecTrigger::TX;
+	o.logSecEvent(EventName::PktProtectFail, event, time);
+      }));
+      return false;
+    }
+    ZmRef<ZiIOBuf> buf = allocTxPkt();
+    const TrafficSecret &secret =
+      txKeyTrafficSecret_(PktKeyLevel::ZeroRTT);
+    int headerLen = Pkt::writeLong(
+      buf->data_(), buf->size, PktType::ZeroRTT,
+      runtimeCID_(dcid), runtimeCID_(scid),
+      payload.bytes() + secret.tagLen, pnLength);
+    if (headerLen < 0 ||
+	PktNumber::encode(
+	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
+	  m_txPN[PktNumSpace::AppData], pnLength) != int(pnLength))
+      return false;
+    if (!payload.padForProtSample(
+	  unsigned(headerLen), pnLength, secret.tagLen))
+      return false;
+    uint64_t pn = m_txPN[PktNumSpace::AppData];
+    int n = PktProt::protectLongV(
+      buf->data_(), buf->size,
+      txKeyProtState_(PktKeyLevel::ZeroRTT), pn,
+      byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
+      payload.data(), payload.count(), unsigned(headerLen), pnLength);
+    if (n < 0) {
+      ++m_txDiag.failures;
+      ZquicLOG(app()->qlogTrace(), ([
+	level = PktNumSpace::AppData,
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	SecEvent event{
+	  .kind = SecKind::PktProtect,
+	  .reason = SecReason::Protect,
+	  .success = false,
+	  .linkInfo = linkInfo
+	};
+	event.packetSpace = level;
+	event.trigger = SecTrigger::TX;
+	o.logSecEvent(EventName::PktProtectFail, event, time);
+      }));
+      return false;
+    }
+    buf->skip = 0;
+    buf->length = unsigned(n);
+    uint8_t ackLevel;
+    uint64_t ackLargest;
+    txAckMeta_(PktNumSpace::AppData, payload, ackLevel, ackLargest);
+    if (!recordProtPktTx_(
+	  PktNumSpace::AppData, pn, unsigned(n), recordFrame, recordRefs,
+	  ackEliciting, false, 0, ackLevel, ackLargest, PktType::ZeroRTT))
+      return false;
+	    if (!sendPkt(ZuMv(buf), ZuMv(addr))) {
+	      discardProtPktTx_(
+		PktNumSpace::AppData, pn, unsigned(n), ackEliciting,
+		recordFrame, recordRefs);
+	      return false;
+	    }
+    if (m_txEarlyData.state == LinkEarlyState::None)
+      m_txEarlyData.state = LinkEarlyState::Offered;
+    m_txEarlyData.bytes += unsigned(n);
+    return true;
+  }
+
+  template <typename AllocTxPkt, typename SendPkt>
   bool sendProtShortPkt_(
     RuntimeCID::T dcid, unsigned pnLength, PktBuild &payload,
     ZiSockAddr addr, ZuBSpan recordFrame, const TxPktRefs *recordRefs,
@@ -6006,40 +6432,62 @@ nextSpace:
       }));
       return false;
     }
-    PktNumSpace::T level =
-      h.type == PktType::Initial ? PktNumSpace::Initial :
-      h.type == PktType::Handshake ? PktNumSpace::Handshake :
-      PktNumSpace::AppData;
-    if (h.type != PktType::Initial && h.type != PktType::Handshake) {
+    PktKeyLevel::T keyLevel =
+      h.type == PktType::Initial ? PktKeyLevel::Initial :
+      h.type == PktType::Handshake ? PktKeyLevel::Handshake :
+      h.type == PktType::ZeroRTT ? PktKeyLevel::ZeroRTT :
+      PktKeyLevel::N;
+    PktNumSpace::T level = pktNumSpaceFromKeyLevel(keyLevel);
+    bool earlyData = keyLevel == PktKeyLevel::ZeroRTT;
+    if (keyLevel == PktKeyLevel::N || level == PktNumSpace::N) {
       ZquicLOG(app()->qlogTrace(), ([
-		packetType = h.type,
-		packetSpace = h.type == PktType::ZeroRTT ?
-	  PktNumSpace::AppData : PktNumSpace::N,
-		packetBytes = packetLen,
-		linkInfo = linkInfo_()
+	packetType = h.type,
+	packetBytes = packetLen,
+	linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
-		PktEvent event{.packetSize = packetBytes};
-		event.packetType = packetType;
-		event.packetSpace = packetSpace;
-		event.ecn = EcnMark::N;
-		event.reason = PktEvent::Reason::UnsupportedLongType;
-		event.linkInfo = linkInfo;
-		o.logPktDrop(event, time);
+	PktEvent event{.packetSize = packetBytes};
+	event.packetType = packetType;
+	event.packetSpace = PktNumSpace::N;
+	event.ecn = EcnMark::N;
+	event.reason = PktEvent::Reason::UnsupportedLongType;
+	event.linkInfo = linkInfo;
+	o.logPktDrop(event, time);
       }));
       return false;
     }
+    if (earlyData &&
+	(m_rxEarlyData.oneRTTSeen || rxEarlyDataRejected_())) {
+      if (!rxEarlyDataRejected_())
+	rejectEarlyData_(ZeroRTTReason::AfterOneRTT);
+      ZquicLOG(app()->qlogTrace(), ([
+	packetType = h.type, level, packetBytes = packetLen,
+	reason = m_rxEarlyData.oneRTTSeen ?
+	  PktEvent::Reason::AfterOneRTT :
+	  PktEvent::Reason::FramePolicy,
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	PktEvent event{.packetSize = packetBytes};
+	event.packetType = packetType;
+	event.packetSpace = level;
+	event.ecn = EcnMark::N;
+	event.reason = reason;
+	event.linkInfo = linkInfo;
+	o.logPktDrop(event, time);
+      }));
+      return true;
+    }
     if (m_rxSpaceDiscarded[level]) {
       ZquicLOG(app()->qlogTrace(), ([
-		level, packetBytes = packetLen,
-		linkInfo = linkInfo_()
+	packetType = h.type, level, packetBytes = packetLen,
+	linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
-		PktEvent event{.packetSize = packetBytes};
-		event.packetType = pktTypeFromPktNumSpace(level);
-		event.packetSpace = level;
-		event.ecn = EcnMark::N;
-		event.reason = PktEvent::Reason::DiscardedSpace;
-		event.linkInfo = linkInfo;
-		o.logPktDrop(event, time);
+	PktEvent event{.packetSize = packetBytes};
+	event.packetType = packetType;
+	event.packetSpace = level;
+	event.ecn = EcnMark::N;
+	event.reason = PktEvent::Reason::DiscardedSpace;
+	event.linkInfo = linkInfo;
+	o.logPktDrop(event, time);
       }));
       return true;
     }
@@ -6051,14 +6499,14 @@ nextSpace:
 	base, packetLen, initialKeys_(keyDir),
 	m_rxLargestPN[level], h.pnOffset, pn, payloadOffset);
     else {
-      if (!m_crypto.rxTrafficSecretInstalled(PktNumSpace::Handshake)) {
+      if (!m_crypto.rxKeyTrafficSecretInstalled(keyLevel)) {
 	++m_rxDiag.failures;
-		ZquicLOG(app()->qlogTrace(), ([
-	  level, packetBytes = packetLen,
+	ZquicLOG(app()->qlogTrace(), ([
+	  packetType = h.type, level, packetBytes = packetLen,
 	  linkInfo = linkInfo_()
-		](auto &o, ZuTime time) {
+	](auto &o, ZuTime time) {
 	  PktEvent event{.packetSize = packetBytes};
-	  event.packetType = pktTypeFromPktNumSpace(level);
+	  event.packetType = packetType;
 	  event.packetSpace = level;
 	  event.ecn = EcnMark::N;
 	  event.reason = PktEvent::Reason::MissingKeys;
@@ -6072,56 +6520,54 @@ nextSpace:
 	  };
 	  security.packetSpace = level;
 	  security.trigger = SecTrigger::RX;
-	  o.logSecEvent(
-    EventName::PktProtectFail, security, time);
+	  o.logSecEvent(EventName::PktProtectFail, security, time);
 	}));
 	return false;
       }
       plainLen = PktProt::unprotectLong(
 	base, packetLen,
-	m_crypto.rxProtState(PktNumSpace::Handshake),
+	m_crypto.rxKeyProtState(keyLevel),
 	m_rxLargestPN[level], h.pnOffset, pn, payloadOffset);
     }
     if (plainLen < 0) {
       if (checkStatelessReset_(datagram, true)) return true;
       ++m_rxDiag.failures;
       ZquicLOG(app()->qlogTrace(), ([
-		level, packetBytes = packetLen,
-		linkInfo = linkInfo_()
+	packetType = h.type, level, packetBytes = packetLen,
+	linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
-		PktEvent event{.packetSize = packetBytes};
-		event.packetType = pktTypeFromPktNumSpace(level);
-		event.packetSpace = level;
-		event.ecn = EcnMark::N;
-		event.reason = PktEvent::Reason::Protection;
-		event.linkInfo = linkInfo;
-		o.logPktDrop(event, time);
-		SecEvent security{
+	PktEvent event{.packetSize = packetBytes};
+	event.packetType = packetType;
+	event.packetSpace = level;
+	event.ecn = EcnMark::N;
+	event.reason = PktEvent::Reason::Protection;
+	event.linkInfo = linkInfo;
+	o.logPktDrop(event, time);
+	SecEvent security{
 	  .kind = SecKind::PktProtect,
 	  .reason = SecReason::Protection,
 	  .success = false,
 	  .linkInfo = linkInfo
-		};
+	};
 	security.packetSpace = level;
 	security.trigger = SecTrigger::RX;
-	o.logSecEvent(
-	  EventName::PktProtectFail, security, time);
+	o.logSecEvent(EventName::PktProtectFail, security, time);
       }));
       return false;
     }
     if (rxPktSeen_(level, pn)) {
       ++m_rxDiag.duplicatePacketsRx;
       ZquicLOG(app()->qlogTrace(), ([
-		level, packetBytes = packetLen,
-		linkInfo = linkInfo_()
+	packetType = h.type, level, packetBytes = packetLen,
+	linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
-		PktEvent event{.packetSize = packetBytes};
-		event.packetType = pktTypeFromPktNumSpace(level);
-		event.packetSpace = level;
-		event.ecn = EcnMark::N;
-		event.reason = PktEvent::Reason::Duplicate;
-		event.linkInfo = linkInfo;
-		o.logPktDrop(event, time);
+	PktEvent event{.packetSize = packetBytes};
+	event.packetType = packetType;
+	event.packetSpace = level;
+	event.ecn = EcnMark::N;
+	event.reason = PktEvent::Reason::Duplicate;
+	event.linkInfo = linkInfo;
+	o.logPktDrop(event, time);
       }));
       return true;
     }
@@ -6143,10 +6589,16 @@ nextSpace:
       if (qlog_) qlog_->~PktEvent();
     }};
     if (!consumeFrames(
-      level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
-      d.addr, d.buf, ack, qlog_))
+	  level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
+	  d.addr, d.buf, ack, qlog_, earlyData))
       return false;
+    if (earlyData) {
+      if (m_rxEarlyData.state == LinkEarlyState::None)
+	m_rxEarlyData.state = LinkEarlyState::Recv;
+      m_rxEarlyData.bytes += unsigned(plainLen);
+    }
     ZquicLOG(app()->qlogTrace(), ([
+      packetType = h.type,
       level, pn,
       packetBytes = packetLen,
       payloadBytes = unsigned(plainLen),
@@ -6154,7 +6606,7 @@ nextSpace:
       event = qlog_ ? ZuMv(*qlog_) : PktEvent{},
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) mutable {
-      event.packetType = pktTypeFromPktNumSpace(level);
+      event.packetType = packetType;
       event.packetSpace = level;
       event.ecn = ecn;
       event.packetNumber = pn;
@@ -6395,10 +6847,11 @@ nextSpace:
       if (qlog_) qlog_->~PktEvent();
     }};
     if (!consumeFrames(
-      PktNumSpace::AppData, pn,
-      byteSpan(base + payloadOffset, unsigned(plainLen)),
-      d.addr, d.buf, ack, qlog_))
+	  PktNumSpace::AppData, pn,
+	  byteSpan(base + payloadOffset, unsigned(plainLen)),
+	  d.addr, d.buf, ack, qlog_))
       return false;
+    m_rxEarlyData.oneRTTSeen = true;
     ZquicLOG(app()->qlogTrace(), ([
       level = PktNumSpace::AppData,
       pn,
@@ -6428,7 +6881,7 @@ nextSpace:
     PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf, RxAckMeta &ackMeta,
     ZquicLog_::PktEvent *qlog, EmitTLS emitTLS,
-    HandleControl handleControl) {
+    HandleControl handleControl, bool earlyData = false) {
     unsigned offset = 0;
     auto frame_ = ZmAlloc(Frame, 1);
     new (&frame_[0]) Frame{};
@@ -6444,7 +6897,10 @@ nextSpace:
 	  frame, used) < 0 || !used)
 	return false;
       ++m_rxDiag.framesRx;
-      if (!packetFrameLegal_(level, frame)) return false;
+      if (!packetFrameLegal_(level, frame, earlyData)) {
+	if (earlyData) rejectEarlyData_(ZeroRTTReason::FramePolicy);
+	return false;
+      }
       if (qlog) qlogAddRxFrame_(*qlog, level, frame);
       if (FrameCodec::ackEliciting(frame.type))
 	ackEliciting = true;
@@ -6468,8 +6924,9 @@ nextSpace:
 	case FrameType::Stream:
 	  m_rxDiag.streamBytesRx += frame.payload.length();
 	  if (receiveFrame(
-      frame, ZmRef<ZiIOBuf>{packetBuf}, nullptr, &immediateAck) < 0)
-    return false;
+		frame, ZmRef<ZiIOBuf>{packetBuf}, nullptr, &immediateAck,
+		earlyData) < 0)
+	    return false;
 	  ZquicLOG(app()->qlogTrace(), ([
 	    streamID = frame.streamID,
 	    offset = frame.offset,
@@ -6552,7 +7009,19 @@ nextSpace:
   }
 
 private:
-  bool packetFrameLegal_(PktNumSpace::T level, const Frame &frame) const {
+  bool packetFrameLegal_(
+    PktNumSpace::T level, const Frame &frame, bool earlyData = false) const {
+    if (earlyData) {
+      if (level != PktNumSpace::AppData) return false;
+      switch (frame.type) {
+	case FrameType::Padding:
+	case FrameType::Ping:
+	case FrameType::Stream:
+	  return true;
+	default:
+	  return false;
+      }
+    }
     switch (frame.type) {
       case FrameType::Unknown:
 	return false;
@@ -7255,6 +7724,9 @@ private:
   PeerCIDs		m_peerCIDs;
   uint64_t		m_rxLargestPN[PktNumSpace::N]{};
   AckManager		m_rxAcks;
+  RxEarlyData		m_rxEarlyData;
+  TransportParams	m_zeroRTTParams;
+  bool			m_zeroRTTParamsSet = false;
   TrafficSecret		m_rxOldTrafficSecret;
   PktProtState		m_rxOldProt;
   TrafficSecret		m_rxNextTrafficSecret;
@@ -7315,6 +7787,8 @@ private:
   CryptoStream		m_txCrypto[PktNumSpace::N];
   CryptoTxPQueue	m_txCryptoUnackd[PktNumSpace::N];
   PktProtState		m_txProt[PktNumSpace::N];
+  PktProtState		m_txEarlyProt;
+  TxEarlyData		m_txEarlyData;
   ZmRef<ZiIOBuf>	m_coalesceInitial;
   ZiSockAddr		m_coalesceAddr;
   RuntimeTxDiag		m_txDiag;

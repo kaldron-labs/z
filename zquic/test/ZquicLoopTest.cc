@@ -229,12 +229,30 @@ void testRecoveryFlowAndPMTUD()
     "loop flow unblock failed");
 
   Zquic::SentPktTracker sent;
-  ZuCHECK(sent.add({1, 100, 1200, Zquic::PktNumSpace::AppData,
-      true, true, false}) &&
-      sent.add({2, 110, 1200, Zquic::PktNumSpace::AppData,
-      true, true, false}) &&
-      sent.add({5, 120, 1200, Zquic::PktNumSpace::AppData,
-      true, true, false}),
+  ZuCHECK(sent.add({
+	.pn = 1,
+	.sentTime = Zquic::timeUS(100),
+	.bytes = 1200,
+	.space = Zquic::PktNumSpace::AppData,
+	.ackEliciting = true,
+	.inFlight = true
+      }) &&
+      sent.add({
+	.pn = 2,
+	.sentTime = Zquic::timeUS(110),
+	.bytes = 1200,
+	.space = Zquic::PktNumSpace::AppData,
+	.ackEliciting = true,
+	.inFlight = true
+      }) &&
+      sent.add({
+	.pn = 5,
+	.sentTime = Zquic::timeUS(120),
+	.bytes = 1200,
+	.space = Zquic::PktNumSpace::AppData,
+	.ackEliciting = true,
+	.inFlight = true
+      }),
     "loop sent-packet add failed");
   ZuCHECK(sent.ack(5), "loop ACK failed");
   ZuCHECK(sent.markPktThresholdLoss(5) == 2 &&
@@ -243,8 +261,14 @@ void testRecoveryFlowAndPMTUD()
 
   Zquic::SentPktTracker pmtudTx;
   Zquic::SentPkt probeAck{
-    10, Zquic::timeUS(100), 1300, Zquic::PktNumSpace::AppData,
-    true, true, true, 1300};
+    .pn = 10,
+    .sentTime = Zquic::timeUS(100),
+    .bytes = 1300,
+    .space = Zquic::PktNumSpace::AppData,
+    .ackEliciting = true,
+    .inFlight = true,
+    .pmtudProbe = true,
+    .pmtudSize = 1300};
   ZuCHECK(pmtudTx.add(probeAck), "loop PMTUD sent-packet add failed");
   Zquic::AckRange probeAckRange{10, 10};
   Zquic::PktTxUpdate probeAckUpdate;
@@ -257,8 +281,14 @@ void testRecoveryFlowAndPMTUD()
 
   Zquic::SentPktTracker pmtudLossTx;
   Zquic::SentPkt probeLoss{
-    11, Zquic::timeUS(100), 1400, Zquic::PktNumSpace::AppData,
-    true, true, true, 1400};
+    .pn = 11,
+    .sentTime = Zquic::timeUS(100),
+    .bytes = 1400,
+    .space = Zquic::PktNumSpace::AppData,
+    .ackEliciting = true,
+    .inFlight = true,
+    .pmtudProbe = true,
+    .pmtudSize = 1400};
   ZuCHECK(pmtudLossTx.add(probeLoss), "loop PMTUD loss add failed");
   Zquic::PktTxUpdate probeLossUpdate;
   ZuCHECK(pmtudLossTx.markTimeThresholdLoss(

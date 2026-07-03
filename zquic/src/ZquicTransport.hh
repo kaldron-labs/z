@@ -44,6 +44,9 @@ struct TransportParams {
   int decode(ZuBSpan);
 };
 
+ZeroRTTReason::T validateZeroRTTParams(
+  const TransportParams &remembered, const TransportParams &current);
+
 } // namespace Zquic
 
 #endif /* ZquicTransport_HH */

@@ -44,6 +44,18 @@ struct App : public Zquic::Engine<App> {
   template <typename L> void txRun(L l) { l(); }
   template <typename L> void txInvoke(L l) { l(); }
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
+  template <typename Link>
+  bool allowEarlyStream(Link *, uint64_t streamID, bool fin) {
+    ++earlyStreamChecks;
+    lastEarlyStreamID = streamID;
+    lastEarlyStreamFin = fin;
+    return earlyStreamAllowed;
+  }
+
+  bool		earlyStreamAllowed = false;
+  unsigned	earlyStreamChecks = 0;
+  uint64_t	lastEarlyStreamID = 0;
+  bool		lastEarlyStreamFin = false;
 
 private:
   static ZiMxParams mxParams_() {
@@ -195,19 +207,21 @@ struct TestLink :
   }
   void recordSentPkt(
     Zquic::PktNumSpace::T level, uint64_t pn, unsigned bytes,
-    const Zquic::SentFrameRef &ref, bool ackEliciting) {
-    Base::recordTxPkt_(level, pn, bytes, ref, ackEliciting);
-#ifdef Zquic_DEBUG
+    const Zquic::SentFrameRef &ref, bool ackEliciting,
+    Zquic::PktType::T packetType = Zquic::PktType::N) {
+    Base::recordTxPkt_(
+      level, pn, bytes, ref, ackEliciting, false, 0,
+      Zquic::PktNumSpace::N, 0, packetType);
     Base::setTxPN_(level, pn + 1);
-#endif
   }
   void recordSentPkt(
     Zquic::PktNumSpace::T level, uint64_t pn, unsigned bytes,
-    const typename Base::TxPktRefs &refs, bool ackEliciting) {
-    Base::recordTxPkt_(level, pn, bytes, refs, ackEliciting);
-#ifdef Zquic_DEBUG
+    const typename Base::TxPktRefs &refs, bool ackEliciting,
+    Zquic::PktType::T packetType = Zquic::PktType::N) {
+    Base::recordTxPkt_(
+      level, pn, bytes, refs, ackEliciting, false, 0,
+      Zquic::PktNumSpace::N, 0, packetType);
     Base::setTxPN_(level, pn + 1);
-#endif
   }
   unsigned flushRecordedRefs(Zquic::SentFrameRef *refs, unsigned capacity) {
     unsigned n = 0;
@@ -505,7 +519,56 @@ struct TestLink :
   }
   void discardPeerKeys() { Base::discardPeerKeys_(); }
 #endif
-  bool receiveShort(ZmRef<ZiIOBuf> buf, bool *qlogSeen = nullptr) {
+	  bool installZeroRTTTx(const Zquic::TrafficSecret &tx) {
+	    return Base::txInstallKeyTrafficSecret_(Zquic::PktKeyLevel::ZeroRTT, tx);
+	  }
+	  bool installZeroRTTRx(const Zquic::TrafficSecret &rx) {
+	    return Base::rxInstallKeyTrafficSecret_(Zquic::PktKeyLevel::ZeroRTT, rx);
+	  }
+	  Zquic::LinkEarlyState::T rxEarlyState() const {
+	    return Base::rxEarlyDataState_();
+	  }
+	  Zquic::LinkEarlyState::T txEarlyState() const {
+	    return Base::txEarlyDataState_();
+	  }
+	  bool rxOneRTTSeen() const { return Base::rxOneRTTSeen_(); }
+	  bool flushEarlyStreamRefs(Zquic::SentFrameRef *refs, unsigned capacity) {
+    unsigned n = 0;
+    bool ok = Base::flushEarlyStreams_(
+      ZiSockAddr{},
+      [&](Zquic::PktBuild &build, ZiSockAddr,
+	  const typename Base::TxPktRefs &r) {
+	n = r.count();
+	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
+	recordSentPkt(
+	  Zquic::PktNumSpace::AppData, sentPkts, build.bytes(), r, true,
+	  Zquic::PktType::ZeroRTT);
+	++sentPkts;
+	return true;
+      });
+    return ok ? n : 0;
+  }
+  unsigned rejectZeroRTT() {
+    return Base::rejectZeroRTTTx_(Zquic::ZeroRTTReason::TLSRejected);
+  }
+  bool canTxZeroRTT() const { return Base::canTxZeroRTT_(); }
+  bool sendZeroRTTProbe(ZmRef<ZiIOBuf> &sent) {
+    uint8_t ping[1];
+    int n = Zquic::FrameCodec::writePing(ping, sizeof(ping));
+    if (n != 1) return false;
+    Zquic::PktBuild payload;
+    if (!payload.add(span_(ping, unsigned(n)))) return false;
+    return Base::sendProtZeroRTTPkt_(
+      Base::RuntimeCID::Peer, Base::RuntimeCID::Local,
+      Base::txPNLength_(Zquic::PktNumSpace::AppData),
+      payload, ZiSockAddr{}, span_(ping, unsigned(n)), nullptr, true,
+      []() { return new Zquic::PktTxBufAlloc<>{nullptr}; },
+      [&sent](auto buf, ZiSockAddr) {
+	sent = ZuMv(buf);
+	return true;
+      });
+  }
+	  bool receiveShort(ZmRef<ZiIOBuf> buf, bool *qlogSeen = nullptr) {
     if (!buf) return false;
     Zquic::Datagram d;
     d.buf = ZuMv(buf);
@@ -522,8 +585,28 @@ struct TestLink :
 	  [](Zquic::PktNumSpace::T, const Zquic::Frame &, ZiSockAddr) {
 	    return true;
 	  });
-      });
-  }
+	      });
+	  }
+	  bool receiveZeroRTT(ZmRef<ZiIOBuf> buf) {
+	    if (!buf) return false;
+	    Zquic::Datagram d;
+	    d.buf = ZuMv(buf);
+	    return Base::receiveProtLongPkt_(
+	      Base::InitialKeyDir::Server, d, 0, d.buf->length,
+	      [](const Zquic::LongHdr &, Zquic::Datagram &) { return true; },
+	      [this](
+		  Zquic::PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
+		  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+		  typename Base::RxAckMeta &ack, auto *qlog, bool earlyData) {
+		return Base::consumeProtFrames_(
+		  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
+		  [](size_t, ZuBSpan, ZiSockAddr) { return true; },
+		  [](Zquic::PktNumSpace::T, const Zquic::Frame &, ZiSockAddr) {
+		    return true;
+		  },
+		  earlyData);
+	      });
+	  }
   void flushTx_() { ++txFlushQueued; }
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }
   void queueTxFlush_() { ++txFlushQueued; }
@@ -578,6 +661,23 @@ static ZmRef<ZiIOBuf> shortPing_(
   if (n < 0) return {};
   buf->skip = 0;
   buf->length = unsigned(n);
+  return buf;
+}
+
+static ZmRef<ZiIOBuf> zeroRTTLongHdr_(uint64_t pn)
+{
+  ZmRef<ZiIOBuf> buf = new Zquic::PktRxBufAlloc<>{nullptr};
+  Zquic::CxnID dcid{"server01"};
+  Zquic::CxnID scid{"client01"};
+  enum { PNLength = 2 };
+  int h = Zquic::Pkt::writeLong(
+    buf->data_(), buf->size, Zquic::PktType::ZeroRTT, dcid, scid, 8, PNLength);
+  if (h < 0 ||
+      Zquic::PktNumber::encode(
+	buf->data_() + h, buf->size - unsigned(h), pn, PNLength) != PNLength)
+    return {};
+  buf->skip = 0;
+  buf->length = unsigned(h + PNLength);
   return buf;
 }
 
@@ -2677,12 +2777,181 @@ void testFrameRoleAndSpaceLegality()
     "APPLICATION_CLOSE frame-space legality mismatch");
 
   frame.reset();
+  frame.type = Zquic::FrameType::Ping;
+  ZuCHECK(client->frameLegal(Zquic::PktNumSpace::AppData, frame, true) &&
+      !client->frameLegal(Zquic::PktNumSpace::Initial, frame, true),
+    "0-RTT PING legality mismatch");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::Stream;
+  ZuCHECK(client->frameLegal(Zquic::PktNumSpace::AppData, frame, true),
+    "0-RTT STREAM was rejected");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::Ack;
+  ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::AppData, frame, true),
+    "0-RTT ACK was accepted");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::Crypto;
+  ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::AppData, frame, true),
+    "0-RTT CRYPTO was accepted");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::ResetStream;
+  ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::AppData, frame, true),
+    "0-RTT RESET_STREAM was accepted before cleanup support");
+
+  frame.reset();
+  frame.type = Zquic::FrameType::HandshakeDone;
+  ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::AppData, frame, true),
+    "0-RTT HANDSHAKE_DONE was accepted");
+
+  frame.reset();
   frame.type = Zquic::FrameType::Unknown;
   ZuCHECK(!client->frameLegal(Zquic::PktNumSpace::AppData, frame),
     "unknown extension frame was accepted");
 }
 
+void testZeroRTTProtectedSend()
+{
+  ZuTestScope(testZeroRTTProtectedSend);
+
+  uint8_t secretBytes[32];
+  for (unsigned i = 0; i < sizeof(secretBytes); ++i)
+    secretBytes[i] = uint8_t(0x80 + i);
+  Zquic::TrafficSecret secret;
+  ZuCHECK(Zquic::PktProt::deriveTrafficSecret(
+      secret, &ptls_openssl_aes128gcmsha256,
+      span_(secretBytes, sizeof(secretBytes))),
+    "0-RTT traffic secret derivation failed");
+
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  ZmRef<ZiIOBuf> sent;
+  ZuCHECK(!link->sendZeroRTTProbe(sent) && !sent,
+    "0-RTT send succeeded without early keys");
+  ZuCHECK(link->installZeroRTTTx(secret),
+    "0-RTT Tx key install failed");
+  ZuCHECK(link->sendZeroRTTProbe(sent) && sent && sent->length,
+    "0-RTT protected send failed");
+
+  Zquic::LongHdr h;
+  ZuCHECK(Zquic::Pkt::parseLong(
+      ZuBSpan{sent->data(), sent->length}, h) > 0 &&
+      h.type == Zquic::PktType::ZeroRTT,
+    "0-RTT packet header was not written");
+
+  Zquic::PktProtState rx;
+  ZuCHECK(rx.init(secret, Zquic::PktNumSpace::AppData, false),
+    "0-RTT Rx protection state init failed");
+  uint64_t pn = 0;
+  unsigned payloadOffset = 0;
+  int plainLen = Zquic::PktProt::unprotectLong(
+    sent->data_(), sent->length, rx, 0, h.pnOffset, pn, payloadOffset);
+  ZuCHECK(plainLen >= 1 && pn == 0 && payloadOffset < sent->length &&
+      sent->data_()[payloadOffset] == uint8_t(Zquic::FrameType::Ping),
+    "0-RTT protected packet did not decrypt to PING");
+  ZuCHECK(link->runtimeDiag().tx.packetsTx == 1,
+    "0-RTT send did not record AppData packet accounting");
+  link->cancelTimers();
+}
+
+void testZeroRTTEarlyStreamPolicy()
+{
+  ZuTestScope(testZeroRTTEarlyStreamPolicy);
+
+  uint8_t secretBytes[32];
+  for (unsigned i = 0; i < sizeof(secretBytes); ++i)
+    secretBytes[i] = uint8_t(0xa0 + i);
+  Zquic::TrafficSecret secret;
+  ZuCHECK(Zquic::PktProt::deriveTrafficSecret(
+      secret, &ptls_openssl_aes128gcmsha256,
+      span_(secretBytes, sizeof(secretBytes))),
+    "0-RTT traffic secret derivation failed");
+
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  ZuCHECK(link->installZeroRTTTx(secret),
+    "0-RTT Tx key install failed");
+  link->grantDataCredit(20000);
+  auto stream = link->stream(Zi::StreamType::Duplex);
+  stream->txCredit(20000);
+  {
+    auto tx = stream->txStream_();
+    tx << "early" << Zi::flush();
+  }
+  link->scheduleStream(stream);
+  ZuCHECK(link->queueMaxData(1234) && link->queuedControlFrames() == 1,
+    "0-RTT stream policy control setup failed");
+
+  Zquic::SentFrameRef refs[4];
+  ZuCHECK(!link->flushEarlyStreamRefs(refs, 4) &&
+      stream->txRangeCount() == 1 &&
+      link->scheduledStreams() == 1 &&
+      app.earlyStreamChecks == 1,
+    "default 0-RTT stream denial consumed or unscheduled data");
+
+  app.earlyStreamAllowed = true;
+  unsigned n = link->flushEarlyStreamRefs(refs, 4);
+  ZuCHECK(n == 1 &&
+      refs[0].kind == Zquic::SentFrameKind::Stream &&
+      refs[0].streamID == uint64_t(stream->id()) &&
+      refs[0].length == 5 &&
+      !refs[0].fin &&
+      !stream->txRangeCount() &&
+      link->queuedControlFrames() == 1,
+    "0-RTT stream flush did not send only eligible STREAM data");
+  ZuCHECK(app.lastEarlyStreamID == uint64_t(stream->id()) &&
+      !app.lastEarlyStreamFin,
+    "0-RTT stream policy hook saw wrong stream metadata");
+
+  Zquic::PktNumSpace::T level = Zquic::PktNumSpace::N;
+  Zquic::SentFrameRef retx;
+  ZuCHECK(link->canTxZeroRTT(), "0-RTT Tx key missing before rejection");
+  ZuCHECK(link->rejectZeroRTT() == 1 &&
+      !link->canTxZeroRTT() &&
+      link->retransmits == 1 &&
+      link->nextRetransmitRef(level, retx) &&
+      level == Zquic::PktNumSpace::AppData &&
+      retx.kind == Zquic::SentFrameKind::Stream &&
+      retx.streamID == uint64_t(stream->id()) &&
+      retx.offset == 0 &&
+      retx.length == 5 &&
+      !retx.fin,
+    "0-RTT rejection did not retire packet and preserve stream retransmit");
+  link->cancelTimers();
+}
+
 #ifdef Zquic_DEBUG
+void testZeroRTTAfterOneRTTRejected()
+{
+  ZuTestScope(testZeroRTTAfterOneRTTRejected);
+
+  Zquic::TrafficSecret rx;
+  Zquic::TrafficSecret tx;
+  ZuCHECK(trafficSecret_(rx, 0xb0) && trafficSecret_(tx, 0xc0),
+    "1-RTT traffic secret derivation failed");
+
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  Zquic::CxnID dcid{"server01"};
+  ZuCHECK(link->installOneRTT(rx, tx, dcid),
+    "1-RTT key install failed");
+  ZuCHECK(link->receiveShort(shortPing_(dcid, rx, 0, false)) &&
+      link->rxOneRTTSeen(),
+    "1-RTT receive did not advance AppData receive state");
+  uint64_t packets = link->runtimeDiag().rx.packetsRx;
+
+  ZuCHECK(link->receiveZeroRTT(zeroRTTLongHdr_(1)),
+    "late 0-RTT packet was treated as a receive failure");
+  ZuCHECK(link->rxEarlyState() == Zquic::LinkEarlyState::Rejected &&
+      link->txEarlyState() == Zquic::LinkEarlyState::Rejected &&
+      link->runtimeDiag().rx.packetsRx == packets,
+    "late 0-RTT was not rejected before decrypt/accounting");
+  link->cancelTimers();
+}
+
 void testRuntimeReceiveQLog()
 {
   ZuTestScope(testRuntimeReceiveQLog);
@@ -2982,7 +3251,10 @@ int main(int argc, char **argv)
   ZuTestCall(testInvalidClosedStreamActivity);
   ZuTestCall(testStreamGC);
   ZuTestCall(testFrameRoleAndSpaceLegality);
-#ifdef Zquic_DEBUG
+  ZuTestCall(testZeroRTTProtectedSend);
+  ZuTestCall(testZeroRTTEarlyStreamPolicy);
+	#ifdef Zquic_DEBUG
+  ZuTestCall(testZeroRTTAfterOneRTTRejected);
   ZuTestCall(testPeerKeyUpdateState);
-#endif
+	#endif
 }

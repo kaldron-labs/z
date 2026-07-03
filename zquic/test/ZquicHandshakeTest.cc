@@ -205,14 +205,14 @@ void testDeterministicHandshakeProfile()
   Zquic::Crypto server;
   ZuCHECK(client.init(Zquic::CryptoConfig{false, false, "h3"}),
     "client crypto init failed");
-  ZuCHECK(server.init(Zquic::CryptoConfig{true, true, "h3"}),
+  ZuCHECK(server.init(Zquic::CryptoConfig{true, false, "h3"}),
     "server crypto init failed");
   ZuCHECK(client.alpn() == "h3" && server.alpn() == "h3",
     "handshake ALPN mismatch");
   ZuCHECK(!client.earlyDataEnabled() && !server.earlyDataEnabled(),
     "0-RTT was enabled");
-  ZuCHECK(server.diag().zeroRTTRejected == 1,
-    "server 0-RTT rejection not counted");
+  ZuCHECK(!server.diag().zeroRTTRejected,
+    "server 0-RTT rejection changed unexpectedly");
 
   ZuCHECK(client.deriveInitial(dcid) && server.deriveInitial(dcid),
     "Initial key derivation failed");
@@ -326,7 +326,7 @@ void testMessageLevelTLSHandshake()
       &clientParams}),
     "client TLS init failed");
   ZuCHECK(server.initTLS(Zquic::CryptoConfig{
-      true, true, "h3", {}, temp.certPath.cspan(), temp.keyPath.cspan(), {},
+      true, false, "h3", {}, temp.certPath.cspan(), temp.keyPath.cspan(), {},
       {}, &serverParams}),
     "server TLS init failed");
   ZuCHECK(!client.earlyDataEnabled() && !server.earlyDataEnabled(),
@@ -394,7 +394,7 @@ void testMessageLevelTLSHandshake()
       server.diag().transportParamsDecoded,
     "TLS transport parameter diagnostics were not updated");
   ZuCHECK(!client.diag().zeroRTTRejected &&
-      server.diag().zeroRTTRejected == 1,
+      !server.diag().zeroRTTRejected,
     "0-RTT posture counters changed unexpectedly");
   ZuCHECK(client.diag().tlsMessagesHandled &&
       server.diag().tlsMessagesHandled &&
@@ -444,7 +444,10 @@ void testZeroRTTPktDrop()
 	  }),
 	  "server crypto init failed");
   ZuCHECK(server.rejectZeroRTT(), "0-RTT reject failed");
-  ZuCHECK(!server.oneRTTReady() && server.diag().zeroRTTRejected == 2,
+  ZuCHECK(!server.oneRTTReady() &&
+      !server.earlyDataEnabled() &&
+      server.earlyDataRejected() &&
+      server.diag().zeroRTTRejected == 1,
     "0-RTT reject affected handshake readiness");
 #ifdef Zquic_DEBUG
 	ZquicLogger::stop();

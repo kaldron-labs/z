@@ -26,7 +26,12 @@ void testDiagAggregation()
   diag.noteStreamRx(30);
   diag.noteStreamTx(40);
   diag.noteLoss(Zquic::SentPkt{
-    1, ZuTime{0}, 100, Zquic::PktNumSpace::AppData, true, true, false });
+    .pn = 1,
+    .sentTime = ZuTime{0},
+    .bytes = 100,
+    .space = Zquic::PktNumSpace::AppData,
+    .ackEliciting = true,
+    .inFlight = true });
   diag.notePTO();
   diag.noteRetransmit(Zquic::SentFrameRef::control());
   diag.setRecovery(12000, 500);

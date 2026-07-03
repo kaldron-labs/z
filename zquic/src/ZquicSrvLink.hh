@@ -294,9 +294,17 @@ private:
     if (!Base::loadServerTransportParams_(m_bootstrap)) return false;
     Base::configureLocalTransportParams_(app());
     if (!Base::deriveInitial_()) return false;
+    uint32_t maxEarlyData = app()->maxEarlyData(impl());
     if (!Base::initTLS_(CryptoConfig{
-	true, false, app()->firstALPN(), {}, app()->certPath(), app()->keyPath(),
-	app()->keyLogPath(), {}, nullptr, &app()->qlogTrace()}))
+	  .isServer = true,
+	  .enable0RTT = maxEarlyData != 0,
+	  .alpn = app()->firstALPN(),
+	  .certPath = app()->certPath(),
+	  .keyPath = app()->keyPath(),
+	  .keyLogPath = app()->keyLogPath(),
+	  .qlogTrace = &app()->qlogTrace(),
+	  .maxEarlyData = maxEarlyData
+	}))
       return false;
     if (!Base::startRuntimeHandshake_()) return false;
     return true;
@@ -644,6 +652,34 @@ private:
       });
   }
 
+  bool sendZeroRTTPkt_(ZuBSpan payload, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server 0-RTT send outside Tx thread", return false);
+    PktBuild build;
+    if (!buildPayload_(PktNumSpace::AppData, build, payload)) return false;
+    return sendZeroRTTPkt_(build, ZuMv(addr), payload);
+  }
+
+  bool sendZeroRTTPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
+    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    typename Base::TxPktRefs refs;
+    const typename Base::TxPktRefs *recordRefs = nullptr;
+    if (recordRef) {
+      refs.add(*recordRef);
+      recordRefs = &refs;
+    }
+    return Base::sendProtZeroRTTPkt_(
+      RuntimeCID::Peer, RuntimeCID::Local,
+      Base::txPNLength_(PktNumSpace::AppData),
+      payload, ZuMv(addr), recordFrame, recordRefs,
+      ackEliciting,
+      [this]() { return app()->allocTxPkt_(); },
+      [this, recordRefs](auto buf, ZiSockAddr addr_) {
+	return sendShortBuf_(ZuMv(buf), ZuMv(addr_), recordRefs);
+      });
+  }
+
   bool sendShortPkt_(ZuBSpan payload, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Short send outside Tx thread", return false);
@@ -850,9 +886,10 @@ private:
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvent *qlog) {
+	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvent *qlog,
+	  bool earlyData) {
 	return consumeFrames_(
-	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog);
+	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog, earlyData);
       });
   }
 
@@ -871,7 +908,7 @@ private:
   bool consumeFrames_(
     PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack,
-    ZquicLog_::PktEvent *qlog) {
+    ZquicLog_::PktEvent *qlog, bool earlyData = false) {
     ZiSockAddr peer = addr;
     bool ok = Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
@@ -881,7 +918,8 @@ private:
       [this](
 	  PktNumSpace::T level_, const Frame &frame, ZiSockAddr addr_) {
 	return handleControlFrame_(level_, frame, ZuMv(addr_));
-      });
+      },
+      earlyData);
     if (ok && level == PktNumSpace::AppData && Base::runtimeEstablished_())
       Base::observePathRx_(app()->local(), ZuMv(peer));
     return ok;

@@ -516,11 +516,34 @@ private:
     }));
     Base::configureLocalTransportParams_(app());
     if (!Base::deriveInitial_()) return false;
-    if (!Base::initTLS_(CryptoConfig{
-	false, false, app()->firstALPN(), app()->caPath(), {}, {},
-	app()->keyLogPath(), m_server, nullptr, &app()->qlogTrace()}))
-      return false;
+    if (!initClientTLS_()) return false;
     return true;
+  }
+
+  bool initClientTLS_() {
+    CryptoConfig config{
+      .isServer = false,
+      .enable0RTT = false,
+      .alpn = app()->firstALPN(),
+      .caPath = app()->caPath(),
+      .keyLogPath = app()->keyLogPath(),
+      .serverName = m_server,
+      .qlogTrace = &app()->qlogTrace()
+    };
+    ZuBSpan sessionTicket;
+    ZuBSpan appParams;
+    const TransportParams *rememberedParams = nullptr;
+    if (app()->earlyDataSession(
+	  impl(), sessionTicket, rememberedParams, appParams)) {
+      if (sessionTicket && rememberedParams &&
+	  app()->validateEarlyDataParams(impl(), appParams)) {
+	Base::rememberZeroRTTParams_(*rememberedParams);
+	config.enable0RTT = true;
+	config.sessionTicket = sessionTicket;
+      } else
+	Base::clearZeroRTTParams_();
+    }
+    return Base::initTLS_(config);
   }
 
   bool startHandshake_() {
@@ -542,10 +565,7 @@ private:
       m_bootstrap.initialDCID(), m_bootstrap.initialDCID());
     Base::configureLocalTransportParams_(app());
     if (!Base::deriveInitial_()) return false;
-    if (!Base::initTLS_(CryptoConfig{
-	false, false, app()->firstALPN(), app()->caPath(), {}, {},
-	app()->keyLogPath(), m_server, nullptr, &app()->qlogTrace()}))
-      return false;
+    if (!initClientTLS_()) return false;
     if (!Base::startRuntimeHandshake_()) return false;
     return emitTLS_(0, {}, Endpoint::remote());
   }
@@ -667,27 +687,10 @@ private:
     if (!flushTx_()) queueTxFlush_();
   }
 
-  void queueTxFlush_() {
-    app()->txRun([link = impl()]() mutable {
-      if (link->disconnecting_()) return;
-      link->flushTx_();
-    });
-  }
-  void queueTxFlush_(ZiSockAddr addr) {
-    app()->txRun([
-      link = impl(),
-      addr = ZuMv(addr)
-    ]() mutable {
-      if (link->disconnecting_()) return;
-      link->flushTx_(ZuMv(addr));
-    });
-  }
-
   bool flushTx_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client flush outside Tx thread", return false);
-    if (Base::closed() || !Base::runtimeEstablished_() ||
-	!Endpoint::remote())
+    if (Base::closed() || !Endpoint::remote())
       return false;
     return flushTx_(Endpoint::remote());
   }
@@ -698,7 +701,15 @@ private:
     if (Base::closed()) return false;
     if (!Base::runtimeEstablished_()) {
       flushPendingAcks_(addr);
-      return false;
+      if (!Base::canTxZeroRTT_()) return false;
+      return Base::flushEarlyStreams_(
+	addr,
+	[this](
+	    PktBuild &build, ZiSockAddr addr_,
+	    const typename Base::TxPktRefs &refs) {
+	  return sendZeroRTTPkt_(
+	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
+	});
     }
     bool sent = Base::flushControlAndStreams_(
       addr,
@@ -713,6 +724,22 @@ private:
     sent |= sendPMTUDProbe_(ZuMv(addr));
     if (!sent) sent = flushPendingAcks_(ZuMv(addr));
     return sent;
+  }
+
+  void queueTxFlush_() {
+    app()->txRun([link = impl()]() mutable {
+      if (link->disconnecting_()) return;
+      link->flushTx_();
+    });
+  }
+  void queueTxFlush_(ZiSockAddr addr) {
+    app()->txRun([
+      link = impl(),
+      addr = ZuMv(addr)
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      link->flushTx_(ZuMv(addr));
+    });
   }
 
   bool sendCryptoPkt_(
@@ -895,6 +922,43 @@ private:
       });
   }
 
+  bool sendZeroRTTPkt_(ZuBSpan payload, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client 0-RTT send outside Tx thread", return false);
+    PktBuild build;
+    if (!buildPayload_(PktNumSpace::AppData, build, payload)) return false;
+    return sendZeroRTTPkt_(build, ZuMv(addr), payload);
+  }
+
+  bool sendZeroRTTPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
+    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    if (!Endpoint::connected()) return false;
+    typename Base::TxPktRefs refs;
+    const typename Base::TxPktRefs *recordRefs = nullptr;
+    if (recordRef) {
+      refs.add(*recordRef);
+      recordRefs = &refs;
+    }
+    return sendZeroRTTPkt_(
+      payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting);
+  }
+
+  bool sendZeroRTTPkt_(
+    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
+    const typename Base::TxPktRefs *recordRefs, bool ackEliciting) {
+    if (!Endpoint::connected()) return false;
+    return Base::sendProtZeroRTTPkt_(
+      RuntimeCID::Peer, RuntimeCID::Local,
+      Base::txPNLength_(PktNumSpace::AppData),
+      payload, ZuMv(addr), recordFrame, recordRefs,
+      ackEliciting,
+      [this]() { return Endpoint::allocTxPkt(); },
+      [this](auto buf, ZiSockAddr addr_) {
+	return sendShortBuf_(ZuMv(buf), ZuMv(addr_));
+      });
+  }
+
   bool sendShortPkt_(ZuBSpan payload, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client Short send outside Tx thread", return false);
@@ -1074,9 +1138,10 @@ private:
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvent *qlog) {
+	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvent *qlog,
+	  bool earlyData) {
 	return consumeFrames_(
-	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog);
+	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog, earlyData);
       });
   }
 
@@ -1095,7 +1160,7 @@ private:
   bool consumeFrames_(
     PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack,
-    ZquicLog_::PktEvent *qlog) {
+    ZquicLog_::PktEvent *qlog, bool earlyData = false) {
     ZiSockAddr peer = addr;
     bool ok = Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
@@ -1105,7 +1170,8 @@ private:
       [this](
 	  PktNumSpace::T level_, const Frame &frame, ZiSockAddr addr_) {
 	return handleControlFrame_(level_, frame, ZuMv(addr_));
-      });
+      },
+      earlyData);
     if (ok && level == PktNumSpace::AppData && Base::runtimeEstablished_())
       Base::observePathRx_(Endpoint::local(), ZuMv(peer));
     return ok;
