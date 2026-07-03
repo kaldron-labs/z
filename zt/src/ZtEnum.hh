@@ -4,7 +4,58 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// enum wrapper
+// good ole' plain enum wrapper
+// - intentionally diverges from `enum class`
+// - intentionally uses int-convertible ordinals
+// - most use cases are satisfied by ZtEnumNS or ZtEnumStruct
+// - the enum is wrapped in a containing namespace or
+//   struct and accompanied by compile-time machinery to
+//   efficiently match names and convert between ordinals
+//   and names:
+//
+// - ZtEnumValues([Type], [Names...])
+//   - [Type] is most often int8_t (T must be signed)
+//   - expands to:
+//     using T = [Type];
+//     enum { [Names...], N };
+//
+// - ZtEnumMap([ID], [Map], [Names...])
+//   - requires a preceding ZtEnumValues
+//   - [Names...] can optionally include one or two trailing
+//     sentinel names ..., [Unknown, [Null]]
+//     - these specify names for ordinals that are
+//       unknown (>= N) and/or null (< 0)
+//   - expands to:
+//     struct [Map] {
+//       const auto &id() { return #[ID]; } // compile-time ID
+//       // compile-time name matcher using ZuMatcher
+//       constexpr auto matcher = ZuMatcher<[Names]>();
+//       constexpr T s2v(ZuCSpan s); // map name to ordinal
+//       constexpr ZuCSpan v2s(int i); // map ordinal to name
+//       // iterates over all ordinals calling l(name, ordinal)
+//       template <typename L> constexpr void all(L &&l);
+//     };
+//
+// - ZtEnumNames([ID], [Names...])
+//   - declares a default ZtEnumMap with name(int) and lookup(ZuCSpan)
+//   - expands to:
+//     // see above; "Map" is the name of the default map
+//     ZtEnumMap([ID], Map, [Names...]);
+//     constexpr ZuCSpan name(int i); // map ordinal to name with Map
+//     constexpr T lookup(ZuCSpan s); // map name to ordinal with Map
+//
+// - ZtEnum([ID], [Type], [Names...])
+//   - expands to:
+//     ZtEnumValues([Type], [Names...]);
+//     ZtEnumNames([ID], [Names...]);
+//
+// - ZtEnumNS([ID], [Type], [Names...])
+//   - expands to:
+//     namespace [ID] { ZtEnum([ID], [Type], [Names...]); }
+//
+// - ZtEnumStruct([ID], [Type], [Names...])
+//   - expands to:
+//     struct [ID] { ZtEnum([ID], [Type], [Names...]); }
 
 #ifndef ZtEnum_HH
 #define ZtEnum_HH
@@ -33,9 +84,20 @@
     static constexpr const auto &id() { return #ID; } \
     static constexpr auto matcher = ZuMatcher<Names>(); \
     static constexpr T s2v(ZuCSpan s) { return matcher.match(s); } \
+    template <unsigned N_ = N> \
     static constexpr ZuCSpan v2s(int i) { \
-      if (i >= Names::N) return "Unknown"; \
-      if (i < 0) return ""; \
+      if (i >= N) { \
+	if constexpr (Names::N > N_) \
+	  return ZuType<N_, Names>{}(); \
+	else \
+	  return "Unknown"; \
+      } \
+      if (i < 0) { \
+	if constexpr (Names::N > N_ + 1) \
+	  return ZuType<N_ + 1, Names>{}(); \
+	else \
+	  return ""; \
+      } \
       return ZuSwitch::dispatch<Names::N>(i, [](auto I) { \
 	return ZuCSpan(ZuType<I, Names>{}); \
       }); \
@@ -61,6 +123,12 @@
   ZtEnumValues(Type, __VA_ARGS__); \
   ZtEnumNames(ID, __VA_ARGS__) \
   struct Map : public Map_ { }
+
+#define ZtEnumNS(ID, Type, ...) \
+  namespace ID { ZtEnum(ID, Type, __VA_ARGS__); }
+
+#define ZtEnumStruct(ID, Type, ...) \
+  struct ID { ZtEnum(ID, Type, __VA_ARGS__); }
 
 #define ZtEnumMap(ID, Map, ...) \
   ZtEnumMap_(ID, Map, __VA_ARGS__); \
