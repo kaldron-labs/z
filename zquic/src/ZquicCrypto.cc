@@ -612,7 +612,7 @@ bool PktProt::deriveNextTrafficSecret(
 bool Crypto::updateTxTrafficSecret(
   PktNumSpace::T level, const TrafficSecret &secret)
 {
-  if (level < 0 || level >= 3 || !secret.valid()) return false;
+  if (level < 0 || level >= PktNumSpace::N || !secret.valid()) return false;
   m_txTrafficSecrets[level] = secret;
   return m_txProt[level].init(m_txTrafficSecrets[level], level, true);
 }
@@ -620,7 +620,7 @@ bool Crypto::updateTxTrafficSecret(
 bool Crypto::updateRxTrafficSecret(
   PktNumSpace::T level, const TrafficSecret &secret)
 {
-  if (level < 0 || level >= 3 || !secret.valid()) return false;
+  if (level < 0 || level >= PktNumSpace::N || !secret.valid()) return false;
   m_rxTrafficSecrets[level] = secret;
   return m_rxProt[level].init(m_rxTrafficSecrets[level], level, false);
 }

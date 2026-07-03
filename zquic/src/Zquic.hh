@@ -376,7 +376,7 @@ struct RuntimeDiagCounter {
 #endif
 
 struct RuntimeRxDiag {
-  AckECN	ecnRx[3];
+  AckECN	ecnRx[PktNumSpace::N];
 
   [[no_unique_address]] RuntimeDiagCounter endpointReady = 0;
   [[no_unique_address]] RuntimeDiagCounter datagramsRx = 0;
@@ -417,12 +417,10 @@ struct RuntimeRxDiag {
 };
 
 struct RuntimeTxDiag {
-  static constexpr unsigned Spaces = 3;
-
   uint64_t	packetsTx = 0;
   bool		ptoTimerActive = false;
   bool		lossTimerActive = false;
-  AckECN	peerAckECN[3];
+  AckECN	peerAckECN[PktNumSpace::N];
 
   [[no_unique_address]] RuntimeDiagCounter bytesTx = 0;
   [[no_unique_address]] RuntimeDiagCounter cryptoBytesTx = 0;
@@ -478,10 +476,13 @@ struct RuntimeTxDiag {
   [[no_unique_address]] RuntimeDiagCounter lossArmed = 0;
   [[no_unique_address]] RuntimeDiagCounter lossCanceled = 0;
   [[no_unique_address]] RuntimeDiagCounter lossExpired = 0;
-  [[no_unique_address]] RuntimeDiagCounter pktBytesInFlight[Spaces] = {};
-  [[no_unique_address]] RuntimeDiagCounter sentPackets[Spaces] = {};
-  [[no_unique_address]] RuntimeDiagCounter retransmitPending[Spaces] = {};
-  [[no_unique_address]] RuntimeDiagCounter retransmittable[Spaces] = {};
+  [[no_unique_address]] RuntimeDiagCounter
+    pktBytesInFlight[PktNumSpace::N] = {};
+  [[no_unique_address]] RuntimeDiagCounter sentPackets[PktNumSpace::N] = {};
+  [[no_unique_address]] RuntimeDiagCounter
+    retransmitPending[PktNumSpace::N] = {};
+  [[no_unique_address]] RuntimeDiagCounter
+    retransmittable[PktNumSpace::N] = {};
   [[no_unique_address]] RuntimeDiagCounter congestionWindow = 0;
   [[no_unique_address]] RuntimeDiagCounter congestionSSThresh = 0;
   [[no_unique_address]] RuntimeDiagCounter congestionBytesInFlight = 0;
@@ -507,7 +508,7 @@ struct RuntimeDiag {
 
 template <typename Send>
 inline bool sendRuntimeCryptoFlights(
-  CryptoStream (&txCrypto)[3], RuntimeTxDiag &diag,
+  CryptoStream (&txCrypto)[PktNumSpace::N], RuntimeTxDiag &diag,
   const uint8_t *data, unsigned len, const size_t offsets[5],
   unsigned chunkMax, ZiSockAddr addr, Send send)
 {
@@ -673,28 +674,28 @@ struct EngineParams {
   ErrorFn &errorFn() { return m_errorFn; }
 
 private:
-  ZiMultiplex	*m_mx = nullptr;
-  ParamString	m_rxThread;
-  ParamString	m_txThread;
-  ParamStrings	m_alpn;
-  ParamString	m_caPath;
-  ParamString	m_certPath;
-  ParamString	m_keyPath;
-  ParamString	m_keyLogPath;
+  ZiMultiplex		*m_mx = nullptr;
+  ParamString		m_rxThread;
+  ParamString		m_txThread;
+  ParamStrings		m_alpn;
+  ParamString		m_caPath;
+  ParamString		m_certPath;
+  ParamString		m_keyPath;
+  ParamString		m_keyLogPath;
   ZquicLogParams	m_qlogParams;
-  ParamString	m_asyncThread;
-  uint64_t	m_maxData = DefaultMaxData;
-  uint64_t	m_maxStreamData = DefaultMaxStreamData;
-  uint64_t	m_maxStreamsBidi = DefaultMaxStreamsBidi;
-  uint64_t	m_maxStreamsUni = DefaultMaxStreamsUni;
-  uint64_t	m_maxIdleTimeout = 0;
-  unsigned	m_maxUDP = MinUDPPayload;
-  TokenSecret	m_tokenSecret;
-  uint64_t	m_tokenLifetime = DefaultTokenLifetime;
-  bool		m_retryAddressValidation = false;
-  bool		m_newTokenAddressValidation = false;
-  bool		m_tokenBindPort = false;
-  ErrorFn	m_errorFn;
+  ParamString		m_asyncThread;
+  uint64_t		m_maxData = DefaultMaxData;
+  uint64_t		m_maxStreamData = DefaultMaxStreamData;
+  uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
+  uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
+  uint64_t		m_maxIdleTimeout = 0;
+  unsigned		m_maxUDP = MinUDPPayload;
+  TokenSecret		m_tokenSecret;
+  uint64_t		m_tokenLifetime = DefaultTokenLifetime;
+  bool			m_retryAddressValidation = false;
+  bool			m_newTokenAddressValidation = false;
+  bool			m_tokenBindPort = false;
+  ErrorFn		m_errorFn;
 };
 
 using ClientParams = EngineParams;
@@ -1039,7 +1040,7 @@ private:
   ParamString		m_certPath;
   ParamString		m_keyPath;
   ParamString		m_keyLogPath;
-  ZquicLogParams		m_qlogParams;
+  ZquicLogParams	m_qlogParams;
   ZquicLogger::Trace	m_qlogTrace;
   uint64_t		m_maxData = DefaultMaxData;
   uint64_t		m_maxStreamData = DefaultMaxStreamData;

@@ -61,7 +61,8 @@ public:
   Link(App *app, bool isServer = false) :
     m_app{app}, m_isServer{isServer},
     m_streams{new Streams}, m_closedStreams{new ClosedStreams} {
-    for (unsigned i = 0; i < 3; ++i) {
+    for (auto &pn : m_txLargestAckd) pn = U64Null;
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       CryptoStream *crypto = &m_rxCrypto[i];
       crypto->dequeueFn([this, crypto]() {
 	this->app()->rxRun([crypto]() {
@@ -69,7 +70,7 @@ public:
 	});
       });
     }
-    for (unsigned i = 0; i < AckManager::Spaces; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       auto space = PktNumSpace::T(i);
       AckTracker *tracker = &m_rxAcks.tracker(space);
       tracker->dequeueFn([this, tracker]() {
@@ -85,7 +86,7 @@ public:
   }
 
   void initCryptoDelivery_() {
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       auto space = PktNumSpace::T(i);
       CryptoStream *crypto = &m_rxCrypto[i];
       crypto->deliveryFn([this, space](ZuBSpan span) {
@@ -102,7 +103,7 @@ public:
       crypto.dequeueFn({});
       crypto.deliveryFn({});
     }
-    for (unsigned i = 0; i < AckManager::Spaces; ++i)
+    for (unsigned i = 0; i < PktNumSpace::N; ++i)
       m_rxAcks.tracker(PktNumSpace::T(i)).dequeueFn({});
   }
 
@@ -516,8 +517,8 @@ protected:
     bool		ready = false;
   };
   struct TxCryptoSnapshot {
-    TrafficSecret	secrets[3];
-    bool		installed[3] = {};
+    TrafficSecret	secrets[PktNumSpace::N];
+    bool		installed[PktNumSpace::N] = {};
   };
   struct TxPktRefs {
     bool add(const SentFrameRef &ref, Stream *stream = nullptr) {
@@ -867,7 +868,7 @@ protected:
   }
   const Crypto &crypto_() const { return m_crypto; }
   void snapshotTxCrypto_(TxCryptoSnapshot &snapshot) const {
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       auto level = PktNumSpace::T(i);
       snapshot.installed[i] = m_crypto.txTrafficSecretInstalled(level);
       if (snapshot.installed[i])
@@ -888,7 +889,7 @@ protected:
   bool installTxCrypto_(const TxCryptoSnapshot &snapshot) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx crypto snapshot install outside Tx thread", return false);
-    for (unsigned i = 0; i < 3; ++i)
+    for (unsigned i = 0; i < PktNumSpace::N; ++i)
       if (snapshot.installed[i] &&
 	  !txInstallTrafficSecret_(PktNumSpace::T(i), snapshot.secrets[i]))
 	return false;
@@ -1141,7 +1142,7 @@ protected:
   }
   RuntimeTxDiag txDiag_() const {
     RuntimeTxDiag diag = m_txDiag;
-    for (unsigned i = 0; i < RuntimeTxDiag::Spaces; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       const PktTxSpace &space = m_txPkts[i];
       diag.pktBytesInFlight[i] = space.bytesInFlight();
       diag.sentPackets[i] = space.count();
@@ -3422,7 +3423,7 @@ protected:
   }
 
   void resetAckPosts_() {
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       AckPost &ackPost = m_ackPost[i];
       ZmGuard guard(ackPost.lock);
       ackPost.ack = {};
@@ -3537,7 +3538,7 @@ protected:
     ZuTime threshold = lossThreshold_();
     ZuTime out;
     bool have = false;
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       auto level = PktNumSpace::T(i);
       if (m_txSpaceDiscarded[level]) continue;
       ZuTime deadline =
@@ -3601,7 +3602,7 @@ protected:
     unsigned level, ZuTime now, PktLossBatch batch, bool lost) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC loss scan outside Tx thread", return);
-    while (level < 3) {
+    while (level < PktNumSpace::N) {
       PktNumSpace::T space = PktNumSpace::T(level);
       bool complete = true;
       lost |= detectLoss_(space, now, batch, complete);
@@ -4403,7 +4404,7 @@ protected:
   bool nextRetransmit_(PktNumSpace::T &level, SentFrameRef &ref) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC retransmit selection outside Tx thread", return false);
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       PktNumSpace::T l = PktNumSpace::T(i);
       if (m_txSpaceDiscarded[l]) continue;
       do {
@@ -4578,7 +4579,7 @@ nextSpace:
 
   bool recordTxPkt_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes, ZuBSpan frame,
-    uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
+    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0) {
     SentFrameRef ref;
     bool ackEliciting = false;
     if (!runtimeFrameRef(frame, ref, ackEliciting)) return true;
@@ -4590,7 +4591,7 @@ nextSpace:
     PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const SentFrameRef &ref, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
-    uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
+    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0) {
     TxPktRefs refs;
     if (ref.kind != SentFrameKind::None) refs.add(ref);
     return recordTxPkt_(
@@ -4602,7 +4603,7 @@ nextSpace:
     PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const TxPktRefs &refs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
-    uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
+    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0) {
     if (m_txSpaceDiscarded[level]) return true;
     if (!ackEliciting && !refs.count()) return true;
     SentPkt packet;
@@ -4750,7 +4751,7 @@ nextSpace:
     }
   }
   void applyAckOfAckTx_(const PktTxUpdate &update) {
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       if (!update.ackdAck[i]) continue;
       auto level = PktNumSpace::T(i);
       uint64_t largest = update.ackLargest[i];
@@ -5335,7 +5336,7 @@ nextSpace:
   }
 
   void noteTxPktDiag_(const TxPktRefs *refs, uint8_t ackLevel) {
-    bool hasAck = ackLevel < 3;
+    bool hasAck = ackLevel < PktNumSpace::N;
     bool hasStream = false;
     bool hasControl = false;
     bool hasCrypto = false;
@@ -5385,7 +5386,7 @@ nextSpace:
     PktNumSpace::T level, uint64_t pn, unsigned bytes, ZuBSpan recordFrame,
     const TxPktRefs *recordRefs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
-    uint8_t ackLevel = 3, uint64_t ackLargest = 0) {
+    uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0) {
     bool recorded = recordRefs ?
       recordTxPkt_(
 	level, pn, bytes, *recordRefs, ackEliciting, pmtudProbe, pmtudSize,
@@ -5408,7 +5409,7 @@ nextSpace:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) mutable {
       unsigned frameCount = hasRecordRefs ? recordRefs.count() : 0;
-      if (ackLevel < 3) ++frameCount;
+      if (ackLevel < PktNumSpace::N) ++frameCount;
       PktEvent event{
 	.packetNumber = pn,
 		.packetSize = packetBytes,
@@ -5495,7 +5496,7 @@ nextSpace:
   ZuArray<ZquicLog_::QAckRange, ZquicLog_::AckRangeMax> qlogAckRanges_(
     uint8_t ackLevel) const {
     ZuArray<ZquicLog_::QAckRange, ZquicLog_::AckRangeMax> ranges;
-    if (ackLevel >= 3) return ranges;
+    if (ackLevel >= PktNumSpace::N) return ranges;
     const AckSnapshot &ack = m_txAck[ackLevel];
     for (unsigned i = 0, n = ack.nRanges; i < n; ++i) {
       if (ranges.length() >= ZquicLog_::AckRangeMax) break;
@@ -5511,7 +5512,7 @@ nextSpace:
     ZquicLog_::PktEvent &event, uint8_t ackLevel, uint64_t ackLargest,
     const ZuArray<ZquicLog_::QAckRange, ZquicLog_::AckRangeMax>
       &ackRanges) {
-    if (ackLevel >= 3) return;
+    if (ackLevel >= PktNumSpace::N) return;
     ZquicLog_::FrameEvent frame{
       .type = FrameType::Ack,
       .largestAcked = ackLargest,
@@ -5638,7 +5639,7 @@ nextSpace:
   bool txAckMeta_(
     PktNumSpace::T level, PktBuild &payload,
     uint8_t &ackLevel, uint64_t &ackLargest) const {
-    ackLevel = 3;
+    ackLevel = PktNumSpace::N;
     ackLargest = 0;
     if (!payload.ack(level)) return false;
     const AckSnapshot &ack = m_txAck[level];
@@ -7108,7 +7109,7 @@ private:
   bool ptoLevel_(PktNumSpace::T &level) const {
     bool have = false;
     ZuTime out;
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       auto l = PktNumSpace::T(i);
       if (m_txSpaceDiscarded[l]) continue;
       const auto &tx = m_txPkts[l];
@@ -7242,8 +7243,8 @@ private:
   RuntimeRxDiag		m_rxDiag;
   Crypto		m_crypto;
   TransportParams	m_transportParams;
-  CryptoStream		m_rxCrypto[3];
-  ZiSockAddr		m_rxCryptoAddr[3];
+  CryptoStream		m_rxCrypto[PktNumSpace::N];
+  ZiSockAddr		m_rxCryptoAddr[PktNumSpace::N];
   CxnID			m_initialDCID;
   CxnID			m_origDCID;
   CxnID			m_groupID;
@@ -7252,7 +7253,7 @@ private:
   ResetToken		m_peerResetToken;
   LocalCIDs		m_localCIDs;
   PeerCIDs		m_peerCIDs;
-  uint64_t		m_rxLargestPN[3]{};
+  uint64_t		m_rxLargestPN[PktNumSpace::N]{};
   AckManager		m_rxAcks;
   TrafficSecret		m_rxOldTrafficSecret;
   PktProtState		m_rxOldProt;
@@ -7261,7 +7262,7 @@ private:
   ZuTime		m_rxOldKeyDiscard;
   RttEstimator		m_rtt;
   PTOBackoff		m_ptoBackoff;
-  AckPost		m_ackPost[3];
+  AckPost		m_ackPost[PktNumSpace::N];
   // Connection-owned timers; callbacks run on Tx.
   ZmScheduler::Timer	m_ackDelayTimer;
   ZmScheduler::Timer	m_lossTimer;
@@ -7281,7 +7282,7 @@ private:
   ZuTime		m_closeNextResponse;
   PktNumSpace::T	m_ptoTimerLevel = PktNumSpace::Initial;
   bool			m_idleAckElicitingSent = false;
-  bool			m_rxSpaceDiscarded[3]{};
+  bool			m_rxSpaceDiscarded[PktNumSpace::N]{};
   LinkState::T		m_linkState = LinkState::Starting;
   unsigned		m_drainPTOs = 0;
   uint64_t		m_peerRetirePriorTo = 0;
@@ -7311,22 +7312,22 @@ private:
   PendingControl	m_pathChallengeControl;
   PathResponses		m_pathResponses{ZmQueueParams{}.initial(PathResponseMax)};
 
-  CryptoStream		m_txCrypto[3];
-  CryptoTxPQueue	m_txCryptoUnackd[3];
-  PktProtState		m_txProt[3];
+  CryptoStream		m_txCrypto[PktNumSpace::N];
+  CryptoTxPQueue	m_txCryptoUnackd[PktNumSpace::N];
+  PktProtState		m_txProt[PktNumSpace::N];
   ZmRef<ZiIOBuf>	m_coalesceInitial;
   ZiSockAddr		m_coalesceAddr;
   RuntimeTxDiag		m_txDiag;
   NewReno		m_congestion;
   uint64_t		m_txRuntimeGen = 0;
-  uint64_t		m_txPN[3]{};
-  uint64_t		m_txLargestAckd[3]{U64Null, U64Null, U64Null};
-  PktTxSpace		m_txPkts[3];
-  AckSnapshot		m_txAck[3];
-  AckECN		m_peerAckECN[3];
+  uint64_t		m_txPN[PktNumSpace::N]{};
+  uint64_t		m_txLargestAckd[PktNumSpace::N]{};
+  PktTxSpace		m_txPkts[PktNumSpace::N];
+  AckSnapshot		m_txAck[PktNumSpace::N];
+  AckECN		m_peerAckECN[PktNumSpace::N];
   Path			m_path;
   PathState		m_validatingPath;
-  bool			m_txSpaceDiscarded[3]{};
+  bool			m_txSpaceDiscarded[PktNumSpace::N]{};
   bool			m_coalesceLong = false;
   bool			m_txKeyPhase = false;
 };
