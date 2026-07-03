@@ -6,15 +6,15 @@
 
 // Z QUIC server link API implementation
 
-#ifndef Zquic_SrvLink_HH
-#define Zquic_SrvLink_HH
+#ifndef ZquicSrvLink_HH
+#define ZquicSrvLink_HH
 
 #ifndef Zquic_HH
 #include <zlib/Zquic.hh>
 #endif
 
-#ifndef Zquic_Link_HH
-#include <zlib/Zquic_Link.hh>
+#ifndef ZquicLink_HH
+#include <zlib/ZquicLink.hh>
 #endif
 
 namespace Zquic {
@@ -991,4 +991,4 @@ private:
 
 } // namespace Zquic
 
-#endif /* Zquic_SrvLink_HH */
+#endif /* ZquicSrvLink_HH */
