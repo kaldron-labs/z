@@ -323,6 +323,13 @@ constexpr uint64_t H3UniMax = 16;
 
 using H3CxnState = Zhttp::H3::CxnState;
 
+ZuDerive(H3Ticket, (ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3Ticket">>));
+
+struct H3EarlySession {
+  H3Ticket		ticket;
+  Zquic::TransportParams params;
+};
+
 struct Req {
   unsigned	id = 0;
   unsigned	requests = 1;
@@ -428,6 +435,7 @@ struct Run {
   URL		originalURL;
   ZtArray<Req, ZtArrayHeapID<"Zhttp.Req">> reqs;
   DiscoveryCacheRef discovery{new DiscoveryCache};
+  H3EarlySession	h3EarlySession;
   ZmSemaphore	done;
   unsigned	scheduled = 0;
   unsigned	active = 0;
@@ -1416,6 +1424,7 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   unsigned complete = 0;
   unsigned failed = 0;
   bool linkFailed = false;
+  H3EarlySession	h3EarlySession;
   ZtArray<Req *, ZtArrayHeapID<"Zhttp.H3Pending">> pending;
   unsigned pendingHead = 0;
 
@@ -1465,6 +1474,9 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   }
   uint64_t maxStreamsUni() const { return H3UniMax; }
   bool multi() const { return run; }
+  H3EarlySession *earlySession_() {
+    return run ? &run->h3EarlySession : &h3EarlySession;
+  }
   void openH3Streams(Link *);
   void openH3Streams_(Link *);
   bool activateH3Req(Req *);
@@ -1477,6 +1489,9 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   void finishH3Req(Link *, Req *, bool);
   void finishH3Req_(Link *, Req *, bool);
   void failH3Link();
+  bool earlyDataSession(
+    Link *, ZuBSpan &, const Zquic::TransportParams *&, ZuBSpan &);
+  void saveEarlyDataSession(Link *, ZuBSpan, const Zquic::TransportParams &);
   bool allowEarlyStream(Link *, uint64_t, bool);
 };
 
@@ -2055,6 +2070,34 @@ bool QUICClient::allowEarlyStream(Link *link, uint64_t streamID, bool fin)
   ZmGuard<ZmLock> guard(lock);
   return req->h3EarlyData && (!run || req->h3Active) &&
     !req->done && !req->failed;
+}
+
+bool QUICClient::earlyDataSession(
+  Link *, ZuBSpan &ticket, const Zquic::TransportParams *&params,
+  ZuBSpan &appParams)
+{
+  ZmGuard<ZmLock> guard(lock);
+  H3EarlySession *session = earlySession_();
+  if (!session || !session->ticket) return false;
+  ticket = session->ticket;
+  params = &session->params;
+  appParams = {};
+  return true;
+}
+
+void QUICClient::saveEarlyDataSession(
+  Link *, ZuBSpan ticket, const Zquic::TransportParams &params)
+{
+  ZmGuard<ZmLock> guard(lock);
+  H3EarlySession *session = earlySession_();
+  if (!session) return;
+  if (!ticket) {
+    session->ticket = {};
+    session->params = {};
+    return;
+  }
+  session->ticket = ticket;
+  session->params = params;
 }
 
 void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)

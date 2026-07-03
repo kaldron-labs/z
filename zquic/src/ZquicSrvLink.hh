@@ -303,7 +303,7 @@ private:
 	  .keyPath = app()->keyPath(),
 	  .keyLogPath = app()->keyLogPath(),
 	  .qlogTrace = &app()->qlogTrace(),
-	  .maxEarlyData = maxEarlyData
+	  .encryptTicket = app()->ticketEncryptCB_()
 	}))
       return false;
     if (!Base::startRuntimeHandshake_()) return false;

@@ -35,6 +35,7 @@ constexpr uint64_t H3DataMax = 100<<20;
 constexpr uint64_t H3StreamDataMax = 16<<20;
 constexpr uint64_t H3BidiMax = 4096;
 constexpr uint64_t H3UniMax = 16;
+constexpr uint32_t H3EarlyDataMax = 1<<20;
 #ifdef Zquic_DEBUG
 constexpr unsigned H3DiagLinkSnapshot = 64;
 #endif
@@ -653,6 +654,7 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
   uint64_t maxStreamData() const { return H3StreamDataMax; }
   uint64_t maxStreamsBidi() const { return H3BidiMax; }
   uint64_t maxStreamsUni() const { return H3UniMax; }
+  uint32_t maxEarlyData(Link *) const { return H3EarlyDataMax; }
   void dropRates() {
 #ifdef ZiMultiplex_FILTER
     parseDrop(state->options.quicRxDrop, m_rxDrop);
