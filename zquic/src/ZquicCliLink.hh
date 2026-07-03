@@ -531,13 +531,13 @@ private:
       .qlogTrace = &app()->qlogTrace(),
       .saveSessionTicketArg = impl(),
       .saveSessionTicket = [](void *arg, ZuBSpan ticket) {
-	static_cast<Impl *>(arg)->saveEarlyDataSession_(ticket);
+	static_cast<Impl *>(arg)->saveEarlyData_(ticket);
       }
     };
     ZuBSpan sessionTicket;
     ZuBSpan appParams;
     const TransportParams *rememberedParams = nullptr;
-    if (app()->earlyDataSession(
+    if (app()->earlyData(
 	  impl(), sessionTicket, rememberedParams, appParams)) {
       if (sessionTicket && rememberedParams &&
 	  app()->validateEarlyDataParams(impl(), appParams)) {
@@ -550,13 +550,13 @@ private:
     return Base::initTLS_(config);
   }
 
-  void saveEarlyDataSession_(ZuBSpan ticket) {
+  void saveEarlyData_(ZuBSpan ticket) {
     if (!ticket) {
-      app()->saveEarlyDataSession(impl(), {}, {});
+      app()->saveEarlyData(impl(), {}, {});
       return;
     }
     if (!Base::crypto_().peerTransportParamsReceived()) return;
-    app()->saveEarlyDataSession(
+    app()->saveEarlyData(
       impl(), ticket, Base::crypto_().peerTransportParams());
   }
 
