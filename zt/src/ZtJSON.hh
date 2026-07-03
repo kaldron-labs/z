@@ -753,8 +753,13 @@ inline void saveValue_(S &s, const T_ &v_)
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
     auto v = B{v_};
-    if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
-      if (!*v) { s << "null"; return; }
+    if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{}) {
+      if constexpr (ZuFieldProp::HasEnum<Props>{}) {
+	if (v < 0) { s << "null"; return; }
+      } else {
+	if (!*v) { s << "null"; return; }
+      }
+    }
     if constexpr (
 	Fmt::String ||
 	bool(ZuFieldProp::HasEnum<Props>{}) ||
@@ -918,7 +923,15 @@ inline bool saveField(S &s, const O &o, bool first)
 	TypeCode == ZtFieldTC::UInt16 ||
 	TypeCode == ZtFieldTC::UInt32 ||
 	TypeCode == ZtFieldTC::UInt64 ||
-	TypeCode == ZtFieldTC::UInt128 ||
+	TypeCode == ZtFieldTC::UInt128) {
+      auto &&v = Field::get(o);
+      if constexpr (ZuFieldProp::HasEnum<Props>{}) {
+	if (v < 0) return false;
+      } else {
+	if (ZuNull(v)) return false;
+      }
+      return save(v);
+    } else if constexpr (
 	TypeCode == ZtFieldTC::Float ||
 	TypeCode == ZtFieldTC::Fixed ||
 	TypeCode == ZtFieldTC::Decimal ||

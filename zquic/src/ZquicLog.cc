@@ -92,10 +92,10 @@ inline QLogCommonFieldsJSON ZtJSON_Fmt(QLogCommonFields *);
 
 namespace Zquic {
 ZtStruct((LinkInfo, JSON),
-  (((origDCID), (JSON::ID<"ODCID">, JSON::Hex)), (Bytes)),
-  (((groupID), (JSON::ID<"group_id">, JSON::Hex)), (Bytes)),
-  (((dcid), (JSON::ID<"DCID">, JSON::Hex)), (Bytes)),
-  (((scid), (JSON::ID<"SCID">, JSON::Hex)), (Bytes)));
+  (((origDCID), (JSON::ID<"ODCID">, JSON::Hex, JSON::Opt)), (Bytes)),
+  (((groupID), (JSON::ID<"group_id">, JSON::Hex, JSON::Opt)), (Bytes)),
+  (((dcid), (JSON::ID<"DCID">, JSON::Hex, JSON::Opt)), (Bytes)),
+  (((scid), (JSON::ID<"SCID">, JSON::Hex, JSON::Opt)), (Bytes)));
 }
 
 template <typename Event>
@@ -537,11 +537,11 @@ ZtStruct((QLogSecData, JSON),
   (((kind), (Enum<SecKind::JSON>)), (Int8)),
   (((packetSpace), (JSON::ID<"packet_number_space">,
     Enum<Zquic::PktNumSpace::JSON>)), (Int8)),
-  (((keyType), (JSON::ID<"key_type">, Enum<SecKeyType::JSON>)),
+  (((keyType), (JSON::ID<"key_type">, JSON::Opt, Enum<SecKeyType::JSON>)),
       (Int8)),
-  (((trigger), (Enum<SecTrigger::JSON>)), (Int8)),
-  (((alpn)), (String)),
-  (((reason), (Enum<SecReason::JSON>)), (Int8)),
+  (((trigger), (JSON::Opt, Enum<SecTrigger::JSON>)), (Int8)),
+  (((alpn), (JSON::Opt)), (String)),
+  (((reason), (JSON::Opt, Enum<SecReason::JSON>)), (Int8)),
   (((value)), (UInt64)),
   (((success)), (Bool)));
 
@@ -741,7 +741,7 @@ ZtStruct((QLogStreamData, JSON),
     Enum<StreamState::JSON>)), (Int8)),
   (((streamSide), (JSON::ID<"stream_side">,
     Enum<StreamSide::JSON>)), (Int8)),
-  (((reason), (Enum<StreamReason::JSON>)), (Int8)),
+  (((reason), (JSON::Opt, Enum<StreamReason::JSON>)), (Int8)),
   (((streamID), (JSON::ID<"stream_id">)), (UInt64)),
   (((offset)), (UInt64)),
   (((length)), (UInt64)),
@@ -772,7 +772,7 @@ ZtStruct((QLogStreamMovedData, JSON),
   (((from), (Enum<StreamDataLoc::JSON>)), (Int8)),
   (((to), (Enum<StreamDataLoc::JSON>)), (Int8)),
   (((additionalInfo), (JSON::ID<"additional_info">,
-    Enum<StreamDataInfo::JSON>)), (Int8)),
+    JSON::Opt, Enum<StreamDataInfo::JSON>)), (Int8)),
   (((raw)), (UDT)));
 
 struct QLogStreamMovedEvent {
