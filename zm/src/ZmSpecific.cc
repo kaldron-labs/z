@@ -14,6 +14,7 @@
 // and cleanup at exit; little if any contention is anticipated; access
 // intended to be exceptional, intermittent and almost exclusively during
 // application startup and shutdown
+alignas(ZmAtomic<uint32_t>)
 static uint32_t ZmSpecific_lock_ = 0;
 ZmAPI void ZmSpecific_lock()
 {

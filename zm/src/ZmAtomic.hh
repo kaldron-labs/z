@@ -276,11 +276,8 @@ template <typename Int64> struct ZmAtomicOps<Int64, 8> {
 
 // 128bit atomic operations
 #ifdef ZmAtomic_GccBuiltins128
-#pragma GCC diagnostic push
-#ifdef __llvm__
-#pragma GCC diagnostic ignored "-Watomic-alignment"
-#endif
-template <typename Int128> struct ZmAtomicOps<Int128, 16> {
+template <typename Int128>
+struct ZmAtomicOps<Int128, 16> {
   using S = int128_t;
   using U = uint128_t;
 
@@ -313,10 +310,10 @@ template <typename Int128> struct ZmAtomicOps<Int128, 16> {
     return __sync_val_compare_and_swap(ptr, cmp, value);
   }
 };
-#pragma GCC diagnostic pop
 #endif /* ZmAtomic_GccBuiltins128 */
 
-template <typename T> class ZmAtomic {
+template <typename T>
+class ZmAtomic {
   ZuAssert(ZuTraits<T>::IsPrimitive && ZuTraits<T>::IsIntegral);
 
 public:
@@ -410,6 +407,7 @@ public:
   }
 
 private:
+  alignas(sizeof(T) <= 4 ? 4 : alignof(T))
   T	m_val;
 };
 

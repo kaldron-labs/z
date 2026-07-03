@@ -22,6 +22,7 @@
 // and cleanup at exit; little if any contention is anticipated; access
 // intended to be exceptional, intermittent, almost entirely during
 // process startup and shutdown
+alignas(ZmAtomic<uint32_t>)
 static uint32_t ZmGlobal_lock = 0;
 #define lock() \
   auto lock = \
