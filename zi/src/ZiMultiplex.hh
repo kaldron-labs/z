@@ -552,11 +552,15 @@ private:
   ZiMultiplex		*m_mx;
   ZiCxnInfo		m_info;
 
-  // Rx thread exclusive
+  // mutable shared
   ZmAtomic<unsigned>	m_rxUp;
+  ZmAtomic<unsigned>	m_txUp;
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  ZiIOContext		m_rxContext;
   uint64_t		m_rxCalls;
   uint64_t		m_rxBytes;
-  ZiIOContext		m_rxContext;
 #ifdef ZiMultiplex_IOCP
   Zi_Overlapped	 	m_discOverlapped;
   Zi_Overlapped		m_rxOverlapped;
@@ -565,10 +569,10 @@ private:
 #endif
 
   // Tx thread exclusive
-  ZmAtomic<unsigned>	m_txUp;
+  alignas(Zm::CacheLineSize)
+  ZiIOContext		m_txContext;
   uint64_t		m_txCalls;
   uint64_t		m_txBytes;
-  ZiIOContext		m_txContext;
 };
 
 // named parameter list for configuring ZiMultiplex
@@ -743,13 +747,12 @@ template <typename> friend class Accept_;
   template <typename Heap> class Accept_ : public Heap {
   friend ZiMultiplex;
 
-
-    Accept_(Listener *listener) : m_listener(listener), m_info{
-	  ZiCxnType::TCPIn,
-	  Zi::nullSocket(),
-	  listener->m_info.options} {
+    Accept_(Listener *listener) :
+      m_listener(listener), m_info{
+	ZiCxnType::TCPIn, Zi::nullSocket(), listener->m_info.options}
+    {
       m_overlapped.init(
-	  Zi_Overlapped::Executed::Member<&Accept_::executed>::fn(this));
+	Zi_Overlapped::Executed::Member<&Accept_::executed>::fn(this));
     }
 
     ZmRef<Listener> listener() const { return m_listener; }
@@ -983,39 +986,23 @@ private:
   void writeWake();
 #endif
 
-  ZmSemaphore		*m_stopping = nullptr;
-
+  // immutable
   unsigned		m_rxThread = 0;
-    // Rx exclusive
-    ZmRef<ListenerHash>	  m_listeners;
-    unsigned		  m_nAccepts = 0; // total #accepts for all listeners
-#if ZiMultiplex__ConnectHash
-    ZmRef<ConnectHash>	  m_connects;
-#endif
-    ZmRef<CxnHash>	  m_cxns;	// connections
-
   unsigned		m_txThread = 0;
-
   unsigned		m_rxBufSize = 0; // setsockopt SO_RCVBUF option
   unsigned		m_txBufSize = 0; // setsockopt SO_SNDBUF option
-
-#ifdef ZiMultiplex_IOCP
-  HANDLE		m_completionPort = INVALID_HANDLE_VALUE;
-#endif
-
 #ifdef ZiMultiplex_EPoll
   unsigned		m_epollMaxFDs = 0;
   unsigned		m_epollQuantum = 0;
-  int			m_epollFD = -1;
-  int			m_wakeFD = -1, m_wakeFD2 = -1;	// wake pipe
 #endif
 
+  // mutable shared
+  ZmSemaphore		*m_stopping = nullptr;
 #ifdef ZiMultiplex_DEBUG
   bool			m_trace = false;
   bool			m_debug = false;
   bool			m_frag = false;
   bool			m_yield = false;
-
   void traceCapture() { m_tracer.capture(1); }
 public:
   template <typename S> void traceDump(S &s) { m_tracer.dump(s); }
@@ -1023,8 +1010,30 @@ private:
   ZmBackTracer<64>	m_tracer;
 #endif
 
+  // Rx thread exclusive
+#ifdef ZiMultiplex_IOCP
+  alignas(Zm::CacheLineSize)
+  HANDLE		m_completionPort = INVALID_HANDLE_VALUE;
+#endif
+#ifdef ZiMultiplex_EPoll
+  alignas(Zm::CacheLineSize)
+  int			m_epollFD = -1;
+  int			m_wakeFD = -1;
+  int			m_wakeFD2 = -1;	// wake pipe
+#endif
+  ZmRef<ListenerHash>	m_listeners;
+#if ZiMultiplex__ConnectHash
+  ZmRef<ConnectHash>	m_connects;
+#endif
+  ZmRef<CxnHash>	m_cxns;	// connections
+  unsigned		m_nAccepts = 0; // total #accepts for all listeners
 #ifdef ZiMultiplex_FILTER
   FilterFn		m_rxFilter;
+#endif
+
+  // Tx thread exclusive
+#ifdef ZiMultiplex_FILTER
+  alignas(Zm::CacheLineSize)
   FilterFn		m_txFilter;
 #endif
 };

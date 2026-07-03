@@ -234,11 +234,11 @@ inline T *u64_ptr(uint64_t v) {
 
 ZiConnection::ZiConnection(ZiMultiplex *mx, const ZiCxnInfo &info) :
   m_mx(mx), m_info(info), m_rxUp(1),
-  m_rxCalls(0), m_rxBytes(0),
+  m_txUp(1), m_rxCalls(0), m_rxBytes(0),
 #ifdef ZiMultiplex_IOCP
   m_rxFlags(0),
 #endif
-  m_txUp(1), m_txCalls(0), m_txBytes(0)
+  m_txCalls(0), m_txBytes(0)
 {
   m_rxContext.cxn = m_txContext.cxn = this;
 }
