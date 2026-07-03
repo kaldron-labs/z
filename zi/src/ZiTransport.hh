@@ -19,13 +19,9 @@
 
 namespace Zi {
 
-struct Transport {
-  ZtEnum(Transport, int8_t, TCP, TLS, QUIC);
-};
+ZtEnumStruct(Transport, int8_t, TCP, TLS, QUIC);
 
-struct StreamType {
-  ZtEnum(StreamType, int8_t, Duplex, Simplex);
-};
+ZtEnumStruct(StreamType, int8_t, Duplex, Simplex);
 
 struct Connected {
   Transport::T	transport = Transport::TCP;

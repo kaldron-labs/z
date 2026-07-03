@@ -37,9 +37,7 @@
 
 #include <zlib/Zhttp.hh>
 
-namespace Http3Mode {
-  ZtEnum(Http3Mode, int8_t, force, prefer, disable);
-}
+ZtEnumNS(Http3Mode, int8_t, force, prefer, disable);
 
 constexpr unsigned ClientTimeout = 15;
 constexpr unsigned H3StallTimeout = 15;
@@ -311,9 +309,7 @@ struct URL {
   HdrString	target;
 };
 
-namespace Protocol {
-  ZtEnum(Protocol, int8_t, H1, H3);
-}
+ZtEnumNS(Protocol, int8_t, H1, H3);
 
 constexpr unsigned H3MaxAttempts = 8;
 constexpr unsigned MaxRedirects = 8;

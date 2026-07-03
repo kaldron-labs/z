@@ -31,11 +31,9 @@ namespace Zhttp { namespace H3 {
 
 using HdrBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HdrBytes">>;
 
-struct QPackInsn {
-  ZtEnum(QPackInsn, int8_t,
-    InsertWithNameRef, InsertWithoutNameRef, Duplicate, SetCapacity,
-    SectionAck, StreamCancellation, InsertCountIncrement);
-};
+ZtEnumStruct(QPackInsn, int8_t,
+  InsertWithNameRef, InsertWithoutNameRef, Duplicate, SetCapacity,
+  SectionAck, StreamCancellation, InsertCountIncrement);
 
 struct Header {
   ZuCSpan	name;
@@ -49,12 +47,10 @@ struct QPackFieldFlags {
   bool	neverIndex = false;
 };
 
-struct QPackBuildFailure {
-  ZtEnum(QPackBuildFailure, uint8_t,
-    None, Plan, PrefixEncode, CapacityPolicy, EncoderCapacityWrite,
-    EncoderInsertWrite, HeadersFrameHeaderWrite, HeadersPayloadEmit,
-    Flush, CapacityCommit, InsertCommit, SectionTracking);
-};
+ZtEnumStruct(QPackBuildFailure, uint8_t,
+  None, Plan, PrefixEncode, CapacityPolicy, EncoderCapacityWrite,
+  EncoderInsertWrite, HeadersFrameHeaderWrite, HeadersPayloadEmit,
+  Flush, CapacityCommit, InsertCommit, SectionTracking);
 
 struct QPackDecodedInsn {
   QPackInsn::T	type = QPackInsn::SetCapacity;

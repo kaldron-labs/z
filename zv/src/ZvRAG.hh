@@ -15,8 +15,6 @@
 
 #include <zlib/ZtEnum.hh>
 
-namespace ZvRAG {
-  ZtEnum(ZvRAG, int8_t, Off, Red, Amber, Green);
-}
+ZtEnumNS(ZvRAG, int8_t, Off, Red, Amber, Green);
 
 #endif /* ZvRAG_HH */

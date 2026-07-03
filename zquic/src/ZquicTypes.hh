@@ -90,9 +90,7 @@ inline constexpr unsigned MinUDPPayload = 1200;
 inline constexpr unsigned BufSize = 1472;
 inline constexpr unsigned MinCIDLength = 8;
 
-struct StreamError {
-  ZtEnum(StreamError, int8_t, None, Reset, Stop);
-};
+ZtEnumStruct(StreamError, int8_t, None, Reset, Stop);
 
 struct PktNumSpace {
   ZtEnum(PktNumSpace, int8_t, Initial, Handshake, AppData);
@@ -159,12 +157,10 @@ struct LinkState {
     "closing", "draining", "closed");
 };
 
-struct TransportError {
-  ZtEnum(TransportError, uint16_t,
-    NoError, InternalError, CxnRefused, FlowControl,
-    StreamLimit, StreamState, FinalSize, FrameEncoding,
-    TransportParam, CxnIDLimit, ProtViolation);
-};
+ZtEnumStruct(TransportError, uint16_t,
+  NoError, InternalError, CxnRefused, FlowControl,
+  StreamLimit, StreamState, FinalSize, FrameEncoding,
+  TransportParam, CxnIDLimit, ProtViolation);
 
 struct FrameType {
   ZtEnum(FrameType, int8_t,
@@ -182,42 +178,26 @@ struct FrameType {
     "connection_close", "application_close", "handshake_done", "unknown");
 };
 
-struct CxnState {
-  ZtEnum(CxnState, int8_t, Active, Retired, Tombstone);
-};
+ZtEnumStruct(CxnState, int8_t, Active, Retired, Tombstone);
 
-struct PathMode {
-  ZtEnum(PathMode, int8_t, ClientConnected, ServerUnconnected);
-};
+ZtEnumStruct(PathMode, int8_t, ClientConnected, ServerUnconnected);
 
-struct IPFamily {
-  ZtEnum(IPFamily, int8_t, IPv4, IPv6);
-};
+ZtEnumStruct(IPFamily, int8_t, IPv4, IPv6);
 
-struct PMTUDState {
-  ZtEnum(PMTUDState, int8_t, Base, Searching, SearchComplete, Error);
-};
+ZtEnumStruct(PMTUDState, int8_t, Base, Searching, SearchComplete, Error);
 
-struct PathHintKind {
-  ZtEnum(PathHintKind, int8_t, None, KernelMTU, PktTooBig, SendTooBig);
-};
+ZtEnumStruct(PathHintKind, int8_t, None, KernelMTU, PktTooBig, SendTooBig);
 
 struct EcnMark {
   ZtEnum(EcnMark, int8_t, NotECT, ECT0, ECT1, CE);
   ZtEnumMap(EcnMark, JSON, "Not-ECT", "ECT0", "ECT1", "CE", "unknown");
 };
 
-struct ServerPktAction {
-  ZtEnum(ServerPktAction, int8_t, Drop, AcceptInitial, VersionNeg);
-};
+ZtEnumStruct(ServerPktAction, int8_t, Drop, AcceptInitial, VersionNeg);
 
-struct RecEvt {
-  ZtEnum(RecEvt, int8_t, Ackd, Lost, PTO, PersistCong);
-};
+ZtEnumStruct(RecEvt, int8_t, Ackd, Lost, PTO, PersistCong);
 
-struct SentFrameKind {
-  ZtEnum(SentFrameKind, int8_t, None, Stream, Crypto, Control);
-};
+ZtEnumStruct(SentFrameKind, int8_t, None, Stream, Crypto, Control);
 
 } // namespace Zquic
 

@@ -76,10 +76,8 @@ using SessionFn = ZmFn<void(ZmRef<Session>)>;
 using LoginFn = ZmFn<void(ZmRef<Session>, ZmRef<ZiIOBuf>)>;
 
 // user DB state
-namespace UserDBState {
-  ZtEnum(UserDBState, int8_t,
-    Uninitialized, Initialized, Opening, Opened, OpenFailed, Bootstrap);
-}
+ZtEnumNS(UserDBState, int8_t,
+  Uninitialized, Initialized, Opening, Opened, OpenFailed, Bootstrap);
 
 // main server-side user DB class
 class ZvAPI UserDB {

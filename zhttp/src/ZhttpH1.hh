@@ -17,18 +17,16 @@ namespace Zhttp {
 
 namespace H1 {
 
-  struct ParserState {
-    ZtEnum(ParserState, int8_t,
-      Initial,		// first line - request operation or response status
-      Headers,		// reading headers
-      Body,		// reading body data (not chunked)
-      ChunkHdr,		// chunk header (hex length + CRLF)
-      Chunk,		// reading chunk data
-      ChunkTrlr,	// chunk trailer (CRLF)
-      Trailers,		// trailers after final chunk
-      Complete,		// message completely read
-      Error);		// invalid message
-  };
+  ZtEnumStruct(ParserState, int8_t,
+    Initial,		// first line - request operation or response status
+    Headers,		// reading headers
+    Body,		// reading body data (not chunked)
+    ChunkHdr,		// chunk header (hex length + CRLF)
+    Chunk,		// reading chunk data
+    ChunkTrlr,	// chunk trailer (CRLF)
+    Trailers,		// trailers after final chunk
+    Complete,		// message completely read
+    Error);		// invalid message
 
   template <typename Impl, typename = void>
   struct HasRuntimeHeader_ : public ZuFalse { };

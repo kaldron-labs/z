@@ -19,17 +19,15 @@
 
 namespace Zquic {
 
-struct CxnTimer {
-  ZtEnum(CxnTimer, int8_t,
-    AckDelay,
-    Loss,
-    PTO,
-    Idle,
-    Close,
-    KeyDiscard,
-    PMTUD,
-    PathValid);
-};
+ZtEnumStruct(CxnTimer, int8_t,
+  AckDelay,
+  Loss,
+  PTO,
+  Idle,
+  Close,
+  KeyDiscard,
+  PMTUD,
+  PathValid);
 
 template <typename App, typename Impl, typename TxBufAlloc_, typename Stream_>
 class Link : public ZmPolymorph {

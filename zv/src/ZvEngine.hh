@@ -38,20 +38,18 @@ namespace ZvEngineState {
     Stopped, Starting, Running, Stopping, StartPending, StopPending);
 }
 
-namespace ZvLinkState {
-  ZtEnum(ZvLinkState, int8_t,
-    Down,
-    Disabled,
-    Deleted,
-    Connecting,
-    Up,
-    ReconnectPending,
-    Reconnecting,
-    Failed,
-    Disconnecting,
-    ConnectPending,
-    DisconnectPending);
-}
+ZtEnumNS(ZvLinkState, int8_t,
+  Down,
+  Disabled,
+  Deleted,
+  Connecting,
+  Up,
+  ReconnectPending,
+  Reconnecting,
+  Failed,
+  Disconnecting,
+  ConnectPending,
+  DisconnectPending);
 
 class ZvAPI ZvAnyTx : public ZmPolymorph {
 protected:

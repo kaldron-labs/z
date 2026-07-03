@@ -934,13 +934,11 @@ auto handler(const Node *root) {
   return typename As<O>::template Handler<O, Facet>{root};
 }
 
-namespace OptType {
-  ZtEnum(OptType, int8_t,
-    Arg = 0,	// value
-    Args,	// value...
-    Option,	// -x value
-    Flag);	// -x
-}
+ZtEnumNS(OptType, int8_t,
+  Arg = 0,	// value
+  Args,	// value...
+  Option,	// -x value
+  Flag);	// -x
 // expansion for an individual option
 // - i.e. fully-qualified field ID
 ZuDerive(Expansion,

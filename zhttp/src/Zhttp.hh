@@ -63,15 +63,11 @@ namespace Zhttp {
 constexpr unsigned DefltMaxHdr = (1<<16);	// 64K default
 constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 
-namespace Method {
-  ZtEnum(Method, int8_t,
-    GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
-}
+ZtEnumNS(Method, int8_t,
+  GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
 
 // deprecated transfer-encoding compression
-namespace XferCompression {
-  ZtEnum(XferCompression, int8_t, compress, deflate, gzip);
-}
+ZtEnumNS(XferCompression, int8_t, compress, deflate, gzip);
 
 // HTTP Parser CRTP API
 // - consistent contract for H1::Parser and H3::Parser

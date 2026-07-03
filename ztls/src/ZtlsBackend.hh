@@ -35,13 +35,11 @@
 
 namespace Ztls {
 
-namespace MDAlg {
-  ZtEnum(MDAlg, int8_t,
-    SHA1,
-    SHA256,
-    SHA384,
-    SHA512);
-}
+ZtEnumNS(MDAlg, int8_t,
+  SHA1,
+  SHA256,
+  SHA384,
+  SHA512);
 
 using MDType = MDAlg::T;
 inline constexpr MDType SHA1 = MDAlg::SHA1;
