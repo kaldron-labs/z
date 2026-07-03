@@ -19,7 +19,7 @@
 #include <zlib/ZmQueue.hh>
 
 #include <zlib/ZquicBuf.hh>
-#include <zlib/ZquicStream.hh>
+#include <zlib/ZquicStreamUtil.hh>
 
 namespace Zquic {
 

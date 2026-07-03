@@ -6,15 +6,15 @@
 
 // Z QUIC client link API implementation
 
-#ifndef Zquic_CliLink_HH
-#define Zquic_CliLink_HH
+#ifndef ZquicCliLink_HH
+#define ZquicCliLink_HH
 
 #ifndef Zquic_HH
 #include <zlib/Zquic.hh>
 #endif
 
-#ifndef Zquic_Link_HH
-#include <zlib/Zquic_Link.hh>
+#ifndef ZquicLink_HH
+#include <zlib/ZquicLink.hh>
 #endif
 
 namespace Zquic {
@@ -1273,4 +1273,4 @@ private:
 
 } // namespace Zquic
 
-#endif /* Zquic_CliLink_HH */
+#endif /* ZquicCliLink_HH */

@@ -6,15 +6,15 @@
 
 // Z QUIC link API implementation
 
-#ifndef Zquic_Link_HH
-#define Zquic_Link_HH
+#ifndef ZquicLink_HH
+#define ZquicLink_HH
 
 #ifndef Zquic_HH
 #include <zlib/Zquic.hh>
 #endif
 
-#ifndef Zquic_Stream_HH
-#include <zlib/Zquic_Stream.hh>
+#ifndef ZquicStream_HH
+#include <zlib/ZquicStream.hh>
 #endif
 
 namespace Zquic {
@@ -7334,4 +7334,4 @@ private:
 
 } // namespace Zquic
 
-#endif /* Zquic_Link_HH */
+#endif /* ZquicLink_HH */

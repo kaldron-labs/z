@@ -48,7 +48,7 @@
 #endif
 
 #include <zlib/ZquicBuf.hh>
-#include <zlib/ZquicStream.hh>
+#include <zlib/ZquicStreamUtil.hh>
 #include <zlib/ZquicSched.hh>
 #include <zlib/ZquicFrame.hh>
 #include <zlib/ZquicTransport.hh>
@@ -1706,20 +1706,20 @@ private:
 
 } // namespace Zquic
 
-#ifndef Zquic_Stream_HH
-#include <zlib/Zquic_Stream.hh>
+#ifndef ZquicStream_HH
+#include <zlib/ZquicStream.hh>
 #endif
 
-#ifndef Zquic_Link_HH
-#include <zlib/Zquic_Link.hh>
+#ifndef ZquicLink_HH
+#include <zlib/ZquicLink.hh>
 #endif
 
-#ifndef Zquic_CliLink_HH
-#include <zlib/Zquic_CliLink.hh>
+#ifndef ZquicCliLink_HH
+#include <zlib/ZquicCliLink.hh>
 #endif
 
-#ifndef Zquic_SrvLink_HH
-#include <zlib/Zquic_SrvLink.hh>
+#ifndef ZquicSrvLink_HH
+#include <zlib/ZquicSrvLink.hh>
 #endif
 
 #endif /* Zquic_HH */

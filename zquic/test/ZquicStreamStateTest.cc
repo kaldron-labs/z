@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZquicStream.hh>
+#include <zlib/ZquicStreamUtil.hh>
 
 using namespace ZuTestUtil;
 
