@@ -440,7 +440,7 @@ void testRuntimeEndpointOpen()
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "runtime server endpoint did not become ready");
   ZuCHECK(server.listening() &&
-      !endpointDiag(server).failures &&
+      !endpointDiag(server).failures() &&
       server.local().port(),
     "runtime server endpoint diagnostics mismatch");
 	  if (!server.listening()) {
@@ -466,7 +466,7 @@ void testRuntimeEndpointOpen()
     "runtime client link did not become ready");
   ZuCHECK(runtimeDiag(clientLink).rx.endpointReady == 1 &&
       !runtimeDiag(clientLink).failures() &&
-      !cxnDiag(clientLink).failures,
+      !cxnDiag(clientLink).failures(),
     "runtime client link diagnostics mismatch");
 	  if (!clientLink->ready()) {
 	    client.final();
@@ -874,7 +874,7 @@ void testRuntimeServerMultiConnection()
 
   uint64_t s0Bytes = runtimeDiag(s0).rx.streamBytesRx;
   uint64_t s1Bytes = runtimeDiag(s1).rx.streamBytesRx;
-  uint64_t failures = endpointDiag(server).failures;
+  uint64_t failures = endpointDiag(server).failures();
   unsigned errors = serverErrors;
   s0->disconnect();
   ZuCHECK(waitUntil([&s0]() {
@@ -886,7 +886,7 @@ void testRuntimeServerMultiConnection()
   ZuCHECK(c0->send(c0Stale, "drop") && c1->send(c1Live, "alive"),
     "multi runtime post-close client stream sends failed");
   ZuCHECK(waitUntil([&server, &s1, failures, s1Bytes]() {
-      return endpointDiag(server).failures > failures &&
+      return endpointDiag(server).failures() > failures &&
 	runtimeDiag(s1).rx.streamBytesRx >= s1Bytes + 5;
     }), "multi runtime stale route drop or sibling delivery did not happen");
   ZuCHECK(runtimeDiag(s0).rx.streamBytesRx == s0Bytes,
