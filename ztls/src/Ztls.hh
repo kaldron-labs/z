@@ -1518,7 +1518,7 @@ private:
     }
   }
 
-  void final_() { // direct call from within rx thread
+  void final_() {
     stopAsyncLoop_();
     m_errorFn = ErrorFn{};
   }
