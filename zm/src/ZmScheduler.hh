@@ -73,7 +73,6 @@ struct ZmAPI ZmSchedParams {
     m_spin{p.m_spin},
     m_timeout{p.m_timeout},
     m_threads{new Thread[p.m_nThreads + 1]},
-    m_startTimer{p.m_startTimer},
     m_ll{p.m_ll}
   {
     if (p.m_threads)
@@ -100,7 +99,6 @@ struct ZmAPI ZmSchedParams {
     m_spin = p.m_spin;
     m_timeout = p.m_timeout;
     m_threads = threads;
-    m_startTimer = p.m_startTimer;
     m_ll = p.m_ll;
     return *this;
   }
@@ -115,7 +113,6 @@ struct ZmAPI ZmSchedParams {
     m_spin{p.m_spin},
     m_timeout{p.m_timeout},
     m_threads{p.m_threads},
-    m_startTimer{p.m_startTimer},
     m_ll{p.m_ll}
   {
     p.m_nThreads = 0;
@@ -136,7 +133,6 @@ struct ZmAPI ZmSchedParams {
     m_spin = p.m_spin;
     m_timeout = p.m_timeout;
     m_threads = p.m_threads;
-    m_startTimer = p.m_startTimer;
     m_ll = p.m_ll;
 
     p.m_nThreads = 0;
@@ -163,8 +159,6 @@ struct ZmAPI ZmSchedParams {
   ZmSchedParams &&spin(unsigned v) { m_spin = v; return ZuMv(*this); }
   ZmSchedParams &&timeout(unsigned v) { m_timeout = v; return ZuMv(*this); }
 
-  ZmSchedParams &&startTimer(bool b) { m_startTimer = b; return ZuMv(*this); }
-
   template <typename L>
   ZmSchedParams &&thread(unsigned sid, L &&l) {
     ZuFwd<L>(l)(m_threads[sid]);
@@ -183,8 +177,6 @@ struct ZmAPI ZmSchedParams {
   bool ll() const { return m_ll; }
   unsigned spin() const { return m_spin; }
   unsigned timeout() const { return m_timeout; }
-
-  bool startTimer() const { return m_startTimer; }
 
   const Thread &thread(unsigned sid) const { return m_threads[sid]; }
 
@@ -210,8 +202,6 @@ private:
   unsigned	m_timeout = 1;
 
   Thread	*m_threads = nullptr;
-
-  bool		m_startTimer = false;
 
   bool		m_ll = false;
 };

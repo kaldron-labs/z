@@ -58,7 +58,7 @@ int main(int argc, char **argv)
   for (int i = 0; i < nthr; i++)
     ZmHeapMgr::init("S", i, ZmHeapConfig{uint64_t(size)});
   ZmSchedParams params;
-  params.id("sched").nThreads(nthr).startTimer(false);
+  params.id("sched").nThreads(nthr);
   for (int i = 0; i < nthr; i++)
     params.thread(i + 1).partition(i);
   ZmScheduler sched_{ZuMv(params)};
