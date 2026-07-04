@@ -76,9 +76,9 @@ ZiResolver_WSDLL::ZiResolver_WSDLL()
     m_freeAddrInfoW = (PFreeAddrInfoW)GetProcAddress(m_wsdll, "FreeAddrInfoW");
     m_getNameInfoW = (PGetNameInfoW)GetProcAddress(m_wsdll, "GetNameInfoW");
   } else {
-    m_getAddrInfoW = 0;
-    m_freeAddrInfoW = 0;
-    m_getNameInfoW = 0;
+    m_getAddrInfoW = nullptr;
+    m_freeAddrInfoW = nullptr;
+    m_getNameInfoW = nullptr;
   }
 }
 
