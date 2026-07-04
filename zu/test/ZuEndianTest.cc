@@ -8,7 +8,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuByteSwap.hh>
-#include <zlib/ZuByteSwap.hh>
 #include <zlib/ZuArray.hh>
 
 template <typename T>
