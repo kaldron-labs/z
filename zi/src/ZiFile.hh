@@ -77,7 +77,6 @@ public:
   ZiFile(const ZiFile &file) :
     m_handle{file.m_handle},
     m_flags{file.m_flags | Shadow},
-    m_offset{file.m_offset},
     m_blkSize{file.m_blkSize},
     m_error{file.m_error} { }
   ZiFile &operator =(const ZiFile &file) {
@@ -90,7 +89,6 @@ public:
   ZiFile(ZiFile &&file) :
     m_handle{file.m_handle},
     m_flags{file.m_flags},
-    m_offset{file.m_offset},
     m_blkSize{file.m_blkSize},
     m_error{file.m_error}
   {
@@ -156,8 +154,8 @@ public:
   int fstat(Stat &stat) const;
   int blkSize() { return m_blkSize; }
 
-  Offset offset() { return m_offset; }
-  void seek(Offset offset) { m_offset = offset; }
+  Offset offset();
+  int seek(Offset offset);
 
   int sync();
 
@@ -238,7 +236,6 @@ private:
 protected:
   Handle	m_handle = Zi::nullHandle();
   unsigned	m_flags = 0;
-  Offset	m_offset = 0;
   int		m_blkSize = 0;
   ZeError	m_error;
 };

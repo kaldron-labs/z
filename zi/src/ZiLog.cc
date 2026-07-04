@@ -20,64 +20,6 @@
 
 #include <zlib/ZiLog.hh>
 
-static bool ZiLog_testProgram(ZuCSpan program)
-{
-  unsigned n = program.length();
-
-  if (n < 4) return false;
-
-  return
-    (program[n - 4] == 'T' &&
-     program[n - 3] == 'e' &&
-     program[n - 2] == 's' &&
-     program[n - 1] == 't') ||
-    (program[n - 4] == 't' &&
-     program[n - 3] == 'e' &&
-     program[n - 2] == 's' &&
-     program[n - 1] == 't');
-}
-
-static Zi::Path ZiLog_repoRoot()
-{
-  Zi::Path dir = ZiFile::cwd();
-
-  for (;;) {
-    if (ZiFile::exists(ZiFile::append(dir, "configure.ac")) &&
-	ZiFile::exists(ZiFile::append(dir, "GUIDELINES.md")))
-      return dir;
-
-    Zi::Path parent = ZiFile::dirname(dir);
-    if (parent == dir) return {};
-    dir = ZuMv(parent);
-  }
-}
-
-static Zi::Path ZiLog_testLogDir()
-{
-  Zi::Path root = ZiLog_repoRoot();
-  if (!root) return {};
-
-  Zi::Path logDir = ZiFile::append(root, "log");
-  if (!ZiFile::isdir(logDir)) {
-    ZiFile::mkdir(logDir);
-    if (!ZiFile::isdir(logDir)) return {};
-  }
-  return logDir;
-}
-
-static Zi::Path ZiLog_defaultLogPath(ZuCSpan suffix)
-{
-  Zi::Path file;
-
-  file << ZiLog::program() << suffix;
-  if (!ZiLog_testProgram(ZiLog::program())) return file;
-
-  Zi::Path logDir = ZiLog_testLogDir();
-  if (!logDir) return file;
-
-  return ZiFile::append(logDir, file);
-}
-
 ZiLog::ZiLog() : m_level{1}
 {
   init_();
@@ -402,7 +344,7 @@ static void ageFile(const Zi::Path &path, unsigned age)
 
 void ZiFileSink::init()
 {
-  if (!m_path) m_path = ZiLog_defaultLogPath(".log");
+  if (!m_path) m_path << ZiLog::program() << ".log";
 
   if (m_path != "&2") {
     ageFile(m_path, m_age);
@@ -478,9 +420,7 @@ void ZiCSVSink::age()
 void ZiDebugSink::init()
 {
   if (!m_path) {
-    Zi::Path suffix;
-    suffix << ".log." << ZuBoxed(Zm::getPID());
-    m_path = ZiLog_defaultLogPath(suffix);
+    m_path << ZiLog::program() << ".log." << ZuBoxed(Zm::getPID());
   }
 
   if (m_path != "&2")

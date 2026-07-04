@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <stdlib.h>
+#include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmTrap.hh>
@@ -99,6 +100,7 @@ void testWriteReadAndBlockSize()
 
     ZuCHECK(f.write(hw.data(), hw.length()) == Zi::OK,
       "write(foo) failed: ", f.error());
+    ZuCheck(f.offset() == static_cast<ZiFile::Offset>(hw.length()));
 
     ZiFile g;
     g.init(f.handle(), 0);
@@ -116,6 +118,7 @@ void testWriteReadAndBlockSize()
 
     int i = f.read(buf, sizeof(buf) - 1);
     ZuCHECK(i >= 0, "read(foo) failed: ", f.error());
+    ZuCheck(f.offset() == i);
     buf[i] = 0;
 
     ZtString<> got;
@@ -139,11 +142,13 @@ void testSparseReadDefaultsToZero()
   uint32_t u = 1;
   ZuCHECK(f.pwrite(4, &u, sizeof(u)) == Zi::OK,
     "pwrite(bar) failed: ", f.error());
+  ZuCheck(f.offset() == 0);
 
   u = 0xffffffffU;
   int n = f.pread(0, &u, sizeof(u));
   ZuCHECK(n >= static_cast<int>(sizeof(u)),
     "pread(bar) failed: ", f.error());
+  ZuCheck(f.offset() == 0);
   ZuCheck(u == 0);
 
   f.close();
@@ -165,6 +170,7 @@ void testVectoredIO()
   ZiVec_init(wv[0], const_cast<char *>(a), 5);
   ZiVec_init(wv[1], const_cast<char *>(b), 4);
   ZuCHECK(f.writev(wv, 2) == Zi::OK, "writev failed: ", f.error());
+  ZuCheck(f.offset() == 9);
 
   const char *x = "ZZ";
   const char *y = "YY";
@@ -172,6 +178,7 @@ void testVectoredIO()
   ZiVec_init(pwv[0], const_cast<char *>(x), 2);
   ZiVec_init(pwv[1], const_cast<char *>(y), 2);
   ZuCHECK(f.pwritev(2, pwv, 2) == Zi::OK, "pwritev failed: ", f.error());
+  ZuCheck(f.offset() == 9);
 
   char out1[8] = {0};
   char out2[8] = {0};
@@ -179,8 +186,18 @@ void testVectoredIO()
   ZiVec_init(rv[0], out1, 4);
   ZiVec_init(rv[1], out2, 5);
   ZuCHECK(f.preadv(0, rv, 2) == Zi::OK, "preadv failed: ", f.error());
+  ZuCheck(f.offset() == 9);
 
   ZtString<> got;
+  got << ZuCSpan(out1, 4) << ZuCSpan(out2, 5);
+  ZuCheck(got == "alZZYYeta");
+
+  memset(out1, 0, sizeof(out1));
+  memset(out2, 0, sizeof(out2));
+  ZuCHECK(f.seek(0) == Zi::OK, "seek(baz) failed: ", f.error());
+  ZuCHECK(f.readv(rv, 2) == Zi::OK, "readv failed: ", f.error());
+  ZuCheck(f.offset() == 9);
+  got = {};
   got << ZuCSpan(out1, 4) << ZuCSpan(out2, 5);
   ZuCheck(got == "alZZYYeta");
 
@@ -197,10 +214,12 @@ void testSeekSizeTruncateSync()
   ZuCHECK(f.open(g_foo, ZiFile::Write, 0666) == Zi::OK,
     "open failed: ", f.error());
   ZuCHECK(f.write("0123456789", 10) == Zi::OK, "write failed: ", f.error());
+  ZuCheck(f.offset() == 10);
 
   ZuCheck(f.size() >= 10);
+  ZuCheck(f.offset() == 10);
 
-  f.seek(4);
+  ZuCHECK(f.seek(4) == Zi::OK, "seek failed: ", f.error());
   ZuCheck(f.offset() == 4);
 
   ZuCHECK(f.truncate(6) == Zi::OK, "truncate failed: ", f.error());
