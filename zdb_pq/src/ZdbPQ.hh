@@ -67,7 +67,7 @@ ZuDerive(SQLString, ZtString<ZtStringHeapID<"ZdbPQ.SQLString">>);
 // Int128    int128_t   Zfb.Int128      int16    (*)  int128_t BE
 // UInt128   uint128_t  Zfb.UInt128     uint16   (*)  uint128_t BE
 // Bitmap    ZtBitmap   Zfb.Bitmap      zbitmap  (**) uint64_t BE, uint64_t[] BE
-// IP        ZiIP       Zfb.IP          inet          IPHdr, ZuIP
+// IP        ZiIP       Zfb.IP          inet          IPHdr, ZiIP
 // ID        ZuID       Zfb.ID          text          raw data
 //
 // <Type>Vec            [<Type>]        type[]        array (see below)
