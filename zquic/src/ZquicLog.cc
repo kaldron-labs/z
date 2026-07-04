@@ -888,7 +888,16 @@ ZquicLogger::ZquicLogger()
 
 ZquicLogger::~ZquicLogger()
 {
-  stop_();
+  m_enabled.store_(false);
+  if (!m_ring.closed()) {
+    if (m_thread) {
+      m_ring.eof(true);
+      // protect against blocking on self-destruction, do NOT use ZmSelf()
+      // - ZmSelf() depends on TLS and should not be called during exit
+      if (m_thread.tid() != Zm::getTID()) m_thread.join();
+    }
+    m_ring.close();
+  }
 }
 
 ZquicLogger *ZquicLogger::instance()
@@ -952,7 +961,7 @@ void ZquicLogger::stop_()
   if (!thread) return;
   while (m_queueCount.load_()) Zm::yield();
   m_ring.eof(true);
-  thread.join();
+  thread.join();		// wait for ring buffer to drain
   m_ring.close();
   m_activeTrace = nullptr;
 }
