@@ -126,9 +126,9 @@ private:
 	{
 	  auto size = file.size();
 	  if (size > 0) {
-	    file.seek(0);
+	    if (file.seek(0) != Zi::OK) { error = ioError(path, file); return; }
 	    if (!matchHeader(&buf_[0])) return;
-	    file.seek(size);
+	    if (file.seek(size) != Zi::OK) { error = ioError(path, file); return; }
 	  } else
 	    writeHeader(&buf_[0]);
 	}
@@ -245,9 +245,9 @@ private:
 	{
 	  auto size = file.size();
 	  if (size > 0) {
-	    file.seek(0);
+	    if (file.seek(0) != Zi::OK) { error = ioError(path, file); return false; }
 	    if (!matchHeader(path, file, buf_)) return false;
-	    file.seek(size);
+	    if (file.seek(size) != Zi::OK) { error = ioError(path, file); return false; }
 	  } else if (!writeHeader(path, file, buf_))
 	    return false;
 	}

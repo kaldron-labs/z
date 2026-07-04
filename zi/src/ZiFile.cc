@@ -370,6 +370,7 @@ int ZiFile::open_(
 
   Handle h;
   unsigned blkSize;
+  Offset fileSize = 0;
 
 #ifndef _WIN32
   int openFlags;
@@ -397,9 +398,10 @@ int ZiFile::open_(
 
       if (::fstat(h, &s) < 0) { ::close(h); goto error; }
       blkSize = s.st_blksize;
+      fileSize = s.st_size;
     }
   }
-  if (length >= 0 && (size() < length || (flags & Truncate))) {
+  if (length >= 0 && (fileSize < length || (flags & Truncate))) {
     if (ftruncate(h, length) < 0) { ::close(h); goto error; }
   }
 #else
@@ -424,7 +426,7 @@ int ZiFile::open_(
       FILE_SHARE_READ | FILE_SHARE_WRITE;
     DWORD createFlags = !(flags & Create) ? OPEN_EXISTING :
       (flags & Exclusive) ? CREATE_NEW : OPEN_ALWAYS;
-    DWORD fileFlags = FILE_FLAG_OVERLAPPED;
+    DWORD fileFlags = 0;
     if (flags & Direct) fileFlags |= FILE_FLAG_NO_BUFFERING;
     if (flags & Sync) fileFlags |= FILE_FLAG_WRITE_THROUGH;
     if (flags & NoFollow) fileFlags |= FILE_FLAG_OPEN_REPARSE_POINT;
@@ -437,7 +439,16 @@ int ZiFile::open_(
       m_error = ERROR_ACCESS_DENIED;
       return Zi::IOError;
     }
-    if ((length > 0 && size() < length) || (flags & Truncate)) {
+    {
+      DWORD low, high;
+      low = GetFileSize(h, &high);
+      if (low == INVALID_FILE_SIZE && GetLastError() != NO_ERROR) {
+	CloseHandle(h);
+	goto error;
+      }
+      fileSize = (Offset(high)<<32) | low;
+    }
+    if ((length > 0 && fileSize < length) || (flags & Truncate)) {
       LONG high = length>>32;
       if ((SetFilePointer(h, length & 0xffffffffU, &high, FILE_BEGIN) ==
 	    INVALID_SET_FILE_POINTER &&
@@ -732,7 +743,6 @@ void ZiFile::close()
 closed:
   m_handle = Zi::nullHandle();
   m_flags = 0;
-  m_offset = 0;
 }
 
 void ZiMMapFile::close()
@@ -790,7 +800,7 @@ void ZiFile::init_(Handle handle, unsigned flags, int blkSize)
   m_handle = handle;
   m_flags = flags;
   m_blkSize = blkSize;
-  m_offset = (flags & Append) ? size() : 0;
+  if (flags & Append_) seek(size());
 }
 
 ZiFile ZiFile::stdIn() { ZiFile file; file.openStdIn(); return file; }
@@ -827,10 +837,12 @@ void ZiFile::openStdErr()
 ZiFile::Offset ZiFile::size()
 {
 #ifndef _WIN32
-  off_t o;
-  if ((o = lseek(m_handle, 0, SEEK_END)) == static_cast<off_t>(-1))
+  struct stat s;
+  if (::fstat(m_handle, &s) < 0) {
+    m_error = ZeLastError;
     return 0;
-  return o;
+  }
+  return s.st_size;
 #else
   DWORD l, h;
 
@@ -878,28 +890,37 @@ error:
   return Zi::IOError;
 }
 
-// ZiFile maintains its own offset, no need to keep the OS offset synchronized
-#if 0
 ZiFile::Offset ZiFile::offset()
 {
 #ifndef _WIN32
-  return lseek(m_handle, 0, SEEK_CUR);
+  auto offset = ::lseek(m_handle, 0, SEEK_CUR);
+  if (offset == static_cast<off_t>(-1)) {
+    m_error = ZeLastError;
+    return 0;
+  }
+  return offset;
 #else
-  return SetFilePointer(m_handle, 0, 0, FILE_CURRENT);
+  LARGE_INTEGER zero, offset;
+  zero.QuadPart = 0;
+  if (!SetFilePointerEx(m_handle, zero, &offset, FILE_CURRENT)) {
+    m_error = ZeLastError;
+    return 0;
+  }
+  return offset.QuadPart;
 #endif
 }
 
 int ZiFile::seek(Offset offset)
 {
 #ifndef _WIN32
-  if (lseek(m_handle, offset, SEEK_BEG) == (off_t)-1) goto error;
+  if (::lseek(m_handle, offset, SEEK_SET) == static_cast<off_t>(-1))
+    goto error;
 #else
-  if (SetFilePointer(m_handle, offset, 0, FILE_BEGIN) ==
-      INVALID_SET_FILE_POINTER)
+  LARGE_INTEGER offset_;
+  offset_.QuadPart = offset;
+  if (!SetFilePointerEx(m_handle, offset_, nullptr, FILE_BEGIN))
     goto error;
 #endif
-
-  m_offset = offset;
 
   return Zi::OK;
 
@@ -907,20 +928,132 @@ error:
   m_error = ZeLastError;
   return Zi::IOError;
 }
-#endif
 
 int ZiFile::read(void *ptr, unsigned len)
 {
-  int r = pread(m_offset, ptr, len);
-  if (r > 0) m_offset += r;
-  return r;
+  if (!len) return 0;
+
+  Ze::ErrNo errNo;
+  unsigned total = 0;
+#ifndef _WIN32
+  int r;
+#else
+  DWORD r;
+#endif
+
+retry:
+
+#ifndef _WIN32
+  r = ::read(m_handle, ptr, len);
+  if (r < 0) {
+    errNo = errno;
+    switch (errNo) {
+      case EINTR:
+      case EAGAIN:
+	goto retry;
+      default:
+	goto error;
+    }
+  }
+#else
+  if (!ReadFile(m_handle, ptr, len, &r, nullptr)) {
+    errNo = GetLastError();
+    if (errNo == ERROR_HANDLE_EOF) return total ? total : Zi::EndOfFile;
+    goto error;
+  }
+#endif
+
+  if (!r) return total ? total : Zi::EndOfFile;
+
+  total += r;
+
+  if ((unsigned)r < len) {
+    ptr = static_cast<void *>(static_cast<uint8_t *>(ptr) + r);
+    len -= r;
+    goto retry;
+  }
+
+  return total;
+
+error:
+  m_error = ZeError(errNo);
+  return total ? total : Zi::IOError;
 }
 
 int ZiFile::readv(const ZiVec *vecs, unsigned nVecs)
 {
-  int r = preadv(m_offset, vecs, nVecs);
-  if (r > 0) m_offset += r;
-  return r;
+#ifndef _WIN32
+  if (!nVecs) return 0;
+  if (nVecs > Zi::NVecMax) {
+    m_error = ZeError{EINVAL};
+    return Zi::IOError;
+  }
+
+  unsigned len = 0;
+  unsigned i;
+  ZiVec *vecs_ = static_cast<ZiVec *>(alloca(sizeof(ZiVec) * nVecs));
+  ZiVec *vecs1 = vecs_;
+
+  for (i = 0; i < nVecs; i++) {
+    vecs_[i] = vecs[i];
+    len += ZiVec_len(vecs[i]);
+  }
+
+  Ze::ErrNo errNo;
+  int r;
+
+retry:
+  r = ::readv(m_handle, vecs1, nVecs);
+  if (r < 0) {
+    errNo = errno;
+    switch (errNo) {
+      case EINTR:
+      case EAGAIN:
+	goto retry;
+      default:
+	goto error;
+    }
+  }
+
+  if (!r) return Zi::EndOfFile;
+
+  if (r < static_cast<int>(len)) {
+    unsigned r_ = r;
+    for (i = 0; i < nVecs; i++) {
+      auto n = ZiVec_len(vecs1[i]);
+      if (r_ < n) break;
+      r_ -= n;
+      len -= n;
+    }
+    vecs1 += i;
+    nVecs -= i;
+    if (r_) {
+      ZiVec_ptr(vecs1[0]) =
+	static_cast<ZiVecPtr>(static_cast<uint8_t *>(ZiVec_ptr(vecs1[0])) + r_);
+      ZiVec_len(vecs1[0]) -= r_;
+      len -= r_;
+    }
+    goto retry;
+  }
+
+  return Zi::OK;
+
+error:
+  m_error = ZeError(errNo);
+  return Zi::IOError;
+#else
+  int total = 0, r = 0;
+
+  for (unsigned i = 0; i < nVecs; i++) {
+    void *ptr = ZiVec_ptr(vecs[i]);
+    unsigned len = ZiVec_len(vecs[i]);
+    r = read(ptr, len);
+    if (r < 0) return total ? total : r;
+    total += r;
+    if (r < static_cast<int>(len)) break;
+  }
+  return total;
+#endif
 }
 
 int ZiFile::preadv(Offset offset, const ZiVec *vecs, unsigned nVecs)
@@ -1054,17 +1187,119 @@ error:
 
 int ZiFile::write(const void *ptr, unsigned len)
 {
-  int r = pwrite(m_offset, ptr, len);
-  if (r == Zi::OK) m_offset += len;
-  return r;
+  if (!len) return Zi::OK;
+
+  Ze::ErrNo errNo;
+#ifndef _WIN32
+  int r;
+#else
+  DWORD r;
+#endif
+
+retry:
+
+#ifndef _WIN32
+  r = ::write(m_handle, ptr, len);
+  if (r <= 0) {
+    errNo = errno;
+    switch (errNo) {
+      case EINTR:
+      case EAGAIN:
+	goto retry;
+      default:
+	goto error;
+    }
+  }
+#else
+  if (!WriteFile(m_handle, ptr, len, &r, nullptr) || !r) {
+    errNo = GetLastError();
+    goto error;
+  }
+#endif
+
+  if ((unsigned)r < len) {
+    ptr = static_cast<const void *>(static_cast<const uint8_t *>(ptr) + r);
+    len -= r;
+    goto retry;
+  }
+
+  return Zi::OK;
+
+error:
+  m_error = ZeError(errNo);
+  return Zi::IOError;
 }
 
 int ZiFile::writev(const ZiVec *vecs, unsigned nVecs)
 {
-  int r = pwritev(m_offset, vecs, nVecs);
-  if (r == Zi::OK)
-    for (unsigned i = 0; i < nVecs; i++) m_offset += ZiVec_len(vecs[i]);
+#ifndef _WIN32
+  if (!nVecs) return Zi::OK;
+  if (nVecs > Zi::NVecMax) {
+    m_error = ZeError{EINVAL};
+    return Zi::IOError;
+  }
+
+  unsigned len = 0;
+  unsigned i;
+  ZiVec *vecs_ = static_cast<ZiVec *>(alloca(sizeof(ZiVec) * nVecs));
+  ZiVec *vecs1 = vecs_;
+
+  for (i = 0; i < nVecs; i++) {
+    vecs_[i] = vecs[i];
+    len += ZiVec_len(vecs[i]);
+  }
+
+  Ze::ErrNo errNo;
+  int r;
+
+retry:
+  r = ::writev(m_handle, vecs1, nVecs);
+  if (r < 0) {
+    errNo = errno;
+    switch (errNo) {
+      case EINTR:
+      case EAGAIN:
+	goto retry;
+      default:
+	goto error;
+    }
+  }
+
+  if (r < static_cast<int>(len)) {
+    unsigned r_ = r;
+    for (i = 0; i < nVecs; i++) {
+      auto n = ZiVec_len(vecs1[i]);
+      if (r_ < n) break;
+      r_ -= n;
+      len -= n;
+    }
+    vecs1 += i;
+    nVecs -= i;
+    if (r_) {
+      ZiVec_ptr(vecs1[0]) =
+	static_cast<ZiVecPtr>(static_cast<uint8_t *>(ZiVec_ptr(vecs1[0])) + r_);
+      ZiVec_len(vecs1[0]) -= r_;
+      len -= r_;
+    }
+    goto retry;
+  }
+
+  return Zi::OK;
+
+error:
+  m_error = ZeError(errNo);
+  return Zi::IOError;
+#else
+  int r = 0;
+
+  for (unsigned i = 0; i < nVecs; i++) {
+    const void *ptr = ZiVec_ptr(vecs[i]);
+    unsigned len = ZiVec_len(vecs[i]);
+    r = write(ptr, len);
+    if (r != Zi::OK) return r;
+  }
   return r;
+#endif
 }
 
 int ZiFile::pwritev(Offset offset, const ZiVec *vecs, unsigned nVecs)

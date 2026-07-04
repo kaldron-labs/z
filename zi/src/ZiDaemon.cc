@@ -234,7 +234,12 @@ int ZiDaemon::init(
 #endif
       }
 
-      file.seek(0);
+      if (file.seek(0) != Zi::OK) {
+	ZiLOG(Error, "ZiDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
+	  s << "seek(" << f << "): " << e;
+	}));
+	return Error;
+      }
     }
 
     buf.null();
