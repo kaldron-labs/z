@@ -15,5 +15,6 @@ table Order {
   quantity:int32;
   bitmap:Zfb.Bitmap;
   id:Zfb.ID;
+  ip:Zfb.IP;
 }
 root_type Order;
