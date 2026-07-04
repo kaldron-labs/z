@@ -231,6 +231,7 @@ void Store::stop_0()
       // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing stop_1()"; }));
 
       store->stop_1();
+
       StopFn stopFn = ZuMv(store->m_stopFn);
       store->m_stopFn = StopFn{};
       if (stopFn) stopFn(StopResult{});
@@ -568,9 +569,7 @@ void Store::start_failed_(ZeException e)
   stop_1();
 
   auto startFn = ZuMv(m_startFn);
-
   m_startFn = StartFn{};
-
   if (startFn) startFn(StartResult{ZuMv(e)});
 }
 
