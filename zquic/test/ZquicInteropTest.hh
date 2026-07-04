@@ -81,7 +81,7 @@ inline bool writeSelfSignedLocalhostCert_(
     "-subj /CN=localhost "
     "-addext basicConstraints=critical,CA:TRUE "
     "-addext keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign "
-    "-addext subjectAltName=DNS:localhost,IP:127.0.0.1 "
+    "-addext subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1 "
     "-keyout " << keyPath << ' ' <<
     "-out " << certPath << " >/dev/null 2>&1";
   return systemOK(::system(cmd.data()));

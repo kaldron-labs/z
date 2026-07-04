@@ -181,6 +181,7 @@ enum {
   SvcNoDefaultALPN = 2,
   SvcPort = 3,
   SvcIPv4Hint = 4,
+  SvcIPv6Hint = 6,
   NameMaxSteps = 64
 };
 
@@ -255,6 +256,7 @@ bool knownMandatory(uint16_t key)
     case SvcNoDefaultALPN:
     case SvcPort:
     case SvcIPv4Hint:
+    case SvcIPv6Hint:
       return true;
     default:
       return false;
@@ -307,9 +309,21 @@ bool parseSvcParams(
 	https.hasIPv4Hint = true;
 	for (unsigned i = 0; i < len && https.nIPv4Hint < ZiResolver::H3MaxIPs;
 	    i += 4) {
-	  https.ipv4Hint[https.nIPv4Hint++] =
+	  in_addr addr;
+	  addr.s_addr = htonl(
 	    (uint32_t(v[i])<<24) | (uint32_t(v[i + 1])<<16) |
-	    (uint32_t(v[i + 2])<<8) | v[i + 3];
+	    (uint32_t(v[i + 2])<<8) | v[i + 3]);
+	  https.ipv4Hint[https.nIPv4Hint++] = addr;
+	}
+	break;
+      case SvcIPv6Hint:
+	if (len % sizeof(in6_addr)) return false;
+	https.hasIPv6Hint = true;
+	for (unsigned i = 0; i < len && https.nIPv6Hint < ZiResolver::H3MaxIPs;
+	    i += sizeof(in6_addr)) {
+	  in6_addr addr;
+	  memcpy(addr.s6_addr, v + i, sizeof(in6_addr));
+	  https.ipv6Hint[https.nIPv6Hint++] = addr;
 	}
 	break;
       default:
@@ -408,8 +422,7 @@ int resolve(Host host, ZmFn<bool(ZiIP)> fn, ZeError *e)
   int errno_;
 
   memset(&hints, 0, sizeof(ZiResolver_AddrInfo));
-  hints.ai_family = AF_INET;
-  hints.ai_protocol = PF_INET;
+  hints.ai_family = AF_UNSPEC;
   while (errno_ = ZiResolver_GetAddrInfo(host.data(), 0, &hints, &result)) {
     if (errno_ == EAI_AGAIN) continue;
     if (e) *e =
@@ -422,10 +435,21 @@ int resolve(Host host, ZmFn<bool(ZiIP)> fn, ZeError *e)
 
   unsigned count = 0;
   for (auto ai = result; ai; ai = ai->ai_next) {
-    if (!ai->ai_addr || ai->ai_addrlen < sizeof(struct sockaddr_in))
-      continue;
+    if (!ai->ai_addr) continue;
+    ZiIP ip;
+    switch (ai->ai_family) {
+      case AF_INET:
+	if (ai->ai_addrlen < sizeof(struct sockaddr_in)) continue;
+	ip = ((struct sockaddr_in *)ai->ai_addr)->sin_addr;
+	break;
+      case AF_INET6:
+	if (ai->ai_addrlen < sizeof(struct sockaddr_in6)) continue;
+	ip = ((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr;
+	break;
+      default:
+	continue;
+    }
     ++count;
-    ZiIP ip{((struct sockaddr_in *)ai->ai_addr)->sin_addr};
     if (!fn(ip)) break;
   }
   ZiResolver_FreeAddrInfo(result);
@@ -439,14 +463,15 @@ Host name(ZiIP ip, ZeError *e)
   ZiResolver_InitOnce();
 
   Host ret;
-  struct sockaddr_in sai;
-  memset(&sai, 0, sizeof(struct sockaddr_in));
-  sai.sin_family = AF_INET;
-  sai.sin_addr = ip;
+  ZiSockAddr addr(ip, 0);
+  if (!addr) {
+    if (e) *e = ZeError(EAI_NONAME);
+    return ret;
+  }
   ret.size(Zi::HostnameMax);
   int errno_;
   while (errno_ = ZiResolver_GetNameInfo(
-	reinterpret_cast<sockaddr *>(&sai), sizeof(struct sockaddr_in),
+	addr.sa(), addr.len(),
 	ret, Zi::HostnameMax, 0, 0, 0)) {
     if (errno_ == EAI_AGAIN) continue;
     if (e) *e =
@@ -539,6 +564,11 @@ int http3(
       uint16_t epPort = rec.port ? rec.port : port;
       for (unsigned j = 0; j < rec.nIPv4Hint; j++) {
 	H3Endpoint ep{target, tlsHost, rec.ipv4Hint[j], epPort, true, true};
+	if (!ZiResolver_::emitIP(ep, seen, nSeen, fn)) return Zi::OK;
+      }
+      for (unsigned j = 0; j < rec.nIPv6Hint; j++) {
+	H3Endpoint ep{
+	  target, tlsHost, rec.ipv6Hint[j], epPort, true, false, true};
 	if (!ZiResolver_::emitIP(ep, seen, nSeen, fn)) return Zi::OK;
       }
       ZeError resolveErr;

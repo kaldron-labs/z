@@ -18,6 +18,10 @@
 #include <alloca.h>
 #endif
 
+#if !defined(IPV6_JOIN_GROUP) && defined(IPV6_ADD_MEMBERSHIP)
+#define IPV6_JOIN_GROUP IPV6_ADD_MEMBERSHIP
+#endif
+
 #ifdef ZiMultiplex_IOCP
 
 #include <zlib/ZmSingleton.hh>
@@ -232,6 +236,46 @@ inline T *u64_ptr(uint64_t v) {
 #define Error(op, result, error) Log(Error, op, result, error)
 #define Warning(op, result, error) Log(Warning, op, result, error)
 
+namespace {
+
+ZiIP ZiIP_wildcard(ZiIPType::T type)
+{
+  switch (type) {
+    case ZiIPType::V6:
+      return ZiIP{in6addr_any};
+    default: {
+      in_addr addr;
+      addr.s_addr = 0;
+      return ZiIP{addr};
+    }
+  }
+}
+
+int ZiIP_family(ZiIPType::T type)
+{
+  switch (type) {
+    case ZiIPType::V6:
+      return AF_INET6;
+    default:
+      return AF_INET;
+  }
+}
+
+bool ZiIP_cxnType(ZiIP localIP, ZiIP remoteIP, ZiIPType::T &type)
+{
+  if (!!localIP && !!remoteIP && localIP.type() != remoteIP.type())
+    return false;
+  if (!!localIP)
+    type = localIP.type();
+  else if (!!remoteIP)
+    type = remoteIP.type();
+  else
+    type = ZiIPType::V4;
+  return true;
+}
+
+} // namespace
+
 ZiConnection::ZiConnection(ZiMultiplex *mx, const ZiCxnInfo &info) :
   m_mx(mx), m_info(info), m_rxUp(1),
   m_txUp(1), m_rxCalls(0), m_rxBytes(0),
@@ -284,10 +328,21 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
     ZiCxnOptions options)
 {
   Socket s;
+  ZiIPType::T ipType;
+  if (!ZiIP_cxnType(localIP, remoteIP, ipType)) {
+    Error("udp", Zi::IOError, ZeError(ZiEINVAL));
+    failFn(false);
+    return;
+  }
+  if (options.multicast() && !options.multicastValid(ipType)) {
+    Error("udp", Zi::IOError, ZeError(ZiEINVAL));
+    failFn(false);
+    return;
+  }
 
 #ifndef _WIN32
 
-  s = (Socket)::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  s = (Socket)::socket(ZiIP_family(ipType), SOCK_DGRAM, IPPROTO_UDP);
   if (s < 0) {
     Error("socket", Zi::IOError, ZeLastSockError);
     failFn(false); // FD exhaustion is generally not transient
@@ -307,6 +362,7 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
   }
 
   if (!!localIP || localPort) {
+    if (!localIP) localIP = ZiIP_wildcard(ipType);
     ZiSockAddr local(localIP, localPort);
     if (bind(s, local.sa(), local.len()) < 0) {
       ZeError e{errno};
@@ -329,50 +385,108 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
   }
 
   if (options.multicast()) {
-    if (!!options.mif()) {
-      if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_IF,
-	    (const char *)&options.mif(), sizeof(struct in_addr)) < 0) {
-	ZeError e{errno};
-	::close(s);
-	Error("setsockopt(IP_MULTICAST_IF)", Zi::IOError, e);
-	failFn(false);
-	return;
-      }
-    }
-    if (options.ttl() > 0) {
-      if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,
-	    (const char *)&options.ttl(), sizeof(int)) < 0) {
-	ZeError e{errno};
-	::close(s);
-	Error("setsockopt(IP_MULTICAST_TTL)", Zi::IOError, e);
-	failFn(false);
-	return;
-      }
-    }
-    {
-      int b = options.loopBack();
-      if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP,
-	    (const char *)&b, sizeof(int)) < 0) {
-	ZeError e{errno};
-	::close(s);
-	Error("setsockopt(IP_MULTICAST_LOOP)", Zi::IOError, e);
-	failFn(false);
-	return;
-      }
-    }
-    if (unsigned n = options.mreqs().length()) {
-      for (unsigned i = 0; i < n; i++) {
-	if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-	      (const char *)&(options.mreqs())[i],
-	      sizeof(struct ip_mreq)) < 0) {
-	  ZeError e{errno};
-	  ::close(s);
-	  Error("setsockopt(IP_ADD_MEMBERSHIP)", Zi::IOError, e);
-	  failFn(false);
-	  return;
+    switch (ipType) {
+      case ZiIPType::V4:
+	if (!!options.mif()) {
+	  if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_IF,
+		(const char *)&options.mif().inAddr(), sizeof(struct in_addr)) < 0) {
+	    ZeError e{errno};
+	    ::close(s);
+	    Error("setsockopt(IP_MULTICAST_IF)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
 	}
+	if (options.ttl() > 0) {
+	  int ttl = options.ttl();
+	  if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,
+		(const char *)&ttl, sizeof(int)) < 0) {
+	    ZeError e{errno};
+	    ::close(s);
+	    Error("setsockopt(IP_MULTICAST_TTL)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	{
+	  int b = options.loopBack();
+	  if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP,
+		(const char *)&b, sizeof(int)) < 0) {
+	    ZeError e{errno};
+	    ::close(s);
+	    Error("setsockopt(IP_MULTICAST_LOOP)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	if (unsigned n = options.mreqs().length()) {
+	  for (unsigned i = 0; i < n; i++) {
+	    if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+		  (const char *)&(options.mreqs())[i].ipMReq(),
+		  sizeof(struct ip_mreq)) < 0) {
+	      ZeError e{errno};
+	      ::close(s);
+	      Error("setsockopt(IP_ADD_MEMBERSHIP)", Zi::IOError, e);
+	      failFn(false);
+	      return;
+	    }
+	  }
+	}
+	break;
+      case ZiIPType::V6:
+	if (options.mifIndex()) {
+	  int index = options.mifIndex();
+	  if (setsockopt(s, IPPROTO_IPV6, IPV6_MULTICAST_IF,
+		(const char *)&index, sizeof(int)) < 0) {
+	    ZeError e{errno};
+	    ::close(s);
+	    Error("setsockopt(IPV6_MULTICAST_IF)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	if (options.ttl() > 0) {
+	  int hops = options.ttl();
+	  if (setsockopt(s, IPPROTO_IPV6, IPV6_MULTICAST_HOPS,
+		(const char *)&hops, sizeof(int)) < 0) {
+	    ZeError e{errno};
+	    ::close(s);
+	    Error("setsockopt(IPV6_MULTICAST_HOPS)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	{
+	  int b = options.loopBack();
+	  if (setsockopt(s, IPPROTO_IPV6, IPV6_MULTICAST_LOOP,
+		(const char *)&b, sizeof(int)) < 0) {
+	    ZeError e{errno};
+	    ::close(s);
+	    Error("setsockopt(IPV6_MULTICAST_LOOP)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	if (unsigned n = options.mreqs().length()) {
+	  for (unsigned i = 0; i < n; i++) {
+	    if (setsockopt(s, IPPROTO_IPV6, IPV6_JOIN_GROUP,
+		  (const char *)&(options.mreqs())[i].ip6MReq(),
+		  sizeof(ZiIPv6MReq)) < 0) {
+	      ZeError e{errno};
+	      ::close(s);
+	      Error("setsockopt(IPV6_JOIN_GROUP)", Zi::IOError, e);
+	      failFn(false);
+	      return;
+	    }
+	  }
+	}
+	break;
+      default:
+	::close(s);
+	Error("multicast", Zi::IOError, ZeError(ZiEINVAL));
+	failFn(false);
+	return;
       }
-    }
   }
 
 #ifdef ZiMultiplex_EPoll
@@ -387,7 +501,7 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
 
 #else /* !_WIN32 */
 
-  s = (Socket)::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  s = (Socket)::socket(ZiIP_family(ipType), SOCK_DGRAM, IPPROTO_UDP);
   if (Zi::nullSocket(s)) {
     Error("socket", Zi::IOError, ZeLastSockError);
     failFn(false);
@@ -407,6 +521,7 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
   }
 
   {
+    if (!localIP) localIP = ZiIP_wildcard(ipType);
     ZiSockAddr local(localIP, localPort);
     if (bind(s, local.sa(), local.len())) {
       ZeError e(WSAGetLastError());
@@ -429,49 +544,107 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
   }
 
   if (options.multicast()) {
-    if (!!options.mif()) {
-      if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_IF,
-	    (const char *)&options.mif(), sizeof(struct in_addr))) {
-	ZeError e(WSAGetLastError());
-	::closesocket(s);
-	Error("setsockopt(IP_MULTICAST_IF)", Zi::IOError, e);
-	failFn(false);
-	return;
-      }
-    }
-    if (options.ttl() > 0) {
-      DWORD ttl = options.ttl();
-      if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,
-	    (const char *)&ttl, sizeof(DWORD))) {
-	ZeError e(WSAGetLastError());
-	::closesocket(s);
-	Error("setsockopt(IP_MULTICAST_TTL)", Zi::IOError, e);
-	failFn(false);
-	return;
-      }
-    }
-    {
-      BOOL b = options.loopBack();
-      if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP,
-	    (const char *)&b, sizeof(BOOL))) {
-	ZeError e(WSAGetLastError());
-	::closesocket(s);
-	Error("setsockopt(IP_MULTICAST_LOOP)", Zi::IOError, e);
-	failFn(false);
-	return;
-      }
-    }
-    if (int n = options.mreqs().length()) {
-      for (int i = 0; i < n; i++) {
-	if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-	      (const char *)&(options.mreqs())[i], sizeof(struct ip_mreq))) {
-	  ZeError e(WSAGetLastError());
-	  ::closesocket(s);
-	  Error("setsockopt(IP_ADD_MEMBERSHIP)", Zi::IOError, e);
-	  failFn(false);
-	  return;
+    switch (ipType) {
+      case ZiIPType::V4:
+	if (!!options.mif()) {
+	  if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_IF,
+		(const char *)&options.mif().inAddr(), sizeof(struct in_addr))) {
+	    ZeError e(WSAGetLastError());
+	    ::closesocket(s);
+	    Error("setsockopt(IP_MULTICAST_IF)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
 	}
-      }
+	if (options.ttl() > 0) {
+	  DWORD ttl = options.ttl();
+	  if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL,
+		(const char *)&ttl, sizeof(DWORD))) {
+	    ZeError e(WSAGetLastError());
+	    ::closesocket(s);
+	    Error("setsockopt(IP_MULTICAST_TTL)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	{
+	  BOOL b = options.loopBack();
+	  if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP,
+		(const char *)&b, sizeof(BOOL))) {
+	    ZeError e(WSAGetLastError());
+	    ::closesocket(s);
+	    Error("setsockopt(IP_MULTICAST_LOOP)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	if (int n = options.mreqs().length()) {
+	  for (int i = 0; i < n; i++) {
+	    if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+		  (const char *)&(options.mreqs())[i].ipMReq(),
+		  sizeof(struct ip_mreq))) {
+	      ZeError e(WSAGetLastError());
+	      ::closesocket(s);
+	      Error("setsockopt(IP_ADD_MEMBERSHIP)", Zi::IOError, e);
+	      failFn(false);
+	      return;
+	    }
+	  }
+	}
+	break;
+      case ZiIPType::V6:
+	if (options.mifIndex()) {
+	  DWORD index = options.mifIndex();
+	  if (setsockopt(s, IPPROTO_IPV6, IPV6_MULTICAST_IF,
+		(const char *)&index, sizeof(DWORD))) {
+	    ZeError e(WSAGetLastError());
+	    ::closesocket(s);
+	    Error("setsockopt(IPV6_MULTICAST_IF)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	if (options.ttl() > 0) {
+	  DWORD hops = options.ttl();
+	  if (setsockopt(s, IPPROTO_IPV6, IPV6_MULTICAST_HOPS,
+		(const char *)&hops, sizeof(DWORD))) {
+	    ZeError e(WSAGetLastError());
+	    ::closesocket(s);
+	    Error("setsockopt(IPV6_MULTICAST_HOPS)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	{
+	  BOOL b = options.loopBack();
+	  if (setsockopt(s, IPPROTO_IPV6, IPV6_MULTICAST_LOOP,
+		(const char *)&b, sizeof(BOOL))) {
+	    ZeError e(WSAGetLastError());
+	    ::closesocket(s);
+	    Error("setsockopt(IPV6_MULTICAST_LOOP)", Zi::IOError, e);
+	    failFn(false);
+	    return;
+	  }
+	}
+	if (int n = options.mreqs().length()) {
+	  for (int i = 0; i < n; i++) {
+	    if (setsockopt(s, IPPROTO_IPV6, IPV6_JOIN_GROUP,
+		  (const char *)&(options.mreqs())[i].ip6MReq(),
+		  sizeof(ZiIPv6MReq))) {
+	      ZeError e(WSAGetLastError());
+	      ::closesocket(s);
+	      Error("setsockopt(IPV6_JOIN_GROUP)", Zi::IOError, e);
+	      failFn(false);
+	      return;
+	    }
+	  }
+	}
+	break;
+      default:
+	::closesocket(s);
+	Error("multicast", Zi::IOError, ZeError(ZiEINVAL));
+	failFn(false);
+	return;
     }
   }
 
@@ -540,13 +713,21 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
     ZiIP remoteIP, uint16_t remotePort, ZiCxnOptions options)
 {
   Socket s;
+  ZiIPType::T ipType = ZiIPType::V4;
 
 #if !defined(_WIN32) && defined(ZiMultiplex_Netlink)
   if (options.netlink())
     s = (Socket)::socket(AF_NETLINK, SOCK_DGRAM, NETLINK_GENERIC);
   else
 #endif
-  s = (Socket)::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  {
+    if (!remoteIP || !ZiIP_cxnType(localIP, remoteIP, ipType)) {
+      Error("connect", Zi::IOError, ZeError(ZiEINVAL));
+      failFn(false);
+      return;
+    }
+    s = (Socket)::socket(ZiIP_family(ipType), SOCK_STREAM, IPPROTO_TCP);
+  }
   if (Zi::nullSocket(s)) {
     ZeError e = ZeLastSockError;
     Zi::closeSocket(s);
@@ -576,6 +757,7 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
     } else
 #endif
     {
+      if (!localIP) localIP = ZiIP_wildcard(ipType);
       ZiSockAddr local(localIP, localPort);
       if (bind(s, local.sa(), local.len()) < 0) {
 	ZeError e{errno};
@@ -586,6 +768,7 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
       }
     }
 #else
+    if (!localIP) localIP = ZiIP_wildcard(ipType);
     ZiSockAddr local(localIP, localPort);
     if (bind(s, local.sa(), local.len())) {
       ZeError e(WSAGetLastError());
@@ -647,6 +830,7 @@ void ZiMultiplex::overlappedConnect(Connect *request,
 
   {
     ZiSockAddr localSockAddr;
+    localSockAddr.init(ci.remoteIP.type());
     int localSockAddrLen = localSockAddr.len();
     if (getsockname(ci.socket, localSockAddr.sa(), &localSockAddrLen)) {
       ZeError e(WSAGetLastError());
@@ -655,6 +839,7 @@ void ZiMultiplex::overlappedConnect(Connect *request,
       request->fail(false);
       return;
     }
+    localSockAddr.sync();
     ci.localIP = localSockAddr.ip();
     ci.localPort = localSockAddr.port();
   }
@@ -691,6 +876,7 @@ void ZiMultiplex::completedConnect(Connect *request)
 #endif
   {
     ZiSockAddr local;
+    local.init(ci.remoteIP.type());
     socklen_t len = local.len();
     if (getsockname(s, local.sa(), &len) < 0) {
       ZeError e{errno};
@@ -700,6 +886,7 @@ void ZiMultiplex::completedConnect(Connect *request)
       request->fail(false);
       return;
     }
+    local.sync();
     ci.localIP = local.ip();
     ci.localPort = local.port();
   }
@@ -801,10 +988,18 @@ void ZiConnection::telemetry(ZiCxnTelemetry &data) const
   ioctlsocket(m_info.socket, FIONREAD, &rxBufLen);
 #endif
   ZiIP mreqAddr, mreqIf;
+  uint32_t mreqIfIndex = 0;
   const auto &mreqs = m_info.options.mreqs();
   if (mreqs.length()) {
-    mreqAddr = mreqs[0].imr_multiaddr;
-    mreqIf = mreqs[0].imr_interface;
+    mreqAddr = mreqs[0].addr();
+    switch (mreqs[0].type()) {
+      case ZiIPType::V4:
+	mreqIf = mreqs[0].mif();
+	break;
+      case ZiIPType::V6:
+	mreqIfIndex = mreqs[0].ifIndex();
+	break;
+    }
   }
   data.mxID = m_mx->id();
   data.socket = m_info.socket;
@@ -818,7 +1013,9 @@ void ZiConnection::telemetry(ZiCxnTelemetry &data) const
   data.txBufLen = txBufLen;
   data.mreqAddr = mreqAddr;
   data.mreqIf = mreqIf;
+  data.mreqIfIndex = mreqIfIndex;
   data.mif = m_info.options.mif();
+  data.mifIndex = m_info.options.mifIndex();
   data.ttl = m_info.options.ttl();
   data.localIP = m_info.localIP;
   data.remoteIP = m_info.remoteIP;
@@ -871,10 +1068,12 @@ void ZiMultiplex::listen_(
     ZiIP localIP, uint16_t localPort, unsigned nAccepts, ZiCxnOptions options)
 {
   Socket lsocket;
+  ZiIPType::T ipType = !!localIP ? localIP.type() : ZiIPType::V4;
+  if (!localIP) localIP = ZiIP_wildcard(ipType);
 
 #ifndef _WIN32
 
-  lsocket = (Socket)::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  lsocket = (Socket)::socket(ZiIP_family(ipType), SOCK_STREAM, IPPROTO_TCP);
   if (lsocket < 0) {
     Error("socket", Zi::IOError, ZeLastSockError);
     failFn(false);
@@ -888,6 +1087,18 @@ void ZiMultiplex::listen_(
       ZeError e{errno};
       ::close(lsocket);
       Error("setsockopt(SO_REUSEADDR)", Zi::IOError, e);
+      failFn(false);
+      return;
+    }
+  }
+
+  if (ipType == ZiIPType::V6) {
+    int b = 1;
+    if (setsockopt(lsocket,
+	  IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&b, sizeof(int)) < 0) {
+      ZeError e{errno};
+      ::close(lsocket);
+      Error("setsockopt(IPV6_V6ONLY)", Zi::IOError, e);
       failFn(false);
       return;
     }
@@ -916,7 +1127,7 @@ void ZiMultiplex::listen_(
 
 #else /* !_WIN32 */
 
-  lsocket = (Socket)::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  lsocket = (Socket)::socket(ZiIP_family(ipType), SOCK_STREAM, IPPROTO_TCP);
   if (Zi::nullSocket(lsocket)) {
     Error("socket", Zi::IOError, ZeLastSockError);
     failFn(false);
@@ -930,6 +1141,18 @@ void ZiMultiplex::listen_(
       ZeError e(WSAGetLastError());
       ::closesocket(lsocket);
       Error("setsockopt(SO_REUSEADDR)", Zi::IOError, e);
+      failFn(false);
+      return;
+    }
+  }
+
+  if (ipType == ZiIPType::V6) {
+    BOOL b = TRUE;
+    if (setsockopt(lsocket,
+	  IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&b, sizeof(BOOL))) {
+      ZeError e(WSAGetLastError());
+      ::closesocket(lsocket);
+      Error("setsockopt(IPV6_V6ONLY)", Zi::IOError, e);
       failFn(false);
       return;
     }
@@ -1037,7 +1260,8 @@ found:
 void ZiMultiplex::accept(Listener *listener)
 {
 #ifdef ZiMultiplex_IOCP
-  Socket s = (Socket)::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  Socket s = (Socket)::socket(
+    ZiIP_family(listener->info().ip.type()), SOCK_STREAM, IPPROTO_TCP);
   if (Zi::nullSocket(s)) {
     Error("socket", Zi::IOError, ZeLastSockError);
     return;
@@ -1053,8 +1277,8 @@ void ZiMultiplex::accept(Listener *listener)
   Zi_Overlapped &overlapped = request->overlapped();
   ZeError e;
   if (ZuLikely(AcceptEx(listener->info().socket, s, request->buf(), 0,
-	  sizeof(struct sockaddr_in) + 16,
-	  sizeof(struct sockaddr_in) + 16,
+	  ZiSockAddr::MaxLen + 16,
+	  ZiSockAddr::MaxLen + 16,
 	  0, (OVERLAPPED *)&overlapped) ||
 	(e = WSAGetLastError()).errNo() == WSA_IO_PENDING))
     return;
@@ -1067,9 +1291,10 @@ void ZiMultiplex::accept(Listener *listener)
   int s;
   ZeError e;
   ZiSockAddr remote;
-  socklen_t len = remote.len();
 
 retry:
+  remote.init(listener->info().ip.type());
+  socklen_t len = remote.len();
   s = ::accept(listener->info().socket, remote.sa(), &len);
   if (s < 0) {
     e = errno;
@@ -1083,11 +1308,12 @@ retry:
     ::close(s);
     goto retry;
   }
+  remote.sync();
 
   ZiDEBUG(this, ([
     socket = s,
     ip = remote.ip(),
-    port = ntohs(remote.port())
+    port = remote.port()
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " ACCEPTING from " << ip << ':' << port;
@@ -1135,8 +1361,8 @@ void ZiMultiplex::overlappedAccept(Accept *request,
     ZiSockAddr *localSockAddr, *remoteSockAddr;
     int localSockAddrLen, remoteSockAddrLen;
     GetAcceptExSockaddrs(
-	request->buf(), 0, sizeof(struct sockaddr_in) + 16,
-	sizeof(struct sockaddr_in) + 16, (struct sockaddr **)&localSockAddr,
+	request->buf(), 0, ZiSockAddr::MaxLen + 16,
+	ZiSockAddr::MaxLen + 16, (struct sockaddr **)&localSockAddr,
 	&localSockAddrLen, (struct sockaddr **)&remoteSockAddr,
 	&remoteSockAddrLen);
     ci.localIP = localSockAddr->ip();
@@ -1279,6 +1505,10 @@ void ZiConnection::recv()
   ZeError e;
   DWORD n;
   if (m_info.options.udp()) {
+    ZiIPType::T type;
+    if (!ZiIP_cxnType(m_info.localIP, m_info.remoteIP, type))
+      type = ZiIPType::V4;
+    m_rxContext.addr.init(type);
     INT addrLen = m_rxContext.addr.len();
     if (ZuLikely(WSARecvFrom(m_info.socket, &wsaBuf, 1, &n, &m_rxFlags,
 	    m_rxContext.addr.sa(), &addrLen,
@@ -1339,10 +1569,15 @@ void ZiConnection::recv()
 
 retry:
   if (m_info.options.udp()) {
+    ZiIPType::T type;
+    if (!ZiIP_cxnType(m_info.localIP, m_info.remoteIP, type))
+      type = ZiIPType::V4;
+    m_rxContext.addr.init(type);
     socklen_t addrLen = m_rxContext.addr.len();
     n = ::recvfrom(
       m_info.socket, reinterpret_cast<char *>(buf), len, 0,
       m_rxContext.addr.sa(), &addrLen);
+    if (n >= 0) m_rxContext.addr.sync();
   } else {
     n = ::recv(
       m_info.socket, reinterpret_cast<char *>(buf), len, 0);
@@ -1441,6 +1676,7 @@ void ZiConnection::overlappedRecv(int status, unsigned n, ZeError e)
       << ZtHexDump_(buf->cspan());
   }));
 
+  if (m_info.options.udp()) m_rxContext.addr.sync();
   executedRecv(n);
 
   if (ZuUnlikely(m_rxContext.completed())) {

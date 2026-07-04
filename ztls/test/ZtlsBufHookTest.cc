@@ -62,7 +62,7 @@ struct TempDir {
       "-subj /CN=localhost "
       "-addext basicConstraints=critical,CA:TRUE "
       "-addext keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign "
-      "-addext subjectAltName=DNS:localhost,IP:127.0.0.1 "
+      "-addext subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1 "
       "-keyout " << keyPath << ' ' <<
       "-out " << certPath << " >/dev/null 2>&1";
     return systemOK(system(cmd.data()));
@@ -246,19 +246,16 @@ bool wait_done(TestState &state)
   return true;
 }
 
-uint16_t reserve_loopback_port()
+uint16_t reserve_loopback_port(ZiIP ip = ZiIP{"127.0.0.1"})
 {
-  int s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  int s = ::socket(ip.v6() ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (s < 0) return 0;
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  addr.sin_port = 0;
+  ZiSockAddr addr{ip, 0};
   uint16_t port = 0;
-  if (!::bind(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr))) {
-    socklen_t len = sizeof(addr);
-    if (!::getsockname(s, reinterpret_cast<sockaddr *>(&addr), &len))
-      port = ntohs(addr.sin_port);
+  if (!::bind(s, addr.sa(), addr.len())) {
+    socklen_t len = addr.len();
+    if (!::getsockname(s, addr.sa(), &len))
+      port = addr.port();
   }
   ::close(s);
   return port;
@@ -410,6 +407,8 @@ void run_in_process(
     unsigned clientLen,
     unsigned serverLen,
     bool clientKeyUpdate,
+    ZiIP ip = ZiIP{"127.0.0.1"},
+    const char *connectIP = "127.0.0.1",
     ptls_cipher_suite_t **cipherSuites = nullptr,
     unsigned expectedCipher = 0)
 {
@@ -418,11 +417,15 @@ void run_in_process(
 
   TestState state;
   state.target = 2;
-  state.ip = ZiIP("127.0.0.1");
-  state.port = reserve_loopback_port();
+  state.ip = ip;
+  state.port = reserve_loopback_port(ip);
   state.clientKeyUpdate = clientKeyUpdate;
   fill_payload(state.clientPayload, clientLen, 0x11);
   fill_payload(state.serverPayload, serverLen, 0x63);
+  if (ip.v6() && !state.port) {
+    std::cout << "# IPv6 loopback unavailable; skipping TLS loopback\n";
+    return;
+  }
   ZTLS_CHECK_RT(state.port, "failed to reserve loopback port");
   if (!state.port) return;
 
@@ -457,7 +460,7 @@ void run_in_process(
 
   ZmRef<typename BaseClient<TestState>::Link> link =
     new typename BaseClient<TestState>::Link(&client);
-  link->connect("127.0.0.1", state.port);
+  link->connect(connectIP, state.port);
 
   bool done = wait_done(state);
   ZTLS_CHECK_RT(done, "TLS disconnect wait timed out");
@@ -697,6 +700,13 @@ void testTLS13JumboBuffers(TempDir &temp, LogCapture &capture)
   run_in_process(temp, capture, JumboPayloadSize, JumboPayloadSize, false);
 }
 
+void testTLS13IPv6Loopback(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testTLS13IPv6Loopback);
+  run_in_process(
+    temp, capture, SmallPayloadSize, SmallPayloadSize, false, ZiIP{"::1"}, "::1");
+}
+
 void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13KeyUpdate);
@@ -707,6 +717,7 @@ void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
   suites.set(suite);
   run_in_process(
     temp, capture, SmallPayloadSize, SmallPayloadSize, true,
+    ZiIP{"127.0.0.1"}, "127.0.0.1",
     suites.list, PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
 }
 
@@ -765,6 +776,7 @@ int main(int argc, char **argv)
   ZuCHECK(tempOK, "failed to generate cert/key");
   if (tempOK) {
     ZuTestCall(testTLS13JumboBuffers, temp, capture);
+    ZuTestCall(testTLS13IPv6Loopback, temp, capture);
     ZuTestCall(testTLS13KeyUpdate, temp, capture);
     ZuTestCall(testTLS12ExplicitIV, temp, capture);
     ZuTestCall(testTLS12NoExplicitIV, temp, capture);

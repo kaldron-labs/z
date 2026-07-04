@@ -420,19 +420,58 @@ bool validateTag(ZuCSpan s) {
 
 template <typename S>
 void parseAddr(const S &s, ZiIP &ip, uint16_t &port) {
-  ZtRegexCaptures(c, 0);
-  if (!s) {
+  ZuCSpan a{s};
+  if (!a) {
     ip = ZiIP();
     port = 0;
-  } else if (ZtREGEX(":").m(s, c)) {
-    ip = c[0];
-    port = ZuBox<unsigned>(c[2]);
-  } else if (ZtREGEX("\D").m(s)) {
-    ip = s;
-    port = 0;
+    return;
+  }
+  ZuCSpan host, port_;
+  if (a[0] == '[') {
+    a.offset(1);
+    auto close = a.find([](auto c) { return c == ']'; });
+    if (close < 0) throw ZeError();
+    host = a;
+    host.trunc(close);
+    a.offset(close + 1);
+    if (!host) throw ZeError();
+    if (a) {
+      if (a[0] != ':') throw ZeError();
+      port_ = a;
+      port_.offset(1);
+      if (!port_) throw ZeError();
+    }
+    ip = host;
+    unsigned p = port_ ? ZuBox<unsigned>(port_) : 0;
+    if (p > 65535) throw ZeError();
+    port = p;
   } else {
-    ip = ZiIP();
-    port = ZuBox<unsigned>(s);
+    int colon = -1;
+    bool multiColon = false;
+    for (unsigned i = 0; i < a.length(); ++i) {
+      if (a[i] != ':') continue;
+      if (colon >= 0) multiColon = true;
+      colon = i;
+    }
+    if (colon >= 0 && !multiColon) {
+      host = a;
+      host.trunc(colon);
+      port_ = a;
+      port_.offset(colon + 1);
+      if (!port_) throw ZeError();
+      ip = host ? ZiIP{host} : ZiIP{};
+      unsigned p = ZuBox<unsigned>(port_);
+      if (p > 65535) throw ZeError();
+      port = p;
+    } else if (ZtREGEX("\D").m(s)) {
+      ip = s;
+      port = 0;
+    } else {
+      ip = ZiIP();
+      unsigned p = ZuBox<unsigned>(s);
+      if (p > 65535) throw ZeError();
+      port = p;
+    }
   }
 }
 
@@ -486,6 +525,7 @@ public:
 	"establish TCP proxy",
 	"Usage: proxy [LOCALIP:]LOCALPORT [REMOTEIP:]REMOTEPORT "
 	    "[[SRCIP:][SRCPORT]] [OPTION]...\n\n"
+	    "IPv6 address/port endpoints use [IP]:PORT.\n\n"
 	    "Options:\n"
 	    "  --tag=TAG\t- apply name tag (\"#default\" if unspecified)\n"
 	    "  --suspend\t- suspend I/O initially\n"

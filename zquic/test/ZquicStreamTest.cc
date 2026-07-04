@@ -738,9 +738,14 @@ static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
 static bool sameAddr_(const ZiSockAddr &l, const ZiSockAddr &r)
 {
   if (!l || !r) return !l && !r;
-  return l.m_sin.sin_family == r.m_sin.sin_family &&
-    l.m_sin.sin_port == r.m_sin.sin_port &&
-    l.m_sin.sin_addr.s_addr == r.m_sin.sin_addr.s_addr;
+  return l.type() == r.type() && l.port() == r.port() && l.ip() == r.ip();
+}
+
+static ZiIP ip4_(uint32_t n)
+{
+  in_addr addr;
+  addr.s_addr = htonl(n);
+  return ZiIP{addr};
 }
 
 static Zi::Path testPath_(ZuCSpan name)
@@ -1700,10 +1705,10 @@ void testPathValidationStateMachine()
 	  "path-validation qlog init failed");
 	ZquicLogger::start();
 	ZmRef<TestLink> link = testLink(&app, true);
-  ZiSockAddr local{ZiIP{0x0a000001}, 4433};
-  ZiSockAddr oldRemote{ZiIP{0x0a000002}, 50000};
-  ZiSockAddr newRemote{ZiIP{0x0a000002}, 50001};
-  ZiSockAddr otherRemote{ZiIP{0x0a000002}, 50002};
+  ZiSockAddr local{ip4_(0x0a000001), 4433};
+  ZiSockAddr oldRemote{ip4_(0x0a000002), 50000};
+  ZiSockAddr newRemote{ip4_(0x0a000002), 50001};
+  ZiSockAddr otherRemote{ip4_(0x0a000002), 50002};
 
   link->initServerPath(local, oldRemote);
   link->validatePath();
@@ -1792,8 +1797,8 @@ void testPMTUDQLog()
 	ZquicLogger::start();
 	ZmRef<TestLink> link = testLink(&app, true);
   link->initServerPath(
-    ZiSockAddr{ZiIP{0x0a000001}, 4433},
-    ZiSockAddr{ZiIP{0x0a000002}, 50000});
+    ZiSockAddr{ip4_(0x0a000001), 4433},
+    ZiSockAddr{ip4_(0x0a000002), 50000});
   link->validatePath();
   ZuCHECK(link->pathValidated(), "PMTUD qlog path validation setup failed");
 

@@ -24,6 +24,16 @@
 
 namespace Zrest {
 
+template <typename S>
+inline void appendAuthority(S &s, ZuCSpan host, uint16_t port)
+{
+  bool bracket =
+    host && host[0] != '[' && host.find([](auto c) { return c == ':'; }) >= 0;
+  if (bracket) s << '[' << host << ']';
+  else s << host;
+  if (port != 443) s << ':' << unsigned(port);
+}
+
 // FIXME - 
 struct Request : public MsgID {
   ZuTime	time;
@@ -446,8 +456,7 @@ template <typename, typename> friend class Client;
   CliLink(App *app, Ztls::Host server, uint16_t port) :
     TLS{app, ZuMv(server), port}
   {
-    m_host << server();
-    if (port != 443) m_host << ':' << unsigned(port);
+    appendAuthority(m_host, server(), port);
   }
 
   // link state management

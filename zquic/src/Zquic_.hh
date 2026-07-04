@@ -425,7 +425,9 @@ public:
     m_mode = mode;
     m_local.init(localIP, localPort);
     if (!!remoteIP) m_remote.init(remoteIP, remotePort); else m_remote.null();
-    m_sockConfig = SockConfig{IPFamily::IPv4, mode, true, true};
+    IPFamily::T family = IPFamily::IPv4;
+    if (localIP.v6() || remoteIP.v6()) family = IPFamily::IPv6;
+    m_sockConfig = SockConfig{family, mode, true, true};
     m_sockDiag = {};
     m_listening = false;
     m_open = true;
@@ -517,9 +519,13 @@ private:
 #ifndef _WIN32
     {
       ZiSockAddr local;
+      local.init(
+	m_sockConfig.family == IPFamily::IPv6 ? ZiIPType::V6 : ZiIPType::V4);
       socklen_t len = local.len();
-      if (::getsockname(cxn->info().socket, local.sa(), &len) == 0)
+      if (::getsockname(cxn->info().socket, local.sa(), &len) == 0) {
+	local.sync();
 	m_local = local;
+      }
     }
 #endif
 

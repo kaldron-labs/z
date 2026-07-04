@@ -558,10 +558,10 @@ inline HdrString hostName(ZuCSpan host_) {
       return out;
     }
   }
-  int p = -1;
+  int p = -1, colons = 0;
   for (unsigned i = 0, n = host.length(); i < n; ++i)
-    if (host[i] == ':') p = int(i);
-  if (p >= 0) host.length(p);
+    if (host[i] == ':') { p = int(i); ++colons; }
+  if (colons == 1) host.length(p);
   lower(host);
   return ZuMv(host);
 }
