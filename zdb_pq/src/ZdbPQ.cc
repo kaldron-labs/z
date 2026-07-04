@@ -124,12 +124,12 @@ void Store::start(StartFn fn)
 	    store->start_failed(false, ZuMv(result).p<ZiEvent::Exception>());
 	    return;
 	  }
-	  if (ZuUnlikely(!store->m_eventLoop.addSocket(
-		store->m_connFD,
-		ZmFn<void(Zi::Socket)>{
-		  store, [](Store *store, Zi::Socket) { store->send(); }},
-		ZmFn<void(Zi::Socket)>{
-		  store, [](Store *store, Zi::Socket) { store->recv(); }}))) {
+	  auto ok = store->m_eventLoop.addSocket(store->m_connFD,
+	    ZmFn<void(Zi::Socket)>{
+	      store, [](Store *store, Zi::Socket) { store->send(); }},
+	    ZmFn<void(Zi::Socket)>{
+	      store, [](Store *store, Zi::Socket) { store->recv(); }});
+	  if (ZuUnlikely(!ok)) {
 	    store->start_failed(
 	      true,
 	      ZeEXCEPT(Fatal, "ZdbPQ", "ZiEventLoop::addSocket() failed"));
