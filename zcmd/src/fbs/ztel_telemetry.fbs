@@ -89,7 +89,9 @@ table Socket {			// == ZiCxnTelemetry
   tx_buf_len:uint32;
   mreq_addr:Zfb.IP;
   mreq_if:Zfb.IP;
+  mreq_if_index:uint32;
   mif:Zfb.IP;
+  mif_index:uint32;
   ttl:uint32;
   local_i_p:Zfb.IP;
   remote_i_p:Zfb.IP;
