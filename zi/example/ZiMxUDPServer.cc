@@ -22,6 +22,41 @@
 
 #include "Global.hh"
 
+bool parseEndpoint(ZuCSpan s, ZiIP &ip, unsigned &port)
+{
+  ZuCSpan host, port_;
+  if (s && s[0] == '[') {
+    s.offset(1);
+    auto close = s.find([](auto c) { return c == ']'; });
+    if (close < 0) return false;
+    host = s;
+    host.trunc(close);
+    s.offset(close + 1);
+    if (!host || !s || s[0] != ':') return false;
+    port_ = s;
+    port_.offset(1);
+  } else {
+    int colon = -1;
+    bool multiColon = false;
+    for (unsigned i = 0; i < s.length(); ++i) {
+      if (s[i] != ':') continue;
+      if (colon >= 0) multiColon = true;
+      colon = i;
+    }
+    if (colon < 0 || multiColon) return false;
+    host = s;
+    host.trunc(colon);
+    port_ = s;
+    port_.offset(colon + 1);
+  }
+  if (!port_) return false;
+  unsigned p = ZuBox<unsigned>{port_};
+  if (!p || p > 65535) return false;
+  ip = host ? ZiIP{host} : ZiIP{};
+  port = p;
+  return true;
+}
+
 void error(ZiConnection *, const char *op, int result, ZeError e)
 {
   ZiLOG(Error, "ZiMxUDPServer", ([op, result, e](auto &s) {
@@ -152,15 +187,16 @@ void usage()
     "  -v\t\t- enable ZiMultiplex debug\n"
     "  -m N\t\t- epoll - N is max number of file descriptors (default: 8)\n"
     "  -q N\t\t- epoll - N is epoll_wait() quantum (default: 8)\n"
-    "  -b [HOST:]PORT- bind to HOST:PORT (HOST defaults to INADDR_ANY)\n"
-    "  -d HOST:PORT\t- send to HOST:PORT\n"
+    "  -b [HOST:]PORT- bind to HOST:PORT (IPv6: [HOST]:PORT)\n"
+    "  -d HOST:PORT\t- send to HOST:PORT (IPv6: [HOST]:PORT)\n"
     "  -c\t\t- connect() - filter packets received from other sources\n"
     "  -M\t\t- use multicast\n"
     "  -L\t\t- use multicast loopback\n"
-    "  -D IP\t\t- multicast to interface IP\n"
+    "  -D IP|N\t- multicast to interface IP or IPv6 interface index\n"
     "  -T N\t\t- multicast with TTL N\n"
     "  -G IP[/IF]\t- multicast subscribe to group IP on interface IF\n"
-    "\t\t  IF is an IP address that defaults to 0.0.0.0\n"
+    "\t\t  IF is an IPv4 address or IPv6 interface index\n"
+    "\t\t  IPv4 IF defaults to 0.0.0.0; IPv6 IF is required\n"
     "\t\t  -G can be specified multiple times\n"
     << std::flush;
   Zm::exit(1);
@@ -225,23 +261,15 @@ int main(int argc, const char *argv[])
 	break;
       case 'b':
 	{
-	  ZtRegexCaptures(c, 0);
 	  try {
-	    int n = ZtREGEX(":").m(argv[++i], c);
-	    if (n != 1) usage();
-	    localIP = c[0].length() ? ZiIP(c[0]) : ZiIP();
-	    localPort = ZuBox<unsigned>{c[2]};
+	    if (!parseEndpoint(argv[++i], localIP, localPort)) usage();
 	  } catch (...) { usage(); }
 	}
 	break;
       case 'd':
 	{
-	  ZtRegexCaptures(c, 0);
 	  try {
-	    int n = ZtREGEX(":").m(argv[++i], c);
-	    if (n != 1) usage();
-	    remoteIP = c[0];
-	    remotePort = ZuBox<unsigned>{c[2]};
+	    if (!parseEndpoint(argv[++i], remoteIP, remotePort)) usage();
 	  } catch (...) { usage(); }
 	}
 	break;
@@ -257,8 +285,13 @@ int main(int argc, const char *argv[])
       case 'D':
 	{
 	  ZiIP mif(argv[++i]);
-	  if (!mif) usage();
-	  options.mif(mif);
+	  if (!!mif) {
+	    options.mif(mif);
+	    break;
+	  }
+	  try {
+	    options.mifIndex(ZuBox<unsigned>{argv[i]});
+	  } catch (...) { usage(); }
 	}
 	break;
       case 'T':
@@ -275,9 +308,22 @@ int main(int argc, const char *argv[])
 	    unsigned n = ZtREGEX("/").m(argv[++i], c);
 	    auto addr = n ? ZiIP{c[0]} : ZiIP{argv[i]};
 	    if (!addr.multicast()) usage();
-	    ZiIP mif;
-	    if (n) mif = c[1];
-	    options.mreq(ZiMReq(addr, mif));
+	    switch (addr.type()) {
+	      case ZiIPType::V4:
+		{
+		  ZiIP mif;
+		  if (n) mif = c[1];
+		  options.mreq(ZiMReq(addr, mif));
+		}
+		break;
+	      case ZiIPType::V6:
+		if (!n || !c[1].length()) usage();
+		options.mreq(ZiMReq(addr, ZuBox<unsigned>{c[1]}));
+		break;
+	      default:
+		usage();
+		break;
+	    }
 	  } catch (...) { usage(); }
 	}
 	break;

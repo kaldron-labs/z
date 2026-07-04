@@ -67,7 +67,7 @@ ZuDerive(SQLString, ZtString<ZtStringHeapID<"ZdbPQ.SQLString">>);
 // Int128    int128_t   Zfb.Int128      int16    (*)  int128_t BE
 // UInt128   uint128_t  Zfb.UInt128     uint16   (*)  uint128_t BE
 // Bitmap    ZtBitmap   Zfb.Bitmap      zbitmap  (**) uint64_t BE, uint64_t[] BE
-// IP        ZiIP       Zfb.IP          inet          IPHdr, ZiIP
+// IP        ZiIP       Zfb.IP          inet          IPHdr, address bytes
 // ID        ZuID       Zfb.ID          text          raw data
 //
 // <Type>Vec            [<Type>]        type[]        array (see below)
@@ -185,12 +185,55 @@ struct DateTime { ZuBigEndian<int64_t> sec; ZuBigEndian<int32_t> nsec; };
 struct Int128 { ZuBigEndian<int128_t> v; };
 struct UInt128 { ZuBigEndian<uint128_t> v; };
 struct IPHdr {
-  uint8_t	family = 2;	// AF_INET
+  uint8_t	family = 2;	// PGSQL_AF_INET
   uint8_t	bits = 32;
   uint8_t	is_cidr = 0;
   uint8_t	len = 4;
 };
-struct IP { IPHdr hdr; ZiIP addr; };
+enum {
+  PGSQL_AF_INET = 2,
+  PGSQL_AF_INET6 = 3
+};
+struct IP {
+  IPHdr		hdr;
+  uint8_t	addr[16] = {};
+
+  ZiIP ziIP() const {
+    switch (hdr.family) {
+      case PGSQL_AF_INET:
+	if (hdr.len != sizeof(in_addr)) return {};
+	{
+	  in_addr a;
+	  memcpy(&a, addr, sizeof(a));
+	  return ZiIP{a};
+	}
+      case PGSQL_AF_INET6:
+	if (hdr.len != sizeof(in6_addr)) return {};
+	{
+	  in6_addr a;
+	  memcpy(&a, addr, sizeof(a));
+	  return ZiIP{a};
+	}
+      default:
+	return {};
+    }
+  }
+  bool ziIP(ZiIP ip) {
+    memset(addr, 0, sizeof(addr));
+    switch (ip.type()) {
+      case ZiIPType::V4:
+	hdr = {PGSQL_AF_INET, 32, 0, sizeof(in_addr)};
+	memcpy(addr, &ip.inAddr(), sizeof(in_addr));
+	return true;
+      case ZiIPType::V6:
+	hdr = {PGSQL_AF_INET6, 128, 0, sizeof(in6_addr)};
+	memcpy(addr, &ip.in6Addr(), sizeof(in6_addr));
+	return true;
+      default:
+	return false;
+    }
+  }
+};
 struct ID { ZuID id; };
 #pragma pack(pop)
 // these must all be distinct types
@@ -334,15 +377,39 @@ struct Value : public Value_ {
     !ZuIsSame<void, T>{} &&
     !ZuIsSame<String, T>{} &&
     !ZuIsSame<Bytes, T>{} &&
+    !ZuIsSame<IP, T>{} &&
     !isVar(I), bool>
   load(const char *data, unsigned length) {
     if (length != sizeof(T)) return false;
-    memcpy(new_<I, true>(), data, length);
+    memcpy(static_cast<void *>(new_<I, true>()), data, length);
     return true;
   }
 #if defined(__GNUC__) && !defined(__llvm__)
 #pragma GCC diagnostic pop
 #endif
+
+  template <unsigned I, typename T = Value_::Type<I>>
+  ZuSame<IP, T, bool>
+  load(const char *data, unsigned length) {
+    if (length < sizeof(IPHdr)) return false;
+    IP ip;
+    memcpy(&ip.hdr, data, sizeof(IPHdr));
+    if (ip.hdr.is_cidr) return false;
+    switch (ip.hdr.family) {
+      case PGSQL_AF_INET:
+	if (ip.hdr.bits != 32 || ip.hdr.len != sizeof(in_addr)) return false;
+	break;
+      case PGSQL_AF_INET6:
+	if (ip.hdr.bits != 128 || ip.hdr.len != sizeof(in6_addr)) return false;
+	break;
+      default:
+	return false;
+    }
+    if (length != sizeof(IPHdr) + ip.hdr.len) return false;
+    memcpy(ip.addr, data + sizeof(IPHdr), ip.hdr.len);
+    new (new_<I, true>()) IP{ip};
+    return true;
+  }
 
   // Postgres binary format - save to params - data<I>(), length<I>()
 
@@ -382,12 +449,20 @@ struct Value : public Value_ {
     return p<T>().v.length();
   }
 
+  template <unsigned I, typename T = Value_::Type<I>>
+  ZuSame<IP, T, const char *>
+  data() const { return reinterpret_cast<const char *>(&p<T>()); }
+  template <unsigned I, typename T = Value_::Type<I>>
+  ZuSame<IP, T, unsigned>
+  length() const { return sizeof(IPHdr) + p<T>().hdr.len; }
+
   // All other types - return bigendian packed struct
   template <unsigned I, typename T = Value_::Type<I>>
   ZuIfT<
     !ZuIsSame<void, T>{} &&
     !ZuIsSame<String, T>{} &&
     !ZuIsSame<Bytes, T>{} &&
+    !ZuIsSame<IP, T>{} &&
     !isVar(I), const char *>
   data() const { return reinterpret_cast<const char *>(this); }
   template <unsigned I, typename T = Value_::Type<I>>
@@ -395,6 +470,7 @@ struct Value : public Value_ {
     !ZuIsSame<void, T>{} &&
     !ZuIsSame<String, T>{} &&
     !ZuIsSame<Bytes, T>{} &&
+    !ZuIsSame<IP, T>{} &&
     !isVar(I), unsigned>
   length() const { return sizeof(T); }
 
@@ -458,7 +534,7 @@ struct Value : public Value_ {
 
   template <unsigned I, typename S>
   ZuIfT<I == Value_::Index<IP>{}>
-  print_(S &s) const { s << p<I>().addr; }
+  print_(S &s) const { s << p<I>().ziIP(); }
 
   template <unsigned I, typename S>
   ZuIfT<I == Value_::Index<ID>{}>
@@ -828,9 +904,11 @@ loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<IP>{}>
 loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
-  new (ptr) IP{
-    IPHdr{},
-    ZfbTransform::IP::load(fbo->GetStruct<const Zfb::IP *>(field->offset()))};
+  IP ip;
+  ip.ziIP(ZfbTransform::IP::load(
+    static_cast<Zfb::IP>(fbo->GetField<uint8_t>(field->offset() - 2, 0)),
+    fbo->GetPointer<const void *>(field->offset())));
+  new (ptr) IP{ip};
 }
 
 template <unsigned Type>
@@ -1126,6 +1204,13 @@ saveOffset(Zfb::Builder &fbb, Offsets &offsets, const Value &value)
 }
 
 template <unsigned Type>
+inline ZuIfT<Type == Value::Index<IP>{}>
+saveOffset(Zfb::Builder &fbb, Offsets &offsets, const Value &value)
+{
+  offsets.push(ZfbTransform::IP::save(fbb, value.p<Type>().ziIP()).offset);
+}
+
+template <unsigned Type>
 inline ZuIfT<Type == Value::Index<StringVec>{}>
 saveOffset(Zfb::Builder &fbb, Offsets &offsets, const Value &value)
 {
@@ -1320,6 +1405,7 @@ template <unsigned Type>
 inline ZuIfT<
   Type != Value::Index<String>{} &&
   Type != Value::Index<Bytes>{} &&
+  Type != Value::Index<IP>{} &&
   !isVar(Type)>
 saveOffset(Zfb::Builder &, Offsets &, const Value &) { }
 
@@ -1453,11 +1539,13 @@ saveValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<IP>{}>
 saveValue(
-  Zfb::Builder &fbb, const Offsets &,
+  Zfb::Builder &fbb, const Offsets &offsets,
   const reflection::Field *field, const Value &value)
 {
-  auto v = ZfbTransform::IP::save(value.p<Type>().addr);
-  fbb.AddStruct(field->offset(), &v);
+  fbb.AddElement<uint8_t>(
+    field->offset() - 2,
+    static_cast<uint8_t>(ZfbTransform::IP::type(value.p<Type>().ziIP())), 0);
+  fbb.AddOffset(field->offset(), offsets.shift());
 }
 
 template <unsigned Type>

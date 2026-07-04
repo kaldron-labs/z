@@ -31,14 +31,6 @@ static void tokenPut64_(uint8_t *out, uint64_t v)
   for (unsigned i = 0; i < 8; ++i) out[i] = uint8_t(v >> (56 - i * 8));
 }
 
-static uint32_t tokenGet32_(const uint8_t *in)
-{
-  return (uint32_t(in[0]) << 24) |
-    (uint32_t(in[1]) << 16) |
-    (uint32_t(in[2]) << 8) |
-    uint32_t(in[3]);
-}
-
 static uint64_t tokenGet64_(const uint8_t *in)
 {
   uint64_t v = 0;
@@ -83,14 +75,26 @@ bool AddressToken::encode(
   enum {
     MagicLength = 4,
     FixedLength =
-      MagicLength + 1 + 1 + 1 + 1 + 1 + 8 + 4 + 2 + NonceLength
+      MagicLength + 1 + 1 + 1 + 1 + 1 + 8 + 1 + 1 + 2 + NonceLength
   };
+  ZiIP ip = addr.ip();
+  unsigned addrLen;
+  switch (ip.type()) {
+    case ZiIPType::V4:
+      addrLen = sizeof(in_addr);
+      break;
+    case ZiIPType::V6:
+      addrLen = sizeof(in6_addr);
+      break;
+    default:
+      return false;
+  }
   if (!addr ||
       origDCID.length() > CxnIDMax ||
       serverCID.length() > CxnIDMax)
     return false;
   unsigned len =
-    FixedLength + origDCID.length() + serverCID.length() + TagLength;
+    FixedLength + addrLen + origDCID.length() + serverCID.length() + TagLength;
   if (len > MaxLength) return false;
   token.length(len);
   uint8_t *out = token.data();
@@ -99,13 +103,23 @@ bool AddressToken::encode(
   out[o++] = 'Q';
   out[o++] = 'A';
   out[o++] = 'V';
-  out[o++] = 1;
+  out[o++] = 2;
   out[o++] = uint8_t(kind);
   out[o++] = bindPort ? 1 : 0;
   out[o++] = origDCID.length();
   out[o++] = serverCID.length();
   tokenPut64_(out + o, nowSec ? nowSec : tokenNowSec_()); o += 8;
-  tokenPut32_(out + o, uint32_t(addr.ip())); o += 4;
+  out[o++] = uint8_t(ip.type());
+  out[o++] = uint8_t(addrLen);
+  switch (ip.type()) {
+    case ZiIPType::V4:
+      memcpy(out + o, &ip.inAddr(), addrLen);
+      break;
+    case ZiIPType::V6:
+      memcpy(out + o, &ip.in6Addr(), addrLen);
+      break;
+  }
+  o += addrLen;
   out[o++] = uint8_t(addr.port() >> 8);
   out[o++] = uint8_t(addr.port());
   if (!Ztls::Backend::init() ||
@@ -134,7 +148,7 @@ TokenStatus::T AddressToken::validate(
   enum {
     MagicLength = 4,
     FixedLength =
-      MagicLength + 1 + 1 + 1 + 1 + 1 + 8 + 4 + 2 + NonceLength
+      MagicLength + 1 + 1 + 1 + 1 + 1 + 8 + 1 + 1 + 2 + NonceLength
   };
   info = {};
   if (!addr ||
@@ -142,11 +156,24 @@ TokenStatus::T AddressToken::validate(
       token.length() > MaxLength ||
       token[0] != 'Z' || token[1] != 'Q' ||
       token[2] != 'A' || token[3] != 'V' ||
-      uint8_t(token[4]) != 1)
+      uint8_t(token[4]) != 2)
     return TokenStatus::Malformed;
   unsigned odcidLen = uint8_t(token[7]);
   unsigned scidLen = uint8_t(token[8]);
-  unsigned len = FixedLength + odcidLen + scidLen + TagLength;
+  unsigned o = 17;
+  ZiIPType::T ipType = ZiIPType::T(uint8_t(token[o++]));
+  unsigned addrLen = uint8_t(token[o++]);
+  switch (ipType) {
+    case ZiIPType::V4:
+      if (addrLen != sizeof(in_addr)) return TokenStatus::Malformed;
+      break;
+    case ZiIPType::V6:
+      if (addrLen != sizeof(in6_addr)) return TokenStatus::Malformed;
+      break;
+    default:
+      return TokenStatus::Malformed;
+  }
+  unsigned len = FixedLength + addrLen + odcidLen + scidLen + TagLength;
   if (odcidLen > CxnIDMax || scidLen > CxnIDMax || token.length() != len)
     return TokenStatus::Malformed;
   uint8_t tag[TagLength];
@@ -168,15 +195,36 @@ TokenStatus::T AddressToken::validate(
   }
   bool tokenBindPort = uint8_t(token[6]) & 1;
   if (bindPort != tokenBindPort) return TokenStatus::Address;
-  unsigned o = 9;
+  o = 9;
   uint64_t issueSec = tokenGet64_(token.data() + o); o += 8;
-  uint32_t ip = tokenGet32_(token.data() + o); o += 4;
+  ipType = ZiIPType::T(uint8_t(token[o++]));
+  addrLen = uint8_t(token[o++]);
+  ZiIP ip;
+  switch (ipType) {
+    case ZiIPType::V4:
+      {
+	in_addr a;
+	memcpy(&a, token.data() + o, sizeof(a));
+	ip = a;
+      }
+      break;
+    case ZiIPType::V6:
+      {
+	in6_addr a;
+	memcpy(&a, token.data() + o, sizeof(a));
+	ip = a;
+      }
+      break;
+    default:
+      return TokenStatus::Malformed;
+  }
+  o += addrLen;
   uint16_t port = (uint16_t(token[o]) << 8) | token[o + 1];
   o += 2 + NonceLength;
   uint64_t now = nowSec ? nowSec : tokenNowSec_();
   if (lifetimeSec && (issueSec > now || now - issueSec > lifetimeSec))
     return TokenStatus::Expired;
-  if (ip != uint32_t(addr.ip()) || (bindPort && port != addr.port()))
+  if (ip != addr.ip() || (bindPort && port != addr.port()))
     return TokenStatus::Address;
   if (odcidLen) {
     info.origDCID = ZuBSpan{token.data() + o, odcidLen};

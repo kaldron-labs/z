@@ -16,6 +16,16 @@
 
 namespace Zws {
 
+template <typename S>
+inline void appendAuthority(S &s, ZuCSpan host, uint16_t port)
+{
+  bool bracket =
+    host && host[0] != '[' && host.find([](auto c) { return c == ':'; }) >= 0;
+  if (bracket) s << '[' << host << ']';
+  else s << host;
+  if (port != 443) s << ':' << unsigned(port);
+}
+
 template <typename App, typename Link> class Client;
 
 template <
@@ -73,8 +83,8 @@ public:
     m_state = State::Handshake;
 
     auto tx = this->txStream();
-    tx << "GET " << m_path << " HTTP/1.1\r\nHost: " << this->server();
-    if (this->port() != 443) tx << ':' << unsigned(this->port());
+    tx << "GET " << m_path << " HTTP/1.1\r\nHost: ";
+    appendAuthority(tx, this->server(), this->port());
     tx
       << "\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
 	 "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: "

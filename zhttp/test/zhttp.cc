@@ -476,6 +476,60 @@ void setHost(URL &url, ZuCSpan host)
 #endif
 }
 
+bool parseAuthority(
+  ZuCSpan authority, ZuCSpan &host, ZuCSpan &port, ZuCSpan &error)
+{
+  port = {};
+  if (!authority) {
+    error = "missing URL host";
+    return false;
+  }
+  if (authority[0] == '[') {
+    ZuCSpan rest = authority;
+    rest.offset(1);
+    auto close = rest.find([](auto c) { return c == ']'; });
+    if (close < 0) {
+      error = "invalid URL authority";
+      return false;
+    }
+    host = rest;
+    host.trunc(close);
+    rest.offset(close + 1);
+    if (!host) {
+      error = "invalid URL authority";
+      return false;
+    }
+    if (!rest) return true;
+    if (rest[0] != ':') {
+      error = "invalid URL authority";
+      return false;
+    }
+    port = rest;
+    port.offset(1);
+    if (!port) {
+      error = "invalid URL authority";
+      return false;
+    }
+    return true;
+  }
+
+  for (unsigned i = 0; i < authority.length(); ++i) {
+    if (authority[i] != ':') continue;
+    host = authority;
+    host.trunc(i);
+    port = authority;
+    port.offset(i + 1);
+    if (!host || !port) {
+      error = "invalid URL authority";
+      return false;
+    }
+    return true;
+  }
+
+  host = authority;
+  return true;
+}
+
 bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
 {
   auto fail = [error](ZuCSpan msg) {
@@ -506,14 +560,9 @@ bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
   target.offset(slash);
   if (!target) target = "/";
 
-  if (!authority) return fail("missing URL host");
-  for (unsigned i = 0; i < authority.length(); ++i) {
-    if (authority[i] != ':') continue;
-    ZuCSpan host = authority;
-    host.trunc(i);
-    ZuCSpan port = authority;
-    port.offset(i + 1);
-    if (!host || !port) return fail("invalid URL authority");
+  ZuCSpan host, port, msg;
+  if (!parseAuthority(authority, host, port, msg)) return fail(msg);
+  if (port) {
     unsigned p = ZuBox<unsigned>(port);
     if (!p || p > 65535) return fail("invalid URL port");
     setHost(url, host);
@@ -522,7 +571,7 @@ bool parseURL(ZuCSpan input, URL &url, ZeException *error = nullptr)
     return true;
   }
 
-  setHost(url, authority);
+  setHost(url, host);
   url.target = target;
   return true;
 }
@@ -575,14 +624,9 @@ bool parseAltSvc(State &state, ZuCSpan value)
     port_.offset(1);
     if (!parsePort(port_, port)) return false;
   } else {
-    host = authority;
-    if (auto i = authority.find([](auto c) { return c == ':'; }); i >= 0) {
-      host = authority;
-      host.trunc(i);
-      ZuCSpan port_ = authority;
-      port_.offset(i + 1);
-      if (!host || !parsePort(port_, port)) return false;
-    }
+    ZuCSpan port_, msg;
+    if (!parseAuthority(authority, host, port_, msg)) return false;
+    if (port_ && !parsePort(port_, port)) return false;
   }
 
   state.altSvcHost = host;
@@ -2495,7 +2539,6 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     link->connect(run.originalURL.host, run.originalURL.port);
     bool timedOut = false;
     bool stalled = false;
-    bool quietTimedOut = false;
     IntervalMonitor mon{
       run.options.timeout,
       run.options.memDiag
@@ -2542,7 +2585,6 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	  quiet >= run.options.quietTimeout &&
 	  incomplete) {
 	stalled = true;
-	quietTimedOut = true;
 	break;
       }
       if (run.options.stallTimeout && incomplete &&
@@ -2600,11 +2642,6 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	s << "h3 " << (stalled ? "stalled" : "timed out") <<
 	  ", reconnecting attempt=" << attempt + 1;
       }));
-      if (quietTimedOut) {
-	ZiLOG(Error, "zhttp",
-	  "h3 quiet timeout tripped; sleeping forever for debugger attach");
-	for (;;) Zm::sleep(ZuTime(1));
-      }
     }
     if (timedOut || stalled)
       abortDrained(link.ptr());

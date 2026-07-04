@@ -14,6 +14,20 @@ using namespace ZuTestUtil;
 
 using Bytes = ZtArray<uint8_t>;
 
+ZiIP ip4(uint32_t n)
+{
+  in_addr addr;
+  addr.s_addr = htonl(n);
+  return ZiIP{addr};
+}
+
+ZiIP ip6(const uint8_t (&bytes)[16])
+{
+  in6_addr addr;
+  memcpy(addr.s6_addr, bytes, sizeof(addr.s6_addr));
+  return ZiIP{addr};
+}
+
 void put16(Bytes &b, uint16_t v)
 {
   b.push(v>>8);
@@ -110,7 +124,7 @@ void testResolveDelegation()
   ZeError e;
   ZuCheck(ZiResolver::resolve("127.0.0.1",
     ZmFn<bool(ZiIP)>{[&](ZiIP ip) {
-      sawLoopback |= ip == ZiIP{0x7f000001U};
+      sawLoopback |= ip == ip4(0x7f000001U);
       ++n;
       return false;
     }}, &e) == Zi::OK);
@@ -119,7 +133,21 @@ void testResolveDelegation()
 
   ZiIP ip;
   ZuCheck(ip.resolve("127.0.0.1", &e) == Zi::OK);
-  ZuCheck(ip == ZiIP{0x7f000001U});
+  ZuCheck(ip == ip4(0x7f000001U));
+
+  unsigned n6 = 0;
+  bool sawLoopback6 = false;
+  ZuCheck(ZiResolver::resolve("::1",
+    ZmFn<bool(ZiIP)>{[&](ZiIP ip) {
+      sawLoopback6 |= ip == ZiIP{"::1"};
+      ++n6;
+      return false;
+    }}, &e) == Zi::OK);
+  ZuCheck(n6 == 1);
+  ZuCheck(sawLoopback6);
+
+  auto name = ZiIP{"::1"}.name(&e);
+  ZuCheck(!!name);
 }
 
 void testValidHTTPS()
@@ -129,10 +157,15 @@ void testValidHTTPS()
   uint8_t alpn[] = { 2, 'h', '3' };
   uint8_t port[] = { 0x20, 0xfb };
   uint8_t hint[] = { 192, 0, 2, 1 };
+  uint8_t hint6[] = {
+    0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1
+  };
   auto msg = response("example.com", 1, ".", [&](Bytes &r) {
     svcParam(r, 1, ZuBSpan(alpn, sizeof(alpn)));
     svcParam(r, 3, ZuBSpan(port, sizeof(port)));
     svcParam(r, 4, ZuBSpan(hint, sizeof(hint)));
+    svcParam(r, 6, ZuBSpan(hint6, sizeof(hint6)));
   });
   ZiResolver::HTTPS https;
   ZuCheck(parseOne(msg, https) == Zi::OK);
@@ -143,7 +176,10 @@ void testValidHTTPS()
   ZuCheck(https.port == 8443);
   ZuCheck(https.hasIPv4Hint);
   ZuCheck(https.nIPv4Hint == 1);
-  ZuCheck(https.ipv4Hint[0] == ZiIP{0xc0000201U});
+  ZuCheck(https.ipv4Hint[0] == ip4(0xc0000201U));
+  ZuCheck(https.hasIPv6Hint);
+  ZuCheck(https.nIPv6Hint == 1);
+  ZuCheck(https.ipv6Hint[0] == ip6(hint6));
 }
 
 void testAliasMode()
@@ -178,6 +214,9 @@ void testMalformed()
   })));
   ZuCheck(bad(response("example.com", 1, ".", [&](Bytes &r) {
     svcParam(r, 4, ZuBSpan(one, sizeof(one)));
+  })));
+  ZuCheck(bad(response("example.com", 1, ".", [&](Bytes &r) {
+    svcParam(r, 6, ZuBSpan(one, sizeof(one)));
   })));
   ZuCheck(bad(response("example.com", 1, ".", [&](Bytes &r) {
     svcParam(r, 1, ZuBSpan{});

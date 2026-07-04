@@ -6,10 +6,10 @@
 
 #include <string.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <iostream>
 
 #include <zlib/ZuTestUtil.hh>
 
@@ -37,6 +37,7 @@ struct State {
   ZmAtomic<unsigned>	doneCount{0};
   ZmAtomic<unsigned>	clientConnected{0};
   ZmAtomic<unsigned>	serverConnected{0};
+  ZiIP			ip;
   unsigned		port = 0;
 
   void fail() {
@@ -60,24 +61,6 @@ ZiMxParams mxParams()
     .rxThread(1).txThread(2);
 }
 
-uint16_t reserveLoopbackPort()
-{
-  int s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (s < 0) return 0;
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  addr.sin_port = 0;
-  uint16_t port = 0;
-  if (!::bind(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr))) {
-    socklen_t len = sizeof(addr);
-    if (!::getsockname(s, reinterpret_cast<sockaddr *>(&addr), &len))
-      port = ntohs(addr.sin_port);
-  }
-  ::close(s);
-  return port;
-}
-
 template <typename Link>
 void sendBytes(Link &link, ZuCSpan s)
 {
@@ -98,6 +81,21 @@ bool consume(Ztcp::RxStream &rx, ZuCSpan expected)
 	!memcmp(span.data(), expected.data(), expected.length());
     });
   return ok;
+}
+
+uint16_t reserveLoopbackPort(ZiIP ip)
+{
+  int s = ::socket(ip.v6() ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (s < 0) return 0;
+  ZiSockAddr addr{ip, 0};
+  uint16_t port = 0;
+  if (!::bind(s, addr.sa(), addr.len())) {
+    socklen_t len = addr.len();
+    if (!::getsockname(s, addr.sa(), &len))
+      port = addr.port();
+  }
+  ::close(s);
+  return port;
 }
 
 struct ClientApp : public Ztcp::Client<ClientApp> {
@@ -148,7 +146,7 @@ struct ServerApp : public Ztcp::Server<ServerApp> {
 
   ZiConnection *accepted(const ZiCxnInfo &ci);
 
-  ZiIP localIP() const { return ZiIP("127.0.0.1"); }
+  ZiIP localIP() const { return state->ip; }
   unsigned localPort() const { return state->port; }
   unsigned nAccepts() const { return 1; }
 
@@ -195,12 +193,17 @@ ZiConnection *ServerApp::accepted(const ZiCxnInfo &ci)
   return new Link::Cxn(new Link(this), ci);
 }
 
-void testLoop()
+void testLoop(const char *testName, ZiIP ip, const char *connectIP)
 {
-  ZuTestScopeRT(testLoop);
+  ZuTestScopeRT(testName);
 
   State state;
-  state.port = reserveLoopbackPort();
+  state.ip = ip;
+  state.port = reserveLoopbackPort(ip);
+  if (ip.v6() && !state.port) {
+    std::cout << "# IPv6 loopback unavailable; skipping " << testName << '\n';
+    return;
+  }
   ZTCP_CHECK_RT(state.port, "failed to reserve loopback port");
   if (!state.port) return;
 
@@ -221,7 +224,7 @@ void testLoop()
     "server listen timed out");
 
   ZmRef<ClientApp::Link> link = new ClientApp::Link(&client);
-  link->connect("127.0.0.1", state.port);
+  link->connect(connectIP, state.port);
 
   ZTCP_CHECK_RT(state.done.timedwait(Zm::now(5)) == 0, "loopback timed out");
   ZTCP_CHECK_RT(!state.errors.load_(), "loopback error");
@@ -245,7 +248,8 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
-  ZuTestCall(testLoop);
+  ZuTestCall(testLoop, "testLoopIPv4", ZiIP{"127.0.0.1"}, "127.0.0.1");
+  ZuTestCall(testLoop, "testLoopIPv6", ZiIP{"::1"}, "::1");
   ZiLog::stop();
   return 0;
 }

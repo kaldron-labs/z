@@ -106,42 +106,77 @@ struct ZiCxnInfo;
 // transient
 using ZiFailFn = ZmFn<void(bool)>;
 
-// multicast subscription request (IGMP Report)
-struct ZiMReq : public ip_mreq {
-  ZiMReq() {
-    new (&imr_multiaddr) ZiIP();
-    new (&imr_interface) ZiIP();
-  }
+#ifdef _WIN32
+using ZiIPv6MReq = IPV6_MREQ;
+#else
+using ZiIPv6MReq = struct ipv6_mreq;
+#endif
+
+// multicast subscription request (IGMP/MLD Report)
+struct ZiMReq {
+  using Req = ZuUnion<void, ip_mreq, ZiIPv6MReq>;
+  enum {
+    Null = Req::Index<void>{},
+    V4 = Req::Index<ip_mreq>{},
+    V6 = Req::Index<ZiIPv6MReq>{}
+  };
+  ZuAssert(Null == ZiIPType::Null);
+  ZuAssert(V4 == ZiIPType::V4);
+  ZuAssert(V6 == ZiIPType::V6);
+
+  ZiMReq() = default;
   ZiMReq(const ZiIP &addr, const ZiIP &mif) {
-    new (&imr_multiaddr) ZiIP(addr);
-    new (&imr_interface) ZiIP(mif);
+    if (addr.type() != ZiIPType::V4 || mif.type() != ZiIPType::V4) {
+      m_req.type_(Null);
+      return;
+    }
+    m_req.p<V4>(ip_mreq{});
+    m_req.p<V4>().imr_multiaddr = addr.inAddr();
+    m_req.p<V4>().imr_interface = mif.inAddr();
+  }
+  ZiMReq(const ZiIP &addr, unsigned ifIndex) {
+    if (addr.type() != ZiIPType::V6) {
+      m_req.type_(Null);
+      return;
+    }
+    m_req.p<V6>(ZiIPv6MReq{});
+    m_req.p<V6>().ipv6mr_multiaddr = addr.in6Addr();
+    m_req.p<V6>().ipv6mr_interface = ifIndex;
   }
 
-  ZiMReq(const ZiMReq &m) {
-    addr() = m.addr(), mif() = m.mif();
-  }
-  ZiMReq &operator =(const ZiMReq &m) {
-    if (ZuLikely(this != &m))
-      addr() = m.addr(), mif() = m.mif();
-    return *this;
-  }
-
-  explicit ZiMReq(const struct ip_mreq &m) {
-    addr() = m.imr_multiaddr, mif() = m.imr_interface;
-  }
+  explicit ZiMReq(const struct ip_mreq &m) :
+      m_req{m} { }
   ZiMReq &operator =(const struct ip_mreq &m) {
-    if ((const struct ip_mreq *)this != &m) 
-      addr() = m.imr_multiaddr, mif() = m.imr_interface;
+    m_req.p<V4>(m);
     return *this;
   }
+
+  ZiIPType::T type() const { return m_req.type(); }
 
   bool equals(const ZiMReq &m) const {
-    return addr() == m.addr() && mif() == m.mif();
+    if (type() != m.type()) return false;
+    switch (type()) {
+      case ZiIPType::V4:
+	return addr() == m.addr() && mif() == m.mif();
+      case ZiIPType::V6:
+	return addr() == m.addr() && ifIndex() == m.ifIndex();
+      default:
+	return true;
+    }
   }
   int cmp(const ZiMReq &m) const {
     int r;
-    if (r = addr().cmp(m.addr())) return r;
-    return mif().cmp(m.mif());
+    if (r = ZuCompare(type(), m.type())) return r;
+    switch (type()) {
+      case ZiIPType::V4:
+	if (r = addr().cmp(m.addr())) return r;
+	return mif().cmp(m.mif());
+      case ZiIPType::V6:
+	if (r = addr().cmp(m.addr())) return r;
+	return ZuCompare(ifIndex(), m.ifIndex());
+      default:
+	return 0;
+    }
   }
   friend inline bool operator ==(const ZiMReq &l, const ZiMReq &r) {
     return l.equals(r);
@@ -150,26 +185,74 @@ struct ZiMReq : public ip_mreq {
     return l.cmp(r);
   }
 
-  bool operator !() const { return !addr() && !mif(); }
+  bool operator !() const {
+    switch (type()) {
+      case ZiIPType::V4:
+	return !addr() && !mif();
+      case ZiIPType::V6:
+	return !addr() && !ifIndex();
+      default:
+	return true;
+    }
+  }
   ZuOpBool
 
   uint32_t hash() const {
-    return addr().hash() ^ mif().hash();
+    switch (type()) {
+      case ZiIPType::V4:
+	return ZuHash<uint8_t>::hash(type()) ^ addr().hash() ^ mif().hash();
+      case ZiIPType::V6:
+	return ZuHash<uint8_t>::hash(type()) ^
+	  addr().hash() ^ ZuBoxed(ifIndex()).hash();
+      default:
+	return ZuHash<uint8_t>::hash(type());
+    }
   }
 
   template <typename S> void print(S &s) const {
-    s << addr() << "->" << mif();
+    switch (type()) {
+      case ZiIPType::V4:
+	s << addr() << "->" << mif();
+	break;
+      case ZiIPType::V6:
+	s << addr() << "->" << ZuBoxed(ifIndex());
+	break;
+      default:
+	s << "null";
+	break;
+    }
   }
 
-  const ZiIP &addr() const { return *(const ZiIP *)&imr_multiaddr; }
-  ZiIP &addr() { return *(ZiIP *)&imr_multiaddr; }
-  const ZiIP &mif() const { return *(const ZiIP *)&imr_interface; }
-  ZiIP &mif() { return *(ZiIP *)&imr_interface; }
+  ZiIP addr() const {
+    switch (type()) {
+      case ZiIPType::V4:
+	return ZiIP{m_req.p<V4>().imr_multiaddr};
+      case ZiIPType::V6:
+	return ZiIP{m_req.p<V6>().ipv6mr_multiaddr};
+      default:
+	return ZiIP{};
+    }
+  }
+  ZiIP mif() const {
+    return type() == ZiIPType::V4 ?
+      ZiIP{m_req.p<V4>().imr_interface} : ZiIP{};
+  }
+  unsigned ifIndex() const {
+    return type() == ZiIPType::V6 ? m_req.p<V6>().ipv6mr_interface : 0;
+  }
+
+  const ip_mreq &ipMReq() const { return m_req.p<V4>(); }
+  ip_mreq &ipMReq() { return m_req.p<V4>(); }
+  const ZiIPv6MReq &ip6MReq() const { return m_req.p<V6>(); }
+  ZiIPv6MReq &ip6MReq() { return m_req.p<V6>(); }
 
   struct Traits : public ZuBaseTraits<ZiMReq> { enum { IsPOD = 1 }; };
   friend Traits ZuTraitsType(ZiMReq *);
   
   friend ZuPrintFn ZuPrintType(ZiMReq *);
+
+private:
+  Req		m_req;
 };
 
 #ifndef ZiCxnOptions_NMReq
@@ -253,10 +336,25 @@ public:
     m_mif = ip;
     return *this;
   }
+  unsigned mifIndex() const { return m_mifIndex; }
+  ZiCxnOptions &mifIndex(unsigned i) {
+    m_mifIndex = i;
+    return *this;
+  }
   const unsigned &ttl() const { return m_ttl; }
   ZiCxnOptions &ttl(unsigned i) {
     m_ttl = i;
     return *this;
+  }
+  bool multicastValid(ZiIPType::T type) const {
+    if (type != ZiIPType::V4 && type != ZiIPType::V6) return false;
+    if (type == ZiIPType::V4 && !!m_mif && m_mif.type() != ZiIPType::V4)
+      return false;
+    if (type == ZiIPType::V6 && !!m_mif) return false;
+    for (unsigned i = 0; i < m_mreqs.length(); i++)
+      if (m_mreqs[i].type() != type || !m_mreqs[i].addr().multicast())
+	return false;
+    return true;
   }
 #ifdef ZiMultiplex_Netlink
   bool netlink() const {
@@ -296,7 +394,8 @@ public:
     if ((m_flags & NetLink())) return m_familyName == o.m_familyName;
 #endif
     if (!(m_flags & Multicast())) return true;
-    return m_mreqs == o.m_mreqs && m_mif == o.m_mif && m_ttl == o.m_ttl;
+    return m_mreqs == o.m_mreqs &&
+      m_mif == o.m_mif && m_mifIndex == o.m_mifIndex && m_ttl == o.m_ttl;
   }
   int cmp(const ZiCxnOptions &o) const {
     using namespace ZiCxnFlags;
@@ -308,6 +407,7 @@ public:
     if (!(m_flags & Multicast())) return i;
     if (i = m_mreqs.cmp(o.m_mreqs)) return i;
     if (i = m_mif.cmp(o.m_mif)) return i;
+    if (i = ZuCompare(m_mifIndex, o.m_mifIndex)) return i;
     return ZuCompare(m_ttl, o.m_ttl);
   }
   friend inline bool operator ==(const ZiCxnOptions &l, const ZiCxnOptions &r) {
@@ -324,7 +424,8 @@ public:
     if (m_flags & NetLink()) return code ^ m_familyName.hash();
 #endif
     if (!(m_flags & Multicast())) return code;
-    return code ^ m_mreqs.hash() ^ m_mif.hash() ^ ZuBoxed(m_ttl).hash();
+    return code ^ m_mreqs.hash() ^ m_mif.hash() ^
+      ZuBoxed(m_mifIndex).hash() ^ ZuBoxed(m_ttl).hash();
   }
 
   template <typename S> void print(S &s) const {
@@ -336,7 +437,9 @@ public:
 	if (i) s << ',';
 	s << m_mreqs[i];
       }
-      s << "} mif=" << m_mif << " TTL=" << ZuBoxed(m_ttl);
+      s << "} mif=" << m_mif <<
+	" mifIndex=" << ZuBoxed(m_mifIndex) <<
+	" TTL=" << ZuBoxed(m_ttl);
     }
 #ifdef ZiMultiplex_Netlink
     if (m_flags & NetLink()) s << " familyName=" << m_familyName;
@@ -348,6 +451,7 @@ public:
 private:
   MReqs			m_mreqs;
   ZiIP			m_mif;
+  unsigned		m_mifIndex = 0;
   unsigned		m_ttl = 0;
 #ifdef ZiMultiplex_Netlink
   FamilyName		m_familyName; // Generic Netlink Family Name
@@ -410,7 +514,8 @@ struct ZiCxnInfo { // pure aggregate, no ctor
 
 // display sequence:
 //   mxID, type, remoteIP, remotePort, localIP, localPort,
-//   socket, flags, mreqAddr, mreqIf, mif, ttl,
+//   socket, flags, mreqAddr, mreqIf, mreqIfIndex,
+//   mif, mifIndex, ttl,
 //   rxBufSize, rxBufLen, txBufSize, txBufLen
 struct ZiCxnTelemetry {
   ZuID		mxID;		// multiplexer ID
@@ -425,7 +530,9 @@ struct ZiCxnTelemetry {
   uint32_t	txBufLen = 0;	// graphable (*) - ioctl(..., SIOCOUTQ, ...)
   ZiIP		mreqAddr;	// mreqs[0]
   ZiIP		mreqIf;		// mreqs[0]
+  uint32_t	mreqIfIndex = 0;
   ZiIP		mif;
+  uint32_t	mifIndex = 0;
   uint32_t	ttl = 0;
   ZiIP		localIP;	// primary key
   ZiIP		remoteIP;	// primary key
@@ -768,7 +875,7 @@ template <typename> friend class Accept_;
     ZmRef<Listener>	m_listener;
     ZiCxnInfo		m_info;
     Zi_Overlapped	m_overlapped;
-    char		m_buf[(sizeof(struct sockaddr_in) + 16) * 2];
+    char		m_buf[(ZiSockAddr::MaxLen + 16) * 2];
   };
   using Accept_Heap = ZmHeap<"ZiMultiplex.Accept", Accept_<ZuEmpty>>;
   ZuDerive(Accept, (Accept_<Accept_Heap>)); 

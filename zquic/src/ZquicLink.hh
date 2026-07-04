@@ -1277,9 +1277,7 @@ protected:
   }
   static bool sameAddr_(const ZiSockAddr &l, const ZiSockAddr &r) {
     if (!l || !r) return !l && !r;
-    return l.m_sin.sin_family == r.m_sin.sin_family &&
-      l.m_sin.sin_port == r.m_sin.sin_port &&
-      l.m_sin.sin_addr.s_addr == r.m_sin.sin_addr.s_addr;
+    return l.type() == r.type() && l.port() == r.port() && l.ip() == r.ip();
   }
   void resetPath_() {
     m_path = m_isServer ?

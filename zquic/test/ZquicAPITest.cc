@@ -664,11 +664,15 @@ void testApplicationCallbacks()
     "transport close callback mismatch");
 
   ZmRef<TestLink> path = new TestLink{&fixture.app, true};
-  ZiSockAddr localAddr{ZiIP{0x0a000001}, 4433};
-  ZiSockAddr oldRemote{ZiIP{0x0a000002}, 50000};
+  in_addr localIP;
+  localIP.s_addr = htonl(0x0a000001);
+  in_addr oldRemoteIP;
+  oldRemoteIP.s_addr = htonl(0x0a000002);
+  ZiSockAddr localAddr{ZiIP{localIP}, 4433};
+  ZiSockAddr oldRemote{ZiIP{oldRemoteIP}, 50000};
 #ifdef Zquic_DEBUG
-  ZiSockAddr newRemote{ZiIP{0x0a000002}, 50001};
-  ZiSockAddr failRemote{ZiIP{0x0a000002}, 50002};
+  ZiSockAddr newRemote{ZiIP{oldRemoteIP}, 50001};
+  ZiSockAddr failRemote{ZiIP{oldRemoteIP}, 50002};
 #endif
   path->initServerPath(localAddr, oldRemote);
 #ifdef Zquic_DEBUG

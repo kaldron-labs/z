@@ -36,10 +36,13 @@ struct HTTPS {
   Host		target;
   uint16_t	port = 0;
   ZiIP		ipv4Hint[H3MaxIPs];
+  ZiIP		ipv6Hint[H3MaxIPs];
   uint8_t	nIPv4Hint = 0;
+  uint8_t	nIPv6Hint = 0;
   bool		noDefaultALPN = false;
   bool		hasALPN = false;
   bool		hasIPv4Hint = false;
+  bool		hasIPv6Hint = false;
   bool		unknownMandatory = false;
   bool		hasH3 = false;
 
@@ -53,6 +56,7 @@ struct H3Endpoint {
   uint16_t	port = 443;
   bool		fromHTTPS = false;
   bool		fromIPv4Hint = false;
+  bool		fromIPv6Hint = false;
 };
 
 enum class H3Policy : int8_t {

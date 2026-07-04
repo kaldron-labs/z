@@ -45,7 +45,7 @@ private:
 
 class LoopMx : public ZiMultiplex {
 public:
-  LoopMx() = default;
+  LoopMx(ZiIP loopIP) : m_loopIP{loopIP} { }
   ~LoopMx() = default;
 
   ZiConnection *connected(const ZiCxnInfo &ci)
@@ -85,7 +85,7 @@ public:
       ZiListenFn{this, ZmFnPtr<&LoopMx::listening>{}},
       ZiFailFn{this, ZmFnPtr<&LoopMx::failed>{}},
       ZiConnectFn{this, ZmFnPtr<&LoopMx::connected>{}},
-      ZiIP("127.0.0.1"), 0, 1,
+      m_loopIP, 0, 1,
       ZiCxnOptions());
   }
 
@@ -161,8 +161,8 @@ private:
     ZiMultiplex::connect(
       ZiConnectFn{this, ZmFnPtr<&LoopMx::connected>{}},
       ZiFailFn{this, ZmFnPtr<&LoopMx::failed>{}},
-      ZiIP("127.0.0.1"), 0,
-      ZiIP("127.0.0.1"), m_listenPort,
+      m_loopIP, 0,
+      m_loopIP, m_listenPort,
       ZiCxnOptions());
   }
 
@@ -189,6 +189,7 @@ private:
 	  ZmSemaphore		m_done;
 	  ZmSemaphore		m_discDone;
 	  ZmScheduler::Timer	m_retryTimer;
+  ZiIP			m_loopIP;
 	  unsigned		m_listenPort = 0;
   unsigned		m_retries = 0;
   ZmRef<LoopCxn>	m_clientCxn;
@@ -301,43 +302,145 @@ bool LoopCxn::sendServerDone(ZiIOContext &io)
   return true;
 }
 
-void testTcpLoopbackAndTelemetry()
+void testMulticastOptions()
 {
-  ZuTestScope(testTcpLoopbackAndTelemetry);
+  ZuTestScope(testMulticastOptions);
 
-  LoopMx mx;
-  ZuCheck(mx.start());
+  ZiMReq v4{ZiIP{"224.0.0.1"}, ZiIP{"0.0.0.0"}};
+  ZuCheck(v4.type() == ZiIPType::V4);
+  ZuCheck(v4.addr() == ZiIP{"224.0.0.1"});
+  ZuCheck(v4.mif() == ZiIP{"0.0.0.0"});
+  ZuCheck(v4.ifIndex() == 0);
+  ZuCheck(!!v4);
+
+  ZiMReq v4b{ZiIP{"224.0.0.2"}, ZiIP{"0.0.0.0"}};
+  ZuCheck(v4 != v4b);
+  ZuCheck(v4.cmp(v4b) != 0);
+  ZuCheck(v4.hash() != v4b.hash());
+  ZtString<> s;
+  s << v4;
+  ZuCheck(s == "224.0.0.1->0.0.0.0");
+
+  ZiMReq v6{ZiIP{"ff01::1"}, 3};
+  ZuCheck(v6.type() == ZiIPType::V6);
+  ZuCheck(v6.addr() == ZiIP{"ff01::1"});
+  ZuCheck(!v6.mif());
+  ZuCheck(v6.ifIndex() == 3);
+  ZuCheck(!!v6);
+
+  ZiMReq v6b{ZiIP{"ff01::2"}, 3};
+  ZuCheck(v6 != v6b);
+  ZuCheck(v6.cmp(v6b) != 0);
+  ZuCheck(v6.hash() != v6b.hash());
+  s.null();
+  s << v6;
+  ZuCheck(s == "ff01::1->3");
+
+  ZiMReq mixed1{ZiIP{"ff01::1"}, ZiIP{"0.0.0.0"}};
+  ZiMReq mixed2{ZiIP{"224.0.0.1"}, 3};
+  ZuCheck(!mixed1);
+  ZuCheck(!mixed2);
+
+  ZiCxnOptions v4Opts;
+  v4Opts.udp(true).multicast(true).loopBack(true).mif(ZiIP{"0.0.0.0"}).ttl(4);
+  v4Opts.mreq(v4);
+  ZuCheck(v4Opts.multicastValid(ZiIPType::V4));
+  ZuCheck(!v4Opts.multicastValid(ZiIPType::V6));
+
+  ZiCxnOptions v6Opts;
+  v6Opts.udp(true).multicast(true).loopBack(true).mifIndex(3).ttl(4);
+  v6Opts.mreq(v6);
+  ZuCheck(v6Opts.multicastValid(ZiIPType::V6));
+  ZuCheck(!v6Opts.multicastValid(ZiIPType::V4));
+  ZuCheck(v4Opts != v6Opts);
+  ZuCheck(v4Opts.cmp(v6Opts) != 0);
+  ZuCheck(v4Opts.hash() != v6Opts.hash());
+}
+
+struct LoopResult {
+  bool		started = false;
+  bool		telemetry = false;
+  bool		done = false;
+  bool		failed = false;
+  unsigned	failKind = 0;
+  bool		clientEcho = false;
+  bool		clientDisc = false;
+  bool		serverDisc = false;
+  bool		waitDisc = false;
+  unsigned	disconnects = 0;
+  unsigned	peerDisconnects = 0;
+  unsigned	localDisconnects = 0;
+};
+
+LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
+{
+  LoopResult result;
+  LoopMx mx{loopIP};
+  result.started = mx.start();
 
   ZiMxTelemetry telemetry{};
   mx.telemetry(telemetry);
-  ZuCheck(telemetry.nThreads >= 1);
+  result.telemetry = telemetry.nThreads >= 1;
 
   mx.startLoopback();
 
-  bool done = mx.waitDone(5);
+  result.done = mx.waitDone(5);
   mx.stop();
-
-  ZuCheck(done);
 
   // Some constrained sandboxes deny loopback socket setup; gate integration
   // assertions to keep the suite deterministic across environments.
-  if (mx.failed_()) {
-    ZuCheck(mx.failKind_() == 1);
-    return;
-  }
+  result.failed = mx.failed_();
+  result.failKind = mx.failKind_();
+  if (result.failed) return result;
 
-  ZuCheck(mx.clientEcho_());
-  ZuCheck(mx.clientDisc_());
-  ZuCheck(mx.serverDisc_());
-  unsigned disconnects = mx.disconnects_();
-  unsigned peerDisconnects = mx.peerDisconnects_();
-  unsigned localDisconnects = mx.localDisconnects_();
+  result.clientEcho = mx.clientEcho_();
+  result.clientDisc = mx.clientDisc_();
+  result.serverDisc = mx.serverDisc_();
+  unsigned disconnects = result.disconnects = mx.disconnects_();
+  result.peerDisconnects = mx.peerDisconnects_();
+  result.localDisconnects = mx.localDisconnects_();
   mx.repeatDisconnects();
-  ZuCheck(mx.waitDisconnections(disconnects + 4, 5));
-  ZuCheck(mx.disconnects_() >= disconnects + 4);
-  ZuCheck(mx.peerDisconnects_() == peerDisconnects);
-  ZuCheck(mx.localDisconnects_() >= localDisconnects + 4);
+  result.waitDisc = mx.waitDisconnections(disconnects + 4, 5);
+  result.disconnects = mx.disconnects_();
+  result.peerDisconnects = mx.peerDisconnects_();
+  result.localDisconnects = mx.localDisconnects_();
+  return result;
 }
+
+#define CheckTcpLoopback(result) do { \
+  ZuCheck((result).started); \
+  ZuCheck((result).telemetry); \
+  ZuCheck((result).done); \
+  if ((result).failed) { \
+    ZuCheck((result).failKind == 1); \
+    return; \
+  } \
+  ZuCheck((result).clientEcho); \
+  ZuCheck((result).clientDisc); \
+  ZuCheck((result).serverDisc); \
+  ZuCheck((result).waitDisc); \
+  ZuCheck((result).disconnects >= 4); \
+  ZuCheck((result).peerDisconnects == 0); \
+  ZuCheck((result).localDisconnects >= 4); \
+} while (0)
+
+void testTcpLoopbackIPv4()
+{
+  ZuTestScope(testTcpLoopbackIPv4);
+
+  auto result = runTcpLoopbackAndTelemetry(ZiIP{"127.0.0.1"});
+  CheckTcpLoopback(result);
+}
+
+void testTcpLoopbackIPv6()
+{
+  ZuTestScope(testTcpLoopbackIPv6);
+
+  auto result = runTcpLoopbackAndTelemetry(ZiIP{"::1"});
+  CheckTcpLoopback(result);
+}
+
+#undef CheckTcpLoopback
 
 } // namespace
 
@@ -345,6 +448,8 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testTcpLoopbackAndTelemetry);
+  ZuTestCall(testMulticastOptions);
+  ZuTestCall(testTcpLoopbackIPv4);
+  ZuTestCall(testTcpLoopbackIPv6);
   return 0;
 }

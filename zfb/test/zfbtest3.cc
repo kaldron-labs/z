@@ -39,6 +39,7 @@ struct Order {
 
   ZtBitmap		bitmap;
   ZuID			id;
+  ZiIP			ip;
 
   friend ZtStructPrint ZuPrintType(Order *);
 };
@@ -54,7 +55,8 @@ ZfbStruct((Order, JSON),
   (((quantity), (Ctor<7>)), (Int32)),
 
   (((bitmap), (Ctor<8>)), (UDT)),
-  (((id), (Ctor<9>)), (UDT)));
+  (((id), (Ctor<9>)), (UDT)),
+  (((ip), (Ctor<10>)), (UDT)));
 
 } // zfbtest3
 
@@ -76,7 +78,9 @@ int main()
 {
   using namespace zfbtest3;
 
-  Order order{"IBM", 42, "FIX0", "order0", 0, Side::Buy, 100, 100, "1-3", "ID0"};
+  Order order{
+    "IBM", 42, "FIX0", "order0", 0, Side::Buy, 100, 100, "1-3", "ID0",
+    ZiIP{"2001:db8::1"}};
 
   {
     IOBuilder fbb(new ZiIOBufAlloc<>());
@@ -89,6 +93,7 @@ int main()
     auto order_ = ZfbStruct::ctor<Order>(fbo);
     std::cout << "order: " << order_ << '\n';
     std::cout << "JSON(order): " << json(order_) << '\n';
+    CHECK(order_.ip == order.ip);
   }
 
   using Key = ZuStructKeyT<Order>;

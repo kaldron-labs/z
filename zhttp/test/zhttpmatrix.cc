@@ -592,10 +592,12 @@ void appendReadyCommand(
   }
 }
 
-void appendURL(ZtString<> &s, Proto::T proto, unsigned port)
+void appendURL(ZtString<> &s, const Case &c, unsigned port)
 {
-  if (proto == Proto::H1TCP)
+  if (c.proto == Proto::H1TCP)
     s << "http://127.0.0.1:" << port << Path;
+  else if (c.pair == Pair::ZhttpZhttpd)
+    s << "https://127.0.0.1:" << port << Path;
   else
     s << "https://localhost:" << port << Path;
 }
@@ -605,6 +607,7 @@ void appendZhttpCommand(
   ZuCSpan tempPath)
 {
   script << "if ! ";
+  if (c.timeout) script << "timeout " << c.timeout << "s ";
   script << "\"$client\" -j " << c.jobs << " -n " << c.requests;
 #ifdef ZiMultiplex_DEBUG
   if (options.debug) script << " --debug";
@@ -635,7 +638,7 @@ void appendZhttpCommand(
       break;
   }
   script << " -o " << tempPath << "/body ";
-  appendURL(script, c.proto, port);
+  appendURL(script, c, port);
   script << " >" << tempPath << "/client.out 2>" << tempPath <<
     "/client.err; then\n"
     "  stop_pcap\n"
@@ -665,7 +668,7 @@ void appendCurlCommand(
     "i=0\n"
     "while [ \"$i\" -lt " << c.requests << " ]; do\n"
     "  printf 'url = \"";
-  appendURL(script, c.proto, port);
+  appendURL(script, c, port);
   script <<
     "\"\\noutput = \"/dev/null\"\\n' >>\"$cfg\"\n"
     "  i=$((i + 1))\n"

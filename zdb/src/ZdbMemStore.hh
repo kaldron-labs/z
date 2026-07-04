@@ -344,6 +344,11 @@ XField xField(
 	}
       }
     } break;
+    case reflection::Union:
+      if (ftype->code == ZtFieldTC::UDT &&
+	  ftype->info.udt()->id == ZuID("IP"))
+	type = Value::Index<ZiIP>{};
+      break;
     case reflection::Vector:
       switch (fbField->type()->element()) {
 	default: break;
@@ -528,7 +533,8 @@ template <unsigned Type>
 inline ZuIfT<Type == Value::Index<ZiIP>{}>
 loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
   new (ptr) ZiIP{ZfbTransform::IP::load(
-    fbo->GetStruct<const Zfb::IP *>(field->offset()))};
+    static_cast<Zfb::IP>(fbo->GetField<uint8_t>(field->offset() - 2, 0)),
+    fbo->GetPointer<const void *>(field->offset()))};
 }
 
 template <unsigned Type>
@@ -819,10 +825,19 @@ saveOffset(
 }
 
 template <unsigned Type>
+inline ZuIfT<Type == Value::Index<ZiIP>{}>
+saveOffset(
+  Zfb::Builder &fbb, Offsets &offsets, const Value &value)
+{
+  offsets.push(ZfbTransform::IP::save(fbb, value.p<Type>()).offset);
+}
+
+template <unsigned Type>
 inline ZuIfT<
   Type != Value::Index<String>{} &&
   Type != Value::Index<Bytes>{} &&
   Type != Value::Index<ZtBitmap>{} &&
+  Type != Value::Index<ZiIP>{} &&
   !isVec(Type)>
 saveOffset(Zfb::Builder &, Offsets &, const Value &) { }
 
@@ -953,11 +968,13 @@ saveValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<ZiIP>{}>
 saveValue(
-  Zfb::Builder &fbb, const Offsets &,
+  Zfb::Builder &fbb, const Offsets &offsets,
   const reflection::Field *field, const Value &value)
 {
-  auto v = ZfbTransform::IP::save(value.p<Type>());
-  fbb.AddStruct(field->offset(), &v);
+  fbb.AddElement<uint8_t>(
+    field->offset() - 2,
+    static_cast<uint8_t>(ZfbTransform::IP::type(value.p<Type>())), 0);
+  fbb.AddOffset(field->offset(), offsets.shift());
 }
 
 template <unsigned Type>

@@ -21,9 +21,11 @@ using Zhttp::Test::writeSelfSignedLocalhostCert;
 
 bool writeHTTPAppScript(
   ZuCSpan path, const char *tempPath_, unsigned port, ZuCSpan transport,
-  ZuCSpan certPath = {}, ZuCSpan keyPath = {})
+  bool ipv6, ZuCSpan certPath = {}, ZuCSpan keyPath = {})
 {
   ZuCSpan tempPath{tempPath_};
+  ZuCSpan addr = ipv6 ? ZuCSpan{"::1"} : ZuCSpan{"127.0.0.1"};
+  ZuCSpan urlHost = ipv6 ? ZuCSpan{"[::1]"} : ZuCSpan{"127.0.0.1"};
   ZtString<> rootPath;
   rootPath << tempPath << "/root";
   if (ZiFile::mkdir(rootPath) != Zi::OK) return false;
@@ -55,14 +57,14 @@ bool writeHTTPAppScript(
     "[ -x \"$client\" ] || client=./zhttp\n";
   if (transport == "http")
     script << "\"$server\" " << rootPath <<
-      " --http --addr 127.0.0.1 --port " << port;
+      " --http --addr " << addr << " --port " << port;
   else if (transport == "https")
     script << "\"$server\" " << rootPath <<
-      " --https --addr 127.0.0.1 --port " << port <<
+      " --https --addr " << addr << " --port " << port <<
       " --cert " << certPath << " --key " << keyPath;
   else
     script << "\"$server\" " << rootPath <<
-      " --http3 --addr 127.0.0.1 --port " << port <<
+      " --http3 --addr " << addr << " --port " << port <<
       " --cert " << certPath << " --key " << keyPath;
   script <<
       " >" << tempPath << "/server.out 2>" << tempPath << "/server.err &\n"
@@ -73,13 +75,14 @@ bool writeHTTPAppScript(
     "  if \"$client\" ";
   if (transport == "http")
     script << "-o " << tempPath << "/body " <<
-      "http://127.0.0.1:" << port << "/zhttp-interop ";
+      "http://" << urlHost << ':' << port << "/zhttp-interop ";
   else if (transport == "https")
     script << "-c " << certPath << " -o " << tempPath << "/body " <<
-      "https://localhost:" << port << "/zhttp-interop ";
+      "https://" << urlHost << ':' << port << "/zhttp-interop ";
   else
     script << "-3 force -c " << certPath << " -o " <<
-      tempPath << "/body https://localhost:" << port << "/zhttp-interop ";
+      tempPath << "/body https://" << urlHost << ':' << port <<
+      "/zhttp-interop ";
   script <<
       ">" << tempPath << "/client.out 2>" << tempPath << "/client.err; then\n"
     "    ok=1\n"
@@ -104,7 +107,7 @@ bool writeHTTPAppScript(
   return true;
 }
 
-void testAppTransport(ZuCSpan transport)
+void testAppTransport(ZuCSpan transport, bool ipv6 = false)
 {
   ZuTestScope(testAppTransport);
 
@@ -120,7 +123,7 @@ void testAppTransport(ZuCSpan transport)
   if (!port) return;
   auto script = temp.pathOf("client-server.sh");
   ZuCHECK(writeHTTPAppScript(script, static_cast<const char *>(temp.path), port,
-      transport, certPath, keyPath),
+      transport, ipv6, certPath, keyPath),
     "Zhttp app script generation failed");
   ZtString<> cmd;
   cmd << "sh " << script;
@@ -136,6 +139,9 @@ void testAppTransport(ZuCSpan transport)
 void testHTTPApp() { testAppTransport("http"); }
 void testHTTPSApp() { testAppTransport("https"); }
 void testH3App() { testAppTransport("h3"); }
+void testHTTPAppIPv6() { testAppTransport("http", true); }
+void testHTTPSAppIPv6() { testAppTransport("https", true); }
+void testH3AppIPv6() { testAppTransport("h3", true); }
 
 } // namespace
 
@@ -146,4 +152,7 @@ int main(int argc, char **argv)
   ZuTestCall(testHTTPApp);
   ZuTestCall(testHTTPSApp);
   ZuTestCall(testH3App);
+  ZuTestCall(testHTTPAppIPv6);
+  ZuTestCall(testHTTPSAppIPv6);
+  ZuTestCall(testH3AppIPv6);
 }

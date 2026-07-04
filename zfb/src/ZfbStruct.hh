@@ -41,23 +41,23 @@
 //
 // fbs:
 //   namespace Zfb;
-//   struct IP {
+//   struct IPv4 {
 //     addr:[uint8:4];
+//   }
+//   struct IPv6 {
+//     addr:[uint8:16];
+//   }
+//   union IP {
+//     IPv4,
+//     IPv6
 //   }
 //
 // C++:
 // namespace ZfbTransform {
 // struct IP {
-//   enum { IsInline = 1 };
-//   static Zfb::IP save(ZiIP addr) {
-//     return {Zfb::span<const uint8_t, 4>{
-//       reinterpret_cast<const uint8_t *>(&addr.s_addr), 4}};
-//   }
-//   static ZiIP load(const Zfb::IP *v) {
-//     struct in_addr addr;
-//     addr.s_addr = *reinterpret_cast<const uint32_t *>(v->addr()->data());
-//     return ZiIP{ZuMv(addr)};
-//   }
+//   enum { IsInline = 0 };
+//   static Save save(Zfb::Builder &fbb, ZiIP addr);
+//   static ZiIP load(Zfb::IP type, const void *v);
 // };
 // } // ZfbTransform
 // ZfbTransform::IP ZfbTransformer_(ZiIP *);
@@ -115,9 +115,9 @@ struct SaveFieldFn {
 template <typename O, typename Facet, typename NestedFields, typename Field>
 struct SaveFieldFn<O, Facet, NestedFields, Field, true> {
   template <template <typename> class Filter, typename Builder>
-  static void save(Builder &fbb, const O &, const Offset<void> *offsets) {
+  static void save(Builder &fbb, const O &o, const Offset<void> *offsets) {
     using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
-    Field::template save<Facet, Filter>(fbb, offsets[OffsetIndex{}]);
+    Field::template save<Facet, Filter>(fbb, o, offsets[OffsetIndex{}]);
   }
 };
 template <
@@ -808,9 +808,49 @@ struct Nested : public Base {
   static void save(Builder &fbb, Zfb::Offset<void> offset) {
     Base::save_(fbb, offset.o);
   }
+  template <
+    typename = void, template <typename> class = ZuAlwaysTrue,
+    typename Builder>
+  static void save(Builder &fbb, const O &, Zfb::Offset<void> offset) {
+    save(fbb, offset);
+  }
   template <typename FBType_>
   static decltype(auto) load_(const FBType_ *fbo) {
     return Transformer::template load<typename Base::T>(Base::load_(fbo));
+  }
+  template <bool _ = Base::ReadOnly, ZuIfT<_, int> = 0>
+  static void load(O &, const FBType *) { }
+  template <bool _ = Base::ReadOnly, ZuIfT<!_, int> = 0>
+  static void load(O &o, const FBType *fbo) {
+    Base::set(o, load_(fbo));
+  }
+};
+
+struct IP;
+
+template <typename O, typename Base, typename Under = O, typename Transformer = IP>
+struct IP_ : public Base {
+  template <template <typename> class Override>
+  using Adapt = IP_<
+    typename Override<ZuOrigField<Base>>::O,
+    typename Base::template Adapt<Override>, Under>;
+  using Builder = Zfb_Builder<Under>;
+  using FBType = Zfb_Type<Under>;
+  enum { IsInline = 0 };
+  template <typename Facet, template <typename> class Filter>
+  static Zfb::Offset<void> save(Zfb::Builder &fbb, const O &o) {
+    return Transformer::save(fbb, Base::get(o)).offset;
+  }
+  template <
+    typename = void, template <typename> class = ZuAlwaysTrue,
+    typename Builder>
+  static void save(Builder &fbb, const O &o, Zfb::Offset<void> offset) {
+    Base::saveType_(fbb, Transformer::type(Base::get(o)));
+    Base::save_(fbb, offset.o);
+  }
+  template <typename FBType_>
+  static decltype(auto) load_(const FBType_ *fbo) {
+    return Transformer::load(Base::loadType_(fbo), Base::load_(fbo));
   }
   template <bool _ = Base::ReadOnly, ZuIfT<_, int> = 0>
   static void load(O &, const FBType *) { }
@@ -883,6 +923,10 @@ template <typename U> struct Resolve<ZtFieldTC::UDT, U> {
   using Field = ZuIf<Transformer::IsInline,
     Inline<O, Base, Transformer>,
     Nested<O, Base, Transformer>>;
+};
+template <> struct Resolve<ZtFieldTC::UDT, ZiIP> {
+  template <typename O, typename Base>
+  using Field = IP_<O, Base>;
 };
 
 } // ZfbTransform
@@ -974,15 +1018,61 @@ struct Bitmap {
 };
 
 struct IP {
-  enum { IsInline = 1 };
-  static Zfb::IP save(ZiIP addr) {
-    return {Zfb::span<const uint8_t, 4>{
-      reinterpret_cast<const uint8_t *>(&addr.s_addr), 4}};
+  enum { IsInline = 0 };
+  struct Save {
+    Zfb::IP		type = Zfb::IP::NONE;
+    Zfb::Offset<void>	offset;
+  };
+  static Zfb::IP type(ZiIP addr) {
+    switch (addr.type()) {
+      case ZiIPType::V4:
+	return Zfb::IP::IPv4;
+      case ZiIPType::V6:
+	return Zfb::IP::IPv6;
+      default:
+	return Zfb::IP::NONE;
+    }
   }
-  static ZiIP load(const Zfb::IP *v) {
-    struct in_addr addr;
-    addr.s_addr = *reinterpret_cast<const uint32_t *>(v->addr()->data());
-    return ZiIP{ZuMv(addr)};
+  static Save save(Zfb::Builder &fbb, ZiIP addr) {
+    switch (addr.type()) {
+      case ZiIPType::V4:
+	{
+	  auto a = addr.inAddr();
+	  Zfb::IPv4 v{Zfb::span<const uint8_t, 4>{
+	    reinterpret_cast<const uint8_t *>(&a), sizeof(a)}};
+	  return {Zfb::IP::IPv4, fbb.CreateStruct(v).Union()};
+	}
+      case ZiIPType::V6:
+	{
+	  auto a = addr.in6Addr();
+	  Zfb::IPv6 v{Zfb::span<const uint8_t, 16>{
+	    reinterpret_cast<const uint8_t *>(&a), sizeof(a)}};
+	  return {Zfb::IP::IPv6, fbb.CreateStruct(v).Union()};
+	}
+      default:
+	return {};
+    }
+  }
+  static ZiIP load(Zfb::IP type, const void *v) {
+    if (!v) return {};
+    switch (type) {
+      case Zfb::IP::IPv4:
+	{
+	  in_addr addr;
+	  memcpy(&addr,
+	    static_cast<const Zfb::IPv4 *>(v)->addr()->data(), sizeof(addr));
+	  return ZiIP{addr};
+	}
+      case Zfb::IP::IPv6:
+	{
+	  in6_addr addr;
+	  memcpy(&addr,
+	    static_cast<const Zfb::IPv6 *>(v)->addr()->data(), sizeof(addr));
+	  return ZiIP{addr};
+	}
+      default:
+	return {};
+    }
   }
 };
 
@@ -1043,13 +1133,23 @@ inline ZuID ZtVFieldTypeID(ZuID *) { return "ID"; }
       typename Override<ZuOrigField<Base>>::O, \
       typename Base::template Adapt<Override>, Under>; \
     template <typename Builder> using SaveFn = decltype(&Builder::add_##ID); \
+    template <typename Builder> \
+    using SaveTypeFn = decltype(&Builder::add_##ID##_type); \
     template <typename Builder, typename Arg> \
     static void save_(Builder &fbb, Arg &&arg) { \
       fbb.add_##ID(ZuFwd<Arg>(arg)); \
     } \
+    template <typename Builder, typename Arg> \
+    static void saveType_(Builder &fbb, Arg &&arg) { \
+      fbb.add_##ID##_type(ZuFwd<Arg>(arg)); \
+    } \
     template <typename FBType> \
     static decltype(auto) load_(const FBType *fbo) { \
       return fbo->ID(); \
+    } \
+    template <typename FBType> \
+    static decltype(auto) loadType_(const FBType *fbo) { \
+      return fbo->ID##_type(); \
     } \
   }; \
   using ZtField(O_, ID) = ZfbFieldT<O_, ZtField(O_, ID##_)<>>;
