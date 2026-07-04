@@ -94,7 +94,6 @@ struct ZvMxParams : public ZiMxParams {
       sched.ll(cf->getBool("ll", sched.ll()));
       sched.spin(cf->getInt("spin", 0, INT_MAX, sched.spin()));
       sched.timeout(cf->getInt("timeout", 0, 3600, sched.timeout()));
-      sched.startTimer(cf->getBool("startTimer", sched.startTimer()));
       if (ZmRef<ZvCf> threadsCf = cf->getCf("threads")) {
 	threadsCf->all([&sched](ZvCfNode *node) {
 	  if (auto threadCf = node->getCf()) {
