@@ -442,6 +442,7 @@ struct Run {
   unsigned	complete = 0;
   unsigned	failed = 0;
   bool		fatal = false;
+  bool		preloadedReqs = false;
 };
 
 struct RequestResult {
@@ -449,6 +450,20 @@ struct RequestResult {
   HdrString	location;
   AltSvcEndpoint altSvc;
 };
+
+void resultFromReq(RequestResult *result, const Req &req)
+{
+  if (!result) return;
+  *result = {};
+  result->status = req.status;
+  result->location = req.location;
+  if (req.altSvcH3) {
+    result->altSvc.host = req.altSvcHost;
+    result->altSvc.dnsHost = req.url.dnsHost;
+    result->altSvc.port = req.altSvcPort;
+    result->altSvc.h3 = true;
+  }
+}
 
 void setHost(URL &url, ZuCSpan host)
 {
@@ -1417,6 +1432,7 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   ZmSemaphore sem;
   State state;
   Run *run = nullptr;
+  H3EarlySession *h3Session = nullptr;
   ZmLock lock;
   ZmAtomic<int> up = 0;
   unsigned scheduled = 0;
@@ -1424,7 +1440,6 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   unsigned complete = 0;
   unsigned failed = 0;
   bool linkFailed = false;
-  H3EarlySession	h3EarlySession;
   ZtArray<Req *, ZtArrayHeapID<"Zhttp.H3Pending">> pending;
   unsigned pendingHead = 0;
 
@@ -1469,13 +1484,16 @@ struct QUICClient : public Zquic::Client<QUICClient> {
   }
   void printDiag(Link *, ZuCSpan);
   uint64_t maxStreamsBidi() const {
-    return run && run->options.concurrency > H3BidiMax ?
+    ZiAssert(run, "zhttp", (), "QUIC client stream limit without run",
+      return H3BidiMax);
+    return run->options.concurrency > H3BidiMax ?
       run->options.concurrency : H3BidiMax;
   }
   uint64_t maxStreamsUni() const { return H3UniMax; }
-  bool multi() const { return run; }
   H3EarlySession *earlySession_() {
-    return run ? &run->h3EarlySession : &h3EarlySession;
+    ZiAssert(h3Session, "zhttp", (), "QUIC client early data without session",
+      return nullptr);
+    return h3Session;
   }
   void openH3Streams(Link *);
   void openH3Streams_(Link *);
@@ -1523,7 +1541,6 @@ struct QUICClient::Link :
   using Base::Base;
 
   void connected(Zi::Connected info) {
-    if (!this->app()->multi()) return Base::connected(info);
     ++this->app()->up;
     m_countedUp = true;
     logConnected(this->app()->state, info);
@@ -1534,7 +1551,6 @@ struct QUICClient::Link :
     this->app()->openH3Streams(this);
   }
   void disconnected(bool peer) {
-    if (!this->app()->multi()) return Base::disconnected(peer);
     ZiLOG(Info, "zhttp", "disconnected");
     int up = this->app()->up.load_();
     if (m_countedUp) {
@@ -1559,7 +1575,6 @@ struct QUICClient::Link :
     ZiLOG(Error, "zhttp", "h3 stateless reset");
   }
   void connectFailed(bool transient) {
-    if (!this->app()->multi()) return Base::connectFailed(transient);
     ZiLOG(Error, "zhttp", ([transient](auto &s) {
       s << "failed to connect";
       if (transient) s << " (transient)";
@@ -1567,13 +1582,11 @@ struct QUICClient::Link :
     this->app()->failH3Link();
   }
   void responseComplete(State *state, bool ok) {
-    if (!this->app()->multi()) return Base::responseComplete(state, ok);
     if (auto stream = this->findStream(state->responseStreamID))
       stream->req = nullptr;
     this->app()->finishH3Req(this, state, ok);
   }
   void streamed(ZmRef<Stream> stream) {
-    if (!this->app()->multi()) return;
     this->app()->bindH3Stream(this, ZuMv(stream));
   }
 
@@ -1811,7 +1824,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
       " pc=" << pc <<
       " bif=" << bif;
   }));
-  if (!run) return;
+  ZiAssert(run, "zhttp", (), "QUIC client diagnostics without run", return);
   ZmGuard<ZmLock> guard(lock);
   for (unsigned i = 0; i < run->reqs.length(); ++i) {
     const Req &req = run->reqs[i];
@@ -1946,8 +1959,7 @@ int QUICClient::Stream::process(Zquic::RxStream &)
     if (req && req->done) return -1;
     return 0;
   }
-  if (this->id() != this->link()->app()->state.responseStreamID) return 0;
-  return this->link()->process(*this);
+  return 0;
 }
 
 H3CxnState::T QUICClient::Stream::h3State() const
@@ -2000,15 +2012,21 @@ void QUICClient::openH3Streams_(Link *link_)
     Req *req = nullptr;
     {
       ZmGuard<ZmLock> guard(lock);
-      if (!run || active >= run->options.concurrency ||
+      ZiAssert(run, "zhttp", (), "QUIC client open streams without run",
+	return);
+      if (active >= run->options.concurrency ||
 	  scheduled >= run->options.requests)
 	return;
-      for (unsigned i = 0; i < run->reqs.length(); ++i) {
-	if (run->reqs[i].h3Active) continue;
-	req = &run->reqs[i];
-	initReq(*req, *run, scheduled++);
-	break;
-      }
+      if (run->preloadedReqs) {
+	if (scheduled >= run->reqs.length()) return;
+	req = &run->reqs[scheduled++];
+      } else
+	for (unsigned i = 0; i < run->reqs.length(); ++i) {
+	  if (run->reqs[i].h3Active) continue;
+	  req = &run->reqs[i];
+	  initReq(*req, *run, scheduled++);
+	  break;
+	}
       if (!req) return;
       if (req->logResponse) {
 		auto ctx = reqLogCtx(*req);
@@ -2044,7 +2062,9 @@ bool QUICClient::activateH3Req(Req *req)
 {
   if (!req) return false;
   ZmGuard<ZmLock> guard(lock);
-  if (!run || req->done) return false;
+  ZiAssert(run, "zhttp", (), "QUIC client activate without run",
+    return false);
+  if (req->done) return false;
   if (!req->h3Active) {
     ++active;
     req->h3Active = true;
@@ -2056,20 +2076,13 @@ bool QUICClient::allowEarlyStream(Link *link, uint64_t streamID, bool fin)
 {
   if (!fin || streamID > uint64_t(INT64_MAX)) return false;
   int64_t id = int64_t(streamID);
-  Req *req = nullptr;
-  if (!run) {
-    if (state.responseStreamID != id) return false;
-    req = &state;
-  } else {
-    if (!link) return false;
-    auto stream = link->findStream(id);
-    if (!stream) return false;
-    req = stream->req;
-  }
+  if (!link) return false;
+  auto stream = link->findStream(id);
+  if (!stream) return false;
+  Req *req = stream->req;
   if (!req) return false;
   ZmGuard<ZmLock> guard(lock);
-  return req->h3EarlyData && (!run || req->h3Active) &&
-    !req->done && !req->failed;
+  return req->h3EarlyData && req->h3Active && !req->done && !req->failed;
 }
 
 bool QUICClient::earlyData(
@@ -2108,7 +2121,7 @@ void QUICClient::sendH3Req(Link *link_, ZmRef<Stream> stream, Req *req)
     stream = ZuMv(stream),
     req
   ]() mutable {
-    if (!run || (req && req->done)) return;
+    if (req && req->done) return;
     sendH3Req_(link, ZuMv(stream), req);
   });
 }
@@ -2222,13 +2235,12 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
       req->url = ZuMv(next);
       ++req->redirects;
       resetAttempt(*req, true);
-      if (!run) return;
       this->txInvoke([
 	this,
 	link = link_,
 	req
       ]() mutable {
-	if (!link || !req || !run || req->done) return;
+	if (!link || !req || req->done) return;
 	auto stream = link->stream(Zi::StreamType::Duplex);
 	if (!stream) {
 	  queueH3Req(req);
@@ -2252,7 +2264,7 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
     }
     ++complete;
     if (!ok) ++failed;
-    done = !run || complete >= run->options.requests;
+    done = complete >= run->options.requests;
     if (!req || req->logResponse) {
       auto haveReq = !!req;
       auto ctx = haveReq ? reqLogCtx(*req) : ReqLogCtx{};
@@ -2276,12 +2288,7 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
 void QUICClient::failH3Link()
 {
   ZmGuard<ZmLock> guard(lock);
-  if (!run) {
-    ZiLOG(Debug, "zhttp.h3", "fail single h3 link");
-    state.failed = true;
-    done();
-    return;
-  }
+  ZiAssert(run, "zhttp", (), "QUIC client link failure without run", return);
   linkFailed = true;
   ZiLOG(Debug, "zhttp.h3", ([
     complete = complete, failed = failed, active = active,
@@ -2307,9 +2314,10 @@ void QUICClient::failH3Link()
 
 template <typename Client>
 int run(
-  ZiMultiplex &mx, const Options &options, Req &req,
+  ZiMultiplex &mx, Run &run_, Req &req,
   RequestResult *result = nullptr)
 {
+  const auto &options = run_.options;
   Client client;
   client.state.id = req.id;
   client.state.requests = req.requests;
@@ -2332,28 +2340,14 @@ int run(
       ZiLOG(Error, "zhttp", "TLS client initialization failed");
       return 1;
     }
-  } else if constexpr (Client::Transport == Zi::Transport::QUIC) {
-    client.state.protocol = Protocol::H3;
-    client.dropRates(options);
-    ZuCSpan alpn[] = { "h3" };
-    if (!client.init(
-	  Zquic::ClientParams(&mx, "3", "4")
-	    .alpn(alpn)
-	    .caPath(options.ca)
-	    .keyLogPath(options.keyLog)
-	    .maxData(H3DataMax)
-	    .maxStreamData(H3StreamDataMax)
-	    .maxStreamsBidi(H3BidiMax)
-	    .maxStreamsUni(H3UniMax))) {
-      ZiLOG(Error, "zhttp", "QUIC client initialization failed");
-      return 1;
-    }
-    client.filters();
+  } else {
+    static_assert(
+      Client::Transport == Zi::Transport::TCP ||
+      Client::Transport == Zi::Transport::TLS,
+      "unsupported one-shot transport");
   }
   if (!client.start()) {
     ZiLOG(Error, "zhttp", "client start failed");
-    if constexpr (Client::Transport == Zi::Transport::QUIC)
-      client.clearFilters();
     client.final();
     return 1;
   }
@@ -2362,35 +2356,18 @@ int run(
     using Link = typename Client::Link;
     ZmRef<Link> link = new Link(&client);
     link->connect(client.state.url.host, client.state.url.port);
-    bool disconnected = false;
     if (!waitMonitored(client.sem, options.timeout, options.memDiag)) {
       ZiLOG(Error, "zhttp", "timed out");
       client.state.failed = true;
       link->disconnect();
-      disconnected = true;
       client.sem.timedwait(Zm::now(2));
-	    }
-	    if constexpr (Client::Transport == Zi::Transport::QUIC) {
-	      if (!disconnected) disconnectDrained(link.ptr());
-	      waitDisconnect(mx);
-	    }
-	  }
-  if (result) {
-    result->status = client.state.status;
-    result->location = client.state.location;
-    if (client.state.altSvcH3) {
-      result->altSvc.host = client.state.altSvcHost;
-      result->altSvc.dnsHost = client.state.url.dnsHost;
-      result->altSvc.port = client.state.altSvcPort;
-      result->altSvc.h3 = true;
     }
   }
+  resultFromReq(result, client.state);
   int rc = client.state.failed ? 1 : 0;
   closeBody(client.state);
   req = ZuMv(client.state);
   client.stop();
-  if constexpr (Client::Transport == Zi::Transport::QUIC)
-    client.clearFilters();
   client.final();
   return rc;
 }
@@ -2473,10 +2450,12 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 {
   unsigned n = run.options.concurrency;
   if (n > run.options.requests) n = run.options.requests;
-  run.reqs.length(n);
+  if (!run.preloadedReqs)
+    run.reqs.length(n);
   for (unsigned attempt = 0; attempt < H3MaxAttempts; ++attempt) {
     QUICClient client;
     client.run = &run;
+    client.h3Session = &run.h3EarlySession;
     client.complete = run.complete;
     client.failed = run.failed;
     client.scheduled = run.complete;
@@ -2657,6 +2636,33 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
   return 1;
 }
 
+int runH3Single(
+  ZiMultiplex &mx, Run &run_, Req &req,
+  RequestResult &result)
+{
+  Run run;
+  run.options = run_.options;
+  run.options.requests = 1;
+  run.options.concurrency = 1;
+  run.originalURL = req.url;
+  run.h3EarlySession = run_.h3EarlySession;
+  run.preloadedReqs = true;
+  run.reqs.length(1);
+  run.reqs[0] = req;
+
+  int rc = runH3Multi(mx, run);
+  run_.h3EarlySession = ZuMv(run.h3EarlySession);
+  if (run.reqs.length()) {
+    Req &h3Req = run.reqs[0];
+    resultFromReq(&result, h3Req);
+    h3Req.id = req.id;
+    h3Req.requests = req.requests;
+    req = ZuMv(h3Req);
+  } else
+    req.failed = rc != 0;
+  return rc;
+}
+
 ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
@@ -2744,7 +2750,7 @@ bool cachedAltSvc(Run &run_, const URL &url, AltSvcEndpoint &altSvc)
 }
 
 int runH3Direct(
-  ZiMultiplex &mx, const Options &options, Req &req,
+  ZiMultiplex &mx, Run &run_, Req &req,
   RequestResult &result)
 {
   auto ctx = reqLogCtx(req);
@@ -2755,14 +2761,13 @@ int runH3Direct(
     s << "HTTP/3 direct: " << host << ':' << ZuBoxed(port);
   }));
   resetAttempt(req, true);
-  return run<QUICClient>(mx, options, req, &result);
+  return runH3Single(mx, run_, req, result);
 }
 
 int runH1AltSvcFirst(
   ZiMultiplex &mx, Run &run_, Req &req,
   RequestResult &result)
 {
-  const auto &options = run_.options;
   AltSvcEndpoint cached;
   if (cachedAltSvc(run_, req.url, cached)) {
     RequestResult h3Result;
@@ -2777,7 +2782,7 @@ int runH1AltSvcFirst(
 	ZuBoxed(port);
     }));
     resetAttempt(req, true);
-    int h3rc = run<QUICClient>(mx, options, req, &h3Result);
+    int h3rc = runH3Single(mx, run_, req, h3Result);
     if (!h3rc) {
       result = ZuMv(h3Result);
       return 0;
@@ -2786,7 +2791,7 @@ int runH1AltSvcFirst(
   }
 
   resetAttempt(req, true);
-  int rc = run<TLSClient>(mx, options, req, &result);
+  int rc = run<TLSClient>(mx, run_, req, &result);
   if (result.altSvc.h3) cacheAltSvc(run_, req.url, result.altSvc);
   if (rc || redirectStatus(result.status) || !result.altSvc.h3) return rc;
 
@@ -2801,7 +2806,7 @@ int runH1AltSvcFirst(
     s << "Alt-Svc HTTP/3 probe: " << host << ':' << ZuBoxed(port);
   }));
   resetAttempt(req, true);
-  int h3rc = run<QUICClient>(mx, options, req, &h3Result);
+  int h3rc = runH3Single(mx, run_, req, h3Result);
   if (!h3rc) {
     result = ZuMv(h3Result);
     return 0;
@@ -2810,18 +2815,17 @@ int runH1AltSvcFirst(
   req.url = ZuMv(h1URL);
   result = {};
   resetAttempt(req, true);
-  return run<TLSClient>(mx, options, req, &result);
+  return run<TLSClient>(mx, run_, req, &result);
 }
 
 int runH3DNSAltSvcFallback(
   ZiMultiplex &mx, Run &run_, Req &req,
   RequestResult &result)
 {
-  const auto &options = run_.options;
   RequestResult h3Result;
   if (resolveH3Cached(run_, req.url, ZiResolver::H3Policy::DNSOnly)) {
     resetAttempt(req, true);
-    if (!run<QUICClient>(mx, options, req, &h3Result)) {
+    if (!runH3Single(mx, run_, req, h3Result)) {
       result = ZuMv(h3Result);
       return 0;
     }
@@ -2839,12 +2843,12 @@ int runReqSerial(ZiMultiplex &mx, Run &run_, Req &req)
     RequestResult result;
     if (req.url.scheme == "http") {
       resetAttempt(req, true);
-      rc = run<TCPClient>(mx, options, req, &result);
+      rc = run<TCPClient>(mx, run_, req, &result);
     } else if (options.http3 == Http3Mode::force)
-      rc = runH3Direct(mx, options, req, result);
+      rc = runH3Direct(mx, run_, req, result);
     else if (options.http3 == Http3Mode::disable) {
       resetAttempt(req, true);
-      rc = run<TLSClient>(mx, options, req, &result);
+      rc = run<TLSClient>(mx, run_, req, &result);
     } else
       rc = runH3DNSAltSvcFallback(mx, run_, req, result);
 
