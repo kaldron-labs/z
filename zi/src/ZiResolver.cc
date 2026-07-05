@@ -548,21 +548,31 @@ void Main::stop_(ZiEvent::StopFn fn)
 
   sched->del(&m_timer);
 
+  auto cancel = [this]() {
+    if (m_channel) ares_cancel(m_channel);
+  };
+
   if (sched->invoked(SID)) {
-    m_loop.stop([this, sched, fn = ZuMv(fn)](
+    cancel();
+    m_loop.stop([sched, fn = ZuMv(fn)](
       ZiEvent::StopResult result) mutable {
-      if (m_channel) ares_cancel(m_channel);
       sched->stop();
       if (fn) fn(ZuMv(result));
     });
     return;
   }
 
+  ZmBlock<>{}([this, cancel = ZuMv(cancel)](auto wake) mutable {
+    m_loop.invoke([cancel = ZuMv(cancel), wake = ZuMv(wake)]() mutable {
+      cancel();
+      wake();
+    });
+  });
+
   ZiEvent::StopResult result;
   ZmSemaphore sem;
-  m_loop.stop([this, &result, &sem](
+  m_loop.stop([&result, &sem](
     ZiEvent::StopResult result_) mutable {
-    if (m_channel) ares_cancel(m_channel);
     result = ZuMv(result_);
     sem.post();
   });

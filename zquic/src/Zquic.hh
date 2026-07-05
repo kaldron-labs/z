@@ -926,7 +926,10 @@ protected:
   void stopQLog_(L l) {
     if (!m_qlogParams.enabled()) { l(); return; }
     ZquicLogger::close(m_qlogTrace, [this, l = ZuMv(l)]() mutable {
-      rxRun(ZuMv(l));
+      rxRun([l = ZuMv(l)]() mutable {
+	ZquicLogger::stopIdle();
+	l();
+      });
     });
   }
 
