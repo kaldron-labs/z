@@ -7,9 +7,10 @@
 // ZmRingFn encapsulates a generic lambda payload for use with ZmRing
 // ring buffers containing variable-sized messages; it optimizes for the
 // stateless case while also handling stateful lambdas with captures;
+//
 // ZmRingFn is move-only
 //
-// ZmRingFn(L &l) stores a pointer to an on-stack lambda instance together
+// ZmRingFn(L &l) stores a pointer to an on-stack lambda lvalue together
 // with function pointers that invoke it, move it, allocate a copy of it
 // and free it; while the lambda remains in scope, the ZmRingFn instance
 // references the lambda instance on-stack without copying it
@@ -105,49 +106,55 @@ public:
     typename L,
     decltype(ZuStatelessLambda<L, ZuTypeList<Args...>>(), int()) = 0>
   ZmRingFn_(L &l) : 
-      m_invokeFn{[](void *, Args... args) -> unsigned {
-	try {
-	  ZuInvokeLambda<L, ZuTypeList<Args...>>(ZuFwd<Args>(args)...);
-	} catch (...) { }
-	return 0;
-      }},
-      m_moveFn{nullptr},
-      m_allocFn{[](uintptr_t) -> uintptr_t { return 0; }},
-      m_ptr{0} { }
+    m_invokeFn{[](void *, Args... args) -> unsigned {
+      try {
+	ZuInvokeLambda<L, ZuTypeList<Args...>>(ZuFwd<Args>(args)...);
+      } catch (...) { }
+      return 0;
+    }},
+    m_moveFn{nullptr},
+    m_allocFn{[](uintptr_t) -> uintptr_t { return 0; }},
+    m_ptr{0}
+  {
+    ZuAssert((!ZuIs_<ZuDecay<L>, ZmAnyFn>{}));
+  }
 
   template <
     typename L,
     decltype(ZuNotStatelessLambda<L, ZuTypeList<Args...>>(), int()) = 0>
   ZmRingFn_(L &l) :
-      m_invokeFn{[](void *ptr_, Args... args) -> unsigned {
-	auto ptr = static_cast<L *>(ptr_);
-	try { (*ptr)(ZuFwd<Args>(args)...); } catch (...) { }
-	ptr->~L();
-	return sizeof(L);
-      }},
-      m_moveFn{[](void *dst, void *src_, bool onHeap) {
-	using Cache = ZmHeapCacheT<HeapID, sizeof(L), alignof(L), Sharded>;
-	auto src = static_cast<L *>(src_);
-	new (dst) L{ZuMv(*src)};
-	if (ZuUnlikely(onHeap)) {
-	  src->~L();
-	  Cache::free(src);
-	}
-      }},
-      m_allocFn{[](uintptr_t ptr_) -> uintptr_t {
-	using Cache = ZmHeapCacheT<HeapID, sizeof(L), alignof(L), Sharded>;
-	// 0 - return sizeof(L) - used in fast path
-	if (ZuLikely(!ptr_)) return sizeof(L);
-	// 1 - heap allocation - slow path
-	if (ZuLikely(ptr_ == 1))
-	  return reinterpret_cast<uintptr_t>(Cache::alloc());
-	// * - heap free (unless on stack)
-	auto ptr = reinterpret_cast<L *>(ptr_);
-	ptr->~L();
-	Cache::free(ptr);
-	return 0;
-      }},
-      m_ptr{reinterpret_cast<uintptr_t>(&l)} { }
+    m_invokeFn{[](void *ptr_, Args... args) -> unsigned {
+      auto ptr = static_cast<L *>(ptr_);
+      try { (*ptr)(ZuFwd<Args>(args)...); } catch (...) { }
+      ptr->~L();
+      return sizeof(L);
+    }},
+    m_moveFn{[](void *dst, void *src_, bool onHeap) {
+      using Cache = ZmHeapCacheT<HeapID, sizeof(L), alignof(L), Sharded>;
+      auto src = static_cast<L *>(src_);
+      new (dst) L{ZuMv(*src)};
+      if (ZuUnlikely(onHeap)) {
+	src->~L();
+	Cache::free(src);
+      }
+    }},
+    m_allocFn{[](uintptr_t ptr_) -> uintptr_t {
+      using Cache = ZmHeapCacheT<HeapID, sizeof(L), alignof(L), Sharded>;
+      // 0 - return sizeof(L) - used in fast path
+      if (ZuLikely(!ptr_)) return sizeof(L);
+      // 1 - heap allocation - slow path
+      if (ZuLikely(ptr_ == 1))
+	return reinterpret_cast<uintptr_t>(Cache::alloc());
+      // * - heap free (unless on stack)
+      auto ptr = reinterpret_cast<L *>(ptr_);
+      ptr->~L();
+      Cache::free(ptr);
+      return 0;
+    }},
+    m_ptr{reinterpret_cast<uintptr_t>(&l)}
+  {
+    ZuAssert((!ZuIs_<ZuDecay<L>, ZmAnyFn>{}));
+  }
 
   template <typename L>
   ZmRingFn_ &operator =(L l) {

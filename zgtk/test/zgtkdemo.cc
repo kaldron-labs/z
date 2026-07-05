@@ -182,7 +182,7 @@ void start()
   // by a containing application view object, and unref'd in reverse
   // order in the dtor
 
-  auto addCol = [&](bool reverse) {
+  auto addCol = [view, model](bool reverse) {
     auto col = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(col, "number");
 

@@ -60,7 +60,7 @@ bool consumeExact(Stream &stream, unsigned n, const char *expected)
       }
       return remaining;
     },
-    [&](ZuBSpan span) {
+    [&called, &ok, &expected](ZuBSpan span) {
       called = true;
       ok = spanEq(span, expected);
     });
@@ -135,7 +135,7 @@ void testConsumeGathersFragmentedFrame()
   bool called = false;
   int64_t consumed = stream.consume(
     [](ZuBSpan) -> int64_t { return 0; },
-    [&](ZuBSpan) { called = true; });
+    [&called](ZuBSpan) { called = true; });
 
   ZuCheck(!consumed);
   ZuCheck(!called);
@@ -147,7 +147,7 @@ void testConsumeGathersFragmentedFrame()
       seen += span.length();
       return seen >= 5 ? span.length() : 0;
     },
-    [&](ZuBSpan span) {
+    [&called](ZuBSpan span) {
       called = true;
       ZuCheck(spanEq(span, "abcde"));
     });
@@ -175,7 +175,7 @@ void testConsumePaddingAcrossQueuedBuffers()
       prevCR = span[span.length() - 1] == '\r';
       return 0;
     },
-    [&](ZuBSpan span) {
+    [&called](ZuBSpan span) {
       called = true;
       ZuCheck(spanEq(span, "abc"));
     });

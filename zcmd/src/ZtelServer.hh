@@ -558,7 +558,7 @@ private:
     if (interval)
       this->subscribe<[](Server *server) { server->heapScan(); }>(
 	  list, watch, interval);
-    ZmHeapMgr::all(ZmFn<void(ZmHeapCache *)>{
+    ZmHeapMgr::all(ZmHeapMgr::AllFn{
       watch, [](Watch *watch, ZmHeapCache *heap) {
 	watch->link->app()->heapQuery_(watch, heap);
       }});
@@ -575,7 +575,7 @@ private:
 
   void heapScan() {
     if (!m_watchLists[ReqType::Heap].list.count_()) return;
-    ZmHeapMgr::all(ZmFn<void(ZmHeapCache *)>{
+    ZmHeapMgr::all(ZmHeapMgr::AllFn{
       this, [](Server *server, ZmHeapCache *heap) {
 	server->heapScan(heap);
       }});
@@ -606,7 +606,7 @@ private:
     if (interval)
       this->subscribe<[](Server *server) { server->hashScan(); }>(
 	  list, watch, interval);
-    ZmHashMgr::all(ZmFn<void(ZmAnyHash *)>{
+    ZmHashMgr::all(ZmHashMgr::AllFn{
       watch, [](Watch *watch, ZmAnyHash *tbl) {
 	watch->link->app()->hashQuery_(watch, tbl);
       }});
@@ -623,7 +623,7 @@ private:
 
   void hashScan() {
     if (!m_watchLists[ReqType::HashTbl].list.count_()) return;
-    ZmHashMgr::all(ZmFn<void(ZmAnyHash *)>{
+    ZmHashMgr::all(ZmHashMgr::AllFn{
       this, [](Server *server, ZmAnyHash *tbl) {
 	server->hashScan(tbl);
       }});
@@ -988,7 +988,8 @@ private:
 	fbb.Finish(fbs::CreateTelemetry(fbb, fbs::TelData::DBHost, offset));
 	link->sendTelemetry(fbb.buf());
       });
-      db->all([link, update](const ZdbAnyTable *table, ZmFn<void(bool)> done) {
+      db->all([link, update](
+	  const ZdbAnyTable *table, Zdb::DB::AllTableFn done) {
 	Zfb::IOBuilder fbb;
 	auto offset = table->telemetry(fbb, update);
 	fbb.Finish(fbs::CreateTelemetry(fbb, fbs::TelData::DBTable, offset));

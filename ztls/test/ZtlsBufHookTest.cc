@@ -221,12 +221,12 @@ int consume_payload_frame(
   uint64_t need = expected.length() - off;
   uint64_t seen = 0;
   int64_t consumed = rx.consume(
-    [&](ZuBSpan span) -> int64_t {
+    [&seen, need](ZuBSpan span) -> int64_t {
       seen += span.length();
       if (seen < need) return 0;
       return span.length() - (seen - need);
     },
-    [&](ZuBSpan span) {
+    [&state, &offset, &expected, msg, &complete](ZuBSpan span) {
       complete = consume_payload(state, offset, expected, span, msg);
     });
 

@@ -198,7 +198,7 @@ public:
     while (!rx.empty()) {
       int consumed = 0;
       int64_t n = rx.consume(
-	[&](ZuBSpan span) -> int64_t {
+	[this, &consumed](ZuBSpan span) -> int64_t {
 	  consumed = rxMsg->process(span, [this]() -> bool {
 	    ZmRef<RxMsg> rxMsg = new RxMsg(new IOBufAlloc());
 	    rxMsg.swap(this->rxMsg);

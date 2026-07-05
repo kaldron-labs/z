@@ -284,6 +284,8 @@ private:
   using W = WrapType<O, TimeIndex>;
 public:
   using Writer = DFWriter<W>;
+  using WriteFn = ZmFn<void(ZmRef<Writer>),
+    ZmFnHeapID<"Zdf.DataFrame.WriteFn">>;
 
 private:
   friend Store;
@@ -321,7 +323,7 @@ public:
     WrRefs	writers;
   };
 
-  void write(ZmFn<void(ZmRef<Writer>)> fn, ErrorFn errorFn) {
+  void write(WriteFn fn, ErrorFn errorFn) {
     ZmRef<Writer> dfw = new Writer{this, ZuMv(errorFn)};
     ZuLambda{[
       this, fn = ZuMv(fn), dfw = ZuMv(dfw)

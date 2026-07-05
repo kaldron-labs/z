@@ -98,7 +98,7 @@ void testLoadDedupForConcurrentMissStyle()
   bool cb2ok = false;
   ZmFn<void(NodeRef)> pending;
 
-  auto loadFn = [&](unsigned key, auto complete) {
+  auto loadFn = [&loadCalls, &pending](unsigned key, auto complete) {
     ++loadCalls;
     pending = ZmFn<void(NodeRef)>{
       [complete = ZuMv(complete)](NodeRef node) mutable {
@@ -108,14 +108,14 @@ void testLoadDedupForConcurrentMissStyle()
   };
 
   cache.find(42U,
-    [&](NodeRef node) {
+    [&cb1ok, &callbackCount](NodeRef node) {
       cb1ok = node && node->val()->id == 42;
       if (cb1ok) ++callbackCount;
     },
     loadFn);
 
   cache.find(42U,
-    [&](NodeRef node) {
+    [&cb2ok, &callbackCount](NodeRef node) {
       cb2ok = node && node->val()->id == 42;
       if (cb2ok) ++callbackCount;
     },

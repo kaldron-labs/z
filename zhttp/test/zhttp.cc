@@ -396,7 +396,8 @@ int http3DNS(
       }
       ZeError resolveErr;
       resolveDNS(target,
-	ZmFn<bool(ZiIP)>{[&](ZiIP ip) {
+	ZmFn<bool(ZiIP)>{[&target, &tlsHost, epPort, &seen, &nSeen, &fn](
+	    ZiIP ip) {
 	  H3Endpoint ep{target, tlsHost, ip, epPort, true, false};
 	  return emitH3IP(ep, seen, nSeen, fn);
 	}}, &resolveErr);
@@ -407,7 +408,8 @@ int http3DNS(
 
   if (policy == H3Policy::DNSWithBlindFallback) {
     int rc = resolveDNS(dnsHost,
-      ZmFn<bool(ZiIP)>{[&](ZiIP ip) {
+      ZmFn<bool(ZiIP)>{[&dnsHost, &tlsHost, port, &seen, &nSeen, &fn](
+	  ZiIP ip) {
 	H3Endpoint ep{dnsHost, tlsHost, ip, port, false, false};
 	return emitH3IP(ep, seen, nSeen, fn);
       }}, e);
@@ -2950,7 +2952,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 #ifdef Zquic_DEBUG
       mon.intervals(
 	[]() { printMemDiag(); },
-	[&]() { client.printDiag(link, "diag"); });
+	[&client, link]() { client.printDiag(link, "diag"); });
 #else
       mon.intervals([]() { printMemDiag(); });
 #endif
@@ -3101,7 +3103,8 @@ bool resolveH3(const URL &url, H3Policy::T policy)
   bool advertised = false;
   ZeError e;
   int rc = http3DNS(url.dnsHost, url.dnsHost, url.port, policy,
-    ZmFn<bool(const H3Endpoint &)>{[&](const auto &ep) {
+    ZmFn<bool(const H3Endpoint &)>{[&eps, &n, &advertised](
+	const auto &ep) {
       for (unsigned i = 0; i < n; ++i)
 	if (eps[i].ip == ep.ip && eps[i].port == ep.port) return true;
       advertised |= ep.fromHTTPS;

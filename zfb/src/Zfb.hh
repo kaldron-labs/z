@@ -124,11 +124,11 @@ namespace Save {
 
   // compile-time-recursive vector push, with a lambda map function
   template <typename T, typename L, typename I>
-  inline void lpush_(T *, L, I) { }
+  inline void lpush_(T *, L &&, I) { }
   template <typename T, typename L, typename I, typename Arg0, typename ...Args>
-  inline void lpush_(T *buf, L l, I i, Arg0 &&arg0, Args &&...args) {
+  inline void lpush_(T *buf, L &&l, I i, Arg0 &&arg0, Args &&...args) {
     buf[i] = l(ZuFwd<Arg0>(arg0));
-    lpush_(buf, ZuMv(l), ZuUnsigned<i + 1>{}, ZuFwd<Args>(args)...);
+    lpush_(buf, ZuFwd<L>(l), ZuUnsigned<i + 1>{}, ZuFwd<Args>(args)...);
   }
 
   // push uninitialized vector
@@ -177,11 +177,11 @@ namespace Save {
   }
   // inline creation of a vector of lambda-transformed offsets
   template <typename T, typename Builder, typename L, typename ...Args>
-  inline Offset<Vector<Offset<T>>> lvector(Builder &fbb, L l, Args &&...args) {
+  inline Offset<Vector<Offset<T>>> lvector(Builder &fbb, L &&l, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmAlloc(Offset<T>, n);
     if (!buf) return {};
-    lpush_(buf.ptr, ZuMv(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    lpush_(buf.ptr, ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
     auto r = fbb.CreateVector(buf.ptr, n);
     return r;
   }
@@ -217,11 +217,11 @@ namespace Save {
   }
   // inline creation of a vector of lambda-transformed keyed offsets
   template <typename T, typename Builder, typename L, typename ...Args>
-  inline Offset<Vector<Offset<T>>> lkeyVec(Builder &fbb, L l, Args &&...args) {
+  inline Offset<Vector<Offset<T>>> lkeyVec(Builder &fbb, L &&l, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmAlloc(Offset<T>, n);
     if (!buf) return {};
-    lpush_(buf.ptr, ZuMv(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    lpush_(buf.ptr, ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
     auto r = fbb.CreateVectorOfSortedTables(buf.ptr, n);
     return r;
   }
@@ -336,7 +336,7 @@ namespace Load {
   }
 
   // load file
-  using LoadFn = ZmFn<bool(ZuBSpan)>;
+  using LoadFn = ZmFn<bool(ZuBSpan), ZmFnHeapID<"Zfb.LoadFn">>;
   ZfbExtern int load(
     const Zi::Path &path, LoadFn, Zi::Offset maxSize, ZeError *e);
 

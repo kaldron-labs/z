@@ -36,9 +36,9 @@ struct ZiIOContext {
 private:
 friend ZiConnection;
   // initialize (called from within send/recv)
-  template <typename Fn>
-  void init_(Fn &&fn_) {
-    fn = ZuFwd<Fn>(fn_);
+  template <typename L>
+  void init_(L &&l) {
+    fn = ZuFwd<L>(l);
     ptr = nullptr;
     size = offset = length = 0;
     (*this)();
@@ -46,19 +46,19 @@ friend ZiConnection;
 
 public:
   // send/receive
-  template <typename Fn>
-  void init(Fn &&fn_, const void *ptr_, unsigned size_, unsigned offset_) {
+  template <typename L>
+  void init(L &&l, const void *ptr_, unsigned size_, unsigned offset_) {
     ZmAssert(size_);
-    fn = ZuFwd<Fn>(fn_);
+    fn = ZuFwd<L>(l);
     ptr = static_cast<uint8_t *>(const_cast<void *>(ptr_));
     size = size_; offset = offset_; length = 0;
   }
   // UDP send
-  template <typename Fn, typename Addr>
-  void init(Fn &&fn_,
+  template <typename L, typename Addr>
+  void init(L &&l,
       const void *ptr_, unsigned size_, unsigned offset_, Addr &&addr_) {
     ZmAssert(size_);
-    fn = ZuFwd<Fn>(fn_);
+    fn = ZuFwd<L>(l);
     ptr = static_cast<uint8_t *>(const_cast<void *>(ptr_));
     size = size_; offset = offset_; length = 0;
     addr = ZuFwd<Addr>(addr_);
@@ -84,7 +84,7 @@ public:
 
   bool operator()();	// return true if complete
 };
-using ZiIOFn = ZmFn<bool(ZiIOContext &)>;
+using ZiIOFn = ZmFn<bool(ZiIOContext &), ZmFnHeapID<"ZiIOFn">>;
 inline bool ZiIOContext::operator ()() { return fn.as<ZiIOFn>()(*this); }
 
 #endif /* ZiIOContext_HH */

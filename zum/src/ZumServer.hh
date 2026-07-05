@@ -26,7 +26,8 @@ namespace Zum::Server {
 class UserDB;
 
 // open callback - ok, permIDs
-using OpenFn = ZmFn<void(bool, ZtArray<unsigned>)>;
+using OpenFn = ZmFn<void(bool, ZtArray<unsigned>),
+  ZmFnHeapID<"Zum.Server.OpenFn">>;
 
 // bootstrap callback
 struct BootstrapData { // bootstrap() result data
@@ -37,10 +38,12 @@ using BootstrapResult = ZuUnion<bool, BootstrapData>;
 inline bool bootstrapOK(const BootstrapResult &result) {
   return !result.is<bool>() || result.p<bool>();
 }
-using BootstrapFn = ZmFn<void(BootstrapResult)>;
+using BootstrapFn = ZmFn<void(BootstrapResult),
+  ZmFnHeapID<"Zum.Server.BootstrapFn">>;
 
 // request/response callback
-using ResponseFn = ZmFn<void(ZmRef<ZiIOBuf>)>;
+using ResponseFn = ZmFn<void(ZmRef<ZiIOBuf>),
+  ZmFnHeapID<"Zum.Server.ResponseFn">>;
 
 // live session
 namespace SessionFlags {
@@ -70,10 +73,12 @@ struct Session : public ZmPolymorph, public Session_ {
 };
 
 // session start callback - nullptr on failure
-using SessionFn = ZmFn<void(ZmRef<Session>)>;
+using SessionFn = ZmFn<void(ZmRef<Session>),
+  ZmFnHeapID<"Zum.Server.SessionFn">>;
 
 // login request callback - session, response
-using LoginFn = ZmFn<void(ZmRef<Session>, ZmRef<ZiIOBuf>)>;
+using LoginFn = ZmFn<void(ZmRef<Session>, ZmRef<ZiIOBuf>),
+  ZmFnHeapID<"Zum.Server.LoginFn">>;
 
 // user DB state
 ZtEnumNS(UserDBState, int8_t,
@@ -208,7 +213,7 @@ private:
     String &passwd);
 
   // clear all API keys for a user
-  template <typename L> void keyClr__(UserID id, L l);
+  template <typename L> void keyClr__(UserID id, L &&l);
 
   // change password
   void chPass(ZmRef<Session>, ZmRef<ZiIOBuf> buf, ResponseFn);

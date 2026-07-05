@@ -157,7 +157,7 @@ bool ZmScheduler::reset()
   return true;
 }
 
-void ZmScheduler::wakeFn(unsigned sid, ZmFn<> fn)
+void ZmScheduler::wakeFn(unsigned sid, WakeFn fn)
 {
   ZmAssert(sid && sid <= m_params.nThreads());
   m_threads[sid - 1].wakeFn = ZuMv(fn);

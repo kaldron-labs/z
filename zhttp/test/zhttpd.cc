@@ -845,8 +845,8 @@ void H3Server::printDiag()
   auto snapshot = ZtLocalArray(LinkSnapshot,
     state && state->options.maxconn ? state->options.maxconn :
       H3DiagLinkSnapshot);
-  ZmBlock<>{}([&](auto wake) {
-    this->allLinks([&](const ZmRef<Link> &link) {
+  ZmBlock<>{}([this, &snapshot](auto wake) {
+    this->allLinks([&snapshot](const ZmRef<Link> &link) {
       snapshot.push(link);
     }, ZuMv(wake));
   });
@@ -1267,7 +1267,7 @@ int main(int argc, char **argv)
       mon.intervals(
 	[]() { printMemDiag(); }
 #ifdef Zquic_DEBUG
-	, [&]() { h3.printDiag(); }
+	, [&h3]() { h3.printDiag(); }
 #endif
       );
     }

@@ -362,7 +362,7 @@ void testFileChunks()
   uint64_t total = 0;
   unsigned chunks = 0;
   unsigned max = 0;
-  fileChunks(len, [&](unsigned n) {
+  fileChunks(len, [&total, &chunks, &max](unsigned n) {
     total += n;
     if (n > max) max = n;
     ++chunks;

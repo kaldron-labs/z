@@ -165,7 +165,7 @@ static_assert(spliceConstevalOffsetOnly());
 static_assert(spliceConstevalReplaceShrink());
 static_assert(spliceConstevalCase1Replace());
 static_assert(HasSubFind<ZuCSpan, ZuCSpan>{});
-static_assert(!HasSubFind<ZuSpan<const double>, ZuSpan<const double>>{});
+static_assert(HasSubFind<ZuSpan<const double>, ZuSpan<const double>>{});
 static_assert(HasFixedFind<ZuCSpan>{});
 static_assert(HasFixedFind<ZuBSpan>{});
 static_assert(!HasFixedFind<ZuSpan<const double>>{});

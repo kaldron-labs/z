@@ -184,7 +184,7 @@ void Terminal::start(StartFn startFn, KeyFn keyFn) // async
     if (!start_()) return;
     StartFn{ZuMv(startFn)}();
     m_keyFn = ZuMv(keyFn);
-    m_sched->wakeFn(m_thread, ZmFn<>{this, [](Terminal *this_) {
+    m_sched->wakeFn(m_thread, ZmScheduler::WakeFn{this, [](Terminal *this_) {
       this_->wake();
     }});
     read();

@@ -151,7 +151,7 @@ private:
     }
   }
 
-  void all(ZmFn<void(ZmHeapCache *)> fn) {
+  void all(ZmHeapMgr::AllFn fn) {
     ZmRef<ZmHeapCache> c;
     {
       ReadGuard guard(m_lock);
@@ -167,7 +167,7 @@ private:
     }
   }
 
-  void all(ZuCSpan id, ZmFn<void(ZmHeapCache *)> fn) {
+  void all(ZuCSpan id, ZmHeapMgr::AllFn fn) {
     Key key{id, 0U, 0U, false};
     ZmRef<ZmHeapCache> c;
     for (;;) {
@@ -244,7 +244,7 @@ void ZmHeapMgr::init(
   ZmHeapMgr_::instance()->init(id, partition, config);
 }
 
-void ZmHeapMgr::all(ZmFn<void(ZmHeapCache *)> fn)
+void ZmHeapMgr::all(AllFn fn)
 {
   ZmHeapMgr_::instance()->all(ZuMv(fn));
 }

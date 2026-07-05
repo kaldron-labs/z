@@ -63,8 +63,6 @@ public:
   void join();			// block until EOF, signal or other end event
   using Editor::running;	// bool running() - check if running
 
-  void invoke(ZmFn<> fn);	// invoke fn in terminal thread
-
 private:
   void final_();
 

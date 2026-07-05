@@ -29,7 +29,7 @@ namespace Zdf {
 ZtEnumNS(StoreState, int8_t,
   Uninitialized, Initialized, Opening, Opened, OpenFailed);
 
-using OpenFn = ZmFn<void(bool)>;	// (bool ok)
+using OpenFn = ZmFn<void(bool), ZmFnHeapID<"Zdf.Store.OpenFn">>;
 
 class ZdfAPI Store {
 public:
@@ -58,11 +58,18 @@ public:
   void open(OpenFn);	// establishes nextSeriesID
   void close();
 
+  template <typename O, bool TimeIndex>
+  using OpenDFFn = ZmFn<void(ZmRef<DataFrame<O, TimeIndex>>),
+    ZmFnHeapID<"Zdf.Store.OpenDFFn">>;
+  template <typename Series_>
+  using OpenSeriesFn = ZmFn<void(ZmRef<Series_>),
+    ZmFnHeapID<"Zdf.Store.OpenSeriesFn">>;
+
   // open data frame
   template <typename O, bool TimeIndex, bool Create>
   void openDF(
     Shard shard, IDString name,
-    ZmFn<void(ZmRef<DataFrame<O, TimeIndex>>)> fn)
+    OpenDFFn<O, TimeIndex> fn)
   {
     using DataFrame = Zdf::DataFrame<O, TimeIndex>;
     using DFRef = ZmRef<DataFrame>;
@@ -116,7 +123,7 @@ private:
   void openSeries_(
     Shard shard, IDString name,
     ZuTime epoch,
-    ZmFn<void(ZmRef<Series_>)> fn)
+    OpenSeriesFn<Series_> fn)
   {
     using Series = Series_;
     using DBSeries = typename Series::DBSeries;
@@ -165,7 +172,7 @@ public:
   template <typename Decoder, bool Create>
   void openSeries(
     Shard shard, IDString name,
-    ZmFn<void(ZmRef<Series<Decoder>>)> fn)
+    OpenSeriesFn<Series<Decoder>> fn)
   {
     openSeries_<Series<Decoder>, Create>(
       shard, ZuMv(name), ZuTime{0}, ZuMv(fn));
@@ -173,7 +180,7 @@ public:
   template <bool Create>
   void openTimeSeries(
     Shard shard, IDString name, ZuTime epoch,
-    ZmFn<void(ZmRef<TimeSeries>)> fn)
+    OpenSeriesFn<TimeSeries> fn)
   {
     openSeries_<TimeSeries, Create>(
       shard, ZuMv(name), epoch, ZuMv(fn));

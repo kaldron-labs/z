@@ -302,7 +302,8 @@ friend class ZmHeapCacheT;
 public:
   static void init(ZuCSpan id, unsigned partition, const ZmHeapConfig &config);
 
-  static void all(ZmFn<void(ZmHeapCache *)> fn);
+  using AllFn = ZmFn<void(ZmHeapCache *), ZmFnHeapID<"ZmHeapMgr.AllFn">>;
+  static void all(AllFn fn);
 
   struct CSV {
     template <typename S> void print(S &s) const {

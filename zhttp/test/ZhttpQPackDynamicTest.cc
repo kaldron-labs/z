@@ -326,7 +326,7 @@ void testDynamicFieldSectionDecode()
   bool sawPath = false, sawAuthority = false;
   ZuCHECK(Zhttp::H3::decodeLiteralDynamic(
       span(bytes), table,
-      [&](Zhttp::H3::Header h) {
+      [&seen, &sawPath, &sawAuthority](Zhttp::H3::Header h) {
 	if (seen == 0 && h.name == ":path" && h.value == "/sample/path")
 	  sawPath = true;
 	if (seen == 1 && h.name == ":authority" &&
@@ -348,7 +348,7 @@ void testDynamicFieldSectionDecode()
   sawPath = sawAuthority = false;
   ZuCHECK(Zhttp::H3::decodeLiteralDynamic(
       span(bytes), table,
-      [&](Zhttp::H3::Header h) {
+      [&seen, &sawPath, &sawAuthority](Zhttp::H3::Header h) {
 	if (seen == 0 && h.name == ":authority" &&
 	    h.value == "www.example.com")
 	  sawAuthority = true;
@@ -380,7 +380,8 @@ void testFieldRepresentationGoldens()
     bool matched = false;
     int n = Zhttp::H3::QPack::decodeFieldSection(
       span(bytes), &table,
-      [&](Zhttp::H3::Header h_, Zhttp::H3::QPackFieldFlags flags_) {
+      [&matched, &seen, &name, &value, &check](
+	  Zhttp::H3::Header h_, Zhttp::H3::QPackFieldFlags flags_) {
 	matched = h_.name == name && h_.value == value && check(flags_);
 	++seen;
       });
@@ -742,7 +743,7 @@ void testFieldDecodeAllocationDiscipline()
   bool inputBacked = true;
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
       span(bytes),
-      [&](Zhttp::H3::Header h) {
+      [&inputBacked, &seen, begin, end](Zhttp::H3::Header h) {
 	inputBacked &= h.name.data() >= begin && h.name.data() < end;
 	inputBacked &= h.value.data() >= begin && h.value.data() < end;
 	++seen;
@@ -760,7 +761,7 @@ void testFieldDecodeAllocationDiscipline()
   seen = 0;
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
       span(bytes),
-      [&](Zhttp::H3::Header h) {
+      [&seen](Zhttp::H3::Header h) {
 	if (h.name == "x" && h.value == "v") ++seen;
       }) == int(bytes.length()) && seen == 20,
     "many Huffman field literals did not decode through scratch path");

@@ -66,6 +66,13 @@ int main(int argc, char **argv)
 
   ZuTestMain();
 
+  {
+    constexpr ZuString L("l");
+    // constexpr ZuString R("r");
+    using LR = ZuFieldProp::JSON::ID<L + "r"_Zu>;
+    (void)sizeof(LR);
+    ZuCHECK(((L + "r"_Zu) == "lr"));
+  }
   // std::cerr << ZuDemangle<decltype(names)>{} << '\n';
   {
     constexpr auto matcher = ZuMatcher<"foo", "foh", "bar", "baz">();

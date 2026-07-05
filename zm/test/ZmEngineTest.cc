@@ -47,10 +47,10 @@ void testIdempotenceAndCallbacks()
   ZuCheck(!e.stopping());
 
   int startCb = 0;
-  e.start(ZmFn<void(bool)>{[&](bool ok) {
+  e.start([&startCb](bool ok) {
     ZuCheck(ok);
     ++startCb;
-  }});
+  });
   ZuCheck(e.state() == Starting);
   ZuCheck(e.running());
   ZuCheck(!e.stopping());
@@ -63,18 +63,18 @@ void testIdempotenceAndCallbacks()
   ZuCheck(startCb == 1);
 
   int startCb2 = 0;
-  e.start(ZmFn<void(bool)>{[&](bool ok) {
+  e.start([&startCb2](bool ok) {
     ZuCheck(ok);
     ++startCb2;
-  }});
+  });
   ZuCheck(startCb2 == 1); // idempotent when already running
   ZuCheck(e.startCalls == 1);
 
   int stopCb = 0;
-  e.stop(ZmFn<void(bool)>{[&](bool ok) {
+  e.stop([&stopCb](bool ok) {
     ZuCheck(ok);
     ++stopCb;
-  }});
+  });
   ZuCheck(e.state() == Stopping);
   ZuCheck(!e.running());
   ZuCheck(e.stopping());
@@ -87,10 +87,10 @@ void testIdempotenceAndCallbacks()
   ZuCheck(stopCb == 1);
 
   int stopCb2 = 0;
-  e.stop(ZmFn<void(bool)>{[&](bool ok) {
+  e.stop([&stopCb2](bool ok) {
     ZuCheck(ok);
     ++stopCb2;
-  }});
+  });
   ZuCheck(stopCb2 == 1); // idempotent when already stopped
   ZuCheck(e.stopCalls == 1);
 }
@@ -105,16 +105,16 @@ void testStopPendingTransition()
   int startCb = 0;
   int stopCb = 0;
 
-  e.start(ZmFn<void(bool)>{[&](bool ok) {
+  e.start([&startCb](bool ok) {
     ZuCheck(ok);
     ++startCb;
-  }});
+  });
   ZuCheck(e.state() == Starting);
 
-  e.stop(ZmFn<void(bool)>{[&](bool ok) {
+  e.stop([&stopCb](bool ok) {
     ZuCheck(ok);
     ++stopCb;
-  }});
+  });
   ZuCheck(e.state() == StopPending);
   ZuCheck(!e.running());
   ZuCheck(!e.stopping());
@@ -143,25 +143,25 @@ void testStartPendingTransition()
   int stopCb = 0;
   int startCb2 = 0;
 
-  e.start(ZmFn<void(bool)>{[&](bool ok) {
+  e.start([&startCb1](bool ok) {
     ZuCheck(ok);
     ++startCb1;
-  }});
+  });
   e.completeStart(true);
   ZuCheck(e.state() == Running);
 
-  e.stop(ZmFn<void(bool)>{[&](bool ok) {
+  e.stop([&stopCb](bool ok) {
     ZuCheck(ok);
     ++stopCb;
-  }});
+  });
   ZuCheck(e.state() == Stopping);
   ZuCheck(!e.running());
   ZuCheck(e.stopping());
 
-  e.start(ZmFn<void(bool)>{[&](bool ok) {
+  e.start([&startCb2](bool ok) {
     ZuCheck(ok);
     ++startCb2;
-  }});
+  });
   ZuCheck(e.state() == StartPending);
   ZuCheck(!e.running());
   ZuCheck(e.stopping());

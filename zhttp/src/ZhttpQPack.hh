@@ -393,7 +393,7 @@ struct QPack {
       headerBytes += value.length();
       return true;
     };
-    auto readValue = [&](ZuCSpan &value) {
+    auto readValue = [&valueStorage, &in, &o](ZuCSpan &value) {
       valueStorage.length(0);
       return decodeString(valueStorage, in, o, 7, 0x80, value) >= 0;
     };

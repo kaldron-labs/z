@@ -40,7 +40,7 @@ class StoreTbl;
 using Event = ZeException;
 
 // failure notification
-using FailFn = ZmFn<void(Event)>;
+using FailFn = ZmFn<void(Event), ZmFnHeapID<"Zdb.Store.FailFn">>;
 
 // result of store init()
 struct InitData {
@@ -53,12 +53,12 @@ using InitResult = ZuUnion<
 // start result
 using StartResult = ZuUnion<void, Event>;
 // start callback
-using StartFn = ZmFn<void(StartResult)>;
+using StartFn = ZmFn<void(StartResult), ZmFnHeapID<"Zdb.Store.StartFn">>;
 
 // stop result
 using StopResult = ZuUnion<void, Event>;
 // stop callback
-using StopFn = ZmFn<void(StopResult)>;
+using StopFn = ZmFn<void(StopResult), ZmFnHeapID<"Zdb.Store.StopFn">>;
 
 // opened table data
 // - (*) un and sn may refer to trailing deletions
@@ -80,10 +80,10 @@ using OpenResult = ZuUnion<
   OpenData,			// succeeded
   Event>;			// error
 // open callback
-using OpenFn = ZmFn<void(OpenResult)>;
+using OpenFn = ZmFn<void(OpenResult), ZmFnHeapID<"Zdb.Store.OpenFn">>;
 
 // table close callback
-using CloseFn = ZmFn<>;
+using CloseFn = ZmFn<void(), ZmFnHeapID<"Zdb.Store.CloseFn">>;
 
 // count data (returned by count)
 struct CountData {
@@ -94,7 +94,7 @@ using CountResult = ZuUnion<
   CountData,		// count
   Event>;		// error
 // count callback
-using CountFn = ZmFn<void(CountResult)>;
+using CountFn = ZmFn<void(CountResult), ZmFnHeapID<"Zdb.Store.CountFn">>;
 
 // tuple data
 struct TupleData {
@@ -109,7 +109,7 @@ using TupleResult = ZuUnion<
   Event>;		// error
 // tuple callback
 // - app must process buf contents synchronously
-using TupleFn = ZmFn<void(TupleResult)>;
+using TupleFn = ZmFn<void(TupleResult), ZmFnHeapID<"Zdb.Store.TupleFn">>;
 
 // row data
 struct RowData {
@@ -122,12 +122,13 @@ using RowResult = ZuUnion<
   Event>;		// error
 
 // row callback
-using RowFn = ZmFn<void(RowResult)>;
+using RowFn = ZmFn<void(RowResult), ZmFnHeapID<"Zdb.Store.RowFn">>;
 
 // commit result
 using CommitResult = ZuUnion<void, Event>;
 // commit callback
-using CommitFn = ZmFn<void(ZmRef<IOBuf>, CommitResult)>;
+using CommitFn = ZmFn<void(ZmRef<IOBuf>, CommitResult),
+  ZmFnHeapID<"Zdb.Store.CommitFn">>;
 
 // backing table interface
 class StoreTbl {

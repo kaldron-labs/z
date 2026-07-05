@@ -66,7 +66,8 @@ void Loop::start(StartFn fn)
       start_failed(ZeEXCEPT(Fatal, "ZiEventLoop", "start() failed"));
       return;
     }
-    m_sched->wakeFn(m_sid, ZmFn<>{this, [](Loop *loop) { loop->wake(); }});
+    m_sched->wakeFn(m_sid,
+      ZmScheduler::WakeFn{this, [](Loop *loop) { loop->wake(); }});
     run_();
   }, m_sid);
 }
@@ -142,7 +143,7 @@ void Loop::stop(StopFn fn)
   m_stopFn = ZuMv(fn);
   m_stopping = true; // inhibits further application requests
 
-  m_sched->wakeFn(m_sid, ZmFn<>{});
+  m_sched->wakeFn(m_sid, ZmScheduler::WakeFn{});
   m_sched->push([this]() mutable {
     stop_0();
     StopFn stopFn = ZuMv(m_stopFn);
@@ -343,9 +344,9 @@ void Loop::delSocket_(ZmRef<Socket> socket)
 #endif /* !_WIN32 */
 }
 
-bool Loop::addHandle(Zi::Handle handle_, HandleSendFn send, HandleRecvFn recv)
+bool Loop::addHandle(Zi::Handle handle_, HandleWriteFn write, HandleReadFn read)
 {
-  ZmRef<Handle> handle = new Handle{handle_, ZuMv(send), ZuMv(recv)};
+  ZmRef<Handle> handle = new Handle{handle_, ZuMv(write), ZuMv(read)};
 
 #ifndef _WIN32
 
@@ -376,8 +377,8 @@ bool Loop::addHandle(Zi::Handle handle_, HandleSendFn send, HandleRecvFn recv)
 
   // "prime the pump" to ensure that read- and write-readiness is
   // correctly signalled via epoll / WFMO
-  handle->send(handle_);
-  handle->recv(handle_);
+  handle->write(handle_);
+  handle->read(handle_);
 
   m_handles.addNode(ZuMv(handle));
 
@@ -512,9 +513,9 @@ again:
 	auto handle = u64_ptr<Handle>(u64);
 
 	if (events & EPOLLOUT)
-	  handle->send(handle->handle);
+	  handle->write(handle->handle);
 	if (events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR))
-	  handle->recv(handle->handle);
+	  handle->read(handle->handle);
       } else { // u64_is_wake(u64)
 	char c;
 	int r = ::read(m_wakeFD, &c, 1);
@@ -558,8 +559,8 @@ again:
 	  socket->recv(socket->socket);
       } else if (u64_is_handle(u64)) {
 	auto handle = u64_ptr<Handle>(u64);
-	if (handle->send) handle->send(handle->handle);
-	if (handle->recv) handle->recv(handle->handle);
+	if (handle->write) handle->write(handle->handle);
+	if (handle->read) handle->read(handle->handle);
       } else { // u64_is_wake(u64)
 	// LATER WFMO should have decremented the semaphore, but test this,
 	// we may need to:

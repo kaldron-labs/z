@@ -150,7 +150,7 @@ public:
       int n = 0;
       int64_t consumed = rx.consume(
 	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[&](ZuBSpan span) { n = process_span_(span); });
+	[this, &n](ZuBSpan span) { n = process_span_(span); });
       if (ZuUnlikely(n < 0)) return -1;
       if (ZuUnlikely(consumed < 0)) return -1;
       if (!consumed) return 0;

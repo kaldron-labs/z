@@ -76,7 +76,7 @@ ZuDerive(Host, ZtString<ZtStringHeapID<"Ztls.Host">>);
 ZuDerive(Ticket, (ZtArray<uint8_t, ZtArrayHeapID<"Ztls.Ticket">>));
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Ztls.ALPNData">>));
 ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Ztls.ALPN">>));
-using ErrorFn = ZmFn<void(ZeException)>;
+using ErrorFn = ZmFn<void(ZeException), ZmFnHeapID<"Ztls.ErrorFn">>;
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Ztls.Param">>);
 ZuDerive(ParamStrings,
   (ZtArray<ParamString, ZtArrayHeapID<"Ztls.ParamStrings">>));
@@ -896,8 +896,8 @@ private:
 
     if (ZuUnlikely(!app()->asyncAddHandle_(
 	  handle,
-	  ZiEvent::HandleSendFn{[](Zi::Handle) { }},
-	  ZiEvent::HandleRecvFn{
+	  ZiEvent::HandleWriteFn{[](Zi::Handle) { }},
+	  ZiEvent::HandleReadFn{
 	    async, ZmFnPtr<&AsyncJob::ready>{}}))) {
       clearAsync_();
       app()->error_(ZeEXCEPT(Error, "Ztls",
@@ -911,13 +911,12 @@ private:
 
   void asyncReady_(AsyncJobRef async, Zi::Handle handle_) {
     if (ZuUnlikely(handle_ != async->handle)) return;
-    if (++async->recvCount != 2) return;
+    if (++async->readCount != 2) return;
     async->handle = Zi::nullHandle();
     app()->asyncDelHandleNow_(handle_);
-    app()->rxRun(ZmFn<>{
-      ZuMv(async), [](AsyncJob *async) {
+    app()->rxRun([async = ZuMv(async)]() mutable {
 	async->link->asyncResume_(async);
-      }});
+      });
   }
 
   void asyncResume_(AsyncJob *async) {
@@ -1055,7 +1054,7 @@ private:
     ptls_async_job_t	*job = nullptr;
     Zi::Handle		handle = Zi::nullHandle();
     uint64_t		gen = 0;
-    ZmAtomic<unsigned>	recvCount = 0;
+    ZmAtomic<unsigned>	readCount = 0;
     bool		retired = false;
   };
 
@@ -1201,7 +1200,7 @@ public:
 	app()->mx()->add(
 	  &m_reconnTimer, Zm::now(reconnFreq), ZmScheduler::Update,
 	  [this](auto &&arm) {
-	    return arm(ZmFn<>{this, [](CliLink *link) { link->connect_(); }});
+	    return arm([this]() { connect_(); });
 	  }, app()->rxThread());
     else
       app()->error_(ZeEXCEPT(Error, "Ztls", "connect failed"));
@@ -1315,7 +1314,7 @@ public:
 
 protected:
   template <typename Params, typename L>
-  bool init_(Params params, L l) {
+  bool init_(Params params, L &&l) {
     m_errorFn = ZuMv(params.errorFn());
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
@@ -1326,7 +1325,7 @@ protected:
       m_mx->sid(params.asyncThread()) : 0;
 
     return ZmBlock<bool>{}([
-      this, params = ZuMv(params), l = ZuMv(l)
+      this, params = ZuMv(params), l = ZuFwd<L>(l)
     ](auto wake) mutable {
       rxInvoke([
 	this, params = ZuMv(params), l = ZuMv(l), wake = ZuMv(wake)
@@ -1523,26 +1522,26 @@ private:
     m_errorFn = ErrorFn{};
   }
 
-  template <typename SendFn, typename RecvFn>
+  template <typename WriteFn, typename ReadFn>
   bool asyncAddHandle_(
-      Zi::Handle handle, SendFn send, RecvFn recv) {
+      Zi::Handle handle, WriteFn write, ReadFn read) {
     if (!m_eventLoopStarted) return false;
     return ZmBlock<bool>{}([
-      this, handle, send = ZuMv(send), recv = ZuMv(recv)
+      this, handle, write = ZuMv(write), read = ZuMv(read)
     ](auto wake) mutable {
       m_eventLoop.run([
-	this, handle, send = ZuMv(send), recv = ZuMv(recv),
+	this, handle, write = ZuMv(write), read = ZuMv(read),
 	wake = ZuMv(wake)
       ]() mutable {
-	bool ok = m_eventLoop.addHandle(handle, ZuMv(send), ZuMv(recv));
+	bool ok = m_eventLoop.addHandle(handle, ZuMv(write), ZuMv(read));
 	wake(ok);
       });
     });
   }
 
-  void asyncRun_(ZmFn<> fn) {
+  template <typename ...Args> void asyncRun_(Args &&...args) {
     if (!m_eventLoopStarted) return;
-    m_eventLoop.run(ZuMv(fn));
+    m_eventLoop.run(ZuFwd<Args>(args)...);
   }
 
   void asyncDelHandleNow_(Zi::Handle handle) {
@@ -1581,9 +1580,9 @@ protected:
   }
 
   template <typename L>
-  bool spawn(L l) {
+  bool spawn(L &&l) {
     if (!m_mx || !m_mx->running()) return false;
-    rxRun(ZuMv(l));
+    rxRun(ZuFwd<L>(l));
     return true;
   }
 

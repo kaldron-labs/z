@@ -189,7 +189,8 @@ struct TestLink :
     bool ok = Base::flushControlAndStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
-      [&](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &r) {
+      [&refs, &kinds, &streamIDs, capacity](
+	  Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &r) {
 	refs = r.count();
 	for (unsigned i = 0; i < refs && i < capacity; ++i) {
 	  kinds[i] = r[i].kind;
@@ -204,7 +205,8 @@ struct TestLink :
     bool ok = Base::flushControlAndStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
-      [&](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &r) {
+      [&n, refs, capacity](
+	  Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &r) {
 	n = r.count();
 	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
 	return true;
@@ -234,7 +236,7 @@ struct TestLink :
     bool ok = Base::flushControlAndStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
-      [&](Zquic::PktBuild &build, ZiSockAddr,
+      [this, &n, refs, capacity](Zquic::PktBuild &build, ZiSockAddr,
 	  const typename Base::TxPktRefs &r) {
 	n = r.count();
 	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
@@ -407,14 +409,14 @@ struct TestLink :
     Base::beginLongCoalesce_();
     bool ok = Base::holdInitialForCoalesce_(
       ZuMv(initial), ZiSockAddr{},
-      [&](auto buf, ZiSockAddr) {
+      [&sends, &bytes](auto buf, ZiSockAddr) {
 	++sends;
 	bytes += buf->length;
 	return true;
       });
     ok = Base::sendHandshakeCoalesced_(
       ZuMv(handshake), ZiSockAddr{},
-      [&](auto buf, ZiSockAddr) {
+      [&sends, &bytes](auto buf, ZiSockAddr) {
 	++sends;
 	bytes += buf->length;
 	return buf->length == 140 &&
@@ -544,7 +546,7 @@ struct TestLink :
     unsigned n = 0;
     bool ok = Base::flushEarlyStreams_(
       ZiSockAddr{},
-      [&](Zquic::PktBuild &build, ZiSockAddr,
+      [this, &n, refs, capacity](Zquic::PktBuild &build, ZiSockAddr,
 	  const typename Base::TxPktRefs &r) {
 	n = r.count();
 	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
@@ -727,7 +729,7 @@ static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
       }
       return remaining;
     },
-    [&](ZuBSpan span) {
+    [&called, &ok, &expected](ZuBSpan span) {
       called = true;
       ok = span.length() == expected.length() &&
 	!memcmp(span.data(), expected.data(), expected.length());

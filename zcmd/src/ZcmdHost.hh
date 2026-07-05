@@ -51,7 +51,9 @@ public:
   ZuDerive(Context, Context_<Host>);
 
   // command handler (context)
-  using Fn = ZmFn<void(Context *, ZiIOBuf *, const Argv &)>;
+  using Fn = ZmFn<void(Context *, ZiIOBuf *, const Argv &),
+    ZmFnHeapID<"Zcmd.Host.Fn">>;
+  using FinalFn = ZmFn<void(), ZmFnHeapID<"ZcmdHost.FinalFn">>;
 
   struct CmdData {
     Fn		fn;
@@ -82,7 +84,7 @@ public:
 
   void processCmd(ZmRef<Context>, const Argv &argv);
 
-  void finalFn(ZmFn<>);
+  void finalFn(FinalFn);
 
   virtual void executed(
     ZmRef<Context>, ZmRef<ZiIOBuf> buf, ZuBSpan out, int code) = 0;
@@ -104,7 +106,7 @@ private:
 	ZmRBTreeLock<ZmNoLock>>>));
 
   Cmds		 	m_cmds;
-  ZtArray<ZmFn<>>	m_finalFn;
+  ZtArray<FinalFn>	m_finalFn;
 };
 
 template <typename ContextRef>

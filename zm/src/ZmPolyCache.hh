@@ -73,13 +73,15 @@ private:
 
 public:
   using HeapID = PolyHash::HeapID;
+  enum { Sharded = PolyHash::Sharded };
 
   using Node = typename PolyHash::Node;
   using NodeRef = typename PolyHash::NodeRef;
   using NodeMvRef = typename PolyHash::NodeMvRef;
 
 private:
-  using FindFn = ZmFn<void(Node *)>;
+  using FindFn = ZmFn<void(Node *),
+    ZmFnHeapID<HeapID{}() + ".FindFn"_Zu, ZmFnSharded<Sharded>>>;
   using FindFnList = ZmList<FindFn, ZmHashHeapID_<HeapID>>;
   // key IDs as a type list
   using KeyIDs = ZuSeqTL<ZuStructKeyIDs<T>>;

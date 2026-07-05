@@ -569,7 +569,7 @@ public:
   }
 
   // start/stop
-  using StartFn = ZmFn<void(Editor &)>;
+  using StartFn = ZmFn<void(Editor &), ZmFnHeapID<"Zrl.Editor.StartFn">>;
   void start(StartFn = {});
   void stop();
   bool running() const;

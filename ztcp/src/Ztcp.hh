@@ -51,7 +51,7 @@ namespace Ztcp {
 
 ZuDerive(LogMsg, ZtString<ZtStringHeapID<"Ztcp.Log">>);
 ZuDerive(Host, ZtString<ZtStringHeapID<"Ztcp.Host">>);
-using ErrorFn = ZmFn<void(ZeException)>;
+using ErrorFn = ZmFn<void(ZeException), ZmFnHeapID<"Ztcp.ErrorFn">>;
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Ztcp.Param">>);
 
 inline ErrorFn defaultErrorFn()
@@ -423,7 +423,7 @@ template <typename> friend class Client;
 	app()->mx()->add(
 	  &m_reconnTimer, Zm::now(reconnFreq), ZmScheduler::Update,
 	  [this](auto &&arm) {
-	    return arm(ZmFn<>{this, [](CliLink *link) { link->connect_(); }});
+	    return arm([this]() { connect_(); });
 	  }, app()->rxThread());
     else
       app()->error_(ZeEXCEPT(Error, "Ztcp", "connect failed"));
@@ -484,14 +484,14 @@ public:
 
 protected:
   template <typename Params, typename L>
-  bool init_(Params params, L l) {
+  bool init_(Params params, L &&l) {
     m_errorFn = ZuMv(params.errorFn_);
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
     m_mx = params.mx;
     m_rxThread = thread_(params.rxThread, m_mx->rxThread());
     m_txThread = thread_(params.txThread, m_mx->txThread());
-    return l(params);
+    return ZuFwd<L>(l)(params);
   }
 
 private:
@@ -584,9 +584,9 @@ protected:
   }
 
   template <typename L>
-  bool spawn(L l) {
+  bool spawn(L &&l) {
     if (!m_mx || !m_mx->running()) return false;
-    rxRun(ZuMv(l));
+    rxRun(ZuFwd<L>(l));
     return true;
   }
 

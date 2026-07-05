@@ -51,7 +51,7 @@ int main(int argc, char **argv)
   {
     log("iteration:");
     unsigned n = 0;
-    cache.allSync([&](auto node, auto wake) {
+    cache.allSync([&n](auto node, auto wake) {
       ++n;
       log(*node);
       wake();

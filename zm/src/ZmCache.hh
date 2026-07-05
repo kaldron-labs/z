@@ -94,7 +94,8 @@ public:
   using NodeMvRef = typename Hash::NodeMvRef;
 
 private:
-  using FindFn = ZmFn<void(Node *)>;
+  using FindFn = ZmFn<void(Node *),
+    ZmFnHeapID<HeapID{}() + ".FindFn"_Zu, ZmFnSharded<Sharded>>>;
   ZuDerive(FindFnList, (ZmList<FindFn>));
   ZuDerive(LoadHash,
     (ZmHashKV<Key, FindFnList,

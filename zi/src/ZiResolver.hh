@@ -113,10 +113,11 @@ using ResolveResult = ZuUnion<void, ZiIP, Event>;
 using NameResult = ZuUnion<Host, Event>;
 using QueryResult = ZuUnion<DNSMsg, Event>;
 using TXTResult = ZuUnion<void, ZuBSpan, Event>;
-using ResolveFn = ZmFn<bool(ResolveResult)>;
-using NameFn = ZmFn<void(NameResult)>;
-using QueryFn = ZmFn<void(QueryResult)>;
-using TXTFn = ZmFn<bool(TXTResult)>;
+using ResolveFn = ZmFn<bool(ResolveResult),
+  ZmFnHeapID<"ZiResolver.ResolveFn">>;
+using NameFn = ZmFn<void(NameResult), ZmFnHeapID<"ZiResolver.NameFn">>;
+using QueryFn = ZmFn<void(QueryResult), ZmFnHeapID<"ZiResolver.QueryFn">>;
+using TxtFn = ZmFn<bool(TXTResult), ZmFnHeapID<"ZiResolver.TxtFn">>;
 
 class Main;
 
@@ -192,7 +193,7 @@ public:
   static ZmRef<Query> resolve(Host, ResolveFn);
   static ZmRef<Query> name(ZiIP, NameFn);
   static ZmRef<Query> query(Host, uint16_t type, uint16_t klass, QueryFn);
-  static void txt(const DNSMsg &, TXTFn);
+  static void txt(const DNSMsg &, TxtFn);
   static void cancel(ZmRef<Query>);
 
   bool running() const;
@@ -214,7 +215,7 @@ private:
   ZmRef<Query> resolve_(Host, ResolveFn);
   ZmRef<Query> name_(ZiIP, NameFn);
   ZmRef<Query> query_(Host, uint16_t type, uint16_t klass, QueryFn);
-  void txt_(const DNSMsg &, TXTFn);
+  void txt_(const DNSMsg &, TxtFn);
   void cancel_(ZmRef<Query>);
 
   void addQuery_(ZmRef<Query>);
@@ -264,7 +265,7 @@ using ZiResolverTXTResult = ZiResolver_::TXTResult;
 using ZiResolverResolveFn = ZiResolver_::ResolveFn;
 using ZiResolverNameFn = ZiResolver_::NameFn;
 using ZiResolverQueryFn = ZiResolver_::QueryFn;
-using ZiResolverTXTFn = ZiResolver_::TXTFn;
+using ZiResolverTxtFn = ZiResolver_::TxtFn;
 using ZiResolverQuery = ZiResolver_::Query;
 
 #endif /* ZiResolver_HH */

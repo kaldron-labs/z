@@ -28,7 +28,7 @@ void testSignalNoMissedWakeup()
   bool woke = false;
   ZmAtomic<int> waiting = 0;
 
-  ZmThread th{[&] {
+  ZmThread th{[&lock, &waiting, &ready, &cond, &woke] {
     ZmGuard<ZmPLock> guard(lock);
     waiting = 1;
     while (!ready) cond.wait();
@@ -55,7 +55,7 @@ void testTimedWaitAndBroadcast()
   ZmCondition<ZmPLock> cond(lock);
 
   int timed = 0;
-  ZmThread timeoutTh{[&] {
+  ZmThread timeoutTh{[&lock, &timed, &cond] {
     ZmGuard<ZmPLock> guard(lock);
     timed = cond.timedWait(Zm::now() + ZuTime(0.03));
   }};
@@ -64,7 +64,7 @@ void testTimedWaitAndBroadcast()
 
   bool go = false;
   int wakeCount = 0;
-  auto waiter = [&] {
+  auto waiter = [&lock, &go, &cond, &wakeCount] {
     ZmGuard<ZmPLock> guard(lock);
     while (!go) cond.wait();
     ++wakeCount;
@@ -96,7 +96,7 @@ void testTimeoutSignalRace()
     int rc = 99;
     bool done = false;
 
-    ZmThread th{[&] {
+    ZmThread th{[&lock, &rc, &cond, &done] {
       ZmGuard<ZmPLock> guard(lock);
       rc = cond.timedWait(Zm::now() + ZuTime(0.01));
       done = true;

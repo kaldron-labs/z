@@ -92,7 +92,7 @@ ZuDerive(TokenBytes,
 ZuDerive(TokenSecret,
   (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.TokenSecret">>));
 
-using ErrorFn = ZmFn<void(ZeException)>;
+using ErrorFn = ZmFn<void(ZeException), ZmFnHeapID<"Zquic.ErrorFn">>;
 
 inline constexpr uint64_t DefaultMaxData = (16<<20); // 16M
 inline constexpr uint64_t DefaultMaxStreamData = (1<<20); // 1M
@@ -822,10 +822,10 @@ public:
 
 protected:
   template <typename Params, typename L>
-  bool init_(Params params, Zquic::Vantage::T vantage, L l) {
+  bool init_(Params params, Zquic::Vantage::T vantage, L &&l) {
     return EngineCtl::lock(
 	ZmEngineState::Stopped,
-	[this, params = ZuMv(params), vantage, l = ZuMv(l)]() mutable -> bool {
+	[this, params = ZuMv(params), vantage, l = ZuFwd<L>(l)]() mutable -> bool {
       m_errorFn = ZuMv(params.errorFn());
       if (!m_errorFn) m_errorFn = defaultErrorFn();
       if (!validate_(params)) return false;
@@ -906,9 +906,9 @@ protected:
   }
 
   template <typename L>
-  bool spawn(L l) {
+  bool spawn(L &&l) {
     if (!mx() || !mx()->running()) return false;
-    rxRun(ZuMv(l));
+    rxRun(ZuFwd<L>(l));
     return true;
   }
 
@@ -923,9 +923,9 @@ protected:
   }
 
   template <typename L>
-  void stopQLog_(L l) {
+  void stopQLog_(L &&l) {
     if (!m_qlogParams.enabled()) { l(); return; }
-    ZquicLogger::close(m_qlogTrace, [this, l = ZuMv(l)]() mutable {
+    ZquicLogger::close(m_qlogTrace, [this, l = ZuFwd<L>(l)]() mutable {
       rxRun([l = ZuMv(l)]() mutable {
 	ZquicLogger::stopIdle();
 	l();
@@ -1200,52 +1200,52 @@ friend ZmEngine<App>;
   bool listening() const { return Endpoint::listening(); }
   bool connected() const { return Endpoint::connected(); }
   const ZiSockAddr &local() const { return Endpoint::local(); }
-  template <typename Fn>
-  void endpointDiag(Fn fn) const {
+  template <typename L>
+  void endpointDiag(L &&l) const {
     auto mx = this->mx();
     if (!mx || mx->invoked(mx->txThread())) {
       EndpointDiag diag = Endpoint::diag();
-      fn(diag);
+      l(diag);
       return;
     }
     auto server = const_cast<Server *>(this);
-    mx->txRun([server, fn = ZuMv(fn)]() mutable {
+    mx->txRun([server, l = ZuFwd<L>(l)]() mutable {
       EndpointDiag diag = server->Endpoint::diag();
-      fn(diag);
+      l(diag);
     });
   }
-  template <typename Fn>
-  void addressValidationDiag(Fn fn) const {
+  template <typename L>
+  void addressValidationDiag(L &&l) const {
     auto mx = this->mx();
     if (!mx) {
       AddressValidationDiag diag;
-      fn(diag);
+      l(diag);
       return;
     }
     auto server = const_cast<Server *>(this);
     if (server->rxInvoked()) {
-      fn(server->m_addressValidationDiag);
+      l(server->m_addressValidationDiag);
       return;
     }
-    mx->rxRun([server, fn = ZuMv(fn)]() mutable {
-      fn(server->m_addressValidationDiag);
+    mx->rxRun([server, l = ZuFwd<L>(l)]() mutable {
+      l(server->m_addressValidationDiag);
     });
   }
-  template <typename Fn, typename Done>
-  void allLinks(Fn fn, Done done) {
+  template <typename L, typename Done>
+  void allLinks(L &&l, Done &&done) {
     ZiAssert(this->mx() && this->rxThread(), "Zquic", (),
       "QUIC server link iteration before app initialization", return);
     if (this->rxInvoked()) {
       if (this->state() == ZmEngineState::Running) {
 	auto i = m_links->citer();
 	while (LinkRef ref = i.val())
-	  fn(ZuMv(ref));
+	  l(ZuMv(ref));
       }
       done();
       return;
     }
-    this->rxInvoke([this, fn = ZuMv(fn), done = ZuMv(done)]() mutable {
-      allLinks(ZuMv(fn), ZuMv(done));
+    this->rxInvoke([this, l = ZuFwd<L>(l), done = ZuFwd<Done>(done)]() mutable {
+      allLinks(ZuMv(l), ZuMv(done));
     });
   }
 
