@@ -9,7 +9,6 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
-#include <zlib/ZiResolver.hh>
 #include <zlib/Zquic.hh>
 #include <zlib/Zhttp.hh>
 
@@ -1233,5 +1232,4 @@ int main(int argc, char **argv)
   ZuTestCall(testCurlZhttpHttpsH1Server);
   ZuTestCall(testCurlZhttpHttpsH3Server);
   ZuTestCall(testZhttpClientCaddyHttpsH3);
-  ZiResolver::final();
 }
