@@ -207,7 +207,9 @@ private:
   void init_(Params, ZiEvent::FailFn);
   void start_(ZiEvent::StartFn);
   void stop_(ZiEvent::StopFn);
+  void stop__(ZiEvent::StopFn);
   void final_();
+  void final__();
 
   ZmRef<Query> resolve_(Host, ResolveFn);
   ZmRef<Query> name_(ZiIP, NameFn);
