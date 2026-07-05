@@ -21,6 +21,8 @@
 
 class ZiConnection;
 
+using ZiTOS = ZuUnion<void, uint8_t>;	// IP TOS raw byte
+
 struct ZiIOContext {
   ZiConnection	*cxn = nullptr;	// connection - set by ZiMultiplex
   ZmAnyFn	fn;		// callback - set by app
@@ -29,6 +31,7 @@ struct ZiIOContext {
   unsigned	offset = 0;	// offset within buffer - set by app
   int		length = 0;	// length - set by ZiMultiplex (-1 on error)
   ZiSockAddr	addr;		// UDP - set by app (send) / ZiMultiplex (recv)
+  ZiTOS		tos;		// TOS raw byte
 
   // ptr sentinel value to disconnect
   static constexpr uintptr_t invalid_ptr() { return uintptr_t(-1); }
@@ -41,6 +44,7 @@ friend ZiConnection;
     fn = ZuFwd<L>(l);
     ptr = nullptr;
     size = offset = length = 0;
+    tos = {};
     (*this)();
   }
 
@@ -52,6 +56,7 @@ public:
     fn = ZuFwd<L>(l);
     ptr = static_cast<uint8_t *>(const_cast<void *>(ptr_));
     size = size_; offset = offset_; length = 0;
+    tos = {};
   }
   // UDP send
   template <typename L, typename Addr>
@@ -62,6 +67,7 @@ public:
     ptr = static_cast<uint8_t *>(const_cast<void *>(ptr_));
     size = size_; offset = offset_; length = 0;
     addr = ZuFwd<Addr>(addr_);
+    tos = {};
   }
   // initially, ptr will be null and app must set it via init()
   bool initialized() { return ptr; }

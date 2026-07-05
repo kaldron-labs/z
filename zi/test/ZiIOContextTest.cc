@@ -20,6 +20,7 @@ void testInitAndCallback()
   char buf[8] = {0};
   bool called = false;
 
+  io.tos = uint8_t(3);
   io.init(ZiIOFn{[&called](ZiIOContext &ctx) {
       called = true;
       ctx.length = 3;
@@ -32,6 +33,7 @@ void testInitAndCallback()
   ZuCheck(io.size == sizeof(buf));
   ZuCheck(io.offset == 0);
   ZuCheck(!io.completed());
+  ZuCheck(io.tos.template is<void>());
 
   ZuCheck(io());
   ZuCheck(called);
@@ -45,14 +47,18 @@ void testCompleteAndDisconnect()
   ZiIOContext io;
   char buf[4] = {0};
 
+  io.tos = uint8_t(2);
   io.init(ZiIOFn{[](ZiIOContext &) { return true; }}, buf, sizeof(buf), 1);
   ZuCheck(io.initialized());
+  ZuCheck(io.tos.template is<void>());
 
   io.complete();
   ZuCheck(io.completed());
   ZuCheck(!io.disconnected());
 
+  io.tos = uint8_t(1);
   io.init(ZiIOFn{[](ZiIOContext &) { return true; }}, buf, sizeof(buf), 0);
+  ZuCheck(io.tos.template is<void>());
   io.disconnect();
   ZuCheck(io.disconnected());
   ZuCheck(io.completed());

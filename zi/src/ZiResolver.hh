@@ -103,7 +103,7 @@ using DNSBuf = ZtBuiltin<
 struct DNSMsg {
   Zi::Name	name;
   uint16_t	type = 0;
-  uint16_t	klass = 0;
+  uint16_t	class_ = 0;
   DNSBuf	buf;
 };
 
@@ -152,7 +152,7 @@ private:
   NameFn		nameFn;
   QueryFn		queryFn;
   uint16_t		type = 0;
-  uint16_t		klass = 0;
+  uint16_t		class_ = 0;
   unsigned		pending = 0;
   unsigned		emitted = 0;
   int			status = ARES_ENOTFOUND;
@@ -192,7 +192,7 @@ public:
 
   static ZmRef<Query> resolve(Host, ResolveFn);
   static ZmRef<Query> name(ZiIP, NameFn);
-  static ZmRef<Query> query(Host, uint16_t type, uint16_t klass, QueryFn);
+  static ZmRef<Query> query(Host, uint16_t type, uint16_t class_, QueryFn);
   static void txt(const DNSMsg &, TxtFn);
   static void cancel(ZmRef<Query>);
 
@@ -214,7 +214,7 @@ private:
 
   ZmRef<Query> resolve_(Host, ResolveFn);
   ZmRef<Query> name_(ZiIP, NameFn);
-  ZmRef<Query> query_(Host, uint16_t type, uint16_t klass, QueryFn);
+  ZmRef<Query> query_(Host, uint16_t type, uint16_t class_, QueryFn);
   void txt_(const DNSMsg &, TxtFn);
   void cancel_(ZmRef<Query>);
 
