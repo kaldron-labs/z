@@ -129,6 +129,8 @@ extern "C" {
     void *, int, int, char *, char *);
   void ZiResolver_QueryCB(
     void *, int, int, unsigned char *, int);
+  void ZiResolver_AddrInfoCB(
+    void *, int, int, ares_addrinfo *);
 }
 
 class Query_ : public ZmPolymorph {
@@ -137,6 +139,7 @@ friend void ZiResolver_AQueryCB(void *, int, int, unsigned char *, int);
 friend void ZiResolver_AAAAQueryCB(void *, int, int, unsigned char *, int);
 friend void ZiResolver_NameCB(void *, int, int, char *, char *);
 friend void ZiResolver_QueryCB(void *, int, int, unsigned char *, int);
+friend void ZiResolver_AddrInfoCB(void *, int, int, ares_addrinfo *);
 
 public:
   bool cancelled() const { return m_cancelled.load_(); }
@@ -169,6 +172,7 @@ friend void ZiResolver_AQueryCB(void *, int, int, unsigned char *, int);
 friend void ZiResolver_AAAAQueryCB(void *, int, int, unsigned char *, int);
 friend void ZiResolver_NameCB(void *, int, int, char *, char *);
 friend void ZiResolver_QueryCB(void *, int, int, unsigned char *, int);
+friend void ZiResolver_AddrInfoCB(void *, int, int, ares_addrinfo *);
 
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
