@@ -20,15 +20,13 @@
 
 extern "C" {
   void ZiResolver_AQueryCB(
-    void *, int, int, unsigned char *, int);
+    void *, int, int, struct hostent *);
   void ZiResolver_AAAAQueryCB(
-    void *, int, int, unsigned char *, int);
+    void *, int, int, struct hostent *);
   void ZiResolver_NameCB(
     void *, int, int, char *, char *);
   void ZiResolver_QueryCB(
     void *, int, int, unsigned char *, int);
-  void ZiResolver_AddrInfoCB(
-    void *, int, int, ares_addrinfo *);
 }
 
 using namespace ZiResolver_;
@@ -187,32 +185,20 @@ static void schedParams(Params &params)
 }
 
 void ZiResolver_AQueryCB(
-  void *arg, int status, int, unsigned char *abuf, int alen)
+  void *arg, int status, int, struct hostent *host)
 {
   ZmRef<Query> query{static_cast<Query *>(arg)};
   auto resolver = Main::instance();
-  if (status == ARES_SUCCESS && abuf && alen > 0) {
-    hostent *host = nullptr;
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-    status = ares_parse_a_reply(abuf, alen, &host, nullptr, nullptr);
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
-    if (status == ARES_SUCCESS && host && host->h_addr_list) {
-      for (char **addr = host->h_addr_list;
-	  *addr && !query->stopped && !query->cancelled(); ++addr) {
-	++query->emitted;
-	if (!query->resolveFn(ResolveResult{
-	      ZiIP{*reinterpret_cast<const in_addr *>(*addr)}})) {
-	  query->stopped = true;
-	  break;
-	}
+  if (status == ARES_SUCCESS && host && host->h_addr_list) {
+    for (char **addr = host->h_addr_list;
+	*addr && !query->stopped && !query->cancelled(); ++addr) {
+      ++query->emitted;
+      if (!query->resolveFn(ResolveResult{
+	    ZiIP{*reinterpret_cast<const in_addr *>(*addr)}})) {
+	query->stopped = true;
+	break;
       }
     }
-    if (host) ares_free_hostent(host);
   }
   if (status == ARES_SUCCESS) query->status = ARES_SUCCESS;
   else if (query->status == ARES_ENOTFOUND) query->status = status;
@@ -229,32 +215,20 @@ void ZiResolver_AQueryCB(
 }
 
 void ZiResolver_AAAAQueryCB(
-  void *arg, int status, int, unsigned char *abuf, int alen)
+  void *arg, int status, int, struct hostent *host)
 {
   ZmRef<Query> query{static_cast<Query *>(arg)};
   auto resolver = Main::instance();
-  if (status == ARES_SUCCESS && abuf && alen > 0) {
-    hostent *host = nullptr;
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-    status = ares_parse_aaaa_reply(abuf, alen, &host, nullptr, nullptr);
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
-    if (status == ARES_SUCCESS && host && host->h_addr_list) {
-      for (char **addr = host->h_addr_list;
-	  *addr && !query->stopped && !query->cancelled(); ++addr) {
-	++query->emitted;
-	if (!query->resolveFn(ResolveResult{
-	      ZiIP{*reinterpret_cast<const in6_addr *>(*addr)}})) {
-	  query->stopped = true;
-	  break;
-	}
+  if (status == ARES_SUCCESS && host && host->h_addr_list) {
+    for (char **addr = host->h_addr_list;
+	*addr && !query->stopped && !query->cancelled(); ++addr) {
+      ++query->emitted;
+      if (!query->resolveFn(ResolveResult{
+	    ZiIP{*reinterpret_cast<const in6_addr *>(*addr)}})) {
+	query->stopped = true;
+	break;
       }
     }
-    if (host) ares_free_hostent(host);
   }
   if (status == ARES_SUCCESS) query->status = ARES_SUCCESS;
   else if (query->status == ARES_ENOTFOUND) query->status = status;
@@ -305,48 +279,6 @@ void ZiResolver_QueryCB(
     return;
   }
   if (!cancelled) fn(QueryResult{aresError(status)});
-}
-
-void ZiResolver_AddrInfoCB(
-  void *arg, int status, int, ares_addrinfo *res)
-{
-  ZmRef<Query> query{static_cast<Query *>(arg)};
-  auto resolver = Main::instance();
-  if (status == ARES_SUCCESS && res) {
-    for (auto node = res->nodes;
-	node && !query->stopped && !query->cancelled(); node = node->ai_next) {
-      switch (node->ai_family) {
-	case AF_INET:
-	  if (node->ai_addrlen < sizeof(sockaddr_in)) break;
-	  ++query->emitted;
-	  if (!query->resolveFn(ResolveResult{
-		ZiIP{reinterpret_cast<const sockaddr_in *>(
-		  node->ai_addr)->sin_addr}}))
-	    query->stopped = true;
-	  break;
-	case AF_INET6:
-	  if (node->ai_addrlen < sizeof(sockaddr_in6)) break;
-	  ++query->emitted;
-	  if (!query->resolveFn(ResolveResult{
-		ZiIP{reinterpret_cast<const sockaddr_in6 *>(
-		  node->ai_addr)->sin6_addr}}))
-	    query->stopped = true;
-	  break;
-      }
-    }
-  }
-  if (res) ares_freeaddrinfo(res);
-  if (status == ARES_SUCCESS) query->status = ARES_SUCCESS;
-  else if (query->status == ARES_ENOTFOUND) query->status = status;
-  bool cancelled = resolver->queryCancelled_(query);
-  auto fn = ZuMv(query->resolveFn);
-  resolver->delQuery_(query);
-  if (!cancelled) {
-    if (!query->emitted)
-      fn(ResolveResult{aresError(query->status)});
-    else if (!query->stopped)
-      fn(ResolveResult{});
-  }
 }
 
 namespace ZiResolver_ {
@@ -697,17 +629,24 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
       return;
     }
     addQuery_(query);
-    ares_addrinfo_hints hints;
-    memset(&hints, 0, sizeof(hints));
-    if (m_params.ipv4() && m_params.ipv6())
-      hints.ai_family = AF_UNSPEC;
-    else if (m_params.ipv4())
-      hints.ai_family = AF_INET;
-    else
-      hints.ai_family = AF_INET6;
-    ares_getaddrinfo(
-      m_channel, query->name.ndata(), nullptr, &hints,
-      ZiResolver_AddrInfoCB, query);
+    query->pending = 0;
+    if (m_params.ipv4()) ++query->pending;
+    if (m_params.ipv6()) ++query->pending;
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    if (m_params.ipv4())
+      ares_gethostbyname(
+	m_channel, query->name.ndata(), AF_INET,
+	ZiResolver_AQueryCB, query);
+    if (m_params.ipv6())
+      ares_gethostbyname(
+	m_channel, query->name.ndata(), AF_INET6,
+	ZiResolver_AAAAQueryCB, query);
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
     armTimer_();
   });
   return query;
