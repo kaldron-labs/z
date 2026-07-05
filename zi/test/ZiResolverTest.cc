@@ -522,7 +522,7 @@ void testTXTParse()
   ZiDNSMsg msg;
   msg.name = "example.com";
   msg.type = ZiDNSType::TXT;
-  msg.klass = ZiDNSClass::IN;
+  msg.class_ = ZiDNSClass::IN;
   msg.buf.length(sizeof(payload));
   for (unsigned i = 0; i < sizeof(payload); i++) msg.buf[i] = payload[i];
 

@@ -675,6 +675,9 @@ private:
 #ifdef ZiMultiplex_IOCP
   Zi_Overlapped	 	m_discOverlapped;
   Zi_Overlapped		m_rxOverlapped;
+  WSABUF		m_rxWSABuf;
+  WSAMSG		m_rxMsg;
+  uint8_t		m_rxControl[WSA_CMSG_SPACE(sizeof(int))];
   DWORD			m_rxFlags;		// flags for WSARecv()
   bool			m_discPeer = false;
 #endif

@@ -17,6 +17,7 @@ using namespace ZuTestUtil;
 namespace {
 
 class LoopMx;
+class UdpTOSMx;
 
 class LoopCxn : public ZiConnection {
   static constexpr uint8_t Msg[4] = { 'P', 'I', 'N', 'G' };
@@ -39,6 +40,27 @@ private:
 
 private:
   LoopMx		*m_owner = nullptr;
+  bool		m_client = false;
+  uint8_t	m_buf[sizeof(Msg)] = {};
+};
+
+class UdpTOSCxn : public ZiConnection {
+  static constexpr uint8_t Msg[4] = { 'T', 'O', 'S', '!' };
+
+public:
+  UdpTOSCxn(UdpTOSMx *mx, const ZiCxnInfo &ci);
+  ~UdpTOSCxn() = default;
+
+  void connected(ZiIOContext &io) override;
+  void disconnected(bool) override;
+
+private:
+  bool send_(ZiIOContext &io);
+  bool sendDone_(ZiIOContext &io);
+  bool recv_(ZiIOContext &io);
+
+private:
+  UdpTOSMx	*m_owner = nullptr;
   bool		m_client = false;
   uint8_t	m_buf[sizeof(Msg)] = {};
 };
@@ -204,6 +226,100 @@ private:
   ZmAtomic<unsigned>	m_localDisconnects = 0;
 };
 
+class UdpTOSMx : public ZiMultiplex {
+public:
+  UdpTOSMx(ZiIP loopIP) : m_loopIP{loopIP} { }
+  ~UdpTOSMx() = default;
+
+  ZiConnection *connected(const ZiCxnInfo &ci)
+  {
+    auto cxn = new UdpTOSCxn(this, ci);
+    if (!!ci.remoteIP)
+      m_clientCxn = cxn;
+    else
+      m_serverCxn = cxn;
+    return cxn;
+  }
+
+  void failed(bool)
+  {
+    m_failed = 1;
+    m_done.post();
+  }
+
+  void startServer()
+  {
+    ZiCxnOptions options;
+    options.udp(true);
+    udp(
+      ZiConnectFn{this, ZmFnPtr<&UdpTOSMx::connected>{}},
+      ZiFailFn{this, ZmFnPtr<&UdpTOSMx::failed>{}},
+      m_loopIP, 0, ZiIP{}, 0, options);
+  }
+
+  void serverReady(ZiConnection *cxn)
+  {
+    ZiSockAddr addr;
+    addr.init(m_loopIP.type());
+    socklen_t len = addr.len();
+    if (::getsockname(cxn->info().socket, addr.sa(), &len) < 0) {
+      failed(false);
+      return;
+    }
+    addr.sync();
+    m_serverPort = addr.port();
+    startClient();
+  }
+
+  void recvTOS(ZiTOS tos, bool payloadOK)
+  {
+    m_payloadOK = payloadOK;
+    if (tos.template is<uint8_t>()) {
+      m_haveTOS = 1;
+      m_tos = tos.template p<uint8_t>();
+    }
+    m_done.post();
+  }
+
+  void ioFailure()
+  {
+    m_failed = 1;
+    m_done.post();
+  }
+
+  bool waitDone(int seconds)
+  {
+    return m_done.timedwait(Zm::now(seconds)) == 0;
+  }
+
+  bool failed_() const { return m_failed.load_(); }
+  bool payloadOK_() const { return m_payloadOK.load_(); }
+  bool haveTOS_() const { return m_haveTOS.load_(); }
+  uint8_t tos_() const { return m_tos; }
+
+private:
+  void startClient()
+  {
+    ZiCxnOptions options;
+    options.udp(true);
+    udp(
+      ZiConnectFn{this, ZmFnPtr<&UdpTOSMx::connected>{}},
+      ZiFailFn{this, ZmFnPtr<&UdpTOSMx::failed>{}},
+      m_loopIP, 0, m_loopIP, m_serverPort, options);
+  }
+
+private:
+  ZmSemaphore		m_done;
+  ZiIP			m_loopIP;
+  uint16_t		m_serverPort = 0;
+  ZmRef<UdpTOSCxn>	m_serverCxn;
+  ZmRef<UdpTOSCxn>	m_clientCxn;
+  ZmAtomic<unsigned>	m_failed = 0;
+  ZmAtomic<unsigned>	m_payloadOK = 0;
+  ZmAtomic<unsigned>	m_haveTOS = 0;
+  uint8_t		m_tos = 0;
+};
+
 LoopCxn::LoopCxn(LoopMx *mx, const ZiCxnInfo &ci) :
     ZiConnection(mx, ci),
     m_owner(mx),
@@ -298,6 +414,65 @@ bool LoopCxn::sendServerDone(ZiIOContext &io)
   }
   if ((io.offset += io.length) < io.size) return true;
 
+  io.disconnect();
+  return true;
+}
+
+UdpTOSCxn::UdpTOSCxn(UdpTOSMx *mx, const ZiCxnInfo &ci) :
+    ZiConnection(mx, ci),
+    m_owner(mx),
+    m_client(!!ci.remoteIP)
+{
+}
+
+void UdpTOSCxn::connected(ZiIOContext &io)
+{
+  if (m_client) {
+    send(ZiIOFn{this, ZmFnPtr<&UdpTOSCxn::send_>{}});
+    io.complete();
+  } else {
+    io.init(
+      ZiIOFn{this, ZmFnPtr<&UdpTOSCxn::recv_>{}},
+      m_buf, sizeof(Msg), 0);
+    m_owner->serverReady(this);
+  }
+}
+
+void UdpTOSCxn::disconnected(bool)
+{
+}
+
+bool UdpTOSCxn::send_(ZiIOContext &io)
+{
+  io.init(
+    ZiIOFn{this, ZmFnPtr<&UdpTOSCxn::sendDone_>{}},
+    Msg, sizeof(Msg), 0);
+  io.tos = uint8_t(0x2e);
+  return true;
+}
+
+bool UdpTOSCxn::sendDone_(ZiIOContext &io)
+{
+  if (io.length < 0) {
+    m_owner->ioFailure();
+    io.disconnect();
+    return true;
+  }
+  if ((io.offset += io.length) < io.size) return true;
+  io.disconnect();
+  return true;
+}
+
+bool UdpTOSCxn::recv_(ZiIOContext &io)
+{
+  if (io.length < 0) {
+    m_owner->ioFailure();
+    io.disconnect();
+    return true;
+  }
+  bool payloadOK = io.length == int(sizeof(Msg)) &&
+    !::memcmp(m_buf, Msg, sizeof(Msg));
+  m_owner->recvTOS(io.tos, payloadOK);
   io.disconnect();
   return true;
 }
@@ -440,6 +615,22 @@ void testTcpLoopbackIPv6()
   CheckTcpLoopback(result);
 }
 
+void testUdpTOSIPv4()
+{
+  ZuTestScope(testUdpTOSIPv4);
+
+  UdpTOSMx mx{ZiIP{"127.0.0.1"}};
+  ZuCheck(mx.start());
+  mx.startServer();
+  ZuCheck(mx.waitDone(5));
+  mx.stop();
+
+  ZuCheck(!mx.failed_());
+  ZuCheck(mx.payloadOK_());
+  ZuCheck(mx.haveTOS_());
+  ZuCheck(mx.tos_() == 0x2e);
+}
+
 #undef CheckTcpLoopback
 
 } // namespace
@@ -451,5 +642,6 @@ int main(int argc, char **argv)
   ZuTestCall(testMulticastOptions);
   ZuTestCall(testTcpLoopbackIPv4);
   ZuTestCall(testTcpLoopbackIPv6);
+  ZuTestCall(testUdpTOSIPv4);
   return 0;
 }

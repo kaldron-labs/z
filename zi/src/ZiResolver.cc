@@ -273,7 +273,7 @@ void ZiResolver_QueryCB(
     DNSMsg msg;
     msg.name = hostName(query->host);
     msg.type = query->type;
-    msg.klass = query->klass;
+    msg.class_ = query->class_;
     setBuf(msg.buf, ZuBSpan{abuf, unsigned(alen)});
     if (!cancelled) fn(QueryResult{ZuMv(msg)});
     return;
@@ -351,9 +351,9 @@ ZmRef<Query> Main::name(ZiIP ip, NameFn fn)
 }
 
 ZmRef<Query> Main::query(
-  Host host, uint16_t type, uint16_t klass, QueryFn fn)
+  Host host, uint16_t type, uint16_t class_, QueryFn fn)
 {
-  return instance()->query_(ZuMv(host), type, klass, ZuMv(fn));
+  return instance()->query_(ZuMv(host), type, class_, ZuMv(fn));
 }
 
 void Main::txt(const DNSMsg &dns, TxtFn fn)
@@ -429,12 +429,12 @@ void Main::txt_(const DNSMsg &dns, TxtFn fn)
       if (!dnsName(msg, len, off)) { fail(ZiEINVAL); return; }
       if (off + 10 > len) { fail(ZiEINVAL); return; }
       unsigned type = u16(msg + off);
-      unsigned klass = u16(msg + off + 2);
+      unsigned class_ = u16(msg + off + 2);
       (void)u32(msg + off + 4);
       unsigned rdlen = u16(msg + off + 8);
       off += 10;
       if (off + rdlen > len) { fail(ZiEINVAL); return; }
-      if (type == DNSType::TXT && klass == DNSClass::IN) {
+      if (type == DNSType::TXT && class_ == DNSClass::IN) {
 	unsigned end = off + rdlen;
 	unsigned pos = off;
 	while (pos < end) {
@@ -684,14 +684,14 @@ ZmRef<Query> Main::name_(ZiIP ip, NameFn fn)
 }
 
 ZmRef<Query> Main::query_(
-  Host host, uint16_t type, uint16_t klass, QueryFn fn)
+  Host host, uint16_t type, uint16_t class_, QueryFn fn)
 {
   start({});
   ZmRef<Query> query = new Query;
   query->host = ZuMv(host);
   query->name = hostName(query->host);
   query->type = type;
-  query->klass = klass;
+  query->class_ = class_;
   query->queryFn = ZuMv(fn);
   m_loop.invoke([this, query]() mutable {
     if (query->cancelled()) return;
@@ -706,7 +706,7 @@ ZmRef<Query> Main::query_(
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
     ares_query(
-      m_channel, query->name.ndata(), query->klass, query->type,
+      m_channel, query->name.ndata(), query->class_, query->type,
       ZiResolver_QueryCB, query);
 #ifdef __GNUC__
 #pragma GCC diagnostic pop

@@ -39,6 +39,13 @@ extern "C" {
       struct sockaddr **remotesa, int *remotesalen);
   typedef BOOL (PASCAL *PDisconnectEx)(
       SOCKET s, OVERLAPPED *overlapped, DWORD flags, DWORD reserved);
+  typedef INT (PASCAL *PWSARecvMsg)(
+      SOCKET s, LPWSAMSG msg, LPDWORD count, LPWSAOVERLAPPED overlapped,
+      LPWSAOVERLAPPED_COMPLETION_ROUTINE completion);
+  typedef INT (PASCAL *PWSASendMsg)(
+      SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD count,
+      LPWSAOVERLAPPED overlapped,
+      LPWSAOVERLAPPED_COMPLETION_ROUTINE completion);
 }
 
 #ifndef WSAID_CONNECTEX
@@ -89,6 +96,19 @@ public:
     if (!m_disconnectEx) { WSASetLastError(WSASYSNOTREADY); return FALSE; }
     return (*m_disconnectEx)(s, overlapped, flags, reserved);
   }
+  INT recvMsg(
+      SOCKET s, LPWSAMSG msg, LPDWORD count, LPWSAOVERLAPPED overlapped,
+      LPWSAOVERLAPPED_COMPLETION_ROUTINE completion) {
+    if (!m_recvMsg) { WSASetLastError(WSASYSNOTREADY); return SOCKET_ERROR; }
+    return (*m_recvMsg)(s, msg, count, overlapped, completion);
+  }
+  INT sendMsg(
+      SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD count,
+      LPWSAOVERLAPPED overlapped,
+      LPWSAOVERLAPPED_COMPLETION_ROUTINE completion) {
+    if (!m_sendMsg) { WSASetLastError(WSASYSNOTREADY); return SOCKET_ERROR; }
+    return (*m_sendMsg)(s, msg, flags, count, overlapped, completion);
+  }
 
   static ZiMultiplex_WSExt *instance();
 
@@ -97,6 +117,8 @@ private:
   PAcceptEx		m_acceptEx;
   PGetAcceptExSockaddrs	m_getAcceptExSockaddrs;
   PDisconnectEx		m_disconnectEx;
+  PWSARecvMsg		m_recvMsg;
+  PWSASendMsg		m_sendMsg;
 };
 
 ZiMultiplex_WSExt *ZiMultiplex_WSExt::instance()
@@ -116,6 +138,8 @@ ZiMultiplex_WSExt::ZiMultiplex_WSExt()
     static GUID acceptExGUID = WSAID_ACCEPTEX;
     static GUID getAcceptExSockaddrsGUID = WSAID_GETACCEPTEXSOCKADDRS;
     static GUID disconnectExGUID = WSAID_DISCONNECTEX;
+    static GUID recvMsgGUID = WSAID_WSARECVMSG;
+    static GUID sendMsgGUID = WSAID_WSASENDMSG;
 
     DWORD n;
     if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER,
@@ -143,16 +167,30 @@ ZiMultiplex_WSExt::ZiMultiplex_WSExt()
 		 sizeof(PDisconnectEx), &n, 0, 0) ||
 	n != sizeof(PDisconnectEx))
       goto error;
+
+	if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER,
+		 &recvMsgGUID, sizeof(GUID),
+		 &m_recvMsg, sizeof(PWSARecvMsg), &n, 0, 0) ||
+	n != sizeof(PWSARecvMsg))
+      m_recvMsg = nullptr;
+
+    if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER,
+		 &sendMsgGUID, sizeof(GUID),
+		 &m_sendMsg, sizeof(PWSASendMsg), &n, 0, 0) ||
+	n != sizeof(PWSASendMsg))
+      m_sendMsg = nullptr;
   }
   ::closesocket(s);
   return;
 
 error:
   if (!Zi::nullSocket(s)) ::closesocket(s);
-  m_connectEx = 0;
-  m_acceptEx = 0;
-  m_getAcceptExSockaddrs = 0;
-  m_disconnectEx = 0;
+  m_connectEx = nullptr;
+  m_acceptEx = nullptr;
+  m_getAcceptExSockaddrs = nullptr;
+  m_disconnectEx = nullptr;
+  m_recvMsg = nullptr;
+  m_sendMsg = nullptr;
 }
 
 ZiMultiplex_WSExt::~ZiMultiplex_WSExt()
@@ -174,6 +212,12 @@ ZiMultiplex_WSExt::~ZiMultiplex_WSExt()
 						       remotesa, remotesalen))
 #define DisconnectEx(s, overlapped, flags, reserved) \
   (ZiMultiplex_WSExt::instance()->disconnectEx(s, overlapped, flags, reserved))
+#define WSARecvMsg(s, msg, count, overlapped, completion) \
+  (ZiMultiplex_WSExt::instance()->recvMsg( \
+    s, msg, count, overlapped, completion))
+#define WSASendMsg(s, msg, flags, count, overlapped, completion) \
+  (ZiMultiplex_WSExt::instance()->sendMsg( \
+    s, msg, flags, count, overlapped, completion))
 
 #endif /* ZiMultiplex_IOCP */
 
@@ -274,6 +318,115 @@ bool ZiIP_cxnType(ZiIP localIP, ZiIP remoteIP, ZiIPType::T &type)
     type = ZiIPType::V4;
   return true;
 }
+
+ZiTOS ZiTOS_(unsigned v)
+{
+  return uint8_t(v);
+}
+
+#ifndef _WIN32
+bool ZiSetRecvTOS(Zi::Socket s, ZiIPType::T type)
+{
+  int b = 1;
+  switch (type) {
+    case ZiIPType::V6:
+#ifdef IPV6_RECVTCLASS
+      return setsockopt(s, IPPROTO_IPV6, IPV6_RECVTCLASS, &b, sizeof(b)) >= 0;
+#else
+      return false;
+#endif
+    default:
+#ifdef IP_RECVTOS
+      return setsockopt(s, IPPROTO_IP, IP_RECVTOS, &b, sizeof(b)) >= 0;
+#else
+      return false;
+#endif
+  }
+}
+
+ZiTOS ZiGetTOS(const struct msghdr &msg)
+{
+  for (auto cmsg = CMSG_FIRSTHDR(&msg); cmsg;
+      cmsg = CMSG_NXTHDR(const_cast<struct msghdr *>(&msg), cmsg)) {
+    if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_TOS) {
+      if (cmsg->cmsg_len >= CMSG_LEN(sizeof(int)))
+	return ZiTOS_(*reinterpret_cast<int *>(CMSG_DATA(cmsg)));
+      if (cmsg->cmsg_len >= CMSG_LEN(sizeof(uint8_t)))
+	return ZiTOS_(*static_cast<uint8_t *>(CMSG_DATA(cmsg)));
+    }
+#ifdef IPV6_TCLASS
+    if (cmsg->cmsg_level == IPPROTO_IPV6 &&
+	cmsg->cmsg_type == IPV6_TCLASS &&
+	cmsg->cmsg_len >= CMSG_LEN(sizeof(int)))
+      return ZiTOS_(*reinterpret_cast<int *>(CMSG_DATA(cmsg)));
+#endif
+  }
+  return {};
+}
+
+void ZiPutTOS(struct msghdr &msg, void *control, unsigned controlLen, ZiTOS tos,
+    int level, int type)
+{
+  if (!tos.template is<uint8_t>()) return;
+  msg.msg_control = control;
+  msg.msg_controllen = controlLen;
+  auto cmsg = CMSG_FIRSTHDR(&msg);
+  cmsg->cmsg_level = level;
+  cmsg->cmsg_type = type;
+  cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+  *reinterpret_cast<int *>(CMSG_DATA(cmsg)) = tos.template p<uint8_t>();
+  msg.msg_controllen = CMSG_SPACE(sizeof(int));
+}
+#else
+bool ZiSetRecvTOS(Zi::Socket s, ZiIPType::T type)
+{
+  DWORD b = TRUE;
+  switch (type) {
+    case ZiIPType::V6:
+#ifdef IPV6_RECVTCLASS
+      return !setsockopt(s,
+	IPPROTO_IPV6, IPV6_RECVTCLASS, (const char *)&b, sizeof(b));
+#else
+      return false;
+#endif
+    default:
+#ifdef IP_RECVTOS
+      return !setsockopt(s, IPPROTO_IP, IP_RECVTOS, (const char *)&b, sizeof(b));
+#else
+      return false;
+#endif
+  }
+}
+
+ZiTOS ZiGetTOS(WSAMSG &msg)
+{
+  for (auto cmsg = WSA_CMSG_FIRSTHDR(&msg); cmsg;
+      cmsg = WSA_CMSG_NXTHDR(&msg, cmsg)) {
+    if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_TOS &&
+	cmsg->cmsg_len >= WSA_CMSG_LEN(sizeof(int)))
+      return ZiTOS_(*reinterpret_cast<int *>(WSA_CMSG_DATA(cmsg)));
+#ifdef IPV6_TCLASS
+    if (cmsg->cmsg_level == IPPROTO_IPV6 &&
+	cmsg->cmsg_type == IPV6_TCLASS &&
+	cmsg->cmsg_len >= WSA_CMSG_LEN(sizeof(int)))
+      return ZiTOS_(*reinterpret_cast<int *>(WSA_CMSG_DATA(cmsg)));
+#endif
+  }
+  return {};
+}
+
+void ZiPutTOS(WSAMSG &msg, WSABUF &control, ZiTOS tos, int level, int type)
+{
+  if (!tos.template is<uint8_t>()) return;
+  msg.Control = control;
+  auto cmsg = WSA_CMSG_FIRSTHDR(&msg);
+  cmsg->cmsg_level = level;
+  cmsg->cmsg_type = type;
+  cmsg->cmsg_len = WSA_CMSG_LEN(sizeof(int));
+  *reinterpret_cast<int *>(WSA_CMSG_DATA(cmsg)) = tos.template p<uint8_t>();
+  msg.Control.len = WSA_CMSG_SPACE(sizeof(int));
+}
+#endif
 
 } // namespace
 
@@ -384,6 +537,9 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
       return;
     }
   }
+
+  if (!ZiSetRecvTOS(s, ipType))
+    Warning("setsockopt(RECVTOS)", Zi::IOError, ZeLastSockError);
 
   if (options.multicast()) {
     switch (ipType) {
@@ -543,6 +699,9 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
       return;
     }
   }
+
+  if (!ZiSetRecvTOS(s, ipType))
+    Warning("setsockopt(RECVTOS)", Zi::IOError, ZeLastSockError);
 
   if (options.multicast()) {
     switch (ipType) {
@@ -1510,9 +1669,16 @@ void ZiConnection::recv()
     if (!ZiIP_cxnType(m_info.localIP, m_info.remoteIP, type))
       type = ZiIPType::V4;
     m_rxContext.addr.init(type);
-    INT addrLen = m_rxContext.addr.len();
-    if (ZuLikely(WSARecvFrom(m_info.socket, &wsaBuf, 1, &n, &m_rxFlags,
-	    m_rxContext.addr.sa(), &addrLen,
+    memset(&m_rxMsg, 0, sizeof(m_rxMsg));
+    m_rxWSABuf = wsaBuf;
+    m_rxMsg.name = m_rxContext.addr.sa();
+    m_rxMsg.namelen = m_rxContext.addr.len();
+    m_rxMsg.lpBuffers = &m_rxWSABuf;
+    m_rxMsg.dwBufferCount = 1;
+    m_rxMsg.Control.buf = reinterpret_cast<char *>(m_rxControl);
+    m_rxMsg.Control.len = sizeof(m_rxControl);
+    m_rxMsg.dwFlags = 0;
+    if (ZuLikely(WSARecvMsg(m_info.socket, &m_rxMsg, &n,
 	    (WSAOVERLAPPED *)&overlapped, 0) != SOCKET_ERROR ||
 	  (e = WSAGetLastError()).errNo() == WSA_IO_PENDING)) {
 #ifdef ZiMultiplex_DEBUG
@@ -1574,11 +1740,23 @@ retry:
     if (!ZiIP_cxnType(m_info.localIP, m_info.remoteIP, type))
       type = ZiIPType::V4;
     m_rxContext.addr.init(type);
-    socklen_t addrLen = m_rxContext.addr.len();
-    n = ::recvfrom(
-      m_info.socket, reinterpret_cast<char *>(buf), len, 0,
-      m_rxContext.addr.sa(), &addrLen);
-    if (n >= 0) m_rxContext.addr.sync();
+    struct iovec iov;
+    iov.iov_base = reinterpret_cast<char *>(buf);
+    iov.iov_len = len;
+    alignas(struct cmsghdr) uint8_t control[CMSG_SPACE(sizeof(int))];
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_name = m_rxContext.addr.sa();
+    msg.msg_namelen = m_rxContext.addr.len();
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+    n = ::recvmsg(m_info.socket, &msg, 0);
+    if (n >= 0) {
+      m_rxContext.addr.sync();
+      m_rxContext.tos = ZiGetTOS(msg);
+    }
   } else {
     n = ::recv(
       m_info.socket, reinterpret_cast<char *>(buf), len, 0);
@@ -1677,7 +1855,10 @@ void ZiConnection::overlappedRecv(int status, unsigned n, ZeError e)
       << ZtHexDump_(buf->cspan());
   }));
 
-  if (m_info.options.udp()) m_rxContext.addr.sync();
+  if (m_info.options.udp()) {
+    m_rxContext.addr.sync();
+    m_rxContext.tos = ZiGetTOS(m_rxMsg);
+  }
   executedRecv(n);
 
   if (ZuUnlikely(m_rxContext.completed())) {
@@ -1801,10 +1982,32 @@ retry:
       << ZtHexDump_(buf->cspan());
   }));
 
-  if (m_info.options.udp() && !!m_txContext.addr) {
-    if (ZuUnlikely(WSASendTo(m_info.socket, &wsaBuf, 1, &n_, 0,
-	    m_txContext.addr.sa(), m_txContext.addr.len(),
-	    0, 0) == SOCKET_ERROR)) {
+  if (m_info.options.udp()) {
+    uint8_t controlBuf[WSA_CMSG_SPACE(sizeof(int))];
+    WSABUF control;
+    control.buf = reinterpret_cast<char *>(controlBuf);
+    control.len = sizeof(controlBuf);
+    WSAMSG msg;
+    memset(&msg, 0, sizeof(msg));
+    if (!!m_txContext.addr) {
+      msg.name = m_txContext.addr.sa();
+      msg.namelen = m_txContext.addr.len();
+    }
+    msg.lpBuffers = &wsaBuf;
+    msg.dwBufferCount = 1;
+    msg.dwFlags = 0;
+    ZiIPType::T type;
+    if (!ZiIP_cxnType(m_info.localIP, m_info.remoteIP, type))
+      type = ZiIPType::V4;
+    if (type == ZiIPType::V6) {
+#ifdef IPV6_TCLASS
+      ZiPutTOS(msg, control, m_txContext.tos, IPPROTO_IPV6, IPV6_TCLASS);
+#endif
+    } else
+      ZiPutTOS(msg, control, m_txContext.tos, IPPROTO_IP, IP_TOS);
+    if (ZuUnlikely(WSASendMsg(m_info.socket, &msg, 0, &n_, 0, 0) ==
+	  SOCKET_ERROR)) {
+      e = WSAGetLastError();
       errorSend(Zi::IOError, e);
       return;
     }
@@ -1815,11 +2018,12 @@ retry:
       n
     ](auto &s) {
       s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
-	<< " WSASendTo(" << len << "): " << n;
+	<< " WSASendMsg(" << len << "): " << n;
     }));
   } else {
     if (ZuUnlikely(WSASend(m_info.socket, &wsaBuf, 1, &n_, 0,
 	    0, 0) == SOCKET_ERROR)) {
+      e = WSAGetLastError();
       errorSend(Zi::IOError, e);
       return;
     }
@@ -1849,10 +2053,32 @@ retry:
       << ZtHexDump_(buf->cspan());
   }));
 
-  if (m_info.options.udp())
-    n_ = ::sendto(
-	m_info.socket, buf, len, 0,
-	m_txContext.addr.sa(), m_txContext.addr.len());
+  if (m_info.options.udp()) {
+    struct iovec iov;
+    iov.iov_base = reinterpret_cast<char *>(buf);
+    iov.iov_len = len;
+    alignas(struct cmsghdr) uint8_t control[CMSG_SPACE(sizeof(int))];
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    if (!!m_txContext.addr) {
+      msg.msg_name = m_txContext.addr.sa();
+      msg.msg_namelen = m_txContext.addr.len();
+    }
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    ZiIPType::T type;
+    if (!ZiIP_cxnType(m_info.localIP, m_info.remoteIP, type))
+      type = ZiIPType::V4;
+    if (type == ZiIPType::V6) {
+#ifdef IPV6_TCLASS
+      ZiPutTOS(msg, control, sizeof(control), m_txContext.tos,
+	IPPROTO_IPV6, IPV6_TCLASS);
+#endif
+    } else
+      ZiPutTOS(msg, control, sizeof(control), m_txContext.tos,
+	IPPROTO_IP, IP_TOS);
+    n_ = ::sendmsg(m_info.socket, &msg, 0);
+  }
 #ifdef ZiMultiplex_Netlink
   else if (m_info.options.netlink())
     n_ = ZiNetlink::send(m_info.socket, m_ci.familyID, m_ci.portID, buf, len);
