@@ -342,11 +342,16 @@ public:
   ZmSpecific &operator =(const ZmSpecific &) = delete;
 
 private:
-  static void final(...) { }
+  template <typename U, typename = void>
+  struct HasFinal : public ZuFalse { };
   template <typename U>
-  static auto final(U *u) -> decltype(u->final()) {
-    return u->final();
-  }
+  struct HasFinal<U, decltype(&U::final, void())> :
+    public ZuBool<__is_member_function_pointer(decltype(&U::final))> { };
+
+  template <typename U>
+  static ZuIfT<!HasFinal<U>{}> final(U *) { }
+  template <typename U>
+  static ZuIfT<HasFinal<U>{}> final(U *u) { u->final(); }
 
   using Object = ZmSpecific_Object;
 

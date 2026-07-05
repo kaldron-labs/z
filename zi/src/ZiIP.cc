@@ -9,9 +9,7 @@
 #include <zlib/ZiIP.hh>
 #include <zlib/ZiResolver.hh>
 
-namespace {
-
-bool ZiIP_pton4(const Zi::Hostname &host, in_addr &addr)
+static bool pton4(const Zi::Hostname &host, in_addr &addr)
 {
 #ifndef _WIN32
   return ::inet_pton(AF_INET, host.data(), &addr) == 1;
@@ -30,7 +28,7 @@ bool ZiIP_pton4(const Zi::Hostname &host, in_addr &addr)
 #endif
 }
 
-bool ZiIP_pton6(const Zi::Hostname &host, in6_addr &addr)
+static bool pton6(const Zi::Hostname &host, in6_addr &addr)
 {
 #ifndef _WIN32
   return ::inet_pton(AF_INET6, host.data(), &addr) == 1;
@@ -49,18 +47,16 @@ bool ZiIP_pton6(const Zi::Hostname &host, in6_addr &addr)
 #endif
 }
 
-} // namespace
-
 int ZiIP::resolve_(Zi::Hostname host, ZeError *e)
 {
   in_addr v4;
-  if (ZiIP_pton4(host, v4)) {
+  if (pton4(host, v4)) {
     *this = v4;
     return Zi::OK;
   }
 
   in6_addr v6;
-  if (ZiIP_pton6(host, v6)) {
+  if (pton6(host, v6)) {
     *this = v6;
     return Zi::OK;
   }
