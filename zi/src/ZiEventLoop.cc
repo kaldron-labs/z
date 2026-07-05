@@ -232,7 +232,8 @@ void Loop::wake_()
 #endif /* !_WIN32 */
 }
 
-bool Loop::addSocket(Zi::Socket socket_, SocketSendFn send, SocketRecvFn recv)
+bool Loop::addSocket(
+  Zi::Socket socket_, SocketSendFn send, SocketRecvFn recv, bool prime)
 {
   ZmRef<Socket> socket = new Socket{socket_, ZuMv(send), ZuMv(recv)};
 
@@ -279,8 +280,10 @@ bool Loop::addSocket(Zi::Socket socket_, SocketSendFn send, SocketRecvFn recv)
 
   // "prime the pump" to ensure that read- and write-readiness is
   // correctly signalled via epoll / WFMO
-  socket->send(socket_);
-  socket->recv(socket_);
+  if (prime) {
+    socket->send(socket_);
+    socket->recv(socket_);
+  }
 
   m_sockets.addNode(ZuMv(socket));
 

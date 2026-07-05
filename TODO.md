@@ -1,161 +1,35 @@
 # TODO
 
+---
+
+`ZiResolver`:
+- why keep track of `m_sockets` outside `ZiEventLoop`, which does that already with `addSocket`/`delSocket`?
+- `ZiDNSMsg::msg` should be a `ZtBuiltin` with a heap ID (`using ZiDNSBuf = ...`)
+- why individual `FailFn`'s on `resolve`/`name`/`query`/`txt`? and why inconsistent sync/async?
+  - all should be async, with continuations
+  - the convention is to pass a `ZuUnion` type that can either be the successful return type
+    or an error (example: `InitResult` in `ZdbStore.hh`)
+- timer teardown needs to be carefully orchestrated:
+  1. cancel the timer, and prevent further timer arming
+  2. post a continuation to drain pending activity
+  3. (in the continuation) complete the teardown
+
+---
+
 ## Zquic
 
----
-
-cascade these renames to call sites:
-- `metadata` (referring to `ZquicLogMetadata`) ->  `linkInfo`
-- `qlogCIDMeta_()` -> `linkInfo()`
-- `ZquicLogCIDMeta` -> `Zquic::LinkInfo` (and move into `Zquic.hh`)
-unify `ZquicLogMetadata` with `Zquic::LinkInfo`
-- `LinkInfo::vantage` (renamed from `vantagePoint`) should be an enum
+`ZiMultiplex` - add ip TOS byte to `ZiIOContext` after UDP addr
+- `codex resume 019f2998-d14f-7732-b7af-9f82b8d2a61d`
+- need Windows and Linux support
 
 ---
 
-fix local variables named `level` or `*Level` due to historical association with the removed `CryptoLevel` enum: these should now be named `space` or `*Space` to align with `PktSpace`; do this for the examples in `zquic/GUIDELINES.md`
+complete library (see `audit.md`):
+- ECN (needs ip TOS)
 
 ---
 
-Align naming with `GUIDELINES.md`, example: `ZquicLogSecurityTrigger` is too long.
-- All such names should be in an internal namespace (suggest: `ZquicLog_`) to permit
-  eliding the `ZquicLog` prefix in code by using a `using namespace ZquicLog_` directive
-- Do a full audit and align, cascading changes to dependent code
-- Examples of overlong verbose names that should be renamed (not exhaustive):
-  - `ZquicLogSecurityTrigger` -> `SecTrigger`
-  - `ZquicLogSecurityEvent` -> `SecEvent`
-  - `ConnectionID` -> `CxnID`
-  - `ZquicLogStreamType` -> `StreamType`
-  - `connectionStarted` -> `cxnStarted`
-  - `Unidirectional` -> `Simplex`
-  - `vantagePoint` -> `vantage` (`Point` is redundant)
-
----
-
-`...Bidi` and `...Uni` names still appear in the source code (e.g. `DefaultMaxStreamsBidi`). These should be `...Duplex` and `...Simplex` respectively.
-
----
-
-audit `zquic` for redundant boolean context evaluation code, for example:
-- `if (m_dcid.length() ...` -> `if (m_dcid ...`
-any value of a type that uses `ZuOpBool` is intended to be boolean-evaluated without decoration
-
----
-
-audit `zquic` for redundant helpers and update call sites:
-- enum ordinal mapping where simply using the ordinal would suffice
-- enum/name mapping where `ZtEnum` already provides the requisite functionality
-
----
-
-`RuntimeDiag` looks completely wrong:
-- Why does it need to repeat all the rx and tx data members when it can be composed from them?
-- It should not explicitly perform individual member-wise copying, which is fragile and duplicative. Given:
-  ```
-  struct A { ...data members... };
-  struct B { ...data members... };
-  struct C { A a; B b; };
-  ```
-  `A(const A &)`, `B(const B &)`, and `C(const C &)` are all defaulted and can be
-  used without specifying individual member-wise copies.
-  - Apply this principle to all such structures.
-- `RuntimeDiag` looks too large, with too many fields; audit `*Diag*` for little-used or unused fields and delete them
-  - Use `Zquic_DEBUG` conditional compilation to reduce the size of these structures to a bare minimum for release builds
-
----
-
-`Zquic.hh` is a generic protocol implementation header for many different QUIC client and/or server applications, it should not include test-only or test-specific functions:
-- why are hard-coded `"zqserv01"` and `"zqcli001"`in `writeInitialPingProbe` in this header?
-- functions like `padForProtSample` also seem to be wrongly placed in this header
-- audit `Zquic.hh` for all code that is test-only or specific to a particular application use case and factor out such code into the appropriate files
-  - test code should be under `zquic/test`, not `zquic/src`
-
----
-
-`Zquic.hh` is too large. It needs to be logically decomposed into additional subsidiary headers:
-- Dependent code should continue to include `Zquic.hh`
-- The key dependent-facing API types that should be in `Zquic.hh` are `Engine`, `App`, `Client`, `Server`, `Link`, `CliLink`, `SrvLink`
-- Private implementation code should be in a `Zquic_` namespace distinct from the dependent-facing `Zquic`.
-  - Implementation-only helpers and code should be moved wholesale into `Zquic_.hh`
-- IMPORTANT - all headers must align with `GUIDELINES.md`:
-  - include guards
-  - overall structure
-  - comments, indentation and formatting
-  - ordering and grouping of includes by layer
-- `Zquic_.hh` can be included at the tail end of `Zquic.hh` for private implementation code
-- `Zquic_.hh` can be further decomposed into `Zquic_Link.hh` etc. if necessary
-  - be careful about dependencies
-  - `zquic` private headers should be named `Zquic_*.hh` not `Zquic*.hh`
-- If private implementation code is bloating `Zquic.hh`, it can be moved out of the containing `struct`/`class` and relocated out-of-line to `Zquic_.hh`
-  - Simple functions (accessors, etc.) that are only a few lines should remain in-line in `Zquic.hh`
-
----
-
-`zquic/src/Zquic_.hh:18` uses `using namespace Zquic;` inside the private
-implementation namespace.  It is less severe than the global qlog
-using-directive, but it still blurs the intended separation between
-`Zquic` dependent-facing API and `Zquic_` private implementation.  Prefer
-explicit qualification or narrow `using` declarations for the public
-protocol types needed.
-
----
-
-what's special about `ecnRx` and `packetsTx` in `*Diag`? group all the mandatory release-build-included diagnostic fields together at top of each struct, with the debug-build-only fields below
-
----
-
-audit `zquic` for redundant or unsafe cross-thread sharing:
-- almost all data should be sharded: thread-dedicated, only accessed by the owning thread
-- use of `ZmLock`/`ZmPLock`/`ZmGuard`/`ZmAtomic` etc. is an amber flag
-  - contended sharing of data should be limited to **exceptional** cases
-
----
-
-Fix this finding:
-Endpoint_ uses atomics as convenience state sharing.
-zquic/src/Zquic_.hh:692 has m_connected, m_listening, m_open as atomics. They are mutated
-from Rx callbacks and read synchronously from arbitrary callers/destructor/open paths. This
-is an amber flag: it avoids races mechanically but preserves shared state. Fix: clarify which
-status reads are public cross-thread snapshots; otherwise route through Rx/Tx or collapse to
-owning-thread state.
-
----
-
-AckPost is an intentional Rx-to-Tx shared slot, but it is still a contended shared object.
-zquic/src/Zquic_Link.hh:509 uses ZmPLock around ACK snapshot handoff from Rx to Tx at zquic/
-src/Zquic_Link.hh:3315. This may be acceptable as an exceptional coalescing slot, but it
-should be documented as such or replaced with value snapshots posted to Tx.
-
----
-
-FIXME from here
-
----
-
-`make clean && make -j8`; verify `make -C zquic/test test` and `make -C zhttp/test test`, diagnose and root-cause-analyze any regressions, fix root causes, cascade breaking changes to dependent code; historical compatibility remains a non-goal
-
----
-
-What is the use case for `U64Null`?
-
----
-
-use `(N<<20)` instead of `N * 1024U * 1024U` and `(N<<10)` instead of `N * 1024U`, examples include `DefaultMaxData`; a trailing comment should explain, e.g. `inline constexpr uint64_t Foo = (1<<20); // 1M`
-
----
-
-audit `zquic` qlog code for proper use of `ZtJSON` capabilities for mapping enums,
-printing/parsing UDTs such as `ZiIP` and `ZiSockAddr`, and so on.
-
----
-
-Very few qlog fields, if any, are genuinely arbitrary strings. `ZeString` is overused. Almost all qlog data relates to QUIC protocol field values which are fixed-size scalars, IP addresses, ports, enumerated values or other closed vocabularies. Reasons that are in the code as short string literals should also be enumerations (aligning with system error codes). Detailed arbitrary string reasons are a rare exception. Almost all string conversions should occur via the JSON mapping, which is performed exclusively by the logger thread in logged lambda bodies.
-
----
-
-rename all diagnostic `struct`s to align with the `*Diag` convention:
-`*Stats` -> `*Diag`, (examples: `ZmHeapStats` -> `ZmHeapDiag`) (DO NOT rename `Zdf::Stats`, it is not diagnostic)
-`*Telemetry` -> `*Diag`, (examples: `ZiCxnTelemetry` -> `ZiCxnDiag`)
+Very few qlog fields, if any, are genuinely arbitrary strings. `ZeString` is probably overused. Almost all qlog data relates to QUIC protocol field values which are fixed-size scalars, IP addresses, ports, enumerated values or other closed vocabularies. Reasons that are in the code as short string literals should also be enumerations (aligning with system error codes). Detailed arbitrary string reasons are a rare exception. Almost all string conversions should occur via the JSON mapping, which is performed exclusively by the logger thread in logged lambda bodies.
 
 ## Z generic
 

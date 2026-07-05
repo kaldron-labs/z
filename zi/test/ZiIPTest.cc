@@ -8,9 +8,15 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmThread.hh>
+
 #include <zlib/ZiIP.hh>
+#include <zlib/ZiResolver.hh>
 
 using namespace ZuTestUtil;
+
+namespace {
 
 ZiIP ip4(uint32_t n)
 {
@@ -18,6 +24,138 @@ ZiIP ip4(uint32_t n)
   addr.s_addr = htonl(n);
   return ZiIP{addr};
 }
+
+class FakeDNS {
+public:
+  FakeDNS()
+  {
+    m_socket = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (Zi::nullSocket(m_socket)) return;
+
+    timeval tv{0, 100000};
+    ::setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(
+	m_socket, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
+      return;
+
+    socklen_t len = sizeof(addr);
+    if (::getsockname(
+	m_socket, reinterpret_cast<sockaddr *>(&addr), &len) != 0)
+      return;
+    m_port = ntohs(addr.sin_port);
+
+    m_thread = ZmThread{[this]() { run(); }};
+    m_ok = true;
+  }
+
+  ~FakeDNS()
+  {
+    m_stopping.store_(1);
+    if (!Zi::nullSocket(m_socket)) Zi::closeSocket(m_socket);
+    m_thread.join();
+  }
+
+  Zi::Name servers() const {
+    Zi::Name s;
+    s << "127.0.0.1:" << ZuBoxed(m_port);
+    return s;
+  }
+
+  bool ok() const { return m_ok; }
+
+private:
+  static uint16_t u16(const uint8_t *ptr) {
+    return (uint16_t(ptr[0]) << 8) | uint16_t(ptr[1]);
+  }
+
+  static void put16(uint8_t *&ptr, uint16_t v) {
+    *ptr++ = uint8_t(v >> 8);
+    *ptr++ = uint8_t(v);
+  }
+
+  static void put32(uint8_t *&ptr, uint32_t v) {
+    *ptr++ = uint8_t(v >> 24);
+    *ptr++ = uint8_t(v >> 16);
+    *ptr++ = uint8_t(v >> 8);
+    *ptr++ = uint8_t(v);
+  }
+
+  static void put(uint8_t *&ptr, ZuBSpan data) {
+    for (unsigned i = 0; i < data.length(); i++) *ptr++ = data[i];
+  }
+
+  bool question(
+    const uint8_t *buf, unsigned len, unsigned &end, uint16_t &type, bool &name)
+  {
+    static const uint8_t resolver[] = {
+      8, 'r', 'e', 's', 'o', 'l', 'v', 'e', 'r',
+      4, 't', 'e', 's', 't', 0
+    };
+
+    unsigned off = 12;
+    while (off < len && buf[off]) off += unsigned(buf[off]) + 1;
+    if (off >= len || off + 5 > len) return false;
+    ++off;
+    type = u16(buf + off);
+    end = off + 4;
+    name = end >= 12 + sizeof(resolver) &&
+      !memcmp(buf + 12, resolver, sizeof(resolver));
+    return true;
+  }
+
+  void run()
+  {
+    while (!m_stopping.load_()) {
+      uint8_t buf[512];
+      sockaddr_in from;
+      socklen_t fromLen = sizeof(from);
+      int n = ::recvfrom(
+	m_socket, buf, sizeof(buf), 0,
+	reinterpret_cast<sockaddr *>(&from), &fromLen);
+      if (n <= 0) continue;
+
+      unsigned qEnd = 0;
+      uint16_t qType = 0;
+      bool qName = false;
+      if (n < 12 || !question(buf, unsigned(n), qEnd, qType, qName)) continue;
+
+      uint8_t out[512];
+      uint8_t *ptr = out;
+      put(ptr, ZuBSpan{buf, 2});
+      put16(ptr, 0x8180);
+      put16(ptr, 1);
+      put16(ptr, (qName && qType == ZiDNSType::A) ? 1 : 0);
+      put16(ptr, 0);
+      put16(ptr, 0);
+      put(ptr, ZuBSpan{buf + 12, qEnd - 12});
+      if (qName && qType == ZiDNSType::A) {
+	put16(ptr, 0xc00c);
+	put16(ptr, ZiDNSType::A);
+	put16(ptr, ZiDNSClass::IN);
+	put32(ptr, 0);
+	put16(ptr, 4);
+	*ptr++ = 192; *ptr++ = 0; *ptr++ = 2; *ptr++ = 53;
+      }
+      ::sendto(
+	m_socket, out, ptr - out, 0,
+	reinterpret_cast<sockaddr *>(&from), fromLen);
+    }
+  }
+
+private:
+  Zi::Socket		m_socket = Zi::nullSocket();
+  uint16_t		m_port = 0;
+  ZmThread		m_thread;
+  bool			m_ok = false;
+  ZmAtomic<unsigned>	m_stopping = 0;
+};
+
+} // namespace
 
 void testParseResolveAndPrint()
 {
@@ -41,15 +179,23 @@ void testParseResolveAndPrint()
   s << ip6;
   ZuCheck(s == "::1");
 
+  FakeDNS dns;
+  ZuCheck(dns.ok());
+  ZiResolver::final();
+  ZiResolver::init(ZiResolverParams{}.ipv4(true).ipv6(false).
+    timeoutMS(500).tries(1).servers(dns.servers()));
+
   ZiIP ip3;
-  ZuCheck(ip3.resolve("localhost", &e) == Zi::OK);
-  ZuCheck(!!ip3);
+  ZuCheck(ip3.resolve("resolver.test", &e) == Zi::OK);
+  ZuCheck(ip3 == ip4(0xc0000235U));
 
   auto name = ip.name(&e);
   ZuCheck(!!name);
 
   ZiIP bad;
-  ZuCheck(bad.resolve("definitely.invalid.localhost.zed", &e) == Zi::IOError);
+  ZuCheck(bad.resolve("missing.test", &e) == Zi::IOError);
+  ZiResolver::stop();
+  ZiResolver::final();
 }
 
 void testMulticastBoundaries()
