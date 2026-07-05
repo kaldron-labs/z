@@ -3357,6 +3357,7 @@ int main(int argc, char **argv)
   }
 
   mx.stop();
+  ZiResolver::final();
   ZiLog::stop();
 
   return rc;
