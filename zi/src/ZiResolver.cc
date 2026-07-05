@@ -620,13 +620,25 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
   start({});
   in_addr v4;
   if (m_params.ipv4() && pton4(host, v4)) {
-    if (fn(ResolveResult{ZiIP{v4}})) fn(ResolveResult{});
-    return {};
+    ZmRef<Query> query = new Query;
+    query->resolveFn = ZuMv(fn);
+    m_loop.invoke([query, ip = ZiIP{v4}]() mutable {
+      if (query->cancelled()) return;
+      if (query->resolveFn(ResolveResult{ip}) && !query->cancelled())
+	query->resolveFn(ResolveResult{});
+    });
+    return query;
   }
   in6_addr v6;
   if (m_params.ipv6() && pton6(host, v6)) {
-    if (fn(ResolveResult{ZiIP{v6}})) fn(ResolveResult{});
-    return {};
+    ZmRef<Query> query = new Query;
+    query->resolveFn = ZuMv(fn);
+    m_loop.invoke([query, ip = ZiIP{v6}]() mutable {
+      if (query->cancelled()) return;
+      if (query->resolveFn(ResolveResult{ip}) && !query->cancelled())
+	query->resolveFn(ResolveResult{});
+    });
+    return query;
   }
   ZmRef<Query> query = new Query;
   query->name = hostName(host);
@@ -667,8 +679,13 @@ ZmRef<Query> Main::name_(ZiIP ip, NameFn fn)
   start({});
   ZiSockAddr addr(ip, 0);
   if (!addr) {
-    fn(NameResult{aresError(ARES_ENOTFOUND)});
-    return {};
+    ZmRef<Query> query = new Query;
+    query->nameFn = ZuMv(fn);
+    m_loop.invoke([query]() mutable {
+      if (!query->cancelled())
+	query->nameFn(NameResult{aresError(ARES_ENOTFOUND)});
+    });
+    return query;
   }
   ZmRef<Query> query = new Query;
   query->addr = addr;

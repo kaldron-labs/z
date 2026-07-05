@@ -274,6 +274,46 @@ void testLazyNumericResolve()
   ZiResolver::final();
 }
 
+void testAsyncContinuations()
+{
+  ZuTestScope(testAsyncContinuations);
+
+  ZmSemaphore resolved;
+  ZmSemaphore named;
+  ZmAtomic<unsigned> failed = 0;
+  ZmAtomic<unsigned> inCall = 0;
+  ZmAtomic<unsigned> callbacks = 0;
+
+  ZiResolver::final();
+  inCall.store_(1);
+  ZiResolver::resolve("127.0.0.1",
+    ZiResolver_::ResolveFn{[&](auto result) {
+      if (inCall.load_()) failed.store_(1);
+      if (result.template is<ZiResolver_::Event>()) failed.store_(1);
+      if (++callbacks == 2) resolved.post();
+      return true;
+    }});
+  inCall.store_(0);
+  ZuCheck(waitFor(resolved));
+  ZuCheck(!failed.load_());
+
+  callbacks.store_(0);
+  inCall.store_(1);
+  ZiResolver::name(ZiIP{},
+    ZiResolver_::NameFn{[&](auto result) {
+      if (inCall.load_()) failed.store_(1);
+      if (!result.template is<ZiResolver_::Event>()) failed.store_(1);
+      callbacks.store_(1);
+      named.post();
+    }});
+  inCall.store_(0);
+  ZuCheck(waitFor(named));
+  ZuCheck(!failed.load_());
+  ZuCheck(callbacks.load_() == 1);
+  ZiResolver::stop();
+  ZiResolver::final();
+}
+
 void testIPv6NumericResolve()
 {
   ZuTestScope(testIPv6NumericResolve);
@@ -563,6 +603,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testLifecycle);
   ZuTestCall(testLazyNumericResolve);
+  ZuTestCall(testAsyncContinuations);
   ZuTestCall(testIPv6NumericResolve);
   ZuTestCall(testIPv4OnlyResolve);
   ZuTestCall(testIPv6EnabledResolve);
