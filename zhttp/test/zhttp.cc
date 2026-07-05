@@ -43,6 +43,380 @@ constexpr unsigned ClientTimeout = 15;
 constexpr unsigned H3StallTimeout = 15;
 constexpr unsigned H3QuietTimeout = 2;
 
+namespace H3Policy {
+  enum T {
+    DNSOnly,
+    DNSWithBlindFallback
+  };
+}
+
+enum {
+  H3MaxIPs = 8,
+  H3MaxALPN = 8,
+  H3AliasDepth = 4,
+  DNSHeaderLen = 12,
+  SvcMandatory = 0,
+  SvcALPN = 1,
+  SvcNoDefaultALPN = 2,
+  SvcPort = 3,
+  SvcIPv4Hint = 4,
+  SvcIPv6Hint = 6,
+  NameMaxSteps = 64
+};
+
+using DNSHost = ZiResolver_::Host;
+
+struct HTTPS {
+  uint16_t	priority = 0;
+  DNSHost	target;
+  uint16_t	port = 0;
+  ZiIP		ipv4Hint[H3MaxIPs];
+  ZiIP		ipv6Hint[H3MaxIPs];
+  uint8_t	nIPv4Hint = 0;
+  uint8_t	nIPv6Hint = 0;
+  bool		noDefaultALPN = false;
+  bool		hasALPN = false;
+  bool		hasIPv4Hint = false;
+  bool		hasIPv6Hint = false;
+  bool		unknownMandatory = false;
+  bool		hasH3 = false;
+
+  bool alias() const { return !priority; }
+};
+
+struct H3Endpoint {
+  DNSHost	dnsHost;
+  DNSHost	tlsHost;
+  ZiIP		ip;
+  uint16_t	port = 443;
+  bool		fromHTTPS = false;
+  bool		fromIPv4Hint = false;
+  bool		fromIPv6Hint = false;
+};
+
+ZuInline uint16_t dnsU16(const uint8_t *p)
+{
+  return (uint16_t(p[0])<<8) | p[1];
+}
+
+void setDNSHost(DNSHost &host, ZuCSpan s)
+{
+#ifndef _WIN32
+  host = s;
+#else
+  host.length(ZuUTF<wchar_t, char>::cvt(host.span(), s));
+  host.truncate();
+#endif
+}
+
+bool readDNSName(
+  const uint8_t *msg, unsigned msgLen, unsigned &off, ZtString<> &out)
+{
+  unsigned p = off, next = off, steps = 0;
+  bool jumped = false;
+  out.length(0);
+  for (;;) {
+    if (p >= msgLen || ++steps > NameMaxSteps) return false;
+    uint8_t l = msg[p++];
+    if (!l) {
+      if (!jumped) next = p;
+      off = next;
+      if (!out.length()) out = ".";
+      return true;
+    }
+    if ((l & 0xc0) == 0xc0) {
+      if (p >= msgLen) return false;
+      unsigned ptr = ((l & 0x3f)<<8) | msg[p++];
+      if (ptr >= msgLen) return false;
+      if (!jumped) next = p;
+      jumped = true;
+      p = ptr;
+      continue;
+    }
+    if (l & 0xc0) return false;
+    if (p + l > msgLen) return false;
+    if (out.length()) out << '.';
+    out << ZuCSpan(reinterpret_cast<const char *>(msg + p), l);
+    p += l;
+    if (!jumped) next = p;
+  }
+}
+
+bool knownSvcMandatory(uint16_t key)
+{
+  switch (key) {
+    case SvcMandatory:
+    case SvcALPN:
+    case SvcNoDefaultALPN:
+    case SvcPort:
+    case SvcIPv4Hint:
+    case SvcIPv6Hint:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool parseSvcParams(
+  const uint8_t *msg, unsigned rdataEnd, unsigned &off, HTTPS &https)
+{
+  uint16_t last = 0;
+  bool haveLast = false;
+  while (off < rdataEnd) {
+    if (off + 4 > rdataEnd) return false;
+    uint16_t key = dnsU16(msg + off);
+    uint16_t len = dnsU16(msg + off + 2);
+    off += 4;
+    if (haveLast && key <= last) return false;
+    haveLast = true;
+    last = key;
+    if (off + len > rdataEnd) return false;
+    const uint8_t *v = msg + off;
+    switch (key) {
+      case SvcMandatory:
+	if (len & 1) return false;
+	for (unsigned i = 0; i < len; i += 2)
+	  if (!knownSvcMandatory(dnsU16(v + i))) https.unknownMandatory = true;
+	break;
+      case SvcALPN: {
+	https.hasALPN = true;
+	unsigned i = 0;
+	while (i < len) {
+	  unsigned n = v[i++];
+	  if (!n || i + n > len) return false;
+	  if (n == 2 && v[i] == 'h' && v[i + 1] == '3') https.hasH3 = true;
+	  i += n;
+	}
+	break;
+      }
+      case SvcNoDefaultALPN:
+	if (len) return false;
+	https.noDefaultALPN = true;
+	break;
+      case SvcPort:
+	if (len != 2) return false;
+	https.port = dnsU16(v);
+	break;
+      case SvcIPv4Hint:
+	if (len % 4) return false;
+	https.hasIPv4Hint = true;
+	for (unsigned i = 0; i < len && https.nIPv4Hint < H3MaxIPs; i += 4) {
+	  in_addr addr;
+	  addr.s_addr = htonl(
+	    (uint32_t(v[i])<<24) | (uint32_t(v[i + 1])<<16) |
+	    (uint32_t(v[i + 2])<<8) | v[i + 3]);
+	  https.ipv4Hint[https.nIPv4Hint++] = addr;
+	}
+	break;
+      case SvcIPv6Hint:
+	if (len % sizeof(in6_addr)) return false;
+	https.hasIPv6Hint = true;
+	for (unsigned i = 0; i < len && https.nIPv6Hint < H3MaxIPs;
+	    i += sizeof(in6_addr)) {
+	  in6_addr addr;
+	  for (unsigned j = 0; j < sizeof(addr.s6_addr); j++)
+	    addr.s6_addr[j] = v[i + j];
+	  https.ipv6Hint[https.nIPv6Hint++] = addr;
+	}
+	break;
+      default:
+	break;
+    }
+    off += len;
+  }
+  return off == rdataEnd;
+}
+
+bool parseHTTPSRData(
+  const uint8_t *msg, unsigned &off, unsigned rdataEnd,
+  const DNSHost &owner, HTTPS &https)
+{
+  if (off + 2 > rdataEnd) return false;
+  https = {};
+  https.priority = dnsU16(msg + off);
+  off += 2;
+  ZtString<> target;
+  if (!readDNSName(msg, rdataEnd, off, target)) return false;
+  setDNSHost(https.target, target == "." ? ZuCSpan(owner) : ZuCSpan(target));
+  if (!parseSvcParams(msg, rdataEnd, off, https)) return false;
+  return true;
+}
+
+int parseHTTPS(
+  ZuBSpan span, DNSHost owner, ZmFn<bool(const HTTPS &)> fn, ZeError *e)
+{
+  const uint8_t *msg = span.data();
+  unsigned msgLen = span.length();
+  if (msgLen < DNSHeaderLen) goto invalid;
+  {
+    unsigned qd = dnsU16(msg + 4);
+    unsigned an = dnsU16(msg + 6);
+    unsigned ns = dnsU16(msg + 8);
+    unsigned ar = dnsU16(msg + 10);
+    unsigned off = DNSHeaderLen;
+    ZtString<> name;
+    for (unsigned i = 0; i < qd; i++) {
+      if (!readDNSName(msg, msgLen, off, name) || off + 4 > msgLen)
+	goto invalid;
+      off += 4;
+    }
+    unsigned emitted = 0;
+    for (unsigned i = 0, n = an + ns + ar; i < n; i++) {
+      if (!readDNSName(msg, msgLen, off, name) || off + 10 > msgLen)
+	goto invalid;
+      uint16_t type = dnsU16(msg + off);
+      uint16_t klass = dnsU16(msg + off + 2);
+      uint16_t rdlen = dnsU16(msg + off + 8);
+      off += 10;
+      if (off + rdlen > msgLen) goto invalid;
+      unsigned rdataEnd = off + rdlen;
+      if ((type == ZiDNSType::HTTPS || type == ZiDNSType::SVCB) &&
+	  klass == ZiDNSClass::IN) {
+	HTTPS https;
+	unsigned rdataOff = off;
+	if (!parseHTTPSRData(msg, rdataOff, rdataEnd, owner, https))
+	  goto invalid;
+	if (!https.unknownMandatory) {
+	  ++emitted;
+	  if (!fn(https)) return Zi::OK;
+	}
+      }
+      off = rdataEnd;
+    }
+    if (emitted) return Zi::OK;
+  }
+  if (e) *e = ZeError(EAI_NONAME);
+  return Zi::IOError;
+
+invalid:
+  if (e) *e = ZeError(ZiEINVAL);
+  return Zi::IOError;
+}
+
+int resolveDNS(DNSHost host, ZmFn<bool(ZiIP)> fn, ZeError *e)
+{
+  ZeError error;
+  bool ok = ZmBlock<bool>{}([host = ZuMv(host), fn = ZuMv(fn), &error](
+      auto wake) mutable {
+    ZiResolver::resolve(ZuMv(host),
+      ZiResolver_::ResolveFn{[fn = ZuMv(fn), &error, wake](
+	  auto result) mutable {
+	if (result.template is<ZiResolver_::Event>()) {
+	  error = result.template p<ZiResolver_::Event>();
+	  wake(false);
+	  return false;
+	}
+	if (result.template is<void>()) return false;
+	fn(result.template p<ZiIP>());
+	wake(true);
+	return false;
+      }});
+  });
+  if (ok) return Zi::OK;
+  if (e) *e = error;
+  return Zi::IOError;
+}
+
+int httpsDNS(DNSHost host, ZmFn<bool(const HTTPS &)> fn, ZeError *e)
+{
+  ZeError error;
+  int rc = ZmBlock<int>{}([host, fn = ZuMv(fn), &error](auto wake) mutable {
+    ZiResolver::query(host, ZiDNSType::HTTPS, ZiDNSClass::IN,
+      ZiResolver_::QueryFn{[
+	host = ZuMv(host), fn = ZuMv(fn), &error, wake](auto result) mutable {
+	if (result.template is<ZiResolver_::Event>()) {
+	  error = result.template p<ZiResolver_::Event>();
+	  wake(Zi::IOError);
+	  return;
+	}
+	auto msg = ZuMv(result).template p<ZiDNSMsg>();
+	int rc = parseHTTPS(
+	  ZuBSpan{msg.buf.data(), msg.buf.length()}, ZuMv(host), ZuMv(fn),
+	  &error);
+	wake(rc);
+      }});
+  });
+  if (rc != Zi::OK && e) *e = error;
+  return rc;
+}
+
+bool emitH3IP(
+  const H3Endpoint &ep, ZiIP *seen, unsigned &nSeen,
+  ZmFn<bool(const H3Endpoint &)> fn)
+{
+  for (unsigned i = 0; i < nSeen; i++)
+    if (seen[i] == ep.ip) return true;
+  if (nSeen < H3MaxIPs) seen[nSeen++] = ep.ip;
+  return fn(ep);
+}
+
+int http3DNS(
+  DNSHost dnsHost, DNSHost tlsHost, uint16_t port, H3Policy::T policy,
+  ZmFn<bool(const H3Endpoint &)> fn, ZeError *e)
+{
+  DNSHost query[H3AliasDepth + 1];
+  query[0] = dnsHost;
+  bool dnsH3 = false;
+  ZiIP seen[H3MaxIPs];
+  unsigned nSeen = 0;
+
+  for (unsigned depth = 0; depth <= H3AliasDepth; depth++) {
+    HTTPS recs[H3MaxALPN];
+    unsigned nRecs = 0;
+    ZeError httpsErr;
+    int rc = httpsDNS(query[depth],
+      ZmFn<bool(const HTTPS &)>{[&recs, &nRecs](const HTTPS &https) {
+	if (nRecs < H3MaxALPN) recs[nRecs++] = https;
+	return nRecs < H3MaxALPN;
+      }}, &httpsErr);
+    if (rc != Zi::OK) break;
+
+    bool followed = false;
+    for (unsigned i = 0; i < nRecs; i++) {
+      auto &rec = recs[i];
+      if (rec.alias()) {
+	if (depth == H3AliasDepth || !rec.target || rec.target == ".") continue;
+	query[depth + 1] = rec.target;
+	followed = true;
+	break;
+      }
+      if (!rec.hasH3 || rec.unknownMandatory ||
+	  (rec.noDefaultALPN && !rec.hasALPN))
+	continue;
+      dnsH3 = true;
+      DNSHost target = rec.target ? rec.target : query[depth];
+      uint16_t epPort = rec.port ? rec.port : port;
+      for (unsigned j = 0; j < rec.nIPv4Hint; j++) {
+	H3Endpoint ep{target, tlsHost, rec.ipv4Hint[j], epPort, true, true};
+	if (!emitH3IP(ep, seen, nSeen, fn)) return Zi::OK;
+      }
+      for (unsigned j = 0; j < rec.nIPv6Hint; j++) {
+	H3Endpoint ep{target, tlsHost, rec.ipv6Hint[j], epPort, true, false, true};
+	if (!emitH3IP(ep, seen, nSeen, fn)) return Zi::OK;
+      }
+      ZeError resolveErr;
+      resolveDNS(target,
+	ZmFn<bool(ZiIP)>{[&](ZiIP ip) {
+	  H3Endpoint ep{target, tlsHost, ip, epPort, true, false};
+	  return emitH3IP(ep, seen, nSeen, fn);
+	}}, &resolveErr);
+    }
+    if (dnsH3) return nSeen ? Zi::OK : Zi::IOError;
+    if (!followed) break;
+  }
+
+  if (policy == H3Policy::DNSWithBlindFallback) {
+    int rc = resolveDNS(dnsHost,
+      ZmFn<bool(ZiIP)>{[&](ZiIP ip) {
+	H3Endpoint ep{dnsHost, tlsHost, ip, port, false, false};
+	return emitH3IP(ep, seen, nSeen, fn);
+      }}, e);
+    return rc == Zi::OK && nSeen ? Zi::OK : Zi::IOError;
+  }
+  if (e) *e = ZeError(EAI_NONAME);
+  return Zi::IOError;
+}
+
 template <typename Link>
 Zquic::RuntimeDiag runtimeDiag(Link *link)
 {
@@ -2720,19 +3094,19 @@ ZiMxParams mxParams(const Options &options)
   return params;
 }
 
-bool resolveH3(const URL &url, ZiResolver::H3Policy policy)
+bool resolveH3(const URL &url, H3Policy::T policy)
 {
-  ZiResolver::H3Endpoint eps[ZiResolver::H3MaxIPs];
+  H3Endpoint eps[H3MaxIPs];
   unsigned n = 0;
   bool advertised = false;
   ZeError e;
-  int rc = ZiResolver::http3(url.dnsHost, url.dnsHost, url.port, policy,
-    ZmFn<bool(const ZiResolver::H3Endpoint &)>{[&](const auto &ep) {
+  int rc = http3DNS(url.dnsHost, url.dnsHost, url.port, policy,
+    ZmFn<bool(const H3Endpoint &)>{[&](const auto &ep) {
       for (unsigned i = 0; i < n; ++i)
 	if (eps[i].ip == ep.ip && eps[i].port == ep.port) return true;
       advertised |= ep.fromHTTPS;
-      if (n < ZiResolver::H3MaxIPs) eps[n++] = ep;
-      return n < ZiResolver::H3MaxIPs;
+      if (n < H3MaxIPs) eps[n++] = ep;
+      return n < H3MaxIPs;
     }}, &e);
   if (rc != Zi::OK || !n) {
     ZiLOG(Info, "zhttp", ([host = ZeString(url.host)](auto &s) {
@@ -2751,9 +3125,9 @@ bool resolveH3(const URL &url, ZiResolver::H3Policy policy)
   return true;
 }
 
-bool resolveH3Cached(Run &run_, const URL &url, ZiResolver::H3Policy policy)
+bool resolveH3Cached(Run &run_, const URL &url, H3Policy::T policy)
 {
-  if (policy != ZiResolver::H3Policy::DNSOnly)
+  if (policy != H3Policy::DNSOnly)
     return resolveH3(url, policy);
   auto &discovery = discoveryFor(run_, url);
   if (discovery.dnsChecked) return discovery.dnsH3;
@@ -2860,7 +3234,7 @@ int runH3DNSAltSvcFallback(
   RequestResult &result)
 {
   RequestResult h3Result;
-  if (resolveH3Cached(run_, req.url, ZiResolver::H3Policy::DNSOnly)) {
+  if (resolveH3Cached(run_, req.url, H3Policy::DNSOnly)) {
     resetAttempt(req, true);
     if (!runH3Single(mx, run_, req, h3Result)) {
       result = ZuMv(h3Result);

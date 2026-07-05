@@ -23,13 +23,14 @@ class ZiConnection;
 
 struct ZiIOContext {
   ZiConnection	*cxn = nullptr;	// connection - set by ZiMultiplex
-  ZmAnyFn	fn;		// callback - set by app (clear to complete I/O)
-  uint8_t	*ptr = nullptr;	// buffer - set by app (clear to disconnect)
+  ZmAnyFn	fn;		// callback - set by app
+  uint8_t	*ptr = nullptr;	// buffer - set by app
   unsigned	size = 0;	// size of buffer - set by app
   unsigned	offset = 0;	// offset within buffer - set by app
   int		length = 0;	// length - set by ZiMultiplex (-1 on error)
   ZiSockAddr	addr;		// UDP - set by app (send) / ZiMultiplex (recv)
 
+  // ptr sentinel value to disconnect
   static constexpr uintptr_t invalid_ptr() { return uintptr_t(-1); }
 
 private:
@@ -78,7 +79,7 @@ public:
     ptr = reinterpret_cast<uint8_t *>(invalid_ptr());
   }
   bool disconnected() const {
-    return reinterpret_cast<uintptr_t>(ptr) == invalid_ptr();
+    return ptr == reinterpret_cast<uint8_t *>(invalid_ptr());
   }
 
   bool operator()();	// return true if complete

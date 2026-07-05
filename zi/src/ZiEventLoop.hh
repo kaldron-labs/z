@@ -125,7 +125,7 @@ public:
   // by the originating library
   static bool unblock(Zi::Socket); // set non-blocking
 
-  bool addSocket(Zi::Socket, SocketSendFn, SocketRecvFn);
+  bool addSocket(Zi::Socket, SocketSendFn, SocketRecvFn, bool prime = true);
   void delSocket(Zi::Socket);
 
   void disconnect(Zi::Socket); // simulate remote disconnect

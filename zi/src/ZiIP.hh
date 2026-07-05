@@ -31,14 +31,6 @@ class ZiIP;
 
 ZtEnumNS(ZiIPType, int8_t, Null, V4, V6);
 
-namespace ZiResolver {
-
-ZiExtern int resolve(
-  Zi::Hostname host, ZmFn<bool(ZiIP)> fn, ZeError *e);
-ZiExtern Zi::Hostname name(ZiIP ip, ZeError *e);
-
-}
-
 class ZiAPI ZiIP {
 public:
   using Hostname = Zi::Hostname;
@@ -84,6 +76,7 @@ public:
 #pragma GCC diagnostic pop
 #endif
     // Falls back to DNS resolution after numeric parsing; this may block.
+    // Do not call from ZiResolver callbacks.
     ZeError e;
     if (resolve(ZuFwd<S>(s), &e) != Zi::OK) throw e;
   }
@@ -99,6 +92,7 @@ public:
 #pragma GCC diagnostic pop
 #endif
     // Falls back to DNS resolution after numeric parsing; this may block.
+    // Do not call from ZiResolver callbacks.
     ZeError e;
     if (resolve(ZuFwd<S>(s), &e) != Zi::OK) throw e;
     return *this;
@@ -263,9 +257,11 @@ public:
 public:
   template <typename S>
   ZuMatchString<S &&, int> resolve(S &&s, ZeError *e = 0) {
+    // Blocks after numeric parsing; do not call from ZiResolver callbacks.
     Zi::Hostname host{ZuFwd<S>(s)};
     return resolve_(ZuMv(host), e);
   }
+  // Blocks on async reverse lookup; do not call from ZiResolver callbacks.
   Hostname name(ZeError *e = 0);
 
 private:

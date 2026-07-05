@@ -875,6 +875,8 @@ template <typename> friend class Accept_;
     ZmRef<Listener>	m_listener;
     ZiCxnInfo		m_info;
     Zi_Overlapped	m_overlapped;
+
+    alignas(16)
     char		m_buf[(ZiSockAddr::MaxLen + 16) * 2];
   };
   using Accept_Heap = ZmHeap<"ZiMultiplex.Accept", Accept_<ZuEmpty>>;

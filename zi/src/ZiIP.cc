@@ -7,6 +7,7 @@
 // IP address
 
 #include <zlib/ZiIP.hh>
+#include <zlib/ZiResolver.hh>
 
 namespace {
 
@@ -64,8 +65,44 @@ int ZiIP::resolve_(Zi::Hostname host, ZeError *e)
     return Zi::OK;
   }
 
-  return ZiResolver::resolve(ZuMv(host), ZmFn<bool(ZiIP)>{[this](ZiIP ip) {
-    *this = ip;
-    return false;
-  }}, e);
+  ZeError error;
+  bool ok = ZmBlock<bool>{}([this, host = ZuMv(host), &error](auto wake) mutable {
+    ZiResolver::resolve(ZuMv(host),
+      ZiResolver_::ResolveFn{[this, &error, wake](auto result) mutable {
+	if (result.template is<ZiResolver_::Event>()) {
+	  error = result.template p<ZiResolver_::Event>();
+	  wake(false);
+	  return false;
+	}
+	if (result.template is<void>()) return false;
+	auto ip = result.template p<ZiIP>();
+	*this = ip;
+	wake(true);
+	return false;
+      }});
+  });
+  if (ok) return Zi::OK;
+  if (e) *e = error;
+  return Zi::IOError;
+}
+
+ZiIP::Hostname ZiIP::name(ZeError *e)
+{
+  Hostname name;
+  ZeError error;
+  bool ok = ZmBlock<bool>{}([this, &name, &error](auto wake) {
+    ZiResolver::name(*this,
+      ZiResolver_::NameFn{[&name, &error, wake](auto result) mutable {
+	if (result.template is<ZiResolver_::Event>()) {
+	  error = result.template p<ZiResolver_::Event>();
+	  wake(false);
+	  return;
+	}
+	name = ZuMv(result).template p<Hostname>();
+	wake(true);
+      }});
+  });
+  if (ok) return name;
+  if (e) *e = error;
+  return {};
 }

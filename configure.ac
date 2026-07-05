@@ -113,19 +113,14 @@ esac
 
 AC_MSG_RESULT([${Z_MT_LIBS}])
 
-case $build_os in
-  linux-*)
-    save_LIBS="$LIBS"
-    AC_SEARCH_LIBS([res_nquery], [resolv], [
-      AC_DEFINE([HAVE_RES_NQUERY], [1], [Define if res_nquery is available])
-      if test "x$ac_cv_search_res_nquery" != "xnone required"; then
-	Z_IO_LIBS="$Z_IO_LIBS $ac_cv_search_res_nquery"
-      fi
-    ])
-    AC_CHECK_FUNCS([res_ninit res_nclose res_query])
-    LIBS="$save_LIBS"
-    ;;
-esac
+# c-ares
+PKG_CHECK_MODULES([CARES], [libcares], [], [dnl
+  AC_MSG_ERROR([libcares required])
+])
+AC_SUBST(CARES_LIBS)
+AC_SUBST(CARES_CFLAGS)
+CPPFLAGS="$CARES_CFLAGS $CPPFLAGS"
+Z_IO_LIBS="$Z_IO_LIBS $CARES_LIBS"
 
 Z_OFLAGS="-fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans"
 Z_CFLAGS="$Z_CFLAGS $Z_OFLAGS"
