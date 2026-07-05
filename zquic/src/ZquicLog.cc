@@ -946,11 +946,12 @@ void ZquicLogger::start_()
     ZmThreadParams().name("zquic-qlog").priority(ZmThreadPriority::Low)};
 }
 
-void ZquicLogger::stop_()
+void ZquicLogger::stop_(bool idleOnly)
 {
   ZmThread thread;
   {
     Guard guard(m_lock);
+    if (idleOnly && m_configured) return;
     thread = ZuMv(m_thread);
     m_thread = {};
   }
@@ -964,12 +965,7 @@ void ZquicLogger::stop_()
 
 void ZquicLogger::final_(Trace &trace)
 {
-  trace.sink.final();
-  trace.configured = false;
-  trace.sinkOpened = false;
-  trace.headerWritten = false;
-  trace.vantage = Zquic::Vantage::Unknown;
-  trace.params = {};
+  closeTrace_(trace);
 }
 
 ZquicLogDiag ZquicLogger::diag_() const

@@ -669,7 +669,8 @@ public:
     return instance()->init_(trace, params, vantage);
   }
   static void start() { instance()->start_(); }
-  static void stop() { instance()->stop_(); }
+  static void stop() { instance()->stop_(false); }
+  static void stopIdle() { instance()->stop_(true); }
   template <typename L>
   static void close(Trace &trace, L l) {
     instance()->close_(trace, ZuMv(l));
@@ -906,7 +907,7 @@ private:
   }
   bool init_(Trace &, const ZquicLogParams &, Zquic::Vantage::T);
   void start_();
-  void stop_();
+  void stop_(bool);
   template <typename L>
   void close_(Trace &trace, L l) {
     if (!trace.configured) { l(); return; }
