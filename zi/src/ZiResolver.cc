@@ -294,6 +294,8 @@ Main::~Main()
       stop__({});
     } else {
       ZmSemaphore sem;
+      // protect against blocking on self-destruction, do NOT use ZmSelf()
+      // - ZmSelf() depends on TLS and should not be called during exit
       stop__([&sem](ZiEvent::StopResult) { sem.post(); });
       sem.wait();
     }
@@ -546,7 +548,6 @@ void Main::stop_(ZiEvent::StopFn fn)
 {
   bool invoked;
   ZiEvent::StopResult result;
-  ZmSemaphore sem;
   {
     Guard guard(m_lock);
     if (!m_sched || !m_sched->running()) {
@@ -558,26 +559,28 @@ void Main::stop_(ZiEvent::StopFn fn)
       stop__(ZuMv(fn));
       return;
     }
-    stop__([&result, &sem](ZiEvent::StopResult result_) {
-      result = ZuMv(result_);
-      sem.post();
+    result = ZmBlock<ZiEvent::StopResult>{}([this](auto wake) {
+      stop__([wake = ZuMv(wake)](ZiEvent::StopResult result) mutable {
+	wake(ZuMv(result));
+      });
     });
   }
-  sem.wait();
   if (fn) fn(ZuMv(result));
 }
 
 void Main::stop__(ZiEvent::StopFn fn)
 {
   m_sched->del(&m_timer);
-  m_loop.stop([sched = m_sched, fn = ZuMv(fn)](
-    ZiEvent::StopResult result) mutable {
-    static_cast<ZmEngine<ZmScheduler> *>(sched)->stop(
-      [result = ZuMv(result), fn = ZuMv(fn)](bool) mutable {
-	if (fn) fn(ZuMv(result));
+  m_loop.invoke([this, sched = m_sched, fn = ZuMv(fn)]() mutable {
+    if (m_channel) ares_cancel(m_channel);
+    m_loop.stop([sched, fn = ZuMv(fn)](
+      ZiEvent::StopResult result) mutable {
+      static_cast<ZmEngine<ZmScheduler> *>(sched)->stop(
+	[result = ZuMv(result), fn = ZuMv(fn)](bool) mutable {
+	  if (fn) fn(ZuMv(result));
+	});
       });
   });
-  if (m_channel) ares_cancel(m_channel);
 }
 
 void Main::final_()
