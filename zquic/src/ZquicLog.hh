@@ -900,7 +900,10 @@ public:
 private:
   ZquicLogger();
 
-  bool enabled_() const { return m_enabled.load_(); }
+  bool enabled_() const {
+    Guard guard(m_lock);
+    return m_thread;
+  }
   bool init_(Trace &, const ZquicLogParams &, Zquic::Vantage::T);
   void start_();
   void stop_();
@@ -1023,7 +1026,6 @@ private:
     ZquicLog_::EventName::T, const ZquicLog_::CxnStateEvent &, ZuTime);
 
 private:
-  ZmAtomic<int>		m_enabled = 0;
   unsigned		m_configured = 0;
   ZquicLogParams	m_params;
   ZmThread		m_thread;

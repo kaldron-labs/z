@@ -888,7 +888,6 @@ ZquicLogger::ZquicLogger()
 
 ZquicLogger::~ZquicLogger()
 {
-  m_enabled.store_(false);
   if (!m_ring.closed()) {
     if (m_thread) {
       m_ring.eof(true);
@@ -916,7 +915,6 @@ bool ZquicLogger::init_(
   if (!params.enabled()) return true;
   if (!m_configured) {
     m_params = params;
-    m_enabled.store_(false);
     m_recordsEnqueued.store_(0);
     m_recordsWritten.store_(0);
     m_recordsDropped.store_(0);
@@ -946,7 +944,6 @@ void ZquicLogger::start_()
   }
   m_thread = ZmThread{[this]() { work_(); },
     ZmThreadParams().name("zquic-qlog").priority(ZmThreadPriority::Low)};
-  m_enabled.store_(true);
 }
 
 void ZquicLogger::stop_()
@@ -954,7 +951,6 @@ void ZquicLogger::stop_()
   ZmThread thread;
   {
     Guard guard(m_lock);
-    m_enabled.store_(false);
     thread = ZuMv(m_thread);
     m_thread = {};
   }
@@ -1440,7 +1436,6 @@ void ZquicLogger::closeTrace_(Trace &trace)
   trace.vantage = Zquic::Vantage::Unknown;
   trace.params = {};
   if (!m_configured) {
-    m_enabled.store_(false);
     m_params = {};
   }
 }

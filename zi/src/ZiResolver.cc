@@ -27,6 +27,8 @@ extern "C" {
     void *, int, int, char *, char *);
   void ZiResolver_QueryCB(
     void *, int, int, unsigned char *, int);
+  void ZiResolver_AddrInfoCB(
+    void *, int, int, ares_addrinfo *);
 }
 
 using namespace ZiResolver_;
@@ -302,6 +304,47 @@ void ZiResolver_QueryCB(
   }
   if (!resolver->queryCancelled_(query))
     query->queryFn(QueryResult{aresError(status)});
+  resolver->delQuery_(query);
+}
+
+void ZiResolver_AddrInfoCB(
+  void *arg, int status, int, ares_addrinfo *res)
+{
+  ZmRef<Query> query{static_cast<Query *>(arg)};
+  auto resolver = Main::instance();
+  if (status == ARES_SUCCESS && res) {
+    for (auto node = res->nodes;
+	node && !query->stopped && !query->cancelled(); node = node->ai_next) {
+      switch (node->ai_family) {
+	case AF_INET:
+	  if (node->ai_addrlen < sizeof(sockaddr_in)) break;
+	  ++query->emitted;
+	  if (!query->resolveFn(ResolveResult{
+		ZiIP{reinterpret_cast<const sockaddr_in *>(
+		  node->ai_addr)->sin_addr}}))
+	    query->stopped = true;
+	  break;
+	case AF_INET6:
+	  if (node->ai_addrlen < sizeof(sockaddr_in6)) break;
+	  ++query->emitted;
+	  if (!query->resolveFn(ResolveResult{
+		ZiIP{reinterpret_cast<const sockaddr_in6 *>(
+		  node->ai_addr)->sin6_addr}}))
+	    query->stopped = true;
+	  break;
+      }
+    }
+  }
+  if (res) ares_freeaddrinfo(res);
+  if (status == ARES_SUCCESS) query->status = ARES_SUCCESS;
+  else if (query->status == ARES_ENOTFOUND) query->status = status;
+  if (!resolver->queryCancelled_(query)) {
+    if (!query->emitted)
+      query->resolveFn(
+	ResolveResult{aresError(query->status)});
+    else if (!query->stopped)
+      query->resolveFn(ResolveResult{});
+  }
   resolver->delQuery_(query);
 }
 
@@ -582,14 +625,19 @@ void Main::stop_(ZiEvent::StopFn fn)
     return;
   }
 
-  auto result = ZmBlock<ZiEvent::StopResult>{}([this](auto wake) {
-    m_loop.stop([this, wake = ZuMv(wake)](
-      ZiEvent::StopResult result_) mutable {
-      if (m_channel) ares_cancel(m_channel);
-      wake(ZuMv(result_));
-    });
+  ZiEvent::StopResult result;
+  ZmSemaphore sem;
+  m_loop.stop([this, &result, &sem](
+    ZiEvent::StopResult result_) mutable {
+    if (m_channel) ares_cancel(m_channel);
+    result = ZuMv(result_);
+    sem.post();
   });
-  sched->stop();
+  sem.wait();
+  ZmSemaphore stopSem;
+  static_cast<ZmEngine<ZmScheduler> *>(sched)->stop(
+    [&stopSem](bool) { stopSem.post(); });
+  stopSem.wait();
   if (fn) fn(ZuMv(result));
 }
 
@@ -601,9 +649,9 @@ void Main::final_()
     running = m_sched && m_sched->running();
   }
   if (running) {
-    ZmBlock<>{}([this](auto wake) {
-      stop_([wake = ZuMv(wake)](ZiEvent::StopResult) mutable { wake(); });
-    });
+    ZmSemaphore sem;
+    stop_([&sem](ZiEvent::StopResult) { sem.post(); });
+    sem.wait();
   }
 
   {
@@ -640,7 +688,6 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
   ZmRef<Query> query = new Query;
   query->name = hostName(host);
   query->resolveFn = ZuMv(fn);
-  query->pending = unsigned(m_params.ipv4()) + unsigned(m_params.ipv6());
   m_loop.invoke([this, query]() mutable {
     if (query->cancelled()) return;
     if (!m_channel || m_loop.stopping()) {
@@ -649,30 +696,17 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
       return;
     }
     addQuery_(query);
-    if (m_params.ipv4()) {
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-      ares_query(
-	m_channel, query->name.ndata(), DNSClass::IN, DNSType::A,
-	ZiResolver_AQueryCB, query);
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
-    }
-    if (m_params.ipv6()) {
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-      ares_query(
-	m_channel, query->name.ndata(), DNSClass::IN, DNSType::AAAA,
-	ZiResolver_AAAAQueryCB, query);
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
-    }
+    ares_addrinfo_hints hints;
+    memset(&hints, 0, sizeof(hints));
+    if (m_params.ipv4() && m_params.ipv6())
+      hints.ai_family = AF_UNSPEC;
+    else if (m_params.ipv4())
+      hints.ai_family = AF_INET;
+    else
+      hints.ai_family = AF_INET6;
+    ares_getaddrinfo(
+      m_channel, query->name.ndata(), nullptr, &hints,
+      ZiResolver_AddrInfoCB, query);
     armTimer_();
   });
   return query;

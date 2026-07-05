@@ -533,6 +533,18 @@ protected:
     Stream		*streams[SentPkt::MaxFrames] = {};
     unsigned		n = 0;
   };
+  struct QLogTxFrameRefs {
+    QLogTxFrameRefs() = default;
+    QLogTxFrameRefs(const SentFrameRef *refs_, unsigned n_) {
+      n = n_ < PktTxUpdate::MaxFrames ? n_ : PktTxUpdate::MaxFrames;
+      for (unsigned i = 0; i < n; ++i) refs[i] = refs_[i];
+    }
+    unsigned count() const { return n; }
+    const SentFrameRef &operator [](unsigned i) const { return refs[i]; }
+
+    SentFrameRef	refs[PktTxUpdate::MaxFrames];
+    unsigned		n = 0;
+  };
   struct PendingControl {
     ControlFrame	frame;
     bool		queued = false;
@@ -3766,8 +3778,7 @@ protected:
       level,
       lostBytes = update.lostBytes,
       bytesInFlight = m_congestion.bytesInFlight(),
-      lostFrames = update.lostFrames,
-      nLostFrames = update.nLostFrames,
+      lostFrames = QLogTxFrameRefs{update.lostFrames, update.nLostFrames},
       reason = RecReason::TimeThreshold,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
@@ -3780,8 +3791,8 @@ protected:
 	.kind = RecKind::Aggregate,
 	.packetSpace = level,
 	.reason = RecReason::T(reason),
-		.frameCount = qlogCount_(nLostFrames)};
-      for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
+		.frameCount = qlogCount_(lostFrames.count())};
+      for (unsigned i = 0, n = lostFrames.count(); i < n; ++i)
 	qlogAddTxFrame_(event, lostFrames[i]);
 
       o.logPktLost(event, time);
@@ -5298,8 +5309,8 @@ nextSpace:
 	  level = ack.level,
 	  lostBytes = lossUpdate.lostBytes,
 	  bytesInFlight = m_congestion.bytesInFlight(),
-	  lostFrames = lossUpdate.lostFrames,
-	  nLostFrames = lossUpdate.nLostFrames,
+	  lostFrames =
+	    QLogTxFrameRefs{lossUpdate.lostFrames, lossUpdate.nLostFrames},
 	  reason = RecReason::PacketThreshold,
 	  linkInfo = linkInfo_()
 		](auto &o, ZuTime time) {
@@ -5312,8 +5323,8 @@ nextSpace:
     .kind = RecKind::Aggregate,
     .packetSpace = level,
 	    .reason = RecReason::T(reason),
-	    .frameCount = qlogCount_(nLostFrames)};
-	  for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
+	    .frameCount = qlogCount_(lostFrames.count())};
+	  for (unsigned i = 0, n = lostFrames.count(); i < n; ++i)
     qlogAddTxFrame_(event, lostFrames[i]);
 
 	  o.logPktLost(event, time);
@@ -5333,8 +5344,8 @@ nextSpace:
 	level = ack.level,
 	lostBytes = lossUpdate.lostBytes,
 		bytesInFlight = m_congestion.bytesInFlight(),
-		lostFrames = lossUpdate.lostFrames,
-		nLostFrames = lossUpdate.nLostFrames,
+		lostFrames =
+		  QLogTxFrameRefs{lossUpdate.lostFrames, lossUpdate.nLostFrames},
 		reason = RecReason::PacketThreshold,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
@@ -5347,8 +5358,8 @@ nextSpace:
 	  .kind = RecKind::Aggregate,
 	  .packetSpace = level,
 	  .reason = RecReason::T(reason),
-	  .frameCount = qlogCount_(nLostFrames)};
-	for (unsigned i = 0; i < nLostFrames && i < PktTxUpdate::MaxFrames; ++i)
+	  .frameCount = qlogCount_(lostFrames.count())};
+	for (unsigned i = 0, n = lostFrames.count(); i < n; ++i)
 	  qlogAddTxFrame_(event, lostFrames[i]);
 
 	o.logPktLost(event, time);
