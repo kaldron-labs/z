@@ -66,9 +66,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ## Use of C++ language
 ### Language level
-- Compile as GNU C++2b, but do not use:
+- Compile as GNU C++2b
+- DO NOT USE:
   - C++ concepts or `requires`.
   - anonymous namespaces in `.cc` files (use file-scope `static`)
+  - non-specific capture packs `[&]` or `[=]`
 - Use advanced C++ where it is expressive and efficient
   - Where C and C++ offer the same facility, prefer the C form:
       - Example: `#include <string.h>`, not `<cstring>`.
