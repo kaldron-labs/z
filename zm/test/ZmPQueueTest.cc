@@ -325,7 +325,8 @@ void testSpansAndGaps()
     uint64_t lengths[3]{};
     unsigned n = 0;
     bool boundsOk = true;
-    bool ok = q.spans([&](const PQueue::Span &span) {
+    bool ok = q.spans([&keys, &lengths, &n, &boundsOk](
+	const PQueue::Span &span) {
       if (n >= 3) { boundsOk = false; return false; }
       keys[n] = span.key();
       lengths[n] = span.length();
@@ -344,7 +345,8 @@ void testSpansAndGaps()
     uint64_t lengths[3]{};
     unsigned n = 0;
     bool boundsOk = true;
-    bool ok = q.rspans([&](const PQueue::Span &span) {
+    bool ok = q.rspans([&keys, &lengths, &n, &boundsOk](
+	const PQueue::Span &span) {
       if (n >= 3) { boundsOk = false; return false; }
       keys[n] = span.key();
       lengths[n] = span.length();
@@ -363,7 +365,8 @@ void testSpansAndGaps()
     uint64_t lengths[2]{};
     unsigned n = 0;
     bool boundsOk = true;
-    bool ok = q.spans(3, 4, [&](const PQueue::Span &span) {
+    bool ok = q.spans(3, 4, [&keys, &lengths, &n, &boundsOk](
+	const PQueue::Span &span) {
       if (n >= 2) { boundsOk = false; return false; }
       keys[n] = span.key();
       lengths[n] = span.length();
@@ -381,7 +384,8 @@ void testSpansAndGaps()
     uint64_t lengths[2]{};
     unsigned n = 0;
     bool boundsOk = true;
-    bool ok = q.rspans(3, 4, [&](const PQueue::Span &span) {
+    bool ok = q.rspans(3, 4, [&keys, &lengths, &n, &boundsOk](
+	const PQueue::Span &span) {
       if (n >= 2) { boundsOk = false; return false; }
       keys[n] = span.key();
       lengths[n] = span.length();
@@ -399,7 +403,8 @@ void testSpansAndGaps()
     uint64_t lengths[2]{};
     unsigned n = 0;
     bool boundsOk = true;
-    bool ok = q.gaps([&](const PQueue::Span &gap) {
+    bool ok = q.gaps([&keys, &lengths, &n, &boundsOk](
+	const PQueue::Span &gap) {
       if (n >= 2) { boundsOk = false; return false; }
       keys[n] = gap.key();
       lengths[n] = gap.length();
@@ -417,7 +422,8 @@ void testSpansAndGaps()
     uint64_t lengths[1]{};
     unsigned n = 0;
     bool boundsOk = true;
-    bool ok = q.gaps(3, 4, [&](const PQueue::Span &gap) {
+    bool ok = q.gaps(3, 4, [&keys, &lengths, &n, &boundsOk](
+	const PQueue::Span &gap) {
       if (n >= 1) { boundsOk = false; return false; }
       keys[n] = gap.key();
       lengths[n] = gap.length();
@@ -435,7 +441,8 @@ void testSpansAndGaps()
     PQueue q2(10);
     q2.add(new QMsg(ZuFwdTuple(12, 2)));
     bool boundsOk = true;
-    bool ok = q2.gaps(8, 6, [&](const PQueue::Span &gap) {
+    bool ok = q2.gaps(8, 6, [&keys, &lengths, &n, &boundsOk](
+	const PQueue::Span &gap) {
       if (n >= 1) { boundsOk = false; return false; }
       keys[n] = gap.key();
       lengths[n] = gap.length();
@@ -448,7 +455,7 @@ void testSpansAndGaps()
 
   {
     unsigned n = 0;
-    ZuCheck(!q.spans([&](const PQueue::Span &) {
+    ZuCheck(!q.spans([&n](const PQueue::Span &) {
       ++n;
       return n < 2;
     }) && n == 2);

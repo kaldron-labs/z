@@ -88,7 +88,7 @@ private:
 
   using Tables = ZmHashMgr_Tables;
 
-  void all(ZmFn<void(ZmAnyHash *)> fn) {
+  void all(ZmHashMgr::AllFn fn) {
     ZmRef<ZmAnyHash> tbl;
     {
       ZmGuard<ZmPLock> guard(m_lock);
@@ -116,7 +116,7 @@ void ZmHashMgr::init(ZuCSpan id, const ZmHashParams &params)
   ZmHashMgr_::instance()->init(id, params);
 }
 
-void ZmHashMgr::all(ZmFn<void(ZmAnyHash *)> fn)
+void ZmHashMgr::all(AllFn fn)
 {
   ZmHashMgr_::instance()->all(fn);
 }

@@ -111,13 +111,14 @@ void Store::start(StartFn fn)
     m_startState.reset();
     m_startFn = ZuMv(fn);
     m_stopFn = StopFn{};
-    m_eventLoop.init(m_mx, m_sid, m_failFn);
+    m_eventLoop.init(m_mx, m_sid,
+      [fn = m_failFn](ZiEvent::Exception e) mutable { fn(ZuMv(e)); });
     if (!start_()) {
       start_failed(false, ZeEXCEPT(Fatal, "ZdbPQ", "PostgreSQL start() failed"));
       return;
     }
     m_eventLoop.start(
-      ZmFn<void(ZiEvent::StartResult)>{
+      ZiEvent::StartFn{
 	this,
 	[](Store *store, ZiEvent::StartResult result) {
 	  if (ZuUnlikely(result.is<ZiEvent::Exception>())) {
@@ -125,9 +126,9 @@ void Store::start(StartFn fn)
 	    return;
 	  }
 	  auto ok = store->m_eventLoop.addSocket(store->m_connFD,
-	    ZmFn<void(Zi::Socket)>{
+	    ZiEvent::SocketSendFn{
 	      store, [](Store *store, Zi::Socket) { store->send(); }},
-	    ZmFn<void(Zi::Socket)>{
+	    ZiEvent::SocketRecvFn{
 	      store, [](Store *store, Zi::Socket) { store->recv(); }});
 	  if (ZuUnlikely(!ok)) {
 	    store->start_failed(
@@ -225,7 +226,7 @@ void Store::stop_()	// called after dequeuing Stop
 
 void Store::stop_0()
 {
-  m_eventLoop.stop(ZmFn<void(ZiEvent::StopResult)>{
+  m_eventLoop.stop(ZiEvent::StopFn{
     this,
     [](Store *store, ZiEvent::StopResult) {
       // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { s << "pushing stop_1()"; }));
@@ -554,10 +555,10 @@ void Store::start_failed(bool running, ZeException e)
   m_startState.setFailed();
 
   if (running) {
-    m_eventLoop.stop(ZmFn<void(ZiEvent::StopResult)>{
+    m_eventLoop.stop(
       [store = this, e = ZuMv(e)](ZiEvent::StopResult) mutable {
 	store->start_failed_(ZuMv(e));
-      }});
+      });
     return;
   }
 

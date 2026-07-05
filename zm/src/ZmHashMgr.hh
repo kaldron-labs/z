@@ -119,7 +119,8 @@ template <typename, typename, typename, unsigned> friend class ZmLHash_;
 public:
   static void init(ZuCSpan id, const ZmHashParams &params);
 
-  static void all(ZmFn<void(ZmAnyHash *)> fn);
+  using AllFn = ZmFn<void(ZmAnyHash *), ZmFnHeapID<"ZmHashMgr.AllFn">>;
+  static void all(AllFn fn);
 
   struct CSV;
 friend CSV;

@@ -214,6 +214,8 @@ friend ZmEngine<ZmScheduler>;
 
 public:
   using ID = ZmSchedParams::ID;
+  using WakeFn = ZmFn<void(), ZmFnHeapID<"ZmScheduler.WakeFn">>;
+  using ThreadFn = ZmFn<void(), ZmFnHeapID<"ZmScheduler.ThreadFn">>;
 
 private:
   ZuDerive(Ring, (ZmRing<ZmRingMW<true>>));
@@ -297,7 +299,7 @@ public:
 
   bool reset(); // reset while stopped - true if ok, false if running
 
-  void wakeFn(unsigned tid, ZmFn<> fn);
+  void wakeFn(unsigned tid, WakeFn fn);
 
   enum { Update = 0, Advance, Defer }; // mode
 
@@ -356,8 +358,8 @@ public:
 	  }
 	}
       } else {
-	if (armFn([this, timer, timeout, sid](auto fn_) {
-	  Fn fn(fn_);
+	if (armFn([this, timer, timeout, sid](auto l) {
+	  Fn fn(l);
 	  if (ZuUnlikely(timeout <= Zm::now())) {
 	    if (ZuLikely(sid)) {
 	      if (ZuLikely(tryRun_(&m_threads[sid - 1], fn))) return true;
@@ -396,34 +398,38 @@ public:
 
   // run and wake any available thread
   template <typename L>
-  void run(L l) {
-    Fn fn{l};
+  void run(L &&l) {
+    ZuDecay<L> l_{ZuFwd<L>(l)};
+    Fn fn{l_};
     run_(fn);
   }
 
   // run and wake specific thread
   template <typename L>
-  void run(L l, unsigned sid) {
+  void run(L &&l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
-    Fn fn{l}; // l is on-stack
+    ZuDecay<L> l_{ZuFwd<L>(l)};
+    Fn fn{l_};
     run_(&m_threads[sid - 1], fn);
   }
 
   // enqueue for specific thread without waking it
   template <typename L>
-  void push(L l, unsigned sid) {
+  void push(L &&l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
-    Fn fn{l}; // l is on-stack
+    ZuDecay<L> l_{ZuFwd<L>(l)};
+    Fn fn{l_};
     push_(&m_threads[sid - 1], fn);
   }
 
   // run and wake thread, unless already on-thread, in which case direct call
   template <typename L>
-  void invoke(L l, unsigned sid) {
+  void invoke(L &&l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
     Thread *thread = &m_threads[sid - 1];
     if (ZuLikely(Zm::getTID() == thread->tid)) { l(); return; }
-    Fn fn{l}; // l is on-stack
+    ZuDecay<L> l_{ZuFwd<L>(l)};
+    Fn fn{l_};
     run_(thread, fn);
   }
 
@@ -463,7 +469,7 @@ private:
   using IsObjectLambda = ZuIfT<IsObjectLambda_<O, L>{}, R>;
 public:
   template <typename O, typename L>
-  IsObjectLambda<O, L> invoke(O *o, L l, unsigned sid) {
+  IsObjectLambda<O, L> invoke(O *o, L &&l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
     Thread *thread = &m_threads[sid - 1];
     if (ZuLikely(Zm::getTID() == thread->tid)) {
@@ -471,13 +477,13 @@ public:
       return;
     }
     o->ref(); // increment reference count
-    auto m = [l = ZuMv(l)]() mutable { l()->deref(); }; // invoke and deref
+    auto m = [l = ZuFwd<L>(l)]() mutable { l()->deref(); }; // invoke and deref
     Fn fn{m};
     run_(thread, fn);
   }
 
-  ZuInline void threadInit(ZmFn<> fn) { m_threadInitFn = ZuMv(fn); }
-  ZuInline void threadFinal(ZmFn<> fn) { m_threadFinalFn = ZuMv(fn); }
+  ZuInline void threadInit(ThreadFn fn) { m_threadInitFn = ZuMv(fn); }
+  ZuInline void threadFinal(ThreadFn fn) { m_threadFinalFn = ZuMv(fn); }
 
   ZuInline unsigned nWorkers() const { return m_nWorkers; }
   ZuInline unsigned workerID(unsigned i) const {
@@ -519,8 +525,8 @@ private:
   void start_();
   void stop_();
   template <typename L>
-  bool spawn(L l) {
-    m_thread = ZmThread{ZuMv(l), m_params.thread(0).detached(true), 0};
+  bool spawn(L &&l) {
+    m_thread = ZmThread{ZuFwd<L>(l), m_params.thread(0).detached(true), 0};
     return !!m_thread;
   }
   void wake();
@@ -542,7 +548,7 @@ private:
 
   struct Thread {
     Ring		ring;
-    ZmFn<>		wakeFn;
+    WakeFn		wakeFn;
     ZmThreadID		tid = 0;
     ZmThread		thread;
     ZmAtomic<unsigned>	queueCount;
@@ -579,8 +585,8 @@ private:
   SpawnLock			m_spawnLock;
     unsigned			  m_runThreads = 0;
 
-  ZmFn<>			m_threadInitFn;
-  ZmFn<>			m_threadFinalFn;
+  ThreadFn			m_threadInitFn;
+  ThreadFn			m_threadFinalFn;
 };
 
 #ifdef _MSC_VER

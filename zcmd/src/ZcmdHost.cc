@@ -119,7 +119,7 @@ void Host::processCmd(ZmRef<Context> ctx, const Argv &argv)
   Zcmd::executed(ZuMv(ctx), ZuMv(out), 1);
 }
 
-void Host::finalFn(ZmFn<> fn)
+void Host::finalFn(FinalFn fn)
 {
   m_finalFn << ZuMv(fn);
 }

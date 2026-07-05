@@ -187,7 +187,9 @@ ZuDerive(ZeLogBuf,
   (ZtBuiltin<ZtArray<char, ZtArrayHeapID<"ZeLogBuf">>, ZeLog_BUFSIZ>));
 
 // message as function delegate
-using ZeMsgFn = ZmFn<void(ZeLogBuf &, const ZeEventInfo &)>;
+using ZeMsgFn = ZmFn<
+  void(ZeLogBuf &, const ZeEventInfo &),
+  ZmFnHeapID<"ZeException">>;
 
 // event base class
 struct ZeAnyEvent : public ZeEventInfo {
@@ -275,11 +277,10 @@ struct ZeEvent : public ZeAnyEvent {
 };
 
 // monomorphic (type-erased) event
-struct ZeException_HeapID : public ZuStringT<"ZeException"> { };
 template <>
 struct ZeEvent<ZeMsgFn> : public ZeAnyEvent {
   using L = ZeMsgFn;
-  using Mk = ZeMsgFn::Lambda<ZeException_HeapID>;
+  using Mk = ZeMsgFn::Lambda;
 
   mutable L	l;
 

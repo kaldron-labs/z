@@ -24,7 +24,7 @@ void testWriteExcludesOthers()
 
   int readTry = 0;
   int writeTry = 0;
-  ZmThread th{[&] {
+  ZmThread th{[&lock, &readTry, &writeTry] {
     readTry = lock.readtrylock();
     if (readTry == 0) lock.readunlock();
 
@@ -65,7 +65,7 @@ void testReadExcludesWriter()
   lock.readlock();
 
   int writeTry = 0;
-  ZmThread th{[&] {
+  ZmThread th{[&lock, &writeTry] {
     writeTry = lock.trylock();
     if (writeTry == 0) lock.unlock();
   }};

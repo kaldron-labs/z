@@ -29,8 +29,10 @@ namespace Zcmd {
 
 class ZcmdAPI Dispatcher {
 public:
-  using Fn = ZmFn<int(void *, ZmRef<ZiIOBuf>, ZuBSpan)>;
-  using DefltFn = ZmFn<int(void *, ZuID, ZmRef<ZiIOBuf>, ZuBSpan)>;
+  using Fn = ZmFn<int(void *, ZmRef<ZiIOBuf>, ZuBSpan),
+    ZmFnHeapID<"Zcmd.Dispatcher.Fn">>;
+  using DefltFn = ZmFn<int(void *, ZuID, ZmRef<ZiIOBuf>, ZuBSpan),
+    ZmFnHeapID<"Zcmd.Dispatcher.DefltFn">>;
 
   void init();
   void final();

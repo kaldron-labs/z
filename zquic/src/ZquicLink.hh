@@ -837,42 +837,42 @@ protected:
       "QUIC Tx diagnostic snapshot outside Tx thread", return {});
     return txDiag_();
   }
-  template <typename Fn>
-  void runtimeDiag(Fn fn) const {
+  template <typename L>
+  void runtimeDiag(L &&l) const {
     auto link = const_cast<Link *>(this)->impl();
     if (rxInvoked_()) {
-      runtimeDiagRx_(ZuMv(fn));
+      runtimeDiagRx_(ZuFwd<L>(l));
       return;
     }
-    app()->rxRun([link, fn = ZuMv(fn)]() mutable {
-      link->runtimeDiagRx_(ZuMv(fn));
+    app()->rxRun([link, l = ZuFwd<L>(l)]() mutable {
+      link->runtimeDiagRx_(ZuMv(l));
     });
   }
-  template <typename Fn>
-  void runtimeDiagRx_(Fn fn) const {
+  template <typename L>
+  void runtimeDiagRx_(L &&l) const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC Rx diagnostic snapshot outside Rx thread", return);
     auto link = const_cast<Link *>(this)->impl();
     RuntimeRxDiag rx = m_rxDiag;
-    app()->txRun([link, rx, fn = ZuMv(fn)]() mutable {
+    app()->txRun([link, rx, l = ZuFwd<L>(l)]() mutable {
       RuntimeDiag diag{rx, link->txDiagSnapshot_()};
-      fn(diag);
+      l(diag);
     });
   }
   RuntimeDiag runtimeDiag_() const {
     return {m_rxDiag, txDiag_()};
   }
-  template <typename Fn>
-  void pathDiag(Fn fn) const {
+  template <typename L>
+  void pathDiag(L &&l) const {
     if (txInvoked_()) {
       PathDiag diag = pathDiag_();
-      fn(diag);
+      l(diag);
       return;
     }
     auto link = const_cast<Link *>(this)->impl();
-    app()->txRun([link, fn = ZuMv(fn)]() mutable {
+    app()->txRun([link, l = ZuFwd<L>(l)]() mutable {
       PathDiag diag = link->pathDiag_();
-      fn(diag);
+      l(diag);
     });
   }
   PathDiag pathDiag_() const {

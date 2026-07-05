@@ -79,7 +79,7 @@ private:
 };
 
 #define linkINFO(msg) \
-  ZiLOG(Info, "ZvEngineTest", ([=, id = id()](auto &s) { s << msg; }))
+  ZiLOG(Info, "ZvEngineTest", ([id = id()](auto &s) { s << msg; }))
 
 class Link : public ZvLink<Link, ZvTxPool<Link>> {
 public:

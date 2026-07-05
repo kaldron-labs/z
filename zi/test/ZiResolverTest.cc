@@ -217,7 +217,7 @@ void testLifecycle()
     ZiEvent::FailFn{[&failed](ZeException) { failed.store_(1); }});
   ZuCheck(ZiResolver::instance()->initialized());
 
-  ZiResolver::start([&](ZiEvent::StartResult result) {
+  ZiResolver::start([&failed, &started](ZiEvent::StartResult result) {
     if (result.is<ZiEvent::Exception>()) failed.store_(1);
     started.post();
   });
@@ -225,14 +225,14 @@ void testLifecycle()
   ZuCheck(ZiResolver::instance()->running());
   ZuCheck(!failed.load_());
 
-  ZiResolver::start([&](ZiEvent::StartResult result) {
+  ZiResolver::start([&failed, &started](ZiEvent::StartResult result) {
     if (result.is<ZiEvent::Exception>()) failed.store_(1);
     started.post();
   });
   ZuCheck(waitFor(started));
   ZuCheck(!failed.load_());
 
-  ZiResolver::stop([&](ZiEvent::StopResult result) {
+  ZiResolver::stop([&failed, &stopped](ZiEvent::StopResult result) {
     if (result.is<ZiEvent::Exception>()) failed.store_(1);
     stopped.post();
   });
@@ -240,7 +240,7 @@ void testLifecycle()
   ZuCheck(!ZiResolver::instance()->running());
   ZuCheck(!failed.load_());
 
-  ZiResolver::stop([&](ZiEvent::StopResult result) {
+  ZiResolver::stop([&failed, &stopped](ZiEvent::StopResult result) {
     if (result.is<ZiEvent::Exception>()) failed.store_(1);
     stopped.post();
   });
@@ -259,7 +259,7 @@ void testLazyNumericResolve()
 
   ZiResolver::final();
   ZiResolver::resolve("127.0.0.1",
-    ZiResolver_::ResolveFn{[&](auto result) {
+    ZiResolver_::ResolveFn{[&failed, &out, &done](auto result) {
       if (result.template is<ZiResolver_::Event>()) failed.store_(1);
       else if (!result.template is<void>()) out = result.template p<ZiIP>();
       done.post();
@@ -290,7 +290,7 @@ void testIPv6NumericResolve()
   ZiResolver::final();
   ZiResolver::init(ZiResolverParams{}.ipv4(false).ipv6(true));
   ZiResolver::resolve("::1",
-    ZiResolver_::ResolveFn{[&](auto result) {
+    ZiResolver_::ResolveFn{[&failed, &out, &done](auto result) {
       if (result.template is<ZiResolver_::Event>()) failed.store_(1);
       else if (!result.template is<void>()) out = result.template p<ZiIP>();
       done.post();
@@ -318,7 +318,7 @@ void testIPv4OnlyResolve()
   ZiResolver::init(ZiResolverParams{}.ipv4(true).ipv6(false).
     timeoutMS(500).tries(1).servers(dns.servers()));
   ZiResolver::resolve("resolver.test",
-    ZiResolver_::ResolveFn{[&](auto result) {
+    ZiResolver_::ResolveFn{[&failed, &out, &done](auto result) {
       if (result.template is<ZiResolver_::Event>()) failed.store_(1);
       else if (!result.template is<void>()) out = result.template p<ZiIP>();
       done.post();
@@ -356,7 +356,8 @@ void testIPv6EnabledResolve()
   ZiResolver::init(ZiResolverParams{}.ipv4(true).ipv6(true).
     timeoutMS(500).tries(1).servers(dns.servers()));
   ZiResolver::resolve("resolver.test",
-    ZiResolver_::ResolveFn{[&](auto result) {
+    ZiResolver_::ResolveFn{[&failed, &count, &have4, &have6, &done](
+	auto result) {
       if (result.template is<ZiResolver_::Event>()) {
 	failed.store_(1);
 	done.post();
@@ -417,7 +418,7 @@ void testReverseLookup()
   ZiResolver::init(ZiResolverParams{}.timeoutMS(500).tries(1).
     servers(dns.servers()));
   ZiResolver::name(ip4(0xc0000235U),
-    ZiResolver_::NameFn{[&](auto result) {
+    ZiResolver_::NameFn{[&failed, &count, &done](auto result) {
       if (result.template is<ZiResolver_::Event>()) {
 	failed.store_(1);
 	done.post();
@@ -428,7 +429,7 @@ void testReverseLookup()
       if (++count == 2) done.post();
     }});
   ZiResolver::name(ip6(v6),
-    ZiResolver_::NameFn{[&](auto result) {
+    ZiResolver_::NameFn{[&failed, &count, &done](auto result) {
       if (result.template is<ZiResolver_::Event>()) {
 	failed.store_(1);
 	done.post();
@@ -465,7 +466,7 @@ void testNoCallbackAfterStop()
       ++callbacks;
       callback.post();
     }});
-  ZiResolver::stop([&](ZiEvent::StopResult) {
+  ZiResolver::stop([&stopped](ZiEvent::StopResult) {
     stopped.post();
   });
   ZuCheck(waitFor(stopped));
@@ -528,7 +529,8 @@ void testTXTParse()
   ZmSemaphore done;
   ZmAtomic<unsigned> failed = 0;
   unsigned n = 0;
-  ZiResolver::txt(msg, ZiResolver_::TXTFn{[&](auto result) {
+  ZiResolver::txt(msg, ZiResolver_::TxtFn{[&failed, &n, &done](
+      auto result) {
     if (result.template is<ZiResolver_::Event>()) {
       failed.store_(1);
       done.post();

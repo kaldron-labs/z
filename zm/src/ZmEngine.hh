@@ -57,7 +57,8 @@ private:
   using ReadGuard = ZmReadGuard<Lock>;
 
   struct HeapID : public ZuStringT<"ZmEngine"> { };
-  ZuDerive(CtrlFnRing, (ZmQueue<ZmFn<void(bool)>, ZmQueueHeapID_<HeapID>>));
+  using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+  ZuDerive(CtrlFnRing, (ZmQueue<CtrlFn, ZmQueueHeapID_<HeapID>>));
 
 public:
   template <typename L>
@@ -72,10 +73,10 @@ public:
     return ZuFwd<L>(l)();
   }
 
-  void start(ZmFn<void(bool)>);	// async
-  void stop(ZmFn<void(bool)>);
+  void start(CtrlFn);	// async
+  void stop(CtrlFn);
 
-  bool start();			// sync
+  bool start();		// sync
   bool stop();
 
   int state() const { return m_state; }
@@ -117,7 +118,7 @@ private:
 };
 
 template <typename Impl>
-inline void ZmEngine<Impl>::start(ZmFn<void(bool)> startFn)
+inline void ZmEngine<Impl>::start(CtrlFn startFn)
 {
   using namespace ZmEngineState;
   bool ok;
@@ -197,7 +198,7 @@ inline void ZmEngine<Impl>::started(bool ok)
 }
 
 template <typename Impl>
-inline void ZmEngine<Impl>::stop(ZmFn<void(bool)> stopFn)
+inline void ZmEngine<Impl>::stop(CtrlFn stopFn)
 {
   using namespace ZmEngineState;
 

@@ -27,47 +27,54 @@
 
 namespace Zrl {
 
-using ErrorFn = ZmFn<void(ZuCSpan)>;		// (message)
+using ErrorFn = ZmFn<void(ZuCSpan), ZmFnHeapID<"Zrl.App.ErrorFn">>;
 
-using OpenFn = ZmFn<void(bool)>;		// (ok)
-using CloseFn = ZmFn<>;
+using OpenFn = ZmFn<void(bool), ZmFnHeapID<"Zrl.App.OpenFn">>;
+using CloseFn = ZmFn<void(), ZmFnHeapID<"Zrl.App.CloseFn">>;
 
 ZuDerive(Prompt, (ZtArray<uint8_t, ZtArrayHeapID<"Zrl.Prompt">>));
-using PromptFn = ZmFn<void(Prompt &)>;
+using PromptFn = ZmFn<void(Prompt &), ZmFnHeapID<"Zrl.App.PromptFn">>;
 
-using EnterFn = ZmFn<bool(ZuCSpan)>;
-using EndFn = ZmFn<>;
-using SigFn = ZmFn<bool(int)>;
+using EnterFn = ZmFn<bool(ZuCSpan), ZmFnHeapID<"Zrl.App.EnterFn">>;
+using EndFn = ZmFn<void(), ZmFnHeapID<"Zrl.App.EndFn">>;
+using SigFn = ZmFn<bool(int), ZmFnHeapID<"Zrl.App.SignalFn">>;
 
 using CompSpliceFn = ZmFn<void(	// splice completion
   unsigned,			// off     - byte offset
   ZuUTFSpan,			// span    - UTF8 span to be replaced
   ZuBSpan,			// replace - replacement data
-  ZuUTFSpan)>;			// rspan   - UTF8 span of replacement
+  ZuUTFSpan),			// rspan   - UTF8 span of replacement
+  ZmFnHeapID<"Zrl.App.CompSpliceFn">>;
 
 using CompIterFn = ZmFn<void(	// iterate completion
   ZuBSpan,			// data    - completion data
-  ZuUTFSpan)>;			// span    - UTF8 span of completion
+  ZuUTFSpan),			// span    - UTF8 span of completion
+  ZmFnHeapID<"Zrl.App.CompIterFn">>;
 
 using CompInitFn = ZmFn<void(	// initialize completion
   ZuBSpan,			// data    - line data (entire line)
   unsigned,			// cursor  - byte offset of cursor
-  CompSpliceFn)>;		// splice  - line splice function
+  CompSpliceFn),		// splice  - line splice function
+  ZmFnHeapID<"Zrl.App.CompInitFn">>;
 
-using CompStartFn = ZmFn<>;	// re-start iteration
+using CompStartFn = ZmFn<void(), ZmFnHeapID<"Zrl.App.CompStartFn">>;
 
 using CompSubstFn = ZmFn<bool(	// substitute next/prev completion
   CompSpliceFn,			// splice  - line splice function
-  bool)>;			// next    - true for next, false for previous
+  bool),			// next    - true for next, false for previous
+  ZmFnHeapID<"Zrl.App.CompSubstFn">>;
 
-using CompNextFn = ZmFn<bool(CompIterFn)>; // iterate next completion
+using CompNextFn = ZmFn<bool(CompIterFn),
+  ZmFnHeapID<"Zrl.App.CompNextFn">>;
 
-using CompFinalFn = ZmFn<>;		// finalize completion
+using CompFinalFn = ZmFn<void(), ZmFnHeapID<"Zrl.App.CompFinalFn">>;
 
-using HistFn = ZmFn<void(ZuBSpan)>;
+using HistFn = ZmFn<void(ZuBSpan), ZmFnHeapID<"Zrl.App.HistFn">>;
 
-using HistSaveFn = ZmFn<void(unsigned, ZuBSpan)>;
-using HistLoadFn = ZmFn<bool(unsigned, HistFn)>;
+using HistSaveFn = ZmFn<void(unsigned, ZuBSpan),
+  ZmFnHeapID<"Zrl.App.HistSaveFn">>;
+using HistLoadFn = ZmFn<bool(unsigned, HistFn),
+  ZmFnHeapID<"Zrl.App.HistLoadFn">>;
 
 struct App {
   ErrorFn	error;		// I/O error

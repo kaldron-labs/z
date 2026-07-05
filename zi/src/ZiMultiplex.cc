@@ -230,8 +230,9 @@ inline T *u64_ptr(uint64_t v) {
 #endif /* ZiMultiplex_EPoll */
 
 #define Log(severity, op, result, error) \
-  ZiLOG(severity, "ZiMultiplex", ([=](auto &s) { \
-    s << op << ' ' << Zi::ioResult(result) << ' ' << error; \
+  ZiLOG(severity, "ZiMultiplex", \
+    ([op_ = op, result_ = result, error_ = error](auto &s) { \
+    s << op_ << ' ' << Zi::ioResult(result_) << ' ' << error_; \
   }))
 #define Error(op, result, error) Log(Error, op, result, error)
 #define Warning(op, result, error) Log(Warning, op, result, error)
@@ -1025,12 +1026,12 @@ void ZiConnection::telemetry(ZiCxnTelemetry &data) const
   data.type = m_info.type;
 }
 
-void ZiMultiplex::allCxns(ZmFn<void(ZiConnection *)> fn)
+void ZiMultiplex::allCxns(ZiCxnFn fn)
 {
   rxInvoke([this, fn = ZuMv(fn)]() mutable { allCxns_(ZuMv(fn)); });
 }
 
-void ZiMultiplex::allCxns_(ZmFn<void(ZiConnection *)> fn)
+void ZiMultiplex::allCxns_(ZiCxnFn fn)
 {
   auto i = m_cxns->citer();
   while (ZmRef<ZiConnection> cxn = i.val())
@@ -2443,7 +2444,8 @@ bool ZiMultiplex::start__()
   }
 #endif
 
-  wakeFn(rxThread(), ZmFn<>{this, [](ZiMultiplex *mx) { mx->wakeRx(); }});
+  wakeFn(rxThread(),
+    WakeFn{this, [](ZiMultiplex *mx) { mx->wakeRx(); }});
   push([this]() { rx(); }, rxThread());
   return true;
 }
@@ -2525,7 +2527,7 @@ void ZiMultiplex::stop_2()
 {
   // close down underlying I/O platform
 
-  wakeFn(rxThread(), ZmFn<>());
+  wakeFn(rxThread(), WakeFn{});
 
 #ifdef ZiMultiplex_IOCP
   CloseHandle(m_completionPort);

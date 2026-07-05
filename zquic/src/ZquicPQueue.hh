@@ -247,8 +247,8 @@ public:
     }
     return changed;
   }
-  template <typename Fn>
-  bool spans(uint64_t offset, uint64_t length, Fn fn) const {
+  template <typename L>
+  bool spans(uint64_t offset, uint64_t length, L &&l) const {
     if (!length) return true;
     uint64_t end = offset + length;
     for (unsigned i = 0; i < m_count; ++i) {
@@ -256,7 +256,7 @@ public:
       uint64_t rangeEnd = first + m_ranges[i].length();
       if (rangeEnd <= offset) continue;
       if (first >= end) break;
-      if (!fn(m_ranges[i])) return false;
+      if (!l(m_ranges[i])) return false;
     }
     return true;
   }

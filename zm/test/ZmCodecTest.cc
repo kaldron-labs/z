@@ -18,9 +18,9 @@ void testBase64()
   const uint8_t data[] = {0x00, 0x01, 0xfe, 0xff, 0x42};
   ZuArray<uint8_t, 16> decoded;
 
-  ZmBase64::enc({data, sizeof(data)}, [&](ZuSpan<uint8_t> enc) {
+  ZmBase64::enc({data, sizeof(data)}, [&decoded](ZuSpan<uint8_t> enc) {
     ZuCheck(enc.length() <= ZmBase64::enclen(sizeof(data)));
-    ZmBase64::dec(enc, [&](ZuSpan<uint8_t> dec) {
+    ZmBase64::dec(enc, [&decoded](ZuSpan<uint8_t> dec) {
       decoded.length(dec.length());
       for (unsigned i = 0; i < dec.length(); i++) decoded[i] = dec[i];
     });
@@ -38,17 +38,18 @@ void testBase32AndHexAndEmpty()
   unsigned base32Len = 0;
   unsigned hexLen = 0;
 
-  ZmBase32::enc({data, sizeof(data)}, [&](ZuSpan<uint8_t> enc) {
+  ZmBase32::enc({data, sizeof(data)}, [&base32Len, &data](
+      ZuSpan<uint8_t> enc) {
     base32Len = enc.length();
-    ZmBase32::dec(enc, [&](ZuSpan<uint8_t> dec) {
+    ZmBase32::dec(enc, [&data](ZuSpan<uint8_t> dec) {
       ZuCheck(dec.length() == sizeof(data));
       for (unsigned i = 0; i < sizeof(data); i++) ZuCheck(dec[i] == data[i]);
     });
   });
 
-  ZmHex::enc({data, sizeof(data)}, [&](ZuSpan<uint8_t> enc) {
+  ZmHex::enc({data, sizeof(data)}, [&hexLen, &data](ZuSpan<uint8_t> enc) {
     hexLen = enc.length();
-    ZmHex::dec(enc, [&](ZuSpan<uint8_t> dec) {
+    ZmHex::dec(enc, [&data](ZuSpan<uint8_t> dec) {
       ZuCheck(dec.length() == sizeof(data));
       for (unsigned i = 0; i < sizeof(data); i++) ZuCheck(dec[i] == data[i]);
     });
@@ -57,9 +58,9 @@ void testBase32AndHexAndEmpty()
   ZuCheck(base32Len <= ZmBase32::enclen(sizeof(data)));
   ZuCheck(hexLen == ZmHex::enclen(sizeof(data)));
 
-  ZmBase64::enc({}, [&](ZuSpan<uint8_t> enc) {
+  ZmBase64::enc({}, [](ZuSpan<uint8_t> enc) {
     ZuCheck(enc.length() == 0);
-    ZmBase64::dec(enc, [&](ZuSpan<uint8_t> dec) {
+    ZmBase64::dec(enc, [](ZuSpan<uint8_t> dec) {
       ZuCheck(dec.length() == 0);
     });
   });

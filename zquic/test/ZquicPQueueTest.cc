@@ -71,7 +71,7 @@ void testRxOverlapDrop()
 
   unsigned spans = 0;
   uint64_t firstKey = 0, firstLength = 0;
-  q.spans([&](const auto &span) {
+  q.spans([&spans, &firstKey, &firstLength](const auto &span) {
     if (!spans) {
       firstKey = span.key();
       firstLength = span.length();

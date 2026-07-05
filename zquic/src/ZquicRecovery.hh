@@ -39,7 +39,7 @@ class AckTracker {
 public:
   static constexpr unsigned Max = 64;
   static constexpr unsigned MaxRetained = Max + 1;
-  using DequeueFn = ZmFn<void()>;
+  using DequeueFn = ZmFn<void(), ZmFnHeapID<"Zquic.Ack.DequeueFn">>;
 
   bool add(uint64_t pn) {
     if (contains(pn)) return true;

@@ -728,7 +728,7 @@ static int unprotect_(
   uint8_t first = packet[0];
   uint8_t pnBytes[4];
   memcpy(pnBytes, packet + pnOffset, sizeof(pnBytes));
-  auto fail = [&]() -> int {
+  auto fail = [packet, pnOffset, first, &pnBytes]() -> int {
     packet[0] = first;
     memcpy(packet + pnOffset, pnBytes, sizeof(pnBytes));
     return -1;

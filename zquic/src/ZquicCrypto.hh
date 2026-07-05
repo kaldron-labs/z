@@ -179,8 +179,9 @@ public:
   using Rx = ZmPQRx<CryptoStream, Queue, CryptoStreamRxNTP>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
-  using DequeueFn = ZmFn<void()>;
-  using DeliveryFn = ZmFn<void(ZuBSpan)>;
+  using DequeueFn = ZmFn<void(), ZmFnHeapID<"Zquic.Crypto.DequeueFn">>;
+  using DeliveryFn = ZmFn<void(ZuBSpan),
+    ZmFnHeapID<"Zquic.Crypto.DeliveryFn">>;
 
   CryptoStream() :
     m_dequeueFn{this, [](CryptoStream *s) { s->dequeueRx_(); }} { }

@@ -24,20 +24,23 @@
 
 class ZmAPI ZmTimeout {
 public:
-  ZmTimeout(ZmScheduler *scheduler,
-	    const ZmBackoff &backoff,
-	    int maxCount) :			// -ve or 0 - infinite
+  using Fn = ZmFn<void(), ZmFnHeapID<"ZmTimeout.Fn">>;
+
+  ZmTimeout(
+    ZmScheduler *scheduler,
+    const ZmBackoff &backoff, int maxCount) // -ve or 0 - infinite
+  :
     m_scheduler(scheduler), m_backoff(backoff),
     m_maxCount(maxCount), m_count(0) { }
 
   ZmTimeout(const ZmTimeout &) = delete;
   ZmTimeout &operator =(const ZmTimeout &) = delete;
 
-  void start(ZmFn<> retryFn, ZmFn<> finalFn = {}) {
+  void start(Fn retryFn, Fn finalFn = {}) {
     ZmGuard<ZmLock> guard(m_lock);
 
-    m_retryFn = retryFn;
-    m_finalFn = finalFn;
+    m_retryFn = ZuMv(retryFn);
+    m_finalFn = ZuMv(finalFn);
     start_();
   }
 
@@ -62,8 +65,8 @@ public:
     ZmGuard<ZmLock> guard(m_lock);
 
     m_scheduler->del(&m_timer);
-    m_retryFn = ZmFn<>();
-    m_finalFn = ZmFn<>();
+    m_retryFn = Fn();
+    m_finalFn = Fn();
   }
 
   void work() {
@@ -77,17 +80,17 @@ public:
 	&m_timer, Zm::now() + m_interval, ZmScheduler::Update,
 	[this](auto &&arm) { return arm([this]() { work(); }); });
     } else {
-      m_retryFn = ZmFn<>();
+      m_retryFn = Fn();
       m_finalFn();
-      m_finalFn = ZmFn<>();
+      m_finalFn = Fn();
     }
   }
 
 private:
   ZmScheduler		*m_scheduler;
   ZmLock		m_lock;
-    ZmFn<>		m_retryFn;
-    ZmFn<>		m_finalFn;
+    Fn			m_retryFn;
+    Fn			m_finalFn;
     ZmBackoff		m_backoff;
     int			m_maxCount;
     int			m_count;

@@ -92,7 +92,8 @@ class ZiConnection;
 class ZiMultiplex;
 
 #ifdef ZiMultiplex_FILTER
-using FilterFn = ZmFn<bool(ZiConnection *, uint8_t *, unsigned)>;
+using FilterFn = ZmFn<bool(ZiConnection *, uint8_t *, unsigned),
+  ZmFnHeapID<"ZiMultiplex.FilterFn">>;
 #endif
 
 class ZiCxnOptions;
@@ -104,7 +105,7 @@ struct ZiCxnInfo;
 #endif
 
 // transient
-using ZiFailFn = ZmFn<void(bool)>;
+using ZiFailFn = ZmFn<void(bool), ZmFnHeapID<"ZiMultiplex.FailFn">>;
 
 #ifdef _WIN32
 using ZiIPv6MReq = IPV6_MREQ;
@@ -542,14 +543,17 @@ struct ZiCxnTelemetry {
   int8_t	type = -1;	// ZiCxnType
 };
 
-using ZiListenFn = ZmFn<void(const ZiListenInfo &)>;
-using ZiConnectFn = ZmFn<ZiConnection *(const ZiCxnInfo &)>;
+using ZiListenFn = ZmFn<void(const ZiListenInfo &),
+  ZmFnHeapID<"ZiMultiplex.ListenFn">>;
+using ZiConnectFn = ZmFn<ZiConnection *(const ZiCxnInfo &),
+  ZmFnHeapID<"ZiMultiplex.ConnectFn">>;
 
 #ifdef ZiMultiplex_IOCP
 // overlapped I/O structure for a single request (Windows IOCP) - internal
 class Zi_Overlapped {
 public:
-  using Executed = ZmFn<void(int, unsigned, ZeError)>;
+  using Executed = ZmFn<void(int, unsigned, ZeError),
+    ZmFnHeapID<"ZiMultiplex.OverlappedFn">>;
 
   Zi_Overlapped() { }
   ~Zi_Overlapped() { }
@@ -792,6 +796,8 @@ struct ZiMxTelemetry { // not graphable
   uint8_t	nThreads = 0;
 };
 
+using ZiCxnFn = ZmFn<void(ZiConnection *), ZmFnHeapID<"ZiCxnFn">>;
+
 class ZiAPI ZiMultiplex : public ZmScheduler {
 friend ZiConnection;
 
@@ -963,8 +969,8 @@ public:
   ZiMultiplex(const ZiMultiplex &) = delete;
   ZiMultiplex &operator =(const ZiMultiplex &) = delete;
 
-  void allCxns(ZmFn<void(ZiConnection *)> fn);
-  void allCxns_(ZmFn<void(ZiConnection *)> fn);			// Rx thread
+  void allCxns(ZiCxnFn fn);
+  void allCxns_(ZiCxnFn fn);					// Rx thread
 
   void listen(
       ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,

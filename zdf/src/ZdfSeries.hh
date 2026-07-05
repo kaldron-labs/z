@@ -97,8 +97,8 @@ namespace RdrState {
 // addLiveReader	live
 // delLiveReader	stop, liveFail
 
-using ErrorFn = ZmFn<void()>;
-using StopFn = ZmFn<void()>;
+using ErrorFn = ZmFn<void(), ZmFnHeapID<"Zdf.Series.ErrorFn">>;
+using StopFn = ZmFn<void(), ZmFnHeapID<"Zdf.Series.StopFn">>;
 
 // the decoder determines the value type (fixed or floating point)
 template <typename Decoder_>
@@ -136,7 +136,6 @@ public:
 
   // the reader control interface is passed to the app's read callback
   class Ctrl;
-
 friend Ctrl;
   class Ctrl {
   friend Reader;
@@ -150,7 +149,8 @@ friend Ctrl;
     auto ref() const { return ZmRef<Reader>{&reader}; }
 
     // app's read callback
-    using Fn = ZmFn<bool(Ctrl &, Value)>;
+    using Fn = ZmFn<bool(Ctrl &, Value),
+      ZmFnHeapID<"Zdf.Series.ReadFn">>;
 
     // update callback
     void fn(Fn fn) { reader.fn(ZuMv(fn)); }
@@ -400,6 +400,8 @@ public:
   using Reader = Zdf::Reader<Decoder>;
   using ReadFn = typename Reader::Fn;
   using Writer = Zdf::Writer<Decoder>;
+  using WriteFn = ZmFn<void(ZmRef<Writer>),
+    ZmFnHeapID<"Zdf.Series.WriteFn">>;
   using PValue = typename Decoder::Value;
   enum { Fixed = ZuIsSame<PValue, int64_t>{} };
   using Value = ZuIf<Fixed, ZuFixed, double>;
@@ -536,10 +538,10 @@ public:
     reader->loadBlk();
   }
 
-  template <typename Vec, typename Fn, bool Live = false>
-  auto readVec(Vec vec, unsigned n, Fn fn) {
+  template <typename Vec, typename L, bool Live = false>
+  auto readVec(Vec vec, unsigned n, L &&l) {
     return [
-      vec = ZuMv(vec), n, fn = ZuMv(fn), i = 0
+      vec = ZuMv(vec), n, l = ZuFwd<L>(l), i = 0
     ](auto &rc, Value value) mutable -> bool {
       if (ZuUnlikely(ZuNull(value))) {
 	if constexpr (Live) return true;
@@ -548,7 +550,7 @@ public:
 	if (i < n) return true;
       }
       rc.stop();
-      ZuMv(fn)(ZuMv(vec));
+      ZuMv(l)(ZuMv(vec));
       return false;
     };
   }
@@ -692,7 +694,7 @@ private:
 public:
   template <typename ...NDP>
   ZuIfT<sizeof...(NDP) == Fixed, void>
-  write(ZmFn<void(ZmRef<Writer>)> fn, ErrorFn errorFn, NDP... ndp) {
+  write(WriteFn fn, ErrorFn errorFn, NDP... ndp) {
     ZmAssert(invoked());
 
     // if this is a fixed-point series, validate the ndp parameter
@@ -767,7 +769,7 @@ public:
 private:
   template <typename ...NDP>
   ZuIfT<sizeof...(NDP) == Fixed, void>
-  write_loadedBlk(ZmFn<void(ZmRef<Writer>)> fn, NDP... ndp) {
+  write_loadedBlk(WriteFn fn, NDP... ndp) {
     m_lastBlk->blkData->pin();
     if (!m_lastBlk->count()) {
       write_newWriter(ZuMv(fn), ndp...);
@@ -794,7 +796,7 @@ private:
   }
   template <typename... NDP>
   ZuIfT<sizeof...(NDP) == Fixed, void>
-  write_newWriter(ZmFn<void(ZmRef<Writer>)> fn, NDP... ndp) {
+  write_newWriter(WriteFn fn, NDP... ndp) {
     if constexpr (Fixed) m_lastBlk->ndp(ndp...);
     m_writer->encoder([this]{ return m_lastBlk->encoder<Decoder>(this); });
     // call async to constrain stack depth
@@ -983,10 +985,10 @@ private:
 
   // load block from data store
   template <typename L>
-  void loadBlk(BlkOffset blkOffset, L l) const {
+  void loadBlk(BlkOffset blkOffset, L &&l) const {
     blkDataTbl()->template find<0>(
       shard(), ZuFwdTuple(id(), blkOffset), [
-	this, l = ZuMv(l)
+	this, l = ZuFwd<L>(l)
       ](ZmRef<BlkData> blkData) mutable {
 	if (ZuUnlikely(!blkData)) { l(nullptr); return; }
 	blkData->data().series =
@@ -997,13 +999,13 @@ private:
 
   // load block data from data store (idempotent)
   template <typename L>
-  void loadBlkData(BlkOffset blkOffset, L l) const {
+  void loadBlkData(BlkOffset blkOffset, L &&l) const {
     ZmRef<IndexBlk> indexBlk = m_index.find(blkOffset);
     if (!indexBlk) { l(nullptr); return; }
     auto blk = &indexBlk->blks[blkOffset - indexBlk->offset];
     if (blk->blkData) { l(blk); return; }
     loadBlk(blkOffset, [
-      indexBlk = ZuMv(indexBlk), blk, l = ZuMv(l) // keep indexBlk in scope
+      indexBlk = ZuMv(indexBlk), blk, l = ZuFwd<L>(l) // keep indexBlk in scope
     ](ZmRef<BlkData> blkData) mutable {
       if (ZuUnlikely(!blkData)) { l(nullptr); return; }
       blk->blkData = ZuMv(blkData);

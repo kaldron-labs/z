@@ -407,7 +407,7 @@ bool QPack::staticNameIndex(ZuCSpan name, uint64_t &index)
 {
   bool ok = false;
   unsigned i = 0;
-  ZuUnroll::all<QPackTbl>([&]<typename KV>() {
+  ZuUnroll::all<QPackTbl>([&ok, &name, &index, i]<typename KV>() mutable {
     if (!ok) {
       using Key = ZuType<0, KV>;
       if (Key{}() == name) {
@@ -424,7 +424,8 @@ int QPack::staticIndex(ZuCSpan name, ZuCSpan value)
 {
   int index = -1;
   unsigned i = 0;
-  ZuUnroll::all<QPackTbl>([&]<typename KV>() {
+  ZuUnroll::all<QPackTbl>(
+      [&index, &name, &value, i]<typename KV>() mutable {
     if (index < 0) {
       using Key = ZuType<0, KV>;
       using Value = QPackValue<KV>;

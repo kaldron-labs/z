@@ -916,9 +916,9 @@ void UserDB::userAdd(ZmRef<ZiIOBuf> buf, ResponseFn fn)
 
 // delete all API keys for a user
 template <typename L>
-void UserDB::keyClr__(UserID id, L l)
+void UserDB::keyClr__(UserID id, L &&l)
 {
-  run([this, id, l = ZuMv(l)]() {
+  run([this, id, l = ZuFwd<L>(l)]() {
     m_keyTbl->selectKeys<0>(ZuMvTuple(ZuMv(id)), MaxAPIKeys, [
       this, l = ZuMv(l)
     ](auto result, unsigned) mutable {

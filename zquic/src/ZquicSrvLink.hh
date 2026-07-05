@@ -35,10 +35,10 @@ public:
   SrvLink(App *app) : Base{app, true} { Base::initCryptoDelivery_(); }
 
   bool established() const { return Base::runtimeEstablished_(); }
-  template <typename Fn>
-  void runtimeDiag(Fn fn) const { Base::runtimeDiag(ZuMv(fn)); }
-  template <typename Fn>
-  void pathDiag(Fn fn) const { Base::pathDiag(ZuMv(fn)); }
+  template <typename L>
+  void runtimeDiag(L &&l) const { Base::runtimeDiag(ZuFwd<L>(l)); }
+  template <typename L>
+  void pathDiag(L &&l) const { Base::pathDiag(ZuFwd<L>(l)); }
   bool pathValidated() const { return Base::pathValidated_(); }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   uint64_t pathAntiAmplification() const {

@@ -35,6 +35,8 @@ template <unsigned N_> struct ZuString {
 
   char data_[N]{};
 
+  constexpr ZuString() noexcept = default;
+
   consteval ZuString(const char (&data)[N]) noexcept {
     for (unsigned i = 0; i < N; i++) data_[i] = data[i];
   }
@@ -132,6 +134,15 @@ template <unsigned N>
 ZuString(const char(&)[N]) -> ZuString<N>;
 template <unsigned N>
 ZuString(char(&)[N]) -> ZuString<N>;
+
+template <unsigned L, unsigned R>
+constexpr auto operator +(const ZuString<L> &l, const ZuString<R> &r)
+{
+  ZuString<L + R - 1> s;
+  for (unsigned i = 0; i < L - 1; i++) s[i] = l[i];
+  for (unsigned i = 0; i < R; i++) s[(L - 1) + i] = r[i];
+  return s;
+}
 
 template <ZuString S>
 constexpr auto operator""_Zu() { return S; }

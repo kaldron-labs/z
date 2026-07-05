@@ -164,7 +164,7 @@ static bool dnsName(
 template <typename Heap>
 struct ZiResolver_TXT_ : public Heap, public ZmObject {
   DNSBuf		buf;
-  TXTFn		fn;
+  TxtFn		fn;
 };
 
 using ZiResolver_TXT = ZiResolver_TXT_<
@@ -356,7 +356,7 @@ ZmRef<Query> Main::query(
   return instance()->query_(ZuMv(host), type, klass, ZuMv(fn));
 }
 
-void Main::txt(const DNSMsg &dns, TXTFn fn)
+void Main::txt(const DNSMsg &dns, TxtFn fn)
 {
   instance()->txt_(dns, ZuMv(fn));
 }
@@ -393,7 +393,7 @@ bool Main::queryCancelled_(const Query *query) const
   return m_loop.stopping() || !query || query->cancelled();
 }
 
-void Main::txt_(const DNSMsg &dns, TXTFn fn)
+void Main::txt_(const DNSMsg &dns, TxtFn fn)
 {
   start({});
   ZmRef<ZiResolver_TXT> query = new ZiResolver_TXT;

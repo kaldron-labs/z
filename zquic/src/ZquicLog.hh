@@ -672,8 +672,8 @@ public:
   static void stop() { instance()->stop_(false); }
   static void stopIdle() { instance()->stop_(true); }
   template <typename L>
-  static void close(Trace &trace, L l) {
-    instance()->close_(trace, ZuMv(l));
+  static void close(Trace &trace, L &&l) {
+    instance()->close_(trace, ZuFwd<L>(l));
   }
   static void final(Trace &trace) { instance()->final_(trace); }
   static ZquicLogDiag diag() { return instance()->diag_(); }
@@ -781,8 +781,8 @@ public:
     instance()->cxnStateUpd_(trace, ZuMv(event));
   }
   template <typename L>
-  static void log(Trace &trace, L l) {
-    instance()->log_(trace, ZuMv(l));
+  static void log(Trace &trace, L &&l) {
+    instance()->log_(trace, ZuFwd<L>(l));
   }
 
   void logCxnStarted(
@@ -909,10 +909,10 @@ private:
   void start_();
   void stop_(bool);
   template <typename L>
-  void close_(Trace &trace, L l) {
+  void close_(Trace &trace, L &&l) {
     if (!trace.configured) { l(); return; }
     if (enabled_()) {
-      auto fn_ = [trace = &trace, l = ZuMv(l)](ZquicLogger *this_) mutable {
+      auto fn_ = [trace = &trace, l = ZuFwd<L>(l)](ZquicLogger *this_) mutable {
 	this_->closeTrace_(*trace);
 	l();
       };
@@ -968,10 +968,10 @@ private:
     }
   }
   template <typename L>
-  void log_(Trace &trace, L l) {
+  void log_(Trace &trace, L &&l) {
     if (!enabled_()) return;
     ZuTime time = Zm::now();
-    auto fn_ = [trace = &trace, l = ZuMv(l), time](ZquicLogger *this_) mutable {
+    auto fn_ = [trace = &trace, l = ZuFwd<L>(l), time](ZquicLogger *this_) mutable {
       if (!this_->useTrace_(trace)) return;
       l(*this_, time);
     };
@@ -1056,7 +1056,7 @@ struct ZquicLogger {
   static void start() { }
   static void stop() { }
   template <typename L>
-  static void close(Trace &, L l) { l(); }
+  static void close(Trace &, L &&l) { l(); }
   static void final(Trace &) { }
   static ZquicLogDiag diag() { return {}; }
   static void cxnStarted(Trace &, ZquicLog_::CxnStartedEvent) { }
@@ -1093,14 +1093,14 @@ struct ZquicLogger {
   static void cxnClosed(Trace &, ZquicLog_::CloseEvent) { }
   static void cxnStateUpd(Trace &, ZquicLog_::CxnStateEvent) { }
   template <typename L>
-  static void log(Trace &, L) { }
+  static void log(Trace &, L &&) { }
 };
 
 #endif /* Zquic_DEBUG */
 
 template <typename L>
-inline void ZquicLog(ZquicLogger::Trace &trace, L l) {
-  ZquicLogger::log(trace, ZuMv(l));
+inline void ZquicLog(ZquicLogger::Trace &trace, L &&l) {
+  ZquicLogger::log(trace, ZuFwd<L>(l));
 }
 
 #ifdef Zquic_DEBUG

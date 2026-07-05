@@ -5,14 +5,15 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // function delegate optimized for performance and avoidance of heap allocation
-// - most function delegate capture packs can be reduced to a this pointer
-// - for this common use case of a callback with a single context pointer,
+// - most function delegate capture packs can be reduced to a single pointer
+//   (or smart pointer), usually `this`
+// - for the common use case of a callback with a single context pointer,
 //   ZmFn can capture the pointer and the function address by value, avoiding
 //   heap allocation entirely
 // - ZmFn falls back to heap allocation for larger capture packs
 // - ZmFn<> is shorthand for ZmFn<void()>
-// - built-in by-value capture is a ZmContext, which can be a raw pointer or
-//   a ZmRef<T> where T is ZmPolymorph-derived (i.e. is intrusively
+// - the built-in by-value capture is a ZmContext, which can be a raw pointer
+//   or a ZmRef<T> where T is ZmPolymorph-derived (i.e. is intrusively
 //   reference-counted and has a virtual destructor); when used with
 //   ZmRef/ZmPolymorph, the ZmFn increments the reference-count of the
 //   referenced object during its lifetime, ensuring that it's lifetime
@@ -88,15 +89,15 @@
 #include <zlib/ZmFn_.hh>
 #include <zlib/ZmHeap.hh>
 
-// stateful heap-allocated lambda wrapper
-template <typename Heap, typename L, typename ArgList> struct ZmLambda__;
+// heap-allocated reference-counted stateful lambda
+template <typename Heap, typename L, typename ArgList> struct ZmLambda_;
 template <typename Heap, typename L, typename ...Args>
-struct ZmLambda__<Heap, L, ZuTypeList<Args...>> :
+struct ZmLambda_<Heap, L, ZuTypeList<Args...>> :
   public Heap, public ZmPolymorph
 {
   L lambda;
 
-  ZmLambda__(L l) : lambda{ZuMv(l)} { }
+  ZmLambda_(L l) : lambda{ZuMv(l)} { }
 
   decltype(auto) invoke(Args... args) {
     return lambda(ZuFwd<Args>(args)...);
@@ -105,38 +106,36 @@ struct ZmLambda__<Heap, L, ZuTypeList<Args...>> :
     return lambda(ZuFwd<Args>(args)...);
   }
 
-  ZmLambda__() = delete;
-  ZmLambda__(const ZmLambda__ &) = delete;
-  ZmLambda__ &operator =(const ZmLambda__ &) = delete;
-  ZmLambda__(ZmLambda__ &&) = delete;
-  ZmLambda__ &operator =(ZmLambda__ &&) = delete;
+  ZmLambda_() = delete;
+  ZmLambda_(const ZmLambda_ &) = delete;
+  ZmLambda_ &operator =(const ZmLambda_ &) = delete;
+  ZmLambda_(ZmLambda_ &&) = delete;
+  ZmLambda_ &operator =(ZmLambda_ &&) = delete;
 };
 template <typename HeapID, bool Sharded, typename L, typename ArgList>
-using ZmLambda_ = ZmLambda__<
-  ZmHeap_<HeapID, ZmLambda__<ZuEmpty, L, ArgList>, Sharded>,
+using ZmLambda = ZmLambda_<
+  ZmHeap_<HeapID, ZmLambda_<ZuEmpty, L, ArgList>, Sharded>,
   L, ArgList>;
-template <ZuString HeapID, bool Sharded, typename L, typename ArgList>
-using ZmLambda = ZmLambda_<ZuStringT<HeapID>, Sharded, L, ArgList>;
 
 // stateful immutable lambda
-template <typename R_, typename ...Args_>
-template <typename HeapID, bool Sharded, typename L>
+template <typename R_, typename ...Args_, typename NTP>
+template <typename L>
 template <typename L_>
-ZmFn<R_(Args_...)>
-ZmFn<R_(Args_...)>::LambdaInvoker<HeapID, Sharded, L, false, false>::fn(L_ &&l) {
+ZmFn<R_(Args_...), NTP>
+ZmFn<R_(Args_...), NTP>::LambdaInvoker<L, false, false>::fn(L_ &&l) {
   ZuAssert((!IsMutable<L>{}));
   ZuAssert((!IsMutable<ZuDecay<L_>>{}));
-  using O = ZmLambda_<HeapID, Sharded, ZuDecay<L>, Args>;
+  using O = ZmLambda<HeapID, Sharded, ZuDecay<L>, Args>;
   return ZmFn{ZmRef<const O>{new O{ZuFwd<L_>(l)}}, ZmFnPtr<&O::cinvoke>{}};
 }
 
 // stateful mutable lambda
-template <typename R_, typename ...Args_>
-template <typename HeapID, bool Sharded, typename L>
+template <typename R_, typename ...Args_, typename NTP>
+template <typename L>
 template <typename L_>
-ZmFn<R_(Args_...)>
-ZmFn<R_(Args_...)>::LambdaInvoker<HeapID, Sharded, L, false, true>::fn(L_ &&l) {
-  using O = ZmLambda_<HeapID, Sharded, ZuDecay<L>, Args>;
+ZmFn<R_(Args_...), NTP>
+ZmFn<R_(Args_...), NTP>::LambdaInvoker<L, false, true>::fn(L_ &&l) {
+  using O = ZmLambda<HeapID, Sharded, ZuDecay<L>, Args>;
   return ZmFn{ZmRef<O>{new O{ZuFwd<L_>(l)}}, ZmFnPtr<&O::invoke>{}};
 }
 

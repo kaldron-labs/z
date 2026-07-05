@@ -153,7 +153,7 @@ void DB::init(
 }
 
 ZmRef<AnyTable> DB::initTable_(
-  ZuCSpan id, ZmFn<AnyTable *(DB *, TableCf *)> ctorFn)
+  ZuCSpan id, InitTableFn fn)
 {
   if (id.length() >= IDSize_)
     throw ZeEXCEPT(Error, "Zdb", ([id](auto &s) {
@@ -161,12 +161,12 @@ ZmRef<AnyTable> DB::initTable_(
 	<< IDSize_ << " bytes)"; }));
   ZmRef<AnyTable> table;
   if (!ZmEngine<DB>::lock(ZmEngineState::Stopped,
-	[this, &table, id, ctorFn = ZuMv(ctorFn)]() {
+	[this, &table, id, fn = ZuMv(fn)]() {
     if (state() != HostState::Initialized) return false;
     if (m_tables.findVal(id)) return false;
     auto cf = m_cf.tableCfs.find(id);
     if (!cf) m_cf.tableCfs.addNode(cf = new TableCfs::Node{id});
-    table = ctorFn(this, &(cf->val()));
+    table = fn(this, &(cf->val()));
     m_tables.add(table);
     return true;
   }))
@@ -246,7 +246,7 @@ void DB::start_1()
   ZdbDEBUG(this, "opening all tables");
 
   // open and recover all tables
-  all([](AnyTable *table, ZmFn<void(bool)> done) {
+  all([](AnyTable *table, DB::AllTableFn done) {
     table->open([done = ZuMv(done)](bool ok) mutable { done(ok); });
   }, [](DB *db, bool ok) {
     ok ? db->start_2() : db->started(false);
@@ -362,7 +362,7 @@ void DB::stop_1()
   ZmAssert(invoked());
 
   // close all tables
-  all([](AnyTable *table, ZmFn<void(bool)> done) {
+  all([](AnyTable *table, DB::AllTableFn done) {
     table->close([done = ZuMv(done)]() mutable { done(true); });
   }, [](DB *db, bool) {
     db->stop_2();
@@ -597,7 +597,7 @@ void DB::all(AllFn fn, AllDoneFn doneFn)
   while (auto table = i.val().ptr())
     table->invoke(0, [table]() {
       auto db = table->db();
-      db->m_allFn(table, ZmFn<void(bool)>{db, [](DB *db, bool ok) {
+      db->m_allFn(table, AllTableFn{db, [](DB *db, bool ok) {
 	db->invoke([db, ok]() { db->allDone(ok); });
       }});
     });
@@ -1682,7 +1682,7 @@ void AnyTable::evictBuf(Shard shard, UN un)
 // DB::open() iterates over tables, calling open()
 // - each store table open calls table->opened(OpenResult) on success
 template <typename L>
-void AnyTable::open(L l)
+void AnyTable::open(L &&l)
 {
   /* ZiLOG(Debug, "Zdb",
     ([hostID = db()->config().hostID, open = unsigned(m_open)](auto &s) {
@@ -1700,7 +1700,7 @@ void AnyTable::open(L l)
   db()->store()->open(
     id(), config().nShards,
     objFields(), objKeyFields(), objSchema(), m_bufAllocFn,
-    [this, l = ZuMv(l)](OpenResult result) mutable {
+    [this, l = ZuFwd<L>(l)](OpenResult result) mutable {
       invoke(0, [this, l = ZuMv(l), result = ZuMv(result)]() mutable {
 	l(opened(ZuMv(result)));
       });
@@ -1738,7 +1738,7 @@ bool AnyTable::opened(OpenResult result)
 }
 
 template <typename L>
-void AnyTable::close(L l)
+void AnyTable::close(L &&l)
 {
   /* ZiLOG(Debug, "Zdb",
     ([hostID = db()->config().hostID, open = unsigned(m_open)](auto &s) {
@@ -1760,7 +1760,7 @@ void AnyTable::close(L l)
     return;
   }
 
-  m_storeTbl->close([this, l = ZuMv(l)]() mutable {
+  m_storeTbl->close([this, l = ZuFwd<L>(l)]() mutable {
     invoke(0, [this, l = ZuMv(l)]() mutable {
       m_storeTbl = nullptr;
       l();

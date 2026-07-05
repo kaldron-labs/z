@@ -197,13 +197,13 @@ struct SocketState {
 
 struct HandleState {
   ZmSemaphore		started;
-  ZmSemaphore		recvd;
+  ZmSemaphore		read;
   ZmSemaphore		stopped;
   ZmAtomic<unsigned>	failed = 0;
   ZmAtomic<unsigned>	loopStarted = 0;
   ZmAtomic<unsigned>	startedOK = 0;
-  ZmAtomic<unsigned>	expectRecv = 0;
-  ZmAtomic<unsigned>	recvOK = 0;
+  ZmAtomic<unsigned>	expectRead = 0;
+  ZmAtomic<unsigned>	readOK = 0;
 };
 
 void testSocketSendRecv()
@@ -238,7 +238,7 @@ void testSocketSendRecv()
     state.stopped.post();
   });
 
-  loop.start([&](ZiEvent::StartResult result) {
+  loop.start([&loop, loopSocket, &state](ZiEvent::StartResult result) {
     if (result.is<ZiEvent::Exception>()) {
       log_("socket start failed: ", ZuMv(result).p<ZiEvent::Exception>());
       state.failed.store_(1);
@@ -334,11 +334,11 @@ void testHandleDispatch()
     log_("handle fail: ", e);
     state.failed.store_(1);
     state.started.post();
-    state.recvd.post();
+    state.read.post();
     state.stopped.post();
   });
 
-  loop.start([&](ZiEvent::StartResult result) {
+  loop.start([&loop, &signal, &state](ZiEvent::StartResult result) {
     if (result.is<ZiEvent::Exception>()) {
       log_("handle start failed: ", ZuMv(result).p<ZiEvent::Exception>());
       state.failed.store_(1);
@@ -352,16 +352,16 @@ void testHandleDispatch()
       signal.loopHandle,
       [](Zi::Handle) { },
       [&loop, &state](Zi::Handle handle) {
-	if (!state.expectRecv.load_()) return;
+	if (!state.expectRead.load_()) return;
 #ifndef _WIN32
 	char byte = 0;
 	int n = int(::read(handle, &byte, 1));
-	state.recvOK.store_(n == 1 && byte == 'H' ? 1U : 0U);
+	state.readOK.store_(n == 1 && byte == 'H' ? 1U : 0U);
 #else
-	state.recvOK.store_(1);
+	state.readOK.store_(1);
 #endif
 	loop.delHandle(handle);
-	state.recvd.post();
+	state.read.post();
       });
 
     state.startedOK.store_(added ? 1U : 0U);
@@ -376,10 +376,10 @@ void testHandleDispatch()
   bool ready = state.startedOK.load_() && !state.failed.load_();
 
   if (ready) {
-    state.expectRecv.store_(1);
+    state.expectRead.store_(1);
     ZuCHECK(triggerHandleSignal(signal), "triggerHandleSignal() failed");
-    ZuCHECK(waitFor(state.recvd), "handle recv timed out");
-    ZuCHECK(state.recvOK.load_(), "handle recv payload mismatch");
+    ZuCHECK(waitFor(state.read), "handle read timed out");
+    ZuCHECK(state.readOK.load_(), "handle read payload mismatch");
   }
 
   if (state.loopStarted.load_()) {

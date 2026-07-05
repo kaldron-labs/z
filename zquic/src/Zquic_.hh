@@ -148,12 +148,12 @@ public:
     all([&n](const Route &) { ++n; });
     return n;
   }
-  template <typename Fn>
-  void all(Fn fn) const {
+  template <typename L>
+  void all(L &&l) const {
     auto i = m_routes->citer();
     while (auto node = i()) {
       const auto &route = *node->val();
-      if (route.state == CxnState::Active) fn(route);
+      if (route.state == CxnState::Active) l(route);
     }
   }
 
@@ -191,8 +191,9 @@ ZuDerive(ServerLinks_,
   (ZmHash<ZmRef<Link_>,
     ZmHashHeapID<"Zquic.Server.LinkHash">>));
 
-ZuDerive(EndpointDrainFns,
-  (ZmQueue<ZmFn<>, ZmQueueHeapID<"Zquic.Endpoint.DrainFns">>));
+using EndpointDiscFn = ZmFn<void(), ZmFnHeapID<"Zquic.Endpoint.DiscFn">>;
+ZuDerive(EndpointDiscFns,
+  (ZmQueue<EndpointDiscFn, ZmQueueHeapID<"Zquic.Endpoint.DiscFns">>));
 
 template <typename Impl_>
 class Endpoint_ {
@@ -458,22 +459,28 @@ public:
   }
 
   void disconnect() {
-    disconnect([]() { });
+    disconnect_(EndpointDiscFn{});
   }
-  template <typename Fn>
-  void disconnect(Fn fn) {
+  template <typename L>
+  void disconnect(L &&l) {
+    disconnect_(ZuFwd<L>(l));
+  }
+  template <typename L>
+  void disconnect_(L &&l) {
     if (!m_mx) {
       m_listening = false;
       m_connected = false;
       m_open = false;
-      fn();
+      l();
       return;
     }
     if (endpointRxInvoked_()) {
-      disconnect_(ZuMv(fn));
+      disconnectRx_(EndpointDiscFn{ZuFwd<L>(l)});
       return;
     }
-    m_mx->rxRun([this, fn = ZuMv(fn)]() mutable { disconnect_(ZuMv(fn)); });
+    m_mx->rxRun([this, l = ZuFwd<L>(l)]() mutable {
+      disconnectRx_(EndpointDiscFn{ZuMv(l)});
+    });
   }
 
   bool listening() const { return m_listening; }
@@ -546,12 +553,12 @@ private:
       ]() mutable {
 	if constexpr (Impl::EndpointRef) impl = nullptr;
 	cxn = nullptr;
-	Endpoint_::runDrainFns_(fns);
+	Endpoint_::runDiscFns_(fns);
       });
     });
   }
 
-  EndpointDrainFns disconnected_(Cxn_ *cxn) {
+  EndpointDiscFns disconnected_(Cxn_ *cxn) {
     if (m_cxn == cxn && cxn->generation() == m_generation) {
       cxn->closeRx_();
       m_cxn = nullptr;
@@ -559,9 +566,9 @@ private:
       m_connected = false;
       m_open = false;
       impl()->endpointDown_(this);
-      return takeDrainFns_();
+      return takeDiscFns_();
     }
-    if (!m_cxn) return takeDrainFns_();
+    if (!m_cxn) return takeDiscFns_();
     return {};
   }
 
@@ -617,15 +624,14 @@ private:
     return cxn->sendPkt(ZuMv(buf), ZuMv(addr));
   }
 
-  template <typename Fn>
-  void disconnect_(Fn fn) {
-    m_drainFns.push(ZmFn<>{ZuMv(fn)});
+  void disconnectRx_(EndpointDiscFn fn) {
+    m_discFns.push(ZuMv(fn));
     m_listening = false;
     m_connected = false;
     m_open = false;
     CxnRef cxn = m_cxn;
     if (!cxn) {
-      drainFns_();
+      discFns_();
       return;
     }
     cxn->beginCloseRx_();
@@ -634,18 +640,18 @@ private:
       cxn->disconnect();
     });
   }
-  EndpointDrainFns takeDrainFns_() {
-    auto fns = ZuMv(m_drainFns);
-    m_drainFns.clean();
+  EndpointDiscFns takeDiscFns_() {
+    auto fns = ZuMv(m_discFns);
+    m_discFns.clean();
     return fns;
   }
-  void drainFns_() {
-    auto fns = takeDrainFns_();
+  void discFns_() {
+    auto fns = takeDiscFns_();
     m_mx->txRun([fns = ZuMv(fns)]() mutable {
-      Endpoint_::runDrainFns_(fns);
+      Endpoint_::runDiscFns_(fns);
     });
   }
-  static void runDrainFns_(EndpointDrainFns &fns) {
+  static void runDiscFns_(EndpointDiscFns &fns) {
     while (auto fn = fns.shift()) fn();
   }
 
@@ -666,7 +672,7 @@ private:
   SockConfig		m_sockConfig;
 
   CxnRef		m_cxn;
-  EndpointDrainFns	m_drainFns;
+  EndpointDiscFns	m_discFns;
   unsigned		m_generation = 0;
   EndpointRxDiag	m_rxDiag;
   SockDiag		m_sockDiag;

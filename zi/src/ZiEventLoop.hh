@@ -42,22 +42,28 @@ using Exception = ZeException;
 // start result
 using StartResult = ZuUnion<void, Exception>;
 // start callback
-using StartFn = ZmFn<void(StartResult)>;
+using StartFn = ZmFn<void(StartResult),
+  ZmFnHeapID<"ZiEventLoop.StartFn">>;
 
 // stop result
 using StopResult = ZuUnion<void, Exception>;
 // stop callback
-using StopFn = ZmFn<void(StopResult)>;
+using StopFn = ZmFn<void(StopResult),
+  ZmFnHeapID<"ZiEventLoop.StopFn">>;
 
 // failure notification
-using FailFn = ZmFn<void(Exception)>;
+using FailFn = ZmFn<void(Exception), ZmFnHeapID<"ZiEventLoop.FailFn">>;
 
 // send/receive callbacks
-using SocketSendFn = ZmFn<void(Zi::Socket)>;
-using SocketRecvFn = ZmFn<void(Zi::Socket)>;
+using SocketSendFn = ZmFn<void(Zi::Socket),
+  ZmFnHeapID<"ZiEventLoop.Socket.SendFn">>;
+using SocketRecvFn = ZmFn<void(Zi::Socket),
+  ZmFnHeapID<"ZiEventLoop.Socket.RecvFn">>;
 
-using HandleSendFn = ZmFn<void(Zi::Handle)>;
-using HandleRecvFn = ZmFn<void(Zi::Handle)>;
+using HandleWriteFn = ZmFn<void(Zi::Handle),
+  ZmFnHeapID<"ZiEventLoop.Handle.WriteFn">>;
+using HandleReadFn = ZmFn<void(Zi::Handle),
+  ZmFnHeapID<"ZiEventLoop.Handle.ReadFn">>;
 
 // socket
 struct Socket__ {
@@ -84,8 +90,8 @@ using Socket = Sockets::Node;
 // handle
 struct Handle__ {
   Zi::Handle	handle = Zi::nullHandle();
-  HandleSendFn	send;
-  HandleRecvFn	recv;
+  HandleWriteFn	write;
+  HandleReadFn	read;
 #ifdef _WIN32
   int		index = -1;	// index into WFMO arrays
 #endif
@@ -130,7 +136,7 @@ public:
 
   void disconnect(Zi::Socket); // simulate remote disconnect
 
-  bool addHandle(Zi::Handle, HandleSendFn, HandleRecvFn);
+  bool addHandle(Zi::Handle, HandleWriteFn, HandleReadFn);
   void delHandle(Zi::Handle);
 
   void close(Zi::Handle handle); // simulate remote close

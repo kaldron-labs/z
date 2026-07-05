@@ -284,8 +284,9 @@ int main(int argc, char **argv)
   }
   {
     {
-      ZmFn<> foo = ZmFn<>::Lambda<ZmLambda_HeapID>::fn(
-	  []{ log("Hello World"); });
+      auto foo = ZmFn<void(), ZmFnHeapID<"Foo">>::Lambda::fn([]{
+	log("Hello World");
+      });
       foo();
 #if 0
       if (verbose) std::cerr << "fast slow ";

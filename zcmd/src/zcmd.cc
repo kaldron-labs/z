@@ -61,7 +61,7 @@ static void usage()
 
 class Telcap {
 public:
-  using Fn = ZmFn<void(const void *)>;
+  using Fn = ZmFn<void(const void *), ZmFnHeapID<"zcmd.TelcapFn">>;
 
   Telcap() { }
   Telcap(Fn fn) : m_fn{ZuMv(fn)} { }
@@ -1587,7 +1587,9 @@ Zcmd::Fn telcapCmd() {
       }
       zcmd->telcapPending(n);
       auto types_ = &types[0]; // survives move-capture of types
-      ZmFn<void(const fbs::ReqAck *, unsigned)> ackFn = [
+      using AckFn = ZmFn<void(const fbs::ReqAck *, unsigned),
+	ZmFnHeapID<"zcmd.Telcap.AckFn">>;
+      AckFn ackFn = [
 	ctx = ZuMv(ctx), out = ZuMv(out),
 	types = ZuMv(types), filters = ZuMv(filters)
       ](const fbs::ReqAck *ack, unsigned i) mutable {

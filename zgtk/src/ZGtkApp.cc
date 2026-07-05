@@ -72,20 +72,21 @@ void App::attach_()
   g_source_attach(m_source, nullptr);
 
   m_sched->push([this]{
-    m_sched->wakeFn(m_sid, ZmFn<>{this, [](App *app) { app->wake(); }});
+    m_sched->wakeFn(m_sid,
+      ZmScheduler::WakeFn{this, [](App *app) { app->wake(); }});
     run_();
   }, m_sid);
 }
 
-void App::detach(ZmFn<> fn)
+void App::detach(DetachFn fn)
 {
-  m_sched->wakeFn(m_sid, ZmFn<>{});
+  m_sched->wakeFn(m_sid, ZmScheduler::WakeFn{});
   m_sched->push([this, fn = ZuMv(fn)]() mutable { detach_(ZuMv(fn)); },
       m_sid);
   wake_();
 }
 
-void App::detach_(ZmFn<> fn)
+void App::detach_(DetachFn fn)
 {
   if (m_source) {
     g_source_destroy(m_source);

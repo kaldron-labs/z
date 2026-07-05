@@ -79,7 +79,8 @@ namespace Ztel {
 // FIXME
 
 // telemetry response
-using AckFn = ZmFn<void(const Ztel::fbs::ReqAck *)>;
+using AckFn = ZmFn<void(const Ztel::fbs::ReqAck *),
+  ZmFnHeapID<"Ztel.Client.AckFn">>;
 
 using KeyData = Zum::KeyData;
 
@@ -290,7 +291,7 @@ public:
       int n = 0;
       int64_t consumed = rx.consume(
 	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[&](ZuBSpan span) { n = process(span.data(), span.length()); });
+	[this, &n](ZuBSpan span) { n = process(span.data(), span.length()); });
       if (ZuUnlikely(n < 0)) return -1;
       if (ZuUnlikely(consumed < 0)) return -1;
       if (!consumed) return 0;

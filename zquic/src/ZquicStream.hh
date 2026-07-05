@@ -640,19 +640,19 @@ private:
     return m_link->app()->rxInvoked();
   }
 
-  template <typename Fn>
-  void txInvoke_(Fn &&fn) {
+  template <typename L>
+  void txInvoke_(L &&l) {
     ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
       "Zquic", (), "QUIC stream Tx invoke before app initialization",
       return);
-    m_link->app()->txInvoke(ZuFwd<Fn>(fn));
+    m_link->app()->txInvoke(ZuFwd<L>(l));
   }
-  template <typename Fn>
-  void rxRun_(Fn &&fn) {
+  template <typename L>
+  void rxRun_(L &&l) {
     ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
       "Zquic", (), "QUIC stream Rx run before app initialization",
       return);
-    m_link->app()->rxRun(ZuFwd<Fn>(fn));
+    m_link->app()->rxRun(ZuFwd<L>(l));
   }
 
   void notifyTx_() {

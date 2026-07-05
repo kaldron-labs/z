@@ -23,6 +23,7 @@ public:
   using Stream = Stream_;
   using StreamRef = ZmRef<Stream>;
   using Endpoint = Endpoint_<CliLink>;
+  using CloseFn = ZmFn<void(), ZmFnHeapID<"ZquicCliLink.CloseFn">>;
   static constexpr bool EndpointRef = true;
   static constexpr unsigned TLSBufSize = (64<<10); // 64K
   static constexpr unsigned RuntimePNLength = 2;
@@ -63,21 +64,21 @@ public:
       return link;
     });
   }
-  template <typename Fn>
-  void disconnect(Fn fn) {
+  template <typename L>
+  void disconnect(L &&l) {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client disconnect before app initialization", return);
-    app()->rxInvoke(impl(), [link = impl(), fn = ZuMv(fn)]() mutable {
-      link->disconnect_(ZuMv(fn));
+    app()->rxInvoke(impl(), [link = impl(), l = ZuFwd<L>(l)]() mutable {
+      link->disconnect_(ZuMv(l));
       return link;
     });
   }
   void disconnect_() { // direct call from within rx thread
-    disconnect_([]() { });
+    disconnect_(CloseFn{});
   }
-  template <typename Fn>
-  void disconnect_(Fn fn) { // direct call from within rx thread
-    closeCurrent_(true, false, ZuMv(fn));
+  template <typename L>
+  void disconnect_(L &&l) { // direct call from within rx thread
+    closeCurrent_(true, false, ZuFwd<L>(l));
     Base::resetTLS_();
   }
   void abort() {
@@ -88,22 +89,22 @@ public:
       return link;
     });
   }
-  template <typename Fn>
-  void abort(Fn fn) {
+  template <typename L>
+  void abort(L &&l) {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client abort before app initialization", return);
-    app()->rxInvoke(impl(), [link = impl(), fn = ZuMv(fn)]() mutable {
-      link->abort_(ZuMv(fn));
+    app()->rxInvoke(impl(), [link = impl(), l = ZuFwd<L>(l)]() mutable {
+      link->abort_(ZuMv(l));
       return link;
     });
   }
   void abort_() {
-    abort_([]() { });
+    abort_(CloseFn{});
   }
-  template <typename Fn>
-  void abort_(Fn fn) {
+  template <typename L>
+  void abort_(L &&l) {
     Base::closeState_();
-    closeEndpointDrained_(true, ZuMv(fn));
+    closeEndpointDrained_(true, ZuFwd<L>(l));
   }
 
   const Host &server() const { return m_server; }
@@ -115,26 +116,26 @@ public:
   bool cxn() const { return Endpoint::connected(); }
   const ZiSockAddr &local() const { return Endpoint::local(); }
   const ZiSockAddr &remote() const { return Endpoint::remote(); }
-  template <typename Fn>
-  void cxnDiag(Fn fn) const { endpointDiag(ZuMv(fn)); }
-  template <typename Fn>
-  void endpointDiag(Fn fn) const {
+  template <typename L>
+  void cxnDiag(L &&l) const { endpointDiag(ZuFwd<L>(l)); }
+  template <typename L>
+  void endpointDiag(L &&l) const {
     auto mx = app()->mx();
     if (mx->invoked(mx->txThread())) {
       EndpointDiag diag = Endpoint::diag();
-      fn(diag);
+      l(diag);
       return;
     }
     auto link = const_cast<CliLink *>(this)->impl();
-    mx->txRun([link, fn = ZuMv(fn)]() mutable {
+    mx->txRun([link, l = ZuFwd<L>(l)]() mutable {
       EndpointDiag diag = link->Endpoint::diag();
-      fn(diag);
+      l(diag);
     });
   }
-  template <typename Fn>
-  void runtimeDiag(Fn fn) const { Base::runtimeDiag(ZuMv(fn)); }
-  template <typename Fn>
-  void pathDiag(Fn fn) const { Base::pathDiag(ZuMv(fn)); }
+  template <typename L>
+  void runtimeDiag(L &&l) const { Base::runtimeDiag(ZuFwd<L>(l)); }
+  template <typename L>
+  void pathDiag(L &&l) const { Base::pathDiag(ZuFwd<L>(l)); }
   bool pathValidated() const { return Base::pathValidated_(); }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   uint64_t pathAntiAmplification() const {
@@ -342,27 +343,27 @@ private:
   using RuntimeCID = typename Base::RuntimeCID;
 
   void closeCurrent_(bool notify) {
-    closeCurrent_(notify, false, []() { });
+    closeCurrent_(notify, false, CloseFn{});
   }
 
-  template <typename Fn>
-  void closeCurrent_(bool notify, Fn fn) {
-    closeCurrent_(notify, false, ZuMv(fn));
+  template <typename L>
+  void closeCurrent_(bool notify, L &&l) {
+    closeCurrent_(notify, false, ZuFwd<L>(l));
   }
 
-  template <typename Fn>
-  void closeCurrent_(bool notify, bool peer, Fn fn) {
+  template <typename L>
+  void closeCurrent_(bool notify, bool peer, L &&l) {
     if (notify && Base::runtimeEstablished_() &&
 	Endpoint::connected() && Endpoint::remote()) {
-      closeAfterConnectionClose_(notify, peer, Endpoint::remote(), ZuMv(fn));
+      closeAfterDisconnect_(
+	notify, peer, Endpoint::remote(), CloseFn{ZuFwd<L>(l)});
       return;
     }
-    closeEndpoint_(notify, peer, ZuMv(fn));
+    closeEndpoint_(notify, peer, ZuFwd<L>(l));
   }
 
-  template <typename Fn>
-  void closeAfterConnectionClose_(
-      bool notify, bool peer, ZiSockAddr addr, Fn fn) {
+  void closeAfterDisconnect_(
+      bool notify, bool peer, ZiSockAddr addr, CloseFn fn) {
     Base::closeState_();
     app()->txInvoke(impl(), [
       link = impl(),
@@ -374,7 +375,7 @@ private:
       (void)link->sendCloseFrame_(ZuMv(addr), true);
       link->m_closeNotify = notify;
       link->m_closePeer = peer;
-      link->m_closeFn = ZmFn<>{ZuMv(fn)};
+      link->m_closeFn = ZuMv(fn);
       link->enterLocalClosingTx_();
       return link;
     });
@@ -385,7 +386,7 @@ private:
       "QUIC client close expiry outside Tx thread", return);
     bool notify = m_closeNotify;
     bool peer = m_closePeer;
-    ZmFn<> fn = ZuMv(m_closeFn);
+    CloseFn fn = ZuMv(m_closeFn);
     m_closeNotify = false;
     m_closePeer = false;
 	    if (drain) {
@@ -417,7 +418,7 @@ private:
     Base::cancelTimers_();
 	    m_closeNotify = true;
 	    m_closePeer = false;
-	    m_closeFn = ZmFn<>{[]() { }};
+	    m_closeFn = CloseFn{[]() { }};
 	    ZquicLOG(app()->qlogTrace(), ([linkInfo = Base::linkInfo_()](auto &o, ZuTime time) {
 	      CloseEvent event{
 		.linkInfo = linkInfo
@@ -432,32 +433,32 @@ private:
   }
 
   void closeEndpoint_(bool notify) {
-    closeEndpoint_(notify, false, []() { });
+    closeEndpoint_(notify, false, CloseFn{});
   }
 
-  template <typename Fn>
-  void closeEndpoint_(bool notify, Fn fn) {
-    closeEndpoint_(notify, false, ZuMv(fn));
+  template <typename L>
+  void closeEndpoint_(bool notify, L &&l) {
+    closeEndpoint_(notify, false, ZuFwd<L>(l));
   }
 
-  template <typename Fn>
-  void closeEndpoint_(bool notify, bool peer, Fn fn) {
+  template <typename L>
+  void closeEndpoint_(bool notify, bool peer, L &&l) {
     app()->rxRun([
-      link = impl(), notify, peer, fn = ZuMv(fn)
+      link = impl(), notify, peer, l = ZuFwd<L>(l)
     ]() mutable {
-      link->closeEndpointDrained_(notify, peer, ZuMv(fn));
+      link->closeEndpointDrained_(notify, peer, ZuMv(l));
     });
   }
 
   void closeEndpointDrained_(bool notify) {
-    closeEndpointDrained_(notify, false, []() { });
+    closeEndpointDrained_(notify, false, CloseFn{});
   }
-  template <typename Fn>
-  void closeEndpointDrained_(bool notify, Fn fn) {
-    closeEndpointDrained_(notify, false, ZuMv(fn));
+  template <typename L>
+  void closeEndpointDrained_(bool notify, L &&l) {
+    closeEndpointDrained_(notify, false, ZuFwd<L>(l));
   }
-  template <typename Fn>
-  void closeEndpointDrained_(bool notify, bool peer, Fn fn) {
+  template <typename L>
+  void closeEndpointDrained_(bool notify, bool peer, L &&l) {
     ZiAssert(app()->rxInvoked(), "Zquic", (),
       "QUIC endpoint close drain outside Rx thread", return);
     m_udpReady = 0;
@@ -466,13 +467,13 @@ private:
     if (Base::closed()) Base::clearCallbacks_();
     Base::disconnect(peer);
     Endpoint::disconnect([
-      link = impl(), fn = ZuMv(fn)
+      link = impl(), l = ZuFwd<L>(l)
     ]() mutable {
       link->app()->txRun([
-	link, fn = ZuMv(fn)
+	link, l = ZuMv(l)
       ]() mutable {
 	link = nullptr;
-	fn();
+	l();
       });
     });
   }
@@ -1232,7 +1233,7 @@ private:
 	  if (link->disconnecting_()) return;
 	  link->m_closeNotify = true;
 	  link->m_closePeer = true;
-	  link->m_closeFn = ZmFn<>{[]() { }};
+	  link->m_closeFn = CloseFn{[]() { }};
 	});
 	Base::enterPeerDraining_(frame.errorCode);
 	return true;
@@ -1333,7 +1334,7 @@ private:
   ZmAtomic<unsigned>	m_udpReady = 0;
   bool			m_closeNotify = false;
   bool			m_closePeer = false;
-  ZmFn<>		m_closeFn;
+  CloseFn		m_closeFn;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)

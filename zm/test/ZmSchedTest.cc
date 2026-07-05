@@ -240,7 +240,7 @@ int main(int argc, char **argv)
   ZmRef<Timer> r = new Timer(&s, o);
 
   r->retry();
-  r->start(ZmFn<>{r.ptr(), ZmFnPtr<&Timer::retry>{}});
+  r->start(ZmTimeout::Fn{r.ptr(), ZmFnPtr<&Timer::retry>{}});
 
   Zm::sleep(ZuTime(8));
 

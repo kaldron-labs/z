@@ -123,7 +123,7 @@ public:
   using Lock = typename NTP::Lock;
   using NodeBase = typename NTP::Node;
   enum { Shadow = NTP::Shadow };
-  using HeapID = NTP::HeapID;
+  using HeapID = typename NTP::HeapID;
   enum { Sharded = NTP::Sharded };
 
 private:
