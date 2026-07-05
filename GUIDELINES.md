@@ -66,7 +66,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ## Use of C++ language
 ### Language level
-- Compile as GNU C++2b, but do not use C++ concepts or `requires`.
+- Compile as GNU C++2b, but do not use:
+  - C++ concepts or `requires`.
+  - anonymous namespaces in `.cc` files (use file-scope `static`)
 - Use advanced C++ where it is expressive and efficient
   - Where C and C++ offer the same facility, prefer the C form:
       - Example: `#include <string.h>`, not `<cstring>`.
@@ -602,6 +604,8 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - Example: `packet` is fine; `reservePacketProtection` is too long; use `resPktProt`.
 - use "ack" and "ackd", not "ackd"; example: `packetAckd`
 - use "nak and "nakd", not "nack", "nackd" or "nacked"; example: `packetNakd`
+- do not prefix or namespace file-scoped `static` functions in `.cc` files:
+  - use short meaningful names, e.g. in `ZiIP.cc`: `pton4` not `ZiIP_pton4`
 
 ### Casing and member prefixes
 - Names are generally camelCase, not snake_case.
