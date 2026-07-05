@@ -190,6 +190,7 @@ void ZiResolver_AQueryCB(
   void *arg, int status, int, unsigned char *abuf, int alen)
 {
   ZmRef<Query> query{static_cast<Query *>(arg)};
+  auto resolver = Main::instance();
   if (status == ARES_SUCCESS && abuf && alen > 0) {
     hostent *host = nullptr;
 #ifdef __GNUC__
@@ -216,21 +217,22 @@ void ZiResolver_AQueryCB(
   if (status == ARES_SUCCESS) query->status = ARES_SUCCESS;
   else if (query->status == ARES_ENOTFOUND) query->status = status;
   if (--query->pending) return;
-  auto resolver = Main::instance();
-  if (!resolver->queryCancelled_(query)) {
-    if (!query->emitted)
-      query->resolveFn(
-	ResolveResult{aresError(query->status)});
-    else if (!query->stopped)
-      query->resolveFn(ResolveResult{});
-  }
+  bool cancelled = resolver->queryCancelled_(query);
+  auto fn = ZuMv(query->resolveFn);
   resolver->delQuery_(query);
+  if (!cancelled) {
+    if (!query->emitted)
+      fn(ResolveResult{aresError(query->status)});
+    else if (!query->stopped)
+      fn(ResolveResult{});
+  }
 }
 
 void ZiResolver_AAAAQueryCB(
   void *arg, int status, int, unsigned char *abuf, int alen)
 {
   ZmRef<Query> query{static_cast<Query *>(arg)};
+  auto resolver = Main::instance();
   if (status == ARES_SUCCESS && abuf && alen > 0) {
     hostent *host = nullptr;
 #ifdef __GNUC__
@@ -257,15 +259,15 @@ void ZiResolver_AAAAQueryCB(
   if (status == ARES_SUCCESS) query->status = ARES_SUCCESS;
   else if (query->status == ARES_ENOTFOUND) query->status = status;
   if (--query->pending) return;
-  auto resolver = Main::instance();
-  if (!resolver->queryCancelled_(query)) {
-    if (!query->emitted)
-      query->resolveFn(
-	ResolveResult{aresError(query->status)});
-    else if (!query->stopped)
-      query->resolveFn(ResolveResult{});
-  }
+  bool cancelled = resolver->queryCancelled_(query);
+  auto fn = ZuMv(query->resolveFn);
   resolver->delQuery_(query);
+  if (!cancelled) {
+    if (!query->emitted)
+      fn(ResolveResult{aresError(query->status)});
+    else if (!query->stopped)
+      fn(ResolveResult{});
+  }
 }
 
 void ZiResolver_NameCB(
@@ -273,17 +275,16 @@ void ZiResolver_NameCB(
 {
   ZmRef<Query> query{static_cast<Query *>(arg)};
   auto resolver = Main::instance();
+  bool cancelled = resolver->queryCancelled_(query);
+  auto fn = ZuMv(query->nameFn);
+  resolver->delQuery_(query);
   if (status == ARES_SUCCESS && node) {
     Host host;
     setHost(host, node);
-    if (!resolver->queryCancelled_(query))
-      query->nameFn(NameResult{ZuMv(host)});
-    resolver->delQuery_(query);
+    if (!cancelled) fn(NameResult{ZuMv(host)});
     return;
   }
-  if (!resolver->queryCancelled_(query))
-    query->nameFn(NameResult{aresError(status)});
-  resolver->delQuery_(query);
+  if (!cancelled) fn(NameResult{aresError(status)});
 }
 
 void ZiResolver_QueryCB(
@@ -291,20 +292,19 @@ void ZiResolver_QueryCB(
 {
   ZmRef<Query> query{static_cast<Query *>(arg)};
   auto resolver = Main::instance();
+  bool cancelled = resolver->queryCancelled_(query);
+  auto fn = ZuMv(query->queryFn);
+  resolver->delQuery_(query);
   if (status == ARES_SUCCESS && abuf && alen > 0) {
     DNSMsg msg;
     msg.name = hostName(query->host);
     msg.type = query->type;
     msg.klass = query->klass;
     setBuf(msg.buf, ZuBSpan{abuf, unsigned(alen)});
-    if (!resolver->queryCancelled_(query))
-      query->queryFn(QueryResult{ZuMv(msg)});
-    resolver->delQuery_(query);
+    if (!cancelled) fn(QueryResult{ZuMv(msg)});
     return;
   }
-  if (!resolver->queryCancelled_(query))
-    query->queryFn(QueryResult{aresError(status)});
-  resolver->delQuery_(query);
+  if (!cancelled) fn(QueryResult{aresError(status)});
 }
 
 void ZiResolver_AddrInfoCB(
@@ -338,14 +338,15 @@ void ZiResolver_AddrInfoCB(
   if (res) ares_freeaddrinfo(res);
   if (status == ARES_SUCCESS) query->status = ARES_SUCCESS;
   else if (query->status == ARES_ENOTFOUND) query->status = status;
-  if (!resolver->queryCancelled_(query)) {
-    if (!query->emitted)
-      query->resolveFn(
-	ResolveResult{aresError(query->status)});
-    else if (!query->stopped)
-      query->resolveFn(ResolveResult{});
-  }
+  bool cancelled = resolver->queryCancelled_(query);
+  auto fn = ZuMv(query->resolveFn);
   resolver->delQuery_(query);
+  if (!cancelled) {
+    if (!query->emitted)
+      fn(ResolveResult{aresError(query->status)});
+    else if (!query->stopped)
+      fn(ResolveResult{});
+  }
 }
 
 namespace ZiResolver_ {
