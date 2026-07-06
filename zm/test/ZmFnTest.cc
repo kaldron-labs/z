@@ -371,6 +371,20 @@ int main(int argc, char **argv)
     fn();
   }
   {
+    ZmFn<> fn{[]{}};
+    ZuCheck(!!fn);
+    fn = {};
+    ZuCheck(!fn);
+    fn();
+  }
+  {
+    ZmFn<int()> fn{[]{ return 42; }};
+    ZuCheck(fn() == 42);
+    fn = {};
+    ZuCheck(!fn);
+    ZuCheck(fn() == 0);
+  }
+  {
     // move-from safety
     ZmFn<int()> fn{[]{ return 7; }};
     ZmFn<int()> moved{ZuMv(fn)};

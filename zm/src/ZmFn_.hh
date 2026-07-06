@@ -334,17 +334,6 @@ public:
     return *this;
   }
 
-private:
-  ZmFn &operator =(const ZmAnyFn &fn) {
-    ZmAnyFn::operator =(fn);
-    return *this;
-  }
-  ZmFn &operator =(ZmAnyFn &&fn) {
-    ZmAnyFn::operator =(static_cast<ZmAnyFn &&>(fn));
-    return *this;
-  }
-
-public:
   template <typename ...Args__, typename R__ = R>
   ZuSame<void, R__, R> operator ()(Args__ &&... args) const {
     if (ZmAnyFn::operator !()) return;
