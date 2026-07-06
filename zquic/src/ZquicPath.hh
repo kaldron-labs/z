@@ -34,11 +34,18 @@ struct PathDiag {
   uint64_t	blackholes = 0;
   uint64_t	kernelHints = 0;
   uint64_t	sendTooBigHints = 0;
+  uint64_t	ecnProbesSent = 0;
+  uint64_t	ecnProbesAckd = 0;
+  uint64_t	ecnFailures = 0;
+  uint64_t	ecnValidationFailures = 0;
+  uint64_t	ecnCEEvents = 0;
+  uint64_t	ecnCEBytes = 0;
 };
 
 class Path {
 public:
   static constexpr unsigned MaxProbeAttempts = 3;
+  static constexpr unsigned ECNProbeThreshold = 10;
 
   Path() = default;
   Path(PathMode::T mode, ZiSockAddr local, ZiSockAddr remote) :
@@ -55,7 +62,30 @@ public:
   const ZiSockAddr &local() const { return m_local; }
   const ZiSockAddr &remote() const { return m_remote; }
   bool validated() const { return m_validated; }
-  bool ecnDisabled() const { return m_ecnDisabled; }
+  bool ecnDisabled() const {
+    return m_ecnState == PathECNState::Disabled ||
+      m_ecnState == PathECNState::Failed;
+  }
+  PathECNState::T ecnState() const { return m_ecnState; }
+  EcnMark::T activeECN() const { return m_activeECN; }
+  const AckECN &peerAckECN(PktNumSpace::T space) const {
+    return m_peerAckECN[space];
+  }
+  AckECN &peerAckECN(PktNumSpace::T space) {
+    return m_peerAckECN[space];
+  }
+  const AckECN &sentECN(PktNumSpace::T space) const {
+    return m_sentECN[space];
+  }
+  AckECN &sentECN(PktNumSpace::T space) {
+    return m_sentECN[space];
+  }
+  unsigned ecnProbeSent() const { return m_ecnProbeSent; }
+  unsigned ecnProbeAckd() const { return m_ecnProbeAckd; }
+  bool ecnProbeExpired() const {
+    return m_ecnState == PathECNState::Testing &&
+      m_ecnProbeSent >= ECNProbeThreshold;
+  }
 
   unsigned activeMaxUDP() const { return m_activeMaxUDP; }
   unsigned peerMaxUDP() const { return m_peerMaxUDP; }
@@ -72,7 +102,79 @@ public:
   PathDiag &diag() { return m_diag; }
 
   void validated(bool b = true) { m_validated = b; }
-  void setEcnDisabled(bool b = true) { m_ecnDisabled = b; }
+  void setEcnDisabled(bool b = true) {
+    if (b)
+      failECN();
+    else
+      ecnTesting();
+  }
+  void ecn(bool enabled) {
+    if (enabled)
+      ecnTesting();
+    else
+      ecnDisabledState();
+  }
+  void ecnTesting() {
+    clearECNCounters_();
+    m_ecnState = PathECNState::Testing;
+    m_activeECN = EcnMark::ECT0;
+  }
+  void ecnCapable() {
+    m_ecnState = PathECNState::Capable;
+    m_activeECN = EcnMark::ECT0;
+  }
+  void failECN() {
+    if (m_ecnState != PathECNState::Failed) ++m_diag.ecnFailures;
+    m_ecnState = PathECNState::Failed;
+    m_activeECN = EcnMark::NotECT;
+  }
+  void ecnDisabledState() {
+    clearECNCounters_();
+    m_ecnState = PathECNState::Disabled;
+    m_activeECN = EcnMark::NotECT;
+  }
+  EcnMark::T txECN(
+      PktNumSpace::T level, bool ackEliciting, bool pmtudProbe) const {
+    if (level != PktNumSpace::AppData || !ackEliciting || pmtudProbe)
+      return EcnMark::NotECT;
+    switch (m_ecnState) {
+      case PathECNState::Testing:
+      case PathECNState::Capable:
+	return m_activeECN;
+      default:
+	return EcnMark::NotECT;
+    }
+  }
+  void sentECN(PktNumSpace::T space, EcnMark::T ecn) {
+    AckECN &sent = m_sentECN[space];
+    switch (ecn) {
+      case EcnMark::ECT0: ++sent.ect0; break;
+      case EcnMark::ECT1: ++sent.ect1; break;
+      case EcnMark::CE: ++sent.ce; break;
+      default: break;
+    }
+    if (m_ecnState == PathECNState::Testing && ecn != EcnMark::NotECT) {
+      ++m_ecnProbeSent;
+      ++m_diag.ecnProbesSent;
+    }
+  }
+  void ackdECN(unsigned packets) {
+    if (!packets) return;
+    if (m_ecnState == PathECNState::Testing) {
+      m_ecnProbeAckd += packets;
+      m_diag.ecnProbesAckd += packets;
+      ecnCapable();
+    }
+  }
+  void ceECN(uint64_t bytes) {
+    if (!bytes) return;
+    ++m_diag.ecnCEEvents;
+    m_diag.ecnCEBytes += bytes;
+  }
+  void ecnValidationFailed() {
+    ++m_diag.ecnValidationFailures;
+    failECN();
+  }
 
   void peerMaxUDP(unsigned v) {
     ZiAssert(v >= MinUDPPayload && v <= BufSize, "Zquic", (v),
@@ -248,6 +350,12 @@ public:
   }
 
 private:
+  void clearECNCounters_() {
+    for (auto &ecn : m_peerAckECN) ecn.reset();
+    for (auto &ecn : m_sentECN) ecn.reset();
+    m_ecnProbeSent = 0;
+    m_ecnProbeAckd = 0;
+  }
   void clampActive_() {
     unsigned c = ceiling();
     if (m_activeMaxUDP > c) m_activeMaxUDP = c;
@@ -267,9 +375,14 @@ private:
   ZiSockAddr	m_local;
   ZiSockAddr	m_remote;
   bool		m_validated = false;
-  bool		m_ecnDisabled = true;
+  PathECNState::T m_ecnState = PathECNState::Disabled;
+  EcnMark::T	m_activeECN = EcnMark::NotECT;
   uint64_t	m_bytesRx = 0;
   uint64_t	m_bytesTx = 0;
+  AckECN	m_peerAckECN[PktNumSpace::N];
+  AckECN	m_sentECN[PktNumSpace::N];
+  unsigned	m_ecnProbeSent = 0;
+  unsigned	m_ecnProbeAckd = 0;
   unsigned	m_activeMaxUDP = MinUDPPayload;
   unsigned	m_peerMaxUDP = BufSize;
   unsigned	m_configuredMaxUDP = BufSize;

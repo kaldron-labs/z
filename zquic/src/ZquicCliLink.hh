@@ -827,9 +827,9 @@ private:
       "QUIC client path send outside Tx thread", return false);
     return Base::sendPathPkt_(
       ZuMv(buf), ZuMv(addr),
-      [this](auto buf_, ZiSockAddr addr_) {
+      [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn) {
 	if (!app()->sendPkt(buf_)) return true;
-	return Endpoint::send(ZuMv(buf_), ZuMv(addr_));
+	return Endpoint::send(ZuMv(buf_), ZuMv(addr_), ecn);
       });
   }
 
@@ -838,9 +838,9 @@ private:
       "QUIC client path probe send outside Tx thread", return false);
     return Base::sendPathProbePkt_(
       ZuMv(buf), ZuMv(addr),
-      [this](auto buf_, ZiSockAddr addr_) {
+      [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn) {
 	if (!app()->sendPkt(buf_)) return true;
-	return Endpoint::send(ZuMv(buf_), ZuMv(addr_));
+	return Endpoint::send(ZuMv(buf_), ZuMv(addr_), ecn);
       });
   }
 
@@ -865,11 +865,18 @@ private:
   }
 
   bool sendShortBuf_(
-    ZmRef<ZiIOBuf> buf, ZiSockAddr addr, unsigned pmtudSize = 0) {
+    ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn,
+    unsigned pmtudSize = 0) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client Short buffer send outside Tx thread", return false);
     if (pmtudSize) return sendPathProbeBuf_(ZuMv(buf), ZuMv(addr));
-    return sendPathBuf_(ZuMv(buf), ZuMv(addr));
+    return Base::sendPathPkt_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn_) {
+	if (!app()->sendPkt(buf_)) return true;
+	return Endpoint::send(ZuMv(buf_), ZuMv(addr_), ecn_);
+      },
+      ecn);
   }
 
   bool sendInitialPkt_(ZuBSpan frame, ZiSockAddr addr) {
@@ -963,7 +970,7 @@ private:
       ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
       [this](auto buf, ZiSockAddr addr_) {
-	return sendShortBuf_(ZuMv(buf), ZuMv(addr_));
+	return sendShortBuf_(ZuMv(buf), ZuMv(addr_), EcnMark::NotECT);
       });
   }
 
@@ -999,8 +1006,9 @@ private:
       RuntimeCID::Peer, Base::txPNLength_(PktNumSpace::AppData),
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
-      [this, pmtudSize](auto buf, ZiSockAddr addr_) {
-	return sendShortBuf_(ZuMv(buf), ZuMv(addr_), pmtudSize);
+      [this, pmtudSize](auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
+	return sendShortBuf_(
+	  ZuMv(buf), ZuMv(addr_), ecn, pmtudSize);
       },
       pmtudSize);
   }

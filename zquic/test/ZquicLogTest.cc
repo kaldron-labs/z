@@ -206,9 +206,11 @@ static bool containsRecoveryFields_(ZuCSpan data)
     data.find<"\"name\":\"quic:congestion_state_updated\",\"data\":{\"new\":"
       "\"slow_start\",\"trigger\":\"ack\"">() >= 0 &&
     data.find<"\"name\":\"quic:ecn_state_updated\",\"data\":{\"old\":"
-      "\"unknown\",\"new\":\"capable\"">() >= 0 &&
+      "\"unknown\",\"new\":\"testing\"">() >= 0 &&
     data.find<"\"name\":\"quic:ecn_state_updated\",\"data\":{\"old\":"
-      "\"unknown\",\"new\":\"failed\"">() >= 0;
+      "\"testing\",\"new\":\"capable\"">() >= 0 &&
+    data.find<"\"name\":\"quic:ecn_state_updated\",\"data\":{\"old\":"
+      "\"capable\",\"new\":\"failed\"">() >= 0;
 }
 
 static bool containsSecEvents_(ZuCSpan data)
@@ -953,6 +955,14 @@ void testQLogTypedRecoveryEvents()
   };
   ZquicLogger::congStateUpd(trace, ZuMv(congestion));
 
+  ECNEvent ecnTesting{
+    .packetSpace = PktNumSpace::AppData,
+    .oldState = ECNState::Unknown,
+    .state = ECNState::Testing,
+    .reason = ECNReason::Probe
+  };
+  ZquicLogger::ecnStateUpd(trace, ZuMv(ecnTesting));
+
   ECNEvent ecn{
     .ect0 = 7,
     .ect1 = 1,
@@ -962,6 +972,7 @@ void testQLogTypedRecoveryEvents()
     .previousCE = 1,
     .largestAcked = 12,
     .packetSpace = PktNumSpace::AppData,
+    .oldState = ECNState::Testing,
     .state = ECNState::Capable,
     .reason = ECNReason::AckECN
   };
@@ -975,6 +986,7 @@ void testQLogTypedRecoveryEvents()
     .previousCE = 2,
     .largestAcked = 12,
     .packetSpace = PktNumSpace::AppData,
+    .oldState = ECNState::Capable,
     .state = ECNState::Failed,
     .reason = ECNReason::CounterExceedsAck,
     .disabled = true

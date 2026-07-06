@@ -285,6 +285,8 @@ ZtEnumStruct(IPFamily, int8_t, IPv4, IPv6);
 
 ZtEnumStruct(PMTUDState, int8_t, Base, Searching, SearchComplete, Error);
 
+ZtEnumStruct(PathECNState, int8_t, Disabled, Testing, Capable, Failed);
+
 ZtEnumStruct(PathHintKind, int8_t, None, KernelMTU, PktTooBig, SendTooBig);
 
 struct EcnMark {

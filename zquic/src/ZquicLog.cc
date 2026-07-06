@@ -2396,7 +2396,7 @@ bool ZquicLogger::writeECNEvent_(
     qlogTime_(time),
     EventName::ECNUpd,
     QLogECNData{
-      ECNState::Unknown,
+      event.oldState,
       event.state
     },
     event.linkInfo

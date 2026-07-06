@@ -613,6 +613,7 @@ struct EngineParams {
     return ZuMv(*this);
   }
   EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
+  EngineParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
   EngineParams &&addressValidationSecret(ZuBSpan v) {
     m_tokenSecret = v;
     return ZuMv(*this);
@@ -664,6 +665,7 @@ struct EngineParams {
   uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   unsigned maxUDP() const { return m_maxUDP; }
+  bool ecn() const { return m_ecn; }
   ZuBSpan addressValidationSecret() const {
     return m_tokenSecret;
   }
@@ -693,6 +695,7 @@ private:
   uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
   uint64_t		m_maxIdleTimeout = 0;
   unsigned		m_maxUDP = MinUDPPayload;
+  bool			m_ecn = false;
   TokenSecret		m_tokenSecret;
   uint64_t		m_tokenLifetime = DefaultTokenLifetime;
   bool			m_retryAddressValidation = false;
@@ -756,6 +759,7 @@ public:
       m_maxStreamsUni = DefaultMaxStreamsUni;
       m_maxIdleTimeout = 0;
       m_maxUDP = MinUDPPayload;
+      m_ecn = false;
       m_tokenSecret = {};
       m_tokenLifetime = DefaultTokenLifetime;
       m_retryAddressValidation = false;
@@ -791,6 +795,7 @@ public:
   uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   unsigned maxUDP() const { return m_maxUDP; }
+  bool ecn() const { return m_ecn; }
   ZuBSpan addressValidationSecret() const {
     return m_tokenSecret;
   }
@@ -845,6 +850,7 @@ protected:
       m_maxStreamsUni = params.maxStreamsUni();
       m_maxIdleTimeout = params.maxIdleTimeout();
       m_maxUDP = params.maxUDP();
+      m_ecn = params.ecn();
       {
 	ZuBSpan secret = params.addressValidationSecret();
 	m_tokenSecret = secret;
@@ -1073,6 +1079,7 @@ private:
   uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
   uint64_t		m_maxIdleTimeout = 0;
   unsigned		m_maxUDP = MinUDPPayload;
+  bool			m_ecn = false;
   TokenSecret		m_tokenSecret;
   uint64_t		m_tokenLifetime = DefaultTokenLifetime;
   bool			m_retryAddressValidation = false;
@@ -1276,8 +1283,10 @@ friend ZmEngine<App>;
     if (!this->app()->sendPkt(buf)) return true;
     return Endpoint::send(ZuMv(buf), ZuMv(addr));
   }
-  bool sendPktRaw_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
-    return Endpoint::send(ZuMv(buf), ZuMv(addr));
+  bool sendPktRaw_(
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
+      EcnMark::T ecn = EcnMark::NotECT) {
+    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn);
   }
   void dissociateRoute_(const CxnID &id) {
     m_routes.retire(id);

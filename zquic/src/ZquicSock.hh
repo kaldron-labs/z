@@ -27,6 +27,33 @@ struct Datagram {
     buf{ZuMv(buf_)}, addr{ZuMv(addr_)}, ecn{ecn_} { }
 };
 
+inline uint8_t ecnBits(EcnMark::T ecn)
+{
+  switch (ecn) {
+    case EcnMark::ECT1: return 0x01;
+    case EcnMark::ECT0: return 0x02;
+    case EcnMark::CE: return 0x03;
+    default: return 0x00;
+  }
+}
+
+inline ZiTOS ecnTOS(EcnMark::T ecn)
+{
+  if (ecn == EcnMark::NotECT) return {};
+  return uint8_t(ecnBits(ecn));
+}
+
+inline EcnMark::T ecnMarkFromTOS(ZiTOS tos)
+{
+  if (!tos.template is<uint8_t>()) return EcnMark::NotECT;
+  switch (tos.template p<uint8_t>() & 0x03) {
+    case 0x01: return EcnMark::ECT1;
+    case 0x02: return EcnMark::ECT0;
+    case 0x03: return EcnMark::CE;
+    default: return EcnMark::NotECT;
+  }
+}
+
 struct EndpointRxDiag {
   uint64_t	datagramsRx = 0;
   uint64_t	bytesRx = 0;

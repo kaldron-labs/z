@@ -495,9 +495,11 @@ protected:
     PktAckBatch		ackBatch;
     PktLossBatch	lossBatch;
     bool		ecnValidated = false;
+    bool		ecnValid = true;
     bool		lossPhase = false;
     bool		congestionOpened = false;
     bool		retransmit = false;
+    uint64_t		ceDelta = 0;
   };
   // Intentional Rx-to-Tx shared coalescing slot.  Rx overwrites this with
   // the latest ACK snapshot while one Tx post per packet space is pending.
@@ -1276,7 +1278,31 @@ protected:
       unsigned(-1) : unsigned(allowance);
   }
   bool ecnDisabled_() const { return m_path.ecnDisabled(); }
-  void setEcnDisabled_(bool b = true) { m_path.setEcnDisabled(b); }
+  void setEcnDisabled_(bool b = true) {
+    auto oldState = qlogECNState_(m_path.ecnState());
+    m_path.setEcnDisabled(b);
+    auto newState = qlogECNState_(m_path.ecnState());
+    if (oldState == newState) return;
+    ZquicLOG(app()->qlogTrace(), ([
+      level = PktNumSpace::T(PktNumSpace::AppData),
+      oldState,
+      newState,
+      reason = b ? ZquicLog_::ECNReason::MarkFailed :
+	ZquicLog_::ECNReason::Probe,
+      disabled = m_path.ecnDisabled(),
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      ECNEvent event{
+	.linkInfo = linkInfo,
+	.packetSpace = level,
+	.oldState = ECNState::T(oldState),
+	.state = ECNState::T(newState),
+	.reason = ECNReason::T(reason),
+	.disabled = disabled};
+
+      o.logECNStateUpd(event, time);
+    }));
+  }
   PktBudget sendBudget_() const {
     PktBudget budget;
     unsigned maxUDP = m_path.activeMaxUDP();
@@ -1291,10 +1317,41 @@ protected:
     if (!l || !r) return !l && !r;
     return l.type() == r.type() && l.port() == r.port() && l.ip() == r.ip();
   }
+  static ZquicLog_::ECNState::T qlogECNState_(PathECNState::T state) {
+    switch (state) {
+      case PathECNState::Disabled: return ZquicLog_::ECNState::Disabled;
+      case PathECNState::Testing: return ZquicLog_::ECNState::Testing;
+      case PathECNState::Capable: return ZquicLog_::ECNState::Capable;
+      case PathECNState::Failed: return ZquicLog_::ECNState::Failed;
+      default: return ZquicLog_::ECNState::Unknown;
+    }
+  }
+  void initPathECN_(Path &path) {
+    path.ecn(app()->ecn());
+    ZquicLOG(app()->qlogTrace(), ([
+      level = PktNumSpace::T(PktNumSpace::AppData),
+      state = qlogECNState_(path.ecnState()),
+      reason = path.ecnState() == PathECNState::Testing ?
+	ZquicLog_::ECNReason::Probe : ZquicLog_::ECNReason::AckECN,
+      disabled = path.ecnDisabled(),
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      ECNEvent event{
+	.linkInfo = linkInfo,
+	.packetSpace = level,
+	.oldState = ECNState::Unknown,
+	.state = ECNState::T(state),
+	.reason = ECNReason::T(reason),
+	.disabled = disabled};
+
+      o.logECNStateUpd(event, time);
+    }));
+  }
   void resetPath_() {
     m_path = m_isServer ?
       Path::server(ZiSockAddr{}, ZiSockAddr{}) :
       Path::client(ZiSockAddr{}, ZiSockAddr{});
+    initPathECN_(m_path);
     m_path.configuredMaxUDP(app()->maxUDP());
     m_path.peerMaxUDP(app()->maxUDP());
     if (!m_isServer) m_path.validated();
@@ -1325,6 +1382,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC client path initialization outside Tx thread", return);
     m_path = Path::client(ZuMv(local), ZuMv(remote));
+    initPathECN_(m_path);
     m_path.configuredMaxUDP(app()->maxUDP());
     m_path.peerMaxUDP(app()->maxUDP());
     m_path.validated();
@@ -1353,6 +1411,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC server path initialization outside Tx thread", return);
     m_path = Path::server(ZuMv(local), ZuMv(remote));
+    initPathECN_(m_path);
     m_path.configuredMaxUDP(app()->maxUDP());
     m_path.peerMaxUDP(app()->maxUDP());
     ZquicLOG(app()->qlogTrace(), ([
@@ -1504,6 +1563,7 @@ protected:
     state.path = m_isServer ?
       Path::server(ZuMv(local), remote) :
       Path::client(ZuMv(local), remote);
+    initPathECN_(state.path);
     state.path.configuredMaxUDP(m_path.configuredMaxUDP());
     state.path.peerMaxUDP(m_path.peerMaxUDP());
     selectPathCID_(state);
@@ -1735,7 +1795,9 @@ protected:
   void discardPeerKeys_() { discardOldPeerKeys_(); }
 #endif
   template <typename SendPkt>
-  bool sendPathPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
+  bool sendPathPkt_(
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt,
+      EcnMark::T ecn = EcnMark::NotECT) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path packet send outside Tx thread", return false);
     if (!buf) return false;
@@ -1772,17 +1834,20 @@ protected:
       }));
       return false;
     }
-    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
-    ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+    if (!sendPkt(ZuMv(buf), ZuMv(addr), ecn)) return false;
+    ZquicLOG(app()->qlogTrace(), ([
+      bytes, ecn, linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
       DgramEvent event{.linkInfo = linkInfo, .size = bytes};
-      event.ecn = EcnMark::N;
+      event.ecn = ecn;
       o.logDgramSent(event, time);
     }));
     return m_path.reserveSend(bytes);
   }
   template <typename SendPkt>
   bool sendPathProbePkt_(
-    ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt,
+      EcnMark::T ecn = EcnMark::NotECT) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path probe packet send outside Tx thread", return false);
     if (!buf) return false;
@@ -1819,17 +1884,21 @@ protected:
       }));
       return false;
     }
-    if (!sendPkt(ZuMv(buf), ZuMv(addr))) return false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr), ecn)) return false;
     m_path.sent(bytes);
-    ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+    ZquicLOG(app()->qlogTrace(), ([
+      bytes, ecn, linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
       DgramEvent event{.linkInfo = linkInfo, .size = bytes};
-      event.ecn = EcnMark::N;
+      event.ecn = ecn;
       o.logDgramSent(event, time);
     }));
     return true;
   }
   template <typename SendPkt>
-  bool sendPathPktApp_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
+  bool sendPathPktApp_(
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt,
+      EcnMark::T ecn = EcnMark::NotECT) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path packet send outside Tx thread", return false);
     if (!buf) return false;
@@ -1867,7 +1936,7 @@ protected:
       return false;
     }
     bool sent = false;
-    if (!sendPkt(ZuMv(buf), ZuMv(addr), sent)) return false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr), ecn, sent)) return false;
     if (!sent) {
       ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 		o.logPktDrop(
@@ -1880,16 +1949,19 @@ protected:
       }));
       return true;
     }
-    ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+    ZquicLOG(app()->qlogTrace(), ([
+      bytes, ecn, linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
       DgramEvent event{.linkInfo = linkInfo, .size = bytes};
-      event.ecn = EcnMark::N;
+      event.ecn = ecn;
       o.logDgramSent(event, time);
     }));
     return m_path.reserveSend(bytes);
   }
   template <typename SendPkt>
   bool sendPathProbePktApp_(
-    ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt) {
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt,
+      EcnMark::T ecn = EcnMark::NotECT) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path probe packet send outside Tx thread", return false);
     if (!buf) return false;
@@ -1927,7 +1999,7 @@ protected:
       return false;
     }
     bool sent = false;
-    if (!sendPkt(ZuMv(buf), ZuMv(addr), sent)) return false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr), ecn, sent)) return false;
     if (!sent) {
       ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
 		o.logPktDrop(
@@ -1941,9 +2013,11 @@ protected:
       return true;
     }
     m_path.sent(bytes);
-    ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+    ZquicLOG(app()->qlogTrace(), ([
+      bytes, ecn, linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
       DgramEvent event{.linkInfo = linkInfo, .size = bytes};
-      event.ecn = EcnMark::N;
+      event.ecn = ecn;
       o.logDgramSent(event, time);
     }));
     return true;
@@ -2804,7 +2878,6 @@ protected:
     m_rxAcks.clear();
     clearPeerKeyState_();
     for (auto &ack : m_txAck) ack = {};
-    for (auto &ecn : m_peerAckECN) ecn.reset();
     for (auto &p : m_txPkts) p.clear();
     m_coalesceInitial = nullptr;
     m_coalesceAddr = {};
@@ -4942,13 +5015,14 @@ nextSpace:
   bool recordTxPkt_(
     PktNumSpace::T level, uint64_t pn, unsigned bytes, ZuBSpan frame,
     uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0,
-    PktType::T packetType = PktType::N) {
+    PktType::T packetType = PktType::N,
+    EcnMark::T ecn = EcnMark::NotECT) {
     SentFrameRef ref;
     bool ackEliciting = false;
     if (!runtimeFrameRef(frame, ref, ackEliciting)) return true;
     return recordTxPkt_(
       level, pn, bytes, ref, ackEliciting, false, 0, ackLevel, ackLargest,
-      packetType);
+      packetType, ecn);
   }
 
   bool recordTxPkt_(
@@ -4956,12 +5030,13 @@ nextSpace:
     const SentFrameRef &ref, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
     uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0,
-    PktType::T packetType = PktType::N) {
+    PktType::T packetType = PktType::N,
+    EcnMark::T ecn = EcnMark::NotECT) {
     TxPktRefs refs;
     if (ref.kind != SentFrameKind::None) refs.add(ref);
     return recordTxPkt_(
       level, pn, bytes, refs, ackEliciting, pmtudProbe, pmtudSize,
-      ackLevel, ackLargest, packetType);
+      ackLevel, ackLargest, packetType, ecn);
   }
 
   bool recordTxPkt_(
@@ -4969,7 +5044,8 @@ nextSpace:
     const TxPktRefs &refs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
     uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0,
-    PktType::T packetType = PktType::N) {
+    PktType::T packetType = PktType::N,
+    EcnMark::T ecn = EcnMark::NotECT) {
     if (m_txSpaceDiscarded[level]) return true;
     if (!ackEliciting && !refs.count()) return true;
     SentPkt packet;
@@ -4978,6 +5054,7 @@ nextSpace:
     packet.packetType = packetType == PktType::N ?
       pktTypeFromPktNumSpace(level) : packetType;
     packet.bytes = bytes;
+    packet.ecn = ecn;
     packet.sentTime = runtimeNow_();
     packet.ackEliciting = ackEliciting;
     packet.inFlight = ackEliciting;
@@ -4988,6 +5065,7 @@ nextSpace:
     for (unsigned i = 0; i < refs.count(); ++i)
       packet.addFrame(refs[i], refs.stream(i));
     if (!m_txPkts[level].add(packet)) return false;
+    if (ackEliciting) m_path.sentECN(level, ecn);
     recordTxUnackd_(level, refs);
     if (ackEliciting) {
       m_congestion.sent(bytes);
@@ -5044,9 +5122,86 @@ nextSpace:
     }
     return reapStream_(stream);
   }
+  void applyECNAckUpdateTx_(
+    const AckSnapshot *ack, const PktTxUpdate &update, bool *ecnValid,
+    uint64_t *ceDelta) {
+    if (!ack || !update.ecnAckdPackets || m_path.ecnDisabled()) return;
+    if (!ack->ecn.any()) {
+      if (m_path.ecnProbeExpired() && ecnValid && *ecnValid) {
+	auto oldState = qlogECNState_(m_path.ecnState());
+	m_path.ecnValidationFailed();
+	++m_txDiag.ecnValidationFailures;
+	*ecnValid = false;
+	ZquicLOG(app()->qlogTrace(), ([
+	  level = ack->level,
+	  oldState,
+	  state = ECNState::Failed,
+	  linkInfo = linkInfo_()
+	](auto &o, ZuTime time) {
+	  ECNEvent event{
+	    .linkInfo = linkInfo,
+	    .packetSpace = level,
+	    .oldState = ECNState::T(oldState),
+	    .state = ECNState::T(state),
+	    .reason = ECNReason::NoAckECN,
+	    .disabled = true};
+
+	  o.logECNStateUpd(event, time);
+	}));
+      }
+      return;
+    }
+    auto oldState = qlogECNState_(m_path.ecnState());
+    m_path.ackdECN(update.ecnAckdPackets);
+    auto newState = qlogECNState_(m_path.ecnState());
+    if (oldState != newState) {
+      ZquicLOG(app()->qlogTrace(), ([
+	level = ack->level,
+	oldState,
+	newState,
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	ECNEvent event{
+	  .linkInfo = linkInfo,
+	  .packetSpace = level,
+	  .oldState = ECNState::T(oldState),
+	  .state = ECNState::T(newState),
+	  .reason = ECNReason::AckECN,
+	  .disabled = false};
+
+	o.logECNStateUpd(event, time);
+      }));
+    }
+    if (!ceDelta || !*ceDelta) return;
+    m_path.ceECN(update.ecnAckdBytes);
+    if (m_congestion.congestionEventAt(
+	uint64_t(update.ecnAckdSentTime.microsecs()))) {
+      *ceDelta = 0;
+      ZquicLOG(app()->qlogTrace(), ([
+	reason = RecReason::ECNCE,
+	cwnd = m_congestion.cwnd(),
+	ssthresh = m_congestion.ssthresh(),
+	bytesInFlight = m_congestion.bytesInFlight(),
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	RecEvent event{
+	  .linkInfo = linkInfo,
+	  .cwnd = cwnd,
+	  .ssthresh = ssthresh,
+	  .bytesInFlight = bytesInFlight,
+	  .kind = RecKind::NewReno,
+	  .packetSpace = PktNumSpace::AppData,
+	  .reason = RecReason::T(reason)};
+
+	o.logCongStateUpd(event, time);
+      }));
+    }
+  }
   void applyAckUpdateTx_(
     const PktTxUpdate &update, bool &congestionOpened,
-    Stream **reapStreams, unsigned &nReapStreams) {
+    Stream **reapStreams, unsigned &nReapStreams,
+    const AckSnapshot *ack = nullptr, bool *ecnValid = nullptr,
+    uint64_t *ceDelta = nullptr) {
     applyAckOfAckTx_(update);
     for (unsigned i = 0; i < update.nAckdFrames; ++i) {
       const SentFrameRef &ref = update.ackdFrames[i];
@@ -5117,6 +5272,7 @@ nextSpace:
 	o.logCongStateUpd(event, time);
       }));
     }
+    applyECNAckUpdateTx_(ack, update, ecnValid, ceDelta);
   }
   void applyAckOfAckTx_(const PktTxUpdate &update) {
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
@@ -5205,7 +5361,7 @@ nextSpace:
       return;
     }
     if (!work.ecnValidated) {
-      validateAckECN_(ack);
+      work.ecnValid = validateAckECN_(ack, &work.ceDelta);
       for (unsigned i = 0; i < ack.nRanges; ++i) {
 	uint64_t largest = ack.ranges[i].largest;
 	if (ZuNull(m_txLargestAckd[ack.level]) ||
@@ -5222,7 +5378,8 @@ nextSpace:
 		  ack.ranges, ack.nRanges, work.ackBatch, RecoveryScanBatch,
 		  ack.level, &update)) {
 		applyAckUpdateTx_(
-		  update, work.congestionOpened, reapStreams, nReapStreams);
+		  update, work.congestionOpened, reapStreams, nReapStreams,
+		  &ack, &work.ecnValid, &work.ceDelta);
 		ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
 	  largestAcked = ack.nRanges ? ack.ranges[ack.nRanges - 1].largest : 0,
@@ -5261,7 +5418,8 @@ nextSpace:
 		return;
 	      }
 	      applyAckUpdateTx_(
-		update, work.congestionOpened, reapStreams, nReapStreams);
+		update, work.congestionOpened, reapStreams, nReapStreams,
+		&ack, &work.ecnValid, &work.ceDelta);
 	      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
 	largestAcked = ack.nRanges ? ack.ranges[ack.nRanges - 1].largest : 0,
@@ -5296,7 +5454,8 @@ nextSpace:
 	      work.lossPhase = true;
 	    } else {
 	      applyAckUpdateTx_(
-		update, work.congestionOpened, reapStreams, nReapStreams);
+		update, work.congestionOpened, reapStreams, nReapStreams,
+		&ack, &work.ecnValid, &work.ceDelta);
 	      reapAckedStreams_(update, reapStreams, nReapStreams);
 	    }
     if (work.ackBatch.haveAckForLoss) {
@@ -5424,10 +5583,10 @@ nextSpace:
     return true;
   }
 
-  bool validateAckECN_(const AckSnapshot &ack) {
+  bool validateAckECN_(const AckSnapshot &ack, uint64_t *ceDelta = nullptr) {
     if (!ack.ecn.any()) return true;
-    unsigned i = unsigned(ack.level);
-    const AckECN &last = m_peerAckECN[i];
+    const AckECN &last = m_path.peerAckECN(ack.level);
+    const AckECN &sent = m_path.sentECN(ack.level);
     bool fail = false;
     if (ack.ecn.ect0 < last.ect0) {
       fail = true;
@@ -5446,18 +5605,27 @@ nextSpace:
     if (withCE < total) {
       fail = true;
     }
-    uint64_t largest = 0;
-    if (ack.nRanges) {
-      largest = ack.ranges[ack.nRanges - 1].largest;
-      if (withCE > largest + 1) {
-	fail = true;
-      }
+    uint64_t sentECT = sent.ect0 + sent.ect1;
+    if (sentECT < sent.ect0) {
+      fail = true;
     }
+    sentECT += sent.ce;
+    if (sentECT < sent.ce) {
+      fail = true;
+    }
+    uint64_t largest = 0;
+    if (ack.nRanges)
+      largest = ack.ranges[ack.nRanges - 1].largest;
+    if (withCE > sentECT || ack.ecn.ect0 > sent.ect0 ||
+	ack.ecn.ect1 > sent.ect1)
+      fail = true;
     if (fail) {
-      m_path.setEcnDisabled();
+      auto oldState = qlogECNState_(m_path.ecnState());
+      m_path.ecnValidationFailed();
       ++m_txDiag.ecnValidationFailures;
       ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
+	oldState,
 	state = ECNState::Failed,
 	ect0 = ack.ecn.ect0,
 	ect1 = ack.ecn.ect1,
@@ -5465,6 +5633,9 @@ nextSpace:
 	previousECT0 = last.ect0,
 		previousECT1 = last.ect1,
 		previousCE = last.ce,
+		sentECT0 = sent.ect0,
+		sentECT1 = sent.ect1,
+		sentTotal = sentECT,
 		largestAcked = largest,
 		disabled = true,
 		linkInfo = linkInfo_()
@@ -5482,7 +5653,7 @@ nextSpace:
 	uint64_t withCE_ = total_ + ce;
 	if (withCE_ < total_)
 	  reason = ECNReason::CEOverflow;
-	if (withCE_ > largestAcked + 1)
+	if (withCE_ > sentTotal || ect0 > sentECT0 || ect1 > sentECT1)
 	  reason = ECNReason::CounterExceedsAck;
 	ECNEvent event{
 	  .linkInfo = linkInfo
@@ -5495,6 +5666,7 @@ nextSpace:
 	  .previousCE = previousCE,
 	  .largestAcked = largestAcked,
 	  .packetSpace = level,
+	  .oldState = ECNState::T(oldState),
 	  .state = ECNState::T(state),
 	  .reason = reason,
 	  .disabled = disabled};
@@ -5503,38 +5675,9 @@ nextSpace:
       }));
       return false;
     }
-    m_peerAckECN[i] = ack.ecn;
-    m_txDiag.peerAckECN[i] = ack.ecn;
-    ZquicLOG(app()->qlogTrace(), ([
-      level = ack.level,
-      state = ECNState::Capable,
-      ect0 = ack.ecn.ect0,
-      ect1 = ack.ecn.ect1,
-      ce = ack.ecn.ce,
-      previousECT0 = last.ect0,
-      previousECT1 = last.ect1,
-      previousCE = last.ce,
-      largestAcked = largest,
-      disabled = false,
-      linkInfo = linkInfo_()
-    ](auto &o, ZuTime time) {
-      ECNEvent event{
-		.linkInfo = linkInfo
-      ,
-	.ect0 = ect0,
-	.ect1 = ect1,
-	.ce = ce,
-	.previousECT0 = previousECT0,
-	.previousECT1 = previousECT1,
-		.previousCE = previousCE,
-		.largestAcked = largestAcked,
-	  .packetSpace = level,
-	  .state = ECNState::T(state),
-	  .reason = ECNReason::AckECN,
-		.disabled = disabled};
-
-      o.logECNStateUpd(event, time);
-    }));
+    if (ceDelta) *ceDelta = ack.ecn.ce - last.ce;
+    m_path.peerAckECN(ack.level) = ack.ecn;
+    m_txDiag.peerAckECN[ack.level] = ack.ecn;
     return true;
   }
 
@@ -5755,13 +5898,14 @@ nextSpace:
     const TxPktRefs *recordRefs, bool ackEliciting,
     bool pmtudProbe = false, unsigned pmtudSize = 0,
     uint8_t ackLevel = PktNumSpace::N, uint64_t ackLargest = 0,
-    PktType::T packetType = PktType::N) {
+    PktType::T packetType = PktType::N,
+    EcnMark::T ecn = EcnMark::NotECT) {
     bool recorded = recordRefs ?
       recordTxPkt_(
 	level, pn, bytes, *recordRefs, ackEliciting, pmtudProbe, pmtudSize,
-	ackLevel, ackLargest, packetType) :
+	ackLevel, ackLargest, packetType, ecn) :
       recordTxPkt_(
-	level, pn, bytes, recordFrame, ackLevel, ackLargest, packetType);
+	level, pn, bytes, recordFrame, ackLevel, ackLargest, packetType, ecn);
     if (!recorded) return false;
     ++m_txPN[level];
     ++m_txDiag.packetsTx;
@@ -5775,6 +5919,7 @@ nextSpace:
       ackLevel, ackLargest,
       ackRanges = qlogAckRanges_(ackLevel),
       packetType,
+      ecn,
       hasRecordRefs = bool(recordRefs),
       recordRefs = recordRefs ? *recordRefs : TxPktRefs{},
       linkInfo = linkInfo_()
@@ -5792,7 +5937,7 @@ nextSpace:
       event.packetType = packetType == PktType::N ?
 	pktTypeFromPktNumSpace(level) : packetType;
       event.packetSpace = level;
-      event.ecn = EcnMark::N;
+      event.ecn = ecn;
       qlogAddAckFrame_(event, ackLevel, ackLargest, ackRanges);
       if (hasRecordRefs)
 	for (unsigned i = 0, n = recordRefs.count(); i < n; ++i)
@@ -6336,11 +6481,14 @@ nextSpace:
     uint8_t ackLevel;
     uint64_t ackLargest;
     txAckMeta_(PktNumSpace::AppData, payload, ackLevel, ackLargest);
+    EcnMark::T ecn =
+      m_path.txECN(PktNumSpace::AppData, ackEliciting, pmtudSize != 0);
     if (!recordProtPktTx_(
 	  PktNumSpace::AppData, pn, unsigned(n), recordFrame, recordRefs,
-	  ackEliciting, pmtudSize != 0, pmtudSize, ackLevel, ackLargest))
+	  ackEliciting, pmtudSize != 0, pmtudSize, ackLevel, ackLargest,
+	  PktType::N, ecn))
       return false;
-    if (!sendPkt(ZuMv(buf), ZuMv(addr))) {
+    if (!sendPkt(ZuMv(buf), ZuMv(addr), ecn)) {
       discardProtPktTx_(
 	PktNumSpace::AppData, pn, unsigned(n), ackEliciting,
 	recordFrame, recordRefs);
@@ -7832,7 +7980,6 @@ private:
   uint64_t		m_txLargestAckd[PktNumSpace::N]{};
   PktTxSpace		m_txPkts[PktNumSpace::N];
   AckSnapshot		m_txAck[PktNumSpace::N];
-  AckECN		m_peerAckECN[PktNumSpace::N];
   Path			m_path;
   PathState		m_validatingPath;
   bool			m_txSpaceDiscarded[PktNumSpace::N]{};

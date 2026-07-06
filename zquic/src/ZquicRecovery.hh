@@ -490,12 +490,16 @@ public:
     if (bytes > m_bytesInFlight) m_bytesInFlight = 0;
     else m_bytesInFlight -= bytes;
     if (pmtudProbe) return;
-    if (m_recoveryStartTime && sentTime <= m_recoveryStartTime) return;
+    congestionEventAt(sentTime);
+  }
+  bool congestionEventAt(uint64_t sentTime) {
+    if (m_recoveryStartTime && sentTime <= m_recoveryStartTime) return false;
     m_recoveryStartTime = sentTime;
     m_ssthresh = m_cwnd >> 1;
     if (m_ssthresh < uint64_t(m_maxDatagram) * 2)
       m_ssthresh = uint64_t(m_maxDatagram) * 2;
     m_cwnd = m_ssthresh;
+    return true;
   }
   void persistentCongestion() {
     m_cwnd = uint64_t(m_maxDatagram) * 2;
@@ -766,6 +770,7 @@ struct SentPkt {
   unsigned	bytes = 0;
   PktNumSpace::T space = PktNumSpace::AppData;
   PktType::T	packetType = PktType::N;
+  EcnMark::T	ecn = EcnMark::NotECT;
   bool		ackEliciting = false;
   bool		inFlight = false;
   bool		pmtudProbe = false;
@@ -795,6 +800,25 @@ struct PktTxUpdate {
     ackdFrames_(p);
     if (p.lost) return;
     ackdBytes += p.bytes;
+    switch (p.ecn) {
+      case EcnMark::ECT0:
+	++ecnAckdPackets;
+	ecnAckdBytes += p.bytes;
+	if (p.sentTime > ecnAckdSentTime) ecnAckdSentTime = p.sentTime;
+	break;
+      case EcnMark::ECT1:
+	++ecnAckdPackets;
+	ecnAckdBytes += p.bytes;
+	if (p.sentTime > ecnAckdSentTime) ecnAckdSentTime = p.sentTime;
+	break;
+      case EcnMark::CE:
+	++ecnAckdPackets;
+	ecnAckdBytes += p.bytes;
+	if (p.sentTime > ecnAckdSentTime) ecnAckdSentTime = p.sentTime;
+	break;
+      default:
+	break;
+    }
     if (p.pmtudProbe) {
       pmtudAckdBytes += p.bytes;
       if (p.pmtudSize > pmtudAckdSize)
@@ -847,6 +871,9 @@ struct PktTxUpdate {
   uint64_t	ackdBytes = 0;
   uint64_t	ackedPNs[MaxAckedPNs] = {};
   PktNumSpace::T	level = PktNumSpace::Initial;
+  unsigned	ecnAckdPackets = 0;
+  uint64_t	ecnAckdBytes = 0;
+  ZuTime	ecnAckdSentTime;
   uint64_t	normalAckdBytes = 0;
   uint64_t	pmtudAckdBytes = 0;
   unsigned	pmtudAckdSize = 0;
