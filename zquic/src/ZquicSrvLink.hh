@@ -412,11 +412,12 @@ private:
       });
   }
 
-  bool sendPktPath_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool &sent) {
+  bool sendPktPath_(
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn, bool &sent) {
     sent = false;
     if (!app()->sendPkt(buf)) return true;
     sent = static_cast<Server<App, Impl> *>(app())->sendPktRaw_(
-      ZuMv(buf), ZuMv(addr));
+      ZuMv(buf), ZuMv(addr), ecn);
     return sent;
   }
 
@@ -541,8 +542,8 @@ private:
       "QUIC server path send outside Tx thread", return false);
     return Base::sendPathPktApp_(
       ZuMv(buf), ZuMv(addr),
-      [this](auto buf_, ZiSockAddr addr_, bool &sent) {
-	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), sent);
+      [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn, bool &sent) {
+	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), ecn, sent);
       });
   }
 
@@ -551,8 +552,8 @@ private:
       "QUIC server path probe send outside Tx thread", return false);
     return Base::sendPathProbePktApp_(
       ZuMv(buf), ZuMv(addr),
-      [this](auto buf_, ZiSockAddr addr_, bool &sent) {
-	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), sent);
+      [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn, bool &sent) {
+	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), ecn, sent);
       });
   }
 
@@ -582,12 +583,17 @@ private:
   bool sendShortBuf_(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
     const typename Base::TxPktRefs *recordRefs,
-    unsigned pmtudSize = 0) {
+    EcnMark::T ecn, unsigned pmtudSize = 0) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Short buffer send outside Tx thread", return false);
     if (!sendFrameRefs_(recordRefs)) return false;
     if (pmtudSize) return sendPathProbeBuf_(ZuMv(buf), ZuMv(addr));
-    return sendPathBuf_(ZuMv(buf), ZuMv(addr));
+    return Base::sendPathPktApp_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn_, bool &sent) {
+	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), ecn_, sent);
+      },
+      ecn);
   }
 
   bool sendInitialPkt_(ZuBSpan frame, ZiSockAddr addr) {
@@ -669,7 +675,8 @@ private:
       ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs](auto buf, ZiSockAddr addr_) {
-	return sendShortBuf_(ZuMv(buf), ZuMv(addr_), recordRefs);
+	return sendShortBuf_(
+	  ZuMv(buf), ZuMv(addr_), recordRefs, EcnMark::NotECT);
       });
   }
 
@@ -703,8 +710,10 @@ private:
       RuntimeCID::Peer, Base::txPNLength_(PktNumSpace::AppData),
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
-      [this, recordRefs, pmtudSize](auto buf, ZiSockAddr addr_) {
-	return sendShortBuf_(ZuMv(buf), ZuMv(addr_), recordRefs, pmtudSize);
+      [this, recordRefs, pmtudSize](
+	  auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
+	return sendShortBuf_(
+	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn, pmtudSize);
       },
       pmtudSize);
   }

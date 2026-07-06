@@ -33,9 +33,41 @@ void testPlans()
   ZuCHECK(diag.mtuQueryErrors == 1, "PMTU query error not counted");
 }
 
+void testECNTOS()
+{
+  ZuTestScope(testECNTOS);
+
+  ZuCHECK(Zquic::ecnBits(Zquic::EcnMark::NotECT) == 0x00,
+    "NotECT bits mismatch");
+  ZuCHECK(Zquic::ecnBits(Zquic::EcnMark::ECT1) == 0x01,
+    "ECT1 bits mismatch");
+  ZuCHECK(Zquic::ecnBits(Zquic::EcnMark::ECT0) == 0x02,
+    "ECT0 bits mismatch");
+  ZuCHECK(Zquic::ecnBits(Zquic::EcnMark::CE) == 0x03,
+    "CE bits mismatch");
+
+  ZuCHECK(!Zquic::ecnTOS(Zquic::EcnMark::NotECT).template is<uint8_t>(),
+    "NotECT should not force TOS ancillary data");
+  ZuCHECK(Zquic::ecnTOS(Zquic::EcnMark::ECT0).template is<uint8_t>() &&
+      Zquic::ecnTOS(Zquic::EcnMark::ECT0).template p<uint8_t>() == 0x02,
+    "ECT0 TOS mismatch");
+
+  ZuCHECK(Zquic::ecnMarkFromTOS({}) == Zquic::EcnMark::NotECT,
+    "empty TOS should decode as NotECT");
+  ZuCHECK(Zquic::ecnMarkFromTOS(uint8_t(0x00)) == Zquic::EcnMark::NotECT,
+    "TOS NotECT decode mismatch");
+  ZuCHECK(Zquic::ecnMarkFromTOS(uint8_t(0x2d)) == Zquic::EcnMark::ECT1,
+    "TOS ECT1 decode mismatch");
+  ZuCHECK(Zquic::ecnMarkFromTOS(uint8_t(0x2e)) == Zquic::EcnMark::ECT0,
+    "TOS ECT0 decode mismatch");
+  ZuCHECK(Zquic::ecnMarkFromTOS(uint8_t(0x2f)) == Zquic::EcnMark::CE,
+    "TOS CE decode mismatch");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testPlans);
+  ZuTestCall(testECNTOS);
 }

@@ -216,10 +216,11 @@ struct TestLink :
   void recordSentPkt(
     Zquic::PktNumSpace::T level, uint64_t pn, unsigned bytes,
     const Zquic::SentFrameRef &ref, bool ackEliciting,
-    Zquic::PktType::T packetType = Zquic::PktType::N) {
+    Zquic::PktType::T packetType = Zquic::PktType::N,
+    Zquic::EcnMark::T ecn = Zquic::EcnMark::NotECT) {
     Base::recordTxPkt_(
       level, pn, bytes, ref, ackEliciting, false, 0,
-      Zquic::PktNumSpace::N, 0, packetType);
+      Zquic::PktNumSpace::N, 0, packetType, ecn);
     Base::setTxPN_(level, pn + 1);
   }
   void recordSentPkt(
@@ -432,6 +433,12 @@ struct TestLink :
       Zquic::PktNumSpace::AppData, pn, bytes,
       Zquic::SentFrameRef::control(), true);
   }
+  void sendECN(
+    uint64_t pn, Zquic::EcnMark::T ecn, unsigned bytes = 1200) {
+    recordSentPkt(
+      Zquic::PktNumSpace::AppData, pn, bytes,
+      Zquic::SentFrameRef::control(), true, Zquic::PktType::N, ecn);
+  }
 #ifdef Zquic_DEBUG
   void ackECN(uint64_t largest, uint64_t ect0, uint64_t ect1, uint64_t ce) {
     Base::setTxPN_(Zquic::PktNumSpace::AppData, largest + 1);
@@ -442,6 +449,14 @@ struct TestLink :
     ack.ecn.ect0 = ect0;
     ack.ecn.ect1 = ect1;
     ack.ecn.ce = ce;
+    Base::processAckFrameTx_(ack);
+  }
+  void ackNoECN(uint64_t largest) {
+    Base::setTxPN_(Zquic::PktNumSpace::AppData, largest + 1);
+    Base::AckSnapshot ack;
+    ack.level = Zquic::PktNumSpace::AppData;
+    ack.nRanges = 1;
+    ack.ranges[0] = Zquic::AckRange{largest, 0};
     Base::processAckFrameTx_(ack);
   }
 #endif
@@ -483,7 +498,7 @@ struct TestLink :
     buf->length = bytes;
     return Base::sendPathPkt_(
       ZuMv(buf), ZiSockAddr{},
-      [](ZmRef<ZiIOBuf>, ZiSockAddr) { return true; });
+      [](ZmRef<ZiIOBuf>, ZiSockAddr, Zquic::EcnMark::T) { return true; });
   }
   void validatePath() { Base::validatePathTx_(); }
 #ifdef Zquic_DEBUG
@@ -1959,17 +1974,37 @@ void testAckECNValidationDisablesECN()
       frame.ackECN.ce == 1,
     "runtime received ECN marks were not emitted in ACK_ECN");
 
-  link->ackECN(9, 2, 1, 0);
+  link->sendECN(0, Zquic::EcnMark::ECT0);
+  link->sendECN(1, Zquic::EcnMark::ECT0);
+  link->sendECN(2, Zquic::EcnMark::ECT1);
+  link->ackECN(2, 2, 1, 0);
   diag = link->runtimeDiag();
   ZuCHECK(!link->ecnDisabled() &&
       diag.tx.peerAckECN[Zquic::PktNumSpace::AppData].ect0 == 2 &&
       diag.tx.peerAckECN[Zquic::PktNumSpace::AppData].ect1 == 1,
     "valid ACK_ECN did not update runtime diagnostics");
-  link->ackECN(9, 1, 1, 0);
+  link->ackECN(2, 1, 1, 0);
   diag = link->runtimeDiag();
   ZuCHECK(link->ecnDisabled() && diag.tx.ecnValidationFailures == 1,
     "regressing ACK_ECN did not disable ECN");
   link->closeForTest();
+
+  ZmRef<TestLink> missing = testLink(&app);
+  missing->enableECN();
+  for (unsigned i = 0; i < Zquic::Path::ECNProbeThreshold - 1; ++i) {
+    missing->sendECN(i, Zquic::EcnMark::ECT0);
+    missing->ackNoECN(i);
+  }
+  diag = missing->runtimeDiag();
+  ZuCHECK(!missing->ecnDisabled() && diag.tx.ecnValidationFailures == 0,
+    "missing ACK_ECN failed before probe budget expired");
+  missing->sendECN(
+    Zquic::Path::ECNProbeThreshold - 1, Zquic::EcnMark::ECT0);
+  missing->ackNoECN(Zquic::Path::ECNProbeThreshold - 1);
+  diag = missing->runtimeDiag();
+  ZuCHECK(missing->ecnDisabled() && diag.tx.ecnValidationFailures == 1,
+    "missing ACK_ECN did not fail after probe budget expired");
+  missing->closeForTest();
 
   ZmRef<TestLink> impossible = testLink(&app);
   impossible->enableECN();
@@ -1986,6 +2021,23 @@ void testAckECNValidationDisablesECN()
     "impossible ACK_ECN did not disable ECN while preserving ACK processing");
   impossible->closeForTest();
 
+  ZmRef<TestLink> ce = testLink(&app);
+  ce->enableECN();
+  ce->sendECN(0, Zquic::EcnMark::ECT0);
+  ce->sendECN(1, Zquic::EcnMark::ECT0);
+  diag = ce->runtimeDiag();
+  uint64_t cwnd = diag.tx.congestionWindow;
+  ce->ackECN(1, 1, 0, 1);
+  diag = ce->runtimeDiag();
+  Zquic::PathDiag pathDiag = ce->pathDiag();
+  ZuCHECK(!ce->ecnDisabled() &&
+      diag.tx.peerAckECN[Zquic::PktNumSpace::AppData].ce == 1 &&
+      diag.tx.congestionWindow < cwnd &&
+      pathDiag.ecnCEEvents == 1 &&
+      pathDiag.ecnCEBytes == 2400,
+    "CE ACK_ECN did not drive congestion response and path diagnostics");
+  ce->closeForTest();
+
 	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag qdiag = ZquicLogger::diag();
@@ -2001,9 +2053,12 @@ void testAckECNValidationDisablesECN()
   ZuCHECK(qlog.find<"quic:ecn_state_updated">() >= 0,
     "ECN qlog event missing");
   ZuCHECK(qlog.find<"\"old\":\"unknown\"">() >= 0 &&
+      qlog.find<"\"new\":\"testing\"">() >= 0,
+    "ECN qlog missing testing state");
+  ZuCHECK(qlog.find<"\"old\":\"testing\"">() >= 0 &&
       qlog.find<"\"new\":\"capable\"">() >= 0,
     "ECN qlog missing capable state");
-  ZuCHECK(qlog.find<"\"old\":\"unknown\"">() >= 0 &&
+  ZuCHECK(qlog.find<"\"old\":\"testing\"">() >= 0 &&
       qlog.find<"\"new\":\"failed\"">() >= 0,
     "ECN qlog missing failed state");
   ZuCHECK(qlog.find<"counter_exceeds_ack">() < 0,

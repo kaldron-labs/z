@@ -173,11 +173,11 @@ struct RecKind {
 struct RecReason {
   ZtEnum(RecReason, int8_t,
     None, TimeThreshold, PacketThreshold, Canceled, Armed, NoLevel, Ack,
-    PMTUDAck, Loss, PMTUDLoss, Expired, Probe, Backoff);
+    PMTUDAck, Loss, PMTUDLoss, Expired, Probe, Backoff, ECNCE);
   ZtEnumMap(RecReason, JSON,
     "", "time_threshold", "packet_threshold", "canceled", "armed",
     "no_level", "ack", "pmtud_ack", "loss", "pmtud_loss",
-    "expired", "probe", "backoff");
+    "expired", "probe", "backoff", "ecn_ce");
 };
 
 struct RecEvent {
@@ -203,17 +203,19 @@ struct RecEvent {
 };
 
 struct ECNState {
-  ZtEnum(ECNState, int8_t, Unknown, Capable, Failed);
-  ZtEnumMap(ECNState, JSON, "unknown", "capable", "failed");
+  ZtEnum(ECNState, int8_t, Unknown, Disabled, Testing, Capable, Failed);
+  ZtEnumMap(ECNState, JSON,
+    "unknown", "disabled", "testing", "capable", "failed");
 };
 
 struct ECNReason {
   ZtEnum(ECNReason, int8_t,
     AckECN, ECT0Decrease, ECT1Decrease, CEDecrease, ECTOverflow, CEOverflow,
-    CounterExceedsAck);
+    CounterExceedsAck, Probe, NoAckECN, MarkFailed, CE);
   ZtEnumMap(ECNReason, JSON,
     "ack_ecn", "ect0_decrease", "ect1_decrease", "ce_decrease",
-    "ect_overflow", "ce_overflow", "counter_exceeds_ack");
+    "ect_overflow", "ce_overflow", "counter_exceeds_ack",
+    "probe", "no_ack_ecn", "mark_failed", "ce");
 };
 
 struct ECNEvent {
@@ -226,6 +228,7 @@ struct ECNEvent {
   uint64_t		previousCE = 0;
   uint64_t		largestAcked = 0;
   PktNumSpace::T	packetSpace = PktNumSpace::Initial;
+  ECNState::T		oldState = ECNState::Unknown;
   ECNState::T		state = ECNState::Capable;
   ECNReason::T		reason = ECNReason::AckECN;
   bool			disabled = false;

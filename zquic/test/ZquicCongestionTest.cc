@@ -181,6 +181,16 @@ void testPersistentCongestion()
   cc.persistentCongestion();
   ZuCHECK(cc.cwnd() == 2400 && cc.ssthresh() == 2400,
     "persistent congestion did not collapse cwnd");
+
+  Zquic::NewReno ecn(1200);
+  ecn.sent(1200);
+  ecn.ackd(1200);
+  uint64_t grown = ecn.cwnd();
+  ZuCHECK(ecn.congestionEventAt(1000) &&
+      ecn.cwnd() == grown >> 1 &&
+      !ecn.congestionEventAt(1000) &&
+      ecn.cwnd() == grown >> 1,
+    "NewReno ECN congestion event did not reduce cwnd once per epoch");
 }
 
 void testRetransmitQueue()

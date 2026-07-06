@@ -156,9 +156,61 @@ void testPMTUD()
     "repeated active-size probe expiry did not trigger blackhole fallback");
 }
 
+void testPathECN()
+{
+  ZuTestScope(testPathECN);
+
+  Zquic::Path path = Zquic::Path::client(
+    ZiSockAddr{ZiIP("127.0.0.1"), 10100},
+    ZiSockAddr{ZiIP("127.0.0.1"), 10101});
+  ZuCHECK(path.ecnDisabled(), "new path should default ECN disabled");
+  ZuCHECK(path.ecnState() == Zquic::PathECNState::Disabled,
+    "new path ECN state mismatch");
+  ZuCHECK(path.activeECN() == Zquic::EcnMark::NotECT,
+    "new path active ECN mismatch");
+  ZuCHECK(path.txECN(Zquic::PktNumSpace::AppData, true, false) ==
+      Zquic::EcnMark::NotECT,
+    "disabled path unexpectedly selected ECN mark");
+
+  path.ecn(true);
+  ZuCHECK(!path.ecnDisabled() &&
+      path.ecnState() == Zquic::PathECNState::Testing &&
+      path.activeECN() == Zquic::EcnMark::ECT0,
+    "enabled path did not enter ECN testing");
+  ZuCHECK(path.txECN(Zquic::PktNumSpace::AppData, true, false) ==
+      Zquic::EcnMark::ECT0,
+    "testing AppData packet did not select ECT0");
+  ZuCHECK(path.txECN(Zquic::PktNumSpace::Initial, true, false) ==
+      Zquic::EcnMark::NotECT,
+    "Initial packet should remain NotECT");
+  ZuCHECK(path.txECN(Zquic::PktNumSpace::AppData, false, false) ==
+      Zquic::EcnMark::NotECT,
+    "non-ack-eliciting packet should remain NotECT");
+  ZuCHECK(path.txECN(Zquic::PktNumSpace::AppData, true, true) ==
+      Zquic::EcnMark::NotECT,
+    "PMTUD probe should remain NotECT");
+
+  path.ecnCapable();
+  ZuCHECK(path.ecnState() == Zquic::PathECNState::Capable &&
+      path.txECN(Zquic::PktNumSpace::AppData, true, false) ==
+	Zquic::EcnMark::ECT0,
+    "capable path did not keep ECT0 active");
+  path.failECN();
+  ZuCHECK(path.ecnDisabled() &&
+      path.ecnState() == Zquic::PathECNState::Failed &&
+      path.activeECN() == Zquic::EcnMark::NotECT &&
+      path.txECN(Zquic::PktNumSpace::AppData, true, false) ==
+	Zquic::EcnMark::NotECT,
+    "failed path did not disable ECN marking");
+  path.ecn(false);
+  ZuCHECK(path.ecnState() == Zquic::PathECNState::Disabled,
+    "explicit ECN disable state mismatch");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testPMTUD);
+  ZuTestCall(testPathECN);
 }

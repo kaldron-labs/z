@@ -205,11 +205,12 @@ class Endpoint_ {
 
     struct TxNode : public ZuObject {
       TxNode() = default;
-      TxNode(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_) :
-	buf{ZuMv(buf_)}, addr{ZuMv(addr_)} { }
+      TxNode(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_, EcnMark::T ecn_) :
+	buf{ZuMv(buf_)}, addr{ZuMv(addr_)}, ecn{ecn_} { }
 
       ZmRef<ZiIOBuf>	buf;
       ZiSockAddr		addr;
+      EcnMark::T		ecn = EcnMark::NotECT;
     };
     ZuDerive(TxQueue,
       (ZmList<ZmRef<TxNode>,
@@ -245,7 +246,9 @@ class Endpoint_ {
     bool txPending() const { return !!m_txBuf; }
     uint64_t txQueued() const { return m_txQueue.count_(); }
 
-    bool sendPkt(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    bool sendPkt(
+	ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
+	EcnMark::T ecn = EcnMark::NotECT) {
       if (m_closing.load_()) {
 	++m_endpoint->m_txDiag.txDropped;
 	return false;
@@ -257,11 +260,12 @@ class Endpoint_ {
       ZiAssert(m_endpoint->m_mx &&
 	  m_endpoint->m_mx->invoked(m_endpoint->m_mx->txThread()),
 	"Zquic", (), "QUIC endpoint send outside Tx thread", return false);
-      if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr));
+      if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr), ecn);
       ++m_endpoint->m_txDiag.submittedTx;
       m_endpoint->m_txDiag.submittedBytes += buf->length;
       m_txBuf = ZuMv(buf);
       m_txAddr = ZuMv(addr);
+      m_txECN = ecn;
       send(ZiIOFn{this, ZmFnPtr<&Cxn_::sendStart_>{}});
       return true;
     }
@@ -274,6 +278,7 @@ class Endpoint_ {
     void closeTx_() {
       m_closing = true;
       m_txBuf = nullptr;
+      m_txECN = EcnMark::NotECT;
       m_txQueue.clean();
     }
 
@@ -282,12 +287,12 @@ class Endpoint_ {
       m_rxBuf = nullptr;
     }
 
-    bool enqueueTx_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    bool enqueueTx_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn) {
       if (m_txQueue.count_() >= EndpointTxQueueLimit)
 	++m_endpoint->m_txDiag.txBackPressure;
       ++m_endpoint->m_txDiag.submittedTx;
       m_endpoint->m_txDiag.submittedBytes += buf->length;
-      m_txQueue.push(new TxNode{ZuMv(buf), ZuMv(addr)});
+      m_txQueue.push(new TxNode{ZuMv(buf), ZuMv(addr), ecn});
       return true;
     }
 
@@ -296,6 +301,7 @@ class Endpoint_ {
       if (!node) return false;
       m_txBuf = ZuMv(node->buf);
       m_txAddr = ZuMv(node->addr);
+      m_txECN = node->ecn;
       return true;
     }
 
@@ -316,7 +322,8 @@ class Endpoint_ {
 	m_rxBuf->skip = 0;
 	m_rxBuf->length = unsigned(io.length);
 	auto buf = ZuMv(m_rxBuf);
-	m_endpoint->received_(Datagram{ZuMv(buf), io.addr});
+	m_endpoint->received_(
+	  Datagram{ZuMv(buf), io.addr, ecnMarkFromTOS(io.tos)});
       }
       if (m_closing.load_()) {
 	io.complete();
@@ -340,7 +347,7 @@ class Endpoint_ {
       }
       io.init(
 	ZiIOFn{this, ZmFnPtr<&Cxn_::sendDone_>{}},
-	m_txBuf->data(), m_txBuf->length, 0, m_txAddr);
+	m_txBuf->data(), m_txBuf->length, 0, m_txAddr, ecnTOS(m_txECN));
       return true;
     }
 
@@ -369,6 +376,7 @@ class Endpoint_ {
 	scheduleTx_();
 	return true;
       }
+      m_txECN = EcnMark::NotECT;
       if (hadQueue) m_endpoint->txDrained_();
       io.complete();
       return true;
@@ -383,6 +391,7 @@ class Endpoint_ {
 
     ZmRef<ZiIOBuf>	m_txBuf;
     ZiSockAddr		m_txAddr;
+    EcnMark::T		m_txECN = EcnMark::NotECT;
     TxQueue		m_txQueue;
   };
 
@@ -502,17 +511,20 @@ public:
   void failure() { ++m_rxDiag.failures; }
   ZmRef<ZiIOBuf> allocTxPkt() { return new TxPktAlloc{this}; }
 
-  bool send(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+  bool send(
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
+      EcnMark::T ecn = EcnMark::NotECT) {
     if (!buf) return false;
     ZiAssert(m_mx, "Zquic", (), "null endpoint multiplexer", return false);
     if (endpointTxInvoked_())
-      return send_(ZuMv(buf), ZuMv(addr), true);
+      return send_(ZuMv(buf), ZuMv(addr), ecn, true);
     m_mx->txRun([
       this,
       buf = ZuMv(buf),
-      addr = ZuMv(addr)
+      addr = ZuMv(addr),
+      ecn
     ]() mutable {
-      (void)send_(ZuMv(buf), ZuMv(addr), false);
+      (void)send_(ZuMv(buf), ZuMv(addr), ecn, false);
     });
     return true;
   }
@@ -604,7 +616,8 @@ private:
       ++m_rxDiag.failures;
   }
 
-  bool send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool direct) {
+  bool send_(
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn, bool direct) {
     ZiAssert(endpointTxInvoked_(), "Zquic", (),
       "QUIC endpoint send outside Tx thread", return false);
     ++m_txDiag.sendCalls;
@@ -621,7 +634,7 @@ private:
       ++m_txDiag.txDropped;
       return false;
     }
-    return cxn->sendPkt(ZuMv(buf), ZuMv(addr));
+    return cxn->sendPkt(ZuMv(buf), ZuMv(addr), ecn);
   }
 
   void disconnectRx_(EndpointDiscFn fn) {
