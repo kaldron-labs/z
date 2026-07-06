@@ -41,7 +41,9 @@ void Diag::summary(DiagText &out) const
     " retransmittedFrames=" << retransmittedFrames <<
     " cwnd=" << cwnd <<
     " bytesInFlight=" << bytesInFlight <<
+#ifdef Zquic_DEBUG
     " handshakeState=" << handshakeState <<
+#endif
     " openStreams=" << openStreams <<
     " closedStreams=" << closedStreams <<
     " pmtudProbes=" << pmtudProbes <<

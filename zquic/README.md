@@ -32,7 +32,22 @@ Applications use the CRTP API:
 opens the client UDP socket. `ClientParams` and `ServerParams` are aliases of
 `EngineParams`, which configures the multiplexer, Rx/Tx threads, TLS paths,
 ALPN, qlog, transport limits, idle timeout, maximum UDP payload, ECN, and
-address validation policy.
+address validation policy.  It also configures single-active-path migration:
+`migrationMode()` defaults to `MigrationMode::Passive`, `activeMigration(true)`
+advertises active migration support, `migrationCIDReserve()` reserves spare
+connection IDs for migration, and `migrationCloseOnFailure()` selects whether
+local-rebind failures close active migration attempts.
+
+Path migration is exposed through the link API.  `CliLink::migrate()`,
+`migrateLocal()`, and `migrateRemote()` request client active migration; the
+transport rejects active requests when the peer sent
+`disable_active_migration`.  `CliLink` and `SrvLink` expose `pathInfo()` and
+`migrationState()` snapshots, and applications may implement
+`pathUpdate(const PathInfo &)`, `migrationStarted(const MigrationResult &)`,
+`migrationPromoted(const MigrationResult &)`, and
+`migrationFailed(const MigrationResult &)`.  This is QUIC v1 path migration,
+not multipath: normal STREAM/control traffic uses one active path while at most
+one candidate path is being validated.
 
 `zquic/example` contains small noinst transport examples:
 `ZquicServer` listens on one UDP socket and accepts routed `SrvLink`s, while
@@ -87,8 +102,12 @@ server's stream response.
   paths in `ZquicLink.hh`.
 - ECN handling crosses socket marking, ACK_ECN parsing, recovery validation,
   path fallback, diagnostics, and qlog events.
-- HTTP/3, QPACK, WebTransport, DATAGRAM, multipath, QUIC v2, and full active
-  migration are not exposed by this module.
+- QUIC path migration covers passive peer tuple changes, NAT rebinding, client
+  active migration, local UDP endpoint rebinding, CID selection, diagnostics,
+  and qlog migration event sourcing.  HTTP/3 policy uses this API from
+  `Zhttp`; HTTP/3 itself is not part of `Zquic`.
+- HTTP/3, QPACK, WebTransport, DATAGRAM, multipath, and QUIC v2 are not
+  exposed by this module.
 
 ## Tests
 
@@ -104,6 +123,10 @@ Tests are standalone binaries under `zquic/test`.  Useful entry points:
 - `ZquicRecoveryTest`, `ZquicFlowTest`, `ZquicCIDTest`, `ZquicSockTest`,
   `ZquicTimerTest`, `ZquicLogTest`, and `ZquicPQueueTest`: focused subsystem
   coverage.
+- Migration behavior is covered across `ZquicAPITest`, `ZquicSockTest`,
+  `ZquicLogTest`, and runtime loopback tests: public migration params and
+  callbacks, endpoint rebinding, CID policy, passive/active validation,
+  diagnostics, and qlog JSON-SEQ event streams.
 
 Run the module tests with:
 

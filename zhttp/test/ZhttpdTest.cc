@@ -142,6 +142,18 @@ void testCLI()
     ZuCheck(both.http);
     ZuCheck(both.https);
   }
+  {
+    Options options;
+    ZuCHECK(load(options, {
+	"zhttpd", "/tmp/www",
+	"--quic-migration", "active",
+	"--quic-migration-cid-reserve=3",
+	"--quic-migration-close-on-failure"}),
+      "QUIC migration options failed");
+    ZuCheck(options.quicMigration == "active");
+    ZuCheck(options.quicMigrationCIDReserve == 3);
+    ZuCheck(options.quicMigrationCloseOnFailure);
+  }
 }
 
 void testMime()

@@ -139,6 +139,8 @@ struct ControlFrame {
   uint64_t		errorCode = 0;
   Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
   uint8_t		payload[8]{};
+  CxnID			cxnID;
+  ResetToken		resetToken;
 
   bool operator !() const { return type == FrameType::Unknown; }
   ZuOpBool
@@ -149,6 +151,8 @@ struct ControlFrame {
     if (type == FrameType::PathChallenge ||
 	type == FrameType::PathResponse)
       return !memcmp(payload, o.payload, sizeof(payload));
+    if (type == FrameType::NewCxnID)
+      return cxnID == o.cxnID && resetToken == o.resetToken;
     return true;
   }
 
@@ -193,6 +197,17 @@ struct ControlFrame {
     frame.type = FrameType::HandshakeDone;
     return frame;
   }
+  static ControlFrame newCxnID(
+    uint64_t sequence, uint64_t retirePriorTo,
+    const CxnID &id, const ResetToken &token) {
+    ControlFrame frame;
+    frame.type = FrameType::NewCxnID;
+    frame.streamID = sequence;
+    frame.value = retirePriorTo;
+    frame.cxnID = id;
+    frame.resetToken = token;
+    return frame;
+  }
 
   int write(uint8_t *out, unsigned len) const {
     switch (type) {
@@ -220,6 +235,9 @@ struct ControlFrame {
 	  payload, sizeof(payload)});
       case FrameType::HandshakeDone:
 	return FrameCodec::writeHandshakeDone(out, len);
+      case FrameType::NewCxnID:
+	return FrameCodec::writeNewCxnID(
+	  out, len, streamID, value, cxnID, resetToken);
       default:
 	return -1;
     }

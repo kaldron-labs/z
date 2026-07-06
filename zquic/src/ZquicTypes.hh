@@ -89,6 +89,88 @@ inline constexpr unsigned MinCIDLength = 8;
 
 ZtEnumStruct(StreamError, int8_t, None, Reset, Stop);
 
+struct PathRole {
+  ZtEnum(PathRole, int8_t, Active, Candidate, Previous);
+  ZtEnumMap(PathRole, JSON,
+    "active", "candidate", "previous", "unknown");
+};
+
+struct MigrationState {
+  ZtEnum(MigrationState, int8_t,
+    Idle, Requested, Validating, Promoted, Failed);
+  ZtEnumMap(MigrationState, JSON,
+    "idle", "requested", "validating", "promoted", "failed", "unknown");
+};
+
+struct MigrationReason {
+  ZtEnum(MigrationReason, int8_t,
+    None, Passive, NATRebind, Active, Disabled, PeerDisabled, NoPeerCID,
+    Endpoint, Validation, Timeout, Abandoned, Closed);
+  ZtEnumMap(MigrationReason, JSON,
+    "none", "passive", "nat_rebind", "active", "disabled",
+    "peer_disabled", "no_peer_cid", "endpoint", "validation", "timeout",
+    "abandoned", "closed", "unknown");
+};
+
+struct MigrationMode {
+  ZtEnum(MigrationMode, int8_t, Disabled, Passive, Active);
+  ZtEnumMap(MigrationMode, JSON,
+    "disabled", "passive", "active", "unknown");
+};
+
+inline bool parseMigrationMode(ZuCSpan s, MigrationMode::T &mode)
+{
+  if (s == "disable") s = "disabled";
+  auto mode_ = MigrationMode::JSON::s2v(s);
+  if (mode_ < 0 || mode_ >= MigrationMode::N) return false;
+  mode = mode_;
+  return true;
+}
+
+inline bool validMigrationMode(ZuCSpan s)
+{
+  MigrationMode::T mode;
+  return parseMigrationMode(s, mode);
+}
+
+inline MigrationMode::T migrationMode(
+  ZuCSpan s, MigrationMode::T deflt = MigrationMode::Passive)
+{
+  MigrationMode::T mode;
+  return parseMigrationMode(s, mode) ? mode : deflt;
+}
+
+struct PathInfo {
+  ZiSockAddr		local;
+  ZiSockAddr		remote;
+  uint64_t		peerCIDSequence = U64Null;
+  uint64_t		bytesRx = 0;
+  uint64_t		bytesTx = 0;
+  unsigned		activeMaxUDP = 0;
+  PathRole::T		role = PathRole::Active;
+  MigrationState::T	migrationState = MigrationState::Idle;
+  MigrationReason::T	reason = MigrationReason::None;
+  bool			validated = false;
+};
+
+struct MigrationParams {
+  ZiSockAddr		local;
+  ZiSockAddr		remote;
+  MigrationReason::T	reason = MigrationReason::Active;
+  bool			rebindLocal = false;
+  bool			requireNewPeerCID = true;
+  bool			closeOnFailure = false;
+};
+
+struct MigrationResult {
+  PathInfo		active;
+  PathInfo		candidate;
+  MigrationState::T	state = MigrationState::Idle;
+  MigrationReason::T	reason = MigrationReason::None;
+  uint64_t		attemptID = 0;
+  bool			success = false;
+};
+
 struct PktNumSpace {
   ZtEnum(PktNumSpace, int8_t, Initial, Handshake, AppData);
   ZtEnumMap(PktNumSpace, JSON,

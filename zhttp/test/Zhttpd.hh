@@ -132,6 +132,9 @@ struct Options {
   bool			debug = false;
   bool			frag = false;
   bool			yield = false;
+  HdrString		quicMigration{"passive"};
+  unsigned		quicMigrationCIDReserve = 1;
+  bool			quicMigrationCloseOnFailure = false;
 #ifdef ZiMultiplex_FILTER
   HdrString		quicRxDrop;
   HdrString		quicTxDrop;
@@ -177,6 +180,11 @@ ZtStruct((Options, CLI),
   (((debug),           (CLI::Long<"debug">)),                    (Bool)),
   (((frag),            (CLI::Long<"frag">)),                     (Bool)),
   (((yield),           (CLI::Long<"yield">)),                    (Bool)),
+  (((quicMigration),   (CLI::Long<"quic-migration">)),           (String, "passive")),
+  (((quicMigrationCIDReserve),
+    (CLI::Long<"quic-migration-cid-reserve">)),                  (UInt32, 1)),
+  (((quicMigrationCloseOnFailure),
+    (CLI::Long<"quic-migration-close-on-failure">)),             (Bool)),
 #ifdef ZiMultiplex_FILTER
   (((quicRxDrop),      (CLI::Long<"quic-rx-drop">)),             (String)),
   (((quicTxDrop),      (CLI::Long<"quic-tx-drop">)),             (String)),

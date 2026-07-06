@@ -136,6 +136,55 @@ public:
   void runtimeDiag(L &&l) const { Base::runtimeDiag(ZuFwd<L>(l)); }
   template <typename L>
   void pathDiag(L &&l) const { Base::pathDiag(ZuFwd<L>(l)); }
+  template <typename L>
+  void pathInfo(L &&l) const {
+    if (app()->txInvoked()) {
+      l(Base::activePathInfo_(), Base::candidatePathInfo_());
+      return;
+    }
+    auto link = const_cast<CliLink *>(this)->impl();
+    app()->txRun([link, l = ZuFwd<L>(l)]() mutable {
+      l(link->activePathInfo_(), link->candidatePathInfo_());
+    });
+  }
+  template <typename L>
+  void migrationState(L &&l) const {
+    if (app()->txInvoked()) {
+      l(Base::migrationResult_());
+      return;
+    }
+    auto link = const_cast<CliLink *>(this)->impl();
+    app()->txRun([link, l = ZuFwd<L>(l)]() mutable {
+      l(link->migrationResult_());
+    });
+  }
+  bool migrate(const MigrationParams &params) {
+    if (Base::disconnecting_()) return false;
+    if (app()->txInvoked())
+      return migrate_(params);
+    app()->txRun([link = impl(), params]() mutable {
+      if (link->disconnecting_()) return;
+      link->migrate_(params);
+    });
+    return true;
+  }
+  bool migrateLocal(ZiIP ip, uint16_t port = 0) {
+    MigrationParams params;
+    params.local.init(ip, port);
+    params.remote = Endpoint::remote();
+    params.rebindLocal = true;
+    params.reason = MigrationReason::Active;
+    params.closeOnFailure = app()->migrationCloseOnFailure();
+    return migrate(params);
+  }
+  bool migrateRemote(ZiSockAddr remote) {
+    MigrationParams params;
+    params.local = Endpoint::local();
+    params.remote = ZuMv(remote);
+    params.reason = MigrationReason::Active;
+    params.closeOnFailure = app()->migrationCloseOnFailure();
+    return migrate(params);
+  }
   bool pathValidated() const { return Base::pathValidated_(); }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   uint64_t pathAntiAmplification() const {
@@ -296,7 +345,6 @@ public:
 	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true, size);
       });
   }
-
   void connect_() { // direct call from within rx thread
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client connect before app initialization", return);
@@ -593,6 +641,7 @@ private:
     Base::establishRuntime_();
     Base::validatePath_();
     Base::schedulePMTUD();
+    Base::scheduleMigrationCIDs_();
     impl()->connected(Zi::Connected{
       .transport = Zi::Transport::QUIC,
       .alpn = Base::negotiatedProtocol_(),
@@ -795,6 +844,68 @@ private:
     PktNumSpace::T level, PktBuild &build,
     ZuBSpan prefix, ZuBSpan payload) {
     return Base::buildPayload_(level, build, prefix, payload);
+  }
+
+  bool migrate_(const MigrationParams &params) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client migration outside Tx thread", return false);
+    MigrationReason::T reason = MigrationReason::None;
+    if (!Base::prepareActiveMigration_(params, reason))
+      return false;
+    if (params.rebindLocal) {
+      ZiSockAddr local = params.local;
+      ZiSockAddr remote = Base::activeMigrationRemote_();
+      Base::activeMigrationRebindStart_();
+      bool posted = Endpoint::rebindUDP(
+	local.ip(), local.port(), remote.ip(), remote.port(),
+	[link = impl()](
+	    bool ok, ZiSockAddr rebound, bool closed) mutable {
+	  link->app()->txRun([
+	    link, ok, rebound = ZuMv(rebound), closed
+	  ]() mutable {
+	    if (link->disconnecting_() && !closed) return;
+	    if (!ok) {
+	      MigrationReason::T reason = closed ?
+		MigrationReason::Closed : MigrationReason::Endpoint;
+	      link->activeMigrationRebindFail_(reason);
+	      link->failActiveMigration_(reason);
+	      return;
+	    }
+	    link->updateActiveMigrationLocal_(ZuMv(rebound));
+	    link->activeMigrationRebindOK_();
+	    if (!link->sendActiveMigrationChallenge_())
+	      link->failActiveMigration_(MigrationReason::Validation);
+	  });
+	});
+      if (!posted) {
+	Base::activeMigrationRebindFail_(MigrationReason::Endpoint);
+	Base::failActiveMigration_(MigrationReason::Endpoint);
+	return false;
+      }
+      return true;
+    }
+    if (sendActiveMigrationChallenge_())
+      return true;
+    Base::failActiveMigration_(MigrationReason::Validation);
+    return false;
+  }
+
+  bool sendActiveMigrationChallenge_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client migration challenge outside Tx thread", return false);
+    if (!Base::activateActiveMigration_())
+      return false;
+    PktBuild build;
+    typename Base::TxPktRefs refs;
+    ControlFrame frame;
+    if (!Base::buildActiveMigrationChallenge_(build, refs, frame))
+      return false;
+    bool sent = sendShortPkt_(
+      Base::activeMigrationPeerCID_(), build,
+      Base::activeMigrationRemote_(), {}, &refs, true);
+    if (sent)
+      Base::activeMigrationChallengeSent_(frame);
+    return sent;
   }
 
   ZuBSpan initialToken_() const {
@@ -1004,6 +1115,22 @@ private:
     if (!Endpoint::connected()) return false;
     return Base::sendProtShortPkt_(
       RuntimeCID::Peer, Base::txPNLength_(PktNumSpace::AppData),
+      payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
+      [this]() { return Endpoint::allocTxPkt(); },
+      [this, pmtudSize](auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
+	return sendShortBuf_(
+	  ZuMv(buf), ZuMv(addr_), ecn, pmtudSize);
+      },
+      pmtudSize);
+  }
+
+  bool sendShortPkt_(
+    const CxnID &dcid, PktBuild &payload, ZiSockAddr addr,
+    ZuBSpan recordFrame, const typename Base::TxPktRefs *recordRefs,
+    bool ackEliciting, unsigned pmtudSize = 0) {
+    if (!Endpoint::connected()) return false;
+    return Base::sendProtShortPkt_(
+      dcid, Base::txPNLength_(PktNumSpace::AppData),
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
       [this, pmtudSize](auto buf, ZiSockAddr addr_, EcnMark::T ecn) {

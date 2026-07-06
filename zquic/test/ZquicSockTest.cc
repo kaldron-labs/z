@@ -5,9 +5,41 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
+
+namespace {
+
+struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
+  using Endpoint = Zquic_::Endpoint_<TestEndpoint>;
+  using ReadyFn = ZmFn<void(bool), ZmFnHeapID<"Zquic.Endpoint.TestReady">>;
+  static constexpr bool EndpointRef = false;
+
+  void endpointReady_(Endpoint *) {
+    ++ready;
+    ReadyFn fn = ZuMv(readyFn);
+    if (fn) fn(true);
+  }
+  void endpointDown_(Endpoint *) { ++down; }
+  void endpointFailed_(bool) {
+    ++failed;
+    ReadyFn fn = ZuMv(readyFn);
+    if (fn) fn(false);
+  }
+  void endpointDatagram_(Zquic::Datagram) { ++datagrams; }
+  void endpointTxDrained_() { ++drained; }
+
+  ReadyFn readyFn;
+  unsigned ready = 0;
+  unsigned down = 0;
+  unsigned failed = 0;
+  unsigned datagrams = 0;
+  unsigned drained = 0;
+};
+
+} // namespace
 
 void testPlans()
 {
@@ -64,10 +96,69 @@ void testECNTOS()
     "TOS CE decode mismatch");
 }
 
+void testEndpointRebind()
+{
+  ZuTestScope(testEndpointRebind);
+
+  ZiMultiplex mx(
+      ZiMxParams()
+	.scheduler([](auto &s) {
+	  s.nThreads(5)
+	    .thread(1, [](auto &t) { t.isolated(1); })
+	    .thread(2, [](auto &t) { t.isolated(1); })
+	    .thread(3, [](auto &t) { t.isolated(1); })
+	    .thread(4, [](auto &t) { t.isolated(1); }); })
+	.rxThread(1).txThread(2));
+  ZuCHECK(mx.start(), "endpoint rebind multiplexer start failed");
+
+  TestEndpoint endpoint;
+  ZuCHECK(endpoint.init(&mx), "endpoint rebind init failed");
+  ZiIP localIP{"127.0.0.1"};
+  bool openReady = ZmBlock<bool>{}([&](auto wake) {
+    endpoint.readyFn = [wake = ZuMv(wake)](bool ok) mutable {
+      wake(ok);
+    };
+    if (!endpoint.openUDP(
+	Zquic::PathMode::ServerUnconnected,
+	localIP, 0)) {
+      auto fn = ZuMv(endpoint.readyFn);
+      if (fn) fn(false);
+    }
+  });
+  ZuCHECK(openReady && endpoint.connected(),
+    "endpoint initial UDP open did not connect");
+  unsigned oldGeneration = endpoint.generation();
+  uint16_t oldPort = endpoint.local().port();
+  ZuCHECK(endpoint.ready == 1 && oldGeneration && oldPort,
+    "endpoint initial UDP open state mismatch");
+
+  bool rebindOK = ZmBlock<bool>{}([&](auto wake) {
+    mx.rxRun([&endpoint, wake = ZuMv(wake)]() mutable {
+      endpoint.rebindUDP(
+	ZiIP{"127.0.0.1"}, 0, ZiIP{}, 0,
+	[&endpoint, wake = ZuMv(wake)](
+	  bool ok, ZiSockAddr local, bool) mutable {
+	  const ZiSockAddr &now = endpoint.local();
+	  wake(ok && local && local == now);
+	});
+    });
+  });
+  ZuCHECK(rebindOK, "endpoint UDP rebind failed");
+  ZuCHECK(endpoint.connected() && endpoint.generation() == oldGeneration + 1 &&
+      endpoint.local().port() && endpoint.local().port() != oldPort,
+    "endpoint UDP rebind did not refresh local endpoint");
+
+  ZmBlock<>{}([&](auto wake) {
+    endpoint.disconnect([wake = ZuMv(wake)]() mutable { wake(); });
+  });
+  mx.stop();
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testPlans);
   ZuTestCall(testECNTOS);
+  ZuTestCall(testEndpointRebind);
 }

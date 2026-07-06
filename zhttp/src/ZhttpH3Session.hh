@@ -102,6 +102,14 @@ struct Cxn {
   QPackTxTable *qpackTx() { return &qpackTxTable; }
   bool qpackEncoderWrite(ZuBSpan span) { return writeQPack_(enc, span); }
   bool qpackDecoderWrite(ZuBSpan span) { return writeQPack_(dec, span); }
+  template <typename PathInfo>
+  void pathUpdate(const PathInfo &) { }
+  template <typename MigrationResult>
+  void migrationStarted(const MigrationResult &) { }
+  template <typename MigrationResult>
+  void migrationPromoted(const MigrationResult &) { }
+  template <typename MigrationResult>
+  void migrationFailed(const MigrationResult &) { }
 
 private:
   bool writeQPack_(StreamRef &stream, ZuBSpan span) {

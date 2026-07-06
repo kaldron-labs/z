@@ -32,7 +32,7 @@ struct TransportParams {
   uint64_t	activeCxnIDLimit = 2;
   ResetToken	statelessResetToken;
   bool		statelessResetTokenPresent = false;
-  bool		disableActiveMigration = true;
+  bool		disableActiveMigration = false;
 
   bool validate() const;
   unsigned encodedLength() const;

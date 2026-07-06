@@ -14,6 +14,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZtCLI.hh>
+#include <zlib/Zquic.hh>
 
 #include "ZhttpTestUtil.hh"
 
@@ -35,6 +36,10 @@ constexpr unsigned DefaultCaseTimeout = 15;
 constexpr unsigned DefaultStallTimeout = 15;
 constexpr unsigned DefaultQuietTimeout = 5;
 constexpr unsigned ReadyAttempts = 15;
+// Large enough to exercise post-header/body migration without dominating
+// interop runtime.
+constexpr uint64_t MigrationAfterBytes = 1024;
+constexpr unsigned LargeBodyLines = 16384;
 
 uint64_t nowMS()
 {
@@ -57,6 +62,17 @@ namespace Proto {
   enum T { H1TCP, H1TLS, H3 };
 }
 
+namespace Scenario {
+  enum T {
+    Default,
+    MigrateHeaders,
+    MigrateBytes,
+    MigrateDrop,
+    MigrateCaddy,
+    MigrateCurl
+  };
+}
+
 struct Case {
   Pair::T	pair;
   Proto::T	proto;
@@ -65,6 +81,7 @@ struct Case {
   unsigned	timeout;
   unsigned	stallTimeout;
   unsigned	quietTimeout;
+  Scenario::T	scenario = Scenario::Default;
 };
 
 using OptString = ZtString<ZtStringHeapID<"ZtCLI.Option">>;
@@ -81,6 +98,13 @@ struct Options {
   bool		discardResponse = false;
   OptString	quicRxDrop;
   OptString	quicTxDrop;
+  OptString	quicMigration{"passive"};
+  uint32_t	quicMigrationCIDReserve = 1;
+  bool		quicMigrationCloseOnFailure = false;
+  OptString	quicMigrationLocal;
+  bool		quicMigrateLocal = false;
+  bool		quicMigrateAfterHeaders = false;
+  uint64_t	quicMigrateAfterBytes = 0;
   uint32_t	quicDiag = 0;
   uint32_t	memDiag = 0;
   bool		quiet = false;
@@ -102,6 +126,19 @@ ZtStruct((Options, CLI),
     (CLI::Long<"discard-response">)),                             (Bool, false)),
   (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),                   (String, "")),
   (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),                   (String, "")),
+  (((quicMigration), (CLI::Long<"quic-migration">)),              (String, "passive")),
+  (((quicMigrationCIDReserve),
+    (CLI::Long<"quic-migration-cid-reserve">)),                   (UInt32, 1)),
+  (((quicMigrationCloseOnFailure),
+    (CLI::Long<"quic-migration-close-on-failure">)),              (Bool, false)),
+  (((quicMigrationLocal),
+    (CLI::Long<"quic-migration-local">)),                         (String, "")),
+  (((quicMigrateLocal),
+    (CLI::Long<"quic-migrate-local">)),                           (Bool, false)),
+  (((quicMigrateAfterHeaders),
+    (CLI::Long<"quic-migrate-after-headers">)),                   (Bool, false)),
+  (((quicMigrateAfterBytes),
+    (CLI::Long<"quic-migrate-after-bytes">)),                     (UInt64, 0)),
   (((quicDiag), (CLI::Long<"quic-diag">)),                        (UInt32, 0)),
   (((memDiag),  (CLI::Long<"mem-diag">)),                         (UInt32, 0)),
   (((quiet),    (CLI::Flag<'q'>, CLI::Long<"quiet">)),            (Bool, false)),
@@ -152,10 +189,23 @@ const char *protoCaseName(Proto::T proto)
   return "unknown";
 }
 
+const char *scenarioCaseName(Scenario::T scenario)
+{
+  switch (scenario) {
+    case Scenario::Default: return "";
+    case Scenario::MigrateHeaders: return "/mig-headers";
+    case Scenario::MigrateBytes: return "/mig-bytes";
+    case Scenario::MigrateDrop: return "/mig-drop";
+    case Scenario::MigrateCaddy: return "/mig-caddy";
+    case Scenario::MigrateCurl: return "/mig-curl";
+  }
+  return "/unknown";
+}
+
 void caseName(ZtString<> &s, const Case &c)
 {
   s << pairCaseName(c.pair) << '/' << protoCaseName(c.proto) <<
-    "/j" << c.jobs << 'n' << c.requests;
+    "/j" << c.jobs << 'n' << c.requests << scenarioCaseName(c.scenario);
 }
 
 void usage(int code = 1)
@@ -177,6 +227,22 @@ void usage(int code = 1)
     "  --discard-response discard zhttp response bodies\n"
     "  --quic-rx-drop=N% pass QUIC receive packet drop rate to zhttp/zhttpd\n"
     "  --quic-tx-drop=N% pass QUIC transmit packet drop rate to zhttp/zhttpd\n"
+    "  --quic-migration=MODE\n"
+    "                    pass QUIC migration policy to zhttp/zhttpd H3 rows;\n"
+    "                    disabled, passive, active; default passive\n"
+    "  --quic-migration-cid-reserve=N\n"
+    "                    pass peer CID reserve to zhttp/zhttpd H3 rows\n"
+    "  --quic-migration-close-on-failure\n"
+    "                    pass active migration close-on-failure to H3 rows\n"
+    "  --quic-migration-local=ADDR[:PORT]\n"
+    "                    pass explicit client local migration address\n"
+    "  --quic-migrate-local\n"
+    "                    request one zhttp H3 client local UDP port migration;\n"
+    "                    requires --quic-migration=active\n"
+    "  --quic-migrate-after-headers\n"
+    "                    request zhttp H3 client migration after headers\n"
+    "  --quic-migrate-after-bytes=N\n"
+    "                    request zhttp H3 client migration after N body bytes\n"
 #ifdef Zquic_DEBUG
     "  --quic-diag=N     pass QUIC diagnostic print interval in seconds\n"
 #endif
@@ -199,6 +265,72 @@ bool selected(const Case &c)
   if (options.caseName) return true;
   if (c.pair == Pair::CurlCaddy) return false;
   return true;
+}
+
+bool scenarioMigrates(const Case &c)
+{
+  return c.scenario == Scenario::MigrateHeaders ||
+    c.scenario == Scenario::MigrateBytes ||
+    c.scenario == Scenario::MigrateDrop ||
+    c.scenario == Scenario::MigrateCaddy;
+}
+
+ZuCSpan caseMigrationMode(const Case &c)
+{
+  if (c.scenario == Scenario::MigrateCurl) return "passive";
+  return scenarioMigrates(c) ? ZuCSpan{"active"} : ZuCSpan{options.quicMigration};
+}
+
+unsigned caseMigrationCIDReserve(const Case &c)
+{
+  unsigned reserve = options.quicMigrationCIDReserve;
+  if (scenarioMigrates(c) && reserve < 2) reserve = 2;
+  return reserve;
+}
+
+bool caseMigrateAfterHeaders(const Case &c)
+{
+  return options.quicMigrateAfterHeaders ||
+    c.scenario == Scenario::MigrateHeaders ||
+    c.scenario == Scenario::MigrateDrop ||
+    c.scenario == Scenario::MigrateCaddy;
+}
+
+uint64_t caseMigrateAfterBytes(const Case &c)
+{
+  if (options.quicMigrateAfterBytes) return options.quicMigrateAfterBytes;
+  return c.scenario == Scenario::MigrateBytes ? MigrationAfterBytes : 0;
+}
+
+bool caseLargeBody(const Case &c)
+{
+  return c.scenario == Scenario::MigrateBytes;
+}
+
+bool caseQuicRxDrop(const Case &c)
+{
+  return options.quicRxDrop || c.scenario == Scenario::MigrateDrop;
+}
+
+bool caseQuicTxDrop(const Case &c)
+{
+  return options.quicTxDrop || c.scenario == Scenario::MigrateDrop;
+}
+
+ZuCSpan caseQuicRxDropValue(const Case &c)
+{
+  return options.quicRxDrop ? ZuCSpan{options.quicRxDrop} : ZuCSpan{"1%"};
+}
+
+ZuCSpan caseQuicTxDropValue(const Case &c)
+{
+  return options.quicTxDrop ? ZuCSpan{options.quicTxDrop} : ZuCSpan{"1%"};
+}
+
+ZuCSpan caseMigrationLocal(const Case &c)
+{
+  if (options.quicMigrationLocal) return options.quicMigrationLocal;
+  return scenarioMigrates(c) ? ZuCSpan{"127.0.0.1:0"} : ZuCSpan{};
 }
 
 bool parsePair(ZuCSpan name, Pair::T &pair)
@@ -234,6 +366,35 @@ bool parseProto(ZuCSpan name, Proto::T &proto)
   }
   if (name == "h3") {
     proto = Proto::H3;
+    return true;
+  }
+  return false;
+}
+
+bool parseScenario(ZuCSpan name, Scenario::T &scenario)
+{
+  if (!name) {
+    scenario = Scenario::Default;
+    return true;
+  }
+  if (name == "mig-headers") {
+    scenario = Scenario::MigrateHeaders;
+    return true;
+  }
+  if (name == "mig-bytes") {
+    scenario = Scenario::MigrateBytes;
+    return true;
+  }
+  if (name == "mig-drop") {
+    scenario = Scenario::MigrateDrop;
+    return true;
+  }
+  if (name == "mig-caddy") {
+    scenario = Scenario::MigrateCaddy;
+    return true;
+  }
+  if (name == "mig-curl") {
+    scenario = Scenario::MigrateCurl;
     return true;
   }
   return false;
@@ -375,21 +536,29 @@ bool parseCase(Case &c)
   int nOff = findChar(s, 'n', workload + 1);
   if (nOff <= int(workload + 1) || nOff + 1 >= int(s.length()))
     return false;
+  int scenarioOff = findChar(s, '/', nOff + 1);
+  unsigned requestEnd = scenarioOff < 0 ? s.length() : unsigned(scenarioOff);
   unsigned jobs, requests;
   if (!parseUInt(ZuCSpan{s.data() + workload + 1,
 	  unsigned(nOff) - workload - 1}, jobs) ||
       !parseUInt(ZuCSpan{s.data() + nOff + 1,
-	  s.length() - unsigned(nOff) - 1}, requests))
+	  requestEnd - unsigned(nOff) - 1}, requests))
     return false;
   Pair::T pair;
   Proto::T proto;
+  Scenario::T scenario;
   if (!parsePair(ZuCSpan{s.data(), unsigned(pairEnd)}, pair) ||
       !parseProto(ZuCSpan{s.data() + pairEnd + 1,
-	unsigned(protoEnd - pairEnd - 1)}, proto))
+	unsigned(protoEnd - pairEnd - 1)}, proto) ||
+      !parseScenario(
+	scenarioOff < 0 ? ZuCSpan{} :
+	  ZuCSpan{s.data() + unsigned(scenarioOff) + 1,
+	    s.length() - unsigned(scenarioOff) - 1},
+	scenario))
     return false;
   if (!jobs || !requests) return false;
   c = {pair, proto, jobs, requests,
-    options.timeout, options.stallTimeout, options.quietTimeout};
+    options.timeout, options.stallTimeout, options.quietTimeout, scenario};
   return true;
 }
 
@@ -419,6 +588,26 @@ void eachCase(L l)
 	for (auto request : requests)
 	  l(Case{pair, proto, job, request,
 	      options.timeout, options.stallTimeout, options.quietTimeout});
+  l(Case{
+    Pair::ZhttpZhttpd, Proto::H3, 1, 1,
+    options.timeout, options.stallTimeout, options.quietTimeout,
+    Scenario::MigrateHeaders});
+  l(Case{
+    Pair::ZhttpZhttpd, Proto::H3, 1, 1,
+    options.timeout, options.stallTimeout, options.quietTimeout,
+    Scenario::MigrateBytes});
+  l(Case{
+    Pair::ZhttpZhttpd, Proto::H3, 1, 1,
+    options.timeout, options.stallTimeout, options.quietTimeout,
+    Scenario::MigrateDrop});
+  l(Case{
+    Pair::ZhttpCaddy, Proto::H3, 1, 1,
+    options.timeout, options.stallTimeout, options.quietTimeout,
+    Scenario::MigrateCaddy});
+  l(Case{
+    Pair::CurlZhttpd, Proto::H3, 1, 1,
+    options.timeout, options.stallTimeout, options.quietTimeout,
+    Scenario::MigrateCurl});
 }
 
 bool anySelected()
@@ -448,6 +637,37 @@ bool selectedNeedsCurlH3()
     if (selected(c) && c.proto == Proto::H3) need = true;
   });
   return need;
+}
+
+bool validMigrationOptions()
+{
+  if (!Zquic::validMigrationMode(options.quicMigration)) return false;
+  bool active = options.quicMigration == "active";
+  bool migrates =
+    options.quicMigrateLocal || options.quicMigrationLocal ||
+    options.quicMigrateAfterHeaders || options.quicMigrateAfterBytes;
+  if (migrates && !active)
+    return false;
+  return true;
+}
+
+bool haveCurlH3Migration()
+{
+  static int available = -1;
+  if (available < 0)
+    available = systemOK(::system(
+      "curl --help all 2>/dev/null | "
+      "grep -Eq -- '--quic-migrate|--quic-rebind|--http3-migration'")) ? 1 : 0;
+  return available;
+}
+
+bool skipCase(const Case &c, ZtString<> &reason)
+{
+  if (c.scenario == Scenario::MigrateCurl && !haveCurlH3Migration()) {
+    reason = "curl lacks HTTP/3 migration/rebind CLI";
+    return true;
+  }
+  return false;
 }
 
 bool writeFile(ZuCSpan path, ZuCSpan data, unsigned mode = 0666)
@@ -511,14 +731,18 @@ void analyzePcap(unsigned port, TempDir &temp)
   (void)::system(cmd.data());
 }
 
-bool writeRoot(TempDir &temp, ZtString<> &rootPath)
+bool writeRoot(TempDir &temp, const Case &c, ZtString<> &rootPath)
 {
   rootPath = temp.pathOf("root");
   if (ZiFile::mkdir(rootPath) != Zi::OK) return false;
   ZtString<> filePath;
   filePath << rootPath << Path;
   ZtString<> body;
-  body << Body << '\n';
+  if (caseLargeBody(c)) {
+    for (unsigned i = 0; i < LargeBodyLines; ++i)
+      body << Body << '\n';
+  } else
+    body << Body << '\n';
   return writeFile(filePath, body.cspan());
 }
 
@@ -629,10 +853,24 @@ void appendZhttpCommand(
       script << " --http3=force -c " << certPath;
       if (options.debug || options.pcap)
 	script << " --key-log=$key_log_file";
-      if (options.quicRxDrop)
-	script << " --quic-rx-drop=" << options.quicRxDrop;
-      if (options.quicTxDrop)
-	script << " --quic-tx-drop=" << options.quicTxDrop;
+      if (caseQuicRxDrop(c))
+	script << " --quic-rx-drop=" << caseQuicRxDropValue(c);
+      if (caseQuicTxDrop(c))
+	script << " --quic-tx-drop=" << caseQuicTxDropValue(c);
+      if (caseMigrationMode(c))
+	script << " --quic-migration=" << caseMigrationMode(c);
+      script << " --quic-migration-cid-reserve=" <<
+	caseMigrationCIDReserve(c);
+      if (options.quicMigrationCloseOnFailure)
+	script << " --quic-migration-close-on-failure";
+      if (ZuCSpan local = caseMigrationLocal(c))
+	script << " --quic-migration-local=" << local;
+      if (options.quicMigrateLocal)
+	script << " --quic-migrate-local";
+      if (caseMigrateAfterHeaders(c))
+	script << " --quic-migrate-after-headers";
+      if (uint64_t bytes = caseMigrateAfterBytes(c))
+	script << " --quic-migrate-after-bytes=" << bytes;
       if (options.quicDiag)
 	script << " --quic-diag=" << options.quicDiag;
       break;
@@ -814,10 +1052,16 @@ bool writeScript(
 	script << " --http3 --cert " << certPath << " --key " << keyPath;
 	if (options.debug || options.pcap)
 	  script << " --key-log=$key_log_file";
-	if (options.quicRxDrop)
-	  script << " --quic-rx-drop=" << options.quicRxDrop;
-	if (options.quicTxDrop)
-	  script << " --quic-tx-drop=" << options.quicTxDrop;
+	if (caseQuicRxDrop(c))
+	  script << " --quic-rx-drop=" << caseQuicRxDropValue(c);
+	if (caseQuicTxDrop(c))
+	  script << " --quic-tx-drop=" << caseQuicTxDropValue(c);
+	if (caseMigrationMode(c))
+	  script << " --quic-migration=" << caseMigrationMode(c);
+	script << " --quic-migration-cid-reserve=" <<
+	  caseMigrationCIDReserve(c);
+	if (options.quicMigrationCloseOnFailure)
+	  script << " --quic-migration-close-on-failure";
 	if (options.quicDiag)
 	  script << " --quic-diag=" << options.quicDiag;
 	break;
@@ -884,7 +1128,7 @@ bool runCase_(const Case &c, uint64_t &duration)
     return false;
   }
   ZtString<> rootPath;
-  if (!writeRoot(temp, rootPath)) {
+  if (!writeRoot(temp, c, rootPath)) {
     std::cout << "# failed to create static root\n";
     preserveTemp(temp);
     return false;
@@ -995,6 +1239,7 @@ int main(int argc, char **argv)
   argc = ZtCLI::load(options, argc, const_cast<const char *const *>(argv));
   if (options.help) usage(0);
   if (argc != 1) usage();
+  if (!validMigrationOptions()) usage();
   verbose = !options.quiet && !::getenv("HARNESS_ACTIVE");
 
   unsigned nTests = 1;
@@ -1015,6 +1260,12 @@ int main(int argc, char **argv)
     if (!selected(c)) return;
     ZtString<> name;
     caseName(name, c);
+    ZtString<> skip;
+    if (skipCase(c, skip)) {
+      std::cout << "ok " << ++testNo << " - " << name << " # SKIP " <<
+	skip << '\n';
+      return;
+    }
     uint64_t start = printCaseStart(c);
     uint64_t duration = 0;
     bool ok = prereqOK && runCase_(c, duration);

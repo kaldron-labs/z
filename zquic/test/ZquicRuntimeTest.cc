@@ -328,6 +328,10 @@ void dumpRuntimeDiag(
     " streamBytesRx=" << uint64_t(d.rx.streamBytesRx) <<
     " ptoCount=" << uint64_t(d.tx.ptoCount) <<
     " retransmittedFrames=" << uint64_t(d.tx.retransmittedFrames) <<
+    " migReq=" << uint64_t(d.tx.migration.requested) <<
+    " migStarted=" << uint64_t(d.tx.migration.started) <<
+    " migPromoted=" << uint64_t(d.tx.migration.promoted) <<
+    " migFailed=" << uint64_t(d.tx.migration.failed) <<
     " failures=" << uint64_t(d.failures()) <<
     " handshakeComplete=" << uint64_t(d.rx.handshakeComplete) <<
     " tlsHandled=" << c.tlsMessagesHandled <<

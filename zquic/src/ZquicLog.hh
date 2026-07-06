@@ -390,18 +390,21 @@ struct PathAction {
 struct PathReason {
   ZtEnum(PathReason, int8_t,
     None, Client, Server, Initial, Datagram, PeerAddrChange, Mismatch,
-    Matched, Response, Promoted, Timeout, AntiAmp, ProbeAdmit,
-    PathHint, Probe, Admission, SendFail);
+    NATRebind, Matched, Response, Promoted, Timeout, AntiAmp, ProbeAdmit,
+    PathHint, Probe, Admission, SendFail, Active, Endpoint, PeerDisabled,
+    NoPeerCID, Validation);
   ZtEnumMap(PathReason, JSON,
     "", "client", "server", "initial", "datagram", "peer_address_change",
-    "mismatch", "matched", "response", "promoted", "timeout",
+    "mismatch", "nat_rebind", "matched", "response", "promoted", "timeout",
     "anti_amplification", "probe_admission", "path_hint", "probe",
-    "admission", "send_failure");
+    "admission", "send_failure", "active", "endpoint", "peer_disabled",
+    "no_peer_cid", "validation");
 };
 
 struct PathEvent {
   LinkInfo		linkInfo;
   uint64_t		tupleID = 0;
+  uint64_t		attemptID = U64Null;
   uint64_t		bytes = 0;
   uint64_t		antiAmplification = 0;
   uint64_t		deadlineUS = 0;
@@ -427,16 +430,18 @@ struct CIDAction {
 struct CIDReason {
   ZtEnum(CIDReason, int8_t,
     None, PeerRequest, PathPromoted, RouteInstall, RouteRetire,
-    RouteTombstone, Sequence, ID, ResetToken, RetirePrior);
+    RouteTombstone, Sequence, ID, ResetToken, RetirePrior, Migration);
   ZtEnumMap(CIDReason, JSON,
     "", "peer_request", "path_promoted", "route_install", "route_retire",
-    "route_tombstone", "sequence", "id", "reset_token", "retire_prior_to");
+    "route_tombstone", "sequence", "id", "reset_token", "retire_prior_to",
+    "migration");
 };
 
 struct CIDEvent {
   CxnID			cxnID;
   LinkInfo		linkInfo;
   uint64_t		sequence = 0;
+  uint64_t		attemptID = U64Null;
   CIDKind::T		kind = CIDKind::CxnID;
   CIDAction::T		action = CIDAction::Updated;
   CIDReason::T		reason = CIDReason::None;
@@ -444,6 +449,37 @@ struct CIDEvent {
   bool			local = false;
   bool			associated = false;
   bool			resetToken = false;
+};
+
+struct MigrationAction {
+  ZtEnum(MigrationAction, int8_t,
+    Requested, Rejected, Started, RebindStart, RebindOK, RebindFail,
+    CIDSelected, CIDUnavailable, ChallengeQueued, ResponseMatched,
+    ResponseMismatch, Promoted, Abandoned, Failed, Closed);
+  ZtEnumMap(MigrationAction, JSON,
+    "requested", "rejected", "started", "rebind_start", "rebind_ok",
+    "rebind_fail", "cid_selected", "cid_unavailable", "challenge_queued",
+    "response_matched", "response_mismatch", "promoted", "abandoned",
+    "failed", "closed", "unknown");
+};
+
+struct MigrationEvent {
+  LinkInfo			linkInfo;
+  ZiSockAddr			activeLocal;
+  ZiSockAddr			activeRemote;
+  ZiSockAddr			candidateLocal;
+  ZiSockAddr			candidateRemote;
+  uint64_t			attemptID = 0;
+  uint64_t			peerCIDSeq = U64Null;
+  uint64_t			deadlineUS = 0;
+  uint32_t			mtu = 0;
+  MigrationAction::T		action = MigrationAction::Requested;
+  Zquic::MigrationReason::T	reason = Zquic::MigrationReason::None;
+  Zquic::MigrationState::T	state = Zquic::MigrationState::Idle;
+  Zquic::PathRole::T		pathRole = Zquic::PathRole::Candidate;
+  bool				localRebind = false;
+  bool				validated = false;
+  bool				closeOnFailure = false;
 };
 
 struct StreamState {
@@ -583,7 +619,7 @@ struct EventName {
     PktProtectFail, ZeroRTTAccept, ZeroRTTReject, TupleAssigned,
     PathValidated, MTUUpd, CIDUpd, StreamStateUpd, StreamDataMoved,
     CxnDataBlockedUpd,
-    StreamDataBlockedUpd, CxnClosed, CxnStateUpd);
+    StreamDataBlockedUpd, CxnClosed, CxnStateUpd, MigrationUpd);
   ZtEnumMap(EventName, JSON,
     "quic:connection_started", "quic:udp_datagrams_sent",
     "quic:udp_datagrams_received", "quic:packet_sent",
@@ -602,7 +638,7 @@ struct EventName {
     "quic:connection_id_updated", "quic:stream_state_updated",
     "quic:stream_data_moved", "quic:connection_data_blocked_updated",
     "quic:stream_data_blocked_updated", "quic:connection_closed",
-    "quic:connection_state_updated");
+    "quic:connection_state_updated", "zquic:migration_updated");
 };
 
 } // namespace ZquicLog_
@@ -762,6 +798,10 @@ public:
   static void cidUpdated(Trace &trace, ZquicLog_::CIDEvent event) {
     instance()->cidUpdated_(trace, ZuMv(event));
   }
+  static void migrationUpdated(
+    Trace &trace, ZquicLog_::MigrationEvent event) {
+    instance()->migrationUpdated_(trace, ZuMv(event));
+  }
   static void streamStateUpd(Trace &trace, ZquicLog_::StreamEvent event) {
     instance()->streamStateUpd_(trace, ZuMv(event));
   }
@@ -874,6 +914,10 @@ public:
   void logCIDUpdated(const ZquicLog_::CIDEvent &event, ZuTime time) {
     writeCIDEvent_(ZquicLog_::EventName::CIDUpd, event, time);
   }
+  void logMigrationUpdated(
+    const ZquicLog_::MigrationEvent &event, ZuTime time) {
+    writeMigrationEvent_(event, time);
+  }
   void logStreamStateUpd(
     const ZquicLog_::StreamEvent &event, ZuTime time) {
     writeStreamEvent_(ZquicLog_::EventName::StreamStateUpd, event, time);
@@ -954,6 +998,7 @@ private:
   void pathValidUpd_(Trace &, ZquicLog_::PathEvent);
   void pmtudUpdated_(Trace &, ZquicLog_::PathEvent);
   void cidUpdated_(Trace &, ZquicLog_::CIDEvent);
+  void migrationUpdated_(Trace &, ZquicLog_::MigrationEvent);
   void streamStateUpd_(Trace &, ZquicLog_::StreamEvent);
   void streamDataMoved_(Trace &, ZquicLog_::StreamDataEvent);
   void cxnDataBlockedUpd_(Trace &, ZquicLog_::BlockedEvent);
@@ -1016,6 +1061,7 @@ private:
   bool writeMTUEvent_(const ZquicLog_::PathEvent &, ZuTime);
   bool writePathValid_(const ZquicLog_::PathEvent &, ZuTime);
   bool writeCIDEvent_(ZquicLog_::EventName::T, const ZquicLog_::CIDEvent &, ZuTime);
+  bool writeMigrationEvent_(const ZquicLog_::MigrationEvent &, ZuTime);
   bool writeStreamEvent_(
     ZquicLog_::EventName::T, const ZquicLog_::StreamEvent &, ZuTime);
   bool writeStreamData_(
@@ -1058,6 +1104,7 @@ struct ZquicLogger {
   }
   static void start() { }
   static void stop() { }
+  static void stopIdle() { }
   template <typename L>
   static void close(Trace &, L &&l) { l(); }
   static void final(Trace &) { }
@@ -1089,6 +1136,7 @@ struct ZquicLogger {
   static void pathValidUpd(Trace &, ZquicLog_::PathEvent) { }
   static void pmtudUpdated(Trace &, ZquicLog_::PathEvent) { }
   static void cidUpdated(Trace &, ZquicLog_::CIDEvent) { }
+  static void migrationUpdated(Trace &, ZquicLog_::MigrationEvent) { }
   static void streamStateUpd(Trace &, ZquicLog_::StreamEvent) { }
   static void streamDataMoved(Trace &, ZquicLog_::StreamDataEvent) { }
   static void cxnDataBlockedUpd(Trace &, ZquicLog_::BlockedEvent) { }

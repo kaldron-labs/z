@@ -192,6 +192,8 @@ ZuDerive(ServerLinks_,
     ZmHashHeapID<"Zquic.Server.LinkHash">>));
 
 using EndpointDiscFn = ZmFn<void(), ZmFnHeapID<"Zquic.Endpoint.DiscFn">>;
+using EndpointRebindFn =
+  ZmFn<void(bool, ZiSockAddr, bool), ZmFnHeapID<"Zquic.Endpoint.RebindFn">>;
 ZuDerive(EndpointDiscFns,
   (ZmQueue<EndpointDiscFn, ZmQueueHeapID<"Zquic.Endpoint.DiscFns">>));
 
@@ -467,6 +469,81 @@ public:
     return true;
   }
 
+  template <typename L>
+  bool rebindUDP(
+      ZiIP localIP, uint16_t localPort,
+      ZiIP remoteIP, uint16_t remotePort,
+      L &&l) {
+    EndpointRebindFn fn{ZuFwd<L>(l)};
+    if (!m_mx) {
+      fn(false, ZiSockAddr{}, false);
+      return false;
+    }
+    if (!m_mx->running()) {
+      fn(false, ZiSockAddr{}, false);
+      return false;
+    }
+    if (endpointRxInvoked_())
+      return rebindUDP_(localIP, localPort, remoteIP, remotePort, ZuMv(fn));
+    m_mx->rxRun([
+      this,
+      localIP,
+      localPort,
+      remoteIP,
+      remotePort,
+      fn = ZuMv(fn)
+    ]() mutable {
+      rebindUDP_(localIP, localPort, remoteIP, remotePort, ZuMv(fn));
+    });
+    return true;
+  }
+
+private:
+  bool rebindUDP_(
+      ZiIP localIP, uint16_t localPort,
+      ZiIP remoteIP, uint16_t remotePort,
+      EndpointRebindFn fn) {
+    if (!m_mx || !m_open || !m_cxn || m_rebindCxn || m_rebinding) {
+      fn(false, ZiSockAddr{}, false);
+      return false;
+    }
+    if (!m_mx->running()) {
+      fn(false, ZiSockAddr{}, false);
+      return false;
+    }
+    IPFamily::T family = IPFamily::IPv4;
+    if (localIP.v6() || remoteIP.v6()) family = IPFamily::IPv6;
+    m_rebindLocal.init(localIP, localPort);
+    if (!!remoteIP)
+      m_rebindRemote.init(remoteIP, remotePort);
+    else
+      m_rebindRemote.null();
+    m_rebindSockConfig = SockConfig{family, m_mode, true, true};
+    m_rebindGeneration = m_generation + 1;
+    m_rebindFn = ZuMv(fn);
+    m_rebinding = true;
+
+    ZiCxnOptions options;
+    options.udp(true);
+    m_mx->udp(
+      ZiConnectFn{this, [](Endpoint_ *self, const ZiCxnInfo &ci) ->
+	  ZiConnection * {
+	if (!self->m_rebinding) return nullptr;
+	auto cxn = new Cxn_{self, ci, self->m_rebindGeneration};
+	self->m_rebindCxn = cxn;
+	return cxn;
+      }},
+      ZiFailFn{this, [](Endpoint_ *self, bool) {
+	self->failedRebind_(false);
+      }},
+      localIP, localPort,
+      m_mode == PathMode::ClientConnected ? remoteIP : ZiIP{},
+      m_mode == PathMode::ClientConnected ? remotePort : 0,
+      options);
+    return true;
+  }
+
+public:
   void disconnect() {
     disconnect_(EndpointDiscFn{});
   }
@@ -497,6 +574,7 @@ public:
   const ZiSockAddr &local() const { return m_local; }
   const ZiSockAddr &remote() const { return m_remote; }
   PathMode::T mode() const { return m_mode; }
+  unsigned generation() const { return m_generation; }
   EndpointDiag diag() const {
     uint64_t txPending = 0;
     uint64_t txQueued = 0;
@@ -531,7 +609,21 @@ public:
 
 private:
   void connected_(Cxn_ *cxn, ZiIOContext &io) {
-    if (m_cxn != cxn || cxn->generation() != m_generation) return;
+    bool rebind = false;
+    CxnRef oldCxn;
+    if (m_rebindCxn == cxn && cxn->generation() == m_rebindGeneration) {
+      rebind = true;
+      oldCxn = ZuMv(m_cxn);
+      m_cxn = cxn;
+      m_generation = m_rebindGeneration;
+      m_sockConfig = m_rebindSockConfig;
+      m_sockDiag = {};
+      m_local = m_rebindLocal;
+      m_remote = m_rebindRemote;
+      m_rebindCxn = nullptr;
+      m_rebinding = false;
+    } else if (m_cxn != cxn || cxn->generation() != m_generation)
+      return;
 
     Sock::initUDP(cxn->info().socket, m_sockConfig, &m_sockDiag);
 
@@ -552,6 +644,11 @@ private:
     m_connected = true;
     cxn->armRecv_(io);
     impl()->endpointReady_(this);
+    if (rebind) {
+      closeCxn_(ZuMv(oldCxn));
+      EndpointRebindFn fn = ZuMv(m_rebindFn);
+      if (fn) fn(true, m_local, false);
+    }
   }
 
   template <typename ImplRef_>
@@ -592,6 +689,15 @@ private:
     m_cxn = nullptr;
     impl()->endpointFailed_(transient);
     impl()->endpointDown_(this);
+  }
+
+  void failedRebind_(bool success) {
+    if (!m_rebinding) return;
+    m_rebindCxn = nullptr;
+    m_rebinding = false;
+    ++m_rxDiag.failures;
+    EndpointRebindFn fn = ZuMv(m_rebindFn);
+    if (fn) fn(success, ZiSockAddr{}, false);
   }
 
   void received_(Datagram datagram) {
@@ -642,16 +748,17 @@ private:
     m_listening = false;
     m_connected = false;
     m_open = false;
+    EndpointRebindFn rebindFn;
+    if (m_rebinding) rebindFn = ZuMv(m_rebindFn);
+    m_rebinding = false;
+    closeCxn_(ZuMv(m_rebindCxn));
+    if (rebindFn) rebindFn(false, ZiSockAddr{}, true);
     CxnRef cxn = m_cxn;
     if (!cxn) {
       discFns_();
       return;
     }
-    cxn->beginCloseRx_();
-    m_mx->txRun([cxn = ZuMv(cxn)]() mutable {
-      cxn->closeTx_();
-      cxn->disconnect();
-    });
+    closeCxn_(ZuMv(cxn));
   }
   EndpointDiscFns takeDiscFns_() {
     auto fns = ZuMv(m_discFns);
@@ -666,6 +773,14 @@ private:
   }
   static void runDiscFns_(EndpointDiscFns &fns) {
     while (auto fn = fns.shift()) fn();
+  }
+  void closeCxn_(CxnRef cxn) {
+    if (!cxn) return;
+    cxn->beginCloseRx_();
+    m_mx->txRun([cxn = ZuMv(cxn)]() mutable {
+      cxn->closeTx_();
+      cxn->disconnect();
+    });
   }
 
   bool endpointRxInvoked_() const {
@@ -685,8 +800,14 @@ private:
   SockConfig		m_sockConfig;
 
   CxnRef		m_cxn;
+  CxnRef		m_rebindCxn;
   EndpointDiscFns	m_discFns;
   unsigned		m_generation = 0;
+  unsigned		m_rebindGeneration = 0;
+  EndpointRebindFn	m_rebindFn;
+  ZiSockAddr		m_rebindLocal;
+  ZiSockAddr		m_rebindRemote;
+  SockConfig		m_rebindSockConfig;
   EndpointRxDiag	m_rxDiag;
   SockDiag		m_sockDiag;
 
@@ -696,6 +817,7 @@ private:
   bool			m_connected = false;
   bool			m_listening = false;
   bool			m_open = false;
+  bool			m_rebinding = false;
 };
 
 } // namespace Zquic_
