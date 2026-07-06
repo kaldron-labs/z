@@ -1,10 +1,21 @@
 # Zquic
 
-`Zquic` is the QUIC transport module. It owns QUIC connection state, packet and
-stream buffers, UDP path handling, loss recovery, flow control, and timers.
-It is a transport library, not an HTTP/3 stack.
+`Zquic` is the QUIC transport module. It owns QUIC connection state, packet
+encoding/protection, stream scheduling, UDP path handling, loss recovery, flow
+control, timers, qlog instrumentation, and transport-facing diagnostics.
+It is a transport library, not an HTTP/3 stack; production HTTP/3 is owned by
+`Zhttp` and uses `Zquic` underneath.
 
-The public API is transport-oriented:
+This file is a map for navigating the implementation.  Required review rules
+for editing `zquic` live in `zquic/GUIDELINES.md`.
+
+## Public Surface
+
+The primary include is `Zquic.hh`, which pulls in the transport vocabulary,
+packet/frame codecs, crypto, recovery, stream/link runtime, socket adapter,
+diagnostics, and qlog support.
+
+Applications use the CRTP API:
 
 - client applications derive from `Zquic::Client<App>` and create
   `Zquic::CliLink<App, Link, Stream>` objects;
@@ -17,150 +28,91 @@ The public API is transport-oriented:
 - peer-created streams are reported to the link implementation with
   `streamed(ZmRef<Stream>)`.
 
-Runtime entry points are also transport-oriented. `Zquic::Server::start()`
-opens one unconnected UDP listener and routes datagrams to active `SrvLink`s by
-connection ID. `Zquic::CliLink::connect()` opens a
-connected UDP socket. `ClientParams` and `ServerParams` are aliases of
-`EngineParams`; they configure the multiplexer, Rx/Tx threads, TLS paths, ALPN,
-qlog, flow/stream limits, idle timeout, maximum UDP payload, ECN, and address
-validation policy.
-
-Runtime diagnostics expose endpoint readiness/failure counts, datagram byte
-counts, parsed packet/frame counts, handshake progress, stream frames, ACKs,
-ECN, congestion/recovery state, PMTUD state, path validation, packet protection,
-address validation, and qlog counters. Endpoint Tx queues are bounded and report
-back-pressure through endpoint diagnostics when enqueue fails.
-
-`Zquic` does not expose HTTP/3 request, response, QPACK, or WebTransport types.
-Production HTTP/3 is owned by `Zhttp` and uses `Zquic` as its transport.
+`Zquic::Server::start()` opens the UDP listener. `Zquic::CliLink::connect()`
+opens the client UDP socket. `ClientParams` and `ServerParams` are aliases of
+`EngineParams`, which configures the multiplexer, Rx/Tx threads, TLS paths,
+ALPN, qlog, transport limits, idle timeout, maximum UDP payload, ECN, and
+address validation policy.
 
 `zquic/example` contains small noinst transport examples:
 `ZquicServer` listens on one UDP socket and accepts routed `SrvLink`s, while
 `ZquicClient` opens a `CliLink`, sends one stream payload, and prints the
 server's stream response.
 
-Current protocol scope:
+## Source Map
 
-- QUIC v1 only;
-- no QUIC v2;
-- no compatible version negotiation;
-- no multipath;
-- no WebTransport;
-- no DATAGRAM support;
-- 0-RTT support is present behind application callbacks for session-ticket
-  storage, remembered transport-parameter validation, maximum early data, early
-  stream admission, and accepted/rejected notification;
-- ECN marking, ACK_ECN parsing, validation, fallback, and diagnostics are
-  present when enabled by `EngineParams::ecn(true)`;
-- no full connection migration beyond path and CID state needed for future
-  extension.
+- `ZquicTypes.hh`: protocol constants and enum vocabulary.
+- `ZquicPacket.hh` / `ZquicPacket.cc`: QUIC packet header parsing, packet
+  number handling, Retry, stateless reset, and Version Negotiation encoding.
+- `ZquicFrame.hh` / `ZquicFrame.cc`: frame parsing/formatting and transport
+  parameter encoding.
+- `ZquicCrypto.hh` / `ZquicCrypto.cc`: picotls integration, Initial/Handshake/
+  0-RTT/1-RTT key state, packet protection, TLS output, and early-data state.
+- `ZquicRecovery.hh` / `ZquicRecovery.cc`: ACK ranges, sent-packet tracking,
+  PTO/loss recovery, retransmit queues, RTT, congestion, and ECN validation.
+- `ZquicStream.hh` / `ZquicStream.cc`: stream objects, Rx reassembly, Tx
+  retention, stream-state transitions, RESET/STOP, and stream GC.
+- `ZquicLink.hh`: shared client/server connection runtime: stream tables,
+  flow control, ACK generation, frame dispatch, control queues, path state,
+  PMTUD, CID management, key updates, close/drain handling, and diagnostics.
+- `ZquicCliLink.hh`: client socket lifecycle, bootstrap, Retry handling,
+  TLS client setup, 0-RTT send path, NEW_TOKEN retention, and client packet I/O.
+- `ZquicSrvLink.hh`: server connection bootstrap, TLS server setup, frame-send
+  gating, server packet I/O, and server close behavior.
+- `Zquic_.hh` and `ZquicSock.hh`: private UDP endpoint adapter, routing tables,
+  socket mode planning, Tx queueing, and datagram ownership.
+- `ZquicPath.hh` / `ZquicPath.cc`: path validation, anti-amplification,
+  ECN path state, and PMTUD/DPLPMTUD state.
+- `ZquicSched.hh` / `ZquicSched.cc`: stream scheduling and pacing helpers.
+- `ZquicBuf.hh` and `ZquicPQueue.hh`: packet/stream/CRYPTO buffer allocation
+  aliases and priority queues.  Buffer rules are in `zquic/GUIDELINES.md`.
+- `ZquicDiag.hh` / `ZquicDiag.cc`: diagnostic counters and stable formatter
+  helpers.
+- `ZquicLog.hh` / `ZquicLog.cc`: qlog JSON-SEQ writer, event model, ring,
+  file aging, and diagnostics.  qlog instrumentation rules are in
+  `zquic/GUIDELINES.md`.
 
-Version negotiation is v1-only. Unsupported long-header versions elicit a
-Version Negotiation packet advertising only `Version1`. Retry packets use the
-QUIC v1 Retry Integrity Tag calculation and client bootstrap validates the raw
-Retry packet before accepting the Retry token and server-selected connection ID.
-Server address validation can require Retry tokens and can issue `NEW_TOKEN`
-tokens for later connection attempts. Tokens are authenticated with an
-application-supplied or generated secret, have a configurable lifetime, and can
-optionally bind to the peer port.
+## Feature Landmarks
 
-The implementation advertises and enforces a local active connection ID limit of
-8; CID storage is dynamically backed but remains bounded by that negotiated
-policy. It also maintains stateless reset tokens for routed short-header CIDs.
+- QUIC version support is currently v1 only. `VersionNeg` and server
+  long-header routing live in `Zquic.hh`; packet codec support is in
+  `ZquicPacket.*`.
+- Address validation spans `AddressToken`, `ClientBootstrap`,
+  `ServerBootstrap`, client `NEW_TOKEN` retention, and server Retry/NEW_TOKEN
+  logic.
+- 0-RTT is application-owned through `Engine` early-data hooks, with crypto
+  state in `ZquicCrypto.*` and packet/stream enforcement in `ZquicLink.hh` and
+  `ZquicCliLink.hh`.
+- PMTUD/DPLPMTUD is split between `ZquicPath.*` state and runtime send/probe
+  paths in `ZquicLink.hh`.
+- ECN handling crosses socket marking, ACK_ECN parsing, recovery validation,
+  path fallback, diagnostics, and qlog events.
+- HTTP/3, QPACK, WebTransport, DATAGRAM, multipath, QUIC v2, and full active
+  migration are not exposed by this module.
 
-## TLS And 0-RTT
+## Tests
 
-`Zquic` uses `ztls`/picotls for QUIC TLS. Servers require `certPath()` and
-`keyPath()`. Clients may configure `caPath()` and may configure client
-certificate/key paths together. `keyLogPath()` enables TLS key logging.
+Tests are standalone binaries under `zquic/test`.  Useful entry points:
 
-0-RTT is application-owned. The base `Engine` defaults reject early data: it
-returns no ticket, advertises zero maximum early data, disallows early streams,
-and treats application parameters as invalid unless empty. Applications that
-want 0-RTT override the early-data hooks on their `Client`/`Server` CRTP type:
-`earlyData()`, `validateEarlyDataParams()`, `saveEarlyData()`,
-`maxEarlyData()`, `allowEarlyStream()`, `earlyDataAccepted()`, and
-`earlyDataRejected()`.
+- `ZquicCodecTest`: packet/frame/transport-parameter codec coverage.
+- `ZquicPacketProtectionTest`: RFC 9001 packet protection vectors and traffic
+  secret protection.
+- `ZquicHandshakeTest` and `ZquicRuntimeTest`: TLS handshake and loopback
+  runtime behavior.
+- `ZquicStreamTest`: stream delivery, retransmission, control queues, PMTUD,
+  ECN, 0-RTT, qlog, and key-update state.
+- `ZquicRecoveryTest`, `ZquicFlowTest`, `ZquicCIDTest`, `ZquicSockTest`,
+  `ZquicTimerTest`, `ZquicLogTest`, and `ZquicPQueueTest`: focused subsystem
+  coverage.
 
-Early STREAM data is policy-gated. Only frame types legal in 0-RTT are accepted;
-late 0-RTT, missing keys, rejected TLS early data, invalid remembered transport
-parameters, and disallowed streams are rejected and surfaced through diagnostics
-and qlog.
+Run the module tests with:
 
-## Buffers
+```sh
+make -C zquic/test -j8
+make -C zquic/test test
+```
 
-`Zquic` keeps packet, stream, and CRYPTO buffers separate. The buffer contract
-is documented in `zquic/GUIDELINES.md` and is part of the implementation
-contract:
-
-- `PktRxBufAlloc` uses `"Zquic.Pkt.Rx"` for received UDP datagrams and
-  in-place packet protection removal;
-- `PktTxBufAlloc` uses `"Zquic.Pkt.Tx"` for transmit packetization and
-  packet protection output;
-- `StreamTxBufAlloc` uses `"Zquic.Stream.TxBuf"` for application stream bytes
-  retained for ACK/loss/retransmission/reset/cancellation/teardown;
-- `CryptoRxBufAlloc` uses `"Zquic.Crypto.RxBuf"` and `CryptoTxBufAlloc` uses
-  `"Zquic.Crypto.TxBuf"` for CRYPTO/TLS buffers.
-
-The built-in packet buffer size is `1472`. The active UDP payload limit is
-separate from that buffer capacity and starts at the QUIC minimum before
-PMTUD/DPLPMTUD raises it.
-
-Tx packet protection is source-to-destination: retained plaintext ranges are
-gathered as read-only inputs and encrypted directly into the final packet
-buffer. Rx packet protection decrypts in place in the received packet buffer.
-STREAM receive delivery retains slices of the decrypted packet buffer; there is
-no frame-only STREAM copy fallback. Hidden fallback copies below the public API
-boundary are forbidden unless added to `zquic/GUIDELINES.md` and covered by a
-test that explains why they are required.
-
-## UDP And PMTUD
-
-Client UDP sockets may be connected when the platform exposes useful PMTU
-queries for connected sockets. Server UDP sockets remain unconnected so one
-socket can serve many peers and paths.
-
-The runtime surface is `Client` / `Server` with `CliLink` / `SrvLink`. Internal
-UDP adaptation and endpoint diagnostics are implemented through the private
-`Endpoint_` layer and exposed through `endpointDiag()`.
-
-`Zquic` owns packetization and PMTUD/DPLPMTUD. It disables IP fragmentation
-where the platform allows it, starts with a safe active payload size, and raises
-the active PMTU only after QUIC probe success. Kernel PMTU, ICMP Packet Too Big,
-`EMSGSIZE`, and Winsock send-size failures are advisory hints that can lower or
-cap the active PMTU; they do not raise it without a successful QUIC probe.
-Timer-driven probe expiry retries the same candidate a bounded number of times
-before lowering the search ceiling. Repeated expiry of an active-size probe
-falls back to the QUIC minimum payload size as a blackhole response.
-
-Unsupported socket controls are diagnostics, not fatal errors, unless the
-platform would force fragmentation for datagrams above the safe minimum.
-
-## Diagnostics
-
-Transport diagnostics count packets, bytes, header/body bytes, stream bytes,
-loss, PTO, retransmission, congestion window, bytes in flight, handshake state,
-stream counts, PMTUD probe outcomes, ECN state, address-validation outcomes,
-packet protection failures, key updates, and buffer-contract violations. Stable
-formatter utilities expose packet-space, frame, stream, recovery, and summary
-names for tests and logs.
-Retransmit-drop reporting is zero by construction because the current
-retransmit queue has no drop policy.
-
-## Qlog
-
-Debug builds can emit qlog JSON-SEQ through `ZquicLogger`. Applications enable
-it through `EngineParams::qlog(true)` and optionally set `qlogPath()`,
-`qlogRingSize()`, and `qlogAge()`. The default output path is `zquic.sqlog`,
-and existing files are aged through the configured archive depth.
-
-Qlog is process-wide and asynchronous. `ZquicLogger::Trace` is owned by the
-engine, started with the engine, closed during stop, and finalized by
-`final()`. Runtime diagnostics expose records enqueued, written, dropped,
-ring back-pressure, writer failures, and bytes written. Release builds erase
-qlog-only call-site work behind `ZquicLOG`.
-
-Log subsystem names are stable constants:
+Log subsystem names used by the implementation:
 
 - `Zquic`
 - `Zquic.Endpoint`

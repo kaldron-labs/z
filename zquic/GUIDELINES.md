@@ -1,8 +1,9 @@
 # zquic supplementary guidelines
 
-These guidelines are specific to the QUIC implementation in `zquic`.  They
+These guidelines are the audit checklist for code changes in `zquic`.  They
 supplement the repo-wide rules in `../GUIDELINES.md`; follow both when editing
-`zquic`.
+or reviewing `zquic` code.  Implementation discovery and source navigation live
+in `README.md`.
 
 # General zquic
 
