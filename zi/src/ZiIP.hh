@@ -178,12 +178,15 @@ public:
   uint32_t hash() const {
     switch (m_addr.type()) {
       case V4:
-	return ZuHash<uint8_t>::hash(V4) ^ m_addr.p<V4>().s_addr;
+	return
+	  ZuHash<uint8_t>::hash(V4) ^
+	  ZuHash<uint32_t>::hash(m_addr.p<V4>().s_addr);
       case V6:
-	return ZuHash<uint8_t>::hash(V6) ^
+	return
+	  ZuHash<uint8_t>::hash(V6) ^
 	  ZuHash_FNV::hash(m_addr.p<V6>().s6_addr, sizeof(in6_addr));
       default:
-	return ZuHash<uint8_t>::hash(Null);
+	return 0;
     }
   }
 
@@ -411,6 +414,37 @@ public:
   bool operator !() const { return type() == ZiIP::Null; }
   ZuOpBool
 
+  friend inline bool operator ==(const ZiSockAddr &l, const ZiSockAddr &r) {
+    return l.equals(r);
+  }
+  friend inline int operator <=>(const ZiSockAddr &l, const ZiSockAddr &r) {
+    return l.cmp(r);
+  }
+
+  bool equals(const ZiSockAddr &a) const {
+    return ip().equals(a.ip()) && port() == a.port();
+  }
+  int cmp(const ZiSockAddr &a) const {
+    if (int i = ip().cmp(a.ip())) return i;
+    return ZuCompare(port(), a.port());
+  }
+
+  uint32_t hash() const {
+    switch (m_addr.type()) {
+      case ZiIPType::V4: {
+	const auto &v4 = m_addr.p<V4>();
+	return ZiIP(v4.sin_addr).hash() ^ ZuHash<uint16_t>::hash(v4.sin_port);
+      }
+      case ZiIPType::V6: {
+	const auto &v6 = m_addr.p<V6>();
+	return ZiIP(v6.sin6_addr).hash() ^ ZuHash<uint16_t>::hash(v6.sin6_port);
+      }
+      default:
+	return 0;
+    }
+  }
+
+private:
   Addr	m_addr;
 };
 
