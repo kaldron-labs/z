@@ -1,41 +1,8 @@
 # TODO
 
----
-
-`ZiResolver`:
-- why keep track of `m_sockets` outside `ZiEventLoop`, which does that already with `addSocket`/`delSocket`?
-- `ZiDNSMsg::msg` should be a `ZtBuiltin` with a heap ID (`using ZiDNSBuf = ...`)
-- why individual `FailFn`'s on `resolve`/`name`/`query`/`txt`? and why inconsistent sync/async?
-  - all should be async, with continuations
-  - the convention is to pass a `ZuUnion` type that can either be the successful return type
-    or an error (example: `InitResult` in `ZdbStore.hh`)
-- timer teardown needs to be carefully orchestrated:
-  1. cancel the timer, and prevent further timer arming
-  2. post a continuation to drain pending activity
-  3. (in the continuation) complete the teardown
-
----
-
 ## Zquic
 
-`ZiMultiplex` - add ip TOS byte to `ZiIOContext` after UDP addr
-- `codex resume 019f2998-d14f-7732-b7af-9f82b8d2a61d`
-- need Windows and Linux support
-
----
-
-complete library (see `audit.md`):
-- ECN (needs ip TOS)
-
----
-
 Very few qlog fields, if any, are genuinely arbitrary strings. `ZeString` is probably overused. Almost all qlog data relates to QUIC protocol field values which are fixed-size scalars, IP addresses, ports, enumerated values or other closed vocabularies. Reasons that are in the code as short string literals should also be enumerations (aligning with system error codes). Detailed arbitrary string reasons are a rare exception. Almost all string conversions should occur via the JSON mapping, which is performed exclusively by the logger thread in logged lambda bodies.
-
-## Z generic
-
-CRTP layer masking to reduce conflicts and inadvertent access from higher layers
-
----
 
 reference implementations:
 - `../zngtcp2` (primary reference)
@@ -88,12 +55,12 @@ L-sized work:
 # Z Deferred Work
 
 ## io_uring
-- `io_uring_prep_send_zc_fixed`
+- UDP with TOS: `io_uring_prep_sendmsg_zc_fixed` / `io_uring_prep_recvmsg_multishot`
+- TCP: `io_uring_prep_send_zc_fixed` / `io_uring_recv_multishot`
 - need a rx and tx buf allocator in Ztls (and ZiMultiplex)
   - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
     - but not jumbo, in that case we fallback to non-registered buffers
     - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
-- steal from unum.cloud ucall for uring
 - https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
 
 # Z Candidate Work

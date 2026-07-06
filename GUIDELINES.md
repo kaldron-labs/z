@@ -29,7 +29,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - fast inter-thread communication with ring buffers
 - asynchronous continuation-based functional style
 
-## No dogma
+### No dogma
 - immutability
   - pervasive immutability is a non-goal
   - mutability is encouraged if it benefits performance
@@ -42,6 +42,10 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - intentionally not header-only
   - Z libraries are hybrid builds
     - headers with accompanying binary versioned shared libraries / DLLs
+- intrusive + intrinsic
+  - non-intrusive or extrinsic storage is a non-goal (no STL containers)
+- sentinel values
+  - sentinel values for logical null or false, not extrinsic booleans
 
 ## Target systems
 - compilers: current gcc, clang
