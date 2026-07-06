@@ -704,6 +704,14 @@ void testTransportParamCoverage()
       q.disableActiveMigration == p.disableActiveMigration,
     "full transport parameter round-trip mismatch");
 
+  p.disableActiveMigration = false;
+  n = p.encode(b, sizeof(b));
+  q.disableActiveMigration = true;
+  ZuCHECK(n > 0 &&
+      !q.decode(bytes_(b, unsigned(n))) &&
+      !q.disableActiveMigration,
+    "absent disable_active_migration decoded as disabled");
+
   n = putParam_(b, sizeof(b), 0x3f, "abc");
   ZuCHECK(n > 0 &&
       !q.decode(bytes_(b, unsigned(n))),

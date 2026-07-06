@@ -353,6 +353,10 @@ public:
   bool peerTransportParamsReceived() const {
     return m_peerTransportParamsReceived;
   }
+  void peerTransportParams_(const TransportParams &params) {
+    m_peerTransportParams = params;
+    m_peerTransportParamsReceived = true;
+  }
 
   int encodeTransportParams(uint8_t *, unsigned, const TransportParams &);
   int decodeTransportParams(ZuBSpan, TransportParams &);

@@ -752,12 +752,6 @@ static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
   return consumed == n && called && ok;
 }
 
-static bool sameAddr_(const ZiSockAddr &l, const ZiSockAddr &r)
-{
-  if (!l || !r) return !l && !r;
-  return l.type() == r.type() && l.port() == r.port() && l.ip() == r.ip();
-}
-
 static ZiIP ip4_(uint32_t n)
 {
   in_addr addr;
@@ -1729,7 +1723,7 @@ void testPathValidationStateMachine()
 
   link->initServerPath(local, oldRemote);
   link->validatePath();
-  ZuCHECK(sameAddr_(link->activePathRemote(), oldRemote),
+  ZuCHECK(link->activePathRemote() == oldRemote,
     "active path remote setup failed");
 
   link->observePath(local, newRemote);
@@ -1739,14 +1733,14 @@ void testPathValidationStateMachine()
   ZuCHECK(link->validatingPath() &&
       data.length() == Zquic::PathChallenge::Length &&
       link->queuedControlFrames() == 1 &&
-      sameAddr_(link->activePathRemote(), oldRemote),
+      link->activePathRemote() == oldRemote,
     "new path replaced active remote before validation");
 
   uint8_t bad[Zquic::PathChallenge::Length]{};
   bad[0] = response[0] ^ 0xffU;
   ZuCHECK(!link->pathResponse(ZuBSpan{bad, sizeof(bad)}) &&
       link->validatingPath() &&
-      sameAddr_(link->activePathRemote(), oldRemote),
+      link->activePathRemote() == oldRemote,
     "unmatched PATH_RESPONSE changed path-validation state");
 
   link->observePath(local, newRemote);
@@ -1756,16 +1750,16 @@ void testPathValidationStateMachine()
   ZuCHECK(link->pathResponse(ZuBSpan{response, sizeof(response)}) &&
       !link->validatingPath() &&
       link->pathValidated() &&
-      sameAddr_(link->activePathRemote(), newRemote),
+      link->activePathRemote() == newRemote,
     "matching PATH_RESPONSE did not promote candidate path");
 
   link->observePath(local, otherRemote);
   ZuCHECK(link->validatingPath() &&
-      sameAddr_(link->activePathRemote(), newRemote),
+      link->activePathRemote() == newRemote,
     "second candidate setup failed");
   link->pathTimeout();
   ZuCHECK(!link->validatingPath() &&
-      sameAddr_(link->activePathRemote(), newRemote),
+      link->activePathRemote() == newRemote,
     "path-validation timeout did not retain active path");
 
   link->closeForTest();

@@ -49,7 +49,9 @@
 #define Zquic_DEBUG	// enable testing / debugging
 #endif
 
-namespace Zquic { }
+namespace Zquic {
+inline constexpr uint64_t U64Null = ZuCmp<uint64_t>::null();
+}
 namespace Zquic_ { using namespace Zquic; }
 
 #include <zlib/ZquicTypes.hh>
@@ -99,8 +101,9 @@ inline constexpr uint64_t DefaultMaxStreamData = (1<<20); // 1M
 inline constexpr uint64_t DefaultMaxStreamsBidi = 128;
 inline constexpr uint64_t DefaultMaxStreamsUni = 16;
 inline constexpr uint64_t MaxStreamCount = uint64_t(INT64_MAX) >> 2;
-inline constexpr uint64_t U64Null = ZuCmp<uint64_t>::null();
 inline constexpr uint64_t DefaultTokenLifetime = 600;
+inline constexpr unsigned LocalActiveCxnIDLimit = 8;
+inline constexpr unsigned MigrationCIDReserveDefault = 1;
 
 ZtEnumStruct(TokenKind, int8_t, Retry = 1, NewToken = 2);
 
@@ -179,6 +182,10 @@ inline bool runtimeFrameRef(
     break;
   case FrameType::PathResponse:
     ref = SentFrameRef::pathResponse(frame.payload);
+    break;
+  case FrameType::NewCxnID:
+    ref = SentFrameRef::newCxnID(
+      frame.value, frame.offset, CxnID{frame.payload}, frame.resetToken);
     break;
   case FrameType::HandshakeDone:
     ref = SentFrameRef::handshakeDone();
@@ -364,155 +371,6 @@ private:
   bool		m_retried = false;
 };
 
-#ifdef Zquic_DEBUG
-using RuntimeDiagCounter = uint64_t;
-#else
-struct RuntimeDiagCounter {
-  RuntimeDiagCounter() = default;
-  RuntimeDiagCounter(uint64_t) { }
-
-  RuntimeDiagCounter &operator =(uint64_t) { return *this; }
-  RuntimeDiagCounter &operator =(uint32_t) { return *this; }
-  RuntimeDiagCounter &operator =(bool) { return *this; }
-  RuntimeDiagCounter &operator ++() { return *this; }
-  RuntimeDiagCounter operator ++(int) { return {}; }
-  RuntimeDiagCounter &operator +=(uint64_t) { return *this; }
-  RuntimeDiagCounter &operator +=(uint32_t) { return *this; }
-  operator uint64_t() const { return 0; }
-};
-#endif
-
-struct RuntimeRxDiag {
-  AckECN	ecnRx[PktNumSpace::N];
-
-  [[no_unique_address]] RuntimeDiagCounter endpointReady = 0;
-  [[no_unique_address]] RuntimeDiagCounter datagramsRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter bytesRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter packetsRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter framesRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter duplicatePacketsRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackCommitsRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackElicitingRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackImmediateRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackSnapshotPostsRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamNoDataRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter cryptoBytesRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamBytesRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter invalidStreamFrames = 0;
-  [[no_unique_address]] RuntimeDiagCounter closedStreamFrames = 0;
-  [[no_unique_address]] RuntimeDiagCounter suspiciousStreamCloses = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamMaxClosedRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamMaxInvalidRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamCtlClosedRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamCtlInvalidRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamDataInvalidRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamDataStateRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamDataFinalRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamRxDeqStateRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamRxDeqFinalRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamBlockedClosedRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamBlockedInvalidRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamBlockedFinalRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter unhandledAppEvents = 0;
-  [[no_unique_address]] RuntimeDiagCounter peerKeyUpdates = 0;
-  [[no_unique_address]] RuntimeDiagCounter invalidKeyPhases = 0;
-  [[no_unique_address]] RuntimeDiagCounter oldKeysAccepted = 0;
-  [[no_unique_address]] RuntimeDiagCounter keyDiscards = 0;
-  [[no_unique_address]] RuntimeDiagCounter newTokenRx = 0;
-  [[no_unique_address]] RuntimeDiagCounter failures = 0;
-  [[no_unique_address]] RuntimeDiagCounter handshakeComplete = 0;
-};
-
-struct RuntimeTxDiag {
-  AckECN	peerAckECN[PktNumSpace::N];
-  uint64_t	packetsTx = 0;
-  bool		ptoTimerActive = false;
-  bool		lossTimerActive = false;
-
-  [[no_unique_address]] RuntimeDiagCounter bytesTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter cryptoBytesTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamBytesTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackOnlyPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamOnlyPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackStreamPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackSnapshotInstallsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackDueInstallsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackAppendTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackAppendEmptyTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackAppendNotDueTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackSentTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter controlOnlyPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackControlPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamControlPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ackStreamControlPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter cryptoPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter otherPacketsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamFramesTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter controlFramesTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter cryptoFramesTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter maxDataTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter maxStreamDataTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter maxStreamsTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter dataBlockedTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamDataBlockedTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter streamsBlockedTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter resetStreamTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter stopSendingTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathChallengeTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathResponseTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter handshakeDoneTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter newTokenTx = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathRxObserved = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathRxSame = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathRxNull = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathValidationActive = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathValidationStarted = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathValidationPromoted = 0;
-  [[no_unique_address]] RuntimeDiagCounter pathResponseUnknown = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoSched = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoNoLevel = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoArmed = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoExpired = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoFlush = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoRetx = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoProbe = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoCount = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoBackoff = 0;
-  [[no_unique_address]] RuntimeDiagCounter ptoTimeoutUS = 0;
-  [[no_unique_address]] RuntimeDiagCounter retransmittedFrames = 0;
-  [[no_unique_address]] RuntimeDiagCounter lossArmed = 0;
-  [[no_unique_address]] RuntimeDiagCounter lossCanceled = 0;
-  [[no_unique_address]] RuntimeDiagCounter lossExpired = 0;
-  [[no_unique_address]] RuntimeDiagCounter
-    pktBytesInFlight[PktNumSpace::N] = {};
-  [[no_unique_address]] RuntimeDiagCounter sentPackets[PktNumSpace::N] = {};
-  [[no_unique_address]] RuntimeDiagCounter
-    retransmitPending[PktNumSpace::N] = {};
-  [[no_unique_address]] RuntimeDiagCounter
-    retransmittable[PktNumSpace::N] = {};
-  [[no_unique_address]] RuntimeDiagCounter congestionWindow = 0;
-  [[no_unique_address]] RuntimeDiagCounter congestionSSThresh = 0;
-  [[no_unique_address]] RuntimeDiagCounter congestionBytesInFlight = 0;
-  [[no_unique_address]] RuntimeDiagCounter persistentCongestion = 0;
-  [[no_unique_address]] RuntimeDiagCounter ecnValidationFailures = 0;
-  [[no_unique_address]] RuntimeDiagCounter unhandledAppEvents = 0;
-  [[no_unique_address]] RuntimeDiagCounter failures = 0;
-};
-
-struct RuntimeDiag {
-  RuntimeDiag() = default;
-  RuntimeDiag(const RuntimeRxDiag &rx_, const RuntimeTxDiag &tx_) :
-    rx{rx_}, tx{tx_} { }
-
-  uint64_t failures() const { return rx.failures + tx.failures; }
-  uint64_t unhandledAppEvents() const {
-    return rx.unhandledAppEvents + tx.unhandledAppEvents;
-  }
-
-  RuntimeRxDiag	rx;
-  RuntimeTxDiag	tx;
-};
-
 template <typename Send>
 inline bool sendRuntimeCryptoFlights(
   CryptoStream (&txCrypto)[PktNumSpace::N], RuntimeTxDiag &diag,
@@ -614,6 +472,22 @@ struct EngineParams {
   }
   EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
   EngineParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
+  EngineParams &&migrationMode(MigrationMode::T v) {
+    m_migrationMode = v;
+    return ZuMv(*this);
+  }
+  EngineParams &&activeMigration(bool v) {
+    m_migrationMode = v ? MigrationMode::Active : MigrationMode::Passive;
+    return ZuMv(*this);
+  }
+  EngineParams &&migrationCIDReserve(unsigned v) {
+    m_migrationCIDReserve = clampMigrationCIDReserve_(v);
+    return ZuMv(*this);
+  }
+  EngineParams &&migrationCloseOnFailure(bool v) {
+    m_migrationCloseOnFailure = v;
+    return ZuMv(*this);
+  }
   EngineParams &&addressValidationSecret(ZuBSpan v) {
     m_tokenSecret = v;
     return ZuMv(*this);
@@ -666,6 +540,12 @@ struct EngineParams {
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   unsigned maxUDP() const { return m_maxUDP; }
   bool ecn() const { return m_ecn; }
+  MigrationMode::T migrationMode() const { return m_migrationMode; }
+  bool activeMigration() const {
+    return m_migrationMode == MigrationMode::Active;
+  }
+  unsigned migrationCIDReserve() const { return m_migrationCIDReserve; }
+  bool migrationCloseOnFailure() const { return m_migrationCloseOnFailure; }
   ZuBSpan addressValidationSecret() const {
     return m_tokenSecret;
   }
@@ -679,6 +559,11 @@ struct EngineParams {
   ErrorFn &errorFn() { return m_errorFn; }
 
 private:
+  static unsigned clampMigrationCIDReserve_(unsigned v) {
+    enum { Max = LocalActiveCxnIDLimit - 1 };
+    return v > Max ? Max : v;
+  }
+
   ZiMultiplex		*m_mx = nullptr;
   ParamString		m_rxThread;
   ParamString		m_txThread;
@@ -696,6 +581,9 @@ private:
   uint64_t		m_maxIdleTimeout = 0;
   unsigned		m_maxUDP = MinUDPPayload;
   bool			m_ecn = false;
+  MigrationMode::T	m_migrationMode = MigrationMode::Passive;
+  unsigned		m_migrationCIDReserve = MigrationCIDReserveDefault;
+  bool			m_migrationCloseOnFailure = false;
   TokenSecret		m_tokenSecret;
   uint64_t		m_tokenLifetime = DefaultTokenLifetime;
   bool			m_retryAddressValidation = false;
@@ -760,6 +648,9 @@ public:
       m_maxIdleTimeout = 0;
       m_maxUDP = MinUDPPayload;
       m_ecn = false;
+      m_migrationMode = MigrationMode::Passive;
+      m_migrationCIDReserve = MigrationCIDReserveDefault;
+      m_migrationCloseOnFailure = false;
       m_tokenSecret = {};
       m_tokenLifetime = DefaultTokenLifetime;
       m_retryAddressValidation = false;
@@ -796,6 +687,12 @@ public:
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   unsigned maxUDP() const { return m_maxUDP; }
   bool ecn() const { return m_ecn; }
+  MigrationMode::T migrationMode() const { return m_migrationMode; }
+  bool activeMigration() const {
+    return m_migrationMode == MigrationMode::Active;
+  }
+  unsigned migrationCIDReserve() const { return m_migrationCIDReserve; }
+  bool migrationCloseOnFailure() const { return m_migrationCloseOnFailure; }
   ZuBSpan addressValidationSecret() const {
     return m_tokenSecret;
   }
@@ -851,6 +748,9 @@ protected:
       m_maxIdleTimeout = params.maxIdleTimeout();
       m_maxUDP = params.maxUDP();
       m_ecn = params.ecn();
+      m_migrationMode = params.migrationMode();
+      m_migrationCIDReserve = params.migrationCIDReserve();
+      m_migrationCloseOnFailure = params.migrationCloseOnFailure();
       {
 	ZuBSpan secret = params.addressValidationSecret();
 	m_tokenSecret = secret;
@@ -1080,6 +980,9 @@ private:
   uint64_t		m_maxIdleTimeout = 0;
   unsigned		m_maxUDP = MinUDPPayload;
   bool			m_ecn = false;
+  MigrationMode::T	m_migrationMode = MigrationMode::Passive;
+  unsigned		m_migrationCIDReserve = MigrationCIDReserveDefault;
+  bool			m_migrationCloseOnFailure = false;
   TokenSecret		m_tokenSecret;
   uint64_t		m_tokenLifetime = DefaultTokenLifetime;
   bool			m_retryAddressValidation = false;
@@ -1288,8 +1191,12 @@ friend ZmEngine<App>;
       EcnMark::T ecn = EcnMark::NotECT) {
     return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn);
   }
-  void dissociateRoute_(const CxnID &id) {
-    m_routes.retire(id);
+  void tombstoneRoute_(const CxnID &id) {
+    m_routes.tombstone(id);
+  }
+  void refreshLinkRoutes_(Link *link) {
+    if (this->state() == ZmEngineState::Running && link)
+      link->installRoutes_(m_routes);
   }
 
 public:

@@ -87,6 +87,12 @@ void usage(int code = 1)
     "  --key path                 TLS private key for --https/--http3\n"
     "  --key-log path             append HTTP/3 TLS secrets for tshark/Wireshark;\n"
     "                             defaults to SSLKEYLOGFILE when set\n"
+    "  --quic-migration=MODE      QUIC migration policy: disabled, passive,\n"
+    "                             active; default passive\n"
+    "  --quic-migration-cid-reserve=N\n"
+    "                             peer CID reserve for QUIC migration, default 1\n"
+    "  --quic-migration-close-on-failure\n"
+    "                             close active migration attempts on failure\n"
     "  --debug                    enable ZiMultiplex and HTTP/3 debug logging\n"
     "  --frag                     fragment ZiMultiplex I/O in debug builds\n"
     "  --yield                    yield in ZiMultiplex in debug builds\n"
@@ -117,11 +123,18 @@ bool parseDrop(ZuCSpan s, double &drop)
 }
 #endif
 
+Zquic::MigrationMode::T migrationMode(const Options &options)
+{
+  return Zquic::migrationMode(options.quicMigration);
+}
+
 bool loadOptions(Options &options, int argc, char **argv)
 {
   bool help = false;
   if (!Zhttpd::loadOptions(options, argc, argv, help)) return false;
   if (help) usage(0);
+  Zquic::MigrationMode::T mode;
+  if (!Zquic::parseMigrationMode(options.quicMigration, mode)) return false;
 #ifdef ZiMultiplex_FILTER
   double drop;
   if (!parseDrop(options.quicRxDrop, drop)) return false;
@@ -773,6 +786,54 @@ struct H3ServerLink :
       s << "streamed stream=" << id;
     }));
   }
+  void pathUpdate(const Zquic::PathInfo &info) {
+    h3.pathUpdate(info);
+    ZiLOG(Debug, "zhttpd.h3", ([
+      remote = ZeString(remote), ip = info.remote.ip(),
+      port = info.remote.port(), role = info.role
+    ](auto &s) {
+      s << "path update remote=" << remote <<
+	" path=" << ip << ':' << port <<
+	" role=" << Zquic::PathRole::Map::v2s(role);
+    }));
+    touch();
+  }
+  void migrationStarted(const Zquic::MigrationResult &result) {
+    h3.migrationStarted(result);
+    ZiLOG(Debug, "zhttpd.h3", ([
+      remote = ZeString(remote), attempt = result.attemptID,
+      reason = result.reason
+    ](auto &s) {
+      s << "migration started remote=" << remote <<
+	" attempt=" << attempt <<
+	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
+    }));
+    touch();
+  }
+  void migrationPromoted(const Zquic::MigrationResult &result) {
+    h3.migrationPromoted(result);
+    ZiLOG(Debug, "zhttpd.h3", ([
+      remote = ZeString(remote), attempt = result.attemptID,
+      reason = result.reason
+    ](auto &s) {
+      s << "migration promoted remote=" << remote <<
+	" attempt=" << attempt <<
+	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
+    }));
+    touch();
+  }
+  void migrationFailed(const Zquic::MigrationResult &result) {
+    h3.migrationFailed(result);
+    ZiLOG(Debug, "zhttpd.h3", ([
+      remote = ZeString(remote), attempt = result.attemptID,
+      reason = result.reason
+    ](auto &s) {
+      s << "migration failed remote=" << remote <<
+	" attempt=" << attempt <<
+	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
+    }));
+    touch();
+  }
 
   H3Cxn		h3;
   ZmScheduler::Timer	idleTimer;
@@ -842,9 +903,7 @@ void H3Server::printDiag()
   bool ptoTimer = false, lossTimer = false;
   using LinkSnapshot =
     ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttpd.H3.LinkSnapshot">>;
-  auto snapshot = ZtLocalArray(LinkSnapshot,
-    state && state->options.maxconn ? state->options.maxconn :
-      H3DiagLinkSnapshot);
+  auto snapshot = ZtLocalArray(LinkSnapshot, H3DiagLinkSnapshot);
   ZmBlock<>{}([this, &snapshot](auto wake) {
     this->allLinks([&snapshot](const ZmRef<Link> &link) {
       snapshot.push(link);
@@ -1223,7 +1282,11 @@ int main(int argc, char **argv)
 	    .certPath(state.options.cert).keyPath(state.options.key).alpn(alpn)
 	    .keyLogPath(state.options.keyLog)
 	    .maxData(H3DataMax).maxStreamData(H3StreamDataMax)
-	    .maxStreamsBidi(H3BidiMax).maxStreamsUni(H3UniMax))) {
+	    .maxStreamsBidi(H3BidiMax).maxStreamsUni(H3UniMax)
+	    .migrationMode(migrationMode(state.options))
+	    .migrationCIDReserve(state.options.quicMigrationCIDReserve)
+	    .migrationCloseOnFailure(
+	      state.options.quicMigrationCloseOnFailure))) {
       ZiLOG(Error, "zhttpd", "H3 server initialization failed");
       if (tlsInit) tls.final();
       if (httpInit) http.final();

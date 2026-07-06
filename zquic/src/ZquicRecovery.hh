@@ -325,7 +325,7 @@ public:
     unsigned i = space;
     return m_ack[i].writeFrame(out, len, delay, ecn ? &m_ecn[i] : nullptr);
   }
-  void sent(PktNumSpace::T space, uint64_t gen = ZuCmp<uint64_t>::null()) {
+  void sent(PktNumSpace::T space, uint64_t gen = U64Null) {
     unsigned i = space;
     if (!ZuNull(gen) && gen != m_gen[i]) return;
     m_pending[i] = false;
@@ -524,6 +524,8 @@ struct SentFrameRef {
   Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
   bool			fin = false;
   uint8_t		payload[8]{};
+  CxnID			cxnID;
+  ResetToken		resetToken;
   TxRange		range;
 
   bool operator !() const { return kind == SentFrameKind::None; }
@@ -594,6 +596,19 @@ struct SentFrameRef {
   static SentFrameRef handshakeDone() {
     SentFrameRef ref = control();
     ref.controlType = FrameType::HandshakeDone;
+    return ref;
+  }
+
+  static SentFrameRef newCxnID(
+    uint64_t sequence, uint64_t retirePriorTo,
+    const CxnID &id, const ResetToken &token) {
+    SentFrameRef ref = control();
+    ref.controlType = FrameType::NewCxnID;
+    ref.streamID = sequence;
+    ref.value = retirePriorTo;
+    ref.length = id.length();
+    ref.cxnID = id;
+    ref.resetToken = token;
     return ref;
   }
 
@@ -680,6 +695,8 @@ struct SentFrameKey {
 	    return h ^ ZuHash<uint64_t>::hash(streamID) ^
 	      ZuHash<uint64_t>::hash(value) ^
 	      ZuHash<uint64_t>::hash(length);
+	  case FrameType::NewCxnID:
+	    return h ^ ZuHash<uint64_t>::hash(streamID);
 	  default:
 	    return h;
 	}
@@ -699,7 +716,8 @@ struct SentFrameKey {
 	  ref.controlType == FrameType::StreamDataBlocked ||
 	  ref.controlType == FrameType::StreamsBlocked ||
 	  ref.controlType == FrameType::ResetStream ||
-	  ref.controlType == FrameType::StopSending));
+	  ref.controlType == FrameType::StopSending ||
+	  ref.controlType == FrameType::NewCxnID));
   }
 };
 

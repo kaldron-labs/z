@@ -45,6 +45,32 @@ and Alt-Svc probing. IPv6, DoH, DoT, ECH,
 WebTransport, DATAGRAM, and QUIC v2 discovery remain out of scope for this
 resolver path.
 
+HTTP/3 uses the `Zquic` migration API without making core `libZhttp` depend on
+`libZquic`.  The test client and server wire migration policy at the transport
+integration layer:
+
+- `--quic-migration=disable|disabled|passive|active` selects the local QUIC migration
+  policy; the default is `passive`.
+- `--quic-migration-cid-reserve=N` reserves spare peer CIDs for active
+  migration; the default is `1`.
+- `--quic-migration-close-on-failure` closes active migration attempts when a
+  local UDP rebind failure makes fallback impossible.
+- `--quic-migration-local=ADDR[:PORT]` sets the client local address used for
+  active HTTP/3 migration tests; the default is the current local IP and an
+  ephemeral port.
+- `--quic-migrate-local` is a test-client switch that requests one HTTP/3
+  client local UDP port migration after H3 control streams open.
+- `--quic-migrate-after-headers` requests client migration after response
+  headers are parsed.
+- `--quic-migrate-after-bytes=N` requests client migration after N response
+  body bytes for large-response tests.
+
+H3 connection hooks receive transport-neutral `pathUpdate()`,
+`migrationStarted()`, `migrationPromoted()`, and `migrationFailed()` callbacks.
+Those callbacks must not reset QPACK, control streams, request streams, or
+GOAWAY state; path migration is a QUIC transport path change for an existing
+HTTP/3 connection.
+
 The example server is a static file server:
 
 ```sh
@@ -71,6 +97,9 @@ zhttpd /tmp/www --https --addr 127.0.0.1 --port 8443 \
   --cert cert.pem --key key.pem
 zhttpd /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
   --cert cert.pem --key key.pem
+zhttpd /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
+  --cert cert.pem --key key.pem --quic-migration=active \
+  --quic-migration-cid-reserve=2
 ```
 
 Useful client checks:
@@ -79,6 +108,9 @@ Useful client checks:
 zhttp -o body http://127.0.0.1:8080/
 zhttp -c cert.pem -o body https://localhost:8443/
 zhttp -3 force -c cert.pem -o body https://localhost:8443/
+zhttp -3 force -c cert.pem --quic-migration=active \
+  --quic-migration-cid-reserve=2 --quic-migrate-after-headers \
+  -o body https://localhost:8443/
 ```
 
 Static-server options include directory indexes and listings, MIME overrides,
@@ -92,4 +124,5 @@ server pass.
 
 First-release exclusions match the transport scope: no server push, no
 WebTransport, no DATAGRAM, no 0-RTT, no QUIC v2, no multipath, and no active
-ECN behavior.
+ECN behavior.  QUIC path migration is single-active-path migration, not
+multipath.

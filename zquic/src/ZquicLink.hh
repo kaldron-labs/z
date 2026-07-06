@@ -40,6 +40,9 @@ public:
   using PathResponses =
     ZmQueue<ControlFrame,
       ZmQueueHeapID<"Zquic.Link.PathResponses">>;
+  using NewCxnIDControls =
+    ZmQueue<ControlFrame,
+      ZmQueueHeapID<"Zquic.Link.NewCxnID">>;
   using StreamQueue =
     ZmQueue<StreamRef,
       ZmQueueHeapID<"Zquic.Link.StreamQueue">>;
@@ -136,6 +139,7 @@ public:
       if (m_streamsBlockedControl[i].queued) ++n;
     }
     n += m_pathResponses.count_();
+    n += m_newCxnIDControls.count_();
     auto iter = m_streams->citer();
     while (auto node = iter())
       n += node->data().queuedControlFrames();
@@ -452,7 +456,8 @@ protected:
   enum { RuntimePNLength = 2 };
   // RFC9000 specifies only a minimum/default of 2 for active_connection_id_limit.
   // This is the local advertised policy cap for active peer-issued CIDs.
-  static constexpr unsigned LocalActiveCxnIDLimit = 8;
+  static constexpr unsigned LocalActiveCxnIDLimit =
+    Zquic::LocalActiveCxnIDLimit;
   static constexpr unsigned SuspiciousStreamThreshold = 8;
 
   struct LinkCID {
@@ -467,9 +472,14 @@ protected:
     Path		prev;
     CxnID		peerCID;
     uint64_t		peerSeq = 0;
+    uint64_t		attemptID = 0;
     ZuTime		deadline;
     PathChallenge	challenge;
+    MigrationState::T	state = MigrationState::Idle;
+    MigrationReason::T	reason = MigrationReason::None;
     bool		active = false;
+    bool		localRebind = false;
+    bool		closeOnFailure = false;
   };
   struct AppClose {
     bool		closed = false;
@@ -600,6 +610,11 @@ protected:
       case FrameType::PathResponse:
 	m_pathResponses.push(frame);
 	while (m_pathResponses.count_() > PathResponseMax) m_pathResponses.shift();
+	return true;
+      case FrameType::NewCxnID:
+	m_newCxnIDControls.push(frame);
+	while (m_newCxnIDControls.count_() > LocalActiveCxnIDLimit)
+	  m_newCxnIDControls.shift();
 	return true;
       case FrameType::HandshakeDone:
 	return queuePendingControl_(m_handshakeDoneControl, frame);
@@ -888,6 +903,7 @@ protected:
   uint64_t pathAntiAmplification_() const {
     return m_path.antiAmplificationRemaining();
   }
+  Crypto &crypto_() { return m_crypto; }
   const Crypto &crypto_() const { return m_crypto; }
   void snapshotTxCrypto_(TxCryptoSnapshot &snapshot) const {
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
@@ -1279,29 +1295,34 @@ protected:
   }
   bool ecnDisabled_() const { return m_path.ecnDisabled(); }
   void setEcnDisabled_(bool b = true) {
-    auto oldState = qlogECNState_(m_path.ecnState());
+#ifdef Zquic_DEBUG
+    auto oldState = m_path.ecnState();
+#endif
     m_path.setEcnDisabled(b);
-    auto newState = qlogECNState_(m_path.ecnState());
-    if (oldState == newState) return;
-    ZquicLOG(app()->qlogTrace(), ([
-      level = PktNumSpace::T(PktNumSpace::AppData),
-      oldState,
-      newState,
-      reason = b ? ZquicLog_::ECNReason::MarkFailed :
-	ZquicLog_::ECNReason::Probe,
-      disabled = m_path.ecnDisabled(),
-      linkInfo = linkInfo_()
-    ](auto &o, ZuTime time) {
-      ECNEvent event{
-	.linkInfo = linkInfo,
-	.packetSpace = level,
-	.oldState = ECNState::T(oldState),
-	.state = ECNState::T(newState),
-	.reason = ECNReason::T(reason),
-	.disabled = disabled};
+#ifdef Zquic_DEBUG
+    auto newState = m_path.ecnState();
+    if (oldState != newState) {
+      ZquicLOG(app()->qlogTrace(), ([
+	level = PktNumSpace::T(PktNumSpace::AppData),
+	oldState = qlogECNState_(oldState),
+	newState = qlogECNState_(newState),
+	reason = b ? ZquicLog_::ECNReason::MarkFailed :
+	  ZquicLog_::ECNReason::Probe,
+	disabled = m_path.ecnDisabled(),
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	ECNEvent event{
+	  .linkInfo = linkInfo,
+	  .packetSpace = level,
+	  .oldState = ECNState::T(oldState),
+	  .state = ECNState::T(newState),
+	  .reason = ECNReason::T(reason),
+	  .disabled = disabled};
 
-      o.logECNStateUpd(event, time);
-    }));
+	o.logECNStateUpd(event, time);
+      }));
+    }
+#endif
   }
   PktBudget sendBudget_() const {
     PktBudget budget;
@@ -1312,10 +1333,6 @@ protected:
     unsigned allowance = congestionAllowance_();
     budget.congestion = allowance < maxUDP ? allowance : maxUDP;
     return budget;
-  }
-  static bool sameAddr_(const ZiSockAddr &l, const ZiSockAddr &r) {
-    if (!l || !r) return !l && !r;
-    return l.type() == r.type() && l.port() == r.port() && l.ip() == r.ip();
   }
   static ZquicLog_::ECNState::T qlogECNState_(PathECNState::T state) {
     switch (state) {
@@ -1355,7 +1372,7 @@ protected:
     m_path.configuredMaxUDP(app()->maxUDP());
     m_path.peerMaxUDP(app()->maxUDP());
     if (!m_isServer) m_path.validated();
-    m_validatingPath = {};
+    m_migration = {};
     m_pathChallengeControl = {};
   }
   void initClientPath_(ZiSockAddr local, ZiSockAddr remote) {
@@ -1395,14 +1412,13 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
-		.linkInfo = linkInfo
-      ,
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-        .kind = PathKind::Path,
-        .action = PathAction::T(action),
-        .reason = PathReason::T(reason),
-		.validated = validated};
+	.linkInfo = linkInfo,
+	.antiAmplification = antiAmplification,
+	.mtu = mtu,
+	.kind = PathKind::Path,
+	.action = PathAction::T(action),
+	.reason = PathReason::T(reason),
+	.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1423,14 +1439,13 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
-		.linkInfo = linkInfo
-      ,
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-        .kind = PathKind::Path,
-        .action = PathAction::T(action),
-        .reason = PathReason::T(reason),
-		.validated = validated};
+	.linkInfo = linkInfo,
+	.antiAmplification = antiAmplification,
+	.mtu = mtu,
+	.kind = PathKind::Path,
+	.action = PathAction::T(action),
+	.reason = PathReason::T(reason),
+	.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1461,14 +1476,13 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
-		.linkInfo = linkInfo
-      ,
-		.antiAmplification = antiAmplification,
-		.mtu = mtu,
-        .kind = PathKind::Path,
-        .action = PathAction::T(action),
-        .reason = PathReason::T(reason),
-		.validated = validated};
+	.linkInfo = linkInfo,
+	.antiAmplification = antiAmplification,
+	.mtu = mtu,
+	.kind = PathKind::Path,
+	.action = PathAction::T(action),
+	.reason = PathReason::T(reason),
+	.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1484,22 +1498,21 @@ protected:
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Received,
       reason = PathReason::Datagram,
-		bytes,
-		antiAmplification = m_path.antiAmplificationRemaining(),
-		mtu = m_path.activeMaxUDP(),
-		validated = pathValidated_(),
-		linkInfo = linkInfo_()
-      ](auto &o, ZuTime time) {
+      bytes,
+      antiAmplification = m_path.antiAmplificationRemaining(),
+      mtu = m_path.activeMaxUDP(),
+      validated = pathValidated_(),
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
       PathEvent event{
-	  .linkInfo = linkInfo
-		,
-	  .bytes = bytes,
-	  .antiAmplification = antiAmplification,
-	  .mtu = mtu,
-        .kind = PathKind::Path,
-        .action = PathAction::T(action),
-        .reason = PathReason::T(reason),
-	  .validated = validated};
+	.linkInfo = linkInfo,
+	.bytes = bytes,
+	.antiAmplification = antiAmplification,
+	.mtu = mtu,
+	.kind = PathKind::Path,
+	.action = PathAction::T(action),
+	.reason = PathReason::T(reason),
+	.validated = validated};
 
       o.logPathUpdated(event, time);
     }));
@@ -1514,7 +1527,8 @@ protected:
       link->observePathRxTx_(ZuMv(local), ZuMv(remote));
     });
   }
-  void observePathRxTx_(ZiSockAddr local, ZiSockAddr remote) {
+  void observePathRxTx_(
+    ZiSockAddr local, ZiSockAddr remote, bool armTimer = true) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path receive observation outside Tx thread", return);
     ++m_txDiag.pathRxObserved;
@@ -1522,15 +1536,21 @@ protected:
       ++m_txDiag.pathRxNull;
       return;
     }
-    if (sameAddr_(remote, m_path.remote())) {
+    if (remote == m_path.remote()) {
       ++m_txDiag.pathRxSame;
       return;
     }
-    if (m_validatingPath.active &&
-	sameAddr_(remote, m_validatingPath.path.remote())) {
+    if (m_migration.active &&
+	remote == m_migration.path.remote()) {
       ++m_txDiag.pathValidationActive;
       return;
     }
+    if (app()->migrationMode() == MigrationMode::Disabled) {
+      ++m_txDiag.pathValidationDisabled;
+      ++m_txDiag.migration.policyReject;
+      return;
+    }
+    ++m_txDiag.migration.peerObserved;
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Observed,
       reason = PathReason::PeerAddrChange,
@@ -1551,13 +1571,13 @@ protected:
 
       o.logPathUpdated(event, time);
     }));
-    startPathValid_(ZuMv(local), ZuMv(remote));
+    startPathValid_(ZuMv(local), ZuMv(remote), armTimer);
   }
   bool startPathValid_(
     ZiSockAddr local, ZiSockAddr remote, bool armTimer = true) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path validation start outside Tx thread", return false);
-    if (!remote || sameAddr_(remote, m_path.remote())) return false;
+    if (!remote || remote == m_path.remote()) return false;
     PathState state;
     state.prev = m_path;
     state.path = m_isServer ?
@@ -1566,20 +1586,32 @@ protected:
     initPathECN_(state.path);
     state.path.configuredMaxUDP(m_path.configuredMaxUDP());
     state.path.peerMaxUDP(m_path.peerMaxUDP());
-    selectPathCID_(state);
+    migrationPeerCID_(state, false);
+    ++m_txDiag.migration.requested;
+    if (state.peerCID == m_peerCID)
+      ++m_txDiag.migration.natRebind;
     if (!state.challenge.generate())
       return false;
     state.deadline = pathValidDeadline_();
+    state.state = MigrationState::Validating;
+    state.reason = MigrationReason::Passive;
+    state.attemptID = m_nextMigrationAttemptID++;
     state.active = true;
-    m_validatingPath = state;
+    m_migration = state;
     ++m_txDiag.pathValidationStarted;
+    ++m_txDiag.migration.started;
+    logMigration_(ZquicLog_::MigrationAction::Started);
+    logMigration_(ZquicLog_::MigrationAction::CIDSelected);
+    impl()->migrationStarted(migrationResult_());
     if (armTimer)
       schedulePathTimer_(state.deadline);
     txQueueControl_(ControlFrame::pathChallenge(
-      m_validatingPath.challenge.bspan()));
+      m_migration.challenge.bspan()));
+    logMigration_(ZquicLog_::MigrationAction::ChallengeQueued);
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::ChallengeTx,
       reason = PathReason::PeerAddrChange,
+      attemptID = state.attemptID,
       deadlineUS = qlogUS_(state.deadline),
       antiAmplification = m_path.antiAmplificationRemaining(),
       mtu = m_path.activeMaxUDP(),
@@ -1587,30 +1619,35 @@ protected:
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PathEvent event{
-		.linkInfo = linkInfo
-      ,
-		.antiAmplification = antiAmplification,
-		.deadlineUS = deadlineUS,
-		.mtu = mtu,
-        .kind = PathKind::PathValid,
-        .action = PathAction::T(action),
-        .reason = PathReason::T(reason),
-		.validated = validated};
+	.linkInfo = linkInfo,
+	.attemptID = attemptID,
+	.antiAmplification = antiAmplification,
+	.deadlineUS = deadlineUS,
+	.mtu = mtu,
+	.kind = PathKind::PathValid,
+	.action = PathAction::T(action),
+	.reason = PathReason::T(reason),
+	.validated = validated};
 
       o.logPathValid(event, time);
     }));
-    impl()->queueTxFlush_(m_validatingPath.path.remote());
+    impl()->queueTxFlush_(m_migration.path.remote());
     return true;
   }
   bool onPathResponse_(ZuBSpan data) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PATH_RESPONSE processing outside Tx thread", return false);
-    if (!m_validatingPath.active ||
-	!m_validatingPath.challenge.equals(data)) {
+    if (!m_migration.active ||
+	!m_migration.challenge.equals(data)) {
       ++m_txDiag.pathResponseUnknown;
+      if (m_migration.active)
+	logMigration_(
+	  ZquicLog_::MigrationAction::ResponseMismatch, MigrationReason::Validation);
       ZquicLOG(app()->qlogTrace(), ([
 	action = PathAction::ResponseUnk,
 		reason = PathReason::Mismatch,
+		attemptID = m_migration.active ?
+		  m_migration.attemptID : U64Null,
 		antiAmplification = m_path.antiAmplificationRemaining(),
 		mtu = m_path.activeMaxUDP(),
 		validated = pathValidated_(),
@@ -1619,6 +1656,7 @@ protected:
 		PathEvent event{
 	  .linkInfo = linkInfo
 		,
+	  .attemptID = attemptID,
 	  .antiAmplification = antiAmplification,
 	  .mtu = mtu,
 	  .kind = PathKind::PathValid,
@@ -1631,9 +1669,11 @@ protected:
       return false;
     }
     m_pathChallengeControl = {};
+    logMigration_(ZquicLog_::MigrationAction::ResponseMatched);
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::ResponseRx,
       reason = PathReason::Matched,
+      attemptID = m_migration.attemptID,
       antiAmplification = m_path.antiAmplificationRemaining(),
       mtu = m_path.activeMaxUDP(),
       validated = pathValidated_(),
@@ -1642,6 +1682,7 @@ protected:
       PathEvent event{
 		.linkInfo = linkInfo
       ,
+		.attemptID = attemptID,
 		.antiAmplification = antiAmplification,
 		.mtu = mtu,
         .kind = PathKind::PathValid,
@@ -1666,16 +1707,18 @@ protected:
   void promotePath_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path promotion outside Tx thread", return);
-    if (!m_validatingPath.active) return;
-    m_path = m_validatingPath.path;
+    if (!m_migration.active) return;
+    m_migration.state = MigrationState::Promoted;
+    m_path = m_migration.path;
     m_path.validated();
     bindPromotedCID_();
-    m_validatingPath = {};
     ++m_txDiag.pathValidationPromoted;
+    ++m_txDiag.migration.promoted;
     cancelPathTimer_();
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Validated,
       reason = PathReason::Response,
+      attemptID = m_migration.attemptID,
       antiAmplification = m_path.antiAmplificationRemaining(),
       mtu = m_path.activeMaxUDP(),
       validated = pathValidated_(),
@@ -1684,6 +1727,7 @@ protected:
       PathEvent event{
 		.linkInfo = linkInfo
       ,
+		.attemptID = attemptID,
 		.antiAmplification = antiAmplification,
 		.mtu = mtu,
         .kind = PathKind::PathValid,
@@ -1696,6 +1740,7 @@ protected:
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Updated,
       reason = PathReason::Promoted,
+      attemptID = m_migration.attemptID,
       antiAmplification = m_path.antiAmplificationRemaining(),
       mtu = m_path.activeMaxUDP(),
       validated = true,
@@ -1704,6 +1749,7 @@ protected:
       PathEvent event{
 		.linkInfo = linkInfo
       ,
+		.attemptID = attemptID,
 		.antiAmplification = antiAmplification,
 		.mtu = mtu,
         .kind = PathKind::Path,
@@ -1714,22 +1760,32 @@ protected:
       o.logPathUpdated(event, time);
     }));
     impl()->pathPromoted_();
-    const Path &path = m_path;
-    impl()->pathUpdate(
-      path.local(), path.remote(), path.validated(), path.activeMaxUDP());
+    impl()->refreshPromotedRoutes_();
+    MigrationResult result = migrationResult_(true, m_migration.reason);
+    logMigration_(ZquicLog_::MigrationAction::Promoted);
+    m_migration = {};
+    impl()->pathUpdate(activePathInfo_());
+    impl()->migrationPromoted(result);
     impl()->queueTxFlush_();
   }
   void failPathValid_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path-validation failure outside Tx thread", return);
-    if (!m_validatingPath.active) return;
-    ZiSockAddr local = m_validatingPath.path.local();
-    ZiSockAddr remote = m_validatingPath.path.remote();
-    m_validatingPath = {};
+    if (!m_migration.active) return;
+    m_migration.state = MigrationState::Failed;
+    m_migration.reason = MigrationReason::Timeout;
+    MigrationResult result = migrationResult_(false, m_migration.reason);
+    ++m_txDiag.migration.abandoned;
+    ++m_txDiag.migration.failed;
+    ++m_txDiag.migration.timeouts;
+    logMigration_(ZquicLog_::MigrationAction::Abandoned);
+    logMigration_(ZquicLog_::MigrationAction::Failed);
+    m_pathChallengeControl = {};
     cancelPathTimer_();
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Failed,
       reason = PathReason::Timeout,
+      attemptID = m_migration.attemptID,
       antiAmplification = m_path.antiAmplificationRemaining(),
       mtu = m_path.activeMaxUDP(),
       validated = pathValidated_(),
@@ -1738,6 +1794,7 @@ protected:
       PathEvent event{
 		.linkInfo = linkInfo
       ,
+		.attemptID = attemptID,
 		.antiAmplification = antiAmplification,
 		.mtu = mtu,
         .kind = PathKind::PathValid,
@@ -1747,10 +1804,338 @@ protected:
 
       o.logPathValid(event, time);
     }));
-    impl()->migrationFailure(local, remote);
+    m_migration = {};
+    impl()->migrationFailed(result);
     impl()->queueTxFlush_();
   }
   void pathExpired_() { failPathValid_(); }
+  bool prepareActiveMigration_(
+    const MigrationParams &params,
+    MigrationReason::T &reason) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC active migration preparation outside Tx thread", return false);
+    reason = MigrationReason::None;
+    ++m_txDiag.migration.requested;
+    if (!runtimeEstablished_()) {
+      reason = MigrationReason::Validation;
+      return false;
+    }
+    if (m_migration.active) {
+      reason = MigrationReason::Validation;
+      return false;
+    }
+    if (m_crypto.peerTransportParamsReceived() &&
+	m_crypto.peerTransportParams().disableActiveMigration) {
+      reason = MigrationReason::PeerDisabled;
+      ++m_txDiag.migration.policyReject;
+      logActiveMigrationRejected_(params, reason);
+      return false;
+    }
+    ZiSockAddr local = params.local ? params.local : m_path.local();
+    ZiSockAddr remote = params.remote ? params.remote : m_path.remote();
+    if (!local || !remote) {
+      reason = MigrationReason::Validation;
+      return false;
+    }
+    if (!params.rebindLocal && remote == m_path.remote()) {
+      reason = MigrationReason::Validation;
+      return false;
+    }
+
+    PathState state;
+    state.prev = m_path;
+    state.path = m_isServer ?
+      Path::server(ZuMv(local), remote) :
+      Path::client(ZuMv(local), remote);
+    initPathECN_(state.path);
+    state.path.configuredMaxUDP(m_path.configuredMaxUDP());
+    state.path.peerMaxUDP(m_path.peerMaxUDP());
+    state.reason = params.reason != MigrationReason::None ?
+      params.reason : MigrationReason::Active;
+    state.localRebind = params.rebindLocal;
+    state.closeOnFailure = params.closeOnFailure;
+    state.state = MigrationState::Requested;
+    state.attemptID = m_nextMigrationAttemptID++;
+    state.active = true;
+    logMigration_(state, ZquicLog_::MigrationAction::Requested);
+    logMigration_(state, ZquicLog_::MigrationAction::Started);
+    ++m_txDiag.migration.started;
+    if (!migrationPeerCID_(state, params.requireNewPeerCID)) {
+      reason = state.reason;
+      ++m_txDiag.migration.noPeerCID;
+      logMigration_(
+	state, ZquicLog_::MigrationAction::CIDUnavailable, reason);
+      logMigration_(state, ZquicLog_::MigrationAction::Failed, reason);
+      return false;
+    }
+    if (!state.challenge.generate()) {
+      reason = MigrationReason::Validation;
+      logMigration_(state, ZquicLog_::MigrationAction::Rejected, reason);
+      return false;
+    }
+    state.deadline = pathValidDeadline_();
+    m_migration = state;
+    logMigration_(ZquicLog_::MigrationAction::CIDSelected);
+    return true;
+  }
+  void updateActiveMigrationLocal_(ZiSockAddr local) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC active migration local update outside Tx thread", return);
+    if (!m_migration.active || !local) return;
+    Path path = m_isServer ?
+      Path::server(ZuMv(local), m_migration.path.remote()) :
+      Path::client(ZuMv(local), m_migration.path.remote());
+    initPathECN_(path);
+    path.configuredMaxUDP(m_path.configuredMaxUDP());
+    path.peerMaxUDP(m_path.peerMaxUDP());
+    m_migration.path = ZuMv(path);
+  }
+  void activeMigrationRebindStart_() {
+    logMigration_(ZquicLog_::MigrationAction::RebindStart);
+  }
+  void activeMigrationRebindOK_() {
+    ++m_txDiag.migration.localRebindOK;
+    logMigration_(ZquicLog_::MigrationAction::RebindOK);
+  }
+  void activeMigrationRebindFail_(MigrationReason::T reason) {
+    ++m_txDiag.migration.localRebindFail;
+    logMigration_(ZquicLog_::MigrationAction::RebindFail, reason);
+  }
+  bool activateActiveMigration_(bool armTimer = true) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC active migration activation outside Tx thread", return false);
+    if (!m_migration.active ||
+	m_migration.state != MigrationState::Requested)
+      return false;
+    m_migration.state = MigrationState::Validating;
+    ++m_txDiag.pathValidationStarted;
+    impl()->migrationStarted(migrationResult_());
+    if (armTimer)
+      schedulePathTimer_(m_migration.deadline);
+    logMigration_(ZquicLog_::MigrationAction::ChallengeQueued);
+    ZquicLOG(app()->qlogTrace(), ([
+      action = PathAction::ChallengeTx,
+      reason = PathReason::Client,
+      attemptID = m_migration.attemptID,
+      deadlineUS = qlogUS_(m_migration.deadline),
+      antiAmplification = m_path.antiAmplificationRemaining(),
+      mtu = m_path.activeMaxUDP(),
+      validated = pathValidated_(),
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      PathEvent event{
+	.linkInfo = linkInfo,
+	.attemptID = attemptID,
+	.antiAmplification = antiAmplification,
+	.deadlineUS = deadlineUS,
+	.mtu = mtu,
+	.kind = PathKind::PathValid,
+	.action = PathAction::T(action),
+	.reason = PathReason::T(reason),
+	.validated = validated};
+
+      o.logPathValid(event, time);
+    }));
+    return true;
+  }
+  bool buildActiveMigrationChallenge_(
+    PktBuild &build, TxPktRefs &refs, ControlFrame &frame) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC active migration challenge build outside Tx thread", return false);
+    if (!m_migration.active ||
+	m_migration.state != MigrationState::Validating)
+      return false;
+    frame = ControlFrame::pathChallenge(m_migration.challenge.bspan());
+    if (!txQueueControl_(frame)) return false;
+    PktBudget budget = sendBudget_();
+    if (!budget.congestion) return false;
+    PktAssembly assembly;
+    ControlFrame sentControls[SentPkt::MaxFrames];
+    unsigned nSentControls = 0;
+    return appendControl_(
+      frame, build, budget, assembly, refs,
+      sentControls, nSentControls);
+  }
+  void activeMigrationChallengeSent_(const ControlFrame &frame) {
+    controlSent_(frame);
+  }
+  const ZiSockAddr &activeMigrationRemote_() const {
+    return m_migration.path.remote();
+  }
+  const CxnID &activeMigrationPeerCID_() const {
+    return m_migration.peerCID;
+  }
+  void failActiveMigration_(MigrationReason::T reason) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC active migration failure outside Tx thread", return);
+    if (!m_migration.active) return;
+    m_migration.state = MigrationState::Failed;
+    m_migration.reason = reason;
+    MigrationResult result = migrationResult_(false, reason);
+    bool closeOnFailure = m_migration.closeOnFailure;
+    ++m_txDiag.migration.failed;
+    if (reason == MigrationReason::Endpoint)
+      ++m_txDiag.migration.endpointFailure;
+    else if (reason == MigrationReason::Timeout)
+      ++m_txDiag.migration.timeouts;
+    logMigration_(ZquicLog_::MigrationAction::Failed, reason);
+    if (closeOnFailure)
+      logMigration_(ZquicLog_::MigrationAction::Closed, reason);
+    m_migration = {};
+    m_pathChallengeControl = {};
+    cancelPathTimer_();
+    impl()->migrationFailed(result);
+    if (closeOnFailure)
+      closeState_(TransportError::NoError);
+  }
+  bool migrationActive_() const { return m_migration.active; }
+  uint64_t activePeerSeq_() const {
+    if (auto cid = findCID_(m_peerCIDs, m_peerCID))
+      return cid->sequence;
+    return U64Null;
+  }
+  static PathInfo pathInfo_(
+    const Path &path, PathRole::T role,
+    MigrationState::T state, MigrationReason::T reason, uint64_t peerSeq) {
+    const PathDiag &diag = path.diag();
+    return PathInfo{
+      .local = path.local(),
+      .remote = path.remote(),
+      .peerCIDSequence = peerSeq,
+      .bytesRx = diag.bytesRx,
+      .bytesTx = diag.bytesTx,
+      .activeMaxUDP = path.activeMaxUDP(),
+      .role = role,
+      .migrationState = state,
+      .reason = reason,
+      .validated = path.validated()
+    };
+  }
+  PathInfo activePathInfo_() const {
+    return pathInfo_(
+      m_path, PathRole::Active, MigrationState::Idle,
+      MigrationReason::None, activePeerSeq_());
+  }
+  PathInfo candidatePathInfo_() const {
+    if (!m_migration.active) return PathInfo{};
+    return pathInfo_(
+      m_migration.path, PathRole::Candidate, m_migration.state,
+      m_migration.reason, m_migration.peerSeq);
+  }
+  MigrationResult migrationResult_(
+    bool success = false,
+    MigrationReason::T reason = MigrationReason::None) const {
+    MigrationState::T state = m_migration.active ?
+      m_migration.state : MigrationState::T(MigrationState::Idle);
+    MigrationReason::T reason_ = reason != MigrationReason::None ? reason :
+      (m_migration.active ?
+	m_migration.reason : MigrationReason::T(MigrationReason::None));
+    return MigrationResult{
+      .active = activePathInfo_(),
+      .candidate = candidatePathInfo_(),
+      .state = state,
+      .reason = reason_,
+      .attemptID = m_migration.active ? m_migration.attemptID : U64Null,
+      .success = success
+    };
+  }
+  void logMigration_(
+    ZquicLog_::MigrationAction::T action,
+    MigrationReason::T reason = MigrationReason::None) const {
+    if (!m_migration.active) return;
+    logMigration_(m_migration, action, reason);
+  }
+  void logMigration_(
+    const PathState &migration,
+    ZquicLog_::MigrationAction::T action,
+    MigrationReason::T reason = MigrationReason::None) const {
+    if (!migration.active) return;
+    ZquicLOG(app()->qlogTrace(), ([
+      action,
+      reason = reason != MigrationReason::None ? reason : migration.reason,
+      state = migration.state,
+      activeLocal = m_path.local(),
+      activeRemote = m_path.remote(),
+      candidateLocal = migration.path.local(),
+      candidateRemote = migration.path.remote(),
+      attemptID = migration.attemptID,
+      peerCIDSeq = migration.peerSeq,
+      deadlineUS = qlogUS_(migration.deadline),
+      mtu = migration.path.activeMaxUDP(),
+      pathRole = action == ZquicLog_::MigrationAction::Promoted ?
+	PathRole::Active : PathRole::Candidate,
+      localRebind = migration.localRebind,
+      validated = action == ZquicLog_::MigrationAction::Promoted ||
+	migration.path.validated(),
+      closeOnFailure = migration.closeOnFailure,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      MigrationEvent event{
+	.linkInfo = linkInfo,
+	.activeLocal = activeLocal,
+	.activeRemote = activeRemote,
+	.candidateLocal = candidateLocal,
+	.candidateRemote = candidateRemote,
+	.attemptID = attemptID,
+	.peerCIDSeq = peerCIDSeq,
+	.deadlineUS = deadlineUS,
+	.mtu = mtu,
+	.action = ZquicLog_::MigrationAction::T(action),
+	.reason = MigrationReason::T(reason),
+	.state = MigrationState::T(state),
+	.pathRole = PathRole::T(pathRole),
+	.localRebind = localRebind,
+	.validated = validated,
+	.closeOnFailure = closeOnFailure};
+
+      o.logMigrationUpdated(event, time);
+    }));
+  }
+  void logActiveMigrationRejected_(
+    const MigrationParams &params, MigrationReason::T reason) {
+    ZiSockAddr local = params.local ? params.local : m_path.local();
+    ZiSockAddr remote = params.remote ? params.remote : m_path.remote();
+    if (!local || !remote) return;
+    PathState state;
+    state.prev = m_path;
+    state.path = m_isServer ?
+      Path::server(ZuMv(local), remote) :
+      Path::client(ZuMv(local), remote);
+    state.path.configuredMaxUDP(m_path.configuredMaxUDP());
+    state.path.peerMaxUDP(m_path.peerMaxUDP());
+    state.state = MigrationState::Idle;
+    state.reason = reason;
+    state.localRebind = params.rebindLocal;
+    state.closeOnFailure = params.closeOnFailure;
+    state.attemptID = m_nextMigrationAttemptID++;
+    state.active = true;
+    logMigration_(state, ZquicLog_::MigrationAction::Requested, reason);
+    logMigration_(state, ZquicLog_::MigrationAction::Rejected, reason);
+  }
+  bool validatingPath_() const { return migrationActive_(); }
+  bool startPathValidation_(ZiSockAddr local, ZiSockAddr remote) {
+    if (!remote || remote == m_path.remote())
+      return false;
+    if (m_migration.active &&
+	remote == m_migration.path.remote())
+      return false;
+    return startPathValid_(ZuMv(local), ZuMv(remote), false);
+  }
+  const ZiSockAddr &validatingRemote_() const {
+    return m_migration.path.remote();
+  }
+  ZuBSpan validatingChallenge_() const {
+    return m_migration.active ?
+      m_migration.challenge.bspan() : ZuBSpan{};
+  }
+  bool installAppDataKeys_(
+    const TrafficSecret &rx, const TrafficSecret &tx, const CxnID &localCID) {
+    m_localSCID = localCID;
+    m_linkState = LinkState::Established;
+    clearPeerKeyState_();
+    return m_crypto.updateRxTrafficSecret(PktNumSpace::AppData, rx) &&
+      txInstallTrafficSecret_(PktNumSpace::AppData, tx);
+  }
 #ifdef Zquic_DEBUG
   void forceActivePathMTU_(unsigned size) {
     m_path.startProbe(size);
@@ -1768,30 +2153,6 @@ protected:
   void expirePMTUDProbe_() { pmtudExpired_(); }
   unsigned pathProbeSize_() const { return m_path.probeSize(); }
   bool pathProbeRetryPending_() const { return m_path.probeRetryPending(); }
-  bool validatingPath_() const { return m_validatingPath.active; }
-  bool startPathValidation_(ZiSockAddr local, ZiSockAddr remote) {
-    if (!remote || sameAddr_(remote, m_path.remote()))
-      return false;
-    if (m_validatingPath.active &&
-	sameAddr_(remote, m_validatingPath.path.remote()))
-      return false;
-    return startPathValid_(ZuMv(local), ZuMv(remote), false);
-  }
-  const ZiSockAddr &validatingRemote_() const {
-    return m_validatingPath.path.remote();
-  }
-  ZuBSpan validatingChallenge_() const {
-    return m_validatingPath.active ?
-      m_validatingPath.challenge.bspan() : ZuBSpan{};
-  }
-  bool installAppDataKeys_(
-    const TrafficSecret &rx, const TrafficSecret &tx, const CxnID &localCID) {
-    m_localSCID = localCID;
-    m_linkState = LinkState::Established;
-    clearPeerKeyState_();
-    return m_crypto.updateRxTrafficSecret(PktNumSpace::AppData, rx) &&
-      txInstallTrafficSecret_(PktNumSpace::AppData, tx);
-  }
   void discardPeerKeys_() { discardOldPeerKeys_(); }
 #endif
   template <typename SendPkt>
@@ -2145,16 +2506,24 @@ protected:
   void transportClose(FrameType::T, uint64_t) {
     ++m_rxDiag.unhandledAppEvents;
   }
-  void pathUpdate(
-    const ZiSockAddr &, const ZiSockAddr &, bool, unsigned) {
+  void migrationStarted(const MigrationResult &) {
     ++m_txDiag.unhandledAppEvents;
   }
-  void migrationFailure(const ZiSockAddr &, const ZiSockAddr &) {
+  void migrationPromoted(const MigrationResult &) {
+    ++m_txDiag.unhandledAppEvents;
+  }
+  void migrationFailed(const MigrationResult &) {
+    ++m_txDiag.unhandledAppEvents;
+  }
+  void pathUpdate(const PathInfo &) {
     ++m_txDiag.unhandledAppEvents;
   }
   void streamFrame(
     uint64_t, uint64_t, ZuBSpan, bool) { }
   void retiredLocalCID_(uint64_t, const CxnID &) { }
+  void refreshPromotedRoutes_() { }
+  void localCIDsIssued_() { }
+  void migrationCIDsReady_() { impl()->queueTxFlush_(); }
   void statelessReset() { ++m_rxDiag.unhandledAppEvents; }
   void disconnected(bool peer) {
     app()->rxRun([link = impl(), peer]() {
@@ -2292,24 +2661,80 @@ protected:
     impl()->retiredLocalCID_(frame.value, id);
     return true;
   }
-  void selectPathCID_(PathState &state) {
+  bool issueMigrationCIDs_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC migration CID issuance outside Tx thread", return false);
+    if (!runtimeEstablished_() ||
+	app()->migrationMode() != MigrationMode::Active ||
+	!app()->migrationCIDReserve())
+      return true;
+    unsigned peerLimit = m_crypto.peerTransportParamsReceived() ?
+      unsigned(m_crypto.peerTransportParams().activeCxnIDLimit) : 2;
+    if (peerLimit < 2) return true;
+    unsigned target = app()->migrationCIDReserve() + 1;
+    if (target > peerLimit) target = peerLimit;
+    if (target > LocalActiveCxnIDLimit) target = LocalActiveCxnIDLimit;
+    unsigned active = 0;
+    uint64_t sequence = 0;
+    for (auto &cid : m_localCIDs) {
+      if (cid.state == CxnState::Active) ++active;
+      if (cid.state != CxnState::Tombstone && cid.sequence > sequence)
+	sequence = cid.sequence;
+    }
+    bool issued = false;
+    unsigned attempts = 0;
+    while (active < target && attempts++ < target * 2) {
+      CxnID id;
+      ResetToken token;
+      if (!CxnIDGen::random(id) || !token.generate()) return false;
+      uint64_t seq = ++sequence;
+      if (!addLocalCID_(id, seq, token)) continue;
+      txQueueControl_(ControlFrame::newCxnID(seq, 0, id, token));
+      issued = true;
+      ++active;
+    }
+    if (issued)
+      impl()->localCIDsIssued_();
+    return active >= target;
+  }
+  void scheduleMigrationCIDs_() {
+    if (txInvoked_()) {
+      if (issueMigrationCIDs_()) impl()->migrationCIDsReady_();
+      return;
+    }
+    app()->txRun([link = impl()]() mutable {
+      if (link->disconnecting_()) return;
+      if (link->issueMigrationCIDs_()) link->migrationCIDsReady_();
+    });
+  }
+  bool migrationPeerCID_(PathState &state, bool requireNewPeerCID) {
     state.peerCID = m_peerCID;
+    state.peerSeq = U64Null;
+    if (!m_peerCID) {
+      state.peerSeq = 0;
+      return true;
+    }
     for (auto &cid : m_peerCIDs) {
       if (cid.state != CxnState::Active || cid.associated)
 	continue;
       state.peerCID = cid.id;
       state.peerSeq = cid.sequence;
-      return;
+      return true;
     }
-    if (auto cid = findCID_(m_peerCIDs, m_peerCID))
+    if (auto cid = findCID_(m_peerCIDs, m_peerCID)) {
       state.peerSeq = cid->sequence;
+      if (!requireNewPeerCID || !m_peerCID.length())
+	return true;
+    }
+    state.reason = MigrationReason::NoPeerCID;
+    return false;
   }
   void bindPromotedCID_() {
     for (auto &cid : m_peerCIDs)
       cid.associated = false;
-    if (!m_validatingPath.peerCID) return;
-    if (auto cid = findCID_(m_peerCIDs, m_validatingPath.peerSeq)) {
-      if (cid->id == m_validatingPath.peerCID) {
+    if (!m_migration.peerCID) return;
+    if (auto cid = findCID_(m_peerCIDs, m_migration.peerSeq)) {
+      if (cid->id == m_migration.peerCID) {
 	cid->associated = true;
 	m_peerCID = cid->id;
 	ZquicLOG(app()->qlogTrace(), ([
@@ -2317,6 +2742,7 @@ protected:
 	  reason = CIDReason::PathPromoted,
 	  cxnID = cid->id,
 	  sequence = cid->sequence,
+	  attemptID = m_migration.attemptID,
 		  length = qlogCount_(cid->id.length()),
 		  local = false,
 		  associated = cid->associated,
@@ -2325,9 +2751,10 @@ protected:
 		](auto &o, ZuTime time) {
 		  CIDEvent event{
 	    .cxnID = cxnID,
-		    .linkInfo = linkInfo
+	    .linkInfo = linkInfo
 		  ,
 	    .sequence = sequence,
+	    .attemptID = attemptID,
 	    .kind = CIDKind::CxnID,
 	    .action = CIDAction::T(action),
 	    .reason = CIDReason::T(reason),
@@ -2345,7 +2772,8 @@ protected:
     ZuTime timeout = ptoTimeout_();
     int64_t usec = timeout.microsecs();
     if (usec < 1000000) usec = 1000000;
-    if (usec > int64_t(-1) / 3) usec = int64_t(-1) / 3;
+    if (usec > ZuCmp<int64_t>::maximum() / 3)
+      usec = ZuCmp<int64_t>::maximum() / 3;
     return runtimeNow_() + timeUS(uint64_t(usec) * 3);
   }
   template <typename Routes>
@@ -2478,6 +2906,18 @@ protected:
       if (cid.state != CxnState::Tombstone && cid.id == id)
 	return &cid;
     return nullptr;
+  }
+  template <typename CIDs>
+  static const LinkCID *findCID_(const CIDs &cids, const CxnID &id) {
+    for (const auto &cid : cids)
+      if (cid.state != CxnState::Tombstone && cid.id == id)
+	return &cid;
+    return nullptr;
+  }
+  bool acceptLocalShortCID_(const CxnID &id) const {
+    if (id == m_localSCID) return true;
+    const LinkCID *cid = findCID_(m_localCIDs, id);
+    return cid && cid->state == CxnState::Active;
   }
   template <typename CIDs>
   bool addCID_(
@@ -2660,6 +3100,9 @@ protected:
       .scid = m_localSCID
     };
   }
+  const TransportParams &localTransportParams_() const {
+    return m_transportParams;
+  }
 
   template <typename AppLike>
   void configureLocalTransportParams_(AppLike *app) {
@@ -2675,6 +3118,8 @@ protected:
     m_transportParams.initialMaxStreamsUni = app->maxStreamsUni();
     m_transportParams.maxIdleTimeout = app->maxIdleTimeout();
     m_transportParams.activeCxnIDLimit = LocalActiveCxnIDLimit;
+    m_transportParams.disableActiveMigration =
+      app->migrationMode() != MigrationMode::Active;
     m_rxDataCredit.set(m_transportParams.initialMaxData);
     m_localLimit[Zi::StreamType::Duplex].set(
       m_transportParams.initialMaxStreamsBidi);
@@ -3109,6 +3554,9 @@ protected:
 	  byteSpan(frame.payload, sizeof(frame.payload)));
       case FrameType::HandshakeDone:
 	return SentFrameRef::handshakeDone();
+      case FrameType::NewCxnID:
+	return SentFrameRef::newCxnID(
+	  frame.streamID, frame.value, frame.cxnID, frame.resetToken);
       case FrameType::ResetStream:
 	return SentFrameRef::resetStream(
 	  frame.streamID, frame.errorCode, frame.value);
@@ -3136,6 +3584,10 @@ protected:
 	ref.controlType == FrameType::PathResponse)
       for (unsigned i = 0; i < sizeof(frame.payload); ++i)
 	frame.payload[i] = ref.payload[i];
+    else if (ref.controlType == FrameType::NewCxnID) {
+      frame.cxnID = ref.cxnID;
+      frame.resetToken = ref.resetToken;
+    }
     return frame;
   }
 
@@ -3210,6 +3662,15 @@ protected:
 	    sentControls, nSentControls))
 	return false;
     }
+    auto cidIter = m_newCxnIDControls.iter();
+    while (refs.count() < SentPkt::MaxFrames) {
+      ControlFrame frame = cidIter();
+      if (!frame) break;
+      if (!appendControl_(
+	    frame, build, budget, assembly, refs,
+	    sentControls, nSentControls))
+	return false;
+    }
     return true;
   }
 
@@ -3256,6 +3717,9 @@ protected:
       case FrameType::PathResponse:
 	m_pathResponses.shift();
 	break;
+      case FrameType::NewCxnID:
+	m_newCxnIDControls.shift();
+	break;
       case FrameType::HandshakeDone:
 	pendingControlSent_(m_handshakeDoneControl, frame);
 	break;
@@ -3279,6 +3743,9 @@ protected:
   void clearPendingControl_(PendingControl &slot, const ControlFrame &frame) {
     if (slot.frame == frame) slot = {};
   }
+  void clearNewCxnIDControl_(const ControlFrame &frame) {
+    (void)frame;
+  }
   void controlAckd_(const SentFrameRef &ref) {
     ControlFrame frame = controlFrame_(ref);
     switch (ref.controlType) {
@@ -3301,6 +3768,9 @@ protected:
 	break;
       case FrameType::HandshakeDone:
 	clearPendingControl_(m_handshakeDoneControl, frame);
+	break;
+      case FrameType::NewCxnID:
+	clearNewCxnIDControl_(frame);
 	break;
       case FrameType::MaxStreamData:
       case FrameType::StreamDataBlocked:
@@ -4391,6 +4861,11 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path-validation timer outside Tx thread", return);
     if (disconnecting_()) return;
+    if (m_migration.active && *m_migration.deadline &&
+	runtimeNow_() < m_migration.deadline) {
+      schedulePathTimer_(m_migration.deadline);
+      return;
+    }
     if (!closed()) impl()->pathExpired_();
   }
 
@@ -5128,13 +5603,15 @@ nextSpace:
     if (!ack || !update.ecnAckdPackets || m_path.ecnDisabled()) return;
     if (!ack->ecn.any()) {
       if (m_path.ecnProbeExpired() && ecnValid && *ecnValid) {
-	auto oldState = qlogECNState_(m_path.ecnState());
+#ifdef Zquic_DEBUG
+	auto oldState = m_path.ecnState();
+#endif
 	m_path.ecnValidationFailed();
 	++m_txDiag.ecnValidationFailures;
 	*ecnValid = false;
 	ZquicLOG(app()->qlogTrace(), ([
 	  level = ack->level,
-	  oldState,
+	  oldState = qlogECNState_(oldState),
 	  state = ECNState::Failed,
 	  linkInfo = linkInfo_()
 	](auto &o, ZuTime time) {
@@ -5151,14 +5628,17 @@ nextSpace:
       }
       return;
     }
-    auto oldState = qlogECNState_(m_path.ecnState());
+#ifdef Zquic_DEBUG
+    auto oldState = m_path.ecnState();
+#endif
     m_path.ackdECN(update.ecnAckdPackets);
-    auto newState = qlogECNState_(m_path.ecnState());
+#ifdef Zquic_DEBUG
+    auto newState = m_path.ecnState();
     if (oldState != newState) {
       ZquicLOG(app()->qlogTrace(), ([
 	level = ack->level,
-	oldState,
-	newState,
+	oldState = qlogECNState_(oldState),
+	newState = qlogECNState_(newState),
 	linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	ECNEvent event{
@@ -5172,6 +5652,7 @@ nextSpace:
 	o.logECNStateUpd(event, time);
       }));
     }
+#endif
     if (!ceDelta || !*ceDelta) return;
     m_path.ceECN(update.ecnAckdBytes);
     if (m_congestion.congestionEventAt(
@@ -5613,19 +6094,21 @@ nextSpace:
     if (sentECT < sent.ce) {
       fail = true;
     }
-    uint64_t largest = 0;
-    if (ack.nRanges)
-      largest = ack.ranges[ack.nRanges - 1].largest;
     if (withCE > sentECT || ack.ecn.ect0 > sent.ect0 ||
 	ack.ecn.ect1 > sent.ect1)
       fail = true;
     if (fail) {
-      auto oldState = qlogECNState_(m_path.ecnState());
+#ifdef Zquic_DEBUG
+      auto oldState = m_path.ecnState();
+      uint64_t largest = 0;
+      if (ack.nRanges)
+	largest = ack.ranges[ack.nRanges - 1].largest;
+#endif
       m_path.ecnValidationFailed();
       ++m_txDiag.ecnValidationFailures;
       ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
-	oldState,
+	oldState = qlogECNState_(oldState),
 	state = ECNState::Failed,
 	ect0 = ack.ecn.ect0,
 	ect1 = ack.ecn.ect1,
@@ -5842,6 +6325,7 @@ nextSpace:
       case FrameType::PathChallenge: ++m_txDiag.pathChallengeTx; break;
       case FrameType::PathResponse: ++m_txDiag.pathResponseTx; break;
       case FrameType::HandshakeDone: ++m_txDiag.handshakeDoneTx; break;
+      case FrameType::NewCxnID: ++m_txDiag.newCxnIDTx; break;
       default: break;
     }
   }
@@ -6137,6 +6621,8 @@ nextSpace:
 	return;
       case SentFrameKind::Control:
 	qlogAddFrame_(event, ZquicLog_::FrameEvent{
+	  .cxnID = ref.cxnID,
+	  .resetToken = ref.resetToken,
 	  .streamID = ref.streamID,
 	  .offset = ref.offset,
 	  .length = ref.length,
@@ -6415,6 +6901,17 @@ nextSpace:
     ZiSockAddr addr, ZuBSpan recordFrame, const TxPktRefs *recordRefs,
     bool ackEliciting, AllocTxPkt allocTxPkt, SendPkt sendPkt,
     unsigned pmtudSize = 0) {
+    return sendProtShortPkt_(
+      runtimeCID_(dcid), pnLength, payload, ZuMv(addr), recordFrame,
+      recordRefs, ackEliciting, ZuMv(allocTxPkt), ZuMv(sendPkt), pmtudSize);
+  }
+
+  template <typename AllocTxPkt, typename SendPkt>
+  bool sendProtShortPkt_(
+    const CxnID &dcid, unsigned pnLength, PktBuild &payload,
+    ZiSockAddr addr, ZuBSpan recordFrame, const TxPktRefs *recordRefs,
+    bool ackEliciting, AllocTxPkt allocTxPkt, SendPkt sendPkt,
+    unsigned pmtudSize = 0) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Short packet protection outside Tx thread", return false);
     if (!runtimeEstablished_() &&
@@ -6438,7 +6935,7 @@ nextSpace:
     }
     ZmRef<ZiIOBuf> buf = allocTxPkt();
     int headerLen = Pkt::writeShort(
-      buf->data_(), buf->size, runtimeCID_(dcid),
+      buf->data_(), buf->size, dcid,
       m_txPN[PktNumSpace::AppData], pnLength, m_txKeyPhase);
     if (headerLen < 0) return false;
     if (!payload.padForProtSample(
@@ -6836,7 +7333,7 @@ nextSpace:
     }
     ShortHdr h;
     if (Pkt::parseShort(packet, m_localSCID.length(), h) < 0 ||
-		!(h.dcid == m_localSCID)) {
+	!acceptLocalShortCID_(h.dcid)) {
       if (checkStatelessReset_(datagram, true)) return true;
       ZquicLOG(app()->qlogTrace(), ([
 		level = PktNumSpace::AppData,
@@ -7474,6 +7971,7 @@ private:
       m_streamsBlockedControl[i] = {};
     }
     m_pathResponses.clean();
+    m_newCxnIDControls.clean();
     auto iter = m_streams->iter();
     while (auto node = iter()) node->data().clearControls();
   }
@@ -7512,13 +8010,20 @@ private:
       }
       case FrameType::PathChallenge:
 	return m_pathChallengeControl.frame == frame &&
-	  m_validatingPath.active &&
-	  m_validatingPath.challenge.equals(byteSpan(
+	  m_migration.active &&
+	  m_migration.challenge.equals(byteSpan(
 	    frame.payload, sizeof(frame.payload)));
       case FrameType::PathResponse:
 	return true;
       case FrameType::HandshakeDone:
 	return m_handshakeDoneControl.frame == frame;
+      case FrameType::NewCxnID: {
+	const LinkCID *cid = localCID_(frame.streamID);
+	return cid &&
+	  cid->state == CxnState::Active &&
+	  cid->id == frame.cxnID &&
+	  cid->resetToken == frame.resetToken;
+      }
       default:
 	return false;
     }
@@ -7965,6 +8470,8 @@ private:
   PendingControl	m_handshakeDoneControl;
   PendingControl	m_pathChallengeControl;
   PathResponses		m_pathResponses{ZmQueueParams{}.initial(PathResponseMax)};
+  NewCxnIDControls	m_newCxnIDControls{
+    ZmQueueParams{}.initial(LocalActiveCxnIDLimit)};
 
   CryptoStream		m_txCrypto[PktNumSpace::N];
   CryptoTxPQueue	m_txCryptoUnackd[PktNumSpace::N];
@@ -7981,7 +8488,8 @@ private:
   PktTxSpace		m_txPkts[PktNumSpace::N];
   AckSnapshot		m_txAck[PktNumSpace::N];
   Path			m_path;
-  PathState		m_validatingPath;
+  PathState		m_migration;
+  uint64_t		m_nextMigrationAttemptID = 1;
   bool			m_txSpaceDiscarded[PktNumSpace::N]{};
   bool			m_coalesceLong = false;
   bool			m_txKeyPhase = false;

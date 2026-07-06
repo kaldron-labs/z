@@ -457,6 +457,14 @@ struct Options {
   ZuCSpan	keyLog;
   ZuCSpan	url;
   Http3Mode::T	http3 = Http3Mode::prefer;
+  ZuCSpan	quicMigration{"passive"};
+  uint32_t	quicMigrationCIDReserve = 1;
+  bool		quicMigrationCloseOnFailure = false;
+  ZuCSpan	quicMigrationLocal;
+  bool		quicMigrateLocal = false;
+  bool		quicMigrateAfterHeaders = false;
+  uint64_t	quicMigrateAfterBytes = 0;
+  ZiSockAddr	quicMigrationLocalAddr;
   bool		verbose = false;
 #ifdef ZiMultiplex_DEBUG
   bool		debug = false;
@@ -490,6 +498,20 @@ ZtStruct((Options, CLI),
   (((http3),     (Enum<Http3Mode::Map>,
 		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
 								 Http3Mode::prefer)),
+  (((quicMigration),
+    (CLI::Long<"quic-migration">)),                         (String, "passive")),
+  (((quicMigrationCIDReserve),
+    (CLI::Long<"quic-migration-cid-reserve">)),             (UInt32, 1)),
+  (((quicMigrationCloseOnFailure),
+    (CLI::Long<"quic-migration-close-on-failure">)),        (Bool, false)),
+  (((quicMigrationLocal),
+    (CLI::Long<"quic-migration-local">)),                   (String)),
+  (((quicMigrateLocal),
+    (CLI::Long<"quic-migrate-local">)),                     (Bool, false)),
+  (((quicMigrateAfterHeaders),
+    (CLI::Long<"quic-migrate-after-headers">)),             (Bool, false)),
+  (((quicMigrateAfterBytes),
+    (CLI::Long<"quic-migrate-after-bytes">)),               (UInt64, 0)),
   (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool, false)),
 #ifdef ZiMultiplex_DEBUG
   (((debug),     (CLI::Long<"debug">)),                      (Bool, false)),
@@ -526,6 +548,22 @@ void usage(int code = 1)
     "                      defaults to SSLKEYLOGFILE when set\n"
     "  -3, --http3=MODE   HTTP/3 mode for https: force, prefer, disable;\n"
     "                      default prefer\n"
+    "  --quic-migration=MODE\n"
+    "                      QUIC migration policy: disabled, passive, active;\n"
+    "                      default passive\n"
+    "  --quic-migration-cid-reserve=N\n"
+    "                      peer CID reserve for QUIC migration, default 1\n"
+    "  --quic-migration-close-on-failure\n"
+    "                      close active migration attempts on failure\n"
+    "  --quic-migration-local=ADDR[:PORT]\n"
+    "                      local address for HTTP/3 client migration\n"
+    "  --quic-migrate-local\n"
+    "                      request one HTTP/3 client local UDP port migration\n"
+    "                      after H3 control streams open\n"
+    "  --quic-migrate-after-headers\n"
+    "                      request HTTP/3 client migration after response headers\n"
+    "  --quic-migrate-after-bytes=N\n"
+    "                      request HTTP/3 client migration after N response bytes\n"
     "  -v, --verbose       show DNS and Alt-Svc probing\n"
 #ifdef ZiMultiplex_DEBUG
     "  --debug             enable ZiMultiplex and HTTP/3 debug logging\n"
@@ -559,11 +597,39 @@ bool parseDrop(ZuCSpan s, double &drop)
   return true;
 }
 
+Zquic::MigrationMode::T migrationMode(const Options &options)
+{
+  return Zquic::migrationMode(options.quicMigration);
+}
+
+bool parseMigrationLocal(ZuCSpan s, ZiSockAddr &addr);
+
+bool migrationConfigured(const Options &options)
+{
+  return options.quicMigrateLocal || options.quicMigrationLocal ||
+    options.quicMigrateAfterHeaders || options.quicMigrateAfterBytes;
+}
+
+bool migrationOnOpen(const Options &options)
+{
+  return options.quicMigrateLocal ||
+    (options.quicMigrationLocal && !options.quicMigrateAfterHeaders &&
+      !options.quicMigrateAfterBytes);
+}
+
 bool validateOptions(Options &options, int argc)
 {
   if (argc < 0 || argc != 2) return false;
   if (!options.requests || !options.concurrency) return false;
   if (options.http3 < 0 || options.http3 >= Http3Mode::N) return false;
+  Zquic::MigrationMode::T mode;
+  if (!Zquic::parseMigrationMode(options.quicMigration, mode)) return false;
+  if (migrationConfigured(options) && mode != Zquic::MigrationMode::Active)
+    return false;
+  if (options.quicMigrationLocal &&
+      !parseMigrationLocal(options.quicMigrationLocal,
+	options.quicMigrationLocalAddr))
+    return false;
 #ifdef ZiMultiplex_FILTER
   double drop;
   if (!parseDrop(options.quicRxDrop, drop)) return false;
@@ -734,6 +800,7 @@ struct Req {
   bool		altSvcH3 = false;
   bool		redirecting = false;
   bool		framingLogged = false;
+  bool		responseHeadersDone = false;
   bool		truncateOutput = false;
   bool		h3Active = false;
   bool		h3EarlyData = false;
@@ -972,6 +1039,26 @@ bool parsePort(ZuCSpan s, uint16_t &port)
   return true;
 }
 
+bool parseMigrationLocal(ZuCSpan s, ZiSockAddr &addr)
+{
+  ZuCSpan host, port_, msg;
+  if (!parseAuthority(s, host, port_, msg)) return false;
+  uint16_t port = 0;
+  if (port_) {
+    unsigned p = ZuBox<unsigned>(port_);
+    if (p > 65535) return false;
+    port = p;
+  }
+  try {
+    ZiIP ip{host};
+    if (!ip) return false;
+    addr.init(ip, port);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 bool parseAltSvc(State &state, ZuCSpan value)
 {
   if (value.match("clear")) return false;
@@ -1038,6 +1125,7 @@ void resetAttempt(Req &req, bool truncateOutput)
   req.altSvcH3 = false;
   req.redirecting = false;
   req.framingLogged = false;
+  req.responseHeadersDone = false;
   req.truncateOutput = truncateOutput;
   req.done = false;
   req.failed = false;
@@ -1284,6 +1372,11 @@ struct ResponseSink {
     link = link_;
     state = state_;
   }
+  void responseHeadersDone() {
+    if (!state || state->responseHeadersDone) return;
+    state->responseHeadersDone = true;
+    if (link) link->responseHeadersParsed(state);
+  }
 
   void status(unsigned status) {
     state->status = status;
@@ -1341,8 +1434,10 @@ struct ResponseSink {
   void body(ZuBSpan span) {
     logFraming(*state);
     if (!span || state->redirecting) return;
+    responseHeadersDone();
     state->bodyBytes += span.length();
     ++state->bodyChunks;
+    if (link) link->responseBodyBytes(state);
     if (state->discardResponse) return;
     if (!truncateOutputPath(*state)) return;
     if (!state->bodyFileOpen) {
@@ -1376,6 +1471,7 @@ struct ResponseSink {
     if (state->done) return;
     auto ctx = reqLogCtx(*state);
     if (parserState == ParserState::Complete) {
+      if (!state->redirecting) responseHeadersDone();
       if (state->logResponse) {
 	auto bodyBytes = state->bodyBytes;
 	auto bodyChunks = state->bodyChunks;
@@ -1537,6 +1633,8 @@ struct CliLink : public Base_ {
     this->app()->done();
   }
   void responseComplete(State *, bool) { this->disconnect(); }
+  void responseHeadersParsed(State *) { }
+  void responseBodyBytes(State *) { }
   template <typename Rx>
   int process(Rx &rx) {
     return processResponse<H3>(*this, this->app()->state, rx);
@@ -1734,6 +1832,8 @@ struct H1PoolLink : public Base_ {
     } else
       connectCurrent();
   }
+  void responseHeadersParsed(State *) { }
+  void responseBodyBytes(State *) { }
   template <typename Rx>
   int process(Rx &rx) {
     return processResponse<false>(*this, *req, rx);
@@ -1969,6 +2069,8 @@ struct QUICClient::Link :
       return;
     }
     this->app()->openH3Streams(this);
+    if (this->app()->run && migrationOnOpen(this->app()->run->options))
+      requestLocalMigration();
   }
   void disconnected(bool peer) {
     ZiLOG(Info, "zhttp", "disconnected");
@@ -2009,9 +2111,75 @@ struct QUICClient::Link :
   void streamed(ZmRef<Stream> stream) {
     this->app()->bindH3Stream(this, ZuMv(stream));
   }
+  void pathUpdate(const Zquic::PathInfo &info) {
+    this->h3.pathUpdate(info);
+    ZiLOG(Debug, "zhttp.h3", ([
+      ip = info.remote.ip(), port = info.remote.port(), role = info.role
+    ](auto &s) {
+      s << "path update path=" << ip << ':' << port <<
+	" role=" << Zquic::PathRole::Map::v2s(role);
+    }));
+  }
+  void migrationStarted(const Zquic::MigrationResult &result) {
+    this->h3.migrationStarted(result);
+    ZiLOG(Debug, "zhttp.h3", ([
+      attempt = result.attemptID, reason = result.reason
+    ](auto &s) {
+      s << "migration started attempt=" << attempt <<
+	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
+    }));
+  }
+  void migrationPromoted(const Zquic::MigrationResult &result) {
+    this->h3.migrationPromoted(result);
+    m_migrateLocalPromoted = true;
+    ZiLOG(Debug, "zhttp.h3", ([
+      attempt = result.attemptID, reason = result.reason
+    ](auto &s) {
+      s << "migration promoted attempt=" << attempt <<
+	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
+    }));
+    this->app()->done();
+  }
+  void migrationFailed(const Zquic::MigrationResult &result) {
+    this->h3.migrationFailed(result);
+    m_migrateLocalFailed = true;
+    ZiLOG(Debug, "zhttp.h3", ([
+      attempt = result.attemptID, reason = result.reason
+    ](auto &s) {
+      s << "migration failed attempt=" << attempt <<
+	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
+    }));
+    this->app()->done();
+  }
+  void responseHeadersParsed(State *) {
+    if (this->app()->run &&
+	this->app()->run->options.quicMigrateAfterHeaders)
+      requestLocalMigration();
+  }
+  void responseBodyBytes(State *state) {
+    if (!this->app()->run) return;
+    uint64_t bytes = this->app()->run->options.quicMigrateAfterBytes;
+    if (bytes && state && state->bodyBytes >= bytes)
+      requestLocalMigration();
+  }
+  bool migrationRequested() const { return m_migrateLocalRequested; }
+  bool migrationPromoted() const { return m_migrateLocalPromoted; }
+  bool migrationFailed() const { return m_migrateLocalFailed; }
+  bool requestLocalMigration() {
+    if (m_migrateLocalRequested) return true;
+    if (!this->app()->run) return true;
+    if (!this->established()) return true;
+    m_migrateLocalRequested = true;
+    ZiSockAddr local = this->app()->run->options.quicMigrationLocalAddr;
+    if (!local) local = this->local();
+    return this->migrateLocal(local.ip(), local.port());
+  }
 
 private:
   bool	m_countedUp = false;
+  bool	m_migrateLocalRequested = false;
+  bool	m_migrateLocalPromoted = false;
+  bool	m_migrateLocalFailed = false;
 };
 
 #ifdef ZmObject_DEBUG
@@ -2115,6 +2283,14 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     pathStarted = diag.tx.pathValidationStarted,
     pathPromoted = diag.tx.pathValidationPromoted,
     pathUnknown = diag.tx.pathResponseUnknown,
+    migReq = diag.tx.migration.requested,
+    migStarted = diag.tx.migration.started,
+    migPromoted = diag.tx.migration.promoted,
+    migFailed = diag.tx.migration.failed,
+    migPolicy = diag.tx.migration.policyReject,
+    migNoCID = diag.tx.migration.noPeerCID,
+    migEndpoint = diag.tx.migration.endpointFailure,
+    migTimeout = diag.tx.migration.timeouts,
     ptoSched = diag.tx.ptoSched,
     ptoNoLevel = diag.tx.ptoNoLevel,
     ptoArmed = diag.tx.ptoArmed,
@@ -2203,6 +2379,9 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
       " pathDiag=[" << pathObserved << ',' << pathSame << ',' <<
 	pathNull << ',' << pathActive << ',' << pathStarted << ',' <<
 	pathPromoted << ',' << pathUnknown << ']' <<
+      " migration=[" << migReq << ',' << migStarted << ',' <<
+	migPromoted << ',' << migFailed << ',' << migPolicy << ',' <<
+	migNoCID << ',' << migEndpoint << ',' << migTimeout << ']' <<
       " ptoDiag=[" << ptoSched << ',' << ptoNoLevel << ',' <<
 	ptoArmed << ',' << ptoExpired << ',' << ptoFlush << ',' <<
 	ptoRetx << ',' << ptoProbe << ']' <<
@@ -2701,8 +2880,11 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
   }
   if (done)
     sem.post();
-  else
+  else {
+    if (run && run->options.quicMigrateLocal && link_)
+      link_->requestLocalMigration();
     openH3Streams(link_);
+  }
 }
 
 void QUICClient::failH3Link()
@@ -2899,7 +3081,11 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	    .maxData(H3DataMax)
 	    .maxStreamData(H3StreamDataMax)
 	    .maxStreamsBidi(client.maxStreamsBidi())
-	    .maxStreamsUni(H3UniMax))) {
+	    .maxStreamsUni(H3UniMax)
+	    .migrationMode(migrationMode(run.options))
+	    .migrationCIDReserve(run.options.quicMigrationCIDReserve)
+	    .migrationCloseOnFailure(
+	      run.options.quicMigrationCloseOnFailure))) {
       ZiLOG(Error, "zhttp", "QUIC client initialization failed");
       return 1;
     }
@@ -2915,6 +3101,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     link->connect(run.originalURL.host, run.originalURL.port);
     bool timedOut = false;
     bool stalled = false;
+    bool migrationFailed = false;
     IntervalMonitor mon{
       run.options.timeout,
       run.options.memDiag
@@ -2932,9 +3119,23 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	timedOut = true;
 	break;
       }
-      if (client.sem.timedwait(Zm::now(step)) == 0) break;
-      mon.advance(step);
+      bool signaled = client.sem.timedwait(Zm::now(step)) == 0;
       Zquic::RuntimeDiag diag = runtimeDiag(link);
+      if (migrationConfigured(run.options)) {
+	if (migrationOnOpen(run.options) && !link->requestLocalMigration()) {
+	  migrationFailed = true;
+	  break;
+	}
+	if (link->migrationFailed()) {
+	  migrationFailed = true;
+	  break;
+	}
+	if (signaled && client.complete >= run.options.requests &&
+	    (!link->migrationRequested() || link->migrationPromoted()))
+	  break;
+      } else if (signaled)
+	break;
+      mon.advance(step);
       bool pktMoved =
 	diag.rx.packetsRx != lastDiag.rx.packetsRx ||
 	diag.tx.packetsTx != lastDiag.tx.packetsTx;
@@ -2973,8 +3174,9 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	break;
       }
     }
-    if (timedOut || stalled) {
-      client.printDiag(link, timedOut ? "timeout" : "stall");
+    if (timedOut || stalled || migrationFailed) {
+      client.printDiag(link,
+	migrationFailed ? "migration-failed" : timedOut ? "timeout" : "stall");
       Zquic::RuntimeDiag diag = runtimeDiag(link);
       unsigned complete, failed, scheduled, active, pending;
       {
@@ -2996,7 +3198,15 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	pto = diag.tx.ptoCount,
 	retx = diag.tx.retransmittedFrames,
 	ptoBackoff = diag.tx.ptoBackoff,
-	ptoTimeoutUS = diag.tx.ptoTimeoutUS
+	ptoTimeoutUS = diag.tx.ptoTimeoutUS,
+	migReq = diag.tx.migration.requested,
+	migStarted = diag.tx.migration.started,
+	migPromoted = diag.tx.migration.promoted,
+	migFailed = diag.tx.migration.failed,
+	migPolicy = diag.tx.migration.policyReject,
+	migNoCID = diag.tx.migration.noPeerCID,
+	migEndpoint = diag.tx.migration.endpointFailure,
+	migTimeout = diag.tx.migration.timeouts
       ](auto &s) {
 	s << "h3 timeout state complete=" << complete <<
 	  " failed=" << failed <<
@@ -3012,14 +3222,17 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	  " pto=" << pto <<
 	  " retx=" << retx <<
 	  " ptoBackoff=" << ptoBackoff <<
-	  " ptoTimeoutUS=" << ptoTimeoutUS;
+	  " ptoTimeoutUS=" << ptoTimeoutUS <<
+	  " migration=[" << migReq << ',' << migStarted << ',' <<
+	    migPromoted << ',' << migFailed << ',' << migPolicy << ',' <<
+	    migNoCID << ',' << migEndpoint << ',' << migTimeout << ']';
       }));
       ZiLOG(Error, "zhttp", ([attempt, stalled](auto &s) {
 	s << "h3 " << (stalled ? "stalled" : "timed out") <<
 	  ", reconnecting attempt=" << attempt + 1;
       }));
     }
-    if (timedOut || stalled)
+    if (timedOut || stalled || migrationFailed)
       abortDrained(link.ptr());
     else
       disconnectDrained(link.ptr());
@@ -3033,14 +3246,23 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     }
     if (linkFailed && run.complete < run.options.requests)
       resetH3Incomplete(run);
-    if (timedOut || stalled)
+    if (timedOut || stalled || migrationFailed)
       resetH3Incomplete(run);
     client.stop();
     client.clearFilters();
     client.final();
+    if (migrationFailed) {
+      if (run.failed == client.failed) ++run.failed;
+      return 1;
+    }
+    if (migrationConfigured(run.options) && link->migrationRequested() &&
+	(timedOut || stalled)) {
+      if (run.failed == client.failed) ++run.failed;
+      return 1;
+    }
     if (linkFailed && run.complete < run.options.requests)
       continue;
-    if (!timedOut && !stalled)
+    if (!timedOut && !stalled && !migrationFailed)
       return run.failed ? 1 : 0;
     if (run.complete >= run.options.requests)
       return run.failed ? 1 : 0;

@@ -650,6 +650,7 @@ QLogEventFmt(QLogVersionEvent);
 
 struct QLogTupleAssignedData {
   uint64_t	tupleID = 0;
+  uint64_t	attemptID = U64Null;
 };
 
 struct QLogTupleAssignedDataJSON;
@@ -666,11 +667,13 @@ QLogEventFmt(QLogPathEvent);
 
 struct QLogMTUData {
   uint32_t	newMTU = 0;
+  uint64_t	attemptID = U64Null;
   bool		done = false;
 };
 
 ZtStruct((QLogMTUData, JSON),
   (((newMTU), (JSON::ID<"new">)), (UInt32)),
+  (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)), (UInt64)),
   (((done)), (Bool)));
 
 struct QLogMTUEvent {
@@ -684,11 +687,13 @@ QLogEventFmt(QLogMTUEvent);
 
 struct QLogPathValidData {
   bool		success = false;
+  uint64_t	attemptID = U64Null;
   Zquic::Vantage::T vantage = Zquic::Vantage::Unknown;
 };
 
 ZtStruct((QLogPathValidData, JSON),
   (((success)), (Bool)),
+  (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)), (UInt64)),
   (((vantage), (JSON::ID<"vantage">,
     Enum<Zquic::Vantage::JSON>)), (Int8)));
 
@@ -705,6 +710,7 @@ struct QLogCIDData {
   Initiator::T initiator = Initiator::Remote;
   ZuBSpan	oldCID;
   ZuBSpan	newCID;
+  uint64_t	attemptID = U64Null;
 };
 
 struct QLogCIDDataJSON;
@@ -718,6 +724,51 @@ struct QLogCIDEvent {
 };
 
 QLogEventFmt(QLogCIDEvent);
+
+struct QLogMigrationData {
+  QLogEndpointInfo	activeLocal;
+  QLogEndpointInfo	activeRemote;
+  QLogEndpointInfo	candidateLocal;
+  QLogEndpointInfo	candidateRemote;
+  uint64_t		attemptID = 0;
+  uint64_t		peerCIDSeq = U64Null;
+  uint64_t		deadlineUS = 0;
+  uint32_t		mtu = 0;
+  MigrationAction::T	action = MigrationAction::Requested;
+  Zquic::MigrationReason::T reason = Zquic::MigrationReason::None;
+  Zquic::MigrationState::T state = Zquic::MigrationState::Idle;
+  Zquic::PathRole::T	pathRole = Zquic::PathRole::Candidate;
+  bool			localRebind = false;
+  bool			validated = false;
+  bool			closeOnFailure = false;
+};
+
+ZtStruct((QLogMigrationData, JSON),
+  (((activeLocal), (JSON::ID<"active_local">)), (UDT)),
+  (((activeRemote), (JSON::ID<"active_remote">)), (UDT)),
+  (((candidateLocal), (JSON::ID<"candidate_local">)), (UDT)),
+  (((candidateRemote), (JSON::ID<"candidate_remote">)), (UDT)),
+  (((attemptID), (JSON::ID<"attempt_id">)), (UInt64)),
+  (((peerCIDSeq), (JSON::ID<"peer_cid_sequence">)), (UInt64)),
+  (((deadlineUS), (JSON::ID<"deadline_us">)), (UInt64)),
+  (((mtu)), (UInt32)),
+  (((action), (Enum<MigrationAction::JSON>)), (Int8)),
+  (((reason), (Enum<Zquic::MigrationReason::JSON>)), (Int8)),
+  (((state), (Enum<Zquic::MigrationState::JSON>)), (Int8)),
+  (((pathRole), (JSON::ID<"path_role">,
+    Enum<Zquic::PathRole::JSON>)), (Int8)),
+  (((localRebind), (JSON::ID<"local_rebind">)), (Bool)),
+  (((validated)), (Bool)),
+  (((closeOnFailure), (JSON::ID<"close_on_failure">)), (Bool)));
+
+struct QLogMigrationEvent {
+  uint64_t	time = 0;
+  EventName::T name = EventName::MigrationUpd;
+  QLogMigrationData data;
+  Zquic::LinkInfo linkInfo;
+};
+
+QLogEventFmt(QLogMigrationEvent);
 
 struct QLogStreamData {
   StreamType::T streamType = StreamType::Duplex;
@@ -1289,6 +1340,19 @@ void ZquicLogger::cidUpdated_(Trace &trace, CIDEvent event)
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
     this_->writeCIDEvent_(EventName::CIDUpd, event_, time);
+  };
+  Fn fn{fn_};
+  log__(fn);
+}
+
+void ZquicLogger::migrationUpdated_(Trace &trace, MigrationEvent event)
+{
+  if (!enabled_()) return;
+  ZuTime time = Zm::now();
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](
+    ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
+    this_->writeMigrationEvent_(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1910,6 +1974,8 @@ struct QLogTupleAssignedDataJSON {
     {
       s << "{\"tuple_id\":";
       qlogJSONTupleID_(s, tuple.tupleID);
+      if (tuple.attemptID != U64Null)
+	s << ",\"attempt_id\":" << tuple.attemptID;
       s << '}';
     }
   };
@@ -1935,6 +2001,9 @@ struct QLogCIDDataJSON {
       if (cid.newCID)
 	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "new", cid.newCID);
+      if (cid.attemptID != U64Null)
+	qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  s, comma, "attempt_id", cid.attemptID);
       s << '}';
     }
   };
@@ -2613,7 +2682,7 @@ bool ZquicLogger::writePathEvent_(
   QLogPathEvent qevent{
     qlogTime_(time),
     name,
-    QLogTupleAssignedData{event.tupleID},
+    QLogTupleAssignedData{event.tupleID, event.attemptID},
     event.linkInfo
   };
   m_buf.length(0);
@@ -2637,6 +2706,7 @@ bool ZquicLogger::writeMTUEvent_(
     EventName::MTUUpd,
     QLogMTUData{
       event.mtu,
+      event.attemptID,
       event.validated
     },
     event.linkInfo
@@ -2665,6 +2735,7 @@ bool ZquicLogger::writePathValid_(
     EventName::PathValidated,
     QLogPathValidData{
       success,
+      event.attemptID,
       event.linkInfo.vantage
     },
     event.linkInfo
@@ -2696,7 +2767,58 @@ bool ZquicLogger::writeCIDEvent_(
       Initiator::T(
 	event.local ? Initiator::Local : Initiator::Remote),
       retired ? cid : ZuBSpan{},
-      retired ? ZuBSpan{} : cid
+      retired ? ZuBSpan{} : cid,
+      event.attemptID
+    },
+    event.linkInfo
+  };
+  m_buf.length(0);
+  m_buf << char(0x1e);
+  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  m_buf << '\n';
+  if (!write_(m_activeTrace, m_buf.cspan())) {
+    ++m_writerFailures;
+    return false;
+  }
+  ++m_recordsWritten;
+  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  return true;
+}
+
+bool ZquicLogger::writeMigrationEvent_(
+  const MigrationEvent &event, ZuTime time)
+{
+  QLogMigrationEvent qevent{
+    qlogTime_(time),
+    EventName::MigrationUpd,
+    QLogMigrationData{
+      event.activeLocal ?
+	QLogEndpointInfo{
+	  true, event.activeLocal.ip(), event.activeLocal.port()} :
+	QLogEndpointInfo{},
+      event.activeRemote ?
+	QLogEndpointInfo{
+	  true, event.activeRemote.ip(), event.activeRemote.port()} :
+	QLogEndpointInfo{},
+      event.candidateLocal ?
+	QLogEndpointInfo{
+	  true, event.candidateLocal.ip(), event.candidateLocal.port()} :
+	QLogEndpointInfo{},
+      event.candidateRemote ?
+	QLogEndpointInfo{
+	  true, event.candidateRemote.ip(), event.candidateRemote.port()} :
+	QLogEndpointInfo{},
+      event.attemptID,
+      event.peerCIDSeq,
+      event.deadlineUS,
+      event.mtu,
+      event.action,
+      event.reason,
+      event.state,
+      event.pathRole,
+      event.localRebind,
+      event.validated,
+      event.closeOnFailure
     },
     event.linkInfo
   };

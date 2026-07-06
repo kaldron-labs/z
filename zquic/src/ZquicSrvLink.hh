@@ -39,6 +39,28 @@ public:
   void runtimeDiag(L &&l) const { Base::runtimeDiag(ZuFwd<L>(l)); }
   template <typename L>
   void pathDiag(L &&l) const { Base::pathDiag(ZuFwd<L>(l)); }
+  template <typename L>
+  void pathInfo(L &&l) const {
+    if (app()->txInvoked()) {
+      l(Base::activePathInfo_(), Base::candidatePathInfo_());
+      return;
+    }
+    auto link = const_cast<SrvLink *>(this)->impl();
+    app()->txRun([link, l = ZuFwd<L>(l)]() mutable {
+      l(link->activePathInfo_(), link->candidatePathInfo_());
+    });
+  }
+  template <typename L>
+  void migrationState(L &&l) const {
+    if (app()->txInvoked()) {
+      l(Base::migrationResult_());
+      return;
+    }
+    auto link = const_cast<SrvLink *>(this)->impl();
+    app()->txRun([link, l = ZuFwd<L>(l)]() mutable {
+      l(link->migrationResult_());
+    });
+  }
   bool pathValidated() const { return Base::pathValidated_(); }
   unsigned activePathMaxUDP() const { return Base::activePathMaxUDP_(); }
   uint64_t pathAntiAmplification() const {
@@ -199,7 +221,6 @@ public:
 	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true, size);
       });
   }
-
   bool disconnect(uint64_t errorCode = 0) {
     if (!Base::closed()) Base::closeState_(errorCode);
     if (Base::runtimeEstablished_() && m_peerAddr) {
@@ -315,6 +336,7 @@ private:
     Base::establishRuntime_();
     Base::validatePath_();
     Base::schedulePMTUD();
+    Base::scheduleMigrationCIDs_();
     if (app()->newTokenAddressValidation())
       queueNewToken_();
     impl()->connected(Zi::Connected{
@@ -1001,6 +1023,21 @@ private:
   void pathPromoted_() {
     m_peerAddr = Base::activePathRemote_();
   }
+  void refreshPromotedRoutes_() {
+    app()->rxRun([link = impl()]() mutable {
+      static_cast<Server<App, Impl> *>(link->app())->refreshLinkRoutes_(link);
+    });
+  }
+  void localCIDsIssued_() { }
+  void migrationCIDsReady_() {
+    app()->rxRun([link = impl()]() mutable {
+      static_cast<Server<App, Impl> *>(link->app())->refreshLinkRoutes_(link);
+      link->app()->txRun([link]() mutable {
+	if (link->disconnecting_()) return;
+	link->flushTx_();
+      });
+    });
+  }
 
   bool receivedRouted_(Datagram d) {
     return received_(ZuMv(d));
@@ -1017,7 +1054,9 @@ private:
   }
 
   void retiredLocalCID_(uint64_t, const CxnID &id) {
-    static_cast<Server<App, Impl> *>(app())->dissociateRoute_(id);
+    app()->rxRun([app = static_cast<Server<App, Impl> *>(app()), id]() mutable {
+      app->tombstoneRoute_(id);
+    });
   }
 
   // shared

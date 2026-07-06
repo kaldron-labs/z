@@ -1331,6 +1331,7 @@ void testQLogTypedPathCIDEvents()
   ZquicLogger::pathUpdated(trace, ZuMv(pathEvent));
 
   PathEvent validation{
+    .attemptID = 42,
     .deadlineUS = 2000000,
     .mtu = 1350,
     .kind = PathKind::PathValid,
@@ -1339,7 +1340,17 @@ void testQLogTypedPathCIDEvents()
   };
   ZquicLogger::pathValidUpd(trace, ZuMv(validation));
 
+  PathEvent pmtudPlain{
+    .mtu = 1390,
+    .kind = PathKind::PMTUD,
+    .action = PathAction::Sent,
+    .reason = PathReason::Probe,
+    .validated = true
+  };
+  ZquicLogger::pmtudUpdated(trace, ZuMv(pmtudPlain));
+
   PathEvent pmtud{
+    .attemptID = 42,
     .mtu = 1400,
     .kind = PathKind::PMTUD,
     .action = PathAction::Sent,
@@ -1348,9 +1359,20 @@ void testQLogTypedPathCIDEvents()
   };
   ZquicLogger::pmtudUpdated(trace, ZuMv(pmtud));
 
+  PathEvent migratedPath{
+    .tupleID = 9,
+    .attemptID = 42,
+    .kind = PathKind::Path,
+    .action = PathAction::Updated,
+    .reason = PathReason::Promoted,
+    .validated = true
+  };
+  ZquicLogger::pathUpdated(trace, ZuMv(migratedPath));
+
   CIDEvent cid{
     .cxnID = CxnID{"cidpath1"},
     .sequence = 7,
+    .attemptID = 42,
     .kind = CIDKind::CxnID,
     .action = CIDAction::RouteBound,
     .reason = CIDReason::PathPromoted,
@@ -1366,8 +1388,8 @@ void testQLogTypedPathCIDEvents()
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
 
-  ZuCHECK(diag.recordsEnqueued >= 4, "path qlog enqueue mismatch");
-  ZuCHECK(diag.recordsWritten >= 5, "path qlog write mismatch");
+  ZuCHECK(diag.recordsEnqueued >= 6, "path qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 7, "path qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "path qlog writer failure");
 
   ZtString<> data = readFile_(path);
@@ -1377,8 +1399,11 @@ void testQLogTypedPathCIDEvents()
   ZuCHECK(containsPathCIDFields_(data), "path/CID fields missing");
 	  ZuCHECK(data.find<"\"name\":\"quic:tuple_assigned\",\"data\":{"
 	    "\"tuple_id\":\"7\"}">() >= 0, "tuple_assigned fields missing");
+	  ZuCHECK(data.find<"\"name\":\"quic:tuple_assigned\",\"data\":{"
+	    "\"tuple_id\":\"9\",\"attempt_id\":42}">() >= 0,
+	    "tuple_assigned migration attempt_id missing");
 	  ZuCHECK(data.find<"\"name\":\"quic:path_validated\",\"data\":{"
-	    "\"success\":false,\"vantage\":\"unknown\"}">() >= 0,
+	    "\"success\":false,\"attempt_id\":42,\"vantage\":\"unknown\"}">() >= 0,
 	    "path_validated fields missing");
 	  ZuCHECK(data.find<"\"name\":\"quic:tuple_assigned\","
 	    "\"data\":{\"kind\"">() < 0,
@@ -1386,8 +1411,12 @@ void testQLogTypedPathCIDEvents()
   ZuCHECK(data.find<"deadline_us">() < 0,
     "old path deadline leaked into standard tuple_assigned");
   ZuCHECK(data.find<"\"name\":\"quic:connection_id_updated\",\"data\":{"
-    "\"initiator\":\"remote\",\"new\":\"6369647061746831\"}">() >= 0,
+    "\"initiator\":\"remote\",\"new\":\"6369647061746831\","
+    "\"attempt_id\":42}">() >= 0,
     "connection_id_updated fields missing");
+  ZuCHECK(data.find<"\"name\":\"quic:mtu_updated\",\"data\":{"
+    "\"new\":1400,\"attempt_id\":42,\"done\":true}">() >= 0,
+    "mtu_updated migration attempt_id missing");
   ZuCHECK(data.find<"\"name\":\"quic:connection_id_updated\","
     "\"data\":{\"kind\"">() < 0,
     "generic CID fields leaked into connection_id_updated");
@@ -1395,7 +1424,7 @@ void testQLogTypedPathCIDEvents()
     "old CID reason leaked into standard event");
   ZuCHECK(data.find<"reset_token">() < 0,
     "old CID reset token flag leaked into standard event");
-  ZuCHECK(data.find<"\"name\":\"quic:mtu_updated\",\"data\":{\"new\":1400,"
+  ZuCHECK(data.find<"\"name\":\"quic:mtu_updated\",\"data\":{\"new\":1390,"
     "\"done\":true}">() >= 0, "MTU update fields missing");
   ZuCHECK(data.find<"\"name\":\"quic:mtu_updated\","
     "\"data\":{\"kind\"">() < 0,
@@ -1501,6 +1530,271 @@ void testQLogTypedStreamEvents()
 #endif
 }
 
+void testQLogTypedMigrationEvents()
+{
+  ZuTestScope(testQLogTypedMigrationEvents);
+
+#ifdef Zquic_DEBUG
+  Zi::Path path = testPath_("ZquicLogMigrationTest.sqlog");
+  ZiFile::remove(path);
+
+  ZquicLogParams params;
+  params.enabled(true).path(path).ringSize(1<<15);
+  ZquicLogger::Trace trace;
+  ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown),
+    "migration qlog init failed");
+  ZquicLogger::start();
+
+  in_addr localIP;
+  localIP.s_addr = htonl(0x0a000001);
+  in_addr oldRemoteIP;
+  oldRemoteIP.s_addr = htonl(0x0a000002);
+  in_addr newRemoteIP;
+  newRemoteIP.s_addr = htonl(0x0a000003);
+  MigrationEvent started{
+    .activeLocal = ZiSockAddr{ZiIP{localIP}, 4433},
+    .activeRemote = ZiSockAddr{ZiIP{oldRemoteIP}, 50000},
+    .candidateLocal = ZiSockAddr{ZiIP{localIP}, 4434},
+    .candidateRemote = ZiSockAddr{ZiIP{newRemoteIP}, 50001},
+    .attemptID = 42,
+    .peerCIDSeq = 7,
+    .deadlineUS = 123456,
+    .mtu = 1200,
+    .action = MigrationAction::Started,
+    .reason = MigrationReason::Active,
+    .state = MigrationState::Validating,
+    .pathRole = PathRole::Candidate,
+    .localRebind = true,
+    .validated = false,
+    .closeOnFailure = true
+  };
+  ZquicLogger::migrationUpdated(trace, ZuMv(started));
+
+  MigrationEvent promoted{
+    .activeLocal = ZiSockAddr{ZiIP{localIP}, 4434},
+    .activeRemote = ZiSockAddr{ZiIP{newRemoteIP}, 50001},
+    .candidateLocal = ZiSockAddr{ZiIP{localIP}, 4434},
+    .candidateRemote = ZiSockAddr{ZiIP{newRemoteIP}, 50001},
+    .attemptID = 42,
+    .peerCIDSeq = 7,
+    .mtu = 1200,
+    .action = MigrationAction::Promoted,
+    .reason = MigrationReason::Active,
+    .state = MigrationState::Promoted,
+    .pathRole = PathRole::Active,
+    .localRebind = true,
+    .validated = true,
+    .closeOnFailure = true
+  };
+  ZquicLogger::migrationUpdated(trace, ZuMv(promoted));
+
+  auto emit = [&](uint64_t attemptID, MigrationAction::T action,
+      MigrationReason::T reason, MigrationState::T state,
+      bool localRebind = false, bool closeOnFailure = false,
+      PathRole::T pathRole = PathRole::Candidate) {
+    MigrationEvent event = started;
+    event.attemptID = attemptID;
+    event.action = action;
+    event.reason = reason;
+    event.state = state;
+    event.pathRole = pathRole;
+    event.localRebind = localRebind;
+    event.closeOnFailure = closeOnFailure;
+    event.validated = state == MigrationState::Promoted;
+    ZquicLogger::migrationUpdated(trace, ZuMv(event));
+  };
+
+  emit(43, MigrationAction::Requested, MigrationReason::Active,
+    MigrationState::Requested, true, true);
+  emit(43, MigrationAction::RebindStart, MigrationReason::Active,
+    MigrationState::Requested, true, true);
+  emit(43, MigrationAction::RebindOK, MigrationReason::Active,
+    MigrationState::Requested, true, true);
+  emit(43, MigrationAction::CIDSelected, MigrationReason::Active,
+    MigrationState::Requested, true, true);
+  emit(43, MigrationAction::ChallengeQueued, MigrationReason::Active,
+    MigrationState::Validating, true, true);
+  emit(43, MigrationAction::ResponseMatched, MigrationReason::Active,
+    MigrationState::Validating, true, true);
+  emit(43, MigrationAction::Promoted, MigrationReason::Active,
+    MigrationState::Promoted, true, true, PathRole::Active);
+
+  emit(44, MigrationAction::Started, MigrationReason::Passive,
+    MigrationState::Validating);
+  emit(44, MigrationAction::ChallengeQueued, MigrationReason::Passive,
+    MigrationState::Validating);
+  emit(44, MigrationAction::ResponseMismatch, MigrationReason::Validation,
+    MigrationState::Validating);
+  emit(44, MigrationAction::Abandoned, MigrationReason::Timeout,
+    MigrationState::Failed);
+  emit(44, MigrationAction::Failed, MigrationReason::Timeout,
+    MigrationState::Failed);
+
+  emit(45, MigrationAction::Requested, MigrationReason::Active,
+    MigrationState::Requested);
+  emit(45, MigrationAction::Rejected, MigrationReason::PeerDisabled,
+    MigrationState::Idle);
+
+  emit(46, MigrationAction::Requested, MigrationReason::Active,
+    MigrationState::Requested);
+  emit(46, MigrationAction::CIDUnavailable, MigrationReason::NoPeerCID,
+    MigrationState::Requested);
+  emit(46, MigrationAction::Failed, MigrationReason::NoPeerCID,
+    MigrationState::Failed);
+
+  emit(47, MigrationAction::Requested, MigrationReason::Active,
+    MigrationState::Requested, true, true);
+  emit(47, MigrationAction::RebindStart, MigrationReason::Active,
+    MigrationState::Requested, true, true);
+  emit(47, MigrationAction::RebindFail, MigrationReason::Endpoint,
+    MigrationState::Failed, true, true);
+  emit(47, MigrationAction::Failed, MigrationReason::Endpoint,
+    MigrationState::Failed, true, true);
+  emit(47, MigrationAction::Closed, MigrationReason::Endpoint,
+    MigrationState::Failed, true, true);
+
+  emit(48, MigrationAction::Started, MigrationReason::Passive,
+    MigrationState::Validating);
+  emit(48, MigrationAction::ChallengeQueued, MigrationReason::Passive,
+    MigrationState::Validating);
+  emit(48, MigrationAction::ResponseMatched, MigrationReason::Passive,
+    MigrationState::Validating);
+  emit(48, MigrationAction::Promoted, MigrationReason::Passive,
+    MigrationState::Promoted, false, false, PathRole::Active);
+
+  closeQLog_(trace);
+  ZquicLogger::stop();
+  ZquicLogDiag diag = ZquicLogger::diag();
+  ZquicLogger::final(trace);
+
+  ZuCHECK(diag.recordsEnqueued >= 15, "migration qlog enqueue mismatch");
+  ZuCHECK(diag.recordsWritten >= 16, "migration qlog write mismatch");
+  ZuCHECK(diag.writerFailures == 0, "migration qlog writer failure");
+
+  ZtString<> data = readFile_(path);
+  ZuCHECK(data, "migration qlog output was not written");
+  ZuCHECK(parseJSONSeq_(data) >= 20,
+    "migration qlog JSON-SEQ parse failed");
+  ZuCHECK(data.find<"zquic:migration_updated">() >= 0,
+    "migration event name missing");
+  ZuCHECK(data.find<"\"attempt_id\":42">() >= 0,
+    "migration attempt_id missing");
+  ZuCHECK(data.find<"\"action\":\"started\"">() >= 0,
+    "migration started action missing");
+  ZuCHECK(data.find<"\"action\":\"promoted\"">() >= 0,
+    "migration promoted action missing");
+  ZuCHECK(data.find<"\"action\":\"requested\"">() >= 0,
+    "migration requested action missing");
+  ZuCHECK(data.find<"\"action\":\"rejected\"">() >= 0,
+    "migration rejected action missing");
+  ZuCHECK(data.find<"\"action\":\"rebind_start\"">() >= 0,
+    "migration rebind_start action missing");
+  ZuCHECK(data.find<"\"action\":\"rebind_ok\"">() >= 0,
+    "migration rebind_ok action missing");
+  ZuCHECK(data.find<"\"action\":\"rebind_fail\"">() >= 0,
+    "migration rebind_fail action missing");
+  ZuCHECK(data.find<"\"action\":\"cid_selected\"">() >= 0,
+    "migration cid_selected action missing");
+  ZuCHECK(data.find<"\"action\":\"cid_unavailable\"">() >= 0,
+    "migration cid_unavailable action missing");
+  ZuCHECK(data.find<"\"action\":\"challenge_queued\"">() >= 0,
+    "migration challenge_queued action missing");
+  ZuCHECK(data.find<"\"action\":\"response_matched\"">() >= 0,
+    "migration response_matched action missing");
+  ZuCHECK(data.find<"\"action\":\"response_mismatch\"">() >= 0,
+    "migration response_mismatch action missing");
+  ZuCHECK(data.find<"\"action\":\"abandoned\"">() >= 0,
+    "migration abandoned action missing");
+  ZuCHECK(data.find<"\"action\":\"failed\"">() >= 0,
+    "migration failed action missing");
+  ZuCHECK(data.find<"\"action\":\"closed\"">() >= 0,
+    "migration closed action missing");
+  ZuCHECK(data.find<"\"reason\":\"peer_disabled\"">() >= 0,
+    "migration peer_disabled reason missing");
+  ZuCHECK(data.find<"\"reason\":\"no_peer_cid\"">() >= 0,
+    "migration no_peer_cid reason missing");
+  ZuCHECK(data.find<"\"reason\":\"endpoint\"">() >= 0,
+    "migration endpoint reason missing");
+  ZuCHECK(data.find<"\"reason\":\"active\"">() >= 0,
+    "migration reason missing");
+  ZuCHECK(data.find<"\"state\":\"validating\"">() >= 0,
+    "migration validating state missing");
+  ZuCHECK(data.find<"\"state\":\"promoted\"">() >= 0,
+    "migration promoted state missing");
+  ZuCHECK(data.find<"\"path_role\":\"candidate\"">() >= 0,
+    "migration candidate path role missing");
+  ZuCHECK(data.find<"\"path_role\":\"active\"">() >= 0,
+    "migration active path role missing");
+  ZuCHECK(data.find<"\"local_rebind\":true">() >= 0,
+    "migration local_rebind missing");
+  ZuCHECK(data.find<"\"close_on_failure\":true">() >= 0,
+    "migration close_on_failure missing");
+  ZuCHECK(data.find<"\"active_local\"">() >= 0 &&
+      data.find<"\"candidate_remote\"">() >= 0,
+    "migration tuple fields missing");
+  ZuCHECK(data.find<"\"action\":\"\"">() < 0,
+    "migration qlog emitted empty action");
+  ZuCHECK(data.find<"\"reason\":\"\"">() < 0,
+    "migration qlog emitted empty reason");
+  ZuCHECK(data.find<"\"state\":\"\"">() < 0,
+    "migration qlog emitted empty state");
+
+  auto ordered = [&](uint64_t attemptID,
+      ZuCSpan a0, ZuCSpan a1, ZuCSpan a2 = {}, ZuCSpan a3 = {},
+      ZuCSpan a4 = {}, ZuCSpan a5 = {}, ZuCSpan a6 = {}) {
+    unsigned off = 0;
+    auto next = [&](ZuCSpan action) {
+      if (!action) return true;
+      ZtString<> needle;
+      needle << "\"attempt_id\":" << attemptID << ',';
+      unsigned pos = off;
+      while (pos < data.length()) {
+	unsigned lineEnd = pos;
+	while (lineEnd < data.length() && data[lineEnd] != '\n') ++lineEnd;
+	ZuCSpan line{data.data() + pos, lineEnd - pos};
+	if (line.find(needle) >= 0 && line.find(action) >= 0) {
+	  off = lineEnd + 1;
+	  return true;
+	}
+	pos = lineEnd + 1;
+      }
+      return false;
+    };
+    return next(a0) && next(a1) && next(a2) && next(a3) &&
+      next(a4) && next(a5) && next(a6);
+  };
+
+  ZuCHECK(ordered(43,
+      "\"action\":\"requested\"", "\"action\":\"rebind_start\"",
+      "\"action\":\"rebind_ok\"", "\"action\":\"cid_selected\"",
+      "\"action\":\"challenge_queued\"", "\"action\":\"response_matched\"",
+      "\"action\":\"promoted\""),
+    "active migration success qlog stream was not ordered");
+  ZuCHECK(ordered(44,
+      "\"action\":\"started\"", "\"action\":\"challenge_queued\"",
+      "\"action\":\"abandoned\"", "\"action\":\"failed\""),
+    "migration timeout qlog stream was not ordered");
+  ZuCHECK(ordered(45,
+      "\"action\":\"requested\"", "\"action\":\"rejected\""),
+    "peer policy reject qlog stream was not ordered");
+  ZuCHECK(ordered(46,
+      "\"action\":\"requested\"", "\"action\":\"cid_unavailable\"",
+      "\"action\":\"failed\""),
+    "no-CID reject qlog stream was not ordered");
+  ZuCHECK(ordered(47,
+      "\"action\":\"requested\"", "\"action\":\"rebind_start\"",
+      "\"action\":\"rebind_fail\"", "\"action\":\"failed\"",
+      "\"action\":\"closed\""),
+    "local rebind failure qlog stream was not ordered");
+  ZuCHECK(ordered(48,
+      "\"action\":\"started\"", "\"action\":\"challenge_queued\"",
+      "\"action\":\"response_matched\"",
+      "\"action\":\"promoted\""),
+    "passive peer-address migration qlog stream was not ordered");
+  removeTestLog_(path);
+#endif
+}
+
 void testQLogTypedCloseEvents()
 {
   ZuTestScope(testQLogTypedCloseEvents);
@@ -1586,6 +1880,7 @@ int main(int argc, char **argv)
   ZuTestCall(testQLogTypedRecoveryEvents);
   ZuTestCall(testQLogTypedSecEvents);
   ZuTestCall(testQLogTypedPathCIDEvents);
+  ZuTestCall(testQLogTypedMigrationEvents);
   ZuTestCall(testQLogTypedStreamEvents);
   ZuTestCall(testQLogTypedCloseEvents);
 }
