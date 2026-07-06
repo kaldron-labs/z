@@ -17,6 +17,47 @@ supplement the repo-wide rules in `../GUIDELINES.md`; follow both when editing
 - Debug text logging is unrelated to qlog.  Use `ZiLOG(Debug, ...)` for debug
   text and keep qlog instrumentation behind `ZquicLOG`.
 
+# Buffers
+
+`Zquic` uses role-specific `ZiIOBuf` allocation aliases from
+`ZquicBuf.hh`.  Keep those roles distinct:
+
+- `PktRxBufAlloc` defaults to the `"Zquic.Pkt.Rx"` heap for received UDP
+  datagrams and in-place QUIC packet protection removal.
+- `PktTxBufAlloc` defaults to the `"Zquic.Pkt.Tx"` heap for transmit
+  packetization and packet protection output.
+- `StreamTxBufAlloc` defaults to the `"Zquic.Stream.TxBuf"` heap for
+  application stream bytes that must be retained for ACK, loss,
+  retransmission, reset, cancellation, or teardown handling.
+- `CryptoRxBufAlloc` defaults to the `"Zquic.Crypto.RxBuf"` heap for retained
+  CRYPTO receive fragments.
+- `CryptoTxBufAlloc` defaults to the `"Zquic.Crypto.TxBuf"` heap for TLS
+  output staged for QUIC CRYPTO frame packetization.
+
+`BufSize` is `1472`.  It is packet-buffer capacity, not the active UDP payload
+limit.  The active path payload starts at the QUIC minimum and is raised only by
+PMTUD/DPLPMTUD success.
+
+Transmit packet protection is source-to-destination.  Retained plaintext
+stream/control byte ranges are gathered as read-only inputs and encrypted
+directly into the final Tx packet buffer.  Do not add an intermediate
+ciphertext staging buffer.
+
+Receive packet protection decrypts in place in the Rx packet buffer.  STREAM
+receive data is represented by retained slices of that decrypted packet buffer:
+`StreamRxData` carries both a `ZmRef<ZiIOBuf>` to the packet and the payload
+span.  Frame-processing APIs that accept STREAM payload must require the packet
+reference; do not add a frame-only STREAM copy fallback.
+
+CRYPTO receive is different from STREAM receive.  Fragmented or out-of-order
+CRYPTO data may be copied into retained `CryptoRxBufAlloc` buffers for
+reassembly.  In-order CRYPTO delivery and TLS output should use direct
+spans/origin-backed buffers when possible.
+
+Hidden fallback copies below the public API boundary are forbidden.  Any new
+copy path must be documented in this section and covered by a test that explains
+why the copy is required.
+
 # qlog
 
 ## Contract
