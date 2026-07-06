@@ -164,7 +164,9 @@ int main(int argc, char **argv)
     ZmRef<App::Link> link = new App::Link{&app};
     link->connect(Zquic::Host{server}, port);
     app.m_done.wait();
-    link->disconnect();
+    ZmBlock<>{}([&link](auto wake) {
+      link->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
+    });
   }
 
   app.final();
