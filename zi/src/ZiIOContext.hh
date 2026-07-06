@@ -61,13 +61,15 @@ public:
   // UDP send
   template <typename L, typename Addr>
   void init(L &&l,
-      const void *ptr_, unsigned size_, unsigned offset_, Addr &&addr_) {
+    const void *ptr_, unsigned size_, unsigned offset_,
+    Addr &&addr_, ZiTOS tos_ = {})
+  {
     ZmAssert(size_);
     fn = ZuFwd<L>(l);
     ptr = static_cast<uint8_t *>(const_cast<void *>(ptr_));
     size = size_; offset = offset_; length = 0;
     addr = ZuFwd<Addr>(addr_);
-    tos = {};
+    tos = tos_;
   }
   // initially, ptr will be null and app must set it via init()
   bool initialized() { return ptr; }
