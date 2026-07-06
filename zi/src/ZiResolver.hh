@@ -143,8 +143,6 @@ public:
   bool cancelled() const { return m_cancelled.load_(); }
 
   void cancel() { m_cancelled.store_(1); }
-
-private:
   Host			host;
   Zi::Name		name;
   ZiSockAddr		addr;
@@ -157,6 +155,8 @@ private:
   unsigned		emitted = 0;
   int			status = ARES_ENOTFOUND;
   bool			stopped = false;
+
+private:
   ZmAtomic<unsigned>	m_cancelled = 0;
 };
 ZuDerive(QueryList,
@@ -219,9 +219,12 @@ private:
   void cancel_(ZmRef<Query>);
 
   void addQuery_(ZmRef<Query>);
+
+public:
   void delQuery_(Query *);
   bool queryCancelled_(const Query *) const;
 
+private:
   void socketState_(ares_socket_t, int readable, int writable);
   void process_(ares_socket_t readFD, ares_socket_t writeFD);
   void armTimer_();
