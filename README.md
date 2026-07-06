@@ -105,5 +105,7 @@ sudo make install-bfd
 ## building libbfd DLL (Windows)
 
 ```
-./mingw_bfd_dll.sh
+./mingw/mingw_bfd_dll.sh
 ```
+
+See `mingw/README.md` for details.
