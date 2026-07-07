@@ -110,26 +110,16 @@ public:
       "QUIC server PTO outside Tx thread", return);
     if (Base::closed() || !m_peerAddr)
       return;
-    Base::notePTOExpired_();
-    uint64_t packetsTx = Base::txPackets_();
-    if (flushTx_()) {
-      Base::notePTOFlush_();
-      if (Base::txPackets_() != packetsTx) {
-	Base::schedulePTO_();
-	return;
-      }
-    }
-    PktNumSpace::T probeLevel = PktNumSpace::Initial;
-    unsigned probeCount = 0;
-    bool probe = Base::reclaimPTO_(probeLevel, probeCount);
-    if (retransmit_()) {
-      Base::notePTORetx_();
-      return;
-    }
-    if (probe) {
-      Base::notePTOProbe_(probeLevel, probeCount);
-      (void)sendPingProbe_();
-    }
+    Base::ptoRecovery_(
+      [this](
+	  PktNumSpace::T level, PktBuild &build,
+	  const SentFrameRef &cryptoRef) {
+	return level == PktNumSpace::Initial ?
+	  sendInitialPkt_(build, m_peerAddr, {}, &cryptoRef, true, false) :
+	  sendHandshakePkt_(build, m_peerAddr, {}, &cryptoRef, true, false);
+      },
+      [this]() { return flushTx_(); },
+      [this](PktNumSpace::T level) { return sendPingProbe_(level); });
   }
 
   void queueRetransmit_() {
@@ -158,9 +148,9 @@ public:
 	if (!Base::buildRetransmitCrypto_(level, build, ref)) continue;
 	bool ok =
 	  level == PktNumSpace::Initial ?
-	    sendInitialPkt_(build, m_peerAddr, {}, &ref, true) :
+	    sendInitialPkt_(build, m_peerAddr, {}, &ref, true, false) :
 	  level == PktNumSpace::Handshake ?
-	    sendHandshakePkt_(build, m_peerAddr, {}, &ref, true) :
+	    sendHandshakePkt_(build, m_peerAddr, {}, &ref, true, false) :
 	    sendShortPkt_(build, m_peerAddr, {}, &ref, true);
 	if (!ok) {
 	  Base::requeueRetransmit_(level, ref);
@@ -205,12 +195,21 @@ public:
     return sent;
   }
 
-  bool sendPingProbe_() {
+  bool sendPingProbe_(PktNumSpace::T level) {
     PktBuild build;
-    if (!Base::buildPingProbe_(build)) return false;
+    if (!Base::buildPingProbe_(level, build)) return false;
     typename Base::TxPktRefs refs;
-    return sendShortPkt_(
-      build, m_peerAddr, {}, &refs, true);
+    switch (level) {
+      case PktNumSpace::Initial:
+	return sendInitialPkt_(
+	  build, m_peerAddr, {}, nullptr, true, false);
+      case PktNumSpace::Handshake:
+	return sendHandshakePkt_(
+	  build, m_peerAddr, {}, nullptr, true, false);
+      default:
+	return sendShortPkt_(
+	  build, m_peerAddr, {}, &refs, true);
+    }
   }
 
   bool sendPMTUDProbe_(ZiSockAddr addr) {
@@ -438,8 +437,7 @@ private:
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn, bool &sent) {
     sent = false;
     if (!app()->sendPkt(buf)) return true;
-    sent = static_cast<Server<App, Impl> *>(app())->sendPktRaw_(
-      ZuMv(buf), ZuMv(addr), ecn);
+    sent = app()->sendPktRaw_(ZuMv(buf), ZuMv(addr), ecn);
     return sent;
   }
 
@@ -486,8 +484,7 @@ private:
     if (!addr) return flushTx_();
     if (Base::closed()) return false;
     if (!Base::runtimeEstablished_()) {
-      flushPendingAcks_(addr);
-      return false;
+      return flushPendingAcks_(addr);
     }
     bool sent = Base::flushControlAndStreams_(
       addr,
@@ -628,19 +625,25 @@ private:
 
   bool sendInitialPkt_(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
+    bool coalesce = true) {
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
     if (recordRef) {
       refs.add(*recordRef);
       recordRefs = &refs;
     }
+    if (ackEliciting) recordRefs = &refs;
     return Base::sendProtInitialPkt_(
       InitialKeyDir::Server, RuntimeCID::Peer, RuntimeCID::Local,
       Base::txPNLength_(PktNumSpace::Initial), {}, false, payload, ZuMv(addr),
       recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
-      [this, recordRefs](auto buf, ZiSockAddr addr_) {
+      [this, recordRefs, coalesce](auto buf, ZiSockAddr addr_) {
+	if (!coalesce) {
+	  if (!sendFrameRefs_(recordRefs)) return false;
+	  return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
+	}
 	return sendInitialBuf_(ZuMv(buf), ZuMv(addr_), recordRefs);
       });
   }
@@ -655,20 +658,23 @@ private:
 
   bool sendHandshakePkt_(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
+    bool coalesce = true) {
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
     if (recordRef) {
       refs.add(*recordRef);
       recordRefs = &refs;
     }
+    if (ackEliciting) recordRefs = &refs;
     return Base::sendProtHandshakePkt_(
       RuntimeCID::Peer, RuntimeCID::Local,
       Base::txPNLength_(PktNumSpace::Handshake),
       payload, ZuMv(addr), recordFrame, recordRefs,
       ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
-      [this](auto buf, ZiSockAddr addr_) {
+      [this, coalesce](auto buf, ZiSockAddr addr_) {
+	if (!coalesce) return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
 	return sendHandshakeBuf_(ZuMv(buf), ZuMv(addr_));
       });
   }
@@ -802,6 +808,9 @@ private:
     Base::handshakeDoneTx_();
     return true;
   }
+  void handshakeDoneAckd_() {
+    Base::discardTxPktNumSpace_(PktNumSpace::Handshake);
+  }
 
   void queueNewToken_() {
     if (!m_peerAddr) return;
@@ -865,25 +874,44 @@ private:
       });
   }
 
-  bool flushPendingAck_(PktNumSpace::T level, ZiSockAddr addr) {
+  bool flushPendingAck_(
+    PktNumSpace::T level, ZiSockAddr addr, bool &sent) {
     PktBuild build;
     build.reset();
     if (!Base::appendPendingAck_(level, build, true)) return false;
     if (!build.bytes()) return true;
-    if (level == PktNumSpace::Initial)
-      return sendInitialPkt_(build, ZuMv(addr), {});
+    bool ok;
+    if (level == PktNumSpace::Initial) {
+      ok = sendInitialPkt_(build, ZuMv(addr), {}, nullptr, false, false);
+      if (ok) sent = true;
+      return ok;
+    }
+    if (!Base::txTrafficSecretInstalled_(level)) return true;
     if (level == PktNumSpace::Handshake)
-      return sendHandshakePkt_(build, ZuMv(addr), {});
-    return sendShortPkt_(build, ZuMv(addr), {});
+      ok = sendHandshakePkt_(build, ZuMv(addr), {});
+    else
+      ok = sendShortPkt_(build, ZuMv(addr), {});
+    if (ok) sent = true;
+    return ok;
   }
 
   bool flushPendingAcks_(ZiSockAddr addr) {
-    return flushPendingAck_(PktNumSpace::Initial, addr) &&
-      flushPendingAck_(PktNumSpace::Handshake, addr) &&
-      flushPendingAck_(PktNumSpace::AppData, ZuMv(addr));
+    bool sent = false;
+    if (Base::pendingAck_(PktNumSpace::Initial))
+      (void)flushPendingAck_(PktNumSpace::Initial, addr, sent);
+    if (Base::pendingAck_(PktNumSpace::Handshake))
+      (void)flushPendingAck_(PktNumSpace::Handshake, addr, sent);
+    if (Base::pendingAck_(PktNumSpace::AppData))
+      (void)flushPendingAck_(PktNumSpace::AppData, ZuMv(addr), sent);
+    if (sent)
+      (void)Base::flushCoalescedInitial_(
+	[this](auto buf, ZiSockAddr addr_) {
+	  return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
+	});
+    return sent;
   }
 
-  bool received_(Datagram d) {
+  bool received_(Datagram d, const CxnID *routedDCID = nullptr) {
     if (!Base::runtimeHandshakeStarted_() && d.buf)
       Base::initServerPath_(app()->local(), d.addr);
     Base::receiveDatagram_(
@@ -891,8 +919,9 @@ private:
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
 	return receivedLong_(d_, packetOffset, packetLen);
       },
-      [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
-	return receivedShort_(d_, packetOffset, packetLen);
+      [this, routedDCID](
+	  Datagram &d_, unsigned packetOffset, unsigned packetLen) {
+	return receivedShort_(d_, packetOffset, packetLen, routedDCID);
       });
     return !Base::disconnecting_();
   }
@@ -904,6 +933,7 @@ private:
 	if (!Base::runtimeHandshakeStarted_()) {
 	  m_peerAddr = d_.addr;
 	  if (!initRuntimeCrypto_(h, d_.buf->length)) return false;
+	  app()->refreshLinkRoutes_(impl());
 	}
 	return true;
       },
@@ -917,7 +947,9 @@ private:
       });
   }
 
-  bool receivedShort_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
+  bool receivedShort_(
+    Datagram &d, unsigned packetOffset, unsigned packetLen,
+    const CxnID *routedDCID = nullptr) {
     return Base::receiveProtShortPkt_(
       d, packetOffset, packetLen,
       [this](
@@ -926,7 +958,8 @@ private:
 	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvent *qlog) {
 	return consumeFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog);
-      });
+      },
+      routedDCID);
   }
 
   bool consumeFrames_(
@@ -1025,13 +1058,16 @@ private:
   }
   void refreshPromotedRoutes_() {
     app()->rxRun([link = impl()]() mutable {
-      static_cast<Server<App, Impl> *>(link->app())->refreshLinkRoutes_(link);
+      link->app()->refreshLinkRoutes_(link);
     });
   }
-  void localCIDsIssued_() { }
+  void localCIDsIssued_() {
+    app()->rxRun([link = impl()]() mutable {
+      link->app()->refreshLinkRoutes_(link);
+    });
+  }
   void migrationCIDsReady_() {
     app()->rxRun([link = impl()]() mutable {
-      static_cast<Server<App, Impl> *>(link->app())->refreshLinkRoutes_(link);
       link->app()->txRun([link]() mutable {
 	if (link->disconnecting_()) return;
 	link->flushTx_();
@@ -1039,8 +1075,8 @@ private:
     });
   }
 
-  bool receivedRouted_(Datagram d) {
-    return received_(ZuMv(d));
+  bool receivedRouted_(Datagram d, const CxnID &routedDCID) {
+    return received_(ZuMv(d), &routedDCID);
   }
 
   void installRoutes_(CxnRouter<Impl> &routes) {
@@ -1054,7 +1090,7 @@ private:
   }
 
   void retiredLocalCID_(uint64_t, const CxnID &id) {
-    app()->rxRun([app = static_cast<Server<App, Impl> *>(app()), id]() mutable {
+    app()->rxRun([app = app(), id]() mutable {
       app->tombstoneRoute_(id);
     });
   }

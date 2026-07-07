@@ -269,17 +269,67 @@ static int longTypeBits_(PktType::T type)
   return -1;
 }
 
-int Pkt::writeLong(
-  uint8_t *out, unsigned len, PktType::T type,
-  const CxnID &dcid, const CxnID &scid,
+int Pkt::longHdrLen(
+  PktType::T type, const CxnID &dcid, const CxnID &scid,
   uint64_t payloadLength, unsigned pnLength, ZuBSpan token)
 {
   if (pnLength < 1 || pnLength > 4) return -1;
   int typeBits = longTypeBits_(type);
   if (typeBits < 0 || type == PktType::Retry) return -1;
   if (type != PktType::Initial && token) return -1;
-  if (len < 7 + dcid.length() + scid.length() + token.length() + 8)
-    return -1;
+  if (payloadLength > uint64_t(-1) - pnLength) return -1;
+  unsigned lengthLen = VarInt::length(payloadLength + pnLength);
+  if (!lengthLen) return -1;
+  unsigned tokenLenLen = 0;
+  if (type == PktType::Initial) {
+    tokenLenLen = VarInt::length(token.length());
+    if (!tokenLenLen) return -1;
+  }
+  uint64_t need =
+    1 + 4 + 1 + dcid.length() + 1 + scid.length() +
+    tokenLenLen + token.length() + lengthLen;
+  return need <= UINT_MAX ? int(need) : -1;
+}
+
+int Pkt::initialHdrLen(
+  const CxnID &dcid, const CxnID &scid, uint64_t payloadLength,
+  unsigned pnLength)
+{
+  return longHdrLen(
+    PktType::Initial, dcid, scid, payloadLength, pnLength);
+}
+
+int Pkt::initialHdrLen(
+  const CxnID &dcid, const CxnID &scid, ZuBSpan token,
+  uint64_t payloadLength, unsigned pnLength)
+{
+  return longHdrLen(
+    PktType::Initial, dcid, scid, payloadLength, pnLength, token);
+}
+
+int Pkt::handshakeHdrLen(
+  const CxnID &dcid, const CxnID &scid, uint64_t payloadLength,
+  unsigned pnLength)
+{
+  return longHdrLen(
+    PktType::Handshake, dcid, scid, payloadLength, pnLength);
+}
+
+int Pkt::shortHdrLen(const CxnID &dcid, unsigned pnLength)
+{
+  if (pnLength < 1 || pnLength > 4) return -1;
+  uint64_t need = 1 + dcid.length() + pnLength;
+  return need <= UINT_MAX ? int(need) : -1;
+}
+
+int Pkt::writeLong(
+  uint8_t *out, unsigned len, PktType::T type,
+  const CxnID &dcid, const CxnID &scid,
+  uint64_t payloadLength, unsigned pnLength, ZuBSpan token)
+{
+  int typeBits = longTypeBits_(type);
+  int need = longHdrLen(type, dcid, scid, payloadLength, pnLength, token);
+  if (typeBits < 0 || need < 0 || len < unsigned(need)) return -1;
   PktWriter w{out, len};
   w.put(uint8_t(0xc0 | (typeBits << 4) | (pnLength - 1)));
   w.put32(Version1);
@@ -358,9 +408,8 @@ int Pkt::writeShort(
   uint8_t *out, unsigned len, const CxnID &dcid, uint64_t pn,
   unsigned pnLength, bool keyPhase)
 {
-  if (pnLength < 1 || pnLength > 4) return -1;
-  unsigned need = 1 + dcid.length() + pnLength;
-  if (len < need) return -1;
+  int need = shortHdrLen(dcid, pnLength);
+  if (need < 0 || len < unsigned(need)) return -1;
   PktWriter w{out, len};
   w.put(uint8_t(0x40 | (keyPhase ? 0x04 : 0) | (pnLength - 1)));
   w.put(dcid);

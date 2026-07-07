@@ -351,6 +351,7 @@ struct H1RespBuilder :
   using Base =
     Zhttp::H1RespBuilder<H1RespBuilder, RespHeaders, ZuTypeList<>, true>;
   H1RespBuilder(const ResponsePlan *plan_) : RespOps{plan_} { }
+  using Base::body;
   using RespOps::contentLength;
   using RespOps::header;
   using RespOps::reason;
@@ -368,6 +369,7 @@ struct H3RespBuilder :
     return qpackEncoderWrite_ && qpackEncoderWrite_(qpackEncoder_, span);
   }
   uint64_t streamID() const { return streamID_; }
+  using Base::body;
   using RespOps::contentLength;
   using RespOps::header;
   using RespOps::reason;
@@ -382,7 +384,7 @@ struct H3RespBuilder :
 template <typename Tx, typename Builder>
 void sendBody(Tx &tx, Builder &builder, const ResponsePlan &resp) {
   if (!resp.sendBody) return;
-  auto body = static_cast<typename Builder::Base &>(builder).body(tx);
+  auto body = builder.body(tx);
   if (resp.generated) {
     sendSpanChunks(body, resp.body.data(), resp.body.length());
     return;

@@ -615,6 +615,7 @@ public:
   using EngineCtl::start;
   using EngineCtl::stop;
   using EngineCtl::state;
+  using EngineCtl::stopping;
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
@@ -1254,23 +1255,24 @@ private:
       Endpoint::failure();
       return;
     }
-    Link *link = route_(d);
+    CxnID routedDCID;
+    Link *link = route_(d, &routedDCID);
     if (!link) {
       sendStatelessReset_(d);
       Endpoint::failure();
       return;
     }
-    if (link->receivedRouted_(ZuMv(d)))
+    if (link->receivedRouted_(ZuMv(d), routedDCID))
       link->installRoutes_(m_routes);
     else
       link->disconnect();
   }
 
-  Link *route_(const Datagram &d) {
+  Link *route_(const Datagram &d, CxnID *routedDCID = nullptr) {
     if (!d.buf || !d.buf->length) return nullptr;
     auto packet = d.buf->cspan();
     if (Pkt::isLong(packet)) return routeLong_(d, packet);
-    return routeShort_(d, packet);
+    return routeShort_(d, packet, routedDCID);
   }
 
   Link *routeLong_(const Datagram &d, ZuBSpan packet) {
@@ -1291,8 +1293,8 @@ private:
     return accept_(info);
   }
 
-  Link *routeShort_(const Datagram &, ZuBSpan packet) {
-    return m_routes.matchShort(packet);
+  Link *routeShort_(const Datagram &, ZuBSpan packet, CxnID *routedDCID) {
+    return m_routes.matchShort(packet, routedDCID);
   }
 
   bool sendStatelessReset_(const Datagram &d) {
