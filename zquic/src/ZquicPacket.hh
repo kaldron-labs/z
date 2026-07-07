@@ -160,6 +160,19 @@ struct Pkt {
   static int parseShort(ZuBSpan, unsigned cidLen, ShortHdr &);
   static int parseVersionNegotiation(
     ZuBSpan, uint32_t *, unsigned capacity, unsigned &nVersions);
+  static int longHdrLen(
+    PktType::T, const CxnID &, const CxnID &,
+    uint64_t payloadLength, unsigned pnLength, ZuBSpan token = {});
+  static int initialHdrLen(
+    const CxnID &, const CxnID &, uint64_t payloadLength,
+    unsigned pnLength);
+  static int initialHdrLen(
+    const CxnID &, const CxnID &, ZuBSpan token,
+    uint64_t payloadLength, unsigned pnLength);
+  static int handshakeHdrLen(
+    const CxnID &, const CxnID &, uint64_t payloadLength,
+    unsigned pnLength);
+  static int shortHdrLen(const CxnID &, unsigned pnLength);
   static int writeLong(
     uint8_t *, unsigned, PktType::T,
     const CxnID &, const CxnID &,

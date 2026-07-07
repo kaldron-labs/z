@@ -902,7 +902,7 @@ QLogEventFmt(QLogCloseEvent);
 
 static uint64_t qlogTime_(ZuTime time)
 {
-  return uint64_t(time.sec()) * 1000000 + uint64_t(time.nsec() / 1000);
+  return uint64_t(time.microsecs());
 }
 
 static double qlogMS_(uint64_t us)

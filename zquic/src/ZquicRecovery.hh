@@ -19,10 +19,17 @@
 
 namespace Zquic {
 
+inline constexpr uint64_t TimeUSPerMS = 1000;
+inline constexpr uint64_t TimeMSPerSec = 1000;
+inline constexpr uint64_t TimeUSPerSec = TimeUSPerMS * TimeMSPerSec;
+inline constexpr uint64_t TimeNSPerUS = 1000;
+inline constexpr uint64_t TimeNSPerMS = TimeNSPerUS * TimeUSPerMS;
+
 inline constexpr ZuTime timeUS(uint64_t usec)
 {
   return ZuTime{
-    int64_t(usec / 1000000), int32_t((usec % 1000000) * 1000)};
+    int64_t(usec / TimeUSPerSec),
+    int32_t((usec % TimeUSPerSec) * TimeNSPerUS)};
 }
 
 inline constexpr ZuTime timePow2(ZuTime t, unsigned n)
@@ -394,8 +401,12 @@ private:
 
 class RttEstimator {
 public:
-  static constexpr ZuTime InitialRTT = timeUS(333000);
-  static constexpr ZuTime Granularity = timeUS(1000);
+  static constexpr unsigned InitialRTTMS = 333;
+  static constexpr unsigned GranularityMS = 1;
+  static constexpr ZuTime InitialRTT{
+    0, int32_t(InitialRTTMS * TimeNSPerMS)};
+  static constexpr ZuTime Granularity{
+    0, int32_t(GranularityMS * TimeNSPerMS)};
   static constexpr uint64_t TimeThresholdNumerator = 9;
   static constexpr uint64_t TimeThresholdDenominator = 8;
 
@@ -1289,6 +1300,15 @@ public:
       if (++scanned >= budget) break;
     }
     return have ? out : ZuTime{0};
+  }
+  bool ackElicitingInFlight() const {
+    auto iter = m_packets.citer();
+    while (auto node = iter()) {
+      const SentPkt &p = node->data();
+      if (!p.ackd && !p.lost && p.inFlight && p.ackEliciting)
+	return true;
+    }
+    return false;
   }
 
   unsigned reject(

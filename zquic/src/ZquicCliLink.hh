@@ -233,26 +233,18 @@ public:
       "QUIC client PTO outside Tx thread", return);
     if (Base::closed() || !Endpoint::connected())
       return;
-    Base::notePTOExpired_();
-    uint64_t packetsTx = Base::txPackets_();
-    if (flushTx_()) {
-      Base::notePTOFlush_();
-      if (Base::txPackets_() != packetsTx) {
-	Base::schedulePTO_();
-	return;
-      }
-    }
-    PktNumSpace::T probeLevel = PktNumSpace::Initial;
-    unsigned probeCount = 0;
-    bool probe = Base::reclaimPTO_(probeLevel, probeCount);
-    if (retransmit_()) {
-      Base::notePTORetx_();
-      return;
-    }
-    if (probe) {
-      Base::notePTOProbe_(probeLevel, probeCount);
-      (void)sendPingProbe_();
-    }
+    Base::ptoRecovery_(
+      [this](
+	  PktNumSpace::T level, PktBuild &build,
+	  const SentFrameRef &cryptoRef) {
+	return level == PktNumSpace::Initial ?
+	  sendInitialPkt_(
+	    build, Endpoint::remote(), {}, &cryptoRef, true, false) :
+	  sendHandshakePkt_(
+	    build, Endpoint::remote(), {}, &cryptoRef, true, false);
+      },
+      [this]() { return flushTx_(); },
+      [this](PktNumSpace::T level) { return sendPingProbe_(level); });
   }
 
   void queueRetransmit_() {
@@ -281,9 +273,9 @@ public:
 	if (!Base::buildRetransmitCrypto_(level, build, ref)) continue;
 	bool ok =
 	  level == PktNumSpace::Initial ?
-	    sendInitialPkt_(build, Endpoint::remote(), {}, &ref, true) :
+	    sendInitialPkt_(build, Endpoint::remote(), {}, &ref, true, false) :
 	  level == PktNumSpace::Handshake ?
-	    sendHandshakePkt_(build, Endpoint::remote(), {}, &ref, true) :
+	    sendHandshakePkt_(build, Endpoint::remote(), {}, &ref, true, false) :
 	    sendShortPkt_(build, Endpoint::remote(), {}, &ref, true);
 	if (!ok) {
 	  Base::requeueRetransmit_(level, ref);
@@ -328,13 +320,22 @@ public:
     return sent;
   }
 
-  bool sendPingProbe_() {
+  bool sendPingProbe_(PktNumSpace::T level) {
     PktBuild build;
-    if (!Base::buildPingProbe_(build)) return false;
+    if (!Base::buildPingProbe_(level, build)) return false;
     typename Base::TxPktRefs refs;
-    return sendShortPkt_(
-      build, Endpoint::remote(), {},
-      &refs, true);
+    switch (level) {
+      case PktNumSpace::Initial:
+	return sendInitialPkt_(
+	  build, Endpoint::remote(), {}, nullptr, true, false);
+      case PktNumSpace::Handshake:
+	return sendHandshakePkt_(
+	  build, Endpoint::remote(), {}, nullptr, true, false);
+      default:
+	return sendShortPkt_(
+	  build, Endpoint::remote(), {},
+	  &refs, true);
+    }
   }
 
   bool sendPMTUDProbe_(ZiSockAddr addr) {
@@ -384,6 +385,10 @@ public:
       s << "QUIC UDP connect failed transient=" << transient;
     }));
     app()->error_(ZuMv(e));
+  }
+
+  ZuBSpan initialTxToken_() const {
+    return initialToken_();
   }
 
 private:
@@ -757,8 +762,8 @@ private:
     if (!addr) return flushTx_();
     if (Base::closed()) return false;
     if (!Base::runtimeEstablished_()) {
-      flushPendingAcks_(addr);
-      if (!Base::canTxZeroRTT_()) return false;
+      bool sent = flushPendingAcks_(addr);
+      if (!Base::canTxZeroRTT_()) return sent;
       return Base::flushEarlyStreams_(
 	addr,
 	[this](
@@ -766,7 +771,7 @@ private:
 	    const typename Base::TxPktRefs &refs) {
 	  return sendZeroRTTPkt_(
 	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
-	});
+	}) || sent;
     }
     bool sent = Base::flushControlAndStreams_(
       addr,
@@ -1000,7 +1005,8 @@ private:
 
   bool sendInitialPkt_(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
+    bool coalesce = true) {
     if (!Endpoint::connected()) return false;
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
@@ -1008,13 +1014,15 @@ private:
       refs.add(*recordRef);
       recordRefs = &refs;
     }
+    if (ackEliciting) recordRefs = &refs;
     return Base::sendProtInitialPkt_(
       InitialKeyDir::Client, RuntimeCID::Initial, RuntimeCID::Local,
       Base::txPNLength_(PktNumSpace::Initial), initialToken_(), true,
       payload, ZuMv(addr),
       recordFrame, recordRefs, ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
-      [this](auto buf, ZiSockAddr addr_) {
+      [this, coalesce](auto buf, ZiSockAddr addr_) {
+	if (!coalesce) return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
 	return sendInitialBuf_(ZuMv(buf), ZuMv(addr_));
       });
   }
@@ -1029,7 +1037,8 @@ private:
 
   bool sendHandshakePkt_(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
+    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
+    bool coalesce = true) {
     if (!Endpoint::connected()) return false;
     typename Base::TxPktRefs refs;
     const typename Base::TxPktRefs *recordRefs = nullptr;
@@ -1037,13 +1046,15 @@ private:
       refs.add(*recordRef);
       recordRefs = &refs;
     }
+    if (ackEliciting) recordRefs = &refs;
     return Base::sendProtHandshakePkt_(
       RuntimeCID::Peer, RuntimeCID::Local,
       Base::txPNLength_(PktNumSpace::Handshake),
       payload, ZuMv(addr), recordFrame, recordRefs,
       ackEliciting,
       [this]() { return Endpoint::allocTxPkt(); },
-      [this](auto buf, ZiSockAddr addr_) {
+      [this, coalesce](auto buf, ZiSockAddr addr_) {
+	if (!coalesce) return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
 	return sendHandshakeBuf_(ZuMv(buf), ZuMv(addr_));
       });
   }
@@ -1196,22 +1207,41 @@ private:
       });
   }
 
-  bool flushPendingAck_(PktNumSpace::T level, ZiSockAddr addr) {
+  bool flushPendingAck_(
+    PktNumSpace::T level, ZiSockAddr addr, bool &sent) {
     PktBuild build;
     build.reset();
     if (!Base::appendPendingAck_(level, build, true)) return false;
     if (!build.bytes()) return true;
-    if (level == PktNumSpace::Initial)
-      return sendInitialPkt_(build, ZuMv(addr), {});
+    bool ok;
+    if (level == PktNumSpace::Initial) {
+      ok = sendInitialPkt_(build, ZuMv(addr), {}, nullptr, false, false);
+      if (ok) sent = true;
+      return ok;
+    }
+    if (!Base::txTrafficSecretInstalled_(level)) return true;
     if (level == PktNumSpace::Handshake)
-      return sendHandshakePkt_(build, ZuMv(addr), {});
-    return sendShortPkt_(build, ZuMv(addr), {});
+      ok = sendHandshakePkt_(build, ZuMv(addr), {});
+    else
+      ok = sendShortPkt_(build, ZuMv(addr), {});
+    if (ok) sent = true;
+    return ok;
   }
 
   bool flushPendingAcks_(ZiSockAddr addr) {
-    return flushPendingAck_(PktNumSpace::Initial, addr) &&
-      flushPendingAck_(PktNumSpace::Handshake, addr) &&
-      flushPendingAck_(PktNumSpace::AppData, ZuMv(addr));
+    bool sent = false;
+    if (Base::pendingAck_(PktNumSpace::Initial))
+      (void)flushPendingAck_(PktNumSpace::Initial, addr, sent);
+    if (Base::pendingAck_(PktNumSpace::Handshake))
+      (void)flushPendingAck_(PktNumSpace::Handshake, addr, sent);
+    if (Base::pendingAck_(PktNumSpace::AppData))
+      (void)flushPendingAck_(PktNumSpace::AppData, ZuMv(addr), sent);
+    if (sent)
+      (void)Base::flushCoalescedInitial_(
+	[this](auto buf, ZiSockAddr addr_) {
+	  return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
+	});
+    return sent;
   }
 
   void received_(Datagram d) {
@@ -1337,6 +1367,8 @@ private:
 	Base::receivePathResponse_(frame.payload);
 	return true;
       case FrameType::HandshakeDone:
+	if (Base::runtimeEstablished_())
+	  Base::discardPktNumSpace_(PktNumSpace::Handshake);
 	return true;
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
@@ -1436,7 +1468,7 @@ public:
 
 private:
   void endpointReadyRx_(Endpoint *ep) {
-    if (ep != static_cast<Endpoint *>(this)) return;
+    if (ep != this) return;
     m_notifyEndpointDown = true;
     ++m_udpReadyCount;
     Base::endpointReady_();
@@ -1444,7 +1476,7 @@ private:
     m_udpReady = 1;
   }
   void endpointDownRx_(Endpoint *ep) {
-    if (ep != static_cast<Endpoint *>(this)) return;
+    if (ep != this) return;
     m_udpReady = 0;
     bool notify = m_notifyEndpointDown;
     m_notifyEndpointDown = true;
