@@ -1353,14 +1353,15 @@ public:
   }
   unsigned reclaimOnPTO(unsigned limit) {
     unsigned n = 0;
-    auto reclaim = [this, limit, &n](bool reclaimed) {
+    auto reclaim = [this, limit, &n](bool reclaimed, bool needFrames) {
       auto iter = m_packets.riter();
       while (n < limit) {
 	auto node = iter();
 	if (!node) break;
 	SentPkt &p = node->data();
 	if (p.ackd || p.lost || !p.inFlight || !p.ackEliciting ||
-	    (!reclaimed && p.ptoReclaimed))
+	    (!reclaimed && p.ptoReclaimed) ||
+	    (needFrames && !p.framesUsed()))
 	  continue;
 	Tx::resend(Span{p.pn, 1});
 	Tx::resend();
@@ -1368,8 +1369,10 @@ public:
 	++n;
       }
     };
-    reclaim(false);
-    if (!n) reclaim(true);
+    reclaim(false, true);
+    if (!n) reclaim(true, true);
+    if (!n) reclaim(false, false);
+    if (!n) reclaim(true, false);
     return n;
   }
   unsigned count() const { return m_packets.count_(); }
