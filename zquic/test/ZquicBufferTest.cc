@@ -47,6 +47,13 @@ void testDiagAggregation()
   path.blackholes = 1;
   diag.add(path);
 
+  ZuCHECK(Zquic::Diag::packetSpaceName(Zquic::PktNumSpace::AppData) ==
+      "AppData" &&
+      Zquic::Diag::frameTypeName(Zquic::FrameType::Stream) == "Stream" &&
+      Zquic::Diag::streamTypeName(Zi::StreamType::Simplex) == "Simplex",
+    "diagnostic stable names mismatch");
+
+#ifdef Zquic_DEBUG
   ZuCHECK(diag.packetsRx == 1 &&
       diag.packetsTx == 1 &&
       diag.bytesRx == 100 &&
@@ -70,12 +77,6 @@ void testDiagAggregation()
       diag.pmtudFailure == 2,
     "diagnostic aggregation mismatch");
 
-  ZuCHECK(Zquic::Diag::packetSpaceName(Zquic::PktNumSpace::AppData) ==
-      "AppData" &&
-      Zquic::Diag::frameTypeName(Zquic::FrameType::Stream) == "Stream" &&
-      Zquic::Diag::streamTypeName(Zi::StreamType::Simplex) == "Simplex",
-    "diagnostic stable names mismatch");
-
   Zquic::DiagText summary = diag.summary();
   ZuCHECK(strstr(summary.data(), "packetsRx=1") &&
       strstr(summary.data(), "headerBytesRx=11") &&
@@ -95,6 +96,21 @@ void testDiagAggregation()
       strstr(streams.data(), "headerBytesTx=12") &&
       strstr(streams.data(), "bodyBytesRx=13"),
     "diagnostic stream summary mismatch");
+#else
+  ZuCHECK(diag.packetsRx == 0 &&
+      diag.packetsTx == 0 &&
+      diag.bytesRx == 0 &&
+      diag.bytesTx == 0 &&
+      diag.packetsLost == 0 &&
+      diag.ptoCount == 0 &&
+      diag.retransmittedFrames == 0,
+    "release diagnostics should be inert");
+
+  ZuCHECK(!diag.summary() &&
+      !diag.recoverySummary() &&
+      !diag.streamSummary(),
+    "release diagnostic summaries should be empty");
+#endif
 }
 
 int main(int argc, char **argv)

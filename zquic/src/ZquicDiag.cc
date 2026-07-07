@@ -26,6 +26,7 @@ ZuCSpan Diag::streamTypeName(Zi::StreamType::T type)
 void Diag::summary(DiagText &out) const
 {
   out.length(0);
+#ifdef Zquic_DEBUG
   out << "packetsRx=" << packetsRx <<
     " packetsTx=" << packetsTx <<
     " bytesRx=" << bytesRx <<
@@ -49,21 +50,25 @@ void Diag::summary(DiagText &out) const
     " pmtudProbes=" << pmtudProbes <<
     " pmtudSuccess=" << pmtudSuccess <<
     " pmtudFailure=" << pmtudFailure;
+#endif
 }
 
 void Diag::recoverySummary(DiagText &out) const
 {
   out.length(0);
+#ifdef Zquic_DEBUG
   out << "cwnd=" << cwnd <<
     " bytesInFlight=" << bytesInFlight <<
     " packetsLost=" << packetsLost <<
     " ptoCount=" << ptoCount <<
     " retransmittedFrames=" << retransmittedFrames;
+#endif
 }
 
 void Diag::streamSummary(DiagText &out) const
 {
   out.length(0);
+#ifdef Zquic_DEBUG
   out << "openStreams=" << openStreams <<
     " closedStreams=" << closedStreams <<
     " streamBytesRx=" << streamBytesRx <<
@@ -72,6 +77,7 @@ void Diag::streamSummary(DiagText &out) const
     " headerBytesTx=" << headerBytesTx <<
     " bodyBytesRx=" << bodyBytesRx <<
     " bodyBytesTx=" << bodyBytesTx;
+#endif
 }
 
 } // namespace Zquic
