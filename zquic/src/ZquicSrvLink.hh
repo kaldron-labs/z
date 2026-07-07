@@ -131,7 +131,7 @@ public:
     });
   }
 
-  bool retransmit_() { // direct call from within tx thread
+  bool retransmit_(bool pto = false) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server retransmit outside Tx thread", return false);
     if (Base::closed() || !m_peerAddr)
@@ -161,7 +161,7 @@ public:
       }
       if (level != PktNumSpace::AppData || !Base::runtimeEstablished_())
 	continue;
-      if (!Base::congestionAllowance_()) {
+      if (!pto && !Base::congestionAllowance_()) {
 	Base::requeueRetransmit_(level, ref);
 	break;
       }

@@ -5345,7 +5345,7 @@ protected:
     bool probe = reclaimPTO_(probeLevel, probeCount);
     if (!probe && probeLevel <= PktNumSpace::Handshake)
       if (sendCryptoPTO_(sendCrypto)) return;
-    if (impl()->retransmit_()) {
+    if (impl()->retransmit_(true)) {
       notePTORetx_();
       return;
     }
