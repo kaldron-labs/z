@@ -2,6 +2,8 @@
 
 ## Zquic
 
+- re-review code
+
 Very few qlog fields, if any, are genuinely arbitrary strings. `ZeString` is probably overused. Almost all qlog data relates to QUIC protocol field values which are fixed-size scalars, IP addresses, ports, enumerated values or other closed vocabularies. Reasons that are in the code as short string literals should also be enumerations (aligning with system error codes). Detailed arbitrary string reasons are a rare exception. Almost all string conversions should occur via the JSON mapping, which is performed exclusively by the logger thread in logged lambda bodies.
 
 reference implementations:
