@@ -147,10 +147,12 @@ void testCLI()
     ZuCHECK(load(options, {
 	"zhttpd", "/tmp/www",
 	"--quic-migration", "active",
+	"--quic-heartbeat=12",
 	"--quic-migration-cid-reserve=3",
 	"--quic-migration-close-on-failure"}),
       "QUIC migration options failed");
     ZuCheck(options.quicMigration == "active");
+    ZuCheck(options.quicHeartbeat == 12);
     ZuCheck(options.quicMigrationCIDReserve == 3);
     ZuCheck(options.quicMigrationCloseOnFailure);
   }

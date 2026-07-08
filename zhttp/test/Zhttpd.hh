@@ -133,6 +133,7 @@ struct Options {
   bool			frag = false;
   bool			yield = false;
   HdrString		quicMigration{"passive"};
+  uint32_t		quicHeartbeat = 0;
   unsigned		quicMigrationCIDReserve = 1;
   bool			quicMigrationCloseOnFailure = false;
 #ifdef ZiMultiplex_FILTER
@@ -181,6 +182,7 @@ ZtStruct((Options, CLI),
   (((frag),            (CLI::Long<"frag">)),                     (Bool)),
   (((yield),           (CLI::Long<"yield">)),                    (Bool)),
   (((quicMigration),   (CLI::Long<"quic-migration">)),           (String, "passive")),
+  (((quicHeartbeat),   (CLI::Long<"quic-heartbeat">)),           (UInt32)),
   (((quicMigrationCIDReserve),
     (CLI::Long<"quic-migration-cid-reserve">)),                  (UInt32, 1)),
   (((quicMigrationCloseOnFailure),
@@ -988,13 +990,14 @@ inline bool parseAuth(Options &options, ZuCSpan auth) {
   return true;
 }
 
-inline bool loadOptions(Options &options, int argc, char **argv, bool &help) {
+inline bool loadOptions(
+  Options &options, int argc, const char *const *argv, bool &help) {
   bool httpSet = false;
   for (int i = 1; i < argc; ++i) {
     ZuCSpan arg{argv[i]};
     if (arg == "--http") httpSet = true;
   }
-  int argc_ = ZtCLI::load(options, argc, const_cast<const char *const *>(argv));
+  int argc_ = ZtCLI::load(options, argc, argv);
   if (argc_ < 0) return false;
   help = options.help;
   if (help) return true;
@@ -1061,6 +1064,8 @@ inline bool validate(Options &options, S &error) {
   }
   return true;
 }
+
+int run(int argc, const char *const *argv);
 
 } // namespace Zhttpd
 

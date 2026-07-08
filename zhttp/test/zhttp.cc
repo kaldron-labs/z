@@ -458,6 +458,7 @@ struct Options {
   ZuCSpan	url;
   Http3Mode::T	http3 = Http3Mode::prefer;
   ZuCSpan	quicMigration{"passive"};
+  uint32_t	quicHeartbeat = 0;
   uint32_t	quicMigrationCIDReserve = 1;
   bool		quicMigrationCloseOnFailure = false;
   ZuCSpan	quicMigrationLocal;
@@ -500,6 +501,8 @@ ZtStruct((Options, CLI),
 								 Http3Mode::prefer)),
   (((quicMigration),
     (CLI::Long<"quic-migration">)),                         (String, "passive")),
+  (((quicHeartbeat),
+    (CLI::Long<"quic-heartbeat">)),                         (UInt32, 0)),
   (((quicMigrationCIDReserve),
     (CLI::Long<"quic-migration-cid-reserve">)),             (UInt32, 1)),
   (((quicMigrationCloseOnFailure),
@@ -551,6 +554,7 @@ void usage(int code = 1)
     "  --quic-migration=MODE\n"
     "                      QUIC migration policy: disabled, passive, active;\n"
     "                      default passive\n"
+    "  --quic-heartbeat=N  send QUIC PING after N idle seconds, 0 disables\n"
     "  --quic-migration-cid-reserve=N\n"
     "                      peer CID reserve for QUIC migration, default 1\n"
     "  --quic-migration-close-on-failure\n"
@@ -600,6 +604,11 @@ bool parseDrop(ZuCSpan s, double &drop)
 Zquic::MigrationMode::T migrationMode(const Options &options)
 {
   return Zquic::migrationMode(options.quicMigration);
+}
+
+ZuTime quicHeartbeat(const Options &options)
+{
+  return options.quicHeartbeat ? ZuTime{options.quicHeartbeat} : ZuTime{};
 }
 
 bool parseMigrationLocal(ZuCSpan s, ZiSockAddr &addr);
@@ -3082,6 +3091,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	    .maxStreamData(H3StreamDataMax)
 	    .maxStreamsBidi(client.maxStreamsBidi())
 	    .maxStreamsUni(H3UniMax)
+	    .heartBeat(quicHeartbeat(run.options))
 	    .migrationMode(migrationMode(run.options))
 	    .migrationCIDReserve(run.options.quicMigrationCIDReserve)
 	    .migrationCloseOnFailure(

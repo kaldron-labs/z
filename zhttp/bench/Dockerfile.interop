@@ -1,0 +1,11 @@
+FROM debian:stable-slim
+ARG ZHTTP_QIR_ROOT=qir-root
+ARG ZHTTP_QIR_REV=local
+COPY ${ZHTTP_QIR_ROOT}/usr/local /usr/local
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ethtool iproute2 net-tools netcat-openbsd \
+  && rm -rf /var/lib/apt/lists/* \
+  && echo /usr/local/lib >/etc/ld.so.conf.d/z.conf && ldconfig \
+  && mkdir -p /logs/qlog
+EXPOSE 443/udp
+ENTRYPOINT ["/usr/local/bin/qir_endpoint.sh"]

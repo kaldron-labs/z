@@ -1,0 +1,258 @@
+#!/bin/sh
+set -eu
+
+usage()
+{
+  cat >&2 <<'EOF'
+Usage: scripts/qir-build-image [OPTION]...
+
+Configure, rebuild, and build the zhttp QUIC interop Docker image through the
+top-level automake target, or build directly from an existing staged root.
+
+Options:
+  --tag TAG          Docker image tag, default zhttp-qir:<git-short-rev>
+  --jobs N          make parallelism, default MAKE_JOBS or 8
+  --prefix PREFIX   install prefix, must be /usr/local for image builds
+  --root DIR         staged DESTDIR root containing usr/local
+  --platform LIST    docker buildx platforms, for example linux/amd64
+  --push            push with docker buildx build --push
+  --no-configure    skip ./z.config
+  --no-clean        skip make clean
+  --allow-dirty     allow a dirty git worktree
+  -h, --help        show this help
+
+Environment:
+  ZHTTP_QIR_ALLOW_DIRTY=1 also allows a dirty git worktree
+
+Required make target:
+  make zhttp-qir-image
+EOF
+}
+
+die()
+{
+  echo "qir-build-image: $*" >&2
+  exit 1
+}
+
+run()
+{
+  echo "+ $*" >&2
+  "$@"
+}
+
+copy_root()
+{
+  src=$1
+  dst=$2
+
+  rm -rf "$dst"
+  mkdir -p "$dst"
+  tar -C "$src" -cf - . | tar -C "$dst" -xf -
+}
+
+stage_runtime_deps()
+{
+  stage=$1
+  bin=$stage/usr/local/bin/zhttpqir
+  libdir=$stage/usr/local/lib
+
+  mkdir -p "$libdir"
+  LD_LIBRARY_PATH=$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+    ldd "$bin" | while IFS= read -r line; do
+    case "$line" in
+      *'=> '*)
+	path=${line#*=> }
+	path=${path%% *}
+	;;
+      /*)
+	path=${line%% *}
+	;;
+      *)
+	continue
+	;;
+    esac
+    case "$path" in
+      ""|not|linux-vdso*|*/ld-linux-*|*/libc.so.*|*/libm.so.*)
+	continue
+	;;
+    esac
+    [ -f "$path" ] || continue
+    base=$(basename "$path")
+    [ -e "$libdir/$base" ] || cp -L "$path" "$libdir/$base"
+  done
+}
+
+repo_root()
+{
+  script=$0
+  case "$script" in
+    */*) ;;
+    *) script=$(command -v "$script") || exit 1 ;;
+  esac
+  dir=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd)
+  printf '%s\n' "$dir"
+}
+
+image_source_url()
+{
+  remote=$(git -C "$root" config --get remote.origin.url 2>/dev/null || true)
+  case "$remote" in
+    https://*|http://*)
+      printf '%s\n' "${remote%.git}"
+      ;;
+    git@*:*)
+      path=${remote#*:}
+      path=${path%.git}
+      printf 'https://github.com/%s\n' "$path"
+      ;;
+    ssh://git@github.com/*)
+      path=${remote#ssh://git@github.com/}
+      path=${path%.git}
+      printf 'https://github.com/%s\n' "$path"
+      ;;
+    *)
+      printf '%s\n' https://github.com/kaldron-labs/z
+      ;;
+  esac
+}
+
+root=$(repo_root)
+cd "$root"
+
+short_rev=$(git rev-parse --short HEAD 2>/dev/null || echo local)
+tag="zhttp-qir:$short_rev"
+jobs=${MAKE_JOBS:-8}
+prefix=/usr/local
+root_dir=
+platform=
+push=0
+configure=1
+clean=1
+allow_dirty=0
+
+case ${ZHTTP_QIR_ALLOW_DIRTY:-0} in
+  1|yes|true|on)
+    allow_dirty=1
+    ;;
+esac
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tag)
+      [ $# -ge 2 ] || die "--tag requires an argument"
+      tag=$2
+      shift 2
+      ;;
+    --jobs)
+      [ $# -ge 2 ] || die "--jobs requires an argument"
+      jobs=$2
+      shift 2
+      ;;
+    --prefix)
+      [ $# -ge 2 ] || die "--prefix requires an argument"
+      prefix=$2
+      shift 2
+      ;;
+    --root)
+      [ $# -ge 2 ] || die "--root requires an argument"
+      root_dir=$2
+      shift 2
+      ;;
+    --platform)
+      [ $# -ge 2 ] || die "--platform requires an argument"
+      platform=$2
+      shift 2
+      ;;
+    --push)
+      push=1
+      shift
+      ;;
+    --no-configure)
+      configure=0
+      shift
+      ;;
+    --no-clean)
+      clean=0
+      shift
+      ;;
+    --allow-dirty)
+      allow_dirty=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+[ "$prefix" = /usr/local ] ||
+  die "Docker image builds require --prefix /usr/local"
+
+if [ "$allow_dirty" -ne 1 ] && [ -n "$(git status --porcelain)" ]; then
+  die "worktree is dirty; commit/stash changes or pass --allow-dirty"
+fi
+
+if [ -n "$root_dir" ]; then
+  [ -x "$root_dir/usr/local/bin/zhttpqir" ] ||
+    die "$root_dir/usr/local/bin/zhttpqir is missing or not executable"
+  [ -x "$root_dir/usr/local/bin/qir_endpoint.sh" ] ||
+    die "$root_dir/usr/local/bin/qir_endpoint.sh is missing or not executable"
+  [ -d "$root_dir/usr/local/lib" ] ||
+    die "$root_dir/usr/local/lib is missing"
+
+  ctx=${TMPDIR:-/tmp}/zhttp-qir-build.$$
+  trap 'rm -rf "$ctx"' EXIT HUP INT TERM
+  mkdir -p "$ctx"
+  cp "$root/zhttp/bench/Dockerfile.interop" "$ctx/Dockerfile.interop"
+  copy_root "$root_dir" "$ctx/qir-root"
+  stage_runtime_deps "$ctx/qir-root"
+
+  created=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  labels="--label org.opencontainers.image.source=$(image_source_url) --label org.opencontainers.image.revision=$short_rev --label org.opencontainers.image.created=$created --label org.opencontainers.image.title=zhttp-qir"
+
+  if [ -n "$platform" ] || [ "$push" -eq 1 ]; then
+    set -- docker buildx build \
+      -f "$ctx/Dockerfile.interop" \
+      --build-arg ZHTTP_QIR_ROOT=qir-root \
+      --build-arg ZHTTP_QIR_REV="$short_rev" \
+      -t "$tag"
+    if [ -n "$platform" ]; then
+      set -- "$@" --platform "$platform"
+    fi
+    if [ "$push" -eq 1 ]; then
+      set -- "$@" --push
+    fi
+    set -- "$@" $labels "$ctx"
+    run "$@"
+  else
+    set -- docker build \
+      -f "$ctx/Dockerfile.interop" \
+      --build-arg ZHTTP_QIR_ROOT=qir-root \
+      --build-arg ZHTTP_QIR_REV="$short_rev" \
+      -t "$tag" \
+      $labels "$ctx"
+    run "$@"
+  fi
+
+  exit 0
+fi
+
+if [ "$configure" -eq 1 ]; then
+  run ./z.config -c -Q -L "$prefix"
+fi
+
+if [ "$clean" -eq 1 ]; then
+  run make clean
+fi
+
+if ! grep -q '^zhttp-qir-image:' Makefile; then
+  die "top-level make target zhttp-qir-image is not available yet"
+fi
+
+echo "+ ZHTTP_QIR_IMAGE=$tag make -j$jobs zhttp-qir-image" >&2
+ZHTTP_QIR_IMAGE=$tag make "-j$jobs" zhttp-qir-image

@@ -7,6 +7,7 @@
 // static HTTP server
 
 #include <iostream>
+#include <signal.h>
 #include <string.h>
 
 #include <zlib/ZmBlock.hh>
@@ -89,6 +90,7 @@ void usage(int code = 1)
     "                             defaults to SSLKEYLOGFILE when set\n"
     "  --quic-migration=MODE      QUIC migration policy: disabled, passive,\n"
     "                             active; default passive\n"
+    "  --quic-heartbeat=N         send QUIC PING after N idle seconds, 0 disables\n"
     "  --quic-migration-cid-reserve=N\n"
     "                             peer CID reserve for QUIC migration, default 1\n"
     "  --quic-migration-close-on-failure\n"
@@ -128,7 +130,12 @@ Zquic::MigrationMode::T migrationMode(const Options &options)
   return Zquic::migrationMode(options.quicMigration);
 }
 
-bool loadOptions(Options &options, int argc, char **argv)
+ZuTime quicHeartbeat(const Options &options)
+{
+  return options.quicHeartbeat ? ZuTime{options.quicHeartbeat} : ZuTime{};
+}
+
+bool loadOptions(Options &options, int argc, const char *const *argv)
 {
   bool help = false;
   if (!Zhttpd::loadOptions(options, argc, argv, help)) return false;
@@ -203,6 +210,32 @@ struct IntervalMonitor {
   unsigned	quicElapsed = 0;
 #endif
 };
+
+static ZmSemaphore *sigDone_;
+
+static void sigHandler(int)
+{
+  if (sigDone_) sigDone_->post();
+}
+
+static void installSigHandlers(
+  ZmSemaphore *done, struct sigaction &oldInt, struct sigaction &oldTerm)
+{
+  sigDone_ = done;
+  struct sigaction action{};
+  action.sa_handler = sigHandler;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGINT, &action, &oldInt);
+  sigaction(SIGTERM, &action, &oldTerm);
+}
+
+static void restoreSigHandlers(
+  const struct sigaction &oldInt, const struct sigaction &oldTerm)
+{
+  sigaction(SIGINT, &oldInt, nullptr);
+  sigaction(SIGTERM, &oldTerm, nullptr);
+  sigDone_ = nullptr;
+}
 
 bool prepareProcess(Options &options)
 {
@@ -1189,13 +1222,13 @@ void H3ServerStream::sendResponse(ResponsePlan resp)
   });
 }
 
-int main(int argc, char **argv)
+int Zhttpd::run(int argc, const char *const *argv)
 {
   ZiHeapCSV::init(::getenv("Z_HEAPTUNE"));
   ZiHashCSV::init(::getenv("Z_HASHTUNE"));
 
   Options options;
-  if (!loadOptions(options, argc, argv)) usage();
+  if (!::loadOptions(options, argc, argv)) usage();
 
   ZeString error;
   if (!validate(options, error)) {
@@ -1224,16 +1257,21 @@ int main(int argc, char **argv)
 
   State state;
   state.options = options;
+  struct sigaction oldInt{};
+  struct sigaction oldTerm{};
+  installSigHandlers(&state.done, oldInt, oldTerm);
   if (!initFileState(state, error)) {
     ZiLOG(Error, "zhttpd", ([error = ZuMv(error)](auto &s) mutable {
       s << "zhttpd: " << error;
     }));
+    restoreSigHandlers(oldInt, oldTerm);
     ZiLog::stop();
     return 1;
   }
   state.mime.init(state.options);
   if (!state.log.init(state.options)) {
     ZiLOG(Error, "zhttpd", "failed to open access log");
+    restoreSigHandlers(oldInt, oldTerm);
     ZiLog::stop();
     return 1;
   }
@@ -1241,6 +1279,7 @@ int main(int argc, char **argv)
   ZiMultiplex mx(mxParams(options));
   if (!mx.start()) {
     ZiLOG(Error, "zhttpd", "ZiMultiplex start failed");
+    restoreSigHandlers(oldInt, oldTerm);
     state.log.final();
     ZiLog::stop();
     return 1;
@@ -1254,6 +1293,7 @@ int main(int argc, char **argv)
   if (state.options.http) {
     if (!http.init(Ztcp::ServerParams(&mx, "3", "4"))) {
       ZiLOG(Error, "zhttpd", "HTTP server initialization failed");
+      restoreSigHandlers(oldInt, oldTerm);
       mx.stop();
       state.log.final();
       ZiLog::stop();
@@ -1268,6 +1308,7 @@ int main(int argc, char **argv)
 	    .certPath(state.options.cert).keyPath(state.options.key)
 	    .alpn(alpn))) {
       ZiLOG(Error, "zhttpd", "HTTPS server initialization failed");
+      restoreSigHandlers(oldInt, oldTerm);
       if (httpInit) http.final();
       mx.stop();
       state.log.final();
@@ -1285,11 +1326,13 @@ int main(int argc, char **argv)
 	    .keyLogPath(state.options.keyLog)
 	    .maxData(H3DataMax).maxStreamData(H3StreamDataMax)
 	    .maxStreamsBidi(H3BidiMax).maxStreamsUni(H3UniMax)
+	    .heartBeat(quicHeartbeat(state.options))
 	    .migrationMode(migrationMode(state.options))
 	    .migrationCIDReserve(state.options.quicMigrationCIDReserve)
 	    .migrationCloseOnFailure(
 	      state.options.quicMigrationCloseOnFailure))) {
       ZiLOG(Error, "zhttpd", "H3 server initialization failed");
+      restoreSigHandlers(oldInt, oldTerm);
       if (tlsInit) tls.final();
       if (httpInit) http.final();
       mx.stop();
@@ -1302,6 +1345,7 @@ int main(int argc, char **argv)
   }
   if (!httpInit && !tlsInit && !h3Init) {
     ZiLOG(Error, "zhttpd", "no transport enabled");
+    restoreSigHandlers(oldInt, oldTerm);
     mx.stop();
     state.log.final();
     ZiLog::stop();
@@ -1345,8 +1389,16 @@ int main(int argc, char **argv)
   }
   if (tlsInit) tls.final();
   if (httpInit) http.final();
+  restoreSigHandlers(oldInt, oldTerm);
   mx.stop();
   state.log.final();
   ZiLog::stop();
   return state.errors ? 1 : 0;
 }
+
+#ifndef ZHTTPD_NO_MAIN
+int main(int argc, char **argv)
+{
+  return Zhttpd::run(argc, argv);
+}
+#endif

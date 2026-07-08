@@ -1,5 +1,7 @@
 ACLOCAL_AMFLAGS = -I m4
 METASOURCES = AUTO
+EXTRA_DIST = scripts/qir-build-image scripts/qir-upload-image \
+	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
 SUBDIRS = zu zm zt ze zi zrl
 SUBDIRS += ztcp ztls zquic zhttp
 # SUBDIRS += zfb
@@ -20,3 +22,33 @@ test: all
 	@for subdir in $(SUBDIRS); do \
 	  $(MAKE) $(AM_MAKEFLAGS) -C $$subdir test || exit $$?; \
 	done
+
+ZHTTP_QIR_INSTALL_DIRS = zu/src zm/src zt/src ze/src zi/src ztls/src \
+	zquic/src zhttp/src
+
+.PHONY: zhttp-qir-build
+zhttp-qir-build:
+	$(MAKE) $(AM_MAKEFLAGS) -C zu/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C zm/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C zt/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C ze/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C zi/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C ztls/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C zquic/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/bench zhttpqir
+
+.PHONY: zhttp-qir-image
+zhttp-qir-image: zhttp-qir-build
+	test "$(prefix)" = "/usr/local"
+	rm -rf "$(abs_builddir)/zhttp/bench/qir-root"
+	@for subdir in $(ZHTTP_QIR_INSTALL_DIRS); do \
+	  $(MAKE) $(AM_MAKEFLAGS) -C $$subdir install \
+	    DESTDIR="$(abs_builddir)/zhttp/bench/qir-root" || exit $$?; \
+	done
+	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/bench qir-stage \
+	  ZHTTP_QIR_ROOT="$(abs_builddir)/zhttp/bench/qir-root"
+	"$(abs_srcdir)/scripts/qir-build-image" \
+	  --root "$(abs_builddir)/zhttp/bench/qir-root" \
+	  --tag "$${ZHTTP_QIR_IMAGE:-zhttp-qir:local}" \
+	  --no-configure --no-clean --allow-dirty

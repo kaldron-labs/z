@@ -9,9 +9,29 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
 
+#include <zpicotls/openssl.h>
+
 using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
+
+enum {
+  // Idle timeout is floored at 3 * initial PTO until RTT is sampled.
+  IdleInventoryWaitUS = 4000000
+};
+
+static ZuBSpan span_(const uint8_t *data, unsigned len)
+{
+  return ZuBSpan{data, len};
+}
+
+static bool trafficSecret_(Zquic::TrafficSecret &secret, uint8_t seed)
+{
+  uint8_t bytes[32];
+  for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = seed + i;
+  return Zquic::PktProt::deriveTrafficSecret(
+    secret, &ptls_openssl_aes128gcmsha256, span_(bytes, sizeof(bytes)));
+}
 
 struct TimerApp : public Zquic::Engine<TimerApp> {
   using Base = Zquic::Engine<TimerApp>;
@@ -19,7 +39,9 @@ struct TimerApp : public Zquic::Engine<TimerApp> {
   TimerApp() : m_mx{mxParams_()} {
     ZiAssert(m_mx.start(), "Zquic", (),
       "timer test multiplexer start failed", return);
-    ZiAssert(Base::init(Zquic::EngineParams(&m_mx, "3", "4")),
+    ZiAssert(Base::init(
+	Zquic::EngineParams(&m_mx, "3", "4")
+	  .heartBeat(ZuTime{10})),
       "Zquic", (), "timer test app init failed", return);
   }
   ~TimerApp() {
@@ -64,7 +86,8 @@ struct TimerLink :
     Base::scheduleAckDelayTimer_(out);
     Base::scheduleLossTimer_(out);
     Base::schedulePTOTimer_(out);
-    Base::scheduleIdleTimer_(out);
+    Base::startIdleTimerTx_(out - Zm::now());
+    Base::scheduleHeartBeatTimer_(out);
     Base::scheduleCloseTimer_(out);
     Base::scheduleKeyDiscardTimer_(out);
     Base::schedulePMTUDTimer_(out);
@@ -75,11 +98,15 @@ struct TimerLink :
     Base::scheduleAckDelayTimer_(ack);
     Base::schedulePTOTimer_(pto);
   }
+  bool installOneRTT(const Zquic::TrafficSecret &secret) {
+    return Base::installAppDataKeys_(secret, secret, {});
+  }
 
   void ackDelayExpired_() { ++ackDelay; }
   void lossTimeExpired_() { ++lossTime; }
   void pto_() { ++pto; }
   void idleExpired_() { ++idle; }
+  void heartBeatExpired_() { ++heartBeat; }
   void closeExpired_() { ++close; }
   void keyDiscardExpired_() { ++keyDiscard; }
   void pmtudExpired_() { ++pmtud; }
@@ -87,13 +114,14 @@ struct TimerLink :
 
   unsigned fired() const {
     return ackDelay + lossTime + pto + idle + close +
-      keyDiscard + pmtud + path;
+      heartBeat + keyDiscard + pmtud + path;
   }
 
   ZmAtomic<unsigned>	ackDelay = 0;
   ZmAtomic<unsigned>	lossTime = 0;
   ZmAtomic<unsigned>	pto = 0;
   ZmAtomic<unsigned>	idle = 0;
+  ZmAtomic<unsigned>	heartBeat = 0;
   ZmAtomic<unsigned>	close = 0;
   ZmAtomic<unsigned>	keyDiscard = 0;
   ZmAtomic<unsigned>	pmtud = 0;
@@ -106,14 +134,18 @@ void testTimerInventory()
 
   TimerApp app;
   ZmRef<TimerLink> link = new TimerLink{&app};
+  Zquic::TrafficSecret secret;
 
+  ZuCHECK(trafficSecret_(secret, 1) && link->installOneRTT(secret),
+    "timer test link establish failed");
   link->armAll(Zm::now() + Zquic::timeUS(10000));
-  usleep(80000);
+  usleep(IdleInventoryWaitUS);
 
   ZuCHECK(link->ackDelay == 1, "ACK delay timer did not fire once");
   ZuCHECK(link->lossTime == 1, "loss timer did not fire once");
   ZuCHECK(link->pto == 1, "PTO timer did not fire once");
   ZuCHECK(link->idle == 1, "idle timer did not fire once");
+  ZuCHECK(link->heartBeat == 1, "heartBeat timer did not fire once");
   ZuCHECK(link->close == 1, "close timer did not fire once");
   ZuCHECK(link->keyDiscard == 1, "key discard timer did not fire once");
   ZuCHECK(link->pmtud == 1, "PMTUD timer did not fire once");
@@ -127,7 +159,10 @@ void testTimerCancel()
 
   TimerApp app;
   ZmRef<TimerLink> link = new TimerLink{&app};
+  Zquic::TrafficSecret secret;
 
+  ZuCHECK(trafficSecret_(secret, 2) && link->installOneRTT(secret),
+    "timer cancel link establish failed");
   link->armAll(Zm::now() + Zquic::timeUS(200000));
   link->cancelAll();
   usleep(80000);

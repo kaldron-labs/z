@@ -228,13 +228,21 @@ void testServerInitialBootstrap()
   ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
     "unsupported Initial version was accepted");
   bad = initial;
-  bad.scid = "short";
+  bad.dcid = "short";
   ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
-    "short client SCID was accepted");
+    "short client DCID was accepted");
   bad = initial;
   bad.type = Zquic::PktType::Handshake;
   ZuCHECK(!badServer.acceptInitial(bad, Zquic::MinUDPPayload),
     "non-Initial packet was accepted");
+
+  Zquic::LongHdr zeroSCID = initial;
+  zeroSCID.scid.null();
+  Zquic::ServerBootstrap zeroSCIDServer;
+  ZuCHECK(zeroSCIDServer.acceptInitial(zeroSCID, Zquic::MinUDPPayload),
+    "zero-length client SCID was rejected");
+  ZuCHECK(!zeroSCIDServer.clientInitialSCID(),
+    "zero-length client SCID was not preserved");
 }
 
 int main(int argc, char **argv)

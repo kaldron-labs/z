@@ -1,0 +1,63 @@
+#!/bin/sh
+set -eu
+
+usage()
+{
+  cat >&2 <<'EOF'
+Usage: scripts/qir-upload-image --source SOURCE_TAG --target TARGET_TAG
+
+Tag and push a validated QUIC interop Docker image to a registry.
+Authenticate first with docker login.
+EOF
+}
+
+die()
+{
+  echo "qir-upload-image: $*" >&2
+  exit 1
+}
+
+run()
+{
+  echo "+ $*" >&2
+  "$@"
+}
+
+source_tag=
+target_tag=
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --source)
+      [ $# -ge 2 ] || die "--source requires an argument"
+      source_tag=$2
+      shift 2
+      ;;
+    --target)
+      [ $# -ge 2 ] || die "--target requires an argument"
+      target_tag=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+[ -n "$source_tag" ] || die "--source is required"
+[ -n "$target_tag" ] || die "--target is required"
+
+run docker image inspect "$source_tag" >/dev/null
+run docker tag "$source_tag" "$target_tag"
+run docker push "$target_tag"
+
+if docker buildx imagetools inspect "$target_tag" >/dev/null 2>&1; then
+  docker buildx imagetools inspect "$target_tag" | sed -n '1,40p'
+else
+  docker image inspect "$target_tag" \
+    --format '{{.Id}} {{range .RepoDigests}}{{.}} {{end}}' || true
+fi

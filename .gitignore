@@ -45,6 +45,8 @@ tags
 *.csv.*
 *.log
 *.log.*
+*.sqlog
+*.sqlog.*
 *.diff
 *.orig
 *.old
@@ -65,3 +67,7 @@ iterate_implementation.md
 iterate_plan.md
 iterate_requirements.md
 research_codebase.md
+!scripts/**
+!zhttp/bench/testdata/**
+zhttp/bench/qir-root/
+zhttp/bench/qir-results/

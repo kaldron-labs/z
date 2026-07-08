@@ -1,0 +1,1 @@
+python3 run.py -s zquic -c ngtcp2 -t handshake,transfer
