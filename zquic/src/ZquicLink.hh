@@ -17,6 +17,7 @@ ZtEnumStruct(CxnTimer, int8_t,
   Loss,
   PTO,
   Idle,
+  HeartBeat,
   Close,
   KeyDiscard,
   PMTUD,
@@ -47,6 +48,7 @@ public:
     ZmQueue<StreamRef,
       ZmQueueHeapID<"Zquic.Link.StreamQueue">>;
   static constexpr unsigned OpenQueuedBatch = 32;
+  static constexpr unsigned StreamFlushBatch = 64;
   // PATH_RESPONSE frames are concrete replies; cap queued payloads at the
   // per-packet sent-frame metadata limit.
   static constexpr unsigned PathResponseMax = SentPkt::MaxFrames;
@@ -1077,6 +1079,26 @@ protected:
     for (unsigned i = 0; i < refs.count(); ++i)
       discardTxUnackd_(level, refs[i], refs.stream(i));
   }
+  bool requeueUnsentStreamRef_(
+    PktNumSpace::T level, const SentFrameRef &ref,
+    Stream *stream = nullptr, bool consumeCredit = false) {
+    if (ref.kind != SentFrameKind::Stream) return false;
+    if (consumeCredit && ref.length)
+      if (!m_txDataCredit.consume(ref.length)) return false;
+    if (!recordTxUnackd_(level, ref, stream)) return false;
+    return requeueRetransmit_(level, ref);
+  }
+  void requeueUnsentStreamRefs_(
+    PktNumSpace::T level, const TxPktRefs &refs, bool consumeCredit,
+    bool queueTx = true) {
+    bool queued = false;
+    for (unsigned i = 0; i < refs.count(); ++i) {
+      const SentFrameRef &ref = refs[i];
+      queued |=
+	requeueUnsentStreamRef_(level, ref, refs.stream(i), consumeCredit);
+    }
+    if (queued && queueTx) impl()->queueRetransmit_();
+  }
   void discardTxUnackd_(
     PktNumSpace::T level, ZuBSpan frame, const TxPktRefs *refs) {
     if (refs) {
@@ -1559,13 +1581,22 @@ protected:
       o.logPathUpdated(event, time);
     }));
   }
-  void recordPathRx_(unsigned bytes) {
-    app()->txRun([link = impl(), bytes]() mutable {
+  void recordPathRx_(ZiSockAddr remote, unsigned bytes) {
+    app()->txRun([
+      link = impl(),
+      remote = ZuMv(remote),
+      bytes
+    ]() mutable {
       if (link->disconnecting_()) return;
-      link->recordPathRxTx_(bytes);
+      link->recordPathRxTx_(ZuMv(remote), bytes);
     });
   }
-  void recordPathRxTx_(unsigned bytes) {
+  void recordPathRxTx_(ZiSockAddr remote, unsigned bytes) {
+    if (remote && m_migration.active && remote == m_migration.path.remote()) {
+      m_migration.path.received(bytes);
+      return;
+    }
+    if (remote && remote != m_path.remote()) return;
     m_path.received(bytes);
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Received,
@@ -1589,18 +1620,20 @@ protected:
       o.logPathUpdated(event, time);
     }));
   }
-  void observePathRx_(ZiSockAddr local, ZiSockAddr remote) {
+  void observePathRx_(ZiSockAddr local, ZiSockAddr remote, unsigned bytes) {
     app()->txRun([
       link = impl(),
       local = ZuMv(local),
-      remote = ZuMv(remote)
+      remote = ZuMv(remote),
+      bytes
     ]() mutable {
       if (link->disconnecting_()) return;
-      link->observePathRxTx_(ZuMv(local), ZuMv(remote));
+      link->observePathRxTx_(ZuMv(local), ZuMv(remote), bytes);
     });
   }
   void observePathRxTx_(
-    ZiSockAddr local, ZiSockAddr remote, bool armTimer = true) {
+    ZiSockAddr local, ZiSockAddr remote, unsigned bytes = 0,
+    bool armTimer = true, bool sendChallenge = true) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path receive observation outside Tx thread", return);
     ++m_txDiag.pathRxObserved;
@@ -1608,13 +1641,20 @@ protected:
       ++m_txDiag.pathRxNull;
       return;
     }
-    if (remote == m_path.remote()) {
-      ++m_txDiag.pathRxSame;
-      return;
-    }
     if (m_migration.active &&
 	remote == m_migration.path.remote()) {
+      if (bytes) m_migration.path.received(bytes);
       ++m_txDiag.pathValidationActive;
+      if (m_migration.state == MigrationState::Validating &&
+	  (m_migration.localRebind ||
+	    m_migration.reason == MigrationReason::Passive)) {
+	promotePath_();
+	return;
+      }
+      return;
+    }
+    if (remote == m_path.remote()) {
+      ++m_txDiag.pathRxSame;
       return;
     }
     if (app()->migrationMode() == MigrationMode::Disabled) {
@@ -1643,10 +1683,12 @@ protected:
 
       o.logPathUpdated(event, time);
     }));
-    startPathValid_(ZuMv(local), ZuMv(remote), armTimer);
+    startPathValid_(
+      ZuMv(local), ZuMv(remote), armTimer, bytes, sendChallenge);
   }
   bool startPathValid_(
-    ZiSockAddr local, ZiSockAddr remote, bool armTimer = true) {
+    ZiSockAddr local, ZiSockAddr remote, bool armTimer = true,
+    unsigned rxBytes = 0, bool sendChallenge = true) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path validation start outside Tx thread", return false);
     if (!remote || remote == m_path.remote()) return false;
@@ -1658,6 +1700,7 @@ protected:
     initPathECN_(state.path);
     state.path.configuredMaxUDP(m_path.configuredMaxUDP());
     state.path.peerMaxUDP(m_path.peerMaxUDP());
+    if (rxBytes) state.path.received(rxBytes);
     migrationPeerCID_(state, false);
     ++m_txDiag.migration.requested;
     if (state.peerCID == m_peerCID)
@@ -1677,9 +1720,6 @@ protected:
     impl()->migrationStarted(migrationResult_());
     if (armTimer)
       schedulePathTimer_(state.deadline);
-    txQueueControl_(ControlFrame::pathChallenge(
-      m_migration.challenge.bspan()));
-    logMigration_(ZquicLog_::MigrationAction::ChallengeQueued);
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::ChallengeTx,
       reason = PathReason::PeerAddrChange,
@@ -1703,7 +1743,12 @@ protected:
 
       o.logPathValid(event, time);
     }));
-    impl()->queueTxFlush_(m_migration.path.remote());
+    if (sendChallenge && !impl()->sendPassiveMigrationChallenge_()) {
+      txQueueControl_(ControlFrame::pathChallenge(
+	m_migration.challenge.bspan()));
+      logMigration_(ZquicLog_::MigrationAction::ChallengeQueued);
+      impl()->queueTxFlush_(m_migration.path.remote());
+    }
     return true;
   }
   bool onPathResponse_(ZuBSpan data) {
@@ -2036,6 +2081,77 @@ protected:
   }
   const CxnID &activeMigrationPeerCID_() const {
     return m_migration.peerCID;
+  }
+  const CxnID &validatingPeerCID_() const {
+    return m_migration.peerCID;
+  }
+  bool buildPassiveMigrationChallenge_(
+    PktBuild &build, TxPktRefs &refs, ControlFrame &frame) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC passive migration challenge build outside Tx thread",
+      return false);
+    if (!m_migration.active ||
+	m_migration.state != MigrationState::Validating)
+      return false;
+    frame = ControlFrame::pathChallenge(m_migration.challenge.bspan());
+    build.reset();
+    int n = frame.write(build.scratch(), build.scratchAvail());
+    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    return refs.add(controlRef_(frame));
+  }
+  void passiveMigrationChallengeSent_(const ControlFrame &frame) {
+    controlSent_(frame);
+  }
+  bool buildPathResponse_(
+    ZuBSpan data, PktBuild &build, TxPktRefs &refs,
+    ZiSockAddr remote = {}, bool includeChallenge = true,
+    bool includeAck = true) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC PATH_RESPONSE build outside Tx thread", return false);
+    if (data.length() != PathChallenge::Length) return false;
+    build.reset();
+    if (includeAck && !appendPendingAck_(PktNumSpace::AppData, build))
+      return false;
+    if (includeChallenge && remote && m_migration.active &&
+	m_migration.state == MigrationState::Validating &&
+	m_migration.challenge.valid() &&
+	remote == m_migration.path.remote()) {
+      ControlFrame frame =
+	ControlFrame::pathChallenge(m_migration.challenge.bspan());
+      int n = frame.write(build.scratch(), build.scratchAvail());
+      if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+      if (!refs.add(controlRef_(frame))) return false;
+    }
+    ControlFrame frame = ControlFrame::pathResponse(data);
+    int n = frame.write(build.scratch(), build.scratchAvail());
+    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    return refs.add(controlRef_(frame));
+  }
+  template <typename Send>
+  bool sendPathResponsePkt_(ZuBSpan data, ZiSockAddr addr, Send send) {
+    ZiSockAddr retryAddr = addr;
+    ZiSockAddr buildAddr = addr;
+    ZiSockAddr validationAddr = addr;
+    PktBuild build;
+    TxPktRefs refs;
+    if (!buildPathResponse_(data, build, refs, ZuMv(buildAddr))) {
+      refs = {};
+      if (!buildPathResponse_(data, build, refs)) return false;
+    }
+    if (send(build, ZuMv(addr), &refs)) return true;
+
+    // PATH_RESPONSE is not retransmitted.  If recovery metadata or frame
+    // admission is saturated by streams, send the direct response untracked.
+    PktBuild retry;
+    TxPktRefs retryRefs;
+    if (!buildPathResponse_(data, retry, retryRefs, {}, false, false))
+      return false;
+    bool sent = send(retry, ZuMv(retryAddr), nullptr);
+    if (sent && validationAddr && m_migration.active &&
+	m_migration.state == MigrationState::Validating &&
+	validationAddr == m_migration.path.remote())
+      (void)impl()->sendPassiveMigrationChallenge_();
+    return sent;
   }
   void failActiveMigration_(MigrationReason::T reason) {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -2391,6 +2507,73 @@ protected:
     }));
     return m_path.reserveSend(bytes);
   }
+  Path &txPath_(const ZiSockAddr &addr) {
+    if (addr && m_migration.active && addr == m_migration.path.remote())
+      return m_migration.path;
+    return m_path;
+  }
+  template <typename SendPkt>
+  bool sendValidPathPktApp_(
+      ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt,
+      EcnMark::T ecn = EcnMark::NotECT) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC validation path packet send outside Tx thread", return false);
+    if (!buf) return false;
+    Path &path = txPath_(addr);
+    const Path &path_ = path;
+    unsigned bytes = buf->length;
+    if (!path.canSend(bytes)) {
+      ZquicLOG(app()->qlogTrace(), ([
+	action = PathAction::Blocked,
+	reason = PathReason::AntiAmp,
+	bytes,
+	antiAmplification = path_.antiAmplificationRemaining(),
+	mtu = path_.activeMaxUDP(),
+	validated = path_.validated(),
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	PathEvent event{
+	  .linkInfo = linkInfo,
+	  .bytes = bytes,
+	  .antiAmplification = antiAmplification,
+	  .mtu = mtu,
+	  .kind = PathKind::Path,
+	  .action = PathAction::T(action),
+	  .reason = PathReason::T(reason),
+	  .validated = validated};
+
+	o.logPathUpdated(event, time);
+	o.logPktDrop(
+	  PktEvent{
+	    .linkInfo = linkInfo,
+	    .packetSize = bytes,
+	    .reason = PktEvent::Reason::AntiAmp},
+	  time);
+      }));
+      return false;
+    }
+    bool sent = false;
+    if (!sendPkt(ZuMv(buf), ZuMv(addr), ecn, sent)) return false;
+    if (!sent) {
+      ZquicLOG(app()->qlogTrace(), ([bytes, linkInfo = linkInfo_()](auto &o, ZuTime time) {
+	o.logPktDrop(
+	  PktEvent{
+	    .linkInfo = linkInfo,
+	    .packetSize = bytes,
+	    .reason = PktEvent::Reason::AppSend},
+	  time);
+      }));
+      return false;
+    }
+    ZquicLOG(app()->qlogTrace(), ([
+      bytes, ecn, linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      DgramEvent event{.linkInfo = linkInfo, .size = bytes};
+      event.ecn = ecn;
+      o.logDgramSent(event, time);
+    }));
+    return path.reserveSend(bytes);
+  }
   template <typename SendPkt>
   bool sendPathProbePktApp_(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr, SendPkt sendPkt,
@@ -2503,6 +2686,8 @@ protected:
     m_idleTimerOut = {};
     m_idleBase = {};
     m_idleAckElicitingSent = false;
+    m_heartBeatTimerOut = {};
+    m_heartBeatBase = {};
     m_closeTimerOut = {};
     m_closeNextResponse = {};
     clearPendingControls_();
@@ -2597,6 +2782,7 @@ protected:
   void refreshPromotedRoutes_() { }
   void localCIDsIssued_() { }
   void migrationCIDsReady_() { impl()->queueTxFlush_(); }
+  bool sendPassiveMigrationChallenge_() { return false; }
   void statelessReset() { ++m_rxDiag.unhandledAppEvents; }
   void disconnected(bool peer) {
     app()->rxRun([link = impl(), peer]() {
@@ -3372,6 +3558,7 @@ protected:
 	      });
 	    }
 	    startIdleTimer_();
+	    startHeartBeatTimer_();
     ++m_rxDiag.handshakeComplete;
   }
 
@@ -3923,6 +4110,10 @@ protected:
     if (!appendQueuedControls_(
 	  build, budget, assembly, refs, sentControls, nSentControls))
       return false;
+    auto fail = [&refs, this]() {
+      requeueUnsentStreamRefs_(PktNumSpace::AppData, refs, false);
+      return false;
+    };
     bool blocked = false;
     bool flushQueuedControls = false;
     while (scheduledStreamCount_() && refs.count() < SentPkt::MaxFrames) {
@@ -3932,7 +4123,7 @@ protected:
 	if (!appendStreamControls_(
 	      stream, build, budget, assembly, refs,
 	      sentControls, nSentControls))
-	  return false;
+	  return fail();
 	if (streamTxPending_(stream) && stream->id() >= 0)
 	  streamWritable_(stream);
 	continue;
@@ -3959,17 +4150,29 @@ protected:
 	if (stream->id() >= 0) streamWritable_(stream);
 	break;
       }
-      if (!build.commitScratch(unsigned(n)) || !build.add(info.range))
-	return false;
       SentFrameRef ref =
 	SentFrameRef::stream(info.streamID, info.range, info.fin);
       if (!info.length) {
 	ref.offset = info.offset;
 	ref.length = 0;
       }
-      if (!refs.add(ref, stream.ptr()))
+      if (!build.commitScratch(unsigned(n)) || !build.add(info.range)) {
+	requeueUnsentStreamRefs_(
+	  PktNumSpace::AppData, refs, false, false);
+	bool queued = requeueUnsentStreamRef_(
+	  PktNumSpace::AppData, ref, stream.ptr(), true);
+	if (queued) impl()->queueRetransmit_();
 	return false;
-      if (info.length && !m_txDataCredit.consume(info.length)) return false;
+      }
+      if (!refs.add(ref, stream.ptr())) {
+	requeueUnsentStreamRefs_(
+	  PktNumSpace::AppData, refs, false, false);
+	bool queued = requeueUnsentStreamRef_(
+	  PktNumSpace::AppData, ref, stream.ptr(), true);
+	if (queued) impl()->queueRetransmit_();
+	return false;
+      }
+      if (info.length && !m_txDataCredit.consume(info.length)) return fail();
       m_txDiag.streamBytesTx += info.length;
       ZquicLOG(app()->qlogTrace(), ([
 		streamID = info.streamID,
@@ -3997,7 +4200,10 @@ protected:
 	streamWritable_(stream);
     }
     if (refs.count()) {
-      if (!sendPkt(build, ZuMv(addr), refs)) return false;
+      if (!sendPkt(build, ZuMv(addr), refs)) {
+	requeueUnsentStreamRefs_(PktNumSpace::AppData, refs, false);
+	return false;
+      }
       for (unsigned i = 0; i < nSentControls; ++i)
 	controlSent_(sentControls[i]);
       if (flushQueuedControls) impl()->flushTx_();
@@ -4018,6 +4224,10 @@ protected:
     budget.flow = m_txDataCredit.available();
     PktAssembly assembly;
     TxPktRefs refs;
+    auto fail = [&refs, this]() {
+      requeueUnsentStreamRefs_(PktNumSpace::AppData, refs, false);
+      return false;
+    };
     bool blocked = false;
     bool flushQueuedControls = false;
     unsigned checked = scheduledStreamCount_();
@@ -4051,17 +4261,29 @@ protected:
 	if (stream->id() >= 0) streamWritable_(stream);
 	break;
       }
-      if (!build.commitScratch(unsigned(n)) || !build.add(info.range))
-	return false;
       SentFrameRef ref =
 	SentFrameRef::stream(info.streamID, info.range, info.fin);
       if (!info.length) {
 	ref.offset = info.offset;
 	ref.length = 0;
       }
-      if (!refs.add(ref, stream.ptr()))
+      if (!build.commitScratch(unsigned(n)) || !build.add(info.range)) {
+	requeueUnsentStreamRefs_(
+	  PktNumSpace::AppData, refs, false, false);
+	bool queued = requeueUnsentStreamRef_(
+	  PktNumSpace::AppData, ref, stream.ptr(), true);
+	if (queued) impl()->queueRetransmit_();
 	return false;
-      if (info.length && !m_txDataCredit.consume(info.length)) return false;
+      }
+      if (!refs.add(ref, stream.ptr())) {
+	requeueUnsentStreamRefs_(
+	  PktNumSpace::AppData, refs, false, false);
+	bool queued = requeueUnsentStreamRef_(
+	  PktNumSpace::AppData, ref, stream.ptr(), true);
+	if (queued) impl()->queueRetransmit_();
+	return false;
+      }
+      if (info.length && !m_txDataCredit.consume(info.length)) return fail();
       m_txDiag.streamBytesTx += info.length;
       ZquicLOG(app()->qlogTrace(), ([
 	streamID = info.streamID,
@@ -4089,7 +4311,10 @@ protected:
 	streamWritable_(stream);
     }
     if (refs.count()) {
-      if (!sendPkt(build, ZuMv(addr), refs)) return false;
+      if (!sendPkt(build, ZuMv(addr), refs)) {
+	requeueUnsentStreamRefs_(PktNumSpace::AppData, refs, false);
+	return false;
+      }
       if (flushQueuedControls) impl()->flushTx_();
       return true;
     }
@@ -4128,18 +4353,30 @@ protected:
     int n = StreamPktizer::writeNext(
       build.scratch(), build.scratchAvail(),
       budget, assembly, *stream, &info);
-    if (n <= 0 || !build.commitScratch(unsigned(n)))
-      return false;
-    if (!build.add(info.range)) return false;
+    if (n <= 0) return false;
     SentFrameRef ref = SentFrameRef::stream(info.streamID, info.range, info.fin);
     if (!info.length) {
       ref.offset = info.offset;
       ref.length = 0;
     }
+    if (!build.commitScratch(unsigned(n)) || !build.add(info.range)) {
+      bool queued = requeueUnsentStreamRef_(
+	PktNumSpace::AppData, ref, stream.ptr(), true);
+      if (queued) impl()->queueRetransmit_();
+      return false;
+    }
     TxPktRefs refs;
-    if (!refs.add(ref, stream.ptr())) return false;
-    if (!sendPkt(build, ZuMv(addr), refs)) return false;
+    if (!refs.add(ref, stream.ptr())) {
+      bool queued = requeueUnsentStreamRef_(
+	PktNumSpace::AppData, ref, stream.ptr(), true);
+      if (queued) impl()->queueRetransmit_();
+      return false;
+    }
     if (info.length && !m_txDataCredit.consume(info.length)) return false;
+    if (!sendPkt(build, ZuMv(addr), refs)) {
+      requeueUnsentStreamRefs_(PktNumSpace::AppData, refs, false);
+      return false;
+    }
     m_txDiag.streamBytesTx += info.length;
     ZquicLOG(app()->qlogTrace(), ([
 	      streamID = info.streamID,
@@ -4738,6 +4975,64 @@ protected:
     m_idleTimerOut = {};
     cancelTimer_("idle", &m_idleTimer);
   }
+  void startHeartBeatTimer_() {
+    ZuTime interval = app()->heartBeat();
+    app()->txRun([link = impl(), interval]() mutable {
+      if (link->disconnecting_()) return;
+      link->startHeartBeatTimerTx_(interval);
+    });
+  }
+  void startHeartBeatTimerTx_(ZuTime interval) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC heartbeat timer start outside Tx thread", return);
+    if (!*interval) {
+      cancelHeartBeatTimer_();
+      return;
+    }
+    m_heartBeatBase = runtimeNow_();
+    scheduleHeartBeatTimer_();
+  }
+  ZuTime heartBeatDeadline_() const {
+    ZuTime interval = app()->heartBeat();
+    if (!*interval) return {};
+    return m_heartBeatBase + interval;
+  }
+  void scheduleHeartBeatTimer_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC heartbeat timer schedule outside Tx thread", return);
+    ZuTime interval = app()->heartBeat();
+    if (closed() || !runtimeEstablished_() || !*interval) {
+      cancelHeartBeatTimer_();
+      return;
+    }
+    if (!*m_heartBeatBase) m_heartBeatBase = runtimeNow_();
+    ZuTime out = heartBeatDeadline_();
+    if (!*out) {
+      cancelHeartBeatTimer_();
+      return;
+    }
+    ZuTime now = runtimeNow_();
+    if (out <= now) out = now + RttEstimator::Granularity;
+    if (m_heartBeatTimer && m_heartBeatTimerOut == out) return;
+    m_heartBeatTimerOut = out;
+    scheduleCxnTimer_(
+      "heartbeat", CxnTimer::HeartBeat,
+      out, ZmScheduler::Update, &m_heartBeatTimer);
+  }
+  void scheduleHeartBeatTimer_(ZuTime out) {
+    scheduleCxnTimer_(
+      "heartbeat", CxnTimer::HeartBeat,
+      out, ZmScheduler::Update, &m_heartBeatTimer);
+  }
+  void cancelHeartBeatTimer_() {
+    m_heartBeatTimerOut = {};
+    cancelTimer_("heartbeat", &m_heartBeatTimer);
+  }
+  void noteHeartBeatActivityTx_() {
+    if (!*app()->heartBeat()) return;
+    m_heartBeatBase = runtimeNow_();
+    scheduleHeartBeatTimer_();
+  }
   void notePeerPacketProcessed_() {
     app()->txRun([link = impl()]() mutable {
       if (link->disconnecting_()) return;
@@ -4747,20 +5042,26 @@ protected:
   void notePeerPacketProcessedTx_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC peer activity outside Tx thread", return);
-    if (closed() || !runtimeEstablished_() || !m_idleTimeout) return;
-    m_idleBase = runtimeNow_();
-    m_idleAckElicitingSent = false;
-    scheduleIdleTimer_();
+    if (closed() || !runtimeEstablished_()) return;
+    if (m_idleTimeout) {
+      m_idleBase = runtimeNow_();
+      m_idleAckElicitingSent = false;
+      scheduleIdleTimer_();
+    }
+    noteHeartBeatActivityTx_();
   }
   void noteAckElicitingSentTx_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ack-eliciting send activity outside Tx thread", return);
-    if (closed() || !runtimeEstablished_() || !m_idleTimeout) return;
-    if (!m_idleAckElicitingSent) {
-      m_idleBase = runtimeNow_();
-      m_idleAckElicitingSent = true;
+    if (closed() || !runtimeEstablished_()) return;
+    if (m_idleTimeout) {
+      if (!m_idleAckElicitingSent) {
+	m_idleBase = runtimeNow_();
+	m_idleAckElicitingSent = true;
+      }
+      scheduleIdleTimer_();
     }
-    scheduleIdleTimer_();
+    noteHeartBeatActivityTx_();
   }
 
   void scheduleCloseTimer_(ZuTime out) {
@@ -4786,6 +5087,7 @@ protected:
     cancelLossTimer_();
     cancelPTO_();
     cancelIdleTimer_();
+    cancelHeartBeatTimer_();
     cancelKeyDiscardTimer_();
     cancelPMTUDTimer_();
     cancelPathTimer_();
@@ -4810,6 +5112,7 @@ protected:
     cancelLossTimer_();
     cancelPTO_();
     cancelIdleTimer_();
+    cancelHeartBeatTimer_();
     cancelKeyDiscardTimer_();
     cancelPMTUDTimer_();
     cancelPathTimer_();
@@ -4888,6 +5191,7 @@ protected:
     cancelLossTimer_();
     cancelPTO_();
     cancelIdleTimer_();
+    cancelHeartBeatTimer_();
     cancelCloseTimer_();
     cancelKeyDiscardTimer_();
     cancelPMTUDTimer_();
@@ -4899,12 +5203,15 @@ protected:
     m_lossTimerOut = {};
     m_ptoTimerOut = {};
     m_idleTimerOut = {};
+    m_heartBeatTimerOut = {};
+    m_heartBeatBase = {};
     m_closeTimerOut = {};
     m_closeNextResponse = {};
     app()->mx()->del(&m_ackDelayTimer);
     app()->mx()->del(&m_lossTimer);
     app()->mx()->del(&m_ptoTimer);
     app()->mx()->del(&m_idleTimer);
+    app()->mx()->del(&m_heartBeatTimer);
     app()->mx()->del(&m_closeTimer);
     app()->mx()->del(&m_keyDiscardTimer);
     app()->mx()->del(&m_pmtudTimer);
@@ -4912,7 +5219,7 @@ protected:
   }
   bool timersActive_() const {
     return m_ackDelayTimer || m_lossTimer || m_ptoTimer ||
-      m_idleTimer || m_closeTimer || m_keyDiscardTimer ||
+      m_idleTimer || m_heartBeatTimer || m_closeTimer || m_keyDiscardTimer ||
       m_pmtudTimer || m_pathTimer;
   }
 
@@ -4947,6 +5254,20 @@ protected:
       return;
     }
     impl()->idleExpired_();
+  }
+  void heartBeat_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC heartbeat timer outside Tx thread", return);
+    if (disconnecting_()) return;
+    if (closed() || !runtimeEstablished_() || !*app()->heartBeat()) return;
+    ZuTime out = heartBeatDeadline_();
+    ZuTime now = runtimeNow_();
+    if (*out && out > now) {
+      scheduleHeartBeatTimer_();
+      return;
+    }
+    dispatchHeartBeatExpired_(0);
+    if (!m_heartBeatTimer) scheduleHeartBeatTimer_();
   }
   void keyDiscard_() {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -4994,6 +5315,13 @@ protected:
   }
   void closeExpired_() { }
   void idleExpired_() { impl()->closeExpired_(); }
+  void heartBeatExpired_() { }
+  template <typename U = Impl,
+    decltype(ZuDeclVal<U *>()->heartBeatExpired_(), int()) = 0>
+  void dispatchHeartBeatExpired_(int) {
+    impl()->heartBeatExpired_();
+  }
+  void dispatchHeartBeatExpired_(...) { heartBeatExpired_(); }
   void keyDiscardExpired_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC key discard expiry outside Tx thread", return);
@@ -7202,7 +7530,7 @@ nextSpace:
       return;
     }
     m_rxDiag.bytesRx += d.buf->length;
-    recordPathRx_(d.buf->length);
+    recordPathRx_(d.addr, d.buf->length);
     bool ok = true;
     unsigned offset = 0;
     while (offset < d.buf->length) {
@@ -8475,6 +8803,10 @@ private:
 	m_idleTimerOut = {};
 	idleTimeout_();
 	break;
+      case CxnTimer::HeartBeat:
+	m_heartBeatTimerOut = {};
+	heartBeat_();
+	break;
       case CxnTimer::Close:
 	closeTimeout_();
 	break;
@@ -8740,6 +9072,7 @@ private:
   ZmScheduler::Timer	m_lossTimer;
   ZmScheduler::Timer	m_ptoTimer;
   ZmScheduler::Timer	m_idleTimer;
+  ZmScheduler::Timer	m_heartBeatTimer;
   ZmScheduler::Timer	m_closeTimer;
   ZmScheduler::Timer	m_keyDiscardTimer;
   // Active-path timers owned by this Link; callbacks run on Tx.
@@ -8750,6 +9083,8 @@ private:
   ZuTime		m_idleTimeout;
   ZuTime		m_idleTimerOut;
   ZuTime		m_idleBase;
+  ZuTime		m_heartBeatTimerOut;
+  ZuTime		m_heartBeatBase;
   ZuTime		m_closeTimerOut;
   ZuTime		m_closeNextResponse;
   PktNumSpace::T	m_ptoTimerLevel = PktNumSpace::Initial;

@@ -1,0 +1,197 @@
+#!/bin/sh
+set -eu
+
+usage()
+{
+  cat >&2 <<'EOF'
+Usage: scripts/qir-report --in DIR --out REPORT.md
+
+Generate a markdown summary from scripts/qir-run-local output.
+EOF
+}
+
+die()
+{
+  echo "qir-report: $*" >&2
+  exit 1
+}
+
+csv_words()
+{
+  printf '%s\n' "$1" | tr ',' ' '
+}
+
+run_server()
+{
+  d=$1
+  name=$2
+  if [ -f "$d/server" ]; then
+    cat "$d/server"
+  else
+    printf '%s\n' "$name" | sed 's/-server_.*//'
+  fi
+}
+
+run_client()
+{
+  d=$1
+  name=$2
+  if [ -f "$d/client" ]; then
+    cat "$d/client"
+  else
+    printf '%s\n' "$name" | sed 's/.*-server_//; s/-client$//'
+  fi
+}
+
+run_tests()
+{
+  d=$1
+  if [ -f "$d/tests" ]; then
+    cat "$d/tests"
+  elif [ -f "$d/command" ]; then
+    sed -n 's/.* -t \([^ ]*\).*/\1/p' "$d/command"
+  else
+    printf '%s\n' unknown
+  fi
+}
+
+run_result()
+{
+  case "$1" in
+    0)
+      printf '%s\n' pass
+      ;;
+    127)
+      printf '%s\n' unsupported
+      ;;
+    unknown)
+      printf '%s\n' unknown
+      ;;
+    *)
+      printf '%s\n' fail
+      ;;
+  esac
+}
+
+failure_artifacts()
+{
+  find "$1" -type f \( \
+    -name stdout -o -name stderr -o \
+    -path '*/logs*/*' -o -path '*/results*/*' -o \
+    -name '*.log' -o -name '*.qlog' -o -name '*.sqlog' -o \
+    -name '*.pcap' -o -name '*.pcapng' \
+  \) 2>/dev/null | sort | sed 's/^/- `/; s/$/`/'
+}
+
+in_dir=
+out_file=
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --in)
+      [ $# -ge 2 ] || die "--in requires an argument"
+      in_dir=$2
+      shift 2
+      ;;
+    --out)
+      [ $# -ge 2 ] || die "--out requires an argument"
+      out_file=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+[ -n "$in_dir" ] || die "--in is required"
+[ -n "$out_file" ] || die "--out is required"
+[ -d "$in_dir" ] || die "input directory does not exist: $in_dir"
+
+tmp=$out_file.tmp
+
+{
+  echo "# QUIC Interop Report"
+  echo
+  echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo
+
+  if [ -f "$in_dir/metadata.env" ]; then
+    echo "## Metadata"
+    echo
+    echo '```text'
+    sed -n '1,120p' "$in_dir/metadata.env"
+    echo '```'
+    echo
+  fi
+
+  echo "## Matrix"
+  echo
+  echo "| server | client | testcase | status | result | command | artifacts |"
+  echo "|---|---|---|---:|---|---|---|"
+
+  found=0
+  for d in "$in_dir"/*; do
+    [ -d "$d" ] || continue
+    [ -f "$d/command" ] || continue
+    found=1
+    name=$(basename "$d")
+    status=unknown
+    [ -f "$d/status" ] && status=$(cat "$d/status")
+    result=$(run_result "$status")
+    command=$(tr '\n' ' ' <"$d/command" | sed 's/|/\\|/g')
+    artifacts=$(printf '%s' "$d" | sed 's/|/\\|/g')
+    server=$(run_server "$d" "$name" | sed 's/|/\\|/g')
+    client=$(run_client "$d" "$name" | sed 's/|/\\|/g')
+    for testcase in $(csv_words "$(run_tests "$d")"); do
+      testcase=$(printf '%s' "$testcase" | sed 's/|/\\|/g')
+      echo "| \`$server\` | \`$client\` | \`$testcase\` | $status | $result | \`$command\` | \`$artifacts\` |"
+    done
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo "| none |  |  |  |  |  |  |"
+  fi
+
+  echo
+  echo "## Failures"
+  echo
+
+  failed=0
+  for d in "$in_dir"/*; do
+    [ -d "$d" ] || continue
+    [ -f "$d/status" ] || continue
+    status=$(cat "$d/status")
+    [ "$status" != 0 ] || continue
+    failed=1
+    name=$(basename "$d")
+    echo "### $name"
+    echo
+    echo "Status: $status"
+    echo
+    echo "Artifacts: \`$d\`"
+    echo
+    artifacts=$(failure_artifacts "$d")
+    if [ -n "$artifacts" ]; then
+      echo "$artifacts"
+      echo
+    fi
+    if [ -s "$d/stderr" ]; then
+      echo '```text'
+      sed -n '1,120p' "$d/stderr"
+      echo '```'
+      echo
+    fi
+  done
+
+  if [ "$failed" -eq 0 ]; then
+    echo "No failed runs recorded."
+    echo
+  fi
+} >"$tmp"
+
+mv "$tmp" "$out_file"

@@ -1,0 +1,125 @@
+#!/bin/sh
+set -eu
+
+usage()
+{
+  cat >&2 <<'EOF'
+Usage: scripts/qir-collect-results --runner PATH --out DIR [OPTION]...
+
+Copy QUIC interop runner logs/results into a stable output directory.
+
+Options:
+  --name NAME        subdirectory name under DIR, default timestamp
+  --stdout PATH      stdout file to copy
+  --stderr PATH      stderr file to copy
+  --status STATUS    numeric run status to write
+  -h, --help         show this help
+EOF
+}
+
+die()
+{
+  echo "qir-collect-results: $*" >&2
+  exit 1
+}
+
+copy_if_exists()
+{
+  src_path=$1
+  dst_path=$2
+  if [ -e "$src_path" ]; then
+    rm -rf "$dst_path"
+    cp -R "$src_path" "$dst_path"
+  fi
+}
+
+copy_prefixed_dirs()
+{
+  prefix=$1
+  for src_path in "$runner"/"$prefix"_*; do
+    [ -d "$src_path" ] || continue
+    base=$(basename "$src_path")
+    copy_if_exists "$src_path" "$dst/$base"
+  done
+}
+
+runner=
+out=
+name=
+stdout_file=
+stderr_file=
+status=
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --runner)
+      [ $# -ge 2 ] || die "--runner requires an argument"
+      runner=$2
+      shift 2
+      ;;
+    --out)
+      [ $# -ge 2 ] || die "--out requires an argument"
+      out=$2
+      shift 2
+      ;;
+    --name)
+      [ $# -ge 2 ] || die "--name requires an argument"
+      name=$2
+      shift 2
+      ;;
+    --stdout)
+      [ $# -ge 2 ] || die "--stdout requires an argument"
+      stdout_file=$2
+      shift 2
+      ;;
+    --stderr)
+      [ $# -ge 2 ] || die "--stderr requires an argument"
+      stderr_file=$2
+      shift 2
+      ;;
+    --status)
+      [ $# -ge 2 ] || die "--status requires an argument"
+      status=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+[ -n "$runner" ] || die "--runner is required"
+[ -n "$out" ] || die "--out is required"
+[ -d "$runner" ] || die "runner directory does not exist: $runner"
+if [ -z "$name" ]; then
+  name=$(date -u +%Y%m%dT%H%M%SZ)
+fi
+
+dst=$out/$name
+mkdir -p "$dst"
+
+copy_if_exists "$runner/logs" "$dst/logs"
+copy_if_exists "$runner/results" "$dst/results"
+copy_prefixed_dirs logs
+copy_prefixed_dirs results
+
+if [ -n "$stdout_file" ] && [ -f "$stdout_file" ] &&
+    [ "$stdout_file" != "$dst/stdout" ]; then
+  cp "$stdout_file" "$dst/stdout"
+fi
+if [ -n "$stderr_file" ] && [ -f "$stderr_file" ] &&
+    [ "$stderr_file" != "$dst/stderr" ]; then
+  cp "$stderr_file" "$dst/stderr"
+fi
+[ -n "$status" ] && printf '%s\n' "$status" >"$dst/status"
+printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$dst/collected_at"
+
+if git -C "$runner" rev-parse HEAD >/dev/null 2>&1; then
+  git -C "$runner" rev-parse HEAD >"$dst/runner.rev"
+else
+  printf 'unknown\n' >"$dst/runner.rev"
+fi

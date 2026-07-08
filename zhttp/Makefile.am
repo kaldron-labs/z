@@ -1,6 +1,7 @@
 METASOURCES = AUTO
-SUBDIRS = src test
+SUBDIRS = src test bench
 
 .PHONY: test
 test: all
-	$(MAKE) $(AM_MAKEFLAGS) -C test
+	$(MAKE) $(AM_MAKEFLAGS) -C test test
+	$(MAKE) $(AM_MAKEFLAGS) -C bench test

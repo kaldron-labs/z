@@ -51,6 +51,11 @@ struct PktBudget {
     used += n;
     return true;
   }
+  bool useFlow(unsigned n) {
+    if (uint64_t(n) > flow) return false;
+    flow -= n;
+    return true;
+  }
 };
 
 class PktAssembly {
@@ -304,6 +309,9 @@ private:
     ZiAssert(stream.consumeTxCredit(payloadLen), "Zquic",
       (),
       "stream Tx exceeded MAX_STREAM_DATA", return -1);
+    ZiAssert(budget.useFlow(payloadLen), "Zquic",
+      (),
+      "stream Tx exceeded MAX_DATA packet budget", return -1);
     if (fin) {
       uint64_t dequeuedOffset = 0;
       ZiAssert(stream.dequeueFin(dequeuedOffset) &&

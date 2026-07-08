@@ -470,6 +470,10 @@ struct EngineParams {
     m_maxIdleTimeout = v;
     return ZuMv(*this);
   }
+  EngineParams &&heartBeat(ZuTime v) {
+    m_heartBeat = normalizeHeartBeat_(v);
+    return ZuMv(*this);
+  }
   EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
   EngineParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
   EngineParams &&migrationMode(MigrationMode::T v) {
@@ -538,6 +542,7 @@ struct EngineParams {
   uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
   uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
+  ZuTime heartBeat() const { return m_heartBeat; }
   unsigned maxUDP() const { return m_maxUDP; }
   bool ecn() const { return m_ecn; }
   MigrationMode::T migrationMode() const { return m_migrationMode; }
@@ -563,6 +568,13 @@ private:
     enum { Max = LocalActiveCxnIDLimit - 1 };
     return v > Max ? Max : v;
   }
+  static ZuTime normalizeHeartBeat_(ZuTime v) {
+    if (!*v || v == ZuTime{0}) return {};
+    if (v < ZuTime{0} || v.nsec() < 0 || v.nsec() >= 1000000000)
+      throw ZeEXCEPT(Error, "Zquic",
+	"invalid QUIC heartbeat interval");
+    return v;
+  }
 
   ZiMultiplex		*m_mx = nullptr;
   ParamString		m_rxThread;
@@ -579,6 +591,7 @@ private:
   uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
   uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
   uint64_t		m_maxIdleTimeout = 0;
+  ZuTime		m_heartBeat;
   unsigned		m_maxUDP = MinUDPPayload;
   bool			m_ecn = false;
   MigrationMode::T	m_migrationMode = MigrationMode::Passive;
@@ -647,6 +660,7 @@ public:
       m_maxStreamsBidi = DefaultMaxStreamsBidi;
       m_maxStreamsUni = DefaultMaxStreamsUni;
       m_maxIdleTimeout = 0;
+      m_heartBeat = {};
       m_maxUDP = MinUDPPayload;
       m_ecn = false;
       m_migrationMode = MigrationMode::Passive;
@@ -686,6 +700,7 @@ public:
   uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
   uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
+  ZuTime heartBeat() const { return m_heartBeat; }
   unsigned maxUDP() const { return m_maxUDP; }
   bool ecn() const { return m_ecn; }
   MigrationMode::T migrationMode() const { return m_migrationMode; }
@@ -747,6 +762,7 @@ protected:
       m_maxStreamsBidi = params.maxStreamsBidi();
       m_maxStreamsUni = params.maxStreamsUni();
       m_maxIdleTimeout = params.maxIdleTimeout();
+      m_heartBeat = params.heartBeat();
       m_maxUDP = params.maxUDP();
       m_ecn = params.ecn();
       m_migrationMode = params.migrationMode();
@@ -979,6 +995,7 @@ private:
   uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
   uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
   uint64_t		m_maxIdleTimeout = 0;
+  ZuTime		m_heartBeat;
   unsigned		m_maxUDP = MinUDPPayload;
   bool			m_ecn = false;
   MigrationMode::T	m_migrationMode = MigrationMode::Passive;
@@ -1189,8 +1206,8 @@ friend ZmEngine<App>;
   }
   bool sendPktRaw_(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
-      EcnMark::T ecn = EcnMark::NotECT) {
-    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn);
+      EcnMark::T ecn = EcnMark::NotECT, bool priority = false) {
+    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority);
   }
   void tombstoneRoute_(const CxnID &id) {
     m_routes.tombstone(id);

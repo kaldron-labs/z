@@ -491,7 +491,7 @@ struct TestLink :
   const ZiSockAddr &activePathRemote() const {
     return Base::activePathRemote_();
   }
-  void pathReceived(unsigned bytes) { Base::recordPathRxTx_(bytes); }
+  void pathReceived(unsigned bytes) { Base::recordPathRxTx_(ZiSockAddr{}, bytes); }
   bool pathSend(unsigned bytes) {
     ZmRef<ZiIOBuf> buf = new Zquic::PktTxBufAlloc<>{nullptr};
     buf->skip = 0;
@@ -1487,6 +1487,12 @@ void testCryptoRetransmitClipsUnackd()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
+  Zquic::TrafficSecret secret;
+  ZuCHECK(trafficSecret_(secret, 0x42) &&
+      link->installOneRTT(secret, secret, {}),
+    "crypto retransmit key setup failed");
+  link->initServerPath();
+  link->growActivePath(Zquic::MinUDPPayload);
   ZuCHECK(link->sendCryptoBytes("0123456789"),
     "crypto send setup failed");
   link->sendCryptoRef(1, Zquic::PktNumSpace::AppData, 2, 5);
@@ -2502,8 +2508,11 @@ void testMaxAndBlockedFrameValidation()
     "MAX_STREAM_DATA did not extend local bidirectional stream credit");
 
   n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 8, 4096);
-  ZuCHECK(parseFrame_(b, n, frame) && !client->applyMaxStreamData(frame),
-    "MAX_STREAM_DATA for uninitiated local stream was accepted");
+  uint64_t invalidMax = client->runtimeDiag().rx.streamMaxInvalidRx;
+  ZuCHECK(parseFrame_(b, n, frame) && client->applyMaxStreamData(frame) &&
+      client->runtimeDiag().rx.streamMaxInvalidRx == invalidMax + 1 &&
+      !client->findStream(8),
+    "MAX_STREAM_DATA for uninitiated local stream was not diagnosed");
 
   n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), localUni->id(), 4096);
@@ -2511,8 +2520,11 @@ void testMaxAndBlockedFrameValidation()
     "MAX_STREAM_DATA for local unidirectional sender was rejected");
 
   n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 3, 4096);
-  ZuCHECK(parseFrame_(b, n, frame) && !client->applyMaxStreamData(frame),
-    "MAX_STREAM_DATA for peer unidirectional stream was accepted");
+  invalidMax = client->runtimeDiag().rx.streamMaxInvalidRx;
+  ZuCHECK(parseFrame_(b, n, frame) && client->applyMaxStreamData(frame) &&
+      client->runtimeDiag().rx.streamMaxInvalidRx == invalidMax + 1 &&
+      !client->findStream(3),
+    "MAX_STREAM_DATA for peer unidirectional stream was not diagnosed");
 
   ZmRef<TestLink> server = testLink(&app, true);
   server->setLocalStreamLimit(Zi::StreamType::Duplex, 2);
@@ -2522,11 +2534,14 @@ void testMaxAndBlockedFrameValidation()
       server->peerStreamsOpened(Zi::StreamType::Duplex) == 1,
     "MAX_STREAM_DATA did not create valid peer bidirectional stream");
 
-  server->setLocalStreamLimit(Zi::StreamType::Duplex, 1);
+  ZmRef<TestLink> limited = testLink(&app, true);
+  limited->setLocalStreamLimit(Zi::StreamType::Duplex, 1);
   n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 4, 2048);
-  ZuCHECK(parseFrame_(b, n, frame) && !server->applyMaxStreamData(frame) &&
-      !server->findStream(4),
-    "MAX_STREAM_DATA created peer stream beyond local stream limit");
+  invalidMax = limited->runtimeDiag().rx.streamMaxInvalidRx;
+  ZuCHECK(parseFrame_(b, n, frame) && limited->applyMaxStreamData(frame) &&
+      limited->runtimeDiag().rx.streamMaxInvalidRx == invalidMax + 1 &&
+      !limited->findStream(4),
+    "MAX_STREAM_DATA beyond local stream limit was not diagnosed");
 
   n = Zquic::FrameCodec::writeDataBlocked(
     b, sizeof(b), server->rxDataCreditLimit());

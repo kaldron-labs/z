@@ -553,6 +553,7 @@ void testParams()
     .maxStreamData(1<<16)
     .maxStreamsBidi(16)
     .maxStreamsUni(4)
+    .heartBeat(ZuTime{7})
     .maxUDP(1200)
     .migrationMode(Zquic::MigrationMode::Disabled)
     .activeMigration(true)
@@ -569,6 +570,19 @@ void testParams()
     "migration CID reserve was not clamped");
   ZuCHECK(clientParams.migrationCloseOnFailure(),
     "migration close-on-failure getter did not report enabled policy");
+  ZuCHECK(clientParams.heartBeat() == ZuTime{7},
+    "heartBeat getter did not report configured interval");
+  auto zeroParams = Zquic::ClientParams(nullptr, "1", "2")
+    .heartBeat(ZuTime{0});
+  ZuCHECK(!*zeroParams.heartBeat(),
+    "explicit zero heartBeat interval was not normalized to null");
+  bool badHeartBeat = false;
+  try {
+    (void)Zquic::ClientParams(nullptr, "1", "2").heartBeat(ZuTime{-1});
+  } catch (const ZeException &) {
+    badHeartBeat = true;
+  }
+  ZuCHECK(badHeartBeat, "negative heartBeat interval was accepted");
 
   uint8_t h3[] = { 'h', '3' };
   ptls_iovec_t iov[] = { ptls_iovec_init(h3, sizeof(h3)) };
@@ -584,6 +598,8 @@ void testParams()
     "default active migration getter unexpectedly reported active");
   ZuCHECK(!serverParams.migrationCloseOnFailure(),
     "default migration close-on-failure policy was not false");
+  ZuCHECK(!*serverParams.heartBeat(),
+    "default heartBeat interval was not disabled");
 
   EngineFixture fixture;
   {

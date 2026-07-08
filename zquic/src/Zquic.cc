@@ -405,7 +405,7 @@ bool ServerBootstrap::acceptInitial(
       initial.type != PktType::Initial ||
       !VersionNeg::supported(initial.version) ||
       initial.dcid.length() < CxnIDGen::InitialLength ||
-      initial.scid.length() < CxnIDGen::InitialLength ||
+      initial.scid.length() > CxnIDMax ||
       datagramLength < MinUDPPayload)
     return false;
 

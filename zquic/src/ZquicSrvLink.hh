@@ -185,7 +185,10 @@ public:
 		ref.streamID << " offset=" << ref.offset <<
 		" length=" << ref.length << " fin=" << int(ref.fin);
 	    }));
-	Base::requeueRetransmit_(level, ref);
+	if (ref.kind == SentFrameKind::Stream)
+	  (void)Base::requeueUnsentStreamRef_(level, ref);
+	else
+	  Base::requeueRetransmit_(level, ref);
 	break;
       }
       sent = true;
@@ -210,6 +213,9 @@ public:
 	return sendShortPkt_(
 	  build, m_peerAddr, {}, &refs, true);
     }
+  }
+  void heartBeatExpired_() {
+    (void)sendPingProbe_(PktNumSpace::AppData);
   }
 
   bool sendPMTUDProbe_(ZiSockAddr addr) {
@@ -471,6 +477,70 @@ private:
     });
   }
 
+  bool sendPassiveMigrationChallenge_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server passive migration challenge outside Tx thread",
+      return false);
+    PktBuild build;
+    typename Base::TxPktRefs refs;
+    ControlFrame frame;
+    if (!Base::buildPassiveMigrationChallenge_(build, refs, frame))
+      return false;
+    ZiSockAddr addr = Base::validatingRemote_();
+    ZiSockAddr retryAddr = addr;
+    bool sent = sendStrictShortPkt_(
+      Base::validatingPeerCID_(), build, ZuMv(addr),
+      &refs);
+    if (!sent) {
+      PktBuild retry;
+      typename Base::TxPktRefs retryRefs;
+      ControlFrame retryFrame;
+      if (!Base::buildPassiveMigrationChallenge_(
+	    retry, retryRefs, retryFrame))
+	return false;
+      sent = sendStrictShortPkt_(
+	Base::validatingPeerCID_(), retry, ZuMv(retryAddr),
+	nullptr);
+      frame = retryFrame;
+    }
+    if (sent)
+      Base::passiveMigrationChallengeSent_(frame);
+    return sent;
+  }
+  bool sendPathResponse_(
+    ZuBSpan data, ZiSockAddr addr, ZiSockAddr local, unsigned rxBytes) {
+    if (data.length() != PathChallenge::Length) return false;
+    uint8_t payload[PathChallenge::Length];
+    for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = data[i];
+    app()->txInvoke([
+      link = impl(),
+      payload,
+      addr = ZuMv(addr),
+      local = ZuMv(local),
+      rxBytes
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      ZiSockAddr remote = addr;
+      ZiSockAddr responseAddr = addr;
+      link->observePathRxTx_(
+	ZuMv(local), ZuMv(remote), rxBytes, true, false);
+      link->sendPathResponseTx_(
+	byteSpan(payload, sizeof(payload)), ZuMv(responseAddr));
+    });
+    return true;
+  }
+  bool sendPathResponseTx_(ZuBSpan data, ZiSockAddr addr) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server PATH_RESPONSE outside Tx thread", return false);
+    return Base::sendPathResponsePkt_(
+      data, ZuMv(addr),
+      [this](
+	  PktBuild &build, ZiSockAddr addr_,
+	  const typename Base::TxPktRefs *refs) {
+	return sendStrictShortPkt_(build, ZuMv(addr_), refs);
+      });
+  }
+
   bool flushTx_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server flush outside Tx thread", return false);
@@ -486,16 +556,22 @@ private:
     if (!Base::runtimeEstablished_()) {
       return flushPendingAcks_(addr);
     }
-    bool sent = Base::flushControlAndStreams_(
-      addr,
-      [this](PktBuild &build) {
-	return appendPendingAck_(PktNumSpace::AppData, build);
-      },
-      [this](
-	  PktBuild &build, ZiSockAddr addr_,
-	  const typename Base::TxPktRefs &refs) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
-      });
+    bool sent = false;
+    for (unsigned i = 0; i < Base::StreamFlushBatch; ++i) {
+      bool sent_ = Base::flushControlAndStreams_(
+	addr,
+	[this](PktBuild &build) {
+	  return appendPendingAck_(PktNumSpace::AppData, build);
+	},
+	[this](
+	    PktBuild &build, ZiSockAddr addr_,
+	    const typename Base::TxPktRefs &refs) {
+	  return sendShortPkt_(
+	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
+	});
+      sent |= sent_;
+      if (!sent_ || !Base::scheduledStreamCount_()) break;
+    }
     sent |= sendPMTUDProbe_(ZuMv(addr));
     if (!sent) sent = flushPendingAcks_(ZuMv(addr));
     return sent;
@@ -611,6 +687,21 @@ private:
       ZuMv(buf), ZuMv(addr),
       [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn_, bool &sent) {
 	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), ecn_, sent);
+      },
+      ecn);
+  }
+  bool sendStrictShortBuf_(
+    ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
+    const typename Base::TxPktRefs *recordRefs, EcnMark::T ecn) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server strict Short buffer send outside Tx thread", return false);
+    if (!sendFrameRefs_(recordRefs)) return false;
+    return Base::sendValidPathPktApp_(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn_, bool &sent) {
+	sent = false;
+	sent = app()->sendPktRaw_(ZuMv(buf_), ZuMv(addr_), ecn_, true);
+	return sent;
       },
       ecn);
   }
@@ -744,6 +835,46 @@ private:
 	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn, pmtudSize);
       },
       pmtudSize);
+  }
+
+  bool sendShortPkt_(
+    const CxnID &dcid, PktBuild &payload, ZiSockAddr addr,
+    ZuBSpan recordFrame, const typename Base::TxPktRefs *recordRefs,
+    bool ackEliciting, unsigned pmtudSize = 0) {
+    return Base::sendProtShortPkt_(
+      dcid, Base::txPNLength_(PktNumSpace::AppData),
+      payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
+      [this]() { return app()->allocTxPkt_(); },
+      [this, recordRefs, pmtudSize](
+	  auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
+	return sendShortBuf_(
+	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn, pmtudSize);
+      },
+      pmtudSize);
+  }
+  bool sendStrictShortPkt_(
+    PktBuild &payload, ZiSockAddr addr,
+    const typename Base::TxPktRefs *recordRefs) {
+    return Base::sendProtShortPkt_(
+      RuntimeCID::Peer, Base::txPNLength_(PktNumSpace::AppData),
+      payload, ZuMv(addr), {}, recordRefs, true,
+      [this]() { return app()->allocTxPkt_(); },
+      [this, recordRefs](auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
+	return sendStrictShortBuf_(
+	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn);
+      });
+  }
+  bool sendStrictShortPkt_(
+    const CxnID &dcid, PktBuild &payload, ZiSockAddr addr,
+    const typename Base::TxPktRefs *recordRefs) {
+    return Base::sendProtShortPkt_(
+      dcid, Base::txPNLength_(PktNumSpace::AppData),
+      payload, ZuMv(addr), {}, recordRefs, true,
+      [this]() { return app()->allocTxPkt_(); },
+      [this, recordRefs](auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
+	return sendStrictShortBuf_(
+	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn);
+      });
   }
 
   bool sendCloseFrame_(ZiSockAddr addr, bool closing = false) {
@@ -967,23 +1098,27 @@ private:
     const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack,
     ZquicLog_::PktEvent *qlog, bool earlyData = false) {
     ZiSockAddr peer = addr;
+    ZiSockAddr local = app()->local();
+    unsigned pathBytes = packetBuf ? packetBuf->length : 0;
     bool ok = Base::consumeProtFrames_(
       level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
       [this](size_t epoch, ZuBSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
       },
-      [this](
+      [this, local, pathBytes](
 	  PktNumSpace::T level_, const Frame &frame, ZiSockAddr addr_) {
-	return handleControlFrame_(level_, frame, ZuMv(addr_));
+	return handleControlFrame_(
+	  level_, frame, ZuMv(addr_), local, pathBytes);
       },
       earlyData);
     if (ok && level == PktNumSpace::AppData && Base::runtimeEstablished_())
-      Base::observePathRx_(app()->local(), ZuMv(peer));
+      Base::observePathRx_(ZuMv(local), ZuMv(peer), pathBytes);
     return ok;
   }
 
   bool handleControlFrame_(
-    PktNumSpace::T, const Frame &frame, ZiSockAddr addr) {
+    PktNumSpace::T level, const Frame &frame, ZiSockAddr addr,
+    ZiSockAddr local = {}, unsigned pathBytes = 0) {
     switch (frame.type) {
       case FrameType::MaxData:
       case FrameType::MaxStreamData:
@@ -991,8 +1126,9 @@ private:
 	queueTxFlush_();
 	return true;
       case FrameType::PathChallenge: {
-	Base::queuePathResponse_(frame.payload);
-	queueTxFlush_(ZuMv(addr));
+	sendPathResponse_(
+	  frame.payload, ZuMv(addr), ZuMv(local),
+	  level == PktNumSpace::AppData ? pathBytes : 0);
 	return true;
       }
       case FrameType::PathResponse:

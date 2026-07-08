@@ -1,0 +1,426 @@
+#!/bin/sh
+set -eu
+
+usage()
+{
+  cat >&2 <<'EOF'
+Usage: scripts/qir-run-local --runner PATH --image IMAGE [OPTION]...
+
+Run a zquic image against reference QUIC interop stacks.
+
+The script temporarily registers STACK in the upstream runner's
+implementations_quic.json and restores the file on exit.
+
+Options:
+  --stack NAME          local stack name, default zquic
+  --url URL             source URL for runner registration
+  --peers LIST          comma-separated peers, default ngtcp2,quiche,quic-go,msquic
+  --tests LIST          comma-separated tests, default handshake,transfer,http3
+  --build-type TYPE     build type label for reports, default unspecified
+  --out DIR             output directory, default zhttp/bench/qir-results/<stamp>
+  --python PYTHON       python executable, default python3
+  --keep-logs           keep runner logs before each run
+  --dry-run             validate inputs and write planned commands only
+  -h, --help            show this help
+EOF
+}
+
+die()
+{
+  echo "qir-run-local: $*" >&2
+  exit 1
+}
+
+repo_root()
+{
+  script=$0
+  case "$script" in
+    */*) ;;
+    *) script=$(command -v "$script") || exit 1 ;;
+  esac
+  dir=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd)
+  printf '%s\n' "$dir"
+}
+
+csv_words()
+{
+  printf '%s\n' "$1" | tr ',' ' '
+}
+
+validate_csv()
+{
+  name=$1
+  value=$2
+  [ -n "$value" ] || die "--$name must not be empty"
+  case "$value" in
+    *,|,*|*,,*)
+      die "--$name contains an empty item: $value"
+      ;;
+  esac
+}
+
+cpu_model()
+{
+  if [ -r /proc/cpuinfo ]; then
+    awk -F: '
+      /model name|Hardware|Processor/ {
+	gsub(/^[ \t]+|[ \t]+$/, "", $2)
+	if ($2 != "") {
+	  print $2
+	  exit
+	}
+      }
+    ' /proc/cpuinfo 2>/dev/null
+  fi
+}
+
+docker_version()
+{
+  if command -v docker >/dev/null 2>&1; then
+    docker version --format '{{.Server.Version}}' 2>/dev/null ||
+      docker --version 2>/dev/null | sed 's/^Docker version //; s/,.*//'
+  fi
+}
+
+source_url()
+{
+  remote=$(git -C "$root" config --get remote.origin.url 2>/dev/null || true)
+  case "$remote" in
+    https://*|http://*)
+      printf '%s\n' "${remote%.git}"
+      ;;
+    git@*:*)
+      path=${remote#*:}
+      path=${path%.git}
+      printf 'https://github.com/%s\n' "$path"
+      ;;
+    ssh://git@github.com/*)
+      path=${remote#ssh://git@github.com/}
+      path=${path%.git}
+      printf 'https://github.com/%s\n' "$path"
+      ;;
+    *)
+      printf '%s\n' https://github.com/kaldron-labs/z
+      ;;
+  esac
+}
+
+cleanup_runner_containers()
+{
+  [ "$dry_run" -eq 0 ] || return 0
+  command -v docker >/dev/null 2>&1 || return 0
+  if [ -n "${runner:-}" ] && [ -f "$runner/docker-compose.yml" ]; then
+    cleanup_dir=${out_abs:-${out:-${TMPDIR:-/tmp}/qir-run-local-cleanup}}
+    mkdir -p "$cleanup_dir/certs" \
+      "$cleanup_dir/client_www" "$cleanup_dir/client_downloads" \
+      "$cleanup_dir/server_www" "$cleanup_dir/server_downloads"
+    echo "+ (cd $runner && docker compose --env-file empty.env down -v --remove-orphans)" >&2
+    (
+      cd "$runner"
+      CERTS="$cleanup_dir/certs" \
+      CLIENT="${image:-zhttp-qir:local}" \
+      SERVER="${image:-zhttp-qir:local}" \
+      CLIENT_WWW="$cleanup_dir/client_www" \
+      CLIENT_DOWNLOADS="$cleanup_dir/client_downloads" \
+      SERVER_WWW="$cleanup_dir/server_www" \
+      SERVER_DOWNLOADS="$cleanup_dir/server_downloads" \
+      REQUESTS_CLIENT= \
+      REQUESTS_SERVER= \
+      TESTCASE_CLIENT=cleanup \
+      TESTCASE_SERVER=cleanup \
+      PROTOCOLS_CLIENT= \
+      PROTOCOLS_SERVER= \
+      SCENARIO= \
+      WAITFORSERVER= \
+      CRON= \
+      CLIENT_PARAMS= \
+      SERVER_PARAMS= \
+      IPERF_CONGESTION= \
+      docker compose --env-file empty.env down -v --remove-orphans
+    ) >/dev/null 2>&1 || true
+  fi
+  echo "+ docker rm -f server client sim" >&2
+  docker rm -f server client sim >/dev/null 2>&1 || true
+}
+
+restore_registration()
+{
+  if [ -n "${impl_backup:-}" ] && [ -f "$impl_backup" ] &&
+      [ -n "${impl_file:-}" ]; then
+    cp "$impl_backup" "$impl_file"
+    rm -f "$impl_backup"
+  fi
+}
+
+signal_cleanup()
+{
+  restore_registration
+  exit 130
+}
+
+runner=
+image=
+stack=zquic
+url=
+peers=ngtcp2,quiche,quic-go,msquic
+tests=handshake,transfer,http3
+build_type=unspecified
+python=python3
+out=
+keep_logs=0
+dry_run=0
+
+root=$(repo_root)
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --runner)
+      [ $# -ge 2 ] || die "--runner requires an argument"
+      runner=$2
+      shift 2
+      ;;
+    --image)
+      [ $# -ge 2 ] || die "--image requires an argument"
+      image=$2
+      shift 2
+      ;;
+    --stack)
+      [ $# -ge 2 ] || die "--stack requires an argument"
+      stack=$2
+      shift 2
+      ;;
+    --url)
+      [ $# -ge 2 ] || die "--url requires an argument"
+      url=$2
+      shift 2
+      ;;
+    --peers)
+      [ $# -ge 2 ] || die "--peers requires an argument"
+      peers=$2
+      shift 2
+      ;;
+    --tests)
+      [ $# -ge 2 ] || die "--tests requires an argument"
+      tests=$2
+      shift 2
+      ;;
+    --build-type)
+      [ $# -ge 2 ] || die "--build-type requires an argument"
+      build_type=$2
+      shift 2
+      ;;
+    --out)
+      [ $# -ge 2 ] || die "--out requires an argument"
+      out=$2
+      shift 2
+      ;;
+    --python)
+      [ $# -ge 2 ] || die "--python requires an argument"
+      python=$2
+      shift 2
+      ;;
+    --keep-logs)
+      keep_logs=1
+      shift
+      ;;
+    --dry-run)
+      dry_run=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+[ -n "$runner" ] || die "--runner is required"
+[ -n "$image" ] || die "--image is required"
+[ -d "$runner" ] || die "runner directory does not exist: $runner"
+[ -f "$runner/run.py" ] || die "runner does not contain run.py: $runner"
+impl_file=$runner/implementations_quic.json
+[ -f "$impl_file" ] || die "runner does not contain implementations_quic.json"
+[ -n "$url" ] || url=$(source_url)
+validate_csv peers "$peers"
+validate_csv tests "$tests"
+
+if [ -z "$out" ]; then
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  rev=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo local)
+  out=$root/zhttp/bench/qir-results/$stamp-$rev
+fi
+
+mkdir -p "$out"
+out_abs=$(CDPATH= cd -- "$out" && pwd)
+
+compose_name=$(printf '%s' "$stack" |
+  tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz' |
+  tr -c 'abcdefghijklmnopqrstuvwxyz0123456789_-' '_')
+[ -n "$compose_name" ] || compose_name=zquic
+COMPOSE_PROJECT_NAME=qir_${compose_name}_interop
+export COMPOSE_PROJECT_NAME
+
+py_compat=$out_abs/python_compat
+mkdir -p "$py_compat"
+cat >"$py_compat/sitecustomize.py" <<'PY'
+import asyncio
+
+try:
+    asyncio.get_event_loop_policy().get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+_policy = asyncio.get_event_loop_policy()
+_get_event_loop = _policy.get_event_loop
+def _compat_get_event_loop():
+    try:
+        return _get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        _policy.set_event_loop(loop)
+        return loop
+_policy.get_event_loop = _compat_get_event_loop
+
+if not hasattr(asyncio, "SafeChildWatcher"):
+    class SafeChildWatcher:
+        def attach_loop(self, loop):
+            return None
+        pass
+    asyncio.SafeChildWatcher = SafeChildWatcher
+
+if not hasattr(asyncio, "set_child_watcher"):
+    def set_child_watcher(watcher):
+        return None
+    asyncio.set_child_watcher = set_child_watcher
+
+if not hasattr(asyncio, "get_child_watcher"):
+    _watcher = asyncio.SafeChildWatcher()
+    def get_child_watcher():
+        return _watcher
+    asyncio.get_child_watcher = get_child_watcher
+PY
+
+impl_backup=$out/implementations_quic.json.orig
+cp "$impl_file" "$impl_backup"
+trap restore_registration EXIT
+trap signal_cleanup HUP INT TERM
+
+"$python" - "$impl_file" "$stack" "$image" "$url" <<'PY'
+import json
+import sys
+
+path, stack, image, url = sys.argv[1:5]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+data[stack] = {
+    "image": image,
+    "url": url,
+    "role": "both",
+}
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+
+{
+  host_kernel=$(uname -a)
+  cpu=$(cpu_model)
+  [ -n "$cpu" ] || cpu=unavailable
+  docker_ver=$(docker_version)
+  [ -n "$docker_ver" ] || docker_ver=unavailable
+
+  printf 'image=%s\n' "$image"
+  printf 'stack=%s\n' "$stack"
+  printf 'source_url=%s\n' "$url"
+  printf 'peers=%s\n' "$peers"
+  printf 'tests=%s\n' "$tests"
+  printf 'build_type=%s\n' "$build_type"
+  printf 'compose_project=%s\n' "$COMPOSE_PROJECT_NAME"
+  printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'registration=%s\n' "$impl_file"
+  printf 'host=%s\n' "$host_kernel"
+  printf 'host_kernel=%s\n' "$host_kernel"
+  printf 'cpu_model=%s\n' "$cpu"
+  printf 'docker_version=%s\n' "$docker_ver"
+  git -C "$root" rev-parse HEAD 2>/dev/null | sed 's/^/z_rev=/'
+  git -C "$runner" rev-parse HEAD 2>/dev/null | sed 's/^/runner_rev=/'
+  docker image inspect "$image" --format 'image_id={{.Id}}' 2>/dev/null || true
+  docker image inspect "$image" \
+    --format 'image_repo_digests={{range .RepoDigests}}{{.}} {{end}}' \
+    2>/dev/null || true
+} >"$out/metadata.env"
+
+cleanup_runner_containers
+
+failed=0
+for peer in $(csv_words "$peers"); do
+  for dirn in "${stack}-server_${peer}-client" "${peer}-server_${stack}-client"; do
+    case "$dirn" in
+      "${stack}-server_"*)
+        server=$stack
+        client=$peer
+        ;;
+      *)
+        server=$peer
+        client=$stack
+        ;;
+    esac
+
+    run_dir=$out/$dirn
+    mkdir -p "$run_dir"
+    printf '%s\n' "$python run.py -s $server -c $client -t $tests" \
+      >"$run_dir/command"
+    printf '%s\n' "$server" >"$run_dir/server"
+    printf '%s\n' "$client" >"$run_dir/client"
+    printf '%s\n' "$tests" >"$run_dir/tests"
+    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$run_dir/started_at"
+
+    if [ "$keep_logs" -ne 1 ]; then
+      rm -rf "$runner/logs" "$runner"/logs_* \
+	"$runner/results" "$runner"/results_*
+    fi
+
+    echo "+ (cd $runner && $python run.py -s $server -c $client -t $tests)" >&2
+    if [ "$dry_run" -eq 1 ]; then
+      printf 'dry-run\n' >"$run_dir/stdout"
+      : >"$run_dir/stderr"
+      rc=0
+    else
+      set +e
+      (
+	cd "$runner"
+	PYTHONPATH="$py_compat${PYTHONPATH:+:$PYTHONPATH}" \
+	  "$python" run.py -s "$server" -c "$client" -t "$tests"
+      ) >"$run_dir/stdout" 2>"$run_dir/stderr"
+      rc=$?
+      set -e
+      if [ "$rc" -eq 0 ] &&
+	  grep -qi 'not compliant' "$run_dir/stdout" "$run_dir/stderr"; then
+	rc=1
+      fi
+    fi
+    printf '%s\n' "$rc" >"$run_dir/status"
+    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$run_dir/finished_at"
+
+    "$root/scripts/qir-collect-results" \
+      --runner "$runner" \
+      --out "$out" \
+      --name "$dirn" \
+      --stdout "$run_dir/stdout" \
+      --stderr "$run_dir/stderr" \
+      --status "$rc"
+    cleanup_runner_containers
+
+    [ "$rc" -eq 0 ] || failed=1
+  done
+done
+
+echo "results: $out" >&2
+printf 'finished_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  >>"$out/metadata.env"
+"$root/scripts/qir-report" --in "$out" --out "$out/report.md"
+echo "report: $out/report.md" >&2
+exit "$failed"
