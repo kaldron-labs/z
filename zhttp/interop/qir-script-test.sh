@@ -60,7 +60,7 @@ do
     exit 1
   fi
 done
-sh -n "$srcdir/zhttp/bench/qir_endpoint.sh"
+sh -n "$srcdir/zhttp/interop/qir_endpoint.sh"
 
 "$srcdir/scripts/qir-collect-results" \
   --runner "$tmp/runner" \
@@ -115,7 +115,7 @@ grep -q 'logs/a/log.txt' "$tmp/report.md"
 grep -q 'stderr' "$tmp/report.md"
 
 "$srcdir/scripts/qir-report" \
-  --in "$srcdir/zhttp/bench/testdata/qir-results/fixture" \
+  --in "$srcdir/zhttp/interop/testdata/qir-results/fixture" \
   --out "$tmp/fixture-report.md"
 grep -q 'fixture-kernel' "$tmp/fixture-report.md"
 grep -q '| `zquic` | `ngtcp2` | `handshake` | 0 |' \

@@ -17,7 +17,7 @@ Options:
   --peers LIST          comma-separated peers, default ngtcp2,quiche,quic-go,msquic
   --tests LIST          comma-separated tests, default handshake,transfer,http3
   --build-type TYPE     build type label for reports, default unspecified
-  --out DIR             output directory, default zhttp/bench/qir-results/<stamp>
+  --out DIR             output directory, default zhttp/interop/qir-results/<stamp>
   --python PYTHON       python executable, default python3
   --keep-logs           keep runner logs before each run
   --dry-run             validate inputs and write planned commands only
@@ -250,7 +250,7 @@ validate_csv tests "$tests"
 if [ -z "$out" ]; then
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   rev=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo local)
-  out=$root/zhttp/bench/qir-results/$stamp-$rev
+  out=$root/zhttp/interop/qir-results/$stamp-$rev
 fi
 
 mkdir -p "$out"

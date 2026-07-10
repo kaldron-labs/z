@@ -68,6 +68,6 @@ iterate_plan.md
 iterate_requirements.md
 research_codebase.md
 !scripts/**
-!zhttp/bench/testdata/**
-zhttp/bench/qir-root/
-zhttp/bench/qir-results/
+!zhttp/interop/testdata/**
+zhttp/interop/qir-root/
+zhttp/interop/qir-results/

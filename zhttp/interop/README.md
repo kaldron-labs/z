@@ -33,7 +33,7 @@ Implemented:
   `quic-go`, and `msquic` for `handshake`, `transfer`, and `http3`
 - upstream QUIC Interop Runner validation for `rebind-port` and `rebind-addr`
   passing in both directions against `ngtcp2`; see
-  `zhttp/bench/qir-results/local-ngtcp2-rebind/report.md`
+  `zhttp/interop/qir-results/local-ngtcp2-rebind/report.md`
 - upstream QUIC Interop Runner validation for `rebind-port` and `rebind-addr`
   passing with zquic as server against `quiche` and `quic-go`
 
@@ -43,14 +43,14 @@ Known gaps:
   but currently fail against `quiche`, `quic-go`, and `msquic`
 - `rebind-port` and `rebind-addr` with zquic as server currently fail against
   `msquic`; the latest full-reference rebinding report is
-  `zhttp/bench/qir-results/local-rebind-refs/report.md`
+  `zhttp/interop/qir-results/local-rebind-refs/report.md`
 
 ## Local Tests
 
-Run the bench-local checks:
+Run the interop-local checks:
 
 ```sh
-make -C zhttp/bench test
+make -C zhttp/interop test
 ```
 
 Run the wider zhttp module path:
@@ -59,10 +59,10 @@ Run the wider zhttp module path:
 make -C zhttp test
 ```
 
-Docker and upstream runner checks are bench lifecycle steps and are not
+Docker and upstream runner checks are interop lifecycle steps and are not
 prerequisites of `make test`.
 
-The automated bench smoke tests create local www/download/cert directories,
+The automated interop smoke tests create local www/download/cert directories,
 start `zhttpqir server`, run `zhttpqir client`, compare downloaded files, and
 terminate the server for these cases:
 
@@ -74,9 +74,9 @@ terminate the server for these cases:
 ## Executable Contract
 
 ```sh
-libtool exec ./zhttp/bench/zhttpqir --help
-libtool exec ./zhttp/bench/zhttpqir server
-libtool exec ./zhttp/bench/zhttpqir client
+libtool exec ./zhttp/interop/zhttpqir --help
+libtool exec ./zhttp/interop/zhttpqir server
+libtool exec ./zhttp/interop/zhttpqir client
 ```
 
 Exit statuses:
@@ -111,7 +111,7 @@ Unknown testcase names return `127`.
 The normal smoke path is:
 
 ```sh
-make -C zhttp/bench test
+make -C zhttp/interop test
 ```
 
 For manual debugging, create temporary directories and run the endpoint through
@@ -134,7 +134,7 @@ ZHTTP_QIR_WWW="$tmp/www" \
 ZHTTP_QIR_CERT="$tmp/certs/cert.pem" \
 ZHTTP_QIR_KEY="$tmp/certs/priv.key" \
 ZHTTP_QIR_PORT=9443 \
-libtool exec ./zhttp/bench/zhttpqir server
+libtool exec ./zhttp/interop/zhttpqir server
 ```
 
 In another shell:
@@ -144,7 +144,7 @@ TESTCASE=http3 \
 REQUESTS=https://127.0.0.1:9443/file.txt \
 ZHTTP_QIR_DOWNLOADS="$tmp/downloads" \
 ZHTTP_QIR_CA="$tmp/certs/ca.pem" \
-libtool exec ./zhttp/bench/zhttpqir client
+libtool exec ./zhttp/interop/zhttpqir client
 ```
 
 Stop the server with SIGTERM after the client exits.
@@ -192,7 +192,7 @@ ZHTTP_QIR_IMAGE=zhttp-qir:$(git rev-parse --short HEAD) \
 Build from an existing staged root for debugging:
 
 ```sh
-scripts/qir-build-image --root zhttp/bench/qir-root --tag zhttp-qir:local
+scripts/qir-build-image --root zhttp/interop/qir-root --tag zhttp-qir:local
 ```
 
 Upload only an image that has already been validated:
@@ -290,8 +290,8 @@ manual artifact edits with:
 
 ```sh
 scripts/qir-report \
-  --in zhttp/bench/qir-results/<run-dir> \
-  --out zhttp/bench/qir-results/<run-dir>/report.md
+  --in zhttp/interop/qir-results/<run-dir> \
+  --out zhttp/interop/qir-results/<run-dir>/report.md
 ```
 
 For an upstream registration PR, add the implementation entry in the upstream
