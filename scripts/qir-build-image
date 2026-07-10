@@ -208,7 +208,7 @@ if [ -n "$root_dir" ]; then
   ctx=${TMPDIR:-/tmp}/zhttp-qir-build.$$
   trap 'rm -rf "$ctx"' EXIT HUP INT TERM
   mkdir -p "$ctx"
-  cp "$root/zhttp/bench/Dockerfile.interop" "$ctx/Dockerfile.interop"
+  cp "$root/zhttp/interop/Dockerfile.interop" "$ctx/Dockerfile.interop"
   copy_root "$root_dir" "$ctx/qir-root"
   stage_runtime_deps "$ctx/qir-root"
 

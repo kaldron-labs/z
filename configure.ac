@@ -226,7 +226,7 @@ AC_CONFIG_FILES([Makefile \
 	zquic/Makefile zquic/src/Makefile zquic/test/Makefile \
 	zquic/example/Makefile \
 	zhttp/Makefile zhttp/src/Makefile zhttp/test/Makefile \
-	zhttp/bench/Makefile zhttp/example/Makefile \
+	zhttp/interop/Makefile zhttp/example/Makefile \
 	zrest/Makefile zrest/src/Makefile zrest/test/Makefile \
 	zws/Makefile zws/src/Makefile zws/test/Makefile \
 	zfb/Makefile zfb/src/Makefile zfb/test/Makefile \

@@ -36,19 +36,19 @@ zhttp-qir-build:
 	$(MAKE) $(AM_MAKEFLAGS) -C ztls/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zquic/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/src all
-	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/bench zhttpqir
+	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/interop zhttpqir
 
 .PHONY: zhttp-qir-image
 zhttp-qir-image: zhttp-qir-build
 	test "$(prefix)" = "/usr/local"
-	rm -rf "$(abs_builddir)/zhttp/bench/qir-root"
+	rm -rf "$(abs_builddir)/zhttp/interop/qir-root"
 	@for subdir in $(ZHTTP_QIR_INSTALL_DIRS); do \
 	  $(MAKE) $(AM_MAKEFLAGS) -C $$subdir install \
-	    DESTDIR="$(abs_builddir)/zhttp/bench/qir-root" || exit $$?; \
+	    DESTDIR="$(abs_builddir)/zhttp/interop/qir-root" || exit $$?; \
 	done
-	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/bench qir-stage \
-	  ZHTTP_QIR_ROOT="$(abs_builddir)/zhttp/bench/qir-root"
+	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/interop qir-stage \
+	  ZHTTP_QIR_ROOT="$(abs_builddir)/zhttp/interop/qir-root"
 	"$(abs_srcdir)/scripts/qir-build-image" \
-	  --root "$(abs_builddir)/zhttp/bench/qir-root" \
+	  --root "$(abs_builddir)/zhttp/interop/qir-root" \
 	  --tag "$${ZHTTP_QIR_IMAGE:-zhttp-qir:local}" \
 	  --no-configure --no-clean --allow-dirty
