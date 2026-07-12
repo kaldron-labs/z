@@ -7,6 +7,23 @@
 --regex-C++=/^\s*ZfbStruct\(\(\s*([^,]+)/ZuFields_\1/s,struct/
 --regex-C++=/^\s*ZfbStruct\(\s*([^(,]+)/ZuFields_\1/s,struct/
 
+--langdef=FlatBuffers
+--map-FlatBuffers=+.fbs
+--kinddef-FlatBuffers=n,namespace,namespaces
+--kinddef-FlatBuffers=t,table,tables
+--kinddef-FlatBuffers=s,struct,structs
+--kinddef-FlatBuffers=e,enum,enums
+--kinddef-FlatBuffers=u,union,unions
+--kinddef-FlatBuffers=r,service,services
+--kinddef-FlatBuffers=v,value,enum values
+--regex-FlatBuffers=/^[ \t]*namespace[ \t]+([A-Za-z_][A-Za-z0-9_.]*)[ \t]*;/\1/n/
+--regex-FlatBuffers=/^[ \t]*table[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/t/
+--regex-FlatBuffers=/^[ \t]*struct[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/s/
+--regex-FlatBuffers=/^[ \t]*enum[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/e/
+--regex-FlatBuffers=/^[ \t]*union[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/u/
+--regex-FlatBuffers=/^[ \t]*rpc_service[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/r/
+--regex-FlatBuffers=/^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*(=[^,}]+)?[ \t]*([,}]|$)/\1/v/
+
 --_tabledef-C++=root
 --_tabledef-C++=ztenum_arg1
 --_tabledef-C++=ztenum_arg2
