@@ -6,7 +6,7 @@ find({
   wanted => sub {
     return if -l;
     return unless -f;
-    return unless /\.(?:h|hh|c|cc|sql)\z/;
+    return unless /\.(?:h|hh|c|cc|fbs|sql)\z/;
     print "$_\n";
   },
 }, '.');
