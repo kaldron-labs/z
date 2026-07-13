@@ -31,6 +31,7 @@
 #include <new>
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuID.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuString.hh>
@@ -88,7 +89,7 @@ struct ZmHeapStats {
 // derived display fields:
 //   allocated = (heapAllocs + cacheAllocs) - frees
 struct ZmHeapTelemetry {
-  ZmIDString	id;		// primary key
+  ZuID		id;		// primary key
   uint64_t	cacheSize = 0;
   ZmBitmap	cpuset;
   uint64_t	cacheAllocs = 0;// graphable (*)

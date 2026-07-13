@@ -24,7 +24,7 @@
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuBox.hh>
-#include <zlib/ZuArray.hh>
+#include <zlib/ZuID.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuLambdaTraits.hh>
 
@@ -55,13 +55,11 @@ namespace ZmThreadPriority {
   };
 }
 
-using ZmThreadName = ZuCArray<28>;
-
 // display sequence:
 //   name, id, tid, cpuUsage, cpuset, priority, sysPriority,
 //   stackSize, partition, main, detached
 struct ZmThreadTelemetry {
-  ZmThreadName	name;
+  ZuID		name;
   uint64_t	tid = 0;	// primary key
   uint64_t	stackSize = 0;
   ZmBitmap	cpuset;
@@ -99,7 +97,7 @@ public:
   ZmThreadParams &&detached(bool b)
     { m_detached = b; return ZuMv(*this); }
 
-  const ZmThreadName &name() const { return m_name; }
+  ZuCSpan name() const { return m_name; }
   unsigned stackSize() const { return m_stackSize; }
   int priority() const { return m_priority; }
   int partition() const { return m_partition; }
@@ -107,7 +105,7 @@ public:
   bool detached() const { return m_detached; }
 
 private:
-  ZmThreadName		m_name;
+  ZuID			m_name;
   unsigned		m_stackSize = 0;
   int			m_priority = -1;
   int			m_partition = -1;
@@ -393,7 +391,7 @@ public:
 #endif /* !_WIN32 */
   }
 
-  const ZmThreadName &name() const { return m_name; }
+  ZuCSpan name() const { return m_name; }
   const char *name_() const { return m_name.data(); }
   int sid() const { return m_sid; }
 
@@ -427,7 +425,7 @@ private:
   DtorFn		m_dtorFn = nullptr;
   void			*m_lambda = nullptr;
 
-  ZmThreadName		m_name;
+  ZuID			m_name;
   int			m_sid = -1;	// thread container's slot ID
 
   int			m_priority = -1;

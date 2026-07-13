@@ -109,8 +109,8 @@ public:
 	impl_->aborted(ZuMv(buf), false); // too late to abort
 	return;
       }
-      bool ok = !!queue.delNode(buf);
-      impl_->aborted(ZuMv(buf), ok);
+	bool ok = !!queue.delNode(buf);
+	impl_->aborted(ZuMv(buf), ok);
     });
   }
 

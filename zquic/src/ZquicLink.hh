@@ -4843,8 +4843,9 @@ protected:
     if (m_ptoTimer && m_ptoTimerOut == out && m_ptoTimerLevel == level)
       return;
     if (debugLog_()) ZiLOG(Debug, "Zquic",
-      ([level, bif = m_txPkts[level].bytesInFlight()](auto &s) {
-	s << "PTO armed level=" << int(level) << " bytesInFlight=" << bif;
+      ([level, bytesInFlight = m_txPkts[level].bytesInFlight()](auto &s) {
+	s << "PTO armed level=" << int(level) <<
+	  " bytesInFlight=" << bytesInFlight;
       }));
     ++m_txDiag.ptoArmed;
     m_ptoTimerOut = out;

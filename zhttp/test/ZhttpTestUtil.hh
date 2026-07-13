@@ -19,7 +19,7 @@ using Zquic::Test::runCurlH3;
 using Zquic::Test::sleepMS;
 using Zquic::Test::systemOK;
 using Zquic::Test::waitUntil;
-using Zquic::Test::writeSelfSignedLocalhostCert;
+using Zquic::Test::writeLocalhostCert;
 
 template <typename L>
 bool retry(unsigned attempts, unsigned delayMS, L l)

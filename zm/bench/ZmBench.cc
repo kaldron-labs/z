@@ -92,7 +92,7 @@ unsigned S::m_j = 0;
 
 struct W {
   void fn(const char *prefix, const ZmThreadContext *c) {
-    const ZmThreadName &s = c->name();
+    ZuCSpan s = c->name();
     if (!s)
       out(prefix, ": ", c->tid());
     else

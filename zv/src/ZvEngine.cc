@@ -190,7 +190,7 @@ void ZvEngine::telemetry(Telemetry &data) const
 
 // connection state management
 
-ZvAnyTx::ZvAnyTx(ZuID id) : m_id(id)
+ZvAnyTx::ZvAnyTx(ZuCSpan id) : m_id(id)
 {
 }
 
@@ -200,7 +200,7 @@ void ZvAnyTx::init(ZvEngine *engine)
   m_mx = engine->mx();
 }
 
-ZvAnyLink::ZvAnyLink(ZuID id) :
+ZvAnyLink::ZvAnyLink(ZuCSpan id) :
   ZvAnyTx(id),
   m_state(ZvLinkState::Down),
   m_reconnects(0)

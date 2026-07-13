@@ -15,13 +15,14 @@
 #endif
 
 #include <zlib/ZuInt.hh>
+#include <zlib/ZuID.hh>
 
 #include <zlib/ZtEnum.hh>
 
 ZtEnumNS(ZvQueueType, int8_t, Thread, IPC, Rx, Tx);
 
 struct ZvQueueTelemetry {
-  ZmIDString	id;		// primary key
+  ZuID		id;		// primary key
   uint64_t	seqNo = 0;	// 0 for Thread, IPC
   uint64_t	count = 0;	// dynamic - may not equal in - out
   uint64_t	inCount = 0;	// dynamic (*)

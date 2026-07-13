@@ -122,7 +122,7 @@ int main()
 
       db[i]->init(ZuMv(dbCf), mx, ZdbHandler{
 	.upFn = [](Zdb *db_, ZdbHost *host) {
-	  ZiLOG(Info, "zdbreptest2", ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	  ZiLOG(Info, "zdbreptest2", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
 	    s << "ACTIVE (was " << id << ')';
 	  }));
 	  if (db_ == db[1]) done.post();

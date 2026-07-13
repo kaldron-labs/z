@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuArray.hh>
+#include <zlib/ZuID.hh>
 
 #include <zlib/ZtString.hh>
 #include <zlib/ZtArray.hh>
@@ -96,7 +97,7 @@ struct DBHost {
 };
 ZfbStruct(DBHost,
     (((ip),		(Ctor<0>)),				(UDT)),
-    (((id),		(Ctor<1>, Keys<0>)),			(UDT)),
+    (((id),		(Ctor<1>, Keys<0>)),			(String)),
     (((priority),	(Ctor<2>)),				(UInt32)),
     (((state),		(Ctor<4>, Mutable, Enum<DBHostState::Map>)), (Int8)),
     (((voted),		(Ctor<5>, Mutable, Series)),		(Bool)),
@@ -109,7 +110,7 @@ ZfbStruct(DBHost,
 //   thread,
 //   heartbeatFreq, heartbeatTimeout, reconnectFreq, electionTimeout
 struct DB {
-  ZmThreadName	thread;
+  ZuID		thread;
   ZuID		self;			// primary key - host ID 
   ZuID		leader;			// host ID
   ZuID		prev;			// ''
@@ -133,10 +134,10 @@ struct DB {
   friend ZtStructPrint ZuPrintType(DB *);
 };
 ZfbStruct(DB,
-    (((self),		(Ctor<2>)),				(UDT)),
-    (((leader),		(Ctor<3>, Mutable)),			(UDT)),
-    (((prev),		(Ctor<4>, Mutable)),			(UDT)),
-    (((next),		(Ctor<5>, Mutable)),			(UDT)),
+    (((self),		(Ctor<2>)),				(String)),
+    (((leader),		(Ctor<3>, Mutable)),			(String)),
+    (((prev),		(Ctor<4>, Mutable)),			(String)),
+    (((next),		(Ctor<5>, Mutable)),			(String)),
     (((state),		(Ctor<14>, Mutable, Enum<DBHostState::Map>)), (Int8)),
     (((active),		(Ctor<15>, Mutable)),			(UInt8)),
     (((recovering),	(Ctor<16>, Mutable)),			(UInt8)),

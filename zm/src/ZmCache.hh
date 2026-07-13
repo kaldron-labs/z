@@ -45,7 +45,9 @@ using ZmCacheHashFn = ZmHashFn<HashFn, NTP>;
 template <typename Lock, typename NTP = ZmCache_Defaults>
 using ZmCacheLock = ZmHashLock<Lock, NTP>;
 template <bool Shadow, typename NTP = ZmCache_Defaults>
-using ZmCacheShadow = ZmHashShadow<Shadow, NTP>;
+using ZmCacheShadow_ = ZmHashShadow_<Shadow, NTP>;
+template <typename NTP = ZmCache_Defaults>
+using ZmCacheShadow = ZmHashShadow<NTP>;
 template <typename HeapID, typename NTP = ZmCache_Defaults>
 using ZmCacheHeapID_ = ZmHashHeapID_<HeapID, NTP>;
 template <ZuString HeapID, typename NTP = ZmCache_Defaults>
@@ -69,7 +71,7 @@ public:
 private:
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
-  ZuDerive(LRUList, (ZmList<T, ZmListNode<T, ZmListShadow<true>>>));
+  ZuDerive(LRUList, (ZmList<T, ZmListNode<T, ZmListShadow<>>>));
   struct LRUDisable { // LRU list is not needed if eviction is disabled
     using Node = T;
     Node *delNode(Node *node) { return node; }

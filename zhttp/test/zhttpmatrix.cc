@@ -27,7 +27,7 @@ using Zhttp::Test::haveCurlH3;
 using Zhttp::Test::loopbackPort;
 using Zhttp::Test::printFile;
 using Zhttp::Test::systemOK;
-using Zhttp::Test::writeSelfSignedLocalhostCert;
+using Zhttp::Test::writeLocalhostCert;
 using Zquic::Test::haveCaddy;
 
 ZuCSpan Path = "/zhttp-interop";
@@ -1134,7 +1134,7 @@ bool runCase_(const Case &c, uint64_t &duration)
     return false;
   }
   ZtString<> certPath, keyPath;
-  if (!writeSelfSignedLocalhostCert(temp, certPath, keyPath)) {
+  if (!writeLocalhostCert(temp, certPath, keyPath)) {
     std::cout << "# failed to create TLS certificate\n";
     preserveTemp(temp);
     return false;

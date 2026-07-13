@@ -168,16 +168,18 @@ struct ZmPQueueNode : public NTP {
 
 // ZmPQueueShadow - shadow nodes, do not manage ownership
 template <bool Shadow_, typename NTP = ZmPQueue_Defaults>
-struct ZmPQueueShadow;
+struct ZmPQueueShadow_;
 template <typename NTP>
-struct ZmPQueueShadow<true, NTP> : public NTP {
+struct ZmPQueueShadow_<true, NTP> : public NTP {
   enum { Shadow = true };
   struct HeapID : public ZuStringT<""> { };
 };
 template <typename NTP>
-struct ZmPQueueShadow<false, NTP> : public NTP {
+struct ZmPQueueShadow_<false, NTP> : public NTP {
   enum { Shadow = false };
 };
+template <typename NTP = ZmPQueue_Defaults>
+using ZmPQueueShadow = ZmPQueueShadow_<true, NTP>;
 
 // ZmPQueueHeapID - the heap ID
 template <ZuString HeapID_, class NTP = ZmPQueue_Defaults>

@@ -1173,7 +1173,7 @@ public:
   template <typename L>
   static void all(L &&l) { instance()->all_(ZuFwd<L>(l)); }
 
-  static ZiMultiplex *find(ZuID id);
+  static ZiMultiplex *find(ZuCSpan id);
 
 private:
   static void add(ZiMultiplex *);

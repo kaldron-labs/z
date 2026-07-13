@@ -113,7 +113,7 @@ int main()
 
     db->init(ZdbCf{cf->getCf<true>("zdb")}, mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
-	ZiLOG(Info, "zdbsmoketest", ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	ZiLOG(Info, "zdbsmoketest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
 	  s << "ACTIVE (was " << id << ')';
 	}));
 	done.post();
@@ -202,7 +202,7 @@ int main()
 
     db->init(ZdbCf{cf->getCf<true>("zdb")}, mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
-	ZiLOG(Info, "zdbsmoketest", ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	ZiLOG(Info, "zdbsmoketest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
 	  s << "ACTIVE (was " << id << ')';
 	}));
       },

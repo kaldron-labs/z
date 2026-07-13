@@ -28,10 +28,9 @@ using BodyData = ZtString<ZtStringHeapID<"ZhttpParserTest.BodyData">>;
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
-  unsigned n = static_cast<unsigned>(::strlen(s));
+  unsigned n = ::strlen(s);
   ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
-  auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
-  if (n) iobuf->append(reinterpret_cast<const uint8_t *>(s), n);
+  if (n) buf->append(reinterpret_cast<const uint8_t *>(s), n);
   return buf;
 }
 

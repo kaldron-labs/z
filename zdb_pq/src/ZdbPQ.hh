@@ -21,7 +21,6 @@
 #include <zlib/ZuFixed.hh>
 #include <zlib/ZuTime.hh>
 #include <zlib/ZuDateTime.hh>
-#include <zlib/ZuID.hh>
 
 #include <zlib/ZmLHash.hh>
 
@@ -68,7 +67,6 @@ ZuDerive(SQLString, ZtString<ZtStringHeapID<"ZdbPQ.SQLString">>);
 // UInt128   uint128_t  Zfb.UInt128     uint16   (*)  uint128_t BE
 // Bitmap    ZtBitmap   Zfb.Bitmap      zbitmap  (**) uint64_t BE, uint64_t[] BE
 // IP        ZiIP       Zfb.IP          inet          IPHdr, address bytes
-// ID        ZuID       Zfb.ID          text          raw data
 //
 // <Type>Vec            [<Type>]        type[]        array (see below)
 
@@ -234,7 +232,6 @@ struct IP {
     }
   }
 };
-struct ID { ZuID id; };
 #pragma pack(pop)
 // these must all be distinct types
 struct StringVec { ZuBSpan v; };
@@ -297,7 +294,6 @@ using Value_ = ZuUnion<
   UInt128,
   Bitmap,
   IP,
-  ID,
 
   // all types after this are vectors, see isVec() below
   StringVec,
@@ -535,10 +531,6 @@ struct Value : public Value_ {
   template <unsigned I, typename S>
   ZuIfT<I == Value_::Index<IP>{}>
   print_(S &s) const { s << p<I>().ziIP(); }
-
-  template <unsigned I, typename S>
-  ZuIfT<I == Value_::Index<ID>{}>
-  print_(S &s) const { s << p<I>().id; }
 
   template <unsigned I, typename S>
   ZuIfT<I == Value_::Index<StringVec>{}>
@@ -909,13 +901,6 @@ loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
     static_cast<Zfb::IP>(fbo->GetField<uint8_t>(field->offset() - 2, 0)),
     fbo->GetPointer<const void *>(field->offset())));
   new (ptr) IP{ip};
-}
-
-template <unsigned Type>
-inline ZuIfT<Type == Value::Index<ID>{}>
-loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
-  new (ptr) ID{
-    ZfbTransform::ID::load(fbo->GetStruct<const Zfb::ID *>(field->offset()))};
 }
 
 template <unsigned Type>
@@ -1546,16 +1531,6 @@ saveValue(
     field->offset() - 2,
     static_cast<uint8_t>(ZfbTransform::IP::type(value.p<Type>().ziIP())), 0);
   fbb.AddOffset(field->offset(), offsets.shift());
-}
-
-template <unsigned Type>
-inline ZuIfT<Type == Value::Index<ID>{}>
-saveValue(
-  Zfb::Builder &fbb, const Offsets &,
-  const reflection::Field *field, const Value &value)
-{
-  auto v = ZfbTransform::ID::save(value.p<Type>().id);
-  fbb.AddStruct(field->offset(), &v);
 }
 
 // --- data tuple

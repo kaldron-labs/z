@@ -11,6 +11,8 @@
 #include <zlib/ZcmdLib.hh>
 #endif
 
+#include <zlib/ZuID.hh>
+
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
 
@@ -353,8 +355,8 @@ using DB = Zdb_::Tel::DB;
 // display sequence:
 //   id, role, RAG, uptime, version
 struct App {
-  ZmIDString	id;
-  ZmIDString	version;
+  ZuID		id;
+  ZuID		version;
   ZuDateTime	uptime;
   // LATER - need instanceID (i.e. hostID) for clustered apps
   int8_t	role = -1;

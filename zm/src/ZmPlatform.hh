@@ -30,8 +30,6 @@
 #endif
 
 #include <zlib/ZuInt.hh>
-#include <zlib/ZuArray.hh>
-
 #ifdef linux
 #include <sys/types.h>
 #include <linux/unistd.h>
@@ -41,10 +39,6 @@
 #pragma warning(push)
 #pragma warning(disable:4251 4800 4996)
 #endif
-
-#define ZmIDStrSize	60	// max length of a heap/hash ID
-
-using ZmIDString = ZuCArray<ZmIDStrSize>;
 
 #ifdef __aarch64__	/* 64bit ARM */
 #define ZmCacheLineSize 128

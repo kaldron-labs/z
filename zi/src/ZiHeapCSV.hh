@@ -13,7 +13,7 @@
 #include <zlib/ZiLib.hh>
 #endif
 
-#include <zlib/ZuArray.hh>
+#include <zlib/ZuID.hh>
 
 #include <zlib/ZmHeap.hh>
 
@@ -24,7 +24,7 @@
 namespace ZiHeapCSV {
 
 struct Data {
-  ZmIDString	id;
+  ZuID		id;
   uint64_t	cacheSize;
   uint16_t	partition;
   ZmBitmap	cpuset;

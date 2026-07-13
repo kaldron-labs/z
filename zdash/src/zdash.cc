@@ -832,7 +832,7 @@ public:
   void connectFailed(bool transient);
 
   int processTelemetry(const uint8_t *data, unsigned len);
-  int processDeflt(ZuID id, const uint8_t *data, unsigned len);
+  int processDeflt(ZuCSpan id, const uint8_t *data, unsigned len);
 
   ID			id;
   ZvSeqNo		seqNo = 0;
@@ -858,7 +858,7 @@ public:
   SrvLink(App_Srv *app);
 
   int processCmd(const uint8_t *data, unsigned len);
-  int processDeflt(ZuID id, const uint8_t *data, unsigned len);
+  int processDeflt(ZuCSpan id, const uint8_t *data, unsigned len);
 
   CliLink		*cliLink = nullptr;
 };
@@ -995,7 +995,7 @@ public:
 	  return static_cast<SrvLink *>(link)->processCmd(data, len);
 	});
     static_cast<Server *>(this)->Dispatcher::deflt(
-	[](void *link, ZuID id, const uint8_t *data, unsigned len) {
+	[](void *link, ZuCSpan id, const uint8_t *data, unsigned len) {
 	  return static_cast<SrvLink *>(link)->processDeflt(id, data, len);
 	});
 
@@ -1006,7 +1006,7 @@ public:
 
     Client::init(mx, cf);
     static_cast<Client *>(this)->Dispatcher::deflt(
-	[](void *link, ZuID id, const uint8_t *data, unsigned len) {
+	[](void *link, ZuCSpan id, const uint8_t *data, unsigned len) {
 	  return static_cast<CliLink_ *>(link)->processDeflt(id, data, len);
 	});
 
@@ -1348,13 +1348,13 @@ public:
   // fwd unknown app messages client <-> server using client-selected
   // server-side link (from zdash perspective, SrvLink selects CliLink)
   int processDeflt(
-      CliLink_ *cliLink, ZuID, const uint8_t *data, unsigned len) {
+      CliLink_ *cliLink, ZuCSpan, const uint8_t *data, unsigned len) {
     if (auto srvLink = cliLink->srvLink)
       srvLink->send_(data - sizeof(Zcmd::Hdr), len + sizeof(Zcmd::Hdr));
     return len;
   }
   int processDeflt(
-      SrvLink *srvLink, ZuID id, const uint8_t *data, unsigned len) {
+      SrvLink *srvLink, ZuCSpan id, const uint8_t *data, unsigned len) {
     if (auto cliLink = srvLink->cliLink)
       cliLink->send_(data - sizeof(Zcmd::Hdr), len + sizeof(Zcmd::Hdr));
     return len;
@@ -1623,7 +1623,8 @@ inline int CliLink_::processTelemetry(const uint8_t *data, unsigned len)
   return static_cast<ZDash::App *>(
       this->app())->processTelemetry(this, data, len);
 }
-inline int CliLink_::processDeflt(ZuID id, const uint8_t *data, unsigned len)
+inline int CliLink_::processDeflt(
+  ZuCSpan id, const uint8_t *data, unsigned len)
 {
   return static_cast<ZDash::App *>(
       this->app())->processDeflt(this, id, data, len);
@@ -1636,7 +1637,8 @@ inline int SrvLink::processCmd(const uint8_t *data, unsigned len)
   return static_cast<ZDash::App *>(
       this->app())->processCmd(this, data, len);
 }
-inline int SrvLink::processDeflt(ZuID id, const uint8_t *data, unsigned len)
+inline int SrvLink::processDeflt(
+  ZuCSpan id, const uint8_t *data, unsigned len)
 {
   return static_cast<ZDash::App *>(
       this->app())->processDeflt(this, id, data, len);

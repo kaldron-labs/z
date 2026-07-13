@@ -18,7 +18,7 @@ class ZmHashMgr_ : public ZmObject {
 friend ZmHashMgr;
 
   ZuDerive(ID2Params,
-    (ZmRBTreeKV<ZmIDString, ZmHashParams,
+    (ZmRBTreeKV<ZuID, ZmHashParams,
       ZmRBTreeUnique<true,
 	ZmRBTreeHeapID<"ZmHashMgr_",
 	  ZmRBTreeLock<ZmNoLock>>>>));
@@ -54,7 +54,7 @@ private:
   }
 
   void init(ZuCSpan id, const ZmHashParams &params) {
-    ZmAssert(id.length() + 1 < ZmIDStrSize);
+    ZmAssert(id.length() + 1 < ZuIDSize);
     ZmGuard<ZmPLock> guard(m_lock);
     if (ID2Params::Node *node = m_params.find(id))
       node->val() = params;
@@ -62,7 +62,7 @@ private:
       m_params.add(id, params);
   }
   ZmHashParams &params(ZuCSpan id, ZmHashParams &in) {
-    ZmAssert(id.length() + 1 < ZmIDStrSize);
+    ZmAssert(id.length() + 1 < ZuIDSize);
     {
       ZmGuard<ZmPLock> guard(m_lock);
       if (ID2Params::Node *node = m_params.find(id))

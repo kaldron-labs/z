@@ -49,10 +49,10 @@ Zquic::EndpointDiag h3EndpointDiag(Server *server)
 }
 
 template <typename Link>
-Zquic::RuntimeDiag h3RuntimeDiag(const ZmRef<Link> &link)
+Zquic::LinkDiag h3LinkDiag(const ZmRef<Link> &link)
 {
-  return ZmBlock<Zquic::RuntimeDiag>{}(
-    [&link](auto wake) { link->runtimeDiag(ZuMv(wake)); });
+  return ZmBlock<Zquic::LinkDiag>{}(
+    [&link](auto wake) { link->diag(ZuMv(wake)); });
 }
 
 void usage(int code = 1)
@@ -700,8 +700,8 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
   }
   uint64_t maxData() const { return H3DataMax; }
   uint64_t maxStreamData() const { return H3StreamDataMax; }
-  uint64_t maxStreamsBidi() const { return H3BidiMax; }
-  uint64_t maxStreamsUni() const { return H3UniMax; }
+  uint64_t maxStreamsDuplex() const { return H3BidiMax; }
+  uint64_t maxStreamsSimplex() const { return H3UniMax; }
   uint32_t maxEarlyData(Link *) const { return H3EarlyDataMax; }
   void dropRates() {
 #ifdef ZiMultiplex_FILTER
@@ -928,11 +928,11 @@ void H3Server::printDiag()
   uint64_t pathStarted = 0, pathPromoted = 0, pathUnknown = 0;
   uint64_t streamRx = 0, streamTx = 0;
   uint64_t peerOpened = 0, localLimit = 0;
-  uint64_t pto = 0, retx = 0, pc = 0;
+  uint64_t pto = 0, retx = 0, persistent = 0;
   uint64_t ptoSched = 0, ptoNoLevel = 0, ptoArmed = 0;
   uint64_t ptoExpired = 0, ptoFlush = 0, ptoRetx = 0, ptoProbe = 0;
   uint64_t lossArmed = 0, lossCanceled = 0, lossExpired = 0;
-  uint64_t cwnd = 0, ssthresh = 0, bif = 0;
+  uint64_t cwnd = 0, ssthresh = 0, bytesInFlight = 0;
   uint64_t pktIF = 0;
   uint64_t sentPkts = 0, retxPend = 0, retxTotal = 0;
   bool ptoTimer = false, lossTimer = false;
@@ -945,7 +945,7 @@ void H3Server::printDiag()
     }, ZuMv(wake));
   });
   for (const auto &link : snapshot) {
-    Zquic::RuntimeDiag d = h3RuntimeDiag(link);
+    Zquic::LinkDiag d = h3LinkDiag(link);
     ++links;
     packetsRx += d.rx.packetsRx;
     packetsTx += d.tx.packetsTx;
@@ -964,10 +964,10 @@ void H3Server::printDiag()
     ackAppendEmpty += d.tx.ackAppendEmptyTx;
     ackAppendNotDue += d.tx.ackAppendNotDueTx;
     ackSent += d.tx.ackSentTx;
-    controlOnly += d.tx.controlOnlyPacketsTx;
-    ackControl += d.tx.ackControlPacketsTx;
-    streamControl += d.tx.streamControlPacketsTx;
-    ackStreamControl += d.tx.ackStreamControlPacketsTx;
+    controlOnly += d.tx.ctlOnlyPktsTx;
+    ackControl += d.tx.ackCtlPktsTx;
+    streamControl += d.tx.streamCtlPktsTx;
+    ackStreamControl += d.tx.ackStreamCtlPktsTx;
     cryptoPkts += d.tx.cryptoPacketsTx;
     otherPkts += d.tx.otherPacketsTx;
     streamFrames += d.tx.streamFramesTx;
@@ -975,7 +975,7 @@ void H3Server::printDiag()
     cryptoFrames += d.tx.cryptoFramesTx;
     invalidStream += d.rx.invalidStreamFrames;
     closedStream += d.rx.closedStreamFrames;
-    suspiciousCloses += d.rx.suspiciousStreamCloses;
+    suspiciousCloses += d.rx.suspectStreamCloses;
     streamMaxClosed += d.rx.streamMaxClosedRx;
     streamMaxInvalid += d.rx.streamMaxInvalidRx;
     streamCtlClosed += d.rx.streamCtlClosedRx;
@@ -1003,7 +1003,7 @@ void H3Server::printDiag()
     pathSame += d.tx.pathRxSame;
     pathNull += d.tx.pathRxNull;
     pathActive += d.tx.pathValidationActive;
-    pathStarted += d.tx.pathValidationStarted;
+    pathStarted += d.tx.pathValidating;
     pathPromoted += d.tx.pathValidationPromoted;
     pathUnknown += d.tx.pathResponseUnknown;
     streamRx += d.rx.streamBytesRx;
@@ -1022,10 +1022,10 @@ void H3Server::printDiag()
     lossArmed += d.tx.lossArmed;
     lossCanceled += d.tx.lossCanceled;
     lossExpired += d.tx.lossExpired;
-    pc += d.tx.persistentCongestion;
+    persistent += d.tx.persistentCongestion;
     cwnd += d.tx.congestionWindow;
     ssthresh += d.tx.congestionSSThresh;
-    bif += d.tx.congestionBytesInFlight;
+    bytesInFlight += d.tx.bytesInFlight;
     ptoTimer = ptoTimer || d.tx.ptoTimerActive;
     lossTimer = lossTimer || d.tx.lossTimerActive;
     for (unsigned i = 0; i < Zquic::PktNumSpace::N; ++i) {
@@ -1059,7 +1059,8 @@ void H3Server::printDiag()
     pathUnknown,
     ptoSched, ptoNoLevel, ptoArmed, ptoExpired, ptoFlush, ptoRetx, ptoProbe,
     ptoTimer, lossTimer, pktIF, sentPkts, retxPend, retxTotal,
-    lossArmed, lossCanceled, lossExpired, cwnd, ssthresh, pc, bif
+    lossArmed, lossCanceled, lossExpired, cwnd, ssthresh,
+    persistent, bytesInFlight
   ](auto &s) {
     s << "h3 diag active=" << active <<
       " requests=" << requests <<
@@ -1119,8 +1120,8 @@ void H3Server::printDiag()
 	lossExpired << ']' <<
       " cwnd=" << cwnd <<
       " ssthresh=" << ssthresh <<
-      " pc=" << pc <<
-      " bif=" << bif;
+      " persistent=" << persistent <<
+      " bytesInFlight=" << bytesInFlight;
   }));
 #endif
 }
@@ -1325,11 +1326,11 @@ int Zhttpd::run(int argc, const char *const *argv)
 	    .certPath(state.options.cert).keyPath(state.options.key).alpn(alpn)
 	    .keyLogPath(state.options.keyLog)
 	    .maxData(H3DataMax).maxStreamData(H3StreamDataMax)
-	    .maxStreamsBidi(H3BidiMax).maxStreamsUni(H3UniMax)
+	    .maxStreamsDuplex(H3BidiMax).maxStreamsSimplex(H3UniMax)
 	    .heartBeat(quicHeartbeat(state.options))
 	    .migrationMode(migrationMode(state.options))
-	    .migrationCIDReserve(state.options.quicMigrationCIDReserve)
-	    .migrationCloseOnFailure(
+	    .migCIDRes(state.options.quicMigrationCIDReserve)
+	    .migCloseOnFail(
 	      state.options.quicMigrationCloseOnFailure))) {
       ZiLOG(Error, "zhttpd", "H3 server initialization failed");
       restoreSigHandlers(oldInt, oldTerm);

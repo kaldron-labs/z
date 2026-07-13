@@ -47,11 +47,7 @@ using BodyData = ZtString<ZtStringHeapID<"Zhttp.Fallback.BodyData">>;
 ZmRef<RxQueue::Node> mkBuf(const uint8_t *data, unsigned len)
 {
   ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
-  auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
-  if (len) {
-    ::memcpy(iobuf->data(), data, len);
-    iobuf->length = len;
-  }
+  if (len) buf->append(data, len);
   return buf;
 }
 

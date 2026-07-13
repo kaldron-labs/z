@@ -23,6 +23,7 @@
 
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuHash.hh>
+#include <zlib/ZuID.hh>
 
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZmAtomic.hh>
@@ -234,10 +235,18 @@ using ZmHashID = ZmHashID_<ZuStringT<ID>, NTP>;
 
 // ZmHashShadow - shadow nodes, do not manage ownership
 template <bool Shadow_, typename NTP = ZmHash_Defaults>
-struct ZmHashShadow : public NTP {
-  enum { Shadow = Shadow_ };
+struct ZmHashShadow_;
+template <typename NTP>
+struct ZmHashShadow_<true, NTP> : public NTP {
+  enum { Shadow = true };
   struct HeapID : public ZuStringT<""> { };
 };
+template <typename NTP>
+struct ZmHashShadow_<false, NTP> : public NTP {
+  enum { Shadow = false };
+};
+template <typename NTP = ZmHash_Defaults>
+using ZmHashShadow = ZmHashShadow_<true, NTP>;
 
 // ZmHashHeapID - the heap ID - also sets ZmHashID if that remains the default
 template <
@@ -1180,7 +1189,7 @@ private:
     unlockAll();
   }
 
-  ZmIDString		m_id;
+  ZuID			m_id;
   Cmp			m_cmp;
   unsigned		m_loadFactor = 0;
   ZmAtomic<unsigned>	m_count = 0;

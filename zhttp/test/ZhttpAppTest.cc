@@ -17,7 +17,7 @@ using Zhttp::Test::TempDir;
 using Zhttp::Test::loopbackPort;
 using Zhttp::Test::printFile;
 using Zhttp::Test::systemOK;
-using Zhttp::Test::writeSelfSignedLocalhostCert;
+using Zhttp::Test::writeLocalhostCert;
 
 bool writeHTTPAppScript(
   ZuCSpan path, const char *tempPath_, unsigned port, ZuCSpan transport,
@@ -116,7 +116,7 @@ void testAppTransport(ZuCSpan transport, bool ipv6 = false)
     "Zhttp app temporary directory failed");
   ZtString<> certPath, keyPath;
   if (transport != "http")
-    ZuCHECK(writeSelfSignedLocalhostCert(temp, certPath, keyPath),
+    ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
       "Zhttp app certificate generation failed");
   unsigned port = loopbackPort();
   ZuCHECK(port, "Zhttp app port allocation failed");

@@ -150,7 +150,7 @@ int main(int argc_, char **argv)
 
     db->init(ZdbCf(cf), mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
-	ZiLOG(Info, "zdbpqtest", ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	ZiLOG(Info, "zdbpqtest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
 	  s << "ACTIVE (was " << id << ')';
 	}));
       },

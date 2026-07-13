@@ -40,7 +40,7 @@ public:
 
   void final() { }
 
-  ZmRef<ZvAnyLink> createLink(ZuID id);
+  ZmRef<ZvAnyLink> createLink(ZuCSpan id);
 };
 
 enum { Connected, Disconnected, Reconnect }; // actions
@@ -86,7 +86,7 @@ public:
   using Pool = ZvTxPool<Link>;
   using Base = ZvLink<Link, Pool>;
 
-  Link(ZuID id) : Base{id} { }
+  Link(ZuCSpan id) : Base{id} { }
 
   ZuInline Engine *engine() {
     return static_cast<Engine *>(ZvAnyLink::engine()); // actually ZvAnyTx
@@ -144,7 +144,7 @@ public:
   ZmRef<ZvIOMsg> retrieve_(ZvSeqNo, ZvSeqNo) { return nullptr; }
 };
 
-ZmRef<ZvAnyLink> App::createLink(ZuID id) { return new Link(id); }
+ZmRef<ZvAnyLink> App::createLink(ZuCSpan id) { return new Link(id); }
 
 void Engine::init(Mgr *mgr, App *app, ZiMultiplex *mx, const ZvCf *cf)
 {

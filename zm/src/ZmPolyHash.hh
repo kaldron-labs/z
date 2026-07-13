@@ -39,7 +39,9 @@ struct ZmPolyHash_Defaults {
 template <typename Lock, typename NTP = ZmPolyHash_Defaults>
 using ZmPolyHashLock = ZmHashLock<Lock, NTP>;
 template <bool Shadow, typename NTP = ZmPolyHash_Defaults>
-using ZmPolyHashShadow = ZmHashShadow<Shadow, NTP>;
+using ZmPolyHashShadow_ = ZmHashShadow_<Shadow, NTP>;
+template <typename NTP = ZmPolyHash_Defaults>
+using ZmPolyHashShadow = ZmHashShadow<NTP>;
 template <typename HeapID, typename NTP = ZmPolyHash_Defaults>
 using ZmPolyHashHeapID_ = ZmHashHeapID_<HeapID, NTP>;
 template <ZuString HeapID, typename NTP = ZmPolyHash_Defaults>
@@ -71,8 +73,8 @@ private:
       ZmHashNode<Node,
 	ZmHashKey<Axor,
 	  ZmHashLock<Lock,
-	    ZmHashShadow<Shadow_,
-	      ZmHashHeapID_<HeapID, // must come after ID
+	    ZmHashShadow_<Shadow_,
+	      ZmHashHeapID_<HeapID, // must come after Shadow
 		ZmHashSharded<Sharded>>>>>>>;
   // resolve index hash table type given key ID and node type
   template <unsigned KeyID, typename Node_, typename O = T>

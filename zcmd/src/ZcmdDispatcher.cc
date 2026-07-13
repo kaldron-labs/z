@@ -21,7 +21,7 @@ void Dispatcher::deflt(DefltFn fn)
   m_defltFn = fn;
 }
 
-void Dispatcher::map(ZuID id, Fn fn)
+void Dispatcher::map(ZuCSpan id, Fn fn)
 {
   Guard guard(m_lock);
   if (auto data = m_fnMap.find(id))
@@ -31,7 +31,7 @@ void Dispatcher::map(ZuID id, Fn fn)
 }
 
 int Dispatcher::dispatch(
-  ZuID id, void *link, ZmRef<ZiIOBuf> buf, ZuBSpan out)
+  ZuCSpan id, void *link, ZmRef<ZiIOBuf> buf, ZuBSpan out)
 {
   if (auto node = m_fnMap.find(id))
     return (node->template p<1>())(link, ZuMv(buf), out);

@@ -53,7 +53,7 @@ ZtEnumNS(ZvLinkState, int8_t,
 
 class ZvAPI ZvAnyTx : public ZmPolymorph {
 protected:
-  ZvAnyTx(ZuID id);
+  ZvAnyTx(ZuCSpan id);
   
   ZvAnyTx(const ZvAnyTx &) = delete;
   ZvAnyTx &operator =(const ZvAnyTx &) = delete;
@@ -63,11 +63,11 @@ protected:
 public:
   using Mx = ZiMultiplex;
 
-  static ZuID IDAxor(const ZvAnyTx *tx) { return tx->id(); }
+  static ZuCSpan IDAxor(const ZvAnyTx *tx) { return tx->id(); }
 
   ZvEngine *engine() const { return m_engine; }
   Mx *mx() const { return m_mx; }
-  ZuID id() const { return m_id; }
+  ZuCSpan id() const { return m_id; }
 
   template <typename T = uintptr_t>
   T appData() const { return static_cast<T>(m_appData); }
@@ -86,7 +86,7 @@ class ZvAPI ZvAnyTxPool : public ZvAnyTx {
   ZvAnyTxPool &operator =(const ZvAnyTxPool &) = delete;
 
 protected:
-  ZvAnyTxPool(ZuID id) : ZvAnyTx(id) { }
+  ZvAnyTxPool(ZuCSpan id) : ZvAnyTx(id) { }
 
 public:
   virtual ZvIOQueue *txQueue() const = 0;
@@ -103,7 +103,7 @@ friend ZvEngine;
   using StateReadGuard = ZmReadGuard<StateLock>;
 
 protected:
-  ZvAnyLink(ZuID id);
+  ZvAnyLink(ZuCSpan id);
 
 public:
   int state() const { return m_state; }
@@ -168,7 +168,7 @@ private:
 
 // Callbacks to the application from the engine implementation
 struct ZvAPI ZvEngineApp {
-  virtual ZmRef<ZvAnyLink> createLink(ZuID) = 0;
+  virtual ZmRef<ZvAnyLink> createLink(ZuCSpan) = 0;
 };
 
 // Note: When event/flow steering, referenced objects must remain
@@ -227,7 +227,7 @@ friend ZvAnyLink;
   using StateReadGuard = ZmReadGuard<StateLock>;
 
 public:
-  static ZuID IDAxor(const ZvEngine *e) { return e->id(); }
+  static ZuCSpan IDAxor(const ZvEngine *e) { return e->id(); }
 
   using Mx = ZiMultiplex;
   using Mgr = ZvEngineMgr;
@@ -260,7 +260,7 @@ public:
 
   Mgr *mgr() const { return m_mgr; }
   ZvEngineApp *app() const { return m_app; }
-  ZuID id() const { return m_id; }
+  ZuCSpan id() const { return m_id; }
   Mx *mx() const { return m_mx; }
   unsigned rxThread() const { return m_rxThread; }
   unsigned txThread() const { return m_txThread; }
@@ -289,7 +289,7 @@ public:
   void mgrAddEngine() { mgr()->addEngine(this); }
   void mgrDelEngine() { mgr()->delEngine(this); }
 
-  ZmRef<ZvAnyLink> appCreateLink(ZuID id) {
+  ZmRef<ZvAnyLink> appCreateLink(ZuCSpan id) {
     return app()->createLink(id);
   }
   void mgrUpdLink(ZvAnyLink *link) { mgr()->updLink(link); }
@@ -334,12 +334,12 @@ private:
 	ZmRBTreeUnique<true>>>));
 
 public:
-  ZmRef<ZvAnyTxPool> txPool(ZuID id) {
+  ZmRef<ZvAnyTxPool> txPool(ZuCSpan id) {
     ReadGuard guard(m_lock);
     return m_txPools.findVal(id);
   }
   template <typename TxPool>
-  ZmRef<ZvAnyTxPool> updateTxPool(ZuID id, const ZvCf *cf) {
+  ZmRef<ZvAnyTxPool> updateTxPool(ZuCSpan id, const ZvCf *cf) {
     Guard guard(m_lock);
     ZmRef<TxPool> pool;
     if (pool = m_txPools.findVal(id)) {
@@ -354,7 +354,7 @@ public:
     mgrAddQueue(pool->txQueue());
     return pool;
   }
-  ZmRef<ZvAnyTxPool> delTxPool(ZuID id) {
+  ZmRef<ZvAnyTxPool> delTxPool(ZuCSpan id) {
     Guard guard(m_lock);
     ZmRef<ZvAnyTxPool> txPool;
     if (txPool = m_txPools.delVal(id)) {
@@ -364,11 +364,11 @@ public:
     return txPool;
   }
 
-  ZmRef<ZvAnyLink> link(ZuID id) {
+  ZmRef<ZvAnyLink> link(ZuCSpan id) {
     ReadGuard guard(m_lock);
     return m_links.findVal(id);
   }
-  ZmRef<ZvAnyLink> updateLink(ZuID id, const ZvCf *cf) {
+  ZmRef<ZvAnyLink> updateLink(ZuCSpan id, const ZvCf *cf) {
     Guard guard(m_lock);
     ZmRef<ZvAnyLink> link;
     if (link = m_links.findVal(id)) {
@@ -388,7 +388,7 @@ public:
     mgrAddQueue(link->txQueue());
     return link;
   }
-  ZmRef<ZvAnyLink> delLink(ZuID id) {
+  ZmRef<ZvAnyLink> delLink(ZuCSpan id) {
     Guard guard(m_lock);
     ZmRef<ZvAnyLink> link;
     if (link = m_links.delVal(id)) {
@@ -449,7 +449,7 @@ public:
 
   using Base::engine;
 
-  ZvTx(ZuID id) : Base{id} { }
+  ZvTx(ZuCSpan id) : Base{id} { }
   
   void init(ZvEngine *engine) { Base::init(engine); }
 
@@ -498,7 +498,7 @@ public:
   using Base::txRun;
   using Base::txInvoke;
 
-  ZvTxPool(ZuID id) : Base{id} { }
+  ZvTxPool(ZuCSpan id) : Base{id} { }
 
   ZvIOQueue *txQueue() const { return Tx::txQueue(); }
 
@@ -594,7 +594,7 @@ public:
   using Base::txRun;
   using Base::txInvoke;
 
-  ZvLink(ZuID id) : Base{id} { }
+  ZvLink(ZuCSpan id) : Base{id} { }
 
   void init(ZvEngine *engine) { Base::init(engine); }
 

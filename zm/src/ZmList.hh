@@ -79,16 +79,18 @@ struct ZmListNode : public NTP {
 
 // ZmListShadow - shadow nodes, do not manage ownership
 template <bool Shadow_, typename NTP = ZmList_Defaults>
-struct ZmListShadow;
+struct ZmListShadow_;
 template <typename NTP>
-struct ZmListShadow<true, NTP> : public NTP {
+struct ZmListShadow_<true, NTP> : public NTP {
   enum { Shadow = true };
   struct HeapID : public ZuStringT<""> { };
 };
 template <typename NTP>
-struct ZmListShadow<false, NTP> : public NTP {
+struct ZmListShadow_<false, NTP> : public NTP {
   enum { Shadow = false };
 };
+template <typename NTP = ZmList_Defaults>
+using ZmListShadow = ZmListShadow_<true, NTP>;
 
 // ZmListHeapID - the heap ID
 template <ZuString HeapID_, class NTP = ZmList_Defaults>

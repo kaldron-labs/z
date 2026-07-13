@@ -22,9 +22,9 @@ ZmScheduler::ZmScheduler(ZmSchedParams params) : m_params{ZuMv(params)}
     auto &thread = m_params.thread(sid);
     if (!thread.name()) {
       if (!sid)
-	thread.name(ZmThreadName{} << m_params.id() << ":timer");
+	thread.name(ZuID{} << m_params.id() << ":timer");
       else
-	thread.name(ZmThreadName{} << m_params.id() << ':' << ZuBoxed(sid));
+	thread.name(ZuID{} << m_params.id() << ':' << ZuBoxed(sid));
     }
     if (!thread.stackSize()) thread.stackSize(m_params.stackSize());
     if (thread.priority() < 0) thread.priority(m_params.priority());

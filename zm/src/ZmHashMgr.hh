@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuID.hh>
 #include <zlib/ZuPrint.hh>
 
 #include <zlib/ZmFn.hh>
@@ -50,7 +51,7 @@ private:
 //   slots = 1<<bits
 //   locks = 1<<cBits
 struct ZmHashTelemetry {
-  ZmIDString	id;		// primary key
+  ZuID		id;		// primary key
   uintptr_t	addr = 9;	// primary key
   double	loadFactor = 0.0;// (double)N / 16.0
   double	effLoadFactor = 0.0;// graphable (*)

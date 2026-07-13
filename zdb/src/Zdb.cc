@@ -623,9 +623,9 @@ struct DBTelemetry : public ZuStructShim<DBTelemetry, ZuFields<Tel::DB>> {
   DBTelemetry(const DB &db_) : db{db_}, state_{db.state()} { }
 
   auto self() const { return db.m_self->id(); }
-  auto leader() const { return db.m_leader ? db.m_leader->id() : ZuID{}; }
-  auto prev() const { return db.m_prev ? db.m_prev->id() : ZuID{}; }
-  auto next() const { return db.m_next ? db.m_next->id() : ZuID{}; }
+  auto leader() const { return db.m_leader ? db.m_leader->id() : ZuCSpan{}; }
+  auto prev() const { return db.m_prev ? db.m_prev->id() : ZuCSpan{}; }
+  auto next() const { return db.m_next ? db.m_next->id() : ZuCSpan{}; }
   auto state() const { return state_; }
   auto active() const { return state_ == HostState::Active; }
   auto recovering() const { return db.m_recovering; }
@@ -785,7 +785,7 @@ void DB::connected(ZmRef<Cxn> cxn)
   m_cxns.addNode(ZuMv(cxn));
 }
 
-void DB::associate(Cxn *cxn, ZuID hostID)
+void DB::associate(Cxn *cxn, ZuCSpan hostID)
 {
   ZmAssert(invoked());
 
@@ -854,7 +854,7 @@ void Host::cancelConnect()
 void Cxn_::hbTimeout()
 {
   ZiLOG(Info, "Zdb",
-      ([id = m_host ? m_host->id() : ZuID{"unknown"},
+      ([id = m_host ? ZuID{m_host->id()} : ZuID{"unknown"},
 	ip = info().remoteIP, port = info().remotePort](auto &s) {
     s << "heartbeat timeout on host "
       << id << " (" << ip << ':' << port << ')';
@@ -866,7 +866,7 @@ void Cxn_::hbTimeout()
 void Cxn_::disconnected(bool)
 {
   ZiLOG(Info, "Zdb",
-      ([id = m_host ? m_host->id() : ZuID{"unknown"},
+      ([id = m_host ? ZuID{m_host->id()} : ZuID{"unknown"},
 	ip = info().remoteIP, port = info().remotePort](auto &s) {
     s << "disconnected from host "
       << id << " (" << ip << ':' << port << ')';
@@ -1298,7 +1298,7 @@ void Cxn_::hbRcvd(const fbs::Heartbeat *hb)
 {
   if (!m_host)
     m_db->associate(
-      static_cast<Cxn *>(this), ZfbTransform::ID::load(hb->host()));
+      static_cast<Cxn *>(this), Zfb::Load::str(hb->host()));
 
   if (!m_host) { disconnect(); return; }
 
@@ -1421,9 +1421,9 @@ void Cxn_::hbSend()
   Zfb::IOBuilder fbb{new ZiTxBufAlloc<HBBufSize, MaxBufSize, "Zdb.TxBuf">{}};
   {
     const auto &dbState = self->dbState();
-    auto id = ZfbTransform::ID::save(self->id());
+    auto id = Zfb::Save::str(fbb, self->id());
     auto msg = fbs::CreateMsg(fbb, fbs::Body::Heartbeat, 
-	fbs::CreateHeartbeat(fbb, &id,
+	fbs::CreateHeartbeat(fbb, id,
 	  m_db->state(), dbState.save(fbb)).Union());
     fbb.Finish(msg);
   }
@@ -1519,8 +1519,8 @@ AnyTable::AnyTable(DB *db, TableCf *cf, IOBufAllocFn fn) :
   m_nextUN.length(n);
   m_cacheUN.length(n);
   m_bufCacheUN.length(n);
-  ZmIDString cacheID = "Zdb.CacheUN."; cacheID << cf->id;
-  ZmIDString bufCacheID = "Zdb.BufCacheUN."; bufCacheID << cf->id;
+  ZuID cacheID = "Zdb.CacheUN."; cacheID << cf->id;
+  ZuID bufCacheID = "Zdb.BufCacheUN."; bufCacheID << cf->id;
   for (unsigned i = 0; i < n; i++) {
     m_nextUN[i] = 0;
     m_cacheUN[i] = new CacheUN{cacheID};
