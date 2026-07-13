@@ -170,9 +170,9 @@ union TelData {
   Queue:Queue,
   Engine:Engine,
   Link:Link,
-  DBTable:DBTable,
-  DBHost:DBHost,
-  DB:DB,
+  DBTable:Zdb_.Tel.fbs.DBTable,
+  DBHost:Zdb_.Tel.fbs.DBHost,
+  DB:Zdb_.Tel.fbs.DB,
   App:App,
   Alert:Alert
 }

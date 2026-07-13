@@ -1,7 +1,7 @@
 include "zfb_types.fbs";
 namespace zfbtest2.fbs;
 table Object {
-  id:Zfb.ID;
+  id:string;
   price:int32;
   flags:Zfb.Bitmap;
 }

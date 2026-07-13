@@ -10,7 +10,7 @@ table DBState {
   table_states:[TableState];
 }
 table Heartbeat {
-  host:Zfb.ID;
+  host:string;
   state:uint32;
   db_state:DBState;
 }
