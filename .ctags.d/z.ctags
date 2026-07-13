@@ -16,13 +16,13 @@
 --kinddef-FlatBuffers=u,union,unions
 --kinddef-FlatBuffers=r,service,services
 --kinddef-FlatBuffers=v,value,enum values
---regex-FlatBuffers=/^[ \t]*namespace[ \t]+([A-Za-z_][A-Za-z0-9_.]*)[ \t]*;/\1/n/
---regex-FlatBuffers=/^[ \t]*table[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/t/
---regex-FlatBuffers=/^[ \t]*struct[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/s/
---regex-FlatBuffers=/^[ \t]*enum[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/e/
---regex-FlatBuffers=/^[ \t]*union[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/u/
---regex-FlatBuffers=/^[ \t]*rpc_service[ \t]+([A-Za-z_][A-Za-z0-9_]*)/\1/r/
---regex-FlatBuffers=/^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*(=[^,}]+)?[ \t]*([,}]|$)/\1/v/
+--regex-FlatBuffers=/^\s*namespace\s+(\w+)\s*;/\1/n/
+--regex-FlatBuffers=/^\s*table\s+(\w+)/\1/t/
+--regex-FlatBuffers=/^\s*struct\s+(\w+)/\1/s/
+--regex-FlatBuffers=/^\s*enum\s+(\w+)/\1/e/
+--regex-FlatBuffers=/^\s*union\s+(\w+)/\1/u/
+--regex-FlatBuffers=/^\s*rpc_service\s+(\w+)/\1/r/
+--regex-FlatBuffers=/^\s*(\w+)\s*(=[^,}]+)?\s*([,}]|$)/\1/v/
 
 --_tabledef-C++=root
 --_tabledef-C++=ztenum_arg1
