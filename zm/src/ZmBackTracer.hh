@@ -15,6 +15,7 @@
 
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuUnion.hh>
+#include <zlib/ZuID.hh>
 
 #include <zlib/ZmBackTrace.hh>
 #include <zlib/ZmThread.hh>
@@ -26,7 +27,7 @@ public:
   ~ZmBackTracer() { }
 
 private:
-  using Data = ZuTuple<ZmThreadID, ZmThreadName, ZmBackTrace>;
+  using Data = ZuTuple<ZmThreadID, ZuID, ZmBackTrace>;
   using Capture = ZuUnion<void, Data>;
 
   using Lock = ZmPLock;

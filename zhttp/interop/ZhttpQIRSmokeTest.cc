@@ -20,7 +20,7 @@ using namespace ZuTestUtil;
 using Zhttp::Test::TempDir;
 using Zhttp::Test::loopbackPort;
 using Zhttp::Test::systemOK;
-using Zhttp::Test::writeSelfSignedLocalhostCert;
+using Zhttp::Test::writeLocalhostCert;
 
 static int exitCode_(int status)
 {
@@ -160,7 +160,7 @@ static bool runHQSingleFile_(ZuCSpan testCase)
   ZtString<> keyPath;
   if (ZiFile::mkdir(www) != Zi::OK ||
       ZiFile::mkdir(downloads) != Zi::OK ||
-      !writeSelfSignedLocalhostCert(temp, certPath, keyPath))
+      !writeLocalhostCert(temp, certPath, keyPath))
     return false;
 
   ZtString<> src;
@@ -229,7 +229,7 @@ static void testH3SingleFile()
   ZtString<> keyPath;
   ZuCHECK(ZiFile::mkdir(www) == Zi::OK, "www created");
   ZuCHECK(ZiFile::mkdir(downloads) == Zi::OK, "downloads created");
-  ZuCHECK(writeSelfSignedLocalhostCert(temp, certPath, keyPath),
+  ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "localhost cert created");
 
   ZtString<> src;
@@ -271,7 +271,7 @@ static void testHQMultiFile()
   ZtString<> keyPath;
   ZuCHECK(ZiFile::mkdir(www) == Zi::OK, "www created");
   ZuCHECK(ZiFile::mkdir(downloads) == Zi::OK, "downloads created");
-  ZuCHECK(writeSelfSignedLocalhostCert(temp, certPath, keyPath),
+  ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "localhost cert created");
 
   ZtString<> nested;
@@ -327,7 +327,7 @@ static void testH3MultiFile()
   ZtString<> keyPath;
   ZuCHECK(ZiFile::mkdir(www) == Zi::OK, "www created");
   ZuCHECK(ZiFile::mkdir(downloads) == Zi::OK, "downloads created");
-  ZuCHECK(writeSelfSignedLocalhostCert(temp, certPath, keyPath),
+  ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "localhost cert created");
 
   ZtString<> nested;

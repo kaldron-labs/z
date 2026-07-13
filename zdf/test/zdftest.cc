@@ -263,7 +263,7 @@ int main(int argc, char **argv)
 
     db->init(ZuMv(dbCf), mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
-	ZiLOG(Info, "zdftest", ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	ZiLOG(Info, "zdftest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
 	  s << "ACTIVE (was " << id << ')';
 	}));
 	done.post();

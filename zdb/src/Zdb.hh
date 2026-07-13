@@ -63,6 +63,7 @@
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuHash.hh>
+#include <zlib/ZuID.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuInt.hh>
 #include <zlib/ZuDerive.hh>
@@ -929,8 +930,8 @@ public:
 
   Table(DB *db, TableCf *cf) : AnyTable{db, cf, Table::allocBuf} {
     unsigned n = cf->nShards;
-    ZmIDString cacheID = "Zdb.Cache."; cacheID << cf->id;
-    ZmIDString bufCacheID = "Zdb.BufCache."; bufCacheID << cf->id;
+    ZuID cacheID = "Zdb.Cache."; cacheID << cf->id;
+    ZuID bufCacheID = "Zdb.BufCache."; bufCacheID << cf->id;
     m_cache.size(n);
     m_bufCache.size(n);
     for (unsigned i = 0; i < n; i++) {
@@ -1447,8 +1448,8 @@ struct HostCf {
   ZvCfString	up;
   ZvCfString	down;
 
-  HostCf(ZuID id_) : id{id_}, standalone{true} { }
-  HostCf(ZuID id_, const ZvCf *cf) : id{id_} {
+  HostCf(ZuCSpan id_) : id{id_}, standalone{true} { }
+  HostCf(ZuCSpan id_, const ZvCf *cf) : id{id_} {
     if (!(standalone = cf->getBool("standalone", false))) {
       priority = cf->getInt<true>("priority", 0, 1<<30);
       ip = cf->get<true>("ip");
@@ -1458,7 +1459,7 @@ struct HostCf {
     down = cf->get("down");
   }
 
-  static ZuID IDAxor(const HostCf &cfg) { return cfg.id; }
+  static ZuCSpan IDAxor(const HostCf &cfg) { return cfg.id; }
 };
 
 ZuDerive(HostCfs,
@@ -1481,7 +1482,7 @@ protected:
 public:
   const HostCf &config() const { return *m_cf; }
 
-  ZuID id() const { return m_cf->id; }
+  ZuCSpan id() const { return m_cf->id; }
   int priority() const { return m_cf->priority; }
   bool standalone() const { return m_cf->standalone; }
   ZiIP ip() const { return m_cf->ip; }
@@ -1504,7 +1505,7 @@ public:
   }
   friend ZuPrintFn ZuPrintType(Host *);
 
-  static ZuID IDAxor(const Host &h) { return h.id(); }
+  static ZuCSpan IDAxor(const Host &h) { return h.id(); }
   static ZuTuple<int, ZuID> IndexAxor(const Host &h) {
     return ZuFwdTuple(h.priority(), h.id());
   }
@@ -1562,7 +1563,7 @@ private:
 ZuDerive(HostIndex,
   (ZmRBTree<Host,
     ZmRBTreeNode<Host,
-      ZmRBTreeShadow<true,
+      ZmRBTreeShadow<
 	ZmRBTreeKey<Host::IndexAxor,
 	  ZmRBTreeUnique<true>>>>>));
 ZuDerive(Hosts,
@@ -1586,7 +1587,7 @@ struct DBHandler {
 // --- DB configuration
 
 struct DBCf {
-  ZmThreadName		thread;
+  ZuID			thread;
   mutable unsigned	sid = 0;
   ZmRef<ZvCf>		storeCf;
   TableCfs		tableCfs;
@@ -1637,11 +1638,11 @@ struct DBCf {
     return &node->val();
   }
 
-  const HostCf *hostCf(ZuID id) const {
+  const HostCf *hostCf(ZuCSpan id) const {
     if (auto node = hostCfs.findPtr(id)) return &node->val();
     return nullptr;
   }
-  HostCf *hostCf(ZuID id) {
+  HostCf *hostCf(ZuCSpan id) {
     auto node = hostCfs.findPtr(id);
     if (!node) hostCfs.addNode(node = new HostCfs::Node{id});
     return &node->val();
@@ -1818,7 +1819,7 @@ private:
   ZiConnection *accepted(const ZiCxnInfo &ci);
   void connected(ZmRef<Cxn> cxn);
   void disconnected(ZmRef<Cxn> cxn);
-  void associate(Cxn *cxn, ZuID hostID);
+  void associate(Cxn *cxn, ZuCSpan hostID);
   void associate(Cxn *cxn, Host *host);
 
   // heartbeats and voting
@@ -2151,7 +2152,7 @@ struct Record_Print {
 struct HB_Print {
   const fbs::Heartbeat *hb = nullptr;
   template <typename S> void print(S &s) const {
-    auto id = ZfbTransform::ID::load(hb->host());
+    auto id = Zfb::Load::str(hb->host());
     s << "{host=" << id
       << " state=" << HostState::name(hb->state())
       << " dbState=" << DBState{hb->dbState()} << "}";

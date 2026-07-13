@@ -420,16 +420,16 @@ int http3DNS(
 }
 
 template <typename Link>
-Zquic::RuntimeDiag runtimeDiag(Link *link)
+Zquic::LinkDiag linkDiag(Link *link)
 {
-  return ZmBlock<Zquic::RuntimeDiag>{}(
-    [link](auto wake) { link->runtimeDiag(ZuMv(wake)); });
+  return ZmBlock<Zquic::LinkDiag>{}(
+    [link](auto wake) { link->diag(ZuMv(wake)); });
 }
 
 template <typename Link>
-Zquic::RuntimeDiag runtimeDiag(const ZmRef<Link> &link)
+Zquic::LinkDiag linkDiag(const ZmRef<Link> &link)
 {
-  return runtimeDiag(link.ptr());
+  return linkDiag(link.ptr());
 }
 
 template <typename Link>
@@ -2012,13 +2012,13 @@ struct QUICClient : public Zquic::Client<QUICClient> {
 #endif
   }
   void printDiag(Link *, ZuCSpan);
-  uint64_t maxStreamsBidi() const {
+  uint64_t maxStreamsDuplex() const {
     ZiAssert(run, "zhttp", (), "QUIC client stream limit without run",
       return H3BidiMax);
     return run->options.concurrency > H3BidiMax ?
       run->options.concurrency : H3BidiMax;
   }
-  uint64_t maxStreamsUni() const { return H3UniMax; }
+  uint64_t maxStreamsSimplex() const { return H3UniMax; }
   H3EarlySession *earlySession_() {
     ZiAssert(h3Session, "zhttp", (), "QUIC client early data without session",
       return nullptr);
@@ -2220,7 +2220,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
 {
 #ifdef Zquic_DEBUG
   if (!link) return;
-  Zquic::RuntimeDiag diag = runtimeDiag(link);
+  Zquic::LinkDiag diag = linkDiag(link);
   Zquic::EndpointDiag epDiag = endpointDiag(link);
   unsigned complete, failed, scheduled, active, pending;
   {
@@ -2253,10 +2253,10 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     ackAppendEmpty = diag.tx.ackAppendEmptyTx,
     ackAppendNotDue = diag.tx.ackAppendNotDueTx,
     ackSent = diag.tx.ackSentTx,
-    controlOnly = diag.tx.controlOnlyPacketsTx,
-    ackControl = diag.tx.ackControlPacketsTx,
-    streamControl = diag.tx.streamControlPacketsTx,
-    ackStreamControl = diag.tx.ackStreamControlPacketsTx,
+    controlOnly = diag.tx.ctlOnlyPktsTx,
+    ackControl = diag.tx.ackCtlPktsTx,
+    streamControl = diag.tx.streamCtlPktsTx,
+    ackStreamControl = diag.tx.ackStreamCtlPktsTx,
     cryptoPkts = diag.tx.cryptoPacketsTx,
     otherPkts = diag.tx.otherPacketsTx,
     streamFrames = diag.tx.streamFramesTx,
@@ -2289,7 +2289,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     pathSame = diag.tx.pathRxSame,
     pathNull = diag.tx.pathRxNull,
     pathActive = diag.tx.pathValidationActive,
-    pathStarted = diag.tx.pathValidationStarted,
+    pathStarted = diag.tx.pathValidating,
     pathPromoted = diag.tx.pathValidationPromoted,
     pathUnknown = diag.tx.pathResponseUnknown,
     migReq = diag.tx.migration.requested,
@@ -2327,7 +2327,7 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     streamRx = diag.rx.streamBytesRx, streamTx = diag.tx.streamBytesTx,
     invalidStream = diag.rx.invalidStreamFrames,
     closedStream = diag.rx.closedStreamFrames,
-    suspiciousCloses = diag.rx.suspiciousStreamCloses,
+    suspiciousCloses = diag.rx.suspectStreamCloses,
     invalidKeys = diag.rx.invalidKeyPhases,
     failures = diag.failures(),
     pto = diag.tx.ptoCount, retx = diag.tx.retransmittedFrames,
@@ -2346,8 +2346,8 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
     rt2 = diag.tx.retransmittable[2],
     cwnd = diag.tx.congestionWindow,
     ssthresh = diag.tx.congestionSSThresh,
-    pc = diag.tx.persistentCongestion,
-    bif = diag.tx.congestionBytesInFlight
+    persistent = diag.tx.persistentCongestion,
+    bytesInFlight = diag.tx.bytesInFlight
   ](auto &s) {
     s << "h3 " << label <<
       " complete=" << complete <<
@@ -2429,8 +2429,8 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
       " retxTotal=[" << rt0 << ',' << rt1 << ',' << rt2 << ']' <<
       " cwnd=" << cwnd <<
       " ssthresh=" << ssthresh <<
-      " pc=" << pc <<
-      " bif=" << bif;
+      " persistent=" << persistent <<
+      " bytesInFlight=" << bytesInFlight;
   }));
   ZiAssert(run, "zhttp", (), "QUIC client diagnostics without run", return);
   ZmGuard<ZmLock> guard(lock);
@@ -3089,12 +3089,12 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	    .keyLogPath(run.options.keyLog)
 	    .maxData(H3DataMax)
 	    .maxStreamData(H3StreamDataMax)
-	    .maxStreamsBidi(client.maxStreamsBidi())
-	    .maxStreamsUni(H3UniMax)
+	    .maxStreamsDuplex(client.maxStreamsDuplex())
+	    .maxStreamsSimplex(H3UniMax)
 	    .heartBeat(quicHeartbeat(run.options))
 	    .migrationMode(migrationMode(run.options))
-	    .migrationCIDReserve(run.options.quicMigrationCIDReserve)
-	    .migrationCloseOnFailure(
+	    .migCIDRes(run.options.quicMigrationCIDReserve)
+	    .migCloseOnFail(
 	      run.options.quicMigrationCloseOnFailure))) {
       ZiLOG(Error, "zhttp", "QUIC client initialization failed");
       return 1;
@@ -3122,7 +3122,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     unsigned idle = 0;
     unsigned lastComplete = client.complete;
     unsigned quiet = 0;
-    Zquic::RuntimeDiag lastDiag = runtimeDiag(link);
+    Zquic::LinkDiag lastDiag = linkDiag(link);
     for (;;) {
       unsigned step = mon.nextStep(1);
       if (!step) {
@@ -3130,7 +3130,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
 	break;
       }
       bool signaled = client.sem.timedwait(Zm::now(step)) == 0;
-      Zquic::RuntimeDiag diag = runtimeDiag(link);
+      Zquic::LinkDiag diag = linkDiag(link);
       if (migrationConfigured(run.options)) {
 	if (migrationOnOpen(run.options) && !link->requestLocalMigration()) {
 	  migrationFailed = true;
@@ -3187,7 +3187,7 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
     if (timedOut || stalled || migrationFailed) {
       client.printDiag(link,
 	migrationFailed ? "migration-failed" : timedOut ? "timeout" : "stall");
-      Zquic::RuntimeDiag diag = runtimeDiag(link);
+      Zquic::LinkDiag diag = linkDiag(link);
       unsigned complete, failed, scheduled, active, pending;
       {
 	ZmGuard<ZmLock> guard(client.lock);

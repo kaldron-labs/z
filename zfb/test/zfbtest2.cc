@@ -9,6 +9,7 @@
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuByteSwap.hh>
+#include <zlib/ZuID.hh>
 
 #include <zlib/ZtHexDump.hh>
 
@@ -37,7 +38,7 @@ struct Test {
 };
 
 ZfbStruct(Object,
-  (((id), (Ctor<0>)), (UDT)),
+  (((id), (Ctor<0>)), (String)),
   (((price), (Ctor<1>)), (Int32)),
   (((flags), (Ctor<2>)), (UDT, ZuBitmap<100>{"42"})));
 

@@ -91,7 +91,7 @@ static Params qirParams_(Params params, const Env &env)
 {
   return ZuMv(params)
     .migrationMode(qirMigrationMode())
-    .migrationCIDReserve(qirMigrationCIDReserve())
+    .migCIDRes(qirMigrationCIDReserve())
     .heartBeat(env.heartBeat);
 }
 
@@ -520,10 +520,10 @@ struct H3Client : public Zquic::Client<H3Client> {
     errors = 1;
     done.post();
   }
-  uint64_t maxStreamsBidi() const {
+  uint64_t maxStreamsDuplex() const {
     return requests.length() > H3BidiMax ? requests.length() : H3BidiMax;
   }
-  uint64_t maxStreamsUni() const { return H3UniMax; }
+  uint64_t maxStreamsSimplex() const { return H3UniMax; }
 
   Env			env;
   Requests		requests;
@@ -1044,8 +1044,8 @@ static int runH3Client_(const Env &env, Requests requests)
 	  .qlogPath(env.qlogPath)
 	  .maxData(H3DataMax)
 	  .maxStreamData(H3StreamDataMax)
-	  .maxStreamsBidi(client.maxStreamsBidi())
-	  .maxStreamsUni(H3UniMax), env))) {
+	  .maxStreamsDuplex(client.maxStreamsDuplex())
+	  .maxStreamsSimplex(H3UniMax), env))) {
     ZmRef<H3Client::Link> link = new H3Client::Link{&client};
     link->connect(Zquic::Host{client.requests[0].host}, client.requests[0].port);
     if (client.done.timedwait(Zm::now(timeouts().total)) != 0)

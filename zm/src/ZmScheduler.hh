@@ -143,7 +143,7 @@ struct ZmAPI ZmSchedParams {
 
   using ID = ZuID;
 
-  ZmSchedParams &&id(ID id) { m_id = id; return ZuMv(*this); }
+  ZmSchedParams &&id(ZuCSpan id) { m_id = id; return ZuMv(*this); }
   ZmSchedParams &&nThreads(unsigned v) {
     delete [] m_threads;
     m_threads = new Thread[(m_nThreads = v) + 1];
@@ -166,7 +166,7 @@ struct ZmAPI ZmSchedParams {
   }
   Thread &thread(unsigned sid) { return m_threads[sid]; }
 
-  ID id() const { return m_id; }
+  ZuCSpan id() const { return m_id; }
   unsigned nThreads() const { return m_nThreads; }
   unsigned stackSize() const { return m_stackSize; }
   int priority() const { return m_priority; }
@@ -279,8 +279,7 @@ private:
     (ZmRBTree<Timer_,
       ZmRBTreeKey<Timer_TimeoutAxor,
 	ZmRBTreeNode<Timer_,
-	  ZmRBTreeHeapID<"ZmScheduler.ScheduleTree",
-	    ZmRBTreeShadow<true>>>>>));
+	  ZmRBTreeShadow<>>>>));
 public:
   using Timer = ScheduleTree::Node;
 
@@ -293,7 +292,7 @@ protected:
   ZmSchedParams &params_() { return m_params; }
 
 public:
-  ZuID id() const { return m_params.id(); }
+  ZuCSpan id() const { return m_params.id(); }
 
   bool stop();
 

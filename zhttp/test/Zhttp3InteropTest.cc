@@ -26,7 +26,7 @@ using Zhttp::Test::retry;
 using Zhttp::Test::runCurlH3Retry;
 using Zhttp::Test::systemOK;
 using Zhttp::Test::waitUntil;
-using Zhttp::Test::writeSelfSignedLocalhostCert;
+using Zhttp::Test::writeLocalhostCert;
 using Zquic::Test::CaddyProcess;
 using Zquic::Test::haveCaddy;
 using Zquic::Test::waitCaddyReady;
@@ -721,8 +721,8 @@ struct H3Client : public Zquic::Client<H3Client> {
 
   H3Client(ClientState *state_) : state{state_} { }
   unsigned reconnFreq() const { return 0; }
-  uint64_t maxStreamsBidi() const { return 8; }
-  uint64_t maxStreamsUni() const { return 8; }
+  uint64_t maxStreamsDuplex() const { return 8; }
+  uint64_t maxStreamsSimplex() const { return 8; }
 
   ClientState	*state = nullptr;
   int64_t	responseStreamID = -1;
@@ -944,7 +944,7 @@ void testZhttpClientCaddyHttpsH1()
   ZuCHECK(temp.init("ZhttpClientCaddyHttpsH1"),
     "Zhttp client->Caddy HTTPS/H1 temporary directory failed");
   ZtString<> certPath, keyPath;
-  ZuCHECK(writeSelfSignedLocalhostCert(temp, certPath, keyPath),
+  ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "Zhttp client->Caddy HTTPS/H1 certificate generation failed");
   unsigned port = loopbackPort();
   ZuCHECK(port, "Zhttp client->Caddy HTTPS/H1 port allocation failed");
@@ -988,7 +988,7 @@ void testZhttpClientCaddyHttpsH3()
   ZuCHECK(temp.init("ZhttpClientCaddyHttpsH3"),
     "Zhttp client->Caddy HTTPS/H3 temporary directory failed");
   ZtString<> certPath, keyPath;
-  ZuCHECK(writeSelfSignedLocalhostCert(temp, certPath, keyPath),
+  ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "Zhttp client->Caddy HTTPS/H3 certificate generation failed");
   unsigned port = loopbackPort();
   ZuCHECK(port, "Zhttp client->Caddy HTTPS/H3 port allocation failed");
@@ -1015,7 +1015,8 @@ void testZhttpClientCaddyHttpsH3()
   ZuCSpan alpn[] = { "h3" };
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4").caPath(certPath.cspan()).alpn(alpn)
-	.maxData(32768).maxStreamData(8192).maxStreamsBidi(8).maxStreamsUni(8)),
+	.maxData(32768).maxStreamData(8192)
+	.maxStreamsDuplex(8).maxStreamsSimplex(8)),
     "Zhttp client->Caddy HTTPS/H3 client init failed");
   ZmRef<H3Client::Link> link = new H3Client::Link{&client};
   link->connect(Zquic::Host{"localhost"}, port);
@@ -1137,7 +1138,7 @@ void testCurlZhttpHttpsH1Server()
   ZuCHECK(temp.init("ZhttpCurlHttpsH1"),
     "curl->Zhttp HTTPS/H1 temporary directory failed");
   ZtString<> certPath, keyPath;
-  ZuCHECK(writeSelfSignedLocalhostCert(temp, certPath, keyPath),
+  ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "curl->Zhttp HTTPS/H1 certificate generation failed");
   ServerState state;
   state.body = "server-h1-ok";
@@ -1175,7 +1176,7 @@ void testCurlZhttpHttpsH3Server()
   ZuCHECK(temp.init("ZhttpCurlHttpsH3"),
     "curl->Zhttp HTTPS/H3 temporary directory failed");
   ZtString<> certPath, keyPath;
-  ZuCHECK(writeSelfSignedLocalhostCert(temp, certPath, keyPath),
+  ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "curl->Zhttp HTTPS/H3 certificate generation failed");
   ServerState state;
   state.body = "server-h3-ok";
@@ -1188,7 +1189,8 @@ void testCurlZhttpHttpsH3Server()
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn)
-	.maxData(32768).maxStreamData(8192).maxStreamsBidi(8).maxStreamsUni(8)),
+	.maxData(32768).maxStreamData(8192)
+	.maxStreamsDuplex(8).maxStreamsSimplex(8)),
     "curl->Zhttp HTTPS/H3 server init failed");
   ZuCHECK(server.start(), "curl->Zhttp HTTPS/H3 server listen failed");
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),

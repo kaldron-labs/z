@@ -31,16 +31,16 @@ class ZcmdAPI Dispatcher {
 public:
   using Fn = ZmFn<int(void *, ZmRef<ZiIOBuf>, ZuBSpan),
     ZmFnHeapID<"Zcmd.Dispatcher.Fn">>;
-  using DefltFn = ZmFn<int(void *, ZuID, ZmRef<ZiIOBuf>, ZuBSpan),
+  using DefltFn = ZmFn<int(void *, ZuCSpan, ZmRef<ZiIOBuf>, ZuBSpan),
     ZmFnHeapID<"Zcmd.Dispatcher.DefltFn">>;
 
   void init();
   void final();
 
-  void map(ZuID id, Fn fn);
+  void map(ZuCSpan id, Fn fn);
   void deflt(DefltFn fn);
 
-  int dispatch(ZuID id, void *link, ZmRef<ZiIOBuf>, ZuBSpan out);
+  int dispatch(ZuCSpan id, void *link, ZmRef<ZiIOBuf>, ZuBSpan out);
 
 private:
   using Lock = ZmPLock;

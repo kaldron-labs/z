@@ -38,7 +38,6 @@ OIDs::OIDs()
     "uint16",	// UInt128
     "zbitmap",	// Bitmap
     "inet",	// IP
-    "text",	// ID
 
     "_text",	// StringVec
     "_bytea",	// BytesVec
@@ -831,17 +830,13 @@ static XField xField(
 	  type = Value::Index<DateTime>{};
 	  break;
 	case ZtFieldTC::UDT: {
-	  ZuID typeID = ftype->info.udt()->id;
-	  if (typeID == ZuID("Bitmap")) {
+	  auto typeID = ftype->info.udt()->id;
+	  if (typeID == "Bitmap") {
 	    type = Value::Index<Bitmap>{};
 	    break;
 	  }
-	  if (typeID == ZuID("IP")) {
+	  if (typeID == "IP") {
 	    type = Value::Index<IP>{};
-	    break;
-	  }
-	  if (typeID == ZuID("ID")) {
-	    type = Value::Index<ID>{};
 	    break;
 	  }
 	}

@@ -23,6 +23,7 @@
 
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuHash.hh>
+#include <zlib/ZuID.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuArrayFn.hh>
 
@@ -302,7 +303,7 @@ protected:
   }
 
 private:
-  ZmIDString		m_id;
+  ZuID			m_id;
 };
 
 // statically allocated hash table base class

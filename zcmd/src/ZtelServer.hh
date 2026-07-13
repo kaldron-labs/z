@@ -12,6 +12,7 @@
 #endif
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuID.hh>
 #include <zlib/ZuLambdaTraits.hh>
 
 #include <zlib/ZmFn.hh>
@@ -314,18 +315,18 @@ public:
     });
   }
   void delEngine(ZvEngine *engine) {
-    invoke([this, id = engine->id()]() {
+    invoke([this, id = ZuID{engine->id()}]() {
       m_engines.del(id);
     });
   }
-  void addQueue(unsigned type, ZuID id, QueueFn queueFn) {
-    invoke([this, type, id, queueFn = ZuMv(queueFn)]() mutable {
+  void addQueue(unsigned type, ZuCSpan id, QueueFn queueFn) {
+    invoke([this, type, id = ZuID{id}, queueFn = ZuMv(queueFn)]() mutable {
       auto key = ZuFwdTuple(type, id);
       if (!m_queues.find(key)) m_queues.add(key, ZuMv(queueFn));
     });
   }
-  void delQueue(unsigned type, ZuID id) {
-    invoke([this, type, id]() {
+  void delQueue(unsigned type, ZuCSpan id) {
+    invoke([this, type, id = ZuID{id}]() {
       auto key = ZuFwdTuple(type, id);
       m_queues.del(key);
     });
@@ -418,12 +419,11 @@ private:
     m_alertQueue.push(ZuMv(buf));
   }
 
-  // FIXME - some queues are ZmIDString not ZuID
   ZuDerive(Queues,
     (ZmRBTreeKV<ZuTuple<unsigned, ZuID>, QueueFn,
       ZmRBTreeUnique<true>>));
 
-  static ZuID EngineIDAxor(const ZvEngine *engine) { return engine->id(); }
+  static ZuCSpan EngineIDAxor(const ZvEngine *engine) { return engine->id(); }
   ZuDerive(Engines,
     (ZmRBTree<ZmRef<ZvEngine>,
       ZmRBTreeKey<EngineIDAxor,
@@ -431,7 +431,7 @@ private:
 
   struct Watch_ {
     Link	*link = nullptr;
-    ZmIDString	filter;
+    ZuID	filter;
   };
   ZuDerive(WatchList_, (ZmList<Watch_, ZmListNode<Watch_>>)); // FIXME - HeapID
   using Watch = typename WatchList_::Node;
@@ -715,7 +715,7 @@ private:
     {
       uint64_t inCount, inBytes, outCount, outBytes;
       for (unsigned tid = 1, n = mx->params().nThreads(); tid <= n; tid++) {
-	ZmIDString queueID;
+	ZuID queueID;
 	queueID << mx->params().id() << '.'
 	  << mx->params().thread(tid).name();
 	{
@@ -730,10 +730,10 @@ private:
 		  fbs::QueueType::Thread).Union()));
 	  watch->link->sendTelemetry(m_fbb.buf());
 	}
-	if (queueID.length() < ZmIDStrSize - 1)
+	if (queueID.length() < ZuIDSize - 1)
 	  queueID << '_';
 	else
-	  queueID[ZmIDStrSize - 2] = '_';
+	  queueID[ZuIDSize - 2] = '_';
 	{
 	  const auto &queue = mx->queue(tid);
 	  queue.stats(inCount, outCount);
@@ -777,7 +777,7 @@ private:
       {
 	uint64_t inCount, inBytes, outCount, outBytes;
 	for (unsigned tid = 1, n = mx->params().nThreads(); tid <= n; tid++) {
-	  ZmIDString queueID;
+	  ZuID queueID;
 	  queueID << mx->params().id() << '.'
 	    << mx->params().thread(tid).name();
 	  {
@@ -797,10 +797,10 @@ private:
 		  fbs::TelData::Queue, b.Finish().Union()));
 	    watch->link->sendTelemetry(m_fbb.buf());
 	  }
-	  if (queueID.length() < ZmIDStrSize)
+	  if (queueID.length() < ZuIDSize)
 	    queueID << '_';
 	  else
-	    queueID[ZmIDStrSize - 1] = '_';
+	    queueID[ZuIDSize - 1] = '_';
 	  {
 	    const auto &queue = mx->queue(tid);
 	    queue.stats(inCount, outCount);

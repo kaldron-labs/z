@@ -7,7 +7,7 @@
 // generic I/O queue based on ZmPQueue skip lists, used by ZvEngine
 //
 // Key / SeqNo - uint64
-// Link ID - ZuID (union of 8-byte string with uint64)
+// Link ID - ZuID
 
 #ifndef ZvIOQueue_HH
 #define ZvIOQueue_HH
@@ -107,7 +107,8 @@ using ZvIOQueue_ =
 	ZmPQueueHeapID<"ZvIOQueue">>>>;
 
 struct ZvIOQueue : public ZvQueue, public ZvIOQueue_ {
-  ZvIOQueue(ZvIOQueueRxTx *owner, ZvQueueType::T type, ZuID id, ZvSeqNo seqNo) :
+  ZvIOQueue(
+    ZvIOQueueRxTx *owner, ZvQueueType::T type, ZuCSpan id, ZvSeqNo seqNo) :
     ZvIOQueue_(seqNo), m_owner(owner), m_type(type), m_id(id) { }
 
   template <typename T>

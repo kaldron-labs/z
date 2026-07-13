@@ -104,7 +104,7 @@ ZuDerive(BufCacheUN,
     ZmHashNode<IOBuf_,
       ZmHashKey<IOBuf_UNAxor,
 	ZmHashLock<ZmPLock,
-	  ZmHashShadow<true>>>>>));
+	  ZmHashShadow<>>>>>));
 
 struct IOBuf : public BufCacheUN::Node {
   ZuDerive_(IOBuf, BufCacheUN::Node)

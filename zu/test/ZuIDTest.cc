@@ -20,14 +20,14 @@ static void test(const char *s)
   ZuTestScope(test);
   log(s);
   unsigned n = strlen(s);
-  if (n > 8) n = 8;
+  if (n > ZuIDSize) n = ZuIDSize;
   ZuID a(s);
   printf("%u %u\n", n, a.length());
   ZuCHECK(a.length() == n);
   ZuCHECK(!memcmp(a.data(), s, n));
-  ZuCHECK(a.span() == ZuCSpan(s, n));
-  ZuCArray<9> b; b << a;
-  ZuCHECK(a.span() == b);
+  ZuCHECK(a == ZuCSpan(s, n));
+  ZuCArray<ZuIDSize> b; b << a;
+  ZuCHECK(a == b);
 }
 
 int main(int argc, char **argv)
@@ -45,4 +45,5 @@ int main(int argc, char **argv)
   ZuTestCall(test, "abcdefg");
   ZuTestCall(test, "abcdefgh");
   ZuTestCall(test, "abcdefghi");
+  ZuTestCall(test, "abcdefghijklmnopqrstuvwxyz0123456789");
 }

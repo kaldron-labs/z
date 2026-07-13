@@ -82,9 +82,11 @@ friend ZmHeapCache;
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
-  using IDPart = ZuTuple<ZmIDString, unsigned>;
+  using IDPart = ZuTuple<ZuID, unsigned>;
   using IDSize = ZuTuple<ZuCSpan, unsigned>;
   using Key = ZmHeapCache::Key;
+
+  // these containers use a null heap ID to prevent a circular dependency
 
   // primary key for heap configurations is {ID, partition}
   ZuDerive(IDPart2Config,

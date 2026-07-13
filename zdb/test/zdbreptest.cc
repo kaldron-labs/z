@@ -120,7 +120,7 @@ int main()
       db[i]->init(ZuMv(dbCf), mx, ZdbHandler{
 	.upFn = [](Zdb *, ZdbHost *host) {
 	  ZiLOG(Info, "zdbreptest",
-	    ([id = host ? host->id() : ZuID{"unset"}](auto &s) {
+	    ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
 	      s << "ACTIVE (was " << id << ')';
 	    }));
 	},

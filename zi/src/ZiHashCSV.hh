@@ -13,7 +13,7 @@
 #include <zlib/ZiLib.hh>
 #endif
 
-#include <zlib/ZuArray.hh>
+#include <zlib/ZuID.hh>
 
 #include <zlib/ZmHash.hh>
 
@@ -24,7 +24,7 @@
 namespace ZiHashCSV {
 
 struct Data {
-  ZmIDString	id;
+  ZuID		id;
   double	loadFactor;
   uint8_t	bits;
   uint8_t	cBits;

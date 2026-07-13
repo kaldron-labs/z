@@ -32,7 +32,6 @@
 //
 // Bitmap	UDT		ZuBitmap<Bits> | ZmBitmap | ZtBitmap
 // IP		UDT		ZiIP
-// ID		UDT		ZuID
 // Object	UDT		<Any>
 
 // UDT transformer example - ZiIP support is added as follows:
@@ -61,7 +60,7 @@
 // };
 // } // ZfbTransform
 // ZfbTransform::IP ZfbTransformer_(ZiIP *);
-// inline ZuID ZtVFieldTypeID(ZiIP *) { return "IP"; }
+// inline ZuCSpan ZtVFieldTypeID(ZiIP *) { return "IP"; }
 
 #ifndef ZfbStruct_HH
 #define ZfbStruct_HH
@@ -72,7 +71,6 @@
 
 #include <assert.h>
 
-#include <zlib/ZuID.hh>
 
 #include <zlib/ZtStruct.hh>
 
@@ -1078,41 +1076,25 @@ struct IP {
   }
 };
 
-struct ID {
-  enum { IsInline = 1 };
-  template <typename _ = void>
-  static Zfb::ID save(ZuID id) {
-    return {Zfb::span<const uint8_t, 8>{
-      reinterpret_cast<const uint8_t *>(id.data()), 8}};
-  }
-  static ZuID load(const Zfb::ID *v) {
-    if (!v) return {};
-    return {*reinterpret_cast<const uint64_t *>(v->data()->data())};
-  }
-};
-
 } // ZfbTransform
 
 namespace ZuBitmap_ {
   template <unsigned Bits>
   ZfbTransform::Bitmap ZfbTransformer_(Bitmap<Bits> *);
   template <unsigned Bits>
-  inline ZuID ZtVFieldTypeID(Bitmap<Bits> *) { return "Bitmap"; }
+  inline ZuCSpan ZtVFieldTypeID(Bitmap<Bits> *) { return "Bitmap"; }
 }
 namespace ZmBitmap_ {
   ZfbTransform::Bitmap ZfbTransformer_(Bitmap *);
-  inline ZuID ZtVFieldTypeID(Bitmap *) { return "Bitmap"; }
+  inline ZuCSpan ZtVFieldTypeID(Bitmap *) { return "Bitmap"; }
 }
 namespace ZtBitmap_ {
   ZfbTransform::Bitmap ZfbTransformer_(Bitmap *);
-  inline ZuID ZtVFieldTypeID(Bitmap *) { return "Bitmap"; }
+  inline ZuCSpan ZtVFieldTypeID(Bitmap *) { return "Bitmap"; }
 }
 
 ZfbTransform::IP ZfbTransformer_(ZiIP *);
-inline ZuID ZtVFieldTypeID(ZiIP *) { return "IP"; }
-
-ZfbTransform::ID ZfbTransformer_(ZuID *);
-inline ZuID ZtVFieldTypeID(ZuID *) { return "ID"; }
+inline ZuCSpan ZtVFieldTypeID(ZiIP *) { return "IP"; }
 
 #define ZfbField_Decl__(O_, ID, Base_, TypeName, Type) \
   ZuField_Decl(O_, Base_) \

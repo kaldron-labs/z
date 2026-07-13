@@ -13,6 +13,7 @@
 #include <zlib/ZmLib.hh>
 #endif
 
+#include <zlib/ZuID.hh>
 #include <zlib/ZuStruct.hh>
 
 #include <zlib/ZmLockTraits.hh>
@@ -35,7 +36,9 @@ struct ZmPolyCache_Defaults : public ZmPolyHash_Defaults {
 template <typename Lock, typename NTP = ZmPolyCache_Defaults>
 using ZmPolyCacheLock = ZmPolyHashLock<Lock, NTP>;
 template <bool Shadow, typename NTP = ZmPolyCache_Defaults>
-using ZmPolyCacheShadow = ZmPolyHashShadow<Shadow, NTP>;
+using ZmPolyCacheShadow_ = ZmPolyHashShadow_<Shadow, NTP>;
+template <typename NTP = ZmPolyCache_Defaults>
+using ZmPolyCacheShadow = ZmPolyHashShadow<NTP>;
 template <typename HeapID, typename NTP = ZmPolyCache_Defaults>
 using ZmPolyCacheHeapID_ = ZmPolyHashHeapID_<HeapID, NTP>;
 template <ZuString HeapID, typename NTP = ZmPolyCache_Defaults>
@@ -59,7 +62,7 @@ public:
 private:
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
-  using LRUList = ZmList<T, ZmListNode<T, ZmListShadow<true>>>;
+  using LRUList = ZmList<T, ZmListNode<T, ZmListShadow<>>>;
   struct LRUDisable { // LRU list is not needed if eviction is disabled
     using Node = T;
     Node *delNode(Node *node) { return nullptr; }
@@ -107,12 +110,12 @@ public:
     if constexpr (KeyIDs::N) {
       ZmAssert(id.length() + 5 +
 	ZuBoxed(unsigned(ZuType<KeyIDs::N - 1, KeyIDs>{})).length() <
-	ZmIDStrSize);
+	ZuIDSize);
     }
     m_size = m_hash.size();
     auto params = ZmHashParams{id};
     ZuUnroll::all<KeyIDs>([this, &id, &params]<typename KeyID>() {
-      ZmIDString loadHashID = id;
+      ZuID loadHashID = id;
       loadHashID << ".ld." << ZuBoxed(KeyID{}());
       m_loadHashes.template p<KeyID{}>(
 	new ZuType<KeyID{}, LoadHashTL>{loadHashID, params});

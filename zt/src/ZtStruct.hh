@@ -485,7 +485,7 @@ typedef void (*ZtVFieldPrint)(const void *, ZuVStream &, const ZtVFmt &);
 typedef void (*ZtVFieldScan)(
   void (*)(void *, const void *), void *, ZuCSpan, const ZtVFmt &);
 
-inline ZuID ZtVFieldTypeID(...) { return {}; }	// default
+inline ZuCSpan ZtVFieldTypeID(...) { return {}; }	// default
 
 // ZtVFieldUDT encapsulates introspected UDT metadata
 struct ZtVFieldUDT {

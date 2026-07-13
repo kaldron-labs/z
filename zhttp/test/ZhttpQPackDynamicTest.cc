@@ -43,8 +43,7 @@ using RxStream = ZiRxStream<RxQueue>;
 static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 {
   ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
-  auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
-  if (span.length()) iobuf->append(span.data(), span.length());
+  if (span.length()) buf->append(span);
   return buf;
 }
 

@@ -97,16 +97,18 @@ struct ZmRBTreeNode : public NTP {
 
 // ZmRBTreeShadow - shadow nodes, do not manage ownership
 template <bool Shadow_, typename NTP = ZmRBTree_Defaults>
-struct ZmRBTreeShadow;
+struct ZmRBTreeShadow_;
 template <typename NTP>
-struct ZmRBTreeShadow<true, NTP> : public NTP {
+struct ZmRBTreeShadow_<true, NTP> : public NTP {
   enum { Shadow = true };
   struct HeapID : public ZuStringT<""> { };
 };
 template <typename NTP>
-struct ZmRBTreeShadow<false, NTP> : public NTP {
+struct ZmRBTreeShadow_<false, NTP> : public NTP {
   enum { Shadow = false };
 };
+template <typename NTP = ZmRBTree_Defaults>
+using ZmRBTreeShadow = ZmRBTreeShadow_<true, NTP>;
 
 // ZmRBTreeHeapID - the heap ID
 template <typename HeapID_, class NTP = ZmRBTree_Defaults>
