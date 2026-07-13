@@ -72,9 +72,11 @@
 
 #include <assert.h>
 
-#include <zlib/Zfb.hh>
+#include <zlib/ZuID.hh>
 
 #include <zlib/ZtStruct.hh>
+
+#include <zlib/Zfb.hh>
 
 void ZfbBuilder_(...);	// default
 void ZfbType_(...);	// ''
