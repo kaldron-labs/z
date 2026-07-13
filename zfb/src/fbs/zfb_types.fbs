@@ -40,6 +40,3 @@ union IP {
   IPv4,
   IPv6
 }
-struct ID { //ZuID
-  data:[uint8:8];
-}

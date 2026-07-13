@@ -16,7 +16,7 @@ table DBTable {
 }
 table DBHost {
   ip:Zfb.IP;
-  id:Zfb.ID;
+  id:string;
   priority:uint32;
   port:uint16;
   state:Zdb_.fbs.HostState;
@@ -25,10 +25,10 @@ table DBHost {
 }
 table DB {
   thread:string;
-  self:Zfb.ID;
-  leader:Zfb.ID;
-  prev:Zfb.ID;
-  next:Zfb.ID;
+  self:string;
+  leader:string;
+  prev:string;
+  next:string;
   n_cxns:uint32;
   heartbeat_freq:uint32;
   heartbeat_timeout:uint32;

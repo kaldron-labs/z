@@ -14,7 +14,7 @@ table Order {
   price:int32;
   quantity:int32;
   bitmap:Zfb.Bitmap;
-  id:Zfb.ID;
+  id:string;
   ip:Zfb.IP;
 }
 root_type Order;
