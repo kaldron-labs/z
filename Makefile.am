@@ -52,3 +52,4 @@ zhttp-qir-image: zhttp-qir-build
 	  --root "$(abs_builddir)/zhttp/interop/qir-root" \
 	  --tag "$${ZHTTP_QIR_IMAGE:-zhttp-qir:local}" \
 	  --no-configure --no-clean --allow-dirty
+	rm -rf "$(abs_builddir)/zhttp/interop/qir-root"
