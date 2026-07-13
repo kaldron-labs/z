@@ -285,7 +285,7 @@ void testTrafficSecretProt()
   uint8_t secretBytes[32];
   for (unsigned i = 0; i < sizeof(secretBytes); ++i) secretBytes[i] = i;
   Zquic::TrafficSecret secret;
-  ZuCHECK(Zquic::PktProt::deriveTrafficSecret(
+  ZuCHECK(Zquic::PktProt::deriveSecret(
       secret, &ptls_openssl_aes128gcmsha256,
       bytes_(secretBytes, sizeof(secretBytes))),
     "traffic secret derivation failed");

@@ -278,9 +278,9 @@ void testPktReorderDuplicateLoss()
     "duplicate ACK range mutated sent-packet state");
 }
 
-void testAckdFrameSuppressesLossReclaim()
+void testAckdFrameStopsLossReclaim()
 {
-  ZuTestScope(testAckdFrameSuppressesLossReclaim);
+  ZuTestScope(testAckdFrameStopsLossReclaim);
 
   Zquic::PktTxSpace tx;
   ZuCHECK(tx.add(txCryptoPkt_(0, 0, 46)) &&
@@ -398,15 +398,15 @@ void testLossThresholds()
     "loss deadline was scheduled before any largest ACKed packet");
   ZuCHECK(tx.nextLossTime(4, threshold) == Zquic::timeUS(250),
     "next loss-deadline computation mismatch");
-  ZuCHECK(tx.markTimeThresholdLoss(4, Zquic::timeUS(270), threshold) == 1,
+  ZuCHECK(tx.markTimeThreshLoss(4, Zquic::timeUS(270), threshold) == 1,
     "time-threshold loss did not mark only oldest packet");
   ZuCHECK(tx.nextLossTime(4, threshold) == Zquic::timeUS(350),
     "next loss-deadline after a single oldest loss mismatch");
-  ZuCHECK(tx.markTimeThresholdLoss(4, Zquic::timeUS(350), threshold) == 1,
+  ZuCHECK(tx.markTimeThreshLoss(4, Zquic::timeUS(350), threshold) == 1,
     "time-threshold loss missed oldest remaining packet");
   ZuCHECK(tx.nextLossTime(4, threshold) == Zquic::timeUS(450),
     "next loss-deadline after two oldest losses mismatch");
-  ZuCHECK(tx.markTimeThresholdLoss(4, Zquic::timeUS(450), threshold) == 1,
+  ZuCHECK(tx.markTimeThreshLoss(4, Zquic::timeUS(450), threshold) == 1,
     "time-threshold loss missed final eligible packet");
   ZuCHECK(!tx.nextLossTime(4, threshold),
     "loss deadline remained after all eligible packets were lost");
@@ -420,7 +420,7 @@ void testLossThresholds()
   ZuCHECK(sameLargest.add(txPkt_(4)) &&
       !sameLargest.nextLossTime(4, threshold),
     "largest ACKed packet scheduled a loss deadline");
-  ZuCHECK(!sameLargest.markTimeThresholdLoss(
+  ZuCHECK(!sameLargest.markTimeThreshLoss(
       4, Zquic::timeUS(1000), threshold),
     "largest ACKed packet was marked time-threshold lost");
 
@@ -476,9 +476,9 @@ void testPktNumSpaceAckLoss()
   }
 }
 
-void testPTOReclaimUsesRetransmitQueue()
+void testPTOReclaimUsesRetxQueue()
 {
-  ZuTestScope(testPTOReclaimUsesRetransmitQueue);
+  ZuTestScope(testPTOReclaimUsesRetxQueue);
 
   Zquic::PktTxSpace tx;
   ZuCHECK(tx.add(txPkt_(7, 1200)) &&
@@ -510,9 +510,9 @@ void testPTOReclaimUsesRetransmitQueue()
     "PTO retransmit fallback did not move to next outstanding packet");
 }
 
-void testAckCanLeaveOnlyRetransmitsPending()
+void testAckLeavesOnlyRetxPending()
 {
-  ZuTestScope(testAckCanLeaveOnlyRetransmitsPending);
+  ZuTestScope(testAckLeavesOnlyRetxPending);
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn < 6; ++pn)
@@ -543,9 +543,9 @@ void testAckCanLeaveOnlyRetransmitsPending()
     "second zero-flight retransmit ref mismatch");
 }
 
-void testRetransmitSkipsOutstandingStreamBytes()
+void testRetxSkipsUnackdStreamBytes()
 {
-  ZuTestScope(testRetransmitSkipsOutstandingStreamBytes);
+  ZuTestScope(testRetxSkipsUnackdStreamBytes);
 
   Zquic::PktTxSpace tx;
   ZuCHECK(tx.add(txStreamPkt_(1, 7, 0, 100)) &&
@@ -670,19 +670,19 @@ void testPktNumSpaceBatchCursors()
 
   Zquic::PktLossBatch lossBatch;
   Zquic::PktTxUpdate lossUpdate0;
-  done = tx.markPktThresholdLossBatch(5, 3, lossBatch, 2, &lossUpdate0);
+  done = tx.markPktThreshLossBatch(5, 3, lossBatch, 2, &lossUpdate0);
   ZuCHECK(!done && lossBatch.lost == 2 && lossUpdate0.lostBytes == 200,
     "first batch loss cursor failed");
 
   Zquic::PktTxUpdate lossUpdate1;
-  done = tx.markPktThresholdLossBatch(5, 3, lossBatch, 2, &lossUpdate1);
+  done = tx.markPktThreshLossBatch(5, 3, lossBatch, 2, &lossUpdate1);
   ZuCHECK(!done && lossBatch.lost == 3 && lossUpdate1.lostBytes == 100,
     "second batch loss cursor failed");
 
   Zquic::PktTxUpdate lossUpdate2;
-  done = tx.markPktThresholdLossBatch(5, 3, lossBatch, 2, &lossUpdate2);
+  done = tx.markPktThreshLossBatch(5, 3, lossBatch, 2, &lossUpdate2);
   Zquic::PktTxUpdate lossUpdate3;
-  done = done || tx.markPktThresholdLossBatch(
+  done = done || tx.markPktThreshLossBatch(
     5, 3, lossBatch, 2, &lossUpdate3);
   ZuCHECK(done && lossBatch.lost == 3 && !lossUpdate2.lostBytes &&
       !lossUpdate3.lostBytes &&
@@ -847,12 +847,12 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRecovery);
   ZuTestCall(testPktReorderDuplicateLoss);
-  ZuTestCall(testAckdFrameSuppressesLossReclaim);
+  ZuTestCall(testAckdFrameStopsLossReclaim);
   ZuTestCall(testLossThresholds);
   ZuTestCall(testPktNumSpaceAckLoss);
-  ZuTestCall(testPTOReclaimUsesRetransmitQueue);
-  ZuTestCall(testAckCanLeaveOnlyRetransmitsPending);
-  ZuTestCall(testRetransmitSkipsOutstandingStreamBytes);
+  ZuTestCall(testPTOReclaimUsesRetxQueue);
+  ZuTestCall(testAckLeavesOnlyRetxPending);
+  ZuTestCall(testRetxSkipsUnackdStreamBytes);
   ZuTestCall(testTypedControlRefs);
   ZuTestCall(testFlowControlRetransmit);
   ZuTestCall(testPktNumSpaceBatchCursors);

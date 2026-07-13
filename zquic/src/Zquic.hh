@@ -98,12 +98,12 @@ using ErrorFn = ZmFn<void(ZeException), ZmFnHeapID<"Zquic.ErrorFn">>;
 
 inline constexpr uint64_t DefaultMaxData = (16<<20); // 16M
 inline constexpr uint64_t DefaultMaxStreamData = (1<<20); // 1M
-inline constexpr uint64_t DefaultMaxStreamsBidi = 128;
-inline constexpr uint64_t DefaultMaxStreamsUni = 16;
+inline constexpr uint64_t DefaultMaxStreamsDuplex = 128;
+inline constexpr uint64_t DefaultMaxStreamsSimplex = 16;
 inline constexpr uint64_t MaxStreamCount = uint64_t(INT64_MAX) >> 2;
 inline constexpr uint64_t DefaultTokenLifetime = 600;
-inline constexpr unsigned LocalActiveCxnIDLimit = 8;
-inline constexpr unsigned MigrationCIDReserveDefault = 1;
+inline constexpr unsigned LocalCIDLimit = 8;
+inline constexpr unsigned DefaultMigCIDRes = 1;
 
 ZtEnumStruct(TokenKind, int8_t, Retry = 1, NewToken = 2);
 
@@ -144,7 +144,7 @@ inline ZuBSpan byteSpan(const uint8_t *data, unsigned len)
   return ZuBSpan{data, len};
 }
 
-inline bool runtimeFrameRef(
+inline bool sentFrameRef(
   ZuBSpan bytes, SentFrameRef &ref, bool &ackEliciting)
 {
   ref = {};
@@ -211,12 +211,12 @@ struct VersionNeg {
     uint8_t *out, unsigned len, const CxnID &dcid,
     const CxnID &scid) {
     uint32_t versions[] = { Version1 };
-    return Pkt::writeVersionNegotiation(out, len, dcid, scid, versions, 1);
+    return Pkt::writeVerNeg(out, len, dcid, scid, versions, 1);
   }
 
   static int parse(
     ZuBSpan in, uint32_t *versions, unsigned capacity, unsigned &nVersions) {
-    return Pkt::parseVersionNegotiation(in, versions, capacity, nVersions);
+    return Pkt::parseVerNeg(in, versions, capacity, nVersions);
   }
 };
 
@@ -231,7 +231,7 @@ struct ServerPkt {
     ZuBSpan, uint8_t *response, unsigned responseLen);
 };
 
-struct AddressValidationDiag {
+struct AddrValidationDiag {
   uint64_t	retrySent = 0;
   uint64_t	retryAccepted = 0;
   uint64_t	retryRejected = 0;
@@ -244,7 +244,7 @@ struct AddressValidationDiag {
   uint64_t	tokenODCIDMismatch = 0;
 };
 
-struct StatelessRst {
+struct StatelessReset {
   static constexpr unsigned TokenLength = ResetToken::Length;
   static constexpr unsigned MinLength = 21;
 
@@ -323,7 +323,7 @@ public:
     return true;
   }
 
-  bool validateServerTransportParams(
+  bool validateServerParams(
     const TransportParams &params,
     const CxnID &serverInitialSCID) const {
     if (!m_started ||
@@ -372,8 +372,8 @@ private:
 };
 
 template <typename Send>
-inline bool sendRuntimeCryptoFlights(
-  CryptoStream (&txCrypto)[PktNumSpace::N], RuntimeTxDiag &diag,
+inline bool sendCryptoFlights(
+  CryptoStream (&txCrypto)[PktNumSpace::N], LinkTxDiag &diag,
   const uint8_t *data, unsigned len, const size_t offsets[5],
   unsigned chunkMax, ZiSockAddr addr, Send send)
 {
@@ -385,7 +385,7 @@ inline bool sendRuntimeCryptoFlights(
     }
     if (offsets[epoch + 1] <= offsets[epoch]) continue;
     PktNumSpace::T space;
-    if (!pktNumSpaceFromTLSEpoch(epoch, space)) continue;
+    if (!spaceFromTLSEpoch(epoch, space)) continue;
     unsigned off = unsigned(offsets[epoch]);
     unsigned remaining = unsigned(offsets[epoch + 1] - offsets[epoch]);
     while (remaining) {
@@ -458,12 +458,12 @@ struct EngineParams {
     m_maxStreamData = v;
     return ZuMv(*this);
   }
-  EngineParams &&maxStreamsBidi(uint64_t v) {
-    m_maxStreamsBidi = v;
+  EngineParams &&maxStreamsDuplex(uint64_t v) {
+    m_maxStreamsDuplex = v;
     return ZuMv(*this);
   }
-  EngineParams &&maxStreamsUni(uint64_t v) {
-    m_maxStreamsUni = v;
+  EngineParams &&maxStreamsSimplex(uint64_t v) {
+    m_maxStreamsSimplex = v;
     return ZuMv(*this);
   }
   EngineParams &&maxIdleTimeout(uint64_t v) {
@@ -484,32 +484,32 @@ struct EngineParams {
     m_migrationMode = v ? MigrationMode::Active : MigrationMode::Passive;
     return ZuMv(*this);
   }
-  EngineParams &&migrationCIDReserve(unsigned v) {
-    m_migrationCIDReserve = clampMigrationCIDReserve_(v);
+  EngineParams &&migCIDRes(unsigned v) {
+    m_migCIDRes = clampMigCIDRes_(v);
     return ZuMv(*this);
   }
-  EngineParams &&migrationCloseOnFailure(bool v) {
-    m_migrationCloseOnFailure = v;
+  EngineParams &&migCloseOnFail(bool v) {
+    m_migCloseOnFail = v;
     return ZuMv(*this);
   }
-  EngineParams &&addressValidationSecret(ZuBSpan v) {
+  EngineParams &&addrValidationSecret(ZuBSpan v) {
     m_tokenSecret = v;
     return ZuMv(*this);
   }
-  EngineParams &&retryAddressValidation(bool v) {
-    m_retryAddressValidation = v;
+  EngineParams &&retryAddrValidate(bool v) {
+    m_retryAddrValidate = v;
     return ZuMv(*this);
   }
-  EngineParams &&newTokenAddressValidation(bool v) {
-    m_newTokenAddressValidation = v;
+  EngineParams &&newTokenAddrValidate(bool v) {
+    m_newTokenAddrValidate = v;
     return ZuMv(*this);
   }
-  EngineParams &&addressValidationLifetime(uint64_t v) {
-    m_tokenLifetime = v;
+  EngineParams &&addrValidationLifetime(uint64_t v) {
+    m_addrValidationLifetime = v;
     return ZuMv(*this);
   }
-  EngineParams &&addressValidationBindPort(bool v) {
-    m_tokenBindPort = v;
+  EngineParams &&addrValidatePeerPort(bool v) {
+    m_addrValidatePeerPort = v;
     return ZuMv(*this);
   }
   EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
@@ -539,8 +539,8 @@ struct EngineParams {
   ZuCSpan asyncThread() const { return m_asyncThread; }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
-  uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
-  uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
+  uint64_t maxStreamsDuplex() const { return m_maxStreamsDuplex; }
+  uint64_t maxStreamsSimplex() const { return m_maxStreamsSimplex; }
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   ZuTime heartBeat() const { return m_heartBeat; }
   unsigned maxUDP() const { return m_maxUDP; }
@@ -549,23 +549,23 @@ struct EngineParams {
   bool activeMigration() const {
     return m_migrationMode == MigrationMode::Active;
   }
-  unsigned migrationCIDReserve() const { return m_migrationCIDReserve; }
-  bool migrationCloseOnFailure() const { return m_migrationCloseOnFailure; }
-  ZuBSpan addressValidationSecret() const {
+  unsigned migCIDRes() const { return m_migCIDRes; }
+  bool migCloseOnFail() const { return m_migCloseOnFail; }
+  ZuBSpan addrValidationSecret() const {
     return m_tokenSecret;
   }
-  bool retryAddressValidation() const { return m_retryAddressValidation; }
-  bool newTokenAddressValidation() const {
-    return m_newTokenAddressValidation;
+  bool retryAddrValidate() const { return m_retryAddrValidate; }
+  bool newTokenAddrValidate() const {
+    return m_newTokenAddrValidate;
   }
-  uint64_t addressValidationLifetime() const { return m_tokenLifetime; }
-  bool addressValidationBindPort() const { return m_tokenBindPort; }
+  uint64_t addrValidationLifetime() const { return m_addrValidationLifetime; }
+  bool addrValidatePeerPort() const { return m_addrValidatePeerPort; }
   const ErrorFn &errorFn() const { return m_errorFn; }
   ErrorFn &errorFn() { return m_errorFn; }
 
 private:
-  static unsigned clampMigrationCIDReserve_(unsigned v) {
-    enum { Max = LocalActiveCxnIDLimit - 1 };
+  static unsigned clampMigCIDRes_(unsigned v) {
+    enum { Max = LocalCIDLimit - 1 };
     return v > Max ? Max : v;
   }
   static ZuTime normalizeHeartBeat_(ZuTime v) {
@@ -588,20 +588,20 @@ private:
   ParamString		m_asyncThread;
   uint64_t		m_maxData = DefaultMaxData;
   uint64_t		m_maxStreamData = DefaultMaxStreamData;
-  uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
-  uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
+  uint64_t		m_maxStreamsDuplex = DefaultMaxStreamsDuplex;
+  uint64_t		m_maxStreamsSimplex = DefaultMaxStreamsSimplex;
   uint64_t		m_maxIdleTimeout = 0;
   ZuTime		m_heartBeat;
   unsigned		m_maxUDP = MinUDPPayload;
   bool			m_ecn = false;
   MigrationMode::T	m_migrationMode = MigrationMode::Passive;
-  unsigned		m_migrationCIDReserve = MigrationCIDReserveDefault;
-  bool			m_migrationCloseOnFailure = false;
+  unsigned		m_migCIDRes = DefaultMigCIDRes;
+  bool			m_migCloseOnFail = false;
   TokenSecret		m_tokenSecret;
-  uint64_t		m_tokenLifetime = DefaultTokenLifetime;
-  bool			m_retryAddressValidation = false;
-  bool			m_newTokenAddressValidation = false;
-  bool			m_tokenBindPort = false;
+  uint64_t		m_addrValidationLifetime = DefaultTokenLifetime;
+  bool			m_retryAddrValidate = false;
+  bool			m_newTokenAddrValidate = false;
+  bool			m_addrValidatePeerPort = false;
   ErrorFn		m_errorFn;
 };
 
@@ -657,20 +657,20 @@ public:
       m_qlogParams = {};
       m_maxData = DefaultMaxData;
       m_maxStreamData = DefaultMaxStreamData;
-      m_maxStreamsBidi = DefaultMaxStreamsBidi;
-      m_maxStreamsUni = DefaultMaxStreamsUni;
+      m_maxStreamsDuplex = DefaultMaxStreamsDuplex;
+      m_maxStreamsSimplex = DefaultMaxStreamsSimplex;
       m_maxIdleTimeout = 0;
       m_heartBeat = {};
       m_maxUDP = MinUDPPayload;
       m_ecn = false;
       m_migrationMode = MigrationMode::Passive;
-      m_migrationCIDReserve = MigrationCIDReserveDefault;
-      m_migrationCloseOnFailure = false;
+      m_migCIDRes = DefaultMigCIDRes;
+      m_migCloseOnFail = false;
       m_tokenSecret = {};
-      m_tokenLifetime = DefaultTokenLifetime;
-      m_retryAddressValidation = false;
-      m_newTokenAddressValidation = false;
-      m_tokenBindPort = false;
+      m_addrValidationLifetime = DefaultTokenLifetime;
+      m_retryAddrValidate = false;
+      m_newTokenAddrValidate = false;
+      m_addrValidatePeerPort = false;
       return true;
     });
     ZiAssert(ok, "Zquic", (),
@@ -697,8 +697,8 @@ public:
   ZquicLogDiag qlogDiag() const { return ZquicLogger::diag(); }
   uint64_t maxData() const { return m_maxData; }
   uint64_t maxStreamData() const { return m_maxStreamData; }
-  uint64_t maxStreamsBidi() const { return m_maxStreamsBidi; }
-  uint64_t maxStreamsUni() const { return m_maxStreamsUni; }
+  uint64_t maxStreamsDuplex() const { return m_maxStreamsDuplex; }
+  uint64_t maxStreamsSimplex() const { return m_maxStreamsSimplex; }
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   ZuTime heartBeat() const { return m_heartBeat; }
   unsigned maxUDP() const { return m_maxUDP; }
@@ -707,17 +707,17 @@ public:
   bool activeMigration() const {
     return m_migrationMode == MigrationMode::Active;
   }
-  unsigned migrationCIDReserve() const { return m_migrationCIDReserve; }
-  bool migrationCloseOnFailure() const { return m_migrationCloseOnFailure; }
-  ZuBSpan addressValidationSecret() const {
+  unsigned migCIDRes() const { return m_migCIDRes; }
+  bool migCloseOnFail() const { return m_migCloseOnFail; }
+  ZuBSpan addrValidationSecret() const {
     return m_tokenSecret;
   }
-  bool retryAddressValidation() const { return m_retryAddressValidation; }
-  bool newTokenAddressValidation() const {
-    return m_newTokenAddressValidation;
+  bool retryAddrValidate() const { return m_retryAddrValidate; }
+  bool newTokenAddrValidate() const {
+    return m_newTokenAddrValidate;
   }
-  uint64_t addressValidationLifetime() const { return m_tokenLifetime; }
-  bool addressValidationBindPort() const { return m_tokenBindPort; }
+  uint64_t addrValidationLifetime() const { return m_addrValidationLifetime; }
+  bool addrValidatePeerPort() const { return m_addrValidatePeerPort; }
 
   template <typename ...Args>
   void rxRun(Args &&...args) {
@@ -759,24 +759,24 @@ protected:
       m_qlogParams = params.qlogParams();
       m_maxData = params.maxData();
       m_maxStreamData = params.maxStreamData();
-      m_maxStreamsBidi = params.maxStreamsBidi();
-      m_maxStreamsUni = params.maxStreamsUni();
+      m_maxStreamsDuplex = params.maxStreamsDuplex();
+      m_maxStreamsSimplex = params.maxStreamsSimplex();
       m_maxIdleTimeout = params.maxIdleTimeout();
       m_heartBeat = params.heartBeat();
       m_maxUDP = params.maxUDP();
       m_ecn = params.ecn();
       m_migrationMode = params.migrationMode();
-      m_migrationCIDReserve = params.migrationCIDReserve();
-      m_migrationCloseOnFailure = params.migrationCloseOnFailure();
+      m_migCIDRes = params.migCIDRes();
+      m_migCloseOnFail = params.migCloseOnFail();
       {
-	ZuBSpan secret = params.addressValidationSecret();
+	ZuBSpan secret = params.addrValidationSecret();
 	m_tokenSecret = secret;
       }
-      m_tokenLifetime = params.addressValidationLifetime();
-      m_retryAddressValidation = params.retryAddressValidation();
-      m_newTokenAddressValidation = params.newTokenAddressValidation();
-      m_tokenBindPort = params.addressValidationBindPort();
-      if ((m_retryAddressValidation || m_newTokenAddressValidation) &&
+      m_addrValidationLifetime = params.addrValidationLifetime();
+      m_retryAddrValidate = params.retryAddrValidate();
+      m_newTokenAddrValidate = params.newTokenAddrValidate();
+      m_addrValidatePeerPort = params.addrValidatePeerPort();
+      if ((m_retryAddrValidate || m_newTokenAddrValidate) &&
 	  !m_tokenSecret &&
 	  !AddressToken::generateSecret(m_tokenSecret))
 	return false;
@@ -866,7 +866,7 @@ protected:
     return false;
   }
   template <typename Link>
-  bool validateEarlyDataParams(Link *, ZuBSpan params) {
+  bool validateEarlyParams(Link *, ZuBSpan params) {
     return !params;
   }
   template <typename Link>
@@ -992,20 +992,20 @@ private:
   ZquicLogger::Trace	m_qlogTrace;
   uint64_t		m_maxData = DefaultMaxData;
   uint64_t		m_maxStreamData = DefaultMaxStreamData;
-  uint64_t		m_maxStreamsBidi = DefaultMaxStreamsBidi;
-  uint64_t		m_maxStreamsUni = DefaultMaxStreamsUni;
+  uint64_t		m_maxStreamsDuplex = DefaultMaxStreamsDuplex;
+  uint64_t		m_maxStreamsSimplex = DefaultMaxStreamsSimplex;
   uint64_t		m_maxIdleTimeout = 0;
   ZuTime		m_heartBeat;
   unsigned		m_maxUDP = MinUDPPayload;
   bool			m_ecn = false;
   MigrationMode::T	m_migrationMode = MigrationMode::Passive;
-  unsigned		m_migrationCIDReserve = MigrationCIDReserveDefault;
-  bool			m_migrationCloseOnFailure = false;
+  unsigned		m_migCIDRes = DefaultMigCIDRes;
+  bool			m_migCloseOnFail = false;
   TokenSecret		m_tokenSecret;
-  uint64_t		m_tokenLifetime = DefaultTokenLifetime;
-  bool			m_retryAddressValidation = false;
-  bool			m_newTokenAddressValidation = false;
-  bool			m_tokenBindPort = false;
+  uint64_t		m_addrValidationLifetime = DefaultTokenLifetime;
+  bool			m_retryAddrValidate = false;
+  bool			m_newTokenAddrValidate = false;
+  bool			m_addrValidatePeerPort = false;
 };
 
 // CRTP - aligned client implementation should conform to this interface:
@@ -1037,8 +1037,8 @@ public:
   using App = App_;
   using Base = Engine<App>;
   static constexpr unsigned TLSBufSize = (64<<10); // 64K
-  static constexpr unsigned RuntimePNLength = 2;
-  static constexpr unsigned RuntimeCryptoChunk = 900;
+  static constexpr unsigned PNLength = 2;
+  static constexpr unsigned CryptoChunk = 900;
 
   bool init(ClientParams params) {
     if (bool(params.certPath()) != bool(params.keyPath())) {
@@ -1095,8 +1095,8 @@ public:
   using Base::app;
   static constexpr bool EndpointRef = false;
   static constexpr unsigned TLSBufSize = Client<App>::TLSBufSize;
-  static constexpr unsigned RuntimePNLength = Client<App>::RuntimePNLength;
-  static constexpr unsigned RuntimeCryptoChunk = Client<App>::RuntimeCryptoChunk;
+  static constexpr unsigned PNLength = Client<App>::PNLength;
+  static constexpr unsigned CryptoChunk = Client<App>::CryptoChunk;
 
 template <typename, typename, typename, typename>
 friend class SrvLink;
@@ -1143,20 +1143,20 @@ friend ZmEngine<App>;
     });
   }
   template <typename L>
-  void addressValidationDiag(L &&l) const {
+  void addrValidationDiag(L &&l) const {
     auto mx = this->mx();
     if (!mx) {
-      AddressValidationDiag diag;
+      AddrValidationDiag diag;
       l(diag);
       return;
     }
     auto server = const_cast<Server *>(this);
     if (server->rxInvoked()) {
-      l(server->m_addressValidationDiag);
+      l(server->m_addrValidationDiag);
       return;
     }
     mx->rxRun([server, l = ZuFwd<L>(l)]() mutable {
-      l(server->m_addressValidationDiag);
+      l(server->m_addrValidationDiag);
     });
   }
   template <typename L, typename Done>
@@ -1296,14 +1296,14 @@ private:
     LongHdr h;
     if (Pkt::parseLong(packet, h) < 0) return nullptr;
     if (!VersionNeg::supported(h.version)) {
-      sendVersionNegotiation_(h, d.addr);
+      sendVerNeg_(h, d.addr);
       return nullptr;
     }
     if (Link *link = m_routes.find(h.dcid)) return link;
     if (h.type != PktType::Initial) return nullptr;
     InitialInfo info{h, d.addr, d.buf->length};
     if (!validateInitial_(info, packet)) {
-      if (app()->retryAddressValidation())
+      if (app()->retryAddrValidate())
 	sendRetry_(h, d.addr);
       return nullptr;
     }
@@ -1321,7 +1321,7 @@ private:
     ResetToken token;
     if (!m_routes.resetTokenForShort(packet, token)) return false;
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
-    int n = StatelessRst::writeForUnknownCID(
+    int n = StatelessReset::writeForUnknownCID(
       buf->data_(), buf->size, packet, token);
     if (n < 0) return false;
     buf->skip = 0;
@@ -1331,14 +1331,14 @@ private:
       ZquicLOG(app()->qlogTrace(), ([
 	resetBytes = unsigned(n)
       ](auto &o, ZuTime time) {
-	SecEvent event{
+	SecEvt event{
 	  .value = resetBytes,
-	  .kind = SecKind::StatelessRst,
+	  .kind = SecKind::StatelessReset,
 	  .success = true
 	};
 	event.trigger = SecTrigger::Sent;
 	event.reason = SecReason::UnknownCID;
-	o.logSecEvent(EventName::StatelessRst, event, time);
+	o.logSecEvt(EvtName::StatelessReset, event, time);
       }));
     }
     return sent;
@@ -1363,7 +1363,7 @@ private:
 	.scid = scid
       };
       o.logCxnStarted(
-	CxnStartedEvent{.local = local, .remote = remote, .linkInfo = linkInfo},
+	CxnStartedEvt{.local = local, .remote = remote, .linkInfo = linkInfo},
 	time);
     }));
     Link *ptr = link.ptr();
@@ -1436,7 +1436,7 @@ private:
     Base::stop_0();
   }
 
-  bool sendVersionNegotiation_(const LongHdr &h, ZiSockAddr addr) {
+  bool sendVerNeg_(const LongHdr &h, ZiSockAddr addr) {
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
     int n = VersionNeg::write(
       buf->data_(), buf->size, h.scid, h.dcid);
@@ -1448,7 +1448,7 @@ private:
       ZquicLOG(app()->qlogTrace(), ([
 	version = h.version
       ](auto &o, ZuTime time) {
-	VersionEvent event;
+	VersionEvt event;
 	new (event.serverVersions.push()) uint32_t(Version1);
 	new (event.clientVersions.push()) uint32_t(version);
 	o.logVersionInfo(event, time);
@@ -1463,44 +1463,44 @@ private:
   }
 
   bool validateInitial_(InitialInfo &info, ZuBSpan packet) {
-    if (!app()->retryAddressValidation()) return true;
+    if (!app()->retryAddrValidate()) return true;
     ZuBSpan token = initialToken_(packet, info.header);
     if (!token) {
-      ++m_addressValidationDiag.retryRejected;
+      ++m_addrValidationDiag.retryRejected;
       ZquicLOG(app()->qlogTrace(), ([
 	tokenLength = 0U
       ](auto &o, ZuTime time) {
-	SecEvent event{
+	SecEvt event{
 	  .value = tokenLength,
 	  .kind = SecKind::Retry,
 	  .reason = SecReason::MissingToken,
 	  .success = false
 	};
 	event.trigger = SecTrigger::Validated;
-	o.logSecEvent(EventName::RetryValid, event, time);
+	o.logSecEvt(EvtName::RetryValid, event, time);
 	event.kind = SecKind::Token;
-	o.logSecEvent(EventName::TokenReject, event, time);
+	o.logSecEvt(EvtName::TokenReject, event, time);
       }));
       return false;
     }
     TokenInfo tokenInfo;
     TokenStatus::T status = AddressToken::validate(
-      tokenInfo, token, app()->addressValidationSecret(), info.peer,
-      uint64_t(Zm::now().sec()), app()->addressValidationLifetime(),
-      app()->addressValidationBindPort());
+      tokenInfo, token, app()->addrValidationSecret(), info.peer,
+      uint64_t(Zm::now().sec()), app()->addrValidationLifetime(),
+      app()->addrValidatePeerPort());
     if (status != TokenStatus::OK) {
-      ++m_addressValidationDiag.retryRejected;
+      ++m_addrValidationDiag.retryRejected;
       switch (status) {
-	case TokenStatus::Expired: ++m_addressValidationDiag.tokenExpired; break;
-	case TokenStatus::Auth: ++m_addressValidationDiag.tokenAuthFailure; break;
+	case TokenStatus::Expired: ++m_addrValidationDiag.tokenExpired; break;
+	case TokenStatus::Auth: ++m_addrValidationDiag.tokenAuthFailure; break;
 	case TokenStatus::Address:
-	  ++m_addressValidationDiag.tokenAddressMismatch;
+	  ++m_addrValidationDiag.tokenAddressMismatch;
 	  break;
 	case TokenStatus::Malformed:
-	  ++m_addressValidationDiag.tokenMalformed;
+	  ++m_addrValidationDiag.tokenMalformed;
 	  break;
-	case TokenStatus::Kind: ++m_addressValidationDiag.tokenKindMismatch; break;
-	case TokenStatus::ODCID: ++m_addressValidationDiag.tokenODCIDMismatch; break;
+	case TokenStatus::Kind: ++m_addrValidationDiag.tokenKindMismatch; break;
+	case TokenStatus::ODCID: ++m_addrValidationDiag.tokenODCIDMismatch; break;
 	default: break;
       }
       ZquicLOG(app()->qlogTrace(), ([
@@ -1519,104 +1519,104 @@ private:
 	  case TokenStatus::ODCID: reason = SecReason::ODCID; break;
 	  default: break;
 	}
-	SecEvent event{
+	SecEvt event{
 	  .value = tokenLength,
 	  .kind = SecKind::Token,
 	  .reason = reason,
 	  .success = false
 	};
 	event.trigger = SecTrigger::Validated;
-	o.logSecEvent(EventName::TokenReject, event, time);
+	o.logSecEvt(EvtName::TokenReject, event, time);
       }));
       return false;
     }
     switch (tokenInfo.kind) {
       case TokenKind::Retry:
 	if (!(tokenInfo.serverCID == info.header.dcid)) {
-	  ++m_addressValidationDiag.retryRejected;
-	  ++m_addressValidationDiag.tokenODCIDMismatch;
+	  ++m_addrValidationDiag.retryRejected;
+	  ++m_addrValidationDiag.tokenODCIDMismatch;
 	  ZquicLOG(app()->qlogTrace(), ([
 	    tokenLength = token.length()
 	  ](auto &o, ZuTime time) {
-	    SecEvent event{
+	    SecEvt event{
 	      .value = tokenLength,
 	      .kind = SecKind::Retry,
 	      .reason = SecReason::RetrySCID,
 	      .success = false
 	    };
 	    event.trigger = SecTrigger::Validated;
-	    o.logSecEvent(EventName::RetryValid, event, time);
+	    o.logSecEvt(EvtName::RetryValid, event, time);
 	    event.kind = SecKind::Token;
-	    o.logSecEvent(EventName::TokenReject, event, time);
+	    o.logSecEvt(EvtName::TokenReject, event, time);
 	  }));
 	  return false;
 	}
 	info.retrySCID = info.header.dcid;
 	info.origDCID = tokenInfo.origDCID.length() ?
 	  tokenInfo.origDCID : info.header.dcid;
-	++m_addressValidationDiag.retryAccepted;
+	++m_addrValidationDiag.retryAccepted;
 	ZquicLOG(app()->qlogTrace(), ([
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
-	  SecEvent event{
+	  SecEvt event{
 	    .value = tokenLength,
 	    .kind = SecKind::Retry,
 	    .reason = SecReason::OK,
 	    .success = true
 	  };
 	  event.trigger = SecTrigger::Validated;
-	  o.logSecEvent(EventName::RetryValid, event, time);
+	  o.logSecEvt(EvtName::RetryValid, event, time);
 	  event.kind = SecKind::Token;
-	  o.logSecEvent(EventName::TokenValid, event, time);
+	  o.logSecEvt(EvtName::TokenValid, event, time);
 	}));
 	break;
       case TokenKind::NewToken:
-	if (!app()->newTokenAddressValidation() || tokenInfo.serverCID.length()) {
-	  ++m_addressValidationDiag.retryRejected;
-	  ++m_addressValidationDiag.tokenKindMismatch;
+	if (!app()->newTokenAddrValidate() || tokenInfo.serverCID.length()) {
+	  ++m_addrValidationDiag.retryRejected;
+	  ++m_addrValidationDiag.tokenKindMismatch;
 	  ZquicLOG(app()->qlogTrace(), ([
 	    tokenLength = token.length()
 	  ](auto &o, ZuTime time) {
-	    SecEvent event{
+	    SecEvt event{
 	      .value = tokenLength,
 	      .kind = SecKind::Token,
 	      .reason = SecReason::NewTokenPolicy,
 	      .success = false
 	    };
 	    event.trigger = SecTrigger::Validated;
-	    o.logSecEvent(EventName::TokenReject, event, time);
+	    o.logSecEvt(EvtName::TokenReject, event, time);
 	  }));
 	  return false;
 	}
 	info.origDCID = info.header.dcid;
-	++m_addressValidationDiag.newTokenAccepted;
+	++m_addrValidationDiag.newTokenAccepted;
 	ZquicLOG(app()->qlogTrace(), ([
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
-	  SecEvent event{
+	  SecEvt event{
 	    .value = tokenLength,
 	    .kind = SecKind::Token,
 	    .reason = SecReason::OK,
 	    .success = true
 	  };
 	  event.trigger = SecTrigger::Validated;
-	  o.logSecEvent(EventName::TokenValid, event, time);
+	  o.logSecEvt(EvtName::TokenValid, event, time);
 	}));
 	break;
       default:
-	++m_addressValidationDiag.retryRejected;
-	++m_addressValidationDiag.tokenKindMismatch;
+	++m_addrValidationDiag.retryRejected;
+	++m_addrValidationDiag.tokenKindMismatch;
 	ZquicLOG(app()->qlogTrace(), ([
 	  tokenLength = token.length()
 	](auto &o, ZuTime time) {
-	  SecEvent event{
+	  SecEvt event{
 	    .value = tokenLength,
 	    .kind = SecKind::Token,
 	    .reason = SecReason::Kind,
 	    .success = false
 	  };
 	  event.trigger = SecTrigger::Validated;
-	  o.logSecEvent(EventName::TokenReject, event, time);
+	  o.logSecEvt(EvtName::TokenReject, event, time);
 	}));
 	return false;
     }
@@ -1630,12 +1630,12 @@ private:
     TokenBytes token;
     if (!CxnIDGen::random(retrySCID) ||
 	!AddressToken::encode(
-	  token, TokenKind::Retry, app()->addressValidationSecret(), addr,
+	  token, TokenKind::Retry, app()->addrValidationSecret(), addr,
 	  h.dcid, retrySCID, uint64_t(Zm::now().sec()),
-	  app()->addressValidationBindPort()))
+	  app()->addrValidatePeerPort()))
       return false;
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
-    int n = Pkt::writeRetryAuthenticated(
+    int n = Pkt::writeRetryAuth(
       buf->data_(), buf->size, h.scid, retrySCID,
       token, h.dcid);
     if (n < 0) return false;
@@ -1643,22 +1643,22 @@ private:
     buf->length = unsigned(n);
     bool sent = sendPkt_(ZuMv(buf), ZuMv(addr));
     if (sent) {
-      ++m_addressValidationDiag.retrySent;
+      ++m_addrValidationDiag.retrySent;
       ZquicLOG(app()->qlogTrace(), ([
 	tokenLength = token.length(),
 	packetBytes = unsigned(n)
       ](auto &o, ZuTime time) {
-	SecEvent event{
+	SecEvt event{
 	  .value = tokenLength,
 	  .kind = SecKind::Retry,
 	  .success = true
 	};
 	event.trigger = SecTrigger::Sent;
 	event.reason = SecReason::AddrValid;
-	o.logSecEvent(EventName::RetrySent, event, time);
+	o.logSecEvt(EvtName::RetrySent, event, time);
 	event.kind = SecKind::Token;
 	event.value = packetBytes;
-	o.logSecEvent(EventName::TokenIssued, event, time);
+	o.logSecEvt(EvtName::TokenIssued, event, time);
       }));
     }
     return sent;
@@ -1675,7 +1675,7 @@ private:
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;
-  AddressValidationDiag	m_addressValidationDiag;
+  AddrValidationDiag	m_addrValidationDiag;
   Ztls::Backend::TicketKey *m_ticketKey	= nullptr;
   unsigned		m_stopCount = 0;
 };

@@ -521,7 +521,7 @@ static bool hkdfExpandLabelPTLS_(
       label, ptls_iovec_init(nullptr, 0), "tls13 ");
 }
 
-bool PktProt::deriveTrafficSecret(
+bool PktProt::deriveSecret(
   TrafficSecret &out, ptls_cipher_suite_t *cipher, ZuBSpan secret)
 {
   out.clear();
@@ -568,7 +568,7 @@ bool PktProt::deriveTrafficSecret(
   return true;
 }
 
-bool PktProt::deriveNextTrafficSecret(
+bool PktProt::deriveNextSecret(
   TrafficSecret &out, const TrafficSecret &current)
 {
   out.clear();
@@ -608,7 +608,7 @@ bool PktProt::deriveNextTrafficSecret(
   return true;
 }
 
-bool Crypto::updateTxTrafficSecret(
+bool Crypto::txSecret(
   PktNumSpace::T level, const TrafficSecret &secret)
 {
   if (level < 0 || level >= PktNumSpace::N || !secret.valid()) return false;
@@ -616,7 +616,7 @@ bool Crypto::updateTxTrafficSecret(
   return m_txProt[level].init(m_txTrafficSecrets[level], level, true);
 }
 
-bool Crypto::updateRxTrafficSecret(
+bool Crypto::rxSecret(
   PktNumSpace::T level, const TrafficSecret &secret)
 {
   if (level < 0 || level >= PktNumSpace::N || !secret.valid()) return false;
@@ -624,36 +624,36 @@ bool Crypto::updateRxTrafficSecret(
   return m_rxProt[level].init(m_rxTrafficSecrets[level], level, false);
 }
 
-bool Crypto::updateTxKeyTrafficSecret(
+bool Crypto::txKeySecret(
   PktKeyLevel::T level, const TrafficSecret &secret)
 {
-  PktNumSpace::T space = pktNumSpaceFromKeyLevel(level);
+  PktNumSpace::T space = spaceFromKeyLevel(level);
   if (space == PktNumSpace::N || !secret.valid()) return false;
   if (level != PktKeyLevel::ZeroRTT)
-    return updateTxTrafficSecret(space, secret);
-  m_txEarlyTrafficSecret = secret;
+    return txSecret(space, secret);
+  m_txEarlySecret = secret;
   m_earlyDataEnabled = true;
   if (m_earlyDataState == EarlyDataState::Disabled ||
       m_earlyDataState == EarlyDataState::Enabled)
     m_earlyDataState = EarlyDataState::Offered;
-  return m_txEarlyProt.init(m_txEarlyTrafficSecret, space, true);
+  return m_txEarlyProt.init(m_txEarlySecret, space, true);
 }
 
-bool Crypto::updateRxKeyTrafficSecret(
+bool Crypto::rxKeySecret(
   PktKeyLevel::T level, const TrafficSecret &secret)
 {
-  PktNumSpace::T space = pktNumSpaceFromKeyLevel(level);
+  PktNumSpace::T space = spaceFromKeyLevel(level);
   if (space == PktNumSpace::N || !secret.valid()) return false;
   if (level != PktKeyLevel::ZeroRTT)
-    return updateRxTrafficSecret(space, secret);
-  m_rxEarlyTrafficSecret = secret;
+    return rxSecret(space, secret);
+  m_rxEarlySecret = secret;
   m_earlyDataEnabled = true;
   if (m_isServer)
     m_earlyDataState = EarlyDataState::Accepted;
   else if (m_earlyDataState == EarlyDataState::Disabled ||
       m_earlyDataState == EarlyDataState::Enabled)
     m_earlyDataState = EarlyDataState::Offered;
-  return m_rxEarlyProt.init(m_rxEarlyTrafficSecret, space, false);
+  return m_rxEarlyProt.init(m_rxEarlySecret, space, false);
 }
 
 static bool trafficMask_(
@@ -889,8 +889,8 @@ bool Crypto::init(const CryptoConfig &config)
   memset(m_secretInstalled, 0, sizeof(m_secretInstalled));
   for (auto &secret : m_txTrafficSecrets) secret.clear();
   for (auto &secret : m_rxTrafficSecrets) secret.clear();
-  m_txEarlyTrafficSecret.clear();
-  m_rxEarlyTrafficSecret.clear();
+  m_txEarlySecret.clear();
+  m_rxEarlySecret.clear();
   for (auto &state : m_txProt) state.clear();
   for (auto &state : m_rxProt) state.clear();
   m_txEarlyProt.clear();
@@ -904,10 +904,10 @@ bool Crypto::init(const CryptoConfig &config)
   if (!m_keyLogPath)
     if (auto path = ::getenv("SSLKEYLOGFILE"))
       m_keyLogPath = ParamString{ZuCSpan{path}};
-  m_localTransportParams = config.localTransportParams ?
-    *config.localTransportParams : TransportParams{};
-  m_peerTransportParams = {};
-  m_peerTransportParamsReceived = false;
+  m_localParams = config.localParams ?
+    *config.localParams : TransportParams{};
+  m_peerParams = {};
+  m_peerParamsSet = false;
   return true;
 }
 
@@ -996,15 +996,15 @@ bool Crypto::initTLSProperties_(const CryptoConfig &config)
 {
   memset(&m_tlsProps, 0, sizeof(m_tlsProps));
   unsigned transportParamsLen =
-    m_localTransportParams.encodedLength();
-  m_tlsTransportParams.length(transportParamsLen);
-  int n = encodeTransportParams(
-    m_tlsTransportParams.data(), m_tlsTransportParams.length(),
-    m_localTransportParams);
-  if (n < 0 || unsigned(n) != m_tlsTransportParams.length()) return false;
-  m_tlsExtensions[0].type = TLSExtQUICTransportParamsV1;
+    m_localParams.encodedLength();
+  m_tlsParams.length(transportParamsLen);
+  int n = encodeParams(
+    m_tlsParams.data(), m_tlsParams.length(),
+    m_localParams);
+  if (n < 0 || unsigned(n) != m_tlsParams.length()) return false;
+  m_tlsExtensions[0].type = TLSExtQUICParamsV1;
   m_tlsExtensions[0].data =
-    ptls_iovec_init(m_tlsTransportParams.data(), m_tlsTransportParams.length());
+    ptls_iovec_init(m_tlsParams.data(), m_tlsParams.length());
   m_tlsExtensions[1].type = UINT16_MAX;
   m_tlsExtensions[1].data = {};
   m_tlsProps.additional_extensions = m_tlsExtensions;
@@ -1059,7 +1059,7 @@ void Crypto::resetTLS_()
   memset(m_tlsCipherSuites, 0, sizeof(m_tlsCipherSuites));
   memset(&m_tlsProps, 0, sizeof(m_tlsProps));
   memset(m_tlsExtensions, 0, sizeof(m_tlsExtensions));
-  m_tlsTransportParams = {};
+  m_tlsParams = {};
   m_alpnVec = {};
   m_maxEarlyData = 0;
   m_tlsResult = PTLS_ERROR_IN_PROGRESS;
@@ -1132,10 +1132,10 @@ int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
 {
   if (!secret) return 0;
   PktKeyLevel::T keyLevel = PktKeyLevel::Initial;
-  if (!pktKeyLevelFromTLSEpoch(epoch, keyLevel) ||
+  if (!keyLevelFromTLSEpoch(epoch, keyLevel) ||
       keyLevel == PktKeyLevel::Initial)
     return 0;
-  PktNumSpace::T space = pktNumSpaceFromKeyLevel(keyLevel);
+  PktNumSpace::T space = spaceFromKeyLevel(keyLevel);
   if (space == PktNumSpace::N) return 0;
 
   ptls_cipher_suite_t *cipher = ptls_get_cipher(m_tls);
@@ -1144,10 +1144,10 @@ int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
     static_cast<const uint8_t *>(secret),
     unsigned(cipher->hash->digest_size)};
   TrafficSecret &traffic = keyLevel == PktKeyLevel::ZeroRTT ?
-    (isEnc ? m_txEarlyTrafficSecret : m_rxEarlyTrafficSecret) :
+    (isEnc ? m_txEarlySecret : m_rxEarlySecret) :
     (isEnc ? m_txTrafficSecrets[space] : m_rxTrafficSecrets[space]);
   bool installed = traffic.valid();
-  if (!PktProt::deriveTrafficSecret(traffic, cipher, secretSpan))
+  if (!PktProt::deriveSecret(traffic, cipher, secretSpan))
     return -1;
   PktProtState &state = keyLevel == PktKeyLevel::ZeroRTT ?
     (isEnc ? m_txEarlyProt : m_rxEarlyProt) :
@@ -1204,7 +1204,7 @@ int Crypto::saveSessionTicket_(ptls_iovec_t input)
 int Crypto::collectExtensionCB_(
   ptls_t *, ptls_handshake_properties_t *, uint16_t type)
 {
-  return type == TLSExtQUICTransportParamsV1;
+  return type == TLSExtQUICParamsV1;
 }
 
 int Crypto::collectedExtensionsCB_(
@@ -1220,11 +1220,11 @@ int Crypto::collectedExtensions_(ptls_raw_extension_t *extensions)
   if (!extensions)
     return PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_MISSING_EXTENSION);
   for (; extensions->type != UINT16_MAX; ++extensions) {
-    if (extensions->type != TLSExtQUICTransportParamsV1) continue;
+    if (extensions->type != TLSExtQUICParamsV1) continue;
     ZuBSpan in{extensions->data.base, unsigned(extensions->data.len)};
-    if (decodeTransportParams(in, m_peerTransportParams) < 0)
+    if (decodeParams(in, m_peerParams) < 0)
       return PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_DECODE_ERROR);
-    m_peerTransportParamsReceived = true;
+    m_peerParamsSet = true;
     return 0;
   }
   return PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_MISSING_EXTENSION);
@@ -1286,8 +1286,8 @@ void Crypto::syncEarlyDataState_()
       break;
     case PTLS_EARLY_DATA_REJECTED:
       if (m_earlyDataState != EarlyDataState::Rejected) {
-	m_txEarlyTrafficSecret.clear();
-	m_rxEarlyTrafficSecret.clear();
+	m_txEarlySecret.clear();
+	m_rxEarlySecret.clear();
 	m_txEarlyProt.clear();
 	m_rxEarlyProt.clear();
 	m_earlyDataEnabled = false;
@@ -1302,7 +1302,7 @@ void Crypto::syncEarlyDataState_()
   }
 }
 
-int Crypto::encodeTransportParams(
+int Crypto::encodeParams(
   uint8_t *out, unsigned len, const TransportParams &params)
 {
   int n = params.encode(out, len);
@@ -1310,7 +1310,7 @@ int Crypto::encodeTransportParams(
   return n;
 }
 
-int Crypto::decodeTransportParams(ZuBSpan in, TransportParams &params)
+int Crypto::decodeParams(ZuBSpan in, TransportParams &params)
 {
   int n = params.decode(in);
   if (!n) ++m_diag.transportParamsDecoded;
@@ -1354,9 +1354,9 @@ bool Crypto::rejectZeroRTT()
 {
   bool wasRejected = m_earlyDataState == EarlyDataState::Rejected;
   bool hadEarly =
-    m_txEarlyTrafficSecret.valid() || m_rxEarlyTrafficSecret.valid();
-  m_txEarlyTrafficSecret.clear();
-  m_rxEarlyTrafficSecret.clear();
+    m_txEarlySecret.valid() || m_rxEarlySecret.valid();
+  m_txEarlySecret.clear();
+  m_rxEarlySecret.clear();
   m_txEarlyProt.clear();
   m_rxEarlyProt.clear();
   m_earlyDataEnabled = false;
@@ -1365,13 +1365,13 @@ bool Crypto::rejectZeroRTT()
   if (!wasRejected) ++m_diag.zeroRTTRejected;
   if (m_qlogTrace)
     ZquicLOG(*m_qlogTrace, ([](auto &o, ZuTime time) {
-      SecEvent event{
+      SecEvt event{
 	.kind = SecKind::TLS,
 	.trigger = SecTrigger::Received,
 	.reason = zeroRTTSecReason(ZeroRTTReason::TLSRejected),
 	.success = false
       };
-      o.logSecEvent(EventName::ZeroRTTReject, event, time);
+      o.logSecEvt(EvtName::ZeroRTTReject, event, time);
     }));
   return true;
 }

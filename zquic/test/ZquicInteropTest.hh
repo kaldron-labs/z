@@ -72,7 +72,7 @@ inline void printFile(const char *label, const ZtString<> &path)
   fclose(f);
 }
 
-inline bool writeSelfSignedLocalhostCert_(
+inline bool writeLocalhostCert_(
   ZuCSpan certPath, ZuCSpan keyPath)
 {
   ZtString<> cmd;
@@ -106,7 +106,7 @@ struct TempDir {
   bool init()
   {
     return init("ZquicInteropTest") &&
-      writeSelfSignedLocalhostCert_(certPath.cspan(), keyPath.cspan());
+      writeLocalhostCert_(certPath.cspan(), keyPath.cspan());
   }
 
   ZtString<> pathOf(const char *name) const
@@ -126,14 +126,14 @@ struct TempDir {
   }
 };
 
-inline bool writeSelfSignedLocalhostCert(
+inline bool writeLocalhostCert(
   TempDir &temp, ZtString<> &certPath, ZtString<> &keyPath)
 {
   certPath = temp.pathOf("cert.pem");
   keyPath = temp.pathOf("key.pem");
   temp.certPath = certPath;
   temp.keyPath = keyPath;
-  return writeSelfSignedLocalhostCert_(certPath.cspan(), keyPath.cspan());
+  return writeLocalhostCert_(certPath.cspan(), keyPath.cspan());
 }
 
 inline bool haveCurlH3()

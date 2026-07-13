@@ -20,7 +20,7 @@ static constexpr uint64_t TPInitialMaxStreamsBidi = 0x08;
 static constexpr uint64_t TPInitialMaxStreamsUni = 0x09;
 static constexpr uint64_t TPAckDelayExponent = 0x0a;
 static constexpr uint64_t TPMaxAckDelay = 0x0b;
-static constexpr uint64_t TPDisableActiveMigration = 0x0c;
+static constexpr uint64_t TPDisableMig = 0x0c;
 static constexpr uint64_t TPActiveCxnIDLimit = 0x0e;
 static constexpr uint64_t TPInitialSCID = 0x0f;
 static constexpr uint64_t TPRetrySCID = 0x10;
@@ -124,7 +124,7 @@ unsigned TransportParams::encodedLength() const
     paramVarLen_(TPMaxAckDelay, maxAckDelay) +
     paramVarLen_(TPActiveCxnIDLimit, activeCxnIDLimit);
   if (disableActiveMigration)
-    n += VarInt::length(TPDisableActiveMigration) + VarInt::length(0);
+    n += VarInt::length(TPDisableMig) + VarInt::length(0);
   if (initialSCID)
     n += paramBytesLen_(TPInitialSCID, initialSCID);
   if (retrySCID)
@@ -163,7 +163,7 @@ int TransportParams::encode(uint8_t *out, unsigned len) const
 	out, len, TPActiveCxnIDLimit, activeCxnIDLimit, o) < 0)
     return -1;
   if (disableActiveMigration &&
-      (VarInt::put(out, len, TPDisableActiveMigration, o) < 0 ||
+      (VarInt::put(out, len, TPDisableMig, o) < 0 ||
        VarInt::put(out, len, 0, o) < 0))
     return -1;
   if (initialSCID &&
@@ -241,7 +241,7 @@ int TransportParams::decode(ZuBSpan in)
       case TPMaxAckDelay:
 	if (getParamVar_(value, maxAckDelay) < 0) return -1;
 	break;
-      case TPDisableActiveMigration:
+      case TPDisableMig:
 	if (len) return -1;
 	disableActiveMigration = true;
 	break;

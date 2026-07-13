@@ -221,27 +221,27 @@ public:
   bool canSend(unsigned bytes) const {
     if (bytes > m_activeMaxUDP) return false;
     if (m_validated) return true;
-    return bytes <= antiAmplificationRemaining();
+    return bytes <= antiAmpRemaining();
   }
   bool canSendProbe(unsigned bytes) const {
     if (bytes < MinUDPPayload || bytes > ceiling()) return false;
     if (m_validated) return true;
-    return bytes <= antiAmplificationRemaining();
+    return bytes <= antiAmpRemaining();
   }
 
-  uint64_t antiAmplificationLimit() const {
+  uint64_t antiAmpLimit() const {
     if (m_validated) return uint64_t(-1);
     if (m_bytesRx > uint64_t(-1) / 3) return uint64_t(-1);
     return m_bytesRx * 3;
   }
-  uint64_t antiAmplificationRemaining() const {
+  uint64_t antiAmpRemaining() const {
     if (m_validated) return uint64_t(-1);
-    uint64_t limit = antiAmplificationLimit();
+    uint64_t limit = antiAmpLimit();
     return m_bytesTx < limit ? limit - m_bytesTx : 0;
   }
   unsigned sendAllowance() const {
     unsigned n = m_activeMaxUDP;
-    uint64_t r = antiAmplificationRemaining();
+    uint64_t r = antiAmpRemaining();
     if (r < n) n = r;
     return n;
   }

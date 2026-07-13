@@ -99,14 +99,14 @@ ZtStruct((LinkInfo, JSON),
 }
 
 template <typename Event>
-struct QLogEventJSON {
+struct QLogEvtJSON {
   template <typename O, typename Facet>
   struct Handler {
     template <template <typename> class Filter, typename S>
     static void save(S &s, const Event &event)
     {
       using NameProps =
-	ZuTypeList<ZuFieldProp::Enum<EventName::JSON>>;
+	ZuTypeList<ZuFieldProp::Enum<EvtName::JSON>>;
 
       bool comma = false;
       s << '{';
@@ -124,16 +124,16 @@ struct QLogEventJSON {
   };
 };
 
-#define QLogEventFmt(Type) inline QLogEventJSON<Type> ZtJSON_Fmt(Type *)
+#define QLogEvtFmt(Type) inline QLogEvtJSON<Type> ZtJSON_Fmt(Type *)
 
-ZuDerive(QLogEventSchemas,
+ZuDerive(QLogEvtSchemas,
   (ZuArray<ZuCSpan, 2>));
-inline ZtJSON::AsArray<ZtFieldTC::String> ZtJSON_Fmt(QLogEventSchemas *);
+inline ZtJSON::AsArray<ZtFieldTC::String> ZtJSON_Fmt(QLogEvtSchemas *);
 
 struct QLogTrace {
   QLogVantage	vantage;
   QLogCommonFields	commonFields;
-  QLogEventSchemas	eventSchemas;
+  QLogEvtSchemas	eventSchemas;
 };
 
 ZtStruct((QLogTrace, JSON),
@@ -177,14 +177,14 @@ struct QLogCxnStartedData {
 struct QLogCxnStartedDataJSON;
 inline QLogCxnStartedDataJSON ZtJSON_Fmt(QLogCxnStartedData *);
 
-struct QLogCxnStartedEvent {
+struct QLogCxnStartedEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::CxnStarted;
+  EvtName::T name = EvtName::CxnStarted;
   QLogCxnStartedData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogCxnStartedEvent);
+QLogEvtFmt(QLogCxnStartedEvt);
 
 struct QLogCxnStateData {
   Zquic::LinkState::T oldState = Zquic::LinkState::Starting;
@@ -197,14 +197,14 @@ ZtStruct((QLogCxnStateData, JSON),
   (((newState), (JSON::ID<"new">,
     Enum<Zquic::LinkState::JSON>)), (Int8)));
 
-struct QLogCxnStateEvent {
+struct QLogCxnStateEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::CxnStateUpd;
+  EvtName::T name = EvtName::CxnStateUpd;
   QLogCxnStateData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogCxnStateEvent);
+QLogEvtFmt(QLogCxnStateEvt);
 
 struct QLogRawInfo {
   uint64_t	length = 0;
@@ -245,14 +245,14 @@ ZtStruct((QLogDatagramData, JSON),
   (((raw)), (UDT)),
   (((ecn)), (UDT)));
 
-struct QLogDatagramEvent {
+struct QLogDatagramEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::UDPTx;
+  EvtName::T name = EvtName::UDPTx;
   QLogDatagramData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogDatagramEvent);
+QLogEvtFmt(QLogDatagramEvt);
 
 struct QLogFrameData {
 	Zquic::FrameType::T frameType = Zquic::FrameType::Unknown;
@@ -326,14 +326,14 @@ struct QLogPacketData {
 struct QLogPacketDataJSON;
 inline QLogPacketDataJSON ZtJSON_Fmt(QLogPacketData *);
 
-struct QLogPacketEvent {
+struct QLogPacketEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::PktSent;
+  EvtName::T name = EvtName::PktSent;
   QLogPacketData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogPacketEvent);
+QLogEvtFmt(QLogPacketEvt);
 
 ZuDerive(QLogPktNumArray,
   (ZuArray<uint64_t, AckPacketMax>));
@@ -351,14 +351,14 @@ ZtStruct((QLogAckData, JSON),
       (Int8)),
   (((packetNumbers), (JSON::ID<"packet_numbers">)), (UDT)));
 
-struct QLogAckEvent {
+struct QLogAckEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::PktsAcked;
+  EvtName::T name = EvtName::PktsAcked;
   QLogAckData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogAckEvent);
+QLogEvtFmt(QLogAckEvt);
 
 struct PktLostTrigger {
   ZtEnum(PktLostTrigger, int8_t,
@@ -377,14 +377,14 @@ ZtStruct((QLogPktLostData, JSON),
   (((header)), (UDT)),
   (((trigger), (Enum<PktLostTrigger::JSON>)), (Int8)));
 
-struct QLogPktLostEvent {
+struct QLogPktLostEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::PktLost;
+  EvtName::T name = EvtName::PktLost;
   QLogPktLostData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogPktLostEvent);
+QLogEvtFmt(QLogPktLostEvt);
 
 struct QLogMarkRetransData {
   QLogFrameArray frames;
@@ -393,14 +393,14 @@ struct QLogMarkRetransData {
 ZtStruct((QLogMarkRetransData, JSON),
   (((frames)), (UDT)));
 
-struct QLogMarkRetransEvent {
+struct QLogMarkRetransEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::MarkRetrans;
+  EvtName::T name = EvtName::MarkRetrans;
   QLogMarkRetransData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogMarkRetransEvent);
+QLogEvtFmt(QLogMarkRetransEvt);
 
 struct QLogRecMetricsData {
   double	latestRTT = 0;
@@ -421,14 +421,14 @@ ZtStruct((QLogRecMetricsData, JSON),
   (((ssthresh)), (UInt64)),
   (((bytesInFlight), (JSON::ID<"bytes_in_flight">)), (UInt64)));
 
-struct QLogRecMetricsEvent {
+struct QLogRecMetricsEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::MetricsUpd;
+  EvtName::T name = EvtName::MetricsUpd;
   QLogRecMetricsData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogRecMetricsEvent);
+QLogEvtFmt(QLogRecMetricsEvt);
 
 struct CongState {
   ZtEnum(CongState, int8_t,
@@ -456,14 +456,14 @@ ZtStruct((QLogCongStateData, JSON),
     Enum<CongState::JSON>)), (Int8)),
   (((trigger), (Enum<CongTrigger::JSON>)), (Int8)));
 
-struct QLogCongStateEvent {
+struct QLogCongStateEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::CongestionUpd;
+  EvtName::T name = EvtName::CongestionUpd;
   QLogCongStateData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogCongStateEvent);
+QLogEvtFmt(QLogCongStateEvt);
 
 struct TimerType {
   ZtEnum(TimerType, int8_t,
@@ -472,17 +472,17 @@ struct TimerType {
     "loss_timeout", "pto");
 };
 
-struct TimerEvent {
-  ZtEnum(TimerEvent, int8_t,
+struct TimerEvt {
+  ZtEnum(TimerEvt, int8_t,
     Set, Expired, Cancelled);
-  ZtEnumMap(TimerEvent, JSON,
+  ZtEnumMap(TimerEvt, JSON,
     "set", "expired", "cancelled");
 };
 
 struct QLogTimerData {
   TimerType::T timerType = TimerType::Loss;
   Zquic::PktNumSpace::T packetSpace = Zquic::PktNumSpace::Initial;
-  TimerEvent::T eventType = TimerEvent::Set;
+  TimerEvt::T eventType = TimerEvt::Set;
   double	delta = 0;
 };
 
@@ -492,17 +492,17 @@ ZtStruct((QLogTimerData, JSON),
   (((packetSpace), (JSON::ID<"packet_number_space">,
     Enum<Zquic::PktNumSpace::JSON>)), (Int8)),
   (((eventType), (JSON::ID<"event_type">,
-    Enum<TimerEvent::JSON>)), (Int8)),
+    Enum<TimerEvt::JSON>)), (Int8)),
   (((delta)), (Float)));
 
-struct QLogTimerEvent {
+struct QLogTimerEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::TimerUpd;
+  EvtName::T name = EvtName::TimerUpd;
   QLogTimerData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogTimerEvent);
+QLogEvtFmt(QLogTimerEvt);
 
 struct QLogECNData {
   ECNState::T oldState = ECNState::Unknown;
@@ -513,14 +513,14 @@ ZtStruct((QLogECNData, JSON),
   (((oldState), (JSON::ID<"old">, Enum<ECNState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">, Enum<ECNState::JSON>)), (Int8)));
 
-struct QLogECNEvent {
+struct QLogECNEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::ECNUpd;
+  EvtName::T name = EvtName::ECNUpd;
   QLogECNData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogECNEvent);
+QLogEvtFmt(QLogECNEvt);
 
 struct QLogSecData {
 	SecKind::T kind = SecKind::TLS;
@@ -545,14 +545,14 @@ ZtStruct((QLogSecData, JSON),
   (((value)), (UInt64)),
   (((success)), (Bool)));
 
-struct QLogSecEvent {
+struct QLogSecEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::TLSAlert;
+  EvtName::T name = EvtName::TLSAlert;
   QLogSecData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogSecEvent);
+QLogEvtFmt(QLogSecEvt);
 
 static constexpr uint64_t QLogKeyPhaseNull = ~uint64_t{0};
 
@@ -565,14 +565,14 @@ struct QLogKeyData {
 struct QLogKeyDataJSON;
 inline QLogKeyDataJSON ZtJSON_Fmt(QLogKeyData *);
 
-struct QLogKeyEvent {
+struct QLogKeyEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::KeyUpd;
+  EvtName::T name = EvtName::KeyUpd;
   QLogKeyData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogKeyEvent);
+QLogEvtFmt(QLogKeyEvt);
 
 struct QLogParamsData {
   Initiator::T initiator = Initiator::Local;
@@ -597,14 +597,14 @@ struct QLogParamsData {
 struct QLogParamsDataJSON;
 inline QLogParamsDataJSON ZtJSON_Fmt(QLogParamsData *);
 
-struct QLogParamsEvent {
+struct QLogParamsEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::ParamsSet;
+  EvtName::T name = EvtName::ParamsSet;
   QLogParamsData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogParamsEvent);
+QLogEvtFmt(QLogParamsEvt);
 
 struct QLogALPNID {
   ZeString	stringValue;
@@ -620,14 +620,14 @@ struct QLogALPNData {
 ZtStruct((QLogALPNData, JSON),
   (((chosenALPN), (JSON::ID<"chosen_alpn">)), (UDT)));
 
-struct QLogALPNEvent {
+struct QLogALPNEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::ALPNInfo;
+  EvtName::T name = EvtName::ALPNInfo;
   QLogALPNData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogALPNEvent);
+QLogEvtFmt(QLogALPNEvt);
 
 struct QLogVersionData {
   Versions	serverVersions;
@@ -639,14 +639,14 @@ struct QLogVersionData {
 struct QLogVersionDataJSON;
 inline QLogVersionDataJSON ZtJSON_Fmt(QLogVersionData *);
 
-struct QLogVersionEvent {
+struct QLogVersionEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::VersionInfo;
+  EvtName::T name = EvtName::VersionInfo;
   QLogVersionData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogVersionEvent);
+QLogEvtFmt(QLogVersionEvt);
 
 struct QLogTupleAssignedData {
   uint64_t	tupleID = 0;
@@ -656,14 +656,14 @@ struct QLogTupleAssignedData {
 struct QLogTupleAssignedDataJSON;
 inline QLogTupleAssignedDataJSON ZtJSON_Fmt(QLogTupleAssignedData *);
 
-struct QLogPathEvent {
+struct QLogPathEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::TupleAssigned;
+  EvtName::T name = EvtName::TupleAssigned;
   QLogTupleAssignedData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogPathEvent);
+QLogEvtFmt(QLogPathEvt);
 
 struct QLogMTUData {
   uint32_t	newMTU = 0;
@@ -676,14 +676,14 @@ ZtStruct((QLogMTUData, JSON),
   (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)), (UInt64)),
   (((done)), (Bool)));
 
-struct QLogMTUEvent {
+struct QLogMTUEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::MTUUpd;
+  EvtName::T name = EvtName::MTUUpd;
   QLogMTUData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogMTUEvent);
+QLogEvtFmt(QLogMTUEvt);
 
 struct QLogPathValidData {
   bool		success = false;
@@ -697,14 +697,14 @@ ZtStruct((QLogPathValidData, JSON),
   (((vantage), (JSON::ID<"vantage">,
     Enum<Zquic::Vantage::JSON>)), (Int8)));
 
-struct QLogPathValidEvent {
+struct QLogPathValidatedEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::PathValidated;
+  EvtName::T name = EvtName::PathValidated;
   QLogPathValidData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogPathValidEvent);
+QLogEvtFmt(QLogPathValidatedEvt);
 
 struct QLogCIDData {
   Initiator::T initiator = Initiator::Remote;
@@ -716,14 +716,14 @@ struct QLogCIDData {
 struct QLogCIDDataJSON;
 inline QLogCIDDataJSON ZtJSON_Fmt(QLogCIDData *);
 
-struct QLogCIDEvent {
+struct QLogCIDEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::CIDUpd;
+  EvtName::T name = EvtName::CIDUpd;
   QLogCIDData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogCIDEvent);
+QLogEvtFmt(QLogCIDEvt);
 
 struct QLogMigrationData {
   QLogEndpointInfo	activeLocal;
@@ -761,14 +761,14 @@ ZtStruct((QLogMigrationData, JSON),
   (((validated)), (Bool)),
   (((closeOnFailure), (JSON::ID<"close_on_failure">)), (Bool)));
 
-struct QLogMigrationEvent {
+struct QLogMigrationEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::MigrationUpd;
+  EvtName::T name = EvtName::MigrationUpd;
   QLogMigrationData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogMigrationEvent);
+QLogEvtFmt(QLogMigrationEvt);
 
 struct QLogStreamData {
   StreamType::T streamType = StreamType::Duplex;
@@ -799,14 +799,14 @@ ZtStruct((QLogStreamData, JSON),
   (((errorCode), (JSON::ID<"error_code">)), (UInt64)),
   (((fin)), (Bool)));
 
-struct QLogStreamEvent {
+struct QLogStreamEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::StreamStateUpd;
+  EvtName::T name = EvtName::StreamStateUpd;
   QLogStreamData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogStreamEvent);
+QLogEvtFmt(QLogStreamEvt);
 
 struct QLogStreamMovedData {
   uint64_t	streamID = 0;
@@ -826,35 +826,35 @@ ZtStruct((QLogStreamMovedData, JSON),
     JSON::Opt, Enum<StreamDataInfo::JSON>)), (Int8)),
   (((raw)), (UDT)));
 
-struct QLogStreamMovedEvent {
+struct QLogStreamMovedEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::StreamDataMoved;
+  EvtName::T name = EvtName::StreamDataMoved;
   QLogStreamMovedData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogStreamMovedEvent);
+QLogEvtFmt(QLogStreamMovedEvt);
 
-struct QLogConnectionBlockedData {
+struct QLogCxnBlockedData {
   BlockedState::T oldState = BlockedState::Unblocked;
   BlockedState::T newState = BlockedState::Blocked;
   BlockedReason::T reason =
     BlockedReason::CxnFlowCtrl;
 };
 
-ZtStruct((QLogConnectionBlockedData, JSON),
+ZtStruct((QLogCxnBlockedData, JSON),
   (((oldState), (JSON::ID<"old">, Enum<BlockedState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">, Enum<BlockedState::JSON>)), (Int8)),
   (((reason), (Enum<BlockedReason::JSON>)), (Int8)));
 
-struct QLogConnectionBlockedEvent {
+struct QLogCxnBlockedEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::CxnDataBlockedUpd;
-  QLogConnectionBlockedData data;
+  EvtName::T name = EvtName::CxnDataBlockedUpd;
+  QLogCxnBlockedData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogConnectionBlockedEvent);
+QLogEvtFmt(QLogCxnBlockedEvt);
 
 struct QLogStreamBlockedData {
   BlockedState::T oldState = BlockedState::Unblocked;
@@ -870,14 +870,14 @@ ZtStruct((QLogStreamBlockedData, JSON),
   (((streamID), (JSON::ID<"stream_id">)), (UInt64)),
   (((reason), (Enum<BlockedReason::JSON>)), (Int8)));
 
-struct QLogStreamBlockedEvent {
+struct QLogStreamBlockedEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::StreamDataBlockedUpd;
+  EvtName::T name = EvtName::StreamDataBlockedUpd;
   QLogStreamBlockedData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogStreamBlockedEvent);
+QLogEvtFmt(QLogStreamBlockedEvt);
 
 struct QLogCloseData {
 	CloseInitiator::T initiator = CloseInitiator::Local;
@@ -891,14 +891,14 @@ struct QLogCloseData {
 struct QLogCloseDataJSON;
 inline QLogCloseDataJSON ZtJSON_Fmt(QLogCloseData *);
 
-struct QLogCloseEvent {
+struct QLogCloseEvt {
   uint64_t	time = 0;
-  EventName::T name = EventName::CxnClosed;
+  EvtName::T name = EvtName::CxnClosed;
   QLogCloseData data;
   Zquic::LinkInfo linkInfo;
 };
 
-QLogEventFmt(QLogCloseEvent);
+QLogEvtFmt(QLogCloseEvt);
 
 static uint64_t qlogTime_(ZuTime time)
 {
@@ -1031,7 +1031,7 @@ ZquicLogDiag ZquicLogger::diag_() const
   };
 }
 
-void ZquicLogger::cxnStarted_(Trace &trace, CxnStartedEvent event)
+void ZquicLogger::cxnStarted_(Trace &trace, CxnStartedEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
@@ -1043,103 +1043,91 @@ void ZquicLogger::cxnStarted_(Trace &trace, CxnStartedEvent event)
   log__(fn);
 }
 
-void ZquicLogger::dgramSent_(Trace &trace, DgramEvent event)
+void ZquicLogger::dgramSent_(Trace &trace, DgramEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeDatagramEvent_(EventName::UDPTx, event_, time);
+    this_->writeDatagramEvt_(EvtName::UDPTx, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::dgramRecv_(Trace &trace, DgramEvent event)
+void ZquicLogger::dgramRecv_(Trace &trace, DgramEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeDatagramEvent_(EventName::UDPRx, event_, time);
+    this_->writeDatagramEvt_(EvtName::UDPRx, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::pktSent_(Trace &trace, PktEvent event)
+void ZquicLogger::pktSent_(Trace &trace, PktEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writePktEvent_(EventName::PktSent, event_, time);
+    this_->writePktEvt_(EvtName::PktSent, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::pktRecv_(Trace &trace, PktEvent event)
+void ZquicLogger::pktRecv_(Trace &trace, PktEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writePktEvent_(EventName::PktRecv, event_, time);
+    this_->writePktEvt_(EvtName::PktRecv, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::pktBuf_(Trace &trace, PktEvent event)
+void ZquicLogger::pktBuf_(Trace &trace, PktEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writePktEvent_(EventName::PktBuf, event_, time);
+    this_->writePktEvt_(EvtName::PktBuf, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::pktDrop_(Trace &trace, PktEvent event)
+void ZquicLogger::pktDrop_(Trace &trace, PktEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writePktEvent_(EventName::PktDrop, event_, time);
+    this_->writePktEvt_(EvtName::PktDrop, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::pktsAcked_(Trace &trace, AckEvent event)
+void ZquicLogger::pktsAcked_(Trace &trace, AckEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeAckEvent_(EventName::PktsAcked, event_, time);
+    this_->writeAckEvt_(EvtName::PktsAcked, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::pktLost_(Trace &trace, RecEvent event)
-{
-  if (!enabled_()) return;
-  ZuTime time = Zm::now();
-  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
-    if (!this_->useTrace_(trace)) return;
-    this_->writePktLost_(event_, time);
-  };
-  Fn fn{fn_};
-  log__(fn);
-}
-
-void ZquicLogger::recPktLost_(Trace &trace, RecEvent event)
+void ZquicLogger::pktLost_(Trace &trace, RecLogEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
@@ -1151,7 +1139,19 @@ void ZquicLogger::recPktLost_(Trace &trace, RecEvent event)
   log__(fn);
 }
 
-void ZquicLogger::markRetrans_(Trace &trace, RecEvent event)
+void ZquicLogger::recPktLost_(Trace &trace, RecLogEvt event)
+{
+  if (!enabled_()) return;
+  ZuTime time = Zm::now();
+  auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
+    if (!this_->useTrace_(trace)) return;
+    this_->writePktLost_(event_, time);
+  };
+  Fn fn{fn_};
+  log__(fn);
+}
+
+void ZquicLogger::markRetrans_(Trace &trace, RecLogEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
@@ -1163,7 +1163,7 @@ void ZquicLogger::markRetrans_(Trace &trace, RecEvent event)
   log__(fn);
 }
 
-void ZquicLogger::metricsUpd_(Trace &trace, RecEvent event)
+void ZquicLogger::metricsUpd_(Trace &trace, RecLogEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
@@ -1175,19 +1175,19 @@ void ZquicLogger::metricsUpd_(Trace &trace, RecEvent event)
   log__(fn);
 }
 
-void ZquicLogger::lossTimerUpd_(Trace &trace, RecEvent event)
+void ZquicLogger::lossTimerUpd_(Trace &trace, RecLogEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeTimerEvent_(event_, time);
+    this_->writeTimerEvt_(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::congStateUpd_(Trace &trace, RecEvent event)
+void ZquicLogger::congStateUpd_(Trace &trace, RecLogEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
@@ -1199,43 +1199,43 @@ void ZquicLogger::congStateUpd_(Trace &trace, RecEvent event)
   log__(fn);
 }
 
-void ZquicLogger::ecnStateUpd_(Trace &trace, ECNEvent event)
+void ZquicLogger::ecnStateUpd_(Trace &trace, ECNEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeECNEvent_(event_, time);
+    this_->writeECNEvt_(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::keyUpdated_(Trace &trace, SecEvent event)
+void ZquicLogger::keyUpdated_(Trace &trace, SecEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeKeyEvent_(EventName::KeyUpd, event_, time);
+    this_->writeKeyEvt_(EvtName::KeyUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::keyRetired_(Trace &trace, SecEvent event)
+void ZquicLogger::keyRetired_(Trace &trace, SecEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeKeyEvent_(EventName::KeyDiscarded, event_, time);
+    this_->writeKeyEvt_(EvtName::KeyDiscarded, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::paramsSet_(Trace &trace, ParamsEvent event)
+void ZquicLogger::paramsSet_(Trace &trace, ParamsEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
@@ -1247,19 +1247,19 @@ void ZquicLogger::paramsSet_(Trace &trace, ParamsEvent event)
   log__(fn);
 }
 
-void ZquicLogger::alpnInfo_(Trace &trace, SecEvent event)
+void ZquicLogger::alpnInfo_(Trace &trace, SecEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeALPNEvent_(event_, time);
+    this_->writeALPNEvt_(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::versionInfo_(Trace &trace, VersionEvent event)
+void ZquicLogger::versionInfo_(Trace &trace, VersionEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
@@ -1271,45 +1271,45 @@ void ZquicLogger::versionInfo_(Trace &trace, VersionEvent event)
   log__(fn);
 }
 
-void ZquicLogger::tlsAlert_(Trace &trace, SecEvent event)
+void ZquicLogger::tlsAlert_(Trace &trace, SecEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeSecEvent_(EventName::TLSAlert, event_, time);
+    this_->writeSecEvt_(EvtName::TLSAlert, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::secEvent_(
-  Trace &trace, EventName::T name, SecEvent event)
+void ZquicLogger::secEvt_(
+  Trace &trace, EvtName::T name, SecEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, name_ = name, event_ = ZuMv(event), time](
     ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeSecEvent_(name_, event_, time);
+    this_->writeSecEvt_(name_, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::pathUpdated_(Trace &trace, PathEvent event)
+void ZquicLogger::pathUpdated_(Trace &trace, PathEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writePathEvent_(EventName::TupleAssigned, event_, time);
+    this_->writePathEvt_(EvtName::TupleAssigned, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::pathValidUpd_(Trace &trace, PathEvent event)
+void ZquicLogger::pathValidUpd_(Trace &trace, PathEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
@@ -1321,118 +1321,118 @@ void ZquicLogger::pathValidUpd_(Trace &trace, PathEvent event)
   log__(fn);
 }
 
-void ZquicLogger::pmtudUpdated_(Trace &trace, PathEvent event)
+void ZquicLogger::pmtudUpdated_(Trace &trace, PathEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeMTUEvent_(event_, time);
+    this_->writeMTUEvt_(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::cidUpdated_(Trace &trace, CIDEvent event)
+void ZquicLogger::cidUpdated_(Trace &trace, CIDEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeCIDEvent_(EventName::CIDUpd, event_, time);
+    this_->writeCIDEvt_(EvtName::CIDUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::migrationUpdated_(Trace &trace, MigrationEvent event)
+void ZquicLogger::migrationUpdated_(Trace &trace, MigrationEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](
     ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeMigrationEvent_(event_, time);
+    this_->writeMigrationEvt_(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::streamStateUpd_(Trace &trace, StreamEvent event)
+void ZquicLogger::streamStateUpd_(Trace &trace, StreamEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeStreamEvent_(
-      EventName::StreamStateUpd, event_, time);
+    this_->writeStreamEvt_(
+      EvtName::StreamStateUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::streamDataMoved_(Trace &trace, StreamDataEvent event)
+void ZquicLogger::streamDataMoved_(Trace &trace, StreamDataEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
     this_->writeStreamData_(
-      EventName::StreamDataMoved, event_, time);
+      EvtName::StreamDataMoved, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
 void ZquicLogger::cxnDataBlockedUpd_(Trace &trace,
-  BlockedEvent event)
+  BlockedEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
     this_->writeCxnBlocked_(
-      EventName::CxnDataBlockedUpd, event_, time);
+      EvtName::CxnDataBlockedUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
 void ZquicLogger::streamDataBlockedUpd_(Trace &trace,
-  BlockedEvent event)
+  BlockedEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
     this_->writeStreamBlocked_(
-      EventName::StreamDataBlockedUpd, event_, time);
+      EvtName::StreamDataBlockedUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::cxnClosed_(Trace &trace, CloseEvent event)
+void ZquicLogger::cxnClosed_(Trace &trace, CloseEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
-    this_->writeCloseEvent_(EventName::CxnClosed, event_, time);
+    this_->writeCloseEvt_(EvtName::CxnClosed, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
 void ZquicLogger::cxnStateUpd_(Trace &trace,
-  CxnStateEvent event)
+  CxnStateEvt event)
 {
   if (!enabled_()) return;
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace_(trace)) return;
     this_->writeCxnState_(
-      EventName::CxnStateUpd, event_, time);
+      EvtName::CxnStateUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1529,7 +1529,7 @@ bool ZquicLogger::writeHeader_(Trace *trace)
 	  .epoch = "1970-01-01T00:00:00.000Z"
 	}
       },
-      QLogEventSchemas{
+      QLogEvtSchemas{
 	"urn:ietf:params:qlog:events:quic-12",
 	"urn:zlib:zquic:qlog:events:zquic"
       }
@@ -1568,11 +1568,11 @@ struct QLogCxnStartedDataJSON {
 };
 
 bool ZquicLogger::writeCxnStarted_(
-  const CxnStartedEvent &event, ZuTime time)
+  const CxnStartedEvt &event, ZuTime time)
 {
-  QLogCxnStartedEvent qevent{
+  QLogCxnStartedEvt qevent{
     qlogTime_(time),
-    EventName::CxnStarted,
+    EvtName::CxnStarted,
     QLogCxnStartedData{
       event.local ?
 	QLogEndpointInfo{true, event.local.ip(), event.local.port()} :
@@ -1596,14 +1596,14 @@ bool ZquicLogger::writeCxnStarted_(
   return true;
 }
 
-bool ZquicLogger::writeDatagramEvent_(
-  EventName::T name, const DgramEvent &event, ZuTime time)
+bool ZquicLogger::writeDatagramEvt_(
+  EvtName::T name, const DgramEvt &event, ZuTime time)
 {
   QLogRawInfoArray raw;
   new (raw.push()) QLogRawInfo{event.size, event.size};
   QLogECNArray ecn;
   new (ecn.push()) Zquic::EcnMark::T(event.ecn);
-  QLogDatagramEvent qevent{
+  QLogDatagramEvt qevent{
     qlogTime_(time),
     name,
     QLogDatagramData{1, ZuMv(raw), ZuMv(ecn)},
@@ -2056,11 +2056,11 @@ struct QLogCloseDataJSON {
 };
 
 static QLogFrameArray qlogFrames_(
-  const ZuArray<FrameEvent, FrameMax> &frames_)
+  const ZuArray<FrameEvt, FrameMax> &frames_)
 {
   QLogFrameArray frames;
   for (unsigned i = 0, n = frames_.length(); i < n; ++i) {
-    const FrameEvent &frame = frames_[i];
+    const FrameEvt &frame = frames_[i];
     QLogFrameData qframe{.frameType = frame.type};
     switch (frame.type) {
       case Zquic::FrameType::Ack:
@@ -2141,39 +2141,39 @@ static QLogFrameArray qlogFrames_(
 }
 
 static PktTrigger::T qlogPktTrigger_(
-  EventName::T name, PktEvent::Reason::T reason)
+  EvtName::T name, PktEvt::Reason::T reason)
 {
   switch (name) {
-    case EventName::PktBuf:
+    case EvtName::PktBuf:
       switch (reason) {
-	case PktEvent::Reason::MissingKeys:
+	case PktEvt::Reason::MissingKeys:
 	  return PktTrigger::KeysUnavailable;
 	default:
 	  return PktTrigger::None;
       }
-    case EventName::PktDrop:
+    case EvtName::PktDrop:
       switch (reason) {
-	case PktEvent::Reason::PrepareLong:
-	case PktEvent::Reason::UnsupportedLongType:
-	case PktEvent::Reason::DiscardedSpace:
+	case PktEvt::Reason::PrepareLong:
+	case PktEvt::Reason::UnsupportedLongType:
+	case PktEvt::Reason::DiscardedSpace:
 	  return PktTrigger::Unsupported;
-	case PktEvent::Reason::ParseLong:
-	case PktEvent::Reason::PacketLength:
-	case PktEvent::Reason::ParseShort:
-	case PktEvent::Reason::BadKeyPhase:
+	case PktEvt::Reason::ParseLong:
+	case PktEvt::Reason::PacketLength:
+	case PktEvt::Reason::ParseShort:
+	case PktEvt::Reason::BadKeyPhase:
 	  return PktTrigger::Invalid;
-	case PktEvent::Reason::MissingKeys:
+	case PktEvt::Reason::MissingKeys:
 	  return PktTrigger::KeyUnavailable;
-		case PktEvent::Reason::Protection:
+		case PktEvt::Reason::Protection:
 		  return PktTrigger::DecryptionFailure;
-		case PktEvent::Reason::Duplicate:
+		case PktEvt::Reason::Duplicate:
 		  return PktTrigger::Duplicate;
-		case PktEvent::Reason::AfterOneRTT:
-		case PktEvent::Reason::FramePolicy:
+		case PktEvt::Reason::AfterOneRTT:
+		case PktEvt::Reason::FramePolicy:
 		  return PktTrigger::Invalid;
-		case PktEvent::Reason::AntiAmp:
-	case PktEvent::Reason::ProbeAdmit:
-	case PktEvent::Reason::AppSend:
+		case PktEvt::Reason::AntiAmp:
+	case PktEvt::Reason::ProbeAdmit:
+	case PktEvt::Reason::AppSend:
 	  return PktTrigger::Rejected;
 	default:
 	  return PktTrigger::General;
@@ -2183,10 +2183,10 @@ static PktTrigger::T qlogPktTrigger_(
   }
 }
 
-bool ZquicLogger::writePktEvent_(
-  EventName::T name, const PktEvent &event, ZuTime time)
+bool ZquicLogger::writePktEvt_(
+  EvtName::T name, const PktEvt &event, ZuTime time)
 {
-  QLogPacketEvent qevent{
+  QLogPacketEvt qevent{
     qlogTime_(time),
     name,
     QLogPacketData{
@@ -2216,15 +2216,15 @@ bool ZquicLogger::writePktEvent_(
   return true;
 }
 
-bool ZquicLogger::writeAckEvent_(
-  EventName::T name, const AckEvent &event, ZuTime time)
+bool ZquicLogger::writeAckEvt_(
+  EvtName::T name, const AckEvt &event, ZuTime time)
 {
   QLogPktNumArray packetNumbers;
   for (unsigned i = 0; i < event.packetNumbers.length(); ++i)
     new (packetNumbers.push()) uint64_t(event.packetNumbers[i]);
   if (!packetNumbers)
     return true;
-  QLogAckEvent qevent{
+  QLogAckEvt qevent{
     qlogTime_(time),
     name,
     QLogAckData{
@@ -2260,14 +2260,14 @@ static PktLostTrigger::T qlogLossTrigger_(
 }
 
 bool ZquicLogger::writePktLost_(
-  const RecEvent &event, ZuTime time)
+  const RecLogEvt &event, ZuTime time)
 {
-  QLogPktLostEvent qevent{
+  QLogPktLostEvt qevent{
     qlogTime_(time),
-    EventName::PktLost,
+    EvtName::PktLost,
     QLogPktLostData{
       QLogPacketHeader{
-	Zquic::pktTypeFromPktNumSpace(event.packetSpace),
+	Zquic::pktTypeFromSpace(event.packetSpace),
 	event.packetNumber
       },
       qlogLossTrigger_(event.reason)
@@ -2288,12 +2288,12 @@ bool ZquicLogger::writePktLost_(
 }
 
 bool ZquicLogger::writeMarkRetrans_(
-  const RecEvent &event, ZuTime time)
+  const RecLogEvt &event, ZuTime time)
 {
   if (!event.frames) return true;
-  QLogMarkRetransEvent qevent{
+  QLogMarkRetransEvt qevent{
     qlogTime_(time),
-    EventName::MarkRetrans,
+    EvtName::MarkRetrans,
     QLogMarkRetransData{
       qlogFrames_(event.frames)
     },
@@ -2313,11 +2313,11 @@ bool ZquicLogger::writeMarkRetrans_(
 }
 
 bool ZquicLogger::writeRecMetrics_(
-  const RecEvent &event, ZuTime time)
+  const RecLogEvt &event, ZuTime time)
 {
-  QLogRecMetricsEvent qevent{
+  QLogRecMetricsEvt qevent{
     qlogTime_(time),
-    EventName::MetricsUpd,
+    EvtName::MetricsUpd,
     QLogRecMetricsData{
       qlogMS_(event.latestRTTUS),
       qlogMS_(event.smoothedRTTUS),
@@ -2343,7 +2343,7 @@ bool ZquicLogger::writeRecMetrics_(
 }
 
 static CongState::T qlogCongState_(
-  const RecEvent &event)
+  const RecLogEvt &event)
 {
   switch (event.reason) {
     case RecReason::Loss:
@@ -2372,11 +2372,11 @@ static CongTrigger::T qlogCongTrigger_(
 }
 
 bool ZquicLogger::writeCongState_(
-  const RecEvent &event, ZuTime time)
+  const RecLogEvt &event, ZuTime time)
 {
-  QLogCongStateEvent qevent{
+  QLogCongStateEvt qevent{
     qlogTime_(time),
-    EventName::CongestionUpd,
+    EvtName::CongestionUpd,
     QLogCongStateData{
       qlogCongState_(event),
       qlogCongTrigger_(event.reason)
@@ -2407,23 +2407,23 @@ static TimerType::T qlogTimerType_(
   }
 }
 
-static TimerEvent::T qlogTimerEventType_(
+static TimerEvt::T qlogTimerEvtType_(
   RecReason::T reason)
 {
   switch (reason) {
     case RecReason::Armed:
-      return TimerEvent::Set;
+      return TimerEvt::Set;
     case RecReason::Expired:
     case RecReason::Backoff:
     case RecReason::Probe:
-      return TimerEvent::Expired;
+      return TimerEvt::Expired;
     default:
-      return TimerEvent::Cancelled;
+      return TimerEvt::Cancelled;
   }
 }
 
 static double qlogTimerDelta_(
-  const RecEvent &event, ZuTime time)
+  const RecLogEvt &event, ZuTime time)
 {
   if (event.reason != RecReason::Armed) return 0;
   uint64_t now = qlogTime_(time);
@@ -2431,16 +2431,16 @@ static double qlogTimerDelta_(
   return qlogMS_(event.deadlineUS - now);
 }
 
-bool ZquicLogger::writeTimerEvent_(
-  const RecEvent &event, ZuTime time)
+bool ZquicLogger::writeTimerEvt_(
+  const RecLogEvt &event, ZuTime time)
 {
-  QLogTimerEvent qevent{
+  QLogTimerEvt qevent{
     qlogTime_(time),
-    EventName::TimerUpd,
+    EvtName::TimerUpd,
     QLogTimerData{
       qlogTimerType_(event.kind),
       event.packetSpace,
-      qlogTimerEventType_(event.reason),
+      qlogTimerEvtType_(event.reason),
       qlogTimerDelta_(event, time)
     },
     event.linkInfo
@@ -2458,12 +2458,12 @@ bool ZquicLogger::writeTimerEvent_(
   return true;
 }
 
-bool ZquicLogger::writeECNEvent_(
-  const ECNEvent &event, ZuTime time)
+bool ZquicLogger::writeECNEvt_(
+  const ECNEvt &event, ZuTime time)
 {
-  QLogECNEvent qevent{
+  QLogECNEvt qevent{
     qlogTime_(time),
-    EventName::ECNUpd,
+    EvtName::ECNUpd,
     QLogECNData{
       event.oldState,
       event.state
@@ -2484,7 +2484,7 @@ bool ZquicLogger::writeECNEvent_(
 }
 
 static KeyType::T qlogKeyType_(
-  const SecEvent &event, Zquic::Vantage::T vantage)
+  const SecEvt &event, Zquic::Vantage::T vantage)
 {
   bool localClient = vantage != Zquic::Vantage::Server;
   bool client =
@@ -2513,7 +2513,7 @@ static KeyType::T qlogKeyType_(
 }
 
 static KeyTrigger::T qlogKeyTrigger_(
-  const SecEvent &event)
+  const SecEvt &event)
 {
   switch (event.trigger) {
     case SecTrigger::Local:
@@ -2527,10 +2527,10 @@ static KeyTrigger::T qlogKeyTrigger_(
   }
 }
 
-bool ZquicLogger::writeKeyEvent_(
-  EventName::T name, const SecEvent &event, ZuTime time)
+bool ZquicLogger::writeKeyEvt_(
+  EvtName::T name, const SecEvt &event, ZuTime time)
 {
-  QLogKeyEvent qevent{
+  QLogKeyEvt qevent{
     qlogTime_(time),
     name,
     QLogKeyData{
@@ -2556,11 +2556,11 @@ bool ZquicLogger::writeKeyEvent_(
 }
 
 bool ZquicLogger::writeParams_(
-  const ParamsEvent &event, ZuTime time)
+  const ParamsEvt &event, ZuTime time)
 {
-  QLogParamsEvent qevent{
+  QLogParamsEvt qevent{
     qlogTime_(time),
-    EventName::ParamsSet,
+    EvtName::ParamsSet,
     QLogParamsData{
       event.initiator,
       event.origDCID,
@@ -2596,12 +2596,12 @@ bool ZquicLogger::writeParams_(
   return true;
 }
 
-bool ZquicLogger::writeALPNEvent_(
-  const SecEvent &event, ZuTime time)
+bool ZquicLogger::writeALPNEvt_(
+  const SecEvt &event, ZuTime time)
 {
-  QLogALPNEvent qevent{
+  QLogALPNEvt qevent{
     qlogTime_(time),
-    EventName::ALPNInfo,
+    EvtName::ALPNInfo,
     QLogALPNData{QLogALPNID{event.alpn}},
     event.linkInfo
   };
@@ -2619,11 +2619,11 @@ bool ZquicLogger::writeALPNEvent_(
 }
 
 bool ZquicLogger::writeVersion_(
-  const VersionEvent &event, ZuTime time)
+  const VersionEvt &event, ZuTime time)
 {
-  QLogVersionEvent qevent{
+  QLogVersionEvt qevent{
     qlogTime_(time),
-    EventName::VersionInfo,
+    EvtName::VersionInfo,
     QLogVersionData{
       event.serverVersions,
       event.clientVersions,
@@ -2645,10 +2645,10 @@ bool ZquicLogger::writeVersion_(
   return true;
 }
 
-bool ZquicLogger::writeSecEvent_(
-  EventName::T name, const SecEvent &event, ZuTime time)
+bool ZquicLogger::writeSecEvt_(
+  EvtName::T name, const SecEvt &event, ZuTime time)
 {
-  QLogSecEvent qevent{
+  QLogSecEvt qevent{
     qlogTime_(time),
     name,
     QLogSecData{
@@ -2676,10 +2676,10 @@ bool ZquicLogger::writeSecEvent_(
   return true;
 }
 
-bool ZquicLogger::writePathEvent_(
-  EventName::T name, const PathEvent &event, ZuTime time)
+bool ZquicLogger::writePathEvt_(
+  EvtName::T name, const PathEvt &event, ZuTime time)
 {
-  QLogPathEvent qevent{
+  QLogPathEvt qevent{
     qlogTime_(time),
     name,
     QLogTupleAssignedData{event.tupleID, event.attemptID},
@@ -2698,12 +2698,12 @@ bool ZquicLogger::writePathEvent_(
   return true;
 }
 
-bool ZquicLogger::writeMTUEvent_(
-  const PathEvent &event, ZuTime time)
+bool ZquicLogger::writeMTUEvt_(
+  const PathEvt &event, ZuTime time)
 {
-  QLogMTUEvent qevent{
+  QLogMTUEvt qevent{
     qlogTime_(time),
-    EventName::MTUUpd,
+    EvtName::MTUUpd,
     QLogMTUData{
       event.mtu,
       event.attemptID,
@@ -2725,14 +2725,14 @@ bool ZquicLogger::writeMTUEvent_(
 }
 
 bool ZquicLogger::writePathValid_(
-  const PathEvent &event, ZuTime time)
+  const PathEvt &event, ZuTime time)
 {
   bool success = event.validated &&
     event.action != PathAction::Failed &&
     event.action != PathAction::Expired;
-  QLogPathValidEvent qevent{
+  QLogPathValidatedEvt qevent{
     qlogTime_(time),
-    EventName::PathValidated,
+    EvtName::PathValidated,
     QLogPathValidData{
       success,
       event.attemptID,
@@ -2753,14 +2753,14 @@ bool ZquicLogger::writePathValid_(
   return true;
 }
 
-bool ZquicLogger::writeCIDEvent_(
-  EventName::T name, const CIDEvent &event, ZuTime time)
+bool ZquicLogger::writeCIDEvt_(
+  EvtName::T name, const CIDEvt &event, ZuTime time)
 {
   bool retired =
     event.action == CIDAction::Retired ||
     event.action == CIDAction::Tombstone;
   auto cid = event.cxnID.cspan();
-  QLogCIDEvent qevent{
+  QLogCIDEvt qevent{
     qlogTime_(time),
     name,
     QLogCIDData{
@@ -2785,12 +2785,12 @@ bool ZquicLogger::writeCIDEvent_(
   return true;
 }
 
-bool ZquicLogger::writeMigrationEvent_(
-  const MigrationEvent &event, ZuTime time)
+bool ZquicLogger::writeMigrationEvt_(
+  const MigrationEvt &event, ZuTime time)
 {
-  QLogMigrationEvent qevent{
+  QLogMigrationEvt qevent{
     qlogTime_(time),
-    EventName::MigrationUpd,
+    EvtName::MigrationUpd,
     QLogMigrationData{
       event.activeLocal ?
 	QLogEndpointInfo{
@@ -2835,10 +2835,10 @@ bool ZquicLogger::writeMigrationEvent_(
   return true;
 }
 
-bool ZquicLogger::writeStreamEvent_(
-  EventName::T name, const StreamEvent &event, ZuTime time)
+bool ZquicLogger::writeStreamEvt_(
+  EvtName::T name, const StreamEvt &event, ZuTime time)
 {
-  QLogStreamEvent qevent{
+  QLogStreamEvt qevent{
     qlogTime_(time),
     name,
     QLogStreamData{
@@ -2869,9 +2869,9 @@ bool ZquicLogger::writeStreamEvent_(
 }
 
 bool ZquicLogger::writeStreamData_(
-  EventName::T name, const StreamDataEvent &event, ZuTime time)
+  EvtName::T name, const StreamDataEvt &event, ZuTime time)
 {
-  QLogStreamMovedEvent qevent{
+  QLogStreamMovedEvt qevent{
     qlogTime_(time),
     name,
     QLogStreamMovedData{
@@ -2898,12 +2898,12 @@ bool ZquicLogger::writeStreamData_(
 }
 
 bool ZquicLogger::writeCxnBlocked_(
-  EventName::T name, const BlockedEvent &event, ZuTime time)
+  EvtName::T name, const BlockedEvt &event, ZuTime time)
 {
-  QLogConnectionBlockedEvent qevent{
+  QLogCxnBlockedEvt qevent{
     qlogTime_(time),
     name,
-    QLogConnectionBlockedData{
+    QLogCxnBlockedData{
       event.oldState,
       event.newState,
       event.reason
@@ -2924,9 +2924,9 @@ bool ZquicLogger::writeCxnBlocked_(
 }
 
 bool ZquicLogger::writeStreamBlocked_(
-  EventName::T name, const BlockedEvent &event, ZuTime time)
+  EvtName::T name, const BlockedEvt &event, ZuTime time)
 {
-  QLogStreamBlockedEvent qevent{
+  QLogStreamBlockedEvt qevent{
     qlogTime_(time),
     name,
     QLogStreamBlockedData{
@@ -2950,10 +2950,10 @@ bool ZquicLogger::writeStreamBlocked_(
   return true;
 }
 
-bool ZquicLogger::writeCloseEvent_(
-  EventName::T name, const CloseEvent &event, ZuTime time)
+bool ZquicLogger::writeCloseEvt_(
+  EvtName::T name, const CloseEvt &event, ZuTime time)
 {
-  QLogCloseEvent qevent{
+  QLogCloseEvt qevent{
     qlogTime_(time),
     name,
     QLogCloseData{
@@ -2980,10 +2980,10 @@ bool ZquicLogger::writeCloseEvent_(
 }
 
 bool ZquicLogger::writeCxnState_(
-  EventName::T name,
-  const CxnStateEvent &event, ZuTime time)
+  EvtName::T name,
+  const CxnStateEvt &event, ZuTime time)
 {
-  QLogCxnStateEvent qevent{
+  QLogCxnStateEvt qevent{
     qlogTime_(time),
     name,
     QLogCxnStateData{
@@ -3005,6 +3005,6 @@ bool ZquicLogger::writeCxnState_(
   return true;
 }
 
-#undef QLogEventFmt
+#undef QLogEvtFmt
 
 #endif /* Zquic_DEBUG */

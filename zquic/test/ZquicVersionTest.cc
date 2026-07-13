@@ -67,14 +67,14 @@ void testServerVersionDecision()
   Zquic::LongHdr h;
   ZuCHECK(Zquic::Pkt::parseLong(
       ZuBSpan{response, unsigned(d.responseLength)}, h) > 0 &&
-      Zquic::Pkt::isVersionNegotiation(
+      Zquic::Pkt::isVerNeg(
 	ZuBSpan{response, unsigned(d.responseLength)}) &&
       h.dcid == scid && h.scid == dcid,
     "Version Negotiation response CID mapping mismatch");
 
   uint32_t versions[1] = {};
   unsigned nVersions = 0;
-  ZuCHECK(!Zquic::Pkt::parseVersionNegotiation(
+  ZuCHECK(!Zquic::Pkt::parseVerNeg(
       ZuBSpan{response, unsigned(d.responseLength)}, versions, 1, nVersions) &&
       nVersions == 1 && versions[0] == Zquic::Version1,
     "Version Negotiation response version list mismatch");
@@ -121,7 +121,7 @@ void testRetryHdr()
     "Retry token/tag parse mismatch");
 
   Zquic::CxnID odcid{"original"};
-  n = Zquic::Pkt::writeRetryAuthenticated(
+  n = Zquic::Pkt::writeRetryAuth(
     b, sizeof(b), dcid, scid, "retry-token", odcid);
   ZuCHECK(n > 0, "authenticated Retry write failed");
   ZuCHECK(Zquic::Pkt::parseRetry(
@@ -138,9 +138,9 @@ void testRetryHdr()
     "mutated Retry integrity tag was accepted");
 }
 
-void testRetryTransportParameterValidation()
+void testRetryParamValidate()
 {
-  ZuTestScope(testRetryTransportParameterValidation);
+  ZuTestScope(testRetryParamValidate);
 
   Zquic::CxnID initialDCID{"client-dc"};
   Zquic::CxnID initialSCID{"client-sc"};
@@ -167,7 +167,7 @@ void testRetryTransportParameterValidation()
   Zquic::ClientBootstrap checkedBootstrap;
   ZuCHECK(checkedBootstrap.start(initialDCID, initialSCID),
     "checked Retry bootstrap start failed");
-  n = Zquic::Pkt::writeRetryAuthenticated(
+  n = Zquic::Pkt::writeRetryAuth(
     b, sizeof(b), initialSCID, retrySCID, "retry-token", initialDCID);
   ZuCHECK(n > 0 && checkedBootstrap.onRetry(
       ZuBSpan{b, unsigned(n)}) &&
@@ -187,20 +187,20 @@ void testRetryTransportParameterValidation()
   params.origDCID = initialDCID;
   params.initialSCID = serverInitialSCID;
   params.retrySCID = retrySCID;
-  ZuCHECK(bootstrap.validateServerTransportParams(params, serverInitialSCID),
+  ZuCHECK(bootstrap.validateServerParams(params, serverInitialSCID),
     "Retry transport parameter validation failed");
   params.retrySCID = "wrong-sc";
-  ZuCHECK(!bootstrap.validateServerTransportParams(params, serverInitialSCID),
+  ZuCHECK(!bootstrap.validateServerParams(params, serverInitialSCID),
     "bad Retry SCID was accepted");
 
   Zquic::ClientBootstrap noRetry;
   ZuCHECK(noRetry.start(initialDCID, initialSCID),
     "no-Retry bootstrap start failed");
   params.retrySCID = {};
-  ZuCHECK(noRetry.validateServerTransportParams(params, serverInitialSCID),
+  ZuCHECK(noRetry.validateServerParams(params, serverInitialSCID),
     "no-Retry transport parameter validation failed");
   params.retrySCID = retrySCID;
-  ZuCHECK(!noRetry.validateServerTransportParams(params, serverInitialSCID),
+  ZuCHECK(!noRetry.validateServerParams(params, serverInitialSCID),
     "unexpected Retry SCID was accepted");
 }
 
@@ -211,5 +211,5 @@ int main(int argc, char **argv)
   ZuTestCall(testVersionNegotiation);
   ZuTestCall(testServerVersionDecision);
   ZuTestCall(testRetryHdr);
-  ZuTestCall(testRetryTransportParameterValidation);
+  ZuTestCall(testRetryParamValidate);
 }

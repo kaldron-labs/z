@@ -239,7 +239,7 @@ ServerPktDecision ServerPkt::routeLongHdr(
   ZuBSpan datagram, uint8_t *response, unsigned responseLen)
 {
   ServerPktDecision decision;
-  if (!Pkt::isLong(datagram) || Pkt::isVersionNegotiation(datagram))
+  if (!Pkt::isLong(datagram) || Pkt::isVerNeg(datagram))
     return decision;
 
   if (Pkt::parseLong(datagram, decision.header) < 0) return decision;
@@ -311,7 +311,7 @@ bool PathChallenge::equals(const PathChallenge &challenge) const
     (!m_valid || !memcmp(m_data, challenge.m_data, Length));
 }
 
-int StatelessRst::decode(ResetToken &token, ZuBSpan datagram)
+int StatelessReset::decode(ResetToken &token, ZuBSpan datagram)
 {
   if (!datagram || datagram.length() <= MinLength || Pkt::isLong(datagram))
     return -1;
@@ -320,7 +320,7 @@ int StatelessRst::decode(ResetToken &token, ZuBSpan datagram)
   return token.set(suffix) ? 0 : -1;
 }
 
-bool StatelessRst::verify(ZuBSpan datagram, const ResetToken &token)
+bool StatelessReset::verify(ZuBSpan datagram, const ResetToken &token)
 {
   if (!token.valid()) return false;
   ResetToken decoded;
@@ -331,7 +331,7 @@ bool StatelessRst::verify(ZuBSpan datagram, const ResetToken &token)
   return !diff;
 }
 
-int StatelessRst::writeForUnknownCID(
+int StatelessReset::writeForUnknownCID(
   uint8_t *out, unsigned len, ZuBSpan receivedPkt,
   const ResetToken &token)
 {

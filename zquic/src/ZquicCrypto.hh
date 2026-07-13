@@ -118,7 +118,7 @@ struct PktProtState {
 };
 
 struct PktProt {
-  static bool deriveTrafficSecret(
+  static bool deriveSecret(
     TrafficSecret &, ptls_cipher_suite_t *, ZuBSpan);
   static int protectLongV(
     uint8_t *, unsigned, PktProtState &, uint64_t,
@@ -150,7 +150,7 @@ struct PktProt {
   static int unprotectShort(
     uint8_t *, unsigned, const TrafficSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
-  static bool deriveNextTrafficSecret(TrafficSecret &, const TrafficSecret &);
+  static bool deriveNextSecret(TrafficSecret &, const TrafficSecret &);
 };
 
 struct CryptoDiag {
@@ -247,7 +247,7 @@ struct CryptoConfig {
   ZuCSpan		keyPath;
   ZuCSpan		keyLogPath;
   ZuCSpan		serverName;
-  const TransportParams	*localTransportParams = nullptr;
+  const TransportParams	*localParams = nullptr;
   ZquicLogger::Trace	*qlogTrace = nullptr;
   ptls_encrypt_ticket_t	*encryptTicket = nullptr;
   void			*saveSessionTicketArg = nullptr;
@@ -293,35 +293,35 @@ public:
   bool secretInstalled(PktNumSpace::T level) const {
     return m_secretInstalled[level];
   }
-  bool txTrafficSecretInstalled(PktNumSpace::T level) const {
+  bool txSecretInstalled(PktNumSpace::T level) const {
     return m_txTrafficSecrets[level].valid();
   }
-  bool rxTrafficSecretInstalled(PktNumSpace::T level) const {
+  bool rxSecretInstalled(PktNumSpace::T level) const {
     return m_rxTrafficSecrets[level].valid();
   }
-  bool txKeyTrafficSecretInstalled(PktKeyLevel::T level) const {
+  bool txKeySecretInstalled(PktKeyLevel::T level) const {
     return level == PktKeyLevel::ZeroRTT ?
-      m_txEarlyTrafficSecret.valid() :
-      txTrafficSecretInstalled(pktNumSpaceFromKeyLevel(level));
+      m_txEarlySecret.valid() :
+      txSecretInstalled(spaceFromKeyLevel(level));
   }
-  bool rxKeyTrafficSecretInstalled(PktKeyLevel::T level) const {
+  bool rxKeySecretInstalled(PktKeyLevel::T level) const {
     return level == PktKeyLevel::ZeroRTT ?
-      m_rxEarlyTrafficSecret.valid() :
-      rxTrafficSecretInstalled(pktNumSpaceFromKeyLevel(level));
+      m_rxEarlySecret.valid() :
+      rxSecretInstalled(spaceFromKeyLevel(level));
   }
-  const TrafficSecret &txTrafficSecret(PktNumSpace::T level) const {
+  const TrafficSecret &txSecret(PktNumSpace::T level) const {
     return m_txTrafficSecrets[level];
   }
-  const TrafficSecret &rxTrafficSecret(PktNumSpace::T level) const {
+  const TrafficSecret &rxSecret(PktNumSpace::T level) const {
     return m_rxTrafficSecrets[level];
   }
-  const TrafficSecret &txKeyTrafficSecret(PktKeyLevel::T level) const {
+  const TrafficSecret &txKeySecret(PktKeyLevel::T level) const {
     return level == PktKeyLevel::ZeroRTT ?
-      m_txEarlyTrafficSecret : txTrafficSecret(pktNumSpaceFromKeyLevel(level));
+      m_txEarlySecret : txSecret(spaceFromKeyLevel(level));
   }
-  const TrafficSecret &rxKeyTrafficSecret(PktKeyLevel::T level) const {
+  const TrafficSecret &rxKeySecret(PktKeyLevel::T level) const {
     return level == PktKeyLevel::ZeroRTT ?
-      m_rxEarlyTrafficSecret : rxTrafficSecret(pktNumSpaceFromKeyLevel(level));
+      m_rxEarlySecret : rxSecret(spaceFromKeyLevel(level));
   }
   PktProtState &txProtState(PktNumSpace::T level) {
     return m_txProt[level];
@@ -331,35 +331,35 @@ public:
   }
   PktProtState &txKeyProtState(PktKeyLevel::T level) {
     return level == PktKeyLevel::ZeroRTT ?
-      m_txEarlyProt : txProtState(pktNumSpaceFromKeyLevel(level));
+      m_txEarlyProt : txProtState(spaceFromKeyLevel(level));
   }
   PktProtState &rxKeyProtState(PktKeyLevel::T level) {
     return level == PktKeyLevel::ZeroRTT ?
-      m_rxEarlyProt : rxProtState(pktNumSpaceFromKeyLevel(level));
+      m_rxEarlyProt : rxProtState(spaceFromKeyLevel(level));
   }
-  bool updateTxTrafficSecret(PktNumSpace::T, const TrafficSecret &);
-  bool updateRxTrafficSecret(PktNumSpace::T, const TrafficSecret &);
-  bool updateTxKeyTrafficSecret(PktKeyLevel::T, const TrafficSecret &);
-  bool updateRxKeyTrafficSecret(PktKeyLevel::T, const TrafficSecret &);
+  bool txSecret(PktNumSpace::T, const TrafficSecret &);
+  bool rxSecret(PktNumSpace::T, const TrafficSecret &);
+  bool txKeySecret(PktKeyLevel::T, const TrafficSecret &);
+  bool rxKeySecret(PktKeyLevel::T, const TrafficSecret &);
   const CryptoDiag &diag() const { return m_diag; }
   int tlsResult() const { return m_tlsResult; }
   size_t tlsReadEpoch() const;
-  const TransportParams &localTransportParams() const {
-    return m_localTransportParams;
+  const TransportParams &localParams() const {
+    return m_localParams;
   }
-  const TransportParams &peerTransportParams() const {
-    return m_peerTransportParams;
+  const TransportParams &peerParams() const {
+    return m_peerParams;
   }
-  bool peerTransportParamsReceived() const {
-    return m_peerTransportParamsReceived;
+  bool peerParamsSet() const {
+    return m_peerParamsSet;
   }
-  void peerTransportParams_(const TransportParams &params) {
-    m_peerTransportParams = params;
-    m_peerTransportParamsReceived = true;
+  void peerParams(const TransportParams &params) {
+    m_peerParams = params;
+    m_peerParamsSet = true;
   }
 
-  int encodeTransportParams(uint8_t *, unsigned, const TransportParams &);
-  int decodeTransportParams(ZuBSpan, TransportParams &);
+  int encodeParams(uint8_t *, unsigned, const TransportParams &);
+  int decodeParams(ZuBSpan, TransportParams &);
   void installSecret(PktNumSpace::T, ZuBSpan);
   bool discardSecret(PktNumSpace::T);
   bool deriveInitial(const CxnID &);
@@ -399,8 +399,8 @@ private:
   bool				m_secretInstalled[PktNumSpace::N] = {};
   TrafficSecret 		m_txTrafficSecrets[PktNumSpace::N];
   TrafficSecret 		m_rxTrafficSecrets[PktNumSpace::N];
-  TrafficSecret 		m_txEarlyTrafficSecret;
-  TrafficSecret 		m_rxEarlyTrafficSecret;
+  TrafficSecret 		m_txEarlySecret;
+  TrafficSecret 		m_rxEarlySecret;
   PktProtState			m_txProt[PktNumSpace::N];
   PktProtState			m_rxProt[PktNumSpace::N];
   PktProtState			m_txEarlyProt;
@@ -413,15 +413,15 @@ private:
   void				(*m_saveSessionTicket)(void *, ZuBSpan) = nullptr;
   InitialKeyMaterial 		m_initialKeys;
   CryptoDiag			m_diag;
-  TransportParams 		m_localTransportParams;
-  TransportParams 		m_peerTransportParams;
-  bool				m_peerTransportParamsReceived = false;
+  TransportParams 		m_localParams;
+  TransportParams 		m_peerParams;
+  bool				m_peerParamsSet = false;
   ptls_context_t 		m_tlsCtx{};
   ptls_cipher_suite_t		*m_tlsCipherSuites[TLSMaxCiphers + 1]{};
   ptls_t			*m_tls = nullptr;
   ptls_handshake_properties_t 	m_tlsProps{};
   ptls_raw_extension_t 		m_tlsExtensions[2]{};
-  TLSTransportParams 		m_tlsTransportParams;
+  TLSTransportParams 		m_tlsParams;
   ptls_iovec_t			m_alpnVec{};
   size_t			m_maxEarlyData = 0;
   int				m_tlsResult = PTLS_ERROR_IN_PROGRESS;

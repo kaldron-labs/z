@@ -102,7 +102,7 @@ bool Pkt::isLong(ZuBSpan p)
   return p && (p[0] & 0x80);
 }
 
-bool Pkt::isVersionNegotiation(ZuBSpan p)
+bool Pkt::isVerNeg(ZuBSpan p)
 {
   return isLong(p) && p.length() >= 5 &&
     !p[1] && !p[2] && !p[3] && !p[4];
@@ -128,7 +128,7 @@ int Pkt::parseLong(ZuBSpan p, LongHdr &h)
 {
   if (p.length() < 7 || !isLong(p)) return -1;
   h.version = load32_(p.data() + 1);
-  if (isVersionNegotiation(p)) h.type = PktType::Initial;
+  if (isVerNeg(p)) h.type = PktType::Initial;
   else {
     switch ((p[0] >> 4) & 0x03) {
       case 0: h.type = PktType::Initial; break;
@@ -146,7 +146,7 @@ int Pkt::parseLong(ZuBSpan p, LongHdr &h)
   if (slen > CxnIDMax || p.length() < o + slen) return -1;
   h.scid = ZuBSpan{p.data() + o, slen};
   o += slen;
-  if (isVersionNegotiation(p) || h.type == PktType::Retry) {
+  if (isVerNeg(p) || h.type == PktType::Retry) {
     h.payloadOffset = o;
     return int(o);
   }
@@ -245,11 +245,11 @@ int Pkt::parseShort(ZuBSpan p, unsigned cidLen, ShortHdr &h)
   return int(h.pnOffset + h.pnLength);
 }
 
-int Pkt::parseVersionNegotiation(
+int Pkt::parseVerNeg(
   ZuBSpan p, uint32_t *versions, unsigned capacity, unsigned &nVersions)
 {
   nVersions = 0;
-  if (!isVersionNegotiation(p)) return -1;
+  if (!isVerNeg(p)) return -1;
   LongHdr h;
   int o = parseLong(p, h);
   if (o < 0 || ((p.length() - unsigned(o)) % 4)) return -1;
@@ -390,7 +390,7 @@ int Pkt::writeRetry(
   return w.finish();
 }
 
-int Pkt::writeRetryAuthenticated(
+int Pkt::writeRetryAuth(
   uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   ZuBSpan token, const CxnID &origDCID)
 {
@@ -419,7 +419,7 @@ int Pkt::writeShort(
   return w.finish();
 }
 
-int Pkt::writeVersionNegotiation(
+int Pkt::writeVerNeg(
   uint8_t *out, unsigned len, const CxnID &dcid, const CxnID &scid,
   const uint32_t *versions, unsigned nVersions)
 {

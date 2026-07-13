@@ -150,7 +150,7 @@ struct ShortHdr {
 
 struct Pkt {
   static bool isLong(ZuBSpan);
-  static bool isVersionNegotiation(ZuBSpan);
+  static bool isVerNeg(ZuBSpan);
   static int parseLong(ZuBSpan, LongHdr &);
   static int parseRetry(ZuBSpan, RetryPkt &);
   static int retryIntegrityTag(
@@ -158,7 +158,7 @@ struct Pkt {
     const CxnID &origDCID);
   static bool validateRetryIntegrity(ZuBSpan, const CxnID &origDCID);
   static int parseShort(ZuBSpan, unsigned cidLen, ShortHdr &);
-  static int parseVersionNegotiation(
+  static int parseVerNeg(
     ZuBSpan, uint32_t *, unsigned capacity, unsigned &nVersions);
   static int longHdrLen(
     PktType::T, const CxnID &, const CxnID &,
@@ -189,13 +189,13 @@ struct Pkt {
   static int writeRetry(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
     ZuBSpan token, ZuBSpan retryIntegrityTag = {});
-  static int writeRetryAuthenticated(
+  static int writeRetryAuth(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
     ZuBSpan token, const CxnID &origDCID);
   static int writeShort(
     uint8_t *, unsigned, const CxnID &, uint64_t pn, unsigned pnLength,
     bool keyPhase = false);
-  static int writeVersionNegotiation(
+  static int writeVerNeg(
     uint8_t *, unsigned, const CxnID &, const CxnID &,
     const uint32_t *, unsigned);
 };

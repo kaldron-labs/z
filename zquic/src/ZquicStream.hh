@@ -75,7 +75,7 @@ public:
   bool closedForStreamCredit() const {
     return (rxComplete() || m_resetReceived) && (m_finDequeued || m_resetSent);
   }
-  bool streamCreditReturned() const { return m_streamCreditReturned; }
+  bool creditReturned() const { return m_creditReturned; }
   bool earlyData() const { return m_earlyData; }
   void earlyData(bool v) { m_earlyData = v; }
   bool txQueued() const { return m_txQueued; }
@@ -104,13 +104,13 @@ public:
   void rxCredit(uint64_t limit) { m_rxCredit.set(limit); }
   void extendRxCredit(uint64_t limit) { m_rxCredit.extend(limit); }
   bool consumeRxCreditTo(uint64_t n) { return m_rxCredit.consumeTo(n); }
-  uint64_t lastStreamDataBlocked() const { return m_lastStreamDataBlocked; }
-  void lastStreamDataBlocked(uint64_t n) { m_lastStreamDataBlocked = n; }
-  void markStreamCreditReturned() { m_streamCreditReturned = true; }
+  uint64_t lastBlocked() const { return m_lastBlocked; }
+  void lastBlocked(uint64_t n) { m_lastBlocked = n; }
+  void markCreditReturned() { m_creditReturned = true; }
   unsigned queuedControlFrames() const {
     unsigned n = 0;
     if (m_maxStreamDataControl.queued) ++n;
-    if (m_streamDataBlockedControl.queued) ++n;
+    if (m_dataBlockedCtl.queued) ++n;
     if (m_resetStreamControl.queued) ++n;
     if (m_stopSendingControl.queued) ++n;
     return n;
@@ -123,9 +123,9 @@ public:
 	FrameType::MaxStreamData, uint64_t(m_id), value,
 	Zi::StreamType::Duplex}));
   }
-  bool queueStreamDataBlocked(uint64_t value) {
+  bool queueDataBlocked(uint64_t value) {
     return queueControl_(
-      m_streamDataBlockedControl,
+      m_dataBlockedCtl,
       ControlFrame::blocked(
 	FrameType::StreamDataBlocked, uint64_t(m_id), value));
   }
@@ -144,8 +144,8 @@ public:
       frame = m_maxStreamDataControl.frame;
       return true;
     }
-    if (m_streamDataBlockedControl.queued) {
-      frame = m_streamDataBlockedControl.frame;
+    if (m_dataBlockedCtl.queued) {
+      frame = m_dataBlockedCtl.frame;
       return true;
     }
     if (m_resetStreamControl.queued) {
@@ -170,7 +170,7 @@ public:
   }
   void clearControls() {
     m_maxStreamDataControl = {};
-    m_streamDataBlockedControl = {};
+    m_dataBlockedCtl = {};
     m_resetStreamControl = {};
     m_stopSendingControl = {};
   }
@@ -212,7 +212,7 @@ public:
 	linkInfo = m_link->linkInfo()
       ](auto &o, ZuTime time) mutable {
 	if (streamID == U64Null) return;
-	StreamDataEvent event{
+	StreamDataEvt event{
 	  .linkInfo = linkInfo
 	,
 	  .streamID = streamID,
@@ -612,7 +612,7 @@ private:
 	linkInfo = m_link->linkInfo()
       ](auto &o, ZuTime time) {
 	if (streamID == U64Null) return;
-	StreamDataEvent event{
+	StreamDataEvt event{
 	  .linkInfo = linkInfo
 	,
 	  .streamID = streamID,
@@ -682,7 +682,7 @@ private:
   PendingControl *controlSlot_(FrameType::T type) {
     switch (type) {
       case FrameType::MaxStreamData: return &m_maxStreamDataControl;
-      case FrameType::StreamDataBlocked: return &m_streamDataBlockedControl;
+      case FrameType::StreamDataBlocked: return &m_dataBlockedCtl;
       case FrameType::ResetStream: return &m_resetStreamControl;
       case FrameType::StopSending: return &m_stopSendingControl;
       default: return nullptr;
@@ -717,14 +717,14 @@ private:
   uint64_t		m_rxDelivered = 0;
   bool			m_resetReceived = false;
   bool			m_stopReceived = false;
-  bool			m_streamCreditReturned = false;
+  bool			m_creditReturned = false;
   bool			m_earlyData = false;
   StreamRxState		m_rxState;
   RxStream		m_rx;
   StreamRxPQueue	m_rxQueue{0};
-  uint64_t		m_lastStreamDataBlocked = U64Null;
+  uint64_t		m_lastBlocked = U64Null;
   PendingControl	m_maxStreamDataControl;
-  PendingControl	m_streamDataBlockedControl;
+  PendingControl	m_dataBlockedCtl;
   uint64_t		m_appError = 0;
   StreamError::T	m_error = StreamError::None;
 

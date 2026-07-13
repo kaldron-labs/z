@@ -82,15 +82,15 @@ void testVarIntAndPkt()
     "Initial token parse mismatch");
 
   uint32_t versions[] = { Zquic::Version1 };
-  l = Zquic::Pkt::writeVersionNegotiation(
+  l = Zquic::Pkt::writeVerNeg(
     b, sizeof(b), dcid, scid, versions, 1);
   ZuCHECK(l > 0, "VN write failed");
-  ZuCHECK(Zquic::Pkt::isVersionNegotiation(
+  ZuCHECK(Zquic::Pkt::isVerNeg(
     ZuBSpan{b, unsigned(l)}),
     "VN recognition failed");
   unsigned nVersions = 0;
   uint32_t parsedVersions[2] = {};
-  ZuCHECK(!Zquic::Pkt::parseVersionNegotiation(
+  ZuCHECK(!Zquic::Pkt::parseVerNeg(
     ZuBSpan{b, unsigned(l)},
     parsedVersions, 2, nVersions), "VN parse failed");
   ZuCHECK(nVersions == 1 && parsedVersions[0] == Zquic::Version1,
@@ -116,23 +116,23 @@ void testPktKeyLevels()
 {
   ZuTestScope(testPktKeyLevels);
 
-  ZuCHECK(Zquic::pktNumSpaceFromKeyLevel(Zquic::PktKeyLevel::Initial) ==
+  ZuCHECK(Zquic::spaceFromKeyLevel(Zquic::PktKeyLevel::Initial) ==
       Zquic::PktNumSpace::Initial &&
       Zquic::pktTypeFromKeyLevel(Zquic::PktKeyLevel::Initial) ==
       Zquic::PktType::Initial,
     "Initial key level mapping mismatch");
-  ZuCHECK(Zquic::pktNumSpaceFromKeyLevel(Zquic::PktKeyLevel::Handshake) ==
+  ZuCHECK(Zquic::spaceFromKeyLevel(Zquic::PktKeyLevel::Handshake) ==
       Zquic::PktNumSpace::Handshake &&
       Zquic::pktTypeFromKeyLevel(Zquic::PktKeyLevel::Handshake) ==
       Zquic::PktType::Handshake,
     "Handshake key level mapping mismatch");
-  ZuCHECK(Zquic::pktNumSpaceFromKeyLevel(Zquic::PktKeyLevel::ZeroRTT) ==
+  ZuCHECK(Zquic::spaceFromKeyLevel(Zquic::PktKeyLevel::ZeroRTT) ==
       Zquic::PktNumSpace::AppData &&
       Zquic::pktTypeFromKeyLevel(Zquic::PktKeyLevel::ZeroRTT) ==
       Zquic::PktType::ZeroRTT &&
       Zquic::isAppDataKeyLevel(Zquic::PktKeyLevel::ZeroRTT),
     "0-RTT key level mapping mismatch");
-  ZuCHECK(Zquic::pktNumSpaceFromKeyLevel(Zquic::PktKeyLevel::OneRTT) ==
+  ZuCHECK(Zquic::spaceFromKeyLevel(Zquic::PktKeyLevel::OneRTT) ==
       Zquic::PktNumSpace::AppData &&
       Zquic::pktTypeFromKeyLevel(Zquic::PktKeyLevel::OneRTT) ==
       Zquic::PktType::Short &&
@@ -143,19 +143,19 @@ void testPktKeyLevels()
 
   Zquic::PktKeyLevel::T level = Zquic::PktKeyLevel::N;
   size_t epoch = 0;
-  ZuCHECK(Zquic::pktKeyLevelFromTLSEpoch(1, level) &&
+  ZuCHECK(Zquic::keyLevelFromTLSEpoch(1, level) &&
       level == Zquic::PktKeyLevel::ZeroRTT &&
-      Zquic::tlsEpochFromPktKeyLevel(level, epoch) && epoch == 1,
+      Zquic::tlsEpochFromKeyLevel(level, epoch) && epoch == 1,
     "0-RTT TLS epoch mapping mismatch");
-  ZuCHECK(Zquic::pktKeyLevelFromTLSEpoch(3, level) &&
+  ZuCHECK(Zquic::keyLevelFromTLSEpoch(3, level) &&
       level == Zquic::PktKeyLevel::OneRTT &&
-      Zquic::tlsEpochFromPktKeyLevel(level, epoch) && epoch == 3,
+      Zquic::tlsEpochFromKeyLevel(level, epoch) && epoch == 3,
     "1-RTT TLS epoch mapping mismatch");
 }
 
-void testVarIntBoundariesAndPktNumbers()
+void testVarIntAndPktNumBounds()
 {
-  ZuTestScope(testVarIntBoundariesAndPktNumbers);
+  ZuTestScope(testVarIntAndPktNumBounds);
 
   struct Case {
     uint64_t	value;
@@ -254,15 +254,15 @@ void testPktParserRejections()
     "Initial max token length beyond packet was accepted");
 
   uint32_t versions[] = { Zquic::Version1 };
-  int n = Zquic::Pkt::writeVersionNegotiation(
+  int n = Zquic::Pkt::writeVerNeg(
     b, sizeof(b), dcid, scid, versions, 1);
   ZuCHECK(n > 0, "VN setup failed");
   unsigned nVersions = 0;
   uint32_t parsed[1];
-  ZuCHECK(Zquic::Pkt::parseVersionNegotiation(
+  ZuCHECK(Zquic::Pkt::parseVerNeg(
       bytes_(b, unsigned(n - 1)), parsed, 1, nVersions) < 0,
     "malformed VN version list was accepted");
-  ZuCHECK(Zquic::Pkt::parseVersionNegotiation(
+  ZuCHECK(Zquic::Pkt::parseVerNeg(
       bytes_(b, unsigned(n)), parsed, 0, nVersions) < 0,
     "VN parse ignored version capacity");
 
@@ -907,7 +907,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testVarIntAndPkt);
   ZuTestCall(testPktKeyLevels);
-  ZuTestCall(testVarIntBoundariesAndPktNumbers);
+  ZuTestCall(testVarIntAndPktNumBounds);
   ZuTestCall(testPktParserRejections);
   ZuTestCall(testFramesAndParams);
   ZuTestCall(testControlFrameCoverage);
