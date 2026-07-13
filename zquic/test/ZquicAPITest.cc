@@ -87,7 +87,7 @@ struct TestStream :
 };
 
 struct EngineApp : public Zquic::Engine<EngineApp> {
-  void activeMigrationForTest(bool v) {
+  void activeMigration(bool v) {
     m_migrationMode = v ?
       Zquic::MigrationMode::Active : Zquic::MigrationMode::Passive;
   }
@@ -157,7 +157,7 @@ struct ClientShapeLink :
   void streamed(ZmRef<ClientShapeStream>) { }
   void connectFailed(bool) { ++failures; }
   void disconnected(bool) { ++disconnects; }
-  Zquic::RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
+  Zquic::LinkDiag diag() const { return Base::diag_(); }
 
   ZmAtomic<unsigned> failures = 0;
   ZmAtomic<unsigned> disconnects = 0;
@@ -188,11 +188,11 @@ struct ServerShapeLink :
 
   void connected(Zi::Connected) { }
   void streamed(ZmRef<ServerShapeStream>) { }
-  void initServerPathForTest(ZiSockAddr local, ZiSockAddr remote) {
+  void initSrvPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
   }
 #ifdef Zquic_DEBUG
-  bool promoteObservedPathForTest(ZiSockAddr local, ZiSockAddr remote) {
+  bool promoteObservedPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::observePathRxTx_(ZuMv(local), ZuMv(remote));
     ZuBSpan challenge = Base::validatingChallenge_();
     if (challenge.length() != Zquic::PathChallenge::Length) return false;
@@ -211,10 +211,10 @@ struct TestLink :
     EngineApp, TestLink, StreamTxBufAlloc,
     TestStream>;
   TestLink(EngineApp *app, bool isServer = false) : Base{app, isServer} {
-    Base::configureLocalTransportParams_(app);
+    Base::configLocalParams_(app);
   }
 
-  const Zquic::TransportParams &localTransportParams() const {
+  const Zquic::TransportParams &localParams() const {
     return Base::localTransportParams_();
   }
 
@@ -327,28 +327,28 @@ struct TestLink :
 	    return ok;
 	  }
 	  void setPeerTransportParams(const Zquic::TransportParams &params) {
-	    Base::crypto_().peerTransportParams_(params);
+	    Base::crypto_().peerParams(params);
 	  }
 	  bool prepareActiveMigration(
 	    const Zquic::MigrationParams &params,
 	    Zquic::MigrationReason::T &reason) {
-	    return Base::prepareActiveMigration_(params, reason);
+	    return Base::prepareMig_(params, reason);
 	  }
 	  bool activateActiveMigration() {
-	    return Base::activateActiveMigration_(false);
+	    return Base::activateMig_(false);
 	  }
-	  void activeRebindStartForTest() {
-	    Base::activeMigrationRebindStart_();
+	  void activeRebindStart() {
+	    Base::migRebindStart_();
 	  }
-	  void activeRebindFailForTest(Zquic::MigrationReason::T reason) {
-	    Base::activeMigrationRebindFail_(reason);
-	    Base::failActiveMigration_(reason);
+	  void activeRebindFail(Zquic::MigrationReason::T reason) {
+	    Base::migRebindFail_(reason);
+	    Base::failMig_(reason);
 	  }
 	  bool buildActiveMigrationChallenge(Zquic::Frame &frame) {
 	    Zquic::PktBuild build;
 	    typename Base::TxPktRefs refs;
 	    Zquic::ControlFrame control;
-	    if (!Base::buildActiveMigrationChallenge_(build, refs, control))
+	    if (!Base::buildMigChal_(build, refs, control))
 	      return false;
 	    if (refs.count() != 1) return false;
 	    unsigned used = 0;
@@ -388,12 +388,12 @@ struct TestLink :
 	  bool checkStatelessReset(ZuBSpan datagram) {
 	    return Base::checkStatelessReset_(datagram);
 	  }
-	  bool draining() const { return Base::runtimeDraining_(); }
+	  bool draining() const { return Base::draining_(); }
   void dataBlockedForTest(uint64_t maximum) {
     Base::dataBlocked_(maximum);
   }
-	  void closeTransportForTest(Zquic::FrameType::T type, uint64_t errorCode) {
-	    Base::closeRuntime_(errorCode);
+	  void closeTransport(Zquic::FrameType::T type, uint64_t errorCode) {
+	    Base::closeLink_(errorCode);
 	    Base::transportClose_(type, errorCode);
 	  }
 	  void closeForTest(uint64_t errorCode = 0) {
@@ -424,7 +424,7 @@ struct TestLink :
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }
   void queueTxFlush_() { ++txFlushQueued; }
   void queueTxFlush_(ZiSockAddr) { ++txFlushQueued; }
-  Zquic::RuntimeDiag runtimeDiag() const { return Base::runtimeDiag_(); }
+  Zquic::LinkDiag diag() const { return Base::diag_(); }
 
   ZmRef<TestStream> lastOpened;
   ZmRef<TestStream> lastDataStream;
@@ -551,24 +551,24 @@ void testParams()
     .asyncThread("4")
     .maxData(1<<20)
     .maxStreamData(1<<16)
-    .maxStreamsBidi(16)
-    .maxStreamsUni(4)
+    .maxStreamsDuplex(16)
+    .maxStreamsSimplex(4)
     .heartBeat(ZuTime{7})
     .maxUDP(1200)
     .migrationMode(Zquic::MigrationMode::Disabled)
     .activeMigration(true)
-    .migrationCIDReserve(Zquic::LocalActiveCxnIDLimit + 8)
-    .migrationCloseOnFailure(true)
+    .migCIDRes(Zquic::LocalCIDLimit + 8)
+    .migCloseOnFail(true)
     .alpn(alpn)
     .errorFn(Zquic::defaultErrorFn());
   ZuCHECK(clientParams.migrationMode() == Zquic::MigrationMode::Active,
     "activeMigration(true) did not enable active migration mode");
   ZuCHECK(clientParams.activeMigration(),
     "active migration getter did not report enabled mode");
-  ZuCHECK(clientParams.migrationCIDReserve() ==
-      Zquic::LocalActiveCxnIDLimit - 1,
+  ZuCHECK(clientParams.migCIDRes() ==
+      Zquic::LocalCIDLimit - 1,
     "migration CID reserve was not clamped");
-  ZuCHECK(clientParams.migrationCloseOnFailure(),
+  ZuCHECK(clientParams.migCloseOnFail(),
     "migration close-on-failure getter did not report enabled policy");
   ZuCHECK(clientParams.heartBeat() == ZuTime{7},
     "heartBeat getter did not report configured interval");
@@ -596,7 +596,7 @@ void testParams()
     "default migration mode was not passive");
   ZuCHECK(!serverParams.activeMigration(),
     "default active migration getter unexpectedly reported active");
-  ZuCHECK(!serverParams.migrationCloseOnFailure(),
+  ZuCHECK(!serverParams.migCloseOnFail(),
     "default migration close-on-failure policy was not false");
   ZuCHECK(!*serverParams.heartBeat(),
     "default heartBeat interval was not disabled");
@@ -604,13 +604,13 @@ void testParams()
   EngineFixture fixture;
   {
     ZmRef<TestLink> link = new TestLink{&fixture.app, false};
-    ZuCHECK(link->localTransportParams().disableActiveMigration,
+    ZuCHECK(link->localParams().disableActiveMigration,
       "default local transport params enabled active migration");
   }
   {
-    fixture.app.activeMigrationForTest(true);
+    fixture.app.activeMigration(true);
     ZmRef<TestLink> link = new TestLink{&fixture.app, false};
-    ZuCHECK(!link->localTransportParams().disableActiveMigration,
+    ZuCHECK(!link->localParams().disableActiveMigration,
       "active migration mode did not clear disable_active_migration");
   }
 }
@@ -674,7 +674,7 @@ void testAlignedSurfaceShape()
       !client->isServer(),
     "client aligned link/stream shape mismatch");
 #ifdef Zquic_DEBUG
-  ZuCHECK(client->runtimeDiag().unhandledAppEvents(),
+  ZuCHECK(client->diag().unhandledAppEvents(),
     "default client stream-open hook was not visible in diagnostics");
 #endif
 
@@ -706,7 +706,7 @@ void testAlignedSurfaceShape()
     serverApp.txRun([
       server, localAddr, remoteAddr, wake = ZuMv(wake)
     ]() mutable {
-      server->initServerPathForTest(localAddr, remoteAddr);
+      server->initSrvPath(localAddr, remoteAddr);
       wake();
     });
   });
@@ -757,7 +757,7 @@ void testAlignedSurfaceShape()
       server, localAddr, promotedRemote,
       &promoted, &peerAfterPromotion, wake = ZuMv(wake)
     ]() mutable {
-      promoted = server->promoteObservedPathForTest(
+      promoted = server->promoteObservedPath(
 	localAddr, promotedRemote);
       peerAfterPromotion = server->peer();
       wake();
@@ -802,10 +802,10 @@ void testStatelessResetDetection()
   ZuBSpan datagram{packet, sizeof(packet)};
 
   Zquic::ResetToken decoded;
-  ZuCHECK(!Zquic::StatelessRst::decode(decoded, datagram) &&
+  ZuCHECK(!Zquic::StatelessReset::decode(decoded, datagram) &&
       decoded == token,
     "stateless reset token decode mismatch");
-  ZuCHECK(Zquic::StatelessRst::verify(datagram, token),
+  ZuCHECK(Zquic::StatelessReset::verify(datagram, token),
     "stateless reset token verify failed");
   ZuCHECK(!link->checkStatelessReset(datagram) && !link->draining(),
     "link accepted stateless reset before peer token was known");
@@ -904,7 +904,7 @@ void testApplicationCallbacks()
       client->lastFlowMaximum == 4096,
     "flow blocked callback mismatch");
 
-  client->closeTransportForTest(Zquic::FrameType::ConnectionClose, 42);
+  client->closeTransport(Zquic::FrameType::ConnectionClose, 42);
   ZuCHECK(client->transportCloseCount == 1 &&
       client->lastCloseType == Zquic::FrameType::ConnectionClose &&
       client->lastCloseError == 42,
@@ -926,12 +926,12 @@ void testApplicationCallbacks()
 #ifdef Zquic_DEBUG
   fixture.app.migrationMode(Zquic::MigrationMode::Disabled);
   path->observePathRx(localAddr, disabledRemote);
-  Zquic::RuntimeDiag disabledDiag = path->runtimeDiag();
+  Zquic::LinkDiag disabledDiag = path->diag();
   ZuCHECK(!path->migrationActive() &&
       disabledDiag.tx.pathRxObserved == 1 &&
       disabledDiag.tx.pathValidationDisabled == 1 &&
       disabledDiag.tx.migration.policyReject == 1 &&
-      disabledDiag.tx.pathValidationStarted == 0,
+      disabledDiag.tx.pathValidating == 0,
     "disabled migration mode did not ignore peer tuple change");
   fixture.app.migrationMode(Zquic::MigrationMode::Passive);
   path->observePathRx(localAddr, newRemote);
@@ -959,7 +959,7 @@ void testApplicationCallbacks()
     "path-update callback did not report a validated path");
   ZuCHECK(path->lastPathMaxUDP >= Zquic::MinUDPPayload,
     "path-update callback MTU mismatch");
-  Zquic::MigrationDiag passiveDiag = path->runtimeDiag().tx.migration;
+  Zquic::MigrationDiag passiveDiag = path->diag().tx.migration;
   ZuCHECK(passiveDiag.requested == 1 &&
       passiveDiag.started == 1 &&
       passiveDiag.promoted == 1 &&
@@ -977,7 +977,7 @@ void testApplicationCallbacks()
       timeoutPath->lastMigration.state == Zquic::MigrationState::Failed &&
       timeoutPath->lastMigration.reason == Zquic::MigrationReason::Timeout,
     "migration failure callback mismatch");
-  Zquic::MigrationDiag timeoutDiag = timeoutPath->runtimeDiag().tx.migration;
+  Zquic::MigrationDiag timeoutDiag = timeoutPath->diag().tx.migration;
   ZuCHECK(timeoutDiag.requested == 1 &&
       timeoutDiag.started == 1 &&
       timeoutDiag.abandoned == 1 &&
@@ -1178,7 +1178,7 @@ void testActiveMigrationAPI()
   ZuCHECK(link->migrationCallbackOrder == "SUP",
     "active migration promotion callback order mismatch");
 #ifdef Zquic_DEBUG
-  Zquic::MigrationDiag activeDiag = link->runtimeDiag().tx.migration;
+  Zquic::MigrationDiag activeDiag = link->diag().tx.migration;
   ZuCHECK(activeDiag.requested == 2 &&
       activeDiag.started == 1 &&
       activeDiag.promoted == 1 &&
@@ -1205,7 +1205,7 @@ void testActiveMigrationAPI()
     "active migration ignored peer disable_active_migration");
 #ifdef Zquic_DEBUG
   Zquic::MigrationDiag disabledMigrationDiag =
-    disabled->runtimeDiag().tx.migration;
+    disabled->diag().tx.migration;
   ZuCHECK(disabledMigrationDiag.requested == 1 &&
       disabledMigrationDiag.policyReject == 1 &&
       disabledMigrationDiag.started == 0,
@@ -1226,7 +1226,7 @@ void testActiveMigrationAPI()
       noSpare->migrationStartedCount == 0,
     "active migration without spare CID advanced to validation");
 #ifdef Zquic_DEBUG
-  Zquic::MigrationDiag noSpareDiag = noSpare->runtimeDiag().tx.migration;
+  Zquic::MigrationDiag noSpareDiag = noSpare->diag().tx.migration;
   ZuCHECK(noSpareDiag.requested == 1 &&
       noSpareDiag.started == 1 &&
       noSpareDiag.noPeerCID == 1 &&
@@ -1344,8 +1344,8 @@ void testMigrationQLogEvents()
   reason = Zquic::MigrationReason::None;
   ZuCHECK(rebind->prepareActiveMigration(rebindParams, reason),
     "qlog rebind migration setup failed");
-  rebind->activeRebindStartForTest();
-  rebind->activeRebindFailForTest(Zquic::MigrationReason::Endpoint);
+  rebind->activeRebindStart();
+  rebind->activeRebindFail(Zquic::MigrationReason::Endpoint);
 
   closeQLog_(fixture.app.qlogTrace());
   ZquicLogger::stop();
@@ -1425,9 +1425,9 @@ void testMigrationQLogEvents()
 #endif
 }
 
-void testInitValidation()
+void testInitValidate()
 {
-  ZuTestScope(testInitValidation);
+  ZuTestScope(testInitValidate);
 
   ZiLog::init("ZquicAPITest");
   ZiLog::level(0);
@@ -1553,5 +1553,5 @@ int main(int argc, char **argv)
   ZuTestCall(testCxnIDFrameLifecycle);
   ZuTestCall(testActiveMigrationAPI);
   ZuTestCall(testMigrationQLogEvents);
-  ZuTestCall(testInitValidation);
+  ZuTestCall(testInitValidate);
 }

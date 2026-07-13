@@ -77,7 +77,7 @@ struct TestLink :
 #ifdef Zquic_DEBUG
   void growActivePath(unsigned size) { Base::forceActivePathMTU_(size); }
   bool startPMTUDProbe(unsigned size) {
-    return Base::startPMTUDProbeChecked_(size);
+    return Base::startPMTUDProbe_(size);
   }
   void ackPMTUDProbe(unsigned size) {
     Base::ackPMTUDProbe_(size);
@@ -250,7 +250,7 @@ void testRecoveryFlowAndPMTUD()
       }),
     "loop sent-packet add failed");
   ZuCHECK(sent.ack(5), "loop ACK failed");
-  ZuCHECK(sent.markPktThresholdLoss(5) == 2 &&
+  ZuCHECK(sent.markPktThreshLoss(5) == 2 &&
       sent.lost() == 2 && sent.retransmittable() == 2,
     "loop packet-threshold loss failed");
 
@@ -286,7 +286,7 @@ void testRecoveryFlowAndPMTUD()
     .pmtudSize = 1400};
   ZuCHECK(pmtudLossTx.add(probeLoss), "loop PMTUD loss add failed");
   Zquic::PktTxUpdate probeLossUpdate;
-  ZuCHECK(pmtudLossTx.markTimeThresholdLoss(
+  ZuCHECK(pmtudLossTx.markTimeThreshLoss(
       13, Zquic::timeUS(500), Zquic::timeUS(100), nullptr, nullptr,
       &probeLossUpdate) == 1 &&
       probeLossUpdate.pmtudLostSize == 1400 &&

@@ -80,7 +80,7 @@ struct QAckRange {
 
 ZuDerive(QAckRanges, (ZuArray<QAckRange, AckRangeMax>));
 
-struct DgramEvent {
+struct DgramEvt {
   LinkInfo		linkInfo;
   uint64_t		size = 0;
   EcnMark::T		ecn = EcnMark::N;
@@ -91,7 +91,7 @@ struct StreamType {
   ZtEnumMap(StreamType, JSON, "bidirectional", "unidirectional");
 };
 
-struct FrameEvent {
+struct FrameEvt {
   QAckRanges		ackRanges;
   CxnID			cxnID;
   ResetToken		resetToken;
@@ -110,13 +110,13 @@ struct FrameEvent {
   uint8_t		rangeCount = 0;
   bool			fin = false;
 
-  struct Traits : public ZuBaseTraits<FrameEvent> {
+  struct Traits : public ZuBaseTraits<FrameEvt> {
     enum { IsPOD = 1 };
   };
-  friend Traits ZuTraitsType(FrameEvent *);
+  friend Traits ZuTraitsType(FrameEvt *);
 };
 
-struct PktEvent {
+struct PktEvt {
   struct Reason {
     ZtEnum(Reason, int8_t,
 	      None, Coalescing, ParseLong, PacketLength, PrepareLong,
@@ -130,7 +130,7 @@ struct PktEvent {
 	    "anti_amplification", "probe_admission", "app_send",
 	    "0rtt_after_1rtt", "frame_policy");
   };
-  using Frames = ZuArray<FrameEvent, FrameMax>;
+  using Frames = ZuArray<FrameEvt, FrameMax>;
 
   Frames		frames;
   LinkInfo		linkInfo;
@@ -147,7 +147,7 @@ struct PktEvent {
   bool			ackEliciting = false;
 };
 
-struct AckEvent {
+struct AckEvt {
   using PacketNumbers = ZuArray<uint64_t, AckPacketMax>;
 
   PacketNumbers		packetNumbers;
@@ -180,8 +180,8 @@ struct RecReason {
     "expired", "probe", "backoff", "ecn_ce");
 };
 
-struct RecEvent {
-  using Frames = ZuArray<FrameEvent, FrameMax>;
+struct RecLogEvt {
+  using Frames = ZuArray<FrameEvt, FrameMax>;
 
   Frames		frames;
   LinkInfo		linkInfo;
@@ -218,7 +218,7 @@ struct ECNReason {
     "probe", "no_ack_ecn", "mark_failed", "ce");
 };
 
-struct ECNEvent {
+struct ECNEvt {
   LinkInfo		linkInfo;
   uint64_t		ect0 = 0;
   uint64_t		ect1 = 0;
@@ -237,7 +237,7 @@ struct ECNEvent {
 struct SecKind {
   ZtEnum(SecKind, int8_t,
     KeyUpdated, KeyRetired, TransportParams, ALPN, TLS, Retry, Token,
-    VersionNeg, StatelessRst, PktProtect);
+    VersionNeg, StatelessReset, PktProtect);
   ZtEnumMap(SecKind, JSON,
     "key_updated", "key_retired", "transport_parameters", "alpn", "tls",
     "retry", "token", "version_negotiation", "stateless_reset",
@@ -327,7 +327,7 @@ inline SecReason::T zeroRTTSecReason(ZeroRTTReason::T reason)
   }
 }
 
-struct SecEvent {
+struct SecEvt {
   ZeString		alpn;
   LinkInfo		linkInfo;
   uint64_t		value = 0;
@@ -340,7 +340,7 @@ struct SecEvent {
   bool			success = true;
 };
 
-struct ParamsEvent {
+struct ParamsEvt {
   CxnID			origDCID;
   CxnID			initialSCID;
   CxnID			retrySCID;
@@ -362,7 +362,7 @@ struct ParamsEvent {
   bool			disableActiveMigration = false;
 };
 
-struct VersionEvent {
+struct VersionEvt {
   Versions		serverVersions;
   Versions		clientVersions;
   LinkInfo		linkInfo;
@@ -401,7 +401,7 @@ struct PathReason {
     "no_peer_cid", "validation");
 };
 
-struct PathEvent {
+struct PathEvt {
   LinkInfo		linkInfo;
   uint64_t		tupleID = 0;
   uint64_t		attemptID = U64Null;
@@ -437,7 +437,7 @@ struct CIDReason {
     "migration");
 };
 
-struct CIDEvent {
+struct CIDEvt {
   CxnID			cxnID;
   LinkInfo		linkInfo;
   uint64_t		sequence = 0;
@@ -463,7 +463,7 @@ struct MigrationAction {
     "failed", "closed", "unknown");
 };
 
-struct MigrationEvent {
+struct MigrationEvt {
   LinkInfo			linkInfo;
   ZiSockAddr			activeLocal;
   ZiSockAddr			activeRemote;
@@ -498,7 +498,7 @@ struct StreamReason {
     "local_open", "peer_open", "reaped", "unknown", "none");
 };
 
-struct StreamEvent {
+struct StreamEvt {
   LinkInfo		linkInfo;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
@@ -523,7 +523,7 @@ struct StreamDataInfo {
   ZtEnumMap(StreamDataInfo, JSON, "fin_set", "unknown", "none");
 };
 
-struct StreamDataEvent {
+struct StreamDataEvt {
   LinkInfo		linkInfo;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
@@ -548,7 +548,7 @@ struct BlockedReason {
     "stream_id", "application");
 };
 
-struct BlockedEvent {
+struct BlockedEvt {
   LinkInfo		linkInfo;
   uint64_t		streamID = 0;
   BlockedState::T	oldState = BlockedState::Unblocked;
@@ -588,7 +588,7 @@ struct CloseError {
     "connection_id_limit_error", "protocol_violation", "", "unknown");
 };
 
-struct CloseEvent {
+struct CloseEvt {
   LinkInfo		linkInfo;
   uint64_t		errorCode = 0;
   CloseInitiator::T	initiator = CloseInitiator::Local;
@@ -598,29 +598,29 @@ struct CloseEvent {
   CloseError::T		applicationError = CloseError::None;
 };
 
-struct CxnStateEvent {
+struct CxnStateEvt {
   LinkInfo		linkInfo;
   LinkState::T		oldState = LinkState::Starting;
   LinkState::T		newState = LinkState::Handshaking;
 };
 
-struct CxnStartedEvent {
+struct CxnStartedEvt {
   ZiSockAddr	local;
   ZiSockAddr	remote;
   LinkInfo	linkInfo;
 };
 
-struct EventName {
-  ZtEnum(EventName, int8_t,
+struct EvtName {
+  ZtEnum(EvtName, int8_t,
     CxnStarted, UDPTx, UDPRx, PktSent, PktRecv, PktBuf, PktDrop, PktsAcked,
     PktLost, MarkRetrans, MetricsUpd, TimerUpd, CongestionUpd, ECNUpd, KeyUpd,
     KeyDiscarded, ParamsSet, ALPNInfo, TLSAlert, RetrySent, RetryValid,
-    TokenIssued, TokenValid, TokenReject, VersionInfo, StatelessRst,
+    TokenIssued, TokenValid, TokenReject, VersionInfo, StatelessReset,
     PktProtectFail, ZeroRTTAccept, ZeroRTTReject, TupleAssigned,
     PathValidated, MTUUpd, CIDUpd, StreamStateUpd, StreamDataMoved,
     CxnDataBlockedUpd,
     StreamDataBlockedUpd, CxnClosed, CxnStateUpd, MigrationUpd);
-  ZtEnumMap(EventName, JSON,
+  ZtEnumMap(EvtName, JSON,
     "quic:connection_started", "quic:udp_datagrams_sent",
     "quic:udp_datagrams_received", "quic:packet_sent",
     "quic:packet_received", "quic:packet_buffered", "quic:packet_dropped",
@@ -718,109 +718,109 @@ public:
   static ZquicLogDiag diag() { return instance()->diag_(); }
 
   static void cxnStarted(
-    Trace &trace, ZquicLog_::CxnStartedEvent event) {
+    Trace &trace, ZquicLog_::CxnStartedEvt event) {
     instance()->cxnStarted_(trace, ZuMv(event));
   }
-  static void dgramSent(Trace &trace, ZquicLog_::DgramEvent event) {
+  static void dgramSent(Trace &trace, ZquicLog_::DgramEvt event) {
     instance()->dgramSent_(trace, ZuMv(event));
   }
-  static void dgramRecv(Trace &trace, ZquicLog_::DgramEvent event) {
+  static void dgramRecv(Trace &trace, ZquicLog_::DgramEvt event) {
     instance()->dgramRecv_(trace, ZuMv(event));
   }
-  static void pktSent(Trace &trace, ZquicLog_::PktEvent event) {
+  static void pktSent(Trace &trace, ZquicLog_::PktEvt event) {
     instance()->pktSent_(trace, ZuMv(event));
   }
-  static void pktRecv(Trace &trace, ZquicLog_::PktEvent event) {
+  static void pktRecv(Trace &trace, ZquicLog_::PktEvt event) {
     instance()->pktRecv_(trace, ZuMv(event));
   }
-  static void pktBuf(Trace &trace, ZquicLog_::PktEvent event) {
+  static void pktBuf(Trace &trace, ZquicLog_::PktEvt event) {
     instance()->pktBuf_(trace, ZuMv(event));
   }
-  static void pktDrop(Trace &trace, ZquicLog_::PktEvent event) {
+  static void pktDrop(Trace &trace, ZquicLog_::PktEvt event) {
     instance()->pktDrop_(trace, ZuMv(event));
   }
-  static void pktsAcked(Trace &trace, ZquicLog_::AckEvent event) {
+  static void pktsAcked(Trace &trace, ZquicLog_::AckEvt event) {
     instance()->pktsAcked_(trace, ZuMv(event));
   }
-  static void pktLost(Trace &trace, ZquicLog_::RecEvent event) {
+  static void pktLost(Trace &trace, ZquicLog_::RecLogEvt event) {
     instance()->pktLost_(trace, ZuMv(event));
   }
-  static void recPktLost(Trace &trace, ZquicLog_::RecEvent event) {
+  static void recPktLost(Trace &trace, ZquicLog_::RecLogEvt event) {
     instance()->recPktLost_(trace, ZuMv(event));
   }
-  static void markRetrans(Trace &trace, ZquicLog_::RecEvent event) {
+  static void markRetrans(Trace &trace, ZquicLog_::RecLogEvt event) {
     instance()->markRetrans_(trace, ZuMv(event));
   }
-  static void metricsUpd(Trace &trace, ZquicLog_::RecEvent event) {
+  static void metricsUpd(Trace &trace, ZquicLog_::RecLogEvt event) {
     instance()->metricsUpd_(trace, ZuMv(event));
   }
-  static void lossTimerUpd(Trace &trace, ZquicLog_::RecEvent event) {
+  static void lossTimerUpd(Trace &trace, ZquicLog_::RecLogEvt event) {
     instance()->lossTimerUpd_(trace, ZuMv(event));
   }
-  static void congStateUpd(Trace &trace, ZquicLog_::RecEvent event) {
+  static void congStateUpd(Trace &trace, ZquicLog_::RecLogEvt event) {
     instance()->congStateUpd_(trace, ZuMv(event));
   }
-  static void ecnStateUpd(Trace &trace, ZquicLog_::ECNEvent event) {
+  static void ecnStateUpd(Trace &trace, ZquicLog_::ECNEvt event) {
     instance()->ecnStateUpd_(trace, ZuMv(event));
   }
-  static void keyUpdated(Trace &trace, ZquicLog_::SecEvent event) {
+  static void keyUpdated(Trace &trace, ZquicLog_::SecEvt event) {
     instance()->keyUpdated_(trace, ZuMv(event));
   }
-  static void keyRetired(Trace &trace, ZquicLog_::SecEvent event) {
+  static void keyRetired(Trace &trace, ZquicLog_::SecEvt event) {
     instance()->keyRetired_(trace, ZuMv(event));
   }
-  static void paramsSet(Trace &trace, ZquicLog_::ParamsEvent event) {
+  static void paramsSet(Trace &trace, ZquicLog_::ParamsEvt event) {
     instance()->paramsSet_(trace, ZuMv(event));
   }
-  static void alpnInfo(Trace &trace, ZquicLog_::SecEvent event) {
+  static void alpnInfo(Trace &trace, ZquicLog_::SecEvt event) {
     instance()->alpnInfo_(trace, ZuMv(event));
   }
-  static void versionInfo(Trace &trace, ZquicLog_::VersionEvent event) {
+  static void versionInfo(Trace &trace, ZquicLog_::VersionEvt event) {
     instance()->versionInfo_(trace, ZuMv(event));
   }
-  static void tlsAlert(Trace &trace, ZquicLog_::SecEvent event) {
+  static void tlsAlert(Trace &trace, ZquicLog_::SecEvt event) {
     instance()->tlsAlert_(trace, ZuMv(event));
   }
-  static void secEvent(
-    Trace &trace, ZquicLog_::EventName::T name,
-    ZquicLog_::SecEvent event) {
-    instance()->secEvent_(trace, name, ZuMv(event));
+  static void secEvt(
+    Trace &trace, ZquicLog_::EvtName::T name,
+    ZquicLog_::SecEvt event) {
+    instance()->secEvt_(trace, name, ZuMv(event));
   }
-  static void pathUpdated(Trace &trace, ZquicLog_::PathEvent event) {
+  static void pathUpdated(Trace &trace, ZquicLog_::PathEvt event) {
     instance()->pathUpdated_(trace, ZuMv(event));
   }
-  static void pathValidUpd(Trace &trace, ZquicLog_::PathEvent event) {
+  static void pathValidUpd(Trace &trace, ZquicLog_::PathEvt event) {
     instance()->pathValidUpd_(trace, ZuMv(event));
   }
-  static void pmtudUpdated(Trace &trace, ZquicLog_::PathEvent event) {
+  static void pmtudUpdated(Trace &trace, ZquicLog_::PathEvt event) {
     instance()->pmtudUpdated_(trace, ZuMv(event));
   }
-  static void cidUpdated(Trace &trace, ZquicLog_::CIDEvent event) {
+  static void cidUpdated(Trace &trace, ZquicLog_::CIDEvt event) {
     instance()->cidUpdated_(trace, ZuMv(event));
   }
   static void migrationUpdated(
-    Trace &trace, ZquicLog_::MigrationEvent event) {
+    Trace &trace, ZquicLog_::MigrationEvt event) {
     instance()->migrationUpdated_(trace, ZuMv(event));
   }
-  static void streamStateUpd(Trace &trace, ZquicLog_::StreamEvent event) {
+  static void streamStateUpd(Trace &trace, ZquicLog_::StreamEvt event) {
     instance()->streamStateUpd_(trace, ZuMv(event));
   }
   static void streamDataMoved(
-    Trace &trace, ZquicLog_::StreamDataEvent event) {
+    Trace &trace, ZquicLog_::StreamDataEvt event) {
     instance()->streamDataMoved_(trace, ZuMv(event));
   }
   static void cxnDataBlockedUpd(
-    Trace &trace, ZquicLog_::BlockedEvent event) {
+    Trace &trace, ZquicLog_::BlockedEvt event) {
     instance()->cxnDataBlockedUpd_(trace, ZuMv(event));
   }
   static void streamDataBlockedUpd(
-    Trace &trace, ZquicLog_::BlockedEvent event) {
+    Trace &trace, ZquicLog_::BlockedEvt event) {
     instance()->streamDataBlockedUpd_(trace, ZuMv(event));
   }
-  static void cxnClosed(Trace &trace, ZquicLog_::CloseEvent event) {
+  static void cxnClosed(Trace &trace, ZquicLog_::CloseEvt event) {
     instance()->cxnClosed_(trace, ZuMv(event));
   }
-  static void cxnStateUpd(Trace &trace, ZquicLog_::CxnStateEvent event) {
+  static void cxnStateUpd(Trace &trace, ZquicLog_::CxnStateEvt event) {
     instance()->cxnStateUpd_(trace, ZuMv(event));
   }
   template <typename L>
@@ -829,120 +829,120 @@ public:
   }
 
   void logCxnStarted(
-    const ZquicLog_::CxnStartedEvent &event, ZuTime time) {
+    const ZquicLog_::CxnStartedEvt &event, ZuTime time) {
     writeCxnStarted_(event, time);
   }
-  void logDgramSent(const ZquicLog_::DgramEvent &event, ZuTime time) {
-    writeDatagramEvent_(ZquicLog_::EventName::UDPTx, event, time);
+  void logDgramSent(const ZquicLog_::DgramEvt &event, ZuTime time) {
+    writeDatagramEvt_(ZquicLog_::EvtName::UDPTx, event, time);
   }
-  void logDgramRecv(const ZquicLog_::DgramEvent &event, ZuTime time) {
-    writeDatagramEvent_(ZquicLog_::EventName::UDPRx, event, time);
+  void logDgramRecv(const ZquicLog_::DgramEvt &event, ZuTime time) {
+    writeDatagramEvt_(ZquicLog_::EvtName::UDPRx, event, time);
   }
-  void logPktSent(const ZquicLog_::PktEvent &event, ZuTime time) {
-    writePktEvent_(ZquicLog_::EventName::PktSent, event, time);
+  void logPktSent(const ZquicLog_::PktEvt &event, ZuTime time) {
+    writePktEvt_(ZquicLog_::EvtName::PktSent, event, time);
   }
-  void logPktRecv(const ZquicLog_::PktEvent &event, ZuTime time) {
-    writePktEvent_(ZquicLog_::EventName::PktRecv, event, time);
+  void logPktRecv(const ZquicLog_::PktEvt &event, ZuTime time) {
+    writePktEvt_(ZquicLog_::EvtName::PktRecv, event, time);
   }
-  void logPktBuf(const ZquicLog_::PktEvent &event, ZuTime time) {
-    writePktEvent_(ZquicLog_::EventName::PktBuf, event, time);
+  void logPktBuf(const ZquicLog_::PktEvt &event, ZuTime time) {
+    writePktEvt_(ZquicLog_::EvtName::PktBuf, event, time);
   }
-  void logPktDrop(const ZquicLog_::PktEvent &event, ZuTime time) {
-    writePktEvent_(ZquicLog_::EventName::PktDrop, event, time);
+  void logPktDrop(const ZquicLog_::PktEvt &event, ZuTime time) {
+    writePktEvt_(ZquicLog_::EvtName::PktDrop, event, time);
   }
-  void logPktsAcked(const ZquicLog_::AckEvent &event, ZuTime time) {
-    writeAckEvent_(ZquicLog_::EventName::PktsAcked, event, time);
+  void logPktsAcked(const ZquicLog_::AckEvt &event, ZuTime time) {
+    writeAckEvt_(ZquicLog_::EvtName::PktsAcked, event, time);
   }
-  void logPktLost(const ZquicLog_::RecEvent &event, ZuTime time) {
+  void logPktLost(const ZquicLog_::RecLogEvt &event, ZuTime time) {
     writePktLost_(event, time);
   }
-  void logRecPktLost(const ZquicLog_::RecEvent &event, ZuTime time) {
+  void logRecPktLost(const ZquicLog_::RecLogEvt &event, ZuTime time) {
     writePktLost_(event, time);
   }
   void logMarkRetrans(
-    const ZquicLog_::RecEvent &event, ZuTime time) {
+    const ZquicLog_::RecLogEvt &event, ZuTime time) {
     writeMarkRetrans_(event, time);
   }
-  void logMetricsUpd(const ZquicLog_::RecEvent &event, ZuTime time) {
+  void logMetricsUpd(const ZquicLog_::RecLogEvt &event, ZuTime time) {
     writeRecMetrics_(event, time);
   }
-  void logLossTimerUpd(const ZquicLog_::RecEvent &event, ZuTime time) {
-    writeTimerEvent_(event, time);
+  void logLossTimerUpd(const ZquicLog_::RecLogEvt &event, ZuTime time) {
+    writeTimerEvt_(event, time);
   }
   void logCongStateUpd(
-    const ZquicLog_::RecEvent &event, ZuTime time) {
+    const ZquicLog_::RecLogEvt &event, ZuTime time) {
     writeCongState_(event, time);
   }
-  void logECNStateUpd(const ZquicLog_::ECNEvent &event, ZuTime time) {
-    writeECNEvent_(event, time);
+  void logECNStateUpd(const ZquicLog_::ECNEvt &event, ZuTime time) {
+    writeECNEvt_(event, time);
   }
-  void logKeyUpdated(const ZquicLog_::SecEvent &event, ZuTime time) {
-    writeKeyEvent_(ZquicLog_::EventName::KeyUpd, event, time);
+  void logKeyUpdated(const ZquicLog_::SecEvt &event, ZuTime time) {
+    writeKeyEvt_(ZquicLog_::EvtName::KeyUpd, event, time);
   }
-  void logKeyRetired(const ZquicLog_::SecEvent &event, ZuTime time) {
-    writeKeyEvent_(ZquicLog_::EventName::KeyDiscarded, event, time);
+  void logKeyRetired(const ZquicLog_::SecEvt &event, ZuTime time) {
+    writeKeyEvt_(ZquicLog_::EvtName::KeyDiscarded, event, time);
   }
   void logParamsSet(
-    const ZquicLog_::ParamsEvent &event, ZuTime time) {
+    const ZquicLog_::ParamsEvt &event, ZuTime time) {
     writeParams_(event, time);
   }
-  void logALPNInfo(const ZquicLog_::SecEvent &event, ZuTime time) {
-    writeALPNEvent_(event, time);
+  void logALPNInfo(const ZquicLog_::SecEvt &event, ZuTime time) {
+    writeALPNEvt_(event, time);
   }
   void logVersionInfo(
-    const ZquicLog_::VersionEvent &event, ZuTime time) {
+    const ZquicLog_::VersionEvt &event, ZuTime time) {
     writeVersion_(event, time);
   }
-  void logTLSAlert(const ZquicLog_::SecEvent &event, ZuTime time) {
-    writeSecEvent_(ZquicLog_::EventName::TLSAlert, event, time);
+  void logTLSAlert(const ZquicLog_::SecEvt &event, ZuTime time) {
+    writeSecEvt_(ZquicLog_::EvtName::TLSAlert, event, time);
   }
-  void logSecEvent(
-    ZquicLog_::EventName::T name,
-    const ZquicLog_::SecEvent &event, ZuTime time) {
-    writeSecEvent_(name, event, time);
+  void logSecEvt(
+    ZquicLog_::EvtName::T name,
+    const ZquicLog_::SecEvt &event, ZuTime time) {
+    writeSecEvt_(name, event, time);
   }
-  void logPathUpdated(const ZquicLog_::PathEvent &event, ZuTime time) {
-    writePathEvent_(ZquicLog_::EventName::TupleAssigned, event, time);
+  void logPathUpdated(const ZquicLog_::PathEvt &event, ZuTime time) {
+    writePathEvt_(ZquicLog_::EvtName::TupleAssigned, event, time);
   }
   void logPathValid(
-    const ZquicLog_::PathEvent &event, ZuTime time) {
+    const ZquicLog_::PathEvt &event, ZuTime time) {
     writePathValid_(event, time);
   }
-  void logPMTUDUpdated(const ZquicLog_::PathEvent &event, ZuTime time) {
-    writeMTUEvent_(event, time);
+  void logPMTUDUpdated(const ZquicLog_::PathEvt &event, ZuTime time) {
+    writeMTUEvt_(event, time);
   }
-  void logCIDUpdated(const ZquicLog_::CIDEvent &event, ZuTime time) {
-    writeCIDEvent_(ZquicLog_::EventName::CIDUpd, event, time);
+  void logCIDUpdated(const ZquicLog_::CIDEvt &event, ZuTime time) {
+    writeCIDEvt_(ZquicLog_::EvtName::CIDUpd, event, time);
   }
   void logMigrationUpdated(
-    const ZquicLog_::MigrationEvent &event, ZuTime time) {
-    writeMigrationEvent_(event, time);
+    const ZquicLog_::MigrationEvt &event, ZuTime time) {
+    writeMigrationEvt_(event, time);
   }
   void logStreamStateUpd(
-    const ZquicLog_::StreamEvent &event, ZuTime time) {
-    writeStreamEvent_(ZquicLog_::EventName::StreamStateUpd, event, time);
+    const ZquicLog_::StreamEvt &event, ZuTime time) {
+    writeStreamEvt_(ZquicLog_::EvtName::StreamStateUpd, event, time);
   }
   void logStreamDataMoved(
-    const ZquicLog_::StreamDataEvent &event, ZuTime time) {
-    writeStreamData_(ZquicLog_::EventName::StreamDataMoved, event, time);
+    const ZquicLog_::StreamDataEvt &event, ZuTime time) {
+    writeStreamData_(ZquicLog_::EvtName::StreamDataMoved, event, time);
   }
   void logCxnDataBlockedUpd(
-    const ZquicLog_::BlockedEvent &event, ZuTime time) {
+    const ZquicLog_::BlockedEvt &event, ZuTime time) {
     writeCxnBlocked_(
-      ZquicLog_::EventName::CxnDataBlockedUpd, event, time);
+      ZquicLog_::EvtName::CxnDataBlockedUpd, event, time);
   }
   void logStreamDataBlockedUpd(
-    const ZquicLog_::BlockedEvent &event, ZuTime time) {
+    const ZquicLog_::BlockedEvt &event, ZuTime time) {
     writeStreamBlocked_(
-      ZquicLog_::EventName::StreamDataBlockedUpd, event, time);
+      ZquicLog_::EvtName::StreamDataBlockedUpd, event, time);
   }
   void logCxnClosed(
-    const ZquicLog_::CloseEvent &event, ZuTime time) {
-    writeCloseEvent_(ZquicLog_::EventName::CxnClosed, event, time);
+    const ZquicLog_::CloseEvt &event, ZuTime time) {
+    writeCloseEvt_(ZquicLog_::EvtName::CxnClosed, event, time);
   }
   void logCxnStateUpd(
-    const ZquicLog_::CxnStateEvent &event, ZuTime time) {
-    writeCxnState_(ZquicLog_::EventName::CxnStateUpd, event, time);
+    const ZquicLog_::CxnStateEvt &event, ZuTime time) {
+    writeCxnState_(ZquicLog_::EvtName::CxnStateUpd, event, time);
   }
 
 private:
@@ -972,39 +972,39 @@ private:
   }
   void final_(Trace &);
   ZquicLogDiag diag_() const;
-  void cxnStarted_(Trace &, ZquicLog_::CxnStartedEvent);
-  void dgramSent_(Trace &, ZquicLog_::DgramEvent);
-  void dgramRecv_(Trace &, ZquicLog_::DgramEvent);
-  void pktSent_(Trace &, ZquicLog_::PktEvent);
-  void pktRecv_(Trace &, ZquicLog_::PktEvent);
-  void pktBuf_(Trace &, ZquicLog_::PktEvent);
-  void pktDrop_(Trace &, ZquicLog_::PktEvent);
-  void pktsAcked_(Trace &, ZquicLog_::AckEvent);
-  void pktLost_(Trace &, ZquicLog_::RecEvent);
-  void recPktLost_(Trace &, ZquicLog_::RecEvent);
-  void markRetrans_(Trace &, ZquicLog_::RecEvent);
-  void metricsUpd_(Trace &, ZquicLog_::RecEvent);
-  void lossTimerUpd_(Trace &, ZquicLog_::RecEvent);
-  void congStateUpd_(Trace &, ZquicLog_::RecEvent);
-  void ecnStateUpd_(Trace &, ZquicLog_::ECNEvent);
-  void keyUpdated_(Trace &, ZquicLog_::SecEvent);
-  void keyRetired_(Trace &, ZquicLog_::SecEvent);
-  void paramsSet_(Trace &, ZquicLog_::ParamsEvent);
-  void alpnInfo_(Trace &, ZquicLog_::SecEvent);
-  void versionInfo_(Trace &, ZquicLog_::VersionEvent);
-  void tlsAlert_(Trace &, ZquicLog_::SecEvent);
-  void secEvent_(Trace &, ZquicLog_::EventName::T, ZquicLog_::SecEvent);
-  void pathUpdated_(Trace &, ZquicLog_::PathEvent);
-  void pathValidUpd_(Trace &, ZquicLog_::PathEvent);
-  void pmtudUpdated_(Trace &, ZquicLog_::PathEvent);
-  void cidUpdated_(Trace &, ZquicLog_::CIDEvent);
-  void migrationUpdated_(Trace &, ZquicLog_::MigrationEvent);
-  void streamStateUpd_(Trace &, ZquicLog_::StreamEvent);
-  void streamDataMoved_(Trace &, ZquicLog_::StreamDataEvent);
-  void cxnDataBlockedUpd_(Trace &, ZquicLog_::BlockedEvent);
-  void streamDataBlockedUpd_(Trace &, ZquicLog_::BlockedEvent);
-  void cxnClosed_(Trace &, ZquicLog_::CloseEvent);
-  void cxnStateUpd_(Trace &, ZquicLog_::CxnStateEvent);
+  void cxnStarted_(Trace &, ZquicLog_::CxnStartedEvt);
+  void dgramSent_(Trace &, ZquicLog_::DgramEvt);
+  void dgramRecv_(Trace &, ZquicLog_::DgramEvt);
+  void pktSent_(Trace &, ZquicLog_::PktEvt);
+  void pktRecv_(Trace &, ZquicLog_::PktEvt);
+  void pktBuf_(Trace &, ZquicLog_::PktEvt);
+  void pktDrop_(Trace &, ZquicLog_::PktEvt);
+  void pktsAcked_(Trace &, ZquicLog_::AckEvt);
+  void pktLost_(Trace &, ZquicLog_::RecLogEvt);
+  void recPktLost_(Trace &, ZquicLog_::RecLogEvt);
+  void markRetrans_(Trace &, ZquicLog_::RecLogEvt);
+  void metricsUpd_(Trace &, ZquicLog_::RecLogEvt);
+  void lossTimerUpd_(Trace &, ZquicLog_::RecLogEvt);
+  void congStateUpd_(Trace &, ZquicLog_::RecLogEvt);
+  void ecnStateUpd_(Trace &, ZquicLog_::ECNEvt);
+  void keyUpdated_(Trace &, ZquicLog_::SecEvt);
+  void keyRetired_(Trace &, ZquicLog_::SecEvt);
+  void paramsSet_(Trace &, ZquicLog_::ParamsEvt);
+  void alpnInfo_(Trace &, ZquicLog_::SecEvt);
+  void versionInfo_(Trace &, ZquicLog_::VersionEvt);
+  void tlsAlert_(Trace &, ZquicLog_::SecEvt);
+  void secEvt_(Trace &, ZquicLog_::EvtName::T, ZquicLog_::SecEvt);
+  void pathUpdated_(Trace &, ZquicLog_::PathEvt);
+  void pathValidUpd_(Trace &, ZquicLog_::PathEvt);
+  void pmtudUpdated_(Trace &, ZquicLog_::PathEvt);
+  void cidUpdated_(Trace &, ZquicLog_::CIDEvt);
+  void migrationUpdated_(Trace &, ZquicLog_::MigrationEvt);
+  void streamStateUpd_(Trace &, ZquicLog_::StreamEvt);
+  void streamDataMoved_(Trace &, ZquicLog_::StreamDataEvt);
+  void cxnDataBlockedUpd_(Trace &, ZquicLog_::BlockedEvt);
+  void streamDataBlockedUpd_(Trace &, ZquicLog_::BlockedEvt);
+  void cxnClosed_(Trace &, ZquicLog_::CloseEvt);
+  void cxnStateUpd_(Trace &, ZquicLog_::CxnStateEvt);
   void log__(Fn &fn) {
     if (tryPush_(fn)) {
       ++m_recordsEnqueued;
@@ -1035,45 +1035,45 @@ private:
   bool write_(Trace *, ZuCSpan);
   bool writeHeader_(Trace *);
   bool writeCxnStarted_(
-    const ZquicLog_::CxnStartedEvent &, ZuTime);
-  bool writeDatagramEvent_(
-    ZquicLog_::EventName::T, const ZquicLog_::DgramEvent &, ZuTime);
-  bool writePktEvent_(
-    ZquicLog_::EventName::T, const ZquicLog_::PktEvent &, ZuTime);
-  bool writeAckEvent_(
-    ZquicLog_::EventName::T, const ZquicLog_::AckEvent &, ZuTime);
-  bool writePktLost_(const ZquicLog_::RecEvent &, ZuTime);
-  bool writeMarkRetrans_(const ZquicLog_::RecEvent &, ZuTime);
-  bool writeRecMetrics_(const ZquicLog_::RecEvent &, ZuTime);
-  bool writeCongState_(const ZquicLog_::RecEvent &, ZuTime);
-  bool writeTimerEvent_(const ZquicLog_::RecEvent &, ZuTime);
-  bool writeECNEvent_(const ZquicLog_::ECNEvent &, ZuTime);
-  bool writeKeyEvent_(
-    ZquicLog_::EventName::T, const ZquicLog_::SecEvent &, ZuTime);
+    const ZquicLog_::CxnStartedEvt &, ZuTime);
+  bool writeDatagramEvt_(
+    ZquicLog_::EvtName::T, const ZquicLog_::DgramEvt &, ZuTime);
+  bool writePktEvt_(
+    ZquicLog_::EvtName::T, const ZquicLog_::PktEvt &, ZuTime);
+  bool writeAckEvt_(
+    ZquicLog_::EvtName::T, const ZquicLog_::AckEvt &, ZuTime);
+  bool writePktLost_(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeMarkRetrans_(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeRecMetrics_(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeCongState_(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeTimerEvt_(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeECNEvt_(const ZquicLog_::ECNEvt &, ZuTime);
+  bool writeKeyEvt_(
+    ZquicLog_::EvtName::T, const ZquicLog_::SecEvt &, ZuTime);
   bool writeParams_(
-    const ZquicLog_::ParamsEvent &, ZuTime);
-  bool writeALPNEvent_(const ZquicLog_::SecEvent &, ZuTime);
-  bool writeVersion_(const ZquicLog_::VersionEvent &, ZuTime);
-  bool writeSecEvent_(
-    ZquicLog_::EventName::T, const ZquicLog_::SecEvent &, ZuTime);
-  bool writePathEvent_(
-    ZquicLog_::EventName::T, const ZquicLog_::PathEvent &, ZuTime);
-  bool writeMTUEvent_(const ZquicLog_::PathEvent &, ZuTime);
-  bool writePathValid_(const ZquicLog_::PathEvent &, ZuTime);
-  bool writeCIDEvent_(ZquicLog_::EventName::T, const ZquicLog_::CIDEvent &, ZuTime);
-  bool writeMigrationEvent_(const ZquicLog_::MigrationEvent &, ZuTime);
-  bool writeStreamEvent_(
-    ZquicLog_::EventName::T, const ZquicLog_::StreamEvent &, ZuTime);
+    const ZquicLog_::ParamsEvt &, ZuTime);
+  bool writeALPNEvt_(const ZquicLog_::SecEvt &, ZuTime);
+  bool writeVersion_(const ZquicLog_::VersionEvt &, ZuTime);
+  bool writeSecEvt_(
+    ZquicLog_::EvtName::T, const ZquicLog_::SecEvt &, ZuTime);
+  bool writePathEvt_(
+    ZquicLog_::EvtName::T, const ZquicLog_::PathEvt &, ZuTime);
+  bool writeMTUEvt_(const ZquicLog_::PathEvt &, ZuTime);
+  bool writePathValid_(const ZquicLog_::PathEvt &, ZuTime);
+  bool writeCIDEvt_(ZquicLog_::EvtName::T, const ZquicLog_::CIDEvt &, ZuTime);
+  bool writeMigrationEvt_(const ZquicLog_::MigrationEvt &, ZuTime);
+  bool writeStreamEvt_(
+    ZquicLog_::EvtName::T, const ZquicLog_::StreamEvt &, ZuTime);
   bool writeStreamData_(
-    ZquicLog_::EventName::T, const ZquicLog_::StreamDataEvent &, ZuTime);
+    ZquicLog_::EvtName::T, const ZquicLog_::StreamDataEvt &, ZuTime);
   bool writeCxnBlocked_(
-    ZquicLog_::EventName::T, const ZquicLog_::BlockedEvent &, ZuTime);
+    ZquicLog_::EvtName::T, const ZquicLog_::BlockedEvt &, ZuTime);
   bool writeStreamBlocked_(
-    ZquicLog_::EventName::T, const ZquicLog_::BlockedEvent &, ZuTime);
-  bool writeCloseEvent_(
-    ZquicLog_::EventName::T, const ZquicLog_::CloseEvent &, ZuTime);
+    ZquicLog_::EvtName::T, const ZquicLog_::BlockedEvt &, ZuTime);
+  bool writeCloseEvt_(
+    ZquicLog_::EvtName::T, const ZquicLog_::CloseEvt &, ZuTime);
   bool writeCxnState_(
-    ZquicLog_::EventName::T, const ZquicLog_::CxnStateEvent &, ZuTime);
+    ZquicLog_::EvtName::T, const ZquicLog_::CxnStateEvt &, ZuTime);
 
 private:
   unsigned		m_configured = 0;
@@ -1109,40 +1109,40 @@ struct ZquicLogger {
   static void close(Trace &, L &&l) { l(); }
   static void final(Trace &) { }
   static ZquicLogDiag diag() { return {}; }
-  static void cxnStarted(Trace &, ZquicLog_::CxnStartedEvent) { }
-  static void dgramSent(Trace &, ZquicLog_::DgramEvent) { }
-  static void dgramRecv(Trace &, ZquicLog_::DgramEvent) { }
-  static void pktSent(Trace &, ZquicLog_::PktEvent) { }
-  static void pktRecv(Trace &, ZquicLog_::PktEvent) { }
-  static void pktBuf(Trace &, ZquicLog_::PktEvent) { }
-  static void pktDrop(Trace &, ZquicLog_::PktEvent) { }
-  static void pktsAcked(Trace &, ZquicLog_::AckEvent) { }
-  static void pktLost(Trace &, ZquicLog_::RecEvent) { }
-  static void recPktLost(Trace &, ZquicLog_::RecEvent) { }
-  static void markRetrans(Trace &, ZquicLog_::RecEvent) { }
-  static void metricsUpd(Trace &, ZquicLog_::RecEvent) { }
-  static void lossTimerUpd(Trace &, ZquicLog_::RecEvent) { }
-  static void congStateUpd(Trace &, ZquicLog_::RecEvent) { }
-  static void ecnStateUpd(Trace &, ZquicLog_::ECNEvent) { }
-  static void keyUpdated(Trace &, ZquicLog_::SecEvent) { }
-  static void keyRetired(Trace &, ZquicLog_::SecEvent) { }
-  static void paramsSet(Trace &, ZquicLog_::ParamsEvent) { }
-  static void alpnInfo(Trace &, ZquicLog_::SecEvent) { }
-  static void versionInfo(Trace &, ZquicLog_::VersionEvent) { }
-  static void tlsAlert(Trace &, ZquicLog_::SecEvent) { }
-  static void secEvent(
-    Trace &, ZquicLog_::EventName::T, ZquicLog_::SecEvent) { }
-  static void pathUpdated(Trace &, ZquicLog_::PathEvent) { }
-  static void pathValidUpd(Trace &, ZquicLog_::PathEvent) { }
-  static void pmtudUpdated(Trace &, ZquicLog_::PathEvent) { }
-  static void cidUpdated(Trace &, ZquicLog_::CIDEvent) { }
-  static void migrationUpdated(Trace &, ZquicLog_::MigrationEvent) { }
-  static void streamStateUpd(Trace &, ZquicLog_::StreamEvent) { }
-  static void streamDataMoved(Trace &, ZquicLog_::StreamDataEvent) { }
-  static void cxnDataBlockedUpd(Trace &, ZquicLog_::BlockedEvent) { }
-  static void streamDataBlockedUpd(Trace &, ZquicLog_::BlockedEvent) { }
-  static void cxnClosed(Trace &, ZquicLog_::CloseEvent) { }
-  static void cxnStateUpd(Trace &, ZquicLog_::CxnStateEvent) { }
+  static void cxnStarted(Trace &, ZquicLog_::CxnStartedEvt) { }
+  static void dgramSent(Trace &, ZquicLog_::DgramEvt) { }
+  static void dgramRecv(Trace &, ZquicLog_::DgramEvt) { }
+  static void pktSent(Trace &, ZquicLog_::PktEvt) { }
+  static void pktRecv(Trace &, ZquicLog_::PktEvt) { }
+  static void pktBuf(Trace &, ZquicLog_::PktEvt) { }
+  static void pktDrop(Trace &, ZquicLog_::PktEvt) { }
+  static void pktsAcked(Trace &, ZquicLog_::AckEvt) { }
+  static void pktLost(Trace &, ZquicLog_::RecLogEvt) { }
+  static void recPktLost(Trace &, ZquicLog_::RecLogEvt) { }
+  static void markRetrans(Trace &, ZquicLog_::RecLogEvt) { }
+  static void metricsUpd(Trace &, ZquicLog_::RecLogEvt) { }
+  static void lossTimerUpd(Trace &, ZquicLog_::RecLogEvt) { }
+  static void congStateUpd(Trace &, ZquicLog_::RecLogEvt) { }
+  static void ecnStateUpd(Trace &, ZquicLog_::ECNEvt) { }
+  static void keyUpdated(Trace &, ZquicLog_::SecEvt) { }
+  static void keyRetired(Trace &, ZquicLog_::SecEvt) { }
+  static void paramsSet(Trace &, ZquicLog_::ParamsEvt) { }
+  static void alpnInfo(Trace &, ZquicLog_::SecEvt) { }
+  static void versionInfo(Trace &, ZquicLog_::VersionEvt) { }
+  static void tlsAlert(Trace &, ZquicLog_::SecEvt) { }
+  static void secEvt(
+    Trace &, ZquicLog_::EvtName::T, ZquicLog_::SecEvt) { }
+  static void pathUpdated(Trace &, ZquicLog_::PathEvt) { }
+  static void pathValidUpd(Trace &, ZquicLog_::PathEvt) { }
+  static void pmtudUpdated(Trace &, ZquicLog_::PathEvt) { }
+  static void cidUpdated(Trace &, ZquicLog_::CIDEvt) { }
+  static void migrationUpdated(Trace &, ZquicLog_::MigrationEvt) { }
+  static void streamStateUpd(Trace &, ZquicLog_::StreamEvt) { }
+  static void streamDataMoved(Trace &, ZquicLog_::StreamDataEvt) { }
+  static void cxnDataBlockedUpd(Trace &, ZquicLog_::BlockedEvt) { }
+  static void streamDataBlockedUpd(Trace &, ZquicLog_::BlockedEvt) { }
+  static void cxnClosed(Trace &, ZquicLog_::CloseEvt) { }
+  static void cxnStateUpd(Trace &, ZquicLog_::CxnStateEvt) { }
   template <typename L>
   static void log(Trace &, L &&) { }
 };

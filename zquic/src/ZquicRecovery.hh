@@ -1075,7 +1075,7 @@ public:
 	if (!wasLost) ++n;
       }
     }
-    unsigned l = markPktThresholdLoss(ranges.largest(), packetThreshold);
+    unsigned l = markPktThreshLoss(ranges.largest(), packetThreshold);
     if (lost) *lost = l;
     return n;
   }
@@ -1124,7 +1124,7 @@ public:
       }
     }
     unsigned l = haveAckForLoss ?
-      markPktThresholdLoss(
+      markPktThreshLoss(
 	largestAckdForLoss, packetThreshold, lostBytes, lostSentTime,
 	update) : 0;
     if (ackdBytes) *ackdBytes = ackdBytes_;
@@ -1185,7 +1185,7 @@ public:
     return node && lose_(node->data());
   }
 
-  unsigned markPktThresholdLoss(
+  unsigned markPktThreshLoss(
     uint64_t largestAckd, unsigned threshold = 3,
     uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr,
     PktTxUpdate *update = nullptr) {
@@ -1209,7 +1209,7 @@ public:
     return n;
   }
 
-  bool markPktThresholdLossBatch(
+  bool markPktThreshLossBatch(
     uint64_t largestAckd, unsigned threshold, PktLossBatch &batch,
     unsigned budget, PktTxUpdate *update = nullptr)
   {
@@ -1230,7 +1230,7 @@ public:
     return true;
   }
 
-  unsigned markTimeThresholdLoss(
+  unsigned markTimeThreshLoss(
     uint64_t largestAckd, ZuTime now, ZuTime threshold,
     uint64_t *lostBytes = nullptr, ZuTime *lostSentTime = nullptr,
     PktTxUpdate *update = nullptr) {
@@ -1256,7 +1256,7 @@ public:
     }
     return n;
   }
-  bool markTimeThresholdLossBatch(
+  bool markTimeThreshLossBatch(
     uint64_t largestAckd, ZuTime now, ZuTime threshold, PktLossBatch &batch,
     unsigned budget, PktTxUpdate *update = nullptr)
   {

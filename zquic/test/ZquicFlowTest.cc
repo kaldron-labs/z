@@ -124,9 +124,9 @@ void testFlowControlFrames()
 	    "STREAM_DATA_BLOCKED frame mismatch");
 }
 
-void testStreamDataBlockedIsAdvisory()
+void testStreamBlockedAdvisory()
 {
-  ZuTestScope(testStreamDataBlockedIsAdvisory);
+  ZuTestScope(testStreamBlockedAdvisory);
 
   FlowApp app;
   FlowLink link{&app};
@@ -332,7 +332,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testFlowCreditAndLimits);
   ZuTestCall(testFlowControlFrames);
-  ZuTestCall(testStreamDataBlockedIsAdvisory);
+  ZuTestCall(testStreamBlockedAdvisory);
   ZuTestCall(testReceiveFlowControl);
   ZuTestCall(testReceiveFlowUpdates);
   ZuTestCall(testScheduling);

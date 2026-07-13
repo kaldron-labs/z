@@ -19,26 +19,26 @@ void testPMTUD()
   ZuCHECK(path.activeMaxUDP() == Zquic::MinUDPPayload,
     "initial active UDP size mismatch");
   ZuCHECK(!path.canSend(1), "unvalidated anti-amplification allowed send");
-  ZuCHECK(path.antiAmplificationLimit() == 0 &&
-      path.antiAmplificationRemaining() == 0 &&
+  ZuCHECK(path.antiAmpLimit() == 0 &&
+      path.antiAmpRemaining() == 0 &&
       path.sendAllowance() == 0,
     "empty anti-amplification budget mismatch");
   path.received(500);
   ZuCHECK(path.canSend(1200), "anti-amplification budget not applied");
-  ZuCHECK(path.antiAmplificationLimit() == 1500 &&
-      path.antiAmplificationRemaining() == 1500 &&
+  ZuCHECK(path.antiAmpLimit() == 1500 &&
+      path.antiAmpRemaining() == 1500 &&
       path.sendAllowance() == 1200,
     "anti-amplification allowance mismatch");
   ZuCHECK(!path.reserveSend(1300), "oversized reservation allowed");
   ZuCHECK(path.reserveSend(1200), "valid reservation failed");
   ZuCHECK(path.diag().bytesTx == 1200 &&
-      path.antiAmplificationRemaining() == 300,
+      path.antiAmpRemaining() == 300,
     "reservation accounting mismatch");
   ZuCHECK(!path.reserveSend(301), "over-budget reservation allowed");
   ZuCHECK(path.reserveSend(300), "exact anti-amplification budget failed");
   ZuCHECK(path.sendAllowance() == 0, "spent budget still allowed send");
   path.validated();
-  ZuCHECK(path.reserveSend(1200) && path.antiAmplificationRemaining() ==
+  ZuCHECK(path.reserveSend(1200) && path.antiAmpRemaining() ==
       uint64_t(-1),
     "validated path did not bypass anti-amplification");
   path.configuredMaxUDP(1400);
@@ -108,7 +108,7 @@ void testPMTUD()
       !limited.probePending(),
     "unvalidated PMTUD probe ignored empty anti-amplification budget");
   limited.received(400);
-  ZuCHECK(limited.antiAmplificationRemaining() == 1200 &&
+  ZuCHECK(limited.antiAmpRemaining() == 1200 &&
       !limited.canSendProbe(1400) &&
       !limited.startNextProbe(200),
     "unvalidated PMTUD probe exceeded anti-amplification budget");

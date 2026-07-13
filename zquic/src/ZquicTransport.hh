@@ -13,7 +13,7 @@
 
 namespace Zquic {
 
-static constexpr uint16_t TLSExtQUICTransportParamsV1 = 0x39;
+static constexpr uint16_t TLSExtQUICParamsV1 = 0x39;
 
 struct TransportParams {
   CxnID		origDCID;

@@ -98,7 +98,7 @@ void testStatelessReset()
   uint8_t packet[64] = {};
   packet[0] = 0x40;
   uint8_t out[64] = {};
-  int n = Zquic::StatelessRst::writeForUnknownCID(
+  int n = Zquic::StatelessReset::writeForUnknownCID(
     out, sizeof(out), ZuBSpan{packet, 64},
     resetToken);
   ZuCHECK(n == 63, "stateless reset size mismatch");
@@ -110,16 +110,16 @@ void testStatelessReset()
     "stateless reset token suffix mismatch");
 
   packet[0] = 0xc0;
-  ZuCHECK(Zquic::StatelessRst::writeForUnknownCID(
+  ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
       out, sizeof(out), ZuBSpan{packet, 64},
       resetToken) < 0, "long-header packet produced stateless reset");
   packet[0] = 0x40;
-  ZuCHECK(Zquic::StatelessRst::writeForUnknownCID(
+  ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
       out, sizeof(out),
-      ZuBSpan{packet, unsigned(Zquic::StatelessRst::MinLength)},
+      ZuBSpan{packet, unsigned(Zquic::StatelessReset::MinLength)},
       resetToken) < 0, "too-short packet produced stateless reset");
   Zquic::ResetToken invalid;
-  ZuCHECK(Zquic::StatelessRst::writeForUnknownCID(
+  ZuCHECK(Zquic::StatelessReset::writeForUnknownCID(
       out, sizeof(out), ZuBSpan{packet, 64},
       invalid) < 0, "invalid token produced stateless reset");
 }
@@ -217,7 +217,7 @@ void testServerInitialBootstrap()
 
   Zquic::ClientBootstrap client;
   ZuCHECK(client.start(initial.dcid, initial.scid) &&
-      client.validateServerTransportParams(params, server.localInitialSCID()),
+      client.validateServerParams(params, server.localInitialSCID()),
     "client rejected server Initial transport parameters");
   ZuCHECK(!server.acceptInitial(initial, Zquic::MinUDPPayload),
     "server accepted a second Initial");

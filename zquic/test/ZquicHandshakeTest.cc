@@ -203,9 +203,9 @@ bool exchangeTLS_(Zquic::Crypto &client, Zquic::Crypto &server)
 
 } // namespace
 
-void testDeterministicHandshakeProfile()
+void testDeterministicHSProfile()
 {
-  ZuTestScope(testDeterministicHandshakeProfile);
+  ZuTestScope(testDeterministicHSProfile);
 
   Zquic::CxnID dcid{"client01"};
   Zquic::Crypto client;
@@ -348,13 +348,13 @@ void testMessageLevelTLSHandshake()
       server.secretInstalled(Zquic::PktNumSpace::Handshake) &&
       server.secretInstalled(Zquic::PktNumSpace::AppData),
     "TLS traffic secrets not recorded");
-  ZuCHECK(client.txTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
-      client.rxTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
-      server.txTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
-      server.rxTrafficSecretInstalled(Zquic::PktNumSpace::AppData),
+  ZuCHECK(client.txSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      client.rxSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      server.txSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      server.rxSecretInstalled(Zquic::PktNumSpace::AppData),
     "TLS traffic keys not derived");
-  ZuCHECK(client.txTrafficSecret(Zquic::PktNumSpace::AppData).tagLen == 16 &&
-      server.rxTrafficSecret(Zquic::PktNumSpace::AppData).tagLen == 16,
+  ZuCHECK(client.txSecret(Zquic::PktNumSpace::AppData).tagLen == 16 &&
+      server.rxSecret(Zquic::PktNumSpace::AppData).tagLen == 16,
     "TLS traffic key linkInfo mismatch");
 
   uint8_t payload[32] = {};
@@ -384,16 +384,16 @@ void testMessageLevelTLSHandshake()
   ZuCHECK(client.negotiatedProtocol() == "h3" &&
       server.negotiatedProtocol() == "h3",
     "ALPN negotiation failed");
-  ZuCHECK(client.peerTransportParamsReceived() &&
-      server.peerTransportParamsReceived(),
+  ZuCHECK(client.peerParamsSet() &&
+      server.peerParamsSet(),
     "TLS transport parameters were not collected");
-  ZuCHECK(client.peerTransportParams().maxUDPPayloadSize == 1350 &&
-      client.peerTransportParams().initialMaxData == 16384 &&
-      client.peerTransportParams().initialSCID == serverParams.initialSCID,
+  ZuCHECK(client.peerParams().maxUDPPayloadSize == 1350 &&
+      client.peerParams().initialMaxData == 16384 &&
+      client.peerParams().initialSCID == serverParams.initialSCID,
     "client did not collect server transport parameters");
-  ZuCHECK(server.peerTransportParams().maxUDPPayloadSize == 1400 &&
-      server.peerTransportParams().initialMaxData == 8192 &&
-      server.peerTransportParams().initialSCID == clientParams.initialSCID,
+  ZuCHECK(server.peerParams().maxUDPPayloadSize == 1400 &&
+      server.peerParams().initialMaxData == 8192 &&
+      server.peerParams().initialSCID == clientParams.initialSCID,
     "server did not collect client transport parameters");
   ZuCHECK(client.diag().transportParamsEncoded &&
       client.diag().transportParamsDecoded &&
@@ -473,7 +473,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testDeterministicHandshakeProfile);
+  ZuTestCall(testDeterministicHSProfile);
   ZuTestCall(testCryptoStreamFrames);
   ZuTestCall(testMessageLevelTLSHandshake);
   ZuTestCall(testZeroRTTPktDrop);

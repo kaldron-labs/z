@@ -216,7 +216,7 @@ struct LinkEarlyState {
 };
 
 // TLS epochs are not packet number spaces: 0-RTT and 1-RTT both use AppData.
-inline bool pktNumSpaceFromTLSEpoch(size_t epoch, PktNumSpace::T &space)
+inline bool spaceFromTLSEpoch(size_t epoch, PktNumSpace::T &space)
 {
   if (epoch == 0) {
     space = PktNumSpace::Initial;
@@ -233,7 +233,7 @@ inline bool pktNumSpaceFromTLSEpoch(size_t epoch, PktNumSpace::T &space)
   return false;
 }
 
-inline bool pktKeyLevelFromTLSEpoch(size_t epoch, PktKeyLevel::T &level)
+inline bool keyLevelFromTLSEpoch(size_t epoch, PktKeyLevel::T &level)
 {
   if (epoch == 0) {
     level = PktKeyLevel::Initial;
@@ -254,7 +254,7 @@ inline bool pktKeyLevelFromTLSEpoch(size_t epoch, PktKeyLevel::T &level)
   return false;
 }
 
-inline bool tlsEpochFromPktNumSpace(PktNumSpace::T space, size_t &epoch)
+inline bool tlsEpochFromSpace(PktNumSpace::T space, size_t &epoch)
 {
   switch (space) {
     case PktNumSpace::Initial:
@@ -271,7 +271,7 @@ inline bool tlsEpochFromPktNumSpace(PktNumSpace::T space, size_t &epoch)
   }
 }
 
-inline bool tlsEpochFromPktKeyLevel(PktKeyLevel::T level, size_t &epoch)
+inline bool tlsEpochFromKeyLevel(PktKeyLevel::T level, size_t &epoch)
 {
   switch (level) {
     case PktKeyLevel::Initial:
@@ -291,7 +291,7 @@ inline bool tlsEpochFromPktKeyLevel(PktKeyLevel::T level, size_t &epoch)
   }
 }
 
-inline PktType::T pktTypeFromPktNumSpace(PktNumSpace::T space)
+inline PktType::T pktTypeFromSpace(PktNumSpace::T space)
 {
   switch (space) {
     case PktNumSpace::Initial: return PktType::Initial;
@@ -301,7 +301,7 @@ inline PktType::T pktTypeFromPktNumSpace(PktNumSpace::T space)
   }
 }
 
-inline PktNumSpace::T pktNumSpaceFromKeyLevel(PktKeyLevel::T level)
+inline PktNumSpace::T spaceFromKeyLevel(PktKeyLevel::T level)
 {
   switch (level) {
     case PktKeyLevel::Initial: return PktNumSpace::Initial;

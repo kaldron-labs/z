@@ -29,7 +29,7 @@ static bool trafficSecret_(Zquic::TrafficSecret &secret, uint8_t seed)
 {
   uint8_t bytes[32];
   for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = seed + i;
-  return Zquic::PktProt::deriveTrafficSecret(
+  return Zquic::PktProt::deriveSecret(
     secret, &ptls_openssl_aes128gcmsha256, span_(bytes, sizeof(bytes)));
 }
 
@@ -87,7 +87,7 @@ struct TimerLink :
     Base::scheduleLossTimer_(out);
     Base::schedulePTOTimer_(out);
     Base::startIdleTimerTx_(out - Zm::now());
-    Base::scheduleHeartBeatTimer_(out);
+    Base::scheduleHBTimer_(out);
     Base::scheduleCloseTimer_(out);
     Base::scheduleKeyDiscardTimer_(out);
     Base::schedulePMTUDTimer_(out);

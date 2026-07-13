@@ -81,7 +81,7 @@ void testEarlyTrafficSecretState()
   uint8_t secretBytes[32];
   for (unsigned i = 0; i < sizeof(secretBytes); ++i) secretBytes[i] = uint8_t(i);
   Zquic::TrafficSecret secret;
-  ZuCHECK(Zquic::PktProt::deriveTrafficSecret(
+  ZuCHECK(Zquic::PktProt::deriveSecret(
       secret, &ptls_openssl_aes128gcmsha256,
       bytes_(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
@@ -89,25 +89,25 @@ void testEarlyTrafficSecretState()
   Zquic::Crypto crypto;
   ZuCHECK(crypto.init(Zquic::CryptoConfig{false, false, "h3"}),
     "crypto init failed");
-  ZuCHECK(crypto.updateTxKeyTrafficSecret(Zquic::PktKeyLevel::ZeroRTT, secret) &&
-      crypto.updateRxKeyTrafficSecret(Zquic::PktKeyLevel::ZeroRTT, secret),
+  ZuCHECK(crypto.txKeySecret(Zquic::PktKeyLevel::ZeroRTT, secret) &&
+      crypto.rxKeySecret(Zquic::PktKeyLevel::ZeroRTT, secret),
     "0-RTT traffic secret install failed");
   ZuCHECK(crypto.earlyDataEnabled(),
     "0-RTT key install did not enable early data state");
   ZuCHECK(crypto.earlyDataOffered(),
     "0-RTT key install did not enter offered state");
-  ZuCHECK(crypto.txKeyTrafficSecretInstalled(Zquic::PktKeyLevel::ZeroRTT) &&
-      crypto.rxKeyTrafficSecretInstalled(Zquic::PktKeyLevel::ZeroRTT),
+  ZuCHECK(crypto.txKeySecretInstalled(Zquic::PktKeyLevel::ZeroRTT) &&
+      crypto.rxKeySecretInstalled(Zquic::PktKeyLevel::ZeroRTT),
     "0-RTT key-level traffic secrets not recorded");
-  ZuCHECK(!crypto.txTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
-      !crypto.rxTrafficSecretInstalled(Zquic::PktNumSpace::AppData) &&
+  ZuCHECK(!crypto.txSecretInstalled(Zquic::PktNumSpace::AppData) &&
+      !crypto.rxSecretInstalled(Zquic::PktNumSpace::AppData) &&
       !crypto.secretInstalled(Zquic::PktNumSpace::AppData),
     "0-RTT keys contaminated 1-RTT AppData state");
 
   ZuCHECK(crypto.rejectZeroRTT(), "0-RTT reject failed");
   ZuCHECK(!crypto.earlyDataEnabled() &&
-      !crypto.txKeyTrafficSecretInstalled(Zquic::PktKeyLevel::ZeroRTT) &&
-      !crypto.rxKeyTrafficSecretInstalled(Zquic::PktKeyLevel::ZeroRTT),
+      !crypto.txKeySecretInstalled(Zquic::PktKeyLevel::ZeroRTT) &&
+      !crypto.rxKeySecretInstalled(Zquic::PktKeyLevel::ZeroRTT),
     "0-RTT reject did not clear early traffic state");
   ZuCHECK(crypto.diag().zeroRTTRejected == 1 &&
       crypto.diag().secretsDiscarded == 1,

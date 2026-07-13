@@ -22,14 +22,14 @@ using namespace ZuTestUtil;
 
 namespace {
 
-static constexpr unsigned RuntimeServerLinkCapacity = 20;
-static constexpr unsigned RuntimeServerMultiConnections = 17;
+static constexpr unsigned TestSrvLinkCap = 20;
+static constexpr unsigned TestSrvCxnCount = 17;
 
 template <typename Link>
-Zquic::RuntimeDiag runtimeDiag(const Link &link)
+Zquic::LinkDiag diag(const Link &link)
 {
-  return ZmBlock<Zquic::RuntimeDiag>{}(
-    [&link](auto wake) { link->runtimeDiag(ZuMv(wake)); });
+  return ZmBlock<Zquic::LinkDiag>{}(
+    [&link](auto wake) { link->diag(ZuMv(wake)); });
 }
 
 template <typename Link>
@@ -47,13 +47,13 @@ Zquic::EndpointDiag endpointDiag(Server &server)
 }
 
 template <typename Server>
-Zquic::AddressValidationDiag addressValidationDiag(Server &server)
+Zquic::AddrValidationDiag addrValidationDiag(Server &server)
 {
-  return ZmBlock<Zquic::AddressValidationDiag>{}(
-    [&server](auto wake) { server.addressValidationDiag(ZuMv(wake)); });
+  return ZmBlock<Zquic::AddrValidationDiag>{}(
+    [&server](auto wake) { server.addrValidationDiag(ZuMv(wake)); });
 }
 
-struct RuntimeClient : public Zquic::Client<RuntimeClient> {
+struct TestClient : public Zquic::Client<TestClient> {
   struct Link;
   struct Stream;
 
@@ -109,12 +109,12 @@ struct RuntimeClient : public Zquic::Client<RuntimeClient> {
   ZmAtomic<unsigned> tokenRewritesApplied = 0;
   ZmAtomic<unsigned> tokenRewriteLengthMismatch = 0;
 };
-struct RuntimeServerLink;
-struct RuntimeServerStream;
-struct RuntimeServer :
-    public Zquic::Server<RuntimeServer, RuntimeServerLink> {
-  using Link = RuntimeServerLink;
-  using Stream = RuntimeServerStream;
+struct TestServerLink;
+struct TestServerStream;
+struct TestServer :
+    public Zquic::Server<TestServer, TestServerLink> {
+  using Link = TestServerLink;
+  using Stream = TestServerStream;
 
   ZmRef<Link> link(unsigned i = unsigned(-1));
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
@@ -159,7 +159,7 @@ struct RuntimeServer :
   }
 
   ZmRef<Link> link_;
-  ZmRef<Link> links_[RuntimeServerLinkCapacity];
+  ZmRef<Link> links_[TestSrvLinkCap];
   ZmAtomic<unsigned> acceptedCount = 0;
   ZmAtomic<unsigned> retryPkts = 0;
   ZmAtomic<unsigned> dropNextInitial = 0;
@@ -174,10 +174,10 @@ struct RuntimeServer :
   ZmAtomic<unsigned> streamFrames = 0;
 };
 
-struct RuntimeClient::Stream :
-  public Zquic::CliStream<RuntimeClient::Link, RuntimeClient::Stream> {
+struct TestClient::Stream :
+  public Zquic::CliStream<TestClient::Link, TestClient::Stream> {
   using Base =
-    Zquic::CliStream<RuntimeClient::Link, RuntimeClient::Stream>;
+    Zquic::CliStream<TestClient::Link, TestClient::Stream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { ++processed; return 0; }
@@ -185,14 +185,14 @@ struct RuntimeClient::Stream :
   unsigned processed = 0;
 };
 
-struct RuntimeClient::Link :
-  public Zquic::CliLink<RuntimeClient, RuntimeClient::Link,
-    RuntimeClient::Stream> {
-  using Base = Zquic::CliLink<RuntimeClient, RuntimeClient::Link,
-    RuntimeClient::Stream>;
+struct TestClient::Link :
+  public Zquic::CliLink<TestClient, TestClient::Link,
+    TestClient::Stream> {
+  using Base = Zquic::CliLink<TestClient, TestClient::Link,
+    TestClient::Stream>;
   using Base::Base;
 
-  Link(RuntimeClient *app) : Base{app} { }
+  Link(TestClient *app) : Base{app} { }
 
   void connected(Zi::Connected) { ++connectedCount; }
   void disconnected(bool) { ++disconnectedCount; }
@@ -211,10 +211,10 @@ struct RuntimeClient::Link :
   ZmAtomic<unsigned> streamedCount = 0;
 };
 
-struct RuntimeServerStream :
-  public Zquic::SrvStream<RuntimeServerLink, RuntimeServerStream> {
+struct TestServerStream :
+  public Zquic::SrvStream<TestServerLink, TestServerStream> {
   using Base =
-    Zquic::SrvStream<RuntimeServerLink, RuntimeServerStream>;
+    Zquic::SrvStream<TestServerLink, TestServerStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { ++processed; return 0; }
@@ -222,20 +222,20 @@ struct RuntimeServerStream :
   unsigned processed = 0;
 };
 
-struct RuntimeServerLink :
-  public Zquic::SrvLink<RuntimeServer, RuntimeServerLink,
-    RuntimeServerStream> {
-  using Base = Zquic::SrvLink<RuntimeServer, RuntimeServerLink,
-    RuntimeServerStream>;
+struct TestServerLink :
+  public Zquic::SrvLink<TestServer, TestServerLink,
+    TestServerStream> {
+  using Base = Zquic::SrvLink<TestServer, TestServerLink,
+    TestServerStream>;
   using Base::Base;
 
-  RuntimeServerLink(RuntimeServer *app) : Base{app} { }
+  TestServerLink(TestServer *app) : Base{app} { }
 
   void connected(Zi::Connected) { ++connectedCount; }
 	void disconnected(bool) { ++disconnectedCount; }
 	void streamed(ZmRef<Stream>) { ++streamedCount; }
   void forceCloseTimeout() {
-    app()->txInvoke(this, [link = ZmRef<RuntimeServerLink>{this}]() mutable {
+    app()->txInvoke(this, [link = ZmRef<TestServerLink>{this}]() mutable {
       link->Base::closeTimeout_();
       return link;
     });
@@ -246,27 +246,27 @@ struct RuntimeServerLink :
 	ZmAtomic<unsigned> streamedCount = 0;
 };
 
-ZmRef<RuntimeServer::Link> RuntimeServer::link(unsigned i)
+ZmRef<TestServer::Link> TestServer::link(unsigned i)
 {
   if (i != unsigned(-1))
-    return i < RuntimeServerLinkCapacity ? links_[i] : nullptr;
+    return i < TestSrvLinkCap ? links_[i] : nullptr;
   return link_;
 }
 
-ZmRef<RuntimeServer::Link> RuntimeServer::accepted(const Zquic::InitialInfo &)
+ZmRef<TestServer::Link> TestServer::accepted(const Zquic::InitialInfo &)
 {
   unsigned i = acceptedCount;
-  if (i >= RuntimeServerLinkCapacity) return nullptr;
+  if (i >= TestSrvLinkCap) return nullptr;
   links_[i] = new Link{this};
   link_ = links_[i];
   ++acceptedCount;
   return link_;
 }
 
-void RuntimeServer::clearLinks()
+void TestServer::clearLinks()
 {
   link_ = nullptr;
-  for (unsigned i = 0; i < RuntimeServerLinkCapacity; ++i)
+  for (unsigned i = 0; i < TestSrvLinkCap; ++i)
     links_[i] = nullptr;
 }
 
@@ -310,8 +310,8 @@ ZtString<> readFile_(ZuCSpan path)
   return data;
 }
 
-void dumpRuntimeDiag(
-  const char *name, const Zquic::RuntimeDiag &d, const Zquic::CryptoDiag &c)
+void dumpDiag(
+  const char *name, const Zquic::LinkDiag &d, const Zquic::CryptoDiag &c)
 {
   std::cout <<
     "# " << name <<
@@ -402,9 +402,9 @@ struct TempDir {
 
 } // namespace
 
-void testRuntimeEndpointOpen()
+void testEndpointOpen()
 {
-  ZuTestScope(testRuntimeEndpointOpen);
+  ZuTestScope(testEndpointOpen);
 
   TempDir temp;
   ZuCHECK(temp.init(), "runtime temporary TLS certificate generation failed");
@@ -424,7 +424,7 @@ void testRuntimeEndpointOpen()
   ZuCHECK(mxStarted, "runtime multiplexer start failed");
   if (!mxStarted) return;
 
-  RuntimeServer server;
+  TestServer server;
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(temp.certPath.cspan())
@@ -435,8 +435,8 @@ void testRuntimeEndpointOpen()
 	.qlogRingSize(1<<16)
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "runtime server init failed");
   ZuCHECK(server.start(),
@@ -454,22 +454,22 @@ void testRuntimeEndpointOpen()
 	    return;
 	  }
 
-  RuntimeClient client;
+  TestClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
 	.caPath(temp.certPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "runtime client init failed");
-  ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+  ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
   ZuCHECK(waitUntil([&clientLink]() { return clientLink->ready(); }),
     "runtime client link did not become ready");
-  ZuCHECK(runtimeDiag(clientLink).rx.endpointReady == 1 &&
-      !runtimeDiag(clientLink).failures() &&
+  ZuCHECK(diag(clientLink).rx.endpointReady == 1 &&
+      !diag(clientLink).failures() &&
       !cxnDiag(clientLink).failures(),
     "runtime client link diagnostics mismatch");
 	  if (!clientLink->ready()) {
@@ -480,18 +480,18 @@ void testRuntimeEndpointOpen()
 	    return;
 	  }
 
-  ZmRef<RuntimeServer::Link> serverLink;
+  ZmRef<TestServer::Link> serverLink;
   bool established = waitUntil([&server, &clientLink, &serverLink]() {
       if (!serverLink) serverLink = server.link();
       return serverLink && clientLink->established() &&
 	serverLink->established();
     });
   if (!established) {
-    dumpRuntimeDiag(
-      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
+    dumpDiag(
+      "client", diag(clientLink), clientLink->crypto().diag());
     if (serverLink)
-      dumpRuntimeDiag(
-	"server", runtimeDiag(serverLink), serverLink->crypto().diag());
+      dumpDiag(
+	"server", diag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(established, "runtime UDP QUIC handshake did not establish");
 	  if (!established || !serverLink) {
@@ -507,24 +507,24 @@ void testRuntimeEndpointOpen()
       clientLink->crypto().negotiatedProtocol() == "h3" &&
       serverLink->crypto().negotiatedProtocol() == "h3",
     "runtime TLS/ALPN state mismatch");
-  ZuCHECK(runtimeDiag(clientLink).rx.handshakeComplete == 1 &&
+  ZuCHECK(diag(clientLink).rx.handshakeComplete == 1 &&
       clientLink->connectedCount == 1,
     "runtime client handshake completion diagnostics mismatch");
-  ZuCHECK(runtimeDiag(serverLink).rx.handshakeComplete == 1,
+  ZuCHECK(diag(serverLink).rx.handshakeComplete == 1,
     "runtime server handshake completion diagnostics mismatch");
-  ZuCHECK(runtimeDiag(clientLink).tx.packetsTx &&
-      runtimeDiag(clientLink).rx.packetsRx &&
-      runtimeDiag(serverLink).tx.packetsTx &&
-      runtimeDiag(serverLink).rx.packetsRx,
+  ZuCHECK(diag(clientLink).tx.packetsTx &&
+      diag(clientLink).rx.packetsRx &&
+      diag(serverLink).tx.packetsTx &&
+      diag(serverLink).rx.packetsRx,
     "runtime packet diagnostics mismatch");
-  ZuCHECK(runtimeDiag(clientLink).tx.cryptoBytesTx &&
-      runtimeDiag(clientLink).rx.cryptoBytesRx &&
-      runtimeDiag(serverLink).tx.cryptoBytesTx &&
-      runtimeDiag(serverLink).rx.cryptoBytesRx,
+  ZuCHECK(diag(clientLink).tx.cryptoBytesTx &&
+      diag(clientLink).rx.cryptoBytesRx &&
+      diag(serverLink).tx.cryptoBytesTx &&
+      diag(serverLink).rx.cryptoBytesRx,
     "runtime CRYPTO byte diagnostics mismatch");
-  ZuCHECK(!runtimeDiag(clientLink).failures(),
+  ZuCHECK(!diag(clientLink).failures(),
     "runtime client failure diagnostics mismatch");
-  ZuCHECK(!runtimeDiag(serverLink).failures(),
+  ZuCHECK(!diag(serverLink).failures(),
     "runtime server failure diagnostics mismatch");
 
   auto clientBidi = clientLink->stream(Zi::StreamType::Duplex);
@@ -538,20 +538,20 @@ void testRuntimeEndpointOpen()
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
   bool streamsArrived = waitUntil([&clientLink, &serverLink]() {
-      return runtimeDiag(serverLink).rx.streamBytesRx >= 21 &&
-	runtimeDiag(clientLink).rx.streamBytesRx >= 21;
+      return diag(serverLink).rx.streamBytesRx >= 21 &&
+	diag(clientLink).rx.streamBytesRx >= 21;
     });
   if (!streamsArrived) {
-    dumpRuntimeDiag(
-      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
-    dumpRuntimeDiag(
-      "server", runtimeDiag(serverLink), serverLink->crypto().diag());
+    dumpDiag(
+      "client", diag(clientLink), clientLink->crypto().diag());
+    dumpDiag(
+      "server", diag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(streamsArrived, "runtime protected stream bytes did not arrive");
-  ZuCHECK(runtimeDiag(clientLink).tx.streamBytesTx == 21 &&
-      runtimeDiag(serverLink).tx.streamBytesTx == 21 &&
-      runtimeDiag(clientLink).tx.packetsTx >= 2 &&
-      runtimeDiag(serverLink).tx.packetsTx >= 2,
+  ZuCHECK(diag(clientLink).tx.streamBytesTx == 21 &&
+      diag(serverLink).tx.streamBytesTx == 21 &&
+      diag(clientLink).tx.packetsTx >= 2 &&
+      diag(serverLink).tx.packetsTx >= 2,
     "runtime stream diagnostics mismatch");
   auto serverRxBidi = serverLink->findStream(0);
   auto serverRxUni = serverLink->findStream(2);
@@ -659,9 +659,9 @@ void testRuntimeEndpointOpen()
   mx.stop();
 }
 
-void testRuntimeHandshakeCryptoLoss()
+void testHandshakeCryptoLoss()
 {
-  ZuTestScope(testRuntimeHandshakeCryptoLoss);
+  ZuTestScope(testHandshakeCryptoLoss);
 
   TempDir temp;
   ZuCHECK(temp.init(), "loss runtime temporary TLS certificate failed");
@@ -681,15 +681,15 @@ void testRuntimeHandshakeCryptoLoss()
   if (!mxStarted) return;
 
   for (unsigned dropHandshake = 0; dropHandshake < 2; ++dropHandshake) {
-    RuntimeServer server;
+    TestServer server;
     ZuCHECK(server.init(
 	Zquic::ServerParams(&mx, "3", "4")
 	  .certPath(temp.certPath.cspan())
 	  .keyPath(temp.keyPath.cspan())
 	  .maxData(32768)
 	  .maxStreamData(8192)
-	  .maxStreamsBidi(8)
-	  .maxStreamsUni(8)
+	  .maxStreamsDuplex(8)
+	  .maxStreamsSimplex(8)
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime server init failed");
     ZuCHECK(server.start(), "loss runtime server listen failed");
@@ -705,37 +705,37 @@ void testRuntimeHandshakeCryptoLoss()
     else
       server.dropNextInitial = 1;
 
-    RuntimeClient client;
+    TestClient client;
     ZuCHECK(client.init(
 	Zquic::ClientParams(&mx, "3", "4")
 	  .caPath(temp.certPath.cspan())
 	  .maxData(32768)
 	  .maxStreamData(8192)
-	  .maxStreamsBidi(8)
-	  .maxStreamsUni(8)
+	  .maxStreamsDuplex(8)
+	  .maxStreamsSimplex(8)
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime client init failed");
-    ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+    ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
     clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
-    ZmRef<RuntimeServer::Link> serverLink;
+    ZmRef<TestServer::Link> serverLink;
     bool established = waitUntil([&server, &clientLink, &serverLink]() {
 	if (!serverLink) serverLink = server.link();
 	return serverLink && clientLink->established() &&
 	  serverLink->established();
       });
     if (!established) {
-      dumpRuntimeDiag(
-	"client", runtimeDiag(clientLink), clientLink->crypto().diag());
+      dumpDiag(
+	"client", diag(clientLink), clientLink->crypto().diag());
       if (serverLink)
-	dumpRuntimeDiag(
-	  "server", runtimeDiag(serverLink), serverLink->crypto().diag());
+	dumpDiag(
+	  "server", diag(serverLink), serverLink->crypto().diag());
     }
     ZuCHECK(established, "loss runtime handshake did not recover");
     ZuCHECK(dropHandshake ? server.droppedHandshake == 4 :
 	server.droppedInitial == 1,
       "loss runtime did not drop selected long-header packet");
-    ZuCHECK(serverLink && runtimeDiag(serverLink).tx.retransmittedFrames,
+    ZuCHECK(serverLink && diag(serverLink).tx.retransmittedFrames,
       "loss runtime did not retransmit dropped handshake data");
 
     ZmSemaphore clientClosed;
@@ -756,9 +756,9 @@ void testRuntimeHandshakeCryptoLoss()
   mx.stop();
 }
 
-void testRuntimeServerMultiConnection()
+void testSrvMultiCxn()
 {
-  ZuTestScope(testRuntimeServerMultiConnection);
+  ZuTestScope(testSrvMultiCxn);
 
   TempDir temp;
   ZuCHECK(temp.init(), "multi runtime temporary TLS certificate failed");
@@ -778,15 +778,15 @@ void testRuntimeServerMultiConnection()
   if (!mxStarted) return;
 
   ZmAtomic<unsigned> serverErrors = 0;
-  RuntimeServer server;
+  TestServer server;
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(temp.certPath.cspan())
 	.keyPath(temp.keyPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})
 	.errorFn(Zquic::ErrorFn{[&serverErrors](ZeException) {
 	  ++serverErrors;
@@ -796,22 +796,22 @@ void testRuntimeServerMultiConnection()
   ZuCHECK(waitUntil([&server]() { return server.listening(); }),
     "multi runtime server did not become ready");
 
-  RuntimeClient client;
+  TestClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
 	.caPath(temp.certPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "multi runtime client init failed");
 
-  ZmRef<RuntimeClient::Link> clients[RuntimeServerMultiConnections];
-  ZmRef<RuntimeServer::Link> serverLinks[RuntimeServerMultiConnections];
+  ZmRef<TestClient::Link> clients[TestSrvCxnCount];
+  ZmRef<TestServer::Link> serverLinks[TestSrvCxnCount];
   bool established = true;
-  for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
-    clients[i] = new RuntimeClient::Link{&client};
+  for (unsigned i = 0; i < TestSrvCxnCount; ++i) {
+    clients[i] = new TestClient::Link{&client};
     clients[i]->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
     if (!waitUntil([&server, &clients, &serverLinks, i]() {
 	if (!serverLinks[i]) serverLinks[i] = server.link(i);
@@ -829,36 +829,36 @@ void testRuntimeServerMultiConnection()
 
   if (established)
     established = waitUntil([&server]() {
-	return server.acceptedCount == RuntimeServerMultiConnections;
+	return server.acceptedCount == TestSrvCxnCount;
       });
   if (!established) {
-    for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i) {
+    for (unsigned i = 0; i < TestSrvCxnCount; ++i) {
       if (clients[i])
-	dumpRuntimeDiag(
-	  "client", runtimeDiag(clients[i]), clients[i]->crypto().diag());
+	dumpDiag(
+	  "client", diag(clients[i]), clients[i]->crypto().diag());
       if (serverLinks[i])
-	dumpRuntimeDiag(
-	  "server", runtimeDiag(serverLinks[i]), serverLinks[i]->crypto().diag());
+	dumpDiag(
+	  "server", diag(serverLinks[i]), serverLinks[i]->crypto().diag());
     }
   }
   ZuCHECK(established,
     "17 runtime connections did not establish");
-  ZuCHECK(server.acceptedCount == RuntimeServerMultiConnections &&
+  ZuCHECK(server.acceptedCount == TestSrvCxnCount &&
       !serverErrors,
     "server live-link table rejected connections past the old cap");
   if (!established || !s0 || !s1) {
-    for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+    for (unsigned i = 0; i < TestSrvCxnCount; ++i)
       if (clients[i]) clients[i]->disconnect();
     (void)waitUntil([&clients]() {
-	for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+	for (unsigned i = 0; i < TestSrvCxnCount; ++i)
 	  if (clients[i] && clients[i]->cxn()) return false;
 	return true;
       });
     server.stop();
     waitDisconnect(mx);
-    for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+    for (unsigned i = 0; i < TestSrvCxnCount; ++i)
       clients[i] = nullptr;
-    for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+    for (unsigned i = 0; i < TestSrvCxnCount; ++i)
       serverLinks[i] = nullptr;
     server.clearLinks();
     client.final();
@@ -872,12 +872,12 @@ void testRuntimeServerMultiConnection()
   ZuCHECK(c0->send(c0s, "zero") && c1->send(c1s, "one"),
     "multi runtime client stream sends failed");
   ZuCHECK(waitUntil([&s0, &s1]() {
-      return runtimeDiag(s0).rx.streamBytesRx == 4 &&
-	runtimeDiag(s1).rx.streamBytesRx == 3;
+      return diag(s0).rx.streamBytesRx == 4 &&
+	diag(s1).rx.streamBytesRx == 3;
     }), "multi runtime routed stream bytes did not arrive independently");
 
-  uint64_t s0Bytes = runtimeDiag(s0).rx.streamBytesRx;
-  uint64_t s1Bytes = runtimeDiag(s1).rx.streamBytesRx;
+  uint64_t s0Bytes = diag(s0).rx.streamBytesRx;
+  uint64_t s1Bytes = diag(s1).rx.streamBytesRx;
   uint64_t failures = endpointDiag(server).failures();
   unsigned errors = serverErrors;
   s0->disconnect();
@@ -891,18 +891,18 @@ void testRuntimeServerMultiConnection()
     "multi runtime post-close client stream sends failed");
   ZuCHECK(waitUntil([&server, &s1, failures, s1Bytes]() {
       return endpointDiag(server).failures() > failures &&
-	runtimeDiag(s1).rx.streamBytesRx >= s1Bytes + 5;
+	diag(s1).rx.streamBytesRx >= s1Bytes + 5;
     }), "multi runtime stale route drop or sibling delivery did not happen");
-  ZuCHECK(runtimeDiag(s0).rx.streamBytesRx == s0Bytes,
+  ZuCHECK(diag(s0).rx.streamBytesRx == s0Bytes,
     "closed server link received stale routed data");
   ZuCHECK(serverErrors == errors,
     "stale routed datagram used ErrorFn instead of diagnostics");
 
-  for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+  for (unsigned i = 0; i < TestSrvCxnCount; ++i)
     clients[i]->disconnect();
   server.stop();
   ZuCHECK(waitUntil([&clients]() {
-      for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+      for (unsigned i = 0; i < TestSrvCxnCount; ++i)
 	if (clients[i]->cxn()) return false;
       return true;
     }) && !server.connected(),
@@ -913,9 +913,9 @@ void testRuntimeServerMultiConnection()
   c1s = nullptr;
   c0Stale = nullptr;
   c1Live = nullptr;
-  for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+  for (unsigned i = 0; i < TestSrvCxnCount; ++i)
     clients[i] = nullptr;
-  for (unsigned i = 0; i < RuntimeServerMultiConnections; ++i)
+  for (unsigned i = 0; i < TestSrvCxnCount; ++i)
     serverLinks[i] = nullptr;
   server.clearLinks();
   client.final();
@@ -924,9 +924,9 @@ void testRuntimeServerMultiConnection()
   mx.stop();
 }
 
-void testRuntimeRetryAddressValidation()
+void testRetryAddrValidate()
 {
-  ZuTestScope(testRuntimeRetryAddressValidation);
+  ZuTestScope(testRetryAddrValidate);
 
   TempDir temp;
   ZuCHECK(temp.init(), "retry runtime temporary TLS certificate failed");
@@ -945,7 +945,7 @@ void testRuntimeRetryAddressValidation()
   ZuCHECK(mxStarted, "retry runtime multiplexer start failed");
   if (!mxStarted) return;
 
-  RuntimeServer server;
+  TestServer server;
   ZtString<> qlogPath = temp.pathOf("retry.sqlog");
   unlink(qlogPath.data());
   ZuCHECK(server.init(
@@ -958,11 +958,11 @@ void testRuntimeRetryAddressValidation()
 	.qlogRingSize(1<<16)
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
-	.retryAddressValidation(true)
-	.newTokenAddressValidation(true)
-	.addressValidationLifetime(60)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
+	.retryAddrValidate(true)
+	.newTokenAddrValidate(true)
+	.addrValidationLifetime(60)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "retry runtime server init failed");
   ZuCHECK(server.start(), "retry runtime server listen failed");
@@ -975,31 +975,31 @@ void testRuntimeRetryAddressValidation()
 	    return;
 	  }
 
-  RuntimeClient client;
+  TestClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
 	.caPath(temp.certPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "retry runtime client init failed");
-  ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+  ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
-  ZmRef<RuntimeServer::Link> serverLink;
+  ZmRef<TestServer::Link> serverLink;
   bool established = waitUntil([&server, &clientLink, &serverLink]() {
       if (!serverLink) serverLink = server.link();
       return serverLink && clientLink->established() &&
 	serverLink->established();
     });
   if (!established) {
-    dumpRuntimeDiag(
-      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
+    dumpDiag(
+      "client", diag(clientLink), clientLink->crypto().diag());
     if (serverLink)
-      dumpRuntimeDiag(
-	"server", runtimeDiag(serverLink), serverLink->crypto().diag());
+      dumpDiag(
+	"server", diag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(established, "retry runtime handshake did not establish");
 	  if (!established || !serverLink) {
@@ -1011,23 +1011,23 @@ void testRuntimeRetryAddressValidation()
 	  }
   ZuCHECK(server.retryPkts >= 1,
     "retry runtime server did not emit Retry");
-  Zquic::AddressValidationDiag av = addressValidationDiag(server);
+  Zquic::AddrValidationDiag av = addrValidationDiag(server);
   ZuCHECK(av.retrySent >= 1 && av.retryAccepted == 1 &&
       av.retryRejected >= 1,
     "retry runtime address-validation diagnostics mismatch");
   ZuCHECK(server.acceptedCount == 1,
     "retry runtime server accepted before validated Initial");
-  const auto &params = clientLink->crypto().peerTransportParams();
+  const auto &params = clientLink->crypto().peerParams();
   ZuCHECK(params.origDCID.length() >= Zquic::MinCIDLength &&
       params.initialSCID.length() >= Zquic::MinCIDLength &&
       params.retrySCID.length() >= Zquic::MinCIDLength,
     "retry runtime transport parameters missing Retry CIDs");
-  ZuCHECK(!runtimeDiag(clientLink).failures() &&
-      !runtimeDiag(serverLink).failures(),
+  ZuCHECK(!diag(clientLink).failures() &&
+      !diag(serverLink).failures(),
     "retry runtime failure diagnostics mismatch");
   ZuCHECK(waitUntil([&clientLink, &serverLink]() {
-      return runtimeDiag(clientLink).rx.newTokenRx >= 1 &&
-	runtimeDiag(serverLink).tx.newTokenTx >= 1;
+      return diag(clientLink).rx.newTokenRx >= 1 &&
+	diag(serverLink).tx.newTokenTx >= 1;
     }), "retry runtime NEW_TOKEN was not exchanged");
 
   unsigned retryPkts = server.retryPkts;
@@ -1037,18 +1037,18 @@ void testRuntimeRetryAddressValidation()
   waitDisconnect(mx);
 
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
-  ZmRef<RuntimeServer::Link> serverLink2;
+  ZmRef<TestServer::Link> serverLink2;
   bool established2 = waitUntil([&server, &clientLink, &serverLink2]() {
       if (!serverLink2) serverLink2 = server.link(1);
       return serverLink2 && clientLink->established() &&
 	serverLink2->established();
     });
   if (!established2) {
-    dumpRuntimeDiag(
-      "client2", runtimeDiag(clientLink), clientLink->crypto().diag());
+    dumpDiag(
+      "client2", diag(clientLink), clientLink->crypto().diag());
     if (serverLink2)
-      dumpRuntimeDiag(
-	"server2", runtimeDiag(serverLink2), serverLink2->crypto().diag());
+      dumpDiag(
+	"server2", diag(serverLink2), serverLink2->crypto().diag());
   }
   ZuCHECK(established2,
     "retry runtime NEW_TOKEN reconnect did not establish");
@@ -1063,11 +1063,11 @@ void testRuntimeRetryAddressValidation()
     "retry runtime server did not accept NEW_TOKEN reconnect");
   ZuCHECK(server.retryPkts == retryPkts,
     "retry runtime NEW_TOKEN reconnect unexpectedly used Retry");
-  av = addressValidationDiag(server);
+  av = addrValidationDiag(server);
   ZuCHECK(av.newTokenAccepted == 1,
     "retry runtime NEW_TOKEN acceptance diagnostics mismatch");
-  ZuCHECK(!runtimeDiag(clientLink).failures() &&
-      !runtimeDiag(serverLink2).failures(),
+  ZuCHECK(!diag(clientLink).failures() &&
+      !diag(serverLink2).failures(),
     "retry runtime NEW_TOKEN reconnect diagnostics mismatch");
 
   clientLink->disconnect();
@@ -1113,9 +1113,9 @@ void testRuntimeRetryAddressValidation()
   mx.stop();
 }
 
-void testRuntimeRejectedTokenQLog()
+void testRejectedTokenQLog()
 {
-  ZuTestScope(testRuntimeRejectedTokenQLog);
+  ZuTestScope(testRejectedTokenQLog);
 
   TempDir temp;
   ZuCHECK(temp.init(), "rejected-token runtime temporary TLS certificate failed");
@@ -1142,7 +1142,7 @@ void testRuntimeRejectedTokenQLog()
   ZuCHECK(mxStarted, "rejected-token runtime multiplexer start failed");
   if (!mxStarted) return;
 
-  RuntimeServer server;
+  TestServer server;
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(temp.certPath.cspan())
@@ -1153,12 +1153,12 @@ void testRuntimeRejectedTokenQLog()
 	.qlogRingSize(1<<16)
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
-	.retryAddressValidation(true)
-	.newTokenAddressValidation(true)
-	.addressValidationSecret(secret)
-	.addressValidationLifetime(60)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
+	.retryAddrValidate(true)
+	.newTokenAddrValidate(true)
+	.addrValidationSecret(secret)
+	.addrValidationLifetime(60)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token runtime server init failed");
   ZuCHECK(server.start(), "rejected-token runtime server listen failed");
@@ -1171,7 +1171,7 @@ void testRuntimeRejectedTokenQLog()
 	    return;
 	  }
 
-  RuntimeClient client;
+  TestClient client;
   client.tokenSecret = secret;
   client.tokenNow = uint64_t(Zm::now().sec());
   ZuCHECK(client.init(
@@ -1179,25 +1179,25 @@ void testRuntimeRejectedTokenQLog()
 	  .caPath(temp.certPath.cspan())
 	  .maxData(32768)
 	  .maxStreamData(8192)
-	  .maxStreamsBidi(8)
-	  .maxStreamsUni(8)
+	  .maxStreamsDuplex(8)
+	  .maxStreamsSimplex(8)
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token runtime client init failed");
-  ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+  ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
 
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
-  ZmRef<RuntimeServer::Link> serverLink;
+  ZmRef<TestServer::Link> serverLink;
   bool established = waitUntil([&server, &clientLink, &serverLink]() {
       if (!serverLink) serverLink = server.link(0);
       return serverLink && clientLink->established() &&
 	serverLink->established();
     });
   if (!established) {
-    dumpRuntimeDiag(
-      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
+    dumpDiag(
+      "client", diag(clientLink), clientLink->crypto().diag());
     if (serverLink)
-      dumpRuntimeDiag(
-	"server", runtimeDiag(serverLink), serverLink->crypto().diag());
+      dumpDiag(
+	"server", diag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(established,
     "rejected-token runtime initial handshake did not establish");
@@ -1209,8 +1209,8 @@ void testRuntimeRejectedTokenQLog()
 	    return;
 	  }
   ZuCHECK(waitUntil([&clientLink, &serverLink]() {
-      return runtimeDiag(clientLink).rx.newTokenRx >= 1 &&
-	runtimeDiag(serverLink).tx.newTokenTx >= 1;
+      return diag(clientLink).rx.newTokenRx >= 1 &&
+	diag(serverLink).tx.newTokenTx >= 1;
     }), "rejected-token runtime NEW_TOKEN was not exchanged");
   clientLink->disconnect();
   ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
@@ -1219,11 +1219,11 @@ void testRuntimeRejectedTokenQLog()
 
   unsigned accepted = 1;
   unsigned modes[] = {
-    RuntimeClient::TokenMalformed,
-    RuntimeClient::TokenAuth,
-    RuntimeClient::TokenExpired,
-    RuntimeClient::TokenAddress,
-    RuntimeClient::TokenKind
+    TestClient::TokenMalformed,
+    TestClient::TokenAuth,
+    TestClient::TokenExpired,
+    TestClient::TokenAddress,
+    TestClient::TokenKind
   };
   for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
     client.tokenNow = uint64_t(Zm::now().sec());
@@ -1237,11 +1237,11 @@ void testRuntimeRejectedTokenQLog()
 	  serverLink->established();
       });
     if (!established) {
-      dumpRuntimeDiag(
-	"client", runtimeDiag(clientLink), clientLink->crypto().diag());
+      dumpDiag(
+	"client", diag(clientLink), clientLink->crypto().diag());
       if (serverLink)
-	dumpRuntimeDiag(
-	  "server", runtimeDiag(serverLink), serverLink->crypto().diag());
+	dumpDiag(
+	  "server", diag(serverLink), serverLink->crypto().diag());
     }
     ZuCHECK(established, "rejected-token runtime handshake did not establish");
 	    if (!established || !serverLink) {
@@ -1260,7 +1260,7 @@ void testRuntimeRejectedTokenQLog()
   server.clearLinks();
   server.final();
 
-  RuntimeServer policyServer;
+  TestServer policyServer;
   ZuCHECK(policyServer.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(temp.certPath.cspan())
@@ -1271,21 +1271,21 @@ void testRuntimeRejectedTokenQLog()
 	.qlogRingSize(1<<16)
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
-	.retryAddressValidation(true)
-	.newTokenAddressValidation(false)
-	.addressValidationSecret(secret)
-	.addressValidationLifetime(60)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
+	.retryAddrValidate(true)
+	.newTokenAddrValidate(false)
+	.addrValidationSecret(secret)
+	.addrValidationLifetime(60)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token policy server init failed");
   ZuCHECK(policyServer.start(), "rejected-token policy server listen failed");
   ZuCHECK(waitUntil([&policyServer]() { return policyServer.listening(); }),
     "rejected-token policy server did not listen");
   client.tokenNow = uint64_t(Zm::now().sec());
-  client.tokenRewrite = RuntimeClient::TokenPolicy;
+  client.tokenRewrite = TestClient::TokenPolicy;
   clientLink->connect(Zquic::Host{"127.0.0.1"}, policyServer.local().port());
-  ZmRef<RuntimeServer::Link> policyLink;
+  ZmRef<TestServer::Link> policyLink;
   established = waitUntil([&policyServer, &clientLink, &policyLink]() {
       if (!policyLink) policyLink = policyServer.link(0);
       return policyLink && clientLink->established() &&
@@ -1331,9 +1331,9 @@ void testRuntimeRejectedTokenQLog()
   mx.stop();
 }
 
-void testRuntimeIdleTimeoutQLog()
+void testIdleTimeoutQLog()
 {
-  ZuTestScope(testRuntimeIdleTimeoutQLog);
+  ZuTestScope(testIdleTimeoutQLog);
 
   TempDir temp;
   ZuCHECK(temp.init(), "idle runtime temporary TLS certificate failed");
@@ -1354,7 +1354,7 @@ void testRuntimeIdleTimeoutQLog()
   ZuCHECK(mxStarted, "idle runtime multiplexer start failed");
   if (!mxStarted) return;
 
-  RuntimeServer server;
+  TestServer server;
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(temp.certPath.cspan())
@@ -1365,8 +1365,8 @@ void testRuntimeIdleTimeoutQLog()
 	.qlogRingSize(1<<16)
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
 	.maxIdleTimeout(1)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "idle runtime server init failed");
@@ -1380,32 +1380,32 @@ void testRuntimeIdleTimeoutQLog()
 	    return;
 	  }
 
-  RuntimeClient client;
+  TestClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
 	.caPath(temp.certPath.cspan())
 	.maxData(32768)
 	.maxStreamData(8192)
-	.maxStreamsBidi(8)
-	.maxStreamsUni(8)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
 	.maxIdleTimeout(1)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "idle runtime client init failed");
-  ZmRef<RuntimeClient::Link> clientLink = new RuntimeClient::Link{&client};
+  ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
-  ZmRef<RuntimeServer::Link> serverLink;
+  ZmRef<TestServer::Link> serverLink;
   bool established = waitUntil([&server, &clientLink, &serverLink]() {
       if (!serverLink) serverLink = server.link();
       return serverLink && clientLink->established() &&
 	serverLink->established();
     });
   if (!established) {
-    dumpRuntimeDiag(
-      "client", runtimeDiag(clientLink), clientLink->crypto().diag());
+    dumpDiag(
+      "client", diag(clientLink), clientLink->crypto().diag());
     if (serverLink)
-      dumpRuntimeDiag(
-	"server", runtimeDiag(serverLink), serverLink->crypto().diag());
+      dumpDiag(
+	"server", diag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(established, "idle runtime handshake did not establish");
 	  if (!established || !serverLink) {
@@ -1448,9 +1448,9 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testRuntimeEndpointOpen);
-  ZuTestCall(testRuntimeServerMultiConnection);
-  ZuTestCall(testRuntimeRetryAddressValidation);
-  ZuTestCall(testRuntimeRejectedTokenQLog);
-  ZuTestCall(testRuntimeIdleTimeoutQLog);
+  ZuTestCall(testEndpointOpen);
+  ZuTestCall(testSrvMultiCxn);
+  ZuTestCall(testRetryAddrValidate);
+  ZuTestCall(testRejectedTokenQLog);
+  ZuTestCall(testIdleTimeoutQLog);
 }
