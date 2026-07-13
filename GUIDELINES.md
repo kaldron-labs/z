@@ -588,7 +588,7 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 
 ## Naming
 ### Length and abbreviations
-- Names must be concise; 32 bytes is the hard upper limit.
+- Names must be concise; 28 bytes is the hard upper limit.
 - Use industry standard in-code abbreviations for long names:
   - `receive` -> `rx`
   - `transmit` -> `tx`
@@ -606,17 +606,26 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
   - `original` -> `orig`
   - `previous` -> `prev`
   - `parameter` -> `param`
+  - `interface` -> `if`
+  - `implementation` -> `impl`
   - ... and so on (this is not an exhaustive list)
 - Example: `packet` is fine; `reservePacketProtection` is too long; use `resPktProt`.
 - use "ack" and "ackd", not "ackd"; example: `packetAckd`
 - use "nak and "nakd", not "nack", "nackd" or "nacked"; example: `packetNakd`
 - do not prefix or namespace file-scoped `static` functions in `.cc` files:
   - use short meaningful names, e.g. in `ZiIP.cc`: `pton4` not `ZiIP_pton4`
+- do not use ambiguous abbreviations:
+  - `bytesInFlight` -> `bif`: `if` is typically read as `interface`
+  - `congestionBytes` -> `congBytes`: `cong` is not a standard abbreviation
+- elide redundant context:
+  - `runtimeDiag` -> `diag`: "runtime" is implied by diagnostics
+  - `Engine::stopEngine` -> `stop`: "engine" is implied by being a member function of `Engine`
 
 ### Casing and member prefixes
 - Names are generally camelCase, not snake_case.
 - External dependencies may keep their native naming.
 - `m_` is reserved for private data members of classes.
+  - private data members that are intended to be accessed directly by friends should NOT have the `m_` prefix.
 
 ### Accessors
 - Use overloads for getters/setters; do not invent separate names.
