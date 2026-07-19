@@ -237,6 +237,32 @@ void testSeekSizeTruncateSync()
   r.close();
 }
 
+void testMMapSpans()
+{
+  ZuTestScope(testMMapSpans);
+
+  cleanupFiles();
+
+  ZuCSpan data{"mapped"};
+  ZiMMapFile file;
+  ZuCHECK(file.mmap(
+      g_foo, ZiFile::Create | ZiFile::Truncate | ZiFile::GC,
+      data.length()) == Zi::OK, "mmap failed: ", file.error());
+
+  auto span = file.span();
+  ZuCheck(span.data() == file.addr());
+  ZuCheck(span.length() == data.length());
+  memcpy(span.data(), data.data(), data.length());
+
+  const ZiMMapFile &cfile = file;
+  ZuBSpan cspan = cfile.cspan();
+  ZuCheck(cspan.data() == file.addr());
+  ZuCheck(cspan.length() == data.length());
+  ZuCheck(!memcmp(cspan.data(), data.data(), data.length()));
+
+  file.close();
+}
+
 void testMetadataAndPathHelpers()
 {
   ZuTestScope(testMetadataAndPathHelpers);
@@ -245,11 +271,12 @@ void testMetadataAndPathHelpers()
 
   Zi::Path cwd = ZiFile::cwd();
   ZuCheck(!!cwd);
-  ZuCheck(ZiFile::isdir(cwd));
+  ZuCheck(ZiStat{cwd}.isdir());
 
   ZuCHECK(ZiFile::mkdir(g_dir) == Zi::OK, "mkdir failed");
-  ZuCheck(ZiFile::exists(g_dir));
-  ZuCheck(ZiFile::isdir(g_dir));
+  ZiStat dirStat{g_dir};
+  ZuCheck(dirStat.exists());
+  ZuCheck(dirStat.isdir());
 
   {
     ZiFile f;
@@ -258,16 +285,21 @@ void testMetadataAndPathHelpers()
     f.close();
   }
 
-  ZuTime mt = ZiFile::mtime(g_foo);
-  ZuCheck(!!mt);
-  ZuCheck(ZiFile::exists(g_foo));
+  ZiStat stat{g_foo};
+  ZuCheck(stat.exists());
+  ZuCheck(!stat.isdir());
+  ZuCheck(stat.size() == 7);
+  ZuCheck(!!stat.mtime());
 
   ZuCHECK(ZiFile::rename(g_foo, g_renamed) == Zi::OK, "rename failed");
-  ZuCheck(!ZiFile::exists(g_foo));
-  ZuCheck(ZiFile::exists(g_renamed));
+  ZuCheck(stat.exists());
+  ZuCheck(stat.size() == 7);
+  ZuCheck(!ZiStat{g_foo}.exists());
+  ZuCheck(ZiStat{g_renamed}.exists());
 
+  ZiStat copyStat{g_copy};
   ZuCHECK(ZiFile::copy(g_renamed, g_copy) == Zi::OK, "copy failed");
-  ZuCheck(ZiFile::exists(g_copy));
+  ZuCheck(copyStat.exists());
 
   ZiFile f;
   ZuCHECK(f.open(g_copy, ZiFile::ReadOnly, 0777) == Zi::OK, "open copy failed: ", f.error());
@@ -288,7 +320,9 @@ void testMetadataAndPathHelpers()
   ZuCheck(ZiFile::absolute(absPath));
 
   ZuCHECK(ZiFile::rmdir(g_dir) == Zi::OK, "rmdir failed");
-  ZuCheck(!ZiFile::isdir(g_dir));
+  ZiStat missing{g_dir};
+  ZuCheck(!missing.isdir());
+  ZuCheck(!!missing.error());
 }
 
 void testNegativeOpen()
@@ -375,6 +409,7 @@ int main(int argc, char **argv)
   ZuTestCall(testSparseReadDefaultsToZero);
   ZuTestCall(testVectoredIO);
   ZuTestCall(testSeekSizeTruncateSync);
+  ZuTestCall(testMMapSpans);
   ZuTestCall(testMetadataAndPathHelpers);
   ZuTestCall(testNegativeOpen);
   ZuTestCall(testOpenAtNoFollowAndStat);

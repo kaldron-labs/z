@@ -75,7 +75,7 @@ namespace Zrest {
 // accept-encoding: identity and content-type: application/json as needed
 template <
   bool HasBody = false,			// has a body
-  typename Context = ZuEmpty>		// additional context for callbacks
+  typename Context = ZuVoid>		// additional context for callbacks
 struct Builder : public Zhttp::Builder<HasBody, Context> {
   using Base = Zhttp::Builder<HasBody, Context>;
 

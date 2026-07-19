@@ -92,11 +92,11 @@ void testAgeRotationBounded()
   writeBase("D");
   ZiFile::age(g_base, 3);
 
-  ZuCheck(!ZiFile::exists(g_base));
-  ZuCheck(ZiFile::exists(rotated(1)));
-  ZuCheck(ZiFile::exists(rotated(2)));
-  ZuCheck(ZiFile::exists(rotated(3)));
-  ZuCheck(!ZiFile::exists(rotated(4)));
+  ZuCheck(!ZiStat{g_base}.exists());
+  ZuCheck(ZiStat{rotated(1)}.exists());
+  ZuCheck(ZiStat{rotated(2)}.exists());
+  ZuCheck(ZiStat{rotated(3)}.exists());
+  ZuCheck(!ZiStat{rotated(4)}.exists());
 
   ZuCheck(readPath(rotated(1)) == "D");
   ZuCheck(readPath(rotated(2)) == "C");

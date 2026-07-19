@@ -167,7 +167,7 @@ struct ZmHash_Defaults {
   template <typename T> using ValCmpT = ZuCmp<T>;
   template <typename T> using HashFnT = ZuHash<T>;
   using Lock = ZmNoLock;
-  using Node = ZuEmpty;
+  using Node = ZuVoid;
   enum { Shadow = 0 };
   struct ID : public ZuStringT<"ZmHash"> { };
   struct HeapID : public ZuStringT<"ZmHash"> { };

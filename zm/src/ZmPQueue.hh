@@ -112,7 +112,7 @@ struct ZmPQueue_Defaults {
   enum { Overlap = 1 };
   enum { Overwrite = 1 };
   using Lock = ZmNoLock;
-  using Node = ZuEmpty;
+  using Node = ZuVoid;
   enum { Shadow = 0 };
   struct HeapID : public ZuStringT<"ZmPQueue"> { };
   enum { Sharded = 0 };

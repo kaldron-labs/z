@@ -433,7 +433,7 @@ bool pathExists(ZuCSpan path)
 #ifndef _WIN32
   ZiFile::Path p;
   p << path;
-  return ZiFile::exists(p);
+  return ZiStat{ZuMv(p)}.exists();
 #else
   return bool(path);
 #endif

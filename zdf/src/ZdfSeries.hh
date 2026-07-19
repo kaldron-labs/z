@@ -348,7 +348,7 @@ private:
   NDP		m_ndp;
 };
 template <typename Decoder>
-using Writer_Heap = ZmHeap<"Zdf.Writer", Writer_<Decoder, ZuEmpty>>;
+using Writer_Heap = ZmHeap<"Zdf.Writer", Writer_<Decoder, ZuVoid>>;
 template <typename Decoder>
 ZuDerive(Writer, (Writer_<Decoder, Writer_Heap<Decoder>>));
 

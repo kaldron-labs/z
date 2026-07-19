@@ -271,7 +271,7 @@ private:
 };
 template <typename W>
 ZuDerive(DFWriter,
-  (DFWriter_<W, ZmHeap<"Zdb.DFWriter", DFWriter_<W, ZuEmpty>>>));
+  (DFWriter_<W, ZmHeap<"Zdb.DFWriter", DFWriter_<W, ZuVoid>>>));
 
 class Store;
 

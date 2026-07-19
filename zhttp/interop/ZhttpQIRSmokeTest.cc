@@ -139,7 +139,7 @@ static void testClientFilesystemPrep()
     "valid client request creates dirs before authority validation");
   ZtString<> parent;
   parent << downloads << "/a/b";
-  ZuCHECK(ZiFile::isdir(parent), "client creates output parent dirs");
+  ZuCHECK(ZiStat{parent}.isdir(), "client creates output parent dirs");
 
   cmd.length(0);
   cmd << "TESTCASE=http3 REQUESTS=https://server/a/../bad "

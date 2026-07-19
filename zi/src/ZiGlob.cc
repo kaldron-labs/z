@@ -24,7 +24,7 @@ bool ZiGlob::init(Zi::Path prefix, ZeError *e)
     if (m_entries) m_entries->clean(); else m_entries = new Entries{};
     Zi::Path name;
     while (m_dir->read(name) == Zi::OK) {
-      bool isdir = ZiFile::isdir(ZiFile::append(dirName, name));
+      bool isdir = ZiStat{ZiFile::append(dirName, name)}.isdir();
       m_entries->add(Entry{ZuMv(name), isdir});
     }
   }

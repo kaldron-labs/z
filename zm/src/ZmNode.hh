@@ -32,16 +32,16 @@ struct ZmNode__<Base_, Heap, true> : public Base_ {
   ZmNode__(Args &&...args) : Base_(ZuFwd<Args>(args)...) { }
 };
 template <typename Base_>
-struct ZmNode__<Base_, ZuEmpty, false> : public Base_ {
+struct ZmNode__<Base_, ZuVoid, false> : public Base_ {
   // ZuDerive_() causes gcc to choke on ZmPolyHash
   using Base_::Base_;
   template <typename ...Args>
   ZmNode__(Args &&...args) : Base_(ZuFwd<Args>(args)...) { }
 };
 template <typename Heap>
-struct ZmNode__<ZuEmpty, Heap, false> : public Heap { };
+struct ZmNode__<ZuVoid, Heap, false> : public Heap { };
 template <>
-struct ZmNode__<ZuEmpty, ZuEmpty, true> { };
+struct ZmNode__<ZuVoid, ZuVoid, true> { };
 
 template <
   typename T,
@@ -152,7 +152,7 @@ template <
 using ZmNode =
   ZmNode_<T, KeyAxor, ValAxor, Base, NodeExt,
     ZmHeap_<HeapID,
-      ZmNode_<T, KeyAxor, ValAxor, Base, NodeExt, ZuEmpty>,
+      ZmNode_<T, KeyAxor, ValAxor, Base, NodeExt, ZuVoid>,
       Sharded>>;
 
 #endif /* ZmNode_HH */

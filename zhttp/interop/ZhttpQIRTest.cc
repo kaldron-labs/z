@@ -278,7 +278,7 @@ static void testParentDirs()
   ZuCHECK(ensureParentDirs(request.output), "nested parent dirs created");
   ZtString<> parent;
   parent << downloads << "/a/b";
-  ZuCHECK(ZiFile::isdir(parent), "nested parent dir exists");
+  ZuCHECK(ZiStat{parent}.isdir(), "nested parent dir exists");
 
   Request bad;
   ZuCHECK(mapURL("https://server/a/../bad", downloads, bad) == PathEscape,

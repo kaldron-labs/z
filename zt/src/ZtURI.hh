@@ -13,9 +13,13 @@
 //
 // this implementation intentionally excludes built-in support for legacy
 // frameworks like Zope with its :list annotation for arrays;
-// supported frameworks, from most widely adopted to least:
-//   Java/Spring, Python/Django, Node/Express, Golang (Render/Chi/Echo/Gin),
-//   Ruby/Rails, PHP/Laravel.
+// supported frameworks, stack-ranked by mid-2026 adoption:
+// - Java/Spring
+// - Python/Django
+// - Node/Express
+// - Golang (Render/Chi/Echo/Gin)
+// - Ruby/Rails
+// - PHP/Laravel
 //
 // Whether in the request header or in the x-www-form-urlencoded body,
 // URI query strings produced/consumed by these frameworks fall
@@ -59,7 +63,7 @@
 //   Delimited	annotated and delimited		a[]=1,2,3
 //   Delimited	wrapped and delimited		a=[1,2,3]
 //
-// Bare repetition is not typically used together with
+// Bare repetition is typically not used together with
 // array-formatted object nesting, so Bare implies Member formatting
 // for nested objects
 //
@@ -426,7 +430,9 @@ ZtExtern ZuTuple<int, int, char> eos(ZuSpan<char> data);
 struct Node_HeapID : public ZuStringT<"ZtURI.Node"> { };
 template <typename Heap>
 struct Node_ : public Heap {
-  static constexpr unsigned ArraySize = 128 / sizeof(ZuPtr<Node_>);
+  // built-in array size (can be exceeded by heap allocation)
+  static constexpr unsigned TargetSize = 128;
+  static constexpr unsigned ArraySize = TargetSize / sizeof(ZuPtr<Node_>);
   ZuAssert(ArraySize > 0);
 
   ZuDerive(String, ZuSpan<char>);
@@ -544,7 +550,7 @@ struct Node_ : public Heap {
     return true;
   }
 };
-ZuDerive(Node_Heap, (ZmHeap_<Node_HeapID, Node_<ZuEmpty>>));
+ZuDerive(Node_Heap, (ZmHeap_<Node_HeapID, Node_<ZuVoid>>));
 using Node = Node_<Node_Heap>;
 using NodeArray = typename Node::Array;
 using CNodeArray = const NodeArray;
@@ -962,15 +968,15 @@ struct AsJSON {
     Handler(const Node *node_) : node{node_} { }
 
     // resolve JSON handler
-    ZuTuple<ZuPtr<const ZtJSON::Node>, Handler_> handler_() const {
+    ZuTuple<ZuPtr<const ZtJSON::AnyNode>, Handler_> handler_() const {
       ZuSpan<char> span;
       if (node->data.is<Node::String>())
 	span = node->data.p<Node::String>();
       auto scan = ZtJSON::scan(span);
       if (scan.template p<0>() < 0)
-	scan = ZtJSON::scan(ZuSpan<char>());
-      ZuPtr<const ZtJSON::Node> node_ = ZuMv(scan.template p<1>());
-      const ZtJSON::Node *ptr = node_.ptr();
+	scan = ZtJSON::scan({});
+      ZuPtr<const ZtJSON::AnyNode> node_ = ZuMv(scan.template p<1>());
+      const ZtJSON::AnyNode *ptr = node_.ptr();
       return {ZuMv(node_), Handler_(ptr)};
     }
 

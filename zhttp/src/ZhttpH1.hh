@@ -23,7 +23,7 @@ namespace H1 {
     Body,		// reading body data (not chunked)
     ChunkHdr,		// chunk header (hex length + CRLF)
     Chunk,		// reading chunk data
-    ChunkTrlr,	// chunk trailer (CRLF)
+    ChunkTrlr,		// chunk trailer (CRLF)
     Trailers,		// trailers after final chunk
     Complete,		// message completely read
     Error);		// invalid message

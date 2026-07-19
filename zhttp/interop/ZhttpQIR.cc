@@ -915,20 +915,20 @@ bool buildHQRequestLine(ZuCSpan path, ZtString<> &line)
 bool ensureParentDirs(ZuCSpan path)
 {
   Zi::Path dir = ZiFile::dirname(Zi::Path{path});
-  if (!dir || dir == "." || ZiFile::isdir(dir)) return true;
+  if (!dir || dir == "." || ZiStat{dir}.isdir()) return true;
 
   ZtArray<Zi::Path> stack;
   Zi::Path cur{dir};
-  while (cur && cur != "." && !ZiFile::isdir(cur)) {
+  while (cur && cur != "." && !ZiStat{cur}.isdir()) {
     stack.push(cur);
     Zi::Path parent = ZiFile::dirname(cur);
     if (parent == cur) break;
     cur = ZuMv(parent);
   }
   for (int i = int(stack.length()); --i >= 0; )
-    if (!ZiFile::isdir(stack[i]) && ZiFile::mkdir(stack[i]) != Zi::OK)
+    if (!ZiStat{stack[i]}.isdir() && ZiFile::mkdir(stack[i]) != Zi::OK)
       return false;
-  return ZiFile::isdir(dir);
+  return ZiStat{dir}.isdir();
 }
 
 static int runHQServer_(const Env &env)
@@ -1127,12 +1127,12 @@ int run(Role role)
     if (status != OK) return status;
     for (unsigned i = 0, n = requests.length(); i < n; ++i)
       if (!ensureParentDirs(requests[i].output)) return Error;
-    if (!ZiFile::exists(env.ca)) return Usage;
+    if (!ZiStat{env.ca}.exists()) return Usage;
     if (caseH3(env.testCase)) return runH3Client_(env, ZuMv(requests));
     if (caseHQ(env.testCase)) return runHQClient_(env, ZuMv(requests));
   } else {
-    if (!ZiFile::isdir(env.www) || !ZiFile::exists(env.cert) ||
-	!ZiFile::exists(env.key))
+    if (!ZiStat{env.www}.isdir() || !ZiStat{env.cert}.exists() ||
+	!ZiStat{env.key}.exists())
       return Usage;
     if (caseH3(env.testCase)) return runH3Server_(env);
     if (caseHQ(env.testCase)) return runHQServer_(env);
