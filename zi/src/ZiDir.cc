@@ -18,8 +18,9 @@ int ZiDir::open(const Path &name, ZeError *e)
 
 #ifdef _WIN32
 
-  if (!ZiFile::isdir(name, e)) {
-    if (e && !*e) *e = ENOTDIR;
+  ZiStat stat{name};
+  if (!stat.isdir()) {
+    if (e) *e = stat.error() ? stat.error() : ZeError{ENOTDIR};
     return Zi::IOError;
   }
   m_match = name + L"\\*";

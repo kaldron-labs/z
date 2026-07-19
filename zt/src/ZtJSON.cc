@@ -222,12 +222,12 @@ int eov_Null(ZuCSpan span) {
 
 // this implementation intentionally permits
 // - trailing commas as in [a,b,]
-ZuTuple<int, ZuPtr<Node>> eov_Array(ZuSpan<char> span) {
+ZuTuple<int, ZuPtr<AnyNode>> eov_Array(ZuSpan<char> span) {
   if (ZuUnlikely(!span)) return {-1, nullptr};
   auto begin = span.begin();
   auto end = span.end();
-  ZuPtr<Node> node = newNode<ValueTC::Array>();
-  auto &array = node->data.p<ValueTC::Array>();
+  auto node = newNode<AnyNode::Array>();
+  auto &array = node->data;
   int o;
   for (;;) {
     // value
@@ -237,7 +237,7 @@ ZuTuple<int, ZuPtr<Node>> eov_Array(ZuSpan<char> span) {
     switch (bv.p<1>()) {
       case ValueTC::Null:
 	if ((o = eov_Null(span)) < 0) goto bad;
-	array.push(newNode<ValueTC::Null>());
+	array.push(newNode<AnyNode::Null>());
 	span.offset(o);
 	break;
       case ValueTC::Array: {
@@ -255,24 +255,24 @@ ZuTuple<int, ZuPtr<Node>> eov_Array(ZuSpan<char> span) {
       case ValueTC::String: {
 	auto ev = eos({&span[0], span.length()});
 	if ((o = ev.p<0>()) < 0) goto bad;
-	array.push(newNode<ValueTC::String>(
+	array.push(newNode<AnyNode::String>(
 	    ZuSpan<char>(&span[0], unsigned(o))));
 	span.offset(ev.p<1>());
       } break;
       case ValueTC::Number:
 	if ((o = eov_Number(span)) < 0) goto bad;
-	array.push(newNode<ValueTC::Number>(
+	array.push(newNode<AnyNode::Number>(
 	    ZuSpan<char>(&span[0], unsigned(o))));
 	span.offset(o);
         break;
       case ValueTC::True:
 	if ((o = eov_True(span)) < 0) goto bad;
-	array.push(newNode<ValueTC::True>());
+	array.push(newNode<AnyNode::True>());
 	span.offset(o);
 	break;
       case ValueTC::False:
 	if ((o = eov_False(span)) < 0) goto bad;
-	array.push(newNode<ValueTC::False>());
+	array.push(newNode<AnyNode::False>());
 	span.offset(o);
 	break;
     }
@@ -290,17 +290,17 @@ bad:
 }
 
 // this implementation intentionally permits
-// - trailing commas as in {"a":"b",}
-// - skipped fields as in {"a":"b",,"c":"d"}
-// - unquoted keys as in {a:"b"}
-ZuTuple<int, ZuPtr<Node>> eov_Object(ZuSpan<char> span) {
+// - trailing commas: {"a":"b",}
+// - skipped fields: {"a":"b",,"c":"d"}
+// - unquoted keys: {a:"b"}
+ZuTuple<int, ZuPtr<AnyNode>> eov_Object(ZuSpan<char> span) {
   if (ZuUnlikely(!span)) return {-1, nullptr};
   auto begin = span.begin();
   auto end = span.end();
-  ZuPtr<Node> node = newNode<ValueTC::Object>();
-  auto &object = node->data.p<ValueTC::Object>();
+  auto node = newNode<AnyNode::Object>();
+  auto &object = node->data;
   ZuCSpan key;
-  ZuPtr<Node> value;
+  ZuPtr<AnyNode> value;
   int o;
   for (;;) {
     // key
@@ -330,7 +330,7 @@ ZuTuple<int, ZuPtr<Node>> eov_Object(ZuSpan<char> span) {
       switch (bv.p<1>()) {
 	case ValueTC::Null:
 	  if ((o = eov_Null(span)) < 0) goto bad;
-	  value = newNode<ValueTC::Null>();
+	  value = newNode<AnyNode::Null>();
 	  span.offset(o);
 	  break;
 	case ValueTC::Array: {
@@ -348,28 +348,28 @@ ZuTuple<int, ZuPtr<Node>> eov_Object(ZuSpan<char> span) {
 	case ValueTC::String: {
 	  auto ev = eos({&span[0], span.length()});
 	  if ((o = ev.p<0>()) < 0) goto bad;
-	  value = newNode<ValueTC::String>(
+	  value = newNode<AnyNode::String>(
 	    ZuSpan<char>(&span[0], unsigned(o)));
 	  span.offset(ev.p<1>());
 	} break;
 	case ValueTC::Number:
 	  if ((o = eov_Number(span)) < 0) goto bad;
-	  value = newNode<ValueTC::Number>(
+	  value = newNode<AnyNode::Number>(
 	    ZuSpan<char>(&span[0], unsigned(o)));
 	  span.offset(o);
 	  break;
 	case ValueTC::True:
 	  if ((o = eov_True(span)) < 0) goto bad;
-	  value = newNode<ValueTC::True>();
+	  value = newNode<AnyNode::True>();
 	  span.offset(o);
 	  break;
 	case ValueTC::False:
 	  if ((o = eov_False(span)) < 0) goto bad;
-	  value = newNode<ValueTC::False>();
+	  value = newNode<AnyNode::False>();
 	  span.offset(o);
 	  break;
       }
-      object.push(Node::Field{key, ZuMv(value)});
+      object.push(AnyNode::Field{key, ZuMv(value)});
     }
 next:
     // comma or closing
@@ -587,7 +587,7 @@ int eov_False(ZuCSpan span) {
   return 5;
 }
 
-ZuTuple<int, ZuPtr<const Node>> scan(ZuSpan<char> span) {
+ZuTuple<int, ZuPtr<const AnyNode>> scan(ZuSpan<char> span) {
   if (ZuUnlikely(!span)) return {-1, nullptr};
   auto begin = span.begin();
   auto end = span.end();
@@ -596,7 +596,7 @@ ZuTuple<int, ZuPtr<const Node>> scan(ZuSpan<char> span) {
   if ((o = tl.p<0>()) < 0) goto bad;
   span.offset(o);
   {
-    ZuPtr<Node> node;
+    ZuPtr<AnyNode> node;
     switch (tl.p<1>()) {
       case ValueTC::Array: {
 	auto ev = eov_Array(span);

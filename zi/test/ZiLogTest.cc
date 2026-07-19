@@ -121,7 +121,7 @@ void testFileSinkWritesAndAges()
   ZuCheck(contains(text, "file sink line two"));
 
   ZiLog::age();
-  ZuCheck(ZiFile::exists(g_log1));
+  ZuCheck(ZiStat{g_log1}.exists());
 }
 
 void testCsvSinkWritesAndParses()
@@ -155,7 +155,7 @@ void testCsvSinkWritesAndParses()
   ZuCheck(sawQuoted);
 
   ZiLog::age();
-  ZuCheck(ZiFile::exists(g_csv1));
+  ZuCheck(ZiStat{g_csv1}.exists());
 }
 
 void testLambdaSinkReceivesEvents()

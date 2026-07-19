@@ -40,7 +40,7 @@ struct ZmRBTree_Defaults {
   template <typename T> using ValCmpT = ZuCmp<T>;
   enum { Unique = 0 };
   using Lock = ZmNoLock;
-  using Node = ZuEmpty;
+  using Node = ZuVoid;
   enum { Shadow = 0 };
   struct HeapID : public ZuStringT<"ZmRBTree"> { };
   enum { Sharded = 0 };

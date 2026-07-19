@@ -114,7 +114,7 @@ struct ZmLambda_<Heap, L, ZuTypeList<Args...>> :
 };
 template <typename HeapID, bool Sharded, typename L, typename ArgList>
 using ZmLambda = ZmLambda_<
-  ZmHeap_<HeapID, ZmLambda_<ZuEmpty, L, ArgList>, Sharded>,
+  ZmHeap_<HeapID, ZmLambda_<ZuVoid, L, ArgList>, Sharded>,
   L, ArgList>;
 
 // stateful immutable lambda

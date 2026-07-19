@@ -111,12 +111,12 @@ ZtString<> readText(const Zi::Path &path)
 bool waitForFile(const Zi::Path &path)
 {
   for (unsigned i = 0; i < 50; i++) {
-    if (ZiFile::exists(path)) return true;
+    if (ZiStat{path}.exists()) return true;
 #ifndef _WIN32
     ::usleep(100000);
 #endif
   }
-  return ZiFile::exists(path);
+  return ZiStat{path}.exists();
 }
 
 template <typename Argv>

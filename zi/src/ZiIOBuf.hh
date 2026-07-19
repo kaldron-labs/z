@@ -342,7 +342,7 @@ struct alignas(ZiIOBuf_Align) IOBufAlloc__ : public Heap, public Base {
 };
 
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
-using IOBuf_Heap = ZmHeap_<HeapID, IOBufAlloc__<Base, Size, MaxSize, ZuEmpty>>;
+using IOBuf_Heap = ZmHeap_<HeapID, IOBufAlloc__<Base, Size, MaxSize, ZuVoid>>;
  
 template <
   typename Base,

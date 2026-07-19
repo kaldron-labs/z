@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // application configuration
-// - ZvCf is intended for infrequent loading/saving of
+// - ZvCf is intended for cold path loading/saving of
 //   configuration data from files, command lines, environments and
 //   other such origins, as typically performed at startup and
 //   during an occasional live reconfiguration
@@ -122,7 +122,7 @@ inline auto badSyntax(unsigned line, char ch, ZuCSpan fileName) {
     if (ch >= 0x20 && ch < 0x7f)
       s << ch;
     else
-      s << '\\' << ZuBoxed(static_cast<unsigned>(ch) & 0xff).
+      s << '\\' << ZuBoxed(unsigned(ch) & 0xff).
 	fmt<ZuFmt::Hex<0, ZuFmt::Alt<ZuFmt::Right<2>>>>();
     s << '\'';
   }));

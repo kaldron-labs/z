@@ -51,7 +51,7 @@ inline State &state_()
 
 inline void mkdirIfNeeded_(const Zi::Path &path)
 {
-  if (ZiFile::isdir(path)) return;
+  if (ZiStat{path}.isdir()) return;
   ZiFile::mkdir(path);
 }
 

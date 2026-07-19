@@ -836,7 +836,7 @@ template <typename Heap>
 struct Count_ : public Heap, public ZmPolymorph, public Count__ {
   ZuDerive_(Count_, Count__)
 };
-using Count_Heap = ZmHeap<"Zdb.Count", Count_<ZuEmpty>>;
+using Count_Heap = ZmHeap<"Zdb.Count", Count_<ZuVoid>>;
 ZuDerive(Count, (Count_<Count_Heap>));
 
 // backing data store select() context
@@ -851,7 +851,7 @@ struct Select_ : public Heap, public ZmPolymorph, public Select__<Tuple> {
   ZuDerive_(Select_, Select__<Tuple>)
 };
 template <typename Tuple>
-using Select_Heap = ZmHeap<"Zdb.Select", Select_<Tuple, ZuEmpty>>;
+using Select_Heap = ZmHeap<"Zdb.Select", Select_<Tuple, ZuVoid>>;
 template <typename Tuple>
 ZuDerive(Select, (Select_<Tuple, Select_Heap<Tuple>>));
 
@@ -869,7 +869,7 @@ struct Find_ : public Heap, public ZmPolymorph, public Find__<T, Key> {
   ZuDerive_(Find_, (Find__<T, Key>))
 };
 template <typename T, typename Key>
-using Find_Heap = ZmHeap<"Zdb.Find", Find_<T, Key, ZuEmpty>>;
+using Find_Heap = ZmHeap<"Zdb.Find", Find_<T, Key, ZuVoid>>;
 template <typename T, typename Key>
 ZuDerive(Find, (Find_<T, Key, Find_Heap<T, Key>>));
 

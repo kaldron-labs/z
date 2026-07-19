@@ -16,6 +16,8 @@
 #include <zlib/ZiLib.hh>
 #endif
 
+#include <zlib/ZuSpan.hh>
+
 #include <zlib/ZmAlloc.hh>
 
 #include <zlib/ZePlatform.hh>
@@ -29,6 +31,47 @@
 #ifndef _WIN32
 #include <alloca.h>
 #endif
+
+class ZiAPI ZiStat {
+  ZiStat(const ZiStat &) = delete;
+  ZiStat &operator =(const ZiStat &) = delete;
+
+public:
+  using Path = Zi::Path;
+  using Offset = Zi::Offset;
+
+  ZiStat(Path path) : m_path{ZuMv(path)} { }
+
+  Offset size() const;
+  ZuTime mtime() const;
+  bool exists() const;
+  bool isdir() const;
+
+  ZeError error() const { return m_error; }
+
+private:
+#ifndef _WIN32
+  bool init_() const;
+#else
+  bool attrs_() const;
+  bool size_() const;
+  bool mtime_() const;
+#endif
+
+  Path			m_path;
+#ifndef _WIN32
+  mutable struct stat	m_stat;
+  mutable int		m_result = Zi::NotReady;
+#else
+  mutable ZuTime	m_mtime;
+  mutable Offset	m_size;
+  mutable DWORD		m_attrs;
+  mutable int		m_mtimeResult = Zi::NotReady;
+  mutable int		m_sizeResult = Zi::NotReady;
+  mutable int		m_attrsResult = Zi::NotReady;
+#endif
+  mutable ZeError	m_error;
+};
 
 class ZiAPI ZiFile {
 public:
@@ -179,10 +222,6 @@ public:
     return *this;
   }
 
-  static ZuTime mtime(const Path &name, ZeError *e = nullptr);
-  static bool exists(const Path &name, ZeError *e = nullptr);
-  static bool isdir(const Path &name, ZeError *e = nullptr);
-
   static int remove(const Path &name, ZeError *e = nullptr);
   static int rename(
       const Path &oldName, const Path &newName, ZeError *e = nullptr);
@@ -282,6 +321,16 @@ public:
 
   ZuInline void *addr() const { return m_addr; }
   ZuInline Offset mmapLength() const { return m_mmapLength; }
+  ZuInline ZuSpan<uint8_t> span() {
+    return {
+      static_cast<uint8_t *>(m_addr),
+      uint64_t(m_mmapLength)};
+  }
+  ZuInline ZuBSpan cspan() const {
+    return {
+      static_cast<const uint8_t *>(m_addr),
+      uint64_t(m_mmapLength)};
+  }
 
 private:
   void final() {
@@ -310,7 +359,7 @@ public:
     const Path &name, unsigned flags, Offset length,
     bool shared = true, int mmapFlags = 0, unsigned mode = 0666);
 
-  int msync(void *addr = 0, Offset length = 0);
+  int msync(void *addr = nullptr, Offset length = 0);
 
   void close();
 

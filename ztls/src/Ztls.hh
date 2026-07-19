@@ -1619,17 +1619,17 @@ protected:
     }
     if (!path) {
 #ifndef _WIN32
-      if (ZiFile::exists("/etc/lsb-release")) // Arch/Ubuntu/Debian/SLES
+      if (ZiStat{"/etc/lsb-release"}.exists()) // Arch/Ubuntu/Debian/SLES
 	path = "/etc/ssl/certs";
-      else if (ZiFile::exists("/etc/redhat-release")) // Fedora/CentOS/RHEL
+      else if (ZiStat{"/etc/redhat-release"}.exists()) // Fedora/CentOS/RHEL
 	path = "/etc/pki/tls/certs";
-      else if (ZiFile::isdir("/system/etc/security/cacerts")) // Android
+      else if (ZiStat{"/system/etc/security/cacerts"}.isdir()) // Android
 	path = "/system/etc/security/cacerts";
-      else if (ZiFile::isdir("/usr/local/share/certs")) // FreeBSD
+      else if (ZiStat{"/usr/local/share/certs"}.isdir()) // FreeBSD
 	path = "/usr/local/share/certs";
-      else if (ZiFile::isdir("/etc/openssl/certs")) // NetBSD
+      else if (ZiStat{"/etc/openssl/certs"}.isdir()) // NetBSD
 	path = "/etc/openssl/certs";
-      else if (ZiFile::isdir("/var/ssl/certs")) // AIX
+      else if (ZiStat{"/var/ssl/certs"}.isdir()) // AIX
 	path = "/var/ssl/certs";
       else // unknown - default to LSB
 	path = "/etc/ssl/certs";
@@ -1659,7 +1659,7 @@ protected:
     if (path) {
       bool ok;
       const char *function;
-      if (ZiFile::isdir(path)) {
+      if (ZiStat{path}.isdir()) {
 	function = "cert_store_load_path";
 	ok = Backend::cert_store_load_path(m_cacert, path);
       } else {

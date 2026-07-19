@@ -170,7 +170,7 @@ public:
     return Backend::pkey_verify(key, MDType, data, signature);
   }
 };
-using PK_RSA_Heap = ZmHeap<"Ztls.PK_RSA", PK_RSA_<ZuEmpty>>;
+using PK_RSA_Heap = ZmHeap<"Ztls.PK_RSA", PK_RSA_<ZuVoid>>;
 ZuDerive(PK_RSA, (PK_RSA_<PK_RSA_Heap>));
 
 // RSA private key
@@ -279,7 +279,7 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
     return {};
   }
 };
-using SK_RSA_Heap = ZmHeap<"Ztls.SK_RSA", SK_RSA_<ZuEmpty>>;
+using SK_RSA_Heap = ZmHeap<"Ztls.SK_RSA", SK_RSA_<ZuVoid>>;
 ZuDerive(SK_RSA, (SK_RSA_<SK_RSA_Heap>));
 
 // EC public key
@@ -312,7 +312,7 @@ public:
     return true;
   }
 };
-using PK_EC_Heap = ZmHeap<"Ztls.PK_EC", PK_EC_<ZuEmpty>>;
+using PK_EC_Heap = ZmHeap<"Ztls.PK_EC", PK_EC_<ZuVoid>>;
 ZuDerive(PK_EC, (PK_EC_<PK_EC_Heap>));
 
 // EC private key
@@ -414,7 +414,7 @@ struct SK_EC_ : public PK_EC_<Heap> {
     return {};
   }
 };
-using SK_EC_Heap = ZmHeap<"Ztls.SK_EC", SK_EC_<ZuEmpty>>;
+using SK_EC_Heap = ZmHeap<"Ztls.SK_EC", SK_EC_<ZuVoid>>;
 ZuDerive(SK_EC, (SK_EC_<SK_EC_Heap>));
 
 // ED25519 public key
@@ -458,7 +458,7 @@ public:
     return Backend::pkey_verify(this->key, MDType, data, signature);
   }
 };
-using PK_ED25519_Heap = ZmHeap<"Ztls.PK_ED25519", PK_ED25519_<ZuEmpty>>;
+using PK_ED25519_Heap = ZmHeap<"Ztls.PK_ED25519", PK_ED25519_<ZuVoid>>;
 ZuDerive(PK_ED25519, (PK_ED25519_<PK_ED25519_Heap>));
 
 // ED25519 private key
@@ -534,7 +534,7 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
     return {};
   }
 };
-using SK_ED25519_Heap = ZmHeap<"Ztls.SK_ED25519", SK_ED25519_<ZuEmpty>>;
+using SK_ED25519_Heap = ZmHeap<"Ztls.SK_ED25519", SK_ED25519_<ZuVoid>>;
 ZuDerive(SK_ED25519, (SK_ED25519_<SK_ED25519_Heap>));
 
 template <typename Impl>

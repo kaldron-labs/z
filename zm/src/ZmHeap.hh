@@ -463,7 +463,7 @@ template <
   unsigned Size,
   unsigned Align,
   bool Sharded>
-struct ZmHeap__<ID, Size, Align, Sharded, true> { using T = ZuEmpty; };
+struct ZmHeap__<ID, Size, Align, Sharded, true> { using T = ZuVoid; };
 
 template <typename ID, typename T, bool Sharded = false>
 using ZmHeap_ = typename ZmHeap__<ID, sizeof(T), alignof(T), Sharded>::T;

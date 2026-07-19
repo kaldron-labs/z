@@ -168,7 +168,7 @@ struct ZiResolver_TXT_ : public Heap, public ZmObject {
 };
 
 using ZiResolver_TXT = ZiResolver_TXT_<
-  ZmHeap<"ZiResolver.TXT", ZiResolver_TXT_<ZuEmpty>>>;
+  ZmHeap<"ZiResolver.TXT", ZiResolver_TXT_<ZuVoid>>>;
 
 static ZiEvent::FailFn defltFailFn()
 {

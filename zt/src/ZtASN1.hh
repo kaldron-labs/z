@@ -9,7 +9,7 @@
 // - compile-time encoding/decoding
 
 // Generic mapping of C++ structs to ASN.1 requires expressing field encodings
-// as a composition of:
+// as a composition of (see recap below for context):
 // - ASN1::Fmt, controlling:
 //   - position within the containing ASN.1 Sequence or Set
 //   - optional tag overrides
@@ -24,13 +24,13 @@
 // - overall structure is a sequence of Tag/Length/Value (TLV) elements
 // - BER encoding is byte-aligned, big-endian ("big end first")
 // - DER is BER with constraints to ensure deterministically reproducible
-//   byte-equivalent encoding - it is constrained by requiring minimal
+//   byte-equivalent encoding: it is constrained by requiring minimal
 //   value lengths, ordering of elements within Sets and constrained
 //   encoding options for types such as date/time
 // - Sequence and Set elements both contain nested sequences of
 //   heterogeneous TLV elements; OctetString and BitString are also
 //   commonly used for nesting opaque variant data, typically
-//   discriminated by an OID in a containing outer Sequence
+//   discriminated by an OID in an outer containing Sequence
 // - Sets typically contain context-specific elements notated [0], [1], etc.
 //   where the number is an index key (the field identifier within an object)
 // - Sequences are ordered, typically representing arrays or objects with
@@ -51,7 +51,7 @@
 //   this is the same encoding used for elements of an OID
 // - lengths are single-byte if < 128, otherwise the length is minimally
 //   encoded as unsigned big-endian preceded by the first byte that contains
-//   the length of the length with MSB set
+//   the "length of the length", with MSB set
 
 #ifndef ZtASN1_HH
 #define ZtASN1_HH

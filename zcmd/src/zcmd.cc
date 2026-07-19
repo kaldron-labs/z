@@ -168,7 +168,7 @@ struct CliContextData {
   Host		*host = nullptr;	// host
   ZiFile	dest;			// output destination
 };
-template <typename Host, typename Heap = ZuEmpty>
+template <typename Host, typename Heap = ZuVoid>
 struct CliContext_ : public Heap, public ZmObject, public CliContextData<Host> {
   ZuDerive_(CliContext_, CliContextData<Host>)
 };

@@ -28,7 +28,7 @@ template <typename Heap> struct S_ : public Heap {
   }
   int m_i;
 };
-ZuDerive(S, (S_<ZmHeap<"S", S_<ZuEmpty>>>));
+ZuDerive(S, (S_<ZmHeap<"S", S_<ZuVoid>>>));
 
 void usage_()
 {

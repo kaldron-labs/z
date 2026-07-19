@@ -38,7 +38,7 @@ struct ZmList_Defaults {
   template <typename T> using CmpT = ZuCmp<T>;
   template <typename T> using ValCmpT = ZuCmp<T>;
   using Lock = ZmNoLock;
-  using Node = ZuEmpty;
+  using Node = ZuVoid;
   enum { Shadow = 0 };
   struct HeapID : public ZuStringT<"ZmList"> { };
   enum { Sharded = 0 };

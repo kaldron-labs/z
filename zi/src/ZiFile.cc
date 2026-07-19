@@ -1506,59 +1506,109 @@ error:
   return Zi::IOError;
 }
 
-ZuTime ZiFile::mtime(const Path &name, ZeError *e)
-{
 #ifndef _WIN32
-  struct stat s;
-  if (::stat(name, &s) < 0) goto error;
-  return ZuTime{s.st_mtime};
+bool ZiStat::init_() const
+{
+  if (ZuLikely(m_result != Zi::NotReady))
+    return m_result == Zi::OK;
+  if (::stat(m_path, &m_stat) < 0) {
+    m_error = ZeLastError;
+    m_result = Zi::IOError;
+    return false;
+  }
+  m_result = Zi::OK;
+  return true;
+}
 #else
-  Handle h;
-  FILETIME mtime;
-  h = CreateFile(name, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
-  if (h == INVALID_HANDLE_VALUE) goto error;
-  if (!GetFileTime(h, 0, 0, &mtime)) { CloseHandle(h); goto error; }
-  CloseHandle(h);
-  return ZuTime{mtime};
-#endif
-
-error:
-  if (e) *e = ZeLastError;
-  return ZuTime{};
+bool ZiStat::attrs_() const
+{
+  if (ZuLikely(m_attrsResult != Zi::NotReady))
+    return m_attrsResult == Zi::OK;
+  m_attrs = GetFileAttributes(m_path);
+  if (m_attrs == INVALID_FILE_ATTRIBUTES) {
+    m_error = ZeLastError;
+    m_attrsResult = Zi::IOError;
+    return false;
+  }
+  m_attrsResult = Zi::OK;
+  return true;
 }
 
-bool ZiFile::exists(const Path &name, ZeError *e)
+bool ZiStat::size_() const
 {
-#ifndef _WIN32
-  struct stat s;
-  if (::stat(name, &s) < 0) goto error;
+  if (ZuLikely(m_sizeResult != Zi::NotReady))
+    return m_sizeResult == Zi::OK;
+  WIN32_FILE_ATTRIBUTE_DATA data;
+  if (!GetFileAttributesEx(m_path, GetFileExInfoStandard, &data)) {
+    m_error = ZeLastError;
+    m_sizeResult = Zi::IOError;
+    return false;
+  }
+  m_size = (Offset(data.nFileSizeHigh)<<32) | data.nFileSizeLow;
+  m_sizeResult = Zi::OK;
   return true;
-#else
-  DWORD a = GetFileAttributes(name);
-  if (a == INVALID_FILE_ATTRIBUTES) goto error;
-  return true;
-#endif
-
-error:
-  if (e) *e = ZeLastError;
-  return false;
 }
 
-bool ZiFile::isdir(const Path &name, ZeError *e)
+bool ZiStat::mtime_() const
 {
-#ifndef _WIN32
-  struct stat s;
-  if (::stat(name, &s) < 0) goto error;
-  return S_ISDIR(s.st_mode);
-#else
-  DWORD a = GetFileAttributes(name);
-  if (a == INVALID_FILE_ATTRIBUTES) goto error;
-  return a & FILE_ATTRIBUTE_DIRECTORY;
+  if (ZuLikely(m_mtimeResult != Zi::NotReady))
+    return m_mtimeResult == Zi::OK;
+  WIN32_FILE_ATTRIBUTE_DATA data;
+  if (!GetFileAttributesEx(m_path, GetFileExInfoStandard, &data)) {
+    m_error = ZeLastError;
+    m_mtimeResult = Zi::IOError;
+    return false;
+  }
+  m_mtime = ZuTime{data.ftLastWriteTime};
+  m_mtimeResult = Zi::OK;
+  return true;
+}
 #endif
 
-error:
-  if (e) *e = ZeLastError;
-  return false;
+ZiStat::Offset ZiStat::size() const
+{
+#ifndef _WIN32
+  if (!init_()) return 0;
+  return m_stat.st_size;
+#else
+  if (!size_()) return 0;
+  return m_size;
+#endif
+}
+
+ZuTime ZiStat::mtime() const
+{
+#ifndef _WIN32
+  if (!init_()) return ZuTime{};
+#ifdef __APPLE__
+  return ZuTime{m_stat.st_mtimespec};
+#else
+  return ZuTime{m_stat.st_mtim};
+#endif
+#else
+  if (!mtime_()) return ZuTime{};
+  return m_mtime;
+#endif
+}
+
+bool ZiStat::exists() const
+{
+#ifndef _WIN32
+  return init_();
+#else
+  return attrs_();
+#endif
+}
+
+bool ZiStat::isdir() const
+{
+#ifndef _WIN32
+  if (!init_()) return false;
+  return S_ISDIR(m_stat.st_mode);
+#else
+  if (!attrs_()) return false;
+  return m_attrs & FILE_ATTRIBUTE_DIRECTORY;
+#endif
 }
 
 int ZiFile::remove(const Path &name, ZeError *e)

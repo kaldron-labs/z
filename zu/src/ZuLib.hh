@@ -327,7 +327,6 @@ constexpr ZuDeref<T> &&ZuMv(T &&v) noexcept {
 }
 // shorthand std::forward_like, extended for converting the passed parameter
 // - ZuFwdLike<decltype(self)>(self.member)
-// - ZuFwdLike<decltype(self), T>(self) // casts self to appropriate T
 template <typename T, typename V>
 constexpr auto &&ZuFwdLike(V &&v) noexcept {
   using U = ZuDeref<V>;
@@ -344,6 +343,7 @@ constexpr auto &&ZuFwdLike(V &&v) noexcept {
       return static_cast<U &&>(v);
   }
 }
+// - ZuFwdLike<decltype(self), U>(self) // casts self to appropriate U
 template <typename T, typename U, typename V>	// V should be convertible to U
 constexpr auto &&ZuFwdLike(V &&v) noexcept {
   constexpr bool Const = ZuIsConst<ZuDeref<T>>{};
@@ -411,10 +411,6 @@ template <typename U> struct ZuDeclVal__ { using T = U; };
 template <typename T> auto ZuDeclVal_(int) -> typename ZuDeclVal__<T&&>::T;
 template <typename T> auto ZuDeclVal_(...) -> typename ZuDeclVal__<T>::T;
 template <typename U> decltype(ZuDeclVal_<U>(0)) ZuDeclVal() noexcept;
-
-// alternative to std::void_t
-template <typename ...> struct ZuVoid_ { using T = void; };
-template <typename ...Ts> using ZuVoid = typename ZuVoid_<Ts...>::T;
 
 // sizeof(void) and empty-class handling:
 // - ZuSize<T>{} is 0 if T is void or an empty class
@@ -513,9 +509,9 @@ template <typename From, typename To, typename R = void>
 using ZuNotConvertible = ZuIfT<!ZuIsConvertible<From, To>{}, R>;
 
 // alternative to std::is_constructible_v
-// - no attempt is made to:
-//   - distinguish throw from nothrow
-//   - distinguish move- from copy-constructible
+// - the following are intentional non-goals:
+//   - distinguishing throw from nothrow
+//   - distinguishing move- from copy-constructible
 template <typename From, typename To, typename = void>
 struct ZuIsConstructible_NonComposite : public ZuFalse { };
 template <typename From, typename To>
@@ -693,7 +689,7 @@ using ZuUnder = typename ZuUnder_<ZuDecay<U>>::T;
 template <typename U>
 auto ZuUnderlying(U &&v) noexcept { return ZuUnder<U>(ZuFwd<U>(v)); }
 
-struct ZuEmpty { };
+struct ZuVoid { };
 
 // alternative to std::is_constant_evaluated()
 constexpr bool ZuConstEval() noexcept {
@@ -710,8 +706,8 @@ constexpr T *ZuAddr(T &v) noexcept {
 // argh, std::construct_at is a function name that is specially recognized
 // and privileged by the compiler and also declared inline in <memory>;
 // it is effectively a kind of reserved word that should have been
-// implemented with a compiler intrinsic; regrettably there's
-// no good option except to #include <memory> (which drags in a bunch
+// implemented in the core language or with a compiler intrinsic; regrettably
+// there's no good option except to #include <memory> (which drags in a bunch
 // of STL cruft), but with C++26 placement new becomes eligible for
 // consteval and this misbegotten thing can be consigned to history
 #include <memory> // LATER - comment out for C++26

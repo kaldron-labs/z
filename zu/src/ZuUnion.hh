@@ -7,6 +7,7 @@
 // generic discriminated union; different design trade-offs than std::variant
 // - consteval eligible
 // - void, primitive and pointer types in addition to composite types
+// - trailing discriminator
 // - never throws exceptions
 // - N - number of types
 // - p<I>() - positional accessor
@@ -64,7 +65,6 @@ template <typename ...Ts> class Union;
 namespace Union_ { // internal
 
   // consteval requires a C union rather than a reinterpreted buffer... bah
-  struct Void { }; // placeholder for void (unused at run-time)
   template <typename ...Ts> struct Data;
   template <> struct Data<> { };
   template <typename T0> struct Data<T0> {
@@ -75,7 +75,7 @@ namespace Union_ { // internal
   template <> struct Data<void> {
     ZuInline constexpr Data() noexcept { }
     ZuInline constexpr ~Data() noexcept { }
-    union { Void l; };
+    union { ZuVoid l; };
   };
   template <typename T0, typename ...Ts>
   struct Data<T0, Ts...> {
@@ -87,7 +87,7 @@ namespace Union_ { // internal
   struct Data<void, Ts...> {
     ZuInline constexpr Data() noexcept { }
     ZuInline constexpr ~Data() noexcept { }
-    union { Void l; Data<Ts...> r; };
+    union { ZuVoid l; Data<Ts...> r; };
   };
 
   // the vast majority of use cases involve fewer than 8 types
