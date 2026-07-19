@@ -60,8 +60,9 @@ public:
   {
     auto length = a.length();
     if (!length) return;
-    if (length < BuiltinSize) {
+    if (length <= BuiltinSize) {
       move___(a.data(), length);
+      own__(builtinData_(), length, BuiltinSize, false);
       a.null();
     } else {
       if (!a.owned())

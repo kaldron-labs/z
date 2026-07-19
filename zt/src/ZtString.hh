@@ -52,7 +52,7 @@
 
 // built-in buffer size (before falling back to ZmVHeap)
 #ifndef ZtString_Builtin
-#define ZtString_Builtin	24	// sizeof(ZtString<>) == 32
+#define ZtString_Builtin	16	// sizeof(ZtString<>) == 32
 #endif
 
 // uses NTP (named template parameters):
@@ -130,7 +130,9 @@ public:
   using Char = Char_;
   using AltChar = ZuAlt<Char>;
   enum { IsWString = ZuIsSame<Char, wchar_t>{} };
-  enum { BuiltinSize = NTP::Builtin / sizeof(Char) };
+  enum { BuiltinSize_ = NTP::Builtin / sizeof(Char) };
+  enum { BuiltinSize =
+    BuiltinSize_ < sizeof(uintptr_t) ? sizeof(uintptr_t) : BuiltinSize_ };
   using HeapID = typename NTP::HeapID;
   enum { HeapMin = NTP::HeapMin };
   enum { HeapMax = NTP::HeapMax };

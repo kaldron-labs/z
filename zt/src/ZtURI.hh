@@ -445,9 +445,9 @@ public:
   decltype(auto) data(this auto &&);
 
   // built-in array size (can be exceeded by heap allocation)
-  static constexpr unsigned TargetSize = 128;
-  static constexpr unsigned ArraySize =
-    (TargetSize - sizeof(ZtArray<ZuPtr<AnyNode>>)) / sizeof(ZuPtr<AnyNode>);
+  static constexpr unsigned LNodeSize = 128;
+  static constexpr int ArraySize =
+    (LNodeSize - sizeof(ZtArray<ZuPtr<AnyNode>>)) / sizeof(ZuPtr<AnyNode>);
   ZuAssert(ArraySize > 0);
 
   ZuDerive(String, ZuSpan<char>);

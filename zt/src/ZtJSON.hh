@@ -234,11 +234,11 @@ public:
   ZuDerive(Field, (ZuTuple<ZuCSpan, ZuPtr<AnyNode>>));
 
   // built-in array sizes (can be exceeded by heap allocation)
-  static constexpr unsigned TargetSize = 512;
-  static constexpr unsigned ArraySize =
-    (TargetSize - sizeof(ZtArray<ZuPtr<AnyNode>>)) / sizeof(ZuPtr<AnyNode>);
-  static constexpr unsigned ObjectSize =
-    (TargetSize - sizeof(ZtArray<Field>)) / sizeof(Field);
+  static constexpr unsigned LNodeSize = 512;
+  static constexpr int ArraySize =
+    (LNodeSize - sizeof(ZtArray<ZuPtr<AnyNode>>)) / sizeof(ZuPtr<AnyNode>);
+  static constexpr int ObjectSize =
+    (LNodeSize - sizeof(ZtArray<Field>)) / sizeof(Field);
   ZuAssert(ArraySize > 0);
   ZuAssert(ObjectSize > 0);
 
