@@ -608,6 +608,27 @@ void testNonStringArrays()
     b.length(0);
     ZuCheck(b.data() == ptr && b.size() == 4 && !b.vallocd() && !b.length());
   }
+
+  {
+    using Builtin =
+      ZtBuiltin<ZtArray<char, ZtArrayHeapID<"ZtArrayTest.Move">>, 8>;
+    Builtin a;
+    a << "12345678";
+    Builtin b{ZuMv(a)};
+    ZuCheck(b == "12345678");
+
+    ZtArray<Builtin> array;
+    for (unsigned i = 0; i < 16; i++) {
+      Builtin value;
+      value << "12345678";
+      array.push(ZuMv(value));
+    }
+    ZuCheck(array.length() == 16);
+    bool valid = true;
+    for (unsigned i = 0; i < array.length(); i++)
+      valid &= array[i] == "12345678";
+    ZuCheck(valid);
+  }
 }
 
 int main(int argc, char **argv)

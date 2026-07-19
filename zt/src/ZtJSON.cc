@@ -618,4 +618,4 @@ bad:
   return {-1, nullptr};
 }
 
-}
+} // ZtJSON
