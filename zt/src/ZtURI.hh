@@ -422,143 +422,194 @@ ZtExtern int boq(ZuCSpan span);
 // - Example: "foo%20bar&" -> "foo bar\0\0\0" returning { 7, 10, '&' }
 ZtExtern ZuTuple<int, int, char> eos(ZuSpan<char> data);
 
-// a node in a scanned URI parse tree; nodes are one of 4 types:
-// - void - uninitialized
-// - String - single string value
-// - Array - array of nodes
-// - Object - tree of key/node pairs
 struct Node_HeapID : public ZuStringT<"ZtURI.Node"> { };
-template <typename Heap>
-struct Node_ : public Heap {
+
+// node in a scan tree
+class AnyNode {
+  AnyNode() = delete;
+  AnyNode(const AnyNode &) = delete;
+  AnyNode &operator =(const AnyNode &) = delete;
+  AnyNode(AnyNode &&) = delete;
+  AnyNode &operator =(AnyNode &&) = delete;
+
+public:
+  int		type;
+
+  AnyNode(int type_) : type(type_) { }
+  virtual ~AnyNode() = default;
+
+  template <typename Data>
+  bool has() const;
+
+  template <typename Data>
+  decltype(auto) data(this auto &&);
+
   // built-in array size (can be exceeded by heap allocation)
   static constexpr unsigned TargetSize = 128;
-  static constexpr unsigned ArraySize = TargetSize / sizeof(ZuPtr<Node_>);
+  static constexpr unsigned ArraySize =
+    (TargetSize - sizeof(ZtArray<ZuPtr<AnyNode>>)) / sizeof(ZuPtr<AnyNode>);
   ZuAssert(ArraySize > 0);
 
   ZuDerive(String, ZuSpan<char>);
   ZuDerive(Array, (ZtBuiltin<
-      ZtArray<ZuPtr<Node_>, ZtArrayHeapID_<Node_HeapID>>, ArraySize>));
+      ZtArray<ZuPtr<AnyNode>, ZtArrayHeapID_<Node_HeapID>>, ArraySize>));
   ZuDerive(Object,
-    (ZmRBTreeKV<ZuCSpan, ZuPtr<Node_>,
+    (ZmRBTreeKV<ZuCSpan, ZuPtr<AnyNode>,
       ZmRBTreeUnique<true,
 	ZmRBTreeHeapID_<Node_HeapID>>>));
 
-  ZuDerive(Data, (ZuUnion<void, String, Array, Object>));
+  using TL = ZuTypeList<String, Array, Object>;
 
-  Data		data;
+  template <typename T>
+  using Index = ZuTypeIndex<T, TL>;
+};
 
-  Node_() = default;
-  Node_(const Node_ &) = default;
-  Node_ &operator =(const Node_ &) = default;
-  Node_(Node_ &&) = default;
-  Node_ &operator =(Node_ &&) = default;
+template <typename Data, typename Heap>
+class Node_ : public Heap, public AnyNode {
+  Node_(const Node_ &) = delete;
+  Node_ &operator =(const Node_ &) = delete;
+  Node_(Node_ &&) = delete;
+  Node_ &operator =(Node_ &&) = delete;
+
+public:
+  using AnyNode::TL;
+
+  Node_() : AnyNode{ZuTypeIndex<Data, TL>{}()} { }
   template <typename ...Args,
     decltype(Data(ZuDeclVal<Args &&>()...), int()) = 0>
-  Node_(Args &&...args) : data(ZuFwd<Args>(args)...) { }
-  template <typename Arg>
-  Node_ &operator =(Arg &&arg) { data = ZuFwd<Arg>(arg); return *this; }
+  Node_(Args &&...args) :
+    AnyNode{ZuTypeIndex<Data, TL>{}()},
+    data(ZuFwd<Args>(args)...) { }
+  ~Node_() = default;
 
-  // add a string
-  Node_ *string(ZuSpan<char> val) {
-    // string is not repeated, i.e. is not (yet) an array
-    if (ZuLikely(data.template is<void>())) {
-      data = String{val};
-      return this;
-    }
-    // nodes cannot be both array of strings and a nested object
-    if (ZuUnlikely(data.template is<Object>())) return nullptr;
-    // if currently a string, this is a repeat - promote it to array
-    if (data.template is<String>()) {
-      String s = data.template p<String>();
-      data = Array(2);
-      data.template p<Array>().push(new Node_{s});
-    }
-    auto node = new Node_{String{val}};
-    data.template p<Array>().push(node);
-    return node;
-  }
-  // push an array element
-  Node_ *push() {
-    // node must be an array to have elements
-    if (ZuUnlikely(data.template is<Object>() || data.template is<String>()))
-      return nullptr;
-    if (ZuLikely(data.template is<void>())) data = Array{};
-    auto &array = data.template p<Array>();
-    // idempotently add node
-    Node_ *node = new Node_{};
-    array.push(node);
-    return node;
-  }
-  // add an array element at a specified index
-  Node_ *elem(unsigned index) {
-    // node must be an array to have elements
-    if (ZuUnlikely(data.template is<Object>() || data.template is<String>()))
-      return nullptr;
-    if (ZuLikely(data.template is<void>())) data = Array{};
-    auto &array = data.template p<Array>();
-    // idempotently add node
-    Node_ *node;
-    array.ensure(index + 1);
-    if (index >= array.length()) array.length(index + 1);
-    if (!(node = array[index])) {
-      node = new Node_{};
-      array[index] = node;
-    }
-    return node;
-  }
-  // add an object field
-  Node_ *field(ZuCSpan key) {
-    // node must be an object to have fields
-    if (ZuUnlikely(data.template is<Array>() || data.template is<String>()))
-      return nullptr;
-    if (ZuLikely(data.template is<void>())) data = Object{};
-    auto &object = data.template p<Object>();
-    // idempotently add node
-    Node_ *node;
-    if (auto node_ = object.find(key)) {
-      node = node_->val();
-    } else {
-      node = new Node_{};
-      object.add(key, node);
-    }
-    return node;
-  }
-  // coerce node to array (if possible)
-  template <typename Config>
-  bool asArray() {
-    if (ZuLikely(data.template is<Array>())) return true;
-    if (ZuUnlikely(data.template is<Object>())) return false;
-    if (ZuUnlikely(data.template is<void>())) { data = Array{}; return true; }
-    // mutate into Array - split string using Config::Delimiter
-    ZuSpan<char> span = data.template p<String>();
-    auto n = span.length();
-    data = Array{};
-    auto &array = data.template p<Array>();
-    // clip any brackets
-    if (n >= 2 && span[0] == '[' && span[n - 1] == ']') {
-      span = {&span[1], n -= 2};
-      span[n] = 0;
-    }
-    while (span) {
-      unsigned i;
-      for (i = 0; i < n; i++)
-	if (span[i] == Config::Delimiter) { span[i] = 0; break; }
-      array.push(new Node_{String{&span[0], i}});
-      span.offset(i + 1);
-      n = span.length();
-    }
+  Data	data;
+};
+
+template <typename Data>
+struct Node : public Node_<Data, ZmHeap_<Node_HeapID, Node_<Data, ZuVoid>>> {
+  using Base = Node_<Data, ZmHeap_<Node_HeapID, Node_<Data, ZuVoid>>>;
+  using Base::Base;
+  template <typename ...Args,
+    decltype(Base(ZuDeclVal<Args &&>()...), int()) = 0>
+  Node(Args &&...args) : Base(ZuFwd<Args>(args)...) { }
+};
+
+template <typename Data>
+inline bool AnyNode::has() const {
+  return type == ZuTypeIndex<Data, TL>{};
+}
+
+template <typename Data>
+inline decltype(auto) AnyNode::data(this auto &&self) {
+  using Self = decltype(self);
+  using NodeT = Node<Data>;
+  return ZuFwdLike<Self>(ZuFwdLike<Self, NodeT>(self).data);
+}
+
+template <typename Data, typename ...Args>
+inline auto newNode(Args &&...args) {
+  using T = Node<Data>;
+  return ZuPtr<T>{new T(ZuFwd<Args>(args)...)};
+}
+
+// add a string
+inline bool string(ZuPtr<AnyNode> &node, ZuSpan<char> val) {
+  if (ZuLikely(!node)) {
+    node = newNode<AnyNode::String>(val);
     return true;
   }
-};
-ZuDerive(Node_Heap, (ZmHeap_<Node_HeapID, Node_<ZuVoid>>));
-using Node = Node_<Node_Heap>;
-using NodeArray = typename Node::Array;
+  // nodes cannot be both an array of strings and a nested object
+  if (ZuUnlikely(node->has<AnyNode::Object>())) return false;
+  // if currently a string, this is a repeat - promote it to array
+  if (node->has<AnyNode::String>()) {
+    auto string = ZuMv(node);
+    node = newNode<AnyNode::Array>(2);
+    node->data<AnyNode::Array>().push(ZuMv(string));
+  }
+  node->data<AnyNode::Array>().push(newNode<AnyNode::String>(val));
+  return true;
+}
+
+// push an array element
+inline ZuPtr<AnyNode> *push(ZuPtr<AnyNode> &node) {
+  if (ZuUnlikely(node && (
+      node->has<AnyNode::Object>() ||
+      node->has<AnyNode::String>())))
+    return nullptr;
+  if (ZuLikely(!node)) node = newNode<AnyNode::Array>();
+  auto &array = node->data<AnyNode::Array>();
+  array.push(ZuPtr<AnyNode>{});
+  return &array[array.length() - 1];
+}
+
+// add an array element at a specified index
+inline ZuPtr<AnyNode> *elem(ZuPtr<AnyNode> &node, unsigned index) {
+  if (ZuUnlikely(node && (
+      node->has<AnyNode::Object>() ||
+      node->has<AnyNode::String>())))
+    return nullptr;
+  if (ZuLikely(!node)) node = newNode<AnyNode::Array>();
+  auto &array = node->data<AnyNode::Array>();
+  array.ensure(index + 1);
+  if (index >= array.length()) array.length(index + 1);
+  return &array[index];
+}
+
+// add an object field
+inline ZuPtr<AnyNode> *field(ZuPtr<AnyNode> &node, ZuCSpan key) {
+  if (ZuUnlikely(node && (
+      node->has<AnyNode::Array>() ||
+      node->has<AnyNode::String>())))
+    return nullptr;
+  if (ZuLikely(!node)) node = newNode<AnyNode::Object>();
+  auto &object = node->data<AnyNode::Object>();
+  if (auto node_ = object.find(key)) return &node_->val();
+  auto node_ = object.add(key, ZuPtr<AnyNode>{});
+  return &node_->val();
+}
+
+// coerce node to array, splitting strings using Config::Delimiter
+template <typename Config>
+bool asArray(ZuPtr<AnyNode> &node) {
+  if (ZuLikely(node && node->has<AnyNode::Array>())) return true;
+  if (ZuUnlikely(node && node->has<AnyNode::Object>())) return false;
+  if (ZuUnlikely(!node)) {
+    node = newNode<AnyNode::Array>();
+    return true;
+  }
+  auto string = ZuMv(node);
+  ZuSpan<char> span = string->data<AnyNode::String>();
+  auto n = span.length();
+  node = newNode<AnyNode::Array>();
+  auto &array = node->data<AnyNode::Array>();
+  if (n >= 2 && span[0] == '[' && span[n - 1] == ']') {
+    span = {&span[1], n -= 2};
+    span[n] = 0;
+  }
+  bool first = true;
+  while (span) {
+    unsigned i;
+    for (i = 0; i < n; ++i)
+      if (span[i] == Config::Delimiter) { span[i] = 0; break; }
+    if (first) {
+      first = false;
+      string->data<AnyNode::String>() = ZuSpan<char>{span.data(), i};
+      array.push(ZuMv(string));
+    } else
+      array.push(newNode<AnyNode::String>(span.data(), i));
+    span.offset(i + 1);
+    n = span.length();
+  }
+  return true;
+}
+
+using NodeArray = typename AnyNode::Array;
 using CNodeArray = const NodeArray;
-using NodeObject = typename Node::Object;
+using NodeObject = typename AnyNode::Object;
 using CNodeObject = const NodeObject;
 
 ZtExtern ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key);
-ZtExtern ZuTuple<int, ZuPtr<Node>> scan(ZuSpan<char> span);
+ZtExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
 
 // --- output functions
 
@@ -696,7 +747,11 @@ void saveValue(S &s, const T &v, ZuCSpan prefix);
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
-auto loadValue(const Node *);
+auto loadValue(AnyNode *);
+template <
+  typename Facet, template <typename> class Filter,
+  unsigned TypeCode, typename Props, typename T>
+auto loadValue(ZuPtr<AnyNode> &);
 
 // save/load handler for object-formatted types
 // - object-formatted in URI query strings means multiple individual fields
@@ -725,9 +780,9 @@ struct AsObject {
       });
     }
 
-    const Node	*node;
+    const AnyNode	*node;
 
-    Handler(const Node *node_) : node{node_} { }
+    Handler(const AnyNode *node_) : node{node_} { }
 
     template <template <typename> class Filter, typename Field>
     auto loadField() const;
@@ -867,37 +922,36 @@ struct AsArray {
       }
     }
 
-    const Node	*node;
+    AnyNode	*node;
 
-    Handler(const Node *node_) : node{node_} {
-      // attempt to coerce node into array
-      node->asArray<Config>();
-    }
+    Handler(AnyNode *node_) : node{node_} { }
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using LoadVec_ =
       LoadVec<Facet, ZtFieldFilter::Load, ElemCode, ElemProps, Elem>;
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      if (ZuUnlikely(!node->data.is<Node::Array>()))
+      if (ZuUnlikely(!node->has<AnyNode::Array>()))
 	return O(ZuFwd<Args>(args)...);
-      return O(ZuFwd<Args>(args)..., LoadVec_(node->data.p<Node::Array>()));
+      return O(
+	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
     template <typename ...Args>
     void new_(void *o, Args &&...args) const {
-      if (ZuUnlikely(!node->data.is<Node::Array>()))
+      if (ZuUnlikely(!node->has<AnyNode::Array>()))
 	new (o) O(ZuFwd<Args>(args)...);
       else
-	new (o) O(ZuFwd<Args>(args)..., LoadVec_(node->data.p<Node::Array>()));
+	new (o) O(
+	  ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
 
     void load(O &o) const {
-      if (ZuLikely(node->data.is<Node::Array>()))
-	o = LoadVec_(node->data.p<Node::Array>());
+      if (ZuLikely(node->has<AnyNode::Array>()))
+	o = LoadVec_(node->data<AnyNode::Array>());
     }
     void update(O &o) const {
-      if (ZuUnlikely(!node->data.is<Node::Array>())) return;
-      const auto &nodes = node->data.p<Node::Array>();
+      if (ZuUnlikely(!node->has<AnyNode::Array>())) return;
+      const auto &nodes = node->data<AnyNode::Array>();
       unsigned n = ZuTraits<O>::length(o);
       unsigned m = nodes.length();
       if (n > m) n = m;
@@ -930,13 +984,13 @@ struct AsString {
       Handler_::save(s, o);
     }
  
-    const Node	*node;
+    const AnyNode	*node;
 
-    Handler(const Node *node_) : node{node_} { }
+    Handler(const AnyNode *node_) : node{node_} { }
 
     ZuCSpan span() const {
-      if (!node->data.is<Node::String>()) return {};
-      return node->data.p<Node::String>();
+      if (!node->has<AnyNode::String>()) return {};
+      return node->data<AnyNode::String>();
     }
 
     ZuInline O ctor() const { return Handler_::load(span()); }
@@ -963,15 +1017,15 @@ struct AsJSON {
       Quote::quote(s, buf);
     }
 
-    const Node	*node;
+    const AnyNode	*node;
 
-    Handler(const Node *node_) : node{node_} { }
+    Handler(const AnyNode *node_) : node{node_} { }
 
     // resolve JSON handler
     ZuTuple<ZuPtr<const ZtJSON::AnyNode>, Handler_> handler_() const {
       ZuSpan<char> span;
-      if (node->data.is<Node::String>())
-	span = node->data.p<Node::String>();
+      if (node->has<AnyNode::String>())
+	span = node->data<AnyNode::String>();
       auto scan = ZtJSON::scan(span);
       if (scan.template p<0>() < 0)
 	scan = ZtJSON::scan({});
@@ -1458,7 +1512,7 @@ inline T loadValue_(ZuSpan<char> span)
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
-inline auto loadValue(Node *node)
+inline auto loadValue(AnyNode *node)
 {
   if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
     if constexpr (TypeCode == ZtFieldTC::UDT) {
@@ -1466,21 +1520,33 @@ inline auto loadValue(Node *node)
       return typename As<T>::template Handler<T, Facet>{node}.ctor();
     } else {
       ZuSpan<char> span;
-      if (ZuLikely(node->data.is<Node::String>()))
-	span = node->data.p<Node::String>();
+      if (ZuLikely(node->has<AnyNode::String>()))
+	span = node->data<AnyNode::String>();
       return loadValue_<Facet, Filter, TypeCode, Props, T>(span);
     }
   } else {
-    using Config = ZtURI::Config<Facet>;
-    node->asArray<Config>();
     enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
     using Elem = ZtFieldTC::Type<ElemCode>;
     using LoadVec_ = LoadVec<Facet, Filter, ElemCode, Props, Elem>;
-    if (!node->data.is<Node::Array>()) {
+    if (!node->has<AnyNode::Array>()) {
       static const NodeArray _;
       return LoadVec_(_);
     }
-    return LoadVec_(node->data.p<Node::Array>());
+    return LoadVec_(node->data<AnyNode::Array>());
+  }
+}
+
+template <
+  typename Facet, template <typename> class Filter,
+  unsigned TypeCode, typename Props, typename T>
+inline auto loadValue(ZuPtr<AnyNode> &node)
+{
+  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
+    return loadValue<Facet, Filter, TypeCode, Props, T>(node.ptr());
+  } else {
+    using Config = ZtURI::Config<Facet>;
+    asArray<Config>(node);
+    return loadValue<Facet, Filter, TypeCode, Props, T>(node.ptr());
   }
 }
 
@@ -1492,26 +1558,25 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
   using Props = typename Field::Props;
   using T = typename Field::T;
   using R = decltype(
-    loadValue<Facet, Filter, TypeCode, Props, T>(ZuDeclVal<Node *>()));
-  if (ZuLikely(node->data.is<Node::Object>())) {
-    const auto &object = node->data.template p<Node::Object>();
+    loadValue<Facet, Filter, TypeCode, Props, T>(ZuDeclVal<AnyNode *>()));
+  if (ZuLikely(node->has<AnyNode::Object>())) {
+    const auto &object = node->data<AnyNode::Object>();
     using PathIndex = ZuFieldProp::URI::GetPathIndex<Props>;
     if constexpr (PathIndex{}() >= 0) {
       auto fieldID = ZuCArray<4>() << '_' << ZuBox<uint8_t>(PathIndex{}());
       if (auto node_ = object.find(fieldID)) {
-	Node *child = node_->val();
+	auto &child = node_->val();
 	return loadValue<Facet, Filter, TypeCode, Props, T>(child);
       }
     } else {
       ZuCSpan fieldID = ZuFieldProp::URI::GetID<Field>{}().cspan();
       if (auto node_ = object.find(fieldID)) {
-	Node *child = node_->val();
+	auto &child = node_->val();
 	return loadValue<Facet, Filter, TypeCode, Props, T>(child);
       }
     }
   }
   if constexpr (ZtFieldTC::IsVec<TypeCode>{}) {
-    // ZuMArray needs an underlying reference
     static const NodeArray _;
     return R(_);
   } else
@@ -1630,7 +1695,7 @@ ZuInline S &saveBodyDel(S &s, const O &o) {
 }
 
 template <typename O, typename Facet = ZuFacet::URI>
-auto handler(const Node *node) {
+auto handler(const AnyNode *node) {
   return typename As<O>::template Handler<O, Facet>{node};
 }
 

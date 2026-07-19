@@ -109,9 +109,9 @@ ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key)
 
 // scan() scans endpoint parameters and query strings from a URI
 
-ZuTuple<int, ZuPtr<Node>> scan(ZuSpan<char> span)
+ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span)
 {
-  ZuPtr<Node> root = new Node{Node::Object{}};
+  ZuPtr<AnyNode> root = newNode<AnyNode::Object>();
 
   if (ZuUnlikely(!span)) return {0, ZuMv(root)};
 
@@ -132,7 +132,8 @@ ZuTuple<int, ZuPtr<Node>> scan(ZuSpan<char> span)
 	if (ZuUnlikely((o = s.p<0>()) < 0)) goto bad;
 	if (o) {
 	  ZuSpan<char> val(&span[0], unsigned(o));
-	  root->field(ZuCArray<4>() << '_' << index)->string(val);
+	  auto node = field(root, ZuCArray<4>() << '_' << index);
+	  if (!node || !string(*node, val)) goto bad;
 	}
 	span.offset(s.p<1>());
 	if ((c = s.p<2>()) != '/') break;
@@ -159,7 +160,7 @@ ZuTuple<int, ZuPtr<Node>> scan(ZuSpan<char> span)
       span.offset(s.p<1>());
 
       // scan within the key, descend to the leaf node, set the value
-      Node *node = root;
+      ZuPtr<AnyNode> *slot = &root;
       while (key) {
 	auto sk = scanKey(key); // {offset, span}
 	auto offset = sk.p<0>();
@@ -169,12 +170,12 @@ ZuTuple<int, ZuPtr<Node>> scan(ZuSpan<char> span)
 	if (!keyPart) break;
 	auto c = keyPart[0];
 	if (c >= '0' && c <= '9')
-	  node = node->elem(ZuBox<unsigned>(keyPart));
+	  slot = elem(*slot, ZuBox<unsigned>(keyPart));
 	else
-	  node = node->field(keyPart);
-	if (!node) goto bad;
+	  slot = field(*slot, keyPart);
+	if (!slot) goto bad;
       }
-      node->string(val);
+      if (!string(*slot, val)) goto bad;
     }
     // adjust end if there is trailing data in span
     if (span) end = span.begin();
