@@ -241,6 +241,52 @@ void percentPolicies()
   }
 }
 
+void arrayCoercion()
+{
+  ZuTestScope(arrayCoercion);
+
+  char data[] = "[a,b]";
+  ZuPtr<ZtURI::AnyNode> node = ZtURI::newNode<ZtURI::AnyNode::String>(
+    ZuSpan<char>{data, sizeof(data) - 1});
+  using Vec = ZtURI::LoadVec<
+    ZuFacet::Bah, ZtFieldFilter::Load, ZtFieldTC::CString,
+    ZuTypeList<>, ZuCSpan>;
+  ZtURI::asArray<ZtURI::Config<ZuFacet::Bah>>(node);
+  const auto &array = node->data<ZtURI::AnyNode::Array>();
+  Vec a{array};
+  Vec b{array};
+
+  ZuCheck(node->has<ZtURI::AnyNode::Array>());
+  ZuCheck(data[2] == 0 && data[4] == 0);
+  ZuCheck(a.length() == 2);
+  ZuCheck(a.get(0) == "a");
+  ZuCheck(a.get(1) == "b");
+  ZuCheck(b.length() == 2);
+  ZuCheck(b.get(0) == "a");
+  ZuCheck(b.get(1) == "b");
+}
+
+void delimitedLoad()
+{
+  ZuTestScope(delimitedLoad);
+
+  char uri[] = "?bytesVec[]=[eHh4,eXl5eQ,enp6eno]";
+  auto scan = ZtURI::scan(uri);
+  ZuCheck(scan.p<0>() > 0);
+  auto &root = scan.p<1>();
+  ZuCheck(root && root->has<ZtURI::AnyNode::Object>());
+  if (!root || !root->has<ZtURI::AnyNode::Object>()) return;
+  auto field = root->data<ZtURI::AnyNode::Object>().find("bytesVec");
+  ZuCheck(field && field->val()->has<ZtURI::AnyNode::String>());
+
+  Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(root).ctor();
+  ZuCheck(field->val()->has<ZtURI::AnyNode::Array>());
+  ZuCheck(foo.bytesVec.length() == 3);
+  ZuCheck(foo.bytesVec[0] == ZuBSpan{"xxx"});
+  ZuCheck(foo.bytesVec[1] == ZuBSpan{"yyyy"});
+  ZuCheck(foo.bytesVec[2] == ZuBSpan{"zzzzz"});
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -249,5 +295,7 @@ int main(int argc, char **argv)
   ZuTestCall(malformedURINegatives);
   ZuTestCall(reservedCharRoundTrip);
   ZuTestCall(percentPolicies);
+  ZuTestCall(arrayCoercion);
+  ZuTestCall(delimitedLoad);
   return 0;
 }

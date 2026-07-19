@@ -235,8 +235,10 @@ public:
 
   // built-in array sizes (can be exceeded by heap allocation)
   static constexpr unsigned TargetSize = 512;
-  static constexpr unsigned ArraySize = TargetSize / sizeof(ZuPtr<AnyNode>);
-  static constexpr unsigned ObjectSize = TargetSize / sizeof(Field);
+  static constexpr unsigned ArraySize =
+    (TargetSize - sizeof(ZtArray<ZuPtr<AnyNode>>)) / sizeof(ZuPtr<AnyNode>);
+  static constexpr unsigned ObjectSize =
+    (TargetSize - sizeof(ZtArray<Field>)) / sizeof(Field);
   ZuAssert(ArraySize > 0);
   ZuAssert(ObjectSize > 0);
 

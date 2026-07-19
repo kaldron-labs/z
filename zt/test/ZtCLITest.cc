@@ -104,6 +104,16 @@ ZtStruct((LongOnly, CLI),
   (((port),    (CLI::Long<"port">)),    (UInt32)),
   (((verbose), (CLI::Long<"verbose">)), (Bool)));
 
+struct DelimitedArgs {
+  ZtArray<ZuCSpan> values;
+
+  template <typename V>
+  DelimitedArgs(V &&v) : values{ZuFwd<V>(v)} { }
+};
+
+ZtStruct((DelimitedArgs, Bah),
+  (((values), (Ctor<0>, CLI::Long<"values">)), (StringVec)));
+
 void roundTrip()
 {
   ZuTestScope(roundTrip);
@@ -226,6 +236,24 @@ void longOnlyOptions()
   ZuCheck(options.verbose);
 }
 
+void delimitedLoad()
+{
+  ZuTestScope(delimitedLoad);
+
+  char cli[] = "x --values=a,b";
+  ZtCLI::InCLI in(cli);
+  ZtCLI::Parser<DelimitedArgs, ZuFacet::Bah> parser;
+  ZuCheck(parser.scanArgv(in.argv));
+  auto field = parser.root->data<ZtURI::AnyNode::Object>().find("values");
+  ZuCheck(field && field->val()->has<ZtURI::AnyNode::String>());
+
+  auto args = ZtCLI::handler<DelimitedArgs, ZuFacet::Bah>(parser.root).ctor();
+  ZuCheck(field->val()->has<ZtURI::AnyNode::Array>());
+  ZuCheck(args.values.length() == 2);
+  ZuCheck(args.values[0] == "a");
+  ZuCheck(args.values[1] == "b");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -235,5 +263,6 @@ int main(int argc, char **argv)
   ZuTestCall(parseCLI);
   ZuTestCall(parseCLIEscapedAndEmpty);
   ZuTestCall(longOnlyOptions);
+  ZuTestCall(delimitedLoad);
   return 0;
 }

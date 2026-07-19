@@ -527,9 +527,9 @@ struct AsObject {
       });
     }
 
-    const Node	*node;
+    const AnyNode	*node;
 
-    Handler(const Node *node_) : node{node_} { }
+    Handler(const AnyNode *node_) : node{node_} { }
 
     template <template <typename> class Filter, typename Field>
     auto loadField() const;
@@ -622,37 +622,36 @@ struct AsArray {
       }
     }
 
-    const Node	*node;
+    AnyNode	*node;
 
-    Handler(const Node *node_) : node{node_} {
-      // attempt to coerce node into array
-      node->asArray<Config>();
-    }
+    Handler(AnyNode *node_) : node{node_} { }
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using LoadVec_ =
       LoadVec<Facet, ZtFieldFilter::Load, ElemCode, ElemProps, Elem>;
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      if (ZuUnlikely(!node->data.is<Node::Array>()))
+      if (ZuUnlikely(!node->has<AnyNode::Array>()))
 	return O(ZuFwd<Args>(args)...);
-      return O(ZuFwd<Args>(args)..., LoadVec_(node->data.p<Node::Array>()));
+      return O(
+	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
     template <typename ...Args>
     void new_(void *o, Args &&...args) const {
-      if (ZuUnlikely(!node->data.is<Node::Array>()))
+      if (ZuUnlikely(!node->has<AnyNode::Array>()))
 	new (o) O(ZuFwd<Args>(args)...);
       else
-	new (o) O(ZuFwd<Args>(args)..., LoadVec_(node->data.p<Node::Array>()));
+	new (o) O(
+	  ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
 
     void load(O &o) const {
-      if (ZuLikely(node->data.is<Node::Array>()))
-	o = LoadVec_(node->data.p<Node::Array>());
+      if (ZuLikely(node->has<AnyNode::Array>()))
+	o = LoadVec_(node->data<AnyNode::Array>());
     }
     void update(O &o) const {
-      if (ZuUnlikely(!node->data.is<Node::Array>())) return;
-      const auto &nodes = node->data.p<Node::Array>();
+      if (ZuUnlikely(!node->has<AnyNode::Array>())) return;
+      const auto &nodes = node->data<AnyNode::Array>();
       unsigned n = ZuTraits<O>::length(o);
       unsigned m = nodes.length();
       if (n > m) n = m;
@@ -688,13 +687,13 @@ struct AsString {
       Handler_::save(s, o);
     }
  
-    const Node	*node;
+    const AnyNode	*node;
 
-    Handler(const Node *node_) : node{node_} { }
+    Handler(const AnyNode *node_) : node{node_} { }
 
     ZuCSpan span() const {
-      if (!node->data.is<Node::String>()) return {};
-      return node->data.p<Node::String>();
+      if (!node->has<AnyNode::String>()) return {};
+      return node->data<AnyNode::String>();
     }
 
     O ctor() const { return Handler_::load(span()); }
@@ -814,28 +813,27 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
   using Props = typename Field::Props;
   using T = typename Field::T;
   using R = decltype(
-    loadValue<Facet, Filter, TypeCode, Props, T>(ZuDeclVal<Node *>()));
-  if (ZuLikely(node->data.is<Node::Object>())) {
-    const auto &object = node->data.template p<Node::Object>();
+    loadValue<Facet, Filter, TypeCode, Props, T>(ZuDeclVal<AnyNode *>()));
+  if (ZuLikely(node->has<AnyNode::Object>())) {
+    const auto &object = node->data<AnyNode::Object>();
     ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
     if (auto node_ = object.find(longOpt)) {
-      Node *child = node_->val();
+      auto &child = node_->val();
       constexpr int8_t Flag = ZuFieldProp::CLI::GetFlag<Props>{};
       if constexpr (Flag >= 0)
 	return R(true);
       else if constexpr (TypeCode == ZtFieldTC::Bool) {
-	if (child->data.template is<Node::String>())
-	  return R(ZtScanBool(child->data.template p<Node::String>()));
+	if (child->has<AnyNode::String>())
+	  return R(ZtScanBool(child->data<AnyNode::String>()));
 	return R(true);
       }
       else if constexpr (TypeCode == ZtFieldTC::UDT)
-	return typename As<T>::template Handler<T, Facet>{child}.ctor();
+	return typename As<T>::template Handler<T, Facet>{child.ptr()}.ctor();
       else
 	return loadValue<Facet, Filter, TypeCode, Props, T>(child);
     }
   }
   if constexpr (ZtFieldTC::IsVec<TypeCode>{}) {
-    // ZuMArray needs an underlying reference
     static const NodeArray _;
     return R(_);
   } else
@@ -930,7 +928,7 @@ ZuInline OutArgv &saveArgvDel(OutArgv &out, const O &v) {
 }
 
 template <typename O, typename Facet = ZuFacet::CLI>
-auto handler(const Node *root) {
+auto handler(const AnyNode *root) {
   return typename As<O>::template Handler<O, Facet>{root};
 }
 
@@ -1011,7 +1009,7 @@ using Options = ZmLHashKV<char, Option,
     ZmLHashLocal<>>>;
 template <typename O, typename Facet = ZuFacet::CLI>
 struct Parser {
-  ZuPtr<Node> root;		// root node
+  ZuPtr<AnyNode> root;		// root node
   unsigned argc = 0;		// number of positional arguments
 
 private:
@@ -1057,14 +1055,14 @@ private:
   }
 
 public:
-  Parser() : root{new Node{Node::Object{}}} {
+  Parser() : root{newNode<AnyNode::Object>()} {
     initOptions<O, Facet>(options);
   }
 
 private:
   bool addNode(ZuCSpan key_, ZuSpan<char> val) {
     // scan within the key, descend to the leaf node, set the value
-    Node *node = root;
+    ZuPtr<AnyNode> *slot = &root;
     while (key_) {
       auto sk = scanKey(key_); // {offset, span}
       auto offset = sk.p<0>();
@@ -1072,51 +1070,50 @@ private:
       key_.offset(offset);
       const auto &keyPart = sk.p<1>();
       if (!keyPart)
-	node = node->push();
+	slot = push(*slot);
       else {
 	auto c = keyPart[0];
 	if (c >= '0' && c <= '9')
-	  node = node->elem(ZuBox<unsigned>(keyPart));
+	  slot = elem(*slot, ZuBox<unsigned>(keyPart));
 	else
-	  node = node->field(keyPart);
+	  slot = field(*slot, keyPart);
       }
-      if (!node) return false;
+      if (!slot) return false;
     }
-    node->string(val);
-    return true;
+    return string(*slot, val);
   }
 
 public:
   bool hasKey(ZuCSpan key_) {
     // scan within the key, descend to the leaf node
-    Node *node = root;
+    AnyNode *node = root;
     while (key_) {
       auto sk = scanKey(key_); // {offset, span}
       auto offset = sk.p<0>();
       if (offset < 0) return false;
       key_.offset(offset);
       const auto &keyPart = sk.p<1>();
-      if (node->data.is<Node::Array>()) {
+      if (node->has<AnyNode::Array>()) {
 	if (!keyPart) return false;
 	auto c = keyPart[0];
 	if (c < '0' || c > '9') return false;
-	const auto &array = node->data.p<Node::Array>();
+	const auto &array = node->data<AnyNode::Array>();
 	node = array[ZuBox<unsigned>(keyPart)];
-      } else if (node->data.is<Node::Object>()) {
-	const auto &object = node->data.p<Node::Object>();
+      } else if (node->has<AnyNode::Object>()) {
+	const auto &object = node->data<AnyNode::Object>();
 	// can't use findVal() here due to ZuPtr being move-only
 	auto node_ = object.find(keyPart);
-	node = node_ ? node_->val().ptr() : static_cast<Node *>(nullptr);
+	node = node_ ? node_->val().ptr() : nullptr;
       } else
 	return false;
       if (!node) return false;
     }
-    return node->data.is<Node::String>();
+    return node->has<AnyNode::String>();
   }
 
   // reset parser state
   void reset() {
-    root = new Node{Node::Object{}};
+    root = newNode<AnyNode::Object>();
     key = {};
     argc = 0;
     opt = false;
