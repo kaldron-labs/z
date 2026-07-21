@@ -32,10 +32,10 @@ ZuExtern zu_time *zu_time_init(zu_time *v);
 /* check if null */
 ZuExtern bool zu_time_null(const zu_time *v);
 
-/* parse string, returns #bytes scanned, 0 on invalid input */
-ZuExtern unsigned zu_time_in_csv(zu_time *v, const char *s);
-ZuExtern unsigned zu_time_in_iso(zu_time *v, const char *s);
-ZuExtern unsigned zu_time_in_fix(zu_time *v, const char *s);
+/* parse string, returns #bytes scanned, -1 on invalid input */
+ZuExtern int zu_time_in_csv(zu_time *v, const char *s);
+ZuExtern int zu_time_in_iso(zu_time *v, const char *s);
+ZuExtern int zu_time_in_fix(zu_time *v, const char *s);
 /* returns output length including null terminator */
 ZuExtern unsigned zu_time_out_csv_len(const zu_time *v);
 ZuExtern unsigned zu_time_out_iso_len(const zu_time *v);

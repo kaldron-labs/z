@@ -30,8 +30,8 @@ typedef struct {
 } zu_decimal;
 #pragma pack(pop)
 
-/* parse string, returns #bytes scanned, 0 on invalid input */
-ZuExtern unsigned zu_decimal_in(zu_decimal *v, const char *s);
+/* parse string, returns #bytes scanned, -1 on invalid input */
+ZuExtern int zu_decimal_in(zu_decimal *v, const char *s);
 /* returns output length including null terminator */
 ZuExtern unsigned zu_decimal_out_len(const zu_decimal *v);
 /* output to string, returns end pointer to null terminator */
