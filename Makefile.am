@@ -4,9 +4,9 @@ EXTRA_DIST = scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
 SUBDIRS = zu zm zt ze zi zrl
 SUBDIRS += ztcp ztls zquic zhttp
-# SUBDIRS += zfb
-# SUBDIRS += zv
-# SUBDIRS += zdb
+SUBDIRS += zfb
+SUBDIRS += zv
+SUBDIRS += zdb
 if LIBPQ
 # SUBDIRS += zdb_pq
 endif

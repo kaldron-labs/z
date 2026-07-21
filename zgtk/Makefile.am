@@ -1,2 +1,2 @@
 METASOURCES = AUTO
-SUBDIRS = src #  = src test
+SUBDIRS = src test
