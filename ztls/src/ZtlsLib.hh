@@ -42,17 +42,14 @@ ZtlsExtern void init(); // can be called repeatedly
 
 struct StrError { char buf[200]; };
 
-ZuInline static constexpr bool isspace__(char c) {
-  return ((c >= '\t' && c <= '\r') || c == ' ');
-}
-
 inline ZuCSpan strerror_(int e) {
   char *buf = ZmTLS<StrError>().buf;
   constexpr unsigned N = sizeof(StrError{}.buf);
   unsigned n = Backend::format_error(e, buf, N);
   for (unsigned i = 0; i < N; i++) if (!buf[i]) { n = i; break; }
-  while (n) if (!isspace__(buf[--n])) { ++n; break; }
-  return {&buf[0], n};
+  ZuCSpan s{&buf[0], n};
+  s.chomp();
+  return s;
 }
 
 }

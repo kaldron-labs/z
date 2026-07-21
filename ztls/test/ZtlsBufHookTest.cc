@@ -680,9 +680,7 @@ void run_tls12_handshake_rejected(
   ZtArray<uint8_t> err;
   bool readErr = read_bytes(errPath.data(), err);
   bool protocolVersion =
-    readErr && LogCapture::contains(
-      ZuCSpan{reinterpret_cast<const char *>(err.data()), err.length()},
-      "protocol version");
+    readErr && LogCapture::contains(err, "protocol version");
   ZTLS_CHECK_RT(!cmdOK, "TLS 1.2 handshake unexpectedly succeeded");
   ZTLS_CHECK_RT(capture.errors.load_(),
     "TLS 1.2 rejection did not log an error");

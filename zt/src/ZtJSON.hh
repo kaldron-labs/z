@@ -1111,6 +1111,7 @@ inline T loadValue_(AnyNode *node)
       case ValueTC::Number: {
 	auto d = eov_Decimal(node->data<AnyNode::Number>());
 	if (d.p<0>() < 0) return ZuCmp<T>::null();
+	// FIXME - validate min/max
 	return T(d.p<1>().floor());
       }
       default:
@@ -1200,7 +1201,7 @@ inline T loadValue_(AnyNode *node)
     } else if constexpr (Fmt::Fmt == ZtJSON::CSV) {
       auto &fmt = ZmTLS<ZuDateTimeScan::CSV, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else
@@ -1208,7 +1209,7 @@ inline T loadValue_(AnyNode *node)
     } else if constexpr (Fmt::Fmt == ZtJSON::FIX) {
       auto &fmt = ZmTLS<ZuDateTimeScan::FIX, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else
@@ -1216,7 +1217,7 @@ inline T loadValue_(AnyNode *node)
     } else if constexpr (Fmt::Fmt == ZtJSON::ISO) {
       auto &fmt = ZmTLS<ZuDateTimeScan::ISO, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else

@@ -21,11 +21,6 @@
 
 using namespace ZuTestUtil;
 
-static ZuBSpan asBytes(const ZtString<> &s)
-{
-  return ZuBSpan(reinterpret_cast<const uint8_t *>(s.data()), s.length());
-}
-
 void testHeaderSplitAndUnquote()
 {
   ZuTestScope(testHeaderSplitAndUnquote);
@@ -107,7 +102,7 @@ void testQuoteAndCodecWrappers()
   ZtArray<uint8_t> d64;
   d64.length(ZuBase64::declen(b64.length()));
   unsigned l64 = ZuBase64::decode(
-    ZuSpan<uint8_t>(d64.data(), d64.length()), asBytes(b64));
+    ZuSpan<uint8_t>(d64.data(), d64.length()), b64.cspan());
   ZuCheck(l64 == sizeof(raw));
   ZuCheck(!std::memcmp(d64.data(), raw, sizeof(raw)));
 
@@ -116,7 +111,7 @@ void testQuoteAndCodecWrappers()
   ZtArray<uint8_t> d32;
   d32.length(ZuBase32::declen(b32.length()));
   unsigned l32 = ZuBase32::decode(
-    ZuSpan<uint8_t>(d32.data(), d32.length()), asBytes(b32));
+    ZuSpan<uint8_t>(d32.data(), d32.length()), b32.cspan());
   ZuCheck(l32 == sizeof(raw));
   ZuCheck(!std::memcmp(d32.data(), raw, sizeof(raw)));
 
@@ -125,7 +120,7 @@ void testQuoteAndCodecWrappers()
   ZtArray<uint8_t> dhex;
   dhex.length(ZuHex::declen(hex.length()));
   unsigned lhex = ZuHex::decode(
-    ZuSpan<uint8_t>(dhex.data(), dhex.length()), asBytes(hex));
+    ZuSpan<uint8_t>(dhex.data(), dhex.length()), hex.cspan());
   ZuCheck(lhex == sizeof(raw));
   ZuCheck(!std::memcmp(dhex.data(), raw, sizeof(raw)));
 }

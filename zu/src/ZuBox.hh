@@ -24,6 +24,7 @@
 #include <zlib/ZuInt.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuTuple.hh>
 
 #include <zlib/ZuFP.hh>
 #include <zlib/ZuFmt.hh>
@@ -407,36 +408,18 @@ public:
     m_val(!*b ? static_cast<T>(Cmp::null()) : static_cast<T>(b.m_val)) { }
 
   template <typename S, decltype(ZuMatchCharString<S>(), int()) = 0>
-  ZuBox(S &&s_) noexcept : m_val(Cmp::null()) {
-    ZuCSpan s(s_);
-    typename Scan<>::T val = 0;
-    if (ZuLikely(s && Scan<>::scan(val, s.data(), s.length())))
-      m_val = val;
-  }
+  ZuBox(S &&s_) noexcept { scan(ZuFwd<S>(s_)); }
   template <
     typename Fmt, typename S,
     decltype(ZuMatchCharString<S>(), int()) = 0>
-  ZuBox(Fmt, S &&s_) noexcept : m_val(Cmp::null()) {
-    ZuCSpan s(s_);
-    typename Scan<Fmt>::T val = 0;
-    if (ZuLikely(s && Scan<Fmt>::scan(val, s.data(), s.length())))
-      m_val = val;
-  }
+  ZuBox(Fmt, S &&s_) noexcept { scan<Fmt>(ZuFwd<S>(s_)); }
 
   template <typename S, decltype(ZuBox_MatchCharPtr<S>(), int()) = 0>
-  ZuBox(S s, unsigned len) noexcept : m_val(Cmp::null()) {
-    typename Scan<>::T val = 0;
-    if (ZuLikely(s && Scan<>::scan(val, s, len)))
-      m_val = val;
-  }
+  ZuBox(S s, unsigned len) noexcept { scan(s, len); }
   template <
     typename Fmt, typename S,
     decltype(ZuBox_MatchCharPtr<S>(), int()) = 0>
-  ZuBox(Fmt, S s, unsigned len) noexcept : m_val(Cmp::null()) {
-    typename Scan<Fmt>::T val = 0;
-    if (ZuLikely(s && Scan<Fmt>::scan(val, s, len)))
-      m_val = val;
-  }
+  ZuBox(Fmt, S s, unsigned len) noexcept { scan<Fmt>(s, len); }
 
   T val() const { return m_val; }
 
@@ -451,12 +434,7 @@ private:
 
   template <typename S>
   ZuMatchCharString<S> assign(S &&s_) {
-    ZuCSpan s(s_);
-    typename Scan<>::T val = 0;
-    if (ZuUnlikely(!s || !Scan<>::scan(val, s.data(), s.length())))
-      m_val = Cmp::null();
-    else
-      m_val = val;
+    scan(ZuFwd<S>(s_));
   }
 
 public:
@@ -533,27 +511,36 @@ public:
   }
 
   template <typename Fmt = ZuFmt::Default, typename S>
-  ZuMatchCharString<S, unsigned> scan(S &&s_) {
-    ZuCSpan s(s_);
-    typename Scan<>::T val = 0;
-    unsigned n = Scan<Fmt>::scan(val, s.data(), s.length());
-    if (ZuUnlikely(!n)) {
-      m_val = Cmp::null();
-      return 0;
-    }
-    m_val = val;
-    return n;
+  ZuMatchCharString<S, int> scan(S &&s_) {
+    auto r = eov<Fmt>(ZuFwd<S>(s_));
+    *this = r.template p<1>();
+    return r.template p<0>();
   }
   template <typename Fmt = ZuFmt::Default, typename S>
-  ZuBox_MatchCharPtr<S, unsigned> scan(S s, unsigned len) {
+  static ZuMatchCharString<S, ZuTuple<int, ZuBox>> eov(S &&s_) {
+    ZuCSpan s(s_);
+    typename Scan<Fmt>::T val = 0;
+    unsigned n = Scan<Fmt>::scan(val, s.data(), s.length());
+    if (ZuUnlikely(!n)) return {-1, ZuBox{}};
+    ZuBox v;
+    v.m_val = val;
+    return {int(n), v};
+  }
+  template <typename Fmt = ZuFmt::Default, typename S>
+  ZuBox_MatchCharPtr<S, int> scan(S s, unsigned len) {
+    auto r = eov<Fmt>(s, len);
+    *this = r.template p<1>();
+    return r.template p<0>();
+  }
+  template <typename Fmt = ZuFmt::Default, typename S>
+  static ZuBox_MatchCharPtr<S, ZuTuple<int, ZuBox>>
+  eov(S s, unsigned len) {
     typename Scan<Fmt>::T val = 0;
     unsigned n = Scan<Fmt>::scan(val, s, len);
-    if (ZuUnlikely(!n)) {
-      m_val = Cmp::null();
-      return 0;
-    }
-    m_val = val;
-    return n;
+    if (ZuUnlikely(!n)) return {-1, ZuBox{}};
+    ZuBox v;
+    v.m_val = val;
+    return {int(n), v};
   }
 
   unsigned length() const { return Print<>::length(m_val); }

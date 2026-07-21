@@ -38,25 +38,19 @@ struct Delimited {
   }
 };
 
-ZuInline bool isspace__(char c) {
+ZuInline constexpr bool isspace__(char c) {
   return ((c >= '\t' && c <= '\r') || c == ' ');
 }
 
 // - white-space delimited
 namespace WhiteSpace {
-  inline void skip(ZuCSpan &span) {
-    unsigned o, n = span.length();
-    for (o = 0; o < n; ++o)
-      if (!isspace__(span[o])) break;
-    if (o) span.offset(o);
-  }
   // returns {} once input is exhausted
   inline ZuCSpan next(ZuCSpan &span) {
     for (unsigned o = 0, n = span.length(); o < n; ++o)
       if (isspace__(span[o])) {
 	ZuCSpan token(&span[0], o);
 	span.offset(o + 1);
-	skip(span);
+	span.trim();
 	return token;
       }
     ZuCSpan token = span;

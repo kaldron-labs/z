@@ -157,26 +157,48 @@
       } \
     }; \
     struct Scan { \
-      T		v; \
+      using B = ZuBox<T>; \
+      B v = 0; \
       operator T() const { return v; } \
-      ZuInline static constexpr bool isspace__(char c) { \
-	return ((c >= '\t' && c <= '\r') || c == ' '); \
+      Scan() = default; \
+      Scan(ZuCSpan s, ZuCSpan delim = "|") { scan(s, delim); } \
+      int scan(ZuCSpan s, ZuCSpan delim = "|") { \
+	auto r = eov(s, delim); \
+	v = r.template p<1>(); \
+	return r.template p<0>(); \
       } \
-      Scan(ZuCSpan s, ZuCSpan delim = "|") { \
+      static ZuTuple<int, B> eov( \
+          ZuCSpan s, ZuCSpan delim = "|") { \
+	auto begin = s.data(); \
+	auto length = s.length(); \
 	auto n = delim.length(); \
-	v = 0; \
-	while (s && isspace__(s[0])) s.offset(1); \
+	B out = 0; \
+	s.trim(); \
+	if (!s) return {int(length), out}; \
+	bool matched = false; \
 	while (s) { \
 	  auto i = s2v(s); \
-	  if (i < 0) break; \
-	  v |= (T(1)<<i); \
+	  if (i >= N) { \
+	    if (!matched) return {-1, B{}}; \
+	    break; \
+	  } \
+	  matched = true; \
+	  out |= (T(1)<<i); \
 	  s.offset(v2s(i).length()); \
-	  while (s && isspace__(s[0])) s.offset(1); \
+	  if (!s) return {int(length), out}; \
+	  s.trim(); \
+	  if (!s) return {int(length), out}; \
+	  auto consumed = int(s.data() - begin); \
+	  if (!n) return {consumed, out}; \
 	  if (s.length() < n) break; \
 	  if (ZuCSpan(&s[0], n) != delim) break; \
-	  s.offset(n); \
-	  while (s && isspace__(s[0])) s.offset(1); \
+	  auto next = s; \
+	  next.offset(n); \
+	  next.trim(); \
+	  if (!next || s2v(next) >= N) return {consumed, out}; \
+	  s = next; \
 	} \
+	return {int(s.data() - begin), out}; \
       } \
     }; \
   }

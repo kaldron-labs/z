@@ -186,7 +186,7 @@ void testBoundaryAndInvalidInputs()
 
   auto &scan = ZmTLS<ZuDateTimeScan::ISO, testBoundaryAndInvalidInputs>();
   ZuDateTime invalid;
-  ZuCheck(!invalid.scan(scan, "not-a-time"));
+  ZuCheck(invalid.scan(scan, "not-a-time") < 0);
 }
 
 int main(int argc, char **argv)

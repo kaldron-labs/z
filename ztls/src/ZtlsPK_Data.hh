@@ -35,23 +35,6 @@ namespace OIDs {
   constexpr auto EC_ALG_UNRESTRICTED = "\x2a\x86\x48\xce\x3d\x02\x01"_Zu;
   constexpr auto ED25519 = "\x2b\x65\x70"_Zu;
   constexpr auto EC_GRP_SECP256R1 = "\x2a\x86\x48\xce\x3d\x03\x01\x07"_Zu;
-
-  inline ZuBSpan pkcs1_rsa() {
-    return {reinterpret_cast<const uint8_t *>(PKCS1_RSA.data()),
-      PKCS1_RSA.length()};
-  }
-  inline ZuBSpan ec_alg_unrestricted() {
-    return {reinterpret_cast<const uint8_t *>(EC_ALG_UNRESTRICTED.data()),
-      EC_ALG_UNRESTRICTED.length()};
-  }
-  inline ZuBSpan ed25519() {
-    return {reinterpret_cast<const uint8_t *>(ED25519.data()),
-      ED25519.length()};
-  }
-  inline ZuBSpan ec_grp_secp256r1() {
-    return {reinterpret_cast<const uint8_t *>(EC_GRP_SECP256R1.data()),
-      EC_GRP_SECP256R1.length()};
-  }
 } // OIDs
 
 namespace Data {

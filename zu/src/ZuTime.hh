@@ -27,6 +27,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuDecimal.hh>
+#include <zlib/ZuTuple.hh>
 
 #ifdef _WIN32
 #define ZuTime_FT_Epoch	0x019db1ded53e8000ULL	// 00:00:00 Jan 1 1970
@@ -330,7 +331,8 @@ public:
   }
 
   // CSV format scan/print
-  unsigned scan(ZuCSpan);
+  int scan(ZuCSpan);
+  static ZuTuple<int, ZuTime> eov(ZuCSpan);
 
   void ymdhmsn(
     int &year, int &month, int &day,

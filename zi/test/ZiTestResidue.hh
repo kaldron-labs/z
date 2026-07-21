@@ -15,6 +15,7 @@
 #endif
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuSpan.hh>
 
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmGuard.hh>
@@ -65,9 +66,9 @@ inline bool endsWith_(const Zi::Path &path, const char *suffix)
 
 inline void trimLine_(char *line)
 {
-  unsigned n = static_cast<unsigned>(::strlen(line));
-  while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
-    line[--n] = 0;
+  ZuSpan<char> span{line, ::strlen(line)};
+  span.chomp();
+  line[span.length()] = 0;
 }
 
 inline void cleanupShm_(const Zi::Name &base)

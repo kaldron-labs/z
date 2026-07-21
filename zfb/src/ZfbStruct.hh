@@ -363,7 +363,7 @@ struct String {
   template <typename = ZuCSpan>
   static ZuCSpan load(const Zfb::String *s) {
     if (!s) return {};
-    return {reinterpret_cast<const char *>(s->Data()), s->size()};
+    return ZuBSpan{s->Data(), s->size()};
   }
 };
 

@@ -136,7 +136,7 @@ bool readDNSName(
     if (l & 0xc0) return false;
     if (p + l > msgLen) return false;
     if (out.length()) out << '.';
-    out << ZuCSpan(reinterpret_cast<const char *>(msg + p), l);
+    out << ZuBSpan{msg + p, l};
     p += l;
     if (!jumped) next = p;
   }

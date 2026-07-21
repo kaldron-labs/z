@@ -106,9 +106,7 @@ namespace H1 {
     }
 
     static bool headerKey_(ZuBSpan key, ZuCSpan name) {
-      return key.length() == name.length() &&
-	!Zu::stricmp_(
-	  reinterpret_cast<const char *>(key.data()), name.data(), key.length());
+      return key == name;
     }
 
     void runtimeHeader_(ZuBSpan key, ZuBSpan value) {

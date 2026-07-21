@@ -430,6 +430,8 @@ end:
   return o ? o : -1;
 }
 
+// ZuDecimal is used for all JSON numbers due to JavaScript's bizarre
+// lack of primitive integer types
 ZuTuple<int, ZuDecimal> eov_Decimal(ZuCSpan span) {
   unsigned n = span.length();
 
@@ -452,9 +454,9 @@ ZuTuple<int, ZuDecimal> eov_Decimal(ZuCSpan span) {
 
   {
     // scan value
-    unsigned o = d.scan(span);
-    if (!o) goto bad;
-    if (o >= n) return {o, d};
+    int o = d.scan(span);
+    if (o < 0) goto bad;
+    if (unsigned(o) >= n) return {o, d};
 
     // check for optional exponent
     char c = span[o];
@@ -466,8 +468,8 @@ ZuTuple<int, ZuDecimal> eov_Decimal(ZuCSpan span) {
     span.offset(o);
     ZuBox<int> e;
     {
-      unsigned o_ = e.scan(span);
-      if (!o_) goto bad;
+      int o_ = e.scan(span);
+      if (o_ < 0) goto bad;
       o += o_;
     }
     if (ZuLikely(e)) {
@@ -535,9 +537,9 @@ ZuTuple<int, double> eov_Float(ZuCSpan span) {
 
   {
     // scan value
-    unsigned o = d.scan(span);
-    if (!o) goto bad;
-    if (o >= n) return {o, d};
+    int o = d.scan(span);
+    if (o < 0) goto bad;
+    if (unsigned(o) >= n) return {o, d};
 
     // check for optional exponent
     char c = span[o];
@@ -549,8 +551,8 @@ ZuTuple<int, double> eov_Float(ZuCSpan span) {
     span.offset(o);
     ZuBox<int> e;
     {
-      unsigned o_ = e.scan(span);
-      if (!o_) goto bad;
+      int o_ = e.scan(span);
+      if (o_ < 0) goto bad;
       o += o_;
     }
     if (ZuLikely(e)) {

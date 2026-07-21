@@ -143,7 +143,7 @@ static bool dnsName(
 	if (pos + c > len) return false;
 	if (name) {
 	  if (name->length()) *name << '.';
-	  name->append(reinterpret_cast<const char *>(msg + pos), c);
+	  *name << ZuBSpan{msg + pos, c};
 	}
 	pos += c;
 	break;

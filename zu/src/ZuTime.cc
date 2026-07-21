@@ -9,11 +9,16 @@
 #include <zlib/ZuTime.hh>
 #include <zlib/ZuDateTime.hh>
 
-unsigned ZuTime::scan(ZuCSpan s)
+int ZuTime::scan(ZuCSpan s)
 {
-  ZuDateTimeScan::CSV fmt;
-  ZuDateTime t;
-  auto n = t.scan(fmt, s);
-  *this = t.as_time();
-  return n;
+  auto r = eov(s);
+  *this = r.p<1>();
+  return r.p<0>();
+}
+
+ZuTuple<int, ZuTime> ZuTime::eov(ZuCSpan s)
+{
+  auto r = ZuDateTime::eov(ZuDateTimeScan::CSV{}, s);
+  if (r.p<0>() < 0) return {-1, ZuTime{}};
+  return {r.p<0>(), r.p<1>().as_time()};
 }

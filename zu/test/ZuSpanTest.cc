@@ -526,6 +526,51 @@ void testSpanFindMatch()
   }
 }
 
+void testSpanStrip()
+{
+  ZuTestScope(testSpanStrip);
+
+  {
+    char data[] = " \tabc \r\n";
+    ZuSpan<char> s{data, sizeof(data) - 1};
+    auto base = s.data();
+
+    s.chomp();
+    ZuCheck(s == " \tabc");
+    ZuCheck(s.data() == base);
+
+    s.trim();
+    ZuCheck(s == "abc");
+    ZuCheck(s.data() == base + 2);
+  }
+
+  {
+    const char data[] = " \t abc \r\n";
+    ZuCSpan s{data, sizeof(data) - 1};
+    s.strip();
+    ZuCheck(s == "abc");
+    ZuCheck(s.data() == data + 3);
+  }
+
+  {
+    const char data[] = " \t\r\n";
+    ZuCSpan s{data, sizeof(data) - 1};
+    s.strip();
+    ZuCheck(!s);
+    ZuCheck(!s.data());
+  }
+
+  {
+    int data[] = {0, 0, 1, 2, 0};
+    ZuSpan<int> s{data, 5};
+    s.strip([](int v) { return !v; });
+    ZuCheck(s.length() == 2);
+    ZuCheck(s.data() == data + 2);
+    ZuCheck(s[0] == 1);
+    ZuCheck(s[1] == 2);
+  }
+}
+
 int main()
 {
   ZuTestMain();
@@ -539,6 +584,7 @@ int main()
   ZuTestCall(testSpanSpliceRuntimePaths);
   ZuTestCall(testSpanSpliceVariantPaths);
   ZuTestCall(testSpanFindMatch);
+  ZuTestCall(testSpanStrip);
 
   {
     ZuBSpan foo("foo");

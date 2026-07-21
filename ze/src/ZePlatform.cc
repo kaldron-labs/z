@@ -178,7 +178,7 @@ const char *Ze::strerror(ErrNo e)
   buf->w.length(n);
 
   buf->s.length(ZuUTF<char, wchar_t>::cvt(
-	ZuSpan<char>(buf->s.data(), buf->s.size() - 1), buf->w));
+      ZuSpan<char>(buf->s.data(), buf->s.size() - 1), buf->w));
 
   // FormatMessage() often returns verbose junk; clean it up
   {

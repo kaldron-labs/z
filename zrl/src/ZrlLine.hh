@@ -72,7 +72,7 @@ public:
 
   // substring
   ZuCSpan substr(unsigned off, unsigned len) const {
-    return {reinterpret_cast<const char *>(&m_data[off]), len};
+    return ZuBSpan{&m_data[off], len};
   }
 
   // byte offset -> display position
@@ -118,7 +118,7 @@ private:
       u == 0x205f ||
       u == 0x3000;
   }
-  static constexpr bool isword__(uint32_t u) {
+  ZuInline static constexpr bool isword__(uint32_t u) {
     return
       (u >= '0' && u <= '9') ||
       (u >= 'a' && u <= 'z') ||

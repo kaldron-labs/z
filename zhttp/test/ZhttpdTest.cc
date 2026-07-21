@@ -66,13 +66,18 @@ bool load(Options &options, std::initializer_list<const char *> args)
 void testPathNormalize()
 {
   ZuTestScope(testPathNormalize);
-  HdrString out, err;
+  auto out = ZtLocalString(HdrString, 64);
+  ZuCSpan err;
   ZuCHECK(decodeNormalizePath("/a//b/./c", false, out, err) &&
       out == "/a/b/c", "path normalization failed");
   ZuCHECK(!decodeNormalizePath("/../x", false, out, err),
     "literal traversal accepted");
   ZuCHECK(!decodeNormalizePath("/%2e%2e/x", false, out, err),
     "encoded traversal accepted");
+  ZuCHECK(!decodeNormalizePath("/%2e%2e%2fx", false, out, err),
+    "encoded slash traversal accepted");
+  ZuCHECK(decodeNormalizePath("/a%2fb", false, out, err) && out == "/a/b",
+    "encoded slash normalization failed");
   ZuCHECK(!decodeNormalizePath("/bad%", false, out, err),
     "malformed percent escape accepted");
   ZuCHECK(!decodeNormalizePath("/%00", false, out, err),
@@ -285,7 +290,7 @@ void testIfModifiedSince()
   ZuCHECK(initState(state, root), "state initialization failed");
   StaticPlanner planner{&state};
   auto r = req("/hello.txt");
-  r.ifModifiedSince = httpDate(time(nullptr) + 60);
+  httpDate(r.ifModifiedSince, time(nullptr) + 60);
   auto p = planner.plan(r);
   ZuCHECK(p.status == 304 && !p.sendBody && p.contentLength == 0,
     "If-Modified-Since did not return 304");
@@ -309,7 +314,7 @@ void testPolicy()
   ZuCHECK(p.status == 401 && p.wwwAuthenticate,
     "missing auth did not return 401");
   auto r = req("/hello.txt");
-  r.authorization = basicAuthValue(state.options);
+  basicAuthValue(r.authorization, state.options);
   p = planner.plan(r);
   ZuCHECK(p.status == 200, "valid auth did not pass");
 

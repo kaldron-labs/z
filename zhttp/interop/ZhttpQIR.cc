@@ -371,8 +371,7 @@ int HQServerStream::process(Zquic::RxStream &rx)
 {
   if (done) return -1;
   int n = consumeRx_(rx, [this](ZuBSpan span) {
-    request << ZuCSpan{
-      reinterpret_cast<const char *>(span.data()), span.length()};
+    request << span;
   });
   if (n < 0) return -1;
   if (!this->rxComplete()) return n ? 1 : 0;
@@ -833,7 +832,7 @@ int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *))
 int parseRequests(ZuCSpan requests, ZuCSpan downloads, Requests &out)
 {
   out.length(0);
-  ZuTokenizer::WhiteSpace::skip(requests);
+  requests.trim();
   while (requests) {
     ZuCSpan url = ZuTokenizer::WhiteSpace::next(requests);
     if (!url.length()) break;

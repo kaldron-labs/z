@@ -664,7 +664,6 @@ int ZiMMapFile::mmap(
     if (!m_addr) goto error;
     if (m_addr == MAP_FAILED) { m_addr = nullptr; goto error; }
   }
-  *(static_cast<uint8_t *>(m_addr) + (m_mmapLength - 1)) = 0;
 #else
   if (flags & Shm)
     m_mmapHandle = m_handle;

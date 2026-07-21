@@ -485,7 +485,7 @@ inline T loadValue_(ZuSpan<char> span)
       TypeCode == ZtFieldTC::DateTime) {
     auto &fmt = ZmTLS<ZuDateTimeScan::CSV, (int Fmt::*){}>();
     ZuDateTime v;
-    if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+    if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
     if constexpr (ZuIs_<T, ZuTime>{})
       return v.as_time();
     else

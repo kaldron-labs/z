@@ -1023,8 +1023,8 @@ private:
   static OptType::T longOptType_(ZuCSpan key_, ZuCSpan prefix = {}) {
     OptType::T type = -1;
     using AllFields = ZuFields<U, Facet>;
-    using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
-    ZuUnroll::all<LoadFields>([&type, &key_, &prefix]<typename Field>() {
+    using SaveFields = ZuTypeGrep<ZtFieldFilter::Save, AllFields>;
+    ZuUnroll::all<SaveFields>([&type, &key_, &prefix]<typename Field>() {
       if (type >= 0) return;
       using Props = typename Field::Props;
       enum { TypeCode = Field::Type::Code };
@@ -1136,6 +1136,7 @@ public:
 	if (p > 0) {
 	  // --x=val
 	  key = {&arg[0], uint64_t(p)};
+	  if (ZuUnlikely(longOptType_<O>(key) < 0)) return false;
 	  if (++p >= n) return false;
 	  val = {&arg[p], uint64_t(n - p)};
 	} else {
