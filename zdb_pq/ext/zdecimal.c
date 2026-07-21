@@ -31,7 +31,7 @@ PG_FUNCTION_INFO_V1(zdecimal_in);
 Datum zdecimal_in(PG_FUNCTION_ARGS) {
   zu_decimal *v = (zu_decimal *)palloc(sizeof(zu_decimal));
   const char *s = PG_GETARG_CSTRING(0);
-  unsigned int n;
+  int n;
 
   /* postgres uses NaN; meanwhile ZuDecimal intentionally omits
    * positive/negative infinity */
@@ -49,8 +49,8 @@ Datum zdecimal_in(PG_FUNCTION_ARGS) {
    * null-termination, this prevents incrementally parsing values within
    * a containing string without copying the string or mutating it with
    * null terminators, but we'll play along, sigh */
-  if (likely(n)) while (unlikely(isspace__(s[n]))) ++n;
-  if (!n || s[n])
+  if (likely(n >= 0)) while (unlikely(isspace__(s[n]))) ++n;
+  if (n < 0 || s[n])
     ereport(
       ERROR,
       (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
