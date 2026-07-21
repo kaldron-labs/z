@@ -55,13 +55,11 @@ struct App : public Ztls::Server<App> {
 	response << Response << content.length() << Response2;
 	{
 	  auto tx = txStream();
-	  tx.append(response);
-	  tx << Zi::flush();
+	  tx << response << Zi::flush();
 	}
 	{
 	  auto tx = txStream();
-	  tx.append(content);
-	  tx << Zi::flush();
+	  tx << content << Zi::flush();
 	}
 	int64_t consumed = rx.consume(
 	  [](ZuBSpan span) -> int64_t { return span.length(); },

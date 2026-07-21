@@ -38,7 +38,7 @@ struct Options {
 };
 ZtStruct(Options,
   (((user),    (Ctor<0>, CLI::Arg<1>)),    (String)),
-  (((passLen), (Ctor<1>, CLI::Arg<2>)),    (UInt8, 20, 6, 60)),
+  (((passLen), (Ctor<1>, CLI::Arg<2>, (Range<6, 60>))), (UInt8, 20)),
   (((perms),   (Ctor<2>, CLI::Args<3>)),   (StringVec)),
   (((module),  (Ctor<3>, CLI::Opt<'m'>)),  (String)),
   (((connect), (Ctor<4>, CLI::Opt<'c'>)),  (String)),

@@ -35,14 +35,17 @@
 // String        <String>        [, default]
 // Bytes         <uint8_t[]>     [, default]
 // Bool          <Integral>      [, default]
-// Int<Size>     <Integral>      [, default, min, max]
-// UInt<Size>    <Integral>      [, default, min, max]
-// Float         <FloatingPoint> [, default, min, max]
-// Fixed         ZuFixed         [, default, min, max]
-// Decimal       ZuDecimal       [, default, min, max]
+// Int<Size>     <Integral>      [, default]
+// UInt<Size>    <Integral>      [, default]
+// Float         <FloatingPoint> [, default]
+// Fixed         ZuFixed         [, default]
+// Decimal       ZuDecimal       [, default]
 // Time          ZuTime          [, default]
 // DateTime      ZuDateTime      [, default]
 // UDT           <UDT>           [, default]
+//
+// Range<Minimum, Maximum> is a field property specifying inclusive bounds
+// for Int, UInt, Float, Fixed and Decimal fields
 //
 // *Vec          ZuSpan<T>       [, default]
 // CStringVec
@@ -265,6 +268,11 @@ namespace ZuFieldProp {
   template <typename Map> struct Enum { using T = Map; };	// enum
   template <typename Map> struct Flags { using T = Map; };	// flags
 
+  template <auto Min, auto Max> struct Range {
+    static constexpr auto minimum() { return Min; }
+    static constexpr auto maximum() { return Max; }
+  };
+
   template <int8_t> struct NDP { }; // NDP for printing float/fixed/decimal
  
   // get group key IDs
@@ -290,6 +298,16 @@ namespace ZuFieldProp {
 
   template <typename Props> using HasFlags = HasType<Props, Flags>;
   template <typename Props> using GetFlags = GetType<Props, Flags>;
+
+  template <typename> struct IsRange : public ZuFalse { };
+  template <auto Min, auto Max>
+  struct IsRange<Range<Min, Max>> : public ZuTrue { };
+  template <typename Props>
+  using Ranges = ZuTypeGrep<IsRange, Props>;
+  template <typename Props>
+  using HasRange = ZuBool<Ranges<Props>::N>;
+  template <typename Props>
+  using GetRange = ZuType<Ranges<Props>::N - 1, Ranges<Props>>;
 
   template <typename Props>
   using HasNDP = HasValue<Props, NDP>;
@@ -342,6 +360,7 @@ namespace ZtVFieldProp {
     Delta2,
     Enum,
     Flags,
+    Range,
     NDP);
 
   using V = T;
@@ -372,6 +391,8 @@ namespace ZtVFieldProp {
   struct Value_<_::Enum<Map>>             { using T = Constant<Enum()>; };
   template <typename Map>
   struct Value_<_::Flags<Map>>            { using T = Constant<Flags()>; };
+  template <auto Min, auto Max>
+  struct Value_<_::Range<Min, Max>>       { using T = Constant<Range()>; };
   template <auto I>
   struct Value_<_::NDP<I>>                { using T = Constant<NDP()>; };
 
@@ -2032,6 +2053,22 @@ struct ZtFieldScanInt<Props, Fmt, ZuBox<T, Cmp>> :
   ZuDerive_(ZtFieldScanInt, (ZtFieldScanInt<Props, Fmt, T>))
 };
 
+template <typename T, typename Props, auto Min, auto Max>
+struct ZtFieldRange {
+  static constexpr T minimum() {
+    if constexpr (ZuFieldProp::HasRange<Props>{})
+      return ZuFieldProp::GetRange<Props>::minimum();
+    else
+      return Min();
+  }
+  static constexpr T maximum() {
+    if constexpr (ZuFieldProp::HasRange<Props>{})
+      return ZuFieldProp::GetRange<Props>::maximum();
+    else
+      return Max();
+  }
+};
+
 #define ZtField_Int(Code_, Type_) \
 template <typename T_, typename Props_> \
 struct ZtFieldType_##Code_ : public ZtFieldType_<Props_> { \
@@ -2098,8 +2135,6 @@ struct ZtFieldType_##Code_##_Def { \
 template < \
   typename Base, \
   auto Def = ZtFieldType_##Code_##_Def<typename Base::T>::deflt, \
-  auto Min = ZtFieldType_##Code_##_Def<typename Base::T>::minimum, \
-  auto Max = ZtFieldType_##Code_##_Def<typename Base::T>::maximum, \
   bool = Base::ReadOnly> \
 struct ZtField_##Code_ : public ZtField_<Base> { \
   template <template <typename> class Override> \
@@ -2107,6 +2142,9 @@ struct ZtField_##Code_ : public ZtField_<Base> { \
   using O = typename Base::O; \
   using T = typename Base::T; \
   using Props = typename Base::Props; \
+  using Range = ZtFieldRange<T, Props, \
+    ZtFieldType_##Code_##_Def<T>::minimum, \
+    ZtFieldType_##Code_##_Def<T>::maximum>; \
   using Type = ZtFieldType_##Code_<T, ZuTypeGrep<ZtFieldType_Props, Props>>; \
   enum { Code = Type::Code }; \
   static ZtVFieldGet getFn() { \
@@ -2118,21 +2156,23 @@ struct ZtField_##Code_ : public ZtField_<Base> { \
     return {.set_ = {.Type_= [](void *, Type_##_t) { }}}; \
   } \
   static constexpr auto deflt() { return Def(); } \
+  static constexpr auto minimum() { return Range::minimum(); } \
+  static constexpr auto maximum() { return Range::maximum(); } \
   static ZtVFieldGet constantFn() { \
     using namespace ZtVFieldConstant; \
     return {.get_ = {.Type_= [](const void *o) -> Type_##_t { \
       switch (int(reinterpret_cast<uintptr_t>(o))) { \
 	case Deflt:   return Def(); \
-	case Minimum: return Min(); \
-	case Maximum: return Max(); \
+	case Minimum: return minimum(); \
+	case Maximum: return maximum(); \
 	default:      return ZuCmp<Type_##_t>::null(); \
       } \
     }}}; \
   } \
 }; \
-template <typename Base, auto Def, auto Min, auto Max> \
-struct ZtField_##Code_<Base, Def, Min, Max, false> : \
-    public ZtField_##Code_<Base, Def, Min, Max, true> { \
+template <typename Base, auto Def> \
+struct ZtField_##Code_<Base, Def, false> : \
+    public ZtField_##Code_<Base, Def, true> { \
   using O = typename Base::O; \
   using T = typename Base::T; \
   static ZtVFieldSet setFn() { \
@@ -2199,8 +2239,6 @@ struct ZtField_Float_Def {
 template <
   typename Base,
   auto Def = ZtField_Float_Def<typename Base::T>::deflt,
-  auto Min = ZtField_Float_Def<typename Base::T>::minimum,
-  auto Max = ZtField_Float_Def<typename Base::T>::maximum,
   bool = Base::ReadOnly>
 struct ZtField_Float : public ZtField_<Base> {
   template <template <typename> class Override>
@@ -2208,6 +2246,8 @@ struct ZtField_Float : public ZtField_<Base> {
   using O = typename Base::O;
   using T = typename Base::T;
   using Props = typename Base::Props;
+  using Range = ZtFieldRange<T, Props,
+    ZtField_Float_Def<T>::minimum, ZtField_Float_Def<T>::maximum>;
   using Type = ZtFieldType_Float<T, ZuTypeGrep<ZtFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZtVFieldGet getFn() {
@@ -2219,21 +2259,23 @@ struct ZtField_Float : public ZtField_<Base> {
     return {.set_ = {.float_ = [](void *, double) { }}};
   }
   static constexpr auto deflt() { return Def(); }
+  static constexpr auto minimum() { return Range::minimum(); }
+  static constexpr auto maximum() { return Range::maximum(); }
   static ZtVFieldGet constantFn() {
     using namespace ZtVFieldConstant;
     return {.get_ = {.float_ = [](const void *o) -> double {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
 	case Deflt:   return Def();
-	case Minimum: return Min();
-	case Maximum: return Max();
+	case Minimum: return minimum();
+	case Maximum: return maximum();
 	default:      return ZuCmp<double>::null();
       }
     }}};
   }
 };
-template <typename Base, auto Def, auto Min, auto Max>
-struct ZtField_Float<Base, Def, Min, Max, false> :
-    public ZtField_Float<Base, Def, Min, Max, true> {
+template <typename Base, auto Def>
+struct ZtField_Float<Base, Def, false> :
+    public ZtField_Float<Base, Def, true> {
   using O = typename Base::O;
   using T = typename Base::T;
   static ZtVFieldSet setFn() {
@@ -2288,8 +2330,6 @@ struct ZtField_Fixed_Def {
 template <
   typename Base,
   auto Def = ZtField_Fixed_Def::deflt,
-  auto Min = ZtField_Fixed_Def::minimum,
-  auto Max = ZtField_Fixed_Def::maximum,
   bool = Base::ReadOnly>
 struct ZtField_Fixed : public ZtField_<Base> {
   template <template <typename> class Override>
@@ -2297,6 +2337,8 @@ struct ZtField_Fixed : public ZtField_<Base> {
   using O = typename Base::O;
   using T = typename Base::T;
   using Props = typename Base::Props;
+  using Range = ZtFieldRange<T, Props,
+    ZtField_Fixed_Def::minimum, ZtField_Fixed_Def::maximum>;
   using Type = ZtFieldType_Fixed<T, ZuTypeGrep<ZtFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZtVFieldGet getFn() {
@@ -2308,21 +2350,23 @@ struct ZtField_Fixed : public ZtField_<Base> {
     return {.set_ = {.fixed = [](void *, ZuFixed) { }}};
   }
   static constexpr auto deflt() { return Def(); }
+  static constexpr auto minimum() { return Range::minimum(); }
+  static constexpr auto maximum() { return Range::maximum(); }
   static ZtVFieldGet constantFn() {
     using namespace ZtVFieldConstant;
     return {.get_ = {.fixed = [](const void *o) -> ZuFixed {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
 	case Deflt:   return Def();
-	case Minimum: return Min();
-	case Maximum: return Max();
+	case Minimum: return minimum();
+	case Maximum: return maximum();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def, auto Min, auto Max>
-struct ZtField_Fixed<Base, Def, Min, Max, false> :
-    public ZtField_Fixed<Base, Def, Min, Max, true> {
+template <typename Base, auto Def>
+struct ZtField_Fixed<Base, Def, false> :
+    public ZtField_Fixed<Base, Def, true> {
   using O = typename Base::O;
   using T = typename Base::T;
   static ZtVFieldSet setFn() {
@@ -2383,8 +2427,6 @@ struct ZtField_Decimal_Def {
 template <
   typename Base,
   auto Def = ZtField_Decimal_Def::deflt,
-  auto Min = ZtField_Decimal_Def::minimum,
-  auto Max = ZtField_Decimal_Def::maximum,
   bool = Base::ReadOnly>
 struct ZtField_Decimal : public ZtField_<Base> {
   template <template <typename> class Override>
@@ -2392,6 +2434,8 @@ struct ZtField_Decimal : public ZtField_<Base> {
   using O = typename Base::O;
   using T = typename Base::T;
   using Props = typename Base::Props;
+  using Range = ZtFieldRange<T, Props,
+    ZtField_Decimal_Def::minimum, ZtField_Decimal_Def::maximum>;
   using Type = ZtFieldType_Decimal<T, ZuTypeGrep<ZtFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZtVFieldGet getFn() {
@@ -2403,21 +2447,23 @@ struct ZtField_Decimal : public ZtField_<Base> {
     return {.set_ = {.decimal = [](void *, ZuDecimal) { }}};
   }
   static constexpr auto deflt() { return Def(); }
+  static constexpr auto minimum() { return Range::minimum(); }
+  static constexpr auto maximum() { return Range::maximum(); }
   static ZtVFieldGet constantFn() {
     using namespace ZtVFieldConstant;
     return {.get_ = {.decimal = [](const void *o) -> ZuDecimal {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
 	case Deflt:   return Def();
-	case Minimum: return Min();
-	case Maximum: return Max();
+	case Minimum: return minimum();
+	case Maximum: return maximum();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def, auto Min, auto Max>
-struct ZtField_Decimal<Base, Def, Min, Max, false> :
-    public ZtField_Decimal<Base, Def, Min, Max, true> {
+template <typename Base, auto Def>
+struct ZtField_Decimal<Base, Def, false> :
+    public ZtField_Decimal<Base, Def, true> {
   using O = typename Base::O;
   static ZtVFieldSet setFn() {
     return {.set_ = {.decimal = [](void *o, ZuDecimal v) {

@@ -52,6 +52,14 @@ static const char testdata[] =
 
 ZtEnumNS(Values, int8_t, High, Low, Normal);
 
+struct Ranged {
+  int value = 2;
+};
+ZtStruct(Ranged,
+  (((value), ((Range<1, 3>))), (Int32, 2)));
+
+using RangedValue = ZtField(Ranged, value);
+
 int main()
 {
   ZiLog::init("CfTest");
@@ -191,6 +199,30 @@ int main()
       ZmRef<ZvCf> cf = new ZvCf();
       cf->fromString("x { y z }");
       CHECK_(cf->get("x.y") == "z");
+    }
+
+    {
+      ZmRef<ZvCf> cf = new ZvCf();
+      cf->fromString("value 1");
+      CHECK_(cf->getField<RangedValue>() == 1);
+      cf->fromString("value 3");
+      CHECK_(cf->getField<RangedValue>() == 3);
+      bool caught = false;
+      try {
+	cf->fromString("value 0");
+	cf->getField<RangedValue>();
+      } catch (const ZeException &) {
+	caught = true;
+      }
+      CHECK_(caught);
+      caught = false;
+      try {
+	cf->fromString("value 4");
+	cf->getField<RangedValue>();
+      } catch (const ZeException &) {
+	caught = true;
+      }
+      CHECK_(caught);
     }
 
   } catch (const ZeException &e) {

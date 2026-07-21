@@ -624,8 +624,8 @@ ZtStruct(UsersCmd,
   (((id),        (Ctor<0>, CLI::Opt<'i'>)),  (UInt64)),
   (((name),      (Ctor<1>, CLI::Opt<'n'>)),  (String)),
   (((exclusive), (Ctor<2>, CLI::Flag<'x'>)), (Bool)),
-  (((limit),     (Ctor<3>, CLI::Opt<'l'>)),  (UInt16, 10,
-						1, Zum::MaxQueryLimit)));
+  (((limit),     (Ctor<3>, CLI::Opt<'l'>,
+	(Range<1, Zum::MaxQueryLimit>))),	(UInt16, 10)));
 Zcmd::Fn usersCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
@@ -880,8 +880,8 @@ struct RolesCmd {
 ZtStruct(RolesCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((exclusive), (Ctor<1>, CLI::Flag<'x'>)), (Bool)),
-  (((limit),     (Ctor<2>, CLI::Opt<'l'>)),  (UInt16, 10,
-						1, Zum::MaxQueryLimit)));
+  (((limit),     (Ctor<2>, CLI::Opt<'l'>,
+	(Range<1, Zum::MaxQueryLimit>))),	(UInt16, 10)));
 Zcmd::Fn rolesCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
@@ -1079,8 +1079,8 @@ ZtStruct(PermsCmd,
   (((id),        (Ctor<0>, CLI::Opt<'i'>)),  (UInt64)),
   (((name),      (Ctor<1>, CLI::Opt<'n'>)),  (String)),
   (((exclusive), (Ctor<2>, CLI::Flag<'x'>)), (Bool)),
-  (((limit),     (Ctor<3>, CLI::Opt<'l'>)),  (UInt16, 10,
-						1, Zum::MaxQueryLimit)));
+  (((limit),     (Ctor<3>, CLI::Opt<'l'>,
+	(Range<1, Zum::MaxQueryLimit>))),	(UInt16, 10)));
 Zcmd::Fn permsCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
@@ -1440,7 +1440,8 @@ struct TelcapCmd {
 ZtStruct(TelcapCmd,
   (((path),        (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((captures),    (Ctor<1>, CLI::Args<2>)),   (StringVec)),
-  (((interval),    (Ctor<2>, CLI::Opt<'i'>)),  (UInt32, 0, 100, 1000000)),
+  (((interval),    (Ctor<2>, CLI::Opt<'i'>, (Range<100, 1000000>))),
+    (UInt32, 0)),
   (((unsubscribe), (Ctor<3>, CLI::Flag<'u'>)), (Bool)));
 Zcmd::Fn telcapCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {

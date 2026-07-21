@@ -18,6 +18,8 @@
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuUTF.hh>
 
 class ZuVStreamBuf {
 public:
