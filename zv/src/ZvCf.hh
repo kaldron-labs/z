@@ -872,10 +872,13 @@ public:
 	Map, T, ZuTypeIn<ZuFieldProp::Required, Props>{}>(
 	  Field::id(), Field::deflt());
     } else {
-      return getScalar<
-	typename Field::T,
-	ZuTypeIn<ZuFieldProp::Required, Props>{}>(
-	  Field::id(), Field::minimum(), Field::maximum(), Field::deflt());
+      using T = typename Field::T;
+      if constexpr (ZuTypeIn<ZuFieldProp::Required, Props>{})
+	return getScalar<T, true>(
+	    Field::id(), Field::minimum(), Field::maximum());
+      else
+	return getScalar<T>(
+	    Field::id(), Field::minimum(), Field::maximum(), Field::deflt());
     }
   }
   template <typename Field>
@@ -883,10 +886,14 @@ public:
 	Field::Type::Code == ZtFieldTC::Fixed ||
 	Field::Type::Code == ZtFieldTC::Decimal, typename Field::T>
   getField() {
-    return getScalar<
-      typename Field::T,
-      ZuTypeIn<ZuFieldProp::Required, typename Field::Props>{}>(
-	Field::id(), Field::minimum(), Field::maximum(), Field::deflt());
+    using T = typename Field::T;
+    using Props = typename Field::Props;
+    if constexpr (ZuTypeIn<ZuFieldProp::Required, Props>{})
+      return getScalar<T, true>(
+	  Field::id(), Field::minimum(), Field::maximum());
+    else
+      return getScalar<T>(
+	  Field::id(), Field::minimum(), Field::maximum(), Field::deflt());
   }
   template <typename Field>
   ZuIfT<Field::Type::Code == ZtFieldTC::CStringVec, typename Field::T>

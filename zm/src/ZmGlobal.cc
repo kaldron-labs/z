@@ -15,6 +15,7 @@
 #include <zlib/ZmGlobal.hh>
 
 #ifdef ZDEBUG
+#include <zlib/ZuBox.hh>
 #include <zlib/ZuVStream.hh>
 #endif
 

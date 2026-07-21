@@ -59,14 +59,14 @@ struct Foo {
 
 #define FooFloatFields \
   (((float_),		(Ctor<8>)),	(Float)), \
-  (((float_ranged),	(Ctor<9>)),	(Float, 0.42, 0.0, 1))
+  (((float_ranged),	(Ctor<9>, (Range<0.0, 1>))),	(Float, 0.42))
 
 ZtStruct((Foo, JSON),
   (((string, Rd),	(Ctor<0>)),	(CString, "hello \"world\"")),
   (((bytes),		(Ctor<1>)),	(Bytes, ZuBSpan{"bytes"})),
   (((id),		(Ctor<2>, Mutable)),	(String, "goodbye")),
   (((int_),		(Ctor<3>)),	(Int32)),
-  (((int_ranged),	(Ctor<4>)),	(Int32, 42, 0, 100)),
+  (((int_ranged),	(Ctor<4>, (Range<0, 100>))),	(Int32, 42)),
   (((hex),		(Ctor<5>, Hex)),
     					(UInt32, 0xdeadbeef)),
   (((enum_),		(Ctor<6>, Enum<Values::Map>)),
@@ -91,6 +91,25 @@ ZtStructRender(Foo, Bah,
   (float_,	JSON::ID<"float-BAH">, JSON::Number<ZuFmt::FP<4>>),
   float_ranged, fixed, decimal, time_, nested, bytesVec);
 
+using IntField = ZtField(Foo, int_);
+using IntRangeField = ZtField(Foo, int_ranged);
+using FloatRangeField = ZtField(Foo, float_ranged);
+using IntRange = ZuFieldProp::GetRange<typename IntRangeField::Props>;
+using FloatRange = ZuFieldProp::GetRange<typename FloatRangeField::Props>;
+
+static_assert(!ZuFieldProp::HasRange<typename IntField::Props>{});
+static_assert(ZuFieldProp::HasRange<typename IntRangeField::Props>{});
+static_assert(IntRange::minimum() == 0);
+static_assert(IntRange::maximum() == 100);
+static_assert(FloatRange::minimum() == 0.0);
+static_assert(FloatRange::maximum() == 1);
+static_assert(IntField::minimum() == ZuCmp<int>::minimum());
+static_assert(IntField::maximum() == ZuCmp<int>::maximum());
+static_assert(IntRangeField::minimum() == 0);
+static_assert(IntRangeField::maximum() == 100);
+static_assert(FloatRangeField::minimum() == 0.0);
+static_assert(FloatRangeField::maximum() == 1);
+
 template <typename T, typename = void>
 struct MinMax {
   template <typename S>
@@ -100,8 +119,9 @@ template <typename T>
 struct MinMax<T, decltype(T::minimum(), void())> {
   template <typename S>
   friend inline S &operator <<(S &s, const MinMax &m) {
-    s << " minimum=" << typename T::template Print_<>{T::minimum()}
-      << " maximum=" << typename T::template Print_<>{T::maximum()};
+    using Print = typename T::Type::template Print<>;
+    s << " minimum=" << Print{T::minimum()}
+      << " maximum=" << Print{T::maximum()};
     return s;
   }
 };
@@ -160,6 +180,24 @@ int main(int argc, char **argv)
   ZtVFmt fmt;
   ZtVFieldArray fields{ZtVFields<Foo>()};
   ZuCheck(fields.length() > 0);
+
+  {
+    auto intField = fields[ZtFieldIndex(Foo, int_)];
+    auto intRangeField = fields[ZtFieldIndex(Foo, int_ranged)];
+    auto floatRangeField = fields[ZtFieldIndex(Foo, float_ranged)];
+    ZuCheck(!(intField->props & ZtVFieldProp::Range()));
+    ZuCheck(intRangeField->props & ZtVFieldProp::Range());
+    ZuCheck(floatRangeField->props & ZtVFieldProp::Range());
+    ZuCheck(!(intRangeField->type->props & ZtVFieldProp::Range()));
+    ZuCheck(intRangeField->constant.get<ZtFieldTC::Int32>(
+	ZtVField::cget(ZtVFieldConstant::Minimum)) == 0);
+    ZuCheck(intRangeField->constant.get<ZtFieldTC::Int32>(
+	ZtVField::cget(ZtVFieldConstant::Maximum)) == 100);
+    ZuCheck(floatRangeField->constant.get<ZtFieldTC::Float>(
+	ZtVField::cget(ZtVFieldConstant::Minimum)) == 0.0);
+    ZuCheck(floatRangeField->constant.get<ZtFieldTC::Float>(
+	ZtVField::cget(ZtVFieldConstant::Maximum)) == 1.0);
+  }
 
   auto vprint = [&fmt](auto &s, const ZtVField &field, int constant) {
     using namespace ZtFieldTC;

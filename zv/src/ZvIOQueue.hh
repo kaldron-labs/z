@@ -118,7 +118,7 @@ struct ZvIOQueue : public ZvQueue, public ZvIOQueue_ {
   ZvQueueType::T type() const { return m_type; }
   ZuCSpan id() const { return m_id; }
   void telemetry(ZvQueueTelemetry &data) const {
-    data.id = m_id.span();
+    data.id = m_id.cspan();
     data.seqNo = head();
     data.count = count_();
     stats(data.inCount, data.inElems, data.outCount, data.outElems);
