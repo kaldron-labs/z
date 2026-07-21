@@ -422,6 +422,10 @@ ZtExtern int boq(ZuCSpan span);
 // - Example: "foo%20bar&" -> "foo bar\0\0\0" returning { 7, 10, '&' }
 ZtExtern ZuTuple<int, int, char> eos(ZuSpan<char> data);
 
+// eoc() is the path-component equivalent of eos(); '/' and '?' terminate
+// the component and '+' is not decoded as space
+ZtExtern ZuTuple<int, int, char> eoc(ZuSpan<char> data);
+
 struct Node_HeapID : public ZuStringT<"ZtURI.Node"> { };
 
 // node in a scan tree
@@ -658,6 +662,21 @@ struct URIQuote {
   static void quote(S &s, ZuCSpan v) {
     using Policy = PercentQuote<Body>;
     ZuPercent::Codec<Policy>::print(s, ZuBSpan{v});
+  }
+};
+
+struct PathQuote {
+  struct Policy : public ZuPercent::NoTerm, public ZuPercent::NoPlus {
+    static constexpr bool esc(uint8_t c) {
+      return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+	(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+	c == '~');
+    }
+  };
+
+  template <typename S>
+  static void quote(S &s, ZuCSpan v) {
+    ZuPercent::Codec<Policy>::print(s, v);
   }
 };
 
@@ -1483,7 +1502,7 @@ inline T loadValue_(ZuSpan<char> span)
     } else if constexpr (TimeFmt::Fmt == ZtURI::CSV) {
       auto &fmt = ZmTLS<ZuDateTimeScan::CSV, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else
@@ -1491,7 +1510,7 @@ inline T loadValue_(ZuSpan<char> span)
     } else if constexpr (TimeFmt::Fmt == ZtURI::FIX) {
       auto &fmt = ZmTLS<ZuDateTimeScan::FIX, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else
@@ -1499,7 +1518,7 @@ inline T loadValue_(ZuSpan<char> span)
     } else if constexpr (TimeFmt::Fmt == ZtURI::ISO) {
       auto &fmt = ZmTLS<ZuDateTimeScan::ISO, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else

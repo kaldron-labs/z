@@ -14,11 +14,6 @@
 
 using namespace ZuTestUtil;
 
-static ZuCSpan span(const Zhttp::H3::HdrBytes &bytes)
-{
-  return ZuCSpan{reinterpret_cast<const char *>(bytes.data()), bytes.length()};
-}
-
 static void appendSpan(Zhttp::H3::HdrBytes &bytes, ZuCSpan s)
 {
   for (unsigned i = 0; i < s.length(); ++i) bytes.push(uint8_t(s[i]));
@@ -217,12 +212,6 @@ struct CxnStream :
   unsigned			settings = 0;
 };
 
-static ZuCSpan captureSpan(const CaptureTxStream &stream)
-{
-  return ZuCSpan{
-    reinterpret_cast<const char *>(stream.bytes.data()), stream.bytes.length()};
-}
-
 static bool headersPayload(ZuCSpan bytes, ZuCSpan &payload)
 {
   unsigned o = 0;
@@ -259,12 +248,10 @@ static void appendHuffmanString(
 {
   Zhttp::H3::HdrBytes encoded;
   encoded.length(Zhttp::H3::HPack::enclen(s.length()));
-  uint64_t n = Zhttp::H3::HPack::encode(
-    ZuSpan<uint8_t>{encoded.data(), encoded.length()},
-    ZuBSpan{reinterpret_cast<const uint8_t *>(s.data()), s.length()});
+  uint64_t n = Zhttp::H3::HPack::encode(encoded.span(), s);
   encoded.length(n);
   Zhttp::H3::putPref(bytes, prefix, prefixBits, encoded.length());
-  appendSpan(bytes, span(encoded));
+  appendSpan(bytes, encoded);
 }
 
 void testRxTable()
@@ -324,7 +311,7 @@ void testDynamicFieldSectionDecode()
   unsigned seen = 0;
   bool sawPath = false, sawAuthority = false;
   ZuCHECK(Zhttp::H3::decodeLiteralDynamic(
-      span(bytes), table,
+      bytes, table,
       [&seen, &sawPath, &sawAuthority](Zhttp::H3::Header h) {
 	if (seen == 0 && h.name == ":path" && h.value == "/sample/path")
 	  sawPath = true;
@@ -346,7 +333,7 @@ void testDynamicFieldSectionDecode()
   seen = 0;
   sawPath = sawAuthority = false;
   ZuCHECK(Zhttp::H3::decodeLiteralDynamic(
-      span(bytes), table,
+      bytes, table,
       [&seen, &sawPath, &sawAuthority](Zhttp::H3::Header h) {
 	if (seen == 0 && h.name == ":authority" &&
 	    h.value == "www.example.com")
@@ -378,7 +365,7 @@ void testFieldRepresentationGoldens()
     unsigned seen = 0;
     bool matched = false;
     int n = Zhttp::H3::QPack::decodeFieldSection(
-      span(bytes), &table,
+      bytes, &table,
       [&matched, &seen, &name, &value, &check](
 	  Zhttp::H3::Header h_, Zhttp::H3::QPackFieldFlags flags_) {
 	matched = h_.name == name && h_.value == value && check(flags_);
@@ -736,12 +723,13 @@ void testFieldDecodeAllocationDiscipline()
     appendString(bytes, 0x20, 3, "x");
     appendString(bytes, 0x00, 7, "v");
   }
-  const char *begin = reinterpret_cast<const char *>(bytes.data());
+  ZuCSpan input = bytes;
+  const char *begin = input.data();
   const char *end = begin + bytes.length();
   unsigned seen = 0;
   bool inputBacked = true;
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
-      span(bytes),
+      input,
       [&inputBacked, &seen, begin, end](Zhttp::H3::Header h) {
 	inputBacked &= h.name.data() >= begin && h.name.data() < end;
 	inputBacked &= h.value.data() >= begin && h.value.data() < end;
@@ -759,7 +747,7 @@ void testFieldDecodeAllocationDiscipline()
   }
   seen = 0;
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
-      span(bytes),
+      bytes,
       [&seen](Zhttp::H3::Header h) {
 	if (h.name == "x" && h.value == "v") ++seen;
       }) == int(bytes.length()) && seen == 20,
@@ -954,8 +942,8 @@ void testInstructionEncoding()
 
   ZuCHECK(Zhttp::H3::QPack::encodeSetCapacity(bytes, 10) > 0 &&
       bytes.length() == 1 && bytes[0] == 0x2a &&
-      Zhttp::H3::QPack::decodeEncoderInsnOne(
-	span(bytes), decoded) == int(bytes.length()) &&
+      Zhttp::H3::QPack::decodeEncoderInsn(
+	bytes, decoded) == int(bytes.length()) &&
       decoded.type == Zhttp::H3::QPackInsn::SetCapacity &&
       decoded.value == 10,
     "set capacity instruction mismatch");
@@ -963,8 +951,8 @@ void testInstructionEncoding()
   ZuCHECK(Zhttp::H3::QPack::encodeInsertWithNameRef(
       bytes, 46, false, "txt") > 0 &&
       bytes.length() == 5 && bytes[0] == 0xee && bytes[1] == 3 &&
-      Zhttp::H3::QPack::decodeEncoderInsnOne(
-	span(bytes), decoded) == int(bytes.length()) &&
+      Zhttp::H3::QPack::decodeEncoderInsn(
+	bytes, decoded) == int(bytes.length()) &&
       decoded.type == Zhttp::H3::QPackInsn::InsertWithNameRef &&
       !decoded.nameRefDynamic && decoded.value == 46 &&
       decoded.header.value == "txt",
@@ -973,8 +961,8 @@ void testInstructionEncoding()
   ZuCHECK(Zhttp::H3::QPack::encodeInsertLiteral(
       bytes, {"accept", "json"}) > 0 &&
       bytes[0] == 0x46 &&
-      Zhttp::H3::QPack::decodeEncoderInsnOne(
-	span(bytes), decoded) == int(bytes.length()) &&
+      Zhttp::H3::QPack::decodeEncoderInsn(
+	bytes, decoded) == int(bytes.length()) &&
       decoded.type == Zhttp::H3::QPackInsn::InsertWithoutNameRef &&
       decoded.header.name == "accept" &&
       decoded.header.value == "json",
@@ -982,8 +970,8 @@ void testInstructionEncoding()
 
   ZuCHECK(Zhttp::H3::QPack::encodeSectionAck(bytes, 4) > 0 &&
       bytes.length() == 1 && bytes[0] == 0x84 &&
-      Zhttp::H3::QPack::decodeDecoderInsnOne(
-	span(bytes), decoded) == int(bytes.length()) &&
+      Zhttp::H3::QPack::decodeDecoderInsn(
+	bytes, decoded) == int(bytes.length()) &&
       decoded.type == Zhttp::H3::QPackInsn::SectionAck &&
       decoded.value == 4,
     "section ack instruction mismatch");
@@ -998,8 +986,8 @@ void testHuffmanInstructionStorage()
   appendHuffmanString(bytes, 0x80, 7, "gzip");
 
   Zhttp::H3::QPackDecodedInsn decoded;
-  ZuCHECK(Zhttp::H3::QPack::decodeEncoderInsnOne(
-      span(bytes), decoded) == int(bytes.length()) &&
+  ZuCHECK(Zhttp::H3::QPack::decodeEncoderInsn(
+      bytes, decoded) == int(bytes.length()) &&
       decoded.type == Zhttp::H3::QPackInsn::InsertWithoutNameRef &&
       decoded.header.name == "accept" && decoded.header.value == "gzip",
     "Huffman insert literal instruction decode failed");
@@ -1021,10 +1009,10 @@ void testInstructionParserSplit()
   Zhttp::H3::QPackInsnParser decoder;
   unsigned encoderApplied = 0, decoderApplied = 0;
   auto decodeEncoder = [](ZuCSpan bytes, Zhttp::H3::QPackDecodedInsn &i) {
-    return Zhttp::H3::QPack::decodeEncoderInsnOne(bytes, i);
+    return Zhttp::H3::QPack::decodeEncoderInsn(bytes, i);
   };
   auto decodeDecoder = [](ZuCSpan bytes, Zhttp::H3::QPackDecodedInsn &i) {
-    return Zhttp::H3::QPack::decodeDecoderInsnOne(bytes, i);
+    return Zhttp::H3::QPack::decodeDecoderInsn(bytes, i);
   };
   auto applyEncoder = [&encoderApplied](
     const Zhttp::H3::QPackDecodedInsn &i) {
@@ -1067,7 +1055,7 @@ void testBuilderPeerCapacity()
     "builder emitted dynamic QPACK before peer capacity");
 
   ZuCSpan payload;
-  ZuCHECK(headersPayload(captureSpan(stream), payload),
+  ZuCHECK(headersPayload(stream.bytes, payload),
     "builder did not emit a valid HEADERS frame");
   unsigned seen = 0;
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
@@ -1146,7 +1134,7 @@ void testBuilderQueryPath()
   builder.request(stream);
 
   ZuCSpan payload;
-  ZuCHECK(headersPayload(captureSpan(stream), payload),
+  ZuCHECK(headersPayload(stream.bytes, payload),
     "builder query path did not emit a valid HEADERS frame");
   bool sawPath = false;
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
@@ -1167,7 +1155,7 @@ void testBuilderRuntimeHeaders()
   builder.request(stream);
 
   ZuCSpan payload;
-  ZuCHECK(headersPayload(captureSpan(stream), payload),
+  ZuCHECK(headersPayload(stream.bytes, payload),
     "runtime header builder did not emit a valid HEADERS frame");
   bool sawRuntime = false;
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(

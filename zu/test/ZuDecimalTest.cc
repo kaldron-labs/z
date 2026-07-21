@@ -146,6 +146,27 @@ int main()
     ZuCheck(d.scan("0") == 1);
   }
   {
+    auto d = ZuDecimal::eov("42.5junk");
+    ZuCheck(d.p<0>() == 4);
+    ZuCheck(d.p<1>() == ZuDecimal{"42.5"});
+    auto f = ZuDecimal::eov("junk");
+    ZuCheck(f.p<0>() < 0);
+    ZuCheck(!*f.p<1>());
+    auto nan = ZuDecimal::eov("nanjunk");
+    ZuCheck(nan.p<0>() == 3);
+    ZuCheck(!*nan.p<1>());
+
+    auto v = ZuFixed::eov("42.5junk");
+    ZuCheck(v.p<0>() == 4);
+    ZuCheck(v.p<1>() == ZuFixed{ZuDecimal{"42.5"}});
+    auto vf = ZuFixed::eov("junk");
+    ZuCheck(vf.p<0>() < 0);
+    ZuCheck(!*vf.p<1>());
+    auto vnan = ZuFixed::eov("nanjunk");
+    ZuCheck(vnan.p<0>() == 3);
+    ZuCheck(!*vnan.p<1>());
+  }
+  {
     ZuDecimal d;
     ZuDecimal e = -d;
     ZuCheck(!*e);

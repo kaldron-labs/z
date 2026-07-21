@@ -673,6 +673,51 @@ public:
     return true;
   }
 
+// chomp(), trim(), strip()
+
+private:
+  // match whitespace
+  constexpr auto matchS() {
+    return [](char c) constexpr {
+      return ((c >= '\t' && c <= '\r') || c == ' ');
+    };
+  }
+public:
+  // remove trailing characters
+  template <typename Match>
+  void chomp(Match &&match) {
+    uint64_t n = m_length;
+    while (n && match(m_data[n - 1])) --n;
+    trunc(n);
+  }
+  void chomp() { return chomp(matchS()); }
+
+  // remove leading characters
+  template <typename Match>
+  void trim(Match &&match) {
+    uint64_t o = 0;
+    while (o < m_length && match(m_data[o])) ++o;
+    offset(o);
+  }
+  void trim() { return trim(matchS()); }
+
+  // remove leading & trailing characters
+  template <typename Match>
+  void strip(Match &&match) {
+    uint64_t n = m_length;
+    while (n && match(m_data[n - 1])) --n;
+    uint64_t o = 0;
+    while (o < n && match(m_data[o])) ++o;
+    if (ZuLikely(o < n)) {
+      m_data += o;
+      m_length = n - o;
+    } else {
+      m_data = nullptr;
+      m_length = 0;
+    }
+  }
+  void strip() { return strip(matchS()); }
+
 // traits
   struct Traits : public ZuBaseTraits<ZuSpan> {
     using Elem = T;

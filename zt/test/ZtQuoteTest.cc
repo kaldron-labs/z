@@ -16,11 +16,6 @@
 
 using namespace ZuTestUtil;
 
-static ZuBSpan asBytes(const ZtString<> &s)
-{
-  return ZuBSpan(reinterpret_cast<const uint8_t *>(s.data()), s.length());
-}
-
 void testStringQuoting()
 {
   ZuTestScope(testStringQuoting);
@@ -46,7 +41,7 @@ void testBinaryWrappersMatchCodecs()
   ZtArray<uint8_t> d32;
   d32.length(ZuBase32::declen(b32.length()));
   unsigned l32 = ZuBase32::decode(
-    ZuSpan<uint8_t>(d32.data(), d32.length()), asBytes(b32));
+    ZuSpan<uint8_t>(d32.data(), d32.length()), b32.cspan());
   ZuCheck(l32 == sizeof(raw));
 
   ZtString<> b64;
@@ -54,7 +49,7 @@ void testBinaryWrappersMatchCodecs()
   ZtArray<uint8_t> d64;
   d64.length(ZuBase64::declen(b64.length()));
   unsigned l64 = ZuBase64::decode(
-    ZuSpan<uint8_t>(d64.data(), d64.length()), asBytes(b64));
+    ZuSpan<uint8_t>(d64.data(), d64.length()), b64.cspan());
   ZuCheck(l64 == sizeof(raw));
 
   ZtString<> hex;
@@ -62,7 +57,7 @@ void testBinaryWrappersMatchCodecs()
   ZtArray<uint8_t> dhex;
   dhex.length(ZuHex::declen(hex.length()));
   unsigned lhex = ZuHex::decode(
-    ZuSpan<uint8_t>(dhex.data(), dhex.length()), asBytes(hex));
+    ZuSpan<uint8_t>(dhex.data(), dhex.length()), hex.cspan());
   ZuCheck(lhex == sizeof(raw));
 }
 

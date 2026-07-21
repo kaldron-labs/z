@@ -49,6 +49,18 @@ void testFlagsScanAndPrint()
 
   auto scanPartial = Perm::Map::Scan{"Read|Unknown"};
   ZuCheck(uint8_t(scanPartial) == Perm::Read());
+
+  auto partial = Perm::Map::Scan::eov("Read|Unknown");
+  ZuCheck(partial.p<0>() == 4);
+  ZuCheck(uint8_t(partial.p<1>()) == Perm::Read());
+
+  auto invalid = Perm::Map::Scan::eov("Unknown");
+  ZuCheck(invalid.p<0>() < 0);
+  ZuCheck(!*invalid.p<1>());
+
+  auto empty = Perm::Map::Scan::eov("   ");
+  ZuCheck(empty.p<0>() == 3);
+  ZuCheck(!uint8_t(empty.p<1>()));
 }
 
 int main(int argc, char **argv)

@@ -1744,6 +1744,7 @@ inline T loadValue_(ZuSpan<char> span)
     if constexpr (ASNType{} == BitString) span.offset(1);
     return ZuBSpan{span};
   } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+    if (ZuUnlikely(!n)) return ZuCmp<T>::null();
     return span[0];
   } else if constexpr (
       TypeCode == ZtFieldTC::Int8 ||
@@ -1758,6 +1759,7 @@ inline T loadValue_(ZuSpan<char> span)
       TypeCode == ZtFieldTC::UInt128) {
     using U = ZtFieldTC::Type<TypeCode>;
     if constexpr (ASNType{} == Integer) {
+      if (ZuUnlikely(!n)) return ZuCmp<T>::null();
       U v = 0;
       if (span[0] & 0x80) v = ~v;
       for (unsigned i = 0; i < n; i++) v = (v<<8) | span[i];

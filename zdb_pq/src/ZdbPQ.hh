@@ -351,7 +351,7 @@ struct Value : public Value_ {
   template <unsigned I, typename T = Value_::Type<I>>
   ZuSame<Bytes, T, bool>
   load(const char *data, unsigned length) {
-    new (new_<I, true>()) T{reinterpret_cast<const uint8_t *>(data), length};
+    new (new_<I, true>()) T{ZuCSpan{data, length}};
     return true;
   }
 
@@ -359,7 +359,7 @@ struct Value : public Value_ {
   template <unsigned I, typename T = Value_::Type<I>>
   ZuIfT<isVar(I), bool>
   load(const char *data, unsigned length) {
-    new (new_<I, true>()) T{{reinterpret_cast<const uint8_t *>(data), length}};
+    new (new_<I, true>()) T{ZuCSpan{data, length}};
     return true;
   }
 

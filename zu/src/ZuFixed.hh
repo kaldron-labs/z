@@ -43,6 +43,7 @@
 #include <zlib/ZuDecimalFn.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuPrint.hh>
+#include <zlib/ZuTuple.hh>
 #include <zlib/ZuFmt.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuDecimal.hh>
@@ -163,13 +164,19 @@ struct ZuFixed {
   }
 
   template <bool NDP = true>
-  unsigned scan(ZuCSpan s, unsigned ndp_) {
+  int scan(ZuCSpan s, unsigned ndp_) {
+    auto r = eov<NDP>(s, ndp_);
+    *this = r.template p<1>();
+    return r.template p<0>();
+  }
+  template <bool NDP = true>
+  static ZuTuple<int, ZuFixed> eov(ZuCSpan s, unsigned ndp_) {
+    ZuFixed out;
     unsigned int m = 0;
     if (ZuUnlikely(!s)) goto null;
-    if (ZuUnlikely(s.length() == 3 &&
+    if (ZuUnlikely(s.length() >= 3 &&
 	  s[0] == 'n' && s[1] == 'a' && s[2] == 'n')) {
-      null();
-      return 3;
+      return {3, out};
     }
     if constexpr (NDP) if (ndp_ > 18) ndp_ = 18;
     {
@@ -206,17 +213,23 @@ struct ZuFixed {
       }
       int64_t v = iv * ZuDecimalFn::pow10_64(ndp_) + fv;
       if (ZuUnlikely(negative)) v = -v;
-      init(v, ndp_);
+      out.init(v, ndp_);
     }
-    return m;
+    return {int(m), out};
   zero:
-    init(0, ndp_);
-    return m;
+    out.init(0, ndp_);
+    return {int(m), out};
   null:
-    null();
-    return 0;
+    return {-1, ZuFixed{}};
   }
-  unsigned scan(ZuCSpan s) { return scan<false>(s, 0); }
+  int scan(ZuCSpan s) {
+    auto r = eov(s);
+    *this = r.p<1>();
+    return r.p<0>();
+  }
+  static ZuTuple<int, ZuFixed> eov(ZuCSpan s) {
+    return eov<false>(s, 0);
+  }
 
 public:
   // traits

@@ -13,7 +13,7 @@
 
 #include <zlib/zu_decimal.h>
 
-unsigned zu_decimal_in(zu_decimal *v_, const char *s)
+int zu_decimal_in(zu_decimal *v_, const char *s)
 {
   ZuDecimal v;
   auto n = v.scan(s);

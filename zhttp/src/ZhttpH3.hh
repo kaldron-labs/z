@@ -352,8 +352,7 @@ namespace H3 {
 	    consumed = rx.template consume<0, "Zhttp.H3.CxnType">(
 	      [this](ZuBSpan span) { return this->consumeVar_(span); },
 	      [this](ZuBSpan span) {
-		if (!this->parseType_(ZuCSpan{
-		      reinterpret_cast<const char *>(span.data()), span.length()}))
+		if (!this->parseType_(span))
 		  m_streamState = StreamState::Error;
 		m_varLen = m_varBytes = 0;
 	      });
@@ -365,8 +364,7 @@ namespace H3 {
 	    consumed = rx.template consume<0, "Zhttp.H3.CxnFrame">(
 	      [this](ZuBSpan span) { return this->consumeFrame_(span); },
 	      [this](ZuBSpan span) {
-		if (!this->parseControlFrame_(ZuCSpan{
-		      reinterpret_cast<const char *>(span.data()), span.length()}))
+		if (!this->parseControlFrame_(span))
 		  m_streamState = StreamState::Error;
 		resetFrame_();
 	      });
@@ -384,7 +382,7 @@ namespace H3 {
 	      [this](ZuBSpan span) {
 		if (!this->parseQPack_(m_qpackEncoderParser, span,
 		    [](ZuCSpan bytes, QPackDecodedInsn &i) {
-		      return QPack::decodeEncoderInsnOne(bytes, i);
+		      return QPack::decodeEncoderInsn(bytes, i);
 		    },
 		    [this](const QPackDecodedInsn &i) {
 		      return this->applyEncoderInstruction_(i);
@@ -398,7 +396,7 @@ namespace H3 {
 	      [this](ZuBSpan span) {
 		if (!this->parseQPack_(m_qpackDecoderParser, span,
 		    [](ZuCSpan bytes, QPackDecodedInsn &i) {
-		      return QPack::decodeDecoderInsnOne(bytes, i);
+		      return QPack::decodeDecoderInsn(bytes, i);
 		    },
 		    [this](const QPackDecodedInsn &i) {
 		      return this->applyDecoderInstruction_(i);
@@ -564,12 +562,10 @@ namespace H3 {
       auto storage = ZtLocalArray(HdrBytes, decodedMax);
       int64_t n = HPack::decode(
 	ZuSpan<uint8_t>{storage.data(), unsigned(decodedMax)},
-	ZuBSpan{
-	  reinterpret_cast<const uint8_t *>(ref.raw.data()), ref.raw.length()});
+	ref.raw);
       if (n < 0) return false;
       storage.length(unsigned(n));
-      return l(ZuCSpan{
-	reinterpret_cast<const char *>(storage.data()), storage.length()});
+      return l(storage);
     }
 
     using FieldState = FieldState_<Request>;

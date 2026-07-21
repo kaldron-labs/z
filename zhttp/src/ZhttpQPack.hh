@@ -353,8 +353,8 @@ struct QPack {
     HdrBytes &, uint64_t, bool, ZuCSpan);
   static int encodeInsertLiteral(HdrBytes &, Header);
   static int encodeSectionAck(HdrBytes &, uint64_t);
-  static int decodeEncoderInsnOne(ZuCSpan, QPackDecodedInsn &);
-  static int decodeDecoderInsnOne(ZuCSpan, QPackDecodedInsn &);
+  static int decodeEncoderInsn(ZuCSpan, QPackDecodedInsn &);
+  static int decodeDecoderInsn(ZuCSpan, QPackDecodedInsn &);
   static int decodeHuffman(HdrBytes &, ZuCSpan);
   static int decodeString(
     HdrBytes &, ZuCSpan, unsigned &, unsigned, uint8_t, ZuCSpan &);
@@ -494,9 +494,7 @@ struct QPackInsnParser {
     unsigned o = 0;
     while (o < span.length()) {
       QPackDecodedInsn insn;
-      int n = decode(ZuCSpan{
-	reinterpret_cast<const char *>(span.data() + o), span.length() - o},
-	insn);
+      int n = decode(ZuCSpan{span}.offset(o), insn);
       if (n == -2) {
 	for (unsigned i = o; i < span.length(); ++i) bytes.push(span[i]);
 	offset = 0;
@@ -518,9 +516,7 @@ private:
   bool drain_(Decode decode, Apply apply) {
     for (;;) {
       QPackDecodedInsn insn;
-      int n = decode(ZuCSpan{
-	reinterpret_cast<const char *>(bytes.data() + offset),
-	bytes.length() - offset}, insn);
+      int n = decode(ZuCSpan{bytes}.offset(offset), insn);
       if (n == -2) {
 	if (offset > 4096 && offset > (bytes.length()>>1)) {
 	  bytes.splice(0, offset);

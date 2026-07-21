@@ -87,7 +87,7 @@ save_PK_RSA(S &s, const Backend::PKey *key) {
     return ZeEXCEPT(Error, "ZtlsPK", "RSA export failed");
 
   Data::PK_X509_RSA data{
-    .id = OIDs::pkcs1_rsa(),
+    .id = OIDs::PKCS1_RSA,
     .rsa = {	// PKCS#1
       modulus,
       pubExp
@@ -118,7 +118,7 @@ save_PK_EC(S &s, const Backend::PKey *key) {
     return ZeEXCEPT(Error, "ZtlsPK", "EC public key export failed");
 
   Data::PK_X509_EC data{
-    .id = OIDs::ec_alg_unrestricted(),
+    .id = OIDs::EC_ALG_UNRESTRICTED,
     .id2 = {oid.data(), oid.length()},
     .pubKey = pubKey,
   };
@@ -228,7 +228,7 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
 
     Data::SK_PKCS8_RSA data{
       .version = 0,
-      .id = OIDs::pkcs1_rsa(),
+      .id = OIDs::PKCS1_RSA,
       .rsa = {	// PKCS#1
 	0,
 	modulus,
@@ -361,7 +361,7 @@ struct SK_EC_ : public PK_EC_<Heap> {
 
     Data::SK_PKCS8_EC data{
       .version = 0,
-      .id = OIDs::ec_alg_unrestricted(),
+      .id = OIDs::EC_ALG_UNRESTRICTED,
       .id2 = {oid.data(), oid.length()},
       .ec = {	// SEC1
 	.version = 1,
@@ -440,7 +440,7 @@ public:
       return ZeEXCEPT(Error, "ZtlsPK", "ED25519 public key export failed");
 
     Data::PK_X509_ED25519 data{
-      .id = OIDs::ed25519(),
+      .id = OIDs::ED25519,
       .pubKey = ZuBSpan{pubKey, sizeof(pubKey)}
     };
 
@@ -491,7 +491,7 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
 
     Data::SK_PKCS8_ED25519 data{
       .version = 0,
-      .id = OIDs::ed25519(),
+      .id = OIDs::ED25519,
       .key = ZuBSpan{prvKey, sizeof(prvKey)}
     };
 

@@ -212,6 +212,11 @@ void percentPolicies()
     ZuCheck(body == "a+b");
   }
   {
+    ZtString<> path;
+    ZtURI::PathQuote::quote(path, "a b?#/");
+    ZuCheck(path == "a%20b%3F%23%2F");
+  }
+  {
     char query[] = "foo%20bar&";
     auto r = ZtURI::eos(query);
     ZuCheck(r.p<0>() == 7 && r.p<1>() == 10 && r.p<2>() == '&');

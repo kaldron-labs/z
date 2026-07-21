@@ -11,11 +11,6 @@
 
 using namespace ZuTestUtil;
 
-static ZuCSpan span(const Zhttp::H3::HdrBytes &bytes)
-{
-  return ZuCSpan{reinterpret_cast<const char *>(bytes.data()), bytes.length()};
-}
-
 void testQPackLiteral()
 {
   ZuTestScope(testQPackLiteral);
@@ -52,7 +47,7 @@ void testQPackLiteral()
 
   unsigned n = 0;
   int used = Zhttp::H3::QPack::decodeLiteral(
-    span(bytes),
+    bytes.cspan(),
     [&n](Zhttp::H3::Header h) {
       if (!n) ZuCHECK(h.name == ":method" && h.value == "GET",
 	"decoded first header mismatch");
@@ -64,14 +59,12 @@ void testQPackLiteral()
 
   uint8_t badHuffmanName[] = { 0x00, 0x00, 0x29, 0x00, 0x00 };
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
-      ZuCSpan{reinterpret_cast<const char *>(badHuffmanName),
-	sizeof(badHuffmanName)},
+      ZuBSpan{badHuffmanName},
       [](Zhttp::H3::Header) { }) < 0,
     "QPACK accepted malformed Huffman-coded literal name");
   uint8_t badHuffmanValue[] = { 0x00, 0x00, 0x21, 'x', 0x81, 0x00 };
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
-      ZuCSpan{reinterpret_cast<const char *>(badHuffmanValue),
-	sizeof(badHuffmanValue)},
+      ZuBSpan{badHuffmanValue},
       [](Zhttp::H3::Header) { }) < 0,
     "QPACK accepted malformed Huffman-coded literal value");
 }
@@ -105,7 +98,7 @@ void testQPackFieldSectionPrefix()
     "zero field-section prefix encode failed");
   Zhttp::H3::FieldSectionPrefix decoded;
   ZuCHECK(Zhttp::H3::QPack::decodeFieldSectionPrefix(
-      span(bytes), decoded, 0, 0) == int(bytes.length()) &&
+      bytes.cspan(), decoded, 0, 0) == int(bytes.length()) &&
       !decoded.requiredInsertCount && !decoded.base &&
       Zhttp::H3::QPack::validateFieldSectionPrefix(decoded, 0),
     "zero field-section prefix decode/validate failed");
@@ -116,7 +109,7 @@ void testQPackFieldSectionPrefix()
   ZuCHECK(Zhttp::H3::QPack::encodeFieldSectionPrefix(bytes, prefix, 256) > 0 &&
       bytes[0] == 3 && bytes[1] == 1 &&
       Zhttp::H3::QPack::decodeFieldSectionPrefix(
-	span(bytes), decoded, 3, 256) == int(bytes.length()) &&
+	bytes.cspan(), decoded, 3, 256) == int(bytes.length()) &&
       decoded.requiredInsertCount == 2 && decoded.base == 3,
     "positive field-section base mismatch");
 
@@ -126,7 +119,7 @@ void testQPackFieldSectionPrefix()
   ZuCHECK(Zhttp::H3::QPack::encodeFieldSectionPrefix(bytes, prefix, 256) > 0 &&
       bytes[0] == 3 && bytes[1] == 0x81 &&
       Zhttp::H3::QPack::decodeFieldSectionPrefix(
-	span(bytes), decoded, 2, 256) == int(bytes.length()) &&
+	bytes.cspan(), decoded, 2, 256) == int(bytes.length()) &&
       decoded.requiredInsertCount == 2 && decoded.base == 0,
     "negative field-section base mismatch");
 
@@ -136,14 +129,13 @@ void testQPackFieldSectionPrefix()
   ZuCHECK(Zhttp::H3::QPack::encodeFieldSectionPrefix(bytes, prefix, 256) > 0 &&
       bytes[0] == 2 &&
       Zhttp::H3::QPack::decodeFieldSectionPrefix(
-	span(bytes), decoded, 17, 256) == int(bytes.length()) &&
+	bytes.cspan(), decoded, 17, 256) == int(bytes.length()) &&
       decoded.requiredInsertCount == 17 && decoded.base == 17,
     "wrapped required insert count mismatch");
 
   uint8_t invalid[] = { 1, 0 };
   ZuCHECK(Zhttp::H3::QPack::decodeFieldSectionPrefix(
-      ZuCSpan{reinterpret_cast<const char *>(invalid), sizeof(invalid)},
-      decoded, 0, 0) < 0,
+      ZuBSpan{invalid}, decoded, 0, 0) < 0,
     "non-zero encoded insert count accepted with zero capacity");
 }
 

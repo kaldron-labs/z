@@ -152,6 +152,30 @@ static void ownership() {
   ZuCheck(value.nested.value == 9);
 }
 
+static void resolve() {
+  ZuTestScope(resolve);
+  auto result = ZtCf::eov_Object(
+    "a: {b: [{value: zero}, {value: one}], empty: []}, text: leaf", true);
+  ZuCheck(result.p<0>() >= 0);
+  auto &root = result.p<1>();
+  ZuCheck(root->resolve("") == root.ptr());
+  ZuCheck(string(root->resolve("a.b[0].value")) == "zero");
+  ZuCheck(string(root->resolve("a.b[1].value")) == "one");
+  ZuCheck(root->resolve("a.b")->has<ZtCf::AnyNode::Array>());
+  ZuCheck(!root->resolve("a.missing"));
+  ZuCheck(!root->resolve("a.b[2]"));
+  ZuCheck(!root->resolve("a.b[-1]"));
+  ZuCheck(!root->resolve("a.b[0x0]"));
+  ZuCheck(!root->resolve("a.b[4294967296]"));
+  ZuCheck(!root->resolve("a.b[0]value"));
+  ZuCheck(!root->resolve("a.b[0].[0]"));
+  ZuCheck(!root->resolve("a.b."));
+  ZuCheck(!root->resolve("text.value"));
+  ZuCheck(!root->resolve("[0]"));
+  ZuCheck(!root->resolve("a[0]"));
+  ZuCheck(!root->resolve("a.empty[0]"));
+}
+
 static void quoting() {
   ZuTestScope(quoting);
   ZuTestCall(checkToken, "bare", "bare");
@@ -310,27 +334,29 @@ static void percent() {
   bool callbackOK = true;
   ZtCf::PctFn pctFn{[&calls, &callbackOK](
       ZuCSpan directive, ZuSpan<const ZuCSpan> args,
-      ZmFn<void(ZuCSpan)> expand) {
+      ZtCf::PctExpandFn expand) {
     ++calls;
     if (directive == "outer") {
       bool valid = args.length() == 2;
       if (valid)
         valid = args[0] == "first,arg" && args[1] == "second value";
       callbackOK &= valid;
-      expand(
+      return expand(
         "%define(ZTCF_PCT_NESTED, yes), "
         "included: ${ZTCF_PCT_NESTED}, %inner(), deep: {value: 9}");
     } else if (directive == "inner") {
       callbackOK &= !args;
-      expand("{inner: expanded}");
+      return expand("{inner: expanded}");
     } else if (directive == "array") {
       callbackOK &= !args;
-      expand("element: included");
+      return expand("element: included");
     } else if (directive == "none") {
       callbackOK &= args.length() == 1 && args[0] == "ignored";
+      return true;
     } else if (directive == "bad") {
-      expand("not an object body");
+      return expand("not an object body");
     }
+    return false;
   }};
 
   {
@@ -364,9 +390,9 @@ static void percent() {
 
   {
     ZuCheck(ZtCf::scan("%unknown()").p<0>() < 0);
-    ZuTestRepeat(invalid, 7);
+    ZuTestRepeat(invalid, 8);
     for (auto input : {
-        ZuCSpan{"%1bad()"}, ZuCSpan{"%missing"},
+        ZuCSpan{"%1bad()"}, ZuCSpan{"%missing"}, ZuCSpan{"%unknown()"},
         ZuCSpan{"%define(one)"},
         ZuCSpan{"%define(one, two"}, ZuCSpan{"%none(a,,b)"},
         ZuCSpan{"%none(a,)"},
@@ -503,6 +529,7 @@ int main(int argc, char **argv) {
   ZuTestMain();
 
   ZuTestCall(ownership);
+  ZuTestCall(resolve);
   ZuTestCall(quoting);
   ZuTestCall(expansion);
   ZuTestCall(classification);

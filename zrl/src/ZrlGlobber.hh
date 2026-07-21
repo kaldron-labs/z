@@ -46,9 +46,6 @@ class ZrlAPI Globber {
   };
 
 private:
-  ZuInline static constexpr bool isspace__(char c) {
-    return ((c >= '\t' && c <= '\r') || c == ' ');
-  }
   typedef bool (*QuoteFn)(uint32_t c);
   QuoteFn quoteFn();
 

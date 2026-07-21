@@ -136,6 +136,7 @@
 #include <zlib/ZuStruct.hh>
 #include <zlib/ZuVArray.hh>
 #include <zlib/ZuID.hh>
+#include <zlib/ZuTuple.hh>
 #include <zlib/ZuVStream.hh>
 
 #include <zlib/ZmAlloc.hh>
@@ -1354,7 +1355,7 @@ inline bool match(ZuCSpan &s, ZuCSpan m) {
   return true;
 }
 inline void skip(ZuCSpan &s) {
-  while (s.length() && isspace__(s[0])) s.offset(1);
+  s.trim();
 }
 
 // this is intentionally a 1-pass scan that does NOT validate the suffix
@@ -1457,22 +1458,22 @@ inline ZuCSpan ZtVField_scanVecElem(ZuCSpan s, const ZtVFmt &fmt)
 
 // scan integer from a vector string
 template <typename T>
-unsigned ZtVField_scanIntVec_(
+int ZtVField_scanIntVec_(
   T &v, ZuCSpan s, const ZtVField *field, const ZtVFmt &fmt)
 {
   if (ZuUnlikely(field->props & ZtVFieldProp::Enum())) {
     auto s_ = ZtVField_scanVecElem(s, fmt);
     auto v_ = field->type->info.enum_()->scan(s_);
     v = v_;
-    if (v_ < 0) return 0;
-    return s_.length();
+    if (v_ < 0) return -1;
+    return int(s_.length());
   }
   if (ZuUnlikely(field->props & ZtVFieldProp::Flags())) {
     auto s_ = ZtVField_scanVecElem(s, fmt);
     auto v_ = field->type->info.flags()->scan(s_, fmt);
     v = v_;
-    if (!v_) return 0;
-    return s_.length();
+    if (!v_) return -1;
+    return int(s_.length());
   }
   if (field->props & ZtVFieldProp::Hex())
     return v.template scan<ZuFmt::Hex<>>(s);
@@ -1487,8 +1488,8 @@ VSet::scan( \
 ) const { \
   VecScan::scan(s, fmt, [this, o, field, fmt](ZuCSpan &s) { \
     ZuBox<int##width##_t> v; \
-    unsigned n = ZtVField_scanIntVec_(v, s, field, fmt); \
-    if (n) { \
+    int n = ZtVField_scanIntVec_(v, s, field, fmt); \
+    if (n > 0) { \
       set_.int##width(o, v); \
       s.offset(n); \
       return true; \
@@ -1503,8 +1504,8 @@ VSet::scan( \
 ) const { \
   VecScan::scan(s, fmt, [this, o, field, fmt](ZuCSpan &s) { \
     ZuBox<uint##width##_t> v; \
-    unsigned n = ZtVField_scanIntVec_(v, s, field, fmt); \
-    if (n) { \
+    int n = ZtVField_scanIntVec_(v, s, field, fmt); \
+    if (n > 0) { \
       set_.uint##width(o, v); \
       s.offset(n); \
       return true; \
@@ -1526,8 +1527,8 @@ VSet::scan(
 ) const {
   VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
     ZuBox<double> v;
-    unsigned n = v.scan(s);
-    if (n) {
+    int n = v.scan(s);
+    if (n > 0) {
       set_.float_(o, v);
       s.offset(n);
       return true;
@@ -1542,8 +1543,8 @@ VSet::scan(
 ) const {
   VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
     ZuFixed v;
-    unsigned n = v.scan(s);
-    if (n) {
+    int n = v.scan(s);
+    if (n > 0) {
       set_.fixed(o, v);
       s.offset(n);
       return true;
@@ -1558,8 +1559,8 @@ VSet::scan(
 ) const {
   VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
     ZuDecimal v;
-    unsigned n = v.scan(s);
-    if (n) {
+    int n = v.scan(s);
+    if (n > 0) {
       set_.decimal(o, v);
       s.offset(n);
       return true;
@@ -1574,8 +1575,8 @@ VSet::scan(
 ) const {
   VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
     ZuDateTime v;
-    unsigned n = v.scan(fmt.dateScan, s);
-    if (n) {
+    int n = v.scan(fmt.dateScan, s);
+    if (n > 0) {
       set_.time(o, v.as_time());
       s.offset(n);
       return true;
@@ -1590,8 +1591,8 @@ VSet::scan(
 ) const {
   VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
     ZuDateTime v;
-    unsigned n = v.scan(fmt.dateScan, s);
-    if (n) {
+    int n = v.scan(fmt.dateScan, s);
+    if (n > 0) {
       set_.dateTime(o, ZuMv(v));
       s.offset(n);
       return true;
@@ -1998,19 +1999,31 @@ template <typename Props, typename Fmt, typename T>
 struct ZtFieldScanInt {
   ZuBox<T>	value;
 
-  template <typename S>
-  ZtFieldScanInt(const S &s) {
+  ZtFieldScanInt() = default;
+  ZtFieldScanInt(ZuCSpan s) { scan(s); }
+
+  int scan(ZuCSpan s) {
+    auto r = eov(s);
+    value = r.template p<1>();
+    return r.template p<0>();
+  }
+  static ZuTuple<int, ZuBox<T>> eov(ZuCSpan s) {
     using namespace ZuFieldProp;
     if constexpr (ZuFieldProp::HasEnum<Props>{}) {
-      value = ZuFieldProp::GetEnum<Props>::s2v(s);
+      using Map = ZuFieldProp::GetEnum<Props>;
+      auto i = Map::s2v(s);
+      if (i < 0) return {-1, ZuBox<T>{}};
+      return {int(Map::v2s(i).length()), ZuBox<T>{i}};
     } else if constexpr (ZuFieldProp::HasFlags<Props>{}) {
       using Map = ZuFieldProp::GetFlags<Props>;
-      value = typename Map::Scan{s, Fmt::FlagsDelim()};
-    } else if constexpr (ZuTypeIn<ZuFieldProp::Hex, Props>{})
+      using Scan = typename Map::Scan;
+      return Scan::eov(s, Fmt::FlagsDelim());
+    } else if constexpr (ZuTypeIn<ZuFieldProp::Hex, Props>{}) {
       // hex case is immaterial in scanning
-      value.template scan<ZuFmt::Hex<false, Fmt>>(s);
-    else
-      value.scan(s);
+      return ZuBox<T>::template eov<ZuFmt::Hex<false, Fmt>>(s);
+    } else {
+      return ZuBox<T>::eov(s);
+    }
   }
 };
 template <typename Props, typename Fmt, typename T, typename Cmp>

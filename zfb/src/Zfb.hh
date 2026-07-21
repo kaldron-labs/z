@@ -315,15 +315,15 @@ namespace Load {
   // inline zero-copy conversion of a FB string to a ZuCSpan
   inline ZuCSpan str(const String *s) {
     if (!s) return {};
-    return {reinterpret_cast<const char *>(s->Data()), s->size()};
+    return ZuBSpan{s->Data(), s->size()};
   }
   // inline zero-copy conversion of a fixed-width FB string to a ZuCSpan
   template <unsigned N>
   inline ZuCSpan strN(const Array<uint8_t, N> *s) {
     if (!s) return {};
-    auto data = reinterpret_cast<const char *>(s->Data());
-    if (data[N-1]) return {data, N};
-    return {data}; // deferred strlen
+    ZuCSpan data = ZuBSpan{s->Data(), N};
+    if (data[N-1]) return data;
+    return {data.data()}; // deferred strlen
   }
 
   // inline zero-copy conversion of a [uint8] to a ZuBSpan

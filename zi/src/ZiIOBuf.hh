@@ -283,8 +283,7 @@ public:
   }
   template <typename C>
   MatchChar<C, IOBuf &> operator <<(C c) {
-    append(reinterpret_cast<const uint8_t *>(&c), 1);
-    return *this;
+    return *this << ZuSpan{&c, 1};
   }
   template <typename R>
   MatchReal<R, IOBuf &> operator <<(const R &r) {

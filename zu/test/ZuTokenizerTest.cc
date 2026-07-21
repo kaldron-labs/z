@@ -25,10 +25,6 @@ int main(int argc, char **argv)
   ZuCheck(Delimited<':'>::next(span = ":") == "");
   ZuCheck(Delimited<':'>::next(span = "foo") == "foo");
   ZuCheck(Delimited<':'>::next(span = "foo:") == "foo");
-  ZuCheck((WhiteSpace::skip(span = ""), span) == "");
-  ZuCheck((WhiteSpace::skip(span = " "), span) == "");
-  ZuCheck((WhiteSpace::skip(span = "  "), span) == "");
-  ZuCheck((WhiteSpace::skip(span = "  foo"), span) == "foo");
   ZuCheck(WhiteSpace::next(span = "") == "");
   ZuCheck(WhiteSpace::next(span = " ") == "");
   ZuCheck(WhiteSpace::next(span = "foo  ") == "foo");
@@ -46,7 +42,7 @@ int main(int argc, char **argv)
   ZuCheck(Delimited<','>::next(span) == "");
 
   ZuCheck(WhiteSpace::next(span = "   ") == "");
-  WhiteSpace::skip(span = "  a   b   c ");
+  (span = "  a   b   c ").trim();
   ZuCheck(WhiteSpace::next(span) == "a");
   ZuCheck(WhiteSpace::next(span) == "b");
   ZuCheck(WhiteSpace::next(span) == "c");

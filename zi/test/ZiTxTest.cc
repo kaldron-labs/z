@@ -82,7 +82,7 @@ ZmRef<ZiTxBuf> mkBuf(char c, unsigned n)
 {
   ZmRef<ZiTxBuf> buf = new TxAlloc{};
   for (unsigned i = 0; i < n; ++i)
-    buf->append(reinterpret_cast<const uint8_t *>(&c), 1);
+    buf->append(ZuSpan{&c, 1});
   return buf;
 }
 

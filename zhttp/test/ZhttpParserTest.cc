@@ -30,7 +30,7 @@ ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
   unsigned n = ::strlen(s);
   ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
-  if (n) buf->append(reinterpret_cast<const uint8_t *>(s), n);
+  if (n) buf->append(ZuCSpan{s, n});
   return buf;
 }
 
@@ -114,8 +114,7 @@ struct RequestParser :
     if constexpr (Key{}() == "host") {
       ++hostCalls;
       host.length(0);
-      host << ZuCSpan{
-	reinterpret_cast<const char *>(value.data()), value.length()};
+      host << value;
     }
   }
 

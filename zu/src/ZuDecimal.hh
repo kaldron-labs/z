@@ -22,6 +22,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuFmt.hh>
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuTuple.hh>
 
 template <typename Fmt> struct ZuDecimalFmt;	// internal
 class ZuDecimalVFmt;				// ''
@@ -374,13 +375,18 @@ public:
     scan(s);
   }
 
-  unsigned scan(ZuCSpan s) {
+  int scan(ZuCSpan s) {
+    auto r = eov(s);
+    *this = r.p<1>();
+    return r.p<0>();
+  }
+  static ZuTuple<int, ZuDecimal> eov(ZuCSpan s) {
+    ZuDecimal v;
     unsigned int m = 0;
     if (ZuUnlikely(!s)) goto null;
-    if (ZuUnlikely(s.length() == 3 &&
+    if (ZuUnlikely(s.length() >= 3 &&
 	  s[0] == 'n' && s[1] == 'a' && s[2] == 'n')) {
-      value = null();
-      return 3;
+      return {3, v};
     }
     {
       bool negative = s[0] == '-';
@@ -412,16 +418,15 @@ public:
 	if (fv && n < 18)
 	  fv *= ZuDecimalFn::pow10_64(18 - n);
       }
-      value = uint128_t(iv) * scale() + fv;
-      if (ZuUnlikely(negative)) value = -value;
+      v.value = uint128_t(iv) * scale() + fv;
+      if (ZuUnlikely(negative)) v.value = -v.value;
     }
-    return m;
+    return {int(m), v};
   zero:
-    value = 0;
-    return m;
+    v.value = 0;
+    return {int(m), v};
   null:
-    value = null();
-    return 0;
+    return {-1, ZuDecimal{}};
   }
 
   // convert to floating point

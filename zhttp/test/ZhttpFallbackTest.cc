@@ -91,8 +91,7 @@ struct RequestRx :
   void header(ZuBSpan value) {
     if constexpr (Key{}() == "host") {
       host.length(0);
-      host << ZuCSpan{
-	reinterpret_cast<const char *>(value.data()), value.length()};
+      host << value;
     }
   }
 

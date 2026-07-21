@@ -12,31 +12,14 @@ using namespace ZuTestUtil;
 
 using HdrBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HPackTest.Bytes">>;
 
-static ZuCSpan bytes_(const uint8_t *data, unsigned length)
-{
-  return ZuCSpan{reinterpret_cast<const char *>(data), length};
-}
-
-static ZuCSpan bytes_(const HdrBytes &data)
-{
-  return bytes_(data.data(), data.length());
-}
-
-static ZuBSpan bspan_(ZuCSpan data)
-{
-  return ZuBSpan{
-    reinterpret_cast<const uint8_t *>(data.data()), data.length()};
-}
-
 static bool encodeEq_(ZuCSpan in, const uint8_t *expected, unsigned n)
 {
   HdrBytes encoded;
   encoded.length(Zhttp::H3::HPack::enclen(in.length()));
-  uint64_t used = Zhttp::H3::HPack::encode(
-    ZuSpan<uint8_t>{encoded.data(), encoded.length()}, bspan_(in));
+  uint64_t used = Zhttp::H3::HPack::encode(encoded.span(), in);
   encoded.length(used);
   return used == n &&
-    bytes_(encoded) == bytes_(expected, n);
+    encoded == ZuBSpan{expected, n};
 }
 
 static bool decodeEq_(const uint8_t *in, unsigned n, ZuCSpan expected)
@@ -47,7 +30,7 @@ static bool decodeEq_(const uint8_t *in, unsigned n, ZuCSpan expected)
     decoded.span(), ZuBSpan{in, n});
   decoded.length(used < 0 ? 0 : uint64_t(used));
   return used == int64_t(expected.length()) &&
-    bytes_(decoded) == expected;
+    decoded == expected;
 }
 
 static bool roundTrip_(ZuCSpan in)
@@ -55,16 +38,13 @@ static bool roundTrip_(ZuCSpan in)
   HdrBytes encoded;
   HdrBytes decoded;
   encoded.length(Zhttp::H3::HPack::enclen(in.length()));
-  uint64_t encodedLen = Zhttp::H3::HPack::encode(
-    ZuSpan<uint8_t>{encoded.data(), encoded.length()}, bspan_(in));
+  uint64_t encodedLen = Zhttp::H3::HPack::encode(encoded.span(), in);
   encoded.length(encodedLen);
   decoded.length(Zhttp::H3::HPack::declen(encoded.length()));
-  int64_t decodedLen = Zhttp::H3::HPack::decode(
-    decoded.span(),
-    ZuBSpan{encoded.data(), encoded.length()});
+  int64_t decodedLen = Zhttp::H3::HPack::decode(decoded.span(), encoded);
   decoded.length(decodedLen < 0 ? 0 : uint64_t(decodedLen));
   return decodedLen == int64_t(in.length()) &&
-    bytes_(decoded) == in;
+    decoded == in;
 }
 
 void testHPackHuffmanKnownVectors()
@@ -85,9 +65,9 @@ void testHPackHuffmanKnownVectors()
   };
   uint8_t highRaw[] = { 0x80, 0xff };
   ZuCHECK(decodeEq_(highOctets, sizeof(highOctets),
-      bytes_(highRaw, sizeof(highRaw))),
+      ZuBSpan{highRaw}),
     "HPACK Huffman high-octet decode failed");
-  ZuCHECK(encodeEq_(bytes_(highRaw, sizeof(highRaw)),
+  ZuCHECK(encodeEq_(ZuBSpan{highRaw},
       highOctets, sizeof(highOctets)),
     "HPACK Huffman high-octet encode failed");
 
@@ -127,13 +107,13 @@ void testHPackHuffmanRoundTrips()
 
   uint8_t all[256];
   for (unsigned i = 0; i < 256; ++i) all[i] = uint8_t(i);
-  ZuCHECK(roundTrip_(bytes_(all, sizeof(all))),
+  ZuCHECK(roundTrip_(ZuBSpan{all}),
     "HPACK Huffman all-octet sequence round trip failed");
 
   bool allSingles = true;
   for (unsigned i = 0; i < 256; ++i) {
     uint8_t one = uint8_t(i);
-    if (!roundTrip_(bytes_(&one, 1))) allSingles = false;
+    if (!roundTrip_(ZuBSpan{&one, 1})) allSingles = false;
   }
   ZuCHECK(allSingles, "HPACK Huffman single-octet round trips failed");
 
@@ -142,7 +122,7 @@ void testHPackHuffmanRoundTrips()
   for (unsigned n = 1; n <= sizeof(buf); ++n) {
     for (unsigned i = 0; i < n; ++i)
       buf[i] = uint8_t((i*37U + n*11U + (i>>1)) & 0xffU);
-    if (!roundTrip_(bytes_(buf, n))) allVariable = false;
+    if (!roundTrip_(ZuBSpan{buf, n})) allVariable = false;
   }
   ZuCHECK(allVariable, "HPACK Huffman variable-length round trips failed");
 }

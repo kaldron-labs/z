@@ -55,16 +55,12 @@ struct App : public Ztls::Server<App> {
 	response << Response << content.length() << Response2;
 	{
 	  auto tx = txStream();
-	  tx.append(
-	    reinterpret_cast<const uint8_t *>(response.data()),
-	    response.length());
+	  tx.append(response);
 	  tx << Zi::flush();
 	}
 	{
 	  auto tx = txStream();
-	  tx.append(
-	    reinterpret_cast<const uint8_t *>(content.data()),
-	    content.length());
+	  tx.append(content);
 	  tx << Zi::flush();
 	}
 	int64_t consumed = rx.consume(

@@ -84,6 +84,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuTime.hh>
+#include <zlib/ZuTuple.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuDerive.hh>
 
@@ -1180,27 +1181,46 @@ private:
   // parse fixed-width integers
   template <unsigned Width> struct Int {
     template <typename T, typename S>
-    static unsigned scan(T &v, S &s) {
-      unsigned i = v.scan(ZuFmt::Right<Width>(), s);
+    static int scan(T &v, S &s) {
+      int i = v.scan(ZuFmt::Right<Width>(), s);
       if (ZuLikely(i > 0)) s.offset(i);
       return i;
     }
   };
   // parse nanoseconds
   template <typename T, typename S>
-  static unsigned scanFrac(T &v, S &s) {
-    unsigned i = v.scan(ZuFmt::Frac<9, 9>(), s);
+  static int scanFrac(T &v, S &s) {
+    int i = v.scan(ZuFmt::Frac<9, 9>(), s);
     if (ZuLikely(i > 0)) s.offset(i);
     return i;
   }
 
+  unsigned scan_(const ZuDateTimeScan::CSV &, ZuCSpan);
+  unsigned scan_(const ZuDateTimeScan::FIX &, ZuCSpan);
+  unsigned scan_(const ZuDateTimeScan::ISO &, ZuCSpan);
+  unsigned scan_(const ZuDateTimeScan::ASN1_U &, ZuCSpan);
+  unsigned scan_(const ZuDateTimeScan::ASN1_G &, ZuCSpan);
+  unsigned scan_(const ZuDateTimeScan::Any &, ZuCSpan);
+
 public:
-  unsigned scan(const ZuDateTimeScan::CSV &, ZuCSpan);
-  unsigned scan(const ZuDateTimeScan::FIX &, ZuCSpan);
-  unsigned scan(const ZuDateTimeScan::ISO &, ZuCSpan);
-  unsigned scan(const ZuDateTimeScan::ASN1_U &, ZuCSpan);
-  unsigned scan(const ZuDateTimeScan::ASN1_G &, ZuCSpan);
-  unsigned scan(const ZuDateTimeScan::Any &, ZuCSpan);
+  int scan(const ZuDateTimeScan::CSV &, ZuCSpan);
+  static ZuTuple<int, ZuDateTime> eov(
+    const ZuDateTimeScan::CSV &, ZuCSpan);
+  int scan(const ZuDateTimeScan::FIX &, ZuCSpan);
+  static ZuTuple<int, ZuDateTime> eov(
+    const ZuDateTimeScan::FIX &, ZuCSpan);
+  int scan(const ZuDateTimeScan::ISO &, ZuCSpan);
+  static ZuTuple<int, ZuDateTime> eov(
+    const ZuDateTimeScan::ISO &, ZuCSpan);
+  int scan(const ZuDateTimeScan::ASN1_U &, ZuCSpan);
+  static ZuTuple<int, ZuDateTime> eov(
+    const ZuDateTimeScan::ASN1_U &, ZuCSpan);
+  int scan(const ZuDateTimeScan::ASN1_G &, ZuCSpan);
+  static ZuTuple<int, ZuDateTime> eov(
+    const ZuDateTimeScan::ASN1_G &, ZuCSpan);
+  int scan(const ZuDateTimeScan::Any &, ZuCSpan);
+  static ZuTuple<int, ZuDateTime> eov(
+    const ZuDateTimeScan::Any &, ZuCSpan);
 
   void normalize(unsigned &year, unsigned &month);
   void normalize(int &year, int &month);

@@ -45,16 +45,39 @@ void testInvalidFormatPaths()
   ZuTestScope(testInvalidFormatPaths);
 
   ZuTime t;
-  ZuCheck(t.scan("not-a-time") == 0);
+  ZuCheck(t.scan("not-a-time") < 0);
 
   ZuDateTime d;
   ZuDateTimeScan::CSV csv;
   ZuDateTimeScan::ISO iso;
   ZuDateTimeScan::FIX fix;
 
-  ZuCheck(d.scan(csv, "not-a-time") == 0);
-  ZuCheck(d.scan(iso, "not-a-time") == 0);
-  ZuCheck(d.scan(fix, "not-a-time") == 0);
+  ZuCheck(d.scan(csv, "not-a-time") < 0);
+  ZuCheck(d.scan(iso, "not-a-time") < 0);
+  ZuCheck(d.scan(fix, "not-a-time") < 0);
+}
+
+void testIncrementalScan()
+{
+  ZuTestScope(testIncrementalScan);
+
+  constexpr ZuCSpan s = "1970/01/01 00:00:01junk";
+  auto t = ZuTime::eov(s);
+  ZuCheck(t.p<0>() == 19);
+  ZuCheck(t.p<1>() == ZuTime{1});
+
+  auto d = ZuDateTime::eov(ZuDateTimeScan::CSV{}, s);
+  ZuCheck(d.p<0>() == 19);
+  ZuCheck(d.p<1>().as_time() == ZuTime{1});
+
+  auto iso = ZuDateTime::eov(
+    ZuDateTimeScan::ISO{}, "1970-01-01T00:00:01junk");
+  ZuCheck(iso.p<0>() == 19);
+  ZuCheck(iso.p<1>().as_time() == ZuTime{1});
+
+  auto invalid = ZuTime::eov("not-a-time");
+  ZuCheck(invalid.p<0>() < 0);
+  ZuCheck(!*invalid.p<1>());
 }
 
 void testNsecBoundaries()
@@ -79,6 +102,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRoundTripAndDecimal);
   ZuTestCall(testInvalidFormatPaths);
+  ZuTestCall(testIncrementalScan);
   ZuTestCall(testNsecBoundaries);
   return 0;
 }

@@ -28,11 +28,11 @@ bool zu_time_null(const zu_time *v_)
   return !*v;
 }
 
-unsigned zu_time_in_csv(zu_time *v, const char *s)
+int zu_time_in_csv(zu_time *v, const char *s)
 {
   return reinterpret_cast<ZuTime *>(v)->scan(s);
 }
-unsigned zu_time_in_iso(zu_time *v_, const char *s)
+int zu_time_in_iso(zu_time *v_, const char *s)
 {
   auto &v = *reinterpret_cast<ZuTime *>(v_);
   ZuDateTimeScan::ISO fmt;
@@ -41,7 +41,7 @@ unsigned zu_time_in_iso(zu_time *v_, const char *s)
   v = t.as_time();
   return n;
 }
-unsigned zu_time_in_fix(zu_time *v_, const char *s)
+int zu_time_in_fix(zu_time *v_, const char *s)
 {
   auto &v = *reinterpret_cast<ZuTime *>(v_);
   ZuDateTimeScan::FIX fmt;

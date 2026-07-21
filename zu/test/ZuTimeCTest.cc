@@ -45,9 +45,9 @@ void testParseAndPrint()
   ZuCheck(zu_time_out_fix(outFIX, sizeof(outFIX), &fix));
   ZuCheck(outFIX[0]);
 
-  ZuCheck(!zu_time_in_csv(&t, "bad"));
-  ZuCheck(!zu_time_in_iso(&t, "bad"));
-  ZuCheck(!zu_time_in_fix(&t, "bad"));
+  ZuCheck(zu_time_in_csv(&t, "bad") < 0);
+  ZuCheck(zu_time_in_iso(&t, "bad") < 0);
+  ZuCheck(zu_time_in_fix(&t, "bad") < 0);
 }
 
 void testDecimalAndMath()

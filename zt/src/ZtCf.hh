@@ -17,6 +17,7 @@
 #include <zlib/ZtLib.hh>
 #endif
 
+#include <limits.h>
 #include <math.h>
 
 #include <zlib/ZuDecimal.hh>
@@ -86,6 +87,9 @@ public:
 
   template <typename Data>
   decltype(auto) data(this auto &&);
+
+  // path is in "Member" format, see ZtURI.hh
+  const AnyNode *resolve(ZuCSpan path) const;
 
   static constexpr unsigned LNodeSize = 512;
   static constexpr unsigned SNodeSize = 48;
@@ -166,6 +170,63 @@ inline decltype(auto) AnyNode::data(this auto &&self) {
   return ZuFwdLike<Self>(ZuFwdLike<Self, NodeT>(self).data);
 }
 
+ZuInline constexpr bool isalpha__(char c) {
+  return (c >= 'a' && c <= 'z') ||
+    (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+ZuInline constexpr bool isdigit__(char c) {
+  return c >= '0' && c <= '9';
+}
+
+ZuInline constexpr bool isword__(char c) {
+  return isalpha__(c) || isdigit__(c);
+}
+
+inline const AnyNode *AnyNode::resolve(ZuCSpan path) const {
+  const AnyNode *node = this;
+  while (path) {
+    unsigned i = 0, n = path.length();
+    if (path[0] == '[') {
+      if (!node->has<Array>() || n < 3) return nullptr;
+      unsigned index = 0;
+      while (++i < n) {
+	auto c = path[i];
+	if (!isdigit__(c)) break;
+	unsigned digit = c - '0';
+	if (index > (UINT_MAX - digit) / 10) return nullptr;
+	index = (index * 10) + digit;
+      }
+      if (i == 1 || i >= n || path[i] != ']') return nullptr;
+      const auto &array = node->data<Array>();
+      if (index >= array.length() || !array[index]) return nullptr;
+      node = array[index].ptr();
+      ++i;
+      if (i < n) {
+	if (path[i] == '[') { path.offset(i); continue; }
+	if (path[i] != '.' || ++i >= n || path[i] == '[') return nullptr;
+      }
+    } else {
+      if (!node->has<Object>() || path[0] == '.') return nullptr;
+      while (++i < n && path[i] != '[' && path[i] != '.');
+      ZuCSpan id{path.data(), i};
+      const auto &fields = node->data<Object>();
+      node = nullptr;
+      for (unsigned j = 0, m = fields.length(); j < m; j++)
+	if (fields[j].p<0>() == id) {
+	  node = fields[j].p<1>().ptr();
+	  break;
+	}
+      if (!node) return nullptr;
+      if (i < n && path[i] == '.') {
+	if (++i >= n || path[i] == '[') return nullptr;
+      }
+    }
+    path.offset(i);
+  }
+  return node;
+}
+
 using NodeArray = typename AnyNode::Array;
 using CNodeArray = const NodeArray;
 
@@ -175,10 +236,15 @@ ZtExtern int eos(ZuCSpan span, AnyNode::String &out);
 extern template int eos<false>(ZuCSpan, AnyNode::String &);
 extern template int eos<true>(ZuCSpan, AnyNode::String &);
 
-// scan Cf, build parse tree
-using PctFn = ZmFn<void(
-  ZuCSpan, ZuSpan<const ZuCSpan>, ZmFn<void(ZuCSpan)>)>;
-// PctFn must invoke its expansion callback synchronously, if at all
+// PctFn must:
+// - propagate expansion failure
+// - call the expansion callback synchronously
+//   - if not called, no expansion is performed
+using PctFnHeapID = ZmFnHeapID<"ZtCf.PctFn">;
+using PctExpandFn = ZmFn<bool(ZuCSpan), PctFnHeapID>;
+using PctFn = ZmFn<bool(
+  ZuCSpan, ZuSpan<const ZuCSpan>, PctExpandFn), PctFnHeapID>;
+// scan configuration data, build parse tree
 ZtExtern ZuTuple<int, ZuPtr<const AnyNode>> scan(
   ZuCSpan span, PctFn pctFn = {}, ZmRef<Defines> defines = new Defines());
 
@@ -610,7 +676,7 @@ inline T loadValue_(const AnyNode *node)
     } else if constexpr (Fmt::Fmt == ZtCf::CSV) {
       auto &fmt = ZmTLS<ZuDateTimeScan::CSV, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else
@@ -618,7 +684,7 @@ inline T loadValue_(const AnyNode *node)
     } else if constexpr (Fmt::Fmt == ZtCf::FIX) {
       auto &fmt = ZmTLS<ZuDateTimeScan::FIX, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else
@@ -626,7 +692,7 @@ inline T loadValue_(const AnyNode *node)
     } else if constexpr (Fmt::Fmt == ZtCf::ISO) {
       auto &fmt = ZmTLS<ZuDateTimeScan::ISO, (int Props::*){}>();
       ZuDateTime v;
-      if (!v.scan(fmt, span)) return ZuCmp<T>::null();
+      if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
       if constexpr (ZuIs_<T, ZuTime>{})
 	return v.as_time();
       else

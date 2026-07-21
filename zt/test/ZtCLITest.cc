@@ -234,6 +234,13 @@ void longOnlyOptions()
   ZuCheck(argc == 1);
   ZuCheck(options.port == 8080);
   ZuCheck(options.verbose);
+
+  parser.reset();
+  char unknown[] = "--unknown";
+  ZuCheck(!parser.scanArg({unknown, sizeof(unknown) - 1}));
+  parser.reset();
+  char unknownValue[] = "--unknown=1";
+  ZuCheck(!parser.scanArg({unknownValue, sizeof(unknownValue) - 1}));
 }
 
 void delimitedLoad()

@@ -274,7 +274,23 @@ void ZuDateTime::normalize(
   }
 }
 
-unsigned ZuDateTime::scan(const ZuDateTimeScan::CSV &fmt, ZuCSpan s)
+int ZuDateTime::scan(const ZuDateTimeScan::CSV &fmt, ZuCSpan s)
+{
+  auto r = eov(fmt, s);
+  *this = r.p<1>();
+  return r.p<0>();
+}
+
+ZuTuple<int, ZuDateTime>
+ZuDateTime::eov(const ZuDateTimeScan::CSV &fmt, ZuCSpan s)
+{
+  ZuDateTime v;
+  unsigned n = v.scan_(fmt, s);
+  if (!n) return {-1, ZuDateTime{}};
+  return {int(n), v};
+}
+
+unsigned ZuDateTime::scan_(const ZuDateTimeScan::CSV &fmt, ZuCSpan s)
 {
   {
     unsigned year, month, day, hour, minute, sec, nsec;
@@ -302,7 +318,7 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::CSV &fmt, ZuCSpan s)
 	!month || month > 12U ||
 	!day || day > 31U)) goto invalid;
 
-    if (ptr >= end || *ptr++ != ' ') {
+    if (ptr >= end || *ptr != ' ') {
       int year_ = year, month_ = month;
       if (ZuUnlikely(bc)) year_ = -year_;
       normalize(year_, month_);
@@ -312,6 +328,7 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::CSV &fmt, ZuCSpan s)
       if (ZuUnlikely(fmt.tzOffset)) *this += fmt.tzOffset;
       return ptr - s.data();
     }
+    ++ptr;
 
     if (ZuUnlikely(end - ptr < 8)) goto invalid;
     c = *ptr++ - '0'; hour = c * 10;
@@ -326,13 +343,14 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::CSV &fmt, ZuCSpan s)
 
     nsec = 0;
     if (ZuLikely(ptr < end)) {
-      if (ZuUnlikely(end - ptr < 2)) goto end;
-      if (ZuUnlikely((c = *ptr++) != '.')) goto end;
+      if (ZuUnlikely(*ptr != '.' || end - ptr < 2)) goto end;
+      ++ptr;
       unsigned pow = 100000000;
       c = *ptr++ - '0'; if (ZuUnlikely(c >= 10)) goto invalid;
       nsec = c * pow;
       while (ptr < end) {
-	c = *ptr++ - '0'; if (ZuUnlikely(c >= 10)) break;
+	c = *ptr - '0'; if (ZuUnlikely(c >= 10)) break;
+	++ptr;
 	nsec += c * (pow /= 10);
       }
     }
@@ -353,7 +371,23 @@ invalid:
   return 0;
 }
 
-unsigned ZuDateTime::scan(const ZuDateTimeScan::FIX &fmt, ZuCSpan s)
+int ZuDateTime::scan(const ZuDateTimeScan::FIX &fmt, ZuCSpan s)
+{
+  auto r = eov(fmt, s);
+  *this = r.p<1>();
+  return r.p<0>();
+}
+
+ZuTuple<int, ZuDateTime>
+ZuDateTime::eov(const ZuDateTimeScan::FIX &fmt, ZuCSpan s)
+{
+  ZuDateTime v;
+  unsigned n = v.scan_(fmt, s);
+  if (!n) return {-1, ZuDateTime{}};
+  return {int(n), v};
+}
+
+unsigned ZuDateTime::scan_(const ZuDateTimeScan::FIX &fmt, ZuCSpan s)
 {
   {
     unsigned year, month, day, hour, minute, sec, nsec;
@@ -387,12 +421,14 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::FIX &fmt, ZuCSpan s)
 
     nsec = 0;
     if (ZuLikely(ptr < end)) {
-      if (ZuUnlikely(end - ptr < 2 || *ptr++ != '.')) goto end;
+      if (ZuUnlikely(*ptr != '.' || end - ptr < 2)) goto end;
+      ++ptr;
       unsigned pow = 100000000;
       c = *ptr++ - '0'; if (ZuUnlikely(c >= 10)) goto invalid;
       nsec = c * pow;
       while (ptr < end) {
-	c = *ptr++ - '0'; if (ZuUnlikely(c >= 10)) break;
+	c = *ptr - '0'; if (ZuUnlikely(c >= 10)) break;
+	++ptr;
 	nsec += c * (pow /= 10);
       }
     }
@@ -412,7 +448,23 @@ invalid:
   return 0;
 }
 
-unsigned ZuDateTime::scan(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
+int ZuDateTime::scan(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
+{
+  auto r = eov(fmt, s);
+  *this = r.p<1>();
+  return r.p<0>();
+}
+
+ZuTuple<int, ZuDateTime>
+ZuDateTime::eov(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
+{
+  ZuDateTime v;
+  unsigned n = v.scan_(fmt, s);
+  if (!n) return {-1, ZuDateTime{}};
+  return {int(n), v};
+}
+
+unsigned ZuDateTime::scan_(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
 {
   {
     unsigned year, month, day, hour, minute, sec, nsec;
@@ -440,7 +492,7 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
 	!month || month > 12U ||
 	!day || day > 31U)) goto invalid;
 
-    if (ptr >= end || *ptr++ != 'T') {
+    if (ptr >= end || *ptr != 'T') {
       int year_ = year, month_ = month;
       if (ZuUnlikely(bc)) year_ = -year_;
       normalize(year_, month_);
@@ -450,6 +502,7 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
       if (ZuUnlikely(fmt.tzOffset)) *this += fmt.tzOffset;
       return ptr - s.data();
     }
+    ++ptr;
 
     if (ZuUnlikely(end - ptr < 8)) goto invalid;
     c = *ptr++ - '0'; hour = c * 10;
@@ -487,7 +540,8 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
       return ptr - s.data();
     }
 
-    if ((c = *ptr++) == 'Z') return ptr - s.data();
+    c = *ptr;
+    if (c == 'Z') return ++ptr - s.data();
 
     int offset;
 
@@ -495,8 +549,11 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
       offset = 1;
     } else if (ZuLikely(c == '-')) {
       offset = -1;
-    } else
-      goto invalid;
+    } else {
+      if (ZuUnlikely(fmt.tzOffset)) *this += fmt.tzOffset;
+      return ptr - s.data();
+    }
+    ++ptr;
 
     if (ZuUnlikely(end - ptr < 2)) goto invalid;
 
@@ -505,12 +562,16 @@ unsigned ZuDateTime::scan(const ZuDateTimeScan::ISO &fmt, ZuCSpan s)
     c = *ptr++ - '0'; offsetHours = c * 10;
     c = *ptr++ - '0'; offsetHours += c;
     if (ZuLikely(ptr >= end)) goto offset;
-    c = *ptr++;
+    c = *ptr;
     if (c == ':') {
+      ++ptr;
       if (ZuUnlikely(end - ptr < 2)) goto invalid;
       c = *ptr++;
-    } else
+    } else {
+      if (unsigned(char(c) - '0') >= 10) goto offset;
+      ++ptr;
       if (ZuUnlikely(end - ptr < 1)) goto invalid;
+    }
     c = char(c) - '0'; offsetMinutes = c * 10;
     c = *ptr++ - '0'; offsetMinutes += c;
     if (ZuUnlikely(offsetHours > 23U || offsetMinutes > 59U)) goto invalid;
@@ -530,7 +591,23 @@ invalid:
   return 0;
 }
 
-unsigned ZuDateTime::scan(const ZuDateTimeScan::ASN1_U &fmt, ZuCSpan s)
+int ZuDateTime::scan(const ZuDateTimeScan::ASN1_U &fmt, ZuCSpan s)
+{
+  auto r = eov(fmt, s);
+  *this = r.p<1>();
+  return r.p<0>();
+}
+
+ZuTuple<int, ZuDateTime>
+ZuDateTime::eov(const ZuDateTimeScan::ASN1_U &fmt, ZuCSpan s)
+{
+  ZuDateTime v;
+  unsigned n = v.scan_(fmt, s);
+  if (!n) return {-1, ZuDateTime{}};
+  return {int(n), v};
+}
+
+unsigned ZuDateTime::scan_(const ZuDateTimeScan::ASN1_U &fmt, ZuCSpan s)
 {
   {
     unsigned year, month, day, hour, minute, sec, nsec = 0;
@@ -574,7 +651,23 @@ invalid:
   return 0;
 }
 
-unsigned ZuDateTime::scan(const ZuDateTimeScan::ASN1_G &fmt, ZuCSpan s)
+int ZuDateTime::scan(const ZuDateTimeScan::ASN1_G &fmt, ZuCSpan s)
+{
+  auto r = eov(fmt, s);
+  *this = r.p<1>();
+  return r.p<0>();
+}
+
+ZuTuple<int, ZuDateTime>
+ZuDateTime::eov(const ZuDateTimeScan::ASN1_G &fmt, ZuCSpan s)
+{
+  ZuDateTime v;
+  unsigned n = v.scan_(fmt, s);
+  if (!n) return {-1, ZuDateTime{}};
+  return {int(n), v};
+}
+
+unsigned ZuDateTime::scan_(const ZuDateTimeScan::ASN1_G &fmt, ZuCSpan s)
 {
   {
     unsigned year, month, day, hour, minute, sec, nsec;
@@ -634,9 +727,25 @@ invalid:
   return 0;
 }
 
-unsigned ZuDateTime::scan(const ZuDateTimeScan::Any &fmt, ZuCSpan s)
+int ZuDateTime::scan(const ZuDateTimeScan::Any &fmt, ZuCSpan s)
+{
+  auto r = eov(fmt, s);
+  *this = r.p<1>();
+  return r.p<0>();
+}
+
+ZuTuple<int, ZuDateTime>
+ZuDateTime::eov(const ZuDateTimeScan::Any &fmt, ZuCSpan s)
+{
+  ZuDateTime v;
+  unsigned n = v.scan_(fmt, s);
+  if (!n) return {-1, ZuDateTime{}};
+  return {int(n), v};
+}
+
+unsigned ZuDateTime::scan_(const ZuDateTimeScan::Any &fmt, ZuCSpan s)
 {
   return fmt.cdispatch([this, s]<typename Fmt>(auto, Fmt &&fmt) {
-    return scan(ZuFwd<Fmt>(fmt), s);
+    return scan_(ZuFwd<Fmt>(fmt), s);
   });
 }

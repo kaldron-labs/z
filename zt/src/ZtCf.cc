@@ -40,18 +40,10 @@ static bool delimiter(char c) {
     return c == ',' || c == ')' || c == ']' || c == '}';
 }
 
-static bool isalpha__(char c) {
-  return (c >= 'a' && c <= 'z') ||
-    (c >= 'A' && c <= 'Z') || c == '_';
-}
-
-static bool isword__(char c) {
-  return isalpha__(c) || (c >= '0' && c <= '9');
-}
-
 template <bool Key>
 static int eos_(
-    ZuCSpan span, AnyNode::String &out, Defines *defines) {
+  ZuCSpan span, AnyNode::String &out, Defines *defines)
+{
   auto n = span.length();
   if (!n) return -1;
 
@@ -284,25 +276,6 @@ static ZuTuple<int, ZuPtr<AnyNode>> eov(
   return {-1, nullptr};
 }
 
-struct PctContext {
-  AnyNode::Object	*object;
-  const PctFn		*pctFn;
-  Defines		*defines;
-  bool			ok = true;
-};
-
-static void pctExpand(PctContext *context, ZuCSpan span) {
-  if (!context->ok) return;
-  int o = eov_Object_(
-    span, *context->object, true, *context->pctFn, context->defines);
-  if (o < 0) {
-    context->ok = false;
-    return;
-  }
-  while (unsigned(o) < span.length() && isspace__(span[o])) ++o;
-  context->ok = unsigned(o) == span.length();
-}
-
 static int eop(
     ZuCSpan span, AnyNode::Object &object, const PctFn &pctFn,
     Defines *defines) {
@@ -360,11 +333,16 @@ static int eop(
   }
   if (!pctFn) return -1;
 
-  PctContext context{&object, &pctFn, defines};
   ZuSpan<const ZuCSpan> argSpan{args.data(), args.length()};
-  pctFn(directive, argSpan,
-    ZmFn<void(ZuCSpan)>{&context, ZmFnPtr<&pctExpand>{}});
-  return context.ok ? int(i) : -1;
+  if (!pctFn(directive, argSpan,
+    [&object, &pctFn, defines](ZuCSpan span) {
+      int o = eov_Object_(span, object, true, pctFn, defines);
+      if (o < 0) return false;
+      span.offset(o);
+      span.trim();
+      return !span;
+    })) return -1;
+  return int(i);
 }
 
 static int eov_Object_(
@@ -374,9 +352,9 @@ static int eov_Object_(
   bool close = !root;
 
   if (root) {
-    unsigned o = 0;
-    while (o < span.length() && isspace__(span[o])) ++o;
-    span.offset(o);
+    auto n = span.length();
+    span.trim();
+    auto o = n - span.length();
     total += o;
     if (!span) return int(total);
     if (span && span[0] == '{') {
@@ -442,9 +420,11 @@ ZuTuple<int, ZuPtr<const AnyNode>> scan(
   auto node = newNode<AnyNode::Object>();
   int o = eov_Object_(span, node->data, true, pctFn, defines);
   if (o < 0) return {-1, nullptr};
-  while (unsigned(o) < span.length() && isspace__(span[o])) ++o;
-  if (unsigned(o) != span.length()) return {-1, nullptr};
-  return {o, ZuMv(node)};
+  auto tail = span;
+  tail.offset(o);
+  tail.trim();
+  if (tail) return {-1, nullptr};
+  return {int(span.length()), ZuMv(node)};
 }
 
 } // ZtCf

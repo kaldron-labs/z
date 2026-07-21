@@ -374,9 +374,7 @@ bool QPackTxTable::streamCancellation(uint64_t streamID)
 int QPack::decodeHuffman(HdrBytes &out, ZuCSpan in)
 {
   out.length(HPack::declen(in.length()));
-  int64_t n = HPack::decode(
-    ZuSpan<uint8_t>{out.data(), out.length()},
-    ZuBSpan{reinterpret_cast<const uint8_t *>(in.data()), in.length()});
+  int64_t n = HPack::decode(out, in);
   if (n < 0) return -1;
   out.length(uint64_t(n));
   return int(n);
@@ -398,8 +396,7 @@ int QPack::decodeString(
     return int(raw.length());
   }
   if (decodeHuffman(storage, raw) < 0) return -1;
-  out = ZuCSpan{
-    reinterpret_cast<const char *>(storage.data()), storage.length()};
+  out = storage;
   return int(out.length());
 }
 
@@ -620,7 +617,7 @@ int QPack::encodeSectionAck(HdrBytes &out, uint64_t streamID)
   return putPref_(out, 0x80, 7, streamID) < 0 ? -1 : int(out.length());
 }
 
-int QPack::decodeEncoderInsnOne(ZuCSpan in, QPackDecodedInsn &i)
+int QPack::decodeEncoderInsn(ZuCSpan in, QPackDecodedInsn &i)
 {
   unsigned o = 0;
   uint8_t first = 0;
@@ -658,7 +655,7 @@ int QPack::decodeEncoderInsnOne(ZuCSpan in, QPackDecodedInsn &i)
   return -1;
 }
 
-int QPack::decodeDecoderInsnOne(ZuCSpan in, QPackDecodedInsn &i)
+int QPack::decodeDecoderInsn(ZuCSpan in, QPackDecodedInsn &i)
 {
   unsigned o = 0;
   if (!in.length()) return -2;

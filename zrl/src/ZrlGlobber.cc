@@ -10,6 +10,10 @@
 
 namespace Zrl {
 
+ZuInline static constexpr bool isspace__(char c) {
+  return ((c >= '\t' && c <= '\r') || c == ' ');
+}
+
 typedef bool (*QuoteFn)(uint32_t);
 
 QuoteFn Globber::quoteFn()

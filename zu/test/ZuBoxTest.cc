@@ -412,8 +412,14 @@ int main(int argc, char **argv)
     f.scan("-inf", 4); ZuCHECK(ZuCmp<double>::inf(-f), f);
     f.scan("inf", 3); ZuCHECK(ZuCmp<double>::inf(f), f);
     f.scan("-inf", 4); ZuCHECK(ZuCmp<double>::inf(-f), f);
-    ZuCHECK(!f.scan("inf", 2), f);
-    ZuCHECK(!f.scan("nan", 2), f);
+    ZuCHECK(f.scan("inf", 2) < 0, f);
+    ZuCHECK(f.scan("nan", 2) < 0, f);
+    auto prefix = ZuBox<double>::eov("42.5junk");
+    ZuCHECK(prefix.p<0>() == 4, prefix.p<0>());
+    ZuCHECK(prefix.p<1>() == 42.5, prefix.p<1>());
+    auto invalid = ZuBox<double>::eov("junk");
+    ZuCHECK(invalid.p<0>() < 0, invalid.p<0>());
+    ZuCHECK(!*invalid.p<1>(), invalid.p<1>());
     char buf[256];
     f = 0;
     buf[f.print(buf)] = 0;

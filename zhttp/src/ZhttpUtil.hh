@@ -73,16 +73,15 @@ ZuInline int eok(ZuBSpan data) {
 
 // skip leading linear white space to find beginning of header value
 ZuInline int bov(ZuBSpan data) {
-  for (unsigned o = 0, n = data.length(); o < n; ++o)
-    if (!islws(data[o])) return o;
-  return -1;
+  auto begin = data.data();
+  data.trim(islws);
+  return data ? int(data.data() - begin) : -1;
 }
 
 // remove trailing linear white space to find end of header value
 ZuInline int eov(ZuBSpan data) {
-  for (int o = data.length(); --o >= 0; )
-    if (!islws(data[o])) return o + 1;
-  return -1;
+  data.chomp(islws);
+  return data ? int(data.length()) : -1;
 }
 
 // split and iterate over HTTP value delimited by \s+,\s+
@@ -178,8 +177,8 @@ inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
 
 inline bool parseUInt64Full_(ZuBSpan value, uint64_t &out) {
   ZuBox<uint64_t> box;
-  unsigned n = box.scan(ZuCSpan{value});
-  if (ZuUnlikely(!n || n != value.length())) return false;
+  int n = box.scan(ZuCSpan{value});
+  if (ZuUnlikely(n < 0 || unsigned(n) != value.length())) return false;
   uint64_t v = 0;
   for (unsigned i = 0; i < value.length(); ++i) {
     int c = value[i];

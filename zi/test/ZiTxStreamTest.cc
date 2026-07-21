@@ -131,8 +131,7 @@ void testRealPrimitiveFormatting()
 
   ZuCheck(h.sendCount == 1);
   ZuCheck(h.sentLen[0] == 26);
-  ZuCSpan sent{
-    reinterpret_cast<const char *>(h.sent[0]->data()), h.sent[0]->length};
+  ZuCSpan sent = h.sent[0]->cspan();
   ZuCheck(sent == "1234567890123456789 -42 17");
 }
 

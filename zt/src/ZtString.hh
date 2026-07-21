@@ -1375,7 +1375,7 @@ public:
     int64_t o = length();
     if (!o) return;
     Char *data = data_();
-    while (--o >= 0 && ZuFwd<Match>(match)(data[o]));
+    while (--o >= 0 && match(data[o]));
     length_(o + 1);
   }
   void chomp() { return chomp(matchS()); }
@@ -1387,7 +1387,7 @@ public:
     uint64_t n = length();
     uint64_t o;
     Char *data = data_();
-    for (o = 0; o < n && ZuFwd<Match>(match)(data[o]); o++);
+    for (o = 0; o < n && match(data[o]); o++);
     if (!o) return;
     if (!(n -= o)) { null(); return; }
     memmove(data, data + o, n * sizeof(Char));
@@ -1406,7 +1406,7 @@ public:
     if (o < 0) { null(); return; }
     length_(o + 1);
     uint64_t n = o + 1;
-    for (o = 0; o < int64_t(n) && ZuFwd<Match>(match)(data[o]); o++);
+    for (o = 0; o < int64_t(n) && match(data[o]); o++);
     if (!o) { length_(n); return; }
     if (!(n -= o)) { null(); return; }
     memmove(data, data + o, n * sizeof(Char));
