@@ -52,8 +52,8 @@
 //
 // Both types of platform also use a signed integer type for system errors,
 // so both sets of codes can be stored in the same type; However,
-// strerror() on Unix will not work with EAI_ codes - on Unix we
-// need to check for < 0 explicitly and call gai_strerror()
+// strerror() on Unix will not work with EAI_ codes - Unix
+// checks for < 0 explicitly and calls gai_strerror()
 
 #define ZeLog_BUFSIZ (8<<10)	// 8k built-in size
 
@@ -249,17 +249,14 @@ struct ZeEvent : public ZeAnyEvent {
   print(S &s) const { l(s, *this); }
 
   template <typename L_ = L>
-  decltype(ZuDeclVal<L_ &>()(
-	ZuDeclVal<ZeLogBuf &>()),
-      ZeMsgFn())
+  decltype(ZuDeclVal<L_ &>()(ZuDeclVal<ZeLogBuf &>()), ZeMsgFn())
   fn_() const {
     return {[l_ = ZuMv(l)](auto &s, const auto &) mutable { l_(s); }};
   }
   template <typename L_ = L>
   decltype(ZuDeclVal<L_ &>()(
-	ZuDeclVal<ZeLogBuf &>(),
-	ZuDeclVal<const ZeEventInfo &>()),
-      ZeMsgFn())
+      ZuDeclVal<ZeLogBuf &>(), ZuDeclVal<const ZeEventInfo &>()),
+    ZeMsgFn())
   fn_() const {
     return {ZuMv(l)};
   }
@@ -317,7 +314,7 @@ struct ZeEvent<ZeMsgFn> : public ZeAnyEvent {
 
   bool operator !() const { return !l; }
 
-  ZeMsgFn fn() const { return {ZuMv(l)}; }
+  ZeMsgFn fn() const { return ZuMv(l); }
 };
 using ZeException = ZeEvent<ZeMsgFn>;
 

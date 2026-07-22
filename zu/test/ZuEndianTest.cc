@@ -10,6 +10,10 @@
 #include <zlib/ZuByteSwap.hh>
 #include <zlib/ZuArray.hh>
 
+ZuAssert((ZuIsSame<ZuByteSwap<ZuByteSwap<uint32_t>>, uint32_t>{}));
+ZuAssert((ZuIsSame<ZuByteSwap<ZuByteSwap<ZuBox<uint32_t>>>,
+    ZuBox<uint32_t>>{}));
+
 template <typename T>
 void test(T v)
 {

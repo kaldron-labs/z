@@ -15,7 +15,8 @@ LDADD = $(top_builddir)/zv/src/libZv.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
-	CfTest CfFlatten ZvEngineTest
+	CfTest CfFlatten ZvNewCfTest ZvEngineTest
 CfTest_SOURCES = CfTest.cc
 CfFlatten_SOURCES = CfFlatten.cc
+ZvNewCfTest_SOURCES = ZvNewCfTest.cc
 ZvEngineTest_SOURCES = ZvEngineTest.cc

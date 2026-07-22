@@ -27,6 +27,7 @@ class Elem {
 public:
   using Window = Window_;
   using T = typename Window::T;
+  using U = ZuUnder<T>;
 
   Elem() = delete;
   Elem(Window &window, unsigned i) : m_window{window}, m_i{i} { }
@@ -39,9 +40,8 @@ public:
 
   operator const T &() const noexcept { return get(); }
   template <
-    typename U,
     typename _ = T,
-    decltype(ZuIfT<!ZuIsSame<U, _>{} && ZuIsSame<U, ZuUnder<_>>{}>(), int()) = 0>
+    decltype(ZuNotSame<U, _>(), int()) = 0>
   operator U() const noexcept { return get(); }
 
   void set(T v);

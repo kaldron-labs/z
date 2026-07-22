@@ -164,7 +164,7 @@ template <typename T, bool = ZuTraits<T>::IsPrimitive> struct Scan_;
 template <typename T_>
 struct Scan_<T_, true> { using T = ZuBox<T_>; };
 template <typename T_, typename NTP_>
-struct Scan_<ZuBox<T_, NTP_>, false> { using T = ZuBox<T_, NTP_>; };
+struct Scan_<ZuBox__<T_, NTP_>, false> { using T = ZuBox__<T_, NTP_>; };
 template <> struct Scan_<ZuFixed, false> { using T = ZuFixed; };
 template <> struct Scan_<ZuDecimal, false> { using T = ZuDecimal; };
 template <typename T> using Scan = typename Scan_<T>::T;

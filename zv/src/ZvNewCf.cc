@@ -7,9 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <zlib/ZtCf.hh>
+#include <zlib/ZvNewCf.hh>
 
-namespace ZtCf {
+namespace ZvNewCf {
 
 static bool appendDefine(
     Defines *defines, ZuCSpan key, AnyNode::String &out) {
@@ -227,6 +227,17 @@ static int eov_Object_(
 static ZuTuple<int, ZuPtr<AnyNode>> eov(
     ZuCSpan span, const PctFn &pctFn, Defines *defines);
 
+static void setParents(AnyNode *node, AnyNode *parent = nullptr) {
+  node->parent = parent;
+  if (node->has<AnyNode::Array>()) {
+    for (auto &child: node->data<AnyNode::Array>())
+      setParents(child.ptr(), node);
+  } else if (node->has<AnyNode::Object>()) {
+    for (auto &field: node->data<AnyNode::Object>())
+      setParents(field.p<1>().ptr(), node);
+  }
+}
+
 static ZuTuple<int, ZuPtr<AnyNode>> eov_Array_(
     ZuCSpan span, const PctFn &pctFn, Defines *defines) {
   unsigned total = 0;
@@ -404,13 +415,16 @@ static int eov_Object_(
 }
 
 ZuTuple<int, ZuPtr<AnyNode>> eov_Array(ZuCSpan span) {
-  return eov_Array_(span, PctFn{}, nullptr);
+  auto v = eov_Array_(span, PctFn{}, nullptr);
+  if (v.p<1>()) setParents(v.p<1>());
+  return v;
 }
 
 ZuTuple<int, ZuPtr<AnyNode>> eov_Object(ZuCSpan span, bool root) {
   auto node = newNode<AnyNode::Object>();
   int o = eov_Object_(span, node->data, root, PctFn{}, nullptr);
   if (o < 0) return {-1, nullptr};
+  setParents(node);
   return {o, ZuMv(node)};
 }
 
@@ -424,7 +438,8 @@ ZuTuple<int, ZuPtr<const AnyNode>> scan(
   tail.offset(o);
   tail.trim();
   if (tail) return {-1, nullptr};
+  setParents(node);
   return {int(span.length()), ZuMv(node)};
 }
 
-} // ZtCf
+} // ZvNewCf

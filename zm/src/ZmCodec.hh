@@ -24,7 +24,7 @@
 
 #define ZmCodec_Fn \
 template <typename L> \
-inline decltype(auto) enc(ZuBSpan src, L &&l) { \
+static inline decltype(auto) enc(ZuBSpan src, L &&l) { \
   auto n = enclen(src.length()); \
   auto buf_ = ZmAlloc(uint8_t, n); \
   ZuSpan<uint8_t> buf(&buf_[0], n); \
@@ -32,7 +32,7 @@ inline decltype(auto) enc(ZuBSpan src, L &&l) { \
   ZuFwd<L>(l)(buf); \
 } \
 template <typename L> \
-inline decltype(auto) dec(ZuBSpan src, L &&l) { \
+static inline decltype(auto) dec(ZuBSpan src, L &&l) { \
   auto n = declen(src.length()); \
   auto buf_ = ZmAlloc(uint8_t, n); \
   ZuSpan<uint8_t> buf(&buf_[0], n); \
@@ -40,8 +40,8 @@ inline decltype(auto) dec(ZuBSpan src, L &&l) { \
   ZuFwd<L>(l)(buf); \
 }
 
-namespace ZmBase64 { using namespace ZuBase64; ZmCodec_Fn }
-namespace ZmBase32 { using namespace ZuBase32; ZmCodec_Fn }
-namespace ZmHex { using namespace ZuHex; ZmCodec_Fn }
+struct ZmBase64 : public ZuBase64 { ZmCodec_Fn };
+struct ZmBase32 : public ZuBase32 { ZmCodec_Fn };
+struct ZmHex : public ZuHex { ZmCodec_Fn };
 
 #endif /* ZmCodec_HH */

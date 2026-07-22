@@ -15,23 +15,23 @@
 
 #include <zlib/ZuSpan.hh>
 
-namespace ZuHex {
+struct ZuHex {
 
-ZuInline constexpr uint8_t lookup(uint8_t c) {
+ZuInline static constexpr uint8_t lookup(uint8_t c) {
   return 
     (c >= 'A' && c <= 'F') ? (c - 'A') + 10 :
     (c >= '0' && c <= '9') ? c - '0' : 0xff;
 }
 
-ZuInline constexpr bool is(char c) {
+ZuInline static constexpr bool is(char c) {
   return (c >= 'A' && c <= 'F') || (c >= '0' && c <= '9');
 }
 
 // both encode and decode return count of bytes written
 
 // does not null-terminate dst
-ZuInline constexpr unsigned enclen(unsigned slen) { return slen<<1; }
-inline unsigned encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
+ZuInline static constexpr unsigned enclen(unsigned slen) { return slen<<1; }
+static inline unsigned encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   static constexpr const char lookup[] = {
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
     'A', 'B', 'C', 'D', 'E', 'F'
@@ -49,10 +49,12 @@ inline unsigned encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   return d - dst.data();
 }
 
-ZuInline constexpr unsigned declen(unsigned slen) { return (slen + 1)>>1; }
+ZuInline static constexpr unsigned declen(unsigned slen) {
+  return (slen + 1)>>1;
+}
 // does not null-terminate dst
 // supports in-place-overwrite decoding (dst == src)
-inline unsigned decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
+static inline unsigned decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   auto s = src.data();
   auto d = dst.data();
   auto n = src.length();
@@ -66,6 +68,6 @@ inline unsigned decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   return d - dst.data();
 }
 
-}
+};
 
 #endif /* ZuHex_HH */

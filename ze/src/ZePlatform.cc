@@ -21,12 +21,10 @@
 
 ZuCSpan Ze::severity(unsigned i)
 {
-  static const char * const name[] = {
-    "DEBUG", "INFO", "WARNING", "ERROR", "FATAL"
-  };
-  static constexpr unsigned namelen[] = { 5, 4, 7, 5, 5 };
-
-  return i > 4 ? ZuCSpan("UNKNOWN", 7) : ZuCSpan(name[i], namelen[i]);
+  using TL = ZuStringTL<"DEBUG", "INFO", "WARNING", "ERROR", "FATAL">;
+  return ZuSwitch::dispatch<TL::N>(i, [](auto i) -> ZuCSpan {
+    return ZuType<i, TL>{};
+  }, "UNKNOWN");
 }
 
 ZuCSpan Ze::file(ZuCSpan s)
