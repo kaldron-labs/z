@@ -1993,9 +1993,9 @@ struct ZtField_Bool<Base, Def, false> :
 
 // --- {Int,UInt}{8,16,32,64,128}
 
-template <typename Props, typename Fmt, typename T>
+template <typename Props, typename Fmt, typename B>
 struct ZtFieldPrintInt {
-  ZuBox<T>	value;
+  B	value;
 
   template <typename S>
   friend inline decltype(auto) operator <<(S &s, const ZtFieldPrintInt &v) {
@@ -2010,15 +2010,22 @@ struct ZtFieldPrintInt {
       return s << v.value.template fmt<Fmt>();
   }
 };
-template <typename Props, typename Fmt, typename T, typename Cmp>
-struct ZtFieldPrintInt<Props, Fmt, ZuBox<T, Cmp>> :
-    ZtFieldPrintInt<Props, Fmt, T> {
-  ZuDerive_(ZtFieldPrintInt, (ZtFieldPrintInt<Props, Fmt, T>))
-};
 
-template <typename Props, typename Fmt, typename T>
+template <typename Props, typename T>
+inline T ZtFieldValidate(T v) {
+  if constexpr (ZuFieldProp::HasRange<Props>{}) {
+    using Range = ZuFieldProp::GetRange<Props>;
+    if (v < Range::minimum() || v > Range::maximum())
+      return ZuCmp<T>::null();
+  }
+  return v;
+}
+
+template <typename Props, typename Fmt, typename B>
 struct ZtFieldScanInt {
-  ZuBox<T>	value;
+  B	value;
+
+  using Result = ZuTuple<int, B>;
 
   ZtFieldScanInt() = default;
   ZtFieldScanInt(ZuCSpan s) { scan(s); }
@@ -2028,29 +2035,38 @@ struct ZtFieldScanInt {
     value = r.template p<1>();
     return r.template p<0>();
   }
-  static ZuTuple<int, ZuBox<T>> eov(ZuCSpan s) {
+  static Result eov(ZuCSpan s) {
     using namespace ZuFieldProp;
     if constexpr (ZuFieldProp::HasEnum<Props>{}) {
       using Map = ZuFieldProp::GetEnum<Props>;
       auto i = Map::s2v(s);
-      if (i < 0) return {-1, ZuBox<T>{}};
-      return {int(Map::v2s(i).length()), ZuBox<T>{i}};
+      if (i < 0) return {-1, B{}};
+      return validate({int(Map::v2s(i).length()), B{i}});
     } else if constexpr (ZuFieldProp::HasFlags<Props>{}) {
       using Map = ZuFieldProp::GetFlags<Props>;
       using Scan = typename Map::Scan;
-      return Scan::eov(s, Fmt::FlagsDelim());
+      auto r = Scan::eov(s, Fmt::FlagsDelim());
+      if (r.template p<0>() < 0) return {-1, B{}};
+      return validate({r.template p<0>(), B{r.template p<1>().val()}});
     } else if constexpr (ZuTypeIn<ZuFieldProp::Hex, Props>{}) {
       // hex case is immaterial in scanning
-      return ZuBox<T>::template eov<ZuFmt::Hex<false, Fmt>>(s);
+      return validate(B::template eov<ZuFmt::Hex<false, Fmt>>(s));
     } else {
-      return ZuBox<T>::eov(s);
+      return validate(B::eov(s));
     }
   }
-};
-template <typename Props, typename Fmt, typename T, typename Cmp>
-struct ZtFieldScanInt<Props, Fmt, ZuBox<T, Cmp>> :
-    ZtFieldScanInt<Props, Fmt, T> {
-  ZuDerive_(ZtFieldScanInt, (ZtFieldScanInt<Props, Fmt, T>))
+  static Result validate(Result r) {
+    if constexpr (!ZuFieldProp::HasRange<Props>{}) {
+      return r;
+    } else {
+      if (r.template p<0>() < 0) return r;
+      using Range = ZuFieldProp::GetRange<Props>;
+      if (r.template p<1>() < Range::minimum() ||
+	  r.template p<1>() > Range::maximum())
+	return {-1, B{}};
+      return r;
+    }
+  }
 };
 
 template <typename T, typename Props, auto Min, auto Max>
@@ -2076,10 +2092,10 @@ struct ZtFieldType_##Code_ : public ZtFieldType_<Props_> { \
   using T = T_; \
   using Props = Props_; \
   template <typename Fmt = ZtFmt::Default> struct Print { \
-    ZuBox<Type_##_t> v; \
+    ZuBox<T> v; \
     template <typename S> \
     friend inline decltype(auto) operator <<(S &s, const Print &print) { \
-      return s << ZtFieldPrintInt<Props, Fmt, Type_##_t>(print.v); \
+      return s << ZtFieldPrintInt<Props, Fmt, ZuBox<T>>(print.v); \
     } \
   }; \
   inline static ZtVFieldType *vtype(); \
@@ -3082,11 +3098,13 @@ struct ZtFieldType_##Code_##Vec : public ZtFieldType_<Props_> { \
     const T &vec; \
     template <typename S> \
     friend inline decltype(auto) operator <<(S &s, const Print &print) { \
+      using Elem = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>; \
+      using B = ZuBox<Elem>; \
       s << Fmt::VecPrefix(); \
       bool first = true; \
       for (unsigned i = 0, n = ZuTraits<T>::length(print.vec); i < n; i++) { \
 	if (!first) s << Fmt::VecDelim(); else first = false; \
-	s << ZtFieldPrintInt<Props, Fmt, Type_##_t>(print.vec[i]); \
+	s << ZtFieldPrintInt<Props, Fmt, B>(print.vec[i]); \
       } \
       return s << Fmt::VecSuffix(); \
     } \

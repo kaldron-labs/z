@@ -428,6 +428,7 @@ template <typename T> struct ZuSize : public ZuSize_<T> { };
 template <> struct ZuSize<void> : public ZuUnsigned<0> { };
 
 // recursive decay (for pair, tuple, union, etc.)
+// - example: ZuRDecay<const ZuTuple<const int &> &> decays to ZuTuple<int>
 struct ZuDefaultRDecayer {
   template <typename T_> struct Decay { using T = T_; };
 };
@@ -655,7 +656,7 @@ struct ZuLambda {
 template <typename L> ZuLambda(L) -> ZuLambda<L>;
 
 // generic underlying type access for wrapper types with a cast operator
-// (used with ZuBox, ZuBigEndian, C++11 scoped enums, etc.)
+// (used with ZuBox, ZuBigEndian, ZuMArray::Elem, C++11 scoped enums, etc.)
 // - ZuUnder<T>
 #ifdef __GNUC__
 template <typename U, bool = __is_enum(U)>

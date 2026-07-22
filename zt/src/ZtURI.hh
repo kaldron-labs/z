@@ -1148,17 +1148,16 @@ inline void saveValue_(S &s, const T &v_, L &&l)
       TypeCode == ZtFieldTC::UInt64 ||
       TypeCode == ZtFieldTC::UInt128) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
-    using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
-    auto v = B{v_};
-    if (!*v) return;
-    l(s);
-    if constexpr (
-	bool(ZuFieldProp::HasEnum<Props>{}) ||
-	bool(ZuFieldProp::HasFlags<Props>{}) ||
-	bool(ZuTypeIn<ZuFieldProp::Hex, Props>{}))
-      s << ZtFieldPrintInt<Props, typename Fmt::Fmt, typename B::T>(v);
-    else
-      s << v.template fmt<typename Fmt::Fmt>();
+    if constexpr (ZuIsBoxed<T>{}) {
+      l(s);
+      s << ZtFieldPrintInt<Props, typename Fmt::Fmt, T>(v_);
+    } else {
+      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      auto v = B{v_};
+      if (!*v) return;
+      l(s);
+      s << ZtFieldPrintInt<Props, typename Fmt::Fmt, B>(v);
+    }
   } else if constexpr (TypeCode == ZtFieldTC::Float) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
     double v = v_;
@@ -1453,9 +1452,14 @@ inline T loadValue_(ZuSpan<char> span)
       TypeCode == ZtFieldTC::UInt64 ||
       TypeCode == ZtFieldTC::UInt128) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
-    using Scan =
-      ZtFieldScanInt<Props, typename Fmt::Fmt, ZtFieldTC::Type<TypeCode>>;
-    return T(Scan{span}.value.val());
+    if constexpr (ZuIsBoxed<T>{}) {
+      using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, T>;
+      return Scan{span}.value;
+    } else {
+      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, B>;
+      return T(Scan{span}.value.val());
+    }
     ZuUnreachable();
   } else if constexpr (
       TypeCode == ZtFieldTC::Float ||
@@ -1466,19 +1470,20 @@ inline T loadValue_(ZuSpan<char> span)
 	TypeCode == ZtFieldTC::Fixed) {
       auto d = ZtJSON::eov_Decimal(span);
       if (d.p<0>() < 0) return T{};
+      auto v = ZtFieldValidate<Props>(d.p<1>());
       if constexpr (TypeCode == ZtFieldTC::Decimal)
-	return d.p<1>();
+	return v;
       else {
-	if (!*d.p<1>()) return ZuFixed{};
+	if (!*v) return ZuFixed{};
 	if constexpr (ZuFieldProp::HasNDP<Props>{})
-	  return ZuFixed{d.p<1>(), ZuFieldProp::GetNDP<Props>{}};
+	  return ZuFixed{v, ZuFieldProp::GetNDP<Props>{}};
 	else
-	  return ZuFixed{d.p<1>()};
+	  return ZuFixed{v};
       }
     } else {
       auto d = ZtJSON::eov_Float(span);
       if (d.p<0>() < 0) return ZuCmp<T>::null();
-      return d.p<1>();
+      return ZtFieldValidate<Props>(d.p<1>());
     }
   } else if constexpr (
       TypeCode == ZtFieldTC::Time ||
@@ -1545,7 +1550,10 @@ inline auto loadValue(AnyNode *node)
     }
   } else {
     enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
-    using Elem = ZtFieldTC::Type<ElemCode>;
+    using Actual = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
+    using Elem = ZuIf<
+      ElemCode >= ZtFieldTC::Int8 && ElemCode <= ZtFieldTC::UInt128 &&
+      bool(ZuIsBoxed<Actual>{}), Actual, ZtFieldTC::Type<ElemCode>>;
     using LoadVec_ = LoadVec<Facet, Filter, ElemCode, Props, Elem>;
     if (!node->has<AnyNode::Array>()) {
       static const NodeArray _;

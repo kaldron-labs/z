@@ -74,8 +74,10 @@ ZtStruct((Foo, JSON),
   (((daFlags),		(Ctor<7>, Flags<Flags::Map>)),
     					(UInt128, Flags::Bit1())),
   FooFloatFields,
-  (((fixed),		(Ctor<10>)),	(Fixed)),
-  (((decimal),		(Ctor<11>)),	(Decimal)),
+  (((fixed),		(Ctor<10>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))),		(Fixed)),
+  (((decimal),		(Ctor<11>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))),	(Decimal)),
   (((time_),		(Ctor<12>)),	(Time)),
   (((nested),		(Ctor<13>)),	(UDT)),
   (((bytesVec),		(Ctor<14>)),	(BytesVec)));
@@ -109,6 +111,17 @@ static_assert(IntRangeField::minimum() == 0);
 static_assert(IntRangeField::maximum() == 100);
 static_assert(FloatRangeField::minimum() == 0.0);
 static_assert(FloatRangeField::maximum() == 1);
+
+using BoxInt = ZuNBox0(int);
+
+struct BoxFoo {
+  BoxInt value;
+  ZtArray<BoxInt> values;
+};
+
+ZtStruct((BoxFoo, JSON),
+  (((value),	(Ctor<0>, JSON::String<>)),	(Int32)),
+  (((values),	(Ctor<1>, JSON::String<>)),	(Int32Vec)));
 
 template <typename T, typename = void>
 struct MinMax {
@@ -306,6 +319,65 @@ int main(int argc, char **argv)
   }
 
   {
+    char wrong_[] = "{\"nested\":42}";
+    auto wrongScan = ZtJSON::scan(wrong_);
+    ZuCheck(wrongScan.p<0>() >= 0);
+    auto wrong = ZtJSON::handler<Foo>(wrongScan.p<1>()).ctor();
+
+    char null_[] = "{\"nested\":null}";
+    auto nullScan = ZtJSON::scan(null_);
+    ZuCheck(nullScan.p<0>() >= 0);
+    auto null = ZtJSON::handler<Foo>(nullScan.p<1>()).ctor();
+
+    ZuCheck(wrong.nested.i1 == null.nested.i1);
+    ZuCheck(wrong.nested.i2 == null.nested.i2);
+
+    char object_[] = "{\"nested\":{}}";
+    auto objectScan = ZtJSON::scan(object_);
+    ZuCheck(objectScan.p<0>() >= 0);
+    auto object = ZtJSON::handler<Foo>(objectScan.p<1>()).ctor();
+    ZuCheck(object.nested.i1 == ZuCmp<int>::null());
+    ZuCheck(object.nested.i2 == ZuCmp<int>::null());
+  }
+
+  {
+    char minimum_[] = "{\"int_ranged\":0}";
+    auto minimumScan = ZtJSON::scan(minimum_);
+    ZuCheck(minimumScan.p<0>() >= 0);
+    auto minimum = ZtJSON::handler<Foo>(minimumScan.p<1>()).ctor();
+    ZuCheck(minimum.int_ranged == 0);
+
+    char maximum_[] = "{\"int_ranged\":\"100tail\"}";
+    auto maximumScan = ZtJSON::scan(maximum_);
+    ZuCheck(maximumScan.p<0>() >= 0);
+    auto maximum = ZtJSON::handler<Foo>(maximumScan.p<1>()).ctor();
+    ZuCheck(maximum.int_ranged == 100);
+
+    char below_[] = "{\"int_ranged\":-1}";
+    auto belowScan = ZtJSON::scan(below_);
+    ZuCheck(belowScan.p<0>() >= 0);
+    auto below = ZtJSON::handler<Foo>(belowScan.p<1>()).ctor();
+    ZuCheck(below.int_ranged == ZuCmp<int>::null());
+
+    char above_[] = "{\"int_ranged\":\"101\"}";
+    auto aboveScan = ZtJSON::scan(above_);
+    ZuCheck(aboveScan.p<0>() >= 0);
+    auto above = ZtJSON::handler<Foo>(aboveScan.p<1>()).ctor();
+    ZuCheck(above.int_ranged == ZuCmp<int>::null());
+  }
+
+  {
+    char outside_[] =
+      "{\"float_ranged\":1.1,\"fixed\":\"-0.1\",\"decimal\":1.1}";
+    auto scan = ZtJSON::scan(outside_);
+    ZuCheck(scan.p<0>() >= 0);
+    auto outside = ZtJSON::handler<Foo>(scan.p<1>()).ctor();
+    ZuCheck(ZuCmp<double>::null(outside.float_ranged));
+    ZuCheck(ZuCmp<ZuFixed>::null(outside.fixed));
+    ZuCheck(ZuCmp<ZuDecimal>::null(outside.decimal));
+  }
+
+  {
     // missing fields should preserve defaults on update
     Foo foo;
     char partial[] = "{\"int_\":7}";
@@ -348,6 +420,32 @@ int main(int argc, char **argv)
     opt.head = nullptr;
     ZtJSON::save(json, opt);
     ZuCheck(json == "{\"req\":\"\",\"mid\":\"mid\",\"tail\":\"tail\"}");
+  }
+
+  {
+    BoxFoo box;
+    box.values = {BoxInt{0}, BoxInt{7}};
+
+    using Field = ZtField(BoxFoo, value);
+    ZtString<> printed;
+    printed << typename Field::Type::template Print<>{box.value};
+    ZuCheck(!printed);
+
+    ZtString<> json;
+    ZtJSON::save(json, box);
+    ZuCheck(json == "{\"value\":\"\",\"values\":[\"\",\"7\"]}");
+
+    auto scan = ZtJSON::scan(json);
+    ZuCheck(scan.p<0>() >= 0);
+    if (scan.p<0>() >= 0) {
+      auto copy = ZtJSON::handler<BoxFoo>(scan.p<1>()).ctor();
+      ZuCheck(!*copy.value);
+      ZuCheck(copy.value.val() == 0);
+      ZuCheck(copy.values.length() == 2);
+      ZuCheck(!*copy.values[0]);
+      ZuCheck(copy.values[0].val() == 0);
+      ZuCheck(copy.values[1].val() == 7);
+    }
   }
 
   return 0;

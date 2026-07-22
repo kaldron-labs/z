@@ -38,9 +38,17 @@ public:
   Elem(Elem &&) = default;
   Elem &operator =(Elem &&) = default;
 
-  R get() const;
+  // Note: this noexcept expression is dependent
+  // - evaluation is deferred to the definition
+  R get() const noexcept(
+    noexcept(ZuDeclVal<const typename Array::Impl &>().get(0)));
 
-  operator R() const { return get(); }
+  operator R() const noexcept(noexcept(get())) { return get(); }
+  template <
+    typename U,
+    typename _ = T,
+    decltype(ZuIfT<!ZuIsSame<U, _>{} && ZuIsSame<U, ZuUnder<_>>{}>(), int()) = 0>
+  operator U() const noexcept(noexcept(get())) { return get(); }
 
   template <typename _ = Array>
   ZuMutable<_, Elem &> operator =(T v);
@@ -185,7 +193,9 @@ friend Elem;
 };
 
 template <typename Array>
-inline typename Array::R Elem<Array>::get() const {
+inline typename Array::R Elem<Array>::get() const noexcept(
+  noexcept(ZuDeclVal<const typename Array::Impl &>().get(0)))
+{
   return array.impl()->get(i);
 }
 
