@@ -17,7 +17,7 @@
 
 #include <zlib/ZmHash.hh>
 
-#include <zlib/ZtStruct.hh>
+#include <zlib/ZfStruct.hh>
 
 #include <zlib/ZiCSV.hh>
 
@@ -30,7 +30,7 @@ struct Data {
   uint8_t	cBits;
 };
 
-ZtStruct(Data,
+ZfStruct(Data,
     (((id),		(Ctor<0>, Keys<0>)),	(String)),
     (((bits),		(Ctor<2>)),		(UInt8)),
     (((loadFactor),	(Ctor<1>)),		(Float)),

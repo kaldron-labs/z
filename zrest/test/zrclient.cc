@@ -6,8 +6,8 @@
 
 #include <zlib/ZmTrap.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -20,25 +20,25 @@ struct Credentials {
   ZtString<>	username;
   ZtString<>	password;
 };
-ZtStruct(Credentials,
+ZfStruct(Credentials,
   (((username),	(Ctor<0>)), (String)),
   (((password),	(Ctor<1>)), (String)));
 
 struct AuthResponse {
   ZtString<>	token;
 
-  friend ZtStructPrint ZuPrintType(AuthResponse *);
+  friend ZfStructPrint ZuPrintType(AuthResponse *);
 };
-ZtStruct(AuthResponse,
+ZfStruct(AuthResponse,
   (((token),	(Ctor<0>)), (String)));
 
 struct ProtectedResponse {
   ZtString<>	message;
   ZtString<>	data;
 
-  friend ZtStructPrint ZuPrintType(ProtectedResponse *);
+  friend ZfStructPrint ZuPrintType(ProtectedResponse *);
 };
-ZtStruct(ProtectedResponse,
+ZfStruct(ProtectedResponse,
   (((message),	(Ctor<0>)), (String)),
   (((data),	(Ctor<1>)), (String)));
 
@@ -107,7 +107,7 @@ void Link::connected(Zi::Connected info)
 {
   Base::connected(info);
   send_(request(Zhttp::Method::POST, "/api/auth", [](ZiIOBuf &buf) {
-    ZtJSON::save(buf, Credentials{"test", "test123"});
+    ZfJSON::save(buf, Credentials{"test", "test123"});
   }));
 }
 
@@ -125,20 +125,20 @@ void Link::disconnected(bool peer)
 
 bool Link::rcvd()
 {
-  auto scan = ZtJSON::scan(body().data);
+  auto scan = ZfJSON::scan(body().data);
   if (scan.p<0>() < 0) {
     ZiLOG(Error, "zrclient", "invalid response");
     return false;
   }
   if (state() == ZvLinkState::Connecting) {
-    auto response = ZtJSON::handler<AuthResponse>(scan.p<1>()).ctor();
+    auto response = ZfJSON::handler<AuthResponse>(scan.p<1>()).ctor();
     std::cout << response << '\n';
     m_token = ZuMv(response.token);
     up();
     send(request_<"authorization">(
 	Zhttp::Method::GET, "/api/protected", m_token));
   } else {
-    std::cout << ZtJSON::handler<ProtectedResponse>(scan.p<1>()).ctor() << '\n';
+    std::cout << ZfJSON::handler<ProtectedResponse>(scan.p<1>()).ctor() << '\n';
     app()->done();
   }
 

@@ -9,8 +9,8 @@
 #include <zlib/ZuID.hh>
 #include <zlib/ZuUnroll.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfCLI.hh>
 
 using namespace ZuTestUtil;
 
@@ -23,15 +23,15 @@ namespace Flags {
 struct Nested {
   int i1 = 0, i2 = 1;
 
-  friend ZtStructPrint ZuPrintType(Nested *);
+  friend ZfStructPrint ZuPrintType(Nested *);
 };
 
 struct NestedJSON {
   int i1 = 2, i2 = 3;
 
-  friend ZtCLI::AsJSON ZtCLI_Fmt(NestedJSON *);	// use JSON in CLI
+  friend ZfCLI::AsJSON ZfCLI_Fmt(NestedJSON *);	// use JSON in CLI
 
-  friend ZtStructPrint ZuPrintType(NestedJSON *);
+  friend ZfStructPrint ZuPrintType(NestedJSON *);
 };
 
 ZuStructFacet(Bah);
@@ -53,14 +53,14 @@ struct ScalarArgs {
   Scalar scalar;
 };
 
-ZtStruct((ScalarArgs, Bah),
+ZfStruct((ScalarArgs, Bah),
   (((scalar), (Ctor<0>)), (UDT)));
 
-ZtStruct((Nested, Bah),
+ZfStruct((Nested, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
-ZtStruct((NestedJSON, Bah),
+ZfStruct((NestedJSON, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
@@ -89,10 +89,10 @@ struct Foo {
   bool bool_ = false;
   /* UBool ubool; */
 
-  friend ZtStructPrint ZuPrintType(Foo *);
+  friend ZfStructPrint ZuPrintType(Foo *);
 };
 
-ZtStruct((Foo, Bah),
+ZfStruct((Foo, Bah),
   (((string, Rd), (Ctor<0>)), (CString, "hello \"world\"")),
   (((bytes), (Ctor<1>, CLI::Escaped, CLI::Arg<1>)), (Bytes, ZuBSpan{"bytes"})),
   (((id), (Ctor<2>, Mutable)), (String, "goodbye")),
@@ -117,14 +117,14 @@ ZtStruct((Foo, Bah),
   (((bool_), (Ctor<16>, CLI::ID<"bool">, CLI::Flag<'b'>)), (Bool)) /*,
   (((ubool), (Ctor<17>)), (Bool)) */);
 
-ZtCLIConfig(Bah, (ZtCLI_ArrayFmt<ZtCLI::Delimited>));
+ZfCLIConfig(Bah, (ZfCLI_ArrayFmt<ZfCLI::Delimited>));
 
 struct LongOnly {
   unsigned	port = 0;
   bool		verbose = false;
 };
 
-ZtStruct((LongOnly, CLI),
+ZfStruct((LongOnly, CLI),
   (((port),    (CLI::Long<"port">)),    (UInt32)),
   (((verbose), (CLI::Long<"verbose">)), (Bool)));
 
@@ -135,16 +135,16 @@ struct DelimitedArgs {
   DelimitedArgs(V &&v) : values{ZuFwd<V>(v)} { }
 };
 
-ZtStruct((DelimitedArgs, Bah),
+ZfStruct((DelimitedArgs, Bah),
   (((values), (Ctor<0>, CLI::Long<"values">)), (StringVec)));
 
 void roundTrip()
 {
   ZuTestScope(roundTrip);
 
-  ZtCLI::Parser<Foo, ZuFacet::Bah> parser;
-  ZuCheck(parser.scanArgv(ZtCLI::SpanArgv{}));
-  Foo foo = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
+  ZuCheck(parser.scanArgv(ZfCLI::SpanArgv{}));
+  Foo foo = ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
   foo.int_ = 42;
   foo.float_ = 42.01;
   foo.bytes = "-bytes";
@@ -154,7 +154,7 @@ void roundTrip()
 
   ZtString<> cli;
   cli << "'' "; // argv[0]
-  ZtCLI::save<ZuFacet::Bah>(cli, foo);
+  ZfCLI::save<ZuFacet::Bah>(cli, foo);
   log("cli=", cli);
   if (verbose) {
     ZuUnroll::all<ZuFields<Foo>>([&foo]<typename T>() mutable {
@@ -166,8 +166,8 @@ void roundTrip()
   }
 
   ZtString<> cli_ = cli;
-  parser.scanArgv(ZtCLI::InCLI{cli}.argv);
-  Foo foo2 = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  parser.scanArgv(ZfCLI::InCLI{cli}.argv);
+  Foo foo2 = ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
   if (verbose) {
     ZuUnroll::all<ZuFields<Foo>>([&foo2]<typename T>() mutable {
       std::cerr
@@ -179,13 +179,13 @@ void roundTrip()
 
   ZtString<> cli2;
   cli2 << "'' "; // argv[0]
-  ZtCLI::save<ZuFacet::Bah>(cli2, foo2);
+  ZfCLI::save<ZuFacet::Bah>(cli2, foo2);
   log("cli2=", cli2);
   ZuCheck(cli_ == cli2);
 
-  ZtCLI::OutArgv out;
+  ZfCLI::OutArgv out;
   out.argv.push(""); // argv[0]
-  ZtCLI::saveArgv<ZuFacet::Bah>(out, foo2);
+  ZfCLI::saveArgv<ZuFacet::Bah>(out, foo2);
   ZuCheck(!out.argv_c()[out.argc()]);
   if (verbose) {
     for (unsigned i = 0, n = out.argc(); i < n; i++)
@@ -193,12 +193,12 @@ void roundTrip()
   }
 
   parser.reset();
-  ZtCLI::InArgv<> in(out.argc(), out.argv_c());
+  ZfCLI::InArgv<> in(out.argc(), out.argv_c());
   parser.scanArgv(in.argv);
-  Foo foo3 = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  Foo foo3 = ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
   ZtString<> cli3;
   cli3 << "'' "; // argv[0]
-  ZtCLI::save<ZuFacet::Bah>(cli3, foo3);
+  ZfCLI::save<ZuFacet::Bah>(cli3, foo3);
   log("cli3=", cli3);
   ZuCheck(cli_ == cli3);
 }
@@ -209,12 +209,12 @@ void fieldlessUDT()
 
   ScalarArgs value{Scalar{"hello world"}};
   ZtString<> cli{"x "};
-  ZtCLI::save<ZuFacet::Bah>(cli, value);
-  ZtCLI::InCLI in{cli};
-  ZtCLI::Parser<ScalarArgs, ZuFacet::Bah> parser;
+  ZfCLI::save<ZuFacet::Bah>(cli, value);
+  ZfCLI::InCLI in{cli};
+  ZfCLI::Parser<ScalarArgs, ZuFacet::Bah> parser;
   ZuCheck(parser.scanArgv(in.argv));
   auto loaded =
-    ZtCLI::handler<ScalarArgs, ZuFacet::Bah>(parser.root).ctor();
+    ZfCLI::handler<ScalarArgs, ZuFacet::Bah>(parser.root).ctor();
   ZuCheck(loaded.scalar.value == "hello world");
 }
 
@@ -222,13 +222,13 @@ void cmdQuote()
 {
   ZuTestScope(cmdQuote);
   ZtString s;
-  ZtCLI::CmdQuote::quote(s, "foo"); ZuCheck(s == "foo"); s.length_(0);
-  ZtCLI::CmdQuote::quote(s, "foo\\"); ZuCheck(s == "foo\\"); s.length_(0);
-  ZtCLI::CmdQuote::quote(s, "foo\\\"");
+  ZfCLI::CmdQuote::quote(s, "foo"); ZuCheck(s == "foo"); s.length_(0);
+  ZfCLI::CmdQuote::quote(s, "foo\\"); ZuCheck(s == "foo\\"); s.length_(0);
+  ZfCLI::CmdQuote::quote(s, "foo\\\"");
     ZuCheck(s == "\"foo\\\\\\\"\""); s.length_(0);
-  ZtCLI::CmdQuote::quote(s, "foo\\\\\"");
+  ZfCLI::CmdQuote::quote(s, "foo\\\\\"");
     ZuCheck(s == "\"foo\\\\\\\\\\\"\""); s.length_(0);
-  ZtCLI::CmdQuote::quote(s, "foo\"\\\\");
+  ZfCLI::CmdQuote::quote(s, "foo\"\\\\");
     ZuCheck(s == "\"foo\\\"\\\\\\\\\"");
 }
 
@@ -236,7 +236,7 @@ void parseCLI()
 {
   ZuTestScope(parseCLI);
   static char cli[] = "'x \\'\"y'\\ \" z\" blurch";
-  ZtCLI::InCLI in(cli);
+  ZfCLI::InCLI in(cli);
   ZuCheck(in.argv[0] == "x '\"y  z");
   ZuCheck(in.argv[1] == "blurch");
 }
@@ -246,7 +246,7 @@ void parseCLIEscapedAndEmpty()
   ZuTestScope(parseCLIEscapedAndEmpty);
 
   static char cli[] = "\"a\\\\\\\"b\" '' \"\" tail";
-  ZtCLI::InCLI in(cli);
+  ZfCLI::InCLI in(cli);
   ZuCheck(in.argv[0] == "a\\\"b");
   ZuCheck(in.argv[1] == "");
   ZuCheck(in.argv[2] == "");
@@ -257,19 +257,19 @@ void longOnlyOptions()
 {
   ZuTestScope(longOnlyOptions);
 
-  ZtCLI::OutArgv out;
+  ZfCLI::OutArgv out;
   out.argv.push("");
   out.argv.push("--port");
   out.argv.push("8080");
   out.argv.push("--verbose");
   out.finish();
 
-  ZtCLI::Parser<LongOnly> parser;
+  ZfCLI::Parser<LongOnly> parser;
   ZuCheck(parser.scanArgv(out.argv));
   ZuCheck(parser.hasKey("verbose"));
 
   LongOnly options;
-  int argc = ZtCLI::load(options, out.argc(), out.argv_c());
+  int argc = ZfCLI::load(options, out.argc(), out.argv_c());
   ZuCheck(argc == 1);
   ZuCheck(options.port == 8080);
   ZuCheck(options.verbose);
@@ -287,10 +287,10 @@ void integerRange()
   ZuTestScope(integerRange);
 
   char cli[] = "x --int_ranged=101";
-  ZtCLI::InCLI in(cli);
-  ZtCLI::Parser<Foo, ZuFacet::Bah> parser;
+  ZfCLI::InCLI in(cli);
+  ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
   ZuCheck(parser.scanArgv(in.argv));
-  auto value = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  auto value = ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
   ZuCheck(value.int_ranged == ZuCmp<int>::null());
 }
 
@@ -300,10 +300,10 @@ void realRange()
 
   char cli[] =
     "x --float_ranged=1.1 --fixed=-0.1 --decimal=1.1";
-  ZtCLI::InCLI in(cli);
-  ZtCLI::Parser<Foo, ZuFacet::Bah> parser;
+  ZfCLI::InCLI in(cli);
+  ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
   ZuCheck(parser.scanArgv(in.argv));
-  auto value = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  auto value = ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
   ZuCheck(ZuCmp<double>::null(value.float_ranged));
   ZuCheck(ZuCmp<ZuFixed>::null(value.fixed));
   ZuCheck(ZuCmp<ZuDecimal>::null(value.decimal));
@@ -314,14 +314,14 @@ void delimitedLoad()
   ZuTestScope(delimitedLoad);
 
   char cli[] = "x --values=a,b";
-  ZtCLI::InCLI in(cli);
-  ZtCLI::Parser<DelimitedArgs, ZuFacet::Bah> parser;
+  ZfCLI::InCLI in(cli);
+  ZfCLI::Parser<DelimitedArgs, ZuFacet::Bah> parser;
   ZuCheck(parser.scanArgv(in.argv));
-  auto field = parser.root->data<ZtURI::AnyNode::Object>().find("values");
-  ZuCheck(field && field->val()->has<ZtURI::AnyNode::String>());
+  auto field = parser.root->data<ZfURI::AnyNode::Object>().find("values");
+  ZuCheck(field && field->val()->has<ZfURI::AnyNode::String>());
 
-  auto args = ZtCLI::handler<DelimitedArgs, ZuFacet::Bah>(parser.root).ctor();
-  ZuCheck(field->val()->has<ZtURI::AnyNode::Array>());
+  auto args = ZfCLI::handler<DelimitedArgs, ZuFacet::Bah>(parser.root).ctor();
+  ZuCheck(field->val()->has<ZfURI::AnyNode::Array>());
   ZuCheck(args.values.length() == 2);
   ZuCheck(args.values[0] == "a");
   ZuCheck(args.values[1] == "b");

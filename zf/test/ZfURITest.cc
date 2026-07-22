@@ -11,12 +11,12 @@
 #include <zlib/ZuID.hh>
 #include <zlib/ZuUnroll.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtURI.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfURI.hh>
 
 using namespace ZuTestUtil;
 
-namespace ZtURI {
+namespace ZfURI {
   ZuTuple<int, int, char> eoc(ZuSpan<char>);
 }
 
@@ -29,15 +29,15 @@ namespace Flags {
 struct Nested {
   int i1 = 0, i2 = 1;
 
-  friend ZtStructPrint ZuPrintType(Nested *);
+  friend ZfStructPrint ZuPrintType(Nested *);
 };
 
 struct NestedJSON {
   int i1 = 2, i2 = 3;
 
-  friend ZtURI::AsJSON ZtURI_Fmt(NestedJSON *);	// use JSON in URI
+  friend ZfURI::AsJSON ZfURI_Fmt(NestedJSON *);	// use JSON in URI
 
-  friend ZtStructPrint ZuPrintType(NestedJSON *);
+  friend ZfStructPrint ZuPrintType(NestedJSON *);
 };
 
 ZuStructFacet(Bah);
@@ -59,14 +59,14 @@ struct ScalarArgs {
   Scalar scalar;
 };
 
-ZtStruct((ScalarArgs, Bah),
+ZfStruct((ScalarArgs, Bah),
   (((scalar), (Ctor<0>)), (UDT)));
 
-ZtStruct((Nested, Bah),
+ZfStruct((Nested, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
-ZtStruct((NestedJSON, Bah),
+ZfStruct((NestedJSON, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
@@ -97,10 +97,10 @@ struct Foo {
   NestedJSON nestedJSON;
   Blur bytesVec;
 
-  friend ZtStructPrint ZuPrintType(Foo *);
+  friend ZfStructPrint ZuPrintType(Foo *);
 };
 
-ZtStruct(Foo,
+ZfStruct(Foo,
   (((string, Rd),	(Ctor<0>)),	(CString, "hello \"world\"")),
   (((bytes),		(Ctor<1>)),	(Bytes, ZuBSpan{"bytes"})),
   (((id),		(Ctor<2>, Mutable)),	(String, "goodbye")),
@@ -123,7 +123,7 @@ ZtStruct(Foo,
   (((nestedJSON),	(Ctor<14>)),	(UDT)),
   (((bytesVec),		(Ctor<15>)),	(BytesVec)));
 
-ZtStructRender(Foo, Bah,
+ZfStructRender(Foo, Bah,
   (enum_,	URI::ID<"enum-BAH">),
   (int_,	URI::ID<"int-BAH">,	URI::Number<ZuFmt::Right<9>>),
   (float_,	URI::ID<"float-BAH">,	URI::Number<ZuFmt::FP<4>>),
@@ -133,26 +133,26 @@ ZtStructRender(Foo, Bah,
   int_ranged, hex, flags, float_ranged, fixed, decimal,
   time_, nested, nestedJSON, bytesVec);
 
-ZtURIConfig(Bah, (
-  ZtURI_ObjectFmt<ZtURI::Array,
-    ZtURI_ArrayFmt<ZtURI::Delimited,
-      ZtURI_Annotated<true,
-	ZtURI_Wrapped<true>>>>));
+ZfURIConfig(Bah, (
+  ZfURI_ObjectFmt<ZfURI::Array,
+    ZfURI_ArrayFmt<ZfURI::Delimited,
+      ZfURI_Annotated<true,
+	ZfURI_Wrapped<true>>>>));
 
 void roundTrip()
 {
   ZuTestScope(roundTrip);
 
   char empty[] = "";
-  auto scan = ZtURI::scan(empty);
-  Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+  auto scan = ZfURI::scan(empty);
+  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
   foo.int_ = 42;
   foo.float_ = 42.01;
   foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
   foo.time_ = Zm::now();
 
   ZtString<> uri;
-  ZtURI::save<ZuFacet::Bah>(uri, foo);
+  ZfURI::save<ZuFacet::Bah>(uri, foo);
   log("uri=", uri);
 
   if (verbose) {
@@ -164,12 +164,12 @@ void roundTrip()
   }
 
   ZtString<> uri_ = uri;
-  scan = ZtURI::scan(uri);
+  scan = ZfURI::scan(uri);
   ZuCheck(scan.p<0>() > 0);
   ZuCheck(scan.p<1>());
   if (!scan.p<1>()) return;
 
-  Foo bar = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+  Foo bar = ZfURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
   if (verbose) {
     ZuUnroll::all<ZuFields<Foo>>([&bar]<typename T>() mutable {
       std::cerr
@@ -179,7 +179,7 @@ void roundTrip()
   }
 
   ZtString<> uri2;
-  ZtURI::save<ZuFacet::Bah>(uri2, bar);
+  ZfURI::save<ZuFacet::Bah>(uri2, bar);
   log("uri2=", uri2);
   ZuCheck(uri_ == uri2);
 }
@@ -190,11 +190,11 @@ void fieldlessUDT()
 
   ScalarArgs value{Scalar{"hello world"}};
   ZtString<> uri;
-  ZtURI::save<ZuFacet::Bah>(uri, value);
-  auto scan = ZtURI::scan(uri);
+  ZfURI::save<ZuFacet::Bah>(uri, value);
+  auto scan = ZfURI::scan(uri);
   ZuCheck(scan.p<0>() == int(uri.length()));
   auto loaded =
-    ZtURI::handler<ScalarArgs, ZuFacet::Bah>(scan.p<1>()).ctor();
+    ZfURI::handler<ScalarArgs, ZuFacet::Bah>(scan.p<1>()).ctor();
   ZuCheck(loaded.scalar.value == "hello world");
 }
 
@@ -203,11 +203,11 @@ void malformedURINegatives()
   ZuTestScope(malformedURINegatives);
 
   char badPct[] = "/foo%zz";
-  auto scanBadPct = ZtURI::scan(badPct);
+  auto scanBadPct = ZfURI::scan(badPct);
   ZuCheck(scanBadPct.p<0>() < 0);
 
   char badEnd[] = "/foo%";
-  auto scanBadEnd = ZtURI::scan(badEnd);
+  auto scanBadEnd = ZfURI::scan(badEnd);
   ZuCheck(scanBadEnd.p<0>() < 0);
 }
 
@@ -216,23 +216,23 @@ void integerRange()
   ZuTestScope(integerRange);
 
   char minimum_[] = "?int_ranged=0";
-  auto minimumScan = ZtURI::scan(minimum_);
-  auto minimum = ZtURI::handler<Foo, ZuFacet::Bah>(minimumScan.p<1>()).ctor();
+  auto minimumScan = ZfURI::scan(minimum_);
+  auto minimum = ZfURI::handler<Foo, ZuFacet::Bah>(minimumScan.p<1>()).ctor();
   ZuCheck(minimum.int_ranged == 0);
 
   char maximum_[] = "?int_ranged=100tail";
-  auto maximumScan = ZtURI::scan(maximum_);
-  auto maximum = ZtURI::handler<Foo, ZuFacet::Bah>(maximumScan.p<1>()).ctor();
+  auto maximumScan = ZfURI::scan(maximum_);
+  auto maximum = ZfURI::handler<Foo, ZuFacet::Bah>(maximumScan.p<1>()).ctor();
   ZuCheck(maximum.int_ranged == 100);
 
   char below_[] = "?int_ranged=-1";
-  auto belowScan = ZtURI::scan(below_);
-  auto below = ZtURI::handler<Foo, ZuFacet::Bah>(belowScan.p<1>()).ctor();
+  auto belowScan = ZfURI::scan(below_);
+  auto below = ZfURI::handler<Foo, ZuFacet::Bah>(belowScan.p<1>()).ctor();
   ZuCheck(below.int_ranged == ZuCmp<int>::null());
 
   char above_[] = "?int_ranged=101";
-  auto aboveScan = ZtURI::scan(above_);
-  auto above = ZtURI::handler<Foo, ZuFacet::Bah>(aboveScan.p<1>()).ctor();
+  auto aboveScan = ZfURI::scan(above_);
+  auto above = ZfURI::handler<Foo, ZuFacet::Bah>(aboveScan.p<1>()).ctor();
   ZuCheck(above.int_ranged == ZuCmp<int>::null());
 }
 
@@ -241,8 +241,8 @@ void realRange()
   ZuTestScope(realRange);
 
   char outside_[] = "?float_ranged=1.1&fixed=-0.1&decimal=1.1";
-  auto scan = ZtURI::scan(outside_);
-  auto outside = ZtURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
+  auto scan = ZfURI::scan(outside_);
+  auto outside = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
   ZuCheck(ZuCmp<double>::null(outside.float_ranged));
   ZuCheck(ZuCmp<ZuFixed>::null(outside.fixed));
   ZuCheck(ZuCmp<ZuDecimal>::null(outside.decimal));
@@ -253,25 +253,25 @@ void reservedCharRoundTrip()
   ZuTestScope(reservedCharRoundTrip);
 
   char empty[] = "";
-  auto scan = ZtURI::scan(empty);
-  Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+  auto scan = ZfURI::scan(empty);
+  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
 
   foo.string = "a/b?c#d";
   foo.id = "x y%z";
   foo.bytes = "raw+bytes";
 
   ZtString<> uri;
-  ZtURI::save<ZuFacet::Bah>(uri, foo);
+  ZfURI::save<ZuFacet::Bah>(uri, foo);
   ZtString<> uri_ = uri;
 
-  auto scan2 = ZtURI::scan(uri);
+  auto scan2 = ZfURI::scan(uri);
   ZuCheck(scan2.p<0>() > 0);
   ZuCheck(scan2.p<1>());
   if (!scan2.p<1>()) return;
 
-  Foo bar = ZtURI::handler<Foo, ZuFacet::Bah>(scan2.template p<1>()).ctor();
+  Foo bar = ZfURI::handler<Foo, ZuFacet::Bah>(scan2.template p<1>()).ctor();
   ZtString<> uri2;
-  ZtURI::save<ZuFacet::Bah>(uri2, bar);
+  ZfURI::save<ZuFacet::Bah>(uri2, bar);
   ZuCheck(uri2.length() > 0);
 }
 
@@ -281,40 +281,40 @@ void percentPolicies()
 
   {
     ZtString<> body;
-    ZtURI::URIQuote<true>::quote(body, "a b");
+    ZfURI::URIQuote<true>::quote(body, "a b");
     ZuCheck(body == "a+b");
   }
   {
     ZtString<> path;
-    ZtURI::PathQuote::quote(path, "a b?#/");
+    ZfURI::PathQuote::quote(path, "a b?#/");
     ZuCheck(path == "a%20b%3F%23%2F");
   }
   {
     char query[] = "foo%20bar&";
-    auto r = ZtURI::eos(query);
+    auto r = ZfURI::eos(query);
     ZuCheck(r.p<0>() == 7 && r.p<1>() == 10 && r.p<2>() == '&');
     ZuCheck(ZuCSpan(query, 7) == "foo bar");
   }
   {
     char path[] = "a%2Fb/c";
-    auto r = ZtURI::eoc(path);
+    auto r = ZfURI::eoc(path);
     ZuCheck(r.p<0>() == 3 && r.p<1>() == 6 && r.p<2>() == '/');
     ZuCheck(ZuCSpan(path, 3) == "a/b");
   }
   {
     char path[] = "a/b";
-    auto r = ZtURI::eoc(path);
+    auto r = ZfURI::eoc(path);
     ZuCheck(r.p<0>() == 1 && r.p<1>() == 2 && r.p<2>() == '/');
     ZuCheck(ZuCSpan(path, 1) == "a");
   }
   {
     char empty[] = "";
-    auto scan = ZtURI::scan(empty);
-    Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+    auto scan = ZfURI::scan(empty);
+    Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
     foo.string = "a<c";
 
     ZtString<> uri;
-    ZtURI::save<ZuFacet::Bah>(uri, foo);
+    ZfURI::save<ZuFacet::Bah>(uri, foo);
     ZuCheck(strstr(uri.data(), "%3C"));
   }
 }
@@ -324,17 +324,17 @@ void arrayCoercion()
   ZuTestScope(arrayCoercion);
 
   char data[] = "[a,b]";
-  ZuPtr<ZtURI::AnyNode> node = ZtURI::newNode<ZtURI::AnyNode::String>(
+  ZuPtr<ZfURI::AnyNode> node = ZfURI::newNode<ZfURI::AnyNode::String>(
     ZuSpan<char>{data, sizeof(data) - 1});
-  using Vec = ZtURI::LoadVec<
-    ZuFacet::Bah, ZtFieldFilter::Load, ZtFieldTC::CString,
+  using Vec = ZfURI::LoadVec<
+    ZuFacet::Bah, ZfFieldFilter::Load, ZfFieldTC::CString,
     ZuTypeList<>, ZuCSpan>;
-  ZtURI::asArray<ZtURI::Config<ZuFacet::Bah>>(node);
-  const auto &array = node->data<ZtURI::AnyNode::Array>();
+  ZfURI::asArray<ZfURI::Config<ZuFacet::Bah>>(node);
+  const auto &array = node->data<ZfURI::AnyNode::Array>();
   Vec a{array};
   Vec b{array};
 
-  ZuCheck(node->has<ZtURI::AnyNode::Array>());
+  ZuCheck(node->has<ZfURI::AnyNode::Array>());
   ZuCheck(data[2] == 0 && data[4] == 0);
   ZuCheck(a.length() == 2);
   ZuCheck(a.get(0) == "a");
@@ -349,16 +349,16 @@ void delimitedLoad()
   ZuTestScope(delimitedLoad);
 
   char uri[] = "?bytesVec[]=[eHh4,eXl5eQ,enp6eno]";
-  auto scan = ZtURI::scan(uri);
+  auto scan = ZfURI::scan(uri);
   ZuCheck(scan.p<0>() > 0);
   auto &root = scan.p<1>();
-  ZuCheck(root && root->has<ZtURI::AnyNode::Object>());
-  if (!root || !root->has<ZtURI::AnyNode::Object>()) return;
-  auto field = root->data<ZtURI::AnyNode::Object>().find("bytesVec");
-  ZuCheck(field && field->val()->has<ZtURI::AnyNode::String>());
+  ZuCheck(root && root->has<ZfURI::AnyNode::Object>());
+  if (!root || !root->has<ZfURI::AnyNode::Object>()) return;
+  auto field = root->data<ZfURI::AnyNode::Object>().find("bytesVec");
+  ZuCheck(field && field->val()->has<ZfURI::AnyNode::String>());
 
-  Foo foo = ZtURI::handler<Foo, ZuFacet::Bah>(root).ctor();
-  ZuCheck(field->val()->has<ZtURI::AnyNode::Array>());
+  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(root).ctor();
+  ZuCheck(field->val()->has<ZfURI::AnyNode::Array>());
   ZuCheck(foo.bytesVec.length() == 3);
   ZuCheck(foo.bytesVec[0] == ZuBSpan{"xxx"});
   ZuCheck(foo.bytesVec[1] == ZuBSpan{"yyyy"});

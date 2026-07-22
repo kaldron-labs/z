@@ -23,7 +23,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
 
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
@@ -483,7 +483,7 @@ struct Options {
   bool		help = false;
 };
 
-ZtStruct((Options, CLI),
+ZfStruct((Options, CLI),
   (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
   (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
   (((discardResponse),
@@ -3539,7 +3539,7 @@ int main(int argc, char **argv)
   ZiHashCSV::init(::getenv("Z_HASHTUNE"));
 
   Options options;
-  argc = ZtCLI::load(options, argc, argv);
+  argc = ZfCLI::load(options, argc, argv);
   if (options.help) usage(0);
   if (!validateOptions(options, argc)) usage();
 

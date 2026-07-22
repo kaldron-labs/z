@@ -4,17 +4,17 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// ZtStruct JSON load/save
+// ZfStruct JSON load/save
 // - compile-time formatting
 // - compile-time field matching automaton (ZuMatcher)
 // - ingests unquoted keys
 // - in-place overwrite decoding of string quoting, base64, base32, hex etc. 
 
-#ifndef ZtJSON_HH
-#define ZtJSON_HH
+#ifndef ZfJSON_HH
+#define ZfJSON_HH
 
-#ifndef ZtLib_HH
-#include <zlib/ZtLib.hh>
+#ifndef ZfLib_HH
+#include <zlib/ZfLib.hh>
 #endif
 
 #include <math.h>
@@ -32,12 +32,12 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
-#include <zlib/ZtStruct.hh>
+#include <zlib/ZfStruct.hh>
 #include <zlib/ZtBytesFmt.hh>
 
 ZuStructFacet(JSON); // canonical JSON facet, others can be defined
 
-namespace ZtJSON {
+namespace ZfJSON {
 
 // bytes format
 using namespace ZtBytesFmt;
@@ -59,7 +59,7 @@ struct TimeFmt {
   static constexpr int NDP = NDP_;        // decimal places (FIX, Unix)
 };
 
-} // ZtJSON
+} // ZfJSON
 
 namespace ZuFieldProp::JSON {
 
@@ -70,25 +70,25 @@ template <typename Fmt> struct TimeFmt { using T = Fmt; };
 template <bool> struct Optional { };
 
 // shorthand
-using Base64 = BytesFmt<ZtJSON::Base64>;
-using Base64URL = BytesFmt<ZtJSON::Base64URL>;
-using Base32 = BytesFmt<ZtJSON::Base32>;
-using Hex = BytesFmt<ZtJSON::Hex>;
-using Raw = BytesFmt<ZtJSON::Raw>;
+using Base64 = BytesFmt<ZfJSON::Base64>;
+using Base64URL = BytesFmt<ZfJSON::Base64URL>;
+using Base32 = BytesFmt<ZfJSON::Base32>;
+using Hex = BytesFmt<ZfJSON::Hex>;
+using Raw = BytesFmt<ZfJSON::Raw>;
 
 template <typename Fmt = ZtFmt::Default>
-using Number = NumberFmt<ZtJSON::NumberFmt<false, Fmt>>;
+using Number = NumberFmt<ZfJSON::NumberFmt<false, Fmt>>;
 template <typename Fmt = ZtFmt::Default>
-using String = NumberFmt<ZtJSON::NumberFmt<true, Fmt>>;
+using String = NumberFmt<ZfJSON::NumberFmt<true, Fmt>>;
 
 template <uint8_t Scale, int8_t NDP>
-using ISO = TimeFmt<ZtJSON::TimeFmt<ZtJSON::ISO, Scale, NDP>>;
+using ISO = TimeFmt<ZfJSON::TimeFmt<ZfJSON::ISO, Scale, NDP>>;
 template <uint8_t Scale, int8_t NDP>
-using FIX = TimeFmt<ZtJSON::TimeFmt<ZtJSON::FIX, Scale, NDP>>;
+using FIX = TimeFmt<ZfJSON::TimeFmt<ZfJSON::FIX, Scale, NDP>>;
 template <uint8_t Scale, int8_t NDP>
-using CSV = TimeFmt<ZtJSON::TimeFmt<ZtJSON::CSV, Scale, NDP>>;
+using CSV = TimeFmt<ZfJSON::TimeFmt<ZfJSON::CSV, Scale, NDP>>;
 template <uint8_t Scale, int8_t NDP>
-using Unix = TimeFmt<ZtJSON::TimeFmt<ZtJSON::Unix, Scale, NDP>>;
+using Unix = TimeFmt<ZfJSON::TimeFmt<ZfJSON::Unix, Scale, NDP>>;
 
 // shorthand for Optional<true>
 using Opt = Optional<true>;
@@ -123,7 +123,7 @@ using GetIDs = typename GetIDs_<U>::T;
 // GetBytesFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BytesFmt>{}>
 struct GetBytesFmt_ {
-  using T = ZuConstant<uint8_t, ZtJSON::Base64>; // default
+  using T = ZuConstant<uint8_t, ZfJSON::Base64>; // default
 };
 template <typename Props>
 struct GetBytesFmt_<Props, true> {
@@ -135,7 +135,7 @@ using GetBytesFmt = typename GetBytesFmt_<Props>::T;
 // GetNumberFmt - ZuFmt
 template <typename Props, bool = HasType<Props, NumberFmt>{}>
 struct GetNumberFmt_ {
-  using T = ZtJSON::NumberFmt<false, ZtFmt::Default>; // default
+  using T = ZfJSON::NumberFmt<false, ZtFmt::Default>; // default
 };
 template <typename Props>
 struct GetNumberFmt_<Props, true> {
@@ -144,9 +144,9 @@ struct GetNumberFmt_<Props, true> {
 template <typename Props>
 using GetNumberFmt = typename GetNumberFmt_<Props>::T;
 
-// GetTimeFmt - ZtJSON::TimeFmt::{Fmt,Scale,NDP}
+// GetTimeFmt - ZfJSON::TimeFmt::{Fmt,Scale,NDP}
 template <typename Props, bool = HasType<Props, TimeFmt>{}>
-struct GetTimeFmt_ { using T = ZtJSON::TimeFmt<ZtJSON::ISO, 0, 3>; };
+struct GetTimeFmt_ { using T = ZfJSON::TimeFmt<ZfJSON::ISO, 0, 3>; };
 template <typename Props>
 struct GetTimeFmt_<Props, true> { using T = GetType<Props, TimeFmt>; };
 template <typename Props>
@@ -168,7 +168,7 @@ using GetOptional = typename GetOptional_<Props>::T;
 
 } // ZuFieldProp::JSON
 
-namespace ZtJSON {
+namespace ZfJSON {
 
 // --- input functions
 
@@ -184,7 +184,7 @@ ZuInline constexpr bool isspace__(char c) {
 
 // bos() finds the beginning of a string, skipping white space
 // - -1 is returned if a non-white-space character other than " is encountered
-ZtExtern int bos(ZuCSpan span);
+ZfExtern int bos(ZuCSpan span);
 
 // eos() finds end of string (EOS) in 1-pass, mutating the contents as
 // necessary if back-quoted characters are embedded
@@ -198,18 +198,18 @@ ZtExtern int bos(ZuCSpan span);
 //   - input is past the end of the input string, i.e. past the terminating "
 // - returns {-1, -1} if no terminating " is found
 // - Example: foo\\nbar\" -> foo\nbar\0\0 returning { 7, 9 }
-ZtExtern ZuTuple<int, int> eos(ZuSpan<char> data);
+ZfExtern ZuTuple<int, int> eos(ZuSpan<char> data);
 
 // bok() finds the beginning of a key, skipping white space
 // - -1 is returned if [^a-zA-Z0-9_$] is encountered
 //   (bizarrely, JavaScript has $ as a permitted character in keys)
-ZtExtern int bok(ZuCSpan span);
+ZfExtern int bok(ZuCSpan span);
 
 // eok() finds end of key (EOK) in 1-pass
 // - no mutation is necessary
-ZtExtern unsigned eok(ZuCSpan span);
+ZfExtern unsigned eok(ZuCSpan span);
 
-struct Node_HeapID : public ZuStringT<"ZtJSON.Node"> { };
+struct Node_HeapID : public ZuStringT<"ZfJSON.Node"> { };
 
 // node in a scan tree
 class AnyNode {
@@ -316,7 +316,7 @@ using NodeArray = typename AnyNode::Array;
 using CNodeArray = const NodeArray;
 
 // scan JSON, build parse tree
-ZtExtern ZuTuple<int, ZuPtr<const AnyNode>> scan(ZuSpan<char> span);
+ZfExtern ZuTuple<int, ZuPtr<const AnyNode>> scan(ZuSpan<char> span);
 
 template <typename Data, typename ...Args>
 inline auto newNode(Args && ...args) {
@@ -325,7 +325,7 @@ inline auto newNode(Args && ...args) {
 }
 
 // a JSON top-level is either an object { ... } or an array [ ... ]
-ZtExtern ZuTuple<int, int> botl(ZuCSpan span);
+ZfExtern ZuTuple<int, int> botl(ZuCSpan span);
 
 // boc() returns the beginning of a colon key/value separator
 // - returns -1 if the input is invalid or no colon is found
@@ -333,47 +333,47 @@ int boc(ZuCSpan span);
 
 // bov() returns the beginning of a value together with the type of the value
 // - returns {-1, -1} if the input is corrupt or no value is found
-ZtExtern ZuTuple<int, int> bov(ZuCSpan span);
+ZfExtern ZuTuple<int, int> bov(ZuCSpan span);
 
 // Note: no eov_String(), eos() is used for both keys and values
 
 // eov_Null() moves past "null", validating the remainder of the input
 // - returns -1 if the input is too short or doesn't match
-ZtExtern int eov_Null(ZuCSpan span);
+ZfExtern int eov_Null(ZuCSpan span);
 
 // eov_Array() scans an array, allocating and returning a new Node
 // - returns {offset, node}
 // - returns {-1, nullptr} on invalid input
-ZtExtern ZuTuple<int, ZuPtr<AnyNode>> eov_Array(ZuSpan<char> span);
+ZfExtern ZuTuple<int, ZuPtr<AnyNode>> eov_Array(ZuSpan<char> span);
 
 // eov_Object() scans an object, allocating and returning a new Node
 // - returns {offset, node}
 // - returns {-1, nullptr} on invalid input
-ZtExtern ZuTuple<int, ZuPtr<AnyNode>> eov_Object(ZuSpan<char> span);
+ZfExtern ZuTuple<int, ZuPtr<AnyNode>> eov_Object(ZuSpan<char> span);
 
 // eov_Number() scans for the end of a number without calculating the value
 // - JSON specifies an optional exponent [eE]N where N is potentially negative
 // - returns offset
 // - returns -1 on invalid input
-ZtExtern int eov_Number(ZuCSpan span);
+ZfExtern int eov_Number(ZuCSpan span);
 
 // eov_Decimal() scans a number as ZuDecimal
 // - returns {offset, value}
 // - returns {-1, {}} on invalid input
-ZtExtern ZuTuple<int, ZuDecimal> eov_Decimal(ZuCSpan span);
+ZfExtern ZuTuple<int, ZuDecimal> eov_Decimal(ZuCSpan span);
 
 // eov_Float() scans a number as double
 // - returns {offset, value}
 // - returns {-1, NaN} on invalid input
-ZtExtern ZuTuple<int, double> eov_Float(ZuCSpan span);
+ZfExtern ZuTuple<int, double> eov_Float(ZuCSpan span);
 
 // eov_True() moves past "true", validating the remainder of the input
 // - returns -1 if the input is too short or doesn't match
-ZtExtern int eov_True(ZuCSpan span);
+ZfExtern int eov_True(ZuCSpan span);
 
 // eov_False() moves past "false", validating the remainder of the input
 // - returns -1 if the input is too short or doesn't match
-ZtExtern int eov_False(ZuCSpan span);
+ZfExtern int eov_False(ZuCSpan span);
 
 // bod() finds the beginning of a delimiter within an object or array
 template <char Close>
@@ -456,14 +456,14 @@ struct AsDeflt {
   using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
 };
 
-} // ZtJSON
+} // ZfJSON
 
-ZtJSON::AsDeflt ZtJSON_Fmt(...); // default
+ZfJSON::AsDeflt ZfJSON_Fmt(...); // default
 
-namespace ZtJSON {
+namespace ZfJSON {
 
 template <typename O>
-using As = decltype(ZtJSON_Fmt(ZuDeclVal<O *>()));
+using As = decltype(ZfJSON_Fmt(ZuDeclVal<O *>()));
 
 // save an individual field
 template <
@@ -494,13 +494,13 @@ struct AsObject {
     using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;
 
     using AllFields = ZuFields<O, Facet>;
-    using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
-    using SaveFields = ZuTypeGrep<ZtFieldFilter::Save, AllFields>;
-    using CtorFields_ = ZuTypeGrep<ZtFieldFilter::Ctor, AllFields>;
+    using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
+    using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
+    using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
     using CtorFields = ZuTypeSort<CtorIndex, CtorFields_>;
-    using InitFields = ZuTypeGrep<ZtFieldFilter::Init, AllFields>;
-    using UpdFields = ZuTypeGrep<ZtFieldFilter::Upd, AllFields>;
-    using DelFields = ZuTypeGrep<ZtFieldFilter::Del, AllFields>;
+    using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
+    using UpdFields = ZuTypeGrep<ZfFieldFilter::Upd, AllFields>;
+    using DelFields = ZuTypeGrep<ZfFieldFilter::Del, AllFields>;
 
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &o) {
@@ -553,7 +553,7 @@ struct AsObject {
 	  return loadValue<Facet, Filter, TypeCode, Props, T>(node);
 	}
       }
-      if constexpr (ZtFieldTC::IsVec<TypeCode>{}) {
+      if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
 	// ZuMArray needs an underlying reference
 	static const NodeArray _;
 	return R(_);
@@ -567,13 +567,13 @@ struct AsObject {
       static O ctor(const Handler &handler, Args &&...args) {
 	return O(
 	  ZuFwd<Args>(args)...,
-	  handler.loadField<ZtFieldFilter::Load, Field>()...);
+	  handler.loadField<ZfFieldFilter::Load, Field>()...);
       }
       template <typename ...Args>
       static void new_(void *o, const Handler &handler, Args &&...args) {
 	new (o) O(
 	  ZuFwd<Args>(args)...,
-	  handler.loadField<ZtFieldFilter::Load, Field>()...);
+	  handler.loadField<ZfFieldFilter::Load, Field>()...);
       }
     };
     template <typename ...Args>
@@ -583,7 +583,7 @@ struct AsObject {
       else {
 	O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
 	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	  Field::set(o, this->loadField<ZtFieldFilter::Load, Field>());
+	  Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
 	});
 	return o;
       }
@@ -593,18 +593,18 @@ struct AsObject {
       ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZtFieldFilter::Load, Field>());
+	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
     }
 
     void load(O &o) const {
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZtFieldFilter::Load, Field>());
+	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
     }
     void update(O &o) const {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZtFieldFilter::Upd, Field>());
+	Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
     }
   };
@@ -652,7 +652,7 @@ struct AsArray {
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using LoadVec_ =
-      LoadVec<Facet, ZtFieldFilter::Load, ElemCode, ElemProps, Elem>;
+      LoadVec<Facet, ZfFieldFilter::Load, ElemCode, ElemProps, Elem>;
     template <typename ...Args>
     O ctor(Args &&...args) const {
       if (ZuUnlikely(!node->has<AnyNode::Array>()))
@@ -677,14 +677,14 @@ struct AsArray {
       unsigned n = ZuTraits<O>::length(o);
       unsigned m = nodes.length();
       if (n > m) n = m;
-      if constexpr (ElemCode == ZtFieldTC::UDT) {
+      if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using ElemHandler = typename As<Elem>::template Handler<Elem, Facet>;
 	for (unsigned i = 0; i < n; i++)
 	  ElemHandler{nodes[i]}.update(o[i]);
       } else {
 	for (unsigned i = 0; i < n; i++)
 	  o[i] = loadValue<
-	    Facet, ZtFieldFilter::Upd, ElemCode, ElemProps, Elem>(nodes[i]);
+	    Facet, ZfFieldFilter::Upd, ElemCode, ElemProps, Elem>(nodes[i]);
       }
     }
   };
@@ -702,14 +702,14 @@ struct AsArray {
 // };
 // class A {
 //   ...
-//   friend inline Fmt ZtJSON_StringFmt(A *); // bind Fmt to A
+//   friend inline Fmt ZfJSON_StringFmt(A *); // bind Fmt to A
 // };
 
 // temporary on-stack string buffer for quoting
 ZuDerive(QuoteBuf,
   (ZtString<
     ZtStringBuiltin<128,
-      ZtStringHeapID<"ZtJSON.Quote",
+      ZtStringHeapID<"ZfJSON.Quote",
 	ZtStringSharded<true>>>>));
 
 struct AsStringDeflt {	// default string formatter
@@ -727,17 +727,17 @@ struct AsStringDeflt {	// default string formatter
   };
 };
 
-} // ZtJSON
+} // ZfJSON
 
-ZtJSON::AsStringDeflt ZtJSON_StringFmt(...);
+ZfJSON::AsStringDeflt ZfJSON_StringFmt(...);
 
-namespace ZtJSON {
+namespace ZfJSON {
 
 struct AsString {
   template <typename O_, typename>
   struct Handler {
     using O = O_;
-    using Fmt = decltype(ZtJSON_StringFmt(ZuDeclVal<O *>()));
+    using Fmt = decltype(ZfJSON_StringFmt(ZuDeclVal<O *>()));
     using Handler_ = typename Fmt::template Handler<O>;
 
     template <template <typename> class Filter, typename S>
@@ -771,56 +771,56 @@ inline void saveValue_(S &s, const T_ &v_)
 {
   using T = ZuDecay<T_>;
   if constexpr (
-      TypeCode == ZtFieldTC::CString ||
-      TypeCode == ZtFieldTC::String)
+      TypeCode == ZfFieldTC::CString ||
+      TypeCode == ZfFieldTC::String)
     quote(s, v_);
-  else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     constexpr unsigned Fmt = ZuFieldProp::JSON::GetBytesFmt<Props>{};
-    if constexpr (Fmt == ZtJSON::Base64) {
+    if constexpr (Fmt == ZfJSON::Base64) {
       ZuBSpan v{v_};
       auto n = ZuBase64::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase64::encode(buf, v));
       s << '"' << ZuCSpan(buf) << '"';
-    } else if constexpr (Fmt == ZtJSON::Base64URL) {
+    } else if constexpr (Fmt == ZfJSON::Base64URL) {
       ZuBSpan v{v_};
       auto n = ZuBase64URL::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase64URL::encode(buf, v));
       s << '"' << ZuCSpan(buf) << '"';
-    } else if constexpr (Fmt == ZtJSON::Base32) {
+    } else if constexpr (Fmt == ZfJSON::Base32) {
       ZuBSpan v{v_};
       auto n = ZuBase32::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase32::encode(buf, v));
       s << '"' << ZuCSpan(buf) << '"';
-    } else if constexpr (Fmt == ZtJSON::Hex) {
+    } else if constexpr (Fmt == ZfJSON::Hex) {
       ZuBSpan v{v_};
       auto n = ZuHex::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuHex::encode(buf, v));
       s << '"' << ZuCSpan(buf) << '"';
-    } else if constexpr (Fmt == ZtJSON::Raw) {
+    } else if constexpr (Fmt == ZfJSON::Raw) {
       quote(s, v_);
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     bool v = v_;
     s << (v ? "true" : "false");
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128) {
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     if constexpr (ZuIsBoxed<T>{}) {
       if constexpr (
@@ -828,12 +828,12 @@ inline void saveValue_(S &s, const T_ &v_)
 	  bool(ZuFieldProp::HasEnum<Props>{}) ||
 	  bool(ZuFieldProp::HasFlags<Props>{}) ||
 	  bool(ZuTypeIn<ZuFieldProp::Hex, Props>{})) {
-	s << '"' << ZtFieldPrintInt<Props, typename Fmt::Fmt, T>(v_) << '"';
+	s << '"' << ZfFieldPrintInt<Props, typename Fmt::Fmt, T>(v_) << '"';
       } else {
-	s << ZtFieldPrintInt<Props, typename Fmt::Fmt, T>(v_);
+	s << ZfFieldPrintInt<Props, typename Fmt::Fmt, T>(v_);
       }
     } else {
-      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      using B = ZuBox<ZfFieldTC::Type<TypeCode>>;
       auto v = B{v_};
       if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{}) {
 	if constexpr (ZuFieldProp::HasEnum<Props>{}) {
@@ -847,12 +847,12 @@ inline void saveValue_(S &s, const T_ &v_)
 	  bool(ZuFieldProp::HasEnum<Props>{}) ||
 	  bool(ZuFieldProp::HasFlags<Props>{}) ||
 	  bool(ZuTypeIn<ZuFieldProp::Hex, Props>{})) {
-	s << '"' << ZtFieldPrintInt<Props, typename Fmt::Fmt, B>(v) << '"';
+	s << '"' << ZfFieldPrintInt<Props, typename Fmt::Fmt, B>(v) << '"';
       } else {
-	s << ZtFieldPrintInt<Props, typename Fmt::Fmt, B>(v);
+	s << ZfFieldPrintInt<Props, typename Fmt::Fmt, B>(v);
       }
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Float) {
+  } else if constexpr (TypeCode == ZfFieldTC::Float) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     double v = v_;
     if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
@@ -871,7 +871,7 @@ inline void saveValue_(S &s, const T_ &v_)
     s << ZuBoxed(v).fmt<typename Fmt::Fmt>();
     if (e) { s << 'e'; if (e > 0) s << '+'; s << e; }
     if constexpr (Fmt::String) s << '"';
-  } else if constexpr (TypeCode == ZtFieldTC::Fixed) {
+  } else if constexpr (TypeCode == ZfFieldTC::Fixed) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     ZuFixed v = v_;
     if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
@@ -879,7 +879,7 @@ inline void saveValue_(S &s, const T_ &v_)
     if constexpr (Fmt::String) s << '"';
     s << v.fmt<typename Fmt::Fmt>();
     if constexpr (Fmt::String) s << '"';
-  } else if constexpr (TypeCode == ZtFieldTC::Decimal) {
+  } else if constexpr (TypeCode == ZfFieldTC::Decimal) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     ZuDecimal v = v_;
     if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
@@ -888,19 +888,19 @@ inline void saveValue_(S &s, const T_ &v_)
     s << v.fmt<typename Fmt::Fmt>();
     if constexpr (Fmt::String) s << '"';
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     using Fmt = ZuFieldProp::JSON::GetTimeFmt<Props>;
-    if constexpr (Fmt::Fmt == ZtJSON::Unix) {
+    if constexpr (Fmt::Fmt == ZfJSON::Unix) {
       ZuTime v{v_};
       if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
 	if (!*v) { s << "null"; return; }
-      if constexpr (Fmt::Unit == ZtJSON::Sec) {
+      if constexpr (Fmt::Unit == ZfJSON::Sec) {
 	s << '"' << ZuBoxed(v.sec());
 	if constexpr (Fmt::NDP)
 	  s << '.' << ZuBoxed(v.nsec()).fmt<ZuFmt::Frac<9, Fmt::NDP>>();
 	s << '"';
-      } else if constexpr (Fmt::Unit == ZtJSON::MSec) {
+      } else if constexpr (Fmt::Unit == ZfJSON::MSec) {
 	int128_t t = int128_t(v.sec());
 	int64_t f = v.nsec();
 	t = t * 1000U + (f / 1000000U);
@@ -909,7 +909,7 @@ inline void saveValue_(S &s, const T_ &v_)
 	if constexpr (Fmt::NDP)
 	  s << '.' << ZuBoxed(f).fmt<ZuFmt::Frac<6, Fmt::NDP>>();
 	s << '"';
-      } else if constexpr (Fmt::Unit == ZtJSON::USec) {
+      } else if constexpr (Fmt::Unit == ZfJSON::USec) {
 	int128_t t = int128_t(v.sec());
 	int64_t f = v.nsec();
 	t = t * 1000000U + (v.nsec() / 1000U);
@@ -918,31 +918,31 @@ inline void saveValue_(S &s, const T_ &v_)
 	if constexpr (Fmt::NDP)
 	  s << '.' << ZuBoxed(f).fmt<ZuFmt::Frac<3, Fmt::NDP>>();
 	s << '"';
-      } else if constexpr (Fmt::Unit == ZtJSON::NSec) {
+      } else if constexpr (Fmt::Unit == ZfJSON::NSec) {
 	int128_t t = int128_t(v.sec());
 	t = t * 1000000000U + v.nsec();
 	s << '"' << ZuBoxed(t) << '"';
       }
-    } else if constexpr (Fmt::Fmt == ZtJSON::CSV) {
+    } else if constexpr (Fmt::Fmt == ZfJSON::CSV) {
       ZuDateTime v{v_};
       if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
 	if (!*v) { s << "null"; return; }
       auto &fmt = ZmTLS<ZuDateTimeFmt::CSV, (int Props::*){}>();
       s << '"' << v.fmt(fmt) << '"';
-    } else if constexpr (Fmt::Fmt == ZtJSON::FIX) {
+    } else if constexpr (Fmt::Fmt == ZfJSON::FIX) {
       auto &fmt = ZmTLS<ZuDateTimeFmt::FIX<Fmt::NDP>, (int Props::*){}>();
       ZuDateTime v{v_};
       if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
 	if (!*v) { s << "null"; return; }
       s << '"' << v.fmt(fmt) << '"';
-    } else if constexpr (Fmt::Fmt == ZtJSON::ISO) {
+    } else if constexpr (Fmt::Fmt == ZfJSON::ISO) {
       auto &fmt = ZmTLS<ZuDateTimeFmt::ISO, (int Props::*){}>();
       ZuDateTime v{v_};
       if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{})
 	if (!*v) { s << "null"; return; }
       s << '"' << v.fmt(fmt) << '"';
     }
-  } else if constexpr (TypeCode == ZtFieldTC::UDT) {
+  } else if constexpr (TypeCode == ZfFieldTC::UDT) {
     As<T>::template Handler<T, Facet>::template save<Filter>(s, v_);
   }
 }
@@ -954,11 +954,11 @@ template <
 inline void saveValue(S &s, const T_ &v)
 {
   using T = ZuDecay<T_>;
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     saveValue_<Facet, Filter, TypeCode, Props>(s, v);
   } else {
     unsigned n = ZuTraits<T>::length(v);
-    enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     s << '[';
     for (unsigned i = 0; i < n; i++) {
       if (i) s << ',';
@@ -985,27 +985,27 @@ inline bool saveField(S &s, const O &o, bool first)
   };
   if constexpr (ZuFieldProp::JSON::GetOptional<Props>{}) {
     if constexpr (
-	TypeCode == ZtFieldTC::CString ||
-	TypeCode == ZtFieldTC::String) {
+	TypeCode == ZfFieldTC::CString ||
+	TypeCode == ZfFieldTC::String) {
       ZuCSpan v = Field::get(o);
       if (!v) return false;
       return save(v);
     } else if constexpr (
-	TypeCode == ZtFieldTC::Bytes) {
+	TypeCode == ZfFieldTC::Bytes) {
       ZuBSpan v = Field::get(o);
       if (!v) return false;
       return save(v);
     } else if constexpr (
-	TypeCode == ZtFieldTC::Int8 ||
-	TypeCode == ZtFieldTC::Int16 ||
-	TypeCode == ZtFieldTC::Int32 ||
-	TypeCode == ZtFieldTC::Int64 ||
-	TypeCode == ZtFieldTC::Int128 ||
-	TypeCode == ZtFieldTC::UInt8 ||
-	TypeCode == ZtFieldTC::UInt16 ||
-	TypeCode == ZtFieldTC::UInt32 ||
-	TypeCode == ZtFieldTC::UInt64 ||
-	TypeCode == ZtFieldTC::UInt128) {
+	TypeCode == ZfFieldTC::Int8 ||
+	TypeCode == ZfFieldTC::Int16 ||
+	TypeCode == ZfFieldTC::Int32 ||
+	TypeCode == ZfFieldTC::Int64 ||
+	TypeCode == ZfFieldTC::Int128 ||
+	TypeCode == ZfFieldTC::UInt8 ||
+	TypeCode == ZfFieldTC::UInt16 ||
+	TypeCode == ZfFieldTC::UInt32 ||
+	TypeCode == ZfFieldTC::UInt64 ||
+	TypeCode == ZfFieldTC::UInt128) {
       auto &&v = Field::get(o);
       if constexpr (ZuFieldProp::HasEnum<Props>{}) {
 	if (v < 0) return false;
@@ -1014,12 +1014,12 @@ inline bool saveField(S &s, const O &o, bool first)
       }
       return save(v);
     } else if constexpr (
-	TypeCode == ZtFieldTC::Float ||
-	TypeCode == ZtFieldTC::Fixed ||
-	TypeCode == ZtFieldTC::Decimal ||
-	TypeCode == ZtFieldTC::Time ||
-	TypeCode == ZtFieldTC::DateTime ||
-	TypeCode == ZtFieldTC::UDT) {
+	TypeCode == ZfFieldTC::Float ||
+	TypeCode == ZfFieldTC::Fixed ||
+	TypeCode == ZfFieldTC::Decimal ||
+	TypeCode == ZfFieldTC::Time ||
+	TypeCode == ZfFieldTC::DateTime ||
+	TypeCode == ZfFieldTC::UDT) {
       auto &&v = Field::get(o);
       if (ZuNull(v)) return false;
       return save(v);
@@ -1038,15 +1038,15 @@ inline T loadValue_(AnyNode *node)
 
   if (type == ValueTC::Null) return ZuCmp<T>::null();
 
-  if constexpr (TypeCode == ZtFieldTC::CString) {
+  if constexpr (TypeCode == ZfFieldTC::CString) {
     if (ZuUnlikely(type != ValueTC::String)) return nullptr;
     // eos() in-place null-terminates the string
     return node->data<AnyNode::String>().data();
-  } else if constexpr (TypeCode == ZtFieldTC::String) {
+  } else if constexpr (TypeCode == ZfFieldTC::String) {
     if (ZuUnlikely(type != ValueTC::String))
       return ZuCmp<T>::null();
     return T(node->data<AnyNode::String>());
-  } else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     if (ZuUnlikely(type != ValueTC::String))
       return ZuCmp<T>::null();
     auto &span = node->data<AnyNode::String>();
@@ -1058,7 +1058,7 @@ inline T loadValue_(AnyNode *node)
     // - zero-fill trailing bytes are used for idempotence
     // - the final trailing byte is used to stash the number of
     //   padding bytes from the original base32/64 encoding
-    if constexpr (Fmt == ZtJSON::Base64) {
+    if constexpr (Fmt == ZfJSON::Base64) {
       unsigned m = ZuBase64::declen(n), l;
       if (bytes[n - 1] >= 4) {
 	l = ZuBase64::decode({&bytes[0], m}, bytes);
@@ -1069,7 +1069,7 @@ inline T loadValue_(AnyNode *node)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtJSON::Base64URL) {
+    } else if constexpr (Fmt == ZfJSON::Base64URL) {
       // permit padding
       unsigned m = ZuBase64URL::declen(n), l;
       if (bytes[n - 1] >= 4) {
@@ -1081,7 +1081,7 @@ inline T loadValue_(AnyNode *node)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtJSON::Base32) {
+    } else if constexpr (Fmt == ZfJSON::Base32) {
       unsigned m = ZuBase32::declen(n), l;
       if (bytes[n - 1] >= 8) {
 	l = ZuBase32::decode({&bytes[0], m}, bytes);
@@ -1092,7 +1092,7 @@ inline T loadValue_(AnyNode *node)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtJSON::Hex) {
+    } else if constexpr (Fmt == ZfJSON::Hex) {
       unsigned m = ZuHex::declen(n);
       if (bytes[n - 1]) {
 	m = ZuHex::decode({&bytes[0], m}, bytes);
@@ -1100,10 +1100,10 @@ inline T loadValue_(AnyNode *node)
       }
       bytes.trunc(m);
       return T(bytes);
-    } else if constexpr (Fmt == ZtJSON::Raw) {
+    } else if constexpr (Fmt == ZfJSON::Raw) {
       return T(bytes);
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     switch(type) {
       case ValueTC::True:
 	return true;
@@ -1114,25 +1114,25 @@ inline T loadValue_(AnyNode *node)
     }
     ZuUnreachable();
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128) {
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     switch (type) {
       case ValueTC::String: {
 	if constexpr (ZuIsBoxed<T>{}) {
-	  using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, T>;
+	  using Scan = ZfFieldScanInt<Props, typename Fmt::Fmt, T>;
 	  return Scan{node->data<AnyNode::String>()}.value;
 	} else {
-	  using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
-	  using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, B>;
+	  using B = ZuBox<ZfFieldTC::Type<TypeCode>>;
+	  using Scan = ZfFieldScanInt<Props, typename Fmt::Fmt, B>;
 	  return T(Scan{node->data<AnyNode::String>()}.value.val());
 	}
       }
@@ -1140,7 +1140,7 @@ inline T loadValue_(AnyNode *node)
 	auto d = eov_Decimal(node->data<AnyNode::Number>());
 	if (d.p<0>() < 0) return ZuCmp<T>::null();
 	auto v = T(d.p<1>().floor());
-	ZtFieldLimit<Props>(v);
+	ZfFieldLimit<Props>(v);
 	return v;
       }
       default:
@@ -1148,18 +1148,18 @@ inline T loadValue_(AnyNode *node)
     }
     ZuUnreachable();
   } else if constexpr (
-      TypeCode == ZtFieldTC::Float ||
-      TypeCode == ZtFieldTC::Fixed ||
-      TypeCode == ZtFieldTC::Decimal) {
+      TypeCode == ZfFieldTC::Float ||
+      TypeCode == ZfFieldTC::Fixed ||
+      TypeCode == ZfFieldTC::Decimal) {
     switch (type) {
       case ValueTC::String: {
 	ZuCSpan span = node->data<AnyNode::String>();
 	if constexpr (
-	    TypeCode == ZtFieldTC::Decimal ||
-	    TypeCode == ZtFieldTC::Fixed) {
+	    TypeCode == ZfFieldTC::Decimal ||
+	    TypeCode == ZfFieldTC::Fixed) {
 	  ZuDecimal d{span};
-	  ZtFieldLimit<Props>(d);
-	  if constexpr (TypeCode == ZtFieldTC::Decimal)
+	  ZfFieldLimit<Props>(d);
+	  if constexpr (TypeCode == ZfFieldTC::Decimal)
 	    return d;
 	  else {
 	    if (!*d) return ZuFixed{};
@@ -1170,7 +1170,7 @@ inline T loadValue_(AnyNode *node)
 	  }
 	} else {
 	  auto v = ZuBox<double>{span}.val();
-	  ZtFieldLimit<Props>(v);
+	  ZfFieldLimit<Props>(v);
 	  return v;
 	}
 	ZuUnreachable();
@@ -1178,13 +1178,13 @@ inline T loadValue_(AnyNode *node)
       case ValueTC::Number: {
 	ZuCSpan span = node->data<AnyNode::Number>();
 	if constexpr (
-	    TypeCode == ZtFieldTC::Decimal ||
-	    TypeCode == ZtFieldTC::Fixed) {
+	    TypeCode == ZfFieldTC::Decimal ||
+	    TypeCode == ZfFieldTC::Fixed) {
 	  auto d = eov_Decimal(span);
 	  if (d.p<0>() < 0) return T{};
 	  auto v = d.p<1>();
-	  ZtFieldLimit<Props>(v);
-	  if constexpr (TypeCode == ZtFieldTC::Decimal)
+	  ZfFieldLimit<Props>(v);
+	  if constexpr (TypeCode == ZfFieldTC::Decimal)
 	    return v;
 	  else {
 	    if (!*v) return ZuFixed{};
@@ -1197,7 +1197,7 @@ inline T loadValue_(AnyNode *node)
 	  auto d = eov_Float(span);
 	  if (d.p<0>() < 0) return ZuCmp<T>::null();
 	  auto v = d.p<1>();
-	  ZtFieldLimit<Props>(v);
+	  ZfFieldLimit<Props>(v);
 	  return v;
 	}
       } break;
@@ -1205,8 +1205,8 @@ inline T loadValue_(AnyNode *node)
 	return ZuCmp<T>::null();
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     using Fmt = ZuFieldProp::JSON::GetTimeFmt<Props>;
     ZuCSpan span;
     switch (type) {
@@ -1219,22 +1219,22 @@ inline T loadValue_(AnyNode *node)
       default:
 	return ZuCmp<T>::null();
     }
-    if constexpr (Fmt::Fmt == ZtJSON::Unix) {
+    if constexpr (Fmt::Fmt == ZfJSON::Unix) {
       auto d = eov_Decimal(span);
       if (d.p<0>() < 0) return ZuCmp<T>::null();
       auto &v = d.p<1>();
-      if constexpr (Fmt::Unit == ZtJSON::MSec) {
+      if constexpr (Fmt::Unit == ZfJSON::MSec) {
 	v.value /= 1000;
-      } else if constexpr (Fmt::Unit == ZtJSON::USec) {
+      } else if constexpr (Fmt::Unit == ZfJSON::USec) {
 	v.value /= 1000000;
-      } else if constexpr (Fmt::Unit == ZtJSON::NSec) {
+      } else if constexpr (Fmt::Unit == ZfJSON::NSec) {
 	v.value /= 1000000000;
       }
       if constexpr (ZuIs_<T, ZuTime>{})
 	return ZuTime{v};
       else
 	return ZuDateTime{ZuTime{v}};
-    } else if constexpr (Fmt::Fmt == ZtJSON::CSV) {
+    } else if constexpr (Fmt::Fmt == ZfJSON::CSV) {
       auto &fmt = ZmTLS<ZuDateTimeScan::CSV, (int Props::*){}>();
       ZuDateTime v;
       if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
@@ -1242,7 +1242,7 @@ inline T loadValue_(AnyNode *node)
 	return v.as_time();
       else
 	return v;
-    } else if constexpr (Fmt::Fmt == ZtJSON::FIX) {
+    } else if constexpr (Fmt::Fmt == ZfJSON::FIX) {
       auto &fmt = ZmTLS<ZuDateTimeScan::FIX, (int Props::*){}>();
       ZuDateTime v;
       if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
@@ -1250,7 +1250,7 @@ inline T loadValue_(AnyNode *node)
 	return v.as_time();
       else
 	return v;
-    } else if constexpr (Fmt::Fmt == ZtJSON::ISO) {
+    } else if constexpr (Fmt::Fmt == ZfJSON::ISO) {
       auto &fmt = ZmTLS<ZuDateTimeScan::ISO, (int Props::*){}>();
       ZuDateTime v;
       if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
@@ -1259,7 +1259,7 @@ inline T loadValue_(AnyNode *node)
       else
 	return v;
     }
-  } else if constexpr (TypeCode == ZtFieldTC::UDT) {
+  } else if constexpr (TypeCode == ZfFieldTC::UDT) {
     using Handler = typename As<T>::template Handler<T, Facet>;
     if (ZuUnlikely(!Handler::valid(node))) return ZuCmp<T>::null();
     return Handler{node}.ctor();
@@ -1271,14 +1271,14 @@ template <
   unsigned TypeCode, typename Props, typename T>
 inline auto loadValue(AnyNode *node)
 {
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     return loadValue_<Facet, Filter, TypeCode, Props, T>(node);
   } else {
-    enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     using Actual = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
     using Elem = ZuIf<
-      ElemCode >= ZtFieldTC::Int8 && ElemCode <= ZtFieldTC::UInt128 &&
-      bool(ZuIsBoxed<Actual>{}), Actual, ZtFieldTC::Type<ElemCode>>;
+      ElemCode >= ZfFieldTC::Int8 && ElemCode <= ZfFieldTC::UInt128 &&
+      bool(ZuIsBoxed<Actual>{}), Actual, ZfFieldTC::Type<ElemCode>>;
     using LoadVec_ = LoadVec<Facet, Filter, ElemCode, Props, Elem>;
     if (!node->has<AnyNode::Array>()) {
       static const NodeArray _;
@@ -1290,7 +1290,7 @@ inline auto loadValue(AnyNode *node)
 
 template <
   typename Facet = ZuFacet::JSON,
-  template <typename> class Filter = ZtFieldFilter::Save,
+  template <typename> class Filter = ZfFieldFilter::Save,
   typename S, typename O>
 inline S &save(S &s, const O &v) {
   As<O>::template Handler<O, Facet>::template save<Filter>(s, v);
@@ -1300,13 +1300,13 @@ template <
   typename Facet = ZuFacet::JSON,
   typename S, typename O>
 ZuInline S &saveUpd(S &s, const O &v) {
-  return save<Facet, ZtFieldFilter::Upd>(s, v);
+  return save<Facet, ZfFieldFilter::Upd>(s, v);
 }
 template <
   typename Facet = ZuFacet::JSON,
   typename S, typename O>
 ZuInline S &saveDel(S &s, const O &v) {
-  return save<Facet, ZtFieldFilter::Del>(s, v);
+  return save<Facet, ZfFieldFilter::Del>(s, v);
 }
 
 template <typename O, typename Facet = ZuFacet::JSON>
@@ -1314,6 +1314,6 @@ auto handler(const ZuPtr<const AnyNode> &node) {
   return typename As<O>::template Handler<O, Facet>{node};
 }
 
-} // ZtJSON
+} // ZfJSON
 
-#endif /* ZtJSON_HH */
+#endif /* ZfJSON_HH */

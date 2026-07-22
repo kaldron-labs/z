@@ -36,7 +36,7 @@ struct SeriesFixed {
   BlkOffset	blkOffset;	// first block
   NDP		ndp;		// NDP of first value in series
 
-  friend ZtStructPrint ZuPrintType(SeriesFixed *);
+  friend ZfStructPrint ZuPrintType(SeriesFixed *);
 };
 
 ZfbStruct(SeriesFixed,
@@ -56,7 +56,7 @@ struct SeriesFloat {
   ZuDateTime	epoch;		// intentionally denormalized
   BlkOffset	blkOffset;	// first block
 
-  friend ZtStructPrint ZuPrintType(SeriesFloat *);
+  friend ZfStructPrint ZuPrintType(SeriesFloat *);
 };
 
 ZfbStruct(SeriesFloat,
@@ -76,7 +76,7 @@ struct BlkFixed {
   BlkCount	count;
   NDP		ndp;
 
-  friend ZtStructPrint ZuPrintType(BlkFixed *);
+  friend ZfStructPrint ZuPrintType(BlkFixed *);
 };
 
 ZfbStruct(BlkFixed,
@@ -96,7 +96,7 @@ struct BlkFloat {
   SeriesID	seriesID;
   BlkCount	count;
 
-  friend ZtStructPrint ZuPrintType(BlkFloat *);
+  friend ZfStructPrint ZuPrintType(BlkFloat *);
 };
 
 ZfbStruct(BlkFloat,
@@ -120,7 +120,7 @@ struct BlkData {
   BlkDataBuf		buf;
   void			*series;	// AnySeries
 
-  friend ZtStructPrint ZuPrintType(BlkData *);
+  friend ZfStructPrint ZuPrintType(BlkData *);
   friend BlkData_Evict ZdbEvictHook(BlkData *);
 };
 

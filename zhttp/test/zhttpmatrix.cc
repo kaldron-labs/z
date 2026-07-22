@@ -13,7 +13,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiFile.hh>
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 #include <zlib/Zquic.hh>
 
 #include "ZhttpTestUtil.hh"
@@ -84,7 +84,7 @@ struct Case {
   Scenario::T	scenario = Scenario::Default;
 };
 
-using OptString = ZtString<ZtStringHeapID<"ZtCLI.Option">>;
+using OptString = ZtString<ZtStringHeapID<"ZfCLI.Option">>;
 
 struct Options {
   OptString	caseName;
@@ -111,7 +111,7 @@ struct Options {
   bool		help = false;
 };
 
-ZtStruct((Options, CLI),
+ZfStruct((Options, CLI),
   (((caseName), (CLI::Long<"case">)),                            (String, "")),
   (((timeout),  (CLI::Long<"timeout">)),                         (UInt32, DefaultCaseTimeout)),
   (((stallTimeout),
@@ -1236,7 +1236,7 @@ bool prerequisitesOK()
 int main(int argc, char **argv)
 {
   matrixDir = executableDir(argv[0]);
-  argc = ZtCLI::load(options, argc, const_cast<const char *const *>(argv));
+  argc = ZfCLI::load(options, argc, const_cast<const char *const *>(argv));
   if (options.help) usage(0);
   if (argc != 1) usage();
   if (!validMigrationOptions()) usage();

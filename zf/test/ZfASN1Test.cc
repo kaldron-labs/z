@@ -12,8 +12,8 @@
 
 #include <zlib/ZmTime.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtASN1.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfASN1.hh>
 #include <zlib/ZtHexDump.hh>
 
 using namespace ZuTestUtil;
@@ -26,10 +26,10 @@ struct Foo {
   ZuDateTime t;
   int32_t iv[4] = { 1, 3, 101, 112 };
 
-  friend ZtStructPrint ZuPrintType(Foo *);
+  friend ZfStructPrint ZuPrintType(Foo *);
 };
 
-ZtStruct(Foo,
+ZfStruct(Foo,
   (((string, Rd),	(Ctor<0>)),		(String, "hello \"world\"")),
   (((bytesVec),		(Ctor<1>)),		(BytesVec)),
   (((t),		(Ctor<2>, NDP<3>)),	(DateTime)),
@@ -41,9 +41,9 @@ ZtStruct(Foo,
     }))),					(Int32Vec))
   );
 
-using namespace ZtASN1::Encoding;
+using namespace ZfASN1::Encoding;
 
-ZtStructRender(Foo, Bah,
+ZfStructRender(Foo, Bah,
   (string, (ASN1::Fmt<3, tagU(), set_(0), tag(0)>)),
   bytesVec, t,
   (iv,     ASN1::Type<OID>));
@@ -58,16 +58,16 @@ void roundTrip()
   foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
 
   ZtString<> asn1;
-  ZtASN1::save<ZuFacet::Bah>(asn1, foo);
+  ZfASN1::save<ZuFacet::Bah>(asn1, foo);
   log("asn1:", ZtHexDump_{asn1.span()});
 
-  Foo bar = ZtASN1::handler<Foo, ZuFacet::Bah>(asn1).ctor();
+  Foo bar = ZfASN1::handler<Foo, ZuFacet::Bah>(asn1).ctor();
   log(bar);
   ZuCheck(bar.string == foo.string);
   ZuCheck(bar.bytesVec.length() == foo.bytesVec.length());
 
   ZtString<> asn2;
-  ZtASN1::save<ZuFacet::Bah>(asn2, bar);
+  ZfASN1::save<ZuFacet::Bah>(asn2, bar);
   log("asn2:", ZtHexDump_{asn2.span()});
   ZuCheck(asn1 == asn2);
 }

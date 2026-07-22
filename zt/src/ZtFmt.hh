@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // compile-time formatted field printing/scanning
-// - see ZtJSON for JSON-specific formatting
+// - see ZfJSON for JSON-specific formatting
 
 #ifndef ZtFmt_HH
 #define ZtFmt_HH

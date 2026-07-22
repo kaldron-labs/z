@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // structured object introspection - flatbuffers extensions
-// - ZtStruct extensions for flatbuffers, with extensible type support
+// - ZfStruct extensions for flatbuffers, with extensible type support
 
 // Syntax
 // ------
@@ -13,10 +13,10 @@
 // 
 // Example: (((id, Rd), (Ctor<0>, Keys<0>)), (String))
 
-// macro DSL syntax is identical to that for ZtStruct, with the Type
+// macro DSL syntax is identical to that for ZfStruct, with the Type
 // extended to specify an extensible flatbuffers <-> C++ mapping
 
-// ZfbStruct	ZtStruct	C++ Type
+// ZfbStruct	ZfStruct	C++ Type
 // --------	--------	--------
 // CString	CString		<CString>
 // String	String		<String>
@@ -60,7 +60,7 @@
 // };
 // } // ZfbTransform
 // ZfbTransform::IP ZfbTransformer_(ZiIP *);
-// inline ZuCSpan ZtVFieldTypeID(ZiIP *) { return "IP"; }
+// inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
 
 #ifndef ZfbStruct_HH
 #define ZfbStruct_HH
@@ -72,7 +72,7 @@
 #include <assert.h>
 
 
-#include <zlib/ZtStruct.hh>
+#include <zlib/ZfStruct.hh>
 
 #include <zlib/Zfb.hh>
 
@@ -178,13 +178,13 @@ struct Handler_ {
   using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;
 
   using AllFields = ZuFields<O, Facet>;
-  using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
-  using SaveFields = ZuTypeGrep<ZtFieldFilter::Save, AllFields>;
-  using CtorFields_ = ZuTypeGrep<ZtFieldFilter::Ctor, AllFields>;
+  using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
+  using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
+  using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
   using CtorFields = ZuTypeSort<CtorIndex, CtorFields_>;
-  using InitFields = ZuTypeGrep<ZtFieldFilter::Init, AllFields>;
-  using UpdFields = ZuTypeGrep<ZtFieldFilter::Upd, AllFields>;
-  using DelFields = ZuTypeGrep<ZtFieldFilter::Del, AllFields>;
+  using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
+  using UpdFields = ZuTypeGrep<ZfFieldFilter::Upd, AllFields>;
+  using DelFields = ZuTypeGrep<ZfFieldFilter::Del, AllFields>;
 
   static constexpr bool ReadOnly = ZuStructRO<O>{};
 
@@ -281,18 +281,18 @@ using FBFields = ZuTypeMap<FBFields_<O>::template Map, ZuFields<O, Facet>>;
 
 template <
   typename Facet = ZuFacet::Core,
-  template <typename> class Filter = ZtFieldFilter::Save,
+  template <typename> class Filter = ZfFieldFilter::Save,
   typename O>
 inline auto save(Zfb::Builder &fbb, const O &o) {
   return Handler<O, Facet>::template save<Filter>(fbb, o);
 }
 template <typename Facet = ZuFacet::Core, typename O>
 ZuInline auto saveUpd(Zfb::Builder &fbb, const O &o) {
-  return Handler<O, Facet>::template save<ZtFieldFilter::Upd>(fbb, o);
+  return Handler<O, Facet>::template save<ZfFieldFilter::Upd>(fbb, o);
 }
 template <typename Facet = ZuFacet::Core, typename O>
 ZuInline auto saveDel(Zfb::Builder &fbb, const O &o) {
-  return Handler<O, Facet>::template save<ZtFieldFilter::Del>(fbb, o);
+  return Handler<O, Facet>::template save<ZfFieldFilter::Del>(fbb, o);
 }
 
 template <typename O>
@@ -465,17 +465,17 @@ struct CStringVec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::CStringVec a) {
+  static auto save(Builder &fbb, ZfStruct_::CStringVec a) {
     using CString = const char *;
     return Zfb::Save::vectorIter<Zfb::String>(fbb, a.length(),
       [&a](Builder &fbb, uint64_t i) mutable {
 	return str(fbb, CString(a[i]));
       });
   }
-  template <typename = ZtStruct_::CStringVec>
-  static const ZtStruct_::CStringVec load(const Vec *v) {
+  template <typename = ZfStruct_::CStringVec>
+  static const ZfStruct_::CStringVec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::CStringVec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::CStringVec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return reinterpret_cast<const char *>(
 	  static_cast<const Vec *>(v_)->Get(i)->Data());
@@ -489,16 +489,16 @@ struct StringVec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::StringVec a) {
+  static auto save(Builder &fbb, ZfStruct_::StringVec a) {
     return Zfb::Save::vectorIter<Zfb::String>(fbb, a.length(),
       [&a](Builder &fbb, uint64_t i) mutable {
 	return String::save(fbb, ZuCSpan(a[i]));
       });
   }
-  template <typename = ZtStruct_::StringVec>
-  static const ZtStruct_::StringVec load(const Vec *v) {
+  template <typename = ZfStruct_::StringVec>
+  static const ZfStruct_::StringVec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::StringVec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::StringVec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return String::load(static_cast<const Vec *>(v_)->Get(i));
       });
@@ -511,16 +511,16 @@ struct BytesVec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::BytesVec a) {
+  static auto save(Builder &fbb, ZfStruct_::BytesVec a) {
     return Zfb::Save::vectorIter<Zfb::Bytes>(fbb, a.length(),
       [&a](Builder &fbb, uint64_t i) mutable {
 	return Zfb::CreateBytes(fbb, Bytes::save(fbb, ZuBSpan(a[i])));
       });
   }
-  template <typename = ZtStruct_::BytesVec>
-  static const ZtStruct_::BytesVec load(const Vec *v) {
+  template <typename = ZfStruct_::BytesVec>
+  static const ZfStruct_::BytesVec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::BytesVec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::BytesVec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return Bytes::load(static_cast<const Vec *>(v_)->Get(i)->data());
       });
@@ -533,15 +533,15 @@ struct Int##Width##Vec { \
   template < \
     typename = void, template <typename> class = ZuAlwaysTrue, \
     typename Builder> \
-  static auto save(Builder &fbb, ZtStruct_::Int##Width##Vec a) { \
+  static auto save(Builder &fbb, ZfStruct_::Int##Width##Vec a) { \
     return Zfb::Save::pvectorIter<int##Width##_t>(fbb, a.length(), \
       [&a](uint64_t i) mutable { return int##Width##_t(a[i]); }); \
   } \
   using Vec = Zfb::Vector<int##Width##_t>; \
-  template <typename = ZtStruct_::Int##Width##Vec> \
-  static const ZtStruct_::Int##Width##Vec load(const Vec *v) { \
+  template <typename = ZfStruct_::Int##Width##Vec> \
+  static const ZfStruct_::Int##Width##Vec load(const Vec *v) { \
     if (!v) return {}; \
-    return ZtStruct_::Int##Width##Vec(*const_cast<Vec *>(v), v->size(), \
+    return ZfStruct_::Int##Width##Vec(*const_cast<Vec *>(v), v->size(), \
       [](const void *v_, uint64_t i) -> int##Width##_t { \
 	return static_cast<const Vec *>(v_)->Get(i); \
       }); \
@@ -552,15 +552,15 @@ struct UInt##Width##Vec { \
   template < \
     typename = void, template <typename> class = ZuAlwaysTrue, \
     typename Builder> \
-  static auto save(Builder &fbb, ZtStruct_::UInt##Width##Vec a) { \
+  static auto save(Builder &fbb, ZfStruct_::UInt##Width##Vec a) { \
     return Zfb::Save::pvectorIter<uint##Width##_t>(fbb, a.length(), \
       [&a](uint64_t i) mutable { return uint##Width##_t(a[i]); }); \
   } \
   using Vec = Zfb::Vector<uint##Width##_t>; \
-  template <typename = ZtStruct_::UInt##Width##Vec> \
-  static const ZtStruct_::UInt##Width##Vec load(const Vec *v) { \
+  template <typename = ZfStruct_::UInt##Width##Vec> \
+  static const ZfStruct_::UInt##Width##Vec load(const Vec *v) { \
     if (!v) return {}; \
-    return ZtStruct_::UInt##Width##Vec(*const_cast<Vec *>(v), v->size(), \
+    return ZfStruct_::UInt##Width##Vec(*const_cast<Vec *>(v), v->size(), \
       [](const void *v_, uint64_t i) -> uint##Width##_t { \
 	return static_cast<const Vec *>(v_)->Get(i); \
       }); \
@@ -576,17 +576,17 @@ struct Int128Vec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::Int128Vec a) {
+  static auto save(Builder &fbb, ZfStruct_::Int128Vec a) {
     return Zfb::Save::structVecIter<Int128>(fbb, a.length(),
       [&a](Int128 *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::Int128{Int128::save(int128_t(a[i]))};
       });
   }
   using Vec = Zfb::Vector<const Zfb::Int128 *>;
-  template <typename = ZtStruct_::Int128Vec>
-  static const ZtStruct_::Int128Vec load(const Vec *v) {
+  template <typename = ZfStruct_::Int128Vec>
+  static const ZfStruct_::Int128Vec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::Int128Vec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::Int128Vec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return int128_t(Int128::load(static_cast<const Vec *>(v_)->Get(i)));
       });
@@ -598,17 +598,17 @@ struct UInt128Vec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::UInt128Vec a) {
+  static auto save(Builder &fbb, ZfStruct_::UInt128Vec a) {
     return Zfb::Save::structVecIter<UInt128>(fbb, a.length(),
       [&a](UInt128 *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::UInt128{UInt128::save(uint128_t(a[i]))};
       });
   }
   using Vec = Zfb::Vector<const Zfb::UInt128 *>;
-  template <typename = ZtStruct_::UInt128Vec>
-  static const ZtStruct_::UInt128Vec load(const Vec *v) {
+  template <typename = ZfStruct_::UInt128Vec>
+  static const ZfStruct_::UInt128Vec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::UInt128Vec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::UInt128Vec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return uint128_t(UInt128::load(static_cast<const Vec *>(v_)->Get(i)));
       });
@@ -620,16 +620,16 @@ struct FloatVec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::FloatVec a) {
+  static auto save(Builder &fbb, ZfStruct_::FloatVec a) {
     using Float = double;
     return Zfb::Save::pvectorIter<Float>(fbb, a.length(),
       [&a](uint64_t i) mutable { return Float(a[i]); });
   }
   using Vec = Zfb::Vector<double>;
-  template <typename = ZtStruct_::FloatVec>
-  static const ZtStruct_::FloatVec load(const Vec *v) {
+  template <typename = ZfStruct_::FloatVec>
+  static const ZfStruct_::FloatVec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::FloatVec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::FloatVec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return static_cast<const Vec *>(v_)->Get(i);
       });
@@ -641,17 +641,17 @@ struct FixedVec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::FixedVec a) {
+  static auto save(Builder &fbb, ZfStruct_::FixedVec a) {
     return Zfb::Save::structVecIter<Fixed>(fbb, a.length(),
       [&a](Fixed *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::Fixed{Fixed::save(ZuFixed(a[i]))};
       });
   }
   using Vec = Zfb::Vector<const Zfb::Fixed *>;
-  template <typename = ZtStruct_::FixedVec>
-  static const ZtStruct_::FixedVec load(const Vec *v) {
+  template <typename = ZfStruct_::FixedVec>
+  static const ZfStruct_::FixedVec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::FixedVec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::FixedVec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return Fixed::load(static_cast<const Vec *>(v_)->Get(i));
       });
@@ -663,17 +663,17 @@ struct DecimalVec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::DecimalVec a) {
+  static auto save(Builder &fbb, ZfStruct_::DecimalVec a) {
     return Zfb::Save::structVecIter<Decimal>(fbb, a.length(),
       [&a](Decimal *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::Decimal{Decimal::save(ZuDecimal(a[i]))};
       });
   }
   using Vec = Zfb::Vector<const Zfb::Decimal *>;
-  template <typename = ZtStruct_::DecimalVec>
-  static const ZtStruct_::DecimalVec load(const Vec *v) {
+  template <typename = ZfStruct_::DecimalVec>
+  static const ZfStruct_::DecimalVec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::DecimalVec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::DecimalVec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return Decimal::load(static_cast<const Vec *>(v_)->Get(i));
       });
@@ -685,17 +685,17 @@ struct TimeVec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::TimeVec a) {
+  static auto save(Builder &fbb, ZfStruct_::TimeVec a) {
     return Zfb::Save::structVecIter<Time>(fbb, a.length(),
       [&a](Time *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::Time{Time::save(ZuTime(a[i]))};
       });
   }
   using Vec = Zfb::Vector<const Zfb::Time *>;
-  template <typename = ZtStruct_::TimeVec>
-  static const ZtStruct_::TimeVec load(const Vec *v) {
+  template <typename = ZfStruct_::TimeVec>
+  static const ZfStruct_::TimeVec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::TimeVec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::TimeVec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return Time::load(static_cast<const Vec *>(v_)->Get(i));
       });
@@ -707,17 +707,17 @@ struct DateTimeVec {
   template <
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
-  static auto save(Builder &fbb, ZtStruct_::DateTimeVec a) {
+  static auto save(Builder &fbb, ZfStruct_::DateTimeVec a) {
     return Zfb::Save::structVecIter<DateTime>(fbb, a.length(),
       [&a](DateTime *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::DateTime{DateTime::save(ZuDateTime(a[i]))};
       });
   }
   using Vec = Zfb::Vector<const Zfb::DateTime *>;
-  template <typename = ZtStruct_::DateTimeVec>
-  static const ZtStruct_::DateTimeVec load(const Vec *v) {
+  template <typename = ZfStruct_::DateTimeVec>
+  static const ZfStruct_::DateTimeVec load(const Vec *v) {
     if (!v) return {};
-    return ZtStruct_::DateTimeVec(*const_cast<Vec *>(v), v->size(),
+    return ZfStruct_::DateTimeVec(*const_cast<Vec *>(v), v->size(),
       [](const void *v_, uint64_t i) {
 	return DateTime::load(static_cast<const Vec *>(v_)->Get(i));
       });
@@ -863,17 +863,17 @@ struct IP_ : public Base {
 template <unsigned, typename> struct Resolve;
 
 #define ZfbTransform_Primitive(Code) \
-  template <typename U> struct Resolve<ZtFieldTC::Code, U> { \
+  template <typename U> struct Resolve<ZfFieldTC::Code, U> { \
     template <typename O, typename Base> \
     using Field = Primitive<O, Base>; \
   }
 #define ZfbTransform_Inline(Code, Transformer) \
-  template <typename U> struct Resolve<ZtFieldTC::Code, U> { \
+  template <typename U> struct Resolve<ZfFieldTC::Code, U> { \
     template <typename O, typename Base> \
     using Field = Inline<O, Base, Transformer>; \
   }
 #define ZfbTransform_Nested(Code, Transformer) \
-  template <typename U> struct Resolve<ZtFieldTC::Code, U> { \
+  template <typename U> struct Resolve<ZfFieldTC::Code, U> { \
     template <typename O, typename Base> \
     using Field = Nested<O, Base, Transformer>; \
   }
@@ -917,14 +917,14 @@ ZfbTransform_Nested(DecimalVec, DecimalVec);
 ZfbTransform_Nested(TimeVec, TimeVec);
 ZfbTransform_Nested(DateTimeVec, DateTimeVec);
 
-template <typename U> struct Resolve<ZtFieldTC::UDT, U> {
+template <typename U> struct Resolve<ZfFieldTC::UDT, U> {
   using Transformer = ZfbTransformer<U>;
   template <typename O, typename Base>
   using Field = ZuIf<Transformer::IsInline,
     Inline<O, Base, Transformer>,
     Nested<O, Base, Transformer>>;
 };
-template <> struct Resolve<ZtFieldTC::UDT, ZiIP> {
+template <> struct Resolve<ZfFieldTC::UDT, ZiIP> {
   template <typename O, typename Base>
   using Field = IP_<O, Base>;
 };
@@ -1082,38 +1082,38 @@ namespace ZuBitmap_ {
   template <unsigned Bits>
   ZfbTransform::Bitmap ZfbTransformer_(Bitmap<Bits> *);
   template <unsigned Bits>
-  inline ZuCSpan ZtVFieldTypeID(Bitmap<Bits> *) { return "Bitmap"; }
+  inline ZuCSpan ZfVFieldTypeID(Bitmap<Bits> *) { return "Bitmap"; }
 }
 namespace ZmBitmap_ {
   ZfbTransform::Bitmap ZfbTransformer_(Bitmap *);
-  inline ZuCSpan ZtVFieldTypeID(Bitmap *) { return "Bitmap"; }
+  inline ZuCSpan ZfVFieldTypeID(Bitmap *) { return "Bitmap"; }
 }
 namespace ZtBitmap_ {
   ZfbTransform::Bitmap ZfbTransformer_(Bitmap *);
-  inline ZuCSpan ZtVFieldTypeID(Bitmap *) { return "Bitmap"; }
+  inline ZuCSpan ZfVFieldTypeID(Bitmap *) { return "Bitmap"; }
 }
 
 ZfbTransform::IP ZfbTransformer_(ZiIP *);
-inline ZuCSpan ZtVFieldTypeID(ZiIP *) { return "IP"; }
+inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
 
 #define ZfbField_Decl__(O_, ID, Base_, TypeName, Type) \
   ZuField_Decl(O_, Base_) \
-  using ZtField(O_, ID##__) = \
-    ZtField_##TypeName<ZuField(O_, ID) ZtField_TypeArgs(Type)>; \
+  using ZfField(O_, ID##__) = \
+    ZfField_##TypeName<ZuField(O_, ID) ZfField_TypeArgs(Type)>; \
   template < \
-    typename O = O_, typename Base = ZtField(O_, ID##__), typename Under = O, \
+    typename O = O_, typename Base = ZfField(O_, ID##__), typename Under = O, \
     typename _ = void> \
-  struct ZtField(O_, ID##_) { \
+  struct ZfField(O_, ID##_) { \
     static_assert( \
       ZuAlwaysFalse<_>{}(), \
       #O_ "/" #ID " - flatbuffer / C++ mismatch"); \
   }; \
   template <typename O, typename Base, typename Under> \
-  struct ZtField(O_, ID##_)< \
+  struct ZfField(O_, ID##_)< \
     O, Base, Under, decltype(&Zfb_Type<Under>::ID, void())> : \
       public Base { \
     template <template <typename> class Override> \
-    using Adapt = ZtField(O_, ID##_)< \
+    using Adapt = ZfField(O_, ID##_)< \
       typename Override<ZuOrigField<Base>>::O, \
       typename Base::template Adapt<Override>, Under>; \
     template <typename Builder> using SaveFn = decltype(&Builder::add_##ID); \
@@ -1136,11 +1136,11 @@ inline ZuCSpan ZtVFieldTypeID(ZiIP *) { return "IP"; }
       return fbo->ID##_type(); \
     } \
   }; \
-  using ZtField(O_, ID) = ZfbFieldT<O_, ZtField(O_, ID##_)<>>;
+  using ZfField(O_, ID) = ZfbFieldT<O_, ZfField(O_, ID##_)<>>;
 #define ZfbField_Decl_(O, Base, Type) \
   ZuPP_Defer(ZfbField_Decl__)(O, \
-      ZuPP_Eval__(ZtField_BaseID(Base)), Base, \
-      ZuPP_Eval__(ZtField_TypeName(Type)), Type)
+      ZuPP_Eval__(ZfField_BaseID(Base)), Base, \
+      ZuPP_Eval__(ZfField_TypeName(Type)), Type)
 #define ZfbField_Decl(O, Args) ZuPP_Defer(ZfbField_Decl_)(O, ZuPP_Strip(Args))
 
 // ZfbStruct preamble
@@ -1159,7 +1159,7 @@ inline ZuCSpan ZtVFieldTypeID(ZiIP *) { return "IP"; }
     template <typename Facet> \
     ZuFields_##O##_FB<Facet> ZuFields_(O *, Facet *); \
     O ZuStructured_(O *); \
-    ZtStructPrint ZuPrintType(O *); \
+    ZfStructPrint ZuPrintType(O *); \
     ZuTrue ZuStructRO_(O *); \
   }
 
@@ -1175,7 +1175,7 @@ inline ZuCSpan ZtVFieldTypeID(ZiIP *) { return "IP"; }
   ZfbStruct_Pre(O) \
   __VA_OPT__(ZuPP_MapArg(ZfbField_Decl, O, __VA_ARGS__)) \
   using ZuFields_##O = ZuTypeList< \
-    __VA_OPT__(ZuPP_MapArgComma(ZtField_Type, O, __VA_ARGS__))>; \
+    __VA_OPT__(ZuPP_MapArgComma(ZfField_Type, O, __VA_ARGS__))>; \
   ZfbStruct_Render(O, Core ZuPP_StripAppend(Facets)) \
   ZfbStruct_Post(O)
 

@@ -4,43 +4,43 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// ZtStruct CLI load/save
+// ZfStruct CLI load/save
 // - compile-time formatting
 // - in-place overwrite decoding of quoting, base64, base32, hex etc. 
 
 // the many and varied ways of flattening structures into CLI args, sigh...
-// - built on ZtURI, which does the same job for HTTP URI queries
-// - see ZtURI.hh for an explanation of Member/Array/List formats
+// - built on ZfURI, which does the same job for HTTP URI queries
+// - see ZfURI.hh for an explanation of Member/Array/List formats
 
 // both arrays and nested objects can also be embedded as JSON
 
-// recap: the top-level is always an object whose fields are ZtStruct-defined;
+// recap: the top-level is always an object whose fields are ZfStruct-defined;
 // individual fields are one of:
 // - a primitive type with non-UDT typecode (String, Int*, etc.)
 //   - per-field StringFmt/BytesFmt/NumberFmt/TimeFmt control the format
 // - a vector type with vector typecode (vector of primitive types)
 //   - no recursion is possible because the element type is primitive
 //   - per-field StringFmt/BytesFmt/NumberFmt/TimeFmt control the element format
-// - a nested UDT type dispatched via the ZtCLI_Fmt() mechanism:
-//   - AsString (default for any type without ZtStruct-defined fields)
+// - a nested UDT type dispatched via the ZfCLI_Fmt() mechanism:
+//   - AsString (default for any type without ZfStruct-defined fields)
 //     - by default operator << is used for saving and the type is expected
 //       to construct itself from a string (ZuCSpan passed to the constructor)
 //     - a custom load/save handler can be defined and bound by
-//       declaring ZtCLI_StringFmt(T *) in T's namespace (see AsString)
-//   - AsObject (default for any type with ZtStruct-defined fields)
-//   - AsArray (ZtCLI::AsArray ZtCLI_Fmt(T *) must be declared in T's namespace)
-//   - AsJSON (ZtCLI::AsJSON ZtCLI_Fmt(T *) must be declared in T's namespace)
-//     - the format is delegated to ZtJSON and any JSON formatting
+//       declaring ZfCLI_StringFmt(T *) in T's namespace (see AsString)
+//   - AsObject (default for any type with ZfStruct-defined fields)
+//   - AsArray (ZfCLI::AsArray ZfCLI_Fmt(T *) must be declared in T's namespace)
+//   - AsJSON (ZfCLI::AsJSON ZfCLI_Fmt(T *) must be declared in T's namespace)
+//     - the format is delegated to ZfJSON and any JSON formatting
 //       defined for the field is used
-//     - the same mapping as for ZtCLI is used (CLI if canonical), so
+//     - the same mapping as for ZfCLI is used (CLI if canonical), so
 //       JSON-in-CLI must be configured via the CLI mapping not the
 //       canonical JSON mapping
 
-#ifndef ZtCLI_HH
-#define ZtCLI_HH
+#ifndef ZfCLI_HH
+#define ZfCLI_HH
 
-#ifndef ZtLib_HH
-#include <zlib/ZtLib.hh>
+#ifndef ZfLib_HH
+#include <zlib/ZfLib.hh>
 #endif
 
 #include <math.h>
@@ -59,12 +59,12 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtJSON.hh>
-#include <zlib/ZtURI.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfJSON.hh>
+#include <zlib/ZfURI.hh>
 #include <zlib/ZtLocalString.hh>
 
-#ifndef ZtCLI_MutableArgv 
+#ifndef ZfCLI_MutableArgv 
 // the argv parameter to main() is mutable on modern operating systems and
 // C libraries including Linux, Windows and MacOS, despite the modern
 // preference for declaring it as const char *const * instead of the
@@ -75,9 +75,9 @@
 // string or bytes field is bound to it with base64/32 or hex encoding,
 // which in practice is never done
 
-// use -DZtCLI_MutableArgv=0 if argv[N] where N > 0 is actually in
+// use -DZfCLI_MutableArgv=0 if argv[N] where N > 0 is actually in
 // read-only memory on a particularly stubborn platform
-#define ZtCLI_MutableArgv 1
+#define ZfCLI_MutableArgv 1
 #endif
 
 ZuStructFacet(CLI); // canonical CLI facet, others can be defined
@@ -86,68 +86,68 @@ ZuStructFacet(CLI); // canonical CLI facet, others can be defined
 
 // NTP (named template parameters):
 //
-// ZtCLIConfig(CLI,			// configure canonical CLI
-//   ZtCLI::ArrayFmt<ZtCLI::Delimited,	// array format is delimited
-//     ZtCLI::Delimiter<','>>>);	// arrays are delimited by ,
+// ZfCLIConfig(CLI,			// configure canonical CLI
+//   ZfCLI::ArrayFmt<ZfCLI::Delimited,	// array format is delimited
+//     ZfCLI::Delimiter<','>>>);	// arrays are delimited by ,
 
-namespace ZtCLI { using namespace ZtURI; }
+namespace ZfCLI { using namespace ZfURI; }
 
 // NTP defaults
-struct ZtCLI_DefltConfig {
+struct ZfCLI_DefltConfig {
   enum {
-    ObjectFmt = ZtCLI::Member,	// CLI only supports Member
-    ArrayFmt = ZtCLI::Bare,	// CLI only supports Bare and Delimited
+    ObjectFmt = ZfCLI::Member,	// CLI only supports Member
+    ArrayFmt = ZfCLI::Bare,	// CLI only supports Bare and Delimited
     Annotated = 0,		// CLI does not support Annotated=1
     Wrapped = 0,		// CLI does not support Wrapped=1
     Delimiter = ','
   };
 };
 
-// ZtCLI_ArrayFmt<...> - configure array format
-template <unsigned Fmt, typename NTP = ZtCLI_DefltConfig>
-struct ZtCLI_ArrayFmt : public ZtURI_ArrayFmt<Fmt, NTP> {
-  ZuAssert(Fmt == ZtCLI::Bare || Fmt == ZtCLI::Delimited);
+// ZfCLI_ArrayFmt<...> - configure array format
+template <unsigned Fmt, typename NTP = ZfCLI_DefltConfig>
+struct ZfCLI_ArrayFmt : public ZfURI_ArrayFmt<Fmt, NTP> {
+  ZuAssert(Fmt == ZfCLI::Bare || Fmt == ZfCLI::Delimited);
 };
 
-// ZtCLI_Delimiter<...> - configure array element delimiter character
-template <char _, typename NTP = ZtCLI_DefltConfig>
-using ZtCLI_Delimiter = ZtURI_Delimiter<_, NTP>;
+// ZfCLI_Delimiter<...> - configure array element delimiter character
+template <char _, typename NTP = ZfCLI_DefltConfig>
+using ZfCLI_Delimiter = ZfURI_Delimiter<_, NTP>;
 
-ZtCLI_DefltConfig ZtCLI_Config(...); // default
+ZfCLI_DefltConfig ZfCLI_Config(...); // default
 
-namespace ZtCLI {
+namespace ZfCLI {
 
 // built-in size for on-heap argument arrays
 constexpr unsigned BuiltinSize = 16;
 
 // resolve configuration (per field mapping)
-// - E.g. ZtCLI::Config<Mapping>::ArrayFmt
+// - E.g. ZfCLI::Config<Mapping>::ArrayFmt
 template <typename Facet>
-using Config = decltype(ZtCLI_Config(ZuDeclVal<Facet *>()));
+using Config = decltype(ZfCLI_Config(ZuDeclVal<Facet *>()));
 
 }
 
-// ZtCLIConfig(Facet, Config)
+// ZfCLIConfig(Facet, Config)
 // - configure CLI for specific facet
 // - must be used in top-level namespace
-#define ZtCLIConfig(Facet, Config) \
-  namespace ZtCLI { \
-    ZuPP_Strip(Config) ZtCLI_Config(ZuFacet::Facet *); \
+#define ZfCLIConfig(Facet, Config) \
+  namespace ZfCLI { \
+    ZuPP_Strip(Config) ZfCLI_Config(ZuFacet::Facet *); \
   }
 
-namespace ZtCLI {
+namespace ZfCLI {
 
 ZuDerive(QuoteBuf, // temporary on-stack string buffer for quoting
   (ZtString<
     ZtStringBuiltin<128,
-      ZtStringHeapID<"ZtCLI.Quote",
+      ZtStringHeapID<"ZfCLI.Quote",
 	ZtStringSharded<true>>>>));
 
-using AsStringDeflt = ZtURI::AsStringDeflt;
+using AsStringDeflt = ZfURI::AsStringDeflt;
 
-} // ZtCLI
+} // ZfCLI
 
-ZtCLI::AsStringDeflt ZtCLI_StringFmt(...);
+ZfCLI::AsStringDeflt ZfCLI_StringFmt(...);
 
 namespace ZuFieldProp::CLI {
 
@@ -203,7 +203,7 @@ template <typename Props> using GetArgs = typename GetParam<Args, Props>::T;
 
 } // ZuFieldProp::CLI
 
-namespace ZtCLI {
+namespace ZfCLI {
 
 // --- input functions
 
@@ -224,21 +224,21 @@ namespace ZtCLI {
 // - any mutation is reduction, shifting down the remainder of the string
 // - truncated bytes and the terminating delimiter are overwritten with 0
 // - Example: "foo\\ bar " -> "foo bar\0\0" returning { 7, 9, ' ' }
-ZtExtern ZuTuple<int, int, char> eos(ZuSpan<char>);
+ZfExtern ZuTuple<int, int, char> eos(ZuSpan<char>);
 
 // find end of key '='
-ZtExtern int eok(ZuCSpan);
+ZfExtern int eok(ZuCSpan);
 
 // on-heap argument types used to build and parse argv[] for interoperating
 // with main, execv*, etc.
 ZuDerive(Arg,
-  (ZtString<ZtStringBuiltin<32, ZtStringHeapID<"ZtCLI.Arg">>>));
+  (ZtString<ZtStringBuiltin<32, ZtStringHeapID<"ZfCLI.Arg">>>));
 ZuDerive(Argv,
-  (ZtBuiltin<ZtArray<Arg, ZtArrayHeapID<"ZtCLI.Argv">>, BuiltinSize>));
+  (ZtBuiltin<ZtArray<Arg, ZtArrayHeapID<"ZfCLI.Argv">>, BuiltinSize>));
 ZuDerive(SpanArgv,
-  (ZtBuiltin<ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZtCLI.Argv">>, BuiltinSize>));
+  (ZtBuiltin<ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZfCLI.Argv">>, BuiltinSize>));
 ZuDerive(Argv_C,
-  (ZtBuiltin<ZtArray<const char *, ZtArrayHeapID<"ZtCLI.Argv">>, BuiltinSize>));
+  (ZtBuiltin<ZtArray<const char *, ZtArrayHeapID<"ZfCLI.Argv">>, BuiltinSize>));
 
 // --- output functions
 
@@ -483,14 +483,14 @@ struct AsDeflt {
   using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
 };
 
-} // ZtCLI
+} // ZfCLI
 
-ZtCLI::AsDeflt ZtCLI_Fmt(...);	// default
+ZfCLI::AsDeflt ZfCLI_Fmt(...);	// default
 
-namespace ZtCLI {
+namespace ZfCLI {
 
 template <typename O>
-using As = decltype(ZtCLI_Fmt(ZuDeclVal<O *>()));
+using As = decltype(ZfCLI_Fmt(ZuDeclVal<O *>()));
 
 // save an individual field
 template <
@@ -517,13 +517,13 @@ struct AsObject {
     using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;
 
     using AllFields = ZuFields<O, Facet>;
-    using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
-    using SaveFields = ZuTypeGrep<ZtFieldFilter::Save, AllFields>;
-    using CtorFields_ = ZuTypeGrep<ZtFieldFilter::Ctor, AllFields>;
+    using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
+    using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
+    using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
     using CtorFields = ZuTypeSort<CtorIndex, CtorFields_>;
-    using InitFields = ZuTypeGrep<ZtFieldFilter::Init, AllFields>;
-    using UpdFields = ZuTypeGrep<ZtFieldFilter::Upd, AllFields>;
-    using DelFields = ZuTypeGrep<ZtFieldFilter::Del, AllFields>;
+    using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
+    using UpdFields = ZuTypeGrep<ZfFieldFilter::Upd, AllFields>;
+    using DelFields = ZuTypeGrep<ZfFieldFilter::Del, AllFields>;
 
     template <
       template <typename> class Filter, typename Quote,
@@ -549,13 +549,13 @@ struct AsObject {
       static O ctor(const Handler &handler, Args &&...args) {
 	return O(
 	  ZuFwd<Args>(args)...,
-	  handler.loadField<ZtFieldFilter::Load, Field>()...);
+	  handler.loadField<ZfFieldFilter::Load, Field>()...);
       }
       template <typename ...Args>
       static void new_(void *o, const Handler &handler, Args &&...args) {
 	new (o) O(
 	  ZuFwd<Args>(args)...,
-	  handler.loadField<ZtFieldFilter::Load, Field>()...);
+	  handler.loadField<ZfFieldFilter::Load, Field>()...);
       }
     };
     template <typename ...Args>
@@ -565,7 +565,7 @@ struct AsObject {
       else {
 	O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
 	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	  Field::set(o, loadField<ZtFieldFilter::Load, Field>());
+	  Field::set(o, loadField<ZfFieldFilter::Load, Field>());
 	});
 	return o;
       }
@@ -575,18 +575,18 @@ struct AsObject {
       ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZtFieldFilter::Load, Field>());
+	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
     }
 
     void load(O &o) const {
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZtFieldFilter::Load, Field>());
+	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
     }
     void update(O &o) const {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZtFieldFilter::Upd, Field>());
+	Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
     }
   };
@@ -599,7 +599,7 @@ struct AsArray {
   struct Handler {
     using O = O_;
 
-    using Config = ZtCLI::Config<Facet>;
+    using Config = ZfCLI::Config<Facet>;
 
     // the top-level cannot be AsArray, so prefix must be non-null
     template <
@@ -621,7 +621,7 @@ struct AsArray {
 	  saveValue<Facet, Filter, Quote, ElemCode, ElemProps>(s, o[i], prefix);
       } else { // Delimited - no nesting is possible, use AsString
 	using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
-	using AsString_ = decltype(ZtCLI_StringFmt(ZuDeclVal<Elem *>()));
+	using AsString_ = decltype(ZfCLI_StringFmt(ZuDeclVal<Elem *>()));
 	using Handler_ = typename AsString_::template Handler<Quote, Elem>;
 	s.template out<Props>(prefix);
 	for (unsigned i = 0; i < n; i++) {
@@ -637,7 +637,7 @@ struct AsArray {
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using LoadVec_ =
-      LoadVec<Facet, ZtFieldFilter::Load, ElemCode, ElemProps, Elem>;
+      LoadVec<Facet, ZfFieldFilter::Load, ElemCode, ElemProps, Elem>;
     template <typename ...Args>
     O ctor(Args &&...args) const {
       if (ZuUnlikely(!node->has<AnyNode::Array>()))
@@ -664,14 +664,14 @@ struct AsArray {
       unsigned n = ZuTraits<O>::length(o);
       unsigned m = nodes.length();
       if (n > m) n = m;
-      if constexpr (ElemCode == ZtFieldTC::UDT) {
+      if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using ElemHandler = typename As<Elem>::template Handler<Elem, Facet>;
 	for (unsigned i = 0; i < n; i++)
 	  ElemHandler{nodes[i]}.update(o[i]);
       } else {
 	for (unsigned i = 0; i < n; i++)
 	  o[i] = loadValue<
-	    Facet, ZtFieldFilter::Upd, ElemCode, ElemProps, Elem>(nodes[i]);
+	    Facet, ZfFieldFilter::Upd, ElemCode, ElemProps, Elem>(nodes[i]);
       }
     }
   };
@@ -683,7 +683,7 @@ struct AsString {
   struct Handler {
     using O = O_;
 
-    using AsString_ = decltype(ZtCLI_StringFmt(ZuDeclVal<O *>()));
+    using AsString_ = decltype(ZfCLI_StringFmt(ZuDeclVal<O *>()));
     using Handler_ = typename AsString_::template Handler<ShellQuote, O>;
 
     template <
@@ -715,9 +715,9 @@ struct AsString {
 // save/load handler for JSON-formatted types
 struct AsJSON {
   template <typename O_, typename Facet>
-  struct Handler : public ZtURI::AsJSON::Handler<O_, Facet> {
+  struct Handler : public ZfURI::AsJSON::Handler<O_, Facet> {
     using O = O_;
-    using Base = ZtURI::AsJSON::Handler<O, Facet>;
+    using Base = ZfURI::AsJSON::Handler<O, Facet>;
     using Base::Base;
     using typename Base::Handler_;
 
@@ -734,7 +734,7 @@ struct AsJSON {
   };
 };
 
-// uses ZtURI::saveValue_()
+// uses ZfURI::saveValue_()
 
 template <
   typename Facet, template <typename> class Filter,
@@ -743,9 +743,9 @@ template <
 inline void saveValue(S &s, const T_ &v, ZuCSpan prefix)
 {
   using T = ZuDecay<T_>;
-  using Config = ZtCLI::Config<Facet>;
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
-    if constexpr (TypeCode == ZtFieldTC::UDT) {
+  using Config = ZfCLI::Config<Facet>;
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
+    if constexpr (TypeCode == ZfFieldTC::UDT) {
       // UDT type - recurse
       using Handler = typename As<T>::template Handler<T, Facet>;
       Handler::template save<Filter, Quote, Props>(s, v, prefix);
@@ -764,7 +764,7 @@ inline void saveValue(S &s, const T_ &v, ZuCSpan prefix)
     }
   } else {
     unsigned n = ZuTraits<ZuDecay<decltype(v)>>::length(v);
-    enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     if constexpr (Config::ArrayFmt == Bare) {
       for (unsigned i = 0; i < n; i++) {
 	saveValue_<Facet, Filter, Quote, ElemCode, Props>(s, v[i],
@@ -789,7 +789,7 @@ inline void saveField(S &s, const O &o, ZuCSpan prefix)
 {
   using Type = typename Field::Type;
   using Props = typename Field::Props;
-  using Config = ZtCLI::Config<Facet>;
+  using Config = ZfCLI::Config<Facet>;
 
   // append long option name to prefix (copy on stack)
   ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
@@ -810,7 +810,7 @@ inline void saveField(S &s, const O &o, ZuCSpan prefix)
     s, Field::get(o), prefix);
 }
 
-// uses ZtURI::loadValue()
+// uses ZfURI::loadValue()
 
 template <typename O, typename Facet>
 template <template <typename> class Filter, typename Field>
@@ -829,18 +829,18 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
       constexpr int8_t Flag = ZuFieldProp::CLI::GetFlag<Props>{};
       if constexpr (Flag >= 0)
 	return R(true);
-      else if constexpr (TypeCode == ZtFieldTC::Bool) {
+      else if constexpr (TypeCode == ZfFieldTC::Bool) {
 	if (child->has<AnyNode::String>())
 	  return R(ZtScanBool(child->data<AnyNode::String>()));
 	return R(true);
       }
-      else if constexpr (TypeCode == ZtFieldTC::UDT)
+      else if constexpr (TypeCode == ZfFieldTC::UDT)
 	return typename As<T>::template Handler<T, Facet>{child.ptr()}.ctor();
       else
 	return loadValue<Facet, Filter, TypeCode, Props, T>(child);
     }
   }
-  if constexpr (ZtFieldTC::IsVec<TypeCode>{}) {
+  if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
     static const NodeArray _;
     return R(_);
   } else
@@ -886,15 +886,15 @@ inline S &save_(S &s_, const O &v) {
 
 template <typename Facet = ZuFacet::CLI, typename S, typename O>
 ZuInline S &save(S &s, const O &v) {
-  return save_<Facet, ZtFieldFilter::Save, ShellQuote>(s, v);
+  return save_<Facet, ZfFieldFilter::Save, ShellQuote>(s, v);
 }
 template <typename Facet = ZuFacet::CLI, typename S, typename O>
 ZuInline S &saveUpd(S &s, const O &v) {
-  return save_<Facet, ZtFieldFilter::Upd, ShellQuote>(s, v);
+  return save_<Facet, ZfFieldFilter::Upd, ShellQuote>(s, v);
 }
 template <typename Facet = ZuFacet::CLI, typename S, typename O>
 ZuInline S &saveDel(S &s, const O &v) {
-  return save_<Facet, ZtFieldFilter::Del, ShellQuote>(s, v);
+  return save_<Facet, ZfFieldFilter::Del, ShellQuote>(s, v);
 }
 
 // constructs argv[] array for execv*(), etc.
@@ -917,19 +917,19 @@ struct OutArgv {
 
 template <typename Facet = ZuFacet::CLI, typename O>
 ZuInline OutArgv &saveArgv(OutArgv &out, const O &v) {
-  save_<Facet, ZtFieldFilter::Save, RawQuote>(out.argv, v);
+  save_<Facet, ZfFieldFilter::Save, RawQuote>(out.argv, v);
   out.finish();
   return out;
 }
 template <typename Facet = ZuFacet::CLI, typename O>
 ZuInline OutArgv &saveArgvUpd(OutArgv &out, const O &v) {
-  save_<Facet, ZtFieldFilter::Upd, RawQuote>(out.argv, v);
+  save_<Facet, ZfFieldFilter::Upd, RawQuote>(out.argv, v);
   out.finish();
   return out;
 }
 template <typename Facet = ZuFacet::CLI, typename O>
 ZuInline OutArgv &saveArgvDel(OutArgv &out, const O &v) {
-  save_<Facet, ZtFieldFilter::Del, RawQuote>(out.argv, v);
+  save_<Facet, ZfFieldFilter::Del, RawQuote>(out.argv, v);
   out.finish();
   return out;
 }
@@ -947,7 +947,7 @@ ZtEnumNS(OptType, int8_t,
 // expansion for an individual option
 // - i.e. fully-qualified field ID
 ZuDerive(Expansion,
-  (ZtString<ZtStringHeapID<"ZtCLI.Expansion", ZtStringSharded<true>>>));
+  (ZtString<ZtStringHeapID<"ZfCLI.Expansion", ZtStringSharded<true>>>));
 struct Option {
   OptType::T	type;
   Expansion	expansion;
@@ -955,7 +955,7 @@ struct Option {
 template <typename O, typename Facet>
 constexpr unsigned nOptions_() {
   using AllFields = ZuFields<O, Facet>;
-  using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
+  using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
   unsigned n = 0;
   ZuUnroll::all<LoadFields>([&n]<typename Field>() {
     using Props = typename Field::Props;
@@ -965,7 +965,7 @@ constexpr unsigned nOptions_() {
     constexpr int8_t Opt = ZuFieldProp::CLI::GetOpt<Props>{};
     constexpr int8_t Flag = ZuFieldProp::CLI::GetFlag<Props>{};
     if constexpr (Arg >= 0 || Args >= 0 || Opt >= 0 || Flag >= 0) ++n;
-    if constexpr (Field::Type::Code == ZtFieldTC::UDT)
+    if constexpr (Field::Type::Code == ZfFieldTC::UDT)
       n += nOptions_<typename Field::T, Facet>();
   });
   return n;
@@ -978,7 +978,7 @@ constexpr unsigned nOptions() {
 template <typename O, typename Facet, typename Hash>
 void initOptions(Hash &hash, ZuCSpan prefix = {}) {
   using AllFields = ZuFields<O, Facet>;
-  using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
+  using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
   ZuUnroll::all<LoadFields>([&hash, &prefix]<typename Field>() {
     using Props = typename Field::Props;
     enum { TypeCode = Field::Type::Code };
@@ -1006,7 +1006,7 @@ void initOptions(Hash &hash, ZuCSpan prefix = {}) {
       ZuAssert(Arg < 0 && Args < 0 && Opt < 0);
       hash.add(Flag, Option{OptType::Flag, expansion});
     }
-    if constexpr (Field::Type::Code == ZtFieldTC::UDT)
+    if constexpr (Field::Type::Code == ZfFieldTC::UDT)
       initOptions<typename Field::T, Facet>(hash, expansion.cspan());
   });
 }
@@ -1030,7 +1030,7 @@ private:
   static OptType::T longOptType_(ZuCSpan key_, ZuCSpan prefix = {}) {
     OptType::T type = -1;
     using AllFields = ZuFields<U, Facet>;
-    using SaveFields = ZuTypeGrep<ZtFieldFilter::Save, AllFields>;
+    using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
     ZuUnroll::all<SaveFields>([&type, &key_, &prefix]<typename Field>() {
       if (type >= 0) return;
       using Props = typename Field::Props;
@@ -1046,13 +1046,13 @@ private:
 	if (prefix) expansion << prefix << '.';
 	expansion << longOpt;
 	if (key_ == expansion) {
-	  if constexpr (TypeCode == ZtFieldTC::Bool ||
+	  if constexpr (TypeCode == ZfFieldTC::Bool ||
 	      ZuIsSame<ZuDecay<typename Field::T>, bool>{})
 	    type = OptType::Flag;
 	  else
 	    type = OptType::Option;
 	}
-	if constexpr (TypeCode == ZtFieldTC::UDT) {
+	if constexpr (TypeCode == ZfFieldTC::UDT) {
 	  if (type < 0)
 	    type = longOptType_<typename Field::T>(key_, expansion.cspan());
 	}
@@ -1277,7 +1277,7 @@ struct InCLI {
 
 // scan argc, argv from platform
 // - MutableArgv is used to configure argv[] mutability
-template <bool MutableArgv = ZtCLI_MutableArgv>
+template <bool MutableArgv = ZfCLI_MutableArgv>
 struct InArgv {
   using Arg_ = ZuIf<MutableArgv, ZuSpan<char>, Arg>;
   using Argv_ = ZuIf<MutableArgv, SpanArgv, Argv>;
@@ -1297,7 +1297,7 @@ template <typename Facet = ZuFacet::CLI, typename O, typename Argv>
 int load(O &o, const Argv &argv) {
   Parser<O, Facet> parser;
   if (!parser.scanArgv(argv)) return -1;
-  ZtCLI::handler<O, Facet>(parser.root).load(o);
+  ZfCLI::handler<O, Facet>(parser.root).load(o);
   return parser.argc;
 }
 
@@ -1308,6 +1308,6 @@ int load(O &o, int argc, const char *const *argv) {
   return load(o, in.argv);
 }
 
-} // ZtCLI
+} // ZfCLI
 
-#endif /* ZtCLI_HH */
+#endif /* ZfCLI_HH */

@@ -7,7 +7,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - File headers consistently declare editor settings for C++ mode, tab indentation, tab width 8, and a 2-space logical offset, and use `//` comments for header metadata (e.g., `zu/src/ZuLib.hh:1`).
 - Include guards use module-prefixed, uppercase identifiers (e.g., `ZuLib_HH` in `zu/src/ZuLib.hh:10`).
 - Names are short and module-prefixed (Zu/Zm/Zi/Zt/Ze/Zdb/etc.), with internal namespaces or helper types frequently in `Zxx_` or module-local namespaces.
-- The code relies heavily on templates, CRTP, and custom meta-programming helpers such as `ZuDerive`, `ZuTypeList`, `ZuTuple`, and macro-based schema definitions (e.g., `ZtStruct`, `ZfbStruct`).
+- The code relies heavily on templates, CRTP, and custom meta-programming helpers such as `ZuDerive`, `ZuTypeList`, `ZuTuple`, and macro-based schema definitions (e.g., `ZfStruct`, `ZfbStruct`).
 - STL usage is minimized; custom containers and spans (`ZuArray`, `ZuSpan`, `ZmRef`, `ZtString`) are widely used in place of `std` types.
 
 ## Detailed Findings
@@ -31,15 +31,19 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - Network-specific utilities for ring buffers and netlink in `zi/src/ZiRing.hh:22` and `zi/src/ZiNetlink.hh:8`.
 - Connections: provides I/O primitives used by Zfb, Zdb, Zhttp, Zrest, Zws, Zcmd, and Zv (for example, `zfb/src/Zfb.hh:10`, `zdb/src/Zdb.hh:57`, `zhttp/src/Zhttp.hh:14`).
 
-### Zt (text, data structures, serialization)
+### Zt (text and data structures)
 - Core Zt module exports and text-oriented types in `zt/src/ZtLib.hh:10` and `zt/src/ZtString.hh:20`.
-- JSON parsing/formatting with structural metadata in `zt/src/ZtJSON.hh:14` and struct reflection helpers in `zt/src/ZtStruct.hh:116`.
-- Regex, URI, timezone, CLI, and other helpers in `zt/src/ZtRegex.hh:10`, `zt/src/ZtURI.hh:109`, `zt/src/ZtTimeZone.hh:20`, and `zt/src/ZtCLI.hh:40`.
+- Regex, timezone, formatting, and other vocabulary helpers in `zt/src/ZtRegex.hh:10`, `zt/src/ZtTimeZone.hh:20`, and `zt/src/ZtFmt.hh:11`.
 - Connections: Zt is a common dependency for higher-level modules such as Zdb, Zdf, Zrest, Zrl, Zv, and Zum (e.g., `zdb/src/Zdb.hh:57`, `zdf/src/Zdf.hh:28`, `zrest/src/Zrest.hh:10`).
 
 ### Ze (platform and logging)
 - Platform abstractions and error/logging helpers in `ze/src/ZePlatform.hh:10`, `ze/src/ZeLog.hh:21`, and `ze/src/ZeAssert.hh:27`.
 - Connections: logging and platform helpers are used across modules, notably Zdb and Zi (e.g., `zdb/src/Zdb.hh:57`, `zi/src/ZiPlatform.hh:10`).
+
+### Zf (reflection and data formats)
+- Struct reflection and type-erased field metadata in `zf/src/ZfStruct.hh`.
+- JSON, URI, CLI, CSV, and ASN.1 parsing/formatting in `zf/src`.
+- Connections: Zf depends on Ze, Zt, Zm, and Zu; Zi and all higher layers depend on Zf.
 
 ### Zfb (FlatBuffers integration)
 - FlatBuffers builder integration and IO buffer-backed allocators in `zfb/src/Zfb.hh:10`.
@@ -481,15 +485,15 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zt/test/ZtDateFixTest.cc:20` - Top-level symbols: define CHECK, struct Null
 - `zt/test/ZtStackTest.cc:25` - Top-level symbols: define CHECK, struct C
 - `zt/test/ZtArrayTest.cc:21` - Top-level symbols: function out, define CHECK, struct E, struct Foo, using Array
-- `zt/test/ZtURITest.cc:15` - Top-level symbols: function out, define CHECK, struct Nested, struct NestedJSON, struct Blur, struct Foo
+- `zf/test/ZfURITest.cc:15` - Top-level symbols: function out, define CHECK, struct Nested, struct NestedJSON, struct Blur, struct Foo
 - `zt/test/vsntest.cc:16` - Top-level symbols: class S, function length, function grow, function vsnprintf, function sprintf
 - `zt/test/ZtDateTest.cc:23` - Top-level symbols: define CHECK, function isoPrint, struct LocalDT, struct GMTDT, function weekDate, function weekDateSun
-- `zt/test/ZtStructTest.cc:15` - Top-level symbols: function out_, define CHECK, struct Nested, struct Foo, struct MinMax, struct MinMax
+- `zf/test/ZfStructTest.cc:15` - Top-level symbols: function out_, define CHECK, struct Nested, struct Foo, struct MinMax, struct MinMax
 - `zt/test/ZtBitmapTest.cc:9` - Top-level symbols: function out, define CHECK_, define CHECK
-- `zt/test/ZtASN1Test.cc:20` - Top-level symbols: function out, define CHECK, struct Foo
+- `zf/test/ZfASN1Test.cc:20` - Top-level symbols: function out, define CHECK, struct Foo
 - `zt/test/ZtIconvTest.cc:19` - Top-level symbols: function main
 - `zt/test/ZtBitWindowTest.cc:1` - Top-level contents (no regex-matched symbols)
-- `zt/test/ZtCLITest.cc:17` - Top-level symbols: function output, define CHECK, struct Nested, struct NestedJSON, struct UBool, struct Foo
+- `zf/test/ZfCLITest.cc:17` - Top-level symbols: function output, define CHECK, struct Nested, struct NestedJSON, struct UBool, struct Foo
 - `zt/test/wchartest_win32.cc:8` - Top-level symbols: define WINVER, define _WIN32_WINNT, define _WIN32_DCOM, define _WIN32_WINDOWS, define _WIN32_IE, define UNICODE
 - `zt/test/ZtStringTest.cc:25` - Top-level symbols: function out, define CHECK_, define CHECK, using uint, using ldouble, using Queue
 - `zfb/src/ZfbStruct.hh:10` - Top-level symbols: define ZfbStruct_HH, using Zfb_Builder, using Zfb_Type, using Zfb_Schema, using ZfbBuilder, using ZfbType
@@ -498,11 +502,11 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zfb/src/ZfbLib.hh:10` - Top-level symbols: define ZfbLib_HH, define ZfbAPI, define ZfbExplicit, define ZfbAPI, define ZfbExplicit, define ZfbExtern
 - `zfb/src/ZfbLib.cc:1` - Top-level contents (no regex-matched symbols)
 - `zt/src/ZtBitWindow.hh:13` - Top-level symbols: define ZtBitWindow_HH, class ZtBitWindow, using ZtBitWindow_ID, class ZtBitWindow, function null, function debug
-- `zt/src/ZtStruct.cc:2` - Top-level contents (no regex-matched symbols)
+- `zf/src/ZfStruct.cc:2` - Top-level contents (no regex-matched symbols)
 - `zt/src/ZtLib.hh:10` - Top-level symbols: define ZtLib_HH, define ZtAPI, define ZtExplicit, define ZtAPI, define ZtExplicit, define ZtExtern
 - `zt/src/ZtRegex.hh:10` - Top-level symbols: define ZtRegex_HH, struct ZtAPI, define ZtRegexOVector, define ZtRegexCaptures, class ZtAPI, using Capture
-- `zt/src/ZtURI.cc:12` - Top-level symbols: function skip
-- `zt/src/ZtCLI.hh:40` - Top-level symbols: define ZtCLI_HH, define ZtCLI_MutableArgv, struct ZtCLI_DefltConfig, struct ZtCLI_ArrayFmt, using ZtCLI_Delimiter, using Config
+- `zf/src/ZfURI.cc:12` - Top-level symbols: function skip
+- `zf/src/ZfCLI.hh:40` - Top-level symbols: define ZfCLI_HH, define ZfCLI_MutableArgv, struct ZfCLI_DefltConfig, struct ZfCLI_ArrayFmt, using ZfCLI_Delimiter, using Config
 - `zfb/test/zfbtest.cc:27` - Top-level symbols: struct Test, using IOBuilder, using IOBuf, function out, define CHECK, function constexpr
 - `zt/src/ZtHexDump.hh:22` - Top-level symbols: define ZtHexDump_HH, class ZtAPI, struct Print, function print, function print, class ZtHexDump
 - `zfb/test/zfbtest3.cc:30` - Top-level symbols: struct Order, function out, define CHECK, using IOBuilder, using IOBuf, using Key
@@ -514,16 +518,16 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zt/src/ZtLocalString.hh:15` - Top-level symbols: define ZtLocalString_HH, struct ZtLocalString_, using Char, define ZtLocalString_1, define ZtLocalString_2, define ZtLocalString_N
 - `zt/src/ZtIconv.hh:10` - Top-level symbols: define ZtIconv_HH, function length, function data, class ZtIconv, function factor, class IconvTraits
 - `zt/src/ZtFmt.hh:11` - Top-level symbols: define ZtFmt_HH, struct Default, function DateScan_, function DatePrint_, function FlagsDelim, function VecPrefix
-- `zt/src/ZtStruct.hh:116` - Top-level symbols: define ZtStruct_HH, struct IsVec, struct Synthetic, struct Mutable, struct Hidden, struct Hex
-- `zt/src/ZtJSON.hh:14` - Top-level symbols: define ZtJSON_HH, struct NumberFmt, using Fmt, struct TimeFmt, using Base64, using Base64URL
-- `zt/src/ZtCLI.cc:94` - Top-level symbols: function eok
-- `zt/src/ZtURI.hh:109` - Top-level symbols: define ZtURI_HH, struct ZtURI_DefltConfig, struct ZtURI_ObjectFmt, struct ZtURI_ArrayFmt, struct ZtURI_Annotated, struct ZtURI_Wrapped
+- `zf/src/ZfStruct.hh:116` - Top-level symbols: define ZfStruct_HH, struct IsVec, struct Synthetic, struct Mutable, struct Hidden, struct Hex
+- `zf/src/ZfJSON.hh:14` - Top-level symbols: define ZfJSON_HH, struct NumberFmt, using Fmt, struct TimeFmt, using Base64, using Base64URL
+- `zf/src/ZfCLI.cc:94` - Top-level symbols: function eok
+- `zf/src/ZfURI.hh:109` - Top-level symbols: define ZfURI_HH, struct ZfURI_DefltConfig, struct ZfURI_ObjectFmt, struct ZfURI_ArrayFmt, struct ZfURI_Annotated, struct ZfURI_Wrapped
 - `zt/src/ZtBitmap.hh:11` - Top-level symbols: define ZtBitmap_HH, struct Data, function combine, function length, using ZtBitmap
 - `zt/src/ZtBytesFmt.hh:11` - Top-level symbols: define ZtBytesFmt_HH
 - `zt/src/ZtWindow.hh:10` - Top-level symbols: define ZtWindow_HH, class Elem, using Window, using T, using Traits, struct Window
 - `zt/src/ZtScanBool.hh:10` - Top-level symbols: define ZtScanBool_HH, struct ZtBadBool, using Cmp, function constexpr
 - `zt/src/ZtLib.cc:1` - Top-level contents (no regex-matched symbols)
-- `zt/src/ZtJSON.cc:11` - Top-level symbols: function bos, using Fmt, function is, function bok, function eok, function boc
+- `zf/src/ZfJSON.cc:11` - Top-level symbols: function bos, using Fmt, function is, function bok, function eok, function boc
 - `zt/src/ZtCase.hh:10` - Top-level symbols: define ZtCase_HH, function isupper__, function toupper__, function islower__, function tolower__, function snakeCamel
 - `zt/src/ZtEnum.hh:10` - Top-level symbols: define ZtEnum_HH, define ZtEnumMap_, struct Map, using Names, function id, function s2v
 - `zt/src/ZtLocalArray.hh:13` - Top-level symbols: define ZtLocalArray_HH, struct ZtLocalArray_, using T, define ZtLocalArray_1, define ZtLocalArray_2, define ZtLocalArray_N
@@ -534,7 +538,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zt/src/ZtPlatform.hh:10` - Top-level symbols: define ZtPlatform_HH, function putenv, function putenv
 - `zt/src/ZtArray.hh:20` - Top-level symbols: define ZtArray_HH, struct ZtArray_Defaults, struct HeapID, struct ZtArrayCmp, struct ZtArrayHeapID_, using HeapID
 - `zt/src/ZtTimeZone.hh:20` - Top-level symbols: define ZtTimeZone_HH, function tzset, function tzset
-- `zt/src/ZtASN1.hh:57` - Top-level symbols: define ZtASN1_HH, function tag, function tag, function tagI, function tagXA, function tagXA
+- `zf/src/ZfASN1.hh:57` - Top-level symbols: define ZfASN1_HH, function tag, function tag, function tagI, function tagXA, function tagXA
 - `zrest/src/zrest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zrest/src/ZrestLib.hh:10` - Top-level symbols: define ZrestLib_HH, define ZrestAPI, define ZrestExplicit, define ZrestAPI, define ZrestExplicit, define ZrestExtern
 - `zrest/src/ZrestLib.cc:1` - Top-level contents (no regex-matched symbols)

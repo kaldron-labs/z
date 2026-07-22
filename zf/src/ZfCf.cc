@@ -7,9 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <zlib/ZvNewCf.hh>
+#include <zlib/ZfCf.hh>
 
-namespace ZvNewCf {
+namespace ZfCf {
 
 static bool appendDefine(
     Defines *defines, ZuCSpan key, AnyNode::String &out) {
@@ -442,4 +442,4 @@ ZuTuple<int, ZuPtr<const AnyNode>> scan(
   return {int(span.length()), ZuMv(node)};
 }
 
-} // ZvNewCf
+} // ZfCf

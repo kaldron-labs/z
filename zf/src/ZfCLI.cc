@@ -4,9 +4,9 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 
-namespace ZtCLI {
+namespace ZfCLI {
 
 // find end of string, un-quoting in-place
 
@@ -97,4 +97,4 @@ int eok(ZuCSpan data) {
   return p - &data[0];
 }
 
-} // ZtCLI
+} // ZfCLI

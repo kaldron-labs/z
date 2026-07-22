@@ -105,7 +105,7 @@ public:
 	}
 	IDString seriesName;
 	seriesName << name << '/' << id;
-	if constexpr (Field::Type::Code == ZtFieldTC::Time) {
+	if constexpr (Field::Type::Code == ZfFieldTC::Time) {
 	  ZuTime epoch = Field::deflt();
 	  if (!*epoch) epoch = DefltEpoch();
 	  openTimeSeries<Create>(shard, ZuMv(seriesName), epoch, ZuMv(next));

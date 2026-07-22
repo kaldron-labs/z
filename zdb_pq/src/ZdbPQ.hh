@@ -477,11 +477,11 @@ struct Value : public Value_ {
 
   template <unsigned I, typename S>
   ZuIfT<I == Value_::Index<String>{}>
-  print_(S &s) const { s << ZtStruct_::Print::String{p<I>()}; }
+  print_(S &s) const { s << ZfStruct_::Print::String{p<I>()}; }
 
   template <unsigned I, typename S>
   ZuIfT<I == Value_::Index<Bytes>{}>
-  print_(S &s) const { s << ZtStruct_::Print::Bytes{p<I>()}; }
+  print_(S &s) const { s << ZfStruct_::Print::Bytes{p<I>()}; }
 
   template <unsigned I, typename S>
   ZuIfT<
@@ -542,7 +542,7 @@ struct Value : public Value_ {
     for (unsigned i = 0; i < n; i++)
       if (i) s << ',';
       vecElem(varBuf, [&s](const uint8_t *ptr, unsigned length) {
-	s << ZtStruct_::Print::String{ZuCSpan(ptr, length)};
+	s << ZfStruct_::Print::String{ZuCSpan(ptr, length)};
       });
     s << ']';
   }
@@ -557,7 +557,7 @@ struct Value : public Value_ {
     for (unsigned i = 0; i < n; i++)
       if (i) s << ',';
       vecElem(varBuf, [&s](const uint8_t *ptr, unsigned length) {
-	s << ZtStruct_::Print::Bytes{ZuBSpan{ptr, length}};
+	s << ZfStruct_::Print::Bytes{ZuBSpan{ptr, length}};
       });
     s << ']';
   }
@@ -1545,7 +1545,7 @@ void loadTuple(
   VarBufParts &varBufParts,
   const OIDs &oids,
   unsigned nParams,
-  const ZtVFieldArray &fields,
+  const ZfVFieldArray &fields,
   const XFields &xFields,
   const Zfb::Table *fbo)
 {
@@ -1806,7 +1806,7 @@ friend Store;
 public:
   StoreTbl(
     Store *store, IDString id, unsigned nShards,
-    ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
+    ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema, IOBufAllocFn bufAllocFn);
 
   Store *store() const { return m_store; }
@@ -1924,7 +1924,7 @@ private:
 
 private:
   ZuDerive(UpdFields,
-    (ZtArray<const ZtVField *, ZtArrayHeapID<"ZdbPQ.UpdFields">>));
+    (ZtArray<const ZfVField *, ZtArrayHeapID<"ZdbPQ.UpdFields">>));
   ZuDerive(FieldID, ZtString<ZtStringHeapID<"ZdbPQ.FieldID">>);
   ZuDerive(KeyGroup, (ZtArray<unsigned, ZtArrayHeapID<"ZdbPQ.KeyGroup">>));
   ZuDerive(FieldMap, (ZmLHashKV<FieldID, unsigned, ZmLHashLocal<>>));
@@ -1933,9 +1933,9 @@ private:
   Store			*m_store = nullptr;
   IDString		m_id;
   IDString		m_id_;		// snake case
-  ZtVFieldArray		m_fields;	// all fields
+  ZfVFieldArray		m_fields;	// all fields
   UpdFields		m_updFields;	// update fields
-  ZtVKeyFieldArray	m_keyFields;	// fields for each key
+  ZfVKeyFieldArray	m_keyFields;	// fields for each key
   XFields		m_xFields;
   XFields		m_xUpdFields;
   XKeyFields		m_xKeyFields;
@@ -1974,8 +1974,8 @@ public:
   void open(
     IDString id,
     unsigned nShards,
-    ZtVFieldArray fields,
-    ZtVKeyFieldArray keyFields,
+    ZfVFieldArray fields,
+    ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema,
     IOBufAllocFn bufAllocFn,
     OpenFn openFn);

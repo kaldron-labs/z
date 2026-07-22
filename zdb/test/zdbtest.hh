@@ -11,8 +11,8 @@
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuInt.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
@@ -36,7 +36,7 @@ struct Order {
   ZtArray<int>		qtys;
   ZtBitmap		flags;
 
-  friend ZtStructPrint ZuPrintType(Order *);
+  friend ZfStructPrint ZuPrintType(Order *);
   friend ZuStringT<"zdbtest.order"> ZdbHeapID(Order *);
   friend ZuUnsigned<512> ZdbBufSize(Order *);
   friend ZuStringT<"zdbtest.order.buf"> ZdbBufHeapID(Order *);

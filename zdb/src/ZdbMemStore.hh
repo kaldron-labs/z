@@ -115,11 +115,11 @@ struct Value : public Value_ {
 
   template <unsigned I, typename S>
   ZuIfT<I == Value_::Index<String>{}>
-  print_(S &s) const { s << ZtStruct_::Print::String{p<I>()}; }
+  print_(S &s) const { s << ZfStruct_::Print::String{p<I>()}; }
 
   template <unsigned I, typename S>
   ZuIfT<I == Value_::Index<Bytes>{}>
-  print_(S &s) const { s << ZtStruct_::Print::Bytes{p<I>()}; }
+  print_(S &s) const { s << ZfStruct_::Print::Bytes{p<I>()}; }
 
   template <unsigned I, typename S>
   ZuIfT<
@@ -160,7 +160,7 @@ struct Value : public Value_ {
     bool first = true;
     p<I>().all([&s, &first](const String &v) {
       if (!first) s << ','; else first = false;
-      s << ZtStruct_::Print::String{v};
+      s << ZfStruct_::Print::String{v};
     });
     s << ']';
   }
@@ -172,7 +172,7 @@ struct Value : public Value_ {
     bool first = true;
     p<I>().all([&s, &first](const Bytes &v) {
       if (!first) s << ','; else first = false;
-      s << ZtStruct_::Print::Bytes{v};
+      s << ZfStruct_::Print::Bytes{v};
     });
     s << ']';
   }
@@ -251,7 +251,7 @@ ZuDerive(XKeyFields, (ZtArray<XFields, ZtArrayHeapID<"ZdbMem.XKeyField">>));
 // resolve Value union discriminator from flatbuffers reflection data
 XField xField(
   const Zfb::Vector<Zfb::Offset<reflection::Field>> *fbFields_,
-  const ZtVField *field,
+  const ZfVField *field,
   ZuCSpan id)
 {
   // resolve flatbuffers reflection data for field
@@ -261,71 +261,71 @@ XField xField(
   auto ftype = field->type;
   switch (fbField->type()->base_type()) {
     case reflection::String:
-      if (ftype->code == ZtFieldTC::CString ||
-	  ftype->code == ZtFieldTC::String)
+      if (ftype->code == ZfFieldTC::CString ||
+	  ftype->code == ZfFieldTC::String)
 	type = Value::Index<String>{};
       break;
     case reflection::Bool:
-      if (ftype->code == ZtFieldTC::Bool)
+      if (ftype->code == ZfFieldTC::Bool)
 	type = Value::Index<bool>{};
       break;
     case reflection::Byte:
-      if (ftype->code == ZtFieldTC::Int8)
+      if (ftype->code == ZfFieldTC::Int8)
 	type = Value::Index<int8_t>{};
       break;
     case reflection::UByte:
-      if (ftype->code == ZtFieldTC::UInt8)
+      if (ftype->code == ZfFieldTC::UInt8)
 	type = Value::Index<uint8_t>{};
       break;
     case reflection::Short:
-      if (ftype->code == ZtFieldTC::Int16)
+      if (ftype->code == ZfFieldTC::Int16)
 	type = Value::Index<int16_t>{};
       break;
     case reflection::UShort:
-      if (ftype->code == ZtFieldTC::UInt16)
+      if (ftype->code == ZfFieldTC::UInt16)
 	type = Value::Index<uint16_t>{};
       break;
     case reflection::Int:
-      if (ftype->code == ZtFieldTC::Int32)
+      if (ftype->code == ZfFieldTC::Int32)
 	type = Value::Index<int32_t>{};
       break;
     case reflection::UInt:
-      if (ftype->code == ZtFieldTC::UInt32)
+      if (ftype->code == ZfFieldTC::UInt32)
 	type = Value::Index<uint32_t>{};
       break;
     case reflection::Long:
-      if (ftype->code == ZtFieldTC::Int64)
+      if (ftype->code == ZfFieldTC::Int64)
 	type = Value::Index<int64_t>{};
       break;
     case reflection::ULong:
-      if (ftype->code == ZtFieldTC::UInt64)
+      if (ftype->code == ZfFieldTC::UInt64)
 	type = Value::Index<uint64_t>{};
       break;
     case reflection::Double:
-      if (ftype->code == ZtFieldTC::Float)
+      if (ftype->code == ZfFieldTC::Float)
 	type = Value::Index<double>{};
       break;
     case reflection::Obj: {
       switch (ftype->code) {
-	case ZtFieldTC::Int128:
+	case ZfFieldTC::Int128:
 	  type = Value::Index<int128_t>{};
 	  break;
-	case ZtFieldTC::UInt128:
+	case ZfFieldTC::UInt128:
 	  type = Value::Index<uint128_t>{};
 	  break;
-	case ZtFieldTC::Fixed:
+	case ZfFieldTC::Fixed:
 	  type = Value::Index<ZuFixed>{};
 	  break;
-	case ZtFieldTC::Decimal:
+	case ZfFieldTC::Decimal:
 	  type = Value::Index<ZuDecimal>{};
 	  break;
-	case ZtFieldTC::Time:
+	case ZfFieldTC::Time:
 	  type = Value::Index<ZuTime>{};
 	  break;
-	case ZtFieldTC::DateTime:
+	case ZfFieldTC::DateTime:
 	  type = Value::Index<ZuDateTime>{};
 	  break;
-	case ZtFieldTC::UDT: {
+	case ZfFieldTC::UDT: {
 	  auto typeID = ftype->info.udt()->id;
 	  if (typeID == "Bitmap") {
 	    type = Value::Index<ZtBitmap>{};
@@ -339,7 +339,7 @@ XField xField(
       }
     } break;
     case reflection::Union:
-      if (ftype->code == ZtFieldTC::UDT &&
+      if (ftype->code == ZfFieldTC::UDT &&
 	  ftype->info.udt()->id == "IP")
 	type = Value::Index<ZiIP>{};
       break;
@@ -347,68 +347,68 @@ XField xField(
       switch (fbField->type()->element()) {
 	default: break;
 	case reflection::String:
-	  if (ftype->code == ZtFieldTC::StringVec)
+	  if (ftype->code == ZfFieldTC::StringVec)
 	    type = Value::Index<StringVec>{};
 	  break;
 	case reflection::Byte:
-	  if (ftype->code == ZtFieldTC::Int8Vec)
+	  if (ftype->code == ZfFieldTC::Int8Vec)
 	    type = Value::Index<Int8Vec>{};
 	  break;
 	case reflection::UByte:
-	  if (ftype->code == ZtFieldTC::Bytes)
+	  if (ftype->code == ZfFieldTC::Bytes)
 	    type = Value::Index<Bytes>{};
-	  else if (ftype->code == ZtFieldTC::UInt8Vec)
+	  else if (ftype->code == ZfFieldTC::UInt8Vec)
 	    type = Value::Index<UInt8Vec>{};
 	  break;
 	case reflection::Short:
-	  if (ftype->code == ZtFieldTC::Int16Vec)
+	  if (ftype->code == ZfFieldTC::Int16Vec)
 	    type = Value::Index<Int16Vec>{};
 	  break;
 	case reflection::UShort:
-	  if (ftype->code == ZtFieldTC::UInt16Vec)
+	  if (ftype->code == ZfFieldTC::UInt16Vec)
 	    type = Value::Index<UInt16Vec>{};
 	  break;
 	case reflection::Int:
-	  if (ftype->code == ZtFieldTC::Int32Vec)
+	  if (ftype->code == ZfFieldTC::Int32Vec)
 	    type = Value::Index<Int32Vec>{};
 	  break;
 	case reflection::UInt:
-	  if (ftype->code == ZtFieldTC::UInt32Vec)
+	  if (ftype->code == ZfFieldTC::UInt32Vec)
 	    type = Value::Index<UInt32Vec>{};
 	  break;
 	case reflection::Long:
-	  if (ftype->code == ZtFieldTC::Int64Vec)
+	  if (ftype->code == ZfFieldTC::Int64Vec)
 	    type = Value::Index<Int64Vec>{};
 	  break;
 	case reflection::ULong:
-	  if (ftype->code == ZtFieldTC::UInt64Vec)
+	  if (ftype->code == ZfFieldTC::UInt64Vec)
 	    type = Value::Index<UInt64Vec>{};
 	  break;
 	case reflection::Double:
-	  if (ftype->code == ZtFieldTC::FloatVec)
+	  if (ftype->code == ZfFieldTC::FloatVec)
 	    type = Value::Index<FloatVec>{};
 	  break;
 	case reflection::Obj:
 	  switch (ftype->code) {
-	    case ZtFieldTC::BytesVec:
+	    case ZfFieldTC::BytesVec:
 	      type = Value::Index<BytesVec>{};
 	      break;
-	    case ZtFieldTC::Int128Vec:
+	    case ZfFieldTC::Int128Vec:
 	      type = Value::Index<Int128Vec>{};
 	      break;
-	    case ZtFieldTC::UInt128Vec:
+	    case ZfFieldTC::UInt128Vec:
 	      type = Value::Index<UInt128Vec>{};
 	      break;
-	    case ZtFieldTC::FixedVec:
+	    case ZfFieldTC::FixedVec:
 	      type = Value::Index<FixedVec>{};
 	      break;
-	    case ZtFieldTC::DecimalVec:
+	    case ZfFieldTC::DecimalVec:
 	      type = Value::Index<DecimalVec>{};
 	      break;
-	    case ZtFieldTC::TimeVec:
+	    case ZfFieldTC::TimeVec:
 	      type = Value::Index<TimeVec>{};
 	      break;
-	    case ZtFieldTC::DateTimeVec:
+	    case ZfFieldTC::DateTimeVec:
 	      type = Value::Index<DateTimeVec>{};
 	      break;
 	  }
@@ -977,7 +977,7 @@ ZuDerive(Tuple, (ZtArray<Value, ZtArrayHeapID<"ZdbMem.Tuple">>));
 template <typename Filter>
 Tuple loadTuple_(
   unsigned nParams,
-  const ZtVFieldArray &fields,
+  const ZfVFieldArray &fields,
   const XFields &xFields,
   const Zfb::Table *fbo,
   Filter filter)
@@ -997,31 +997,31 @@ Tuple loadTuple_(
 }
 Tuple loadTuple_(
   unsigned nParams,
-  const ZtVFieldArray &fields,
+  const ZfVFieldArray &fields,
   const XFields &xFields,
   const Zfb::Table *fbo)
 {
   return loadTuple_(nParams, fields, xFields, fbo,
-    [](const ZtVField *) { return true; });
+    [](const ZfVField *) { return true; });
 }
 Tuple loadTuple(
-  const ZtVFieldArray &fields, const XFields &xFields, const Zfb::Table *fbo)
+  const ZfVFieldArray &fields, const XFields &xFields, const Zfb::Table *fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo);
 }
 Tuple loadUpdTuple(
-  const ZtVFieldArray &fields, const XFields &xFields, const Zfb::Table *fbo)
+  const ZfVFieldArray &fields, const XFields &xFields, const Zfb::Table *fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo,
-    [](const ZtVField *field) -> bool {
-      return bool(field->props & ZtVFieldProp::Mutable()) || (field->keys & 1);
+    [](const ZfVField *field) -> bool {
+      return bool(field->props & ZfVFieldProp::Mutable()) || (field->keys & 1);
     });
 }
 Tuple loadDelTuple(
-  const ZtVFieldArray &fields, const XFields &xFields, const Zfb::Table *fbo)
+  const ZfVFieldArray &fields, const XFields &xFields, const Zfb::Table *fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo,
-    [](const ZtVField *field) -> bool { return (field->keys & 1); });
+    [](const ZfVField *field) -> bool { return (field->keys & 1); });
 }
 
 // save tuple to flatbuffer
@@ -1056,12 +1056,12 @@ Offset saveTuple(
 }
 
 // update tuple
-void updTuple(const ZtVFieldArray &fields, Tuple &data, Tuple &&update) {
+void updTuple(const ZfVFieldArray &fields, Tuple &data, Tuple &&update) {
   ZmAssert(fields.length() == data.length());
   ZmAssert(data.length() == update.length());
   unsigned n = data.length();
   for (unsigned i = 0; i < n; i++)
-    if (fields[i]->props & ZtVFieldProp::Mutable()) {
+    if (fields[i]->props & ZfVFieldProp::Mutable()) {
       ZmAssert(update[i].type());
       data[i] = ZuMv(update[i]);
     }
@@ -1069,8 +1069,8 @@ void updTuple(const ZtVFieldArray &fields, Tuple &data, Tuple &&update) {
 
 // extract key from tuple
 Tuple extractKey(
-  const ZtVFieldArray &fields,
-  const ZtVKeyFieldArray &keyFields,
+  const ZfVFieldArray &fields,
+  const ZfVKeyFieldArray &keyFields,
   KeyID keyID, const Tuple &data)
 {
   ZmAssert(keyID >= 0 && keyID < 64);
@@ -1179,7 +1179,7 @@ public:
 
   StoreTbl(
     Store *store, IDString id, unsigned nShards,
-    ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
+    ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
   :
     m_store{store}, m_id{ZuMv(id)},
@@ -1310,8 +1310,8 @@ private:
 
   Store			*m_store;
   IDString		m_id;
-  ZtVFieldArray		m_fields;
-  ZtVKeyFieldArray	m_keyFields;
+  ZfVFieldArray		m_fields;
+  ZfVKeyFieldArray	m_keyFields;
   XFields		m_xFields;
   XKeyFields		m_xKeyFields;
   KeyGroup		m_keyGroup;	// length of group key, 0 if none
@@ -1383,7 +1383,7 @@ public:
 
   void open(
     IDString id, unsigned nShards,
-    ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
+    ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema,
     IOBufAllocFn bufAllocFn, OpenFn openFn)
   {

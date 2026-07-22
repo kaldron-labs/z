@@ -72,7 +72,7 @@ struct Frame {
   ZuFixed v2() const { return ZuFixed{v2_, 9}; }
   void v2(ZuFixed v) { v2_ = v.adjust(9); }
 };
-ZtStruct(Frame,
+ZfStruct(Frame,
   (((v1),	(Ctor<0>, Series, Index, Delta)),	(UInt64)),
   (((v2, Fn),	(Series, Delta, NDP<9>)),		(Fixed)));
 
@@ -113,7 +113,7 @@ struct Test {
     df->run([this]() { run_read1(); });
   }
   void run_read1() {
-    using Field = ZtField(Frame, v1);
+    using Field = ZfField(Frame, v1);
     using Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->find<Field>(
       ZuFixed{20, 0}, {this, ZmFnPtr<&Test::run_read2<Ctrl>>{}}, []{
@@ -123,7 +123,7 @@ struct Test {
   }
   template <typename Ctrl>
   bool run_read2(Ctrl &rc, ZuFixed) {
-    df->seek<ZtField(Frame, v2)>(
+    df->seek<ZfField(Frame, v2)>(
       rc.stop(), {this, ZmFnPtr<&Test::run_read3<Ctrl>>{}}, []{
 	ZiLOG(Fatal, "zdftest", "data frame read2 failed");
 	done.post();
@@ -144,7 +144,7 @@ struct Test {
     ZiLOG(Debug, "zdftest", ([v](auto &s) { s << "v=" << v; }));
     CHECK(v.mantissa == 200 * 42);
     CHECK(v.ndp == 9);
-    df->seek<ZtField(Frame, v1)>(
+    df->seek<ZfField(Frame, v1)>(
       rc.stop(), {this, ZmFnPtr<&Test::run_read5<Ctrl>>{}}, []{
 	ZiLOG(Fatal, "zdftest", "data frame read4 failed");
 	done.post();
@@ -159,7 +159,7 @@ struct Test {
   }
   template <typename Ctrl>
   bool run_read6(Ctrl &rc, ZuFixed) {
-    df->seek<ZtField(Frame, v2)>(
+    df->seek<ZfField(Frame, v2)>(
       rc.stop(), {this, ZmFnPtr<&Test::run_read7<Ctrl>>{}}, []{
 	ZiLOG(Fatal, "zdftest", "data frame read6 failed");
 	done.post();

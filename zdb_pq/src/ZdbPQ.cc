@@ -718,7 +718,7 @@ void Store::mkTblMRD_rcvd(PGresult *res)
 
 void Store::open(
   IDString id, unsigned nShards,
-  ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
+  ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
   const reflection::Schema *schema,
   IOBufAllocFn bufAllocFn, OpenFn openFn)
 {
@@ -755,7 +755,7 @@ void Store::enqueue(Work::Task task)
 // resolve Value union discriminator from flatbuffers reflection data
 static XField xField(
   const Zfb::Vector<Zfb::Offset<reflection::Field>> *fbFields_,
-  const ZtVField *field,
+  const ZfVField *field,
   const IDString &id)
 {
   // resolve flatbuffers reflection data for field
@@ -765,71 +765,71 @@ static XField xField(
   auto ftype = field->type;
   switch (fbField->type()->base_type()) {
     case reflection::String:
-      if (ftype->code == ZtFieldTC::CString ||
-	  ftype->code == ZtFieldTC::String)
+      if (ftype->code == ZfFieldTC::CString ||
+	  ftype->code == ZfFieldTC::String)
 	type = Value::Index<String>{};
       break;
     case reflection::Bool:
-      if (ftype->code == ZtFieldTC::Bool)
+      if (ftype->code == ZfFieldTC::Bool)
 	type = Value::Index<Bool>{};
       break;
     case reflection::Byte:
-      if (ftype->code == ZtFieldTC::Int8)
+      if (ftype->code == ZfFieldTC::Int8)
 	type = Value::Index<Int8>{};
       break;
     case reflection::UByte:
-      if (ftype->code == ZtFieldTC::UInt8)
+      if (ftype->code == ZfFieldTC::UInt8)
 	type = Value::Index<UInt8>{};
       break;
     case reflection::Short:
-      if (ftype->code == ZtFieldTC::Int16)
+      if (ftype->code == ZfFieldTC::Int16)
 	type = Value::Index<Int16>{};
       break;
     case reflection::UShort:
-      if (ftype->code == ZtFieldTC::UInt16)
+      if (ftype->code == ZfFieldTC::UInt16)
 	type = Value::Index<UInt16>{};
       break;
     case reflection::Int:
-      if (ftype->code == ZtFieldTC::Int32)
+      if (ftype->code == ZfFieldTC::Int32)
 	type = Value::Index<Int32>{};
       break;
     case reflection::UInt:
-      if (ftype->code == ZtFieldTC::UInt32)
+      if (ftype->code == ZfFieldTC::UInt32)
 	type = Value::Index<UInt32>{};
       break;
     case reflection::Long:
-      if (ftype->code == ZtFieldTC::Int64)
+      if (ftype->code == ZfFieldTC::Int64)
 	type = Value::Index<Int64>{};
       break;
     case reflection::ULong:
-      if (ftype->code == ZtFieldTC::UInt64)
+      if (ftype->code == ZfFieldTC::UInt64)
 	type = Value::Index<UInt64>{};
       break;
     case reflection::Double:
-      if (ftype->code == ZtFieldTC::Float)
+      if (ftype->code == ZfFieldTC::Float)
 	type = Value::Index<Float>{};
       break;
     case reflection::Obj: {
       switch (ftype->code) {
-	case ZtFieldTC::Int128:
+	case ZfFieldTC::Int128:
 	  type = Value::Index<Int128>{};
 	  break;
-	case ZtFieldTC::UInt128:
+	case ZfFieldTC::UInt128:
 	  type = Value::Index<UInt128>{};
 	  break;
-	case ZtFieldTC::Fixed:
+	case ZfFieldTC::Fixed:
 	  type = Value::Index<Fixed>{};
 	  break;
-	case ZtFieldTC::Decimal:
+	case ZfFieldTC::Decimal:
 	  type = Value::Index<Decimal>{};
 	  break;
-	case ZtFieldTC::Time:
+	case ZfFieldTC::Time:
 	  type = Value::Index<Time>{};
 	  break;
-	case ZtFieldTC::DateTime:
+	case ZfFieldTC::DateTime:
 	  type = Value::Index<DateTime>{};
 	  break;
-	case ZtFieldTC::UDT: {
+	case ZfFieldTC::UDT: {
 	  auto typeID = ftype->info.udt()->id;
 	  if (typeID == "Bitmap") {
 	    type = Value::Index<Bitmap>{};
@@ -846,68 +846,68 @@ static XField xField(
       switch (fbField->type()->element()) {
 	default: break;
 	case reflection::String:
-	  if (ftype->code == ZtFieldTC::StringVec)
+	  if (ftype->code == ZfFieldTC::StringVec)
 	    type = Value::Index<StringVec>{};
 	  break;
 	case reflection::Byte:
-	  if (ftype->code == ZtFieldTC::Int8Vec)
+	  if (ftype->code == ZfFieldTC::Int8Vec)
 	    type = Value::Index<Int8Vec>{};
 	  break;
 	case reflection::UByte:
-	  if (ftype->code == ZtFieldTC::Bytes)
+	  if (ftype->code == ZfFieldTC::Bytes)
 	    type = Value::Index<Bytes>{};
-	  else if (ftype->code == ZtFieldTC::UInt8Vec)
+	  else if (ftype->code == ZfFieldTC::UInt8Vec)
 	    type = Value::Index<UInt8Vec>{};
 	  break;
 	case reflection::Short:
-	  if (ftype->code == ZtFieldTC::Int16Vec)
+	  if (ftype->code == ZfFieldTC::Int16Vec)
 	    type = Value::Index<Int16Vec>{};
 	  break;
 	case reflection::UShort:
-	  if (ftype->code == ZtFieldTC::UInt16Vec)
+	  if (ftype->code == ZfFieldTC::UInt16Vec)
 	    type = Value::Index<UInt16Vec>{};
 	  break;
 	case reflection::Int:
-	  if (ftype->code == ZtFieldTC::Int32Vec)
+	  if (ftype->code == ZfFieldTC::Int32Vec)
 	    type = Value::Index<Int32Vec>{};
 	  break;
 	case reflection::UInt:
-	  if (ftype->code == ZtFieldTC::UInt32Vec)
+	  if (ftype->code == ZfFieldTC::UInt32Vec)
 	    type = Value::Index<UInt32Vec>{};
 	  break;
 	case reflection::Long:
-	  if (ftype->code == ZtFieldTC::Int64Vec)
+	  if (ftype->code == ZfFieldTC::Int64Vec)
 	    type = Value::Index<Int64Vec>{};
 	  break;
 	case reflection::ULong:
-	  if (ftype->code == ZtFieldTC::UInt64Vec)
+	  if (ftype->code == ZfFieldTC::UInt64Vec)
 	    type = Value::Index<UInt64Vec>{};
 	  break;
 	case reflection::Double:
-	  if (ftype->code == ZtFieldTC::FloatVec)
+	  if (ftype->code == ZfFieldTC::FloatVec)
 	    type = Value::Index<FloatVec>{};
 	  break;
 	case reflection::Obj:
 	  switch (ftype->code) {
-	    case ZtFieldTC::BytesVec:
+	    case ZfFieldTC::BytesVec:
 	      type = Value::Index<BytesVec>{};
 	      break;
-	    case ZtFieldTC::Int128Vec:
+	    case ZfFieldTC::Int128Vec:
 	      type = Value::Index<Int128Vec>{};
 	      break;
-	    case ZtFieldTC::UInt128Vec:
+	    case ZfFieldTC::UInt128Vec:
 	      type = Value::Index<UInt128Vec>{};
 	      break;
-	    case ZtFieldTC::FixedVec:
+	    case ZfFieldTC::FixedVec:
 	      type = Value::Index<FixedVec>{};
 	      break;
-	    case ZtFieldTC::DecimalVec:
+	    case ZfFieldTC::DecimalVec:
 	      type = Value::Index<DecimalVec>{};
 	      break;
-	    case ZtFieldTC::TimeVec:
+	    case ZfFieldTC::TimeVec:
 	      type = Value::Index<TimeVec>{};
 	      break;
-	    case ZtFieldTC::DateTimeVec:
+	    case ZfFieldTC::DateTimeVec:
 	      type = Value::Index<DateTimeVec>{};
 	      break;
 	  }
@@ -922,7 +922,7 @@ static XField xField(
 
 StoreTbl::StoreTbl(
   Store *store, IDString id, unsigned nShards,
-  ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
+  ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
   const reflection::Schema *schema, IOBufAllocFn bufAllocFn
 ) :
   m_store{store}, m_id{ZuMv(id)},
@@ -939,7 +939,7 @@ StoreTbl::StoreTbl(
   {
     unsigned j = 0;
     for (unsigned i = 0; i < n; i++)
-      if (m_fields[i]->props & ZtVFieldProp::Mutable()) j++;
+      if (m_fields[i]->props & ZfVFieldProp::Mutable()) j++;
     j += m_keyFields[0].length();
     m_updFields.size(j);
     m_xUpdFields.size(j);
@@ -948,7 +948,7 @@ StoreTbl::StoreTbl(
     ZtCase::camelSnake(m_fields[i]->id,
       [this, fbFields_, i](ZuCSpan id) {
 	m_xFields.push(xField(fbFields_, m_fields[i], id));
-	if (m_fields[i]->props & ZtVFieldProp::Mutable()) {
+	if (m_fields[i]->props & ZfVFieldProp::Mutable()) {
 	  m_updFields.push(m_fields[i]);
 	  m_xUpdFields.push(xField(fbFields_, m_fields[i], id));
 	}
@@ -1247,8 +1247,8 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
 	auto ftype = field->type;
 	s << "inconsistent schema for table " << id
 	  << " field[" << i << "]={id=" << field->id
-	  << " typeCode=" << ZtFieldTC::name(field->type->code);
-	if (ftype->code == ZtFieldTC::UDT) {
+	  << " typeCode=" << ZfFieldTC::name(field->type->code);
+	if (ftype->code == ZfFieldTC::UDT) {
 	  auto udtInfo = ftype->info.udt();
 	  s << " typeID=" << udtInfo->id
 	    << " typeName=" << ZmDemangle_{udtInfo->info->name()};
@@ -1745,7 +1745,7 @@ int StoreTbl::prepUpdate_send()
   oids.push(m_store->oids().oid(Value::Index<UInt64>{}));
   unsigned j = 4;
   for (unsigned i = 0; i < n; i++) {
-    if (!(m_fields[i]->props & ZtVFieldProp::Mutable())) continue;
+    if (!(m_fields[i]->props & ZfVFieldProp::Mutable())) continue;
     auto type = m_xFields[i].type;
     query << ", \"" << m_xFields[i].id_
       << "\"=$" << j << "::" << m_store->oids().name(type);

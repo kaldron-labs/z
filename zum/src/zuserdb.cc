@@ -11,7 +11,7 @@
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuBase64.hh>
 
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -36,7 +36,7 @@ struct Options {
   bool			debug = false;
   bool			help = false;
 };
-ZtStruct(Options,
+ZfStruct(Options,
   (((user),    (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((passLen), (Ctor<1>, CLI::Arg<2>, (Range<6, 60>))), (UInt8, 20)),
   (((perms),   (Ctor<2>, CLI::Args<3>)),   (StringVec)),
@@ -76,7 +76,7 @@ int main(int argc_, char **argv)
   Options options;
   options.module = getenv("ZDB_MODULE");
   options.connect = getenv("ZDB_CONNECT");
-  int argc = ZtCLI::load(options, argc_, argv);
+  int argc = ZfCLI::load(options, argc_, argv);
   if (argc < 3) usage();
   if (options.help) usage();
   if (!options.module) {

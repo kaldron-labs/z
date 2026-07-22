@@ -10,7 +10,7 @@
 
 #include <zlib/ZmTrap.hh>
 
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 
 #include <zlib/ZvCf.hh>
 #include <zlib/ZvMxParams.hh>
@@ -71,7 +71,7 @@ struct Frame {
   ZuTime	time;
   double	price;
 };
-ZtStruct(Frame,
+ZfStruct(Frame,
   (((seqNo),	(Ctor<0>, Series, Index, Delta)),	(UInt64)),
   (((time),	(Ctor<1>, Series, Index, Delta)),	(Time, "2020/01/01")),
   (((price),	(Ctor<2>, Series, NDP<9>)),		(Float)));
@@ -117,7 +117,7 @@ struct Test {
       return;
     }
     df = ZuMv(df_);
-    auto count = df->series<ZtField(Frame, seqNo)>()->count();
+    auto count = df->series<ZfField(Frame, seqNo)>()->count();
     if (count) {
       df->run([this]() { run_read1(); });
     } else
@@ -137,7 +137,7 @@ struct Test {
     df->run([this]() { run_read1(); });
   }
   void run_read1() {
-    using Field = ZtField(Frame, seqNo);
+    using Field = ZfField(Frame, seqNo);
     using Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->find<Field>(
       ZuFixed{20, 0}, {this, ZmFnPtr<&Test::run_read2<Ctrl>>{}}, []{
@@ -147,7 +147,7 @@ struct Test {
   }
   template <typename Ctrl>
   bool run_read2(Ctrl &rc, ZuFixed) {
-    using Field = ZtField(Frame, price);
+    using Field = ZfField(Frame, price);
     using V2Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->seek<Field>(
       rc.stop() - 1, {this, ZmFnPtr<&Test::run_read3<V2Ctrl>>{}}, []{
@@ -166,7 +166,7 @@ struct Test {
   template <typename Ctrl>
   bool run_read4(Ctrl &rc, double v) {
     CHECK(ZuBoxed(v).feq(0.0000084));
-    using Field = ZtField(Frame, seqNo);
+    using Field = ZfField(Frame, seqNo);
     using V1Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->seek<Field>(
       rc.stop() - 1, {this, ZmFnPtr<&Test::run_read5<V1Ctrl>>{}}, []{
@@ -183,7 +183,7 @@ struct Test {
   }
   template <typename Ctrl>
   bool run_read6(Ctrl &rc, ZuFixed) {
-    using Field = ZtField(Frame, price);
+    using Field = ZfField(Frame, price);
     using V2Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->seek<Field>(
       rc.stop() - 1, {this, ZmFnPtr<&Test::run_read7<V2Ctrl>>{}}, []{
@@ -220,7 +220,7 @@ struct Test {
     return false;
   }
   void run_read9() {
-    using Field = ZtField(Frame, price);
+    using Field = ZfField(Frame, price);
     using Ctrl = Zdf::FieldRdrCtrl<Field>;
     df->seek<Field>(
       Zdf::MaxOffset,
@@ -270,7 +270,7 @@ struct Options {
   bool		heapTel;
   bool		help;
 };
-ZtStruct(Options,
+ZfStruct(Options,
   (((module),    (Ctor<0>, CLI::Opt<'m'>)),  (String, getenv("ZDB_MODULE"))),
   (((connect),   (Ctor<1>, CLI::Opt<'c'>)),  (String, getenv("ZDB_CONNECT"))),
   (((debug),     (Ctor<2>, CLI::Flag<'d'>)), (Bool)),
@@ -281,7 +281,7 @@ ZtStruct(Options,
 int main(int argc_, char **argv)
 {
   Options options;
-  int argc = ZtCLI::load(options, argc_, argv);
+  int argc = ZfCLI::load(options, argc_, argv);
   if (argc != 1) usage();
 
   ZmRef<ZvCf> cf;

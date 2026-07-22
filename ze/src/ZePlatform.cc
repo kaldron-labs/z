@@ -24,7 +24,7 @@ ZuCSpan Ze::severity(unsigned i)
   using TL = ZuStringTL<"DEBUG", "INFO", "WARNING", "ERROR", "FATAL">;
   return ZuSwitch::dispatch<TL::N>(i, [](auto i) -> ZuCSpan {
     return ZuType<i, TL>{};
-  }, "UNKNOWN");
+  }, ZuCSpan{"UNKNOWN"});
 }
 
 ZuCSpan Ze::file(ZuCSpan s)

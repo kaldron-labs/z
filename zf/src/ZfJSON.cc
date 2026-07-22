@@ -4,9 +4,9 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfJSON.hh>
 
-namespace ZtJSON {
+namespace ZfJSON {
 
 int bos(ZuCSpan span) {
   unsigned n = span.length();
@@ -620,4 +620,4 @@ bad:
   return {-1, nullptr};
 }
 
-} // ZtJSON
+} // ZfJSON

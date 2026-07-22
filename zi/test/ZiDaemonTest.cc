@@ -15,7 +15,7 @@
 
 #include <zlib/ZmPlatform.hh>
 
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiDaemon.hh>
@@ -35,7 +35,7 @@ struct Options {
   bool		help;
 };
 
-ZtStruct(Options,
+ZfStruct(Options,
   (((quiet),		(Ctor<0>, CLI::Flag<'q'>)),		(Bool)),
   (((child),		(Ctor<1>, CLI::Flag<'c'>)),		(Bool)),
   (((daemonize),	(Ctor<2>, CLI::Flag<'d'>)),		(Bool)),
@@ -122,15 +122,15 @@ bool waitForFile(const Zi::Path &path)
 template <typename Argv>
 int loadOptions(Options &options, const Argv &argv)
 {
-  ZtCLI::Parser<Options, ZuFacet::Core> parser;
+  ZfCLI::Parser<Options, ZuFacet::Core> parser;
   if (!parser.scanArgv(argv)) return -1;
-  options = ZtCLI::handler<Options, ZuFacet::Core>(parser.root).ctor();
+  options = ZfCLI::handler<Options, ZuFacet::Core>(parser.root).ctor();
   return parser.argc;
 }
 
 int loadOptions(Options &options, int argc, const char *const *argv)
 {
-  ZtCLI::InArgv<> in(argc, argv);
+  ZfCLI::InArgv<> in(argc, argv);
   return loadOptions(options, in.argv);
 }
 

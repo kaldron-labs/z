@@ -7,7 +7,7 @@ code, read the relevant parts of `GUIDELINES.md` first and apply them over any
 generic C++ preference.
 
 ## Project Structure & Module Organization
-The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`, `zi`, `zdb`). Each module typically contains `src/` for library code and `test/` for module-specific test binaries. Top-level build inputs live in `configure.ac`, `Makefile.am`, and `m4/`. Helper scripts live under `scripts/` and the `z.config` wrapper centralizes configure flags.
+The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`, `zf`, `zi`, `zdb`). Each module typically contains `src/` for library code and `test/` for module-specific test binaries. Top-level build inputs live in `configure.ac`, `Makefile.am`, and `m4/`. Helper scripts live under `scripts/` and the `z.config` wrapper centralizes configure flags.
 
 ## Build, Test, and Development Commands
 - `./z.config /opt/z` configures the build with a prefix; use `./z.config -h` for options. Common flags include `-c` to rerun `autoreconf`, `-d` for debug, `-L` for clang, `-G` to disable Gtk, `-P` to disable PostgreSQL, and `-M` for MinGW.
@@ -27,8 +27,8 @@ The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`
 - C++ is compiled as GNU C++2b; headers use `.hh`, sources use `.cc`.
 - Do not use C++ concepts or `requires`; express constraints with SFINAE, detector traits, and established `ZuIfT` patterns.
 - Prefer CRTP, templates, compile-time dispatch, ADL tagging, and side-effect-safe base defaults over virtual polymorphism or runtime dispatch.
-- Minimize STL use. Prefer C headers where equivalent, and prefer existing `Zu*`, `Zm*`, `Zt*`, `Zi*`, and module-local facilities over standard-library or ad hoc replacements.
-- Use Z conventions for assertions, formatting, containers, metadata, I/O, scheduling, callbacks, and persistence: for example `ZuAssert`/`ZmAssert`/`ZiAssert`, `ZuBox`/`ZuFmt`/`ZuPrint`, `ZmHash`/`ZmList`, `ZtJSON`, `ZiIOBuf`, `ZmScheduler`, `ZmFn`, and `Zdb`.
+- Minimize STL use. Prefer C headers where equivalent, and prefer existing `Zu*`, `Zm*`, `Zt*`, `Zf*`, `Zi*`, and module-local facilities over standard-library or ad hoc replacements.
+- Use Z conventions for assertions, formatting, containers, metadata, I/O, scheduling, callbacks, and persistence: for example `ZuAssert`/`ZmAssert`/`ZiAssert`, `ZuBox`/`ZuFmt`/`ZuPrint`, `ZmHash`/`ZmList`, `ZfJSON`, `ZiIOBuf`, `ZmScheduler`, `ZmFn`, and `Zdb`.
 - Avoid unnecessary casts among Z span/string/array types; these types usually interoperate directly.
 
 ## Layout and Naming

@@ -22,7 +22,7 @@ struct LogCsvRow {
   ZuCArray<64>	component;
   ZuCArray<512>	msg;
 };
-ZtStruct(LogCsvRow,
+ZfStruct(LogCsvRow,
   (((component), (Ctor<6>)), (String)),
   (((msg),       (Ctor<7>)), (String)));
 

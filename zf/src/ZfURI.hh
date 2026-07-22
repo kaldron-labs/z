@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// ZtStruct URI query load/save
+// ZfStruct URI query load/save
 // - compile-time formatting
 // - in-place overwrite decoding of percent-escaping, base64, base32, hex etc. 
 
@@ -78,7 +78,7 @@
 //
 // finally, both arrays and nested objects can also be embedded as JSON
 //
-// recap: the top-level is always an object whose fields are ZtStruct-defined;
+// recap: the top-level is always an object whose fields are ZfStruct-defined;
 // individual fields are one of:
 // - a primitive type with non-UDT typecode (String, Int*, etc.)
 //   - per-field StringFmt/BytesFmt/NumberFmt/TimeFmt control the format
@@ -87,33 +87,33 @@
 //     - canonical mapping is URI, default ArrayFmt is Member
 //   - no recursion is possible because the element type is primitive
 //   - per-field StringFmt/BytesFmt/NumberFmt/TimeFmt control the element format
-// - a nested UDT type dispatched via the ZtURI_Fmt() mechanism:
-//   - AsString (default for any type without ZtStruct-defined fields)
+// - a nested UDT type dispatched via the ZfURI_Fmt() mechanism:
+//   - AsString (default for any type without ZfStruct-defined fields)
 //     - by default operator << is used for saving and the type is expected
 //       to construct itself from a string (ZuCSpan passed to the constructor)
 //     - a custom load/save handler can be defined and bound by
-//       declaring ZtURI_StringFmt(T *) in T's namespace (see AsString)
-//   - AsObject (default for any type with ZtStruct-defined fields)
+//       declaring ZfURI_StringFmt(T *) in T's namespace (see AsString)
+//   - AsObject (default for any type with ZfStruct-defined fields)
 //     - the ObjectFmt configured for the mapping controls the formatting
 //     - default mapping is URI, default ObjectFmt is Member
-//   - AsArray (ZtURI::AsArray ZtURI_Fmt(T *) must be declared in T's namespace)
+//   - AsArray (ZfURI::AsArray ZfURI_Fmt(T *) must be declared in T's namespace)
 //     - the ArrayFmt configured for the mapping controls the formatting
 //       - default mapping is URI, default ArrayFmt is Member
 //     - if the elements are UDT AsObject, Member or Array format must be used
 //     - otherwise each element is recursively formatted as if a top-level,
 //       with its keys prefixed accordingly
-//   - AsJSON (ZtURI::AsJSON ZtURI_Fmt(T *) must be declared in T's namespace)
-//     - the format is delegated to ZtJSON and any JSON formatting
+//   - AsJSON (ZfURI::AsJSON ZfURI_Fmt(T *) must be declared in T's namespace)
+//     - the format is delegated to ZfJSON and any JSON formatting
 //       defined for the field is used
-//     - the same mapping as for ZtURI is used (URI if canonical), so
+//     - the same mapping as for ZfURI is used (URI if canonical), so
 //       JSON-in-URI must be configured via the URI mapping not the
 //       canonical JSON mapping
 
-#ifndef ZtURI_HH
-#define ZtURI_HH
+#ifndef ZfURI_HH
+#define ZfURI_HH
 
-#ifndef ZtLib_HH
-#include <zlib/ZtLib.hh>
+#ifndef ZfLib_HH
+#include <zlib/ZfLib.hh>
 #endif
 
 #include <math.h>
@@ -130,8 +130,8 @@
 
 #include <zlib/ZmRBTree.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfJSON.hh>
 
 ZuStructFacet(URI); // canonical URI facet, others can be defined
 
@@ -139,70 +139,70 @@ ZuStructFacet(URI); // canonical URI facet, others can be defined
 
 // NTP (named template parameters):
 //
-// ZtURIConfig(URI,				// configure canonical URI
-//   ZtURI::ObjectFmt<ZtURI::Array,		// object format is array
-//     ZtURI::ArrayFmt<ZtURI::Delimited,	// array format is delimited
-//       ZtURI::Annotated<true,			// arrays are annotated []=...
-// 	   ZtURI::Wrapped<true>>>>);		// arrays are wrapped [...]
+// ZfURIConfig(URI,				// configure canonical URI
+//   ZfURI::ObjectFmt<ZfURI::Array,		// object format is array
+//     ZfURI::ArrayFmt<ZfURI::Delimited,	// array format is delimited
+//       ZfURI::Annotated<true,			// arrays are annotated []=...
+// 	   ZfURI::Wrapped<true>>>>);		// arrays are wrapped [...]
 
-namespace ZtURI { enum { Member, Array, List, Bare, Delimited }; }
+namespace ZfURI { enum { Member, Array, List, Bare, Delimited }; }
 
 // NTP defaults
-struct ZtURI_DefltConfig {
+struct ZfURI_DefltConfig {
   enum {
-    ObjectFmt = ZtURI::Member,
-    ArrayFmt = ZtURI::Array,
+    ObjectFmt = ZfURI::Member,
+    ArrayFmt = ZfURI::Array,
     Annotated = 0,
     Wrapped = 0,
     Delimiter = ','
   };
 };
 
-// ZtURI_ObjectFmt<...> - configure object format
-template <unsigned Fmt_, typename NTP = ZtURI_DefltConfig>
-struct ZtURI_ObjectFmt : public NTP { enum { ObjectFmt = Fmt_ }; };
+// ZfURI_ObjectFmt<...> - configure object format
+template <unsigned Fmt_, typename NTP = ZfURI_DefltConfig>
+struct ZfURI_ObjectFmt : public NTP { enum { ObjectFmt = Fmt_ }; };
 
-// ZtURI_ArrayFmt<...> - configure array format
-template <unsigned Fmt_, typename NTP = ZtURI_DefltConfig>
-struct ZtURI_ArrayFmt : public NTP { enum { ArrayFmt = Fmt_ }; };
+// ZfURI_ArrayFmt<...> - configure array format
+template <unsigned Fmt_, typename NTP = ZfURI_DefltConfig>
+struct ZfURI_ArrayFmt : public NTP { enum { ArrayFmt = Fmt_ }; };
 
-// ZtURI_Annotated<...> - configure array annotation (a=... vs a[]=...)
-template <bool _, typename NTP = ZtURI_DefltConfig>
-struct ZtURI_Annotated : public NTP { enum { Annotated = _ }; };
+// ZfURI_Annotated<...> - configure array annotation (a=... vs a[]=...)
+template <bool _, typename NTP = ZfURI_DefltConfig>
+struct ZfURI_Annotated : public NTP { enum { Annotated = _ }; };
 
-// ZtURI_Wrapped<...> - configure array wrapping (a=... vs a=[...])
-template <bool _, typename NTP = ZtURI_DefltConfig>
-struct ZtURI_Wrapped : public NTP { enum { Wrapped = _ }; };
+// ZfURI_Wrapped<...> - configure array wrapping (a=... vs a=[...])
+template <bool _, typename NTP = ZfURI_DefltConfig>
+struct ZfURI_Wrapped : public NTP { enum { Wrapped = _ }; };
 
-// ZtURI_Delimiter<...> - configure array element delimiter character
-template <char _, typename NTP = ZtURI_DefltConfig>
-struct ZtURI_Delimiter : public NTP { enum { Delimiter = _ }; };
+// ZfURI_Delimiter<...> - configure array element delimiter character
+template <char _, typename NTP = ZfURI_DefltConfig>
+struct ZfURI_Delimiter : public NTP { enum { Delimiter = _ }; };
 
-ZtURI_DefltConfig ZtURI_Config(...); // default
+ZfURI_DefltConfig ZfURI_Config(...); // default
 
-namespace ZtURI {
+namespace ZfURI {
 
 // resolve configuration (per facet)
-// - E.g. ZtURI::Config<Facet>::ObjectFmt
+// - E.g. ZfURI::Config<Facet>::ObjectFmt
 template <typename Facet>
-using Config = decltype(ZtURI_Config(ZuDeclVal<Facet *>()));
+using Config = decltype(ZfURI_Config(ZuDeclVal<Facet *>()));
 
 }
 
-// ZtURIConfig(Facet, Config)
+// ZfURIConfig(Facet, Config)
 // - configure URI for facet
 // - must be used in top-level namespace
-#define ZtURIConfig(Facet, Config) \
-  ZuPP_Strip(Config) ZtURI_Config(ZuFacet::Facet *);
+#define ZfURIConfig(Facet, Config) \
+  ZuPP_Strip(Config) ZfURI_Config(ZuFacet::Facet *);
 
-namespace ZtURI {
+namespace ZfURI {
 
 // temporary on-stack string buffer for quoting
 // - falls back to sharded ZmVHeap if built-in size is exceeded (unlikely)
 ZuDerive(QuoteBuf,
   (ZtString<
     ZtStringBuiltin<128,
-      ZtStringHeapID<"ZtURI.Quote",
+      ZtStringHeapID<"ZfURI.Quote",
 	ZtStringSharded<true>>>>));
 
 // AsString save/load handler for UDTs
@@ -218,7 +218,7 @@ ZuDerive(QuoteBuf,
 // class A {
 //   ...
 //   // bind A to Fmt::Handler<Quote, A>
-//   friend inline Fmt ZtURI_StringFmt(A *);
+//   friend inline Fmt ZfURI_StringFmt(A *);
 // };
 
 struct AsStringDeflt {	// default string formatter
@@ -236,11 +236,11 @@ struct AsStringDeflt {	// default string formatter
   };
 };
 
-} // ZtURI
+} // ZfURI
 
-ZtURI::AsStringDeflt ZtURI_StringFmt(...);
+ZfURI::AsStringDeflt ZfURI_StringFmt(...);
 
-namespace ZtURI {
+namespace ZfURI {
 
 // enums are intentionally not namespaced (for brevity, they don't collide)
 
@@ -270,7 +270,7 @@ struct TimeFmt {
   static constexpr int NDP = NDP_;        // decimal places (FIX, Unix)
 };
 
-} // ZtURI
+} // ZfURI
 
 namespace ZuFieldProp::URI {
 
@@ -282,35 +282,35 @@ template <uint8_t I> struct BoolFmt { };
 template <typename Fmt> struct TimeFmt { using T = Fmt; };
 
 // shorthand
-using Base64 = BytesFmt<ZtURI::Base64>;
-using Base64URL = BytesFmt<ZtURI::Base64URL>;
-using Base32 = BytesFmt<ZtURI::Base32>;
-using Hex = BytesFmt<ZtURI::Hex>;
-using Escaped = BytesFmt<ZtURI::Escaped>;
+using Base64 = BytesFmt<ZfURI::Base64>;
+using Base64URL = BytesFmt<ZfURI::Base64URL>;
+using Base32 = BytesFmt<ZfURI::Base32>;
+using Hex = BytesFmt<ZfURI::Hex>;
+using Escaped = BytesFmt<ZfURI::Escaped>;
 
 template <typename Fmt = ZtFmt::Default>
-using Number = NumberFmt<ZtURI::NumberFmt<Fmt>>;
+using Number = NumberFmt<ZfURI::NumberFmt<Fmt>>;
 
-using Bool_TRUE_FALSE = BoolFmt<ZtURI::Bool_TRUE_FALSE>;
-using Bool_True_False = BoolFmt<ZtURI::Bool_True_False>;
-using Bool_true_false = BoolFmt<ZtURI::Bool_true_false>;
-using Bool_T_F = BoolFmt<ZtURI::Bool_T_F>;
-using Bool_t_f = BoolFmt<ZtURI::Bool_t_f>;
-using Bool_YES_NO = BoolFmt<ZtURI::Bool_YES_NO>;
-using Bool_Yes_No = BoolFmt<ZtURI::Bool_Yes_No>;
-using Bool_yes_no = BoolFmt<ZtURI::Bool_yes_no>;
-using Bool_Y_N = BoolFmt<ZtURI::Bool_Y_N>;
-using Bool_y_n = BoolFmt<ZtURI::Bool_y_n>;
-using Bool_0_1 = BoolFmt<ZtURI::Bool_0_1>;
+using Bool_TRUE_FALSE = BoolFmt<ZfURI::Bool_TRUE_FALSE>;
+using Bool_True_False = BoolFmt<ZfURI::Bool_True_False>;
+using Bool_true_false = BoolFmt<ZfURI::Bool_true_false>;
+using Bool_T_F = BoolFmt<ZfURI::Bool_T_F>;
+using Bool_t_f = BoolFmt<ZfURI::Bool_t_f>;
+using Bool_YES_NO = BoolFmt<ZfURI::Bool_YES_NO>;
+using Bool_Yes_No = BoolFmt<ZfURI::Bool_Yes_No>;
+using Bool_yes_no = BoolFmt<ZfURI::Bool_yes_no>;
+using Bool_Y_N = BoolFmt<ZfURI::Bool_Y_N>;
+using Bool_y_n = BoolFmt<ZfURI::Bool_y_n>;
+using Bool_0_1 = BoolFmt<ZfURI::Bool_0_1>;
 
 template <uint8_t Scale, int8_t NDP>
-using ISO = TimeFmt<ZtURI::TimeFmt<ZtURI::ISO, Scale, NDP>>;
+using ISO = TimeFmt<ZfURI::TimeFmt<ZfURI::ISO, Scale, NDP>>;
 template <uint8_t Scale, int8_t NDP>
-using FIX = TimeFmt<ZtURI::TimeFmt<ZtURI::FIX, Scale, NDP>>;
+using FIX = TimeFmt<ZfURI::TimeFmt<ZfURI::FIX, Scale, NDP>>;
 template <uint8_t Scale, int8_t NDP>
-using CSV = TimeFmt<ZtURI::TimeFmt<ZtURI::CSV, Scale, NDP>>;
+using CSV = TimeFmt<ZfURI::TimeFmt<ZfURI::CSV, Scale, NDP>>;
 template <uint8_t Scale, int8_t NDP>
-using Unix = TimeFmt<ZtURI::TimeFmt<ZtURI::Unix, Scale, NDP>>;
+using Unix = TimeFmt<ZfURI::TimeFmt<ZfURI::Unix, Scale, NDP>>;
 
 // GetPathIndex<Field> - int8_t
 // - gets the endpoint path index for the field
@@ -345,7 +345,7 @@ using GetID = typename GetID_<Field>::T;
 // GetBytesFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BytesFmt>{}>
 struct GetBytesFmt_ {
-  using T = ZuConstant<uint8_t, ZtURI::Base64URL>; // default
+  using T = ZuConstant<uint8_t, ZfURI::Base64URL>; // default
 };
 template <typename Props>
 struct GetBytesFmt_<Props, true> {
@@ -357,7 +357,7 @@ using GetBytesFmt = typename GetBytesFmt_<Props>::T;
 // GetNumberFmt - ZuFmt
 template <typename Props, bool = HasType<Props, NumberFmt>{}>
 struct GetNumberFmt_ {
-  using T = ZtURI::NumberFmt<ZtFmt::Default>; // default
+  using T = ZfURI::NumberFmt<ZtFmt::Default>; // default
 };
 template <typename Props>
 struct GetNumberFmt_<Props, true> {
@@ -369,7 +369,7 @@ using GetNumberFmt = typename GetNumberFmt_<Props>::T;
 // GetBoolFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BoolFmt>{}>
 struct GetBoolFmt_ {
-  using T = ZuConstant<uint8_t, ZtURI::Bool_true_false>; // default
+  using T = ZuConstant<uint8_t, ZfURI::Bool_true_false>; // default
 };
 template <typename Props>
 struct GetBoolFmt_<Props, true> {
@@ -380,7 +380,7 @@ using GetBoolFmt = typename GetBoolFmt_<Props>::T;
 
 // GetTimeFmt - {Fmt, Scale, NDP}
 template <typename Props, bool = HasType<Props, TimeFmt>{}>
-struct GetTimeFmt_ { using T = ZtURI::TimeFmt<ZtURI::ISO, 0, 3>; };
+struct GetTimeFmt_ { using T = ZfURI::TimeFmt<ZfURI::ISO, 0, 3>; };
 template <typename Props>
 struct GetTimeFmt_<Props, true> { using T = GetType<Props, TimeFmt>; };
 template <typename Props>
@@ -388,7 +388,7 @@ using GetTimeFmt = typename GetTimeFmt_<Props>::T;
 
 } // ZuFieldProp::URI
 
-namespace ZtURI {
+namespace ZfURI {
 
 // --- input functions
 
@@ -401,7 +401,7 @@ ZuInline constexpr bool isspace__(char c) {
 
 // boq() finds the beginning of a query string
 // - -1 is returned if none is found
-ZtExtern int boq(ZuCSpan span);
+ZfExtern int boq(ZuCSpan span);
 
 // eos() finds end of a string (EOS) in 1-pass, mutating the contents as
 // necessary if escaped characters are embedded
@@ -420,13 +420,13 @@ ZtExtern int boq(ZuCSpan span);
 //   - char delimiter is the character that is now overwritten with '\0'
 // - returns {-1, -1, 0} if no terminating delimiter is found
 // - Example: "foo%20bar&" -> "foo bar\0\0\0" returning { 7, 10, '&' }
-ZtExtern ZuTuple<int, int, char> eos(ZuSpan<char> data);
+ZfExtern ZuTuple<int, int, char> eos(ZuSpan<char> data);
 
 // eoc() is the path-component equivalent of eos(); '/' and '?' terminate
 // the component and '+' is not decoded as space
-ZtExtern ZuTuple<int, int, char> eoc(ZuSpan<char> data);
+ZfExtern ZuTuple<int, int, char> eoc(ZuSpan<char> data);
 
-struct Node_HeapID : public ZuStringT<"ZtURI.Node"> { };
+struct Node_HeapID : public ZuStringT<"ZfURI.Node"> { };
 
 // node in a scan tree
 class AnyNode {
@@ -612,8 +612,8 @@ using CNodeArray = const NodeArray;
 using NodeObject = typename AnyNode::Object;
 using CNodeObject = const NodeObject;
 
-ZtExtern ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key);
-ZtExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
+ZfExtern ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key);
+ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
 
 // --- output functions
 
@@ -720,11 +720,11 @@ struct AsDeflt {
   using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
 };
 
-} // ZtURI
+} // ZfURI
 
-ZtURI::AsDeflt ZtURI_Fmt(...);	// default
+ZfURI::AsDeflt ZfURI_Fmt(...);	// default
 
-namespace ZtURI {
+namespace ZfURI {
 
 // filter fields that form part of the endpoint path
 template <typename Field>
@@ -746,7 +746,7 @@ struct QueryFilter {
 
 // dispatch saved objects to AsObject, AsArray or AsString
 template <typename O>
-using As = decltype(ZtURI_Fmt(ZuDeclVal<O *>()));
+using As = decltype(ZfURI_Fmt(ZuDeclVal<O *>()));
 
 // save an individual field
 template <
@@ -783,13 +783,13 @@ struct AsObject {
     using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;
 
     using AllFields = ZuFields<O, Facet>;
-    using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
-    using SaveFields = ZuTypeGrep<ZtFieldFilter::Save, AllFields>;
-    using CtorFields_ = ZuTypeGrep<ZtFieldFilter::Ctor, AllFields>;
+    using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
+    using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
+    using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
     using CtorFields = ZuTypeSort<CtorIndex, CtorFields_>;
-    using InitFields = ZuTypeGrep<ZtFieldFilter::Init, AllFields>;
-    using UpdFields = ZuTypeGrep<ZtFieldFilter::Upd, AllFields>;
-    using DelFields = ZuTypeGrep<ZtFieldFilter::Del, AllFields>;
+    using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
+    using UpdFields = ZuTypeGrep<ZfFieldFilter::Upd, AllFields>;
+    using DelFields = ZuTypeGrep<ZfFieldFilter::Del, AllFields>;
 
     template <template <typename> class Filter, typename Quote, typename S>
     static void save(S &s, const O &o, ZuCSpan prefix) {
@@ -812,13 +812,13 @@ struct AsObject {
       static O ctor(const Handler &handler, Args &&...args) {
 	return O(
 	  ZuFwd<Args>(args)...,
-	  handler.loadField<ZtFieldFilter::Load, Field>()...);
+	  handler.loadField<ZfFieldFilter::Load, Field>()...);
       }
       template <typename ...Args>
       static void new_(void *o, const Handler &handler, Args &&...args) {
 	new (o) O(
 	  ZuFwd<Args>(args)...,
-	  handler.loadField<ZtFieldFilter::Load, Field>()...);
+	  handler.loadField<ZfFieldFilter::Load, Field>()...);
       }
     };
     template <typename ...Args>
@@ -828,7 +828,7 @@ struct AsObject {
       else {
 	O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
 	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	  Field::set(o, loadField<ZtFieldFilter::Load, Field>());
+	  Field::set(o, loadField<ZfFieldFilter::Load, Field>());
 	});
 	return o;
       }
@@ -838,18 +838,18 @@ struct AsObject {
       ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	Field::set(o, loadField<ZtFieldFilter::Load, Field>());
+	Field::set(o, loadField<ZfFieldFilter::Load, Field>());
       });
     }
 
     void load(O &o) const {
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-	Field::set(o, loadField<ZtFieldFilter::Load, Field>());
+	Field::set(o, loadField<ZfFieldFilter::Load, Field>());
       });
     }
     void update(O &o) const {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	Field::set(o, loadField<ZtFieldFilter::Upd, Field>());
+	Field::set(o, loadField<ZfFieldFilter::Upd, Field>());
       });
     }
   };
@@ -877,7 +877,7 @@ struct AsArray {
   struct Handler {
     using O = O_;
 
-    using Config = ZtURI::Config<Facet>;
+    using Config = ZfURI::Config<Facet>;
 
     // the top-level cannot be AsArray, so prefix must be non-null
     template <template <typename> class Filter, typename Quote, typename S>
@@ -925,7 +925,7 @@ struct AsArray {
 	}
       } else { // Delimited - no nesting is possible, use AsString
 	using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
-	using AsString_ = decltype(ZtURI_StringFmt(ZuDeclVal<Elem *>()));
+	using AsString_ = decltype(ZfURI_StringFmt(ZuDeclVal<Elem *>()));
 	using Handler_ = typename AsString_::template Handler<Quote, Elem>;
 	s.delimit();
 	if constexpr (Config::Annotated)
@@ -947,7 +947,7 @@ struct AsArray {
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using LoadVec_ =
-      LoadVec<Facet, ZtFieldFilter::Load, ElemCode, ElemProps, Elem>;
+      LoadVec<Facet, ZfFieldFilter::Load, ElemCode, ElemProps, Elem>;
     template <typename ...Args>
     O ctor(Args &&...args) const {
       if (ZuUnlikely(!node->has<AnyNode::Array>()))
@@ -974,14 +974,14 @@ struct AsArray {
       unsigned n = ZuTraits<O>::length(o);
       unsigned m = nodes.length();
       if (n > m) n = m;
-      if constexpr (ElemCode == ZtFieldTC::UDT) {
+      if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using ElemHandler = typename As<Elem>::template Handler<Elem, Facet>;
 	for (unsigned i = 0; i < n; i++)
 	  ElemHandler{nodes[i]}.update(o[i]);
       } else {
 	for (unsigned i = 0; i < n; i++)
 	  o[i] = loadValue<
-	    Facet, ZtFieldFilter::Upd, ElemCode, ElemProps, Elem>(nodes[i]);
+	    Facet, ZfFieldFilter::Upd, ElemCode, ElemProps, Elem>(nodes[i]);
       }
     }
   };
@@ -993,7 +993,7 @@ struct AsString {
   struct Handler {
     using O = O_;
 
-    using AsString_ = decltype(ZtURI_StringFmt(ZuDeclVal<O *>()));
+    using AsString_ = decltype(ZfURI_StringFmt(ZuDeclVal<O *>()));
     using Handler_ = typename AsString_::template Handler<URIQuote<>, O>;
 
     template <template <typename> class Filter, typename Quote, typename S>
@@ -1025,7 +1025,7 @@ struct AsJSON {
   struct Handler {
     using O = O_;
 
-    using Handler_ = typename ZtJSON::As<O>::template Handler<O, Facet>;
+    using Handler_ = typename ZfJSON::As<O>::template Handler<O, Facet>;
 
     template <template <typename> class Filter, typename Quote, typename S>
     static void save(S &s, const O &o, ZuCSpan prefix) {
@@ -1041,15 +1041,15 @@ struct AsJSON {
     Handler(const AnyNode *node_) : node{node_} { }
 
     // resolve JSON handler
-    ZuTuple<ZuPtr<const ZtJSON::AnyNode>, Handler_> handler_() const {
+    ZuTuple<ZuPtr<const ZfJSON::AnyNode>, Handler_> handler_() const {
       ZuSpan<char> span;
       if (node->has<AnyNode::String>())
 	span = node->data<AnyNode::String>();
-      auto scan = ZtJSON::scan(span);
+      auto scan = ZfJSON::scan(span);
       if (scan.template p<0>() < 0)
-	scan = ZtJSON::scan({});
-      ZuPtr<const ZtJSON::AnyNode> node_ = ZuMv(scan.template p<1>());
-      const ZtJSON::AnyNode *ptr = node_.ptr();
+	scan = ZfJSON::scan({});
+      ZuPtr<const ZfJSON::AnyNode> node_ = ZuMv(scan.template p<1>());
+      const ZfJSON::AnyNode *ptr = node_.ptr();
       return {ZuMv(node_), Handler_(ptr)};
     }
 
@@ -1073,92 +1073,92 @@ template <
 inline void saveValue_(S &s, const T &v_, L &&l)
 {
   if constexpr (
-      TypeCode == ZtFieldTC::CString ||
-      TypeCode == ZtFieldTC::String) {
+      TypeCode == ZfFieldTC::CString ||
+      TypeCode == ZfFieldTC::String) {
     l(s);
     Quote::quote(s, v_);
-  } else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     l(s);
     constexpr unsigned Fmt = ZuFieldProp::URI::GetBytesFmt<Props>{};
-    if constexpr (Fmt == ZtURI::Base64) {
+    if constexpr (Fmt == ZfURI::Base64) {
       ZuBSpan v{v_};
       auto n = ZuBase64::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase64::encode(buf, v));
       Quote::quote(s, ZuCSpan(buf)); // base64 needs quoting
-    } else if constexpr (Fmt == ZtURI::Base64URL) {
+    } else if constexpr (Fmt == ZfURI::Base64URL) {
       ZuBSpan v{v_};
       auto n = ZuBase64URL::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase64URL::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZtURI::Base32) {
+    } else if constexpr (Fmt == ZfURI::Base32) {
       ZuBSpan v{v_};
       auto n = ZuBase32::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase32::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZtURI::Hex) {
+    } else if constexpr (Fmt == ZfURI::Hex) {
       ZuBSpan v{v_};
       auto n = ZuHex::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuHex::encode(buf, v));
       s << ZuCSpan(buf);
-    } else // if constexpr (Fmt == ZtURI::Escaped)
+    } else // if constexpr (Fmt == ZfURI::Escaped)
       Quote::quote(s, v_);
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     l(s);
     constexpr unsigned Fmt = ZuFieldProp::URI::GetBoolFmt<Props>{};
     bool v = v_;
-    if constexpr (Fmt == ZtURI::Bool_TRUE_FALSE)
+    if constexpr (Fmt == ZfURI::Bool_TRUE_FALSE)
       s << (v ? "TRUE" : "FALSE");
-    else if constexpr (Fmt == ZtURI::Bool_True_False)
+    else if constexpr (Fmt == ZfURI::Bool_True_False)
       s << (v ? "True" : "False");
-    else if constexpr (Fmt == ZtURI::Bool_true_false)
+    else if constexpr (Fmt == ZfURI::Bool_true_false)
       s << (v ? "true" : "false");
-    else if constexpr (Fmt == ZtURI::Bool_T_F)
+    else if constexpr (Fmt == ZfURI::Bool_T_F)
       s << (v ? "T" : "F");
-    else if constexpr (Fmt == ZtURI::Bool_t_f)
+    else if constexpr (Fmt == ZfURI::Bool_t_f)
       s << (v ? "t" : "f");
-    else if constexpr (Fmt == ZtURI::Bool_YES_NO)
+    else if constexpr (Fmt == ZfURI::Bool_YES_NO)
       s << (v ? "YES" : "NO");
-    else if constexpr (Fmt == ZtURI::Bool_Yes_No)
+    else if constexpr (Fmt == ZfURI::Bool_Yes_No)
       s << (v ? "Yes" : "No");
-    else if constexpr (Fmt == ZtURI::Bool_yes_no)
+    else if constexpr (Fmt == ZfURI::Bool_yes_no)
       s << (v ? "yes" : "no");
-    else if constexpr (Fmt == ZtURI::Bool_Y_N)
+    else if constexpr (Fmt == ZfURI::Bool_Y_N)
       s << (v ? "Y" : "N");
-    else if constexpr (Fmt == ZtURI::Bool_y_n)
+    else if constexpr (Fmt == ZfURI::Bool_y_n)
       s << (v ? "y" : "n");
-    else // if constexpr (Fmt == ZtURI::Bool_0_1)
+    else // if constexpr (Fmt == ZfURI::Bool_0_1)
       s << (v ? "0" : "1");
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128) {
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
     if constexpr (ZuIsBoxed<T>{}) {
       l(s);
-      s << ZtFieldPrintInt<Props, typename Fmt::Fmt, T>(v_);
+      s << ZfFieldPrintInt<Props, typename Fmt::Fmt, T>(v_);
     } else {
-      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      using B = ZuBox<ZfFieldTC::Type<TypeCode>>;
       auto v = B{v_};
       if (!*v) return;
       l(s);
-      s << ZtFieldPrintInt<Props, typename Fmt::Fmt, B>(v);
+      s << ZfFieldPrintInt<Props, typename Fmt::Fmt, B>(v);
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Float) {
+  } else if constexpr (TypeCode == ZfFieldTC::Float) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
     double v = v_;
     if (ZuUnlikely(ZuNull(v))) return;
@@ -1175,31 +1175,31 @@ inline void saveValue_(S &s, const T &v_, L &&l)
     }
     s << ZuBoxed(v).fmt<typename Fmt::Fmt>();
     if (e) { s << 'e'; if (e > 0) s << '+'; s << e; }
-  } else if constexpr (TypeCode == ZtFieldTC::Fixed) {
+  } else if constexpr (TypeCode == ZfFieldTC::Fixed) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
     ZuFixed v = v_;
     if (ZuUnlikely(!*v)) return;
     l(s);
     s << v.fmt<typename Fmt::Fmt>();
-  } else if constexpr (TypeCode == ZtFieldTC::Decimal) {
+  } else if constexpr (TypeCode == ZfFieldTC::Decimal) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
     ZuDecimal v = v_;
     if (ZuUnlikely(!*v)) return;
     l(s);
     s << v.fmt<typename Fmt::Fmt>();
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     using Fmt = ZuFieldProp::URI::GetTimeFmt<Props>;
-    if constexpr (Fmt::Fmt == ZtURI::Unix) {
+    if constexpr (Fmt::Fmt == ZfURI::Unix) {
       ZuTime v{v_};
       if (!*v) return;
       l(s);
-      if constexpr (Fmt::Unit == ZtURI::Sec) {
+      if constexpr (Fmt::Unit == ZfURI::Sec) {
 	s << ZuBoxed(v.sec());
 	if constexpr (Fmt::NDP)
 	  s << '.' << ZuBoxed(v.nsec()).fmt<ZuFmt::Frac<9, Fmt::NDP>>();
-      } else if constexpr (Fmt::Unit == ZtURI::MSec) {
+      } else if constexpr (Fmt::Unit == ZfURI::MSec) {
 	int128_t t = int128_t(v.sec());
 	int64_t f = v.nsec();
 	t = t * 1000U + (f / 1000000U);
@@ -1207,7 +1207,7 @@ inline void saveValue_(S &s, const T &v_, L &&l)
 	s << ZuBoxed(t);
 	if constexpr (Fmt::NDP)
 	  s << '.' << ZuBoxed(f).fmt<ZuFmt::Frac<6, Fmt::NDP>>();
-      } else if constexpr (Fmt::Unit == ZtURI::USec) {
+      } else if constexpr (Fmt::Unit == ZfURI::USec) {
 	int128_t t = int128_t(v.sec());
 	int64_t f = v.nsec();
 	t = t * 1000000U + (v.nsec() / 1000U);
@@ -1215,24 +1215,24 @@ inline void saveValue_(S &s, const T &v_, L &&l)
 	s << ZuBoxed(t);
 	if constexpr (Fmt::NDP)
 	  s << '.' << ZuBoxed(f).fmt<ZuFmt::Frac<3, Fmt::NDP>>();
-      } else if constexpr (Fmt::Unit == ZtURI::NSec) {
+      } else if constexpr (Fmt::Unit == ZfURI::NSec) {
 	int128_t t = int128_t(v.sec());
 	t = t * 1000000000U + v.nsec();
 	s << ZuBoxed(t);
       }
-    } else if constexpr (Fmt::Fmt == ZtURI::CSV) {
+    } else if constexpr (Fmt::Fmt == ZfURI::CSV) {
       ZuDateTime v{v_};
       if (!*v) return;
       l(s);
       auto &fmt = ZmTLS<ZuDateTimeFmt::CSV, (int Props::*){}>();
       s << v.fmt(fmt);
-    } else if constexpr (Fmt::Fmt == ZtURI::FIX) {
+    } else if constexpr (Fmt::Fmt == ZfURI::FIX) {
       auto &fmt = ZmTLS<ZuDateTimeFmt::FIX<Fmt::NDP>, (int Props::*){}>();
       ZuDateTime v{v_};
       if (!*v) return;
       l(s);
       s << v.fmt(fmt);
-    } else if constexpr (Fmt::Fmt == ZtURI::ISO) {
+    } else if constexpr (Fmt::Fmt == ZfURI::ISO) {
       auto &fmt = ZmTLS<ZuDateTimeFmt::ISO, (int Props::*){}>();
       ZuDateTime v{v_};
       if (!*v) return;
@@ -1249,9 +1249,9 @@ template <
 inline void saveValue(S &s, const T_ &v, ZuCSpan prefix)
 {
   using T = ZuDecay<T_>;
-  using Config = ZtURI::Config<Facet>;
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
-    if constexpr (TypeCode == ZtFieldTC::UDT) {
+  using Config = ZfURI::Config<Facet>;
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
+    if constexpr (TypeCode == ZfFieldTC::UDT) {
       // UDT type - recurse
       using Handler = typename As<T>::template Handler<T, Facet>;
       Handler::template save<Filter, Quote>(s, v, prefix);
@@ -1262,7 +1262,7 @@ inline void saveValue(S &s, const T_ &v, ZuCSpan prefix)
     }
   } else {
     unsigned n = ZuTraits<ZuDecay<decltype(v)>>::length(v);
-    enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     if constexpr (
 	Config::ArrayFmt == Member || Config::ArrayFmt == Array ||
 	Config::ArrayFmt == List || Config::ArrayFmt == Bare) {
@@ -1319,7 +1319,7 @@ inline void saveField(S &s, const O &o, ZuCSpan prefix)
 {
   using Type = typename Field::Type;
   using Props = typename Field::Props;
-  using Config = ZtURI::Config<Facet>;
+  using Config = ZfURI::Config<Facet>;
 
   // append field ID to prefix (copy on stack)
   ZuCSpan fieldID = ZuFieldProp::URI::GetID<Field>{}().cspan();
@@ -1351,12 +1351,12 @@ template <
   unsigned TypeCode, typename Props, typename T>
 inline T loadValue_(ZuSpan<char> span)
 {
-  if constexpr (TypeCode == ZtFieldTC::CString) {
+  if constexpr (TypeCode == ZfFieldTC::CString) {
     // eos() in-place null-terminates the string
     return T(&span[0]);
-  } else if constexpr (TypeCode == ZtFieldTC::String) {
+  } else if constexpr (TypeCode == ZfFieldTC::String) {
     return T(span);
-  } else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     unsigned n = span.length();
     if (ZuUnlikely(!n)) return ZuCmp<T>::null();
     ZuSpan<uint8_t> bytes(span);
@@ -1365,7 +1365,7 @@ inline T loadValue_(ZuSpan<char> span)
     // - trailing bytes are zero-filled to ensure idempotence
     // - for base32/64, the final trailing byte is used to stash
     //   the number of padding bytes from the original encoding
-    if constexpr (Fmt == ZtURI::Base64) {
+    if constexpr (Fmt == ZfURI::Base64) {
       unsigned m = ZuBase64::declen(n), l;
       if (bytes[n - 1] >= 4) {
 	l = ZuBase64::decode({&bytes[0], m}, bytes);
@@ -1376,7 +1376,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtURI::Base64URL) {
+    } else if constexpr (Fmt == ZfURI::Base64URL) {
       // permit padding
       unsigned m = ZuBase64URL::declen(n), l;
       if (bytes[n - 1] >= 4) {
@@ -1388,7 +1388,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtURI::Base32) {
+    } else if constexpr (Fmt == ZfURI::Base32) {
       unsigned m = ZuBase32::declen(n), l;
       if (bytes[n - 1] >= 8) {
 	l = ZuBase32::decode({&bytes[0], m}, bytes);
@@ -1399,7 +1399,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtURI::Hex) {
+    } else if constexpr (Fmt == ZfURI::Hex) {
       unsigned m = ZuHex::declen(n);
       if (bytes[n - 1]) {
 	m = ZuHex::decode({&bytes[0], m}, bytes);
@@ -1407,72 +1407,72 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(m);
       return T(bytes);
-    } else if constexpr (Fmt == ZtURI::Escaped) {
+    } else if constexpr (Fmt == ZfURI::Escaped) {
       return T(bytes);
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     constexpr unsigned BoolFmt = ZuFieldProp::URI::GetBoolFmt<Props>{};
-    if constexpr (BoolFmt == ZtURI::Bool_TRUE_FALSE)
+    if constexpr (BoolFmt == ZfURI::Bool_TRUE_FALSE)
       return span == "TRUE" ? T(true) : span == "FALSE" ? T(false) :
 	ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_True_False)
+    else if constexpr (BoolFmt == ZfURI::Bool_True_False)
       return span == "True" ? T(true) : span == "False" ? T(false) :
 	ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_true_false)
+    else if constexpr (BoolFmt == ZfURI::Bool_true_false)
       return span == "true" ? T(true) : span == "false" ? T(false) :
 	ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_T_F)
+    else if constexpr (BoolFmt == ZfURI::Bool_T_F)
       return span == "T" ? T(true) : span == "F" ? T(false) : ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_t_f)
+    else if constexpr (BoolFmt == ZfURI::Bool_t_f)
       return span == "t" ? T(true) : span == "f" ? T(false) : ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_YES_NO)
+    else if constexpr (BoolFmt == ZfURI::Bool_YES_NO)
       return span == "YES" ? T(true) : span == "NO" ? T(false) :
 	ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_Yes_No)
+    else if constexpr (BoolFmt == ZfURI::Bool_Yes_No)
       return span == "Yes" ? T(true) : span == "No" ? T(false) :
 	ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_yes_no)
+    else if constexpr (BoolFmt == ZfURI::Bool_yes_no)
       return span == "yes" ? T(true) : span == "no" ? T(false) :
 	ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_Y_N)
+    else if constexpr (BoolFmt == ZfURI::Bool_Y_N)
       return span == "Y" ? T(true) : span == "N" ? T(false) : ZuCmp<T>::null();
-    else if constexpr (BoolFmt == ZtURI::Bool_y_n)
+    else if constexpr (BoolFmt == ZfURI::Bool_y_n)
       return span == "y" ? T(true) : span == "n" ? T(false) : ZuCmp<T>::null();
-    else // if constexpr (BoolFmt == ZtURI::Bool_0_1)
+    else // if constexpr (BoolFmt == ZfURI::Bool_0_1)
       return span == "1" ? T(true) : span == "0" ? T(false) : ZuCmp<T>::null();
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128) {
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
     if constexpr (ZuIsBoxed<T>{}) {
-      using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, T>;
+      using Scan = ZfFieldScanInt<Props, typename Fmt::Fmt, T>;
       return Scan{span}.value;
     } else {
-      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
-      using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, B>;
+      using B = ZuBox<ZfFieldTC::Type<TypeCode>>;
+      using Scan = ZfFieldScanInt<Props, typename Fmt::Fmt, B>;
       return T(Scan{span}.value.val());
     }
     ZuUnreachable();
   } else if constexpr (
-      TypeCode == ZtFieldTC::Float ||
-      TypeCode == ZtFieldTC::Fixed ||
-      TypeCode == ZtFieldTC::Decimal) {
+      TypeCode == ZfFieldTC::Float ||
+      TypeCode == ZfFieldTC::Fixed ||
+      TypeCode == ZfFieldTC::Decimal) {
     if constexpr (
-	TypeCode == ZtFieldTC::Decimal ||
-	TypeCode == ZtFieldTC::Fixed) {
-      auto d = ZtJSON::eov_Decimal(span);
+	TypeCode == ZfFieldTC::Decimal ||
+	TypeCode == ZfFieldTC::Fixed) {
+      auto d = ZfJSON::eov_Decimal(span);
       if (d.p<0>() < 0) return T{};
       auto v = d.p<1>();
-      ZtFieldLimit<Props>(v);
-      if constexpr (TypeCode == ZtFieldTC::Decimal)
+      ZfFieldLimit<Props>(v);
+      if constexpr (TypeCode == ZfFieldTC::Decimal)
 	return v;
       else {
 	if (!*v) return ZuFixed{};
@@ -1482,32 +1482,32 @@ inline T loadValue_(ZuSpan<char> span)
 	  return ZuFixed{v};
       }
     } else {
-      auto d = ZtJSON::eov_Float(span);
+      auto d = ZfJSON::eov_Float(span);
       if (d.p<0>() < 0) return ZuCmp<T>::null();
       auto v = d.p<1>();
-      ZtFieldLimit<Props>(v);
+      ZfFieldLimit<Props>(v);
       return v;
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     using TimeFmt = ZuFieldProp::URI::GetTimeFmt<Props>;
-    if constexpr (TimeFmt::Fmt == ZtURI::Unix) {
-      auto d = ZtJSON::eov_Decimal(span);
+    if constexpr (TimeFmt::Fmt == ZfURI::Unix) {
+      auto d = ZfJSON::eov_Decimal(span);
       if (d.p<0>() < 0) return ZuCmp<T>::null();
       auto &v = d.p<1>();
-      if constexpr (TimeFmt::Unit == ZtURI::MSec) {
+      if constexpr (TimeFmt::Unit == ZfURI::MSec) {
 	v.value /= 1000;
-      } else if constexpr (TimeFmt::Unit == ZtURI::USec) {
+      } else if constexpr (TimeFmt::Unit == ZfURI::USec) {
 	v.value /= 1000000;
-      } else if constexpr (TimeFmt::Unit == ZtURI::NSec) {
+      } else if constexpr (TimeFmt::Unit == ZfURI::NSec) {
 	v.value /= 1000000000;
       }
       if constexpr (ZuIs_<T, ZuTime>{})
 	return ZuTime{v};
       else
 	return ZuDateTime{ZuTime{v}};
-    } else if constexpr (TimeFmt::Fmt == ZtURI::CSV) {
+    } else if constexpr (TimeFmt::Fmt == ZfURI::CSV) {
       auto &fmt = ZmTLS<ZuDateTimeScan::CSV, (int Props::*){}>();
       ZuDateTime v;
       if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
@@ -1515,7 +1515,7 @@ inline T loadValue_(ZuSpan<char> span)
 	return v.as_time();
       else
 	return v;
-    } else if constexpr (TimeFmt::Fmt == ZtURI::FIX) {
+    } else if constexpr (TimeFmt::Fmt == ZfURI::FIX) {
       auto &fmt = ZmTLS<ZuDateTimeScan::FIX, (int Props::*){}>();
       ZuDateTime v;
       if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
@@ -1523,7 +1523,7 @@ inline T loadValue_(ZuSpan<char> span)
 	return v.as_time();
       else
 	return v;
-    } else if constexpr (TimeFmt::Fmt == ZtURI::ISO) {
+    } else if constexpr (TimeFmt::Fmt == ZfURI::ISO) {
       auto &fmt = ZmTLS<ZuDateTimeScan::ISO, (int Props::*){}>();
       ZuDateTime v;
       if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
@@ -1541,8 +1541,8 @@ template <
   unsigned TypeCode, typename Props, typename T>
 inline auto loadValue(AnyNode *node)
 {
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
-    if constexpr (TypeCode == ZtFieldTC::UDT) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
+    if constexpr (TypeCode == ZfFieldTC::UDT) {
       // UDT type - recurse
       return typename As<T>::template Handler<T, Facet>{node}.ctor();
     } else {
@@ -1552,11 +1552,11 @@ inline auto loadValue(AnyNode *node)
       return loadValue_<Facet, Filter, TypeCode, Props, T>(span);
     }
   } else {
-    enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     using Actual = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
     using Elem = ZuIf<
-      ElemCode >= ZtFieldTC::Int8 && ElemCode <= ZtFieldTC::UInt128 &&
-      bool(ZuIsBoxed<Actual>{}), Actual, ZtFieldTC::Type<ElemCode>>;
+      ElemCode >= ZfFieldTC::Int8 && ElemCode <= ZfFieldTC::UInt128 &&
+      bool(ZuIsBoxed<Actual>{}), Actual, ZfFieldTC::Type<ElemCode>>;
     using LoadVec_ = LoadVec<Facet, Filter, ElemCode, Props, Elem>;
     if (!node->has<AnyNode::Array>()) {
       static const NodeArray _;
@@ -1571,10 +1571,10 @@ template <
   unsigned TypeCode, typename Props, typename T>
 inline auto loadValue(ZuPtr<AnyNode> &node)
 {
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     return loadValue<Facet, Filter, TypeCode, Props, T>(node.ptr());
   } else {
-    using Config = ZtURI::Config<Facet>;
+    using Config = ZfURI::Config<Facet>;
     asArray<Config>(node);
     return loadValue<Facet, Filter, TypeCode, Props, T>(node.ptr());
   }
@@ -1606,7 +1606,7 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
       }
     }
   }
-  if constexpr (ZtFieldTC::IsVec<TypeCode>{}) {
+  if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
     static const NodeArray _;
     return R(_);
   } else
@@ -1623,10 +1623,10 @@ inline S &savePath_(S &s, const O &o) {
       using Type = typename Field::Type;
       using Props = typename Field::Props;
       s << '/';
-      if constexpr (Type::Code == ZtFieldTC::UDT) {
+      if constexpr (Type::Code == ZfFieldTC::UDT) {
 	// UDT type in the path - process as string
 	using T = typename Field::T;
-	using AsString = decltype(ZtURI_StringFmt(ZuDeclVal<T *>()));
+	using AsString = decltype(ZfURI_StringFmt(ZuDeclVal<T *>()));
 	using Handler =
 	  typename AsString::template Handler<URIQuote<false>, T>;
 	Handler::save(s, Field::get(o));
@@ -1671,57 +1671,57 @@ template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 inline S &save(S &s, const O &o) {
-  return save_<Facet, ZtFieldFilter::Save>(s, o);
+  return save_<Facet, ZfFieldFilter::Save>(s, o);
 }
 template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 ZuInline S &saveUpd(S &s, const O &o) {
-  return save_<Facet, ZtFieldFilter::Upd>(s, o);
+  return save_<Facet, ZfFieldFilter::Upd>(s, o);
 }
 template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 ZuInline S &saveDel(S &s, const O &o) {
-  return save_<Facet, ZtFieldFilter::Del>(s, o);
+  return save_<Facet, ZfFieldFilter::Del>(s, o);
 }
 
 template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 inline S &savePath(S &s, const O &o) {
-  return savePath_<Facet, ZtFieldFilter::Save>(s, o);
+  return savePath_<Facet, ZfFieldFilter::Save>(s, o);
 }
 template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 ZuInline S &savePathUpd(S &s, const O &o) {
-  return savePath_<Facet, ZtFieldFilter::Upd>(s, o);
+  return savePath_<Facet, ZfFieldFilter::Upd>(s, o);
 }
 template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 ZuInline S &savePathDel(S &s, const O &o) {
-  return savePath_<Facet, ZtFieldFilter::Del>(s, o);
+  return savePath_<Facet, ZfFieldFilter::Del>(s, o);
 }
 
 template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 inline S &saveBody(S &s, const O &o) {
-  return saveBody_<Facet, ZtFieldFilter::Save>(s, o);
+  return saveBody_<Facet, ZfFieldFilter::Save>(s, o);
 }
 template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 ZuInline S &saveBodyUpd(S &s, const O &o) {
-  return saveBody_<Facet, ZtFieldFilter::Upd>(s, o);
+  return saveBody_<Facet, ZfFieldFilter::Upd>(s, o);
 }
 template <
   typename Facet = ZuFacet::URI,
   typename S, typename O>
 ZuInline S &saveBodyDel(S &s, const O &o) {
-  return saveBody_<Facet, ZtFieldFilter::Del>(s, o);
+  return saveBody_<Facet, ZfFieldFilter::Del>(s, o);
 }
 
 template <typename O, typename Facet = ZuFacet::URI>
@@ -1729,6 +1729,6 @@ auto handler(const AnyNode *node) {
   return typename As<O>::template Handler<O, Facet>{node};
 }
 
-} // ZtURI
+} // ZfURI
 
-#endif /* ZtURI_HH */
+#endif /* ZfURI_HH */

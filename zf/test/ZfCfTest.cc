@@ -8,7 +8,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZvNewCf.hh>
+#include <zlib/ZfCf.hh>
 
 using namespace ZuTestUtil;
 
@@ -19,14 +19,14 @@ namespace CfFlags {
 }
 
 namespace ZuFieldProp::Cf {
-  using Unix9 = Unix<ZvNewCf::Sec, 9>;
+  using Unix9 = Unix<ZfCf::Sec, 9>;
 }
 
 struct CfNested {
   int value = 0;
 };
 
-ZtStruct((CfNested, Cf),
+ZfStruct((CfNested, Cf),
   (((value), (Ctor<0>)), (Int32)));
 
 struct CfText {
@@ -35,14 +35,14 @@ struct CfText {
 
   ZtString<> value;
 
-  friend ZvNewCf::AsString ZvNewCf_Fmt(CfText *);
+  friend ZfCf::AsString ZfCf_Fmt(CfText *);
 };
 
 struct CfTextData {
   CfText text;
 };
 
-ZtStruct((CfTextData, Cf),
+ZfStruct((CfTextData, Cf),
   (((text), (Ctor<0>)), (UDT)));
 
 struct CfData {
@@ -55,7 +55,7 @@ struct CfData {
   CfNested nested;
 };
 
-ZtStruct((CfData, Cf),
+ZfStruct((CfData, Cf),
   (((cstr), (Ctor<0>)), (CString)),
   (((string), (Ctor<1>)), (String)),
   (((number), (Ctor<2>)), (Int32)),
@@ -73,7 +73,7 @@ struct CfBytes {
   ZtArray<ZtArray<uint8_t>> vec;
 };
 
-ZtStruct((CfBytes, Cf),
+ZfStruct((CfBytes, Cf),
   (((base64),		(Ctor<0>, Cf::Base64)),	(Bytes)),
   (((base64URL),	(Ctor<1>, Cf::Base64URL)),	(Bytes)),
   (((base32),		(Ctor<2>, Cf::Base32)),	(Bytes)),
@@ -93,7 +93,7 @@ struct CfNumbers {
   ZtArray<int> ints;
 };
 
-ZtStruct((CfNumbers, Cf),
+ZfStruct((CfNumbers, Cf),
   (((i),		(Ctor<0>, Mutable)),		(Int32)),
   (((hex),	(Ctor<1>, Hex)),		(UInt32)),
   (((enum_),	(Ctor<2>, Enum<CfValues::Map>)),	(Int32)),
@@ -112,7 +112,7 @@ struct CfOptional {
   const char *tail = "tail";
 };
 
-ZtStruct((CfOptional, Cf),
+ZfStruct((CfOptional, Cf),
   (((head), (Ctor<0>, Cf::Opt)), (CString)),
   (((req),  (Ctor<1>)), (CString)),
   (((tail), (Ctor<2>)), (CString)));
@@ -121,21 +121,30 @@ struct CfRange {
   int value = 42;
 };
 
-ZtStruct((CfRange, Cf),
+ZfStruct((CfRange, Cf),
   (((value), (Ctor<0>, (Range<0, 100>))), (Int32, 42)));
 
-static const ZvNewCf::AnyNode *field(
-    const ZvNewCf::AnyNode *node, ZuCSpan id) {
-  if (!node || !node->has<ZvNewCf::AnyNode::Object>()) return nullptr;
-  const auto &fields = node->data<ZvNewCf::AnyNode::Object>();
+struct CfRequired {
+  int required;
+  int optional;
+};
+
+ZfStruct((CfRequired, Cf),
+  (((required), (Ctor<0>, Required)), (Int32)),
+  (((optional), (Ctor<1>)), (Int32)));
+
+static const ZfCf::AnyNode *field(
+    const ZfCf::AnyNode *node, ZuCSpan id) {
+  if (!node || !node->has<ZfCf::AnyNode::Object>()) return nullptr;
+  const auto &fields = node->data<ZfCf::AnyNode::Object>();
   for (unsigned i = 0, n = fields.length(); i < n; i++)
     if (fields[i].p<0>() == id) return fields[i].p<1>();
   return nullptr;
 }
 
-static ZuCSpan string(const ZvNewCf::AnyNode *node) {
-  if (!node || !node->has<ZvNewCf::AnyNode::String>()) return {};
-  return node->data<ZvNewCf::AnyNode::String>();
+static ZuCSpan string(const ZfCf::AnyNode *node) {
+  if (!node || !node->has<ZfCf::AnyNode::String>()) return {};
+  return node->data<ZfCf::AnyNode::String>();
 }
 
 template <typename L>
@@ -150,8 +159,8 @@ static bool loadError(L l) {
 
 static void checkToken(ZuCSpan in, ZuCSpan expected) {
   ZuTestScope(checkToken);
-  ZvNewCf::AnyNode::String out;
-  auto result = ZvNewCf::eos<false>(in, out);
+  ZfCf::AnyNode::String out;
+  auto result = ZfCf::eos<false>(in, out);
   ZuCheck(result == int(in.length()));
   ZuCheck(out == expected);
   ZuCheck(!out.data()[out.length()]);
@@ -161,26 +170,26 @@ static void ownership() {
   ZuTestScope(ownership);
   static const char input[] =
     "key: value, number: -42.5e+2, nested: { child: text }";
-  auto result = ZvNewCf::scan(ZuCSpan{input});
+  auto result = ZfCf::scan(ZuCSpan{input});
   ZuCheck(result.p<0>() == int(sizeof(input) - 1));
   ZuCheck(string(field(result.p<1>(), "key")) == "value");
   auto number = field(result.p<1>(), "number");
-  ZuCheck(number && number->has<ZvNewCf::AnyNode::String>());
+  ZuCheck(number && number->has<ZfCf::AnyNode::String>());
   ZuCheck(string(number) == "-42.5e+2");
 
-  ZuPtr<const ZvNewCf::AnyNode> tree;
+  ZuPtr<const ZfCf::AnyNode> tree;
   {
     ZtString<> source =
       "cstr: retained, string: owned, number: 7, bool_: true, "
       "bytes: eHh4, strings: [one, two], nested: {value: 9}";
-    auto scan = ZvNewCf::scan(source);
+    auto scan = ZfCf::scan(source);
     ZuCheck(scan.p<0>() == int(source.length()));
     tree = ZuMv(scan.p<1>());
     source = "overwritten";
   }
   ZuCheck(string(field(tree, "cstr")) == "retained");
   ZuCheck(string(field(tree, "string")) == "owned");
-  auto value = ZvNewCf::handler<CfData>(tree).ctor();
+  auto value = ZfCf::handler<CfData>(tree).ctor();
   ZuCheck(ZuCSpan{value.cstr} == "retained");
   ZuCheck(value.string == "owned");
   ZuCheck(value.number == 7);
@@ -189,14 +198,14 @@ static void ownership() {
 
 static void resolve() {
   ZuTestScope(resolve);
-  auto result = ZvNewCf::eov_Object(
+  auto result = ZfCf::eov_Object(
     "a: {b: [{value: zero}, {value: one}], empty: []}, text: leaf", true);
   ZuCheck(result.p<0>() >= 0);
   auto &root = result.p<1>();
   ZuCheck(root->resolve("") == root.ptr());
   ZuCheck(string(root->resolve("a.b[0].value")) == "zero");
   ZuCheck(string(root->resolve("a.b[1].value")) == "one");
-  ZuCheck(root->resolve("a.b")->has<ZvNewCf::AnyNode::Array>());
+  ZuCheck(root->resolve("a.b")->has<ZfCf::AnyNode::Array>());
   ZuCheck(!root->resolve("a.missing"));
   ZuCheck(!root->resolve("a.b[2]"));
   ZuCheck(!root->resolve("a.b[-1]"));
@@ -235,13 +244,13 @@ static void quoting() {
         ZuCSpan{"bare\\"}, ZuCSpan{"\"\\u12xz\""},
         ZuCSpan{"\"\\ud83d\""}, ZuCSpan{"\"\\udc04\""},
         ZuCSpan{"\"\\ud83d\\u03bb\""}, ZuCSpan{"\"\\u123\""}}) {
-      ZvNewCf::AnyNode::String out;
-      ZuCheck(ZvNewCf::eos<false>(bad, out) < 0);
+      ZfCf::AnyNode::String out;
+      ZuCheck(ZfCf::eos<false>(bad, out) < 0);
     }
   }
   {
-    ZvNewCf::AnyNode::String out;
-    auto result = ZvNewCf::eos<true>("foo\\:bar", out);
+    ZfCf::AnyNode::String out;
+    auto result = ZfCf::eos<true>("foo\\:bar", out);
     ZuCheck(result == 8);
     ZuCheck(out == "foo:bar");
   }
@@ -267,8 +276,8 @@ static void expansion() {
   ZuTestCall(checkToken, "${ZTCF_TEST_UNSET}", "");
 
   {
-    ZvNewCf::AnyNode::String out;
-    auto result = ZvNewCf::eos<true>("${x}", out);
+    ZfCf::AnyNode::String out;
+    auto result = ZfCf::eos<true>("${x}", out);
     ZuCheck(result == 4);
     ZuCheck(out == "${x}");
   }
@@ -277,8 +286,8 @@ static void expansion() {
     ZuTestRepeat(invalid, 3);
     for (auto bad : {
         ZuCSpan{"${}"}, ZuCSpan{"${1x}"}, ZuCSpan{"${x"}}) {
-      ZvNewCf::AnyNode::String out;
-      ZuCheck(ZvNewCf::eos<false>(bad, out) < 0);
+      ZfCf::AnyNode::String out;
+      ZuCheck(ZfCf::eos<false>(bad, out) < 0);
     }
   }
 
@@ -294,7 +303,7 @@ static void expansion() {
 
 static void classification() {
   ZuTestScope(classification);
-  auto scan = ZvNewCf::scan(
+  auto scan = ZfCf::scan(
     "n: null, t: true, f: false, i: -42, d: .5, e: 1e+3, "
     "tv: trueValue, np: nullPath, ns: nanosecond, ni: 123abc, "
     "qn: \"42\", en: ${x}");
@@ -303,13 +312,13 @@ static void classification() {
     ZuTestRepeat(strings, 12);
     for (auto id : {
 	"n", "t", "f", "i", "d", "e", "tv", "np", "ns", "ni", "qn", "en"})
-      ZuCheck(field(scan.p<1>(), id)->has<ZvNewCf::AnyNode::String>());
+      ZuCheck(field(scan.p<1>(), id)->has<ZfCf::AnyNode::String>());
   }
 }
 
 static void grammar() {
   ZuTestScope(grammar);
-  ZuCheck(ZvNewCf::scan(ZuCSpan{}).p<0>() < 0);
+  ZuCheck(ZfCf::scan(ZuCSpan{}).p<0>() < 0);
   {
     ZuTestRepeat(valid, 10);
     for (auto good : {
@@ -319,7 +328,7 @@ static void grammar() {
         ZuCSpan{"x: {y: [one, 'two', \"three\",],},"},
         ZuCSpan{"x: 1,, y: 2,"}, ZuCSpan{",x: 1"},
         ZuCSpan{"{,x: 1,}"}})
-      ZuCheck(ZvNewCf::scan(good).p<0>() == int(good.length()));
+      ZuCheck(ZfCf::scan(good).p<0>() == int(good.length()));
   }
   {
     ZuTestRepeat(invalid, 8);
@@ -328,7 +337,7 @@ static void grammar() {
         ZuCSpan{"x: 1 garbage"}, ZuCSpan{"x: ]"},
         ZuCSpan{"x: 1}"}, ZuCSpan{"x:: 1"},
         ZuCSpan{"x: [one two]"}, ZuCSpan{"{x: 1"}})
-      ZuCheck(ZvNewCf::scan(bad).p<0>() < 0);
+      ZuCheck(ZfCf::scan(bad).p<0>() < 0);
   }
 }
 
@@ -345,8 +354,8 @@ static void percent() {
 #endif
 
   {
-    ZmRef<ZvNewCf::Defines> defines = new ZvNewCf::Defines();
-    auto scan = ZvNewCf::scan(
+    ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
+    auto scan = ZfCf::scan(
       "%define(ZTCF_PCT_DEFINE_1, first), "
       "one: ${ZTCF_PCT_DEFINE_1}, "
       "%define(ZTCF_PCT_DEFINE_1, 'second,value'), "
@@ -355,21 +364,21 @@ static void percent() {
     ZuCheck(string(field(scan.p<1>(), "one")) == "first");
     ZuCheck(string(field(scan.p<1>(), "two")) == "second,value");
 
-    auto next = ZvNewCf::scan(
+    auto next = ZfCf::scan(
       "value: ${ZTCF_PCT_DEFINE_1}", {}, defines);
     ZuCheck(next.p<0>() >= 0);
     ZuCheck(string(field(next.p<1>(), "value")) == "second,value");
 
-    auto isolated = ZvNewCf::scan("value: ${ZTCF_PCT_DEFINE_1}");
+    auto isolated = ZfCf::scan("value: ${ZTCF_PCT_DEFINE_1}");
     ZuCheck(isolated.p<0>() >= 0);
     ZuCheck(string(field(isolated.p<1>(), "value")) == "environment");
   }
 
   unsigned calls = 0;
   bool callbackOK = true;
-  ZvNewCf::PctFn pctFn{[&calls, &callbackOK](
+  ZfCf::PctFn pctFn{[&calls, &callbackOK](
       ZuCSpan directive, ZuSpan<const ZuCSpan> args,
-      ZvNewCf::PctExpandFn expand) {
+      ZfCf::PctExpandFn expand) {
     ++calls;
     if (directive == "outer") {
       bool valid = args.length() == 2;
@@ -395,7 +404,7 @@ static void percent() {
   }};
 
   {
-    auto scan = ZvNewCf::scan(
+    auto scan = ZfCf::scan(
       "before: 1, %outer('first,arg', \"second value\"), "
       "nested: {%none(ignored), retained: true}, "
       "array: [{%array()}], after: 2",
@@ -410,21 +419,21 @@ static void percent() {
     auto nested = field(scan.p<1>(), "nested");
     ZuCheck(string(field(nested, "retained")) == "true");
     auto array = field(scan.p<1>(), "array");
-    ZuCheck(array && array->has<ZvNewCf::AnyNode::Array>());
-    ZuCheck(string(field(array->data<ZvNewCf::AnyNode::Array>()[0], "element")) ==
+    ZuCheck(array && array->has<ZfCf::AnyNode::Array>());
+    ZuCheck(string(field(array->data<ZfCf::AnyNode::Array>()[0], "element")) ==
       "included");
     ZuCheck(string(field(scan.p<1>(), "after")) == "2");
   }
 
   {
-    auto scan = ZvNewCf::scan("'%quoted': one, \\%escaped: two");
+    auto scan = ZfCf::scan("'%quoted': one, \\%escaped: two");
     ZuCheck(scan.p<0>() >= 0);
     ZuCheck(string(field(scan.p<1>(), "%quoted")) == "one");
     ZuCheck(string(field(scan.p<1>(), "%escaped")) == "two");
   }
 
   {
-    ZuCheck(ZvNewCf::scan("%unknown()").p<0>() < 0);
+    ZuCheck(ZfCf::scan("%unknown()").p<0>() < 0);
     ZuTestRepeat(invalid, 8);
     for (auto input : {
         ZuCSpan{"%1bad()"}, ZuCSpan{"%missing"}, ZuCSpan{"%unknown()"},
@@ -432,7 +441,7 @@ static void percent() {
         ZuCSpan{"%define(one, two"}, ZuCSpan{"%none(a,,b)"},
         ZuCSpan{"%none(a,)"},
         ZuCSpan{"%bad()"}})
-      ZuCheck(ZvNewCf::scan(input, pctFn).p<0>() < 0);
+      ZuCheck(ZfCf::scan(input, pctFn).p<0>() < 0);
   }
 
 #ifdef _WIN32
@@ -448,39 +457,60 @@ static void percent() {
 static void loadTypes() {
   ZuTestScope(loadTypes);
   {
-    auto minimumScan = ZvNewCf::scan("value: 0");
-    auto minimum = ZvNewCf::handler<CfRange>(minimumScan.p<1>()).ctor();
+    auto missingScan = ZfCf::scan("optional: 1");
+    ZuCheck(loadError([&]() {
+      ZfCf::handler<CfRequired>(missingScan.p<1>()).ctor();
+    }));
+
+    auto nullScan = ZfCf::scan("required: -2147483648");
+    ZuCheck(loadError([&]() {
+      ZfCf::handler<CfRequired>(nullScan.p<1>()).ctor();
+    }));
+
+    auto validScan = ZfCf::scan("required: 0");
+    auto valid = ZfCf::handler<CfRequired>(validScan.p<1>()).ctor();
+    ZuCheck(valid.required == 0);
+    ZuCheck(ZuNull(valid.optional));
+
+    CfRequired loaded{1, 2};
+    ZuCheck(loadError([&]() {
+      ZfCf::handler<CfRequired>(missingScan.p<1>()).load(loaded);
+    }));
+  }
+  {
+    auto minimumScan = ZfCf::scan("value: 0");
+    auto minimum = ZfCf::handler<CfRange>(minimumScan.p<1>()).ctor();
     ZuCheck(minimum.value == 0);
 
-    auto maximumScan = ZvNewCf::scan("value: 100");
-    auto maximum = ZvNewCf::handler<CfRange>(maximumScan.p<1>()).ctor();
+    auto maximumScan = ZfCf::scan("value: 100");
+    auto maximum = ZfCf::handler<CfRange>(maximumScan.p<1>()).ctor();
     ZuCheck(maximum.value == 100);
 
-    auto trailingScan = ZvNewCf::scan("value: 100tail");
+    auto trailingScan = ZfCf::scan("value: 100tail");
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfRange>(trailingScan.p<1>()).ctor();
+      ZfCf::handler<CfRange>(trailingScan.p<1>()).ctor();
     }));
 
-    auto belowScan = ZvNewCf::scan("value: -1");
+    auto belowScan = ZfCf::scan("value: -1");
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfRange>(belowScan.p<1>()).ctor();
+      ZfCf::handler<CfRange>(belowScan.p<1>()).ctor();
     }));
 
-    auto aboveScan = ZvNewCf::scan("value: 101");
+    auto aboveScan = ZfCf::scan("value: 101");
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfRange>(aboveScan.p<1>()).ctor();
+      ZfCf::handler<CfRange>(aboveScan.p<1>()).ctor();
     }));
   }
   {
-    auto scan = ZvNewCf::scan("float_: 1001, fixed: -1001, decimal: 1001");
+    auto scan = ZfCf::scan("float_: 1001, fixed: -1001, decimal: 1001");
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfNumbers>(scan.p<1>()).ctor();
+      ZfCf::handler<CfNumbers>(scan.p<1>()).ctor();
     }));
   }
   {
-    auto scan = ZvNewCf::scan("bool_: maybe");
+    auto scan = ZfCf::scan("bool_: maybe");
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfData>(scan.p<1>()).ctor();
+      ZfCf::handler<CfData>(scan.p<1>()).ctor();
     }));
   }
   {
@@ -490,67 +520,67 @@ static void loadTypes() {
       ZuCSpan{"fixed: 1.0x"}, ZuCSpan{"decimal: 1.0x"},
       ZuCSpan{"time: 1.0x"}, ZuCSpan{"fixed: 1e19"},
       ZuCSpan{"decimal: 1e19"}, ZuCSpan{"time: 1e19"}}) {
-      auto scan = ZvNewCf::scan(source);
+      auto scan = ZfCf::scan(source);
       ZuCheck(loadError([&]() {
-	ZvNewCf::handler<CfNumbers>(scan.p<1>()).ctor();
+	ZfCf::handler<CfNumbers>(scan.p<1>()).ctor();
       }));
     }
   }
   {
-    auto numberScan = ZvNewCf::scan("nested: 42");
+    auto numberScan = ZfCf::scan("nested: 42");
     ZuCheck(numberScan.p<0>() >= 0);
     ZuCheck(field(numberScan.p<1>(), "nested")->
-	has<ZvNewCf::AnyNode::String>());
+	has<ZfCf::AnyNode::String>());
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfData>(numberScan.p<1>()).ctor();
+      ZfCf::handler<CfData>(numberScan.p<1>()).ctor();
     }));
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfNested>(field(numberScan.p<1>(), "nested")).ctor();
+      ZfCf::handler<CfNested>(field(numberScan.p<1>(), "nested")).ctor();
     }));
 
-    auto nullScan = ZvNewCf::scan("nested: null");
+    auto nullScan = ZfCf::scan("nested: null");
     ZuCheck(nullScan.p<0>() >= 0);
     ZuCheck(string(field(nullScan.p<1>(), "nested")) == "null");
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfData>(nullScan.p<1>()).ctor();
+      ZfCf::handler<CfData>(nullScan.p<1>()).ctor();
     }));
 
-    auto objectScan = ZvNewCf::scan("nested: {}");
+    auto objectScan = ZfCf::scan("nested: {}");
     ZuCheck(objectScan.p<0>() >= 0);
-    auto object = ZvNewCf::handler<CfData>(objectScan.p<1>()).ctor();
+    auto object = ZfCf::handler<CfData>(objectScan.p<1>()).ctor();
     ZuCheck(object.nested.value == ZuCmp<int>::null());
 
-    auto textScan = ZvNewCf::scan("text: null");
+    auto textScan = ZfCf::scan("text: null");
     ZuCheck(textScan.p<0>() >= 0);
-    auto text = ZvNewCf::handler<CfTextData>(textScan.p<1>()).ctor();
+    auto text = ZfCf::handler<CfTextData>(textScan.p<1>()).ctor();
     ZuCheck(text.text.value == "null");
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfText>(objectScan.p<1>()).ctor();
+      ZfCf::handler<CfText>(objectScan.p<1>()).ctor();
     }));
   }
   {
     for (auto source: {
       ZuCSpan{"strings: nope"}, ZuCSpan{"ints: nope"}}) {
-      auto scan = ZvNewCf::scan(source);
+      auto scan = ZfCf::scan(source);
       ZuCheck(loadError([&]() {
 	if (source[0] == 's')
-	  ZvNewCf::handler<CfData>(scan.p<1>()).ctor();
+	  ZfCf::handler<CfData>(scan.p<1>()).ctor();
 	else
-	  ZvNewCf::handler<CfNumbers>(scan.p<1>()).ctor();
+	  ZfCf::handler<CfNumbers>(scan.p<1>()).ctor();
       }));
     }
-    auto scan = ZvNewCf::scan("vec: nope");
+    auto scan = ZfCf::scan("vec: nope");
     ZuCheck(loadError([&]() {
-      ZvNewCf::handler<CfBytes>(scan.p<1>()).ctor();
+      ZfCf::handler<CfBytes>(scan.p<1>()).ctor();
     }));
   }
   {
     for (auto source: {
       ZuCSpan{"base64: 'eA==junk'"}, ZuCSpan{"base64URL: '_w!junk'"},
       ZuCSpan{"base32: 'PB4HQ===junk'"}, ZuCSpan{"hex: '78787'"}}) {
-      auto scan = ZvNewCf::scan(source);
+      auto scan = ZfCf::scan(source);
       ZuCheck(loadError([&]() {
-	ZvNewCf::handler<CfBytes>(scan.p<1>()).ctor();
+	ZfCf::handler<CfBytes>(scan.p<1>()).ctor();
       }));
     }
   }
@@ -558,9 +588,9 @@ static void loadTypes() {
     ZtString<> source =
       "base64: eHh4, base64URL: _w, base32: PB4HQ===, "
       "hex: '787878', raw: 'raw bytes', vec: [eA==, eXk=]";
-    auto scan = ZvNewCf::scan(source);
+    auto scan = ZfCf::scan(source);
     ZuCheck(scan.p<0>() == int(source.length()));
-    auto value = ZvNewCf::handler<CfBytes>(scan.p<1>()).ctor();
+    auto value = ZfCf::handler<CfBytes>(scan.p<1>()).ctor();
     ZuCheck(ZuBSpan{value.base64} == ZuBSpan{"xxx"});
     ZuCheck(value.base64URL.length() == 1 && value.base64URL[0] == 0xff);
     ZuCheck(ZuBSpan{value.base32} == ZuBSpan{"xxx"});
@@ -572,7 +602,7 @@ static void loadTypes() {
     ZuCheck(value.vec[1].length() == 2);
     ZuCheck(value.vec[1][0] == 'y' && value.vec[1][1] == 'y');
 
-    auto again = ZvNewCf::handler<CfBytes>(scan.p<1>()).ctor();
+    auto again = ZfCf::handler<CfBytes>(scan.p<1>()).ctor();
     ZuCheck(ZuBSpan{again.base64} == ZuBSpan{"xxx"});
     ZuCheck(string(field(scan.p<1>(), "base64")) == "eHh4");
   }
@@ -581,9 +611,9 @@ static void loadTypes() {
       "i: -42, hex: deadbeef, enum_: Low, flags: Bit0|Bit2, "
       "float_: 1.25e2, fixed: 12.5, decimal: -0.125, "
       "time: 1700000000.25, ints: [1, -2, 3]";
-    auto scan = ZvNewCf::scan(source);
+    auto scan = ZfCf::scan(source);
     ZuCheck(scan.p<0>() == int(source.length()));
-    auto value = ZvNewCf::handler<CfNumbers>(scan.p<1>()).ctor();
+    auto value = ZfCf::handler<CfNumbers>(scan.p<1>()).ctor();
     ZuCheck(value.i == -42);
     ZuCheck(value.hex == 0xdeadbeef);
     ZuCheck(value.enum_ == CfValues::Low);
@@ -597,18 +627,18 @@ static void loadTypes() {
     ZuCheck(value.ints[0] == 1 && value.ints[1] == -2 && value.ints[2] == 3);
 
     CfNumbers loaded;
-    ZvNewCf::handler<CfNumbers>(scan.p<1>()).load(loaded);
+    ZfCf::handler<CfNumbers>(scan.p<1>()).load(loaded);
     ZuCheck(loaded.i == -42 && loaded.hex == 0xdeadbeef);
-    auto update = ZvNewCf::scan("i: 7");
-    ZvNewCf::handler<CfNumbers>(update.p<1>()).update(loaded);
+    auto update = ZfCf::scan("i: 7");
+    ZfCf::handler<CfNumbers>(update.p<1>()).update(loaded);
     ZuCheck(loaded.i == 7);
     ZuCheck(loaded.hex == 0xdeadbeef);
 
     ZtString<> saved;
-    ZvNewCf::save(saved, value);
-    auto rescanned = ZvNewCf::scan(saved);
+    ZfCf::save(saved, value);
+    auto rescanned = ZfCf::scan(saved);
     ZuCheck(rescanned.p<0>() == int(saved.length()));
-    auto roundTrip = ZvNewCf::handler<CfNumbers>(rescanned.p<1>()).ctor();
+    auto roundTrip = ZfCf::handler<CfNumbers>(rescanned.p<1>()).ctor();
     ZuCheck(roundTrip.i == value.i);
     ZuCheck(roundTrip.hex == value.hex);
     ZuCheck(roundTrip.enum_ == value.enum_);
@@ -618,10 +648,10 @@ static void loadTypes() {
   {
     CfOptional value;
     ZtString<> saved;
-    ZvNewCf::save(saved, value);
-    auto scan = ZvNewCf::scan(saved);
+    ZfCf::save(saved, value);
+    auto scan = ZfCf::scan(saved);
     ZuCheck(scan.p<0>() == int(saved.length()));
-    auto roundTrip = ZvNewCf::handler<CfOptional>(scan.p<1>()).ctor();
+    auto roundTrip = ZfCf::handler<CfOptional>(scan.p<1>()).ctor();
     ZuCheck(!roundTrip.head);
     ZuCheck(!roundTrip.req[0]);
     ZuCheck(ZuCSpan{roundTrip.tail} == "tail");
@@ -635,11 +665,11 @@ static void loadSave() {
     "bytes: eHh4, strings: [one, 'two', \"three\"], "
     "nested: {value: 7}";
   ZtString<> original = source;
-  auto scan = ZvNewCf::scan(source);
+  auto scan = ZfCf::scan(source);
   ZuCheck(scan.p<0>() == int(source.length()));
   ZuCheck(source == original);
 
-  auto value = ZvNewCf::handler<CfData>(scan.p<1>()).ctor();
+  auto value = ZfCf::handler<CfData>(scan.p<1>()).ctor();
   ZuCheck(ZuCSpan{value.cstr} == "hello");
   ZuCheck(value.string == "world");
   ZuCheck(value.number == 42);
@@ -652,15 +682,15 @@ static void loadSave() {
   ZuCheck(value.nested.value == 7);
   ZuCheck(source == original);
 
-  auto again = ZvNewCf::handler<CfData>(scan.p<1>()).ctor();
+  auto again = ZfCf::handler<CfData>(scan.p<1>()).ctor();
   ZuCheck(ZuBSpan{again.bytes} == ZuBSpan{"xxx"});
   ZuCheck(source == original);
 
   ZtString<> saved;
-  ZvNewCf::save(saved, value);
-  auto rescanned = ZvNewCf::scan(saved);
+  ZfCf::save(saved, value);
+  auto rescanned = ZfCf::scan(saved);
   ZuCheck(rescanned.p<0>() == int(saved.length()));
-  auto roundTrip = ZvNewCf::handler<CfData>(rescanned.p<1>()).ctor();
+  auto roundTrip = ZfCf::handler<CfData>(rescanned.p<1>()).ctor();
   ZuCheck(roundTrip.string == value.string);
   ZuCheck(roundTrip.number == value.number);
   ZuCheck(roundTrip.nested.value == value.nested.value);

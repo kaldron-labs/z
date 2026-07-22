@@ -6,7 +6,7 @@
 
 // Zcmd locally hosted commands
 
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 
 #include <zlib/ZcmdHost.hh>
 
@@ -15,13 +15,13 @@
 namespace Zcmd {
 
 struct Help { ZuCSpan cmd; };
-ZtStruct(Help, (((cmd), (CLI::Arg<1>)), (String)));
+ZfStruct(Help, (((cmd), (CLI::Arg<1>)), (String)));
 Fn helpCmd()
 {
   return [](Context *ctx, ZiIOBuf *out, const Argv &argv) {
     Host *host = ctx->host;
     Help help;
-    unsigned argc = ZtCLI::load(help, argv);
+    unsigned argc = ZfCLI::load(help, argv);
     if (argc > 2) throw Usage();
     if (ZuUnlikely(argc == 2)) {
       auto cmd = host->findCmd(help.cmd);
@@ -46,12 +46,12 @@ Fn helpCmd()
 }
 
 struct LoadMod { ZiModule::Path path; };
-ZtStruct(LoadMod, (((path), (CLI::Arg<1>)), (String)));
+ZfStruct(LoadMod, (((path), (CLI::Arg<1>)), (String)));
 Fn loadModCmd()
 {
   return [](Context *ctx, ZiIOBuf *out, const Argv &argv) {
     LoadMod loadMod;
-    unsigned argc = ZtCLI::load(loadMod, argv);
+    unsigned argc = ZfCLI::load(loadMod, argv);
     if (argc != 2) throw Usage();
     ZiModule module;
     ZeString e;

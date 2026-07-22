@@ -9,9 +9,9 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#include <zlib/ZtCSV.hh>
+#include <zlib/ZfCSV.hh>
 
-namespace ZtCSV {
+namespace ZfCSV {
 
 // Microsoft Excel compatible quoting: a, " ,"",",b -> a| ,",|b
 
@@ -224,4 +224,4 @@ ret:
   span.trunc(o);
 }
 
-} // ZtCSV
+} // ZfCSV

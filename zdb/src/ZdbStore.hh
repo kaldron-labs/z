@@ -19,7 +19,7 @@
 
 #include <zlib/ZmPolymorph.hh>
 
-#include <zlib/ZtStruct.hh>
+#include <zlib/ZfStruct.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -170,8 +170,8 @@ public:
   virtual void open(			// open table - idempotent, async
       IDString id,			// name of table
       unsigned nShards,			// #shards
-      ZtVFieldArray fields,		// fields
-      ZtVKeyFieldArray keyFields,	// keys and their fields
+      ZfVFieldArray fields,		// fields
+      ZfVKeyFieldArray keyFields,	// keys and their fields
       const reflection::Schema *schema,	// flatbuffer reflection schema
       IOBufAllocFn,			// buffer allocator
       OpenFn) = 0;			// open result callback
