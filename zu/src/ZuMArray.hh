@@ -30,6 +30,7 @@ public:
   using Array = Array_;
   using T = typename Array::T;
   using R = typename Array::R;
+  using U = ZuUnder<T>;
 
   Elem() = delete;
   Elem(Array &array_, uint64_t i_) : array{array_}, i{i_} { }
@@ -45,9 +46,8 @@ public:
 
   operator R() const noexcept(noexcept(get())) { return get(); }
   template <
-    typename U,
     typename _ = T,
-    decltype(ZuIfT<!ZuIsSame<U, _>{} && ZuIsSame<U, ZuUnder<_>>{}>(), int()) = 0>
+    decltype(ZuNotSame<U, _>(), int()) = 0>
   operator U() const noexcept(noexcept(get())) { return get(); }
 
   template <typename _ = Array>

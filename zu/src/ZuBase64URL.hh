@@ -15,7 +15,7 @@
 
 #include <zlib/ZuSpan.hh>
 
-namespace ZuBase64URL {
+struct ZuBase64URL {
 
 // UTF8 / ASCII, which is all we care about
 static constexpr const uint8_t lookup_[] = {
@@ -28,24 +28,24 @@ static constexpr const uint8_t lookup_[] = {
   39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
 };
 
-ZuInline constexpr uint8_t lookup(uint8_t c) {
+ZuInline static constexpr uint8_t lookup(uint8_t c) {
   c -= 45;
   return c > 120 ? 0xff : lookup_[c];
 };
 
-ZuInline constexpr bool is(char c) {
+ZuInline static constexpr bool is(char c) {
   return lookup(c) != 0xff;
 }
 
 // both encode and decode return count of bytes written
 
-ZuInline constexpr uint64_t enclen(uint64_t slen) {
+ZuInline static constexpr uint64_t enclen(uint64_t slen) {
   uint64_t dlen = (slen / 3)<<2;
   if (slen %= 3) dlen += slen + 1;
   return dlen;
 }
 // does not null-terminate dst
-inline uint64_t encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
+static inline uint64_t encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   static constexpr const char lookup[] = {
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
     'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
@@ -81,14 +81,14 @@ inline uint64_t encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   return d - dst.data();
 }
 
-ZuInline constexpr uint64_t declen(uint64_t slen) {
+ZuInline static constexpr uint64_t declen(uint64_t slen) {
   uint64_t dlen = (slen>>2) * 3;
   if (slen &= 3) dlen += slen - 1;
   return dlen;
 }
 // does not null-terminate dst
 // supports in-place-overwrite decoding (dst == src)
-inline uint64_t decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
+static inline uint64_t decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   auto s = src.data();
   auto d = dst.data();
   auto n = src.length();
@@ -108,6 +108,6 @@ inline uint64_t decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   return d - dst.data();
 }
 
-}
+};
 
 #endif /* ZuBase64URL_HH */

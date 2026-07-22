@@ -42,7 +42,7 @@ template <> struct ZuByteSwap_UInt<16> { using T = uint128_t; };
 
 #pragma pack(push, 1)
 
-template <typename T_> class ZuByteSwap {
+template <typename T_> class ZuByteSwap__ {
 public:
   using T = T_;
   using U = ZuUnder<T>;
@@ -50,105 +50,105 @@ public:
   ZuAssert(ZuTraits<U>::IsPrimitive && ZuTraits<U>::IsReal);
   using I = typename ZuByteSwap_UInt<sizeof(T)>::T;
 
-  constexpr ZuByteSwap() noexcept { m_i = 0; }
-  constexpr ZuByteSwap(const ZuByteSwap &i) noexcept { m_i = i.m_i; }
-  constexpr ZuByteSwap &operator =(const ZuByteSwap &i) noexcept {
+  constexpr ZuByteSwap__() noexcept { m_i = 0; }
+  constexpr ZuByteSwap__(const ZuByteSwap__ &i) noexcept { m_i = i.m_i; }
+  constexpr ZuByteSwap__ &operator =(const ZuByteSwap__ &i) noexcept {
     if (this != &i) m_i = i.m_i;
     return *this;
   }
 
   template <typename R>
-  ZuByteSwap(const R &r) noexcept { set(r); }
+  ZuByteSwap__(const R &r) noexcept { set(r); }
   template <typename R>
-  ZuByteSwap &operator =(const R &r) noexcept { set(r); return *this; }
+  ZuByteSwap__ &operator =(const R &r) noexcept { set(r); return *this; }
 
   constexpr operator U() const noexcept { return get<U>(); }
 
-  ZuByteSwap operator -() { return ZuByteSwap(-get<U>()); }
+  ZuByteSwap__ operator -() { return ZuByteSwap__(-get<U>()); }
 
-  template <typename P> ZuByteSwap operator +(const P &p) const {
-    return ZuByteSwap(get<U>() + p);
+  template <typename P> ZuByteSwap__ operator +(const P &p) const {
+    return ZuByteSwap__(get<U>() + p);
   }
-  template <typename P> ZuByteSwap operator -(const P &p) const {
-    return ZuByteSwap(get<U>() - p);
+  template <typename P> ZuByteSwap__ operator -(const P &p) const {
+    return ZuByteSwap__(get<U>() - p);
   }
-  template <typename P> ZuByteSwap operator *(const P &p) const {
-    return ZuByteSwap(get<U>() * p);
+  template <typename P> ZuByteSwap__ operator *(const P &p) const {
+    return ZuByteSwap__(get<U>() * p);
   }
-  template <typename P> ZuByteSwap operator /(const P &p) const {
-    return ZuByteSwap(get<U>() / p);
+  template <typename P> ZuByteSwap__ operator /(const P &p) const {
+    return ZuByteSwap__(get<U>() / p);
   }
-  template <typename P> ZuByteSwap operator %(const P &p) const {
-    return ZuByteSwap(get<U>() % p);
+  template <typename P> ZuByteSwap__ operator %(const P &p) const {
+    return ZuByteSwap__(get<U>() % p);
   }
-  template <typename P> ZuByteSwap operator |(const P &p) const {
-    return ZuByteSwap(get<U>() | p);
+  template <typename P> ZuByteSwap__ operator |(const P &p) const {
+    return ZuByteSwap__(get<U>() | p);
   }
-  template <typename P> ZuByteSwap operator &(const P &p) const {
-    return ZuByteSwap(get<U>() & p);
+  template <typename P> ZuByteSwap__ operator &(const P &p) const {
+    return ZuByteSwap__(get<U>() & p);
   }
-  template <typename P> ZuByteSwap operator ^(const P &p) const {
-    return ZuByteSwap(get<U>() ^ p);
+  template <typename P> ZuByteSwap__ operator ^(const P &p) const {
+    return ZuByteSwap__(get<U>() ^ p);
   }
 
-  ZuByteSwap operator ++(int) {
-    ZuByteSwap o = *this;
+  ZuByteSwap__ operator ++(int) {
+    ZuByteSwap__ o = *this;
     set(get<U>() + 1);
     return o;
   }
-  ZuByteSwap &operator ++() {
+  ZuByteSwap__ &operator ++() {
     set(get<U>() + 1);
     return *this;
   }
-  ZuByteSwap operator --(int) {
-    ZuByteSwap o = *this;
+  ZuByteSwap__ operator --(int) {
+    ZuByteSwap__ o = *this;
     set(get<U>() - 1);
     return o;
   }
-  ZuByteSwap &operator --() {
+  ZuByteSwap__ &operator --() {
     set(get<U>() - 1);
     return *this;
   }
 
-  template <typename P> ZuByteSwap &operator +=(const P &p) {
+  template <typename P> ZuByteSwap__ &operator +=(const P &p) {
     set(get<U>() + p);
     return *this;
   }
-  template <typename P> ZuByteSwap &operator -=(const P &p) {
+  template <typename P> ZuByteSwap__ &operator -=(const P &p) {
     set(get<U>() - p);
     return *this;
   }
-  template <typename P> ZuByteSwap &operator *=(const P &p) {
+  template <typename P> ZuByteSwap__ &operator *=(const P &p) {
     set(get<U>() * p);
     return *this;
   }
-  template <typename P> ZuByteSwap &operator /=(const P &p) {
+  template <typename P> ZuByteSwap__ &operator /=(const P &p) {
     set(get<U>() / p);
     return *this;
   }
-  template <typename P> ZuByteSwap &operator %=(const P &p) {
+  template <typename P> ZuByteSwap__ &operator %=(const P &p) {
     set(get<U>() % p);
     return *this;
   }
-  template <typename P> ZuByteSwap &operator |=(const P &p) {
+  template <typename P> ZuByteSwap__ &operator |=(const P &p) {
     set(get<U>() | p);
     return *this;
   }
-  template <typename P> ZuByteSwap &operator &=(const P &p) {
+  template <typename P> ZuByteSwap__ &operator &=(const P &p) {
     set(get<U>() & p);
     return *this;
   }
-  template <typename P> ZuByteSwap &operator ^=(const P &p) {
+  template <typename P> ZuByteSwap__ &operator ^=(const P &p) {
     set(get<U>() ^ p);
     return *this;
   }
 
 private:
-  // P is exactly ZuByteSwap<T>
+  // P is exactly ZuByteSwap__<T>
   template <typename P>
-  ZuSame<P, ZuByteSwap> set(const P &p) { m_i = p.m_i; }
+  ZuSame<P, ZuByteSwap__> set(const P &p) { m_i = p.m_i; }
   template <typename P>
-  ZuSame<P, ZuByteSwap, const ZuByteSwap &> get() const { return *this; }
+  ZuSame<P, ZuByteSwap__, const ZuByteSwap__ &> get() const { return *this; }
 
   // P is exactly U or T
   template <typename P>
@@ -163,7 +163,7 @@ private:
   // P is integral (but not the same)
   template <typename P>
   ZuIfT<
-      !ZuIsSame<P, ZuByteSwap>{} &&
+      !ZuIsSame<P, ZuByteSwap__>{} &&
       !ZuIsSame<P, T>{} && !ZuIsSame<P, U>{} &&
       ZuTraits<P>::IsIntegral>
   set(P p) {
@@ -171,7 +171,7 @@ private:
   }
   template <typename P>
   ZuIfT<
-      !ZuIsSame<P, ZuByteSwap>{} &&
+      !ZuIsSame<P, ZuByteSwap__>{} &&
       !ZuIsSame<P, T>{} && !ZuIsSame<P, U>{} &&
       ZuTraits<P>::IsIntegral>
   get() const {
@@ -181,7 +181,7 @@ private:
   // P is non-integral and converts (but is not the same as U)
   template <typename P>
   ZuIfT<
-      !ZuIsSame<P, ZuByteSwap>{} &&
+      !ZuIsSame<P, ZuByteSwap__>{} &&
       !ZuIsSame<P, T>{} && !ZuIsSame<P, U>{} &&
       !ZuTraits<P>::IsIntegral &&
       ZuIsConvertible<P, U>{}>
@@ -190,7 +190,7 @@ private:
   }
   template <typename P>
   ZuIfT<
-      !ZuIsSame<P, ZuByteSwap>{} &&
+      !ZuIsSame<P, ZuByteSwap__>{} &&
       !ZuIsSame<P, T>{} && !ZuIsSame<P, U>{} &&
       !ZuTraits<P>::IsIntegral &&
       ZuIsConvertible<U, P>{}, P>
@@ -200,16 +200,20 @@ private:
 
   // traits
   struct Traits : public ZuTraits<I> { enum { IsPrimitive = 0 }; };
-  friend Traits ZuTraitsType(ZuByteSwap *);
+  friend Traits ZuTraitsType(ZuByteSwap__ *);
 
   // underlying
-  friend U ZuUnderType(ZuByteSwap *);
+  friend U ZuUnderType(ZuByteSwap__ *);
 
 private:
   I	m_i;
 };
 
 #pragma pack(pop)
+
+template <typename U> struct ZuByteSwap_ { using T = ZuByteSwap__<U>; };
+template <typename U> struct ZuByteSwap_<ZuByteSwap__<U>> { using T = U; };
+template <typename U> using ZuByteSwap = typename ZuByteSwap_<U>::T;
 
 #if Zu_BIGENDIAN
 template <typename T> using ZuBigEndian = T;

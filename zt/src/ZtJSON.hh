@@ -482,7 +482,7 @@ void saveValue(S &s, const T &v);
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
-auto loadValue(const AnyNode *);
+auto loadValue(AnyNode *);
 
 // save/load handler for object-formatted types {...}
 struct AsObject {
@@ -1139,8 +1139,9 @@ inline T loadValue_(AnyNode *node)
       case ValueTC::Number: {
 	auto d = eov_Decimal(node->data<AnyNode::Number>());
 	if (d.p<0>() < 0) return ZuCmp<T>::null();
-	auto v = d.p<1>().floor();
-	return ZtFieldValidate<Props>(T(v));
+	auto v = T(d.p<1>().floor());
+	ZtFieldLimit<Props>(v);
+	return v;
       }
       default:
 	return ZuCmp<T>::null();
@@ -1157,7 +1158,7 @@ inline T loadValue_(AnyNode *node)
 	    TypeCode == ZtFieldTC::Decimal ||
 	    TypeCode == ZtFieldTC::Fixed) {
 	  ZuDecimal d{span};
-	  d = ZtFieldValidate<Props>(d);
+	  ZtFieldLimit<Props>(d);
 	  if constexpr (TypeCode == ZtFieldTC::Decimal)
 	    return d;
 	  else {
@@ -1168,7 +1169,9 @@ inline T loadValue_(AnyNode *node)
 	      return ZuFixed{d};
 	  }
 	} else {
-	  return ZtFieldValidate<Props>(ZuBox<double>{span}.val());
+	  auto v = ZuBox<double>{span}.val();
+	  ZtFieldLimit<Props>(v);
+	  return v;
 	}
 	ZuUnreachable();
       } break;
@@ -1179,7 +1182,8 @@ inline T loadValue_(AnyNode *node)
 	    TypeCode == ZtFieldTC::Fixed) {
 	  auto d = eov_Decimal(span);
 	  if (d.p<0>() < 0) return T{};
-	  auto v = ZtFieldValidate<Props>(d.p<1>());
+	  auto v = d.p<1>();
+	  ZtFieldLimit<Props>(v);
 	  if constexpr (TypeCode == ZtFieldTC::Decimal)
 	    return v;
 	  else {
@@ -1192,7 +1196,9 @@ inline T loadValue_(AnyNode *node)
 	} else {
 	  auto d = eov_Float(span);
 	  if (d.p<0>() < 0) return ZuCmp<T>::null();
-	  return ZtFieldValidate<Props>(d.p<1>());
+	  auto v = d.p<1>();
+	  ZtFieldLimit<Props>(v);
+	  return v;
 	}
       } break;
       default:

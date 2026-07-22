@@ -472,7 +472,16 @@ struct AsArray;		// as array
 struct AsString;	// as string
 struct AsJSON;		// as embedded JSON
 
-using AsDeflt = AsObject;
+// if fields are defined, default to AsObject
+template <typename O, typename Facet, typename = ZuFields<O, Facet>>
+struct AsDeflt_ { using T = AsObject; };
+// ... otherwise fall back to AsString
+template <typename O, typename Facet>
+struct AsDeflt_<O, Facet, ZuTypeList<>> { using T = AsString; };
+struct AsDeflt {
+  template <typename O, typename Facet>
+  using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
+};
 
 } // ZtCLI
 
@@ -800,8 +809,6 @@ inline void saveField(S &s, const O &o, ZuCSpan prefix)
   saveValue<Facet, Filter, Quote, Type::Code, Props>(
     s, Field::get(o), prefix);
 }
-
-// uses ZtURI::loadValue_()
 
 // uses ZtURI::loadValue()
 

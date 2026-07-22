@@ -1470,7 +1470,8 @@ inline T loadValue_(ZuSpan<char> span)
 	TypeCode == ZtFieldTC::Fixed) {
       auto d = ZtJSON::eov_Decimal(span);
       if (d.p<0>() < 0) return T{};
-      auto v = ZtFieldValidate<Props>(d.p<1>());
+      auto v = d.p<1>();
+      ZtFieldLimit<Props>(v);
       if constexpr (TypeCode == ZtFieldTC::Decimal)
 	return v;
       else {
@@ -1483,7 +1484,9 @@ inline T loadValue_(ZuSpan<char> span)
     } else {
       auto d = ZtJSON::eov_Float(span);
       if (d.p<0>() < 0) return ZuCmp<T>::null();
-      return ZtFieldValidate<Props>(d.p<1>());
+      auto v = d.p<1>();
+      ZtFieldLimit<Props>(v);
+      return v;
     }
   } else if constexpr (
       TypeCode == ZtFieldTC::Time ||

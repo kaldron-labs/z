@@ -483,12 +483,14 @@ inline T loadValue_(ZuSpan<char> span)
       return T(Scan{span}.value.val());
     }
   } else if constexpr (TypeCode == ZtFieldTC::Float) {
-    return ZtFieldValidate<Props>(ZuBox<double>{span}.val());
+    auto v = ZuBox<double>{span}.val();
+    ZtFieldLimit<Props>(v);
+    return v;
   } else if constexpr (
       TypeCode == ZtFieldTC::Fixed ||
       TypeCode == ZtFieldTC::Decimal) {
     ZuDecimal d{span};
-    d = ZtFieldValidate<Props>(d);
+    ZtFieldLimit<Props>(d);
     if constexpr (TypeCode == ZtFieldTC::Decimal)
       return d;
     else {

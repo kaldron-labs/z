@@ -29,6 +29,7 @@ public:
   using T = typename Array::T;
   static constexpr bool Mutable = Array::Mutable;
   using R = typename Array::R;
+  using U = ZuUnder<R>;
 
   Elem() = delete;
   Elem(Array &array_, uint64_t i_) : array{array_}, i{i_} { }
@@ -41,9 +42,8 @@ public:
 
   operator R() const { return get(); }
   template <
-    typename U,
     typename _ = T,
-    decltype(ZuIfT<!ZuIsSame<U, _>{} && ZuIsSame<U, ZuUnder<_>>{}>(), int()) = 0>
+    decltype(ZuNotSame<U, _>(), int()) = 0>
   operator U() const { return get(); }
 
   template <bool _ = Mutable>

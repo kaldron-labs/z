@@ -36,6 +36,26 @@ struct NestedJSON {
 
 ZuStructFacet(Bah);
 
+struct Scalar {
+  Scalar() = default;
+  Scalar(ZuCSpan value_) : value{value_} { }
+
+  ZtString<>	value;
+
+  template <typename S>
+  friend S &operator <<(S &s, const Scalar &v) {
+    s << v.value;
+    return s;
+  }
+};
+
+struct ScalarArgs {
+  Scalar scalar;
+};
+
+ZtStruct((ScalarArgs, Bah),
+  (((scalar), (Ctor<0>)), (UDT)));
+
 ZtStruct((Nested, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
@@ -183,6 +203,21 @@ void roundTrip()
   ZuCheck(cli_ == cli3);
 }
 
+void fieldlessUDT()
+{
+  ZuTestScope(fieldlessUDT);
+
+  ScalarArgs value{Scalar{"hello world"}};
+  ZtString<> cli{"x "};
+  ZtCLI::save<ZuFacet::Bah>(cli, value);
+  ZtCLI::InCLI in{cli};
+  ZtCLI::Parser<ScalarArgs, ZuFacet::Bah> parser;
+  ZuCheck(parser.scanArgv(in.argv));
+  auto loaded =
+    ZtCLI::handler<ScalarArgs, ZuFacet::Bah>(parser.root).ctor();
+  ZuCheck(loaded.scalar.value == "hello world");
+}
+
 void cmdQuote()
 {
   ZuTestScope(cmdQuote);
@@ -297,6 +332,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(roundTrip);
+  ZuTestCall(fieldlessUDT);
   ZuTestCall(cmdQuote);
   ZuTestCall(parseCLI);
   ZuTestCall(parseCLIEscapedAndEmpty);

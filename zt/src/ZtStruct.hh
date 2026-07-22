@@ -2011,14 +2011,25 @@ struct ZtFieldPrintInt {
   }
 };
 
+// returns true if:
+// - no range is specified
+// - value was within range
+// - value was already null;
+// returns false and sets value to null if:
+// - value was out of range
 template <typename Props, typename T>
-inline T ZtFieldValidate(T v) {
-  if constexpr (ZuFieldProp::HasRange<Props>{}) {
+inline bool ZtFieldLimit(T &v) {
+  if constexpr (!ZuFieldProp::HasRange<Props>{}) {
+    return true;
+  } else {
+    if (ZuCmp<T>::null(v)) return true;
     using Range = ZuFieldProp::GetRange<Props>;
-    if (v < Range::minimum() || v > Range::maximum())
-      return ZuCmp<T>::null();
+    if (v < Range::minimum() || v > Range::maximum()) {
+      v = ZuCmp<T>::null();
+      return false;
+    }
+    return true;
   }
-  return v;
 }
 
 template <typename Props, typename Fmt, typename B>
