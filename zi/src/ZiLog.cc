@@ -16,7 +16,7 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZtRegex.hh>
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/ZiLog.hh>
 

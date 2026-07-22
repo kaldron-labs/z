@@ -11,9 +11,9 @@
 // - a field is a data/function member or lambda-defined derived data
 // - fields can be combined into primary/secondary keys, which can form groups
 // - compile-time reflection and access to individual fields
-// - ZtStruct extends ZuStruct for type-erased run-time introspection,
+// - ZfStruct extends ZuStruct for type-erased run-time introspection,
 //   type codes, printing/scanning, ...
-// - ZfbStruct further extends ZtStruct for flatbuffers serialization
+// - ZfbStruct further extends ZfStruct for flatbuffers serialization
 // - Zdb provides relational data store
 //
 // each structure has 1 or more "facets"
@@ -125,7 +125,7 @@ namespace ZuStructKeyID {
 // - a typelist of individual properties:
 // - each type is declared in the ZuFieldProp namespace
 // - additional properties can be injected into the ZuFieldProp namespace
-//   by higher layers (ZtStruct, ZfbStruct, etc.)
+//   by higher layers (ZfStruct, ZfbStruct, etc.)
 namespace ZuFieldProp {
   // extract a value property
   // - property can be declared with a specific type T:

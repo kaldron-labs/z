@@ -8,7 +8,7 @@
 
 #include <zlib/ZmTrap.hh>
 
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -32,7 +32,7 @@ struct Options {
   bool		help = false;
 };
 
-ZtStruct((Options, CLI),
+ZfStruct((Options, CLI),
   (((module),  (CLI::Opt<'m'>)),  (String, getenv("ZDB_MODULE"))),
   (((connect), (CLI::Opt<'c'>)),  (String, getenv("ZDB_CONNECT"))),
   (((debug),   (CLI::Flag<'d'>)),                        (Bool)),
@@ -92,7 +92,7 @@ void gtfo()
 int main(int argc_, char **argv)
 {
   Options options;
-  int argc = ZtCLI::load(options, argc_, argv);
+  int argc = ZfCLI::load(options, argc_, argv);
   if (argc != 1) usage();
   if (options.help) usage();
   if (!options.module) {

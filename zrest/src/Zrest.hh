@@ -260,9 +260,9 @@ struct FooType : public typename Link::MsgType {
     ZuCSpan path = rxMsg->header.path;
     path.offset(...);// skip endpoint
     // for URI use path:
-    ZtURI::new_<T>(o->ptr(), path);
+    ZfURI::new_<T>(o->ptr(), path);
     // or for POST with JSON body:
-    ZtJSON::load(o->data(), rxMsg->body.span); // for POSTed body
+    ZfJSON::load(o->data(), rxMsg->body.span); // for POSTed body
     // can also use rxMsg->header.key(i) to access headers
     // -----
 
@@ -316,7 +316,7 @@ struct FooType : public typename Link::MsgType {
     Builder builder{new IOBufAlloc()};
 
     // ----- build object -> HTTP
-    // use Builder with ZtJSON::save(s, o) for body
+    // use Builder with ZfJSON::save(s, o) for body
     builder.response(...); // or request
     // -----
 
@@ -418,7 +418,7 @@ class CliLink :
   // headers are too arbitrary
   // - need to present key, value to lambda for parsing
   // - provide built-in support for Authorization: Basic, Bearer and JWT
-  // - factor out idempotent in-place decoding of base64 etc. (see ZtJSON)
+  // - factor out idempotent in-place decoding of base64 etc. (see ZfJSON)
 
 public:
   using App = App_;
@@ -485,7 +485,7 @@ template <typename, typename> friend class Client;
     using Builder = Zrest::Builder<>; // no body, this is the client
     Builder builder{new IOBufAlloc()};
     builder.request(method, path, [](Builder &builder) {
-      ZtURI::save<Fields>(builder.buf, object);
+      ZfURI::save<Fields>(builder.buf, object);
     }, host, /* FIXME - headers must come from msg */);
     auto buf = builder.finish();
     TLS::send(ZuMv(buf));

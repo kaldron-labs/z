@@ -10,8 +10,8 @@
 
 #include <zlib/ZmDemangle.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfJSON.hh>
 
 using namespace ZuTestUtil;
 
@@ -26,14 +26,14 @@ ZuStructFacet(Bah);
 struct Nested {
   int i1 = 0, i2 = 0;
 
-  friend ZtStructPrint ZuPrintType(Nested *);
+  friend ZfStructPrint ZuPrintType(Nested *);
 };
 
 #define Nested_Fields(macro, ...) macro( \
   (((i1), (Ctor<0>)), (Int32)), \
   (((i2), (Ctor<1>)), (Int32)) __VA_OPT__(, __VA_ARGS__))
 
-#define Nested_Struct(...) ZtStruct((Nested, JSON, Bah) __VA_OPT__(, __VA_ARGS__))
+#define Nested_Struct(...) ZfStruct((Nested, JSON, Bah) __VA_OPT__(, __VA_ARGS__))
 
 Nested_Fields(Nested_Struct);
 
@@ -54,14 +54,14 @@ struct Foo {
   Nested nested;
   ZtArray<ZtArray<uint8_t>> bytesVec;
 
-  friend ZtStructPrint ZuPrintType(Foo *);
+  friend ZfStructPrint ZuPrintType(Foo *);
 };
 
 #define FooFloatFields \
   (((float_),		(Ctor<8>)),	(Float)), \
   (((float_ranged),	(Ctor<9>, (Range<0.0, 1>))),	(Float, 0.42))
 
-ZtStruct((Foo, JSON),
+ZfStruct((Foo, JSON),
   (((string, Rd),	(Ctor<0>)),	(CString, "hello \"world\"")),
   (((bytes),		(Ctor<1>)),	(Bytes, ZuBSpan{"bytes"})),
   (((id),		(Ctor<2>, Mutable)),	(String, "goodbye")),
@@ -82,7 +82,7 @@ ZtStruct((Foo, JSON),
   (((nested),		(Ctor<13>)),	(UDT)),
   (((bytesVec),		(Ctor<14>)),	(BytesVec)));
 
-ZtStructRender(Foo, Bah,
+ZfStructRender(Foo, Bah,
   string,
   (bytes,	JSON::ID<"bytes-BAH">, JSON::Raw),
   id,
@@ -93,9 +93,9 @@ ZtStructRender(Foo, Bah,
   (float_,	JSON::ID<"float-BAH">, JSON::Number<ZuFmt::FP<4>>),
   float_ranged, fixed, decimal, time_, nested, bytesVec);
 
-using IntField = ZtField(Foo, int_);
-using IntRangeField = ZtField(Foo, int_ranged);
-using FloatRangeField = ZtField(Foo, float_ranged);
+using IntField = ZfField(Foo, int_);
+using IntRangeField = ZfField(Foo, int_ranged);
+using FloatRangeField = ZfField(Foo, float_ranged);
 using IntRange = ZuFieldProp::GetRange<typename IntRangeField::Props>;
 using FloatRange = ZuFieldProp::GetRange<typename FloatRangeField::Props>;
 
@@ -119,7 +119,7 @@ struct BoxFoo {
   ZtArray<BoxInt> values;
 };
 
-ZtStruct((BoxFoo, JSON),
+ZfStruct((BoxFoo, JSON),
   (((value),	(Ctor<0>, JSON::String<>)),	(Int32)),
   (((values),	(Ctor<1>, JSON::String<>)),	(Int32Vec)));
 
@@ -155,17 +155,17 @@ struct Baz {
   friend inline decltype(auto) operator <<(S &s, const Baz &baz) {
     return s << "baz!";
   }
-  friend ZtJSON::AsString ZtJSON_Fmt(Baz *);
+  friend ZfJSON::AsString ZfJSON_Fmt(Baz *);
 };
 struct BazArray : public ZtArray<Baz> {
   ZuDerive_(BazArray, ZtArray<Baz>);
-  friend ZtJSON::AsArray<ZtFieldTC::UDT> ZtJSON_Fmt(BazArray *);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(BazArray *);
 };
 struct Bazz {
   Baz baz;
   BazArray bazArray;
 };
-ZtStruct(Bazz,
+ZfStruct(Bazz,
   (((baz), (Ctor<0>)), (UDT)),
   (((bazArray), (Ctor<1>)), (UDT)));
 
@@ -175,7 +175,7 @@ struct OptFoo {
   const char *mid = nullptr;
   const char *tail = "tail";
 };
-ZtStruct((OptFoo, JSON),
+ZfStruct((OptFoo, JSON),
   (((head),	(Ctor<0>, JSON::Opt)),	(CString)),
   (((req),	(Ctor<1>)),		(CString)),
   (((mid),	(Ctor<2>, JSON::Opt)),	(CString)),
@@ -191,32 +191,32 @@ int main(int argc, char **argv)
   ZuCheck(Fields::N > 0);
 
   ZtVFmt fmt;
-  ZtVFieldArray fields{ZtVFields<Foo>()};
+  ZfVFieldArray fields{ZfVFields<Foo>()};
   ZuCheck(fields.length() > 0);
 
   {
-    auto intField = fields[ZtFieldIndex(Foo, int_)];
-    auto intRangeField = fields[ZtFieldIndex(Foo, int_ranged)];
-    auto floatRangeField = fields[ZtFieldIndex(Foo, float_ranged)];
-    ZuCheck(!(intField->props & ZtVFieldProp::Range()));
-    ZuCheck(intRangeField->props & ZtVFieldProp::Range());
-    ZuCheck(floatRangeField->props & ZtVFieldProp::Range());
-    ZuCheck(!(intRangeField->type->props & ZtVFieldProp::Range()));
-    ZuCheck(intRangeField->constant.get<ZtFieldTC::Int32>(
-	ZtVField::cget(ZtVFieldConstant::Minimum)) == 0);
-    ZuCheck(intRangeField->constant.get<ZtFieldTC::Int32>(
-	ZtVField::cget(ZtVFieldConstant::Maximum)) == 100);
-    ZuCheck(floatRangeField->constant.get<ZtFieldTC::Float>(
-	ZtVField::cget(ZtVFieldConstant::Minimum)) == 0.0);
-    ZuCheck(floatRangeField->constant.get<ZtFieldTC::Float>(
-	ZtVField::cget(ZtVFieldConstant::Maximum)) == 1.0);
+    auto intField = fields[ZfFieldIndex(Foo, int_)];
+    auto intRangeField = fields[ZfFieldIndex(Foo, int_ranged)];
+    auto floatRangeField = fields[ZfFieldIndex(Foo, float_ranged)];
+    ZuCheck(!(intField->props & ZfVFieldProp::Range()));
+    ZuCheck(intRangeField->props & ZfVFieldProp::Range());
+    ZuCheck(floatRangeField->props & ZfVFieldProp::Range());
+    ZuCheck(!(intRangeField->type->props & ZfVFieldProp::Range()));
+    ZuCheck(intRangeField->constant.get<ZfFieldTC::Int32>(
+	ZfVField::cget(ZfVFieldConstant::Minimum)) == 0);
+    ZuCheck(intRangeField->constant.get<ZfFieldTC::Int32>(
+	ZfVField::cget(ZfVFieldConstant::Maximum)) == 100);
+    ZuCheck(floatRangeField->constant.get<ZfFieldTC::Float>(
+	ZfVField::cget(ZfVFieldConstant::Minimum)) == 0.0);
+    ZuCheck(floatRangeField->constant.get<ZfFieldTC::Float>(
+	ZfVField::cget(ZfVFieldConstant::Maximum)) == 1.0);
   }
 
-  auto vprint = [&fmt](auto &s, const ZtVField &field, int constant) {
-    using namespace ZtFieldTC;
-    ZuSwitch::dispatch<ZtFieldTC::N>(field.type->code,
+  auto vprint = [&fmt](auto &s, const ZfVField &field, int constant) {
+    using namespace ZfFieldTC;
+    ZuSwitch::dispatch<ZfFieldTC::N>(field.type->code,
 	[&s, constant, &field, &fmt](auto Code) {
-      field.constant.print<Code>(s, ZtVField::cget(constant), &field, fmt);
+      field.constant.print<Code>(s, ZfVField::cget(constant), &field, fmt);
     });
   };
 
@@ -224,10 +224,10 @@ int main(int argc, char **argv)
     std::cerr << "Foo schema (compile-time)\n";
     ZuUnroll::all<Fields>([]<typename Field>() {
       std::cerr << "  " << Field::id()
-	<< ' ' << ZtFieldTC::name(Field::Type::Code)
+	<< ' ' << ZfFieldTC::name(Field::Type::Code)
 	<< " deflt=" << typename Field::Type::template Print<>{Field::deflt()}
 	<< MinMax<Field>{}
-	<< (Field::Type::Code == ZtFieldTC::Bytes ? "" : "\n");
+	<< (Field::Type::Code == ZfFieldTC::Bytes ? "" : "\n");
     });
     std::cerr << '\n';
 
@@ -235,17 +235,17 @@ int main(int argc, char **argv)
     for (unsigned i = 0, n = fields.length(); i < n; i++) {
       std::cerr << "  " << fields[i]->id;
       auto type = fields[i]->type;
-      std::cerr << ' ' << ZtFieldTC::name(type->code);
-      if (type->code == ZtFieldTC::UDT) {
+      std::cerr << ' ' << ZfFieldTC::name(type->code);
+      if (type->code == ZfFieldTC::UDT) {
 	std::cerr << " udt=" << ZmDemangle_{type->info.udt()->info->name()};
-      } else if (type->props & ZtVFieldProp::Enum()) {
+      } else if (type->props & ZfVFieldProp::Enum()) {
 	std::cerr << " enum=" << type->info.enum_()->id();
-      } else if (type->props & ZtVFieldProp::Flags()) {
+      } else if (type->props & ZfVFieldProp::Flags()) {
 	std::cerr << " flags=" << type->info.flags()->id();
       }
       std::cerr << " deflt=";
-      vprint(std::cerr, *fields[i], ZtVFieldConstant::Deflt);
-      using namespace ZtFieldTC;
+      vprint(std::cerr, *fields[i], ZfVFieldConstant::Deflt);
+      using namespace ZfFieldTC;
       switch (type->code) {
 	case Int32:
 	case UInt32:
@@ -253,9 +253,9 @@ int main(int argc, char **argv)
 	case Fixed:
 	case Decimal:
 	  std::cerr << " minimum=";
-	  vprint(std::cerr, *fields[i], ZtVFieldConstant::Minimum);
+	  vprint(std::cerr, *fields[i], ZfVFieldConstant::Minimum);
 	  std::cerr << " maximum=";
-	  vprint(std::cerr, *fields[i], ZtVFieldConstant::Maximum);
+	  vprint(std::cerr, *fields[i], ZfVFieldConstant::Maximum);
 	  break;
 	case Bytes:
 	  continue;
@@ -269,12 +269,12 @@ int main(int argc, char **argv)
     Foo foo;
 
     char cow[] = "{ id : \"\\ud83d\\uDC04\" }";
-    auto scan = ZtJSON::scan(cow);
+    auto scan = ZfJSON::scan(cow);
     ZuCheck(scan.template p<0>() >= 0);
     if (scan.template p<0>() < 0) return 1;
-    using Handler = ZtJSON::As<Foo>::template Handler<Foo, ZuFacet::JSON>;
+    using Handler = ZfJSON::As<Foo>::template Handler<Foo, ZuFacet::JSON>;
     ZuCheck((Handler::UpdFields::N));
-    ZtJSON::handler<Foo, ZuFacet::JSON>(scan.template p<1>()).update(foo);
+    ZfJSON::handler<Foo, ZuFacet::JSON>(scan.template p<1>()).update(foo);
 
     foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
 
@@ -294,17 +294,17 @@ int main(int argc, char **argv)
 
     ZtString<> json, json2, json3;
 
-    ZtJSON::save<ZuFacet::Bah>(json, foo);
+    ZfJSON::save<ZuFacet::Bah>(json, foo);
 
     json2 = json;
 
-    auto scan = ZtJSON::scan(json); // mutates json (unquotes strings, etc.)
+    auto scan = ZfJSON::scan(json); // mutates json (unquotes strings, etc.)
     ZuCheck(scan.p<0>() >= 0);
     if (scan.p<0>() < 0) return 1;
 
-    auto bar = ZtJSON::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
+    auto bar = ZfJSON::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
 
-    ZtJSON::save<ZuFacet::Bah>(json3, bar);
+    ZfJSON::save<ZuFacet::Bah>(json3, bar);
 
     log("JSON: ", json2);
 
@@ -314,64 +314,64 @@ int main(int argc, char **argv)
   {
     // malformed input should be rejected
     char bad[] = "{ id : \"x\" ";
-    auto scan = ZtJSON::scan(bad);
+    auto scan = ZfJSON::scan(bad);
     ZuCheck(scan.p<0>() < 0);
   }
 
   {
     char wrong_[] = "{\"nested\":42}";
-    auto wrongScan = ZtJSON::scan(wrong_);
+    auto wrongScan = ZfJSON::scan(wrong_);
     ZuCheck(wrongScan.p<0>() >= 0);
-    auto wrong = ZtJSON::handler<Foo>(wrongScan.p<1>()).ctor();
+    auto wrong = ZfJSON::handler<Foo>(wrongScan.p<1>()).ctor();
 
     char null_[] = "{\"nested\":null}";
-    auto nullScan = ZtJSON::scan(null_);
+    auto nullScan = ZfJSON::scan(null_);
     ZuCheck(nullScan.p<0>() >= 0);
-    auto null = ZtJSON::handler<Foo>(nullScan.p<1>()).ctor();
+    auto null = ZfJSON::handler<Foo>(nullScan.p<1>()).ctor();
 
     ZuCheck(wrong.nested.i1 == null.nested.i1);
     ZuCheck(wrong.nested.i2 == null.nested.i2);
 
     char object_[] = "{\"nested\":{}}";
-    auto objectScan = ZtJSON::scan(object_);
+    auto objectScan = ZfJSON::scan(object_);
     ZuCheck(objectScan.p<0>() >= 0);
-    auto object = ZtJSON::handler<Foo>(objectScan.p<1>()).ctor();
+    auto object = ZfJSON::handler<Foo>(objectScan.p<1>()).ctor();
     ZuCheck(object.nested.i1 == ZuCmp<int>::null());
     ZuCheck(object.nested.i2 == ZuCmp<int>::null());
   }
 
   {
     char minimum_[] = "{\"int_ranged\":0}";
-    auto minimumScan = ZtJSON::scan(minimum_);
+    auto minimumScan = ZfJSON::scan(minimum_);
     ZuCheck(minimumScan.p<0>() >= 0);
-    auto minimum = ZtJSON::handler<Foo>(minimumScan.p<1>()).ctor();
+    auto minimum = ZfJSON::handler<Foo>(minimumScan.p<1>()).ctor();
     ZuCheck(minimum.int_ranged == 0);
 
     char maximum_[] = "{\"int_ranged\":\"100tail\"}";
-    auto maximumScan = ZtJSON::scan(maximum_);
+    auto maximumScan = ZfJSON::scan(maximum_);
     ZuCheck(maximumScan.p<0>() >= 0);
-    auto maximum = ZtJSON::handler<Foo>(maximumScan.p<1>()).ctor();
+    auto maximum = ZfJSON::handler<Foo>(maximumScan.p<1>()).ctor();
     ZuCheck(maximum.int_ranged == 100);
 
     char below_[] = "{\"int_ranged\":-1}";
-    auto belowScan = ZtJSON::scan(below_);
+    auto belowScan = ZfJSON::scan(below_);
     ZuCheck(belowScan.p<0>() >= 0);
-    auto below = ZtJSON::handler<Foo>(belowScan.p<1>()).ctor();
+    auto below = ZfJSON::handler<Foo>(belowScan.p<1>()).ctor();
     ZuCheck(below.int_ranged == ZuCmp<int>::null());
 
     char above_[] = "{\"int_ranged\":\"101\"}";
-    auto aboveScan = ZtJSON::scan(above_);
+    auto aboveScan = ZfJSON::scan(above_);
     ZuCheck(aboveScan.p<0>() >= 0);
-    auto above = ZtJSON::handler<Foo>(aboveScan.p<1>()).ctor();
+    auto above = ZfJSON::handler<Foo>(aboveScan.p<1>()).ctor();
     ZuCheck(above.int_ranged == ZuCmp<int>::null());
   }
 
   {
     char outside_[] =
       "{\"float_ranged\":1.1,\"fixed\":\"-0.1\",\"decimal\":1.1}";
-    auto scan = ZtJSON::scan(outside_);
+    auto scan = ZfJSON::scan(outside_);
     ZuCheck(scan.p<0>() >= 0);
-    auto outside = ZtJSON::handler<Foo>(scan.p<1>()).ctor();
+    auto outside = ZfJSON::handler<Foo>(scan.p<1>()).ctor();
     ZuCheck(ZuCmp<double>::null(outside.float_ranged));
     ZuCheck(ZuCmp<ZuFixed>::null(outside.fixed));
     ZuCheck(ZuCmp<ZuDecimal>::null(outside.decimal));
@@ -381,10 +381,10 @@ int main(int argc, char **argv)
     // missing fields should preserve defaults on update
     Foo foo;
     char partial[] = "{\"int_\":7}";
-    auto scan = ZtJSON::scan(partial);
+    auto scan = ZfJSON::scan(partial);
     ZuCheck(scan.p<0>() >= 0);
     if (scan.p<0>() >= 0) {
-      ZtJSON::handler<Foo, ZuFacet::JSON>(scan.p<1>()).update(foo);
+      ZfJSON::handler<Foo, ZuFacet::JSON>(scan.p<1>()).update(foo);
       ZuCheck(foo.int_ == 0);
       ZuCheck(foo.int_ranged == 42);
       ZuCheck(foo.enum_ == Values::Normal);
@@ -395,13 +395,13 @@ int main(int argc, char **argv)
     OptFoo opt;
     ZtString<> json;
 
-    ZtJSON::save(json, opt);
+    ZfJSON::save(json, opt);
     ZuCheck(json == "{\"req\":\"\",\"tail\":\"tail\"}");
     {
-      auto scan = ZtJSON::scan(json);
+      auto scan = ZfJSON::scan(json);
       ZuCheck(scan.p<0>() >= 0);
       if (scan.p<0>() >= 0) {
-	auto in = ZtJSON::handler<OptFoo>(scan.p<1>()).ctor();
+	auto in = ZfJSON::handler<OptFoo>(scan.p<1>()).ctor();
 	ZuCheck(!in.head);
 	ZuCheck(!in.req[0]);
 	ZuCheck(!in.mid);
@@ -412,13 +412,13 @@ int main(int argc, char **argv)
     json.length(0);
     opt.head = "head";
     opt.mid = "mid";
-    ZtJSON::save(json, opt);
+    ZfJSON::save(json, opt);
     ZuCheck(json ==
 	"{\"head\":\"head\",\"req\":\"\",\"mid\":\"mid\",\"tail\":\"tail\"}");
 
     json.length(0);
     opt.head = nullptr;
-    ZtJSON::save(json, opt);
+    ZfJSON::save(json, opt);
     ZuCheck(json == "{\"req\":\"\",\"mid\":\"mid\",\"tail\":\"tail\"}");
   }
 
@@ -426,19 +426,19 @@ int main(int argc, char **argv)
     BoxFoo box;
     box.values = {BoxInt{0}, BoxInt{7}};
 
-    using Field = ZtField(BoxFoo, value);
+    using Field = ZfField(BoxFoo, value);
     ZtString<> printed;
     printed << typename Field::Type::template Print<>{box.value};
     ZuCheck(!printed);
 
     ZtString<> json;
-    ZtJSON::save(json, box);
+    ZfJSON::save(json, box);
     ZuCheck(json == "{\"value\":\"\",\"values\":[\"\",\"7\"]}");
 
-    auto scan = ZtJSON::scan(json);
+    auto scan = ZfJSON::scan(json);
     ZuCheck(scan.p<0>() >= 0);
     if (scan.p<0>() >= 0) {
-      auto copy = ZtJSON::handler<BoxFoo>(scan.p<1>()).ctor();
+      auto copy = ZfJSON::handler<BoxFoo>(scan.p<1>()).ctor();
       ZuCheck(!*copy.value);
       ZuCheck(copy.value.val() == 0);
       ZuCheck(copy.values.length() == 2);

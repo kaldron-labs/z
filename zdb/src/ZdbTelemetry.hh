@@ -18,7 +18,7 @@
 
 #include <zlib/ZtString.hh>
 #include <zlib/ZtArray.hh>
-#include <zlib/ZtStruct.hh>
+#include <zlib/ZfStruct.hh>
 
 #include <zlib/ZfbStruct.hh>
 
@@ -66,7 +66,7 @@ struct DBTable {
   }
   void rag(ZvRAG::T) { } // unused
 
-  friend ZtStructPrint ZuPrintType(DBTable *);
+  friend ZfStructPrint ZuPrintType(DBTable *);
 };
 ZfbStruct(DBTable,
     (((name),		(Ctor<0>, Keys<0>)),			(String)),
@@ -93,7 +93,7 @@ struct DBHost {
   ZvRAG::T rag() const { return dbHostStateRAG(state); }
   void rag(ZvRAG::T) { } // unused
 
-  friend ZtStructPrint ZuPrintType(DBHost *);
+  friend ZfStructPrint ZuPrintType(DBHost *);
 };
 ZfbStruct(DBHost,
     (((ip),		(Ctor<0>)),				(UDT)),
@@ -131,7 +131,7 @@ struct DB {
   ZvRAG::T rag() const { return dbHostStateRAG(state); }
   void rag(ZvRAG::T) { } // unused
 
-  friend ZtStructPrint ZuPrintType(DB *);
+  friend ZfStructPrint ZuPrintType(DB *);
 };
 ZfbStruct(DB,
     (((self),		(Ctor<2>)),				(String)),

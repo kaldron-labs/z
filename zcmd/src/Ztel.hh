@@ -132,7 +132,7 @@ struct Heap : public Heap_ {
   }
   void rag(int8_t) { } // unused
 
-  friend ZtStructPrint ZuPrintType(Heap *);
+  friend ZfStructPrint ZuPrintType(Heap *);
 };
 ZfbStruct(Heap,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
@@ -160,7 +160,7 @@ struct HashTbl : public HashTbl_ {
   }
   void rag(int8_t) { } // unused
 
-  friend ZtStructPrint ZuPrintType(HashTbl *);
+  friend ZfStructPrint ZuPrintType(HashTbl *);
 };
 ZfbStruct(HashTbl,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
@@ -187,7 +187,7 @@ struct Thread : public Thread_ {
   }
   void rag(int8_t) { } // unused
 
-  friend ZtStructPrint ZuPrintType(Thread *);
+  friend ZfStructPrint ZuPrintType(Thread *);
 };
 // LATER - need to optionally enrich this with thread ring count and overCount
 // (i.e. scheduler queue length and DLQ length)
@@ -214,7 +214,7 @@ struct Mx : public Mx_ {
   int8_t rag() const { return EngineState::rag(state); }
   void rag(int8_t) { } // unused
 
-  friend ZtStructPrint ZuPrintType(Mx *);
+  friend ZfStructPrint ZuPrintType(Mx *);
 };
 ZfbStruct(Mx,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
@@ -246,7 +246,7 @@ struct Socket : public Socket_ {
   }
   void rag(int8_t) { } // unused
 
-  friend ZtStructPrint ZuPrintType(Socket *);
+  friend ZfStructPrint ZuPrintType(Socket *);
 };
 ZfbStruct(Socket,
     (((mxID),		(Ctor<0>)),				(String)),
@@ -285,7 +285,7 @@ struct Queue : public Queue_ {
   }
   void rag(int8_t) { } // unused
 
-  friend ZtStructPrint ZuPrintType(Queue *);
+  friend ZfStructPrint ZuPrintType(Queue *);
 };
 ZfbStruct(Queue,
     (((id),		(Keys<0>, Ctor<0>)),			(String)),
@@ -309,7 +309,7 @@ struct Link : public Link_ {
   int8_t rag() const { return LinkState::rag(state); }
   void rag(int8_t) { } // unused
 
-  friend ZtStructPrint ZuPrintType(Link *);
+  friend ZfStructPrint ZuPrintType(Link *);
 };
 ZfbStruct(Link,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
@@ -330,7 +330,7 @@ struct Engine : public Engine_ {
   int8_t rag() const { return EngineState::rag(state); }
   void rag(int8_t) { } // unused
 
-  friend ZtStructPrint ZuPrintType(Engine *);
+  friend ZfStructPrint ZuPrintType(Engine *);
 };
 ZfbStruct(Engine,
     (((id),		(Keys<0>, Ctor<0>)),			(String)),
@@ -362,7 +362,7 @@ struct App {
   int8_t	role = -1;
   int8_t	rag = -1;
 
-  friend ZtStructPrint ZuPrintType(App *);
+  friend ZfStructPrint ZuPrintType(App *);
 };
 ZfbStruct(App,
     (((id),		(Keys<0>, Ctor<0>)),			(String)),
@@ -380,7 +380,7 @@ struct Alert {
   int8_t	severity = -1;
   ZeString	message;
 
-  friend ZtStructPrint ZuPrintType(Alert *);
+  friend ZfStructPrint ZuPrintType(Alert *);
 };
 ZfbStruct(Alert,
     (((time),		(Ctor<0>)),				(DateTime)),

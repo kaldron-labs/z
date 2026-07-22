@@ -138,7 +138,7 @@ int main()
 	if (ZuUnlikely(!o)) return;
 	new (o->ptr())
 	  Order{"IBM", 0, "FIX0", "order0", 0, Side::Buy, {100}, {100}};
-	o->data().flags = ZtField(Order, flags)::deflt();
+	o->data().flags = ZfField(Order, flags)::deflt();
 	o->commit();
 	id = o->data().orderID;
 	ZiLOG(Info, "zdbsmoketest", ([id](auto &s) { s << "orderID=" << id; }));

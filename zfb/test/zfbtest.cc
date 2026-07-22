@@ -31,7 +31,7 @@ struct Test {
   uint8_t *zero;
   unsigned n;
 
-  friend ZtStructPrint ZuPrintType(Test *);
+  friend ZfStructPrint ZuPrintType(Test *);
 };
 
 ZfbStruct(Test,

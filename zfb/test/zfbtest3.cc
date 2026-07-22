@@ -12,7 +12,7 @@
 
 #include <zlib/ZmDemangle.hh>
 
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
@@ -42,7 +42,7 @@ struct Order {
   ZuID			id;
   ZiIP			ip;
 
-  friend ZtStructPrint ZuPrintType(Order *);
+  friend ZfStructPrint ZuPrintType(Order *);
 };
 
 ZfbStruct((Order, JSON),
@@ -71,7 +71,7 @@ using IOBuf = ZiIOBuf;
 template <typename T>
 ZtString<> json(const T &v) {
   ZtString<> s;
-  ZtJSON::save<ZuFacet::JSON, ZtFieldFilter::All>(s, v);
+  ZfJSON::save<ZuFacet::JSON, ZfFieldFilter::All>(s, v);
   return s;
 }
 
@@ -86,7 +86,7 @@ int main()
 
   {
     IOBuilder fbb(new ZiIOBufAlloc<>());
-    //fbb.Finish(ZfbTransform::Object::save<ZuFacet::Core, ZtFieldFilter::Save>(fbb, order));
+    //fbb.Finish(ZfbTransform::Object::save<ZuFacet::Core, ZfFieldFilter::Save>(fbb, order));
     fbb.Finish(ZfbStruct::save(fbb, order));
     auto buf = fbb.buf();
     auto fbo = ZfbStruct::root<Order>(buf->data());

@@ -659,9 +659,9 @@ protected:
   virtual void objRecover(const fbs::Record *) = 0;
 
   // objFields() - run-time field array
-  virtual ZtVFieldArray objFields() const = 0;
+  virtual ZfVFieldArray objFields() const = 0;
   // objKeyFields() - run-time key field arrays
-  virtual ZtVKeyFieldArray objKeyFields() const = 0;
+  virtual ZfVKeyFieldArray objKeyFields() const = 0;
   // objSchema() - flatbuffer reflection schema
   virtual const reflection::Schema *objSchema() const = 0;
 
@@ -811,7 +811,7 @@ struct RepBuf_ : public ZmPolymorph {
   friend RepBuf_ ZuStructured_(RepBuf_ *);
 
   // override printing
-  friend ZtStructPrint ZuPrintType(RepBuf_ *);
+  friend ZfStructPrint ZuPrintType(RepBuf_ *);
 };
 
 // replication buffer cache
@@ -1003,9 +1003,9 @@ private:
   }
 
   // objFields() - run-time field array
-  ZtVFieldArray objFields() const { return ZtVFields<T>(); }
+  ZfVFieldArray objFields() const { return ZfVFields<T>(); }
   // objKeyFields() - run-time key field arrays
-  ZtVKeyFieldArray objKeyFields() const { return ZtVKeyFields<T>(); }
+  ZfVKeyFieldArray objKeyFields() const { return ZfVKeyFields<T>(); }
   // objSchema() - flatbuffer reflection schema
   const reflection::Schema *objSchema() const {
     return reflection::GetSchema(ZfbSchema<T>::data());
@@ -1013,7 +1013,7 @@ private:
 
   // objPrint(stream, ptr) - print object
   void objPrint(ZuVStream &s, const void *ptr) const {
-    ZtStructPrint::print(s, *static_cast<const T *>(ptr));
+    ZfStructPrint::print(s, *static_cast<const T *>(ptr));
   }
   // objPrintFB(stream, data) - print flatbuffer
   void objPrintFB(ZuVStream &s, ZuBSpan data) const {
@@ -1941,7 +1941,7 @@ inline void Table<T>::count(GroupKey<KeyID> key, L &&l)
 
   Zfb::IOBuilder fbb{allocBuf()};
   fbb.Finish(ZfbStruct::save(fbb, key).Union());
-  // fbb.Finish(ZfbStruct::SaveFieldsFn<Key, ZuFacet::Core, ZuFields<Key>, ZtFieldFilter::Save>::save(fbb, key).Union());
+  // fbb.Finish(ZfbStruct::SaveFieldsFn<Key, ZuFacet::Core, ZuFields<Key>, ZfFieldFilter::Save>::save(fbb, key).Union());
   auto keyBuf = fbb.buf();
 
   auto countFn = CountFn{ZuMv(context),
@@ -1974,7 +1974,7 @@ inline void Table<T>::select_(
 
   Zfb::IOBuilder fbb{allocBuf()};
   fbb.Finish(ZfbStruct::save(fbb, selectKey).Union());
-  // fbb.Finish(ZfbStruct::SaveFieldsFn<SelectKey, ZuFields<SelectKey>, ZtFieldFilter::Load>::save(fbb, selectKey).Union());
+  // fbb.Finish(ZfbStruct::SaveFieldsFn<SelectKey, ZuFields<SelectKey>, ZfFieldFilter::Load>::save(fbb, selectKey).Union());
   auto keyBuf = fbb.buf();
 
   auto tupleFn = TupleFn{ZuMv(context),

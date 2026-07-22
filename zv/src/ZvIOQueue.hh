@@ -43,7 +43,7 @@
 // - declare a message type that is derived from ZvIOMsg
 // - use ZvIOMsg-derived messages with send()
 // - return ZvIOMsg-derived objects from process_()
-// - E.g. for REST ZvIOMsg is extended to include ZtStruct payload data and
+// - E.g. for REST ZvIOMsg is extended to include ZfStruct payload data and
 //   virtually-dispatched compile-time functions to:
 //   - build the HTTP buffer from the payload for sending
 //   - parse a HTTP buffer into a payload for receiving

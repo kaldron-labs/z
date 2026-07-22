@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // bytes format
-// - common enum used by ZtJSON, etc.
+// - common enum used by ZfJSON, etc.
 
 #ifndef ZtBytesFmt_HH
 #define ZtBytesFmt_HH

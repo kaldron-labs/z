@@ -100,6 +100,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Prefer brevity, common expert idioms, and precise structure over beginner-oriented readability.
 - Do not disdain "Hacker's Delight" style when it is clear, correct, and faster.
 - `auto ptr = ...` not `auto *ptr = ...`
+- Strongly prefer `T(u)` to `static_cast<T>(u)` in all cases where they're equivalent
 
 ### Portability and compiler features
 - Target gcc and clang; use `__GNUC__`, intrinsics, `int128_t`, and `uint128_t` where appropriate.
@@ -122,7 +123,8 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ## Use of STL and other dependencies
 - minimize use of STL
 - use `Zu` alternatives to STL: example: `ZuIfT` instead of `enable_if`
-- maximally leverage `Zu*`, `Zm*`, `Zt*` and `Zi*`
+- maximally leverage the foundation Z framework libraries:
+  - `zu`, `zm`, `zt`, `zf`, `ze`, `zi`
 
 ## Audit flags
 ### Code structure
@@ -143,7 +145,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: disorderly structs
   Problem: disordered members induce unnecessary padding due to alignment
   Fix: strike a balance between organizing members into logical groups and ordering by size from largest-to-smallest; immutable members should still come first, followed by mutable shared members, then groups of thread-exclusive members
-  Note: C++ member order is storage layout, while `ZuStruct`/`ZtStruct`/`ZfbStruct` metadata is intentionally schema/logical ordering
+  Note: C++ member order is storage layout, while `ZuStruct`/`ZfStruct`/`ZfbStruct` metadata is intentionally schema/logical ordering
 - Red Flag: cache line contended structs
   Problem: multiple threads contend for data shared in the same cache line
   Fix: begin thread-exclusive groups of data members with `alignas(Zm::CacheLineSize)`
@@ -226,7 +228,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ### Framework fit
 - Red Flag: reimplementing lower-level Z Framework capabilities.
   Problem: duplicate code misses established semantics, optimizations, and maintenance paths.
-  Fix: use the existing `Zu*`, `Zm*`, `Zt*`, and `Zi*` facilities.
+  Fix: use the existing foundational libraries: `zu`, `zm`, `zt`, `zf`, `ze`, `zi`
 - Amber Flag: direct use of `FILE`, `syslog`, etc.
   Problem: it bypasses Z I/O and logging conventions.
   Fix: use `ZiFile`, `ZiLog`, etc.
@@ -344,8 +346,8 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Stream directly to `Z*String`, `Z*Array`, and `std::cout`-style outputs.
 
 ### Metadata
-- Use `ZuStruct`, `ZtStruct`, and `ZfbStruct` for compile-time extract/transform metadata.
-- Use metadata integrations instead of ad hoc parsing: JSON `ZtJSON`, ASN.1 `ZtASN1`, CLI `ZtCLI`, CSV `ZtCSV`, URI query `ZtURI`, and Framebuffers `ZfbStruct`.
+- Use `ZuStruct`, `ZfStruct`, and `ZfbStruct` for compile-time extract/transform metadata.
+- Use metadata integrations instead of ad hoc parsing: JSON `ZfJSON`, ASN.1 `ZfASN1`, CLI `ZfCLI`, CSV `ZfCSV`, URI query `ZfURI`, and Framebuffers `ZfbStruct`.
 
 ### Concurrency and sharding
 - Use `ZmScheduler` for thread pools.
@@ -474,7 +476,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   ```
   StoreTbl(
     Store *store, IDString id, unsigned nShards,
-    ZtVFieldArray fields, ZtVKeyFieldArray keyFields,
+    ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
   :
     m_store{store}, m_id{ZuMv(id)},

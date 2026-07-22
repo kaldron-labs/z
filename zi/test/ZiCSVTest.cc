@@ -21,7 +21,7 @@ struct CSVRow {
   int32_t	id = 0;
 };
 
-ZtStruct(CSVRow,
+ZfStruct(CSVRow,
   (((text), (Ctor<0>)), (String)),
   (((id),   (Ctor<1>)), (Int32)));
 
@@ -117,7 +117,7 @@ void testFilteredColumns()
 
   unsigned i = 0;
   auto w = ZiCSV::writeFile<CSVRow>({
-      ZtFieldIndex(CSVRow, text)
+      ZfFieldIndex(CSVRow, text)
     }, g_filtered, ZiCSV::Replace, [&i](auto emit) {
       CSVRow row;
       switch (i++) {
@@ -180,8 +180,8 @@ void testAppend()
   }
   {
     auto w = ZiCSV::writeFile<CSVRow>({
-	ZtFieldIndex(CSVRow, id),
-	ZtFieldIndex(CSVRow, text)
+	ZfFieldIndex(CSVRow, id),
+	ZfFieldIndex(CSVRow, text)
       }, g_append, ZiCSV::Append);
     CSVRow row;
     row.text = "beta";
@@ -196,7 +196,7 @@ void testAppend()
 
   {
     auto w = ZiCSV::writeFile<CSVRow>({
-	ZtFieldIndex(CSVRow, text)
+	ZfFieldIndex(CSVRow, text)
       }, g_append, ZiCSV::Append);
     ZuCheck(!w);
     ZuCheck(w.error);

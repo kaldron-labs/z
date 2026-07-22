@@ -1,5 +1,20 @@
 # TODO
 
+## ZvCf
+
+- `ZfCLI`:
+  - detach from underlying `ZfURI`
+  - align with `ZvNewCf` validation: add exceptions and throw them
+
+- `findings.md`
+codex resume 019f804a-6b6e-7a20-b965-67081eafb8d3
+- update and implement `zvcf.md`
+
+## ZiEngine
+
+- ZiEngine - complete command/control + telemetry
+- migrate ztcp, ztls, zquic, zhttp, zrest to ZiEngine
+
 ## Zquic
 
 - re-review code
@@ -38,7 +53,7 @@ L-sized work:
 - `Zquic` + `Ztcp` derive from `Zi*`, implement APIs
 
 ## Zum
-- all flatbuffers -> ZtStruct FB
+- all flatbuffers -> ZfStruct FB
 - own protocol
 
 ## Zcmd

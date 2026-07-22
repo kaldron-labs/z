@@ -42,7 +42,7 @@
 #include <zlib/ZmRing.hh>
 #include <zlib/ZmRingFn.hh>
 
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -134,7 +134,7 @@ struct ZiSinkEvent {
   const ZeEventInfo	&info;
 };
 
-ZtStruct(ZiSinkEvent,
+ZfStruct(ZiSinkEvent,
   (((time,      AliasRd, info.time)),      (Time)),
   (((tid,       AliasRd, info.tid)),       (UInt32)),
   (((severity,  AliasRd, info.severity)),  (Int8)),

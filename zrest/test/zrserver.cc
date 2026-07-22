@@ -4,8 +4,8 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/Zrest.hh>
 

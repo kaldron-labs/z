@@ -19,7 +19,7 @@ ZuStructFacet(JSON);
 ZuStructFacet(Foo);
 ZuStructFacet(Bar);
 
-namespace ZtJSON {
+namespace ZfJSON {
   enum { Base64 = 0, Base32, Hex, String };
   enum { ISO = 0, FIX, CSV, Unix };
   template <unsigned Fmt_, unsigned Scale_, int NDP_>
@@ -41,19 +41,19 @@ namespace ZuFieldProp {
     template <typename> struct TimeFmt { };
 
     // shorthand
-    using Base64 = BytesFmt<ZtJSON::Base64>;
-    using Base32 = BytesFmt<ZtJSON::Base32>;
-    using Hex = BytesFmt<ZtJSON::Hex>;
-    using String = BytesFmt<ZtJSON::String>;
+    using Base64 = BytesFmt<ZfJSON::Base64>;
+    using Base32 = BytesFmt<ZfJSON::Base32>;
+    using Hex = BytesFmt<ZfJSON::Hex>;
+    using String = BytesFmt<ZfJSON::String>;
 
     template <uint8_t Scale, int8_t NDP>
-    using ISO = TimeFmt<ZtJSON::TimeFmt<ZtJSON::ISO, Scale, NDP>>;
+    using ISO = TimeFmt<ZfJSON::TimeFmt<ZfJSON::ISO, Scale, NDP>>;
     template <uint8_t Scale, int8_t NDP>
-    using FIX = TimeFmt<ZtJSON::TimeFmt<ZtJSON::FIX, Scale, NDP>>;
+    using FIX = TimeFmt<ZfJSON::TimeFmt<ZfJSON::FIX, Scale, NDP>>;
     template <uint8_t Scale, int8_t NDP>
-    using CSV = TimeFmt<ZtJSON::TimeFmt<ZtJSON::CSV, Scale, NDP>>;
+    using CSV = TimeFmt<ZfJSON::TimeFmt<ZfJSON::CSV, Scale, NDP>>;
     template <uint8_t Scale, int8_t NDP>
-    using Unix = TimeFmt<ZtJSON::TimeFmt<ZtJSON::Unix, Scale, NDP>>;
+    using Unix = TimeFmt<ZfJSON::TimeFmt<ZfJSON::Unix, Scale, NDP>>;
 
     // GetID<Field> - ZuStringT
     // - gets the JSON-specific ID for the field
@@ -73,7 +73,7 @@ namespace ZuFieldProp {
 
     // GetBytesFmt - ZuUnsigned
     template <typename Props, bool = HasValue<Props, BytesFmt>{}>
-    struct GetBytesFmt_ { using T = ZuUnsigned<ZtJSON::Base64>; };
+    struct GetBytesFmt_ { using T = ZuUnsigned<ZfJSON::Base64>; };
     template <typename Props>
     struct GetBytesFmt_<Props, true> {
       using T = GetValue<Props, BytesFmt>;
@@ -89,9 +89,9 @@ namespace ZuFieldProp {
     template <typename Props>
     using GetNumberFmt = typename GetNumberFmt_<Props>::T;
 
-    // GetTimeFmt - ZtJSON::TimeFmt::{Fmt,Scale,NDP}
+    // GetTimeFmt - ZfJSON::TimeFmt::{Fmt,Scale,NDP}
     template <typename Props, bool = HasType<Props, TimeFmt>{}>
-    struct GetTimeFmt_ { using T = ZtJSON::TimeFmt<ZtJSON::ISO, 0, 3>; };
+    struct GetTimeFmt_ { using T = ZfJSON::TimeFmt<ZfJSON::ISO, 0, 3>; };
     template <typename Props>
     struct GetTimeFmt_<Props, true> { using T = GetType<Props, TimeFmt>; };
     template <typename Props>
@@ -175,7 +175,7 @@ int main(int argc, char **argv)
   ZuCHECK((ZuIs_<T2, T1>{}));
   {
     using namespace ZuFieldProp::JSON;
-    ZuCHECK((GetBytesFmt<Foo::ZuField(B, j)>{} == ZtJSON::Base64));
+    ZuCHECK((GetBytesFmt<Foo::ZuField(B, j)>{} == ZfJSON::Base64));
   }
 
   return 0;

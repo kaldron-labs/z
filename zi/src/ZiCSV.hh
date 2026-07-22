@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // CSV file I/O
-// - layered on ZtCSV
+// - layered on ZfCSV
 
 #ifndef ZiCSV_HH
 #define ZiCSV_HH
@@ -14,7 +14,7 @@
 #include <zlib/ZiLib.hh>
 #endif
 
-#include <zlib/ZtCSV.hh>
+#include <zlib/ZfCSV.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -22,7 +22,7 @@
 
 namespace ZiCSV {
 
-using namespace ZtCSV;
+using namespace ZfCSV;
 
 using Path = Zi::Path;
 
@@ -317,9 +317,9 @@ ZuUnion<void, ZeException> writeFile(
 }
 
 template <typename O_, typename Facet = ZuFacet::Core>
-struct Reader : public ZtCSV::Reader<O_, Facet> {
+struct Reader : public ZfCSV::Reader<O_, Facet> {
   using O = O_;
-  using Base = ZtCSV::Reader<O, Facet>;
+  using Base = ZfCSV::Reader<O, Facet>;
   using Base::Base;
   template <typename ...Args>
   Reader(Args &&...args) : Base(ZuFwd<Args>(args)...) { }

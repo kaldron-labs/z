@@ -2,7 +2,7 @@ ACLOCAL_AMFLAGS = -I m4
 METASOURCES = AUTO
 EXTRA_DIST = scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
-SUBDIRS = zu zm zt ze zi zrl
+SUBDIRS = zu zm zt ze zf zi zrl
 SUBDIRS += ztcp ztls zquic zhttp
 SUBDIRS += zfb
 SUBDIRS += zv
@@ -23,7 +23,7 @@ test: all
 	  $(MAKE) $(AM_MAKEFLAGS) -C $$subdir test || exit $$?; \
 	done
 
-ZHTTP_QIR_INSTALL_DIRS = zu/src zm/src zt/src ze/src zi/src ztls/src \
+ZHTTP_QIR_INSTALL_DIRS = zu/src zm/src zt/src ze/src zf/src zi/src ztls/src \
 	zquic/src zhttp/src
 
 .PHONY: zhttp-qir-build
@@ -32,6 +32,7 @@ zhttp-qir-build:
 	$(MAKE) $(AM_MAKEFLAGS) -C zm/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zt/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C ze/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C zf/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zi/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C ztls/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zquic/src all

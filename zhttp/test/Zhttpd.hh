@@ -24,11 +24,11 @@
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtArray.hh>
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 #include <zlib/ZtLocalArray.hh>
 #include <zlib/ZtLocalString.hh>
 #include <zlib/ZtString.hh>
-#include <zlib/ZtURI.hh>
+#include <zlib/ZfURI.hh>
 
 #include <zlib/ZiDir.hh>
 #include <zlib/ZiFile.hh>
@@ -36,8 +36,8 @@
 
 #include <zlib/Zhttp.hh>
 
-ZtCLIConfig(CLI,
-  (ZtCLI_ArrayFmt<ZtCLI::Delimited, ZtCLI_Delimiter<';'>>));
+ZfCLIConfig(CLI,
+  (ZfCLI_ArrayFmt<ZfCLI::Delimited, ZfCLI_Delimiter<';'>>));
 
 namespace Zhttpd {
 
@@ -151,7 +151,7 @@ struct Options {
   bool			help = false;
 };
 
-ZtStruct((Options, CLI),
+ZfStruct((Options, CLI),
   (((root),            (CLI::Arg<1>)),                           (String)),
   (((addr),            (CLI::Long<"addr">)),                     (String, "0.0.0.0")),
   (((port),            (CLI::Long<"port">)),                     (UInt32, 8080)),
@@ -493,7 +493,7 @@ inline bool decodeNormalizePath(
   };
   ZuSpan<char> input{decoded};
   while (input) {
-    auto scan = ZtURI::eoc(input);
+    auto scan = ZfURI::eoc(input);
     int n = scan.template p<0>();
     if (n < 0) { err = "bad percent escape"; return false; }
     ZuCSpan part{input.data(), unsigned(n)};
@@ -943,7 +943,7 @@ struct StaticPlanner {
     for (unsigned i = 0, n = entries.length(); i < n; ++i) {
       auto &e = entries[i];
       html += "<a href=\"";
-      ZtURI::PathQuote::quote(html, e.name);
+      ZfURI::PathQuote::quote(html, e.name);
       if (e.dir) html << '/';
       html += "\">";
       htmlEsc(html, e.name);
@@ -1005,7 +1005,7 @@ inline bool loadOptions(
     ZuCSpan arg{argv[i]};
     if (arg == "--http") httpSet = true;
   }
-  int argc_ = ZtCLI::load(options, argc, argv);
+  int argc_ = ZfCLI::load(options, argc, argv);
   if (argc_ < 0) return false;
   help = options.help;
   if (help) return true;

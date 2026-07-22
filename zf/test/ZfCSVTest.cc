@@ -14,7 +14,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
-#include <zlib/ZtCSV.hh>
+#include <zlib/ZfCSV.hh>
 #include <zlib/ZtQuote.hh>
 #include <zlib/ZtScanBool.hh>
 #include <zlib/ZtBytesFmt.hh>
@@ -25,7 +25,7 @@ struct RangeData {
   int value = 42;
 };
 
-ZtStruct((RangeData, CSV),
+ZfStruct((RangeData, CSV),
   (((value), (Ctor<0>, (Range<0, 100>))), (Int32, 42)));
 
 struct RealRangeData {
@@ -34,7 +34,7 @@ struct RealRangeData {
   ZuDecimal decimal;
 };
 
-ZtStruct((RealRangeData, CSV),
+ZfStruct((RealRangeData, CSV),
   (((float_), (Ctor<0>, (Range<0.0, 1.0>))), (Float, 0.5)),
   (((fixed), (Ctor<1>,
       (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Fixed)),
@@ -46,19 +46,19 @@ void testHeaderSplitAndUnquote()
   ZuTestScope(testHeaderSplitAndUnquote);
 
   char line[] = "id,\"display,name\",state\r\n";
-  ZtCSV::Header header;
-  int n = ZtCSV::split(ZuSpan<char>(line, sizeof(line) - 1), header);
+  ZfCSV::Header header;
+  int n = ZfCSV::split(ZuSpan<char>(line, sizeof(line) - 1), header);
 
   ZuCheck(n > 0);
   ZuCheck(header.length() == 3);
   ZuCheck(header[0] == "id");
 
   ZuSpan<char> display = header[1];
-  ZtCSV::unquote(display);
+  ZfCSV::unquote(display);
   ZuCheck(display == "display,name");
 
   // unquote() should be idempotent when called repeatedly.
-  ZtCSV::unquote(display);
+  ZfCSV::unquote(display);
   ZuCheck(display == "display,name");
 }
 
@@ -67,39 +67,39 @@ void testRowSplitArrayFormsAndMalformed()
   ZuTestScope(testRowSplitArrayFormsAndMalformed);
 
   char rowLine[] = "a,={1;\"two\";3},=@{\"x\";\"y\"},\"z,z\"\n";
-  ZtCSV::Row row;
-  int n = ZtCSV::split(ZuSpan<char>(rowLine, sizeof(rowLine) - 1), row);
+  ZfCSV::Row row;
+  int n = ZfCSV::split(ZuSpan<char>(rowLine, sizeof(rowLine) - 1), row);
 
   ZuCheck(n > 0);
   ZuCheck(row.length() == 4);
 
   ZuCheck(row[0].is<ZuSpan<char>>());
-  ZuCheck(row[1].is<ZtCSV::ArrayCell>());
-  ZuCheck(row[2].is<ZtCSV::ArrayCell>());
+  ZuCheck(row[1].is<ZfCSV::ArrayCell>());
+  ZuCheck(row[2].is<ZfCSV::ArrayCell>());
   ZuCheck(row[3].is<ZuSpan<char>>());
 
   ZuSpan<char> c0 = row[0].p<ZuSpan<char>>();
   ZuCheck(c0 == "a");
 
-  auto a1 = row[1].p<ZtCSV::ArrayCell>();
+  auto a1 = row[1].p<ZfCSV::ArrayCell>();
   ZuCheck(a1.length() == 3);
   ZuSpan<char> a11 = a1[1];
-  ZtCSV::unquote(a11);
+  ZfCSV::unquote(a11);
   ZuCheck(a11 == "two");
 
-  auto a2 = row[2].p<ZtCSV::ArrayCell>();
+  auto a2 = row[2].p<ZfCSV::ArrayCell>();
   ZuCheck(a2.length() == 2);
   ZuSpan<char> a20 = a2[0];
-  ZtCSV::unquote(a20);
+  ZfCSV::unquote(a20);
   ZuCheck(a20 == "x");
 
   ZuSpan<char> c3 = row[3].p<ZuSpan<char>>();
-  ZtCSV::unquote(c3);
+  ZfCSV::unquote(c3);
   ZuCheck(c3 == "z,z");
 
   char bad[] = "\"unterminated\n";
-  ZtCSV::Row malformed;
-  ZuCheck(ZtCSV::split(ZuSpan<char>(bad, sizeof(bad) - 1), malformed) == -1);
+  ZfCSV::Row malformed;
+  ZuCheck(ZfCSV::split(ZuSpan<char>(bad, sizeof(bad) - 1), malformed) == -1);
 }
 
 void testQuoteAndCodecWrappers()
@@ -161,11 +161,11 @@ void testScanBoolAndBytesFmt()
   }
   ZuCheck(threw);
 
-  ZuCheck(ZtBytesFmt::Base64 == ZtCSV::Base64);
-  ZuCheck(ZtBytesFmt::Base64URL == ZtCSV::Base64URL);
-  ZuCheck(ZtBytesFmt::Base32 == ZtCSV::Base32);
-  ZuCheck(ZtBytesFmt::Hex == ZtCSV::Hex);
-  ZuCheck(ZtBytesFmt::Raw == ZtCSV::Raw);
+  ZuCheck(ZtBytesFmt::Base64 == ZfCSV::Base64);
+  ZuCheck(ZtBytesFmt::Base64URL == ZfCSV::Base64URL);
+  ZuCheck(ZtBytesFmt::Base32 == ZfCSV::Base32);
+  ZuCheck(ZtBytesFmt::Hex == ZfCSV::Hex);
+  ZuCheck(ZtBytesFmt::Raw == ZfCSV::Raw);
 }
 
 void testIntegerRange()
@@ -173,7 +173,7 @@ void testIntegerRange()
   ZuTestScope(testIntegerRange);
 
   char csv[] = "value\n101\n";
-  auto reader = ZtCSV::reader<RangeData>();
+  auto reader = ZfCSV::reader<RangeData>();
   RangeData value;
   unsigned rows = 0;
   reader.read({csv, sizeof(csv) - 1}, [&](const auto &row) {
@@ -189,7 +189,7 @@ void testRealRange()
   ZuTestScope(testRealRange);
 
   char csv[] = "float_,fixed,decimal\n1.1,-0.1,1.1\n";
-  auto reader = ZtCSV::reader<RealRangeData>();
+  auto reader = ZfCSV::reader<RealRangeData>();
   RealRangeData value;
   unsigned rows = 0;
   reader.read({csv, sizeof(csv) - 1}, [&](const auto &row) {

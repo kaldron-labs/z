@@ -52,7 +52,7 @@ struct WrapType {
 };
 
 // synthetic field returning time now, used if TimeIndex is set
-using TimeType = ZtFieldType_Time<ZuTime, ZuTypeList<ZuFieldProp::NDP<9>>>;
+using TimeType = ZfFieldType_Time<ZuTime, ZuTypeList<ZuFieldProp::NDP<9>>>;
 template <typename O_>
 struct TimeField_ {
   using O = O_;
@@ -67,7 +67,7 @@ struct TimeField_ {
   template <typename P> static void set(O &, P &&) { }
 };
 template <typename O>
-using TimeField = ZtField_Time<TimeField_<O>>;
+using TimeField = ZfField_Time<TimeField_<O>>;
 
 // Zdf data-frames are comprised of series fields
 template <typename Field>
@@ -87,7 +87,7 @@ using Fields = typename Fields_<typename W::O, W::TimeIndex>::T;
 // map a field to its Decoder type
 template <typename Field, typename Props = typename Field::Props>
 using FieldDecoderFlags_ = ZuUnsigned<
-  ((Field::Type::Code == ZtFieldTC::Float) ? 4 : 0) |
+  ((Field::Type::Code == ZfFieldTC::Float) ? 4 : 0) |
   (ZuTypeIn<ZuFieldProp::Delta2, Props>{} ? 2 : 0) |
   (ZuTypeIn<ZuFieldProp::Delta, Props>{} ? 1 : 0)>;
 template <typename Field, unsigned = FieldDecoderFlags_<Field>{}>
@@ -104,7 +104,7 @@ template <typename Field>
 using FieldDecoder = typename FieldDecoder_<Field>::T;
 
 // map a field to corresponding Series / Reader
-template <typename Field, bool = Field::Type::Code == ZtFieldTC::Time>
+template <typename Field, bool = Field::Type::Code == ZfFieldTC::Time>
 struct FieldSeries_ { using T = Series<FieldDecoder<Field>>; };
 template <typename Field>
 struct FieldSeries_<Field, true> { using T = TimeSeries; };
@@ -213,7 +213,7 @@ private:
 
 public:
   void write(const O &o) {
-    using namespace ZtFieldTC;
+    using namespace ZfFieldTC;
 
     if (m_stopped) return;
 
@@ -339,7 +339,7 @@ public:
 	  ZuMv(self).template operator()(ZuInt<J>{}, ZuMv(wrRef));
 	};
 	auto error = [dfw = dfw.ptr()]() { dfw->fail(); };
-	if constexpr (Field::Code == ZtFieldTC::Float)
+	if constexpr (Field::Code == ZfFieldTC::Float)
 	  m_seriesRefs.template p<J>()->write(ZuMv(next), ZuMv(error));
 	else
 	  m_seriesRefs.template p<J>()->write(

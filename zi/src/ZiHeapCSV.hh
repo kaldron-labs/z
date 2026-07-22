@@ -17,7 +17,7 @@
 
 #include <zlib/ZmHeap.hh>
 
-#include <zlib/ZtStruct.hh>
+#include <zlib/ZfStruct.hh>
 
 #include <zlib/ZiCSV.hh>
 
@@ -30,7 +30,7 @@ struct Data {
   ZmBitmap	cpuset;
 };
 
-ZtStruct(Data,
+ZfStruct(Data,
     (((id),		(Ctor<0>, Keys<0>, Group<0>)),	(String)),
     (((partition),	(Ctor<2>, Keys<0>)),		(UInt16)),
     (((cacheSize),	(Ctor<1>)),			(UInt64)),

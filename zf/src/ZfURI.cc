@@ -4,9 +4,9 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZtURI.hh>
+#include <zlib/ZfURI.hh>
 
-namespace ZtURI {
+namespace ZfURI {
 
 // returns the number of leading '/' characters
 unsigned skip(ZuSpan<char> span) {
@@ -188,4 +188,4 @@ bad:
   return {-1, nullptr};
 }
 
-} // ZtURI
+} // ZfURI

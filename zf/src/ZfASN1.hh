@@ -4,8 +4,8 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// ZtStruct ASN.1 load/save
-// - maps ZtStruct-defined data structures to/from ASN.1
+// ZfStruct ASN.1 load/save
+// - maps ZfStruct-defined data structures to/from ASN.1
 // - compile-time encoding/decoding
 
 // Generic mapping of C++ structs to ASN.1 requires expressing field encodings
@@ -53,28 +53,28 @@
 //   encoded as unsigned big-endian preceded by the first byte that contains
 //   the "length of the length", with MSB set
 
-#ifndef ZtASN1_HH
-#define ZtASN1_HH
+#ifndef ZfASN1_HH
+#define ZfASN1_HH
 
-#ifndef ZtLib_HH
-#include <zlib/ZtLib.hh>
+#ifndef ZfLib_HH
+#include <zlib/ZfLib.hh>
 #endif
 
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuFixed.hh>
 #include <zlib/ZuMArray.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfJSON.hh>
 #include <zlib/ZtHexDump.hh>
 
 ZuStructFacet(ASN1); // canonical ASN.1 facet, others can be defined
 
-namespace ZtASN1 {
+namespace ZfASN1 {
 
-// ZtASN1::Spec is a subsidiary namespace that apps can import to access
+// ZfASN1::Spec is a subsidiary namespace that apps can import to access
 // ASN.1 encoding-related constants and functions without dragging
-// in the rest of ZtASN1
+// in the rest of ZfASN1
 namespace Encoding {
 
 enum {
@@ -200,7 +200,7 @@ struct Fmt {
   constexpr const T &operator ()() const noexcept { return V; }
 };
 
-} // ZtASN1
+} // ZfASN1
 
 namespace ZuFieldProp::ASN1 {
 
@@ -216,17 +216,17 @@ template <bool> struct Optional { };
 //   [0] IMPLICIT SET { [0] value ... } ...
 template <
   uint32_t Pos,
-  uint32_t Tag = ZtASN1::tagU(),
+  uint32_t Tag = ZfASN1::tagU(),
   uint32_t Nesting = 0,
-  uint32_t NestTag = ZtASN1::tagU()>
-using Fmt = Fmt_<ZtASN1::Fmt<Pos, Tag, Nesting, NestTag>>;
+  uint32_t NestTag = ZfASN1::tagU()>
+using Fmt = Fmt_<ZfASN1::Fmt<Pos, Tag, Nesting, NestTag>>;
 
 // shorthand for Optional<true>
 using Opt = Optional<true>;
 
 // GetFmt - {Pos, Tag, Nesting, NestTag}
 template <typename Props, uint32_t Deflt, bool = HasType<Props, Fmt_>{}>
-struct GetFmt_ { using T = ZtASN1::Fmt<Deflt>; };
+struct GetFmt_ { using T = ZfASN1::Fmt<Deflt>; };
 template <typename Props, uint32_t Deflt>
 struct GetFmt_<Props, Deflt, true> {
   using T = ZuFieldProp::GetType<Props, Fmt_>;
@@ -284,43 +284,43 @@ using GetOptional = typename GetOptional_<Props>::T;
 
 } // ZuFieldProp::ASN1
 
-namespace ZtASN1 {
+namespace ZfASN1 {
 
 // default ASN types for field element type codes
 template <unsigned TypeCode>
 constexpr uint8_t DefltASNType() {
   if constexpr (
-      TypeCode == ZtFieldTC::CString ||
-      TypeCode == ZtFieldTC::String)
+      TypeCode == ZfFieldTC::CString ||
+      TypeCode == ZfFieldTC::String)
     return UTF8String;
-  else if constexpr (TypeCode == ZtFieldTC::Bytes)
+  else if constexpr (TypeCode == ZfFieldTC::Bytes)
     return OctetString;
-  else if constexpr (TypeCode == ZtFieldTC::Bool)
+  else if constexpr (TypeCode == ZfFieldTC::Bool)
     return Boolean;
   else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128)
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128)
     return Integer;
   else if constexpr (
-      TypeCode == ZtFieldTC::Float ||
-      TypeCode == ZtFieldTC::Fixed ||
-      TypeCode == ZtFieldTC::Decimal)
+      TypeCode == ZfFieldTC::Float ||
+      TypeCode == ZfFieldTC::Fixed ||
+      TypeCode == ZfFieldTC::Decimal)
     return Real;
   else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime)
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime)
     return GeneralizedTime;
   else if constexpr (
-      TypeCode == ZtFieldTC::UDT ||
-      ZtFieldTC::IsVec<TypeCode>{})
+      TypeCode == ZfFieldTC::UDT ||
+      ZfFieldTC::IsVec<TypeCode>{})
     return Sequence;
   // ZuUnreachable();
 }
@@ -415,7 +415,7 @@ struct SaveValue {
 #pragma pack(pop)
 
 // first pass builds a SaveArray
-ZuDerive(SaveArray, (ZtArray<SaveValue, ZtArrayHeapID<"ZtASN1.SaveArray">>));
+ZuDerive(SaveArray, (ZtArray<SaveValue, ZtArrayHeapID<"ZfASN1.SaveArray">>));
 // second pass uses spans contained within the SaveArray
 using SaveSpan = ZuSpan<const SaveValue>;
 
@@ -681,14 +681,14 @@ struct AsObject;	// as sequence/set
 template <unsigned ElemCode>
 struct AsArray;		// as homogeneous sequence
 
-} // ZtASN1
+} // ZfASN1
 
-ZtASN1::AsObject ZtASN1_Fmt(...);	// default
+ZfASN1::AsObject ZfASN1_Fmt(...);	// default
 
-namespace ZtASN1 {
+namespace ZfASN1 {
 
 template <typename O>
-using As = decltype(ZtASN1_Fmt(ZuDeclVal<O *>()));
+using As = decltype(ZfASN1_Fmt(ZuDeclVal<O *>()));
 
 // save individual value
 template <
@@ -737,12 +737,12 @@ struct AsObject {
       ZuFieldProp::ASN1::GetFmt<typename Field::Props,
 	int(ZuTypeIndex<Field, AllFields>{}())>;
 
-    using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
-    using SaveFields_ = ZuTypeGrep<ZtFieldFilter::Save, AllFields>;
+    using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
+    using SaveFields_ = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
     using SaveFields = ZuTypeSort<ASN1Order, SaveFields_>;
-    using CtorFields_ = ZuTypeGrep<ZtFieldFilter::Ctor, AllFields>;
+    using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
     using CtorFields = ZuTypeSort<CtorIndex, CtorFields_>;
-    using InitFields = ZuTypeGrep<ZtFieldFilter::Init, AllFields>;
+    using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
 
     static void save1(SaveArray &stash, const O &o) {
       using Fmt = ZuFieldProp::ASN1::GetFmt<Props>;
@@ -817,7 +817,7 @@ struct AsObject {
       enum { I = ZuTypeIndex<Field, SaveFields>{} };
       if (context.fields[I])
 	return loadValue<Facet, TypeCode, FieldProps, T>(context.fields[I]);
-      if constexpr (ZtFieldTC::IsVec<TypeCode>{})
+      if constexpr (ZfFieldTC::IsVec<TypeCode>{})
 	return R(ZuSpan<char>());
       else
 	return R{Field::deflt()};
@@ -869,7 +869,7 @@ struct AsObject {
 // and elide copying
 
 // LoadOID wraps an array of uint64_t OID elements
-using LoadOID_ = ZtArray<uint64_t, ZtArrayHeapID<"ZtASN1.LoadOID">>;
+using LoadOID_ = ZtArray<uint64_t, ZtArrayHeapID<"ZfASN1.LoadOID">>;
 struct LoadOID : public LoadOID_ {
   using Base = LoadOID_;
   using Base::push;
@@ -898,7 +898,7 @@ struct LoadOID : public LoadOID_ {
 };
 
 // LoadVec wraps an array of sub-spans, parsing each sub-span on demand
-ZuDerive(LoadVec_, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZtASN1.LoadVec">>));
+ZuDerive(LoadVec_, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZfASN1.LoadVec">>));
 template <
   typename Facet,
   typename Props,	// sequence props
@@ -969,7 +969,7 @@ struct AsArray {
       SaveContext outer{stash};
       outer.begin<nestID(Fmt::Nesting)>();
       unsigned n = ZuTraits<O>::length(o);
-      if constexpr (ElemCode == ZtFieldTC::UDT) {
+      if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using ElemHandler =
 	  typename As<Elem>::template Handler<Elem, Facet, ElemProps>;
 	for (unsigned i = 0; i < n; i++)
@@ -989,7 +989,7 @@ struct AsArray {
       saveTL<Fmt::InnerTag, ASNType>(s, stash[0].constructed.n);
       unsigned n = ZuTraits<O>::length(o);
       unsigned i = 1;
-      if constexpr (ElemCode == ZtFieldTC::UDT) {
+      if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using ElemHandler =
 	  typename As<Elem>::template Handler<Elem, Facet, ElemProps>;
 	for (unsigned j = 0; j < n; j++) {
@@ -1035,8 +1035,8 @@ inline void saveValue1_(SaveValue &sv, const T &v_)
 
   sv.count = 1;
   if constexpr (
-      TypeCode == ZtFieldTC::CString ||
-      TypeCode == ZtFieldTC::String) {
+      TypeCode == ZfFieldTC::CString ||
+      TypeCode == ZfFieldTC::String) {
     if constexpr (ASNType{} == UniversalString) {	// UTF32
       sv.string.n = ZuUTF<uint32_t, uint8_t>::span(v_).outLen();
       sv.length = (Optional && !sv.string.n) ? 0 : lenTL<Tag>(sv.string.n<<2);
@@ -1054,7 +1054,7 @@ inline void saveValue1_(SaveValue &sv, const T &v_)
     } else {
       sv.length = 0;
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     auto n = ZuBSpan{v_}.length();
     if constexpr (ASNType{} == Integer) {
       ZuBSpan bytes{v_};
@@ -1072,20 +1072,20 @@ inline void saveValue1_(SaveValue &sv, const T &v_)
       if (n) ++n;
     }
     sv.length = (Optional && !n) ? 0 : lenTL<Tag>(n);
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     sv.length = lenTL<Tag>(1);
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128) {
-    using U = ZtFieldTC::Type<TypeCode>;
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128) {
+    using U = ZfFieldTC::Type<TypeCode>;
     U v{v_};
     if (Optional && ZuNull(v)) { sv.length = 0; return; }
     if constexpr (ASNType{} == Integer) {
@@ -1106,7 +1106,7 @@ inline void saveValue1_(SaveValue &sv, const T &v_)
     } else {
       sv.length = 0;
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Float) {
+  } else if constexpr (TypeCode == ZfFieldTC::Float) {
     using F = ZuFPType<sizeof(T)>;
     F v = v_;
     if constexpr (ASNType{} == Real) {
@@ -1205,8 +1205,8 @@ inline void saveValue1_(SaveValue &sv, const T &v_)
       sv.length = 0;
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Fixed ||
-      TypeCode == ZtFieldTC::Decimal) {
+      TypeCode == ZfFieldTC::Fixed ||
+      TypeCode == ZfFieldTC::Decimal) {
     ZuDecimal v = v_;
     if constexpr (ASNType{} == Real) {
       if (ZuUnlikely(!*v)) { // nan
@@ -1259,8 +1259,8 @@ inline void saveValue1_(SaveValue &sv, const T &v_)
       sv.length = 0;
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     ZuDateTime dt{v_};
     int y, m_, d, h, m, s, n;
     dt.ymd(y, m_, d);
@@ -1306,8 +1306,8 @@ template <
 inline void saveValue1(SaveArray &stash, const T_ &v)
 {
   using T = ZuDecay<T_>;
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
-    if constexpr (TypeCode == ZtFieldTC::UDT) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
+    if constexpr (TypeCode == ZfFieldTC::UDT) {
       using Handler = typename As<T>::template Handler<T, Facet, Props>;
       Handler::save1(stash, v);
     } else {
@@ -1334,7 +1334,7 @@ inline void saveValue1(SaveArray &stash, const T_ &v)
       sv.count = 1;
       sv.oid.n = l;
     } else if constexpr (ASNType{} == Sequence) {
-      enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+      enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
       using ElemProps = ZuFieldProp::ASN1::GetElemProps<Props>;
       constexpr bool Optional = ZuFieldProp::ASN1::GetOptional<Props>{};
 
@@ -1368,8 +1368,8 @@ inline void saveValue2_(S &s, const T &v_, const SaveValue &sv)
   using ASNType = ZuFieldProp::ASN1::GetType<Props, DefltASNType<TypeCode>()>;
 
   if constexpr (
-      TypeCode == ZtFieldTC::CString ||
-      TypeCode == ZtFieldTC::String) {
+      TypeCode == ZfFieldTC::CString ||
+      TypeCode == ZfFieldTC::String) {
     ZuCSpan v(v_);
     if constexpr (ASNType{} == UniversalString) {	// UTF32
       unsigned n = sv.string.n;
@@ -1399,7 +1399,7 @@ inline void saveValue2_(S &s, const T &v_, const SaveValue &sv)
       saveTL<Tag, ASNType{}>(s, v.length());
       s << v;
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     ZuBSpan v{v_};
     auto n = v.length();
     if constexpr (ASNType{} == Integer) {
@@ -1415,22 +1415,22 @@ inline void saveValue2_(S &s, const T &v_, const SaveValue &sv)
       saveTL<Tag, ASNType{}>(s, n);
     }
     s << ZuCSpan(v);
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     bool v = v_;
     saveTL<Tag, Boolean>(s, 1);
     s << char(v ? 0xff : 0);
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128) {
-    using U = ZtFieldTC::Type<TypeCode>;
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128) {
+    using U = ZfFieldTC::Type<TypeCode>;
     U v{v_};
     if constexpr (ASNType{} == Integer) {
       auto n = sv.integer.n;
@@ -1456,7 +1456,7 @@ inline void saveValue2_(S &s, const T &v_, const SaveValue &sv)
       Zu_ntoa::Base10_print(u, n, buf);
       s << ZuCSpan(&buf[0], n);
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Float) {
+  } else if constexpr (TypeCode == ZfFieldTC::Float) {
     if constexpr (ASNType{} == Real) {
       auto e = sv.real.e;
       auto m = sv.real.m;
@@ -1538,8 +1538,8 @@ inline void saveValue2_(S &s, const T &v_, const SaveValue &sv)
       }
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Fixed ||
-      TypeCode == ZtFieldTC::Decimal) {
+      TypeCode == ZfFieldTC::Fixed ||
+      TypeCode == ZfFieldTC::Decimal) {
     ZuDecimal v = v_;
     if constexpr (ASNType{} == Real) {
       auto e = sv.real.e;
@@ -1599,8 +1599,8 @@ inline void saveValue2_(S &s, const T &v_, const SaveValue &sv)
       }
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     if (sv.time.y < 0) return;
     if constexpr (ASNType{} == UTCTime) {
       if (sv.time.y < 1950 || sv.time.y >= 2050) return;
@@ -1647,8 +1647,8 @@ template <
 inline void saveValue2(S &s, const T_ &v, SaveSpan stash)
 {
   using T = ZuDecay<T_>;
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
-    if constexpr (TypeCode == ZtFieldTC::UDT) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
+    if constexpr (TypeCode == ZfFieldTC::UDT) {
       using Handler = typename As<T>::template Handler<T, Facet, Props>;
       Handler::save2(s, v, stash);
     } else {
@@ -1675,7 +1675,7 @@ inline void saveValue2(S &s, const T_ &v, SaveSpan stash)
 	s << char(j & 0x7f);
       }
     } else if constexpr (ASNType{} == Sequence) {
-      enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+      enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
       using ElemProps = ZuFieldProp::ASN1::GetElemProps<Props>;
 
       const auto &sv = stash[0];
@@ -1708,8 +1708,8 @@ inline T loadValue_(ZuSpan<char> span)
   unsigned n = span.length();
 
   if constexpr (
-      TypeCode == ZtFieldTC::CString ||
-      TypeCode == ZtFieldTC::String) {
+      TypeCode == ZfFieldTC::CString ||
+      TypeCode == ZfFieldTC::String) {
     if constexpr (ASNType{} == UniversalString) {	// UTF32
       n &= ~3;
       if (ZuUnlikely(!n)) return T{};
@@ -1740,24 +1740,24 @@ inline T loadValue_(ZuSpan<char> span)
     } else {
       return ZuCSpan();
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     if constexpr (ASNType{} == BitString) span.offset(1);
     return ZuBSpan{span};
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     if (ZuUnlikely(!n)) return ZuCmp<T>::null();
     return span[0];
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128) {
-    using U = ZtFieldTC::Type<TypeCode>;
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128) {
+    using U = ZfFieldTC::Type<TypeCode>;
     if constexpr (ASNType{} == Integer) {
       if (ZuUnlikely(!n)) return ZuCmp<T>::null();
       U v = 0;
@@ -1781,7 +1781,7 @@ inline T loadValue_(ZuSpan<char> span)
     } else {
       return ZuCmp<T>::null();
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Float) {
+  } else if constexpr (TypeCode == ZfFieldTC::Float) {
     using F = ZuFPType<sizeof(T)>;
     using FP = ZuFP<F>;
     if constexpr (ASNType{} == Real) {
@@ -1809,15 +1809,15 @@ inline T loadValue_(ZuSpan<char> span)
 	ASNType{} == PrintableString ||
 	ASNType{} == T61String ||
 	ASNType{} == IA5String) {
-      auto d = ZtJSON::eov_Float(span);
+      auto d = ZfJSON::eov_Float(span);
       if (d.p<0>() < 0) return ZuCmp<T>::null();
       return d.p<1>();
     } else {
       return ZuCmp<T>::null();
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Fixed ||
-      TypeCode == ZtFieldTC::Decimal) {
+      TypeCode == ZfFieldTC::Fixed ||
+      TypeCode == ZfFieldTC::Decimal) {
     if constexpr (ASNType{} == Real) {
       if (!n) return 0;
       uint8_t b = span[0];
@@ -1841,9 +1841,9 @@ inline T loadValue_(ZuSpan<char> span)
 	ASNType{} == PrintableString ||
 	ASNType{} == T61String ||
 	ASNType{} == IA5String) {
-      auto d = ZtJSON::eov_Decimal(span);
+      auto d = ZfJSON::eov_Decimal(span);
       if (d.p<0>() < 0) return T{};
-      if constexpr (TypeCode == ZtFieldTC::Decimal)
+      if constexpr (TypeCode == ZfFieldTC::Decimal)
 	return d.p<1>();
       else {
 	if (!*d.p<1>()) return ZuFixed{};
@@ -1856,8 +1856,8 @@ inline T loadValue_(ZuSpan<char> span)
       return T{};
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     if constexpr (ASNType{} == UTCTime) {
       return ZuDateTime{ZuDateTimeScan::ASN1_U{}, span};
     } else if (ASNType{} == GeneralizedTime) {
@@ -1865,7 +1865,7 @@ inline T loadValue_(ZuSpan<char> span)
     } else {
       return T{};
     }
-  } else if constexpr (TypeCode == ZtFieldTC::UDT) {
+  } else if constexpr (TypeCode == ZfFieldTC::UDT) {
     return typename As<T>::template Handler<T, Facet>{ZuFalse{}, span}.ctor();
   }
 }
@@ -1873,7 +1873,7 @@ inline T loadValue_(ZuSpan<char> span)
 template <typename Facet, unsigned TypeCode, typename Props, typename T>
 inline auto loadValue(ZuSpan<char> span)
 {
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     return loadValue_<Facet, TypeCode, Props, T>(span);
   } else {
     using ASNType = ZuFieldProp::ASN1::GetType<Props, Sequence>;
@@ -1885,9 +1885,9 @@ inline auto loadValue(ZuSpan<char> span)
       ZuAssert((ZuIsConstructible<uint64_t, Elem>{}));
       return LoadOID(span);
     } else {
-      enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+      enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
       using ElemProps = ZuFieldProp::ASN1::GetElemProps<Props>;
-      using Elem = ZtFieldTC::Type<ElemCode>;
+      using Elem = ZfFieldTC::Type<ElemCode>;
       using LoadVec_ = LoadVec<Facet, Props, ElemCode, ElemProps, Elem>;
       return LoadVec_(span);
     }
@@ -1912,6 +1912,6 @@ auto handler(ZuSpan<char> span) {
   return typename As<O>::template Handler<O, Facet>{ZuTrue{}, span};
 }
 
-} // ZtASN1
+} // ZfASN1
 
-#endif /* ZtASN1_HH */
+#endif /* ZfASN1_HH */

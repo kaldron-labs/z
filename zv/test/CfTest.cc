@@ -55,10 +55,10 @@ ZtEnumNS(Values, int8_t, High, Low, Normal);
 struct Ranged {
   int value = 2;
 };
-ZtStruct(Ranged,
+ZfStruct(Ranged,
   (((value), ((Range<1, 3>))), (Int32, 2)));
 
-using RangedValue = ZtField(Ranged, value);
+using RangedValue = ZfField(Ranged, value);
 
 int main()
 {

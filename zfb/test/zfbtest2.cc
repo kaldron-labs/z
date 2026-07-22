@@ -27,14 +27,14 @@ struct Object {
   int price;
   ZuBitmap<100> flags;
 
-  friend ZtStructPrint ZuPrintType(Object *);
+  friend ZfStructPrint ZuPrintType(Object *);
 };
 struct Test {
   int foo = 42;
   ZtString<> bar;
   Object baz;
 
-  friend ZtStructPrint ZuPrintType(Test *);
+  friend ZfStructPrint ZuPrintType(Test *);
 };
 
 ZfbStruct(Object,
@@ -49,7 +49,7 @@ ZfbStruct(Test,
 
 ZfbRoot(Test);
 
-static auto vfields = ZtVFields<Test>();
+static auto vfields = ZfVFields<Test>();
 
 } // zfbtest
 

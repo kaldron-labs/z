@@ -20,15 +20,15 @@
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuString.hh>
 
-#include <zlib/ZtStruct.hh>
-#include <zlib/ZtASN1.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfASN1.hh>
 
 namespace Ztls::PK {
 
 enum { BufSize = 4<<10 };	// a 4096bit RSA key pem is under 4k
 enum { DERBufSize = 3<<10 };	// BufSize reduced by 3/4 for base64
 
-using namespace ZtASN1::Encoding;
+using namespace ZfASN1::Encoding;
 
 namespace OIDs {
   constexpr auto PKCS1_RSA = "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"_Zu;
@@ -51,7 +51,7 @@ struct SK_PKCS1 {
   ZuBSpan	exp2;
   ZuBSpan	coeff;
 };
-ZtStruct((SK_PKCS1, ASN1),
+ZfStruct((SK_PKCS1, ASN1),
   (((version),	(Ctor<0>)),				(UInt8)),
   (((modulus),	(Ctor<1>, ASN1::Type<Integer>)),	(Bytes)),
   (((pubExp),	(Ctor<2>, ASN1::Type<Integer>)),	(Bytes)),
@@ -69,7 +69,7 @@ struct SK_SEC1 {
   ZuBSpan	id;		// e.g. OIDs::EC_GRP_SECP256R1
   ZuBSpan	pubKey;		// optional
 };
-ZtStruct((SK_SEC1, ASN1),
+ZfStruct((SK_SEC1, ASN1),
   (((version), (Ctor<0>)),					   (UInt8)),
   (((key),     (Ctor<1>)),					   (Bytes)),
   (((id),      (Ctor<2>, (ASN1::Fmt<2, tag(0, OID)>), ASN1::Opt)), (Bytes)),
@@ -83,7 +83,7 @@ struct SK_PKCS8_HDR {
 				//      OIDs::PKCS1_RSA for RSA
 				//      1.3.101.112 for ED25519
 };
-ZtStruct((SK_PKCS8_HDR, ASN1),
+ZfStruct((SK_PKCS8_HDR, ASN1),
   (((version), (Ctor<0>)),					      (UInt8)),
   (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)));
 
@@ -93,7 +93,7 @@ struct SK_PKCS8_RSA {
   ZuBSpan	id;
   SK_PKCS1	rsa;
 };
-ZtStruct((SK_PKCS8_RSA, ASN1),
+ZfStruct((SK_PKCS8_RSA, ASN1),
   (((version), (Ctor<0>)),					      (UInt8)),
   (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((rsa),     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),	      (UDT)));
@@ -105,7 +105,7 @@ struct SK_PKCS8_EC {
   ZuBSpan	id2;
   SK_SEC1	ec;
 };
-ZtStruct((SK_PKCS8_EC, ASN1),
+ZfStruct((SK_PKCS8_EC, ASN1),
   (((version), (Ctor<0>)),					      (UInt8)),
   (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((id2),     (Ctor<2>, (ASN1::Fmt<2, tagU(), seq(1), tagU(OID)>))), (Bytes)),
@@ -117,7 +117,7 @@ struct SK_PKCS8_ED25519 {
   ZuBSpan	id;
   ZuBSpan	key;
 };
-ZtStruct((SK_PKCS8_ED25519, ASN1),
+ZfStruct((SK_PKCS8_ED25519, ASN1),
   (((version), (Ctor<0>)),					      (UInt8)),
   (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((key),     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),	      (Bytes)));
@@ -127,7 +127,7 @@ struct PK_PKCS1 {
   ZuBSpan	modulus;
   ZuBSpan	pubExp;
 };
-ZtStruct((PK_PKCS1, ASN1),
+ZfStruct((PK_PKCS1, ASN1),
   (((modulus),	(Ctor<0>, ASN1::Type<Integer>)),	(Bytes)),
   (((pubExp),	(Ctor<1>, ASN1::Type<Integer>)),	(Bytes)));
 
@@ -139,7 +139,7 @@ struct PK_X509_HDR {
   ZuBSpan	id2;		// e.g. OIDs::EC_GRP_SECP256R1 for EC
 				//      null for RSA and ED25519
 };
-ZtStruct((PK_X509_HDR, ASN1),
+ZfStruct((PK_X509_HDR, ASN1),
   (((id),  (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((id2), (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(1), tagU(OID)>), ASN1::Opt)),
 								  (Bytes)));
@@ -149,7 +149,7 @@ struct PK_X509_RSA {
   ZuBSpan	id;
   PK_PKCS1	rsa;
 };
-ZtStruct((PK_X509_RSA, ASN1),
+ZfStruct((PK_X509_RSA, ASN1),
   (((id),  (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))),    (Bytes)),
   (((rsa), (Ctor<3>, (ASN1::Fmt<3, tagU(), bstr(1, 0)>))),	     (UDT)));
 
@@ -159,7 +159,7 @@ struct PK_X509_EC {
   ZuBSpan	id2;
   ZuBSpan	pubKey;
 };
-ZtStruct((PK_X509_EC, ASN1),
+ZfStruct((PK_X509_EC, ASN1),
   (((id),     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((id2),    (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(1), tagU(OID)>))), (Bytes)),
   (((pubKey), (Ctor<2>, (ASN1::Type<BitString>))),		     (Bytes)));
@@ -169,7 +169,7 @@ struct PK_X509_ED25519 {
   ZuBSpan	id;
   ZuBSpan	pubKey;
 };
-ZtStruct((PK_X509_ED25519, ASN1),
+ZfStruct((PK_X509_ED25519, ASN1),
   (((id),     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((pubKey), (Ctor<2>, (ASN1::Type<BitString>))),		     (Bytes)));
 

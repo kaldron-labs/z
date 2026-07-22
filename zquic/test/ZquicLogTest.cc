@@ -6,7 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/ZiFile.hh>
 
@@ -57,7 +57,7 @@ static unsigned parseJSONSeq_(ZuCSpan data)
     if (i >= data.length()) return 0;
     ZtString<> json;
     json << ZuCSpan{data.data() + start, i - start};
-    auto scan = ZtJSON::scan(json);
+    auto scan = ZfJSON::scan(json);
     if (scan.p<0>() != int(json.length())) return 0;
     ++n;
     ++i;

@@ -16,7 +16,7 @@
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmTrap.hh>
 
-#include <zlib/ZtCLI.hh>
+#include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiModule.hh>
@@ -302,12 +302,12 @@ friend Link;
   Ztls::Random *rng() { return this; }
 
   void exec(ZuSpan<char> s) {
-    ZtCLI::InCLI in(s);
+    ZfCLI::InCLI in(s);
     exec_(in.argv, in.in, in.out, in.append);
   }
 
   void exec(unsigned argc, const char *const *argv) {
-    ZtCLI::InArgv in(argc, argv);
+    ZfCLI::InArgv in(argc, argv);
     exec_(in.argv);
   }
 
@@ -569,11 +569,11 @@ private:
 using Context = ZCmd::Context;
 
 struct PasswdCmd { };
-ZtStruct(PasswdCmd);
+ZfStruct(PasswdCmd);
 Zcmd::Fn passwdCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     PasswdCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 1) throw Zcmd::Usage();
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     auto oldpw = zcmd->getpass("Current password: ", 100);
@@ -620,7 +620,7 @@ struct UsersCmd {
   bool			exclusive = false;
   int			limit = 10;
 };
-ZtStruct(UsersCmd,
+ZfStruct(UsersCmd,
   (((id),        (Ctor<0>, CLI::Opt<'i'>)),  (UInt64)),
   (((name),      (Ctor<1>, CLI::Opt<'n'>)),  (String)),
   (((exclusive), (Ctor<2>, CLI::Flag<'x'>)), (Bool)),
@@ -630,7 +630,7 @@ Zcmd::Fn usersCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     UsersCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 1) throw Zcmd::Usage();
     if (*options.id && options.name) throw Zcmd::Usage();
     using namespace Zum;
@@ -683,7 +683,7 @@ struct UserAddCmd {
   bool			enabled = true;
   bool			immutable = false;
 };
-ZtStruct(UserAddCmd,
+ZfStruct(UserAddCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((roles),     (Ctor<1>, CLI::Arg<2>)),    (StringVec)),
   (((enabled),   (Ctor<2>, CLI::Flag<'e'>)), (Bool)),
@@ -692,7 +692,7 @@ Zcmd::Fn userAddCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     UserAddCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 3) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -737,13 +737,13 @@ Zcmd::Fn userAddCmd() {
 struct ResetPassCmd {
   Zum::UserID	userID;
 };
-ZtStruct(ResetPassCmd,
+ZfStruct(ResetPassCmd,
   (((userID), (Ctor<0>, CLI::Arg<1>)), (UInt64)));
 Zcmd::Fn resetPassCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     ResetPassCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -779,7 +779,7 @@ struct UserModCmd {
   ZuBox<int8_t>		enabled;
   ZuBox<int8_t>		immutable;
 };
-ZtStruct(UserModCmd,
+ZfStruct(UserModCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)),
   (((name),      (Ctor<1>, CLI::Opt<'n'>)),  (String)),
   (((roles),     (Ctor<2>, CLI::Opt<'r'>)),  (StringVec)),
@@ -789,7 +789,7 @@ Zcmd::Fn userModCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     UserModCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -837,13 +837,13 @@ Zcmd::Fn userModCmd() {
 struct UserDelCmd {
   Zum::UserID		userID;
 };
-ZtStruct(UserDelCmd,
+ZfStruct(UserDelCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)));
 Zcmd::Fn userDelCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     UserDelCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -877,7 +877,7 @@ struct RolesCmd {
   bool		exclusive = false;
   uint16_t	limit = 10;
 };
-ZtStruct(RolesCmd,
+ZfStruct(RolesCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((exclusive), (Ctor<1>, CLI::Flag<'x'>)), (Bool)),
   (((limit),     (Ctor<2>, CLI::Opt<'l'>,
@@ -886,7 +886,7 @@ Zcmd::Fn rolesCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     RolesCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc < 1 || argc > 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -928,7 +928,7 @@ struct RoleAddCmd {
   ZtBitmap		apiperms;
   bool			immutable = false;
 };
-ZtStruct(RoleAddCmd,
+ZfStruct(RoleAddCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((perms),     (Ctor<1>, CLI::Arg<2>)),    (UDT)),
   (((apiperms),  (Ctor<2>, CLI::Arg<3>)),    (UDT)),
@@ -937,7 +937,7 @@ Zcmd::Fn roleAddCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     RoleAddCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 4) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -976,7 +976,7 @@ struct RoleModCmd {
   ZtBitmap		apiperms;
   ZuBox<int8_t>		immutable;
 };
-ZtStruct(RoleModCmd,
+ZfStruct(RoleModCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((perms),     (Ctor<1>, CLI::Opt<'p'>)),  (UDT)),
   (((apiperms),  (Ctor<2>, CLI::Opt<'a'>)),  (UDT)),
@@ -985,10 +985,10 @@ Zcmd::Fn roleModCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     // need the parser to check if --perms or --apiperms was used
-    ZtCLI::Parser<RoleModCmd> parser;
+    ZfCLI::Parser<RoleModCmd> parser;
     if (!parser.scanArgv(argv)) throw Zcmd::Usage();
     RoleModCmd options;
-    ZtCLI::handler<RoleModCmd>(parser.root).load(options);
+    ZfCLI::handler<RoleModCmd>(parser.root).load(options);
     if (parser.argc != 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1034,13 +1034,13 @@ Zcmd::Fn roleModCmd() {
 struct RoleDelCmd {
   ZuCSpan		name;
 };
-ZtStruct(RoleDelCmd,
+ZfStruct(RoleDelCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)));
 Zcmd::Fn roleDelCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     RoleDelCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1075,7 +1075,7 @@ struct PermsCmd {
   bool			exclusive = false;
   uint16_t		limit = 10;
 };
-ZtStruct(PermsCmd,
+ZfStruct(PermsCmd,
   (((id),        (Ctor<0>, CLI::Opt<'i'>)),  (UInt64)),
   (((name),      (Ctor<1>, CLI::Opt<'n'>)),  (String)),
   (((exclusive), (Ctor<2>, CLI::Flag<'x'>)), (Bool)),
@@ -1085,7 +1085,7 @@ Zcmd::Fn permsCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     PermsCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 1) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1134,13 +1134,13 @@ Zcmd::Fn permsCmd() {
 struct PermAddCmd {
   ZuCSpan		name;
 };
-ZtStruct(PermAddCmd,
+ZfStruct(PermAddCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),  (String)));
 Zcmd::Fn permAddCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     PermAddCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1176,14 +1176,14 @@ struct PermModCmd {
   ZuBox<uint64_t>	id;
   ZuCSpan		name;
 };
-ZtStruct(PermModCmd,
+ZfStruct(PermModCmd,
   (((id),        (Ctor<0>, CLI::Arg<1>)),  (UInt64)),
   (((name),      (Ctor<1>, CLI::Arg<2>)),  (String)));
 Zcmd::Fn permModCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     PermModCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 3) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1216,13 +1216,13 @@ Zcmd::Fn permModCmd() {
 struct PermDelCmd {
   ZuBox<uint64_t>	id;
 };
-ZtStruct(PermDelCmd,
+ZfStruct(PermDelCmd,
   (((id),        (Ctor<0>, CLI::Arg<1>)),  (UInt64)));
 Zcmd::Fn permDelCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     PermModCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1255,13 +1255,13 @@ Zcmd::Fn permDelCmd() {
 struct KeysCmd {
   Zum::UserID		userID;
 };
-ZtStruct(KeysCmd,
+ZfStruct(KeysCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)));
 Zcmd::Fn keysCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     KeysCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc < 1 || argc > 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1302,13 +1302,13 @@ Zcmd::Fn keysCmd() {
 struct KeyAddCmd {
   Zum::UserID		userID;
 };
-ZtStruct(KeyAddCmd,
+ZfStruct(KeyAddCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)));
 Zcmd::Fn keyAddCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     KeyAddCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc < 1 || argc > 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1347,13 +1347,13 @@ Zcmd::Fn keyAddCmd() {
 struct KeyClrCmd {
   Zum::UserID		userID;
 };
-ZtStruct(KeyClrCmd,
+ZfStruct(KeyClrCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)));
 Zcmd::Fn keyClrCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     KeyClrCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc < 1 || argc > 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1391,13 +1391,13 @@ Zcmd::Fn keyClrCmd() {
 struct KeyDelCmd {
   Zum::KeyIDData	id;
 };
-ZtStruct(KeyDelCmd,
+ZfStruct(KeyDelCmd,
   (((id),        (Ctor<0>, CLI::Arg<1>)),  (Bytes)));
 Zcmd::Fn keyDelCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     KeyDelCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     if (argc != 2) throw Zcmd::Usage();
     using namespace Zum;
     ZmRef<ZiIOBuf> buf;
@@ -1437,7 +1437,7 @@ struct TelcapCmd {
   uint32_t	interval = 0;
   bool		unsubscribe = false;
 };
-ZtStruct(TelcapCmd,
+ZfStruct(TelcapCmd,
   (((path),        (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((captures),    (Ctor<1>, CLI::Args<2>)),   (StringVec)),
   (((interval),    (Ctor<2>, CLI::Opt<'i'>, (Range<100, 1000000>))),
@@ -1447,7 +1447,7 @@ Zcmd::Fn telcapCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     TelcapCmd options;
-    unsigned argc = ZtCLI::load(options, argv);
+    unsigned argc = ZfCLI::load(options, argv);
     using namespace Ztel;
     if (options.unsubscribe) {
       if (argc > 2) throw Zcmd::Usage();

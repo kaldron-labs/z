@@ -8,7 +8,7 @@
 
 #include <zlib/ZmSingleton.hh>
 
-#include <zlib/ZtJSON.hh>
+#include <zlib/ZfJSON.hh>
 #include <zlib/ZtBuiltin.hh>
 
 #include <zlib/Zquic.hh>
@@ -27,7 +27,7 @@ struct QLogVantage {
   Zquic::Vantage::T	type = Zquic::Vantage::Unknown;
 };
 
-ZtStruct((QLogVantage, JSON),
+ZfStruct((QLogVantage, JSON),
   (((type), (Enum<Zquic::Vantage::JSON>)), (Int8)));
 
 struct QLogImplementation {
@@ -35,7 +35,7 @@ struct QLogImplementation {
   ZuCSpan	version;
 };
 
-ZtStruct((QLogImplementation, JSON),
+ZfStruct((QLogImplementation, JSON),
   (((name)), (String)),
   (((version)), (String)));
 
@@ -44,7 +44,7 @@ struct QLogReferenceTime {
   ZuCSpan	epoch;
 };
 
-ZtStruct((QLogReferenceTime, JSON),
+ZfStruct((QLogReferenceTime, JSON),
   (((clockType), (JSON::ID<"clock_type">)), (String)),
   (((epoch)), (String)));
 
@@ -68,30 +68,30 @@ struct QLogCommonFieldsJSON {
       bool comma = false;
       s << '{';
       if (fields.origDCID)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "ODCID", fields.origDCID);
       if (fields.groupID)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "group_id", fields.groupID);
       if (fields.dcid)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "DCID", fields.dcid);
       if (fields.scid)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "SCID", fields.scid);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::String>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::String>(
 	s, comma, "time_format", fields.timeFormat);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	s, comma, "reference_time", fields.referenceTime);
       s << '}';
     }
   };
 };
 
-inline QLogCommonFieldsJSON ZtJSON_Fmt(QLogCommonFields *);
+inline QLogCommonFieldsJSON ZfJSON_Fmt(QLogCommonFields *);
 
 namespace Zquic {
-ZtStruct((LinkInfo, JSON),
+ZfStruct((LinkInfo, JSON),
   (((origDCID), (JSON::ID<"ODCID">, JSON::Hex, JSON::Opt)), (Bytes)),
   (((groupID), (JSON::ID<"group_id">, JSON::Hex, JSON::Opt)), (Bytes)),
   (((dcid), (JSON::ID<"DCID">, JSON::Hex, JSON::Opt)), (Bytes)),
@@ -110,25 +110,25 @@ struct QLogEvtJSON {
 
       bool comma = false;
       s << '{';
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "time", event.time);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, NameProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, NameProps>(
 	s, comma, "name", event.name);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	s, comma, "data", event.data);
       if (event.linkInfo)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	  s, comma, "common_fields", event.linkInfo);
       s << '}';
     }
   };
 };
 
-#define QLogEvtFmt(Type) inline QLogEvtJSON<Type> ZtJSON_Fmt(Type *)
+#define QLogEvtFmt(Type) inline QLogEvtJSON<Type> ZfJSON_Fmt(Type *)
 
 ZuDerive(QLogEvtSchemas,
   (ZuArray<ZuCSpan, 2>));
-inline ZtJSON::AsArray<ZtFieldTC::String> ZtJSON_Fmt(QLogEvtSchemas *);
+inline ZfJSON::AsArray<ZfFieldTC::String> ZfJSON_Fmt(QLogEvtSchemas *);
 
 struct QLogTrace {
   QLogVantage	vantage;
@@ -136,7 +136,7 @@ struct QLogTrace {
   QLogEvtSchemas	eventSchemas;
 };
 
-ZtStruct((QLogTrace, JSON),
+ZfStruct((QLogTrace, JSON),
   (((vantage), (JSON::ID<"vantage_point">)), (UDT)),
   (((commonFields), (JSON::ID<"common_fields">)), (UDT)),
   (((eventSchemas), (JSON::ID<"event_schemas">)), (UDT)));
@@ -149,7 +149,7 @@ struct QLogHeader {
   QLogTrace	trace;
 };
 
-ZtStruct((QLogHeader, JSON),
+ZfStruct((QLogHeader, JSON),
   (((fileSchema), (JSON::ID<"file_schema">)), (String)),
   (((serializationFormat), (JSON::ID<"serialization_format">)), (String)),
   (((title)), (String)),
@@ -165,7 +165,7 @@ struct QLogEndpointInfo {
   ZuOpBool
 };
 
-ZtStruct((QLogEndpointInfo, JSON),
+ZfStruct((QLogEndpointInfo, JSON),
   (((ip), (JSON::ID<"ip_v4">)), (UDT)),
   (((port), (JSON::ID<"port_v4">)), (UInt16)));
 
@@ -175,7 +175,7 @@ struct QLogCxnStartedData {
 };
 
 struct QLogCxnStartedDataJSON;
-inline QLogCxnStartedDataJSON ZtJSON_Fmt(QLogCxnStartedData *);
+inline QLogCxnStartedDataJSON ZfJSON_Fmt(QLogCxnStartedData *);
 
 struct QLogCxnStartedEvt {
   uint64_t	time = 0;
@@ -191,7 +191,7 @@ struct QLogCxnStateData {
   Zquic::LinkState::T newState = Zquic::LinkState::Handshaking;
 };
 
-ZtStruct((QLogCxnStateData, JSON),
+ZfStruct((QLogCxnStateData, JSON),
   (((oldState), (JSON::ID<"old">,
     Enum<Zquic::LinkState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">,
@@ -211,28 +211,28 @@ struct QLogRawInfo {
   uint64_t	payloadLength = 0;
 };
 
-ZtStruct((QLogRawInfo, JSON),
+ZfStruct((QLogRawInfo, JSON),
   (((length)), (UInt64)),
   (((payloadLength), (JSON::ID<"payload_length">)), (UInt64)));
 
 ZuDerive(QLogRawInfoArray,
   (ZuArray<QLogRawInfo, 1>));
-inline ZtJSON::AsArray<ZtFieldTC::UDT> ZtJSON_Fmt(QLogRawInfoArray *);
+inline ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(QLogRawInfoArray *);
 
 ZuDerive(QLogECNArray,
   (ZuArray<Zquic::EcnMark::T, 1>));
-inline ZtJSON::AsArray<
-  ZtFieldTC::Int8,
-  ZuTypeList<ZuFieldProp::Enum<Zquic::EcnMark::JSON>>> ZtJSON_Fmt(
+inline ZfJSON::AsArray<
+  ZfFieldTC::Int8,
+  ZuTypeList<ZuFieldProp::Enum<Zquic::EcnMark::JSON>>> ZfJSON_Fmt(
     QLogECNArray *);
 
 ZuDerive(QLogAckRange,
   (ZuArray<uint64_t, 2>));
-inline ZtJSON::AsArray<ZtFieldTC::UInt64> ZtJSON_Fmt(QLogAckRange *);
+inline ZfJSON::AsArray<ZfFieldTC::UInt64> ZfJSON_Fmt(QLogAckRange *);
 
 ZuDerive(QLogAckRangeArray,
   (ZuArray<QLogAckRange, AckRangeMax>));
-inline ZtJSON::AsArray<ZtFieldTC::UDT> ZtJSON_Fmt(QLogAckRangeArray *);
+inline ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(QLogAckRangeArray *);
 
 struct QLogDatagramData {
 	uint16_t	count = 0;
@@ -240,7 +240,7 @@ struct QLogDatagramData {
 	QLogECNArray	ecn;
 };
 
-ZtStruct((QLogDatagramData, JSON),
+ZfStruct((QLogDatagramData, JSON),
   (((count)), (UInt16)),
   (((raw)), (UDT)),
   (((ecn)), (UDT)));
@@ -283,18 +283,18 @@ struct QLogFrameData {
 };
 
 struct QLogFrameDataJSON;
-inline QLogFrameDataJSON ZtJSON_Fmt(QLogFrameData *);
+inline QLogFrameDataJSON ZfJSON_Fmt(QLogFrameData *);
 
 ZuDerive(QLogFrameArray,
   (ZuArray<QLogFrameData, FrameMax>));
-inline ZtJSON::AsArray<ZtFieldTC::UDT> ZtJSON_Fmt(QLogFrameArray *);
+inline ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(QLogFrameArray *);
 
 struct QLogPacketHeader {
 	Zquic::PktType::T packetType = Zquic::PktType::Initial;
 	uint64_t	packetNumber = 0;
 };
 
-ZtStruct((QLogPacketHeader, JSON),
+ZfStruct((QLogPacketHeader, JSON),
   (((packetType), (JSON::ID<"packet_type">, Enum<Zquic::PktType::JSON>)),
       (Int8)),
   (((packetNumber), (JSON::ID<"packet_number">)), (UInt64)));
@@ -324,7 +324,7 @@ struct QLogPacketData {
 };
 
 struct QLogPacketDataJSON;
-inline QLogPacketDataJSON ZtJSON_Fmt(QLogPacketData *);
+inline QLogPacketDataJSON ZfJSON_Fmt(QLogPacketData *);
 
 struct QLogPacketEvt {
   uint64_t	time = 0;
@@ -337,7 +337,7 @@ QLogEvtFmt(QLogPacketEvt);
 
 ZuDerive(QLogPktNumArray,
   (ZuArray<uint64_t, AckPacketMax>));
-inline ZtJSON::AsArray<ZtFieldTC::UInt64> ZtJSON_Fmt(
+inline ZfJSON::AsArray<ZfFieldTC::UInt64> ZfJSON_Fmt(
   QLogPktNumArray *);
 
 struct QLogAckData {
@@ -345,7 +345,7 @@ struct QLogAckData {
 	QLogPktNumArray packetNumbers;
 };
 
-ZtStruct((QLogAckData, JSON),
+ZfStruct((QLogAckData, JSON),
   (((packetSpace), (JSON::ID<"packet_number_space">,
     Enum<Zquic::PktNumSpace::JSON>)),
       (Int8)),
@@ -373,7 +373,7 @@ struct QLogPktLostData {
     PktLostTrigger::ReorderThresh;
 };
 
-ZtStruct((QLogPktLostData, JSON),
+ZfStruct((QLogPktLostData, JSON),
   (((header)), (UDT)),
   (((trigger), (Enum<PktLostTrigger::JSON>)), (Int8)));
 
@@ -390,7 +390,7 @@ struct QLogMarkRetransData {
   QLogFrameArray frames;
 };
 
-ZtStruct((QLogMarkRetransData, JSON),
+ZfStruct((QLogMarkRetransData, JSON),
   (((frames)), (UDT)));
 
 struct QLogMarkRetransEvt {
@@ -412,7 +412,7 @@ struct QLogRecMetricsData {
   uint64_t	bytesInFlight = 0;
 };
 
-ZtStruct((QLogRecMetricsData, JSON),
+ZfStruct((QLogRecMetricsData, JSON),
   (((latestRTT), (JSON::ID<"latest_rtt">)), (Float)),
   (((smoothedRTT), (JSON::ID<"smoothed_rtt">)), (Float)),
   (((rttVariance), (JSON::ID<"rtt_variance">)), (Float)),
@@ -451,7 +451,7 @@ struct QLogCongStateData {
   CongTrigger::T trigger = CongTrigger::Ack;
 };
 
-ZtStruct((QLogCongStateData, JSON),
+ZfStruct((QLogCongStateData, JSON),
   (((newState), (JSON::ID<"new">,
     Enum<CongState::JSON>)), (Int8)),
   (((trigger), (Enum<CongTrigger::JSON>)), (Int8)));
@@ -486,7 +486,7 @@ struct QLogTimerData {
   double	delta = 0;
 };
 
-ZtStruct((QLogTimerData, JSON),
+ZfStruct((QLogTimerData, JSON),
   (((timerType), (JSON::ID<"timer_type">,
     Enum<TimerType::JSON>)), (Int8)),
   (((packetSpace), (JSON::ID<"packet_number_space">,
@@ -509,7 +509,7 @@ struct QLogECNData {
   ECNState::T newState = ECNState::Unknown;
 };
 
-ZtStruct((QLogECNData, JSON),
+ZfStruct((QLogECNData, JSON),
   (((oldState), (JSON::ID<"old">, Enum<ECNState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">, Enum<ECNState::JSON>)), (Int8)));
 
@@ -533,7 +533,7 @@ struct QLogSecData {
   bool		success = true;
 };
 
-ZtStruct((QLogSecData, JSON),
+ZfStruct((QLogSecData, JSON),
   (((kind), (Enum<SecKind::JSON>)), (Int8)),
   (((packetSpace), (JSON::ID<"packet_number_space">,
     Enum<Zquic::PktNumSpace::JSON>)), (Int8)),
@@ -563,7 +563,7 @@ struct QLogKeyData {
 };
 
 struct QLogKeyDataJSON;
-inline QLogKeyDataJSON ZtJSON_Fmt(QLogKeyData *);
+inline QLogKeyDataJSON ZfJSON_Fmt(QLogKeyData *);
 
 struct QLogKeyEvt {
   uint64_t	time = 0;
@@ -595,7 +595,7 @@ struct QLogParamsData {
 };
 
 struct QLogParamsDataJSON;
-inline QLogParamsDataJSON ZtJSON_Fmt(QLogParamsData *);
+inline QLogParamsDataJSON ZfJSON_Fmt(QLogParamsData *);
 
 struct QLogParamsEvt {
   uint64_t	time = 0;
@@ -610,14 +610,14 @@ struct QLogALPNID {
   ZeString	stringValue;
 };
 
-ZtStruct((QLogALPNID, JSON),
+ZfStruct((QLogALPNID, JSON),
   (((stringValue), (JSON::ID<"string_value">)), (String)));
 
 struct QLogALPNData {
   QLogALPNID chosenALPN;
 };
 
-ZtStruct((QLogALPNData, JSON),
+ZfStruct((QLogALPNData, JSON),
   (((chosenALPN), (JSON::ID<"chosen_alpn">)), (UDT)));
 
 struct QLogALPNEvt {
@@ -637,7 +637,7 @@ struct QLogVersionData {
 };
 
 struct QLogVersionDataJSON;
-inline QLogVersionDataJSON ZtJSON_Fmt(QLogVersionData *);
+inline QLogVersionDataJSON ZfJSON_Fmt(QLogVersionData *);
 
 struct QLogVersionEvt {
   uint64_t	time = 0;
@@ -654,7 +654,7 @@ struct QLogTupleAssignedData {
 };
 
 struct QLogTupleAssignedDataJSON;
-inline QLogTupleAssignedDataJSON ZtJSON_Fmt(QLogTupleAssignedData *);
+inline QLogTupleAssignedDataJSON ZfJSON_Fmt(QLogTupleAssignedData *);
 
 struct QLogPathEvt {
   uint64_t	time = 0;
@@ -671,7 +671,7 @@ struct QLogMTUData {
   bool		done = false;
 };
 
-ZtStruct((QLogMTUData, JSON),
+ZfStruct((QLogMTUData, JSON),
   (((newMTU), (JSON::ID<"new">)), (UInt32)),
   (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)), (UInt64)),
   (((done)), (Bool)));
@@ -691,7 +691,7 @@ struct QLogPathValidData {
   Zquic::Vantage::T vantage = Zquic::Vantage::Unknown;
 };
 
-ZtStruct((QLogPathValidData, JSON),
+ZfStruct((QLogPathValidData, JSON),
   (((success)), (Bool)),
   (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)), (UInt64)),
   (((vantage), (JSON::ID<"vantage">,
@@ -714,7 +714,7 @@ struct QLogCIDData {
 };
 
 struct QLogCIDDataJSON;
-inline QLogCIDDataJSON ZtJSON_Fmt(QLogCIDData *);
+inline QLogCIDDataJSON ZfJSON_Fmt(QLogCIDData *);
 
 struct QLogCIDEvt {
   uint64_t	time = 0;
@@ -743,7 +743,7 @@ struct QLogMigrationData {
   bool			closeOnFailure = false;
 };
 
-ZtStruct((QLogMigrationData, JSON),
+ZfStruct((QLogMigrationData, JSON),
   (((activeLocal), (JSON::ID<"active_local">)), (UDT)),
   (((activeRemote), (JSON::ID<"active_remote">)), (UDT)),
   (((candidateLocal), (JSON::ID<"candidate_local">)), (UDT)),
@@ -783,7 +783,7 @@ struct QLogStreamData {
   bool		fin = false;
 };
 
-ZtStruct((QLogStreamData, JSON),
+ZfStruct((QLogStreamData, JSON),
   (((streamType), (JSON::ID<"stream_type">,
     Enum<StreamType::JSON>)), (Int8)),
   (((oldState), (JSON::ID<"old">,
@@ -817,7 +817,7 @@ struct QLogStreamMovedData {
   QLogRawInfo	raw;
 };
 
-ZtStruct((QLogStreamMovedData, JSON),
+ZfStruct((QLogStreamMovedData, JSON),
   (((streamID), (JSON::ID<"stream_id">)), (UInt64)),
   (((offset)), (UInt64)),
   (((from), (Enum<StreamDataLoc::JSON>)), (Int8)),
@@ -842,7 +842,7 @@ struct QLogCxnBlockedData {
     BlockedReason::CxnFlowCtrl;
 };
 
-ZtStruct((QLogCxnBlockedData, JSON),
+ZfStruct((QLogCxnBlockedData, JSON),
   (((oldState), (JSON::ID<"old">, Enum<BlockedState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">, Enum<BlockedState::JSON>)), (Int8)),
   (((reason), (Enum<BlockedReason::JSON>)), (Int8)));
@@ -864,7 +864,7 @@ struct QLogStreamBlockedData {
     BlockedReason::StreamFlowCtrl;
 };
 
-ZtStruct((QLogStreamBlockedData, JSON),
+ZfStruct((QLogStreamBlockedData, JSON),
   (((oldState), (JSON::ID<"old">, Enum<BlockedState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">, Enum<BlockedState::JSON>)), (Int8)),
   (((streamID), (JSON::ID<"stream_id">)), (UInt64)),
@@ -889,7 +889,7 @@ struct QLogCloseData {
 };
 
 struct QLogCloseDataJSON;
-inline QLogCloseDataJSON ZtJSON_Fmt(QLogCloseData *);
+inline QLogCloseDataJSON ZfJSON_Fmt(QLogCloseData *);
 
 struct QLogCloseEvt {
   uint64_t	time = 0;
@@ -1537,7 +1537,7 @@ bool ZquicLogger::writeHeader_(Trace *trace)
   };
   ZeLogBuf buf;
   buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(buf, header);
+  ZfJSON::save<ZuFacet::JSON>(buf, header);
   buf << '\n';
   if (!trace->sink.write(buf.cspan())) {
     ++m_writerFailures;
@@ -1557,10 +1557,10 @@ struct QLogCxnStartedDataJSON {
       bool comma = false;
       s << '{';
       if (event.local)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	  s, comma, "local", event.local);
       if (event.remote)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	  s, comma, "remote", event.remote);
       s << '}';
     }
@@ -1585,7 +1585,7 @@ bool ZquicLogger::writeCxnStarted_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -1611,7 +1611,7 @@ bool ZquicLogger::writeDatagramEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -1639,7 +1639,7 @@ static void qlogJSONField_(S &s, bool &comma, ZuCSpan id, const T &v)
   s << '"';
   s << id;
   s << "\":";
-  ZtJSON::saveValue<Facet, Filter, TypeCode, Props>(s, v);
+  ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(s, v);
 }
 
 struct QLogPacketDataJSON {
@@ -1657,26 +1657,26 @@ struct QLogPacketDataJSON {
 
       bool comma = false;
       s << '{';
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	s, comma, "header", packet.header);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, PktSpaceProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, PktSpaceProps>(
 	s, comma, "packet_number_space", packet.packetSpace);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	s, comma, "raw", packet.raw);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, ECNProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, ECNProps>(
 	s, comma, "ecn", packet.ecn);
       if (packet.trigger != PktTrigger::None)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, TriggerProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, TriggerProps>(
 	  s, comma, "trigger", packet.trigger);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "bytes_in_flight", packet.bytesInFlight);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt8>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt8>(
 	s, comma, "frame_count", packet.frameCount);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Bool>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Bool>(
 	s, comma, "frames_truncated", packet.framesTruncated);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	s, comma, "frames", packet.frames);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Bool>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Bool>(
 	s, comma, "ack_eliciting", packet.ackEliciting);
       s << '}';
     }
@@ -1697,122 +1697,122 @@ struct QLogFrameDataJSON {
 
       bool comma = false;
       s << '{';
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, FrameTypeProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, FrameTypeProps>(
 	s, comma, "frame_type", frame.frameType);
 
       switch (frame.frameType) {
 	case Zquic::FrameType::Ack:
 	  if (!ZuNull(frame.ackDelay) && frame.ackDelay)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::Float>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::Float>(
 	      s, comma, "ack_delay", frame.ackDelay);
 	  if (frame.ackedRanges)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	      s, comma, "acked_ranges", frame.ackedRanges);
 	  if (frame.ect0)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	      s, comma, "ect0", frame.ect0);
 	  if (frame.ect1)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	      s, comma, "ect1", frame.ect1);
 	  if (frame.ce)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	      s, comma, "ce", frame.ce);
 	  break;
 	case Zquic::FrameType::Crypto:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "offset", frame.offset);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	    s, comma, "raw", frame.raw);
 	  break;
 	case Zquic::FrameType::Stream:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "stream_id", frame.streamID);
 	  if (frame.offset)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	      s, comma, "offset", frame.offset);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	    s, comma, "raw", frame.raw);
 	  if (frame.fin)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::Bool>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::Bool>(
 	      s, comma, "fin", frame.fin);
 	  break;
 	case Zquic::FrameType::ResetStream:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "stream_id", frame.streamID);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "error_code", frame.errorCode);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "final_size", frame.finalSize);
 	  break;
 	case Zquic::FrameType::StopSending:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "stream_id", frame.streamID);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "error_code", frame.errorCode);
 	  break;
 	case Zquic::FrameType::MaxData:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "maximum", frame.maximum);
 	  break;
 	case Zquic::FrameType::MaxStreamData:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "stream_id", frame.streamID);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "maximum", frame.maximum);
 	  break;
 	case Zquic::FrameType::MaxStreams:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, StreamTypeProps>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, StreamTypeProps>(
 	    s, comma, "stream_type", frame.streamType);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "maximum", frame.maximum);
 	  break;
 	case Zquic::FrameType::DataBlocked:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "limit", frame.limit);
 	  break;
 	case Zquic::FrameType::StreamDataBlocked:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "stream_id", frame.streamID);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "limit", frame.limit);
 	  break;
 	case Zquic::FrameType::StreamsBlocked:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, StreamTypeProps>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, StreamTypeProps>(
 	    s, comma, "stream_type", frame.streamType);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "limit", frame.limit);
 	  break;
 	case Zquic::FrameType::NewCxnID:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "sequence_number", frame.sequenceNumber);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "retire_prior_to", frame.retirePriorTo);
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "connection_id_length", frame.cxnIDLength);
 	  if (frame.cxnID)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	      s, comma, "connection_id", frame.cxnID);
 	  if (frame.statelessResetToken)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	      s, comma, "stateless_reset_token", frame.statelessResetToken);
 	  break;
 	case Zquic::FrameType::RetireCxnID:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "sequence_number", frame.sequenceNumber);
 	  break;
 	case Zquic::FrameType::ConnectionClose:
 	case Zquic::FrameType::ApplicationClose:
-	  qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	  qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	    s, comma, "error_code", frame.errorCode);
 	  if (frame.raw.length)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	      s, comma, "raw", frame.raw);
 	  break;
 	case Zquic::FrameType::NewToken:
 	case Zquic::FrameType::PathChallenge:
 	case Zquic::FrameType::PathResponse:
 	  if (frame.raw.length)
-	    qlogJSONField_<Facet, Filter, ZtFieldTC::UDT>(
+	    qlogJSONField_<Facet, Filter, ZfFieldTC::UDT>(
 	      s, comma, "raw", frame.raw);
 	  break;
 	default:
@@ -1836,12 +1836,12 @@ struct QLogKeyDataJSON {
 
       bool comma = false;
       s << '{';
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, KeyTypeProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, KeyTypeProps>(
 	s, comma, "key_type", key.keyType);
       if (key.keyPhase != QLogKeyPhaseNull)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	  s, comma, "key_phase", key.keyPhase);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, TriggerProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, TriggerProps>(
 	s, comma, "trigger", key.trigger);
       s << '}';
     }
@@ -1860,48 +1860,48 @@ struct QLogParamsDataJSON {
 
       bool comma = false;
       s << '{';
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, InitiatorProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, InitiatorProps>(
 	s, comma, "initiator", params.initiator);
       if (params.origDCID)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "original_destination_connection_id",
 	  params.origDCID);
       if (params.initialSCID)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "initial_source_connection_id", params.initialSCID);
       if (params.retrySCID)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "retry_source_connection_id", params.retrySCID);
       if (params.statelessResetToken)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "stateless_reset_token", params.statelessResetToken);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Bool>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Bool>(
 	s, comma, "disable_active_migration", params.disableActiveMigration);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "max_idle_timeout", params.maxIdleTimeout);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "max_udp_payload_size", params.maxUDPPayloadSize);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "ack_delay_exponent", params.ackDelayExponent);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "max_ack_delay", params.maxAckDelay);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "active_connection_id_limit",
 	params.activeCxnIDLimit);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "initial_max_data", params.initialMaxData);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "initial_max_stream_data_bidi_local",
 	params.initialMaxStreamDataBidiLocal);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "initial_max_stream_data_bidi_remote",
 	params.initialMaxStreamDataBidiRemote);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "initial_max_stream_data_uni",
 	params.initialMaxStreamDataUni);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "initial_max_streams_bidi", params.initialMaxStreamsBidi);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	s, comma, "initial_max_streams_uni", params.initialMaxStreamsUni);
       s << '}';
     }
@@ -1993,16 +1993,16 @@ struct QLogCIDDataJSON {
 
       bool comma = false;
       s << '{';
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, InitiatorProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, InitiatorProps>(
 	s, comma, "initiator", cid.initiator);
       if (cid.oldCID)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "old", cid.oldCID);
       if (cid.newCID)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Bytes, BytesHexProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "new", cid.newCID);
       if (cid.attemptID != U64Null)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	  s, comma, "attempt_id", cid.attemptID);
       s << '}';
     }
@@ -2032,23 +2032,23 @@ struct QLogCloseDataJSON {
 
       bool comma = false;
       s << '{';
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, InitiatorProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, InitiatorProps>(
 	s, comma, "initiator", close.initiator);
       if (connectionError != CloseError::None)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, ErrorProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, ErrorProps>(
 	  s, comma, "connection_error", connectionError);
       if (applicationError != CloseError::None)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, ErrorProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, ErrorProps>(
 	  s, comma, "application_error", applicationError);
       if ((connectionError == CloseError::Unknown ||
 	  applicationError == CloseError::Unknown) &&
 	  close.errorCode)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::UInt64>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::UInt64>(
 	  s, comma, "error_code", close.errorCode);
       if (close.reason != CloseReason::None)
-	qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, ReasonProps>(
+	qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, ReasonProps>(
 	  s, comma, "reason", close.reason);
-      qlogJSONField_<Facet, Filter, ZtFieldTC::Int8, TriggerProps>(
+      qlogJSONField_<Facet, Filter, ZfFieldTC::Int8, TriggerProps>(
 	s, comma, "trigger", close.trigger);
       s << '}';
     }
@@ -2205,7 +2205,7 @@ bool ZquicLogger::writePktEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2235,7 +2235,7 @@ bool ZquicLogger::writeAckEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2276,7 +2276,7 @@ bool ZquicLogger::writePktLost_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2301,7 +2301,7 @@ bool ZquicLogger::writeMarkRetrans_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2331,7 +2331,7 @@ bool ZquicLogger::writeRecMetrics_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2385,7 +2385,7 @@ bool ZquicLogger::writeCongState_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2447,7 +2447,7 @@ bool ZquicLogger::writeTimerEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2472,7 +2472,7 @@ bool ZquicLogger::writeECNEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2544,7 +2544,7 @@ bool ZquicLogger::writeKeyEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2585,7 +2585,7 @@ bool ZquicLogger::writeParams_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2607,7 +2607,7 @@ bool ZquicLogger::writeALPNEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2634,7 +2634,7 @@ bool ZquicLogger::writeVersion_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2665,7 +2665,7 @@ bool ZquicLogger::writeSecEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2687,7 +2687,7 @@ bool ZquicLogger::writePathEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2713,7 +2713,7 @@ bool ZquicLogger::writeMTUEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2742,7 +2742,7 @@ bool ZquicLogger::writePathValid_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2774,7 +2774,7 @@ bool ZquicLogger::writeCIDEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2824,7 +2824,7 @@ bool ZquicLogger::writeMigrationEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2857,7 +2857,7 @@ bool ZquicLogger::writeStreamEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2886,7 +2886,7 @@ bool ZquicLogger::writeStreamData_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2912,7 +2912,7 @@ bool ZquicLogger::writeCxnBlocked_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2939,7 +2939,7 @@ bool ZquicLogger::writeStreamBlocked_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2968,7 +2968,7 @@ bool ZquicLogger::writeCloseEvt_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;
@@ -2994,7 +2994,7 @@ bool ZquicLogger::writeCxnState_(
   };
   m_buf.length(0);
   m_buf << char(0x1e);
-  ZtJSON::save<ZuFacet::JSON>(m_buf, qevent);
+  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
   m_buf << '\n';
   if (!write_(m_activeTrace, m_buf.cspan())) {
     ++m_writerFailures;

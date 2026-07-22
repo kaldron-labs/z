@@ -4,7 +4,7 @@ METASOURCES = AUTO
 %.i.cc: %.cc
 	$(CXXCOMPILE) -I$(top_srcdir)/zrl/src -C -E $< -o $@
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
-	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src \
+	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/zfb/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
@@ -22,7 +22,7 @@ CLEANFILES = ${FBS_H}
 noinst_HEADERS = ${FBS_H}
 LDADD = $(top_builddir)/zfb/src/libZfb.la \
 	$(top_builddir)/zi/src/libZi.la \
-	$(top_builddir)/ze/src/libZe.la \
+	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \

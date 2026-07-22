@@ -30,7 +30,7 @@ latency-sensitive applications and servers. Hallmarks of the library are:
     - consistency with the pre-processor (macros are name-scoped with
       prefixes not namespaces)
     - unneeded - Z uses prefixes with a low probability of collision
-      (`Zu`, `Zt`, ...)
+      (`Zu`, `Zt`, `Zf`, ...)
     - a short prefix is more succinct (`Zu` vs `Zu::`)
     - no uncontrolled large-scale naming imports (no `using namespace std`)
     - mitigation of C++ name-mangling bloat with heavily templated code
@@ -85,8 +85,9 @@ latency-sensitive applications and servers. Hallmarks of the library are:
 
 - Zu	- "Universal" - foundation (meta-programming, traits, etc.)
 - Zm	- Multithreading - threads, locks, scheduler, concurrent containers
-- Zt	- Vocabulary Types - dates/times, arrays, strings, serializers, etc.
+- Zt	- Vocabulary Types - dates/times, arrays, strings, formatting, etc.
 - Ze	- Errors & Logging - errors & logging to file / syslog / event log
+- Zf	- Data Formats - reflection, JSON, URI, CLI, CSV, ASN.1
 - Zi	- I/O - file I/O and socket I/O multiplexing (epoll 
 - Zv	- Service Frameworks - I/O framework, option parsing, config files
 - Zdb	- Database - in-memory DB, using Zi for HA clustering/replication

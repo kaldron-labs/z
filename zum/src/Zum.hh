@@ -73,7 +73,7 @@ struct Key {
   KeyIDData		id;
   KeyData		secret;
 
-  friend ZtStructPrint ZuPrintType(Key *);
+  friend ZfStructPrint ZuPrintType(Key *);
 };
 ZfbStruct(Key,
   (((userID),	(Ctor<0>, Keys<0>, Group<0>)),	(UInt64)),
@@ -87,7 +87,7 @@ struct Perm {
   PermID		id;
   String		name;
 
-  friend ZtStructPrint ZuPrintType(Perm *);
+  friend ZfStructPrint ZuPrintType(Perm *);
 };
 ZfbStruct(Perm,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	(UInt32)),
@@ -106,7 +106,7 @@ struct Role {
   ZtBitmap		apiperms;
   uint8_t		flags;		// RoleFlags
 
-  friend ZtStructPrint ZuPrintType(Role *);
+  friend ZfStructPrint ZuPrintType(Role *);
 };
 ZfbStruct(Role,
   (((name),	(Ctor<0>, Keys<0>)),				(String)),
@@ -133,7 +133,7 @@ struct User {
   uint32_t		failures = 0;
   UserFlags::T		flags = 0;	// UserFlags
 
-  friend ZtStructPrint ZuPrintType(User *);
+  friend ZfStructPrint ZuPrintType(User *);
 };
 ZfbStruct(User,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),		(UInt64)),

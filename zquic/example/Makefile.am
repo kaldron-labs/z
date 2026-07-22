@@ -1,6 +1,6 @@
 METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
-	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src \
+	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/zquic/src \
 	@Z_CPPFLAGS@ @PTLS_CFLAGS@
@@ -9,7 +9,7 @@ AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zi/src/libZi.la \
-	$(top_builddir)/ze/src/libZe.la \
+	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \

@@ -5,11 +5,11 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// ZtStruct
+// ZfStruct
 
-#include <zlib/ZtStruct.hh>
+#include <zlib/ZfStruct.hh>
 
-namespace ZtStruct_::Scan {
+namespace ZfStruct_::Scan {
 
 unsigned string(ZuSpan<char> dst, ZuCSpan &src)
 {
@@ -94,4 +94,4 @@ unsigned strElem(
   return j;
 }
 
-} // ZtStruct_::Scan
+} // ZfStruct_::Scan

@@ -4,15 +4,15 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// ZtStruct CSV parser/generator
+// ZfStruct CSV parser/generator
 // - streaming functional-style API (can handle very large datasets)
-// - column binding with ZtStruct
+// - column binding with ZfStruct
 
-#ifndef ZtCSV_HH
-#define ZtCSV_HH
+#ifndef ZfCSV_HH
+#define ZfCSV_HH
 
-#ifndef ZtLib_HH
-#include <zlib/ZtLib.hh>
+#ifndef ZfLib_HH
+#include <zlib/ZfLib.hh>
 #endif
 
 #include <zlib/ZuDerive.hh>
@@ -28,17 +28,17 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
-#include <zlib/ZtStruct.hh>
+#include <zlib/ZfStruct.hh>
 #include <zlib/ZtBytesFmt.hh>
 
 ZuStructFacet(CSV); // canonical CSV facet, others can be defined
 
-namespace ZtCSV {
+namespace ZfCSV {
 
 // bytes format
 using namespace ZtBytesFmt;
 
-} // ZtCSV
+} // ZfCSV
 
 namespace ZuFieldProp::CSV { // ZuStruct field properties
 
@@ -82,7 +82,7 @@ using GetIDs = typename GetIDs_<U>::T;
 // GetBytesFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BytesFmt>{}>
 struct GetBytesFmt_ {
-  using T = ZuConstant<uint8_t, ZtCSV::Base64>; // default
+  using T = ZuConstant<uint8_t, ZfCSV::Base64>; // default
 };
 template <typename Props>
 struct GetBytesFmt_<Props, true> {
@@ -93,7 +93,7 @@ using GetBytesFmt = typename GetBytesFmt_<Props>::T;
 
 } // ZuFieldProp::CSV
 
-namespace ZtCSV {
+namespace ZfCSV {
 
 // CSV-specific formatting
 struct Fmt : public ZtFmt::Default {
@@ -163,13 +163,13 @@ struct String {
 // };
 // class A {
 //   ...
-//   friend inline Fmt ZtCSV_StringFmt(A *); // bind Fmt to A
+//   friend inline Fmt ZfCSV_StringFmt(A *); // bind Fmt to A
 // };
 
 ZuDerive(QuoteBuf, // temporary on-stack string buffer for quoting
   (ZtString<
     ZtStringBuiltin<128,
-      ZtStringHeapID<"ZtCSV.Quote",
+      ZtStringHeapID<"ZfCSV.Quote",
 	ZtStringSharded<true>>>>));
 
 struct AsStringDeflt {	// default string formatter
@@ -187,11 +187,11 @@ struct AsStringDeflt {	// default string formatter
   };
 };
 
-} // ZtCSV
+} // ZfCSV
 
-ZtCSV::AsStringDeflt ZtCSV_StringFmt(...);
+ZfCSV::AsStringDeflt ZfCSV_StringFmt(...);
 
-namespace ZtCSV {
+namespace ZfCSV {
 
 // --- output functions
 
@@ -201,80 +201,80 @@ template <
 inline void saveValue_(S &s, const T_ &v_)
 {
   using T = ZuDecay<T_>;
-  if constexpr (TypeCode == ZtFieldTC::CString)
+  if constexpr (TypeCode == ZfFieldTC::CString)
     s << Quote::CString{v_};
-  else if constexpr (TypeCode == ZtFieldTC::String)
+  else if constexpr (TypeCode == ZfFieldTC::String)
     s << Quote::String{v_};
-  else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     constexpr unsigned Fmt = ZuFieldProp::CSV::GetBytesFmt<Props>{};
-    if constexpr (Fmt == ZtCSV::Base64) {
+    if constexpr (Fmt == ZfCSV::Base64) {
       ZuBSpan v{v_};
       auto n = ZuBase64::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase64::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZtCSV::Base64URL) {
+    } else if constexpr (Fmt == ZfCSV::Base64URL) {
       ZuBSpan v{v_};
       auto n = ZuBase64URL::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase64URL::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZtCSV::Base32) {
+    } else if constexpr (Fmt == ZfCSV::Base32) {
       ZuBSpan v{v_};
       auto n = ZuBase32::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuBase32::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZtCSV::Hex) {
+    } else if constexpr (Fmt == ZfCSV::Hex) {
       ZuBSpan v{v_};
       auto n = ZuHex::enclen(v.length());
       auto buf_ = ZmAlloc(uint8_t, n);
       ZuSpan<uint8_t> buf(&buf_[0], n);
       buf.trunc(ZuHex::encode(buf, v));
       s << ZuCSpan(buf);
-    } else if constexpr (Fmt == ZtCSV::Raw) {
+    } else if constexpr (Fmt == ZfCSV::Raw) {
       s << Quote::String{v_};
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     bool v = v_;
     s << (v ? '1' : '0');
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt128) {
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt128) {
     if constexpr (ZuIsBoxed<T>{}) {
       if constexpr (
 	  bool(ZuFieldProp::HasEnum<Props>{}) ||
 	  bool(ZuFieldProp::HasFlags<Props>{})) {
 	QuoteBuf buf;
-	buf << ZtFieldPrintInt<Props, Fmt, T>(v_);
+	buf << ZfFieldPrintInt<Props, Fmt, T>(v_);
 	s << Quote::String{buf.span()};
       } else
-	s << ZtFieldPrintInt<Props, Fmt, T>(v_);
+	s << ZfFieldPrintInt<Props, Fmt, T>(v_);
     } else {
-      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      using B = ZuBox<ZfFieldTC::Type<TypeCode>>;
       auto v = B{v_};
       if (!*v) return;
       if constexpr (
 	  bool(ZuFieldProp::HasEnum<Props>{}) ||
 	  bool(ZuFieldProp::HasFlags<Props>{})) {
 	QuoteBuf buf;
-	buf << ZtFieldPrintInt<Props, Fmt, B>(v);
+	buf << ZfFieldPrintInt<Props, Fmt, B>(v);
 	s << Quote::String{buf.span()};
       } else
-	s << ZtFieldPrintInt<Props, Fmt, B>(v);
+	s << ZfFieldPrintInt<Props, Fmt, B>(v);
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Float) {
+  } else if constexpr (TypeCode == ZfFieldTC::Float) {
     double v = v_;
     if (ZuUnlikely(ZuNull(v))) return;
     bool negative = v < 0;
@@ -293,23 +293,23 @@ inline void saveValue_(S &s, const T_ &v_)
     }
     s << ZuBoxed(v).fmt<Fmt>();
     if (e) { s << 'E'; if (e > 0) s << '+'; s << e; }
-  } else if constexpr (TypeCode == ZtFieldTC::Fixed) {
+  } else if constexpr (TypeCode == ZfFieldTC::Fixed) {
     ZuFixed v = v_;
     if (ZuUnlikely(!*v)) return;
     s << v.fmt<Fmt>();
-  } else if constexpr (TypeCode == ZtFieldTC::Decimal) {
+  } else if constexpr (TypeCode == ZfFieldTC::Decimal) {
     ZuDecimal v = v_;
     if (ZuUnlikely(!*v)) return;
     s << v.fmt<Fmt>();
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     ZuDateTime v{v_};
     if (!*v) return;
     auto &fmt = ZmTLS<ZuDateTimeFmt::CSV, (int Fmt::*){}>();
     s << v.fmt(fmt);
-  } else if constexpr (TypeCode == ZtFieldTC::UDT) {
-    using Fmt = decltype(ZtCSV_StringFmt(ZuDeclVal<T *>()));
+  } else if constexpr (TypeCode == ZfFieldTC::UDT) {
+    using Fmt = decltype(ZfCSV_StringFmt(ZuDeclVal<T *>()));
     using Handler = typename Fmt::template Handler<T>;
     Handler::save(s, v_);
   }
@@ -321,11 +321,11 @@ template <
 inline void saveValue(S &s, const T_ &v)
 {
   using T = ZuDecay<T_>;
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     saveValue_<TypeCode, Props>(s, v);
   } else {
     unsigned n = ZuTraits<T>::length(v);
-    enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     s << Fmt::VecPrefix();
     for (unsigned i = 0; i < n; i++) {
       if (i) s << Fmt::VecDelim();
@@ -351,16 +351,16 @@ ZuInline constexpr bool isspace__(char c) {
 
 // returns the number of columns in a CSV header line
 // - returns -1 if the line is incomplete
-ZtExtern int scan(ZuSpan<char> span);
+ZfExtern int scan(ZuSpan<char> span);
 
 // array of spans within a CSV header
-ZuDerive(Header, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZtCSV.Header">>));
+ZuDerive(Header, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZfCSV.Header">>));
 // array of spans within a single cell (yes, Excel has that capability)
-ZuDerive(ArrayCell, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZtCSV.ArrayCell">>));
+ZuDerive(ArrayCell, (ZtArray<ZuSpan<char>, ZtArrayHeapID<"ZfCSV.ArrayCell">>));
 // individual cell (either a single value span, or an array value)
 ZuDerive(Cell, (ZuUnion<ZuSpan<char>, ArrayCell>));
 // array of spans within a CSV row (body line)
-ZuDerive(Row, (ZtArray<Cell, ZtArrayHeapID<"ZtCSV.Row">>));
+ZuDerive(Row, (ZtArray<Cell, ZtArrayHeapID<"ZfCSV.Row">>));
 // field ID -> column index (used for reading)
 // - each row is split into a Row
 // - each object is loaded from the Row as indexed by Lookup
@@ -387,28 +387,28 @@ struct Lookup : ZuArray<int, Fields::N> {
 // - fills header with scanned spans
 // - returns +ve offset to the next line if a full line was scanned
 // - returns -1 if the line is incomplete
-ZtExtern int split(ZuSpan<char> span, Header &header);
+ZfExtern int split(ZuSpan<char> span, Header &header);
 // splits a body line into comma-separated spans
 // - fills row with scanned spans
 // - splits array cells into elements
 // - returns +ve offset to the next row if a full line was scanned
 // - returns -1 if the line is incomplete
-ZtExtern int split(ZuSpan<char> span, Row &row);
+ZfExtern int split(ZuSpan<char> span, Row &row);
 // idempotently unquote a span
 // - un-quotes strings in-place, mutating the span
 // - uses the byte following the span (the , or \n delimiter) as
 //   a guaranteed null-terminator and an idempotence check
-ZtExtern void unquote(ZuSpan<char> &span);
+ZfExtern void unquote(ZuSpan<char> &span);
 
 template <unsigned TypeCode, typename Props, typename T>
 inline T loadValue_(ZuSpan<char> span)
 {
   unquote(span); // idempotent, null-terminates
-  if constexpr (TypeCode == ZtFieldTC::CString) {
+  if constexpr (TypeCode == ZfFieldTC::CString) {
     return T(&span[0]);
-  } else if constexpr (TypeCode == ZtFieldTC::String) {
+  } else if constexpr (TypeCode == ZfFieldTC::String) {
     return T(span);
-  } else if constexpr (TypeCode == ZtFieldTC::Bytes) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bytes) {
     unsigned n = span.length();
     if (ZuUnlikely(!n)) return ZuCmp<T>::null();
     ZuSpan<uint8_t> bytes(span);
@@ -417,7 +417,7 @@ inline T loadValue_(ZuSpan<char> span)
     // - zero-fill trailing bytes are used for idempotence
     // - the final trailing byte is used to stash the number of
     //   padding bytes from the original base32/64 encoding
-    if constexpr (Fmt == ZtCSV::Base64) {
+    if constexpr (Fmt == ZfCSV::Base64) {
       unsigned m = ZuBase64::declen(n), l;
       if (bytes[n - 1] >= 4) {
 	l = ZuBase64::decode({&bytes[0], m}, bytes);
@@ -428,7 +428,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtCSV::Base64URL) {
+    } else if constexpr (Fmt == ZfCSV::Base64URL) {
       unsigned m = ZuBase64URL::declen(n), l;
       if (bytes[n - 1] >= 4) {
 	l = ZuBase64URL::decode({&bytes[0], m}, bytes);
@@ -439,7 +439,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtCSV::Base32) {
+    } else if constexpr (Fmt == ZfCSV::Base32) {
       unsigned m = ZuBase32::declen(n), l;
       if (bytes[n - 1] >= 8) {
 	l = ZuBase32::decode({&bytes[0], m}, bytes);
@@ -450,7 +450,7 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(l);
       return T(bytes);
-    } else if constexpr (Fmt == ZtCSV::Hex) {
+    } else if constexpr (Fmt == ZfCSV::Hex) {
       unsigned m = ZuHex::declen(n);
       if (bytes[n - 1]) {
 	m = ZuHex::decode({const_cast<uint8_t *>(&bytes[0]), m}, bytes);
@@ -458,40 +458,40 @@ inline T loadValue_(ZuSpan<char> span)
       }
       bytes.trunc(m);
       return T(bytes);
-    } else if constexpr (Fmt == ZtCSV::Raw) {
+    } else if constexpr (Fmt == ZfCSV::Raw) {
       return T(bytes);
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Bool) {
+  } else if constexpr (TypeCode == ZfFieldTC::Bool) {
     return T(ZuBox<uint8_t>{span}.val());
   } else if constexpr (
-      TypeCode == ZtFieldTC::Int8 ||
-      TypeCode == ZtFieldTC::Int16 ||
-      TypeCode == ZtFieldTC::Int32 ||
-      TypeCode == ZtFieldTC::Int64 ||
-      TypeCode == ZtFieldTC::Int128 ||
-      TypeCode == ZtFieldTC::UInt8 ||
-      TypeCode == ZtFieldTC::UInt16 ||
-      TypeCode == ZtFieldTC::UInt32 ||
-      TypeCode == ZtFieldTC::UInt64 ||
-      TypeCode == ZtFieldTC::UInt128) {
+      TypeCode == ZfFieldTC::Int8 ||
+      TypeCode == ZfFieldTC::Int16 ||
+      TypeCode == ZfFieldTC::Int32 ||
+      TypeCode == ZfFieldTC::Int64 ||
+      TypeCode == ZfFieldTC::Int128 ||
+      TypeCode == ZfFieldTC::UInt8 ||
+      TypeCode == ZfFieldTC::UInt16 ||
+      TypeCode == ZfFieldTC::UInt32 ||
+      TypeCode == ZfFieldTC::UInt64 ||
+      TypeCode == ZfFieldTC::UInt128) {
     if constexpr (ZuIsBoxed<T>{}) {
-      using Scan = ZtFieldScanInt<Props, Fmt, T>;
+      using Scan = ZfFieldScanInt<Props, Fmt, T>;
       return Scan{span}.value;
     } else {
-      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
-      using Scan = ZtFieldScanInt<Props, Fmt, B>;
+      using B = ZuBox<ZfFieldTC::Type<TypeCode>>;
+      using Scan = ZfFieldScanInt<Props, Fmt, B>;
       return T(Scan{span}.value.val());
     }
-  } else if constexpr (TypeCode == ZtFieldTC::Float) {
+  } else if constexpr (TypeCode == ZfFieldTC::Float) {
     auto v = ZuBox<double>{span}.val();
-    ZtFieldLimit<Props>(v);
+    ZfFieldLimit<Props>(v);
     return v;
   } else if constexpr (
-      TypeCode == ZtFieldTC::Fixed ||
-      TypeCode == ZtFieldTC::Decimal) {
+      TypeCode == ZfFieldTC::Fixed ||
+      TypeCode == ZfFieldTC::Decimal) {
     ZuDecimal d{span};
-    ZtFieldLimit<Props>(d);
-    if constexpr (TypeCode == ZtFieldTC::Decimal)
+    ZfFieldLimit<Props>(d);
+    if constexpr (TypeCode == ZfFieldTC::Decimal)
       return d;
     else {
       if (!*d) return ZuFixed{};
@@ -501,8 +501,8 @@ inline T loadValue_(ZuSpan<char> span)
 	return ZuFixed{d};
     }
   } else if constexpr (
-      TypeCode == ZtFieldTC::Time ||
-      TypeCode == ZtFieldTC::DateTime) {
+      TypeCode == ZfFieldTC::Time ||
+      TypeCode == ZfFieldTC::DateTime) {
     auto &fmt = ZmTLS<ZuDateTimeScan::CSV, (int Fmt::*){}>();
     ZuDateTime v;
     if (v.scan(fmt, span) < 0) return ZuCmp<T>::null();
@@ -510,8 +510,8 @@ inline T loadValue_(ZuSpan<char> span)
       return v.as_time();
     else
       return v;
-  } else if constexpr (TypeCode == ZtFieldTC::UDT) {
-    using Fmt = decltype(ZtCSV_StringFmt(ZuDeclVal<T *>()));
+  } else if constexpr (TypeCode == ZfFieldTC::UDT) {
+    using Fmt = decltype(ZfCSV_StringFmt(ZuDeclVal<T *>()));
     using Handler = typename Fmt::template Handler<T>;
     return Handler::load(span);
   }
@@ -533,7 +533,7 @@ struct LoadVec :
 template <unsigned TypeCode, typename Props, typename T>
 inline auto loadValue(Cell &cell)
 {
-  if constexpr (!ZtFieldTC::IsVec<TypeCode>{}) {
+  if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     if (cell.is<ZuSpan<char>>())
       return loadValue_<TypeCode, Props, T>(
 	cell.p<ZuSpan<char>>());
@@ -544,11 +544,11 @@ inline auto loadValue(Cell &cell)
     // coerce cell to an array
     if (cell.is<ZuSpan<char>>())
       cell = ArrayCell{cell.p<ZuSpan<char>>()};
-    enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
+    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     using Actual = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
     using Elem = ZuIf<
-      ElemCode >= ZtFieldTC::Int8 && ElemCode <= ZtFieldTC::UInt128 &&
-      bool(ZuIsBoxed<Actual>{}), Actual, ZtFieldTC::Type<ElemCode>>;
+      ElemCode >= ZfFieldTC::Int8 && ElemCode <= ZfFieldTC::UInt128 &&
+      bool(ZuIsBoxed<Actual>{}), Actual, ZfFieldTC::Type<ElemCode>>;
     using LoadVec_ = LoadVec<ElemCode, Props, Elem>;
     return LoadVec_(cell.p<ArrayCell>());
   }
@@ -787,15 +787,15 @@ struct Reader {
   using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;
 
   using AllFields = ZuFields<O, Facet>;
-  using LoadFields = ZuTypeGrep<ZtFieldFilter::Load, AllFields>;
-  using SaveFields = ZuTypeGrep<ZtFieldFilter::Save, AllFields>;
-  using CtorFields_ = ZuTypeGrep<ZtFieldFilter::Ctor, AllFields>;
+  using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
+  using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
+  using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
   using CtorFields = ZuTypeSort<CtorIndex, CtorFields_>;
-  using InitFields = ZuTypeGrep<ZtFieldFilter::Init, AllFields>;
-  using UpdFields = ZuTypeGrep<ZtFieldFilter::Upd, AllFields>;
-  using DelFields = ZuTypeGrep<ZtFieldFilter::Del, AllFields>;
+  using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
+  using UpdFields = ZuTypeGrep<ZfFieldFilter::Upd, AllFields>;
+  using DelFields = ZuTypeGrep<ZfFieldFilter::Del, AllFields>;
 
-  using Lookup = ZtCSV::Lookup<SaveFields>;
+  using Lookup = ZfCSV::Lookup<SaveFields>;
 
   ZuUnion<void, Lookup>	lookup;
   mutable Row		row;
@@ -847,7 +847,7 @@ struct Reader {
       auto j = lookup.template p<Lookup>()[I];
       if (j >= 0) return loadValue<TypeCode, Props, T>(row[j]);
     }
-    if constexpr (ZtFieldTC::IsVec<TypeCode>{})
+    if constexpr (ZfFieldTC::IsVec<TypeCode>{})
       return R();
     else
       return R{Field::deflt()};
@@ -871,7 +871,7 @@ struct Reader {
     else {
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZtFieldFilter::Load, Field>());
+	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
       return o;
     }
@@ -881,18 +881,18 @@ struct Reader {
     ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
     O &o = *static_cast<O *>(o_);
     ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-      Field::set(o, this->loadField<ZtFieldFilter::Load, Field>());
+      Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
     });
   }
 
   void load(O &o) const {
     ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-      Field::set(o, this->loadField<ZtFieldFilter::Load, Field>());
+      Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
     });
   }
   void update(O &o) const {
     ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-      Field::set(o, this->loadField<ZtFieldFilter::Upd, Field>());
+      Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
     });
   }
 
@@ -913,6 +913,6 @@ inline auto reader() {
   return Reader<O, Facet>{};
 }
 
-} // ZtCSV
+} // ZfCSV
 
-#endif /* ZtCSV_HH */
+#endif /* ZfCSV_HH */

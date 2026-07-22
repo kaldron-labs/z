@@ -207,9 +207,9 @@ The hot-path thread should only:
 The qlog thread should do as much as possible:
 
 - construct qlog-specific structs from captured values;
-- map enum names through `ZtEnumMap` and qlog field names through `ZtStruct`
+- map enum names through `ZtEnumMap` and qlog field names through `ZfStruct`
   metadata;
-- use `ZtJSON` / `ZtStruct` mappings;
+- use `ZfJSON` / `ZfStruct` mappings;
 - write JSON-SEQ records;
 - perform bounded formatting.
 
@@ -226,22 +226,22 @@ labels should be modeled as enum values, aligning with system error-code style
 classification.  Do not capture those literals as strings.
 
 If a value is an enumeration or closed vocabulary, keep it as an enum and use a
-`ZtEnumMap` with `ZtStruct` / `ZtJSON`.  The JSON string conversion belongs on
-the logger thread, during `ZtJSON` serialization:
+`ZtEnumMap` with `ZfStruct` / `ZfJSON`.  The JSON string conversion belongs on
+the logger thread, during `ZfJSON` serialization:
 
 ```c++
 ZtEnum(TheEnum, int8_t, Value0, Value1);
 ZtEnumMap(TheEnum, JSON, "value_0", "value_1");
-ZtStruct((TheStruct, JSON),
+ZfStruct((TheStruct, JSON),
   (((enum_), (Ctor<...>, Enum<TheEnum::JSON>)), (Int8)));
 ```
 
 Do not translate enums to strings in helper functions just to feed those
-strings back into `ZtJSON`.
+strings back into `ZfJSON`.
 
 Use existing Z framework printing and JSON facilities for Z network value
 types.  `ZiIP` already knows how to print itself, and qlog endpoint/address
-JSON should be expressed as `ZtJSON` / `ZtStruct` mappings over `ZiIP`,
+JSON should be expressed as `ZfJSON` / `ZfStruct` mappings over `ZiIP`,
 `ZiSockAddr`, ports, and enum/scalar fields.  Do not add qlog-local IP address
 formatters, byte shifting, `{data(), length()}` span reconstruction, or string
 parsing helpers for functionality the Z types already provide.
@@ -317,7 +317,7 @@ call sites and writer helpers can initialize only the emitted fields.
 Prefer typed event fields over string fields.  If a value is derived at run
 time, first model it as a scalar, fixed-size value, error code, or enum with
 `ZtEnumMap`.  Qlog event names are closed vocabulary values: model them as a
-`ZtEnumMap`-backed enum and serialize them through `ZtJSON`; do not pass qlog
+`ZtEnumMap`-backed enum and serialize them through `ZfJSON`; do not pass qlog
 event names around as `ZuCSpan`, `ZeString`, or string literals outside the
 enum map.  Event string fields must own their data only when the string is
 genuinely arbitrary free-form text; in that rare case use `ZeString`, move it
@@ -356,7 +356,7 @@ Good helpers:
 - logger-thread helpers called from inside the `ZquicLOG` lambda;
 - pure qlog conversion helpers used only inside `ZquicLOG`;
 - bounded event writers that take already-captured scalar metadata;
-- JSON serialization helpers using `ZtJSON` / `ZtStruct`.
+- JSON serialization helpers using `ZfJSON` / `ZfStruct`.
 
 Bad helpers:
 
@@ -392,6 +392,6 @@ For every qlog call site, verify:
 - captures are by value and bounded;
 - no references, runtime owner pointers, packet payloads, or secrets escape to
   the qlog thread;
-- JSON output uses `ZtJSON` / `ZtStruct`;
+- JSON output uses `ZfJSON` / `ZfStruct`;
 - release builds erase the qlog-only code at preprocessing time;
 - the hot path does not do qlog formatting or JSON serialization.
