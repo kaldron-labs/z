@@ -86,8 +86,10 @@ ZtStruct((Foo, Bah),
   (((float_), (Ctor<8>, CLI::ID<"float">, CLI::Number<ZuFmt::FP<4>>)), (Float)),
   (((float_ranged), (Ctor<9>, CLI::ID<"float-ranged">, (Range<0.0, 1>))),
     (Float, 0.42)),
-  (((fixed), (Ctor<10>)), (Fixed)),
-  (((decimal), (Ctor<11>)), (Decimal)),
+  (((fixed), (Ctor<10>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Fixed)),
+  (((decimal), (Ctor<11>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Decimal)),
   (((time_), (Ctor<12>, CLI::ID<"time">)), (Time)),
   (((nested), (Ctor<13>)), (UDT)),
   (((nestedJSON), (Ctor<14>)), (UDT)),
@@ -245,6 +247,33 @@ void longOnlyOptions()
   ZuCheck(!parser.scanArg({unknownValue, sizeof(unknownValue) - 1}));
 }
 
+void integerRange()
+{
+  ZuTestScope(integerRange);
+
+  char cli[] = "x --int_ranged=101";
+  ZtCLI::InCLI in(cli);
+  ZtCLI::Parser<Foo, ZuFacet::Bah> parser;
+  ZuCheck(parser.scanArgv(in.argv));
+  auto value = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  ZuCheck(value.int_ranged == ZuCmp<int>::null());
+}
+
+void realRange()
+{
+  ZuTestScope(realRange);
+
+  char cli[] =
+    "x --float_ranged=1.1 --fixed=-0.1 --decimal=1.1";
+  ZtCLI::InCLI in(cli);
+  ZtCLI::Parser<Foo, ZuFacet::Bah> parser;
+  ZuCheck(parser.scanArgv(in.argv));
+  auto value = ZtCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  ZuCheck(ZuCmp<double>::null(value.float_ranged));
+  ZuCheck(ZuCmp<ZuFixed>::null(value.fixed));
+  ZuCheck(ZuCmp<ZuDecimal>::null(value.decimal));
+}
+
 void delimitedLoad()
 {
   ZuTestScope(delimitedLoad);
@@ -272,6 +301,8 @@ int main(int argc, char **argv)
   ZuTestCall(parseCLI);
   ZuTestCall(parseCLIEscapedAndEmpty);
   ZuTestCall(longOnlyOptions);
+  ZuTestCall(integerRange);
+  ZuTestCall(realRange);
   ZuTestCall(delimitedLoad);
   return 0;
 }

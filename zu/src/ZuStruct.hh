@@ -585,7 +585,7 @@ using ZuStructTupleT = typename ZuStructTupleT_<
   ZuDecay<O>, ObjectMap, ValueMap, Filter, 
   ZuTypeGrep<Filter, ZuFields<O>>>::T;
 
-// value tuple - i.e. tuple of value types
+// value tuple - i.e. a tuple of decayed (copied) values
 
 template <typename O>
 using ZuStructTuple = ZuStructTupleT<O, ZuMkCRef, ZuDecay, ZuAlwaysTrue>;

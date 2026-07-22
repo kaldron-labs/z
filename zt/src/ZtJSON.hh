@@ -516,6 +516,10 @@ struct AsObject {
     const AnyNode	*node;
     int			lookup[SaveFields::N];
 
+    static bool valid(const AnyNode *node) {
+      return node->has<AnyNode::Object>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} {
       for (unsigned i = 0; i < SaveFields::N; i++) lookup[i] = -1;
       if (node->has<AnyNode::Object>()) {
@@ -640,6 +644,10 @@ struct AsArray {
 
     const AnyNode	*node;
 
+    static bool valid(const AnyNode *node) {
+      return node->has<AnyNode::Array>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} { }
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
@@ -737,6 +745,10 @@ struct AsString {
  
     const AnyNode	*node;
 
+    static bool valid(const AnyNode *node) {
+      return node->has<AnyNode::String>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} { }
 
     ZuCSpan span() const {
@@ -810,25 +822,36 @@ inline void saveValue_(S &s, const T_ &v_)
       TypeCode == ZtFieldTC::UInt64 ||
       TypeCode == ZtFieldTC::UInt128) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
-    using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
-    auto v = B{v_};
-    if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{}) {
-      if constexpr (ZuFieldProp::HasEnum<Props>{}) {
-	if (v < 0) { s << "null"; return; }
+    if constexpr (ZuIsBoxed<T>{}) {
+      if constexpr (
+	  Fmt::String ||
+	  bool(ZuFieldProp::HasEnum<Props>{}) ||
+	  bool(ZuFieldProp::HasFlags<Props>{}) ||
+	  bool(ZuTypeIn<ZuFieldProp::Hex, Props>{})) {
+	s << '"' << ZtFieldPrintInt<Props, typename Fmt::Fmt, T>(v_) << '"';
       } else {
-	if (!*v) { s << "null"; return; }
+	s << ZtFieldPrintInt<Props, typename Fmt::Fmt, T>(v_);
+      }
+    } else {
+      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      auto v = B{v_};
+      if constexpr (!ZuFieldProp::JSON::GetOptional<Props>{}) {
+	if constexpr (ZuFieldProp::HasEnum<Props>{}) {
+	  if (v < 0) { s << "null"; return; }
+	} else {
+	  if (!*v) { s << "null"; return; }
+	}
+      }
+      if constexpr (
+	  Fmt::String ||
+	  bool(ZuFieldProp::HasEnum<Props>{}) ||
+	  bool(ZuFieldProp::HasFlags<Props>{}) ||
+	  bool(ZuTypeIn<ZuFieldProp::Hex, Props>{})) {
+	s << '"' << ZtFieldPrintInt<Props, typename Fmt::Fmt, B>(v) << '"';
+      } else {
+	s << ZtFieldPrintInt<Props, typename Fmt::Fmt, B>(v);
       }
     }
-    if constexpr (
-	Fmt::String ||
-	bool(ZuFieldProp::HasEnum<Props>{}) ||
-	bool(ZuFieldProp::HasFlags<Props>{}) ||
-	bool(ZuTypeIn<ZuFieldProp::Hex, Props>{})) {
-      s << '"'
-	<< ZtFieldPrintInt<Props, typename Fmt::Fmt, typename B::T>(v)
-	<< '"';
-    } else
-      s << v.template fmt<typename Fmt::Fmt>();
   } else if constexpr (TypeCode == ZtFieldTC::Float) {
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     double v = v_;
@@ -1104,15 +1127,20 @@ inline T loadValue_(AnyNode *node)
     using Fmt = ZuFieldProp::JSON::GetNumberFmt<Props>;
     switch (type) {
       case ValueTC::String: {
-	using Scan =
-	  ZtFieldScanInt<Props, typename Fmt::Fmt, ZtFieldTC::Type<TypeCode>>;
-	return T(Scan{node->data<AnyNode::String>()}.value.val());
+	if constexpr (ZuIsBoxed<T>{}) {
+	  using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, T>;
+	  return Scan{node->data<AnyNode::String>()}.value;
+	} else {
+	  using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+	  using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, B>;
+	  return T(Scan{node->data<AnyNode::String>()}.value.val());
+	}
       }
       case ValueTC::Number: {
 	auto d = eov_Decimal(node->data<AnyNode::Number>());
 	if (d.p<0>() < 0) return ZuCmp<T>::null();
-	// FIXME - validate min/max
-	return T(d.p<1>().floor());
+	auto v = d.p<1>().floor();
+	return ZtFieldValidate<Props>(T(v));
       }
       default:
 	return ZuCmp<T>::null();
@@ -1129,6 +1157,7 @@ inline T loadValue_(AnyNode *node)
 	    TypeCode == ZtFieldTC::Decimal ||
 	    TypeCode == ZtFieldTC::Fixed) {
 	  ZuDecimal d{span};
+	  d = ZtFieldValidate<Props>(d);
 	  if constexpr (TypeCode == ZtFieldTC::Decimal)
 	    return d;
 	  else {
@@ -1139,7 +1168,7 @@ inline T loadValue_(AnyNode *node)
 	      return ZuFixed{d};
 	  }
 	} else {
-	  return ZuBox<double>{span}.val();
+	  return ZtFieldValidate<Props>(ZuBox<double>{span}.val());
 	}
 	ZuUnreachable();
       } break;
@@ -1150,19 +1179,20 @@ inline T loadValue_(AnyNode *node)
 	    TypeCode == ZtFieldTC::Fixed) {
 	  auto d = eov_Decimal(span);
 	  if (d.p<0>() < 0) return T{};
+	  auto v = ZtFieldValidate<Props>(d.p<1>());
 	  if constexpr (TypeCode == ZtFieldTC::Decimal)
-	    return d.p<1>();
+	    return v;
 	  else {
-	    if (!*d.p<1>()) return ZuFixed{};
+	    if (!*v) return ZuFixed{};
 	    if constexpr (ZuFieldProp::HasNDP<Props>{})
-	      return ZuFixed{d.p<1>(), ZuFieldProp::GetNDP<Props>{}};
+	      return ZuFixed{v, ZuFieldProp::GetNDP<Props>{}};
 	    else
-	      return ZuFixed{d.p<1>()};
+	      return ZuFixed{v};
 	  }
 	} else {
 	  auto d = eov_Float(span);
 	  if (d.p<0>() < 0) return ZuCmp<T>::null();
-	  return d.p<1>();
+	  return ZtFieldValidate<Props>(d.p<1>());
 	}
       } break;
       default:
@@ -1224,7 +1254,9 @@ inline T loadValue_(AnyNode *node)
 	return v;
     }
   } else if constexpr (TypeCode == ZtFieldTC::UDT) {
-    return typename As<T>::template Handler<T, Facet>{node}.ctor();
+    using Handler = typename As<T>::template Handler<T, Facet>;
+    if (ZuUnlikely(!Handler::valid(node))) return ZuCmp<T>::null();
+    return Handler{node}.ctor();
   }
 }
 
@@ -1237,7 +1269,10 @@ inline auto loadValue(AnyNode *node)
     return loadValue_<Facet, Filter, TypeCode, Props, T>(node);
   } else {
     enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
-    using Elem = ZtFieldTC::Type<ElemCode>;
+    using Actual = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
+    using Elem = ZuIf<
+      ElemCode >= ZtFieldTC::Int8 && ElemCode <= ZtFieldTC::UInt128 &&
+      bool(ZuIsBoxed<Actual>{}), Actual, ZtFieldTC::Type<ElemCode>>;
     using LoadVec_ = LoadVec<Facet, Filter, ElemCode, Props, Elem>;
     if (!node->has<AnyNode::Array>()) {
       static const NodeArray _;

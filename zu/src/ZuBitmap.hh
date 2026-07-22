@@ -43,8 +43,8 @@ public:
   void set();
   void clr();
 
-  ZuInline operator bool() const { return get(); }
-  ZuInline bool operator !() const { return !get(); }
+  ZuInline operator bool() const noexcept { return get(); }
+  ZuInline bool operator !() const noexcept { return !get(); }
 
   ZuInline Bit &operator =(bool v) { v ? set() : clr(); return *this; }
 

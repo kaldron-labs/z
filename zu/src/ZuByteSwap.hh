@@ -32,6 +32,7 @@
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuInt.hh>
 #include <zlib/ZuIntrin.hh>
+#include <zlib/ZuAssert.hh>
 
 template <unsigned> struct ZuByteSwap_UInt;
 template <> struct ZuByteSwap_UInt<2> { using T = uint16_t; };
@@ -45,6 +46,8 @@ template <typename T_> class ZuByteSwap {
 public:
   using T = T_;
   using U = ZuUnder<T>;
+  ZuAssert(sizeof(T) == sizeof(U));
+  ZuAssert(ZuTraits<U>::IsPrimitive && ZuTraits<U>::IsReal);
   using I = typename ZuByteSwap_UInt<sizeof(T)>::T;
 
   constexpr ZuByteSwap() noexcept { m_i = 0; }

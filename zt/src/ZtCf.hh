@@ -328,6 +328,10 @@ struct AsObject {
     const AnyNode	*node;
     int			lookup[SaveFields::N];
 
+    static bool valid(const AnyNode *node) {
+      return node->has<AnyNode::Object>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} {
       for (unsigned i = 0; i < SaveFields::N; i++) lookup[i] = -1;
       if (node->has<AnyNode::Object>()) {
@@ -450,6 +454,10 @@ struct AsArray {
 
     const AnyNode	*node;
 
+    static bool valid(const AnyNode *node) {
+      return node->has<AnyNode::Array>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} { }
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
@@ -538,6 +546,10 @@ struct AsString {
 
     const AnyNode	*node;
 
+    static bool valid(const AnyNode *node) {
+      return node->has<AnyNode::String>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} { }
 
     ZuCSpan span() const {
@@ -625,9 +637,14 @@ inline T loadValue_(const AnyNode *node)
       TypeCode == ZtFieldTC::UInt128) {
     using Fmt = ZuFieldProp::Cf::GetNumberFmt<Props>;
     if (ZuUnlikely(type != ValueTC::String)) return ZuCmp<T>::null();
-    using Scan =
-      ZtFieldScanInt<Props, typename Fmt::Fmt, ZtFieldTC::Type<TypeCode>>;
-    return T(Scan{node->data<AnyNode::String>()}.value.val());
+    if constexpr (ZuIsBoxed<T>{}) {
+      using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, T>;
+      return Scan{node->data<AnyNode::String>()}.value;
+    } else {
+      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      using Scan = ZtFieldScanInt<Props, typename Fmt::Fmt, B>;
+      return T(Scan{node->data<AnyNode::String>()}.value.val());
+    }
   } else if constexpr (
       TypeCode == ZtFieldTC::Float ||
       TypeCode == ZtFieldTC::Fixed ||
@@ -638,6 +655,7 @@ inline T loadValue_(const AnyNode *node)
 	TypeCode == ZtFieldTC::Decimal ||
 	TypeCode == ZtFieldTC::Fixed) {
       ZuDecimal d{span};
+      d = ZtFieldValidate<Props>(d);
       if constexpr (TypeCode == ZtFieldTC::Decimal)
 	return d;
       else {
@@ -650,7 +668,7 @@ inline T loadValue_(const AnyNode *node)
     } else {
       auto d = eov_Float(span);
       if (d.p<0>() < 0) return ZuCmp<T>::null();
-      return d.p<1>();
+      return ZtFieldValidate<Props>(d.p<1>());
     }
   } else if constexpr (
       TypeCode == ZtFieldTC::Time ||
@@ -699,7 +717,9 @@ inline T loadValue_(const AnyNode *node)
 	return v;
     }
   } else if constexpr (TypeCode == ZtFieldTC::UDT) {
-    return typename As<T>::template Handler<T, Facet>{node}.ctor();
+    using Handler = typename As<T>::template Handler<T, Facet>;
+    if (ZuUnlikely(!Handler::valid(node))) return ZuCmp<T>::null();
+    return Handler{node}.ctor();
   }
 }
 
@@ -722,7 +742,10 @@ inline auto loadValue(const AnyNode *node)
 	  loadValue_<Facet, Filter, ElemCode, Props, Elem>(nodes[i]));
       return out;
     } else {
-      using Elem = ZtFieldTC::Type<ElemCode>;
+      using Actual = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
+      using Elem = ZuIf<
+	ElemCode >= ZtFieldTC::Int8 && ElemCode <= ZtFieldTC::UInt128 &&
+	bool(ZuIsBoxed<Actual>{}), Actual, ZtFieldTC::Type<ElemCode>>;
       using LoadVec_ = LoadVec<Facet, Filter, ElemCode, Props, Elem>;
       if (!node->has<AnyNode::Array>()) {
 	static const NodeArray _;

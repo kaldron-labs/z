@@ -21,6 +21,26 @@
 
 using namespace ZuTestUtil;
 
+struct RangeData {
+  int value = 42;
+};
+
+ZtStruct((RangeData, CSV),
+  (((value), (Ctor<0>, (Range<0, 100>))), (Int32, 42)));
+
+struct RealRangeData {
+  double float_ = 0.5;
+  ZuFixed fixed;
+  ZuDecimal decimal;
+};
+
+ZtStruct((RealRangeData, CSV),
+  (((float_), (Ctor<0>, (Range<0.0, 1.0>))), (Float, 0.5)),
+  (((fixed), (Ctor<1>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Fixed)),
+  (((decimal), (Ctor<2>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Decimal)));
+
 void testHeaderSplitAndUnquote()
 {
   ZuTestScope(testHeaderSplitAndUnquote);
@@ -148,6 +168,40 @@ void testScanBoolAndBytesFmt()
   ZuCheck(ZtBytesFmt::Raw == ZtCSV::Raw);
 }
 
+void testIntegerRange()
+{
+  ZuTestScope(testIntegerRange);
+
+  char csv[] = "value\n101\n";
+  auto reader = ZtCSV::reader<RangeData>();
+  RangeData value;
+  unsigned rows = 0;
+  reader.read({csv, sizeof(csv) - 1}, [&](const auto &row) {
+    value = row.ctor();
+    ++rows;
+  });
+  ZuCheck(rows == 1);
+  ZuCheck(value.value == ZuCmp<int>::null());
+}
+
+void testRealRange()
+{
+  ZuTestScope(testRealRange);
+
+  char csv[] = "float_,fixed,decimal\n1.1,-0.1,1.1\n";
+  auto reader = ZtCSV::reader<RealRangeData>();
+  RealRangeData value;
+  unsigned rows = 0;
+  reader.read({csv, sizeof(csv) - 1}, [&](const auto &row) {
+    value = row.ctor();
+    ++rows;
+  });
+  ZuCheck(rows == 1);
+  ZuCheck(ZuCmp<double>::null(value.float_));
+  ZuCheck(ZuCmp<ZuFixed>::null(value.fixed));
+  ZuCheck(ZuCmp<ZuDecimal>::null(value.decimal));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -156,5 +210,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRowSplitArrayFormsAndMalformed);
   ZuTestCall(testQuoteAndCodecWrappers);
   ZuTestCall(testScanBoolAndBytesFmt);
+  ZuTestCall(testIntegerRange);
+  ZuTestCall(testRealRange);
   return 0;
 }

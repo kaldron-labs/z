@@ -19,6 +19,9 @@
 
 namespace ZtWindow_ {
 
+// Elem can potentially index an element outside the window
+// - if outside the window, get() resolves to a null reference
+// - set() is used to extend the window to include the element
 template <typename Window_>
 class Elem {
 public:
@@ -32,16 +35,21 @@ public:
   Elem(Elem &&) = default;
   Elem &operator =(Elem &&) = default;
 
-  const T &get() const;
+  const T &get() const noexcept;
 
-  operator const T &() const { return get(); }
+  operator const T &() const noexcept { return get(); }
+  template <
+    typename U,
+    typename _ = T,
+    decltype(ZuIfT<!ZuIsSame<U, _>{} && ZuIsSame<U, ZuUnder<_>>{}>(), int()) = 0>
+  operator U() const noexcept { return get(); }
 
   void set(T v);
 
   Elem &operator =(T v);
 
-  bool equals(const Elem &r) const { return get() == r.get(); }
-  int cmp(const Elem &r) const { return ZuCmp<T>::cmp(get(), r.get()); }
+  bool equals(const Elem &r) const noexcept { return get() == r.get(); }
+  int cmp(const Elem &r) const noexcept { return ZuCmp<T>::cmp(get(), r.get()); }
   friend inline bool
   operator ==(const Elem &l, const Elem &r) { return l.equals(r); }
   friend inline int
@@ -146,7 +154,7 @@ private:
 };
 
 template <typename Window>
-inline const typename Elem<Window>::T &Elem<Window>::get() const {
+inline const typename Elem<Window>::T &Elem<Window>::get() const noexcept {
   if (auto ptr = m_window.ptr(m_i)) return *ptr;
   return ZuNullRef<T>();
 }

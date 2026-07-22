@@ -252,17 +252,28 @@ inline void saveValue_(S &s, const T_ &v_)
       TypeCode == ZtFieldTC::UInt64 ||
       TypeCode == ZtFieldTC::Int128 ||
       TypeCode == ZtFieldTC::UInt128) {
-    using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
-    auto v = B{v_};
-    if (!*v) return;
-    if constexpr (
-	bool(ZuFieldProp::HasEnum<Props>{}) ||
-	bool(ZuFieldProp::HasFlags<Props>{})) {
-      QuoteBuf buf;
-      buf << ZtFieldPrintInt<Props, Fmt, typename B::T>(v);
-      s << Quote::String{buf.span()};
-    } else
-      s << ZtFieldPrintInt<Props, Fmt, typename B::T>(v);
+    if constexpr (ZuIsBoxed<T>{}) {
+      if constexpr (
+	  bool(ZuFieldProp::HasEnum<Props>{}) ||
+	  bool(ZuFieldProp::HasFlags<Props>{})) {
+	QuoteBuf buf;
+	buf << ZtFieldPrintInt<Props, Fmt, T>(v_);
+	s << Quote::String{buf.span()};
+      } else
+	s << ZtFieldPrintInt<Props, Fmt, T>(v_);
+    } else {
+      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      auto v = B{v_};
+      if (!*v) return;
+      if constexpr (
+	  bool(ZuFieldProp::HasEnum<Props>{}) ||
+	  bool(ZuFieldProp::HasFlags<Props>{})) {
+	QuoteBuf buf;
+	buf << ZtFieldPrintInt<Props, Fmt, B>(v);
+	s << Quote::String{buf.span()};
+      } else
+	s << ZtFieldPrintInt<Props, Fmt, B>(v);
+    }
   } else if constexpr (TypeCode == ZtFieldTC::Float) {
     double v = v_;
     if (ZuUnlikely(ZuNull(v))) return;
@@ -463,14 +474,21 @@ inline T loadValue_(ZuSpan<char> span)
       TypeCode == ZtFieldTC::UInt32 ||
       TypeCode == ZtFieldTC::UInt64 ||
       TypeCode == ZtFieldTC::UInt128) {
-    using Scan = ZtFieldScanInt<Props, Fmt, ZtFieldTC::Type<TypeCode>>;
-    return T(Scan{span}.value.val());
+    if constexpr (ZuIsBoxed<T>{}) {
+      using Scan = ZtFieldScanInt<Props, Fmt, T>;
+      return Scan{span}.value;
+    } else {
+      using B = ZuBox<ZtFieldTC::Type<TypeCode>>;
+      using Scan = ZtFieldScanInt<Props, Fmt, B>;
+      return T(Scan{span}.value.val());
+    }
   } else if constexpr (TypeCode == ZtFieldTC::Float) {
-    return ZuBox<double>{span}.val();
+    return ZtFieldValidate<Props>(ZuBox<double>{span}.val());
   } else if constexpr (
       TypeCode == ZtFieldTC::Fixed ||
       TypeCode == ZtFieldTC::Decimal) {
     ZuDecimal d{span};
+    d = ZtFieldValidate<Props>(d);
     if constexpr (TypeCode == ZtFieldTC::Decimal)
       return d;
     else {
@@ -525,7 +543,10 @@ inline auto loadValue(Cell &cell)
     if (cell.is<ZuSpan<char>>())
       cell = ArrayCell{cell.p<ZuSpan<char>>()};
     enum { ElemCode = ZtFieldTC::Elem<TypeCode>{} };
-    using Elem = ZtFieldTC::Type<ElemCode>;
+    using Actual = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
+    using Elem = ZuIf<
+      ElemCode >= ZtFieldTC::Int8 && ElemCode <= ZtFieldTC::UInt128 &&
+      bool(ZuIsBoxed<Actual>{}), Actual, ZtFieldTC::Type<ElemCode>>;
     using LoadVec_ = LoadVec<ElemCode, Props, Elem>;
     return LoadVec_(cell.p<ArrayCell>());
   }

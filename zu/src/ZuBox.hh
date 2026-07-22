@@ -37,10 +37,11 @@
 #pragma warning(disable:4312 4800)
 #endif
 
-template <typename T, typename NTP> class ZuBox;
+template <typename T, typename NTP> class ZuBox__;
+
 template <typename> struct ZuIsBoxed : public ZuFalse { };
-template <typename T, typename NTP>
-struct ZuIsBoxed<ZuBox<T, NTP>> : public ZuTrue { };
+template <typename U, typename NTP>
+struct ZuIsBoxed<ZuBox__<U, NTP>> : public ZuTrue { };
 
 template <typename U, typename R = void>
 using ZuMatchBoxed = ZuIfT<ZuIsBoxed<U>{}, R>;
@@ -282,7 +283,7 @@ template <typename B> struct ZuBoxPrint : public ZuPrintBuffer {
 // compile-time formatting
 template <typename Boxed, typename Fmt>
 class ZuBoxFmt {
-template <typename, typename> friend class ZuBox;
+template <typename, typename> friend class ZuBox__;
 
   using Print =
     ZuBox_Print<typename Boxed::T, Fmt, Boxed::isNull, Boxed::NullString>;
@@ -302,7 +303,7 @@ private:
 // run-time formatting
 template <typename Boxed>
 class ZuBoxVFmt : public ZuVFmtWrapper<ZuBoxVFmt<Boxed>> {
-template <typename, typename> friend class ZuBox;
+template <typename, typename> friend class ZuBox__;
 
   using Print =
     ZuBox_VPrint<typename Boxed::T, Boxed::isNull, Boxed::NullString>;
@@ -368,9 +369,9 @@ struct ZuBoxNullString : public NTP {
   static constexpr auto NullString = NullString_;
 };
 
-template <typename T_, typename NTP = ZuBox_Defaults>
-class ZuBox {
-template <typename, typename> friend class ZuBox;
+template <typename T_, typename NTP>
+class ZuBox__ {
+template <typename, typename> friend class ZuBox__;
 template <typename, typename> friend class ZuBoxFmt;
 template <typename> friend class ZuBoxVFmt;
 
@@ -392,34 +393,34 @@ private:
   ZuAssert(ZuTraits<T>::IsPrimitive && ZuTraits<T>::IsReal);
 
 public:
-  constexpr ZuBox() noexcept : m_val(Cmp::null()) { }
+  constexpr ZuBox__() noexcept : m_val(Cmp::null()) { }
 
-  constexpr ZuBox(const ZuBox &b) noexcept : m_val(b.m_val) { }
-  constexpr ZuBox &operator =(const ZuBox &b) noexcept {
+  constexpr ZuBox__(const ZuBox__ &b) noexcept : m_val(b.m_val) { }
+  constexpr ZuBox__ &operator =(const ZuBox__ &b) noexcept {
     m_val = b.m_val;
     return *this;
   }
 
   template <typename R, decltype(ZuBox_MatchReal<R, T>(), int()) = 0>
-  constexpr ZuBox(R r) noexcept : m_val(r) { }
+  constexpr ZuBox__(R r) noexcept : m_val(r) { }
 
   template <typename B, decltype(ZuMatchBoxed<B>(), int()) = 0>
-  constexpr ZuBox(B b) noexcept :
+  constexpr ZuBox__(B b) noexcept :
     m_val(!*b ? static_cast<T>(Cmp::null()) : static_cast<T>(b.m_val)) { }
 
   template <typename S, decltype(ZuMatchCharString<S>(), int()) = 0>
-  ZuBox(S &&s_) noexcept { scan(ZuFwd<S>(s_)); }
+  ZuBox__(S &&s_) noexcept { scan(ZuFwd<S>(s_)); }
   template <
     typename Fmt, typename S,
     decltype(ZuMatchCharString<S>(), int()) = 0>
-  ZuBox(Fmt, S &&s_) noexcept { scan<Fmt>(ZuFwd<S>(s_)); }
+  ZuBox__(Fmt, S &&s_) noexcept { scan<Fmt>(ZuFwd<S>(s_)); }
 
   template <typename S, decltype(ZuBox_MatchCharPtr<S>(), int()) = 0>
-  ZuBox(S s, unsigned len) noexcept { scan(s, len); }
+  ZuBox__(S s, unsigned len) noexcept { scan(s, len); }
   template <
     typename Fmt, typename S,
     decltype(ZuBox_MatchCharPtr<S>(), int()) = 0>
-  ZuBox(Fmt, S s, unsigned len) noexcept { scan<Fmt>(s, len); }
+  ZuBox__(Fmt, S s, unsigned len) noexcept { scan<Fmt>(s, len); }
 
   T val() const { return m_val; }
 
@@ -439,7 +440,7 @@ private:
 
 public:
   template <typename T>
-  ZuBox &operator =(T &&t) { assign(ZuFwd<T>(t)); return *this; }
+  ZuBox__ &operator =(T &&t) { assign(ZuFwd<T>(t)); return *this; }
 
   template <typename T>
   static constexpr ZuMatchFloatingPoint<T, bool>
@@ -453,28 +454,28 @@ public:
   equals_(T t1, T t2) {
     return t1 == t2;
   }
-  constexpr bool equals(const ZuBox &b) const {
+  constexpr bool equals(const ZuBox__ &b) const {
     return equals_(m_val, b.m_val);
   }
 
   template <typename Cmp__ = Cmp>
   constexpr ZuIfT<!ZuIsSame<Cmp__, ZuCmp0<T>>{}, int>
-  cmp_(const ZuBox &b) const {
+  cmp_(const ZuBox__ &b) const {
     if (Cmp::null(b.m_val)) return Cmp::null(m_val) ? 0 : 1;
     if (Cmp::null(m_val)) return -1;
     return Cmp::cmp(m_val, b.m_val);
   }
   template <typename Cmp__ = Cmp>
   constexpr ZuIfT<ZuIsSame<Cmp__, ZuCmp0<T>>{}, int>
-  cmp_(const ZuBox &b) const {
+  cmp_(const ZuBox__ &b) const {
     return Cmp::cmp(m_val, b.m_val);
   }
-  constexpr int cmp(const ZuBox &b) const { return cmp_(b.m_val); }
+  constexpr int cmp(const ZuBox__ &b) const { return cmp_(b.m_val); }
   template <typename L, typename R>
-  friend constexpr ZuIfT<ZuIs_<L, ZuBox>{}, bool>
+  friend constexpr ZuIfT<ZuIs_<L, ZuBox__>{}, bool>
   operator ==(const L &l, const R &r) { return l.equals(r); }
   template <typename L, typename R>
-  friend constexpr ZuIfT<ZuIs_<L, ZuBox>{}, int>
+  friend constexpr ZuIfT<ZuIs_<L, ZuBox__>{}, int>
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
   constexpr bool operator !() const { return !m_val; }
@@ -482,32 +483,32 @@ public:
 
   uint32_t hash() const { return ZuHash<T>::hash(m_val); }
 
-  constexpr operator T() const { return m_val; }
-  constexpr operator T &() & { return m_val; }
+  constexpr operator const T &() const & noexcept { return m_val; }
+  constexpr operator T &() & noexcept { return m_val; }
 
   // compile-time formatting
   template <typename Fmt = ZuFmt::Default>
-  ZuBoxFmt<ZuBox, Fmt> fmt() const { 
-    return ZuBoxFmt<ZuBox, Fmt>{*this};
+  ZuBoxFmt<ZuBox__, Fmt> fmt() const {
+    return ZuBoxFmt<ZuBox__, Fmt>{*this};
   }
   template <bool Upper = false, typename Fmt = ZuFmt::Default>
-  ZuBoxFmt<ZuBox, ZuFmt::Hex<Upper, Fmt>> hex() const {
-    return ZuBoxFmt<ZuBox, ZuFmt::Hex<Upper, Fmt>>{*this};
+  ZuBoxFmt<ZuBox__, ZuFmt::Hex<Upper, Fmt>> hex() const {
+    return ZuBoxFmt<ZuBox__, ZuFmt::Hex<Upper, Fmt>>{*this};
   }
   template <
     int NDP = -ZuFmt::Default::NDP_,
     char Trim = '\0',
     typename Fmt = ZuFmt::Default>
-  ZuBoxFmt<ZuBox, ZuFmt::FP<NDP, Trim, Fmt>> fp() const {
-    return ZuBoxFmt<ZuBox, ZuFmt::FP<NDP, Trim, Fmt>>{*this};
+  ZuBoxFmt<ZuBox__, ZuFmt::FP<NDP, Trim, Fmt>> fp() const {
+    return ZuBoxFmt<ZuBox__, ZuFmt::FP<NDP, Trim, Fmt>>{*this};
   }
   // run-time formatting
-  ZuBoxVFmt<ZuBox> vfmt() const {
-    return ZuBoxVFmt<ZuBox>{*this};
+  ZuBoxVFmt<ZuBox__> vfmt() const {
+    return ZuBoxVFmt<ZuBox__>{*this};
   }
   template <typename VFmt>
-  ZuBoxVFmt<ZuBox> vfmt(VFmt &&fmt) const {
-    return ZuBoxVFmt<ZuBox>{*this, ZuFwd<VFmt>(fmt)};
+  ZuBoxVFmt<ZuBox__> vfmt(VFmt &&fmt) const {
+    return ZuBoxVFmt<ZuBox__>{*this, ZuFwd<VFmt>(fmt)};
   }
 
   template <typename Fmt = ZuFmt::Default, typename S>
@@ -517,12 +518,12 @@ public:
     return r.template p<0>();
   }
   template <typename Fmt = ZuFmt::Default, typename S>
-  static ZuMatchCharString<S, ZuTuple<int, ZuBox>> eov(S &&s_) {
+  static ZuMatchCharString<S, ZuTuple<int, ZuBox__>> eov(S &&s_) {
     ZuCSpan s(s_);
     typename Scan<Fmt>::T val = 0;
     unsigned n = Scan<Fmt>::scan(val, s.data(), s.length());
-    if (ZuUnlikely(!n)) return {-1, ZuBox{}};
-    ZuBox v;
+    if (ZuUnlikely(!n)) return {-1, ZuBox__{}};
+    ZuBox__ v;
     v.m_val = val;
     return {int(n), v};
   }
@@ -533,12 +534,12 @@ public:
     return r.template p<0>();
   }
   template <typename Fmt = ZuFmt::Default, typename S>
-  static ZuBox_MatchCharPtr<S, ZuTuple<int, ZuBox>>
+  static ZuBox_MatchCharPtr<S, ZuTuple<int, ZuBox__>>
   eov(S s, unsigned len) {
     typename Scan<Fmt>::T val = 0;
     unsigned n = Scan<Fmt>::scan(val, s, len);
-    if (ZuUnlikely(!n)) return {-1, ZuBox{}};
-    ZuBox v;
+    if (ZuUnlikely(!n)) return {-1, ZuBox__{}};
+    ZuBox__ v;
     v.m_val = val;
     return {int(n), v};
   }
@@ -546,58 +547,58 @@ public:
   unsigned length() const { return Print<>::length(m_val); }
   unsigned print(char *buf) const { return Print<>::print(m_val, buf); }
 
-  // ZuBox operators intentionally behave identically to those
+  // ZuBox__ operators intentionally behave identically to those
   // on the underlying primitive type - there is no explicit
   // handling of sentinel nulls, NaNs, infinities, overflow etc.
 
-  constexpr ZuBox operator -() { return -m_val; }
+  constexpr ZuBox__ operator -() { return -m_val; }
 
   template <typename R>
-  constexpr ZuBox operator +(const R &r) const { return m_val + r; }
+  constexpr ZuBox__ operator +(const R &r) const { return m_val + r; }
   template <typename R>
-  constexpr ZuBox operator -(const R &r) const { return m_val - r; }
+  constexpr ZuBox__ operator -(const R &r) const { return m_val - r; }
   template <typename R>
-  constexpr ZuBox operator *(const R &r) const { return m_val * r; }
+  constexpr ZuBox__ operator *(const R &r) const { return m_val * r; }
   template <typename R>
-  constexpr ZuBox operator /(const R &r) const { return m_val / r; }
+  constexpr ZuBox__ operator /(const R &r) const { return m_val / r; }
   template <typename R>
-  constexpr ZuBox operator %(const R &r) const { return m_val % r; }
+  constexpr ZuBox__ operator %(const R &r) const { return m_val % r; }
   template <typename R>
-  constexpr ZuBox operator |(const R &r) const { return m_val | r; }
+  constexpr ZuBox__ operator |(const R &r) const { return m_val | r; }
   template <typename R>
-  constexpr ZuBox operator &(const R &r) const { return m_val & r; }
+  constexpr ZuBox__ operator &(const R &r) const { return m_val & r; }
   template <typename R>
-  constexpr ZuBox operator ^(const R &r) const { return m_val ^ r; }
+  constexpr ZuBox__ operator ^(const R &r) const { return m_val ^ r; }
 
-  constexpr ZuBox operator ++(int) { return m_val++; }
-  constexpr ZuBox &operator ++() { ++m_val; return *this; }
-  constexpr ZuBox operator --(int) { return m_val--; }
-  constexpr ZuBox &operator --() { --m_val; return *this; }
+  constexpr ZuBox__ operator ++(int) { return m_val++; }
+  constexpr ZuBox__ &operator ++() { ++m_val; return *this; }
+  constexpr ZuBox__ operator --(int) { return m_val--; }
+  constexpr ZuBox__ &operator --() { --m_val; return *this; }
 
   template <typename R>
-  constexpr ZuBox &operator +=(const R &r) { m_val += r; return *this; }
+  constexpr ZuBox__ &operator +=(const R &r) { m_val += r; return *this; }
   template <typename R>
-  constexpr ZuBox &operator -=(const R &r) { m_val -= r; return *this; }
+  constexpr ZuBox__ &operator -=(const R &r) { m_val -= r; return *this; }
   template <typename R>
-  constexpr ZuBox &operator *=(const R &r) { m_val *= r; return *this; }
+  constexpr ZuBox__ &operator *=(const R &r) { m_val *= r; return *this; }
   template <typename R>
-  constexpr ZuBox &operator /=(const R &r) { m_val /= r; return *this; }
+  constexpr ZuBox__ &operator /=(const R &r) { m_val /= r; return *this; }
   template <typename R>
-  constexpr ZuBox &operator %=(const R &r) { m_val %= r; return *this; }
+  constexpr ZuBox__ &operator %=(const R &r) { m_val %= r; return *this; }
   template <typename R>
-  constexpr ZuBox &operator |=(const R &r) { m_val |= r; return *this; }
+  constexpr ZuBox__ &operator |=(const R &r) { m_val |= r; return *this; }
   template <typename R>
-  constexpr ZuBox &operator &=(const R &r) { m_val &= r; return *this; }
+  constexpr ZuBox__ &operator &=(const R &r) { m_val &= r; return *this; }
   template <typename R>
-  constexpr ZuBox &operator ^=(const R &r) { m_val ^= r; return *this; }
+  constexpr ZuBox__ &operator ^=(const R &r) { m_val ^= r; return *this; }
 
   // apply update (leaves existing value in place if u is null)
-  constexpr ZuBox &update(const ZuBox &u) {
+  constexpr ZuBox__ &update(const ZuBox__ &u) {
     if (!Cmp::null(u)) m_val = u.m_val;
     return *this;
   }
   // apply update, with additional sentinel value signifying "reset to null"
-  constexpr ZuBox &update(const ZuBox &u, const ZuBox &reset) {
+  constexpr ZuBox__ &update(const ZuBox__ &u, const ZuBox__ &reset) {
     if (!Cmp::null(u)) {
       if (u == reset)
 	m_val = Cmp::null();
@@ -608,15 +609,15 @@ public:
   }
 
   // infinity (positive)
-  constexpr ZuInline static ZuBox inf() { return ZuBox{Cmp::inf()}; }
+  constexpr ZuInline static ZuBox__ inf() { return ZuBox__{Cmp::inf()}; }
 
   // the decimal epsilon functions below are intended for use with
   // systems that use floating point for decimal values - unless
   // this is required, use ZuDecimal and/or ZuFixed in preference
-  // to ZuBox<double>
+  // to ZuBox__<double>
 
   // decimal epsilon of floating point type
-  ZuBox epsilon() const { return ZuBox{Cmp::epsilon(m_val)}; }
+  ZuBox__ epsilon() const { return ZuBox__{Cmp::epsilon(m_val)}; }
 
   // floating point equality using decimal epsilon
   bool feq(T r) const {
@@ -676,17 +677,29 @@ public:
 
   // traits
   struct Traits : public ZuTraits<T> { enum { IsPrimitive = 0 }; };
-  friend Traits ZuTraitsType(ZuBox *);
+  friend Traits ZuTraitsType(ZuBox__ *);
 
   // printing
-  friend ZuBoxPrint<ZuBox> ZuPrintType(ZuBox *);
+  friend ZuBoxPrint<ZuBox__> ZuPrintType(ZuBox__ *);
 
   // underlying
-  friend T ZuUnderType(ZuBox *);
+  friend T ZuUnderType(ZuBox__ *);
 
 private:
   T	m_val;
 };
+template <typename U, typename NTP>
+struct ZuBox_ { using T = ZuBox__<U, NTP>; };
+template <typename U, typename NTP_, typename NTP>
+struct ZuBox_<ZuBox__<U, NTP_>, NTP> {
+  using T = ZuBox__<typename ZuBox__<U, NTP_>::T, NTP>;
+};
+template <typename U, typename NTP_>
+struct ZuBox_<ZuBox__<U, NTP_>, ZuBox_Defaults> {
+  using T = ZuBox__<U, NTP_>;
+};
+template <typename U, typename NTP = ZuBox_Defaults>
+using ZuBox = typename ZuBox_<U, NTP>::T;
 
 #define ZuBox0(T) ZuBox<T, ZuBoxCmp<ZuCmp0>>
 #define ZuBox_1(T) ZuBox<T, ZuBoxCmp<ZuCmp_1>>
@@ -697,8 +710,8 @@ template <auto N> struct ZuBox_CmpN {
 
 // ZuCmp has to be specialized since null() is otherwise !t (instead of !*t)
 template <typename T_, typename NTP>
-struct ZuCmp<ZuBox<T_, NTP>> : public ZuCmp<T_> {
-  using T = ZuBox<T_, NTP>;
+struct ZuCmp<ZuBox__<T_, NTP>> : public ZuCmp<T_> {
+  using T = ZuBox__<T_, NTP>;
   static int cmp(const T &t1, const T &t2) { return t1.cmp(t2); }
   static bool less(const T &t1, const T &t2) { return t1 < t2; }
   static bool equals(const T &t1, const T &t2) { return t1 == t2; }
@@ -722,7 +735,7 @@ ZuInline ZuNotBoxed<T, ZuBox<T>> &ZuBoxed(T &v) noexcept {
 
 // ZuBoxPtr(x) - convenience function to box pointers as uintptr_t
 #define ZuBoxPtr(x) \
-  (ZuBox<uintptr_t, ZuBoxCmp<ZuCmp0>>{reinterpret_cast<uintptr_t>(x)})
+  (ZuBox__<uintptr_t, ZuBoxCmp<ZuCmp0>>{reinterpret_cast<uintptr_t>(x)})
 
 // ZuNBox* - same as ZuBox but null values are printed/scanned as ""
 template <typename T, typename NTP = ZuBox_Defaults>

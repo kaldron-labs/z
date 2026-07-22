@@ -94,8 +94,10 @@ ZtStruct(Foo,
 					(UInt128, Flags::Bit1())),
   (((float_),		(Ctor<8>)),	(Float)),
   (((float_ranged),	(Ctor<9>, (Range<0.0, 1>))), (Float, 0.42)),
-  (((fixed),		(Ctor<10>)),	(Fixed)),
-  (((decimal),		(Ctor<11>)),	(Decimal)),
+  (((fixed),		(Ctor<10>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))),		(Fixed)),
+  (((decimal),		(Ctor<11>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))),	(Decimal)),
   (((time_),		(Ctor<12>)),	(Time)),
   (((nested),		(Ctor<13>)),	(UDT)),
   (((nestedJSON),	(Ctor<14>)),	(UDT)),
@@ -173,6 +175,43 @@ void malformedURINegatives()
   char badEnd[] = "/foo%";
   auto scanBadEnd = ZtURI::scan(badEnd);
   ZuCheck(scanBadEnd.p<0>() < 0);
+}
+
+void integerRange()
+{
+  ZuTestScope(integerRange);
+
+  char minimum_[] = "?int_ranged=0";
+  auto minimumScan = ZtURI::scan(minimum_);
+  auto minimum = ZtURI::handler<Foo, ZuFacet::Bah>(minimumScan.p<1>()).ctor();
+  ZuCheck(minimum.int_ranged == 0);
+
+  char maximum_[] = "?int_ranged=100tail";
+  auto maximumScan = ZtURI::scan(maximum_);
+  auto maximum = ZtURI::handler<Foo, ZuFacet::Bah>(maximumScan.p<1>()).ctor();
+  ZuCheck(maximum.int_ranged == 100);
+
+  char below_[] = "?int_ranged=-1";
+  auto belowScan = ZtURI::scan(below_);
+  auto below = ZtURI::handler<Foo, ZuFacet::Bah>(belowScan.p<1>()).ctor();
+  ZuCheck(below.int_ranged == ZuCmp<int>::null());
+
+  char above_[] = "?int_ranged=101";
+  auto aboveScan = ZtURI::scan(above_);
+  auto above = ZtURI::handler<Foo, ZuFacet::Bah>(aboveScan.p<1>()).ctor();
+  ZuCheck(above.int_ranged == ZuCmp<int>::null());
+}
+
+void realRange()
+{
+  ZuTestScope(realRange);
+
+  char outside_[] = "?float_ranged=1.1&fixed=-0.1&decimal=1.1";
+  auto scan = ZtURI::scan(outside_);
+  auto outside = ZtURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
+  ZuCheck(ZuCmp<double>::null(outside.float_ranged));
+  ZuCheck(ZuCmp<ZuFixed>::null(outside.fixed));
+  ZuCheck(ZuCmp<ZuDecimal>::null(outside.decimal));
 }
 
 void reservedCharRoundTrip()
@@ -298,6 +337,8 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(roundTrip);
   ZuTestCall(malformedURINegatives);
+  ZuTestCall(integerRange);
+  ZuTestCall(realRange);
   ZuTestCall(reservedCharRoundTrip);
   ZuTestCall(percentPolicies);
   ZuTestCall(arrayCoercion);

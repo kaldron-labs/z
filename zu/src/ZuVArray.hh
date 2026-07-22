@@ -40,6 +40,11 @@ public:
   R get() const;
 
   operator R() const { return get(); }
+  template <
+    typename U,
+    typename _ = T,
+    decltype(ZuIfT<!ZuIsSame<U, _>{} && ZuIsSame<U, ZuUnder<_>>{}>(), int()) = 0>
+  operator U() const { return get(); }
 
   template <bool _ = Mutable>
   ZuIfT<_, Elem &> operator =(T v);

@@ -29,6 +29,22 @@ struct CfNested {
 ZtStruct((CfNested, Cf),
   (((value), (Ctor<0>)), (Int32)));
 
+struct CfText {
+  CfText() = default;
+  CfText(ZuCSpan value_) : value{value_} { }
+
+  ZtString<> value;
+
+  friend ZtCf::AsString ZtCf_Fmt(CfText *);
+};
+
+struct CfTextData {
+  CfText text;
+};
+
+ZtStruct((CfTextData, Cf),
+  (((text), (Ctor<0>)), (UDT)));
+
 struct CfData {
   const char *cstr = nullptr;
   ZtString<> string;
@@ -82,9 +98,11 @@ ZtStruct((CfNumbers, Cf),
   (((hex),	(Ctor<1>, Hex)),		(UInt32)),
   (((enum_),	(Ctor<2>, Enum<CfValues::Map>)),	(Int32)),
   (((flags),	(Ctor<3>, Flags<CfFlags::Map>)),	(UInt128)),
-  (((float_),	(Ctor<4>)),			(Float)),
-  (((fixed),	(Ctor<5>)),			(Fixed)),
-  (((decimal),	(Ctor<6>)),			(Decimal)),
+  (((float_),	(Ctor<4>, (Range<-1000.0, 1000.0>))),	(Float)),
+  (((fixed),	(Ctor<5>,
+      (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),	(Fixed)),
+  (((decimal),	(Ctor<6>,
+      (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),	(Decimal)),
   (((time),	(Ctor<7>, Cf::Unix9)),		(Time)),
   (((ints),	(Ctor<8>)),			(Int32Vec)));
 
@@ -98,6 +116,13 @@ ZtStruct((CfOptional, Cf),
   (((head), (Ctor<0>, Cf::Opt)), (CString)),
   (((req),  (Ctor<1>)), (CString)),
   (((tail), (Ctor<2>)), (CString)));
+
+struct CfRange {
+  int value = 42;
+};
+
+ZtStruct((CfRange, Cf),
+  (((value), (Ctor<0>, (Range<0, 100>))), (Int32, 42)));
 
 static const ZtCf::AnyNode *field(
     const ZtCf::AnyNode *node, ZuCSpan id) {
@@ -412,6 +437,55 @@ static void percent() {
 
 static void loadTypes() {
   ZuTestScope(loadTypes);
+  {
+    auto minimumScan = ZtCf::scan("value: 0");
+    auto minimum = ZtCf::handler<CfRange>(minimumScan.p<1>()).ctor();
+    ZuCheck(minimum.value == 0);
+
+    auto maximumScan = ZtCf::scan("value: 100tail");
+    auto maximum = ZtCf::handler<CfRange>(maximumScan.p<1>()).ctor();
+    ZuCheck(maximum.value == 100);
+
+    auto belowScan = ZtCf::scan("value: -1");
+    auto below = ZtCf::handler<CfRange>(belowScan.p<1>()).ctor();
+    ZuCheck(below.value == ZuCmp<int>::null());
+
+    auto aboveScan = ZtCf::scan("value: 101");
+    auto above = ZtCf::handler<CfRange>(aboveScan.p<1>()).ctor();
+    ZuCheck(above.value == ZuCmp<int>::null());
+  }
+  {
+    auto scan = ZtCf::scan("float_: 1001, fixed: -1001, decimal: 1001");
+    auto outside = ZtCf::handler<CfNumbers>(scan.p<1>()).ctor();
+    ZuCheck(ZuCmp<double>::null(outside.float_));
+    ZuCheck(ZuCmp<ZuFixed>::null(outside.fixed));
+    ZuCheck(ZuCmp<ZuDecimal>::null(outside.decimal));
+  }
+  {
+    auto numberScan = ZtCf::scan("nested: 42");
+    ZuCheck(numberScan.p<0>() >= 0);
+    ZuCheck(field(numberScan.p<1>(), "nested")->
+	has<ZtCf::AnyNode::String>());
+    auto number = ZtCf::handler<CfData>(numberScan.p<1>()).ctor();
+
+    auto nullScan = ZtCf::scan("nested: null");
+    ZuCheck(nullScan.p<0>() >= 0);
+    ZuCheck(string(field(nullScan.p<1>(), "nested")) == "null");
+    auto null = ZtCf::handler<CfData>(nullScan.p<1>()).ctor();
+
+    ZuCheck(number.nested.value == ZuCmp<CfNested>::null().value);
+    ZuCheck(null.nested.value == ZuCmp<CfNested>::null().value);
+
+    auto objectScan = ZtCf::scan("nested: {}");
+    ZuCheck(objectScan.p<0>() >= 0);
+    auto object = ZtCf::handler<CfData>(objectScan.p<1>()).ctor();
+    ZuCheck(object.nested.value == ZuCmp<int>::null());
+
+    auto textScan = ZtCf::scan("text: null");
+    ZuCheck(textScan.p<0>() >= 0);
+    auto text = ZtCf::handler<CfTextData>(textScan.p<1>()).ctor();
+    ZuCheck(text.text.value == "null");
+  }
   {
     ZtString<> source =
       "base64: eHh4, base64URL: _w==, base32: PB4HQ===, "
