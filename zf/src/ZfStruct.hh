@@ -141,6 +141,7 @@
 #include <zlib/ZuID.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuVStream.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZmAlloc.hh>
 #include <zlib/ZmSingleton.hh>
@@ -2050,7 +2051,7 @@ struct ZfFieldScanInt {
     using namespace ZuFieldProp;
     if constexpr (ZuFieldProp::HasEnum<Props>{}) {
       using Map = ZuFieldProp::GetEnum<Props>;
-      auto i = Map::s2v(s);
+      auto i = Map::match(s);
       if (i < 0) return {-1, B{}};
       return validate({int(Map::v2s(i).length()), B{i}});
     } else if constexpr (ZuFieldProp::HasFlags<Props>{}) {
@@ -3871,6 +3872,22 @@ inline ZfVFieldArray ZfVFields() {
   return ZfVFields_<ZuFields<O>, VField>();
 }
 
+typedef int (*ZfVFieldMatchFn)(ZuCSpan);
+template <typename Fields>
+inline ZfVFieldMatchFn ZfVFieldMatcher_() {
+  if constexpr (!Fields::N)
+    return [](ZuCSpan) { return -1; };
+  else
+    return [](ZuCSpan s) {
+      constexpr auto matcher = ZuMatcher<ZuFieldIDs<Fields>>();
+      return matcher.match(s);
+    };
+}
+template <typename O>
+inline ZfVFieldMatchFn ZfVFieldMatcher() {
+  return ZfVFieldMatcher_<ZuFields<O>>();
+}
+
 // run-time keys
 // - each key is a ZuStructKeyT<O, KeyID>, i.e. a value tuple of a
 //   subset of the values in the object itself, used to identify the
@@ -3941,5 +3958,14 @@ namespace ZfFieldFilter {
   template <typename Field>
   using Del = ZuFieldProp::Key<typename Field::Props, 0>;
 }
+
+// ZfVStructInfo aggregates the field metadata a run-time
+// introspector needs to access and update a struct;
+// this can be used to abstract command/control
+struct ZfVStructInfo {
+  ZfVFieldMatchFn	matcher;	// match ID to fields[] index
+  ZfVFieldArray		fields;
+  ZfVKeyFieldArray	keyFields;
+};
 
 #endif /* ZfStruct_HH */

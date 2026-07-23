@@ -126,7 +126,7 @@ namespace H1 {
       }
       if constexpr (Keys::N) {
 	static constexpr auto kMatcher = ZuMatcher<Keys>();
-	auto i = kMatcher.match(key);
+	auto i = kMatcher.exact(key);
 	if (i < 0) {
 	  runtimeHeader_(key, value);
 	  return;
@@ -136,7 +136,7 @@ namespace H1 {
 	  if constexpr (!ZuIsSame<KValues, void>{}) {
 	    if constexpr (KValues::N) {
 	      static constexpr auto vMatcher = ZuMatcher<KValues>();
-	      auto j = vMatcher.match(value);
+	      auto j = vMatcher.exact(value);
 	      enum { I = i };
 	      if (j >= 0) {
 		ZuSwitch::dispatch<KValues::N>(j, [this](auto j) {

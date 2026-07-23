@@ -26,6 +26,8 @@
 // matcher.match("foh") == 1
 // matcher.match("baz") == 3
 // matcher.match("xbaz") == -1 
+// matcher.exact("foo") == 0
+// matcher.exact("foo!") == -1
 
 #ifndef ZuMatcher_HH
 #define ZuMatcher_HH
@@ -54,7 +56,7 @@
 // than isolating the use of ZuMatcher to a single .cc source file and
 // building that file with -g0 or -g1
 // - this problem exists for all compile-time programming and is
-//   significantly more challenging for complex libraries such as ctre
+//   significantly more problematic for complex libraries such as ctre
 
 namespace Zu_::AhoCorasick {
 
@@ -304,6 +306,8 @@ __attribute__((no_instrument_function))
 
 template <typename Keys>
 struct Matcher {
+  ZuAssert(Keys::N < 256);
+
   using Automaton_ = Automaton<Keys>;
 
   static constexpr Automaton_ automaton = Automaton_();
@@ -371,6 +375,16 @@ struct Matcher {
     return int(output_(current)) - 1;
   }
 
+  // exact match of a key against the entire passed string
+  // - returns the index of the matched key or -1 if no match
+  static constexpr int exact(ZuCSpan s) {
+    auto i = match(s);
+    if (i < 0) return -1;
+    return ZuSwitch::dispatch<Keys::N>(i, [s](auto I) {
+      return s.length() == ZuType<I, Keys>{}().length() ? int(I) : -1;
+    });
+  }
+
   // substring match of keys anywhere in the passed string
   // - returns {offset, index} of the matched key or {-1, -1} if no match
   static constexpr ZuTuple<int, int> find(ZuCSpan s) {
@@ -406,11 +420,13 @@ struct Matcher {
 // ZuMatcher<"a", "b", ...>()
 template <ZuString ...Keys>
 constexpr auto ZuMatcher() {
+  ZuAssert(sizeof...(Keys) < 256);
   return Zu_::AhoCorasick::Matcher<ZuStringTL<Keys...>>{};
 }
 // ZuMatcher<ZuFieldProp::JSON::GetIDs<Order>>;
 template <typename Keys>
 constexpr auto ZuMatcher() {
+  ZuAssert(Keys::N < 256);
   return Zu_::AhoCorasick::Matcher<Keys>{};
 }
 

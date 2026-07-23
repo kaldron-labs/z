@@ -83,7 +83,8 @@
     using Names = ZuStringTL<__VA_ARGS__>; \
     static constexpr const auto &id() { return #ID; } \
     static constexpr auto matcher = ZuMatcher<Names>(); \
-    static constexpr T s2v(ZuCSpan s) { return matcher.match(s); } \
+    static constexpr T s2v(ZuCSpan s) { return matcher.exact(s); } \
+    static constexpr T match(ZuCSpan s) { return matcher.match(s); } \
     template <unsigned N_ = N> \
     static constexpr ZuCSpan v2s(int i) { \
       if (i >= N) { \
@@ -177,7 +178,7 @@
 	if (!s) return {int(length), out}; \
 	bool matched = false; \
 	while (s) { \
-	  auto i = s2v(s); \
+	  auto i = match(s); \
 	  if (i >= N) { \
 	    if (!matched) return {-1, B{}}; \
 	    break; \
@@ -195,7 +196,7 @@
 	  auto next = s; \
 	  next.offset(n); \
 	  next.trim(); \
-	  if (!next || s2v(next) >= N) return {consumed, out}; \
+	  if (!next || match(next) >= N) return {consumed, out}; \
 	  s = next; \
 	} \
 	return {int(s.data() - begin), out}; \

@@ -121,7 +121,7 @@ struct MigrationMode {
 inline bool parseMigrationMode(ZuCSpan s, MigrationMode::T &mode)
 {
   if (s == "disable") s = "disabled";
-  auto mode_ = MigrationMode::JSON::s2v(s);
+  auto mode_ = MigrationMode::JSON::exact(s);
   if (mode_ < 0 || mode_ >= MigrationMode::N) return false;
   mode = mode_;
   return true;

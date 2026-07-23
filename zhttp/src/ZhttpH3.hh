@@ -589,7 +589,7 @@ namespace H3 {
 	if constexpr (Request) {
 	  static constexpr auto matcher =
 	    ZuMatcher<":method", ":path", ":scheme", ":authority">();
-	  switch (matcher.match(name)) {
+	  switch (matcher.exact(name)) {
 	    case 0:
 	      return withString_(valueRef, [&fields](ZuCSpan value) {
 		Method::T method = Method::lookup(value);
@@ -682,7 +682,7 @@ namespace H3 {
     void header_(ZuBSpan key, ZuBSpan value) {
       if constexpr (HeaderKeys::N) {
 	static constexpr auto kMatcher = ZuMatcher<HeaderKeys>();
-	auto i = kMatcher.match(key);
+	auto i = kMatcher.exact(key);
 	if (i < 0) {
 	  runtimeHeader_(key, value);
 	  return;
@@ -691,7 +691,7 @@ namespace H3 {
 	  using KValues = ZuType<i, HeaderValues>;
 	  if constexpr (!ZuIsSame<KValues, void>{}) {
 	    static constexpr auto vMatcher = ZuMatcher<KValues>();
-	    auto j = vMatcher.match(value);
+	    auto j = vMatcher.exact(value);
 	    enum { I = i };
 	    if (j >= 0) {
 	      ZuSwitch::dispatch<KValues::N>(j, [this](auto j) {

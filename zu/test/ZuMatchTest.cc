@@ -92,6 +92,12 @@ int main(int argc, char **argv)
     ZuCHECK((matcher.match("bar") == 2));
     ZuCHECK((matcher.match("baz") == 3));
     ZuCHECK((matcher.match("xbaz") == -1));
+    ZuCHECK((matcher.exact("fo") < 0));
+    ZuCHECK((matcher.exact("foo") == 0));
+    ZuCHECK((matcher.exact("foo!") < 0));
+    ZuCHECK((matcher.exact("foh") == 1));
+    ZuCHECK((matcher.exact("baz") == 3));
+    ZuCHECK((matcher.exact("xbaz") == -1));
     ZuCHECK((matcher.find("xbaz") == ZuTuple<int, int>{1, 3}));
     ZuCHECK((matcher.find("x_baz") == ZuTuple<int, int>{2, 3}));
   }
@@ -101,10 +107,21 @@ int main(int argc, char **argv)
     ZuCHECK((matcher.find("foox") == ZuTuple<int, int>{1, 1}));
   }
   {
+    constexpr auto matcher = ZuMatcher<"f", "fo", "foo">();
+    ZuCHECK((matcher.match("foo") == 2));
+    ZuCHECK((matcher.match("foo!") == 2));
+    ZuCHECK((matcher.exact("f") == 0));
+    ZuCHECK((matcher.exact("fo") == 1));
+    ZuCHECK((matcher.exact("foo") == 2));
+    ZuCHECK((matcher.exact("foo!") < 0));
+  }
+  {
     constexpr auto &x = "x";
     constexpr auto matcher = ZuMatcher<x>();
     ZuCHECK((matcher.match("x") == 0));
     ZuCHECK((matcher.match("y") == -1));
+    ZuCHECK((matcher.exact("x") == 0));
+    ZuCHECK((matcher.exact("xx") == -1));
     ZuCHECK((matcher.find("abcx") == ZuTuple<int, int>{3, 0}));
     ZuCHECK((matcher.find("abc") == ZuTuple<int, int>{-1, -1}));
   }
