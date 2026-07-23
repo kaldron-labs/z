@@ -21,6 +21,7 @@ unsigned Scan::position(ZuCSpan at, unsigned offset)
   if (m_state.span.data() && at.data())
     offset += unsigned(at.data() - m_state.span.data());
   if (offset > m_state.span.length()) offset = m_state.span.length();
+  if (offset < m_state.offset) return m_state.offset;
   while (m_state.offset < offset) {
     if (m_state.span[m_state.offset++] == '\n') {
       ++m_state.line;
@@ -577,7 +578,7 @@ ZuTuple<int, ZuPtr<const AnyNode>> Scan::scan()
   auto node = newNode<AnyNode::Object>(nullptr);
   int o = eov_Object(m_state.span, node.ptr(), true);
   if (o < 0 || m_state.error.failed) {
-    if (!m_state.error.failed) fail(m_state.span);
+    if (!m_state.error.failed) fail(m_state.span, m_state.offset);
     throw ZfCf_EXCEPT(badSyntax(
       m_state.error.line, m_state.error.column,
       m_state.error.offset, m_state.error.ch));

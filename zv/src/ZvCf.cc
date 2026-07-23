@@ -32,7 +32,7 @@ public:
     if (!m_defines) m_defines = new Defines();
   }
 
-  ZuTuple<int, ZuPtr<const AnyNode>> read(const Zi::Path &path) {
+  ZuTuple<int, ZuPtr<const AnyNode>> load(const Zi::Path &path) {
     auto root = ZiFile::canonical(path);
     if (!root)
       throw ZvCf_EXCEPT(
@@ -172,10 +172,10 @@ private:
 
 } // namespace
 
-ZuTuple<int, ZuPtr<const AnyNode>> read(
+ZuTuple<int, ZuPtr<const AnyNode>> load(
     const Zi::Path &path, PctFn pctFn, ZmRef<Defines> defines)
 {
-  return Reader{ZuMv(pctFn), ZuMv(defines)}.read(path);
+  return Reader{ZuMv(pctFn), ZuMv(defines)}.load(path);
 }
 
 } // ZvCf

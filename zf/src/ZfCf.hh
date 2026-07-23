@@ -213,15 +213,11 @@ inline const AnyNode *AnyNode::resolve(ZuCSpan path) const {
       if (!node->has<Object>() || path[0] == '.') return nullptr;
       while (++i < n && path[i] != '[' && path[i] != '.');
       ZuCSpan id{path.data(), i};
-      const auto &fields = node->data<Object>();
-      node = nullptr;
-      for (auto &&field: fields) {
-	if (field.p<0>() == id) {
-	  node = field.p<1>().ptr();
-	  break;
-	}
-      }
-      if (!node) return nullptr;
+	      const auto &fields = node->data<Object>();
+	      node = nullptr;
+	      for (auto &&field: fields)
+		if (field.p<0>() == id) node = field.p<1>().ptr();
+	      if (!node) return nullptr;
       if (i < n && path[i] == '.') {
 	if (++i >= n || path[i] == '[') return nullptr;
       }
@@ -470,23 +466,6 @@ inline auto badType(const AnyNode *node, ZuCSpan expected) {
   };
 }
 
-template <ZuString Op>
-inline auto fileError(ZuCSpan fileName, ZeError e) {
-  return [
-    fileName = ZeString{fileName}, e
-  ](auto &s) {
-    s << Op.cspan() << "(\"" << fileName << "\"): " << e;
-  };
-}
-
-inline auto file2Big(ZuCSpan fileName) {
-  return [
-    fileName = ZeString{fileName}
-  ](auto &s) {
-    s << '"' << fileName << "\": file too big";
-  };
-}
-
 inline auto badDefine(ZuCSpan define, ZuCSpan fileName) {
   return [
     define = ZeString{define}, fileName = ZeString{fileName}
@@ -578,14 +557,10 @@ struct AsObject {
       if (node->has<AnyNode::Object>()) {
 	constexpr auto matcher =
 	  ZuMatcher<ZuFieldProp::Cf::GetIDs<SaveFields>>();
-	unsigned matched = 0;
 	const auto &fields = node->data<AnyNode::Object>();
 	for (unsigned i = 0, n = fields.length(); i < n; i++) {
 	  auto j = matcher.match(fields[i].p<0>());
-	  if (j >= 0) {
-	    lookup[j] = i;
-	    if (++matched >= SaveFields::N) break;
-	  }
+	  if (j >= 0) lookup[j] = i;
 	}
       }
     }

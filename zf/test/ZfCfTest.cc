@@ -523,6 +523,38 @@ static void percent() {
 #endif
 }
 
+static void duplicates() {
+  ZuTestScope(duplicates);
+
+  auto direct = ZfCf::scan("value: 1, value: 2");
+  ZuCheck(string(direct.p<1>()->resolve("value")) == "2");
+  auto value = ZfCf::handler<CfNested>(direct.p<1>()).ctor();
+  ZuCheck(value.value == 2);
+  const auto &directFields =
+    direct.p<1>()->data<ZfCf::AnyNode::Object>();
+  ZuCheck(directFields.length() == 2);
+  ZuCheck(string(directFields[0].p<1>()) == "1");
+  ZuCheck(string(directFields[1].p<1>()) == "2");
+
+  ZfCf::PctFn pctFn{[](ZfCf::Scan &, ZuCSpan directive,
+      ZuSpan<const ZuCSpan>, ZfCf::PctExpandFn expand) {
+    return directive == "inject" && expand("value: 2");
+  }};
+  auto expanded = ZfCf::scan(
+    "value: 1,\n"
+    "%inject()\n"
+    "value: 3", pctFn);
+  ZuCheck(string(expanded.p<1>()->resolve("value")) == "3");
+  value = ZfCf::handler<CfNested>(expanded.p<1>()).ctor();
+  ZuCheck(value.value == 3);
+  const auto &expandedFields =
+    expanded.p<1>()->data<ZfCf::AnyNode::Object>();
+  ZuCheck(expandedFields.length() == 3);
+  ZuCheck(string(expandedFields[0].p<1>()) == "1");
+  ZuCheck(string(expandedFields[1].p<1>()) == "2");
+  ZuCheck(string(expandedFields[2].p<1>()) == "3");
+}
+
 static void loadTypes() {
   ZuTestScope(loadTypes);
   {
@@ -782,6 +814,7 @@ int main(int argc, char **argv) {
   ZuTestCall(grammar);
   ZuTestCall(comments);
   ZuTestCall(percent);
+  ZuTestCall(duplicates);
   ZuTestCall(loadTypes);
   ZuTestCall(loadSave);
 }
