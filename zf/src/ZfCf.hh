@@ -82,7 +82,7 @@ public:
   AnyNode	*const parent;
   int		type;
 
-  AnyNode(int type_, AnyNode *parent_) : parent{parent_}, type{type_} { }
+  AnyNode(AnyNode *parent_, int type_) : parent{parent_}, type{type_} { }
   virtual ~AnyNode() = default;
 
   template <typename Data>
@@ -145,7 +145,7 @@ public:
 
   template <typename ...Args>
   Node_(AnyNode *parent, Args &&...args) :
-    AnyNode{ZuTypeIndex<Data, TL>{}(), parent},
+    AnyNode(parent, ZuTypeIndex<Data, TL>{}()),
     data(ZuFwd<Args>(args)...) { }
   ~Node_() = default;
 

@@ -25,7 +25,6 @@
 
 #include <zlib/ZrlTypes.hh>
 
-#include <zlib/ZvCf.hh>
 
 #include <zlib/Zcmd.hh>
 
@@ -129,9 +128,9 @@ inline void executed(ContextRef ctx, ZmRef<ZiIOBuf> buf, ZuBSpan out, int code)
 // - may want to get rid of server-side commands entirely
 // - the Zcmd protocol is extensible via the ZuID type mechanism and Dispatcher
 
-// loadable module must export void Zcmd_plugin(Zcmd::Host *)
+// loadable module must export void Zcmd_plugin(void *)
 extern "C" {
-  typedef void (*ZcmdInitFn)(Zcmd::Host *host);
+  typedef void (*ZcmdInitFn)(void *host);
 }
 
 #endif /* ZcmdHost_HH */

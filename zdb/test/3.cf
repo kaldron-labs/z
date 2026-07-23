@@ -1,7 +1,6 @@
-%include	mx.cf
-
-db {
-  %include		db.cf
-  envDir		3
-  hostID		3
-}
+db: {
+  envDir: 3,
+  hostID: 3,
+%include(db.cf)
+},
+%include(mx.cf)

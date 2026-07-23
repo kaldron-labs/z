@@ -35,7 +35,8 @@ class ZdfAPI Store {
 public:
   Store() { }
 
-  static void dbCf(const ZvCf *, ZdbCf &dbCf);	// inject tables into dbCf
+  static void dbCf(
+    const ZfCf::AnyNode *, ZdbCf &dbCf);	// inject tables into dbCf
   void init(Zdb *);
   void final();
 

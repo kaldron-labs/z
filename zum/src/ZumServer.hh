@@ -25,6 +25,19 @@ namespace Zum::Server {
 
 class UserDB;
 
+struct UserDBCf {
+  ZtString<>	thread;
+  unsigned	passLen = 12;
+  unsigned	totpRange = 6;
+  unsigned	keyInterval = 30;
+};
+
+ZfStruct((UserDBCf, Cf),
+  (((thread),		(Required)),			(String)),
+  (((passLen),		((Range<6U, 60U>))),		(UInt32, 12)),
+  (((totpRange),	((Range<0U, 100U>))),		(UInt32, 6)),
+  (((keyInterval),	((Range<0U, 36000U>))),		(UInt32, 30)));
+
 // open callback - ok, permIDs
 using OpenFn = ZmFn<void(bool, ZtArray<unsigned>),
   ZmFnHeapID<"Zum.Server.OpenFn">>;
@@ -90,8 +103,9 @@ public:
   UserDB(Ztls::Random *rng);
   ~UserDB();
 
-  static void dbCf(const ZvCf *, ZdbCf &dbCf);	// inject tables into dbCf
-  void init(ZvCf *, Zdb *);
+  static void dbCf(
+    const ZfCf::AnyNode *, ZdbCf &dbCf);	// inject tables into dbCf
+  void init(const ZfCf::AnyNode *, Zdb *);
   void final();
 
   // user DB thread

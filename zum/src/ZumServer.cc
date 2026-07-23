@@ -30,7 +30,7 @@ UserDB::~UserDB()
 {
 }
 
-void UserDB::dbCf(const ZvCf *cf, ZdbCf &dbCf)
+void UserDB::dbCf(const ZfCf::AnyNode *cf, ZdbCf &dbCf)
 {
   // ensure all tables are running on the same thread
   // - ensures that direct references to the user and key DB objects
@@ -38,8 +38,9 @@ void UserDB::dbCf(const ZvCf *cf, ZdbCf &dbCf)
   //   without contention on the object data
   // - UserDB relies on being a single-writer to the DB (Zdb guarantee)
 
+  auto config = ZfCf::handler<UserDBCf>(cf).ctor();
   StringVec threads;
-  threads.push(cf->get<true>("thread"));
+  threads.push(config.thread);
 
   static ZtArray<ZuCSpan> tables{
     "zum.user",
@@ -56,14 +57,15 @@ void UserDB::dbCf(const ZvCf *cf, ZdbCf &dbCf)
   }
 }
 
-void UserDB::init(ZvCf *cf, Zdb *db)
+void UserDB::init(const ZfCf::AnyNode *cf, Zdb *db)
 {
   ZiAssert(m_state == UserDBState::Uninitialized, "Zum",
     (state = m_state), "invalid state=" << state, return);
 
-  m_passLen = cf->getInt("passLen", 6, 60, m_passLen);
-  m_totpRange = cf->getInt("totpRange", 0, 100, m_totpRange);
-  m_keyInterval = cf->getInt("keyInterval", 0, 36000, m_keyInterval);
+  auto config = ZfCf::handler<UserDBCf>(cf).ctor();
+  m_passLen = config.passLen;
+  m_totpRange = config.totpRange;
+  m_keyInterval = config.keyInterval;
 
   m_userTbl = db->initTable<User>("zum.user");
   m_roleTbl = db->initTable<Role>("zum.role");

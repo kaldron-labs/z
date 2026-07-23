@@ -17,12 +17,27 @@
 
 #include <zlib/Ztls.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvEngine.hh>
 
 #include <zlib/Zhttp.hh>
 
 namespace Zrest {
+
+struct ClientCf {
+  ZtString<>	rxThread;
+  ZtString<>	txThread;
+  ZtString<>	caPath;
+  unsigned	reconnFreq = 0;
+  unsigned	timeout = 0;
+};
+
+ZfStruct((ClientCf, Cf),
+  (((rxThread), (Required)),				(String)),
+  (((txThread), (Required)),				(String)),
+  (((caPath)),						(String)),
+  (((reconnFreq), ((Range<0U, 3600U>))),		(UInt32)),
+  (((timeout), ((Range<0U, 3600U>))),			(UInt32)));
 
 template <typename S>
 inline void appendAuthority(S &s, ZuCSpan host, uint16_t port)
@@ -532,17 +547,18 @@ public:
 
   using Base::app;
 
-  void init(ZiMultiplex *mx, const ZvCf *cf) {
+  void init(ZiMultiplex *mx, const ZfCf::AnyNode *cf) {
     ZuCSpan alpn[] = { "http/1.1" };
+    auto config = ZfCf::handler<ClientCf>(cf).ctor();
 
     if (!Base::init(
 	  Ztls::ClientParams(
-	    mx, cf->get("rxThread", true), cf->get("txThread", true)).alpn(alpn)
-	    .caPath(cf->get("caPath", false))))
+	    mx, config.rxThread, config.txThread).alpn(alpn)
+	    .caPath(config.caPath)))
       ZiLOG(Error, "Zrest", "TLS client initialization failed");
 
-    m_reconnFreq = cf->getInt("reconnFreq", 0, 3600, 0);
-    m_timeout = cf->getInt("timeout", 0, 3600, 0);
+    m_reconnFreq = config.reconnFreq;
+    m_timeout = config.timeout;
   }
 
   void final() {

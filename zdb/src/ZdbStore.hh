@@ -25,7 +25,7 @@
 
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 
 #include <zlib/ZdbBuf.hh>
 #include <zlib/ZdbMsg.hh>
@@ -159,7 +159,7 @@ class Store : public ZmPolymorph {
 public:
   // init and final are synchronous / blocking
   virtual InitResult init(		// initialize data store - idempotent
-      ZvCf *cf,
+      const ZfCf::AnyNode *cf,
       ZiMultiplex *mx,
       FailFn failFn) = 0;		// asynchronous failure notification
   virtual void final() = 0;		// finalize data store - idempotent

@@ -67,7 +67,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - The main database interface, clustered host model, and table/object machinery in `zdb/src/Zdb.hh:57` (including inline documentation of the DB state and workflow).
 - Backing store interface and in-memory store implementation in `zdb/src/ZdbStore.hh:10` and `zdb/src/ZdbMemStore.hh:10`.
 - Replication messages and buffer formats in `zdb/src/ZdbMsg.hh:10` and `zdb/src/ZdbBuf.hh:10`, with telemetry and type definitions in `zdb/src/ZdbTelemetry.hh:10` and `zdb/src/ZdbTypes.hh:10`.
-- Connections: Zdb uses Zm for concurrency/engine control, Zi for networking, Zfb for serialization, Zt for structured field metadata, and Zv for configuration (e.g., `zdb/src/Zdb.hh:57`).
+- Connections: Zdb uses Zm for concurrency/engine control, Zi for networking, Zfb for serialization, and typed Zf configuration metadata.
 
 ### Zdb_pq (PostgreSQL integration)
 - Postgres store interface and adapter types in `zdb_pq/src/ZdbPQ.hh:8` and `zdb_pq/src/ZdbPQLib.hh:10`.
@@ -94,8 +94,8 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 
 ### Zv (connectivity framework)
 - Core engine, link, and queue abstractions in `zv/src/ZvEngine.hh:10` and `zv/src/ZvIOQueue.hh:13`.
-- Configuration and CSV helpers in `zv/src/ZvCf.hh:18` and `zv/src/ZvCSV.hh:12`.
-- Connections: uses Zi multiplexing and Zm engine primitives; higher-level services (e.g., Zdb) reference Zv configuration structures.
+- Mmap-backed Zf configuration file loading and CSV helpers live in `zv/src/ZvCf.hh` and `zv/src/ZvCSV.hh`.
+- Connections: uses Zi multiplexing and Zm engine primitives; higher-level services load typed Zf configuration records.
 
 ### Zgtk (GTK integration)
 - GTK application and model wrappers in `zgtk/src/ZGtkApp.hh:10` and `zgtk/src/ZGtkTreeModel.hh:10`.
@@ -234,7 +234,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `ztls/src/ZtlsPK.hh:18` - Top-level symbols: define ZtlsPK_HH, function mwb_error_, define ZtlsPK_mwb_error, function mrb_error_, define ZtlsPK_mrb_error, struct AnyKey
 - `zv/src/ZvRingParams.hh:10` - Top-level symbols: define ZvRingParams_HH, struct ZvRingParams, function init
 - `zv/src/ZvMxParams.hh:10` - Top-level symbols: define ZvMxParams_HH, struct ZvCxnOptions, function init, struct ZvMxParams, function init
-- `zv/src/ZvCf.hh:18` - Top-level symbols: define ZvCf_HH, define ZvCfMaxFileSize, class Cf, using Cf, using String, function required
+- `zv/src/ZvCf.hh` - Top-level symbols: namespace ZvCf, function read
 - `zu/test/ZuMatchTest.cc:9` - Top-level symbols: function out, define CHECK, struct GetID_, using T, struct GetID_, using T
 - `zv/src/ZvLib.cc:1` - Top-level contents (no regex-matched symbols)
 - `zu/test/ZuTokenizerTest.cc:12` - Top-level symbols: function out, define CHECK
@@ -268,7 +268,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `ztls/test/ZtlsPKTest.cc:31` - Top-level symbols: function out, define CHECK, function constexpr, using PK
 - `ztls/test/ZtlsClient.cc:24` - Top-level symbols: struct App, struct Link, using Base, function connected, function disconnected, function connectFailed
 - `ztls/test/ZtlsServer.cc:33` - Top-level symbols: struct App, struct Link, function connected, function disconnected, function process, using Cxn
-- `zv/src/ZvCf.cc:135` - Top-level symbols: function constexpr, function matchDot, using State
+- `zv/src/ZvCf.cc` - Top-level contents: mmap-backed root and include loading
 - `zv/src/ZvHashCSV.hh:10` - Top-level symbols: define ZvHashCSV_HH, struct Data, class CSV, function read, function init
 - `zu/test/ZuTimeTest.cc:21` - Top-level symbols: function out, define CHECK
 - `zu/test/ZuBase64Test.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define TEST
@@ -407,9 +407,8 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zgtk/src/ZGtkApp.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/test/ZiDaemonTest.cc:18` - Top-level symbols: function usage, function notify, function sigint, struct Options
 - `zgtk/src/ZGtkLib.hh:10` - Top-level symbols: define ZGtkLib_HH, define ZGtkAPI, define ZGtkExplicit, define ZGtkAPI, define ZGtkExplicit, define ZGtkExtern
-- `zv/test/CfTest.cc:19` - Top-level symbols: function fail, function out_, define CHECK_, define CHECK
+- `zv/test/ZvCfTest.cc` - Top-level coverage: mmap-backed reads, nested includes, definitions, diagnostics, and mapping lifetime
 - `zv/test/ZvEngineTest.cc:12` - Top-level symbols: class Mgr, function addEngine, function delEngine, function updEngine, function updLink, function addQueue
-- `zv/test/CfFlatten.cc:1` - Top-level contents (no regex-matched symbols)
 - `zcmd/src/zcmd.cc:64` - Top-level symbols: class Telcap, using Fn, function keyedFn, using Data, using FBType, using Tree_
 - `zcmd/src/ZcmdDispatcher.cc:1` - Top-level contents (no regex-matched symbols)
 - `zcmd/src/ZtelClient.hh:8` - Top-level symbols: define ZtelClient_HH, using ReqIOBufAlloc, define ZcmdClient_HH, using AckFn, using KeyData, struct Login
