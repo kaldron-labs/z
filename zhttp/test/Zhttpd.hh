@@ -1006,7 +1006,6 @@ inline bool loadOptions(
     if (arg == "--http") httpSet = true;
   }
   int argc_ = ZfCLI::load(options, argc, argv);
-  if (argc_ < 0) return false;
   help = options.help;
   if (help) return true;
   if (argc_ != 2) return false;

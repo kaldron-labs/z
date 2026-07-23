@@ -27,7 +27,8 @@
 
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCLI.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/ZrlCLI.hh>
@@ -442,7 +443,7 @@ void parseAddr(const S &s, ZiIP &ip, uint16_t &port) {
       if (!port_) throw ZeError();
     }
     ip = host;
-    unsigned p = port_ ? ZuBox<unsigned>(port_) : 0;
+    unsigned p = port_ ? unsigned(ZuBox<unsigned>(port_)) : 0;
     if (p > 65535) throw ZeError();
     port = p;
   } else {
@@ -483,12 +484,118 @@ ZtEnumNS(Side, int8_t, In, Out, Both);
 
 ZtEnumNS(IOOp, int8_t, Send, Recv, Both);
 
-class App : public ZmPolymorph, public ZcmdHost {
+struct ProxyArgs {
+  ZuCSpan	local;
+  ZuCSpan	remote;
+  ZuCSpan	source;
+  ZuCSpan	tag;
+  bool		suspend = false;
+  bool		hold = false;
+  bool		trace = false;
+  bool		drop = false;
+  double	latency = 0;
+  int		frag = 0;
+  int		pack = 0;
+  double	delay = 0;
+  unsigned	reconnect = 1;
+};
+
+ZfStruct((ProxyArgs, CLI),
+  (((local),		(CLI::Arg<1>)),				(String)),
+  (((remote),		(CLI::Arg<2>)),				(String)),
+  (((source),		(CLI::Arg<3>)),				(String)),
+  (((tag)),							(String)),
+  (((suspend),		(CLI::Flag<'S'>)),			(Bool)),
+  (((hold),		(CLI::Flag<'H'>)),			(Bool)),
+  (((trace),		(CLI::Flag<'T'>)),			(Bool)),
+  (((drop),		(CLI::Flag<'D'>)),			(Bool)),
+  (((latency),		((Range<0.0, 3600.0>))),		(Float)),
+  (((frag)),							(Int32)),
+  (((pack)),							(Int32)),
+  (((delay),		((Range<0.0, 3600.0>))),		(Float)),
+  (((reconnect),	((Range<1U, 3600U>))),			(UInt32, 1)));
+
+struct TargetArgs {
+  ZuCSpan target;
+};
+ZfStruct((TargetArgs, CLI),
+  (((target), (CLI::Arg<1>)), (String)));
+
+struct TargetSideArgs {
+  ZuCSpan	target;
+  int		side = Side::Both;
+};
+ZfStruct((TargetSideArgs, CLI),
+  (((target), (CLI::Arg<1>)),			(String)),
+  (((side), (CLI::Arg<2>, Enum<Side::Map>)),	(Int32, Side::Both)));
+
+struct TargetIOArgs {
+  ZuCSpan	target;
+  int		side = Side::Both;
+  int		op = IOOp::Both;
+};
+ZfStruct((TargetIOArgs, CLI),
+  (((target), (CLI::Arg<1>)),			(String)),
+  (((side), (CLI::Arg<2>, Enum<Side::Map>)),	(Int32, Side::Both)),
+  (((op), (CLI::Arg<3>, Enum<IOOp::Map>)),	(Int32, IOOp::Both)));
+
+struct TargetToggleArgs {
+  ZuCSpan	target;
+  bool		on = true;
+  int		side = Side::Both;
+};
+ZfStruct((TargetToggleArgs, CLI),
+  (((target), (CLI::Arg<1>)),			(String)),
+  (((on), (CLI::Arg<2>)),			(Bool, true)),
+  (((side), (CLI::Arg<3>, Enum<Side::Map>)),	(Int32, Side::Both)));
+
+struct ToggleArgs {
+  bool on = true;
+};
+ZfStruct((ToggleArgs, CLI),
+  (((on), (CLI::Arg<1>)), (Bool, true)));
+
+struct StatusArgs {
+  ZuCSpan tag;
+};
+ZfStruct((StatusArgs, CLI),
+  (((tag), (CLI::Arg<1>)), (String)));
+
+struct AppCf {
+  bool verbose = false;
+};
+
+ZfStruct((AppCf, Cf),
+  (((verbose)), (Bool, false)));
+
+template <typename Host_>
+struct ProxyContextData {
+  using Host = Host_;
+  Host	*host = nullptr;
+  int	code = 0;
+};
+template <typename Host, typename Heap = ZuVoid>
+struct ProxyContext_ :
+    public Heap, public ZmObject, public ProxyContextData<Host> {
+  ZuDerive_(ProxyContext_, ProxyContextData<Host>)
+};
+template <typename Host>
+ZuDerive(ProxyContext,
+  (ProxyContext_<Host, ZmHeap<"zproxy.Context", ProxyContext_<Host>>>));
+
+class App :
+    public ZmPolymorph,
+    public Zcmd::Host<ProxyContext> {
+  using Host = Zcmd::Host<ProxyContext>;
+
+public:
+  using Context = typename Host::Context;
 
   class Mx : public ZuObject, public ZiMultiplex {
   public:
     Mx() : ZiMultiplex{ZvMxParams{}} { }
-    Mx(const ZvCf *cf) : ZiMultiplex{ZvMxParams{"zproxy", cf}} { }
+    Mx(const ZfCf::AnyNode *cf) :
+      ZiMultiplex{ZvMxParams{"zproxy", cf}} { }
   };
 
   ZuDerive(ListenerHash,
@@ -499,29 +606,17 @@ class App : public ZmPolymorph, public ZcmdHost {
     (ZmHash<ZmRef<Proxy>,
       ZmHashKey<Proxy::SrcPortAxor>>));
 
-public:
   App() : m_verbose(false) {
     m_listeners = new ListenerHash(ZmHashParams().bits(4).loadFactor(1.0));
     m_proxies = new ProxyHash(ZmHashParams().bits(8).loadFactor(1.0));
   }
 
-  void init(const ZvCf *cf) {
-    // cf->set("mx:debug", "1");
-    ZcmdHost::init();
-    m_mx = new Mx(cf->getCf("mx"));
-    m_verbose = cf->getBool("verbose", 0);
+  void init(const ZfCf::AnyNode *cf) {
+    Host::init();
+    m_mx = new Mx(cf->resolve("mx"));
+    m_verbose = ZfCf::handler<AppCf>(cf).ctor().verbose;
     addCmd("proxy",
-	"tag { param tag } "
-	"suspend { flag suspend } "
-	"hold { flag hold } "
-	"trace { flag trace } "
-	"drop { flag drop } "
-	"latency { param latency } "
-	"frag { param frag } "
-	"pack { param pack } "
-	"delay { param delay } "
-	"reconnect { param reconnect }",
-	ZcmdFn{this, ZmFnPtr<&App::proxyCmd>{}},
+	Host::Fn{this, ZmFnPtr<&App::proxyCmd>{}},
 	"establish TCP proxy",
 	"Usage: proxy [LOCALIP:]LOCALPORT [REMOTEIP:]REMOTEPORT "
 	    "[[SRCIP:][SRCPORT]] [OPTION]...\n\n"
@@ -537,53 +632,53 @@ public:
 	    "  --pack=N\t- consolidate packets into N bytes\n"
 	    "  --delay=N\t- delay each receive by N seconds\n"
 	    "  --reconnect=N\t- retry connect every N seconds (0 - disabled)");
-    addCmd("stop", "",
-	ZcmdFn{this, ZmFnPtr<&App::stopListeningCmd>{}},
+    addCmd("stop",
+	Host::Fn{this, ZmFnPtr<&App::stopListeningCmd>{}},
 	"stop listening (do not disconnect open connections)",
 	"Usage: stop #TAG|LOCALPORT");
-    addCmd("hold", "",
-	ZcmdFn{this, ZmFnPtr<&App::holdCmd>{}},
+    addCmd("hold",
+	Host::Fn{this, ZmFnPtr<&App::holdCmd>{}},
 	"hold [one side] open",
 	"Usage: hold SRCPORT|#TAG|all [in|out]");
-    addCmd("release", "",
-	ZcmdFn{this, ZmFnPtr<&App::releaseCmd>{}},
+    addCmd("release",
+	Host::Fn{this, ZmFnPtr<&App::releaseCmd>{}},
 	"release [one side], permit disconnect\n"
 	"Note: remote-initiated disconnects always occur regardless",
 	"Usage: release SRCPORT|#TAG|all [in|out]");
-    addCmd("disc", "",
-	ZcmdFn{this, ZmFnPtr<&App::discCmd>{}},
+    addCmd("disc",
+	Host::Fn{this, ZmFnPtr<&App::discCmd>{}},
 	"disconnect SRCPORT",
 	"disc SRCPORT|#TAG|all");
-    addCmd("suspend", "",
-	ZcmdFn{this, ZmFnPtr<&App::suspendCmd>{}},
+    addCmd("suspend",
+	Host::Fn{this, ZmFnPtr<&App::suspendCmd>{}},
 	"suspend I/O",
 	"Usage: suspend SRCPORT|#TAG|all [in|out [send|recv]]");
-    addCmd("resume", "",
-	ZcmdFn{this, ZmFnPtr<&App::resumeCmd>{}},
+    addCmd("resume",
+	Host::Fn{this, ZmFnPtr<&App::resumeCmd>{}},
 	"resume I/O",
 	"resume SRCPORT|#TAG|all [in|out [send|recv]]");
-    addCmd("trace", "",
-	ZcmdFn{this, ZmFnPtr<&App::traceCmd>{}},
+    addCmd("trace",
+	Host::Fn{this, ZmFnPtr<&App::traceCmd>{}},
 	"hex dump traffic (0 - off, 1 - on)",
 	"trace SRCPORT|#TAG|all [0|1 [in|out]]");
-    addCmd("drop", "",
-	ZcmdFn{this, ZmFnPtr<&App::dropCmd>{}},
+    addCmd("drop",
+	Host::Fn{this, ZmFnPtr<&App::dropCmd>{}},
 	"drop (discard) incoming traffic (0 - off, 1 - on)",
 	"drop SRCPORT|#TAG|all [0|1 [in|out]]");
-    addCmd("verbose", "",
-	ZcmdFn{this, ZmFnPtr<&App::verboseCmd>{}},
+    addCmd("verbose",
+	Host::Fn{this, ZmFnPtr<&App::verboseCmd>{}},
 	"log connection setup and teardown (0 - off, 1 - on)",
 	"verbose 0|1");
-    addCmd("status", "",
-	ZcmdFn{this, ZmFnPtr<&App::statusCmd>{}},
+    addCmd("status",
+	Host::Fn{this, ZmFnPtr<&App::statusCmd>{}},
 	"list listeners and open connections (including queue sizes)",
 	"status [#TAG]");
-    addCmd("quit", "",
-	ZcmdFn{this, ZmFnPtr<&App::quitCmd>{}},
+    addCmd("quit",
+	Host::Fn{this, ZmFnPtr<&App::quitCmd>{}},
 	"shutdown and exit", "");
   }
   void final() {
-    ZcmdHost::final();
+    Host::final();
     m_listeners->clean();
     m_proxies->clean();
   }
@@ -604,18 +699,24 @@ public:
 
   int exec(ZtString<> cmd) {
     if (!cmd) return 0;
-    ZtArray<ZtString<>> args = ZvCf::parseCLI(cmd);
-    if (!args) return 0;
-    ZcmdContext ctx{.host = this, .interactive = true};
-    processCmd(&ctx, args);
-    m_executed.wait();
-    return ctx.code;
+    try {
+      ZfCLI::InCLI in({cmd.data(), cmd.length()});
+      if (!in.argv) return 0;
+      ZmRef<Context> ctx = new Context{};
+      ctx->host = this;
+      processCmd(ctx, in.argv);
+      m_executed.wait();
+      return ctx->code;
+    } catch (const ZeException &e) {
+      std::cerr << e << '\n';
+      return 1;
+    }
   }
 
-  using ZcmdHost::executed;
-  void executed(ZcmdContext *ctx) {
-    if (const auto &out = ctx->out)
-      fwrite(out.data(), 1, out.length(), stdout);
+  void executed(
+      ZmRef<Context> ctx, ZmRef<ZiIOBuf> buf, ZuBSpan out, int code) {
+    ctx->code = code;
+    if (out) fwrite(out.data(), 1, out.length(), stdout);
     fflush(stdout);
     m_executed.post();
   }
@@ -627,9 +728,8 @@ public:
     m_proxies->del(Proxy::SrcPortAxor(proxy));
   }
 
-  void proxyCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void proxyCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     ZmRef<Listener> listener;
     ZiIP localIP, remoteIP, srcIP;
     ZuCSpan tag;
@@ -641,36 +741,41 @@ public:
     double cxnDelay = 0;
     unsigned reconnectFreq = 1;
     try {
-      parseAddr(args->get("1"), localIP, localPort);
+      ProxyArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc < 3 || argc > 4) throw ZeError();
+      parseAddr(args.local, localIP, localPort);
       if (!localPort) throw ZeError();
-      parseAddr(args->get("2"), remoteIP, remotePort);
+      parseAddr(args.remote, remoteIP, remotePort);
       if (!remotePort) throw ZeError();
       if (!remoteIP) remoteIP = "127.0.0.1";
-      parseAddr(args->get("3"), srcIP, srcPort);
-      tag = args->get("tag");
+      parseAddr(args.source, srcIP, srcPort);
+      tag = args.tag;
       if (tag) {
 	if (!validateTag(tag)) throw ZeError();
       } else
 	tag = "#default";
-      if (args->getBool("suspend"))
+      if (args.suspend)
 	cxnFlags |= Connection::SuspRecv | Connection::SuspSend;
-      if (args->getBool("hold"))
+      if (args.hold)
 	cxnFlags |= Connection::Hold;
-      if (args->getBool("trace"))
+      if (args.trace)
 	cxnFlags |= Connection::Trace;
-      if (args->getBool("drop"))
+      if (args.drop)
 	cxnFlags |= Connection::Drop;
-      cxnLatency = args->getDbl("latency", 0, 3600, 0);
-      cxnFrag = args->getInt("frag", INT_MIN, INT_MAX, 0);
-      cxnPack = args->getInt("pack", INT_MIN, INT_MAX, 0);
-      cxnDelay = args->getDbl("delay", 0, 3600, 0);
-      reconnectFreq = args->getInt("reconnect", 1, 3600, 1);
+      cxnLatency = args.latency;
+      cxnFrag = args.frag;
+      cxnPack = args.pack;
+      cxnDelay = args.delay;
+      reconnectFreq = args.reconnect;
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (m_listeners->findVal(localPort)) {
       out << "already listening on port " << ZuBoxed(localPort) << '\n';
-      executed(1, ctx);
+      Zcmd::executed(ctx, out_, 1);
       return;
     }
     listener = new Listener(
@@ -683,23 +788,31 @@ public:
     else
       code = 1;
     out << listener->status() << '\n';
-    executed(code, ctx);
+    Zcmd::executed(ctx, out_, code);
   }
 
-  void stopListeningCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void stopListeningCmd(
+      Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     ZuCSpan tag;
     unsigned localPort;
     bool isTag = false;
     try {
-      tag = args->get("1");
+      TargetArgs args;
+      if (ZfCLI::load(args, argv) != 2) throw ZeError();
+      tag = args.target;
       if (validateTag(tag))
         isTag = true;
-      else
-        localPort = args->getInt<true>("1", 1, 65535);
+      else {
+	auto parsed = ZuBox<unsigned>::eov(tag);
+	if (parsed.p<0>() != int(tag.length()) ||
+	    !parsed.p<1>() || parsed.p<1>() > 65535) throw ZeError();
+	localPort = parsed.p<1>();
+      }
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (isTag) {
       auto i = m_listeners->iter();
@@ -709,39 +822,47 @@ public:
         m_listeners->del(listener->localPort());
         out << listener->status() << '\n';
       }
-      statusCmd(ctx);
+      status_(ctx, out_, tag);
       return;
     }
     ZmRef<Listener> listener = m_listeners->findVal(localPort);
     if (!listener) {
       out << "no listener on port " << ZuBoxed(localPort) << '\n';
-      executed(1, ctx);
+      Zcmd::executed(ctx, out_, 1);
       return;
     }
     listener->stop();
     out << listener->status() << '\n';
     m_listeners->del(localPort);
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void holdCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void holdCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     unsigned srcPort;
     int side;
     bool allProxies = false, isTag = false;
     ZuCSpan tag;
     try {
-      tag = args->get("1");
+      TargetSideArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc < 2 || argc > 3) throw ZeError();
+      tag = args.target;
       if (validateTag(tag))
         isTag = true;
-      else if (args->get("1") == "all")
+      else if (tag == "all")
 	allProxies = true;
-      else
-	srcPort = args->getInt<true>("1", 1, 65535);
-      side = args->getEnum<Side::Map, int>("2", Side::Both);
+      else {
+	auto parsed = ZuBox<unsigned>::eov(tag);
+	if (parsed.p<0>() != int(tag.length()) ||
+	    !parsed.p<1>() || parsed.p<1>() > 65535) throw ZeError();
+	srcPort = parsed.p<1>();
+      }
+      side = args.side;
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (allProxies || isTag) {
       auto i = m_proxies->citer();
@@ -756,13 +877,13 @@ public:
 	    (connection = proxy->out()))
 	  connection->hold();
       }
-      statusCmd(ctx);
+      status_(ctx, out_, isTag ? tag : ZuCSpan{});
       return;
     }
     ZmRef<Proxy> proxy = m_proxies->findVal(srcPort);
     if (!proxy) {
       out << "no proxy on source port " << ZuBoxed(srcPort) << '\n';
-      executed(1, ctx);
+      Zcmd::executed(ctx, out_, 1);
       return;
     }
     ZmRef<Connection> connection;
@@ -773,27 +894,35 @@ public:
 	(connection = proxy->out()))
       connection->hold();
     out << proxy->status() << '\n';
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void releaseCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void releaseCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     ZuCSpan tag;
     unsigned srcPort;
     int side;
     bool isTag = false, allProxies = false;
     try {
-      tag = args->get("1");
+      TargetSideArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc < 2 || argc > 3) throw ZeError();
+      tag = args.target;
       if (validateTag(tag))
         isTag = true;
-      else if (args->get("1") == "all")
+      else if (tag == "all")
 	allProxies = true;
-      else
-	srcPort = args->getInt<true>("1", 1, 65535);
-      side = args->getEnum<Side::Map, int>("2", Side::Both);
+      else {
+	auto parsed = ZuBox<unsigned>::eov(tag);
+	if (parsed.p<0>() != int(tag.length()) ||
+	    !parsed.p<1>() || parsed.p<1>() > 65535) throw ZeError();
+	srcPort = parsed.p<1>();
+      }
+      side = args.side;
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (allProxies || isTag) {
       auto i = m_proxies->citer();
@@ -808,13 +937,13 @@ public:
 	    (connection = proxy->out()))
 	  connection->release();
       }
-      statusCmd(ctx);
+      status_(ctx, out_, isTag ? tag : ZuCSpan{});
       return;
     } else {
       ZmRef<Proxy> proxy = m_proxies->findVal(srcPort);
       if (!proxy) {
 	out << "no proxy on source port " << ZuBoxed(srcPort) << '\n';
-	executed(1, ctx);
+	Zcmd::executed(ctx, out_, 1);
 	return;
       }
       ZmRef<Connection> connection;
@@ -826,25 +955,32 @@ public:
 	connection->release();
       out << proxy->status() << '\n';
     }
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void discCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void discCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     ZuCSpan tag;
     unsigned srcPort;
     bool isTag = false, allProxies = false;
     try {
-      tag = args->get("1");
+      TargetArgs args;
+      if (ZfCLI::load(args, argv) != 2) throw ZeError();
+      tag = args.target;
       if (validateTag(tag))
         isTag = true;
-      else if (args->get("1") == "all")
+      else if (tag == "all")
 	allProxies = true;
-      else
-	srcPort = args->getInt<true>("1", 1, 65535);
+      else {
+	auto parsed = ZuBox<unsigned>::eov(tag);
+	if (parsed.p<0>() != int(tag.length()) ||
+	    !parsed.p<1>() || parsed.p<1>() > 65535) throw ZeError();
+	srcPort = parsed.p<1>();
+      }
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (allProxies || isTag) {
       auto i = m_proxies->citer();
@@ -855,13 +991,13 @@ public:
 	if (connection = proxy->in()) connection->disconnect();
 	if (connection = proxy->out()) connection->disconnect();
       }
-      statusCmd(ctx);
+      status_(ctx, out_, isTag ? tag : ZuCSpan{});
       return;
     } else {
       ZmRef<Proxy> proxy = m_proxies->findVal(srcPort);
       if (!proxy) {
 	out << "no proxy on source port " << ZuBoxed(srcPort) << '\n';
-	executed(1, ctx);
+	Zcmd::executed(ctx, out_, 1);
 	return;
       }
       ZmRef<Connection> connection;
@@ -869,28 +1005,36 @@ public:
       if (connection = proxy->out()) connection->disconnect();
       out << proxy->status() << '\n';
     }
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void suspendCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void suspendCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     ZuCSpan tag;
     unsigned srcPort;
     int side, op;
-    bool isTag, allProxies = false;
+    bool isTag = false, allProxies = false;
     try {
-      tag = args->get("1");
+      TargetIOArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc < 2 || argc > 4) throw ZeError();
+      tag = args.target;
       if (validateTag(tag))
         isTag = true;
-      else if (args->get("1") == "all")
+      else if (tag == "all")
 	allProxies = true;
-      else
-	srcPort = args->getInt<true>("1", 1, 65535);
-      side = args->getEnum<Side::Map, int>("2", Side::Both);
-      op = args->getEnum<IOOp::Map, int>("3", IOOp::Both);
+      else {
+	auto parsed = ZuBox<unsigned>::eov(tag);
+	if (parsed.p<0>() != int(tag.length()) ||
+	    !parsed.p<1>() || parsed.p<1>() > 65535) throw ZeError();
+	srcPort = parsed.p<1>();
+      }
+      side = args.side;
+      op = args.op;
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (allProxies || isTag) {
       auto i = m_proxies->citer();
@@ -913,13 +1057,13 @@ public:
 	    connection->suspRecv();
 	}
       }
-      statusCmd(ctx);
+      status_(ctx, out_, isTag ? tag : ZuCSpan{});
       return;
     } else {
       ZmRef<Proxy> proxy = m_proxies->findVal(srcPort);
       if (!proxy) {
 	out << "no proxy on source port " << ZuBoxed(srcPort) << '\n';
-	executed(1, ctx);
+	Zcmd::executed(ctx, out_, 1);
 	return;
       }
       ZmRef<Connection> connection;
@@ -935,28 +1079,36 @@ public:
       }
       out << proxy->status() << '\n';
     }
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void resumeCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void resumeCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     ZuCSpan tag;
     unsigned srcPort;
     int side, op;
     bool isTag = false, allProxies = false;
     try {
-      tag = args->get("1");
+      TargetIOArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc < 2 || argc > 4) throw ZeError();
+      tag = args.target;
       if (validateTag(tag))
         isTag = true;
-      else if (args->get("1") == "all")
+      else if (tag == "all")
 	allProxies = true;
-      else
-	srcPort = args->getInt<true>("1", 1, 65535);
-      side = args->getEnum<Side::Map, int>("2", Side::Both);
-      op = args->getEnum<IOOp::Map, int>("3", IOOp::Both);
+      else {
+	auto parsed = ZuBox<unsigned>::eov(tag);
+	if (parsed.p<0>() != int(tag.length()) ||
+	    !parsed.p<1>() || parsed.p<1>() > 65535) throw ZeError();
+	srcPort = parsed.p<1>();
+      }
+      side = args.side;
+      op = args.op;
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (allProxies || isTag) {
       auto i = m_proxies->citer();
@@ -975,13 +1127,13 @@ public:
 	  if (op == IOOp::Recv || op == IOOp::Both) connection->resRecv();
 	}
       }
-      statusCmd(ctx);
+      status_(ctx, out_, isTag ? tag : ZuCSpan{});
       return;
     } else {
       ZmRef<Proxy> proxy = m_proxies->findVal(srcPort);
       if (!proxy) {
 	out << "no proxy on source port " << ZuBoxed(srcPort) << '\n';
-	executed(1, ctx);
+	Zcmd::executed(ctx, out_, 1);
 	return;
       }
       ZmRef<Connection> connection;
@@ -997,29 +1149,37 @@ public:
       }
       out << proxy->status() << '\n';
     }
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void traceCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void traceCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     ZuCSpan tag;
     unsigned srcPort;
     int side;
     bool on;
     bool isTag = false, allProxies = false;
     try {
-      tag = args->get("1");
+      TargetToggleArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc < 2 || argc > 4) throw ZeError();
+      tag = args.target;
       if (validateTag(tag))
         isTag = true;
-      else if (args->get("1") == "all")
+      else if (tag == "all")
 	allProxies = true;
-      else
-	srcPort = args->getInt<true>("1", 1, 65535);
-      on = args->getBool("2", true);
-      side = args->getEnum<Side::Map, int>("3", Side::Both);
+      else {
+	auto parsed = ZuBox<unsigned>::eov(tag);
+	if (parsed.p<0>() != int(tag.length()) ||
+	    !parsed.p<1>() || parsed.p<1>() > 65535) throw ZeError();
+	srcPort = parsed.p<1>();
+      }
+      on = args.on;
+      side = args.side;
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (allProxies || isTag) {
       auto i = m_proxies->citer();
@@ -1034,13 +1194,13 @@ public:
 	    (connection = proxy->out()))
 	  connection->trace(on);
       }
-      statusCmd(ctx);
+      status_(ctx, out_, isTag ? tag : ZuCSpan{});
       return;
     } else {
       ZmRef<Proxy> proxy = m_proxies->findVal(srcPort);
       if (!proxy) {
 	out << "no proxy on source port " << ZuBoxed(srcPort) << '\n';
-	executed(1, ctx);
+	Zcmd::executed(ctx, out_, 1);
 	return;
       }
       ZmRef<Connection> connection;
@@ -1052,29 +1212,37 @@ public:
 	connection->trace(on);
       out << proxy->status() << '\n';
     }
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void dropCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void dropCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     ZuCSpan tag;
     unsigned srcPort;
     int side;
     bool on;
     bool isTag = false, allProxies = false;
     try {
-      tag = args->get("1");
+      TargetToggleArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc < 2 || argc > 4) throw ZeError();
+      tag = args.target;
       if (validateTag(tag))
         isTag = true;
-      else if (args->get("1") == "all")
+      else if (tag == "all")
 	allProxies = true;
-      else
-	srcPort = args->getInt<true>("1", 1, 65535);
-      on = args->getBool("2", true);
-      side = args->getEnum<Side::Map, int>("3", Side::Both);
+      else {
+	auto parsed = ZuBox<unsigned>::eov(tag);
+	if (parsed.p<0>() != int(tag.length()) ||
+	    !parsed.p<1>() || parsed.p<1>() > 65535) throw ZeError();
+	srcPort = parsed.p<1>();
+      }
+      on = args.on;
+      side = args.side;
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
     if (allProxies || isTag) {
       auto i = m_proxies->citer();
@@ -1089,13 +1257,13 @@ public:
 	    (connection = proxy->out()))
 	  connection->drop(on);
       }
-      statusCmd(ctx);
+      status_(ctx, out_, isTag ? tag : ZuCSpan{});
       return;
     } else {
       ZmRef<Proxy> proxy = m_proxies->findVal(srcPort);
       if (!proxy) {
 	out << "no proxy on source port " << ZuBoxed(srcPort) << '\n';
-	executed(1, ctx);
+	Zcmd::executed(ctx, out_, 1);
 	return;
       }
       ZmRef<Connection> connection;
@@ -1107,58 +1275,69 @@ public:
 	connection->drop(on);
       out << proxy->status() << '\n';
     }
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void verboseCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
-    bool on;
+  void verboseCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    auto &out = *out_;
     try {
-      on = args->getBool("1", true);
+      ToggleArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc > 2) throw ZeError();
+      m_verbose = args.on;
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
-    m_verbose = on;
-    out = on ? "verbose on\n" : "verbose off\n";
-    executed(0, ctx);
+    out << (m_verbose ? "verbose on\n" : "verbose off\n");
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void statusCmd(ZcmdContext *ctx) {
-    const auto &args = ctx->args;
-    auto &out = ctx->out;
+  void statusCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
     ZuCSpan tag;
-    bool isTag = false;
     try {
-      tag = args->get("1");
-      isTag = validateTag(tag);
+      StatusArgs args;
+      auto argc = ZfCLI::load(args, argv);
+      if (argc > 2) throw ZeError();
+      tag = args.tag;
+      if (tag && !validateTag(tag)) throw ZeError();
+    } catch (const ZeException &) {
+      throw;
     } catch (...) {
-      throw ZcmdUsage();
+      throw Zcmd::Usage();
     }
+    status_(ctx, out_, tag);
+  }
+
+  void status_(Context *ctx, ZiIOBuf *out_, ZuCSpan tag) {
+    auto &out = *out_;
     {
       auto i = m_listeners->iter();
       while (ZmRef<Listener> listener = i.val()) {
-        if (isTag && listener->tag() != tag)
+        if (tag && listener->tag() != tag)
           continue;
-	if (out.length()) out << '\n';
+	if (out.length) out << '\n';
 	out << listener->status();
       }
     }
     {
       auto i = m_proxies->citer();
       while (ZmRef<Proxy> proxy = i.val()) {
-	if (out.length()) out << '\n';
+	if (tag && proxy->tag() != tag) continue;
+	if (out.length) out << '\n';
 	out << proxy->status();
       }
     }
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
-  void quitCmd(ZcmdContext *ctx) {
-    auto &out = ctx->out;
+  void quitCmd(Context *ctx, ZiIOBuf *out_, const Zcmd::Argv &argv) {
+    if (argv.length() != 1) throw Zcmd::Usage();
     post();
+    auto &out = *out_;
     out << "shutting down\n";
-    executed(0, ctx);
+    Zcmd::executed(ctx, out_, 0);
   }
 
 private:
@@ -1561,14 +1740,18 @@ ZmRef<App> app;
 
 void sigint() { if (app) app->post(); }
 
-int main(int argc, char **argv)
+struct Options {
+  bool		verbose = false;
+  unsigned	nThreads = 0;
+};
+
+ZfStruct((Options, CLI),
+  (((verbose),	(CLI::Flag<'v'>)),			(Bool)),
+  (((nThreads),	(CLI::Opt<'t'>, CLI::Long<"n-threads">,
+      (Range<1U, 1024U>))),				(UInt32)));
+
+int main(int argc_, char **argv)
 {
-  ZmRef<ZvCf> options = new ZvCf{};
-
-  options->fromString(
-    "verbose v v { param verbose }\n"
-    "nThreads t t { param mx.nThreads }\n");
-
   static const char *usage =
     "Usage: zproxy [OPTION]...\n"
     "\n"
@@ -1578,16 +1761,23 @@ int main(int argc, char **argv)
 
   bool interactive = Zrl::interactive();
 
-  ZmRef<App> app = new App();
-  ZmRef<ZvCf> args = new ZvCf();
+  app = new App();
 
   try {
-    if (args->fromArgs(options, ZvCf::args(argc, argv)) != 1) {
+    Options options;
+    int argc = ZfCLI::load(options, argc_, argv);
+    if (argc != 1) {
       std::cerr << usage << std::flush;
       return 1;
     }
-    app->init(args);
-  } catch (...) {
+    ZtString<> source;
+    source << "verbose: " << (options.verbose ? "true" : "false");
+    if (options.nThreads)
+      source << ", mx: {nThreads: " << ZuBoxed(options.nThreads) << '}';
+    auto scan = ZfCf::scan(source);
+    app->init(scan.p<1>());
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
     std::cerr << usage << std::flush;
     return 1;
   }
@@ -1606,7 +1796,7 @@ int main(int argc, char **argv)
     Zrl::CLI cli;
     cli.init({
       .error = [](ZuCSpan s) { std::cerr << s << '\n'; },
-      .prompt = [](ZtArray<uint8_t> &s) { if (!s) s = "zproxy] "; },
+      .prompt = [](Zrl::Prompt &s) { if (!s) s = "zproxy] "; },
       .enter = [app = app.ptr()](ZuCSpan cmd) -> bool {
 	app->exec(ZtString<>{cmd}); // ignore result code
 	return false;

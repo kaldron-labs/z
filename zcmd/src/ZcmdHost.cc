@@ -112,7 +112,8 @@ void Host::processCmd(ZmRef<Context> ctx, const Argv &argv)
   } catch (const Usage &) {
     *out << cmd->val().usage << '\n';
   } catch (const ZeException &e) {
-    *out << '"' << argv[0] << "\": " << e << '\n';
+    *out << '"' << argv[0] << "\": " << e << '\n' <<
+      cmd->val().usage << '\n';
   } catch (...) {
     *out << '"' << argv[0] << "\": unknown exception\n";
   }

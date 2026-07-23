@@ -10,6 +10,9 @@
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZmTime.hh>
 
+#include <zlib/ZfCLI.hh>
+#include <zlib/ZfCf.hh>
+
 #include <zlib/ZcmdServer.hh>
 
 class CmdTest;
@@ -21,7 +24,7 @@ struct Link : public ZcmdSrvLink<CmdTest, Link> {
 
 class CmdTest : public ZmObject, public ZcmdServer<CmdTest, Link> {
 public:
-  void init(const ZvCf *cf, ZiMultiplex *mx, Zdb *db) {
+  void init(const ZfCf::AnyNode *cf, ZiMultiplex *mx, Zdb *db) {
     m_uptime = Zm::now();
 
     ZcmdServer::init(cf, mx, db);
@@ -81,6 +84,41 @@ void gtfo() {
   Zm::exit(1);
 };
 
+struct Options {
+  ZuCSpan	certPath;
+  ZuCSpan	keyPath;
+  ZuCSpan	localIP;
+  unsigned	localPort = 0;
+  ZuCSpan	module = getenv("ZDB_MODULE");
+  ZuCSpan	connect = getenv("ZDB_CONNECT");
+  ZuCSpan	caPath = "/etc/ssl/certs";
+  unsigned	passLen = 12;
+  unsigned	totpRange = 2;
+  unsigned	keyInterval = 30;
+  ZuCSpan	log = "&2";
+  bool		debug = false;
+  bool		help = false;
+};
+
+ZfStruct((Options, CLI),
+  (((certPath),		(CLI::Arg<1>)),			(String)),
+  (((keyPath),		(CLI::Arg<2>)),			(String)),
+  (((localIP),		(CLI::Arg<3>)),			(String)),
+  (((localPort),	(CLI::Arg<4>, (Range<1U, 65535U>))), (UInt32)),
+  (((module),		(CLI::Opt<'m'>)),		(String)),
+  (((connect),		(CLI::Opt<'c'>)),		(String)),
+  (((caPath),		(CLI::Opt<'C'>, CLI::Long<"ca-path">)), (String,
+      "/etc/ssl/certs")),
+  (((passLen),		(CLI::Long<"pass-len">, (Range<6U, 60U>))),
+							(UInt32, 12)),
+  (((totpRange),	(CLI::Long<"totp-range">, (Range<0U, 100U>))),
+							(UInt32, 2)),
+  (((keyInterval),	(CLI::Long<"key-interval">,
+      (Range<0U, 36000U>))),				(UInt32, 30)),
+  (((log),		(CLI::Opt<'l'>)),		(String, "&2")),
+  (((debug),		(CLI::Flag<'d'>)),		(Bool)),
+  (((help),		(CLI::Flag<'h'>)),		(Bool)));
+
 void usage()
 {
   std::cerr << "Usage: cmdtest CERTPATH KEYPATH IP PORT [OPTION]...\n"
@@ -96,7 +134,6 @@ void usage()
     "      --pass-len=N\tset default password length (default: 12)\n"
     "      --totp-range=N\tset TOTP accepted range (default: 2)\n"
     "      --key-interval=N\tset key refresh interval (default: 30)\n"
-    "      --max-age=N\tset user DB file backups (default: 8)\n"
     "  -l, --log=FILE\tlog to FILE\n"
     "  -d, --debug\t\tenable Zdb debugging\n"
     "      --help\t\tthis help\n"
@@ -106,101 +143,93 @@ void usage()
 
 void sigint() { if (server) server->post(); }
 
-int main(int argc, char **argv)
+int main(int argc_, char **argv)
 {
-  ZmRef<ZvCf> cf;
   mx = new ZiMultiplex();
   ZmRef<Zdb> db = new Zdb();
   server = new CmdTest{};
 
   try {
-    ZmRef<ZvCf> options = new ZvCf{};
-
-    options->fromString(
-      "module m m { param zdb.store.module }\n"
-      "connect c c { param zdb.store.connection }\n"
-      "ca-path C C { param caPath }\n"
-      "pass-len { param userDB.passLen }\n"
-      "totp-range { param userDB.totpRange }\n"
-      "key-interval { param userDB.keyInterval }\n"
-      "max-age { param userDB.maxAge }\n"
-      "log l l { param log }\n"
-      "debug d d { flag zdb.debug }\n"
-      "help { flag help }\n");
-
-    ZmRef<ZvCf> cf = new ZvCf{};
-
-    cf->fromString(
-      "log \"&2\"\n"	// default - stderr
-      "mx {\n"
-      "  nThreads 5\n"
-      "  threads {\n"
-      "    1 { name rx isolated true }\n"
-      "    2 { name tx isolated true }\n"
-      "    3 { name zdb isolated true }\n"
-      "    4 { name zdb_store isolated true }\n"
-      "    5 { name app }\n"
-      "  }\n"
-      "  rxThread rx\n"
-      "  txThread tx\n"
-      "}\n"
-      "userdb {\n"
-      "  thread app\n"
-      "  passLen 12\n"
-      "  totpRange 2\n"
-      "  keyInterval 30\n"
-      "  maxAge 8\n"
-      "}\n"
-      "zdb {\n"
-      "  thread zdb\n"
-      "  hostID 0\n"
-      "  hosts { 0 { standalone 1 } }\n"
-      "  store {\n"
-      "    module ${ZDB_MODULE}\n"
-      "    connection ${ZDB_CONNECT}\n"
-      "    thread zdb_store\n"
-      "    replicated true\n"
-      "  }\n"
-      "  tables { }\n"
-      "}\n"
-      "server {\n"
-      "  thread app\n"
-      "  caPath /etc/ssl/certs\n"
-      "}\n");
-
-    if (cf->fromArgs(options, ZvCf::args(argc, argv)) != 5 ||
-	cf->getBool("help")) {
-      usage();
-      gtfo();
-    }
-
-    if (!cf->exists("zdb.store.module")) {
+    Options options;
+    int argc = ZfCLI::load(options, argc_, argv);
+    if (argc != 5 || options.help) usage();
+    if (!options.module) {
       std::cerr << "set ZDB_MODULE or use --module=MODULE\n" << std::flush;
       gtfo();
     }
-    if (!cf->exists("zdb.store.connection")) {
+    if (!options.connect) {
       std::cerr << "set ZDB_CONNECT or use --connect=CONNECT\n" << std::flush;
       gtfo();
     }
 
-    {
-      ZmRef<ZvCf> srvCf = cf->getCf<true>("server");
-      srvCf->set("certPath", cf->get("1"));
-      srvCf->set("keyPath", cf->get("2"));
-      srvCf->set("localIP", cf->get("3"));
-      srvCf->set("localPort", cf->get("4"));
-    }
+    ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
+    auto define = [&defines](ZuCSpan key, auto value) {
+      defines->add(ZfCf::DefKey{key}, ZfCf::DefVal{value});
+    };
+    define("MODULE", options.module);
+    define("CONNECT", options.connect);
+    define("CAPATH", options.caPath);
+    define("CERTPATH", options.certPath);
+    define("KEYPATH", options.keyPath);
+    define("LOCALIP", options.localIP);
+    define("LOCALPORT", ZuBoxed(options.localPort));
+    define("PASSLEN", ZuBoxed(options.passLen));
+    define("TOTPRANGE", ZuBoxed(options.totpRange));
+    define("KEYINTERVAL", ZuBoxed(options.keyInterval));
+    define("DEBUG", options.debug ? "true" : "false");
+    auto scan = ZfCf::scan(
+      "mx: {\n"
+      "  nThreads: 5,\n"
+      "  threads: {\n"
+      "    1: {name: rx, isolated: true},\n"
+      "    2: {name: tx, isolated: true},\n"
+      "    3: {name: zdb, isolated: true},\n"
+      "    4: {name: zdb_store, isolated: true},\n"
+      "    5: {name: app}\n"
+      "  },\n"
+      "  rxThread: rx,\n"
+      "  txThread: tx\n"
+      "},\n"
+      "userdb: {\n"
+      "  thread: app,\n"
+      "  passLen: ${PASSLEN},\n"
+      "  totpRange: ${TOTPRANGE},\n"
+      "  keyInterval: ${KEYINTERVAL}\n"
+      "},\n"
+      "zdb: {\n"
+      "  thread: zdb,\n"
+      "  debug: ${DEBUG},\n"
+      "  hostID: 0,\n"
+      "  hosts: {0: {standalone: true}},\n"
+      "  store: {\n"
+      "    module: ${MODULE},\n"
+      "    connection: ${CONNECT},\n"
+      "    thread: zdb_store,\n"
+      "    replicated: true\n"
+      "  },\n"
+      "  tables: {}\n"
+      "},\n"
+      "server: {\n"
+      "  thread: app,\n"
+      "  caPath: ${CAPATH},\n"
+      "  certPath: ${CERTPATH},\n"
+      "  keyPath: ${KEYPATH},\n"
+      "  localIP: ${LOCALIP},\n"
+      "  localPort: ${LOCALPORT}\n"
+      "}\n",
+      {}, ZuMv(defines));
+    auto cf = ZuMv(scan.p<1>());
 
     ZiLog::init("cmdtest");
     ZiLog::level(0);
-    ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path(cf->get<true>("log"))));
+    ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path(options.log)));
     ZiLog::start();
 
-    mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
+    mx = new ZiMultiplex{ZvMxParams{"mx", cf->resolve("mx")}};
 
     mx->start();
 
-    ZdbCf dbCf{cf->getCf<true>("zdb")};
+    ZdbCf dbCf{cf->resolve("zdb")};
 
     CmdTest::dbCf(cf, dbCf);
 
@@ -211,9 +240,9 @@ int main(int argc, char **argv)
 
     server->init(cf, mx, db);
 
-  } catch (const ZvCfError::Usage &e) {
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
     usage();
-    gtfo();
   } catch (const ZvError &e) {
     std::cerr << e << '\n' << std::flush;
     gtfo();

@@ -1229,7 +1229,12 @@ int Zhttpd::run(int argc, const char *const *argv)
   ZiHashCSV::init(::getenv("Z_HASHTUNE"));
 
   Options options;
-  if (!::loadOptions(options, argc, argv)) usage();
+  try {
+    if (!::loadOptions(options, argc, argv)) usage();
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
+    usage();
+  }
 
   ZeString error;
   if (!validate(options, error)) {

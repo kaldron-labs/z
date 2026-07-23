@@ -1236,7 +1236,13 @@ bool prerequisitesOK()
 int main(int argc, char **argv)
 {
   matrixDir = executableDir(argv[0]);
-  argc = ZfCLI::load(options, argc, const_cast<const char *const *>(argv));
+  try {
+    argc = ZfCLI::load(
+      options, argc, const_cast<const char *const *>(argv));
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
+    usage();
+  }
   if (options.help) usage(0);
   if (argc != 1) usage();
   if (!validMigrationOptions()) usage();

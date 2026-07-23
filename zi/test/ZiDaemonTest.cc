@@ -123,7 +123,7 @@ template <typename Argv>
 int loadOptions(Options &options, const Argv &argv)
 {
   ZfCLI::Parser<Options, ZuFacet::Core> parser;
-  if (!parser.scanArgv(argv)) return -1;
+  parser.scanArgv(argv);
   options = ZfCLI::handler<Options, ZuFacet::Core>(parser.root).ctor();
   return parser.argc;
 }
@@ -317,7 +317,13 @@ void usage(const char *self)
 int main(int argc, char **argv)
 {
   Options options{};
-  int argc_ = loadOptions(options, argc, argv);
+  int argc_;
+  try {
+    argc_ = loadOptions(options, argc, argv);
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
+    usage(argv[0]);
+  }
   if (argc_ < 1 || options.help) usage(argv[0]);
   verbose = options.quiet ? false : !::getenv("HARNESS_ACTIVE");
 

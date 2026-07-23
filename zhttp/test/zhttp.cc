@@ -3539,7 +3539,12 @@ int main(int argc, char **argv)
   ZiHashCSV::init(::getenv("Z_HASHTUNE"));
 
   Options options;
-  argc = ZfCLI::load(options, argc, argv);
+  try {
+    argc = ZfCLI::load(options, argc, argv);
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
+    usage();
+  }
   if (options.help) usage(0);
   if (!validateOptions(options, argc)) usage();
 
