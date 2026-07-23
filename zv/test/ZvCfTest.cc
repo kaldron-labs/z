@@ -16,6 +16,15 @@
 
 using namespace ZuTestUtil;
 
+struct FileCf {
+  ZtString<>	value;
+  int		number = 0;
+};
+
+ZfStruct((FileCf, Cf),
+  (((value),	(Ctor<0>)),	(String)),
+  (((number),	(Ctor<1>)),	(Int32)));
+
 namespace {
 
 Zi::Path g_dir;
@@ -83,7 +92,7 @@ void files()
     "%application(ok)\n");
 
   unsigned calls = 0;
-  auto result = ZvCf::read(rootPath,
+  auto result = ZvCf::load(rootPath,
     ZfCf::PctFn{[&calls](ZfCf::Scan &, ZuCSpan directive,
 	ZuSpan<const ZuCSpan> args, ZfCf::PctExpandFn expand) {
       ++calls;
@@ -119,18 +128,18 @@ void emptyAndErrors()
   ZuTestScope(emptyAndErrors);
   auto emptyPath = path("empty.cf");
   write(emptyPath, {});
-  auto result = ZvCf::read(emptyPath);
+  auto result = ZvCf::load(emptyPath);
   ZuCheck(result.p<0>() == 0);
   ZuCheck(result.p<1>()->has<ZfCf::AnyNode::Object>());
 
   auto missingPath = path("missing.cf");
-  auto message = exception([&] { ZvCf::read(missingPath); });
+  auto message = exception([&] { ZvCf::load(missingPath); });
   ZuCheck(message && message.find("open(") >= 0);
   ZuCheck(message.find("missing.cf") >= 0);
 
   auto badPath = path("bad.cf");
   write(badPath, "ok: yes,\nbad");
-  message = exception([&] { ZvCf::read(badPath); });
+  message = exception([&] { ZvCf::load(badPath); });
   ZuCheck(message.find("bad.cf") >= 0);
   ZuCheck(message.find(":2:1 syntax error at offset 9") >= 0);
 
@@ -140,14 +149,14 @@ void emptyAndErrors()
     ZuCheck(file.open(bigPath, ZiFile::Write | ZiFile::GC) == Zi::OK);
     ZuCheck(file.truncate(1<<20) == Zi::OK);
   }
-  message = exception([&] { ZvCf::read(bigPath); });
+  message = exception([&] { ZvCf::load(bigPath); });
   ZuCheck(message.find("file too big") >= 0);
 
 #ifndef _WIN32
   auto unreadablePath = path("unreadable.cf");
   write(unreadablePath, "value: hidden");
   ZuCheck(::chmod(unreadablePath, 0000) == 0);
-  message = exception([&] { ZvCf::read(unreadablePath); });
+  message = exception([&] { ZvCf::load(unreadablePath); });
   ZuCheck(message.find("mmap(") >= 0);
   ::chmod(unreadablePath, 0644);
   ZiFile::remove(unreadablePath);
@@ -173,13 +182,13 @@ void nestedObjectAndDuplicates()
     "object: {\n"
     "%include(object-include.cf)\n"
     "}\n");
-  auto result = ZvCf::read(rootPath);
+  auto result = ZvCf::load(rootPath);
   ZuCheck(string(result.p<1>()->resolve("value")) == "after");
   ZuCheck(string(result.p<1>()->resolve("object.inside")) == "included");
 
 #ifndef _WIN32
   ZuCheck(::chmod(rootPath, 0444) == 0);
-  result = ZvCf::read(rootPath);
+  result = ZvCf::load(rootPath);
   ZuCheck(string(result.p<1>()->resolve("value")) == "after");
   ::chmod(rootPath, 0644);
 #endif
@@ -189,6 +198,37 @@ void nestedObjectAndDuplicates()
   ZiFile::remove(rootPath);
 }
 
+void saveLoad()
+{
+  ZuTestScope(saveLoad);
+  auto savePath = path("saved.cf");
+  FileCf saved;
+  saved.value = "file stream";
+  saved.number = 42;
+  ZvCf::save(savePath, saved);
+
+  auto result = ZvCf::load(savePath);
+  auto loaded = ZfCf::handler<FileCf>(result.p<1>()).ctor();
+  ZuCheck(loaded.value == saved.value);
+  ZuCheck(loaded.number == saved.number);
+
+  auto updPath = path("updated.cf");
+  auto delPath = path("deleted.cf");
+  ZvCf::saveUpd(updPath, saved);
+  ZvCf::saveDel(delPath, saved);
+  ZuCheck(ZiStat{updPath}.exists());
+  ZuCheck(ZiStat{delPath}.exists());
+
+  auto badPath = ZiFile::append(path("missing"), "saved.cf");
+  auto message = exception([&] { ZvCf::save(badPath, saved); });
+  ZuCheck(message.find("open(") >= 0);
+  ZuCheck(message.find("saved.cf") >= 0);
+
+  ZiFile::remove(delPath);
+  ZiFile::remove(updPath);
+  ZiFile::remove(savePath);
+}
+
 void includeErrors()
 {
   ZuTestScope(includeErrors);
@@ -196,25 +236,25 @@ void includeErrors()
   auto b = path("b.cf");
   write(a, "%include(b.cf)\n");
   write(b, "%include(a.cf)\n");
-  auto message = exception([&] { ZvCf::read(a); });
+  auto message = exception([&] { ZvCf::load(a); });
   ZuCheck(message.find("recursive %include") >= 0);
   ZuCheck(message.find("a.cf") >= 0);
   ZuCheck(message.find("b.cf") >= 0);
 
   auto malformed = path("malformed.cf");
   write(malformed, "%include()\n");
-  message = exception([&] { ZvCf::read(malformed); });
+  message = exception([&] { ZvCf::load(malformed); });
   ZuCheck(message.find("requires one non-empty argument") >= 0);
 
   auto unknown = path("unknown.cf");
   write(unknown, "%unknown()\n");
-  message = exception([&] { ZvCf::read(unknown); });
+  message = exception([&] { ZvCf::load(unknown); });
   ZuCheck(message.find("unknown.cf") >= 0);
   ZuCheck(message.find("syntax error") >= 0);
 
   auto missing = path("missing-include.cf");
   write(missing, "%include(not-there.cf)\n");
-  message = exception([&] { ZvCf::read(missing); });
+  message = exception([&] { ZvCf::load(missing); });
   ZuCheck(message.find("not-there.cf") >= 0);
   ZuCheck(message.find("include chain:") >= 0);
 
@@ -226,7 +266,7 @@ void includeErrors()
   }
   auto includeBig = path("include-big.cf");
   write(includeBig, "%include(big-include.cf)\n");
-  message = exception([&] { ZvCf::read(includeBig); });
+  message = exception([&] { ZvCf::load(includeBig); });
   ZuCheck(message.find("file too big") >= 0);
   ZuCheck(message.find("include chain:") >= 0);
 
@@ -236,7 +276,7 @@ void includeErrors()
   ZuCheck(::chmod(unreadable, 0000) == 0);
   auto includeUnreadable = path("include-unreadable.cf");
   write(includeUnreadable, "%include(unreadable-include.cf)\n");
-  message = exception([&] { ZvCf::read(includeUnreadable); });
+  message = exception([&] { ZvCf::load(includeUnreadable); });
   ZuCheck(message.find("mmap(") >= 0);
   ZuCheck(message.find("include chain:") >= 0);
   ::chmod(unreadable, 0644);
@@ -247,7 +287,7 @@ void includeErrors()
   auto appFalse = path("app-false.cf");
   write(appFalse, "%application()\n");
   message = exception([&] {
-    ZvCf::read(appFalse, ZfCf::PctFn{
+    ZvCf::load(appFalse, ZfCf::PctFn{
       [](ZfCf::Scan &, ZuCSpan, ZuSpan<const ZuCSpan>,
 	  ZfCf::PctExpandFn) { return false; }});
   });
@@ -257,7 +297,7 @@ void includeErrors()
   auto expandFalse = path("expand-false.cf");
   write(expandFalse, "%application()\n");
   message = exception([&] {
-    ZvCf::read(expandFalse, ZfCf::PctFn{
+    ZvCf::load(expandFalse, ZfCf::PctFn{
       [](ZfCf::Scan &, ZuCSpan, ZuSpan<const ZuCSpan>,
 	  ZfCf::PctExpandFn expand) { return expand("broken"); }});
   });
@@ -273,7 +313,7 @@ void includeErrors()
 	ZuCSpan{"%include(a.cf),\n"}}) {
       auto syntax = path("include-syntax.cf");
       write(syntax, invalid);
-      message = exception([&] { ZvCf::read(syntax); });
+      message = exception([&] { ZvCf::load(syntax); });
       ZuCheck(message.find("syntax error") >= 0);
       ZiFile::remove(syntax);
     }
@@ -306,6 +346,7 @@ int main(int argc, char **argv)
   ZuTestCall(files);
   ZuTestCall(emptyAndErrors);
   ZuTestCall(nestedObjectAndDuplicates);
+  ZuTestCall(saveLoad);
   ZuTestCall(includeErrors);
 
   ZiFile::rmdir(g_dir);

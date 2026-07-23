@@ -16,6 +16,7 @@
 #include <zlib/ZfCf.hh>
 
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiFileTxStream.hh>
 
 namespace ZvCfError {
 
@@ -68,8 +69,37 @@ namespace ZvCf {
 using namespace ZfCf;
 using ZfCf::AnyNode;
 
-ZvExtern ZuTuple<int, ZuPtr<const AnyNode>> read(
+ZvExtern ZuTuple<int, ZuPtr<const AnyNode>> load(
   const Zi::Path &, PctFn = {}, ZmRef<Defines> = new Defines());
+
+template <
+  typename Facet = ZuFacet::Cf,
+  template <typename> class Filter = ZfFieldFilter::Save,
+  typename O>
+inline void save(const Zi::Path &path, const O &v) {
+  ZiFile file;
+  if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK)
+    throw ZvCf_EXCEPT(
+      ZvCfError::fileError<"open">(path, file.error()));
+  ZiFileTxStream<> stream{file};
+  ZfCf::save<Facet, Filter>(stream, v);
+  stream.flush();
+  if (file.error())
+    throw ZvCf_EXCEPT(
+      ZvCfError::fileError<"write">(path, file.error()));
+}
+template <
+  typename Facet = ZuFacet::Cf,
+  typename O>
+ZuInline void saveUpd(const Zi::Path &path, const O &v) {
+  save<Facet, ZfFieldFilter::Upd>(path, v);
+}
+template <
+  typename Facet = ZuFacet::Cf,
+  typename O>
+ZuInline void saveDel(const Zi::Path &path, const O &v) {
+  save<Facet, ZfFieldFilter::Del>(path, v);
+}
 
 } // ZvCf
 
