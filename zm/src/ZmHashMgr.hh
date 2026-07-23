@@ -76,7 +76,8 @@ ZuDerive(ZmHashMgr_Tables,
     ZmRBTreeNode<ZmAnyHash_,
       ZmRBTreeKey<ZmAnyHash_PtrAxor,
 	ZmRBTreeUnique<true,
-	  ZmRBTreeHeapID<"">>>>>));
+	  ZmRBTreeShadow<
+	    ZmRBTreeHeapID<"">>>>>>));
 using ZmAnyHash = ZmHashMgr_Tables::Node;
 
 template <typename, typename> class ZmHash; 

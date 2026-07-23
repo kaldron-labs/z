@@ -7,11 +7,9 @@
 // scheduler with thread pool
 // - globally configured thread pools
 //   - CPU affinity, priority, stack size, etc.
-// - integrated with telemetry (ZvTelemetry)
 // - isolated (dedicated) and shared threads
 // - timed events (repeat and one-shot)
 // - globally configured CPU affinity, priority, etc.
-// - integrates with telemetry (ZvTelemetry)
 
 #ifndef ZmScheduler_HH
 #define ZmScheduler_HH
