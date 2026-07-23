@@ -34,15 +34,14 @@ public:
     buf << "\nleaked hash tables:\n";
     std::cerr << buf << std::flush;
     while (auto tbl = i()) {
-      {
+      if (tbl->refCount()) {
 	ZmHashTelemetry data;
 	tbl->telemetry(data);
 	buf.length(0);
 	buf << ZuBoxPtr(tbl).hex() << ' ' << data.id << '\n';
 	std::cerr << buf << std::flush;
       }
-      tbl->ref2_();
-      (i.del(tbl))->deref_();
+      i.del(tbl);
     }
   }
 
@@ -74,16 +73,11 @@ private:
   void add(ZmAnyHash *tbl) {
     ZmGuard<ZmPLock> guard(m_lock);
     m_tables.addNode(tbl);
-    // deref, otherwise m_tables.add() prevents dtor from ever being called
-    tbl->deref_();
   }
 
   void del(ZmAnyHash *tbl) {
     ZmGuard<ZmPLock> guard(m_lock);
-    // double ref prevents m_tables.del() from recursing into dtor
-    tbl->ref2_();
-    if (!m_tables.del(ZmAnyHash_PtrAxor(*tbl))) tbl->deref_();
-    tbl->deref_();
+    m_tables.delNode(tbl);
   }
 
   using Tables = ZmHashMgr_Tables;
@@ -92,17 +86,23 @@ private:
     ZmRef<ZmAnyHash> tbl;
     {
       ZmGuard<ZmPLock> guard(m_lock);
-      tbl = m_tables.minimum();
+      auto next = m_tables.minimum();
+      while (next && !next->refCount())
+	next = m_tables.citer<ZmRBTreeGreater>(
+	  ZmAnyHash_PtrAxor(*tbl))();
+      tbl = next;
     }
     while (tbl) {
       fn(tbl);
-      ZmRef<ZmAnyHash> next;
       {
 	ZmGuard<ZmPLock> guard(m_lock);
-	next = m_tables.citer<ZmRBTreeGreater>(
-	  ZmAnyHash_PtrAxor(*tbl))();
+	auto next = tbl.ptr();
+	do {
+	  next = m_tables.citer<ZmRBTreeGreater>(
+	    ZmAnyHash_PtrAxor(*next))();
+	} while (next && !next->refCount());
+	tbl = next;
       }
-      tbl = ZuMv(next);
     }
   }
 

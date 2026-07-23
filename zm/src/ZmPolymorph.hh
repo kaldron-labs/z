@@ -82,7 +82,6 @@ public:
 
   // apps occasionally need to manipulate the refCount directly
   void ref_() const { ++m_refCount; }
-  void ref2_() const { m_refCount += 2; }
   bool deref_() const { return !--m_refCount; }
 
 private:
