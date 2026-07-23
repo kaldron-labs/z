@@ -48,7 +48,10 @@ struct ResponseParser :
   using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, 1024>;
 
   void status(unsigned v) { statusSeen = v; }
-  void contentLength(uint64_t v) { contentLengthSeen = v; }
+  void contentLength(uint64_t v) {
+    contentLengthSeen = v;
+    ++contentLengthCalls;
+  }
   void chunked() { chunkedSeen = true; }
 
   template <typename Key>
@@ -91,6 +94,7 @@ struct ResponseParser :
   unsigned			bodyCalls = 0;
   uint64_t			bodyBytes = 0;
   unsigned			completeCalls = 0;
+  unsigned			contentLengthCalls = 0;
   unsigned			runtimeCalls = 0;
   Zhttp::H1::ParserState::T		completeState = Zhttp::H1::ParserState::Initial;
   BodyData			bodyData;
@@ -203,6 +207,8 @@ void testRuntimeHeaderCallback()
   stream.push(mkBuf(
     "HTTP/1.1 200 OK\r\n"
     "Key: Value\r\n"
+    "Key-Junk: suffix\r\n"
+    "Content-Length-Junk: 7\r\n"
     "X-Runtime: varied\r\n"
     "Content-Length: 0\r\n"
     "\r\n"));
@@ -210,8 +216,10 @@ void testRuntimeHeaderCallback()
     "runtime header response failed");
   ZuCHECK(parser.keyCalls == 1,
     "selected header was not delivered through typed callback");
-  ZuCHECK(parser.runtimeCalls == 1,
+  ZuCHECK(parser.runtimeCalls == 3,
     "unselected header callback count mismatch");
+  ZuCHECK(parser.contentLengthCalls == 1,
+    "suffixed content-length was treated as canonical");
   ZuCHECK(parser.runtimeKey == "x-runtime",
     "unselected header key mismatch");
   ZuCHECK(parser.runtimeValue == "varied",
@@ -302,19 +310,27 @@ void testInvalidRequestMethod()
 {
   ZuTestScope(testInvalidRequestMethod);
 
-  RequestParser parser;
-  RxStream stream;
-  stream.push(mkBuf(
+  auto test = [](const char *request) {
+    RequestParser parser;
+    RxStream stream;
+    stream.push(mkBuf(request));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error,
+      "invalid request method was not rejected");
+    ZuCHECK(parser.method < 0 && !parser.hostCalls && !parser.bodyCalls,
+      "invalid request method delivered callbacks");
+    ZuCHECK(parser.completeCalls == 1 &&
+	parser.completeState == Zhttp::H1::ParserState::Error,
+      "invalid request method completion mismatch");
+  };
+
+  test(
     "WHAT /bad HTTP/1.1\r\n"
     "host: example.com\r\n"
-    "\r\n"));
-  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error,
-    "invalid request method was not rejected");
-  ZuCHECK(parser.method < 0 && !parser.hostCalls && !parser.bodyCalls,
-    "invalid request method delivered callbacks");
-  ZuCHECK(parser.completeCalls == 1 &&
-      parser.completeState == Zhttp::H1::ParserState::Error,
-    "invalid request method completion mismatch");
+    "\r\n");
+  test(
+    "GETX /bad HTTP/1.1\r\n"
+    "host: example.com\r\n"
+    "\r\n");
 }
 
 void testEmptySelectedHeaderValues()

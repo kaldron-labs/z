@@ -182,6 +182,18 @@ void testIntegerRange()
   });
   ZuCheck(rows == 1);
   ZuCheck(value.value == ZuCmp<int>::null());
+
+  char unknownCSV[] = "value-junk\n99\n";
+  auto unknownReader = ZfCSV::reader<RangeData>();
+  RangeData unknown;
+  rows = 0;
+  unknownReader.read(
+    {unknownCSV, sizeof(unknownCSV) - 1}, [&](const auto &row) {
+      unknown = row.ctor();
+      ++rows;
+    });
+  ZuCheck(rows == 1);
+  ZuCheck(unknown.value == 42);
 }
 
 void testRealRange()

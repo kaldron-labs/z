@@ -377,7 +377,7 @@ struct Lookup : ZuArray<int, Fields::N> {
     for (unsigned i = 0; i < Fields::N; i++) (*this)[i] = -1;
     constexpr auto matcher = ZuMatcher<ZuFieldProp::CSV::GetIDs<Fields>>();
     for (unsigned i = 0; i < ncols; i++) {
-      auto j = matcher.match(header[i]);
+      auto j = matcher.exact(header[i]);
       if (j >= 0) (*this)[j] = i;
     }
   }

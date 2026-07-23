@@ -528,7 +528,7 @@ struct AsObject {
 	unsigned matched = 0;
 	const auto &fields = node->data<AnyNode::Object>();
 	for (unsigned i = 0, n = fields.length(); i < n; i++) {
-	  auto j = matcher.match(fields[i].p<0>());
+	  auto j = matcher.exact(fields[i].p<0>());
 	  if (j >= 0) {
 	    if (lookup[j] < 0) ++matched;
 	    lookup[j] = i;

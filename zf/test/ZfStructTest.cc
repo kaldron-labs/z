@@ -341,6 +341,12 @@ int main(int argc, char **argv)
   }
 
   {
+    char unknown_[] = "{\"int_ranged-junk\":99}";
+    auto unknownScan = ZfJSON::scan(unknown_);
+    ZuCheck(unknownScan.p<0>() >= 0);
+    auto unknown = ZfJSON::handler<Foo>(unknownScan.p<1>()).ctor();
+    ZuCheck(unknown.int_ranged == 42);
+
     char minimum_[] = "{\"int_ranged\":0}";
     auto minimumScan = ZfJSON::scan(minimum_);
     ZuCheck(minimumScan.p<0>() >= 0);

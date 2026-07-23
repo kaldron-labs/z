@@ -23,6 +23,9 @@ void testEnumLookupAndName()
 
   ZuCheck(Color::name(Color::Red) == "Red");
   ZuCheck(Color::lookup("Green") == Color::Green);
+  ZuCheck(Color::lookup("GreenJunk") < 0);
+  ZuCheck(Color::Map::s2v("GreenJunk") < 0);
+  ZuCheck(Color::Map::match("GreenJunk") == Color::Green);
   ZuCheck(Color::lookup("missing") < 0);
   ZuCheck(Color::name(99) == "Unknown");
 

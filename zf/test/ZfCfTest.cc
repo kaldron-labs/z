@@ -597,6 +597,10 @@ static void loadTypes() {
       ZfCf::handler<CfRange>(trailingScan.p<1>()).ctor();
     }));
 
+    auto unknownScan = ZfCf::scan("value-junk: 99");
+    auto unknown = ZfCf::handler<CfRange>(unknownScan.p<1>()).ctor();
+    ZuCheck(unknown.value == 42);
+
     auto belowScan = ZfCf::scan("value: -1");
     ZuCheck(loadError([&]() {
       ZfCf::handler<CfRange>(belowScan.p<1>()).ctor();
@@ -622,6 +626,7 @@ static void loadTypes() {
   {
     for (auto source: {
       ZuCSpan{"i: 1x"}, ZuCSpan{"enum_: unknown"},
+      ZuCSpan{"enum_: NormalJunk"},
       ZuCSpan{"flags: Bit0|unknown"}, ZuCSpan{"float_: 1.0x"},
       ZuCSpan{"fixed: 1.0x"}, ZuCSpan{"decimal: 1.0x"},
       ZuCSpan{"time: 1.0x"}, ZuCSpan{"fixed: 1e19"},
