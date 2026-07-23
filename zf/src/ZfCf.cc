@@ -9,30 +9,70 @@
 
 #include <zlib/ZfCf.hh>
 
+#include <zlib/ZtLocalArray.hh>
+
 namespace ZfCf {
 
-static bool appendDefine(
-    Defines *defines, ZuCSpan key, AnyNode::String &out) {
-  if (!defines) return false;
-  auto node = defines->findPtr(key);
+using Args = ZtArray<AnyNode::String, ZtArrayHeapID<"ZfCf.Args">>;
+using ArgSpans = ZtArray<ZuCSpan, ZtArrayHeapID<"ZfCf.ArgSpans">>;
+
+unsigned Scan::position(ZuCSpan at, unsigned offset)
+{
+  if (m_state.span.data() && at.data())
+    offset += unsigned(at.data() - m_state.span.data());
+  if (offset > m_state.span.length()) offset = m_state.span.length();
+  while (m_state.offset < offset) {
+    if (m_state.span[m_state.offset++] == '\n') {
+      ++m_state.line;
+      m_state.lineOffset = m_state.offset;
+    }
+  }
+  return offset;
+}
+
+void Scan::fail(ZuCSpan at, unsigned offset)
+{
+  if (m_state.error.failed) return;
+  offset = position(at, offset);
+  m_state.error.offset = offset;
+  m_state.error.line = m_state.line;
+  m_state.error.column = offset - m_state.lineOffset + 1;
+  m_state.error.ch =
+    offset < m_state.span.length() ? m_state.span[offset] : 0;
+  m_state.error.failed = true;
+}
+
+static unsigned nonSpace(ZuCSpan span)
+{
+  unsigned i = 0;
+  while (i < span.length() && isspace__(span[i])) ++i;
+  return i;
+}
+
+bool Scan::appendDefine(ZuCSpan key, AnyNode::String &out)
+{
+  if (!m_defines) return false;
+  auto node = m_defines->findPtr(key);
   if (!node) return false;
   const auto &value = node->val();
   out.append(value.data(), value.length());
   return true;
 }
 
-static void setDefine(Defines *defines, ZuCSpan key, ZuCSpan value) {
-  if (auto node = defines->findPtr(key)) {
+void Scan::setDefine(ZuCSpan key, ZuCSpan value)
+{
+  if (auto node = m_defines->findPtr(key)) {
     node->val() = value;
     return;
   }
-  defines->add(DefKey{key}, DefVal{value});
+  m_defines->add(DefKey{key}, DefVal{value});
 }
 
 namespace TokenState { enum { Bare, Single, Double }; }
 
 template <bool Key>
-static bool delimiter(char c) {
+static bool delimiter(char c)
+{
   if (isspace__(c)) return true;
   if constexpr (Key)
     return c == ':';
@@ -41,11 +81,13 @@ static bool delimiter(char c) {
 }
 
 template <bool Key>
-static int eos_(
-  ZuCSpan span, AnyNode::String &out, Defines *defines)
+int Scan::eos(ZuCSpan span, AnyNode::String &out)
 {
   auto n = span.length();
-  if (!n) return -1;
+  if (!n) {
+    fail(span);
+    return -1;
+  }
 
   unsigned state = TokenState::Bare;
   unsigned i = 0;
@@ -76,7 +118,10 @@ slow:
 
     if (c == '\\') {
       token = true;
-      if (++i >= n) return -1;
+      if (++i >= n) {
+	fail(span, i);
+	return -1;
+      }
       c = span[i++];
       switch (c) {
 	case 'b': out << '\b'; break;
@@ -94,21 +139,34 @@ slow:
 	    i += 4;
 	    return true;
 	  };
-	  if (!scanHex(utf[0])) return -1;
+	  if (!scanHex(utf[0])) {
+	    fail(span, i);
+	    return -1;
+	  }
 	  if (utf[0] >= 0xd800 && utf[0] <= 0xdbff) {
-	    if (i + 2 > n || span[i] != '\\' || span[i + 1] != 'u')
+	    if (i + 2 > n || span[i] != '\\' || span[i + 1] != 'u') {
+	      fail(span, i);
 	      return -1;
+	    }
 	    i += 2;
-	    if (!scanHex(utf[1])) return -1;
+	    if (!scanHex(utf[1])) {
+	      fail(span, i);
+	      return -1;
+	    }
 	    nUTF = 2;
 	  }
 	  ZuSpan<const uint16_t> input{utf, nUTF};
 	  auto l = ZuUTF<char, uint16_t>::len(input);
-	  if (!l) return -1;
+	  if (!l) {
+	    fail(span, i);
+	    return -1;
+	  }
 	  auto o = out.length();
 	  out.length(o + l);
-	  if (ZuUTF<char, uint16_t>::cvt({out.data() + o, l}, input) != l)
+	  if (ZuUTF<char, uint16_t>::cvt({out.data() + o, l}, input) != l) {
+	    fail(span, i);
 	    return -1;
+	  }
 	  break;
 	}
 	default: out << c; break;
@@ -152,11 +210,17 @@ slow:
 	  c == '$' && i + 1 < n && span[i + 1] == '{') {
 	unsigned begin = i + 2;
 	unsigned end = begin;
-	if (begin >= n || !isalpha__(span[begin])) return -1;
+	if (begin >= n || !isalpha__(span[begin])) {
+	  fail(span, begin);
+	  return -1;
+	}
 	while (end < n && isword__(span[end])) ++end;
-	if (end >= n || span[end] != '}') return -1;
+	if (end >= n || span[end] != '}') {
+	  fail(span, end);
+	  return -1;
+	}
 	ZuCSpan name{span.data() + begin, end - begin};
-	if (!appendDefine(defines, name, out)) {
+	if (!appendDefine(name, out)) {
 	  auto env = ZtLocalString(ZtString<>, name.length() + 1);
 	  env << name;
 	  if (auto value = ::getenv(env)) out.append(value, strlen(value));
@@ -172,40 +236,57 @@ slow:
     ++i;
   }
 
-  if (state != TokenState::Bare || !token) return -1;
+  if (state != TokenState::Bare || !token) {
+    fail(span, i);
+    return -1;
+  }
   out.length(out.length());
   return int(i);
 }
 
-template <bool Key>
-int eos(ZuCSpan span, AnyNode::String &out) {
-  return eos_<Key>(span, out, nullptr);
+static int eoc(ZuCSpan span)
+{
+  if (!span || span[0] != '#') return -1;
+  unsigned i = 1, n = span.length();
+  while (i < n && span[i] != '\n') ++i;
+  if (i < n) ++i;
+  return int(i);
 }
 
-template int eos<false>(ZuCSpan, AnyNode::String &);
-template int eos<true>(ZuCSpan, AnyNode::String &);
-
-static ZuTuple<int, bool> bok(ZuCSpan span) {
-  for (unsigned o = 0, n = span.length(); o < n; o++) {
-    char c = span[o];
-    if (!isspace__(c))
-      return c == ',' || c == '}' ? ZuTuple<int, bool>{-1, false} :
-	ZuTuple<int, bool>{int(o), c == '%'};
+static unsigned skipTrivia(ZuCSpan span)
+{
+  unsigned total = 0;
+  for (;;) {
+    auto i = nonSpace(span);
+    span.offset(i);
+    total += i;
+    auto n = eoc(span);
+    if (n < 0) return total;
+    span.offset(n);
+    total += n;
   }
-  return {-1, false};
 }
 
-static ZuTuple<int, char> eor(ZuCSpan span) {
+template <char Close>
+static ZuTuple<int, char> eod(ZuCSpan span)
+{
   unsigned n = span.length();
   for (unsigned o = 0; o < n; o++) {
     char c = span[o];
     if (c == ',') return {int(o + 1), ','};
+    if (c == '#') return {int(o), '#'};
+    if constexpr (Close)
+      if (c == Close) return {int(o + 1), Close};
     if (!isspace__(c)) return {-1, -1};
   }
-  return {int(n), 0};
+  if constexpr (Close)
+    return {-1, -1};
+  else
+    return {int(n), 0};
 }
 
-ZuTuple<int, int> bov(ZuCSpan span) {
+ZuTuple<int, int> Scan::bov(ZuCSpan span)
+{
   unsigned o = 0;
   while (o < span.length() && isspace__(span[o])) ++o;
   if (o >= span.length()) return {-1, -1};
@@ -221,65 +302,53 @@ ZuTuple<int, int> bov(ZuCSpan span) {
   return {int(o), ValueTC::String};
 }
 
-static int eov_Object_(
-  ZuCSpan, AnyNode::Object &, bool, const PctFn &, Defines *);
-
-static ZuTuple<int, ZuPtr<AnyNode>> eov(
-    ZuCSpan span, const PctFn &pctFn, Defines *defines);
-
-static void setParents(AnyNode *node, AnyNode *parent = nullptr) {
-  node->parent = parent;
-  if (node->has<AnyNode::Array>()) {
-    for (auto &child: node->data<AnyNode::Array>())
-      setParents(child.ptr(), node);
-  } else if (node->has<AnyNode::Object>()) {
-    for (auto &field: node->data<AnyNode::Object>())
-      setParents(field.p<1>().ptr(), node);
-  }
-}
-
-static ZuTuple<int, ZuPtr<AnyNode>> eov_Array_(
-    ZuCSpan span, const PctFn &pctFn, Defines *defines) {
+ZuTuple<int, ZuPtr<AnyNode>>
+Scan::eov_Array(ZuCSpan span, AnyNode *parent)
+{
   unsigned total = 0;
-  auto node = newNode<AnyNode::Array>();
+  auto node = newNode<AnyNode::Array>(parent);
   auto &array = node->data;
   for (;;) {
-    auto ev = eov(span, pctFn, defines);
+    auto ev = eov(span, node.ptr());
     if (ev.p<0>() >= 0) {
       array.push(ZuMv(ev.p<1>()));
       span.offset(ev.p<0>());
       total += ev.p<0>();
     }
     auto bd = bod<']'>(span);
-    if (bd.p<0>() < 0) return {-1, nullptr};
+    if (bd.p<0>() < 0) {
+      fail(span, nonSpace(span));
+      return {-1, nullptr};
+    }
     span.offset(bd.p<0>());
     total += bd.p<0>();
     if (bd.p<1>() == ']') return {int(total), ZuMv(node)};
   }
 }
 
-static ZuTuple<int, ZuPtr<AnyNode>> eov(
-    ZuCSpan span, const PctFn &pctFn, Defines *defines) {
+ZuTuple<int, ZuPtr<AnyNode>>
+Scan::eov(ZuCSpan span, AnyNode *parent)
+{
   auto bv = bov(span);
   int prefix = bv.p<0>();
   if (prefix < 0) return {-1, nullptr};
   span.offset(prefix);
   switch (bv.p<1>()) {
     case ValueTC::Array: {
-      auto ev = eov_Array_(span, pctFn, defines);
+      auto ev = eov_Array(span, parent);
       if (ev.p<0>() < 0) return {-1, nullptr};
       ev.p<0>() += prefix;
       return ev;
     }
     case ValueTC::Object: {
-      auto node = newNode<AnyNode::Object>();
-      int o = eov_Object_(span, node->data, false, pctFn, defines);
+      auto node = newNode<AnyNode::Object>(parent);
+      int o = eov_Object(span, node.ptr(), false);
       if (o < 0) return {-1, nullptr};
       return {prefix + o, ZuMv(node)};
     }
     case ValueTC::String: {
-      auto node = newNode<AnyNode::String>();
-      int o = eos_<false>(span, node->data, defines);
+      auto node = newNode<AnyNode::String>(parent);
+      int o = eos<false>(span, node->data);
       if (o < 0) return {-1, nullptr};
       return {prefix + o, ZuMv(node)};
     }
@@ -287,88 +356,164 @@ static ZuTuple<int, ZuPtr<AnyNode>> eov(
   return {-1, nullptr};
 }
 
-static int eop(
-    ZuCSpan span, AnyNode::Object &object, const PctFn &pctFn,
-    Defines *defines) {
-  unsigned n = span.length();
-  if (n < 4 || span[0] != '%' || !isalpha__(span[1])) return -1;
+int Scan::eod(ZuCSpan span, AnyNode *node)
+{
+  unsigned length = span.length();
+  unsigned n = 0;
+  while (n < length && span[n] != '\n') ++n;
+  unsigned next = n + (n < length);
+  if (n < 4 || span[0] != '%' || !isalpha__(span[1])) {
+    fail(span, n > 1 ? 1 : n);
+    return -1;
+  }
 
   unsigned i = 2;
   while (i < n && isword__(span[i])) ++i;
   ZuCSpan directive{span.data() + 1, i - 1};
-  if (i >= n || span[i++] != '(') return -1;
+  if (i >= n || span[i++] != '(') {
+    fail(span, i < n ? i : n);
+    return -1;
+  }
 
-  AnyNode::String argData;
-  ZtArray<unsigned> argLengths;
+  auto args = ZtLocalArray(Args, 4);
   bool afterComma = false;
   for (;;) {
     while (i < n && isspace__(span[i])) ++i;
-    if (i >= n) return -1;
+    if (i >= n) {
+      fail(span, i);
+      return -1;
+    }
     if (span[i] == ')') {
-      if (afterComma) return -1;
+      if (afterComma) {
+	fail(span, i);
+	return -1;
+      }
       ++i;
       break;
     }
 
-    unsigned begin = argData.length();
-    int o = eos_<false>(
-      {span.data() + i, n - i}, argData, defines);
+    auto arg = args.push(AnyNode::String{});
+    int o = eos<false>({span.data() + i, n - i}, *arg);
     if (o < 0) return -1;
     i += o;
-    argLengths.push(argData.length() - begin);
     afterComma = false;
 
     while (i < n && isspace__(span[i])) ++i;
-    if (i >= n) return -1;
+    if (i >= n) {
+      fail(span, i);
+      return -1;
+    }
     if (span[i] == ')') {
       ++i;
       break;
     }
-    if (span[i++] != ',') return -1;
+    if (span[i++] != ',') {
+      fail(span, i - 1);
+      return -1;
+    }
     afterComma = true;
   }
 
-  ZtArray<ZuCSpan> args;
-  args.length(argLengths.length());
-  unsigned offset = 0;
-  for (unsigned j = 0; j < args.length(); j++) {
-    unsigned length = argLengths[j];
-    args[j] = {argData.data() + offset, length};
-    offset += length;
+  while (i < n && isspace__(span[i])) ++i;
+  if (i < n && span[i] == '#') i = n;
+  if (i < n) {
+    fail(span, i);
+    return -1;
   }
 
   if (directive == "define") {
-    if (args.length() != 2 || !defines) return -1;
-    setDefine(defines, args[0], args[1]);
-    return int(i);
+    if (args.length() != 2 || !m_defines) {
+      fail(span);
+      return -1;
+    }
+    setDefine(args[0], args[1]);
+    return int(next);
   }
-  if (!pctFn) return -1;
+  if (!m_pctFn) {
+    fail(span);
+    return -1;
+  }
 
-  ZuSpan<const ZuCSpan> argSpan{args.data(), args.length()};
-  if (!pctFn(directive, argSpan,
-    [&object, &pctFn, defines](ZuCSpan span) {
-      int o = eov_Object_(span, object, true, pctFn, defines);
-      if (o < 0) return false;
-      span.offset(o);
-      span.trim();
-      return !span;
-    })) return -1;
-  return int(i);
+  auto argSpans = ZtLocalArray(
+    ArgSpans, args.length(), args.length());
+  for (unsigned j = 0; j < args.length(); j++) argSpans[j] = args[j];
+  ZuSpan<const ZuCSpan> argSpan{argSpans.data(), argSpans.length()};
+  if (!m_pctFn(*this, directive, argSpan,
+    [this, node](ZuCSpan span) {
+      auto outerState = m_state;
+      m_state = {span};
+      int o = eov_Object(span, node, true);
+      bool ok = o >= 0;
+      auto tail = span;
+      if (ok) {
+	tail.offset(o);
+	auto i = skipTrivia(tail);
+	if (i < tail.length()) {
+	  fail(tail, i);
+	  ok = false;
+	}
+      }
+      auto expansionError = m_state.error;
+      m_state = outerState;
+      if (expansionError.failed) m_state.error = expansionError;
+      return ok;
+    })) {
+    fail(span);
+    return -1;
+  }
+  return int(next);
 }
 
-static int eov_Object_(
-    ZuCSpan span, AnyNode::Object &object, bool root, const PctFn &pctFn,
-    Defines *defines) {
+ZuTuple<int, bool> Scan::bok(ZuCSpan span, AnyNode *node)
+{
+  unsigned total = 0;
+  for (;;) {
+    auto o = nonSpace(span);
+    span.offset(o);
+    total += o;
+    auto offset = position(span);
+    if (!span || span[0] == '}') return {int(total), false};
+
+    if (span[0] == '#') {
+      o = eoc(span);
+      if (o < 0) {
+	fail(span);
+	return {-1, false};
+      }
+      span.offset(o);
+      total += o;
+      continue;
+    }
+    if (span[0] == ',') {
+      span.offset(1);
+      ++total;
+      continue;
+    }
+    if (span[0] != '%') return {int(total), true};
+    if (offset != m_state.lineOffset) {
+      fail(span);
+      return {-1, false};
+    }
+
+    int n = eod(span, node);
+    if (n < 0) return {-1, false};
+    span.offset(n);
+    total += n;
+  }
+}
+
+int Scan::eov_Object(ZuCSpan span, AnyNode *node, bool root)
+{
   unsigned total = 0;
   bool close = !root;
+  auto &object = node->data<AnyNode::Object>();
 
   if (root) {
-    auto n = span.length();
-    span.trim();
-    auto o = n - span.length();
+    auto o = nonSpace(span);
+    span.offset(o);
     total += o;
     if (!span) return int(total);
-    if (span && span[0] == '{') {
+    if (span[0] == '{') {
       close = true;
       span.offset(1);
       ++total;
@@ -376,70 +521,83 @@ static int eov_Object_(
   }
 
   for (;;) {
-    auto bk = bok(span);
+    auto bk = bok(span, node);
     int o = bk.p<0>();
-    if (o >= 0) {
+    if (o < 0) return -1;
+    span.offset(o);
+    total += o;
+
+    if (bk.p<1>()) {
+      AnyNode::String key;
+      int ek = eos<true>(span, key);
+      if (ek < 0) {
+	fail(span);
+	return -1;
+      }
+      span.offset(ek);
+      total += ek;
+      o = boc(span);
+      if (o < 0) {
+	fail(span, nonSpace(span));
+	return -1;
+      }
       span.offset(o);
       total += o;
 
-      if (bk.p<1>()) {
-	o = eop(span, object, pctFn, defines);
-	if (o < 0) return -1;
-	span.offset(o);
-	total += o;
-      } else {
-	AnyNode::String key;
-	int ek = eos<true>(span, key);
-	if (ek < 0) return -1;
-	span.offset(ek);
-	total += ek;
-	o = boc(span);
-	if (o < 0) return -1;
-	span.offset(o);
-	total += o;
-
-	auto ev = eov(span, pctFn, defines);
-	if (ev.p<0>() < 0) return -1;
-	object.push(AnyNode::Field{ZuMv(key), ZuMv(ev.p<1>())});
-	span.offset(ev.p<0>());
-	total += ev.p<0>();
+      auto ev = eov(span, node);
+      if (ev.p<0>() < 0) {
+	fail(span, nonSpace(span));
+	return -1;
       }
+      object.push(AnyNode::Field{ZuMv(key), ZuMv(ev.p<1>())});
+      span.offset(ev.p<0>());
+      total += ev.p<0>();
     }
 
-    auto bd = close ? bod<'}'>(span) : eor(span);
-    if (bd.p<0>() < 0) return -1;
+    auto bd = close ? ZfCf::eod<'}'>(span) : ZfCf::eod<0>(span);
+    if (bd.p<0>() < 0) {
+      fail(span, nonSpace(span));
+      return -1;
+    }
     span.offset(bd.p<0>());
     total += bd.p<0>();
+    if (bd.p<1>() == '#') continue;
     if (bd.p<1>() != ',') return int(total);
   }
 }
 
-ZuTuple<int, ZuPtr<AnyNode>> eov_Array(ZuCSpan span) {
-  auto v = eov_Array_(span, PctFn{}, nullptr);
-  if (v.p<1>()) setParents(v.p<1>());
-  return v;
-}
-
-ZuTuple<int, ZuPtr<AnyNode>> eov_Object(ZuCSpan span, bool root) {
-  auto node = newNode<AnyNode::Object>();
-  int o = eov_Object_(span, node->data, root, PctFn{}, nullptr);
-  if (o < 0) return {-1, nullptr};
-  setParents(node);
-  return {o, ZuMv(node)};
+ZuTuple<int, ZuPtr<const AnyNode>> Scan::scan()
+{
+  if (ZuUnlikely(!m_state.span.data())) {
+    fail(m_state.span);
+    throw ZfCf_EXCEPT(badSyntax(
+      m_state.error.line, m_state.error.column,
+      m_state.error.offset, m_state.error.ch));
+  }
+  auto node = newNode<AnyNode::Object>(nullptr);
+  int o = eov_Object(m_state.span, node.ptr(), true);
+  if (o < 0 || m_state.error.failed) {
+    if (!m_state.error.failed) fail(m_state.span);
+    throw ZfCf_EXCEPT(badSyntax(
+      m_state.error.line, m_state.error.column,
+      m_state.error.offset, m_state.error.ch));
+  }
+  auto tail = m_state.span;
+  tail.offset(o);
+  auto i = skipTrivia(tail);
+  if (i < tail.length()) {
+    fail(tail, i);
+    throw ZfCf_EXCEPT(badSyntax(
+      m_state.error.line, m_state.error.column,
+      m_state.error.offset, m_state.error.ch));
+  }
+  return {int(m_state.span.length()), ZuMv(node)};
 }
 
 ZuTuple<int, ZuPtr<const AnyNode>> scan(
-  ZuCSpan span, PctFn pctFn, ZmRef<Defines> defines) {
-  if (ZuUnlikely(!span.data())) return {-1, nullptr};
-  auto node = newNode<AnyNode::Object>();
-  int o = eov_Object_(span, node->data, true, pctFn, defines);
-  if (o < 0) return {-1, nullptr};
-  auto tail = span;
-  tail.offset(o);
-  tail.trim();
-  if (tail) return {-1, nullptr};
-  setParents(node);
-  return {int(span.length()), ZuMv(node)};
+  ZuCSpan span, PctFn pctFn, ZmRef<Defines> defines)
+{
+  return Scan{span, ZuMv(pctFn), ZuMv(defines)}.scan();
 }
 
 } // ZfCf

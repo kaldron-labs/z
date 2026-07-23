@@ -79,10 +79,10 @@ class AnyNode {
   AnyNode &operator =(AnyNode &&) = delete;
 
 public:
-  AnyNode	*parent = nullptr;
+  AnyNode	*const parent;
   int		type;
 
-  AnyNode(int type_) : type(type_) { }
+  AnyNode(int type_, AnyNode *parent_) : parent{parent_}, type{type_} { }
   virtual ~AnyNode() = default;
 
   template <typename Data>
@@ -143,10 +143,9 @@ class Node_ : public Heap, public AnyNode {
 public:
   using AnyNode::TL;
 
-  Node_() : AnyNode{ZuTypeIndex<Data, TL>{}()} { }
   template <typename ...Args>
-  Node_(Args &&...args) :
-    AnyNode{ZuTypeIndex<Data, TL>{}()},
+  Node_(AnyNode *parent, Args &&...args) :
+    AnyNode{ZuTypeIndex<Data, TL>{}(), parent},
     data(ZuFwd<Args>(args)...) { }
   ~Node_() = default;
 
@@ -261,44 +260,112 @@ template <typename S> void AnyNode::path(S &s) const {
 using NodeArray = typename AnyNode::Array;
 using CNodeArray = const NodeArray;
 
-// scan a bare, quoted or mixed token into owned storage
-template <bool Key>
-ZfExtern int eos(ZuCSpan span, AnyNode::String &out);
-extern template int eos<false>(ZuCSpan, AnyNode::String &);
-extern template int eos<true>(ZuCSpan, AnyNode::String &);
+class Scan;
 
 // PctFn must:
+// - receive the mutable scan context
 // - propagate expansion failure
 // - call the expansion callback synchronously
 //   - if not called, no expansion is performed
 using PctFnHeapID = ZmFnHeapID<"ZfCf.PctFn">;
 using PctExpandFn = ZmFn<bool(ZuCSpan), PctFnHeapID>;
 using PctFn = ZmFn<bool(
-  ZuCSpan, ZuSpan<const ZuCSpan>, PctExpandFn), PctFnHeapID>;
+  Scan &, ZuCSpan, ZuSpan<const ZuCSpan>, PctExpandFn), PctFnHeapID>;
+
+struct SyntaxError {
+  unsigned	offset = 0;
+  unsigned	line = 1;
+  unsigned	column = 1;
+  char		ch = 0;
+  bool		failed = false;
+};
+
+class ZfAPI Scan {
+public:
+  Scan(ZuCSpan span, PctFn pctFn, ZmRef<Defines> defines) :
+    m_state{span}, m_defines{ZuMv(defines)}, m_pctFn{ZuMv(pctFn)} { }
+
+  ZuCSpan span() const { return m_state.span; }
+  void span(ZuCSpan span) { m_state = {span}; }
+
+  const SyntaxError &error() const { return m_state.error; }
+  SyntaxError &error() { return m_state.error; }
+
+  const ZmRef<Defines> &defines() const { return m_defines; }
+  ZmRef<Defines> &defines() { return m_defines; }
+
+  ZuTuple<int, ZuPtr<const AnyNode>> scan();
+
+private:
+  struct State {
+    ZuCSpan	span;
+    SyntaxError	error;
+    unsigned	offset = 0;
+    unsigned	lineOffset = 0;
+    unsigned	line = 1;
+  };
+
+  unsigned position(ZuCSpan at, unsigned offset = 0);
+  void fail(ZuCSpan at, unsigned offset = 0);
+
+  bool appendDefine(ZuCSpan key, AnyNode::String &out);
+  void setDefine(ZuCSpan key, ZuCSpan value);
+
+  // eos() scans a bare, quoted, or mixed key/value token into owned storage
+  // - Key selects key delimiters and disables ${...} expansion
+  // - returns the offset past the token
+  // - returns -1 on invalid input
+  template <bool Key>
+  int eos(ZuCSpan span, AnyNode::String &out);
+
+  // bok() finds the beginning of a key, processing comments and line-level
+  // directives
+  // - returns {offset, true} when a key is found
+  // - returns {offset, false} at the end of the object
+  // - returns {-1, false} on directive failure
+  ZuTuple<int, bool> bok(ZuCSpan span, AnyNode *node);
+
+  // bov() returns the beginning of a value together with its node type
+  // - returns {offset, type}
+  // - returns {-1, -1} if the input is invalid or no value is found
+  ZuTuple<int, int> bov(ZuCSpan span);
+
+  // eod() scans and executes a line-level % directive
+  // - returns the offset past the directive line
+  // - returns -1 on invalid input or directive failure
+  int eod(ZuCSpan span, AnyNode *node);
+
+  // eov() scans a value, allocating and returning the appropriate Node
+  // - returns {offset, node}
+  // - returns {-1, nullptr} on invalid input
+  ZuTuple<int, ZuPtr<AnyNode>> eov(ZuCSpan span, AnyNode *parent);
+
+  // eov_Array() scans an array, allocating and returning a new Node
+  // - returns {offset, node}
+  // - returns {-1, nullptr} on invalid input
+  ZuTuple<int, ZuPtr<AnyNode>> eov_Array(ZuCSpan span, AnyNode *parent);
+
+  // eov_Object() scans an object into an existing Node
+  // - using an existing node permits % directive expansion in-place
+  // - returns the offset past the object
+  // - returns -1 on invalid input
+  int eov_Object(ZuCSpan span, AnyNode *node, bool root);
+
+  State			m_state;
+  ZmRef<Defines>	m_defines;
+  PctFn			m_pctFn;
+};
+
 // scan configuration data, build parse tree
+// - throws ZfCfError::badSyntax on syntax, directive or trailing-input failure
 ZfExtern ZuTuple<int, ZuPtr<const AnyNode>> scan(
   ZuCSpan span, PctFn pctFn = {}, ZmRef<Defines> defines = new Defines());
 
 template <typename Data, typename ...Args>
-inline auto newNode(Args && ...args) {
+inline auto newNode(AnyNode *parent, Args && ...args) {
   using T = Node<Data>;
-  return ZuPtr<T>{new T(ZuFwd<Args>(args)...)};
+  return ZuPtr<T>{new T(parent, ZuFwd<Args>(args)...)};
 }
-
-// bov() returns the beginning of a value together with the type of the value
-// - returns {-1, -1} if the input is corrupt or no value is found
-ZfExtern ZuTuple<int, int> bov(ZuCSpan span);
-
-// eov_Array() scans an array, allocating and returning a new Node
-// - returns {offset, node}
-// - returns {-1, nullptr} on invalid input
-ZfExtern ZuTuple<int, ZuPtr<AnyNode>> eov_Array(ZuCSpan span);
-
-// eov_Object() scans an object, allocating and returning a new Node
-// - returns {offset, node}
-// - returns {-1, nullptr} on invalid input
-ZfExtern ZuTuple<int, ZuPtr<AnyNode>> eov_Object(
-  ZuCSpan span, bool root = false);
 
 } // ZfCf
 
@@ -373,14 +440,18 @@ inline auto badEnum(const AnyNode *node, ZuCSpan key, ZuCSpan value) {
   };
 }
 
-inline auto badSyntax(unsigned line, char ch, ZuCSpan fileName) {
+inline auto badSyntax(
+    unsigned line, unsigned column, unsigned offset, char ch,
+    ZuCSpan fileName = {}) {
   return [
-    line, ch, fileName = ZeString{fileName}
+    line, column, offset, ch, fileName = ZeString{fileName}
   ](auto &s) {
     if (fileName)
-      s << '"' << fileName << "\":" << line << " syntax error";
+      s << '"' << fileName << "\":" << line << ':' << column <<
+	" syntax error at offset " << offset;
     else
-      s << "syntax error at line " << line;
+      s << "syntax error at line " << line << ", column " << column <<
+	" (offset " << offset << ')';
     s << " near '";
     if (ch >= 0x20 && ch < 0x7f)
       s << ch;
@@ -594,6 +665,7 @@ struct AsObject {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
 	Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
+      validate(o);
     }
 
   private:
