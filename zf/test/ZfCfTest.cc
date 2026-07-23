@@ -157,11 +157,25 @@ static bool loadError(L l) {
   return false;
 }
 
+static ZeString syntaxError(ZuCSpan input, ZfCf::PctFn pctFn = {}) {
+  try {
+    ZfCf::scan(input, ZuMv(pctFn));
+  } catch (const ZeException &e) {
+    ZeString message;
+    message << e;
+    return message;
+  }
+  return {};
+}
+
 static void checkToken(ZuCSpan in, ZuCSpan expected) {
   ZuTestScope(checkToken);
-  ZfCf::AnyNode::String out;
-  auto result = ZfCf::eos<false>(in, out);
-  ZuCheck(result == int(in.length()));
+  ZtString<> source;
+  source << "value: " << in;
+  auto result = ZfCf::scan(source);
+  ZuCheck(result.p<0>() == int(source.length()));
+  auto node = field(result.p<1>(), "value");
+  const auto &out = node->data<ZfCf::AnyNode::String>();
   ZuCheck(out == expected);
   ZuCheck(!out.data()[out.length()]);
 }
@@ -198,10 +212,19 @@ static void ownership() {
 
 static void resolve() {
   ZuTestScope(resolve);
-  auto result = ZfCf::eov_Object(
-    "a: {b: [{value: zero}, {value: one}], empty: []}, text: leaf", true);
+  auto result = ZfCf::scan(
+    "a: {b: [{value: zero}, {value: one}], empty: []}, text: leaf");
   ZuCheck(result.p<0>() >= 0);
   auto &root = result.p<1>();
+  auto a = root->resolve("a");
+  auto b = root->resolve("a.b");
+  auto element = root->resolve("a.b[0]");
+  auto value = root->resolve("a.b[0].value");
+  ZuCheck(!root->parent);
+  ZuCheck(a->parent == root.ptr());
+  ZuCheck(b->parent == a);
+  ZuCheck(element->parent == b);
+  ZuCheck(value->parent == element);
   ZuCheck(root->resolve("") == root.ptr());
   ZuCheck(string(root->resolve("a.b[0].value")) == "zero");
   ZuCheck(string(root->resolve("a.b[1].value")) == "one");
@@ -244,15 +267,14 @@ static void quoting() {
         ZuCSpan{"bare\\"}, ZuCSpan{"\"\\u12xz\""},
         ZuCSpan{"\"\\ud83d\""}, ZuCSpan{"\"\\udc04\""},
         ZuCSpan{"\"\\ud83d\\u03bb\""}, ZuCSpan{"\"\\u123\""}}) {
-      ZfCf::AnyNode::String out;
-      ZuCheck(ZfCf::eos<false>(bad, out) < 0);
+      ZtString<> source;
+      source << "value: " << bad;
+      ZuCheck(syntaxError(source));
     }
   }
   {
-    ZfCf::AnyNode::String out;
-    auto result = ZfCf::eos<true>("foo\\:bar", out);
-    ZuCheck(result == 8);
-    ZuCheck(out == "foo:bar");
+    auto result = ZfCf::scan("foo\\:bar: value");
+    ZuCheck(string(field(result.p<1>(), "foo:bar")) == "value");
   }
 }
 
@@ -276,18 +298,17 @@ static void expansion() {
   ZuTestCall(checkToken, "${ZTCF_TEST_UNSET}", "");
 
   {
-    ZfCf::AnyNode::String out;
-    auto result = ZfCf::eos<true>("${x}", out);
-    ZuCheck(result == 4);
-    ZuCheck(out == "${x}");
+    auto result = ZfCf::scan("${x}: value");
+    ZuCheck(string(field(result.p<1>(), "${x}")) == "value");
   }
 
   {
     ZuTestRepeat(invalid, 3);
     for (auto bad : {
         ZuCSpan{"${}"}, ZuCSpan{"${1x}"}, ZuCSpan{"${x"}}) {
-      ZfCf::AnyNode::String out;
-      ZuCheck(ZfCf::eos<false>(bad, out) < 0);
+      ZtString<> source;
+      source << "value: " << bad;
+      ZuCheck(syntaxError(source));
     }
   }
 
@@ -318,7 +339,7 @@ static void classification() {
 
 static void grammar() {
   ZuTestScope(grammar);
-  ZuCheck(ZfCf::scan(ZuCSpan{}).p<0>() < 0);
+  ZuCheck(syntaxError(ZuCSpan{}));
   {
     ZuTestRepeat(valid, 10);
     for (auto good : {
@@ -335,10 +356,35 @@ static void grammar() {
     for (auto bad : {
         ZuCSpan{"[one, two]"}, ZuCSpan{"x = 1"},
         ZuCSpan{"x: 1 garbage"}, ZuCSpan{"x: ]"},
-        ZuCSpan{"x: 1}"}, ZuCSpan{"x:: 1"},
-        ZuCSpan{"x: [one two]"}, ZuCSpan{"{x: 1"}})
-      ZuCheck(ZfCf::scan(bad).p<0>() < 0);
+      ZuCSpan{"x: 1}"}, ZuCSpan{"x:: 1"},
+      ZuCSpan{"x: [one two]"}, ZuCSpan{"{x: 1"}})
+      ZuCheck(syntaxError(bad));
   }
+
+  ZuCheck(syntaxError("a: one,\nb: two,\nc: ]") ==
+    "syntax error at line 3, column 4 (offset 19) near ']'");
+  ZuCheck(syntaxError("{a: one}\n junk") ==
+    "syntax error at line 2, column 2 (offset 10) near 'j'");
+}
+
+static void comments() {
+  ZuTestScope(comments);
+  ZuCSpan source =
+    "# heading\n"
+    "a: one # first field\n"
+    "# between fields\n"
+    "b: { # nested heading\n"
+    "  c: two # nested field\n"
+    "}, escaped: \\#value, '#key': value # final comment";
+  auto scan = ZfCf::scan(source);
+  ZuCheck(scan.p<0>() == int(source.length()));
+  ZuCheck(string(field(scan.p<1>(), "a")) == "one");
+  ZuCheck(string(field(field(scan.p<1>(), "b"), "c")) == "two");
+  ZuCheck(string(field(scan.p<1>(), "escaped")) == "#value");
+  ZuCheck(string(field(scan.p<1>(), "#key")) == "value");
+
+  ZuCheck(syntaxError("key # comment\n: value"));
+  ZuCheck(syntaxError("key: # comment\nvalue"));
 }
 
 static void percent() {
@@ -356,9 +402,9 @@ static void percent() {
   {
     ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
     auto scan = ZfCf::scan(
-      "%define(ZTCF_PCT_DEFINE_1, first), "
-      "one: ${ZTCF_PCT_DEFINE_1}, "
-      "%define(ZTCF_PCT_DEFINE_1, 'second,value'), "
+      "%define(ZTCF_PCT_DEFINE_1, first)\n"
+      "one: ${ZTCF_PCT_DEFINE_1},\n"
+      "%define(ZTCF_PCT_DEFINE_1, 'second,value') # replace\n"
       "two: ${ZTCF_PCT_DEFINE_1}", {}, defines);
     ZuCheck(scan.p<0>() >= 0);
     ZuCheck(string(field(scan.p<1>(), "one")) == "first");
@@ -377,17 +423,24 @@ static void percent() {
   unsigned calls = 0;
   bool callbackOK = true;
   ZfCf::PctFn pctFn{[&calls, &callbackOK](
-      ZuCSpan directive, ZuSpan<const ZuCSpan> args,
+      ZfCf::Scan &context, ZuCSpan directive, ZuSpan<const ZuCSpan> args,
       ZfCf::PctExpandFn expand) {
     ++calls;
     if (directive == "outer") {
       bool valid = args.length() == 2;
       if (valid)
         valid = args[0] == "first,arg" && args[1] == "second value";
+      if (valid) {
+	valid = context.defines();
+	context.defines()->add(
+	  ZfCf::DefKey{"ZTCF_PCT_CONTEXT"}, ZfCf::DefVal{"context"});
+      }
       callbackOK &= valid;
       return expand(
-        "%define(ZTCF_PCT_NESTED, yes), "
-        "included: ${ZTCF_PCT_NESTED}, %inner(), deep: {value: 9}");
+        "%define(ZTCF_PCT_NESTED, yes)\n"
+        "included: ${ZTCF_PCT_NESTED}, fromContext: ${ZTCF_PCT_CONTEXT},\n"
+	"%inner()\n"
+	"deep: {value: 9}");
     } else if (directive == "inner") {
       callbackOK &= !args;
       return expand("{inner: expanded}");
@@ -397,6 +450,11 @@ static void percent() {
     } else if (directive == "none") {
       callbackOK &= args.length() == 1 && args[0] == "ignored";
       return true;
+    } else if (directive == "many") {
+      callbackOK &= args.length() == 5 && args[0] == "one" &&
+	args[1] == "two value" && args[2] == "three" &&
+	args[3] == "four" && args[4] == "context";
+      return true;
     } else if (directive == "bad") {
       return expand("not an object body");
     }
@@ -405,16 +463,24 @@ static void percent() {
 
   {
     auto scan = ZfCf::scan(
-      "before: 1, %outer('first,arg', \"second value\"), "
-      "nested: {%none(ignored), retained: true}, "
-      "array: [{%array()}], after: 2",
+      "before: 1,\n"
+      "%outer('first,arg', \"second value\")\n"
+      "%many(one, 'two value', three, four, ${ZTCF_PCT_CONTEXT}) # five\n"
+      "nested: {\n"
+      "%none(ignored)\n"
+      "retained: true},\n"
+      "array: [{\n"
+      "%array()\n"
+      "}], after: 2",
       pctFn);
     ZuCheck(scan.p<0>() >= 0);
-    ZuCheck(calls == 4);
+    ZuCheck(calls == 5);
     ZuCheck(callbackOK);
     ZuCheck(string(field(scan.p<1>(), "included")) == "yes");
+    ZuCheck(string(field(scan.p<1>(), "fromContext")) == "context");
     ZuCheck(string(field(scan.p<1>(), "inner")) == "expanded");
     auto deep = field(scan.p<1>(), "deep");
+    ZuCheck(deep->parent == scan.p<1>().ptr());
     ZuCheck(string(field(deep, "value")) == "9");
     auto nested = field(scan.p<1>(), "nested");
     ZuCheck(string(field(nested, "retained")) == "true");
@@ -433,15 +499,18 @@ static void percent() {
   }
 
   {
-    ZuCheck(ZfCf::scan("%unknown()").p<0>() < 0);
-    ZuTestRepeat(invalid, 8);
+    ZuCheck(syntaxError("ok: 1,\n%unknown()") ==
+      "syntax error at line 2, column 1 (offset 7) near '%'");
+    ZuTestRepeat(invalid, 12);
     for (auto input : {
         ZuCSpan{"%1bad()"}, ZuCSpan{"%missing"}, ZuCSpan{"%unknown()"},
         ZuCSpan{"%define(one)"},
         ZuCSpan{"%define(one, two"}, ZuCSpan{"%none(a,,b)"},
         ZuCSpan{"%none(a,)"},
-        ZuCSpan{"%bad()"}})
-      ZuCheck(ZfCf::scan(input, pctFn).p<0>() < 0);
+        ZuCSpan{"%bad()"}, ZuCSpan{" %none()"},
+        ZuCSpan{"ok: 1, %none()"}, ZuCSpan{"%none() trailing"},
+        ZuCSpan{"%none(\na)"}})
+      ZuCheck(syntaxError(input, pctFn));
   }
 
 #ifdef _WIN32
@@ -475,6 +544,11 @@ static void loadTypes() {
     CfRequired loaded{1, 2};
     ZuCheck(loadError([&]() {
       ZfCf::handler<CfRequired>(missingScan.p<1>()).load(loaded);
+    }));
+
+    CfRequired updated{ZuCmp<int>::null(), 2};
+    ZuCheck(loadError([&]() {
+      ZfCf::handler<CfRequired>(validScan.p<1>()).update(updated);
     }));
   }
   {
@@ -706,6 +780,7 @@ int main(int argc, char **argv) {
   ZuTestCall(expansion);
   ZuTestCall(classification);
   ZuTestCall(grammar);
+  ZuTestCall(comments);
   ZuTestCall(percent);
   ZuTestCall(loadTypes);
   ZuTestCall(loadSave);
