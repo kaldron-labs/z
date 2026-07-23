@@ -58,9 +58,7 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   TxStream(unsigned maxSize, unsigned headRoom, unsigned tailRoom) :
-    m_maxSize(maxSize), m_headRoom(headRoom), m_tailRoom(tailRoom)
-  {
-  }
+    m_maxSize(maxSize), m_headRoom(headRoom), m_tailRoom(tailRoom) { }
   ~TxStream() { flush(); }
 
   TxStream(TxStream &&) = default;
