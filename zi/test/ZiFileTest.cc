@@ -300,6 +300,11 @@ void testMetadataAndPathHelpers()
   ZiStat copyStat{g_copy};
   ZuCHECK(ZiFile::copy(g_renamed, g_copy) == Zi::OK, "copy failed");
   ZuCheck(copyStat.exists());
+  auto canonical = ZiFile::canonical(
+    ZiFile::append(ZiFile::dirname(g_copy), path_("./copy")));
+  ZuCheck(!!canonical);
+  ZuCheck(ZiFile::absolute(canonical));
+  ZuCheck(ZiFile::leafname(canonical) == path_("copy"));
 
   ZiFile f;
   ZuCHECK(f.open(g_copy, ZiFile::ReadOnly, 0777) == Zi::OK, "open copy failed: ", f.error());

@@ -231,6 +231,7 @@ public:
   static int rmdir(const Path &name, ZeError *e = nullptr);
 
   static Path cwd();
+  static Path canonical(const Path &name);
 
   static bool absolute(const Path &name);
 

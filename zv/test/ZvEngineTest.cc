@@ -49,7 +49,8 @@ class Engine : public ZvEngine {
 public:
   // Engine() { }
 
-  void init(Mgr *mgr, App *app, ZiMultiplex *mx, const ZvCf *cf);
+  void init(
+    Mgr *mgr, App *app, ZiMultiplex *mx, const ZfCf::AnyNode *cf);
 
   void up() { ZiLOG(Info, "ZvEngineTest", "UP"); }
   void down() { ZiLOG(Info, "ZvEngineTest", "DOWN"); }
@@ -96,7 +97,7 @@ public:
   ZuTime reconnInterval(unsigned) { return engine()->reconnInterval(); }
 
   // ZvAnyLink virtual
-  void update(const ZvCf *cf) { }
+  void update(const ZfCf::AnyNode *) { }
   void reset(ZvSeqNo rxSeqNo, ZvSeqNo txSeqNo) { }
 
   void connect() {
@@ -146,16 +147,27 @@ public:
 
 ZmRef<ZvAnyLink> App::createLink(ZuCSpan id) { return new Link(id); }
 
-void Engine::init(Mgr *mgr, App *app, ZiMultiplex *mx, const ZvCf *cf)
+struct EngineCf {
+  double reconnInterval = 1;
+  double reReqInterval = 1;
+};
+
+ZfStruct((EngineCf, Cf),
+  (((reconnInterval),	((Range<0.0, 3600.0>))),	(Float, 1)),
+  (((reReqInterval),	((Range<0.0, 3600.0>))),	(Float, 1)));
+
+void Engine::init(
+    Mgr *mgr, App *app, ZiMultiplex *mx, const ZfCf::AnyNode *cf)
 {
   ZvEngine::init(mgr, app, mx, cf);
-  m_reconnInterval = cf->getDbl("reconnInterval", 0, 3600, 1);
-  m_reReqInterval = cf->getDbl("reReqInterval", 0, 3600, 1);
-  if (ZmRef<ZvCf> linksCf = cf->getCf("links")) {
-    linksCf->all([this](ZvCfNode *node) {
-      if (node->data.is<ZmRef<ZvCf>>())
-	ZvEngine::updateLink(node->key, node->data.p<ZmRef<ZvCf>>());
-    });
+  auto config = ZfCf::handler<EngineCf>(cf).ctor();
+  m_reconnInterval = config.reconnInterval;
+  m_reReqInterval = config.reReqInterval;
+  if (auto links = cf->resolve("links")) {
+    if (!links->has<ZfCf::AnyNode::Object>())
+      throw ZfCf_EXCEPT(ZfCfError::badType(links, "object"));
+    for (auto &field: links->data<ZfCf::AnyNode::Object>())
+      ZvEngine::updateLink(field.p<0>(), field.p<1>());
   }
 }
 
@@ -166,25 +178,30 @@ int main()
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZmRef<ZvCf> cf = new ZvCf();
-  cf->fromString(
-      "id Engine\n"
-      "mx {\n"
-	"nThreads 4\n"		// thread IDs are 1-based
-	"rxThread 1\n"		// I/O Rx
-	"txThread 2\n"		// I/O Tx
-	"threads { 1 { isolated 1 } 2 { isolated 1 } 3 { isolated 1 } }\n"
-      "}\n"
-      "rxThread 3\n"		// App Rx
-      "txThread 2\n"		// App Tx (same as I/O Tx)
-      "links { link1 { } }\n");
+  auto scan = ZfCf::scan(
+      "id: Engine,\n"
+      "mx: {\n"
+	"nThreads: 4,\n"		// thread IDs are 1-based
+	"rxThread: 1,\n"		// I/O Rx
+	"txThread: 2,\n"		// I/O Tx
+	"threads: {\n"
+	  "1: {isolated: true},\n"
+	  "2: {isolated: true},\n"
+	  "3: {isolated: true}\n"
+	"}\n"
+      "},\n"
+      "rxThread: 3,\n"		// App Rx
+      "txThread: 2,\n"		// App Tx (same as I/O Tx)
+      "links: {link1: {}}\n");
+  auto root = ZuMv(scan.p<1>());
 
   ZuPtr<App> app = new App();
   ZuPtr<Mgr> mgr = new Mgr();
   ZmRef<Engine> engine = new Engine();
-  ZuPtr<ZiMultiplex> mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf("mx")}};
+  ZuPtr<ZiMultiplex> mx =
+    new ZiMultiplex{ZvMxParams{"mx", root->resolve("mx")}};
 
-  engine->init(mgr, app, mx, cf);
+  engine->init(mgr, app, mx, root);
 
   mx->start();
 

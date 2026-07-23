@@ -15,8 +15,17 @@
 
 #include <zlib/ZmStack.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvCSV.hh>
+
+struct ZvStackCf {
+  unsigned	initial = 0;
+  double	maxFrag = 0;
+};
+
+ZfStruct((ZvStackCf, Cf),
+  (((initial),	((Range<2U, 28U>))),	(UInt32)),
+  (((maxFrag),	((Range<1.0, 256.0>))),	(Float)));
 
 struct ZvStackParams : public ZmStackParams {
   ZvStackParams(const ZmStackParams &p) : ZmStackParams{p} { }
@@ -30,18 +39,17 @@ struct ZvStackParams : public ZmStackParams {
     return *this;
   }
 
-  ZvStackParams(const ZvCf *cf) : ZmStackParams() { init(cf); }
-  ZvStackParams(const ZvCf *cf, ZmStackParams deflt) :
+  ZvStackParams(const ZfCf::AnyNode *cf) : ZmStackParams() { init(cf); }
+  ZvStackParams(const ZfCf::AnyNode *cf, ZmStackParams deflt) :
       ZmStackParams{ZuMv(deflt)} { init(cf); }
 
-  void init(const ZvCf *cf) {
-    ZmStackParams::operator =(ZmStackParams());
-
+  void init(const ZfCf::AnyNode *cf) {
     if (!cf) return;
-
-    initial(cf->getInt("initial", 2, 28, initial()));
-    maxFrag(cf->getDbl("maxFrag", 1, 256, maxFrag()));
+    auto patch = ZfCf::handler<ZvStackCf>(cf).ctor();
+    if (cf->resolve("initial")) initial(patch.initial);
+    if (cf->resolve("maxFrag")) maxFrag(patch.maxFrag);
   }
+
 };
 
 #endif /* ZvStackParams_HH */

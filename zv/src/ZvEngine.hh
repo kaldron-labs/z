@@ -24,7 +24,7 @@
 
 #include <zlib/ZtEnum.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvIOQueue.hh>
 #include <zlib/ZvMxParams.hh>
 #include <zlib/ZvThreadParams.hh>
@@ -50,6 +50,17 @@ ZtEnumNS(ZvLinkState, int8_t,
   Disconnecting,
   ConnectPending,
   DisconnectPending);
+
+struct ZvEngineCf {
+  ZtString<>	id;
+  ZtString<>	rxThread;
+  ZtString<>	txThread;
+};
+
+ZfStruct((ZvEngineCf, Cf),
+  (((id), (Required)),	(String)),
+  (((rxThread)),	(String)),
+  (((txThread)),	(String)));
 
 class ZvAPI ZvAnyTx : public ZmPolymorph {
 protected:
@@ -123,7 +134,7 @@ public:
   bool up() { return up_(true); }
   bool down() { return down_(true); }
 
-  virtual void update(const ZvCf *cf) = 0;
+  virtual void update(const ZfCf::AnyNode *cf) = 0;
   virtual void reset(ZvSeqNo rxSeqNo, ZvSeqNo txSeqNo) = 0;
 
   ZvSeqNo rxSeqNo() const {
@@ -238,21 +249,31 @@ public:
   ZvEngine(const ZvEngine &) = delete;
   ZvEngine &operator =(const ZvEngine &) = delete;
 
-  bool init(Mgr *mgr, App *app, Mx *mx, const ZvCf *cf) {
+  bool init(Mgr *mgr, App *app, Mx *mx, const ZfCf::AnyNode *cf) {
     return ZmEngine<ZvEngine>::lock(
 	ZmEngineState::Stopped, [this, mgr, app, mx, cf]() {
+      auto config = ZfCf::handler<ZvEngineCf>(cf).ctor();
       m_mgr = mgr;
       m_app = app;
-      m_id = cf->get("id", true);
+      m_id = config.id;
       m_mx = mx;
-      if (ZuCSpan s = cf->get("rxThread"))
-	m_rxThread = mx->sid(s);
+      if (cf->resolve("rxThread"))
+	m_rxThread = mx->sid(config.rxThread);
       else
 	m_rxThread = mx->rxThread();
-      if (ZuCSpan s = cf->get("txThread"))
-	m_txThread = mx->sid(s);
+      if (cf->resolve("txThread"))
+	m_txThread = mx->sid(config.txThread);
       else
 	m_txThread = mx->txThread();
+      if (!m_rxThread || m_rxThread > mx->params().nThreads() ||
+	  !m_txThread || m_txThread > mx->params().nThreads())
+	throw ZeEXCEPT(Error, "ZvEngine", ([
+	  id = ZeString{config.id}, rx = m_rxThread, tx = m_txThread,
+	  max = mx->params().nThreads()
+	](auto &s) {
+	  s << '"' << id << "\": invalid Rx/Tx scheduler SIDs " <<
+	    rx << '/' << tx << "; expected [1, " << max << ']';
+	}));
       return true;
     });
   }
@@ -339,7 +360,7 @@ public:
     return m_txPools.findVal(id);
   }
   template <typename TxPool>
-  ZmRef<ZvAnyTxPool> updateTxPool(ZuCSpan id, const ZvCf *cf) {
+  ZmRef<ZvAnyTxPool> updateTxPool(ZuCSpan id, const ZfCf::AnyNode *cf) {
     Guard guard(m_lock);
     ZmRef<TxPool> pool;
     if (pool = m_txPools.findVal(id)) {
@@ -368,7 +389,7 @@ public:
     ReadGuard guard(m_lock);
     return m_links.findVal(id);
   }
-  ZmRef<ZvAnyLink> updateLink(ZuCSpan id, const ZvCf *cf) {
+  ZmRef<ZvAnyLink> updateLink(ZuCSpan id, const ZfCf::AnyNode *cf) {
     Guard guard(m_lock);
     ZmRef<ZvAnyLink> link;
     if (link = m_links.findVal(id)) {
