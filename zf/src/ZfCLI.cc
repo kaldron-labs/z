@@ -10,7 +10,7 @@ namespace ZfCLI {
 
 // find end of string, un-quoting in-place
 
-ZuTuple<int, int, char> eos(ZuSpan<char> span)
+ZuTuple<int, int, char> eos(ZuSpan<char> span, unsigned position)
 {
   unsigned n = span.length();
 
@@ -28,6 +28,11 @@ ZuTuple<int, int, char> eos(ZuSpan<char> span)
       return {o, i, c};
     }
     if (ZuUnlikely(c == '<' || c == '>' || c == '#' || c == ';')) {
+      if (!i) {
+	if (c == '#' || c == ';') return {1, 1, c};
+	continue;
+      }
+      if (i == 1 && c == '>' && span[0] == '>') continue;
       return {i, i, c};
     }
   }
@@ -39,6 +44,7 @@ slow:
   while (i < n) {
     char c = span[i];
     if (c == '"') {
+      bool closed = false;
       while (++i < n) {
 	c = span[i];
 	if (c == '\\') {
@@ -47,13 +53,17 @@ slow:
 	}
 	if (c == '"') {
 	  ++i;
+	  closed = true;
 	  break;
 	}
 	span[o++] = span[i];
       }
+      if (ZuUnlikely(!closed))
+	throw ZfCLI_EXCEPT(ZfCLIError::unterminated(position, '"'));
       continue;
     }
     if (c == '\'') {
+      bool closed = false;
       while (++i < n) {
 	c = span[i];
 	if (c == '\\') {
@@ -62,10 +72,13 @@ slow:
 	}
 	if (c == '\'') {
 	  ++i;
+	  closed = true;
 	  break;
 	}
 	span[o++] = span[i];
       }
+      if (ZuUnlikely(!closed))
+	throw ZfCLI_EXCEPT(ZfCLIError::unterminated(position, '\''));
       continue;
     }
     if (ZuUnlikely(isspace__(c))) {
@@ -78,7 +91,8 @@ slow:
       return {o, i, c};
     }
     if (c == '\\') {
-      if (++i >= n) break;
+      if (++i >= n)
+	throw ZfCLI_EXCEPT(ZfCLIError::unterminated(position, 0));
       c = span[i];
     }
     ++i;
@@ -95,6 +109,32 @@ int eok(ZuCSpan data) {
   auto p = static_cast<const char *>(memchr(&data[0], '=', data.length()));
   if (!p) return -1;
   return p - &data[0];
+}
+
+ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key)
+{
+  unsigned e = key.length();
+  if (!e) return {-1};
+  auto c = key[0];
+
+  if (c == '[') {
+    unsigned i = 0;
+    while (++i < e) {
+      c = key[i];
+      if (c == ']') return {i + 1, ZuCSpan(&key[1], i - 1)};
+    }
+    return {-1};
+  }
+
+  if (c == '.') return {-1};
+
+  unsigned i = 0;
+  while (++i < e) {
+    c = key[i];
+    if (c == '[') break;
+    if (c == '.') return {i + 1, ZuCSpan(&key[0], i)};
+  }
+  return {i, ZuCSpan(&key[0], i)};
 }
 
 } // ZfCLI

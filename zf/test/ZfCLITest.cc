@@ -138,12 +138,51 @@ struct DelimitedArgs {
 ZfStruct((DelimitedArgs, Bah),
   (((values), (Ctor<0>, CLI::Long<"values">)), (StringVec)));
 
+struct IntArray : public ZtArray<int> {
+  ZuDerive_(IntArray, ZtArray<int>);
+  friend ZfCLI::AsArray<ZfFieldTC::Int32> ZfCLI_Fmt(IntArray *);
+};
+
+struct ArrayOpt {
+  IntArray values;
+};
+
+ZfStruct((ArrayOpt, Bah),
+  (((values), (Ctor<0>)), (UDT)));
+
+struct Positional {
+  int value = 0;
+};
+
+ZfStruct((Positional, CLI),
+  (((value), (Ctor<0>, CLI::Arg<1>, (Range<0, 10>))), (Int32)));
+
+struct RequiredOpt {
+  int value = ZuCmp<int>::null();
+};
+
+ZfStruct((RequiredOpt, CLI),
+  (((value), (Ctor<0>, Required)), (Int32)));
+
+template <typename L>
+static ZeString cliError(L l)
+{
+  try {
+    l();
+  } catch (const ZeException &e) {
+    ZeString message;
+    message << e;
+    return message;
+  }
+  return {};
+}
+
 void roundTrip()
 {
   ZuTestScope(roundTrip);
 
   ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
-  ZuCheck(parser.scanArgv(ZfCLI::SpanArgv{}));
+  parser.scanArgv(ZfCLI::SpanArgv{});
   Foo foo = ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
   foo.int_ = 42;
   foo.float_ = 42.01;
@@ -212,7 +251,7 @@ void fieldlessUDT()
   ZfCLI::save<ZuFacet::Bah>(cli, value);
   ZfCLI::InCLI in{cli};
   ZfCLI::Parser<ScalarArgs, ZuFacet::Bah> parser;
-  ZuCheck(parser.scanArgv(in.argv));
+  parser.scanArgv(in.argv);
   auto loaded =
     ZfCLI::handler<ScalarArgs, ZuFacet::Bah>(parser.root).ctor();
   ZuCheck(loaded.scalar.value == "hello world");
@@ -253,6 +292,19 @@ void parseCLIEscapedAndEmpty()
   ZuCheck(in.argv[3] == "tail");
 }
 
+void parseCLIRedirect()
+{
+  ZuTestScope(parseCLIRedirect);
+
+  static char cli[] = "x <in >> out";
+  ZfCLI::InCLI in(cli);
+  ZuCheck(in.argv.length() == 1);
+  ZuCheck(in.argv[0] == "x");
+  ZuCheck(in.in == "in");
+  ZuCheck(in.out == "out");
+  ZuCheck(in.append);
+}
+
 void longOnlyOptions()
 {
   ZuTestScope(longOnlyOptions);
@@ -265,7 +317,7 @@ void longOnlyOptions()
   out.finish();
 
   ZfCLI::Parser<LongOnly> parser;
-  ZuCheck(parser.scanArgv(out.argv));
+  parser.scanArgv(out.argv);
   ZuCheck(parser.hasKey("verbose"));
 
   LongOnly options;
@@ -276,10 +328,16 @@ void longOnlyOptions()
 
   parser.reset();
   char unknown[] = "--unknown";
-  ZuCheck(!parser.scanArg({unknown, sizeof(unknown) - 1}));
+  auto message = cliError([&parser, &unknown] {
+    parser.scanArg({unknown, sizeof(unknown) - 1});
+  });
+  ZuCheck(message.find("unrecognized option '--unknown'") >= 0);
   parser.reset();
   char unknownValue[] = "--unknown=1";
-  ZuCheck(!parser.scanArg({unknownValue, sizeof(unknownValue) - 1}));
+  message = cliError([&parser, &unknownValue] {
+    parser.scanArg({unknownValue, sizeof(unknownValue) - 1});
+  });
+  ZuCheck(message.find("unrecognized option '--unknown'") >= 0);
 }
 
 void integerRange()
@@ -289,9 +347,12 @@ void integerRange()
   char cli[] = "x --int_ranged=101";
   ZfCLI::InCLI in(cli);
   ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
-  ZuCheck(parser.scanArgv(in.argv));
-  auto value = ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
-  ZuCheck(value.int_ranged == ZuCmp<int>::null());
+  parser.scanArgv(in.argv);
+  auto message = cliError([&parser] {
+    ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  });
+  ZuCheck(message.find("option '--int_ranged'") >= 0);
+  ZuCheck(message.find("out of range") >= 0);
 }
 
 void realRange()
@@ -302,11 +363,149 @@ void realRange()
     "x --float_ranged=1.1 --fixed=-0.1 --decimal=1.1";
   ZfCLI::InCLI in(cli);
   ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
-  ZuCheck(parser.scanArgv(in.argv));
-  auto value = ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
-  ZuCheck(ZuCmp<double>::null(value.float_ranged));
-  ZuCheck(ZuCmp<ZuFixed>::null(value.fixed));
-  ZuCheck(ZuCmp<ZuDecimal>::null(value.decimal));
+  parser.scanArgv(in.argv);
+  auto message = cliError([&parser] {
+    ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+  });
+  ZuCheck(message.find("option '--float_ranged'") >= 0);
+  ZuCheck(message.find("out of range") >= 0);
+}
+
+void diagnostics()
+{
+  ZuTestScope(diagnostics);
+
+  {
+    char cli[] = "x --foo";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<LongOnly> parser;
+    auto message = cliError([&parser, &in] { parser.scanArgv(in.argv); });
+    ZuCheck(message.find("unrecognized option '--foo'") >= 0);
+    ZuCheck(message.find("line") < 0);
+    ZuCheck(message.find("offset") < 0);
+    ZuCheck(message.find("ZfCLI.hh") < 0);
+    ZuCheck(message.find("ZfCLI.cc") < 0);
+  }
+  {
+    char cli[] = "x --port";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<LongOnly> parser;
+    auto message = cliError([&parser, &in] { parser.scanArgv(in.argv); });
+    ZuCheck(message.find("option '--port' requires a value") >= 0);
+  }
+  {
+    char cli[] = "x --port=12x";
+    ZfCLI::InCLI in(cli);
+    LongOnly value;
+    auto message = cliError([&value, &in] { ZfCLI::load(value, in.argv); });
+    ZuCheck(message.find("invalid integer '12x'") >= 0);
+    ZuCheck(message.find("option '--port'") >= 0);
+  }
+  {
+    char cli[] = "x --port=1 --port=2";
+    ZfCLI::InCLI in(cli);
+    LongOnly value;
+    auto message = cliError([&value, &in] { ZfCLI::load(value, in.argv); });
+    ZuCheck(message.find(
+      "option '--port' was specified more than once") >= 0);
+  }
+  {
+    char cli[] = "x --verbose=maybe";
+    ZfCLI::InCLI in(cli);
+    LongOnly value;
+    auto message = cliError([&value, &in] { ZfCLI::load(value, in.argv); });
+    ZuCheck(message.find("invalid boolean 'maybe'") >= 0);
+    ZuCheck(message.find("option '--verbose'") >= 0);
+  }
+  {
+    char cli[] = "x -e Bad";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
+    parser.scanArgv(in.argv);
+    auto message = cliError([&parser] {
+      ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+    });
+    ZuCheck(message.find("invalid value 'Bad' for option '-e'") >= 0);
+    ZuCheck(message.find("High") >= 0);
+    ZuCheck(message.find("Low") >= 0);
+    ZuCheck(message.find("Normal") >= 0);
+  }
+  {
+    char cli[] = "x --time_=bad";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
+    parser.scanArgv(in.argv);
+    auto message = cliError([&parser] {
+      ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+    });
+    ZuCheck(message.find("invalid date/time 'bad'") >= 0);
+    ZuCheck(message.find("option '--time_'") >= 0);
+  }
+  {
+    char cli[] = "x '' '' !!!";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
+    parser.scanArgv(in.argv);
+    auto message = cliError([&parser] {
+      ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+    });
+    ZuCheck(message.find("invalid encoded bytes '!!!'") >= 0);
+    ZuCheck(message.find("argument 3") >= 0);
+  }
+  {
+    char cli[] = "x --values=1,bad";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<ArrayOpt, ZuFacet::Bah> parser;
+    parser.scanArgv(in.argv);
+    auto message = cliError([&parser] {
+      ZfCLI::handler<ArrayOpt, ZuFacet::Bah>(parser.root).ctor();
+    });
+    ZuCheck(message.find("invalid integer 'bad'") >= 0);
+    ZuCheck(message.find("option '--values'") >= 0);
+  }
+  {
+    char cli[] = "x bad";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<Positional> parser;
+    parser.scanArgv(in.argv);
+    auto message = cliError([&parser] {
+      ZfCLI::handler<Positional>(parser.root).ctor();
+    });
+    ZuCheck(message.find("invalid integer 'bad'") >= 0);
+    ZuCheck(message.find("argument 1") >= 0);
+  }
+  {
+    char cli[] = "x";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<RequiredOpt> parser;
+    parser.scanArgv(in.argv);
+    auto message = cliError([&parser] {
+      ZfCLI::handler<RequiredOpt>(parser.root).ctor();
+    });
+    ZuCheck(message.find("option '--value' is required") >= 0);
+  }
+  {
+    char cli[] = "x --nestedJSON=broken";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
+    parser.scanArgv(in.argv);
+    auto message = cliError([&parser] {
+      ZfCLI::handler<Foo, ZuFacet::Bah>(parser.root).ctor();
+    });
+    ZuCheck(message.find("invalid JSON 'broken'") >= 0);
+    ZuCheck(message.find("option '--nestedJSON'") >= 0);
+  }
+  {
+    char cli[] = "x 'broken";
+    auto message = cliError([&cli] { ZfCLI::InCLI in(cli); });
+    ZuCheck(message.find("unterminated quote ' in argument 1") >= 0);
+  }
+  {
+    char cli[] = "x >";
+    auto message = cliError([&cli] { ZfCLI::InCLI in(cli); });
+    ZuCheck(message.find(
+      "output redirection in argument 1 requires a path") >= 0);
+  }
 }
 
 void delimitedLoad()
@@ -316,12 +515,12 @@ void delimitedLoad()
   char cli[] = "x --values=a,b";
   ZfCLI::InCLI in(cli);
   ZfCLI::Parser<DelimitedArgs, ZuFacet::Bah> parser;
-  ZuCheck(parser.scanArgv(in.argv));
-  auto field = parser.root->data<ZfURI::AnyNode::Object>().find("values");
-  ZuCheck(field && field->val()->has<ZfURI::AnyNode::String>());
+  parser.scanArgv(in.argv);
+  auto field = parser.root->data<ZfCLI::AnyNode::Object>().find("values");
+  ZuCheck(field && field->val()->has<ZfCLI::AnyNode::String>());
 
   auto args = ZfCLI::handler<DelimitedArgs, ZuFacet::Bah>(parser.root).ctor();
-  ZuCheck(field->val()->has<ZfURI::AnyNode::Array>());
+  ZuCheck(field->val()->has<ZfCLI::AnyNode::Array>());
   ZuCheck(args.values.length() == 2);
   ZuCheck(args.values[0] == "a");
   ZuCheck(args.values[1] == "b");
@@ -336,9 +535,11 @@ int main(int argc, char **argv)
   ZuTestCall(cmdQuote);
   ZuTestCall(parseCLI);
   ZuTestCall(parseCLIEscapedAndEmpty);
+  ZuTestCall(parseCLIRedirect);
   ZuTestCall(longOnlyOptions);
   ZuTestCall(integerRange);
   ZuTestCall(realRange);
+  ZuTestCall(diagnostics);
   ZuTestCall(delimitedLoad);
   return 0;
 }
