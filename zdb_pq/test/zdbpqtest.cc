@@ -12,7 +12,7 @@
 
 #include <zlib/ZiLog.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/Zdb.hh>
@@ -75,11 +75,11 @@ void sigint()
   done.post();
 }
 
-ZmRef<ZvCf> inlineCf(ZuCSpan s)
+ZuPtr<const ZfCf::AnyNode> inlineCf(
+    ZuCSpan s, ZmRef<ZfCf::Defines> defines = new ZfCf::Defines())
 {
-  ZmRef<ZvCf> cf = new ZvCf{};
-  cf->fromString(s);
-  return cf;
+  auto scan = ZfCf::scan(s, {}, ZuMv(defines));
+  return ZuMv(scan.p<1>());
 }
 
 void gtfo()
@@ -92,7 +92,13 @@ void gtfo()
 int main(int argc_, char **argv)
 {
   Options options;
-  int argc = ZfCLI::load(options, argc_, argv);
+  int argc;
+  try {
+    argc = ZfCLI::load(options, argc_, argv);
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
+    usage();
+  }
   if (argc != 1) usage();
   if (options.help) usage();
   if (!options.module) {
@@ -104,34 +110,34 @@ int main(int argc_, char **argv)
     Zm::exit(1);
   }
 
-  ZmRef<ZvCf> cf = inlineCf(
-    "thread zdb\n"
-    "hostID 0\n"
-    "hosts {\n"
-    "  0 { standalone 1 }\n"
-    "}\n"
-    "store {\n"
-    "  thread zdb_pq\n"
-    "  replicated true\n"
-    "}\n"
-    "tables {\n"
-    "  order { warmup 1 }\n"
-    "}\n"
-    "mx {\n"
-    "  nThreads 4\n"
-    "  threads {\n"
-    "    1 { name rx isolated true }\n"
-    "    2 { name tx isolated true }\n"
-    "    3 { name zdb isolated true }\n"
-    "    4 { name zdb_pq isolated true }\n"
-    "  }\n"
-    "  rxThread rx\n"
-    "  txThread tx\n"
-    "}\n");
-
-  cf->set("store.module", options.module);
-  cf->set("store.connection", options.connect);
-  cf->set("debug", options.debug ? "1" : "0");
+  ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
+  defines->add(ZfCf::DefKey{"MODULE"}, ZfCf::DefVal{options.module});
+  defines->add(ZfCf::DefKey{"CONNECT"}, ZfCf::DefVal{options.connect});
+  defines->add(
+    ZfCf::DefKey{"DEBUG"}, ZfCf::DefVal{options.debug ? "true" : "false"});
+  auto cf = inlineCf(
+    "thread: zdb,\n"
+    "hostID: 0,\n"
+    "hosts: {0: {standalone: true}},\n"
+    "store: {\n"
+    "  thread: zdb_pq,\n"
+    "  replicated: true,\n"
+    "  module: ${MODULE},\n"
+    "  connection: ${CONNECT}\n"
+    "},\n"
+    "tables: {order: {warmup: true}},\n"
+    "debug: ${DEBUG},\n"
+    "mx: {\n"
+    "  nThreads: 4,\n"
+    "  threads: {\n"
+    "    1: {name: rx, isolated: true},\n"
+    "    2: {name: tx, isolated: true},\n"
+    "    3: {name: zdb, isolated: true},\n"
+    "    4: {name: zdb_pq, isolated: true}\n"
+    "  },\n"
+    "  rxThread: rx,\n"
+    "  txThread: tx\n"
+    "}\n", defines);
 
   ZiLog::init("zdbpqtest");
   ZiLog::level(0);
@@ -142,7 +148,7 @@ int main(int argc_, char **argv)
   ZmTrap::trap();
 
   try {
-    mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
+    mx = new ZiMultiplex{ZvMxParams{"mx", cf->resolve("mx")}};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbpqtest", "multiplexer start failed");
 

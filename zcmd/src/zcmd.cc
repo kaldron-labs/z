@@ -21,7 +21,7 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiModule.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvCSV.hh>
 
 #include <zlib/Ztls.hh>
@@ -192,7 +192,8 @@ public:
 
 friend Link;
 
-  void init(ZiMultiplex *mx, const ZvCf *cf, bool interactive) {
+  void init(
+      ZiMultiplex *mx, const ZfCf::AnyNode *cf, bool interactive) {
     Base::init(mx, cf);
     m_interactive = interactive;
     Zcmd::Host::init();
@@ -302,8 +303,13 @@ friend Link;
   Ztls::Random *rng() { return this; }
 
   void exec(ZuSpan<char> s) {
-    ZfCLI::InCLI in(s);
-    exec_(in.argv, in.in, in.out, in.append);
+    try {
+      ZfCLI::InCLI in(s);
+      exec_(in.argv, in.in, in.out, in.append);
+    } catch (const ZeException &e) {
+      std::cerr << e << '\n';
+      m_exitCode = 1;
+    }
   }
 
   void exec(unsigned argc, const char *const *argv) {
@@ -986,7 +992,7 @@ Zcmd::Fn roleModCmd() {
     auto zcmd = static_cast<ZCmd *>(ctx->host);
     // need the parser to check if --perms or --apiperms was used
     ZfCLI::Parser<RoleModCmd> parser;
-    if (!parser.scanArgv(argv)) throw Zcmd::Usage();
+    parser.scanArgv(argv);
     RoleModCmd options;
     ZfCLI::handler<RoleModCmd>(parser.root).load(options);
     if (parser.argc != 2) throw Zcmd::Usage();
@@ -1833,14 +1839,16 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   {
-    ZmRef<ZvCf> cf = new ZvCf();
-    cf->set("timeout", "1");
-    cf->set("rxThread", "3");
-    cf->set("txThread", "4");
+    ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
     if (auto caPath = ::getenv("ZCMD_CAPATH"))
-      cf->set("caPath", caPath);
+      defines->add(ZfCf::DefKey{"CAPATH"}, ZfCf::DefVal{caPath});
     else
-      cf->set("caPath", "/etc/ssl/certs");
+      defines->add(
+	ZfCf::DefKey{"CAPATH"}, ZfCf::DefVal{"/etc/ssl/certs"});
+    auto scan = ZfCf::scan(
+      "timeout: 1, rxThread: 3, txThread: 4, caPath: ${CAPATH}",
+      {}, defines);
+    auto cf = ZuMv(scan.p<1>());
     try {
       client->init(mx, cf, interactive);
     } catch (const ZeException &e) {

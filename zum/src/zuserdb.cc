@@ -15,7 +15,7 @@
 
 #include <zlib/ZiLog.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/ZtlsTOTP.hh>
@@ -64,11 +64,11 @@ void usage()
   exit(1);
 }
 
-ZmRef<ZvCf> inlineCf(ZuCSpan s)
+ZuPtr<const ZfCf::AnyNode> inlineCf(
+    ZuCSpan s, ZmRef<ZfCf::Defines> defines = new ZfCf::Defines())
 {
-  ZmRef<ZvCf> cf = new ZvCf{};
-  cf->fromString(s);
-  return cf;
+  auto scan = ZfCf::scan(s, {}, ZuMv(defines));
+  return ZuMv(scan.p<1>());
 }
 
 int main(int argc_, char **argv)
@@ -76,7 +76,13 @@ int main(int argc_, char **argv)
   Options options;
   options.module = getenv("ZDB_MODULE");
   options.connect = getenv("ZDB_CONNECT");
-  int argc = ZfCLI::load(options, argc_, argv);
+  int argc;
+  try {
+    argc = ZfCLI::load(options, argc_, argv);
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
+    usage();
+  }
   if (argc < 3) usage();
   if (options.help) usage();
   if (!options.module) {
@@ -88,49 +94,50 @@ int main(int argc_, char **argv)
     Zm::exit(1);
   }
 
-  ZmRef<ZvCf> cf = inlineCf(
-    "log \"&2\"\n"	// default - stderr
-    "mx {\n"
-    "  nThreads 5\n"
-    "  threads {\n"
-    "    1 { name rx isolated true }\n"
-    "    2 { name tx isolated true }\n"
-    "    3 { name zdb isolated true }\n"
-    "    4 { name zdb_store isolated true }\n"
-    "    5 { name app }\n"
-    "  }\n"
-    "  rxThread rx\n"
-    "  txThread tx\n"
-    "}\n"
-    "userdb {\n"
-    "  thread app\n"
-    "}\n"
-    "zdb {\n"
-    "  thread zdb\n"
-    "  hostID 0\n"
-    "  hosts { 0 { standalone 1 } }\n"
-    "  store {\n"
-    "    module ${ZDB_MODULE}\n"
-    "    connection ${ZDB_CONNECT}\n"
-    "    thread zdb_store\n"
-    "    replicated true\n"
-    "  }\n"
-    "  tables {\n"
-    "    \"zum.user\" { }\n"
-    "    \"zum.role\" { }\n"
-    "    \"zum.key\" { }\n"
-    "    \"zum.perm\" { }\n"
-    "  }\n"
-    "}\n");
-
-  cf->set("zdb.store.module", options.module);
-  cf->set("zdb.store.connection", options.connect);
-  cf->set("zdb.debug", options.debug ? "1" : "0");
-  cf->set("userDB.passLen", ZvCfString{} << options.passLen);
+  ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
+  defines->add(ZfCf::DefKey{"MODULE"}, ZfCf::DefVal{options.module});
+  defines->add(ZfCf::DefKey{"CONNECT"}, ZfCf::DefVal{options.connect});
+  defines->add(
+    ZfCf::DefKey{"DEBUG"}, ZfCf::DefVal{options.debug ? "true" : "false"});
+  defines->add(
+    ZfCf::DefKey{"PASSLEN"}, ZfCf::DefVal{ZuBoxed(options.passLen)});
+  auto cf = inlineCf(
+    "mx: {\n"
+    "  nThreads: 5,\n"
+    "  threads: {\n"
+    "    1: {name: rx, isolated: true},\n"
+    "    2: {name: tx, isolated: true},\n"
+    "    3: {name: zdb, isolated: true},\n"
+    "    4: {name: zdb_store, isolated: true},\n"
+    "    5: {name: app}\n"
+    "  },\n"
+    "  rxThread: rx,\n"
+    "  txThread: tx\n"
+    "},\n"
+    "userdb: {thread: app, passLen: ${PASSLEN}},\n"
+    "zdb: {\n"
+    "  thread: zdb,\n"
+    "  hostID: 0,\n"
+    "  hosts: {0: {standalone: true}},\n"
+    "  store: {\n"
+    "    module: ${MODULE},\n"
+    "    connection: ${CONNECT},\n"
+    "    thread: zdb_store,\n"
+    "    replicated: true\n"
+    "  },\n"
+    "  tables: {\n"
+    "    \"zum.user\": {},\n"
+    "    \"zum.role\": {},\n"
+    "    \"zum.key\": {},\n"
+    "    \"zum.perm\": {}\n"
+    "  },\n"
+    "  debug: ${DEBUG}\n"
+    "}\n", defines);
 
   ZiLog::init("zuserdb");
   ZiLog::level(0);
-  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path(cf->get<true>("log"))));
+  ZiLog::sink(ZiLog::fileSink(
+    ZiSinkOptions{}.path(options.log ? options.log : ZuCSpan{"&2"})));
   ZiLog::start();
 
   ZiMultiplex *mx = nullptr;
@@ -149,14 +156,14 @@ int main(int argc_, char **argv)
   Zum::Server::UserDB userDB(&rng);
 
   try {
-    mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
+    mx = new ZiMultiplex{ZvMxParams{"mx", cf->resolve("mx")}};
 
-    db->init(ZdbCf(cf->getCf<true>("zdb")), mx, ZdbHandler{
+    db->init(ZdbCf(cf->resolve("zdb")), mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *) { },
       .downFn = [](Zdb *, bool) { }
     });
 
-    userDB.init(cf->getCf<true>("userdb"), db);
+    userDB.init(cf->resolve("userdb"), db);
 
     mx->start();
     if (!db->start()) throw ZeEXCEPT(Fatal, "zuserdb", "Zdb start failed");

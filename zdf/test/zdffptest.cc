@@ -12,7 +12,7 @@
 
 #include <zlib/ZfCLI.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/Zdb.hh>
@@ -52,11 +52,11 @@ void sigint()
   done.post();
 }
 
-ZmRef<ZvCf> inlineCf(ZuCSpan s)
+ZuPtr<const ZfCf::AnyNode> inlineCf(
+    ZuCSpan s, ZmRef<ZfCf::Defines> defines = new ZfCf::Defines())
 {
-  ZmRef<ZvCf> cf = new ZvCf{};
-  cf->fromString(s);
-  return cf;
+  auto scan = ZfCf::scan(s, {}, ZuMv(defines));
+  return ZuMv(scan.p<1>());
 }
 
 void gtfo()
@@ -281,40 +281,18 @@ ZfStruct(Options,
 int main(int argc_, char **argv)
 {
   Options options;
-  int argc = ZfCLI::load(options, argc_, argv);
+  int argc;
+  try {
+    argc = ZfCLI::load(options, argc_, argv);
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
+    usage();
+  }
   if (argc != 1) usage();
 
-  ZmRef<ZvCf> cf;
+  ZuPtr<const ZfCf::AnyNode> cf;
 
   try {
-    cf = inlineCf(
-      "zdb {\n"
-      "  thread zdb\n"
-      "  hostID 0\n"
-      "  hosts {\n"
-      "    0 { standalone 1 }\n"
-      "  }\n"
-      "  store {\n"
-      "    thread zdb_pq\n"
-      "    replicated true\n"
-      "  }\n"
-      "  tables { }\n"
-      "}\n"
-      "mx {\n"
-      "  nThreads 4\n"
-      "  threads {\n"
-      "    1 { name rx isolated true }\n"
-      "    2 { name tx isolated true }\n"
-      "    3 { name zdb isolated true }\n"
-      "    4 { name zdb_pq isolated true }\n"
-      "  }\n"
-      "  rxThread rx\n"
-      "  txThread tx\n"
-      "}\n");
-
-    // "  module ../src/.libs/libZdbPQ.so\n"
-    // "  connection \"dbname=test host=/tmp\"\n"
-
     if (!options.module) {
       std::cerr << "set ZDB_MODULE or use --module=MODULE\n" << std::flush;
       Zm::exit(1);
@@ -323,10 +301,39 @@ int main(int argc_, char **argv)
       std::cerr << "set ZDB_CONNECT or use --connect=CONNECT\n" << std::flush;
       Zm::exit(1);
     }
+    ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
+    defines->add(ZfCf::DefKey{"MODULE"}, ZfCf::DefVal{options.module});
+    defines->add(ZfCf::DefKey{"CONNECT"}, ZfCf::DefVal{options.connect});
+    defines->add(
+      ZfCf::DefKey{"DEBUG"}, ZfCf::DefVal{options.debug ? "true" : "false"});
+    cf = inlineCf(
+      "zdb: {\n"
+      "  thread: zdb,\n"
+      "  hostID: 0,\n"
+      "  hosts: {0: {standalone: true}},\n"
+      "  store: {\n"
+      "    thread: zdb_pq,\n"
+      "    replicated: true,\n"
+      "    module: ${MODULE},\n"
+      "    connection: ${CONNECT}\n"
+      "  },\n"
+      "  tables: {},\n"
+      "  debug: ${DEBUG}\n"
+      "},\n"
+      "mx: {\n"
+      "  nThreads: 4,\n"
+      "  threads: {\n"
+      "    1: {name: rx, isolated: true},\n"
+      "    2: {name: tx, isolated: true},\n"
+      "    3: {name: zdb, isolated: true},\n"
+      "    4: {name: zdb_pq, isolated: true}\n"
+      "  },\n"
+      "  rxThread: rx,\n"
+      "  txThread: tx\n"
+      "}\n", defines);
 
-    cf->set("zdb.store.module", options.module);
-    cf->set("zdb.store.connection", options.connect);
-    if (options.debug) cf->set("zdb.debug", "1");
+    // "  module ../src/.libs/libZdbPQ.so\n"
+    // "  connection \"dbname=test host=/tmp\"\n"
 
   } catch (const ZeException &e) {
     std::cerr << e << '\n' << std::flush;
@@ -347,13 +354,13 @@ int main(int argc_, char **argv)
   ZmTrap::trap();
 
   try {
-    mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
+    mx = new ZiMultiplex{ZvMxParams{"mx", cf->resolve("mx")}};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdffptest", "multiplexer start failed");
 
     db = new Zdb();
 
-    ZdbCf dbCf{cf->getCf<true>("zdb")};
+    ZdbCf dbCf{cf->resolve("zdb")};
 
     Zdf::Store::dbCf(cf, dbCf);
 
