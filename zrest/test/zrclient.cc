@@ -185,14 +185,16 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   {
-    ZmRef<ZvCf> cf = new ZvCf();
-    cf->set("timeout", "1");
-    cf->set("rxThread", "3");
-    cf->set("txThread", "4");
+    ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
     if (auto caPath = ::getenv("ZREST_CAPATH"))
-      cf->set("caPath", caPath);
+      defines->add(ZfCf::DefKey{"CAPATH"}, ZfCf::DefVal{caPath});
     else
-      cf->set("caPath", "/etc/ssl/certs");
+      defines->add(
+	ZfCf::DefKey{"CAPATH"}, ZfCf::DefVal{"/etc/ssl/certs"});
+    auto scan = ZfCf::scan(
+      "timeout: 1, rxThread: 3, txThread: 4, caPath: ${CAPATH}",
+      {}, defines);
+    auto cf = ZuMv(scan.p<1>());
     try {
       client->init(mx, cf);
     } catch (const ZeException &e) {

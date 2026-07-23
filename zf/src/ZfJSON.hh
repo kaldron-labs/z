@@ -530,8 +530,9 @@ struct AsObject {
 	for (unsigned i = 0, n = fields.length(); i < n; i++) {
 	  auto j = matcher.match(fields[i].p<0>());
 	  if (j >= 0) {
+	    if (lookup[j] < 0) ++matched;
 	    lookup[j] = i;
-	    if (++matched >= SaveFields::N) break;
+	    if (matched >= SaveFields::N) break;
 	  }
 	}
       }

@@ -76,7 +76,7 @@ void DB::init(
 	  tableCf.sids.push(config.sid);
 	else {
 	  tableCf.sids.size(tableCf.threads.length());
-	  tableCf.threads.all([mx, &tableCf](const ZvCfString &thread) {
+	  tableCf.threads.all([mx, &tableCf](const ZtString<> &thread) {
 	    auto sid = mx->sid(thread);
 	    if (invalidSID(mx, sid))
 	      throw ZeEXCEPT(Fatal, "Zdb",
@@ -99,11 +99,11 @@ void DB::init(
       if (store)
 	m_store = ZuMv(store);
       else {
+	auto storeCf = ZfCf::handler<StoreLoadCf>(m_cf.storeCf).ctor();
 	ZiModule module_;
-	auto path = m_cf.storeCf->get<true>("module");
-	auto preload = m_cf.storeCf->getBool("preload", false);
+	auto &path = storeCf.module;
 	ZeString e; // dlerror() returns a string
-	if (module_.load(path, preload ? ZiModule::Pre : 0, &e) < 0)
+	if (module_.load(path, storeCf.preload ? ZiModule::Pre : 0, &e) < 0)
 	  throw ZeEXCEPT(Fatal, "Zdb", ([path = ZeString{path}, e](auto &s) {
 	    s << "failed to load \"" << path << "\": " << e; }));
 	auto storeFn =
@@ -120,6 +120,7 @@ void DB::init(
       InitResult result = m_store->init(
 	  m_cf.storeCf, m_mx,
 	  FailFn{this, ZmFnPtr<&DB::storeFailed>{}});
+      m_cf.storeCf = nullptr;
       if (result.is<Event>()) throw ZuMv(result).p<Event>();
       m_repStore = result.p<InitData>().replicated;
     }
@@ -1560,7 +1561,7 @@ struct TableTelemetry :
   auto cacheMisses() const { return cacheMisses_; }
   auto cacheEvictions() const { return cacheEvictions_; }
   auto nShards() const { return tbl.config().nShards; }
-  const ZvCfStringVec &threads() const { return tbl.config().threads; }
+  const ZtArray<ZtString<>> &threads() const { return tbl.config().threads; }
 };
 ZfbEnableShimNS(TableTelemetry, Tel, DBTable);
 

@@ -1961,11 +1961,22 @@ ZuDerive(StoreTbls,
     ZmHashNode<StoreTbl,
       ZmHashKey<StoreTbl_IDAxor,
 	ZmHashLock<ZmPLock,
-	  ZmHashHeapID<"ZdbPQ.StoreTbl">>>>>));
+	ZmHashHeapID<"ZdbPQ.StoreTbl">>>>>));
+
+struct StoreCf {
+  ZtString<>	thread;
+  ZtString<>	connection;
+  bool		replicated = false;
+};
+
+ZfStruct((StoreCf, Cf),
+  (((thread), (Required)),	(String)),
+  (((connection), (Required)),	(String)),
+  (((replicated)),		(Bool)));
 
 class Store : public Zdb_::Store {
 public:
-  InitResult init(ZvCf *, ZiMultiplex *, FailFn);
+  InitResult init(const ZfCf::AnyNode *, ZiMultiplex *, FailFn);
   void final();
 
   void start(StartFn);
@@ -2047,7 +2058,7 @@ private:
   void mkIdxMRD_rcvd(PGresult *);
 
 private:
-  ZvCf			*m_cf = nullptr;
+  ZtString<>		m_connection;
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_sid = 0;
   FailFn		m_failFn;

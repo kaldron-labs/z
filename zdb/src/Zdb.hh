@@ -95,7 +95,7 @@
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 
 #include <zlib/ZdbTypes.hh>
 #include <zlib/ZdbTelemetry.hh>
@@ -534,33 +534,46 @@ struct TableCf {
 
   IDString		id;
   unsigned		nShards = 1;	// #shards
-  ZvCfStringVec		threads;	// threads
+  ZtArray<ZtString<>>	threads;	// threads
   mutable SIDArray	sids = 0;	// thread slot IDs
   int			cacheMode = CacheMode::Normal;
 
   TableCf() = default;
   TableCf(ZuCSpan id_) : id{id_} { }
-  TableCf(ZuCSpan id_, const ZvCf *cf) : id{id_} {
-    nShards = cf->getScalar<unsigned>("shards", 1, 64, 1);
-    const auto &threads_ = cf->getStringVec("threads");
-    if (threads_) {
-      unsigned nThreads = threads_.length();
+  TableCf(
+      ZuCSpan id_, unsigned nShards_, ZtArray<ZtString<>> threads_,
+      int cacheMode_) :
+    id{id_}, nShards{nShards_}, threads(ZuMv(threads_)),
+    cacheMode{cacheMode_}
+  {
+    if (threads) {
+      unsigned nThreads = threads.length();
       // ensure nThreads is a power of 2 and <= nShards
       if ((nThreads & (nThreads - 1)) || nThreads > nShards)
 	throw ZeEXCEPT(Error, "Zdb", ([
-	  key = ZeString{fullKey(cf, "threads")}, nThreads, nShards = nShards
+	  id = id, nThreads, nShards = nShards
 	](auto &s) {
-	  s << '"' << key << "\" invalid array size " << nThreads
+	  s << '"' << id << ".threads\" invalid array size " << nThreads
 	    << " (" << nShards << " shards)";
 	}));
-      threads = threads_;
     }
-    cacheMode = cf->getEnum<CacheMode::Map, int>(
-      "cacheMode", CacheMode::Normal);
   }
+  TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf);
 
   static const auto &IDAxor(const TableCf &cf) { return cf.id; }
 };
+
+ZfStruct((TableCf, Cf),
+  (((nShards),	(Ctor<0>, Cf::ID<"shards">, (Range<1U, 64U>))),
+    (UInt32, 1)),
+  (((threads),	(Ctor<1>)),				(StringVec)),
+  (((cacheMode), (Ctor<2>, Enum<CacheMode::Map>)),	(Int32,
+      CacheMode::Normal)));
+
+inline TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
+  TableCf{ZfCf::handler<TableCf>(cf).ctor(id_)}
+{
+}
 
 // --- table configuration
 
@@ -1445,22 +1458,47 @@ struct HostCf {
   ZiIP		ip;
   uint16_t	port = 0;
   bool		standalone = false;
-  ZvCfString	up;
-  ZvCfString	down;
+  ZtString<>	up;
+  ZtString<>	down;
 
   HostCf(ZuCSpan id_) : id{id_}, standalone{true} { }
-  HostCf(ZuCSpan id_, const ZvCf *cf) : id{id_} {
-    if (!(standalone = cf->getBool("standalone", false))) {
-      priority = cf->getInt<true>("priority", 0, 1<<30);
-      ip = cf->get<true>("ip");
-      port = cf->getInt<true>("port", 1, (1<<16) - 1);
-    }
-    up = cf->get("up");
-    down = cf->get("down");
+  HostCf(
+      ZuCSpan id_, int priority_, ZiIP ip_, uint16_t port_,
+      bool standalone_, ZtString<> up_, ZtString<> down_) :
+    id{id_}, priority{priority_}, ip{ip_}, port{port_},
+    standalone{standalone_}, up{ZuMv(up_)}, down{ZuMv(down_)}
+  {
+    if (!standalone && (!ip || !port))
+      throw ZeEXCEPT(Error, "Zdb", ([id = id](auto &s) {
+	s << '"' << id << "\": non-standalone host requires ip and port";
+      }));
   }
+  HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf);
 
   static ZuCSpan IDAxor(const HostCf &cfg) { return cfg.id; }
 };
+
+ZfStruct((HostCf, Cf),
+  (((priority),	(Ctor<0>, (Range<0, 1<<30>))),	(Int32)),
+  (((ip),	(Ctor<1>)),				(String)),
+  (((port),	(Ctor<2>, (Range<uint16_t(1), uint16_t(-1)>))),
+    (UInt16)),
+  (((standalone), (Ctor<3>)),				(Bool)),
+  (((up),	(Ctor<4>)),				(String)),
+  (((down),	(Ctor<5>)),				(String)));
+
+inline HostCf::HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
+  HostCf{ZfCf::handler<HostCf>(cf).ctor(id_)}
+{
+  if (!standalone) {
+    if (!cf->resolve("priority"))
+      throw ZfCf_EXCEPT(ZfCfError::required(cf, "priority"));
+    if (!cf->resolve("ip"))
+      throw ZfCf_EXCEPT(ZfCfError::required(cf, "ip"));
+    if (!cf->resolve("port"))
+      throw ZfCf_EXCEPT(ZfCfError::required(cf, "port"));
+  }
+}
 
 ZuDerive(HostCfs,
   (ZmRBTree<HostCf,
@@ -1586,10 +1624,19 @@ struct DBHandler {
 
 // --- DB configuration
 
+struct StoreLoadCf {
+  ZtString<>	module;
+  bool		preload = false;
+};
+
+ZfStruct((StoreLoadCf, Cf),
+  (((module), (Required)),	(String)),
+  (((preload)),		(Bool)));
+
 struct DBCf {
   ZuID			thread;
   mutable unsigned	sid = 0;
-  ZmRef<ZvCf>		storeCf;
+  const ZfCf::AnyNode	*storeCf = nullptr;
   TableCfs		tableCfs;
   HostCfs		hostCfs;
   ZuID			hostID;
@@ -1604,27 +1651,22 @@ struct DBCf {
 #endif
 
   DBCf() = default;
-  DBCf(const ZvCf *cf) {
-    thread = cf->get<true>("thread");
-    storeCf = cf->getCf("store");
-    cf->getCf<true>("tables")->all([this](ZvCfNode *node) {
-      if (auto tableCf = node->getCf())
-	tableCfs.addNode(new TableCfs::Node{node->key, ZuMv(tableCf)});
-    });
-    cf->getCf<true>("hosts")->all([this](ZvCfNode *node) {
-      if (auto hostCf = node->getCf())
-	hostCfs.addNode(new HostCfs::Node{node->key, ZuMv(hostCf)});
-    });
-    hostID = cf->get("hostID"); // may be supplied separately
-    nAccepts = cf->getInt("nAccepts", 1, 1<<10, 8);
-    heartbeatFreq = cf->getInt("heartbeatFreq", 1, 3600, 1);
-    heartbeatTimeout = cf->getInt("heartbeatTimeout", 1, 14400, 4);
-    reconnectFreq = cf->getInt("reconnectFreq", 1, 3600, 1);
-    electionTimeout = cf->getInt("electionTimeout", 1, 3600, 8);
+  DBCf(
+      ZuID thread_, ZuID hostID_, unsigned nAccepts_,
+      unsigned heartbeatFreq_, unsigned heartbeatTimeout_,
+      unsigned reconnectFreq_, unsigned electionTimeout_
 #if Zdb_DEBUG
-    debug = cf->getBool("debug");
+      , bool debug_
 #endif
-  }
+      ) :
+    thread{ZuMv(thread_)}, hostID{ZuMv(hostID_)}, nAccepts{nAccepts_},
+    heartbeatFreq{heartbeatFreq_}, heartbeatTimeout{heartbeatTimeout_},
+    reconnectFreq{reconnectFreq_}, electionTimeout{electionTimeout_}
+#if Zdb_DEBUG
+    , debug{debug_}
+#endif
+    { }
+  DBCf(const ZfCf::AnyNode *cf);
   DBCf(DBCf &&) = default;
   DBCf &operator =(DBCf &&) = default;
 
@@ -1648,6 +1690,48 @@ struct DBCf {
     return &node->val();
   }
 };
+
+ZfStruct((DBCf, Cf),
+  (((thread),		(Ctor<0>, Required)),		(String)),
+  (((hostID),		(Ctor<1>)),			(String)),
+  (((nAccepts),		(Ctor<2>, (Range<1U, 1U<<10U>))),
+    (UInt32, 8)),
+  (((heartbeatFreq),	(Ctor<3>, (Range<1U, 3600U>))),
+    (UInt32, 1)),
+  (((heartbeatTimeout),	(Ctor<4>, (Range<1U, 14400U>))),
+    (UInt32, 4)),
+  (((reconnectFreq),	(Ctor<5>, (Range<1U, 3600U>))),
+    (UInt32, 1)),
+  (((electionTimeout),	(Ctor<6>, (Range<1U, 3600U>))),
+    (UInt32, 8))
+#if Zdb_DEBUG
+  ,
+  (((debug),		(Ctor<7>)),			(Bool))
+#endif
+);
+
+inline DBCf::DBCf(const ZfCf::AnyNode *cf) :
+  DBCf{ZfCf::handler<DBCf>(cf).ctor()}
+{
+  storeCf = cf->resolve("store");
+  auto tables = cf->resolve("tables");
+  if (!tables)
+    throw ZfCf_EXCEPT(ZfCfError::required(cf, "tables"));
+  if (!tables->has<ZfCf::AnyNode::Object>())
+    throw ZfCf_EXCEPT(ZfCfError::badType(tables, "object"));
+  for (auto &field: tables->data<ZfCf::AnyNode::Object>())
+    tableCfs.addNode(
+      new TableCfs::Node{field.p<0>(), field.p<1>()});
+
+  auto hosts = cf->resolve("hosts");
+  if (!hosts)
+    throw ZfCf_EXCEPT(ZfCfError::required(cf, "hosts"));
+  if (!hosts->has<ZfCf::AnyNode::Object>())
+    throw ZfCf_EXCEPT(ZfCfError::badType(hosts, "object"));
+  for (auto &field: hosts->data<ZfCf::AnyNode::Object>())
+    hostCfs.addNode(
+      new HostCfs::Node{field.p<0>(), field.p<1>()});
+}
 
 // --- DB
 

@@ -22,7 +22,6 @@
 
 #include <zlib/ZfbStruct.hh>
 
-#include <zlib/ZvCf.hh>
 #include <zlib/ZvRAG.hh>
 
 #include <zlib/ZdbTypes.hh>
@@ -49,7 +48,7 @@ struct DBTable {
 
   Name			name;				// primary key
   uint32_t		nShards = 0;
-  ZvCfStringVec		threads;
+  ZtArray<ZtString<>>	threads;
   uint64_t		count = 0;			// dynamic
   uint64_t		cacheLoads = 0;			// dynamic (*)
   uint64_t		cacheMisses = 0;		// dynamic (*)

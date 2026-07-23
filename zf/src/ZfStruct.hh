@@ -60,8 +60,8 @@
 // DateTimeVec
 // 
 // ZfVField provides run-time introspection via a monomorphic
-// (aka type-erased) type - virtual polymorphism and RTTI are intentionally
-// avoided:
+// (type-erased) type - virtual polymorphism and RTTI are
+// intentionally avoided:
 // - if ZfVField were virtually polymorphic, passing it to dynamically
 //   loaded libraries (e.g. data store adapters performing serdes) would
 //   entail a far more complex type hierarchy with diamond-shaped

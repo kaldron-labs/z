@@ -1335,7 +1335,14 @@ ZuDerive(StoreTbls_,
     ZmHashNode<StoreTbl_,
       ZmHashKey<StoreTbl_IDAxor<StoreTbl_>,
 	ZmHashLock<ZmPLock,
-	  ZmHashHeapID<"ZdbMem.StoreTbl">>>>>));
+	ZmHashHeapID<"ZdbMem.StoreTbl">>>>>));
+
+struct MemStoreCf {
+  ZtString<> thread;
+};
+
+ZfStruct((MemStoreCf, Cf),
+  (((thread), (Required)), (String)));
 
 template <typename StoreTbl_>
 class Store_ : public Zdb_::Store, public Store__ {
@@ -1346,11 +1353,13 @@ private:
   using StoreTblNode = typename StoreTbls::Node;
 
 public:
-  InitResult init(ZvCf *cf, ZiMultiplex *mx, FailFn failFn) {
+  InitResult init(
+      const ZfCf::AnyNode *cf, ZiMultiplex *mx, FailFn failFn) {
     if (!m_storeTbls) m_storeTbls = new StoreTbls{};
     m_failFn = ZuMv(failFn);
     try {
-      const auto &tid = cf->get<true>("thread");
+      auto config = ZfCf::handler<MemStoreCf>(cf).ctor();
+      const auto &tid = config.thread;
       auto sid = mx->sid(tid);
       if (!sid ||
 	  sid > mx->params().nThreads() ||

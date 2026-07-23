@@ -10,7 +10,7 @@
 
 #include <zlib/ZmTrap.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/ZdbMemStore.hh>
@@ -49,11 +49,10 @@ void sigint()
   done.post();
 }
 
-ZmRef<ZvCf> inlineCf(ZuCSpan s)
+ZuPtr<const ZfCf::AnyNode> inlineCf(ZuCSpan s)
 {
-  ZmRef<ZvCf> cf = new ZvCf{};
-  cf->fromString(s);
-  return cf;
+  auto scan = ZfCf::scan(s);
+  return ZuMv(scan.p<1>());
 }
 
 void gtfo()
@@ -242,30 +241,28 @@ Test test;
 
 int main()
 {
-  ZmRef<ZvCf> cf;
+  ZuPtr<const ZfCf::AnyNode> cf;
 
   try {
     cf = inlineCf(
-      "zdb {\n"
-      "  thread zdb\n"
-      "  store { thread zdb_mem }\n"
-      "  hostID 0\n"
-      "  hosts {\n"
-      "    0 { standalone 1 }\n"
-      "  }\n"
-      "  tables { }\n"
-      "  debug 1\n"
-      "}\n"
-      "mx {\n"
-      "  nThreads 4\n"
-      "  threads {\n"
-      "    1 { name rx isolated true }\n"
-      "    2 { name tx isolated true }\n"
-      "    3 { name zdb isolated true }\n"
-      "    4 { name zdb_mem isolated true }\n"
-      "  }\n"
-      "  rxThread rx\n"
-      "  txThread tx\n"
+      "zdb: {\n"
+      "  thread: zdb,\n"
+      "  store: {thread: zdb_mem},\n"
+      "  hostID: 0,\n"
+      "  hosts: {0: {standalone: true}},\n"
+      "  tables: {},\n"
+      "  debug: true\n"
+      "},\n"
+      "mx: {\n"
+      "  nThreads: 4,\n"
+      "  threads: {\n"
+      "    1: {name: rx, isolated: true},\n"
+      "    2: {name: tx, isolated: true},\n"
+      "    3: {name: zdb, isolated: true},\n"
+      "    4: {name: zdb_mem, isolated: true}\n"
+      "  },\n"
+      "  rxThread: rx,\n"
+      "  txThread: tx\n"
       "}\n"
     );
 
@@ -288,13 +285,13 @@ int main()
   ZmTrap::trap();
 
   try {
-    mx = new ZiMultiplex{ZvMxParams{"mx", cf->getCf<true>("mx")}};
+    mx = new ZiMultiplex{ZvMxParams{"mx", cf->resolve("mx")}};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdfseriestest", "multiplexer start failed");
 
     db = new Zdb();
 
-    ZdbCf dbCf{cf->getCf<true>("zdb")};
+    ZdbCf dbCf{cf->resolve("zdb")};
 
     Zdf::Store::dbCf(cf, dbCf);
 
@@ -356,4 +353,3 @@ int main()
 
   return 0;
 }
-

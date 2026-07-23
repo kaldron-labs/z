@@ -32,6 +32,21 @@ namespace Ztel {
 
 enum { ReqIOBufSize = 128 }; // built-in I/O buffer size
 
+struct ClientCf {
+  ZtString<>	rxThread;
+  ZtString<>	txThread;
+  ZtString<>	caPath;
+  unsigned	reconnFreq = 0;
+  unsigned	timeout = 0;
+};
+
+ZfStruct((ClientCf, Cf),
+  (((rxThread), (Required)),				(String)),
+  (((txThread), (Required)),				(String)),
+  (((caPath)),						(String)),
+  (((reconnFreq), ((Range<0U, 3600U>))),		(UInt32)),
+  (((timeout), ((Range<0U, 3600U>))),			(UInt32)));
+
 using ReqIOBufAlloc = ZiIOBufAlloc<ReqIOBufSize>;
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
@@ -65,7 +80,6 @@ using ReqIOBufAlloc = ZiIOBufAlloc<ReqIOBufSize>;
 #include <zlib/Zfb.hh>
 #include <zlib/Ztls.hh>
 
-#include <zlib/ZvCf.hh>
 
 #include <zlib/Zum.hh>
 
@@ -408,8 +422,9 @@ public:
 
 friend TLS;
 
-  void init(ZiMultiplex *mx, const ZvCf *cf) {
+  void init(ZiMultiplex *mx, const ZfCf::AnyNode *cf) {
     ZuCSpan alpn[] = { "zcmd" };
+    auto config = ZfCf::handler<ClientCf>(cf).ctor();
 
     Dispatcher::init();
 
@@ -432,12 +447,12 @@ friend TLS;
 
     if (!TLS::init(
 	  Ztls::ClientParams(
-	    mx, cf->get("rxThread", true), cf->get("txThread", true)).alpn(alpn)
-	    .caPath(cf->get("caPath"))))
+	    mx, config.rxThread, config.txThread).alpn(alpn)
+	    .caPath(config.caPath)))
       ZiLOG(Error, "Ztel", "TLS client initialization failed");
 
-    m_reconnFreq = cf->getInt("reconnFreq", 0, 3600, 0);
-    m_timeout = cf->getInt("timeout", 0, 3600, 0);
+    m_reconnFreq = config.reconnFreq;
+    m_timeout = config.timeout;
   }
 
   void final() {

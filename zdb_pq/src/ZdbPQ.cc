@@ -61,27 +61,29 @@ OIDs::OIDs()
   m_names = names;
 }
 
-InitResult Store::init(ZvCf *cf, ZiMultiplex *mx, FailFn failFn)
+InitResult Store::init(
+    const ZfCf::AnyNode *cf, ZiMultiplex *mx, FailFn failFn)
 {
-  m_cf = cf;
   m_mx = mx;
   m_failFn = ZuMv(failFn);
 
   bool replicated;
 
   try {
-    const auto &tid = cf->get<true>("thread");
+    auto config = ZfCf::handler<StoreCf>(cf).ctor();
+    const auto &tid = config.thread;
     auto sid = m_mx->sid(tid);
     if (!sid ||
 	sid > m_mx->params().nThreads() ||
 	sid == m_mx->rxThread() ||
 	sid == m_mx->txThread())
-      return ZeEXCEPT(Fatal, "ZdbPQ", ([tid = ZvCfString{tid}](auto &s, const auto &) {
+      return ZeEXCEPT(Fatal, "ZdbPQ", ([tid = ZeString{tid}](auto &s, const auto &) {
 	s << "Store::init() failed: invalid thread configuration \""
 	  << tid << '"';
       }));
     m_sid = sid;
-    replicated = cf->getBool("replicated", false);
+    m_connection = ZuMv(config.connection);
+    replicated = config.replicated;
   } catch (const ZeException &e) {
     return ZeEXCEPT(Fatal, "ZdbPQ", ([e](auto &s) {
       s << "Store::init() failed: invalid configuration: " << e;
@@ -172,9 +174,7 @@ bool Store::start_()
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
-  const auto &connection = m_cf->get<true>("connection");
-
-  m_conn = PQconnectdb(connection);
+  m_conn = PQconnectdb(m_connection);
 
   if (!m_conn || PQstatus(m_conn) != CONNECTION_OK) {
     ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {

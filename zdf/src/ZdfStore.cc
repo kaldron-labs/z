@@ -10,9 +10,16 @@
 
 using namespace Zdf;
 
-void Store::dbCf(const ZvCf *cf, ZdbCf &dbCf)
+struct StoreCf {
+  ZtArray<ZtString<>> threads;
+};
+
+ZfStruct((StoreCf, Cf),
+  (((threads)), (StringVec)));
+
+void Store::dbCf(const ZfCf::AnyNode *cf, ZdbCf &dbCf)
 {
-  auto threads = cf->getStringVec<false>("threads");
+  auto config = ZfCf::handler<StoreCf>(cf).ctor();
 
   static ZtArray<ZuCSpan> tables{
     "zdf.series_fixed",
@@ -26,7 +33,7 @@ void Store::dbCf(const ZvCf *cf, ZdbCf &dbCf)
     auto node = dbCf.tableCfs.find(tblID);
     using Node = ZuDecay<decltype(*node)>;
     if (!node) dbCf.tableCfs.addNode(node = new Node{tblID});
-    node->data().threads = threads;
+    node->data().threads = config.threads;
   }
 }
 

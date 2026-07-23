@@ -26,7 +26,7 @@
 #include <zlib/ZiModule.hh>
 #include <zlib/ZiRing.hh>
 
-#include <zlib/ZvCf.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZvCSV.hh>
 #include <zlib/ZvRingParams.hh>
 #include <zlib/ZvMxParams.hh>
@@ -67,6 +67,26 @@ static void usage()
 void sigint();
 
 namespace ZDash {
+
+struct AppCf {
+  ZvRingCf	telRing;
+  int		appRole = ZvTelemetry::AppRole::Dev;
+  ZtString<>	gtkGlade;
+  ZtString<>	gtkStyle;
+  unsigned	gtkRefresh = 1;
+  unsigned	thread = 0;
+  unsigned	gtkThread = 0;
+};
+
+ZfStruct((AppCf, Cf),
+  (((telRing)),						(UDT)),
+  (((appRole), (Enum<ZvTelemetry::AppRole::Map>)),	(Int32,
+      ZvTelemetry::AppRole::Dev)),
+  (((gtkGlade), (Required)),				(String)),
+  (((gtkStyle)),					(String)),
+  (((gtkRefresh), ((Range<1U, 60000U>))),		(UInt32, 1)),
+  (((thread), (Required)),				(UInt32)),
+  (((gtkThread), (Required)),				(UInt32)));
 
 namespace Telemetry {
   struct Watch {
@@ -942,8 +962,9 @@ public:
   using AppItem = TelItem<ZvTelemetry::App>;
   using DBItem = TelItem<ZvTelemetry::DB>;
 
-  void init(ZiMultiplex *mx, const ZvCf *cf) {
-    if (ZmRef<ZvCf> telRingCf = cf->getCf("telRing"))
+  void init(ZiMultiplex *mx, const ZfCf::AnyNode *cf) {
+    auto config = ZfCf::handler<AppCf>(cf).ctor();
+    if (auto telRingCf = cf->resolve("telRing"))
       m_telRingParams.init(telRingCf);
     else
       m_telRingParams.name("zdash").size(131072);
@@ -961,15 +982,13 @@ public:
 	      s << name << ": reset failed - " << Zu::ioResult(r); }));
     }
 
-    m_role = cf->getEnum<ZvTelemetry::AppRole::Map, int>(
-      "appRole", ZvTelemetry::AppRole::Dev);
+    m_role = config.appRole;
 
-    m_gladePath = cf->get("gtkGlade", true);
-    m_stylePath = cf->get("gtkStyle");
+    m_gladePath = ZuMv(config.gtkGlade);
+    m_stylePath = ZuMv(config.gtkStyle);
 
     {
-      int64_t refreshRate =
-	cf->getInt64("gtkRefresh", 1, 60000, 1) * (int64_t)1000000;
+      int64_t refreshRate = config.gtkRefresh * (int64_t)1000000;
       m_refreshQuantum = ZuTime{ZuTime::Nano{refreshRate>>1}};
       if (m_refreshQuantum < mx->params().quantum()) {
 	m_refreshQuantum = mx->params().quantum();
@@ -980,8 +999,16 @@ public:
     unsigned gtkTID;
     {
       unsigned nThreads = mx->params().nThreads();
-      m_sid = cf->getInt<true>("thread", 1, nThreads);
-      gtkTID = cf->getInt<true>("gtkThread", 1, nThreads);
+      if (!config.thread || config.thread > nThreads ||
+	  !config.gtkThread || config.gtkThread > nThreads)
+	throw ZeEXCEPT(Error, "zdash", ([
+	  thread = config.thread, gtkThread = config.gtkThread, nThreads
+	](auto &s) {
+	  s << "thread IDs " << thread << ", " << gtkThread <<
+	    " outside [1, " << nThreads << ']';
+	}));
+      m_sid = config.thread;
+      gtkTID = config.gtkThread;
     }
 
     // both server and client are initialized with the same mx, cf
@@ -1677,15 +1704,21 @@ int main(int argc, char **argv)
   app = new ZDash::App{};
 
   {
-    ZmRef<ZvCf> cf = new ZvCf();
-    cf->set("timeout", "1");
-    cf->set("thread", "3");
-    cf->set("gtkThread", "4");
-    cf->set("gtkGlade", "zdash.glade");
-    if (auto caPath = ::getenv("ZCMD_CAPATH"))
-      cf->set("caPath", caPath);
-    else
-      cf->set("caPath", "/etc/ssl/certs");
+    ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
+    auto caPath = ::getenv("ZCMD_CAPATH");
+    defines->add(
+      ZfCf::DefKey{"CAPATH"},
+      ZfCf::DefVal{caPath ? caPath : "/etc/ssl/certs"});
+    auto scan = ZfCf::scan(
+      "timeout: 1,\n"
+      "thread: 3,\n"
+      "gtkThread: 4,\n"
+      "gtkGlade: zdash.glade,\n"
+      "caPath: ${CAPATH},\n"
+      "rxThread: 1,\n"
+      "txThread: 2\n",
+      {}, ZuMv(defines));
+    auto cf = ZuMv(scan.p<1>());
     try {
       app->init(mx, cf);
     } catch (const ZeException &e) {

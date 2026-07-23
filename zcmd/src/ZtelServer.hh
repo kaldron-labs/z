@@ -34,6 +34,26 @@ namespace Ztel {
 
 using namespace Zcmd;
 
+struct TelemetryCf {
+  ZtString<>	thread;
+  unsigned	minInterval = 10;
+  ZtString<>	alertPrefix = "alerts";
+  unsigned	alertMaxReplay = 10;
+};
+
+ZfStruct((TelemetryCf, Cf),
+  (((thread)),						(String)),
+  (((minInterval), ((Range<1U, 1000000U>))),		(UInt32, 10)),
+  (((alertPrefix)),					(String, "alerts")),
+  (((alertMaxReplay), ((Range<1U, 1000U>))),		(UInt32, 10)));
+
+struct ServerCf {
+  TelemetryCf telemetry;
+};
+
+ZfStruct((ServerCf, Cf),
+  (((telemetry)), (UDT)));
+
 enum { AckIOBufSize = 32 };
 using AckIOBufAlloc = ZiIOBufAlloc<AckIOBufSize>;
 
@@ -207,7 +227,7 @@ public:
       m_watchLists[i].server = this;
   }
 
-  bool init(ZiMultiplex *mx, const ZvCf *cf) {
+  bool init(ZiMultiplex *mx, const ZfCf::AnyNode *cf) {
     return ZmEngine<Server>::lock(
 	ZmEngineState::Stopped, [this, mx, cf]() -> bool {
       m_mx = mx;
@@ -220,15 +240,16 @@ public:
 	return true;
       }
 
-      if (auto thread = cf->get("telemetry:thread", false))
-	m_thread = mx->sid(thread);
+      auto config = ZfCf::handler<ServerCf>(cf).ctor();
+      if (config.telemetry.thread)
+	m_thread = mx->sid(config.telemetry.thread);
       else
 	m_thread = mx->txThread();
 
-      m_minInterval = cf->getInt("telemetry:minInterval", 1, 1000000, 10);
-      m_alertPrefix = cf->get("telemetry:alertPrefix", "alerts");
+      m_minInterval = config.telemetry.minInterval;
+      m_alertPrefix = ZuMv(config.telemetry.alertPrefix);
       // unit of alertMaxReplay is days
-      m_alertMaxReplay = cf->getInt("telemetry:alertMaxReplay", 1, 1000, 10);
+      m_alertMaxReplay = config.telemetry.alertMaxReplay;
 
       return true;
     });
