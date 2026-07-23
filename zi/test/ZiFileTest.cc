@@ -11,6 +11,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiFileTxStream.hh>
 
 #include "ZiTestResidue.hh"
 
@@ -338,6 +339,44 @@ void testNegativeOpen()
   ZuCheck(f.open(ZiFile::append(g_root, "does-not-exist"), ZiFile::ReadOnly, 0777) == Zi::IOError);
 }
 
+void testTxStream()
+{
+  ZuTestScope(testTxStream);
+
+  cleanupFiles();
+  ZiFile file;
+  ZuCHECK(file.open(g_foo, ZiFile::Write | ZiFile::GC) == Zi::OK,
+    "open failed: ", file.error());
+
+  using Stream = ZiFileTxStream<ZiFileTxBufSize<8>>;
+  static_assert(Stream::maxSize == 8);
+  static_assert(
+    ZiFileTxStream<ZiFileTxBufSize<(16<<10)>>::maxSize == (16<<10));
+  {
+    Stream stream{file};
+    stream << ZuCSpan{"12345678"};
+    ZuCheck(file.size() == 0);
+
+    stream << 'A';
+    ZuCheck(file.size() == 8);
+
+    stream << ZuCSpan{"0123456789"};
+    ZuCheck(file.size() == 19);
+
+    stream << 'x' << '7';
+  }
+  ZuCheck(file.size() == 21);
+  file.close();
+  ZuCHECK(file.open(g_foo, ZiFile::ReadOnly | ZiFile::GC) == Zi::OK,
+    "reopen failed: ", file.error());
+
+  char buf[24] = {};
+  auto n = file.read(buf, sizeof(buf));
+  ZuCheck(n == 21);
+  ZuCSpan output{buf, unsigned(n)};
+  ZuCheck(output == "12345678A0123456789x7");
+}
+
 void testOpenAtNoFollowAndStat()
 {
   ZuTestScope(testOpenAtNoFollowAndStat);
@@ -417,6 +456,7 @@ int main(int argc, char **argv)
   ZuTestCall(testMMapSpans);
   ZuTestCall(testMetadataAndPathHelpers);
   ZuTestCall(testNegativeOpen);
+  ZuTestCall(testTxStream);
   ZuTestCall(testOpenAtNoFollowAndStat);
   cleanupFiles();
   return 0;
