@@ -28,6 +28,8 @@ class Link : public ZmPolymorph {
 template <typename, typename>
 friend class Server;
 public:
+  using StreamType = Zquic::StreamType;
+
   using Self = Link<App, Impl, TxBufAlloc_, Stream_>;
   using TxBufAlloc = TxBufAlloc_;
   using Stream = Stream_;
@@ -110,22 +112,22 @@ public:
   bool closed() const { return m_appClose.closed; }
   uint64_t closeError() const { return m_appClose.error; }
   uint64_t streamCount() const { return m_streams->count_(); }
-  uint64_t peerStreamLimit(Zi::StreamType::T type) const {
+  uint64_t peerStreamLimit(Zquic::StreamType::T type) const {
     return m_peerLimit[type].limit();
   }
-  uint64_t localStreamsOpened(Zi::StreamType::T type) const {
+  uint64_t localStreamsOpened(Zquic::StreamType::T type) const {
     return m_peerLimit[type].opened();
   }
-  uint64_t queuedLocalStreams(Zi::StreamType::T type) const {
+  uint64_t queuedLocalStreams(Zquic::StreamType::T type) const {
     return m_queued[type];
   }
-  uint64_t localStreamLimit(Zi::StreamType::T type) const {
+  uint64_t localStreamLimit(Zquic::StreamType::T type) const {
     return m_localLimit[type].limit();
   }
-  uint64_t peerStreamsOpened(Zi::StreamType::T type) const {
+  uint64_t peerStreamsOpened(Zquic::StreamType::T type) const {
     return m_localLimit[type].opened();
   }
-  bool localStreamsBlocked(Zi::StreamType::T type) const {
+  bool localStreamsBlocked(Zquic::StreamType::T type) const {
     return m_queued[type] != 0;
   }
   unsigned queuedControlFrames() const {
@@ -151,17 +153,17 @@ public:
   uint64_t rxDataCreditLimit() const { return m_rxDataCredit.limit(); }
   uint64_t rxDataCreditAvailable() const { return m_rxDataCredit.available(); }
 
-  void setPeerStreamLimit(Zi::StreamType::T type, uint64_t limit) {
+  void setPeerStreamLimit(Zquic::StreamType::T type, uint64_t limit) {
     m_peerLimit[type].set(limit);
   }
-  void setLocalStreamLimit(Zi::StreamType::T type, uint64_t limit) {
+  void setLocalStreamLimit(Zquic::StreamType::T type, uint64_t limit) {
     m_localLimit[type].set(limit);
   }
 
   bool rxApplyMaxStreams_(const Frame &frame) {
     if (!validateMaxStreams_(frame)) return false;
     uint64_t value = frame.value;
-    Zi::StreamType::T type = frame.streamType;
+    Zquic::StreamType::T type = frame.streamType;
     app()->txRun([link = impl(), type, value]() mutable {
       if (link->disconnecting_()) return;
       link->txApplyMaxStreams_(type, value);
@@ -211,7 +213,7 @@ public:
     return packetFrameLegal_(level, frame, earlyData);
   }
 
-  StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
+  StreamRef stream(Zquic::StreamType::T type = Zquic::StreamType::Duplex) {
     if (!m_peerLimit[type].open()) {
       ++m_queued[type];
       queueBlocked_(
@@ -227,7 +229,7 @@ public:
     if (StreamID::server(id) == m_isServer) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
     if (closedStreamID_(id)) return nullptr;
-    Zi::StreamType::T type = StreamID::uni(id);
+    Zquic::StreamType::T type = StreamID::uni(id);
     uint64_t opened = StreamID::ordinal(id) + 1;
     if (!m_localLimit[type].allowsTo(opened)) return nullptr;
 
@@ -405,9 +407,10 @@ public:
   void newToken_(ZuBSpan) { }
 
 protected:
-  void closeState_(uint64_t errorCode = 0) {
+  void closeState_(uint64_t errorCode = 0, bool application = false) {
     m_appClose.error = errorCode;
     m_appClose.closed = true;
+    m_appClose.application = application;
     closeLinkState_();
     cancelTimers();
   }
@@ -420,7 +423,7 @@ protected:
     return n > 0 && build.commitScratch(unsigned(n));
   }
   bool appCloseOnDisconnect_() const {
-    return app()->stopping();
+    return m_appClose.application || app()->stopping();
   }
   bool sendCloseFrame_(ZiSockAddr, bool = false) { return false; }
 
@@ -487,6 +490,7 @@ protected:
   };
   struct AppClose {
     bool		closed = false;
+    bool		application = false;
     uint64_t		error = 0;
   };
   struct AckSnapshot {
@@ -658,7 +662,7 @@ protected:
   }
   bool queueBlocked_(
     FrameType::T type, uint64_t streamID, uint64_t value,
-    Zi::StreamType::T streamType = Zi::StreamType::Duplex) {
+    Zquic::StreamType::T streamType = Zquic::StreamType::Duplex) {
     ControlFrame frame = ControlFrame::blocked(
       type, streamID, value, streamType);
     if (!blockedFrameNeeded_(frame)) return false;
@@ -815,11 +819,11 @@ protected:
     stream->extendTxCredit(value);
     stream->clearControl(SentFrameRef::blocked(
       FrameType::StreamDataBlocked, streamID,
-      stream->lastBlocked(), Zi::StreamType::Duplex));
+      stream->lastBlocked(), Zquic::StreamType::Duplex));
     if (streamTxPending_(stream)) streamWritable_(stream);
     return true;
   }
-  bool txApplyMaxStreams_(Zi::StreamType::T type, uint64_t value) {
+  bool txApplyMaxStreams_(Zquic::StreamType::T type, uint64_t value) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC MAX_STREAMS processing outside Tx thread", return false);
     m_peerLimit[type].extend(value);
@@ -2663,8 +2667,8 @@ protected:
     m_txDataCredit = {};
     m_rxDataCredit = {};
     m_lastDataBlocked = U64Null;
-	    m_lastStreamsBlocked[Zi::StreamType::Duplex] = U64Null;
-	    m_lastStreamsBlocked[Zi::StreamType::Simplex] = U64Null;
+	    m_lastStreamsBlocked[Zquic::StreamType::Duplex] = U64Null;
+	    m_lastStreamsBlocked[Zquic::StreamType::Simplex] = U64Null;
 	    m_rxEarlyData = {};
 	    clearZeroRTTParams_();
 	    m_crypto.resetTLS();
@@ -2729,14 +2733,14 @@ protected:
   void pathPromoted_() { }
   void dataBlocked_(uint64_t maximum) {
     impl()->flowBlocked(
-      FrameType::DataBlocked, 0, Zi::StreamType::Duplex, maximum);
+      FrameType::DataBlocked, 0, Zquic::StreamType::Duplex, maximum);
   }
   void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
     impl()->flowBlocked(
       FrameType::StreamDataBlocked, streamID,
-      Zi::StreamType::Duplex, maximum);
+      Zquic::StreamType::Duplex, maximum);
   }
-  void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
+  void streamsBlocked_(Zquic::StreamType::T type, uint64_t maximum) {
     impl()->flowBlocked(FrameType::StreamsBlocked, 0, type, maximum);
   }
   void streamOpen(StreamRef, bool) { ++m_rxDiag.unhandledAppEvents; }
@@ -2758,7 +2762,7 @@ protected:
     ++m_txDiag.unhandledAppEvents;
   }
   void flowBlocked(
-    FrameType::T, uint64_t, Zi::StreamType::T, uint64_t) {
+    FrameType::T, uint64_t, Zquic::StreamType::T, uint64_t) {
     ++m_txDiag.unhandledAppEvents;
   }
   void transportClose(FrameType::T, uint64_t) {
@@ -2876,25 +2880,24 @@ protected:
       action = CIDAction::Retired,
       reason = CIDReason::PeerRequest,
       cxnID = cid->id,
-	      sequence = cid->sequence,
-	      length = qlogCount_(cid->id.length()),
-	      local = true,
-	      associated = cid->associated,
-	      resetToken = cid->resetToken.valid(),
-	      linkInfo = linkInfo_()
-	    ](auto &o, ZuTime time) {
-	      CIDEvt event{
+      sequence = cid->sequence,
+      length = qlogCount_(cid->id.length()),
+      local = true,
+      associated = cid->associated,
+      resetToken = cid->resetToken.valid(),
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      CIDEvt event{
 	.cxnID = cxnID,
-		.linkInfo = linkInfo
-	      ,
+	.linkInfo = linkInfo,
 	.sequence = sequence,
-	        .kind = CIDKind::CxnID,
-        .action = CIDAction::T(action),
-        .reason = CIDReason::T(reason),
-		.length = length,
-		.local = local,
-		.associated = associated,
-		.resetToken = resetToken};
+	.kind = CIDKind::CxnID,
+	.action = CIDAction::T(action),
+	.reason = CIDReason::T(reason),
+	.length = length,
+	.local = local,
+	.associated = associated,
+	.resetToken = resetToken};
 
       o.logCIDUpdated(event, time);
     }));
@@ -2921,8 +2924,8 @@ protected:
     return true;
   }
   bool issueMigrationCIDs_() {
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC migration CID issuance outside Tx thread", return false);
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC migration CID issuance outside Rx thread", return false);
     if (!established_() ||
 	app()->migrationMode() != MigrationMode::Active ||
 	!app()->migCIDRes())
@@ -2948,7 +2951,7 @@ protected:
       if (!CxnIDGen::random(id) || !token.generate()) return false;
       uint64_t seq = ++sequence;
       if (!addLocalCID_(id, seq, token)) continue;
-      txQueueControl_(ControlFrame::newCxnID(seq, 0, id, token));
+      queueControl_(ControlFrame::newCxnID(seq, 0, id, token));
       issued = true;
       ++active;
     }
@@ -2957,11 +2960,11 @@ protected:
     return active >= target;
   }
   void scheduleMigrationCIDs_() {
-    if (txInvoked_()) {
+    if (rxInvoked_()) {
       if (issueMigrationCIDs_()) impl()->migrationCIDsReady_();
       return;
     }
-    app()->txRun([link = impl()]() mutable {
+    app()->rxRun([link = impl()]() mutable {
       if (link->disconnecting_()) return;
       if (link->issueMigrationCIDs_()) link->migrationCIDsReady_();
     });
@@ -3002,25 +3005,24 @@ protected:
 	  cxnID = cid->id,
 	  sequence = cid->sequence,
 	  attemptID = m_migration.attemptID,
-		  length = qlogCount_(cid->id.length()),
-		  local = false,
-		  associated = cid->associated,
-		  resetToken = cid->resetToken.valid(),
-		  linkInfo = linkInfo_()
-		](auto &o, ZuTime time) {
-		  CIDEvt event{
+	  length = qlogCount_(cid->id.length()),
+	  local = false,
+	  associated = cid->associated,
+	  resetToken = cid->resetToken.valid(),
+	  linkInfo = linkInfo_()
+	](auto &o, ZuTime time) {
+	  CIDEvt event{
 	    .cxnID = cxnID,
-	    .linkInfo = linkInfo
-		  ,
+	    .linkInfo = linkInfo,
 	    .sequence = sequence,
 	    .attemptID = attemptID,
 	    .kind = CIDKind::CxnID,
 	    .action = CIDAction::T(action),
 	    .reason = CIDReason::T(reason),
-		    .length = length,
-		    .local = local,
-		    .associated = associated,
-		    .resetToken = resetToken};
+	    .length = length,
+	    .local = local,
+	    .associated = associated,
+	    .resetToken = resetToken};
 
 	  o.logCIDUpdated(event, time);
 	}));
@@ -3044,24 +3046,23 @@ protected:
 	reason = CIDReason::RouteInstall,
 	cxnID = cid.id,
 	sequence = cid.sequence,
-		length = qlogCount_(cid.id.length()),
-		local = true,
-		associated = cid.associated,
-		resetToken = cid.resetToken.valid(),
-		linkInfo = linkInfo_()
-	      ](auto &o, ZuTime time) {
-		CIDEvt event{
+	length = qlogCount_(cid.id.length()),
+	local = true,
+	associated = cid.associated,
+	resetToken = cid.resetToken.valid(),
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	CIDEvt event{
 	  .cxnID = cxnID,
-		  .linkInfo = linkInfo
-		,
+	  .linkInfo = linkInfo,
 	  .sequence = sequence,
 	  .kind = CIDKind::CxnID,
 	  .action = CIDAction::T(action),
 	  .reason = CIDReason::T(reason),
-		  .length = length,
-		  .local = local,
-		  .associated = associated,
-		  .resetToken = resetToken};
+	  .length = length,
+	  .local = local,
+	  .associated = associated,
+	  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -3079,24 +3080,23 @@ protected:
 	reason = CIDReason::RouteRetire,
 	cxnID = cid.id,
 	sequence = cid.sequence,
-		length = qlogCount_(cid.id.length()),
-		local = true,
-		associated = cid.associated,
-		resetToken = cid.resetToken.valid(),
-		linkInfo = linkInfo_()
-	      ](auto &o, ZuTime time) {
-		CIDEvt event{
+	length = qlogCount_(cid.id.length()),
+	local = true,
+	associated = cid.associated,
+	resetToken = cid.resetToken.valid(),
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	CIDEvt event{
 	  .cxnID = cxnID,
-		  .linkInfo = linkInfo
-		,
+	  .linkInfo = linkInfo,
 	  .sequence = sequence,
 	  .kind = CIDKind::CxnID,
 	  .action = CIDAction::T(action),
 	  .reason = CIDReason::T(reason),
-		  .length = length,
-		  .local = local,
-		  .associated = associated,
-		  .resetToken = resetToken};
+	  .length = length,
+	  .local = local,
+	  .associated = associated,
+	  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -3114,24 +3114,23 @@ protected:
 	reason = CIDReason::RouteTombstone,
 	cxnID = cid.id,
 	sequence = cid.sequence,
-		length = qlogCount_(cid.id.length()),
-		local = true,
-		associated = cid.associated,
-		resetToken = cid.resetToken.valid(),
-		linkInfo = linkInfo_()
-	      ](auto &o, ZuTime time) {
-		CIDEvt event{
+	length = qlogCount_(cid.id.length()),
+	local = true,
+	associated = cid.associated,
+	resetToken = cid.resetToken.valid(),
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	CIDEvt event{
 	  .cxnID = cxnID,
-		  .linkInfo = linkInfo
-		,
+	  .linkInfo = linkInfo,
 	  .sequence = sequence,
 	  .kind = CIDKind::CxnID,
 	  .action = CIDAction::T(action),
 	  .reason = CIDReason::T(reason),
-		  .length = length,
-		  .local = local,
-		  .associated = associated,
-		  .resetToken = resetToken};
+	  .length = length,
+	  .local = local,
+	  .associated = associated,
+	  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
       }));
@@ -3378,9 +3377,9 @@ protected:
     m_transportParams.disableActiveMigration =
       app->migrationMode() != MigrationMode::Active;
     m_rxDataCredit.set(m_transportParams.initialMaxData);
-    m_localLimit[Zi::StreamType::Duplex].set(
+    m_localLimit[Zquic::StreamType::Duplex].set(
       m_transportParams.initialMaxStreamsBidi);
-    m_localLimit[Zi::StreamType::Simplex].set(
+    m_localLimit[Zquic::StreamType::Simplex].set(
       m_transportParams.initialMaxStreamsUni);
   }
 
@@ -3481,8 +3480,8 @@ protected:
     if (m_crypto.peerParamsSet()) {
       const auto &params = m_crypto.peerParams();
       m_txDataCredit.set(params.initialMaxData);
-      m_peerLimit[Zi::StreamType::Duplex].set(params.initialMaxStreamsBidi);
-      m_peerLimit[Zi::StreamType::Simplex].set(params.initialMaxStreamsUni);
+      m_peerLimit[Zquic::StreamType::Duplex].set(params.initialMaxStreamsBidi);
+      m_peerLimit[Zquic::StreamType::Simplex].set(params.initialMaxStreamsUni);
       ZquicLOG(app()->qlogTrace(), ([
 	origDCID = params.origDCID,
 	initialSCID = params.initialSCID,
@@ -8291,11 +8290,11 @@ private:
     }
   }
 
-  StreamRef openLocalStream_(Zi::StreamType::T type) {
+  StreamRef openLocalStream_(Zquic::StreamType::T type) {
     return newStream_(nextStreamID_(type));
   }
 
-  unsigned openQueued_(Zi::StreamType::T type, unsigned limit) {
+  unsigned openQueued_(Zquic::StreamType::T type, unsigned limit) {
     uint64_t &queued = m_queued[type];
     unsigned opened = 0;
     while (queued && opened < limit && m_peerLimit[type].open()) {
@@ -8315,8 +8314,8 @@ private:
       link->streamed(ZuMv(stream));
     });
   }
-  void scheduleOpenQueued_(Zi::StreamType::T type) {
-    unsigned i = type == Zi::StreamType::Simplex ? 1 : 0;
+  void scheduleOpenQueued_(Zquic::StreamType::T type) {
+    unsigned i = type == Zquic::StreamType::Simplex ? 1 : 0;
     if (!m_queued[type] || m_peerLimit[type].blocked() ||
 	m_openQueuedPending[i])
       return;
@@ -8339,8 +8338,8 @@ private:
   static bool localInitiated_(uint64_t id, bool isServer) {
     return StreamID::server(id) == isServer;
   }
-  static unsigned streamTypeIndex_(Zi::StreamType::T type) {
-    return type == Zi::StreamType::Simplex ? 1 : 0;
+  static unsigned streamTypeIndex_(Zquic::StreamType::T type) {
+    return type == Zquic::StreamType::Simplex ? 1 : 0;
   }
   bool canPeerSend_(uint64_t id) const {
     return !StreamID::uni(id) || !localInitiated_(id, m_isServer);
@@ -8351,7 +8350,7 @@ private:
   bool peerOpenedStreamID_(uint64_t id) const {
     if (id > uint64_t(INT64_MAX) || localInitiated_(id, m_isServer))
       return false;
-    Zi::StreamType::T type = StreamID::uni(id);
+    Zquic::StreamType::T type = StreamID::uni(id);
     return StreamID::ordinal(id) < m_localLimit[type].opened();
   }
   bool localOpenedStreamID_(uint64_t id) const {
@@ -8593,7 +8592,7 @@ private:
     if (maximum <= m_rxDataCredit.limit()) return;
     m_rxDataCredit.extend(maximum);
     queueFlowUpdate_(
-      FlowUpdate{FrameType::MaxData, 0, maximum, Zi::StreamType::Duplex});
+      FlowUpdate{FrameType::MaxData, 0, maximum, Zquic::StreamType::Duplex});
   }
   void maybeExtendMaxStreamData_(const StreamRef &stream) {
     if (!stream || !stream->readOpen()) return;
@@ -8606,7 +8605,7 @@ private:
     stream->extendRxCredit(maximum);
     queueFlowUpdate_(FlowUpdate{
       FrameType::MaxStreamData, uint64_t(stream->id()), maximum,
-      Zi::StreamType::Duplex});
+      Zquic::StreamType::Duplex});
   }
   bool returnStreamCredit_(const StreamRef &stream) {
     if (!stream || stream->id() < 0 || stream->creditReturned())
@@ -8616,7 +8615,7 @@ private:
     if (!stream->rxComplete() && !stream->resetReceived()) return false;
     if (!StreamID::uni(id) && !stream->finDequeued() && !stream->resetSent())
       return false;
-    Zi::StreamType::T type = StreamID::uni(id);
+    Zquic::StreamType::T type = StreamID::uni(id);
     StreamLimit &limit = m_localLimit[type];
     if (limit.limit() >= MaxStreamCount) return false;
     uint64_t next = limit.limit() + 1;
@@ -8685,7 +8684,7 @@ private:
     uint64_t id = uint64_t(stream->id());
     if (localInitiated_(id, m_isServer)) return true;
     if (stream->creditReturned()) return true;
-    Zi::StreamType::T type = StreamID::uni(id);
+    Zquic::StreamType::T type = StreamID::uni(id);
     return m_localLimit[type].limit() >= MaxStreamCount;
   }
   StreamRef newStream_(int64_t id) {
@@ -8738,12 +8737,12 @@ private:
       m_transportParams.initialMaxStreamDataBidiRemote;
   }
 
-  int64_t nextStreamID_(Zi::StreamType::T type) {
+  int64_t nextStreamID_(Zquic::StreamType::T type) {
     uint64_t &ordinal =
-      type == Zi::StreamType::Simplex ? m_nextUniOrdinal : m_nextBidiOrdinal;
+      type == Zquic::StreamType::Simplex ? m_nextUniOrdinal : m_nextBidiOrdinal;
     uint64_t id = (ordinal++ << 2) |
       (m_isServer ? 1U : 0U) |
-      (type == Zi::StreamType::Simplex ? 2U : 0U);
+      (type == Zquic::StreamType::Simplex ? 2U : 0U);
     ZiAssert(id <= uint64_t(INT64_MAX), "Zquic", (id),
       "stream ID overflow id=" << id, return INT64_MAX);
     return int64_t(id);

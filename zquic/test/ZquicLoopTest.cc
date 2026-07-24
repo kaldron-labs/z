@@ -150,9 +150,9 @@ void testHandshakeStreamsAndClose()
   App app;
   ZmRef<TestLink> client = new TestLink{&app};
   ZmRef<TestLink> server = new TestLink{&app, true};
-  auto c0 = client->stream(Zi::StreamType::Duplex);
-  auto c1 = client->stream(Zi::StreamType::Simplex);
-  auto s0 = server->stream(Zi::StreamType::Duplex);
+  auto c0 = client->stream(Zquic::StreamType::Duplex);
+  auto c1 = client->stream(Zquic::StreamType::Simplex);
+  auto s0 = server->stream(Zquic::StreamType::Duplex);
   ZuCHECK(c0->id() == 0 && c1->id() == 2 && s0->id() == 1,
     "loop stream IDs mismatch");
   {
@@ -177,7 +177,7 @@ void testSplitReorderedStreamFrames()
   unsigned used = 0;
   App app;
   ZmRef<TestLink> client = new TestLink{&app};
-  auto stream = client->stream(Zi::StreamType::Duplex);
+  auto stream = client->stream(Zquic::StreamType::Duplex);
 
   auto packet = streamPkt_(
     stream->id(), sizeof(p0), bytes_(p1, sizeof(p1)), false, f, used);

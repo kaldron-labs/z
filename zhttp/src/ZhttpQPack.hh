@@ -18,16 +18,18 @@
 
 #include <zlib/ZmLHash.hh>
 
-#include <zlib/ZtEnum.hh>
-#include <zlib/ZtString.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtEnum.hh>
+#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtString.hh>
 
 #include <zlib/ZiAssert.hh>
-#include <zlib/ZtLocalArray.hh>
 
 #include <zlib/ZhttpHPack.hh>
 
-namespace Zhttp { namespace H3 {
+namespace Zhttp {
+
+namespace H3 {
 
 using HdrBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HdrBytes">>;
 
@@ -77,7 +79,8 @@ using HeaderName = ZtString<ZtStringHeapID<"Zhttp.H3.HeaderName">>;
 using QPackNameList =
   ZtArray<HeaderName, ZtArrayHeapID<"Zhttp.H3.Params.Names">>;
 
-struct Params {
+class Params {
+public:
   Params &&maxHeaderListSize(unsigned v) {
     maxHeaderListSize_ = v;
     return ZuMv(*this);
@@ -148,6 +151,14 @@ using QPackRxArray =
   ZtArray<QPackRxEntry, ZtArrayHeapID<"Zhttp.H3.QPackRx.Array">>;
 
 struct QPackRxTable {
+  QPackRxArray	entries;	// oldest-to-newest
+  uint32_t	head_ = 0;
+  uint64_t	baseAbs_ = 0;
+  uint64_t	insertCount_ = 0;
+  uint32_t	capacityBytes_ = 0;
+  uint32_t	maxCapacityBytes_ = 0;
+  uint32_t	usedBytes_ = 0;
+
   // Connection-affine Rx state. Callers must serialize access from the owning
   // receive path; table storage is deliberately unsynchronized.
   bool setCapacity(uint32_t);
@@ -168,14 +179,6 @@ struct QPackRxTable {
   uint32_t used() const { return usedBytes_; }
   uint32_t count() const { return entries.length() - head_; }
   uint32_t maxEntries() const { return maxCapacityBytes_>>5; }
-
-  QPackRxArray	entries;	// oldest-to-newest
-  uint32_t	head_ = 0;
-  uint64_t	baseAbs_ = 0;
-  uint64_t	insertCount_ = 0;
-  uint32_t	capacityBytes_ = 0;
-  uint32_t	maxCapacityBytes_ = 0;
-  uint32_t	usedBytes_ = 0;
 };
 
 static inline const char *QPackTxHashID() { return "Zhttp.H3.QPackTx"; }
@@ -259,6 +262,17 @@ using QPackTxSections =
       ZmLHashID<QPackTxSectionsID>>>;
 
 struct QPackTxTable {
+  ZmRef<QPackTxHash>	hash;
+  QPackTxOrder		order;
+  ZmRef<QPackTxSections> sections;
+  uint32_t		orderHead_ = 0;
+  uint64_t		insertCount_ = 0;
+  uint64_t		knownReceivedCount_ = 0;
+  uint32_t		capacityBytes_ = 0;
+  uint32_t		maxCapacityBytes_ = 0;
+  uint32_t		usedBytes_ = 0;
+  bool			capacitySent = false;
+
   // Connection-affine Tx state. Callers must serialize access from the owning
   // transmit path.
   QPackTxTable() :
@@ -277,6 +291,7 @@ struct QPackTxTable {
   bool insertCountIncrement(uint64_t);
   bool sectionAck(uint64_t);
   bool streamCancellation(uint64_t);
+  bool applyDecoder(QPackInsn::T, uint64_t);
   bool trackSection(uint64_t, ZuSpan<uint64_t>);
   bool trackSection(uint64_t, QPackTxRefs);
   void compactOrder();
@@ -287,17 +302,6 @@ struct QPackTxTable {
   uint32_t capacity() const { return capacityBytes_; }
   uint32_t maxCapacity() const { return maxCapacityBytes_; }
   uint32_t used() const { return usedBytes_; }
-
-  ZmRef<QPackTxHash> hash;
-  QPackTxOrder	order;
-  ZmRef<QPackTxSections> sections;
-  uint32_t	orderHead_ = 0;
-  uint64_t	insertCount_ = 0;
-  uint64_t	knownReceivedCount_ = 0;
-  uint32_t	capacityBytes_ = 0;
-  uint32_t	maxCapacityBytes_ = 0;
-  uint32_t	usedBytes_ = 0;
-  bool		capacitySent = false;
 };
 
 inline int qpackDecodePrefInt_(
@@ -483,7 +487,8 @@ struct QPack {
   }
 };
 
-struct QPackInsnParser {
+class QPackInsnParser {
+public:
   template <typename Decode, typename Apply>
   bool parse(ZuBSpan span, Decode decode, Apply apply) {
     if (bytes.length() != offset) {
@@ -708,6 +713,8 @@ struct QPackValue_<KV, true> { using T = ZuType<1, KV>; };
 template <typename KV>
 using QPackValue = typename QPackValue_<KV>::T;
 
-}} // namespace Zhttp::H3
+} // namespace H3
+
+} // namespace Zhttp
 
 #endif /* ZhttpQPack_HH */

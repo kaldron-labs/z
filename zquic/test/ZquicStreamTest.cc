@@ -138,19 +138,19 @@ struct TestLink :
   bool queueMaxData(uint64_t value) {
     return Base::txQueueControl_(Zquic::ControlFrame::flowUpdate(
       Zquic::FlowUpdate{
-	Zquic::FrameType::MaxData, 0, value, Zi::StreamType::Duplex}));
+	Zquic::FrameType::MaxData, 0, value, Zquic::StreamType::Duplex}));
   }
   bool queueMaxStreamData(uint64_t streamID, uint64_t value) {
     return Base::txQueueControl_(Zquic::ControlFrame::flowUpdate(
       Zquic::FlowUpdate{
 	Zquic::FrameType::MaxStreamData, streamID, value,
-	Zi::StreamType::Duplex}));
+	Zquic::StreamType::Duplex}));
   }
   bool queueDataBlocked(uint64_t streamID, uint64_t value) {
     return Base::queueBlocked_(
       Zquic::FrameType::StreamDataBlocked, streamID, value);
   }
-  bool queueStreamsBlocked(Zi::StreamType::T type, uint64_t value) {
+  bool queueStreamsBlocked(Zquic::StreamType::T type, uint64_t value) {
     return Base::queueBlocked_(
       Zquic::FrameType::StreamsBlocked, 0, value, type);
   }
@@ -814,13 +814,13 @@ void testStreamIDs()
 
   App app;
   ZmRef<TestLink> client = testLink(&app);
-  auto c0 = client->stream(Zi::StreamType::Duplex);
-  auto c1 = client->stream(Zi::StreamType::Simplex);
+  auto c0 = client->stream(Zquic::StreamType::Duplex);
+  auto c1 = client->stream(Zquic::StreamType::Simplex);
   ZuCHECK(c0->id() == 0 && c1->id() == 2, "client stream IDs mismatch");
 
   ZmRef<TestLink> server = testLink(&app, true);
-  auto s0 = server->stream(Zi::StreamType::Duplex);
-  auto s1 = server->stream(Zi::StreamType::Simplex);
+  auto s0 = server->stream(Zquic::StreamType::Duplex);
+  auto s1 = server->stream(Zquic::StreamType::Simplex);
   ZuCHECK(s0->id() == 1 && s1->id() == 3, "server stream IDs mismatch");
   ZuCHECK(server->findStream(1) == s0, "stream table lookup failed");
 }
@@ -831,7 +831,7 @@ void testStreamFrameDelivery()
 
   App app;
   ZmRef<TestLink> client = testLink(&app);
-  auto stream = client->stream(Zi::StreamType::Duplex);
+  auto stream = client->stream(Zquic::StreamType::Duplex);
 
   Zquic::Frame frame;
   unsigned used = 0;
@@ -875,7 +875,7 @@ void testStreamRxSliceDelivery()
 
   App app;
   ZmRef<TestLink> client = testLink(&app);
-  auto stream = client->stream(Zi::StreamType::Duplex);
+  auto stream = client->stream(Zquic::StreamType::Duplex);
 
   ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
   int n = Zquic::FrameCodec::writeStream(
@@ -910,7 +910,7 @@ void testOutOfOrderStreamDelivery()
 
   App app;
   ZmRef<TestLink> client = testLink(&app);
-  auto stream = client->stream(Zi::StreamType::Duplex);
+  auto stream = client->stream(Zquic::StreamType::Duplex);
 
   Zquic::Frame frame;
   unsigned used = 0;
@@ -945,7 +945,7 @@ void testOutOfOrderStreamDelivery()
     "second reordered STREAM payload mismatch");
   ZuCHECK(rx.empty(), "second reordered STREAM consume failed");
 
-  auto split = client->stream(Zi::StreamType::Duplex);
+  auto split = client->stream(Zquic::StreamType::Duplex);
   diag = {};
   packet = streamPkt_(split->id(), 5, "world", false, frame, used);
   ZuCHECK(packet,
@@ -980,7 +980,7 @@ void testStreamTxRetention()
 
   App app;
   ZmRef<TestLink> client = testLink(&app);
-  auto stream = client->stream(Zi::StreamType::Duplex);
+  auto stream = client->stream(Zquic::StreamType::Duplex);
 
   {
     auto tx = stream->txStream_();
@@ -1039,7 +1039,7 @@ void testStreamTxUnackd()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
   ZuCHECK(stream &&
       stream->recordTxUnackd(10, 10, false) &&
       stream->txUnackdCount() == 1 &&
@@ -1068,7 +1068,7 @@ void testStreamTxUnackdFin()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
   ZuCHECK(stream &&
       stream->recordTxUnackd(20, 5, true) &&
       stream->txUnackdCount() == 1 &&
@@ -1095,7 +1095,7 @@ void testLinkStreamTxUnackdAck()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
 
   link->sendStreamRef(7, stream, 40, 5);
   ZuCHECK(stream->txUnackdCount() == 1 &&
@@ -1117,7 +1117,7 @@ void testStreamRetxUnackdIdempotent()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
 
   link->sendStreamRef(0, stream, 40, 5);
   ZuCHECK(stream->txUnackdCount() == 1 &&
@@ -1195,7 +1195,7 @@ void testStreamPktizer()
 
   App app;
   ZmRef<TestLink> client = testLink(&app);
-  auto stream = client->stream(Zi::StreamType::Duplex);
+  auto stream = client->stream(Zquic::StreamType::Duplex);
   stream->txCredit(6);
   {
     auto tx = stream->txStream_();
@@ -1273,7 +1273,7 @@ void testStreamPktizer()
 	      b, sizeof(b), budget, assembly, *stream, &info),
 	    "packetizer wrote a frame for an empty stream");
 
-  auto blocked = client->stream(Zi::StreamType::Duplex);
+  auto blocked = client->stream(Zquic::StreamType::Duplex);
   blocked->txCredit(7);
   {
     auto tx = blocked->txStream_();
@@ -1289,7 +1289,7 @@ void testStreamPktizer()
       !assembly.streamAdded(),
     "packetizer consumed data without packet budget");
 
-  auto split = client->stream(Zi::StreamType::Duplex);
+  auto split = client->stream(Zquic::StreamType::Duplex);
   split->txCredit(10);
   {
     auto tx = split->txStream_();
@@ -1370,8 +1370,8 @@ void testMultiFrameAssembly()
     "runtime did not assemble multiple control frames into one packet");
 
   ZmRef<TestLink> streams = testLink(&app);
-  auto s0 = streams->stream(Zi::StreamType::Duplex);
-  auto s1 = streams->stream(Zi::StreamType::Duplex);
+  auto s0 = streams->stream(Zquic::StreamType::Duplex);
+  auto s1 = streams->stream(Zquic::StreamType::Duplex);
   streams->grantDataCredit(20000);
   s0->txCredit(20000);
   s1->txCredit(20000);
@@ -1396,7 +1396,7 @@ void testMultiFrameAssembly()
     "runtime did not assemble multiple stream frames into one packet");
 
   ZmRef<TestLink> finOnly = testLink(&app);
-  auto finStream = finOnly->stream(Zi::StreamType::Duplex);
+  auto finStream = finOnly->stream(Zquic::StreamType::Duplex);
   finOnly->grantDataCredit(20000);
   finStream->txCredit(20000);
   {
@@ -1423,7 +1423,7 @@ void testStreamRetransmitClipsUnackd()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
   link->sendStreamRef(0, stream, 0, 10);
   link->sendStreamRef(1, stream, 2, 5);
   link->sendAckEliciting(4);
@@ -1457,7 +1457,7 @@ void testStreamRetxClipsUnackdFin()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
   link->sendStreamRef(0, stream, 0, 10, true);
   ZuCHECK(stream->ackTxUnackd(0, 10, false) &&
       stream->txStillUnackd(10, 0, true),
@@ -1578,7 +1578,7 @@ void testCongestionBudgetGatesSends()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
   link->grantDataCredit(20000);
   stream->txCredit(20000);
   {
@@ -2086,7 +2086,7 @@ void testBlockedFrameDedup()
     "sent DATA_BLOCKED duplicate suppression mismatch");
 
   ZmRef<TestLink> streamLink = testLink(&app);
-  auto stream = streamLink->stream(Zi::StreamType::Duplex);
+  auto stream = streamLink->stream(Zquic::StreamType::Duplex);
   ZuCHECK(stream &&
       streamLink->queueDataBlocked(uint64_t(stream->id()), 4096) &&
       !streamLink->queueDataBlocked(uint64_t(stream->id()), 4096) &&
@@ -2101,22 +2101,22 @@ void testBlockedFrameDedup()
     "sent STREAM_DATA_BLOCKED duplicate suppression mismatch");
 
   ZmRef<TestLink> limitLink = testLink(&app);
-  limitLink->setPeerStreamLimit(Zi::StreamType::Duplex, 0);
-  (void)limitLink->stream(Zi::StreamType::Duplex);
+  limitLink->setPeerStreamLimit(Zquic::StreamType::Duplex, 0);
+  (void)limitLink->stream(Zquic::StreamType::Duplex);
   ZuCHECK(limitLink->queuedControlFrames() == 1 &&
-      !limitLink->queueStreamsBlocked(Zi::StreamType::Duplex, 0) &&
+      !limitLink->queueStreamsBlocked(Zquic::StreamType::Duplex, 0) &&
       limitLink->queuedControlFrames() == 1,
     "pending STREAMS_BLOCKED duplicate was queued");
   (void)limitLink->flushControlSends();
   ZuCHECK(
       !limitLink->queuedControlFrames() &&
-      limitLink->queueStreamsBlocked(Zi::StreamType::Duplex, 0) &&
+      limitLink->queueStreamsBlocked(Zquic::StreamType::Duplex, 0) &&
       limitLink->queuedControlFrames() == 1,
     "sent STREAMS_BLOCKED was not requeued");
   (void)limitLink->flushControlSends();
   ZuCHECK(
       !limitLink->queuedControlFrames() &&
-      limitLink->queueStreamsBlocked(Zi::StreamType::Duplex, 8) &&
+      limitLink->queueStreamsBlocked(Zquic::StreamType::Duplex, 8) &&
       limitLink->queuedControlFrames() == 1,
     "sent STREAMS_BLOCKED duplicate suppression mismatch");
 }
@@ -2134,9 +2134,9 @@ void testKeyedControlReplacement()
     "MAX_DATA keyed replacement mismatch");
 
   ZmRef<TestLink> streams = testLink(&app);
-  ZuCHECK(streams->queueStreamsBlocked(Zi::StreamType::Duplex, 7) &&
-      !streams->queueStreamsBlocked(Zi::StreamType::Duplex, 7) &&
-      streams->queueStreamsBlocked(Zi::StreamType::Duplex, 8) &&
+  ZuCHECK(streams->queueStreamsBlocked(Zquic::StreamType::Duplex, 7) &&
+      !streams->queueStreamsBlocked(Zquic::StreamType::Duplex, 7) &&
+      streams->queueStreamsBlocked(Zquic::StreamType::Duplex, 8) &&
       streams->queuedControlFrames() == 1,
     "STREAMS_BLOCKED keyed replacement mismatch");
 
@@ -2154,7 +2154,7 @@ void testControlInvalidation()
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
   ZuCHECK(stream &&
       link->queueMaxStreamData(
 	uint64_t(stream->id()), stream->rxCreditLimit()) &&
@@ -2204,7 +2204,7 @@ void testPeerStreamAcceptance()
     "peer stream acceptance state mismatch");
 
   ZmRef<TestLink> client = testLink(&app);
-  auto local = client->stream(Zi::StreamType::Duplex);
+  auto local = client->stream(Zquic::StreamType::Duplex);
   packet = streamPkt_(local->id(), 0, "rsp", true, frame, used);
   ZuCHECK(packet,
     "response STREAM frame setup failed");
@@ -2221,10 +2221,10 @@ void testPeerStreamAcceptance()
     "server accepted local-origin peer stream ID");
 
   ZmRef<TestLink> gap = testLink(&app, true);
-  gap->setLocalStreamLimit(Zi::StreamType::Duplex, 3);
+  gap->setLocalStreamLimit(Zquic::StreamType::Duplex, 3);
   packet = streamPkt_(8, 0, "hi", true, frame, used);
   ZuCHECK(packet && gap->receiveFrame(frame, packet) == 0 &&
-      gap->peerStreamsOpened(Zi::StreamType::Duplex) == 3 &&
+      gap->peerStreamsOpened(Zquic::StreamType::Duplex) == 3 &&
       gap->findStream(8),
     "higher peer stream was not accepted");
   packet = streamPkt_(4, 0, "lo", true, frame, used);
@@ -2243,31 +2243,31 @@ void testStreamCountLimits()
 
   App app;
   ZmRef<TestLink> client = testLink(&app);
-  client->setPeerStreamLimit(Zi::StreamType::Duplex, 1);
+  client->setPeerStreamLimit(Zquic::StreamType::Duplex, 1);
 
-  auto first = client->stream(Zi::StreamType::Duplex);
+  auto first = client->stream(Zquic::StreamType::Duplex);
   ZuCHECK(first && first->id() == 0 &&
-      client->localStreamsOpened(Zi::StreamType::Duplex) == 1 &&
+      client->localStreamsOpened(Zquic::StreamType::Duplex) == 1 &&
       client->streamCount() == 1,
     "first stream under peer limit did not open");
-  auto blocked = client->stream(Zi::StreamType::Duplex);
+  auto blocked = client->stream(Zquic::StreamType::Duplex);
   ZuCHECK(!blocked &&
-      client->localStreamsBlocked(Zi::StreamType::Duplex) &&
-      client->queuedLocalStreams(Zi::StreamType::Duplex) == 1 &&
+      client->localStreamsBlocked(Zquic::StreamType::Duplex) &&
+      client->queuedLocalStreams(Zquic::StreamType::Duplex) == 1 &&
       client->streamCount() == 1,
     "stream over peer limit was not queued");
 
   uint8_t b[32];
   int n = Zquic::FrameCodec::writeMaxStreams(
-    b, sizeof(b), Zi::StreamType::Duplex, 2);
+    b, sizeof(b), Zquic::StreamType::Duplex, 2);
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
       ZuBSpan{b, unsigned(n)}, frame, used),
     "MAX_STREAMS setup failed");
   ZuCHECK(client->applyMaxStreams(frame) &&
-      !client->queuedLocalStreams(Zi::StreamType::Duplex) &&
-      client->localStreamsOpened(Zi::StreamType::Duplex) == 2 &&
+      !client->queuedLocalStreams(Zquic::StreamType::Duplex) &&
+      client->localStreamsOpened(Zquic::StreamType::Duplex) == 2 &&
       client->streamCount() == 2 &&
       client->streamedCount == 1 &&
       client->lastStream &&
@@ -2275,12 +2275,12 @@ void testStreamCountLimits()
     "MAX_STREAMS did not open queued local stream");
 
   ZmRef<TestLink> server = testLink(&app, true);
-  server->setLocalStreamLimit(Zi::StreamType::Duplex, 1);
+  server->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
   auto packet = streamPkt_(0, 0, "a", true, frame, used);
   ZuCHECK(packet,
     "first peer STREAM setup failed");
   ZuCHECK(server->receiveFrame(frame, packet) == 0 &&
-      server->peerStreamsOpened(Zi::StreamType::Duplex) == 1 &&
+      server->peerStreamsOpened(Zquic::StreamType::Duplex) == 1 &&
       server->findStream(0),
     "first peer stream under local limit did not open");
 
@@ -2288,22 +2288,22 @@ void testStreamCountLimits()
   ZuCHECK(packet,
     "second peer STREAM setup failed");
   ZuCHECK(server->receiveFrame(frame, packet) < 0 &&
-      server->peerStreamsOpened(Zi::StreamType::Duplex) == 1 &&
+      server->peerStreamsOpened(Zquic::StreamType::Duplex) == 1 &&
       !server->findStream(4),
     "peer stream count limit was not enforced");
 
-  server->setLocalStreamLimit(Zi::StreamType::Duplex, 2);
+  server->setLocalStreamLimit(Zquic::StreamType::Duplex, 2);
   ZuCHECK(server->receiveFrame(frame, packet) == 0 &&
-      server->peerStreamsOpened(Zi::StreamType::Duplex) == 2 &&
+      server->peerStreamsOpened(Zquic::StreamType::Duplex) == 2 &&
       server->findStream(4),
     "extended local stream count did not admit peer stream");
 
-  server->setLocalStreamLimit(Zi::StreamType::Simplex, 1);
+  server->setLocalStreamLimit(Zquic::StreamType::Simplex, 1);
   packet = streamPkt_(2, 0, "u", true, frame, used);
   ZuCHECK(packet,
     "first peer uni STREAM setup failed");
   ZuCHECK(server->receiveFrame(frame, packet) == 0 &&
-      server->peerStreamsOpened(Zi::StreamType::Simplex) == 1 &&
+      server->peerStreamsOpened(Zquic::StreamType::Simplex) == 1 &&
       server->findStream(2),
     "first peer uni stream under local limit did not open");
 
@@ -2311,18 +2311,18 @@ void testStreamCountLimits()
   ZuCHECK(packet,
     "second peer uni STREAM setup failed");
   ZuCHECK(server->receiveFrame(frame, packet) == 0 &&
-      server->peerStreamsOpened(Zi::StreamType::Simplex) == 2 &&
-      server->localStreamLimit(Zi::StreamType::Simplex) == 3 &&
+      server->peerStreamsOpened(Zquic::StreamType::Simplex) == 2 &&
+      server->localStreamLimit(Zquic::StreamType::Simplex) == 3 &&
       server->findStream(6),
     "completed peer uni stream did not return stream-count credit");
 
   ZmRef<TestLink> bidiServer = testLink(&app, true);
-  bidiServer->setLocalStreamLimit(Zi::StreamType::Duplex, 1);
+  bidiServer->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
   packet = streamPkt_(0, 0, "req", true, frame, used);
   ZuCHECK(packet && bidiServer->receiveFrame(frame, packet) == 0,
     "peer bidi stream receive setup failed");
   auto peerBidi = bidiServer->findStream(0);
-  ZuCHECK(peerBidi && bidiServer->localStreamLimit(Zi::StreamType::Duplex) == 1,
+  ZuCHECK(peerBidi && bidiServer->localStreamLimit(Zquic::StreamType::Duplex) == 1,
     "peer bidi stream returned stream-count credit before local FIN");
   unsigned queuedControls = bidiServer->queuedControlFrames();
   unsigned queuedFlushes = bidiServer->txFlushQueued;
@@ -2344,7 +2344,7 @@ void testStreamCountLimits()
     "peer bidi response flush failed");
   ZuCHECK(peerBidi->finDequeued(),
     "peer bidi response FIN was not dequeued");
-  ZuCHECK(bidiServer->localStreamLimit(Zi::StreamType::Duplex) == 2,
+  ZuCHECK(bidiServer->localStreamLimit(Zquic::StreamType::Duplex) == 2,
     "completed peer bidi stream did not return stream-count credit");
   ZuCHECK(bidiServer->queuedControlFrames() == queuedControls + 1,
     "completed peer bidi stream did not queue MAX_STREAMS");
@@ -2379,7 +2379,7 @@ void testResetStopFrames()
     "RESET_STREAM state mismatch");
 
   ZmRef<TestLink> client = testLink(&app);
-  auto local = client->stream(Zi::StreamType::Duplex);
+  auto local = client->stream(Zquic::StreamType::Duplex);
   n = Zquic::FrameCodec::writeStopSending(b, sizeof(b), local->id(), 9);
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
       ZuBSpan{b, unsigned(n)}, frame, used),
@@ -2390,7 +2390,7 @@ void testResetStopFrames()
       local->appError() == 9,
     "STOP_SENDING state mismatch");
 
-  auto delivered = client->stream(Zi::StreamType::Duplex);
+  auto delivered = client->stream(Zquic::StreamType::Duplex);
   auto packet = streamPkt_(delivered->id(), 0, "hello", false, frame, used);
   ZuCHECK(packet &&
       delivered->receiveFrame(frame, packet),
@@ -2411,7 +2411,7 @@ void testLocalResetStopSend()
   ZmRef<TestLink> link = testLink(&app);
   Zquic::SentFrameRef refs[2];
 
-  auto reset = link->stream(Zi::StreamType::Duplex);
+  auto reset = link->stream(Zquic::StreamType::Duplex);
   {
     auto tx = reset->txStream_();
     tx << "abc" << Zi::flush();
@@ -2439,7 +2439,7 @@ void testLocalResetStopSend()
       rebuilt.length == 3,
     "local RESET_STREAM retransmit rebuild failed");
 
-  auto stop = link->stream(Zi::StreamType::Duplex);
+  auto stop = link->stream(Zquic::StreamType::Duplex);
   stop->stop(9);
   ZuCHECK(stop->stopSent() &&
       stop->error() == Zquic::StreamError::Stop &&
@@ -2471,7 +2471,7 @@ void testLocalResetStopSend()
   link->cancelTimers();
 
   ZmRef<TestLink> lost = testLink(&app);
-  auto lostStop = lost->stream(Zi::StreamType::Duplex);
+  auto lostStop = lost->stream(Zquic::StreamType::Duplex);
   lostStop->stop(11);
   n = lost->flushSentRefs(refs, 2);
   ZuCHECK(n == 1 &&
@@ -2499,8 +2499,8 @@ void testMaxBlockedValidate()
   Zquic::Frame frame;
 
   ZmRef<TestLink> client = testLink(&app);
-  auto localBidi = client->stream(Zi::StreamType::Duplex);
-  auto localUni = client->stream(Zi::StreamType::Simplex);
+  auto localBidi = client->stream(Zquic::StreamType::Duplex);
+  auto localUni = client->stream(Zquic::StreamType::Simplex);
   int n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), localBidi->id(), 4096);
   ZuCHECK(parseFrame_(b, n, frame) && client->applyMaxStreamData(frame) &&
@@ -2527,15 +2527,15 @@ void testMaxBlockedValidate()
     "MAX_STREAM_DATA for peer unidirectional stream was not diagnosed");
 
   ZmRef<TestLink> server = testLink(&app, true);
-  server->setLocalStreamLimit(Zi::StreamType::Duplex, 2);
+  server->setLocalStreamLimit(Zquic::StreamType::Duplex, 2);
   n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 0, 2048);
   ZuCHECK(parseFrame_(b, n, frame) && server->applyMaxStreamData(frame) &&
       server->findStream(0) &&
-      server->peerStreamsOpened(Zi::StreamType::Duplex) == 1,
+      server->peerStreamsOpened(Zquic::StreamType::Duplex) == 1,
     "MAX_STREAM_DATA did not create valid peer bidirectional stream");
 
   ZmRef<TestLink> limited = testLink(&app, true);
-  limited->setLocalStreamLimit(Zi::StreamType::Duplex, 1);
+  limited->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
   n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 4, 2048);
   invalidMax = limited->diag().rx.streamMaxInvalidRx;
   ZuCHECK(parseFrame_(b, n, frame) && limited->applyMaxStreamData(frame) &&
@@ -2553,13 +2553,13 @@ void testMaxBlockedValidate()
     "DATA_BLOCKED above local receive limit was accepted");
 
   n = Zquic::FrameCodec::writeStreamsBlocked(
-    b, sizeof(b), Zi::StreamType::Duplex,
-    server->localStreamLimit(Zi::StreamType::Duplex));
+    b, sizeof(b), Zquic::StreamType::Duplex,
+    server->localStreamLimit(Zquic::StreamType::Duplex));
   ZuCHECK(parseFrame_(b, n, frame) && server->receiveStreamsBlocked(frame),
     "STREAMS_BLOCKED at local advertised peer limit was rejected");
   n = Zquic::FrameCodec::writeStreamsBlocked(
-    b, sizeof(b), Zi::StreamType::Duplex,
-    server->localStreamLimit(Zi::StreamType::Duplex) + 1);
+    b, sizeof(b), Zquic::StreamType::Duplex,
+    server->localStreamLimit(Zquic::StreamType::Duplex) + 1);
   ZuCHECK(parseFrame_(b, n, frame) && !server->receiveStreamsBlocked(frame),
     "STREAMS_BLOCKED above local advertised peer limit was accepted");
 }
@@ -2573,7 +2573,7 @@ void testStreamBlockedValidate()
   Zquic::Frame frame;
 
   ZmRef<TestLink> server = testLink(&app, true);
-  server->setLocalStreamLimit(Zi::StreamType::Duplex, 2);
+  server->setLocalStreamLimit(Zquic::StreamType::Duplex, 2);
   int n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 0, 128);
   ZuCHECK(parseFrame_(b, n, frame) &&
       server->rxStreamBlocked(frame) &&
@@ -2599,7 +2599,7 @@ void testStreamBlockedValidate()
   ZuCHECK(parseFrame_(b, n, frame) &&
       server->rxStreamBlocked(frame) &&
       server->findStream(4) &&
-      server->peerStreamsOpened(Zi::StreamType::Duplex) == 2,
+      server->peerStreamsOpened(Zquic::StreamType::Duplex) == 2,
     "valid unopened peer STREAM_DATA_BLOCKED did not create stream");
 
   n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 8, 128);
@@ -2615,7 +2615,7 @@ void testStreamBlockedValidate()
     "STREAM_DATA_BLOCKED for local unidirectional stream was accepted");
 
   ZmRef<TestLink> small = testLink(&app, true);
-  small->setLocalStreamLimit(Zi::StreamType::Duplex, 1);
+  small->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
   n = Zquic::FrameCodec::writeStreamDataBlocked(
     b, sizeof(b), 0, small->rxDataCreditLimit() + 1);
   ZuCHECK(parseFrame_(b, n, frame) &&
@@ -2633,7 +2633,7 @@ void testInvalidClosedStreamActivity()
   unsigned used = 0;
 
   ZmRef<TestLink> maxLink = testLink(&app);
-  auto local = maxLink->stream(Zi::StreamType::Duplex);
+  auto local = maxLink->stream(Zquic::StreamType::Duplex);
   local->reset(1);
   int n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(local->id()), 4096);
@@ -2684,7 +2684,7 @@ void testInvalidClosedStreamActivity()
     "closed-stream STREAM_DATA_BLOCKED diagnostics mismatch");
 
   ZmRef<TestLink> dupLink = testLink(&app);
-  auto dup = dupLink->stream(Zi::StreamType::Duplex);
+  auto dup = dupLink->stream(Zquic::StreamType::Duplex);
   auto packet = streamPkt_(dup->id(), 0, "dup", false, frame, used);
   ZuCHECK(packet &&
       dupLink->receiveFrame(frame, packet) == 0,
@@ -2696,7 +2696,7 @@ void testInvalidClosedStreamActivity()
     "ordinary duplicate STREAM was treated as invalid");
 
   ZmRef<TestLink> threshold = testLink(&app);
-  auto noisy = threshold->stream(Zi::StreamType::Duplex);
+  auto noisy = threshold->stream(Zquic::StreamType::Duplex);
   noisy->reset(3);
   n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(noisy->id()), 4096);
@@ -2723,7 +2723,7 @@ void testStreamGC()
   App app;
 
   ZmRef<TestLink> held = testLink(&app);
-  auto live = held->stream(Zi::StreamType::Simplex);
+  auto live = held->stream(Zquic::StreamType::Simplex);
   uint64_t liveID = uint64_t(live->id());
   live->fin();
   held->scheduleStream(live);
@@ -2740,7 +2740,7 @@ void testStreamGC()
   held->cancelTimers();
 
   ZmRef<TestLink> maxLink = testLink(&app);
-  auto local = maxLink->stream(Zi::StreamType::Simplex);
+  auto local = maxLink->stream(Zquic::StreamType::Simplex);
   uint64_t localID = uint64_t(local->id());
   local->fin();
   maxLink->scheduleStream(local);
@@ -2762,7 +2762,7 @@ void testStreamGC()
     "closed MAX_STREAM_DATA after stream GC was not compact-handled");
 
   ZmRef<TestLink> ackLink = testLink(&app);
-  auto ackd = ackLink->stream(Zi::StreamType::Simplex);
+  auto ackd = ackLink->stream(Zquic::StreamType::Simplex);
   uint64_t ackdID = uint64_t(ackd->id());
   ackd->fin();
   ackLink->scheduleStream(ackd);
@@ -2959,7 +2959,7 @@ void testZeroRTTEarlyStreamPolicy()
   ZuCHECK(link->installZeroRTTTx(secret),
     "0-RTT Tx key install failed");
   link->grantDataCredit(20000);
-  auto stream = link->stream(Zi::StreamType::Duplex);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
   stream->txCredit(20000);
   {
     auto tx = stream->txStream_();
@@ -3223,7 +3223,7 @@ void testFlowControlQLog()
 	ZquicLogger::start();
 	ZuCHECK(ZquicLogger::enabled(), "flow-control qlog did not enable");
 	ZmRef<TestLink> link = testLink(&app);
-  ZmRef<TestStream> stream = link->stream(Zi::StreamType::Duplex);
+  ZmRef<TestStream> stream = link->stream(Zquic::StreamType::Duplex);
   ZuCHECK(stream, "flow-control qlog stream open failed");
   stream->txCredit(32);
   {
@@ -3240,7 +3240,7 @@ void testFlowControlQLog()
   ZuCHECK(link->flushCongestedStream(stream),
     "flow-control qlog stream did not send after MAX_DATA");
 
-  ZmRef<TestStream> streamBlocked = link->stream(Zi::StreamType::Duplex);
+  ZmRef<TestStream> streamBlocked = link->stream(Zquic::StreamType::Duplex);
   ZuCHECK(streamBlocked, "flow-control qlog blocked stream open failed");
   streamBlocked->txCredit(0);
   {

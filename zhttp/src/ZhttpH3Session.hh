@@ -13,9 +13,9 @@
 #include <zlib/Zhttp.hh>
 #endif
 
-#include <zlib/ZiTransport.hh>
+namespace Zhttp {
 
-namespace Zhttp { namespace H3 {
+namespace H3 {
 
 template <typename Link, typename StreamRef, typename = void>
 struct HasStreamSend : public ZuFalse { };
@@ -26,14 +26,27 @@ struct HasStreamSend<Link, StreamRef,
       ZuDeclVal<StreamRef &>(), ZuDeclVal<ZuBSpan>(), false),
     void())> : public ZuTrue { };
 
+// HTTP/3 connection streams and connection-level QPACK state
 template <typename Link, typename StreamRef>
 struct Cxn {
   using State = CxnState;
 
+  // Rx thread exclusive
+  State::T		state = State::Init;
+  Link			*link_ = nullptr;
+  StreamRef		control;
+  StreamRef		enc;
+  StreamRef		dec;
+  bool			peerControl = false;
+  bool			peerEncoder = false;
+  bool			peerDecoder = false;
+  QPackRxTable		qpackRxTable;
+
   bool openLocal(Link &link, const Params &params = Params{}) {
-    control = link.stream(Zi::StreamType::Simplex);
-    enc = link.stream(Zi::StreamType::Simplex);
-    dec = link.stream(Zi::StreamType::Simplex);
+    using StreamType = typename Link::StreamType;
+    control = link.stream(StreamType::Simplex);
+    enc = link.stream(StreamType::Simplex);
+    dec = link.stream(StreamType::Simplex);
     if (!control || !enc || !dec) return false;
 
     using Scratch = ZtArray<char, ZtArrayHeapID<"Zhttp.H3.Cxn">>;
@@ -99,9 +112,22 @@ struct Cxn {
     return true;
   }
   QPackRxTable *qpackRx() { return &qpackRxTable; }
-  QPackTxTable *qpackTx() { return &qpackTxTable; }
+  QPackTxTable *qpackTx() { return link_ ? link_->qpackTx() : nullptr; }
+  bool qpackTxInsn(QPackInsn::T type, uint64_t value) {
+    return qpackTx_(QPackDecoderError,
+      [type, value](QPackTxTable &tx) {
+	return tx.applyDecoder(type, value);
+      });
+  }
+  bool qpackTxMaxCapacity(uint64_t capacity) {
+    return qpackTx_(SettingsError, [capacity](QPackTxTable &tx) {
+      return capacity <= uint32_t(-1) &&
+	tx.setMaxCapacity(uint32_t(capacity));
+    });
+  }
   bool qpackEncoderWrite(ZuBSpan span) { return writeQPack_(enc, span); }
   bool qpackDecoderWrite(ZuBSpan span) { return writeQPack_(dec, span); }
+
   template <typename PathInfo>
   void pathUpdate(const PathInfo &) { }
   template <typename MigrationResult>
@@ -111,7 +137,23 @@ struct Cxn {
   template <typename MigrationResult>
   void migrationFailed(const MigrationResult &) { }
 
-private:
+  template <typename L>
+  bool qpackTx_(uint64_t error, L &&l) {
+    if (!link_) return false;
+    auto link = link_;
+    link->app()->txRun([
+      link,
+      error,
+      l = ZuFwd<L>(l)
+    ]() mutable {
+      auto tx = link->qpackTx();
+      if (!tx || link->closed()) return;
+      if (l(*tx)) return;
+      link->disconnect(error);
+    });
+    return true;
+  }
+
   bool writeQPack_(StreamRef &stream, ZuBSpan span) {
     if (!link_ || !stream || !span) return false;
     if constexpr (HasStreamSend<Link, StreamRef>{})
@@ -119,22 +161,9 @@ private:
     else
       return false;
   }
-
-public:
-  // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
-  State::T		state = State::Init;
-  Link			*link_ = nullptr;
-  StreamRef		control;
-  StreamRef		enc;
-  StreamRef		dec;
-  bool			peerControl = false;
-  bool			peerEncoder = false;
-  bool			peerDecoder = false;
-  QPackRxTable		qpackRxTable;
-  QPackTxTable		qpackTxTable;
 };
 
+// Peer unidirectional connection stream adapter
 template <typename Impl, typename Cxn_>
 struct CxnStream : public CxnParser<Impl> {
   using Cxn = Cxn_;
@@ -154,8 +183,15 @@ struct CxnStream : public CxnParser<Impl> {
   bool qpackDecoderWrite(ZuBSpan span) {
     return impl()->h3Cxn().qpackDecoderWrite(span);
   }
+  bool qpackTxInsn(QPackInsn::T type, uint64_t value) {
+    return impl()->h3Cxn().qpackTxInsn(type, value);
+  }
+  bool qpackTxMaxCapacity(uint64_t capacity) {
+    return impl()->h3Cxn().qpackTxMaxCapacity(capacity);
+  }
 };
 
+// Request/response transmit helpers
 template <typename Stream, typename Builder>
 bool sendReq(Stream &stream, Builder &builder, bool fin = true) {
   auto tx = stream.txStream();
@@ -174,21 +210,26 @@ bool sendResp(Stream &stream, Builder &builder, bool fin = true) {
   return true;
 }
 
+// Server request stream parser adapter
 template <typename Impl, typename Parser_>
 struct ServerStream {
   using Parser = Parser_;
   using State = typename Parser::State;
+
+  // Rx thread exclusive
+  Parser	parser;
+  bool		complete_ = false;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
   template <typename Stream, typename Rx>
   int processReq(Stream &stream, Rx &rx) {
-    if (m_complete) return 1;
+    if (complete_) return 1;
     auto state = parser.process(rx);
     if (state == State::Error) return impl()->error(stream, parser);
     if (state == State::Complete) {
-      m_complete = true;
+      complete_ = true;
       return impl()->request(stream, parser);
     }
     return 0;
@@ -198,13 +239,10 @@ struct ServerStream {
   int error(Stream &, Parser &) { return -1; }
   template <typename Stream>
   int request(Stream &, Parser &) { return 0; }
-
-  // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
-  Parser	parser;
-  bool		m_complete = false;
 };
 
-}} // Zhttp::H3
+} // namespace H3
+
+} // namespace Zhttp
 
 #endif /* ZhttpH3Session_HH */

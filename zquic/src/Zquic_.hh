@@ -181,7 +181,6 @@ private:
   }
 
   // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
   ZmRef<Routes>	m_routes;
   Tombstones	m_tombstones{ZmQueueParams{}.initial(TombstoneMax)};
 };

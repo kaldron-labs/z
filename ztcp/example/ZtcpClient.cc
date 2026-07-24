@@ -41,7 +41,7 @@ struct App::Link :
     tx << "ping\r\n" << Zi::flush();
   }
 
-  void connected(Zi::Connected) {
+  void connected(Ztcp::Connected) {
     std::cerr << "TCP connected\n" << std::flush;
     sendPing();
   }

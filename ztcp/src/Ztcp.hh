@@ -29,7 +29,6 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTx.hh>
 #include <zlib/ZiTxStream.hh>
-#include <zlib/ZiTransport.hh>
 
 namespace Ztcp_ {
 
@@ -48,6 +47,8 @@ using BufAlloc =
 } // namespace Ztcp_
 
 namespace Ztcp {
+
+struct Connected { };
 
 ZuDerive(LogMsg, ZtString<ZtStringHeapID<"Ztcp.Log">>);
 ZuDerive(Host, ZtString<ZtStringHeapID<"Ztcp.Host">>);
@@ -154,9 +155,7 @@ friend Cxn;
 
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
-  StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
-    return type == Zi::StreamType::Duplex ? impl() : nullptr;
-  }
+  StreamRef stream() { return impl(); }
 
 private:
   void connected_0(Cxn *cxn, ZiIOContext &io) {
@@ -211,7 +210,7 @@ private:
     m_cxn = ZuMv(cxn);
     m_disconnecting = 0;
     m_rxStream.clean();
-    impl()->connected(Zi::Connected{.transport = Zi::Transport::TCP});
+    impl()->connected(Connected{});
   }
 
   template <typename ImplRef_>
@@ -475,8 +474,6 @@ public:
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
-
-  enum { Transport = Zi::Transport::TCP };
 
   bool init(EngineParams params) {
     return init_(ZuMv(params), [](const EngineParams &) { return true; });

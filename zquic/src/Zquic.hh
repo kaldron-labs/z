@@ -21,8 +21,8 @@
 
 #include <zpicotls.h>
 
-#include <zlib/ZuObject.hh>
 #include <zlib/ZuElem.hh>
+#include <zlib/ZuObject.hh>
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmAlloc.hh>
@@ -36,6 +36,7 @@
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmQueue.hh>
+
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtLocalArray.hh>
 #include <zlib/ZtString.hh>
@@ -50,7 +51,7 @@
 #endif
 
 namespace Zquic {
-inline constexpr uint64_t U64Null = ZuCmp<uint64_t>::null();
+  inline constexpr uint64_t U64Null = ZuCmp<uint64_t>::null();
 }
 namespace Zquic_ { using namespace Zquic; }
 
@@ -71,6 +72,7 @@ namespace Zquic_ { using namespace Zquic; }
 
 namespace Zquic {
 
+// Public connection metadata and token/address validation
 ZuDerive(LogMsg, ZtString<ZtStringHeapID<"Zquic.Log">>);
 ZuDerive(ParamStrings,
   (ZtArray<ParamString, ZtArrayHeapID<"Zquic.ParamStrings">>));
@@ -265,6 +267,7 @@ using Zquic_::CxnRouter;
 using Zquic_::Endpoint_;
 using Zquic_::ServerLinks_;
 
+// Connection bootstrap
 struct CxnIDGen {
   static constexpr unsigned InitialLength = MinCIDLength;
 
@@ -418,13 +421,18 @@ inline bool sendCryptoFlights(
   return true;
 }
 
-struct EngineParams {
+// Engine configuration
+class EngineParams {
+public:
   EngineParams(
     ZiMultiplex *mx = nullptr,
     ZuCSpan rxThread = {},
-    ZuCSpan txThread = {}) :
-      m_mx{mx}, m_rxThread{rxThread}, m_txThread{txThread},
-      m_errorFn{defaultErrorFn()} { }
+    ZuCSpan txThread = {})
+  :
+    m_mx{mx}, m_rxThread{rxThread}, m_txThread{txThread},
+    m_errorFn{defaultErrorFn()}
+  {
+  }
 
   EngineParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
   EngineParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
@@ -632,8 +640,6 @@ public:
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
-
-  enum { Transport = Zi::Transport::QUIC };
 
   bool init(EngineParams params) {
     return init_(ZuMv(params), Zquic::Vantage::Unknown,
@@ -1024,7 +1030,7 @@ struct App::Stream : public Zquic::CliStream<Link, Stream> {
 struct App::Link : public Zquic::CliLink<App, Link, App::Stream> {
   Link(App *, Zquic::Host server, uint16_t port);
 
-  void connected(Zi::Connected); // Zquic Rx thread
+  void connected(Zquic::Connected); // Zquic Rx thread
   void disconnected(bool peer); // Zquic Rx thread
   void connectFailed(bool transient); // Zquic Rx thread
   void streamed(ZmRef<Stream>); // Zquic Rx thread
@@ -1077,7 +1083,7 @@ struct AppStream : public Zquic::SrvStream<AppLink, AppStream> {
 struct AppLink : public Zquic::SrvLink<App, AppLink, AppStream> {
   AppLink(App *);
 
-  void connected(Zi::Connected); // Zquic Rx thread
+  void connected(Zquic::Connected); // Zquic Rx thread
   void disconnected(bool peer); // Zquic Rx thread
   void streamed(ZmRef<Stream>); // Zquic Rx thread
 };

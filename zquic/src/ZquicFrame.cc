@@ -137,7 +137,7 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
     case 0x13:
       f.type = FrameType::MaxStreams;
       f.streamType =
-	t == 0x12 ? Zi::StreamType::Duplex : Zi::StreamType::Simplex;
+	t == 0x12 ? Zquic::StreamType::Duplex : Zquic::StreamType::Simplex;
       if (getVar_(in, o, f.value) < 0) return -1;
       used = o;
       return 0;
@@ -157,7 +157,7 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
     case 0x17:
       f.type = FrameType::StreamsBlocked;
       f.streamType =
-	t == 0x16 ? Zi::StreamType::Duplex : Zi::StreamType::Simplex;
+	t == 0x16 ? Zquic::StreamType::Duplex : Zquic::StreamType::Simplex;
       if (getVar_(in, o, f.value) < 0) return -1;
       used = o;
       return 0;
@@ -380,10 +380,10 @@ int FrameCodec::writeMaxStreamData(
 }
 
 int FrameCodec::writeMaxStreams(
-  uint8_t *out, unsigned len, Zi::StreamType::T type, uint64_t maximum)
+  uint8_t *out, unsigned len, Zquic::StreamType::T type, uint64_t maximum)
 {
   PktWriter w{out, len};
-  w.put(type == Zi::StreamType::Duplex ? 0x12 : 0x13);
+  w.put(type == Zquic::StreamType::Duplex ? 0x12 : 0x13);
   w.putVar(maximum);
   return w.finish();
 }
@@ -407,10 +407,10 @@ int FrameCodec::writeStreamDataBlocked(
 }
 
 int FrameCodec::writeStreamsBlocked(
-  uint8_t *out, unsigned len, Zi::StreamType::T type, uint64_t maximum)
+  uint8_t *out, unsigned len, Zquic::StreamType::T type, uint64_t maximum)
 {
   PktWriter w{out, len};
-  w.put(type == Zi::StreamType::Duplex ? 0x16 : 0x17);
+  w.put(type == Zquic::StreamType::Duplex ? 0x16 : 0x17);
   w.putVar(maximum);
   return w.finish();
 }

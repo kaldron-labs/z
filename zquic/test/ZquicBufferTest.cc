@@ -50,7 +50,7 @@ void testDiagAggregation()
   ZuCHECK(Zquic::Diag::packetSpaceName(Zquic::PktNumSpace::AppData) ==
       "AppData" &&
       Zquic::Diag::frameTypeName(Zquic::FrameType::Stream) == "Stream" &&
-      Zquic::Diag::streamTypeName(Zi::StreamType::Simplex) == "Simplex",
+      Zquic::Diag::streamTypeName(Zquic::StreamType::Simplex) == "Simplex",
     "diagnostic stable names mismatch");
 
 #ifdef Zquic_DEBUG

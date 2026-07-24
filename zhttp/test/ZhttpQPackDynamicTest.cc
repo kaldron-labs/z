@@ -200,8 +200,17 @@ struct CxnStream :
   bool resetReceived() const { return false; }
   bool stopReceived() const { return false; }
   bool finReceived() const { return false; }
-  Zhttp::H3::QPackTxTable *qpackTx() { return &qpackTxTable; }
-  void setting(uint64_t, uint64_t) { ++settings; }
+  bool qpackTxInsn(Zhttp::H3::QPackInsn::T type, uint64_t value) {
+    return qpackTxTable.applyDecoder(type, value);
+  }
+  bool qpackTxMaxCapacity(uint64_t capacity) {
+    return capacity <= uint32_t(-1) &&
+      qpackTxTable.setMaxCapacity(uint32_t(capacity));
+  }
+  void setting(uint64_t key, uint64_t value) {
+    Base::setting(key, value);
+    ++settings;
+  }
 
   void push(const Zhttp::H3::HdrBytes &bytes) {
     rx.push(rxBuf(ZuBSpan{bytes}));

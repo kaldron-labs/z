@@ -340,12 +340,12 @@ void testFramesAndParams()
     "MAX_STREAM_DATA parse mismatch");
 
   l = Zquic::FrameCodec::writeStreamsBlocked(
-    b, sizeof(b), Zi::StreamType::Simplex, 11);
+    b, sizeof(b), Zquic::StreamType::Simplex, 11);
   ZuCHECK(l > 0, "STREAMS_BLOCKED write failed");
   ZuCHECK(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::StreamsBlocked &&
-    f.streamType == Zi::StreamType::Simplex && f.value == 11,
+    f.streamType == Zquic::StreamType::Simplex && f.value == 11,
     "STREAMS_BLOCKED parse mismatch");
 
   l = Zquic::FrameCodec::writePathChallenge(b, sizeof(b), "12345678");
@@ -502,18 +502,18 @@ void testControlFrameCoverage()
     "MAX_DATA coverage mismatch");
 
   n = Zquic::FrameCodec::writeMaxStreams(
-    b, sizeof(b), Zi::StreamType::Duplex, 17);
+    b, sizeof(b), Zquic::StreamType::Duplex, 17);
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::MaxStreams &&
-      f.streamType == Zi::StreamType::Duplex && f.value == 17,
+      f.streamType == Zquic::StreamType::Duplex && f.value == 17,
     "MAX_STREAMS bidi coverage mismatch");
   n = Zquic::FrameCodec::writeMaxStreams(
-    b, sizeof(b), Zi::StreamType::Simplex, 19);
+    b, sizeof(b), Zquic::StreamType::Simplex, 19);
   ZuCHECK(n > 0 &&
       !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::MaxStreams &&
-      f.streamType == Zi::StreamType::Simplex && f.value == 19,
+      f.streamType == Zquic::StreamType::Simplex && f.value == 19,
     "MAX_STREAMS uni coverage mismatch");
 
   n = Zquic::FrameCodec::writeDataBlocked(b, sizeof(b), 4096);

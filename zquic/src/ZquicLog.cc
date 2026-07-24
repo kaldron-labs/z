@@ -261,7 +261,7 @@ struct QLogFrameData {
   QLogRawInfo	raw;
   double	ackDelay = 0;
   QLogAckRangeArray ackedRanges;
-  StreamType::T streamType = StreamType::Duplex;
+  ZquicLog_::StreamType::T streamType = ZquicLog_::StreamType::Duplex;
   uint64_t	maximum = 0;
   uint64_t	limit = 0;
   uint64_t	errorCode = 0;
@@ -771,7 +771,7 @@ struct QLogMigrationEvt {
 QLogEvtFmt(QLogMigrationEvt);
 
 struct QLogStreamData {
-  StreamType::T streamType = StreamType::Duplex;
+  ZquicLog_::StreamType::T streamType = ZquicLog_::StreamType::Duplex;
   StreamState::T oldState = StreamState::Idle;
   StreamState::T newState = StreamState::Open;
   StreamSide::T streamSide = StreamSide::Sending;
@@ -785,7 +785,7 @@ struct QLogStreamData {
 
 ZfStruct((QLogStreamData, JSON),
   (((streamType), (JSON::ID<"stream_type">,
-    Enum<StreamType::JSON>)), (Int8)),
+    Enum<ZquicLog_::StreamType::JSON>)), (Int8)),
   (((oldState), (JSON::ID<"old">,
     Enum<StreamState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">,
@@ -1692,7 +1692,7 @@ struct QLogFrameDataJSON {
       using FrameTypeProps =
 	ZuTypeList<ZuFieldProp::Enum<Zquic::FrameType::JSON>>;
       using StreamTypeProps =
-	ZuTypeList<ZuFieldProp::Enum<StreamType::JSON>>;
+	ZuTypeList<ZuFieldProp::Enum<ZquicLog_::StreamType::JSON>>;
       using BytesHexProps = ZuTypeList<ZuFieldProp::JSON::Hex>;
 
       bool comma = false;

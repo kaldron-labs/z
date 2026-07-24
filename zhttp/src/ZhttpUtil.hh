@@ -191,6 +191,6 @@ inline bool parseUInt64Full_(ZuBSpan value, uint64_t &out) {
   return true;
 }
 
-} // Zhttp
+} // namespace Zhttp
 
 #endif /* ZhttpUtil_HH */

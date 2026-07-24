@@ -577,7 +577,7 @@ void testTypedControlRefs()
   ZuTestScope(testTypedControlRefs);
 
   Zquic::FlowUpdate update{
-    Zquic::FrameType::MaxStreamData, 8, 4096, Zi::StreamType::Duplex};
+    Zquic::FrameType::MaxStreamData, 8, 4096, Zquic::StreamType::Duplex};
   Zquic::SentFrameRef ref = Zquic::SentFrameRef::flowUpdate(update);
   ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
       ref.controlType == Zquic::FrameType::MaxStreamData &&
@@ -586,10 +586,10 @@ void testTypedControlRefs()
     "typed flow-update control ref mismatch");
 
   ref = Zquic::SentFrameRef::blocked(
-    Zquic::FrameType::StreamsBlocked, 0, 17, Zi::StreamType::Simplex);
+    Zquic::FrameType::StreamsBlocked, 0, 17, Zquic::StreamType::Simplex);
   ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
       ref.controlType == Zquic::FrameType::StreamsBlocked &&
-      ref.streamType == Zi::StreamType::Simplex &&
+      ref.streamType == Zquic::StreamType::Simplex &&
       ref.value == 17,
     "typed blocked control ref mismatch");
 
@@ -620,11 +620,11 @@ void testFlowControlRetransmit()
 
   Zquic::PktTxSpace tx;
   Zquic::FlowUpdate update{
-    Zquic::FrameType::MaxStreams, 0, 129, Zi::StreamType::Duplex};
+    Zquic::FrameType::MaxStreams, 0, 129, Zquic::StreamType::Duplex};
   ZuCHECK(tx.add(txControlPkt_(0, Zquic::SentFrameRef::flowUpdate(update))) &&
       tx.add(txControlPkt_(1, Zquic::SentFrameRef::blocked(
 	Zquic::FrameType::StreamsBlocked, 0, 128,
-	Zi::StreamType::Duplex))) &&
+	Zquic::StreamType::Duplex))) &&
       tx.add(txPkt_(4)),
     "flow-control retransmit packet setup failed");
 

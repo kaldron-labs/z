@@ -1151,7 +1151,7 @@ public:
     data.loadFactor = loadFactor();
     unsigned count = m_count.load_();
     unsigned bits = m_bits;
-    data.effLoadFactor = static_cast<double>(count) / (1<<bits);
+    data.effLoadFactor = double(count) / (1<<bits);
     data.nodeSize = sizeof(Node);
     data.count = count;
     data.resized = m_resized.load_();

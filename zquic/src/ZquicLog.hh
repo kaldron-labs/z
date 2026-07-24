@@ -41,7 +41,8 @@ struct Diag {
   uint64_t	bytesWritten = 0;
 };
 
-struct Params {
+class Params {
+public:
   Params &enabled(bool v) { m_enabled = v; return *this; }
   Params &path(ZuCSpan v) { m_path = v; return *this; }
   Params &ringSize(unsigned v) { m_ringSize = v; return *this; }

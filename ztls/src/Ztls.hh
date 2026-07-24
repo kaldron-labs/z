@@ -30,7 +30,6 @@
 #include <zlib/ZiTx.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
-#include <zlib/ZiTransport.hh>
 
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsBackend.hh>
@@ -68,6 +67,11 @@ struct ZuTraits<ptls_iovec_t> : public ZuBaseTraits<ptls_iovec_t> {
 };
 
 namespace Ztls {
+
+struct Connected {
+  ZuCSpan	alpn;
+  int		version = 0;
+};
 
 // heap-allocated vocabulary types
 
@@ -290,9 +294,7 @@ public:
 
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
-  StreamRef stream(Zi::StreamType::T type = Zi::StreamType::Duplex) {
-    return type == Zi::StreamType::Duplex ? impl() : nullptr;
-  }
+  StreamRef stream() { return impl(); }
   TlsInfo tlsInfo() const {
     if (!m_tls || !m_handshook) return {};
     auto tls = const_cast<ptls_t *>(m_tls);
@@ -446,8 +448,7 @@ private:
     m_txControlPending = false;
     m_handshook = true;
     const char *alpn = ptls_get_negotiated_protocol(m_tls);
-    impl()->connected(Zi::Connected{
-      .transport = Zi::Transport::TLS,
+    impl()->connected(Connected{
       .alpn = alpn ? ZuCSpan{alpn, unsigned(strlen(alpn))} : ZuCSpan{},
       .version = tlsver_(tlsver)
     });
@@ -1293,8 +1294,6 @@ public:
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
 
-  enum { Transport = Zi::Transport::TLS };
-
   Engine() {
     memset(&m_ctx, 0, sizeof(m_ctx));
   }
@@ -1770,7 +1769,7 @@ struct App : public Client<App> {
 
   struct Link : public CliLink<App, Link, RxBufAlloc, TxBufAlloc> {
     // Ztls Rx thread - handshake completed
-    void connected(Zi::Connected);
+    void connected(Ztls::Connected);
 
     void disconnected(bool peer); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread
@@ -1872,7 +1871,7 @@ struct App : public Server<App> {
 
   struct Link : public SrvLink<App, Link, RxBufAlloc, TxBufAlloc> {
     // Ztls Rx thread - handshake completed
-    void connected(Zi::Connected);
+    void connected(Ztls::Connected);
 
     void disconnected(bool peer); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread

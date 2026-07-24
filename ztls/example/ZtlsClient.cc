@@ -29,7 +29,7 @@ struct App : public Ztls::Client<App> {
 
     Link(App *app) : Base{app} { }
 
-    void connected(Zi::Connected info) {
+    void connected(Ztls::Connected info) {
       ++round;
       bool resumed = this->tlsInfo().psk;
       if (round > 1) {

@@ -371,6 +371,17 @@ bool QPackTxTable::streamCancellation(uint64_t streamID)
   return sectionAck(streamID);
 }
 
+bool QPackTxTable::applyDecoder(QPackInsn::T type, uint64_t value)
+{
+  switch (type) {
+    case QPackInsn::SectionAck: return sectionAck(value);
+    case QPackInsn::StreamCancellation: return streamCancellation(value);
+    case QPackInsn::InsertCountIncrement:
+      return insertCountIncrement(value);
+    default: return false;
+  }
+}
+
 int QPack::decodeHuffman(HdrBytes &out, ZuCSpan in)
 {
   out.length(HPack::declen(in.length()));

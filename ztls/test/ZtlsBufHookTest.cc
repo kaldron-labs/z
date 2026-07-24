@@ -293,7 +293,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
     using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseClient *app) : BaseLink{app} { }
 
-    void connected(Zi::Connected info) {
+    void connected(Ztls::Connected info) {
       auto &state = this->app()->state;
       state.client_connected = 1;
       state.client_tlsver = unsigned(info.version);
@@ -341,7 +341,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
     using BaseLink = Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
 
-    void connected(Zi::Connected info) {
+    void connected(Ztls::Connected info) {
       auto &state = this->app()->state;
       state.server_connected = 1;
       state.server_tlsver = unsigned(info.version);

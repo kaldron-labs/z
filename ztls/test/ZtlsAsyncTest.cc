@@ -17,7 +17,7 @@ struct ClientApp : public Ztls::Client<ClientApp> {
   struct Link : public Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc> {
     using Base = Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc>;
     Link(ClientApp *app) : Base(app) { }
-    void connected(Zi::Connected) { }
+    void connected(Ztls::Connected) { }
     void disconnected(bool) { }
     void connectFailed(bool) { }
     int process(Ztls::RxStream &) { return 0; }
@@ -30,7 +30,7 @@ struct ServerApp : public Ztls::Server<ServerApp> {
   struct Link : public Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc> {
     using Base = Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc>;
     Link(ServerApp *app) : Base(app) { }
-    void connected(Zi::Connected) { }
+    void connected(Ztls::Connected) { }
     void disconnected(bool) { }
     int process(Ztls::RxStream &) { return 0; }
   };
@@ -77,9 +77,6 @@ void testInitValidation()
   {
     ClientApp::Link link(&client);
     ZuCHECK(link.stream() == &link, "TLS client bidi stream is not link");
-    ZuCHECK(
-      link.stream(Zi::StreamType::Simplex) == nullptr,
-      "TLS client uni stream is not null");
     typename ClientApp::Link::StreamRef stream = link.stream();
     auto tx = stream->txStream();
     (void)tx;
@@ -94,9 +91,6 @@ void testInitValidation()
   {
     ServerApp::Link link(&server);
     ZuCHECK(link.stream() == &link, "TLS server bidi stream is not link");
-    ZuCHECK(
-      link.stream(Zi::StreamType::Simplex) == nullptr,
-      "TLS server uni stream is not null");
     typename ServerApp::Link::StreamRef stream = link.stream();
     auto tx = stream->txStream();
     (void)tx;

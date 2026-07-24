@@ -47,7 +47,7 @@ struct App::Link :
 
   Link(App *app) : Base{app} { }
 
-  void connected(Zi::Connected) {
+  void connected(Ztcp::Connected) {
     std::cerr << "TCP accepted\n" << std::flush;
   }
   void disconnected(bool) {

@@ -113,15 +113,8 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
 
   Link(ClientApp *app) : Base(app) { }
 
-  void connected(Zi::Connected info) {
-    ZTCP_CHECK_RT(info.transport == Zi::Transport::TCP,
-      "client transport is not TCP");
-    ZTCP_CHECK_RT(info.version == 0, "client TCP version is non-zero");
-    ZTCP_CHECK_RT(!info.alpn, "client TCP ALPN is not empty");
+  void connected(Ztcp::Connected) {
     ZTCP_CHECK_RT(this->stream() == this, "client bidi stream is not link");
-    ZTCP_CHECK_RT(
-      this->stream(Zi::StreamType::Simplex) == nullptr,
-      "client uni stream is not null");
     typename Link::StreamRef stream = this->stream();
     ZTCP_CHECK_RT(stream, "client stream ref is null");
     auto tx = stream->txStream();
@@ -164,15 +157,8 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
 
   Link(ServerApp *app) : Base(app) { }
 
-  void connected(Zi::Connected info) {
-    ZTCP_CHECK_RT(info.transport == Zi::Transport::TCP,
-      "server transport is not TCP");
-    ZTCP_CHECK_RT(info.version == 0, "server TCP version is non-zero");
-    ZTCP_CHECK_RT(!info.alpn, "server TCP ALPN is not empty");
+  void connected(Ztcp::Connected) {
     ZTCP_CHECK_RT(this->stream() == this, "server bidi stream is not link");
-    ZTCP_CHECK_RT(
-      this->stream(Zi::StreamType::Simplex) == nullptr,
-      "server uni stream is not null");
     typename Link::StreamRef stream = this->stream();
     ZTCP_CHECK_RT(stream, "server stream ref is null");
     auto tx = stream->txStream();

@@ -238,7 +238,7 @@ public:
 
   void loggedIn() { } // default
 
-  void connected(Zi::Connected info) {
+  void connected(Ztls::Connected info) {
     if (info.alpn != "zcmd") {
       disconnect();
       return;

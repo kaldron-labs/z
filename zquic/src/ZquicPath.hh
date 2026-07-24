@@ -12,7 +12,6 @@
 
 #include <zlib/ZiIP.hh>
 
-
 namespace Zquic {
 
 struct PathHint {

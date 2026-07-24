@@ -13,8 +13,11 @@
 #include <zlib/Zhttp.hh>
 #endif
 
-namespace Zhttp { namespace H1 {
+namespace Zhttp {
 
+namespace H1 {
+
+// Bidirectional HTTP/1 connection adapter
 template <typename Impl, typename Link>
 struct Session {
   auto impl() const { return static_cast<const Impl *>(this); }
@@ -32,6 +35,7 @@ struct Session {
   void closed(Link &, bool) { }
 };
 
+// Request/response transmit helpers
 template <typename Stream, typename Builder>
 void sendReq(Stream &stream, Builder &builder) {
   auto tx = stream.txStream();
@@ -46,10 +50,14 @@ void sendResp(Stream &stream, Builder &builder) {
   builder.finish(tx);
 }
 
+// Server request parser adapter
 template <typename Impl, typename Parser_>
 struct Server {
   using Parser = Parser_;
   using State = typename Parser::State;
+
+  // Rx thread exclusive
+  Parser	parser;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -73,12 +81,10 @@ struct Server {
   int error(Link &, Parser &) { return -1; }
   template <typename Link>
   int request(Link &, Parser &) { return 1; }
-
-  // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
-  Parser	parser;
 };
 
-}} // Zhttp::H1
+} // namespace H1
+
+} // namespace Zhttp
 
 #endif /* ZhttpH1Session_HH */

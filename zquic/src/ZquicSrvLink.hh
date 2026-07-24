@@ -227,7 +227,7 @@ public:
       });
   }
   bool disconnect(uint64_t errorCode = 0) {
-    if (!Base::closed()) Base::closeState_(errorCode);
+    if (!Base::closed()) Base::closeState_(errorCode, true);
     if (Base::established_() && m_peerAddr) {
       app()->txRun([
 	link = impl(),
@@ -344,10 +344,9 @@ private:
     Base::scheduleMigrationCIDs_();
     if (app()->newTokenAddrValidate())
       queueNewToken_();
-    impl()->connected(Zi::Connected{
-      .transport = Zi::Transport::QUIC,
+    impl()->connected(Connected{
       .alpn = Base::negotiatedProtocol_(),
-      .version = int(Version1)
+      .version = Version1
     });
   }
 
@@ -1173,17 +1172,17 @@ private:
   void dataBlocked_(uint64_t maximum) {
     Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
     impl()->flowBlocked(
-      FrameType::DataBlocked, 0, Zi::StreamType::Duplex, maximum);
+      FrameType::DataBlocked, 0, Zquic::StreamType::Duplex, maximum);
     queueTxFlush_();
   }
   void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
     impl()->flowBlocked(
       FrameType::StreamDataBlocked, streamID,
-      Zi::StreamType::Duplex, maximum);
+      Zquic::StreamType::Duplex, maximum);
     queueTxFlush_();
   }
-  void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
+  void streamsBlocked_(Zquic::StreamType::T type, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
     impl()->flowBlocked(FrameType::StreamsBlocked, 0, type, maximum);
     queueTxFlush_();
