@@ -290,36 +290,30 @@ private:
 
 public:
   // callable objects
-  template <typename L, decltype(MatchCallable<L>(), int()) = 0>
+  template <typename L, MatchCallable<L, int> = 0>
   ZmFn(L &&l) : ZmAnyFn{fn(ZuFwd<L>(l))} { }
   template <
     typename O, typename L,
-    decltype(MatchBoundCallable<ZuDeref<O>, L>(), int()) = 0>
+    MatchBoundCallable<ZuDeref<O>, L, int> = 0>
   ZmFn(O &&o, L &&l) :
       ZmAnyFn{fn(ZuFwd<O>(o), ZuFwd<L>(l))} { }
 
   // member function pointers via ZmFnPtr<>
-  template <
-    typename O, typename Fn,
-    decltype(MatchMemberFn<O, Fn>(), int()) = 0>
+  template <typename O, typename Fn, MatchMemberFn<O, Fn, int> = 0>
   ZmFn(O &&o, Fn fn) :
     ZmAnyFn{
       &MemberInvoker<ZuDeref<O>, typename Fn::T(fn)>::invoke,
       ZuFwd<O>(o)} { }
 
   // bound function pointers via ZmFnPtr<>
-  template <
-    typename O, typename Fn,
-    decltype(MatchBoundFn<O, Fn>(), int()) = 0>
+  template <typename O, typename Fn, MatchBoundFn<O, Fn, int> = 0>
   ZmFn(O &&o, Fn fn) :
     ZmAnyFn{
       &BoundInvoker<ZuDeref<O>, typename Fn::T(fn)>::invoke,
       ZuFwd<O>(o)} { }
 
   // plain function pointers via ZmFnPtr<>
-  template <
-    typename Fn,
-    decltype(MatchUnboundFn<Fn>(), int()) = 0>
+  template <typename Fn, MatchUnboundFn<Fn, int> = 0>
   ZmFn(Fn fn) :
     ZmAnyFn{
       &FnInvoker<typename Fn::T(fn)>::invoke,

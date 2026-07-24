@@ -401,25 +401,25 @@ public:
     return *this;
   }
 
-  template <typename R, decltype(ZuBox_MatchReal<R, T>(), int()) = 0>
+  template <typename R, ZuBox_MatchReal<R, T, int> = 0>
   constexpr ZuBox__(R r) noexcept : m_val(r) { }
 
-  template <typename B, decltype(ZuMatchBoxed<B>(), int()) = 0>
+  template <typename B, ZuMatchBoxed<B, int> = 0>
   constexpr ZuBox__(B b) noexcept :
     m_val(!*b ? static_cast<T>(Cmp::null()) : static_cast<T>(b.m_val)) { }
 
-  template <typename S, decltype(ZuMatchCharString<S>(), int()) = 0>
+  template <typename S, ZuMatchCharString<S, int> = 0>
   ZuBox__(S &&s_) noexcept { scan(ZuFwd<S>(s_)); }
   template <
     typename Fmt, typename S,
-    decltype(ZuMatchCharString<S>(), int()) = 0>
+    ZuMatchCharString<S, int> = 0>
   ZuBox__(Fmt, S &&s_) noexcept { scan<Fmt>(ZuFwd<S>(s_)); }
 
-  template <typename S, decltype(ZuBox_MatchCharPtr<S>(), int()) = 0>
+  template <typename S, ZuBox_MatchCharPtr<S, int> = 0>
   ZuBox__(S s, unsigned len) noexcept { scan(s, len); }
   template <
     typename Fmt, typename S,
-    decltype(ZuBox_MatchCharPtr<S>(), int()) = 0>
+    ZuBox_MatchCharPtr<S, int> = 0>
   ZuBox__(Fmt, S s, unsigned len) noexcept { scan<Fmt>(s, len); }
 
   T val() const { return m_val; }

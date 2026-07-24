@@ -185,7 +185,7 @@ public:
   using MatchPtrElem = ZuIfT<IsPtrElem<U>{}, R>;
 
 // compile-time length from string literal
-  template <typename A, decltype(MatchStrLiteral<A>(), int()) = 0>
+  template <typename A, MatchStrLiteral<A, int> = 0>
   constexpr ZuSpan(A &&a) noexcept :
     m_data(&a[0]),
     m_length((ZuUnlikely(!(sizeof(a) / sizeof(a[0])) || !a[0])) ? 0U :
@@ -199,7 +199,7 @@ public:
   }
 
 // compile-time length from primitive array
-  template <typename A, decltype(MatchPrimitiveArray<A>(), int()) = 0>
+  template <typename A, MatchPrimitiveArray<A, int> = 0>
   constexpr ZuSpan(A &&a) noexcept :
     m_data(&a[0]),
     m_length(sizeof(a) / sizeof(a[0])) { }
@@ -216,7 +216,7 @@ public:
 #pragma GCC diagnostic ignored "-Waddress"
 #pragma GCC diagnostic ignored "-Wnonnull-compare"
 #endif
-  template <typename A, decltype(MatchCString<A>(), int()) = 0>
+  template <typename A, MatchCString<A, int> = 0>
   ZuSpan(A &&a) noexcept :
     m_data{a}, m_length{!a ? 0 : ZuTraits<A>::length(a)} { }
   template <typename A>
@@ -239,7 +239,7 @@ private:
 
 public:
 // from equivalent ZuSpan
-  template <typename A, decltype(MatchZuSpan<A>(), int()) = 0>
+  template <typename A, MatchZuSpan<A, int> = 0>
   constexpr ZuSpan(A &&a) :
       m_data{cast(a.m_data)},
       m_length{a.m_length} { }
@@ -251,15 +251,15 @@ public:
   }
 
 // from some other array
-  template <typename A, typename V = T, decltype(ZuIfT<
-      bool(IsOtherSpan<A>{}) && bool(ZuIsConst<V>{})
-    >(), int()) = 0>
+  template <
+    typename A, typename V = T,
+    ZuIfT<bool(IsOtherSpan<A>{}) && bool(ZuIsConst<V>{}), int> = 0>
   constexpr ZuSpan(A &&a) noexcept :
     m_data{cast(ZuTraits<A>::data(a))},
     m_length{!m_data ? 0 : ZuTraits<A>::length(a)} { }
-  template <typename A, typename V = T, decltype(ZuIfT<
-      bool(IsOtherSpan<A>{}) && !ZuIsConst<V>{}
-    >(), int()) = 0>
+  template <
+    typename A, typename V = T,
+    ZuIfT<bool(IsOtherSpan<A>{}) && !ZuIsConst<V>{}, int> = 0>
   constexpr ZuSpan(A &&a) noexcept :
     m_data{cast(ZuTraits<A>::data(const_cast<ZuDecay<A> &>(a)))},
     m_length{!m_data ? 0 : ZuTraits<A>::length(a)} { }
@@ -274,7 +274,7 @@ public:
   }
 
 // from pointer, length
-  template <typename V, decltype(MatchPtrElem<V>(), int()) = 0>
+  template <typename V, MatchPtrElem<V, int> = 0>
   constexpr ZuSpan(V *data, uint64_t length) noexcept :
     m_data{cast(data)}, m_length{length} { }
 
@@ -626,7 +626,7 @@ public:
 // find compile-time string using Boyer-Moore-Horspool
   template <
     ZuString S, typename U = T,
-    decltype(ZuIfT<ZuEquiv<U, char>{}>(), int()) = 0>
+    ZuIfT<ZuEquiv<U, char>{}, int> = 0>
   constexpr int64_t find() const {
     constexpr uint64_t n = S.length();
     if constexpr (!n) return 0;
@@ -664,7 +664,7 @@ public:
 // match compile-time string at start
   template <
     ZuString S, typename U = T,
-    decltype(ZuIfT<ZuEquiv<U, char>{}>(), int()) = 0>
+    ZuIfT<ZuEquiv<U, char>{}, int> = 0>
   constexpr bool match() const {
     constexpr uint64_t n = S.length();
     if (length() < n) return false;
@@ -772,9 +772,9 @@ public:
   constexpr ZuSpan(const ZuSpan &a) { }
   constexpr ZuSpan &operator =(const ZuSpan &a) { return *this; }
 
-  template <typename A, decltype(ZuIfT<
-      ZuTraits<A>::IsArray &&
-      ZuIsConstructible<typename ZuTraits<A>::Elem, void>{}>(), int()) = 0>
+  template <typename A, ZuIfT<
+    ZuTraits<A>::IsArray &&
+    ZuIsConstructible<typename ZuTraits<A>::Elem, void>{}, int> = 0>
   constexpr ZuSpan(const A &a) { }
   template <typename A>
   ZuIfT<

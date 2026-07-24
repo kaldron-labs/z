@@ -81,7 +81,7 @@ public:
   ZuRef(ZuRef &&r) noexcept : m_object{r.m_object} {
     r.m_object = 0;
   }
-  template <typename R, decltype(MatchOtherRef<ZuDeref<R>>(), int()) = 0>
+  template <typename R, MatchOtherRef<ZuDeref<R>, int> = 0>
   ZuRef(R &&r) noexcept :
     m_object{static_cast<T *>(const_cast<ZuDeref<R> *>(r.m_object))}
   {
@@ -94,7 +94,7 @@ public:
   ZuRef(T *o) noexcept : m_object{o} {
     if (o) o->ref();
   }
-  template <typename O, decltype(MatchPtr<O>(), int()) = 0>
+  template <typename O, MatchPtr<O, int> = 0>
   ZuRef(O *o) noexcept : m_object{static_cast<T *>(o)} {
     if (o) o->ref();
   }

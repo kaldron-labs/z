@@ -69,11 +69,11 @@ struct ZuFixed {
 
   constexpr ZuFixed() noexcept : mantissa{ZuFixedNull}, ndp{0} { }
 
-  template <typename M, decltype(ZuMatchIntegral<M>(), int()) = 0>
+  template <typename M, ZuMatchIntegral<M, int> = 0>
   constexpr ZuFixed(M mantissa_, unsigned ndp_) noexcept :
     mantissa{int64_t(mantissa_)}, ndp{uint8_t(ndp_)} { }
 
-  template <typename V, decltype(ZuMatchFloatingPoint<V>(), int()) = 0>
+  template <typename V, ZuMatchFloatingPoint<V, int> = 0>
   constexpr ZuFixed(V v, unsigned ndp_) noexcept :
     mantissa{int64_t(double(v) * ZuDecimalFn::pow10_64(ndp_))},
     ndp{uint8_t(ndp_)} { }
@@ -154,11 +154,11 @@ struct ZuFixed {
   }
 
   // scan from string
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuFixed(const S &s) {
     scan(s);
   }
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuFixed(const S &s, unsigned ndp_) {
     scan(s, ndp_);
   }

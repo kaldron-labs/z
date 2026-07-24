@@ -45,9 +45,7 @@ public:
     noexcept(ZuDeclVal<const typename Array::Impl &>().get(0)));
 
   operator R() const noexcept(noexcept(get())) { return get(); }
-  template <
-    typename _ = T,
-    decltype(ZuNotSame<U, _>(), int()) = 0>
+  template <typename _ = T, ZuNotSame<U, _, int> = 0>
   operator U() const noexcept(noexcept(get())) { return get(); }
 
   template <typename _ = Array>

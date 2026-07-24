@@ -161,7 +161,7 @@ private:
 template <
   unsigned Cleanup = ZmCleanup::Application,
   typename L,
-  decltype(ZuStatelessLambda<L>(), int()) = 0>
+  ZuStatelessLambda<L, int> = 0>
 inline auto &ZmStatic(L l) {
   using T = ZuDecay<decltype(*ZuDeclVal<ZuLambdaReturn<L>>())>;
   using Singleton =

@@ -397,7 +397,7 @@ public:
 
   // ZuTime
 
-  template <typename T, decltype(ZuSame<ZuTime, T>(), int()) = 0>
+  template <typename T, ZuSame<ZuTime, T, int> = 0>
   constexpr ZuDateTime(const T &v) noexcept {
     if (!*v) return;
     init(v.sec()), m_nsec = v.nsec();
@@ -484,13 +484,13 @@ public:
   }
 
   // CSV format: YYYY/MM/DD HH:MM:SS with an optional timezone parameter
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuDateTime(const ZuDateTimeScan::CSV &fmt, const S &s) noexcept {
     scan(fmt, s);
   }
 
   // FIX format: YYYYMMDD-HH:MM:SS.nnnnnnnnn
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuDateTime(const ZuDateTimeScan::FIX &fmt, const S &s) noexcept {
     scan(fmt, s);
   }
@@ -498,30 +498,30 @@ public:
   // the ISO8601 ctor accepts the two standard ISO8601 date/time formats
   // "yyyy-mm-dd" and "yyyy-mm-ddThh:mm:ss[.n]Z", where Z is an optional
   // timezone: "Z" (GMT), "+hhmm", "+hh:mm", "-hhmm", or "-hh:mm"
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuDateTime(const ZuDateTimeScan::ISO &fmt, const S &s) noexcept {
     scan(fmt, s);
   }
 
   // ASN.1 UTC format
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuDateTime(const ZuDateTimeScan::ASN1_U &fmt, const S &s) noexcept {
     scan(fmt, s);
   }
 
   // ASN.1 Generalized format
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuDateTime(const ZuDateTimeScan::ASN1_G &fmt, const S &s) noexcept {
     scan(fmt, s);
   }
 
   // default to ISO
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuDateTime(const S &s) noexcept {
     scan(ZuDateTimeScan::ISO{}, s);
   }
 
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZuDateTime(const ZuDateTimeScan::Any &fmt, const S &s) noexcept {
     scan(fmt, s);
   }

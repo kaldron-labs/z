@@ -319,7 +319,7 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
       copyElems(data(), a, length_);
   }
 
-  template <typename V, decltype(MatchCtorLength<V>(), int()) = 0>
+  template <typename V, MatchCtorLength<V, int> = 0>
   constexpr Array(V n, bool init = !ZuTraits<T>::IsPrimitive)
     noexcept(ZuNXConstruct<T>{}) : length_(n)
   {
@@ -373,7 +373,7 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
 	new (&(*this)[i]) T(ZuFwdLike<A>(*a++));
   }
 
-  template <typename S, decltype(MatchString<S>(), int()) = 0>
+  template <typename S, MatchString<S, int> = 0>
   constexpr Array(const S &s) noexcept : length_(ZuTraits<S>::length(s)) {
     if (length_ > N) length_ = N;
     if (ZuConstEval()) {
@@ -388,7 +388,7 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
   }
 
   template <
-    typename E, decltype(MatchCtorElem<E>(), int()) = 0,
+    typename E, MatchCtorElem<E, int> = 0,
     bool NoExcept = noexcept(T(ZuDeclVal<E &&>()))>
   constexpr Array(E &&e) noexcept(NoExcept) : length_{1} {
     if (ZuConstEval()) {
@@ -400,20 +400,20 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
       initElem(data(), ZuFwd<E>(e));
   }
 
-  template <typename S, decltype(MatchAltString<S>(), int()) = 0>
+  template <typename S, MatchAltString<S, int> = 0>
   Array(S &&s) noexcept {
     data()[length_ = ZuUTF<T, AltChar>::cvt({data(), N}, s)] = 0;
   }
-  template <typename C, decltype(MatchAltChar<C>(), int()) = 0>
+  template <typename C, MatchAltChar<C, int> = 0>
   Array(C c) noexcept {
     data()[length_ = ZuUTF<T, AltChar>::cvt({data(), N}, {&c, 1})] = 0;
   }
 
-  template <typename P, decltype(MatchPDelegate<P>(), int()) = 0>
+  template <typename P, MatchPDelegate<P, int> = 0>
   Array(P &&p) noexcept {
     ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
-  template <typename P, decltype(MatchPBuffer<P>(), int()) = 0>
+  template <typename P, MatchPBuffer<P, int> = 0>
   Array(const P &p) noexcept {
     unsigned length = ZuPrint<P>::length(p);
     if (length > N)
@@ -422,13 +422,13 @@ struct Array : public Array_<ZuStrip<T_>>, public ZuArrayFn<T_> {
       length_ = ZuPrint<P>::print(reinterpret_cast<char *>(data()), length, p);
   }
 
-  template <typename V, decltype(MatchCtorReal<V>(), int()) = 0>
+  template <typename V, MatchCtorReal<V, int> = 0>
   Array(V v) noexcept {
     new (this) Array{ZuBoxed(v)};
   }
 
   // arrays as ptr, length
-  template <typename A, decltype(ZuConvertible<A, T>(), int()) = 0>
+  template <typename A, ZuConvertible<A, T, int> = 0>
   constexpr Array(const A *a, unsigned length)
     noexcept(ZuNXCopy<T, ZuDeref<decltype(a[0])>>{}) : length_{length}
   {

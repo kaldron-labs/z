@@ -39,9 +39,7 @@ public:
   const T &get() const noexcept;
 
   operator const T &() const noexcept { return get(); }
-  template <
-    typename _ = T,
-    decltype(ZuNotSame<U, _>(), int()) = 0>
+  template <typename _ = T, ZuNotSame<U, _, int> = 0>
   operator U() const noexcept { return get(); }
 
   void set(T v);

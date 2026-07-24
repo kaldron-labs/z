@@ -120,9 +120,9 @@ public:
   template <
     typename Cmp_,
     typename ID,
-    decltype(ZuIfT<
+    ZuIfT<
       bool(ZuIsSame<Cmp_, Cmp>{}) &&
-      ZuTraits<ID>::IsString>(), int()) = 0>
+      ZuTraits<ID>::IsString, int> = 0>
   ZmCache(Cmp_ cmp, const ID &id) {
     m_hash = new Hash{cmp, id};
     m_loadHash = new LoadHash{cmp, id};
@@ -139,9 +139,9 @@ public:
   template <
     typename Cmp_,
     typename Params,
-    decltype(ZuIfT<
+    ZuIfT<
       bool(ZuIsSame<Cmp_, Cmp>{}) &&
-      bool(ZuIsSame<Params, ZmHashParams>{})>(), int()) = 0>
+      bool(ZuIsSame<Params, ZmHashParams>{}), int> = 0>
   ZmCache(Cmp_ cmp, const Params &params) {
     m_hash = new Hash{cmp, params};
     m_loadHash = new LoadHash{cmp, params};

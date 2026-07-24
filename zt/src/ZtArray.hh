@@ -734,7 +734,7 @@ private:
   }
 
 public:
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZtArray(S &&s_, ZtIconv *iconv) {
     ZuSpan<const typename ZuTraits<S>::Elem> s(s_);
     convert_(s, iconv);

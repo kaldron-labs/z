@@ -71,14 +71,14 @@ public:
   ZuPtr(ZuPtr &&r) noexcept : m_object{r.m_object} {
     r.m_object = nullptr;
   }
-  template <typename R, decltype(MatchOtherPtr<ZuDeref<R>>(), int()) = 0>
+  template <typename R, MatchOtherPtr<ZuDeref<R>, int> = 0>
   ZuPtr(R &&r) noexcept :
     m_object{static_cast<T *>(const_cast<typename ZuDeref<R>::T *>(r.m_object))}
   {
     if constexpr (!ZuIsLRef<R>{}) r.m_object = nullptr;
   }
   ZuPtr(T *o) noexcept : m_object{o} { }
-  template <typename O, decltype(MatchPtr<O>(), int()) = 0>
+  template <typename O, MatchPtr<O, int> = 0>
   ZuPtr(O *o) noexcept : m_object{static_cast<T *>(o)} { }
   ~ZuPtr() noexcept { if (T *o = m_object) delete o; }
 
