@@ -269,11 +269,9 @@ class ZmAPI ZmThreadContext : public ZmObject, public ZmThreadContext_ {
     m_name.terminate();
   }
 
-  template <
-    typename L,
-    decltype(
-      ZuIfT<bool(ZuIsStatelessLambda<L>{}) &&
-      bool(ZuIsVoidRetLambda<L>{})>(), int()) = 0>
+  template <typename L, ZuIfT<
+    bool(ZuIsStatelessLambda<L>{}) &&
+    bool(ZuIsVoidRetLambda<L>{}), int> = 0>
   ZmThreadContext(L l, const ZmThreadParams &params, int sid = -1) :
     m_callFn{[](void *) -> void * {
       try { ZuInvokeLambda<L>(); } catch (...) { }
@@ -293,9 +291,9 @@ class ZmAPI ZmThreadContext : public ZmObject, public ZmThreadContext_ {
 
   template <
     typename L,
-    decltype(ZuIfT<
+    ZuIfT<
       !ZuIsStatelessLambda<L>{} &&
-      bool(ZuIsVoidRetLambda<L>{})>(), int()) = 0>
+      bool(ZuIsVoidRetLambda<L>{}), int> = 0>
   ZmThreadContext(L l, const ZmThreadParams &params, int sid = -1) :
     m_callFn{[](void *lambda_) -> void * {
       if (ZuUnlikely(!lambda_)) return nullptr;
@@ -320,9 +318,9 @@ class ZmAPI ZmThreadContext : public ZmObject, public ZmThreadContext_ {
 
   template <
     typename L,
-    decltype(ZuIfT<
+    ZuIfT<
       bool(ZuIsStatelessLambda<L>{}) &&
-      !ZuIsVoidRetLambda<L>{}>(), int()) = 0>
+      !ZuIsVoidRetLambda<L>{}, int> = 0>
   ZmThreadContext(L l, const ZmThreadParams &params, int sid = -1) :
     m_callFn{[](void *) -> void * {
       void *res = nullptr;
@@ -343,9 +341,9 @@ class ZmAPI ZmThreadContext : public ZmObject, public ZmThreadContext_ {
 
   template <
     typename L,
-    decltype(ZuIfT<
+    ZuIfT<
       !ZuIsStatelessLambda<L>{} &&
-      !ZuIsVoidRetLambda<L>{}>(), int()) = 0>
+      !ZuIsVoidRetLambda<L>{}, int> = 0>
   ZmThreadContext(L l, const ZmThreadParams &params, int sid = -1) :
     m_callFn{[](void *lambda_) -> void * {
       if (ZuUnlikely(!lambda_)) return nullptr;

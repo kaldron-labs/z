@@ -104,7 +104,7 @@ public:
 
   template <
     typename L,
-    decltype(ZuStatelessLambda<L, ZuTypeList<Args...>>(), int()) = 0>
+    ZuStatelessLambda<L, ZuTypeList<Args...>, int> = 0>
   ZmRingFn_(L &l) : 
     m_invokeFn{[](void *, Args... args) -> unsigned {
       try {
@@ -121,7 +121,7 @@ public:
 
   template <
     typename L,
-    decltype(ZuNotStatelessLambda<L, ZuTypeList<Args...>>(), int()) = 0>
+    ZuNotStatelessLambda<L, ZuTypeList<Args...>, int> = 0>
   ZmRingFn_(L &l) :
     m_invokeFn{[](void *ptr_, Args... args) -> unsigned {
       auto ptr = static_cast<L *>(ptr_);

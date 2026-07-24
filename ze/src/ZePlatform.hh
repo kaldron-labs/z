@@ -344,15 +344,15 @@ template <typename U> struct IsOther : public IsOther_<ZuDecay<U>> { };
 template <typename U, typename R = void>
 using MatchOther = ZuIfT<IsOther<U>{}, R>;
 
-template <typename Msg, decltype(MatchOther<Msg>(), int()) = 0>
+template <typename Msg, MatchOther<Msg, int> = 0>
 inline decltype(auto) fn(Msg &&msg) {
   return ZuFwd<Msg>(msg);
 }
-template <typename Msg, decltype(MatchLiteral<Msg>(), int()) = 0>
+template <typename Msg, MatchLiteral<Msg, int> = 0>
 inline auto fn(Msg &&msg) {
   return [msg = static_cast<const char *>(msg)](auto &s) mutable { s << msg; };
 }
-template <typename Msg, decltype(MatchPrint<Msg>(), int()) = 0>
+template <typename Msg, MatchPrint<Msg, int> = 0>
 inline auto fn(Msg &&msg) {
   return [msg = ZuFwd<Msg>(msg)](auto &s) mutable { s << ZuMv(msg); };
 }

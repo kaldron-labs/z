@@ -64,7 +64,7 @@ public:
     return *this;
   }
 
-  template <typename S, decltype(ZuMatchString<S>(), int()) = 0>
+  template <typename S, ZuMatchString<S, int> = 0>
   ZiIP(S &&s) {
 #ifdef __GNUC__
 #pragma GCC diagnostic push

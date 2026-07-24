@@ -594,9 +594,9 @@ public:
   template <
     typename ID_,
     typename Cmp_,
-    decltype(ZuIfT<
+    ZuIfT<
       ZuTraits<ID_>::IsString &&
-      bool(ZuIsSame<Cmp_, Cmp>{})>(), int()) = 0>
+      bool(ZuIsSame<Cmp_, Cmp>{}), int> = 0>
   ZmHash(const ID_ &id, Cmp_ cmp) : m_id{id}, m_cmp{ZuMv(cmp)} {
     auto params = ZmHashParams{m_id};
     LockMgr::init(params);
@@ -606,9 +606,9 @@ public:
   template <
     typename Cmp_,
     typename Params,
-    decltype(ZuIfT<
+    ZuIfT<
       bool(ZuIsSame<Cmp_, Cmp>{}) &&
-      bool(ZuIsSame<Params, ZmHashParams>{})>(), int()) = 0>
+      bool(ZuIsSame<Params, ZmHashParams>{}), int> = 0>
   ZmHash(Cmp_ cmp, const Params &params) : m_id{ID{}()}, m_cmp{ZuMv(cmp)} {
     LockMgr::init(params);
     ZmHash::init(params);
@@ -617,9 +617,9 @@ public:
   template <
     typename ID_,
     typename Params,
-    decltype(ZuIfT<
+    ZuIfT<
       ZuTraits<ID_>::IsString &&
-      bool(ZuIsSame<Params, ZmHashParams>{})>(), int()) = 0>
+      bool(ZuIsSame<Params, ZmHashParams>{}), int> = 0>
   ZmHash(
     const ID_ &id,
     const Params &params) : m_id{id}
@@ -632,10 +632,10 @@ public:
     typename ID_,
     typename Cmp_,
     typename Params,
-    decltype(ZuIfT<
+    ZuIfT<
       ZuTraits<ID_>::IsString &&
       bool(ZuIsSame<Cmp_, Cmp>{}) &&
-      bool(ZuIsSame<Params, ZmHashParams>{})>(), int()) = 0>
+      bool(ZuIsSame<Params, ZmHashParams>{}), int> = 0>
   ZmHash(
     const ID_ &id,
     Cmp_ cmp,

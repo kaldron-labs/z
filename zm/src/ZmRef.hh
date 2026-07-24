@@ -139,7 +139,7 @@ public:
     if (T *o = m_object) ZmMVREF(o, &r, this);
 #endif
   }
-  template <typename R, decltype(MatchOtherRef<ZuDeref<R>>(), int()) = 0>
+  template <typename R, MatchOtherRef<ZuDeref<R>, int> = 0>
   ZmRef(R &&r) noexcept : m_object{
 	static_cast<T *>(const_cast<typename ZuDeref<R>::T *>(r.m_object))} {
     if constexpr (ZuIsLRef<R>{}) {
@@ -154,7 +154,7 @@ public:
   ZmRef(T *o) noexcept : m_object{o} {
     if (o) ZmREF(o);
   }
-  template <typename O, decltype(MatchPtr<O>(), int()) = 0>
+  template <typename O, MatchPtr<O, int> = 0>
   ZmRef(O *o) noexcept : m_object{static_cast<T *>(o)} {
     if (o) ZmREF(o);
   }

@@ -41,9 +41,7 @@ public:
   R get() const;
 
   operator R() const { return get(); }
-  template <
-    typename _ = T,
-    decltype(ZuNotSame<U, _>(), int()) = 0>
+  template <typename _ = T, ZuNotSame<U, _, int> = 0>
   operator U() const { return get(); }
 
   template <bool _ = Mutable>

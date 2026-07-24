@@ -980,7 +980,7 @@ struct Bitmap {
   struct IsZuBitmap<ZuBitmap<Bits>> : public ZuTrue { };
   template <typename T, typename R = void>
   using MatchZuBitmap = ZuIfT<IsZuBitmap<T>{}, R>;
-  template <typename T, decltype(MatchZuBitmap<T>(), int()) = 0>
+  template <typename T, MatchZuBitmap<T, int> = 0>
   static T load(const Zfb::Bitmap *bitmap) {
     if (!bitmap || !bitmap->data()) return T{};
     auto vec = bitmap->data();
@@ -991,7 +991,7 @@ struct Bitmap {
     return b;
   }
   // ZmBitmap - hwloc bitmap (variable-size)
-  template <typename T, decltype(ZuSame<ZmBitmap, T>(), int()) = 0>
+  template <typename T, ZuSame<ZmBitmap, T, int> = 0>
   static T load(const Zfb::Bitmap *bitmap) {
     if (!bitmap || !bitmap->data()) return T{};
     auto vec = bitmap->data();
@@ -1005,7 +1005,7 @@ struct Bitmap {
     return b;
   }
   // ZtBitmap - variable-size bitmap
-  template <typename T, decltype(ZuSame<ZtBitmap, T>(), int()) = 0>
+  template <typename T, ZuSame<ZtBitmap, T, int> = 0>
   static T load(const Zfb::Bitmap *bitmap) {
     if (!bitmap || !bitmap->data()) return T{};
     auto vec = bitmap->data();
