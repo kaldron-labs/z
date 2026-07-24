@@ -18,10 +18,10 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
-#include <zlib/ZuString.hh>
-#include <zlib/ZuTL.hh>
 #include <zlib/ZuMatcher.hh>
+#include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
+#include <zlib/ZuTL.hh>
 #include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZtLocalArray.hh>
@@ -143,8 +143,9 @@ struct Impl : public Parser<Impl, ...> {
   // optional - peer dynamic table; nullptr disables dynamic QPACK decoding
   QPackRxTable *qpackRx();
 
-  // optional - local Tx dynamic table, currently exposed for symmetry
-  QPackTxTable *qpackTx();
+  // optional - post peer decoder instructions and SETTINGS capacity to Tx
+  bool qpackTxInsn(QPackInsn::T, uint64_t);
+  bool qpackTxMaxCapacity(uint64_t);
 };
 #endif
 
@@ -204,7 +205,7 @@ struct Impl : public Builder<Impl, Headers, Trailers, HasBody, Chunked> {
 };
 #endif
 
-} // Zhttp
+} // namespace Zhttp
 
 #include <zlib/ZhttpH1.hh>
 #include <zlib/ZhttpH3.hh>
@@ -265,6 +266,6 @@ template <
   bool HasBody = false>
 using H3RespBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
 
-} // Zhttp
+} // namespace Zhttp
 
 #endif /* Zhttp_HH */

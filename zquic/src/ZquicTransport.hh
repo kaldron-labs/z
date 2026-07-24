@@ -10,7 +10,6 @@
 #error "include zlib/Zquic.hh before this header"
 #endif
 
-
 namespace Zquic {
 
 static constexpr uint16_t TLSExtQUICParamsV1 = 0x39;

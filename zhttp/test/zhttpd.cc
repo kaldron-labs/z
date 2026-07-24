@@ -546,7 +546,7 @@ struct HTTPServer::Link :
   enum { TLS = false };
 
   Link(HTTPServer *app, ZuCSpan remote_) : Base{app}, remote{remote_} { }
-  void connected(Zi::Connected) { h1.connected(*this); touch(); }
+  void connected(Ztcp::Connected) { h1.connected(*this); touch(); }
   void disconnected(bool peer) {
     app()->mx()->del(&idleTimer);
     h1.disconnected(*this, peer);
@@ -628,7 +628,7 @@ struct TLSServer::Link :
   enum { TLS = true };
 
   Link(TLSServer *app, ZuCSpan remote_) : Base{app}, remote{remote_} { }
-  void connected(Zi::Connected) { h1.connected(*this); touch(); }
+  void connected(Ztls::Connected) { h1.connected(*this); touch(); }
   void disconnected(bool peer) {
     app()->mx()->del(&idleTimer);
     h1.disconnected(*this, peer);
@@ -772,9 +772,8 @@ struct H3ServerLink :
 
   H3ServerLink(H3Server *app, State *state_, ZuCSpan remote_) :
     Base{app}, state{state_}, remote{remote_} { }
-  void connected(Zi::Connected info) {
-    if (info.transport != Zi::Transport::QUIC ||
-	info.version != int(Zquic::Version1) || info.alpn != "h3")
+  void connected(Zquic::Connected info) {
+    if (info.version != Zquic::Version1 || info.alpn != "h3")
       app()->state->errors = 1;
     if (!h3.openLocal(*this))
       app()->state->errors = 1;
@@ -815,7 +814,6 @@ struct H3ServerLink :
 	return arm([link = ZmMkRef(this)]() { link->disconnect(); });
       });
   }
-  bool disconnect() { return Base::disconnect(); }
   void streamed(ZmRef<Stream> stream) {
     ZiLOG(Debug, "zhttpd.h3", ([id = stream ? stream->id() : -1](auto &s) {
       s << "streamed stream=" << id;
@@ -870,11 +868,19 @@ struct H3ServerLink :
     touch();
   }
 
-  H3Cxn		h3;
-  ZmScheduler::Timer	idleTimer;
-  State		*state = nullptr;
-  HdrString		remote;
-  bool		counted = true;
+  Zhttp::H3::QPackTxTable *qpackTx() { return &h3Tx; }
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  H3Cxn				h3;
+  ZmScheduler::Timer		idleTimer;
+  State				*state = nullptr;
+  HdrString			remote;
+  bool				counted = true;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  Zhttp::H3::QPackTxTable	h3Tx;
 };
 
 ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &info)
@@ -1008,8 +1014,8 @@ void H3Server::printDiag()
     pathUnknown += d.tx.pathResponseUnknown;
     streamRx += d.rx.streamBytesRx;
     streamTx += d.tx.streamBytesTx;
-    peerOpened += link->peerStreamsOpened(Zi::StreamType::Duplex);
-    localLimit += link->localStreamLimit(Zi::StreamType::Duplex);
+    peerOpened += link->peerStreamsOpened(Zquic::StreamType::Duplex);
+    localLimit += link->localStreamLimit(Zquic::StreamType::Duplex);
     ptoSched += d.tx.ptoSched;
     ptoNoLevel += d.tx.ptoNoLevel;
     ptoArmed += d.tx.ptoArmed;
@@ -1182,7 +1188,7 @@ void H3ServerStream::sendResponse(ResponsePlan resp)
   ]() mutable {
     auto tx = ref->txStream_();
     H3RespBuilder builder{&resp};
-    builder.qpackTx_ = &link->h3.qpackTxTable;
+    builder.qpackTx_ = link->qpackTx();
     builder.qpackEncoder_ = &link->h3;
     builder.qpackEncoderWrite_ = [](void *ptr, ZuBSpan span) {
       return static_cast<ZuDecay<decltype(link->h3)> *>(ptr)->

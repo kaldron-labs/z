@@ -101,11 +101,10 @@ ZiMxParams mxParams(bool h3 = false)
   return params;
 }
 
-bool validQUICInfo(Zi::Connected info)
+bool validQUICInfo(Zquic::Connected info)
 {
   return
-    info.transport == Zi::Transport::QUIC &&
-    info.version == int(Zquic::Version1) &&
+    info.version == Zquic::Version1 &&
     info.alpn == "h3";
 }
 
@@ -188,7 +187,7 @@ void sendH3Response(Stream &stream, ZuCSpan body)
   ]() mutable {
     auto tx = ref->txStream_();
     H3ResponseBuilder builder{ZuCSpan{body_}};
-    builder.qpackTx_ = &link->h3.qpackTxTable;
+    builder.qpackTx_ = link->qpackTx();
     builder.qpackEncoder_ = &link->h3;
     builder.qpackEncoderWrite_ = [](void *ptr, ZuBSpan span) {
       return static_cast<ZuDecay<decltype(link->h3)> *>(ptr)->
@@ -350,7 +349,7 @@ void sendH3Request(Stream &stream, ZuCSpan body)
   ]() mutable {
     auto tx = ref->txStream_();
     H3RequestBuilder builder{ZuCSpan{body_}};
-    builder.qpackTx_ = &link->h3.qpackTxTable;
+    builder.qpackTx_ = link->qpackTx();
     builder.qpackEncoder_ = &link->h3;
     builder.qpackEncoderWrite_ = [](void *ptr, ZuBSpan span) {
       return static_cast<ZuDecay<decltype(link->h3)> *>(ptr)->
@@ -411,7 +410,7 @@ struct TCPServer::Link :
   using Base::Base;
 
   Link(TCPServer *app) : Base{app} { }
-  void connected(Zi::Connected) { }
+  void connected(Ztcp::Connected) { }
   void disconnected(bool) { }
   int process(Ztcp::RxStream &rx) {
     auto s = parser.process(rx);
@@ -464,7 +463,7 @@ struct TLSServer::Link :
   using Base::Base;
 
   Link(TLSServer *app) : Base{app} { }
-  void connected(Zi::Connected) { }
+  void connected(Ztls::Connected) { }
   void disconnected(bool) { }
   int process(Ztls::RxStream &rx) {
     auto s = parser.process(rx);
@@ -520,7 +519,8 @@ struct H3ServerStream :
   bool peerEncoderStream();
   bool peerDecoderStream();
   Zhttp::H3::QPackRxTable *qpackRx();
-  Zhttp::H3::QPackTxTable *qpackTx();
+  bool qpackTxInsn(Zhttp::H3::QPackInsn::T, uint64_t);
+  bool qpackTxMaxCapacity(uint64_t);
 
   RequestParser<true>	parser;
 };
@@ -531,7 +531,7 @@ struct H3ServerLink :
   using H3Cxn = Zhttp::H3::Cxn<H3ServerLink, ZmRef<Stream>>;
 
   H3ServerLink(H3Server *app) : Base{app} { }
-  void connected(Zi::Connected info) {
+  void connected(Zquic::Connected info) {
     if (!validQUICInfo(info)) app()->state->errors = 1;
     if (!h3.openLocal(*this))
       app()->state->errors = 1;
@@ -539,7 +539,15 @@ struct H3ServerLink :
   void disconnected(bool) { }
   void streamed(ZmRef<Stream>) { }
 
-  H3Cxn	h3;
+  Zhttp::H3::QPackTxTable *qpackTx() { return &h3Tx; }
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  H3Cxn				h3;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  Zhttp::H3::QPackTxTable	h3Tx;
 };
 
 ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &)
@@ -620,9 +628,15 @@ Zhttp::H3::QPackRxTable *H3ServerStream::qpackRx()
   return this->link()->h3.qpackRx();
 }
 
-Zhttp::H3::QPackTxTable *H3ServerStream::qpackTx()
+bool H3ServerStream::qpackTxInsn(
+  Zhttp::H3::QPackInsn::T type, uint64_t value)
 {
-  return this->link()->h3.qpackTx();
+  return this->link()->h3.qpackTxInsn(type, value);
+}
+
+bool H3ServerStream::qpackTxMaxCapacity(uint64_t capacity)
+{
+  return this->link()->h3.qpackTxMaxCapacity(capacity);
 }
 
 struct ClientState {
@@ -663,7 +677,10 @@ struct H1ClientLinkOps : public Base {
 
   H1ClientLinkOps(App *app) : Base{app} { }
 
-  void connected(Zi::Connected) { sendH1Request(*this, this->app()->state->body); }
+  template <typename Connected>
+  void connected(Connected) {
+    sendH1Request(*this, this->app()->state->body);
+  }
   void disconnected(bool) {
     auto state = this->app()->state;
     if (!state->response.complete) {
@@ -742,7 +759,8 @@ struct H3Client::Stream :
   bool peerEncoderStream();
   bool peerDecoderStream();
   Zhttp::H3::QPackRxTable *qpackRx();
-  Zhttp::H3::QPackTxTable *qpackTx();
+  bool qpackTxInsn(Zhttp::H3::QPackInsn::T, uint64_t);
+  bool qpackTxMaxCapacity(uint64_t);
 
   ResponseParser<true>	parser;
 };
@@ -754,7 +772,7 @@ struct H3Client::Link :
 
   Link(H3Client *app) : Base{app} { }
 
-  void connected(Zi::Connected info) {
+  void connected(Zquic::Connected info) {
     if (!validQUICInfo(info)) {
       app()->state->errors = 1;
       app()->state->done.post();
@@ -765,7 +783,7 @@ struct H3Client::Link :
       app()->state->done.post();
       return;
     }
-    request = this->stream(Zi::StreamType::Duplex);
+    request = this->stream(Zquic::StreamType::Duplex);
     if (!request) {
       app()->state->errors = 1;
       app()->state->done.post();
@@ -786,8 +804,16 @@ struct H3Client::Link :
   }
   void streamed(ZmRef<Stream>) { }
 
-  ZmRef<Stream>	request;
-  H3Cxn		h3;
+  Zhttp::H3::QPackTxTable *qpackTx() { return &h3Tx; }
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  ZmRef<Stream>			request;
+  H3Cxn				h3;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  Zhttp::H3::QPackTxTable	h3Tx;
 };
 
 int H3Client::Stream::process(Zquic::RxStream &rx)
@@ -844,9 +870,15 @@ Zhttp::H3::QPackRxTable *H3Client::Stream::qpackRx()
   return this->link()->h3.qpackRx();
 }
 
-Zhttp::H3::QPackTxTable *H3Client::Stream::qpackTx()
+bool H3Client::Stream::qpackTxInsn(
+  Zhttp::H3::QPackInsn::T type, uint64_t value)
 {
-  return this->link()->h3.qpackTx();
+  return this->link()->h3.qpackTxInsn(type, value);
+}
+
+bool H3Client::Stream::qpackTxMaxCapacity(uint64_t capacity)
+{
+  return this->link()->h3.qpackTxMaxCapacity(capacity);
 }
 
 bool waitDone(ZmSemaphore &sem)

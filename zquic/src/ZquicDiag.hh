@@ -12,7 +12,6 @@
 
 #include <zlib/ZtString.hh>
 
-
 namespace Zquic {
 
 using DiagText = ZtString<
@@ -40,7 +39,7 @@ struct DiagCounter {
 struct Diag {
   static ZuCSpan packetSpaceName(PktNumSpace::T);
   static ZuCSpan frameTypeName(FrameType::T);
-  static ZuCSpan streamTypeName(Zi::StreamType::T);
+  static ZuCSpan streamTypeName(Zquic::StreamType::T);
 
   void notePktRx(unsigned bytes) {
     ++packetsRx;

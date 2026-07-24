@@ -9,9 +9,15 @@
 #ifndef ZhttpHPack_HH
 #define ZhttpHPack_HH
 
+#ifndef ZhttpLib_HH
+#include <zlib/ZhttpLib.hh>
+#endif
+
 #include <zlib/ZuBitStream.hh>
 
-namespace Zhttp { namespace H3 {
+namespace Zhttp {
+
+namespace H3 {
 
 namespace HPack {
 
@@ -28,8 +34,10 @@ namespace HPack {
   }
   int64_t decode(ZuSpan<uint8_t>, ZuBSpan);
 
-} // HPack
+} // namespace HPack
 
-}} // namespace Zhttp::H3
+} // namespace H3
+
+} // namespace Zhttp
 
 #endif /* ZhttpHPack_HH */

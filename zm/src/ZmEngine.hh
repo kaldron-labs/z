@@ -21,6 +21,7 @@
 #include <zlib/ZmBlock.hh>
 
 namespace ZmEngineState {
+  using T = int8_t;
   enum {
     Stopped = 0, Starting, Running, Stopping,
     StartPending,	// started while stopping

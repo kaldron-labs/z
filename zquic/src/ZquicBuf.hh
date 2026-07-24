@@ -20,7 +20,6 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
 
-
 namespace Zquic_ {
 
 ZuDerive(IOQueue,

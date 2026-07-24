@@ -19,14 +19,15 @@
 
 #include <zlib/ZtlsPico.hh>
 
-
-namespace Ztls { namespace Backend {
-struct PKey;
-struct CertStore;
-struct SignCert;
-struct TicketKey;
-struct VerifyCert;
-} }
+namespace Ztls {
+namespace Backend {
+  struct PKey;
+  struct CertStore;
+  struct SignCert;
+  struct TicketKey;
+  struct VerifyCert;
+}
+}
 
 namespace Zquic {
 

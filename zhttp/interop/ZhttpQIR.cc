@@ -352,7 +352,7 @@ struct HQServerLink :
 
   HQServerLink(HQServer *app) : Base{app} { }
 
-  void connected(Zi::Connected info) {
+  void connected(Zquic::Connected info) {
     if (info.alpn != HQALPN) {
       app()->errors = 1;
       disconnect();
@@ -445,13 +445,13 @@ struct HQClient::Link :
     return findStream(int64_t(streamID));
   }
 
-  void connected(Zi::Connected info) {
+  void connected(Zquic::Connected info) {
     if (info.alpn != HQALPN) {
       app()->fail();
       return;
     }
     for (unsigned i = 0, n = app()->requests.length(); i < n; ++i) {
-      auto stream = this->stream(Zi::StreamType::Duplex);
+      auto stream = this->stream(Zquic::StreamType::Duplex);
       if (!stream) {
 	app()->fail();
 	return;
@@ -563,7 +563,8 @@ struct H3Client::Stream :
   bool peerEncoderStream();
   bool peerDecoderStream();
   Zhttp::H3::QPackRxTable *qpackRx();
-  Zhttp::H3::QPackTxTable *qpackTx();
+  bool qpackTxInsn(Zhttp::H3::QPackInsn::T, uint64_t);
+  bool qpackTxMaxCapacity(uint64_t);
   void complete(bool ok);
 
   H3RespParser	parser;
@@ -582,8 +583,8 @@ struct H3Client::Link :
     return findStream(int64_t(streamID));
   }
 
-  void connected(Zi::Connected info) {
-    if (info.alpn != H3ALPN || info.transport != Zi::Transport::QUIC) {
+  void connected(Zquic::Connected info) {
+    if (info.alpn != H3ALPN) {
       app()->fail();
       return;
     }
@@ -592,7 +593,7 @@ struct H3Client::Link :
       return;
     }
     for (unsigned i = 0, n = app()->requests.length(); i < n; ++i) {
-      auto stream = this->stream(Zi::StreamType::Duplex);
+      auto stream = this->stream(Zquic::StreamType::Duplex);
       if (!stream) {
 	app()->fail();
 	return;
@@ -618,7 +619,15 @@ struct H3Client::Link :
   void connectFailed(bool) { app()->fail(); }
   void streamed(ZmRef<Stream>) { }
 
-  H3Cxn	h3;
+  Zhttp::H3::QPackTxTable *qpackTx() { return &h3Tx; }
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  H3Cxn				h3;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  Zhttp::H3::QPackTxTable	h3Tx;
 };
 
 Zhttp::H3::QPackRxTable *H3RespParser::qpackRx() const
@@ -701,9 +710,15 @@ Zhttp::H3::QPackRxTable *H3Client::Stream::qpackRx()
   return this->link()->h3.qpackRx();
 }
 
-Zhttp::H3::QPackTxTable *H3Client::Stream::qpackTx()
+bool H3Client::Stream::qpackTxInsn(
+  Zhttp::H3::QPackInsn::T type, uint64_t value)
 {
-  return this->link()->h3.qpackTx();
+  return this->link()->h3.qpackTxInsn(type, value);
+}
+
+bool H3Client::Stream::qpackTxMaxCapacity(uint64_t capacity)
+{
+  return this->link()->h3.qpackTxMaxCapacity(capacity);
 }
 
 void H3Client::Stream::complete(bool ok)

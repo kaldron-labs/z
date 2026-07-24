@@ -16,7 +16,6 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmQueue.hh>
 
-
 namespace Zquic {
 
 inline constexpr uint64_t TimeUSPerMS = 1000;
@@ -532,7 +531,7 @@ struct SentFrameRef {
   uint64_t		offset = 0;
   uint64_t		length = 0;
   uint64_t		value = 0;
-  Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
+  Zquic::StreamType::T	streamType = Zquic::StreamType::Duplex;
   bool			fin = false;
   uint8_t		payload[8]{};
   CxnID			cxnID;
@@ -578,7 +577,7 @@ struct SentFrameRef {
 
   static SentFrameRef blocked(
     FrameType::T type, uint64_t streamID_, uint64_t limit,
-    Zi::StreamType::T streamType_ = Zi::StreamType::Duplex) {
+    Zquic::StreamType::T streamType_ = Zquic::StreamType::Duplex) {
     SentFrameRef ref = control();
     ref.controlType = type;
     ref.streamID = streamID_;

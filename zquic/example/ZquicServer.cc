@@ -70,7 +70,7 @@ struct AppLink :
 
   AppLink(App *app) : Base{app} { }
 
-  void connected(Zi::Connected info) {
+  void connected(Zquic::Connected info) {
     std::cerr << "QUIC handshake completed"
       << " version=" << info.version
       << " alpn=" << info.alpn << '\n' << std::flush;

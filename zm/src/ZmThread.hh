@@ -46,12 +46,14 @@
 using ZmThreadID = Zm::ThreadID;
 
 namespace ZmThreadPriority {
+  using T = int8_t;
   enum {		// thread priorities
     Unset = -1,
     RealTime = 0,
     High = 1,
     Normal = 2,
-    Low = 3
+    Low = 3,
+    N = 4
   };
 }
 
@@ -59,19 +61,19 @@ namespace ZmThreadPriority {
 //   name, id, tid, cpuUsage, cpuset, priority, sysPriority,
 //   stackSize, partition, main, detached
 struct ZmThreadTelemetry {
-  ZuID		name;
-  uint64_t	tid = 0;	// primary key
-  uint64_t	stackSize = 0;
-  ZmBitmap	cpuset;
-  double	cpuUsage = 0.0;	// graphable (*)
-  uint64_t	allocStack = 0;
-  uint64_t	allocHeap = 0;
-  int32_t	sysPriority = 0;
-  uint16_t	sid = 0;	// thread container's slot ID
-  uint16_t	partition = 0;
-  int8_t	priority = -1;
-  uint8_t	main = 0;
-  uint8_t	detached = 0;
+  ZuID			name;
+  uint64_t		tid = 0;	// primary key
+  uint64_t		stackSize = 0;
+  ZmBitmap		cpuset;
+  double		cpuUsage = 0.0;	// graphable (*)
+  uint64_t		allocStack = 0;
+  uint64_t		allocHeap = 0;
+  int32_t		sysPriority = 0;
+  uint16_t		sid = 0;	// thread container's slot ID
+  uint16_t		partition = 0;
+  ZmThreadPriority::T	priority = -1;
+  bool			main = 0;
+  bool			detached = 0;
 };
 
 class ZmThreadContext;

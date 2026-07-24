@@ -14,13 +14,19 @@
 #include <stdint.h>
 
 #include <zlib/ZuDerive.hh>
-
-#include <zlib/ZiTransport.hh>
+#include <zlib/ZuSpan.hh>
 
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
 namespace Zquic {
+
+ZtEnumStruct(StreamType, int8_t, Duplex, Simplex);
+
+struct Connected {
+  ZuCSpan	alpn;
+  uint32_t	version = 0;
+};
 
 ZuDerive(Host, ZtString<ZtStringHeapID<"Zquic.Host">>);
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Zquic.Param">>);
@@ -121,7 +127,7 @@ struct MigrationMode {
 inline bool parseMigrationMode(ZuCSpan s, MigrationMode::T &mode)
 {
   if (s == "disable") s = "disabled";
-  auto mode_ = MigrationMode::JSON::exact(s);
+  auto mode_ = MigrationMode::JSON::s2v(s);
   if (mode_ < 0 || mode_ >= MigrationMode::N) return false;
   mode = mode_;
   return true;

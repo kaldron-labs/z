@@ -12,7 +12,6 @@
 
 #include <zlib/ZiMultiplex.hh>
 
-
 namespace Zquic {
 
 struct Datagram {

@@ -299,12 +299,12 @@ void testScheduling()
 
   control = Zquic::ControlFrame::flowUpdate(
     Zquic::FlowUpdate{
-      Zquic::FrameType::MaxStreams, 0, 8, Zi::StreamType::Simplex});
+      Zquic::FrameType::MaxStreams, 0, 8, Zquic::StreamType::Simplex});
   n = control.write(b, sizeof(b));
   ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
       ZuBSpan{b, unsigned(n)}, frame, used) &&
       frame.type == Zquic::FrameType::MaxStreams &&
-      frame.streamType == Zi::StreamType::Simplex &&
+      frame.streamType == Zquic::StreamType::Simplex &&
       frame.value == 8,
     "queued MAX_STREAMS control write mismatch");
 }

@@ -18,9 +18,9 @@ ZuCSpan Diag::frameTypeName(FrameType::T type)
   return FrameType{}.name(type);
 }
 
-ZuCSpan Diag::streamTypeName(Zi::StreamType::T type)
+ZuCSpan Diag::streamTypeName(Zquic::StreamType::T type)
 {
-  return Zi::StreamType{}.name(type);
+  return Zquic::StreamType{}.name(type);
 }
 
 void Diag::summary(DiagText &out) const

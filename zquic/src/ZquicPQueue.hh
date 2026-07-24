@@ -14,7 +14,6 @@
 
 #include <zlib/ZtArray.hh>
 
-
 namespace Zquic {
 
 struct RxData {

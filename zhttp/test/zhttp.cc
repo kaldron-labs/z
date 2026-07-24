@@ -1568,26 +1568,35 @@ int processResponse(Link &link, State &state, Stream &rx)
   return 1;
 }
 
-ZuCSpan transportName(Zi::Transport::T transport)
-{
-  if (transport == Zi::Transport::TLS) return "TLS";
-  if (transport == Zi::Transport::QUIC) return "QUIC";
-  return "TCP";
-}
-
-void logConnected(const State &state, Zi::Connected info)
+void logConnected_(
+  const State &state, ZuCSpan transport, int version, ZuCSpan alpn)
 {
   ZiLOG(Info, "zhttp", ([
-    transport = info.transport,
+    transport = ZeString(transport),
     host = ZeString(state.url.host),
-    version = info.version,
-    alpn = ZeString(info.alpn)
+    version,
+    alpn = ZeString(alpn)
   ](auto &s) {
-    s << transportName(transport) << " connected (hostname: " << host;
+    s << transport << " connected (hostname: " << host;
     if (version) s << " version: " << version;
     if (alpn) s << " ALPN: " << alpn;
     s << ')';
   }));
+}
+
+void logConnected(const State &state, Ztcp::Connected)
+{
+  logConnected_(state, "TCP", 0, {});
+}
+
+void logConnected(const State &state, Ztls::Connected info)
+{
+  logConnected_(state, "TLS", info.version, info.alpn);
+}
+
+void logConnected(const State &state, Zquic::Connected info)
+{
+  logConnected_(state, "QUIC", int(info.version), info.alpn);
 }
 
 template <typename App_, typename Base_, bool H3_ = false>
@@ -1601,7 +1610,8 @@ struct CliLink : public Base_ {
 
   CliLink(App *app) : Base{app}, parser{this, &app->state} { }
 
-  void connected(Zi::Connected info) {
+  template <typename Connected>
+  void connected(Connected info) {
     logConnected(this->app()->state, info);
     typename Base::StreamRef stream;
     if constexpr (H3) {
@@ -1610,7 +1620,7 @@ struct CliLink : public Base_ {
 	this->app()->done();
 	return;
       }
-      stream = this->stream(Zi::StreamType::Duplex);
+      stream = this->stream(Zquic::StreamType::Duplex);
       this->app()->state.responseStreamID = stream ? stream->id() : -1;
     } else
       stream = this->stream();
@@ -1649,8 +1659,19 @@ struct CliLink : public Base_ {
     return processResponse<H3>(*this, this->app()->state, rx);
   }
 
-  Parser		parser;
-  H3Cxn			h3;
+  Zhttp::H3::QPackTxTable *qpackTx() {
+    if constexpr (H3) return &h3Tx;
+    return nullptr;
+  }
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  Parser			parser;
+  H3Cxn				h3;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  Zhttp::H3::QPackTxTable	h3Tx;
 };
 
 template <
@@ -1677,16 +1698,17 @@ struct Client : public Client_<App> {
   unsigned reconnFreq() const { return 0; }
 };
 
-struct TCPClient : public Client<TCPClient, Ztcp::Client, Ztcp::CliLink> { };
-struct TLSClient : public Client<TLSClient, Ztls::Client, Ztls::CliLink> { };
+struct TCPClient : public Client<TCPClient, Ztcp::Client, Ztcp::CliLink> {
+  enum { TLS = false };
+};
+struct TLSClient : public Client<TLSClient, Ztls::Client, Ztls::CliLink> {
+  enum { TLS = true };
+};
 
 template <typename Client>
 bool h1TransportOK(const URL &url)
 {
-  if constexpr (Client::Transport == Zi::Transport::TCP)
-    return url.scheme == "http";
-  else
-    return url.scheme == "https";
+  return url.scheme == (Client::TLS ? "https" : "http");
 }
 
 bool sameOrigin(const URL &a, const URL &b)
@@ -1735,7 +1757,8 @@ struct H1PoolLink : public Base_ {
     parser.reset();
     sendH1Request(*req, this->stream());
   }
-  void connected(Zi::Connected info) {
+  template <typename Connected>
+  void connected(Connected info) {
     if (req) logConnected(*req, info);
     if (!this->app()->running()) {
       this->disconnect_();
@@ -1944,9 +1967,13 @@ struct H1PoolClient : public Client_<App> {
 };
 
 struct H1TCPClient :
-  public H1PoolClient<H1TCPClient, Ztcp::Client, Ztcp::CliLink> { };
+  public H1PoolClient<H1TCPClient, Ztcp::Client, Ztcp::CliLink> {
+  enum { TLS = false };
+};
 struct H1TLSClient :
-  public H1PoolClient<H1TLSClient, Ztls::Client, Ztls::CliLink> { };
+  public H1PoolClient<H1TLSClient, Ztls::Client, Ztls::CliLink> {
+  enum { TLS = true };
+};
 
 struct QUICClient : public Zquic::Client<QUICClient> {
   struct Link;
@@ -2056,7 +2083,8 @@ struct QUICClient::Stream :
   bool peerEncoderStream();
   bool peerDecoderStream();
   Zhttp::H3::QPackRxTable *qpackRx();
-  Zhttp::H3::QPackTxTable *qpackTx();
+  bool qpackTxInsn(Zhttp::H3::QPackInsn::T, uint64_t);
+  bool qpackTxMaxCapacity(uint64_t);
 
   Req *req = nullptr;
   H3ResponseParser<QUICClient::Link> parser;
@@ -2069,7 +2097,7 @@ struct QUICClient::Link :
     Zquic::CliLink<QUICClient, QUICClient::Link, QUICClient::Stream>, true>;
   using Base::Base;
 
-  void connected(Zi::Connected info) {
+  void connected(Zquic::Connected info) {
     ++this->app()->up;
     m_countedUp = true;
     logConnected(this->app()->state, info);
@@ -2234,9 +2262,9 @@ void QUICClient::printDiag(Link *link, ZuCSpan label)
   ZiLOG(Info, "zhttp", ([
     label, complete, failed, scheduled, active, pending,
     streams = link->streamCount(),
-    limit = link->peerStreamLimit(Zi::StreamType::Duplex),
-    opened = link->localStreamsOpened(Zi::StreamType::Duplex),
-    queued = link->queuedLocalStreams(Zi::StreamType::Duplex),
+    limit = link->peerStreamLimit(Zquic::StreamType::Duplex),
+    opened = link->localStreamsOpened(Zquic::StreamType::Duplex),
+    queued = link->queuedLocalStreams(Zquic::StreamType::Duplex),
     packetsRx = diag.rx.packetsRx, packetsTx = diag.tx.packetsTx,
     duplicatePackets = diag.rx.duplicatePacketsRx,
     ackCommits = diag.rx.ackCommitsRx,
@@ -2600,9 +2628,15 @@ Zhttp::H3::QPackRxTable *QUICClient::Stream::qpackRx()
   return this->link()->h3.qpackRx();
 }
 
-Zhttp::H3::QPackTxTable *QUICClient::Stream::qpackTx()
+bool QUICClient::Stream::qpackTxInsn(
+  Zhttp::H3::QPackInsn::T type, uint64_t value)
 {
-  return this->link()->h3.qpackTx();
+  return this->link()->h3.qpackTxInsn(type, value);
+}
+
+bool QUICClient::Stream::qpackTxMaxCapacity(uint64_t capacity)
+{
+  return this->link()->h3.qpackTxMaxCapacity(capacity);
 }
 
 void QUICClient::openH3Streams(Link *link_)
@@ -2650,7 +2684,7 @@ void QUICClient::openH3Streams_(Link *link_)
     }
     resetAttempt(*req, true);
     if (!activateH3Req(req)) return;
-    auto stream = link_->stream(Zi::StreamType::Duplex);
+    auto stream = link_->stream(Zquic::StreamType::Duplex);
     if (!stream) {
       if (req->logResponse) {
 		auto ctx = reqLogCtx(*req);
@@ -2849,7 +2883,7 @@ void QUICClient::finishH3Req_(Link *link_, Req *req, bool ok)
 	req
       ]() mutable {
 	if (!link || !req || req->done) return;
-	auto stream = link->stream(Zi::StreamType::Duplex);
+	auto stream = link->stream(Zquic::StreamType::Duplex);
 	if (!stream) {
 	  queueH3Req(req);
 	  return;
@@ -2937,13 +2971,13 @@ int run(
   client.state.discardResponse = req.discardResponse;
   client.state.logResponse = req.logResponse;
 
-  if constexpr (Client::Transport == Zi::Transport::TCP) {
+  if constexpr (!Client::TLS) {
     client.state.protocol = Protocol::H1;
     if (!client.init(Ztcp::ClientParams(&mx, "3", "4"))) {
       ZiLOG(Error, "zhttp", "TCP client initialization failed");
       return 1;
     }
-  } else if constexpr (Client::Transport == Zi::Transport::TLS) {
+  } else {
     client.state.protocol = Protocol::H1;
     ZuCSpan alpn[] = { "http/1.1" };
     if (!client.init(
@@ -2951,11 +2985,6 @@ int run(
       ZiLOG(Error, "zhttp", "TLS client initialization failed");
       return 1;
     }
-  } else {
-    static_assert(
-      Client::Transport == Zi::Transport::TCP ||
-      Client::Transport == Zi::Transport::TLS,
-      "unsupported one-shot transport");
   }
   if (!client.start()) {
     ZiLOG(Error, "zhttp", "client start failed");
@@ -2989,7 +3018,7 @@ int runH1Pool(ZiMultiplex &mx, Run &run)
   Client client;
   client.run = &run;
 
-  if constexpr (Client::Transport == Zi::Transport::TCP) {
+  if constexpr (!Client::TLS) {
     if (!client.init(Ztcp::ClientParams(&mx, "3", "4"))) {
       ZiLOG(Error, "zhttp", "TCP client initialization failed");
       return 1;
@@ -3200,9 +3229,9 @@ int runH3Multi(ZiMultiplex &mx, Run &run)
       ZiLOG(Error, "zhttp", ([
 	complete, failed, scheduled, active, pending,
 	streams = link->streamCount(),
-	limit = link->peerStreamLimit(Zi::StreamType::Duplex),
-	opened = link->localStreamsOpened(Zi::StreamType::Duplex),
-	queued = link->queuedLocalStreams(Zi::StreamType::Duplex),
+	limit = link->peerStreamLimit(Zquic::StreamType::Duplex),
+	opened = link->localStreamsOpened(Zquic::StreamType::Duplex),
+	queued = link->queuedLocalStreams(Zquic::StreamType::Duplex),
 	packetsRx = diag.rx.packetsRx,
 	packetsTx = diag.tx.packetsTx,
 	pto = diag.tx.ptoCount,

@@ -64,6 +64,24 @@ public:
       return link;
     });
   }
+  bool disconnect(uint64_t errorCode) {
+    if (!Base::closed()) Base::closeState_(errorCode, true);
+    if (Base::established_() && Endpoint::connected() &&
+	Endpoint::remote()) {
+      app()->txRun([
+	link = impl(),
+	addr = Endpoint::remote()
+      ]() mutable {
+	if (link->disconnecting_()) return;
+	(void)link->sendCloseFrame_(ZuMv(addr), true);
+	link->m_closeNotify = false;
+	link->m_closePeer = false;
+	link->enterLocalClosingTx_();
+      });
+      return true;
+    }
+    return Base::disconnect(false);
+  }
   template <typename L>
   void disconnect(L &&l) {
     ZiAssert(app() && app()->mx(), "Zquic", (),
@@ -653,10 +671,9 @@ private:
     Base::validatePath_();
     Base::schedulePMTUD();
     Base::scheduleMigrationCIDs_();
-    impl()->connected(Zi::Connected{
-      .transport = Zi::Transport::QUIC,
+    impl()->connected(Connected{
       .alpn = Base::negotiatedProtocol_(),
-      .version = int(Version1)
+      .version = Version1
     });
   }
 
@@ -1489,17 +1506,17 @@ private:
   void dataBlocked_(uint64_t maximum) {
     Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
     impl()->flowBlocked(
-      FrameType::DataBlocked, 0, Zi::StreamType::Duplex, maximum);
+      FrameType::DataBlocked, 0, Zquic::StreamType::Duplex, maximum);
     queueTxFlush_();
   }
   void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
     impl()->flowBlocked(
       FrameType::StreamDataBlocked, streamID,
-      Zi::StreamType::Duplex, maximum);
+      Zquic::StreamType::Duplex, maximum);
     queueTxFlush_();
   }
-  void streamsBlocked_(Zi::StreamType::T type, uint64_t maximum) {
+  void streamsBlocked_(Zquic::StreamType::T type, uint64_t maximum) {
     Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
     impl()->flowBlocked(FrameType::StreamsBlocked, 0, type, maximum);
     queueTxFlush_();

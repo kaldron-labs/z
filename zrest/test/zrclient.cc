@@ -59,7 +59,7 @@ public:
   Link(Client *client, ZtString<> server, uint16_t port) :
     Base{client, ZuMv(server), port} { }
 
-  void connected(Zi::Connected);
+  void connected(Ztls::Connected);
   void connectFailed(bool transient);
   void disconnected(bool);
 
@@ -103,7 +103,7 @@ private:
   ZmRef<Link>		m_link;
 };
 
-void Link::connected(Zi::Connected info)
+void Link::connected(Ztls::Connected info)
 {
   Base::connected(info);
   send_(request(Zhttp::Method::POST, "/api/auth", [](ZiIOBuf &buf) {

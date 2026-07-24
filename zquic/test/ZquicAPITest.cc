@@ -127,7 +127,7 @@ struct ServerAppLink :
 
   ServerAppLink(ServerApp *app) : Base{app} { }
 
-  void connected(Zi::Connected) { }
+  void connected(Zquic::Connected) { }
   void streamed(ZmRef<ServerAppStream>) { }
 };
 
@@ -153,7 +153,7 @@ struct ClientShapeLink :
 
   ClientShapeLink(ClientShapeApp *app) : Base{app} { }
 
-  void connected(Zi::Connected) { }
+  void connected(Zquic::Connected) { }
   void streamed(ZmRef<ClientShapeStream>) { }
   void connectFailed(bool) { ++failures; }
   void disconnected(bool) { ++disconnects; }
@@ -186,7 +186,7 @@ struct ServerShapeLink :
 
   ServerShapeLink(ServerShapeApp *app) : Base{app} { }
 
-  void connected(Zi::Connected) { }
+  void connected(Zquic::Connected) { }
   void streamed(ZmRef<ServerShapeStream>) { }
   void initSrvPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
@@ -259,7 +259,7 @@ struct TestLink :
   }
   void flowBlocked(
     Zquic::FrameType::T type, uint64_t streamID,
-    Zi::StreamType::T streamType, uint64_t maximum) {
+    Zquic::StreamType::T streamType, uint64_t maximum) {
     lastFlowType = type;
     lastFlowStreamID = streamID;
     lastFlowStreamType = streamType;
@@ -453,7 +453,7 @@ struct TestLink :
   Zquic::CxnID retiredCID;
   Zquic::FrameType::T lastFlowType = Zquic::FrameType::Unknown;
   Zquic::FrameType::T lastCloseType = Zquic::FrameType::Unknown;
-  Zi::StreamType::T lastFlowStreamType = Zi::StreamType::Duplex;
+  Zquic::StreamType::T lastFlowStreamType = Zquic::StreamType::Duplex;
   unsigned lastDataLength = 0;
   unsigned lastPathMaxUDP = 0;
   unsigned retiredCount = 0;
@@ -624,7 +624,7 @@ void testStreamShape()
   ZmRef<TestLink> server = new TestLink{&fixture.app, true};
 
   auto c0 = client->stream();
-  auto c1 = client->stream(Zi::StreamType::Simplex);
+  auto c1 = client->stream(Zquic::StreamType::Simplex);
   auto s0 = server->stream();
 
   ZuCHECK(c0 && c0->id() == 0, "client bidi stream ID mismatch");

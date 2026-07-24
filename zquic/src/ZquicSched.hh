@@ -15,7 +15,6 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmQueue.hh>
 
-
 namespace Zquic {
 
 // Reserve a round 64 bytes when sizing stream plaintext against the
@@ -142,7 +141,7 @@ struct ControlFrame {
   uint64_t		streamID = 0;
   uint64_t		value = 0;
   uint64_t		errorCode = 0;
-  Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
+  Zquic::StreamType::T	streamType = Zquic::StreamType::Duplex;
   uint8_t		payload[8]{};
   CxnID			cxnID;
   ResetToken		resetToken;
@@ -167,19 +166,19 @@ struct ControlFrame {
   }
   static ControlFrame blocked(
     FrameType::T type_, uint64_t streamID_, uint64_t value_,
-    Zi::StreamType::T streamType_ = Zi::StreamType::Duplex) {
+    Zquic::StreamType::T streamType_ = Zquic::StreamType::Duplex) {
     return ControlFrame{type_, streamID_, value_, 0, streamType_, {}};
   }
   static ControlFrame resetStream(
     uint64_t streamID_, uint64_t appError, uint64_t finalSize) {
     return ControlFrame{
       FrameType::ResetStream, streamID_, finalSize, appError,
-      Zi::StreamType::Duplex, {}};
+      Zquic::StreamType::Duplex, {}};
   }
   static ControlFrame stopSending(uint64_t streamID_, uint64_t appError) {
     return ControlFrame{
       FrameType::StopSending, streamID_, 0, appError,
-      Zi::StreamType::Duplex, {}};
+      Zquic::StreamType::Duplex, {}};
   }
   static ControlFrame pathResponse(ZuBSpan data) {
     ControlFrame frame;

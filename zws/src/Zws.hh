@@ -89,7 +89,7 @@ public:
     return true;
   }
 
-  void connected(Zi::Connected info) {
+  void connected(Ztls::Connected info) {
     if (info.alpn != "http/1.1") {
       disconnect();
       return;

@@ -10,7 +10,6 @@
 #error "include zlib/Zquic.hh before this header"
 #endif
 
-
 namespace Zquic {
 
 struct StreamID {
@@ -19,9 +18,9 @@ struct StreamID {
   static bool uni(uint64_t id) { return id & 2; }
   static bool bidi(uint64_t id) { return !(id & 2); }
   static uint64_t ordinal(uint64_t id) { return id >> 2; }
-  static uint64_t make(bool server, Zi::StreamType::T type, uint64_t ordinal) {
+  static uint64_t make(bool server, Zquic::StreamType::T type, uint64_t ordinal) {
     return (ordinal<<2) | (server ? 1U : 0U) |
-      (type == Zi::StreamType::Simplex ? 2U : 0U);
+      (type == Zquic::StreamType::Simplex ? 2U : 0U);
   }
 };
 
@@ -69,7 +68,7 @@ struct FlowUpdate {
   FrameType::T	type = FrameType::Unknown;
   uint64_t	streamID = 0;
   uint64_t	maximum = 0;
-  Zi::StreamType::T	streamType = Zi::StreamType::Duplex;
+  Zquic::StreamType::T	streamType = Zquic::StreamType::Duplex;
 
   bool needed() const { return type != FrameType::Unknown; }
 
@@ -118,12 +117,12 @@ public:
 
   bool maxDataUpdate(FlowUpdate &update) {
     return update_(m_connection, m_dataWindow,
-      FlowUpdate{FrameType::MaxData, 0, 0, Zi::StreamType::Duplex}, update);
+      FlowUpdate{FrameType::MaxData, 0, 0, Zquic::StreamType::Duplex}, update);
   }
 
   bool maxStreamDataUpdate(uint64_t streamID, FlowUpdate &update) {
     return update_(m_stream, m_streamWindow,
-      FlowUpdate{FrameType::MaxStreamData, streamID, 0, Zi::StreamType::Duplex},
+      FlowUpdate{FrameType::MaxStreamData, streamID, 0, Zquic::StreamType::Duplex},
       update);
   }
 

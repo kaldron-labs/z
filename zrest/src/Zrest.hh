@@ -475,7 +475,7 @@ template <typename, typename> friend class Client;
   }
 
   // link state management
-  void connected(Zi::Connected info) {
+  void connected(Ztls::Connected info) {
     if (info.alpn != "http/1.1") {
       this->disconnect();
       return;
@@ -609,7 +609,7 @@ template <typename, typename> friend class Server;
 
   SrvLink(App *app) : Base(app) { }
 
-  // void connected(Zi::Connected);
+  // void connected(Ztls::Connected);
   // void disconnected(bool);
 
   // int process(const uint8_t *data, unsigned len);

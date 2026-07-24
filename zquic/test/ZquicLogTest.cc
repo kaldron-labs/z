@@ -641,12 +641,12 @@ void testQLogTypedTransportEvents()
   FrameEvt maxStreams;
   maxStreams.type = FrameType::MaxStreams;
   maxStreams.value = 16;
-  maxStreams.streamType = StreamType::Simplex;
+  maxStreams.streamType = ZquicLog_::StreamType::Simplex;
   packet.frames.push(maxStreams);
   FrameEvt streamsBlocked;
   streamsBlocked.type = FrameType::StreamsBlocked;
   streamsBlocked.value = 8;
-  streamsBlocked.streamType = StreamType::Duplex;
+  streamsBlocked.streamType = ZquicLog_::StreamType::Duplex;
   packet.frames.push(streamsBlocked);
   packet.frames.push(FrameEvt{.type = FrameType::PathResponse});
   packet.frames.push(FrameEvt{
@@ -1449,7 +1449,7 @@ void testQLogTypedStreamEvents()
 
   StreamEvt open{
     .streamID = 4,
-    .streamType = StreamType::Duplex,
+    .streamType = ZquicLog_::StreamType::Duplex,
     .oldState = StreamState::Idle,
     .newState = StreamState::Open,
     .streamSide = StreamSide::Sending,
@@ -1461,7 +1461,7 @@ void testQLogTypedStreamEvents()
     .streamID = 4,
     .offset = 128,
     .length = 32,
-    .streamType = StreamType::Duplex,
+    .streamType = ZquicLog_::StreamType::Duplex,
     .oldState = StreamState::Open,
     .newState = StreamState::Closed,
     .streamSide = StreamSide::Receiving,

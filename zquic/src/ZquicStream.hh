@@ -121,7 +121,7 @@ public:
       m_maxStreamDataControl,
       ControlFrame::flowUpdate(FlowUpdate{
 	FrameType::MaxStreamData, uint64_t(m_id), value,
-	Zi::StreamType::Duplex}));
+	Zquic::StreamType::Duplex}));
   }
   bool queueDataBlocked(uint64_t value) {
     return queueControl_(
