@@ -421,10 +421,10 @@ inline bool sendCryptoFlights(
   return true;
 }
 
-// Engine configuration
-class EngineParams {
+// Hub configuration
+class HubParams {
 public:
-  EngineParams(
+  HubParams(
     ZiMultiplex *mx = nullptr,
     ZuCSpan rxThread = {},
     ZuCSpan txThread = {})
@@ -434,106 +434,106 @@ public:
   {
   }
 
-  EngineParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
-  EngineParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
-  EngineParams &&keyPath(ZuCSpan v) { m_keyPath = v; return ZuMv(*this); }
-  EngineParams &&keyLogPath(ZuCSpan v) {
+  HubParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
+  HubParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
+  HubParams &&keyPath(ZuCSpan v) { m_keyPath = v; return ZuMv(*this); }
+  HubParams &&keyLogPath(ZuCSpan v) {
     m_keyLogPath = v;
     return ZuMv(*this);
   }
-  EngineParams &&qlog(bool v) {
+  HubParams &&qlog(bool v) {
     m_qlogParams.enabled(v);
     return ZuMv(*this);
   }
-  EngineParams &&qlogPath(ZuCSpan v) {
+  HubParams &&qlogPath(ZuCSpan v) {
     m_qlogParams.path(v);
     return ZuMv(*this);
   }
-  EngineParams &&qlogRingSize(unsigned v) {
+  HubParams &&qlogRingSize(unsigned v) {
     m_qlogParams.ringSize(v);
     return ZuMv(*this);
   }
-  EngineParams &&qlogAge(unsigned v) {
+  HubParams &&qlogAge(unsigned v) {
     m_qlogParams.age(v);
     return ZuMv(*this);
   }
-  EngineParams &&asyncThread(ZuCSpan v) {
+  HubParams &&asyncThread(ZuCSpan v) {
     m_asyncThread = v;
     return ZuMv(*this);
   }
-  EngineParams &&maxData(uint64_t v) { m_maxData = v; return ZuMv(*this); }
-  EngineParams &&maxStreamData(uint64_t v) {
+  HubParams &&maxData(uint64_t v) { m_maxData = v; return ZuMv(*this); }
+  HubParams &&maxStreamData(uint64_t v) {
     m_maxStreamData = v;
     return ZuMv(*this);
   }
-  EngineParams &&maxStreamsDuplex(uint64_t v) {
+  HubParams &&maxStreamsDuplex(uint64_t v) {
     m_maxStreamsDuplex = v;
     return ZuMv(*this);
   }
-  EngineParams &&maxStreamsSimplex(uint64_t v) {
+  HubParams &&maxStreamsSimplex(uint64_t v) {
     m_maxStreamsSimplex = v;
     return ZuMv(*this);
   }
-  EngineParams &&maxIdleTimeout(uint64_t v) {
+  HubParams &&maxIdleTimeout(uint64_t v) {
     m_maxIdleTimeout = v;
     return ZuMv(*this);
   }
-  EngineParams &&heartBeat(ZuTime v) {
+  HubParams &&heartBeat(ZuTime v) {
     m_heartBeat = normalizeHeartBeat_(v);
     return ZuMv(*this);
   }
-  EngineParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
-  EngineParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
-  EngineParams &&migrationMode(MigrationMode::T v) {
+  HubParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
+  HubParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
+  HubParams &&migrationMode(MigrationMode::T v) {
     m_migrationMode = v;
     return ZuMv(*this);
   }
-  EngineParams &&activeMigration(bool v) {
+  HubParams &&activeMigration(bool v) {
     m_migrationMode = v ? MigrationMode::Active : MigrationMode::Passive;
     return ZuMv(*this);
   }
-  EngineParams &&migCIDRes(unsigned v) {
+  HubParams &&migCIDRes(unsigned v) {
     m_migCIDRes = clampMigCIDRes_(v);
     return ZuMv(*this);
   }
-  EngineParams &&migCloseOnFail(bool v) {
+  HubParams &&migCloseOnFail(bool v) {
     m_migCloseOnFail = v;
     return ZuMv(*this);
   }
-  EngineParams &&addrValidationSecret(ZuBSpan v) {
+  HubParams &&addrValidationSecret(ZuBSpan v) {
     m_tokenSecret = v;
     return ZuMv(*this);
   }
-  EngineParams &&retryAddrValidate(bool v) {
+  HubParams &&retryAddrValidate(bool v) {
     m_retryAddrValidate = v;
     return ZuMv(*this);
   }
-  EngineParams &&newTokenAddrValidate(bool v) {
+  HubParams &&newTokenAddrValidate(bool v) {
     m_newTokenAddrValidate = v;
     return ZuMv(*this);
   }
-  EngineParams &&addrValidationLifetime(uint64_t v) {
+  HubParams &&addrValidationLifetime(uint64_t v) {
     m_addrValidationLifetime = v;
     return ZuMv(*this);
   }
-  EngineParams &&addrValidatePeerPort(bool v) {
+  HubParams &&addrValidatePeerPort(bool v) {
     m_addrValidatePeerPort = v;
     return ZuMv(*this);
   }
-  EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
+  HubParams &&alpn(ZuSpan<ZuCSpan> v) {
     m_alpn = {};
     m_alpn.ensure(v.length());
     for (auto &s : v) m_alpn.push(ParamString{s});
     return ZuMv(*this);
   }
-  EngineParams &&alpn(ZuSpan<const ptls_iovec_t> v) {
+  HubParams &&alpn(ZuSpan<const ptls_iovec_t> v) {
     m_alpn = {};
     m_alpn.ensure(v.length());
     for (auto &p : v)
       m_alpn.push(ParamString{ZuCSpan{p.base, unsigned(p.len)}});
     return ZuMv(*this);
   }
-  EngineParams &&errorFn(ErrorFn v) { m_errorFn = ZuMv(v); return ZuMv(*this); }
+  HubParams &&errorFn(ErrorFn v) { m_errorFn = ZuMv(v); return ZuMv(*this); }
 
   ZiMultiplex *mx() const { return m_mx; }
   ZuCSpan rxThread() const { return m_rxThread; }
@@ -613,10 +613,10 @@ private:
   ErrorFn		m_errorFn;
 };
 
-using ClientParams = EngineParams;
-using ServerParams = EngineParams;
+using ClientParams = HubParams;
+using ServerParams = HubParams;
 
-template <typename App_> class Engine :
+template <typename App_> class Hub :
   public ZmPolymorph,
   public ZmEngine<App_> {
 friend ZmEngine<App_>;
@@ -631,23 +631,23 @@ friend class Zquic_::Endpoint_;
 
 public:
   using App = App_;
-  using EngineCtl = ZmEngine<App>;
+  using HubCtl = ZmEngine<App>;
 
-  using EngineCtl::start;
-  using EngineCtl::stop;
-  using EngineCtl::state;
-  using EngineCtl::stopping;
+  using HubCtl::start;
+  using HubCtl::stop;
+  using HubCtl::state;
+  using HubCtl::stopping;
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
 
-  bool init(EngineParams params) {
+  bool init(HubParams params) {
     return init_(ZuMv(params), Zquic::Vantage::Unknown,
-      [](const EngineParams &) { return true; });
+      [](const HubParams &) { return true; });
   }
 
   void final() {
-    bool ok = EngineCtl::lock(ZmEngineState::Stopped, [this]() {
+    bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
       ZquicLogger::final(m_qlogTrace);
       m_mx = nullptr;
       m_rxThread = 0;
@@ -680,7 +680,7 @@ public:
       return true;
     });
     ZiAssert(ok, "Zquic", (),
-      "QUIC engine finalization while not stopped", return);
+      "QUIC hub finalization while not stopped", return);
   }
 
   ZiMultiplex *mx() const { return m_mx; }
@@ -747,7 +747,7 @@ public:
 protected:
   template <typename Params, typename L>
   bool init_(Params params, Zquic::Vantage::T vantage, L &&l) {
-    return EngineCtl::lock(
+    return HubCtl::lock(
 	ZmEngineState::Stopped,
 	[this, params = ZuMv(params), vantage, l = ZuFwd<L>(l)]() mutable -> bool {
       m_errorFn = ZuMv(params.errorFn());
@@ -818,7 +818,7 @@ protected:
     this->started(true);
   }
 
-  void stop_() {		// engine callback - enter Rx thread
+  void stop_() {		// hub callback - enter Rx thread
     rxRun([this]() { stop_0(); });
   }
 
@@ -1038,10 +1038,10 @@ struct App::Link : public Zquic::CliLink<App, Link, App::Stream> {
   unsigned reconnFreq() const; // optional
 };
 #endif
-template <typename App_> class Client : public Engine<App_> {
+template <typename App_> class Client : public Hub<App_> {
 public:
   using App = App_;
-  using Base = Engine<App>;
+  using Base = Hub<App>;
   static constexpr unsigned TLSBufSize = (64<<10); // 64K
   static constexpr unsigned PNLength = 2;
   static constexpr unsigned CryptoChunk = 900;
@@ -1089,14 +1089,14 @@ struct AppLink : public Zquic::SrvLink<App, AppLink, AppStream> {
 };
 #endif
 template <typename App_, typename Link_> class Server :
-  public Engine<App_>,
+  public Hub<App_>,
   public Endpoint_<Server<App_, Link_>> {
 public:
   using App = App_;
   using Link = Link_;
   using LinkRef = ZmRef<Link>;
   using LinkTable = ServerLinks_<Link>;
-  using Base = Engine<App>;
+  using Base = Hub<App>;
   using Endpoint = Endpoint_<Server>;
   using Base::app;
   static constexpr bool EndpointRef = false;
@@ -1419,7 +1419,7 @@ private:
     }
   }
 
-  void stop_() {		// engine callback - enter Rx thread
+  void stop_() {		// hub callback - enter Rx thread
     Base::rxRun([this]() { stop_0(); });
   }
 
@@ -1437,7 +1437,7 @@ private:
     if (!m_stopCount) stop_1();
   }
 
-  void stop_1() {		// Rx thread - clean links / resume engine stop
+  void stop_1() {		// Rx thread - clean links / resume hub stop
     m_links->clean();
     Base::stop_0();
   }

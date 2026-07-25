@@ -11,13 +11,13 @@ using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-struct FlowApp : public Zquic::Engine<FlowApp> {
-  using Base = Zquic::Engine<FlowApp>;
+struct FlowApp : public Zquic::Hub<FlowApp> {
+  using Base = Zquic::Hub<FlowApp>;
 
   FlowApp() : m_mx{mxParams_()} {
     ZiAssert(m_mx.start(), "Zquic", (),
       "flow test multiplexer start failed", return);
-    ZiAssert(Base::init(Zquic::EngineParams(&m_mx, "3", "4")),
+    ZiAssert(Base::init(Zquic::HubParams(&m_mx, "3", "4")),
       "Zquic", (), "flow test app init failed", return);
   }
   ~FlowApp() {

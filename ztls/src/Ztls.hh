@@ -90,28 +90,28 @@ inline ErrorFn defaultErrorFn()
   return ErrorFn{[](ZeException e) { ZiLogEvent(ZuMv(e)); }};
 }
 
-struct EngineParams {
-  EngineParams(
+struct HubParams {
+  HubParams(
     ZiMultiplex *mx = nullptr,
     ZuCSpan rxThread = {},
     ZuCSpan txThread = {}) :
       m_mx{mx}, m_rxThread{rxThread}, m_txThread{txThread},
       m_errorFn{defaultErrorFn()} { }
 
-  EngineParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
-  EngineParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
-  EngineParams &&keyPath(ZuCSpan v) { m_keyPath = v; return ZuMv(*this); }
-  EngineParams &&asyncThread(ZuCSpan v) {
+  HubParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
+  HubParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
+  HubParams &&keyPath(ZuCSpan v) { m_keyPath = v; return ZuMv(*this); }
+  HubParams &&asyncThread(ZuCSpan v) {
     m_asyncThread = v;
     return ZuMv(*this);
   }
-  EngineParams &&alpn(ZuSpan<ZuCSpan> v) {
+  HubParams &&alpn(ZuSpan<ZuCSpan> v) {
     m_alpn = {};
     m_alpn.ensure(v.length());
     for (auto &s : v) m_alpn.push(ParamString{s});
     return ZuMv(*this);
   }
-  EngineParams &&errorFn(ErrorFn v) { m_errorFn = ZuMv(v); return ZuMv(*this); }
+  HubParams &&errorFn(ErrorFn v) { m_errorFn = ZuMv(v); return ZuMv(*this); }
 
   ZiMultiplex *mx() const { return m_mx; }
   ZuCSpan rxThread() const { return m_rxThread; }
@@ -136,29 +136,29 @@ private:
   ErrorFn	m_errorFn;
 };
 
-using ClientParams = EngineParams;
+using ClientParams = HubParams;
 
-struct ServerParams : public EngineParams {
-  using EngineParams::EngineParams;
-  using EngineParams::caPath;
-  using EngineParams::certPath;
-  using EngineParams::keyPath;
-  using EngineParams::asyncThread;
-  using EngineParams::alpn;
-  using EngineParams::errorFn;
+struct ServerParams : public HubParams {
+  using HubParams::HubParams;
+  using HubParams::caPath;
+  using HubParams::certPath;
+  using HubParams::keyPath;
+  using HubParams::asyncThread;
+  using HubParams::alpn;
+  using HubParams::errorFn;
 
   ServerParams &&caPath(ZuCSpan v)
-    { EngineParams::caPath(v); return ZuMv(*this); }
+    { HubParams::caPath(v); return ZuMv(*this); }
   ServerParams &&certPath(ZuCSpan v)
-    { EngineParams::certPath(v); return ZuMv(*this); }
+    { HubParams::certPath(v); return ZuMv(*this); }
   ServerParams &&keyPath(ZuCSpan v)
-    { EngineParams::keyPath(v); return ZuMv(*this); }
+    { HubParams::keyPath(v); return ZuMv(*this); }
   ServerParams &&asyncThread(ZuCSpan v)
-    { EngineParams::asyncThread(v); return ZuMv(*this); }
+    { HubParams::asyncThread(v); return ZuMv(*this); }
   ServerParams &&alpn(ZuSpan<ZuCSpan> v)
-    { EngineParams::alpn(v); return ZuMv(*this); }
+    { HubParams::alpn(v); return ZuMv(*this); }
   ServerParams &&errorFn(ErrorFn v)
-    { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
+    { HubParams::errorFn(ZuMv(v)); return ZuMv(*this); }
   ServerParams &&mTLS(bool v) { m_mTLS = v; return ZuMv(*this); }
   ServerParams &&cacheTimeout(int v) { m_cacheTimeout = v; return ZuMv(*this); }
 
@@ -1274,7 +1274,7 @@ private:
   }
 };
 
-template <typename App_> class Engine :
+template <typename App_> class Hub :
   public Random,
   public ZmEngine<App_> {
 friend ZmEngine<App_>;
@@ -1285,19 +1285,19 @@ template <typename, typename, typename, typename> friend class SrvLink;
 
 public:
   using App = App_;
-  using EngineCtl = ZmEngine<App>;
+  using HubCtl = ZmEngine<App>;
 
-  using EngineCtl::start;
-  using EngineCtl::stop;
-  using EngineCtl::state;
+  using HubCtl::start;
+  using HubCtl::stop;
+  using HubCtl::state;
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
 
-  Engine() {
+  Hub() {
     memset(&m_ctx, 0, sizeof(m_ctx));
   }
-  ~Engine() {
+  ~Hub() {
     if (m_ctx.certificates.list) {
       for (unsigned i = 0; i < m_ctx.certificates.count; ++i)
 	::free(m_ctx.certificates.list[i].base);
@@ -1307,8 +1307,8 @@ public:
     Backend::cert_store_free(m_cacert);
   }
 
-  bool init(EngineParams params) {
-    return init_(ZuMv(params), [](const EngineParams &) { return true; });
+  bool init(HubParams params) {
+    return init_(ZuMv(params), [](const HubParams &) { return true; });
   }
 
 protected:
@@ -1430,12 +1430,12 @@ private:
 
 public:
   void final() {
-    bool ok = EngineCtl::lock(ZmEngineState::Stopped, [this]() {
+    bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
       final_();
       return true;
     });
     ZiAssert(ok, "Ztls", (),
-      "TLS engine finalization while not stopped", return);
+      "TLS hub finalization while not stopped", return);
   }
 
   ZiMultiplex *mx() const { return m_mx; }
@@ -1566,7 +1566,7 @@ protected:
     this->started(true);
   }
 
-  void stop_() {		// engine callback - enter Rx thread
+  void stop_() {		// hub callback - enter Rx thread
     rxRun([this]() { stop_0(); });
   }
 
@@ -1784,9 +1784,9 @@ struct App : public Client<App> {
   };
 };
 #endif
-template <typename App> class Client : public Engine<App> {
+template <typename App> class Client : public Hub<App> {
 public:
-  using Base = Engine<App>;
+  using Base = Hub<App>;
 friend Base;
 
   using Base::error_;
@@ -1898,10 +1898,10 @@ struct App : public Server<App> {
 };
 #endif
 template <typename App_>
-class Server : public Engine<App_> {
+class Server : public Hub<App_> {
 public:
   using App = App_;
-  using Base = Engine<App>;
+  using Base = Hub<App>;
 friend Base;
 
   using Base::loadCA;

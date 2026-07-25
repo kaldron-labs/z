@@ -30,7 +30,7 @@ Applications use the CRTP API:
 
 `Zquic::Server::start()` opens the UDP listener. `Zquic::CliLink::connect()`
 opens the client UDP socket. `ClientParams` and `ServerParams` are aliases of
-`EngineParams`, which configures the multiplexer, Rx/Tx threads, TLS paths,
+`HubParams`, which configures the multiplexer, Rx/Tx threads, TLS paths,
 ALPN, qlog, transport limits, idle timeout, maximum UDP payload, ECN, and
 address validation policy.  It also configures single-active-path migration:
 `migrationMode()` defaults to `MigrationMode::Passive`, `activeMigration(true)`
@@ -95,7 +95,7 @@ server's stream response.
 - Address validation spans `AddressToken`, `ClientBootstrap`,
   `ServerBootstrap`, client `NEW_TOKEN` retention, and server Retry/NEW_TOKEN
   logic.
-- 0-RTT is application-owned through `Engine` early-data hooks, with crypto
+- 0-RTT is application-owned through `Hub` early-data hooks, with crypto
   state in `ZquicCrypto.*` and packet/stream enforcement in `ZquicLink.hh` and
   `ZquicCliLink.hh`.
 - PMTUD/DPLPMTUD is split between `ZquicPath.*` state and runtime send/probe

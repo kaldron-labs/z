@@ -60,15 +60,15 @@ inline ErrorFn defaultErrorFn()
   return ErrorFn{[](ZeException e) { ZiLogEvent(ZuMv(e)); }};
 }
 
-struct EngineParams {
-  EngineParams(
+struct HubParams {
+  HubParams(
     ZiMultiplex *mx_ = nullptr,
     ZuCSpan rxThread_ = {},
     ZuCSpan txThread_ = {}) :
       mx{mx_}, rxThread{rxThread_}, txThread{txThread_},
       errorFn_{defaultErrorFn()} { }
 
-  EngineParams &&errorFn(ErrorFn v) { errorFn_ = ZuMv(v); return ZuMv(*this); }
+  HubParams &&errorFn(ErrorFn v) { errorFn_ = ZuMv(v); return ZuMv(*this); }
 
   ZiMultiplex *mx = nullptr;
   ParamString rxThread;
@@ -76,18 +76,18 @@ struct EngineParams {
   ErrorFn errorFn_;
 };
 
-struct ClientParams : public EngineParams {
-  using EngineParams::EngineParams;
+struct ClientParams : public HubParams {
+  using HubParams::HubParams;
 
   ClientParams &&errorFn(ErrorFn v)
-    { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
+    { HubParams::errorFn(ZuMv(v)); return ZuMv(*this); }
 };
 
-struct ServerParams : public EngineParams {
-  using EngineParams::EngineParams;
+struct ServerParams : public HubParams {
+  using HubParams::HubParams;
 
   ServerParams &&errorFn(ErrorFn v)
-    { EngineParams::errorFn(ZuMv(v)); return ZuMv(*this); }
+    { HubParams::errorFn(ZuMv(v)); return ZuMv(*this); }
 };
 
 template <typename Link_, typename LinkRef_>
@@ -457,7 +457,7 @@ template <typename> friend class Server;
   SrvLink(App *app) : Base(app) { }
 };
 
-template <typename App_> class Engine : public ZmEngine<App_> {
+template <typename App_> class Hub : public ZmEngine<App_> {
 friend ZmEngine<App_>;
 template <typename, typename, typename, typename, typename, typename>
 friend class Link;
@@ -466,17 +466,17 @@ template <typename, typename, typename, typename> friend class SrvLink;
 
 public:
   using App = App_;
-  using EngineCtl = ZmEngine<App>;
+  using HubCtl = ZmEngine<App>;
 
-  using EngineCtl::start;
-  using EngineCtl::stop;
-  using EngineCtl::state;
+  using HubCtl::start;
+  using HubCtl::stop;
+  using HubCtl::state;
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
 
-  bool init(EngineParams params) {
-    return init_(ZuMv(params), [](const EngineParams &) { return true; });
+  bool init(HubParams params) {
+    return init_(ZuMv(params), [](const HubParams &) { return true; });
   }
 
 protected:
@@ -532,12 +532,12 @@ private:
 
 public:
   void final() {
-    bool ok = EngineCtl::lock(ZmEngineState::Stopped, [this]() {
+    bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
       final_();
       return true;
     });
     ZiAssert(ok, "Ztcp", (),
-      "TCP engine finalization while not stopped", return);
+      "TCP hub finalization while not stopped", return);
   }
 
   ZiMultiplex *mx() const { return m_mx; }
@@ -568,7 +568,7 @@ protected:
     this->started(true);
   }
 
-  void stop_() {		// engine callback - enter Rx thread
+  void stop_() {		// hub callback - enter Rx thread
     rxRun([this]() { stop_0(); });
   }
 
@@ -612,9 +612,9 @@ private:
   ErrorFn		m_errorFn;
 };
 
-template <typename App> class Client : public Engine<App> {
+template <typename App> class Client : public Hub<App> {
 public:
-  using Base = Engine<App>;
+  using Base = Hub<App>;
 friend Base;
 
   using Base::error_;
@@ -633,10 +633,10 @@ protected:
 };
 
 template <typename App_>
-class Server : public Engine<App_> {
+class Server : public Hub<App_> {
 public:
   using App = App_;
-  using Base = Engine<App>;
+  using Base = Hub<App>;
 friend Base;
 
   using Base::mx;
