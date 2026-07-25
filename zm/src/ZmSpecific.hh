@@ -63,10 +63,10 @@
 #include <alloca.h>
 #endif
 
-#include <stdlib.h>
 #include <typeinfo>
 
 #include <zlib/ZuCmp.hh>
+#include <zlib/ZuSort.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuDeduce.hh>
 #include <zlib/ZuLambdaTraits.hh>
@@ -249,11 +249,9 @@ public:
 #ifdef _WIN32
     // on Windows, there may be multiple Object instances pointing to
     // the same underlying T
-    qsort(objects, n, sizeof(Object *),
-	[](const void *o1, const void *o2) -> int {
-	  return ZuCompare(
-	      (*(Object **)o1)->tid, (*(Object **)o2)->tid);
-	});
+    ZuSort(objects, n, [](Object *&o1, Object *&o2) {
+      return ZuCompare(o1->tid, o2->tid);
+    });
     {
       Zm::ThreadID lastTID = 0;
       for (j = 0; j < n; j++)
