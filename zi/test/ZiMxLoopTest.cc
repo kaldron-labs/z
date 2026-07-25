@@ -547,15 +547,26 @@ struct LoopResult {
   unsigned	localDisconnects = 0;
 };
 
+struct MxCheck {
+  Ztc::Mx	*target;
+  bool		found = false;
+};
+
 LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
 {
   LoopResult result;
   LoopMx mx{loopIP};
   result.started = mx.start();
 
-  ZiMxTelemetry telemetry{};
+  Ztc::MxTelemetry telemetry{};
   mx.telemetry(telemetry);
-  result.telemetry = telemetry.nThreads >= 1;
+  MxCheck check{&mx};
+  Ztc::MxMgr::all(Ztc::MxMgr::AllFn{
+    &check, [](MxCheck *check, Ztc::Mx *mx) {
+      if (mx == check->target) check->found = true;
+    }});
+  result.telemetry =
+    telemetry.nThreads >= 1 && mx.telKey() == telemetry.id && check.found;
 
   mx.startLoopback();
 

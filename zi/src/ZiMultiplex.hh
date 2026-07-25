@@ -40,6 +40,7 @@
 #include <zlib/ZiIP.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiIOContext.hh>
+#include <zlib/ZtcMx.hh>
 
 #if defined(ZDEBUG) && !defined(ZiMultiplex_DEBUG)
 #define ZiMultiplex_DEBUG	// enable testing / debugging
@@ -513,36 +514,6 @@ struct ZiCxnInfo { // pure aggregate, no ctor
   friend ZuPrintFn ZuPrintType(ZiCxnInfo *);
 };
 
-// display sequence:
-//   mxID, type, remoteIP, remotePort, localIP, localPort,
-//   socket, flags, mreqAddr, mreqIf, mreqIfIndex,
-//   mif, mifIndex, ttl,
-//   rxBufSize, rxBufLen, txBufSize, txBufLen
-struct ZiCxnTelemetry {
-  ZuID		mxID;		// multiplexer ID
-  uint64_t	socket = 0;	// Unix file descriptor / Winsock SOCKET
-  uint64_t	rxCalls = 0;	// graphable
-  uint64_t	rxBytes = 0;	// graphable
-  uint64_t	txCalls = 0;	// graphable
-  uint64_t	txBytes = 0;	// graphable
-  uint32_t	rxBufSize = 0;	// graphable - getsockopt(..., SO_RCVBUF, ...)
-  uint32_t	rxBufLen = 0;	// graphable (*) - ioctl(..., SIOCINQ, ...)
-  uint32_t	txBufSize = 0;	// graphable - getsockopt(..., SO_SNDBUF, ...)
-  uint32_t	txBufLen = 0;	// graphable (*) - ioctl(..., SIOCOUTQ, ...)
-  ZiIP		mreqAddr;	// mreqs[0]
-  ZiIP		mreqIf;		// mreqs[0]
-  uint32_t	mreqIfIndex = 0;
-  ZiIP		mif;
-  uint32_t	mifIndex = 0;
-  uint32_t	ttl = 0;
-  ZiIP		localIP;	// primary key
-  ZiIP		remoteIP;	// primary key
-  uint16_t	localPort = 0;	// primary key
-  uint16_t	remotePort = 0;	// primary key
-  uint8_t	flags = 0;	// ZiCxnFlags
-  int8_t	type = -1;	// ZiCxnType
-};
-
 using ZiListenFn = ZmFn<void(const ZiListenInfo &),
   ZmFnHeapID<"ZiMultiplex.ListenFn">>;
 using ZiConnectFn = ZmFn<ZiConnection *(const ZiCxnInfo &),
@@ -578,7 +549,8 @@ private:
 // when listen() or connect() completion is called with an OK status;
 // derived class must supply connected() and disconnected() functions
 // (and probably a destructor)
-class ZiAPI ZiConnection : public ZmPolymorph {
+class ZiAPI ZiConnection :
+    public ZmPolymorph, public Ztc::Connection {
   ZiConnection(const ZiConnection &) = delete;
   ZiConnection &operator =(const ZiConnection &) = delete;
 
@@ -626,7 +598,13 @@ public:
   ZiMultiplex *mx() const { return m_mx; }
   const ZiCxnInfo &info() const { return m_info; }
 
-  void telemetry(ZiCxnTelemetry &data) const;
+  Ztc::Connection::Key telKey() const override {
+    return {
+      m_info.remoteIP, m_info.remotePort,
+      m_info.localIP, m_info.localPort
+    };
+  }
+  void telemetry(Ztc::CxnTelemetry &data) const override;
 
 private:
   void connected();
@@ -778,30 +756,8 @@ private:
 #endif
 };
 
-// display sequence:
-//   id, state, nThreads, rxThread, txThread,
-//   priority, stackSize, partition, rxBufSize, txBufSize,
-//   queueSize, ll, spin, timeout
-struct ZiMxTelemetry { // not graphable
-  ZuID		id;		// primary key
-  uint32_t	stackSize = 0;
-  uint32_t	queueSize = 0;
-  uint32_t	spin = 0;
-  uint32_t	timeout = 0;
-  uint32_t	rxBufSize = 0;
-  uint32_t	txBufSize = 0;
-  uint16_t	rxThread = 0;
-  uint16_t	txThread = 0;
-  uint16_t	partition = 0;
-  int8_t	state = ZmEngineState::Stopped;
-  uint8_t	ll = 0;
-  uint8_t	priority = 0;
-  uint8_t	nThreads = 0;
-};
-
-using ZiCxnFn = ZmFn<void(ZiConnection *), ZmFnHeapID<"ZiCxnFn">>;
-
-class ZiAPI ZiMultiplex : public ZmScheduler {
+class ZiAPI ZiMultiplex :
+    public ZmScheduler, public Ztc::Mx {
 friend ZiConnection;
 
   class Listener_;
@@ -972,8 +928,8 @@ public:
   ZiMultiplex(const ZiMultiplex &) = delete;
   ZiMultiplex &operator =(const ZiMultiplex &) = delete;
 
-  void allCxns(ZiCxnFn fn);
-  void allCxns_(ZiCxnFn fn);					// Rx thread
+  void allCxns(Ztc::Mx::AllCxnsFn fn) override;
+  void allCxns_(Ztc::Mx::AllCxnsFn fn);				// Rx thread
 
   void listen(
       ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,
@@ -1048,11 +1004,12 @@ public:
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
 
-  void telemetry(ZiMxTelemetry &data) const;
+  ZuID telKey() const override { return id(); }
+  void telemetry(Ztc::MxTelemetry &data) const override;
 
 private:
-  bool start__();
-  bool stop__();
+  bool start__() override;
+  bool stop__() override;
 
   void stop_0();	// Rx thread - disconnect all connections
   void stop_1();	// Rx thread - stop connecting / listening / accepting
@@ -1154,39 +1111,6 @@ private:
   alignas(Zm::CacheLineSize)
   FilterFn		m_txFilter;
 #endif
-};
-
-#include <zlib/ZmRBTree.hh>
-
-class ZiAPI ZiMxMgr {
-  ZuDerive(Map,
-    (ZmRBTreeKV<ZuID, ZiMultiplex *,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmPLock,
-	  ZmRBTreeHeapID<"ZiMxMgr">>>>));
-
-friend ZiMultiplex;
-
-public:
-  static ZiMxMgr *instance();
-
-  template <typename L>
-  static void all(L &&l) { instance()->all_(ZuFwd<L>(l)); }
-
-  static ZiMultiplex *find(ZuCSpan id);
-
-private:
-  static void add(ZiMultiplex *);
-  static void del(ZiMultiplex *);
-
-  template <typename L>
-  void all_(L &&l) const {
-    auto i = m_map.citer();
-    while (auto mx = i.val()) ZuFwd<L>(l)(mx);
-  }
-
-private:
-  Map	m_map;
 };
 
 #endif /* ZiMultiplex_HH */

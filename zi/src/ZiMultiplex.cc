@@ -9,10 +9,38 @@
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmRBTree.hh>
+#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtHexDump.hh>
 
 #include <zlib/ZiLog.hh>
+
+class ZiMxMgr_ {
+  ZuDerive(Map,
+    (ZmRBTreeKV<ZuID, ZiMultiplex *,
+      ZmRBTreeUnique<true,
+	ZmRBTreeLock<ZmPLock,
+	  ZmRBTreeHeapID<"Ztc.MxMgr">>>>));
+
+public:
+  static ZiMxMgr_ *instance() {
+    return
+      ZmSingleton<ZiMxMgr_,
+	ZmSingletonCleanup<ZmCleanup::Library>>::instance();
+  }
+
+  void add(ZiMultiplex *mx) { m_map.add(mx->id(), mx); }
+  void del(ZiMultiplex *mx) { m_map.del(mx->id()); }
+
+  void all(Ztc::MxMgr::AllFn fn) const {
+    auto i = m_map.citer();
+    while (auto mx = i.val()) fn(mx);
+  }
+
+private:
+  Map	m_map;
+};
 
 #ifndef _WIN32
 #include <alloca.h>
@@ -23,8 +51,6 @@
 #endif
 
 #ifdef ZiMultiplex_IOCP
-
-#include <zlib/ZmSingleton.hh>
 
 extern "C" {
   typedef BOOL (PASCAL *PConnectEx)(
@@ -1125,7 +1151,7 @@ void ZiMultiplex::executedConnect(ZiConnectFn fn, const ZiCxnInfo &ci)
   }));
 }
 
-void ZiConnection::telemetry(ZiCxnTelemetry &data) const
+void ZiConnection::telemetry(Ztc::CxnTelemetry &data) const
 {
   unsigned rxBufSize = 0;
   unsigned txBufSize = 0;
@@ -1185,12 +1211,12 @@ void ZiConnection::telemetry(ZiCxnTelemetry &data) const
   data.type = m_info.type;
 }
 
-void ZiMultiplex::allCxns(ZiCxnFn fn)
+void ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn)
 {
   rxInvoke([this, fn = ZuMv(fn)]() mutable { allCxns_(ZuMv(fn)); });
 }
 
-void ZiMultiplex::allCxns_(ZiCxnFn fn)
+void ZiMultiplex::allCxns_(Ztc::Mx::AllCxnsFn fn)
 {
   auto i = m_cxns->citer();
   while (ZmRef<ZiConnection> cxn = i.val())
@@ -2586,7 +2612,7 @@ ZiMultiplex::ZiMultiplex(ZiMxParams mxParams) :
   if (!params().thread(m_txThread).name())
     params_().thread(m_txThread).name("ioTx");
 
-  ZiMxMgr::instance()->add(this);
+  ZiMxMgr_::instance()->add(this);
 
 #ifdef ZiMultiplex_EPoll
   ZmScheduler::threadInit([]() {
@@ -2601,7 +2627,7 @@ ZiMultiplex::ZiMultiplex(ZiMxParams mxParams) :
 
 ZiMultiplex::~ZiMultiplex()
 {
-  ZiMxMgr::instance()->del(this);
+  ZiMxMgr_::instance()->del(this);
 }
 
 bool ZiMultiplex::start__()
@@ -2982,7 +3008,7 @@ void ZiMultiplex::writeWake()
 }
 #endif
 
-void ZiMultiplex::telemetry(ZiMxTelemetry &data) const
+void ZiMultiplex::telemetry(Ztc::MxTelemetry &data) const
 {
   data.id = params().id();
   data.stackSize = params().stackSize();
@@ -3000,24 +3026,7 @@ void ZiMultiplex::telemetry(ZiMxTelemetry &data) const
   data.nThreads = params().nThreads();
 }
 
-ZiMxMgr *ZiMxMgr::instance()
+void Ztc::MxMgr::all(AllFn fn)
 {
-  return
-    ZmSingleton<ZiMxMgr,
-      ZmSingletonCleanup<ZmCleanup::Library>>::instance();
-}
-
-void ZiMxMgr::add(ZiMultiplex *mx)
-{
-  instance()->m_map.add(mx->id(), mx);
-}
-
-void ZiMxMgr::del(ZiMultiplex *mx)
-{
-  instance()->m_map.del(mx->id());
-}
-
-ZiMultiplex *ZiMxMgr::find(ZuCSpan id)
-{
-  return instance()->m_map.findVal(id);
+  ZiMxMgr_::instance()->all(ZuMv(fn));
 }
