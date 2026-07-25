@@ -153,7 +153,7 @@ void ZmThreadContext::init()
   if (m_partition < 0) m_partition = 0;
 }
 
-void ZmThreadContext::telemetry(ZmThreadTelemetry &data) const {
+void ZmThreadContext::telemetry(Ztc::ThreadTelemetry &data) const {
   data.name = m_name;
   data.tid = tid();
   data.stackSize = stackSize();
@@ -167,6 +167,12 @@ void ZmThreadContext::telemetry(ZmThreadTelemetry &data) const {
   data.partition = m_partition;
   data.main = this->main();
   data.detached = m_detached;
+}
+
+void Ztc::ThreadMgr::all(AllFn fn)
+{
+  ZmThreadContextTLS::all(
+    [&fn](ZmThreadContext *tc) { fn(tc); });
 }
 
 void ZmThreadContext::prioritize(int priority)
