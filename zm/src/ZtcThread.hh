@@ -25,8 +25,8 @@
 namespace Ztc {
 
 // display sequence:
-//   name, id, tid, cpuUsage, cpuset, priority, sysPriority,
-//   stackSize, partition, main, detached
+//   name, sid, tid, cpuUsage, cpuset, priority, sysPriority,
+//   stackSize, allocStack, allocHeap, partition, main, detached
 struct ThreadTelemetry {
   ZuID		name;
   uint64_t	tid = 0;	// primary key
@@ -61,8 +61,8 @@ template <class S> struct ThreadCSV_ {
   ThreadCSV_(S &stream) : m_stream(stream) { }
   void print() {
     m_stream <<
-      "name,sid,tid,cpuUsage,cpuSet,sysPriority,priority,"
-      "stackSize,partition,main,detached,allocStack,allocHeap\n";
+      "name,sid,tid,cpuUsage,cpuset,priority,sysPriority,"
+      "stackSize,allocStack,allocHeap,partition,main,detached\n";
     ThreadMgr::all({this, ZmFnPtr<&ThreadCSV_::print_>{}});
   }
   void print_(Thread *thread) {
@@ -75,14 +75,15 @@ template <class S> struct ThreadCSV_ {
       << ',' << data.tid
       << ',' << ZuBoxed(data.cpuUsage * 100.0).fmt<ZuFmt::FP<2>>()
       << ",\"" << data.cpuset << '"'
-      << ',' << ZuBoxed(data.sysPriority)
       << ',' << ZuBoxed(data.priority)
+      << ',' << ZuBoxed(data.sysPriority)
       << ',' << data.stackSize
+      << ',' << ZuBoxed(data.allocStack)
+      << ',' << ZuBoxed(data.allocHeap)
       << ',' << ZuBoxed(data.partition)
       << ',' << ZuBoxed(data.main)
       << ',' << ZuBoxed(data.detached)
-      << ',' << ZuBoxed(data.allocStack)
-      << ',' << ZuBoxed(data.allocHeap) << '\n';
+      << '\n';
   }
 
 private:
