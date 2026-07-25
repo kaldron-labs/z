@@ -38,7 +38,7 @@ struct QueueTelemetry {
 };
 
 struct Queue {
-  virtual ZuTuple<ZuID, QueueType::T> key() const = 0;
+  virtual ZuTuple<ZuID, QueueType::T> telKey() const = 0;
   virtual void telemetry(QueueTelemetry &data) const = 0;
 };
 

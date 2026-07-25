@@ -19,6 +19,7 @@
 
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
+#include <zlib/ZtcMx.hh>
 #include <zlib/ZtcThread.hh>
 
 #include <zlib/ZtRegex.hh>
@@ -727,56 +728,20 @@ private:
     if (interval)
       this->subscribe<[](Server *server) { server->mxScan(); }>(
 	  list, watch, interval);
-    ZiMxMgr::all([watch](ZiMultiplex *mx) {
-      watch->link->app()->mxQuery_(watch, mx);
-    });
+    Ztc::MxMgr::all(Ztc::MxMgr::AllFn{
+      watch, [](Watch *watch, Ztc::Mx *mx) {
+	watch->link->app()->mxQuery_(watch, mx);
+      }});
     if (!interval) delete watch;
   }
-  void mxQuery_(Watch *watch, ZiMultiplex *mx) {
+  void mxQuery_(Watch *watch, Ztc::Mx *mx) {
     Mx data;
     mx->telemetry(data);
     if (!match(watch->filter, data.id)) return;
     m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
 	  fbs::TelData::Mx, ZfbStruct::save(m_fbb, data).Union()));
     watch->link->sendTelemetry(m_fbb.buf());
-    {
-      uint64_t inCount, inBytes, outCount, outBytes;
-      for (unsigned tid = 1, n = mx->params().nThreads(); tid <= n; tid++) {
-	ZuID queueID;
-	queueID << mx->params().id() << '.'
-	  << mx->params().thread(tid).name();
-	{
-	  const auto &ring = mx->ring(tid);
-	  ring.stats(inCount, inBytes, outCount, outBytes);
-	  m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
-		fbs::TelData::Queue,
-		fbs::CreateQueue(m_fbb,
-		  Zfb::Save::str(m_fbb, queueID), 0, ring.count_(),
-		  inCount, inBytes, outCount, outBytes,
-		  ring.params().size, ring.full(),
-		  fbs::QueueType::Thread).Union()));
-	  watch->link->sendTelemetry(m_fbb.buf());
-	}
-	if (queueID.length() < ZuIDSize - 1)
-	  queueID << '_';
-	else
-	  queueID[ZuIDSize - 2] = '_';
-	{
-	  const auto &queue = mx->queue(tid);
-	  queue.stats(inCount, outCount);
-	  m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
-		fbs::TelData::Queue,
-		fbs::CreateQueue(m_fbb,
-		  str(m_fbb, queueID), 0, queue.count_(),
-		  inCount, inCount * sizeof(ZmFn<>),
-		  outCount, outCount * sizeof(ZmFn<>),
-		  queue.size_(), false,
-		  fbs::QueueType::Thread).Union()));
-	  watch->link->sendTelemetry(m_fbb.buf());
-	}
-      }
-    }
-    mx->allCxns([this, watch](ZiConnection *cxn) {
+    mx->allCxns([this, watch](Ztc::Connection *cxn) {
       Socket data;
       cxn->telemetry(data);
       m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
@@ -787,12 +752,10 @@ private:
 
   void mxScan() {
     if (!m_watchLists[ReqType::Mx].list.count_()) return;
-    ZiMxMgr::all([this](ZiMultiplex *mx) { mxScan(mx); });
+    Ztc::MxMgr::all(Ztc::MxMgr::AllFn{
+      this, [](Server *server, Ztc::Mx *mx) { server->mxScan(mx); }});
   }
-  // FIXME - these thread queues should be added to the tel server's 
-  // queue container so they can be found and subscribed to by ID
-  // independently of the multiplexer
-  void mxScan(ZiMultiplex *mx) {
+  void mxScan(Ztc::Mx *mx) {
     Mx data;
     mx->telemetry(data);
     auto i = m_watchLists[ReqType::Mx].list.citer();
@@ -801,53 +764,7 @@ private:
       m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
 	    fbs::TelData::Mx, ZfbStruct::saveUpd(m_fbb, data).Union()));
       watch->link->sendTelemetry(m_fbb.buf());
-      {
-	uint64_t inCount, inBytes, outCount, outBytes;
-	for (unsigned tid = 1, n = mx->params().nThreads(); tid <= n; tid++) {
-	  ZuID queueID;
-	  queueID << mx->params().id() << '.'
-	    << mx->params().thread(tid).name();
-	  {
-	    const auto &ring = mx->ring(tid);
-	    ring.stats(inCount, inBytes, outCount, outBytes);
-	    auto id_ = Zfb::Save::str(m_fbb, queueID);
-	    fbs::QueueBuilder b(m_fbb);
-	    b.add_id(id_);
-	    b.add_count(ring.count_());
-	    b.add_inCount(inCount);
-	    b.add_inBytes(inBytes);
-	    b.add_outCount(outCount);
-	    b.add_outBytes(outBytes);
-	    b.add_full(ring.full());
-	    // FIXME - add_type()
-	    m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
-		  fbs::TelData::Queue, b.Finish().Union()));
-	    watch->link->sendTelemetry(m_fbb.buf());
-	  }
-	  if (queueID.length() < ZuIDSize)
-	    queueID << '_';
-	  else
-	    queueID[ZuIDSize - 1] = '_';
-	  {
-	    const auto &queue = mx->queue(tid);
-	    queue.stats(inCount, outCount);
-	    auto id_ = Zfb::Save::str(m_fbb, queueID);
-	    fbs::QueueBuilder b(m_fbb);
-	    b.add_id(id_);
-	    b.add_count(queue.count_());
-	    b.add_inCount(inCount);
-	    b.add_inBytes(inCount * sizeof(ZmFn<>));
-	    b.add_outCount(outCount);
-	    b.add_outBytes(outCount * sizeof(ZmFn<>));
-	    b.add_full(0);
-	    // FIXME - add_type()
-	    m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
-		  fbs::TelData::Queue, b.Finish().Union()));
-	    watch->link->sendTelemetry(m_fbb.buf());
-	  }
-	}
-      }
-      mx->allCxns([this, watch](ZiConnection *cxn) {
+      mx->allCxns([this, watch](Ztc::Connection *cxn) {
 	Socket data;
 	cxn->telemetry(data);
 	m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
@@ -858,20 +775,6 @@ private:
   }
 
   // queue processing
-  // LATER - old queue code - used by caller of addQueue()
-#if 0
-    ZvQueue *queue;
-    queue->stats(data.inCount, data.inBytes, data.outCount, data.outBytes);
-
-    // I/O queues (link, etc.)
-	  cxn->transmit(queue(
-
-	    // IPC queues (ZiRing)
-	    ring->params().name(), (uint64_t)0, (uint64_t)count,
-	    inCount, inBytes, outCount, outBytes,
-	    (uint32_t)ring->full(), (uint32_t)ring->params().size(),
-	    (uint8_t)QueueType::IPC));
-#endif
 
   void queueQuery(
     ZmRef<Link> link, const fbs::Request *req, unsigned interval)

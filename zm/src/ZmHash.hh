@@ -1146,7 +1146,7 @@ public:
     return lockCode(HashFn::hash(ZuFwd<P>(key)));
   }
 
-  ZuTuple<ZuID, uintptr_t> key() const override {
+  ZuTuple<ZuID, uintptr_t> telKey() const override {
     return {m_id, reinterpret_cast<uintptr_t>(this)};
   }
 

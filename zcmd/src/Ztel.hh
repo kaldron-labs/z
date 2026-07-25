@@ -15,6 +15,7 @@
 
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
+#include <zlib/ZtcMx.hh>
 #include <zlib/ZtcThread.hh>
 
 #include <zlib/Zfb.hh>
@@ -211,7 +212,7 @@ ZfbStruct(Thread,
     (((detached),	(Ctor<12>)),				(Bool)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-using Mx_ = ZiMxTelemetry;
+using Mx_ = Ztc::MxTelemetry;
 struct Mx : public Mx_ {
   ZuDerive_(Mx, Mx_)
 
@@ -237,7 +238,7 @@ ZfbStruct(Mx,
     (((timeout),	(Ctor<4>)),				(UInt32)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-using Socket_ = ZiCxnTelemetry;
+using Socket_ = Ztc::CxnTelemetry;
 struct Socket : public Socket_ {
   ZuDerive_(Socket, Socket_)
 
@@ -255,11 +256,11 @@ struct Socket : public Socket_ {
 ZfbStruct(Socket,
     (((mxID),		(Ctor<0>)),				(String)),
     (((type),		(Ctor<17>, Enum<SocketType::Map>)),	(Int8)),
-    (((remoteIP),	(Ctor<13>)),				(IP)),
-    (((remotePort),	(Ctor<15>)),				(UInt16)),
-    (((localIP),	(Ctor<12>)),				(IP)),
-    (((localPort),	(Ctor<14>)),				(UInt16)),
-    (((socket),		(Ctor<1>, Keys<0>)),			(UInt64)),
+    (((remoteIP),	(Ctor<13>, Keys<0>)),			(IP)),
+    (((remotePort),	(Ctor<15>, Keys<0>)),			(UInt16)),
+    (((localIP),	(Ctor<12>, Keys<0>)),			(IP)),
+    (((localPort),	(Ctor<14>, Keys<0>)),			(UInt16)),
+    (((socket),		(Ctor<1>)),				(UInt64)),
     (((flags),		(Ctor<16>, Flags<ZiCxnFlags::Map>)),	(UInt8)),
     (((mreqAddr),	(Ctor<6>)),				(IP)),
     (((mreqIf),		(Ctor<7>)),				(IP)),

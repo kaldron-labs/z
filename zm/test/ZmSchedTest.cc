@@ -167,7 +167,7 @@ int main(int argc, char **argv)
   ZmScheduler s{ZuMv(params)};
   s.allQueues(Ztc::QueueMgr::AllFn{
     &queues, [](QueueCheck *queues, Ztc::Queue *queue) {
-      auto key = queue->key();
+      auto key = queue->telKey();
       Ztc::QueueTelemetry data;
       queue->telemetry(data);
       ++queues->count;

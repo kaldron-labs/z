@@ -56,6 +56,11 @@ public:
     connect();
   }
 
+protected:
+  void telUp_() { connect(); }
+
+public:
+
   void disconnect() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client disconnect before app initialization", return);
