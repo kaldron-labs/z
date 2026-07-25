@@ -171,7 +171,7 @@ int main(int argc_, char **argv)
       ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHashMgr::csv()));
 
     if (options.heapTel)
-      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHeapMgr::csv()));
+      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << Ztc::heapCSV()));
 
     ZuNBox<uint64_t> seqNo;
 
@@ -324,7 +324,7 @@ int main(int argc_, char **argv)
       ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHashMgr::csv()));
 
     if (options.heapTel)
-      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHeapMgr::csv()));
+      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << Ztc::heapCSV()));
 
     db->stop(); // closes all tables
 

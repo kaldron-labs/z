@@ -295,7 +295,7 @@ int main(int argc, char **argv)
     mx->stop();
 
     // ZiLOG(Debug, "zdftest", (ZeString{} << '\n' << ZmHashMgr::csv()));
-    // ZiLOG(Debug, "zdftest", (ZeString{} << '\n' << ZmHeapMgr::csv()));
+    // ZiLOG(Debug, "zdftest", (ZeString{} << '\n' << Ztc::heapCSV()));
 
     db = {};
     store = {};

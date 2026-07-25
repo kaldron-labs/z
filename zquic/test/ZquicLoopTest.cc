@@ -16,15 +16,15 @@ namespace {
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-struct App : public Zquic::Engine<App> {
-  using Base = Zquic::Engine<App>;
+struct App : public Zquic::Hub<App> {
+  using Base = Zquic::Hub<App>;
 
   App() : m_mx{mxParams_()} {
     bool ok = m_mx.start();
     ZiAssert(ok, "Zquic", (), "loop test multiplexer start failed", return);
     if (ok)
       ok = Base::init(
-	Zquic::EngineParams(&m_mx, "3", "4").maxUDP(Zquic::BufSize));
+	Zquic::HubParams(&m_mx, "3", "4").maxUDP(Zquic::BufSize));
     ZiAssert(ok, "Zquic", (), "loop test app init failed", return);
   }
   ~App() {

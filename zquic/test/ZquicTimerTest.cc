@@ -33,14 +33,14 @@ static bool trafficSecret_(Zquic::TrafficSecret &secret, uint8_t seed)
     secret, &ptls_openssl_aes128gcmsha256, span_(bytes, sizeof(bytes)));
 }
 
-struct TimerApp : public Zquic::Engine<TimerApp> {
-  using Base = Zquic::Engine<TimerApp>;
+struct TimerApp : public Zquic::Hub<TimerApp> {
+  using Base = Zquic::Hub<TimerApp>;
 
   TimerApp() : m_mx{mxParams_()} {
     ZiAssert(m_mx.start(), "Zquic", (),
       "timer test multiplexer start failed", return);
     ZiAssert(Base::init(
-	Zquic::EngineParams(&m_mx, "3", "4")
+	Zquic::HubParams(&m_mx, "3", "4")
 	  .heartBeat(ZuTime{10})),
       "Zquic", (), "timer test app init failed", return);
   }

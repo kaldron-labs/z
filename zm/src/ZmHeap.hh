@@ -42,7 +42,8 @@
 #include <zlib/ZmSpecific.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmGuard.hh>
-#include <zlib/ZmFn_.hh>	// avoid circular dependency
+
+#include <zlib/ZtcHeap.hh>
 
 #if defined(ZDEBUG) && !defined(ZmHeap_DEBUG)
 #define ZmHeap_DEBUG
@@ -82,32 +83,12 @@ struct ZmHeapStats {
   uint64_t	crossFrees;
 };
 
-// display sequence:
-//   id, size, alignment, partition, sharded,
-//   cacheSize, cpuset, cacheAllocs, heapAllocs,
-//   frees, crossFrees, allocated (*)
-// derived display fields:
-//   allocated = (heapAllocs + cacheAllocs) - frees
-struct ZmHeapTelemetry {
-  ZuID		id;		// primary key
-  uint64_t	cacheSize = 0;
-  ZmBitmap	cpuset;
-  uint64_t	cacheAllocs = 0;// graphable (*)
-  uint64_t	heapAllocs = 0;	// graphable (*)
-  uint64_t	frees = 0;	// graphable
-  uint64_t	crossFrees = 0;	// graphable
-  uint32_t	size = 0;
-  uint16_t	partition = 0;
-  uint8_t	sharded = 0;
-  uint8_t	alignment = 0;
-};
-
 class ZmHeapLookup;
 
 typedef void (*ZmHeapReportFn)();
 
 // cache (LIFO free list) of fixed-size blocks; one per CPU set / NUMA node
-class ZmAPI ZmHeapCache : public ZmObject {
+class ZmAPI ZmHeapCache final : public ZmObject, public Ztc::Heap {
 friend ZmHeapMgr;
 friend ZmHeapMgr_;
 friend ZmHeapLookup;
@@ -157,7 +138,7 @@ public:
 
   void warmup();
 
-  void telemetry(ZmHeapTelemetry &data) const;
+  void telemetry(Ztc::HeapTelemetry &data) const;
 
 #ifdef ZmHeap_DEBUG
   typedef void (*TraceFn)(ZuCSpan, unsigned);
@@ -270,49 +251,8 @@ friend ZmHeapCache;
 template <typename, unsigned, unsigned, bool, unsigned>
 friend class ZmHeapCacheT; 
 
-  template <class S> struct CSV_ {
-    CSV_(S &stream) : m_stream(stream) { }
-    void print() {
-      m_stream <<
-	"ID,size,partition,sharded,alignment,cacheSize,cpuset,"
-	"cacheAllocs,heapAllocs,frees,crossFrees\n";
-      ZmHeapMgr::all({this, ZmFnPtr<&CSV_::print_>{}});
-    }
-    void print_(ZmHeapCache *cache) {
-      ZmHeapTelemetry data;
-      cache->telemetry(data);
-      if (!data.cacheAllocs && !data.heapAllocs) return;
-      m_stream <<
-	'"' << data.id << "\"," <<	// assume no need to quote embedded "
-	ZuBoxed(data.size) << ',' <<
-	ZuBoxed(data.partition) << ',' <<
-	ZuBoxed(data.sharded) << ',' <<
-	ZuBoxed(data.alignment) << ',' <<
-	ZuBoxed(data.cacheSize) << ',' <<
-	data.cpuset << ',' <<
-	ZuBoxed(data.cacheAllocs) << ',' <<
-	ZuBoxed(data.heapAllocs) << ',' <<
-	ZuBoxed(data.frees) << ',' <<
-	ZuBoxed(data.crossFrees) << '\n';
-    }
-
-  private:
-    S	&m_stream;
-  };
-
 public:
   static void init(ZuCSpan id, unsigned partition, const ZmHeapConfig &config);
-
-  using AllFn = ZmFn<void(ZmHeapCache *), ZmFnHeapID<"ZmHeapMgr.AllFn">>;
-  static void all(AllFn fn);
-
-  struct CSV {
-    template <typename S> void print(S &s) const {
-      ZmHeapMgr::CSV_<S>(s).print();
-    }
-    friend ZuPrintFn ZuPrintType(CSV *);
-  };
-  static CSV csv() { return CSV(); }
 
 #ifdef ZmHeap_DEBUG
   using TraceFn = ZmHeapCache::TraceFn;

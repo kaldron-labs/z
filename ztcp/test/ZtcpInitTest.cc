@@ -19,7 +19,7 @@ using namespace ZuTestUtil;
 
 namespace {
 
-struct App : public Ztcp::Engine<App> {
+struct App : public Ztcp::Hub<App> {
 };
 
 Ztcp::ErrorFn countErrors(ZmAtomic<unsigned> &errors)
@@ -47,7 +47,7 @@ void testValidation()
 
   {
     App app;
-    ZTCP_CHECK_RT(!app.init(Ztcp::EngineParams(nullptr, "3", "4").
+    ZTCP_CHECK_RT(!app.init(Ztcp::HubParams(nullptr, "3", "4").
 	errorFn(countErrors(errors))),
       "null multiplexer unexpectedly succeeded");
   }
@@ -55,25 +55,25 @@ void testValidation()
   ZiMultiplex stoppedMx(mxParams());
   {
     App app;
-    ZTCP_CHECK_RT(!app.init(Ztcp::EngineParams(&stoppedMx, "9", "4").
+    ZTCP_CHECK_RT(!app.init(Ztcp::HubParams(&stoppedMx, "9", "4").
 	errorFn(countErrors(errors))),
       "invalid Rx thread unexpectedly succeeded");
   }
   {
     App app;
-    ZTCP_CHECK_RT(!app.init(Ztcp::EngineParams(&stoppedMx, "3", "9").
+    ZTCP_CHECK_RT(!app.init(Ztcp::HubParams(&stoppedMx, "3", "9").
 	errorFn(countErrors(errors))),
       "invalid Tx thread unexpectedly succeeded");
   }
   {
     App app;
-    ZTCP_CHECK_RT(!app.init(Ztcp::EngineParams(&stoppedMx, "3", "3").
+    ZTCP_CHECK_RT(!app.init(Ztcp::HubParams(&stoppedMx, "3", "3").
 	errorFn(countErrors(errors))),
       "same Rx/Tx thread unexpectedly succeeded");
   }
   {
     App app;
-    ZTCP_CHECK_RT(!app.init(Ztcp::EngineParams(&stoppedMx, "3", "4").
+    ZTCP_CHECK_RT(!app.init(Ztcp::HubParams(&stoppedMx, "3", "4").
 	errorFn(countErrors(errors))),
       "non-running multiplexer unexpectedly succeeded");
   }
@@ -85,9 +85,9 @@ void testValidation()
 
   {
     App app;
-    ZTCP_CHECK_RT(app.init(Ztcp::EngineParams(&mx, "3", "4").
+    ZTCP_CHECK_RT(app.init(Ztcp::HubParams(&mx, "3", "4").
 	errorFn(countErrors(errors))),
-      "valid TCP engine initialization failed");
+      "valid TCP hub initialization failed");
     ZTCP_CHECK_RT(app.rxThread() == 3, "unexpected Rx thread");
     ZTCP_CHECK_RT(app.txThread() == 4, "unexpected Tx thread");
     app.final();

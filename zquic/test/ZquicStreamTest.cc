@@ -28,14 +28,14 @@ static void closeQLog_(ZquicLogger::Trace &trace)
   });
 }
 
-struct App : public Zquic::Engine<App> {
-  using Base = Zquic::Engine<App>;
+struct App : public Zquic::Hub<App> {
+  using Base = Zquic::Hub<App>;
 
   App(unsigned maxUDP = Zquic::MinUDPPayload) : m_mx{mxParams_()} {
     bool ok = m_mx.start();
     ZiAssert(ok, "Zquic", (), "stream test multiplexer start failed", return);
     if (ok)
-      ok = Base::init(Zquic::EngineParams(&m_mx, "3", "4").maxUDP(maxUDP));
+      ok = Base::init(Zquic::HubParams(&m_mx, "3", "4").maxUDP(maxUDP));
     ZiAssert(ok, "Zquic", (), "stream test app init failed", return);
   }
   ~App() {

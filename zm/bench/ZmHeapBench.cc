@@ -112,5 +112,5 @@ int main(int argc, char **argv)
   ZuTime end = Zm::now();
   end -= start;
   out(end.sec(), '.', end.nsec());
-  out(ZmHeapMgr::csv());
+  out(Ztc::heapCSV());
 }

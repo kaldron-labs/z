@@ -271,5 +271,5 @@ int main(int argc, char **argv)
   a.runResend();
   ZuCheck(a.checkResentGap(App::Span(11, 2)));
 
-  log(ZmHeapMgr::csv());
+  log(Ztc::heapCSV());
 }

@@ -77,6 +77,7 @@ private:
 class ZmHeapMgr_ : public ZmObject {
 friend ZmHeapMgr;
 friend ZmHeapCache;
+friend Ztc::HeapMgr;
 
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
@@ -148,19 +149,21 @@ private:
     {
       auto i = m_id2Cache.citer<ZmRBTreeEqual>(id);
       while (ZmHeapCache *c = i.val())
-	if (c->info().partition == partition)
+	if (c->info().partition == partition) {
 	  c->init(config, hwloc);
+	  lookupAdd(c);
+	}
     }
   }
 
-  void all(ZmHeapMgr::AllFn fn) {
+  void all(Ztc::HeapMgr::AllFn fn) {
     ZmRef<ZmHeapCache> c;
     {
       ReadGuard guard(m_lock);
       c = m_key2Cache.minimumVal();
     }
     while (c) {
-      fn(c);
+      fn(c.ptr());
       {
 	ReadGuard guard(m_lock);
 	c = m_key2Cache.citer<ZmRBTreeGreater>(
@@ -169,7 +172,8 @@ private:
     }
   }
 
-  void all(ZuCSpan id, ZmHeapMgr::AllFn fn) {
+#if 0
+  void all(ZuCSpan id, Ztc::HeapMgr::AllFn fn) {
     Key key{id, 0U, 0U, false};
     ZmRef<ZmHeapCache> c;
     for (;;) {
@@ -183,6 +187,7 @@ private:
       fn(c);
     }
   }
+#endif
 
 #ifdef ZmHeap_DEBUG
   void trace(ZuCSpan id, TraceFn allocFn, TraceFn freeFn) {
@@ -193,6 +198,19 @@ private:
     }
   }
 #endif
+
+  void lookupAdd(ZmHeapCache *c) {
+    const auto &info = c->info();
+    if (info.sharded || !info.config.cacheSize || c->lookup()) return;
+    IDSize2Lookup::Node *node =
+      m_lookups.find(ZuFwdTuple(info.id, info.size));
+    if (!node) {
+      node = new IDSize2Lookup::Node{};
+      node->key() = ZuFwdTuple(info.id, info.size);
+      m_lookups.addNode(node);
+    }
+    node->val().add(c);
+  }
 
   ZmHeapCache *cache(
     ZuCSpan id, unsigned size, unsigned alignment, bool sharded,
@@ -221,15 +239,7 @@ private:
     ZmREF(c);
     m_id2Cache.add(c);
     m_key2Cache.add(c);
-    if (!sharded && c->info().config.cacheSize) {
-      IDSize2Lookup::Node *lookupNode = m_lookups.find(ZuFwdTuple(id, size));
-      if (!lookupNode) {
-	lookupNode = new IDSize2Lookup::Node{};
-	lookupNode->key() = ZuFwdTuple(id, size);
-	m_lookups.addNode(lookupNode);
-      }
-      lookupNode->val().add(c);
-    }
+    lookupAdd(c);
     return c;
   }
 
@@ -244,11 +254,6 @@ void ZmHeapMgr::init(
   ZuCSpan id, unsigned partition, const ZmHeapConfig &config)
 {
   ZmHeapMgr_::instance()->init(id, partition, config);
-}
-
-void ZmHeapMgr::all(AllFn fn)
-{
-  ZmHeapMgr_::instance()->all(ZuMv(fn));
 }
 
 #ifdef ZmHeap_DEBUG
@@ -402,7 +407,14 @@ void ZmHeapCache::histStats(const ZmHeapStats &s) const
   m_histStats.crossFrees += s.crossFrees;
 }
 
-void ZmHeapCache::telemetry(ZmHeapTelemetry &data) const
+// --- telemetry
+
+void Ztc::HeapMgr::all(AllFn fn)
+{
+  ZmHeapMgr_::instance()->all(ZuMv(fn));
+}
+
+void ZmHeapCache::telemetry(Ztc::HeapTelemetry &data) const
 {
   report();
   data.id = m_info.id;

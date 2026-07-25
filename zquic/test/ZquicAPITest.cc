@@ -86,7 +86,7 @@ struct TestStream :
   int process(Zquic::RxStream &) { return 0; }
 };
 
-struct EngineApp : public Zquic::Engine<EngineApp> {
+struct HubApp : public Zquic::Hub<HubApp> {
   void activeMigration(bool v) {
     m_migrationMode = v ?
       Zquic::MigrationMode::Active : Zquic::MigrationMode::Passive;
@@ -205,12 +205,12 @@ struct ServerShapeLink :
 
 struct TestLink :
     public Zquic::Link<
-      EngineApp, TestLink, StreamTxBufAlloc,
+      HubApp, TestLink, StreamTxBufAlloc,
       TestStream> {
   using Base = Zquic::Link<
-    EngineApp, TestLink, StreamTxBufAlloc,
+    HubApp, TestLink, StreamTxBufAlloc,
     TestStream>;
-  TestLink(EngineApp *app, bool isServer = false) : Base{app, isServer} {
+  TestLink(HubApp *app, bool isServer = false) : Base{app, isServer} {
     Base::configLocalParams_(app);
   }
 
@@ -487,14 +487,14 @@ bool waitUntil(L l)
   return false;
 }
 
-struct EngineFixture {
-  EngineFixture() : mx{mxParams_()} {
+struct HubFixture {
+  HubFixture() : mx{mxParams_()} {
     ZiAssert(mx.start(), "Zquic", (),
       "API test multiplexer start failed", return);
-    ZiAssert(app.init(Zquic::EngineParams(&mx, "3", "4")),
-      "Zquic", (), "API test engine init failed", return);
+    ZiAssert(app.init(Zquic::HubParams(&mx, "3", "4")),
+      "Zquic", (), "API test hub init failed", return);
   }
-  ~EngineFixture() {
+  ~HubFixture() {
     app.final();
     mx.stop();
   }
@@ -508,7 +508,7 @@ struct EngineFixture {
   }
 
   ZiMultiplex	mx;
-  EngineApp	app;
+  HubApp	app;
 };
 
 static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
@@ -601,7 +601,7 @@ void testParams()
   ZuCHECK(!*serverParams.heartBeat(),
     "default heartBeat interval was not disabled");
 
-  EngineFixture fixture;
+  HubFixture fixture;
   {
     ZmRef<TestLink> link = new TestLink{&fixture.app, false};
     ZuCHECK(link->localParams().disableActiveMigration,
@@ -619,7 +619,7 @@ void testStreamShape()
 {
   ZuTestScope(testStreamShape);
 
-  EngineFixture fixture;
+  HubFixture fixture;
   ZmRef<TestLink> client = new TestLink{&fixture.app, false};
   ZmRef<TestLink> server = new TestLink{&fixture.app, true};
 
@@ -655,7 +655,7 @@ void testAlignedSurfaceShape()
 {
   ZuTestScope(testAlignedSurfaceShape);
 
-  ZiMultiplex mx{EngineFixture::mxParams_()};
+  ZiMultiplex mx{HubFixture::mxParams_()};
   bool mxOK = mx.start();
   ZuCHECK(mxOK, "aligned shape multiplexer start failed");
   if (!mxOK) return;
@@ -784,7 +784,7 @@ void testStatelessResetDetection()
 	params.enabled(true).path(qlogPath);
 #endif
 
-	EngineFixture fixture;
+	HubFixture fixture;
 #ifdef Zquic_DEBUG
 	ZuCHECK(ZquicLogger::init(
 	    fixture.app.qlogTrace(), params, Zquic::Vantage::Unknown),
@@ -842,7 +842,7 @@ void testApplicationCallbacks()
 {
   ZuTestScope(testApplicationCallbacks);
 
-  EngineFixture fixture;
+  HubFixture fixture;
   ZmRef<TestLink> server = new TestLink{&fixture.app, true};
   ZmRef<TestLink> client = new TestLink{&fixture.app};
   uint8_t b[128];
@@ -992,7 +992,7 @@ void testCxnIDFrameLifecycle()
 {
   ZuTestScope(testCxnIDFrameLifecycle);
 
-  EngineFixture fixture;
+  HubFixture fixture;
   ZmRef<TestLink> link = new TestLink{&fixture.app};
   Zquic::ResetToken peerToken{"0123456789abcdef"};
   Zquic::Frame f;
@@ -1105,7 +1105,7 @@ void testActiveMigrationAPI()
 {
   ZuTestScope(testActiveMigrationAPI);
 
-  EngineFixture fixture;
+  HubFixture fixture;
   ZiSockAddr localAddr{ZiIP{"127.0.0.1"}, 4433};
   ZiSockAddr oldRemote{ZiIP{"127.0.0.1"}, 50000};
   ZiSockAddr newRemote{ZiIP{"127.0.0.1"}, 50001};
@@ -1246,7 +1246,7 @@ void testMigrationQLogEvents()
   ZquicLogParams qlogParams;
   qlogParams.enabled(true).path(qlogPath).ringSize(1<<15);
 
-  EngineFixture fixture;
+  HubFixture fixture;
   ZuCHECK(ZquicLogger::init(
       fixture.app.qlogTrace(), qlogParams, Zquic::Vantage::Unknown),
     "migration runtime qlog init failed");
@@ -1435,9 +1435,9 @@ void testInitValidate()
 
   {
     unsigned errors = 0;
-    EngineApp engine;
-    ZuCHECK(!engine.init(
-	Zquic::EngineParams(nullptr, "1", "2")
+    HubApp hub;
+    ZuCHECK(!hub.init(
+	Zquic::HubParams(nullptr, "1", "2")
 	  .errorFn(Zquic::ErrorFn{[&errors](ZeException) { ++errors; }})),
       "null multiplexer init unexpectedly succeeded");
     ZuCHECK(errors == 1, "null multiplexer error callback mismatch");
@@ -1472,36 +1472,36 @@ void testInitValidate()
 
   {
     unsigned errors = 0;
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-	Zquic::EngineParams(&mx, "9", "2")
+	Zquic::HubParams(&mx, "9", "2")
 	  .errorFn(Zquic::ErrorFn{[&errors](ZeException) { ++errors; }})),
       "invalid Rx thread unexpectedly succeeded");
     ZuCHECK(errors == 1, "invalid Rx thread error callback mismatch");
   }
   {
     unsigned errors = 0;
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-	Zquic::EngineParams(&mx, "1", "9")
+	Zquic::HubParams(&mx, "1", "9")
 	  .errorFn(Zquic::ErrorFn{[&errors](ZeException) { ++errors; }})),
       "invalid Tx thread unexpectedly succeeded");
     ZuCHECK(errors == 1, "invalid Tx thread error callback mismatch");
   }
   {
     unsigned errors = 0;
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-	Zquic::EngineParams(&mx, "3", "3")
+	Zquic::HubParams(&mx, "3", "3")
 	  .errorFn(Zquic::ErrorFn{[&errors](ZeException) { ++errors; }})),
       "same Rx/Tx thread unexpectedly succeeded");
     ZuCHECK(errors == 1, "same Rx/Tx thread error callback mismatch");
   }
   {
     unsigned errors = 0;
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-	Zquic::EngineParams(&mx, "3", "4")
+	Zquic::HubParams(&mx, "3", "4")
 	  .asyncThread("1")
 	  .errorFn(Zquic::ErrorFn{[&errors](ZeException) { ++errors; }})),
       "I/O async thread unexpectedly succeeded");

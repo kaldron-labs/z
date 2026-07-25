@@ -651,7 +651,7 @@ void printMemDiag()
 {
   ZiLOG(Info, "zhttp", ([](auto &s) {
     s << "Hash Tables:\n" << ZmHashMgr::csv();
-    s << "Heaps:\n" << ZmHeapMgr::csv();
+    s << "Heaps:\n" << Ztc::heapCSV();
   }));
 }
 

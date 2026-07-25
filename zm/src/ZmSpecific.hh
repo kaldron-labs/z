@@ -479,7 +479,7 @@ template <typename T, auto> struct ZmTLS_ : public ZmObject {
 template <
   unsigned Cleanup = ZmCleanup::Application,
   typename L,
-  ZuStatelessLambda<L, int> = 0>
+  ZuStatelessLambda<L, ZuArgList<L>, int> = 0>
 inline auto &ZmTLS(L l) {
   using T = ZuDecay<decltype(ZuDeclVal<ZuLambdaReturn<L>>())>;
   using Object = ZmTLS_<T, &L::operator ()>;

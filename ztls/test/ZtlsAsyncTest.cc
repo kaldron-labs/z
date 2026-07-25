@@ -41,7 +41,7 @@ struct ServerApp : public Ztls::Server<ServerApp> {
   }
 };
 
-struct EngineApp : public Ztls::Engine<EngineApp> { };
+struct HubApp : public Ztls::Hub<HubApp> { };
 
 } // namespace
 
@@ -117,51 +117,51 @@ void testInitValidation()
   }
 
   {
-    EngineApp app;
-    ZuCHECK(!app.init(Ztls::EngineParams(&mx, "9", "4").alpn(alpn)),
+    HubApp app;
+    ZuCHECK(!app.init(Ztls::HubParams(&mx, "9", "4").alpn(alpn)),
       "invalid TLS Rx thread unexpectedly succeeded");
   }
   {
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("9")),
+      Ztls::HubParams(&mx, "3", "4").alpn(alpn).asyncThread("9")),
       "invalid async thread unexpectedly succeeded");
   }
   {
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("3")),
+      Ztls::HubParams(&mx, "3", "4").alpn(alpn).asyncThread("3")),
       "TLS Rx async thread unexpectedly succeeded");
   }
   {
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("4")),
+      Ztls::HubParams(&mx, "3", "4").alpn(alpn).asyncThread("4")),
       "TLS Tx async thread unexpectedly succeeded");
   }
   {
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("1")),
+      Ztls::HubParams(&mx, "3", "4").alpn(alpn).asyncThread("1")),
       "rx async thread unexpectedly succeeded");
   }
   {
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("2")),
+      Ztls::HubParams(&mx, "3", "4").alpn(alpn).asyncThread("2")),
       "tx async thread unexpectedly succeeded");
   }
   {
-    EngineApp app;
+    HubApp app;
     ZuCHECK(!app.init(
-      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("6")),
+      Ztls::HubParams(&mx, "3", "4").alpn(alpn).asyncThread("6")),
       "non-isolated async thread unexpectedly succeeded");
   }
   {
-    EngineApp app;
+    HubApp app;
     bool ok = app.init(
-      Ztls::EngineParams(&mx, "3", "4").alpn(alpn).asyncThread("5"));
-    ZuCHECK(ok, "valid async engine init failed");
+      Ztls::HubParams(&mx, "3", "4").alpn(alpn).asyncThread("5"));
+    ZuCHECK(ok, "valid async hub init failed");
     if (ok) app.final();
   }
 
