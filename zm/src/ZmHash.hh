@@ -1145,7 +1145,7 @@ public:
     return lockCode(HashFn::hash(ZuFwd<P>(key)));
   }
 
-  void telemetry(ZmHashTelemetry &data) const {
+  void telemetry(Ztc::HashTelemetry &data) const {
     data.id = m_id;
     data.addr = reinterpret_cast<uintptr_t>(this);
     data.loadFactor = loadFactor();

@@ -21,7 +21,9 @@ pkginclude_HEADERS = \
 	ZmTimeInterval.hh ZmTimeout.hh ZmTopology.hh ZmTrap.hh \
 	ZmEngine.hh ZmCache.hh ZmCacheStats.hh ZmDemangle.hh \
 	ZmPolyHash.hh ZmPolyCache.hh ZmCodec.hh \
-	ZmLocal.hh ZmStack.hh ZmStackAvail.hh
+	ZmLocal.hh ZmStack.hh ZmStackAvail.hh \
+	\
+	ZtcHash.hh ZtcHeap.hh
 lib_LTLIBRARIES = libZm.la
 libZm_la_SOURCES = \
 	ZmAssert.cc ZmBackTrace.cc ZmGlobal.cc ZmHashMgr.cc ZmHeap.cc \

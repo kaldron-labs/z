@@ -287,19 +287,19 @@ protected:
 };
 
 // global, dynamic
-template <typename Hash, typename NTP>
-class ZmLHash__<Hash, NTP, false, false> :
-  public ZmAnyHash, public ZmLHash__<Hash, NTP, true, false> {
+template <typename Hash_, typename NTP>
+class ZmLHash__<Hash_, NTP, false, false> :
+  public ZmAnyHash, public ZmLHash__<Hash_, NTP, true, false> {
 protected:
   ZmLHash__(ZuCSpan id, const ZmHashParams &params) :
-    ZmLHash__<Hash, NTP, true, false>{params}, m_id{id} { }
+    ZmLHash__<Hash_, NTP, true, false>{params}, m_id{id} { }
 
   void init() { ZmHashMgr::add(this); }
   void final() { ZmHashMgr::del(this); }
 
-  void telemetry(ZmHashTelemetry &data) const {
+  void telemetry(Ztc::HashTelemetry &data) const {
     data.id = m_id;
-    static_cast<const Hash *>(this)->telemetry_(data);
+    static_cast<const Hash_ *>(this)->telemetry_(data);
   }
 
 private:
@@ -1203,7 +1203,7 @@ private:
   }
 
 private:
-  void telemetry_(ZmHashTelemetry &data) const {
+  void telemetry_(Ztc::HashTelemetry &data) const {
     data.addr = reinterpret_cast<uintptr_t>(this);
     data.loadFactor = loadFactor();
     unsigned count = m_count.load_();
