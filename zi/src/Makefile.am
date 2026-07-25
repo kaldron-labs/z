@@ -13,7 +13,8 @@ pkginclude_HEADERS = \
 	ZiMultiplex.hh ZiPlatform.hh ZiRing.hh ZiDaemon.hh \
 	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh \
 	ZiTxStream.hh ZiFileTxStream.hh ZiRxStream.hh ZiEventLoop.hh \
-	ZiResolver.hh ZiHeapCSV.hh ZiHashCSV.hh
+	ZiResolver.hh ZiHeapCSV.hh ZiHashCSV.hh \
+	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh
 if NETLINK
 pkginclude_HEADERS += ZiNetlinkMsg.hh ZiNetlink.hh zi_netlink.h
 endif
@@ -21,7 +22,7 @@ lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \
 	ZiDir.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
 	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc \
-	ZiRing.cc ZiLog.cc ZiEventLoop.cc ZiDaemon.cc ZiResolver.cc
+	ZiRing.cc ZiLog.cc ZiEventLoop.cc ZiDaemon.cc ZiResolver.cc ZtcHub.cc
 if NETLINK
 libZi_la_SOURCES += ZiNetlink.cc ZiNetlinkMsg.cc
 endif
