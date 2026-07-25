@@ -13,6 +13,7 @@
 #include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtHexDump.hh>
+#include <zlib/ZtLocalArray.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -1213,14 +1214,24 @@ void ZiConnection::telemetry(Ztc::CxnTelemetry &data) const
 
 void ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn)
 {
-  rxInvoke([this, fn = ZuMv(fn)]() mutable { allCxns_(ZuMv(fn)); });
+  ZmRef<CxnHash> cxns = m_cxns;
+  if (!cxns) return;
+  unsigned n = cxns->count_();
+  if (!n) return;
+  using CxnRefs =
+    ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Zi.CxnRefs">>;
+  auto refs = ZtLocalArray(CxnRefs, n);
+  {
+    auto i = cxns->citer();
+    while (ZmRef<ZiConnection> cxn = i.val())
+      refs.push(ZuMv(cxn));
+  }
+  refs.all([&fn](ZmRef<ZiConnection> &cxn) { fn(cxn.ptr()); });
 }
 
 void ZiMultiplex::allCxns_(Ztc::Mx::AllCxnsFn fn)
 {
-  auto i = m_cxns->citer();
-  while (ZmRef<ZiConnection> cxn = i.val())
-    txRun([fn, cxn = ZuMv(cxn)]() { fn(cxn); });
+  allCxns(ZuMv(fn));
 }
 
 void ZiMultiplex::listen(

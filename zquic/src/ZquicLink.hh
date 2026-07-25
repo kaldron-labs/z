@@ -24,7 +24,9 @@ ZtEnumStruct(CxnTimer, int8_t,
   PathValid);
 
 template <typename App, typename Impl, typename TxBufAlloc_, typename Stream_>
-class Link : public ZmPolymorph {
+class Link :
+  public ZmPolymorph,
+  public Ztc::Link {
 template <typename, typename>
 friend class Server;
 public:
@@ -108,6 +110,44 @@ public:
   }
 
   App *app() const { return m_app; }
+  ZuID telID() const {
+    return ZuID{} << "quic:" <<
+      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
+  }
+  ZuTuple<ZuID, ZuID> telKey() const override {
+    return {app()->telID(), telID()};
+  }
+  void telemetry(Ztc::LinkTelemetry &data) const override {
+    data.hubID = app()->telID();
+    data.id = telID();
+    data.rxCalls = m_rxDiag.datagramsRx;
+    data.txCalls = m_txDiag.packetsTx;
+    data.rxBytes = m_rxDiag.bytesRx;
+    data.txBytes = m_txDiag.bytesTx;
+    data.reconnects = 0;
+    data.type = Ztc::LinkType::QUIC;
+    switch (m_linkState) {
+      case LinkState::Starting:
+      case LinkState::Handshaking:
+	data.state = Ztc::LinkState::Connecting;
+	break;
+      case LinkState::Established:
+	data.state = Ztc::LinkState::Up;
+	break;
+      case LinkState::Closing:
+      case LinkState::Draining:
+	data.state = Ztc::LinkState::Disconnecting;
+	break;
+      default:
+	data.state = Ztc::LinkState::Down;
+	break;
+    }
+  }
+  Ztc::Queue *rxQueue() const override { return nullptr; }
+  Ztc::Queue *txQueue() const override { return nullptr; }
+  void up() override { impl()->telUp_(); }
+  void down() override { (void)impl()->disconnect(); }
+
   bool isServer() const { return m_isServer; }
   bool closed() const { return m_appClose.closed; }
   uint64_t closeError() const { return m_appClose.error; }
@@ -407,6 +447,8 @@ public:
   void newToken_(ZuBSpan) { }
 
 protected:
+  void telUp_() { }
+
   void closeState_(uint64_t errorCode = 0, bool application = false) {
     m_appClose.error = errorCode;
     m_appClose.closed = true;

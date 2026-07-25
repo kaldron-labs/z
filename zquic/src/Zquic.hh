@@ -43,6 +43,7 @@
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZtcHub.hh>
 
 #include <zlib/ZtlsBackend.hh>
 
@@ -618,7 +619,8 @@ using ServerParams = HubParams;
 
 template <typename App_> class Hub :
   public ZmPolymorph,
-  public ZmEngine<App_> {
+  public ZmEngine<App_>,
+  public Ztc::Hub {
 friend ZmEngine<App_>;
 template <typename, typename, typename, typename>
 friend class Link;
@@ -645,9 +647,56 @@ public:
     return init_(ZuMv(params), Zquic::Vantage::Unknown,
       [](const HubParams &) { return true; });
   }
+  bool start() override { return HubCtl::start(); }
+  bool stop() override { return HubCtl::stop(); }
+
+  ZuID telID() const {
+    return ZuID{} << "quic:" <<
+      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
+  }
+  ZuTuple<Ztc::LinkType::T, ZuID> telKey() const override {
+    return {Ztc::LinkType::QUIC, telID()};
+  }
+  void telemetry(Ztc::HubTelemetry &data) const override {
+    data.id = telID();
+    if (m_mx) data.mxID = m_mx->id();
+    data.down = 0;
+    data.disabled = 0;
+    data.transient = 0;
+    data.up = 0;
+    data.reconn = 0;
+    data.failed = 0;
+    data.nLinks = 0;
+    data.rxThread = m_rxThread;
+    data.txThread = m_txThread;
+    data.linkType = Ztc::LinkType::QUIC;
+    data.state = state();
+    const_cast<Hub *>(this)->allLinks({
+      &data, [](Ztc::HubTelemetry *data, Ztc::Link *link) {
+	Ztc::LinkTelemetry linkData;
+	link->telemetry(linkData);
+	++data->nLinks;
+	switch (linkData.state) {
+	  case Ztc::LinkState::Down:		  ++data->down; break;
+	  case Ztc::LinkState::Disabled:	  ++data->disabled; break;
+	  case Ztc::LinkState::ReconnectPending:
+	  case Ztc::LinkState::Reconnecting:	  ++data->reconn; break;
+	  case Ztc::LinkState::Up:		  ++data->up; break;
+	  case Ztc::LinkState::Failed:		  ++data->failed; break;
+	  default:				  ++data->transient; break;
+	}
+      }});
+  }
+  void allLinks(Ztc::Hub::AllLinksFn fn) override {
+    app()->allLinks_(ZuMv(fn));
+  }
+  void allPools(Ztc::Hub::AllPoolsFn fn) override {
+    app()->allPools_(ZuMv(fn));
+  }
 
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
+      Ztc::HubMgr::del(this);
       ZquicLogger::final(m_qlogTrace);
       m_mx = nullptr;
       m_rxThread = 0;
@@ -747,7 +796,7 @@ public:
 protected:
   template <typename Params, typename L>
   bool init_(Params params, Zquic::Vantage::T vantage, L &&l) {
-    return HubCtl::lock(
+    bool ok = HubCtl::lock(
 	ZmEngineState::Stopped,
 	[this, params = ZuMv(params), vantage, l = ZuFwd<L>(l)]() mutable -> bool {
       m_errorFn = ZuMv(params.errorFn());
@@ -792,7 +841,12 @@ protected:
 	return false;
       return l(params);
     });
+    if (ok) Ztc::HubMgr::add(this);
+    return ok;
   }
+
+  void allLinks_(Ztc::Hub::AllLinksFn) { }
+  void allPools_(Ztc::Hub::AllPoolsFn) { }
 
   void error_(ZeException e) {
     if (m_errorFn)
@@ -1096,6 +1150,8 @@ public:
   using Link = Link_;
   using LinkRef = ZmRef<Link>;
   using LinkTable = ServerLinks_<Link>;
+  using LinkRefs =
+    ZtArray<LinkRef, ZtArrayHeapID<"Zquic.Server.LinkRefs">>;
   using Base = Hub<App>;
   using Endpoint = Endpoint_<Server>;
   using Base::app;
@@ -1170,17 +1226,18 @@ friend ZmEngine<App>;
     ZiAssert(this->mx() && this->rxThread(), "Zquic", (),
       "QUIC server link iteration before app initialization", return);
     if (this->rxInvoked()) {
-      if (this->state() == ZmEngineState::Running) {
-	auto i = m_links->citer();
-	while (LinkRef ref = i.val())
-	  l(ZuMv(ref));
-      }
+      if (this->state() == ZmEngineState::Running)
+	allLinks_0([&l](LinkRef &ref) { l(ZuMv(ref)); });
       done();
       return;
     }
     this->rxInvoke([this, l = ZuFwd<L>(l), done = ZuFwd<Done>(done)]() mutable {
       allLinks(ZuMv(l), ZuMv(done));
     });
+  }
+
+  void allLinks_(Ztc::Hub::AllLinksFn fn) {
+    allLinks_0([&fn](LinkRef &ref) { fn(ref.ptr()); });
   }
 
   ZiIP localIP() const { return ZiIP{}; }
@@ -1253,6 +1310,21 @@ public:
   }
 
 private:
+  template <typename L>
+  void allLinks_0(L &&l) {
+    ZmRef<LinkTable> table = m_links;
+    if (!table) return;
+    unsigned n = table->count_();
+    if (!n) return;
+    auto links = ZtLocalArray(LinkRefs, n);
+    {
+      auto i = table->citer();
+      while (LinkRef ref = i.val())
+	links.push(ZuMv(ref));
+    }
+    links.all(ZuFwd<L>(l));
+  }
+
   void txDrained_() {
     auto i = m_links->citer();
     while (LinkRef ref = i.val())

@@ -415,7 +415,7 @@ void Ztc::HeapMgr::all(AllFn fn)
 }
 
 ZuTuple<ZuID, uint32_t, uint8_t, uint16_t, uint8_t>
-ZmHeapCache::key() const
+ZmHeapCache::telKey() const
 {
   return {
     m_info.id, m_info.size, m_info.alignment,

@@ -56,8 +56,8 @@ struct Hub {
 
   virtual ZuTuple<LinkType::T, ZuID> telKey() const = 0;
   virtual void telemetry(HubTelemetry &data) const = 0;
-  virtual void start() = 0;
-  virtual void stop() = 0;
+  virtual bool start() = 0;
+  virtual bool stop() = 0;
   virtual void allLinks(AllLinksFn fn) = 0;
   virtual void allPools(AllPoolsFn fn) = 0;
 };

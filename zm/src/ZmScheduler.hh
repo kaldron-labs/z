@@ -549,7 +549,7 @@ private:
   using SpawnReadGuard = ZmReadGuard<SpawnLock>;
 
   struct Thread final : public Ztc::Queue {
-    ZuTuple<ZuID, Ztc::QueueType::T> key() const override;
+    ZuTuple<ZuID, Ztc::QueueType::T> telKey() const override;
     void telemetry(Ztc::QueueTelemetry &) const override;
 
     ZuID		id;

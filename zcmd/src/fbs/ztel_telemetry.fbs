@@ -51,7 +51,7 @@ table Thread {			// == Ztc::ThreadTelemetry
   main:uint8;
   detached:uint8;
 }
-table Mx {			// == ZiMxTelemetry
+table Mx {			// == Ztc::MxTelemetry
   id:string;
   stack_size:uint32;
   queue_size:uint32;
@@ -80,7 +80,7 @@ enum SocketType:int8 {		// == ZiCxnType
   TCPOut,
   UDP
 }
-table Socket {			// == ZiCxnTelemetry
+table Socket {			// == Ztc::CxnTelemetry
   mx_i_d:string;
   socket:uint64;
   rx_buf_size:uint32;

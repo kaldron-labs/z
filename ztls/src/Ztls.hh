@@ -30,6 +30,7 @@
 #include <zlib/ZiTx.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
+#include <zlib/ZtcHub.hh>
 
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsBackend.hh>
@@ -211,9 +212,13 @@ public:
   Cxn(LinkRef link, const ZiCxnInfo &ci) :
     ZiConnection(link->app()->mx(), ci), m_link(ZuMv(link)) { }
 
-  void connected(ZiIOContext &io) { m_link->connected_0(this, io); }
-  void disconnected(bool peer) {
+  void connected(ZiIOContext &io) override { m_link->connected_0(this, io); }
+  void disconnected(bool peer) override {
     if (Link *link = m_link) link->disconnected_0(this, ZuMv(m_link), peer);
+  }
+  Ztc::Link *telLink(const void *owner) const override {
+    Link *link = m_link;
+    return link && link->app() == owner ? link : nullptr;
   }
 
 private:
@@ -255,7 +260,8 @@ template <
 class Link :
   public ZmPolymorph,
   public ZiRx<Impl, RxBufAlloc_>,
-  public ZiTx<Impl>
+  public ZiTx<Impl>,
+  public Ztc::Link
 {
   ZuAssert((ZuIs_<RxBufAlloc_, Ztls_::IOQueue::Node>{}));
   ZuAssert((ZuIs_<TxBufAlloc_, Ztls_::IOQueue::Node>{}));
@@ -295,6 +301,33 @@ public:
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
   StreamRef stream() { return impl(); }
+  ZuTuple<ZuID, ZuID> telKey() const override {
+    return {app()->telID(), telID()};
+  }
+  void telemetry(Ztc::LinkTelemetry &data) const override {
+    data.hubID = app()->telID();
+    data.id = telID();
+    data.rxCalls = 0;
+    data.txCalls = 0;
+    data.rxBytes = 0;
+    data.txBytes = 0;
+    data.reconnects = 0;
+    if (Cxn *cxn = m_cxn) {
+      data.rxCalls = cxn->rxCalls();
+      data.txCalls = cxn->txCalls();
+      data.rxBytes = cxn->rxBytes();
+      data.txBytes = cxn->txBytes();
+    }
+    data.type = Ztc::LinkType::TLS;
+    data.state = m_handshook ? Ztc::LinkState::Up :
+      m_cxn ? Ztc::LinkState::Connecting :
+      m_disconnecting.load_() ?
+	Ztc::LinkState::Disconnecting : Ztc::LinkState::Down;
+  }
+  Ztc::Queue *rxQueue() const override { return nullptr; }
+  Ztc::Queue *txQueue() const override { return nullptr; }
+  void up() override { impl()->telUp_(); }
+  void down() override { disconnect(); }
   TlsInfo tlsInfo() const {
     if (!m_tls || !m_handshook) return {};
     auto tls = const_cast<ptls_t *>(m_tls);
@@ -991,6 +1024,8 @@ public:
   }
 
 protected:
+  void telUp_() { }
+
   static int tlsver_(uint16_t v) {
     switch (v) {
       case 0x0303: return 12;
@@ -1022,6 +1057,11 @@ protected:
   }
 
 private:
+  ZuID telID() const {
+    return ZuID{} << "tls:" <<
+      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
+  }
+
   // immutable
   App			*m_app = nullptr;
   bool			m_isServer = false;
@@ -1207,6 +1247,9 @@ public:
       app()->error_(ZeEXCEPT(Error, "Ztls", "connect failed"));
   }
 
+protected:
+  void telUp_() { connect(); }
+
 private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -1276,7 +1319,8 @@ private:
 
 template <typename App_> class Hub :
   public Random,
-  public ZmEngine<App_> {
+  public ZmEngine<App_>,
+  public Ztc::Hub {
 friend ZmEngine<App_>;
 template <typename, typename, typename, typename, typename, typename>
 friend class Link;
@@ -1310,6 +1354,52 @@ public:
   bool init(HubParams params) {
     return init_(ZuMv(params), [](const HubParams &) { return true; });
   }
+  bool start() override { return HubCtl::start(); }
+  bool stop() override { return HubCtl::stop(); }
+
+  ZuID telID() const {
+    return ZuID{} << "tls:" <<
+      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
+  }
+  ZuTuple<Ztc::LinkType::T, ZuID> telKey() const override {
+    return {Ztc::LinkType::TLS, telID()};
+  }
+  void telemetry(Ztc::HubTelemetry &data) const override {
+    data.id = telID();
+    if (m_mx) data.mxID = m_mx->id();
+    data.down = 0;
+    data.disabled = 0;
+    data.transient = 0;
+    data.up = 0;
+    data.reconn = 0;
+    data.failed = 0;
+    data.nLinks = 0;
+    data.rxThread = m_rxThread;
+    data.txThread = m_txThread;
+    data.linkType = Ztc::LinkType::TLS;
+    data.state = state();
+    const_cast<Hub *>(this)->allLinks({
+      &data, [](Ztc::HubTelemetry *data, Ztc::Link *link) {
+	Ztc::LinkTelemetry linkData;
+	link->telemetry(linkData);
+	++data->nLinks;
+	switch (linkData.state) {
+	  case Ztc::LinkState::Down:		  ++data->down; break;
+	  case Ztc::LinkState::Disabled:	  ++data->disabled; break;
+	  case Ztc::LinkState::ReconnectPending:
+	  case Ztc::LinkState::Reconnecting:	  ++data->reconn; break;
+	  case Ztc::LinkState::Up:		  ++data->up; break;
+	  case Ztc::LinkState::Failed:		  ++data->failed; break;
+	  default:				  ++data->transient; break;
+	}
+      }});
+  }
+  void allLinks(Ztc::Hub::AllLinksFn fn) override {
+    app()->allLinks_(ZuMv(fn));
+  }
+  void allPools(Ztc::Hub::AllPoolsFn fn) override {
+    app()->allPools_(ZuMv(fn));
+  }
 
 protected:
   template <typename Params, typename L>
@@ -1323,7 +1413,7 @@ protected:
     m_asyncThread = params.asyncThread() ?
       m_mx->sid(params.asyncThread()) : 0;
 
-    return ZmBlock<bool>{}([
+    bool ok = ZmBlock<bool>{}([
       this, params = ZuMv(params), l = ZuFwd<L>(l)
     ](auto wake) mutable {
       rxInvoke([
@@ -1332,6 +1422,9 @@ protected:
 	wake(init_context_(params, l));
       });
     });
+    if (!ok) return false;
+    Ztc::HubMgr::add(this);
+    return true;
   }
 
 private:
@@ -1431,6 +1524,7 @@ private:
 public:
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
+      Ztc::HubMgr::del(this);
       final_();
       return true;
     });
@@ -1466,6 +1560,9 @@ private:
   bool asyncConfigured_() const { return m_asyncThread != 0; }
 
 protected:
+  void allLinks_(Ztc::Hub::AllLinksFn) { }
+  void allPools_(Ztc::Hub::AllPoolsFn) { }
+
   void error_(ZeException e) {
     if (m_errorFn)
       m_errorFn(ZuMv(e));
@@ -1921,6 +2018,14 @@ friend Base;
   bool init(ServerParams params);
 
   void final() { Base::final(); }
+
+  void allLinks_(Ztc::Hub::AllLinksFn fn) {
+    mx()->allCxns(Ztc::Mx::AllCxnsFn{
+      [app = app(), fn = ZuMv(fn)](Ztc::Connection *cxn_) mutable {
+	auto cxn = static_cast<ZiConnection *>(cxn_);
+	if (auto link = cxn->telLink(app)) fn(link);
+      }});
+  }
 
   void listen() {
     mx()->listen(

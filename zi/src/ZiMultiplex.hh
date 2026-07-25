@@ -42,6 +42,8 @@
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZtcMx.hh>
 
+namespace Ztc { struct Link; }
+
 #if defined(ZDEBUG) && !defined(ZiMultiplex_DEBUG)
 #define ZiMultiplex_DEBUG	// enable testing / debugging
 #if !defined(ZiMultiplex_FILTER)
@@ -590,6 +592,7 @@ public:
   // low-frequency - vtbl dispatch overhead is fine
   virtual void connected(ZiIOContext &rxContext) = 0;
   virtual void disconnected(bool peer) = 0;
+  virtual Ztc::Link *telLink(const void *) const { return nullptr; }
 
   bool up() const {
     return m_rxUp.load_() && m_txUp.load_();
@@ -597,6 +600,11 @@ public:
 
   ZiMultiplex *mx() const { return m_mx; }
   const ZiCxnInfo &info() const { return m_info; }
+  // telemetry snapshots - intentionally unclean cross-thread reads
+  uint64_t rxCalls() const { return m_rxCalls; }
+  uint64_t rxBytes() const { return m_rxBytes; }
+  uint64_t txCalls() const { return m_txCalls; }
+  uint64_t txBytes() const { return m_txBytes; }
 
   Ztc::Connection::Key telKey() const override {
     return {
@@ -929,7 +937,7 @@ public:
   ZiMultiplex &operator =(const ZiMultiplex &) = delete;
 
   void allCxns(Ztc::Mx::AllCxnsFn fn) override;
-  void allCxns_(Ztc::Mx::AllCxnsFn fn);				// Rx thread
+  void allCxns_(Ztc::Mx::AllCxnsFn fn);
 
   void listen(
       ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,

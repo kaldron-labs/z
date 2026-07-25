@@ -44,7 +44,7 @@ struct HashTelemetry {
 // Note: ZtStruct metadata declaration is deferred
 
 struct Hash {
-  virtual ZuTuple<ZuID, uintptr_t> key() const = 0;
+  virtual ZuTuple<ZuID, uintptr_t> telKey() const = 0;
   virtual void telemetry(HashTelemetry &) const = 0;
 };
 

@@ -43,7 +43,7 @@ struct HeapTelemetry {
 
 struct Heap {
   virtual ZuTuple<ZuID, uint32_t, uint8_t, uint16_t, uint8_t>
-    key() const = 0;
+    telKey() const = 0;
   virtual void telemetry(HeapTelemetry &data) const = 0;
 };
 

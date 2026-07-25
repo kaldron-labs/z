@@ -46,7 +46,7 @@ struct ThreadTelemetry {
 // Note: ZtStruct metadata declaration is deferred
 
 struct Thread {
-  virtual uint64_t key() const = 0;
+  virtual uint64_t telKey() const = 0;
   virtual void telemetry(ThreadTelemetry &data) const = 0;
 };
 
