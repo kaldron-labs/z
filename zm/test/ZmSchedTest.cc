@@ -16,7 +16,15 @@
 #include <zlib/ZmBackoff.hh>
 #include <zlib/ZmTimeout.hh>
 
+#include <zlib/ZtcQueue.hh>
+
 using namespace ZuTestUtil;
+
+struct QueueCheck {
+  unsigned	size;
+  unsigned	count = 0;
+  bool		valid = true;
+};
 
 struct TLS : public ZmObject {
   TLS() : m_ping(0) {
@@ -154,7 +162,28 @@ int main(int argc, char **argv)
     }
   }
 
+  unsigned nQueues = params.nThreads();
+  QueueCheck queues{params.queueSize()};
   ZmScheduler s{ZuMv(params)};
+  s.allQueues(Ztc::QueueMgr::AllFn{
+    &queues, [](QueueCheck *queues, Ztc::Queue *queue) {
+      auto key = queue->key();
+      Ztc::QueueTelemetry data;
+      queue->telemetry(data);
+      ++queues->count;
+      queues->valid =
+	queues->valid &&
+	key.p<0>() == data.id &&
+	key.p<1>() == data.type &&
+	data.type == Ztc::QueueType::Thread &&
+	data.size == queues->size &&
+	!data.count &&
+	!data.inCount &&
+	!data.inBytes &&
+	!data.outCount &&
+	!data.outBytes &&
+	!data.full;
+    }});
   // ZmRef<Job> jobs[10];
   // ZmFn<> fns[10];
   ZmScheduler::Timer timers[10];
@@ -250,5 +279,5 @@ int main(int argc, char **argv)
   log(Ztc::threadCSV());
   s.stop();
 
-  ZuCheck(true); // success is running to completion
+  ZuCheck(queues.valid && queues.count == nQueues);
 }

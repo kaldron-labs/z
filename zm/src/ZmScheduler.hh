@@ -40,6 +40,8 @@
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmEngine.hh>
 
+#include <zlib/ZtcQueue.hh>
+
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable:4251 4231 4355 4660)
@@ -204,7 +206,8 @@ private:
   bool		m_ll = false;
 };
 
-class ZmAPI ZmScheduler : public ZmEngine<ZmScheduler> {
+class ZmAPI ZmScheduler :
+    public ZmEngine<ZmScheduler>, public Ztc::QueueMgr {
   ZmScheduler(const ZmScheduler &) = delete;
   ZmScheduler &operator =(const ZmScheduler &) = delete;
 
@@ -291,6 +294,8 @@ protected:
 
 public:
   ZuCSpan id() const { return m_params.id(); }
+
+  void allQueues(Ztc::QueueMgr::AllFn) const override;
 
   bool stop();
 
@@ -543,13 +548,17 @@ private:
   using SpawnGuard = ZmGuard<SpawnLock>;
   using SpawnReadGuard = ZmReadGuard<SpawnLock>;
 
-  struct Thread {
+  struct Thread final : public Ztc::Queue {
+    ZuTuple<ZuID, Ztc::QueueType::T> key() const override;
+    void telemetry(Ztc::QueueTelemetry &) const override;
+
+    ZuID		id;
     Ring		ring;
     WakeFn		wakeFn;
     ZmThreadID		tid = 0;
     ZmThread		thread;
     ZmAtomic<unsigned>	queueCount;
-    Queue		queue;	// fallback overflow queue
+    ZmScheduler::Queue	queue;	// fallback overflow queue
   };
 
   void wake(Thread *thread) { (thread->wakeFn)(); }
@@ -579,7 +588,7 @@ private:
   unsigned			m_nWorkers = 0;
   Thread			**m_workers;
 
-  SpawnLock			m_spawnLock;
+  mutable SpawnLock		m_spawnLock;
     unsigned			  m_runThreads = 0;
 
   ThreadFn			m_threadInitFn;

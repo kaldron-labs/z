@@ -34,7 +34,9 @@ ZmScheduler::ZmScheduler(ZmSchedParams params) : m_params{ZuMv(params)}
   m_workers = new Thread *[n];
   for (unsigned i = 0; i < n; i++) {
     unsigned sid = i + 1;
-    Ring &ring = m_threads[i].ring;
+    Thread &thread = m_threads[i];
+    thread.id << m_params.id() << '.' << m_params.thread(sid).name();
+    Ring &ring = thread.ring;
     ring.init(ZmRingParams{m_params.queueSize()}.
 	ll(m_params.ll()).
 	spin(m_params.spin()).
@@ -68,6 +70,28 @@ ZmScheduler::~ZmScheduler()
   }
   delete [] m_workers;
   delete [] m_threads;
+}
+
+ZuTuple<ZuID, Ztc::QueueType::T> ZmScheduler::Thread::key() const
+{
+  return {id, Ztc::QueueType::Thread};
+}
+
+void ZmScheduler::Thread::telemetry(Ztc::QueueTelemetry &data) const
+{
+  data.id = id;
+  ring.stats(data.inCount, data.inBytes, data.outCount, data.outBytes);
+  data.count = ring.count_();
+  data.size = ring.params().size;
+  data.full = ring.full();
+  data.type = Ztc::QueueType::Thread;
+}
+
+void ZmScheduler::allQueues(Ztc::QueueMgr::AllFn fn) const
+{
+  SpawnReadGuard spawnGuard(m_spawnLock);
+  for (unsigned i = 0, n = m_params.nThreads(); i < n; i++)
+    fn(&m_threads[i]);
 }
 
 void ZmScheduler::start_()
