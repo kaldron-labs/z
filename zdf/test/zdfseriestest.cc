@@ -10,6 +10,8 @@
 
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtcHash.hh>
+
 #include <zlib/ZfCf.hh>
 #include <zlib/ZvMxParams.hh>
 
@@ -331,7 +333,7 @@ int main()
 
     mx->stop();
 
-    ZiLOG(Debug, "zdfseriestest", (ZeString{} << '\n' << ZmHashMgr::csv()));
+    ZiLOG(Debug, "zdfseriestest", (ZeString{} << '\n' << Ztc::hashCSV()));
 
     db = {};
     store = {};

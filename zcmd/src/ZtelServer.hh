@@ -17,6 +17,10 @@
 
 #include <zlib/ZmFn.hh>
 
+#include <zlib/ZtcHash.hh>
+#include <zlib/ZtcHeap.hh>
+#include <zlib/ZtcThread.hh>
+
 #include <zlib/ZtRegex.hh>
 
 #include <zlib/ZvEngine.hh>
@@ -579,13 +583,13 @@ private:
     if (interval)
       this->subscribe<[](Server *server) { server->heapScan(); }>(
 	  list, watch, interval);
-    ZmHeapMgr::all(ZmHeapMgr::AllFn{
-      watch, [](Watch *watch, ZmHeapCache *heap) {
+    Ztc::HeapMgr::all(Ztc::HeapMgr::AllFn{
+      watch, [](Watch *watch, Ztc::Heap *heap) {
 	watch->link->app()->heapQuery_(watch, heap);
       }});
     if (!interval) delete watch;
   }
-  void heapQuery_(Watch *watch, const ZmHeapCache *heap) {
+  void heapQuery_(Watch *watch, const Ztc::Heap *heap) {
     Heap data;
     heap->telemetry(data);
     if (!match(watch->filter, data.id)) return;
@@ -596,12 +600,12 @@ private:
 
   void heapScan() {
     if (!m_watchLists[ReqType::Heap].list.count_()) return;
-    ZmHeapMgr::all(ZmHeapMgr::AllFn{
-      this, [](Server *server, ZmHeapCache *heap) {
+    Ztc::HeapMgr::all(Ztc::HeapMgr::AllFn{
+      this, [](Server *server, Ztc::Heap *heap) {
 	server->heapScan(heap);
       }});
   }
-  void heapScan(const ZmHeapCache *heap) {
+  void heapScan(const Ztc::Heap *heap) {
     Heap data;
     heap->telemetry(data);
     auto i = m_watchLists[ReqType::Heap].list.citer();
@@ -627,13 +631,13 @@ private:
     if (interval)
       this->subscribe<[](Server *server) { server->hashScan(); }>(
 	  list, watch, interval);
-    ZmHashMgr::all(ZmHashMgr::AllFn{
-      watch, [](Watch *watch, ZmAnyHash *tbl) {
+    Ztc::HashMgr::all(Ztc::HashMgr::AllFn{
+      watch, [](Watch *watch, Ztc::Hash *tbl) {
 	watch->link->app()->hashQuery_(watch, tbl);
       }});
     if (!interval) delete watch;
   }
-  void hashQuery_(Watch *watch, const ZmAnyHash *tbl) {
+  void hashQuery_(Watch *watch, const Ztc::Hash *tbl) {
     HashTbl data;
     tbl->telemetry(data);
     if (!match(watch->filter, data.id)) return;
@@ -644,12 +648,12 @@ private:
 
   void hashScan() {
     if (!m_watchLists[ReqType::HashTbl].list.count_()) return;
-    ZmHashMgr::all(ZmHashMgr::AllFn{
-      this, [](Server *server, ZmAnyHash *tbl) {
+    Ztc::HashMgr::all(Ztc::HashMgr::AllFn{
+      this, [](Server *server, Ztc::Hash *tbl) {
 	server->hashScan(tbl);
       }});
   }
-  void hashScan(const ZmAnyHash *tbl) {
+  void hashScan(const Ztc::Hash *tbl) {
     HashTbl data;
     tbl->telemetry(data);
     auto i = m_watchLists[ReqType::HashTbl].list.citer();
@@ -675,14 +679,15 @@ private:
     if (interval)
       this->subscribe<[](Server *server) { server->threadScan(); }>(
 	  list, watch, interval);
-    ZmThreadContextTLS::all([watch](ZmThreadContext *tc) {
-      watch->link->app()->threadQuery_(watch, tc);
-    });
+    Ztc::ThreadMgr::all(Ztc::ThreadMgr::AllFn{
+      watch, [](Watch *watch, Ztc::Thread *thread) {
+	watch->link->app()->threadQuery_(watch, thread);
+      }});
     if (!interval) delete watch;
   }
-  void threadQuery_(Watch *watch, const ZmThreadContext *tc) {
+  void threadQuery_(Watch *watch, const Ztc::Thread *thread) {
     Thread data;
-    tc->telemetry(data);
+    thread->telemetry(data);
     if (!matchThread(watch->filter, data.name, data.tid)) return;
     m_fbb.Finish(fbs::CreateTelemetry(m_fbb,
 	  fbs::TelData::Thread, ZfbStruct::save(m_fbb, data).Union()));
@@ -691,13 +696,14 @@ private:
 
   void threadScan() {
     if (!m_watchLists[ReqType::Thread].list.count_()) return;
-    ZmThreadContextTLS::all([this](ZmThreadContext *tc) {
-      threadScan(tc);
-    });
+    Ztc::ThreadMgr::all(Ztc::ThreadMgr::AllFn{
+      this, [](Server *server, Ztc::Thread *thread) {
+	server->threadScan(thread);
+      }});
   }
-  void threadScan(const ZmThreadContext *tc) {
+  void threadScan(const Ztc::Thread *thread) {
     Thread data;
-    tc->telemetry(data);
+    thread->telemetry(data);
     auto i = m_watchLists[ReqType::Thread].list.citer();
     while (auto watch = i()) {
       if (!matchThread(watch->filter, data.name, data.tid)) continue;

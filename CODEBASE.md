@@ -337,7 +337,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zm/src/ZmDemangle.hh:10` - Top-level symbols: define ZmDemangle_HH, define DMGL_PARAMS, define DMGL_ANSI, define DMGL_VERBOSE, define DMGL_TYPES, class ZmDemangle
 - `zm/src/ZmLock.cc:15` - Top-level symbols: class ZmLock_Debug_, function enable, function disable, function capture
 - `zm/src/ZmSpinLock.hh:10` - Top-level symbols: define ZmSpinLock_HH, using ZmSpinLock, class ZmSpinLock, function ZmSpinLock, function lock, function trylock
-- `zm/src/ZmThread.hh:14` - Top-level symbols: define ZmThread_HH, using ZmThreadID, using ZmThreadName, struct ZmThreadTelemetry, class ZmThreadContext, class ZmThreadParams
+- `zm/src/ZtcThread.hh:10` - Top-level symbols: namespace Ztc, struct ThreadTelemetry, struct Thread, struct ThreadMgr, struct ThreadCSV
 - `zm/src/ZmHash.hh:18` - Top-level symbols: define ZmHash_HH, function ZmHashBits, using LockTraits, function init, function bits, function cBits
 - `zm/src/ZmLHash.hh:18` - Top-level symbols: define ZmLHash_HH, struct ZmLHash_Defaults, using Lock, function ID, struct ZmLHashKey, struct ZmLHashKeyVal
 - `zm/src/ZmGuard.hh:10` - Top-level symbols: define ZmGuard_HH, using Traits, struct Try, function ZmGuard, function ZmGuard, function unlock
@@ -345,7 +345,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zm/src/ZmAtomic.hh:10` - Top-level symbols: define ZmAtomic_HH, define ZmAtomic_load, define ZmAtomic_store, define ZmAtomic_acquire, define ZmAtomic_release, define ZmAtomic_load
 - `zm/src/ZmSemaphore.hh:10` - Top-level symbols: define ZmSemaphore_HH, define ZmSemaphore_aligned, function wait, function trywait, function timedwait, function post
 - `zm/src/ZmSingleton.hh:25` - Top-level symbols: define ZmSingleton_HH, struct ZmSingleton_, function ref, function deref, function ref, function deref
-- `zm/src/ZmHashMgr.hh:10` - Top-level symbols: define ZmHashMgr_HH, class ZmHashParams, function bits, function loadFactor, function cBits, struct ZmHashTelemetry
+- `zm/src/ZtcHash.hh:10` - Top-level symbols: namespace Ztc, struct HashTelemetry, struct Hash, struct HashMgr, struct HashCSV
 - `zm/src/ZmBackoff.hh:10` - Top-level symbols: define ZmBackoff_HH, class ZmAPI, function minimum, function maximum, function initial, function backoff
 - `zm/src/ZmCacheStats.hh:10` - Top-level symbols: define ZmCacheStats_HH, struct ZmCacheStats
 - `zm/src/ZmRef.hh:16` - Top-level symbols: define ZmRef_HH, struct ZmRef__, define ZmREF, define ZmDEREF, define ZmMVREF, struct ZmRef__

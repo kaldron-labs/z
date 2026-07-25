@@ -10,6 +10,9 @@
 
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtcHash.hh>
+#include <zlib/ZtcHeap.hh>
+
 #include <zlib/ZfCf.hh>
 #include <zlib/ZvMxParams.hh>
 
@@ -294,7 +297,7 @@ int main(int argc, char **argv)
 
     mx->stop();
 
-    // ZiLOG(Debug, "zdftest", (ZeString{} << '\n' << ZmHashMgr::csv()));
+    // ZiLOG(Debug, "zdftest", (ZeString{} << '\n' << Ztc::hashCSV()));
     // ZiLOG(Debug, "zdftest", (ZeString{} << '\n' << Ztc::heapCSV()));
 
     db = {};
