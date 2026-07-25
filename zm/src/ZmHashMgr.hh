@@ -43,7 +43,10 @@ private:
   unsigned	m_cBits = 3;
 };
 
-class ZmAPI ZmAnyHash_ : public ZmPolymorph, public Ztc::Hash { };
+class ZmAPI ZmAnyHash_ : public ZmPolymorph {
+public:
+  virtual Ztc::Hash *ztcHash() = 0;
+};
 inline uintptr_t ZmAnyHash_PtrAxor(const ZmAnyHash_ &h) {
   return reinterpret_cast<uintptr_t>(&h);
 }

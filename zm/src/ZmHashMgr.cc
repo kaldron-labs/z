@@ -37,7 +37,7 @@ public:
     while (auto tbl = i()) {
       if (tbl->refCount()) {
 	Ztc::HashTelemetry data;
-	tbl->telemetry(data);
+	tbl->ztcHash()->telemetry(data);
 	buf.length(0);
 	buf << ZuBoxPtr(tbl).hex() << ' ' << data.id << '\n';
 	std::cerr << buf << std::flush;
@@ -94,7 +94,7 @@ private:
       tbl = next;
     }
     while (tbl) {
-      fn(tbl.ptr());
+      fn(tbl->ztcHash());
       {
 	ZmGuard<ZmPLock> guard(m_lock);
 	auto next = tbl.ptr();

@@ -289,7 +289,8 @@ protected:
 // global, dynamic
 template <typename Hash_, typename NTP>
 class ZmLHash__<Hash_, NTP, false, false> :
-  public ZmAnyHash, public ZmLHash__<Hash_, NTP, true, false> {
+  public ZmAnyHash, public Ztc::Hash,
+  public ZmLHash__<Hash_, NTP, true, false> {
 protected:
   ZmLHash__(ZuCSpan id, const ZmHashParams &params) :
     ZmLHash__<Hash_, NTP, true, false>{params}, m_id{id} { }
@@ -297,7 +298,14 @@ protected:
   void init() { ZmHashMgr::add(this); }
   void final() { ZmHashMgr::del(this); }
 
-  void telemetry(Ztc::HashTelemetry &data) const {
+  ZuTuple<ZuID, uintptr_t> key() const override {
+    return {m_id, reinterpret_cast<uintptr_t>(
+      static_cast<const Hash_ *>(this))};
+  }
+
+  Ztc::Hash *ztcHash() override { return this; }
+
+  void telemetry(Ztc::HashTelemetry &data) const override {
     data.id = m_id;
     static_cast<const Hash_ *>(this)->telemetry_(data);
   }

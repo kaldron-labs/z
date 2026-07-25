@@ -13,6 +13,8 @@
 #include <zlib/ZmLib.hh>
 #endif
 
+#include <zlib/ZuTuple.hh>
+
 #include <zlib/ZmFn_.hh>
 
 namespace Ztc {
@@ -31,15 +33,17 @@ struct HeapTelemetry {
   uint64_t	heapAllocs = 0;	// graphable (*)
   uint64_t	frees = 0;	// graphable
   uint64_t	crossFrees = 0;	// graphable
-  uint32_t	size = 0;
-  uint16_t	partition = 0;
-  uint8_t	sharded = 0;
-  uint8_t	alignment = 0;
+  uint32_t	size = 0;	// primary key
+  uint16_t	partition = 0;	// primary key
+  uint8_t	sharded = 0;	// primary key
+  uint8_t	alignment = 0;	// primary key
 };
 
 // Note: ZtStruct metadata declaration is deferred
 
 struct Heap {
+  virtual ZuTuple<ZuID, uint32_t, uint8_t, uint16_t, uint8_t>
+    key() const = 0;
   virtual void telemetry(HeapTelemetry &data) const = 0;
 };
 

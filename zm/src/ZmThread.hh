@@ -386,6 +386,7 @@ public:
 
   bool detached() const { return m_detached; }
 
+  uint64_t key() const override { return tid(); }
   void telemetry(Ztc::ThreadTelemetry &data) const override;
 
   template <typename S> void print(S &s) const {
