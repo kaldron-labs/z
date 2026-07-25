@@ -23,6 +23,9 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
 
+#include <zlib/ZtcHash.hh>
+#include <zlib/ZtcHeap.hh>
+
 #include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiFile.hh>
@@ -650,7 +653,7 @@ bool validateOptions(Options &options, int argc)
 void printMemDiag()
 {
   ZiLOG(Info, "zhttp", ([](auto &s) {
-    s << "Hash Tables:\n" << ZmHashMgr::csv();
+    s << "Hash Tables:\n" << Ztc::hashCSV();
     s << "Heaps:\n" << Ztc::heapCSV();
   }));
 }

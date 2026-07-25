@@ -13,6 +13,9 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmRandom.hh>
 
+#include <zlib/ZtcHash.hh>
+#include <zlib/ZtcHeap.hh>
+
 #include <zlib/ZtLocalArray.hh>
 
 #include <zlib/ZiDaemon.hh>
@@ -153,7 +156,7 @@ bool loadOptions(Options &options, int argc, const char *const *argv)
 void printMemDiag()
 {
   ZiLOG(Info, "zhttpd", ([](auto &s) {
-    s << "Hash Tables:\n" << ZmHashMgr::csv();
+    s << "Hash Tables:\n" << Ztc::hashCSV();
     s << "Heaps:\n" << Ztc::heapCSV();
   }));
 }

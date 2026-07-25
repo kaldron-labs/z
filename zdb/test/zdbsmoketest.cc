@@ -8,6 +8,8 @@
 
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtcHash.hh>
+
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZfCf.hh>
@@ -248,7 +250,7 @@ int main()
 
     mx->stop();
 
-    ZiLOG(Debug, "zdbsmoketest", (ZeString{} << '\n' << ZmHashMgr::csv()));
+    ZiLOG(Debug, "zdbsmoketest", (ZeString{} << '\n' << Ztc::hashCSV()));
 
     orders = {};
     db->final(); // calls Store::final()

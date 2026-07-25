@@ -13,6 +13,10 @@
 
 #include <zlib/ZuID.hh>
 
+#include <zlib/ZtcHash.hh>
+#include <zlib/ZtcHeap.hh>
+#include <zlib/ZtcThread.hh>
+
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
 
@@ -117,7 +121,7 @@ namespace Severity {
   ZfbEnumValues(Severity, Debug, Info, Warning, Error, Fatal)
 }
 
-using Heap_ = ZmHeapTelemetry;
+using Heap_ = Ztc::HeapTelemetry;
 struct Heap : public Heap_ {
   ZuDerive_(Heap, Heap_)
 
@@ -149,7 +153,7 @@ ZfbStruct(Heap,
     (((allocated, RdFn), (Synthetic, Series)),			(UInt64)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-using HashTbl_ = ZmHashTelemetry;
+using HashTbl_ = Ztc::HashTelemetry;
 struct HashTbl : public HashTbl_ {
   ZuDerive_(HashTbl, HashTbl_)
 
@@ -176,7 +180,7 @@ ZfbStruct(HashTbl,
     (((resized),	(Ctor<6>)),				(UInt32)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-using Thread_ = ZmThreadTelemetry;
+using Thread_ = Ztc::ThreadTelemetry;
 struct Thread : public Thread_ {
   ZuDerive_(Thread, Thread_)
 

@@ -8,6 +8,8 @@
 
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtcHash.hh>
+
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZfCf.hh>
@@ -136,7 +138,7 @@ int main()
 
     mx->stop();
 
-    ZiLOG(Debug, "zdfstoretest", (ZeString{} << '\n' << ZmHashMgr::csv()));
+    ZiLOG(Debug, "zdfstoretest", (ZeString{} << '\n' << Ztc::hashCSV()));
 
     db = {};
     store = {};

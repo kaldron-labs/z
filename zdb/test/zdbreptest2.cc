@@ -11,6 +11,8 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtcHash.hh>
+
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZfCf.hh>
@@ -283,7 +285,7 @@ int main()
 
     mx->stop();
 
-    // ZiLOG(Debug, "zdbreptest2", (ZeString{} << '\n' << ZmHashMgr::csv()));
+    // ZiLOG(Debug, "zdbreptest2", (ZeString{} << '\n' << Ztc::hashCSV()));
 
     for (unsigned i = 0; i < 2; i++) {
       orders[i] = {};

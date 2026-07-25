@@ -11,7 +11,7 @@ enum RAG:int8 {
   Amber,
   Green
 }
-table Heap {			// == ZmHeapTelemetry
+table Heap {			// == Ztc::HeapTelemetry
   id:string;
   cache_size:uint64;
   cpuset:Zfb.Bitmap;
@@ -23,7 +23,7 @@ table Heap {			// == ZmHeapTelemetry
   sharded:uint8;
   alignment:uint8;
 }
-table HashTbl {			// == ZmHashTelemetry
+table HashTbl {			// == Ztc::HashTelemetry
   id:string;
   addr:uint64;
   load_factor:double;
@@ -36,7 +36,7 @@ table HashTbl {			// == ZmHashTelemetry
   linear:uint8;
   shadow:uint8;
 }
-table Thread {			// == ZmThreadTelemetry
+table Thread {			// == Ztc::ThreadTelemetry
   name:string;
   tid:uint64;
   stack_size:uint64;

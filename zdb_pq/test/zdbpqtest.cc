@@ -8,6 +8,9 @@
 
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtcHash.hh>
+#include <zlib/ZtcHeap.hh>
+
 #include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiLog.hh>
@@ -168,7 +171,7 @@ int main(int argc_, char **argv)
     if (!db->start()) throw ZeEXCEPT(Fatal, "zdbpqtest", "Zdb start failed");
 
     if (options.hashTel)
-      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHashMgr::csv()));
+      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << Ztc::hashCSV()));
 
     if (options.heapTel)
       ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << Ztc::heapCSV()));
@@ -321,7 +324,7 @@ int main(int argc_, char **argv)
     }
 
     if (options.hashTel)
-      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << ZmHashMgr::csv()));
+      ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << Ztc::hashCSV()));
 
     if (options.heapTel)
       ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << Ztc::heapCSV()));
