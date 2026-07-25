@@ -15,6 +15,7 @@
 
 #include <zlib/ZuID.hh>
 #include <zlib/ZuPrint.hh>
+#include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmFn_.hh>
 
@@ -43,6 +44,7 @@ struct HashTelemetry {
 // Note: ZtStruct metadata declaration is deferred
 
 struct Hash {
+  virtual ZuTuple<ZuID, uintptr_t> key() const = 0;
   virtual void telemetry(HashTelemetry &) const = 0;
 };
 

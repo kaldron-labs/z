@@ -414,6 +414,15 @@ void Ztc::HeapMgr::all(AllFn fn)
   ZmHeapMgr_::instance()->all(ZuMv(fn));
 }
 
+ZuTuple<ZuID, uint32_t, uint8_t, uint16_t, uint8_t>
+ZmHeapCache::key() const
+{
+  return {
+    m_info.id, m_info.size, m_info.alignment,
+    m_info.partition, m_info.sharded
+  };
+}
+
 void ZmHeapCache::telemetry(Ztc::HeapTelemetry &data) const
 {
   report();

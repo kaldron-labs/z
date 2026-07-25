@@ -138,7 +138,9 @@ public:
 
   void warmup();
 
-  void telemetry(Ztc::HeapTelemetry &data) const;
+  ZuTuple<ZuID, uint32_t, uint8_t, uint16_t, uint8_t>
+    key() const override;
+  void telemetry(Ztc::HeapTelemetry &data) const override;
 
 #ifdef ZmHeap_DEBUG
   typedef void (*TraceFn)(ZuCSpan, unsigned);
