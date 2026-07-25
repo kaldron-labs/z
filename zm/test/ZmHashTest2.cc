@@ -70,4 +70,14 @@ int main(int argc, char **argv)
   }
   ZuCheck(churnOK);
   ZuCheck(orders->count_() == 98);
+
+  bool found = false;
+  Ztc::HashMgr::all(Ztc::HashMgr::AllFn{
+    &found, [](bool *found, Ztc::Hash *hash) {
+      Ztc::HashTelemetry data;
+      hash->telemetry(data);
+      if (data.id == "Orders") *found = true;
+    }});
+  ZuCheck(found);
+  log(Ztc::hashCSV());
 }

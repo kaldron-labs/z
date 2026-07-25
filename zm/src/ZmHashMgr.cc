@@ -16,6 +16,7 @@
 
 class ZmHashMgr_ : public ZmObject {
 friend ZmHashMgr;
+friend Ztc::HashMgr;
 
   ZuDerive(ID2Params,
     (ZmRBTreeKV<ZuID, ZmHashParams,
@@ -35,7 +36,7 @@ public:
     std::cerr << buf << std::flush;
     while (auto tbl = i()) {
       if (tbl->refCount()) {
-	ZmHashTelemetry data;
+	Ztc::HashTelemetry data;
 	tbl->telemetry(data);
 	buf.length(0);
 	buf << ZuBoxPtr(tbl).hex() << ' ' << data.id << '\n';
@@ -82,7 +83,7 @@ private:
 
   using Tables = ZmHashMgr_Tables;
 
-  void all(ZmHashMgr::AllFn fn) {
+  void all(Ztc::HashMgr::AllFn fn) {
     ZmRef<ZmAnyHash> tbl;
     {
       ZmGuard<ZmPLock> guard(m_lock);
@@ -93,7 +94,7 @@ private:
       tbl = next;
     }
     while (tbl) {
-      fn(tbl);
+      fn(tbl.ptr());
       {
 	ZmGuard<ZmPLock> guard(m_lock);
 	auto next = tbl.ptr();
@@ -116,9 +117,9 @@ void ZmHashMgr::init(ZuCSpan id, const ZmHashParams &params)
   ZmHashMgr_::instance()->init(id, params);
 }
 
-void ZmHashMgr::all(AllFn fn)
+void Ztc::HashMgr::all(AllFn fn)
 {
-  ZmHashMgr_::instance()->all(fn);
+  ZmHashMgr_::instance()->all(ZuMv(fn));
 }
 
 ZmHashParams &ZmHashMgr::params(ZuCSpan id, ZmHashParams &in)
