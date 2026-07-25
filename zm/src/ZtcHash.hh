@@ -29,8 +29,8 @@ namespace Ztc {
 struct HashTelemetry {
   ZuID		id;		// primary key
   uintptr_t	addr = 9;	// primary key
-  double	loadFactor = 0.0;// (double)N / 16.0
-  double	effLoadFactor = 0.0;// graphable (*)
+  double	loadFactor = 0.0; // (double)N / 16.0
+  double	effLoadFactor = 0.0; // graphable (*)
   uint64_t	count = 0;	// graphable (*)
   uint32_t	nodeSize = 0;
   uint32_t	resized = 0;	// dynamic

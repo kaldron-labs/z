@@ -35,8 +35,8 @@
 #include <zlib/ZmCleanup.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmTime.hh>
-#include <zlib/ZmPLock.hh>
-#include <zlib/ZmGuard.hh>
+
+#include <zlib/ZtcThread.hh>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -56,25 +56,6 @@ namespace ZmThreadPriority {
     N = 4
   };
 }
-
-// display sequence:
-//   name, id, tid, cpuUsage, cpuset, priority, sysPriority,
-//   stackSize, partition, main, detached
-struct ZmThreadTelemetry {
-  ZuID			name;
-  uint64_t		tid = 0;	// primary key
-  uint64_t		stackSize = 0;
-  ZmBitmap		cpuset;
-  double		cpuUsage = 0.0;	// graphable (*)
-  uint64_t		allocStack = 0;
-  uint64_t		allocHeap = 0;
-  int32_t		sysPriority = 0;
-  uint16_t		sid = 0;	// thread container's slot ID
-  uint16_t		partition = 0;
-  ZmThreadPriority::T	priority = -1;
-  bool			main = 0;
-  bool			detached = 0;
-};
 
 class ZmThreadContext;
 
@@ -213,7 +194,8 @@ protected:
 
 class ZmThread;
 
-class ZmAPI ZmThreadContext : public ZmObject, public ZmThreadContext_ {
+class ZmAPI ZmThreadContext final :
+    public ZmObject, public ZmThreadContext_, public Ztc::Thread {
   friend ZmThreadContext *ZmThreadContext_new();
 #ifndef _WIN32
   friend ZmAPI void *ZmThread_start(void *);
@@ -404,7 +386,7 @@ public:
 
   bool detached() const { return m_detached; }
 
-  void telemetry(ZmThreadTelemetry &data) const;
+  void telemetry(Ztc::ThreadTelemetry &data) const override;
 
   template <typename S> void print(S &s) const {
     s << this->name() << " (" << ZuBoxed(sid()) << ") [" << m_cpuset << "] "
@@ -509,42 +491,6 @@ public:
   bool operator !() const { return !m_context; }
   ZuOpBool
 
-  template <class S> struct CSV_ {
-    CSV_(S &stream) : m_stream(stream) { 
-      m_stream <<
-	"name,sid,tid,cpuUsage,cpuSet,sysPriority,priority,"
-	"stackSize,partition,main,detached,allocStack,allocHeap\n";
-    }
-    void print(const ZmThreadContext *tc) {
-      ZmThreadTelemetry data;
-      static ZmPLock lock;
-      ZmGuard<ZmPLock> guard(lock);
-      tc->telemetry(data);
-      m_stream << data.name
-	<< ',' << data.sid
-	<< ',' << data.tid
-	<< ',' << ZuBoxed(data.cpuUsage * 100.0).fmt<ZuFmt::FP<2>>()
-	<< ",\"" << ZmBitmap(data.cpuset) << '"'
-	<< ',' << ZuBoxed(data.sysPriority)
-	<< ',' << ZuBoxed(data.priority)
-	<< ',' << data.stackSize
-	<< ',' << ZuBoxed(data.partition)
-	<< ',' << ZuBoxed(data.main)
-	<< ',' << ZuBoxed(data.detached)
-	<< ',' << ZuBoxed(data.allocStack)
-	<< ',' << ZuBoxed(data.allocHeap) << '\n';
-    }
-    S &stream() { return m_stream; }
-
-  private:
-    S	&m_stream;
-  };
-  struct CSV {
-    template <typename S> void print(S &s) const;
-    friend ZuPrintFn ZuPrintType(CSV *);
-  };
-  static CSV csv() { return {}; }
-
 private:
   ZmRef<Context>	m_context;
 };
@@ -569,11 +515,4 @@ inline ZmThreadContext *ZmThreadContext::self() {
 inline ZmThreadContext *ZmThreadContext::self(ZmThreadContext *c) {
   return ZmThreadContextTLS::instance(c);
 }
-template <typename S>
-inline void ZmThread::CSV::print(S &s) const {
-  CSV_<S> csv{s};
-  ZmThreadContextTLS::all(
-    [&csv](const ZmThreadContext *tc) { csv.print(tc); });
-}
-
 #endif /* ZmThread_HH */

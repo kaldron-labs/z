@@ -189,7 +189,7 @@ int main(int argc, char **argv)
   Zm::sleep(ZuTime(.6));
 
   log("threads:");
-  log(ZmThread::csv());
+  log(Ztc::threadCSV());
   s.stop();
 
   s.start();
@@ -230,7 +230,7 @@ int main(int argc, char **argv)
   Zm::sleep(ZuTime(.6));
 
   log("threads:");
-  log(ZmThread::csv());
+  log(Ztc::threadCSV());
   s.stop();
 
   ZmBackoff o(.25, 5, 1.25, .25);
@@ -247,7 +247,7 @@ int main(int argc, char **argv)
   r->stop();
 
   log("threads:");
-  log(ZmThread::csv());
+  log(Ztc::threadCSV());
   s.stop();
 
   ZuCheck(true); // success is running to completion
