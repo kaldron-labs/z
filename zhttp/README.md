@@ -45,9 +45,52 @@ and Alt-Svc probing. IPv6, DoH, DoT, ECH,
 WebTransport, DATAGRAM, and QUIC v2 discovery remain out of scope for this
 resolver path.
 
-HTTP/3 uses the `Zquic` migration API without making core `libZhttp` depend on
-`libZquic`.  The test client and server wire migration policy at the transport
-integration layer:
+`libZhttp` is the HTTP integration layer over `libZtcp`, `libZtls`, and
+`libZquic`.  Applications configure TCP, TLS, and QUIC with public `Zhttp`
+configuration types; HTTP ALPN and mandatory H3 transport defaults are
+library-owned.  Native transport traits remain private implementation detail.
+The application flow is protocol-independent:
+
+```c++
+template <typename Protocol>
+struct Client : Zhttp::Client<Client<Protocol>, Protocol> {
+  struct Link :
+    Zhttp::ClientLink<Client, Link, Protocol> {
+    using Base = Zhttp::ClientLink<Client, Link, Protocol>;
+    using Base::Base;
+  };
+
+  void connected(Link &link, Zhttp::ConnectedInfo) {
+    auto tx = link.txStream();
+    // build and send the request, then link.finish()
+  }
+  template <typename Rx>
+  int process(Link &link, Rx &rx) {
+    // link.receive(parser, rx), then process the response
+  }
+};
+```
+
+Servers use the corresponding `Zhttp::Server`,
+`Zhttp::ServerLink`, and `Zhttp::ServerSession` templates.  TCP, TLS, and QUIC
+instantiate the same connection/message templates; only initialization
+configuration differs:
+
+```c++
+engines.init(tcp, engine, Zhttp::TCPConfig{});
+engines.init(tls, engine, Zhttp::TLSConfig{}
+  .certPath(cert).keyPath(key));
+engines.init(h3, engine, Zhttp::QUICConfig{}
+  .certPath(cert).keyPath(key));
+engines.start();
+// process connections and messages
+engines.stop();
+engines.final();
+```
+
+QUIC configuration defaults include H3 ALPN, control streams, QPACK, flow
+control, and passive migration.  Applications override only the policy they
+need.  The test client and server expose these migration policy switches:
 
 - `--quic-migration=disable|disabled|passive|active` selects the local QUIC migration
   policy; the default is `passive`.

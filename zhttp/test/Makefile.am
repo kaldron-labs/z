@@ -22,7 +22,9 @@ noinst_PROGRAMS = zhttp zhttpd zhttpmatrix \
 	ZhttpHPackTest ZhttpQPackTest \
 	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
 	ZhttpAppTest ZhttpMultiRequestTest \
-	ZhttpdTest ZhttpDarkhttpdCompatTest
+	ZhttpdTest ZhttpDarkhttpdCompatTest ZhttpLifecycleTest \
+	ZhttpTransportContractTest ZhttpH1EngineTest ZhttpH3EngineTest \
+	ZhttpEngineLifecycleTest
 noinst_HEADERS = ZhttpTestUtil.hh Zhttpd.hh
 zhttp_SOURCES = zhttp.cc
 zhttpd_SOURCES = zhttpd.cc
@@ -37,6 +39,11 @@ ZhttpAppTest_SOURCES = ZhttpAppTest.cc
 ZhttpMultiRequestTest_SOURCES = ZhttpMultiRequestTest.cc
 ZhttpdTest_SOURCES = ZhttpdTest.cc
 ZhttpDarkhttpdCompatTest_SOURCES = ZhttpDarkhttpdCompatTest.cc
+ZhttpLifecycleTest_SOURCES = ZhttpLifecycleTest.cc
+ZhttpTransportContractTest_SOURCES = ZhttpTransportContractTest.cc
+ZhttpH1EngineTest_SOURCES = ZhttpH1EngineTest.cc
+ZhttpH3EngineTest_SOURCES = ZhttpH3EngineTest.cc
+ZhttpEngineLifecycleTest_SOURCES = ZhttpEngineLifecycleTest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
@@ -44,4 +51,6 @@ test: $(noinst_PROGRAMS)
 	prove -j1 ZhttpParserTest ZhttpHPackTest ZhttpQPackTest \
 		ZhttpFallbackTest ZhttpQPackDynamicTest \
 		ZhttpAppTest ZhttpMultiRequestTest zhttpmatrix \
-		ZhttpdTest ZhttpDarkhttpdCompatTest Zhttp3InteropTest
+		ZhttpdTest ZhttpDarkhttpdCompatTest Zhttp3InteropTest \
+		ZhttpLifecycleTest ZhttpTransportContractTest ZhttpH1EngineTest \
+		ZhttpH3EngineTest ZhttpEngineLifecycleTest

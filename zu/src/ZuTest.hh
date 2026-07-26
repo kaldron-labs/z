@@ -154,17 +154,26 @@ extern "C" {
 #endif /* _WIN32 */
 
 namespace ZuTest_ {
-  // this is carefully written to ensure static initialization
-  // in the image without COMDAT or ODR conflicts
+// this is carefully written to ensure static initialization
+// in the image without COMDAT or ODR conflicts
+// - gcc: cannot place vague-linkage template statics in the shared ZuTest
+//   section without a COMDAT conflict; internal linkage avoids that conflict.
+// - clang: retains external linkage to coalesce inline-header registrations.
+#if defined(__GNUC__) && !defined(__clang__)
+#define ZuTest_Linkage static
+#else
+#define ZuTest_Linkage
+#endif
   template <
     ZuTest_Scope *Scope, ZuString File, unsigned Line,
     ZuString Expr, unsigned Count>
-  ZuInline ZuTest_Step &step_() {
+  ZuTest_Linkage ZuInline ZuTest_Step &step_() {
     static constinit ZuTest_Step step ZuTest_Section = {
       Scope, File.data_, Line, Expr.data_, 0, Count
     };
     return step;
   }
+#undef ZuTest_Linkage
 }
 
 struct ZuTest_Context {

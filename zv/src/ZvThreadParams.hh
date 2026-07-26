@@ -21,7 +21,6 @@
 
 namespace ZmThreadPriority {
   using T = int8_t;
-  enum { N = 4 };
   ZtEnumMap(ZmThreadPriority, Map, "RealTime", "High", "Normal", "Low");
 }
 

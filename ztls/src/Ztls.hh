@@ -57,16 +57,6 @@ using BufAlloc =
 
 } // namespace Ztls_
 
-template <>
-struct ZuTraits<ptls_iovec_t> : public ZuBaseTraits<ptls_iovec_t> {
-  enum { IsArray = 1, IsSpan = 1, IsPrimitive = 0 };
-  using Elem = uint8_t;
-
-  static uint8_t *data(ptls_iovec_t &v) { return v.base; }
-  static const uint8_t *data(const ptls_iovec_t &v) { return v.base; }
-  static size_t length(const ptls_iovec_t &v) { return v.len; }
-};
-
 namespace Ztls {
 
 struct Connected {

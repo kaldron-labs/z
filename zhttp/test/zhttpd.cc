@@ -10,21 +10,14 @@
 #include <signal.h>
 #include <string.h>
 
-#include <zlib/ZmBlock.hh>
-#include <zlib/ZmRandom.hh>
+#include <zlib/ZmBitmap.hh>
 
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
 
-#include <zlib/ZtLocalArray.hh>
-
 #include <zlib/ZiDaemon.hh>
 #include <zlib/ZiHashCSV.hh>
 #include <zlib/ZiHeapCSV.hh>
-
-#include <zlib/Ztcp.hh>
-#include <zlib/Ztls.hh>
-#include <zlib/Zquic.hh>
 
 #include <zlib/Zhttp.hh>
 
@@ -33,30 +26,6 @@
 using namespace Zhttpd;
 
 constexpr uint64_t ReqBodyMax = 1<<20;
-constexpr unsigned BufBuiltin = 8<<10;
-constexpr unsigned BufMax = 100<<20;
-constexpr uint64_t H3DataMax = 100<<20;
-constexpr uint64_t H3StreamDataMax = 16<<20;
-constexpr uint64_t H3BidiMax = 4096;
-constexpr uint64_t H3UniMax = 16;
-constexpr uint32_t H3EarlyDataMax = 1<<20;
-#ifdef Zquic_DEBUG
-constexpr unsigned H3DiagLinkSnapshot = 64;
-#endif
-
-template <typename Server>
-Zquic::EndpointDiag h3EndpointDiag(Server *server)
-{
-  return ZmBlock<Zquic::EndpointDiag>{}(
-    [server](auto wake) { server->endpointDiag(ZuMv(wake)); });
-}
-
-template <typename Link>
-Zquic::LinkDiag h3LinkDiag(const ZmRef<Link> &link)
-{
-  return ZmBlock<Zquic::LinkDiag>{}(
-    [&link](auto wake) { link->diag(ZuMv(wake)); });
-}
 
 void usage(int code = 1)
 {
@@ -128,9 +97,9 @@ bool parseDrop(ZuCSpan s, double &drop)
 }
 #endif
 
-Zquic::MigrationMode::T migrationMode(const Options &options)
+int8_t migrationMode(const Options &options)
 {
-  return Zquic::migrationMode(options.quicMigration);
+  return Zhttp::migrationMode(options.quicMigration);
 }
 
 ZuTime quicHeartbeat(const Options &options)
@@ -143,8 +112,7 @@ bool loadOptions(Options &options, int argc, const char *const *argv)
   bool help = false;
   if (!Zhttpd::loadOptions(options, argc, argv, help)) return false;
   if (help) usage(0);
-  Zquic::MigrationMode::T mode;
-  if (!Zquic::parseMigrationMode(options.quicMigration, mode)) return false;
+  if (Zhttp::migrationMode(options.quicMigration, -1) < 0) return false;
 #ifdef ZiMultiplex_FILTER
   double drop;
   if (!parseDrop(options.quicRxDrop, drop)) return false;
@@ -329,21 +297,12 @@ struct ReqParser :
   using State = typename Base::State;
   void reset() { Base::reset(); ReqSink::reset(); }
   void complete(State::T state) { ReqSink::template complete<State>(state); }
-  Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
-  bool qpackDecoderWrite(ZuBSpan span) const {
-    return qpackDecoderWrite_ && qpackDecoderWrite_(qpackDecoder_, span);
-  }
-  uint64_t streamID() const { return streamID_; }
   using ReqSink::body;
   using ReqSink::contentLength;
   using ReqSink::header;
   using ReqSink::operation;
   using ReqSink::version;
 
-  Zhttp::H3::QPackRxTable	*qpackRx_ = nullptr;
-  void				*qpackDecoder_ = nullptr;
-  bool				(*qpackDecoderWrite_)(void *, ZuBSpan) = nullptr;
-  uint64_t			streamID_ = 0;
 };
 
 struct RespOps {
@@ -400,21 +359,12 @@ struct H3RespBuilder :
   using Base =
     Zhttp::H3RespBuilder<H3RespBuilder, RespHeaders, ZuTypeList<>, true>;
   H3RespBuilder(const ResponsePlan *plan_) : RespOps{plan_} { }
-  Zhttp::H3::QPackTxTable *qpackTx() const { return qpackTx_; }
-  bool qpackEncoderWrite(ZuBSpan span) const {
-    return qpackEncoderWrite_ && qpackEncoderWrite_(qpackEncoder_, span);
-  }
-  uint64_t streamID() const { return streamID_; }
   using Base::body;
   using RespOps::contentLength;
   using RespOps::header;
   using RespOps::reason;
   using RespOps::status;
 
-  Zhttp::H3::QPackTxTable	*qpackTx_ = nullptr;
-  void				*qpackEncoder_ = nullptr;
-  bool				(*qpackEncoderWrite_)(void *, ZuBSpan) = nullptr;
-  uint64_t			streamID_ = 0;
 };
 
 template <typename Tx, typename Builder>
@@ -442,61 +392,47 @@ void sendBody(Tx &tx, Builder &builder, const ResponsePlan &resp) {
   }
 }
 
-struct StaticH1Server :
-  public Zhttp::H1::Server<StaticH1Server, ReqParser<false> > {
-  using Base = Zhttp::H1::Server<StaticH1Server, ReqParser<false> >;
+template <typename Protocol> struct Message;
+template <> struct Message<Zhttp::TCP> {
+  using Parser = ReqParser<false>;
+  using Builder = H1RespBuilder;
+};
+template <> struct Message<Zhttp::TLS> : public Message<Zhttp::TCP> { };
+template <> struct Message<Zhttp::QUIC> {
+  using Parser = ReqParser<true>;
+  using Builder = H3RespBuilder;
+};
+
+template <typename Protocol>
+struct StaticServer :
+  public Zhttp::ServerSession<
+    StaticServer<Protocol>, typename Message<Protocol>::Parser> {
+  using Parser = typename Message<Protocol>::Parser;
+  using Builder = typename Message<Protocol>::Builder;
+  using Base = Zhttp::ServerSession<StaticServer, Parser>;
   using Base::parser;
 
   template <typename Link>
-  int error(Link &link, ReqParser<false> &) {
+  int error(Link &link, Parser &) {
     link.app()->state->errors = 1;
     return -1;
   }
 
   template <typename Link>
-  int request(Link &link, ReqParser<false> &parser) {
+  int request(Link &link, Parser &parser) {
     ++link.app()->state->requests;
+    parser.req.h3 = Link::Multiplexed;
     parser.req.tls = Link::TLS;
     StaticPlanner planner{link.app()->state};
     auto resp = planner.plan(parser.req);
-    link.sendResponse(resp);
-    link.app()->state->log.write(parser.req, resp, link.remote);
-    return resp.close ? -1 : 1;
-  }
-};
-
-struct StaticH3Server :
-  public Zhttp::H3::ServerStream<StaticH3Server, ReqParser<true> > {
-  using Base = Zhttp::H3::ServerStream<StaticH3Server, ReqParser<true> >;
-  using Base::parser;
-
-  template <typename Stream>
-  int error(Stream &stream, ReqParser<true> &) {
-    ZiLOG(Debug, "zhttpd.h3", ([id = stream.id()](auto &s) {
-      s << "request parse error stream=" << id;
-    }));
-    stream.link()->app()->state->errors = 1;
-    return -1;
-  }
-
-  template <typename Stream>
-  int request(Stream &stream, ReqParser<true> &parser) {
-    auto n = ++stream.link()->app()->state->requests;
-    parser.req.h3 = true;
-    parser.req.tls = true;
-    StaticPlanner planner{stream.link()->app()->state};
-    auto resp = planner.plan(parser.req);
-    ZiLOG(Debug, "zhttpd.h3", ([
-      id = stream.id(), target = parser.req.target,
-      status = resp.status, length = resp.contentLength, n
-    ](auto &s) mutable {
-      s << "request stream=" << id << " total=" << n <<
-	" target=" << target << " status=" << status <<
-	" content-length=" << length;
-    }));
-    stream.link()->app()->state->log.write(parser.req, resp, stream.link()->remote);
-    stream.sendResponse(ZuMv(resp));
-    return 1;
+    Builder builder{&resp};
+    auto tx = link.transmit(builder);
+    builder.response(tx);
+    sendBody(tx, builder, resp);
+    builder.finish(tx);
+    link.finish();
+    link.app()->state->log.write(parser.req, resp, link.remote());
+    return Link::Multiplexed ? 1 : (resp.close ? -1 : 1);
   }
 };
 
@@ -521,716 +457,71 @@ ZiMxParams mxParams(const Options &options)
   return params;
 }
 
-struct HTTPServer : public Ztcp::Server<HTTPServer> {
-  struct Link;
+template <typename Protocol> struct AppServer;
+template <typename Protocol> struct AppServerLink;
 
-  HTTPServer(State *state_) : state{state_} { }
-
-  ZiConnection *accepted(const ZiCxnInfo &ci);
-  ZiIP localIP() const { return ZiIP(state->options.addr); }
-  unsigned localPort() const { return state->options.port; }
-  void listening(const ZiListenInfo &info) {
-    ZiLOG(Info, "zhttpd", ([port = info.port](auto &s) {
-      s << "http listening: " << port;
-    }));
-  }
-  void listenFailed(bool) {
-    state->errors = 1;
-    state->done.post();
-  }
+template <typename Protocol>
+struct AppServer :
+  public Zhttp::Server<AppServer<Protocol>, Protocol> {
+  using Base = Zhttp::Server<AppServer<Protocol>, Protocol>;
+  using Link = AppServerLink<Protocol>;
 
   State	*state = nullptr;
-};
 
-struct HTTPServer::Link :
-  public Ztcp::SrvLink<HTTPServer, HTTPServer::Link> {
-  using Base = Ztcp::SrvLink<HTTPServer, HTTPServer::Link>;
-  using Base::Base;
-  enum { TLS = false };
+  AppServer(State *state_) : state{state_} { }
 
-  Link(HTTPServer *app, ZuCSpan remote_) : Base{app}, remote{remote_} { }
-  void connected(Ztcp::Connected) { h1.connected(*this); touch(); }
-  void disconnected(bool peer) {
-    app()->mx()->del(&idleTimer);
-    h1.disconnected(*this, peer);
-    if (counted) {
-      --app()->state->active;
-      counted = false;
-    }
-  }
-  void touch() {
-    auto timeout = app()->state->options.timeout;
-    if (!timeout) return;
-    app()->mx()->add(&idleTimer, Zm::now(timeout), ZmScheduler::Update,
-      [this](auto &&arm) {
-	return arm([link = ZmMkRef(this)]() { link->disconnect(); });
-      });
-  }
-
-  void sendResponse(const ResponsePlan &resp) {
-    auto tx = this->txStream();
-    H1RespBuilder builder{&resp};
-    builder.response(tx);
-    sendBody(tx, builder, resp);
-    builder.finish(tx);
-  }
-
-  int process(Ztcp::RxStream &rx) {
-    int rc = h1.process(*this, rx);
-    if (rc >= 0) touch();
-    return rc;
-  }
-
-  StaticH1Server	h1;
-  ZmScheduler::Timer	idleTimer;
-  HdrString			remote;
-  bool			counted = true;
-};
-
-ZiConnection *HTTPServer::accepted(const ZiCxnInfo &ci)
-{
-  unsigned active = ++state->active;
-  if (state->options.maxconn && active > state->options.maxconn) {
-    --state->active;
-    return nullptr;
-  }
-  HdrString remote;
-  remote << ci.remoteIP;
-  return new Link::Cxn(new Link(this, remote), ci);
-}
-
-struct TLSServer : public Ztls::Server<TLSServer> {
-  using RxBufAlloc = Ztls::RxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
-  using TxBufAlloc = Ztls::TxBufAlloc<BufBuiltin, BufMax, "Zhttp.Buf">;
-  struct Link;
-
-  TLSServer(State *state_) : state{state_} { }
-
-  ZiConnection *accepted(const ZiCxnInfo &ci);
   ZiIP localIP() const { return ZiIP(state->options.addr); }
   unsigned localPort() const { return state->options.port; }
-  void listening(const ZiListenInfo &info) {
-    ZiLOG(Info, "zhttpd", ([port = info.port](auto &s) {
-      s << "https listening: " << port;
-    }));
-  }
-  void listenFailed(bool) {
-    state->errors = 1;
-    state->done.post();
-  }
-
-  State	*state = nullptr;
-};
-
-struct TLSServer::Link :
-  public Ztls::SrvLink<TLSServer, TLSServer::Link,
-    TLSServer::RxBufAlloc, TLSServer::TxBufAlloc> {
-  using Base = Ztls::SrvLink<TLSServer, TLSServer::Link,
-    TLSServer::RxBufAlloc, TLSServer::TxBufAlloc>;
-  using Base::Base;
-  enum { TLS = true };
-
-  Link(TLSServer *app, ZuCSpan remote_) : Base{app}, remote{remote_} { }
-  void connected(Ztls::Connected) { h1.connected(*this); touch(); }
-  void disconnected(bool peer) {
-    app()->mx()->del(&idleTimer);
-    h1.disconnected(*this, peer);
-    if (counted) {
-      --app()->state->active;
-      counted = false;
-    }
-  }
-  void touch() {
-    auto timeout = app()->state->options.timeout;
-    if (!timeout) return;
-    app()->mx()->add(&idleTimer, Zm::now(timeout), ZmScheduler::Update,
-      [this](auto &&arm) {
-	return arm([link = ZmMkRef(this)]() { link->disconnect(); });
-      });
-  }
-
-  void sendResponse(const ResponsePlan &resp) {
-    auto tx = this->txStream();
-    H1RespBuilder builder{&resp};
-    builder.response(tx);
-    sendBody(tx, builder, resp);
-    builder.finish(tx);
-  }
-
-  int process(Ztls::RxStream &rx) {
-    int rc = h1.process(*this, rx);
-    if (rc >= 0) touch();
-    return rc;
-  }
-
-  StaticH1Server h1;
-  ZmScheduler::Timer idleTimer;
-  HdrString	remote;
-  bool		counted = true;
-};
-
-ZiConnection *TLSServer::accepted(const ZiCxnInfo &ci)
-{
-  unsigned active = ++state->active;
-  if (state->options.maxconn && active > state->options.maxconn) {
+  unsigned idleTimeout() const { return state->options.timeout; }
+  template <typename Info>
+  bool admit(const Info &) {
+    unsigned active = ++state->active;
+    if (!state->options.maxconn || active <= state->options.maxconn)
+      return true;
     --state->active;
-    return nullptr;
+    return false;
   }
-  HdrString remote;
-  remote << ci.remoteIP;
-  return new Link::Cxn(new Link(this, remote), ci);
-}
-
-struct H3ServerLink;
-struct H3ServerStream;
-struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
-  using Link = H3ServerLink;
-  using Stream = H3ServerStream;
-
-  H3Server(State *state_) : state{state_} { }
-
-  ZmRef<Link> accepted(const Zquic::InitialInfo &);
-  ZiIP localIP() const { return ZiIP(state->options.addr); }
-  uint16_t localPort() const { return state->options.port; }
+  void release() { --state->active; }
+  template <typename Info>
+  void listening(const Info &info) {
+    listening_(info.port);
+  }
   void listening() {
-    ZiLOG(Info, "zhttpd", ([port = this->local().port()](auto &s) {
-      s << "h3 listening: " << port;
-    }));
+    listening_(state->options.port);
   }
   void listenFailed(bool) {
     state->errors = 1;
     state->done.post();
   }
-  uint64_t maxData() const { return H3DataMax; }
-  uint64_t maxStreamData() const { return H3StreamDataMax; }
-  uint64_t maxStreamsDuplex() const { return H3BidiMax; }
-  uint64_t maxStreamsSimplex() const { return H3UniMax; }
-  uint32_t maxEarlyData(Link *) const { return H3EarlyDataMax; }
-  void dropRates() {
-#ifdef ZiMultiplex_FILTER
-    parseDrop(state->options.quicRxDrop, m_rxDrop);
-    parseDrop(state->options.quicTxDrop, m_txDrop);
-#endif
-  }
-  void filters() {
-#ifdef ZiMultiplex_FILTER
-    auto mx = this->mx();
-    ZiAssert(mx, "zhttpd", (), "H3 server filters before initialization",
-      return);
-    if (m_rxDrop)
-      mx->rxFilter(FilterFn{this, [](H3Server *server,
-	  ZiConnection *cxn, uint8_t *data, unsigned len) {
-	(void)data; (void)len;
-	if (ZuUnlikely(!cxn->info().options.udp())) return false;
-	return server->m_rng.rand() < server->m_rxDrop;
-      }});
-    if (m_txDrop)
-      mx->txFilter(FilterFn{this, [](H3Server *server,
-	  ZiConnection *cxn, uint8_t *data, unsigned len) {
-	(void)data; (void)len;
-	if (ZuUnlikely(!cxn->info().options.udp())) return false;
-	return server->m_rng.rand() < server->m_txDrop;
-      }});
-#endif
-  }
-  void clearFilters() {
-#ifdef ZiMultiplex_FILTER
-    auto mx = this->mx();
-    if (!mx) return;
-    if (m_rxDrop) mx->rxFilter({});
-    if (m_txDrop) mx->txFilter({});
-#endif
-  }
-  void printDiag();
 
-  State	*state = nullptr;
-#ifdef ZiMultiplex_FILTER
-  double m_rxDrop = 0.0;
-  double m_txDrop = 0.0;
-  ZmRandom m_rng;
-#endif
+private:
+  void listening_(unsigned port) {
+    ZiLOG(Info, "zhttpd", ([port](auto &s) {
+      if constexpr (ZuIsSame<Protocol, Zhttp::QUIC>{})
+	s << "h3";
+      else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
+	s << "https";
+      else
+	s << "http";
+      s << " listening: " << port;
+    }));
+  }
 };
 
-struct H3ServerStream :
-  public Zquic::SrvStream<H3ServerLink, H3ServerStream>,
-  public Zhttp::H3::CxnStream<H3ServerStream,
-    Zhttp::H3::Cxn<H3ServerLink, ZmRef<H3ServerStream> > > {
-  using Base = Zquic::SrvStream<H3ServerLink, H3ServerStream>;
-  using H3Cxn = Zhttp::H3::Cxn<H3ServerLink, ZmRef<H3ServerStream> >;
-  using CxnStream = Zhttp::H3::CxnStream<H3ServerStream, H3Cxn>;
+template <typename Protocol>
+struct AppServerLink :
+  public Zhttp::ServerLink<
+    AppServer<Protocol>, AppServerLink<Protocol>, Protocol,
+    StaticServer<Protocol>> {
+  using Base = Zhttp::ServerLink<
+    AppServer<Protocol>, AppServerLink<Protocol>, Protocol,
+    StaticServer<Protocol>>;
   using Base::Base;
-
-  int process(Zquic::RxStream &rx);
-  H3Cxn &h3Cxn() const;
-
-  void sendResponse(ResponsePlan resp);
-
-  StaticH3Server h3;
 };
 
-struct H3ServerLink :
-  public Zquic::SrvLink<H3Server, H3ServerLink, H3ServerStream> {
-  using Base = Zquic::SrvLink<H3Server, H3ServerLink, H3ServerStream>;
-  using H3Cxn = Zhttp::H3::Cxn<H3ServerLink, ZmRef<H3ServerStream> >;
-
-  H3ServerLink(H3Server *app, State *state_, ZuCSpan remote_) :
-    Base{app}, state{state_}, remote{remote_} { }
-  void connected(Zquic::Connected info) {
-    if (info.version != Zquic::Version1 || info.alpn != "h3")
-      app()->state->errors = 1;
-    if (!h3.openLocal(*this))
-      app()->state->errors = 1;
-    ZiLOG(Debug, "zhttpd.h3", ([
-      remote = ZeString(remote), info
-    ](auto &s) {
-      s << "connected remote=" << remote <<
-	" version=" << info.version << " alpn=" << info.alpn;
-    }));
-    touch();
-  }
-  void disconnected(bool) {
-    app()->mx()->del(&idleTimer);
-    unsigned active = state ? state->active.load_() : 0;
-    uint64_t requests = state ? state->requests.load_() : 0;
-    uint64_t errors = state ? state->errors.load_() : 0;
-    ZiLOG(Debug, "zhttpd.h3", ([
-      remote = ZeString(remote), counted = counted, active, requests, errors,
-      haveState = bool(state)
-    ](auto &s) {
-      s << "disconnected remote=" << remote <<
-	" counted=" << counted;
-      if (haveState)
-	s << " active=" << active <<
-	  " requests=" << requests <<
-	  " errors=" << errors;
-    }));
-    if (counted && state) {
-      --state->active;
-      counted = false;
-    }
-  }
-  void touch() {
-    auto timeout = state ? state->options.timeout : 0;
-    if (!timeout) return;
-    app()->mx()->add(&idleTimer, Zm::now(timeout), ZmScheduler::Update,
-      [this](auto &&arm) {
-	return arm([link = ZmMkRef(this)]() { link->disconnect(); });
-      });
-  }
-  void streamed(ZmRef<Stream> stream) {
-    ZiLOG(Debug, "zhttpd.h3", ([id = stream ? stream->id() : -1](auto &s) {
-      s << "streamed stream=" << id;
-    }));
-  }
-  void pathUpdate(const Zquic::PathInfo &info) {
-    h3.pathUpdate(info);
-    ZiLOG(Debug, "zhttpd.h3", ([
-      remote = ZeString(remote), ip = info.remote.ip(),
-      port = info.remote.port(), role = info.role
-    ](auto &s) {
-      s << "path update remote=" << remote <<
-	" path=" << ip << ':' << port <<
-	" role=" << Zquic::PathRole::Map::v2s(role);
-    }));
-    touch();
-  }
-  void migrationStarted(const Zquic::MigrationResult &result) {
-    h3.migrationStarted(result);
-    ZiLOG(Debug, "zhttpd.h3", ([
-      remote = ZeString(remote), attempt = result.attemptID,
-      reason = result.reason
-    ](auto &s) {
-      s << "migration started remote=" << remote <<
-	" attempt=" << attempt <<
-	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
-    }));
-    touch();
-  }
-  void migrationPromoted(const Zquic::MigrationResult &result) {
-    h3.migrationPromoted(result);
-    ZiLOG(Debug, "zhttpd.h3", ([
-      remote = ZeString(remote), attempt = result.attemptID,
-      reason = result.reason
-    ](auto &s) {
-      s << "migration promoted remote=" << remote <<
-	" attempt=" << attempt <<
-	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
-    }));
-    touch();
-  }
-  void migrationFailed(const Zquic::MigrationResult &result) {
-    h3.migrationFailed(result);
-    ZiLOG(Debug, "zhttpd.h3", ([
-      remote = ZeString(remote), attempt = result.attemptID,
-      reason = result.reason
-    ](auto &s) {
-      s << "migration failed remote=" << remote <<
-	" attempt=" << attempt <<
-	" reason=" << Zquic::MigrationReason::Map::v2s(reason);
-    }));
-    touch();
-  }
-
-  Zhttp::H3::QPackTxTable *qpackTx() { return &h3Tx; }
-
-  // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
-  H3Cxn				h3;
-  ZmScheduler::Timer		idleTimer;
-  State				*state = nullptr;
-  HdrString			remote;
-  bool				counted = true;
-
-  // Tx thread exclusive
-  alignas(Zm::CacheLineSize)
-  Zhttp::H3::QPackTxTable	h3Tx;
-};
-
-ZmRef<H3Server::Link> H3Server::accepted(const Zquic::InitialInfo &info)
-{
-  unsigned active = ++state->active;
-  if (state->options.maxconn && active > state->options.maxconn) {
-    ZiLOG(Debug, "zhttpd.h3", ([ip = info.peer.ip(), active](auto &s) {
-      s << "reject initial peer=" << ip
-	<< " active=" << active;
-    }));
-    --state->active;
-    return {};
-  }
-  ZeString remote;
-  remote << info.peer.ip();
-  ZiLOG(Debug, "zhttpd.h3", ([remote = ZeString(remote), active](auto &s) {
-    s << "accepted remote=" << remote << " active=" << active;
-  }));
-  return new Link{this, state, remote};
-}
-
-void H3Server::printDiag()
-{
-#ifdef Zquic_DEBUG
-  Zquic::EndpointDiag diag = h3EndpointDiag(this);
-  unsigned active = state ? state->active.load_() : 0;
-  uint64_t requests = state ? state->requests.load_() : 0;
-  uint64_t errors = state ? state->errors.load_() : 0;
-  unsigned links = 0;
-  uint64_t packetsRx = 0, packetsTx = 0;
-  uint64_t ackOnly = 0, streamOnly = 0, ackStream = 0;
-  uint64_t duplicatePackets = 0, ackCommits = 0, ackEliciting = 0;
-  uint64_t ackImmediate = 0, ackPosts = 0, streamNoData = 0;
-  uint64_t ackInstalls = 0, ackDueInstalls = 0, ackAppend = 0;
-  uint64_t ackAppendEmpty = 0, ackAppendNotDue = 0, ackSent = 0;
-  uint64_t controlOnly = 0, ackControl = 0, streamControl = 0;
-  uint64_t ackStreamControl = 0, cryptoPkts = 0, otherPkts = 0;
-  uint64_t streamFrames = 0, controlFrames = 0, cryptoFrames = 0;
-  uint64_t maxData = 0, maxStreamData = 0, maxStreams = 0;
-  uint64_t dataBlocked = 0, streamDataBlocked = 0, streamsBlocked = 0;
-  uint64_t resetStream = 0, stopSending = 0, pathChallenge = 0;
-  uint64_t pathResponse = 0, handshakeDone = 0;
-  uint64_t invalidStream = 0, closedStream = 0, suspiciousCloses = 0;
-  uint64_t streamMaxClosed = 0, streamMaxInvalid = 0;
-  uint64_t streamCtlClosed = 0, streamCtlInvalid = 0;
-  uint64_t streamDataInvalid = 0, streamDataState = 0, streamDataFinal = 0;
-  uint64_t streamRxDeqState = 0, streamRxDeqFinal = 0;
-  uint64_t streamBlockedClosed = 0, streamBlockedInvalid = 0;
-  uint64_t streamBlockedFinal = 0;
-  uint64_t pathObserved = 0, pathSame = 0, pathNull = 0, pathActive = 0;
-  uint64_t pathStarted = 0, pathPromoted = 0, pathUnknown = 0;
-  uint64_t streamRx = 0, streamTx = 0;
-  uint64_t peerOpened = 0, localLimit = 0;
-  uint64_t pto = 0, retx = 0, persistent = 0;
-  uint64_t ptoSched = 0, ptoNoLevel = 0, ptoArmed = 0;
-  uint64_t ptoExpired = 0, ptoFlush = 0, ptoRetx = 0, ptoProbe = 0;
-  uint64_t lossArmed = 0, lossCanceled = 0, lossExpired = 0;
-  uint64_t cwnd = 0, ssthresh = 0, bytesInFlight = 0;
-  uint64_t pktIF = 0;
-  uint64_t sentPkts = 0, retxPend = 0, retxTotal = 0;
-  bool ptoTimer = false, lossTimer = false;
-  using LinkSnapshot =
-    ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttpd.H3.LinkSnapshot">>;
-  auto snapshot = ZtLocalArray(LinkSnapshot, H3DiagLinkSnapshot);
-  ZmBlock<>{}([this, &snapshot](auto wake) {
-    this->allLinks([&snapshot](const ZmRef<Link> &link) {
-      snapshot.push(link);
-    }, ZuMv(wake));
-  });
-  for (const auto &link : snapshot) {
-    Zquic::LinkDiag d = h3LinkDiag(link);
-    ++links;
-    packetsRx += d.rx.packetsRx;
-    packetsTx += d.tx.packetsTx;
-    duplicatePackets += d.rx.duplicatePacketsRx;
-    ackCommits += d.rx.ackCommitsRx;
-    ackEliciting += d.rx.ackElicitingRx;
-    ackImmediate += d.rx.ackImmediateRx;
-    ackPosts += d.rx.ackSnapshotPostsRx;
-    streamNoData += d.rx.streamNoDataRx;
-    ackOnly += d.tx.ackOnlyPacketsTx;
-    streamOnly += d.tx.streamOnlyPacketsTx;
-    ackStream += d.tx.ackStreamPacketsTx;
-    ackInstalls += d.tx.ackSnapshotInstallsTx;
-    ackDueInstalls += d.tx.ackDueInstallsTx;
-    ackAppend += d.tx.ackAppendTx;
-    ackAppendEmpty += d.tx.ackAppendEmptyTx;
-    ackAppendNotDue += d.tx.ackAppendNotDueTx;
-    ackSent += d.tx.ackSentTx;
-    controlOnly += d.tx.ctlOnlyPktsTx;
-    ackControl += d.tx.ackCtlPktsTx;
-    streamControl += d.tx.streamCtlPktsTx;
-    ackStreamControl += d.tx.ackStreamCtlPktsTx;
-    cryptoPkts += d.tx.cryptoPacketsTx;
-    otherPkts += d.tx.otherPacketsTx;
-    streamFrames += d.tx.streamFramesTx;
-    controlFrames += d.tx.controlFramesTx;
-    cryptoFrames += d.tx.cryptoFramesTx;
-    invalidStream += d.rx.invalidStreamFrames;
-    closedStream += d.rx.closedStreamFrames;
-    suspiciousCloses += d.rx.suspectStreamCloses;
-    streamMaxClosed += d.rx.streamMaxClosedRx;
-    streamMaxInvalid += d.rx.streamMaxInvalidRx;
-    streamCtlClosed += d.rx.streamCtlClosedRx;
-    streamCtlInvalid += d.rx.streamCtlInvalidRx;
-    streamDataInvalid += d.rx.streamDataInvalidRx;
-    streamDataState += d.rx.streamDataStateRx;
-    streamDataFinal += d.rx.streamDataFinalRx;
-    streamRxDeqState += d.rx.streamRxDeqStateRx;
-    streamRxDeqFinal += d.rx.streamRxDeqFinalRx;
-    streamBlockedClosed += d.rx.streamBlockedClosedRx;
-    streamBlockedInvalid += d.rx.streamBlockedInvalidRx;
-    streamBlockedFinal += d.rx.streamBlockedFinalRx;
-    maxData += d.tx.maxDataTx;
-    maxStreamData += d.tx.maxStreamDataTx;
-    maxStreams += d.tx.maxStreamsTx;
-    dataBlocked += d.tx.dataBlockedTx;
-    streamDataBlocked += d.tx.streamDataBlockedTx;
-    streamsBlocked += d.tx.streamsBlockedTx;
-    resetStream += d.tx.resetStreamTx;
-    stopSending += d.tx.stopSendingTx;
-    pathChallenge += d.tx.pathChallengeTx;
-    pathResponse += d.tx.pathResponseTx;
-    handshakeDone += d.tx.handshakeDoneTx;
-    pathObserved += d.tx.pathRxObserved;
-    pathSame += d.tx.pathRxSame;
-    pathNull += d.tx.pathRxNull;
-    pathActive += d.tx.pathValidationActive;
-    pathStarted += d.tx.pathValidating;
-    pathPromoted += d.tx.pathValidationPromoted;
-    pathUnknown += d.tx.pathResponseUnknown;
-    streamRx += d.rx.streamBytesRx;
-    streamTx += d.tx.streamBytesTx;
-    peerOpened += link->peerStreamsOpened(Zquic::StreamType::Duplex);
-    localLimit += link->localStreamLimit(Zquic::StreamType::Duplex);
-    ptoSched += d.tx.ptoSched;
-    ptoNoLevel += d.tx.ptoNoLevel;
-    ptoArmed += d.tx.ptoArmed;
-    ptoExpired += d.tx.ptoExpired;
-    ptoFlush += d.tx.ptoFlush;
-    ptoRetx += d.tx.ptoRetx;
-    ptoProbe += d.tx.ptoProbe;
-    pto += d.tx.ptoCount;
-    retx += d.tx.retransmittedFrames;
-    lossArmed += d.tx.lossArmed;
-    lossCanceled += d.tx.lossCanceled;
-    lossExpired += d.tx.lossExpired;
-    persistent += d.tx.persistentCongestion;
-    cwnd += d.tx.congestionWindow;
-    ssthresh += d.tx.congestionSSThresh;
-    bytesInFlight += d.tx.bytesInFlight;
-    ptoTimer = ptoTimer || d.tx.ptoTimerActive;
-    lossTimer = lossTimer || d.tx.lossTimerActive;
-    for (unsigned i = 0; i < Zquic::PktNumSpace::N; ++i) {
-      pktIF += d.tx.pktBytesInFlight[i];
-      sentPkts += d.tx.sentPackets[i];
-      retxPend += d.tx.retransmitPending[i];
-      retxTotal += d.tx.retransmittable[i];
-    }
-  }
-  ZiLOG(Info, "zhttpd", ([
-    active, requests, errors, links,
-    datagramsRx = diag.rx.datagramsRx, datagramsTx = diag.tx.datagramsTx,
-    bytesRx = diag.rx.bytesRx, bytesTx = diag.tx.bytesTx,
-    txBackPressure = diag.tx.txBackPressure,
-    failures = diag.failures(),
-    packetsRx, packetsTx, streamRx, streamTx, peerOpened, localLimit, pto, retx,
-    duplicatePackets, ackCommits, ackEliciting, ackImmediate, ackPosts,
-    streamNoData, ackInstalls, ackDueInstalls, ackAppend, ackAppendEmpty,
-    ackAppendNotDue, ackSent,
-    ackOnly, streamOnly, ackStream, controlOnly, ackControl, streamControl,
-    ackStreamControl, cryptoPkts, otherPkts, streamFrames, controlFrames,
-    cryptoFrames, invalidStream, closedStream, suspiciousCloses,
-    streamMaxClosed, streamMaxInvalid, streamCtlClosed, streamCtlInvalid,
-    streamDataInvalid, streamDataState, streamDataFinal, streamRxDeqState,
-    streamRxDeqFinal, streamBlockedClosed, streamBlockedInvalid,
-    streamBlockedFinal,
-    maxData, maxStreamData, maxStreams, dataBlocked,
-    streamDataBlocked, streamsBlocked, resetStream, stopSending,
-    pathChallenge, pathResponse, handshakeDone,
-    pathObserved, pathSame, pathNull, pathActive, pathStarted, pathPromoted,
-    pathUnknown,
-    ptoSched, ptoNoLevel, ptoArmed, ptoExpired, ptoFlush, ptoRetx, ptoProbe,
-    ptoTimer, lossTimer, pktIF, sentPkts, retxPend, retxTotal,
-    lossArmed, lossCanceled, lossExpired, cwnd, ssthresh,
-    persistent, bytesInFlight
-  ](auto &s) {
-    s << "h3 diag active=" << active <<
-      " requests=" << requests <<
-      " errors=" << errors <<
-      " links=" << links <<
-      " datagramsRx=" << datagramsRx <<
-      " datagramsTx=" << datagramsTx <<
-      " bytesRx=" << bytesRx <<
-      " bytesTx=" << bytesTx <<
-      " txBackPressure=" << txBackPressure <<
-      " failures=" << failures <<
-      " packetsRx=" << packetsRx <<
-      " packetsTx=" << packetsTx <<
-      " ackDiag=[" << duplicatePackets << ',' << ackCommits << ',' <<
-	ackEliciting << ',' << ackImmediate << ',' << ackPosts << ',' <<
-	streamNoData << ',' << ackInstalls << ',' << ackDueInstalls << ',' <<
-	ackAppend << ',' << ackAppendEmpty << ',' << ackAppendNotDue << ',' <<
-	ackSent << ']' <<
-      " pktMix=[" << ackOnly << ',' << streamOnly << ',' << ackStream <<
-	',' << controlOnly << ',' << ackControl << ',' <<
-	streamControl << ',' << ackStreamControl << ',' << cryptoPkts <<
-	',' << otherPkts << ']' <<
-      " frameMix=[" << streamFrames << ',' << controlFrames << ',' <<
-	cryptoFrames << ']' <<
-      " streamFault=[" << invalidStream << ',' << closedStream << ',' <<
-	suspiciousCloses << ',' << streamMaxClosed << ',' <<
-	streamMaxInvalid << ',' << streamCtlClosed << ',' <<
-	streamCtlInvalid << ',' << streamDataInvalid << ',' <<
-	streamDataState << ',' << streamDataFinal << ',' <<
-	streamRxDeqState << ',' << streamRxDeqFinal << ',' <<
-	streamBlockedClosed << ',' << streamBlockedInvalid << ',' <<
-	streamBlockedFinal << ']' <<
-      " ctrlTx=[" << maxData << ',' << maxStreamData << ',' <<
-	maxStreams << ',' << dataBlocked << ',' << streamDataBlocked <<
-	',' << streamsBlocked << ',' << resetStream << ',' <<
-	stopSending << ',' << pathChallenge << ',' << pathResponse << ',' <<
-	handshakeDone << ']' <<
-      " pathDiag=[" << pathObserved << ',' << pathSame << ',' <<
-	pathNull << ',' << pathActive << ',' << pathStarted << ',' <<
-	pathPromoted << ',' << pathUnknown << ']' <<
-      " streamRx=" << streamRx <<
-      " streamTx=" << streamTx <<
-      " peerOpened=" << peerOpened <<
-      " localLimit=" << localLimit <<
-      " ptoDiag=[" << ptoSched << ',' << ptoNoLevel << ',' <<
-	ptoArmed << ',' << ptoExpired << ',' << ptoFlush << ',' <<
-	ptoRetx << ',' << ptoProbe << ']' <<
-      " pto=" << pto <<
-      " retx=" << retx <<
-      " ptoTimer=" << unsigned(ptoTimer) <<
-      " lossTimer=" << unsigned(lossTimer) <<
-      " pktIF=" << pktIF <<
-      " sentPkts=" << sentPkts <<
-      " retxPend=" << retxPend <<
-      " retxTotal=" << retxTotal <<
-      " lossDiag=[" << lossArmed << ',' << lossCanceled << ',' <<
-	lossExpired << ']' <<
-      " cwnd=" << cwnd <<
-      " ssthresh=" << ssthresh <<
-      " persistent=" << persistent <<
-      " bytesInFlight=" << bytesInFlight;
-  }));
-#endif
-}
-
-H3ServerStream::H3Cxn &H3ServerStream::h3Cxn() const
-{
-  return this->link()->h3;
-}
-
-int H3ServerStream::process(Zquic::RxStream &rx)
-{
-  if (Zquic::StreamID::uni(uint64_t(this->id()))) {
-    auto s = this->CxnStream::process(*this);
-    ZiLOG(Debug, "zhttpd.h3", ([id = this->id(), s](auto &out) {
-      out << "control stream=" << id << " state=" << s;
-    }));
-    if (s == Zhttp::H3::CxnState::Error) {
-      this->link()->app()->state->errors = 1;
-      return -1;
-    }
-    (void)rx;
-    this->link()->touch();
-    return 0;
-  }
-
-  h3.parser.qpackRx_ = &this->link()->h3.qpackRxTable;
-  using Cxn = ZuDecay<decltype(this->link()->h3)>;
-  h3.parser.qpackDecoder_ = &this->link()->h3;
-  h3.parser.qpackDecoderWrite_ = [](void *ptr, ZuBSpan span) {
-    return static_cast<Cxn *>(ptr)->qpackDecoderWrite(span);
-  };
-  h3.parser.streamID_ = uint64_t(this->id());
-  int rc = h3.processReq(*this, *this);
-  ZiLOG(Debug, "zhttpd.h3", ([id = this->id(), rc](auto &s) {
-    s << "process request stream=" << id << " rc=" << rc;
-  }));
-  if (rc >= 0) this->link()->touch();
-  return rc;
-}
-
-void H3ServerStream::sendResponse(ResponsePlan resp)
-{
-  ZiLOG(Debug, "zhttpd.h3", ([
-    id = this->id(), status = resp.status, length = resp.contentLength
-  ](auto &s) {
-    s << "queue response stream=" << id << " status=" << status <<
-      " content-length=" << length;
-  }));
-  auto ref = this->link()->findStream(this->id());
-  if (!ref) {
-    ZiLOG(Error, "zhttpd", ([id = this->id()](auto &s) {
-      s << "H3 response stream not found: " << id;
-    }));
-    return;
-  }
-  this->link()->app()->txInvoke([
-    link = this->link(), ref, resp = ZuMv(resp)
-  ]() mutable {
-    auto tx = ref->txStream_();
-    H3RespBuilder builder{&resp};
-    builder.qpackTx_ = link->qpackTx();
-    builder.qpackEncoder_ = &link->h3;
-    builder.qpackEncoderWrite_ = [](void *ptr, ZuBSpan span) {
-      return static_cast<ZuDecay<decltype(link->h3)> *>(ptr)->
-	qpackEncoderWrite(span);
-    };
-    builder.streamID_ = uint64_t(ref->id());
-    builder.response(tx);
-    sendBody(tx, builder, resp);
-    builder.finish(tx);
-    bool ok = link->send_(ref, "", true);
-    ZiLOG(Debug, "zhttpd.h3", ([id = ref->id(), ok](auto &s) {
-      s << "send response stream=" << id << " ok=" << ok;
-    }));
-    if (!ok)
-      ZiLOG(Error, "zhttpd", ([
-	id = ref->id(),
-	closed = link->closed(),
-	closeError = link->closeError(),
-	rxComplete = ref->rxComplete(),
-	finReceived = ref->finReceived(),
-	finSent = ref->finSent(),
-	finDequeued = ref->finDequeued(),
-	txRanges = ref->txRangeCount(),
-	txBuffered = ref->txBufferedBytes(),
-	txUnackd = ref->txUnackdCount()
-      ](auto &s) {
-	s << "H3 response send failed: " << id <<
-	  " closed=" << unsigned(closed) <<
-	  " closeError=" << closeError <<
-	  " rxComplete=" << unsigned(rxComplete) <<
-	  " finReceived=" << unsigned(finReceived) <<
-	  " finSent=" << unsigned(finSent) <<
-	  " finDequeued=" << unsigned(finDequeued) <<
-	  " txRanges=" << txRanges <<
-	  " txBuffered=" << txBuffered <<
-	  " txUnackd=" << txUnackd;
-      }));
-  });
-}
+using HTTPServer = AppServer<Zhttp::TCP>;
+using TLSServer = AppServer<Zhttp::TLS>;
+using H3Server = AppServer<Zhttp::QUIC>;
 
 int Zhttpd::run(int argc, const char *const *argv)
 {
@@ -1299,87 +590,89 @@ int Zhttpd::run(int argc, const char *const *argv)
     ZiLog::stop();
     return 1;
   }
-  bool httpInit = false;
-  bool tlsInit = false;
-  bool h3Init = false;
   HTTPServer http{&state};
   TLSServer tls{&state};
   H3Server h3{&state};
+  Zhttp::Engines engines;
   if (state.options.http) {
-    if (!http.init(Ztcp::ServerParams(&mx, "3", "4"))) {
+    if (!engines.init(http,
+	  Zhttp::EngineConfig{&mx, "3", "4"}, Zhttp::TCPConfig{})) {
       ZiLOG(Error, "zhttpd", "HTTP server initialization failed");
       restoreSigHandlers(oldInt, oldTerm);
+      engines.final();
       mx.stop();
       state.log.final();
       ZiLog::stop();
       return 1;
     }
-    httpInit = true;
   }
   if (state.options.https) {
-    ZuCSpan alpn[] = { "http/1.1" };
-    if (!tls.init(
-	  Ztls::ServerParams(&mx, "3", "4")
-	    .certPath(state.options.cert).keyPath(state.options.key)
-	    .alpn(alpn))) {
+    if (!engines.init(tls,
+	  Zhttp::EngineConfig{&mx, "3", "4"},
+	  Zhttp::TLSConfig{}
+	    .certPath(state.options.cert).keyPath(state.options.key))) {
       ZiLOG(Error, "zhttpd", "HTTPS server initialization failed");
       restoreSigHandlers(oldInt, oldTerm);
-      if (httpInit) http.final();
+      engines.final();
       mx.stop();
       state.log.final();
       ZiLog::stop();
       return 1;
     }
-    tlsInit = true;
   }
+#ifdef Zquic_DEBUG
+  bool h3Enabled = false;
+#endif
   if (state.options.http3) {
-    h3.dropRates();
-    ZuCSpan alpn[] = { "h3" };
-    if (!h3.init(
-	  Zquic::ServerParams(&mx, "3", "4")
-	    .certPath(state.options.cert).keyPath(state.options.key).alpn(alpn)
+    double rxDrop = 0, txDrop = 0;
+#ifdef ZiMultiplex_FILTER
+    (void)parseDrop(state.options.quicRxDrop, rxDrop);
+    (void)parseDrop(state.options.quicTxDrop, txDrop);
+#endif
+    if (!engines.init(h3,
+	  Zhttp::EngineConfig{&mx, "3", "4"},
+	  Zhttp::QUICConfig{}
+	    .certPath(state.options.cert).keyPath(state.options.key)
 	    .keyLogPath(state.options.keyLog)
-	    .maxData(H3DataMax).maxStreamData(H3StreamDataMax)
-	    .maxStreamsDuplex(H3BidiMax).maxStreamsSimplex(H3UniMax)
-	    .heartBeat(quicHeartbeat(state.options))
-	    .migrationMode(migrationMode(state.options))
-	    .migCIDRes(state.options.quicMigrationCIDReserve)
-	    .migCloseOnFail(
-	      state.options.quicMigrationCloseOnFailure))) {
+	    .heartbeat(quicHeartbeat(state.options))
+	    .migration(migrationMode(state.options))
+	    .migrationCIDReserve(state.options.quicMigrationCIDReserve)
+	    .migrationCloseOnFailure(
+	      state.options.quicMigrationCloseOnFailure)
+	    .rxDrop(rxDrop).txDrop(txDrop))) {
       ZiLOG(Error, "zhttpd", "H3 server initialization failed");
       restoreSigHandlers(oldInt, oldTerm);
-      if (tlsInit) tls.final();
-      if (httpInit) http.final();
+      engines.final();
       mx.stop();
       state.log.final();
       ZiLog::stop();
       return 1;
     }
-    h3.filters();
-    h3Init = true;
+#ifdef Zquic_DEBUG
+    h3Enabled = true;
+#endif
   }
-  if (!httpInit && !tlsInit && !h3Init) {
+  if (!engines.count()) {
     ZiLOG(Error, "zhttpd", "no transport enabled");
     restoreSigHandlers(oldInt, oldTerm);
+    engines.final();
     mx.stop();
     state.log.final();
     ZiLog::stop();
     return 1;
   }
-  if (httpInit) http.listen();
-  if (tlsInit) tls.listen();
-  bool h3Started = false;
-  if (h3Init) {
-    h3Started = h3.start();
-    if (!h3Started) {
-      ZiLOG(Error, "zhttpd", "H3 server listen failed");
-      state.errors = 1;
-      state.done.post();
-    }
+  if (!engines.start()) {
+    ZiLOG(Error, "zhttpd", "HTTP engine start failed");
+    restoreSigHandlers(oldInt, oldTerm);
+    engines.final();
+    mx.stop();
+    state.log.final();
+    ZiLog::stop();
+    return 1;
   }
   IntervalMonitor mon{state.options.memDiag
 #ifdef Zquic_DEBUG
-    , h3Init ? state.options.quicDiag : 0
+    , h3Enabled ? state.options.quicDiag : 0
 #endif
   };
   if (mon.active()) {
@@ -1397,13 +690,8 @@ int Zhttpd::run(int argc, const char *const *argv)
     }
   } else
     state.done.wait();
-  if (h3Init) {
-    h3.clearFilters();
-    if (h3Started) h3.stop();
-    h3.final();
-  }
-  if (tlsInit) tls.final();
-  if (httpInit) http.final();
+  if (!engines.stop()) state.errors = 1;
+  engines.final();
   restoreSigHandlers(oldInt, oldTerm);
   mx.stop();
   state.log.final();

@@ -30,6 +30,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiTxStream.hh>
 
+#include <zlib/ZhttpConfig.hh>
 #include <zlib/ZhttpUtil.hh>
 #include <zlib/ZhttpHPack.hh>
 #include <zlib/ZhttpQPack.hh>
@@ -62,6 +63,44 @@ namespace Zhttp {
 
 constexpr unsigned DefltMaxHdr = (1<<16);	// 64K default
 constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
+
+// HTTP engine/link application contract
+//
+// Engines:
+//   init(params) -> start() -> process links -> stop() -> final()
+// final() is only valid after stop and after all links have drained.
+//
+// Client links:
+//   connect() -> connected() -> txStream()/process() -> disconnected()
+//
+// Server links:
+//   connected() -> txStream()/process(initial message) -> disconnected()
+//
+// The process callback is installed by CRTP composition before connected()
+// returns and before received application bytes are dispatched.  TCP and TLS
+// links represent transport connections.  An HTTP/3 application link
+// represents a duplex request stream; the physical QUIC connection, H3
+// control streams, and QPACK state remain library-owned.
+//
+// Thread ownership:
+//   init/final		caller/control thread
+//   start/stop		ZmEngine control path
+//   connected/process	Rx thread
+//   request/response Tx	Tx thread
+//   disconnected	Rx thread, exactly once per application link
+//
+// Protocol-specific concrete link and Rx/Tx stream types may differ, but they
+// must provide the same compile-time operations so one application template
+// implements the connection and message processing body for all protocols.
+//
+// Completion rules:
+// - an H1 close-delimited response completes at EOF, before disconnected();
+// - an H1 keep-alive link may process multiple messages before disconnected();
+// - a TLS handshake failure reports connectFailed(), never connected();
+// - an H3 application link becomes connected only after connection control
+//   streams are ready and the corresponding request stream exists;
+// - peer close/reset during a response completes or fails that application
+//   link exactly once, followed by one disconnected() callback.
 
 ZtEnumNS(Method, int8_t,
   GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
@@ -211,6 +250,7 @@ struct Impl : public Builder<Impl, Headers, Trailers, HasBody, Chunked> {
 #include <zlib/ZhttpH3.hh>
 #include <zlib/ZhttpH1Session.hh>
 #include <zlib/ZhttpH3Session.hh>
+#include <zlib/ZhttpMessage.hh>
 
 namespace Zhttp {
 
@@ -267,5 +307,10 @@ template <
 using H3RespBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
 
 } // namespace Zhttp
+
+#include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpServer.hh>
+#include <zlib/ZhttpEngines.hh>
+#include <zlib/ZhttpH3Engine.hh>
 
 #endif /* Zhttp_HH */

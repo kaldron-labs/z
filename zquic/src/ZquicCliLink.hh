@@ -549,16 +549,19 @@ private:
     if (Base::closed()) Base::clearCallbacks_();
     Base::disconnect(peer);
     Endpoint::disconnect([
-      link = impl(), l = ZuFwd<L>(l)
+      link = impl(), notify, l = ZuFwd<L>(l)
     ]() mutable {
       link->app()->txRun([
-	link, l = ZuMv(l)
+	link, notify, l = ZuMv(l)
       ]() mutable {
+	if (notify) link->endpointDown();
 	link = nullptr;
 	l();
       });
     });
   }
+
+  void endpointDown() { }
 
   void resetRuntimeState_() {
     Base::resetLink_();

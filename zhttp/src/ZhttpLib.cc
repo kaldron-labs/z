@@ -8,4 +8,18 @@
 
 #include <zlib/ZhttpLib.hh>
 
+#include <zlib/ZuICmp.hh>
+
+#include <zlib/ZhttpConfig.hh>
+
 ZhttpExtern const char ZhttpLib[] = "@(#) Z HTTP Library v" Z_VERNAME;
+
+int8_t Zhttp::migrationMode(ZuCSpan s, int8_t deflt)
+{
+  if (ZuICmp<ZuCSpan>::equals(s, "disabled") ||
+      ZuICmp<ZuCSpan>::equals(s, "disable"))
+    return Migration::Disabled;
+  if (ZuICmp<ZuCSpan>::equals(s, "passive")) return Migration::Passive;
+  if (ZuICmp<ZuCSpan>::equals(s, "active")) return Migration::Active;
+  return deflt;
+}
