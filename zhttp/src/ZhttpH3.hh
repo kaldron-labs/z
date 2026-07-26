@@ -484,6 +484,8 @@ template <
   uint64_t MaxBody_ = DefltMaxBody>
 class Parser {
 public:
+  using QPackWriteFn = bool (*)(void *, ZuBSpan);
+
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
@@ -494,6 +496,15 @@ public:
   using HeaderValues = ZuTypeSlice<2, 1, Headers>;
   static constexpr uint64_t MaxBody = MaxBody_;
   using State = ParserState;
+
+  void h3(
+    QPackRxTable *rx, void *decoder, QPackWriteFn decoderWrite,
+    uint64_t streamID) {
+    m_qpackRx = rx;
+    m_qpackDecoder = decoder;
+    m_qpackDecoderWrite = decoderWrite;
+    m_streamID = streamID;
+  }
 
 private:
   int64_t consumePayload_(ZuBSpan span) {
@@ -648,8 +659,10 @@ private:
     static const Params params;
     return params;
   }
-  uint64_t streamID() const { return 0; }
+  uint64_t streamID() const { return m_streamID; }
   bool qpackDecoderWrite(ZuBSpan span) {
+    if (m_qpackDecoderWrite)
+      return m_qpackDecoderWrite(m_qpackDecoder, span);
     if constexpr (HasH3Cxn<Impl>{})
 	return impl()->h3Cxn().qpackDecoderWrite(span);
     else
@@ -994,6 +1007,7 @@ public:
   void complete(State::T) { }
   bool rxComplete() const { return impl()->finReceived(); }
   QPackRxTable *qpackRx() {
+    if (m_qpackRx) return m_qpackRx;
     if constexpr (HasH3Cxn<Impl>{})
 	return impl()->h3Cxn().qpackRx();
     else
@@ -1010,6 +1024,10 @@ private:
   uint64_t		m_frameLen = 0;
   uint64_t		m_frameType = 0;
   uint64_t		m_frameOff = 0;
+  QPackRxTable		*m_qpackRx = nullptr;
+  void			*m_qpackDecoder = nullptr;
+  QPackWriteFn		m_qpackDecoderWrite = nullptr;
+  uint64_t		m_streamID = 0;
 };
 
 // QUIC variable-length integer and HTTP/3 field encoding
@@ -1239,6 +1257,8 @@ template <
   bool = false>			// ignored for HTTP/3
 class Builder {
 public:
+  using QPackWriteFn = bool (*)(void *, ZuBSpan);
+
   enum {
     PrefixBuiltin = 16,
     EncoderScratchBuiltin = 256
@@ -1250,6 +1270,15 @@ public:
   using Headers = Headers_;
   using Trailers = Trailers_;
   enum { HasBody = HasBody_ };
+
+  void h3(
+    QPackTxTable *tx, void *encoder, QPackWriteFn encoderWrite,
+    uint64_t streamID) {
+    m_qpackTx = tx;
+    m_qpackEncoder = encoder;
+    m_qpackEncoderWrite = encoderWrite;
+    m_streamID = streamID;
+  }
 
 private:
   template <typename L>
@@ -1601,12 +1630,15 @@ public:
   template <typename L> void header(L &&) { }
   uint64_t contentLength() { return 0; }
   QPackTxTable *qpackTx() {
+    if (m_qpackTx) return m_qpackTx;
     if constexpr (HasH3Cxn<Impl>{})
 	return impl()->h3Cxn().qpackTx();
     else
 	return nullptr;
   }
   bool qpackEncoderWrite(ZuBSpan span) {
+    if (m_qpackEncoderWrite)
+      return m_qpackEncoderWrite(m_qpackEncoder, span);
     if constexpr (HasH3Cxn<Impl>{})
 	return impl()->h3Cxn().qpackEncoderWrite(span);
     else
@@ -1617,11 +1649,15 @@ public:
     static const Params params;
     return params;
   }
-  uint64_t streamID() const { return 0; }
+  uint64_t streamID() const { return m_streamID; }
 
 private:
   // Tx thread exclusive
   QPackBuildFailure::T	m_qpackFailure = QPackBuildFailure::None;
+  QPackTxTable		*m_qpackTx = nullptr;
+  void			*m_qpackEncoder = nullptr;
+  QPackWriteFn		m_qpackEncoderWrite = nullptr;
+  uint64_t		m_streamID = 0;
 };
 
 } // namespace H3

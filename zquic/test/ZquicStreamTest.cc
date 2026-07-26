@@ -534,12 +534,12 @@ struct TestLink :
     ack.ranges[0] = Zquic::AckRange{largest, first};
     return Base::ackFrameValidTx_(ack);
   }
-#ifdef Zquic_DEBUG
   bool installOneRTT(
     const Zquic::TrafficSecret &rx, const Zquic::TrafficSecret &tx,
     const Zquic::CxnID &localCID) {
     return Base::installAppDataKeys_(rx, tx, localCID);
   }
+#ifdef Zquic_DEBUG
   void discardPeerKeys() { Base::discardPeerKeys_(); }
 #endif
 	  bool installZeroRTTTx(const Zquic::TrafficSecret &tx) {
@@ -1492,7 +1492,7 @@ void testCryptoRetransmitClipsUnackd()
       link->installOneRTT(secret, secret, {}),
     "crypto retransmit key setup failed");
   link->initServerPath();
-  link->growActivePath(Zquic::MinUDPPayload);
+  link->validatePath();
   ZuCHECK(link->sendCryptoBytes("0123456789"),
     "crypto send setup failed");
   link->sendCryptoRef(1, Zquic::PktNumSpace::AppData, 2, 5);

@@ -2567,6 +2567,7 @@ protected:
     if (!buf) return false;
     Path &path = txPath_(addr);
     const Path &path_ = path;
+    (void)path_;
     unsigned bytes = buf->length;
     if (!path.canSend(bytes)) {
       ZquicLOG(app()->qlogTrace(), ([

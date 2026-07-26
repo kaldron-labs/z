@@ -663,6 +663,12 @@ bool haveCurlH3Migration()
 
 bool skipCase(const Case &c, ZtString<> &reason)
 {
+#ifndef ZiMultiplex_FILTER
+  if (c.scenario == Scenario::MigrateDrop) {
+    reason = "packet-drop diagnostics are not compiled";
+    return true;
+  }
+#endif
   if (c.scenario == Scenario::MigrateCurl && !haveCurlH3Migration()) {
     reason = "curl lacks HTTP/3 migration/rebind CLI";
     return true;
