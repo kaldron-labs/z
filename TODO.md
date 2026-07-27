@@ -1,31 +1,69 @@
 # TODO
 
-## ZvCf
+## zhttp
 
-- `ZfCLI`:
-  - detach from underlying `ZfURI`
-  - align with `ZvNewCf` validation: add exceptions and throw them
+- `zhttp2.md`: improve it to define acceptance criteria to limit `zhttpd.cc` and `zhttp.cc` retained functionality to:
+  - CLI parsing
+  - protocol-specific configuration
+  - workload selection
+  - workload-specific request/response handling
+  - output-file handling
+  - reporting
 
-- `findings.md`
-codex resume 019f804a-6b6e-7a20-b965-67081eafb8d3
-- update and implement `zvcf.md`
+- `zhttp2.md`: iterate and improve it to be more specific and prescriptive, sliced/phased;
+  - ensure that each slice/phase:
+    - has acceptance criteria to hand off to the next
+    - concludes with a `GUIDELINES.md` alignment audit and repair step
 
-## ZiEngine
+- `h2.md`: iterate and improve it to be more specific and prescriptive, sliced/phased;
+  - ensure that each slice/phase:
+    - has acceptance criteria to hand off to the next
+    - concludes with a `GUIDELINES.md` alignment audit and repair step
 
-- ZiEngine - complete command/control + telemetry
+- add H2
+
+- `ws.md`: iterate and improve it to be more specific and prescriptive, sliced/phased;
+  - ensure that each slice/phase:
+    - has acceptance criteria to hand off to the next
+    - concludes with a `GUIDELINES.md` alignment audit and repair step
+
+- add websockets
+
+### deferred
+- cross-origin connection coalescing
+
+## zrest
+
+remaining telemetry hierarchy:
+```
+DB : public Ztc::DB
+  DBTable ; public Ztc::Table
+  DBHost : public Ztc::Host
+App : public Ztc::App (singleton)
+```
+
+## ZvEngine value
+
+- the key innovation in legacy `ZvEngine`, beyond the `Hub`/`Link`/`Pool`/`Cxn` model is:
+  - predictive flow control for pooled links, optimized for minimum latency
+  - `Link` is a `Tx`
+  - `Pool` is also a `Tx`
+  - permits "pools of pools"
+  - `pool->ready(Tx *tx, ZuTime t)`:
+    - informs `pool` that `tx` will be ready to send at future time `t`
+    - if `tx` was previously forecast to be ready at a time `q`,
+      it is removed from the pool and added back at new time `t`
+    - if `t` is `0`, it is immediately available
+    - if `t` is `null`, it is unavailable
+  - sending is always to the earliest available `tx`, i.e. `minimum`
+  - the protocol implementation can use reinforcement learning to predict when
+    it will become available for sending based on the peer's observed behavior
+
+- `zhttp` implements something like the above, reconcile
+
+- `ZiEngine` - complete command/control + telemetry
+
 - migrate ztcp, ztls, zquic, zhttp, zrest to ZiEngine
-
-## Zquic
-
-- re-review code
-
-Very few qlog fields, if any, are genuinely arbitrary strings. `ZeString` is probably overused. Almost all qlog data relates to QUIC protocol field values which are fixed-size scalars, IP addresses, ports, enumerated values or other closed vocabularies. Reasons that are in the code as short string literals should also be enumerations (aligning with system error codes). Detailed arbitrary string reasons are a rare exception. Almost all string conversions should occur via the JSON mapping, which is performed exclusively by the logger thread in logged lambda bodies.
-
-reference implementations:
-- `../zngtcp2` (primary reference)
-- `../msquic` Microsoft QUIC
-- `../quiche` Google Quiche
-- `../mvfst` Facebook mvfst
 
 ## devlayer
 
@@ -46,11 +84,6 @@ L-sized work:
 ## build system
 - factor out fbs codegen into shell script
   - used repeatedly in multiple Makefile.am
-
-## ZvEngine
-- becomes `ZiEngine` / ...
-- type-erased telemetry + command/control APIs (not CRTP)
-- `Zquic` + `Ztcp` derive from `Zi*`, implement APIs
 
 ## Zum
 - all flatbuffers -> ZfStruct FB
@@ -80,20 +113,10 @@ L-sized work:
     - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
 - https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
 
-# Z Candidate Work
+## ZfTOML
+- copy of `ZfCf` but TOML format
 
-## `ZvCf`
-- `ZvCf`:
-  - factor out cf-specific file format parsing/building from `ZvCf`
-  - cf-format becomes one of several
-  - `ZvCf` core becomes `ZvMap`
-  - `ZvCf` format becomes `ZvMapCf`
-- yaml: `ZvMapYAML`
-- toml: `ZvMapTOML`
-- json: `ZvMapJSON`
-- cf: `ZvMapCf`
-- (possibly later: xml)
-- core file handling dispatches to appropriate format based on file extension matching
+# Z Candidate Work
 
 ## Documentation
 - internals docs
@@ -140,7 +163,7 @@ L-sized work:
 ### Test Coverage
 - 128bit print/scan tests
 - vector print/scan tests
-- vector ZvCf and ZvCSV tests
+- vector ZfCf and ZvCSV tests
 
 # Notes
 - https://verdagon.dev/blog/when-to-use-memory-safe-part-2
