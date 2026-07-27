@@ -31,6 +31,8 @@
 #include <zlib/ZiTxStream.hh>
 
 #include <zlib/ZhttpConfig.hh>
+#include <zlib/ZhttpURL.hh>
+#include <zlib/ZhttpDiscovery.hh>
 #include <zlib/ZhttpUtil.hh>
 #include <zlib/ZhttpHPack.hh>
 #include <zlib/ZhttpQPack.hh>
@@ -67,8 +69,10 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 // HTTP engine/link application contract
 //
 // Engines:
-//   init(params) -> start() -> process links -> stop() -> final()
-// final() is only valid after stop and after all links have drained.
+//   init(params) -> start() -> process links -> stop(done) -> final()
+// done is called only after ingress is disabled and Rx/Tx work and links have
+// drained.  final() is only valid from done (or after the main-thread blocking
+// stop() wrapper returns); no caller may infer completion from a posted stop.
 //
 // Client links:
 //   connect() -> connected() -> txStream()/process() -> disconnected()
@@ -308,9 +312,13 @@ using H3RespBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
 
 } // namespace Zhttp
 
+#ifndef Zhttp_CORE_ONLY
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpClientPool.hh>
+#include <zlib/ZhttpAgent.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZhttpEngines.hh>
 #include <zlib/ZhttpH3Engine.hh>
+#endif
 
 #endif /* Zhttp_HH */

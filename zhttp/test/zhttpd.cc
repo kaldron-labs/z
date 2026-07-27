@@ -7,7 +7,6 @@
 // static HTTP server
 
 #include <iostream>
-#include <signal.h>
 #include <string.h>
 
 #include <zlib/ZmBitmap.hh>
@@ -20,6 +19,7 @@
 #include <zlib/ZiHeapCSV.hh>
 
 #include <zlib/Zhttp.hh>
+#include <zlib/ZhttpService.hh>
 
 #include "Zhttpd.hh"
 
@@ -129,85 +129,6 @@ void printMemDiag()
   }));
 }
 
-struct IntervalMonitor {
-  bool active() const {
-    return memDiag
-#ifdef Zquic_DEBUG
-      || quicDiag
-#endif
-      ;
-  }
-  unsigned nextStep() const {
-    unsigned step = 0;
-    auto limit = [&step](unsigned v) {
-      if (!step || v < step) step = v;
-    };
-    if (memDiag) limit(memDiag - memElapsed);
-#ifdef Zquic_DEBUG
-    if (quicDiag) limit(quicDiag - quicElapsed);
-#endif
-    return step;
-  }
-  void advance(unsigned step) {
-    if (memDiag) memElapsed += step;
-#ifdef Zquic_DEBUG
-    if (quicDiag) quicElapsed += step;
-#endif
-  }
-  template <typename MemFn>
-  void intervals(MemFn memFn) {
-    if (memDiag && memElapsed >= memDiag) {
-      memElapsed = 0;
-      memFn();
-    }
-  }
-#ifdef Zquic_DEBUG
-  template <typename MemFn, typename QuicFn>
-  void intervals(MemFn memFn, QuicFn quicFn) {
-    if (quicDiag && quicElapsed >= quicDiag) {
-      quicElapsed = 0;
-      quicFn();
-    }
-    intervals(memFn);
-  }
-#endif
-
-  uint32_t	memDiag = 0;
-#ifdef Zquic_DEBUG
-  uint32_t	quicDiag = 0;
-#endif
-  unsigned	memElapsed = 0;
-#ifdef Zquic_DEBUG
-  unsigned	quicElapsed = 0;
-#endif
-};
-
-static ZmSemaphore *sigDone_;
-
-static void sigHandler(int)
-{
-  if (sigDone_) sigDone_->post();
-}
-
-static void installSigHandlers(
-  ZmSemaphore *done, struct sigaction &oldInt, struct sigaction &oldTerm)
-{
-  sigDone_ = done;
-  struct sigaction action{};
-  action.sa_handler = sigHandler;
-  sigemptyset(&action.sa_mask);
-  sigaction(SIGINT, &action, &oldInt);
-  sigaction(SIGTERM, &action, &oldTerm);
-}
-
-static void restoreSigHandlers(
-  const struct sigaction &oldInt, const struct sigaction &oldTerm)
-{
-  sigaction(SIGINT, &oldInt, nullptr);
-  sigaction(SIGTERM, &oldTerm, nullptr);
-  sigDone_ = nullptr;
-}
-
 bool prepareProcess(Options &options)
 {
   const char *pidfile = options.pidfile ? options.pidfile.data() : nullptr;
@@ -244,129 +165,6 @@ using RespHeaders = ZhttpHeaders(
   "allow",
   "connection");
 
-struct ReqSink {
-  void reset() { req = {}; complete_ = false; failed = false; }
-  void operation(Zhttp::Method::T method_, ZuBSpan target_) {
-    req.method = method_;
-    req.target = ZuCSpan{target_};
-  }
-  void version(ZuBSpan version_) { req.http10 = ZuCSpan{version_} == "HTTP/1.0"; }
-  template <typename Key> void header(ZuBSpan value) {
-    if constexpr (Key{}() == "host")
-      req.host = ZuCSpan{value};
-    else if constexpr (Key{}() == "authorization")
-      req.authorization = ZuCSpan{value};
-    else if constexpr (Key{}() == "range")
-      req.range = ZuCSpan{value};
-    else if constexpr (Key{}() == "if-modified-since")
-      req.ifModifiedSince = ZuCSpan{value};
-    else if constexpr (Key{}() == "connection")
-      req.connection = ZuCSpan{value};
-    else if constexpr (Key{}() == "referer")
-      req.referer = ZuCSpan{value};
-    else if constexpr (Key{}() == "user-agent")
-      req.userAgent = ZuCSpan{value};
-  }
-  void contentLength(uint64_t) { }
-  void body(ZuBSpan) { }
-  template <typename ParserState>
-  void complete(typename ParserState::T state) {
-    complete_ = state == ParserState::Complete;
-    failed = !complete_;
-  }
-
-  RequestData	req;
-  bool		complete_ = false;
-  bool		failed = false;
-};
-
-template <typename Impl, bool H3>
-struct ReqParserBase_;
-template <typename Impl>
-struct ReqParserBase_<Impl, false> :
-  public Zhttp::H1ReqParser<Impl, ReqHeaders, ReqBodyMax> { };
-template <typename Impl>
-struct ReqParserBase_<Impl, true> :
-  public Zhttp::H3ReqParser<Impl, ReqHeaders, ReqBodyMax> { };
-
-template <bool H3>
-struct ReqParser :
-  public ReqParserBase_<ReqParser<H3>, H3>,
-  public ReqSink {
-  using Base = ReqParserBase_<ReqParser<H3>, H3>;
-  using State = typename Base::State;
-  void reset() { Base::reset(); ReqSink::reset(); }
-  void complete(State::T state) { ReqSink::template complete<State>(state); }
-  using ReqSink::body;
-  using ReqSink::contentLength;
-  using ReqSink::header;
-  using ReqSink::operation;
-  using ReqSink::version;
-
-};
-
-struct RespOps {
-  RespOps(const ResponsePlan *plan_) : plan{plan_} { }
-
-  unsigned status() const { return plan->status; }
-  template <typename L> void reason(L &&l) const { l(plan->reason); }
-  uint64_t contentLength() const { return plan->contentLength; }
-  template <typename Key, typename L>
-  void header(L &&l) const {
-    if constexpr (Key{}() == "content-type")
-      l(plan->contentType);
-    else if constexpr (Key{}() == "date")
-      l(plan->date);
-    else if constexpr (Key{}() == "server")
-      l(plan->server);
-    else if constexpr (Key{}() == "last-modified")
-      l(plan->lastModified);
-    else if constexpr (Key{}() == "accept-ranges")
-      l(plan->file ? ZuCSpan{"bytes"} : ZuCSpan{});
-    else if constexpr (Key{}() == "content-range")
-      l(plan->contentRange);
-    else if constexpr (Key{}() == "location")
-      l(plan->location);
-    else if constexpr (Key{}() == "www-authenticate")
-      l(plan->wwwAuthenticate);
-    else if constexpr (Key{}() == "allow")
-      l(plan->allow);
-    else if constexpr (Key{}() == "connection")
-      l(plan->connection);
-    else
-      l("");
-  }
-
-  const ResponsePlan	*plan = nullptr;
-};
-
-struct H1RespBuilder :
-  public Zhttp::H1RespBuilder<H1RespBuilder, RespHeaders, ZuTypeList<>, true>,
-  public RespOps {
-  using Base =
-    Zhttp::H1RespBuilder<H1RespBuilder, RespHeaders, ZuTypeList<>, true>;
-  H1RespBuilder(const ResponsePlan *plan_) : RespOps{plan_} { }
-  using Base::body;
-  using RespOps::contentLength;
-  using RespOps::header;
-  using RespOps::reason;
-  using RespOps::status;
-};
-
-struct H3RespBuilder :
-  public Zhttp::H3RespBuilder<H3RespBuilder, RespHeaders, ZuTypeList<>, true>,
-  public RespOps {
-  using Base =
-    Zhttp::H3RespBuilder<H3RespBuilder, RespHeaders, ZuTypeList<>, true>;
-  H3RespBuilder(const ResponsePlan *plan_) : RespOps{plan_} { }
-  using Base::body;
-  using RespOps::contentLength;
-  using RespOps::header;
-  using RespOps::reason;
-  using RespOps::status;
-
-};
-
 template <typename Tx, typename Builder>
 void sendBody(Tx &tx, Builder &builder, const ResponsePlan &resp) {
   if (!resp.sendBody) return;
@@ -379,61 +177,85 @@ void sendBody(Tx &tx, Builder &builder, const ResponsePlan &resp) {
   ZiFile file;
   if (file.dup(resp.fileHandle, ZiFile::GC) != Zi::OK)
     return;
-  char buf[FileChunk];
+  auto buf = ZtLocalArray(ZtArray<char>, FileChunk, FileChunk);
+  if (!buf) return;
   uint64_t offset = resp.fileOffset;
   uint64_t left = resp.fileLength;
   while (left) {
     unsigned n = left > FileChunk ? FileChunk : unsigned(left);
-    int r = file.pread(offset, buf, n);
+    int r = file.pread(offset, buf.data(), n);
     if (r <= 0) break;
-    sendSpanChunks(body, buf, unsigned(r));
+    sendSpanChunks(body, buf.data(), unsigned(r));
     offset += r;
     left -= r;
   }
 }
 
-template <typename Protocol> struct Message;
-template <> struct Message<Zhttp::TCP> {
-  using Parser = ReqParser<false>;
-  using Builder = H1RespBuilder;
-};
-template <> struct Message<Zhttp::TLS> : public Message<Zhttp::TCP> { };
-template <> struct Message<Zhttp::QUIC> {
-  using Parser = ReqParser<true>;
-  using Builder = H3RespBuilder;
-};
+struct Workload {
+  using Response = ResponsePlan;
 
-template <typename Protocol>
-struct StaticServer :
-  public Zhttp::ServerSession<
-    StaticServer<Protocol>, typename Message<Protocol>::Parser> {
-  using Parser = typename Message<Protocol>::Parser;
-  using Builder = typename Message<Protocol>::Builder;
-  using Base = Zhttp::ServerSession<StaticServer, Parser>;
-  using Base::parser;
-
-  template <typename Link>
-  int error(Link &link, Parser &) {
-    link.app()->state->errors = 1;
-    return -1;
+  Response request(const Zhttp::RequestInfo &info) {
+    ++state->requests;
+    StaticPlanner planner{state};
+    return planner.plan(info);
   }
 
-  template <typename Link>
-  int request(Link &link, Parser &parser) {
-    ++link.app()->state->requests;
-    parser.req.h3 = Link::Multiplexed;
-    parser.req.tls = Link::TLS;
-    StaticPlanner planner{link.app()->state};
-    auto resp = planner.plan(parser.req);
-    Builder builder{&resp};
-    auto tx = link.transmit(builder);
-    builder.response(tx);
-    sendBody(tx, builder, resp);
-    builder.finish(tx);
-    link.finish();
-    link.app()->state->log.write(parser.req, resp, link.remote());
-    return Link::Multiplexed ? 1 : (resp.close ? -1 : 1);
+  unsigned status(const Response &response) const { return response.status; }
+  template <typename L>
+  void reason(const Response &response, L &&l) const { l(response.reason); }
+  uint64_t contentLength(const Response &response) const {
+    return response.contentLength;
   }
+  template <typename Key, typename L>
+  void header(const Response &response, L &&l) const {
+    if constexpr (Key{}() == "content-type")
+      l(response.contentType);
+    else if constexpr (Key{}() == "date")
+      l(response.date);
+    else if constexpr (Key{}() == "server")
+      l(response.server);
+    else if constexpr (Key{}() == "last-modified")
+      l(response.lastModified);
+    else if constexpr (Key{}() == "accept-ranges")
+      l(response.file ? ZuCSpan{"bytes"} : ZuCSpan{});
+    else if constexpr (Key{}() == "content-range")
+      l(response.contentRange);
+    else if constexpr (Key{}() == "location")
+      l(response.location);
+    else if constexpr (Key{}() == "www-authenticate")
+      l(response.wwwAuthenticate);
+    else if constexpr (Key{}() == "allow")
+      l(response.allow);
+    else if constexpr (Key{}() == "connection")
+      l(response.connection);
+    else
+      l("");
+  }
+  template <typename Tx, typename Builder>
+  void body(Tx &tx, Builder &builder, const Response &response) {
+    sendBody(tx, builder, response);
+  }
+  bool close(const Response &response) const { return response.close; }
+  void complete(const Zhttp::RequestInfo &info, const Response &response) {
+    state->log.write(info, response, info.remote);
+  }
+  void listening(int transport, unsigned port) {
+    ZiLOG(Info, "zhttpd", ([transport, port](auto &s) {
+      switch (transport) {
+	case Zhttp::Transport::QUIC: s << "h3"; break;
+	case Zhttp::Transport::TLS: s << "https"; break;
+	default: s << "http"; break;
+      }
+      s << " listening: " << port;
+    }));
+  }
+  void listenFailed(int, bool) {
+    state->errors = 1;
+  }
+  void connected(int) { }
+  void disconnected(int) { }
+
+  State *state = nullptr;
 };
 
 ZiMxParams mxParams(const Options &options)
@@ -457,71 +279,8 @@ ZiMxParams mxParams(const Options &options)
   return params;
 }
 
-template <typename Protocol> struct AppServer;
-template <typename Protocol> struct AppServerLink;
-
-template <typename Protocol>
-struct AppServer :
-  public Zhttp::Server<AppServer<Protocol>, Protocol> {
-  using Base = Zhttp::Server<AppServer<Protocol>, Protocol>;
-  using Link = AppServerLink<Protocol>;
-
-  State	*state = nullptr;
-
-  AppServer(State *state_) : state{state_} { }
-
-  ZiIP localIP() const { return ZiIP(state->options.addr); }
-  unsigned localPort() const { return state->options.port; }
-  unsigned idleTimeout() const { return state->options.timeout; }
-  template <typename Info>
-  bool admit(const Info &) {
-    unsigned active = ++state->active;
-    if (!state->options.maxconn || active <= state->options.maxconn)
-      return true;
-    --state->active;
-    return false;
-  }
-  void release() { --state->active; }
-  template <typename Info>
-  void listening(const Info &info) {
-    listening_(info.port);
-  }
-  void listening() {
-    listening_(state->options.port);
-  }
-  void listenFailed(bool) {
-    state->errors = 1;
-    state->done.post();
-  }
-
-private:
-  void listening_(unsigned port) {
-    ZiLOG(Info, "zhttpd", ([port](auto &s) {
-      if constexpr (ZuIsSame<Protocol, Zhttp::QUIC>{})
-	s << "h3";
-      else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
-	s << "https";
-      else
-	s << "http";
-      s << " listening: " << port;
-    }));
-  }
-};
-
-template <typename Protocol>
-struct AppServerLink :
-  public Zhttp::ServerLink<
-    AppServer<Protocol>, AppServerLink<Protocol>, Protocol,
-    StaticServer<Protocol>> {
-  using Base = Zhttp::ServerLink<
-    AppServer<Protocol>, AppServerLink<Protocol>, Protocol,
-    StaticServer<Protocol>>;
-  using Base::Base;
-};
-
-using HTTPServer = AppServer<Zhttp::TCP>;
-using TLSServer = AppServer<Zhttp::TLS>;
-using H3Server = AppServer<Zhttp::QUIC>;
+using Service =
+  Zhttp::Service<Workload, ReqHeaders, RespHeaders, ReqBodyMax>;
 
 int Zhttpd::run(int argc, const char *const *argv)
 {
@@ -563,21 +322,16 @@ int Zhttpd::run(int argc, const char *const *argv)
 
   State state;
   state.options = options;
-  struct sigaction oldInt{};
-  struct sigaction oldTerm{};
-  installSigHandlers(&state.done, oldInt, oldTerm);
   if (!initFileState(state, error)) {
     ZiLOG(Error, "zhttpd", ([error = ZuMv(error)](auto &s) mutable {
       s << "zhttpd: " << error;
     }));
-    restoreSigHandlers(oldInt, oldTerm);
     ZiLog::stop();
     return 1;
   }
   state.mime.init(state.options);
   if (!state.log.init(state.options)) {
     ZiLOG(Error, "zhttpd", "failed to open access log");
-    restoreSigHandlers(oldInt, oldTerm);
     ZiLog::stop();
     return 1;
   }
@@ -585,40 +339,24 @@ int Zhttpd::run(int argc, const char *const *argv)
   ZiMultiplex mx(mxParams(options));
   if (!mx.start()) {
     ZiLOG(Error, "zhttpd", "ZiMultiplex start failed");
-    restoreSigHandlers(oldInt, oldTerm);
     state.log.final();
     ZiLog::stop();
     return 1;
   }
-  HTTPServer http{&state};
-  TLSServer tls{&state};
-  H3Server h3{&state};
-  Zhttp::Engines engines;
+  Workload workload{&state};
+  Service service;
+  Zhttp::ServiceConfig serviceConfig;
+  serviceConfig
+    .localIP(ZiIP(state.options.addr))
+    .port(state.options.port)
+    .idleTimeout(state.options.timeout)
+    .maxConnections(state.options.maxconn);
   if (state.options.http) {
-    if (!engines.init(http,
-	  Zhttp::EngineConfig{&mx, "3", "4"}, Zhttp::TCPConfig{})) {
-      ZiLOG(Error, "zhttpd", "HTTP server initialization failed");
-      restoreSigHandlers(oldInt, oldTerm);
-      engines.final();
-      mx.stop();
-      state.log.final();
-      ZiLog::stop();
-      return 1;
-    }
+    serviceConfig.tcp();
   }
   if (state.options.https) {
-    if (!engines.init(tls,
-	  Zhttp::EngineConfig{&mx, "3", "4"},
-	  Zhttp::TLSConfig{}
-	    .certPath(state.options.cert).keyPath(state.options.key))) {
-      ZiLOG(Error, "zhttpd", "HTTPS server initialization failed");
-      restoreSigHandlers(oldInt, oldTerm);
-      engines.final();
-      mx.stop();
-      state.log.final();
-      ZiLog::stop();
-      return 1;
-    }
+    serviceConfig.tls(Zhttp::TLSConfig{}
+      .certPath(state.options.cert).keyPath(state.options.key));
   }
 #ifdef Zquic_DEBUG
   bool h3Enabled = false;
@@ -629,9 +367,7 @@ int Zhttpd::run(int argc, const char *const *argv)
     (void)parseDrop(state.options.quicRxDrop, rxDrop);
     (void)parseDrop(state.options.quicTxDrop, txDrop);
 #endif
-    if (!engines.init(h3,
-	  Zhttp::EngineConfig{&mx, "3", "4"},
-	  Zhttp::QUICConfig{}
+    serviceConfig.quic(Zhttp::QUICConfig{}
 	    .certPath(state.options.cert).keyPath(state.options.key)
 	    .keyLogPath(state.options.keyLog)
 	    .heartbeat(quicHeartbeat(state.options))
@@ -639,60 +375,41 @@ int Zhttpd::run(int argc, const char *const *argv)
 	    .migrationCIDReserve(state.options.quicMigrationCIDReserve)
 	    .migrationCloseOnFailure(
 	      state.options.quicMigrationCloseOnFailure)
-	    .rxDrop(rxDrop).txDrop(txDrop))) {
-      ZiLOG(Error, "zhttpd", "H3 server initialization failed");
-      restoreSigHandlers(oldInt, oldTerm);
-      engines.final();
-      mx.stop();
-      state.log.final();
-      ZiLog::stop();
-      return 1;
-    }
+	    .rxDrop(rxDrop).txDrop(txDrop));
 #ifdef Zquic_DEBUG
     h3Enabled = true;
 #endif
   }
-  if (!engines.count()) {
-    ZiLOG(Error, "zhttpd", "no transport enabled");
-    restoreSigHandlers(oldInt, oldTerm);
-    engines.final();
+  bool serviceInited = service.init(
+    Zhttp::EngineConfig{&mx, "3", "4"},
+    ZuMv(serviceConfig), &workload);
+  if (!serviceInited) {
+    ZiLOG(Error, "zhttpd", "HTTP service initialization failed");
+    service.final();
     mx.stop();
     state.log.final();
     ZiLog::stop();
     return 1;
   }
-  if (!engines.start()) {
+  if (!service.start()) {
     ZiLOG(Error, "zhttpd", "HTTP engine start failed");
-    restoreSigHandlers(oldInt, oldTerm);
-    engines.final();
+    (void)service.stop();
+    service.final();
     mx.stop();
     state.log.final();
     ZiLog::stop();
     return 1;
   }
-  IntervalMonitor mon{state.options.memDiag
+  service.diagnostic(state.options.memDiag,
+    Zhttp::DiagnosticFn{[]() { printMemDiag(); }});
 #ifdef Zquic_DEBUG
-    , h3Enabled ? state.options.quicDiag : 0
+  if (h3Enabled)
+    service.diagnostic(state.options.quicDiag,
+      Zhttp::DiagnosticFn{[&service]() { service.printQUICDiag(); }});
 #endif
-  };
-  if (mon.active()) {
-    for (;;) {
-      unsigned step = mon.nextStep();
-      if (!step) break;
-      if (!state.done.timedwait(Zm::now(step))) break;
-      mon.advance(step);
-      mon.intervals(
-	[]() { printMemDiag(); }
-#ifdef Zquic_DEBUG
-	, [&h3]() { h3.printDiag(); }
-#endif
-      );
-    }
-  } else
-    state.done.wait();
-  if (!engines.stop()) state.errors = 1;
-  engines.final();
-  restoreSigHandlers(oldInt, oldTerm);
+  service.wait();
+  if (!service.stop()) state.errors = 1;
+  service.final();
   mx.stop();
   state.log.final();
   ZiLog::stop();

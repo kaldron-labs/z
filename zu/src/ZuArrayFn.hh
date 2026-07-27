@@ -130,7 +130,8 @@ struct ZuArrayFn_Ops : public ZuArrayFn_ElemOps<T, Cmp> {
 	if (ZuUnlikely(dst == static_cast<T *>(src))) return;
       do {
 	ZuNew<T>(dst++, ZuMv(*src));
-	if constexpr (Destroy) (*src++).~T();
+	if constexpr (Destroy) src->~T();
+	++src;
       } while (--length > 0);
     } else {
       ptrdiff_t diff = 
@@ -140,7 +141,8 @@ struct ZuArrayFn_Ops : public ZuArrayFn_ElemOps<T, Cmp> {
       if (diff < 0 || diff > ptrdiff_t(length * sizeof(T))) {
 	do {
 	  new (dst++) T(ZuMv(*src));
-	  if constexpr (Destroy) (*src++).~T();
+	  if constexpr (Destroy) src->~T();
+	  ++src;
 	} while (--length > 0);
       } else {
 	dst += length;
@@ -235,19 +237,22 @@ public:
     if (ZuConstEval()) {
       do {
 	ZuNew<T>(dst++, ZuMv(*src));
-	if constexpr (Destroy) (*src++).~T();
+	if constexpr (Destroy) src->~T();
+	++src;
       } while (--length > 0);
     } else {
       if constexpr (!ZuIsConvertible<S *, T *>{}) {
 	do {
 	  new (dst++) T(ZuMv(*src));
-	  if constexpr (Destroy) (*src++).~T();
+	  if constexpr (Destroy) src->~T();
+	  ++src;
 	} while (--length > 0);
       } else if (static_cast<T *>(src) > dst ||
 	  length < uint64_t(dst - static_cast<const T *>(src))) {
 	do {
 	  new (dst++) T(ZuMv(*src));
-	  if constexpr (Destroy) (*src++).~T();
+	  if constexpr (Destroy) src->~T();
+	  ++src;
 	} while (--length > 0);
       } else {
 	dst += length;
@@ -274,7 +279,8 @@ public:
 	if (ZuUnlikely(dst == static_cast<const T *>(src))) return;
       do {
 	ZuNew<T>(dst++, ZuMv(*src));
-	if constexpr (Destroy) (*src++).~T();
+	if constexpr (Destroy) src->~T();
+	++src;
       } while (--length > 0);
     } else {
 #ifdef __GNUC__

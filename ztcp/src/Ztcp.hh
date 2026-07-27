@@ -249,20 +249,35 @@ private:
   template <typename ImplRef_>
   void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMv(impl_)};
-    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn), peer]() {
-      impl->disconnected_(cxn.ptr(), peer);
-      auto mx = cxn->mx();
-      mx->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn)]() { });
+    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn), peer]() mutable {
+      impl->disconnected_(cxn.ptr());
+      auto app = impl->app();
+      app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), peer]() mutable {
+	auto app = impl->app();
+	app->rxRun([
+	  impl = ZuMv(impl), cxn = ZuMv(cxn), peer
+	]() mutable {
+	  impl->disconnected_1(peer);
+	  (void)cxn;
+	});
+      });
     });
   }
 
-  void disconnected_(Cxn *cxn, bool peer) {
+  void disconnected_(Cxn *cxn) {
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP disconnected dispatch outside Rx thread", return);
     if (m_cxn == cxn) m_cxn = nullptr;
     m_disconnecting = 0;
     m_rxStream.clean();
+  }
+
+  void disconnected_1(bool peer) {
+    ZiAssert(app()->rxInvoked(), "Ztcp", (),
+      "TCP disconnect completion outside Rx thread", return);
+    auto app = impl()->app();
     impl()->disconnected(peer);
+    app->linkDisconnected_();
   }
 
   void rcvd_(Cxn *cxn, ZmRef<ZiIOBuf> buf) {
@@ -658,6 +673,8 @@ public:
   }
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
+  void linkDisconnected_() { }
+
 protected:
   void allLinks_(Ztc::Hub::AllLinksFn) { }
   void allPools_(Ztc::Hub::AllPoolsFn) { }
@@ -666,7 +683,9 @@ protected:
     this->started(true);
   }
 
-  void stop_() {		// hub callback - enter Rx thread
+  // ZmEngine hook; public stop(done) retains done until stop_1() calls
+  // stopped(true).  Returning from this function does not complete stop.
+  void stop_() {		// enter Rx thread
     rxRun([this]() { stop_0(); });
   }
 
@@ -732,6 +751,8 @@ protected:
 
 template <typename App_>
 class Server : public Hub<App_> {
+friend ZmEngine<App_>;
+
 public:
   using App = App_;
   using Base = Hub<App>;
@@ -739,6 +760,7 @@ friend Base;
 
   using Base::mx;
   using Base::error_;
+  using Base::stop;
 
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
@@ -777,6 +799,13 @@ friend Base;
     m_listening = false;
   }
 
+  void linkDisconnected_() {
+    ZiAssert(this->rxInvoked(), "Ztcp", (),
+      "TCP server link completion outside Rx thread", return);
+    if (!this->stopping() || !m_stopCount) return;
+    if (!--m_stopCount && m_stopDrained) Base::stop_0();
+  }
+
 protected:
   unsigned nAccepts() const { return 8; }
   unsigned rebindFreq() const { return 0; }
@@ -800,11 +829,37 @@ protected:
       })));
   }
 
+  // ZmEngine hook.  Public stop(done) retains done until Base::stop_1()
+  // calls stopped(true) after every continuation below has drained.
+  void stop_() {
+    stopListening();
+    m_stopCount = 0;
+    m_stopDrained = false;
+    // Drain accepted connections whose connected_1() is already queued
+    // before enumerating links; down() requires the installed m_cxn.
+    this->rxRun([this]() { stop_0(); });
+  }
+
+  void stop_0() {
+    allLinks_({this, [](Server *server, Ztc::Link *link) {
+      ++server->m_stopCount;
+      link->down();
+    }});
+    this->rxRun([this]() { stop_1(); });
+  }
+
+  void stop_1() {
+    m_stopDrained = true;
+    if (!m_stopCount) Base::stop_0();
+  }
+
 private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_rebindTimer;
+  unsigned		m_stopCount = 0;
   bool			m_listening = false;
+  bool			m_stopDrained = false;
 };
 
 }

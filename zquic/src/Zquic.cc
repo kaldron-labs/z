@@ -18,14 +18,6 @@ static uint64_t tokenNowSec_()
   return uint64_t(Zm::now().sec());
 }
 
-static void tokenPut32_(uint8_t *out, uint32_t v)
-{
-  out[0] = uint8_t(v >> 24);
-  out[1] = uint8_t(v >> 16);
-  out[2] = uint8_t(v >> 8);
-  out[3] = uint8_t(v);
-}
-
 static void tokenPut64_(uint8_t *out, uint64_t v)
 {
   for (unsigned i = 0; i < 8; ++i) out[i] = uint8_t(v >> (56 - i * 8));

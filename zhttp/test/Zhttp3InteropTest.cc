@@ -25,7 +25,6 @@ using Zhttp::Test::printFile;
 using Zhttp::Test::retry;
 using Zhttp::Test::runCurlH3Retry;
 using Zhttp::Test::systemOK;
-using Zhttp::Test::waitUntil;
 using Zhttp::Test::writeLocalhostCert;
 using Zquic::Test::CaddyProcess;
 using Zquic::Test::haveCaddy;
@@ -500,6 +499,11 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
   ZmRef<Link> link() const { return link_; }
   void clearLink() { link_ = nullptr; }
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
+  void listening() {
+    state->port = this->local().port();
+    state->listening.post();
+  }
+  void listenFailed(bool) { state->errors = 1; state->done.post(); }
 
   ServerState	*state = nullptr;
   ZmRef<Link>	link_;
@@ -641,6 +645,7 @@ bool H3ServerStream::qpackTxMaxCapacity(uint64_t capacity)
 
 struct ClientState {
   ZmSemaphore	done;
+  ZmSemaphore	disconnected;
   ResponseSeen	response;
   ZuCSpan	body{"zhttp-client"};
   ZmAtomic<unsigned> errors = 0;
@@ -692,6 +697,7 @@ struct H1ClientLinkOps : public Base {
 	state->errors = 1;
       state->done.post();
     }
+    this->app()->rxRun([state]() { state->disconnected.post(); });
   }
   void connectFailed(bool) {
     this->app()->state->errors = 1;
@@ -900,6 +906,18 @@ void waitDisconnect(ZiMultiplex &mx)
   waitThread(mx, mx.txThread());
 }
 
+template <typename Server>
+bool stopServer(Server &server)
+{
+  bool stopped = ZmBlock<bool>{}([&server](auto wake) mutable {
+    server.stop([wake = ZuMv(wake)](bool ok) mutable {
+      wake(ok);
+    });
+  });
+  if (stopped) server.final();
+  return stopped;
+}
+
 bool writeHttpCaddyfile(ZuCSpan path, unsigned port, ZuCSpan body)
 {
   ZtString<> filePath;
@@ -958,12 +976,18 @@ void testZhttpClientCaddyHttp()
   TCPClient client{&state};
   ZuCHECK(client.init(Ztcp::ClientParams(&mx, "3", "4")),
     "Zhttp client->Caddy HTTP client init failed");
+  ZuCHECK(client.start(), "Zhttp client->Caddy HTTP client start failed");
   ZmRef<TCPClient::Link> link = new TCPClient::Link{&client};
   link->connect("127.0.0.1", port);
   ZuCHECK(waitDone(state.done), "Zhttp client->Caddy HTTP timed out");
   ZuCHECK(!state.errors && state.response.complete &&
       state.response.status == 200,
     "Zhttp client->Caddy HTTP response mismatch");
+  link->disconnect();
+  ZuCHECK(waitDone(state.disconnected),
+    "Zhttp client->Caddy HTTP disconnect timed out");
+  link = nullptr;
+  client.stop();
   client.final();
   mx.stop();
 }
@@ -1002,12 +1026,18 @@ void testZhttpClientCaddyHttpsH1()
   ZuCHECK(client.init(
       Ztls::ClientParams(&mx, "3", "4").caPath(certPath.cspan()).alpn(alpn)),
     "Zhttp client->Caddy HTTPS/H1 client init failed");
+  ZuCHECK(client.start(), "Zhttp client->Caddy HTTPS/H1 client start failed");
   ZmRef<TLSClient::Link> link = new TLSClient::Link{&client};
   link->connect("localhost", port);
   ZuCHECK(waitDone(state.done), "Zhttp client->Caddy HTTPS/H1 timed out");
   ZuCHECK(!state.errors && state.response.complete &&
       state.response.status == 200 && state.response.body == "caddy-h1-ok",
     "Zhttp client->Caddy HTTPS/H1 response mismatch");
+  link->disconnect();
+  ZuCHECK(waitDone(state.disconnected),
+    "Zhttp client->Caddy HTTPS/H1 disconnect timed out");
+  link = nullptr;
+  client.stop();
   client.final();
   mx.stop();
 }
@@ -1050,6 +1080,7 @@ void testZhttpClientCaddyHttpsH3()
 	.maxData(32768).maxStreamData(8192)
 	.maxStreamsDuplex(8).maxStreamsSimplex(8)),
     "Zhttp client->Caddy HTTPS/H3 client init failed");
+  ZuCHECK(client.start(), "Zhttp client->Caddy HTTPS/H3 client start failed");
   ZmRef<H3Client::Link> link = new H3Client::Link{&client};
   link->connect(Zquic::Host{"localhost"}, port);
   ZuCHECK(waitDone(state.done), "Zhttp client->Caddy HTTPS/H3 timed out");
@@ -1064,6 +1095,7 @@ void testZhttpClientCaddyHttpsH3()
     "Zhttp client->Caddy HTTPS/H3 disconnect timed out");
   waitDisconnect(mx);
   link = nullptr;
+  client.stop();
   client.final();
   mx.stop();
 }
@@ -1149,6 +1181,7 @@ void testCurlZhttpHttpServer()
   TCPServer server{&state};
   ZuCHECK(server.init(Ztcp::ServerParams(&mx, "3", "4")),
     "curl->Zhttp HTTP server init failed");
+  ZuCHECK(server.start(), "curl->Zhttp HTTP server start failed");
   server.listen();
   ZuCHECK(waitDone(state.listening), "curl->Zhttp HTTP listen timed out");
   ZuCHECK(curlHTTP(state.port, state.body),
@@ -1158,7 +1191,7 @@ void testCurlZhttpHttpServer()
       state.request.method == Zhttp::Method::POST &&
       state.request.path == Path && state.request.body == "curl-body",
     "curl->Zhttp HTTP decoded request mismatch");
-  server.final();
+  ZuCHECK(stopServer(server), "Zhttp interop HTTP server stop failed");
   mx.stop();
 }
 
@@ -1187,6 +1220,7 @@ void testCurlZhttpHttpsH1Server()
       Ztls::ServerParams(&mx, "3", "4")
 	.certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn)),
     "curl->Zhttp HTTPS/H1 server init failed");
+  ZuCHECK(server.start(), "curl->Zhttp HTTPS/H1 server start failed");
   server.listen();
   ZuCHECK(waitDone(state.listening), "curl->Zhttp HTTPS/H1 listen timed out");
   ZuCHECK(curlHTTPSH1(state.port, certPath.cspan(), state.body),
@@ -1196,7 +1230,7 @@ void testCurlZhttpHttpsH1Server()
       state.request.method == Zhttp::Method::POST &&
       state.request.path == Path && state.request.body == "curl-body",
     "curl->Zhttp HTTPS/H1 decoded request mismatch");
-  server.final();
+  ZuCHECK(stopServer(server), "Zhttp interop TLS server stop failed");
   mx.stop();
 }
 
@@ -1225,7 +1259,7 @@ void testCurlZhttpHttpsH3Server()
 	.maxStreamsDuplex(8).maxStreamsSimplex(8)),
     "curl->Zhttp HTTPS/H3 server init failed");
   ZuCHECK(server.start(), "curl->Zhttp HTTPS/H3 server listen failed");
-  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+  ZuCHECK(waitDone(state.listening),
     "curl->Zhttp HTTPS/H3 server did not become ready");
   ZuCHECK(runCurlH3Retry(temp, server.local().port(), Path, state.body),
     "curl HTTPS/H3 request to local Zhttp server failed");
@@ -1266,4 +1300,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCurlZhttpHttpsH1Server);
   ZuTestCall(testCurlZhttpHttpsH3Server);
   ZuTestCall(testZhttpClientCaddyHttpsH3);
+  ZiResolver::stop();
+  ZiResolver::final();
+  ZiLog::stop();
 }

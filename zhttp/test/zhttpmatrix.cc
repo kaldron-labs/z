@@ -59,7 +59,7 @@ namespace Pair {
 }
 
 namespace Proto {
-  enum T { H1TCP, H1TLS, H3 };
+  enum T { H1TCP, H1TLS, H3, H3Prefer };
 }
 
 namespace Scenario {
@@ -175,6 +175,7 @@ const char *protoName(Proto::T proto)
     case Proto::H1TCP: return "h1/tcp";
     case Proto::H1TLS: return "h1/tls";
     case Proto::H3: return "h3/quic";
+    case Proto::H3Prefer: return "h3/prefer";
   }
   return "unknown";
 }
@@ -185,6 +186,7 @@ const char *protoCaseName(Proto::T proto)
     case Proto::H1TCP: return "h1-tcp";
     case Proto::H1TLS: return "h1-tls";
     case Proto::H3: return "h3";
+    case Proto::H3Prefer: return "h3-prefer";
   }
   return "unknown";
 }
@@ -214,6 +216,7 @@ void usage(int code = 1)
     "Usage: zhttpmatrix [OPTION]...\n\n"
     "Options:\n"
     "  --case=CASE       exact case, e.g. zhttp-caddy/h3/j10n100000\n"
+    "                    prefer benchmark: zhttp-zhttpd/h3-prefer/j1n10000\n"
     "                    default matrix excludes curl-caddy; explicit cases may use it\n"
     "  --timeout=N       client timeout in seconds, default 15, 0 disables\n"
     "  --stall-timeout=N no-progress stall timeout in seconds, default 15,\n"
@@ -366,6 +369,10 @@ bool parseProto(ZuCSpan name, Proto::T &proto)
   }
   if (name == "h3") {
     proto = Proto::H3;
+    return true;
+  }
+  if (name == "h3-prefer") {
+    proto = Proto::H3Prefer;
     return true;
   }
   return false;
@@ -639,6 +646,11 @@ bool selectedNeedsCurlH3()
   return need;
 }
 
+bool quicProto(Proto::T proto)
+{
+  return proto == Proto::H3 || proto == Proto::H3Prefer;
+}
+
 bool validMigrationOptions()
 {
   if (!Zquic::validMigrationMode(options.quicMigration)) return false;
@@ -663,6 +675,14 @@ bool haveCurlH3Migration()
 
 bool skipCase(const Case &c, ZtString<> &reason)
 {
+  if (c.proto == Proto::H3Prefer && c.pair != Pair::ZhttpZhttpd) {
+    reason = "prefer-mode routing requires zhttp and zhttpd";
+    return true;
+  }
+  if (c.proto == Proto::H3Prefer && c.requests < 2) {
+    reason = "prefer-mode routing requires at least two requests";
+    return true;
+  }
 #ifndef ZiMultiplex_FILTER
   if (c.scenario == Scenario::MigrateDrop) {
     reason = "packet-drop diagnostics are not compiled";
@@ -687,7 +707,7 @@ bool writeFile(ZuCSpan path, ZuCSpan data, unsigned mode = 0666)
 
 bool pcapEnabled(const Case &c)
 {
-  return (options.debug || options.pcap) && c.proto == Proto::H3;
+  return (options.debug || options.pcap) && quicProto(c.proto);
 }
 
 void analyzePcap(unsigned port, TempDir &temp)
@@ -804,6 +824,7 @@ void appendReadyCommand(
 	" >/dev/null 2>&1; then\n";
       break;
     case Proto::H1TLS:
+    case Proto::H3Prefer:
       script <<
 	"  if curl --http1.1 --cacert " << certPath <<
 		" --fail -sS --connect-timeout 1 --max-time 1 "
@@ -841,7 +862,7 @@ void appendZhttpCommand(
   script << "\"$client\" -j " << c.jobs << " -n " << c.requests;
 #ifdef ZiMultiplex_DEBUG
   if (options.debug) script << " --debug";
-  if (options.frag && c.proto != Proto::H3) script << " --frag";
+  if (options.frag && !quicProto(c.proto)) script << " --frag";
   if (options.yield) script << " --yield";
 #endif
   if (options.discardResponse) script << " --discard-response";
@@ -880,6 +901,9 @@ void appendZhttpCommand(
       if (options.quicDiag)
 	script << " --quic-diag=" << options.quicDiag;
       break;
+    case Proto::H3Prefer:
+      script << " --http3=prefer -v -c " << certPath;
+      break;
   }
   script << " -o " << tempPath << "/body ";
   appendURL(script, c, port);
@@ -889,7 +913,11 @@ void appendZhttpCommand(
     "  cat " << tempPath << "/client.err\n"
     "  exit 1\n"
     "fi\n";
-  if ((options.debug || options.pcap) && c.proto == Proto::H3)
+  if (c.proto == Proto::H3Prefer)
+    script <<
+      "grep -q 'TLS connected' " << tempPath << "/client.err\n"
+      "grep -q 'QUIC connected' " << tempPath << "/client.err\n";
+  if ((options.debug || options.pcap) && quicProto(c.proto))
     script << "stop_pcap\n";
   if (!options.discardResponse)
     script <<
@@ -925,6 +953,7 @@ void appendCurlCommand(
       script << "curl_proto='--http1.1'\n";
       break;
     case Proto::H1TLS:
+    case Proto::H3Prefer:
       script << "curl_proto='--http1.1 --cacert " << certPath <<
 	" --resolve localhost:" << port << ":127.0.0.1'\n";
       break;
@@ -948,7 +977,7 @@ void appendCurlCommand(
     "  cat " << tempPath << "/curl.err\n"
     "  exit 1\n"
     "fi\n";
-  if ((options.debug || options.pcap) && c.proto == Proto::H3)
+  if ((options.debug || options.pcap) && quicProto(c.proto))
     script << "stop_pcap\n";
 }
 
@@ -963,6 +992,9 @@ bool writeScript(
   script <<
     "#!/bin/sh\n"
     "set -eu\n"
+    "# Parent/unit tests own leak checks; keep instrumented app children fast.\n"
+    "ASAN_OPTIONS=\"${ASAN_OPTIONS:+$ASAN_OPTIONS:}detect_leaks=0\"\n"
+    "export ASAN_OPTIONS\n"
     "lsan_suppressions=\n"
     "for f in .lsan-suppressions ../../.lsan-suppressions; do\n"
     "  if [ -f \"$f\" ]; then\n"
@@ -1043,7 +1075,7 @@ bool writeScript(
     script << "\"$server\" " << rootPath;
 #ifdef ZiMultiplex_DEBUG
     if (options.debug) script << " --debug";
-    if (options.frag && c.proto != Proto::H3) script << " --frag";
+    if (options.frag && !quicProto(c.proto)) script << " --frag";
     if (options.yield) script << " --yield";
 #endif
     if (options.memDiag) script << " --mem-diag=" << options.memDiag;
@@ -1071,6 +1103,10 @@ bool writeScript(
 	if (options.quicDiag)
 	  script << " --quic-diag=" << options.quicDiag;
 	break;
+      case Proto::H3Prefer:
+	script << " --https --http3 --cert " << certPath <<
+	  " --key " << keyPath;
+	break;
     }
     script <<
       " --addr 127.0.0.1 --port " << port <<
@@ -1096,7 +1132,7 @@ bool writeScript(
     "  cat " << tempPath << "/server.err\n"
     "  exit 1\n"
     "fi\n";
-  if ((options.debug || options.pcap) && c.proto == Proto::H3)
+  if ((options.debug || options.pcap) && quicProto(c.proto))
     script <<
       "if command -v dumpcap >/dev/null 2>&1 && "
 	"command -v tshark >/dev/null 2>&1; then\n"
@@ -1207,26 +1243,6 @@ void printCaseEnd(const Case &c, bool ok, uint64_t start, uint64_t duration)
     (duration ? duration : t - start) << "ms " << (ok ? "ok" : "not ok") << ": " <<
     pairName(c.pair) << ' ' << protoName(c.proto) <<
     " -j" << c.jobs << " -n" << c.requests << '\n';
-}
-
-void runCase(Case c)
-{
-  ZuTestScopeRT(runCase);
-  uint64_t start = printCaseStart(c);
-  uint64_t duration;
-  bool ok = runCase_(c, duration);
-  printCaseEnd(c, ok, start, duration);
-  ZuCheckRT(ok);
-}
-
-void testPrerequisites()
-{
-  ZuTestScopeRT(testPrerequisites);
-  ZuCheckRT(anySelected());
-  if (selectedNeedsCaddy())
-    ZuCheckRT(haveCaddy());
-  if (selectedNeedsCurlH3())
-    ZuCheckRT(haveCurlH3());
 }
 
 bool prerequisitesOK()

@@ -49,7 +49,60 @@ resolver path.
 `libZquic`.  Applications configure TCP, TLS, and QUIC with public `Zhttp`
 configuration types; HTTP ALPN and mandatory H3 transport defaults are
 library-owned.  Native transport traits remain private implementation detail.
-The application flow is protocol-independent:
+For complete HTTP applications, `Zhttp::Agent` owns client routing,
+discovery, pools, retries, redirects, fallback, and engine lifecycle, while
+`Zhttp::Service` owns server listeners, admission, sessions, message
+selection, and engine lifecycle. Applications provide protocol configuration
+and one protocol-neutral callback contract:
+
+```c++
+struct ClientApp :
+  Zhttp::Agent<
+    ClientApp, Request, RequestHeaders, ResponseHeaders, ResponseBodyMax> {
+  // Supply request intent and consume response callbacks here.
+};
+
+ClientApp client;
+client.init(
+  Zhttp::EngineConfig{&mx, "rx", "tx"},
+  Zhttp::AgentConfig{}.protocol(Zhttp::ProtocolPolicy::PreferH3),
+  Zhttp::TCPConfig{},
+  Zhttp::TLSConfig{}.caPath(ca),
+  Zhttp::QUICConfig{}.caPath(ca));
+client.start();
+client.submit(requests, requestCount);
+// ClientApp receives the same request/response callbacks for H1 and H3.
+client.stop();
+client.final();
+```
+
+```c++
+using Service = Zhttp::Service<
+  Workload, RequestHeaders, ResponseHeaders, RequestBodyMax>;
+
+Workload workload;
+Service service;
+service.init(
+  Zhttp::EngineConfig{&mx, "rx", "tx"},
+  Zhttp::ServiceConfig{}
+    .port(port)
+    .tcp(Zhttp::TCPConfig{})
+    .tls(Zhttp::TLSConfig{}.certPath(cert).keyPath(key))
+    .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)),
+  &workload);
+service.start();
+// Workload receives the same request/response callbacks for H1 and H3.
+// disconnected(transport) observes admission release on the owning Rx shard.
+service.stop();
+service.final();
+```
+
+When TLS and QUIC are enabled together, `Service` emits the HTTP/3 Alt-Svc
+header on TLS responses. `altSvcMaxAge()` controls its lifetime; zero disables
+advertising. No HTTP/3 response branch belongs in the application.
+
+The lower-level typed client/server application flow is likewise
+protocol-independent:
 
 ```c++
 template <typename Protocol>
@@ -143,6 +196,14 @@ zhttpd /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
 zhttpd /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
   --cert cert.pem --key key.pem --quic-migration=active \
   --quic-migration-cid-reserve=2
+```
+
+To serve HTTPS and HTTP/3 together and advertise HTTP/3 automatically, enable
+both transports on the same port:
+
+```sh
+zhttpd /tmp/www --https --http3 --addr 127.0.0.1 --port 8443 \
+  --cert cert.pem --key key.pem
 ```
 
 Useful client checks:

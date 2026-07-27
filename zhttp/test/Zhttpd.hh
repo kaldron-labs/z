@@ -21,7 +21,6 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
-#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZfCLI.hh>
@@ -35,6 +34,7 @@
 #include <zlib/ZiLog.hh>
 
 #include <zlib/Zhttp.hh>
+#include <zlib/ZhttpService.hh>
 
 ZfCLIConfig(CLI,
   (ZfCLI_ArrayFmt<ZfCLI::Delimited, ZfCLI_Delimiter<';'>>));
@@ -201,20 +201,7 @@ ZfStruct((Options, CLI),
   (((memDiag),         (CLI::Long<"mem-diag">)),                 (UInt32)),
   (((help),            (CLI::Flag<'h'>, CLI::Long<"help">)),     (Bool)));
 
-struct RequestData {
-  Zhttp::Method::T	method = -1;
-  HdrString		target;
-  HdrString		host;
-  HdrString		authorization;
-  HdrString		range;
-  HdrString		ifModifiedSince;
-  HdrString		connection;
-  HdrString		referer;
-  HdrString		userAgent;
-  bool			h3 = false;
-  bool			tls = false;
-  bool			http10 = false;
-};
+using RequestData = Zhttp::RequestInfo;
 
 struct ResponsePlan {
   ResponsePlan() = default;
@@ -284,8 +271,8 @@ struct MimeMap {
   ZmRef<Map>		map{new Map};
 
   void add(ZuCSpan ext, ZuCSpan mime) {
-    String ext_;
-    lower(ext_, ext);
+    String ext_{ext};
+    lower(ext_);
     map->del(ext_);
     map->add(ZuMv(ext_), String{mime});
   }
@@ -410,8 +397,6 @@ struct State {
   ZiFile		rootDir;
   ZiFile		rootFile;
   ZiFile::Stat		rootFileStat;
-  ZmSemaphore		done;
-  ZmAtomic<unsigned>	active = 0;
   ZmAtomic<uint64_t>	requests = 0;
   ZmAtomic<uint64_t>	errors = 0;
 };
@@ -589,7 +574,7 @@ struct StaticPlanner {
     for (unsigned i = 0; i < state->options.forwards.length(); ++i)
       if (host == state->options.forwards[i].host)
 	return redirect(req, state->options.forwards[i].url, resp);
-    if (state->options.forwardHttps && !req.tls) {
+    if (state->options.forwardHttps && !req.secure) {
       auto url = ZtLocalString(
         HdrString, req.host.length() + req.target.length() + 9);
       url << "https://" << req.host << req.target;

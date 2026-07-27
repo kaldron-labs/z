@@ -480,6 +480,8 @@ struct Foo {
   ZtString<> bar;
 };
 
+struct RefObj : public ZmObject { };
+
 template <auto &ZuTest_scope>
 void testNonStringArrays()
 {
@@ -524,6 +526,24 @@ void testNonStringArrays()
     a.push(Foo("world"));
     out(a[0].bar);
     out(a[1].bar);
+  }
+
+  {
+    ZuArray<ZmRef<RefObj>, 64> owners;
+    ZtArray<ZmRef<RefObj>> array;
+    for (unsigned i = 0; i < owners.length(); ++i) {
+      owners[i] = new RefObj;
+      array.push(owners[i]);
+    }
+    bool valid = true;
+    for (unsigned i = 0; i < owners.length(); ++i)
+      valid &= owners[i]->refCount() == 2 && array[i] == owners[i];
+    ZuCheck(valid);
+    array.length(0);
+    valid = true;
+    for (unsigned i = 0; i < owners.length(); ++i)
+      valid &= owners[i]->refCount() == 1;
+    ZuCheck(valid);
   }
 
 #if 0

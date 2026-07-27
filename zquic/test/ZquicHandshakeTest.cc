@@ -23,6 +23,7 @@ namespace {
 constexpr unsigned TLSBufSize = (64<<10); // 64K
 constexpr unsigned MaxTLSMessages = 32;
 
+#ifdef Zquic_DEBUG
 static ZtString<> readFile_(const Zi::Path &path)
 {
   ZtString<> data;
@@ -45,6 +46,7 @@ static void closeQLog_(ZquicLogger::Trace &trace)
     ZquicLogger::close(trace, ZuMv(wake));
   });
 }
+#endif
 
 ZuBSpan bytes_(const uint8_t *data, unsigned len)
 {
