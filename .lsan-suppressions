@@ -1,8 +1,2 @@
-# LeakSanitizer suppressions for intentional or cached Z debug allocations.
-# Keep entries narrow and stack-rooted; do not suppress generic allocators.
-
-leak:Ztls::Pico::(anonymous namespace)::buffer_alloc_
-leak:Ztls::Backend::cert_store_load_file
-leak:libzpicotls-openssl.so
-leak:evp_kem_exchange
-leak:schedulePTO_
+# LeakSanitizer suppressions must be narrow, stack-rooted, and justified here.
+# The current Zhttp/Zquic sanitizer suites require no suppressions.
