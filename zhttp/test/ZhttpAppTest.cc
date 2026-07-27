@@ -43,6 +43,9 @@ bool writeHTTPAppScript(
   script <<
     "#!/bin/sh\n"
     "set -eu\n"
+    "# Parent/unit tests own leak checks; keep instrumented app children fast.\n"
+    "ASAN_OPTIONS=\"${ASAN_OPTIONS:+$ASAN_OPTIONS:}detect_leaks=0\"\n"
+    "export ASAN_OPTIONS\n"
     "pid=\n"
     "cleanup() {\n"
     "  if [ -n \"$pid\" ]; then\n"
@@ -62,6 +65,10 @@ bool writeHTTPAppScript(
     script << "\"$server\" " << rootPath <<
       " --https --addr " << addr << " --port " << port <<
       " --cert " << certPath << " --key " << keyPath;
+  else if (transport == "prefer")
+    script << "\"$server\" " << rootPath <<
+      " --https --http3 --addr " << addr << " --port " << port <<
+      " --cert " << certPath << " --key " << keyPath;
   else
     script << "\"$server\" " << rootPath <<
       " --http3 --addr " << addr << " --port " << port <<
@@ -76,11 +83,13 @@ bool writeHTTPAppScript(
   if (transport == "http")
     script << "-o " << tempPath << "/body " <<
       "http://" << urlHost << ':' << port << "/zhttp-interop ";
-  else if (transport == "https")
-    script << "-c " << certPath << " -o " << tempPath << "/body " <<
+  else if (transport == "https" || transport == "prefer")
+    script << "-j 5 -n 10 " <<
+      (transport == "https" ? "-3 disable " : "") <<
+      "-c " << certPath << " -o " << tempPath << "/body " <<
       "https://" << urlHost << ':' << port << "/zhttp-interop ";
   else
-    script << "-3 force -c " << certPath << " -o " <<
+    script << "-3 force -j 5 -n 10 -c " << certPath << " -o " <<
       tempPath << "/body https://" << urlHost << ':' << port <<
       "/zhttp-interop ";
   script <<
@@ -99,7 +108,9 @@ bool writeHTTPAppScript(
     "  cat " << tempPath << "/client.err\n"
     "  exit 1\n"
     "fi\n"
-    "grep -qx 'zhttp-ok' " << tempPath << "/body\n";
+    "grep -qx 'zhttp-ok' " << tempPath << "/body";
+  if (transport != "http") script << ".9";
+  script << '\n';
   ZiFile f;
   if (f.open(path, ZiFile::Write, 0777) != Zi::OK) return false;
   if (f.write(script.data(), script.length()) != Zi::OK) return false;
@@ -139,6 +150,7 @@ void testAppTransport(ZuCSpan transport, bool ipv6 = false)
 void testHTTPApp() { testAppTransport("http"); }
 void testHTTPSApp() { testAppTransport("https"); }
 void testH3App() { testAppTransport("h3"); }
+void testPreferApp() { testAppTransport("prefer"); }
 void testHTTPAppIPv6() { testAppTransport("http", true); }
 void testHTTPSAppIPv6() { testAppTransport("https", true); }
 void testH3AppIPv6() { testAppTransport("h3", true); }
@@ -152,6 +164,7 @@ int main(int argc, char **argv)
   ZuTestCall(testHTTPApp);
   ZuTestCall(testHTTPSApp);
   ZuTestCall(testH3App);
+  ZuTestCall(testPreferApp);
   ZuTestCall(testHTTPAppIPv6);
   ZuTestCall(testHTTPSAppIPv6);
   ZuTestCall(testH3AppIPv6);

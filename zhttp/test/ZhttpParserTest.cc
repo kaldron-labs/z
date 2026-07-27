@@ -11,6 +11,7 @@
 #include <zlib/ZmList.hh>
 
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
 #include <zlib/ZtString.hh>
@@ -542,5 +543,6 @@ int main(int argc, char **argv)
   ZuTestCall(testCloseDelimitedResponseTooLarge);
   ZuTestCall(testNoBodyStatusWithoutLengthCompletesAtHeaders);
   ZuTestCall(testEarlyDataSafeRequestPolicy);
+  ZiLog::stop();
   return 0;
 }

@@ -128,26 +128,28 @@ struct ZuUTF16 {
     return 2;
   }
 
-  static unsigned in(const uint16_t *s, unsigned n) {
-    uint16_t c = *s;
+  template <typename C>
+  static unsigned in(const C *s, unsigned n) {
     if (ZuUnlikely(n < 1)) return 0;
+    uint16_t c = uint16_t(*s);
     if (ZuLikely(c < 0xd800 || c >= 0xe000)) return 1;
     if (ZuUnlikely(n < 2 || c >= 0xdc00)) return 0;
-    c = *++s;
+    c = uint16_t(*++s);
     if (ZuUnlikely(c < 0xdc00 || c >= 0xe000)) return 0;
     return 2;
   }
 
-  static unsigned in(const uint16_t *s, unsigned n, uint32_t &u_) {
-    uint16_t c = *s;
+  template <typename C>
+  static unsigned in(const C *s, unsigned n, uint32_t &u_) {
     if (ZuUnlikely(n < 1)) return 0;
+    uint16_t c = uint16_t(*s);
     if (ZuLikely(c < 0xd800 || c >= 0xe000)) {
       u_ = c;
       return 1;
     }
     if (ZuUnlikely(n < 2 || c >= 0xdc00)) return 0;
     uint32_t u = c;
-    c = *++s;
+    c = uint16_t(*++s);
     if (ZuUnlikely(c < 0xdc00 || c >= 0xe000)) return 0;
     u_ = (((u - 0xd800)<<10) | 0x10000) + (uint32_t(c) - 0xdc00);
     return 2;
@@ -158,15 +160,16 @@ struct ZuUTF16 {
     return 2;
   }
 
-  static unsigned out(uint16_t *s, unsigned n, uint32_t u) {
+  template <typename C>
+  static unsigned out(C *s, unsigned n, uint32_t u) {
     if (ZuUnlikely(n < 1)) return 0;
     if (ZuLikely(u < 0xd800 || (u >= 0xe000 && u < 0x10000))) {
-      *s = u;
+      *s = C(u);
       return 1;
     }
     if (ZuUnlikely(n < 2)) return 0;
-    *s++ = ((u & 0xffff)>>10) + 0xd800;
-    *s = (u & 0x3ff) + 0xdc00;
+    *s++ = C(((u & 0xffff)>>10) + 0xd800);
+    *s = C((u & 0x3ff) + 0xdc00);
     return 2;
   }
 };
@@ -174,17 +177,19 @@ struct ZuUTF16 {
 struct ZuAPI ZuUTF32 {
   using Elem = uint32_t;
 
-  static unsigned in(const uint32_t *s, unsigned n, uint32_t &u) {
+  template <typename C>
+  static unsigned in(const C *s, unsigned n, uint32_t &u) {
     if (ZuUnlikely(n < 1)) return 0;
-    u = *s;
+    u = uint32_t(*s);
     return 1;
   }
 
   static constexpr unsigned out(uint32_t) { return 1; }
 
-  static unsigned out(uint32_t *s, unsigned n, uint32_t u) {
+  template <typename C>
+  static unsigned out(C *s, unsigned n, uint32_t u) {
     if (ZuUnlikely(n < 1)) return 0;
-    *s = u;
+    *s = C(u);
     return 1;
   }
 
@@ -262,8 +267,23 @@ template <typename OutChar, typename InChar> struct ZuUTF {
 
   using Span = ZuUTFSpan;
 
+private:
+  static auto inData_(const InChar *s) {
+    if constexpr (sizeof(InChar) == 1)
+      return reinterpret_cast<const InElem *>(s);
+    else
+      return s;
+  }
+  static auto outData_(OutChar *s) {
+    if constexpr (sizeof(OutChar) == 1)
+      return reinterpret_cast<OutElem *>(s);
+    else
+      return s;
+  }
+
+public:
   static Span span(ZuSpan<const InChar> s_) {
-    auto s = reinterpret_cast<const InElem *>(s_.data());
+    auto s = inData_(s_.data());
     unsigned n = s_.length();
     uint32_t u;
     unsigned l = 0;
@@ -280,7 +300,7 @@ template <typename OutChar, typename InChar> struct ZuUTF {
   }
 
   static Span nspan(ZuSpan<const InChar> s_, unsigned nglyphs) {
-    auto s = reinterpret_cast<const InElem *>(s_.data());
+    auto s = inData_(s_.data());
     unsigned n = s_.length();
     uint32_t u;
     unsigned l = 0;
@@ -298,7 +318,7 @@ template <typename OutChar, typename InChar> struct ZuUTF {
   }
 
   static Span gspan(ZuSpan<const InChar> s_) { // single glyph
-    auto s = reinterpret_cast<const InElem *>(s_.data());
+    auto s = inData_(s_.data());
     unsigned n = s_.length();
     uint32_t u;
     if (ZuUnlikely(!n)) return Span();
@@ -308,7 +328,7 @@ template <typename OutChar, typename InChar> struct ZuUTF {
   }
 
   static uint64_t len(ZuSpan<const InChar> s_) {
-    auto s = reinterpret_cast<const InElem *>(s_.data());
+    auto s = inData_(s_.data());
     uint64_t n = s_.length();
     uint32_t u;
     uint64_t l = 0;
@@ -323,9 +343,9 @@ template <typename OutChar, typename InChar> struct ZuUTF {
 
   // conversion with silent truncation
   static uint64_t cvt(ZuSpan<OutChar> o_, ZuSpan<const InChar> s_) {
-    auto o = reinterpret_cast<OutElem *>(o_.data());
+    auto o = outData_(o_.data());
     uint64_t l = o_.length();
-    auto s = reinterpret_cast<const InElem *>(s_.data());
+    auto s = inData_(s_.data());
     uint64_t n = s_.length();
     uint32_t u;
     for (uint64_t i = n; i; ) {
@@ -342,9 +362,9 @@ template <typename OutChar, typename InChar> struct ZuUTF {
   // conversion with overflow detection
   static ZuTuple<uint64_t, bool>
   cvt_overflow(ZuSpan<OutChar> o_, ZuSpan<const InChar> s_) {
-    auto o = reinterpret_cast<OutElem *>(o_.data());
+    auto o = outData_(o_.data());
     uint64_t l = o_.length();
-    auto s = reinterpret_cast<const InElem *>(s_.data());
+    auto s = inData_(s_.data());
     uint64_t n = s_.length();
     uint32_t u;
     bool overflow = false;

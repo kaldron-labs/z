@@ -929,7 +929,7 @@ public:
     if (!m_data || size() <= n) return;
     T *newData = alloc__(n);
     if (!newData) throw std::bad_alloc{};
-    moveElems(newData, m_data, n);
+    this->template moveElems<false>(newData, m_data, n);
     free_();
     m_data = newData;
     vallocd(1);
@@ -1069,7 +1069,7 @@ public:
     uint64_t n = z;
     if (n > length()) n = length();
     if (m_data) {
-      if (n) moveElems(newData, m_data, n);
+      if (n) this->template moveElems<false>(newData, m_data, n);
       free_();
     }
     m_data = newData;
@@ -1090,7 +1090,7 @@ public:
       z = grow_(z, i + 1);
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
-      moveElems(newData, m_data, n);
+      this->template moveElems<false>(newData, m_data, n);
       free_();
       m_data = newData;
       size_owned(z, 1);
@@ -1368,7 +1368,7 @@ public:
       z = grow_(z, n + 1);
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
-      moveElems(newData, m_data, n);
+      this->template moveElems<false>(newData, m_data, n);
       free_();
       m_data = newData;
       size_owned(z, 1);
@@ -1428,7 +1428,7 @@ public:
       z = grow_(z, n + 1);
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
-      moveElems(newData + 1, m_data, n);
+      this->template moveElems<false>(newData + 1, m_data, n);
       free_();
       m_data = newData;
       size_owned(z, 1);
@@ -1501,12 +1501,12 @@ public:
       if (!z) { null(); return; }
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
-      moveElems(newData, m_data, offset);
+      this->template moveElems<false>(newData, m_data, offset);
       if (rlength)
 	rlength = replace(ZuSpan(newData + offset, rlength));
       l = n + rlength - length; // rlength may have been reduced
       if (offset + length < int64_t(n))
-	moveElems(
+	this->template moveElems<false>(
 	    newData + offset + rlength,
 	    m_data + offset + length,
 	    n - (offset + length));

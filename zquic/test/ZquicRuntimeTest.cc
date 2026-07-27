@@ -201,7 +201,7 @@ struct TestClient::Link :
   void forceCloseTimeout() {
     app()->txInvoke(this, [link = ZmRef<Link>{this}]() mutable {
       link->Base::closeTimeout_();
-      return link;
+      return link.ptr();
     });
   }
 
@@ -237,7 +237,7 @@ struct TestServerLink :
   void forceCloseTimeout() {
     app()->txInvoke(this, [link = ZmRef<TestServerLink>{this}]() mutable {
       link->Base::closeTimeout_();
-      return link;
+      return link.ptr();
     });
   }
 
@@ -294,6 +294,7 @@ void waitDisconnect(ZiMultiplex &mx)
   waitThread(mx, mx.txThread());
 }
 
+#ifdef Zquic_DEBUG
 ZtString<> readFile_(ZuCSpan path)
 {
   ZtString<> data;
@@ -309,6 +310,7 @@ ZtString<> readFile_(ZuCSpan path)
     data.length(unsigned(n));
   return data;
 }
+#endif
 
 void dumpDiag(
   const char *name, const Zquic::LinkDiag &d, const Zquic::CryptoDiag &c)
@@ -465,13 +467,19 @@ void testEndpointOpen()
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "runtime client init failed");
   ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
-  clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+  clientLink->connect(
+    Zquic::Host{"localhost"}, server.local().port(), ZiIP{"127.0.0.1"});
   ZuCHECK(waitUntil([&clientLink]() { return clientLink->ready(); }),
     "runtime client link did not become ready");
+#ifdef Zquic_DEBUG
   ZuCHECK(diag(clientLink).rx.endpointReady == 1 &&
       !diag(clientLink).failures() &&
       !cxnDiag(clientLink).failures(),
     "runtime client link diagnostics mismatch");
+#endif
+  ZuCHECK(clientLink->server() == "localhost" &&
+      clientLink->remote().ip() == ZiIP{"127.0.0.1"},
+    "explicit remote preserves TLS server name");
 	  if (!clientLink->ready()) {
 	    client.final();
 	    server.stop();
@@ -507,8 +515,10 @@ void testEndpointOpen()
       clientLink->crypto().negotiatedProtocol() == "h3" &&
       serverLink->crypto().negotiatedProtocol() == "h3",
     "runtime TLS/ALPN state mismatch");
-  ZuCHECK(diag(clientLink).rx.handshakeComplete == 1 &&
-      clientLink->connectedCount == 1,
+  ZuCHECK(clientLink->connectedCount == 1,
+    "runtime client handshake completion callback mismatch");
+#ifdef Zquic_DEBUG
+  ZuCHECK(diag(clientLink).rx.handshakeComplete == 1,
     "runtime client handshake completion diagnostics mismatch");
   ZuCHECK(diag(serverLink).rx.handshakeComplete == 1,
     "runtime server handshake completion diagnostics mismatch");
@@ -522,6 +532,7 @@ void testEndpointOpen()
       diag(serverLink).tx.cryptoBytesTx &&
       diag(serverLink).rx.cryptoBytesRx,
     "runtime CRYPTO byte diagnostics mismatch");
+#endif
   ZuCHECK(!diag(clientLink).failures(),
     "runtime client failure diagnostics mismatch");
   ZuCHECK(!diag(serverLink).failures(),
@@ -538,8 +549,8 @@ void testEndpointOpen()
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
   bool streamsArrived = waitUntil([&clientLink, &serverLink]() {
-      return diag(serverLink).rx.streamBytesRx >= 21 &&
-	diag(clientLink).rx.streamBytesRx >= 21;
+      return serverLink->streamedCount == 2 &&
+	clientLink->streamedCount == 2;
     });
   if (!streamsArrived) {
     dumpDiag(
@@ -548,11 +559,13 @@ void testEndpointOpen()
       "server", diag(serverLink), serverLink->crypto().diag());
   }
   ZuCHECK(streamsArrived, "runtime protected stream bytes did not arrive");
+#ifdef Zquic_DEBUG
   ZuCHECK(diag(clientLink).tx.streamBytesTx == 21 &&
       diag(serverLink).tx.streamBytesTx == 21 &&
       diag(clientLink).tx.packetsTx >= 2 &&
       diag(serverLink).tx.packetsTx >= 2,
     "runtime stream diagnostics mismatch");
+#endif
   auto serverRxBidi = serverLink->findStream(0);
   auto serverRxUni = serverLink->findStream(2);
   auto clientRxBidi = clientLink->findStream(1);
@@ -872,13 +885,20 @@ void testSrvMultiCxn()
   ZuCHECK(c0->send(c0s, "zero") && c1->send(c1s, "one"),
     "multi runtime client stream sends failed");
   ZuCHECK(waitUntil([&s0, &s1]() {
-      return diag(s0).rx.streamBytesRx == 4 &&
-	diag(s1).rx.streamBytesRx == 3;
+      auto s0rx = s0->findStream(0);
+      auto s1rx = s1->findStream(0);
+      return s0rx && s0rx->processed &&
+	s1rx && s1rx->processed;
     }), "multi runtime routed stream bytes did not arrive independently");
 
+#ifdef Zquic_DEBUG
   uint64_t s0Bytes = diag(s0).rx.streamBytesRx;
   uint64_t s1Bytes = diag(s1).rx.streamBytesRx;
   uint64_t failures = endpointDiag(server).failures();
+#else
+  unsigned s0Streams = s0->streamedCount;
+  unsigned s1Streams = s1->streamedCount;
+#endif
   unsigned errors = serverErrors;
   s0->disconnect();
   ZuCHECK(waitUntil([&s0]() {
@@ -889,12 +909,20 @@ void testSrvMultiCxn()
   auto c1Live = c1->stream(Zquic::StreamType::Duplex);
   ZuCHECK(c0->send(c0Stale, "drop") && c1->send(c1Live, "alive"),
     "multi runtime post-close client stream sends failed");
+#ifdef Zquic_DEBUG
   ZuCHECK(waitUntil([&server, &s1, failures, s1Bytes]() {
       return endpointDiag(server).failures() > failures &&
 	diag(s1).rx.streamBytesRx >= s1Bytes + 5;
     }), "multi runtime stale route drop or sibling delivery did not happen");
   ZuCHECK(diag(s0).rx.streamBytesRx == s0Bytes,
     "closed server link received stale routed data");
+#else
+  ZuCHECK(waitUntil([&s1, s1Streams]() {
+      return s1->streamedCount > s1Streams;
+    }), "multi runtime sibling delivery did not happen");
+  ZuCHECK(s0->streamedCount == s0Streams,
+    "closed server link received stale routed data");
+#endif
   ZuCHECK(serverErrors == errors,
     "stale routed datagram used ErrorFn instead of diagnostics");
 
@@ -1025,10 +1053,12 @@ void testRetryAddrValidate()
   ZuCHECK(!diag(clientLink).failures() &&
       !diag(serverLink).failures(),
     "retry runtime failure diagnostics mismatch");
+#ifdef Zquic_DEBUG
   ZuCHECK(waitUntil([&clientLink, &serverLink]() {
       return diag(clientLink).rx.newTokenRx >= 1 &&
 	diag(serverLink).tx.newTokenTx >= 1;
     }), "retry runtime NEW_TOKEN was not exchanged");
+#endif
 
   unsigned retryPkts = server.retryPkts;
   clientLink->disconnect();
@@ -1208,10 +1238,12 @@ void testRejectedTokenQLog()
 	    mx.stop();
 	    return;
 	  }
+#ifdef Zquic_DEBUG
   ZuCHECK(waitUntil([&clientLink, &serverLink]() {
       return diag(clientLink).rx.newTokenRx >= 1 &&
 	diag(serverLink).tx.newTokenTx >= 1;
     }), "rejected-token runtime NEW_TOKEN was not exchanged");
+#endif
   clientLink->disconnect();
   ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
     "rejected-token runtime initial connection did not close");

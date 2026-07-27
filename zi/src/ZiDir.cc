@@ -85,7 +85,7 @@ error:
 
   errno = 0;
   if (!(r = readdir(m_dir))) goto error;
-  name = r->d_name;
+  name = &r->d_name[0];
   return Zi::OK;
 
 error:

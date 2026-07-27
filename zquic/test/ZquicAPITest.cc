@@ -21,6 +21,7 @@ namespace {
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
+#ifdef Zquic_DEBUG
 static Zi::Path testPath_(ZuCSpan name)
 {
   Zi::Path path;
@@ -76,6 +77,7 @@ static void closeQLog_(ZquicLogger::Trace &trace)
     ZquicLogger::close(trace, ZuMv(wake));
   });
 }
+#endif
 
 struct TestLink;
 struct TestStream :

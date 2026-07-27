@@ -34,7 +34,7 @@ namespace ZmEngineState {
 #if 0
 struct Impl : public ZmEngine<Impl> {
   void start_(); // start engine - impl should eventually call started(ok)
-  void stop_();  // stop engine - impl should eventually call stopped(ok)
+  void stop_(); // stop engine - impl should eventually call stopped(ok)
 
   // optional functions
 
@@ -75,6 +75,7 @@ public:
   }
 
   void start(CtrlFn);	// async
+  // Retains stopFn until the implementation completes via stopped(ok).
   void stop(CtrlFn);
 
   bool start();		// sync

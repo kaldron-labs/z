@@ -24,8 +24,11 @@ noinst_PROGRAMS = zhttp zhttpd zhttpmatrix \
 	ZhttpAppTest ZhttpMultiRequestTest \
 	ZhttpdTest ZhttpDarkhttpdCompatTest ZhttpLifecycleTest \
 	ZhttpTransportContractTest ZhttpH1EngineTest ZhttpH3EngineTest \
-	ZhttpEngineLifecycleTest
-noinst_HEADERS = ZhttpTestUtil.hh Zhttpd.hh
+	ZhttpEngineLifecycleTest ZhttpURLTest ZhttpDiscoveryTest \
+	ZhttpAdmissionTest ZhttpAgentCancelTest ZhttpRuntimeTest \
+	ZhttpServiceIdleTest ZhttpAgentFallbackTest
+dist_noinst_SCRIPTS = ZhttpBoundaryTest.sh
+noinst_HEADERS = ZhttpTestUtil.hh Zhttpd.hh ZhttpBoundary.md
 zhttp_SOURCES = zhttp.cc
 zhttpd_SOURCES = zhttpd.cc
 zhttpmatrix_SOURCES = zhttpmatrix.cc
@@ -44,6 +47,13 @@ ZhttpTransportContractTest_SOURCES = ZhttpTransportContractTest.cc
 ZhttpH1EngineTest_SOURCES = ZhttpH1EngineTest.cc
 ZhttpH3EngineTest_SOURCES = ZhttpH3EngineTest.cc
 ZhttpEngineLifecycleTest_SOURCES = ZhttpEngineLifecycleTest.cc
+ZhttpURLTest_SOURCES = ZhttpURLTest.cc
+ZhttpDiscoveryTest_SOURCES = ZhttpDiscoveryTest.cc
+ZhttpAdmissionTest_SOURCES = ZhttpAdmissionTest.cc
+ZhttpAgentCancelTest_SOURCES = ZhttpAgentCancelTest.cc
+ZhttpRuntimeTest_SOURCES = ZhttpRuntimeTest.cc
+ZhttpServiceIdleTest_SOURCES = ZhttpServiceIdleTest.cc
+ZhttpAgentFallbackTest_SOURCES = ZhttpAgentFallbackTest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
@@ -53,4 +63,7 @@ test: $(noinst_PROGRAMS)
 		ZhttpAppTest ZhttpMultiRequestTest zhttpmatrix \
 		ZhttpdTest ZhttpDarkhttpdCompatTest Zhttp3InteropTest \
 		ZhttpLifecycleTest ZhttpTransportContractTest ZhttpH1EngineTest \
-		ZhttpH3EngineTest ZhttpEngineLifecycleTest
+		ZhttpH3EngineTest ZhttpEngineLifecycleTest ZhttpURLTest \
+		ZhttpDiscoveryTest ZhttpAdmissionTest ZhttpAgentCancelTest \
+		ZhttpRuntimeTest ZhttpServiceIdleTest ZhttpAgentFallbackTest
+	./ZhttpBoundaryTest.sh

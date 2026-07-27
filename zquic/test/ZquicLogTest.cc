@@ -16,6 +16,7 @@ using namespace ZuTestUtil;
 using namespace Zquic;
 using namespace ZquicLog_;
 
+#ifdef Zquic_DEBUG
 static Zi::Path testPath_(ZuCSpan name)
 {
   Zi::Path path;
@@ -304,6 +305,7 @@ static bool hasZiLogPrefix_(ZuCSpan data)
 {
   return data.find<"[Zquic]">() >= 0;
 }
+#endif
 
 static void closeQLog_(ZquicLogger::Trace &trace)
 {

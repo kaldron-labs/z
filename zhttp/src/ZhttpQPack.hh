@@ -181,7 +181,7 @@ struct QPackRxTable {
   uint32_t maxEntries() const { return maxCapacityBytes_>>5; }
 };
 
-static inline const char *QPackTxHashID() { return "Zhttp.H3.QPackTx"; }
+inline const char *QPackTxHashID() { return "Zhttp.H3.QPackTx"; }
 
 using QPackTxString =
   ZtString<ZtStringHeapID<"Zhttp.H3.QPackTx.String">>;
@@ -252,7 +252,7 @@ struct QPackTxSection {
   }
 };
 
-static inline const char *QPackTxSectionsID() {
+inline const char *QPackTxSectionsID() {
   return "Zhttp.H3.QPackTx.Sections";
 }
 

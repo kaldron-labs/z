@@ -21,12 +21,14 @@ static ZuBSpan span_(const uint8_t *data, unsigned len)
   return ZuBSpan{data, len};
 }
 
+#ifdef Zquic_DEBUG
 static void closeQLog_(ZquicLogger::Trace &trace)
 {
   ZmBlock<>{}([&trace](auto wake) {
     ZquicLogger::close(trace, ZuMv(wake));
   });
 }
+#endif
 
 struct App : public Zquic::Hub<App> {
   using Base = Zquic::Hub<App>;
@@ -664,6 +666,7 @@ static bool trafficSecret_(
     secret, &ptls_openssl_aes128gcmsha256, span_(bytes, sizeof(bytes)));
 }
 
+#ifdef Zquic_DEBUG
 static ZmRef<ZiIOBuf> shortPing_(
   const Zquic::CxnID &dcid, const Zquic::TrafficSecret &secret,
   uint64_t pn, bool keyPhase)
@@ -705,6 +708,7 @@ static ZmRef<ZiIOBuf> zeroRTTLongHdr_(uint64_t pn)
   buf->length = unsigned(h + PNLength);
   return buf;
 }
+#endif
 
 static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
 {
@@ -752,6 +756,7 @@ static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
   return consumed == n && called && ok;
 }
 
+#ifdef Zquic_DEBUG
 static ZiIP ip4_(uint32_t n)
 {
   in_addr addr;
@@ -807,6 +812,7 @@ static unsigned parseJSONSeq_(ZuCSpan data)
   }
   return n;
 }
+#endif
 
 void testStreamIDs()
 {
@@ -1576,6 +1582,7 @@ void testCongestionBudgetGatesSends()
 {
   ZuTestScope(testCongestionBudgetGatesSends);
 
+#ifdef Zquic_DEBUG
   App app;
   ZmRef<TestLink> link = testLink(&app);
   auto stream = link->stream(Zquic::StreamType::Duplex);
@@ -1613,6 +1620,7 @@ void testCongestionBudgetGatesSends()
   ZuCHECK(!link->queuedControlFrames(),
     "runtime control queue did not drain after ACK opened cwnd");
   link->closeForTest();
+#endif
 }
 
 void testActivePathBudget()
@@ -2508,11 +2516,16 @@ void testMaxBlockedValidate()
     "MAX_STREAM_DATA did not extend local bidirectional stream credit");
 
   n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 8, 4096);
+#ifdef Zquic_DEBUG
   uint64_t invalidMax = client->diag().rx.streamMaxInvalidRx;
+#endif
   ZuCHECK(parseFrame_(b, n, frame) && client->applyMaxStreamData(frame) &&
-      client->diag().rx.streamMaxInvalidRx == invalidMax + 1 &&
       !client->findStream(8),
     "MAX_STREAM_DATA for uninitiated local stream was not diagnosed");
+#ifdef Zquic_DEBUG
+  ZuCHECK(client->diag().rx.streamMaxInvalidRx == invalidMax + 1,
+    "uninitiated local MAX_STREAM_DATA diagnostics mismatch");
+#endif
 
   n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), localUni->id(), 4096);
@@ -2520,11 +2533,16 @@ void testMaxBlockedValidate()
     "MAX_STREAM_DATA for local unidirectional sender was rejected");
 
   n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 3, 4096);
+#ifdef Zquic_DEBUG
   invalidMax = client->diag().rx.streamMaxInvalidRx;
+#endif
   ZuCHECK(parseFrame_(b, n, frame) && client->applyMaxStreamData(frame) &&
-      client->diag().rx.streamMaxInvalidRx == invalidMax + 1 &&
       !client->findStream(3),
     "MAX_STREAM_DATA for peer unidirectional stream was not diagnosed");
+#ifdef Zquic_DEBUG
+  ZuCHECK(client->diag().rx.streamMaxInvalidRx == invalidMax + 1,
+    "peer unidirectional MAX_STREAM_DATA diagnostics mismatch");
+#endif
 
   ZmRef<TestLink> server = testLink(&app, true);
   server->setLocalStreamLimit(Zquic::StreamType::Duplex, 2);
@@ -2537,11 +2555,16 @@ void testMaxBlockedValidate()
   ZmRef<TestLink> limited = testLink(&app, true);
   limited->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
   n = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 4, 2048);
+#ifdef Zquic_DEBUG
   invalidMax = limited->diag().rx.streamMaxInvalidRx;
+#endif
   ZuCHECK(parseFrame_(b, n, frame) && limited->applyMaxStreamData(frame) &&
-      limited->diag().rx.streamMaxInvalidRx == invalidMax + 1 &&
       !limited->findStream(4),
     "MAX_STREAM_DATA beyond local stream limit was not diagnosed");
+#ifdef Zquic_DEBUG
+  ZuCHECK(limited->diag().rx.streamMaxInvalidRx == invalidMax + 1,
+    "over-limit MAX_STREAM_DATA diagnostics mismatch");
+#endif
 
   n = Zquic::FrameCodec::writeDataBlocked(
     b, sizeof(b), server->rxDataCreditLimit());
@@ -2641,12 +2664,14 @@ void testInvalidClosedStreamActivity()
       maxLink->applyMaxStreamData(frame) &&
       !maxLink->closeError(),
     "closed-stream MAX_STREAM_DATA was not ignored");
+#ifdef Zquic_DEBUG
   Zquic::LinkDiag diag = maxLink->diag();
   ZuCHECK(!diag.rx.invalidStreamFrames &&
       !diag.rx.closedStreamFrames &&
       diag.rx.streamMaxClosedRx == 1 &&
       !diag.rx.suspectStreamCloses,
     "closed-stream MAX_STREAM_DATA diagnostics mismatch");
+#endif
 
   ZmRef<TestLink> resetLink = testLink(&app, true);
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
@@ -2654,19 +2679,23 @@ void testInvalidClosedStreamActivity()
       resetLink->receiveFrame(frame) == 0 &&
       resetLink->receiveFrame(frame) == 0,
     "duplicate RESET_STREAM final size was not ignored");
+#ifdef Zquic_DEBUG
   diag = resetLink->diag();
   ZuCHECK(!diag.rx.invalidStreamFrames &&
       !diag.rx.closedStreamFrames &&
       !resetLink->closeError(),
     "duplicate RESET_STREAM diagnostics mismatch");
+#endif
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 1);
   ZuCHECK(parseFrame_(b, n, frame) &&
       resetLink->receiveFrame(frame) < 0 &&
       resetLink->closeError() == Zquic::TransportError::FinalSize,
     "active duplicate RESET_STREAM final-size violation did not close");
+#ifdef Zquic_DEBUG
   diag = resetLink->diag();
   ZuCHECK(diag.rx.suspectStreamCloses == 1,
     "final-size violation close diagnostics mismatch");
+#endif
 
   ZmRef<TestLink> blockedLink = testLink(&app, true);
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
@@ -2678,10 +2707,12 @@ void testInvalidClosedStreamActivity()
       blockedLink->rxStreamBlocked(frame) &&
       !blockedLink->closeError(),
     "closed-stream STREAM_DATA_BLOCKED was not ignored");
+#ifdef Zquic_DEBUG
   diag = blockedLink->diag();
   ZuCHECK(diag.rx.invalidStreamFrames == 1 &&
       diag.rx.closedStreamFrames == 1,
     "closed-stream STREAM_DATA_BLOCKED diagnostics mismatch");
+#endif
 
   ZmRef<TestLink> dupLink = testLink(&app);
   auto dup = dupLink->stream(Zquic::StreamType::Duplex);
@@ -2704,6 +2735,7 @@ void testInvalidClosedStreamActivity()
   for (unsigned i = 0; i < TestLink::suspiciousStreamThreshold(); ++i)
     ZuCHECK(threshold->applyMaxStreamData(frame),
       "closed-stream threshold frame was rejected");
+#ifdef Zquic_DEBUG
   diag = threshold->diag();
   ZuCHECK(!threshold->closeError() &&
       diag.rx.streamMaxClosedRx == TestLink::suspiciousStreamThreshold() &&
@@ -2714,6 +2746,11 @@ void testInvalidClosedStreamActivity()
 	TestLink::suspiciousStreamThreshold() + 1 &&
       !threshold->diag().rx.suspectStreamCloses,
     "closed-stream MAX_STREAM_DATA produced suspicious close diagnostics");
+#else
+  ZuCHECK(!threshold->closeError() &&
+      threshold->applyMaxStreamData(frame),
+    "closed-stream MAX_STREAM_DATA was not handled as benign");
+#endif
 }
 
 void testStreamGC()
@@ -2757,9 +2794,12 @@ void testStreamGC()
   int n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), localID, 4096);
   ZuCHECK(parseFrame_(b, n, frame) &&
-      maxLink->applyMaxStreamData(frame) &&
-      maxLink->diag().rx.streamMaxClosedRx == 1,
+      maxLink->applyMaxStreamData(frame),
     "closed MAX_STREAM_DATA after stream GC was not compact-handled");
+#ifdef Zquic_DEBUG
+  ZuCHECK(maxLink->diag().rx.streamMaxClosedRx == 1,
+    "closed MAX_STREAM_DATA after stream GC diagnostics mismatch");
+#endif
 
   ZmRef<TestLink> ackLink = testLink(&app);
   auto ackd = ackLink->stream(Zquic::StreamType::Simplex);
@@ -2936,8 +2976,10 @@ void testZeroRTTProtectedSend()
   ZuCHECK(plainLen >= 1 && pn == 0 && payloadOffset < sent->length &&
       sent->data_()[payloadOffset] == uint8_t(Zquic::FrameType::Ping),
     "0-RTT protected packet did not decrypt to PING");
+#ifdef Zquic_DEBUG
   ZuCHECK(link->diag().tx.packetsTx == 1,
     "0-RTT send did not record AppData packet accounting");
+#endif
   link->cancelTimers();
 }
 

@@ -116,14 +116,6 @@ static uint32_t load32_(const uint8_t *p)
     uint32_t(p[3]);
 }
 
-static void store32_(uint8_t *p, uint32_t v)
-{
-  p[0] = uint8_t(v>>24);
-  p[1] = uint8_t(v>>16);
-  p[2] = uint8_t(v>>8);
-  p[3] = uint8_t(v);
-}
-
 int Pkt::parseLong(ZuBSpan p, LongHdr &h)
 {
   if (p.length() < 7 || !isLong(p)) return -1;

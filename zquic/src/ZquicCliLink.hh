@@ -53,6 +53,13 @@ public:
   void connect(Host server, uint16_t port) {
     m_server = ZuMv(server);
     m_port = port;
+    m_remote = ZiIP{};
+    connect();
+  }
+  void connect(Host server, uint16_t port, ZiIP remote) {
+    m_server = ZuMv(server);
+    m_port = port;
+    m_remote = ZuMv(remote);
     connect();
   }
 
@@ -378,7 +385,7 @@ public:
   void connect_() { // direct call from within rx thread
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client connect before app initialization", return);
-    ZiIP ip = m_server;
+    ZiIP ip = m_remote ? m_remote : ZiIP{m_server};
     if (!ip || !m_port) {
       app()->error_(ZeEXCEPT(Error, "Zquic",
 	([server = LogMsg{m_server}, port = m_port](auto &s) {
@@ -671,6 +678,7 @@ private:
 	Base::tlsFailure_();
 	app()->error_(ZeEXCEPT(Error, "Zquic",
 	  "server QUIC transport parameters failed validation"));
+	connectFailed_0(false);
 	return;
       }
       m_peerParamsValidated = true;
@@ -686,7 +694,7 @@ private:
   }
 
   bool emitTLS_(size_t inEpoch, ZuBSpan input, ZiSockAddr addr) {
-    return Base::template advanceTLS_<TLSBufSize>(
+    bool ok = Base::template advanceTLS_<TLSBufSize>(
       inEpoch, input, ZuMv(addr),
       [this](
 	  const uint8_t *data, unsigned len, const size_t offsets[5],
@@ -695,6 +703,8 @@ private:
       },
       [this]() { markEstablished_(); },
       [](ZiSockAddr) { return true; });
+    if (!ok && input) connectFailed_0(false);
+    return ok;
   }
 
   bool sendCryptoFlights_(
@@ -1533,38 +1543,38 @@ private:
 public:
   void endpointDatagram_(Datagram d) {
     if (Base::disconnecting_()) return;
-    app()->rxRun([link = impl(), d = ZuMv(d)]() mutable {
-      if (link->disconnecting_()) return;
-      link->received_(ZuMv(d));
+    app()->rxInvoke(impl(), [link = impl(), d = ZuMv(d)]() mutable {
+      if (!link->disconnecting_()) link->received_(ZuMv(d));
+      return link;
     });
   }
   void endpointReady_(Endpoint *ep) {
     if (Base::disconnecting_()) return;
-    app()->rxRun([link = impl(), ep]() mutable {
-      if (link->disconnecting_()) return;
-      link->endpointReadyRx_(ep);
+    app()->rxInvoke(impl(), [link = impl(), ep]() mutable {
+      if (!link->disconnecting_()) link->endpointReadyRx_(ep);
+      return link;
     });
   }
 
   void endpointFailed_(bool transient) {
     if (Base::disconnecting_()) return;
-    app()->rxRun([link = impl(), transient]() mutable {
-      if (link->disconnecting_()) return;
-      link->connectFailed_0(transient);
+    app()->rxInvoke(impl(), [link = impl(), transient]() mutable {
+      if (!link->disconnecting_()) link->connectFailed_0(transient);
+      return link;
     });
   }
   void endpointDown_(Endpoint *ep) {
     if (Base::disconnecting_()) return;
-    app()->rxRun([link = impl(), ep]() mutable {
-      if (link->disconnecting_()) return;
-      link->endpointDownRx_(ep);
+    app()->rxInvoke(impl(), [link = impl(), ep]() mutable {
+      if (!link->disconnecting_()) link->endpointDownRx_(ep);
+      return link;
     });
   }
   void endpointTxDrained_() {
     if (Base::disconnecting_()) return;
-    app()->txRun([link = impl()]() mutable {
-      if (link->disconnecting_()) return;
-      link->txDrained_();
+    app()->txInvoke(impl(), [link = impl()]() mutable {
+      if (!link->disconnecting_()) link->txDrained_();
+      return link;
     });
   }
 
@@ -1574,7 +1584,10 @@ private:
     m_notifyEndpointDown = true;
     ++m_udpReadyCount;
     Base::endpointReady_();
-    startHandshake_();
+    if (!startHandshake_()) {
+      connectFailed_0(false);
+      return;
+    }
     m_udpReady = 1;
   }
   void endpointDownRx_(Endpoint *ep) {
@@ -1592,9 +1605,9 @@ private:
     Base::endpointFailure_();
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client connect failure before app initialization", return);
-    app()->rxRun([link = impl(), transient]() {
-      if (link->disconnecting_()) return;
-      link->connectFailed(transient);
+    app()->rxInvoke(impl(), [link = impl(), transient]() {
+      if (!link->disconnecting_()) link->connectFailed(transient);
+      return link;
     });
   }
 
@@ -1608,6 +1621,7 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   Host			m_server;
+  ZiIP			m_remote;
   ClientBootstrap	m_bootstrap;
   TokenBytes		m_newToken;
   uint16_t		m_port = 0;

@@ -1155,6 +1155,7 @@ public:
   using Base = Hub<App>;
   using Endpoint = Endpoint_<Server>;
   using Base::app;
+  using Base::allLinks;
   static constexpr bool EndpointRef = false;
   static constexpr unsigned TLSBufSize = Client<App>::TLSBufSize;
   static constexpr unsigned PNLength = Client<App>::PNLength;

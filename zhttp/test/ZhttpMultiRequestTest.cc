@@ -38,6 +38,9 @@ bool writeScript(ZuCSpan path, const char *tempPath_, unsigned port)
   script <<
     "#!/bin/sh\n"
     "set -eu\n"
+    "# Parent/unit tests own leak checks; keep instrumented app children fast.\n"
+    "ASAN_OPTIONS=\"${ASAN_OPTIONS:+$ASAN_OPTIONS:}detect_leaks=0\"\n"
+    "export ASAN_OPTIONS\n"
     "pid=\n"
     "cleanup() {\n"
     "  if [ -n \"$pid\" ]; then\n"

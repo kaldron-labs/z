@@ -9,6 +9,7 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmList.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
 
@@ -921,7 +922,8 @@ void testTxSectionStress()
     char name[16], value[16];
     snprintf(name, sizeof(name), "x-ref-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
-    ZuCHECK(table.insert({name, value}, &abs[i]),
+    const char *name_ = name, *value_ = value;
+    ZuCHECK(table.insert({ZuCSpan(name_), ZuCSpan(value_)}, &abs[i]),
       "tx section stress insert failed");
   }
   for (unsigned i = 0; i < 6; ++i) {
@@ -1211,4 +1213,5 @@ int main(int argc, char **argv)
   ZuTestCall(testBuilderCommitFailureAtomic);
   ZuTestCall(testBuilderQueryPath);
   ZuTestCall(testBuilderRuntimeHeaders);
+  ZiLog::stop();
 }
