@@ -98,11 +98,13 @@ public:
   using LinkRef = LinkRef_;
 
   Cxn(LinkRef link, const ZiCxnInfo &ci) :
-    ZiConnection(link->app()->mx(), ci), m_link(ZuMv(link)) { }
+    ZiConnection(link->app()->mx(), ci), m_link(ZuMvPtr(link)) { }
 
   void connected(ZiIOContext &io) override { m_link->connected_0(this, io); }
   void disconnected(bool peer) override {
-    if (Link *link = m_link) link->disconnected_0(this, ZuMv(m_link), peer);
+    LinkRef link_ = ZuMvPtr(m_link);
+    if (Link *link = link_)
+      link->disconnected_0(this, ZuMvPtr(link_), peer);
   }
   Ztc::Link *telLink(const void *owner) const override {
     Link *link = m_link;
@@ -239,7 +241,10 @@ private:
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP connected dispatch outside Rx thread", return);
     if (ZuUnlikely(m_cxn == cxn)) return;
-    if (ZuUnlikely(m_cxn)) { auto cxn_ = ZuMv(m_cxn); cxn_->close(); }
+    if (ZuUnlikely(m_cxn)) {
+      auto cxn_ = ZuMvPtr(m_cxn);
+      cxn_->close();
+    }
     m_cxn = ZuMv(cxn);
     m_disconnecting = 0;
     m_rxStream.clean();
@@ -248,7 +253,7 @@ private:
 
   template <typename ImplRef_>
   void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
-    ZmRef<Impl> impl{ZuMv(impl_)};
+    ZmRef<Impl> impl{ZuMvPtr(impl_)};
     app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn), peer]() mutable {
       impl->disconnected_(cxn.ptr());
       auto app = impl->app();
@@ -375,8 +380,7 @@ public:
       "TCP disconnect outside Rx thread", return);
     m_disconnecting = 1;
     app()->mx()->del(&m_reconnTimer);
-    auto cxn = ZmRef<Cxn>{ZuMv(m_cxn)};
-    m_cxn = nullptr;
+    auto cxn = ZmRef<Cxn>{ZuMvPtr(m_cxn)};
     if (cxn) {
       auto mx = cxn->mx();
       if (notify)
@@ -758,6 +762,8 @@ friend ZmEngine<App_>;
 public:
   using App = App_;
   using Base = Hub<App>;
+  using StopCxns =
+    ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Ztc.Server.StopCxns">>;
 friend Base;
 
   using Base::mx;
@@ -843,14 +849,28 @@ protected:
   }
 
   void stop_0() {
-    allLinks_({this, [](Server *server, Ztc::Link *link) {
-      ++server->m_stopCount;
-      link->down();
-    }});
-    this->rxRun([this]() { stop_1(); });
+    mx()->run([this]() {
+      StopCxns cxns;
+      mx()->allCxns_({&cxns, [](StopCxns *cxns, Ztc::Connection *cxn) {
+	cxns->push(ZmRef<ZiConnection>{
+	  static_cast<ZiConnection *>(cxn)});
+      }});
+      this->rxRun([this, cxns = ZuMv(cxns)]() mutable {
+	stop_1(ZuMv(cxns));
+      });
+    }, mx()->rxThread());
   }
 
-  void stop_1() {
+  void stop_1(StopCxns cxns) {
+    for (unsigned i = 0; i < cxns.length(); ++i)
+      if (auto link = cxns[i]->telLink(app())) {
+	++m_stopCount;
+	link->down();
+      }
+    this->rxRun([this]() { stop_2(); });
+  }
+
+  void stop_2() {
     m_stopDrained = true;
     if (!m_stopCount) Base::stop_0();
   }

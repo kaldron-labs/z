@@ -132,9 +132,13 @@ public:
     bool stopped() const { return m_stopped; }
 
     void assign(Request *request) {
+      ++m_generation;
       m_request = request;
       m_complete = false;
+      m_producerFailed = false;
+      m_sent = false;
       m_stopped = false;
+      m_closing = false;
       message.bind(request);
       message.reset();
     }
@@ -146,10 +150,32 @@ public:
       if (!m_request) return;
       message.bind(m_request);
       message.reset();
+      m_sent = true;
       owner()->poolSend(*this, *m_request, Message::ID);
-      message.send();
+      auto link = ZmMkRef(this);
+      unsigned generation = m_generation;
+      pool()->txRun([link = ZuMv(link), generation]() mutable {
+	link->message.startTx(generation);
+	link->sendRequestTx_(generation);
+      });
     }
-    void close() { this->disconnect(); }
+    void close() {
+      if (m_closing) return;
+      m_closing = true;
+      auto link = ZmMkRef(this);
+      pool()->txRun([link = ZuMv(link)]() mutable {
+	link->message.cancelTx();
+	auto pool = link->pool();
+	// Drain producer resumptions queued before cancellation, then return to
+	// Rx before disabling the native link.
+	pool->txRun([link = ZuMv(link)]() mutable {
+	  auto pool = link->pool();
+	  pool->rxRun([link = ZuMv(link)]() mutable {
+	    link->disconnect();
+	  });
+	});
+      });
+    }
     void replace(Request *request) {
       m_next = request;
       if (this->active()) {
@@ -211,9 +237,31 @@ public:
     void complete(bool ok) {
       if (!m_request || m_complete) return;
       m_complete = true;
-      auto request = m_request;
-      bool reuse = ok && reusable();
-      owner()->poolComplete(*this, *request, ok, reuse);
+      auto link = ZmMkRef(this);
+      unsigned generation = m_generation;
+      bool sent = m_sent;
+      pool()->txRun([link = ZuMv(link), generation, ok, sent]() mutable {
+	if (sent) link->message.cancelTx();
+	auto pool = link->pool();
+	// Drain any producer resumption queued before cancellation, then return
+	// the authoritative Tx commitment to Rx for the retry decision.
+	pool->txRun([link = ZuMv(link), generation, ok, sent]() mutable {
+	  BodyCommit commit = sent ? link->message.commit() : BodyCommit{};
+	  auto pool = link->pool();
+	  pool->rxRun([
+	    link = ZuMv(link), commit, generation, ok]() mutable {
+	    if (link->m_generation != generation) return;
+	    auto request = link->m_request;
+	    if (!request) return;
+	    if (link->m_producerFailed)
+	      link->owner()->poolTxFailed(*link, *request, commit);
+	    else
+	      link->owner()->poolTxCommitted(*link, *request, commit);
+	    bool reuse = ok && link->reusable();
+	    link->owner()->poolComplete(*link, *request, ok, reuse);
+	  });
+	});
+      });
     }
 
     Owner *owner() const { return pool()->owner(); }
@@ -224,6 +272,44 @@ public:
     IO		message;
 
   private:
+    void sendRequestTx_(unsigned generation) {
+      if (message.txGeneration() != generation) return;
+      unsigned batch = owner()->requestBodyBatch();
+      int state = message.send(batch);
+      switch (state) {
+	case BodySend::More: {
+	  auto link = ZmMkRef(this);
+	  pool()->txRun([link = ZuMv(link), generation]() mutable {
+	    link->sendRequestTx_(generation);
+	  });
+	  break;
+	}
+	case BodySend::Complete: {
+	  auto link = ZmMkRef(this);
+	  auto pool = this->pool();
+	  BodyCommit commit = message.commit();
+	  pool->rxRun([link = ZuMv(link), commit, generation]() mutable {
+	    if (link->m_generation == generation)
+	      if (auto request = link->request())
+		link->owner()->poolTxCommitted(*link, *request, commit);
+	  });
+	  break;
+	}
+	case BodySend::Cancelled:
+	  break;
+	default: {
+	  auto link = ZmMkRef(this);
+	  auto pool = this->pool();
+	  pool->rxRun([link = ZuMv(link), generation]() mutable {
+	    if (link->m_generation != generation) return;
+	    link->m_producerFailed = true;
+	    link->complete(false);
+	  });
+	  break;
+	}
+      }
+    }
+
     void notifyStopped_() {
       if (m_stopped) return;
       m_stopped = true;
@@ -232,8 +318,12 @@ public:
 
     Request	*m_request = nullptr;
     Request	*m_next = nullptr;
+    unsigned	m_generation = 0;
     bool	m_complete = false;
+    bool	m_producerFailed = false;
+    bool	m_sent = false;
     bool	m_stopped = false;
+    bool	m_closing = false;
   };
 
   using Links =

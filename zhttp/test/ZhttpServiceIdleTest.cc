@@ -51,6 +51,7 @@ struct State {
 
 struct Workload {
   struct Response { };
+  struct RequestState { };
 
   Workload(State *state_) : state{state_} { }
 
@@ -76,9 +77,14 @@ struct Workload {
     }
   }
 
-  Response request(const Zhttp::RequestInfo &) {
+  Response request(const Zhttp::RequestInfo &, RequestState &) {
     state->fail();
     return {};
+  }
+  template <typename Rx>
+  void requestBody(
+    const Zhttp::RequestInfo &, RequestState &, Rx &rx) {
+    Zhttp::bodyDrain(rx);
   }
   unsigned status(const Response &) const { return 200; }
   template <typename L>

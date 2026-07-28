@@ -87,6 +87,17 @@ void testRuntimeSmokes()
 {
   ZuTestScope(testRuntimeSmokes);
 
+  struct Value { };
+  Value value;
+  static_assert(ZuIsSame<decltype(ZuMvPtr(value)), Value &&>{});
+
+  int i = 42;
+  int *raw = &i;
+  static_assert(ZuIsSame<decltype(ZuMvPtr(raw)), int *>{});
+  int *moved = ZuMvPtr(raw);
+  ZuCheck(!raw);
+  ZuCheck(moved == &i);
+
   struct P : public ZuPolymorph { };
 
   P p;

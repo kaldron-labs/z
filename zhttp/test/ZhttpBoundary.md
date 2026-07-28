@@ -1,7 +1,8 @@
 # Zhttp executable boundary manifest
 
 This manifest covers the complete program-only source closure:
-`zhttp.cc` for `zhttp`, and `zhttpd.cc` plus `Zhttpd.hh` for `zhttpd`.
+`zhttp.cc` plus `ZhttpPut.hh` for `zhttp`, and `zhttpd.cc` plus
+`Zhttpd.hh` and `ZhttpPut.hh` for `zhttpd`.
 All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 
 ## `zhttp.cc`
@@ -10,7 +11,7 @@ All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 | --- | --- | --- |
 | CLI parsing | `Http3Mode`, timeout defaults, `Options`, `usage`, `parseDrop`, `validateOptions` | Declare, parse, validate, and document command-line workload and configuration choices. |
 | Protocol-specific configuration | `Http2Mode`, `Http3Mode`, `parseAuthority`, `parseMigrationLocal`, `migrationMode`, `migrationConfigured`, `migrationOnOpen`, `quicHeartbeat`, `mxParams` | Convert CLI values into multiplex, TLS, and QUIC configuration. |
-| Workload selection | `RequestHeaders`, `ResponseHeaders`, `URL`, `MaxRedirects`, `RespBodyMax`, `Req`, `State`, `initReq`, `ClientCallbacks` | Describe submitted GET requests and implement the single protocol-neutral response callback contract. |
+| Workload selection | `RequestHeaders`, `ResponseHeaders`, `URL`, `MaxRedirects`, `RespBodyMax`, `Req`, `State`, `initReq`, `ClientCallbacks` | Describe submitted GET and typed-JSON PUT requests and implement the single protocol-neutral response callback contract. |
 | Workload-specific request/response handling | `redirectStatus`, `resetResponse` | Interpret response status for output policy and reset application response state after a library-managed redirect. |
 | Output-file handling | `HdrString`, `outputPath`, `closeBody`, `truncateOutputPath` | Select, open, truncate, write, and close response output files. |
 | Reporting | `printMemDiag`, `hotLog`, `ReqLogCtx`, `reqLogCtx`, `reqLogPrefix`, `logFraming`, `logConnected_`, `logConnected` | Format application, framing, connection, memory, hash, and heap diagnostics. |
@@ -20,6 +21,12 @@ All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 consumption. It delegates output operations and reporting to the separately
 classified helpers above; it owns no routing, attempt, transport, parser,
 builder, pool, redirect, fallback, or lifecycle mechanism.
+
+## `ZhttpPut.hh`
+
+| Category | Top-level declarations | Application responsibility |
+| --- | --- | --- |
+| Workload-specific request/response handling | `String`, `Record`, `Record::JSON`, `equals`, `load` | Define the shared typed JSON PUT record and its `ZfJSON` encode/decode validation. |
 
 ## `zhttpd.cc`
 
@@ -50,7 +57,8 @@ not own listener state or lifecycle decisions.
 The automated `ZhttpBoundaryTest.sh` rejects native transport headers, internal
 link calls, parser/builder selection, HPACK/H2 frame/session/wire code,
 application-local ALPN manipulation, discovery/cache/pool machinery, blocking
-coordination, and program-local engine/runtime coordinators in this closure.
+coordination, old borrowed-span body callbacks, and program-local
+engine/runtime coordinators in this closure.
 It also derives executable sources from `Makefile.am` and quoted local-header
 edges from the reviewed files, rejecting any unreviewed addition to the
 program-only closure.

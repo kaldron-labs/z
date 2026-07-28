@@ -54,6 +54,8 @@ ZtEnumStruct(ParserState, int8_t,
   Initial,		// expecting first HEADERS frame
   Body,		// after initial HEADERS; accepting DATA or trailers
   Trailers,		// trailing HEADERS received; no more frames allowed
+  Tunnel,		// Extended CONNECT ordered payload
+  RemoteClosed,	// tunnel FIN received after all payload
   Complete,		// stream FIN / closed cleanly
   Cancelled,	// RESET_STREAM / STOP_SENDING / app cancellation
   Error);		// invalid frame sequence or decode failure
@@ -507,6 +509,8 @@ public:
     if (key == 0x01)
 	if (!impl()->qpackTxMaxCapacity(value))
 	  m_streamState = StreamState::Error;
+    if (key == 0x08 && value > 1)
+      m_streamState = StreamState::Error;
   }
   void goaway(uint64_t) { }
   QPackRxTable *qpackRx() { return nullptr; }
@@ -555,6 +559,10 @@ public:
     ZuStringT<"content-length">, void>;
   static constexpr uint64_t MaxBody = MaxBody_;
   using State = ParserState;
+
+  void requestMethod(Method::T method) { m_requestMethod = method; }
+  void extendedConnect(bool value) { m_extendedConnect = value; }
+  void tunnel() { m_state = State::Tunnel; }
 
   void h3(
     QPackRxTable *rx, void *cxn, QPackWriteFn decoderWrite,
@@ -718,6 +726,8 @@ private:
     FieldSectionPrefix prefix;
     FieldState fields;
     fields.trailers(!initial);
+    fields.extendedConnect(m_extendedConnect);
+    if constexpr (!Request) fields.requestMethod(m_requestMethod);
     bool ok = true;
     int used = QPack::decodeFieldSection(
 	payload, rx,
@@ -735,11 +745,18 @@ private:
 	if (!impl()->qpackDecoderWrite(ZuBSpan{ack}))
 	  return Fields::Invalid;
     }
-    return fields.finish(
+    auto section = fields.finish(
       [this](Method::T method, ZuBSpan path) {
 	impl()->operation(method, path);
       },
       [this](unsigned status) { impl()->status(status); });
+    if constexpr (Request)
+      if (section == Fields::Final)
+	if (ZuCSpan protocol = fields.protocol())
+	  impl()->protocol(protocol);
+    if (section != Fields::Invalid)
+      impl()->headers(section, false);
+    return section;
   }
 
   bool bodyComplete_() const {
@@ -755,7 +772,7 @@ private:
 	  auto section = parseFields_(payload, true);
 	  if (section == Fields::Invalid) return false;
 	  if (section == Fields::Informational) return true;
-	  m_state = State::Body;
+	  if (m_state != State::Tunnel) m_state = State::Body;
 	  return true;
 	}
 	if (m_state != State::Body) return false;
@@ -787,6 +804,15 @@ private:
   }
 
   bool processDataPayload_(ZuCSpan payload) {
+    if (m_state == State::Tunnel) {
+      bool ok = m_bodyRx.offer(payload, false,
+	[this](auto &rx) { impl()->tunnelData(rx); });
+      if (!ok) {
+	m_bodyRx.cancel();
+	impl()->tunnelReset();
+      }
+      return ok;
+    }
     if (m_state != State::Body) return false;
     if (payload.length() > MaxBody ||
 	  m_bodyLen > MaxBody - payload.length())
@@ -794,8 +820,8 @@ private:
     m_bodyLen += payload.length();
     if (m_contentLen >= 0 && m_bodyLen > uint64_t(m_contentLen))
 	return false;
-    impl()->body(payload);
-    return true;
+    return m_bodyRx.offer(payload, false,
+      [this](auto &rx) { impl()->body(rx); });
   }
 
   template <typename Stream, typename Rx>
@@ -817,7 +843,17 @@ public:
   // top-level process
   template <typename Stream>
   State::T process(Stream &stream) {
-    if (stream.resetReceived()) {
+    if (m_state == State::Complete ||
+	m_state == State::Cancelled ||
+	m_state == State::Error)
+      return m_state;
+    if (stream.resetReceived() ||
+	(stream.stopReceived() &&
+	  (m_state == State::Tunnel || m_state == State::RemoteClosed))) {
+	if (m_state == State::Tunnel || m_state == State::RemoteClosed) {
+	  m_bodyRx.cancel();
+	  impl()->tunnelReset();
+	}
 	m_state = State::Cancelled;
 	complete_(m_state);
 	return m_state;
@@ -978,13 +1014,22 @@ public:
     } while (consumed);
 
     if (streamComplete_(stream, rx)) {
-	if (m_state == State::Initial)
+	if (m_state == State::Tunnel) {
+	  if (!m_bodyRx.finish())
+	    m_state = State::Error;
+	  else {
+	    m_state = State::RemoteClosed;
+	    impl()->tunnelEnd();
+	  }
+	} else if (m_state == State::Initial)
 	  m_state = State::Error;
 	else if (!bodyComplete_())
 	  m_state = State::Error;
 	else if (m_state != State::Error)
 	  m_state = State::Complete;
     }
+    if (m_state == State::Complete && !m_bodyRx.finish())
+      m_state = State::Error;
     if (m_state == State::Complete ||
 	  m_state == State::Cancelled ||
 	  m_state == State::Error)
@@ -993,9 +1038,12 @@ public:
   }
 
   void reset() {
+    m_bodyRx.reset();
     m_state = State::Initial;
     m_contentLen = -1;
     m_bodyLen = 0;
+    m_requestMethod = -1;
+    m_extendedConnect = false;
     m_frameState = FrameState::Type;
     m_varLen = m_varBytes = 0;
     m_frameType = m_frameLen = m_frameOff = 0;
@@ -1010,7 +1058,14 @@ public:
   template <typename Key, typename Value> void header() { }
   void header(ZuBSpan, ZuBSpan) { }
   void contentLength(uint64_t) { }
-  void body(ZuBSpan) { }
+  void protocol(ZuBSpan) { }
+  void headers(Fields::Section, bool) { }
+  template <typename Rx>
+  void body(Rx &rx) { bodyDrain(rx); }
+  template <typename Rx>
+  void tunnelData(Rx &rx) { bodyDrain(rx); }
+  void tunnelEnd() { }
+  void tunnelReset() { }
   void complete(State::T) { }
   bool rxComplete() const { return impl()->finReceived(); }
   QPackRxTable *qpackRx() {
@@ -1024,6 +1079,8 @@ private:
   // Rx thread exclusive
   int64_t		m_contentLen = -1;
   uint64_t		m_bodyLen = 0;
+  BodyRx		m_bodyRx;
+  Method::T		m_requestMethod = -1;
   State::T		m_state = State::Initial;
   FrameState::T	m_frameState = FrameState::Type;
   unsigned		m_varLen = 0;
@@ -1038,6 +1095,7 @@ private:
   uint64_t		m_streamID = 0;
   uint64_t		m_h3Error = 0;
   bool			m_complete = false;
+  bool			m_extendedConnect = false;
 };
 
 // QUIC variable-length integer and HTTP/3 field encoding
@@ -1202,11 +1260,20 @@ template <typename Lower>
 struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
   using Base = ZiTxLayer<DataStream<Lower>, Lower>;
 
-  DataStream(Lower &lower) : Base(lower, 9, 0) { }
+  DataStream(Lower &lower, uint64_t remaining = uint64_t(-1)) :
+    Base(lower, 9, 0), m_remaining{remaining} { }
 
   ~DataStream() { this->flush(); }
 
   void prepareBuf_(ZiIOBuf *buf, bool) {
+    if (m_remaining != uint64_t(-1)) {
+      if (ZuUnlikely(m_remaining < buf->length)) {
+	m_valid = false;
+	buf->length = unsigned(m_remaining);
+      }
+      m_remaining -= buf->length;
+    }
+    m_produced += buf->length;
     uint8_t hdr[16];
     using FrameHdr = ZtArray<uint8_t,
 	ZtArrayHeapID<"Zhttp.H3.FrameHdr">>;
@@ -1219,10 +1286,25 @@ struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
     buf->rewind(frameHdr.length());
     memcpy(buf->data(), hdr, frameHdr.length());
   }
+  uint64_t produced() const { return m_produced; }
+  bool valid() const { return m_valid; }
+  bool complete() const {
+    return m_valid &&
+      (m_remaining == uint64_t(-1) || !m_remaining);
+  }
+
+private:
+  uint64_t	m_remaining;
+  uint64_t	m_produced = 0;
+  bool		m_valid = true;
 };
 
 template <typename Lower>
 auto dataStream(Lower &lower) { return DataStream<Lower>(lower); }
+template <typename Lower>
+auto dataStream(Lower &lower, uint64_t length) {
+  return DataStream<Lower>(lower, length);
+}
 
 // HTTP/3 message builder
 template <
@@ -1230,7 +1312,7 @@ template <
   typename Headers_ = ZuTypeList<>,
   typename Trailers_ = ZuTypeList<>,	// ignored if not chunked
   bool HasBody_ = false,		// has a body
-  bool = false>			// ignored for HTTP/3
+  bool Streaming_ = false>
 class Builder {
 public:
   using QPackWriteFn = bool (*)(void *, ZuBSpan);
@@ -1246,14 +1328,16 @@ public:
   using Headers = Headers_;
   using Trailers = Trailers_;
   enum { HasBody = HasBody_ };
+  enum { Streaming = Streaming_ };
 
   void h3(
     QPackTxTable *tx, void *encoder, QPackWriteFn encoderWrite,
-    uint64_t streamID) {
+    uint64_t streamID, bool peerExtendedConnect = false) {
     m_qpackTx = tx;
     m_qpackEncoder = encoder;
     m_qpackEncoderWrite = encoderWrite;
     m_streamID = streamID;
+    m_peerExtendedConnect = peerExtendedConnect;
   }
 
 private:
@@ -1397,7 +1481,7 @@ private:
 
   template <typename Build>
   bool contentLength_(Build &build) {
-    if constexpr (HasBody) {
+    if constexpr (HasBody && !Streaming) {
 	char buf[32];
 	build.field("content-length", uintSpan_(impl()->contentLength(), buf));
 	return build.ok;
@@ -1542,25 +1626,36 @@ private:
   // request
 public:
   template <typename Stream>
-  void request(Stream &stream) {
-    writeHeaders_(stream, [this](auto &build) {
-	impl()->operation([&build]<typename Path, typename Query>(
+  bool request(Stream &stream) {
+    bool valid = true;
+    writeHeaders_(stream, [this, &valid](auto &build) {
+	impl()->operation([this, &build, &valid]<typename Path, typename Query>(
 	    Method::T method, Path &&path, Query &&query) {
+	  ZuCSpan protocol;
+	  if (method == Method::CONNECT)
+	    impl()->protocol([&protocol]<typename P>(P &&value) {
+	      protocol = ZuCSpan{ZuFwd<P>(value)};
+	    });
+	  if (protocol && !m_peerExtendedConnect) {
+	    valid = false;
+	    return;
+	  }
 	  encodeMethod_(build, method);
-	});
-	build.field(":scheme", "https");
-	impl()->host([&build]<typename Host>(Host &&host) {
-	  build.field(":authority", ZuCSpan{ZuFwd<Host>(host)});
-	});
-	impl()->operation([&build]<typename Path, typename Query>(
-	    Method::T, Path &&path, Query &&query) {
+	  if (method == Method::CONNECT && !protocol) return;
+	  build.field(":scheme", "https");
 	  encodePath_(build, ZuCSpan{ZuFwd<Path>(path)},
 	    ZuCSpan{ZuFwd<Query>(query)});
+	  if (protocol) build.field(":protocol", protocol);
+	});
+	if (!valid) return false;
+	impl()->host([&build]<typename Host>(Host &&host) {
+	  build.field(":authority", ZuCSpan{ZuFwd<Host>(host)});
 	});
 	contentLength_(build);
 	headers_<Headers>(build);
 	return build.ok;
     });
+    return valid && m_qpackFailure == QPackBuildFailure::None;
   }
 
   // response
@@ -1578,7 +1673,19 @@ public:
 
   // body
   template <typename Stream>
-  auto body(Stream &stream) { return dataStream(stream); }
+  auto body(Stream &stream) {
+    if constexpr (Streaming)
+      return dataStream(stream);
+    else
+      return dataStream(stream, impl()->contentLength());
+  }
+  template <typename Stream>
+  auto body(Stream &stream, uint64_t remaining) {
+    if constexpr (Streaming)
+      return dataStream(stream);
+    else
+      return dataStream(stream, remaining);
+  }
 
   // finish
   template <typename Stream>
@@ -1599,6 +1706,7 @@ public:
   bool request() { return true; }
   template <typename L> void operation(L &&l) { l(Method::GET, "/", ""); }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
+  template <typename L> void protocol(L &&) { }
   unsigned status() { return 200; }
   template <typename L> void reason(L &&l) { l(""); }
   template <typename Key, typename L>
@@ -1634,6 +1742,7 @@ private:
   void			*m_qpackEncoder = nullptr;
   QPackWriteFn		m_qpackEncoderWrite = nullptr;
   uint64_t		m_streamID = 0;
+  bool			m_peerExtendedConnect = false;
 };
 
 } // namespace H3

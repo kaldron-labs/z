@@ -84,8 +84,10 @@ struct Agent :
     done.post();
   }
   void responseStatus(Request &, unsigned status_) { status = status_; }
-  void responseBody(Request &, ZuBSpan value) {
-    bodyBytes += value.length();
+  template <typename Rx>
+  void responseBody(Request &, Rx &rx) {
+    Zhttp::bodyEach(rx,
+      [this](ZuBSpan value) { bodyBytes += value.length(); });
   }
   template <typename Key>
   void responseHeader(Request &, ZuBSpan value) {

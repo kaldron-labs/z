@@ -71,6 +71,59 @@ struct App :
   bool		replayable = true;
 };
 
+struct BodyRequest {
+  Zhttp::URL	url;
+};
+
+struct BodyCursor {
+  uint64_t	offset = 0;
+};
+
+struct BodyApp :
+  public Zhttp::Agent<
+    BodyApp, BodyRequest, ZuTypeList<>, ZuTypeList<>, 1024,
+    Zhttp::Body::Fixed<BodyCursor>> {
+  using Base =
+    Zhttp::Agent<
+      BodyApp, BodyRequest, ZuTypeList<>, ZuTypeList<>, 1024,
+      Zhttp::Body::Fixed<BodyCursor>>;
+  static constexpr uint64_t Length = 1ULL<<30;
+
+  bool requestReplayable(const BodyRequest &) const { return false; }
+  bool requestReproducible(const BodyRequest &) const { return false; }
+  uint64_t requestContentLength(const BodyRequest &) const { return Length; }
+  BodyCursor requestBodyCursor(BodyRequest &) {
+    ++cursorCalls;
+    return {};
+  }
+  template <typename Tx>
+  int requestBody(
+    BodyRequest &, BodyCursor &cursor, Tx &tx, unsigned batch) {
+    unsigned call = ++producerCalls;
+    if (call == 1) producing.post();
+    unsigned n = batch;
+    uint64_t left = Length - cursor.offset;
+    if (n > left) n = unsigned(left);
+    unsigned produced = n;
+    while (n--) tx << 'x';
+    cursor.offset += produced;
+    return cursor.offset < Length ?
+      Zhttp::BodyProduce::More : Zhttp::BodyProduce::Done;
+  }
+  void completed(BodyRequest &, const Zhttp::Result &result) {
+    terminal = result;
+    completedCalls = producerCalls.load_();
+    done.post();
+  }
+
+  ZmAtomic<unsigned> producerCalls = 0;
+  ZmSemaphore	producing;
+  ZmSemaphore	done;
+  Zhttp::Result	terminal;
+  ZmAtomic<unsigned> cursorCalls = 0;
+  unsigned	completedCalls = 0;
+};
+
 ZiMxParams mxParams()
 {
   return ZiMxParams()
@@ -285,6 +338,134 @@ void timeout()
       app.events[app.events.length() - 1].type ==
 	Zhttp::AgentEventType::Stopping,
     "typed timeout completion and shutdown events");
+  app.final();
+  mx.stop();
+  ::close(fd);
+}
+
+void cancelBody()
+{
+  ZuTestScope(cancelBody);
+
+  uint16_t port;
+  int fd = listener(port);
+  ZuCHECK(fd >= 0 && port, "create body cancellation listener");
+  if (fd < 0) return;
+
+  ZiMultiplex mx{mxParams()};
+  ZuCHECK(mx.start(), "start body cancellation multiplexer");
+
+  BodyApp app;
+  Zhttp::AgentConfig config;
+  config
+    .concurrency(1).maxPending(1).bodyTxBatch(1)
+    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .tcp(true).tls(true).quic(false);
+  ZuCHECK(app.init(
+      Zhttp::EngineConfig{&mx, "3", "4"}, config,
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
+    "initialize body cancellation agent");
+  ZuCHECK(app.start(), "start body cancellation agent");
+
+  BodyRequest request;
+  ZtString<> url;
+  url << "http://127.0.0.1:" << port << '/';
+  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(),
+    "parse body cancellation URL");
+  app.submit(&request, 1);
+  ZuCHECK(app.producing.timedwait(Zm::now(10)) == 0,
+    "body producer starts");
+  app.cancel(request);
+  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
+    "mid-body cancellation completes");
+  app.stop();
+
+  ZuCHECK(app.terminal.code == Zhttp::ResultCode::Cancelled &&
+      app.terminal.requestBodyProduced ==
+	app.terminal.requestBodyCommitted &&
+      app.terminal.requestBodyCommitted &&
+      app.terminal.requestBodyReset ==
+	app.terminal.requestBodyCommitted &&
+      app.terminal.requestBodyDiscarded ==
+	BodyApp::Length - app.terminal.requestBodyProduced &&
+      !app.terminal.responseBodyReceived &&
+      !app.terminal.responseBodyConsumed &&
+      app.cursorCalls.load_() == 1 && app.completedCalls,
+    "mid-body cancellation returns one typed result");
+  ZuCHECK(app.producerCalls.load_() == app.completedCalls,
+    "no body producer callback follows terminal completion");
+
+  app.final();
+  mx.stop();
+  ::close(fd);
+}
+
+void stopBody()
+{
+  ZuTestScope(stopBody);
+
+  uint16_t port;
+  int fd = listener(port);
+  ZuCHECK(fd >= 0 && port, "create body shutdown listener");
+  if (fd < 0) return;
+
+  ZiMultiplex mx{mxParams()};
+  ZuCHECK(mx.start(), "start body shutdown multiplexer");
+
+  BodyApp app;
+  Zhttp::AgentConfig config;
+  config
+    .concurrency(1).maxPending(1).bodyTxBatch(1)
+    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .tcp(true).tls(true).quic(false);
+  ZuCHECK(app.init(
+      Zhttp::EngineConfig{&mx, "3", "4"}, config,
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
+    "initialize body shutdown agent");
+  ZuCHECK(app.start(), "start body shutdown agent");
+
+  BodyRequest request;
+  ZtString<> url;
+  url << "http://127.0.0.1:" << port << '/';
+  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(),
+    "parse body shutdown URL");
+  app.submit(&request, 1);
+  ZuCHECK(app.producing.timedwait(Zm::now(10)) == 0,
+    "body producer starts before shutdown");
+
+  ZmSemaphore stopDone;
+  ZmAtomic<unsigned> stopReturned = 0;
+  ZmAtomic<unsigned> stopSync = 0;
+  ZmAtomic<unsigned> stopFailed = 0;
+  app.stop([
+    &stopDone, &stopReturned, &stopSync, &stopFailed
+  ](bool ok) {
+    if (!stopReturned.load_()) ++stopSync;
+    if (!ok) ++stopFailed;
+    stopDone.post();
+  });
+  stopReturned = 1;
+
+  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0 &&
+      stopDone.timedwait(Zm::now(10)) == 0,
+    "mid-body shutdown drains request and engine");
+  ZuCHECK(!stopSync.load_() && !stopFailed.load_(),
+    "mid-body shutdown continuation is asynchronous and successful");
+  ZuCHECK(app.terminal.code == Zhttp::ResultCode::Cancelled &&
+      app.terminal.requestBodyProduced ==
+	app.terminal.requestBodyCommitted &&
+      app.terminal.requestBodyCommitted &&
+      app.terminal.requestBodyReset ==
+	app.terminal.requestBodyCommitted &&
+      app.terminal.requestBodyDiscarded ==
+	BodyApp::Length - app.terminal.requestBodyProduced &&
+      !app.terminal.responseBodyReceived &&
+      !app.terminal.responseBodyConsumed &&
+      app.cursorCalls.load_() == 1 && app.completedCalls,
+    "mid-body shutdown returns one typed result");
+  ZuCHECK(app.producerCalls.load_() == app.completedCalls,
+    "no body producer callback follows shutdown completion");
+
   app.final();
   mx.stop();
   ::close(fd);
@@ -645,6 +826,8 @@ int main(int argc, char **argv)
   (void)argv;
   ZuTestMain();
   ZuTestCall(cancel);
+  ZuTestCall(cancelBody);
+  ZuTestCall(stopBody);
   ZuTestCall(timeout);
   ZuTestCall(retry);
   ZuTestCall(redirect);

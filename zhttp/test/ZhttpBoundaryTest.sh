@@ -3,9 +3,9 @@
 set -eu
 
 echo 'TAP version 14'
-echo '1..6'
+echo '1..7'
 
-files='zhttp.cc zhttpd.cc Zhttpd.hh'
+files='zhttp.cc zhttpd.cc Zhttpd.hh ZhttpPut.hh'
 bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|HPack|H2::(Frame|Session|Wire)|H2_(Client|Server|Logical)|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Engines|Ztls::|\.alpn[[:space:]]*\(|ZmBlock|ZmSemaphore'
 
 if grep -En "$bad" $files >/dev/null; then
@@ -29,23 +29,32 @@ else
   exit 1
 fi
 
+if grep -En \
+    '(responseBody|requestBody|tunnelData|void[[:space:]]+body)[[:space:]]*\([^)]*ZuBSpan' \
+    $files >/dev/null; then
+  echo 'not ok 4 - executable closure excludes borrowed-span body callbacks'
+  exit 1
+fi
+echo 'ok 4 - executable closure excludes borrowed-span body callbacks'
+
 fixture=$(mktemp)
 trap 'rm -f "$fixture"' EXIT HUP INT TERM
 echo 'void violation() { link.disconnect_(); }' >"$fixture"
 if grep -Eq "$bad" "$fixture"; then
-  echo 'ok 4 - negative scan rejects representative violation'
+  echo 'ok 5 - negative scan rejects representative violation'
 else
-  echo 'not ok 4 - negative scan rejects representative violation'
+  echo 'not ok 5 - negative scan rejects representative violation'
   exit 1
 fi
 
 if test -f ZhttpBoundary.md &&
     grep -q 'zhttp.cc' ZhttpBoundary.md &&
     grep -q 'zhttpd.cc' ZhttpBoundary.md &&
-    grep -q 'Zhttpd.hh' ZhttpBoundary.md; then
-  echo 'ok 5 - executable closure has a retained manifest'
+    grep -q 'Zhttpd.hh' ZhttpBoundary.md &&
+    grep -q 'ZhttpPut.hh' ZhttpBoundary.md; then
+  echo 'ok 6 - executable closure has a retained manifest'
 else
-  echo 'not ok 5 - executable closure has a retained manifest'
+  echo 'not ok 6 - executable closure has a retained manifest'
   exit 1
 fi
 
@@ -59,11 +68,13 @@ headers=$(
   sed -n 's/^[[:space:]]*#include[[:space:]]*"\([^"]*\)".*/\1/p' \
     $files | sort -u
 )
+expected_headers='ZhttpPut.hh
+Zhttpd.hh'
 if test "$sources" = 'zhttp.cc zhttpd.cc' &&
-    test "$headers" = 'Zhttpd.hh'; then
-  echo 'ok 6 - reviewed manifest covers the complete program-only closure'
+    test "$headers" = "$expected_headers"; then
+  echo 'ok 7 - reviewed manifest covers the complete program-only closure'
 else
-  echo 'not ok 6 - unreviewed program-only source entered the closure'
+  echo 'not ok 7 - unreviewed program-only source entered the closure'
   echo "# sources: $sources"
   echo "# headers: $headers"
   exit 1

@@ -351,8 +351,6 @@ struct ZmHeapAllocSize<Size_, false, 0, true> : // larger than cache line size
   public ZuConstant<uint64_t,
     ((Size_ + Zm::CacheLineSize - 1) & ~(Zm::CacheLineSize - 1))> { };
 
-template <typename Cache> struct ZmHeap_Warmup { ZmHeap_Warmup(); };
-
 template <typename ID_, unsigned Size_, unsigned Align_, bool Sharded_>
 class ZmHeapBase {
 public:
@@ -363,27 +361,15 @@ public:
 
 private:
   using Cache = ZmHeapCacheT<ID, AllocSize, Align, Sharded>;
-  using Warmup = ZmHeap_Warmup<Cache>;
 
 public:
-  void *operator new(size_t) { (void)&m_warmup; return Cache::alloc(); }
+  void *operator new(size_t) { return Cache::alloc(); }
   void *operator new(size_t, void *p) noexcept { return p; }
   void operator delete(void *p) noexcept {
     if (ZuUnlikely(!p)) return;
     Cache::free(p);
   }
-
-private:
-  static Warmup		m_warmup;
 };
-
-// mitigate cold start
-template <typename Cache>
-ZmHeap_Warmup<Cache>::ZmHeap_Warmup() { Cache::warmup(); }
-
-template <typename ID, unsigned Size, unsigned Align, bool Sharded>
-inline typename ZmHeapBase<ID, Size, Align, Sharded>::Warmup
-ZmHeapBase<ID, Size, Align, Sharded>::m_warmup;
 
 ZuFalse ZmHeap_Disabled_(...); // default
 

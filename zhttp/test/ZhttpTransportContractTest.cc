@@ -8,6 +8,9 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZiRxStream.hh>
+#include <zlib/ZiTxStream.hh>
+
 #include <zlib/ZhttpService.hh>
 
 using namespace ZuTestUtil;
@@ -20,6 +23,129 @@ using QUIC = Zhttp::Transport_::Traits<Zhttp::QUIC>;
 
 struct Rx { };
 struct Tx { };
+
+struct BodyTx : public ZiTxStream<BodyTx> {
+  using Base = ZiTxStream<BodyTx>;
+
+  BodyTx(unsigned, unsigned, unsigned);
+
+  ZmRef<ZiIOBuf> allocBuf_(unsigned);
+  void sendBuf_(ZmRef<ZiIOBuf>, bool);
+};
+
+struct BodyRxOwner {
+  Zi::RxRefill rxRefill_();
+  ZuSpan<uint8_t> rxSpan_();
+  unsigned rxAdvance_(unsigned);
+  void rxCancel_();
+};
+using BodyRx = ZiRxLayer<BodyRxOwner>;
+
+struct Frame {
+  int64_t operator ()(ZuBSpan) const;
+};
+struct Data {
+  void operator ()(ZuSpan<uint8_t>) const;
+};
+
+template <typename Stream, typename = void>
+struct HasBodyTx : public ZuFalse { };
+template <typename Stream>
+struct HasBodyTx<Stream, decltype(
+  ZuDeclVal<Stream &>() << ZuDeclVal<ZuBSpan>(),
+  ZuDeclVal<Stream &>().flush(), void())> : public ZuTrue { };
+
+template <typename Stream, typename = void>
+struct HasFinalSend : public ZuFalse { };
+template <typename Stream>
+struct HasFinalSend<Stream, decltype(
+  ZuDeclVal<Stream &>().sendBuf_(
+    ZuDeclVal<ZmRef<ZiIOBuf>>(), ZuDeclVal<bool>()),
+  void())> : public ZuTrue { };
+
+template <typename Stream, typename = void>
+struct HasBodyRx : public ZuFalse { };
+template <typename Stream>
+struct HasBodyRx<Stream, decltype(
+  ZuDeclVal<Stream &>().input(),
+  ZuDeclVal<Stream &>().available(),
+  ZuDeclVal<Stream &>().consume(Frame{}, Data{}),
+  ZuDeclVal<Stream &>().complete(),
+  void())> : public ZuTrue { };
+
+struct MuxTx {
+  BodyTx body();
+  BodyTx body(uint64_t);
+};
+
+template <int Version> struct LinkTx;
+template <> struct LinkTx<Zhttp::Version::H1> {
+  BodyTx &txStream();
+};
+template <> struct LinkTx<Zhttp::Version::H2> {
+  MuxTx &txStream();
+};
+template <> struct LinkTx<Zhttp::Version::H3> {
+  BodyTx &txStream();
+};
+
+template <typename Profile>
+struct BodyLink : public LinkTx<Profile::HTTPVersion> {
+  BodyRx rxBody();
+};
+
+template <typename Message>
+struct BodyBuilder :
+  public Message::template Builder<
+    BodyBuilder<Message>, ZuTypeList<>, ZuTypeList<>, true, false> {
+  using Base = typename Message::template Builder<
+    BodyBuilder, ZuTypeList<>, ZuTypeList<>, true, false>;
+  using Base::body;
+  uint64_t contentLength() const { return 1; }
+};
+
+template <typename Link, typename Builder, typename = void>
+struct HasLinkBody : public ZuFalse { };
+template <typename Link, typename Builder>
+struct HasLinkBody<Link, Builder, decltype(
+  ZuDeclVal<Builder &>().body(ZuDeclVal<Link &>().txStream()),
+  ZuDeclVal<Link &>().rxBody(), void())> : public ZuTrue { };
+
+template <typename Profile>
+using ProfileBuilder =
+  BodyBuilder<Zhttp::MessageTraits<Profile>>;
+
+struct SyntheticProfile {
+  enum {
+    HTTPVersion = Zhttp::Version::H2,
+    Multiplexed = true
+  };
+};
+struct SyntheticTraits {
+  using Transport = void;
+  enum {
+    HTTPVersion = Zhttp::Version::H2,
+    Multiplexed = true
+  };
+};
+using SyntheticMessage =
+  Zhttp::MessageTraits<SyntheticProfile, SyntheticTraits>;
+using SyntheticBuilder = BodyBuilder<SyntheticMessage>;
+
+static_assert(HasBodyTx<BodyTx>{});
+static_assert(HasFinalSend<BodyTx>{});
+static_assert(HasBodyRx<BodyRx>{});
+static_assert(HasLinkBody<
+  BodyLink<Zhttp::H1TCP>, ProfileBuilder<Zhttp::H1TCP>>{});
+static_assert(HasLinkBody<
+  BodyLink<Zhttp::H1TLS>, ProfileBuilder<Zhttp::H1TLS>>{});
+static_assert(HasLinkBody<
+  BodyLink<Zhttp::H2TLS>, ProfileBuilder<Zhttp::H2TLS>>{});
+static_assert(HasLinkBody<
+  BodyLink<Zhttp::H3QUIC>, ProfileBuilder<Zhttp::H3QUIC>>{});
+static_assert(SyntheticMessage::Multiplexed);
+static_assert(HasLinkBody<
+  BodyLink<SyntheticProfile>, SyntheticBuilder>{});
 
 template <typename Profile, typename = void>
 struct HasProfileTraits : public ZuFalse { };
@@ -52,6 +178,229 @@ static_assert(Zhttp::Transport_::HasDisconnected<Link>{});
 using Contract =
   Zhttp::Transport_::LinkContract<Link, Rx, Zhttp::ConnectedInfo>;
 static_assert(sizeof(Contract) == 1);
+
+using TxBufAlloc =
+  ZiIOBufAlloc<64, 256, "Zhttp.Contract.TxBuf">;
+
+struct TxRequest {
+  ZuCSpan	body;
+  uint64_t	length = 0;
+  bool		hasBody = false;
+  bool		overproduce = false;
+};
+
+struct TxCursor {
+  unsigned	offset = 0;
+  unsigned	id = 0;
+};
+
+struct TxApp {
+  using BodyPolicy = Zhttp::Body::OptionalFixed<TxCursor>;
+
+  bool requestHasBody(const TxRequest &request) const {
+    return request.hasBody;
+  }
+  uint64_t requestContentLength(const TxRequest &request) const {
+    return request.length;
+  }
+  TxCursor requestBodyCursor(TxRequest &) {
+    return {0, ++cursorCalls};
+  }
+  unsigned requestBodyBatch() const { return 3; }
+  template <typename Tx_>
+  int requestBody(
+    TxRequest &request, TxCursor &cursor, Tx_ &tx, unsigned batch) {
+    ++producerCalls;
+    if (cursor.id != activeCursor) {
+      activeCursor = cursor.id;
+      ++cursorStarts;
+    }
+    unsigned remaining = request.body.length() - cursor.offset;
+    unsigned n = remaining > batch ? batch : remaining;
+    if (request.overproduce && remaining > n) ++n;
+    tx << ZuCSpan{request.body.data() + cursor.offset, n};
+    cursor.offset += n;
+    return cursor.offset == request.body.length() ?
+      Zhttp::BodyProduce::Done : Zhttp::BodyProduce::More;
+  }
+  template <typename L>
+  void requestOperation(TxRequest &, L &&l) {
+    l(Zhttp::Method::PUT, "/", "");
+  }
+  template <typename L>
+  void requestHost(TxRequest &, L &&l) { l("localhost"); }
+  template <typename L>
+  void requestProtocol(TxRequest &, L &&) { }
+  template <typename Key, typename L>
+  void requestHeader(TxRequest &, L &&l) { l(""); }
+
+  void responseStatus(auto &, TxRequest &, unsigned) { }
+  void responseContentLength(auto &, TxRequest &, uint64_t) { }
+  void responseChunked(auto &, TxRequest &) { }
+  void responseVersion(auto &, TxRequest &, ZuBSpan) { }
+  template <typename Key>
+  void responseHeader(auto &, TxRequest &, ZuBSpan) { }
+  void responseBody(auto &, TxRequest &, auto &) { }
+  template <typename State>
+  void responseComplete(auto &, TxRequest &, typename State::T) { }
+  bool responseFailed(const TxRequest &) const { return false; }
+
+  unsigned	cursorCalls = 0;
+  unsigned	producerCalls = 0;
+  unsigned	cursorStarts = 0;
+  unsigned	activeCursor = 0;
+};
+
+struct StreamTxApp : public TxApp {
+  using BodyPolicy = Zhttp::Body::OptionalStream<TxCursor>;
+
+  template <typename L>
+  void requestOperation(TxRequest &, L &&l) {
+    l(Zhttp::Method::POST, "/stream", "");
+  }
+};
+
+struct TxLink {
+  struct Stream : public ZiTxStream<Stream> {
+    using Base = ZiTxStream<Stream>;
+
+    Stream(TxLink &link_) : Base{64, 0, 0}, link{&link_} { }
+    Stream(Stream &&) = default;
+    Stream &operator =(Stream &&) = default;
+
+    ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+      ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
+      buf->skip = headRoom;
+      buf->length = 0;
+      return buf;
+    }
+    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+      link->wire << ZuCSpan{buf->cspan()};
+    }
+
+    TxLink	*link;
+  };
+
+  auto transmit(auto &) { return Stream{*this}; }
+  void finish() { ++finishes; }
+
+  ZtString<ZtStringHeapID<"Zhttp.Contract.Wire">> wire;
+  unsigned	finishes = 0;
+};
+
+void testBodyTx()
+{
+  ZuTestScope(testBodyTx);
+
+  using Message = Zhttp::ClientMessage<
+    TxApp, TxRequest, TxLink, Zhttp::H1TCP,
+    ZuTypeList<>, ZuTypeList<>, 1024>;
+
+  TxApp app;
+  TxLink link;
+  Message message{&app, &link};
+  TxRequest request{"abcdefgh", 8, true};
+  message.bind(&request);
+  message.startTx();
+  ZuCHECK(message.send() == Zhttp::BodySend::More,
+    "first bounded body turn did not suspend");
+  ZuCHECK(message.send() == Zhttp::BodySend::More,
+    "second bounded body turn did not suspend");
+  ZuCHECK(message.send() == Zhttp::BodySend::Complete,
+    "final bounded body turn did not complete");
+  auto commit = message.commit();
+  ZuCHECK(app.cursorCalls == 1 && app.producerCalls == 3 &&
+      commit.headers && commit.produced == 8 && commit.committed == 8 &&
+      !commit.reset && !commit.discarded && commit.final &&
+      link.finishes == 1,
+    "bounded body accounting mismatch");
+  ZuCHECK(link.wire.find("content-length: 8\r\n") >= 0 &&
+      link.wire.find("abcdefgh") >= 0,
+    "bounded body wire output mismatch");
+
+  unsigned wireLength = link.wire.length();
+  message.bind(&request);
+  message.startTx();
+  while (message.send() == Zhttp::BodySend::More);
+  ZuCSpan replay{
+    link.wire.data() + wireLength, link.wire.length() - wireLength};
+  ZuCHECK(app.cursorCalls == 2 && app.cursorStarts == 2 &&
+      replay.find("abcdefgh") >= 0,
+    "replayed attempt did not create a fresh byte-zero cursor");
+
+  wireLength = link.wire.length();
+  unsigned producerCalls = app.producerCalls;
+  TxRequest empty{{}, 0, false};
+  message.bind(&empty);
+  message.startTx();
+  ZuCHECK(message.send() == Zhttp::BodySend::Complete &&
+      app.cursorCalls == 2 && app.producerCalls == producerCalls,
+    "optional bodyless path created a cursor or producer turn");
+  ZuCSpan bodyless{
+    link.wire.data() + wireLength, link.wire.length() - wireLength};
+  ZuCHECK(bodyless.find("content-length:") < 0,
+    "bodyless request emitted body framing");
+
+  TxRequest short_{"abcdefgh", 9, true};
+  message.bind(&short_);
+  message.startTx();
+  ZuCHECK(message.send() == Zhttp::BodySend::More &&
+      message.send() == Zhttp::BodySend::More &&
+      message.send() == Zhttp::BodySend::Failed &&
+      message.commit().produced == 8 &&
+      message.commit().committed == 8 &&
+      message.commit().reset == 8 &&
+      message.commit().discarded == 1 &&
+      !message.commit().final,
+    "short fixed source was not rejected");
+
+  TxRequest over{"abcdefgh", 8, true, true};
+  message.bind(&over);
+  message.startTx();
+  ZuCHECK(message.send() == Zhttp::BodySend::Failed &&
+      message.commit().produced == 4 &&
+      message.commit().committed == 4 &&
+      message.commit().reset == 4 &&
+      message.commit().discarded == 4 &&
+      !message.commit().final,
+    "over-budget producer was not rejected");
+
+  request = {"abcdefgh", 8, true};
+  message.bind(&request);
+  message.startTx();
+  ZuCHECK(message.send() == Zhttp::BodySend::More,
+    "cancellation setup turn failed");
+  unsigned calls = app.producerCalls;
+  message.cancelTx();
+  ZuCHECK(message.send() == Zhttp::BodySend::Cancelled &&
+      app.producerCalls == calls &&
+      message.commit().produced == 3 &&
+      message.commit().committed == 3 &&
+      message.commit().reset == 3 &&
+      message.commit().discarded == 5,
+    "cancelled request invoked its producer again");
+
+  using StreamMessage = Zhttp::ClientMessage<
+    StreamTxApp, TxRequest, TxLink, Zhttp::H1TCP,
+    ZuTypeList<>, ZuTypeList<>, 1024>;
+  StreamTxApp streamApp;
+  TxLink streamLink;
+  StreamMessage streamMessage{&streamApp, &streamLink};
+  TxRequest streamRequest{"abcdefgh", 0, true};
+  streamMessage.bind(&streamRequest);
+  streamMessage.startTx();
+  ZuCHECK(streamMessage.send() == Zhttp::BodySend::More &&
+      streamMessage.send() == Zhttp::BodySend::More &&
+      streamMessage.send() == Zhttp::BodySend::Complete,
+    "streaming POST did not use bounded producer turns");
+  ZuCHECK(
+    streamLink.wire.find("POST /stream HTTP/1.1\r\n") >= 0 &&
+    streamLink.wire.find("transfer-encoding: chunked\r\n") >= 0 &&
+    streamLink.wire.find(
+      "00000003\r\nabc\r\n00000003\r\ndef\r\n"
+      "00000002\r\ngh\r\n0\r\n\r\n") >= 0,
+    "streaming POST chunk framing mismatch");
+}
 
 void testTraits()
 {
@@ -188,16 +537,21 @@ void testParams()
     .maxEndpoints = 7, .maxAliasDepth = 2};
   auto agent = Zhttp::AgentConfig{}
     .requestTimeout(13).maxAltSvc(11)
+    .bodyTxBatch(4096)
     .discoveryLimits(limits).altSvcCrossHost(true)
     .h2Policy(Zhttp::H2Policy::Disable);
   ZuCHECK(agent.requestTimeout() == 13 &&
       agent.maxAltSvc() == 11 && agent.altSvcCrossHost() &&
+      agent.bodyTxBatch() == 4096 &&
       agent.h2Policy() == Zhttp::H2Policy::Disable &&
       agent.discoveryLimits().maxRecords == 3 &&
       agent.discoveryLimits().maxHints == 5 &&
       agent.discoveryLimits().maxEndpoints == 7 &&
       agent.discoveryLimits().maxAliasDepth == 2,
     "agent discovery bounds mapping mismatch");
+  ZuCHECK(
+    Zhttp::AgentConfig{}.bodyTxBatch() == Zhttp::BodyDeflt::TxBatch,
+    "body stream policy defaults mismatch");
   ZuCHECK(
     Zhttp::ServiceConfig{}.tlsConfig().policy() ==
       Zhttp::H2Policy::Prefer &&
@@ -240,6 +594,51 @@ void testMetadata()
     "migration configuration vocabulary mismatch");
 }
 
+void testBodyRx()
+{
+  ZuTestScope(testBodyRx);
+
+  uint8_t bytes[] = {'a', 'b', 'c', 'd', 'e'};
+  Zhttp::BodyRx body;
+  unsigned calls = 0;
+  bool ok = body.offer({bytes, unsigned(sizeof(bytes))}, true,
+    [&calls](auto &rx) {
+      ++calls;
+      ZuCHECK(rx.input() && rx.available() == 5,
+	"body input was not admitted");
+      ZuCHECK(rx.consume(
+	  [](ZuBSpan) -> int64_t { return 2; },
+	  [](ZuBSpan span) {
+	    ZuCHECK(ZuCSpan(span) == "ab",
+	      "first partial body consume mismatch");
+	  }) == 2,
+	"first partial body consume failed");
+      ZuCHECK(rx.consume(
+	  [](ZuBSpan span) -> int64_t { return span.length(); },
+	  [](ZuBSpan span) {
+	    ZuCHECK(ZuCSpan(span) == "cde",
+	      "second partial body consume mismatch");
+	  }) == 3,
+	"second partial body consume failed");
+    });
+  ZuCHECK(ok && calls == 1 && body.consumed() == sizeof(bytes) &&
+      body.complete(),
+    "body receive layer did not complete exact consumption");
+
+  body.reset();
+  ok = body.offer({bytes, unsigned(sizeof(bytes))}, false,
+    [](auto &rx) {
+      ZuCHECK(rx.input(), "body input was not admitted before cancellation");
+      (void)rx.consume(
+	[](ZuBSpan) -> int64_t { return 1; },
+	[](ZuBSpan) { });
+    });
+  ZuCHECK(!ok && body.consumed() == 1,
+    "partial callback return was not rejected");
+  body.cancel();
+  ZuCHECK(!body.consumed(), "cancelled body retained consumed state");
+}
+
 } // namespace ZhttpTransportContractTest_
 
 int main(int argc, char **argv)
@@ -251,5 +650,7 @@ int main(int argc, char **argv)
   ZuTestCall(testTraits);
   ZuTestCall(testParams);
   ZuTestCall(testMetadata);
+  ZuTestCall(testBodyTx);
+  ZuTestCall(testBodyRx);
   return 0;
 }

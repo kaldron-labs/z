@@ -296,6 +296,7 @@ struct ClientStream :
     return logical ? logical->process_(rx) : -1;
   }
   H3Cxn &h3Cxn() const { return this->link()->h3; }
+  void quicReset(uint64_t error) { Base::reset(error); }
 
   ZmRef<Logical>	logical;
 };
@@ -311,6 +312,8 @@ struct ClientSession :
   using H3Cxn = H3::Cxn<ClientSession, StreamRef>;
   using Pending =
     ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H3.ClientPending">>;
+  using Waiting =
+    ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H3.ClientWaiting">>;
   using Streams =
     ZtArray<StreamRef, ZtArrayHeapID<"Zhttp.H3.ClientStreams">>;
   using Base::Base;
@@ -327,12 +330,19 @@ struct ClientSession :
     open(ZuMv(logical));
   }
   void open(ZmRef<Logical> logical) {
-    auto stream = this->stream(Zquic::StreamType::Duplex);
-    if (!stream) {
-      logical->connectFailed_(false);
-      logical->session({});
-      return;
-    }
+    waiting.push(ZuMv(logical));
+    auto session = ZmMkRef(this);
+    this->app()->txRun([session]() mutable {
+      auto stream = session->stream(Zquic::StreamType::Duplex);
+      if (!stream) return;
+      session->app()->rxRun([
+	session = ZuMv(session), stream = ZuMv(stream)
+      ]() mutable {
+	session->streamed(ZuMv(stream));
+      });
+    });
+  }
+  void opened(ZmRef<Logical> logical, StreamRef stream) {
     stream->logical = logical;
     streams.push(stream);
     logical->stream(stream.ptr());
@@ -346,10 +356,17 @@ struct ClientSession :
 
   void connected(Zquic::Connected info) {
     if (info.version != Zquic::Version1 || info.alpn != "h3" ||
-	!h3.openLocal(*this)) {
+	!h3.openLocal(
+	  *this, H3::Params{},
+	  this->app()->user()->quicConfig().extendedConnect())) {
       connectFailed(false);
       return;
     }
+    if (h3.localExtendedConnect) return;
+    h3Ready();
+  }
+  void h3Ready() {
+    if (ready) return;
     ready = true;
     unsigned n = pending.length();
     for (unsigned i = 0; i < n; ++i)
@@ -380,6 +397,11 @@ struct ClientSession :
       if (logical) logical->connectFailed_(false);
     }
     pending.length(0);
+    for (unsigned i = 0; i < waiting.length(); ++i) {
+      auto logical = ZuMv(waiting[i]);
+      if (logical) logical->connectFailed_(false);
+    }
+    waiting.length(0);
     this->app()->sessionDown();
   }
   void connectFailed(bool transient) {
@@ -390,6 +412,11 @@ struct ClientSession :
       if (logical) logical->connectFailed_(transient);
     }
     pending.length(0);
+    for (unsigned i = 0; i < waiting.length(); ++i) {
+      auto logical = ZuMv(waiting[i]);
+      if (logical) logical->connectFailed_(transient);
+    }
+    waiting.length(0);
     Base::disconnect();
   }
   void close(Logical *logical, Stream *stream) {
@@ -406,6 +433,16 @@ struct ClientSession :
   void finish(Stream *stream) {
     this->send(ZmMkRef(stream), "", true);
   }
+  bool h3PeerCap() const {
+    if (this->app()->txInvoked()) return h3PeerCapTx;
+    return h3.peerExtendedConnect;
+  }
+  void h3PeerCap(bool value) {
+    auto session = this;
+    this->app()->txRun([session, value]() {
+      session->h3PeerCapTx = value;
+    });
+  }
   bool migrate(const ZiSockAddr &local) {
     if (migrationDone) return false;
     if (migrationRequested) return true;
@@ -418,13 +455,10 @@ struct ClientSession :
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical close outside Rx thread", return);
     if (!stream) {
-      for (unsigned i = 0; i < pending.length(); ++i)
-	if (pending[i].ptr() == logical.ptr()) {
-	  pending.splice(i, 1);
-	  logical->session({});
-	  logical->disconnected_(false);
-	  break;
-	}
+      if (!remove_(pending, logical.ptr()))
+	(void)remove_(waiting, logical.ptr());
+      logical->session({});
+      logical->disconnected_(false);
       return;
     }
     if (stream->logical.ptr() != logical.ptr()) return;
@@ -437,10 +471,38 @@ struct ClientSession :
       }
     logical->disconnected_(false);
   }
-  void streamed(StreamRef) { }
+  void streamed(StreamRef stream) {
+    if (!stream || stream->id() < 0 ||
+	Zquic::StreamID::server(uint64_t(stream->id())) ||
+	Zquic::StreamID::uni(uint64_t(stream->id())))
+      return;
+    if (!waiting) {
+      (void)this->send(stream, "", true);
+      return;
+    }
+    auto logical = ZuMv(waiting[0]);
+    waiting.splice(0, 1);
+    opened(ZuMv(logical), ZuMv(stream));
+  }
+  void streamResetReceived(StreamRef stream, uint64_t, uint64_t) {
+    if (stream) (void)stream->process(stream->rxStream());
+  }
+  void streamStopSendingReceived(StreamRef stream, uint64_t) {
+    if (stream) (void)stream->process(stream->rxStream());
+  }
   H3::QPackTxTable *qpackTx() { return &h3Tx; }
 
 private:
+  template <typename List>
+  static bool remove_(List &list, Logical *logical) {
+    for (unsigned i = 0; i < list.length(); ++i)
+      if (list[i].ptr() == logical) {
+	list.splice(i, 1);
+	return true;
+      }
+    return false;
+  }
+
   void migrationComplete_() {
     migrationDone = true;
     Pending logical;
@@ -456,6 +518,7 @@ public:
   alignas(Zm::CacheLineSize)
   H3Cxn		h3;
   Pending		pending;
+  Waiting		waiting;
   Streams		streams;
   Zquic::Host		host;
   uint16_t		port = 0;
@@ -468,6 +531,7 @@ public:
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   H3::QPackTxTable	h3Tx;
+  bool			h3PeerCapTx = false;
 };
 
 template <typename App> struct ServerSession;
@@ -566,6 +630,7 @@ struct ServerStream :
     return logical->process_(rx);
   }
   H3Cxn &h3Cxn() const { return this->link()->h3; }
+  void quicReset(uint64_t error) { Base::reset(error); }
 
   ZmRef<Logical>	logical;
 };
@@ -588,7 +653,9 @@ struct ServerSession :
 
   void connected(Zquic::Connected info) {
     if (info.version != Zquic::Version1 || info.alpn != "h3" ||
-	!h3.openLocal(*this))
+	!h3.openLocal(
+	  *this, H3::Params{},
+	  this->app()->user()->quicConfig().extendedConnect()))
       Base::disconnect(H3::SettingsError);
   }
   void disconnected(bool peer) {
@@ -604,8 +671,24 @@ struct ServerSession :
     this->app()->user()->release();
   }
   void streamed(StreamRef) { }
+  void streamResetReceived(StreamRef stream, uint64_t, uint64_t) {
+    if (stream) (void)stream->process(stream->rxStream());
+  }
+  void streamStopSendingReceived(StreamRef stream, uint64_t) {
+    if (stream) (void)stream->process(stream->rxStream());
+  }
   void finish(Stream *stream) {
     this->send(ZmMkRef(stream), "", true);
+  }
+  bool h3PeerCap() const {
+    if (this->app()->txInvoked()) return h3PeerCapTx;
+    return h3.peerExtendedConnect;
+  }
+  void h3PeerCap(bool value) {
+    auto session = this;
+    this->app()->txRun([session, value]() {
+      session->h3PeerCapTx = value;
+    });
   }
   H3::QPackTxTable *qpackTx() { return &h3Tx; }
 
@@ -619,6 +702,7 @@ struct ServerSession :
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   H3::QPackTxTable	h3Tx;
+  bool			h3PeerCapTx = false;
 };
 
 } // namespace H3_
@@ -631,6 +715,7 @@ class ClientLink<App, Impl, H3QUIC> : public ZmObject {
 
 public:
   enum { TLS = 1, Multiplexed = 1 };
+  using Protocol = QUIC;
 
   ClientLink(App *app) : m_app{app} {
 #ifdef ZmObject_DEBUG
@@ -669,6 +754,31 @@ public:
     connect(endpoint.tlsName, endpoint.port, endpoint.ip);
   }
   auto txStream() { return m_stream->txStream(); }
+  bool tunnelPeerCap() const {
+    return m_session && m_session->h3PeerCap();
+  }
+  bool tunnelLocalCap() const {
+    return m_session && m_session->h3.localExtendedConnect;
+  }
+  template <typename L>
+  void tunnelSend(L &&l) {
+    if (!m_stream) return;
+    auto tx = m_stream->txStream();
+    auto body = H3::dataStream(tx);
+    ZuFwd<L>(l)(body);
+    body.flush();
+  }
+  void tunnelEnd() {
+    if (m_session && m_stream) m_session->finish(m_stream);
+  }
+  void tunnelReset() {
+    if (!m_stream) return;
+    auto stream = ZmMkRef(m_stream);
+    m_stream->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
+      stream->stop(H3::RequestCancelled);
+      stream->quicReset(H3::RequestCancelled);
+    });
+  }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {
     using H3Cxn = ZuDecay<decltype(m_session->h3)>;
@@ -681,6 +791,7 @@ public:
 	static_cast<H3Cxn *>(ptr)->error(error);
       },
       uint64_t(m_stream->id()));
+    parser.extendedConnect(m_session->h3.localExtendedConnect);
     (void)rx;
     return parser.process(*m_stream);
   }
@@ -692,7 +803,7 @@ public:
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackEncoderWrite(span);
       },
-      uint64_t(m_stream->id()));
+      uint64_t(m_stream->id()), m_session->h3PeerCap());
     return m_stream->txStream();
   }
   void finish() {
@@ -819,6 +930,7 @@ class ServerLink<App, Impl, H3QUIC, Session> : public ZmObject {
 
 public:
   enum { TLS = 1, Multiplexed = 1 };
+  using Protocol = QUIC;
 
   ServerLink(
     App *app, NativeSession *native, NativeStream *stream, ZuCSpan remote) :
@@ -836,6 +948,31 @@ public:
   ZuCSpan remote() const { return m_remote; }
   Session &session() { return m_session; }
   auto txStream() { return m_stream->txStream(); }
+  bool tunnelPeerCap() const {
+    return m_native && m_native->h3PeerCap();
+  }
+  bool tunnelLocalCap() const {
+    return m_native && m_native->h3.localExtendedConnect;
+  }
+  template <typename L>
+  void tunnelSend(L &&l) {
+    if (!m_stream) return;
+    auto tx = m_stream->txStream();
+    auto body = H3::dataStream(tx);
+    ZuFwd<L>(l)(body);
+    body.flush();
+  }
+  void tunnelEnd() {
+    if (m_native && m_stream) m_native->finish(m_stream);
+  }
+  void tunnelReset() {
+    if (!m_stream) return;
+    auto stream = ZmMkRef(m_stream);
+    m_stream->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
+      stream->stop(H3::RequestCancelled);
+      stream->quicReset(H3::RequestCancelled);
+    });
+  }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {
     using H3Cxn = ZuDecay<decltype(m_native->h3)>;
@@ -848,6 +985,7 @@ public:
 	static_cast<H3Cxn *>(ptr)->error(error);
       },
       uint64_t(m_stream->id()));
+    parser.extendedConnect(m_native->h3.localExtendedConnect);
     (void)rx;
     return parser.process(*m_stream);
   }
@@ -859,7 +997,7 @@ public:
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackEncoderWrite(span);
       },
-      uint64_t(m_stream->id()));
+      uint64_t(m_stream->id()), m_native->h3PeerCap());
     return m_stream->txStream();
   }
   void finish() {
@@ -902,6 +1040,7 @@ public:
   using Base::init;
 
   bool init(const EngineConfig &engine, const QUICConfig &config) {
+    m_config = config;
     if (!Base::init(Traits::serverParams(engine, config))) return false;
     Base::faults(config);
     return true;
@@ -915,6 +1054,10 @@ public:
   void connected(Link &, ConnectedInfo) { }
   template <typename Link>
   void disconnected(Link &, bool) { }
+  const QUICConfig &quicConfig() const { return m_config; }
+
+private:
+  QUICConfig	m_config;
 };
 
 } // namespace Zhttp

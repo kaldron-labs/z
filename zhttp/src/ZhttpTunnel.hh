@@ -22,28 +22,14 @@ class Tunnel {
 public:
   Tunnel(Link &link) : m_link{&link} { }
 
-  bool peerCap() const {
-    auto tx = m_link->txStream();
-    return tx.extendedConnect();
-  }
-  bool localCap() const {
-    auto tx = m_link->txStream();
-    return tx.localExtendedConnect();
-  }
+  bool peerCap() const { return m_link->tunnelPeerCap(); }
+  bool localCap() const { return m_link->tunnelLocalCap(); }
 
   template <typename L>
-  void send(L &&l) {
-    auto tx = m_link->txStream();
-    auto body = tx.body();
-    ZuFwd<L>(l)(body);
-    body.flush();
-  }
+  void send(L &&l) { m_link->tunnelSend(ZuFwd<L>(l)); }
 
-  void end() {
-    auto tx = m_link->txStream();
-    tx.end();
-  }
-  void reset() { m_link->disconnect(); }
+  void end() { m_link->tunnelEnd(); }
+  void reset() { m_link->tunnelReset(); }
 
 private:
   Link	*m_link = nullptr;

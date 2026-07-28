@@ -29,7 +29,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZhttpFallbackTest_ {
 
 constexpr unsigned FallbackBufSize = 8<<10;
 constexpr unsigned FallbackMaxBody = 64<<10;
@@ -106,7 +106,10 @@ struct ResponseRx :
 
   void status(unsigned v) { statusSeen = v; }
   void contentLength(uint64_t v) { contentLengthSeen = v; }
-  void body(ZuBSpan span) { bodyData << span; }
+  template <typename Rx>
+  void body(Rx &rx) {
+    Zhttp::bodyEach(rx, [this](ZuBSpan span) { bodyData << span; });
+  }
   void complete(Zhttp::H1::ParserState::T state_) { completeState = state_; }
 
   int				statusSeen = -1;
@@ -310,7 +313,9 @@ bool waitServerOK_(pid_t) { return false; }
 bool runCurlZhttpH1_(unsigned, ZuCSpan) { return false; }
 #endif
 
-} // namespace
+} // namespace ZhttpFallbackTest_
+
+using namespace ZhttpFallbackTest_;
 
 void testInteropPrerequisites()
 {

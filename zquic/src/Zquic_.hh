@@ -658,12 +658,12 @@ private:
 
   template <typename ImplRef_>
   void disconnected_0(Cxn_ *cxn, ImplRef_ impl_) {
-    m_mx->rxRun([impl = ZuMv(impl_), cxn = ZmMkRef(cxn)]() mutable {
+    m_mx->rxRun([impl = ZuMvPtr(impl_), cxn = ZmMkRef(cxn)]() mutable {
       auto fns = static_cast<Impl *>(impl)->
 	Endpoint_::disconnected_(cxn.ptr());
       auto mx = cxn->mx();
       mx->txRun([
-	impl = ZuMv(impl), cxn = ZuMv(cxn), fns = ZuMv(fns)
+	impl = ZuMvPtr(impl), cxn = ZuMv(cxn), fns = ZuMv(fns)
       ]() mutable {
 	if constexpr (Impl::EndpointRef) impl = nullptr;
 	cxn = nullptr;

@@ -12,7 +12,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZhttpH3PushTest_ {
 
 ZuDerive(RxQueue,
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf,
@@ -87,6 +87,7 @@ struct MsgInput : public Zhttp::H3::Parser<MsgInput<Request>, Request> {
 
   RxStream &rxStream() { return rx; }
   bool resetReceived() const { return false; }
+  bool stopReceived() const { return false; }
   bool finReceived() const { return fin; }
   void complete(State::T state) {
     completeState = state;
@@ -163,7 +164,9 @@ struct CloseLink {
   unsigned	calls = 0;
 };
 
-} // namespace
+} // namespace ZhttpH3PushTest_
+
+using namespace ZhttpH3PushTest_;
 
 static void testControlFrames()
 {

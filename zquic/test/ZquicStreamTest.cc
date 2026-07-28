@@ -2333,7 +2333,6 @@ void testStreamCountLimits()
   ZuCHECK(peerBidi && bidiServer->localStreamLimit(Zquic::StreamType::Duplex) == 1,
     "peer bidi stream returned stream-count credit before local FIN");
   unsigned queuedControls = bidiServer->queuedControlFrames();
-  unsigned queuedFlushes = bidiServer->txFlushQueued;
   bidiServer->initServerPath();
   bidiServer->pathReceived(1200);
   bidiServer->grantDataCredit(20000);
@@ -2348,6 +2347,7 @@ void testStreamCountLimits()
       peerBidi->txCreditAvailable() >= 3 &&
       peerBidi->finSent(),
     "peer bidi response was not queued for transmit");
+  unsigned queuedFlushes = bidiServer->txFlushQueued;
   ZuCHECK(bidiServer->flushCongestedStream(peerBidi),
     "peer bidi response flush failed");
   ZuCHECK(peerBidi->finDequeued(),

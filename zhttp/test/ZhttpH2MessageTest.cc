@@ -13,7 +13,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZhttpH2MessageTest_ {
 
 using TestHeaders = ZhttpHeaders("x-test");
 
@@ -33,8 +33,22 @@ struct Parsed :
   void header(ZuBSpan name, ZuBSpan value) {
     if (name == "host") host = value;
   }
-  void body(ZuBSpan value) {
-    body_ << ZuCSpan{value};
+  template <typename Rx>
+  void body(Rx &rx) {
+    while (rx.input()) {
+      const uint8_t *offered = nullptr;
+      if (rx.consume(
+	  [&offered, this](ZuBSpan value) -> int64_t {
+	    offered = value.data();
+	    return partial ? 1 : value.length();
+	  },
+	  [this, &offered](ZuBSpan value) {
+	    noCopy &= value.data() == offered;
+	    body_ << ZuCSpan{value};
+	  }) <= 0)
+	break;
+      if (partial) break;
+    }
   }
   void complete(Zhttp::H2::ParserState::T state) {
     completeState = state;
@@ -52,6 +66,8 @@ struct Parsed :
   ZtString<> host;
   ZtString<> xTest;
   ZtString<> body_;
+  bool partial = false;
+  bool noCopy = true;
 };
 
 struct Response :
@@ -64,7 +80,11 @@ struct Response :
   template <typename Key> void header(ZuBSpan value) {
     if constexpr (Key{}() == "x-test") xTest = value;
   }
-  void body(ZuBSpan value) { body_ << ZuCSpan{value}; }
+  template <typename Rx>
+  void body(Rx &rx) {
+    Zhttp::bodyEach(rx,
+      [this](ZuBSpan value) { body_ << ZuCSpan{value}; });
+  }
   void complete(Zhttp::H2::ParserState::T state) {
     completeState = state;
     ++completeCalls;
@@ -156,7 +176,8 @@ struct TunnelResponse :
   void status(unsigned value) { status_ = value; }
   void contentLength(uint64_t) { }
   template <typename Key> void header(ZuBSpan) { }
-  void body(ZuBSpan) { }
+  template <typename Rx>
+  void body(Rx &rx) { Zhttp::bodyDrain(rx); }
   void headers(Zhttp::Fields::Section section, bool endStream) {
     if (section == Zhttp::Fields::Final &&
 	status_ >= 200 && status_ < 300 && !endStream) {
@@ -164,7 +185,25 @@ struct TunnelResponse :
       ++established;
     }
   }
-  void tunnelData(ZuBSpan value) { data_ << ZuCSpan{value}; }
+  template <typename Rx>
+  void tunnelData(Rx &rx) {
+    Zi::RxEvent::T events = rx.events();
+    if (events & Zi::RxEvent::Start()) ++starts;
+    while (rx.input()) {
+      const uint8_t *offered = nullptr;
+      if (rx.consume(
+	  [&offered](ZuBSpan span) -> int64_t {
+	    offered = span.data();
+	    return 1;
+	  },
+	  [this, &offered](ZuBSpan span) {
+	    noCopy &= span.data() == offered;
+	    data_ << ZuCSpan{span};
+	  }) <= 0)
+	break;
+      if (partial) break;
+    }
+  }
   void tunnelEnd() { ++remoteEnds; }
   void tunnelReset() { ++resets; }
   void complete(Zhttp::H2::ParserState::T) { ++completions; }
@@ -175,6 +214,9 @@ struct TunnelResponse :
   unsigned	remoteEnds = 0;
   unsigned	resets = 0;
   unsigned	completions = 0;
+  unsigned	starts = 0;
+  bool		noCopy = true;
+  bool		partial = false;
 };
 
 bool find(
@@ -206,8 +248,23 @@ void testRequest()
     "shared request callbacks");
   ZuCHECK(parser.data("abc", true) &&
       parser.body_ == "abc" && parser.completeCalls == 1 &&
-      parser.completeState == Zhttp::H2::ParserState::Complete,
+      parser.completeState == Zhttp::H2::ParserState::Complete &&
+      parser.noCopy,
     "streaming request body completion");
+
+  Parsed partial;
+  partial.partial = true;
+  ZuCHECK(partial.beginHeaders() &&
+      partial.field(":method", "POST") &&
+      partial.field(":scheme", "https") &&
+      partial.field(":authority", "example.com") &&
+      partial.field(":path", "/submit") &&
+      partial.field("content-length", "3") &&
+      partial.endHeaders(false) &&
+      !partial.data("abc") && partial.body_ == "a" &&
+      partial.completeCalls == 1 &&
+      partial.completeState == Zhttp::H2::ParserState::Error,
+    "unconsumed H2 message DATA was not rejected exactly once");
 }
 
 void testResponses()
@@ -338,8 +395,10 @@ void testExtendedConnect()
       response.field(":status", "200") &&
       response.endHeaders(false) &&
       response.state() == Zhttp::H2::ParserState::Tunnel &&
-      response.established == 1 && response.data("abc") &&
-      response.data_ == "abc" && response.data({}, true) &&
+      response.established == 1 && response.data("a") &&
+      response.data("bc") && response.data_ == "abc" &&
+      response.starts == 1 && response.noCopy &&
+      response.data({}, true) &&
       response.state() == Zhttp::H2::ParserState::RemoteClosed &&
       response.remoteEnds == 1 && !response.completions,
     "successful response transitions to an unbounded ordered tunnel");
@@ -347,6 +406,21 @@ void testExtendedConnect()
       response.completions == 1 &&
       response.state() == Zhttp::H2::ParserState::Error,
     "tunnel reset completes exactly once");
+
+  TunnelResponse partial;
+  partial.reset();
+  partial.partial = true;
+  ZuCHECK(partial.beginHeaders() &&
+      partial.field(":status", "200") &&
+      partial.endHeaders(false) &&
+      !partial.data("abc") &&
+      partial.data_ == "a" &&
+      partial.resets == 1 &&
+      partial.completions == 1 &&
+      partial.state() == Zhttp::H2::ParserState::Error &&
+      !partial.cancel() && partial.resets == 1 &&
+      partial.completions == 1,
+    "unconsumed tunnel input resets and terminates exactly once");
 
   TunnelResponse rejected;
   rejected.reset();
@@ -368,10 +442,12 @@ void testMessageTrait()
     "H2 profile uses the common message trait contract");
 }
 
-} // namespace
+} // namespace ZhttpH2MessageTest_
 
 int main(int argc, char **argv)
 {
+  using namespace ZhttpH2MessageTest_;
+
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testRequest);

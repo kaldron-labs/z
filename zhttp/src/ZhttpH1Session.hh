@@ -37,10 +37,11 @@ struct Session {
 
 // Request/response transmit helpers
 template <typename Stream, typename Builder>
-void sendReq(Stream &stream, Builder &builder) {
+bool sendReq(Stream &stream, Builder &builder) {
   auto tx = stream.txStream();
-  builder.request(tx);
+  if (!builder.request(tx)) return false;
   builder.finish(tx);
+  return true;
 }
 
 template <typename Stream, typename Builder>

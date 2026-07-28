@@ -17,7 +17,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZhttpMessageEngineTest_ {
 
 using TestHeaders = ZhttpHeaders("x-test", "x-trailer");
 
@@ -36,11 +36,12 @@ struct State {
 template <typename Profile>
 struct RequestBuilder :
   public Zhttp::MessageTraits<Profile>::template Builder<
-    RequestBuilder<Profile>, ZuTypeList<>, ZuTypeList<>, false, false> {
+    RequestBuilder<Profile>, ZuTypeList<>, ZuTypeList<>, true, false> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::GET, "/", ""); }
+  void operation(L &&l) { l(Zhttp::Method::PUT, "/", ""); }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
+  uint64_t contentLength() const { return 5; }
 };
 
 template <typename Profile>
@@ -99,9 +100,12 @@ struct ClientParser :
     else if constexpr (Key{}() == "x-trailer")
       xTrailer = value;
   }
-  void body(ZuBSpan value) {
-    shared->bodyBytes += value.length();
-    body_ << value;
+  template <typename Rx>
+  void body(Rx &rx) {
+    Zhttp::bodyEach(rx, [this](ZuBSpan value) {
+      shared->bodyBytes += value.length();
+      body_ << value;
+    });
   }
   void complete(typename State::T value) {
     ++shared->completions;
@@ -116,7 +120,7 @@ struct ClientParser :
   unsigned	status_ = 0;
   unsigned	statusCalls = 0;
   typename State::T complete_ = State::Initial;
-  ::State	*shared = nullptr;
+  ZhttpMessageEngineTest_::State *shared = nullptr;
 };
 
 template <typename Profile>
@@ -137,6 +141,12 @@ struct Client : public Zhttp::Client<Client<Profile>, Profile> {
     }
     auto tx = link.transmit(request);
     request.request(tx);
+    {
+      auto body = request.body(tx);
+      body << ZuCSpan{"he"} << ZuCSpan{"llo"};
+      body.flush();
+      if (!body.complete()) ++state->errors;
+    }
     request.finish(tx);
     link.finish();
   }
@@ -202,11 +212,15 @@ struct ServerSession {
     void chunked() { }
     void version(ZuBSpan) { }
     template <typename Key> void header(ZuBSpan) { }
-    void body(ZuBSpan) { }
+    template <typename Rx>
+    void body(Rx &rx) {
+      Zhttp::bodyEach(rx, [this](ZuBSpan span) { body_ << span; });
+    }
     void complete(typename State::T value) { complete_ = value; }
     bool finReceived() const { return false; }
 
     ZtString<>		path;
+    ZtString<>		body_;
     Zhttp::Method::T	method = -1;
     typename State::T	complete_ = State::Initial;
   } parser;
@@ -221,7 +235,8 @@ struct ServerSession {
     auto state = link.receive(parser, rx);
     if (state == Parser::State::Error) return -1;
     if (state != Parser::State::Complete) return 0;
-    if (parser.method != Zhttp::Method::GET || parser.path != "/")
+    if (parser.method != Zhttp::Method::PUT || parser.path != "/" ||
+	parser.body_ != "hello")
       ++link.app()->state->errors;
     {
       InfoBuilder<Profile> info;
@@ -395,10 +410,12 @@ void run(const Zhttp::Test::TempDir &cert)
   mx.stop();
 }
 
-} // namespace
+} // namespace ZhttpMessageEngineTest_
 
 int main(int argc, char **argv)
 {
+  using namespace ZhttpMessageEngineTest_;
+
   parse(argc, argv);
   ZuTestMain();
   Zhttp::Test::TempDir cert;

@@ -72,9 +72,10 @@ struct ClientParser :
   void status(unsigned value) { status_ = value; }
   void contentLength(uint64_t value) { length = value; }
   template <typename Key> void header(ZuBSpan) { }
-  void body(ZuBSpan value) {
+  template <typename Rx>
+  void body(Rx &rx) {
     ++bodyCalls;
-    body_ << value;
+    Zhttp::bodyEach(rx, [this](ZuBSpan value) { body_ << value; });
   }
   void complete(Zhttp::H2::ParserState::T value) { complete_ = value; }
   void headers(Zhttp::Fields::Section section, bool endStream) {
@@ -84,7 +85,22 @@ struct ClientParser :
       ++tunnelEstablished;
     }
   }
-  void tunnelData(ZuBSpan value) { tunnelBody << ZuCSpan{value}; }
+  template <typename Rx>
+  void tunnelData(Rx &rx) {
+    while (rx.input()) {
+      const uint8_t *offered = nullptr;
+      if (rx.consume(
+	  [&offered](ZuBSpan span) -> int64_t {
+	    offered = span.data();
+	    return 1;
+	  },
+	  [this, &offered](ZuBSpan span) {
+	    tunnelNoCopy &= span.data() == offered;
+	    tunnelBody << ZuCSpan{span};
+	  }) <= 0)
+	break;
+    }
+  }
   void tunnelEnd() { ++tunnelEnds; }
   void tunnelReset() { ++tunnelResets; }
 
@@ -96,6 +112,7 @@ struct ClientParser :
   unsigned			tunnelEstablished = 0;
   unsigned			tunnelEnds = 0;
   unsigned			tunnelResets = 0;
+  bool				tunnelNoCopy = true;
   bool				tunnelExpected = false;
   Zhttp::H2::ParserState::T	complete_ =
     Zhttp::H2::ParserState::Initial;
@@ -181,6 +198,7 @@ int Client::process(Link &link, Zhttp::H2_::EventRx &rx)
     if (state_ == Zhttp::H2::ParserState::RemoteClosed) {
       if (link.parser.tunnelEstablished != 1 ||
 	  link.parser.tunnelBody != "ping" ||
+	  !link.parser.tunnelNoCopy ||
 	  link.parser.tunnelEnds != 1 || link.parser.tunnelResets)
 	++state->errors;
       state->response.post();
@@ -216,21 +234,38 @@ struct ServerSession {
     void contentLength(uint64_t) { }
     void status(unsigned) { }
     template <typename Key> void header(ZuBSpan) { }
-    void body(ZuBSpan) { }
-    void tunnelData(ZuBSpan value) { tunnelSpan = value; }
+    template <typename Rx>
+    void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+    template <typename Rx>
+    void tunnelData(Rx &rx) {
+      while (rx.input()) {
+	const uint8_t *offered = nullptr;
+	if (rx.consume(
+	    [&offered](ZuBSpan span) -> int64_t {
+	      offered = span.data();
+	      return 1;
+	    },
+	    [this, &offered](ZuBSpan span) {
+	      tunnelNoCopy &= span.data() == offered;
+	      tunnelData_ << ZuCSpan{span};
+	    }) <= 0)
+	  break;
+      }
+    }
     void tunnelEnd() { remoteEnded = true; }
     void tunnelReset() { ++tunnelResets; }
     void complete(Zhttp::H2::ParserState::T value) { complete_ = value; }
 
     ZtString<>			path;
     ZtString<>			protocol_;
-    ZuBSpan			tunnelSpan;
+    ZtString<>			tunnelData_;
     Zhttp::Method::T		method = -1;
     Zhttp::H2::ParserState::T	complete_ =
       Zhttp::H2::ParserState::Initial;
     unsigned			tunnelEstablished = 0;
     unsigned			tunnelResets = 0;
     bool			remoteEnded = false;
+    bool			tunnelNoCopy = true;
   } parser;
 
   template <typename Link>
@@ -243,21 +278,22 @@ struct ServerSession {
   template <typename Link>
   int process(Link &link, Zhttp::H2_::EventRx &rx) {
     if (!connected_) ++link.app()->state->errors;
-    parser.tunnelSpan = {};
+    parser.tunnelData_.null();
     parser.remoteEnded = false;
     auto state = rx.process(parser);
     if (state == Zhttp::H2::ParserState::Error) return -1;
     if (state == Zhttp::H2::ParserState::Tunnel ||
 	state == Zhttp::H2::ParserState::RemoteClosed) {
+      if (!parser.tunnelNoCopy) ++link.app()->state->errors;
       if (!tunnelResponse_) {
 	tunnelResponse_ = true;
 	auto tx = link.txStream();
 	TunnelResponseBuilder builder;
 	builder.response(tx);
       }
-      if (parser.tunnelSpan) {
+      if (parser.tunnelData_) {
 	Zhttp::Tunnel{link}.send([this](auto &body) {
-	  body << parser.tunnelSpan;
+	  body << parser.tunnelData_;
 	});
       }
       if (parser.remoteEnded) Zhttp::Tunnel{link}.end();
