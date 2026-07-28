@@ -2,32 +2,7 @@
 
 ## zhttp
 
-- `zhttp2.md`: improve it to define acceptance criteria to limit `zhttpd.cc` and `zhttp.cc` retained functionality to:
-  - CLI parsing
-  - protocol-specific configuration
-  - workload selection
-  - workload-specific request/response handling
-  - output-file handling
-  - reporting
-
-- `zhttp2.md`: iterate and improve it to be more specific and prescriptive, sliced/phased;
-  - ensure that each slice/phase:
-    - has acceptance criteria to hand off to the next
-    - concludes with a `GUIDELINES.md` alignment audit and repair step
-
-- `h2.md`: iterate and improve it to be more specific and prescriptive, sliced/phased;
-  - ensure that each slice/phase:
-    - has acceptance criteria to hand off to the next
-    - concludes with a `GUIDELINES.md` alignment audit and repair step
-
-- add H2
-
-- `ws.md`: iterate and improve it to be more specific and prescriptive, sliced/phased;
-  - ensure that each slice/phase:
-    - has acceptance criteria to hand off to the next
-    - concludes with a `GUIDELINES.md` alignment audit and repair step
-
-- add websockets
+- read and execute `ws.md`
 
 ### deferred
 - cross-origin connection coalescing
