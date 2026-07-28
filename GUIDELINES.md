@@ -246,6 +246,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: casts among char-equivalent pointers.
   Problem: most Z types already convert equivalent primitive element types automatically.
   Fix: remove the cast unless a real representation change is required.
+- Amber Flag: `reinterpret_cast` used to initialize or convert span, string or array data
+  Problem: probably unnecessary cast, obfuscates code
+  Fix: check if direct-construction, implicit conversion or assignment of the type can be used
 - Red Flag: casts to CRTP `impl()`/`app()` bases.
   Problem: they obscure name lookup and static dispatch.
   Fix: use `using T::function;` in bases that need constrained function lookup.
@@ -387,7 +390,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Z iterators are usually optionally mutable and can delete while iterating.
 - `del()`/`delNode()` usually returns a movable reference to the deleted node/value.
 - Prefer intrusive container nodes when application nodes can own them; this reduces key/value copying and, for reference-counted application data, consolidates the application object and container node from two allocations into one.
-- Stack container intrusions when one application node participates in multiple containers, e.g. `ZmCache` combining an LRU `ZmList` and `ZmHash`.
+- Stack container intrusions when one application node participates in multiple containers, example: `ZmCache` has nodes that participate in both an LRU `ZmList` and `ZmHash`.
 - Use `HeapID<"">` to disable inner-container `ZmHeap` allocation when the full node size is only available at the outermost container.
 
 ### Callbacks
