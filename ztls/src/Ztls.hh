@@ -623,7 +623,7 @@ private:
   void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMv(impl_)};
     app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn), peer]() mutable {
-      impl->disconnected_(cxn);
+      if (!impl->disconnected_(cxn)) return;
       auto app = impl->app();
       // drain Tx while keeping cxn/impl referenced
       app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), peer]() mutable {
@@ -637,17 +637,21 @@ private:
       });
     });
   }
-  void disconnected_(Cxn *cxn) {
+  bool disconnected_(Cxn *cxn) {
     // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
-      "TLS disconnected dispatch outside Rx thread", return);
-    if (m_cxn == cxn) m_cxn = nullptr;
-    reset_tls_();
+      "TLS disconnected dispatch outside Rx thread", return false);
+    if (m_cxn == cxn) {
+      m_cxn = nullptr;
+      return true;
+    }
+    return !m_cxn && m_disconnecting.load_();
   }
 
   void disconnected_1(bool peer) {
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnect completion outside Rx thread", return);
+    reset_tls_();
     auto app = impl()->app();
     impl()->disconnected(peer);
     app->linkDisconnected_();
@@ -681,18 +685,13 @@ private:
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       auto buf = m_link->allocTxBuf_();
-      if constexpr (AppThread) {
-	if (ZuUnlikely(!buf || buf->skip > skip))
-	  throw TxStreamAllocFailure{};
-	buf->skip = skip;
-      } else {
-	if (ZuUnlikely(!buf || buf->skip != skip))
-	  throw TxStreamAllocFailure{};
-      }
+      if (ZuUnlikely(!buf || buf->skip > skip || skip > buf->size))
+	throw TxStreamAllocFailure{};
+      buf->skip = skip;
       return buf;
     }
 
-    void sendBuf_(ZmRef<ZiIOBuf> buf) {
+    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_link->impl();
       auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)
@@ -812,13 +811,17 @@ private:
     if (ZuUnlikely(gen != m_tlsGen.load_())) return;
     if (ZuUnlikely(!m_tls || !cipher_())) return; // FIXME - log diagnostic
 
-    ZiAssert(buf->length <= TxMaxPlaintext, "Ztls", (),
-      "TLS Tx plaintext exceeds record limit", return);
-    ZiAssert(buf->skip == m_headroom, "Ztls", (),
-      "TLS Tx buffer missing headroom", return);
+    ZiAssert(buf->skip >= m_headroom && buf->skip <= TxRecordCapacity,
+      "Ztls", (), "TLS Tx buffer missing headroom", return);
+    unsigned extraHeadroom = buf->skip - m_headroom;
+    ZiAssert(extraHeadroom <= TxMaxPlaintext &&
+	buf->length <= TxMaxPlaintext - extraHeadroom,
+      "Ztls", (), "TLS Tx plaintext exceeds record limit", return);
+    ZiAssert(buf->length <= buf->size - buf->skip, "Ztls", (),
+      "TLS Tx plaintext bounds exceeded", return);
 
     if (ZuUnlikely(buf->size < TxRecordCapacity))
-      if (ZuUnlikely(!buf->ensure(TxRecordCapacity))) {
+      if (ZuUnlikely(!buf->ensure(TxRecordCapacity - buf->skip))) {
 	app()->error_(ZeEXCEPT(Error, "Ztls",
 	  "TLS Tx buffer growth failed"));
 	disconnect_(false);

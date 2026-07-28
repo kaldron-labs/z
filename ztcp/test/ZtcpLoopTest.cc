@@ -62,10 +62,22 @@ ZiMxParams mxParams()
 }
 
 template <typename Link>
+struct ReserveLayer : public ZiTxLayer<ReserveLayer<Link>, Link> {
+  using Base = ZiTxLayer<ReserveLayer<Link>, Link>;
+
+  ReserveLayer(Link &link, unsigned headRoom, unsigned tailRoom) :
+    Base{link, headRoom, tailRoom} { }
+
+  void prepareBuf_(ZiIOBuf *, bool) { }
+};
+
+template <typename Link>
 void sendBytes(Link &link, ZuCSpan s)
 {
   auto tx = link.txStream();
-  tx << s << Zi::flush();
+  ReserveLayer first{tx, 7, 3};
+  ReserveLayer second{first, 11, 5};
+  second << s << Zi::flush();
 }
 
 bool consume(Ztcp::RxStream &rx, ZuCSpan expected)

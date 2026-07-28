@@ -213,7 +213,7 @@ void cancel()
     .tcp(true).tls(true).quic(false);
   ZuCHECK(app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{}),
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
     "initialize agent");
   ZuCHECK(app.start(), "start agent");
 
@@ -266,7 +266,7 @@ void timeout()
     .tcp(true).tls(true).quic(false);
   ZuCHECK(app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{}),
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
     "initialize agent");
   ZuCHECK(app.start(), "start agent");
 
@@ -319,7 +319,7 @@ void retry()
     .tcp(true).tls(true).quic(false);
   ZuCHECK(app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{}),
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
     "initialize retry agent");
   ZuCHECK(app.start(), "start retry agent");
 
@@ -389,7 +389,7 @@ void redirect()
     .tcp(true).tls(true).quic(false);
   ZuCHECK(app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{}),
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
     "initialize redirect agent");
   ZuCHECK(app.start(), "start redirect agent");
 
@@ -459,7 +459,7 @@ void unsafeRedirect()
     .tcp(true).tls(true).quic(false);
   ZuCHECK(app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{}),
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
     "initialize unsafe redirect agent");
   ZuCHECK(app.start(), "start unsafe redirect agent");
 
@@ -509,7 +509,7 @@ void retryLimit()
     .tcp(true).tls(true).quic(false);
   ZuCHECK(app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{}),
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
     "initialize retry-limit agent");
   ZuCHECK(app.start(), "start retry-limit agent");
 
@@ -559,7 +559,7 @@ void unsafeRetry()
     .tcp(true).tls(true).quic(false);
   ZuCHECK(app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{}),
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
     "initialize unsafe retry agent");
   ZuCHECK(app.start(), "start unsafe retry agent");
 
@@ -607,7 +607,7 @@ void resolverLifecycle()
     App app;
     bool inited = app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{});
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
     ZuCHECK(inited && app.start(), "start resolver-owning agent");
     ZiResolver::start();
     ZuCHECK(ZiResolver::instance()->running(), "start agent-owned resolver");
@@ -623,7 +623,7 @@ void resolverLifecycle()
     App app;
     bool inited = app.init(
       Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::TLSConfig{}, Zhttp::QUICConfig{});
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
     ZuCHECK(inited && app.start(), "start resolver-borrowing agent");
     if (inited) app.stop();
     if (inited) app.final();

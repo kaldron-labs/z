@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z HTTP/2 HPACK support
+// Z HTTP/2 HPACK codec
 
 #ifndef ZhttpHPack_HH
 #define ZhttpHPack_HH
@@ -13,30 +13,197 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
-#include <zlib/ZuBitStream.hh>
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtEnum.hh>
+#include <zlib/ZtString.hh>
+
+#include <zlib/ZhttpCompression.hh>
 
 namespace Zhttp {
 
-namespace H3 {
+namespace H2 {
 
-namespace HPack {
+struct Field {
+  ZuCSpan	name;
+  ZuCSpan	value;
+};
 
-  using BitWriter = ZuBitStream::BE::Writer;
-  using BitReader = ZuBitStream::BE::Reader;
+ZtEnumStruct(HPackFailure, uint8_t,
+  None, Truncated, Integer, String, Index, Capacity, HeaderList);
 
-  ZuInline constexpr uint64_t enclen(uint64_t slen) {
-    return (slen>>2)*15U + (((slen & 3U)*30U + 7U)>>3);
+using HPackString =
+  ZtString<ZtStringHeapID<"Zhttp.H2.HPack.String">>;
+
+struct HPackEntry {
+  HPackString	name;
+  HPackString	value;
+  uint32_t	size = 0;
+};
+
+using HPackEntries =
+  ZtArray<HPackEntry, ZtArrayHeapID<"Zhttp.H2.HPack.Entries">>;
+using HPackBytes =
+  ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H2.HPack.Bytes">>;
+using HPackNames =
+  ZtArray<HPackString, ZtArrayHeapID<"Zhttp.H2.HPack.NeverIndex">>;
+
+class HPackTable {
+public:
+  bool capacity(uint32_t);
+  bool insert(ZuCSpan, ZuCSpan);
+  bool lookup(uint64_t, Field &) const;
+  void reset();
+
+  uint32_t capacity() const { return m_capacity; }
+  uint32_t used() const { return m_used; }
+  unsigned count() const { return m_entries.length() - m_head; }
+
+private:
+  void evict_();
+  void compact_();
+
+  HPackEntries	m_entries;
+  unsigned	m_head = 0;
+  uint32_t	m_capacity = 0;
+  uint32_t	m_used = 0;
+};
+
+class HPack {
+public:
+  static bool staticField(uint64_t, Field &);
+  static int staticIndex(ZuCSpan, ZuCSpan);
+  static int staticNameIndex(ZuCSpan);
+};
+
+class HPackDecoder {
+public:
+  bool init(uint32_t capacity, uint64_t maxHeaderListSize);
+  void reset();
+  void final();
+
+  template <typename FieldFn>
+  int process(ZuBSpan input, FieldFn &&field) {
+    if (m_pending)
+      return resume(input, ZuFwd<FieldFn>(field));
+    unsigned offset = 0;
+    while (offset < input.length()) {
+      unsigned before = offset;
+      Field decoded;
+      bool emitted = false;
+      int state = decode_(input, offset, decoded, emitted);
+      if (state < 0) return -1;
+      if (!state) {
+	for (unsigned i = before; i < input.length(); ++i)
+	  m_pending.push(input[i]);
+	return 0;
+      }
+      if (emitted) field(decoded);
+    }
+    return 1;
   }
-  uint64_t encode(ZuSpan<uint8_t>, ZuBSpan);
 
-  ZuInline constexpr uint64_t declen(uint64_t slen) {
-    return ((slen / 5U)<<3) + (((slen % 5U)<<3)/5U);
+  template <typename FieldFn>
+  int resume(ZuBSpan input, FieldFn &&field) {
+    if (!m_pending)
+      return process(input, ZuFwd<FieldFn>(field));
+    for (unsigned i = 0; i < input.length(); ++i)
+      m_pending.push(input[i]);
+    while (m_pending) {
+      unsigned offset = 0;
+      Field decoded;
+      bool emitted = false;
+      int state = decode_(m_pending, offset, decoded, emitted);
+      if (state < 0) return -1;
+      if (!state) return 0;
+      if (emitted) field(decoded);
+      m_pending.shift(offset);
+    }
+    return 1;
   }
-  int64_t decode(ZuSpan<uint8_t>, ZuBSpan);
 
-} // namespace HPack
+  bool finish();
+  HPackFailure::T failure() const { return m_failure; }
+  const HPackTable &table() const { return m_table; }
 
-} // namespace H3
+private:
+  int decode_(ZuCSpan, unsigned &, Field &, bool &);
+  bool indexed_(uint64_t, Field &);
+  int literal_(ZuCSpan, unsigned &, unsigned, bool, Field &);
+  int string_(ZuCSpan, unsigned &, unsigned, uint8_t, HPackString &);
+  bool account_(Field);
+  int fail_(HPackFailure::T);
+
+  HPackTable	m_table;
+  HPackBytes	m_pending;
+  HPackString	m_name;
+  HPackString	m_value;
+  uint64_t	m_maxHeaderListSize = 0;
+  uint64_t	m_headerListSize = 0;
+  uint32_t	m_maxCapacity = 0;
+  HPackFailure::T m_failure = HPackFailure::None;
+  bool		m_capacityAllowed = true;
+};
+
+class HPackEncoder {
+public:
+  bool init(uint32_t capacity);
+  void reset();
+  void final();
+  void neverIndex(ZuCSpan);
+  bool neverIndexed(ZuCSpan) const;
+  template <typename Bytes>
+  int field(Bytes &out, Field field) const {
+    int index = HPack::staticIndex(field.name, field.value);
+    if (index > 0)
+      return Compression::putPref(out, 0x80, 7, unsigned(index)) < 0 ?
+	-1 : int(out.length());
+    int nameIndex = HPack::staticNameIndex(field.name);
+    uint8_t prefix = neverIndexed(field.name) ? 0x10 : 0x00;
+    if (nameIndex > 0) {
+      if (Compression::putPref(out, prefix, 4, unsigned(nameIndex)) < 0)
+	return -1;
+    } else {
+      if (Compression::putPref(out, prefix, 4, 0) < 0 ||
+	  Compression::putString(out, 0, 7, field.name) < 0)
+	return -1;
+    }
+    return Compression::putString(out, 0, 7, field.value) < 0 ?
+      -1 : int(out.length());
+  }
+  template <typename Bytes>
+  int field(
+    Bytes &out, ZuCSpan name,
+    ZuCSpan value1, char separator, ZuCSpan value2) const {
+    int nameIndex = HPack::staticNameIndex(name);
+    uint8_t prefix = neverIndexed(name) ? 0x10 : 0x00;
+    if (nameIndex > 0) {
+      if (Compression::putPref(out, prefix, 4, unsigned(nameIndex)) < 0)
+	return -1;
+    } else {
+      if (Compression::putPref(out, prefix, 4, 0) < 0 ||
+	  Compression::putString(out, 0, 7, name) < 0)
+	return -1;
+    }
+    return Compression::putString(
+      out, 0, 7, value1, separator, value2) < 0 ?
+	-1 : int(out.length());
+  }
+  template <typename Bytes>
+  int capacity(Bytes &out, uint32_t value) {
+    if (value > m_maxCapacity || !m_table.capacity(value)) return -1;
+    return Compression::putPref(out, 0x20, 5, value) < 0 ?
+      -1 : int(out.length());
+  }
+
+  const HPackTable &table() const { return m_table; }
+
+private:
+  HPackTable	m_table;
+  HPackNames	m_neverIndex;
+  uint32_t	m_maxCapacity = 0;
+};
+
+} // namespace H2
 
 } // namespace Zhttp
 

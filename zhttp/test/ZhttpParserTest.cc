@@ -48,7 +48,7 @@ struct ResponseParser :
   public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, 1024> {
   using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, 1024>;
 
-  void status(unsigned v) { statusSeen = v; }
+  void status(unsigned v) { statusSeen = v; ++statusCalls; }
   void contentLength(uint64_t v) {
     contentLengthSeen = v;
     ++contentLengthCalls;
@@ -93,6 +93,7 @@ struct ResponseParser :
   unsigned			emptyCalls = 0;
   unsigned			emptyLen = 1;
   unsigned			bodyCalls = 0;
+  unsigned			statusCalls = 0;
   uint64_t			bodyBytes = 0;
   unsigned			completeCalls = 0;
   unsigned			contentLengthCalls = 0;
@@ -504,6 +505,34 @@ void testNoBodyStatusWithoutLengthCompletesAtHeaders()
   ZuCHECK(!stream, "stream still has data after no-body status response");
 }
 
+void testInformationalThenFinalResponse()
+{
+  ZuTestScope(testInformationalThenFinalResponse);
+
+  ResponseParser parser;
+  RxStream stream;
+  stream.push(mkBuf(
+    "HTTP/1.1 103 Early Hints\r\n"
+    "Key: Value\r\n"
+    "\r\n"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Headers,
+    "informational response reports progress without completion");
+  ZuCHECK(parser.statusSeen == 103 && parser.statusCalls == 1 &&
+      parser.completeCalls == 0 && !stream,
+    "informational response preserves the final-response parse");
+
+  stream.push(mkBuf(
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Length: 4\r\n"
+    "\r\n"
+    "pong"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
+    "final response completes after informational response");
+  ZuCHECK(parser.statusSeen == 200 && parser.statusCalls == 2 &&
+      parser.bodyData == "pong" && parser.completeCalls == 1,
+    "final response callbacks follow informational callbacks exactly once");
+}
+
 void testEarlyDataSafeRequestPolicy()
 {
   ZuTestScope(testEarlyDataSafeRequestPolicy);
@@ -542,6 +571,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCloseDelimitedResponseBody);
   ZuTestCall(testCloseDelimitedResponseTooLarge);
   ZuTestCall(testNoBodyStatusWithoutLengthCompletesAtHeaders);
+  ZuTestCall(testInformationalThenFinalResponse);
   ZuTestCall(testEarlyDataSafeRequestPolicy);
   ZiLog::stop();
   return 0;

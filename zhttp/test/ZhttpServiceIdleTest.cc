@@ -97,12 +97,12 @@ struct Workload {
 using Service = Zhttp::Service<
   Workload, ZuTypeList<>, ZuTypeList<>, 1024>;
 
-template <typename Protocol>
-struct Client : public Zhttp::Client<Client<Protocol>, Protocol> {
+template <typename Profile>
+struct Client : public Zhttp::Client<Client<Profile>, Profile> {
   struct Builder :
-    public Zhttp::MessageTraits<Protocol>::template Builder<
+    public Zhttp::MessageTraits<Profile>::template Builder<
       Builder, ZuTypeList<>, ZuTypeList<>, true, false> {
-    using Base = typename Zhttp::MessageTraits<Protocol>::template Builder<
+    using Base = typename Zhttp::MessageTraits<Profile>::template Builder<
       Builder, ZuTypeList<>, ZuTypeList<>, true, false>;
 
     template <typename L>
@@ -115,8 +115,8 @@ struct Client : public Zhttp::Client<Client<Protocol>, Protocol> {
   };
 
   struct Link :
-    public Zhttp::ClientLink<Client, Link, Protocol> {
-    using Base = Zhttp::ClientLink<Client, Link, Protocol>;
+    public Zhttp::ClientLink<Client, Link, Profile> {
+    using Base = Zhttp::ClientLink<Client, Link, Profile>;
     using Base::Base;
   };
 
@@ -134,8 +134,8 @@ struct Client : public Zhttp::Client<Client<Protocol>, Protocol> {
     state->disconnected.post();
   }
   void connectFailed(Link &, bool) { state->fail(); }
-  int process(
-      Link &, typename Zhttp::Transport_::Traits<Protocol>::RxStream &) {
+  template <typename Rx>
+  int process(Link &, Rx &) {
     return 0;
   }
 
@@ -196,13 +196,13 @@ void idle()
     state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "service listens for HTTP/3");
 
-  Client<Zhttp::QUIC> client{&state};
+  Client<Zhttp::H3QUIC> client{&state};
   bool clientInited = listening && client.init(
     engine, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
   ZuCHECK(clientInited, "initialize client");
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");
-  using ClientLink = typename Client<Zhttp::QUIC>::Link;
+  using ClientLink = typename Client<Zhttp::H3QUIC>::Link;
   ZmRef<ClientLink> link;
   if (clientUp) link = new ClientLink{&client};
 #ifdef ZmObject_DEBUG
@@ -236,7 +236,7 @@ void idle()
   ZuCHECK(!state.errors.load_(), "idle expiry has no transport error");
 }
 
-template <typename Protocol>
+template <typename Profile>
 void activeStop()
 {
   ZuTestScope(activeStop);
@@ -252,7 +252,9 @@ void activeStop()
 
   State state;
   state.port = Zhttp::Test::loopbackPort();
-  state.expectedTransport = Zhttp::Transport_::Traits<Protocol>::ID;
+  using HTTP = Zhttp::ProfileTraits<Profile>;
+  using Protocol = typename HTTP::Protocol;
+  state.expectedTransport = HTTP::Transport::ID;
   state.openRequest = true;
   ZuCHECK(state.port, "allocate loopback port");
   if (!state.port) return;
@@ -271,7 +273,8 @@ void activeStop()
     serviceConfig.tcp();
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
     serviceConfig.tls(
-      Zhttp::TLSConfig{}.certPath(cert).keyPath(key));
+      Zhttp::H2Config{}.certPath(cert).keyPath(key)
+	.policy(Zhttp::H2Policy::Prefer));
   else
     serviceConfig.quic(
       Zhttp::QUICConfig{}.certPath(cert).keyPath(key).maxIdleTimeout(10000));
@@ -284,25 +287,31 @@ void activeStop()
     state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "service listens for HTTP/3");
 
-  Client<Protocol> client{&state};
+  Client<Profile> client{&state};
   bool clientInited = false;
   if constexpr (ZuIsSame<Protocol, Zhttp::TCP>{})
     clientInited = listening && client.init(engine, Zhttp::TCPConfig{});
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
-    clientInited =
-      listening && client.init(engine, Zhttp::TLSConfig{}.caPath(cert));
+    if constexpr (HTTP::Multiplexed)
+      clientInited = listening && client.init(
+	engine, Zhttp::H2Config{}.caPath(cert)
+	  .policy(Zhttp::H2Policy::Force));
+    else
+      clientInited =
+	listening && client.init(engine, Zhttp::TLSConfig{}.caPath(cert));
   else
     clientInited = listening && client.init(
       engine, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
   ZuCHECK(clientInited, "initialize client");
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");
-  using ClientLink = typename Client<Protocol>::Link;
+  using ClientLink = typename Client<Profile>::Link;
   ZmRef<ClientLink> link;
   if (clientUp) link = new ClientLink{&client};
 #ifdef ZmObject_DEBUG
   if (link) {
-    if constexpr (ZuIsSame<Protocol, Zhttp::QUIC>{})
+    if constexpr (HTTP::Multiplexed ||
+	ZuIsSame<Protocol, Zhttp::QUIC>{})
       link->ZmObject::debug();
     else
       link->ZmPolymorph::debug();
@@ -362,8 +371,9 @@ int main(int argc, char **argv)
   (void)argv;
   ZuTestMain();
   ZuTestCall(idle);
-  ZuTestCall((activeStop<Zhttp::TCP>));
-  ZuTestCall((activeStop<Zhttp::TLS>));
-  ZuTestCall((activeStop<Zhttp::QUIC>));
+  ZuTestCall((activeStop<Zhttp::H1TCP>));
+  ZuTestCall((activeStop<Zhttp::H1TLS>));
+  ZuTestCall((activeStop<Zhttp::H2TLS>));
+  ZuTestCall((activeStop<Zhttp::H3QUIC>));
   return 0;
 }

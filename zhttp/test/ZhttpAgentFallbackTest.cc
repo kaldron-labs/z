@@ -240,7 +240,7 @@ void fallback()
     .tcp(true).tls(true).quic(true);
   bool agentInited = agent.init(
     engine, agentConfig, Zhttp::TCPConfig{},
-    Zhttp::TLSConfig{}.caPath(cert),
+    Zhttp::H2Config{}.caPath(cert),
     Zhttp::QUICConfig{}.caPath(untrustedCert).maxIdleTimeout(500));
   ZuCHECK(agentInited, "initialize prefer-mode agent");
   bool agentUp = agentInited && agent.start();
@@ -264,15 +264,15 @@ void fallback()
 	if (completed) {
 	  ZuCHECK(agent.result.ok() &&
 	      agent.result.transport == Zhttp::Transport::TLS &&
-	      agent.result.httpVersion == Zhttp::Version::H1 &&
+	      agent.result.httpVersion == Zhttp::Version::H2 &&
 	      agent.status == 200 && agent.bodyBytes == expected.length(),
-	    "fallback terminal result identifies TLS/H1");
+	    "fallback terminal result identifies TLS/H2");
 	  ZuCHECK(agent.altSvc, "TLS response contains Alt-Svc");
 	  ZuCHECK(agent.eventCount(Zhttp::AgentEventType::Selected) == 2 &&
 	      agent.eventCount(Zhttp::AgentEventType::AttemptFailed) == 1 &&
 	      agent.eventCount(Zhttp::AgentEventType::Fallback) == 1 &&
 	      agent.eventCount(Zhttp::AgentEventType::Completed) == 1,
-	    "typed H3-to-H1 fallback transition sequence");
+	    "typed H3-to-H2 fallback transition sequence");
 	  uint64_t requestID = 0;
 	  uint64_t failedAttempt = 0;
 	  uint64_t fallbackAttempt = 0;
@@ -311,7 +311,7 @@ void fallback()
     .tcp(true).tls(true).quic(true);
   bool cacheInited = cachedAgent.init(
     engine, cacheConfig, Zhttp::TCPConfig{},
-    Zhttp::TLSConfig{}.caPath(cert),
+    Zhttp::H2Config{}.caPath(cert),
     Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(500));
   ZuCHECK(cacheInited, "initialize cached-routing agent");
   bool cacheUp = cacheInited && cachedAgent.start();
@@ -342,11 +342,11 @@ void fallback()
 	      cachedAgent.results[0].ok() && cachedAgent.results[1].ok() &&
 	      cachedAgent.results[0].transport == Zhttp::Transport::TLS &&
 	      cachedAgent.results[1].transport == Zhttp::Transport::QUIC &&
-	      cachedAgent.results[0].httpVersion == Zhttp::Version::H1 &&
+	      cachedAgent.results[0].httpVersion == Zhttp::Version::H2 &&
 	      cachedAgent.results[1].httpVersion == Zhttp::Version::H3 &&
 	      cachedAgent.status == 200 &&
 	      cachedAgent.bodyBytes == expected.length() * 2,
-	    "Alt-Svc moves the second request from TLS/H1 to QUIC/H3");
+	    "Alt-Svc moves the second request from TLS/H2 to QUIC/H3");
 	  bool cached = false;
 	  for (unsigned i = 0; i < cachedAgent.events.length(); ++i) {
 	    const auto &event = cachedAgent.events[i];

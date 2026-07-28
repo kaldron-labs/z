@@ -26,6 +26,7 @@
 #include <zlib/Zhttp.hh>
 
 ZtEnumNS(Http3Mode, int8_t, force, prefer, disable);
+ZtEnumNS(Http2Mode, int8_t, force, prefer, disable);
 
 constexpr unsigned ClientTimeout = 15;
 constexpr unsigned H3StallTimeout = 15;
@@ -44,6 +45,7 @@ struct Options {
   ZuCSpan	keyLog;
   ZuCSpan	url;
   Http3Mode::T	http3 = Http3Mode::prefer;
+  Http2Mode::T	http2 = Http2Mode::prefer;
   ZuCSpan	quicMigration{"passive"};
   uint32_t	quicHeartbeat = 0;
   uint32_t	quicMigrationCIDReserve = 1;
@@ -87,6 +89,9 @@ ZfStruct((Options, CLI),
   (((http3),     (Enum<Http3Mode::Map>,
 		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
 								 Http3Mode::prefer)),
+  (((http2),     (Enum<Http2Mode::Map>,
+		  CLI::Opt<'2'>, CLI::Long<"http2">)),       (Int8,
+								 Http2Mode::prefer)),
   (((quicMigration),
     (CLI::Long<"quic-migration">)),                         (String, "passive")),
   (((quicHeartbeat),
@@ -139,6 +144,8 @@ void usage(int code = 1)
     "  --key-log=PATH      append HTTP/3 TLS secrets for tshark/Wireshark;\n"
     "                      defaults to SSLKEYLOGFILE when set\n"
     "  -3, --http3=MODE   HTTP/3 mode for https: force, prefer, disable;\n"
+    "                      default prefer\n"
+    "  -2, --http2=MODE   HTTP/2 mode within TLS: force, prefer, disable;\n"
     "                      default prefer\n"
     "  --quic-migration=MODE\n"
     "                      QUIC migration policy: disabled, passive, active;\n"
@@ -220,6 +227,7 @@ bool validateOptions(Options &options, int argc)
   if (argc < 0 || argc != 2) return false;
   if (!options.requests || !options.concurrency) return false;
   if (options.http3 < 0 || options.http3 >= Http3Mode::N) return false;
+  if (options.http2 < 0 || options.http2 >= Http2Mode::N) return false;
   int8_t mode = Zhttp::migrationMode(options.quicMigration, -1);
   if (mode < 0) return false;
   if (migrationConfigured(options) && mode != Zhttp::Migration::Active)
@@ -722,6 +730,12 @@ int main(int argc, char **argv)
   (void)parseDrop(options.quicTxDrop, txDrop);
 #endif
   Zhttp::AgentConfig agentConfig;
+  int8_t h2Policy;
+  switch (options.http2) {
+    case Http2Mode::force: h2Policy = Zhttp::H2Policy::Force; break;
+    case Http2Mode::disable: h2Policy = Zhttp::H2Policy::Disable; break;
+    default: h2Policy = Zhttp::H2Policy::Prefer; break;
+  }
   agentConfig
     .concurrency(options.concurrency)
     .maxPending(options.requests)
@@ -729,6 +743,7 @@ int main(int argc, char **argv)
     .maxRedirects(MaxRedirects)
     .maxRetries(options.retries)
     .protocol(policy)
+    .h2Policy(h2Policy)
     .tcp(true)
     .tls(policy != Zhttp::ProtocolPolicy::ForceH3)
     .quic(policy != Zhttp::ProtocolPolicy::DisableH3);
@@ -749,7 +764,8 @@ int main(int argc, char **argv)
   ClientCallbacks app;
   bool appInited = app.init(
     Zhttp::EngineConfig{&mx, "3", "4"}, agentConfig,
-    Zhttp::TCPConfig{}, Zhttp::TLSConfig{}.caPath(options.ca), quic);
+    Zhttp::TCPConfig{},
+    Zhttp::H2Config{}.caPath(options.ca).policy(h2Policy), quic);
   bool appUp = appInited && app.start();
   if (!appUp) {
     ZiLOG(Error, "zhttp", "client initialization/start failed");

@@ -8,34 +8,6 @@
 
 namespace Zhttp { namespace H3 {
 
-static int putPref_(HdrBytes &out, uint8_t prefix, unsigned prefixBits,
-  uint64_t v)
-{
-  if (!prefixBits || prefixBits > 8) return -1;
-  uint8_t mask = uint8_t((1U << prefixBits) - 1U);
-  if (v < mask) {
-    out.push(prefix | uint8_t(v));
-    return 0;
-  }
-
-  out.push(prefix | mask);
-  v -= mask;
-  while (v >= 128) {
-    out.push(uint8_t((v & 0x7f) | 0x80));
-    v >>= 7;
-  }
-  out.push(uint8_t(v));
-  return 0;
-}
-
-static int putString_(HdrBytes &out, uint8_t prefix, unsigned prefixBits,
-  ZuCSpan s)
-{
-  if (putPref_(out, prefix, prefixBits, s.length()) < 0) return -1;
-  CodecBytes::putSpan(out, s);
-  return 0;
-}
-
 static uint32_t qpackEntrySize_(ZuCSpan name, ZuCSpan value)
 {
   uint64_t n = uint64_t(name.length()) + value.length() + 32;
@@ -382,33 +354,12 @@ bool QPackTxTable::applyDecoder(QPackInsn::T type, uint64_t value)
   }
 }
 
-int QPack::decodeHuffman(HdrBytes &out, ZuCSpan in)
-{
-  out.length(HPack::declen(in.length()));
-  int64_t n = HPack::decode(out, in);
-  if (n < 0) return -1;
-  out.length(uint64_t(n));
-  return int(n);
-}
-
 int QPack::decodeString(
   HdrBytes &storage, ZuCSpan in, unsigned &o, unsigned prefixBits,
   uint8_t huffmanMask, ZuCSpan &out)
 {
-  uint64_t len = 0;
-  uint8_t first = 0;
-  int n = qpackDecodePrefInt_(in, o, prefixBits, len, &first);
-  if (n < 0) return n;
-  if (in.length() < o + len) return -2;
-  ZuCSpan raw{in.data() + o, unsigned(len)};
-  o += unsigned(len);
-  if (!(first & huffmanMask)) {
-    out = raw;
-    return int(raw.length());
-  }
-  if (decodeHuffman(storage, raw) < 0) return -1;
-  out = storage;
-  return int(out.length());
+  return Compression::decodeString(
+    storage, in, o, prefixBits, huffmanMask, out);
 }
 
 bool QPack::staticNameIndex(ZuCSpan name, uint64_t &index)
@@ -494,8 +445,9 @@ int QPack::encodeFieldSectionPrefix(
     }
   } else if (prefix.base)
     return -1;
-  if (putPref_(out, 0, 8, encodedInsertCount) < 0 ||
-      putPref_(out, negative ? 0x80 : 0x00, 7, deltaBase) < 0)
+  if (Compression::putPref(out, 0, 8, encodedInsertCount) < 0 ||
+      Compression::putPref(
+	out, negative ? 0x80 : 0x00, 7, deltaBase) < 0)
     return -1;
   return out.length();
 }
@@ -506,8 +458,10 @@ int QPack::decodeFieldSectionPrefix(
   prefix = {};
   unsigned o = 0;
   uint8_t baseFirst = 0;
-  if (qpackDecodePrefInt_(in, o, 8, prefix.encodedInsertCount) < 0 ||
-      qpackDecodePrefInt_(in, o, 7, prefix.deltaBase, &baseFirst) < 0)
+  if (Compression::decodePref(
+      in, o, 8, prefix.encodedInsertCount) < 0 ||
+      Compression::decodePref(
+	in, o, 7, prefix.deltaBase, &baseFirst) < 0)
     return -1;
   prefix.baseNegative = baseFirst & 0x80;
   return int(o);
@@ -567,20 +521,23 @@ int QPack::encodeFieldLine(HdrBytes &out, Header h, const Params &params)
 {
   int staticIndex = QPack::staticIndex(h.name, h.value);
   if (staticIndex >= 0)
-    return putPref_(out, 0xc0, 6, unsigned(staticIndex)) < 0 ?
+    return Compression::putPref(
+      out, 0xc0, 6, unsigned(staticIndex)) < 0 ?
       -1 : int(out.length());
 
   uint64_t nameIndex = 0;
   if (staticNameIndex(h.name, nameIndex)) {
     uint8_t prefix = uint8_t(0x50 | (params.neverIndex(h.name) ? 0x20 : 0));
-    return putPref_(out, prefix, 4, nameIndex) < 0 ||
-      putString_(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
+    return Compression::putPref(out, prefix, 4, nameIndex) < 0 ||
+      Compression::putString(out, 0x00, 7, h.value) < 0 ?
+      -1 : int(out.length());
   }
 
-  return putString_(
+  return Compression::putString(
     out, uint8_t(0x20 | (params.neverIndex(h.name) ? 0x10 : 0)),
     3, h.name) < 0 ||
-    putString_(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
+    Compression::putString(out, 0x00, 7, h.value) < 0 ?
+    -1 : int(out.length());
 }
 
 int QPack::encodeLiteral(HdrBytes &out, ZuSpan<Header> headers,
@@ -603,7 +560,8 @@ int QPack::encodeLiteral(HdrBytes &out, ZuSpan<Header> headers,
 int QPack::encodeSetCapacity(HdrBytes &out, uint64_t capacity)
 {
   out.length(0);
-  return putPref_(out, 0x20, 5, capacity) < 0 ? -1 : int(out.length());
+  return Compression::putPref(out, 0x20, 5, capacity) < 0 ?
+    -1 : int(out.length());
 }
 
 int QPack::encodeInsertWithNameRef(
@@ -611,21 +569,24 @@ int QPack::encodeInsertWithNameRef(
 {
   out.length(0);
   uint8_t prefix = uint8_t(0x80 | (dynamic ? 0x00 : 0x40));
-  return putPref_(out, prefix, 6, index) < 0 ||
-    putString_(out, 0x00, 7, value) < 0 ? -1 : int(out.length());
+  return Compression::putPref(out, prefix, 6, index) < 0 ||
+    Compression::putString(out, 0x00, 7, value) < 0 ?
+    -1 : int(out.length());
 }
 
 int QPack::encodeInsertLiteral(HdrBytes &out, Header h)
 {
   out.length(0);
-  return putString_(out, 0x40, 5, h.name) < 0 ||
-    putString_(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
+  return Compression::putString(out, 0x40, 5, h.name) < 0 ||
+    Compression::putString(out, 0x00, 7, h.value) < 0 ?
+    -1 : int(out.length());
 }
 
 int QPack::encodeSectionAck(HdrBytes &out, uint64_t streamID)
 {
   out.length(0);
-  return putPref_(out, 0x80, 7, streamID) < 0 ? -1 : int(out.length());
+  return Compression::putPref(out, 0x80, 7, streamID) < 0 ?
+    -1 : int(out.length());
 }
 
 int QPack::decodeEncoderInsn(ZuCSpan in, QPackDecodedInsn &i)
@@ -637,7 +598,7 @@ int QPack::decodeEncoderInsn(ZuCSpan in, QPackDecodedInsn &i)
 
   if (uint8_t(in[0]) & 0x80) {
     i.type = QPackInsn::InsertWithNameRef;
-    int n = qpackDecodePrefInt_(in, o, 6, i.value, &first);
+    int n = Compression::decodePref(in, o, 6, i.value, &first);
     if (n < 0) return n;
     i.nameRefDynamic = !(first & 0x40);
     if ((n = decodeString(
@@ -655,12 +616,12 @@ int QPack::decodeEncoderInsn(ZuCSpan in, QPackDecodedInsn &i)
   }
   if ((uint8_t(in[0]) & 0xe0) == 0x20) {
     i.type = QPackInsn::SetCapacity;
-    int n = qpackDecodePrefInt_(in, o, 5, i.value);
+    int n = Compression::decodePref(in, o, 5, i.value);
     return n < 0 ? n : int(o);
   }
   if ((uint8_t(in[0]) & 0xe0) == 0x00) {
     i.type = QPackInsn::Duplicate;
-    int n = qpackDecodePrefInt_(in, o, 5, i.value);
+    int n = Compression::decodePref(in, o, 5, i.value);
     return n < 0 ? n : int(o);
   }
   return -1;
@@ -673,16 +634,16 @@ int QPack::decodeDecoderInsn(ZuCSpan in, QPackDecodedInsn &i)
   i = {};
   if (uint8_t(in[0]) & 0x80) {
     i.type = QPackInsn::SectionAck;
-    int n = qpackDecodePrefInt_(in, o, 7, i.value);
+    int n = Compression::decodePref(in, o, 7, i.value);
     return n < 0 ? n : int(o);
   }
   if (uint8_t(in[0]) & 0x40) {
     i.type = QPackInsn::StreamCancellation;
-    int n = qpackDecodePrefInt_(in, o, 6, i.value);
+    int n = Compression::decodePref(in, o, 6, i.value);
     return n < 0 ? n : int(o);
   }
   i.type = QPackInsn::InsertCountIncrement;
-  int n = qpackDecodePrefInt_(in, o, 6, i.value);
+  int n = Compression::decodePref(in, o, 6, i.value);
   if (n < 0) return n;
   if (!i.value) return -1;
   return int(o);

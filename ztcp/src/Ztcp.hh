@@ -315,11 +315,13 @@ private:
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       auto buf = m_link->allocTxBuf_();
-      if (ZuUnlikely(!buf || skip)) throw TxStreamAllocFailure{};
+      if (ZuUnlikely(!buf || skip > buf->size))
+	throw TxStreamAllocFailure{};
+      buf->skip = skip;
       return buf;
     }
 
-    void sendBuf_(ZmRef<ZiIOBuf> buf) {
+    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_link->impl();
       auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)

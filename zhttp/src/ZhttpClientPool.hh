@@ -98,31 +98,31 @@ private:
 // One typed pool of normalized HTTP client links.  The pool owns transport
 // links and message machinery; Owner owns request policy and attempt results.
 template <
-  typename Owner_, typename Protocol_, typename Request_,
+  typename Owner_, typename Profile_, typename Request_,
   typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_>
 class ClientPool :
   public Client<
     ClientPool<
-      Owner_, Protocol_, Request_,
+      Owner_, Profile_, Request_,
       ReqHeaders_, RespHeaders_, RespBodyMax_>,
-    Protocol_> {
+    Profile_> {
 public:
   using Owner = Owner_;
-  using ProtocolT = Protocol_;
+  using Profile = Profile_;
   using Request = Request_;
   using ReqHeaders = ReqHeaders_;
   using RespHeaders = RespHeaders_;
   using Pool = ClientPool;
-  using Message = MessageTraits<ProtocolT>;
-  using Base = Client<Pool, ProtocolT>;
+  using Message = MessageTraits<Profile>;
+  using Base = Client<Pool, Profile>;
   static constexpr uint64_t RespBodyMax = RespBodyMax_;
 
   struct Link :
-    public ClientLink<Pool, Link, Protocol_> {
-    using Base = ClientLink<Pool, Link, Protocol_>;
-    using Protocol = Protocol_;
+    public ClientLink<Pool, Link, Profile_> {
+    using Base = ClientLink<Pool, Link, Profile_>;
+    using Protocol = typename Profile::Protocol;
     using IO = ClientMessage<
-      Owner, Request, Link, Protocol,
+      Owner, Request, Link, Profile,
       ReqHeaders, RespHeaders, RespBodyMax>;
 
     Link(Pool *pool, unsigned id_) :
@@ -244,6 +244,7 @@ public:
   Owner *owner() const { return m_owner; }
   void owner(Owner *owner_) { m_owner = owner_; }
   bool accepting() const { return !m_stopping && this->running(); }
+  unsigned live() const { return m_live; }
   unsigned linkCount() const { return m_links.length(); }
   const Links &links() const { return m_links; }
 
@@ -258,7 +259,7 @@ public:
 
   ZmRef<Link> open(Request *request, unsigned id) {
     if (!accepting() || !request) return {};
-    if constexpr (!Base::Multiplexed)
+    if constexpr (!Message::Multiplexed)
       for (unsigned i = 0; i < m_links.length(); ++i)
 	if (m_links[i]->stopped()) {
 	  auto link = m_links[i];
@@ -270,7 +271,7 @@ public:
 	}
     ZmRef<Link> link = new Link{this, id};
 #ifdef ZmObject_DEBUG
-    if constexpr (Base::Multiplexed)
+    if constexpr (Message::Multiplexed)
       link->ZmObject::debug();
     else
       link->ZmPolymorph::debug();
@@ -301,8 +302,8 @@ public:
     m_owner->poolStopped(link);
     if (m_live) --m_live;
     if (m_stopping && !m_live)
-      if constexpr (!Base::Multiplexed) Base::stop_();
-    if constexpr (Base::Multiplexed)
+      if constexpr (!Message::Multiplexed) Base::stop_();
+    if constexpr (Message::Multiplexed)
       this->rxRun([this, hold = ZmMkRef(&link)]() mutable {
 	unsigned i = hold->slot;
 	unsigned n = m_links.length();
@@ -320,7 +321,7 @@ public:
   // H3_::ClientEngine::stop(done) instead and never enters this hook.
   void stop_() {
     m_stopping = true;
-    if constexpr (!Base::Multiplexed) {
+    if constexpr (!Message::Multiplexed) {
       if (!m_live) {
 	Base::stop_();
 	return;

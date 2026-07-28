@@ -94,8 +94,8 @@ void send(Link &link, State &state, int ready, int sent, ZuCSpan data)
   tx << data << Zi::flush();
 }
 
-template <typename Protocol> struct Server;
-template <typename Protocol> struct ServerLink;
+template <typename Profile> struct Server;
+template <typename Profile> struct ServerLink;
 
 struct ServerSession {
   template <typename Link>
@@ -120,10 +120,10 @@ struct ServerSession {
   }
 };
 
-template <typename Protocol>
+template <typename Profile>
 struct Server :
-  public Zhttp::Server<Server<Protocol>, Protocol> {
-  using Link = ServerLink<Protocol>;
+  public Zhttp::Server<Server<Profile>, Profile> {
+  using Link = ServerLink<Profile>;
 
   State	*state = nullptr;
 
@@ -139,21 +139,21 @@ struct Server :
   }
 };
 
-template <typename Protocol>
+template <typename Profile>
 struct ServerLink :
   public Zhttp::ServerLink<
-    Server<Protocol>, ServerLink<Protocol>, Protocol, ServerSession> {
+    Server<Profile>, ServerLink<Profile>, Profile, ServerSession> {
   using Base = Zhttp::ServerLink<
-    Server<Protocol>, ServerLink<Protocol>, Protocol, ServerSession>;
+    Server<Profile>, ServerLink<Profile>, Profile, ServerSession>;
   using Base::Base;
 };
 
-template <typename Protocol>
+template <typename Profile>
 struct Client :
-  public Zhttp::Client<Client<Protocol>, Protocol> {
+  public Zhttp::Client<Client<Profile>, Profile> {
   struct Link :
-    public Zhttp::ClientLink<Client, Link, Protocol> {
-    using Base = Zhttp::ClientLink<Client, Link, Protocol>;
+    public Zhttp::ClientLink<Client, Link, Profile> {
+    using Base = Zhttp::ClientLink<Client, Link, Profile>;
     using Base::Base;
 
     unsigned responses = 0;
@@ -187,10 +187,10 @@ struct Client :
 };
 
 struct FailClient :
-  public Zhttp::Client<FailClient, Zhttp::TLS> {
+  public Zhttp::Client<FailClient, Zhttp::H1TLS> {
   struct Link :
-    public Zhttp::ClientLink<FailClient, Link, Zhttp::TLS> {
-    using Base = Zhttp::ClientLink<FailClient, Link, Zhttp::TLS>;
+    public Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS> {
+    using Base = Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS>;
     using Base::Base;
   };
 
@@ -211,12 +211,12 @@ struct FailClient :
   int process(Link &, Rx &) { state->fail(); return -1; }
 };
 
-template <typename Protocol> struct Config;
-template <> struct Config<Zhttp::TCP> {
+template <typename Profile> struct Config;
+template <> struct Config<Zhttp::H1TCP> {
   static auto client(const TempDir &) { return Zhttp::TCPConfig{}; }
   static auto server(const TempDir &) { return Zhttp::TCPConfig{}; }
 };
-template <> struct Config<Zhttp::TLS> {
+template <> struct Config<Zhttp::H1TLS> {
   static auto client(const TempDir &temp) {
     return Zhttp::TLSConfig{}.caPath(temp.certPath.cspan());
   }
@@ -225,7 +225,7 @@ template <> struct Config<Zhttp::TLS> {
       .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan());
   }
 };
-template <> struct Config<Zhttp::QUIC> {
+template <> struct Config<Zhttp::H3QUIC> {
   static auto client(const TempDir &temp) {
     return Zhttp::QUICConfig{}.caPath(temp.certPath.cspan());
   }
@@ -235,7 +235,7 @@ template <> struct Config<Zhttp::QUIC> {
   }
 };
 
-template <typename Protocol>
+template <typename Profile>
 void run(
   const TempDir &temp, unsigned rounds = 2, unsigned links = 1,
   bool asyncStop = false)
@@ -254,10 +254,10 @@ void run(
   if (!mx.running()) return;
 
   Zhttp::EngineConfig engine{&mx, "3", "4"};
-  Server<Protocol> server{&state};
-  Client<Protocol> client{&state};
-  bool serverInit = server.init(engine, Config<Protocol>::server(temp));
-  bool clientInit = client.init(engine, Config<Protocol>::client(temp));
+  Server<Profile> server{&state};
+  Client<Profile> client{&state};
+  bool serverInit = server.init(engine, Config<Profile>::server(temp));
+  bool clientInit = client.init(engine, Config<Profile>::client(temp));
   ZuCHECK(serverInit && clientInit, "H1 engine initialization failed");
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
@@ -282,7 +282,7 @@ void run(
 
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "H1 listen timed out");
-  using Link = typename Client<Protocol>::Link;
+  using Link = typename Client<Profile>::Link;
   using Links =
     ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttp.Test.EngineLinks">>;
   Links links_;
@@ -294,14 +294,14 @@ void run(
       links_.push(ZuMv(link));
     }
     auto &complete =
-      Client<Protocol>::Multiplexed ? state.messageDone : state.done;
+      Client<Profile>::Multiplexed ? state.messageDone : state.done;
     ZuCHECK(complete.timedwait(Zm::now(10)) == 0,
       "H1 message lifecycle timed out");
   }
 
   server.stopAccepting();
   bool stopped = false;
-  if constexpr (ZuIsSame<Protocol, Zhttp::QUIC>{}) {
+  if constexpr (ZuIsSame<Profile, Zhttp::H3QUIC>{}) {
     if (asyncStop) {
       ZmSemaphore stopDone;
       ZmAtomic<unsigned> stopErrors = 0;
@@ -322,7 +322,7 @@ void run(
   } else
     stopped = client.stop() && server.stop();
   ZuCHECK(stopped, "H1 engine stop failed");
-  if constexpr (Client<Protocol>::Multiplexed) {
+  if constexpr (Client<Profile>::Multiplexed) {
     bool closed = state.done.timedwait(Zm::now(10)) == 0;
     ZuCHECK(closed, "H3 disconnect lifecycle timed out");
   }
@@ -350,7 +350,7 @@ void run(
     "H1 application event order mismatch");
 }
 
-template <typename Protocol>
+template <typename Profile>
 void runServerStop(const TempDir &temp)
 {
   ZuTestScope(runServerStop);
@@ -367,10 +367,10 @@ void runServerStop(const TempDir &temp)
   if (!mx.running()) return;
 
   Zhttp::EngineConfig engine{&mx, "3", "4"};
-  Server<Protocol> server{&state};
-  Client<Protocol> client{&state};
-  bool serverInit = server.init(engine, Config<Protocol>::server(temp));
-  bool clientInit = client.init(engine, Config<Protocol>::client(temp));
+  Server<Profile> server{&state};
+  Client<Profile> client{&state};
+  bool serverInit = server.init(engine, Config<Profile>::server(temp));
+  bool clientInit = client.init(engine, Config<Profile>::client(temp));
   ZuCHECK(serverInit && clientInit,
     "active-stop engine initialization failed");
   if (!serverInit || !clientInit) {
@@ -394,7 +394,7 @@ void runServerStop(const TempDir &temp)
 
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "active-stop listen timed out");
-  using Link = typename Client<Protocol>::Link;
+  using Link = typename Client<Profile>::Link;
   ZmRef<Link> link;
   bool active = false;
   if (listening) {
@@ -461,9 +461,9 @@ void testTLSFailure(const TempDir &cert, const TempDir &otherCA)
   if (!mx.running()) return;
 
   Zhttp::EngineConfig engine{&mx, "3", "4"};
-  Server<Zhttp::TLS> server{&state};
+  Server<Zhttp::H1TLS> server{&state};
   FailClient client{&state};
-  bool serverInit = server.init(engine, Config<Zhttp::TLS>::server(cert));
+  bool serverInit = server.init(engine, Config<Zhttp::H1TLS>::server(cert));
   bool clientInit = client.init(
     engine, Zhttp::TLSConfig{}.caPath(otherCA.certPath.cspan()));
   ZuCHECK(serverInit && clientInit, "TLS failure engine initialization failed");

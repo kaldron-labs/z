@@ -408,8 +408,11 @@ static int ticket_key_cb_(unsigned char *key_name, unsigned char *iv,
   };
   if (enc) {
     memcpy(key_name, key->name, sizeof(key->name));
-    RAND_bytes(iv, EVP_CIPHER_iv_length(EVP_aes_256_cbc()));
-    EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key->aes_key, iv);
+    if (RAND_bytes(
+	  iv, EVP_CIPHER_iv_length(EVP_aes_256_cbc())) != 1 ||
+	EVP_EncryptInit_ex(
+	  ctx, EVP_aes_256_cbc(), nullptr, key->aes_key, iv) != 1)
+      return -1;
     if (EVP_MAC_init(hctx, key->hmac_key, sizeof(key->hmac_key), params) != 1)
       return -1;
     return 1;
@@ -436,19 +439,18 @@ static int ticket_encrypt_cb_(ptls_encrypt_ticket_t *self, ptls_t *,
 
 bool init()
 {
-  static bool done = false;
-  if (done) return true;
-  done = true;
-  Ztls::Pico::install();
-  OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, nullptr);
-  return true;
+  static const bool done = []() {
+    Ztls::Pico::install();
+    return OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, nullptr) == 1;
+  }();
+  return done;
 }
 
 bool random_bytes(ZuSpan<uint8_t> data)
 {
   if (!data.length()) return true;
-  ptls_openssl_random_bytes(data.data(), data.length());
-  return true;
+  return init() &&
+    RAND_bytes(data.data(), data.length()) == 1;
 }
 
 RandomBytesFn random_bytes_cb()
@@ -1022,11 +1024,15 @@ bool load_certificates(ptls_context_t *ctx, const char *path)
 
 TicketKey *ticket_key_new()
 {
+  if (!init()) return nullptr;
   auto key = new TicketKey{};
   key->super.cb = ticket_encrypt_cb_;
-  RAND_bytes(key->name, sizeof(key->name));
-  RAND_bytes(key->aes_key, sizeof(key->aes_key));
-  RAND_bytes(key->hmac_key, sizeof(key->hmac_key));
+  if (RAND_bytes(key->name, sizeof(key->name)) != 1 ||
+      RAND_bytes(key->aes_key, sizeof(key->aes_key)) != 1 ||
+      RAND_bytes(key->hmac_key, sizeof(key->hmac_key)) != 1) {
+    delete key;
+    return nullptr;
+  }
   return key;
 }
 

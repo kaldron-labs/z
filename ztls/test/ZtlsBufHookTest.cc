@@ -129,6 +129,8 @@ struct TestState {
   ZtArray<uint8_t>	serverPayload;
   bool			clientKeyUpdate = false;
   bool			serverDisconnectAfterSend = false;
+  unsigned		txHeadroom = 0;
+  unsigned		txTailroom = 0;
 
   ZmAtomic<unsigned>	done_count{0};
   ZmAtomic<unsigned>	errors{0};
@@ -274,13 +276,29 @@ ZiMxParams mx_params()
     .rxThread(1).txThread(2);
 }
 
+template <typename Lower>
+struct ReserveLayer : public ZiTxLayer<ReserveLayer<Lower>, Lower> {
+  using Base = ZiTxLayer<ReserveLayer<Lower>, Lower>;
+
+  ReserveLayer(Lower &lower, unsigned headRoom, unsigned tailRoom) :
+    Base{lower, headRoom, tailRoom} { }
+
+  void prepareBuf_(ZiIOBuf *, bool) { }
+};
+
 template <typename Link>
 void send_payload(Link *link, const ZtArray<uint8_t> &payload)
 {
   if (!payload.length()) return;
   auto tx = link->txStream();
-  tx.append(payload.data(), unsigned(payload.length()));
-  tx << Zi::flush();
+  auto &state = link->app()->state;
+  unsigned head1 = state.txHeadroom >> 1;
+  unsigned tail1 = state.txTailroom >> 1;
+  ReserveLayer first{tx, head1, tail1};
+  ReserveLayer second{
+    first, state.txHeadroom - head1, state.txTailroom - tail1};
+  second.append(payload.data(), unsigned(payload.length()));
+  second << Zi::flush();
 }
 
 template <typename State>
@@ -410,7 +428,9 @@ void run_in_process(
     ZiIP ip = ZiIP{"127.0.0.1"},
     const char *connectIP = "127.0.0.1",
     ptls_cipher_suite_t **cipherSuites = nullptr,
-    unsigned expectedCipher = 0)
+    unsigned expectedCipher = 0,
+    unsigned txHeadroom = 0,
+    unsigned txTailroom = 0)
 {
   Ztls::Pico::reset_stats();
   capture.reset();
@@ -420,6 +440,8 @@ void run_in_process(
   state.ip = ip;
   state.port = reserve_loopback_port(ip);
   state.clientKeyUpdate = clientKeyUpdate;
+  state.txHeadroom = txHeadroom;
+  state.txTailroom = txTailroom;
   fill_payload(state.clientPayload, clientLen, 0x11);
   fill_payload(state.serverPayload, serverLen, 0x63);
   if (ip.v6() && !state.port) {
@@ -465,6 +487,8 @@ void run_in_process(
   bool done = wait_done(state);
   ZTLS_CHECK_RT(done, "TLS disconnect wait timed out");
 
+  client.final();
+  server.final();
   mx.stop();
 
   ZTLS_CHECK_RT(!capture.errors.load_(), "unexpected error logs");
@@ -719,6 +743,26 @@ void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
     suites.list, PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
 }
 
+void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testTLS13ComposedHeadroom);
+
+  constexpr unsigned ExtraHeadroom = 31;
+  constexpr unsigned ExtraTailroom = 17;
+  constexpr unsigned RecordPayload =
+    16 * 1024 - 325 - ExtraHeadroom - ExtraTailroom;
+  constexpr unsigned Payload = RecordPayload * 2 + 1;
+
+  for (auto suites = Ztls::Backend::cipher_suites(); *suites; ++suites) {
+    SuiteList selected;
+    selected.set(*suites);
+    run_in_process(
+      temp, capture, Payload, Payload, false,
+      ZiIP{"127.0.0.1"}, "127.0.0.1",
+      selected.list, (*suites)->id, ExtraHeadroom, ExtraTailroom);
+  }
+}
+
 void testTLS12ExplicitIV(TempDir &temp, LogCapture &capture)
 {
   (void)temp;
@@ -776,6 +820,7 @@ int main(int argc, char **argv)
     ZuTestCall(testTLS13JumboBuffers, temp, capture);
     ZuTestCall(testTLS13IPv6Loopback, temp, capture);
     ZuTestCall(testTLS13KeyUpdate, temp, capture);
+    ZuTestCall(testTLS13ComposedHeadroom, temp, capture);
     ZuTestCall(testTLS12ExplicitIV, temp, capture);
     ZuTestCall(testTLS12NoExplicitIV, temp, capture);
     ZuTestCall(testTLS12HandshakeRejected, temp, capture);
