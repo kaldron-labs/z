@@ -9,7 +9,7 @@ All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
 | CLI parsing | `Http3Mode`, timeout defaults, `Options`, `usage`, `parseDrop`, `validateOptions` | Declare, parse, validate, and document command-line workload and configuration choices. |
-| Protocol-specific configuration | `parseAuthority`, `parseMigrationLocal`, `migrationMode`, `migrationConfigured`, `migrationOnOpen`, `quicHeartbeat`, `mxParams` | Convert CLI values into multiplex, TLS, and QUIC configuration. |
+| Protocol-specific configuration | `Http2Mode`, `Http3Mode`, `parseAuthority`, `parseMigrationLocal`, `migrationMode`, `migrationConfigured`, `migrationOnOpen`, `quicHeartbeat`, `mxParams` | Convert CLI values into multiplex, TLS, and QUIC configuration. |
 | Workload selection | `RequestHeaders`, `ResponseHeaders`, `URL`, `MaxRedirects`, `RespBodyMax`, `Req`, `State`, `initReq`, `ClientCallbacks` | Describe submitted GET requests and implement the single protocol-neutral response callback contract. |
 | Workload-specific request/response handling | `redirectStatus`, `resetResponse` | Interpret response status for output policy and reset application response state after a library-managed redirect. |
 | Output-file handling | `HdrString`, `outputPath`, `closeBody`, `truncateOutputPath` | Select, open, truncate, write, and close response output files. |
@@ -40,7 +40,7 @@ not own listener state or lifecycle decisions.
 
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
-| CLI parsing | `CLI`, `Forward`, `Options`, `parseForward`, `parseAuth`, `loadOptions`, `validate` | Define and validate static-server workload options. |
+| CLI parsing | `CLI`, `Http2Mode`, `Forward`, `Options`, `parseForward`, `parseAuth`, `loadOptions`, `validate` | Define and validate static-server workload options. |
 | Workload selection | `FileChunk`, `MimeFileMax`, `DateBufSize`, `DirEntriesBuiltin`, `DirNameBuiltin`, `HdrString`, `PathOffsets`, `State`, `initFileState` | Own bounded static-workload configuration and state. |
 | Workload-specific request/response handling | `ResponsePlan`, `MimeMap`, `StaticPlanner`, `isspace__`, `lower__`, `lower`, `ieq`, `httpDate`, `parseHTTPDate`, `splitTarget`, `pathComponent`, `decodeNormalizePath`, `staticPath`, `htmlEsc`, `hostName`, `constTimeEqual`, `basicAuthValue` | Plan authorization, redirects, normalized static paths, MIME, conditional and range responses, directory listings, and response metadata. |
 | Output-file handling | `fileChunks`, `sendSpanChunks` | Bound response-file and generated-body chunks presented to the public service body sink. |
@@ -48,7 +48,8 @@ not own listener state or lifecycle decisions.
 | CLI parsing | `run` declaration | Expose the executable entry point to application tests. |
 
 The automated `ZhttpBoundaryTest.sh` rejects native transport headers, internal
-link calls, parser/builder selection, discovery/cache/pool machinery, blocking
+link calls, parser/builder selection, HPACK/H2 frame/session/wire code,
+application-local ALPN manipulation, discovery/cache/pool machinery, blocking
 coordination, and program-local engine/runtime coordinators in this closure.
 It also derives executable sources from `Makefile.am` and quoted local-header
 edges from the reviewed files, rejecting any unreviewed addition to the

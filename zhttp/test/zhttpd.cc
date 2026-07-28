@@ -54,7 +54,9 @@ void usage(int code = 1)
     "  --timeout secs             idle connection timeout, 30 default, 0 disables\n"
     "  --auth username:password   Basic authentication\n"
     "  --http                     enable HTTP/1.1 over TCP, default\n"
-    "  --https                    enable HTTP/1.1 over TLS\n"
+    "  --https                    enable HTTP/1.1 or HTTP/2 over TLS\n"
+    "  --http2=MODE               HTTP/2 mode within TLS: force, prefer,\n"
+    "                             disable; default prefer\n"
     "  --http3                    enable HTTP/3 over QUIC\n"
     "  --cert path                TLS certificate for --https/--http3\n"
     "  --key path                 TLS private key for --https/--http3\n"
@@ -355,8 +357,15 @@ int Zhttpd::run(int argc, const char *const *argv)
     serviceConfig.tcp();
   }
   if (state.options.https) {
-    serviceConfig.tls(Zhttp::TLSConfig{}
-      .certPath(state.options.cert).keyPath(state.options.key));
+    int8_t policy;
+    switch (state.options.http2) {
+      case Http2Mode::force: policy = Zhttp::H2Policy::Force; break;
+      case Http2Mode::disable: policy = Zhttp::H2Policy::Disable; break;
+      default: policy = Zhttp::H2Policy::Prefer; break;
+    }
+    serviceConfig.tls(Zhttp::H2Config{}
+      .certPath(state.options.cert).keyPath(state.options.key)
+      .policy(policy));
   }
 #ifdef Zquic_DEBUG
   bool h3Enabled = false;

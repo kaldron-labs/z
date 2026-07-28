@@ -15,8 +15,9 @@
 //     - ZmRef<IOBuf> allocBuf_(unsigned headRoom)
 //     - return a new buffer with skip == headRoom
 //   - how buffers are sent - the sendBuf_ callback
-//     - void sendBuf_(ZmRef<IOBuf> buf)
+//     - void sendBuf_(ZmRef<IOBuf> buf, bool final)
 //     - send buf (via lower-level protocol)
+//     - final is false for rollover and true for flush/destruction
 
 #ifndef ZiTxStream_HH
 #define ZiTxStream_HH
@@ -44,7 +45,7 @@ struct Impl : public TxStream<Impl> {
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom);
 
-  void sendBuf_(ZmRef<ZiIOBuf>);
+  void sendBuf_(ZmRef<ZiIOBuf>, bool final);
 };
 #endif
 
@@ -61,8 +62,20 @@ public:
     m_maxSize(maxSize), m_headRoom(headRoom), m_tailRoom(tailRoom) { }
   ~TxStream() { flush(); }
 
-  TxStream(TxStream &&) = default;
-  TxStream &operator =(TxStream &&) = default;
+  TxStream(TxStream &&stream) :
+    m_maxSize{stream.m_maxSize},
+    m_headRoom{stream.m_headRoom},
+    m_tailRoom{stream.m_tailRoom},
+    m_buf{ZuMv(stream.m_buf)} { }
+  TxStream &operator =(TxStream &&stream) {
+    if (this == &stream) return *this;
+    flush();
+    m_maxSize = stream.m_maxSize;
+    m_headRoom = stream.m_headRoom;
+    m_tailRoom = stream.m_tailRoom;
+    m_buf = ZuMv(stream.m_buf);
+    return *this;
+  }
 
   unsigned maxSize() const { return m_maxSize; }
   unsigned headRoom() const { return m_headRoom; }
@@ -71,11 +84,12 @@ public:
 private:
   void allocBuf() { m_buf = impl()->allocBuf_(m_headRoom); }
   void ensureBuf() { if (!m_buf) allocBuf(); }
-  void sendBuf() { impl()->sendBuf_(ZuMv(m_buf)); allocBuf(); }
-  void flushBuf() { impl()->sendBuf_(ZuMv(m_buf)); m_buf = {}; }
+  void sendBuf() { impl()->sendBuf_(ZuMv(m_buf), false); allocBuf(); }
+  void flushBuf() { impl()->sendBuf_(ZuMv(m_buf), true); m_buf = {}; }
 
 public:
   void append(const uint8_t *data, unsigned length) {
+    if (!length) return;
     ensureBuf();
     for (;;) {
       unsigned total = m_buf->length + m_headRoom + m_tailRoom;
@@ -112,8 +126,8 @@ private:
     ZmAssert(total <= m_maxSize); // sanity check on current buf
     unsigned avail = m_maxSize - total;
     if (avail < length_) {
-      // need new buf
-      sendBuf();
+      // need new buf, unless the output itself exceeds an empty buffer
+      if (bufLen) sendBuf();
       avail = m_maxSize - (m_headRoom + m_tailRoom);
       if (length_ > avail)
 	throw ZeEXCEPT(Fatal, "ZiTxStream", ([avail, length_](auto &s) {
@@ -179,7 +193,7 @@ private:
 struct Impl : public TxLayer<Impl, ...> {
   using Base = TxStream<Impl, ...>;
 
-  void prepareBuf_(ZiIOBuf *); // prepare for sending
+  void prepareBuf_(ZiIOBuf *, bool final); // prepare for sending
 };
 #endif
 
@@ -200,15 +214,18 @@ public:
   {
     m_below.flush();
   }
-  ~TxLayer() { m_below.flush(); }
+  ~TxLayer() {
+    this->flush();
+    m_below.flush();
+  }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     return m_below.allocBuf_(headRoom);
   }
 
-  void sendBuf_(ZmRef<ZiIOBuf> buf) {
-    impl()->prepareBuf_(buf);
-    m_below.sendBuf_(ZuMv(buf));
+  void sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+    impl()->prepareBuf_(buf, final);
+    m_below.sendBuf_(ZuMv(buf), final);
   }
 
 private:

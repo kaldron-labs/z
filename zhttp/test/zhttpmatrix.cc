@@ -59,7 +59,7 @@ namespace Pair {
 }
 
 namespace Proto {
-  enum T { H1TCP, H1TLS, H3, H3Prefer };
+  enum T { H1TCP, H1TLS, H2TLS, H3, H3Prefer };
 }
 
 namespace Scenario {
@@ -174,6 +174,7 @@ const char *protoName(Proto::T proto)
   switch (proto) {
     case Proto::H1TCP: return "h1/tcp";
     case Proto::H1TLS: return "h1/tls";
+    case Proto::H2TLS: return "h2/tls";
     case Proto::H3: return "h3/quic";
     case Proto::H3Prefer: return "h3/prefer";
   }
@@ -185,6 +186,7 @@ const char *protoCaseName(Proto::T proto)
   switch (proto) {
     case Proto::H1TCP: return "h1-tcp";
     case Proto::H1TLS: return "h1-tls";
+    case Proto::H2TLS: return "h2-tls";
     case Proto::H3: return "h3";
     case Proto::H3Prefer: return "h3-prefer";
   }
@@ -365,6 +367,10 @@ bool parseProto(ZuCSpan name, Proto::T &proto)
   }
   if (name == "h1-tls") {
     proto = Proto::H1TLS;
+    return true;
+  }
+  if (name == "h2-tls") {
+    proto = Proto::H2TLS;
     return true;
   }
   if (name == "h3") {
@@ -585,6 +591,7 @@ void eachCase(L l)
   Proto::T protos[] = {
     Proto::H1TCP,
     Proto::H1TLS,
+    Proto::H2TLS,
     Proto::H3
   };
   unsigned jobs[] = {1, 5};
@@ -832,6 +839,14 @@ void appendReadyCommand(
 	"https://localhost:" << port << Path <<
 	" >/dev/null 2>&1; then\n";
       break;
+    case Proto::H2TLS:
+      script <<
+	"  if curl --http2 --cacert " << certPath <<
+		" --fail -sS --connect-timeout 1 --max-time 1 "
+	"--resolve localhost:" << port << ":127.0.0.1 "
+	"https://localhost:" << port << Path <<
+	" >/dev/null 2>&1; then\n";
+      break;
     case Proto::H3:
       script <<
 	"  if curl --http3-only --cacert " << certPath <<
@@ -874,7 +889,10 @@ void appendZhttpCommand(
     case Proto::H1TCP:
       break;
     case Proto::H1TLS:
-      script << " --http3=disable -c " << certPath;
+      script << " --http3=disable --http2=disable -c " << certPath;
+      break;
+    case Proto::H2TLS:
+      script << " --http3=disable --http2=force -c " << certPath;
       break;
     case Proto::H3:
       script << " --http3=force -c " << certPath;
@@ -955,6 +973,10 @@ void appendCurlCommand(
     case Proto::H1TLS:
     case Proto::H3Prefer:
       script << "curl_proto='--http1.1 --cacert " << certPath <<
+	" --resolve localhost:" << port << ":127.0.0.1'\n";
+      break;
+    case Proto::H2TLS:
+      script << "curl_proto='--http2 --cacert " << certPath <<
 	" --resolve localhost:" << port << ":127.0.0.1'\n";
       break;
     case Proto::H3:
@@ -1084,7 +1106,12 @@ bool writeScript(
 	script << " --http";
 	break;
       case Proto::H1TLS:
-	script << " --https --cert " << certPath << " --key " << keyPath;
+	script << " --https --http2=disable --cert " << certPath <<
+	  " --key " << keyPath;
+	break;
+      case Proto::H2TLS:
+	script << " --https --http2=force --cert " << certPath <<
+	  " --key " << keyPath;
 	break;
       case Proto::H3:
 	script << " --http3 --cert " << certPath << " --key " << keyPath;

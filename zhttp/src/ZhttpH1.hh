@@ -28,21 +28,6 @@ ZtEnumStruct(ParserState, int8_t,
   Complete,		// message completely read
   Error);		// invalid message
 
-template <typename Impl, typename = void>
-struct HasRuntimeHeader_ : public ZuFalse { };
-template <typename Impl>
-struct HasRuntimeHeader_<Impl,
-  decltype(ZuDeclVal<Impl *>()->header(
-    ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
-    public ZuTrue { };
-
-template <typename Impl, typename L, typename = void>
-struct HasRuntimeHeaderBuilder_ : public ZuFalse { };
-template <typename Impl, typename L>
-struct HasRuntimeHeaderBuilder_<Impl, L,
-  decltype(ZuDeclVal<Impl *>()->header(ZuDeclVal<L &&>()), void())> :
-    public ZuTrue { };
-
 // HTTP/1 request/response parser
 template <
   typename Impl,
@@ -58,8 +43,6 @@ public:
   using Headers = typename Headers_::template Unshift<
     ZuStringT<"transfer-encoding">, void,
     ZuStringT<"content-length">, void>;
-  using Keys = ZuTypeSlice<2, 0, Headers>;
-  using Values = ZuTypeSlice<2, 1, Headers>;
   static constexpr uint64_t MaxBody = MaxBody_;
   using State = ParserState;
 
@@ -112,7 +95,7 @@ private:
   }
 
   void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
-    if constexpr (HasRuntimeHeader_<Impl>{})
+    if constexpr (Fields::HasRuntime<Impl>{})
 	impl()->header(key, value);
   }
 
@@ -126,33 +109,18 @@ private:
 	this->template header_<ZuStringT<"content-length">>(value);
 	return;
     }
-    if constexpr (Keys::N) {
-	static constexpr auto kMatcher = ZuMatcher<Keys>();
-	auto i = kMatcher.exact(key);
-	if (i < 0) {
-	  runtimeHeader_(key, value);
-	  return;
-	}
-	ZuSwitch::dispatch<Keys::N>(i, [this, &value](auto i) {
-	  using KValues = ZuType<i, Values>;
-	  if constexpr (!ZuIsSame<KValues, void>{}) {
-	    if constexpr (KValues::N) {
-	      static constexpr auto vMatcher = ZuMatcher<KValues>();
-	      auto j = vMatcher.exact(value);
-	      enum { I = i };
-	      if (j >= 0) {
-		ZuSwitch::dispatch<KValues::N>(j, [this](auto j) {
-		  impl()->template header<ZuType<I, Keys>, ZuType<j, KValues>>();
-		});
-		return;
-	      }
-	    }
-	  }
-	  this->template header_<ZuType<i, Keys>>(value);
-	});
-    } else {
+    Fields::dispatch<Headers>(
+      key, value,
+      [this](auto key, ZuBSpan value) {
+	this->template header_<ZuDecay<decltype(key)>>(value);
+      },
+      [this](auto key, auto value) {
+	impl()->template header<
+	  ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>();
+      },
+      [this](ZuBSpan key, ZuBSpan value) {
 	runtimeHeader_(key, value);
-    }
+      });
   }
 
   // parse request operation line
@@ -213,6 +181,7 @@ public:
   template <typename Stream>
   State::T process(Stream &stream) {
     int64_t consumed = 0;
+    bool progressed = false;
     do {
 	consumed = 0;
 	switch (m_state) {
@@ -237,7 +206,14 @@ public:
 		else if constexpr (Request) {
 		  m_state = State::Complete;
 		} else {
-		  if (m_contentLength == 0 || noResponseBody_())
+		  if (interimResponse_()) {
+		    m_state = State::Initial;
+		    m_chunked = false;
+		    m_eofBody = false;
+		    m_contentLength = -1;
+		    m_chunkLength = -1;
+		    m_statusCode = 0;
+		  } else if (m_contentLength == 0 || noResponseBody_())
 		    m_state = State::Complete;
 		  else {
 		    m_state = State::Body;
@@ -334,6 +310,7 @@ public:
 	    });
 	  } break;
 	}
+	if (consumed > 0) progressed = true;
 	if (m_state == State::Complete ||
 	    m_state == State::Error) {
 	  State::T state = m_state;
@@ -341,7 +318,11 @@ public:
 	  return state;
 	}
     } while (consumed);
-    return m_state;
+    // Initial is numerically zero, while native transport process callbacks
+    // use zero to mean that no Rx bytes were consumed.  An informational
+    // response can consume a complete section and return to Initial.
+    return progressed && m_state == State::Initial ?
+      State::Headers : m_state;
   }
 
   // complete an EOF-framed response body when the connection closes
@@ -380,6 +361,10 @@ public:
   void complete(State::T) { }
 
 private:
+  bool interimResponse_() const {
+    return m_statusCode >= 100 && m_statusCode < 200 &&
+      m_statusCode != 101;
+  }
   bool noResponseBody_() const {
     return (m_statusCode >= 100 && m_statusCode < 200) ||
 	m_statusCode == 204 || m_statusCode == 304;
@@ -403,7 +388,7 @@ public:
   BodyStream(Lower &lower, uint64_t contentLength_) :
     Base(lower, 0, 0), m_contentLength(contentLength_) { }
 
-  void prepareBuf_(ZiIOBuf *buf) {
+  void prepareBuf_(ZiIOBuf *buf, bool) {
     ZiAssert(m_contentLength >= buf->length,
 	"Zhttp", (), "oversized body", buf->length = m_contentLength);
     m_contentLength -= buf->length;
@@ -428,7 +413,7 @@ struct ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
 
   ChunkedStream(Lower &lower) : Base(lower, HdrSize, TrlrSize) { }
 
-  void prepareBuf_(ZiIOBuf *buf) {
+  void prepareBuf_(ZiIOBuf *buf, bool) {
     ZuBox<uint32_t> n = buf->length;
     ZiAssert(buf->skip >= HdrSize,
 	"Zhttp", (), "ChunkedStream headroom error", return);
@@ -468,7 +453,7 @@ public:
 private:
   template <typename L>
   void runtimeHeaders_(L &&l) {
-    if constexpr (HasRuntimeHeaderBuilder_<Impl, L>{})
+    if constexpr (Fields::HasRuntimeBuilder<Impl, L>{})
 	impl()->header(ZuFwd<L>(l));
   }
 

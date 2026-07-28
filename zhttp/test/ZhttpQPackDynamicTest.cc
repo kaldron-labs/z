@@ -70,7 +70,7 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
     return buf;
   }
 
-  void sendBuf_(ZmRef<ZiIOBuf> buf) {
+  void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
     if (!buf) return;
     for (unsigned i = 0; i < buf->length; ++i) bytes.push(buf->data()[i]);
   }
@@ -257,8 +257,8 @@ static void appendHuffmanString(
   ZuCSpan s)
 {
   Zhttp::H3::HdrBytes encoded;
-  encoded.length(Zhttp::H3::HPack::enclen(s.length()));
-  uint64_t n = Zhttp::H3::HPack::encode(encoded.span(), s);
+  encoded.length(Zhttp::Compression::Huffman::enclen(s.length()));
+  uint64_t n = Zhttp::Compression::Huffman::encode(encoded.span(), s);
   encoded.length(n);
   Zhttp::H3::putPref(bytes, prefix, prefixBits, encoded.length());
   appendSpan(bytes, encoded);
@@ -517,6 +517,15 @@ static void putLiteralField(
   Zhttp::H3::HdrBytes &payload, ZuCSpan name, ZuCSpan value,
   bool huffmanValue = false, bool huffmanName = false);
 
+static void putRequestPseudos(
+  Zhttp::H3::HdrBytes &payload, ZuCSpan path = "/parser")
+{
+  putLiteralField(payload, ":method", "GET");
+  putLiteralField(payload, ":scheme", "https");
+  putLiteralField(payload, ":authority", "example.com");
+  putLiteralField(payload, ":path", path);
+}
+
 void testParserFieldCallbacks()
 {
   ZuTestScope(testParserFieldCallbacks);
@@ -525,18 +534,20 @@ void testParserFieldCallbacks()
 
   Zhttp::H3::Header initialHeaders[] = {
     {":method", "GET"},
+    {":scheme", "https"},
+    {":authority", "example.com"},
     {":path", "/parser"},
     {"x-test", "initial"},
     {"x-runtime", "plain"}
   };
   Zhttp::H3::HdrBytes frame;
-  putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 4});
+  putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 6});
   parser.push(frame);
   ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
       parser.method == Zhttp::Method::GET &&
       parser.path == "/parser" &&
       parser.xTestCalls == 1 && parser.xTest == "initial" &&
-      parser.runtimeCalls == 1 &&
+      parser.runtimeCalls == 2 &&
       parser.runtimeName == "x-runtime" &&
       parser.runtimeValue == "plain",
     "parser did not deliver initial pseudo/regular fields");
@@ -560,14 +571,13 @@ void testParserHuffmanRuntimeHeader()
   Zhttp::H3::HdrBytes payload;
   payload.push(0);
   payload.push(0);
-  putLiteralField(payload, ":method", "GET");
-  putLiteralField(payload, ":path", "/parser");
+  putRequestPseudos(payload);
   putLiteralField(payload, "x-hpack-key", "hpack-value", true, true);
   Zhttp::H3::HdrBytes frame;
   putFrame(frame, 0x01, ZuBSpan{payload});
   parser.push(frame);
   ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
-      parser.runtimeCalls == 1 &&
+      parser.runtimeCalls == 2 &&
       parser.runtimeName == "x-hpack-key" &&
       parser.runtimeValue == "hpack-value",
     "Huffman literal runtime header was not delivered");
@@ -581,10 +591,12 @@ void testParserInvalidFields()
     ParserStream parser;
     Zhttp::H3::Header initialHeaders[] = {
       {":method", "GET"},
+      {":scheme", "https"},
+      {":authority", "example.com"},
       {":path", "/parser"}
     };
     Zhttp::H3::HdrBytes frame;
-    putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 2});
+    putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 4});
     parser.push(frame);
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body,
       "invalid trailer setup failed");
@@ -621,11 +633,13 @@ void testParserStrictContentLength()
     ParserStream parser;
     Zhttp::H3::Header initialHeaders[] = {
       {":method", "GET"},
+      {":scheme", "https"},
+      {":authority", "example.com"},
       {":path", "/parser"},
       {"content-length", values[i]}
     };
     Zhttp::H3::HdrBytes frame;
-    putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 3});
+    putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 5});
     parser.push(frame);
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error,
       "invalid H3 content-length was not rejected");
@@ -662,8 +676,7 @@ void testParserHeaderScratchAndLimits()
     Zhttp::H3::HdrBytes payload;
     payload.push(0);
     payload.push(0);
-    putLiteralField(payload, ":method", "GET");
-    putLiteralField(payload, ":path", "/parser");
+    putRequestPseudos(payload);
     putLiteralField(payload, "x-test", longValue, true);
     Zhttp::H3::HdrBytes frame;
     putFrame(frame, 0x01, ZuBSpan{payload});
@@ -678,8 +691,7 @@ void testParserHeaderScratchAndLimits()
     Zhttp::H3::HdrBytes payload;
     payload.push(0);
     payload.push(0);
-    putLiteralField(payload, ":method", "GET");
-    putLiteralField(payload, ":path", "/parser");
+    putRequestPseudos(payload);
     putLiteralField(payload, "x-test", longValue, true);
     Zhttp::H3::HdrBytes frame;
     putFrame(frame, 0x01, ZuBSpan{payload});
@@ -692,12 +704,11 @@ void testParserHeaderScratchAndLimits()
     parser.params.maxHeaderListSize(4096);
     ZtString<> longName;
     longName << "x-long-";
-    for (unsigned i = 0; i < 300; ++i) longName << 'A';
+    for (unsigned i = 0; i < 300; ++i) longName << 'a';
     Zhttp::H3::HdrBytes payload;
     payload.push(0);
     payload.push(0);
-    putLiteralField(payload, ":method", "GET");
-    putLiteralField(payload, ":path", "/parser");
+    putRequestPseudos(payload);
     putLiteralField(payload, longName, "ok");
     Zhttp::H3::HdrBytes frame;
     putFrame(frame, 0x01, ZuBSpan{payload});
@@ -711,8 +722,7 @@ void testParserHeaderScratchAndLimits()
     Zhttp::H3::HdrBytes payload;
     payload.push(0);
     payload.push(0);
-    putLiteralField(payload, ":method", "GET");
-    putLiteralField(payload, ":path", "/parser");
+    putRequestPseudos(payload);
     putLiteralField(payload, "x-test", "value-too-large");
     Zhttp::H3::HdrBytes frame;
     putFrame(frame, 0x01, ZuBSpan{payload});

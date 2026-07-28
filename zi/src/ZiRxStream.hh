@@ -29,11 +29,28 @@
 #include <zlib/ZuSpan.hh>
 
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtEnum.hh>
 #include <zlib/ZtLocalArray.hh>
 
 #include <zlib/ZiIOBuf.hh>
 
 namespace Zi {
+
+ZtEnumNS(RxRefillState, int8_t, Wait, Input, Final, Error);
+
+struct RxRefill {
+  uint32_t	length = 0;
+  RxRefillState::T state = RxRefillState::Wait;
+};
+
+namespace RxEvent {
+  enum {
+    Start	= 1,
+    Input	= 2,
+    Final	= 4,
+    Error	= 8
+  };
+}
 
 template <typename Queue>
 class RxStream {
@@ -68,6 +85,25 @@ private:
   }
 
 public:
+  auto span() {
+    NodeRef node = head();
+    return node ? node->span() : ZuSpan<uint8_t>{};
+  }
+  auto span() const {
+    NodeRef node = head();
+    return node ? node->span() : ZuSpan<const uint8_t>{};
+  }
+  unsigned advance(unsigned n) {
+    NodeRef node = head();
+    if (!node) return 0;
+    if (n > node->length) n = node->length;
+    if (n < node->length)
+      node->advance(n);
+    else
+      m_queue.shift();
+    return n;
+  }
+
   // consume(frame, data) returns the total number of bytes consumed across all spans
   // - int64_t frame(span)
   //   - returns the number of bytes N to be consumed in span
@@ -159,9 +195,152 @@ private:
   Queue			m_queue;
 };
 
+// Synchronous bounded view over decoder-owned native input.  Impl provides:
+//   RxRefill rxRefill_()       - expose the next payload-only region
+//   ZuSpan<uint8_t> rxSpan_()  - current mutable native input span
+//   unsigned rxAdvance_(unsigned) - consume payload from native input
+//   void rxCancel_()           - discard decoder state on cancellation
+// The decoder consumes all hidden framing/control input in rxRefill_().  A
+// returned length bounds the view even if rxSpan_() also contains framing or
+// bytes belonging to the next logical message.
+template <typename Impl>
+class RxLayer {
+  RxLayer(const RxLayer &) = delete;
+  RxLayer &operator =(const RxLayer &) = delete;
+
+public:
+  RxLayer(Impl &impl_) : m_impl{&impl_} { }
+  ~RxLayer() { clean(); }
+
+  RxLayer(RxLayer &&layer) :
+    m_impl{layer.m_impl},
+    m_avail{layer.m_avail},
+    m_events{layer.m_events},
+    m_final{layer.m_final},
+    m_complete{layer.m_complete},
+    m_failed{layer.m_failed}
+  {
+    layer.m_impl = nullptr;
+    layer.clear_();
+  }
+  RxLayer &operator =(RxLayer &&layer) {
+    if (this == &layer) return *this;
+    clean();
+    m_impl = layer.m_impl;
+    m_avail = layer.m_avail;
+    m_events = layer.m_events;
+    m_final = layer.m_final;
+    m_complete = layer.m_complete;
+    m_failed = layer.m_failed;
+    layer.m_impl = nullptr;
+    layer.clear_();
+    return *this;
+  }
+
+  void reset() {
+    clean();
+    clear_();
+  }
+  void clean() {
+    if (m_impl && !m_complete) m_impl->rxCancel_();
+    m_avail = 0;
+    m_final = false;
+    m_complete = true;
+  }
+
+  unsigned events() {
+    unsigned events = m_events;
+    m_events = 0;
+    return events;
+  }
+  bool complete() const { return m_complete; }
+  bool failed() const { return m_failed; }
+  uint32_t available() const { return m_avail; }
+
+  bool input() {
+    return m_avail || refill_();
+  }
+  bool empty() { return !input(); }
+
+  // Same callback shape as RxStream::consume(), bounded to the currently
+  // exposed logical-message region.  Repeated calls refill transparently;
+  // one call never crosses into hidden input or the following message.
+  template <typename Frame, typename Data>
+  int64_t consume(Frame &&frame, Data &&data) {
+    if (m_failed) return -1;
+    if (!input()) return 0;
+    auto span = m_impl->rxSpan_();
+    if (ZuUnlikely(!span.length())) return fail_();
+    if (span.length() > m_avail) span.trunc(m_avail);
+    int64_t n = frame(span);
+    if (n <= 0) return n;
+    if (ZuUnlikely(uint64_t(n) > span.length())) return fail_();
+    span.trunc(unsigned(n));
+    data(span);
+    if (ZuUnlikely(m_impl->rxAdvance_(unsigned(n)) != unsigned(n)))
+      return fail_();
+    m_avail -= unsigned(n);
+    if (!m_avail && m_final) {
+      m_complete = true;
+      m_events |= RxEvent::Final;
+    }
+    return n;
+  }
+
+private:
+  bool refill_() {
+    if (!m_impl || m_complete || m_failed) return false;
+    RxRefill refill = m_impl->rxRefill_();
+    switch (refill.state) {
+      case RxRefillState::Wait:
+	return false;
+      case RxRefillState::Input:
+      case RxRefillState::Final:
+	if (ZuUnlikely(!refill.length)) {
+	  if (refill.state == RxRefillState::Final) {
+	    m_final = m_complete = true;
+	    m_events |= RxEvent::Final;
+	    return false;
+	  }
+	  return fail_(), false;
+	}
+	m_avail = refill.length;
+	m_final = refill.state == RxRefillState::Final;
+	m_events |= RxEvent::Input;
+	return true;
+      case RxRefillState::Error:
+	return fail_(), false;
+    }
+    return fail_(), false;
+  }
+  int64_t fail_() {
+    m_avail = 0;
+    m_failed = true;
+    m_events |= RxEvent::Error;
+    return -1;
+  }
+  void clear_() {
+    m_avail = 0;
+    m_events = RxEvent::Start;
+    m_final = false;
+    m_complete = false;
+    m_failed = false;
+  }
+
+  Impl		*m_impl = nullptr;
+  uint32_t	m_avail = 0;
+  unsigned	m_events = RxEvent::Start;
+  bool		m_final = false;
+  bool		m_complete = false;
+  bool		m_failed = false;
+};
+
 } // Zi
 
 template <typename Queue>
 using ZiRxStream = Zi::RxStream<Queue>;
+
+template <typename Impl>
+using ZiRxLayer = Zi::RxLayer<Impl>;
 
 #endif /* ZiRxStream_HH */

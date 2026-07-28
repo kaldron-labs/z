@@ -40,6 +40,8 @@ struct RequestInfo {
 
 class ServiceConfig {
 public:
+  ServiceConfig() { m_tls.policy(H2Policy::Prefer); }
+
   const ZiIP &localIP() const { return m_localIP; }
   uint16_t port() const { return m_port; }
   unsigned idleTimeout() const { return m_idleTimeout; }
@@ -49,7 +51,7 @@ public:
   bool tlsEnabled() const { return m_tlsEnabled; }
   bool quicEnabled() const { return m_quicEnabled; }
   const TCPConfig &tcpConfig() const { return m_tcp; }
-  const TLSConfig &tlsConfig() const { return m_tls; }
+  const H2Config &tlsConfig() const { return m_tls; }
   const QUICConfig &quicConfig() const { return m_quic; }
   QUICConfig quicEngineConfig() const {
     QUICConfig config{m_quic};
@@ -79,7 +81,7 @@ public:
     m_tcpEnabled = true;
     return *this;
   }
-  ServiceConfig &tls(TLSConfig v) {
+  ServiceConfig &tls(H2Config v) {
     m_tls = ZuMv(v);
     m_tlsEnabled = true;
     return *this;
@@ -93,7 +95,7 @@ public:
 private:
   ZiIP		m_localIP;
   TCPConfig	m_tcp;
-  TLSConfig	m_tls;
+  H2Config	m_tls;
   QUICConfig	m_quic;
   unsigned	m_idleTimeout = 0;
   unsigned	m_maxConnections = 0;
@@ -120,6 +122,9 @@ private:
   template <typename Protocol> struct Session;
   template <typename Protocol> struct Engine;
   template <typename Protocol> struct Link;
+  struct TLSEngine;
+  struct TLSH1Link;
+  struct TLSH2Link;
 
   struct ReqSink {
     void reset() { request = {}; complete_ = false; }
@@ -148,6 +153,7 @@ private:
 	request.userAgent = ZuCSpan{value};
     }
     void contentLength(uint64_t) { }
+    void status(unsigned) { }
     void body(ZuBSpan) { }
     template <typename ParserState>
     void complete(typename ParserState::T state) {
@@ -158,12 +164,12 @@ private:
     bool	complete_ = false;
   };
 
-  template <typename Protocol>
+  template <typename Profile>
   struct Parser :
-    public MessageTraits<Protocol>::template Parser<
-      Parser<Protocol>, true, ReqHeaders, ReqBodyMax>,
+    public MessageTraits<Profile>::template Parser<
+      Parser<Profile>, true, ReqHeaders, ReqBodyMax>,
     public ReqSink {
-    using Base = typename MessageTraits<Protocol>::template Parser<
+    using Base = typename MessageTraits<Profile>::template Parser<
       Parser, true, ReqHeaders, ReqBodyMax>;
     using State = typename Base::State;
     void reset() { Base::reset(); ReqSink::reset(); }
@@ -174,6 +180,7 @@ private:
     using ReqSink::contentLength;
     using ReqSink::header;
     using ReqSink::operation;
+    using ReqSink::status;
     using ReqSink::version;
   };
 
@@ -197,18 +204,18 @@ private:
     }
   };
 
-  template <typename Protocol>
+  template <typename Profile>
   struct Builder :
-    public MessageTraits<Protocol>::template Builder<
-      Builder<Protocol>, RespHeaders, ZuTypeList<>, true, false>,
+    public MessageTraits<Profile>::template Builder<
+      Builder<Profile>, RespHeaders, ZuTypeList<>, true, false>,
     public RespOps {
-    using Base = typename MessageTraits<Protocol>::template Builder<
+    using Base = typename MessageTraits<Profile>::template Builder<
       Builder, RespHeaders, ZuTypeList<>, true, false>;
     Builder(Service *service, const Response *response) :
       RespOps{service, response} { }
     template <typename L>
     void header(L &&l) const {
-      if constexpr (ZuIsSame<Protocol, TLS>{})
+      if constexpr (ZuIsSame<typename Profile::Protocol, TLS>{})
 	if (this->service->m_altSvc)
 	  l("alt-svc", this->service->m_altSvc);
     }
@@ -219,13 +226,13 @@ private:
     using RespOps::status;
   };
 
-  template <typename Protocol>
+  template <typename Profile>
   struct Session :
     public ServerSession<
-      Session<Protocol>, Parser<Protocol>, MessageTraits<Protocol>> {
-    using Message = MessageTraits<Protocol>;
-    using Parser_ = Parser<Protocol>;
-    using Builder_ = Builder<Protocol>;
+      Session<Profile>, Parser<Profile>, MessageTraits<Profile>> {
+    using Message = MessageTraits<Profile>;
+    using Parser_ = Parser<Profile>;
+    using Builder_ = Builder<Profile>;
     using Base = ServerSession<Session, Parser_, Message>;
     using Base::parser;
 
@@ -256,9 +263,10 @@ private:
     }
   };
 
-  template <typename Protocol>
-  struct Engine : public Server<Engine<Protocol>, Protocol> {
-    using Link_ = typename Service::template Link<Protocol>;
+  template <typename Profile>
+  struct Engine : public Server<Engine<Profile>, Profile> {
+    using HTTP = ProfileTraits<Profile>;
+    using Link_ = typename Service::template Link<Profile>;
     using Link = Link_;
     Service *service = nullptr;
 
@@ -271,33 +279,81 @@ private:
     template <typename Link_>
     void connected(Link_ &, const ConnectedInfo &) {
       service->m_workload->connected(
-	Transport_::Traits<Protocol>::ID);
+	HTTP::Transport::ID);
     }
     void release() {
-      service->release(Transport_::Traits<Protocol>::ID);
+      service->release(HTTP::Transport::ID);
     }
     template <typename Info>
     void listening(const Info &info) {
       service->m_workload->listening(
-	Transport_::Traits<Protocol>::ID, info.port);
+	HTTP::Transport::ID, info.port);
     }
     void listening() {
       service->m_workload->listening(
-	Transport_::Traits<Protocol>::ID, service->m_config.port());
+	HTTP::Transport::ID, service->m_config.port());
     }
     void listenFailed(bool transient) {
       service->m_workload->listenFailed(
-	Transport_::Traits<Protocol>::ID, transient);
+	HTTP::Transport::ID, transient);
       service->failed();
     }
   };
 
-  template <typename Protocol>
+  template <typename Profile>
   struct Link :
     public ServerLink<
-      Engine<Protocol>, Link<Protocol>, Protocol, Session<Protocol>> {
+      Engine<Profile>, Link<Profile>, Profile, Session<Profile>> {
     using Base = ServerLink<
-      Engine<Protocol>, Link, Protocol, Session<Protocol>>;
+      Engine<Profile>, Link, Profile, Session<Profile>>;
+    using Base::Base;
+  };
+
+  struct TLSEngine : public TLS_::ServerEngine<TLSEngine> {
+    using H1Link = TLSH1Link;
+    using H2Link = TLSH2Link;
+    Service *service = nullptr;
+
+    TLSEngine(Service *service_) : service{service_} { }
+    ZiIP localIP() const { return service->m_config.localIP(); }
+    unsigned localPort() const { return service->m_config.port(); }
+    unsigned idleTimeout() const {
+      return service->m_config.idleTimeout();
+    }
+    bool admit(const ZiCxnInfo &) { return service->admit(); }
+    template <typename Link_>
+    void connected(Link_ &, const ConnectedInfo &) {
+      service->m_workload->connected(Transport::TLS);
+    }
+    template <typename Link_>
+    void disconnected(Link_ &, bool) { }
+    void release() { service->release(Transport::TLS); }
+    void listening(const ZiListenInfo &info) {
+      service->m_workload->listening(Transport::TLS, info.port);
+    }
+    void listenFailed(bool transient) {
+      service->m_workload->listenFailed(Transport::TLS, transient);
+      service->failed();
+    }
+  };
+
+  struct TLSH1Link :
+    public TLS_::ServerH1Logical<
+      TLSEngine, TLSH1Link, Session<H1TLS>,
+      TLS_::ServerSession<TLSEngine>> {
+    using Base = TLS_::ServerH1Logical<
+      TLSEngine, TLSH1Link, Session<H1TLS>,
+      TLS_::ServerSession<TLSEngine>>;
+    using Base::Base;
+  };
+
+  struct TLSH2Link :
+    public H2_::ServerLogical<
+      TLSEngine, TLSH2Link, Session<H2TLS>,
+      TLS_::ServerSession<TLSEngine>> {
+    using Base = H2_::ServerLogical<
+      TLSEngine, TLSH2Link, Session<H2TLS>,
+      TLS_::ServerSession<TLSEngine>>;
     using Base::Base;
   };
 
@@ -400,9 +456,9 @@ private:
   ServiceConfig	m_config;
   MessageString	m_altSvc;
   Workload	*m_workload = nullptr;
-  Engine<TCP>	m_tcp;
-  Engine<TLS>	m_tls;
-  Engine<QUIC>	m_quic;
+  Engine<H1TCP>	m_tcp;
+  TLSEngine	m_tls;
+  Engine<H3QUIC>	m_quic;
   Engines	m_engines;
   Runtime	m_runtime;
   ZmAtomic<unsigned> m_active = 0;

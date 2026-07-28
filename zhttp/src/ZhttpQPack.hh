@@ -25,7 +25,7 @@
 
 #include <zlib/ZiAssert.hh>
 
-#include <zlib/ZhttpHPack.hh>
+#include <zlib/ZhttpCompression.hh>
 
 namespace Zhttp {
 
@@ -304,35 +304,6 @@ struct QPackTxTable {
   uint32_t used() const { return usedBytes_; }
 };
 
-inline int qpackDecodePrefInt_(
-  ZuCSpan in, unsigned &o, unsigned prefixBits, uint64_t &v,
-  uint8_t *firstByte = nullptr)
-{
-  if (!prefixBits || prefixBits > 8) return -1;
-  if (o >= in.length()) return -2;
-  uint8_t mask = uint8_t((1U << prefixBits) - 1U);
-  uint8_t first = uint8_t(in[o++]);
-  if (firstByte) *firstByte = first;
-  v = first & mask;
-  if (v < mask) return 0;
-
-  unsigned shift = 0;
-  for (;;) {
-    if (o >= in.length()) return -2;
-    if (shift >= 56) return -1;
-    uint8_t b = uint8_t(in[o++]);
-    v += uint64_t(b & 0x7f) << shift;
-    if (!(b & 0x80)) return 0;
-    shift += 7;
-  }
-}
-
-struct CodecBytes {
-  static void putSpan(HdrBytes &out, ZuCSpan s) {
-    for (unsigned i = 0; i < s.length(); ++i) out.push(uint8_t(s[i]));
-  }
-};
-
 struct QPack {
   static int staticIndex(ZuCSpan name, ZuCSpan value);
   static bool staticField(uint64_t, Header &);
@@ -359,7 +330,6 @@ struct QPack {
   static int encodeSectionAck(HdrBytes &, uint64_t);
   static int decodeEncoderInsn(ZuCSpan, QPackDecodedInsn &);
   static int decodeDecoderInsn(ZuCSpan, QPackDecodedInsn &);
-  static int decodeHuffman(HdrBytes &, ZuCSpan);
   static int decodeString(
     HdrBytes &, ZuCSpan, unsigned &, unsigned, uint8_t, ZuCSpan &);
 
@@ -385,8 +355,10 @@ struct QPack {
     // Non-Huffman strings are returned as spans into the input section.
     // Huffman strings use these per-section scratch buffers, reused for each
     // field rather than allocated inside the representation loop.
-    auto nameStorage = ZtLocalArray(HdrBytes, HPack::declen(in.length()));
-    auto valueStorage = ZtLocalArray(HdrBytes, HPack::declen(in.length()));
+    auto nameStorage =
+      ZtLocalArray(HdrBytes, Compression::Huffman::declen(in.length()));
+    auto valueStorage =
+      ZtLocalArray(HdrBytes, Compression::Huffman::declen(in.length()));
 
     auto countHeader = [&headerBytes, &params](ZuCSpan name, ZuCSpan value) {
       if (headerBytes > params.maxHeaderListSize() - name.length())
@@ -413,7 +385,8 @@ struct QPack {
       if (first & 0x80) {
 	uint64_t index = 0;
 	uint8_t indexFirst = 0;
-	if (qpackDecodePrefInt_(in, o, 6, index, &indexFirst) < 0)
+	if (Compression::decodePref(
+	    in, o, 6, index, &indexFirst) < 0)
 	  return -1;
 	if (indexFirst & 0x40) {
 	  if (!staticField(index, indexed)) return -1;
@@ -427,7 +400,7 @@ struct QPack {
 	value = indexed.value;
       } else if ((first & 0xf0) == 0x10) {
 	uint64_t index = 0;
-	if (qpackDecodePrefInt_(in, o, 4, index) < 0 ||
+	if (Compression::decodePref(in, o, 4, index) < 0 ||
 	    !table || !table->lookupPostBase(base, index, indexed))
 	  return -1;
 	name = indexed.name;
@@ -437,7 +410,8 @@ struct QPack {
       } else if ((first & 0xc0) == 0x40) {
 	uint64_t index = 0;
 	uint8_t nameFirst = 0;
-	if (qpackDecodePrefInt_(in, o, 4, index, &nameFirst) < 0)
+	if (Compression::decodePref(
+	    in, o, 4, index, &nameFirst) < 0)
 	  return -1;
 	flags.neverIndex = nameFirst & 0x20;
 	if (nameFirst & 0x10) {
@@ -453,7 +427,7 @@ struct QPack {
 	if (!readValue(value)) return -1;
       } else if ((first & 0xf0) == 0x00) {
 	uint64_t index = 0;
-	if (qpackDecodePrefInt_(in, o, 3, index) < 0 ||
+	if (Compression::decodePref(in, o, 3, index) < 0 ||
 	    !table || !table->lookupPostBase(base, index, indexed))
 	  return -1;
 	flags.neverIndex = first & 0x08;

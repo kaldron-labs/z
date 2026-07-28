@@ -380,7 +380,7 @@ public:
       return buf;
     }
 
-    void sendBuf_(ZmRef<ZiIOBuf> buf) {
+    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_stream;
       auto stream = static_cast<Stream *>(buf->owner);
       if (AppThread)

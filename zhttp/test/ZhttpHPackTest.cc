@@ -4,210 +4,303 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+// Z HTTP/2 HPACK test
+
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZtArray.hh>
+
 #include <zlib/ZhttpHPack.hh>
 
 using namespace ZuTestUtil;
 
-using HdrBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HPackTest.Bytes">>;
+namespace {
 
-static bool encodeEq_(ZuCSpan in, const uint8_t *expected, unsigned n)
+using Bytes = Zhttp::H2::HPackBytes;
+
+struct OwnedField {
+  Zhttp::H2::HPackString	name;
+  Zhttp::H2::HPackString	value;
+};
+
+using Fields =
+  ZtArray<OwnedField, ZtArrayHeapID<"Zhttp.HPackTest.Fields">>;
+
+Bytes hex(ZuCSpan value)
 {
-  HdrBytes encoded;
-  encoded.length(Zhttp::H3::HPack::enclen(in.length()));
-  uint64_t used = Zhttp::H3::HPack::encode(encoded.span(), in);
-  encoded.length(used);
-  return used == n &&
-    encoded == ZuBSpan{expected, n};
-}
-
-static bool decodeEq_(const uint8_t *in, unsigned n, ZuCSpan expected)
-{
-  HdrBytes decoded;
-  decoded.length(Zhttp::H3::HPack::declen(n));
-  int64_t used = Zhttp::H3::HPack::decode(
-    decoded.span(), ZuBSpan{in, n});
-  decoded.length(used < 0 ? 0 : uint64_t(used));
-  return used == int64_t(expected.length()) &&
-    decoded == expected;
-}
-
-static bool roundTrip_(ZuCSpan in)
-{
-  HdrBytes encoded;
-  HdrBytes decoded;
-  encoded.length(Zhttp::H3::HPack::enclen(in.length()));
-  uint64_t encodedLen = Zhttp::H3::HPack::encode(encoded.span(), in);
-  encoded.length(encodedLen);
-  decoded.length(Zhttp::H3::HPack::declen(encoded.length()));
-  int64_t decodedLen = Zhttp::H3::HPack::decode(decoded.span(), encoded);
-  decoded.length(decodedLen < 0 ? 0 : uint64_t(decodedLen));
-  return decodedLen == int64_t(in.length()) &&
-    decoded == in;
-}
-
-void testHPackHuffmanKnownVectors()
-{
-  ZuTestScope(testHPackHuffmanKnownVectors);
-
-  uint8_t www[] = {
-    0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0,
-    0xab, 0x90, 0xf4, 0xff
-  };
-  ZuCHECK(decodeEq_(www, sizeof(www), "www.example.com"),
-    "HPACK Huffman RFC example decode failed");
-  ZuCHECK(encodeEq_("www.example.com", www, sizeof(www)),
-    "HPACK Huffman RFC example encode failed");
-
-  uint8_t highOctets[] = {
-    0xff, 0xfe, 0x6f, 0xff, 0xff, 0xbb
-  };
-  uint8_t highRaw[] = { 0x80, 0xff };
-  ZuCHECK(decodeEq_(highOctets, sizeof(highOctets),
-      ZuBSpan{highRaw}),
-    "HPACK Huffman high-octet decode failed");
-  ZuCHECK(encodeEq_(ZuBSpan{highRaw},
-      highOctets, sizeof(highOctets)),
-    "HPACK Huffman high-octet encode failed");
-
-  uint8_t zero[] = { 0x07 };
-  ZuCHECK(decodeEq_(zero, sizeof(zero), "0"),
-    "HPACK Huffman single 5-bit symbol decode failed");
-  ZuCHECK(encodeEq_("0", zero, sizeof(zero)),
-    "HPACK Huffman single 5-bit symbol encode failed");
-
-  uint8_t space[] = { 0x53 };
-  ZuCHECK(decodeEq_(space, sizeof(space), " "),
-    "HPACK Huffman single 6-bit symbol decode failed");
-  ZuCHECK(encodeEq_(" ", space, sizeof(space)),
-    "HPACK Huffman single 6-bit symbol encode failed");
-
-  uint8_t amp[] = { 0xf8 };
-  ZuCHECK(decodeEq_(amp, sizeof(amp), "&"),
-    "HPACK Huffman single 8-bit symbol decode failed");
-  ZuCHECK(encodeEq_("&", amp, sizeof(amp)),
-    "HPACK Huffman single 8-bit symbol encode failed");
-
-  uint8_t packedZeros[] = { 0x00, 0x3f };
-  ZuCHECK(decodeEq_(packedZeros, sizeof(packedZeros), "00"),
-    "HPACK Huffman packed symbols decode failed");
-  ZuCHECK(encodeEq_("00", packedZeros, sizeof(packedZeros)),
-    "HPACK Huffman packed symbols encode failed");
-}
-
-void testHPackHuffmanRoundTrips()
-{
-  ZuTestScope(testHPackHuffmanRoundTrips);
-
-  ZuCHECK(roundTrip_(""), "HPACK Huffman empty string round trip failed");
-  ZuCHECK(roundTrip_(
-      ":method: GET\r\naccept-encoding: gzip, deflate, br\r\n"),
-    "HPACK Huffman HTTP-ish ASCII round trip failed");
-
-  uint8_t all[256];
-  for (unsigned i = 0; i < 256; ++i) all[i] = uint8_t(i);
-  ZuCHECK(roundTrip_(ZuBSpan{all}),
-    "HPACK Huffman all-octet sequence round trip failed");
-
-  bool allSingles = true;
-  for (unsigned i = 0; i < 256; ++i) {
-    uint8_t one = uint8_t(i);
-    if (!roundTrip_(ZuBSpan{&one, 1})) allSingles = false;
+  Bytes out;
+  unsigned high = 0;
+  bool haveHigh = false;
+  for (unsigned i = 0; i < value.length(); ++i) {
+    int c = value[i];
+    if (c == ' ') continue;
+    unsigned digit =
+      c >= '0' && c <= '9' ? unsigned(c - '0') :
+      c >= 'a' && c <= 'f' ? unsigned(c - 'a' + 10) :
+      c >= 'A' && c <= 'F' ? unsigned(c - 'A' + 10) : 16;
+    if (digit > 15) continue;
+    if (!haveHigh) {
+      high = digit;
+      haveHigh = true;
+    } else {
+      out.push(uint8_t((high << 4) | digit));
+      haveHigh = false;
+    }
   }
-  ZuCHECK(allSingles, "HPACK Huffman single-octet round trips failed");
+  return out;
+}
 
-  uint8_t buf[257];
-  bool allVariable = true;
-  for (unsigned n = 1; n <= sizeof(buf); ++n) {
-    for (unsigned i = 0; i < n; ++i)
-      buf[i] = uint8_t((i*37U + n*11U + (i>>1)) & 0xffU);
-    if (!roundTrip_(ZuBSpan{buf, n})) allVariable = false;
+bool decode(
+  Zhttp::H2::HPackDecoder &decoder, ZuBSpan encoded, Fields &fields)
+{
+  decoder.reset();
+  fields.length(0);
+  for (unsigned i = 0; i < encoded.length(); ++i)
+    if (decoder.process(
+	ZuBSpan{encoded.data() + i, 1},
+	[&fields](Zhttp::H2::Field field) {
+	  new (fields.push()) OwnedField{
+	    Zhttp::H2::HPackString{field.name},
+	    Zhttp::H2::HPackString{field.value}
+	  };
+	}) < 0)
+      return false;
+  return decoder.finish();
+}
+
+bool field(const Fields &fields, unsigned i, ZuCSpan name, ZuCSpan value)
+{
+  return i < fields.length() &&
+    fields[i].name == name && fields[i].value == value;
+}
+
+void testStaticTable()
+{
+  ZuTestScope(testStaticTable);
+
+  bool complete = true;
+  for (unsigned i = 1; i <= 61; ++i) {
+    Zhttp::H2::Field value;
+    if (!Zhttp::H2::HPack::staticField(i, value) ||
+	Zhttp::H2::HPack::staticNameIndex(value.name) <= 0)
+      complete = false;
+    if (value.value &&
+	Zhttp::H2::HPack::staticIndex(value.name, value.value) != int(i))
+      complete = false;
   }
-  ZuCHECK(allVariable, "HPACK Huffman variable-length round trips failed");
+  Zhttp::H2::Field value;
+  ZuCHECK(complete, "all 61 RFC static entries round trip");
+  ZuCHECK(!Zhttp::H2::HPack::staticField(0, value) &&
+      !Zhttp::H2::HPack::staticField(62, value),
+    "out-of-range static indexes fail");
 }
 
-void testHPackHuffmanLengths()
+void testRFCRequests()
 {
-  ZuTestScope(testHPackHuffmanLengths);
+  ZuTestScope(testRFCRequests);
 
-  ZuCHECK(Zhttp::H3::HPack::enclen(0) == 0,
-    "HPACK Huffman zero encode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::enclen(1) == 4,
-    "HPACK Huffman one-byte encode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::enclen(2) == 8,
-    "HPACK Huffman two-byte encode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::enclen(3) == 12,
-    "HPACK Huffman three-byte encode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::enclen(4) == 15,
-    "HPACK Huffman four-byte encode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::enclen(5) == 19,
-    "HPACK Huffman five-byte encode length mismatch");
+  Zhttp::H2::HPackDecoder decoder;
+  Fields fields;
+  ZuCHECK(decoder.init(4096, 1U<<16), "initialize HPACK decoder");
 
-  ZuCHECK(Zhttp::H3::HPack::declen(0) == 0,
-    "HPACK Huffman zero decode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::declen(1) == 1,
-    "HPACK Huffman one-byte decode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::declen(2) == 3,
-    "HPACK Huffman two-byte decode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::declen(3) == 4,
-    "HPACK Huffman three-byte decode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::declen(4) == 6,
-    "HPACK Huffman four-byte decode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::declen(5) == 8,
-    "HPACK Huffman five-byte decode length mismatch");
-  ZuCHECK(Zhttp::H3::HPack::declen(12) == 19,
-    "HPACK Huffman RFC vector decode length mismatch");
+  auto first = hex("82 86 84 41 0f 7777772e6578616d706c652e636f6d");
+  ZuCHECK(decode(decoder, first, fields) && fields.length() == 4 &&
+      field(fields, 0, ":method", "GET") &&
+      field(fields, 1, ":scheme", "http") &&
+      field(fields, 2, ":path", "/") &&
+      field(fields, 3, ":authority", "www.example.com"),
+    "RFC C.2.1 request at every byte split");
+  ZuCHECK(decoder.table().count() == 1 &&
+      decoder.table().used() == 57,
+    "RFC C.2.1 dynamic table state");
+
+  auto second = hex("82 86 84 be 58 08 6e6f2d6361636865");
+  ZuCHECK(decode(decoder, second, fields) && fields.length() == 5 &&
+      field(fields, 3, ":authority", "www.example.com") &&
+      field(fields, 4, "cache-control", "no-cache"),
+    "RFC C.2.2 request at every byte split");
+  ZuCHECK(decoder.table().count() == 2 &&
+      decoder.table().used() == 110,
+    "RFC C.2.2 dynamic table state");
+
+  auto third = hex(
+    "82 87 85 bf 40 0a 637573746f6d2d6b6579 "
+    "0c 637573746f6d2d76616c7565");
+  ZuCHECK(decode(decoder, third, fields) && fields.length() == 5 &&
+      field(fields, 4, "custom-key", "custom-value"),
+    "RFC C.2.3 request at every byte split");
+  ZuCHECK(decoder.table().count() == 3 &&
+      decoder.table().used() == 164,
+    "RFC C.2.3 dynamic table state");
+  decoder.final();
 }
 
-void testHPackHuffmanMalformed()
+void testHuffmanRequest()
 {
-  ZuTestScope(testHPackHuffmanMalformed);
+  ZuTestScope(testHuffmanRequest);
 
-  HdrBytes decoded;
-
-  uint8_t eosBadPad[] = { 0xff, 0xff, 0xff, 0xfc };
-  decoded.length(Zhttp::H3::HPack::declen(sizeof(eosBadPad)));
-  ZuCHECK(Zhttp::H3::HPack::decode(
-      decoded.span(),
-      ZuBSpan{eosBadPad, sizeof(eosBadPad)}) < 0,
-    "HPACK Huffman accepted EOS symbol");
-
-  uint8_t eosGoodPad[] = { 0xff, 0xff, 0xff, 0xff };
-  decoded.length(Zhttp::H3::HPack::declen(sizeof(eosGoodPad)));
-  ZuCHECK(Zhttp::H3::HPack::decode(
-      decoded.span(),
-      ZuBSpan{eosGoodPad, sizeof(eosGoodPad)}) < 0,
-    "HPACK Huffman accepted EOS symbol with valid-looking padding");
-
-  uint8_t overlongPadding[] = { 0xff };
-  decoded.length(Zhttp::H3::HPack::declen(sizeof(overlongPadding)));
-  ZuCHECK(Zhttp::H3::HPack::decode(
-      decoded.span(),
-      ZuBSpan{overlongPadding, sizeof(overlongPadding)}) < 0,
-    "HPACK Huffman accepted overlong padding");
-
-  uint8_t badPadding[] = { 0x00 };
-  decoded.length(Zhttp::H3::HPack::declen(sizeof(badPadding)));
-  ZuCHECK(Zhttp::H3::HPack::decode(
-      decoded.span(),
-      ZuBSpan{badPadding, sizeof(badPadding)}) < 0,
-    "HPACK Huffman accepted zero padding");
-
-  uint8_t truncatedLong[] = { 0xff, 0xfe };
-  decoded.length(Zhttp::H3::HPack::declen(sizeof(truncatedLong)));
-  ZuCHECK(Zhttp::H3::HPack::decode(
-      decoded.span(),
-      ZuBSpan{truncatedLong, sizeof(truncatedLong)}) < 0,
-    "HPACK Huffman accepted truncated long symbol");
+  Zhttp::H2::HPackDecoder decoder;
+  Fields fields;
+  decoder.init(4096, 1U<<16);
+  auto encoded = hex(
+    "82 86 84 41 8c f1e3c2e5f23a6ba0ab90f4ff");
+  ZuCHECK(decode(decoder, encoded, fields) && fields.length() == 4 &&
+      field(fields, 3, ":authority", "www.example.com"),
+    "RFC C.4.1 Huffman request at every byte split");
+  encoded = hex("82 86 84 be 58 86 a8eb10649cbf");
+  ZuCHECK(decode(decoder, encoded, fields) && fields.length() == 5 &&
+      field(fields, 4, "cache-control", "no-cache"),
+    "RFC C.4.2 Huffman request at every byte split");
+  encoded = hex(
+    "82 87 85 bf 40 88 25a849e95ba97d7f "
+    "89 25a849e95bb8e8b4bf");
+  ZuCHECK(decode(decoder, encoded, fields) && fields.length() == 5 &&
+      field(fields, 4, "custom-key", "custom-value"),
+    "RFC C.4.3 Huffman request at every byte split");
+  decoder.final();
 }
+
+bool response(const Fields &fields, ZuCSpan status, ZuCSpan date)
+{
+  return fields.length() >= 4 &&
+    field(fields, 0, ":status", status) &&
+    field(fields, 1, "cache-control", "private") &&
+    field(fields, 2, "date", date) &&
+    field(fields, 3, "location", "https://www.example.com");
+}
+
+void testRFCResponses(bool huffman)
+{
+  ZuTestScope(testRFCResponses);
+
+  Zhttp::H2::HPackDecoder decoder;
+  Fields fields;
+  decoder.init(256, 1U<<16);
+  auto first = huffman ?
+    hex("48 82 6402 58 85 aec3771a4b "
+	"61 96 d07abe941054d444a8200595040b8166e082a62d1bff "
+	"6e 91 9d29ad171863c78f0b97c8e9ae82ae43d3") :
+    hex("48 03 333032 58 07 70726976617465 "
+	"61 1d 4d6f6e2c203231204f637420323031332032303a31333a323120474d54 "
+	"6e 17 68747470733a2f2f7777772e6578616d706c652e636f6d");
+  ZuCHECK(decode(decoder, first, fields) &&
+      response(fields, "302", "Mon, 21 Oct 2013 20:13:21 GMT"),
+    huffman ? "RFC C.6.1 Huffman response" :
+      "RFC C.5.1 raw response");
+  ZuCHECK(decoder.table().count() == 4 && decoder.table().used() == 222,
+    "first response dynamic table state");
+
+  auto second = huffman ?
+    hex("48 83 640eff c1 c0 bf") :
+    hex("48 03 333037 c1 c0 bf");
+  ZuCHECK(decode(decoder, second, fields) &&
+      response(fields, "307", "Mon, 21 Oct 2013 20:13:21 GMT"),
+    huffman ? "RFC C.6.2 Huffman response" :
+      "RFC C.5.2 raw response");
+  ZuCHECK(decoder.table().count() == 4 && decoder.table().used() == 222,
+    "second response dynamic table state");
+
+  auto third = huffman ?
+    hex("88 c1 61 96 d07abe941054d444a8200595040b8166e084a62d1bff "
+	"c0 5a 83 9bd9ab "
+	"77 ad 94e7821dd7f2e6c7b335dfdfcd5b3960d5af27087f3672c1"
+	"ab270fb5291f9587316065c003ed4ee5b1063d5007") :
+    hex("88 c1 "
+	"61 1d 4d6f6e2c203231204f637420323031332032303a31333a323220474d54 "
+	"c0 5a 04 677a6970 "
+	"77 38 666f6f3d4153444a4b48514b425a584f5157454f50495541585157454f"
+	"49553b206d61782d6167653d333630303b2076657273696f6e3d31");
+  ZuCHECK(decode(decoder, third, fields) && fields.length() == 6 &&
+      field(fields, 0, ":status", "200") &&
+      field(fields, 2, "date", "Mon, 21 Oct 2013 20:13:22 GMT") &&
+      field(fields, 4, "content-encoding", "gzip") &&
+      field(fields, 5, "set-cookie",
+	"foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"),
+    huffman ? "RFC C.6.3 Huffman response" :
+      "RFC C.5.3 raw response");
+  ZuCHECK(decoder.table().count() == 3 && decoder.table().used() == 215,
+    "third response bounded eviction state");
+  decoder.final();
+}
+
+void testRepresentationsAndFailures()
+{
+  ZuTestScope(testRepresentationsAndFailures);
+
+  Zhttp::H2::HPackDecoder decoder;
+  Fields fields;
+  decoder.init(128, 256);
+
+  auto legal = hex(
+    "3f 21 82 0f 09 03 616263 10 03 782d78 01 79");
+  ZuCHECK(decode(decoder, legal, fields) && fields.length() == 3 &&
+      field(fields, 0, ":method", "GET") &&
+      field(fields, 1, "cache-control", "abc") &&
+      field(fields, 2, "x-x", "y"),
+    "size update, indexed, non-indexed, and never-indexed literals");
+
+  auto badIndex = hex("80");
+  ZuCHECK(!decode(decoder, badIndex, fields) &&
+      decoder.failure() == Zhttp::H2::HPackFailure::Index,
+    "zero indexed representation fails");
+
+  decoder.final();
+  decoder.init(64, 16);
+  auto tooLarge = hex("00 01 78 01 79");
+  ZuCHECK(!decode(decoder, tooLarge, fields) &&
+      decoder.failure() == Zhttp::H2::HPackFailure::HeaderList,
+    "header list limit fails deterministically");
+
+  decoder.final();
+  decoder.init(64, 256);
+  auto truncated = hex("40 03 6162");
+  decoder.reset();
+  ZuCHECK(decoder.process(
+      truncated, [](Zhttp::H2::Field) { }) == 0 && !decoder.finish() &&
+      decoder.failure() == Zhttp::H2::HPackFailure::Truncated,
+    "truncated literal fails at block completion");
+  decoder.final();
+}
+
+void testEncoder()
+{
+  ZuTestScope(testEncoder);
+
+  Zhttp::H2::HPackEncoder encoder;
+  Bytes encoded;
+  uint8_t methodGET[] = {0x82};
+  Zhttp::H2::Field method{":method", "GET"};
+  Zhttp::H2::Field authorization{"authorization", "secret"};
+  Zhttp::H2::Field cookie{"cookie", "a=b"};
+  Zhttp::H2::Field setCookie{"set-cookie", "a=b"};
+  encoder.init(4096);
+  ZuCHECK(encoder.field(encoded, method) > 0 &&
+      encoded == ZuBSpan{methodGET},
+    "encoder uses exact static index");
+  encoded.length(0);
+  ZuCHECK(encoder.field(encoded, authorization) > 0 &&
+      (encoded[0] & 0xf0) == 0x10,
+    "encoder never-indexes authorization");
+  encoded.length(0);
+  ZuCHECK(encoder.field(encoded, cookie) > 0 &&
+      (encoded[0] & 0xf0) == 0x10,
+    "encoder never-indexes cookie");
+  encoded.length(0);
+  ZuCHECK(encoder.field(encoded, setCookie) > 0 &&
+      (encoded[0] & 0xf0) == 0x10,
+    "encoder never-indexes set-cookie");
+  encoder.final();
+}
+
+} // namespace
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testHPackHuffmanKnownVectors);
-  ZuTestCall(testHPackHuffmanRoundTrips);
-  ZuTestCall(testHPackHuffmanLengths);
-  ZuTestCall(testHPackHuffmanMalformed);
+  ZuTestCall(testStaticTable);
+  ZuTestCall(testRFCRequests);
+  ZuTestCall(testHuffmanRequest);
+  ZuTestCall(testRFCResponses, false);
+  ZuTestCall(testRFCResponses, true);
+  ZuTestCall(testRepresentationsAndFailures);
+  ZuTestCall(testEncoder);
 }

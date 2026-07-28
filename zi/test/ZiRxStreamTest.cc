@@ -10,6 +10,7 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZmList.hh>
+#include <zlib/ZtString.hh>
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
@@ -39,6 +40,85 @@ bool spanEq(ZuBSpan span, const char *s)
 {
   unsigned n = static_cast<unsigned>(::strlen(s));
   return span.length() == n && (!n || !::memcmp(span.data(), s, n));
+}
+
+struct ViewOwner {
+  struct Part {
+    uint32_t	length = 0;
+    bool	payload = false;
+    bool	final = false;
+  };
+  using Parts = ZtArray<Part, ZtArrayHeapID<"ZiRxStreamTest.Parts">>;
+
+  ZiRxStream<RxQueue>	stream;
+  Parts			parts;
+  unsigned		part = 0;
+  uint32_t		remaining = 0;
+  uint32_t		offered = 0;
+  unsigned		cancelled = 0;
+
+  void add(uint32_t length, bool payload, bool final = false) {
+    parts.push(Part{length, payload, final});
+  }
+  Zi::RxRefill rxRefill_() {
+    if (offered) return {0, Zi::RxRefillState::Error};
+    for (;;) {
+      if (!remaining) {
+	if (part >= parts.length()) return {0, Zi::RxRefillState::Wait};
+	remaining = parts[part].length;
+	if (!remaining) {
+	  bool final = parts[part++].final;
+	  if (final) return {0, Zi::RxRefillState::Final};
+	  continue;
+	}
+      }
+      auto span = stream.span();
+      if (!span.length()) return {0, Zi::RxRefillState::Wait};
+      auto &current = parts[part];
+      unsigned n = span.length();
+      if (n > remaining) n = remaining;
+      if (!current.payload) {
+	stream.advance(n);
+	remaining -= n;
+	if (!remaining) ++part;
+	continue;
+      }
+      offered = n;
+      return {
+	n,
+	current.final && n == remaining ?
+	  Zi::RxRefillState::Final : Zi::RxRefillState::Input
+      };
+    }
+  }
+  auto rxSpan_() { return stream.span(); }
+  unsigned rxAdvance_(unsigned n) {
+    if (n > offered) return 0;
+    unsigned advanced = stream.advance(n);
+    offered -= advanced;
+    remaining -= advanced;
+    if (!remaining) ++part;
+    return advanced;
+  }
+  void rxCancel_() {
+    ++cancelled;
+    stream.clean();
+    part = parts.length();
+    remaining = offered = 0;
+  }
+};
+
+template <typename Layer>
+ZtString<> drain(Layer &layer)
+{
+  ZtString<> out;
+  while (layer.input()) {
+    int64_t n = layer.consume(
+      [](ZuBSpan span) -> int64_t { return span.length(); },
+      [&out](ZuSpan<uint8_t> span) { out << span; });
+    if (n <= 0) break;
+  }
+  return out;
 }
 
 template <typename Stream>
@@ -206,6 +286,104 @@ void testCleanResetsState()
   ZuCheck(consumeExact(stream, 1, "z"));
 }
 
+void testBoundedView()
+{
+  ZuTestScope(testBoundedView);
+
+  ViewOwner owner;
+  owner.add(3, true, true);
+  owner.add(4, true, true);
+  owner.stream.push(mkBuf("abcNEXT"));
+  ZiRxLayer<ViewOwner> view{owner};
+
+  ZuCheck(view.events() == Zi::RxEvent::Start);
+  ZuCheck(view.input());
+  ZuCheck(view.events() == Zi::RxEvent::Input);
+  ZuCheck(drain(view) == "abc");
+  ZuCheck(view.complete());
+  ZuCheck(view.events() == Zi::RxEvent::Final);
+  ZuCheck(spanEq(owner.stream.span(), "NEXT"));
+}
+
+void testBoundedViewHiddenAndFragmented()
+{
+  ZuTestScope(testBoundedViewHiddenAndFragmented);
+
+  ViewOwner owner;
+  owner.add(2, true);
+  owner.add(2, false);
+  owner.add(2, true, true);
+  owner.stream.push(mkBuf("ab"));
+  owner.stream.push(mkBuf("XX"));
+  owner.stream.push(mkBuf("cd"));
+  ZiRxLayer<ViewOwner> view{owner};
+
+  ZuCheck(drain(view) == "abcd");
+  ZuCheck(view.complete());
+  ZuCheck(!owner.stream);
+}
+
+void testBoundedViewIncremental()
+{
+  ZuTestScope(testBoundedViewIncremental);
+
+  ViewOwner owner;
+  owner.add(4, true, true);
+  owner.stream.push(mkBuf("a"));
+  ZiRxLayer<ViewOwner> view{owner};
+
+  ZuCheck(drain(view) == "a");
+  ZuCheck(!view.complete());
+  ZuCheck(view.empty());
+  owner.stream.push(mkBuf("bcd"));
+  ZuCheck(drain(view) == "bcd");
+  ZuCheck(view.complete());
+}
+
+void testBoundedViewBoundsAndCleanup()
+{
+  ZuTestScope(testBoundedViewBoundsAndCleanup);
+
+  ViewOwner owner;
+  owner.add(3, true, true);
+  owner.stream.push(mkBuf("abc"));
+  ZiRxLayer<ViewOwner> view{owner};
+
+  int64_t n = view.consume(
+    [](ZuBSpan span) -> int64_t { return span.length() + 1; },
+    [](ZuSpan<uint8_t>) { });
+  ZuCheck(n < 0);
+  ZuCheck(view.failed());
+  ZuCheck(spanEq(owner.stream.span(), "abc"));
+  view.clean();
+
+  ViewOwner partial;
+  partial.add(3, true, true);
+  partial.stream.push(mkBuf("abc"));
+  ZiRxLayer<ViewOwner> partialView{partial};
+  n = partialView.consume(
+    [](ZuBSpan) -> int64_t { return 1; },
+    [](ZuSpan<uint8_t> span) { span[0] = 'A'; });
+  ZuCheck(n == 1);
+  ZuCheck(spanEq(partial.stream.span(), "bc"));
+  partialView.clean();
+  ZuCheck(partial.cancelled == 1);
+  ZuCheck(!partial.stream);
+
+  ViewOwner scoped;
+  scoped.add(3, true, true);
+  scoped.stream.push(mkBuf("abc"));
+  {
+    ZiRxLayer<ViewOwner> layer{scoped};
+    n = layer.consume(
+      [](ZuBSpan) -> int64_t { return 1; },
+      [](ZuSpan<uint8_t>) { });
+    ZuCheck(n == 1);
+  }
+  ZuCheck(scoped.cancelled == 1);
+  ZuCheck(!scoped.stream);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -218,5 +396,9 @@ int main(int argc, char **argv)
   ZuTestCall(testConsumeGathersFragmentedFrame);
   ZuTestCall(testConsumePaddingAcrossQueuedBuffers);
   ZuTestCall(testCleanResetsState);
+  ZuTestCall(testBoundedView);
+  ZuTestCall(testBoundedViewHiddenAndFragmented);
+  ZuTestCall(testBoundedViewIncremental);
+  ZuTestCall(testBoundedViewBoundsAndCleanup);
   return 0;
 }

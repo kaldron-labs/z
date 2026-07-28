@@ -18,12 +18,12 @@
 namespace Zhttp {
 
 template <
-  typename Protocol,
-  typename Native = Zhttp::Transport_::Traits<Protocol>>
+  typename Profile,
+  typename Traits = Zhttp::ProfileTraits<Profile>>
 struct MessageTraits;
 
 template <
-  typename App, typename Request, typename Link, typename Protocol,
+  typename App, typename Request, typename Link, typename Profile,
   typename ReqHeaders, typename RespHeaders, uint64_t RespBodyMax,
   bool ReqBody = false, bool ReqChunked = false>
 class ClientMessage;
@@ -57,6 +57,23 @@ template <> struct MessageVersion<Version::H1> {
     H1::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
 };
 
+template <> struct MessageVersion<Version::H2> {
+  enum {
+    ID = Version::H2,
+    OneMessagePerLink = true,
+    CloseDelimited = false
+  };
+
+  template <
+    typename Impl, bool Request, typename Headers, uint64_t MaxBody>
+  using Parser = H2::Parser<Impl, Request, Headers, MaxBody>;
+  template <
+    typename Impl, typename Headers, typename Trailers,
+    bool HasBody, bool>
+  using Builder =
+    H2::Builder<Impl, Headers, Trailers, HasBody, false>;
+};
+
 template <> struct MessageVersion<Version::H3> {
   enum {
     ID = Version::H3,
@@ -74,10 +91,12 @@ template <> struct MessageVersion<Version::H3> {
     H3::Builder<Impl, Headers, Trailers, HasBody, false>;
 };
 
-template <typename Protocol, typename Native>
+template <typename Profile, typename Traits>
 struct MessageTraits :
-  public MessageVersion<Native::HTTPVersion> {
-  using Transport = Native;
+  public MessageVersion<Traits::HTTPVersion> {
+  using ProfileT = Profile;
+  using Transport = typename Traits::Transport;
+  enum { Multiplexed = Traits::Multiplexed };
 };
 
 template <typename Link, typename Builder>
@@ -100,7 +119,7 @@ void sendResp(Link &link, Builder &builder) {
 // response handling; HTTP-version-specific builders, parsers, EOF rules, and
 // link completion remain library-owned.
 template <
-  typename App_, typename Request_, typename Link_, typename Protocol_,
+  typename App_, typename Request_, typename Link_, typename Profile_,
   typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_,
   bool ReqBody_, bool ReqChunked_>
 class ClientMessage {
@@ -108,10 +127,10 @@ public:
   using App = App_;
   using Request = Request_;
   using Link = Link_;
-  using Protocol = Protocol_;
+  using Profile = Profile_;
   using ReqHeaders = ReqHeaders_;
   using RespHeaders = RespHeaders_;
-  using Message = MessageTraits<Protocol>;
+  using Message = MessageTraits<Profile>;
   enum {
     ReqBody = ReqBody_,
     ReqChunked = ReqChunked_
@@ -153,6 +172,7 @@ private:
   };
 
   struct RespOps {
+    void operation(Method::T, ZuBSpan) { }
     void status(unsigned value) {
       app->responseStatus(*link, *request, value);
     }
@@ -191,6 +211,9 @@ private:
       Parser, false, RespHeaders, RespBodyMax>;
     using State = typename Base::State;
 
+    void operation(Method::T method, ZuBSpan path) {
+      RespOps::operation(method, path);
+    }
     void complete(typename State::T state) {
       RespOps::template complete<State>(state);
     }

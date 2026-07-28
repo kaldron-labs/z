@@ -11,18 +11,22 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
-	ZhttpLink.hh ZhttpClient.hh ZhttpClientPool.hh ZhttpAgent.hh \
+	ZhttpTLSEngine.hh \
+	ZhttpLink.hh ZhttpClient.hh ZhttpClientPool.hh ZhttpTLSClientPool.hh \
+	ZhttpAgent.hh ZhttpTunnel.hh \
 	ZhttpServer.hh ZhttpService.hh ZhttpEngines.hh \
-	ZhttpH3Engine.hh \
+	ZhttpH2Engine.hh ZhttpH3Engine.hh \
 	ZhttpURL.hh ZhttpDiscovery.hh ZhttpRuntime.hh \
 	ZhttpH1.hh ZhttpH3.hh \
+	ZhttpH2.hh ZhttpH2Session.hh ZhttpH2Message.hh \
 	ZhttpH1Session.hh ZhttpH3Session.hh ZhttpMessage.hh \
-	ZhttpHPack.hh ZhttpQPack.hh ZhttpUtil.hh
+	ZhttpCompression.hh ZhttpFields.hh ZhttpHPack.hh ZhttpTypes.hh \
+	ZhttpQPack.hh ZhttpUtil.hh
 lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
 libZhttp_la_SOURCES = ZhttpLib.cc ZhttpURL.cc ZhttpDiscovery.cc \
 	ZhttpRuntime.cc \
-	ZhttpHPack.cc ZhttpQPack.cc
+	ZhttpCompression.cc ZhttpH2.cc ZhttpHPack.cc ZhttpQPack.cc
 libZhttp_la_LIBADD = \
 	$(top_builddir)/ztcp/src/libZtcp.la \
 	$(top_builddir)/ztls/src/libZtls.la \

@@ -1,8 +1,9 @@
-# Zhttp HTTP/3
+# Zhttp HTTP/1.1, HTTP/2, and HTTP/3
 
-`Zhttp` owns production HTTP behavior. HTTP/1.1 continues to use the existing
-`Ztls` path, while HTTP/3 uses `Zquic` as the QUIC transport and keeps H3 and
-QPACK code in `zhttp/src`.
+`Zhttp` owns production HTTP behavior. HTTP/1.1 uses `Ztcp` or `Ztls`,
+HTTP/2 uses `Ztls`, and HTTP/3 uses `Zquic`. HPACK, H2, QPACK, H3, ALPN
+selection, physical-session management, and logical request streams remain
+inside `zhttp/src`.
 
 The HTTP/3 surface is REST-oriented:
 
@@ -36,12 +37,14 @@ instruction sequences by the connection.
 For `http:` URLs, the example client always uses HTTP/1.1 over `Ztcp`; if a
 redirect moves the request to `https:`, HTTPS policy then applies. For `https:`
 URLs, the default `-3 prefer` / `--http3=prefer` mode tries DNS-advertised
-HTTP/3 first, then uses HTTP/1.1 over TLS and follows Alt-Svc HTTP/3 upgrades,
-then remains on HTTP/1.1 when HTTP/3 is unavailable or rejected by policy.
+HTTP/3 first, then makes one TLS connection offering HTTP/2 and HTTP/1.1.
+TLS ALPN selects the HTTP version without an application-managed second
+connection attempt. Alt-Svc can promote later requests to HTTP/3.
 `-3 force` / `--http3=force` skips DNS and Alt-Svc probing and runs HTTP/3
 over QUIC directly for `https:` requests. `-3 disable` / `--http3=disable`
-uses HTTP/1.1 exclusively without HTTP/3 probing. `-v`/`--verbose` shows DNS
-and Alt-Svc probing. IPv6, DoH, DoT, ECH,
+disables HTTP/3 probing. `-2 force|prefer|disable` /
+`--http2=force|prefer|disable` controls TLS ALPN policy; the default is
+`prefer`. `-v`/`--verbose` shows DNS and Alt-Svc probing. IPv6, DoH, DoT, ECH,
 WebTransport, DATAGRAM, and QUIC v2 discovery remain out of scope for this
 resolver path.
 
@@ -65,13 +68,15 @@ struct ClientApp :
 ClientApp client;
 client.init(
   Zhttp::EngineConfig{&mx, "rx", "tx"},
-  Zhttp::AgentConfig{}.protocol(Zhttp::ProtocolPolicy::PreferH3),
+  Zhttp::AgentConfig{}
+    .protocol(Zhttp::ProtocolPolicy::PreferH3)
+    .h2Policy(Zhttp::H2Policy::Prefer),
   Zhttp::TCPConfig{},
-  Zhttp::TLSConfig{}.caPath(ca),
+  Zhttp::H2Config{}.caPath(ca),
   Zhttp::QUICConfig{}.caPath(ca));
 client.start();
 client.submit(requests, requestCount);
-// ClientApp receives the same request/response callbacks for H1 and H3.
+// ClientApp receives the same request/response callbacks for H1, H2, and H3.
 client.stop();
 client.final();
 ```
@@ -87,11 +92,13 @@ service.init(
   Zhttp::ServiceConfig{}
     .port(port)
     .tcp(Zhttp::TCPConfig{})
-    .tls(Zhttp::TLSConfig{}.certPath(cert).keyPath(key))
+    .tls(Zhttp::H2Config{}
+      .certPath(cert).keyPath(key)
+      .policy(Zhttp::H2Policy::Prefer))
     .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)),
   &workload);
 service.start();
-// Workload receives the same request/response callbacks for H1 and H3.
+// Workload receives the same request/response callbacks for H1, H2, and H3.
 // disconnected(transport) observes admission release on the owning Rx shard.
 service.stop();
 service.final();
@@ -101,15 +108,37 @@ When TLS and QUIC are enabled together, `Service` emits the HTTP/3 Alt-Svc
 header on TLS responses. `altSvcMaxAge()` controls its lifetime; zero disables
 advertising. No HTTP/3 response branch belongs in the application.
 
+H2 Extended CONNECT is opt-in with `H2Config::extendedConnect(true)`.
+`libZhttp` advertises and parses `SETTINGS_ENABLE_CONNECT_PROTOCOL`, waits for
+the peer's initial SETTINGS before constructing client requests, and refuses
+to emit `:protocol` unless the peer advertised support. A successful 2xx
+handshake can transition `H2::Parser` to `ParserState::Tunnel`; DATA is then
+delivered through `tunnelData()`, with `tunnelEnd()` and `tunnelReset()`
+reporting remote half-close and reset. `Zhttp::Tunnel<Link>` is the
+non-owning, shard-affine transmit adapter:
+
+```c++
+Zhttp::Tunnel tunnel{link};
+if (tunnel.peerCap()) {
+  tunnel.send([](auto &tx) { tx << bytes; });
+  tunnel.end();                 // local half-close
+}
+```
+
+The callback receives the native pooled transmit layer only for the duration
+of the call. The tunnel contract contains no WebSocket fields, framing,
+masking, close codes, or subprotocol policy; those belong in a dependent
+protocol library.
+
 The lower-level typed client/server application flow is likewise
 protocol-independent:
 
 ```c++
-template <typename Protocol>
-struct Client : Zhttp::Client<Client<Protocol>, Protocol> {
+template <typename Profile>
+struct Client : Zhttp::Client<Client<Profile>, Profile> {
   struct Link :
-    Zhttp::ClientLink<Client, Link, Protocol> {
-    using Base = Zhttp::ClientLink<Client, Link, Protocol>;
+    Zhttp::ClientLink<Client, Link, Profile> {
+    using Base = Zhttp::ClientLink<Client, Link, Profile>;
     using Base::Base;
   };
 
@@ -124,15 +153,17 @@ struct Client : Zhttp::Client<Client<Protocol>, Protocol> {
 };
 ```
 
-Servers use the corresponding `Zhttp::Server`,
-`Zhttp::ServerLink`, and `Zhttp::ServerSession` templates.  TCP, TLS, and QUIC
-instantiate the same connection/message templates; only initialization
-configuration differs:
+Servers use the corresponding `Zhttp::Server`, `Zhttp::ServerLink`, and
+`Zhttp::ServerSession` templates. Profiles such as `H1TCP`, `H1TLS`, `H2TLS`,
+and `H3QUIC` instantiate the same connection/message contract; only
+initialization configuration differs. The high-level `Agent` and `Service`
+normally own these engines:
 
 ```c++
 engines.init(tcp, engine, Zhttp::TCPConfig{});
-engines.init(tls, engine, Zhttp::TLSConfig{}
-  .certPath(cert).keyPath(key));
+engines.init(tls, engine, Zhttp::H2Config{}
+  .certPath(cert).keyPath(key)
+  .policy(Zhttp::H2Policy::Prefer));
 engines.init(h3, engine, Zhttp::QUICConfig{}
   .certPath(cert).keyPath(key));
 engines.start();
@@ -191,6 +222,8 @@ Then start the TLS or HTTP/3 transports:
 ```sh
 zhttpd /tmp/www --https --addr 127.0.0.1 --port 8443 \
   --cert cert.pem --key key.pem
+zhttpd /tmp/www --https --http2=force --addr 127.0.0.1 --port 8443 \
+  --cert cert.pem --key key.pem
 zhttpd /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
   --cert cert.pem --key key.pem
 zhttpd /tmp/www --http3 --addr 127.0.0.1 --port 8443 \
@@ -211,11 +244,28 @@ Useful client checks:
 ```sh
 zhttp -o body http://127.0.0.1:8080/
 zhttp -c cert.pem -o body https://localhost:8443/
+zhttp -3 disable -2 force -c cert.pem -o body https://localhost:8443/
 zhttp -3 force -c cert.pem -o body https://localhost:8443/
 zhttp -3 force -c cert.pem --quic-migration=active \
   --quic-migration-cid-reserve=2 --quic-migrate-after-headers \
   -o body https://localhost:8443/
 ```
+
+The repeatable H2 interoperability gate runs the in-tree client/server pair,
+curl against `zhttpd`, and `zhttp` against Caddy.  When `h2spec`, `nghttp`, or
+`nghttpd` are already installed, it also runs those roles; absent optional
+tools are reported as TAP skips and are never downloaded:
+
+```sh
+cd zhttp/test
+./ZhttpH2InteropTest.sh
+```
+
+Set `ZHTTP_H2_ARTIFACTS` to an existing artifact directory,
+`ZHTTP_H2_KEEP_ARTIFACTS=1` to retain successful runs, and
+`ZHTTP_H2_PORT`/`ZHTTP_H2_NGHTTPD_PORT` when the default loopback ports are
+occupied.  Every retained run includes tool versions plus separate client,
+server, and conformance output.
 
 Static-server options include directory indexes and listings, MIME overrides,
 single-file mode, hidden-dotfile rejection, Basic auth, host redirects,

@@ -23,15 +23,16 @@ namespace Zhttp {
 
 ZuDerive(EndpointString, ZtString<ZtStringHeapID<"Zhttp.Endpoint">>);
 
-template <typename App, typename Impl, typename Protocol>
+template <typename App, typename Impl, typename Profile>
 class ClientLink :
-  public Transport_::Traits<Protocol>::template ClientLink<App, Impl> {
-  using Traits = Transport_::Traits<Protocol>;
+  public ProfileTraits<Profile>::Transport::template ClientLink<App, Impl> {
+  using HTTP = ProfileTraits<Profile>;
+  using Traits = typename HTTP::Transport;
   using Base = typename Traits::template ClientLink<App, Impl>;
 
 public:
   using Base::Base;
-  enum { TLS = Traits::Secure, Multiplexed = Traits::Multiplexed };
+  enum { TLS = Traits::Secure, Multiplexed = HTTP::Multiplexed };
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -53,7 +54,7 @@ public:
       return;
     }
     m_connected = true;
-    this->app()->connected(*impl(), Traits::connected(info));
+    this->app()->connected(*impl(), HTTP::connected(ZuMv(info)));
   }
   void disconnected(bool peer) {
     if (m_connected) {
@@ -99,14 +100,15 @@ private:
 };
 
 template <
-  typename App, typename Impl, typename Protocol, typename Session>
+  typename App, typename Impl, typename Profile, typename Session>
 class ServerLink :
-  public Transport_::Traits<Protocol>::template ServerLink<App, Impl> {
-  using Traits = Transport_::Traits<Protocol>;
+  public ProfileTraits<Profile>::Transport::template ServerLink<App, Impl> {
+  using HTTP = ProfileTraits<Profile>;
+  using Traits = typename HTTP::Transport;
   using Base = typename Traits::template ServerLink<App, Impl>;
 
 public:
-  enum { TLS = Traits::Secure, Multiplexed = Traits::Multiplexed };
+  enum { TLS = Traits::Secure, Multiplexed = HTTP::Multiplexed };
 
   ServerLink(App *app, const ZiCxnInfo &ci) :
     Base{app}
@@ -125,7 +127,7 @@ public:
 
   void connected(typename Traits::Connected info) {
     m_session.connected(*impl());
-    this->app()->connected(*impl(), Traits::connected(info));
+    this->app()->connected(*impl(), HTTP::connected(ZuMv(info)));
     touch();
   }
   void disconnected(bool peer) {

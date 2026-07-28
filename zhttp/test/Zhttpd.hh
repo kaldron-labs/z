@@ -41,6 +41,8 @@ ZfCLIConfig(CLI,
 
 namespace Zhttpd {
 
+ZtEnumNS(Http2Mode, int8_t, force, prefer, disable);
+
 constexpr unsigned FileChunk = 16<<10;
 constexpr unsigned MimeFileMax = 16<<20;
 constexpr unsigned DateBufSize = 32;
@@ -133,6 +135,7 @@ struct Options {
   bool			http = true;
   bool			https = false;
   bool			http3 = false;
+  Http2Mode::T		http2 = Http2Mode::prefer;
   bool			debug = false;
   bool			frag = false;
   bool			yield = false;
@@ -182,6 +185,8 @@ ZfStruct((Options, CLI),
   (((http),            (CLI::Long<"http">)),                     (Bool, true)),
   (((https),           (CLI::Long<"https">)),                    (Bool)),
   (((http3),           (CLI::Long<"http3">)),                    (Bool)),
+  (((http2),           (Enum<Http2Mode::Map>, CLI::Long<"http2">)),
+								 (Int8, Http2Mode::prefer)),
   (((debug),           (CLI::Long<"debug">)),                    (Bool)),
   (((frag),            (CLI::Long<"frag">)),                     (Bool)),
   (((yield),           (CLI::Long<"yield">)),                    (Bool)),
@@ -995,6 +1000,7 @@ inline bool loadOptions(
   if (help) return true;
   if (argc_ != 2) return false;
   if (options.port > 65535) return false;
+  if (options.http2 < 0 || options.http2 >= Http2Mode::N) return false;
   for (unsigned i = 0, n = options.forward.length(); i < n; ++i)
     if (!parseForward(options, options.forward[i])) return false;
   if (options.auth && !parseAuth(options, options.auth)) return false;

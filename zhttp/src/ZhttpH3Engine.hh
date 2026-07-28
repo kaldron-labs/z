@@ -336,14 +336,12 @@ struct ClientSession :
     stream->logical = logical;
     streams.push(stream);
     logical->stream(stream.ptr());
-    logical->connected_({
+    logical->connected_(ProfileTraits<H3QUIC>::apply({
       .alpn = "h3",
       .version = Zquic::Version1,
       .transport = Transport::QUIC,
-      .httpVersion = Version::H3,
-      .secure = true,
-      .multiplexed = true
-    });
+      .secure = true
+    }));
   }
 
   void connected(Zquic::Connected info) {
@@ -516,13 +514,11 @@ public:
   }
 
   ZmRef<Session> accepted(const Zquic::InitialInfo &info) {
-    ConnectedInfo ci{
+    ConnectedInfo ci = ProfileTraits<H3QUIC>::apply({
       .version = Zquic::Version1,
       .transport = Transport::QUIC,
-      .httpVersion = Version::H3,
-      .secure = true,
-      .multiplexed = true
-    };
+      .secure = true
+    });
     if (!user()->admit(ci)) return {};
     EndpointString remote;
     remote << info.peer.ip();
@@ -560,14 +556,12 @@ struct ServerStream :
       logical = new Logical{
 	session->app()->user(), session, this, session->remote};
       session->logical.push(ZmMkRef(this));
-      logical->connected_({
+      logical->connected_(ProfileTraits<H3QUIC>::apply({
 	.alpn = "h3",
 	.version = Zquic::Version1,
 	.transport = Transport::QUIC,
-	.httpVersion = Version::H3,
-	.secure = true,
-	.multiplexed = true
-      });
+	.secure = true
+      }));
     }
     return logical->process_(rx);
   }
@@ -630,7 +624,7 @@ struct ServerSession :
 } // namespace H3_
 
 template <typename App, typename Impl>
-class ClientLink<App, Impl, QUIC> : public ZmObject {
+class ClientLink<App, Impl, H3QUIC> : public ZmObject {
   using Engine = H3_::ClientEngine<App>;
   using NativeSession = H3_::ClientSession<App, Impl>;
   using NativeStream = H3_::ClientStream<App, Impl>;
@@ -682,6 +676,9 @@ public:
       m_session->h3.qpackRx(), &m_session->h3,
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackDecoderWrite(span);
+      },
+      [](void *ptr, uint64_t error) {
+	static_cast<H3Cxn *>(ptr)->error(error);
       },
       uint64_t(m_stream->id()));
     (void)rx;
@@ -785,7 +782,7 @@ private:
 };
 
 template <typename App>
-class Client<App, QUIC> : public H3_::ClientEngine<App> {
+class Client<App, H3QUIC> : public H3_::ClientEngine<App> {
 public:
   using Base = H3_::ClientEngine<App>;
   using Traits = Transport_::Traits<QUIC>;
@@ -815,7 +812,7 @@ private:
 };
 
 template <typename App, typename Impl, typename Session>
-class ServerLink<App, Impl, QUIC, Session> : public ZmObject {
+class ServerLink<App, Impl, H3QUIC, Session> : public ZmObject {
   using Engine = H3_::ServerEngine<App>;
   using NativeSession = H3_::ServerSession<App>;
   using NativeStream = H3_::ServerStream<App>;
@@ -846,6 +843,9 @@ public:
       m_native->h3.qpackRx(), &m_native->h3,
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackDecoderWrite(span);
+      },
+      [](void *ptr, uint64_t error) {
+	static_cast<H3Cxn *>(ptr)->error(error);
       },
       uint64_t(m_stream->id()));
     (void)rx;
@@ -893,7 +893,7 @@ private:
 };
 
 template <typename App>
-class Server<App, QUIC> : public H3_::ServerEngine<App> {
+class Server<App, H3QUIC> : public H3_::ServerEngine<App> {
 public:
   using Base = H3_::ServerEngine<App>;
   using Traits = Transport_::Traits<QUIC>;

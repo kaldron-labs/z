@@ -17,17 +17,18 @@
 
 namespace Zhttp {
 
-template <typename App, typename Protocol>
+template <typename App, typename Profile>
 class Client :
-  public Transport_::Traits<Protocol>::template Client<App> {
-  using Traits = Transport_::Traits<Protocol>;
+  public ProfileTraits<Profile>::Transport::template Client<App> {
+  using HTTP = ProfileTraits<Profile>;
+  using Traits = typename HTTP::Transport;
 
 public:
   using Base = typename Traits::template Client<App>;
   using Base::init;
   enum {
     TLS = Traits::Secure,
-    Multiplexed = Traits::Multiplexed
+    Multiplexed = HTTP::Multiplexed
   };
 
   auto impl() const { return static_cast<const App *>(this); }

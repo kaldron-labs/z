@@ -40,6 +40,7 @@ struct Cxn {
   bool			peerControl = false;
   bool			peerEncoder = false;
   bool			peerDecoder = false;
+  uint64_t		errorCode = 0;
   QPackRxTable		qpackRxTable;
 
   bool openLocal(Link &link, const Params &params = Params{}) {
@@ -127,6 +128,12 @@ struct Cxn {
   }
   bool qpackEncoderWrite(ZuBSpan span) { return writeQPack_(enc, span); }
   bool qpackDecoderWrite(ZuBSpan span) { return writeQPack_(dec, span); }
+  void error(uint64_t code) {
+    if (errorCode) return;
+    errorCode = code;
+    state = State::Error;
+    if (link_) link_->disconnect(code);
+  }
 
   template <typename PathInfo>
   void pathUpdate(const PathInfo &) { }
@@ -175,6 +182,8 @@ struct CxnStream : public CxnParser<Impl> {
 
   State::T h3State() const { return impl()->h3Cxn().state; }
   void h3State(State::T state) { impl()->h3Cxn().state = state; }
+  bool h3Server() const { return impl()->link()->isServer(); }
+  void h3Error(uint64_t error) { impl()->h3Cxn().error(error); }
   bool peerControlStream() { return impl()->h3Cxn().peerControlStream(); }
   bool peerEncoderStream() { return impl()->h3Cxn().peerEncoderStream(); }
   bool peerDecoderStream() { return impl()->h3Cxn().peerDecoderStream(); }

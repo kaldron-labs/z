@@ -6,7 +6,7 @@ echo 'TAP version 14'
 echo '1..6'
 
 files='zhttp.cc zhttpd.cc Zhttpd.hh'
-bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Engines|ZmBlock|ZmSemaphore'
+bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|HPack|H2::(Frame|Session|Wire)|H2_(Client|Server|Logical)|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Engines|Ztls::|\.alpn[[:space:]]*\(|ZmBlock|ZmSemaphore'
 
 if grep -En "$bad" $files >/dev/null; then
   echo 'not ok 1 - executable closure excludes reusable HTTP mechanisms'

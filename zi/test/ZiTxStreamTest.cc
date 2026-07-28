@@ -4,9 +4,13 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <string.h>
+
 #include <stdlib.h>
 
 #include <zlib/ZuTestUtil.hh>
+
+#include <zlib/ZtArray.hh>
 
 #include <zlib/ZiTxStream.hh>
 
@@ -32,12 +36,17 @@ struct BigPrint_Print : public ZuPrintBuffer {
 BigPrint_Print ZuPrintType(BigPrint *);
 
 struct StreamHarness {
-  unsigned		allocCount = 0;
-  unsigned		sendCount = 0;
+  struct Sent {
+    ZmRef<ZiIOBuf>	buf;
+    unsigned		length = 0;
+    unsigned		skip = 0;
+    bool		final = false;
+  };
+  using SentBufs =
+    ZtArray<Sent, ZtArrayHeapID<"ZiTxStreamTest.Sent">>;
 
-  ZmRef<ZiIOBuf>	sent[16];
-  unsigned		sentLen[16] = {};
-  unsigned		sentSkip[16] = {};
+  SentBufs		sent;
+  unsigned		allocCount = 0;
 
   ZmRef<ZiIOBuf> alloc(unsigned headRoom) {
     ZmRef<ZiIOBuf> buf = new StreamAlloc{};
@@ -47,13 +56,13 @@ struct StreamHarness {
     return buf;
   }
 
-  void send(ZmRef<ZiIOBuf> buf) {
-    if (sendCount < 16) {
-      sent[sendCount] = buf;
-      sentLen[sendCount] = buf ? buf->length : 0;
-      sentSkip[sendCount] = buf ? buf->skip : 0;
-    }
-    ++sendCount;
+  void send(ZmRef<ZiIOBuf> buf, bool final) {
+    sent.push(Sent{
+      .buf = buf,
+      .length = buf ? buf->length : 0,
+      .skip = buf ? buf->skip : 0,
+      .final = final
+    });
   }
 };
 
@@ -64,13 +73,15 @@ struct TestTxStream : public Zi::TxStream<TestTxStream> {
       StreamHarness &h_, unsigned maxSize, unsigned headRoom,
       unsigned tailRoom) :
     Base(maxSize, headRoom, tailRoom), h{&h_} { }
+  TestTxStream(TestTxStream &&) = default;
+  TestTxStream &operator =(TestTxStream &&) = default;
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     return h->alloc(headRoom);
   }
 
-  void sendBuf_(ZmRef<ZiIOBuf> buf) {
-    h->send(ZuMv(buf));
+  void sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+    h->send(ZuMv(buf), final);
   }
 
   StreamHarness	*h;
@@ -89,18 +100,21 @@ void testSplitAndFlush()
   stream << ZuCSpan(payload, sizeof(payload));
 
   ZuCheck(h.allocCount == 3);
-  ZuCheck(h.sendCount == 2);
-  ZuCheck(h.sentLen[0] == 9);
-  ZuCheck(h.sentLen[1] == 9);
-  ZuCheck(h.sentSkip[0] == 2);
-  ZuCheck(h.sentSkip[1] == 2);
+  ZuCheck(h.sent.length() == 2);
+  ZuCheck(h.sent[0].length == 9);
+  ZuCheck(h.sent[1].length == 9);
+  ZuCheck(h.sent[0].skip == 2);
+  ZuCheck(h.sent[1].skip == 2);
+  ZuCheck(!h.sent[0].final);
+  ZuCheck(!h.sent[1].final);
 
   stream << Zi::flush();
 
   ZuCheck(h.allocCount == 3);
-  ZuCheck(h.sendCount == 3);
-  ZuCheck(h.sentLen[2] == 2);
-  ZuCheck(h.sentSkip[2] == 2);
+  ZuCheck(h.sent.length() == 3);
+  ZuCheck(h.sent[2].length == 2);
+  ZuCheck(h.sent[2].skip == 2);
+  ZuCheck(h.sent[2].final);
 }
 
 void testPrimitiveAppendAccounting()
@@ -111,12 +125,13 @@ void testPrimitiveAppendAccounting()
   TestTxStream stream{h, 10, 1, 1};
 
   stream << 'A' << 'B' << 'C';
-  ZuCheck(h.sendCount == 0);
+  ZuCheck(!h.sent);
 
   stream << Zi::flush();
-  ZuCheck(h.sendCount == 1);
-  ZuCheck(h.sentLen[0] == 3);
-  ZuCheck(h.sentSkip[0] == 1);
+  ZuCheck(h.sent.length() == 1);
+  ZuCheck(h.sent[0].length == 3);
+  ZuCheck(h.sent[0].skip == 1);
+  ZuCheck(h.sent[0].final);
 }
 
 void testRealPrimitiveFormatting()
@@ -129,9 +144,10 @@ void testRealPrimitiveFormatting()
   stream << uint64_t(1234567890123456789ULL) << ' ' << int64_t(-42) <<
     ' ' << unsigned(17) << Zi::flush();
 
-  ZuCheck(h.sendCount == 1);
-  ZuCheck(h.sentLen[0] == 26);
-  ZuCSpan sent = h.sent[0]->cspan();
+  ZuCheck(h.sent.length() == 1);
+  ZuCheck(h.sent[0].final);
+  ZuCheck(h.sent[0].length == 26);
+  ZuCSpan sent = h.sent[0].buf->cspan();
   ZuCheck(sent == "1234567890123456789 -42 17");
 }
 
@@ -143,21 +159,22 @@ void testFlushElidesEmptyBuffer()
   TestTxStream stream{h, 10, 1, 1};
 
   ZuCheck(h.allocCount == 0);
-  ZuCheck(h.sendCount == 0);
+  ZuCheck(!h.sent);
 
   stream << Zi::flush();
   ZuCheck(h.allocCount == 0);
-  ZuCheck(h.sendCount == 0);
+  ZuCheck(!h.sent);
 
   stream << 'Z' << Zi::flush();
   ZuCheck(h.allocCount == 1);
-  ZuCheck(h.sendCount == 1);
-  ZuCheck(h.sentLen[0] == 1);
-  ZuCheck(h.sentSkip[0] == 1);
+  ZuCheck(h.sent.length() == 1);
+  ZuCheck(h.sent[0].length == 1);
+  ZuCheck(h.sent[0].skip == 1);
+  ZuCheck(h.sent[0].final);
 
   stream << Zi::flush();
   ZuCheck(h.allocCount == 1);
-  ZuCheck(h.sendCount == 1);
+  ZuCheck(h.sent.length() == 1);
 }
 
 void testOversizePrintableThrows()
@@ -175,8 +192,101 @@ void testOversizePrintableThrows()
   }
 
   ZuCheck(threw);
-  ZuCheck(h.sendCount == 1);
-  ZuCheck(h.allocCount == 2);
+  ZuCheck(!h.sent);
+  ZuCheck(h.allocCount == 1);
+}
+
+void testExactCapacityAndDestruction()
+{
+  ZuTestScope(testExactCapacityAndDestruction);
+
+  StreamHarness h;
+  {
+    TestTxStream stream{h, 6, 1, 1};
+    stream << "abcd";
+    ZuCheck(!h.sent);
+  }
+  ZuCheck(h.sent.length() == 1);
+  ZuCheck(h.sent[0].length == 4);
+  ZuCheck(h.sent[0].final);
+}
+
+void testMove()
+{
+  ZuTestScope(testMove);
+
+  StreamHarness h1;
+  {
+    TestTxStream stream1{h1, 16, 1, 1};
+    stream1 << "one";
+    TestTxStream stream2{ZuMv(stream1)};
+    ZuCheck(!h1.sent);
+  }
+  ZuCheck(h1.sent.length() == 1);
+  ZuCheck(h1.sent[0].final);
+  ZuCheck(h1.sent[0].buf->cspan() == "one");
+
+  StreamHarness h2, h3;
+  {
+    TestTxStream stream2{h2, 16, 1, 1};
+    TestTxStream stream3{h3, 16, 1, 1};
+    stream2 << "two";
+    stream3 << "three";
+    stream3 = ZuMv(stream2);
+    ZuCheck(h3.sent.length() == 1);
+    ZuCheck(h3.sent[0].final);
+    ZuCheck(h3.sent[0].buf->cspan() == "three");
+  }
+  ZuCheck(h2.sent.length() == 1);
+  ZuCheck(h2.sent[0].final);
+  ZuCheck(h2.sent[0].buf->cspan() == "two");
+}
+
+template <typename Lower>
+struct TestLayer : public ZiTxLayer<TestLayer<Lower>, Lower> {
+  using Base = ZiTxLayer<TestLayer<Lower>, Lower>;
+
+  TestLayer(
+      Lower &lower, unsigned reserve_, unsigned actual_, unsigned tail_) :
+    Base{lower, reserve_, tail_}, reserve{reserve_}, actual{actual_} { }
+
+  void prepareBuf_(ZiIOBuf *buf, bool final) {
+    valid &= buf->skip >= reserve;
+    finals.push(final);
+    if (actual) {
+      buf->rewind(actual);
+      memset(buf->data(), int('0' + actual), actual);
+    }
+  }
+
+  ZtArray<bool, ZtArrayHeapID<"ZiTxStreamTest.Finals">> finals;
+  unsigned reserve = 0;
+  unsigned actual = 0;
+  bool valid = true;
+};
+
+void testLayerComposition()
+{
+  ZuTestScope(testLayerComposition);
+
+  StreamHarness h;
+  TestTxStream native{h, 32, 2, 3};
+  TestLayer inner{native, 4, 2, 2};
+  TestLayer outer{inner, 5, 1, 1};
+
+  ZuCheck(outer.headRoom() == 11);
+  ZuCheck(outer.tailRoom() == 6);
+  outer << "payload" << Zi::flush();
+
+  ZuCheck(h.allocCount == 1);
+  ZuCheck(h.sent.length() == 1);
+  ZuCheck(h.sent[0].final);
+  ZuCheck(h.sent[0].skip == 8);
+  ZuCheck(h.sent[0].length == 10);
+  ZuCheck(inner.finals.length() == 1 && inner.finals[0]);
+  ZuCheck(outer.finals.length() == 1 && outer.finals[0]);
+  ZuCheck(inner.valid && outer.valid);
+  ZuCheck(h.sent[0].buf->cspan() == "221payload");
 }
 
 } // namespace
@@ -190,5 +300,8 @@ int main(int argc, char **argv)
   ZuTestCall(testRealPrimitiveFormatting);
   ZuTestCall(testFlushElidesEmptyBuffer);
   ZuTestCall(testOversizePrintableThrows);
+  ZuTestCall(testExactCapacityAndDestruction);
+  ZuTestCall(testMove);
+  ZuTestCall(testLayerComposition);
   return 0;
 }

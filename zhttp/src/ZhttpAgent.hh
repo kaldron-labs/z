@@ -23,12 +23,13 @@
 #include <zlib/ZhttpDiscovery.hh>
 #include <zlib/ZhttpEngines.hh>
 #include <zlib/ZhttpRuntime.hh>
+#include <zlib/ZhttpTLSClientPool.hh>
 #include <zlib/ZhttpURL.hh>
 
 namespace Zhttp {
 
 template <
-  typename Owner, typename Protocol, typename Request,
+  typename Owner, typename Profile, typename Request,
   typename ReqHeaders, typename RespHeaders, uint64_t RespBodyMax>
 class ClientPool;
 
@@ -60,10 +61,12 @@ public:
     unsigned		endpointIndex = 0;
     unsigned		status = 0;
     int8_t		transport = Transport::TCP;
+    int8_t		httpVersion = Version::H1;
     bool		endpointSet = false;
     bool		headersDone = false;
     bool		responseStarted = false;
     bool		responseDone = false;
+    bool		selectionObserved = false;
     bool		failed = false;
     bool		connectFailed = false;
     bool		failureObserved = false;
@@ -76,11 +79,11 @@ public:
   };
 
   using TCPPool = ClientPool<
-    Self, TCP, Attempt, ReqHeaders, RespHeaders, RespBodyMax>;
-  using TLSPool = ClientPool<
-    Self, TLS, Attempt, ReqHeaders, RespHeaders, RespBodyMax>;
+    Self, H1TCP, Attempt, ReqHeaders, RespHeaders, RespBodyMax>;
+  using TLSPool = TLSClientPool<
+    Self, Attempt, ReqHeaders, RespHeaders, RespBodyMax>;
   using QUICPool = ClientPool<
-    Self, QUIC, Attempt, ReqHeaders, RespHeaders, RespBodyMax>;
+    Self, H3QUIC, Attempt, ReqHeaders, RespHeaders, RespBodyMax>;
 
   using Requests =
     ZtArray<Request *, ZtArrayHeapID<"Zhttp.Agent.Requests">>;
@@ -135,18 +138,22 @@ public:
 
   bool init(
     const EngineConfig &engine, const AgentConfig &config,
-    const TCPConfig &tcp, const TLSConfig &tls, const QUICConfig &quic)
+    const TCPConfig &tcp, H2Config tls, const QUICConfig &quic)
   {
     if (!engine.mx() || !config.concurrency() || !config.maxPending() ||
 	!config.admissionBatch() ||
 	config.protocol() < ProtocolPolicy::ForceH3 ||
 	config.protocol() > ProtocolPolicy::DisableH3 ||
+	!TLS_::valid(tls) ||
+	config.h2Policy() < H2Policy::Force ||
+	config.h2Policy() > H2Policy::Disable ||
 	!config.tcp() ||
 	(config.protocol() == ProtocolPolicy::ForceH3 && !config.quic()) ||
 	(config.protocol() == ProtocolPolicy::PreferH3 &&
 	  (!config.tls() || !config.quic())) ||
 	(config.protocol() == ProtocolPolicy::DisableH3 && !config.tls()))
       return false;
+    tls.policy(config.h2Policy());
     m_mx = engine.mx();
     m_rxThread = engine.rxThread() ?
       m_mx->sid(engine.rxThread()) : m_mx->rxThread();
@@ -288,6 +295,13 @@ public:
   template <typename Link>
   void poolConnected(
     Link &, Attempt &attempt, const ConnectedInfo &info) {
+    attempt.transport = info.transport;
+    attempt.httpVersion = info.httpVersion;
+    if (!attempt.selectionObserved) {
+      attempt.selectionObserved = true;
+      observe_(
+	attempt.request, event_(attempt, AgentEventType::Selected));
+    }
     impl()->connected(*attempt.request, info);
   }
   template <typename Link>
@@ -355,6 +369,7 @@ public:
       observe_(attempt.request, event);
       impl()->redirected(*attempt.request, attempt.url);
       if (reuse && same && direct_<Link>(attempt)) {
+	attempt.selectionObserved = true;
 	observe_(
 	  attempt.request, event_(attempt, AgentEventType::Selected));
 	link.assign(&attempt);
@@ -365,6 +380,33 @@ public:
       }
       return;
     }
+    if constexpr (ZuIsSame<typename Link::Protocol, TLS>{})
+      if (!ok) {
+	switch (link.result()) {
+	  case ResultCode::Cancelled:
+	    finish_(link, attempt, ResultCode::Cancelled, false);
+	    return;
+	  case ResultCode::Indeterminate:
+	    finish_(link, attempt, ResultCode::Indeterminate, false);
+	    return;
+	  case ResultCode::Unprocessed:
+	    if (attempt.responseStarted ||
+		!impl()->requestReplayable(*attempt.request)) {
+	      finish_(link, attempt, ResultCode::ReplayUnsafe, false);
+	      return;
+	    }
+	    {
+	      uint64_t previous = attempt.id;
+	      nextAttempt_(attempt, false);
+	      auto event = event_(attempt, AgentEventType::Retried);
+	      event.previousAttempt = previous;
+	      observe_(attempt.request, event);
+	      startTLS_(attempt);
+	      link.retire();
+	    }
+	    return;
+	}
+      }
     if (!ok && retry_(link, attempt)) return;
     if (!ok && attempt.transport == Transport::QUIC &&
 	m_config.protocol() == ProtocolPolicy::PreferH3) {
@@ -492,8 +534,7 @@ private:
       .type = type,
       .result = result,
       .transport = attempt.transport,
-      .httpVersion = int8_t(attempt.transport == Transport::QUIC ?
-	Version::H3 : Version::H1),
+      .httpVersion = attempt.httpVersion,
       .endpointSource = int8_t(attempt.endpointSet ?
 	attempt.endpoint.source : EndpointSource::Origin),
       .transient = transient,
@@ -645,6 +686,7 @@ private:
     attempt.headersDone = false;
     attempt.responseStarted = false;
     attempt.responseDone = false;
+    attempt.selectionObserved = false;
     attempt.failed = false;
     attempt.connectFailed = false;
     attempt.failureObserved = false;
@@ -669,6 +711,13 @@ private:
 	  return !m_altSvc.hasH3(attempt.url.origin(), Zm::now());
       }
     return false;
+  }
+
+  template <typename Profile>
+  static void select_(Attempt &attempt) {
+    using HTTP = ProfileTraits<Profile>;
+    attempt.transport = HTTP::Transport::ID;
+    attempt.httpVersion = HTTP::HTTPVersion;
   }
 
   void route_(Attempt &attempt) {
@@ -769,19 +818,23 @@ private:
   }
 
   void startTCP_(Attempt &attempt) {
-    attempt.transport = Transport::TCP;
+    select_<H1TCP>(attempt);
+    attempt.selectionObserved = true;
     observe_(
       attempt.request, event_(attempt, AgentEventType::Selected));
     m_tcp.open(&attempt, attempt.slot);
   }
   void startTLS_(Attempt &attempt) {
     attempt.transport = Transport::TLS;
-    observe_(
-      attempt.request, event_(attempt, AgentEventType::Selected));
+    switch (m_config.h2Policy()) {
+      case H2Policy::Disable: attempt.httpVersion = Version::H1; break;
+      default: attempt.httpVersion = Version::H2; break;
+    }
     m_tls.open(&attempt, attempt.slot);
   }
   void startQUIC_(Attempt &attempt, const Endpoint *endpoint) {
-    attempt.transport = Transport::QUIC;
+    select_<H3QUIC>(attempt);
+    attempt.selectionObserved = true;
     if (endpoint) {
       attempt.endpoint = *endpoint;
       attempt.endpointSet = true;
@@ -883,6 +936,7 @@ private:
       Origin prev = attempt.url.origin();
       prepare_(attempt, next);
       if (reuse && prev == attempt.url.origin() && direct_<Link>(attempt)) {
+	attempt.selectionObserved = true;
 	observe_(
 	  attempt.request, event_(attempt, AgentEventType::Selected));
 	link.assign(&attempt);
@@ -917,8 +971,7 @@ private:
       .retries = uint16_t(attempt.retries),
       .code = code,
       .transport = attempt.transport,
-      .httpVersion = int8_t(attempt.transport == Transport::QUIC ?
-	Version::H3 : Version::H1)
+      .httpVersion = attempt.httpVersion
     };
   }
 

@@ -23,14 +23,14 @@ int main(int argc, char **argv)
   ZuCHECK(otherCA.init(), "second temporary certificate creation failed");
   if (temp.certPath && temp.keyPath &&
       otherCA.certPath && otherCA.keyPath) {
-    ZuTestCall(run<Zhttp::TCP>, temp);
-    ZuTestCall(run<Zhttp::TCP>, temp);
-    ZuTestCall(run<Zhttp::TCP>, temp);
-    ZuTestCall(runServerStop<Zhttp::TCP>, temp);
-    ZuTestCall(run<Zhttp::TLS>, temp);
-    ZuTestCall(run<Zhttp::TLS>, temp);
-    ZuTestCall(run<Zhttp::TLS>, temp);
-    ZuTestCall(runServerStop<Zhttp::TLS>, temp);
+    ZuTestCall(run<Zhttp::H1TCP>, temp);
+    ZuTestCall(run<Zhttp::H1TCP>, temp);
+    ZuTestCall(run<Zhttp::H1TCP>, temp);
+    ZuTestCall(runServerStop<Zhttp::H1TCP>, temp);
+    ZuTestCall(run<Zhttp::H1TLS>, temp);
+    ZuTestCall(run<Zhttp::H1TLS>, temp);
+    ZuTestCall(run<Zhttp::H1TLS>, temp);
+    ZuTestCall(runServerStop<Zhttp::H1TLS>, temp);
     ZuTestCall(testTLSFailure, temp, otherCA);
   }
 

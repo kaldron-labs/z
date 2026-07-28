@@ -127,9 +127,7 @@ template <typename Protocol> struct Traits;
 template <> struct Traits<TCP> {
   enum {
     ID = Transport::TCP,
-    HTTPVersion = Version::H1,
     Secure = false,
-    Multiplexed = false,
     Datagram = false
   };
 
@@ -162,8 +160,7 @@ template <> struct Traits<TCP> {
   }
   static ConnectedInfo connected(Connected) {
     return {
-      .transport = Transport::TCP,
-      .httpVersion = Version::H1
+      .transport = Transport::TCP
     };
   }
   template <typename Engine>
@@ -179,9 +176,7 @@ template <> struct Traits<TCP> {
 template <> struct Traits<TLS> {
   enum {
     ID = Transport::TLS,
-    HTTPVersion = Version::H1,
     Secure = true,
-    Multiplexed = false,
     Datagram = false
   };
 
@@ -222,7 +217,6 @@ template <> struct Traits<TLS> {
       .alpn = info.alpn,
       .version = uint32_t(info.version),
       .transport = Transport::TLS,
-      .httpVersion = Version::H1,
       .secure = true
     };
   }
@@ -239,9 +233,7 @@ template <> struct Traits<TLS> {
 template <> struct Traits<QUIC> {
   enum {
     ID = Transport::QUIC,
-    HTTPVersion = Version::H3,
     Secure = true,
-    Multiplexed = true,
     Datagram = true
   };
 
@@ -280,9 +272,7 @@ template <> struct Traits<QUIC> {
       .alpn = info.alpn,
       .version = info.version,
       .transport = Transport::QUIC,
-      .httpVersion = Version::H3,
-      .secure = true,
-      .multiplexed = true
+      .secure = true
     };
   }
   template <typename Engine>
@@ -296,6 +286,29 @@ template <> struct Traits<QUIC> {
 };
 
 } // namespace Transport_
+
+template <
+  typename Profile_,
+  typename = ZuIfT<IsProfile<Profile_>{}>>
+struct ProfileTraits {
+  using Profile = Profile_;
+  using Protocol = typename Profile::Protocol;
+  using Transport = Transport_::Traits<Protocol>;
+
+  enum {
+    HTTPVersion = Profile::HTTPVersion,
+    Multiplexed = Profile::Multiplexed
+  };
+
+  static ConnectedInfo apply(ConnectedInfo connected) {
+    connected.httpVersion = HTTPVersion;
+    connected.multiplexed = Multiplexed;
+    return connected;
+  }
+  static ConnectedInfo connected(typename Transport::Connected info) {
+    return apply(Transport::connected(ZuMv(info)));
+  }
+};
 
 } // namespace Zhttp
 

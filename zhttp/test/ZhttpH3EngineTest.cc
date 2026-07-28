@@ -20,10 +20,10 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuCHECK(temp.init(), "temporary certificate creation failed");
   if (temp.certPath && temp.keyPath) {
-    ZuTestCall(run<Zhttp::QUIC>, temp, 1U, 2U);
-    ZuTestCall(run<Zhttp::QUIC>, temp, 1U, 2U);
-    ZuTestCall(run<Zhttp::QUIC>, temp, 1U, 2U, true);
-    ZuTestCall(runServerStop<Zhttp::QUIC>, temp);
+    ZuTestCall(run<Zhttp::H3QUIC>, temp, 1U, 2U);
+    ZuTestCall(run<Zhttp::H3QUIC>, temp, 1U, 2U);
+    ZuTestCall(run<Zhttp::H3QUIC>, temp, 1U, 2U, true);
+    ZuTestCall(runServerStop<Zhttp::H3QUIC>, temp);
   }
 
   ZiLog::stop();

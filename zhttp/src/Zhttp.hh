@@ -31,9 +31,11 @@
 #include <zlib/ZiTxStream.hh>
 
 #include <zlib/ZhttpConfig.hh>
+#include <zlib/ZhttpTypes.hh>
 #include <zlib/ZhttpURL.hh>
 #include <zlib/ZhttpDiscovery.hh>
 #include <zlib/ZhttpUtil.hh>
+#include <zlib/ZhttpCompression.hh>
 #include <zlib/ZhttpHPack.hh>
 #include <zlib/ZhttpQPack.hh>
 
@@ -105,29 +107,6 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 //   streams are ready and the corresponding request stream exists;
 // - peer close/reset during a response completes or fails that application
 //   link exactly once, followed by one disconnected() callback.
-
-ZtEnumNS(Method, int8_t,
-  GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
-
-inline bool earlyDataSafeMethod(Method::T method)
-{
-  switch (method) {
-    case Method::GET:
-    case Method::HEAD:
-    case Method::OPTIONS:
-      return true;
-    default:
-      return false;
-  }
-}
-
-inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
-{
-  return !hasBody && earlyDataSafeMethod(method);
-}
-
-// deprecated transfer-encoding compression
-ZtEnumNS(XferCompression, int8_t, compress, deflate, gzip);
 
 // HTTP Parser CRTP API
 // - consistent contract for H1::Parser and H3::Parser
@@ -250,11 +229,17 @@ struct Impl : public Builder<Impl, Headers, Trailers, HasBody, Chunked> {
 
 } // namespace Zhttp
 
+#include <zlib/ZhttpFields.hh>
 #include <zlib/ZhttpH1.hh>
+#include <zlib/ZhttpH2.hh>
+#include <zlib/ZhttpH2Session.hh>
+#include <zlib/ZhttpH2Message.hh>
 #include <zlib/ZhttpH3.hh>
 #include <zlib/ZhttpH1Session.hh>
 #include <zlib/ZhttpH3Session.hh>
 #include <zlib/ZhttpMessage.hh>
+#include <zlib/ZhttpTunnel.hh>
+#include <zlib/ZhttpTLSEngine.hh>
 
 namespace Zhttp {
 
@@ -269,6 +254,18 @@ template <
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
 using H1RespParser = H1::Parser<Impl, false, Headers, MaxBody>;
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  uint64_t MaxBody = DefltMaxBody>
+using H2ReqParser = H2::Parser<Impl, true, Headers, MaxBody>;
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  uint64_t MaxBody = DefltMaxBody>
+using H2RespParser = H2::Parser<Impl, false, Headers, MaxBody>;
 
 template <
   typename Impl,
@@ -301,6 +298,20 @@ template <
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
+using H2ReqBuilder = H2::Builder<Impl, Headers, Trailers, HasBody, false>;
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false>
+using H2RespBuilder = H2::Builder<Impl, Headers, Trailers, HasBody, false>;
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false>
 using H3ReqBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
 
 template <
@@ -318,6 +329,7 @@ using H3RespBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
 #include <zlib/ZhttpAgent.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZhttpEngines.hh>
+#include <zlib/ZhttpH2Engine.hh>
 #include <zlib/ZhttpH3Engine.hh>
 #endif
 
