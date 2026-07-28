@@ -22,6 +22,7 @@
 #include <zlib/ZhttpService.hh>
 
 #include "Zhttpd.hh"
+#include "ZhttpPut.hh"
 
 using namespace Zhttpd;
 
@@ -195,9 +196,40 @@ void sendBody(Tx &tx, Builder &builder, const ResponsePlan &resp) {
 
 struct Workload {
   using Response = ResponsePlan;
+  struct RequestState {
+    ZhttpPut::String	body;
+  };
 
-  Response request(const Zhttp::RequestInfo &info) {
+  template <typename Rx>
+  void requestBody(
+    const Zhttp::RequestInfo &, RequestState &state, Rx &rx) {
+    Zhttp::bodyEach(rx,
+      [&state](ZuBSpan span) { state.body << span; });
+  }
+
+  Response request(
+    const Zhttp::RequestInfo &info, RequestState &requestState) {
     ++state->requests;
+    if (info.method == Zhttp::Method::PUT) {
+      ZhttpPut::Record record;
+      Response response;
+      if (info.bodyReceived != requestState.body.length() ||
+	  info.bodyConsumed != requestState.body.length() ||
+	  info.bodyReset || info.bodyDiscarded ||
+	  !ZhttpPut::load(record, requestState.body)) {
+	response.status = 400;
+	response.reason = "Bad Request";
+	return response;
+      }
+      response.status = 200;
+      response.reason = "OK";
+      response.contentType = "application/json";
+      ZfJSON::save(response.body, record);
+      response.contentLength = response.body.length();
+      response.sendBody = true;
+      response.generated = true;
+      return response;
+    }
     StaticPlanner planner{state};
     return planner.plan(info);
   }

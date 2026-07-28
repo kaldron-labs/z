@@ -38,6 +38,7 @@
 #include <zlib/ZhttpCompression.hh>
 #include <zlib/ZhttpHPack.hh>
 #include <zlib/ZhttpQPack.hh>
+#include <zlib/ZhttpBody.hh>
 
 // Headers typelist definition, e.g.
 // - keys (variable values):
@@ -140,8 +141,8 @@ struct Impl : public Parser<Impl, ...> {
   // optional - content-length header
   void contentLength(uint64_t);
 
-  // optional - body data
-  void body(ZuBSpan);
+  // optional - decoded entity-body input; synchronous and Rx-shard-affine
+  template <typename Rx> void body(Rx &);
 
   // optional - end of stream/message
   void complete(ParserState::T);

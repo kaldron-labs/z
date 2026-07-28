@@ -20,7 +20,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZhttpMatrix_ {
 
 using Zhttp::Test::TempDir;
 using Zhttp::Test::haveCurlH3;
@@ -69,7 +69,8 @@ namespace Scenario {
     MigrateBytes,
     MigrateDrop,
     MigrateCaddy,
-    MigrateCurl
+    MigrateCurl,
+    Put
   };
 }
 
@@ -202,6 +203,7 @@ const char *scenarioCaseName(Scenario::T scenario)
     case Scenario::MigrateDrop: return "/mig-drop";
     case Scenario::MigrateCaddy: return "/mig-caddy";
     case Scenario::MigrateCurl: return "/mig-curl";
+    case Scenario::Put: return "/put";
   }
   return "/unknown";
 }
@@ -408,6 +410,10 @@ bool parseScenario(ZuCSpan name, Scenario::T &scenario)
   }
   if (name == "mig-curl") {
     scenario = Scenario::MigrateCurl;
+    return true;
+  }
+  if (name == "put") {
+    scenario = Scenario::Put;
     return true;
   }
   return false;
@@ -622,6 +628,11 @@ void eachCase(L l)
     Pair::CurlZhttpd, Proto::H3, 1, 1,
     options.timeout, options.stallTimeout, options.quietTimeout,
     Scenario::MigrateCurl});
+  for (auto proto : protos)
+    l(Case{
+      Pair::ZhttpZhttpd, proto, 1, 1,
+      options.timeout, options.stallTimeout, options.quietTimeout,
+      Scenario::Put});
 }
 
 bool anySelected()
@@ -881,6 +892,8 @@ void appendZhttpCommand(
   if (options.yield) script << " --yield";
 #endif
   if (options.discardResponse) script << " --discard-response";
+  if (c.scenario == Scenario::Put)
+    script << " --put --body-tx-batch=7";
   if (options.memDiag) script << " --mem-diag=" << options.memDiag;
   script << " --timeout=" << c.timeout <<
     " --stall-timeout=" << c.stallTimeout <<
@@ -937,7 +950,7 @@ void appendZhttpCommand(
       "grep -q 'QUIC connected' " << tempPath << "/client.err\n";
   if ((options.debug || options.pcap) && quicProto(c.proto))
     script << "stop_pcap\n";
-  if (!options.discardResponse)
+  if (!options.discardResponse && c.scenario != Scenario::Put)
     script <<
     "if [ " << c.requests << " -eq 1 ]; then\n"
     "  grep -qx '" << Body << "' " << tempPath << "/body\n"
@@ -1280,7 +1293,9 @@ bool prerequisitesOK()
   return true;
 }
 
-} // namespace
+} // namespace ZhttpMatrix_
+
+using namespace ZhttpMatrix_;
 
 int main(int argc, char **argv)
 {

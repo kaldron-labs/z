@@ -15,7 +15,24 @@
 
 #include <zlib/ZhttpTransport.hh>
 
+#include <zlib/ZuUnion.hh>
+
 namespace Zhttp {
+
+// Application message callback contract
+//
+// Header callbacks precede the first body callback.  Body callbacks receive a
+// concrete ZiRxStream-compatible bounded layer on the owning Rx shard; the
+// layer and every span it offers are synchronous and callback-scoped.  The
+// application must consume or copy offered input before returning.
+//
+// Body completion follows successful framing validation and consumption of
+// all payload.  The terminal result follows body completion, is delivered
+// exactly once, and no message callback is made after that result.
+//
+// Application Tx producers receive a concrete ZiTxStream-compatible body
+// stream on the owning Tx shard.  The producer writes entity bytes only;
+// libZhttp owns framing and final end-of-stream mapping.
 
 template <
   typename Profile,
@@ -24,8 +41,7 @@ struct MessageTraits;
 
 template <
   typename App, typename Request, typename Link, typename Profile,
-  typename ReqHeaders, typename RespHeaders, uint64_t RespBodyMax,
-  bool ReqBody = false, bool ReqChunked = false>
+  typename ReqHeaders, typename RespHeaders, uint64_t RespBodyMax>
 class ClientMessage;
 
 } // namespace Zhttp
@@ -69,9 +85,9 @@ template <> struct MessageVersion<Version::H2> {
   using Parser = H2::Parser<Impl, Request, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, typename Trailers,
-    bool HasBody, bool>
+    bool HasBody, bool Streaming>
   using Builder =
-    H2::Builder<Impl, Headers, Trailers, HasBody, false>;
+    H2::Builder<Impl, Headers, Trailers, HasBody, Streaming>;
 };
 
 template <> struct MessageVersion<Version::H3> {
@@ -86,9 +102,9 @@ template <> struct MessageVersion<Version::H3> {
   using Parser = H3::Parser<Impl, Request, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, typename Trailers,
-    bool HasBody, bool>
+    bool HasBody, bool Streaming>
   using Builder =
-    H3::Builder<Impl, Headers, Trailers, HasBody, false>;
+    H3::Builder<Impl, Headers, Trailers, HasBody, Streaming>;
 };
 
 template <typename Profile, typename Traits>
@@ -100,11 +116,12 @@ struct MessageTraits :
 };
 
 template <typename Link, typename Builder>
-void sendReq(Link &link, Builder &builder) {
+bool sendReq(Link &link, Builder &builder) {
   auto tx = link.transmit(builder);
-  builder.request(tx);
+  if (!builder.request(tx)) return false;
   builder.finish(tx);
   link.finish();
+  return true;
 }
 
 template <typename Link, typename Builder>
@@ -120,8 +137,7 @@ void sendResp(Link &link, Builder &builder) {
 // link completion remain library-owned.
 template <
   typename App_, typename Request_, typename Link_, typename Profile_,
-  typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_,
-  bool ReqBody_, bool ReqChunked_>
+  typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_>
 class ClientMessage {
 public:
   using App = App_;
@@ -131,11 +147,21 @@ public:
   using ReqHeaders = ReqHeaders_;
   using RespHeaders = RespHeaders_;
   using Message = MessageTraits<Profile>;
+  using BodyPolicy = typename App::BodyPolicy;
+  using BodyCursor = typename BodyPolicy::Cursor;
+  using BodyCursorStorage = ZuUnion<void, BodyCursor>;
+  using ReqHeaderKeys = ZuTypeSlice<2, 0, ReqHeaders>;
   enum {
-    ReqBody = ReqBody_,
-    ReqChunked = ReqChunked_
+    ReqBody = BodyPolicy::HasBody,
+    ReqChunked = BodyPolicy::Streaming
   };
   static constexpr uint64_t RespBodyMax = RespBodyMax_;
+  static_assert(
+    !ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{},
+    "libZhttp owns request content-length framing");
+  static_assert(
+    !ZuTypeIn<ZuStringT<"transfer-encoding">, ReqHeaderKeys>{},
+    "libZhttp owns request transfer-encoding framing");
 
 private:
   struct ReqOps {
@@ -147,28 +173,39 @@ private:
     void host(L &&l) {
       app->requestHost(*req, ZuFwd<L>(l));
     }
+    template <typename L>
+    void protocol(L &&l) {
+      app->requestProtocol(*req, ZuFwd<L>(l));
+    }
     template <typename Key, typename L>
     void header(L &&l) {
       app->template requestHeader<Key>(*req, ZuFwd<L>(l));
+    }
+    uint64_t contentLength() {
+      return app->requestContentLength(*req);
     }
 
     App		*app = nullptr;
     Request	*req = nullptr;
   };
 
-  struct Builder :
+  template <bool HasBody, bool Chunked>
+  struct Builder_ :
     public Message::template Builder<
-      Builder, ReqHeaders, ZuTypeList<>, ReqBody, ReqChunked>,
+      Builder_<HasBody, Chunked>,
+      ReqHeaders, ZuTypeList<>, HasBody, Chunked>,
     public ReqOps {
     using Base = typename Message::template Builder<
-      Builder, ReqHeaders, ZuTypeList<>, ReqBody, ReqChunked>;
+      Builder_, ReqHeaders, ZuTypeList<>, HasBody, Chunked>;
 
-    Builder(App *app, Request *request) :
+    Builder_(App *app, Request *request) :
       ReqOps{app, request} { }
 
     using ReqOps::header;
     using ReqOps::host;
     using ReqOps::operation;
+    using ReqOps::protocol;
+    using ReqOps::contentLength;
   };
 
   struct RespOps {
@@ -189,8 +226,9 @@ private:
     void header(ZuBSpan value) {
       app->template responseHeader<Key>(*link, *request, value);
     }
-    void body(ZuBSpan value) {
-      app->responseBody(*link, *request, value);
+    template <typename Rx>
+    void body(Rx &rx) {
+      app->responseBody(*link, *request, rx);
     }
     template <typename ParserState>
     void complete(typename ParserState::T state) {
@@ -238,13 +276,100 @@ public:
     m_request = request;
     static_cast<RespOps &>(m_parser) = {m_app, m_link, request};
   }
-  void reset() { m_parser.reset(); }
-
-  void send() {
-    Builder builder{m_app, m_request};
-    ::Zhttp::sendReq(*m_link, builder);
+  void reset() {
+    m_parser.reset();
+    if constexpr (Message::ID != Version::H1)
+      if (m_request)
+	m_app->requestOperation(
+	  *m_request,
+	  [this](Method::T method, auto &&, auto &&) {
+	    m_parser.requestMethod(method);
+	  });
   }
 
+  // Tx-owned request production.  startTx(), every send() turn, and
+  // cancelTx() execute on Tx.  A producer must write no more than the supplied
+  // batch; libZhttp verifies both progress and the actual framed byte count.
+  void startTx(unsigned generation = 0) {
+    m_bodyCursor = BodyCursorStorage{};
+    m_bodyLength = 0;
+    m_bodyProduced = 0;
+    m_commit = {};
+    m_txGeneration = generation;
+    m_hasBody = false;
+    if constexpr (ReqBody) {
+      m_hasBody = !BodyPolicy::Optional ||
+	m_app->requestHasBody(*m_request);
+      if (m_hasBody) {
+	if constexpr (!ReqChunked)
+	  m_bodyLength = m_app->requestContentLength(*m_request);
+	m_bodyCursor = m_app->requestBodyCursor(*m_request);
+      }
+    }
+    m_txState = TxState::Active;
+  }
+
+  void cancelTx() {
+    if (m_txState != TxState::Active) return;
+    abandonTx_();
+    m_txState = TxState::Cancelled;
+  }
+
+  BodyCommit commit() const { return m_commit; }
+  unsigned txGeneration() const { return m_txGeneration; }
+
+  int send() { return send(m_app->requestBodyBatch()); }
+  int send(unsigned batch) {
+    if (m_txState != TxState::Active) return BodySend::Cancelled;
+    if constexpr (ReqBody)
+      if (m_hasBody) return send_<true, ReqChunked>(batch);
+    return send_<false, false>(batch);
+  }
+
+private:
+  template <bool HasBody, bool Chunked>
+  int send_(unsigned batch) {
+    Builder_<HasBody, Chunked> builder{m_app, m_request};
+    auto tx = m_link->transmit(builder);
+    if (!m_commit.headers) {
+      if (!builder.request(tx)) return failTx_();
+      m_commit.headers = true;
+    }
+    if constexpr (HasBody) {
+      uint64_t remaining = Chunked ?
+	uint64_t(-1) : m_bodyLength - m_bodyProduced;
+      auto body = builder.body(tx, remaining);
+      int state = m_app->requestBody(
+	*m_request, m_bodyCursor.template p<1>(), body, batch);
+      body.flush();
+      uint64_t produced = body.produced();
+      m_bodyProduced += produced;
+      m_commit.produced = m_bodyProduced;
+      m_commit.committed = m_bodyProduced;
+      if (!body.valid() || produced > batch) return failTx_();
+      switch (state) {
+	case BodyProduce::More:
+	  if (!produced ||
+	      (!Chunked && m_bodyProduced >= m_bodyLength))
+	    return failTx_();
+	  return BodySend::More;
+	case BodyProduce::Done:
+	  if (!Chunked && m_bodyProduced != m_bodyLength)
+	    return failTx_();
+	  break;
+	default:
+	  return failTx_();
+      }
+    }
+    builder.finish(tx);
+    m_link->finish();
+    m_commit.final = true;
+    m_bodyCursor = BodyCursorStorage{};
+    m_txState = TxState::Complete;
+    return BodySend::Complete;
+  }
+
+public:
   template <typename Rx>
   int process(Rx &rx) {
     auto state = m_link->receive(m_parser, rx);
@@ -258,10 +383,35 @@ public:
   }
 
 private:
+  struct TxState {
+    enum { Idle, Active, Complete, Failed, Cancelled };
+  };
+
+  int failTx_() {
+    abandonTx_();
+    m_txState = TxState::Failed;
+    return BodySend::Failed;
+  }
+
+  void abandonTx_() {
+    m_commit.reset = m_commit.committed;
+    if constexpr (ReqBody && !ReqChunked)
+      if (m_hasBody && m_bodyProduced < m_bodyLength)
+	m_commit.discarded = m_bodyLength - m_bodyProduced;
+    m_bodyCursor = BodyCursorStorage{};
+  }
+
   App		*m_app = nullptr;
   Link		*m_link = nullptr;
   Request	*m_request = nullptr;
   Parser	m_parser;
+  BodyCursorStorage m_bodyCursor;
+  uint64_t	m_bodyLength = 0;
+  uint64_t	m_bodyProduced = 0;
+  BodyCommit	m_commit;
+  unsigned	m_txGeneration = 0;
+  int8_t	m_txState = TxState::Idle;
+  bool		m_hasBody = false;
 };
 
 template <typename Impl, typename Parser_, typename Message_>

@@ -35,13 +35,16 @@ class ClientPool;
 
 template <
   typename App_, typename Request_,
-  typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_>
+  typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_,
+  typename BodyPolicy_ = Body::None>
 class Agent {
 public:
   using App = App_;
   using Request = Request_;
   using ReqHeaders = ReqHeaders_;
   using RespHeaders = RespHeaders_;
+  using BodyPolicy = BodyPolicy_;
+  using BodyCursor = typename BodyPolicy::Cursor;
   using Self = Agent;
   static constexpr uint64_t RespBodyMax = RespBodyMax_;
 
@@ -55,6 +58,13 @@ public:
     uint64_t		requestID = 0;
     uint64_t		id = 0;
     uint64_t		bodyBytes = 0;
+    uint64_t		bodyReceived = 0;
+    uint64_t		requestBodyProduced = 0;
+    uint64_t		requestBodyCommitted = 0;
+    uint64_t		requestBodyReset = 0;
+    uint64_t		requestBodyDiscarded = 0;
+    uint64_t		responseBodyReset = 0;
+    uint64_t		responseBodyDiscarded = 0;
     unsigned		slot = 0;
     unsigned		redirects = 0;
     unsigned		retries = 0;
@@ -76,6 +86,9 @@ public:
     bool		connectionKeepAlive = false;
     bool		http10 = false;
     bool		closeDelimited = false;
+    bool		requestHeadersCommitted = false;
+    bool		requestFinalCommitted = false;
+    bool		producerFailed = false;
   };
 
   using TCPPool = ClientPool<
@@ -141,7 +154,7 @@ public:
     const TCPConfig &tcp, H2Config tls, const QUICConfig &quic)
   {
     if (!engine.mx() || !config.concurrency() || !config.maxPending() ||
-	!config.admissionBatch() ||
+	!config.admissionBatch() || !config.bodyTxBatch() ||
 	config.protocol() < ProtocolPolicy::ForceH3 ||
 	config.protocol() > ProtocolPolicy::DisableH3 ||
 	!TLS_::valid(tls) ||
@@ -181,9 +194,12 @@ public:
   }
 
   bool start() { return m_engines.start(); }
+  unsigned requestBodyBatch() const { return m_config.bodyTxBatch(); }
 
-  // Submit and seal one finite contiguous workload.  Its storage must remain
-  // valid through the final completed() callback.
+  // Submit and seal one finite workload.  Request metadata and submitted body
+  // source storage must remain valid through completed().  All response
+  // header callbacks precede body input; responseEnd() follows validated,
+  // fully consumed body input; completed() is terminal and exact-once.
   void submit(Request *requests, unsigned count) {
     rxRun_([this, requests, count]() {
       submit_(requests, count);
@@ -251,7 +267,19 @@ public:
 
   // Side-effect-safe application defaults.
   URL requestURL(const Request &request) const { return request.url; }
-  bool requestReplayable(const Request &) const { return true; }
+  bool requestReplayable(const Request &) const {
+    return !BodyPolicy::HasBody;
+  }
+  bool requestReproducible(const Request &) const {
+    return !BodyPolicy::HasBody;
+  }
+  uint64_t requestContentLength(const Request &) const { return 0; }
+  bool requestHasBody(const Request &) const { return BodyPolicy::HasBody; }
+  BodyCursor requestBodyCursor(Request &) { return {}; }
+  template <typename Tx>
+  int requestBody(Request &, BodyCursor &, Tx &, unsigned) {
+    return BodyProduce::Done;
+  }
   template <typename L>
   void requestOperation(const Request &, const URL &url, L &&l) {
     ZuCSpan path, query;
@@ -262,6 +290,8 @@ public:
   void requestHost(const Request &, const URL &url, L &&l) {
     l(ZuCSpan{url.host});
   }
+  template <typename L>
+  void requestProtocol(const Request &, L &&) { }
   template <typename Key, typename L>
   void requestHeader(const Request &, L &&l) { l(""); }
   void responseStatus(Request &, unsigned) { }
@@ -270,7 +300,8 @@ public:
   void responseVersion(Request &, ZuBSpan) { }
   template <typename Key>
   void responseHeader(Request &, ZuBSpan) { }
-  void responseBody(Request &, ZuBSpan) { }
+  template <typename Rx>
+  void responseBody(Request &, Rx &rx) { bodyDrain(rx); }
   void responseEnd(Request &, bool) { }
   void connected(Request &, const ConnectedInfo &) { }
   void disconnected(Request *, bool) { }
@@ -321,6 +352,23 @@ public:
     }
     impl()->connectFailed(attempt ? attempt->request : nullptr, transient);
   }
+  template <typename Link>
+  void poolTxCommitted(
+    Link &, Attempt &attempt, const BodyCommit &commit) {
+    attempt.requestHeadersCommitted = commit.headers;
+    attempt.requestBodyProduced = commit.produced;
+    attempt.requestBodyCommitted = commit.committed;
+    attempt.requestBodyReset = commit.reset;
+    attempt.requestBodyDiscarded = commit.discarded;
+    attempt.requestFinalCommitted = commit.final;
+  }
+  template <typename Link>
+  void poolTxFailed(
+    Link &link, Attempt &attempt, const BodyCommit &commit) {
+    poolTxCommitted(link, attempt, commit);
+    attempt.producerFailed = true;
+    attempt.failed = true;
+  }
   void poolCloseDelimited(Attempt &attempt) {
     attempt.closeDelimited = true;
   }
@@ -347,7 +395,7 @@ public:
     }
     if (ok && redirectStatus_(attempt.status) && attempt.location) {
       URL next;
-      if (!impl()->requestReplayable(*attempt.request)) {
+      if (!canReplay_(attempt)) {
 	finish_(link, attempt, ResultCode::ReplayUnsafe, reuse);
 	return;
       }
@@ -380,6 +428,14 @@ public:
       }
       return;
     }
+    if (!ok && attempt.producerFailed) {
+      finish_(link, attempt,
+	(attempt.requestHeadersCommitted &&
+	  !canReplay_(attempt)) ?
+	  ResultCode::Indeterminate : ResultCode::Failed,
+	false);
+      return;
+    }
     if constexpr (ZuIsSame<typename Link::Protocol, TLS>{})
       if (!ok) {
 	switch (link.result()) {
@@ -390,8 +446,7 @@ public:
 	    finish_(link, attempt, ResultCode::Indeterminate, false);
 	    return;
 	  case ResultCode::Unprocessed:
-	    if (attempt.responseStarted ||
-		!impl()->requestReplayable(*attempt.request)) {
+	    if (attempt.responseStarted || !canReplay_(attempt)) {
 	      finish_(link, attempt, ResultCode::ReplayUnsafe, false);
 	      return;
 	    }
@@ -410,8 +465,7 @@ public:
     if (!ok && retry_(link, attempt)) return;
     if (!ok && attempt.transport == Transport::QUIC &&
 	m_config.protocol() == ProtocolPolicy::PreferH3) {
-      if (!attempt.responseStarted &&
-	  impl()->requestReplayable(*attempt.request)) {
+      if (!attempt.responseStarted && canReplay_(attempt)) {
 	uint64_t previous = attempt.id;
 	nextAttempt_(attempt, false);
 	auto event = event_(attempt, AgentEventType::Fallback);
@@ -422,14 +476,15 @@ public:
 	return;
       }
       finish_(link, attempt,
-	attempt.responseStarted ? ResultCode::Indeterminate :
+	(attempt.responseStarted || attempt.requestHeadersCommitted) ?
+	  ResultCode::Indeterminate :
 	  ResultCode::ReplayUnsafe, false);
       return;
     }
     finish_(link, attempt,
       ok ? ResultCode::OK :
-	(attempt.responseStarted &&
-	  !impl()->requestReplayable(*attempt.request) ?
+	((attempt.responseStarted || attempt.requestHeadersCommitted) &&
+	  !canReplay_(attempt) ?
 	  ResultCode::Indeterminate : ResultCode::Failed),
       reuse);
   }
@@ -451,6 +506,25 @@ public:
   template <typename Key, typename L>
   void requestHeader(const Attempt &attempt, L &&l) {
     impl()->template requestHeader<Key>(*attempt.request, ZuFwd<L>(l));
+  }
+  template <typename L>
+  void requestProtocol(const Attempt &attempt, L &&l) {
+    impl()->requestProtocol(*attempt.request, ZuFwd<L>(l));
+  }
+  uint64_t requestContentLength(const Attempt &attempt) {
+    return impl()->requestContentLength(*attempt.request);
+  }
+  bool requestHasBody(const Attempt &attempt) {
+    return impl()->requestHasBody(*attempt.request);
+  }
+  BodyCursor requestBodyCursor(Attempt &attempt) {
+    return impl()->requestBodyCursor(*attempt.request);
+  }
+  template <typename Tx>
+  int requestBody(
+    Attempt &attempt, BodyCursor &cursor, Tx &tx, unsigned batch) {
+    return impl()->requestBody(
+      *attempt.request, cursor, tx, batch);
   }
 
   template <typename Link>
@@ -490,11 +564,23 @@ public:
     impl()->template responseHeader<Key>(*attempt.request, value);
   }
   template <typename Link>
-  void responseBody(Link &link, Attempt &attempt, ZuBSpan value) {
+  void responseBody(Link &link, Attempt &attempt, auto &rx) {
     headersDone_(link, attempt);
-    attempt.bodyBytes += value.length();
+    (void)rx.input();
+    uint32_t offered = rx.available();
+    attempt.bodyReceived += offered;
+    impl()->responseBody(*attempt.request, rx);
+    uint32_t pending = rx.available();
+    if (pending > offered) {
+      attempt.failed = true;
+      return;
+    }
+    attempt.bodyBytes += offered - pending;
+    if (pending) {
+      attempt.responseBodyReset += pending;
+      attempt.responseBodyDiscarded += pending;
+    }
     link.responseBodyBytes(&attempt);
-    impl()->responseBody(*attempt.request, value);
   }
   template <typename ParserState, typename Link>
   void responseComplete(
@@ -682,6 +768,13 @@ private:
     attempt.location.length(0);
     attempt.status = 0;
     attempt.bodyBytes = 0;
+    attempt.bodyReceived = 0;
+    attempt.requestBodyProduced = 0;
+    attempt.requestBodyCommitted = 0;
+    attempt.requestBodyReset = 0;
+    attempt.requestBodyDiscarded = 0;
+    attempt.responseBodyReset = 0;
+    attempt.responseBodyDiscarded = 0;
     attempt.endpointSet = false;
     attempt.headersDone = false;
     attempt.responseStarted = false;
@@ -696,6 +789,9 @@ private:
     attempt.connectionKeepAlive = false;
     attempt.http10 = false;
     attempt.closeDelimited = false;
+    attempt.requestHeadersCommitted = false;
+    attempt.requestFinalCommitted = false;
+    attempt.producerFailed = false;
   }
 
   template <typename Link>
@@ -888,7 +984,7 @@ private:
     if (!attempt.connectFailed || !attempt.transient ||
 	attempt.responseStarted ||
 	attempt.retries >= m_config.maxRetries() ||
-	!impl()->requestReplayable(*attempt.request))
+	!canReplay_(attempt))
       return false;
 
     uint64_t previous = attempt.id;
@@ -915,6 +1011,11 @@ private:
     }
     link.retire();
     return true;
+  }
+
+  bool canReplay_(const Attempt &attempt) const {
+    return impl()->requestReplayable(*attempt.request) &&
+      impl()->requestReproducible(*attempt.request);
   }
 
   template <typename Link>
@@ -966,6 +1067,14 @@ private:
     return {
       .request = attempt.requestID,
       .attempt = attempt.id,
+      .requestBodyProduced = attempt.requestBodyProduced,
+      .requestBodyCommitted = attempt.requestBodyCommitted,
+      .requestBodyReset = attempt.requestBodyReset,
+      .requestBodyDiscarded = attempt.requestBodyDiscarded,
+      .responseBodyReceived = attempt.bodyReceived,
+      .responseBodyConsumed = attempt.bodyBytes,
+      .responseBodyReset = attempt.responseBodyReset,
+      .responseBodyDiscarded = attempt.responseBodyDiscarded,
       .status = attempt.status,
       .redirects = uint16_t(attempt.redirects),
       .retries = uint16_t(attempt.retries),

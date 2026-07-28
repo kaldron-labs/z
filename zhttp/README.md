@@ -5,7 +5,8 @@ HTTP/2 uses `Ztls`, and HTTP/3 uses `Zquic`. HPACK, H2, QPACK, H3, ALPN
 selection, physical-session management, and logical request streams remain
 inside `zhttp/src`.
 
-The HTTP/3 surface is REST-oriented:
+The HTTP/3 surface includes ordinary messages and ordered Extended CONNECT
+tunnels:
 
 - ALPN `h3` is configured only when HTTP/3 is enabled;
 - each connection sends one control stream with SETTINGS first;
@@ -61,8 +62,14 @@ and one protocol-neutral callback contract:
 ```c++
 struct ClientApp :
   Zhttp::Agent<
-    ClientApp, Request, RequestHeaders, ResponseHeaders, ResponseBodyMax> {
-  // Supply request intent and consume response callbacks here.
+    ClientApp, Request, RequestHeaders, ResponseHeaders, ResponseBodyMax,
+    Zhttp::Body::Fixed<BodyCursor>> {
+  uint64_t requestContentLength(const Request &) const;
+  BodyCursor requestBodyCursor(Request &);
+  template <typename Tx>
+  int requestBody(Request &, BodyCursor &, Tx &, unsigned batch);
+  template <typename Rx>
+  void responseBody(Request &, Rx &);
 };
 
 ClientApp client;
@@ -76,8 +83,9 @@ client.init(
   Zhttp::QUICConfig{}.caPath(ca));
 client.start();
 client.submit(requests, requestCount);
-// ClientApp receives the same request/response callbacks for H1, H2, and H3.
-client.stop();
+// requestBody() runs on Tx; responseBody() runs synchronously on Rx.
+client.stop([](bool) { /* shutdown continuation */ });
+// The main thread waits for that continuation before final().
 client.final();
 ```
 
@@ -98,30 +106,80 @@ service.init(
     .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)),
   &workload);
 service.start();
-// Workload receives the same request/response callbacks for H1, H2, and H3.
+// Workload::RequestState is owned by one logical request.  requestBody()
+// receives (RequestInfo, RequestState, Rx) before request() constructs the
+// response from the completed state.
 // disconnected(transport) observes admission release on the owning Rx shard.
-service.stop();
+service.stop([](bool) { /* shutdown continuation */ });
+// The main thread waits for that continuation before final().
 service.final();
 ```
+
+`Body::None` is allocation-free. `Body::Fixed<Cursor>` derives
+`content-length`; `Body::Stream<Cursor>` selects H1 chunked transfer and
+H2/H3 DATA without a content length. Each retry creates a fresh cursor.
+Body-bearing requests are non-replayable by default; applications must opt in
+only when they can reproduce the source from byte zero. A fixed producer
+writes entity bytes directly to its concrete `ZiTxStream`:
+
+```c++
+template <typename Tx>
+int requestBody(
+  Request &request, Cursor &cursor, Tx &tx, unsigned batch) {
+  return produce(request, cursor, tx, batch); // no HTTP framing here
+}
+
+template <typename Rx>
+void responseBody(Request &, Rx &rx) {
+  Zhttp::bodyEach(rx, [](ZuBSpan bytes) {
+    consume(bytes);                    // span is callback-scoped
+  });
+}
+```
+
+The same producer shape implements a non-replayable streaming POST by selecting
+`Body::Stream<Cursor>`, returning `BodyProduce::More` while input remains, and
+leaving the default `requestReplayable()` and `requestReproducible()` false.
+The `batch` argument bounds one scheduler turn only. It is not transport credit:
+H1 has no flow control, H2 flow control remains in Zhttp's H2 layer, and QUIC
+flow control remains in Zquic.
+
+The same bounded `ZiRxStream` contract is used by
+`Workload::requestBody()`. The callback must consume or copy all offered
+input before returning. Headers precede body input, validated body completion
+precedes the exact-once terminal result, and no callback follows that result.
+`Result` reports request bytes produced, committed, reset, and discarded plus
+response bytes received, consumed, reset, and discarded. `RequestInfo`
+reports server-side request bytes received, consumed, reset, and discarded.
+These owner-shard counters are diagnostics; they do not gate production,
+parsing, or transport flow control and are not stable cross-shard snapshots.
 
 When TLS and QUIC are enabled together, `Service` emits the HTTP/3 Alt-Svc
 header on TLS responses. `altSvcMaxAge()` controls its lifetime; zero disables
 advertising. No HTTP/3 response branch belongs in the application.
 
-H2 Extended CONNECT is opt-in with `H2Config::extendedConnect(true)`.
-`libZhttp` advertises and parses `SETTINGS_ENABLE_CONNECT_PROTOCOL`, waits for
-the peer's initial SETTINGS before constructing client requests, and refuses
-to emit `:protocol` unless the peer advertised support. A successful 2xx
-handshake can transition `H2::Parser` to `ParserState::Tunnel`; DATA is then
-delivered through `tunnelData()`, with `tunnelEnd()` and `tunnelReset()`
-reporting remote half-close and reset. `Zhttp::Tunnel<Link>` is the
-non-owning, shard-affine transmit adapter:
+Extended CONNECT is opt-in with `H2Config::extendedConnect(true)` for H2 and
+`QUICConfig::extendedConnect(true)` for H3. `libZhttp` advertises and parses
+`SETTINGS_ENABLE_CONNECT_PROTOCOL`, tracks local and peer capability
+independently, and refuses to emit or accept `:protocol` without the relevant
+capability. A successful 2xx handshake transitions the logical H2 or H3
+stream to `ParserState::Tunnel`; ordered DATA is delivered through the same
+bounded `ZiRxStream` callback, with `tunnelEnd()` and `tunnelReset()` reporting
+remote half-close and reset. `Zhttp::Tunnel<Link>` is the non-owning,
+shard-affine H2/H3 transmit adapter:
 
 ```c++
 Zhttp::Tunnel tunnel{link};
 if (tunnel.peerCap()) {
   tunnel.send([](auto &tx) { tx << bytes; });
   tunnel.end();                 // local half-close
+}
+
+template <typename Rx>
+void tunnelData(Rx &rx) {
+  Zhttp::bodyEach(rx, [](ZuBSpan bytes) {
+    consume(bytes);              // ordered, callback-scoped input
+  });
 }
 ```
 
@@ -136,6 +194,15 @@ protocol-independent:
 ```c++
 template <typename Profile>
 struct Client : Zhttp::Client<Client<Profile>, Profile> {
+  struct RequestBuilder :
+    Zhttp::MessageTraits<Profile>::template Builder<
+      RequestBuilder, ZuTypeList<>, ZuTypeList<>, false, false> {
+    template <typename L>
+    void operation(L &&l) { l(Zhttp::Method::GET, "/", ""); }
+    template <typename L>
+    void host(L &&l) { l("127.0.0.1"); }
+  };
+
   struct Link :
     Zhttp::ClientLink<Client, Link, Profile> {
     using Base = Zhttp::ClientLink<Client, Link, Profile>;
@@ -143,8 +210,9 @@ struct Client : Zhttp::Client<Client<Profile>, Profile> {
   };
 
   void connected(Link &link, Zhttp::ConnectedInfo) {
-    auto tx = link.txStream();
-    // build and send the request, then link.finish()
+    RequestBuilder builder;
+    auto tx = link.transmit(builder);
+    if (builder.request(tx)) link.finish();
   }
   template <typename Rx>
   int process(Link &link, Rx &rx) {
@@ -168,7 +236,8 @@ engines.init(h3, engine, Zhttp::QUICConfig{}
   .certPath(cert).keyPath(key));
 engines.start();
 // process connections and messages
-engines.stop();
+engines.stop([](bool) { /* shutdown continuation */ });
+// The main thread waits for the continuation before finalization.
 engines.final();
 ```
 

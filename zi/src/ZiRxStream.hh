@@ -28,6 +28,8 @@
 
 #include <zlib/ZuSpan.hh>
 
+#include <zlib/ZmNoLock.hh>
+
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtLocalArray.hh>
@@ -36,20 +38,15 @@
 
 namespace Zi {
 
-ZtEnumNS(RxRefillState, int8_t, Wait, Input, Final, Error);
-
 struct RxRefill {
+  ZtEnum(RxRefill, int8_t, Wait, Input, Final, Error);
+
   uint32_t	length = 0;
-  RxRefillState::T state = RxRefillState::Wait;
+  T		state = Wait;
 };
 
 namespace RxEvent {
-  enum {
-    Start	= 1,
-    Input	= 2,
-    Final	= 4,
-    Error	= 8
-  };
+  ZtFlags(RxEvent, uint8_t, Start, Input, Final, Error);
 }
 
 template <typename Queue>
@@ -196,10 +193,10 @@ private:
 };
 
 // Synchronous bounded view over decoder-owned native input.  Impl provides:
-//   RxRefill rxRefill_()       - expose the next payload-only region
-//   ZuSpan<uint8_t> rxSpan_()  - current mutable native input span
+//   RxRefill rxRefill_()          - expose the next payload-only region
+//   auto rxSpan_()                - current native input span
 //   unsigned rxAdvance_(unsigned) - consume payload from native input
-//   void rxCancel_()           - discard decoder state on cancellation
+//   void rxCancel_()              - discard decoder state on cancellation
 // The decoder consumes all hidden framing/control input in rxRefill_().  A
 // returned length bounds the view even if rxSpan_() also contains framing or
 // bytes belonging to the next logical message.
@@ -248,8 +245,8 @@ public:
     m_complete = true;
   }
 
-  unsigned events() {
-    unsigned events = m_events;
+  RxEvent::T events() {
+    RxEvent::T events = m_events;
     m_events = 0;
     return events;
   }
@@ -282,7 +279,7 @@ public:
     m_avail -= unsigned(n);
     if (!m_avail && m_final) {
       m_complete = true;
-      m_events |= RxEvent::Final;
+      m_events |= RxEvent::Final();
     }
     return n;
   }
@@ -292,23 +289,23 @@ private:
     if (!m_impl || m_complete || m_failed) return false;
     RxRefill refill = m_impl->rxRefill_();
     switch (refill.state) {
-      case RxRefillState::Wait:
+      case RxRefill::Wait:
 	return false;
-      case RxRefillState::Input:
-      case RxRefillState::Final:
+      case RxRefill::Input:
+      case RxRefill::Final:
 	if (ZuUnlikely(!refill.length)) {
-	  if (refill.state == RxRefillState::Final) {
+	  if (refill.state == RxRefill::Final) {
 	    m_final = m_complete = true;
-	    m_events |= RxEvent::Final;
+	    m_events |= RxEvent::Final();
 	    return false;
 	  }
 	  return fail_(), false;
 	}
 	m_avail = refill.length;
-	m_final = refill.state == RxRefillState::Final;
-	m_events |= RxEvent::Input;
+	m_final = refill.state == RxRefill::Final;
+	m_events |= RxEvent::Input();
 	return true;
-      case RxRefillState::Error:
+      case RxRefill::Error:
 	return fail_(), false;
     }
     return fail_(), false;
@@ -316,12 +313,12 @@ private:
   int64_t fail_() {
     m_avail = 0;
     m_failed = true;
-    m_events |= RxEvent::Error;
+    m_events |= RxEvent::Error();
     return -1;
   }
   void clear_() {
     m_avail = 0;
-    m_events = RxEvent::Start;
+    m_events = RxEvent::Start();
     m_final = false;
     m_complete = false;
     m_failed = false;
@@ -329,7 +326,7 @@ private:
 
   Impl		*m_impl = nullptr;
   uint32_t	m_avail = 0;
-  unsigned	m_events = RxEvent::Start;
+  RxEvent::T	m_events = RxEvent::Start();
   bool		m_final = false;
   bool		m_complete = false;
   bool		m_failed = false;

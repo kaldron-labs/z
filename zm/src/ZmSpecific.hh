@@ -83,6 +83,7 @@ struct ZmSpecific_Object;
 extern "C" {
   ZmExtern void ZmSpecific_lock();
   ZmExtern void ZmSpecific_unlock();
+  [[noreturn]] ZmExtern void ZmSpecific_allocFail();
 #ifdef _WIN32
   ZmExtern void ZmSpecific_cleanup();
   ZmExtern void ZmSpecific_cleanup_add(ZmSpecific_Object *);
@@ -124,7 +125,9 @@ struct ZmSpecific_Allocator {
   pthread_key_t	key;
 
   ZmSpecific_Allocator() {
-    pthread_key_create(&key, [](void *o) { delete static_cast<O *>(o); });
+    if (pthread_key_create(
+	  &key, [](void *o) { delete static_cast<O *>(o); }))
+      ZmSpecific_allocFail();
   }
   ~ZmSpecific_Allocator() { pthread_key_delete(key); }
 
@@ -141,7 +144,10 @@ template <typename O = ZmSpecific_Object>
 struct ZmSpecific_Allocator {
   DWORD	key;
 
-  ZmSpecific_Allocator() { key = TlsAlloc(); }
+  ZmSpecific_Allocator() {
+    if ((key = TlsAlloc()) == TLS_OUT_OF_INDEXES)
+      ZmSpecific_allocFail();
+  }
   ~ZmSpecific_Allocator() { TlsFree(key); }
 
   bool set(O *o) const {

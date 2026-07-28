@@ -11,6 +11,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
+	ZhttpBody.hh \
 	ZhttpTLSEngine.hh \
 	ZhttpLink.hh ZhttpClient.hh ZhttpClientPool.hh ZhttpTLSClientPool.hh \
 	ZhttpAgent.hh ZhttpTunnel.hh \

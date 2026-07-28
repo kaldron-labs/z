@@ -98,6 +98,14 @@ struct ResultCode {
 struct Result {
   uint64_t	request = 0;
   uint64_t	attempt = 0;
+  uint64_t	requestBodyProduced = 0;
+  uint64_t	requestBodyCommitted = 0;
+  uint64_t	requestBodyReset = 0;
+  uint64_t	requestBodyDiscarded = 0;
+  uint64_t	responseBodyReceived = 0;
+  uint64_t	responseBodyConsumed = 0;
+  uint64_t	responseBodyReset = 0;
+  uint64_t	responseBodyDiscarded = 0;
   uint32_t	status = 0;
   uint16_t	redirects = 0;
   uint16_t	retries = 0;
@@ -107,6 +115,74 @@ struct Result {
 
   bool ok() const { return code == ResultCode::OK; }
 };
+
+namespace BodyDeflt {
+  enum {
+    // Bound one producer turn without imposing transport flow control.
+    TxBatch = 1<<16
+  };
+}
+
+struct BodyProduce {
+  enum {
+    More,		// producer made progress and has more input
+    Done,		// producer reached the source boundary
+    Failed		// source or producer failed
+  };
+};
+
+struct BodySend {
+  enum {
+    More,		// another bounded Tx turn is required
+    Complete,		// request framing and final boundary were submitted
+    Failed,		// production or framing failed
+    Cancelled		// Tx ownership was cancelled and drained
+  };
+};
+
+struct BodyCommit {
+  uint64_t	produced = 0;
+  uint64_t	committed = 0;
+  uint64_t	reset = 0;
+  uint64_t	discarded = 0;
+  bool		headers = false;
+  bool		final = false;
+};
+
+namespace Body {
+
+struct EmptyCursor { };
+
+struct None {
+  using Cursor = EmptyCursor;
+  enum { HasBody = false, Optional = false, Streaming = false };
+};
+
+template <typename Cursor_>
+struct Fixed {
+  using Cursor = Cursor_;
+  enum { HasBody = true, Optional = false, Streaming = false };
+};
+
+template <typename Cursor_>
+struct OptionalFixed {
+  using Cursor = Cursor_;
+  enum { HasBody = true, Optional = true, Streaming = false };
+};
+
+template <typename Cursor_>
+struct Stream {
+  using Cursor = Cursor_;
+  enum { HasBody = true, Optional = false, Streaming = true };
+};
+
+template <typename Cursor_>
+struct OptionalStream {
+  using Cursor = Cursor_;
+  enum { HasBody = true, Optional = true, Streaming = true };
+};
+
+} // namespace Body
 
 struct AgentEventType {
   enum {
@@ -147,6 +223,7 @@ public:
   unsigned maxRetries() const { return m_maxRetries; }
   unsigned maxOrigins() const { return m_maxOrigins; }
   unsigned maxAltSvc() const { return m_maxAltSvc; }
+  unsigned bodyTxBatch() const { return m_bodyTxBatch; }
   const DiscoveryLimits &discoveryLimits() const {
     return m_discoveryLimits;
   }
@@ -190,6 +267,10 @@ public:
     m_maxAltSvc = v;
     return *this;
   }
+  AgentConfig &bodyTxBatch(unsigned v) {
+    m_bodyTxBatch = v;
+    return *this;
+  }
   AgentConfig &discoveryLimits(DiscoveryLimits v) {
     m_discoveryLimits = v;
     return *this;
@@ -220,6 +301,7 @@ private:
   unsigned	m_maxRetries = 0;
   unsigned	m_maxOrigins = 256;
   unsigned	m_maxAltSvc = 8;
+  unsigned	m_bodyTxBatch = BodyDeflt::TxBatch;
   DiscoveryLimits m_discoveryLimits;
   int8_t	m_protocol = ProtocolPolicy::PreferH3;
   int8_t	m_h2Policy = H2Policy::Prefer;
@@ -442,6 +524,7 @@ public:
   }
   bool ecn() const { return m_ecn; }
   bool qlog() const { return m_qlog; }
+  bool extendedConnect() const { return m_extendedConnect; }
 
   QUICConfig &caPath(ZuCSpan v) { m_caPath = v; return *this; }
   QUICConfig &certPath(ZuCSpan v) { m_certPath = v; return *this; }
@@ -501,6 +584,10 @@ public:
   }
   QUICConfig &ecn(bool v) { m_ecn = v; return *this; }
   QUICConfig &qlog(bool v) { m_qlog = v; return *this; }
+  QUICConfig &extendedConnect(bool v) {
+    m_extendedConnect = v;
+    return *this;
+  }
 
 private:
   ConfigString	m_caPath;
@@ -528,6 +615,7 @@ private:
   bool		m_migrationCloseOnFailure = false;
   bool		m_ecn = false;
   bool		m_qlog = false;
+  bool		m_extendedConnect = false;
 };
 
 } // namespace Zhttp

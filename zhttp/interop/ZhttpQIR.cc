@@ -541,7 +541,8 @@ struct H3RespParser :
   bool qpackDecoderWrite(ZuBSpan span) const;
   uint64_t streamID() const;
   void status(unsigned status) { status_ = status; }
-  void body(ZuBSpan body);
+  template <typename Rx>
+  void body(Rx &rx);
   void complete(State::T state);
   template <typename Key> void header(ZuBSpan) { }
 
@@ -645,11 +646,14 @@ uint64_t H3RespParser::streamID() const
   return stream ? uint64_t(stream->id()) : 0;
 }
 
-void H3RespParser::body(ZuBSpan body_)
+template <typename Rx>
+void H3RespParser::body(Rx &rx)
 {
-  if (!stream || !body_.length()) return;
-  if (stream->file.write(body_.data(), body_.length()) != Zi::OK)
-    stream->complete(false);
+  Zhttp::bodyEach(rx, [this](ZuBSpan body) {
+    if (!stream || !body.length()) return;
+    if (stream->file.write(body.data(), body.length()) != Zi::OK)
+      stream->complete(false);
+  });
 }
 
 void H3RespParser::complete(State::T state)

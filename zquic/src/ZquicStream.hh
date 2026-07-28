@@ -417,6 +417,7 @@ public:
     if (m_link && m_id >= 0)
       m_link->streamResetSent_(
 	uint64_t(m_id), appError, m_txBytes);
+    notifyTx_();
   }
   void stop(uint64_t appError) {
     if (m_stopSent) return;
@@ -427,6 +428,7 @@ public:
       m_link->localStopSending_(uint64_t(m_id), appError);
     if (m_link && m_id >= 0)
       m_link->streamStopSendingSent_(uint64_t(m_id), appError);
+    notifyTx_();
   }
 
   bool receiveFrame(
@@ -656,8 +658,10 @@ private:
   }
 
   void notifyTx_() {
-    if (m_link && m_id >= 0)
+    if (m_link && m_id >= 0) {
       m_link->streamWritable_(ZmRef<Impl>{impl()});
+      m_link->flushTx_();
+    }
   }
   struct PendingControl {
     ControlFrame	frame;

@@ -34,7 +34,7 @@ noinst_PROGRAMS = zhttp zhttpd zhttpmatrix \
 	ZhttpAdmissionTest ZhttpAgentCancelTest ZhttpRuntimeTest \
 	ZhttpServiceIdleTest ZhttpAgentFallbackTest
 dist_noinst_SCRIPTS = ZhttpBoundaryTest.sh ZhttpH2InteropTest.sh
-noinst_HEADERS = ZhttpTestUtil.hh Zhttpd.hh ZhttpBoundary.md
+noinst_HEADERS = ZhttpTestUtil.hh ZhttpPut.hh Zhttpd.hh ZhttpBoundary.md
 zhttp_SOURCES = zhttp.cc
 zhttpd_SOURCES = zhttpd.cc
 zhttpmatrix_SOURCES = zhttpmatrix.cc

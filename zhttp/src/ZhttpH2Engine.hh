@@ -99,10 +99,19 @@ class DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
 public:
   using Base = ZiTxLayer<DataStream<Lower>, Lower>;
 
-  DataStream(Lower &lower, uint32_t streamID) :
-    Base{lower, 9, 0}, m_streamID{streamID} { }
+  DataStream(
+    Lower &lower, uint32_t streamID, uint64_t remaining = uint64_t(-1)) :
+    Base{lower, 9, 0}, m_remaining{remaining}, m_streamID{streamID} { }
 
   void prepareBuf_(ZiIOBuf *buf, bool) {
+    if (m_remaining != uint64_t(-1)) {
+      if (ZuUnlikely(m_remaining < buf->length)) {
+	m_valid = false;
+	buf->length = unsigned(m_remaining);
+      }
+      m_remaining -= buf->length;
+    }
+    m_produced += buf->length;
     uint32_t length = buf->length;
     ZiAssert(buf->skip >= 9, "Zhttp", (),
       "H2 DATA headroom error", return);
@@ -118,9 +127,18 @@ public:
     out[7] = uint8_t(m_streamID>>8);
     out[8] = uint8_t(m_streamID);
   }
+  uint64_t produced() const { return m_produced; }
+  bool valid() const { return m_valid; }
+  bool complete() const {
+    return m_valid &&
+      (m_remaining == uint64_t(-1) || !m_remaining);
+  }
 
 private:
+  uint64_t m_remaining;
+  uint64_t m_produced = 0;
   uint32_t m_streamID;
+  bool m_valid = true;
 };
 
 template <typename Native>
@@ -263,6 +281,9 @@ public:
     m_native.sendHeaders(m_streamID, ZuMv(m_frames), m_endStream);
   }
   auto body() { return DataStream<HeaderBlock>{*this, m_streamID}; }
+  auto body(uint64_t length) {
+    return DataStream<HeaderBlock>{*this, m_streamID, length};
+  }
   void end() {
     m_native.endData(m_streamID);
   }
@@ -354,6 +375,7 @@ struct TxWindowEntry {
   int64_t	window = DefltWindow;
   uint64_t	headSeq = 0;
   uint64_t	nextSeq = 0;
+  bool		localEndQueued = false;
 };
 
 inline uint32_t TxWindowEntry_IDAxor(const TxWindowEntry &entry)
@@ -406,8 +428,12 @@ public:
 
   Impl *impl_() { return static_cast<Impl *>(this); }
   const HPackEncoder &encoder() const { return m_encoder; }
-  uint32_t peerFrameSize() const { return Base::peerSettings().maxFrameSize; }
-  bool peerExtendedConnect() const {
+  uint32_t peerFrameSize() {
+    if (impl_()->app()->txInvoked()) return m_txFrameSize;
+    return Base::peerSettings().maxFrameSize;
+  }
+  bool peerExtendedConnect() {
+    if (impl_()->app()->txInvoked()) return m_txExtendedConnect;
     return Base::peerSettings().enableConnectProtocol;
   }
   bool localExtendedConnect() const { return m_config.extendedConnect(); }
@@ -462,6 +488,7 @@ public:
   unsigned count() const { return m_entries ? m_entries->count_() : 0; }
 
   unsigned dataMaxSize(uint32_t id) {
+    if (impl_()->app()->txInvoked()) return dataMaxSizeTx_(id);
     auto tx = impl_()->txStream();
     uint32_t length = peerFrameSize();
     if (auto entry_ = entry(id)) {
@@ -477,6 +504,10 @@ public:
     return maxSize < tx.maxSize() ? maxSize : tx.maxSize();
   }
   void sendData(uint32_t id, ZmRef<ZiIOBuf> buf) {
+    if (impl_()->app()->txInvoked()) {
+      sendDataTx_(id, ZuMv(buf));
+      return;
+    }
     if (m_stopping || !buf || buf->length < 9) return;
     auto entry_ = entry(id);
     if (!entry_ || entry_->localEndQueued) return;
@@ -488,11 +519,19 @@ public:
     sendFrame_(id, length, false, ZuMv(buf));
   }
   void sendFrame(uint32_t id, ZmRef<ZiIOBuf> buf) {
+    if (impl_()->app()->txInvoked()) {
+      sendFrameDirectTx_(id, 0, false, ZuMv(buf));
+      return;
+    }
     if (m_stopping || !buf || !buf->length) return;
     sendFrame_(id, 0, false, ZuMv(buf));
   }
   void sendHeaders(
     uint32_t id, HeaderFrames frames, bool endStream) {
+    if (impl_()->app()->txInvoked()) {
+      sendHeadersDirectTx_(id, ZuMv(frames), endStream);
+      return;
+    }
     if (m_stopping || !frames) return;
     auto entry_ = entry(id);
     if (!entry_ || entry_->localEndQueued) return;
@@ -513,6 +552,10 @@ public:
     });
   }
   void endHeaders(uint32_t id) {
+    if (impl_()->app()->txInvoked()) {
+      endTx_(id);
+      return;
+    }
     if (m_stopping) return;
     auto entry_ = entry(id);
     if (!entry_ || entry_->localEndQueued) return;
@@ -520,6 +563,10 @@ public:
     sendFrame_(id, 0, true, {});
   }
   void endData(uint32_t id) {
+    if (impl_()->app()->txInvoked()) {
+      endTx_(id);
+      return;
+    }
     if (m_stopping) return;
     auto entry_ = entry(id);
     if (!entry_ || entry_->localEndQueued) return;
@@ -581,6 +628,13 @@ public:
   }
   void h2Settings() {
     sendSettingsAck_();
+    uint32_t frameSize = peerFrameSize();
+    bool extendedConnect = peerExtendedConnect();
+    auto session = impl_();
+    impl_()->app()->txRun([
+      session, frameSize, extendedConnect]() {
+      session->peerSettingsTx_(frameSize, extendedConnect);
+    });
     impl_()->h2SettingsReceived();
   }
   void h2SettingsAck() {
@@ -792,6 +846,13 @@ public:
     return true;
   }
 
+  void peerSettingsTx_(uint32_t frameSize, bool extendedConnect) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 peer settings outside Tx thread", return);
+    m_txFrameSize = frameSize;
+    m_txExtendedConnect = extendedConnect;
+  }
+
 private:
   LogicalEntry<Logical> *begin_(uint32_t id) {
     auto entry_ = entry(id);
@@ -878,6 +939,79 @@ private:
 	TxWindowEntry{id, m_txInitialWindow});
     return entry_;
   }
+  unsigned dataMaxSizeTx_(uint32_t id) {
+    auto tx = impl_()->directTxStream();
+    uint32_t length = m_txFrameSize;
+    (void)id;
+    unsigned overhead = tx.headRoom() + tx.tailRoom() + 9;
+    unsigned maxSize = overhead + length;
+    return maxSize < tx.maxSize() ? maxSize : tx.maxSize();
+  }
+  void sendDataTx_(uint32_t id, ZmRef<ZiIOBuf> buf) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 DATA queue outside Tx thread", return);
+    if (!buf || buf->length < 9) return;
+    uint32_t length = buf->length - 9;
+    if (length > m_txFrameSize) {
+      txError_(id);
+      return;
+    }
+    sendFrameDirectTx_(id, length, false, ZuMv(buf));
+  }
+  void sendFrameDirectTx_(
+    uint32_t id, uint32_t length, bool endStream,
+    ZmRef<ZiIOBuf> buf) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 direct frame queue outside Tx thread", return);
+    auto entry_ = txWindow_(id);
+    if (!entry_ || entry_->localEndQueued) return;
+    if (!m_frameAdmission.push()) {
+      txError_(id);
+      return;
+    }
+    if (endStream) entry_->localEndQueued = true;
+    sendFrameTx_(id, length, endStream, ZuMv(buf));
+  }
+  void sendHeadersDirectTx_(
+    uint32_t id, HeaderFrames frames, bool endStream) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 direct header queue outside Tx thread", return);
+    if (!frames) return;
+    auto entry_ = txWindow_(id);
+    if (!entry_ || entry_->localEndQueued) return;
+    unsigned admitted = 0;
+    while (admitted < frames.length() && m_frameAdmission.push())
+      ++admitted;
+    if (admitted != frames.length()) {
+      if (admitted) m_frameAdmission.pop(admitted);
+      txError_(id);
+      return;
+    }
+    if (endStream) entry_->localEndQueued = true;
+    sendHeadersTx_(id, ZuMv(frames), endStream);
+  }
+  void endTx_(uint32_t id) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 end queue outside Tx thread", return);
+    auto entry_ = txWindow_(id);
+    if (!entry_ || entry_->localEndQueued) return;
+    auto tx = impl_()->directTxStream();
+    auto buf = tx.allocBuf_(tx.headRoom());
+    if (!buf) {
+      txError_(id);
+      return;
+    }
+    buf->length = 9;
+    auto header = buf->data();
+    header[0] = header[1] = header[2] = 0;
+    header[3] = FrameType::Data;
+    header[4] = Flag::EndStream;
+    header[5] = uint8_t(id>>24);
+    header[6] = uint8_t(id>>16);
+    header[7] = uint8_t(id>>8);
+    header[8] = uint8_t(id);
+    sendFrameDirectTx_(id, 0, true, ZuMv(buf));
+  }
   void sendFrame_(
     uint32_t id, uint32_t length, bool endStream,
     ZmRef<ZiIOBuf> buf) {
@@ -902,6 +1036,7 @@ private:
       m_frameAdmission.pop();
       return;
     }
+    if (endStream) entry_->localEndQueued = true;
     m_pendingFrames.push(
       PendingFrame{
 	id, length, entry_->nextSeq++, endStream, ZuMv(buf)});
@@ -916,6 +1051,7 @@ private:
       m_frameAdmission.pop(frames.length());
       return;
     }
+    if (endStream) entry_->localEndQueued = true;
     unsigned n = frames.length();
     for (unsigned i = 0; i < n; ++i)
       m_pendingFrames.push(PendingFrame{
@@ -1108,11 +1244,13 @@ private:
   ZmRef<TxWindowHash>	m_txWindows;
   PendingFrameQueue	m_pendingFrames;
   uint32_t		m_txInitialWindow = DefltWindow;
+  uint32_t		m_txFrameSize = DefltFrameSize;
   uint32_t		m_frameCursor = 0;
   uint32_t		m_frameScan = 0;
   uint32_t		m_headerStream = 0;
   int64_t		m_txWindow = DefltWindow;
   bool			m_frameDrainPosted = false;
+  bool			m_txExtendedConnect = false;
 };
 
 template <typename App> class ClientEngine;
@@ -1901,6 +2039,26 @@ public:
     connect(endpoint.target, endpoint.port);
   }
   auto txStream() { return m_session->logicalTx(m_streamID); }
+  bool tunnelPeerCap() {
+    auto tx = txStream();
+    return tx.extendedConnect();
+  }
+  bool tunnelLocalCap() {
+    auto tx = txStream();
+    return tx.localExtendedConnect();
+  }
+  template <typename L>
+  void tunnelSend(L &&l) {
+    auto tx = txStream();
+    auto body = tx.body();
+    ZuFwd<L>(l)(body);
+    body.flush();
+  }
+  void tunnelEnd() {
+    auto tx = txStream();
+    tx.end();
+  }
+  void tunnelReset() { disconnect(); }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
@@ -2002,6 +2160,26 @@ public:
   ZuCSpan remote() const { return m_remote; }
   Session &session() { return m_session; }
   auto txStream() { return m_native->logicalTx(m_streamID); }
+  bool tunnelPeerCap() {
+    auto tx = txStream();
+    return tx.extendedConnect();
+  }
+  bool tunnelLocalCap() {
+    auto tx = txStream();
+    return tx.localExtendedConnect();
+  }
+  template <typename L>
+  void tunnelSend(L &&l) {
+    auto tx = txStream();
+    auto body = tx.body();
+    ZuFwd<L>(l)(body);
+    body.flush();
+  }
+  void tunnelEnd() {
+    auto tx = txStream();
+    tx.end();
+  }
+  void tunnelReset() { disconnect(); }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>

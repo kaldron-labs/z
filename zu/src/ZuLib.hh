@@ -325,6 +325,22 @@ template <typename T>
 constexpr ZuDeref<T> &&ZuMv(T &&v) noexcept {
   return static_cast<ZuDeref<T> &&>(v);
 }
+// ZuMv for types that can be both smart and raw pointers
+// - ensures the from pointer is nullptr after the move
+template <typename T> struct ZuMvPtr_ {
+  static constexpr T &&mv(T &v) noexcept { return ZuMv(v); }
+};
+template <typename T> struct ZuMvPtr_<T *> {
+  static constexpr T *mv(T *&v) noexcept {
+    T *p = v;
+    v = nullptr;
+    return p;
+  }
+};
+template <typename T, typename = ZuMutable<T>>
+constexpr decltype(auto) ZuMvPtr(T &v) noexcept {
+  return ZuMvPtr_<T>::mv(v);
+}
 // shorthand std::forward_like, extended for converting the passed parameter
 // - ZuFwdLike<decltype(self)>(self.member)
 template <typename T, typename V>

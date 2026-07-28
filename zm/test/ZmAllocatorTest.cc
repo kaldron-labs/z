@@ -10,10 +10,58 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAllocator.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmLocal.hh>
 #include <zlib/ZmStackAvail.hh>
+#include <zlib/ZmVHeap.hh>
+#include <zlib/ZtcHeap.hh>
 
 using namespace ZuTestUtil;
+
+namespace {
+
+template <typename Heap>
+struct FixedLazy_ : public Heap {
+  uintptr_t value;
+};
+ZuDerive(FixedLazy,
+  (FixedLazy_<ZmHeap<
+    "ZmAllocatorTest.FixedLazy", FixedLazy_<ZuVoid>>>));
+using VHeapLazy =
+  ZmVHeap<"ZmAllocatorTest.VHeapLazy", 16, 256, alignof(uintptr_t)>;
+
+unsigned heapCount(ZuID id)
+{
+  unsigned n = 0;
+  Ztc::HeapMgr::all(Ztc::HeapMgr::AllFn{
+    [&n, id](Ztc::Heap *heap) {
+      Ztc::HeapTelemetry data;
+      heap->telemetry(data);
+      if (data.id == id) ++n;
+    }});
+  return n;
+}
+
+}
+
+void testLazyHeaps()
+{
+  ZuTestScope(testLazyHeaps);
+
+  ZuCheck(!heapCount("ZmAllocatorTest.FixedLazy"));
+  ZuCheck(!heapCount("ZmAllocatorTest.VHeapLazy"));
+
+  auto fixed = new FixedLazy{};
+  ZuCheck(heapCount("ZmAllocatorTest.FixedLazy") == 1);
+  delete fixed;
+
+  void *small = VHeapLazy::valloc(8);
+  ZuCheck(heapCount("ZmAllocatorTest.VHeapLazy") == 1);
+  void *large = VHeapLazy::valloc(64);
+  ZuCheck(heapCount("ZmAllocatorTest.VHeapLazy") == 2);
+  VHeapLazy::vfree(large);
+  VHeapLazy::vfree(small);
+}
 
 void testAllocatorWithSTL()
 {
@@ -78,6 +126,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testLazyHeaps);
   ZuTestCall(testAllocatorWithSTL);
   ZuTestCall(testAllocateDeallocate);
   ZuTestCall(testLocalAndStackAvail);

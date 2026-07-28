@@ -17,7 +17,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZiRxStreamTest_ {
 
 ZuDerive(RxQueue,
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
@@ -61,19 +61,19 @@ struct ViewOwner {
     parts.push(Part{length, payload, final});
   }
   Zi::RxRefill rxRefill_() {
-    if (offered) return {0, Zi::RxRefillState::Error};
+    if (offered) return {0, Zi::RxRefill::Error};
     for (;;) {
       if (!remaining) {
-	if (part >= parts.length()) return {0, Zi::RxRefillState::Wait};
+	if (part >= parts.length()) return {0, Zi::RxRefill::Wait};
 	remaining = parts[part].length;
 	if (!remaining) {
 	  bool final = parts[part++].final;
-	  if (final) return {0, Zi::RxRefillState::Final};
+	  if (final) return {0, Zi::RxRefill::Final};
 	  continue;
 	}
       }
       auto span = stream.span();
-      if (!span.length()) return {0, Zi::RxRefillState::Wait};
+      if (!span.length()) return {0, Zi::RxRefill::Wait};
       auto &current = parts[part];
       unsigned n = span.length();
       if (n > remaining) n = remaining;
@@ -86,8 +86,9 @@ struct ViewOwner {
       offered = n;
       return {
 	n,
-	current.final && n == remaining ?
-	  Zi::RxRefillState::Final : Zi::RxRefillState::Input
+	Zi::RxRefill::T(
+	  current.final && n == remaining ?
+	    Zi::RxRefill::Final : Zi::RxRefill::Input)
       };
     }
   }
@@ -296,12 +297,12 @@ void testBoundedView()
   owner.stream.push(mkBuf("abcNEXT"));
   ZiRxLayer<ViewOwner> view{owner};
 
-  ZuCheck(view.events() == Zi::RxEvent::Start);
+  ZuCheck(view.events() == Zi::RxEvent::Start());
   ZuCheck(view.input());
-  ZuCheck(view.events() == Zi::RxEvent::Input);
+  ZuCheck(view.events() == Zi::RxEvent::Input());
   ZuCheck(drain(view) == "abc");
   ZuCheck(view.complete());
-  ZuCheck(view.events() == Zi::RxEvent::Final);
+  ZuCheck(view.events() == Zi::RxEvent::Final());
   ZuCheck(spanEq(owner.stream.span(), "NEXT"));
 }
 
@@ -384,10 +385,12 @@ void testBoundedViewBoundsAndCleanup()
   ZuCheck(!scoped.stream);
 }
 
-} // namespace
+} // namespace ZiRxStreamTest_
 
 int main(int argc, char **argv)
 {
+  using namespace ZiRxStreamTest_;
+
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testConsumeAcrossQueuedBuffers);

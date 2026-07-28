@@ -18,7 +18,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZhttpParserTest_ {
 
 ZuDerive(RxQueue,
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
@@ -66,10 +66,13 @@ struct ResponseParser :
     }
   }
 
-  void body(ZuBSpan span) {
+  template <typename Rx>
+  void body(Rx &rx) {
     ++bodyCalls;
-    bodyBytes += span.length();
-    bodyData << span;
+    Zhttp::bodyEach(rx, [this](ZuBSpan span) {
+      bodyBytes += span.length();
+      bodyData << span;
+    });
   }
 
   void complete(Zhttp::H1::ParserState::T state_) {
@@ -124,9 +127,10 @@ struct RequestParser :
     }
   }
 
-  void body(ZuBSpan span) {
+  template <typename Rx>
+  void body(Rx &rx) {
     ++bodyCalls;
-    bodyData << span;
+    Zhttp::bodyEach(rx, [this](ZuBSpan span) { bodyData << span; });
   }
 
   void complete(Zhttp::H1::ParserState::T state_) {
@@ -553,7 +557,9 @@ void testEarlyDataSafeRequestPolicy()
     "DELETE should not be 0-RTT eligible by default");
 }
 
-} // namespace
+} // namespace ZhttpParserTest_
+
+using namespace ZhttpParserTest_;
 
 int main(int argc, char **argv)
 {

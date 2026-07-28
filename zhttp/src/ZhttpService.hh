@@ -32,6 +32,10 @@ struct RequestInfo {
   MessageString	referer;
   MessageString	userAgent;
   MessageString	remote;
+  uint64_t	bodyReceived = 0;
+  uint64_t	bodyConsumed = 0;
+  uint64_t	bodyReset = 0;
+  uint64_t	bodyDiscarded = 0;
   int8_t	transport = Transport::TCP;
   int8_t	httpVersion = Version::H1;
   bool		secure = false;
@@ -127,7 +131,14 @@ private:
   struct TLSH2Link;
 
   struct ReqSink {
-    void reset() { request = {}; complete_ = false; }
+    using RequestState = typename Workload::RequestState;
+
+    void reset() {
+      request = {};
+      requestState = {};
+      bodyReceived = bodyConsumed = bodyReset = bodyDiscarded = 0;
+      complete_ = false;
+    }
     void operation(Method::T method, ZuBSpan target) {
       request.method = method;
       request.target = ZuCSpan{target};
@@ -154,13 +165,35 @@ private:
     }
     void contentLength(uint64_t) { }
     void status(unsigned) { }
-    void body(ZuBSpan) { }
+    template <typename Rx>
+    void body(Rx &rx) {
+      (void)rx.input();
+      uint32_t offered = rx.available();
+      bodyReceived += offered;
+      service->m_workload->requestBody(request, requestState, rx);
+      uint32_t pending = rx.available();
+      if (pending <= offered) {
+	bodyConsumed += offered - pending;
+	bodyReset += pending;
+	bodyDiscarded += pending;
+      }
+      request.bodyReceived = bodyReceived;
+      request.bodyConsumed = bodyConsumed;
+      request.bodyReset = bodyReset;
+      request.bodyDiscarded = bodyDiscarded;
+    }
     template <typename ParserState>
     void complete(typename ParserState::T state) {
       complete_ = state == ParserState::Complete;
     }
 
+    Service	*service = nullptr;
     RequestInfo	request;
+    RequestState requestState;
+    uint64_t	bodyReceived = 0;
+    uint64_t	bodyConsumed = 0;
+    uint64_t	bodyReset = 0;
+    uint64_t	bodyDiscarded = 0;
     bool	complete_ = false;
   };
 
@@ -236,6 +269,19 @@ private:
     using Base = ServerSession<Session, Parser_, Message>;
     using Base::parser;
 
+    template <typename Link_, typename Rx>
+    int process(Link_ &link, Rx &rx) {
+      parser.service = link.app()->service;
+      auto &request = parser.request;
+      if (!request.remote) {
+	request.remote = link.remote();
+	request.transport = Message::Transport::ID;
+	request.httpVersion = Message::ID;
+	request.secure = Message::Transport::Secure;
+      }
+      return Base::process(link, rx);
+    }
+
     template <typename Link_>
     int error(Link_ &link, Parser_ &) {
       link.app()->service->failed();
@@ -246,11 +292,8 @@ private:
     int request(Link_ &link, Parser_ &parser) {
       auto service = link.app()->service;
       auto &request = parser.request;
-      request.remote = link.remote();
-      request.transport = Message::Transport::ID;
-      request.httpVersion = Message::ID;
-      request.secure = Message::Transport::Secure;
-      Response response = service->m_workload->request(request);
+      Response response =
+	service->m_workload->request(request, parser.requestState);
       Builder_ builder{service, &response};
       auto tx = link.transmit(builder);
       builder.response(tx);
@@ -360,6 +403,10 @@ private:
 public:
   Service() : m_tcp{this}, m_tls{this}, m_quic{this} { }
 
+  // Request metadata callbacks precede request-body input.  Body input is a
+  // concrete bounded stream on the Rx shard and is valid only for the
+  // synchronous workload callback.  Message completion follows validated,
+  // fully consumed input; no workload callback follows terminal completion.
   bool init(
     const EngineConfig &engine, ServiceConfig config, Workload *workload) {
     if (!workload || !config.port()) return false;

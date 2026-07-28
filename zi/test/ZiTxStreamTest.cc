@@ -16,7 +16,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZiTxStreamTest_ {
 
 using StreamAlloc = ZiIOBufAlloc<64, 256, "ZiTxStreamTest.Buf">;
 
@@ -289,10 +289,12 @@ void testLayerComposition()
   ZuCheck(h.sent[0].buf->cspan() == "221payload");
 }
 
-} // namespace
+} // namespace ZiTxStreamTest_
 
 int main(int argc, char **argv)
 {
+  using namespace ZiTxStreamTest_;
+
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testSplitAndFlush);

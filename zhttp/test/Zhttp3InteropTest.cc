@@ -16,7 +16,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace Zhttp3InteropTest_ {
 
 using Zhttp::Test::TempDir;
 using Zhttp::Test::haveCurlH3;
@@ -235,7 +235,11 @@ struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
     seen.method = method;
     seen.path = ZuCSpan{path};
   }
-  void body(ZuBSpan body) { seen.body << ZuCSpan{body}; }
+  template <typename Rx>
+  void body(Rx &rx) {
+    Zhttp::bodyEach(rx,
+      [this](ZuBSpan body) { seen.body << ZuCSpan{body}; });
+  }
   void complete(typename State::T state) {
     if (state == State::Complete) seen.complete = 1;
     else if (state == State::Error) seen.errors = 1;
@@ -278,7 +282,11 @@ struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
   }
   uint64_t streamID() const { return streamID_; }
   void status(unsigned status_) { seen.status = status_; }
-  void body(ZuBSpan body) { seen.body << ZuCSpan{body}; }
+  template <typename Rx>
+  void body(Rx &rx) {
+    Zhttp::bodyEach(rx,
+      [this](ZuBSpan body) { seen.body << ZuCSpan{body}; });
+  }
   void complete(typename State::T state) {
     if (state == State::Complete) seen.complete = 1;
     else if (state == State::Error) seen.errors = 1;
@@ -1287,7 +1295,9 @@ void testInteropPrerequisites()
     "curl with HTTP3/ngtcp2/nghttp3 is required for Zhttp H3 interop tests");
 }
 
-} // namespace
+} // namespace Zhttp3InteropTest_
+
+using namespace Zhttp3InteropTest_;
 
 int main(int argc, char **argv)
 {

@@ -34,19 +34,6 @@ template <
   bool Sharded = false>
 class ZmVHeap_;
 
-template <
-  typename ID,
-  unsigned Min = ZmVHeap_DefltMin,
-  unsigned Max = ZmVHeap_DefltMax,
-  unsigned Align = 1,
-  bool Sharded = false>
-class ZmVHeap_Warmup {
-  using VHeap = ZmVHeap_<ID, Min, Max, Align, Sharded>;
-  friend VHeap;
-
-  ZmVHeap_Warmup();
-};
-
 inline uint64_t ZmGrow(uint64_t o, uint64_t n)
 {
   if (ZuUnlikely(o >= n)) return o;
@@ -68,9 +55,6 @@ public:
   ZuAssert(Align > 0);
   static constexpr unsigned Min = Min_ < 2 ? 2 : Min_;
   static constexpr unsigned Max = Max_ <= Min ? Min + 1 : Max_;
-
-  using Warmup = ZmVHeap_Warmup<ID, Min, Max, Align, Sharded>;
-  friend Warmup;
 
   static constexpr unsigned MinBits =
     ((sizeof(Min)<<3) - ZuIntrin::clz(Min - 1)) - 1;
@@ -95,7 +79,6 @@ public:
     ID, ZmHeapAllocSize<cacheSize(I)>{}, Align, Sharded, I>;
 
   static void *valloc(size_t size) {
-    (void)&m_init;
     if (ZuUnlikely(!size)) return nullptr;
     size += Align;
     uint8_t i = cacheI(size);
@@ -126,9 +109,6 @@ public:
       });
     }
   }
-
-private:
-  static ZmVHeap_Warmup<ID, Min_, Max_, Align, Sharded>	m_init;
 };
 template <
   ZuString ID,
@@ -137,30 +117,5 @@ template <
   unsigned Align = 1,
   bool Sharded = false>
 using ZmVHeap = ZmVHeap_<ZuStringT<ID>, Min, Max, Align, Sharded>;
-
-template <
-  typename ID,
-  unsigned Min,
-  unsigned Max,
-  unsigned Align,
-  bool Sharded>
-ZmVHeap_Warmup<ID, Min, Max, Align, Sharded>::ZmVHeap_Warmup() {
-  using VHeap = ZmVHeap_<ID, Min, Max, Align, Sharded>;
-  constexpr unsigned N = (VHeap::MaxBits + 1) - VHeap::MinBits;
-  for (unsigned i = 0; i < N; i++) {
-    ZuSwitch::dispatch<N>(i, [](auto I) {
-      VHeap::template Cache<I>::warmup();
-    });
-  }
-}
-
-template <
-  typename ID,
-  unsigned Min,
-  unsigned Max,
-  unsigned Align,
-  bool Sharded>
-inline ZmVHeap_Warmup<ID, Min, Max, Align, Sharded>
-ZmVHeap_<ID, Min, Max, Align, Sharded>::m_init;
 
 #endif /* ZmVHeap_HH */

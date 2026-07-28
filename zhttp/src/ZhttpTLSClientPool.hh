@@ -48,9 +48,13 @@ public:
   void slot(unsigned slot_) { m_slot = slot_; }
 
   void assign(Request *request) {
+    ++m_generation;
     m_request = request;
     m_complete = -1;
+    m_producerFailed = false;
+    m_sent = false;
     m_stopped = false;
+    m_closing = false;
     m_message.bind(request);
     m_message.reset();
   }
@@ -58,10 +62,30 @@ public:
     if (!m_request) return;
     m_message.bind(m_request);
     m_message.reset();
+    m_sent = true;
     owner()->poolSend(*m_impl, *m_request, Message::ID);
-    m_message.send();
+    auto link = ZmMkRef(m_impl);
+    unsigned generation = m_generation;
+    m_pool->txRun([this, link = ZuMv(link), generation]() mutable {
+      m_message.startTx(generation);
+      sendRequestTx_(generation);
+    });
   }
-  void close() { m_impl->disconnect(); }
+  void close() {
+    if (m_closing) return;
+    m_closing = true;
+    auto link = ZmMkRef(m_impl);
+    m_pool->txRun([this, link = ZuMv(link)]() mutable {
+      m_message.cancelTx();
+      // Drain producer resumptions queued before cancellation, then return
+      // to Rx before disabling the native logical link.
+      m_pool->txRun([this, link = ZuMv(link)]() mutable {
+	m_pool->rxRun([this, link = ZuMv(link)]() mutable {
+	  m_impl->disconnect();
+	});
+      });
+    });
+  }
   void retire() {
     m_request = nullptr;
     if (!m_impl->active()) {
@@ -112,14 +136,69 @@ public:
   void complete(bool ok) {
     if (!m_request || m_complete >= 0) return;
     m_complete = int8_t(ok);
-    auto request = m_request;
-    bool reuse = ok && reusable();
-    owner()->poolComplete(*m_impl, *request, ok, reuse);
+    auto link = ZmMkRef(m_impl);
+    unsigned generation = m_generation;
+    bool sent = m_sent;
+    m_pool->txRun([
+      this, link = ZuMv(link), generation, ok, sent]() mutable {
+      if (sent) m_message.cancelTx();
+      // Drain any producer resumption queued before cancellation, then return
+      // the authoritative Tx commitment to Rx for the retry decision.
+      m_pool->txRun([
+	this, link = ZuMv(link), generation, ok, sent]() mutable {
+	BodyCommit commit = sent ? m_message.commit() : BodyCommit{};
+	m_pool->rxRun([
+	  this, link = ZuMv(link), commit, generation, ok]() mutable {
+	  if (m_generation != generation || !m_request) return;
+	  if (m_producerFailed)
+	    owner()->poolTxFailed(*m_impl, *m_request, commit);
+	  else
+	    owner()->poolTxCommitted(*m_impl, *m_request, commit);
+	  bool reuse = ok && reusable();
+	  owner()->poolComplete(*m_impl, *m_request, ok, reuse);
+	});
+      });
+    });
   }
 
   Owner *owner() const { return m_pool->owner(); }
 
 private:
+  void sendRequestTx_(unsigned generation) {
+    if (m_message.txGeneration() != generation) return;
+    unsigned batch = owner()->requestBodyBatch();
+    int state = m_message.send(batch);
+    switch (state) {
+      case BodySend::More: {
+	auto link = ZmMkRef(m_impl);
+	m_pool->txRun([this, link = ZuMv(link), generation]() mutable {
+	  sendRequestTx_(generation);
+	});
+	break;
+      }
+      case BodySend::Complete: {
+	auto link = ZmMkRef(m_impl);
+	BodyCommit commit = m_message.commit();
+	m_pool->rxRun([this, link = ZuMv(link), commit, generation]() mutable {
+	  if (m_generation == generation && m_request)
+	    owner()->poolTxCommitted(*m_impl, *m_request, commit);
+	});
+	break;
+      }
+      case BodySend::Cancelled:
+	break;
+      default: {
+	auto link = ZmMkRef(m_impl);
+	m_pool->rxRun([this, link = ZuMv(link), generation]() mutable {
+	  if (m_generation != generation) return;
+	  m_producerFailed = true;
+	  complete(false);
+	});
+	break;
+      }
+    }
+  }
+
   void notifyStopped_() {
     if (m_stopped) return;
     m_stopped = true;
@@ -129,9 +208,13 @@ private:
   Pool		*m_pool = nullptr;
   Impl		*m_impl = nullptr;
   Request	*m_request = nullptr;
+  unsigned	m_generation = 0;
   unsigned	m_slot = 0;
   int8_t	m_complete = -1;
+  bool		m_producerFailed = false;
+  bool		m_sent = false;
   bool		m_stopped = false;
+  bool		m_closing = false;
   IO		m_message;
 };
 

@@ -67,6 +67,7 @@ struct TestLink :
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
+  void flushTx_() { }
   void queueTxFlush_() { }
 	  void initPath(ZiSockAddr local, ZiSockAddr remote) {
 	    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));

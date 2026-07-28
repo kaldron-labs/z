@@ -25,6 +25,8 @@
 
 #include <zlib/Zhttp.hh>
 
+#include "ZhttpPut.hh"
+
 ZtEnumNS(Http3Mode, int8_t, force, prefer, disable);
 ZtEnumNS(Http2Mode, int8_t, force, prefer, disable);
 
@@ -36,8 +38,10 @@ struct Options {
   ZuCSpan	ca;
   ZuCSpan	output{"index.html"};
   bool		discardResponse = false;
+  bool		put = false;
   uint32_t	requests = 1;
   uint32_t	concurrency = 1;
+  uint32_t	bodyTxBatch = Zhttp::BodyDeflt::TxBatch;
   uint32_t	retries = 0;
   uint32_t	timeout = ClientTimeout;
   uint32_t	stallTimeout = H3StallTimeout;
@@ -77,8 +81,11 @@ ZfStruct((Options, CLI),
   (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
   (((discardResponse),
     (CLI::Long<"discard-response">)),                         (Bool, false)),
+  (((put),       (CLI::Long<"put">)),                         (Bool, false)),
   (((requests),  (CLI::Opt<'n'>,  CLI::Long<"requests">)),   (UInt32, 1)),
   (((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),       (UInt32, 1)),
+  (((bodyTxBatch), (CLI::Long<"body-tx-batch">)),             (UInt32,
+							 Zhttp::BodyDeflt::TxBatch)),
   (((retries),   (CLI::Long<"retries">)),                    (UInt32, 0)),
   (((timeout),   (CLI::Long<"timeout">)),                    (UInt32, ClientTimeout)),
   (((stallTimeout),
@@ -133,8 +140,10 @@ void usage(int code = 1)
     "  -c, --ca=PATH       CA path for https:\n"
     "  -o, --output=PATH   response body output path\n"
     "  --discard-response  discard response bodies instead of writing files\n"
+    "  --put               PUT and validate a typed JSON record\n"
     "  -n, --requests=N    submit N GET requests, default 1\n"
     "  -j, --jobs=M        run up to M requests concurrently, default 1\n"
+    "  --body-tx-batch=N   maximum request-body bytes produced per Tx turn\n"
     "  --retries=N         retry transient connection failures N times\n"
     "  --timeout=N         completion timeout in seconds, default 15, 0 disables\n"
     "  --stall-timeout=N   no-progress stall timeout in seconds, default 15,\n"
@@ -225,7 +234,8 @@ bool migrationOnOpen(const Options &options)
 bool validateOptions(Options &options, int argc)
 {
   if (argc < 0 || argc != 2) return false;
-  if (!options.requests || !options.concurrency) return false;
+  if (!options.requests || !options.concurrency || !options.bodyTxBatch)
+    return false;
   if (options.http3 < 0 || options.http3 >= Http3Mode::N) return false;
   if (options.http2 < 0 || options.http2 >= Http2Mode::N) return false;
   int8_t mode = Zhttp::migrationMode(options.quicMigration, -1);
@@ -281,6 +291,10 @@ struct Req {
   URL		url;
   HdrString	output;
   bool		discardResponse = false;
+  bool		put = false;
+  ZhttpPut::Record putRecord;
+  ZhttpPut::String requestJSON;
+  ZhttpPut::String responseJSON;
   bool		logResponse = false;
   unsigned	status = 0;
   ZiFile	bodyFile;
@@ -407,6 +421,7 @@ void resetResponse(Req &req, bool truncateOutput)
   req.contentLength = -1;
   req.bodyBytes = 0;
   req.bodyChunks = 0;
+  req.responseJSON.length(0);
   req.chunked = false;
   req.redirecting = false;
   req.framingLogged = false;
@@ -426,6 +441,12 @@ void initReq(
   if (!options.discardResponse)
     req.output = outputPath(options.output, id, options.requests);
   req.discardResponse = options.discardResponse;
+  req.put = options.put;
+  if (req.put) {
+    req.putRecord.id = id;
+    req.putRecord.text << "zhttp-put-" << ZuBoxed(id);
+    ZfJSON::save(req.requestJSON, req.putRecord);
+  }
   req.logResponse = hotLog(options);
 }
 
@@ -490,18 +511,39 @@ void logConnected(const State &, const Zhttp::ConnectedInfo &);
 
 struct ClientCallbacks :
   public Zhttp::Agent<
-    ClientCallbacks, Req, RequestHeaders, ResponseHeaders, RespBodyMax> {
+    ClientCallbacks, Req, RequestHeaders, ResponseHeaders, RespBodyMax,
+    Zhttp::Body::OptionalFixed<unsigned>> {
   using Base = Zhttp::Agent<
-    ClientCallbacks, Req, RequestHeaders, ResponseHeaders, RespBodyMax>;
+    ClientCallbacks, Req, RequestHeaders, ResponseHeaders, RespBodyMax,
+    Zhttp::Body::OptionalFixed<unsigned>>;
 
   URL requestURL(const State &state) const { return state.url; }
 
   template <typename L>
-  void requestOperation(const State &, const URL &url, L &&l) {
+  void requestOperation(const State &state, const URL &url, L &&l) {
     ZuCSpan path;
     ZuCSpan query;
     url.pathQuery(path, query);
-    l(Zhttp::Method::GET, path, query);
+    l(state.put ? Zhttp::Method::PUT : Zhttp::Method::GET, path, query);
+  }
+  bool requestReplayable(const State &) const { return true; }
+  bool requestReproducible(const State &) const { return true; }
+  uint64_t requestContentLength(const State &state) const {
+    return state.put ? state.requestJSON.length() : 0;
+  }
+  bool requestHasBody(const State &state) const { return state.put; }
+  unsigned requestBodyCursor(State &) { return 0; }
+  template <typename Tx>
+  int requestBody(
+    State &state, unsigned &cursor, Tx &tx, unsigned batch) {
+    if (!state.put || cursor >= state.requestJSON.length())
+      return Zhttp::BodyProduce::Done;
+    unsigned length = state.requestJSON.length() - cursor;
+    if (length > batch) length = batch;
+    tx << ZuCSpan{state.requestJSON.data() + cursor, length};
+    cursor += length;
+    return cursor < state.requestJSON.length() ?
+      Zhttp::BodyProduce::More : Zhttp::BodyProduce::Done;
   }
   template <typename L>
   void requestHost(const State &, const URL &url, L &&l) {
@@ -552,29 +594,33 @@ struct ClientCallbacks :
     }));
   }
 
-  void responseBody(State &state, ZuBSpan span) {
+  template <typename Rx>
+  void responseBody(State &state, Rx &rx) {
     logFraming(state);
-    if (!span || state.redirecting) return;
     responseHeadersDone(state);
-    state.bodyBytes += span.length();
-    ++state.bodyChunks;
-    if (state.discardResponse) return;
-    if (!truncateOutputPath(state)) return;
-    if (!state.bodyFileOpen) {
-      state.bodyFile = ZiFile(state.output, ZiFile::Write | ZiFile::GC);
-      if (!state.bodyFile) {
-	auto ctx = reqLogCtx(state);
-	ZiLOG(Error, "zhttp", ([ctx, output = ZeString(state.output)](auto &s) {
-	  reqLogPrefix(ctx, s);
-	  s << "failed to open " << output;
-	}));
-	state.failed = true;
-	state.done = true;
-	return;
+    Zhttp::bodyEach(rx, [&state](ZuBSpan span) {
+      state.bodyBytes += span.length();
+      ++state.bodyChunks;
+      if (state.put) state.responseJSON << span;
+      if (state.redirecting || state.discardResponse) return;
+      if (!truncateOutputPath(state)) return;
+      if (!state.bodyFileOpen) {
+	state.bodyFile = ZiFile(state.output, ZiFile::Write | ZiFile::GC);
+	if (!state.bodyFile) {
+	  auto ctx = reqLogCtx(state);
+	  ZiLOG(Error, "zhttp", ([
+	    ctx, output = ZeString(state.output)](auto &s) {
+	    reqLogPrefix(ctx, s);
+	    s << "failed to open " << output;
+	  }));
+	  state.failed = true;
+	  state.done = true;
+	  return;
+	}
+	state.bodyFileOpen = true;
       }
-      state.bodyFileOpen = true;
-    }
-    if (state.bodyFile.write(span.data(), span.length()) != Zi::OK) {
+      if (state.bodyFile.write(span.data(), span.length()) == Zi::OK)
+	return;
       auto ctx = reqLogCtx(state);
       ZiLOG(Error, "zhttp", ([ctx](auto &s) {
 	reqLogPrefix(ctx, s);
@@ -582,12 +628,19 @@ struct ClientCallbacks :
       }));
       state.failed = true;
       state.done = true;
-      return;
-    }
+    });
   }
 
   void responseEnd(State &state, bool ok) {
     auto ctx = reqLogCtx(state);
+    if (ok && state.put && !state.redirecting) {
+      ZhttpPut::Record record;
+      if (!ZhttpPut::load(record, state.responseJSON) ||
+	  !ZhttpPut::equals(record, state.putRecord)) {
+	ok = false;
+	state.failed = true;
+      }
+    }
     if (ok) {
       if (!state.redirecting) responseHeadersDone(state);
       if (state.logResponse) {
@@ -614,7 +667,14 @@ struct ClientCallbacks :
   void completed(State &state, const Zhttp::Result &result) {
     closeBody(state);
     state.done = true;
-    state.failed = !result.ok();
+    state.failed = !result.ok() ||
+      (state.put &&
+	(result.requestBodyProduced != state.requestJSON.length() ||
+	 result.requestBodyCommitted != state.requestJSON.length() ||
+	 result.requestBodyReset || result.requestBodyDiscarded ||
+	 result.responseBodyReceived != state.bodyBytes ||
+	 result.responseBodyConsumed != state.bodyBytes ||
+	 result.responseBodyReset || result.responseBodyDiscarded));
   }
 
   void connected(State &state, const Zhttp::ConnectedInfo &info) {
@@ -739,6 +799,7 @@ int main(int argc, char **argv)
   agentConfig
     .concurrency(options.concurrency)
     .maxPending(options.requests)
+    .bodyTxBatch(options.bodyTxBatch)
     .requestTimeout(options.timeout)
     .maxRedirects(MaxRedirects)
     .maxRetries(options.retries)

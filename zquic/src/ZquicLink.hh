@@ -538,6 +538,7 @@ protected:
   struct AckSnapshot {
     PktNumSpace::T	level = PktNumSpace::Initial;
     uint64_t		gen = 0;
+    uint64_t		keyGeneration = 0;
     uint64_t		delay = 0;
     uint64_t		largestRxTime = 0;
     AckECN		ecn;
@@ -3629,6 +3630,7 @@ protected:
     m_rtt = {};
     m_ptoBackoff.reset();
     m_txKeyPhase = false;
+    m_txKeyGeneration = 0;
   }
 
   void closeStreamsRx_() {
@@ -3646,6 +3648,7 @@ protected:
     m_rxOldKeyDiscard = {};
     m_rxKeyPhase = false;
     m_rxOldKeyPhase = false;
+    m_rxKeyGeneration = 0;
   }
   bool ensureNextPeerKey_() {
     if (m_rxNextProt.valid()) return true;
@@ -3671,6 +3674,7 @@ protected:
     if (!m_crypto.rxSecret(PktNumSpace::AppData, nextRxSecret))
       return false;
     m_rxKeyPhase = !m_rxKeyPhase;
+    uint64_t keyGeneration = ++m_rxKeyGeneration;
     m_rxNextSecret.clear();
     m_rxNextProt.clear();
     m_rxOldKeyDiscard = keyDiscardDeadline_();
@@ -3693,9 +3697,9 @@ protected:
       o.logKeyUpdated(event, time);
     }));
     schedulePeerKeyDiscard_(m_rxOldKeyDiscard);
-    app()->txInvoke(impl(), [link = impl()]() mutable {
+    app()->txInvoke(impl(), [link = impl(), keyGeneration]() mutable {
       if (link->disconnecting_()) return link;
-      link->txInstallPeerKeyUpdate_();
+      link->txInstallPeerKeyUpdate_(keyGeneration);
       return link;
     });
     return true;
@@ -3730,15 +3734,18 @@ protected:
       o.logKeyRetired(event, time);
     }));
   }
-  bool txInstallPeerKeyUpdate_() {
+  bool txInstallPeerKeyUpdate_(uint64_t keyGeneration) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC peer key update outside Tx thread", return false);
+    if (keyGeneration <= m_txKeyGeneration) return true;
+    if (keyGeneration != m_txKeyGeneration + 1) return false;
     TrafficSecret nextTxSecret;
     if (!PktProt::deriveNextSecret(
 	  nextTxSecret, txSecret_(PktNumSpace::AppData)) ||
 	!txInstallSecret_(PktNumSpace::AppData, nextTxSecret))
       return false;
     m_txKeyPhase = !m_txKeyPhase;
+    m_txKeyGeneration = keyGeneration;
 	    ZquicLOG(app()->qlogTrace(), ([
 	      level = PktNumSpace::T(PktNumSpace::AppData),
 	      keyPhase = uint64_t(m_txKeyPhase),
@@ -4461,6 +4468,8 @@ protected:
     AckSnapshot ack;
     ack.level = level;
     ack.gen = m_rxAcks.gen(space);
+    if (level == PktNumSpace::AppData)
+      ack.keyGeneration = m_rxKeyGeneration;
     ack.largestRxTime = m_rxAcks.largestRxTime(space);
     ack.due = m_rxAcks.immediate(space);
     ack.ecn = m_rxAcks.ackECN(space);
@@ -4567,6 +4576,11 @@ protected:
       ackPost.ready = false;
       ackPost.posted = false;
     }
+    // A coalesced ACK for a new peer key phase must use the corresponding
+    // updated sending keys, even if its Tx post predates the key update.
+    if (level == PktNumSpace::AppData &&
+	!txInstallPeerKeyUpdate_(ack.keyGeneration))
+      return;
     if (noteAckTx_(ack)) {
       cancelAckDelayTimer_();
       impl()->flushTx_(ZuMv(addr));
@@ -9138,6 +9152,7 @@ private:
   bool			m_suspiciousStreamClosed = false;
   bool			m_rxKeyPhase = false;
   bool			m_rxOldKeyPhase = false;
+  uint64_t		m_rxKeyGeneration = 0;
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -9186,6 +9201,7 @@ private:
   bool			m_txSpaceDiscarded[PktNumSpace::N]{};
   bool			m_coalesceLong = false;
   bool			m_txKeyPhase = false;
+  uint64_t		m_txKeyGeneration = 0;
 };
 
 } // namespace Zquic

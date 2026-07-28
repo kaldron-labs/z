@@ -10,6 +10,12 @@
 
 #include <zlib/ZmSpecific.hh>
 
+[[noreturn]] ZmAPI void ZmSpecific_allocFail()
+{
+  std::cerr << "failed to allocate thread-local storage key\n" << std::flush;
+  ::abort();
+}
+
 // statically-initialized spinlock to guard initial singleton registration
 // and cleanup at exit; little if any contention is anticipated; access
 // intended to be exceptional, intermittent and almost exclusively during

@@ -26,6 +26,18 @@ struct HasStreamSend<Link, StreamRef,
       ZuDeclVal<StreamRef &>(), ZuDeclVal<ZuBSpan>(), false),
     void())> : public ZuTrue { };
 
+template <typename Link, typename = void>
+struct HasH3PeerCap : public ZuFalse { };
+template <typename Link>
+struct HasH3PeerCap<Link, decltype(
+  ZuDeclVal<Link *>()->h3PeerCap(false), void())> : public ZuTrue { };
+
+template <typename Link, typename = void>
+struct HasH3Ready : public ZuFalse { };
+template <typename Link>
+struct HasH3Ready<Link, decltype(
+  ZuDeclVal<Link *>()->h3Ready(), void())> : public ZuTrue { };
+
 // HTTP/3 connection streams and connection-level QPACK state
 template <typename Link, typename StreamRef>
 struct Cxn {
@@ -40,10 +52,14 @@ struct Cxn {
   bool			peerControl = false;
   bool			peerEncoder = false;
   bool			peerDecoder = false;
+  bool			localExtendedConnect = false;
+  bool			peerExtendedConnect = false;
   uint64_t		errorCode = 0;
   QPackRxTable		qpackRxTable;
 
-  bool openLocal(Link &link, const Params &params = Params{}) {
+  bool openLocal(
+    Link &link, const Params &params = Params{},
+    bool extendedConnect = false) {
     using StreamType = typename Link::StreamType;
     control = link.stream(StreamType::Simplex);
     enc = link.stream(StreamType::Simplex);
@@ -58,7 +74,9 @@ struct Cxn {
 	putVar(count, 0x06) < 0 ||
 	putVar(count, params.maxHeaderListSize()) < 0 ||
 	putVar(count, 0x07) < 0 ||
-	putVar(count, params.qpackBlockedStreams()) < 0)
+	putVar(count, params.qpackBlockedStreams()) < 0 ||
+	(extendedConnect &&
+	  (putVar(count, 0x08) < 0 || putVar(count, 1) < 0)))
       return false;
     if (putVar(payload, 0x00) < 0 ||
 	putVar(payload, 0x04) < 0 ||
@@ -68,7 +86,9 @@ struct Cxn {
 	putVar(payload, 0x06) < 0 ||
 	putVar(payload, params.maxHeaderListSize()) < 0 ||
 	putVar(payload, 0x07) < 0 ||
-	putVar(payload, params.qpackBlockedStreams()) < 0)
+	putVar(payload, params.qpackBlockedStreams()) < 0 ||
+	(extendedConnect &&
+	  (putVar(payload, 0x08) < 0 || putVar(payload, 1) < 0)))
       return false;
     if (!link.send(control, payload, false)) return false;
     {
@@ -84,6 +104,7 @@ struct Cxn {
       tx.flush();
     }
     link_ = &link;
+    localExtendedConnect = extendedConnect;
     state = State::Ready;
     return true;
   }
@@ -111,6 +132,18 @@ struct Cxn {
     }
     peerDecoder = true;
     return true;
+  }
+  bool setting(uint64_t key, uint64_t value) {
+    if (key != 0x08) return true;
+    if (value > 1) return false;
+    peerExtendedConnect = value;
+    if constexpr (HasH3PeerCap<Link>{})
+      if (link_) link_->h3PeerCap(value);
+    return true;
+  }
+  void peerSettings() {
+    if constexpr (HasH3Ready<Link>{})
+      if (link_) link_->h3Ready();
   }
   QPackRxTable *qpackRx() { return &qpackRxTable; }
   QPackTxTable *qpackTx() { return link_ ? link_->qpackTx() : nullptr; }
@@ -181,7 +214,11 @@ struct CxnStream : public CxnParser<Impl> {
   auto impl() { return static_cast<Impl *>(this); }
 
   State::T h3State() const { return impl()->h3Cxn().state; }
-  void h3State(State::T state) { impl()->h3Cxn().state = state; }
+  void h3State(State::T state) {
+    auto &cxn = impl()->h3Cxn();
+    cxn.state = state;
+    if (state == State::PeerSettingsReceived) cxn.peerSettings();
+  }
   bool h3Server() const { return impl()->link()->isServer(); }
   void h3Error(uint64_t error) { impl()->h3Cxn().error(error); }
   bool peerControlStream() { return impl()->h3Cxn().peerControlStream(); }
@@ -198,13 +235,18 @@ struct CxnStream : public CxnParser<Impl> {
   bool qpackTxMaxCapacity(uint64_t capacity) {
     return impl()->h3Cxn().qpackTxMaxCapacity(capacity);
   }
+  void setting(uint64_t key, uint64_t value) {
+    Base::setting(key, value);
+    if (!impl()->h3Cxn().setting(key, value))
+      impl()->h3Cxn().error(SettingsError);
+  }
 };
 
 // Request/response transmit helpers
 template <typename Stream, typename Builder>
 bool sendReq(Stream &stream, Builder &builder, bool fin = true) {
   auto tx = stream.txStream();
-  builder.request(tx);
+  if (!builder.request(tx)) return false;
   builder.finish(tx);
   if (fin) stream.link()->send(stream.link()->findStream(stream.id()), "", true);
   return true;

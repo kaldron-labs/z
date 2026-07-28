@@ -36,6 +36,7 @@ public:
   static constexpr uint64_t MaxBody = MaxBody_;
 
   void reset() {
+    m_bodyRx.reset();
     m_fields = {};
     m_state = State::Initial;
     m_contentLength = -1;
@@ -113,7 +114,13 @@ public:
 
   bool data(ZuBSpan value, bool endStream = false) {
     if (m_state == State::Tunnel) {
-      if (value) impl()->tunnelData(value);
+      bool ok = m_bodyRx.offer(value, endStream,
+	[this](auto &rx) { impl()->tunnelData(rx); });
+      if (!ok) {
+	m_bodyRx.cancel();
+	impl()->tunnelReset();
+	return fail_();
+      }
       if (endStream) {
 	m_state = State::RemoteClosed;
 	impl()->tunnelEnd();
@@ -127,8 +134,11 @@ public:
 	(m_bodyLength > uint64_t(m_contentLength) ||
 	 value.length() > uint64_t(m_contentLength) - m_bodyLength))
       return fail_();
+    bool final = endStream;
+    if (!m_bodyRx.offer(value, final,
+	[this](auto &rx) { impl()->body(rx); }))
+      return fail_();
     m_bodyLength += value.length();
-    if (value) impl()->body(value);
     if (endStream) {
       if (!bodyComplete_()) return fail_();
       complete_();
@@ -144,14 +154,19 @@ public:
 
   State::T state() const { return m_state; }
   bool cancel() {
-    if (m_state == State::Tunnel || m_state == State::RemoteClosed)
+    if (m_state == State::Tunnel || m_state == State::RemoteClosed) {
+      m_bodyRx.cancel();
       impl()->tunnelReset();
+    }
     return fail_();
   }
 
   void protocol(ZuBSpan) { }
   void headers(Fields::Section, bool) { }
-  void tunnelData(ZuBSpan) { }
+  template <typename Rx>
+  void body(Rx &rx) { bodyDrain(rx); }
+  template <typename Rx>
+  void tunnelData(Rx &rx) { bodyDrain(rx); }
   void tunnelEnd() { }
   void tunnelReset() { }
 
@@ -197,12 +212,15 @@ private:
   }
   void complete_() {
     if (m_complete) return;
+    if (m_state != State::Error && !m_bodyRx.finish())
+      m_state = State::Error;
     m_complete = true;
     if (m_state != State::Error) m_state = State::Complete;
     impl()->complete(m_state);
   }
 
   Fields::Semantics<Request> m_fields;
+  BodyRx		m_bodyRx;
   State::T		m_state = State::Initial;
   Method::T		m_requestMethod = -1;
   int64_t		m_contentLength = -1;
@@ -218,7 +236,7 @@ template <
   typename Headers_ = ZuTypeList<>,
   typename Trailers_ = ZuTypeList<>,
   bool HasBody_ = false,
-  bool = false>
+  bool Streaming_ = false>
 class Builder {
 public:
   auto impl() { return static_cast<Impl *>(this); }
@@ -226,6 +244,7 @@ public:
   using Headers = Headers_;
   using Trailers = Trailers_;
   enum { HasBody = HasBody_ };
+  enum { Streaming = Streaming_ };
 
   template <typename Stream>
   bool request(Stream &stream) {
@@ -291,7 +310,19 @@ public:
   }
 
   template <typename Stream>
-  auto body(Stream &stream) { return stream.body(); }
+  auto body(Stream &stream) {
+    if constexpr (Streaming)
+      return stream.body();
+    else
+      return stream.body(impl()->contentLength());
+  }
+  template <typename Stream>
+  auto body(Stream &stream, uint64_t remaining) {
+    if constexpr (Streaming)
+      return stream.body();
+    else
+      return stream.body(remaining);
+  }
 
   template <typename Stream>
   void finish(Stream &stream) {
@@ -327,7 +358,7 @@ private:
     typename KVs = Headers, bool IncludeContentLength = true,
     typename Stream>
   void headers_(Stream &stream) {
-    if constexpr (HasBody && IncludeContentLength) {
+    if constexpr (HasBody && !Streaming && IncludeContentLength) {
       char value[32];
       uint64_t length = impl()->contentLength();
       unsigned offset = sizeof(value);

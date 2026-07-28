@@ -244,7 +244,11 @@ public:
 		  if (!(m_contentLength -= n)) m_state = State::Complete;
 		}
 		return n;
-	      }, [this](ZuBSpan span) { impl()->body(span); });
+	      }, [this](ZuBSpan span) {
+		if (!m_bodyRx.offer(span, m_state == State::Complete,
+		    [this](auto &rx) { impl()->body(rx); }))
+		  m_state = State::Error;
+	      });
 	    } break;
 	  case State::ChunkHdr: { // parse chunk header
 	    consumed = stream.template consume<2, "Zhttp.ChunkHdr">(
@@ -275,7 +279,11 @@ public:
 		if (n > m_chunkLength) n = m_chunkLength;
 		if (!(m_chunkLength -= n)) m_state = State::ChunkTrlr;
 		return n;
-	      }, [this](ZuBSpan span) { impl()->body(span); });
+	      }, [this](ZuBSpan span) {
+		if (!m_bodyRx.offer(span, false,
+		    [this](auto &rx) { impl()->body(rx); }))
+		  m_state = State::Error;
+	      });
 	  } break;
 	  case State::ChunkTrlr: { // parse trailing "\r\n"
 	    consumed = stream.template consume<2, "Zhttp.ChunkTrlr">(
@@ -313,6 +321,8 @@ public:
 	if (consumed > 0) progressed = true;
 	if (m_state == State::Complete ||
 	    m_state == State::Error) {
+	  if (m_state == State::Complete && !m_bodyRx.finish())
+	    m_state = State::Error;
 	  State::T state = m_state;
 	  impl()->complete(state);
 	  return state;
@@ -333,12 +343,15 @@ public:
 	m_state = State::Complete;
     else
 	m_state = State::Error;
+    if (m_state == State::Complete && !m_bodyRx.finish())
+      m_state = State::Error;
     impl()->complete(m_state);
     return m_state;
   }
 
   // reset for next message
   void reset() {
+    m_bodyRx.reset();
     m_state = State::Initial;
     m_chunked = false;
     m_eofBody = false;
@@ -357,7 +370,8 @@ public:
   void contentLength(uint64_t) { }
   void xferCompression(XferCompression::T) { }
   void chunked() { }
-  void body(ZuBSpan) { }
+  template <typename Rx>
+  void body(Rx &rx) { bodyDrain(rx); }
   void complete(State::T) { }
 
 private:
@@ -373,6 +387,7 @@ private:
   // Rx thread exclusive
   int64_t	m_contentLength = -1;
   int64_t	m_chunkLength = -1;
+  BodyRx	m_bodyRx;
   unsigned	m_statusCode = 0;
   State::T	m_state = State::Initial;
   bool	m_chunked = false;
@@ -389,14 +404,22 @@ public:
     Base(lower, 0, 0), m_contentLength(contentLength_) { }
 
   void prepareBuf_(ZiIOBuf *buf, bool) {
-    ZiAssert(m_contentLength >= buf->length,
-	"Zhttp", (), "oversized body", buf->length = m_contentLength);
+    if (ZuUnlikely(m_contentLength < buf->length)) {
+      m_valid = false;
+      buf->length = m_contentLength;
+    }
     m_contentLength -= buf->length;
+    m_produced += buf->length;
   }
+  uint64_t produced() const { return m_produced; }
+  bool valid() const { return m_valid; }
+  bool complete() const { return m_valid && !m_contentLength; }
 
 private:
   // Tx thread exclusive
   uint64_t		m_contentLength;
+  uint64_t		m_produced = 0;
+  bool			m_valid = true;
 };
 template <typename Lower>
 auto bodyStream(Lower &lower, uint64_t contentLength) {
@@ -414,6 +437,7 @@ struct ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
   ChunkedStream(Lower &lower) : Base(lower, HdrSize, TrlrSize) { }
 
   void prepareBuf_(ZiIOBuf *buf, bool) {
+    m_produced += buf->length;
     ZuBox<uint32_t> n = buf->length;
     ZiAssert(buf->skip >= HdrSize,
 	"Zhttp", (), "ChunkedStream headroom error", return);
@@ -427,6 +451,12 @@ struct ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
     // chunk trailer
     *buf << "\r\n";
   }
+
+  uint64_t produced() const { return m_produced; }
+  bool valid() const { return true; }
+
+private:
+  uint64_t	m_produced = 0;
 };
 template <typename Lower>
 auto chunkedStream(Lower &lower) {
@@ -500,7 +530,7 @@ private:
 public:
   // request
   template <typename Stream>
-  void request(Stream &stream) {
+  bool request(Stream &stream) {
     impl()->operation([&stream]<typename Path, typename Query>(
 	  Method::T method, Path &&path, Query &&query) {
 	ZuCSpan query_{ZuFwd<Query>(query)};
@@ -515,6 +545,7 @@ public:
     stream << "\r\n";
     // remaining headers
     headers(stream);
+    return true;
   }
 
   // response
@@ -535,10 +566,18 @@ public:
   template <typename Stream, bool _ = HasBody && !Chunked>
   ZuIfT<_, BodyStream<Stream>>
   body(Stream &stream) { return bodyStream(stream, impl()->contentLength()); }
+  template <typename Stream, bool _ = HasBody && !Chunked>
+  ZuIfT<_, BodyStream<Stream>>
+  body(Stream &stream, uint64_t remaining) {
+    return bodyStream(stream, remaining);
+  }
 
   template <typename Stream, bool _ = HasBody && Chunked>
   ZuIfT<_, ChunkedStream<Stream>>
   body(Stream &stream) { return chunkedStream(stream); }
+  template <typename Stream, bool _ = HasBody && Chunked>
+  ZuIfT<_, ChunkedStream<Stream>>
+  body(Stream &stream, uint64_t) { return chunkedStream(stream); }
 
   // finish
   template <typename Stream>
