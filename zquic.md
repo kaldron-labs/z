@@ -701,6 +701,32 @@ minimum padding, protection-sample padding, and vector-capacity failure.
 
 Only then start Slice 7.
 
+### Slice 6 execution record
+
+- API gate: no dependent use required a packet-codec signature or exposed
+  aggregate-layout change.  Public diagnostic arrays remain raw with an
+  explicit dependent-API reason; picotls cipher, extension, and epoch-offset
+  arrays remain raw for its C ABI.
+- Packet assembly: `PlainVec` owns active `ptls_iovec_t` values in
+  `ZuArray`; `PktBuild` owns full-length uninitialized scratch in `ZuBArray`.
+  Vectored protection still references one stable process-lifetime zero
+  `ZuBArray`, so packet payload goes directly to the final `ZiIOBuf`-backed
+  destination without a staging copy.
+- Indexed metadata: packet-space path, crypto, ACK, recovery, and Link state
+  use full-length `ZuArray` values.  Stream-direction state uses
+  `StreamType::N`; the four wire stream-ID classes use the named
+  `StreamClassCount`.  Frame-reference and sent-control arrays now retain
+  active length in their containers rather than parallel counts.
+- Initialization: `fixedArray` explicitly value-fills primitive fixed arrays;
+  the focused recovery test caught and prevented reliance on default
+  initialization of primitive `ZuArray` elements.
+- Build: `make -C zquic/src -j8 libZquic.la`.
+- Focused unit build and run: `ZquicCodecTest`, `ZquicBufferTest`, and
+  `ZquicRecoveryTest` passed under the existing clang-debug configuration.
+  Coverage includes maximum vector capacity/failure, Initial minimum padding,
+  protection-sample padding, maximum ACK encoding, and retained recovery
+  batches.
+
 ## Slice 7: formatting lookup cleanup and final source audit
 
 Dependency: accepted and committed Slice 6.

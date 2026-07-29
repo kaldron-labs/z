@@ -436,13 +436,26 @@ private:
   bool				m_earlyDataEnabled = false;
   EarlyDataState::T		m_earlyDataState = EarlyDataState::Disabled;
   bool				m_oneRTTReady = false;
-  bool				m_secretInstalled[PktNumSpace::N] = {};
-  TrafficSecret 		m_txTrafficSecrets[PktNumSpace::N];
-  TrafficSecret 		m_rxTrafficSecrets[PktNumSpace::N];
+  ZuArray<bool, PktNumSpace::N>	m_secretInstalled =
+				  fixedArray<bool, PktNumSpace::N>();
+  ZuArray<TrafficSecret, PktNumSpace::N>
+				m_txTrafficSecrets =
+				  ZuArray<TrafficSecret, PktNumSpace::N>(
+				    PktNumSpace::N);
+  ZuArray<TrafficSecret, PktNumSpace::N>
+				m_rxTrafficSecrets =
+				  ZuArray<TrafficSecret, PktNumSpace::N>(
+				    PktNumSpace::N);
   TrafficSecret 		m_txEarlySecret;
   TrafficSecret 		m_rxEarlySecret;
-  PktProtState			m_txProt[PktNumSpace::N];
-  PktProtState			m_rxProt[PktNumSpace::N];
+  ZuArray<PktProtState, PktNumSpace::N>
+				m_txProt =
+				  ZuArray<PktProtState, PktNumSpace::N>(
+				    PktNumSpace::N);
+  ZuArray<PktProtState, PktNumSpace::N>
+				m_rxProt =
+				  ZuArray<PktProtState, PktNumSpace::N>(
+				    PktNumSpace::N);
   PktProtState			m_txEarlyProt;
   PktProtState			m_rxEarlyProt;
   ParamString			m_alpn;
@@ -457,9 +470,11 @@ private:
   TransportParams 		m_peerParams;
   bool				m_peerParamsSet = false;
   ptls_context_t 		m_tlsCtx{};
+  // picotls consumes this null-terminated raw pointer array through its C ABI.
   ptls_cipher_suite_t		*m_tlsCipherSuites[TLSMaxCiphers + 1]{};
   ptls_t			*m_tls = nullptr;
   ptls_handshake_properties_t 	m_tlsProps{};
+  // picotls requires an inline sentinel-terminated C extension array.
   ptls_raw_extension_t 		m_tlsExtensions[2]{};
   TLSTransportParams 		m_tlsParams;
   ptls_iovec_t			m_alpnVec{};

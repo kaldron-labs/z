@@ -62,6 +62,7 @@ public:
   // per-packet sent-frame metadata limit.
   static constexpr unsigned PathResponseMax = SentPkt::MaxFrames;
   static constexpr unsigned RecoveryScanBatch = 256;
+  static constexpr unsigned StreamClassCount = 4;
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
@@ -579,40 +580,45 @@ protected:
     bool		ready = false;
   };
   struct TxCryptoSnapshot {
-    TrafficSecret	secrets[PktNumSpace::N];
+    ZuArray<TrafficSecret, PktNumSpace::N>
+			secrets =
+			  ZuArray<TrafficSecret, PktNumSpace::N>(
+			    PktNumSpace::N);
     TrafficSecret	earlySecret;
-    bool		installed[PktNumSpace::N] = {};
+    ZuArray<bool, PktNumSpace::N>
+			installed =
+			  fixedArray<bool, PktNumSpace::N>();
     bool		earlyInstalled = false;
   };
   struct TxPktRefs {
     bool add(const SentFrameRef &ref, Stream *stream = nullptr) {
-      if (ref.kind == SentFrameKind::None || n >= SentPkt::MaxFrames)
+      if (ref.kind == SentFrameKind::None ||
+	  refs.length() >= SentPkt::MaxFrames)
 	return false;
-      refs[n++] = ref;
-      streams[n - 1] = stream;
+      refs.push(ref);
+      streams.push(stream);
       return true;
     }
-    unsigned count() const { return n; }
+    unsigned count() const { return refs.length(); }
     const SentFrameRef &operator [](unsigned i) const { return refs[i]; }
     Stream *stream(unsigned i) const { return streams[i]; }
 
-    SentFrameRef	refs[SentPkt::MaxFrames];
-    Stream		*streams[SentPkt::MaxFrames] = {};
-    unsigned		n = 0;
+    ZuArray<SentFrameRef, SentPkt::MaxFrames> refs;
+    ZuArray<Stream *, SentPkt::MaxFrames> streams;
   };
   struct QLogTxFrameRefs {
     QLogTxFrameRefs() = default;
     QLogTxFrameRefs(const SentFrameUpdates &updates) {
-      n = updates.length() < PktTxUpdate::MaxFrames ?
+      unsigned n = updates.length() < PktTxUpdate::MaxFrames ?
 	updates.length() : PktTxUpdate::MaxFrames;
-      for (unsigned i = 0; i < n; ++i) refs[i] = updates[i].ref;
+      for (unsigned i = 0; i < n; ++i) refs.push(updates[i].ref);
     }
-    unsigned count() const { return n; }
+    unsigned count() const { return refs.length(); }
     const SentFrameRef &operator [](unsigned i) const { return refs[i]; }
 
-    SentFrameRef	refs[PktTxUpdate::MaxFrames];
-    unsigned		n = 0;
+    ZuArray<SentFrameRef, PktTxUpdate::MaxFrames> refs;
   };
+  using SentControls = ZuArray<ControlFrame, SentPkt::MaxFrames>;
   struct PendingControl {
     ControlFrame	frame;
     bool		queued = false;
@@ -2118,11 +2124,10 @@ protected:
     PktBudget budget = sendBudget_();
     if (!budget.congestion) return false;
     PktAssembly assembly;
-    ControlFrame sentControls[SentPkt::MaxFrames];
-    unsigned nSentControls = 0;
+    SentControls sentControls;
     return appendControl_(
       frame, build, budget, assembly, refs,
-      sentControls, nSentControls);
+      sentControls);
   }
   void migChalSent_(const ControlFrame &frame) {
     controlSent_(frame);
@@ -3616,9 +3621,9 @@ protected:
 	    for (auto &p : m_txProt) p.clear();
 	    m_txEarlyProt.clear();
 	    m_txEarlyData = {};
-    memset(m_txPN, 0, sizeof(m_txPN));
+    for (auto &pn : m_txPN) pn = 0;
     for (auto &pn : m_txLargestAckd) pn = U64Null;
-    memset(m_rxLargestPN, 0, sizeof(m_rxLargestPN));
+    for (auto &pn : m_rxLargestPN) pn = 0;
     m_rxAcks.clear();
     clearPeerKeyState_();
     for (auto &ack : m_txAck) ack = {};
@@ -3629,8 +3634,8 @@ protected:
     m_txInitProbeOut = {};
     m_txHandshakeProbeOut = {};
     m_txAppProbeOut = {};
-    memset(m_rxSpaceDiscarded, 0, sizeof(m_rxSpaceDiscarded));
-    memset(m_txSpaceDiscarded, 0, sizeof(m_txSpaceDiscarded));
+    for (auto &discarded : m_rxSpaceDiscarded) discarded = false;
+    for (auto &discarded : m_txSpaceDiscarded) discarded = false;
     m_rtt = {};
     m_ptoBackoff.reset();
     m_txKeyPhase = false;
@@ -3805,6 +3810,7 @@ protected:
     AfterEstablished afterEstablished) {
     ZmRef<ZiIOBuf> out =
       new CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>{this};
+    // picotls writes this fixed five-offset array through its C callback ABI.
     size_t offsets[5] = {};
     int n =
       m_crypto.handleTLSMessage(out.ptr(), offsets, inEpoch, input);
@@ -3902,21 +3908,21 @@ protected:
   bool appendControl_(
     const ControlFrame &frame, PktBuild &build, PktBudget &budget,
     PktAssembly &assembly, TxPktRefs &refs,
-    ControlFrame *sentControls, unsigned &nSentControls) {
+    SentControls &sentControls) {
     if (!controlStillValid_(frame)) return false;
     int n = frame.write(build.scratch(), build.scratchAvail());
     if (n <= 0 || !assembly.addControl(budget, unsigned(n)) ||
 	!build.commitScratch(unsigned(n)))
       return false;
     if (!refs.add(controlRef_(frame))) return false;
-    sentControls[nSentControls++] = frame;
+    sentControls.push(frame);
     return true;
   }
 
   bool appendQueuedCtl_(
     PendingControl &slot, PktBuild &build, PktBudget &budget,
     PktAssembly &assembly, TxPktRefs &refs,
-    ControlFrame *sentControls, unsigned &nSentControls) {
+    SentControls &sentControls) {
     if (!slot.queued) return true;
     if (!controlStillValid_(slot.frame)) {
       slot = {};
@@ -3924,42 +3930,43 @@ protected:
     }
     return appendControl_(
       slot.frame, build, budget, assembly, refs,
-      sentControls, nSentControls);
+      sentControls);
   }
 
   bool appendQueuedCtls_(
     PktBuild &build, PktBudget &budget, PktAssembly &assembly,
-    TxPktRefs &refs, ControlFrame *sentControls,
-    unsigned &nSentControls) {
+    TxPktRefs &refs, SentControls &sentControls) {
     if (refs.count() >= SentPkt::MaxFrames) return true;
     if (!appendQueuedCtl_(
 	  m_maxDataControl, build, budget, assembly, refs,
-	  sentControls, nSentControls))
+	  sentControls))
       return false;
-    for (unsigned i = 0; i < 2 && refs.count() < SentPkt::MaxFrames; ++i)
+    for (unsigned i = 0;
+	i < Zquic::StreamType::N && refs.count() < SentPkt::MaxFrames; ++i)
       if (!appendQueuedCtl_(
 	    m_maxStreamsControl[i], build, budget, assembly, refs,
-	    sentControls, nSentControls))
+	    sentControls))
 	return false;
     if (refs.count() < SentPkt::MaxFrames &&
 	!appendQueuedCtl_(
 	  m_dataBlockedControl, build, budget, assembly, refs,
-	  sentControls, nSentControls))
+	  sentControls))
       return false;
-    for (unsigned i = 0; i < 2 && refs.count() < SentPkt::MaxFrames; ++i)
+    for (unsigned i = 0;
+	i < Zquic::StreamType::N && refs.count() < SentPkt::MaxFrames; ++i)
       if (!appendQueuedCtl_(
 	    m_streamsBlockedControl[i], build, budget, assembly, refs,
-	    sentControls, nSentControls))
+	    sentControls))
 	return false;
     if (refs.count() < SentPkt::MaxFrames &&
 	!appendQueuedCtl_(
 	  m_pathChallengeControl, build, budget, assembly, refs,
-	  sentControls, nSentControls))
+	  sentControls))
       return false;
     if (refs.count() < SentPkt::MaxFrames &&
 	!appendQueuedCtl_(
 	  m_handshakeDoneControl, build, budget, assembly, refs,
-	  sentControls, nSentControls))
+	  sentControls))
       return false;
     auto iter = m_pathResponses.iter();
     while (refs.count() < SentPkt::MaxFrames) {
@@ -3967,7 +3974,7 @@ protected:
       if (!frame) break;
       if (!appendControl_(
 	    frame, build, budget, assembly, refs,
-	    sentControls, nSentControls))
+	    sentControls))
 	return false;
     }
     auto cidIter = m_newCxnIDControls.iter();
@@ -3976,7 +3983,7 @@ protected:
       if (!frame) break;
       if (!appendControl_(
 	    frame, build, budget, assembly, refs,
-	    sentControls, nSentControls))
+	    sentControls))
 	return false;
     }
     return true;
@@ -3985,7 +3992,7 @@ protected:
   bool appendStreamCtls_(
     const StreamRef &stream, PktBuild &build, PktBudget &budget,
     PktAssembly &assembly, TxPktRefs &refs,
-    ControlFrame *sentControls, unsigned &nSentControls) {
+    SentControls &sentControls) {
     while (stream && refs.count() < SentPkt::MaxFrames) {
       ControlFrame frame;
       if (!stream->nextQueuedControl(frame)) return true;
@@ -3995,7 +4002,7 @@ protected:
       }
       if (!appendControl_(
 	    frame, build, budget, assembly, refs,
-	    sentControls, nSentControls))
+	    sentControls))
 	return false;
       stream->controlSent(frame);
       return true;
@@ -4109,14 +4116,13 @@ protected:
     if (!appendAck(build)) return false;
     unsigned ackBytes = build.bytes() - before;
     if (ackBytes && !budget.add(ackBytes)) return false;
-    ControlFrame sentControls[SentPkt::MaxFrames];
-    unsigned nSentControls = 0;
+    SentControls sentControls;
     if (!appendQueuedCtls_(
-	  build, budget, assembly, refs, sentControls, nSentControls))
+	  build, budget, assembly, refs, sentControls))
       return false;
     if (refs.count()) {
       if (!sendPkt(build, ZuMv(addr), refs)) return false;
-      for (unsigned i = 0; i < nSentControls; ++i)
+      for (unsigned i = 0; i < sentControls.length(); ++i)
 	controlSent_(sentControls[i]);
       return true;
     }
@@ -4154,10 +4160,9 @@ protected:
     if (!appendAck(build)) return false;
     unsigned ackBytes = build.bytes() - before;
     if (ackBytes && !budget.add(ackBytes)) return false;
-    ControlFrame sentControls[SentPkt::MaxFrames];
-    unsigned nSentControls = 0;
+    SentControls sentControls;
     if (!appendQueuedCtls_(
-	  build, budget, assembly, refs, sentControls, nSentControls))
+	  build, budget, assembly, refs, sentControls))
       return false;
     auto fail = [&refs, this]() {
       requeueStreamRefs_(PktNumSpace::AppData, refs, false);
@@ -4171,7 +4176,7 @@ protected:
       if (stream->controlQueued()) {
 	if (!appendStreamCtls_(
 	      stream, build, budget, assembly, refs,
-	      sentControls, nSentControls))
+	      sentControls))
 	  return fail();
 	if (streamTxPending_(stream) && stream->id() >= 0)
 	  streamWritable_(stream);
@@ -4253,7 +4258,7 @@ protected:
 	requeueStreamRefs_(PktNumSpace::AppData, refs, false);
 	return false;
       }
-      for (unsigned i = 0; i < nSentControls; ++i)
+      for (unsigned i = 0; i < sentControls.length(); ++i)
 	controlSent_(sentControls[i]);
       if (flushQueuedControls) impl()->flushTx_();
       return true;
@@ -9098,19 +9103,28 @@ private:
   alignas(Zm::CacheLineSize)
   AppClose		m_appClose;
   FlowCredit		m_rxDataCredit;
-  StreamLimit		m_peerLimit[2] = {
+  ZuArray<StreamLimit, Zquic::StreamType::N>
+			m_peerLimit = {
     StreamLimit(MaxStreamCount),
     StreamLimit(MaxStreamCount)
   };
   StreamsRef		m_streams;
-  uint64_t		m_closedStreamBase[4] = {};
+  ZuArray<uint64_t, StreamClassCount>
+			m_closedStreamBase =
+			  fixedArray<uint64_t, StreamClassCount>();
   ClosedStreamsRef	m_closedStreams;
 
   LinkRxDiag		m_rxDiag;
   Crypto		m_crypto;
   TransportParams	m_transportParams;
-  CryptoStream		m_rxCrypto[PktNumSpace::N];
-  ZiSockAddr		m_rxCryptoAddr[PktNumSpace::N];
+  ZuArray<CryptoStream, PktNumSpace::N>
+			m_rxCrypto =
+			  ZuArray<CryptoStream, PktNumSpace::N>(
+			    PktNumSpace::N);
+  ZuArray<ZiSockAddr, PktNumSpace::N>
+			m_rxCryptoAddr =
+			  ZuArray<ZiSockAddr, PktNumSpace::N>(
+			    PktNumSpace::N);
   CxnID			m_initialDCID;
   CxnID			m_origDCID;
   CxnID			m_groupID;
@@ -9119,7 +9133,9 @@ private:
   ResetToken		m_peerResetToken;
   LocalCIDs		m_localCIDs;
   PeerCIDs		m_peerCIDs;
-  uint64_t		m_rxLargestPN[PktNumSpace::N]{};
+  ZuArray<uint64_t, PktNumSpace::N>
+			m_rxLargestPN =
+			  fixedArray<uint64_t, PktNumSpace::N>();
   AckManager		m_rxAcks;
   RxEarlyData		m_rxEarlyData;
   TransportParams	m_zeroRTTParams;
@@ -9131,7 +9147,10 @@ private:
   ZuTime		m_rxOldKeyDiscard;
   RttEstimator		m_rtt;
   PTOBackoff		m_ptoBackoff;
-  AckPost		m_ackPost[PktNumSpace::N];
+  ZuArray<AckPost, PktNumSpace::N>
+			m_ackPost =
+			  ZuArray<AckPost, PktNumSpace::N>(
+			    PktNumSpace::N);
   // Connection-owned timers; callbacks run on Tx.
   ZmScheduler::Timer	m_ackDelayTimer;
   ZmScheduler::Timer	m_lossTimer;
@@ -9154,7 +9173,9 @@ private:
   ZuTime		m_closeNextResponse;
   PktNumSpace::T	m_ptoTimerLevel = PktNumSpace::Initial;
   bool			m_idleAckElicitingSent = false;
-  bool			m_rxSpaceDiscarded[PktNumSpace::N]{};
+  ZuArray<bool, PktNumSpace::N>
+			m_rxSpaceDiscarded =
+			  fixedArray<bool, PktNumSpace::N>();
   LinkState::T		m_linkState = LinkState::Starting;
   unsigned		m_drainPTOs = 0;
   uint64_t		m_peerRetirePriorTo = 0;
@@ -9169,28 +9190,49 @@ private:
   FlowCredit		m_txDataCredit;
   uint64_t		m_nextBidiOrdinal = 0;
   uint64_t		m_nextUniOrdinal = 0;
-  StreamLimit		m_localLimit[2] = {
+  ZuArray<StreamLimit, Zquic::StreamType::N>
+			m_localLimit = {
     StreamLimit(MaxStreamCount),
     StreamLimit(MaxStreamCount)
   };
-  uint64_t		m_queued[2] = {};
-  bool			m_openQueuedPending[2] = {};
+  ZuArray<uint64_t, Zquic::StreamType::N>
+			m_queued =
+			  fixedArray<uint64_t, Zquic::StreamType::N>();
+  ZuArray<bool, Zquic::StreamType::N>
+			m_openQueuedPending =
+			  fixedArray<bool, Zquic::StreamType::N>();
   uint64_t		m_lastDataBlocked = U64Null;
-  uint64_t		m_lastStreamsBlocked[2] = {U64Null, U64Null};
+  ZuArray<uint64_t, Zquic::StreamType::N>
+			m_lastStreamsBlocked = {U64Null, U64Null};
   StreamQueue		m_streamQueue;
   PendingControl	m_maxDataControl;
-  PendingControl	m_maxStreamsControl[2];
+  ZuArray<PendingControl, Zquic::StreamType::N>
+			m_maxStreamsControl =
+			  ZuArray<PendingControl, Zquic::StreamType::N>(
+			    Zquic::StreamType::N);
   PendingControl	m_dataBlockedControl;
-  PendingControl	m_streamsBlockedControl[2];
+  ZuArray<PendingControl, Zquic::StreamType::N>
+			m_streamsBlockedControl =
+			  ZuArray<PendingControl, Zquic::StreamType::N>(
+			    Zquic::StreamType::N);
   PendingControl	m_handshakeDoneControl;
   PendingControl	m_pathChallengeControl;
   PathResponses		m_pathResponses{ZmQueueParams{}.initial(PathResponseMax)};
   NewCxnIDControls	m_newCxnIDControls{
     ZmQueueParams{}.initial(LocalCIDLimit)};
 
-  CryptoStream		m_txCrypto[PktNumSpace::N];
-  CryptoTxPQueue	m_txCryptoUnackd[PktNumSpace::N];
-  PktProtState		m_txProt[PktNumSpace::N];
+  ZuArray<CryptoStream, PktNumSpace::N>
+			m_txCrypto =
+			  ZuArray<CryptoStream, PktNumSpace::N>(
+			    PktNumSpace::N);
+  ZuArray<CryptoTxPQueue, PktNumSpace::N>
+			m_txCryptoUnackd =
+			  ZuArray<CryptoTxPQueue, PktNumSpace::N>(
+			    PktNumSpace::N);
+  ZuArray<PktProtState, PktNumSpace::N>
+			m_txProt =
+			  ZuArray<PktProtState, PktNumSpace::N>(
+			    PktNumSpace::N);
   PktProtState		m_txEarlyProt;
   TxEarlyData		m_txEarlyData;
   ZmRef<ZiIOBuf>	m_coalesceInitial;
@@ -9198,17 +9240,29 @@ private:
   LinkTxDiag		m_txDiag;
   NewReno		m_congestion;
   uint64_t		m_txRuntimeGen = 0;
-  uint64_t		m_txPN[PktNumSpace::N]{};
-  uint64_t		m_txLargestAckd[PktNumSpace::N]{};
-  PktTxSpace		m_txPkts[PktNumSpace::N];
-  AckSnapshot		m_txAck[PktNumSpace::N];
+  ZuArray<uint64_t, PktNumSpace::N>
+			m_txPN =
+			  fixedArray<uint64_t, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N>
+			m_txLargestAckd =
+			  fixedArray<uint64_t, PktNumSpace::N>();
+  ZuArray<PktTxSpace, PktNumSpace::N>
+			m_txPkts =
+			  ZuArray<PktTxSpace, PktNumSpace::N>(
+			    PktNumSpace::N);
+  ZuArray<AckSnapshot, PktNumSpace::N>
+			m_txAck =
+			  ZuArray<AckSnapshot, PktNumSpace::N>(
+			    PktNumSpace::N);
   ZuTime		m_txInitProbeOut;
   ZuTime		m_txHandshakeProbeOut;
   ZuTime		m_txAppProbeOut;
   Path			m_path;
   PathState		m_migration;
   uint64_t		m_nextMigrationAttemptID = 1;
-  bool			m_txSpaceDiscarded[PktNumSpace::N]{};
+  ZuArray<bool, PktNumSpace::N>
+			m_txSpaceDiscarded =
+			  fixedArray<bool, PktNumSpace::N>();
   bool			m_coalesceLong = false;
   bool			m_txKeyPhase = false;
   uint64_t		m_txKeyGeneration = 0;
