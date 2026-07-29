@@ -161,7 +161,8 @@ struct HuffmanDecode_ {
     fffe(1U << FFFEBits),
     ffff(1U << FFFFBits)
   {
-    for (auto &sym : huffman_) {
+    for (unsigned i = 0; i < huffman_.size(); ++i) {
+      const auto &sym = huffman_[i];
       if (sym.bits <= PrimaryBits) {
 	if (sym.symbol < 256)
 	  fillPrimary_(sym.code, sym.bits, sym.bits, sym.symbol);

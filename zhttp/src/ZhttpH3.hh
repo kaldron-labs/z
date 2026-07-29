@@ -663,7 +663,7 @@ private:
   template <unsigned I>
   bool staticHeader_(FieldState &fields, bool initial) {
     using KV = QPackKV<I>;
-    using Key = ZuType<0, KV>;
+    using Key = StaticKey<KV>;
     using Value = QPackValue<KV>;
     if constexpr (ZuIsSame<Value, void>{})
 	return qpackHeader_(fields, initial, Key{}(), "");

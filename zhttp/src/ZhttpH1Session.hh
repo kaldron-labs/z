@@ -75,7 +75,7 @@ struct Server {
       parser.reset();
       return rc;
     }
-    return 0;
+    return parser.progressed();
   }
 
   template <typename Link>

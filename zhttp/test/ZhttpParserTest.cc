@@ -519,7 +519,9 @@ void testInformationalThenFinalResponse()
     "HTTP/1.1 103 Early Hints\r\n"
     "Key: Value\r\n"
     "\r\n"));
-  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Headers,
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Initial,
+    "informational response restores the initial parser state");
+  ZuCHECK(parser.progressed(),
     "informational response reports progress without completion");
   ZuCHECK(parser.statusSeen == 103 && parser.statusCalls == 1 &&
       parser.completeCalls == 0 && !stream,

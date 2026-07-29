@@ -550,9 +550,9 @@ int decodeLiteralDynamic(
 
 // QPack static table compile-time lookup definition
 #define Zhttp_QPack_1(Key) \
-  ZuTypeList<ZuStringT<Key>, void>
+  StaticEntry<ZuStringT<Key>>
 #define Zhttp_QPack_2(Key, Value) \
-  ZuTypeList<ZuStringT<Key>, ZuStringT<Value>>
+  StaticEntry<ZuStringT<Key>, ZuStringT<Value>>
 #define Zhttp_QPack_N(_0, _1, Fn, ...) Fn
 #define Zhttp_QPack_(...) \
   Zhttp_QPack_N(__VA_ARGS__, \
@@ -671,13 +671,13 @@ using QPackStatic = StaticTable<QPackTbl>;
 // - use <Key, void> for entries which are Key only
 // - evaluates to -1 if <Key, Value> are not in table
 template <typename Key, typename Value,
-  bool = ZuTypeIn<ZuTypeList<Key, Value>, QPackTbl>{}>
+  bool = ZuTypeIn<StaticEntry<Key, Value>, QPackTbl>{}>
 struct QPackIndex_ {
   using T = ZuInt<-1>;
 };
 template <typename Key, typename Value>
 struct QPackIndex_<Key, Value, true> {
-  using T = ZuTypeIndex<ZuTypeList<Key, Value>, QPackTbl>;
+  using T = ZuTypeIndex<StaticEntry<Key, Value>, QPackTbl>;
 };
 template <typename Key, typename Value>
 using QPackIndex = typename QPackIndex_<Key, Value>::T;
@@ -685,7 +685,7 @@ using QPackIndex = typename QPackIndex_<Key, Value>::T;
 template <ZuString Key, ZuString Value>
 using QPackKVIndex = QPackIndex<ZuStringT<Key>, ZuStringT<Value>>;
 template <typename KV>
-using QPackKey = ZuType<0, KV>;
+using QPackKey = StaticKey<KV>;
 using QPackKeys = ZuTypeMap<QPackKey, QPackTbl>;
 template <typename Key, bool = ZuTypeIn<Key, QPackKeys>{}>
 struct QPackKeyIndex_ {
@@ -702,12 +702,8 @@ using QPackKeyIndex = typename QPackKeyIndex_<ZuStringT<Key>>::T;
 // - undefined if I is out of range
 template <unsigned I>
 using QPackKV = ZuType<I, QPackTbl>;
-template <typename KV, bool = (KV::N > 1)>
-struct QPackValue_ { using T = void; };
 template <typename KV>
-struct QPackValue_<KV, true> { using T = ZuType<1, KV>; };
-template <typename KV>
-using QPackValue = typename QPackValue_<KV>::T;
+using QPackValue = StaticValue<KV>;
 
 } // namespace H3
 

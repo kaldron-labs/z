@@ -32,8 +32,10 @@ struct Field {
   ZuCSpan	value;
 };
 
-#define Zhttp_HPack(Key, Value) \
-  ZuTypeList<ZuStringT<Key>, ZuStringT<Value>>
+#define Zhttp_HPack_(Key, Value) \
+  StaticEntry<ZuStringT<Key>, ZuStringT<Value>>
+#define Zhttp_HPack(KV) \
+  ZuPP_Defer(Zhttp_HPack_)(ZuPP_Strip(KV))
 #define ZhttpHPackTbl(...) \
   ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(Zhttp_HPack, __VA_ARGS__))>
 

@@ -32,10 +32,12 @@ template void streamContract<
 struct StreamState {
   ZmSemaphore		listening;
   ZmSemaphore		response;
+  ZmSemaphore		cleanEnd;
   ZmSemaphore		reset;
   ZmSemaphore		stopped;
   ZmAtomic<unsigned>	errors = 0;
   ZmAtomic<unsigned>	admissions = 0;
+  ZmAtomic<unsigned>	cleanEnds = 0;
   ZmAtomic<unsigned>	releases = 0;
   uint16_t		port = 0;
 };
@@ -197,6 +199,10 @@ struct StreamClientLink :
 void StreamClient::disconnected(Link &link, bool)
 {
   link.parser.final();
+  if (link.mode == StreamClientLink::Mode::Echo) {
+    ++state->cleanEnds;
+    state->cleanEnd.post();
+  }
 }
 
 void StreamClient::connected(
@@ -259,7 +265,6 @@ int StreamClient::process(
 	  link.parser.streamResets)
 	++state->errors;
       state->response.post();
-      link.disconnect();
       return 0;
     case Zhttp::H3::ParserState::Complete:
       if (link.mode != StreamClientLink::Mode::REST ||
@@ -501,7 +506,9 @@ void runStream(const Zhttp::Test::TempDir &temp)
     state.response.timedwait(Zm::now(10)) == 0 &&
     state.response.timedwait(Zm::now(10)) == 0 &&
     state.response.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(first && !state.errors && state.admissions == 1,
+  bool cleanEnd = state.cleanEnd.timedwait(Zm::now(10)) == 0;
+  ZuCHECK(first && cleanEnd && state.cleanEnds == 1 &&
+      !state.errors && state.admissions == 1,
     "H3 stream-credit queue preserves one shared QUIC session");
 
   ZmRef<StreamClientLink> reset = new StreamClientLink{&client};

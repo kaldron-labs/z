@@ -807,11 +807,17 @@ void testStream()
       [&dispatch, &result](auto &rx) { result = dispatch.process(rx); }) &&
       result == -1 && link.resets == 2,
     "negative stream result did not reset the logical stream");
+  unsigned calls = consumer.calls;
+  uint8_t rejectedByte = 'x';
+  ZuCHECK(!rejected.offer({&rejectedByte, 1}, false,
+      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
+      consumer.calls == calls && link.resets == 2,
+    "terminal stream dispatch admitted or reset a second callback");
   consumer.result = 1;
   rejected.cancel();
 
   dispatch.disable_();
-  unsigned calls = consumer.calls;
+  calls = consumer.calls;
   Zhttp::BodyRx disabled;
   ZuCHECK(disabled.start(
       [&dispatch](auto &rx) { dispatch.process(rx); }) &&

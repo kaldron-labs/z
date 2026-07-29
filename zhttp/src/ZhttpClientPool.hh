@@ -233,6 +233,10 @@ public:
     int process(Rx &rx) {
       return m_request ? message.process(rx) : -1;
     }
+    template <
+      typename Stream, typename Rx, int ID = Message::ID,
+      ZuIfT<ID == Version::H1, int> = 0>
+    int process(Stream, Rx &) { return -1; }
 
     void complete(bool ok) {
       if (!m_request || m_complete) return;

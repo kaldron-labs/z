@@ -181,7 +181,7 @@ public:
   template <typename Stream>
   State::T process(Stream &stream) {
     int64_t consumed = 0;
-    bool progressed = false;
+    m_progressed = false;
     do {
 	consumed = 0;
 	switch (m_state) {
@@ -318,7 +318,7 @@ public:
 	    });
 	  } break;
 	}
-	if (consumed > 0) progressed = true;
+	if (consumed > 0) m_progressed = true;
 	if (m_state == State::Complete ||
 	    m_state == State::Error) {
 	  if (m_state == State::Complete && !m_bodyRx.finish())
@@ -328,12 +328,10 @@ public:
 	  return state;
 	}
     } while (consumed);
-    // Initial is numerically zero, while native transport process callbacks
-    // use zero to mean that no Rx bytes were consumed.  An informational
-    // response can consume a complete section and return to Initial.
-    return progressed && m_state == State::Initial ?
-      State::Headers : m_state;
+    return m_state;
   }
+
+  bool progressed() const { return m_progressed; }
 
   // complete an EOF-framed response body when the connection closes
   State::T eof() {
@@ -358,6 +356,7 @@ public:
     m_contentLength = -1;
     m_chunkLength = -1;
     m_statusCode = 0;
+    m_progressed = false;
   }
 
   // CRTP defaults
@@ -392,6 +391,7 @@ private:
   State::T	m_state = State::Initial;
   bool	m_chunked = false;
   bool	m_eofBody = false;
+  bool	m_progressed = false;
 };
 
 // HTTP 1.1 non-chunked body Tx streaming

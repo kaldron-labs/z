@@ -123,7 +123,10 @@ public:
     if (!m_link || !m_consumer) return 0;
     auto link = m_link;
     int rc = m_consumer->process(Stream{*link}, rx);
-    if (rc < 0) Stream{*link}.reset();
+    if (rc < 0) {
+      m_link = nullptr;
+      Stream{*link}.reset();
+    }
     return rc;
   }
 

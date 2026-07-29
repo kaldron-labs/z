@@ -1,0 +1,439 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2026 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
+// Generic WebSocket engines over normalized Zhttp profiles
+
+#ifndef ZwsEngine_HH
+#define ZwsEngine_HH
+
+#ifndef ZwsLib_HH
+#include <zlib/ZwsLib.hh>
+#endif
+
+#include <zlib/ZwsExtended.hh>
+#include <zlib/ZwsH1Engine.hh>
+
+namespace Zws {
+
+template <typename Profile> struct ExtendedConfig;
+template <> struct ExtendedConfig<Zhttp::H2TLS> {
+  using T = Zhttp::H2Config;
+};
+template <> struct ExtendedConfig<Zhttp::H3QUIC> {
+  using T = Zhttp::QUICConfig;
+};
+
+template <typename App, typename Profile> class ExtendedClientLink;
+template <typename App, typename Profile> class ExtendedServerLink;
+
+template <typename App, typename Profile>
+class ExtendedClient :
+  public Zhttp::Client<ExtendedClient<App, Profile>, Profile> {
+  using Base = Zhttp::Client<ExtendedClient, Profile>;
+
+public:
+  static_assert(Zhttp::ProfileTraits<Profile>::Multiplexed);
+  using Link = ExtendedClientLink<App, Profile>;
+  using Config = typename ExtendedConfig<Profile>::T;
+
+  ExtendedClient(App *app) : m_app{app} { }
+
+  bool init(
+      const Zhttp::EngineConfig &engine, Config config,
+      Zws::Config wsConfig = {}) {
+    m_config = wsConfig;
+    config.extendedConnect(true);
+    return m_random.init() && Base::init(engine, config);
+  }
+
+  App *app() const { return m_app; }
+  Ztls::Random &random() { return m_random; }
+  const Zws::Config &wsConfig() const { return m_config; }
+
+  void connected(Link &link, Zhttp::ConnectedInfo info) {
+    link.open_(ZuMv(info));
+  }
+  template <typename Rx>
+  int process(Link &link, Rx &rx) { return link.handshake_(rx); }
+  void disconnected(Link &link, bool peer) {
+    link.down_(peer);
+  }
+  void connectFailed(Link &link, bool transient) {
+    H1_::connectFailed(*m_app, link, transient, 0);
+  }
+
+private:
+  App			*m_app;
+  Ztls::Random		m_random;
+  Zws::Config		m_config;
+};
+
+template <typename App, typename Profile>
+class ExtendedClientLink :
+  public Zhttp::ClientLink<
+    ExtendedClient<App, Profile>, ExtendedClientLink<App, Profile>, Profile>,
+  public Codec<
+    ExtendedClientLink<App, Profile>,
+    ExtendedClientLink<App, Profile>, false, Ztls::Random>,
+  public AppLinkState<App> {
+  using Engine = ExtendedClient<App, Profile>;
+  using HTTPBase =
+    Zhttp::ClientLink<Engine, ExtendedClientLink, Profile>;
+  using CodecBase =
+    Codec<ExtendedClientLink, ExtendedClientLink, false, Ztls::Random>;
+  using StateBase = AppLinkState<App>;
+
+public:
+  using RxLayer = typename CodecBase::RxLayer;
+  using CodecBase::txStream;
+  StateBase &state() { return *this; }
+  const StateBase &state() const { return *this; }
+
+  ExtendedClientLink(
+      Engine *engine, const URI &uri, ZuCSpan protocol = {}) :
+    HTTPBase{engine},
+    CodecBase{*this, engine->random(), engine->wsConfig()},
+    m_uri{uri}, m_protocol{protocol} { }
+
+  auto txStream() { return HTTPBase::txStream(); }
+
+  void open_(Zhttp::ConnectedInfo info) {
+    this->CodecBase::reopen_(*this);
+    m_down = false;
+    m_handshakeFailed = false;
+    m_info = ZuMv(info);
+    if (!Zhttp::Stream{*this}.peerCap()) {
+      H1_::error(*this->app()->app(), *this, Failure::Capability, 0);
+      this->disconnect();
+      return;
+    }
+    m_parser.bind(*this, m_protocol);
+    m_bound = true;
+    this->CodecBase::opening_();
+    Extended::Request<Profile> request{m_uri, m_protocol};
+    auto tx = this->transmit(request);
+    if (!request.request(tx)) {
+      H1_::error(*this->app()->app(), *this, Failure::Handshake, 0);
+      this->disconnect();
+    }
+  }
+
+  template <typename Rx>
+  int handshake_(Rx &rx) {
+    auto state = this->receive(m_parser, rx);
+    if (!m_parser.established() && (m_parser.invalid() ||
+	state == Extended::ClientParser<
+	  ExtendedClientLink, Profile>::State::Error)) {
+      failHandshake_();
+      return -1;
+    }
+    return 0;
+  }
+  void established_() {
+    if (m_up) return;
+    m_up = true;
+    this->CodecBase::up_();
+    H1_::connected(
+      *this->app()->app(), *this, ZuMv(m_info), 0);
+  }
+  void down_(bool peer) {
+    if (m_down) return;
+    m_down = true;
+    m_up = false;
+    if (m_bound) {
+      m_parser.disable_();
+    }
+    this->CodecBase::disable_();
+    this->app()->rxRun([link = ZmMkRef(this), peer]() mutable {
+      if (link->m_bound) {
+	link->m_parser.final_();
+	link->m_bound = false;
+      }
+      link->CodecBase::final_();
+      auto app = link->app();
+      app->txRun([link = ZuMv(link), peer]() mutable {
+	auto app = link->app();
+	app->rxRun([link = ZuMv(link), peer]() mutable {
+	  auto app = link->app();
+	  H1_::disconnected(*app->app(), *link, peer, 0);
+	});
+      });
+    });
+  }
+
+  template <typename Rx>
+  int process(Zhttp::Stream<ExtendedClientLink> stream, Rx &rx) {
+    return CodecBase::process(ZuMv(stream), rx);
+  }
+  int message(RxLayer &rx) {
+    return H1_::process(*this->app()->app(), *this, rx, 0);
+  }
+  void pong(ZuBSpan payload) {
+    H1_::pong(*this->app()->app(), *this, payload, 0);
+  }
+  void closed(uint16_t code, ZuBSpan reason) {
+    H1_::closed(*this->app()->app(), *this, code, reason, 0);
+  }
+  void error(Failure::T failure) {
+    H1_::error(*this->app()->app(), *this, failure, 0);
+  }
+  ZuCSpan protocol() const { return m_parser.selected(); }
+
+private:
+  void failHandshake_() {
+    if (m_handshakeFailed) return;
+    m_handshakeFailed = true;
+    H1_::error(
+      *this->app()->app(), *this, Failure::Handshake, 0);
+  }
+
+  Extended::ClientParser<ExtendedClientLink, Profile>	m_parser;
+  URI							m_uri;
+  HandshakeString					m_protocol;
+  Zhttp::ConnectedInfo					m_info;
+  bool							m_bound = false;
+  bool							m_up = false;
+  bool							m_down = false;
+  bool							m_handshakeFailed = false;
+};
+
+template <typename Link>
+struct ExtendedServerSession {
+  template <typename Link_>
+  void connected(Link_ &link) { link.open_(); }
+  template <typename Link_>
+  void disconnected(Link_ &, bool) { }
+  template <typename Link_, typename Rx>
+  int process(Link_ &link, Rx &rx) { return link.handshake_(rx); }
+};
+
+template <typename App, typename Profile>
+class ExtendedServer :
+  public Zhttp::Server<ExtendedServer<App, Profile>, Profile> {
+  using Base = Zhttp::Server<ExtendedServer, Profile>;
+
+public:
+  static_assert(Zhttp::ProfileTraits<Profile>::Multiplexed);
+  using Link = ExtendedServerLink<App, Profile>;
+  using Config = typename ExtendedConfig<Profile>::T;
+
+  ExtendedServer(App *app, ZiIP localIP, unsigned localPort) :
+    m_app{app}, m_localIP{ZuMv(localIP)}, m_localPort{localPort} { }
+
+  bool init(
+      const Zhttp::EngineConfig &engine, Config config,
+      Zws::Config wsConfig = {}) {
+    m_config = wsConfig;
+    config.extendedConnect(true);
+    return m_random.init() && Base::init(engine, config);
+  }
+
+  App *app() const { return m_app; }
+  Ztls::Random &random() { return m_random; }
+  const Zws::Config &wsConfig() const { return m_config; }
+  ZiIP localIP() const { return m_localIP; }
+  unsigned localPort() const { return m_localPort; }
+
+  void listening(const ZiListenInfo &info) {
+    H1_::listening(*m_app, info, 0);
+  }
+  void listening() { H1_::listening(*m_app, 0); }
+  void listenFailed(bool transient) {
+    H1_::listenFailed(*m_app, transient, 0);
+  }
+  bool admit(const auto &) { return true; }
+  void release() { }
+  void connected(Link &link, Zhttp::ConnectedInfo info) {
+    link.info_(ZuMv(info));
+  }
+  void disconnected(Link &link, bool peer) {
+    link.down_(peer);
+  }
+
+private:
+  App			*m_app;
+  Ztls::Random		m_random;
+  Zws::Config		m_config;
+  ZiIP			m_localIP;
+  unsigned		m_localPort;
+};
+
+template <typename App, typename Profile>
+class ExtendedServerLink :
+  public Zhttp::ServerLink<
+    ExtendedServer<App, Profile>, ExtendedServerLink<App, Profile>,
+    Profile, ExtendedServerSession<ExtendedServerLink<App, Profile>>>,
+  public Codec<
+    ExtendedServerLink<App, Profile>,
+    ExtendedServerLink<App, Profile>, true, Ztls::Random>,
+  public AppLinkState<App> {
+  using Engine = ExtendedServer<App, Profile>;
+  using Session = ExtendedServerSession<ExtendedServerLink>;
+  using HTTPBase =
+    Zhttp::ServerLink<Engine, ExtendedServerLink, Profile, Session>;
+  using CodecBase =
+    Codec<ExtendedServerLink, ExtendedServerLink, true, Ztls::Random>;
+  using StateBase = AppLinkState<App>;
+
+public:
+  using RxLayer = typename CodecBase::RxLayer;
+  using CodecBase::txStream;
+  StateBase &state() { return *this; }
+  const StateBase &state() const { return *this; }
+
+  template <typename ...Args>
+  ExtendedServerLink(Engine *engine, Args &&...args) :
+    HTTPBase{engine, ZuFwd<Args>(args)...},
+    CodecBase{*this, engine->random(), engine->wsConfig()} { }
+
+  auto txStream() { return HTTPBase::txStream(); }
+
+  void open_() {
+    this->CodecBase::reopen_(*this);
+    m_protocol.length(0);
+    m_info = {};
+    m_down = false;
+    m_handshakeFailed = false;
+    m_parser.bind(*this);
+    m_bound = true;
+    this->CodecBase::opening_();
+  }
+  void down_(bool peer) {
+    if (m_down) return;
+    m_down = true;
+    m_up = false;
+    if (m_bound) {
+      m_parser.disable_();
+    }
+    this->CodecBase::disable_();
+    this->app()->rxRun([link = ZmMkRef(this), peer]() mutable {
+      if (link->m_bound) {
+	link->m_parser.final_();
+	link->m_bound = false;
+      }
+      link->CodecBase::final_();
+      auto app = link->app();
+      app->txRun([link = ZuMv(link), peer]() mutable {
+	auto app = link->app();
+	app->rxRun([link = ZuMv(link), peer]() mutable {
+	  auto app = link->app();
+	  H1_::disconnected(*app->app(), *link, peer, 0);
+	});
+      });
+    });
+  }
+
+  template <typename Rx>
+  int handshake_(Rx &rx) {
+    auto state = this->receive(m_parser, rx);
+    if (!m_parser.established() && (m_parser.invalid() ||
+	state == Extended::ServerParser<
+	  ExtendedServerLink, Profile>::State::Error))
+      return -1;
+    return 0;
+  }
+  bool accept_(
+      ZuCSpan host, ZuCSpan target, ZuCSpan offered,
+      HandshakeString &selected) {
+    return H1_::accept(
+      *this->app()->app(), *this,
+      host, target, offered, selected, 0);
+  }
+  void respond_(ZuCSpan selected) {
+    m_protocol = selected;
+    Extended::Response<Profile> response{m_protocol};
+    auto tx = this->transmit(response);
+    response.response(tx);
+  }
+  void reject_() {
+    if (!m_handshakeFailed) {
+      m_handshakeFailed = true;
+      H1_::error(
+	*this->app()->app(), *this, Failure::Handshake, 0);
+    }
+    Extended::ErrorResponse<Profile> response;
+    auto tx = this->transmit(response);
+    response.response(tx);
+    this->finish();
+  }
+  void established_() {
+    if (m_up) return;
+    m_up = true;
+    this->CodecBase::up_();
+    H1_::connected(
+      *this->app()->app(), *this, ZuMv(m_info), 0);
+  }
+
+  template <typename Rx>
+  int process(Zhttp::Stream<ExtendedServerLink> stream, Rx &rx) {
+    return CodecBase::process(ZuMv(stream), rx);
+  }
+  int message(RxLayer &rx) {
+    return H1_::process(*this->app()->app(), *this, rx, 0);
+  }
+  void pong(ZuBSpan payload) {
+    H1_::pong(*this->app()->app(), *this, payload, 0);
+  }
+  void closed(uint16_t code, ZuBSpan reason) {
+    H1_::closed(*this->app()->app(), *this, code, reason, 0);
+  }
+  void error(Failure::T failure) {
+    H1_::error(*this->app()->app(), *this, failure, 0);
+  }
+  ZuCSpan protocol() const { return m_protocol; }
+  void info_(Zhttp::ConnectedInfo info) { m_info = ZuMv(info); }
+
+private:
+  Extended::ServerParser<ExtendedServerLink, Profile>	m_parser;
+  HandshakeString					m_protocol;
+  Zhttp::ConnectedInfo					m_info;
+  bool							m_bound = false;
+  bool							m_up = false;
+  bool							m_down = false;
+  bool							m_handshakeFailed = false;
+};
+
+template <
+  typename App, typename Profile,
+  bool Multiplexed = Zhttp::ProfileTraits<Profile>::Multiplexed>
+class Client;
+
+template <typename App, typename Profile>
+class Client<App, Profile, false> : public H1Client<App, Profile> {
+  using Base = H1Client<App, Profile>;
+public:
+  using Base::Base;
+};
+
+template <typename App, typename Profile>
+class Client<App, Profile, true> : public ExtendedClient<App, Profile> {
+  using Base = ExtendedClient<App, Profile>;
+public:
+  using Base::Base;
+};
+
+template <
+  typename App, typename Profile,
+  bool Multiplexed = Zhttp::ProfileTraits<Profile>::Multiplexed>
+class Server;
+
+template <typename App, typename Profile>
+class Server<App, Profile, false> : public H1Server<App, Profile> {
+  using Base = H1Server<App, Profile>;
+public:
+  using Base::Base;
+};
+
+template <typename App, typename Profile>
+class Server<App, Profile, true> : public ExtendedServer<App, Profile> {
+  using Base = ExtendedServer<App, Profile>;
+public:
+  using Base::Base;
+};
+
+} // namespace Zws
+
+#endif /* ZwsEngine_HH */

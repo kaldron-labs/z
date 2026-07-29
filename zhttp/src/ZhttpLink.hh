@@ -44,7 +44,7 @@ class ClientLink :
   using Traits = typename HTTP::Transport;
   using Base = typename Traits::template ClientLink<App, Impl>;
   using StreamBinding =
-    H1::StreamBinding<Impl, ClientLink, typename Traits::RxStream>;
+    H1::StreamBinding<Impl, Impl, typename Traits::RxStream>;
 
 public:
   using Base::Base;
@@ -97,12 +97,14 @@ public:
     if (m_stream.stream()) return m_stream.process(rx);
     if (m_stream.terminal()) return 0;
     int rc = this->app()->process(*impl(), rx);
-    return m_stream.stream() ? m_stream.process(rx) : rc;
+    if (!m_stream.stream()) return rc;
+    int streamRC = m_stream.process(rx);
+    return streamRC ? streamRC : rc;
   }
   bool streamEnable(bool enabled = true) {
     return m_stream.enable(enabled);
   }
-  bool streamAccept() { return m_stream.accept(*impl(), *this); }
+  bool streamAccept() { return m_stream.accept(*impl(), *impl()); }
   bool streamLocalCap() const { return m_stream.localCap(); }
   bool streamPeerCap() const { return m_stream.peerCap(); }
   template <typename L>
@@ -114,11 +116,13 @@ public:
   void streamTxEnd() {
     if (!m_stream.end()) return;
     this->app()->txRun([link = ZmMkRef(impl())]() mutable {
-      auto app = link->app();
-      app->rxRun([link = ZuMv(link)]() mutable {
-	Traits::disconnect(*link);
-      });
+      link->streamTxEnd_();
     });
+  }
+  void sent(ZmRef<ZiTxBuf>, bool ok) {
+    if (!m_streamEnd || (ok && this->txQueue.count_())) return;
+    m_streamEnd = false;
+    streamTxClose_();
   }
   void streamTxReset() {
     if (m_stream.reset()) this->disconnect();
@@ -143,10 +147,25 @@ public:
   void responseBodyBytes(State *) { }
 
 private:
+  void streamTxEnd_() {
+    if (this->txQueue.count_()) {
+      m_streamEnd = true;
+      return;
+    }
+    streamTxClose_();
+  }
+  void streamTxClose_() {
+    auto app = this->app();
+    app->rxRun([link = ZmMkRef(impl())]() mutable {
+      Traits::disconnect(*link);
+    });
+  }
+
   StreamBinding	m_stream;
-  bool	m_connected = false;
-  bool	m_failed = false;
-  bool	m_cancelled = false;
+  bool		m_connected = false;
+  bool		m_failed = false;
+  bool		m_cancelled = false;
+  bool		m_streamEnd = false;	// Tx-owned
 };
 
 template <
@@ -157,7 +176,7 @@ class ServerLink :
   using Traits = typename HTTP::Transport;
   using Base = typename Traits::template ServerLink<App, Impl>;
   using StreamBinding =
-    H1::StreamBinding<Impl, ServerLink, typename Traits::RxStream>;
+    H1::StreamBinding<Impl, Impl, typename Traits::RxStream>;
 
 public:
   enum { TLS = Traits::Secure, Multiplexed = HTTP::Multiplexed };
@@ -205,14 +224,17 @@ public:
     if (m_stream.stream()) return m_stream.process(rx);
     if (m_stream.terminal()) return 0;
     int rc = m_session.process(*impl(), rx);
-    if (m_stream.stream()) rc = m_stream.process(rx);
+    if (m_stream.stream()) {
+      int streamRC = m_stream.process(rx);
+      if (streamRC) rc = streamRC;
+    }
     if (rc >= 0) touch();
     return rc;
   }
   bool streamEnable(bool enabled = true) {
     return m_stream.enable(enabled);
   }
-  bool streamAccept() { return m_stream.accept(*impl(), *this); }
+  bool streamAccept() { return m_stream.accept(*impl(), *impl()); }
   bool streamLocalCap() const { return m_stream.localCap(); }
   bool streamPeerCap() const { return m_stream.peerCap(); }
   template <typename L>
@@ -224,11 +246,13 @@ public:
   void streamTxEnd() {
     if (!m_stream.end()) return;
     this->app()->txRun([link = ZmMkRef(impl())]() mutable {
-      auto app = link->app();
-      app->rxRun([link = ZuMv(link)]() mutable {
-	Traits::disconnect(*link);
-      });
+      link->streamTxEnd_();
     });
+  }
+  void sent(ZmRef<ZiTxBuf>, bool ok) {
+    if (!m_streamEnd || (ok && this->txQueue.count_())) return;
+    m_streamEnd = false;
+    streamTxClose_();
   }
   void streamTxReset() {
     if (m_stream.reset()) this->disconnect();
@@ -258,12 +282,27 @@ public:
   }
 
 private:
+  void streamTxEnd_() {
+    if (this->txQueue.count_()) {
+      m_streamEnd = true;
+      return;
+    }
+    streamTxClose_();
+  }
+  void streamTxClose_() {
+    auto app = this->app();
+    app->rxRun([link = ZmMkRef(impl())]() mutable {
+      Traits::disconnect(*link);
+    });
+  }
+
   Session		m_session;
   ZmScheduler::Timer	m_idleTimer;
   StreamBinding		m_stream;
   EndpointString	m_remote;
   bool			m_counted = true;
   bool			m_disconnected = false;
+  bool			m_streamEnd = false;	// Tx-owned
 };
 
 } // namespace Zhttp
