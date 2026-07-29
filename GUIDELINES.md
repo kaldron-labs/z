@@ -131,6 +131,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: declarations nested inside templates, that do not depend on template parameters
   Problem: bloats debug info and linker symbol space with template noise
   Fix: move these declarations out of the enclosing template
+- Red Flag: invariant function call in a loop conditional
+  Problem: inefficient repeated calling of a function that returns an invariant value
+  Fix: use a local variable to cache the value before the loop
 
 ### Storage and capacity
 - Red Flag: hard-coded capacities such as `16`.
