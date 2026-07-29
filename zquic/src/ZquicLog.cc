@@ -1911,12 +1911,9 @@ struct QLogParamsDataJSON {
 template <typename S>
 static void qlogJSONVersion_(S &s, uint32_t version)
 {
-  static constexpr char hex[] = "0123456789abcdef";
-
-  s << '"';
-  for (int i = 28; i >= 0; i -= 4)
-    s << hex[(version >> i) & 0x0f];
-  s << '"';
+  s << '"' <<
+    ZuBoxed(version).hex<false, ZuFmt::Right<8, '0'>>() <<
+    '"';
 }
 
 template <typename S>

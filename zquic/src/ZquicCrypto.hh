@@ -408,6 +408,7 @@ public:
   bool completeHandshake();
   bool initTLS(const CryptoConfig &);
   void resetTLS() { resetTLS_(); }
+  // Raw pointer-decayed offsets preserve the picotls C callback ABI.
   int handleTLSMessage(
     ZiIOBuf *, size_t[5], size_t, ZuBSpan);
 
