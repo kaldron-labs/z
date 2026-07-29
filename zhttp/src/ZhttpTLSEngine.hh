@@ -13,6 +13,8 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZuMatcher.hh>
+
 #include <zlib/Ztls.hh>
 
 #include <zlib/ZhttpConfig.hh>
@@ -80,11 +82,15 @@ inline Ztls::ServerParams serverParams(
 
 inline int8_t version(ZuCSpan alpn, int8_t policy)
 {
-  if (alpn == "h2")
-    return policy != H2Policy::Disable ? Version::H2 : int8_t(-1);
-  if (alpn == "http/1.1")
-    return policy != H2Policy::Force ? Version::H1 : int8_t(-1);
-  return -1;
+  static constexpr auto matcher = ZuMatcher<"h2", "http/1.1">();
+  switch (matcher.exact(alpn)) {
+    case 0:
+      return policy != H2Policy::Disable ? Version::H2 : int8_t(-1);
+    case 1:
+      return policy != H2Policy::Force ? Version::H1 : int8_t(-1);
+    default:
+      return -1;
+  }
 }
 
 } // namespace TLS_

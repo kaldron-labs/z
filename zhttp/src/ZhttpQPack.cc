@@ -364,40 +364,15 @@ int QPack::decodeString(
 
 bool QPack::staticNameIndex(ZuCSpan name, uint64_t &index)
 {
-  bool ok = false;
-  unsigned i = 0;
-  ZuUnroll::all<QPackTbl>([&ok, &name, &index, i]<typename KV>() mutable {
-    if (!ok) {
-      using Key = ZuType<0, KV>;
-      if (Key{}() == name) {
-	index = i;
-	ok = true;
-      }
-    }
-    ++i;
-  });
-  return ok;
+  int i = QPackStatic::nameIndex(name);
+  if (i < 0) return false;
+  index = unsigned(i);
+  return true;
 }
 
 int QPack::staticIndex(ZuCSpan name, ZuCSpan value)
 {
-  int index = -1;
-  unsigned i = 0;
-  ZuUnroll::all<QPackTbl>(
-      [&index, &name, &value, i]<typename KV>() mutable {
-    if (index < 0) {
-      using Key = ZuType<0, KV>;
-      using Value = QPackValue<KV>;
-      if (Key{}() == name) {
-	if constexpr (ZuIsSame<Value, void>{}) {
-	  if (!value.length()) index = int(i);
-	} else if (Value{}() == value)
-	  index = int(i);
-      }
-    }
-    ++i;
-  });
-  return index;
+  return QPackStatic::index(name, value);
 }
 
 bool QPack::staticField(uint64_t index, Header &field)

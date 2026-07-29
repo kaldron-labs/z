@@ -342,6 +342,10 @@ private:
 
 using ClosedStreams =
   ZtArray<uint32_t, ZtArrayHeapID<"Zhttp.H2">>;
+using ClosedStreamSet = ZmHashKV<
+  uint32_t, bool,
+  ZmHashLock<ZmNoLock,
+    ZmHashHeapID<"Zhttp.H2.ClosedStreams">>>;
 
 class Session {
 public:
@@ -415,9 +419,7 @@ public:
   }
 
   bool recentlyClosed(uint32_t id) const {
-    for (unsigned i = 0; i < m_recent.length(); ++i)
-      if (m_recent[i] == id) return true;
-    return false;
+    return m_recentSet->find(id);
   }
   bool closed(uint32_t id) const {
     if (!id || m_streams.find(id)) return false;
@@ -454,6 +456,8 @@ public:
   void final() {
     m_streams.final();
     m_recent.length(0);
+    m_recentSet->clean();
+    m_recentHead = 0;
     m_nextLocal = 1;
     m_lastPeer = 0;
     m_localCount = 0;
@@ -464,12 +468,20 @@ public:
 private:
   void recent_(uint32_t id) {
     if (!m_recentMax) return;
-    if (m_recent.length() == m_recentMax) m_recent.shift(1);
-    m_recent.push(id);
+    if (m_recentSet->find(id)) return;
+    if (m_recent.length() < m_recentMax) {
+      m_recent.push(id);
+    } else {
+      m_recentSet->del(m_recent[m_recentHead]);
+      m_recent[m_recentHead] = id;
+      if (++m_recentHead == m_recent.length()) m_recentHead = 0;
+    }
+    m_recentSet->add(id, true);
   }
 
   StreamRegistry	m_streams;
   ClosedStreams		m_recent;
+  ZmRef<ClosedStreamSet> m_recentSet{new ClosedStreamSet};
   uint32_t		m_nextLocal = 1;
   uint32_t		m_lastPeer = 0;
   uint32_t		m_localMax = 0;
@@ -481,6 +493,7 @@ private:
   uint32_t		m_pending = 0;
   uint32_t		m_localRxWindow = DefltWindow;
   uint32_t		m_peerInitialWindow = DefltWindow;
+  unsigned		m_recentHead = 0;
   unsigned		m_recentMax = 0;
   bool			m_server = false;
 };

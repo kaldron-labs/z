@@ -126,9 +126,10 @@ public:
     if (name[0] == ':')
       return pseudo_(name, value, ZuFwd<Header>(header));
     m_regular = true;
-    if (name == "connection" || name == "proxy-connection" ||
-	name == "keep-alive" || name == "transfer-encoding" ||
-	name == "upgrade")
+    static constexpr auto forbidden = ZuMatcher<
+      "connection", "proxy-connection", "keep-alive",
+      "transfer-encoding", "upgrade">();
+    if (forbidden.exact(name) >= 0)
       return false;
     if (m_trailers && name == "content-length") return false;
     if (name == "te" && value != "trailers") return false;
@@ -204,7 +205,8 @@ private:
 	  m_path = value;
 	  return true;
 	case 2:
-	  return value == "http" || value == "https";
+	  static constexpr auto schemes = ZuMatcher<"http", "https">();
+	  return schemes.exact(value) >= 0;
 	case 3:
 	  if (!value) return false;
 	  header(ZuBSpan{"host"}, ZuBSpan{value});

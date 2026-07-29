@@ -11,6 +11,7 @@
 
 #include <iostream>
 
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZfCLI.hh>
@@ -342,48 +343,22 @@ ZuCSpan caseMigrationLocal(const Case &c)
 
 bool parsePair(ZuCSpan name, Pair::T &pair)
 {
-  if (name == "zhttp-caddy") {
-    pair = Pair::ZhttpCaddy;
-    return true;
-  }
-  if (name == "zhttp-zhttpd") {
-    pair = Pair::ZhttpZhttpd;
-    return true;
-  }
-  if (name == "curl-caddy") {
-    pair = Pair::CurlCaddy;
-    return true;
-  }
-  if (name == "curl-zhttpd") {
-    pair = Pair::CurlZhttpd;
-    return true;
-  }
-  return false;
+  static constexpr auto matcher = ZuMatcher<
+    "zhttp-caddy", "zhttp-zhttpd", "curl-caddy", "curl-zhttpd">();
+  int i = matcher.exact(name);
+  if (i < 0) return false;
+  pair = Pair::T(i);
+  return true;
 }
 
 bool parseProto(ZuCSpan name, Proto::T &proto)
 {
-  if (name == "h1-tcp") {
-    proto = Proto::H1TCP;
-    return true;
-  }
-  if (name == "h1-tls") {
-    proto = Proto::H1TLS;
-    return true;
-  }
-  if (name == "h2-tls") {
-    proto = Proto::H2TLS;
-    return true;
-  }
-  if (name == "h3") {
-    proto = Proto::H3;
-    return true;
-  }
-  if (name == "h3-prefer") {
-    proto = Proto::H3Prefer;
-    return true;
-  }
-  return false;
+  static constexpr auto matcher =
+    ZuMatcher<"h1-tcp", "h1-tls", "h2-tls", "h3", "h3-prefer">();
+  int i = matcher.exact(name);
+  if (i < 0) return false;
+  proto = Proto::T(i);
+  return true;
 }
 
 bool parseScenario(ZuCSpan name, Scenario::T &scenario)
@@ -392,31 +367,13 @@ bool parseScenario(ZuCSpan name, Scenario::T &scenario)
     scenario = Scenario::Default;
     return true;
   }
-  if (name == "mig-headers") {
-    scenario = Scenario::MigrateHeaders;
-    return true;
-  }
-  if (name == "mig-bytes") {
-    scenario = Scenario::MigrateBytes;
-    return true;
-  }
-  if (name == "mig-drop") {
-    scenario = Scenario::MigrateDrop;
-    return true;
-  }
-  if (name == "mig-caddy") {
-    scenario = Scenario::MigrateCaddy;
-    return true;
-  }
-  if (name == "mig-curl") {
-    scenario = Scenario::MigrateCurl;
-    return true;
-  }
-  if (name == "put") {
-    scenario = Scenario::Put;
-    return true;
-  }
-  return false;
+  static constexpr auto matcher = ZuMatcher<
+    "mig-headers", "mig-bytes", "mig-drop", "mig-caddy", "mig-curl",
+    "put">();
+  int i = matcher.exact(name);
+  if (i < 0) return false;
+  scenario = Scenario::T(i + 1);
+  return true;
 }
 
 int findChar(ZuCSpan s, char c, unsigned off = 0)

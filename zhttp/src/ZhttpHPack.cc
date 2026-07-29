@@ -8,32 +8,7 @@
 
 namespace Zhttp { namespace H2 {
 
-static constexpr const char *hpackStatic_[][2] = {
-  {":authority", ""}, {":method", "GET"}, {":method", "POST"},
-  {":path", "/"}, {":path", "/index.html"}, {":scheme", "http"},
-  {":scheme", "https"}, {":status", "200"}, {":status", "204"},
-  {":status", "206"}, {":status", "304"}, {":status", "400"},
-  {":status", "404"}, {":status", "500"}, {"accept-charset", ""},
-  {"accept-encoding", "gzip, deflate"}, {"accept-language", ""},
-  {"accept-ranges", ""}, {"accept", ""},
-  {"access-control-allow-origin", ""}, {"age", ""}, {"allow", ""},
-  {"authorization", ""}, {"cache-control", ""},
-  {"content-disposition", ""}, {"content-encoding", ""},
-  {"content-language", ""}, {"content-length", ""},
-  {"content-location", ""}, {"content-range", ""},
-  {"content-type", ""}, {"cookie", ""}, {"date", ""}, {"etag", ""},
-  {"expect", ""}, {"expires", ""}, {"from", ""}, {"host", ""},
-  {"if-match", ""}, {"if-modified-since", ""}, {"if-none-match", ""},
-  {"if-range", ""}, {"if-unmodified-since", ""}, {"last-modified", ""},
-  {"link", ""}, {"location", ""}, {"max-forwards", ""},
-  {"proxy-authenticate", ""}, {"proxy-authorization", ""},
-  {"range", ""}, {"referer", ""}, {"refresh", ""}, {"retry-after", ""},
-  {"server", ""}, {"set-cookie", ""}, {"strict-transport-security", ""},
-  {"transfer-encoding", ""}, {"user-agent", ""}, {"vary", ""},
-  {"via", ""}, {"www-authenticate", ""}
-};
-
-static_assert(sizeof(hpackStatic_) / sizeof(hpackStatic_[0]) == 61);
+static_assert(HPackTbl::N == 61);
 
 static uint32_t entrySize_(ZuCSpan name, ZuCSpan value)
 {
@@ -105,25 +80,26 @@ void HPackTable::compact_()
 
 bool HPack::staticField(uint64_t index, Field &field)
 {
-  if (!index || index > 61) return false;
-  auto &entry = hpackStatic_[index - 1];
-  field = {entry[0], entry[1]};
+  if (!index || index > HPackTbl::N) return false;
+  ZuSwitch::dispatch<HPackTbl::N>(unsigned(index - 1), [&field](auto i) {
+    using KV = ZuType<i, HPackTbl>;
+    using Key = StaticKey<KV>;
+    using Value = StaticValue<KV>;
+    field = {Key{}(), Value{}()};
+  });
   return true;
 }
 
 int HPack::staticIndex(ZuCSpan name, ZuCSpan value)
 {
-  for (unsigned i = 0; i < 61; ++i)
-    if (name == hpackStatic_[i][0] && value == hpackStatic_[i][1])
-      return int(i + 1);
-  return -1;
+  int index = HPackStatic::index(name, value);
+  return index < 0 ? -1 : index + 1;
 }
 
 int HPack::staticNameIndex(ZuCSpan name)
 {
-  for (unsigned i = 0; i < 61; ++i)
-    if (name == hpackStatic_[i][0]) return int(i + 1);
-  return -1;
+  int index = HPackStatic::nameIndex(name);
+  return index < 0 ? -1 : index + 1;
 }
 
 bool HPackDecoder::init(uint32_t capacity, uint64_t maxHeaderListSize)
@@ -289,9 +265,6 @@ bool HPackEncoder::init(uint32_t capacity)
   final();
   m_maxCapacity = capacity;
   if (!m_table.capacity(capacity)) return false;
-  neverIndex("authorization");
-  neverIndex("cookie");
-  neverIndex("set-cookie");
   return true;
 }
 
@@ -303,20 +276,34 @@ void HPackEncoder::final()
 {
   m_table.reset();
   m_table.capacity(0);
-  m_neverIndex.length(0);
+  detachNeverIndex_();
+  m_neverIndex->clean();
   m_maxCapacity = 0;
 }
 
 void HPackEncoder::neverIndex(ZuCSpan name)
 {
-  if (!neverIndexed(name)) new (m_neverIndex.push()) HPackString{name};
+  if (!m_neverIndex->find(name)) {
+    detachNeverIndex_();
+    m_neverIndex->add(HPackString{name}, true);
+  }
 }
 
 bool HPackEncoder::neverIndexed(ZuCSpan name) const
 {
-  for (unsigned i = 0; i < m_neverIndex.length(); ++i)
-    if (m_neverIndex[i] == name) return true;
-  return false;
+  static constexpr auto matcher =
+    ZuMatcher<"authorization", "cookie", "set-cookie">();
+  if (matcher.exact(name) >= 0) return true;
+  return m_neverIndex->find(name);
+}
+
+void HPackEncoder::detachNeverIndex_()
+{
+  if (m_neverIndex->refCount() <= 1) return;
+  ZmRef<HPackNameSet> copy{new HPackNameSet};
+  auto i = m_neverIndex->iter();
+  while (auto entry = i()) copy->add(entry->key(), true);
+  m_neverIndex = ZuMv(copy);
 }
 
 }} // namespace Zhttp::H2
