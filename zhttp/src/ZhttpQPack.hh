@@ -16,6 +16,7 @@
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuString.hh>
 
+#include <zlib/ZmHash.hh>
 #include <zlib/ZmLHash.hh>
 
 #include <zlib/ZtArray.hh>
@@ -26,6 +27,7 @@
 #include <zlib/ZiAssert.hh>
 
 #include <zlib/ZhttpCompression.hh>
+#include <zlib/ZhttpStaticTable.hh>
 
 namespace Zhttp {
 
@@ -76,11 +78,17 @@ struct EncodedFieldSectionPrefix {
 
 using Headers = ZtArray<Header, ZtArrayHeapID<"Zhttp.H3.Headers">>;
 using HeaderName = ZtString<ZtStringHeapID<"Zhttp.H3.HeaderName">>;
-using QPackNameList =
-  ZtArray<HeaderName, ZtArrayHeapID<"Zhttp.H3.Params.Names">>;
+using QPackNameSet = ZmHashKV<
+  HeaderName, bool,
+  ZmHashLock<ZmNoLock,
+    ZmHashHeapID<"Zhttp.H3.Params.Names">>>;
 
 class Params {
 public:
+  Params() :
+    index_{new QPackNameSet},
+    neverIndex_{new QPackNameSet} { }
+
   Params &&maxHeaderListSize(unsigned v) {
     maxHeaderListSize_ = v;
     return ZuMv(*this);
@@ -94,26 +102,30 @@ public:
     return ZuMv(*this);
   }
   Params &&qpackIndex(ZuCSpan name) {
-    new (index_.push()) HeaderName{headerName_(name)};
+    name = headerName_(name);
+    if (!index_->find(name)) {
+      detach_(index_);
+      index_->add(HeaderName{name}, true);
+    }
     return ZuMv(*this);
   }
   Params &&qpackNeverIndex(ZuCSpan name) {
-    new (neverIndex_.push()) HeaderName{headerName_(name)};
+    name = headerName_(name);
+    if (!neverIndex_->find(name)) {
+      detach_(neverIndex_);
+      neverIndex_->add(HeaderName{name}, true);
+    }
     return ZuMv(*this);
   }
 
   bool indexAllowed(ZuCSpan name) const {
-    for (unsigned i = 0; i < neverIndex_.length(); ++i)
-      if (neverIndex_[i] == name) return false;
-    for (unsigned i = 0; i < index_.length(); ++i)
-      if (index_[i] == name) return true;
-    return false;
+    return !neverIndex_->find(name) && index_->find(name);
   }
   bool neverIndex(ZuCSpan name) const {
-    for (unsigned i = 0; i < neverIndex_.length(); ++i)
-      if (neverIndex_[i] == name) return true;
-    return name == "authorization" || name == "cookie" ||
-      name == "set-cookie";
+    if (neverIndex_->find(name)) return true;
+    static constexpr auto matcher =
+      ZuMatcher<"authorization", "cookie", "set-cookie">();
+    return matcher.exact(name) >= 0;
   }
 
   unsigned maxHeaderListSize() const { return maxHeaderListSize_; }
@@ -121,6 +133,14 @@ public:
   unsigned qpackBlockedStreams() const { return qpackBlockedStreams_; }
 
 private:
+  static void detach_(ZmRef<QPackNameSet> &set) {
+    if (set->refCount() <= 1) return;
+    ZmRef<QPackNameSet> copy{new QPackNameSet};
+    auto i = set->iter();
+    while (auto entry = i()) copy->add(entry->key(), true);
+    set = ZuMv(copy);
+  }
+
   static ZuCSpan headerName_(ZuCSpan name) {
     for (unsigned i = 0; i < name.length(); ++i)
       if (!name[i]) {
@@ -130,11 +150,11 @@ private:
     return name;
   }
 
-  unsigned	maxHeaderListSize_ = 1<<16;
-  unsigned	qpackTableCapacity_ = 0;
-  unsigned	qpackBlockedStreams_ = 0;
-  QPackNameList	index_;
-  QPackNameList	neverIndex_;
+  ZmRef<QPackNameSet>	index_;
+  ZmRef<QPackNameSet>	neverIndex_;
+  unsigned		maxHeaderListSize_ = 1<<16;
+  unsigned		qpackTableCapacity_ = 0;
+  unsigned		qpackBlockedStreams_ = 0;
 };
 
 using QPackRxString =
@@ -644,6 +664,8 @@ using QPackTbl = ZhttpQPackTbl(
   ("x-forwarded-for"),
   ("x-frame-options", "deny"),
   ("x-frame-options", "sameorigin"));
+
+using QPackStatic = StaticTable<QPackTbl>;
 
 // evaluates QPACK static table index I given <Key, Value>
 // - use <Key, void> for entries which are Key only

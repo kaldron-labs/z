@@ -6,6 +6,8 @@
 
 #include <zlib/ZhttpCompression.hh>
 
+#include <zlib/ZuArray.hh>
+
 namespace Zhttp { namespace Compression {
 
 struct HuffmanSymbol_ {
@@ -14,7 +16,8 @@ struct HuffmanSymbol_ {
   uint16_t	symbol;
 };
 
-static constexpr HuffmanSymbol_ huffman_[] = {
+// RFC 7541 Appendix B defines 256 octets plus EOS.
+static constexpr ZuArray<HuffmanSymbol_, 257> huffman_ = {
   {0x1ff8U, 13, 0}, {0x7fffd8U, 23, 1}, {0xfffffe2U, 28, 2},
   {0xfffffe3U, 28, 3}, {0xfffffe4U, 28, 4}, {0xfffffe5U, 28, 5},
   {0xfffffe6U, 28, 6}, {0xfffffe7U, 28, 7}, {0xfffffe8U, 28, 8},
@@ -110,33 +113,58 @@ static ZuInline unsigned huffmanEntrySymbol_(uint16_t v)
   return v & 0x1ffU;
 }
 
-// compile-time instantiated
+// Compile-time instantiated.  The 16-bit primary fanout keeps the common
+// decode path to one dependent lookup; the two suffix tables cover only the
+// RFC codes beginning 0xfffe and 0xffff.
 struct HuffmanDecode_ {
   static constexpr unsigned PrimaryBits = 16;
   static constexpr unsigned FFFEBits = 5;
   static constexpr unsigned FFFFBits = 14;
+  static constexpr unsigned PrimaryHalf = 1U << (PrimaryBits - 1);
 
-  uint16_t	primary[1U << PrimaryBits] = {};
-  uint16_t	fffe[1U << FFFEBits] = {};
-  uint16_t	ffff[1U << FFFFBits] = {};
+  ZuArray<uint16_t, PrimaryHalf> primaryLo;
+  ZuArray<uint16_t, PrimaryHalf> primaryHi;
+  ZuArray<uint16_t, 1U << FFFEBits> fffe;
+  ZuArray<uint16_t, 1U << FFFFBits> ffff;
 
-  template <unsigned TableBits>
+  constexpr uint16_t &primary(unsigned i) {
+    return i < PrimaryHalf ? primaryLo[i] : primaryHi[i - PrimaryHalf];
+  }
+  constexpr uint16_t primary(unsigned i) const {
+    return i < PrimaryHalf ? primaryLo[i] : primaryHi[i - PrimaryHalf];
+  }
+
+  template <unsigned TableBits, unsigned N>
   static constexpr void fill_(
-    uint16_t (&table)[1U << TableBits],
+    ZuArray<uint16_t, N> &table,
     uint32_t code, unsigned codeBits, unsigned bits, unsigned symbol)
   {
+    static_assert(N == (1U << TableBits));
     uint32_t first = code << (TableBits - codeBits);
     uint32_t n = 1U << (TableBits - codeBits);
     uint16_t v = huffmanPack_(bits, symbol);
     for (uint32_t i = 0; i < n; ++i) table[first + i] = v;
   }
 
-  constexpr HuffmanDecode_()
+  constexpr void fillPrimary_(
+    uint32_t code, unsigned codeBits, unsigned bits, unsigned symbol)
+  {
+    uint32_t first = code << (PrimaryBits - codeBits);
+    uint32_t n = 1U << (PrimaryBits - codeBits);
+    uint16_t v = huffmanPack_(bits, symbol);
+    for (uint32_t i = 0; i < n; ++i) primary(first + i) = v;
+  }
+
+  constexpr HuffmanDecode_() :
+    primaryLo(PrimaryHalf),
+    primaryHi(PrimaryHalf),
+    fffe(1U << FFFEBits),
+    ffff(1U << FFFFBits)
   {
     for (auto &sym : huffman_) {
       if (sym.bits <= PrimaryBits) {
 	if (sym.symbol < 256)
-	  fill_<PrimaryBits>(primary, sym.code, sym.bits, sym.bits, sym.symbol);
+	  fillPrimary_(sym.code, sym.bits, sym.bits, sym.symbol);
 	continue;
       }
 
@@ -171,15 +199,15 @@ static ZuInline uint16_t huffmanLookup_(uint64_t bits, unsigned nBits)
   if (!nBits) return 0;
 
   uint16_t prefix = uint16_t(bits >> 48);
-  uint16_t v = huffmanDecode_.primary[prefix];
+  uint16_t v = huffmanDecode_.primary(prefix);
   if (ZuLikely(v))
     return huffmanEntryBits_(v) <= nBits ? v : 0;
   if (ZuUnlikely(prefix == 0xfffeU))
     return huffmanLongLookup_(
-      huffmanDecode_.fffe, HuffmanDecode_::FFFEBits, bits, nBits);
+      huffmanDecode_.fffe.data(), HuffmanDecode_::FFFEBits, bits, nBits);
   if (ZuUnlikely(prefix == 0xffffU))
     return huffmanLongLookup_(
-      huffmanDecode_.ffff, HuffmanDecode_::FFFFBits, bits, nBits);
+      huffmanDecode_.ffff.data(), HuffmanDecode_::FFFFBits, bits, nBits);
   return 0;
 }
 

@@ -22,7 +22,7 @@ pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpH2.hh ZhttpH2Session.hh ZhttpH2Message.hh \
 	ZhttpH1Session.hh ZhttpH3Session.hh ZhttpMessage.hh \
 	ZhttpCompression.hh ZhttpFields.hh ZhttpHPack.hh ZhttpTypes.hh \
-	ZhttpQPack.hh ZhttpUtil.hh
+	ZhttpQPack.hh ZhttpStaticTable.hh ZhttpUtil.hh
 lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
 libZhttp_la_SOURCES = ZhttpLib.cc ZhttpURL.cc ZhttpDiscovery.cc \

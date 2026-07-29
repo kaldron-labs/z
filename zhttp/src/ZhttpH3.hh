@@ -17,6 +17,11 @@ namespace Zhttp {
 
 namespace H3 {
 
+enum {
+  Decimal64Size = 20,		// maximum decimal width of uint64_t
+  StatusSize = 3		// HTTP status is exactly three decimal digits
+};
+
 enum : uint64_t {
   NoError = 0x100,
   GeneralProtocolError = 0x101,
@@ -78,8 +83,10 @@ ZtEnumStruct(CxnStreamState, int8_t,
   Cancelled,	// RESET_STREAM / STOP_SENDING
   Error);		// invalid connection stream
 
-using SettingsKeys =
-  ZtArray<uint64_t, ZtArrayHeapID<"Zhttp.H3.SettingsKeys">>;
+using SettingsKeySet = ZmHashKV<
+  uint64_t, bool,
+  ZmHashLock<ZmNoLock,
+    ZmHashHeapID<"Zhttp.H3.SettingsKeys">>>;
 
 static inline int decodeVar(ZuCSpan in, unsigned &o, uint64_t &v) {
   if (o >= in.length()) return -1;
@@ -307,9 +314,8 @@ private:
 	if (decodeVar(payload, o, key) < 0 ||
 	    decodeVar(payload, o, value) < 0)
 	  return false;
-	for (unsigned i = 0; i < m_settingsKeys.length(); ++i)
-	  if (m_settingsKeys[i] == key) return false;
-	m_settingsKeys.push(key);
+	if (m_settingsKeys->find(key)) return false;
+	m_settingsKeys->add(key, true);
 	impl()->setting(key, value);
 	if (m_streamState == StreamState::Error) return false;
     }
@@ -491,7 +497,7 @@ public:
     m_settings = false;
     m_error = 0;
     m_maxPushID = -1;
-    m_settingsKeys = {};
+    m_settingsKeys->clean();
     m_qpackEncoderParser.reset();
     m_qpackDecoderParser.reset();
     resetFrame_();
@@ -532,7 +538,7 @@ private:
   uint64_t		m_frameOff = 0;
   QPackInsnParser	m_qpackEncoderParser;
   QPackInsnParser	m_qpackDecoderParser;
-  SettingsKeys	m_settingsKeys;
+  ZmRef<SettingsKeySet>	m_settingsKeys{new SettingsKeySet};
 };
 
 // HTTP/3 request/response stream parser
@@ -1278,17 +1284,16 @@ struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
       m_remaining -= buf->length;
     }
     m_produced += buf->length;
-    uint8_t hdr[16];
+    enum { FramePrefixSize = 16 }; // two maximum-width QUIC varints
     using FrameHdr = ZtArray<uint8_t,
 	ZtArrayHeapID<"Zhttp.H3.FrameHdr">>;
-    auto frameHdr = ZtLocalArray(FrameHdr, 16);
+    auto frameHdr = ZtLocalArray(FrameHdr, FramePrefixSize);
     putVar(frameHdr, 0);
     putVar(frameHdr, buf->length);
     ZiAssert(buf->skip >= frameHdr.length(),
 	"Zhttp", (), "H3 DataStream headroom error", return);
-    memcpy(hdr, frameHdr.data(), frameHdr.length());
     buf->rewind(frameHdr.length());
-    memcpy(buf->data(), hdr, frameHdr.length());
+    memcpy(buf->data(), frameHdr.data(), frameHdr.length());
   }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return m_valid; }
@@ -1351,21 +1356,20 @@ private:
 	impl()->header(ZuFwd<L>(l));
   }
 
-  static ZuCSpan uintSpan_(uint64_t v, char (&buf)[32]) {
-    unsigned o = sizeof(buf);
+  static ZuCSpan uintSpan_(uint64_t v, ZuCArray<Decimal64Size> &buf) {
+    unsigned o = buf.size();
     do {
 	buf[--o] = char('0' + (v % 10));
 	v /= 10;
     } while (v);
-    return ZuCSpan{buf + o, unsigned(sizeof(buf) - o)};
+    return ZuCSpan{buf.data() + o, buf.size() - o};
   }
 
-  static ZuCSpan statusSpan_(unsigned status, char (&buf)[4]) {
+  static ZuCSpan statusSpan_(unsigned status, ZuCArray<StatusSize> &buf) {
     buf[0] = char('0' + ((status / 100) % 10));
     buf[1] = char('0' + ((status / 10) % 10));
     buf[2] = char('0' + (status % 10));
-    buf[3] = 0;
-    return ZuCSpan{buf, 3};
+    return ZuCSpan{buf.data(), StatusSize};
   }
 
   template <typename Stream>
@@ -1486,7 +1490,7 @@ private:
   template <typename Build>
   bool contentLength_(Build &build) {
     if constexpr (HasBody && !Streaming) {
-	char buf[32];
+	ZuCArray<Decimal64Size> buf;
 	build.field("content-length", uintSpan_(impl()->contentLength(), buf));
 	return build.ok;
     }
@@ -1667,7 +1671,7 @@ public:
   void response(Stream &stream) {
     writeHeaders_(stream, [this](auto &build) {
 	unsigned status = impl()->status();
-	char buf[4];
+	ZuCArray<StatusSize> buf;
 	build.field(":status", statusSpan_(status, buf));
 	contentLength_(build);
 	headers_<Headers>(build);

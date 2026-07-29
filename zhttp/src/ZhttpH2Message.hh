@@ -17,6 +17,11 @@ namespace Zhttp {
 
 namespace H2 {
 
+enum {
+  StatusSize = 3,		// HTTP status is exactly three decimal digits
+  UInt64BufSize = 20		// maximum decimal width of uint64_t
+};
+
 ZtEnumStruct(ParserState, int8_t,
   Initial, Body, Stream, RemoteClosed, Trailers, Complete, Error);
 
@@ -297,11 +302,11 @@ public:
     bool endStream =
       !informational && !streamMode && !HasBody && !Trailers::N;
     stream.beginHeaders(endStream);
-    char status[3];
+    ZuCArray<StatusSize> status;
     status[0] = char('0' + ((value / 100) % 10));
     status[1] = char('0' + ((value / 10) % 10));
     status[2] = char('0' + (value % 10));
-    field_(stream, ":status", ZuCSpan{status, 3});
+    field_(stream, ":status", ZuCSpan{status.data(), StatusSize});
     if (streamMode)
       headers_<Headers, false>(stream);
     else
@@ -359,15 +364,15 @@ private:
     typename Stream>
   void headers_(Stream &stream) {
     if constexpr (HasBody && !Streaming && IncludeContentLength) {
-      char value[32];
+      ZuCArray<UInt64BufSize> value;
       uint64_t length = impl()->contentLength();
-      unsigned offset = sizeof(value);
+      unsigned offset = value.size();
       do {
 	value[--offset] = char('0' + (length % 10));
 	length /= 10;
       } while (length);
       field_(stream, "content-length",
-	ZuCSpan{value + offset, unsigned(sizeof(value) - offset)});
+	ZuCSpan{value.data() + offset, value.size() - offset});
     }
     using Keys = ZuTypeSlice<2, 0, KVs>;
     using Values = ZuTypeSlice<2, 1, KVs>;

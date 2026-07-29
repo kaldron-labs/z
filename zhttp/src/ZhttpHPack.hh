@@ -13,11 +13,15 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZmHash.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZhttpCompression.hh>
+#include <zlib/ZhttpStaticTable.hh>
 
 namespace Zhttp {
 
@@ -27,6 +31,37 @@ struct Field {
   ZuCSpan	name;
   ZuCSpan	value;
 };
+
+#define Zhttp_HPack(Key, Value) \
+  ZuTypeList<ZuStringT<Key>, ZuStringT<Value>>
+#define ZhttpHPackTbl(...) \
+  ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(Zhttp_HPack, __VA_ARGS__))>
+
+using HPackTbl = ZhttpHPackTbl(
+  (":authority", ""), (":method", "GET"), (":method", "POST"),
+  (":path", "/"), (":path", "/index.html"), (":scheme", "http"),
+  (":scheme", "https"), (":status", "200"), (":status", "204"),
+  (":status", "206"), (":status", "304"), (":status", "400"),
+  (":status", "404"), (":status", "500"), ("accept-charset", ""),
+  ("accept-encoding", "gzip, deflate"), ("accept-language", ""),
+  ("accept-ranges", ""), ("accept", ""),
+  ("access-control-allow-origin", ""), ("age", ""), ("allow", ""),
+  ("authorization", ""), ("cache-control", ""),
+  ("content-disposition", ""), ("content-encoding", ""),
+  ("content-language", ""), ("content-length", ""),
+  ("content-location", ""), ("content-range", ""),
+  ("content-type", ""), ("cookie", ""), ("date", ""), ("etag", ""),
+  ("expect", ""), ("expires", ""), ("from", ""), ("host", ""),
+  ("if-match", ""), ("if-modified-since", ""), ("if-none-match", ""),
+  ("if-range", ""), ("if-unmodified-since", ""), ("last-modified", ""),
+  ("link", ""), ("location", ""), ("max-forwards", ""),
+  ("proxy-authenticate", ""), ("proxy-authorization", ""),
+  ("range", ""), ("referer", ""), ("refresh", ""), ("retry-after", ""),
+  ("server", ""), ("set-cookie", ""), ("strict-transport-security", ""),
+  ("transfer-encoding", ""), ("user-agent", ""), ("vary", ""),
+  ("via", ""), ("www-authenticate", ""));
+
+using HPackStatic = StaticTable<HPackTbl>;
 
 ZtEnumStruct(HPackFailure, uint8_t,
   None, Truncated, Integer, String, Index, Capacity, HeaderList);
@@ -44,8 +79,10 @@ using HPackEntries =
   ZtArray<HPackEntry, ZtArrayHeapID<"Zhttp.H2.HPack.Entries">>;
 using HPackBytes =
   ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H2.HPack.Bytes">>;
-using HPackNames =
-  ZtArray<HPackString, ZtArrayHeapID<"Zhttp.H2.HPack.NeverIndex">>;
+using HPackNameSet = ZmHashKV<
+  HPackString, bool,
+  ZmHashLock<ZmNoLock,
+    ZmHashHeapID<"Zhttp.H2.HPack.NeverIndex">>>;
 
 class HPackTable {
 public:
@@ -146,6 +183,8 @@ private:
 
 class HPackEncoder {
 public:
+  HPackEncoder() : m_neverIndex{new HPackNameSet} { }
+
   bool init(uint32_t capacity);
   void reset();
   void final();
@@ -198,8 +237,10 @@ public:
   const HPackTable &table() const { return m_table; }
 
 private:
+  void detachNeverIndex_();
+
   HPackTable	m_table;
-  HPackNames	m_neverIndex;
+  ZmRef<HPackNameSet>	m_neverIndex;
   uint32_t	m_maxCapacity = 0;
 };
 

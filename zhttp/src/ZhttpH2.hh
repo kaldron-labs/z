@@ -13,6 +13,7 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZuArray.hh>
 #include <zlib/ZuSpan.hh>
 
 #include <zlib/ZtEnum.hh>
@@ -25,6 +26,10 @@ constexpr uint32_t DefltFrameSize = 1U<<14;
 constexpr uint32_t MaxFrameSize = (1U<<24) - 1;
 constexpr uint32_t DefltWindow = (1U<<16) - 1;
 constexpr uint32_t MaxWindow = (1U<<31) - 1;
+enum {
+  FrameHeaderSize = 9,		// RFC 9113 section 4.1
+  FixedPayloadSize = 8		// largest incrementally parsed fixed payload
+};
 
 ZtEnumNS(FrameType, uint8_t,
   Data, Headers, Priority, RSTStream, Settings, PushPromise, Ping, Goaway,
@@ -72,7 +77,7 @@ public:
   void reset() { m_length = 0; }
 
 private:
-  uint8_t	m_bytes[9];
+  ZuBArray<FrameHeaderSize>	m_bytes;
   unsigned	m_length = 0;
 };
 
@@ -100,7 +105,7 @@ int putHeader(Bytes &out, FrameHeader header) {
   out.push(uint8_t(header.streamID>>16));
   out.push(uint8_t(header.streamID>>8));
   out.push(uint8_t(header.streamID));
-  return 9;
+  return FrameHeaderSize;
 }
 
 template <typename Bytes>
@@ -381,7 +386,7 @@ private:
       ++m_payloadOffset;
       if (m_fixedLength == 6) {
 	uint16_t key = (uint16_t(m_fixed[0])<<8) | m_fixed[1];
-	uint32_t value = uint32_(m_fixed + 2);
+	uint32_t value = uint32_(m_fixed.data() + 2);
 	auto error = m_peerSettings.apply(key, value, !m_server);
 	if (error) return fail_(error) >= 0;
 	impl()->h2Setting(key, value);
@@ -406,7 +411,7 @@ private:
   }
 
   bool fixedPayload_(ZuBSpan span) {
-    unsigned retain = m_header.type == FrameType::Goaway ? 8 :
+    unsigned retain = m_header.type == FrameType::Goaway ? FixedPayloadSize :
       m_header.length;
     unsigned offset = 0;
     while (offset < span.length() && m_fixedLength < retain)
@@ -427,7 +432,7 @@ private:
 	break;
       case FrameType::Headers:
 	if ((m_header.flags & Flag::Priority) &&
-	    (uint32_(m_fixed) & MaxWindow) == m_header.streamID)
+	    (uint32_(m_fixed.data()) & MaxWindow) == m_header.streamID)
 	  return fail_(Error::ProtocolError) >= 0;
 	if (m_header.flags & Flag::EndHeaders)
 	  impl()->h2HeadersEnd(m_headerStream, m_headersEndStream);
@@ -447,26 +452,28 @@ private:
 	break;
       case FrameType::Ping:
 	if (m_header.flags & Flag::ACK)
-	  impl()->h2PingAck(ZuBSpan{m_fixed, 8});
+	  impl()->h2PingAck(ZuBSpan{m_fixed.data(), FixedPayloadSize});
 	else
-	  impl()->h2Ping(ZuBSpan{m_fixed, 8});
+	  impl()->h2Ping(ZuBSpan{m_fixed.data(), FixedPayloadSize});
 	break;
       case FrameType::RSTStream:
-	impl()->h2Reset(m_header.streamID, Error::T(uint32_(m_fixed)));
+	impl()->h2Reset(
+	  m_header.streamID, Error::T(uint32_(m_fixed.data())));
 	break;
       case FrameType::Priority:
-	if ((uint32_(m_fixed) & MaxWindow) == m_header.streamID)
+	if ((uint32_(m_fixed.data()) & MaxWindow) == m_header.streamID)
 	  return fail_(Error::ProtocolError) >= 0;
 	break;
       case FrameType::WindowUpdate: {
-	uint32_t value = uint32_(m_fixed) & MaxWindow;
+	uint32_t value = uint32_(m_fixed.data()) & MaxWindow;
 	if (!value) return fail_(Error::ProtocolError) >= 0;
 	impl()->h2WindowUpdate(m_header.streamID, value);
 	break;
       }
       case FrameType::Goaway:
 	impl()->h2Goaway(
-	  uint32_(m_fixed) & MaxWindow, Error::T(uint32_(m_fixed + 4)));
+	  uint32_(m_fixed.data()) & MaxWindow,
+	  Error::T(uint32_(m_fixed.data() + 4)));
 	break;
       case FrameType::PushPromise:
 	return fail_(Error::ProtocolError) >= 0;
@@ -480,7 +487,7 @@ private:
   PrefaceParser		m_prefaceParser;
   FrameHeader		m_header;
   Settings		m_peerSettings;
-  uint8_t		m_fixed[8];
+  ZuBArray<FixedPayloadSize>	m_fixed;
   uint32_t		m_expectedContinuation = 0;
   uint32_t		m_headerStream = 0;
   uint32_t		m_payloadOffset = 0;

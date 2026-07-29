@@ -15,6 +15,9 @@
 
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuSort.hh>
+#include <zlib/ZuString.hh>
+#include <zlib/ZuTL.hh>
+#include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmGuard.hh>
@@ -273,6 +276,25 @@ struct ResponsePlan {
 struct MimeMap {
   using String = ZtString<ZtStringHeapID<"Zhttpd.Mime.String">>;
   using Map = ZmHashKV<String, String, ZmHashHeapID<"Zhttpd.Mime">>;
+  using Builtins = ZuTypeList<
+    ZuTypeList<ZuStringT<"html">, ZuStringT<"text/html">>,
+    ZuTypeList<ZuStringT<"htm">, ZuStringT<"text/html">>,
+    ZuTypeList<ZuStringT<"txt">, ZuStringT<"text/plain">>,
+    ZuTypeList<ZuStringT<"css">, ZuStringT<"text/css">>,
+    ZuTypeList<ZuStringT<"js">, ZuStringT<"application/javascript">>,
+    ZuTypeList<ZuStringT<"json">, ZuStringT<"application/json">>,
+    ZuTypeList<ZuStringT<"png">, ZuStringT<"image/png">>,
+    ZuTypeList<ZuStringT<"jpg">, ZuStringT<"image/jpeg">>,
+    ZuTypeList<ZuStringT<"jpeg">, ZuStringT<"image/jpeg">>,
+    ZuTypeList<ZuStringT<"gif">, ZuStringT<"image/gif">>,
+    ZuTypeList<ZuStringT<"svg">, ZuStringT<"image/svg+xml">>,
+    ZuTypeList<ZuStringT<"ico">, ZuStringT<"image/x-icon">>,
+    ZuTypeList<ZuStringT<"wasm">, ZuStringT<"application/wasm">>,
+    ZuTypeList<ZuStringT<"pdf">, ZuStringT<"application/pdf">>,
+    ZuTypeList<ZuStringT<"mp3">, ZuStringT<"audio/mpeg">>,
+    ZuTypeList<ZuStringT<"mp4">, ZuStringT<"video/mp4">>,
+    ZuTypeList<ZuStringT<"webp">, ZuStringT<"image/webp">>>;
+
   ZmRef<Map>		map{new Map};
 
   void add(ZuCSpan ext, ZuCSpan mime) {
@@ -283,18 +305,9 @@ struct MimeMap {
   }
 
   void init(const Options &options) {
-    static const struct { const char *ext; const char *mime; } builtins[] = {
-      {"html", "text/html"}, {"htm", "text/html"},
-      {"txt", "text/plain"}, {"css", "text/css"},
-      {"js", "application/javascript"}, {"json", "application/json"},
-      {"png", "image/png"}, {"jpg", "image/jpeg"},
-      {"jpeg", "image/jpeg"}, {"gif", "image/gif"},
-      {"svg", "image/svg+xml"}, {"ico", "image/x-icon"},
-      {"wasm", "application/wasm"}, {"pdf", "application/pdf"},
-      {"mp3", "audio/mpeg"}, {"mp4", "video/mp4"},
-      {"webp", "image/webp"}
-    };
-    for (auto &m : builtins) add(m.ext, m.mime);
+    ZuUnroll::all<Builtins>([this]<typename KV>() {
+      add(ZuType<0, KV>{}(), ZuType<1, KV>{}());
+    });
     if (!options.mimetypes) return;
     ZiFile f;
     if (f.open(options.mimetypes, ZiFile::ReadOnly | ZiFile::GC) != Zi::OK)

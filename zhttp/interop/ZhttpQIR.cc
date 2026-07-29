@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuTokenizer.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
@@ -744,15 +745,11 @@ ZuCSpan roleName(Role role)
 
 bool parseRole(ZuCSpan s, Role &role)
 {
-  if (s == "client") {
-    role = Client;
-    return true;
-  }
-  if (s == "server") {
-    role = Server;
-    return true;
-  }
-  return false;
+  static constexpr auto matcher = ZuMatcher<"client", "server">();
+  int i = matcher.exact(s);
+  if (i < 0) return false;
+  role = Role(i);
+  return true;
 }
 
 ZuCSpan caseName(Case testCase)
@@ -771,13 +768,11 @@ ZuCSpan caseName(Case testCase)
 
 Case parseCase(ZuCSpan s)
 {
-  if (s == "handshake") return Handshake;
-  if (s == "transfer") return Transfer;
-  if (s == "http3") return HTTP3;
-  if (s == "rebind-port") return RebindPort;
-  if (s == "rebind-addr") return RebindAddr;
-  if (s == "connectionmigration") return ConnectionMigration;
-  return Unsupported;
+  static constexpr auto matcher = ZuMatcher<
+    "handshake", "transfer", "http3", "rebind-port", "rebind-addr",
+    "connectionmigration">();
+  int i = matcher.exact(s);
+  return i < 0 ? Unsupported : Case(i);
 }
 
 bool caseSupported(Case testCase)
