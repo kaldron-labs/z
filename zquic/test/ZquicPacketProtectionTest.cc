@@ -42,6 +42,14 @@ bool hexEquals_(const uint8_t (&actual)[N], const char *expected)
   return hexDecode_(b, N, expected) && !memcmp(actual, b, N);
 }
 
+template <unsigned N>
+bool hexEquals_(const ZuBArray<N> &actual, const char *expected)
+{
+  uint8_t b[N];
+  return actual.length() == N &&
+    hexDecode_(b, N, expected) && !memcmp(actual.data(), b, N);
+}
+
 ZuBSpan bytes_(const uint8_t *data, unsigned len)
 {
   return ZuBSpan{data, len};
@@ -97,7 +105,7 @@ void testRFC9001InitialKeys()
   ZuCHECK(crypto.diag().initialKeysDerived == 1,
     "Initial derivation not counted");
   ZuCHECK(!memcmp(
-      crypto.initialKeys().client.key, keys.client.key,
+      crypto.initialKeys().client.key.data(), keys.client.key.data(),
       Zquic::InitialSecret::KeyLen),
     "Crypto Initial derivation stored wrong keys");
 }
@@ -282,16 +290,46 @@ void testTrafficSecretProt()
 {
   ZuTestScope(testTrafficSecretProt);
 
+  Zquic::SecretBytes<8> bounded;
+  ZuCHECK(bounded.length(8) && bounded.length() == 8 &&
+      !bounded.length(9) && bounded.length() == 8,
+    "bounded secret accepted an oversize length");
+  memset(bounded.data(), 0x5a, bounded.length());
+  bounded.clear();
+  bool cleared = !bounded.length();
+  for (unsigned i = 0; i < 8; ++i) cleared &= bounded.data()[i] == 0;
+  ZuCHECK(cleared, "bounded secret clear did not clear length and bytes");
+
   uint8_t secretBytes[32];
   for (unsigned i = 0; i < sizeof(secretBytes); ++i) secretBytes[i] = i;
+  Zquic::TrafficSecret rejected;
+  ZuCHECK(!Zquic::PktProt::deriveSecret(
+	rejected, &ptls_openssl_aes128gcmsha256,
+	bytes_(secretBytes, sizeof(secretBytes) - 1)) &&
+      !rejected.valid() && !rejected.secret.length() &&
+      !rejected.key.length() && !rejected.iv.length() &&
+      !rejected.hp.length(),
+    "failed traffic secret installation retained material");
+
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
       secret, &ptls_openssl_aes128gcmsha256,
       bytes_(secretBytes, sizeof(secretBytes))),
     "traffic secret derivation failed");
-  ZuCHECK(secret.valid() && secret.keyLen == 16 && secret.ivLen == 12 &&
-      secret.hpLen == 16 && secret.tagLen == 16,
+  ZuCHECK(secret.valid() && secret.key.length() == 16 &&
+      secret.iv.length() == 12 && secret.hp.length() == 16 &&
+      secret.tagLen == 16,
     "traffic secret metadata mismatch");
+  Zquic::TrafficSecret reinstalled = secret;
+  reinstalled.clear();
+  ZuCHECK(!reinstalled.valid() && !reinstalled.secret.length() &&
+      !reinstalled.key.length() && !reinstalled.iv.length() &&
+      !reinstalled.hp.length() &&
+      Zquic::PktProt::deriveSecret(
+	reinstalled, &ptls_openssl_aes128gcmsha256,
+	bytes_(secretBytes, sizeof(secretBytes))) &&
+      reinstalled.valid(),
+    "traffic secret clear/reinstall failed");
 
   Zquic::PktProtState txLong;
   Zquic::PktProtState txLongSplit;

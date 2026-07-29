@@ -17,6 +17,40 @@ struct TestRouteLink { };
 
 } // namespace
 
+void testFixedProtocolValues()
+{
+  ZuTestScope(testFixedProtocolValues);
+
+  Zquic::ResetToken token{"0123456789abcdef"};
+  Zquic::ResetToken saved = token;
+  uint8_t shortToken[Zquic::ResetToken::Length - 1] = {};
+  ZuCHECK(!token.set(ZuBSpan{shortToken, sizeof(shortToken)}) &&
+      token == saved,
+    "invalid reset token input modified the value");
+
+  uint8_t zeroToken[Zquic::ResetToken::Length] = {};
+  Zquic::ResetToken zero{ZuBSpan{zeroToken, sizeof(zeroToken)}};
+  ZuCHECK(zero.valid() && zero.length() == sizeof(zeroToken) &&
+      !memcmp(zero.data(), zeroToken, sizeof(zeroToken)),
+    "all-zero reset token was not retained as valid");
+
+  Zquic::PathChallenge challenge{"12345678"};
+  Zquic::PathChallenge savedChallenge = challenge;
+  uint8_t shortChallenge[Zquic::PathChallenge::Length - 1] = {};
+  ZuCHECK(!challenge.set(
+	ZuBSpan{shortChallenge, sizeof(shortChallenge)}) &&
+      challenge == savedChallenge,
+    "invalid path challenge input modified the value");
+
+  uint8_t zeroChallenge[Zquic::PathChallenge::Length] = {};
+  Zquic::PathChallenge zeroPath{
+    ZuBSpan{zeroChallenge, sizeof(zeroChallenge)}};
+  ZuCHECK(zeroPath.valid() &&
+      zeroPath.length() == sizeof(zeroChallenge) &&
+      zeroPath.equals(ZuBSpan{zeroChallenge, sizeof(zeroChallenge)}),
+    "all-zero path challenge was not retained as valid");
+}
+
 void testCxnRouter()
 {
   ZuTestScope(testCxnRouter);
@@ -249,6 +283,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testFixedProtocolValues);
   ZuTestCall(testCxnRouter);
   ZuTestCall(testCxnRouterTombstoneFIFO);
   ZuTestCall(testStatelessReset);

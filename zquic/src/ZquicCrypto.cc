@@ -28,7 +28,7 @@ using namespace ZquicLog_;
 
 namespace {
 
-static constexpr uint8_t InitialSaltV1_[] = {
+static constexpr ZuBArray<20> InitialSaltV1_ = {
   0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
   0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a
 };
@@ -67,22 +67,25 @@ static bool hkdfExpand_(
   uint8_t *out, unsigned outLen, const uint8_t *secret, unsigned secretLen,
   const uint8_t *info, unsigned infoLen)
 {
-  uint8_t t[InitialSecret::SecretLen];
-  uint8_t msg[InitialSecret::SecretLen + 256 + 1];
+  ZuBArray<InitialSecret::SecretLen>
+    t(InitialSecret::SecretLen, false);
+  ZuBArray<InitialSecret::SecretLen + 256 + 1>
+    msg(InitialSecret::SecretLen + 256 + 1, false);
   unsigned tLen = 0, off = 0;
   for (uint8_t block = 1; off < outLen; ++block) {
-    if (tLen + infoLen + 1 > sizeof(msg)) return false;
-    memcpy(msg, t, tLen);
-    memcpy(msg + tLen, info, infoLen);
+    if (tLen + infoLen + 1 > msg.length()) return false;
+    memcpy(msg.data(), t.data(), tLen);
+    memcpy(msg.data() + tLen, info, infoLen);
     msg[tLen + infoLen] = block;
-    if (!hmacSHA256_(secret, secretLen, msg, tLen + infoLen + 1,
-	  t, sizeof(t)))
+    if (!hmacSHA256_(
+	  secret, secretLen, msg.data(), tLen + infoLen + 1,
+	  t.data(), t.length()))
       return false;
     unsigned n = outLen - off;
-    if (n > sizeof(t)) n = sizeof(t);
-    memcpy(out + off, t, n);
+    if (n > t.length()) n = t.length();
+    memcpy(out + off, t.data(), n);
     off += n;
-    tLen = sizeof(t);
+    tLen = t.length();
   }
   return true;
 }
@@ -92,37 +95,41 @@ static bool hkdfExpandLabel_(
   ZuCSpan label)
 {
   static constexpr char Prefix[] = "tls13 ";
-  uint8_t info[64];
+  ZuBArray<64> info(64, false);
   unsigned o = 0;
   unsigned fullLen = (sizeof(Prefix) - 1) + label.length();
   if (fullLen > 255 || outLen > 0xffff) return false;
   info[o++] = uint8_t(outLen >> 8);
   info[o++] = uint8_t(outLen);
   info[o++] = uint8_t(fullLen);
-  memcpy(info + o, Prefix, sizeof(Prefix) - 1);
+  memcpy(info.data() + o, Prefix, sizeof(Prefix) - 1);
   o += sizeof(Prefix) - 1;
-  memcpy(info + o, label.data(), label.length());
+  memcpy(info.data() + o, label.data(), label.length());
   o += label.length();
   info[o++] = 0;
-  return hkdfExpand_(out, outLen, secret, secretLen, info, o);
+  return hkdfExpand_(out, outLen, secret, secretLen, info.data(), o);
 }
 
 static bool deriveSecret_(InitialSecret &out, const uint8_t *initial,
     ZuCSpan label)
 {
   return hkdfExpandLabel_(
-      out.secret, sizeof(out.secret), initial, InitialSecret::SecretLen, label) &&
+      out.secret.data(), out.secret.length(),
+      initial, InitialSecret::SecretLen, label) &&
     hkdfExpandLabel_(
-      out.key, sizeof(out.key), out.secret, sizeof(out.secret), "quic key") &&
+      out.key.data(), out.key.length(),
+      out.secret.data(), out.secret.length(), "quic key") &&
     hkdfExpandLabel_(
-      out.iv, sizeof(out.iv), out.secret, sizeof(out.secret), "quic iv") &&
+      out.iv.data(), out.iv.length(),
+      out.secret.data(), out.secret.length(), "quic iv") &&
     hkdfExpandLabel_(
-      out.hp, sizeof(out.hp), out.secret, sizeof(out.secret), "quic hp");
+      out.hp.data(), out.hp.length(),
+      out.secret.data(), out.secret.length(), "quic hp");
 }
 
 static void nonce_(uint8_t *out, const InitialSecret &secret, uint64_t pn)
 {
-  memcpy(out, secret.iv, InitialSecret::IVLen);
+  memcpy(out, secret.iv.data(), InitialSecret::IVLen);
   for (unsigned i = 0; i < 8; ++i)
     out[InitialSecret::IVLen - 1 - i] ^= uint8_t(pn >> (i * 8));
 }
@@ -294,11 +301,11 @@ void CryptoStream::process(Msg *node)
 bool InitialCrypto::derive(InitialKeyMaterial &out, const CxnID &dcid)
 {
   out = {};
-  if (!hkdfExtract_(out.initial, InitialSaltV1_, sizeof(InitialSaltV1_),
-	dcid))
+  if (!hkdfExtract_(
+	out.initial.data(), InitialSaltV1_.data(), InitialSaltV1_.length(), dcid))
     return false;
-  return deriveSecret_(out.client, out.initial, "client in") &&
-    deriveSecret_(out.server, out.initial, "server in");
+  return deriveSecret_(out.client, out.initial.data(), "client in") &&
+    deriveSecret_(out.server, out.initial.data(), "server in");
 }
 
 int InitialCrypto::encrypt(
@@ -322,16 +329,18 @@ int InitialCrypto::encryptV(
     plainLen += plain[i].len;
   }
   if (len < plainLen + InitialSecret::TagLen) return -1;
-  uint8_t nonce[InitialSecret::IVLen];
-  nonce_(nonce, secret, pn);
+  ZuBArray<InitialSecret::IVLen> nonce(InitialSecret::IVLen, false);
+  nonce_(nonce.data(), secret, pn);
 
   EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return -1;
   int n = 0, off = 0;
   bool ok =
     EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) == 1 &&
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, sizeof(nonce), nullptr) == 1 &&
-    EVP_EncryptInit_ex(ctx, nullptr, nullptr, secret.key, nonce) == 1 &&
+    EVP_CIPHER_CTX_ctrl(
+      ctx, EVP_CTRL_GCM_SET_IVLEN, nonce.length(), nullptr) == 1 &&
+    EVP_EncryptInit_ex(
+      ctx, nullptr, nullptr, secret.key.data(), nonce.data()) == 1 &&
     (!aad || EVP_EncryptUpdate(ctx, nullptr, &n,
       aad.data(), aad.length()) == 1);
   for (unsigned i = 0; ok && i < plainCount; ++i) {
@@ -354,16 +363,18 @@ int InitialCrypto::decrypt(
   if (ciphertext.length() < InitialSecret::TagLen) return -1;
   unsigned plainLen = ciphertext.length() - InitialSecret::TagLen;
   if (len < plainLen) return -1;
-  uint8_t nonce[InitialSecret::IVLen];
-  nonce_(nonce, secret, pn);
+  ZuBArray<InitialSecret::IVLen> nonce(InitialSecret::IVLen, false);
+  nonce_(nonce.data(), secret, pn);
 
   EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return -1;
   int n = 0, off = 0;
   bool ok =
     EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) == 1 &&
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, sizeof(nonce), nullptr) == 1 &&
-    EVP_DecryptInit_ex(ctx, nullptr, nullptr, secret.key, nonce) == 1 &&
+    EVP_CIPHER_CTX_ctrl(
+      ctx, EVP_CTRL_GCM_SET_IVLEN, nonce.length(), nullptr) == 1 &&
+    EVP_DecryptInit_ex(
+      ctx, nullptr, nullptr, secret.key.data(), nonce.data()) == 1 &&
     (!aad || EVP_DecryptUpdate(ctx, nullptr, &n,
       aad.data(), aad.length()) == 1) &&
     (!plainLen || EVP_DecryptUpdate(ctx, out, &n,
@@ -381,18 +392,19 @@ bool InitialCrypto::headerMask(
   uint8_t *out, unsigned len, const InitialSecret &secret, ZuBSpan sample)
 {
   if (len < InitialSecret::HPMaskLen || sample.length() < 16) return false;
-  uint8_t block[32];
+  ZuBArray<32> block(32, false);
   EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return false;
   int n = 0, total = 0;
   bool ok =
-    EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), nullptr, secret.hp, nullptr) == 1 &&
+    EVP_EncryptInit_ex(
+      ctx, EVP_aes_128_ecb(), nullptr, secret.hp.data(), nullptr) == 1 &&
     EVP_CIPHER_CTX_set_padding(ctx, 0) == 1 &&
-    EVP_EncryptUpdate(ctx, block, &n,
+    EVP_EncryptUpdate(ctx, block.data(), &n,
       sample.data(), 16) == 1;
   if (ok) total = n;
-  ok = ok && EVP_EncryptFinal_ex(ctx, block + total, &n) == 1;
-  if (ok) memcpy(out, block, InitialSecret::HPMaskLen);
+  ok = ok && EVP_EncryptFinal_ex(ctx, block.data() + total, &n) == 1;
+  if (ok) memcpy(out, block.data(), InitialSecret::HPMaskLen);
   return ok;
 }
 
@@ -432,9 +444,10 @@ int InitialPktProt::protectLongV(
     plain, plainCount);
   if (n != int(plainLen + InitialSecret::TagLen)) return -1;
 
-  uint8_t mask[InitialSecret::HPMaskLen];
+  ZuBArray<InitialSecret::HPMaskLen>
+    mask(InitialSecret::HPMaskLen, false);
   if (!InitialCrypto::headerMask(
-	mask, sizeof(mask), secret,
+	mask.data(), mask.length(), secret,
 	ZuBSpan{out + pnOffset + 4, 16}))
     return -1;
   out[0] ^= mask[0] & 0x0f;
@@ -448,9 +461,10 @@ int InitialPktProt::unprotectLong(
   uint64_t largestPN, unsigned pnOffset, uint64_t &pn, unsigned &payloadOffset)
 {
   if (pnOffset + 4 + 16 > len) return -1;
-  uint8_t mask[InitialSecret::HPMaskLen];
+  ZuBArray<InitialSecret::HPMaskLen>
+    mask(InitialSecret::HPMaskLen, false);
   if (!InitialCrypto::headerMask(
-	mask, sizeof(mask), secret,
+	mask.data(), mask.length(), secret,
 	ZuBSpan{packet + pnOffset + 4, 16}))
     return -1;
   packet[0] ^= mask[0] & 0x0f;
@@ -473,7 +487,16 @@ int InitialPktProt::unprotectLong(
 
 void TrafficSecret::clear()
 {
-  memset(this, 0, sizeof(*this));
+  secret.clear();
+  key.clear();
+  iv.clear();
+  hp.clear();
+  tagLen = 0;
+  aead = nullptr;
+  hash = nullptr;
+  hpCipher = nullptr;
+  hpSuppCipher = nullptr;
+  installed = false;
 }
 
 bool PktProtState::init(
@@ -483,12 +506,15 @@ bool PktProtState::init(
   if (!secret_.valid() || !secret_.aead || !secret_.hpCipher ||
       !secret_.hpSuppCipher)
     return false;
-  if (!aead.init(secret_.aead, tx_, secret_.key, secret_.iv)) return false;
-  if (!hp.init(secret_.hpCipher, true, secret_.hp)) {
+  if (!aead.init(
+	secret_.aead, tx_, secret_.key.data(), secret_.iv.data()))
+    return false;
+  if (!hp.init(secret_.hpCipher, true, secret_.hp.data())) {
     clear();
     return false;
   }
-  if (tx_ && !hpSupp.init(secret_.hpSuppCipher, true, secret_.hp)) {
+  if (tx_ && !hpSupp.init(
+	secret_.hpSuppCipher, true, secret_.hp.data())) {
     clear();
     return false;
   }
@@ -546,19 +572,26 @@ bool PktProt::deriveSecret(
       !tagLen)
     return false;
 
-  if (!hkdfExpandLabelPTLS_(cipher->hash, out.key, keyLen,
-	secret, "quic key") ||
-      !hkdfExpandLabelPTLS_(cipher->hash, out.iv, ivLen,
-	secret, "quic iv") ||
-      !hkdfExpandLabelPTLS_(cipher->hash, out.hp, hpLen,
-	secret, "quic hp"))
+  if (!out.secret.length(secretLen) ||
+      !out.key.length(keyLen) ||
+      !out.iv.length(ivLen) ||
+      !out.hp.length(hpLen)) {
+    out.clear();
     return false;
+  }
 
-  memcpy(out.secret, secret.data(), secret.length());
-  out.secretLen = secretLen;
-  out.keyLen = keyLen;
-  out.ivLen = ivLen;
-  out.hpLen = hpLen;
+  if (!hkdfExpandLabelPTLS_(cipher->hash, out.key.data(), keyLen,
+	secret, "quic key") ||
+      !hkdfExpandLabelPTLS_(cipher->hash, out.iv.data(), ivLen,
+	secret, "quic iv") ||
+      !hkdfExpandLabelPTLS_(cipher->hash, out.hp.data(), hpLen,
+	secret, "quic hp"))
+    {
+      out.clear();
+      return false;
+    }
+
+  memcpy(out.secret.data(), secret.data(), secret.length());
   out.tagLen = tagLen;
   out.aead = cipher->aead;
   out.hash = cipher->hash;
@@ -573,37 +606,37 @@ bool PktProt::deriveNextSecret(
 {
   out.clear();
   if (!current.valid() || !current.hash || !current.aead ||
-      !current.hpCipher || !current.secretLen ||
-      current.secretLen > TrafficSecret::MaxSecretLen)
+      !current.hpCipher || !current.secret.length() ||
+      current.secret.length() > TrafficSecret::MaxSecretLen)
     return false;
 
-  out.secretLen = current.secretLen;
-  out.keyLen = current.keyLen;
-  out.ivLen = current.ivLen;
-  out.hpLen = current.hpLen;
+  if (!out.secret.length(current.secret.length()) ||
+      !out.key.length(current.key.length()) ||
+      !out.iv.length(current.iv.length()) ||
+      !out.hp.length(current.hp.length()))
+    return false;
   out.tagLen = current.tagLen;
   out.aead = current.aead;
   out.hash = current.hash;
   out.hpCipher = current.hpCipher;
   out.hpSuppCipher = current.hpSuppCipher;
 
-  ZuBSpan secret{current.secret};
-  secret.trunc(current.secretLen);
-  if (!hkdfExpandLabelPTLS_(current.hash, out.secret, out.secretLen,
-	secret, "quic ku")) {
+  if (!hkdfExpandLabelPTLS_(
+	current.hash, out.secret.data(), out.secret.length(),
+	current.secret.bspan(), "quic ku")) {
     out.clear();
     return false;
   }
-  ZuBSpan next{out.secret};
-  next.trunc(out.secretLen);
-  if (!hkdfExpandLabelPTLS_(current.hash, out.key, out.keyLen,
-	next, "quic key") ||
-      !hkdfExpandLabelPTLS_(current.hash, out.iv, out.ivLen,
-	next, "quic iv")) {
+  if (!hkdfExpandLabelPTLS_(
+	current.hash, out.key.data(), out.key.length(),
+	out.secret.bspan(), "quic key") ||
+      !hkdfExpandLabelPTLS_(
+	current.hash, out.iv.data(), out.iv.length(),
+	out.secret.bspan(), "quic iv")) {
     out.clear();
     return false;
   }
-  memcpy(out.hp, current.hp, out.hpLen);
+  memcpy(out.hp.data(), current.hp.data(), out.hp.length());
   out.installed = true;
   return true;
 }
@@ -665,10 +698,10 @@ static bool trafficMask_(
       !secret.hpCipher || sample.length() < 16)
     return false;
   ptls_cipher_context_t *ctx = state.hp.get();
-  uint8_t block[32];
+  ZuBArray<32> block(32, false);
   ptls_cipher_init(ctx, nullptr);
-  ptls_cipher_encrypt(ctx, block, sample.data(), 16);
-  memcpy(mask, block, InitialSecret::HPMaskLen);
+  ptls_cipher_encrypt(ctx, block.data(), sample.data(), 16);
+  memcpy(mask, block.data(), InitialSecret::HPMaskLen);
   return true;
 }
 
@@ -703,9 +736,10 @@ static int protect_(
   size_t n = plainLen + secret.tagLen;
   if (n != plainLen + secret.tagLen) return -1;
 
-  uint8_t mask[InitialSecret::HPMaskLen];
+  ZuBArray<InitialSecret::HPMaskLen>
+    mask(InitialSecret::HPMaskLen, false);
   if (!trafficMask_(
-	mask, sizeof(mask), state,
+	mask.data(), mask.length(), state,
 	ZuBSpan{out + pnOffset + 4, 16}))
     return -1;
   out[0] ^= mask[0] & firstMask;
@@ -726,16 +760,17 @@ static int unprotect_(
     return -1;
   if (len > BufSize) return -1;
   uint8_t first = packet[0];
-  uint8_t pnBytes[4];
-  memcpy(pnBytes, packet + pnOffset, sizeof(pnBytes));
+  ZuBArray<4> pnBytes(4, false);
+  memcpy(pnBytes.data(), packet + pnOffset, pnBytes.length());
   auto fail = [packet, pnOffset, first, &pnBytes]() -> int {
     packet[0] = first;
-    memcpy(packet + pnOffset, pnBytes, sizeof(pnBytes));
+    memcpy(packet + pnOffset, pnBytes.data(), pnBytes.length());
     return -1;
   };
-  uint8_t mask[InitialSecret::HPMaskLen];
+  ZuBArray<InitialSecret::HPMaskLen>
+    mask(InitialSecret::HPMaskLen, false);
   if (!trafficMask_(
-	mask, sizeof(mask), state,
+	mask.data(), mask.length(), state,
 	ZuBSpan{packet + pnOffset + 4, 16}))
     return fail();
   packet[0] ^= mask[0] & firstMask;
@@ -1334,7 +1369,7 @@ bool Crypto::discardSecret(PktNumSpace::T level)
   if (!m_secretInstalled[level]) return false;
   m_secretInstalled[level] = false;
   if (level == PktNumSpace::Initial)
-    memset(&m_initialKeys, 0, sizeof(m_initialKeys));
+    m_initialKeys.clear();
   m_txTrafficSecrets[level].clear();
   m_rxTrafficSecrets[level].clear();
   m_txProt[level].clear();

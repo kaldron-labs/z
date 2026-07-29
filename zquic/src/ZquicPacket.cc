@@ -179,11 +179,11 @@ int Pkt::retryIntegrityTag(
   uint8_t *tag, unsigned len, ZuBSpan retryWithoutTag,
   const CxnID &origDCID)
 {
-  static constexpr uint8_t Key[16] = {
+  static constexpr ZuBArray<16> Key = {
     0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a,
     0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e
   };
-  static constexpr uint8_t Nonce[12] = {
+  static constexpr ZuBArray<12> Nonce = {
     0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63,
     0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb
   };
@@ -198,8 +198,10 @@ int Pkt::retryIntegrityTag(
   int outLen = 0;
   uint8_t odcidLen = origDCID.length();
   if (EVP_EncryptInit_ex(ctx, EVP_aes_128_gcm(), nullptr, nullptr, nullptr) == 1 &&
-      EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, sizeof(Nonce), nullptr) == 1 &&
-      EVP_EncryptInit_ex(ctx, nullptr, nullptr, Key, Nonce) == 1 &&
+      EVP_CIPHER_CTX_ctrl(
+	ctx, EVP_CTRL_GCM_SET_IVLEN, Nonce.length(), nullptr) == 1 &&
+      EVP_EncryptInit_ex(
+	ctx, nullptr, nullptr, Key.data(), Nonce.data()) == 1 &&
       EVP_EncryptUpdate(ctx, nullptr, &outLen, &odcidLen, 1) == 1 &&
       (!origDCID ||
 	EVP_EncryptUpdate(ctx, nullptr, &outLen,
@@ -217,13 +219,14 @@ bool Pkt::validateRetryIntegrity(ZuBSpan p, const CxnID &origDCID)
 {
   RetryPkt retry;
   if (parseRetry(p, retry) < 0) return false;
-  uint8_t tag[16];
+  ZuBArray<16> tag(16, false);
   if (retryIntegrityTag(
-	tag, sizeof(tag),
+	tag.data(), tag.length(),
 	ZuBSpan{p.data(), p.length() - retry.integrityTag.length()},
 	origDCID) < 0)
     return false;
-  return !CRYPTO_memcmp(tag, retry.integrityTag.data(), sizeof(tag));
+  return !CRYPTO_memcmp(
+    tag.data(), retry.integrityTag.data(), tag.length());
 }
 
 int Pkt::parseShort(ZuBSpan p, unsigned cidLen, ShortHdr &h)
