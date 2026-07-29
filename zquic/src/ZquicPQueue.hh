@@ -84,6 +84,7 @@ using StreamRxPQueueFn =
     ZquicPQueueBufLenAxor()>;
 
 struct StreamTxData : public ZiIOBuf {
+  // ZiIOBuf requires payload storage inline at a stable offset for pool reuse.
   alignas(ZiIOBuf_Align) uint8_t data_[BufSize];
   uint64_t		streamOffset = 0;
 

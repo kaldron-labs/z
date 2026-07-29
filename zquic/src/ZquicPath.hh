@@ -378,8 +378,12 @@ private:
   EcnMark::T	m_activeECN = EcnMark::NotECT;
   uint64_t	m_bytesRx = 0;
   uint64_t	m_bytesTx = 0;
-  AckECN	m_peerAckECN[PktNumSpace::N];
-  AckECN	m_sentECN[PktNumSpace::N];
+  ZuArray<AckECN, PktNumSpace::N>
+		m_peerAckECN =
+		  ZuArray<AckECN, PktNumSpace::N>(PktNumSpace::N);
+  ZuArray<AckECN, PktNumSpace::N>
+		m_sentECN =
+		  ZuArray<AckECN, PktNumSpace::N>(PktNumSpace::N);
   unsigned	m_ecnProbeSent = 0;
   unsigned	m_ecnProbeAckd = 0;
   unsigned	m_activeMaxUDP = MinUDPPayload;

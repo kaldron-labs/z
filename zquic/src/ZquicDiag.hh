@@ -127,6 +127,7 @@ struct Diag {
 };
 
 struct LinkRxDiag {
+  // Public diagnostic aggregate layout is retained for dependent API users.
   AckECN	ecnRx[PktNumSpace::N];
 
   [[no_unique_address]] DiagCounter endpointReady = 0;
@@ -184,6 +185,7 @@ struct MigrationDiag {
 };
 
 struct LinkTxDiag {
+  // Public diagnostic aggregate layout is retained for dependent API users.
   AckECN	peerAckECN[PktNumSpace::N];
   bool		ptoTimerActive = false;
   bool		lossTimerActive = false;
@@ -246,6 +248,7 @@ struct LinkTxDiag {
   [[no_unique_address]] DiagCounter lossArmed = 0;
   [[no_unique_address]] DiagCounter lossCanceled = 0;
   [[no_unique_address]] DiagCounter lossExpired = 0;
+  // Public diagnostic aggregate layout is retained for dependent API users.
   [[no_unique_address]] DiagCounter
     pktBytesInFlight[PktNumSpace::N] = {};
   [[no_unique_address]] DiagCounter sentPackets[PktNumSpace::N] = {};

@@ -113,9 +113,41 @@ void testDiagAggregation()
 #endif
 }
 
+void testPktBuildMetadata()
+{
+  ZuTestScope(testPktBuildMetadata);
+
+  uint8_t byte = 0x5a;
+  Zquic::PktBuild build;
+  for (unsigned i = 0; i < Zquic::PlainVec::Max; ++i)
+    ZuCHECK(build.add(ZuBSpan{&byte, 1}),
+      "packet plaintext vector append failed");
+  ZuCHECK(build.count() == Zquic::PlainVec::Max &&
+      build.bytes() == Zquic::PlainVec::Max &&
+      !build.add(ZuBSpan{&byte, 1}) &&
+      !build.pad(1),
+    "packet plaintext vector capacity was not enforced");
+
+  build.reset();
+  ZuCHECK(build.scratchAvail() == Zquic::PktBuildScratchSize &&
+      build.padTo(Zquic::MinUDPPayload) &&
+      build.count() == 1 &&
+      build.bytes() == Zquic::MinUDPPayload &&
+      build.data()[0].base[0] == 0 &&
+      build.data()[0].base[Zquic::MinUDPPayload - 1] == 0,
+    "QUIC Initial minimum padding metadata mismatch");
+
+  build.reset();
+  ZuCHECK(build.padForProtSample(5, 1, 16) &&
+      build.count() == 1 &&
+      build.bytes() == 3,
+    "packet protection sample padding metadata mismatch");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testDiagAggregation);
+  ZuTestCall(testPktBuildMetadata);
 }

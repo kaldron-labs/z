@@ -64,13 +64,13 @@ static int putParamVar_(uint8_t *out, unsigned len, uint64_t id, uint64_t v,
     unsigned &o)
 {
   if (o > len) return -1;
-  uint8_t tmp[8];
-  int n = VarInt::encode(tmp, sizeof(tmp), v);
+  ZuBArray<8> tmp = ZuBArray<8>(8, false);
+  int n = VarInt::encode(tmp.data(), tmp.length(), v);
   if (n < 0) return -1;
   PktWriter w{out + o, len - o};
   w.putVar(id);
   w.putVar(unsigned(n));
-  w.put(ZuBSpan{tmp, unsigned(n)});
+  w.put(ZuBSpan{tmp.data(), unsigned(n)});
   if (!w.ok()) return -1;
   o += w.offset();
   return 0;

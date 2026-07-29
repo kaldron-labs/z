@@ -921,7 +921,7 @@ bool Crypto::init(const CryptoConfig &config)
   m_earlyDataState =
     config.enable0RTT ? EarlyDataState::Enabled : EarlyDataState::Disabled;
   m_oneRTTReady = false;
-  memset(m_secretInstalled, 0, sizeof(m_secretInstalled));
+  for (auto &installed : m_secretInstalled) installed = false;
   for (auto &secret : m_txTrafficSecrets) secret.clear();
   for (auto &secret : m_rxTrafficSecrets) secret.clear();
   m_txEarlySecret.clear();

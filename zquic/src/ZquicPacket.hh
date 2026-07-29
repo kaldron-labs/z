@@ -199,7 +199,10 @@ struct Pkt {
     const uint32_t *, unsigned);
 };
 
-inline constexpr uint8_t PktBuildZeroPad[BufSize] = {};
+// Vectored packet protection retains this source until the final ciphertext is
+// written, so padding needs stable process-lifetime backing storage.
+inline const ZuBArray<BufSize> PktBuildZeroPad =
+  fixedArray<uint8_t, BufSize>();
 // Scratch holds locally encoded ACK/control and frame prefixes only. It is
 // sized for the current ACK_ECN encoder cap of 64 ranges plus one STREAM prefix.
 inline constexpr unsigned PktBuildMaxAckRanges = 64;
@@ -218,26 +221,26 @@ public:
   // frame payload, and padding for up to SentPkt::MaxFrames runtime frames.
   enum { Max = 18 };
 
-  const ptls_iovec_t *data() const { return m_vec; }
-  unsigned count() const { return m_count; }
+  const ptls_iovec_t *data() const { return m_vec.data(); }
+  unsigned count() const { return m_vec.length(); }
   unsigned bytes() const { return m_bytes; }
 
   void reset() {
-    m_count = 0;
+    m_vec.length(0);
     m_bytes = 0;
   }
 
   bool add(ZuBSpan span) {
     if (!span) return true;
-    if (m_count >= Max || span.length() > UINT_MAX - m_bytes) return false;
-    m_vec[m_count++] = ptls_iovec_init(span.data(), span.length());
+    if (m_vec.length() >= Max || span.length() > UINT_MAX - m_bytes)
+      return false;
+    m_vec.push(ptls_iovec_init(span.data(), span.length()));
     m_bytes += span.length();
     return true;
   }
 
 private:
-  ptls_iovec_t	m_vec[Max];
-  unsigned	m_count = 0;
+  ZuArray<ptls_iovec_t, Max> m_vec;
   unsigned	m_bytes = 0;
 };
 
@@ -251,8 +254,10 @@ public:
   const ptls_iovec_t *data() const { return m_plain.data(); }
   unsigned count() const { return m_plain.count(); }
   unsigned bytes() const { return m_plain.bytes(); }
-  uint8_t *scratch() { return m_scratch + m_scratchLen; }
-  unsigned scratchAvail() const { return sizeof(m_scratch) - m_scratchLen; }
+  uint8_t *scratch() { return m_scratch.data() + m_scratchLen; }
+  unsigned scratchAvail() const {
+    return m_scratch.length() - m_scratchLen;
+  }
   bool ack(unsigned level) const {
     return m_ackLevel == level && m_ackLevel < PktNumSpace::N;
   }
@@ -268,7 +273,7 @@ public:
     if (len > scratchAvail()) return false;
     unsigned off = m_scratchLen;
     m_scratchLen += len;
-    return m_plain.add(pktBuildSpan(m_scratch + off, len));
+    return m_plain.add(pktBuildSpan(m_scratch.data() + off, len));
   }
 
   bool add(ZuBSpan span) { return m_plain.add(span); }
@@ -283,7 +288,7 @@ public:
   bool pad(unsigned len) {
     if (!len) return true;
     if (len > BufSize) return false;
-    return m_plain.add(pktBuildSpan(PktBuildZeroPad, len));
+    return m_plain.add(pktBuildSpan(PktBuildZeroPad.data(), len));
   }
 
   bool padTo(unsigned bytes) {
@@ -303,7 +308,10 @@ public:
 
 private:
   PlainVec		m_plain;
-  uint8_t		m_scratch[PktBuildScratchSize];
+  ZuBArray<PktBuildScratchSize>
+			m_scratch =
+			  ZuBArray<PktBuildScratchSize>(
+			    PktBuildScratchSize, false);
   unsigned		m_scratchLen = 0;
   unsigned		m_ackLevel = PktNumSpace::N;
 };

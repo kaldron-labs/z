@@ -22,6 +22,13 @@
 
 namespace Zquic {
 
+template <typename T, unsigned N>
+inline ZuArray<T, N> fixedArray(const T &value = T{}) {
+  ZuArray<T, N> array(N);
+  for (auto &v : array) v = value;
+  return array;
+}
+
 ZtEnumStruct(StreamType, int8_t, Duplex, Simplex);
 
 struct Connected {

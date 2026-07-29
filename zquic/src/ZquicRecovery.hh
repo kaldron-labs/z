@@ -413,17 +413,28 @@ private:
     }
   }
 
-  AckTracker	m_ack[PktNumSpace::N];
-  AckECN	m_ecn[PktNumSpace::N];
-  bool		m_pending[PktNumSpace::N] = {};
-  bool		m_ackEliciting[PktNumSpace::N] = {};
-  unsigned	m_activeAck[PktNumSpace::N] = {};
-  bool		m_immediate[PktNumSpace::N] = {};
-  bool		m_deadlineSet[PktNumSpace::N] = {};
-  uint64_t	m_deadline[PktNumSpace::N] = {};
-  uint64_t	m_largestRxTime[PktNumSpace::N] = {};
-  uint64_t	m_gen[PktNumSpace::N] = {};
-  uint64_t	m_postedGen[PktNumSpace::N] = {};
+  ZuArray<AckTracker, PktNumSpace::N> m_ack =
+    ZuArray<AckTracker, PktNumSpace::N>(PktNumSpace::N);
+  ZuArray<AckECN, PktNumSpace::N> m_ecn =
+    ZuArray<AckECN, PktNumSpace::N>(PktNumSpace::N);
+  ZuArray<bool, PktNumSpace::N> m_pending =
+    fixedArray<bool, PktNumSpace::N>();
+  ZuArray<bool, PktNumSpace::N> m_ackEliciting =
+    fixedArray<bool, PktNumSpace::N>();
+  ZuArray<unsigned, PktNumSpace::N> m_activeAck =
+    fixedArray<unsigned, PktNumSpace::N>();
+  ZuArray<bool, PktNumSpace::N> m_immediate =
+    fixedArray<bool, PktNumSpace::N>();
+  ZuArray<bool, PktNumSpace::N> m_deadlineSet =
+    fixedArray<bool, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N> m_deadline =
+    fixedArray<uint64_t, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N> m_largestRxTime =
+    fixedArray<uint64_t, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N> m_gen =
+    fixedArray<uint64_t, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N> m_postedGen =
+    fixedArray<uint64_t, PktNumSpace::N>();
 };
 
 class RttEstimator {
@@ -928,7 +939,9 @@ struct PktTxUpdate {
   void clearAckdFrames() { ackdFrames.clear(); }
 
   uint64_t	ackdBytes = 0;
-  uint64_t	ackedPNs[AckedPNSampleMax] = {};
+  ZuArray<uint64_t, AckedPNSampleMax>
+		ackedPNs =
+		  fixedArray<uint64_t, AckedPNSampleMax>();
   PktNumSpace::T	level = PktNumSpace::Initial;
   unsigned	ecnAckdPackets = 0;
   uint64_t	ecnAckdBytes = 0;
@@ -942,8 +955,12 @@ struct PktTxUpdate {
   unsigned	pmtudLostSize = 0;
   ZuTime	normalLostSentTime;
   ZuTime	pmtudLostSentTime;
-  bool		ackdAck[PktNumSpace::N] = {};
-  uint64_t	ackLargest[PktNumSpace::N] = {};
+  ZuArray<bool, PktNumSpace::N>
+		ackdAck =
+		  fixedArray<bool, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N>
+		ackLargest =
+		  fixedArray<uint64_t, PktNumSpace::N>();
   SentFrameUpdates ackdFrames;
   SentFrameUpdates lostFrames;
   unsigned	nAckedPNs = 0;
