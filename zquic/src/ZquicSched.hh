@@ -142,7 +142,7 @@ struct ControlFrame {
   uint64_t		value = 0;
   uint64_t		errorCode = 0;
   Zquic::StreamType::T	streamType = Zquic::StreamType::Duplex;
-  uint8_t		payload[8]{};
+  PathData		payload;
   CxnID			cxnID;
   ResetToken		resetToken;
 
@@ -154,7 +154,7 @@ struct ControlFrame {
       return false;
     if (type == FrameType::PathChallenge ||
 	type == FrameType::PathResponse)
-      return !memcmp(payload, o.payload, sizeof(payload));
+      return payload == o.payload;
     if (type == FrameType::NewCxnID)
       return cxnID == o.cxnID && resetToken == o.resetToken;
     return true;
@@ -183,17 +183,15 @@ struct ControlFrame {
   static ControlFrame pathResponse(ZuBSpan data) {
     ControlFrame frame;
     frame.type = FrameType::PathResponse;
-    if (data.length() == sizeof(frame.payload))
-      for (unsigned i = 0; i < sizeof(frame.payload); ++i)
-	frame.payload[i] = data[i];
+    frame.payload = data.length() == PathChallenge::Length ?
+      PathData{data} : PathData(PathChallenge::Length, true);
     return frame;
   }
   static ControlFrame pathChallenge(ZuBSpan data) {
     ControlFrame frame;
     frame.type = FrameType::PathChallenge;
-    if (data.length() == sizeof(frame.payload))
-      for (unsigned i = 0; i < sizeof(frame.payload); ++i)
-	frame.payload[i] = data[i];
+    frame.payload = data.length() == PathChallenge::Length ?
+      PathData{data} : PathData(PathChallenge::Length, true);
     return frame;
   }
   static ControlFrame handshakeDone() {
@@ -232,11 +230,9 @@ struct ControlFrame {
       case FrameType::StopSending:
 	return FrameCodec::writeStopSending(out, len, streamID, errorCode);
       case FrameType::PathChallenge:
-	return FrameCodec::writePathChallenge(out, len, ZuBSpan{
-	  payload, sizeof(payload)});
+	return FrameCodec::writePathChallenge(out, len, payload);
       case FrameType::PathResponse:
-	return FrameCodec::writePathResponse(out, len, ZuBSpan{
-	  payload, sizeof(payload)});
+	return FrameCodec::writePathResponse(out, len, payload);
       case FrameType::HandshakeDone:
 	return FrameCodec::writeHandshakeDone(out, len);
       case FrameType::NewCxnID:

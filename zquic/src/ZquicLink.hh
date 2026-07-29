@@ -1861,11 +1861,10 @@ protected:
   }
   void rxPathResponse_(ZuBSpan data) {
     if (data.length() != PathChallenge::Length) return;
-    uint8_t payload[PathChallenge::Length];
-    for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = data[i];
+    PathData payload{data};
     app()->txRun([link = impl(), payload]() mutable {
       if (link->disconnecting_()) return;
-      link->onPathResponse_(byteSpan(payload, sizeof(payload)));
+      link->onPathResponse_(payload);
     });
   }
   void promotePath_() {
@@ -3808,8 +3807,11 @@ protected:
       tlsFailure_();
       return false;
     }
+    CryptoOffsets offsets_(TLSEpochCount + 1, false);
+    for (unsigned i = 0; i <= TLSEpochCount; ++i)
+      offsets_[i] = offsets[i];
     syncEarlyDataTLS_();
-    if (!sendFlights(out->data(), unsigned(n), offsets, addr))
+    if (!sendFlights(out->data(), unsigned(n), offsets_, addr))
       return false;
     markEstablished();
     return afterEstablished(ZuMv(addr));
@@ -3851,11 +3853,9 @@ protected:
 	return SentFrameRef::blocked(
 	  frame.type, frame.streamID, frame.value, frame.streamType);
       case FrameType::PathChallenge:
-	return SentFrameRef::pathChallenge(
-	  byteSpan(frame.payload, sizeof(frame.payload)));
+	return SentFrameRef::pathChallenge(frame.payload);
       case FrameType::PathResponse:
-	return SentFrameRef::pathResponse(
-	  byteSpan(frame.payload, sizeof(frame.payload)));
+	return SentFrameRef::pathResponse(frame.payload);
       case FrameType::HandshakeDone:
 	return SentFrameRef::handshakeDone();
       case FrameType::NewCxnID:
@@ -3886,8 +3886,7 @@ protected:
     frame.streamType = ref.streamType;
     if (ref.controlType == FrameType::PathChallenge ||
 	ref.controlType == FrameType::PathResponse)
-      for (unsigned i = 0; i < sizeof(frame.payload); ++i)
-	frame.payload[i] = ref.payload[i];
+      frame.payload = ref.payload;
     else if (ref.controlType == FrameType::NewCxnID) {
       frame.cxnID = ref.cxnID;
       frame.resetToken = ref.resetToken;
@@ -6838,9 +6837,9 @@ nextSpace:
 
   template <typename SendCryptoPkt>
   bool sendCryptoFlights_(
-    const uint8_t *data, unsigned len, const size_t offsets[5],
+    const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
     unsigned chunkMax, ZiSockAddr addr, SendCryptoPkt sendCryptoPkt) {
-    return sendCryptoFlights(
+    return Zquic::sendCryptoFlights_(
       m_txCrypto, m_txDiag,
       data, len, offsets, chunkMax, ZuMv(addr),
       [sendCryptoPkt](
@@ -6849,6 +6848,12 @@ nextSpace:
 	return sendCryptoPkt(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
+  }
+
+  void invalidCryptoOffsetsTx_() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC crypto offset failure outside Tx thread", return);
+    ++m_txDiag.failures;
   }
 
   template <
@@ -8622,8 +8627,7 @@ private:
       case FrameType::PathChallenge:
 	return m_pathChallengeControl.frame == frame &&
 	  m_migration.active &&
-	  m_migration.challenge.equals(byteSpan(
-	    frame.payload, sizeof(frame.payload)));
+	  m_migration.challenge.equals(frame.payload);
       case FrameType::PathResponse:
 	return true;
       case FrameType::HandshakeDone:

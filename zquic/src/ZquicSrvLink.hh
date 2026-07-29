@@ -354,7 +354,7 @@ private:
     return Base::template advanceTLS_<TLSBufSize>(
       inEpoch, input, ZuMv(addr),
       [this](
-	  const uint8_t *data, unsigned len, const size_t offsets[5],
+	  const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
 	  ZiSockAddr addr_) {
 	return sendCryptoFlights_(data, len, offsets, ZuMv(addr_));
       },
@@ -370,35 +370,36 @@ private:
   }
 
   bool sendCryptoFlights_(
-    const uint8_t *data, unsigned len, const size_t offsets[5],
+    const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
     ZiSockAddr addr) {
+    if (!validCryptoOffsets(offsets, len)) {
+      app()->txRun([link = impl()]() {
+	if (!link->disconnecting_())
+	  link->invalidCryptoOffsetsTx_();
+      });
+      return true;
+    }
     typename Base::TxCryptoSnapshot txCrypto;
     Base::snapshotTxCrypto_(txCrypto);
     AsyncSendPayload payload;
     payload.append(data, len);
-    size_t offset0 = offsets[0];
-    size_t offset1 = offsets[1];
-    size_t offset2 = offsets[2];
-    size_t offset3 = offsets[3];
-    size_t offset4 = offsets[4];
     app()->txRun([
       link = impl(),
       txCrypto,
       payload = ZuMv(payload),
-      offset0, offset1, offset2, offset3, offset4,
+      offsets,
       addr = ZuMv(addr)
     ]() mutable {
       if (link->disconnecting_()) return;
-      size_t offsets_[5] = {offset0, offset1, offset2, offset3, offset4};
       if (!link->installTxCrypto_(txCrypto)) return;
       (void)link->sendCryptoFlightsTx_(
-	payload.data(), payload.length(), offsets_, ZuMv(addr));
+	payload.data(), payload.length(), offsets, ZuMv(addr));
     });
     return true;
   }
 
   bool sendCryptoFlightsTx_(
-    const uint8_t *data, unsigned len, const size_t offsets[5],
+    const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
     ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server crypto send outside Tx thread", return false);
@@ -509,8 +510,7 @@ private:
   bool sendPathResponse_(
     ZuBSpan data, ZiSockAddr addr, ZiSockAddr local, unsigned rxBytes) {
     if (data.length() != PathChallenge::Length) return false;
-    uint8_t payload[PathChallenge::Length];
-    for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = data[i];
+    PathData payload{data};
     app()->txInvoke([
       link = impl(),
       payload,
@@ -524,7 +524,7 @@ private:
       link->observePathRxTx_(
 	ZuMv(local), ZuMv(remote), rxBytes, true, false);
       link->sendPathResponseTx_(
-	byteSpan(payload, sizeof(payload)), ZuMv(responseAddr));
+	payload, ZuMv(responseAddr));
     });
     return true;
   }

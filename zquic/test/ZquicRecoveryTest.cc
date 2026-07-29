@@ -596,7 +596,7 @@ void testTypedControlRefs()
   ref = Zquic::SentFrameRef::pathResponse("12345678");
   ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
       ref.controlType == Zquic::FrameType::PathResponse &&
-      !memcmp(ref.payload, "12345678", 8),
+      ref.payload == "12345678",
     "typed PATH_RESPONSE control ref mismatch");
 
   ref = Zquic::SentFrameRef::handshakeDone();

@@ -144,6 +144,58 @@ void testTLSOutputBuffer()
     "TLS output diagnostic not updated");
 }
 
+void testCryptoFlightOffsets()
+{
+  ZuTestScope(testCryptoFlightOffsets);
+
+  Zquic::CryptoStream txCrypto[Zquic::PktNumSpace::N];
+  Zquic::LinkTxDiag diag;
+  unsigned sends = 0;
+  auto send = [&sends](
+      Zquic::PktNumSpace::T, ZuBSpan, ZuBSpan,
+      const Zquic::SentFrameRef &, ZiSockAddr) {
+    ++sends;
+    return true;
+  };
+
+  size_t empty[5] = {};
+  ZuCHECK(Zquic::sendCryptoFlights(
+      txCrypto, diag, nullptr, 0, empty, 16, {}, send) &&
+      !sends && !diag.failures,
+    "empty crypto flights failed");
+
+  size_t one[5] = {0, 3, 3, 3, 3};
+  ZuCHECK(Zquic::sendCryptoFlights(
+      txCrypto, diag, reinterpret_cast<const uint8_t *>("abc"), 3,
+      one, 16, {}, send) &&
+      sends == 1 && diag.cryptoBytesTx == 3,
+    "single-epoch crypto flights failed");
+
+  Zquic::CryptoStream multiCrypto[Zquic::PktNumSpace::N];
+  Zquic::LinkTxDiag multiDiag;
+  sends = 0;
+  size_t multi[5] = {0, 2, 2, 4, 6};
+  ZuCHECK(Zquic::sendCryptoFlights(
+      multiCrypto, multiDiag,
+      reinterpret_cast<const uint8_t *>("abcdef"), 6,
+      multi, 16, {}, send) &&
+      sends == 4 && multiDiag.cryptoBytesTx == 6,
+    "multi-epoch crypto flights failed");
+
+  size_t descending[5] = {0, 3, 2, 3, 3};
+  size_t beyond[5] = {0, 0, 0, 0, 4};
+  ZuCHECK(!Zquic::sendCryptoFlights(
+      multiCrypto, multiDiag,
+      reinterpret_cast<const uint8_t *>("abc"), 3,
+      descending, 16, {}, send) &&
+      !Zquic::sendCryptoFlights(
+	multiCrypto, multiDiag,
+	reinterpret_cast<const uint8_t *>("abc"), 3,
+	beyond, 16, {}, send) &&
+      multiDiag.failures == 2,
+    "invalid crypto offsets diagnostics mismatch");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -152,4 +204,5 @@ int main(int argc, char **argv)
   ZuTestCall(testEarlyDataTLSProperties);
   ZuTestCall(testEarlyTrafficSecretState);
   ZuTestCall(testTLSOutputBuffer);
+  ZuTestCall(testCryptoFlightOffsets);
 }
