@@ -26,15 +26,14 @@ ZuDerive(EndpointString, ZtString<ZtStringHeapID<"Zhttp.Endpoint">>);
 
 namespace Link_ {
 
-template <typename Consumer, typename Link, typename Stream>
-auto streamProcess(
-  Consumer &consumer, Link &link, Stream stream, int) ->
-    decltype(consumer.streamProcess(link, ZuMv(stream)), void())
+template <typename Consumer, typename Stream, typename Rx>
+auto process(Consumer &consumer, Stream stream, Rx &rx, int) ->
+    decltype(int(consumer.process(ZuMv(stream), rx)))
 {
-  consumer.streamProcess(link, ZuMv(stream));
+  return int(consumer.process(ZuMv(stream), rx));
 }
-template <typename Consumer, typename Link, typename Stream>
-void streamProcess(Consumer &, Link &, Stream, ...) { }
+template <typename Consumer, typename Stream, typename Rx>
+int process(Consumer &, Stream, Rx &, ...) { return 0; }
 
 } // namespace Link_
 
@@ -124,9 +123,9 @@ public:
   void streamTxReset() {
     if (m_stream.reset()) this->disconnect();
   }
-  template <typename Stream>
-  void streamProcess(Stream stream) {
-    Link_::streamProcess(*this->app(), *impl(), ZuMv(stream), 0);
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Link_::process(*this->app(), ZuMv(stream), rx, 0);
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {
@@ -234,9 +233,9 @@ public:
   void streamTxReset() {
     if (m_stream.reset()) this->disconnect();
   }
-  template <typename Stream>
-  void streamProcess(Stream stream) {
-    Link_::streamProcess(m_session, *impl(), ZuMv(stream), 0);
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Link_::process(m_session, ZuMv(stream), rx, 0);
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {

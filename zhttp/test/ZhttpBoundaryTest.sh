@@ -3,7 +3,7 @@
 set -eu
 
 echo 'TAP version 14'
-echo '1..7'
+echo '1..8'
 
 files='zhttp.cc zhttpd.cc Zhttpd.hh ZhttpPut.hh'
 bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|HPack|H2::(Frame|Session|Wire)|H2_(Client|Server|Logical)|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Engines|Ztls::|\.alpn[[:space:]]*\(|ZmBlock|ZmSemaphore'
@@ -30,7 +30,7 @@ else
 fi
 
 if grep -En \
-    '(responseBody|requestBody|streamProcess|void[[:space:]]+body)[[:space:]]*\([^)]*ZuBSpan' \
+    '(responseBody|requestBody|void[[:space:]]+body)[[:space:]]*\([^)]*ZuBSpan' \
     $files >/dev/null; then
   echo 'not ok 4 - executable closure excludes borrowed-span body callbacks'
   exit 1
@@ -77,5 +77,19 @@ else
   echo 'not ok 7 - unreviewed program-only source entered the closure'
   echo "# sources: $sources"
   echo "# headers: $headers"
+  exit 1
+fi
+
+stream_policy='websocket|sec-websocket|permessage-deflate|continuation[ _-]+opcode|binary[ _-]+opcode|text[ _-]+opcode|close[ _-]+code|masking[ _-]+key'
+if grep -Ein "$stream_policy" ../src/*.cc ../src/*.hh >/dev/null; then
+  echo 'not ok 8 - production zhttp excludes dependent stream protocols'
+  grep -Ein "$stream_policy" ../src/*.cc ../src/*.hh | sed 's/^/# /'
+  exit 1
+fi
+echo 'websocket sec-websocket masking-key close-code binary-opcode' >"$fixture"
+if grep -Eiq "$stream_policy" "$fixture"; then
+  echo 'ok 8 - production zhttp excludes dependent stream protocols'
+else
+  echo 'not ok 8 - dependent stream policy scan rejects violations'
   exit 1
 fi
