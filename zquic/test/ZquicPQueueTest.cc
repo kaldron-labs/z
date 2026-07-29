@@ -381,6 +381,65 @@ void testTxUnackdFinSentinel()
     "stream unackd FIN-only range clear failed");
 }
 
+void testTxUnackdFragmentation()
+{
+  ZuTestScope(testTxUnackdFragmentation);
+
+  Zquic::StreamTxPQueue q{0};
+  constexpr unsigned Ranges = Zquic::StreamTxPQueue::Max << 1;
+  for (unsigned i = 0; i < Ranges; ++i)
+    ZuCHECK(q.add(Zquic::TxUnackdRange{uint64_t(i) << 1, 1}) ==
+	ZmPQResult::Inserted,
+      "fragmented stream range insert failed");
+  ZuCHECK(q.count_() == Ranges &&
+      q.length_() == Ranges &&
+      q.find(0) &&
+      q.find((uint64_t(Ranges - 1) << 1)) &&
+      !q.find(1) &&
+      q.verify(),
+    "fragmented stream ranges did not grow beyond former capacity");
+
+  ZuCHECK(q.add(Zquic::TxUnackdRange{1, 1}) == ZmPQResult::Inserted &&
+      q.count_() == Ranges - 1 &&
+      q.length_() == Ranges + 1 &&
+      q.find(0)->data().length() == 3 &&
+      q.verify(),
+    "fragmented stream ranges did not coalesce around an inserted bridge");
+
+  unsigned spans = 0;
+  ZuCHECK(q.spans(0, 8, [&spans](const auto &) {
+	++spans;
+	return true;
+      }) &&
+      spans == 3,
+    "fragmented stream range span traversal mismatch");
+}
+
+void testTxUnackdBoundaries()
+{
+  ZuTestScope(testTxUnackdBoundaries);
+
+  Zquic::StreamTxPQueue q{0};
+  ZuCHECK(q.add(Zquic::TxUnackdRange{uint64_t(-1), 1}) ==
+	ZmPQResult::Invalid &&
+      q.add(Zquic::TxUnackdRange{0, uint64_t(-1), true}) ==
+	ZmPQResult::Invalid &&
+      !q.clear(uint64_t(-1), 2) &&
+      !q.spans(uint64_t(-1), 2, [](const auto &) { return true; }) &&
+      !q.count_() &&
+      !q.length_() &&
+      q.verify(),
+    "stream range endpoint overflow was not rejected");
+
+  for (unsigned i = 0; i <= Zquic::StreamTxPQueue::BuiltinRanges; ++i)
+    ZuCHECK(q.add(Zquic::TxUnackdRange{uint64_t(i) << 1, 1}) ==
+	ZmPQResult::Inserted,
+      "stream range inline/heap transition insert failed");
+  ZuCHECK(q.count_() == Zquic::StreamTxPQueue::BuiltinRanges + 1 &&
+      q.verify(),
+    "stream range inline/heap transition lost retained ranges");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -398,4 +457,6 @@ int main(int argc, char **argv)
   ZuTestCall(testTxPktRetainedLostAck);
   ZuTestCall(testTxUnackdRangeQueue);
   ZuTestCall(testTxUnackdFinSentinel);
+  ZuTestCall(testTxUnackdFragmentation);
+  ZuTestCall(testTxUnackdBoundaries);
 }

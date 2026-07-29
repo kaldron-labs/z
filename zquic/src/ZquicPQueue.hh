@@ -181,7 +181,15 @@ struct TxUnackdRange {
 
 class TxUnackdRanges {
 public:
-  static constexpr unsigned Max = 128;
+  static constexpr unsigned Max = 128; // preserved former public capacity
+  // Ordinary focused cases had a 95th percentile of two retained ranges;
+  // eight leaves one allocation-free growth class.  The adversarial case
+  // reached 256 ranges and deliberately exercises named heap fallback.
+  static constexpr unsigned BuiltinRanges = 8;
+  using Ranges = ZtBuiltin<
+    ZtArray<TxUnackdRange,
+      ZtArrayHeapID<"Zquic.Stream.TxUnackdRanges">>,
+    BuiltinRanges>;
 
   class Node : public ZuObject {
   public:
@@ -203,16 +211,22 @@ public:
     return add(node_->data());
   }
   ZmPQResult::T add(const TxUnackdRange &range) {
+    if (range.fin && range.bytes == uint64_t(-1))
+      return ZmPQResult::Invalid;
     uint64_t length = range.length();
-    if (!length) return ZmPQResult::Invalid;
+    if (!length || range.offset > uint64_t(-1) - length)
+      return ZmPQResult::Invalid;
     uint64_t first = range.offset;
     uint64_t end = first + length;
     bool fin = range.fin;
-    unsigned i = 0;
-    while (i < m_count) {
+    unsigned i = lowerBound_(first);
+    if (i && end_(m_ranges[i - 1]) >= first)
+      --i;
+    unsigned begin = i;
+    uint64_t removed = 0;
+    while (i < m_ranges.length()) {
       uint64_t rangeFirst = m_ranges[i].offset;
-      uint64_t rangeEnd = rangeFirst + m_ranges[i].length();
-      if (rangeEnd < first) { ++i; continue; }
+      uint64_t rangeEnd = end_(m_ranges[i]);
       if (end < rangeFirst) break;
       if (rangeFirst < first) first = rangeFirst;
       if (rangeEnd > end) {
@@ -220,64 +234,82 @@ public:
 	fin = m_ranges[i].fin;
       } else if (rangeEnd == end)
 	fin = fin || m_ranges[i].fin;
-      remove_(i);
+      removed += m_ranges[i].length();
+      ++i;
     }
-    if (m_count >= Max) return ZmPQResult::Invalid;
-    insert_(i, makeRange_(first, end, fin));
+    TxUnackdRange merged = makeRange_(first, end, fin);
+    m_ranges.splice(
+      begin, i - begin, ZuSpan<const TxUnackdRange>{&merged, 1});
+    m_length = m_length - removed + merged.length();
+    ZmAssert(verify());
     return ZmPQResult::Inserted;
   }
   bool clear(uint64_t offset, uint64_t length) {
-    if (!length) return false;
+    if (!length || offset > uint64_t(-1) - length) return false;
     uint64_t end = offset + length;
-    bool changed = false;
-    unsigned i = 0;
-    while (i < m_count) {
-      TxUnackdRange range = m_ranges[i];
+    unsigned i = lowerBound_(offset);
+    if (i && end_(m_ranges[i - 1]) > offset) --i;
+    unsigned begin = i;
+    uint64_t removed = 0;
+    ZuArray<TxUnackdRange, 2> survivors;
+    while (i < m_ranges.length()) {
+      const TxUnackdRange &range = m_ranges[i];
       uint64_t first = range.offset;
-      uint64_t rangeEnd = first + range.length();
-      if (rangeEnd <= offset) { ++i; continue; }
+      uint64_t rangeEnd = end_(range);
       if (first >= end) break;
-      changed = true;
-      remove_(i);
+      removed += range.length();
       if (first < offset)
-	insert_(i++, slice_(range, first, offset));
+	survivors.push(slice_(range, first, offset));
       if (rangeEnd > end)
-	insert_(i++, slice_(range, end, rangeEnd));
+	survivors.push(slice_(range, end, rangeEnd));
+      ++i;
     }
-    return changed;
+    if (i == begin) return false;
+    uint64_t retained = 0;
+    for (unsigned j = 0; j < survivors.length(); ++j)
+      retained += survivors[j].length();
+    m_ranges.splice(begin, i - begin, survivors.cspan());
+    m_length = m_length - removed + retained;
+    ZmAssert(verify());
+    return true;
   }
   template <typename L>
   bool spans(uint64_t offset, uint64_t length, L &&l) const {
     if (!length) return true;
+    if (offset > uint64_t(-1) - length) return false;
     uint64_t end = offset + length;
-    for (unsigned i = 0; i < m_count; ++i) {
+    unsigned i = lowerBound_(offset);
+    if (i && end_(m_ranges[i - 1]) > offset) --i;
+    for (; i < m_ranges.length(); ++i) {
       uint64_t first = m_ranges[i].offset;
-      uint64_t rangeEnd = first + m_ranges[i].length();
-      if (rangeEnd <= offset) continue;
       if (first >= end) break;
       if (!l(m_ranges[i])) return false;
     }
     return true;
   }
   ZmRef<Node> find(uint64_t offset) const {
-    for (unsigned i = 0; i < m_count; ++i)
-      if (m_ranges[i].offset == offset)
-	return new Node{m_ranges[i]};
+    unsigned i = lowerBound_(offset);
+    if (i < m_ranges.length() && m_ranges[i].offset == offset)
+      return new Node{m_ranges[i]};
     return nullptr;
   }
   void clear() {
-    m_count = 0;
+    m_ranges.clear();
     m_length = 0;
   }
   void clean() { clear(); }
-  unsigned count_() const { return m_count; }
+  unsigned count_() const { return m_ranges.length(); }
   uint64_t length_() const { return m_length; }
   bool verify() const {
     uint64_t length = 0;
-    for (unsigned i = 0; i < m_count; ++i) {
+    for (unsigned i = 0; i < m_ranges.length(); ++i) {
       if (!m_ranges[i]) return false;
-      if (i && m_ranges[i - 1].offset + m_ranges[i - 1].length() >=
+      if (m_ranges[i].offset > uint64_t(-1) - m_ranges[i].length())
+	return false;
+      if (i && end_(m_ranges[i - 1]) >=
 	  m_ranges[i].offset)
+	return false;
+      if (length > uint64_t(-1) - m_ranges[i].length())
 	return false;
       length += m_ranges[i].length();
     }
@@ -285,6 +317,20 @@ public:
   }
 
 private:
+  static uint64_t end_(const TxUnackdRange &range) {
+    return range.offset + range.length();
+  }
+  unsigned lowerBound_(uint64_t offset) const {
+    unsigned l = 0, r = m_ranges.length();
+    while (l < r) {
+      unsigned m = (l + r) >> 1;
+      if (m_ranges[m].offset < offset)
+	l = m + 1;
+      else
+	r = m;
+    }
+    return l;
+  }
   static TxUnackdRange makeRange_(
     uint64_t first, uint64_t end, bool fin) {
     if (fin) return TxUnackdRange{first, end - first - 1, true};
@@ -301,26 +347,7 @@ private:
     }
     return TxUnackdRange{first, bytes, fin};
   }
-  void insert_(unsigned i, const TxUnackdRange &range) {
-    unsigned j = m_count++;
-    while (j > i) {
-      m_ranges[j] = m_ranges[j - 1];
-      --j;
-    }
-    m_ranges[i] = range;
-    m_length += range.length();
-  }
-  void remove_(unsigned i) {
-    m_length -= m_ranges[i].length();
-    --m_count;
-    while (i < m_count) {
-      m_ranges[i] = m_ranges[i + 1];
-      ++i;
-    }
-  }
-
-  TxUnackdRange	m_ranges[Max];
-  unsigned	m_count = 0;
+  Ranges	m_ranges;
   uint64_t	m_length = 0;
 };
 
