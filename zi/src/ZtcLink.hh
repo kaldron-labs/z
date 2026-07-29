@@ -58,6 +58,36 @@ struct Link {
   virtual void down() = 0;
 };
 
+template <typename Owner_, QueueType::T Type_>
+class LinkQueue final : public Queue {
+  static_assert(Type_ == QueueType::Rx || Type_ == QueueType::Tx);
+
+public:
+  using Owner = Owner_;
+  enum { Type = Type_ };
+
+  LinkQueue(Owner *owner) : m_owner{owner} { }
+
+  ZuTuple<ZuID, QueueType::T> telKey() const override {
+    auto key = m_owner->telKey();
+    return {key.template p<1>(), Type};
+  }
+
+  void telemetry(QueueTelemetry &data) const override {
+    auto key = m_owner->telKey();
+    data = {};
+    data.id = key.template p<1>();
+    data.type = Type;
+    if constexpr (Type == QueueType::Rx)
+      m_owner->rxQueueTelemetry_(data);
+    else
+      m_owner->txQueueTelemetry_(data);
+  }
+
+private:
+  Owner *const	m_owner;
+};
+
 } // Ztc
 
 #endif /* ZtcLink_HH */

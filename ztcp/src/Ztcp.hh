@@ -141,6 +141,9 @@ class Link :
   public ZiTx<Impl>,
   public Ztc::Link
 {
+template <typename, Ztc::QueueType::T>
+friend class Ztc::LinkQueue;
+
   ZuAssert((ZuIs_<RxBufAlloc_, Ztcp_::IOQueue::Node>{}));
   ZuAssert((ZuIs_<TxBufAlloc_, Ztcp_::IOQueue::Node>{}));
 
@@ -152,13 +155,18 @@ public:
   using Tx = ZiTx<Impl>;
   using Stream = Impl;
   using StreamRef = Impl *;
+  using RxTelQueue =
+    Ztc::LinkQueue<Link, Ztc::QueueType::Rx>;
+  using TxTelQueue =
+    Ztc::LinkQueue<Link, Ztc::QueueType::Tx>;
 
 friend Cxn;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  Link(App *app) : m_app(app) { }
+  Link(App *app) :
+    m_app{app}, m_rxTelQueue{this}, m_txTelQueue{this} { }
   ~Link() = default;
 
   App *app() const { return m_app; }
@@ -187,8 +195,8 @@ friend Cxn;
       m_disconnecting.load_() ?
 	Ztc::LinkState::Disconnecting : Ztc::LinkState::Down;
   }
-  Ztc::Queue *rxQueue() const override { return nullptr; }
-  Ztc::Queue *txQueue() const override { return nullptr; }
+  Ztc::Queue *rxQueue() const override { return &m_rxTelQueue; }
+  Ztc::Queue *txQueue() const override { return &m_txTelQueue; }
   void up() override { impl()->telUp_(); }
   void down() override { disconnect(); }
 
@@ -366,7 +374,11 @@ protected:
       "TCP send_ outside Tx thread", return);
     if (ZuUnlikely(!buf || !buf->length)) return;
     if (ZuUnlikely(m_disconnecting.load_())) return;
+    if (ZuUnlikely(!m_cxn)) return;
     buf->owner = impl();
+    auto length = buf->length;
+    m_txInCount.store_(m_txInCount.load_() + 1);
+    m_txInBytes.store_(m_txInBytes.load_() + length);
     Tx::send(ZuMv(buf));
   }
 
@@ -394,6 +406,26 @@ protected:
   void telUp_() { }
 
 private:
+  void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
+    Cxn *cxn = m_cxn;
+    if (cxn) {
+      data.inCount = cxn->rxCalls();
+      data.inBytes = cxn->rxBytes();
+    }
+    data.count = m_rxStream.count_();
+  }
+
+  void txQueueTelemetry_(Ztc::QueueTelemetry &data) const {
+    data.inCount = m_txInCount.load_();
+    data.inBytes = m_txInBytes.load_();
+    Cxn *cxn = m_cxn;
+    if (cxn) {
+      data.outCount = cxn->txCalls();
+      data.outBytes = cxn->txBytes();
+    }
+    data.count = Tx::txQueue.count_();
+  }
+
   ZuID telID() const {
     return ZuID{} << "tcp:" <<
       ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
@@ -401,6 +433,8 @@ private:
 
   // immutable
   App			*m_app = nullptr;
+  mutable RxTelQueue	m_rxTelQueue;
+  mutable TxTelQueue	m_txTelQueue;
 
   // shared
   ZmAtomic<unsigned>	m_disconnecting = 0;
@@ -410,6 +444,11 @@ private:
   ZmScheduler::Timer	m_reconnTimer;
   CxnRef		m_cxn = nullptr;	// read by Tx thread
   RxStream		m_rxStream;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t>	m_txInCount = 0;
+  ZmAtomic<uint64_t>	m_txInBytes = 0;
 };
 
 template <

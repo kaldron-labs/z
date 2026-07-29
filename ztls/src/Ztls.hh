@@ -255,6 +255,9 @@ class Link :
   public ZiTx<Impl>,
   public Ztc::Link
 {
+template <typename, Ztc::QueueType::T>
+friend class Ztc::LinkQueue;
+
   ZuAssert((ZuIs_<RxBufAlloc_, Ztls_::IOQueue::Node>{}));
   ZuAssert((ZuIs_<TxBufAlloc_, Ztls_::IOQueue::Node>{}));
 
@@ -268,6 +271,10 @@ public:
   using ImplRef = typename Cxn::LinkRef;
   using Stream = Impl;
   using StreamRef = Impl *;
+  using RxTelQueue =
+    Ztc::LinkQueue<Link, Ztc::QueueType::Rx>;
+  using TxTelQueue =
+    Ztc::LinkQueue<Link, Ztc::QueueType::Tx>;
 
 friend Cxn;
 
@@ -279,7 +286,9 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  Link(App *app, bool isServer) : m_app(app), m_isServer(isServer) { }
+  Link(App *app, bool isServer) :
+    m_app{app}, m_isServer{isServer},
+    m_rxTelQueue{this}, m_txTelQueue{this} { }
   ~Link() {
     if (m_tls) {
       if (ZuUnlikely(asyncPending_()))
@@ -316,8 +325,8 @@ public:
       m_disconnecting.load_() ?
 	Ztc::LinkState::Disconnecting : Ztc::LinkState::Down;
   }
-  Ztc::Queue *rxQueue() const override { return nullptr; }
-  Ztc::Queue *txQueue() const override { return nullptr; }
+  Ztc::Queue *rxQueue() const override { return &m_rxTelQueue; }
+  Ztc::Queue *txQueue() const override { return &m_txTelQueue; }
   void up() override { impl()->telUp_(); }
   void down() override { disconnect(); }
   TlsInfo tlsInfo() const {
@@ -521,6 +530,8 @@ private:
     // Publish exactly the serialized TLS record bytes.
     buf->skip = 0;
     buf->length = uint32_t(pbuf.off);
+    m_txInCount.store_(m_txInCount.load_() + 1);
+    m_txInBytes.store_(m_txInBytes.load_() + buf->length);
     Tx::send(ZuMv(buf));
     return true;
   }
@@ -571,6 +582,8 @@ private:
 	// Application plaintext becomes the active ZiIOBuf span.
 	buf->skip = m_headroom;
 	buf->length = uint32_t(pbuf.off);
+	m_rxInCount.store_(m_rxInCount.load_() + 1);
+	m_rxInBytes.store_(m_rxInBytes.load_() + buf->length);
 	m_rxStream.push(ZuMv(buf));
       } else {
 	// A zero-output post-handshake control record can queue a reciprocal
@@ -1073,6 +1086,23 @@ protected:
   }
 
 private:
+  void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
+    data.inCount = m_rxInCount.load_();
+    data.inBytes = m_rxInBytes.load_();
+    data.count = m_rxStream.count_();
+  }
+
+  void txQueueTelemetry_(Ztc::QueueTelemetry &data) const {
+    data.inCount = m_txInCount.load_();
+    data.inBytes = m_txInBytes.load_();
+    Cxn *cxn = m_cxn;
+    if (cxn) {
+      data.outCount = cxn->txCalls();
+      data.outBytes = cxn->txBytes();
+    }
+    data.count = Tx::txQueue.count_();
+  }
+
   ZuID telID() const {
     return ZuID{} << "tls:" <<
       ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
@@ -1081,6 +1111,8 @@ private:
   // immutable
   App			*m_app = nullptr;
   bool			m_isServer = false;
+  mutable RxTelQueue	m_rxTelQueue;
+  mutable TxTelQueue	m_txTelQueue;
 
   // shared
   ZmAtomic<uint64_t>	m_tlsGen = 0;
@@ -1089,6 +1121,10 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
+  ZmAtomic<uint64_t>	m_rxInCount = 0;
+  ZmAtomic<uint64_t>	m_rxInBytes = 0;
+  ZmAtomic<uint64_t>	m_txInCount = 0;
+  ZmAtomic<uint64_t>	m_txInBytes = 0;
 
   struct AsyncJob : public ZmPolymorph {
     AsyncJob(

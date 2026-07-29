@@ -23,6 +23,7 @@
 
 #include <zlib/ZuElem.hh>
 #include <zlib/ZuObject.hh>
+#include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmAlloc.hh>

@@ -144,6 +144,11 @@ struct TestState {
   ZmAtomic<unsigned>	server_cipher{0};
   ZmAtomic<unsigned>	client_closed{0};
   ZmAtomic<unsigned>	server_replied{0};
+  ZmAtomic<Ztc::Link *>	server_link{nullptr};
+  Ztc::QueueTelemetry	client_rx;
+  Ztc::QueueTelemetry	client_tx;
+  Ztc::QueueTelemetry	server_rx;
+  Ztc::QueueTelemetry	server_tx;
   const char		*error_msg = nullptr;
 
   void done_one() {
@@ -154,6 +159,60 @@ struct TestState {
     for (unsigned i = 0; i < target; ++i) done.post();
   }
 };
+
+template <typename Link>
+void check_queues(Link &link)
+{
+  auto rx = link.rxQueue();
+  auto tx = link.txQueue();
+  ZTLS_CHECK_RT(rx, "Rx telemetry queue is null");
+  ZTLS_CHECK_RT(tx, "Tx telemetry queue is null");
+  if (!rx || !tx) return;
+  ZTLS_CHECK_RT(link.rxQueue() == rx, "Rx telemetry queue is unstable");
+  ZTLS_CHECK_RT(link.txQueue() == tx, "Tx telemetry queue is unstable");
+  ZTLS_CHECK_RT(rx != tx, "Rx and Tx telemetry queues alias");
+
+  auto linkKey = link.telKey();
+  auto rxKey = rx->telKey();
+  auto txKey = tx->telKey();
+  ZTLS_CHECK_RT(
+    rxKey.template p<0>() == linkKey.template p<1>(),
+    "Rx telemetry queue ID mismatch");
+  ZTLS_CHECK_RT(
+    txKey.template p<0>() == linkKey.template p<1>(),
+    "Tx telemetry queue ID mismatch");
+  ZTLS_CHECK_RT(
+    rxKey.template p<1>() == Ztc::QueueType::Rx,
+    "Rx telemetry queue type mismatch");
+  ZTLS_CHECK_RT(
+    txKey.template p<1>() == Ztc::QueueType::Tx,
+    "Tx telemetry queue type mismatch");
+
+  Ztc::QueueTelemetry data;
+  data.id = ZuID{} << "dirty";
+  data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
+  data.count = data.size = data.full = 1;
+  data.type = Ztc::QueueType::Thread;
+  rx->telemetry(data);
+  ZTLS_CHECK_RT(data.id == rxKey.template p<0>(),
+    "Rx telemetry ID mismatch");
+  ZTLS_CHECK_RT(data.type == rxKey.template p<1>(),
+    "Rx telemetry type mismatch");
+  ZTLS_CHECK_RT(!data.outBytes && !data.outCount && !data.count &&
+    !data.size && !data.full, "Rx telemetry was not reset");
+
+  data.id = ZuID{} << "dirty";
+  data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
+  data.count = data.size = data.full = 1;
+  data.type = Ztc::QueueType::Thread;
+  tx->telemetry(data);
+  ZTLS_CHECK_RT(data.id == txKey.template p<0>(),
+    "Tx telemetry ID mismatch");
+  ZTLS_CHECK_RT(data.type == txKey.template p<1>(),
+    "Tx telemetry type mismatch");
+  ZTLS_CHECK_RT(!data.size && !data.full,
+    "Tx telemetry was not reset");
+}
 
 void fill_payload(ZtArray<uint8_t> &payload, unsigned len, uint8_t seed)
 {
@@ -313,6 +372,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 
     void connected(Ztls::Connected info) {
       auto &state = this->app()->state;
+      check_queues(*this);
       state.client_connected = 1;
       state.client_tlsver = unsigned(info.version);
       state.client_cipher = this->tlsInfo().cipherID;
@@ -333,8 +393,15 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 	  "client received unexpected payload", complete);
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
-	if (complete && !state.client_closed.xch(1))
+	if (complete && !state.client_closed.xch(1)) {
+	  this->rxQueue()->telemetry(state.client_rx);
+	  this->txQueue()->telemetry(state.client_tx);
+	  if (auto serverLink = state.server_link.load_()) {
+	    serverLink->rxQueue()->telemetry(state.server_rx);
+	    serverLink->txQueue()->telemetry(state.server_tx);
+	  }
 	  this->disconnect_();
+	}
       }
       return 1;
     }
@@ -361,6 +428,8 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
 
     void connected(Ztls::Connected info) {
       auto &state = this->app()->state;
+      check_queues(*this);
+      state.server_link = this;
       state.server_connected = 1;
       state.server_tlsver = unsigned(info.version);
       state.server_cipher = this->tlsInfo().cipherID;
@@ -482,6 +551,7 @@ void run_in_process(
 
   ZmRef<typename BaseClient<TestState>::Link> link =
     new typename BaseClient<TestState>::Link(&client);
+  check_queues(*link);
   link->connect(connectIP, state.port);
 
   bool done = wait_done(state);
@@ -502,6 +572,33 @@ void run_in_process(
     "client payload length mismatch");
   ZTLS_CHECK_RT(state.server_rx_bytes.load_() == clientLen,
     "server payload length mismatch");
+  ZTLS_CHECK_RT(state.client_rx.inBytes == serverLen,
+    "client plaintext Rx telemetry mismatch");
+  ZTLS_CHECK_RT(state.server_rx.inBytes == clientLen,
+    "server plaintext Rx telemetry mismatch");
+  ZTLS_CHECK_RT(state.client_rx.inCount,
+    "client plaintext Rx ingress count is zero");
+  ZTLS_CHECK_RT(state.server_rx.inCount,
+    "server plaintext Rx ingress count is zero");
+  ZTLS_CHECK_RT(state.client_tx.inCount && state.client_tx.inBytes,
+    "client serialized Tx ingress is zero");
+  ZTLS_CHECK_RT(state.server_tx.inCount && state.server_tx.inBytes,
+    "server serialized Tx ingress is zero");
+  ZTLS_CHECK_RT(state.client_tx.inBytes >= clientLen,
+    "client serialized Tx bytes omit application payload");
+  ZTLS_CHECK_RT(state.server_tx.inBytes >= serverLen,
+    "server serialized Tx bytes omit application payload");
+  ZTLS_CHECK_RT(state.client_tx.outCount && state.client_tx.outBytes,
+    "client wire Tx egress is zero");
+  ZTLS_CHECK_RT(state.server_tx.outCount && state.server_tx.outBytes,
+    "server wire Tx egress is zero");
+  ZTLS_CHECK_RT(!state.client_rx.count && !state.client_tx.count,
+    "client TLS queues did not drain");
+  ZTLS_CHECK_RT(!state.server_rx.count && !state.server_tx.count,
+    "server TLS queues did not drain");
+  if (clientKeyUpdate)
+    ZTLS_CHECK_RT(state.server_rx.inCount == 1,
+      "zero-output control record incremented plaintext Rx count");
   if (expectedCipher) {
     ZTLS_CHECK_RT(state.client_cipher.load_() == expectedCipher,
       "client selected unexpected cipher");

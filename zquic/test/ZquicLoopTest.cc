@@ -12,6 +12,8 @@
 
 using namespace ZuTestUtil;
 
+#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+
 namespace {
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
@@ -69,12 +71,29 @@ struct TestLink :
   TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
   void flushTx_() { }
   void queueTxFlush_() { }
-	  void initPath(ZiSockAddr local, ZiSockAddr remote) {
-	    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
-	  }
-	  void closeForTest(uint64_t errorCode = 0) {
-	    Base::closeState_(errorCode);
-	  }
+  void pto_() { }
+  void queueRetransmit_() { }
+  void initPath(ZiSockAddr local, ZiSockAddr remote) {
+    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
+  }
+  void closeForTest(uint64_t errorCode = 0) {
+    Base::closeState_(errorCode);
+  }
+  bool recordTx(unsigned bytes) {
+    return Base::recordProtPktTx_(
+      Zquic::PktNumSpace::AppData, 0, bytes, {}, nullptr, false);
+  }
+  void receiveDatagram(unsigned bytes) {
+    ZmRef<ZiIOBuf> buf = new Zquic::PktRxBufAlloc<>{this};
+    memset(buf->data_(), 0, bytes);
+    buf->skip = 0;
+    buf->length = bytes;
+    Base::receiveDatagram_(
+      Zquic::Datagram{ZuMv(buf), {}},
+      [](Zquic::Datagram &, unsigned, unsigned) { return true; },
+      [](Zquic::Datagram &, unsigned, unsigned) { return true; });
+  }
+  uint64_t txQueueCount() const { return Base::txQueueCount_(); }
 #ifdef Zquic_DEBUG
   void growActivePath(unsigned size) { Base::forceActivePathMTU_(size); }
   bool startPMTUDProbe(unsigned size) {
@@ -106,6 +125,78 @@ struct TestLink :
 #endif
 };
 
+template <typename Link>
+void checkQueues(Link &link)
+{
+  auto rx = link.rxQueue();
+  auto tx = link.txQueue();
+  ZQUIC_CHECK_RT(rx, "Rx telemetry queue is null");
+  ZQUIC_CHECK_RT(tx, "Tx telemetry queue is null");
+  if (!rx || !tx) return;
+  ZQUIC_CHECK_RT(link.rxQueue() == rx, "Rx telemetry queue is unstable");
+  ZQUIC_CHECK_RT(link.txQueue() == tx, "Tx telemetry queue is unstable");
+  ZQUIC_CHECK_RT(rx != tx, "Rx and Tx telemetry queues alias");
+
+  auto linkKey = link.telKey();
+  auto rxKey = rx->telKey();
+  auto txKey = tx->telKey();
+  ZQUIC_CHECK_RT(rxKey.template p<0>() == linkKey.template p<1>(),
+    "Rx telemetry queue ID mismatch");
+  ZQUIC_CHECK_RT(txKey.template p<0>() == linkKey.template p<1>(),
+    "Tx telemetry queue ID mismatch");
+  ZQUIC_CHECK_RT(rxKey.template p<1>() == Ztc::QueueType::Rx,
+    "Rx telemetry queue type mismatch");
+  ZQUIC_CHECK_RT(txKey.template p<1>() == Ztc::QueueType::Tx,
+    "Tx telemetry queue type mismatch");
+
+  Ztc::QueueTelemetry data;
+  data.id = ZuID{} << "dirty";
+  data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
+  data.count = data.size = data.full = 1;
+  data.type = Ztc::QueueType::Thread;
+  rx->telemetry(data);
+  ZQUIC_CHECK_RT(data.id == rxKey.template p<0>(),
+    "Rx telemetry ID mismatch");
+  ZQUIC_CHECK_RT(data.type == rxKey.template p<1>(),
+    "Rx telemetry type mismatch");
+  ZQUIC_CHECK_RT(!data.outBytes && !data.outCount &&
+      !data.count && !data.size && !data.full,
+    "Rx telemetry was not reset");
+
+  data.id = ZuID{} << "dirty";
+  data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
+  data.count = data.size = data.full = 1;
+  data.type = Ztc::QueueType::Thread;
+  tx->telemetry(data);
+  ZQUIC_CHECK_RT(data.id == txKey.template p<0>(),
+    "Tx telemetry ID mismatch");
+  ZQUIC_CHECK_RT(data.type == txKey.template p<1>(),
+    "Tx telemetry type mismatch");
+  ZQUIC_CHECK_RT(!data.inBytes && !data.inCount && !data.size && !data.full,
+    "Tx telemetry was not reset");
+}
+
+void checkTrafficTelemetry(TestLink &link)
+{
+  Ztc::QueueTelemetry rx;
+  Ztc::QueueTelemetry tx;
+  Ztc::LinkTelemetry data;
+  link.rxQueue()->telemetry(rx);
+  link.txQueue()->telemetry(tx);
+  link.telemetry(data);
+  ZQUIC_CHECK_RT(rx.inCount && rx.inBytes,
+    "QUIC Rx queue activity is zero");
+  ZQUIC_CHECK_RT(tx.outCount && tx.outBytes,
+    "QUIC Tx queue activity is zero");
+  ZQUIC_CHECK_RT(data.rxCalls == rx.inCount && data.rxBytes == rx.inBytes,
+    "QUIC Rx link and queue telemetry differ");
+  ZQUIC_CHECK_RT(data.txCalls == tx.outCount && data.txBytes == tx.outBytes,
+    "QUIC Tx link and queue telemetry differ");
+  ZQUIC_CHECK_RT(!rx.count, "QUIC Rx queue depth is non-zero");
+  ZQUIC_CHECK_RT(tx.count == link.txQueueCount(),
+    "QUIC Tx queue depth differs from packet-space count");
+}
+
 ZuBSpan bytes_(const uint8_t *data, unsigned len)
 {
   return ZuBSpan{data, len};
@@ -132,38 +223,50 @@ static ZmRef<ZiIOBuf> streamPkt_(
 
 void testHandshakeStreamsAndClose()
 {
-  ZuTestScope(testHandshakeStreamsAndClose);
+  ZuTestScopeRT(testHandshakeStreamsAndClose);
 
   Zquic::CxnID dcid{"client01"};
   Zquic::Crypto clientCrypto;
   Zquic::Crypto serverCrypto;
-  ZuCHECK(clientCrypto.init(Zquic::CryptoConfig{false, false, "h3"}) &&
+  ZQUIC_CHECK_RT(clientCrypto.init(Zquic::CryptoConfig{false, false, "h3"}) &&
       serverCrypto.init(Zquic::CryptoConfig{true, false, "h3"}),
     "loop crypto init failed");
-  ZuCHECK(clientCrypto.deriveInitial(dcid) && serverCrypto.deriveInitial(dcid),
+  ZQUIC_CHECK_RT(
+    clientCrypto.deriveInitial(dcid) && serverCrypto.deriveInitial(dcid),
     "loop Initial key derivation failed");
 
   clientCrypto.installSecret(Zquic::PktNumSpace::AppData, "client-app");
   serverCrypto.installSecret(Zquic::PktNumSpace::AppData, "server-app");
-  ZuCHECK(clientCrypto.completeHandshake() && serverCrypto.completeHandshake(),
+  ZQUIC_CHECK_RT(
+    clientCrypto.completeHandshake() && serverCrypto.completeHandshake(),
     "loop 1-RTT readiness failed");
 
   App app;
   ZmRef<TestLink> client = new TestLink{&app};
   ZmRef<TestLink> server = new TestLink{&app, true};
+  checkQueues(*client);
+  checkQueues(*server);
+  client->receiveDatagram(17);
+  server->receiveDatagram(23);
+  ZQUIC_CHECK_RT(client->recordTx(29), "client Tx packet recording failed");
+  ZQUIC_CHECK_RT(server->recordTx(31), "server Tx packet recording failed");
+  checkTrafficTelemetry(*client);
+  checkTrafficTelemetry(*server);
   auto c0 = client->stream(Zquic::StreamType::Duplex);
   auto c1 = client->stream(Zquic::StreamType::Simplex);
   auto s0 = server->stream(Zquic::StreamType::Duplex);
-  ZuCHECK(c0->id() == 0 && c1->id() == 2 && s0->id() == 1,
+  ZQUIC_CHECK_RT(c0->id() == 0 && c1->id() == 2 && s0->id() == 1,
     "loop stream IDs mismatch");
   {
     auto tx = c0->txStream_();
     tx << "request-body" << Zi::flush();
   }
-  ZuCHECK(c0->txBytes() == 12, "loop stream Tx accounting mismatch");
+  ZQUIC_CHECK_RT(c0->txBytes() == 12,
+    "loop stream Tx accounting mismatch");
 
   client->closeForTest(Zquic::TransportError::NoError);
-  ZuCHECK(client->closed() && !client->closeError(), "loop graceful close failed");
+  ZQUIC_CHECK_RT(client->closed() && !client->closeError(),
+    "loop graceful close failed");
 }
 
 void testSplitReorderedStreamFrames()
