@@ -239,29 +239,29 @@ struct StreamLink {
 };
 
 struct StreamConsumer {
-  template <typename Stream>
-  void streamProcess(Stream stream) {
+  template <typename Stream, typename Rx>
+  int process(Stream, Rx &rx) {
     ++calls;
-    auto &rx = stream.rx();
     bool input = rx.input();
     events |= rx.events();
-    if (!input) return;
-    (void)rx.consume(
-      [](ZuBSpan span) -> int64_t { return span.length(); },
-      [this](ZuBSpan span) { data << ZuCSpan{span}; });
-    events |= rx.events();
+    if (input) {
+      (void)rx.consume(
+	[](ZuBSpan span) -> int64_t { return span.length(); },
+	[this](ZuBSpan span) { data << ZuCSpan{span}; });
+      events |= rx.events();
+    }
+    return result;
   }
 
   ZtString<ZtStringHeapID<"Zhttp.Contract.StreamData">> data;
   Zi::RxEvent::T events{};
   unsigned	calls = 0;
+  int		result = 1;
 };
 
-using BareStream = Zhttp::Stream<StreamLink>;
-using RxStream = Zhttp::Stream<StreamLink, Zhttp::BodyRx::Layer>;
+using LogicalStream = Zhttp::Stream<StreamLink>;
 using Dispatch = Zhttp::StreamDispatch<StreamLink, StreamConsumer>;
-static_assert(sizeof(BareStream) == sizeof(void *));
-static_assert(sizeof(RxStream) == sizeof(void *) * 2);
+static_assert(sizeof(LogicalStream) == sizeof(void *));
 static_assert(sizeof(Dispatch) == sizeof(void *) * 2);
 
 struct TxRequest {
@@ -751,7 +751,7 @@ void testStream()
   Zhttp::Stream stream{link};
   ZuCHECK(stream.localCap() && !stream.peerCap(),
     "logical-stream capabilities mismatch");
-  stream.tx([](auto &tx) {
+  stream.txStream([](auto &tx) {
     tx << ZuCSpan{"a"};
     tx.flush();
     tx << ZuCSpan{"b"} << Zi::flush();
@@ -799,6 +799,16 @@ void testStream()
       consumer.events ==
 	(Zi::RxEvent::Start() | Zi::RxEvent::Error()),
     "stream dispatch did not deliver Error");
+
+  Zhttp::BodyRx rejected;
+  consumer.result = -1;
+  int result = 0;
+  ZuCHECK(rejected.start(
+      [&dispatch, &result](auto &rx) { result = dispatch.process(rx); }) &&
+      result == -1 && link.resets == 2,
+    "negative stream result did not reset the logical stream");
+  consumer.result = 1;
+  rejected.cancel();
 
   dispatch.disable_();
   unsigned calls = consumer.calls;

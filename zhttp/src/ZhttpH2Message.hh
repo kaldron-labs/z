@@ -52,7 +52,7 @@ public:
   void stream() {
     m_state = State::Stream;
     (void)m_bodyRx.start(
-      [this](auto &rx) { impl()->streamProcess(rx); });
+      [this](auto &rx) { impl()->streamRx_(rx); });
   }
 
   bool beginHeaders(bool trailers = false) {
@@ -117,7 +117,7 @@ public:
 
   bool data(ZuBSpan value, bool endStream = false) {
     if (m_state == State::Stream) {
-      auto process = [this](auto &rx) { impl()->streamProcess(rx); };
+      auto process = [this](auto &rx) { impl()->streamRx_(rx); };
       bool ok = value ?
 	m_bodyRx.offer(value, endStream, process) :
 	(!endStream || m_bodyRx.finish(process));
@@ -159,7 +159,7 @@ public:
   bool cancel() {
     if (m_state == State::Stream)
       (void)m_bodyRx.fail(
-	[this](auto &rx) { impl()->streamProcess(rx); });
+	[this](auto &rx) { impl()->streamRx_(rx); });
     return fail_();
   }
 
@@ -168,7 +168,7 @@ public:
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
   template <typename Rx>
-  void streamProcess(Rx &rx) { bodyDrain(rx); }
+  void streamRx_(Rx &rx) { bodyDrain(rx); }
 
 private:
   void header_(ZuBSpan key, ZuBSpan value) {

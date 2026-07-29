@@ -164,34 +164,36 @@ Extended CONNECT is opt-in with `H2Config::extendedConnect(true)` for H2 and
 independently, and refuses to emit or accept `:protocol` without the relevant
 capability. A successful 2xx handshake transitions the logical H2 or H3
 stream to `ParserState::Stream`. H1 Upgrade and H2/H3 Extended CONNECT then
-expose the same borrowed, shard-affine `Zhttp::Stream<Link, Rx>` contract:
+expose the same borrowed, shard-affine logical-stream contract. Rx is passed
+separately to `process()` and Tx is callback-scoped:
 
 ```c++
 Zhttp::Stream stream{link};
 if (stream.peerCap()) {
-  stream.tx([](auto &tx) {
+  stream.txStream([](auto &tx) {
     tx << bytes;
     tx.flush();                  // application message/latency boundary
   });
   stream.end();                  // ordered after the flushed bytes
 }
 
-void streamProcess(auto stream) {
-  auto &rx = stream.rx();
+int process(auto stream, auto &rx) {
   while (rx.input()) {
     auto events = rx.events();   // Start/Input/Final/Error, read and clear
-    if (events & Zi::RxEvent::Error()) return;
-    if (rx.consume(frame, consume) <= 0) return;
+    if (events & Zi::RxEvent::Error()) return -1;
+    if (rx.consume(frame, consume) <= 0) return 0;
   }
   auto events = rx.events();
   if (events & Zi::RxEvent::Final()) peerEnded();
+  return 1;
 }
 ```
 
-The callback receives the native pooled transmit layer only for the duration
-of the call. The logical-stream contract contains no WebSocket fields, framing,
-masking, close codes, or subprotocol policy; those belong in a dependent
-protocol library.
+The Rx layer and native pooled Tx layer are valid only for their respective
+callback durations. A negative `process()` result resets only the affected
+logical stream. The logical-stream contract contains no WebSocket fields,
+framing, masking, close codes, or subprotocol policy; those belong in a
+dependent protocol library.
 
 The lower-level typed client/server application flow is likewise
 protocol-independent:

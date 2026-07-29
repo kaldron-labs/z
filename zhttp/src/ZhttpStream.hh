@@ -74,7 +74,7 @@ public:
   bool peerCap() const { return m_link->streamPeerCap(); }
 
   template <typename L>
-  void tx(L &&l) {
+  void txStream(L &&l) {
     m_link->streamTx([&l](auto &tx) {
       static_assert(
 	Stream_::IsTx<ZuDecay<decltype(tx)>>{},
@@ -92,26 +92,10 @@ private:
 
 } // namespace Stream_
 
-// Non-owning, shard-affine facade.  Link and callback-scoped Rx/Tx objects
-// outlive each call only; tx() is not transport-send completion.
-template <typename Link, typename Rx = void>
-class Stream : public Stream_::Base<Link> {
-  using Base = Stream_::Base<Link>;
-
-public:
-  Stream(Link &link, Rx &rx) : Base{link}, m_rx{&rx} {
-    static_assert(
-      Stream_::IsRx<Rx>{}, "invalid Zhttp logical-stream Rx layer");
-  }
-
-  Rx &rx() const { return *m_rx; }
-
-private:
-  Rx	*m_rx;
-};
-
+// Non-owning, shard-affine facade.  Link and callback-scoped Tx objects
+// outlive each call only; txStream() is not transport-send completion.
 template <typename Link>
-class Stream<Link, void> : public Stream_::Base<Link> {
+class Stream : public Stream_::Base<Link> {
   using Base = Stream_::Base<Link>;
 
 public:
@@ -120,8 +104,6 @@ public:
 
 template <typename Link>
 Stream(Link &) -> Stream<Link>;
-template <typename Link, typename Rx>
-Stream(Link &, Rx &) -> Stream<Link, Rx>;
 
 // Rx-owner adapter.  Disable ingress on the Rx shard before disable_(), drain
 // pending Rx work, then call final_() from that drain continuation.
@@ -135,9 +117,14 @@ public:
   }
 
   template <typename Rx>
-  void process(Rx &rx) {
-    if (m_link && m_consumer)
-      m_consumer->streamProcess(Stream{*m_link, rx});
+  int process(Rx &rx) {
+    static_assert(
+      Stream_::IsRx<Rx>{}, "invalid Zhttp logical-stream Rx layer");
+    if (!m_link || !m_consumer) return 0;
+    auto link = m_link;
+    int rc = m_consumer->process(Stream{*link}, rx);
+    if (rc < 0) Stream{*link}.reset();
+    return rc;
   }
 
   void disable_() { m_link = nullptr; }

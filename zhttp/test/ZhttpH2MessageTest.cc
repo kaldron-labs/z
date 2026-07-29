@@ -187,8 +187,8 @@ struct StreamLink {
 };
 
 struct StreamConsumer {
-  template <typename Stream>
-  void streamProcess(Stream stream);
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx);
 
   StreamResponse	*owner = nullptr;
 };
@@ -215,7 +215,7 @@ struct StreamResponse :
     }
   }
   template <typename Rx>
-  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void streamRx_(Rx &rx) { dispatch.process(rx); }
   void events_(Zi::RxEvent::T events) {
     if (events & Zi::RxEvent::Start()) ++starts;
     if (events & Zi::RxEvent::Final()) ++remoteEnds;
@@ -260,10 +260,11 @@ struct StreamResponse :
   StreamLink	link;
 };
 
-template <typename Stream>
-void StreamConsumer::streamProcess(Stream stream)
+template <typename Stream, typename Rx>
+int StreamConsumer::process(Stream, Rx &rx)
 {
-  owner->processStream(stream.rx());
+  owner->processStream(rx);
+  return 1;
 }
 
 bool find(

@@ -153,8 +153,8 @@ struct LogicalLink {
 };
 
 struct StreamConsumer {
-  template <typename Stream>
-  void streamProcess(Stream stream);
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx);
 
   ParserStream	*parser = nullptr;
 };
@@ -227,7 +227,7 @@ struct ParserStream :
     }
   }
   template <typename Rx>
-  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void streamRx_(Rx &rx) { dispatch.process(rx); }
   void streamEvents_(Zi::RxEvent::T events) {
     if (events & Zi::RxEvent::Start()) ++streamStarts;
     if (events & Zi::RxEvent::Final()) ++streamEnds;
@@ -298,10 +298,11 @@ struct ParserStream :
   ZtString<>			runtimeValue;
 };
 
-template <typename Stream>
-void StreamConsumer::streamProcess(Stream stream)
+template <typename Stream, typename Rx>
+int StreamConsumer::process(Stream, Rx &rx)
 {
-  parser->processStream(stream.rx());
+  parser->processStream(rx);
+  return 1;
 }
 
 struct CxnStream :

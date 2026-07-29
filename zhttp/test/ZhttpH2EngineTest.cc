@@ -68,8 +68,8 @@ struct ClientLink;
 struct ClientParser;
 
 struct ClientStream {
-  template <typename Stream>
-  void streamProcess(Stream stream);
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx);
 
   ClientParser	*parser = nullptr;
 };
@@ -101,7 +101,7 @@ struct ClientParser :
     }
   }
   template <typename Rx>
-  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void streamRx_(Rx &rx) { dispatch.process(rx); }
   void events_(Zi::RxEvent::T events) {
     if (events & Zi::RxEvent::Start()) ++streamStarts;
     if (events & Zi::RxEvent::Final()) ++streamEnds;
@@ -147,10 +147,11 @@ struct ClientParser :
     Zhttp::H2::ParserState::Initial;
 };
 
-template <typename Stream>
-void ClientStream::streamProcess(Stream stream)
+template <typename Stream, typename Rx>
+int ClientStream::process(Stream, Rx &rx)
 {
-  parser->processStream(stream.rx());
+  parser->processStream(rx);
+  return 1;
 }
 
 struct Client : public Zhttp::Client<Client, Zhttp::H2TLS> {
@@ -229,7 +230,7 @@ int Client::process(Link &link, Zhttp::H2_::EventRx &rx)
 	return 0;
       }
       Zhttp::Stream stream{link};
-      stream.tx([](auto &body) {
+      stream.txStream([](auto &body) {
 	body << ZuCSpan{"ping"};
 	body.flush();
       });
@@ -260,8 +261,8 @@ struct ServerLink;
 struct ServerParser;
 
 struct ServerStream {
-  template <typename Stream>
-  void streamProcess(Stream stream);
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx);
 
   ServerParser	*parser = nullptr;
 };
@@ -293,7 +294,7 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
   template <typename Rx>
   void body(Rx &rx) { Zhttp::bodyDrain(rx); }
   template <typename Rx>
-  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void streamRx_(Rx &rx) { dispatch.process(rx); }
   void events_(Zi::RxEvent::T events) {
     if (events & Zi::RxEvent::Start()) ++streamStarts;
     if (events & Zi::RxEvent::Final()) remoteEnded = true;
@@ -338,10 +339,11 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
   bool				streamNoCopy = true;
 };
 
-template <typename Stream>
-void ServerStream::streamProcess(Stream stream)
+template <typename Stream, typename Rx>
+int ServerStream::process(Stream, Rx &rx)
 {
-  parser->processStream(stream.rx());
+  parser->processStream(rx);
+  return 1;
 }
 
 struct ServerSession {
@@ -377,7 +379,7 @@ struct ServerSession {
 	builder.response(tx);
       }
       if (parser.streamData) {
-	Zhttp::Stream{link}.tx([this](auto &body) {
+	Zhttp::Stream{link}.txStream([this](auto &body) {
 	  body << parser.streamData;
 	  body.flush();
 	});

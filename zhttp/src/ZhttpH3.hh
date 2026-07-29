@@ -565,7 +565,7 @@ public:
   void stream() {
     m_state = State::Stream;
     (void)m_bodyRx.start(
-      [this](auto &rx) { impl()->streamProcess(rx); });
+      [this](auto &rx) { impl()->streamRx_(rx); });
   }
 
   void h3(
@@ -582,7 +582,7 @@ private:
   void error_() {
     if (m_state == State::Stream)
       (void)m_bodyRx.fail(
-	[this](auto &rx) { impl()->streamProcess(rx); });
+	[this](auto &rx) { impl()->streamRx_(rx); });
     m_state = State::Error;
   }
   bool fail_(uint64_t error) {
@@ -816,7 +816,7 @@ private:
   bool processDataPayload_(ZuCSpan payload) {
     if (m_state == State::Stream) {
       bool ok = m_bodyRx.offer(payload, false,
-	[this](auto &rx) { impl()->streamProcess(rx); });
+	[this](auto &rx) { impl()->streamRx_(rx); });
       if (!ok) error_();
       return ok;
     }
@@ -859,7 +859,7 @@ public:
 	  (m_state == State::Stream || m_state == State::RemoteClosed))) {
 	if (m_state == State::Stream)
 	  (void)m_bodyRx.fail(
-	    [this](auto &rx) { impl()->streamProcess(rx); });
+	    [this](auto &rx) { impl()->streamRx_(rx); });
 	m_state = State::Cancelled;
 	complete_(m_state);
 	return m_state;
@@ -1022,7 +1022,7 @@ public:
     if (streamComplete_(stream, rx)) {
 	if (m_state == State::Stream) {
 	  if (!m_bodyRx.finish(
-	      [this](auto &rx) { impl()->streamProcess(rx); }))
+	      [this](auto &rx) { impl()->streamRx_(rx); }))
 	    error_();
 	  else {
 	    m_state = State::RemoteClosed;
@@ -1069,7 +1069,7 @@ public:
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
   template <typename Rx>
-  void streamProcess(Rx &rx) { bodyDrain(rx); }
+  void streamRx_(Rx &rx) { bodyDrain(rx); }
   void complete(State::T) { }
   bool rxComplete() const { return impl()->finReceived(); }
   QPackRxTable *qpackRx() {

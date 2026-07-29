@@ -14,7 +14,7 @@ void streamContract(Link &link)
   Zhttp::Stream stream{link};
   (void)stream.peerCap();
   (void)stream.localCap();
-  stream.tx([](auto &tx) {
+  stream.txStream([](auto &tx) {
     tx << ZuCSpan{"x"};
     tx.flush();
   });
@@ -77,8 +77,8 @@ struct StreamClientLink;
 struct ClientParser;
 
 struct ClientStream {
-  template <typename Stream>
-  void streamProcess(Stream stream);
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx);
 
   ClientParser	*parser = nullptr;
 };
@@ -110,7 +110,7 @@ struct ClientParser :
     Zhttp::bodyEach(rx, [this](ZuBSpan value) { body_ << value; });
   }
   template <typename Rx>
-  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void streamRx_(Rx &rx) { dispatch.process(rx); }
   void events_(Zi::RxEvent::T events) {
     if (events & Zi::RxEvent::Start()) ++streamStarts;
     if (events & Zi::RxEvent::Final()) ++streamEnds;
@@ -156,10 +156,11 @@ struct ClientParser :
     Zhttp::H3::ParserState::Initial;
 };
 
-template <typename Stream>
-void ClientStream::streamProcess(Stream stream)
+template <typename Stream, typename Rx>
+int ClientStream::process(Stream, Rx &rx)
 {
-  parser->processStream(stream.rx());
+  parser->processStream(rx);
+  return 1;
 }
 
 struct StreamClient :
@@ -242,7 +243,7 @@ int StreamClient::process(
 	Zhttp::Stream{link}.reset();
 	return 0;
       }
-      Zhttp::Stream{link}.tx([](auto &body) {
+      Zhttp::Stream{link}.txStream([](auto &body) {
 	body << ZuCSpan{"ping"};
 	body.flush();
       });
@@ -282,8 +283,8 @@ struct StreamServerLink;
 struct ServerParser;
 
 struct ServerStream {
-  template <typename Stream>
-  void streamProcess(Stream stream);
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx);
 
   ServerParser	*parser = nullptr;
 };
@@ -314,7 +315,7 @@ struct ServerParser : public Zhttp::H3::Parser<ServerParser, true> {
   template <typename Rx>
   void body(Rx &rx) { Zhttp::bodyDrain(rx); }
   template <typename Rx>
-  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void streamRx_(Rx &rx) { dispatch.process(rx); }
   void events_(Zi::RxEvent::T events) {
     if (events & Zi::RxEvent::Start()) ++streamStarts;
     if (events & Zi::RxEvent::Final()) remoteEnded = true;
@@ -351,10 +352,11 @@ struct ServerParser : public Zhttp::H3::Parser<ServerParser, true> {
   bool				remoteEnded = false;
 };
 
-template <typename Stream>
-void ServerStream::streamProcess(Stream stream)
+template <typename Stream, typename Rx>
+int ServerStream::process(Stream, Rx &rx)
 {
-  parser->processStream(stream.rx());
+  parser->processStream(rx);
+  return 1;
 }
 
 struct StreamServerSession {
@@ -380,7 +382,7 @@ struct StreamServerSession {
 	  builder.response(tx);
 	}
 	if (parser.streamBody) {
-	  Zhttp::Stream{link}.tx([this](auto &body) {
+	  Zhttp::Stream{link}.txStream([this](auto &body) {
 	    body << parser.streamBody;
 	    body.flush();
 	  });

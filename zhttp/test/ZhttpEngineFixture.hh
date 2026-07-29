@@ -295,13 +295,15 @@ template <typename Profile> struct UpgradeServer;
 template <typename Profile> struct UpgradeSrvLink;
 
 struct UpgradeSession {
+  UpgradeState	*state = nullptr;
   UpgradeReq	parser;
   unsigned	offset = 0;
   bool		replied = false;
 
   template <typename Link>
   void connected(Link &link) {
-    if (!link.streamEnable()) link.app()->state->fail();
+    state = link.app()->state;
+    if (!link.streamEnable()) state->fail();
   }
   template <typename Link>
   void disconnected(Link &, bool) { }
@@ -326,30 +328,29 @@ struct UpgradeSession {
     }
     return 1;
   }
-  template <typename Link, typename Stream>
-  void streamProcess(Link &link, Stream stream) {
-    auto &state = *link.app()->state;
-    auto &rx = stream.rx();
+  template <typename Link, typename Rx>
+  int process(Zhttp::Stream<Link> stream, Rx &rx) {
     bool input = rx.input();
     auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) ++state.srvStarts;
+    if (events & Zi::RxEvent::Start()) ++state->srvStarts;
     if (events & Zi::RxEvent::Error()) {
-      state.fail();
-      return;
+      state->fail();
+      return -1;
     }
     if (input && !consumeStream(rx, Ping, offset)) {
-      state.fail();
-      return;
+      state->fail();
+      return -1;
     }
     if (!replied && offset == Ping.length()) {
       replied = true;
-      stream.tx([](auto &tx) {
+      stream.txStream([](auto &tx) {
 	tx << Pong;
 	tx.flush();
       });
     }
     events |= rx.events();
-    if (events & Zi::RxEvent::Final()) ++state.srvFinals;
+    if (events & Zi::RxEvent::Final()) ++state->srvFinals;
+    return 1;
   }
 };
 
@@ -390,14 +391,15 @@ struct UpgradeClient :
     using Base::Base;
 
     UpgradeResp	parser;
-    unsigned	offset = 0;
   };
 
   UpgradeState	*state = nullptr;
+  unsigned	offset = 0;
 
   UpgradeClient(UpgradeState *state_) : state{state_} { }
 
   void connected(Link &link, Zhttp::ConnectedInfo) {
+    offset = 0;
     if (!link.streamEnable()) {
       state->fail();
       return;
@@ -425,21 +427,21 @@ struct UpgradeClient :
     }
     return 1;
   }
-  template <typename Stream>
-  void streamProcess(Link &link, Stream stream) {
-    auto &rx = stream.rx();
+  template <typename Link, typename Rx>
+  int process(Zhttp::Stream<Link> stream, Rx &rx) {
     bool input = rx.input();
     auto events = rx.events();
     if (events & Zi::RxEvent::Start()) ++state->cliStarts;
     if (events & Zi::RxEvent::Error()) {
       state->fail();
-      return;
+      return -1;
     }
-    if (input && !consumeStream(rx, Pong, link.offset)) {
+    if (input && !consumeStream(rx, Pong, offset)) {
       state->fail();
-      return;
+      return -1;
     }
-    if (link.offset == Pong.length()) stream.end();
+    if (offset == Pong.length()) stream.end();
+    return 1;
   }
 };
 

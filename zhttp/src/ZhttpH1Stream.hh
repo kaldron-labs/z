@@ -39,9 +39,9 @@ public:
   template <typename Dispatch>
   int process(NativeRx &native, Dispatch &dispatch) {
     m_native = &native;
-    dispatch.process(m_layer);
+    int rc = dispatch.process(m_layer);
     m_native = nullptr;
-    return native.empty() ? 1 : 0;
+    return rc;
   }
 
   template <typename Dispatch>
