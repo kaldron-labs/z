@@ -91,6 +91,10 @@ private:
 
 using PathData = ZuBArray<PathChallenge::Length>;
 
+// picotls reports output boundaries for epochs 0 through 3.
+enum { TLSEpochCount = 4 };
+using CryptoOffsets = ZuArray<size_t, TLSEpochCount + 1>;
+
 inline constexpr uint32_t Version1 = 0x00000001U;
 inline constexpr unsigned MinUDPPayload = 1200;
 inline constexpr unsigned BufSize = 1472;

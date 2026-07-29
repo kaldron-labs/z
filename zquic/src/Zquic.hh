@@ -375,18 +375,24 @@ private:
   bool		m_retried = false;
 };
 
+inline bool validCryptoOffsets(
+  const CryptoOffsets &offsets, unsigned len)
+{
+  for (unsigned epoch = 0; epoch < TLSEpochCount; ++epoch)
+    if (offsets[epoch + 1] < offsets[epoch] ||
+	offsets[epoch + 1] > len)
+      return false;
+  return true;
+}
+
 template <typename Send>
-inline bool sendCryptoFlights(
+inline bool sendCryptoFlights_(
   CryptoStream (&txCrypto)[PktNumSpace::N], LinkTxDiag &diag,
-  const uint8_t *data, unsigned len, const size_t offsets[5],
+  const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
   unsigned chunkMax, ZiSockAddr addr, Send send)
 {
   if (!chunkMax) return false;
-  for (size_t epoch = 0; epoch < 4; ++epoch) {
-    if (offsets[epoch + 1] < offsets[epoch] || offsets[epoch + 1] > len) {
-      ++diag.failures;
-      return false;
-    }
+  for (unsigned epoch = 0; epoch < TLSEpochCount; ++epoch) {
     if (offsets[epoch + 1] <= offsets[epoch]) continue;
     PktNumSpace::T space;
     if (!spaceFromTLSEpoch(epoch, space)) continue;
@@ -420,6 +426,28 @@ inline bool sendCryptoFlights(
     }
   }
   return true;
+}
+
+// Compatibility ingress for the public picotls-style callback contract.
+template <typename Send>
+inline bool sendCryptoFlights(
+  CryptoStream (&txCrypto)[PktNumSpace::N], LinkTxDiag &diag,
+  const uint8_t *data, unsigned len, const size_t offsets[5],
+  unsigned chunkMax, ZiSockAddr addr, Send send)
+{
+  if (!offsets) {
+    ++diag.failures;
+    return false;
+  }
+  CryptoOffsets offsets_(TLSEpochCount + 1, false);
+  for (unsigned i = 0; i <= TLSEpochCount; ++i)
+    offsets_[i] = offsets[i];
+  if (!validCryptoOffsets(offsets_, len)) {
+    ++diag.failures;
+    return false;
+  }
+  return sendCryptoFlights_(
+    txCrypto, diag, data, len, offsets_, chunkMax, ZuMv(addr), ZuMv(send));
 }
 
 // Hub configuration

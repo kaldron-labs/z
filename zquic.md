@@ -303,6 +303,25 @@ do not run handshake, runtime, socket, stream, or API integration binaries yet.
 
 Only then start Slice 3.
 
+### Slice 2 execution record
+
+- API gate: no non-`zquic` caller of `sendCryptoFlights` was found.  Its
+  picotls-style five-offset signature remains as a compatibility ingress; all
+  link-internal helpers consume `CryptoOffsets`.
+- Path metadata: `ControlFrame`, `SentFrameRef`, and Rx-to-Tx path posts own
+  `PathData` values.  Invalid PATH factories retain the prior full-length,
+  all-zero result.
+- TLS metadata: picotls output is copied once into `CryptoOffsets`; client and
+  server validate it before posting, capture one value, and account an invalid
+  input on the Tx owner without changing the asynchronous return contract.
+- Build: `make -C zquic/src -j8 libZquic.la`.
+- Focused unit build:
+  `make -C zquic/test -j8 ZquicCodecTest ZquicCryptoTest`.
+- Focused unit run: `ZquicCodecTest` and `ZquicCryptoTest` passed under the
+  existing clang-debug configuration.  Coverage includes valid and invalid
+  PATH factories plus empty, single-epoch, multi-epoch, descending, and
+  out-of-bounds crypto offsets.
+
 ## Slice 3: make recovery frame accumulation lossless
 
 Dependency: accepted and committed Slice 2.

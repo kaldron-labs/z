@@ -584,6 +584,26 @@ void testControlFrameCoverage()
     "unknown frame parse mismatch");
 }
 
+void testPathControlValues()
+{
+  ZuTestScope(testPathControlValues);
+
+  Zquic::ControlFrame challenge =
+    Zquic::ControlFrame::pathChallenge("12345678");
+  Zquic::ControlFrame response =
+    Zquic::ControlFrame::pathResponse("87654321");
+  ZuCHECK(challenge.payload == "12345678" &&
+      response.payload == "87654321" &&
+      challenge.payload.length() == Zquic::PathChallenge::Length,
+    "path control values mismatch");
+
+  Zquic::ControlFrame invalid =
+    Zquic::ControlFrame::pathChallenge("short");
+  Zquic::PathData zero(Zquic::PathChallenge::Length, true);
+  ZuCHECK(invalid.payload == zero,
+    "invalid path control result changed");
+}
+
 void testMalformedFrameCoverage()
 {
   ZuTestScope(testMalformedFrameCoverage);
@@ -911,6 +931,7 @@ int main(int argc, char **argv)
   ZuTestCall(testPktParserRejections);
   ZuTestCall(testFramesAndParams);
   ZuTestCall(testControlFrameCoverage);
+  ZuTestCall(testPathControlValues);
   ZuTestCall(testMalformedFrameCoverage);
   ZuTestCall(testTransportParamCoverage);
   ZuTestCall(testZeroRTTTransportParams);

@@ -533,7 +533,7 @@ struct SentFrameRef {
   uint64_t		value = 0;
   Zquic::StreamType::T	streamType = Zquic::StreamType::Duplex;
   bool			fin = false;
-  uint8_t		payload[8]{};
+  PathData		payload;
   CxnID			cxnID;
   ResetToken		resetToken;
   TxRange		range;
@@ -589,17 +589,15 @@ struct SentFrameRef {
   static SentFrameRef pathResponse(ZuBSpan data) {
     SentFrameRef ref = control();
     ref.controlType = FrameType::PathResponse;
-    if (data.length() == sizeof(ref.payload))
-      for (unsigned i = 0; i < sizeof(ref.payload); ++i)
-	ref.payload[i] = data[i];
+    ref.payload = data.length() == PathChallenge::Length ?
+      PathData{data} : PathData(PathChallenge::Length, true);
     return ref;
   }
   static SentFrameRef pathChallenge(ZuBSpan data) {
     SentFrameRef ref = control();
     ref.controlType = FrameType::PathChallenge;
-    if (data.length() == sizeof(ref.payload))
-      for (unsigned i = 0; i < sizeof(ref.payload); ++i)
-	ref.payload[i] = data[i];
+    ref.payload = data.length() == PathChallenge::Length ?
+      PathData{data} : PathData(PathChallenge::Length, true);
     return ref;
   }
 
