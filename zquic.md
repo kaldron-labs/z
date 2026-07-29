@@ -793,6 +793,36 @@ Add unit cases for versions `0`, `1`, a value containing `a` through `f`, and
 
 Only then start Slice 8.
 
+### Slice 7 execution record
+
+- Formatting: `qlogJSONVersion_` now writes a `ZuBoxed` value through
+  `ZuFmt::Right<8, '0'>` in lowercase hexadecimal directly to the qlog stream.
+  Exact JSON checks cover `0`, `1`, `0x1abcdef0`, and `UINT32_MAX`.
+- Converted audit findings: the qlog hexadecimal character table and nibble
+  lookup are gone; the fixed HKDF label prefix is a `ZuCSpan`; runtime arrays,
+  scratch buffers, and parallel array/count state were converted in the
+  preceding slices.
+- External C ABI exceptions: the null-terminated picotls cipher-suite array,
+  sentinel picotls extension array, and five-element epoch-offset callback
+  parameter remain raw and have local comments.  The dependent
+  `sendCryptoFlights` array-reference API remains unchanged and binds
+  `ZuArray` directly.
+- Required layout exceptions: `CryptoRxPQueue::Buf::data_` remains inline for
+  the `ZiIOBuf` pool layout, and the diagnostic packet-space arrays remain raw
+  public aggregate fields; both carry local maintenance comments.
+- Lookup and traversal disposition: ACK membership and stream-range lookup use
+  binary lower-bound.  The retained ACK index APIs traverse the bounded
+  composite wire-order view and are locally documented.  Negotiated ALPN,
+  version-negotiation, picotls suite/extension, qlog event-list, and protocol
+  range traversal are dynamic peer/library or active-length traversal, not
+  fixed lookup.  Packet/varint/header-protection byte loops are wire encoding;
+  authentication/reset-token comparisons retain documented full constant-time
+  traversal.  No fixed multi-string mapping or static integral table remains,
+  so no new `ZuMatcher` or `ZuSwitch` is required.
+- Build: `make -C zquic/src -j8 libZquic.la`.
+- Focused unit build and run: `ZquicLogTest` passed under the existing
+  clang-debug configuration.
+
 ## Slice 8: final zquic-only integration and delivery
 
 Dependency: accepted and committed Slice 7.

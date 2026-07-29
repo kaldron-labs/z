@@ -45,6 +45,7 @@ static bool tokenHMAC_(uint8_t *out, ZuBSpan secret, ZuBSpan data)
 static bool tokenTagEquals_(ZuBSpan a, const uint8_t *b)
 {
   if (a.length() != AddressToken::TagLength) return false;
+  // Authentication tags require a full constant-time byte traversal.
   uint8_t diff = 0;
   for (unsigned i = 0; i < AddressToken::TagLength; ++i)
     diff |= a[i] ^ b[i];
@@ -318,6 +319,7 @@ bool StatelessReset::verify(ZuBSpan datagram, const ResetToken &token)
   if (!token.valid()) return false;
   ResetToken decoded;
   if (decode(decoded, datagram) < 0) return false;
+  // Reset tokens require a full constant-time byte traversal.
   uint8_t diff = 0;
   for (unsigned i = 0; i < TokenLength; ++i)
     diff |= decoded.data()[i] ^ token.data()[i];

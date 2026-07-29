@@ -98,6 +98,8 @@ public:
     });
     return (ok || stop) && n > 1;
   }
+  // These dependent index APIs address the bounded ACK wire-order view, which
+  // combines the implicit head with sparse storage and has no direct index.
   uint64_t first(unsigned i) const {
     uint64_t v = 0;
     unsigned n = 0;

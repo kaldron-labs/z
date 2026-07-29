@@ -385,6 +385,8 @@ inline bool validCryptoOffsets(
   return true;
 }
 
+// Raw array-reference ingress preserves the dependent callback API; ZuArray
+// binds directly without a conversion or copy.
 template <typename Send>
 inline bool sendCryptoFlights_(
   CryptoStream (&txCrypto)[PktNumSpace::N], LinkTxDiag &diag,

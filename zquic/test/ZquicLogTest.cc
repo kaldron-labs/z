@@ -1168,8 +1168,10 @@ void testQLogTypedSecEvents()
     });
 
   VersionEvt vn;
+  new (vn.serverVersions.push()) uint32_t(0);
   new (vn.serverVersions.push()) uint32_t(Version1);
-  new (vn.clientVersions.push()) uint32_t(0x1a2a3a4a);
+  new (vn.clientVersions.push()) uint32_t(0x1abcdef0);
+  new (vn.clientVersions.push()) uint32_t(UINT32_MAX);
   ZquicLogger::versionInfo(trace, ZuMv(vn));
 
   SecEvt reset{
@@ -1267,8 +1269,8 @@ void testQLogTypedSecEvents()
   ZuCHECK(data.find<"address_validation">() >= 0,
     "Retry qlog reason missing");
   ZuCHECK(data.find<"\"name\":\"quic:version_information\",\"data\":{"
-    "\"server_versions\":[\"00000001\"],"
-    "\"client_versions\":[\"1a2a3a4a\"]}">() >= 0,
+    "\"server_versions\":[\"00000000\",\"00000001\"],"
+    "\"client_versions\":[\"1abcdef0\",\"ffffffff\"]}">() >= 0,
     "version_information fields missing");
   ZuCHECK(data.find<"\"name\":\"quic:version_information\","
     "\"data\":{\"kind\"">() < 0,
