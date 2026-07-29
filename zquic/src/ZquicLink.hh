@@ -36,6 +36,11 @@ public:
   using TxBufAlloc = TxBufAlloc_;
   using Stream = Stream_;
   using StreamRef = ZmRef<Stream>;
+  // 64 covers the former common batch; valid larger reap sets grow on heap.
+  using ReapStreams = ZtBuiltin<
+    ZtArray<Stream *,
+      ZtArrayHeapID<"Zquic.Recovery.ReapStreams">>,
+    64>;
   using Streams = Streams_<Stream>;
   using StreamsRef = ZmRef<Streams>;
   using ClosedStreams =
@@ -598,9 +603,10 @@ protected:
   };
   struct QLogTxFrameRefs {
     QLogTxFrameRefs() = default;
-    QLogTxFrameRefs(const SentFrameRef *refs_, unsigned n_) {
-      n = n_ < PktTxUpdate::MaxFrames ? n_ : PktTxUpdate::MaxFrames;
-      for (unsigned i = 0; i < n; ++i) refs[i] = refs_[i];
+    QLogTxFrameRefs(const SentFrameUpdates &updates) {
+      n = updates.length() < PktTxUpdate::MaxFrames ?
+	updates.length() : PktTxUpdate::MaxFrames;
+      for (unsigned i = 0; i < n; ++i) refs[i] = updates[i].ref;
     }
     unsigned count() const { return n; }
     const SentFrameRef &operator [](unsigned i) const { return refs[i]; }
@@ -4709,7 +4715,7 @@ protected:
       level,
       lostBytes = update.lostBytes,
       bytesInFlight = m_congestion.bytesInFlight(),
-      lostFrames = QLogTxFrameRefs{update.lostFrames, update.nLostFrames},
+      lostFrames = QLogTxFrameRefs{update.lostFrames},
       reason = RecReason::TimeThreshold,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
@@ -5698,7 +5704,7 @@ protected:
     }
     schedulePTO_();
     scheduleLossTimer_();
-    if (update.nLostFrames) impl()->queueRetransmit_();
+    if (update.lostFrames) impl()->queueRetransmit_();
     return n;
   }
 
@@ -6130,15 +6136,15 @@ nextSpace:
   }
 
   void queueAckReap_(
-    Stream **streams, unsigned &nStreams, Stream *stream) {
+    ReapStreams &streams, Stream *stream) {
     if (!stream) return;
-    for (unsigned i = 0; i < nStreams; ++i)
+    for (unsigned i = 0; i < streams.length(); ++i)
       if (streams[i] == stream) return;
-    if (nStreams < PktTxUpdate::MaxFrames) streams[nStreams++] = stream;
+    streams.push(stream);
   }
-  void reapAckedStreams_(PktTxUpdate &update, Stream **streams, unsigned n) {
+  void reapAckedStreams_(PktTxUpdate &update, ReapStreams &streams) {
     update.clearAckdFrames();
-    for (unsigned i = 0; i < n; ++i)
+    for (unsigned i = 0; i < streams.length(); ++i)
       reapStream_(streams[i]);
   }
   void reapStreamFromRx_(const StreamRef &stream) {
@@ -6242,14 +6248,15 @@ nextSpace:
   }
   void applyAckUpdateTx_(
     const PktTxUpdate &update, bool &congestionOpened,
-    Stream **reapStreams, unsigned &nReapStreams,
+    ReapStreams &reapStreams,
     const AckSnapshot *ack = nullptr, bool *ecnValid = nullptr,
     uint64_t *ceDelta = nullptr) {
     applyAckOfAckTx_(update);
-    for (unsigned i = 0; i < update.nAckdFrames; ++i) {
-      const SentFrameRef &ref = update.ackdFrames[i];
+    for (unsigned i = 0; i < update.ackdFrames.length(); ++i) {
+      const SentFrameUpdate &frame = update.ackdFrames[i];
+      const SentFrameRef &ref = frame.ref;
       StreamRef streamRef;
-      Stream *stream = static_cast<Stream *>(update.ackdOwners[i]);
+      Stream *stream = static_cast<Stream *>(frame.owner);
       if ((ref.kind == SentFrameKind::Stream ||
 	  ref.kind == SentFrameKind::Control) &&
 	  ref.streamID <= uint64_t(INT64_MAX)) {
@@ -6259,11 +6266,11 @@ nextSpace:
       if (ackTxFrame_(update.level, ref, stream))
 	switch (ref.kind) {
 	  case SentFrameKind::Stream:
-	    if (ref.fin) queueAckReap_(reapStreams, nReapStreams, stream);
+	    if (ref.fin) queueAckReap_(reapStreams, stream);
 	    break;
 	  case SentFrameKind::Control:
 	    if (ref.controlType == FrameType::ResetStream)
-	      queueAckReap_(reapStreams, nReapStreams, stream);
+	      queueAckReap_(reapStreams, stream);
 	    break;
 	  default:
 	    break;
@@ -6414,14 +6421,13 @@ nextSpace:
       work.ecnValidated = true;
     }
 	    PktTxUpdate update;
-	    Stream *reapStreams[PktTxUpdate::MaxFrames] = {};
-	    unsigned nReapStreams = 0;
+	    ReapStreams reapStreams;
 	    if (!work.lossPhase) {
 	      if (!m_txPkts[ack.level].ackBatch(
 		  ack.ranges, ack.nRanges, work.ackBatch, RecoveryScanBatch,
 		  ack.level, &update)) {
 		applyAckUpdateTx_(
-		  update, work.congestionOpened, reapStreams, nReapStreams,
+		  update, work.congestionOpened, reapStreams,
 		  &ack, &work.ecnValid, &work.ceDelta);
 		ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
@@ -6431,8 +6437,8 @@ nextSpace:
 	  ackedBytes = update.ackdBytes,
 	  lostBytes = update.lostBytes,
 	  nRanges = ack.nRanges,
-	  nAckdFrames = update.nAckdFrames,
-	  nLostFrames = update.nLostFrames,
+	  nAckdFrames = update.ackdFrames.length(),
+	  nLostFrames = update.lostFrames.length(),
 	  packetNumbers = qlogAckedPNs_(update),
 	  packetNumbersTruncated = update.ackedPNsTruncated,
 	  linkInfo = linkInfo_()
@@ -6453,7 +6459,7 @@ nextSpace:
 		  event.packetSpace = level;
 		  o.logPktsAcked(event, time);
 		}));
-		reapAckedStreams_(update, reapStreams, nReapStreams);
+		reapAckedStreams_(update, reapStreams);
 		app()->txRun([link = impl(), work = ZuMv(work)]() mutable {
 		  if (link->disconnecting_()) return;
 		  link->processAckFrameTx_(ZuMv(work));
@@ -6461,7 +6467,7 @@ nextSpace:
 		return;
 	      }
 	      applyAckUpdateTx_(
-		update, work.congestionOpened, reapStreams, nReapStreams,
+		update, work.congestionOpened, reapStreams,
 		&ack, &work.ecnValid, &work.ceDelta);
 	      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
@@ -6471,8 +6477,8 @@ nextSpace:
 	ackedBytes = update.ackdBytes,
 	lostBytes = update.lostBytes,
 	nRanges = ack.nRanges,
-	nAckdFrames = update.nAckdFrames,
-		nLostFrames = update.nLostFrames,
+	nAckdFrames = update.ackdFrames.length(),
+		nLostFrames = update.lostFrames.length(),
 		packetNumbers = qlogAckedPNs_(update),
 		packetNumbersTruncated = update.ackedPNsTruncated,
 		linkInfo = linkInfo_()
@@ -6493,13 +6499,13 @@ nextSpace:
 		event.packetSpace = level;
 		o.logPktsAcked(event, time);
 	      }));
-	      reapAckedStreams_(update, reapStreams, nReapStreams);
+	      reapAckedStreams_(update, reapStreams);
 	      work.lossPhase = true;
 	    } else {
 	      applyAckUpdateTx_(
-		update, work.congestionOpened, reapStreams, nReapStreams,
+		update, work.congestionOpened, reapStreams,
 		&ack, &work.ecnValid, &work.ceDelta);
-	      reapAckedStreams_(update, reapStreams, nReapStreams);
+	      reapAckedStreams_(update, reapStreams);
 	    }
     if (work.ackBatch.haveAckForLoss) {
       PktTxUpdate lossUpdate;
@@ -6512,7 +6518,7 @@ nextSpace:
 	  lostBytes = lossUpdate.lostBytes,
 	  bytesInFlight = m_congestion.bytesInFlight(),
 	  lostFrames =
-	    QLogTxFrameRefs{lossUpdate.lostFrames, lossUpdate.nLostFrames},
+	    QLogTxFrameRefs{lossUpdate.lostFrames},
 	  reason = RecReason::PacketThreshold,
 	  linkInfo = linkInfo_()
 		](auto &o, ZuTime time) {
@@ -6547,7 +6553,7 @@ nextSpace:
 	lostBytes = lossUpdate.lostBytes,
 		bytesInFlight = m_congestion.bytesInFlight(),
 		lostFrames =
-		  QLogTxFrameRefs{lossUpdate.lostFrames, lossUpdate.nLostFrames},
+		  QLogTxFrameRefs{lossUpdate.lostFrames},
 		reason = RecReason::PacketThreshold,
 		linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {

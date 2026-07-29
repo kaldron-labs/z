@@ -41,7 +41,7 @@ static Zquic::TxPkt txCryptoPkt_(
   unsigned bytes = 100)
 {
   Zquic::TxPkt p = txPkt_(pn, bytes);
-  p.frameCount = 0;
+  p.frames.clear();
   p.addFrame(Zquic::SentFrameRef::crypto(offset, length));
   return p;
 }
@@ -51,7 +51,7 @@ static Zquic::TxPkt txStreamPkt_(
   bool fin = false, unsigned bytes = 100)
 {
   Zquic::TxPkt p = txPkt_(pn, bytes);
-  p.frameCount = 0;
+  p.frames.clear();
   Zquic::TxRange range;
   range.offset = uint32_t(offset);
   range.length = length;
@@ -369,10 +369,10 @@ void testAckdFrameStopsLossReclaim()
 	nullptr, &update) == 0 &&
       !ackdBytes &&
       !update.ackdBytes &&
-      update.nAckdFrames == 1 &&
-      update.ackdFrames[0].kind == Zquic::SentFrameKind::Crypto &&
-      update.ackdFrames[0].offset == 0 &&
-      update.ackdFrames[0].length == 46 &&
+      update.ackdFrames.length() == 1 &&
+      update.ackdFrames[0].ref.kind == Zquic::SentFrameKind::Crypto &&
+      update.ackdFrames[0].ref.offset == 0 &&
+      update.ackdFrames[0].ref.length == 46 &&
       lateLost.count() == 1 &&
       lateLost.retainedLost() == 1 &&
       lateLost.ackd() == 1,
@@ -609,7 +609,7 @@ static Zquic::TxPkt txControlPkt_(
   uint64_t pn, const Zquic::SentFrameRef &ref, unsigned bytes = 100)
 {
   Zquic::TxPkt p = txPkt_(pn, bytes);
-  p.frameCount = 0;
+  p.frames.clear();
   p.addFrame(ref);
   return p;
 }
@@ -841,6 +841,49 @@ void testAckManager()
     "ACK manager active ACK threshold did not reset after send");
 }
 
+void testLosslessFrameUpdates()
+{
+  ZuTestScope(testLosslessFrameUpdates);
+
+  Zquic::PktTxUpdate lost;
+  bool lostSetup = true;
+  for (unsigned i = 0; i < 65; ++i) {
+    Zquic::SentPkt packet;
+    packet.pn = i;
+    packet.bytes = 1;
+    lostSetup &= packet.addFrame(
+	Zquic::SentFrameRef::crypto(i, 1),
+	reinterpret_cast<void *>(uintptr_t(i + 1)));
+    lost.lost(packet);
+  }
+  ZuCHECK(lostSetup && lost.lostFrames.length() == 65 &&
+      lost.lostFrames[64].ref.offset == 64 &&
+      lost.lostFrames[64].owner ==
+	reinterpret_cast<void *>(uintptr_t(65)),
+    "lost updates stopped at built-in capacity");
+
+  Zquic::PktTxUpdate ackd;
+  bool ackdSetup = true;
+  for (unsigned packetNo = 0; packetNo < 256; ++packetNo) {
+    Zquic::SentPkt packet;
+    packet.pn = packetNo;
+    packet.bytes = 8;
+    for (unsigned frameNo = 0; frameNo < Zquic::SentPkt::MaxFrames; ++frameNo)
+      ackdSetup &= packet.addFrame(
+	  Zquic::SentFrameRef::crypto(packetNo * 8 + frameNo, 1),
+	  reinterpret_cast<void *>(
+	    uintptr_t(packetNo * 8 + frameNo + 1)));
+    ackd.ackd(packet);
+  }
+  ZuCHECK(ackdSetup &&
+      ackd.ackdFrames.length() == 256 * Zquic::SentPkt::MaxFrames &&
+      ackd.ackdFrames[2047].ref.offset == 2047 &&
+      ackd.ackdFrames[2047].owner ==
+	reinterpret_cast<void *>(uintptr_t(2048)) &&
+      ackd.ackedPNsTruncated,
+    "ACK updates or qlog truncation policy mismatch");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -857,4 +900,5 @@ int main(int argc, char **argv)
   ZuTestCall(testFlowControlRetransmit);
   ZuTestCall(testPktNumSpaceBatchCursors);
   ZuTestCall(testAckManager);
+  ZuTestCall(testLosslessFrameUpdates);
 }

@@ -762,6 +762,11 @@ ZuDerive(SentFrameAckHash,
       ZmHashKey<SentFrameKey_IDAxor,
 	ZmHashHeapID<"Zquic.Pkt.AckdFrame">>>>));
 
+struct SentFrameUpdate {
+  SentFrameRef	ref;
+  void		*owner = nullptr;
+};
+
 struct SentPkt {
   static constexpr unsigned MaxFrames = 8;
 
@@ -773,22 +778,21 @@ struct SentPkt {
   void write(const I &) { }
 
   bool addFrame(const SentFrameRef &frame, void *owner = nullptr) {
-    if (frame.kind == SentFrameKind::None || frameCount >= MaxFrames)
+    if (frame.kind == SentFrameKind::None || frames.length() >= MaxFrames)
       return false;
-    frames[frameCount] = frame;
-    frameOwners[frameCount++] = owner;
+    frames.push(SentFrameUpdate{frame, owner});
     return true;
   }
-  unsigned framesUsed() const { return frameCount; }
+  unsigned framesUsed() const { return frames.length(); }
   const SentFrameRef &frame(unsigned i) const {
-    ZiAssert(i < frameCount, "Zquic", (),
-      "sent-packet frame index out of bounds", return frames[0]);
-    return frames[i];
+    ZiAssert(i < frames.length(), "Zquic", (),
+      "sent-packet frame index out of bounds", return frames[0].ref);
+    return frames[i].ref;
   }
   void *frameOwner(unsigned i) const {
-    ZiAssert(i < frameCount, "Zquic", (),
+    ZiAssert(i < frames.length(), "Zquic", (),
       "sent-packet frame-owner index out of bounds", return nullptr);
-    return frameOwners[i];
+    return frames[i].owner;
   }
 
   uint64_t	pn = 0;
@@ -806,19 +810,24 @@ struct SentPkt {
   bool		ptoReclaimed = false;
   uint8_t	ackLevel = PktNumSpace::N;
   uint64_t	ackLargest = 0;
-  SentFrameRef	frames[MaxFrames];
-  void		*frameOwners[MaxFrames] = {};
-  unsigned	frameCount = 0;
+  ZuArray<SentFrameUpdate, MaxFrames> frames;
 };
 
 using TxPkt = SentPkt;
 
+// 64 matches the former common batch size; valid larger batches grow on heap.
+using SentFrameUpdates = ZtBuiltin<
+  ZtArray<SentFrameUpdate,
+    ZtArrayHeapID<"Zquic.Recovery.FrameUpdates">>,
+  64>;
+
 struct PktTxUpdate {
-  static constexpr unsigned MaxFrames = 64;
-  static constexpr unsigned MaxAckedPNs = 64;
+  static constexpr unsigned MaxFrames = 64; // preserved qlog sample policy
+  static constexpr unsigned AckedPNSampleMax = 64;
+  static constexpr unsigned MaxAckedPNs = AckedPNSampleMax;
 
   void ackd(const SentPkt &p) {
-    if (nAckedPNs < MaxAckedPNs)
+    if (nAckedPNs < AckedPNSampleMax)
       ackedPNs[nAckedPNs++] = p.pn;
     else
       ackedPNsTruncated = true;
@@ -875,27 +884,23 @@ struct PktTxUpdate {
     }
   }
   void ackdFrames_(const SentPkt &p) {
-    for (unsigned i = 0; i < p.framesUsed() && nAckdFrames < MaxFrames; ++i) {
-      ackdFrames[nAckdFrames++] = p.frame(i);
-      ackdOwners[nAckdFrames - 1] = p.frameOwner(i);
-    }
+    unsigned n = ackdFrames.length();
+    for (unsigned i = 0; i < p.framesUsed(); ++i)
+      ackdFrames.push(SentFrameUpdate{p.frame(i), p.frameOwner(i)});
+    ZiAssert(ackdFrames.length() - n == p.framesUsed(), "Zquic", (),
+      "ACK frame update truncation", return);
   }
   void lostFrames_(const SentPkt &p) {
-    for (unsigned i = 0; i < p.framesUsed() && nLostFrames < MaxFrames; ++i) {
-      lostFrames[nLostFrames++] = p.frame(i);
-      lostOwners[nLostFrames - 1] = p.frameOwner(i);
-    }
+    unsigned n = lostFrames.length();
+    for (unsigned i = 0; i < p.framesUsed(); ++i)
+      lostFrames.push(SentFrameUpdate{p.frame(i), p.frameOwner(i)});
+    ZiAssert(lostFrames.length() - n == p.framesUsed(), "Zquic", (),
+      "lost frame update truncation", return);
   }
-  void clearAckdFrames() {
-    for (unsigned i = 0; i < nAckdFrames; ++i) {
-      ackdFrames[i] = {};
-      ackdOwners[i] = nullptr;
-    }
-    nAckdFrames = 0;
-  }
+  void clearAckdFrames() { ackdFrames.clear(); }
 
   uint64_t	ackdBytes = 0;
-  uint64_t	ackedPNs[MaxAckedPNs] = {};
+  uint64_t	ackedPNs[AckedPNSampleMax] = {};
   PktNumSpace::T	level = PktNumSpace::Initial;
   unsigned	ecnAckdPackets = 0;
   uint64_t	ecnAckdBytes = 0;
@@ -911,12 +916,8 @@ struct PktTxUpdate {
   ZuTime	pmtudLostSentTime;
   bool		ackdAck[PktNumSpace::N] = {};
   uint64_t	ackLargest[PktNumSpace::N] = {};
-  SentFrameRef	ackdFrames[MaxFrames];
-  SentFrameRef	lostFrames[MaxFrames];
-  void		*ackdOwners[MaxFrames] = {};
-  void		*lostOwners[MaxFrames] = {};
-  unsigned	nAckdFrames = 0;
-  unsigned	nLostFrames = 0;
+  SentFrameUpdates ackdFrames;
+  SentFrameUpdates lostFrames;
   unsigned	nAckedPNs = 0;
   bool		ackedPNsTruncated = false;
 };

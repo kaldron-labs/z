@@ -425,6 +425,23 @@ Add unit cases for:
 
 Only then start Slice 4.
 
+### Slice 3 execution record
+
+- API gate: the repository has no non-`zquic` caller of `SentPkt`,
+  `SentFrameRef`, or `PktTxUpdate`; the documented queue methods and callback
+  ordering remain unchanged.
+- Recovery metadata: per-packet frames are `SentFrameUpdate` values, and ACKed
+  and lost batches use `SentFrameUpdates` with 64 built-in elements plus the
+  named `Zquic.Recovery.FrameUpdates` heap fallback.
+- Stream reaping uses the matching `ReapStreams` value with the
+  `Zquic.Recovery.ReapStreams` heap ID.  Qlog copies at most its former
+  64-frame sample and never captures owner pointers or the dynamic container.
+- Build: `make -C zquic/src -j8 libZquic.la`.
+- Focused unit build and run: `ZquicRecoveryTest` passed under the existing
+  clang-debug configuration.  Direct cases retain 65 lost updates and 2,048
+  ACKed updates (256 packets with eight frames), including owners; qlog packet
+  number truncation remains independent of protocol callback retention.
+
 ## Slice 4: separate ACK wire policy from retained storage
 
 Dependency: accepted and committed Slice 3.
