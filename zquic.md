@@ -869,3 +869,42 @@ ASan/LSan build.
 - The delivery note records exact commands, tests, platform/toolchain, any
   valgrind investigation, chosen built-in capacities and evidence, and every
   retained raw-array exception.
+
+### Slice 8 delivery record
+
+- Platform/toolchain: Linux `x86_64`, clang 22.1.8, existing debug
+  configuration (`-g -DZDEBUG`); no clean or reconfiguration was performed.
+- Final commands were `make -C zquic/src -j8 libZquic.la`,
+  `make -C zquic/test -j8`, and `make -C zquic/test test`.  After repairing
+  findings, the same three commands were rerun as applicable; no dependency
+  layer or dependent module was built or tested.
+- The first complete test build found two stale internal contracts:
+  `sendCryptoFlights_` accepted only a raw C array after Link storage became
+  `ZuArray`, and `ZquicStreamTest` still wrote the removed parallel
+  `AckSnapshot::nRanges`.  The internal helper now accepts either indexed
+  container while the public raw callback signature is unchanged; the test
+  constructs the active `AckRanges` value directly.
+- The first complete run exposed an abort in `ZquicRuntimeTest`.  The required
+  `./libtool --mode=execute valgrind --track-origins=yes
+  --error-exitcode=99 zquic/test/ZquicRuntimeTest` traced it to an
+  inline-backed `ZtBuiltin` ACK snapshot copy freeing stack storage.
+  `AckSnapshot` now deep-copies into its already-constructed destination
+  buffer.  The repaired runtime binary passed normally.  A follow-up valgrind
+  run no longer reported the ACK snapshot corruption but changed shutdown
+  timing enough to expose a separate endpoint-disconnect lifetime race; no
+  ASan/LSan build was made and that unrelated shutdown redesign was not folded
+  into this storage slice.
+- Final result: all 20 zquic test binaries passed, 159 tests total.  The test
+  set includes API, socket, codec, crypto, packet protection, handshake,
+  recovery, stream state, PMTUD, version, CID, stream, flow, buffer,
+  congestion, packet queue, loop, runtime, timer, and qlog coverage.
+- Built-in tuning retained by evidence: crypto staging uses 8 KiB inline with
+  heap fallback up to the explicit 64 KiB message policy; recovery updates and
+  reap lists use 64 inline elements, with focused coverage at 65 and 2,048
+  updates; ACK wire and retained ranges use 32 inline elements with separate
+  64-wire and 65-retained policies; stream retransmit ranges use eight inline
+  elements, with focused 256-range heap-fallback coverage.
+- Reviewed raw-array exceptions remain exactly those recorded in Slice 7:
+  picotls cipher/extension/epoch-offset C ABI, public diagnostic aggregate
+  layout, dependent raw callback ingress, and the inline `ZiIOBuf` pool
+  payload.  All carry local maintenance comments.

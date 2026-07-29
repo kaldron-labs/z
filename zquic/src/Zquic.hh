@@ -385,11 +385,9 @@ inline bool validCryptoOffsets(
   return true;
 }
 
-// Raw array-reference ingress preserves the dependent callback API; ZuArray
-// binds directly without a conversion or copy.
-template <typename Send>
+template <typename CryptoStreams, typename Send>
 inline bool sendCryptoFlights_(
-  CryptoStream (&txCrypto)[PktNumSpace::N], LinkTxDiag &diag,
+  CryptoStreams &txCrypto, LinkTxDiag &diag,
   const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
   unsigned chunkMax, ZiSockAddr addr, Send send)
 {
@@ -430,7 +428,8 @@ inline bool sendCryptoFlights_(
   return true;
 }
 
-// Compatibility ingress for the public picotls-style callback contract.
+// Raw array-reference ingress preserves the public picotls-style callback
+// contract; the internal helper also accepts the owning ZuArray directly.
 template <typename Send>
 inline bool sendCryptoFlights(
   CryptoStream (&txCrypto)[PktNumSpace::N], LinkTxDiag &diag,

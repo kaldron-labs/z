@@ -290,15 +290,13 @@ struct TestLink :
   void ackThrough(uint64_t pn) {
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
-    ack.nRanges = 1;
-    ack.ranges[0] = Zquic::AckRange{pn, 0};
+    new (ack.ranges.push()) Zquic::AckRange{pn, 0};
     Base::processAckFrameTx_(ack);
   }
   void ackOnly(uint64_t pn) {
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
-    ack.nRanges = 1;
-    ack.ranges[0] = Zquic::AckRange{pn, pn};
+    new (ack.ranges.push()) Zquic::AckRange{pn, pn};
     Base::processAckFrameTx_(ack);
   }
 	  bool nextRetransmitRef(
@@ -446,8 +444,7 @@ struct TestLink :
     Base::setTxPN_(Zquic::PktNumSpace::AppData, largest + 1);
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
-    ack.nRanges = 1;
-    ack.ranges[0] = Zquic::AckRange{largest, 0};
+    new (ack.ranges.push()) Zquic::AckRange{largest, 0};
     ack.ecn.ect0 = ect0;
     ack.ecn.ect1 = ect1;
     ack.ecn.ce = ce;
@@ -457,8 +454,7 @@ struct TestLink :
     Base::setTxPN_(Zquic::PktNumSpace::AppData, largest + 1);
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
-    ack.nRanges = 1;
-    ack.ranges[0] = Zquic::AckRange{largest, 0};
+    new (ack.ranges.push()) Zquic::AckRange{largest, 0};
     Base::processAckFrameTx_(ack);
   }
 #endif
@@ -532,8 +528,7 @@ struct TestLink :
     Zquic::PktNumSpace::T level, uint64_t first, uint64_t largest) const {
     Base::AckSnapshot ack;
     ack.level = level;
-    ack.nRanges = 1;
-    ack.ranges[0] = Zquic::AckRange{largest, first};
+    new (ack.ranges.push()) Zquic::AckRange{largest, first};
     return Base::ackFrameValidTx_(ack);
   }
   bool installOneRTT(

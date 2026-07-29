@@ -542,6 +542,24 @@ protected:
     uint64_t		error = 0;
   };
   struct AckSnapshot {
+    AckSnapshot() = default;
+    // ZtBuiltin's inline buffer is object-local; copy into the already
+    // constructed destination so its backing pointer cannot alias the source.
+    AckSnapshot(const AckSnapshot &a) { *this = a; }
+    AckSnapshot &operator =(const AckSnapshot &a) {
+      level = a.level;
+      gen = a.gen;
+      keyGeneration = a.keyGeneration;
+      delay = a.delay;
+      largestRxTime = a.largestRxTime;
+      ecn = a.ecn;
+      due = a.due;
+      ranges = a.ranges;
+      return *this;
+    }
+    AckSnapshot(AckSnapshot &&) = default;
+    AckSnapshot &operator =(AckSnapshot &&) = default;
+
     PktNumSpace::T	level = PktNumSpace::Initial;
     uint64_t		gen = 0;
     uint64_t		keyGeneration = 0;
