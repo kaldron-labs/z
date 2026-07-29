@@ -39,11 +39,11 @@ struct RequestBuilder :
   void host(L &&l) { l("127.0.0.1"); }
 };
 
-struct TunnelRequestBuilder :
-  public Zhttp::H2::Builder<TunnelRequestBuilder,
+struct StreamRequestBuilder :
+  public Zhttp::H2::Builder<StreamRequestBuilder,
     ZuTypeList<>, ZuTypeList<>, true> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::CONNECT, "/tunnel", ""); }
+  void operation(L &&l) { l(Zhttp::Method::CONNECT, "/stream", ""); }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
   template <typename L>
@@ -57,17 +57,32 @@ struct ResponseBuilder :
   uint64_t contentLength() { return 4; }
 };
 
-struct TunnelResponseBuilder :
-  public Zhttp::H2::Builder<TunnelResponseBuilder> {
+struct StreamResponseBuilder :
+  public Zhttp::H2::Builder<StreamResponseBuilder> {
   unsigned status() { return 200; }
-  bool tunnelResponse() { return true; }
+  bool streamResponse() { return true; }
 };
 
 struct Client;
 struct ClientLink;
+struct ClientParser;
+
+struct ClientStream {
+  template <typename Stream>
+  void streamProcess(Stream stream);
+
+  ClientParser	*parser = nullptr;
+};
 
 struct ClientParser :
   public Zhttp::H2::Parser<ClientParser, false> {
+  ClientParser() : consumer{this} { }
+
+  void bind(ClientLink &link) { dispatch.init(link, consumer); }
+  void final() {
+    dispatch.disable_();
+    dispatch.final_();
+  }
   void operation(Zhttp::Method::T, ZuBSpan) { }
   void status(unsigned value) { status_ = value; }
   void contentLength(uint64_t value) { length = value; }
@@ -79,44 +94,64 @@ struct ClientParser :
   }
   void complete(Zhttp::H2::ParserState::T value) { complete_ = value; }
   void headers(Zhttp::Fields::Section section, bool endStream) {
-    if (tunnelExpected && section == Zhttp::Fields::Final &&
+    if (streamExpected && section == Zhttp::Fields::Final &&
 	status_ >= 200 && status_ < 300 && !endStream) {
-      tunnel();
-      ++tunnelEstablished;
+      stream();
+      ++streamEstablished;
     }
   }
   template <typename Rx>
-  void tunnelData(Rx &rx) {
-    while (rx.input()) {
+  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void events_(Zi::RxEvent::T events) {
+    if (events & Zi::RxEvent::Start()) ++streamStarts;
+    if (events & Zi::RxEvent::Final()) ++streamEnds;
+    if (events & Zi::RxEvent::Error()) ++streamResets;
+    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
+      dispatch.disable_();
+  }
+  template <typename Rx>
+  void processStream(Rx &rx) {
+    for (;;) {
+      bool input = rx.input();
+      events_(rx.events());
+      if (!input) break;
       const uint8_t *offered = nullptr;
-      if (rx.consume(
+      int64_t n = rx.consume(
 	  [&offered](ZuBSpan span) -> int64_t {
 	    offered = span.data();
 	    return 1;
 	  },
 	  [this, &offered](ZuBSpan span) {
-	    tunnelNoCopy &= span.data() == offered;
-	    tunnelBody << ZuCSpan{span};
-	  }) <= 0)
-	break;
+	    streamNoCopy &= span.data() == offered;
+	    streamBody << ZuCSpan{span};
+	  });
+      events_(rx.events());
+      if (n <= 0) break;
     }
   }
-  void tunnelEnd() { ++tunnelEnds; }
-  void tunnelReset() { ++tunnelResets; }
 
   ZtString<>			body_;
-  ZtString<>			tunnelBody;
+  ZtString<>			streamBody;
+  Zhttp::StreamDispatch<ClientLink, ClientStream> dispatch;
+  ClientStream			consumer;
   uint64_t			length = 0;
   unsigned			status_ = 0;
   unsigned			bodyCalls = 0;
-  unsigned			tunnelEstablished = 0;
-  unsigned			tunnelEnds = 0;
-  unsigned			tunnelResets = 0;
-  bool				tunnelNoCopy = true;
-  bool				tunnelExpected = false;
+  unsigned			streamEstablished = 0;
+  unsigned			streamStarts = 0;
+  unsigned			streamEnds = 0;
+  unsigned			streamResets = 0;
+  bool				streamNoCopy = true;
+  bool				streamExpected = false;
   Zhttp::H2::ParserState::T	complete_ =
     Zhttp::H2::ParserState::Initial;
 };
+
+template <typename Stream>
+void ClientStream::streamProcess(Stream stream)
+{
+  parser->processStream(stream.rx());
+}
 
 struct Client : public Zhttp::Client<Client, Zhttp::H2TLS> {
   using Link = ClientLink;
@@ -140,13 +175,14 @@ struct ClientLink :
   using Base::Base;
 
   ClientParser parser;
-  bool		tunnelSent = false;
-  bool		holdOpen = false;
   unsigned	disconnects = 0;
+  bool		streamSent = false;
+  bool		holdOpen = false;
 };
 
 void Client::disconnected(Link &link, bool)
 {
+  link.parser.final();
   ++link.disconnects;
   ++state->closed;
 }
@@ -160,9 +196,10 @@ void Client::connected(Link &link, Zhttp::ConnectedInfo info)
     state->response.post();
     return;
   }
+  link.parser.bind(link);
   auto tx = link.txStream();
-  if (link.parser.tunnelExpected) {
-    TunnelRequestBuilder builder;
+  if (link.parser.streamExpected) {
+    StreamRequestBuilder builder;
     if (!builder.request(tx)) {
       ++state->errors;
       state->response.post();
@@ -177,29 +214,33 @@ void Client::connected(Link &link, Zhttp::ConnectedInfo info)
 
 int Client::process(Link &link, Zhttp::H2_::EventRx &rx)
 {
-  auto state_ = rx.process(link.parser);
+  auto state_ = link.receive(link.parser, rx);
   if (state_ == Zhttp::H2::ParserState::Error) {
     ++state->errors;
     state->response.post();
     return -1;
   }
-  if (link.parser.tunnelExpected) {
-    if (state_ == Zhttp::H2::ParserState::Tunnel &&
-	!link.tunnelSent) {
-      link.tunnelSent = true;
+  if (link.parser.streamExpected) {
+    if (state_ == Zhttp::H2::ParserState::Stream &&
+	!link.streamSent) {
+      link.streamSent = true;
       if (link.holdOpen) {
 	state->response.post();
 	return 0;
       }
-      Zhttp::Tunnel tunnel{link};
-      tunnel.send([](auto &body) { body << ZuCSpan{"ping"}; });
-      tunnel.end();
+      Zhttp::Stream stream{link};
+      stream.tx([](auto &body) {
+	body << ZuCSpan{"ping"};
+	body.flush();
+      });
+      stream.end();
     }
     if (state_ == Zhttp::H2::ParserState::RemoteClosed) {
-      if (link.parser.tunnelEstablished != 1 ||
-	  link.parser.tunnelBody != "ping" ||
-	  !link.parser.tunnelNoCopy ||
-	  link.parser.tunnelEnds != 1 || link.parser.tunnelResets)
+      if (link.parser.streamEstablished != 1 ||
+	  link.parser.streamStarts != 1 ||
+	  link.parser.streamBody != "ping" ||
+	  !link.parser.streamNoCopy ||
+	  link.parser.streamEnds != 1 || link.parser.streamResets)
 	++state->errors;
       state->response.post();
     }
@@ -216,87 +257,132 @@ int Client::process(Link &link, Zhttp::H2_::EventRx &rx)
 struct Server;
 struct ServerLink;
 
-struct ServerSession {
-  struct Parser : public Zhttp::H2::Parser<Parser, true> {
-    void operation(Zhttp::Method::T method_, ZuBSpan path_) {
-      method = method_;
-      path = path_;
-    }
-    void protocol(ZuBSpan value) { protocol_ = value; }
-    void headers(Zhttp::Fields::Section section, bool endStream) {
-      if (section == Zhttp::Fields::Final &&
-	  method == Zhttp::Method::CONNECT && protocol_ &&
-	  !endStream) {
-	tunnel();
-	++tunnelEstablished;
-      }
-    }
-    void contentLength(uint64_t) { }
-    void status(unsigned) { }
-    template <typename Key> void header(ZuBSpan) { }
-    template <typename Rx>
-    void body(Rx &rx) { Zhttp::bodyDrain(rx); }
-    template <typename Rx>
-    void tunnelData(Rx &rx) {
-      while (rx.input()) {
-	const uint8_t *offered = nullptr;
-	if (rx.consume(
-	    [&offered](ZuBSpan span) -> int64_t {
-	      offered = span.data();
-	      return 1;
-	    },
-	    [this, &offered](ZuBSpan span) {
-	      tunnelNoCopy &= span.data() == offered;
-	      tunnelData_ << ZuCSpan{span};
-	    }) <= 0)
-	  break;
-      }
-    }
-    void tunnelEnd() { remoteEnded = true; }
-    void tunnelReset() { ++tunnelResets; }
-    void complete(Zhttp::H2::ParserState::T value) { complete_ = value; }
+struct ServerParser;
 
-    ZtString<>			path;
-    ZtString<>			protocol_;
-    ZtString<>			tunnelData_;
-    Zhttp::Method::T		method = -1;
-    Zhttp::H2::ParserState::T	complete_ =
-      Zhttp::H2::ParserState::Initial;
-    unsigned			tunnelEstablished = 0;
-    unsigned			tunnelResets = 0;
-    bool			remoteEnded = false;
-    bool			tunnelNoCopy = true;
-  } parser;
+struct ServerStream {
+  template <typename Stream>
+  void streamProcess(Stream stream);
+
+  ServerParser	*parser = nullptr;
+};
+
+struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
+  ServerParser() : consumer{this} { }
+
+  void bind(ServerLink &link) { dispatch.init(link, consumer); }
+  void final() {
+    dispatch.disable_();
+    dispatch.final_();
+  }
+  void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+    method = method_;
+    path = path_;
+  }
+  void protocol(ZuBSpan value) { protocol_ = value; }
+  void headers(Zhttp::Fields::Section section, bool endStream) {
+    if (section == Zhttp::Fields::Final &&
+	method == Zhttp::Method::CONNECT && protocol_ &&
+	!endStream) {
+      stream();
+      ++streamEstablished;
+    }
+  }
+  void contentLength(uint64_t) { }
+  void status(unsigned) { }
+  template <typename Key> void header(ZuBSpan) { }
+  template <typename Rx>
+  void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  template <typename Rx>
+  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void events_(Zi::RxEvent::T events) {
+    if (events & Zi::RxEvent::Start()) ++streamStarts;
+    if (events & Zi::RxEvent::Final()) remoteEnded = true;
+    if (events & Zi::RxEvent::Error()) ++streamResets;
+    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
+      dispatch.disable_();
+  }
+  template <typename Rx>
+  void processStream(Rx &rx) {
+    for (;;) {
+      bool input = rx.input();
+      events_(rx.events());
+      if (!input) break;
+      const uint8_t *offered = nullptr;
+      int64_t n = rx.consume(
+	  [&offered](ZuBSpan span) -> int64_t {
+	    offered = span.data();
+	    return 1;
+	  },
+	  [this, &offered](ZuBSpan span) {
+	    streamNoCopy &= span.data() == offered;
+	    streamData << ZuCSpan{span};
+	  });
+      events_(rx.events());
+      if (n <= 0) break;
+    }
+  }
+  void complete(Zhttp::H2::ParserState::T value) { complete_ = value; }
+
+  ZtString<>			path;
+  ZtString<>			protocol_;
+  ZtString<>			streamData;
+  Zhttp::StreamDispatch<ServerLink, ServerStream> dispatch;
+  ServerStream			consumer;
+  Zhttp::Method::T		method = -1;
+  Zhttp::H2::ParserState::T	complete_ =
+    Zhttp::H2::ParserState::Initial;
+  unsigned			streamEstablished = 0;
+  unsigned			streamStarts = 0;
+  unsigned			streamResets = 0;
+  bool				remoteEnded = false;
+  bool				streamNoCopy = true;
+};
+
+template <typename Stream>
+void ServerStream::streamProcess(Stream stream)
+{
+  parser->processStream(stream.rx());
+}
+
+struct ServerSession {
+  ServerParser parser;
 
   template <typename Link>
   void connected(Link &link) {
     connected_ = true;
-    parser.extendedConnect(Zhttp::Tunnel{link}.localCap());
+    if constexpr (ZuIsSame<ZuDecay<Link>, ServerLink>{})
+      parser.bind(link);
+    parser.extendedConnect(Zhttp::Stream{link}.localCap());
   }
   template <typename Link>
-  void disconnected(Link &, bool) { }
+  void disconnected(Link &, bool) {
+    if constexpr (ZuIsSame<ZuDecay<Link>, ServerLink>{})
+      parser.final();
+  }
   template <typename Link>
   int process(Link &link, Zhttp::H2_::EventRx &rx) {
     if (!connected_) ++link.app()->state->errors;
-    parser.tunnelData_.null();
+    parser.streamData.null();
     parser.remoteEnded = false;
-    auto state = rx.process(parser);
+    auto state = link.receive(parser, rx);
     if (state == Zhttp::H2::ParserState::Error) return -1;
-    if (state == Zhttp::H2::ParserState::Tunnel ||
+    if (state == Zhttp::H2::ParserState::Stream ||
 	state == Zhttp::H2::ParserState::RemoteClosed) {
-      if (!parser.tunnelNoCopy) ++link.app()->state->errors;
-      if (!tunnelResponse_) {
-	tunnelResponse_ = true;
+      if (!parser.streamNoCopy || parser.streamStarts != 1)
+	++link.app()->state->errors;
+      if (!streamResponse_) {
+	streamResponse_ = true;
 	auto tx = link.txStream();
-	TunnelResponseBuilder builder;
+	StreamResponseBuilder builder;
 	builder.response(tx);
       }
-      if (parser.tunnelData_) {
-	Zhttp::Tunnel{link}.send([this](auto &body) {
-	  body << parser.tunnelData_;
+      if (parser.streamData) {
+	Zhttp::Stream{link}.tx([this](auto &body) {
+	  body << parser.streamData;
+	  body.flush();
 	});
       }
-      if (parser.remoteEnded) Zhttp::Tunnel{link}.end();
+      if (parser.remoteEnded) Zhttp::Stream{link}.end();
       return 0;
     }
     if (state != Zhttp::H2::ParserState::Complete) return 0;
@@ -313,7 +399,7 @@ struct ServerSession {
   }
 
   bool connected_ = false;
-  bool tunnelResponse_ = false;
+  bool streamResponse_ = false;
 };
 
 struct Server : public Zhttp::Server<Server, Zhttp::H2TLS> {
@@ -670,9 +756,9 @@ void run()
   mx.stop();
 }
 
-void runTunnel()
+void runStream()
 {
-  ZuTestScope(runTunnel);
+  ZuTestScope(runStream);
 
   Zhttp::Test::TempDir cert;
   bool certOK = cert.init();
@@ -714,17 +800,17 @@ void runTunnel()
   ZuCHECK(listening, "Extended CONNECT server listening");
 
   ZmRef<ClientLink> rest = new ClientLink{&client};
-  ZmRef<ClientLink> tunnel1 = new ClientLink{&client};
-  ZmRef<ClientLink> tunnel2 = new ClientLink{&client};
+  ZmRef<ClientLink> stream1 = new ClientLink{&client};
+  ZmRef<ClientLink> stream2 = new ClientLink{&client};
   ZmRef<ClientLink> active = new ClientLink{&client};
-  tunnel1->parser.tunnelExpected = true;
-  tunnel2->parser.tunnelExpected = true;
-  active->parser.tunnelExpected = true;
+  stream1->parser.streamExpected = true;
+  stream2->parser.streamExpected = true;
+  active->parser.streamExpected = true;
   active->holdOpen = true;
   if (listening) {
     rest->connect("127.0.0.1", state.port);
-    tunnel1->connect("127.0.0.1", state.port);
-    tunnel2->connect("127.0.0.1", state.port);
+    stream1->connect("127.0.0.1", state.port);
+    stream2->connect("127.0.0.1", state.port);
     active->connect("127.0.0.1", state.port);
   }
   bool responses =
@@ -733,7 +819,7 @@ void runTunnel()
     state.response.timedwait(Zm::now(10)) == 0 &&
     state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(responses && !state.errors && state.admissions == 1,
-    "REST and three flow-controlled tunnels share one H2 connection");
+    "REST and three flow-controlled streams share one H2 connection");
 
   client.stop([&state](bool ok) {
     if (!ok) ++state.errors;
@@ -748,7 +834,7 @@ void runTunnel()
     state.stopped.timedwait(Zm::now(10)) == 0;
   ZuCHECK(stopped && !state.errors && state.releases == 1 &&
       active->disconnects == 1,
-    "active tunnel disconnects once before physical stop completion");
+    "active stream disconnects once before physical stop completion");
   client.final();
   server.final();
   mx.stop();
@@ -969,7 +1055,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(ZhttpH2EngineTest_::run);
-  ZuTestCall(ZhttpH2EngineTest_::runTunnel);
+  ZuTestCall(ZhttpH2EngineTest_::runStream);
   ZuTestCall(ZhttpH2EngineTest_::runSharedTLS);
   ZuTestCall(ZhttpH2EngineTest_::runForceMismatch);
 }

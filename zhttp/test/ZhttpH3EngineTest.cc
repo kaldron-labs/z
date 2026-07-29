@@ -9,24 +9,27 @@
 namespace ZhttpH3EngineTest_ {
 
 template <typename Link>
-void tunnelContract(Link &link)
+void streamContract(Link &link)
 {
-  Zhttp::Tunnel tunnel{link};
-  (void)tunnel.peerCap();
-  (void)tunnel.localCap();
-  tunnel.send([](auto &tx) { tx << ZuCSpan{"x"}; });
-  tunnel.end();
-  tunnel.reset();
+  Zhttp::Stream stream{link};
+  (void)stream.peerCap();
+  (void)stream.localCap();
+  stream.tx([](auto &tx) {
+    tx << ZuCSpan{"x"};
+    tx.flush();
+  });
+  stream.end();
+  stream.reset();
 }
 
-template void tunnelContract<
+template void streamContract<
   ZhttpH1EngineTest_::Client<Zhttp::H3QUIC>::Link>(
     ZhttpH1EngineTest_::Client<Zhttp::H3QUIC>::Link &);
-template void tunnelContract<
+template void streamContract<
   ZhttpH1EngineTest_::ServerLink<Zhttp::H3QUIC>>(
     ZhttpH1EngineTest_::ServerLink<Zhttp::H3QUIC> &);
 
-struct TunnelState {
+struct StreamState {
   ZmSemaphore		listening;
   ZmSemaphore		response;
   ZmSemaphore		reset;
@@ -45,11 +48,11 @@ struct RequestBuilder :
   void host(L &&l) { l("127.0.0.1"); }
 };
 
-struct TunnelRequestBuilder :
-  public Zhttp::H3::Builder<TunnelRequestBuilder> {
+struct StreamRequestBuilder :
+  public Zhttp::H3::Builder<StreamRequestBuilder> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::CONNECT, "/tunnel", "");
+    l(Zhttp::Method::CONNECT, "/stream", "");
   }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
@@ -64,27 +67,42 @@ struct ResponseBuilder :
   uint64_t contentLength() const { return 4; }
 };
 
-struct TunnelResponseBuilder :
-  public Zhttp::H3::Builder<TunnelResponseBuilder> {
+struct StreamResponseBuilder :
+  public Zhttp::H3::Builder<StreamResponseBuilder> {
   unsigned status() const { return 200; }
 };
 
-struct TunnelClient;
-struct TunnelClientLink;
+struct StreamClient;
+struct StreamClientLink;
+struct ClientParser;
+
+struct ClientStream {
+  template <typename Stream>
+  void streamProcess(Stream stream);
+
+  ClientParser	*parser = nullptr;
+};
 
 struct ClientParser :
   public Zhttp::H3::Parser<ClientParser, false> {
   using Base = Zhttp::H3::Parser<ClientParser, false>;
 
+  ClientParser() : consumer{this} { }
+
+  void bind(StreamClientLink &link) { dispatch.init(link, consumer); }
+  void final() {
+    dispatch.disable_();
+    dispatch.final_();
+  }
   void operation(Zhttp::Method::T, ZuBSpan) { }
   void status(unsigned value) { status_ = value; }
   void contentLength(uint64_t value) { length = value; }
   template <typename Key> void header(ZuBSpan) { }
   void headers(Zhttp::Fields::Section section, bool) {
-    if (tunnelExpected && section == Zhttp::Fields::Final &&
+    if (streamExpected && section == Zhttp::Fields::Final &&
 	status_ >= 200 && status_ < 300) {
-      Base::tunnel();
-      ++tunnelEstablished;
+      Base::stream();
+      ++streamEstablished;
     }
   }
   template <typename Rx>
@@ -92,48 +110,68 @@ struct ClientParser :
     Zhttp::bodyEach(rx, [this](ZuBSpan value) { body_ << value; });
   }
   template <typename Rx>
-  void tunnelData(Rx &rx) {
-    while (rx.input()) {
+  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void events_(Zi::RxEvent::T events) {
+    if (events & Zi::RxEvent::Start()) ++streamStarts;
+    if (events & Zi::RxEvent::Final()) ++streamEnds;
+    if (events & Zi::RxEvent::Error()) ++streamResets;
+    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
+      dispatch.disable_();
+  }
+  template <typename Rx>
+  void processStream(Rx &rx) {
+    for (;;) {
+      bool input = rx.input();
+      events_(rx.events());
+      if (!input) break;
       const uint8_t *offered = nullptr;
-      if (rx.consume(
+      int64_t n = rx.consume(
 	  [&offered](ZuBSpan span) -> int64_t {
 	    offered = span.data();
 	    return 1;
 	  },
 	  [this, &offered](ZuBSpan span) {
-	    tunnelNoCopy &= span.data() == offered;
-	    tunnelBody << ZuCSpan{span};
-	  }) <= 0)
-	break;
+	    streamNoCopy &= span.data() == offered;
+	    streamBody << ZuCSpan{span};
+	  });
+      events_(rx.events());
+      if (n <= 0) break;
     }
   }
-  void tunnelEnd() { ++tunnelEnds; }
-  void tunnelReset() { ++tunnelResets; }
   void complete(Zhttp::H3::ParserState::T state) { complete_ = state; }
 
   ZtString<>			body_;
-  ZtString<>			tunnelBody;
+  ZtString<>			streamBody;
+  Zhttp::StreamDispatch<StreamClientLink, ClientStream> dispatch;
+  ClientStream			consumer;
   uint64_t			length = 0;
   unsigned			status_ = 0;
-  unsigned			tunnelEstablished = 0;
-  unsigned			tunnelEnds = 0;
-  unsigned			tunnelResets = 0;
-  bool				tunnelExpected = false;
-  bool				tunnelNoCopy = true;
+  unsigned			streamEstablished = 0;
+  unsigned			streamStarts = 0;
+  unsigned			streamEnds = 0;
+  unsigned			streamResets = 0;
+  bool				streamExpected = false;
+  bool				streamNoCopy = true;
   Zhttp::H3::ParserState::T	complete_ =
     Zhttp::H3::ParserState::Initial;
 };
 
-struct TunnelClient :
-  public Zhttp::Client<TunnelClient, Zhttp::H3QUIC> {
-  using Link = TunnelClientLink;
+template <typename Stream>
+void ClientStream::streamProcess(Stream stream)
+{
+  parser->processStream(stream.rx());
+}
 
-  TunnelState	*state = nullptr;
+struct StreamClient :
+  public Zhttp::Client<StreamClient, Zhttp::H3QUIC> {
+  using Link = StreamClientLink;
 
-  TunnelClient(TunnelState *state_) : state{state_} { }
+  StreamState	*state = nullptr;
+
+  StreamClient(StreamState *state_) : state{state_} { }
 
   void connected(Link &link, Zhttp::ConnectedInfo info);
-  void disconnected(Link &, bool) { }
+  void disconnected(Link &link, bool);
   void connectFailed(Link &, bool) {
     ++state->errors;
     state->response.post();
@@ -141,22 +179,27 @@ struct TunnelClient :
   int process(Link &link, Zquic::RxStream &rx);
 };
 
-struct TunnelClientLink :
+struct StreamClientLink :
   public Zhttp::ClientLink<
-    TunnelClient, TunnelClientLink, Zhttp::H3QUIC> {
+    StreamClient, StreamClientLink, Zhttp::H3QUIC> {
   using Base = Zhttp::ClientLink<
-    TunnelClient, TunnelClientLink, Zhttp::H3QUIC>;
+    StreamClient, StreamClientLink, Zhttp::H3QUIC>;
   using Base::Base;
 
-  enum Mode { REST, Echo, Reset };
+  struct Mode { enum { REST, Echo, Reset }; };
 
   ClientParser	parser;
-  Mode		mode = REST;
+  int8_t	mode = Mode::REST;
   bool		sent = false;
 };
 
-void TunnelClient::connected(
-  TunnelClientLink &link, Zhttp::ConnectedInfo info)
+void StreamClient::disconnected(Link &link, bool)
+{
+  link.parser.final();
+}
+
+void StreamClient::connected(
+  StreamClientLink &link, Zhttp::ConnectedInfo info)
 {
   if (info.httpVersion != Zhttp::Version::H3 ||
       info.transport != Zhttp::Transport::QUIC ||
@@ -165,7 +208,8 @@ void TunnelClient::connected(
     state->response.post();
     return;
   }
-  if (link.mode == TunnelClientLink::REST) {
+  link.parser.bind(link);
+  if (link.mode == StreamClientLink::Mode::REST) {
     RequestBuilder builder;
     auto tx = link.transmit(builder);
     if (!builder.request(tx)) {
@@ -176,9 +220,9 @@ void TunnelClient::connected(
     link.finish();
     return;
   }
-  link.parser.tunnelExpected = true;
+  link.parser.streamExpected = true;
   link.parser.requestMethod(Zhttp::Method::CONNECT);
-  TunnelRequestBuilder builder;
+  StreamRequestBuilder builder;
   auto tx = link.transmit(builder);
   if (!builder.request(tx)) {
     ++state->errors;
@@ -186,35 +230,38 @@ void TunnelClient::connected(
   }
 }
 
-int TunnelClient::process(
-  TunnelClientLink &link, Zquic::RxStream &rx)
+int StreamClient::process(
+  StreamClientLink &link, Zquic::RxStream &rx)
 {
   auto state_ = link.receive(link.parser, rx);
   switch (state_) {
-    case Zhttp::H3::ParserState::Tunnel:
+    case Zhttp::H3::ParserState::Stream:
       if (link.sent) return 0;
       link.sent = true;
-      if (link.mode == TunnelClientLink::Reset) {
-	Zhttp::Tunnel{link}.reset();
+      if (link.mode == StreamClientLink::Mode::Reset) {
+	Zhttp::Stream{link}.reset();
 	return 0;
       }
-      Zhttp::Tunnel{link}.send(
-	[](auto &body) { body << ZuCSpan{"ping"}; });
-      Zhttp::Tunnel{link}.end();
+      Zhttp::Stream{link}.tx([](auto &body) {
+	body << ZuCSpan{"ping"};
+	body.flush();
+      });
+      Zhttp::Stream{link}.end();
       return 0;
     case Zhttp::H3::ParserState::RemoteClosed:
-      if (link.mode != TunnelClientLink::Echo ||
-	  link.parser.tunnelEstablished != 1 ||
-	  link.parser.tunnelBody != "ping" ||
-	  !link.parser.tunnelNoCopy ||
-	  link.parser.tunnelEnds != 1 ||
-	  link.parser.tunnelResets)
+      if (link.mode != StreamClientLink::Mode::Echo ||
+	  link.parser.streamEstablished != 1 ||
+	  link.parser.streamStarts != 1 ||
+	  link.parser.streamBody != "ping" ||
+	  !link.parser.streamNoCopy ||
+	  link.parser.streamEnds != 1 ||
+	  link.parser.streamResets)
 	++state->errors;
       state->response.post();
       link.disconnect();
       return 0;
     case Zhttp::H3::ParserState::Complete:
-      if (link.mode != TunnelClientLink::REST ||
+      if (link.mode != StreamClientLink::Mode::REST ||
 	  link.parser.status_ != 200 ||
 	  link.parser.length != 4 || link.parser.body_ != "pong")
 	++state->errors;
@@ -230,76 +277,119 @@ int TunnelClient::process(
   }
 }
 
-struct TunnelServer;
-struct TunnelServerLink;
+struct StreamServer;
+struct StreamServerLink;
+struct ServerParser;
 
-struct TunnelServerSession {
-  struct Parser : public Zhttp::H3::Parser<Parser, true> {
-    using Base = Zhttp::H3::Parser<Parser, true>;
+struct ServerStream {
+  template <typename Stream>
+  void streamProcess(Stream stream);
 
-    void operation(Zhttp::Method::T method_, ZuBSpan path_) {
-      method = method_;
-      path = path_;
-    }
-    void protocol(ZuBSpan value) {
-      protocol_ = value;
-      Base::tunnel();
-      ++tunnelEstablished;
-    }
-    void headers(Zhttp::Fields::Section, bool) { }
-    void contentLength(uint64_t) { }
-    void status(unsigned) { }
-    template <typename Key> void header(ZuBSpan) { }
-    template <typename Rx>
-    void body(Rx &rx) { Zhttp::bodyDrain(rx); }
-    template <typename Rx>
-    void tunnelData(Rx &rx) {
-      Zhttp::bodyEach(rx,
-	[this](ZuBSpan value) { tunnelBody << value; });
-    }
-    void tunnelEnd() { remoteEnded = true; }
-    void tunnelReset() { ++tunnelResets; }
-    void complete(Zhttp::H3::ParserState::T state) { complete_ = state; }
+  ServerParser	*parser = nullptr;
+};
 
-    ZtString<>			path;
-    ZtString<>			protocol_;
-    ZtString<>			tunnelBody;
-    Zhttp::Method::T		method = -1;
-    Zhttp::H3::ParserState::T	complete_ =
-      Zhttp::H3::ParserState::Initial;
-    unsigned			tunnelEstablished = 0;
-    unsigned			tunnelResets = 0;
-    bool			remoteEnded = false;
-  } parser;
+struct ServerParser : public Zhttp::H3::Parser<ServerParser, true> {
+  using Base = Zhttp::H3::Parser<ServerParser, true>;
+
+  ServerParser() : consumer{this} { }
+
+  void bind(StreamServerLink &link) { dispatch.init(link, consumer); }
+  void final() {
+    dispatch.disable_();
+    dispatch.final_();
+  }
+  void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+    method = method_;
+    path = path_;
+  }
+  void protocol(ZuBSpan value) {
+    protocol_ = value;
+    Base::stream();
+    ++streamEstablished;
+  }
+  void headers(Zhttp::Fields::Section, bool) { }
+  void contentLength(uint64_t) { }
+  void status(unsigned) { }
+  template <typename Key> void header(ZuBSpan) { }
+  template <typename Rx>
+  void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  template <typename Rx>
+  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void events_(Zi::RxEvent::T events) {
+    if (events & Zi::RxEvent::Start()) ++streamStarts;
+    if (events & Zi::RxEvent::Final()) remoteEnded = true;
+    if (events & Zi::RxEvent::Error()) ++streamResets;
+    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
+      dispatch.disable_();
+  }
+  template <typename Rx>
+  void processStream(Rx &rx) {
+    for (;;) {
+      bool input = rx.input();
+      events_(rx.events());
+      if (!input) break;
+      int64_t n = rx.consume(
+	[](ZuBSpan span) -> int64_t { return span.length(); },
+	[this](ZuBSpan value) { streamBody << value; });
+      events_(rx.events());
+      if (n <= 0) break;
+    }
+  }
+  void complete(Zhttp::H3::ParserState::T state) { complete_ = state; }
+
+  ZtString<>			path;
+  ZtString<>			protocol_;
+  ZtString<>			streamBody;
+  Zhttp::StreamDispatch<StreamServerLink, ServerStream> dispatch;
+  ServerStream			consumer;
+  Zhttp::Method::T		method = -1;
+  Zhttp::H3::ParserState::T	complete_ =
+    Zhttp::H3::ParserState::Initial;
+  unsigned			streamEstablished = 0;
+  unsigned			streamStarts = 0;
+  unsigned			streamResets = 0;
+  bool				remoteEnded = false;
+};
+
+template <typename Stream>
+void ServerStream::streamProcess(Stream stream)
+{
+  parser->processStream(stream.rx());
+}
+
+struct StreamServerSession {
+  ServerParser parser;
 
   template <typename Link>
   void connected(Link &link) {
-    parser.extendedConnect(Zhttp::Tunnel{link}.localCap());
+    parser.bind(link);
+    parser.extendedConnect(Zhttp::Stream{link}.localCap());
   }
   template <typename Link>
-  void disconnected(Link &, bool) { }
+  void disconnected(Link &, bool) { parser.final(); }
   template <typename Link>
   int process(Link &link, Zquic::RxStream &rx) {
     auto state = link.receive(parser, rx);
     switch (state) {
-      case Zhttp::H3::ParserState::Tunnel:
+      case Zhttp::H3::ParserState::Stream:
       case Zhttp::H3::ParserState::RemoteClosed:
 	if (!responseSent) {
 	  responseSent = true;
-	  TunnelResponseBuilder builder;
+	  StreamResponseBuilder builder;
 	  auto tx = link.transmit(builder);
 	  builder.response(tx);
 	}
-	if (parser.tunnelBody) {
-	  Zhttp::Tunnel{link}.send([this](auto &body) {
-	    body << parser.tunnelBody;
+	if (parser.streamBody) {
+	  Zhttp::Stream{link}.tx([this](auto &body) {
+	    body << parser.streamBody;
+	    body.flush();
 	  });
-	  parser.tunnelBody.null();
+	  parser.streamBody.null();
 	}
-	if (parser.remoteEnded) Zhttp::Tunnel{link}.end();
+	if (parser.remoteEnded) Zhttp::Stream{link}.end();
 	return 0;
       case Zhttp::H3::ParserState::Cancelled:
-	if (parser.tunnelResets == 1)
+	if (parser.streamResets == 1)
 	  link.app()->state->reset.post();
 	else
 	  ++link.app()->state->errors;
@@ -327,13 +417,13 @@ struct TunnelServerSession {
   bool	responseSent = false;
 };
 
-struct TunnelServer :
-  public Zhttp::Server<TunnelServer, Zhttp::H3QUIC> {
-  using Link = TunnelServerLink;
+struct StreamServer :
+  public Zhttp::Server<StreamServer, Zhttp::H3QUIC> {
+  using Link = StreamServerLink;
 
-  TunnelState	*state = nullptr;
+  StreamState	*state = nullptr;
 
-  TunnelServer(TunnelState *state_) : state{state_} { }
+  StreamServer(StreamState *state_) : state{state_} { }
 
   ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
   unsigned localPort() const { return state->port; }
@@ -350,27 +440,27 @@ struct TunnelServer :
   void disconnected(Link &, bool) { }
 };
 
-struct TunnelServerLink :
+struct StreamServerLink :
   public Zhttp::ServerLink<
-    TunnelServer, TunnelServerLink, Zhttp::H3QUIC,
-    TunnelServerSession> {
+    StreamServer, StreamServerLink, Zhttp::H3QUIC,
+    StreamServerSession> {
   using Base = Zhttp::ServerLink<
-    TunnelServer, TunnelServerLink, Zhttp::H3QUIC,
-    TunnelServerSession>;
+    StreamServer, StreamServerLink, Zhttp::H3QUIC,
+    StreamServerSession>;
   using Base::Base;
 };
 
-void runTunnel(const Zhttp::Test::TempDir &temp)
+void runStream(const Zhttp::Test::TempDir &temp)
 {
-  ZuTestScope(runTunnel);
+  ZuTestScope(runStream);
 
-  TunnelState state;
+  StreamState state;
   state.port = Zhttp::Test::loopbackPort();
-  ZuCHECK(state.port, "H3 tunnel port allocation failed");
+  ZuCHECK(state.port, "H3 stream port allocation failed");
   if (!state.port) return;
 
   ZiMultiplex mx{ZhttpH1EngineTest_::mxParams()};
-  ZuCHECK(mx.start(), "H3 tunnel multiplexer start failed");
+  ZuCHECK(mx.start(), "H3 stream multiplexer start failed");
   if (!mx.running()) return;
 
   Zhttp::EngineConfig engine{&mx, "3", "4"};
@@ -380,11 +470,11 @@ void runTunnel(const Zhttp::Test::TempDir &temp)
     .extendedConnect(true);
   auto clientConfig = Zhttp::QUICConfig{}
     .caPath(temp.certPath.cspan()).extendedConnect(true);
-  TunnelServer server{&state};
-  TunnelClient client{&state};
+  StreamServer server{&state};
+  StreamClient client{&state};
   bool initialized =
     server.init(engine, serverConfig) && client.init(engine, clientConfig);
-  ZuCHECK(initialized, "H3 tunnel engines initialized");
+  ZuCHECK(initialized, "H3 stream engines initialized");
   if (!initialized) {
     client.final();
     server.final();
@@ -392,16 +482,16 @@ void runTunnel(const Zhttp::Test::TempDir &temp)
     return;
   }
   bool started = server.start() && client.start();
-  ZuCHECK(started, "H3 tunnel engines started");
+  ZuCHECK(started, "H3 stream engines started");
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(listening, "H3 tunnel server listening");
+  ZuCHECK(listening, "H3 stream server listening");
 
-  ZmRef<TunnelClientLink> tunnel = new TunnelClientLink{&client};
-  ZmRef<TunnelClientLink> rest = new TunnelClientLink{&client};
-  ZmRef<TunnelClientLink> queued = new TunnelClientLink{&client};
-  tunnel->mode = TunnelClientLink::Echo;
+  ZmRef<StreamClientLink> stream = new StreamClientLink{&client};
+  ZmRef<StreamClientLink> rest = new StreamClientLink{&client};
+  ZmRef<StreamClientLink> queued = new StreamClientLink{&client};
+  stream->mode = StreamClientLink::Mode::Echo;
   if (listening) {
-    tunnel->connect("127.0.0.1", state.port);
+    stream->connect("127.0.0.1", state.port);
     rest->connect("127.0.0.1", state.port);
     queued->connect("127.0.0.1", state.port);
   }
@@ -412,19 +502,19 @@ void runTunnel(const Zhttp::Test::TempDir &temp)
   ZuCHECK(first && !state.errors && state.admissions == 1,
     "H3 stream-credit queue preserves one shared QUIC session");
 
-  ZmRef<TunnelClientLink> reset = new TunnelClientLink{&client};
-  reset->mode = TunnelClientLink::Reset;
+  ZmRef<StreamClientLink> reset = new StreamClientLink{&client};
+  reset->mode = StreamClientLink::Mode::Reset;
   if (first) reset->connect("127.0.0.1", state.port);
   bool resetSeen = state.reset.timedwait(Zm::now(10)) == 0;
   ZuCHECK(resetSeen && !state.errors && state.admissions == 1,
-    "H3 tunnel reset preserved its shared QUIC session");
+    "H3 stream reset preserved its shared QUIC session");
   reset->disconnect();
 
-  ZmRef<TunnelClientLink> after = new TunnelClientLink{&client};
+  ZmRef<StreamClientLink> after = new StreamClientLink{&client};
   if (resetSeen) after->connect("127.0.0.1", state.port);
   bool survived = state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(survived && !state.errors && state.admissions == 1,
-    "H3 request succeeded after tunnel reset on shared session");
+    "H3 request succeeded after stream reset on shared session");
 
   client.stop([&state](bool ok) {
     if (!ok) ++state.errors;
@@ -438,9 +528,9 @@ void runTunnel(const Zhttp::Test::TempDir &temp)
     state.stopped.timedwait(Zm::now(10)) == 0 &&
     state.stopped.timedwait(Zm::now(10)) == 0;
   ZuCHECK(stopped && !state.errors && state.releases == 1,
-    "H3 tunnel engines drained before stop completion");
+    "H3 stream engines drained before stop completion");
 
-  tunnel = nullptr;
+  stream = nullptr;
   rest = nullptr;
   queued = nullptr;
   reset = nullptr;
@@ -470,7 +560,7 @@ int main(int argc, char **argv)
     ZuTestCall(run<Zhttp::H3QUIC>, temp, 1U, 2U);
     ZuTestCall(run<Zhttp::H3QUIC>, temp, 1U, 2U, true);
     ZuTestCall(runServerStop<Zhttp::H3QUIC>, temp);
-    ZuTestCall(ZhttpH3EngineTest_::runTunnel, temp);
+    ZuTestCall(ZhttpH3EngineTest_::runStream, temp);
   }
 
   ZiLog::stop();

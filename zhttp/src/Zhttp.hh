@@ -239,7 +239,8 @@ struct Impl : public Builder<Impl, Headers, Trailers, HasBody, Chunked> {
 #include <zlib/ZhttpH1Session.hh>
 #include <zlib/ZhttpH3Session.hh>
 #include <zlib/ZhttpMessage.hh>
-#include <zlib/ZhttpTunnel.hh>
+#include <zlib/ZhttpStream.hh>
+#include <zlib/ZhttpH1Stream.hh>
 #include <zlib/ZhttpTLSEngine.hh>
 
 namespace Zhttp {

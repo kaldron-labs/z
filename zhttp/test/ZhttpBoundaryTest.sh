@@ -30,7 +30,7 @@ else
 fi
 
 if grep -En \
-    '(responseBody|requestBody|tunnelData|void[[:space:]]+body)[[:space:]]*\([^)]*ZuBSpan' \
+    '(responseBody|requestBody|streamProcess|void[[:space:]]+body)[[:space:]]*\([^)]*ZuBSpan' \
     $files >/dev/null; then
   echo 'not ok 4 - executable closure excludes borrowed-span body callbacks'
   exit 1

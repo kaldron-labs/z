@@ -14,11 +14,11 @@ pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpBody.hh \
 	ZhttpTLSEngine.hh \
 	ZhttpLink.hh ZhttpClient.hh ZhttpClientPool.hh ZhttpTLSClientPool.hh \
-	ZhttpAgent.hh ZhttpTunnel.hh \
+	ZhttpAgent.hh ZhttpStream.hh \
 	ZhttpServer.hh ZhttpService.hh ZhttpEngines.hh \
 	ZhttpH2Engine.hh ZhttpH3Engine.hh \
 	ZhttpURL.hh ZhttpDiscovery.hh ZhttpRuntime.hh \
-	ZhttpH1.hh ZhttpH3.hh \
+	ZhttpH1.hh ZhttpH1Stream.hh ZhttpH3.hh \
 	ZhttpH2.hh ZhttpH2Session.hh ZhttpH2Message.hh \
 	ZhttpH1Session.hh ZhttpH3Session.hh ZhttpMessage.hh \
 	ZhttpCompression.hh ZhttpFields.hh ZhttpHPack.hh ZhttpTypes.hh \

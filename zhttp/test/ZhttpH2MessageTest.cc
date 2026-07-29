@@ -170,8 +170,37 @@ struct ConnectBuild :
   template <typename L> void protocol(L &&l) { l("opaque"); }
 };
 
-struct TunnelResponse :
-  public Zhttp::H2::Parser<TunnelResponse, false, ZuTypeList<>, 1> {
+struct StreamResponse;
+
+struct StreamLink {
+  struct Tx { void flush() { } };
+
+  bool streamLocalCap() const { return true; }
+  bool streamPeerCap() const { return true; }
+  template <typename L>
+  void streamTx(L &&l) {
+    Tx tx;
+    ZuFwd<L>(l)(tx);
+  }
+  void streamTxEnd() { }
+  void streamTxReset() { }
+};
+
+struct StreamConsumer {
+  template <typename Stream>
+  void streamProcess(Stream stream);
+
+  StreamResponse	*owner = nullptr;
+};
+
+struct StreamResponse :
+  public Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>, 1> {
+  StreamResponse() : consumer{this} { dispatch.init(link, consumer); }
+  ~StreamResponse() {
+    dispatch.disable_();
+    dispatch.final_();
+  }
+
   void operation(Zhttp::Method::T, ZuBSpan) { }
   void status(unsigned value) { status_ = value; }
   void contentLength(uint64_t) { }
@@ -181,17 +210,27 @@ struct TunnelResponse :
   void headers(Zhttp::Fields::Section section, bool endStream) {
     if (section == Zhttp::Fields::Final &&
 	status_ >= 200 && status_ < 300 && !endStream) {
-      tunnel();
+      stream();
       ++established;
     }
   }
   template <typename Rx>
-  void tunnelData(Rx &rx) {
-    Zi::RxEvent::T events = rx.events();
+  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void events_(Zi::RxEvent::T events) {
     if (events & Zi::RxEvent::Start()) ++starts;
-    while (rx.input()) {
+    if (events & Zi::RxEvent::Final()) ++remoteEnds;
+    if (events & Zi::RxEvent::Error()) ++resets;
+    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
+      dispatch.disable_();
+  }
+  template <typename Rx>
+  void processStream(Rx &rx) {
+    for (;;) {
+      bool input = rx.input();
+      events_(rx.events());
+      if (!input) break;
       const uint8_t *offered = nullptr;
-      if (rx.consume(
+      int64_t n = rx.consume(
 	  [&offered](ZuBSpan span) -> int64_t {
 	    offered = span.data();
 	    return 1;
@@ -199,16 +238,17 @@ struct TunnelResponse :
 	  [this, &offered](ZuBSpan span) {
 	    noCopy &= span.data() == offered;
 	    data_ << ZuCSpan{span};
-	  }) <= 0)
-	break;
+	  });
+      events_(rx.events());
+      if (n <= 0) break;
       if (partial) break;
     }
   }
-  void tunnelEnd() { ++remoteEnds; }
-  void tunnelReset() { ++resets; }
   void complete(Zhttp::H2::ParserState::T) { ++completions; }
 
   ZtString<>	data_;
+  Zhttp::StreamDispatch<StreamLink, StreamConsumer> dispatch;
+  StreamConsumer consumer;
   unsigned	status_ = 0;
   unsigned	established = 0;
   unsigned	remoteEnds = 0;
@@ -217,7 +257,14 @@ struct TunnelResponse :
   unsigned	starts = 0;
   bool		noCopy = true;
   bool		partial = false;
+  StreamLink	link;
 };
+
+template <typename Stream>
+void StreamConsumer::streamProcess(Stream stream)
+{
+  owner->processStream(stream.rx());
+}
 
 bool find(
   const CapturedFields &fields, ZuCSpan name, ZuCSpan value)
@@ -389,25 +436,25 @@ void testExtendedConnect()
       !disabled.endHeaders(false),
     "disabled Extended CONNECT request is rejected");
 
-  TunnelResponse response;
+  StreamResponse response;
   response.reset();
   ZuCHECK(response.beginHeaders() &&
       response.field(":status", "200") &&
       response.endHeaders(false) &&
-      response.state() == Zhttp::H2::ParserState::Tunnel &&
+      response.state() == Zhttp::H2::ParserState::Stream &&
       response.established == 1 && response.data("a") &&
       response.data("bc") && response.data_ == "abc" &&
       response.starts == 1 && response.noCopy &&
       response.data({}, true) &&
       response.state() == Zhttp::H2::ParserState::RemoteClosed &&
       response.remoteEnds == 1 && !response.completions,
-    "successful response transitions to an unbounded ordered tunnel");
-  ZuCHECK(!response.cancel() && response.resets == 1 &&
+    "successful response transitions to an unbounded ordered stream");
+  ZuCHECK(!response.cancel() && response.resets == 0 &&
       response.completions == 1 &&
       response.state() == Zhttp::H2::ParserState::Error,
-    "tunnel reset completes exactly once");
+    "post-Final stream cleanup does not duplicate a terminal event");
 
-  TunnelResponse partial;
+  StreamResponse partial;
   partial.reset();
   partial.partial = true;
   ZuCHECK(partial.beginHeaders() &&
@@ -420,16 +467,16 @@ void testExtendedConnect()
       partial.state() == Zhttp::H2::ParserState::Error &&
       !partial.cancel() && partial.resets == 1 &&
       partial.completions == 1,
-    "unconsumed tunnel input resets and terminates exactly once");
+    "unconsumed stream input resets and terminates exactly once");
 
-  TunnelResponse rejected;
+  StreamResponse rejected;
   rejected.reset();
   ZuCHECK(rejected.beginHeaders() &&
       rejected.field(":status", "403") &&
       rejected.endHeaders(true) &&
       rejected.state() == Zhttp::H2::ParserState::Complete &&
       !rejected.established && rejected.completions == 1,
-    "non-2xx response completes without entering tunnel mode");
+    "non-2xx response completes without entering stream mode");
 }
 
 void testMessageTrait()

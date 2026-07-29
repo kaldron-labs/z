@@ -54,8 +54,8 @@ ZtEnumStruct(ParserState, int8_t,
   Initial,		// expecting first HEADERS frame
   Body,		// after initial HEADERS; accepting DATA or trailers
   Trailers,		// trailing HEADERS received; no more frames allowed
-  Tunnel,		// Extended CONNECT ordered payload
-  RemoteClosed,	// tunnel FIN received after all payload
+  Stream,		// Extended CONNECT ordered payload
+  RemoteClosed,	// stream FIN received after all payload
   Complete,		// stream FIN / closed cleanly
   Cancelled,	// RESET_STREAM / STOP_SENDING / app cancellation
   Error);		// invalid frame sequence or decode failure
@@ -562,7 +562,11 @@ public:
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
   void extendedConnect(bool value) { m_extendedConnect = value; }
-  void tunnel() { m_state = State::Tunnel; }
+  void stream() {
+    m_state = State::Stream;
+    (void)m_bodyRx.start(
+      [this](auto &rx) { impl()->streamProcess(rx); });
+  }
 
   void h3(
     QPackRxTable *rx, void *cxn, QPackWriteFn decoderWrite,
@@ -575,12 +579,18 @@ public:
   }
 
 private:
+  void error_() {
+    if (m_state == State::Stream)
+      (void)m_bodyRx.fail(
+	[this](auto &rx) { impl()->streamProcess(rx); });
+    m_state = State::Error;
+  }
   bool fail_(uint64_t error) {
     if (!m_h3Error) {
 	m_h3Error = error;
 	if (m_errorFn) m_errorFn(m_h3Cxn, error);
     }
-    m_state = State::Error;
+    error_();
     return false;
   }
 
@@ -772,7 +782,7 @@ private:
 	  auto section = parseFields_(payload, true);
 	  if (section == Fields::Invalid) return false;
 	  if (section == Fields::Informational) return true;
-	  if (m_state != State::Tunnel) m_state = State::Body;
+	  if (m_state != State::Stream) m_state = State::Body;
 	  return true;
 	}
 	if (m_state != State::Body) return false;
@@ -804,13 +814,10 @@ private:
   }
 
   bool processDataPayload_(ZuCSpan payload) {
-    if (m_state == State::Tunnel) {
+    if (m_state == State::Stream) {
       bool ok = m_bodyRx.offer(payload, false,
-	[this](auto &rx) { impl()->tunnelData(rx); });
-      if (!ok) {
-	m_bodyRx.cancel();
-	impl()->tunnelReset();
-      }
+	[this](auto &rx) { impl()->streamProcess(rx); });
+      if (!ok) error_();
       return ok;
     }
     if (m_state != State::Body) return false;
@@ -849,11 +856,10 @@ public:
       return m_state;
     if (stream.resetReceived() ||
 	(stream.stopReceived() &&
-	  (m_state == State::Tunnel || m_state == State::RemoteClosed))) {
-	if (m_state == State::Tunnel || m_state == State::RemoteClosed) {
-	  m_bodyRx.cancel();
-	  impl()->tunnelReset();
-	}
+	  (m_state == State::Stream || m_state == State::RemoteClosed))) {
+	if (m_state == State::Stream)
+	  (void)m_bodyRx.fail(
+	    [this](auto &rx) { impl()->streamProcess(rx); });
 	m_state = State::Cancelled;
 	complete_(m_state);
 	return m_state;
@@ -865,7 +871,7 @@ public:
 	consumed = 0;
 	switch (m_frameState) {
 	  default:
-	    m_state = State::Error;
+	    error_();
 	    break;
 	  case FrameState::Type: { // parse frame type
 	    auto frameState = m_frameState;
@@ -979,7 +985,7 @@ public:
 	  case FrameState::Payload: { // parse frame payload
 	    if (!m_frameLen) {
 	      if (!processPayloadFrame_(m_frameType, {}))
-		m_state = State::Error;
+		error_();
 	      resetFrame_();
 	      consumed = 1;
 	      break;
@@ -991,7 +997,7 @@ public:
 		}, [this](ZuBSpan span) {
 		  ZuCSpan payload{span};
 		  if (!this->processDataPayload_(payload))
-		    m_state = State::Error;
+		    error_();
 		  if (m_frameOff == m_frameLen) resetFrame_();
 		});
 	      break;
@@ -1003,33 +1009,33 @@ public:
 	      }, [this](ZuBSpan span) {
 		ZuCSpan payload{span};
 		if (!this->processPayloadFrame_(m_frameType, payload))
-		  m_state = State::Error;
+		  error_();
 		resetFrame_();
 	      });
 	    if (!consumed) m_frameOff = frameOff;
 	  } break;
 	}
-	if (consumed < 0) m_state = State::Error;
+	if (consumed < 0) error_();
 	if (m_state == State::Error) break;
     } while (consumed);
 
     if (streamComplete_(stream, rx)) {
-	if (m_state == State::Tunnel) {
-	  if (!m_bodyRx.finish())
-	    m_state = State::Error;
+	if (m_state == State::Stream) {
+	  if (!m_bodyRx.finish(
+	      [this](auto &rx) { impl()->streamProcess(rx); }))
+	    error_();
 	  else {
 	    m_state = State::RemoteClosed;
-	    impl()->tunnelEnd();
 	  }
 	} else if (m_state == State::Initial)
-	  m_state = State::Error;
+	  error_();
 	else if (!bodyComplete_())
-	  m_state = State::Error;
+	  error_();
 	else if (m_state != State::Error)
 	  m_state = State::Complete;
     }
     if (m_state == State::Complete && !m_bodyRx.finish())
-      m_state = State::Error;
+      error_();
     if (m_state == State::Complete ||
 	  m_state == State::Cancelled ||
 	  m_state == State::Error)
@@ -1063,9 +1069,7 @@ public:
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
   template <typename Rx>
-  void tunnelData(Rx &rx) { bodyDrain(rx); }
-  void tunnelEnd() { }
-  void tunnelReset() { }
+  void streamProcess(Rx &rx) { bodyDrain(rx); }
   void complete(State::T) { }
   bool rxComplete() const { return impl()->finReceived(); }
   QPackRxTable *qpackRx() {

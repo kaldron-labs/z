@@ -136,9 +136,38 @@ struct BuilderState :
 
 using ParserHeaders = ZhttpHeaders("x-test");
 
+struct ParserStream;
+
+struct LogicalLink {
+  struct Tx { void flush() { } };
+
+  bool streamLocalCap() const { return true; }
+  bool streamPeerCap() const { return true; }
+  template <typename L>
+  void streamTx(L &&l) {
+    Tx tx;
+    ZuFwd<L>(l)(tx);
+  }
+  void streamTxEnd() { }
+  void streamTxReset() { }
+};
+
+struct StreamConsumer {
+  template <typename Stream>
+  void streamProcess(Stream stream);
+
+  ParserStream	*parser = nullptr;
+};
+
 struct ParserStream :
   public Zhttp::H3::Parser<ParserStream, true, ParserHeaders, 1024> {
   using Base = Zhttp::H3::Parser<ParserStream, true, ParserHeaders, 1024>;
+
+  ParserStream() : consumer{this} { dispatch.init(link, consumer); }
+  ~ParserStream() {
+    dispatch.disable_();
+    dispatch.final_();
+  }
 
   RxStream &rxStream() { return rx; }
   bool resetReceived() const { return reset_; }
@@ -176,7 +205,7 @@ struct ParserStream :
   void protocol(ZuBSpan value) {
     protocol_.length(0);
     protocol_ << ZuCSpan{value};
-    if (acceptTunnel) Base::tunnel();
+    if (acceptStream) Base::stream();
   }
   void headers(Zhttp::Fields::Section, bool) { ++headerCalls; }
   template <typename Rx>
@@ -198,24 +227,35 @@ struct ParserStream :
     }
   }
   template <typename Rx>
-  void tunnelData(Rx &rx) {
-    while (rx.input()) {
+  void streamProcess(Rx &rx) { dispatch.process(rx); }
+  void streamEvents_(Zi::RxEvent::T events) {
+    if (events & Zi::RxEvent::Start()) ++streamStarts;
+    if (events & Zi::RxEvent::Final()) ++streamEnds;
+    if (events & Zi::RxEvent::Error()) ++streamResets;
+    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
+      dispatch.disable_();
+  }
+  template <typename Rx>
+  void processStream(Rx &rx) {
+    for (;;) {
+      bool input = rx.input();
+      streamEvents_(rx.events());
+      if (!input) break;
       const uint8_t *offered = nullptr;
-      if (rx.consume(
+      int64_t n = rx.consume(
 	  [&offered](ZuBSpan span) -> int64_t {
 	    offered = span.data();
 	    return 1;
 	  },
 	  [this, &offered](ZuBSpan span) {
-	    tunnelNoCopy &= span.data() == offered;
-	    tunnelBody << ZuCSpan{span};
-	  }) <= 0)
-	break;
-      if (partialTunnel) break;
+	    streamNoCopy &= span.data() == offered;
+	    streamBody << ZuCSpan{span};
+	  });
+      streamEvents_(rx.events());
+      if (n <= 0) break;
+      if (partialStream) break;
     }
   }
-  void tunnelEnd() { ++tunnelEnds; }
-  void tunnelReset() { ++tunnelResets; }
   void complete(Zhttp::H3::ParserState::T state_) {
     completeState = state_;
     ++completeCalls;
@@ -224,6 +264,9 @@ struct ParserStream :
   RxStream			rx;
   Zhttp::H3::QPackRxTable	qpackRxTable;
   Zhttp::H3::Params		params;
+  Zhttp::StreamDispatch<LogicalLink, StreamConsumer> dispatch;
+  StreamConsumer		consumer;
+  LogicalLink			link;
   Zhttp::Method::T		method = -1;
   ZtString<>			path;
   ZtString<>			xTest;
@@ -234,25 +277,32 @@ struct ParserStream :
   unsigned			contentLenCalls = 0;
   unsigned			bodyCalls = 0;
   unsigned			headerCalls = 0;
-  unsigned			tunnelEnds = 0;
-  unsigned			tunnelResets = 0;
+  unsigned			streamStarts = 0;
+  unsigned			streamEnds = 0;
+  unsigned			streamResets = 0;
   unsigned			completeCalls = 0;
   bool				partialBody = false;
   bool				bodyNoCopy = true;
   bool				fin = false;
   bool				reset_ = false;
   bool				stop_ = false;
-  bool				acceptTunnel = false;
-  bool				partialTunnel = false;
-  bool				tunnelNoCopy = true;
+  bool				acceptStream = false;
+  bool				partialStream = false;
+  bool				streamNoCopy = true;
   Zhttp::H3::ParserState::T	completeState =
     Zhttp::H3::ParserState::Initial;
   ZtString<>			protocol_;
   ZtString<>			bodyData;
-  ZtString<>			tunnelBody;
+  ZtString<>			streamBody;
   ZtString<>			runtimeName;
   ZtString<>			runtimeValue;
 };
+
+template <typename Stream>
+void StreamConsumer::streamProcess(Stream stream)
+{
+  parser->processStream(stream.rx());
+}
 
 struct CxnStream :
   public Zhttp::H3::CxnParser<CxnStream> {
@@ -925,7 +975,7 @@ static Zhttp::H3::HdrBytes extendedConnectHeaders()
   putLiteralField(payload, ":method", "CONNECT");
   putLiteralField(payload, ":scheme", "https");
   putLiteralField(payload, ":authority", "example.com");
-  putLiteralField(payload, ":path", "/tunnel");
+  putLiteralField(payload, ":path", "/stream");
   putLiteralField(payload, ":protocol", "opaque");
   Zhttp::H3::HdrBytes frame;
   putFrame(frame, 0x01, ZuBSpan{payload});
@@ -938,7 +988,7 @@ void testExtendedConnectRx()
 
   {
     ParserStream parser;
-    parser.acceptTunnel = true;
+    parser.acceptStream = true;
     parser.push(extendedConnectHeaders());
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error &&
 	parser.completeCalls == 1,
@@ -946,12 +996,12 @@ void testExtendedConnectRx()
   }
   {
     ParserStream parser;
-    parser.acceptTunnel = true;
+    parser.acceptStream = true;
     parser.extendedConnect(true);
     parser.push(extendedConnectHeaders());
-    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Tunnel &&
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Stream &&
 	parser.protocol_ == "opaque" && parser.headerCalls == 1,
-      "H3 Extended CONNECT did not enter tunnel state");
+      "H3 Extended CONNECT did not enter stream state");
 
     Zhttp::H3::HdrBytes frame;
     putFrame(frame, 0x00, ZuBSpan{"a"});
@@ -959,56 +1009,57 @@ void testExtendedConnectRx()
     frame.length(0);
     putFrame(frame, 0x00, ZuBSpan{"bc"});
     parser.push(frame);
-    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Tunnel &&
-	parser.tunnelBody == "abc" && parser.tunnelNoCopy,
-      "H3 tunnel DATA was not delivered in order without copying");
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Stream &&
+	parser.streamBody == "abc" && parser.streamNoCopy,
+      "H3 stream DATA was not delivered in order without copying");
 
     parser.fin = true;
     ZuCHECK(parser.process(parser) ==
 	Zhttp::H3::ParserState::RemoteClosed &&
-	parser.tunnelEnds == 1 && !parser.tunnelResets &&
+	parser.streamStarts == 1 && parser.streamEnds == 1 &&
+	!parser.streamResets &&
 	!parser.completeCalls,
-      "H3 tunnel FIN was not ordered after payload");
+      "H3 stream FIN was not ordered after payload");
   }
   {
     ParserStream parser;
-    parser.acceptTunnel = true;
+    parser.acceptStream = true;
     parser.extendedConnect(true);
     parser.push(extendedConnectHeaders());
-    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Tunnel,
-      "H3 reset setup did not enter tunnel state");
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Stream,
+      "H3 reset setup did not enter stream state");
     parser.reset_ = true;
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Cancelled &&
-	parser.tunnelResets == 1 && parser.completeCalls == 1,
-      "H3 RESET_STREAM did not terminate the tunnel exactly once");
+	parser.streamResets == 1 && parser.completeCalls == 1,
+      "H3 RESET_STREAM did not terminate the stream exactly once");
   }
   {
     ParserStream parser;
-    parser.acceptTunnel = true;
+    parser.acceptStream = true;
     parser.extendedConnect(true);
     parser.push(extendedConnectHeaders());
-    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Tunnel,
-      "H3 stop setup did not enter tunnel state");
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Stream,
+      "H3 stop setup did not enter stream state");
     parser.stop_ = true;
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Cancelled &&
-	parser.tunnelResets == 1 && parser.completeCalls == 1,
-      "H3 STOP_SENDING did not terminate the tunnel exactly once");
+	parser.streamResets == 1 && parser.completeCalls == 1,
+      "H3 STOP_SENDING did not terminate the stream exactly once");
   }
   {
     ParserStream parser;
-    parser.acceptTunnel = true;
-    parser.partialTunnel = true;
+    parser.acceptStream = true;
+    parser.partialStream = true;
     parser.extendedConnect(true);
     parser.push(extendedConnectHeaders());
-    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Tunnel,
-      "H3 partial-consume setup did not enter tunnel state");
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Stream,
+      "H3 partial-consume setup did not enter stream state");
     Zhttp::H3::HdrBytes frame;
     putFrame(frame, 0x00, ZuBSpan{"abc"});
     parser.push(frame);
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error &&
-	parser.tunnelBody == "a" && parser.tunnelResets == 1 &&
+	parser.streamBody == "a" && parser.streamResets == 1 &&
 	parser.completeCalls == 1,
-      "unconsumed H3 tunnel DATA was not rejected exactly once");
+      "unconsumed H3 stream DATA was not rejected exactly once");
   }
 }
 
@@ -1499,7 +1550,7 @@ void testBuilderExtendedConnect()
 
   BuilderState disabled;
   disabled.method = Zhttp::Method::CONNECT;
-  disabled.path = "/tunnel";
+  disabled.path = "/stream";
   disabled.protocol_ = "opaque";
   CaptureTxStream disabledStream;
   ZuCHECK(!disabled.request(disabledStream) && !disabledStream.bytes,
@@ -1507,7 +1558,7 @@ void testBuilderExtendedConnect()
 
   BuilderState enabled;
   enabled.method = Zhttp::Method::CONNECT;
-  enabled.path = "/tunnel";
+  enabled.path = "/stream";
   enabled.protocol_ = "opaque";
   enabled.h3(nullptr, nullptr, nullptr, enabled.id, true);
   CaptureTxStream stream;

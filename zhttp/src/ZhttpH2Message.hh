@@ -18,7 +18,7 @@ namespace Zhttp {
 namespace H2 {
 
 ZtEnumStruct(ParserState, int8_t,
-  Initial, Body, Tunnel, RemoteClosed, Trailers, Complete, Error);
+  Initial, Body, Stream, RemoteClosed, Trailers, Complete, Error);
 
 template <
   typename Impl,
@@ -49,7 +49,11 @@ public:
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
   void extendedConnect(bool value) { m_extendedConnect = value; }
-  void tunnel() { m_state = State::Tunnel; }
+  void stream() {
+    m_state = State::Stream;
+    (void)m_bodyRx.start(
+      [this](auto &rx) { impl()->streamProcess(rx); });
+  }
 
   bool beginHeaders(bool trailers = false) {
     if (m_headers || m_complete) return fail_();
@@ -97,9 +101,8 @@ public:
 	impl()->protocol(protocol);
     m_bodyAllowed = m_fields.bodyAllowed();
     impl()->headers(section, endStream);
-    if (m_state == State::Tunnel) {
+    if (m_state == State::Stream) {
       if (endStream) return fail_();
-      m_state = State::Tunnel;
       return true;
     }
     if (endStream) {
@@ -113,17 +116,17 @@ public:
   }
 
   bool data(ZuBSpan value, bool endStream = false) {
-    if (m_state == State::Tunnel) {
-      bool ok = m_bodyRx.offer(value, endStream,
-	[this](auto &rx) { impl()->tunnelData(rx); });
+    if (m_state == State::Stream) {
+      auto process = [this](auto &rx) { impl()->streamProcess(rx); };
+      bool ok = value ?
+	m_bodyRx.offer(value, endStream, process) :
+	(!endStream || m_bodyRx.finish(process));
       if (!ok) {
-	m_bodyRx.cancel();
-	impl()->tunnelReset();
+	(void)m_bodyRx.fail(process);
 	return fail_();
       }
       if (endStream) {
 	m_state = State::RemoteClosed;
-	impl()->tunnelEnd();
       }
       return true;
     }
@@ -154,10 +157,9 @@ public:
 
   State::T state() const { return m_state; }
   bool cancel() {
-    if (m_state == State::Tunnel || m_state == State::RemoteClosed) {
-      m_bodyRx.cancel();
-      impl()->tunnelReset();
-    }
+    if (m_state == State::Stream)
+      (void)m_bodyRx.fail(
+	[this](auto &rx) { impl()->streamProcess(rx); });
     return fail_();
   }
 
@@ -166,9 +168,7 @@ public:
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
   template <typename Rx>
-  void tunnelData(Rx &rx) { bodyDrain(rx); }
-  void tunnelEnd() { }
-  void tunnelReset() { }
+  void streamProcess(Rx &rx) { bodyDrain(rx); }
 
 private:
   void header_(ZuBSpan key, ZuBSpan value) {
@@ -250,9 +250,9 @@ public:
   bool request(Stream &stream) {
     bool sent = false;
     bool endStream = false;
-    bool tunnel = false;
+    bool streamMode = false;
     impl()->operation(
-      [this, &stream, &sent, &endStream, &tunnel]
+      [this, &stream, &sent, &endStream, &streamMode]
       <typename Path, typename Query>(
 	Method::T method, Path &&path, Query &&query) {
       ZuCSpan protocol;
@@ -261,7 +261,7 @@ public:
 	  protocol = ZuCSpan{ZuFwd<P>(value)};
 	});
       if (protocol && !stream.extendedConnect()) return;
-      tunnel = bool(protocol);
+      streamMode = bool(protocol);
       endStream = !HasBody && !Trailers::N && !protocol;
       stream.beginHeaders(endStream);
       Builder::field_(stream, ":method", Method::name(method));
@@ -281,7 +281,7 @@ public:
     impl()->host([&stream]<typename Host>(Host &&host) {
       Builder::field_(stream, ":authority", ZuCSpan{ZuFwd<Host>(host)});
     });
-    if (tunnel)
+    if (streamMode)
       headers_<Headers, false>(stream);
     else
       headers_(stream);
@@ -293,16 +293,16 @@ public:
   void response(Stream &stream) {
     unsigned value = impl()->status();
     bool informational = value >= 100 && value < 200;
-    bool tunnel = impl()->tunnelResponse();
+    bool streamMode = impl()->streamResponse();
     bool endStream =
-      !informational && !tunnel && !HasBody && !Trailers::N;
+      !informational && !streamMode && !HasBody && !Trailers::N;
     stream.beginHeaders(endStream);
     char status[3];
     status[0] = char('0' + ((value / 100) % 10));
     status[1] = char('0' + ((value / 10) % 10));
     status[2] = char('0' + (value % 10));
     field_(stream, ":status", ZuCSpan{status, 3});
-    if (tunnel)
+    if (streamMode)
       headers_<Headers, false>(stream);
     else
       headers_(stream);
@@ -343,7 +343,7 @@ public:
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   template <typename L> void protocol(L &&) { }
   unsigned status() { return 200; }
-  bool tunnelResponse() { return false; }
+  bool streamResponse() { return false; }
   template <typename Key, typename L> void header(L &&) { }
   template <typename L> void header(L &&) { }
   uint64_t contentLength() { return 0; }

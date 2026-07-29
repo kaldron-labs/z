@@ -18,10 +18,25 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZhttpTransport.hh>
+#include <zlib/ZhttpH1Stream.hh>
 
 namespace Zhttp {
 
 ZuDerive(EndpointString, ZtString<ZtStringHeapID<"Zhttp.Endpoint">>);
+
+namespace Link_ {
+
+template <typename Consumer, typename Link, typename Stream>
+auto streamProcess(
+  Consumer &consumer, Link &link, Stream stream, int) ->
+    decltype(consumer.streamProcess(link, ZuMv(stream)), void())
+{
+  consumer.streamProcess(link, ZuMv(stream));
+}
+template <typename Consumer, typename Link, typename Stream>
+void streamProcess(Consumer &, Link &, Stream, ...) { }
+
+} // namespace Link_
 
 template <typename App, typename Impl, typename Profile>
 class ClientLink :
@@ -29,6 +44,8 @@ class ClientLink :
   using HTTP = ProfileTraits<Profile>;
   using Traits = typename HTTP::Transport;
   using Base = typename Traits::template ClientLink<App, Impl>;
+  using StreamBinding =
+    H1::StreamBinding<Impl, ClientLink, typename Traits::RxStream>;
 
 public:
   using Base::Base;
@@ -39,6 +56,7 @@ public:
 
   template <typename ...Args>
   void connect(Args &&...args) {
+    m_stream.reopen();
     m_connected = false;
     m_failed = false;
     m_cancelled = false;
@@ -60,6 +78,7 @@ public:
     if (m_connected) {
       m_connected = false;
       m_failed = true;
+      m_stream.disconnected(peer);
       this->app()->disconnected(*impl(), peer);
     } else if (!m_failed) {
       m_failed = true;
@@ -76,7 +95,38 @@ public:
     Traits::disconnect(*this);
   }
   int process(typename Traits::RxStream &rx) {
-    return this->app()->process(*impl(), rx);
+    if (m_stream.stream()) return m_stream.process(rx);
+    if (m_stream.terminal()) return 0;
+    int rc = this->app()->process(*impl(), rx);
+    return m_stream.stream() ? m_stream.process(rx) : rc;
+  }
+  bool streamEnable(bool enabled = true) {
+    return m_stream.enable(enabled);
+  }
+  bool streamAccept() { return m_stream.accept(*impl(), *this); }
+  bool streamLocalCap() const { return m_stream.localCap(); }
+  bool streamPeerCap() const { return m_stream.peerCap(); }
+  template <typename L>
+  void streamTx(L &&l) {
+    if (!m_stream.tx()) return;
+    auto tx = this->txStream();
+    ZuFwd<L>(l)(tx);
+  }
+  void streamTxEnd() {
+    if (!m_stream.end()) return;
+    this->app()->txRun([link = ZmMkRef(impl())]() mutable {
+      auto app = link->app();
+      app->rxRun([link = ZuMv(link)]() mutable {
+	Traits::disconnect(*link);
+      });
+    });
+  }
+  void streamTxReset() {
+    if (m_stream.reset()) this->disconnect();
+  }
+  template <typename Stream>
+  void streamProcess(Stream stream) {
+    Link_::streamProcess(*this->app(), *impl(), ZuMv(stream), 0);
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {
@@ -94,6 +144,7 @@ public:
   void responseBodyBytes(State *) { }
 
 private:
+  StreamBinding	m_stream;
   bool	m_connected = false;
   bool	m_failed = false;
   bool	m_cancelled = false;
@@ -106,6 +157,8 @@ class ServerLink :
   using HTTP = ProfileTraits<Profile>;
   using Traits = typename HTTP::Transport;
   using Base = typename Traits::template ServerLink<App, Impl>;
+  using StreamBinding =
+    H1::StreamBinding<Impl, ServerLink, typename Traits::RxStream>;
 
 public:
   enum { TLS = Traits::Secure, Multiplexed = HTTP::Multiplexed };
@@ -140,6 +193,7 @@ public:
       }, this->app()->rxThread());
   }
   void notifyDisconnected_(bool peer) {
+    m_stream.disconnected(peer);
     m_session.disconnected(*impl(), peer);
     this->app()->disconnected(*impl(), peer);
     if (m_counted) {
@@ -149,9 +203,40 @@ public:
     this->app()->linkDrained_();
   }
   int process(typename Traits::RxStream &rx) {
+    if (m_stream.stream()) return m_stream.process(rx);
+    if (m_stream.terminal()) return 0;
     int rc = m_session.process(*impl(), rx);
+    if (m_stream.stream()) rc = m_stream.process(rx);
     if (rc >= 0) touch();
     return rc;
+  }
+  bool streamEnable(bool enabled = true) {
+    return m_stream.enable(enabled);
+  }
+  bool streamAccept() { return m_stream.accept(*impl(), *this); }
+  bool streamLocalCap() const { return m_stream.localCap(); }
+  bool streamPeerCap() const { return m_stream.peerCap(); }
+  template <typename L>
+  void streamTx(L &&l) {
+    if (!m_stream.tx()) return;
+    auto tx = this->txStream();
+    ZuFwd<L>(l)(tx);
+  }
+  void streamTxEnd() {
+    if (!m_stream.end()) return;
+    this->app()->txRun([link = ZmMkRef(impl())]() mutable {
+      auto app = link->app();
+      app->rxRun([link = ZuMv(link)]() mutable {
+	Traits::disconnect(*link);
+      });
+    });
+  }
+  void streamTxReset() {
+    if (m_stream.reset()) this->disconnect();
+  }
+  template <typename Stream>
+  void streamProcess(Stream stream) {
+    Link_::streamProcess(m_session, *impl(), ZuMv(stream), 0);
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {
@@ -176,6 +261,7 @@ public:
 private:
   Session		m_session;
   ZmScheduler::Timer	m_idleTimer;
+  StreamBinding		m_stream;
   EndpointString	m_remote;
   bool			m_counted = true;
   bool			m_disconnected = false;
