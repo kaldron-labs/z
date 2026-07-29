@@ -606,6 +606,25 @@ clear, FIN-only ranges, and integer overflow.
 
 Only then start Slice 6.
 
+### Slice 5 execution record
+
+- API gate: no non-`zquic` use of `TxUnackdRanges` was found.  Its constructor,
+  methods, `Node` ownership, `ZmPQResult` values, public former-capacity
+  constant, and FIN representation remain available.
+- Storage and lookup: retained ranges use `ZtBuiltin` with eight inline
+  elements and the `Zquic.Stream.TxUnackdRanges` heap ID.  Ordinary focused
+  cases had a 95th percentile of two retained ranges; eight supplies one
+  allocation-free growth class, while the adversarial case reached 256 and
+  exercised heap fallback.  All four searches start with binary lower-bound.
+- Mutation: add and clear validate endpoints, determine the complete affected
+  run, and perform one `splice`.  The former 128-range rejection is gone;
+  post-mutation `ZmAssert` checks ordering, separation, and cached length.
+- Build: `make -C zquic/src -j8 libZquic.la`.
+- Focused unit build and run: `ZquicPQueueTest` passed under the existing
+  clang-debug configuration.  Coverage includes inline/heap transition, 256
+  disjoint ranges, lookup gaps, bridge coalescing, span traversal, split and
+  exact clears, data-plus-FIN and FIN-only ranges, and endpoint overflow.
+
 ## Slice 6: packet-builder and indexed metadata cleanup
 
 Dependency: accepted and committed Slice 5.
