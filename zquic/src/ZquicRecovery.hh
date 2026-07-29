@@ -41,10 +41,30 @@ inline constexpr ZuTime timeDiv(ZuTime t, uint64_t n)
   return ZuTime{ZuTime::Nano{t.nanosecs() / n}};
 }
 
+inline unsigned ackRangeLowerBound(
+  ZuSpan<const AckRange> ranges, uint64_t pn)
+{
+  unsigned l = 0, r = ranges.length();
+  while (l < r) {
+    unsigned m = (l + r) >> 1;
+    if (ranges[m].largest < pn)
+      l = m + 1;
+    else
+      r = m;
+  }
+  return l;
+}
+
 class AckTracker {
 public:
   static constexpr unsigned Max = 64;
   static constexpr unsigned MaxRetained = Max + 1;
+  static constexpr unsigned BuiltinRetained = 32;
+  using RetainedRanges = ZtBuiltin<
+    ZtArray<AckRange,
+      ZtArrayHeapMax<MaxRetained,
+	ZtArrayHeapID<"Zquic.Ack.RetainedRanges">>>,
+    BuiltinRetained>;
   using DequeueFn = ZmFn<void(), ZmFnHeapID<"Zquic.Ack.DequeueFn">>;
 
   bool add(uint64_t pn) {
@@ -60,7 +80,7 @@ public:
   bool contains(uint64_t pn) const {
     if (pn < m_ackHead) return true;
     unsigned i = findSparse_(pn);
-    return i < m_sparseN && m_sparse[i].first <= pn;
+    return i < m_sparse.length() && m_sparse[i].first <= pn;
   }
 
   unsigned count() const {
@@ -109,8 +129,8 @@ public:
   }
   bool largest(uint64_t &v) const {
     bool found = false;
-    if (m_sparseN) {
-      v = m_sparse[m_sparseN - 1].largest;
+    if (m_sparse) {
+      v = m_sparse[m_sparse.length() - 1].largest;
       found = true;
     }
     if (m_ackHead && (!found || m_ackHead - 1 > v)) {
@@ -124,34 +144,35 @@ public:
     if (!largest(v)) return 0;
     return v;
   }
+  Frame::AckRanges snapshot(unsigned max = Max) const {
+    if (max > Max) max = Max;
+    return snapshot_(max);
+  }
   int snapshot(AckRange *ranges, unsigned max) const {
     if (!ranges || !max) return 0;
     if (max > Max) max = Max;
-    AckRange retained[Max];
-    unsigned n = 0;
-    for (unsigned i = m_sparseN; i-- && n < max; )
-      retained[n++] = m_sparse[i];
-    if (n < max && m_ackHead > m_ackBase)
-      retained[n++] = AckRange{m_ackHead - 1, m_ackBase};
-    for (unsigned i = 0; i < n; ++i)
-      ranges[i] = retained[n - i - 1];
-    return int(n);
+    Frame::AckRanges retained = snapshot_(max);
+    for (unsigned i = 0; i < retained.length(); ++i)
+      ranges[i] = retained[i];
+    return int(retained.length());
   }
   int writeFrame(
     uint8_t *out, unsigned len, uint64_t delay = 0,
     const AckECN *ecn = nullptr) const
   {
-    AckRange ranges[Max];
-    int n = snapshot(ranges, Max);
-    if (n <= 0) return -1;
+    Frame::AckRanges ranges = snapshot_(Max);
+    if (!ranges) return -1;
     return ecn ?
-      FrameCodec::writeAckECN(out, len, ranges, n, delay, *ecn) :
-      FrameCodec::writeAckRanges(out, len, ranges, n, delay);
+      FrameCodec::writeAckECN(
+	out, len, ranges.data(), ranges.length(), delay, *ecn) :
+      FrameCodec::writeAckRanges(
+	out, len, ranges.data(), ranges.length(), delay);
   }
   void clear() {
     m_ackHead = 0;
     m_ackBase = 0;
-    m_sparseN = 0;
+    m_sparse.clear();
+    m_retiredRanges = 0;
   }
 
   void ackdByPeer(uint64_t largest) {
@@ -164,6 +185,7 @@ public:
 
   void dequeueFn(DequeueFn fn) { m_dequeueFn = ZuMv(fn); }
   void dequeueRx_() { }
+  uint64_t retiredRanges() const { return m_retiredRanges; }
 
 private:
   static bool before_(uint64_t largest, uint64_t first) {
@@ -171,78 +193,84 @@ private:
   }
 
   unsigned findSparse_(uint64_t pn) const {
-    unsigned l = 0, r = m_sparseN;
-    while (l < r) {
-      unsigned m = (l + r) >> 1;
-      if (m_sparse[m].largest < pn)
-	l = m + 1;
-      else
-	r = m;
-    }
-    return l;
-  }
-
-  void removeSparse_(unsigned i) {
-    --m_sparseN;
-    while (i < m_sparseN) {
-      m_sparse[i] = m_sparse[i + 1];
-      ++i;
-    }
+    return ackRangeLowerBound(m_sparse.cspan(), pn);
   }
 
   void insertSparse_(uint64_t pn) {
     AckRange range{pn, pn};
     unsigned i = findSparse_(pn);
+    unsigned begin = i;
     if (i && !before_(m_sparse[i - 1].largest, range.first)) {
-      --i;
-      range.first = m_sparse[i].first;
-      if (m_sparse[i].largest > range.largest)
-	range.largest = m_sparse[i].largest;
-      removeSparse_(i);
+      begin = --i;
+      range.first = m_sparse[begin].first;
+      if (m_sparse[begin].largest > range.largest)
+	range.largest = m_sparse[begin].largest;
     }
-    while (i < m_sparseN && !before_(range.largest, m_sparse[i].first)) {
-      if (m_sparse[i].largest > range.largest)
-	range.largest = m_sparse[i].largest;
-      removeSparse_(i);
+    unsigned end = i;
+    while (end < m_sparse.length() &&
+	!before_(range.largest, m_sparse[end].first)) {
+      if (m_sparse[end].largest > range.largest)
+	range.largest = m_sparse[end].largest;
+      ++end;
     }
-    if (m_sparseN >= MaxRetained) {
-      removeSparse_(0);
-      if (i) --i;
+    if (m_sparse.length() == MaxRetained && begin == end) {
+      m_sparse.splice(0, 1);
+      ++m_retiredRanges;
+      if (begin) --begin;
+      if (end) --end;
     }
-    if (i > m_sparseN) i = m_sparseN;
-    for (unsigned j = m_sparseN; j > i; --j)
-      m_sparse[j] = m_sparse[j - 1];
-    m_sparse[i] = range;
-    ++m_sparseN;
+    m_sparse.splice(
+      begin, end - begin, ZuSpan<const AckRange>{&range, 1});
   }
 
   void advanceHead_(uint64_t head) {
     m_ackHead = head;
-    while (m_sparseN && m_sparse[0].first <= m_ackHead) {
-      if (m_sparse[0].largest >= m_ackHead)
-	m_ackHead = m_sparse[0].largest + 1;
-      removeSparse_(0);
+    unsigned consumed = 0;
+    while (consumed < m_sparse.length() &&
+	m_sparse[consumed].first <= m_ackHead) {
+      if (m_sparse[consumed].largest >= m_ackHead)
+	m_ackHead = m_sparse[consumed].largest + 1;
+      ++consumed;
     }
+    if (consumed) m_sparse.splice(0, consumed);
   }
 
   void trimSparseRanges_() {
-    while (count() > MaxRetained && m_sparseN)
-      removeSparse_(0);
+    unsigned total = m_sparse.length() + (m_ackHead > m_ackBase);
+    if (total <= MaxRetained || !m_sparse) return;
+    unsigned retire = total - MaxRetained;
+    m_sparse.splice(0, retire);
+    m_retiredRanges += retire;
+  }
+
+  Frame::AckRanges snapshot_(unsigned max) const {
+    Frame::AckRanges ranges;
+    unsigned total = m_sparse.length() + (m_ackHead > m_ackBase);
+    unsigned skip = total > max ? total - max : 0;
+    ranges_([&ranges, &skip](const AckRange &range) {
+      if (skip) {
+	--skip;
+	return true;
+      }
+      ranges.push(range);
+      return true;
+    });
+    return ranges;
   }
 
   template <typename L>
   bool ranges_(L &&l) const {
     if (m_ackHead > m_ackBase)
       if (!l(AckRange{m_ackHead - 1, m_ackBase})) return false;
-    for (unsigned i = 0; i < m_sparseN; ++i)
+    for (unsigned i = 0; i < m_sparse.length(); ++i)
       if (!l(m_sparse[i])) return false;
     return true;
   }
 
   uint64_t	m_ackHead = 0;
   uint64_t	m_ackBase = 0;
-  unsigned	m_sparseN = 0;
-  AckRange	m_sparse[MaxRetained];
+  RetainedRanges m_sparse;
+  uint64_t	m_retiredRanges = 0;
   DequeueFn	m_dequeueFn;
 };
 

@@ -513,6 +513,24 @@ retirement, ACK-of-ACK, and exactly 64, 65, and more-than-65 retained ranges.
 
 Only then start Slice 5.
 
+### Slice 4 execution record
+
+- API gate: no dependent layer uses `AckTracker` or the internal
+  `AckSnapshot`; the existing raw `snapshot(AckRange *, unsigned)` and all
+  codec signatures remain available.
+- Retention: `AckTracker::RetainedRanges` has 32 built-in elements, the
+  `Zquic.Ack.RetainedRanges` heap ID, and a separate 65-range retained policy.
+  Lookup uses `ackRangeLowerBound`; merging and retirement use `splice`, and
+  explicit retirements increment `retiredRanges()`.
+- Wire snapshots: `Frame::MaxAckRanges` remains 64.  Typed snapshots are
+  constructed directly in codec order, and `AckSnapshot` owns a
+  `Frame::AckRanges` value across the Rx-to-Tx post.
+- Build: `make -C zquic/src -j8 libZquic.la`.
+- Focused unit build and run: `ZquicRecoveryTest` and `ZquicCodecTest` passed
+  under the existing clang-debug configuration.  Tests cover bridging,
+  adjacency, duplicates, 65 retained ranges, retirement beyond 65, the
+  64-range wire cap, typed/raw snapshot ordering, and ACK-of-ACK behavior.
+
 ## Slice 5: replace `TxUnackdRanges`
 
 Dependency: accepted and committed Slice 4.

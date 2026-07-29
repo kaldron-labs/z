@@ -547,9 +547,8 @@ protected:
     uint64_t		delay = 0;
     uint64_t		largestRxTime = 0;
     AckECN		ecn;
-    unsigned		nRanges = 0;
     bool		due = false;
-    AckRange		ranges[Frame::MaxAckRanges];
+    Frame::AckRanges	ranges;
   };
   struct RxAckMeta {
     bool		ackEliciting = false;
@@ -4479,9 +4478,7 @@ protected:
     ack.due = m_rxAcks.immediate(space);
     ack.ecn = m_rxAcks.ackECN(space);
     const AckTracker &tracker = m_rxAcks.tracker(space);
-    int nRanges = tracker.snapshot(ack.ranges, Frame::MaxAckRanges);
-    if (nRanges < 0) return;
-    ack.nRanges = unsigned(nRanges);
+    ack.ranges = tracker.snapshot(Frame::MaxAckRanges);
     bool deadline = m_rxAcks.deadlineSet(space);
     uint64_t deadlineUS = deadline ? m_rxAcks.deadline(space) : 0;
     bool post;
@@ -4600,7 +4597,7 @@ protected:
       "QUIC ACK append outside Tx thread", return false);
     AckSnapshot &ack = m_txAck[level];
     ++m_txDiag.ackAppendTx;
-    if (!ack.nRanges) {
+    if (!ack.ranges) {
       ++m_txDiag.ackAppendEmptyTx;
       return true;
     }
@@ -4617,10 +4614,12 @@ protected:
     }
     int n = !m_path.ecnDisabled() && ack.ecn.any() ?
       FrameCodec::writeAckECN(
-	build.scratch(), build.scratchAvail(), ack.ranges, ack.nRanges,
+	build.scratch(), build.scratchAvail(),
+	ack.ranges.data(), ack.ranges.length(),
 	delay, ack.ecn) :
       FrameCodec::writeAckRanges(
-	build.scratch(), build.scratchAvail(), ack.ranges, ack.nRanges,
+	build.scratch(), build.scratchAvail(),
+	ack.ranges.data(), ack.ranges.length(),
 	delay);
     if (n < 0) return false;
     if (!build.commitScratch(unsigned(n))) return false;
@@ -4630,16 +4629,16 @@ protected:
 
   bool pendingAck_(PktNumSpace::T level) const {
     const AckSnapshot &ack = m_txAck[level];
-    return ack.nRanges && ack.due;
+    return ack.ranges && ack.due;
   }
 
   void ackSentTx_(PktNumSpace::T level) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK commit outside Tx thread", return);
     AckSnapshot ack = m_txAck[level];
-    if (!ack.nRanges) return;
+    if (!ack.ranges) return;
     ++m_txDiag.ackSentTx;
-    m_txAck[level].nRanges = 0;
+    m_txAck[level].ranges.clear();
     m_txAck[level].due = false;
     app()->rxRun([link = impl(), level, gen = ack.gen]() mutable {
       if (link->disconnecting_()) return;
@@ -5537,7 +5536,7 @@ protected:
     m_txPkts[level].clear();
     m_txCrypto[level].reset();
     m_txCryptoUnackd[level].clean();
-    m_txAck[level].nRanges = 0;
+    m_txAck[level].ranges.clear();
     ZquicLOG(app()->qlogTrace(), ([
       level,
       linkInfo = linkInfo_()
@@ -6126,9 +6125,7 @@ nextSpace:
     ack.level = level;
     ack.delay = frame.value;
     ack.ecn = frame.ackECN;
-    ack.nRanges = frame.ackRanges.length();
-    for (unsigned i = 0; i < ack.nRanges; ++i)
-      ack.ranges[i] = frame.ackRanges[i];
+    ack.ranges = frame.ackRanges;
     app()->txRun([link = impl(), ack]() mutable {
       if (link->disconnecting_()) return;
       link->processAckFrameTx_(ack);
@@ -6405,14 +6402,14 @@ nextSpace:
       "QUIC ACK sent-packet processing outside Tx thread", return);
     AckSnapshot &ack = work.ack;
     if (work.gen != m_txRuntimeGen) return;
-    if (!ack.nRanges || m_txSpaceDiscarded[ack.level]) return;
+    if (!ack.ranges || m_txSpaceDiscarded[ack.level]) return;
     if (!ackFrameValidTx_(ack)) {
       ++m_txDiag.failures;
       return;
     }
     if (!work.ecnValidated) {
       work.ecnValid = validateAckECN_(ack, &work.ceDelta);
-      for (unsigned i = 0; i < ack.nRanges; ++i) {
+      for (unsigned i = 0; i < ack.ranges.length(); ++i) {
 	uint64_t largest = ack.ranges[i].largest;
 	if (ZuNull(m_txLargestAckd[ack.level]) ||
 	    largest > m_txLargestAckd[ack.level])
@@ -6424,19 +6421,21 @@ nextSpace:
 	    ReapStreams reapStreams;
 	    if (!work.lossPhase) {
 	      if (!m_txPkts[ack.level].ackBatch(
-		  ack.ranges, ack.nRanges, work.ackBatch, RecoveryScanBatch,
+		  ack.ranges.data(), ack.ranges.length(),
+		  work.ackBatch, RecoveryScanBatch,
 		  ack.level, &update)) {
 		applyAckUpdateTx_(
 		  update, work.congestionOpened, reapStreams,
 		  &ack, &work.ecnValid, &work.ceDelta);
 		ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
-	  largestAcked = ack.nRanges ? ack.ranges[ack.nRanges - 1].largest : 0,
+	  largestAcked = ack.ranges ?
+	    ack.ranges[ack.ranges.length() - 1].largest : 0,
 	  ackDelayUS = ack.level == PktNumSpace::AppData ?
     qlogUS_(ackDelay_(ack.delay)) : 0,
 	  ackedBytes = update.ackdBytes,
 	  lostBytes = update.lostBytes,
-	  nRanges = ack.nRanges,
+	  nRanges = ack.ranges.length(),
 	  nAckdFrames = update.ackdFrames.length(),
 	  nLostFrames = update.lostFrames.length(),
 	  packetNumbers = qlogAckedPNs_(update),
@@ -6471,12 +6470,13 @@ nextSpace:
 		&ack, &work.ecnValid, &work.ceDelta);
 	      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
-	largestAcked = ack.nRanges ? ack.ranges[ack.nRanges - 1].largest : 0,
+	largestAcked = ack.ranges ?
+	  ack.ranges[ack.ranges.length() - 1].largest : 0,
 	ackDelayUS = ack.level == PktNumSpace::AppData ?
 	  qlogUS_(ackDelay_(ack.delay)) : 0,
 	ackedBytes = update.ackdBytes,
 	lostBytes = update.lostBytes,
-	nRanges = ack.nRanges,
+	nRanges = ack.ranges.length(),
 	nAckdFrames = update.ackdFrames.length(),
 		nLostFrames = update.lostFrames.length(),
 		packetNumbers = qlogAckedPNs_(update),
@@ -6627,7 +6627,7 @@ nextSpace:
   }
 
   bool ackFrameValidTx_(const AckSnapshot &ack) const {
-    for (unsigned i = 0; i < ack.nRanges; ++i)
+    for (unsigned i = 0; i < ack.ranges.length(); ++i)
       if (ack.ranges[i].largest >= m_txPN[ack.level]) return false;
     return true;
   }
@@ -6669,8 +6669,8 @@ nextSpace:
 #ifdef Zquic_DEBUG
       auto oldState = m_path.ecnState();
       uint64_t largest = 0;
-      if (ack.nRanges)
-	largest = ack.ranges[ack.nRanges - 1].largest;
+      if (ack.ranges)
+	largest = ack.ranges[ack.ranges.length() - 1].largest;
 #endif
       m_path.ecnValidationFailed();
       ++m_txDiag.ecnValidationFailures;
@@ -7075,7 +7075,7 @@ nextSpace:
     ZuArray<ZquicLog_::QAckRange, ZquicLog_::AckRangeMax> ranges;
     if (ackLevel >= PktNumSpace::N) return ranges;
     const AckSnapshot &ack = m_txAck[ackLevel];
-    for (unsigned i = 0, n = ack.nRanges; i < n; ++i) {
+    for (unsigned i = 0, n = ack.ranges.length(); i < n; ++i) {
       if (ranges.length() >= ZquicLog_::AckRangeMax) break;
       new (ranges.push()) ZquicLog_::QAckRange{
 	.first = ack.ranges[i].first,
@@ -7222,9 +7222,9 @@ nextSpace:
     ackLargest = 0;
     if (!payload.ack(level)) return false;
     const AckSnapshot &ack = m_txAck[level];
-    if (!ack.nRanges) return false;
+    if (!ack.ranges) return false;
     ackLevel = uint8_t(level);
-    ackLargest = ack.ranges[ack.nRanges - 1].largest;
+    ackLargest = ack.ranges[ack.ranges.length() - 1].largest;
     return true;
   }
 
