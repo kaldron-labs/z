@@ -1,0 +1,12 @@
+{
+  "outdir": "./reports/server",
+  "servers": [
+    {
+      "agent": "Zws",
+      "url": "ws://host.docker.internal:9001"
+    }
+  ],
+  "cases": ["*"],
+  "exclude-cases": [],
+  "exclude-agent-cases": {}
+}

@@ -54,7 +54,7 @@ ZuInline int eol(ZuBSpan data) {
     if (ZuLikely(o < n)) {
       c = data[o + 2];
       if constexpr (CanFold)
-	if (c == '\t' || c == ' ') { o += 3; continue; }
+	if (o && (c == '\t' || c == ' ')) { o += 3; continue; }
     }
     if (data[o + 1] != '\n') { ++o; continue; }
     if (data[o] == '\r') return o;

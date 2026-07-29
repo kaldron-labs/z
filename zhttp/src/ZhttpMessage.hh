@@ -375,7 +375,10 @@ public:
     auto state = m_link->receive(m_parser, rx);
     if (state == ParserState::Error) return -1;
     if (state == ParserState::Complete) return 1;
-    return m_app->responseFailed(*m_request) ? -1 : 0;
+    if (m_app->responseFailed(*m_request)) return -1;
+    if constexpr (Message::ID == Version::H1)
+      return m_parser.progressed();
+    return 0;
   }
 
   void eof() {
@@ -434,7 +437,11 @@ struct ServerSession {
     if (complete) return 1;
     auto state = link.receive(parser, rx);
     if (state == State::Error) return impl()->error(link, parser);
-    if (state != State::Complete) return 0;
+    if (state != State::Complete) {
+      if constexpr (Message::ID == Version::H1)
+	return parser.progressed();
+      return 0;
+    }
     int rc = impl()->request(link, parser);
     if constexpr (Message::OneMessagePerLink)
       complete = true;

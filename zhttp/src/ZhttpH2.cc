@@ -25,9 +25,9 @@ int PrefaceParser::process(ZuBSpan input, unsigned &offset)
 int FrameHeaderParser::process(
   ZuBSpan input, unsigned &offset, FrameHeader &header)
 {
-  while (offset < input.length() && m_length < sizeof(m_bytes))
+  while (offset < input.length() && m_length < m_bytes.size())
     m_bytes[m_length++] = input[offset++];
-  if (m_length < sizeof(m_bytes)) return 0;
+  if (m_length < m_bytes.size()) return 0;
   header.length =
     (uint32_t(m_bytes[0])<<16) |
     (uint32_t(m_bytes[1])<<8) |

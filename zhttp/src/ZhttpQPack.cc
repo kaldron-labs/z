@@ -20,7 +20,7 @@ template <unsigned I>
 static Header qpackStaticField_()
 {
   using KV = QPackKV<I>;
-  using Key = ZuType<0, KV>;
+  using Key = StaticKey<KV>;
   using Value = QPackValue<KV>;
   if constexpr (ZuIsSame<Value, void>{})
     return Header{Key{}(), ""};
@@ -394,7 +394,7 @@ bool QPack::staticName(uint64_t index, HeaderName &name)
   ZuSwitch::dispatch<QPackTbl::N>(unsigned(index),
     [&name, &ok](auto i) {
       using KV = QPackKV<i>;
-      using Key = ZuType<0, KV>;
+      using Key = StaticKey<KV>;
       name = Key{}();
       ok = true;
     });

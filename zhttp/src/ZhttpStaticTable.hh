@@ -42,14 +42,14 @@ struct StaticUnique_<U, V> :
 template <typename ...Us>
 using StaticUnique = typename StaticUnique_<Us...>::T;
 
-template <typename KV> using StaticKey = ZuType<0, KV>;
+template <typename Key_, typename Value_ = void>
+struct StaticEntry {
+  using Key = Key_;
+  using Value = Value_;
+};
 
-template <typename KV, bool = (KV::N > 1)>
-struct StaticValue_ { using T = void; };
-template <typename KV>
-struct StaticValue_<KV, true> { using T = ZuType<1, KV>; };
-template <typename KV>
-using StaticValue = typename StaticValue_<KV>::T;
+template <typename KV> using StaticKey = typename KV::Key;
+template <typename KV> using StaticValue = typename KV::Value;
 
 template <typename KV, bool = ZuIsSame<StaticValue<KV>, void>{}>
 struct StaticMatchValue_ { using T = StaticValue<KV>; };

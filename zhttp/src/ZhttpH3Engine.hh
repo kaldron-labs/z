@@ -293,12 +293,18 @@ struct ClientStream :
   int process(Zquic::RxStream &rx) {
     if (Zquic::StreamID::uni(uint64_t(this->id())))
       return CxnStream::process(*this);
-    return logical ? logical->process_(rx) : -1;
+    if (!logical) return -1;
+    int rc = logical->process_(rx);
+    if (rc >= 0 && this->rxComplete()) this->link()->remoteEnd(this);
+    return rc;
   }
   H3Cxn &h3Cxn() const { return this->link()->h3; }
   void quicReset(uint64_t error) { Base::reset(error); }
 
   ZmRef<Logical>	logical;
+  bool		localEnd = false;
+  bool		remoteEnd = false;
+  bool		closing = false;
 };
 
 template <typename App, typename Logical>
@@ -431,7 +437,19 @@ struct ClientSession :
     });
   }
   void finish(Stream *stream) {
+    ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
+      "H3 logical end outside Rx thread", return);
+    if (!stream || !stream->logical || stream->localEnd) return;
+    stream->localEnd = true;
+    if (stream->remoteEnd) closeLater_(stream, false);
     this->send(ZmMkRef(stream), "", true);
+  }
+  void remoteEnd(Stream *stream) {
+    ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
+      "H3 remote logical end outside Rx thread", return);
+    if (!stream || !stream->logical || stream->remoteEnd) return;
+    stream->remoteEnd = true;
+    if (stream->localEnd) closeLater_(stream, true);
   }
   bool h3PeerCap() const {
     if (this->app()->txInvoked()) return h3PeerCapTx;
@@ -493,6 +511,23 @@ struct ClientSession :
   H3::QPackTxTable *qpackTx() { return &h3Tx; }
 
 private:
+  void closeLater_(Stream *stream, bool peer) {
+    if (!stream || stream->closing) return;
+    stream->closing = true;
+    this->app()->rxRun([
+      session = ZmMkRef(this), stream = ZmMkRef(stream), peer
+    ]() mutable {
+      if (!stream->logical) return;
+      auto logical = ZuMv(stream->logical);
+      for (unsigned i = 0; i < session->streams.length(); ++i)
+	if (session->streams[i].ptr() == stream.ptr()) {
+	  session->streams.splice(i, 1);
+	  break;
+	}
+      logical->disconnected_(peer);
+    });
+  }
+
   template <typename List>
   static bool remove_(List &list, Logical *logical) {
     for (unsigned i = 0; i < list.length(); ++i)
@@ -627,12 +662,17 @@ struct ServerStream :
 	.secure = true
       }));
     }
-    return logical->process_(rx);
+    int rc = logical->process_(rx);
+    if (rc >= 0 && this->rxComplete()) this->link()->remoteEnd(this);
+    return rc;
   }
   H3Cxn &h3Cxn() const { return this->link()->h3; }
   void quicReset(uint64_t error) { Base::reset(error); }
 
   ZmRef<Logical>	logical;
+  bool		localEnd = false;
+  bool		remoteEnd = false;
+  bool		closing = false;
 };
 
 template <typename App>
@@ -678,7 +718,19 @@ struct ServerSession :
     if (stream) (void)stream->process(stream->rxStream());
   }
   void finish(Stream *stream) {
+    ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
+      "H3 logical end outside Rx thread", return);
+    if (!stream || !stream->logical || stream->localEnd) return;
+    stream->localEnd = true;
+    if (stream->remoteEnd) closeLater_(stream, false);
     this->send(ZmMkRef(stream), "", true);
+  }
+  void remoteEnd(Stream *stream) {
+    ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
+      "H3 remote logical end outside Rx thread", return);
+    if (!stream || !stream->logical || stream->remoteEnd) return;
+    stream->remoteEnd = true;
+    if (stream->localEnd) closeLater_(stream, true);
   }
   bool h3PeerCap() const {
     if (this->app()->txInvoked()) return h3PeerCapTx;
@@ -692,6 +744,25 @@ struct ServerSession :
   }
   H3::QPackTxTable *qpackTx() { return &h3Tx; }
 
+private:
+  void closeLater_(Stream *stream, bool peer) {
+    if (!stream || stream->closing) return;
+    stream->closing = true;
+    this->app()->rxRun([
+      session = ZmMkRef(this), stream = ZmMkRef(stream), peer
+    ]() mutable {
+      if (!stream->logical) return;
+      auto logical = ZuMv(stream->logical);
+      for (unsigned i = 0; i < session->logical.length(); ++i)
+	if (session->logical[i].ptr() == stream.ptr()) {
+	  session->logical.splice(i, 1);
+	  break;
+	}
+      logical->disconnected_(peer);
+    });
+  }
+
+public:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   H3Cxn		h3;
