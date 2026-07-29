@@ -101,9 +101,18 @@ void testRecovery()
   ZuCHECK(manyOK, "many-range ACK setup failed");
   Zquic::AckRange snapshot[Zquic::Frame::MaxAckRanges];
   ZuCHECK(many.multipleRanges() &&
+      many.count() == Zquic::AckTracker::MaxRetained &&
+      many.retiredRanges() == 7 &&
       many.snapshot(snapshot, Zquic::Frame::MaxAckRanges) ==
 	Zquic::Frame::MaxAckRanges,
-    "many-range ACK snapshot did not cap ranges");
+    "many-range ACK retention policy mismatch");
+  Zquic::Frame::AckRanges typed =
+    many.snapshot(Zquic::Frame::MaxAckRanges);
+  ZuCHECK(typed.length() == Zquic::Frame::MaxAckRanges &&
+      typed[0].first == snapshot[0].first &&
+      typed[typed.length() - 1].largest ==
+	snapshot[Zquic::Frame::MaxAckRanges - 1].largest,
+    "typed ACK snapshot ordering mismatch");
   uint8_t manyBuf[1024];
   n = many.writeFrame(manyBuf, sizeof(manyBuf));
   ZuCHECK(n > 0 &&
