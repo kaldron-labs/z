@@ -431,6 +431,7 @@ protected:
     if (n == PTLS_ERROR_ASYNC_OPERATION) return asyncHandshake_();
     if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
 	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
+      m_peerClosed = true;
       disconnect_(true);
       return false;
     }
@@ -588,6 +589,7 @@ private:
     }
     if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
 	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
+      m_peerClosed = true;
       disconnect_(true);
       return;
     }
@@ -656,6 +658,7 @@ private:
   void disconnected_1(bool peer) {
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnect completion outside Rx thread", return);
+    peer |= m_peerClosed;
     reset_tls_();
     auto app = impl()->app();
     impl()->disconnected(peer);
@@ -1062,6 +1065,7 @@ protected:
     m_txSeqEst = 0;
     m_txControlPending = false;
     m_handshook = false;
+    m_peerClosed = false;
     m_disconnecting = 0;
     reset_handshake_props_();
 
@@ -1116,6 +1120,7 @@ private:
   uint64_t		m_txSeqEst = 0;
   bool			m_txControlPending = false;
   bool			m_handshook = false;
+  bool			m_peerClosed = false;
   ptls_handshake_properties_t m_props{};
   AsyncJob		*m_asyncJob = nullptr;
   CxnRef		m_cxn = nullptr;	// read by Tx thread

@@ -537,6 +537,47 @@ void testInformationalThenFinalResponse()
     "final response callbacks follow informational callbacks exactly once");
 }
 
+void testUpgradeLeavesInput()
+{
+  ZuTestScope(testUpgradeLeavesInput);
+
+  {
+    ResponseParser parser;
+    RxStream stream;
+    stream.push(mkBuf(
+      "HTTP/1.1 101 Switching Protocols\r\n"
+      "Upgrade: opaque\r\n"
+      "Connection: Upgrade\r\n"
+      "\r\n"
+      "first"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
+      "101 response did not complete at the header boundary");
+    ZuCHECK(parser.statusSeen == 101 && parser.completeCalls == 1,
+      "101 response completion callbacks mismatch");
+    ZuCHECK(ZuCSpan{stream.span()} == "first",
+      "101 response consumed coalesced upgraded-stream input");
+  }
+
+  {
+    RequestParser parser;
+    RxStream stream;
+    stream.push(mkBuf(
+      "GET /chat HTTP/1.1\r\n"
+      "Host: example.com\r\n"
+      "Upgrade: opaque\r\n"
+      "Connection: Upgrade\r\n"
+      "\r\n"
+      "first"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
+      "Upgrade request did not complete at the header boundary");
+    ZuCHECK(parser.method == Zhttp::Method::GET &&
+	parser.path == "/chat" && parser.completeCalls == 1,
+      "Upgrade request completion callbacks mismatch");
+    ZuCHECK(ZuCSpan{stream.span()} == "first",
+      "Upgrade request consumed coalesced upgraded-stream input");
+  }
+}
+
 void testEarlyDataSafeRequestPolicy()
 {
   ZuTestScope(testEarlyDataSafeRequestPolicy);
@@ -578,6 +619,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCloseDelimitedResponseTooLarge);
   ZuTestCall(testNoBodyStatusWithoutLengthCompletesAtHeaders);
   ZuTestCall(testInformationalThenFinalResponse);
+  ZuTestCall(testUpgradeLeavesInput);
   ZuTestCall(testEarlyDataSafeRequestPolicy);
   ZiLog::stop();
   return 0;

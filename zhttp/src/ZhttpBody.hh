@@ -37,22 +37,51 @@ public:
   }
 
   template <typename L>
+  bool start(L &&l) {
+    if (m_started || m_layer.complete() || m_layer.failed()) return false;
+    m_started = true;
+    ZuFwd<L>(l)(m_layer);
+    return true;
+  }
+
+  template <typename L>
   bool offer(ZuBSpan span, bool final, L &&l) {
-    if (m_ready || m_span || m_layer.complete() || m_layer.failed())
+    if (m_state != Zi::RxRefill::Wait || m_span ||
+	m_layer.complete() || m_layer.failed())
       return false;
     m_span = span;
     m_consumed = 0;
-    m_ready = span || final;
-    m_final = final;
+    m_state = final ? Zi::RxRefill::Final : Zi::RxRefill::Input;
     if (span)
       ZuFwd<L>(l)(m_layer);
     else if (final)
       (void)m_layer.input();
+    else
+      m_state = Zi::RxRefill::Wait;
     return !m_span && (!final || m_layer.complete());
   }
 
   bool finish() {
-    return m_layer.complete() || offer({}, true, [](auto &) { });
+    return m_layer.complete() ||
+      offer({}, true, [](auto &rx) { (void)rx.input(); });
+  }
+  template <typename L>
+  bool finish(L &&l) {
+    if (m_layer.complete()) return true;
+    if (m_state != Zi::RxRefill::Wait || m_span || m_layer.failed())
+      return false;
+    m_state = Zi::RxRefill::Final;
+    ZuFwd<L>(l)(m_layer);
+    return m_layer.complete();
+  }
+  template <typename L>
+  bool fail(L &&l) {
+    if (m_layer.complete() || m_layer.failed())
+      return m_layer.failed();
+    m_span = {};
+    m_state = Zi::RxRefill::Error;
+    ZuFwd<L>(l)(m_layer);
+    return m_layer.failed();
   }
 
   uint32_t consumed() const { return m_consumed; }
@@ -60,13 +89,9 @@ public:
   bool failed() const { return m_layer.failed(); }
 
   Zi::RxRefill rxRefill_() {
-    if (!m_ready) return {};
-    m_ready = false;
-    return {
-      uint32_t(m_span.length()),
-      Zi::RxRefill::T(
-	m_final ? Zi::RxRefill::Final : Zi::RxRefill::Input)
-    };
+    Zi::RxRefill::T state = m_state;
+    m_state = Zi::RxRefill::Wait;
+    return {uint32_t(m_span.length()), state};
   }
   ZuBSpan rxSpan_() { return m_span; }
   unsigned rxAdvance_(unsigned n) {
@@ -81,15 +106,15 @@ private:
   void clear_() {
     m_span = {};
     m_consumed = 0;
-    m_ready = false;
-    m_final = false;
+    m_state = Zi::RxRefill::Wait;
+    m_started = false;
   }
 
   Layer		m_layer;
   ZuBSpan	m_span;
   uint32_t	m_consumed = 0;
-  bool		m_ready = false;
-  bool		m_final = false;
+  Zi::RxRefill::T m_state = Zi::RxRefill::Wait;
+  bool		m_started = false;
 };
 
 template <typename Rx, typename L>

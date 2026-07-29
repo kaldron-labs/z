@@ -6,7 +6,7 @@ selection, physical-session management, and logical request streams remain
 inside `zhttp/src`.
 
 The HTTP/3 surface includes ordinary messages and ordered Extended CONNECT
-tunnels:
+logical streams:
 
 - ALPN `h3` is configured only when HTTP/3 is enabled;
 - each connection sends one control stream with SETTINGS first;
@@ -163,28 +163,33 @@ Extended CONNECT is opt-in with `H2Config::extendedConnect(true)` for H2 and
 `SETTINGS_ENABLE_CONNECT_PROTOCOL`, tracks local and peer capability
 independently, and refuses to emit or accept `:protocol` without the relevant
 capability. A successful 2xx handshake transitions the logical H2 or H3
-stream to `ParserState::Tunnel`; ordered DATA is delivered through the same
-bounded `ZiRxStream` callback, with `tunnelEnd()` and `tunnelReset()` reporting
-remote half-close and reset. `Zhttp::Tunnel<Link>` is the non-owning,
-shard-affine H2/H3 transmit adapter:
+stream to `ParserState::Stream`. H1 Upgrade and H2/H3 Extended CONNECT then
+expose the same borrowed, shard-affine `Zhttp::Stream<Link, Rx>` contract:
 
 ```c++
-Zhttp::Tunnel tunnel{link};
-if (tunnel.peerCap()) {
-  tunnel.send([](auto &tx) { tx << bytes; });
-  tunnel.end();                 // local half-close
+Zhttp::Stream stream{link};
+if (stream.peerCap()) {
+  stream.tx([](auto &tx) {
+    tx << bytes;
+    tx.flush();                  // application message/latency boundary
+  });
+  stream.end();                  // ordered after the flushed bytes
 }
 
-template <typename Rx>
-void tunnelData(Rx &rx) {
-  Zhttp::bodyEach(rx, [](ZuBSpan bytes) {
-    consume(bytes);              // ordered, callback-scoped input
-  });
+void streamProcess(auto stream) {
+  auto &rx = stream.rx();
+  while (rx.input()) {
+    auto events = rx.events();   // Start/Input/Final/Error, read and clear
+    if (events & Zi::RxEvent::Error()) return;
+    if (rx.consume(frame, consume) <= 0) return;
+  }
+  auto events = rx.events();
+  if (events & Zi::RxEvent::Final()) peerEnded();
 }
 ```
 
 The callback receives the native pooled transmit layer only for the duration
-of the call. The tunnel contract contains no WebSocket fields, framing,
+of the call. The logical-stream contract contains no WebSocket fields, framing,
 masking, close codes, or subprotocol policy; those belong in a dependent
 protocol library.
 

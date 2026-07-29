@@ -705,10 +705,53 @@ struct ServerSession :
   bool			h3PeerCapTx = false;
 };
 
+template <typename Impl>
+class LogicalStream {
+public:
+  bool streamPeerCap() const {
+    auto native = streamImpl_()->h3Native_();
+    return native && native->h3PeerCap();
+  }
+  bool streamLocalCap() const {
+    auto native = streamImpl_()->h3Native_();
+    return native && native->h3.localExtendedConnect;
+  }
+  template <typename L>
+  void streamTx(L &&l) {
+    auto stream = streamImpl_()->h3Stream_();
+    if (!stream) return;
+    auto tx = stream->txStream();
+    auto body = H3::dataStream(tx);
+    ZuFwd<L>(l)(body);
+  }
+  void streamTxEnd() {
+    auto impl = streamImpl_();
+    auto native = impl->h3Native_();
+    auto stream = impl->h3Stream_();
+    if (native && stream) native->finish(stream);
+  }
+  void streamTxReset() {
+    auto stream_ = streamImpl_()->h3Stream_();
+    if (!stream_) return;
+    auto stream = ZmMkRef(stream_);
+    stream_->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
+      stream->stop(H3::RequestCancelled);
+      stream->quicReset(H3::RequestCancelled);
+    });
+  }
+
+private:
+  const Impl *streamImpl_() const {
+    return static_cast<const Impl *>(this);
+  }
+  Impl *streamImpl_() { return static_cast<Impl *>(this); }
+};
+
 } // namespace H3_
 
 template <typename App, typename Impl>
-class ClientLink<App, Impl, H3QUIC> : public ZmObject {
+class ClientLink<App, Impl, H3QUIC> :
+  public ZmObject, public H3_::LogicalStream<Impl> {
   using Engine = H3_::ClientEngine<App>;
   using NativeSession = H3_::ClientSession<App, Impl>;
   using NativeStream = H3_::ClientStream<App, Impl>;
@@ -754,31 +797,8 @@ public:
     connect(endpoint.tlsName, endpoint.port, endpoint.ip);
   }
   auto txStream() { return m_stream->txStream(); }
-  bool tunnelPeerCap() const {
-    return m_session && m_session->h3PeerCap();
-  }
-  bool tunnelLocalCap() const {
-    return m_session && m_session->h3.localExtendedConnect;
-  }
-  template <typename L>
-  void tunnelSend(L &&l) {
-    if (!m_stream) return;
-    auto tx = m_stream->txStream();
-    auto body = H3::dataStream(tx);
-    ZuFwd<L>(l)(body);
-    body.flush();
-  }
-  void tunnelEnd() {
-    if (m_session && m_stream) m_session->finish(m_stream);
-  }
-  void tunnelReset() {
-    if (!m_stream) return;
-    auto stream = ZmMkRef(m_stream);
-    m_stream->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
-      stream->stop(H3::RequestCancelled);
-      stream->quicReset(H3::RequestCancelled);
-    });
-  }
+  NativeSession *h3Native_() const { return m_session; }
+  NativeStream *h3Stream_() const { return m_stream; }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {
     using H3Cxn = ZuDecay<decltype(m_session->h3)>;
@@ -923,7 +943,8 @@ private:
 };
 
 template <typename App, typename Impl, typename Session>
-class ServerLink<App, Impl, H3QUIC, Session> : public ZmObject {
+class ServerLink<App, Impl, H3QUIC, Session> :
+  public ZmObject, public H3_::LogicalStream<Impl> {
   using Engine = H3_::ServerEngine<App>;
   using NativeSession = H3_::ServerSession<App>;
   using NativeStream = H3_::ServerStream<App>;
@@ -948,31 +969,8 @@ public:
   ZuCSpan remote() const { return m_remote; }
   Session &session() { return m_session; }
   auto txStream() { return m_stream->txStream(); }
-  bool tunnelPeerCap() const {
-    return m_native && m_native->h3PeerCap();
-  }
-  bool tunnelLocalCap() const {
-    return m_native && m_native->h3.localExtendedConnect;
-  }
-  template <typename L>
-  void tunnelSend(L &&l) {
-    if (!m_stream) return;
-    auto tx = m_stream->txStream();
-    auto body = H3::dataStream(tx);
-    ZuFwd<L>(l)(body);
-    body.flush();
-  }
-  void tunnelEnd() {
-    if (m_native && m_stream) m_native->finish(m_stream);
-  }
-  void tunnelReset() {
-    if (!m_stream) return;
-    auto stream = ZmMkRef(m_stream);
-    m_stream->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
-      stream->stop(H3::RequestCancelled);
-      stream->quicReset(H3::RequestCancelled);
-    });
-  }
+  NativeSession *h3Native_() const { return m_native; }
+  NativeStream *h3Stream_() const { return m_stream; }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {
     using H3Cxn = ZuDecay<decltype(m_native->h3)>;

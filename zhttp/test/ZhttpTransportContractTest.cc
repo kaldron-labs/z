@@ -12,6 +12,7 @@
 #include <zlib/ZiTxStream.hh>
 
 #include <zlib/ZhttpService.hh>
+#include <zlib/ZhttpStream.hh>
 
 using namespace ZuTestUtil;
 
@@ -40,6 +41,21 @@ struct BodyRxOwner {
   void rxCancel_();
 };
 using BodyRx = ZiRxLayer<BodyRxOwner>;
+
+struct ErrorRxOwner {
+  bool	error = true;
+
+  Zi::RxRefill rxRefill_() {
+    if (error) {
+      error = false;
+      return {0, Zi::RxRefill::Error};
+    }
+    return {};
+  }
+  ZuBSpan rxSpan_() { return {}; }
+  unsigned rxAdvance_(unsigned) { return 0; }
+  void rxCancel_() { }
+};
 
 struct Frame {
   int64_t operator ()(ZuBSpan) const;
@@ -181,6 +197,72 @@ static_assert(sizeof(Contract) == 1);
 
 using TxBufAlloc =
   ZiIOBufAlloc<64, 256, "Zhttp.Contract.TxBuf">;
+
+struct StreamLink {
+  struct Tx : public ZiTxStream<Tx> {
+    using Base = ZiTxStream<Tx>;
+
+    Tx(StreamLink &link_) : Base{64, 0, 0}, link{&link_} { }
+    Tx(Tx &&) = default;
+    Tx &operator =(Tx &&) = default;
+
+    ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+      ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
+      buf->skip = headRoom;
+      buf->length = 0;
+      return buf;
+    }
+    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+      ++link->handoffs;
+      link->wire << ZuCSpan{buf->cspan()};
+    }
+
+    StreamLink	*link;
+  };
+
+  bool streamLocalCap() const { return localCap; }
+  bool streamPeerCap() const { return peerCap; }
+  template <typename L>
+  void streamTx(L &&l) {
+    Tx tx{*this};
+    ZuFwd<L>(l)(tx);
+  }
+  void streamTxEnd() { ++ends; }
+  void streamTxReset() { ++resets; }
+
+  ZtString<ZtStringHeapID<"Zhttp.Contract.StreamWire">> wire;
+  unsigned	handoffs = 0;
+  unsigned	ends = 0;
+  unsigned	resets = 0;
+  bool		localCap = true;
+  bool		peerCap = false;
+};
+
+struct StreamConsumer {
+  template <typename Stream>
+  void streamProcess(Stream stream) {
+    ++calls;
+    auto &rx = stream.rx();
+    bool input = rx.input();
+    events |= rx.events();
+    if (!input) return;
+    (void)rx.consume(
+      [](ZuBSpan span) -> int64_t { return span.length(); },
+      [this](ZuBSpan span) { data << ZuCSpan{span}; });
+    events |= rx.events();
+  }
+
+  ZtString<ZtStringHeapID<"Zhttp.Contract.StreamData">> data;
+  Zi::RxEvent::T events{};
+  unsigned	calls = 0;
+};
+
+using BareStream = Zhttp::Stream<StreamLink>;
+using RxStream = Zhttp::Stream<StreamLink, Zhttp::BodyRx::Layer>;
+using Dispatch = Zhttp::StreamDispatch<StreamLink, StreamConsumer>;
+static_assert(sizeof(BareStream) == sizeof(void *));
+static_assert(sizeof(RxStream) == sizeof(void *) * 2);
+static_assert(sizeof(Dispatch) == sizeof(void *) * 2);
 
 struct TxRequest {
   ZuCSpan	body;
@@ -604,8 +686,15 @@ void testBodyRx()
   bool ok = body.offer({bytes, unsigned(sizeof(bytes))}, true,
     [&calls](auto &rx) {
       ++calls;
+      auto events = rx.events();
+      ZuCHECK(events == Zi::RxEvent::Start(),
+	"body receive layer did not begin with Start");
       ZuCHECK(rx.input() && rx.available() == 5,
 	"body input was not admitted");
+      events = rx.events();
+      ZuCHECK(events == Zi::RxEvent::Input(),
+	"body input did not raise Input exactly once");
+      ZuCHECK(!rx.events(), "body input flags did not clear on read");
       ZuCHECK(rx.consume(
 	  [](ZuBSpan) -> int64_t { return 2; },
 	  [](ZuBSpan span) {
@@ -613,6 +702,7 @@ void testBodyRx()
 	      "first partial body consume mismatch");
 	  }) == 2,
 	"first partial body consume failed");
+      ZuCHECK(!rx.events(), "partial body consume raised a terminal event");
       ZuCHECK(rx.consume(
 	  [](ZuBSpan span) -> int64_t { return span.length(); },
 	  [](ZuBSpan span) {
@@ -620,6 +710,10 @@ void testBodyRx()
 	      "second partial body consume mismatch");
 	  }) == 3,
 	"second partial body consume failed");
+      events = rx.events();
+      ZuCHECK(events == Zi::RxEvent::Final(),
+	"final body consume did not raise Final exactly once");
+      ZuCHECK(!rx.events(), "body final flag did not clear on read");
     });
   ZuCHECK(ok && calls == 1 && body.consumed() == sizeof(bytes) &&
       body.complete(),
@@ -637,6 +731,86 @@ void testBodyRx()
     "partial callback return was not rejected");
   body.cancel();
   ZuCHECK(!body.consumed(), "cancelled body retained consumed state");
+
+  ErrorRxOwner owner;
+  ZiRxLayer<ErrorRxOwner> error{owner};
+  ZuCHECK(error.events() == Zi::RxEvent::Start(),
+    "error layer did not begin with Start");
+  ZuCHECK(!error.input() && error.failed(),
+    "error refill did not fail the receive layer");
+  ZuCHECK(error.events() == Zi::RxEvent::Error(),
+    "error refill did not raise Error exactly once");
+  ZuCHECK(!error.events(), "receive error flag did not clear on read");
+}
+
+void testStream()
+{
+  ZuTestScope(testStream);
+
+  StreamLink link;
+  Zhttp::Stream stream{link};
+  ZuCHECK(stream.localCap() && !stream.peerCap(),
+    "logical-stream capabilities mismatch");
+  stream.tx([](auto &tx) {
+    tx << ZuCSpan{"a"};
+    tx.flush();
+    tx << ZuCSpan{"b"} << Zi::flush();
+    tx << ZuCSpan{"c"};
+  });
+  ZuCHECK(link.handoffs == 3 && link.wire == "abc",
+    "explicit and residual logical-stream flushes mismatch");
+  stream.end();
+  stream.reset();
+  ZuCHECK(link.ends == 1 && link.resets == 1,
+    "logical-stream Tx terminal forwarding mismatch");
+
+  StreamConsumer consumer;
+  Dispatch dispatch;
+  Zhttp::BodyRx body;
+  dispatch.init(link, consumer);
+  ZuCHECK(body.start(
+      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
+      consumer.calls == 1 &&
+      consumer.events == Zi::RxEvent::Start(),
+    "stream dispatch did not deliver Start");
+  consumer.events = {};
+
+  uint8_t bytes[] = {'e', 'f'};
+  ZuCHECK(body.offer({bytes, unsigned(sizeof(bytes))}, false,
+      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
+      consumer.calls == 2 &&
+      consumer.events == Zi::RxEvent::Input() &&
+      consumer.data == "ef",
+    "stream dispatch did not deliver Input");
+  consumer.events = {};
+  ZuCHECK(body.finish(
+      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
+      consumer.calls == 3 &&
+      consumer.events == Zi::RxEvent::Final(),
+    "stream dispatch did not deliver empty Final");
+
+  Zhttp::BodyRx failed;
+  consumer.events = {};
+  ZuCHECK(failed.start(
+      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
+      failed.fail(
+	[&dispatch](auto &rx) { dispatch.process(rx); }) &&
+      consumer.calls == 5 &&
+      consumer.events ==
+	(Zi::RxEvent::Start() | Zi::RxEvent::Error()),
+    "stream dispatch did not deliver Error");
+
+  dispatch.disable_();
+  unsigned calls = consumer.calls;
+  Zhttp::BodyRx disabled;
+  ZuCHECK(disabled.start(
+      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
+      consumer.calls == calls,
+    "disabled stream dispatch admitted a callback");
+  disabled.cancel();
+  ZuCHECK(consumer.calls == calls,
+    "silent BodyRx cancellation invoked the consumer");
+  dispatch.final_();
 }
 
 } // namespace ZhttpTransportContractTest_
@@ -652,5 +826,6 @@ int main(int argc, char **argv)
   ZuTestCall(testMetadata);
   ZuTestCall(testBodyTx);
   ZuTestCall(testBodyRx);
+  ZuTestCall(testStream);
   return 0;
 }

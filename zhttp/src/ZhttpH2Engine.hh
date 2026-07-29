@@ -2009,8 +2009,35 @@ private:
 
 namespace H2_ {
 
+template <typename Impl>
+class LogicalStream {
+public:
+  bool streamPeerCap() {
+    auto tx = streamImpl_()->txStream();
+    return tx.extendedConnect();
+  }
+  bool streamLocalCap() {
+    auto tx = streamImpl_()->txStream();
+    return tx.localExtendedConnect();
+  }
+  template <typename L>
+  void streamTx(L &&l) {
+    auto tx = streamImpl_()->txStream();
+    auto body = tx.body();
+    ZuFwd<L>(l)(body);
+  }
+  void streamTxEnd() {
+    auto tx = streamImpl_()->txStream();
+    tx.end();
+  }
+  void streamTxReset() { streamImpl_()->disconnect(); }
+
+private:
+  Impl *streamImpl_() { return static_cast<Impl *>(this); }
+};
+
 template <typename App, typename Impl, typename Native>
-class ClientLogical : public ZmObject {
+class ClientLogical : public ZmObject, public LogicalStream<Impl> {
 public:
   enum { TLS = 1, Multiplexed = 1 };
 
@@ -2039,26 +2066,6 @@ public:
     connect(endpoint.target, endpoint.port);
   }
   auto txStream() { return m_session->logicalTx(m_streamID); }
-  bool tunnelPeerCap() {
-    auto tx = txStream();
-    return tx.extendedConnect();
-  }
-  bool tunnelLocalCap() {
-    auto tx = txStream();
-    return tx.localExtendedConnect();
-  }
-  template <typename L>
-  void tunnelSend(L &&l) {
-    auto tx = txStream();
-    auto body = tx.body();
-    ZuFwd<L>(l)(body);
-    body.flush();
-  }
-  void tunnelEnd() {
-    auto tx = txStream();
-    tx.end();
-  }
-  void tunnelReset() { disconnect(); }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
@@ -2143,7 +2150,7 @@ public:
 namespace H2_ {
 
 template <typename App, typename Impl, typename Session, typename Native>
-class ServerLogical : public ZmObject {
+class ServerLogical : public ZmObject, public LogicalStream<Impl> {
 public:
   enum { TLS = 1, Multiplexed = 1 };
 
@@ -2160,26 +2167,6 @@ public:
   ZuCSpan remote() const { return m_remote; }
   Session &session() { return m_session; }
   auto txStream() { return m_native->logicalTx(m_streamID); }
-  bool tunnelPeerCap() {
-    auto tx = txStream();
-    return tx.extendedConnect();
-  }
-  bool tunnelLocalCap() {
-    auto tx = txStream();
-    return tx.localExtendedConnect();
-  }
-  template <typename L>
-  void tunnelSend(L &&l) {
-    auto tx = txStream();
-    auto body = tx.body();
-    ZuFwd<L>(l)(body);
-    body.flush();
-  }
-  void tunnelEnd() {
-    auto tx = txStream();
-    tx.end();
-  }
-  void tunnelReset() { disconnect(); }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>

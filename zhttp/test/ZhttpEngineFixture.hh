@@ -85,6 +85,29 @@ bool consume(Rx &rx, ZuCSpan expected)
   return ok;
 }
 
+template <typename Rx>
+bool consumeStream(Rx &rx, ZuCSpan expected, unsigned &offset)
+{
+  while (rx.input()) {
+    auto events = rx.events();
+    if (events & Zi::RxEvent::Error()) return false;
+    int64_t n = rx.consume(
+      [&expected, &offset](ZuBSpan span) -> int64_t {
+	unsigned remain = expected.length() - offset;
+	return span.length() < remain ? span.length() : remain;
+      },
+      [&expected, &offset](ZuBSpan span) {
+	if (::memcmp(span.data(), expected.data() + offset, span.length()))
+	  offset = expected.length() + 1;
+	else
+	  offset += span.length();
+      });
+    if (n < 0 || offset > expected.length()) return false;
+    if (!n) break;
+  }
+  return !rx.failed();
+}
+
 template <typename Link>
 void send(Link &link, State &state, int ready, int sent, ZuCSpan data)
 {
@@ -211,6 +234,215 @@ struct FailClient :
   int process(Link &, Rx &) { state->fail(); return -1; }
 };
 
+struct UpgradeState {
+  ZmSemaphore		listening;
+  ZmSemaphore		done;
+  ZmAtomic<unsigned>	closed = 0;
+  ZmAtomic<unsigned>	errors = 0;
+  ZmAtomic<unsigned>	srvStarts = 0;
+  ZmAtomic<unsigned>	cliStarts = 0;
+  ZmAtomic<unsigned>	srvFinals = 0;
+  uint16_t		port = 0;
+
+  void fail() {
+    errors = 1;
+    done.post();
+  }
+  void close() {
+    if (closed.xchAdd(1) + 1 == 2) done.post();
+  }
+};
+
+struct UpgradeReq :
+  public Zhttp::H1::Parser<UpgradeReq, true> {
+  using Base = Zhttp::H1::Parser<UpgradeReq, true>;
+  using State = Zhttp::H1::ParserState;
+  using Base::header;
+
+  void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+    method = method_;
+    path = path_ == "/stream";
+  }
+  void header(ZuBSpan key, ZuBSpan value) {
+    if (key == "upgrade" && value == "opaque") upgrade = true;
+    if (key == "connection" && value == "Upgrade") connection = true;
+  }
+
+  Zhttp::Method::T	method = -1;
+  bool			path = false;
+  bool			upgrade = false;
+  bool			connection = false;
+};
+
+struct UpgradeResp :
+  public Zhttp::H1::Parser<UpgradeResp, false> {
+  using Base = Zhttp::H1::Parser<UpgradeResp, false>;
+  using State = Zhttp::H1::ParserState;
+  using Base::header;
+
+  void status(unsigned v) { statusCode = v; }
+  void header(ZuBSpan key, ZuBSpan value) {
+    if (key == "upgrade" && value == "opaque") upgrade = true;
+    if (key == "connection" && value == "Upgrade") connection = true;
+  }
+
+  unsigned	statusCode = 0;
+  bool		upgrade = false;
+  bool		connection = false;
+};
+
+template <typename Profile> struct UpgradeServer;
+template <typename Profile> struct UpgradeSrvLink;
+
+struct UpgradeSession {
+  UpgradeReq	parser;
+  unsigned	offset = 0;
+  bool		replied = false;
+
+  template <typename Link>
+  void connected(Link &link) {
+    if (!link.streamEnable()) link.app()->state->fail();
+  }
+  template <typename Link>
+  void disconnected(Link &, bool) { }
+  template <typename Link, typename Rx>
+  int process(Link &link, Rx &rx) {
+    auto state = parser.process(rx);
+    if (state != UpgradeReq::State::Complete)
+      return state == UpgradeReq::State::Error ? -1 : 0;
+    if (parser.method != Zhttp::Method::GET || !parser.path ||
+	!parser.upgrade || !parser.connection) {
+      link.app()->state->fail();
+      return -1;
+    }
+    auto tx = link.txStream();
+    tx << "HTTP/1.1 101 Switching Protocols\r\n"
+	  "Upgrade: opaque\r\n"
+	  "Connection: Upgrade\r\n\r\n";
+    tx.flush();
+    if (!link.streamAccept()) {
+      link.app()->state->fail();
+      return -1;
+    }
+    return 1;
+  }
+  template <typename Link, typename Stream>
+  void streamProcess(Link &link, Stream stream) {
+    auto &state = *link.app()->state;
+    auto &rx = stream.rx();
+    bool input = rx.input();
+    auto events = rx.events();
+    if (events & Zi::RxEvent::Start()) ++state.srvStarts;
+    if (events & Zi::RxEvent::Error()) {
+      state.fail();
+      return;
+    }
+    if (input && !consumeStream(rx, Ping, offset)) {
+      state.fail();
+      return;
+    }
+    if (!replied && offset == Ping.length()) {
+      replied = true;
+      stream.tx([](auto &tx) {
+	tx << Pong;
+	tx.flush();
+      });
+    }
+    events |= rx.events();
+    if (events & Zi::RxEvent::Final()) ++state.srvFinals;
+  }
+};
+
+template <typename Profile>
+struct UpgradeServer :
+  public Zhttp::Server<UpgradeServer<Profile>, Profile> {
+  using Link = UpgradeSrvLink<Profile>;
+
+  UpgradeState	*state = nullptr;
+
+  UpgradeServer(UpgradeState *state_) : state{state_} { }
+
+  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
+  unsigned localPort() const { return state->port; }
+  void listening(const ZiListenInfo &) { state->listening.post(); }
+  void listening() { state->listening.post(); }
+  void listenFailed(bool) { state->fail(); }
+  void disconnected(Link &, bool) { state->close(); }
+};
+
+template <typename Profile>
+struct UpgradeSrvLink :
+  public Zhttp::ServerLink<
+    UpgradeServer<Profile>, UpgradeSrvLink<Profile>,
+    Profile, UpgradeSession> {
+  using Base = Zhttp::ServerLink<
+    UpgradeServer<Profile>, UpgradeSrvLink<Profile>,
+    Profile, UpgradeSession>;
+  using Base::Base;
+};
+
+template <typename Profile>
+struct UpgradeClient :
+  public Zhttp::Client<UpgradeClient<Profile>, Profile> {
+  struct Link :
+    public Zhttp::ClientLink<UpgradeClient, Link, Profile> {
+    using Base = Zhttp::ClientLink<UpgradeClient, Link, Profile>;
+    using Base::Base;
+
+    UpgradeResp	parser;
+    unsigned	offset = 0;
+  };
+
+  UpgradeState	*state = nullptr;
+
+  UpgradeClient(UpgradeState *state_) : state{state_} { }
+
+  void connected(Link &link, Zhttp::ConnectedInfo) {
+    if (!link.streamEnable()) {
+      state->fail();
+      return;
+    }
+    auto tx = link.txStream();
+    tx << "GET /stream HTTP/1.1\r\n"
+	  "Host: localhost\r\n"
+	  "Upgrade: opaque\r\n"
+	  "Connection: Upgrade\r\n\r\n"
+	  "ping";
+    tx.flush();
+  }
+  void disconnected(Link &, bool) { state->close(); }
+  void connectFailed(Link &, bool) { state->fail(); }
+  template <typename Rx>
+  int process(Link &link, Rx &rx) {
+    auto parserState = link.parser.process(rx);
+    if (parserState != UpgradeResp::State::Complete)
+      return parserState == UpgradeResp::State::Error ? -1 : 0;
+    if (link.parser.statusCode != 101 ||
+	!link.parser.upgrade || !link.parser.connection ||
+	!link.streamAccept()) {
+      state->fail();
+      return -1;
+    }
+    return 1;
+  }
+  template <typename Stream>
+  void streamProcess(Link &link, Stream stream) {
+    auto &rx = stream.rx();
+    bool input = rx.input();
+    auto events = rx.events();
+    if (events & Zi::RxEvent::Start()) ++state->cliStarts;
+    if (events & Zi::RxEvent::Error()) {
+      state->fail();
+      return;
+    }
+    if (input && !consumeStream(rx, Pong, link.offset)) {
+      state->fail();
+      return;
+    }
+    if (link.offset == Pong.length()) stream.end();
+  }
+};
+
 template <typename Profile> struct Config;
 template <> struct Config<Zhttp::H1TCP> {
   static auto client(const TempDir &) { return Zhttp::TCPConfig{}; }
@@ -234,6 +466,86 @@ template <> struct Config<Zhttp::H3QUIC> {
       .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan());
   }
 };
+
+template <typename Profile>
+void runUpgrade(const TempDir &temp)
+{
+  ZuTestScope(runUpgrade);
+
+  UpgradeState state;
+  state.port = loopbackPort();
+  ZuCHECK(state.port, "Upgrade loopback port allocation failed");
+  if (!state.port) return;
+
+  ZiMultiplex mx{mxParams()};
+  ZuCHECK(mx.start(), "Upgrade multiplexer start failed");
+  if (!mx.running()) return;
+
+  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  UpgradeServer<Profile> server{&state};
+  UpgradeClient<Profile> client{&state};
+  bool serverInit = server.init(engine, Config<Profile>::server(temp));
+  bool clientInit = client.init(engine, Config<Profile>::client(temp));
+  ZuCHECK(serverInit && clientInit, "Upgrade engine initialization failed");
+  if (!serverInit || !clientInit) {
+    if (clientInit) client.final();
+    if (serverInit) server.final();
+    mx.stop();
+    return;
+  }
+
+  bool serverStart = server.start();
+  bool clientStart = client.start();
+  ZuCHECK(serverStart && clientStart, "Upgrade engine start failed");
+  if (!serverStart || !clientStart) {
+    if (clientStart) client.stop();
+    if (serverStart) server.stop();
+    client.final();
+    server.final();
+    mx.stop();
+    return;
+  }
+
+  bool listening = state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCHECK(listening, "Upgrade listen timed out");
+  using Link = typename UpgradeClient<Profile>::Link;
+  ZmRef<Link> link;
+  if (listening) {
+    link = new Link{&client};
+    link->connect("127.0.0.1", state.port);
+    ZuCHECK(state.done.timedwait(Zm::now(10)) == 0,
+      "Upgrade stream lifecycle timed out");
+  }
+
+  server.stopAccepting();
+  ZmSemaphore stopDone;
+  ZmAtomic<unsigned> stopErrors = 0;
+  client.stop([&stopDone, &stopErrors](bool ok) {
+    if (!ok) ++stopErrors;
+    stopDone.post();
+  });
+  server.stop([&stopDone, &stopErrors](bool ok) {
+    if (!ok) ++stopErrors;
+    stopDone.post();
+  });
+  bool stopped =
+    stopDone.timedwait(Zm::now(10)) == 0 &&
+    stopDone.timedwait(Zm::now(10)) == 0 &&
+    !stopErrors.load_();
+  ZuCHECK(stopped, "Upgrade engine stop failed");
+  link = nullptr;
+  client.final();
+  server.final();
+  mx.stop();
+
+  if (!listening) return;
+  ZuCHECK(!state.errors.load_(), "Upgrade stream application error");
+  ZuCHECK(state.closed.load_() == 2,
+    "Upgrade stream disconnect count mismatch");
+  ZuCHECK(state.cliStarts.load_() == 1 &&
+      state.srvStarts.load_() == 1 && state.srvFinals.load_() == 1,
+    "Upgrade stream terminal event mismatch");
+}
 
 template <typename Profile>
 void run(
