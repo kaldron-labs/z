@@ -131,8 +131,8 @@ struct LinkRxDiag {
   AckECN	ecnRx[PktNumSpace::N];
 
   [[no_unique_address]] DiagCounter endpointReady = 0;
-  [[no_unique_address]] DiagCounter datagramsRx = 0;
-  [[no_unique_address]] DiagCounter bytesRx = 0;
+  ZmAtomic<uint64_t>	datagramsRx = 0;
+  ZmAtomic<uint64_t>	bytesRx = 0;
   [[no_unique_address]] DiagCounter packetsRx = 0;
   [[no_unique_address]] DiagCounter framesRx = 0;
   [[no_unique_address]] DiagCounter duplicatePacketsRx = 0;
@@ -190,8 +190,8 @@ struct LinkTxDiag {
   bool		ptoTimerActive = false;
   bool		lossTimerActive = false;
 
-  [[no_unique_address]] DiagCounter packetsTx = 0;
-  [[no_unique_address]] DiagCounter bytesTx = 0;
+  ZmAtomic<uint64_t>	packetsTx = 0;
+  ZmAtomic<uint64_t>	bytesTx = 0;
   [[no_unique_address]] DiagCounter cryptoBytesTx = 0;
   [[no_unique_address]] DiagCounter streamBytesTx = 0;
   [[no_unique_address]] DiagCounter ackOnlyPacketsTx = 0;

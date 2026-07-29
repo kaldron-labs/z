@@ -37,6 +37,8 @@ struct State {
   ZmAtomic<unsigned>	doneCount{0};
   ZmAtomic<unsigned>	clientConnected{0};
   ZmAtomic<unsigned>	serverConnected{0};
+  Ztc::QueueTelemetry	clientRx;
+  Ztc::QueueTelemetry	clientTx;
   ZiIP			ip;
   unsigned		port = 0;
 
@@ -48,6 +50,60 @@ struct State {
     if (doneCount.xchAdd(1) < 1) done.post();
   }
 };
+
+template <typename Link>
+void checkQueues(Link &link)
+{
+  auto rx = link.rxQueue();
+  auto tx = link.txQueue();
+  ZTCP_CHECK_RT(rx, "Rx telemetry queue is null");
+  ZTCP_CHECK_RT(tx, "Tx telemetry queue is null");
+  if (!rx || !tx) return;
+  ZTCP_CHECK_RT(link.rxQueue() == rx, "Rx telemetry queue is unstable");
+  ZTCP_CHECK_RT(link.txQueue() == tx, "Tx telemetry queue is unstable");
+  ZTCP_CHECK_RT(rx != tx, "Rx and Tx telemetry queues alias");
+
+  auto linkKey = link.telKey();
+  auto rxKey = rx->telKey();
+  auto txKey = tx->telKey();
+  ZTCP_CHECK_RT(
+    rxKey.template p<0>() == linkKey.template p<1>(),
+    "Rx telemetry queue ID mismatch");
+  ZTCP_CHECK_RT(
+    txKey.template p<0>() == linkKey.template p<1>(),
+    "Tx telemetry queue ID mismatch");
+  ZTCP_CHECK_RT(
+    rxKey.template p<1>() == Ztc::QueueType::Rx,
+    "Rx telemetry queue type mismatch");
+  ZTCP_CHECK_RT(
+    txKey.template p<1>() == Ztc::QueueType::Tx,
+    "Tx telemetry queue type mismatch");
+
+  Ztc::QueueTelemetry data;
+  data.id = ZuID{} << "dirty";
+  data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
+  data.count = data.size = data.full = 1;
+  data.type = Ztc::QueueType::Thread;
+  rx->telemetry(data);
+  ZTCP_CHECK_RT(data.id == rxKey.template p<0>(),
+    "Rx telemetry ID mismatch");
+  ZTCP_CHECK_RT(data.type == rxKey.template p<1>(),
+    "Rx telemetry type mismatch");
+  ZTCP_CHECK_RT(!data.outBytes && !data.outCount && !data.count &&
+    !data.size && !data.full, "Rx telemetry was not reset");
+
+  data.id = ZuID{} << "dirty";
+  data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
+  data.count = data.size = data.full = 1;
+  data.type = Ztc::QueueType::Thread;
+  tx->telemetry(data);
+  ZTCP_CHECK_RT(data.id == txKey.template p<0>(),
+    "Tx telemetry ID mismatch");
+  ZTCP_CHECK_RT(data.type == txKey.template p<1>(),
+    "Tx telemetry type mismatch");
+  ZTCP_CHECK_RT(!data.size && !data.full,
+    "Tx telemetry was not reset");
+}
 
 ZiMxParams mxParams()
 {
@@ -138,6 +194,8 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
 
   int process(Ztcp::RxStream &rx) {
     if (!consume(rx, Pong)) return 0;
+    rxQueue()->telemetry(app()->state->clientRx);
+    txQueue()->telemetry(app()->state->clientTx);
     app()->state->doneOne();
     disconnect();
     return 1;
@@ -222,6 +280,7 @@ void testLoop(const char *testName, ZiIP ip, const char *connectIP)
     "server listen timed out");
 
   ZmRef<ClientApp::Link> link = new ClientApp::Link(&client);
+  checkQueues(*link);
   link->connect(connectIP, state.port);
 
   ZTCP_CHECK_RT(state.done.timedwait(Zm::now(5)) == 0, "loopback timed out");
@@ -229,6 +288,17 @@ void testLoop(const char *testName, ZiIP ip, const char *connectIP)
   ZTCP_CHECK_RT(state.doneCount.load_() == 1, "client did not receive response");
   ZTCP_CHECK_RT(state.clientConnected.load_(), "client did not connect");
   ZTCP_CHECK_RT(state.serverConnected.load_(), "server did not connect");
+  ZTCP_CHECK_RT(state.clientRx.inCount >= 1, "Rx ingress count is zero");
+  ZTCP_CHECK_RT(state.clientRx.inBytes >= Pong.length(),
+    "Rx ingress bytes omit pong");
+  ZTCP_CHECK_RT(state.clientTx.inCount >= 1, "Tx ingress count is zero");
+  ZTCP_CHECK_RT(state.clientTx.inBytes >= Ping.length(),
+    "Tx ingress bytes omit ping");
+  ZTCP_CHECK_RT(state.clientTx.outCount >= 1, "Tx egress count is zero");
+  ZTCP_CHECK_RT(state.clientTx.outBytes >= Ping.length(),
+    "Tx egress bytes omit ping");
+  ZTCP_CHECK_RT(!state.clientRx.count, "Rx queue did not drain");
+  ZTCP_CHECK_RT(!state.clientTx.count, "Tx queue did not drain");
 
   server.stopListening();
   client.final();

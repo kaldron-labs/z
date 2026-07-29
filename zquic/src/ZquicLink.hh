@@ -29,6 +29,8 @@ class Link :
   public Ztc::Link {
 template <typename, typename>
 friend class Server;
+template <typename, Ztc::QueueType::T>
+friend class Ztc::LinkQueue;
 public:
   using StreamType = Zquic::StreamType;
 
@@ -56,6 +58,10 @@ public:
   using StreamQueue =
     ZmQueue<StreamRef,
       ZmQueueHeapID<"Zquic.Link.StreamQueue">>;
+  using RxTelQueue =
+    Ztc::LinkQueue<Link, Ztc::QueueType::Rx>;
+  using TxTelQueue =
+    Ztc::LinkQueue<Link, Ztc::QueueType::Tx>;
   static constexpr unsigned OpenQueuedBatch = 32;
   static constexpr unsigned StreamFlushBatch = 64;
   // PATH_RESPONSE frames are concrete replies; cap queued payloads at the
@@ -68,6 +74,7 @@ public:
 
   Link(App *app, bool isServer = false) :
     m_app{app}, m_isServer{isServer},
+    m_rxTelQueue{this}, m_txTelQueue{this},
     m_streams{new Streams}, m_closedStreams{new ClosedStreams} {
     for (auto &pn : m_txLargestAckd) pn = U64Null;
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
@@ -126,10 +133,10 @@ public:
   void telemetry(Ztc::LinkTelemetry &data) const override {
     data.hubID = app()->telID();
     data.id = telID();
-    data.rxCalls = m_rxDiag.datagramsRx;
-    data.txCalls = m_txDiag.packetsTx;
-    data.rxBytes = m_rxDiag.bytesRx;
-    data.txBytes = m_txDiag.bytesTx;
+    data.rxCalls = m_rxDiag.datagramsRx.load_();
+    data.txCalls = m_txDiag.packetsTx.load_();
+    data.rxBytes = m_rxDiag.bytesRx.load_();
+    data.txBytes = m_txDiag.bytesTx.load_();
     data.reconnects = 0;
     data.type = Ztc::LinkType::QUIC;
     switch (m_linkState) {
@@ -149,8 +156,8 @@ public:
 	break;
     }
   }
-  Ztc::Queue *rxQueue() const override { return nullptr; }
-  Ztc::Queue *txQueue() const override { return nullptr; }
+  Ztc::Queue *rxQueue() const override { return &m_rxTelQueue; }
+  Ztc::Queue *txQueue() const override { return &m_txTelQueue; }
   void up() override { impl()->telUp_(); }
   void down() override { (void)impl()->disconnect(); }
 
@@ -5885,7 +5892,7 @@ protected:
       o.logLossTimerUpd(event, time);
     }));
   }
-  uint64_t txPackets_() const { return m_txDiag.packetsTx; }
+  uint64_t txPackets_() const { return m_txDiag.packetsTx.load_(); }
 
   bool nextRetransmit_(PktNumSpace::T &level, SentFrameRef &ref) {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -6998,8 +7005,8 @@ nextSpace:
 	level, pn, bytes, recordFrame, ackLevel, ackLargest, packetType, ecn);
     if (!recorded) return false;
     ++m_txPN[level];
-    ++m_txDiag.packetsTx;
-    m_txDiag.bytesTx += bytes;
+    m_txDiag.packetsTx.store_(m_txDiag.packetsTx.load_() + 1);
+    m_txDiag.bytesTx.store_(m_txDiag.bytesTx.load_() + bytes);
     noteTxPktDiag_(recordRefs, ackLevel);
     ZquicLOG(app()->qlogTrace(), ([
       level, pn,
@@ -7611,12 +7618,12 @@ nextSpace:
   template <typename ReceiveLong, typename ReceiveShort>
   void receiveDatagram_(
     Datagram d, ReceiveLong receiveLong, ReceiveShort receiveShort) {
-    ++m_rxDiag.datagramsRx;
+    m_rxDiag.datagramsRx.store_(m_rxDiag.datagramsRx.load_() + 1);
     if (!d.buf) {
       ++m_rxDiag.failures;
       return;
     }
-    m_rxDiag.bytesRx += d.buf->length;
+    m_rxDiag.bytesRx.store_(m_rxDiag.bytesRx.load_() + d.buf->length);
     recordPathRx_(d.addr, d.buf->length);
     bool ok = true;
     unsigned offset = 0;
@@ -9110,9 +9117,33 @@ private:
     m_drainPTOs = 0;
   }
 
+protected:
+  uint64_t txQueueCount_() const {
+    uint64_t count = 0;
+    ZuUnroll::all<PktNumSpace::N>([this, &count](auto I) {
+      count += m_txPkts[I()].count();
+    });
+    return count;
+  }
+
+private:
+  void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
+    data.inCount = m_rxDiag.datagramsRx.load_();
+    data.inBytes = m_rxDiag.bytesRx.load_();
+    data.count = 0;
+  }
+
+  void txQueueTelemetry_(Ztc::QueueTelemetry &data) const {
+    data.outCount = m_txDiag.packetsTx.load_();
+    data.outBytes = m_txDiag.bytesTx.load_();
+    data.count = txQueueCount_();
+  }
+
   // immutable
   App			*m_app = nullptr;
   bool			m_isServer = false;
+  mutable RxTelQueue	m_rxTelQueue;
+  mutable TxTelQueue	m_txTelQueue;
 
   // shared
   ZmAtomic<unsigned>	m_disconnecting = 0;
