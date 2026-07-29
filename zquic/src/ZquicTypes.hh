@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zlib/ZuArray.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuSpan.hh>
 
@@ -42,9 +43,9 @@ public:
   bool generate();
   bool valid() const { return m_valid; }
   unsigned length() const { return m_valid ? Length : 0; }
-  const uint8_t *data() const { return m_data; }
+  const uint8_t *data() const { return m_data.data(); }
   ZuBSpan bspan() const {
-    return ZuBSpan{m_data, m_valid ? Length : 0};
+    return ZuBSpan{m_data.data(), m_valid ? Length : 0};
   }
 
   bool equals(const ResetToken &) const;
@@ -55,7 +56,7 @@ public:
   }
 
 private:
-  uint8_t	m_data[Length] = {};
+  ZuBArray<Length>	m_data = ZuBArray<Length>(Length, true);
   bool		m_valid = false;
 };
 
@@ -70,9 +71,9 @@ public:
   bool generate();
   bool valid() const { return m_valid; }
   unsigned length() const { return m_valid ? Length : 0; }
-  const uint8_t *data() const { return m_data; }
+  const uint8_t *data() const { return m_data.data(); }
   ZuBSpan bspan() const {
-    return ZuBSpan{m_data, m_valid ? Length : 0};
+    return ZuBSpan{m_data.data(), m_valid ? Length : 0};
   }
 
   bool equals(ZuBSpan) const;
@@ -84,9 +85,11 @@ public:
   }
 
 private:
-  uint8_t	m_data[Length] = {};
+  ZuBArray<Length>	m_data = ZuBArray<Length>(Length, true);
   bool		m_valid = false;
 };
+
+using PathData = ZuBArray<PathChallenge::Length>;
 
 inline constexpr uint32_t Version1 = 0x00000001U;
 inline constexpr unsigned MinUDPPayload = 1200;

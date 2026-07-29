@@ -36,9 +36,9 @@ static bool tokenHMAC_(uint8_t *out, ZuBSpan secret, ZuBSpan data)
   Ztls::HMAC<> hmac;
   hmac.start(secret);
   hmac.update(data);
-  uint8_t mac[Ztls::HMAC<>::Size];
-  hmac.finish(ZuSpan<uint8_t>{mac, sizeof(mac)});
-  memcpy(out, mac, AddressToken::TagLength);
+  ZuBArray<Ztls::HMAC<>::Size> mac(Ztls::HMAC<>::Size, false);
+  hmac.finish(mac.span());
+  memcpy(out, mac.data(), AddressToken::TagLength);
   return true;
 }
 
@@ -127,9 +127,9 @@ bool AddressToken::encode(
     memcpy(out + o, serverCID.data(), serverCID.length());
     o += serverCID.length();
   }
-  uint8_t tag[TagLength];
-  if (!tokenHMAC_(tag, secret, ZuBSpan{out, o})) return false;
-  memcpy(out + o, tag, TagLength);
+  ZuBArray<TagLength> tag(TagLength, false);
+  if (!tokenHMAC_(tag.data(), secret, ZuBSpan{out, o})) return false;
+  memcpy(out + o, tag.data(), TagLength);
   return true;
 }
 
@@ -168,14 +168,14 @@ TokenStatus::T AddressToken::validate(
   unsigned len = FixedLength + addrLen + odcidLen + scidLen + TagLength;
   if (odcidLen > CxnIDMax || scidLen > CxnIDMax || token.length() != len)
     return TokenStatus::Malformed;
-  uint8_t tag[TagLength];
+  ZuBArray<TagLength> tag(TagLength, false);
   auto auth = token;
   auth.trunc(token.length() - TagLength);
-  if (!tokenHMAC_(tag, secret, auth))
+  if (!tokenHMAC_(tag.data(), secret, auth))
     return TokenStatus::Auth;
   auto tokenTag = token;
   tokenTag.offset(token.length() - TagLength);
-  if (!tokenTagEquals_(tokenTag, tag))
+  if (!tokenTagEquals_(tokenTag, tag.data()))
     return TokenStatus::Auth;
   switch (uint8_t(token[5])) {
     case TokenKind::Retry:
@@ -254,53 +254,54 @@ ServerPktDecision ServerPkt::routeLongHdr(
 bool ResetToken::set(ZuBSpan token)
 {
   if (token.length() != Length) return false;
-  memcpy(m_data, token.data(), Length);
+  memcpy(m_data.data(), token.data(), Length);
   m_valid = true;
   return true;
 }
 
 bool ResetToken::generate()
 {
-  uint8_t bytes[Length];
+  ZuBArray<Length> bytes(Length, false);
   if (!Ztls::Backend::init() ||
-      !Ztls::Backend::random_bytes(ZuSpan<uint8_t>{bytes, Length}))
+      !Ztls::Backend::random_bytes(bytes.span()))
     return false;
-  return set(ZuBSpan{bytes, Length});
+  return set(bytes.cspan());
 }
 
 bool ResetToken::equals(const ResetToken &token) const
 {
   return m_valid == token.m_valid &&
-    (!m_valid || !memcmp(m_data, token.m_data, Length));
+    (!m_valid || !memcmp(m_data.data(), token.m_data.data(), Length));
 }
 
 bool PathChallenge::set(ZuBSpan data)
 {
   if (data.length() != Length) return false;
-  memcpy(m_data, data.data(), Length);
+  memcpy(m_data.data(), data.data(), Length);
   m_valid = true;
   return true;
 }
 
 bool PathChallenge::generate()
 {
-  uint8_t bytes[Length];
+  ZuBArray<Length> bytes(Length, false);
   if (!Ztls::Backend::init() ||
-      !Ztls::Backend::random_bytes(ZuSpan<uint8_t>{bytes, Length}))
+      !Ztls::Backend::random_bytes(bytes.span()))
     return false;
-  return set(ZuBSpan{bytes, Length});
+  return set(bytes.cspan());
 }
 
 bool PathChallenge::equals(ZuBSpan data) const
 {
   return m_valid && data.length() == Length &&
-    !memcmp(m_data, data.data(), Length);
+    !memcmp(m_data.data(), data.data(), Length);
 }
 
 bool PathChallenge::equals(const PathChallenge &challenge) const
 {
   return m_valid == challenge.m_valid &&
-    (!m_valid || !memcmp(m_data, challenge.m_data, Length));
+    (!m_valid ||
+      !memcmp(m_data.data(), challenge.m_data.data(), Length));
 }
 
 int StatelessReset::decode(ResetToken &token, ZuBSpan datagram)
@@ -350,13 +351,13 @@ bool CxnIDGen::random(CxnID &cid, unsigned length)
 {
   if (length < InitialLength || length > CxnIDMax) return false;
 
-  uint8_t bytes[CxnIDMax];
+  CxnID generated;
+  generated.length(length);
   if (!Ztls::Backend::init() ||
-      !Ztls::Backend::random_bytes(ZuSpan<uint8_t>{bytes, length}))
+      !Ztls::Backend::random_bytes(
+	ZuSpan<uint8_t>{generated.data(), length}))
     return false;
 
-  CxnID generated;
-  generated = ZuBSpan{bytes, length};
   cid = generated;
   return true;
 }

@@ -226,11 +226,13 @@ void testDeterministicHSProfile()
   ZuCHECK(client.deriveInitial(dcid) && server.deriveInitial(dcid),
     "Initial key derivation failed");
   ZuCHECK(!memcmp(
-      client.initialKeys().client.key, server.initialKeys().client.key,
+      client.initialKeys().client.key.data(),
+      server.initialKeys().client.key.data(),
       Zquic::InitialSecret::KeyLen),
     "client Initial keys differ across peers");
   ZuCHECK(!memcmp(
-      client.initialKeys().server.key, server.initialKeys().server.key,
+      client.initialKeys().server.key.data(),
+      server.initialKeys().server.key.data(),
       Zquic::InitialSecret::KeyLen),
     "server Initial keys differ across peers");
 

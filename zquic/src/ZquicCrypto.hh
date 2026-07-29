@@ -10,6 +10,8 @@
 #error "include zlib/Zquic.hh before this header"
 #endif
 
+#include <string.h>
+
 #include <zpicotls.h>
 
 #include <zlib/ZmFn.hh>
@@ -31,6 +33,29 @@ namespace Backend {
 
 namespace Zquic {
 
+template <unsigned Max>
+class SecretBytes {
+public:
+  unsigned length() const { return m_data.length(); }
+  bool length(unsigned n) {
+    if (n > Max) return false;
+    m_data.length(n);
+    return true;
+  }
+  uint8_t *data() { return m_data.data(); }
+  const uint8_t *data() const { return m_data.data(); }
+  uint8_t &operator [](unsigned i) { return m_data[i]; }
+  const uint8_t &operator [](unsigned i) const { return m_data[i]; }
+  ZuBSpan bspan() const { return m_data.cspan(); }
+  void clear() {
+    memset(m_data.data(), 0, Max);
+    m_data.length(0);
+  }
+
+private:
+  ZuBArray<Max>	m_data;
+};
+
 struct InitialSecret {
   static constexpr unsigned SecretLen = 32;
   static constexpr unsigned KeyLen = 16;
@@ -38,14 +63,30 @@ struct InitialSecret {
   static constexpr unsigned TagLen = 16;
   static constexpr unsigned HPMaskLen = 5;
 
-  uint8_t	secret[SecretLen] = {};
-  uint8_t	key[KeyLen] = {};
-  uint8_t	iv[IVLen] = {};
-  uint8_t	hp[KeyLen] = {};
+  void clear() {
+    memset(secret.data(), 0, secret.length());
+    memset(key.data(), 0, key.length());
+    memset(iv.data(), 0, iv.length());
+    memset(hp.data(), 0, hp.length());
+  }
+
+  ZuBArray<SecretLen>	secret = ZuBArray<SecretLen>(SecretLen, true);
+  ZuBArray<KeyLen>	key = ZuBArray<KeyLen>(KeyLen, true);
+  ZuBArray<IVLen>	iv = ZuBArray<IVLen>(IVLen, true);
+  ZuBArray<KeyLen>	hp = ZuBArray<KeyLen>(KeyLen, true);
 };
 
 struct InitialKeyMaterial {
-  uint8_t	initial[InitialSecret::SecretLen] = {};
+  void clear() {
+    memset(initial.data(), 0, initial.length());
+    client.clear();
+    server.clear();
+  }
+
+  ZuBArray<InitialSecret::SecretLen>
+		initial =
+		  ZuBArray<InitialSecret::SecretLen>(
+		    InitialSecret::SecretLen, true);
   InitialSecret	client;
   InitialSecret	server;
 };
@@ -81,17 +122,15 @@ struct TrafficSecret {
   static constexpr unsigned MaxIVLen = 16;
   static constexpr unsigned MaxHPLen = 32;
 
+  TrafficSecret() { clear(); }
+
   void clear();
   bool valid() const { return installed; }
 
-  uint8_t			secret[MaxSecretLen] = {};
-  uint8_t			key[MaxKeyLen] = {};
-  uint8_t			iv[MaxIVLen] = {};
-  uint8_t			hp[MaxHPLen] = {};
-  unsigned			secretLen = 0;
-  unsigned			keyLen = 0;
-  unsigned			ivLen = 0;
-  unsigned			hpLen = 0;
+  SecretBytes<MaxSecretLen>	secret;
+  SecretBytes<MaxKeyLen>	key;
+  SecretBytes<MaxIVLen>		iv;
+  SecretBytes<MaxHPLen>		hp;
   unsigned			tagLen = 0;
   ptls_aead_algorithm_t		*aead = nullptr;
   ptls_hash_algorithm_t		*hash = nullptr;
