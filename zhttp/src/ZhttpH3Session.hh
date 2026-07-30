@@ -55,11 +55,16 @@ struct Cxn {
   bool			localExtendedConnect = false;
   bool			peerExtendedConnect = false;
   uint64_t		errorCode = 0;
+  QPackLimits		limits;
+  Params		params;
   QPackRxTable		qpackRxTable;
 
   bool openLocal(
-    Link &link, const Params &params = Params{},
+    Link &link, const Params &params_ = Params{},
     bool extendedConnect = false) {
+    params = params_;
+    limits = params.qpackLimits();
+    if (!qpackRxTable.init(limits.rxCapacity)) return false;
     using StreamType = typename Link::StreamType;
     control = link.stream(StreamType::Simplex);
     enc = link.stream(StreamType::Simplex);
@@ -70,11 +75,11 @@ struct Cxn {
     auto payload = ZtLocalArray(Scratch, 64);
     CountBytes count;
     if (putVar(count, 0x01) < 0 ||
-	putVar(count, params.qpackTableCapacity()) < 0 ||
+	putVar(count, params.qpackRxCapacity()) < 0 ||
 	putVar(count, 0x06) < 0 ||
 	putVar(count, params.maxHeaderListSize()) < 0 ||
 	putVar(count, 0x07) < 0 ||
-	putVar(count, params.qpackBlockedStreams()) < 0 ||
+	putVar(count, params.qpackRxBlocked()) < 0 ||
 	(extendedConnect &&
 	  (putVar(count, 0x08) < 0 || putVar(count, 1) < 0)))
       return false;
@@ -82,11 +87,11 @@ struct Cxn {
 	putVar(payload, 0x04) < 0 ||
 	putVar(payload, count.length()) < 0 ||
 	putVar(payload, 0x01) < 0 ||
-	putVar(payload, params.qpackTableCapacity()) < 0 ||
+	putVar(payload, params.qpackRxCapacity()) < 0 ||
 	putVar(payload, 0x06) < 0 ||
 	putVar(payload, params.maxHeaderListSize()) < 0 ||
 	putVar(payload, 0x07) < 0 ||
-	putVar(payload, params.qpackBlockedStreams()) < 0 ||
+	putVar(payload, params.qpackRxBlocked()) < 0 ||
 	(extendedConnect &&
 	  (putVar(payload, 0x08) < 0 || putVar(payload, 1) < 0)))
       return false;
@@ -154,9 +159,18 @@ struct Cxn {
       });
   }
   bool qpackTxMaxCapacity(uint64_t capacity) {
-    return qpackTx_(SettingsError, [capacity](QPackTxTable &tx) {
-      return capacity <= uint32_t(-1) &&
-	tx.setMaxCapacity(uint32_t(capacity));
+    if (capacity > uint32_t(-1)) return false;
+    return qpackTx_(SettingsError, [capacity = uint32_t(capacity)](
+	QPackTxTable &tx) {
+      return tx.peerCapacity(capacity);
+    });
+  }
+  bool qpackTxBlocked(uint64_t blocked) {
+    if (blocked > uint32_t(-1)) return false;
+    return qpackTx_(SettingsError, [blocked = uint32_t(blocked)](
+	QPackTxTable &tx) {
+      tx.peerBlocked(blocked);
+      return true;
     });
   }
   bool qpackEncoderWrite(ZuBSpan span) { return writeQPack_(enc, span); }
@@ -234,6 +248,9 @@ struct CxnStream : public CxnParser<Impl> {
   }
   bool qpackTxMaxCapacity(uint64_t capacity) {
     return impl()->h3Cxn().qpackTxMaxCapacity(capacity);
+  }
+  bool qpackTxBlocked(uint64_t blocked) {
+    return impl()->h3Cxn().qpackTxBlocked(blocked);
   }
   void setting(uint64_t key, uint64_t value) {
     Base::setting(key, value);

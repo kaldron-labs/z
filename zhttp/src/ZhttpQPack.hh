@@ -14,8 +14,10 @@
 #endif
 
 #include <zlib/ZuHash.hh>
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZuString.hh>
 
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmLHash.hh>
 
@@ -54,7 +56,7 @@ struct QPackFieldFlags {
 ZtEnumStruct(QPackBuildFailure, uint8_t,
   None, Plan, PrefixEncode, CapacityPolicy, EncoderCapacityWrite,
   EncoderInsertWrite, HeadersFrameHeaderWrite, HeadersPayloadEmit,
-  Flush, CapacityCommit, InsertCommit, SectionTracking);
+  Flush, CapacityCommit, InsertCommit);
 
 struct QPackDecodedInsn {
   QPackInsn::T	type = QPackInsn::SetCapacity;
@@ -83,6 +85,13 @@ using QPackNameSet = ZmHashKV<
   ZmHashLock<ZmNoLock,
     ZmHashHeapID<"Zhttp.H3.Params.Names">>>;
 
+struct QPackLimits {
+  uint32_t	rxCapacity = 0;
+  uint32_t	txCapacity = 0;
+  uint32_t	rxBlocked = 0;
+  uint32_t	txSections = 0;
+};
+
 class Params {
 public:
   Params() :
@@ -93,12 +102,27 @@ public:
     maxHeaderListSize_ = v;
     return ZuMv(*this);
   }
-  Params &&qpackTableCapacity(unsigned v) {
-    qpackTableCapacity_ = v;
+  Params &&qpackRxCapacity(unsigned v) {
+    qpackRxCapacity_ = v;
     return ZuMv(*this);
   }
-  Params &&qpackBlockedStreams(unsigned v) {
-    qpackBlockedStreams_ = v;
+  Params &&qpackTxCapacity(unsigned v) {
+    qpackTxCapacity_ = v;
+    return ZuMv(*this);
+  }
+  Params &&qpackRxBlocked(unsigned v) {
+    qpackRxBlocked_ = v;
+    return ZuMv(*this);
+  }
+  Params &&qpackTxSections(unsigned v) {
+    qpackTxSections_ = v;
+    return ZuMv(*this);
+  }
+  Params &&qpackLimits(QPackLimits v) {
+    qpackRxCapacity_ = v.rxCapacity;
+    qpackTxCapacity_ = v.txCapacity;
+    qpackRxBlocked_ = v.rxBlocked;
+    qpackTxSections_ = v.txSections;
     return ZuMv(*this);
   }
   Params &&qpackIndex(ZuCSpan name) {
@@ -129,8 +153,16 @@ public:
   }
 
   unsigned maxHeaderListSize() const { return maxHeaderListSize_; }
-  unsigned qpackTableCapacity() const { return qpackTableCapacity_; }
-  unsigned qpackBlockedStreams() const { return qpackBlockedStreams_; }
+  unsigned qpackRxCapacity() const { return qpackRxCapacity_; }
+  unsigned qpackTxCapacity() const { return qpackTxCapacity_; }
+  unsigned qpackRxBlocked() const { return qpackRxBlocked_; }
+  unsigned qpackTxSections() const { return qpackTxSections_; }
+  QPackLimits qpackLimits() const {
+    return {
+      qpackRxCapacity_, qpackTxCapacity_,
+      qpackRxBlocked_, qpackTxSections_
+    };
+  }
 
 private:
   static void detach_(ZmRef<QPackNameSet> &set) {
@@ -153,8 +185,10 @@ private:
   ZmRef<QPackNameSet>	index_;
   ZmRef<QPackNameSet>	neverIndex_;
   unsigned		maxHeaderListSize_ = 1<<16;
-  unsigned		qpackTableCapacity_ = 0;
-  unsigned		qpackBlockedStreams_ = 0;
+  unsigned		qpackRxCapacity_ = 0;
+  unsigned		qpackTxCapacity_ = 0;
+  unsigned		qpackRxBlocked_ = 0;
+  unsigned		qpackTxSections_ = 0;
 };
 
 using QPackRxString =
@@ -181,6 +215,8 @@ struct QPackRxTable {
 
   // Connection-affine Rx state. Callers must serialize access from the owning
   // receive path; table storage is deliberately unsynchronized.
+  bool init(uint32_t);
+  void final();
   bool setCapacity(uint32_t);
   bool insert(Header);
   bool insert(ZuCSpan, ZuCSpan);
@@ -199,9 +235,8 @@ struct QPackRxTable {
   uint32_t used() const { return usedBytes_; }
   uint32_t count() const { return entries.length() - head_; }
   uint32_t maxEntries() const { return maxCapacityBytes_>>5; }
+  uint32_t slots() const { return entries.size(); }
 };
-
-inline const char *QPackTxHashID() { return "Zhttp.H3.QPackTx"; }
 
 using QPackTxString =
   ZtString<ZtStringHeapID<"Zhttp.H3.QPackTx.String">>;
@@ -232,6 +267,7 @@ struct QPackFieldKey {
 
 struct QPackTxEntry {
   uint64_t	abs = 0;
+  uint64_t	prevName = uint64_t(-1);
   uint32_t	size = 0;
   uint64_t	refcnt = 0;
   QPackTxString	name;
@@ -249,7 +285,20 @@ struct QPackTxHashEntry {
 
 using QPackTxHash = ZmLHash<QPackTxHashEntry,
   ZmLHashKey<QPackTxHashEntry::FieldAxor,
-    ZmLHashID<QPackTxHashID>>>;
+    ZmLHashLocal<>>>;
+
+struct QPackTxNameEntry {
+  uint64_t		abs = 0;
+  Compression::NameView key;
+
+  static Compression::NameView KeyAxor(
+      const QPackTxNameEntry &entry) {
+    return entry.key;
+  }
+};
+
+using QPackTxNames = ZmLHash<QPackTxNameEntry,
+  ZmLHashKey<QPackTxNameEntry::KeyAxor, ZmLHashLocal<>>>;
 
 struct QPackTxOrderEntry : public QPackTxEntry {
   static QPackFieldKey FieldAxor(const QPackTxOrderEntry &entry) {
@@ -272,39 +321,65 @@ struct QPackTxSection {
   }
 };
 
-inline const char *QPackTxSectionsID() {
-  return "Zhttp.H3.QPackTx.Sections";
-}
-
 using QPackTxSections =
   ZmLHash<QPackTxSection,
     ZmLHashKey<QPackTxSection::StreamAxor,
-      ZmLHashID<QPackTxSectionsID>>>;
+      ZmLHashLocal<>>>;
 
 struct QPackTxTable {
-  ZmRef<QPackTxHash>	hash;
+  ZuPtr<QPackTxHash>	exact;
+  ZuPtr<QPackTxNames>	names;
   QPackTxOrder		order;
-  ZmRef<QPackTxSections> sections;
+  ZuPtr<QPackTxSections> sections;
   uint32_t		orderHead_ = 0;
   uint64_t		insertCount_ = 0;
   uint64_t		knownReceivedCount_ = 0;
   uint32_t		capacityBytes_ = 0;
-  uint32_t		maxCapacityBytes_ = 0;
+  uint32_t		localCapacityBytes_ = 0;
+  uint32_t		peerCapacityBytes_ = 0;
+  uint32_t		peerBlocked_ = 0;
+  uint32_t		maxSections_ = 0;
+  uint32_t		sectionCount_ = 0;
   uint32_t		usedBytes_ = 0;
   bool			capacitySent = false;
 
   // Connection-affine Tx state. Callers must serialize access from the owning
   // transmit path.
-  QPackTxTable() :
-    hash{new QPackTxHash{ZmHashParams{128}}},
-    sections{new QPackTxSections{ZmHashParams{64}}} { }
-
+  bool init(uint32_t, uint32_t);
+  void final();
   bool setCapacity(uint32_t);
-  bool setMaxCapacity(uint32_t);
+  bool peerCapacity(uint32_t);
+  void peerBlocked(uint32_t v) { peerBlocked_ = v; }
   const QPackTxEntry *find(ZuCSpan, ZuCSpan) const;
+  const QPackTxEntry *findName(ZuCSpan) const;
+  const QPackTxEntry *findName(ZuCSpan, uint64_t) const;
   const QPackTxEntry *findAbs(uint64_t) const;
   bool insert(Header, uint64_t * = nullptr);
   bool insert(QPackTxString, QPackTxString, uint64_t * = nullptr);
+  template <typename Inserts>
+  bool canCommit(uint32_t capacity, const Inserts &inserts) const {
+    if (capacity > effectiveCapacity()) return false;
+    uint32_t used = usedBytes_;
+    uint32_t head = orderHead_;
+    auto makeRoom = [&](uint32_t n) {
+      while (head < order.length() && used + n > capacity) {
+	if (order[head].refcnt) return false;
+	used -= order[head++].size;
+      }
+      if (used + n > capacity) used = capacity - n;
+      return true;
+    };
+    if (!makeRoom(0)) return false;
+    for (unsigned i = 0; i < inserts.length(); ++i) {
+      uint64_t n_ =
+	uint64_t(inserts[i].name.length()) + inserts[i].value.length() + 32;
+      if (n_ > capacity) return false;
+      uint32_t n = uint32_t(n_);
+      if (!makeRoom(n)) return false;
+      used += n;
+    }
+    return true;
+  }
   bool lookupAbs(uint64_t, Header &) const;
   bool evict();
   bool dropOldest();
@@ -312,16 +387,35 @@ struct QPackTxTable {
   bool sectionAck(uint64_t);
   bool streamCancellation(uint64_t);
   bool applyDecoder(QPackInsn::T, uint64_t);
+  bool sectionAdmissible(uint64_t) const;
   bool trackSection(uint64_t, ZuSpan<uint64_t>);
   bool trackSection(uint64_t, QPackTxRefs);
   void compactOrder();
-  void rebuildHash();
+  void rebuildHashes();
 
   uint64_t insertCount() const { return insertCount_; }
   uint64_t knownReceivedCount() const { return knownReceivedCount_; }
   uint32_t capacity() const { return capacityBytes_; }
-  uint32_t maxCapacity() const { return maxCapacityBytes_; }
+  uint32_t localCapacity() const { return localCapacityBytes_; }
+  uint32_t peerCapacity() const { return peerCapacityBytes_; }
+  uint32_t effectiveCapacity() const {
+    return localCapacityBytes_ < peerCapacityBytes_ ?
+      localCapacityBytes_ : peerCapacityBytes_;
+  }
+  uint32_t peerBlocked() const { return peerBlocked_; }
+  uint32_t maxSections() const { return maxSections_; }
   uint32_t used() const { return usedBytes_; }
+  uint32_t count() const { return order.length() - orderHead_; }
+  uint32_t orderSlots() const { return order.size(); }
+  uint32_t exactSlots() const { return exact ? exact->size() : 0; }
+  uint32_t exactResized() const { return exact ? exact->resized() : 0; }
+  uint32_t nameSlots() const { return names ? names->size() : 0; }
+  uint32_t nameResized() const { return names ? names->resized() : 0; }
+  uint32_t sectionCount() const { return sectionCount_; }
+  uint32_t sectionSlots() const { return sections ? sections->size() : 0; }
+  uint32_t sectionResized() const {
+    return sections ? sections->resized() : 0;
+  }
 };
 
 struct QPack {
@@ -477,7 +571,7 @@ struct QPack {
     return decodeFieldSection(
       in, nullptr,
       [&l](Header h, QPackFieldFlags) { l(h); },
-      params, insertCount, params.qpackTableCapacity());
+      params, insertCount, params.qpackRxCapacity());
   }
 };
 

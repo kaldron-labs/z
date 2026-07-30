@@ -29,8 +29,28 @@ class Link :
   public Ztc::Link {
 template <typename, typename>
 friend class Server;
-template <typename, Ztc::QueueType::T>
-friend class Ztc::LinkQueue;
+
+  class TelQueue final : public Ztc::Queue {
+  public:
+    TelQueue(const Link *link) : m_link{link} { }
+
+    ZuTuple<ZuID, Ztc::QueueType::T> telKey() const override {
+      return {m_link->telID(), m_type};
+    }
+    void telemetry(Ztc::QueueTelemetry &data) const override {
+      if (m_type == Ztc::QueueType::Rx)
+	m_link->rxQueueTelemetry_(data);
+      else
+	m_link->txQueueTelemetry_(data);
+    }
+
+    void type(Ztc::QueueType::T type) { m_type = type; }
+
+  private:
+    const Link			*m_link;
+    Ztc::QueueType::T		m_type = Ztc::QueueType::Rx;
+  };
+
 public:
   using StreamType = Zquic::StreamType;
 
@@ -58,10 +78,6 @@ public:
   using StreamQueue =
     ZmQueue<StreamRef,
       ZmQueueHeapID<"Zquic.Link.StreamQueue">>;
-  using RxTelQueue =
-    Ztc::LinkQueue<Link, Ztc::QueueType::Rx>;
-  using TxTelQueue =
-    Ztc::LinkQueue<Link, Ztc::QueueType::Tx>;
   static constexpr unsigned OpenQueuedBatch = 32;
   static constexpr unsigned StreamFlushBatch = 64;
   // PATH_RESPONSE frames are concrete replies; cap queued payloads at the
@@ -74,7 +90,6 @@ public:
 
   Link(App *app, bool isServer = false) :
     m_app{app}, m_isServer{isServer},
-    m_rxTelQueue{this}, m_txTelQueue{this},
     m_streams{new Streams}, m_closedStreams{new ClosedStreams} {
     for (auto &pn : m_txLargestAckd) pn = U64Null;
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
@@ -156,8 +171,12 @@ public:
 	break;
     }
   }
-  Ztc::Queue *rxQueue() const override { return &m_rxTelQueue; }
-  Ztc::Queue *txQueue() const override { return &m_txTelQueue; }
+  void allQueues(Ztc::QueueMgr::AllFn fn) const override {
+    TelQueue queue{this};
+    fn(&queue);
+    queue.type(Ztc::QueueType::Tx);
+    fn(&queue);
+  }
   void up() override { impl()->telUp_(); }
   void down() override { (void)impl()->disconnect(); }
 
@@ -9128,22 +9147,32 @@ protected:
 
 private:
   void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
-    data.inCount = m_rxDiag.datagramsRx.load_();
+    data.id = telID();
     data.inBytes = m_rxDiag.bytesRx.load_();
+    data.outBytes = 0;
+    data.inCount = m_rxDiag.datagramsRx.load_();
+    data.outCount = 0;
     data.count = 0;
+    data.size = 0;
+    data.full = 0;
+    data.type = Ztc::QueueType::Rx;
   }
 
   void txQueueTelemetry_(Ztc::QueueTelemetry &data) const {
-    data.outCount = m_txDiag.packetsTx.load_();
+    data.id = telID();
+    data.inBytes = 0;
     data.outBytes = m_txDiag.bytesTx.load_();
+    data.inCount = 0;
+    data.outCount = m_txDiag.packetsTx.load_();
     data.count = txQueueCount_();
+    data.size = 0;
+    data.full = 0;
+    data.type = Ztc::QueueType::Tx;
   }
 
   // immutable
   App			*m_app = nullptr;
   bool			m_isServer = false;
-  mutable RxTelQueue	m_rxTelQueue;
-  mutable TxTelQueue	m_txTelQueue;
 
   // shared
   ZmAtomic<unsigned>	m_disconnecting = 0;

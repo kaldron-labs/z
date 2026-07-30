@@ -13,7 +13,10 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZuPtr.hh>
+
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmLHash.hh>
 #include <zlib/ZmRef.hh>
 
 #include <zlib/ZtArray.hh>
@@ -107,11 +110,101 @@ private:
   uint32_t	m_used = 0;
 };
 
+struct HPackTxEntry {
+  uint64_t	abs = 0;
+  uint32_t	size = 0;
+  HPackString	name;
+  HPackString	value;
+};
+
+struct HPackTxExactEntry {
+  uint64_t		abs = 0;
+  Compression::FieldView key;
+
+  static Compression::FieldView KeyAxor(
+      const HPackTxExactEntry &entry) {
+    return entry.key;
+  }
+};
+
+struct HPackTxNameEntry {
+  uint64_t		abs = 0;
+  Compression::NameView key;
+
+  static Compression::NameView KeyAxor(
+      const HPackTxNameEntry &entry) {
+    return entry.key;
+  }
+};
+
+using HPackTxEntries =
+  ZtArray<HPackTxEntry, ZtArrayHeapID<"Zhttp.H2.HPack.TxEntries">>;
+using HPackTxExact = ZmLHash<HPackTxExactEntry,
+  ZmLHashKey<HPackTxExactEntry::KeyAxor, ZmLHashLocal<>>>;
+using HPackTxNames = ZmLHash<HPackTxNameEntry,
+  ZmLHashKey<HPackTxNameEntry::KeyAxor, ZmLHashLocal<>>>;
+
+class HPackTxTable {
+public:
+  bool init(uint32_t);
+  void final();
+  bool capacity(uint32_t);
+  const HPackTxEntry *find(Compression::FieldView) const;
+  const HPackTxEntry *findName(ZuCSpan) const;
+  bool insert(Compression::FieldView);
+
+  uint32_t capacity() const { return m_capacity; }
+  uint32_t localCapacity() const { return m_localCapacity; }
+  uint32_t used() const { return m_used; }
+  uint64_t insertCount() const { return m_insertCount; }
+  unsigned count() const { return m_entries.length() - m_head; }
+  unsigned orderSlots() const { return m_entries.size(); }
+  unsigned exactSlots() const { return m_exact ? m_exact->size() : 0; }
+  unsigned nameSlots() const { return m_names ? m_names->size() : 0; }
+  unsigned exactResized() const {
+    return m_exact ? m_exact->resized() : 0;
+  }
+  unsigned nameResized() const {
+    return m_names ? m_names->resized() : 0;
+  }
+
+private:
+  const HPackTxEntry *findAbs_(uint64_t) const;
+  bool dropOldest_();
+  void compact_();
+  void rebuild_();
+
+  HPackTxEntries	m_entries;
+  ZuPtr<HPackTxExact> m_exact;
+  ZuPtr<HPackTxNames> m_names;
+  unsigned	m_head = 0;
+  uint64_t	m_insertCount = 0;
+  uint32_t	m_capacity = 0;
+  uint32_t	m_localCapacity = 0;
+  uint32_t	m_used = 0;
+};
+
 class HPack {
 public:
   static bool staticField(uint64_t, Field &);
   static int staticIndex(ZuCSpan, ZuCSpan);
   static int staticNameIndex(ZuCSpan);
+};
+
+ZtEnumStruct(HPackRep, uint8_t,
+  Indexed, Incremental, NonIndexed, NeverIndexed);
+
+struct HPackPlan {
+  Compression::FieldView	field;
+  uint64_t			index = 0;
+  HPackRep::T			rep = HPackRep::NonIndexed;
+};
+
+struct HPackUpdates {
+  uint64_t	generation = 0;
+  uint32_t	first = 0;
+  uint32_t	second = 0;
+  uint8_t	count = 0;
 };
 
 class HPackDecoder {
@@ -187,63 +280,87 @@ class HPackEncoder {
 public:
   HPackEncoder() : m_neverIndex{new HPackNameSet} { }
 
-  bool init(uint32_t capacity);
+  bool init(uint32_t);
   void reset();
   void final();
+  bool peerCapacity(uint32_t);
   void neverIndex(ZuCSpan);
   bool neverIndexed(ZuCSpan) const;
+  HPackPlan plan(Compression::FieldView) const;
+  HPackUpdates updates() const;
+  void commit(const HPackPlan &);
+  void commit(const HPackUpdates &);
+
   template <typename Bytes>
-  int field(Bytes &out, Field field) const {
-    int index = HPack::staticIndex(field.name, field.value);
-    if (index > 0)
-      return Compression::putPref(out, 0x80, 7, unsigned(index)) < 0 ?
-	-1 : int(out.length());
-    int nameIndex = HPack::staticNameIndex(field.name);
-    uint8_t prefix = neverIndexed(field.name) ? 0x10 : 0x00;
-    if (nameIndex > 0) {
-      if (Compression::putPref(out, prefix, 4, unsigned(nameIndex)) < 0)
-	return -1;
-    } else {
-      if (Compression::putPref(out, prefix, 4, 0) < 0 ||
-	  Compression::putString(out, 0, 7, field.name) < 0)
-	return -1;
+  int emit(Bytes &out, const HPackPlan &plan) const {
+    switch (plan.rep) {
+      case HPackRep::Indexed:
+	return Compression::putPref(out, 0x80, 7, plan.index) < 0 ?
+	  -1 : int(out.length());
+      case HPackRep::Incremental:
+      case HPackRep::NonIndexed:
+      case HPackRep::NeverIndexed:
+	break;
     }
-    return Compression::putString(out, 0, 7, field.value) < 0 ?
-      -1 : int(out.length());
+    uint8_t prefix =
+      plan.rep == HPackRep::Incremental ? 0x40 :
+      plan.rep == HPackRep::NeverIndexed ? 0x10 : 0x00;
+    unsigned bits = plan.rep == HPackRep::Incremental ? 6 : 4;
+    if (Compression::putPref(out, prefix, bits, plan.index) < 0)
+      return -1;
+    if (!plan.index &&
+	Compression::putString(out, 0, 7, plan.field.name) < 0)
+      return -1;
+    int n = plan.field.split ?
+      Compression::putString(
+	out, 0, 7, plan.field.value1, plan.field.separator,
+	plan.field.value2) :
+      Compression::putString(out, 0, 7, plan.field.value1);
+    return n < 0 ? -1 : int(out.length());
+  }
+
+  template <typename Bytes>
+  int emit(Bytes &out, const HPackUpdates &updates) const {
+    for (unsigned i = 0; i < updates.count; ++i)
+      if (Compression::putPref(
+	  out, 0x20, 5, i ? updates.second : updates.first) < 0)
+	return -1;
+    return int(out.length());
+  }
+
+  template <typename Bytes>
+  int field(Bytes &out, Field field) {
+    auto plan_ = plan({field.name, field.value});
+    if (emit(out, plan_) < 0) return -1;
+    commit(plan_);
+    return int(out.length());
   }
   template <typename Bytes>
   int field(
     Bytes &out, ZuCSpan name,
-    ZuCSpan value1, char separator, ZuCSpan value2) const {
-    int nameIndex = HPack::staticNameIndex(name);
-    uint8_t prefix = neverIndexed(name) ? 0x10 : 0x00;
-    if (nameIndex > 0) {
-      if (Compression::putPref(out, prefix, 4, unsigned(nameIndex)) < 0)
-	return -1;
-    } else {
-      if (Compression::putPref(out, prefix, 4, 0) < 0 ||
-	  Compression::putString(out, 0, 7, name) < 0)
-	return -1;
-    }
-    return Compression::putString(
-      out, 0, 7, value1, separator, value2) < 0 ?
-	-1 : int(out.length());
-  }
-  template <typename Bytes>
-  int capacity(Bytes &out, uint32_t value) {
-    if (value > m_maxCapacity || !m_table.capacity(value)) return -1;
-    return Compression::putPref(out, 0x20, 5, value) < 0 ?
-      -1 : int(out.length());
+    ZuCSpan value1, char separator, ZuCSpan value2) {
+    auto plan_ =
+      plan({name, value1, separator, value2});
+    if (emit(out, plan_) < 0) return -1;
+    commit(plan_);
+    return int(out.length());
   }
 
-  const HPackTable &table() const { return m_table; }
+  const HPackTxTable &table() const { return m_table; }
 
 private:
   void detachNeverIndex_();
+  void pending_(uint32_t);
 
-  HPackTable	m_table;
+  HPackTxTable	m_table;
   ZmRef<HPackNameSet>	m_neverIndex;
-  uint32_t	m_maxCapacity = 0;
+  uint64_t	m_generation = 0;
+  uint32_t	m_localCapacity = 0;
+  uint32_t	m_peerCapacity = 4096;
+  uint32_t	m_signalledCapacity = 4096;
+  uint32_t	m_pendingMin = 0;
+  uint32_t	m_pendingFinal = 0;
+  bool		m_pending = false;
 };
 
 } // namespace H2

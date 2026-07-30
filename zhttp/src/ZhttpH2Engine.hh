@@ -231,41 +231,39 @@ class HeaderBlock {
 
 public:
   HeaderBlock(
-    Native &native, const HPackEncoder &encoder, uint32_t streamID,
+    Native &native, HPackEncoder &encoder, uint32_t streamID,
     uint32_t frameSize) :
       m_native{native}, m_encoder{encoder}, m_streamID{streamID},
       m_frameSize{frameSize} { }
 
   void beginHeaders(bool endStream = false) {
     m_frames.length(0);
+    m_updates = m_encoder.updates();
     m_first = true;
     m_open = true;
     m_endStream = endStream;
   }
   void field(ZuCSpan name, ZuCSpan value) {
-    CountBytes count;
-    if (m_encoder.field(count, {name, value}) < 0) return;
-    Bytes bytes{
-      m_native, m_streamID, count.length(), m_frameSize,
-      m_first, m_endStream, m_frames};
-    m_encoder.field(bytes, {name, value});
-    bytes.flush();
-    m_first = false;
+    field_(Compression::FieldView{name, value});
   }
   void field(
     ZuCSpan name, ZuCSpan value1, char separator, ZuCSpan value2) {
-    CountBytes count;
-    if (m_encoder.field(
-	count, name, value1, separator, value2) < 0) return;
-    Bytes bytes{
-      m_native, m_streamID, count.length(), m_frameSize,
-      m_first, m_endStream, m_frames};
-    m_encoder.field(bytes, name, value1, separator, value2);
-    bytes.flush();
-    m_first = false;
+    field_(Compression::FieldView{name, value1, separator, value2});
   }
   void endHeaders(bool) {
     if (!m_open) return;
+    if (m_first && m_updates.count) {
+      CountBytes count;
+      if (m_encoder.emit(count, m_updates) < 0) return;
+      Bytes bytes{
+	m_native, m_streamID, count.length(), m_frameSize,
+	true, m_endStream, m_frames};
+      if (m_encoder.emit(bytes, m_updates) < 0) return;
+      bytes.flush();
+      m_encoder.commit(m_updates);
+      m_updates = {};
+      m_first = false;
+    }
     FrameTx tx{m_native, m_streamID, &m_frames};
     StreamBytes<FrameTx> sink{tx};
     putHeader(sink, {
@@ -312,8 +310,30 @@ public:
   }
 
 private:
+  void field_(Compression::FieldView field) {
+    auto plan = m_encoder.plan(field);
+    CountBytes count;
+    if ((m_first && m_encoder.emit(count, m_updates) < 0) ||
+	m_encoder.emit(count, plan) < 0)
+      return;
+    Bytes bytes{
+      m_native, m_streamID, count.length(), m_frameSize,
+      m_first, m_endStream, m_frames};
+    if ((m_first && m_encoder.emit(bytes, m_updates) < 0) ||
+	m_encoder.emit(bytes, plan) < 0)
+      return;
+    bytes.flush();
+    if (m_first) {
+      m_encoder.commit(m_updates);
+      m_updates = {};
+    }
+    m_encoder.commit(plan);
+    m_first = false;
+  }
+
   Native	&m_native;
-  const HPackEncoder &m_encoder;
+  HPackEncoder	&m_encoder;
+  HPackUpdates	m_updates;
   uint32_t	m_streamID = 0;
   uint32_t	m_frameSize = DefltFrameSize;
   HeaderFrames	m_frames;
@@ -401,8 +421,8 @@ public:
     m_frameAdmission.init(config.maxQueuedFrames());
     if (!Base::init(server, config.maxFrameSize()) ||
 	!m_decoder.init(
-	  config.headerTableSize(), config.maxHeaderListSize()) ||
-	!m_encoder.init(config.headerTableSize()))
+	  config.hpackRxCapacity(), config.maxHeaderListSize()) ||
+	!m_encoder.init(config.hpackTxCapacity()))
       return false;
     m_entries = new Entries;
     m_txWindows = new TxWindowHash;
@@ -427,7 +447,7 @@ public:
   }
 
   Impl *impl_() { return static_cast<Impl *>(this); }
-  const HPackEncoder &encoder() const { return m_encoder; }
+  HPackEncoder &encoder() { return m_encoder; }
   uint32_t peerFrameSize() {
     if (impl_()->app()->txInvoked()) return m_txFrameSize;
     return Base::peerSettings().maxFrameSize;
@@ -603,7 +623,7 @@ public:
     unsigned count = (m_server ? 5 : 6) +
       unsigned(m_config.extendedConnect());
     putSettingsHeader(sink, count);
-    putSetting(sink, Setting::HeaderTableSize, m_config.headerTableSize());
+    putSetting(sink, Setting::HeaderTableSize, m_config.hpackRxCapacity());
     if (!m_server) putSetting(sink, Setting::EnablePush, 0);
     putSetting(
       sink, Setting::MaxConcurrentStreams,
@@ -628,12 +648,14 @@ public:
   }
   void h2Settings() {
     sendSettingsAck_();
+    uint32_t hpackCapacity = Base::peerSettings().headerTableSize;
     uint32_t frameSize = peerFrameSize();
     bool extendedConnect = peerExtendedConnect();
     auto session = impl_();
     impl_()->app()->txRun([
-      session, frameSize, extendedConnect]() {
-      session->peerSettingsTx_(frameSize, extendedConnect);
+      session, hpackCapacity, frameSize, extendedConnect]() {
+      session->peerSettingsTx_(
+	hpackCapacity, frameSize, extendedConnect);
     });
     impl_()->h2SettingsReceived();
   }
@@ -846,9 +868,17 @@ public:
     return true;
   }
 
-  void peerSettingsTx_(uint32_t frameSize, bool extendedConnect) {
+  void peerSettingsTx_(
+    uint32_t hpackCapacity, uint32_t frameSize, bool extendedConnect) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 peer settings outside Tx thread", return);
+    if (!m_encoder.peerCapacity(hpackCapacity)) {
+      auto session = impl_();
+      impl_()->app()->rxRun([session]() {
+	session->h2Error(Error::CompressionError);
+      });
+      return;
+    }
     m_txFrameSize = frameSize;
     m_txExtendedConnect = extendedConnect;
   }
@@ -1217,7 +1247,6 @@ protected:
 
 private:
   // immutable after initWire()
-  HPackEncoder		m_encoder;
   H2Config		m_config;
   bool			m_server = false;
 
@@ -1241,6 +1270,7 @@ private:
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
+  HPackEncoder		m_encoder;
   ZmRef<TxWindowHash>	m_txWindows;
   PendingFrameQueue	m_pendingFrames;
   uint32_t		m_txInitialWindow = DefltWindow;

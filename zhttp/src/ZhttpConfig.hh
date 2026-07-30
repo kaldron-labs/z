@@ -382,12 +382,15 @@ private:
 
 class H2Config : public TLSConfig {
 public:
+  enum { MaxHPackCapacity = 1U<<24 };
+
   ZuCSpan caPath() const { return TLSConfig::caPath(); }
   ZuCSpan certPath() const { return TLSConfig::certPath(); }
   ZuCSpan keyPath() const { return TLSConfig::keyPath(); }
   bool mTLS() const { return TLSConfig::mTLS(); }
   int cacheTimeout() const { return TLSConfig::cacheTimeout(); }
-  uint32_t headerTableSize() const { return m_headerTableSize; }
+  uint32_t hpackRxCapacity() const { return m_hpackRxCapacity; }
+  uint32_t hpackTxCapacity() const { return m_hpackTxCapacity; }
   uint32_t maxHeaderListSize() const { return m_maxHeaderListSize; }
   uint32_t initialWindowSize() const { return m_initialWindowSize; }
   uint32_t maxFrameSize() const { return m_maxFrameSize; }
@@ -420,8 +423,12 @@ public:
     TLSConfig::cacheTimeout(v);
     return *this;
   }
-  H2Config &headerTableSize(uint32_t v) {
-    m_headerTableSize = v;
+  H2Config &hpackRxCapacity(uint32_t v) {
+    m_hpackRxCapacity = v;
+    return *this;
+  }
+  H2Config &hpackTxCapacity(uint32_t v) {
+    m_hpackTxCapacity = v;
     return *this;
   }
   H2Config &maxHeaderListSize(uint32_t v) {
@@ -467,7 +474,8 @@ public:
   }
 
 private:
-  uint32_t	m_headerTableSize = 4096;
+  uint32_t	m_hpackRxCapacity = 4096;
+  uint32_t	m_hpackTxCapacity = 4096;
   uint32_t	m_maxHeaderListSize = 1U<<16;
   uint32_t	m_initialWindowSize = (1U<<16) - 1;
   uint32_t	m_maxFrameSize = 1U<<14;
@@ -494,7 +502,11 @@ public:
     DefltServerStreams = 4096,
     // Three mandatory H3 streams plus bounded diagnostic/extension headroom.
     DefltControlStreams = 16,
-    DefltMigrationCIDReserve = 1
+    DefltMigrationCIDReserve = 1,
+    // Bound per-connection QPACK storage to 16MiB/1M sections.  These are
+    // trusted local policy limits, not protocol limits or peer permissions.
+    MaxQPackCapacity = 1U<<24,
+    MaxQPackSections = 1U<<20
   };
 
   ZuCSpan caPath() const { return m_caPath; }
@@ -512,6 +524,10 @@ public:
   unsigned migrationCIDReserve() const { return m_migrationCIDReserve; }
   unsigned qlogRingSize() const { return m_qlogRingSize; }
   unsigned qlogAge() const { return m_qlogAge; }
+  unsigned qpackRxCapacity() const { return m_qpackRxCapacity; }
+  unsigned qpackTxCapacity() const { return m_qpackTxCapacity; }
+  unsigned qpackRxBlocked() const { return m_qpackRxBlocked; }
+  unsigned qpackTxSections() const { return m_qpackTxSections; }
   double rxDrop() const { return m_rxDrop; }
   double txDrop() const { return m_txDrop; }
   const ZiSockAddr &migrationLocal() const { return m_migrationLocal; }
@@ -525,6 +541,12 @@ public:
   bool ecn() const { return m_ecn; }
   bool qlog() const { return m_qlog; }
   bool extendedConnect() const { return m_extendedConnect; }
+  bool qpackValid() const {
+    return m_qpackRxCapacity <= MaxQPackCapacity &&
+      m_qpackTxCapacity <= MaxQPackCapacity &&
+      m_qpackRxBlocked <= MaxQPackSections &&
+      m_qpackTxSections <= MaxQPackSections;
+  }
 
   QUICConfig &caPath(ZuCSpan v) { m_caPath = v; return *this; }
   QUICConfig &certPath(ZuCSpan v) { m_certPath = v; return *this; }
@@ -559,6 +581,22 @@ public:
     return *this;
   }
   QUICConfig &qlogAge(unsigned v) { m_qlogAge = v; return *this; }
+  QUICConfig &qpackRxCapacity(unsigned v) {
+    m_qpackRxCapacity = v;
+    return *this;
+  }
+  QUICConfig &qpackTxCapacity(unsigned v) {
+    m_qpackTxCapacity = v;
+    return *this;
+  }
+  QUICConfig &qpackRxBlocked(unsigned v) {
+    m_qpackRxBlocked = v;
+    return *this;
+  }
+  QUICConfig &qpackTxSections(unsigned v) {
+    m_qpackTxSections = v;
+    return *this;
+  }
   QUICConfig &rxDrop(double v) { m_rxDrop = v; return *this; }
   QUICConfig &txDrop(double v) { m_txDrop = v; return *this; }
   QUICConfig &migrationLocal(const ZiSockAddr &v) {
@@ -607,6 +645,10 @@ private:
   unsigned	m_migrationCIDReserve = DefltMigrationCIDReserve;
   unsigned	m_qlogRingSize = 0;
   unsigned	m_qlogAge = 0;
+  unsigned	m_qpackRxCapacity = 0;
+  unsigned	m_qpackTxCapacity = 0;
+  unsigned	m_qpackRxBlocked = 0;
+  unsigned	m_qpackTxSections = 0;
   double	m_rxDrop = 0;
   double	m_txDrop = 0;
   int8_t	m_migration = Migration::Passive;

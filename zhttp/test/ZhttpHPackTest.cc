@@ -6,6 +6,8 @@
 
 // Z HTTP/2 HPACK test
 
+#include <stdio.h>
+
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZhttpHPack.hh>
@@ -290,6 +292,149 @@ void testEncoder()
   encoder.final();
 }
 
+void testDynamicEncoder()
+{
+  ZuTestScope(testDynamicEncoder);
+
+  Zhttp::H2::HPackEncoder encoder;
+  Zhttp::H2::HPackDecoder decoder;
+  Fields fields;
+  Bytes encoded;
+  ZuCHECK(encoder.init(256) && decoder.init(256, 1U<<16),
+    "initialize dynamic HPACK endpoints");
+  auto initial = encoder.updates();
+  ZuCHECK(initial.count == 1 && initial.first == 256 &&
+      encoder.emit(encoded, initial) >= 0 &&
+      decode(decoder, encoded, fields) && !fields,
+    "local HPACK Tx ceiling did not schedule the initial size update");
+  encoder.commit(initial);
+
+  auto emit = [&encoder, &decoder, &fields, &encoded](
+      Zhttp::Compression::FieldView field_) {
+    encoded.length(0);
+    auto plan = encoder.plan(field_);
+    unsigned before = encoder.table().count();
+    Bytes counted;
+    bool planned = encoder.emit(counted, plan) >= 0 &&
+      encoder.table().count() == before;
+    bool emitted = encoder.emit(encoded, plan) >= 0 &&
+      encoded == counted && encoder.table().count() == before;
+    if (emitted) encoder.commit(plan);
+    return planned && emitted &&
+      decode(decoder, encoded, fields);
+  };
+
+  ZuCHECK(emit({"x-dyn", "one"}) &&
+      fields.length() == 1 && field(fields, 0, "x-dyn", "one") &&
+      (encoded[0] & 0xc0) == 0x40 && encoder.table().count() == 1,
+    "first HPACK field used incremental indexing exactly once");
+  ZuCHECK(emit({"x-dyn", "one"}) &&
+      encoded.length() == 1 && encoded[0] == 0xbe &&
+      encoder.table().count() == 1,
+    "HPACK exact dynamic lookup selected index 62");
+  ZuCHECK(emit({"x-dyn", "two"}) &&
+      encoded[0] == 0x7e && encoder.table().count() == 2 &&
+      field(fields, 0, "x-dyn", "two"),
+    "HPACK name-only dynamic lookup selected the newest name");
+  auto staticExact = encoder.plan({":method", "GET"});
+  auto staticName = encoder.plan({"cache-control", "private"});
+  ZuCHECK(staticExact.rep == Zhttp::H2::HPackRep::Indexed &&
+      staticExact.index == 2 &&
+      staticName.rep == Zhttp::H2::HPackRep::Incremental &&
+      staticName.index == 24,
+    "HPACK dynamic lookup displaced static exact/name precedence");
+  ZuCHECK(emit({"x-split", "a?b"}) &&
+      emit({"x-split", "a", '?', "b"}) &&
+      (encoded[0] & 0x80) && field(fields, 0, "x-split", "a?b"),
+    "segmented HPACK value matched a contiguous dynamic entry");
+
+  unsigned before = encoder.table().count();
+  ZuCHECK(emit({"authorization", "secret"}) &&
+      emit({"authorization", "secret"}) &&
+      (encoded[0] & 0xf0) == 0x10 &&
+      encoder.table().count() == before,
+    "never-index policy bypassed dynamic lookup and insertion");
+
+  encoder.final();
+  decoder.final();
+
+  Zhttp::H2::HPackEncoder disabled;
+  ZuCHECK(disabled.init(0), "initialize zero-capacity HPACK encoder");
+  auto plan = disabled.plan({"x-zero", "value"});
+  encoded.length(0);
+  ZuCHECK(plan.rep == Zhttp::H2::HPackRep::NonIndexed &&
+      disabled.emit(encoded, plan) >= 0 &&
+      !(encoded[0] & 0xf0) && !disabled.table().count(),
+    "zero-capacity HPACK did not use non-indexed fallback");
+}
+
+void testTxStorageAndUpdates()
+{
+  ZuTestScope(testTxStorageAndUpdates);
+
+  Zhttp::H2::HPackTxTable table;
+  enum { Capacity = 32768, Entries = 300 };
+  ZuCHECK(table.init(Capacity) && table.capacity(Capacity),
+    "initialize bounded HPACK Tx table");
+  unsigned orderSlots = table.orderSlots();
+  unsigned exactSlots = table.exactSlots();
+  unsigned nameSlots = table.nameSlots();
+  bool inserted = true;
+  for (unsigned i = 0; i < Entries; ++i) {
+    char name[24], value[24];
+    snprintf(name, sizeof(name), "x-hpack-%u", i);
+    snprintf(value, sizeof(value), "v%u", i);
+    if (!table.insert({ZuCSpan{name}, ZuCSpan{value}})) {
+      inserted = false;
+      break;
+    }
+  }
+  ZuCHECK(inserted && table.orderSlots() == orderSlots &&
+      table.exactSlots() == exactSlots &&
+      table.nameSlots() == nameSlots &&
+      !table.exactResized() && !table.nameResized(),
+    "HPACK Tx churn grew or resized bounded storage");
+
+  Zhttp::H2::HPackTxTable names;
+  ZuCHECK(names.init(128) && names.capacity(128) &&
+      names.insert({"x", "one"}) && names.insert({"x", "two"}) &&
+      names.insert({"y", "three"}) && names.insert({"z", "four"}) &&
+      !names.find({"x", "one"}) && names.find({"x", "two"}) &&
+      names.findName("x") && names.findName("x")->value == "two",
+    "HPACK eviction hid the newest duplicate name");
+
+  Zhttp::H2::HPackEncoder encoder;
+  Bytes bytes;
+  ZuCHECK(encoder.init(8192) && encoder.peerCapacity(0) &&
+      encoder.peerCapacity(4096),
+    "prepare coalesced HPACK capacity updates");
+  auto updates = encoder.updates();
+  ZuCHECK(updates.count == 2 && !updates.first &&
+      updates.second == 4096 && encoder.emit(bytes, updates) >= 0 &&
+      bytes[0] == 0x20,
+    "HPACK capacity reduction/increase ordering mismatch");
+  encoder.commit(updates);
+  ZuCHECK(!encoder.updates().count,
+    "HPACK capacity update remained pending after commit");
+}
+
+void testFieldView()
+{
+  ZuTestScope(testFieldView);
+
+  Zhttp::Compression::FieldView contiguous{"x", "a?b"};
+  Zhttp::Compression::FieldView segmented{"x", "a", '?', "b"};
+  Zhttp::Compression::FieldView empty1{"x", ""};
+  Zhttp::Compression::FieldView empty2{"x", "", '\0', ""};
+  ZuCHECK(contiguous == segmented &&
+      contiguous.hash() == segmented.hash() &&
+      contiguous.valueLength() == 3,
+    "contiguous and segmented field hashes diverged");
+  ZuCHECK(!(empty1 == empty2) && empty1.valueLength() == 0 &&
+      empty2.valueLength() == 1,
+    "empty segmented field boundaries were conflated");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -303,4 +448,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRFCResponses, true);
   ZuTestCall(testRepresentationsAndFailures);
   ZuTestCall(testEncoder);
+  ZuTestCall(testDynamicEncoder);
+  ZuTestCall(testTxStorageAndUpdates);
+  ZuTestCall(testFieldView);
 }

@@ -361,15 +361,35 @@ struct ClientSession :
   }
 
   void connected(Zquic::Connected info) {
-    if (info.version != Zquic::Version1 || info.alpn != "h3" ||
-	!h3.openLocal(
-	  *this, H3::Params{},
-	  this->app()->user()->quicConfig().extendedConnect())) {
+    if (info.version != Zquic::Version1 || info.alpn != "h3") {
       connectFailed(false);
       return;
     }
-    if (h3.localExtendedConnect) return;
-    h3Ready();
+    const auto &config = this->app()->user()->quicConfig();
+    H3::QPackLimits limits{
+      config.qpackRxCapacity(), config.qpackTxCapacity(),
+      config.qpackRxBlocked(), config.qpackTxSections()
+    };
+    bool extendedConnect = config.extendedConnect();
+    auto session = ZmMkRef(this);
+    this->app()->txRun([session, limits, extendedConnect]() mutable {
+      bool ok = session->h3Tx.init(limits.txCapacity, limits.txSections);
+      session->app()->rxRun([
+	session = ZuMv(session), limits, extendedConnect, ok
+      ]() mutable {
+	if (!ok || session->down) {
+	  session->connectFailed(false);
+	  return;
+	}
+	H3::Params params;
+	params.qpackLimits(limits);
+	if (!session->h3.openLocal(*session, params, extendedConnect)) {
+	  session->connectFailed(false);
+	  return;
+	}
+	if (!session->h3.localExtendedConnect) session->h3Ready();
+      });
+    });
   }
   void h3Ready() {
     if (ready) return;
@@ -392,6 +412,8 @@ struct ClientSession :
     });
   }
   void endpointDown_() {
+    if (finalizing) return;
+    finalizing = true;
     down = true;
     for (unsigned i = 0; i < streams.length(); ++i) {
       auto logical = ZuMv(streams[i]->logical);
@@ -408,7 +430,14 @@ struct ClientSession :
       if (logical) logical->connectFailed_(false);
     }
     waiting.length(0);
-    this->app()->sessionDown();
+    h3.qpackRxTable.final();
+    auto session = ZmMkRef(this);
+    this->app()->txRun([session]() mutable {
+      session->h3Tx.final();
+      session->app()->rxRun([session = ZuMv(session)]() mutable {
+	session->app()->sessionDown();
+      });
+    });
   }
   void connectFailed(bool transient) {
     auto self = ZmMkRef(this);
@@ -437,12 +466,21 @@ struct ClientSession :
     });
   }
   void finish(Stream *stream) {
+    auto session = this;
+    this->app()->rxInvoke(session, [
+      session, stream = ZmMkRef(stream)
+    ]() mutable {
+      session->finish_(ZuMv(stream));
+      return session;
+    });
+  }
+  void finish_(StreamRef stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical end outside Rx thread", return);
     if (!stream || !stream->logical || stream->localEnd) return;
     stream->localEnd = true;
     if (stream->remoteEnd) closeLater_(stream, false);
-    this->send(ZmMkRef(stream), "", true);
+    this->send(ZuMv(stream), "", true);
   }
   void remoteEnd(Stream *stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
@@ -562,6 +600,7 @@ public:
   bool			closePeer = false;
   bool			migrationRequested = false;
   bool			migrationDone = false;
+  bool			finalizing = false;
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -692,11 +731,29 @@ struct ServerSession :
     Base{app}, remote{ZuMv(remote_)} { }
 
   void connected(Zquic::Connected info) {
-    if (info.version != Zquic::Version1 || info.alpn != "h3" ||
-	!h3.openLocal(
-	  *this, H3::Params{},
-	  this->app()->user()->quicConfig().extendedConnect()))
+    if (info.version != Zquic::Version1 || info.alpn != "h3") {
       Base::disconnect(H3::SettingsError);
+      return;
+    }
+    const auto &config = this->app()->user()->quicConfig();
+    H3::QPackLimits limits{
+      config.qpackRxCapacity(), config.qpackTxCapacity(),
+      config.qpackRxBlocked(), config.qpackTxSections()
+    };
+    bool extendedConnect = config.extendedConnect();
+    auto session = ZmMkRef(this);
+    this->app()->txRun([session, limits, extendedConnect]() mutable {
+      bool ok = session->h3Tx.init(limits.txCapacity, limits.txSections);
+      session->app()->rxRun([
+	session = ZuMv(session), limits, extendedConnect, ok
+      ]() mutable {
+	if (!ok || session->closed()) return;
+	H3::Params params;
+	params.qpackLimits(limits);
+	if (!session->h3.openLocal(*session, params, extendedConnect))
+	  session->disconnect(H3::SettingsError);
+      });
+    });
   }
   void disconnected(bool peer) {
     logicalDisconnected(peer);
@@ -708,7 +765,14 @@ struct ServerSession :
       if (logical[i]->logical)
 	logical[i]->logical->disconnected_(peer);
     logical.length(0);
-    this->app()->user()->release();
+    h3.qpackRxTable.final();
+    auto session = ZmMkRef(this);
+    this->app()->txRun([session]() mutable {
+      session->h3Tx.final();
+      session->app()->rxRun([session = ZuMv(session)]() mutable {
+	session->app()->user()->release();
+      });
+    });
   }
   void streamed(StreamRef) { }
   void streamResetReceived(StreamRef stream, uint64_t, uint64_t) {
@@ -718,12 +782,21 @@ struct ServerSession :
     if (stream) (void)stream->process(stream->rxStream());
   }
   void finish(Stream *stream) {
+    auto session = this;
+    this->app()->rxInvoke(session, [
+      session, stream = ZmMkRef(stream)
+    ]() mutable {
+      session->finish_(ZuMv(stream));
+      return session;
+    });
+  }
+  void finish_(StreamRef stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical end outside Rx thread", return);
     if (!stream || !stream->logical || stream->localEnd) return;
     stream->localEnd = true;
     if (stream->remoteEnd) closeLater_(stream, false);
-    this->send(ZmMkRef(stream), "", true);
+    this->send(ZuMv(stream), "", true);
   }
   void remoteEnd(Stream *stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
@@ -881,7 +954,7 @@ public:
       [](void *ptr, uint64_t error) {
 	static_cast<H3Cxn *>(ptr)->error(error);
       },
-      uint64_t(m_stream->id()));
+      uint64_t(m_stream->id()), &m_session->h3.params);
     parser.extendedConnect(m_session->h3.localExtendedConnect);
     (void)rx;
     return parser.process(*m_stream);
@@ -894,7 +967,8 @@ public:
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackEncoderWrite(span);
       },
-      uint64_t(m_stream->id()), m_session->h3PeerCap());
+      uint64_t(m_stream->id()), m_session->h3PeerCap(),
+      &m_session->h3.params);
     return m_stream->txStream();
   }
   void finish() {
@@ -994,6 +1068,7 @@ public:
   using Base::init;
 
   bool init(const EngineConfig &engine, const QUICConfig &config) {
+    if (!config.qpackValid()) return false;
     m_config = config;
     if (!Base::init(Traits::clientParams(engine, config))) return false;
     Base::faults(config);
@@ -1053,7 +1128,7 @@ public:
       [](void *ptr, uint64_t error) {
 	static_cast<H3Cxn *>(ptr)->error(error);
       },
-      uint64_t(m_stream->id()));
+      uint64_t(m_stream->id()), &m_native->h3.params);
     parser.extendedConnect(m_native->h3.localExtendedConnect);
     (void)rx;
     return parser.process(*m_stream);
@@ -1066,7 +1141,8 @@ public:
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackEncoderWrite(span);
       },
-      uint64_t(m_stream->id()), m_native->h3PeerCap());
+      uint64_t(m_stream->id()), m_native->h3PeerCap(),
+      &m_native->h3.params);
     return m_stream->txStream();
   }
   void finish() {
@@ -1109,6 +1185,7 @@ public:
   using Base::init;
 
   bool init(const EngineConfig &engine, const QUICConfig &config) {
+    if (!config.qpackValid()) return false;
     m_config = config;
     if (!Base::init(Traits::serverParams(engine, config))) return false;
     Base::faults(config);
