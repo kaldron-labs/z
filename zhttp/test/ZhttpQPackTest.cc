@@ -74,7 +74,7 @@ void testQPackPolicy()
   ZuTestScope(testQPackPolicy);
 
   Zhttp::H3::Params params;
-  params.qpackTableCapacity(256).qpackIndex("accept").qpackNeverIndex("cookie");
+  params.qpackTxCapacity(256).qpackIndex("accept").qpackNeverIndex("cookie");
   for (unsigned i = 0; i < 40; ++i) {
     char name[16];
     snprintf(name, sizeof(name), "x-qpack-%u", i);

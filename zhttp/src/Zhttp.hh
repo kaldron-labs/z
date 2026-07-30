@@ -169,6 +169,7 @@ struct Impl : public Parser<Impl, ...> {
   // optional - post peer decoder instructions and SETTINGS capacity to Tx
   bool qpackTxInsn(QPackInsn::T, uint64_t);
   bool qpackTxMaxCapacity(uint64_t);
+  bool qpackTxBlocked(uint64_t);
 };
 #endif
 

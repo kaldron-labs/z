@@ -6,6 +6,8 @@
 
 #include <zlib/ZhttpHPack.hh>
 
+#include <zlib/ZmAssert.hh>
+
 namespace Zhttp { namespace H2 {
 
 static_assert(HPackTbl::N == 61);
@@ -76,6 +78,172 @@ void HPackTable::compact_()
   if (!m_head) return;
   m_entries.shift(m_head);
   m_head = 0;
+}
+
+bool HPackTxTable::init(uint32_t capacity)
+{
+  final();
+  m_localCapacity = capacity;
+  uint32_t n = capacity>>5;
+  if (n) {
+    m_entries.ensure(n);
+    m_exact = new HPackTxExact{ZmHashParams{n}};
+    m_names = new HPackTxNames{ZmHashParams{n}};
+  }
+  m_capacity = capacity < 4096 ? capacity : 4096;
+  return m_entries.size() >= n &&
+    (!m_exact || m_exact->size() >= n) &&
+    (!m_names || m_names->size() >= n);
+}
+
+void HPackTxTable::final()
+{
+  m_names = nullptr;
+  m_exact = nullptr;
+  m_entries.init();
+  m_head = 0;
+  m_insertCount = 0;
+  m_capacity = 0;
+  m_localCapacity = 0;
+  m_used = 0;
+}
+
+bool HPackTxTable::capacity(uint32_t capacity)
+{
+  if (capacity > m_localCapacity) return false;
+  m_capacity = capacity;
+  while (m_head < m_entries.length() && m_used > m_capacity)
+    if (!dropOldest_()) return false;
+  return m_used <= m_capacity;
+}
+
+const HPackTxEntry *HPackTxTable::findAbs_(uint64_t abs) const
+{
+  if (m_head >= m_entries.length()) return nullptr;
+  uint64_t base = m_entries[m_head].abs;
+  uint64_t count_ = m_entries.length() - m_head;
+  if (abs < base || abs >= base + count_) return nullptr;
+  const auto &entry = m_entries[m_head + unsigned(abs - base)];
+  return entry.abs == abs ? &entry : nullptr;
+}
+
+const HPackTxEntry *HPackTxTable::find(
+  Compression::FieldView field) const
+{
+  if (!m_exact) return nullptr;
+  auto indexed = m_exact->find(field);
+  if (!indexed) return nullptr;
+  auto entry = findAbs_(indexed->abs);
+  if (!entry) return nullptr;
+  return Compression::FieldView{entry->name, entry->value} == field ?
+    entry : nullptr;
+}
+
+const HPackTxEntry *HPackTxTable::findName(ZuCSpan name) const
+{
+  if (!m_names) return nullptr;
+  auto indexed = m_names->find(Compression::NameView{name});
+  if (!indexed) return nullptr;
+  auto entry = findAbs_(indexed->abs);
+  return entry && entry->name == name ? entry : nullptr;
+}
+
+bool HPackTxTable::insert(Compression::FieldView field)
+{
+  uint64_t n_ =
+    uint64_t(field.name.length()) + field.valueLength() + 32;
+  if (n_ > m_capacity) return false;
+  uint32_t n = uint32_t(n_);
+  while (m_head < m_entries.length() && m_used + n > m_capacity)
+    if (!dropOldest_()) return false;
+  if (m_head && m_entries.length() == m_entries.size()) compact_();
+  if (!m_exact || !m_names || m_entries.length() >= m_entries.size())
+    return false;
+
+  uint64_t abs = m_insertCount;
+  auto entry = new (m_entries.push()) HPackTxEntry();
+  entry->abs = abs;
+  entry->size = n;
+  entry->name = field.name;
+  entry->value.length(field.valueLength());
+  for (unsigned i = 0; i < entry->value.length(); ++i)
+    entry->value[i] = field.value(i);
+
+  Compression::FieldView key{entry->name, entry->value};
+  if (!m_exact->add(HPackTxExactEntry{abs, key})) {
+    m_entries.length(m_entries.length() - 1);
+    return false;
+  }
+  auto name = const_cast<HPackTxNameEntry *>(
+      m_names->find(Compression::NameView{entry->name}));
+  if (name) {
+    name->abs = abs;
+    name->key = Compression::NameView{entry->name};
+  } else if (!m_names->add(
+      HPackTxNameEntry{abs, Compression::NameView{entry->name}})) {
+    m_exact->del(key);
+    m_entries.length(m_entries.length() - 1);
+    return false;
+  }
+
+  ZmAssert(!m_exact->resized());
+  ZmAssert(!m_names->resized());
+  m_used += n;
+  ++m_insertCount;
+  return true;
+}
+
+bool HPackTxTable::dropOldest_()
+{
+  if (m_head >= m_entries.length()) return false;
+  const auto &entry = m_entries[m_head];
+  m_used -= entry.size;
+  m_exact->del(Compression::FieldView{entry.name, entry.value});
+  auto name = m_names->find(Compression::NameView{entry.name});
+  if (name && name->abs == entry.abs)
+    m_names->del(Compression::NameView{entry.name});
+  ++m_head;
+  if (m_head == m_entries.length()) {
+    m_entries.length(0);
+    m_head = 0;
+  } else if (m_head >= 64 && m_head >= (m_entries.length()>>1))
+    compact_();
+  return true;
+}
+
+void HPackTxTable::compact_()
+{
+  if (!m_head) return;
+  m_entries.splice(0, m_head);
+  m_head = 0;
+  rebuild_();
+}
+
+void HPackTxTable::rebuild_()
+{
+  if (!m_exact || !m_names) return;
+  m_exact->clean();
+  m_names->clean();
+  for (unsigned i = m_head; i < m_entries.length(); ++i) {
+    auto &entry = m_entries[i];
+    if (!m_exact->add(HPackTxExactEntry{
+	  entry.abs, {entry.name, entry.value}})) {
+      ZmAssert(false);
+      return;
+    }
+    auto name = const_cast<HPackTxNameEntry *>(
+	m_names->find(Compression::NameView{entry.name}));
+    if (name) {
+      name->abs = entry.abs;
+      name->key = Compression::NameView{entry.name};
+    } else if (!m_names->add(HPackTxNameEntry{
+	  entry.abs, Compression::NameView{entry.name}})) {
+      ZmAssert(false);
+      return;
+    }
+  }
+  ZmAssert(!m_exact->resized());
+  ZmAssert(!m_names->resized());
 }
 
 bool HPack::staticField(uint64_t index, Field &field)
@@ -263,8 +431,12 @@ bool HPackDecoder::finish()
 bool HPackEncoder::init(uint32_t capacity)
 {
   final();
-  m_maxCapacity = capacity;
-  if (!m_table.capacity(capacity)) return false;
+  m_localCapacity = capacity;
+  m_peerCapacity = 4096;
+  m_signalledCapacity = 4096;
+  if (!m_table.init(capacity)) return false;
+  uint32_t effective = capacity < 4096 ? capacity : 4096;
+  if (effective != m_signalledCapacity) pending_(effective);
   return true;
 }
 
@@ -274,11 +446,107 @@ void HPackEncoder::reset()
 
 void HPackEncoder::final()
 {
-  m_table.reset();
-  m_table.capacity(0);
+  m_table.final();
   detachNeverIndex_();
   m_neverIndex->clean();
-  m_maxCapacity = 0;
+  m_generation = 0;
+  m_localCapacity = 0;
+  m_peerCapacity = 4096;
+  m_signalledCapacity = 4096;
+  m_pendingMin = 0;
+  m_pendingFinal = 0;
+  m_pending = false;
+}
+
+bool HPackEncoder::peerCapacity(uint32_t capacity)
+{
+  m_peerCapacity = capacity;
+  uint32_t effective =
+    m_localCapacity < capacity ? m_localCapacity : capacity;
+  if (!m_table.capacity(effective)) return false;
+  if (effective != m_signalledCapacity || m_pending) pending_(effective);
+  return true;
+}
+
+HPackPlan HPackEncoder::plan(Compression::FieldView field) const
+{
+  HPackPlan plan_{.field = field};
+  bool never = neverIndexed(field.name);
+  if (!never && !field.split) {
+    int index = HPack::staticIndex(field.name, field.value1);
+    if (index > 0) {
+      plan_.index = unsigned(index);
+      plan_.rep = HPackRep::Indexed;
+      return plan_;
+    }
+  }
+  if (!never)
+    if (auto entry = m_table.find(field)) {
+      plan_.index =
+	62 + m_table.insertCount() - entry->abs - 1;
+      plan_.rep = HPackRep::Indexed;
+      return plan_;
+    }
+
+  int nameIndex = HPack::staticNameIndex(field.name);
+  if (nameIndex > 0)
+    plan_.index = unsigned(nameIndex);
+  else if (auto entry = m_table.findName(field.name))
+    plan_.index = 62 + m_table.insertCount() - entry->abs - 1;
+
+  if (never) {
+    plan_.rep = HPackRep::NeverIndexed;
+    return plan_;
+  }
+  uint64_t size =
+    uint64_t(field.name.length()) + field.valueLength() + 32;
+  plan_.rep = m_table.capacity() && size <= m_table.capacity() ?
+    HPackRep::Incremental : HPackRep::NonIndexed;
+  return plan_;
+}
+
+HPackUpdates HPackEncoder::updates() const
+{
+  HPackUpdates updates{.generation = m_generation};
+  if (!m_pending) return updates;
+  updates.first = m_pendingMin;
+  updates.count = 1;
+  if (m_pendingFinal != m_pendingMin) {
+    updates.second = m_pendingFinal;
+    updates.count = 2;
+  }
+  return updates;
+}
+
+void HPackEncoder::commit(const HPackPlan &plan)
+{
+  if (plan.rep != HPackRep::Incremental) return;
+  bool ok = m_table.insert(plan.field);
+  ZmAssert(ok);
+  (void)ok;
+}
+
+void HPackEncoder::commit(const HPackUpdates &updates)
+{
+  if (!updates.count) return;
+  m_signalledCapacity =
+    updates.count == 2 ? updates.second : updates.first;
+  if (updates.generation != m_generation) return;
+  m_pending = false;
+  m_pendingMin = 0;
+  m_pendingFinal = 0;
+}
+
+void HPackEncoder::pending_(uint32_t capacity)
+{
+  ++m_generation;
+  if (!m_pending) {
+    m_pendingMin = m_pendingFinal = capacity;
+    m_pending = true;
+    return;
+  }
+  if (capacity < m_pendingMin) m_pendingMin = capacity;
+  m_pendingFinal = capacity;
 }
 
 void HPackEncoder::neverIndex(ZuCSpan name)

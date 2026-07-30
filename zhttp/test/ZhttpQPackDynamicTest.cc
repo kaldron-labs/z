@@ -309,6 +309,8 @@ struct CxnStream :
   public Zhttp::H3::CxnParser<CxnStream> {
   using Base = Zhttp::H3::CxnParser<CxnStream>;
 
+  CxnStream() { qpackTxTable.init(4096, 64); }
+
   RxStream &rxStream() { return rx; }
   bool resetReceived() const { return false; }
   bool stopReceived() const { return false; }
@@ -318,7 +320,12 @@ struct CxnStream :
   }
   bool qpackTxMaxCapacity(uint64_t capacity) {
     return capacity <= uint32_t(-1) &&
-      qpackTxTable.setMaxCapacity(uint32_t(capacity));
+      qpackTxTable.peerCapacity(uint32_t(capacity));
+  }
+  bool qpackTxBlocked(uint64_t blocked) {
+    if (blocked > uint32_t(-1)) return false;
+    qpackTxTable.peerBlocked(uint32_t(blocked));
+    return true;
   }
   void setting(uint64_t key, uint64_t value) {
     Base::setting(key, value);
@@ -385,7 +392,7 @@ void testRxTable()
   ZuTestScope(testRxTable);
 
   Zhttp::H3::QPackRxTable table;
-  table.maxCapacityBytes_ = 128;
+  table.init(128);
   ZuCHECK(table.setCapacity(128), "rx capacity setup failed");
   ZuCHECK(table.insert({":authority", "www.example.com"}) &&
       table.insert({":path", "/sample/path"}) &&
@@ -419,7 +426,7 @@ void testDynamicFieldSectionDecode()
   ZuTestScope(testDynamicFieldSectionDecode);
 
   Zhttp::H3::QPackRxTable table;
-  table.maxCapacityBytes_ = 256;
+  table.init(256);
   table.setCapacity(256);
   table.insert({":authority", "www.example.com"});
   table.insert({":path", "/sample/path"});
@@ -477,7 +484,7 @@ void testFieldRepresentationGoldens()
   ZuTestScope(testFieldRepresentationGoldens);
 
   Zhttp::H3::QPackRxTable table;
-  table.maxCapacityBytes_ = 512;
+  table.init(512);
   table.setCapacity(512);
   table.insert({"x-a", "one"});
   table.insert({"x-b", "two"});
@@ -1136,6 +1143,29 @@ void testSettingsKeyBoundary()
   }
   {
     CxnStream stream;
+    uint32_t orderSlots = stream.qpackTxTable.orderSlots();
+    uint32_t exactSlots = stream.qpackTxTable.exactSlots();
+    uint32_t nameSlots = stream.qpackTxTable.nameSlots();
+    uint32_t sectionSlots = stream.qpackTxTable.sectionSlots();
+    Zhttp::H3::HdrBytes settings;
+    putSetting(settings, 0x01, uint32_t(-1));
+    putSetting(settings, 0x07, 77);
+    Zhttp::H3::HdrBytes bytes;
+    Zhttp::H3::putVar(bytes, 0x00);
+    putFrame(bytes, 0x04, ZuBSpan{settings});
+    stream.push(bytes);
+    ZuCHECK(stream.process(stream) ==
+	Zhttp::H3::CxnState::PeerSettingsReceived &&
+	stream.qpackTxTable.peerCapacity() == uint32_t(-1) &&
+	stream.qpackTxTable.peerBlocked() == 77 &&
+	stream.qpackTxTable.orderSlots() == orderSlots &&
+	stream.qpackTxTable.exactSlots() == exactSlots &&
+	stream.qpackTxTable.nameSlots() == nameSlots &&
+	stream.qpackTxTable.sectionSlots() == sectionSlots,
+      "peer QPACK SETTINGS allocated or were not retained");
+  }
+  {
+    CxnStream stream;
     Zhttp::H3::HdrBytes settings;
     putSetting(settings, 0x08, 1);
     putSetting(settings, 0x08, 1);
@@ -1191,7 +1221,8 @@ void testTxTable()
   ZuTestScope(testTxTable);
 
   Zhttp::H3::QPackTxTable table;
-  ZuCHECK(table.setMaxCapacity(128) && table.setCapacity(128),
+  ZuCHECK(table.init(128, 8) && table.peerCapacity(128) &&
+      table.setCapacity(128),
     "tx capacity setup failed");
   uint64_t abs = uint64_t(-1);
   ZuCHECK(table.insert({"accept", "application/json"}, &abs) && !abs,
@@ -1228,12 +1259,146 @@ void testTxTable()
   ZuCHECK(table.used() <= table.capacity(), "tx eviction failed");
 }
 
+void testTxNameLookup()
+{
+  ZuTestScope(testTxNameLookup);
+
+  Zhttp::H3::QPackTxTable table;
+  uint64_t first = 0, second = 0;
+  ZuCHECK(table.init(256, 8) && table.peerCapacity(256) &&
+      table.setCapacity(256) &&
+      table.insert({"x-name", "one"}, &first) &&
+      table.insert({"x-name", "two"}, &second),
+    "dynamic name table setup failed");
+  ZuCHECK(table.findName("x-name") &&
+      table.findName("x-name")->abs == second,
+    "dynamic name lookup did not select newest entry");
+  ZuCHECK(table.insertCountIncrement(1) &&
+      table.findName("x-name", table.insertCount()) &&
+      table.findName("x-name", table.insertCount())->abs == first,
+    "dynamic name lookup did not fall back to older eligible entry");
+  ZuCHECK(table.insertCountIncrement(1) &&
+      table.findName("x-name", table.insertCount())->abs == second,
+    "dynamic name lookup did not advance to newly eligible entry");
+  ZuCHECK(!table.nameResized(),
+    "dynamic name lookup resized bounded name storage");
+
+  Zhttp::H3::QPackTxTable churn;
+  ZuCHECK(churn.init(4096, 8) && churn.peerCapacity(4096) &&
+      churn.setCapacity(4096),
+    "dynamic name churn setup failed");
+  bool inserted = true;
+  for (unsigned i = 0; i < 300; ++i) {
+    char value[24];
+    snprintf(value, sizeof(value), "v%u", i);
+    if (!churn.insert({"x-repeat", ZuCSpan{value}})) {
+      inserted = false;
+      break;
+    }
+  }
+  auto newest = churn.findName("x-repeat");
+  ZuCHECK(inserted && newest && newest->value == "v299" &&
+      !churn.exactResized() && !churn.nameResized(),
+    "eviction/compaction did not preserve the newest name mapping");
+  ZuCHECK(churn.setCapacity(64) &&
+      (newest = churn.findName("x-repeat")) &&
+      newest->value == "v299",
+    "capacity reduction left a stale same-name mapping");
+}
+
+void testBoundedStorage()
+{
+  ZuTestScope(testBoundedStorage);
+
+  Zhttp::H3::QPackRxTable rx;
+  Zhttp::H3::QPackTxTable tx;
+  ZuCHECK(rx.init(0) && tx.init(0, 0) &&
+      !rx.slots() && !tx.orderSlots() && !tx.exactSlots() &&
+      !tx.nameSlots() &&
+      !tx.sectionSlots(),
+    "zero QPACK limits allocated dynamic storage");
+
+  ZuCHECK(rx.init(31) && !rx.maxEntries() && !rx.slots(),
+    "31-byte Rx capacity allocated an impossible entry");
+  ZuCHECK(rx.init(32) && rx.maxEntries() == 1 && rx.slots() >= 1,
+    "32-byte Rx capacity did not allocate one entry slot");
+
+  enum { Capacity = 32768, Entries = 300, Sections = 128 };
+  ZuCHECK(rx.init(Capacity) && rx.setCapacity(Capacity),
+    "bounded Rx setup failed");
+  uint32_t rxSlots = rx.slots();
+  for (unsigned i = 0; i < Entries; ++i) {
+    char name[24], value[24];
+    snprintf(name, sizeof(name), "x-rx-bound-%u", i);
+    snprintf(value, sizeof(value), "v%u", i);
+    ZuCHECK(rx.insert({ZuCSpan{name}, ZuCSpan{value}}),
+      "bounded Rx churn insert failed");
+  }
+  ZuCHECK(rx.slots() == rxSlots,
+    "bounded Rx churn changed array capacity");
+
+  ZuCHECK(tx.init(Capacity, Sections),
+    "bounded Tx setup failed");
+  uint32_t orderSlots = tx.orderSlots();
+  uint32_t exactSlots = tx.exactSlots();
+  uint32_t nameSlots = tx.nameSlots();
+  uint32_t sectionSlots = tx.sectionSlots();
+  ZuCHECK(tx.peerCapacity(uint32_t(-1)) &&
+      tx.orderSlots() == orderSlots && tx.exactSlots() == exactSlots &&
+      tx.nameSlots() == nameSlots &&
+      tx.sectionSlots() == sectionSlots &&
+      tx.effectiveCapacity() == Capacity &&
+      tx.setCapacity(Capacity),
+    "peer capacity changed locally bounded storage");
+  uint64_t newest = 0;
+  for (unsigned i = 0; i < Entries; ++i) {
+    char name[24], value[24];
+    snprintf(name, sizeof(name), "x-tx-bound-%u", i);
+    snprintf(value, sizeof(value), "v%u", i);
+    ZuCHECK(tx.insert({ZuCSpan{name}, ZuCSpan{value}}, &newest),
+      "bounded Tx churn insert failed");
+  }
+  ZuCHECK(tx.orderSlots() == orderSlots &&
+      tx.exactSlots() == exactSlots && !tx.exactResized() &&
+      tx.nameSlots() == nameSlots && !tx.nameResized(),
+    "bounded Tx churn grew or resized entry storage");
+
+  for (unsigned i = 0; i < Sections; ++i) {
+    Zhttp::H3::QPackTxRefs refs;
+    refs.push(newest);
+    ZuCHECK(tx.trackSection(1000 + i, ZuMv(refs)),
+      "bounded section insertion failed");
+  }
+  Zhttp::H3::QPackTxRefs denied;
+  denied.push(newest);
+  ZuCHECK(!tx.trackSection(2000, ZuMv(denied)) &&
+      tx.sectionCount() == Sections &&
+      tx.sectionSlots() == sectionSlots && !tx.sectionResized(),
+    "section bound grew or resized section storage");
+  for (unsigned i = Sections; i; --i)
+    ZuCHECK(tx.sectionAck(999 + i), "bounded section release failed");
+  ZuCHECK(!tx.sectionCount() && !tx.sectionResized(),
+    "section churn retained state or resized");
+
+  ZuCHECK(tx.peerCapacity(64) && tx.capacity() <= 64 &&
+      tx.orderSlots() == orderSlots && tx.exactSlots() == exactSlots &&
+      tx.nameSlots() == nameSlots,
+    "peer capacity reduction reallocated Tx storage");
+  rx.final();
+  tx.final();
+  ZuCHECK(!rx.slots() && !tx.orderSlots() && !tx.exactSlots() &&
+      !tx.nameSlots() &&
+      !tx.sectionSlots() && rx.init(0) && tx.init(0, 0),
+    "QPACK init/final retained dynamic storage");
+}
+
 void testTxEvictReferenced()
 {
   ZuTestScope(testTxEvictReferenced);
 
   Zhttp::H3::QPackTxTable table;
-  ZuCHECK(table.setMaxCapacity(128) && table.setCapacity(128),
+  ZuCHECK(table.init(128, 8) && table.peerCapacity(128) &&
+      table.setCapacity(128),
     "tx capacity setup failed");
   uint64_t abs0 = uint64_t(-1), abs1 = uint64_t(-1);
   ZuCHECK(table.insert({"a", "b"}, &abs0) && !abs0 &&
@@ -1257,7 +1422,7 @@ void testRxTxChurn()
   ZuTestScope(testRxTxChurn);
 
   Zhttp::H3::QPackRxTable rx;
-  rx.maxCapacityBytes_ = 96;
+  rx.init(96);
   ZuCHECK(rx.setCapacity(96), "rx churn capacity setup failed");
   for (unsigned i = 0; i < 40; ++i) {
     char name[16], value[16];
@@ -1276,7 +1441,8 @@ void testRxTxChurn()
     "rx churn newest lookup failed");
 
   Zhttp::H3::QPackTxTable tx;
-  ZuCHECK(tx.setMaxCapacity(96) && tx.setCapacity(96),
+  ZuCHECK(tx.init(96, 8) && tx.peerCapacity(96) &&
+      tx.setCapacity(96),
     "tx churn capacity setup failed");
   for (unsigned i = 0; i < 40; ++i) {
     char name[16], value[16];
@@ -1304,7 +1470,8 @@ void testTxSectionStress()
   ZuTestScope(testTxSectionStress);
 
   Zhttp::H3::QPackTxTable table;
-  ZuCHECK(table.setMaxCapacity(512) && table.setCapacity(512),
+  ZuCHECK(table.init(512, 8) && table.peerCapacity(512) &&
+      table.setCapacity(512),
     "tx section stress capacity setup failed");
   uint64_t abs[6];
   for (unsigned i = 0; i < 6; ++i) {
@@ -1447,7 +1614,7 @@ void testBuilderPeerCapacity()
   ZuTestScope(testBuilderPeerCapacity);
 
   BuilderState builder;
-  builder.params.qpackTableCapacity(256);
+  builder.params.qpackTxCapacity(256);
   CaptureTxStream stream;
   builder.request(stream);
   ZuCHECK(!builder.encoder.bytes.length() && !builder.tx.capacity() &&
@@ -1466,8 +1633,9 @@ void testBuilderPeerCapacity()
     "builder static/literal HEADERS payload did not decode");
 
   BuilderState dynamicBuilder;
-  dynamicBuilder.params.qpackTableCapacity(256);
-  ZuCHECK(dynamicBuilder.tx.setMaxCapacity(256),
+  dynamicBuilder.params.qpackTxCapacity(256);
+  ZuCHECK(dynamicBuilder.tx.init(256, 16) &&
+      dynamicBuilder.tx.peerCapacity(256),
     "builder tx max capacity setup failed");
   CaptureTxStream dynamicStream;
   dynamicBuilder.request(dynamicStream);
@@ -1483,8 +1651,8 @@ void testBuilderCommitFailureAtomic()
 
   {
     BuilderState builder;
-    builder.params.qpackTableCapacity(256);
-    ZuCHECK(builder.tx.setMaxCapacity(256),
+    builder.params.qpackTxCapacity(256);
+    ZuCHECK(builder.tx.init(256, 16) && builder.tx.peerCapacity(256),
       "capacity failure max setup failed");
     builder.encoder.failWrite = 0;
     CaptureTxStream stream;
@@ -1497,8 +1665,8 @@ void testBuilderCommitFailureAtomic()
   }
   {
     BuilderState builder;
-    builder.params.qpackTableCapacity(256);
-    ZuCHECK(builder.tx.setMaxCapacity(256),
+    builder.params.qpackTxCapacity(256);
+    ZuCHECK(builder.tx.init(256, 16) && builder.tx.peerCapacity(256),
       "insert failure max setup failed");
     builder.encoder.failWrite = 1;
     CaptureTxStream stream;
@@ -1511,8 +1679,8 @@ void testBuilderCommitFailureAtomic()
   }
   {
     BuilderState builder;
-    builder.params.qpackTableCapacity(256);
-    ZuCHECK(builder.tx.setMaxCapacity(256),
+    builder.params.qpackTxCapacity(256);
+    ZuCHECK(builder.tx.init(256, 16) && builder.tx.peerCapacity(256),
       "success max setup failed");
     CaptureTxStream stream;
     builder.request(stream);
@@ -1521,6 +1689,41 @@ void testBuilderCommitFailureAtomic()
 	builder.tx.insertCount() > 0,
       "successful dynamic build did not commit once");
   }
+}
+
+void testBuilderSectionFallback()
+{
+  ZuTestScope(testBuilderSectionFallback);
+
+  BuilderState builder;
+  builder.params.qpackTxCapacity(256);
+  ZuCHECK(builder.tx.init(256, 1) && builder.tx.peerCapacity(256),
+    "section fallback setup failed");
+
+  CaptureTxStream first;
+  builder.request(first);
+  ZuCHECK(builder.tx.insertCount() &&
+      builder.tx.insertCountIncrement(builder.tx.insertCount()),
+    "section fallback dynamic table setup failed");
+
+  builder.id = 3;
+  CaptureTxStream second;
+  builder.request(second);
+  ZuCHECK(builder.tx.sectionCount() == 1,
+    "section fallback did not occupy the configured section slot");
+
+  builder.id = 5;
+  CaptureTxStream third;
+  builder.request(third);
+  ZuCSpan payload;
+  Zhttp::H3::EncodedFieldSectionPrefix prefix;
+  ZuCHECK(headersPayload(third.bytes, payload) &&
+      Zhttp::H3::QPack::decodeFieldSectionPrefix(payload, prefix) > 0 &&
+      !prefix.encodedInsertCount && builder.tx.sectionCount() == 1 &&
+      !builder.tx.sectionResized(),
+    "denied section tracking emitted a dynamic reference");
+  ZuCHECK(builder.tx.sectionAck(3) && !builder.tx.sectionCount(),
+    "section fallback acknowledgement failed");
 }
 
 void testBuilderQueryPath()
@@ -1600,13 +1803,191 @@ void testBuilderRuntimeHeaders()
 
   BuilderState dynamicBuilder;
   dynamicBuilder.runtimeHeader = true;
-  dynamicBuilder.params.qpackTableCapacity(256);
-  ZuCHECK(dynamicBuilder.tx.setMaxCapacity(256),
+  dynamicBuilder.params.qpackTxCapacity(256);
+  ZuCHECK(dynamicBuilder.tx.init(256, 16) &&
+      dynamicBuilder.tx.peerCapacity(256),
     "runtime header builder tx max capacity setup failed");
   CaptureTxStream dynamicStream;
   dynamicBuilder.request(dynamicStream);
   ZuCHECK(dynamicBuilder.tx.find("server", "zhttp-runtime"),
     "runtime header was not planned through dynamic QPACK");
+}
+
+bool applyEncoder(
+  Zhttp::H3::QPackRxTable &table, ZuCSpan bytes,
+  bool *dynamicName = nullptr)
+{
+  unsigned offset = 0;
+  while (offset < bytes.length()) {
+    Zhttp::H3::QPackDecodedInsn insn;
+    int n = Zhttp::H3::QPack::decodeEncoderInsn(
+      ZuCSpan{bytes.data() + offset, bytes.length() - offset}, insn);
+    if (n <= 0) return false;
+    switch (insn.type) {
+      case Zhttp::H3::QPackInsn::SetCapacity:
+	if (!table.setCapacity(uint32_t(insn.value))) return false;
+	break;
+      case Zhttp::H3::QPackInsn::InsertWithoutNameRef:
+	if (!table.insert(insn.header)) return false;
+	break;
+      case Zhttp::H3::QPackInsn::InsertWithNameRef: {
+	Zhttp::H3::Header indexed;
+	if (insn.nameRefDynamic) {
+	  if (!table.lookupRelative(
+	      table.insertCount(), insn.value, indexed))
+	    return false;
+	  if (dynamicName) *dynamicName = true;
+	} else {
+	  Zhttp::H3::HeaderName name;
+	  if (!Zhttp::H3::QPack::staticName(insn.value, name))
+	    return false;
+	  indexed.name = name;
+	}
+	if (!table.insert({indexed.name, insn.header.value})) return false;
+	break;
+      }
+      case Zhttp::H3::QPackInsn::Duplicate:
+	if (!table.duplicate(insn.value)) return false;
+	break;
+      default:
+	return false;
+    }
+    offset += unsigned(n);
+  }
+  return true;
+}
+
+bool encoderNameRef(ZuCSpan bytes, ZuCSpan value, bool dynamic)
+{
+  unsigned offset = 0;
+  while (offset < bytes.length()) {
+    Zhttp::H3::QPackDecodedInsn insn;
+    int n = Zhttp::H3::QPack::decodeEncoderInsn(
+      ZuCSpan{bytes.data() + offset, bytes.length() - offset}, insn);
+    if (n <= 0) return false;
+    if (insn.type == Zhttp::H3::QPackInsn::InsertWithNameRef &&
+	insn.header.value == value)
+      return insn.nameRefDynamic == dynamic;
+    offset += unsigned(n);
+  }
+  return false;
+}
+
+void testBuilderStaticNamePrecedence()
+{
+  ZuTestScope(testBuilderStaticNamePrecedence);
+
+  BuilderState builder;
+  builder.runtimeHeader = true;
+  builder.runtimeName = "accept";
+  builder.runtimeValue = "other";
+  builder.params.qpackTxCapacity(512);
+  ZuCHECK(builder.tx.init(512, 16) && builder.tx.peerCapacity(512) &&
+      builder.tx.setCapacity(512) &&
+      builder.tx.insert({"accept", "dynamic"}) &&
+      builder.tx.insertCountIncrement(1),
+    "QPACK static-name precedence setup failed");
+  builder.tx.capacitySent = true;
+
+  CaptureTxStream stream;
+  builder.request(stream);
+  ZuCHECK(encoderNameRef(builder.encoder.bytes, "other", false),
+    "QPACK encoder insertion displaced a static name with a dynamic name");
+
+  ZuCSpan payload;
+  bool staticName = false;
+  ZuCHECK(headersPayload(stream.bytes, payload) &&
+      Zhttp::H3::QPack::decodeFieldSection(
+	payload, nullptr,
+	[&staticName](
+	    Zhttp::H3::Header h,
+	    Zhttp::H3::QPackFieldFlags flags) {
+	  if (h.name == "accept" && h.value == "other")
+	    staticName = flags.staticRef && !flags.dynamicRef;
+	}) == int(payload.length()) && staticName,
+    "QPACK field line displaced a static name with a dynamic name");
+}
+
+void testBuilderDynamicNameLookup()
+{
+  ZuTestScope(testBuilderDynamicNameLookup);
+
+  BuilderState builder;
+  builder.runtimeHeader = true;
+  builder.runtimeName = "x-dynamic-name";
+  builder.runtimeValue = "one";
+  builder.params.qpackTxCapacity(512);
+  ZuCHECK(builder.tx.init(512, 16) && builder.tx.peerCapacity(512),
+    "dynamic name builder setup failed");
+
+  CaptureTxStream first;
+  builder.request(first);
+  Zhttp::H3::QPackRxTable rx;
+  ZuCHECK(rx.init(512) && applyEncoder(rx, builder.encoder.bytes) &&
+      builder.tx.insertCountIncrement(builder.tx.insertCount()),
+    "first dynamic name section did not establish matching tables");
+
+  builder.encoder.bytes.length(0);
+  builder.id = 3;
+  builder.runtimeValue = "two";
+  CaptureTxStream second;
+  builder.request(second);
+  bool encoderDynamicName = false;
+  ZuCHECK(applyEncoder(
+      rx, builder.encoder.bytes, &encoderDynamicName) &&
+      encoderDynamicName,
+    "QPACK insertion did not use a dynamic name reference");
+
+  ZuCSpan payload;
+  bool fieldDynamicName = false;
+  ZuCHECK(headersPayload(second.bytes, payload) &&
+      Zhttp::H3::QPack::decodeFieldSection(
+	payload, &rx,
+	[&fieldDynamicName](
+	    Zhttp::H3::Header h,
+	    Zhttp::H3::QPackFieldFlags flags) {
+	  if (h.name == "x-dynamic-name" && h.value == "two")
+	    fieldDynamicName = flags.dynamicRef;
+	}) == int(payload.length()) && fieldDynamicName,
+    "QPACK field line did not use a dynamic name reference");
+
+  BuilderState denied;
+  denied.runtimeHeader = true;
+  denied.runtimeName = "x-denied-name";
+  denied.runtimeValue = "one";
+  denied.params.qpackTxCapacity(512);
+  ZuCHECK(denied.tx.init(512, 1) && denied.tx.peerCapacity(512),
+    "dynamic name section-denial setup failed");
+  CaptureTxStream establish;
+  denied.request(establish);
+  ZuCHECK(denied.tx.insertCount() &&
+      denied.tx.insertCountIncrement(denied.tx.insertCount()),
+    "dynamic name section-denial table setup failed");
+
+  denied.id = 3;
+  denied.runtimeValue = "two";
+  CaptureTxStream tracked;
+  denied.request(tracked);
+  ZuCHECK(denied.tx.sectionCount() == 1,
+    "dynamic name section was not tracked");
+
+  denied.id = 5;
+  denied.runtimeValue = "three";
+  CaptureTxStream fallback;
+  denied.request(fallback);
+  Zhttp::H3::EncodedFieldSectionPrefix prefix;
+  bool literal = false;
+  ZuCHECK(headersPayload(fallback.bytes, payload) &&
+      Zhttp::H3::QPack::decodeFieldSectionPrefix(payload, prefix) > 0 &&
+      !prefix.encodedInsertCount &&
+      Zhttp::H3::QPack::decodeLiteral(
+	payload,
+	[&literal](Zhttp::H3::Header h) {
+	  if (h.name == "x-denied-name" && h.value == "three")
+	    literal = true;
+	}) == int(payload.length()) && literal &&
+      denied.tx.sectionCount() == 1,
+    "denied section tracking retained a dynamic name reference");
 }
 
 int main(int argc, char **argv)
@@ -1626,6 +2007,8 @@ int main(int argc, char **argv)
   ZuTestCall(testFieldDecodeAllocationDiscipline);
   ZuTestCall(testSettingsKeyBoundary);
   ZuTestCall(testTxTable);
+  ZuTestCall(testTxNameLookup);
+  ZuTestCall(testBoundedStorage);
   ZuTestCall(testTxEvictReferenced);
   ZuTestCall(testRxTxChurn);
   ZuTestCall(testTxSectionStress);
@@ -1634,8 +2017,11 @@ int main(int argc, char **argv)
   ZuTestCall(testInstructionParserSplit);
   ZuTestCall(testBuilderPeerCapacity);
   ZuTestCall(testBuilderCommitFailureAtomic);
+  ZuTestCall(testBuilderSectionFallback);
   ZuTestCall(testBuilderQueryPath);
   ZuTestCall(testBuilderExtendedConnect);
   ZuTestCall(testBuilderRuntimeHeaders);
+  ZuTestCall(testBuilderStaticNamePrecedence);
+  ZuTestCall(testBuilderDynamicNameLookup);
   ZiLog::stop();
 }

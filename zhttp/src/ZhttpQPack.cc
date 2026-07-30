@@ -30,9 +30,31 @@ static Header qpackStaticField_()
 
 QPackRxEntry *QPackRxTable::pushNewest()
 {
-  if (head_ && head_ >= 64 && head_ >= (entries.length()>>1))
+  if (head_ && (entries.length() == entries.size() ||
+      (head_ >= 64 && head_ >= (entries.length()>>1))))
     compact();
+  if (entries.length() >= entries.size()) return nullptr;
   return new (entries.push()) QPackRxEntry();
+}
+
+bool QPackRxTable::init(uint32_t capacity)
+{
+  final();
+  maxCapacityBytes_ = capacity;
+  uint32_t n = capacity>>5;
+  if (n) entries.ensure(n);
+  return entries.size() >= n;
+}
+
+void QPackRxTable::final()
+{
+  entries.init();
+  head_ = 0;
+  baseAbs_ = 0;
+  insertCount_ = 0;
+  capacityBytes_ = 0;
+  maxCapacityBytes_ = 0;
+  usedBytes_ = 0;
 }
 
 const QPackRxEntry *QPackRxTable::oldest() const
@@ -79,6 +101,7 @@ bool QPackRxTable::insert(ZuCSpan name, ZuCSpan value)
   if (n > capacityBytes_) return false;
   while (oldest() && usedBytes_ + n > capacityBytes_) dropOldest();
   auto e = pushNewest();
+  if (!e) return false;
   e->abs = insertCount_++;
   e->size = n;
   e->name = name;
@@ -113,6 +136,7 @@ bool QPackRxTable::duplicate(uint64_t relativeIndex)
     QPackRxString value{entries[src].value};
     while (oldest() && usedBytes_ + n > capacityBytes_) dropOldest();
     auto e = pushNewest();
+    if (!e) return false;
     e->abs = insertCount_++;
     e->size = n;
     e->name = ZuMv(name);
@@ -122,8 +146,10 @@ bool QPackRxTable::duplicate(uint64_t relativeIndex)
   }
 
   while (oldest() && usedBytes_ + n > capacityBytes_) dropOldest();
-  if (head_ && head_ >= 64 && head_ >= (entries.length()>>1)) compact();
-  entries.ensure(entries.length() + 1);
+  if (head_ && (entries.length() == entries.size() ||
+      (head_ >= 64 && head_ >= (entries.length()>>1))))
+    compact();
+  if (entries.length() >= entries.size()) return false;
   src = head_ + uint32_t(abs - baseAbs_);
   Header h{entries[src].name, entries[src].value};
   auto e = new (entries.push()) QPackRxEntry();
@@ -158,21 +184,55 @@ bool QPackRxTable::lookupPostBase(
   return lookupAbs(base + index, h);
 }
 
-bool QPackTxTable::setMaxCapacity(uint32_t capacity)
+bool QPackTxTable::init(uint32_t capacity, uint32_t maxSections)
 {
-  maxCapacityBytes_ = capacity;
-  if (capacityBytes_ > maxCapacityBytes_) return setCapacity(maxCapacityBytes_);
-  uint64_t n = capacity>>5;
-  if (n > order.size()) {
+  final();
+  localCapacityBytes_ = capacity;
+  maxSections_ = maxSections;
+  uint32_t n = capacity>>5;
+  if (n) {
     order.ensure(n);
-    rebuildHash();
+    exact = new QPackTxHash{ZmHashParams{n}};
+    names = new QPackTxNames{ZmHashParams{n}};
   }
-  return true;
+  if (maxSections)
+    sections = new QPackTxSections{ZmHashParams{maxSections}};
+  return order.size() >= n &&
+    (!exact || exact->size() >= n) &&
+    (!names || names->size() >= n) &&
+    (!sections || sections->size() >= maxSections);
+}
+
+void QPackTxTable::final()
+{
+  sections = nullptr;
+  names = nullptr;
+  exact = nullptr;
+  order.init();
+  orderHead_ = 0;
+  insertCount_ = 0;
+  knownReceivedCount_ = 0;
+  capacityBytes_ = 0;
+  localCapacityBytes_ = 0;
+  peerCapacityBytes_ = 0;
+  peerBlocked_ = 0;
+  maxSections_ = 0;
+  sectionCount_ = 0;
+  usedBytes_ = 0;
+  capacitySent = false;
+}
+
+bool QPackTxTable::peerCapacity(uint32_t capacity)
+{
+  peerCapacityBytes_ = capacity;
+  uint32_t effective = effectiveCapacity();
+  if (capacityBytes_ <= effective) return true;
+  return setCapacity(effective);
 }
 
 bool QPackTxTable::setCapacity(uint32_t capacity)
 {
-  if (capacity > maxCapacityBytes_) return false;
+  if (capacity > effectiveCapacity()) return false;
   uint32_t old = capacityBytes_;
   capacityBytes_ = capacity;
   if (evict()) return true;
@@ -182,11 +242,35 @@ bool QPackTxTable::setCapacity(uint32_t capacity)
 
 const QPackTxEntry *QPackTxTable::find(ZuCSpan name, ZuCSpan value) const
 {
-  auto h = hash->find(QPackFieldKey{name, value});
+  if (!exact) return nullptr;
+  auto h = exact->find(QPackFieldKey{name, value});
   if (!h || h->index < orderHead_ || h->index >= order.length())
     return nullptr;
   const auto &e = order[h->index];
   return e.name == name && e.value == value ? &e : nullptr;
+}
+
+const QPackTxEntry *QPackTxTable::findName(ZuCSpan name) const
+{
+  if (!names) return nullptr;
+  auto indexed = names->find(Compression::NameView{name});
+  if (!indexed) return nullptr;
+  auto entry = findAbs(indexed->abs);
+  return entry && entry->name == name ? entry : nullptr;
+}
+
+const QPackTxEntry *QPackTxTable::findName(
+  ZuCSpan name, uint64_t base) const
+{
+  auto entry = findName(name);
+  while (entry) {
+    if (entry->abs < base &&
+	entry->abs + 1 <= knownReceivedCount_)
+      return entry;
+    if (entry->prevName == uint64_t(-1)) break;
+    entry = findAbs(entry->prevName);
+  }
+  return nullptr;
 }
 
 const QPackTxEntry *QPackTxTable::findAbs(uint64_t abs) const
@@ -230,22 +314,37 @@ bool QPackTxTable::insert(
     if (!dropOldest()) return false;
   if (usedBytes_ + n > capacityBytes_) return false;
   uint64_t nextAbs = insertCount_;
-  if (order.size() < order.length() + 1) {
-    order.ensure(order.length() + 1);
-    rebuildHash();
-  }
+  if (orderHead_ && order.length() == order.size()) compactOrder();
+  if (!exact || !names || order.length() >= order.size()) return false;
+  uint64_t prevName = uint64_t(-1);
+  if (auto prior = findName(name)) prevName = prior->abs;
   auto entry = new (order.push()) QPackTxOrderEntry();
   entry->abs = nextAbs;
+  entry->prevName = prevName;
   entry->size = n;
   entry->name = ZuMv(name);
   entry->value = ZuMv(value);
   QPackTxHashEntry hashEntry;
   hashEntry.index = uint32_t(order.length() - 1);
   hashEntry.key = {entry->name, entry->value};
-  if (!hash->add(hashEntry)) {
+  if (!exact->add(hashEntry)) {
     order.length(order.length() - 1);
     return false;
   }
+  auto nameEntry = const_cast<QPackTxNameEntry *>(
+      names->find(Compression::NameView{entry->name}));
+  if (nameEntry) {
+    nameEntry->abs = nextAbs;
+    nameEntry->key = Compression::NameView{entry->name};
+  } else if (!names->add(QPackTxNameEntry{
+      nextAbs, Compression::NameView{entry->name}})) {
+    exact->del(hashEntry.key);
+    order.length(order.length() - 1);
+    return false;
+  }
+  ZmAssert(!exact->resized());
+  ZmAssert(!names->resized());
+  ZmAssert(order.length() - orderHead_ <= order.size());
   usedBytes_ += n;
   insertCount_ = nextAbs + 1;
   if (abs) *abs = nextAbs;
@@ -265,7 +364,10 @@ bool QPackTxTable::dropOldest()
   const auto &old = order[orderHead_];
   if (old.refcnt) return false;
   usedBytes_ -= old.size;
-  hash->del(QPackFieldKey{old.name, old.value});
+  exact->del(QPackFieldKey{old.name, old.value});
+  auto name = names->find(Compression::NameView{old.name});
+  if (name && name->abs == old.abs)
+    names->del(Compression::NameView{old.name});
   ++orderHead_;
   if (orderHead_ == order.length()) {
     order.length(0);
@@ -280,18 +382,35 @@ void QPackTxTable::compactOrder()
   if (!orderHead_) return;
   order.splice(0, orderHead_);
   orderHead_ = 0;
-  rebuildHash();
+  rebuildHashes();
 }
 
-void QPackTxTable::rebuildHash()
+void QPackTxTable::rebuildHashes()
 {
-  hash->clean();
+  if (!exact || !names) return;
+  exact->clean();
+  names->clean();
   for (unsigned i = orderHead_; i < order.length(); ++i) {
     QPackTxHashEntry h;
     h.index = i;
     h.key = {order[i].name, order[i].value};
-    hash->add(h);
+    if (!exact->add(h)) {
+      ZmAssert(false);
+      return;
+    }
+    auto name = const_cast<QPackTxNameEntry *>(
+	names->find(Compression::NameView{order[i].name}));
+    if (name) {
+      name->abs = order[i].abs;
+      name->key = Compression::NameView{order[i].name};
+    } else if (!names->add(QPackTxNameEntry{
+	order[i].abs, Compression::NameView{order[i].name}})) {
+      ZmAssert(false);
+      return;
+    }
   }
+  ZmAssert(!exact->resized());
+  ZmAssert(!names->resized());
 }
 
 bool QPackTxTable::insertCountIncrement(uint64_t n)
@@ -313,12 +432,15 @@ bool QPackTxTable::trackSection(uint64_t streamID, ZuSpan<uint64_t> refs)
 bool QPackTxTable::trackSection(uint64_t streamID, QPackTxRefs refs)
 {
   if (!refs.length()) return true;
-  if (sections->find(streamID)) return false;
+  if (!sectionAdmissible(streamID)) return false;
   QPackTxSection section_;
   section_.streamID = streamID;
   section_.refs = ZuMv(refs);
   auto section = const_cast<QPackTxSection *>(sections->add(ZuMv(section_)));
   if (!section) return false;
+  ZmAssert(!sections->resized());
+  ZmAssert(sectionCount_ < maxSections_);
+  ++sectionCount_;
   for (unsigned i = 0; i < section->refs.length(); ++i) {
     if (auto e = findAbs(section->refs[i]))
       const_cast<QPackTxEntry *>(e)->refcnt++;
@@ -328,6 +450,7 @@ bool QPackTxTable::trackSection(uint64_t streamID, QPackTxRefs refs)
 
 bool QPackTxTable::sectionAck(uint64_t streamID)
 {
+  if (!sections) return false;
   auto section = sections->find(streamID);
   if (!section) return false;
   for (unsigned i = 0; i < section->refs.length(); ++i) {
@@ -335,12 +458,19 @@ bool QPackTxTable::sectionAck(uint64_t streamID)
       if (e->refcnt) const_cast<QPackTxEntry *>(e)->refcnt--;
   }
   sections->del(streamID);
+  --sectionCount_;
   return true;
 }
 
 bool QPackTxTable::streamCancellation(uint64_t streamID)
 {
   return sectionAck(streamID);
+}
+
+bool QPackTxTable::sectionAdmissible(uint64_t streamID) const
+{
+  return sections && !sections->find(streamID) &&
+    sectionCount_ < maxSections_;
 }
 
 bool QPackTxTable::applyDecoder(QPackInsn::T type, uint64_t value)
@@ -522,7 +652,7 @@ int QPack::encodeLiteral(HdrBytes &out, ZuSpan<Header> headers,
   if (encodeFieldSectionPrefix(out, prefix) < 0) return -1;
   unsigned headerBytes = 0;
   for (auto &h : headers) {
-    if (params.neverIndex(h.name) && params.qpackTableCapacity() &&
+    if (params.neverIndex(h.name) && params.qpackTxCapacity() &&
 	params.indexAllowed(h.name))
       return -1;
     headerBytes += h.name.length() + h.value.length();

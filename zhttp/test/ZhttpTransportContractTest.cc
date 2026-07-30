@@ -574,8 +574,15 @@ void testParams()
 	Zhttp::H2Config{}.maxFrameSize(
 	  Zhttp::H2::DefltFrameSize - 1)) &&
       !Zhttp::TLS_::valid(Zhttp::H2Config{}.maxPending(0)) &&
-      !Zhttp::TLS_::valid(Zhttp::H2Config{}.maxStreamID(2)),
+      !Zhttp::TLS_::valid(Zhttp::H2Config{}.maxStreamID(2)) &&
+      !Zhttp::TLS_::valid(Zhttp::H2Config{}.hpackTxCapacity(
+	Zhttp::H2Config::MaxHPackCapacity + 1)),
     "shared TLS/H2 validation mismatch");
+  auto hpack = Zhttp::H2Config{}.
+    hpackRxCapacity(4096).hpackTxCapacity(8192);
+  ZuCHECK(hpack.hpackRxCapacity() == 4096 &&
+      hpack.hpackTxCapacity() == 8192,
+    "H2 HPACK local limits mismatch");
   ZuCHECK(
     Zhttp::TLS_::version("h2", Zhttp::H2Policy::Force) ==
       Zhttp::Version::H2 &&
@@ -605,6 +612,18 @@ void testParams()
     quicCli.maxStreamsSimplex() ==
       Zhttp::QUICConfig::DefltControlStreams,
     "H3 transport defaults mismatch");
+  auto qpack = Zhttp::QUICConfig{}.
+    qpackRxCapacity(4096).qpackTxCapacity(8192).
+    qpackRxBlocked(16).qpackTxSections(32);
+  ZuCHECK(qpack.qpackValid() &&
+      qpack.qpackRxCapacity() == 4096 &&
+      qpack.qpackTxCapacity() == 8192 &&
+      qpack.qpackRxBlocked() == 16 &&
+      qpack.qpackTxSections() == 32 &&
+      !Zhttp::QUICConfig{}.
+	qpackTxCapacity(Zhttp::QUICConfig::MaxQPackCapacity + 1).
+	qpackValid(),
+    "H3 QPACK local-limit validation mismatch");
 
   auto serviceQUIC = Zhttp::ServiceConfig{}.idleTimeout(7)
     .quic(Zhttp::QUICConfig{}).quicEngineConfig();

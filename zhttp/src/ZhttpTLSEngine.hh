@@ -30,7 +30,9 @@ inline bool validPolicy(int8_t policy)
 
 inline bool valid(const H2Config &config)
 {
-  return config.maxFrameSize() >= H2::DefltFrameSize &&
+  return config.hpackRxCapacity() <= H2Config::MaxHPackCapacity &&
+    config.hpackTxCapacity() <= H2Config::MaxHPackCapacity &&
+    config.maxFrameSize() >= H2::DefltFrameSize &&
     config.maxFrameSize() <= H2::MaxFrameSize &&
     config.initialWindowSize() <= H2::MaxWindow &&
     config.maxConcurrentStreams() && config.maxPending() &&

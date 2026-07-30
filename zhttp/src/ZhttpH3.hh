@@ -156,6 +156,7 @@ struct Impl : public CxnParser<Impl> {
   // optional - post peer decoder instructions and SETTINGS capacity to Tx
   bool qpackTxInsn(QPackInsn::T, uint64_t);
   bool qpackTxMaxCapacity(uint64_t);
+  bool qpackTxBlocked(uint64_t);
 };
 #endif
 
@@ -512,9 +513,13 @@ public:
   bool h3Server() const { return false; }
   void h3Error(uint64_t) { }
   void setting(uint64_t key, uint64_t value) {
-    if (key == 0x01)
-	if (!impl()->qpackTxMaxCapacity(value))
-	  m_streamState = StreamState::Error;
+    if (key == 0x01) {
+      if (!impl()->qpackTxMaxCapacity(value))
+	m_streamState = StreamState::Error;
+    } else if (key == 0x07) {
+      if (!impl()->qpackTxBlocked(value))
+	m_streamState = StreamState::Error;
+    }
     if (key == 0x08 && value > 1)
       m_streamState = StreamState::Error;
   }
@@ -522,6 +527,7 @@ public:
   QPackRxTable *qpackRx() { return nullptr; }
   bool qpackTxInsn(QPackInsn::T, uint64_t) { return true; }
   bool qpackTxMaxCapacity(uint64_t) { return true; }
+  bool qpackTxBlocked(uint64_t) { return true; }
 
 private:
   // Rx thread exclusive
@@ -576,12 +582,13 @@ public:
 
   void h3(
     QPackRxTable *rx, void *cxn, QPackWriteFn decoderWrite,
-    ErrorFn error, uint64_t streamID) {
+    ErrorFn error, uint64_t streamID, const Params *params = nullptr) {
     m_qpackRx = rx;
     m_h3Cxn = cxn;
     m_qpackDecoderWrite = decoderWrite;
     m_errorFn = error;
     m_streamID = streamID;
+    m_params = params;
   }
 
 private:
@@ -688,6 +695,7 @@ private:
   }
 
   const Params &h3Params() const {
+    if (m_params) return *m_params;
     static const Params params;
     return params;
   }
@@ -1103,6 +1111,7 @@ private:
   QPackWriteFn		m_qpackDecoderWrite = nullptr;
   ErrorFn		m_errorFn = nullptr;
   uint64_t		m_streamID = 0;
+  const Params		*m_params = nullptr;
   uint64_t		m_h3Error = 0;
   bool			m_complete = false;
   bool			m_extendedConnect = false;
@@ -1266,6 +1275,24 @@ inline int qpackEncodeDynamicIndexed(Bytes &out, uint64_t relativeIndex) {
     -1 : int(out.length());
 }
 
+template <typename Bytes>
+inline int qpackEncodeDynamicName(
+  Bytes &out, uint64_t relativeIndex, ZuCSpan value, bool never) {
+  return putPref(out, uint8_t(0x40 | (never ? 0x20 : 0)), 4,
+      relativeIndex) < 0 ||
+    putString(out, 0, 7, value) < 0 ? -1 : int(out.length());
+}
+
+template <typename Bytes>
+inline int qpackEncodeDynamicName(
+  Bytes &out, uint64_t relativeIndex,
+  ZuCSpan value1, char sep, ZuCSpan value2, bool never) {
+  return putPref(out, uint8_t(0x40 | (never ? 0x20 : 0)), 4,
+      relativeIndex) < 0 ||
+    putString(out, 0, 7, value1, sep, value2) < 0 ?
+    -1 : int(out.length());
+}
+
 template <typename Lower>
 struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
   using Base = ZiTxLayer<DataStream<Lower>, Lower>;
@@ -1341,12 +1368,14 @@ public:
 
   void h3(
     QPackTxTable *tx, void *encoder, QPackWriteFn encoderWrite,
-    uint64_t streamID, bool peerExtendedConnect = false) {
+    uint64_t streamID, bool peerExtendedConnect = false,
+    const Params *params = nullptr) {
     m_qpackTx = tx;
     m_qpackEncoder = encoder;
     m_qpackEncoderWrite = encoderWrite;
     m_streamID = streamID;
     m_peerExtendedConnect = peerExtendedConnect;
+    m_params = params;
   }
 
 private:
@@ -1407,6 +1436,9 @@ private:
     struct InsertPlan {
 	QPackTxString	name;
 	QPackTxString	value;
+	uint64_t	nameIndex = 0;
+	bool		nameRef = false;
+	bool		nameDynamic = false;
     };
     using InsertPlans =
 	ZtArray<InsertPlan, ZtArrayHeapID<"Zhttp.H3.QPackInsertPlan">>;
@@ -1420,6 +1452,7 @@ private:
     uint64_t		required = 0;
     uint32_t		plannedCapacity = 0;
     bool		sendCapacity = false;
+    bool		dynamic = false;
     bool		ok = true;
 
     Build(Bytes &out_) : out{out_} { }
@@ -1432,11 +1465,31 @@ private:
     }
     void planInsert_(ZuCSpan name, ZuCSpan value) {
 	if constexpr (Plan) {
-	  if (!tx || !plannedCapacity || params.neverIndex(name)) return;
+	  if (!tx || !dynamic || !plannedCapacity ||
+	      params.neverIndex(name))
+	    return;
 	  if (tx->find(name, value) || planned_(name, value)) return;
 	  auto plan = new (inserts.push()) InsertPlan();
 	  plan->name = name;
 	  plan->value = value;
+	  if (QPack::staticNameIndex(name, plan->nameIndex)) {
+	    plan->nameRef = true;
+	    return;
+	  }
+	  unsigned i = inserts.length() - 1;
+	  while (i)
+	    if (inserts[--i].name == name) {
+	      plan->nameIndex = inserts.length() - i - 2;
+	      plan->nameRef = true;
+	      plan->nameDynamic = true;
+	      return;
+	    }
+	  if (auto entry = tx->findName(name)) {
+	    plan->nameIndex =
+	      base + inserts.length() - entry->abs - 2;
+	    plan->nameRef = true;
+	    plan->nameDynamic = true;
+	  }
 	}
     }
     void field(ZuCSpan name, ZuCSpan value) {
@@ -1446,7 +1499,7 @@ private:
 	  ok = qpackEncodeFieldLine(out, h, params) >= 0;
 	  return;
 	}
-	if (tx)
+	if (tx && dynamic)
 	  if (auto e = tx->find(name, value))
 	    if (e->abs < base && e->abs + 1 <= tx->knownReceivedCount()) {
 	      ok = qpackEncodeDynamicIndexed(out, base - e->abs - 1) >= 0;
@@ -1454,12 +1507,32 @@ private:
 	      if constexpr (Plan) refs.push(e->abs);
 	      return;
 	    }
+	uint64_t staticName = 0;
+	if (tx && dynamic && !QPack::staticNameIndex(name, staticName))
+	  if (auto e = tx->findName(name, base)) {
+	    ok = qpackEncodeDynamicName(
+	      out, base - e->abs - 1, value, params.neverIndex(name)) >= 0;
+	    if (required < e->abs + 1) required = e->abs + 1;
+	    if constexpr (Plan) refs.push(e->abs);
+	    if (ok) planInsert_(name, value);
+	    return;
+	  }
 	ok = qpackEncodeFieldLine(out, h, params) >= 0;
 	if (!ok) return;
 	planInsert_(name, value);
     }
     void field(ZuCSpan name, ZuCSpan value1, char sep, ZuCSpan value2) {
 	if (!ok) return;
+	uint64_t staticName = 0;
+	if (tx && dynamic && !QPack::staticNameIndex(name, staticName))
+	  if (auto e = tx->findName(name, base)) {
+	    ok = qpackEncodeDynamicName(
+	      out, base - e->abs - 1, value1, sep, value2,
+	      params.neverIndex(name)) >= 0;
+	    if (required < e->abs + 1) required = e->abs + 1;
+	    if constexpr (Plan) refs.push(e->abs);
+	    return;
+	  }
 	ok = qpackEncodeFieldLine(out, name, value1, sep, value2, params) >= 0;
     }
   };
@@ -1518,10 +1591,9 @@ private:
     Build<CountBytes, true> plan{count};
     plan.tx = impl()->qpackTx();
     plan.params = impl()->h3Params();
-    if (plan.tx) {
-	uint32_t peerMax = plan.tx->maxCapacity();
-	uint32_t desired = plan.params.qpackTableCapacity();
-	if (desired > peerMax) desired = peerMax;
+    if (plan.tx &&
+	(plan.dynamic = plan.tx->sectionAdmissible(impl()->streamID()))) {
+	uint32_t desired = plan.tx->effectiveCapacity();
 	plan.plannedCapacity = plan.tx->capacity();
 	if (plan.plannedCapacity != desired) {
 	  plan.plannedCapacity = desired;
@@ -1533,6 +1605,23 @@ private:
 	impl()->qpackFailure(QPackBuildFailure::Plan);
 	ZiLOG(Error, "Zhttp", "failed to plan H3 headers");
 	return;
+    }
+    if (plan.tx && plan.dynamic) {
+	if (!plan.tx->canCommit(plan.plannedCapacity, plan.inserts)) {
+	  count.n = 0;
+	  plan.refs.init();
+	  plan.inserts.init();
+	  plan.required = 0;
+	  plan.plannedCapacity = plan.tx->capacity();
+	  plan.sendCapacity = false;
+	  plan.dynamic = false;
+	  plan.ok = true;
+	  if (!encode(plan) || !plan.ok) {
+	    impl()->qpackFailure(QPackBuildFailure::Plan);
+	    ZiLOG(Error, "Zhttp", "failed to re-plan literal H3 headers");
+	    return;
+	  }
+	}
     }
     auto prefix = ZtLocalArray(HdrBytes, PrefixBuiltin);
     FieldSectionPrefix p;
@@ -1562,10 +1651,9 @@ private:
 	}
 	for (unsigned i = 0; i < plan.inserts.length(); ++i) {
 	  const auto &insert = plan.inserts[i];
-	  uint64_t nameIndex = 0;
-	  int n = QPack::staticNameIndex(insert.name, nameIndex) ?
+	  int n = insert.nameRef ?
 	    QPack::encodeInsertWithNameRef(
-	      scratch, nameIndex, false, insert.value) :
+	      scratch, insert.nameIndex, insert.nameDynamic, insert.value) :
 	    QPack::encodeInsertLiteral(
 	      scratch, Header{insert.name, insert.value});
 	  if (n < 0) {
@@ -1597,6 +1685,7 @@ private:
     emit.base = plan.base;
     emit.plannedCapacity = plan.plannedCapacity;
     emit.sendCapacity = plan.sendCapacity;
+    emit.dynamic = plan.dynamic;
     if (!encode(emit) || !emit.ok ||
 	  out.length() - bodyStart != count.length()) {
 	impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
@@ -1623,11 +1712,12 @@ private:
 	      return;
 	    }
 	}
-	if (plan.refs.length())
-	  if (!plan.tx->trackSection(impl()->streamID(), ZuMv(plan.refs))) {
-	    impl()->qpackFailure(QPackBuildFailure::SectionTracking);
-	    ZiLOG(Error, "Zhttp", "failed to track QPACK section");
-	  }
+	if (plan.refs.length()) {
+	  bool tracked =
+	    plan.tx->trackSection(impl()->streamID(), ZuMv(plan.refs));
+	  ZiAssert(tracked, "Zhttp", (),
+	    "pre-admitted QPACK section tracking failed", return);
+	}
     }
   }
 
@@ -1738,6 +1828,7 @@ public:
   }
   void qpackFailure(QPackBuildFailure::T failure) { m_qpackFailure = failure; }
   const Params &h3Params() const {
+    if (m_params) return *m_params;
     static const Params params;
     return params;
   }
@@ -1750,6 +1841,7 @@ private:
   void			*m_qpackEncoder = nullptr;
   QPackWriteFn		m_qpackEncoderWrite = nullptr;
   uint64_t		m_streamID = 0;
+  const Params		*m_params = nullptr;
   bool			m_peerExtendedConnect = false;
 };
 
