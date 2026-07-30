@@ -673,6 +673,9 @@ public:
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
 
+  Hub() : m_id{ZuID{} << "quic:" <<
+    ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
+
   bool init(HubParams params) {
     return init_(ZuMv(params), Zquic::Vantage::Unknown,
       [](const HubParams &) { return true; });
@@ -680,23 +683,19 @@ public:
   bool start() override { return HubCtl::start(); }
   bool stop() override { return HubCtl::stop(); }
 
-  ZuID telID() const {
-    return ZuID{} << "quic:" <<
-      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
-  }
-  ZuTuple<Ztc::LinkType::T, ZuID> telKey() const override {
-    return {Ztc::LinkType::QUIC, telID()};
+  ZuTuple<Ztc::LinkType::T, const ZuID &> telKey() const override {
+    return {Ztc::LinkType::QUIC, m_id};
   }
   void telemetry(Ztc::HubTelemetry &data) const override {
-    data.id = telID();
+    data.id = m_id;
     if (m_mx) data.mxID = m_mx->id();
-    data.down = m_telDown.load_();
+    data.down = m_down.load_();
     data.disabled = 0;
-    data.transient = m_telTransient.load_();
-    data.up = m_telUp.load_();
+    data.transient = m_transient.load_();
+    data.up = m_up.load_();
     data.reconn = 0;
     data.failed = 0;
-    data.nLinks = m_telLinks.load_();
+    data.nLinks = m_nLinks.load_();
     data.rxThread = m_rxThread;
     data.txThread = m_txThread;
     data.linkType = Ztc::LinkType::QUIC;
@@ -808,18 +807,32 @@ public:
   }
   bool txInvoked() { return m_mx && m_txThread && m_mx->invoked(m_txThread); }
 
-  void telLinkAdd_(Ztc::LinkState::T state) {
-    ++m_telLinks;
-    telLinkInc_(state);
+private:
+  void linkAdded_(Ztc::Link *link) {
+    Ztc::Hub::linkAdded_(link);
   }
-  void telLinkDel_(Ztc::LinkState::T state) {
-    telLinkDec_(state);
-    --m_telLinks;
+  void linkDeleted_(Ztc::Link *link, Ztc::LinkState::T state) {
+    switch (state) {
+      case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
+      case Ztc::LinkState::Up: Ztc::Hub::linkUpDec_(); break;
+      default: Ztc::Hub::linkTransientDec_(); break;
+    }
+    Ztc::Hub::linkDeleted_(link);
   }
-  void telLinkState_(
+
+public:
+  void linkState_(
       Ztc::LinkState::T oldState, Ztc::LinkState::T newState) {
-    telLinkDec_(oldState);
-    telLinkInc_(newState);
+    switch (oldState) {
+      case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
+      case Ztc::LinkState::Up: Ztc::Hub::linkUpDec_(); break;
+      default: Ztc::Hub::linkTransientDec_(); break;
+    }
+    switch (newState) {
+      case Ztc::LinkState::Down: Ztc::Hub::linkDownInc_(); break;
+      case Ztc::LinkState::Up: Ztc::Hub::linkUpInc_(); break;
+      default: Ztc::Hub::linkTransientInc_(); break;
+    }
   }
 
 protected:
@@ -1065,22 +1078,8 @@ private:
     return true;
   }
 
-  void telLinkInc_(Ztc::LinkState::T state) {
-    switch (state) {
-      case Ztc::LinkState::Down:	++m_telDown; break;
-      case Ztc::LinkState::Up:		++m_telUp; break;
-      default:				++m_telTransient; break;
-    }
-  }
-  void telLinkDec_(Ztc::LinkState::T state) {
-    switch (state) {
-      case Ztc::LinkState::Down:	--m_telDown; break;
-      case Ztc::LinkState::Up:		--m_telUp; break;
-      default:				--m_telTransient; break;
-    }
-  }
-
   // immutable after init()
+  const ZuID		m_id;
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
@@ -1111,11 +1110,6 @@ private:
   bool			m_newTokenAddrValidate = false;
   bool			m_addrValidatePeerPort = false;
 
-  // shared
-  ZmAtomic<unsigned>	m_telDown = 0;
-  ZmAtomic<unsigned>	m_telTransient = 0;
-  ZmAtomic<unsigned>	m_telUp = 0;
-  ZmAtomic<unsigned>	m_telLinks = 0;
 };
 
 // CRTP - aligned client implementation should conform to this interface:

@@ -15,7 +15,12 @@
 
 #include <zlib/ZuTuple.hh>
 
+#include <zlib/ZmBitmap.hh>
 #include <zlib/ZmFn_.hh>
+#include <zlib/ZmGuard.hh>
+#include <zlib/ZmPLock.hh>
+
+#include <zlib/ZtcTypes.hh>
 
 namespace Ztc {
 
@@ -42,15 +47,30 @@ struct HeapTelemetry {
 // Note: ZtStruct metadata declaration is deferred
 
 struct Heap {
-  virtual ZuTuple<ZuID, uint32_t, uint8_t, uint16_t, uint8_t>
+  virtual ZuTuple<const ZuID &, uint32_t, uint8_t, uint16_t, uint8_t>
     telKey() const = 0;
   virtual void telemetry(HeapTelemetry &data) const = 0;
 };
 
 struct HeapMgr {
-  using AllFn = ZmFn<void(Heap *), ZmFnHeapID<"Ztc.Heap.AllFn">>;
+private:
+  using WatchLock = ZmPLock;
+  using WatchGuard = ZmGuard<WatchLock>;
 
-  static void all(AllFn);
+  static WatchLock &watchLock_();
+
+public:
+  using AllFn = ZmFn<void(Heap *), AllFnHeapID>;
+  using AddFn = ZmFn<void(Heap *), WatchFnHeapID>;
+  using DelFn = ZmFn<void(Heap *), WatchFnHeapID>;
+
+  static unsigned all(AllFn);
+  template <typename L> static void guard(L &&l) {
+    WatchGuard guard(watchLock_());
+    ZuFwd<L>(l)();
+  }
+  static void watch(AddFn, DelFn);
+  static void unwatch();
 };
 
 // Heap CSV

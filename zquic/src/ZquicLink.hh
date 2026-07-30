@@ -32,10 +32,13 @@ friend class Server;
 
   class TelQueue final : public Ztc::Queue {
   public:
-    TelQueue(const Link *link) : m_link{link} { }
+    TelQueue(const Link *link, Ztc::QueueType::T type) :
+      m_link{link}, m_type{type} { }
 
-    ZuTuple<ZuID, Ztc::QueueType::T> telKey() const override {
-      return {m_link->telID(), m_type};
+    ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>
+      telKey() const override {
+      auto linkKey = m_link->telKey();
+      return {linkKey.template p<0>(), linkKey.template p<1>(), m_type};
     }
     void telemetry(Ztc::QueueTelemetry &data) const override {
       if (m_type == Ztc::QueueType::Rx)
@@ -44,11 +47,9 @@ friend class Server;
 	m_link->txQueueTelemetry_(data);
     }
 
-    void type(Ztc::QueueType::T type) { m_type = type; }
-
   private:
     const Link			*m_link;
-    Ztc::QueueType::T		m_type = Ztc::QueueType::Rx;
+    const Ztc::QueueType::T	m_type;
   };
 
 public:
@@ -89,7 +90,10 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   Link(App *app, bool isServer = false) :
-    m_app{app}, m_isServer{isServer},
+    Link{app, isServer, ZuID{} << "quic:" <<
+      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
+  Link(App *app, bool isServer, ZuID id) :
+    m_app{app}, m_id{ZuMv(id)}, m_isServer{isServer},
     m_streams{new Streams}, m_closedStreams{new ClosedStreams} {
     for (auto &pn : m_txLargestAckd) pn = U64Null;
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
@@ -109,12 +113,13 @@ public:
 	});
       });
     }
-    app->telLinkAdd_(telState_(m_linkState));
+    app->linkAdded_(this);
+    linkState_(LinkState::Starting);
   }
   ~Link() {
     clearCallbacks_();
     assert(!timersActive_());
-    app()->telLinkDel_(telState_(m_linkState));
+    app()->linkDeleted_(this, telState_(m_linkState));
   }
 
   void initCryptoDelivery_() {
@@ -140,16 +145,12 @@ public:
   }
 
   App *app() const { return m_app; }
-  ZuID telID() const {
-    return ZuID{} << "quic:" <<
-      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
-  }
-  ZuTuple<ZuID, ZuID> telKey() const override {
-    return {app()->telID(), telID()};
+  ZuTuple<const ZuID &, const ZuID &> telKey() const override {
+    return {app()->telKey().template p<1>(), m_id};
   }
   void telemetry(Ztc::LinkTelemetry &data) const override {
-    data.hubID = app()->telID();
-    data.id = telID();
+    data.hubID = app()->telKey().template p<1>();
+    data.id = m_id;
     data.rxCalls = m_rxDiag.datagramsRx.load_();
     data.txCalls = m_txDiag.packetsTx.load_();
     data.rxBytes = m_rxDiag.bytesRx.load_();
@@ -159,10 +160,10 @@ public:
     data.state = telState_(m_linkState);
   }
   unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    TelQueue queue{this};
-    fn(&queue);
-    queue.type(Ztc::QueueType::Tx);
-    fn(&queue);
+    TelQueue rxQueue{this, Ztc::QueueType::Rx};
+    fn(&rxQueue);
+    TelQueue txQueue{this, Ztc::QueueType::Tx};
+    fn(&txQueue);
     return 2;
   }
   void up() override { impl()->telUp_(); }
@@ -9050,7 +9051,7 @@ private:
     auto oldState = telState_(m_linkState);
     auto newState = telState_(state);
     if (oldState != newState)
-      app()->telLinkState_(oldState, newState);
+      app()->linkState_(oldState, newState);
     m_linkState = state;
   }
 
@@ -9158,7 +9159,8 @@ protected:
 
 private:
   void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
-    data.id = telID();
+    data.ownerID = app()->telKey().template p<1>();
+    data.id = m_id;
     data.inBytes = m_rxDiag.bytesRx.load_();
     data.outBytes = 0;
     data.inCount = m_rxDiag.datagramsRx.load_();
@@ -9170,7 +9172,8 @@ private:
   }
 
   void txQueueTelemetry_(Ztc::QueueTelemetry &data) const {
-    data.id = telID();
+    data.ownerID = app()->telKey().template p<1>();
+    data.id = m_id;
     data.inBytes = 0;
     data.outBytes = m_txDiag.bytesTx.load_();
     data.inCount = 0;
@@ -9183,6 +9186,7 @@ private:
 
   // immutable
   App			*m_app = nullptr;
+  const ZuID		m_id;
   bool			m_isServer = false;
 
   // shared
@@ -9265,7 +9269,7 @@ private:
   ZuArray<bool, PktNumSpace::N>
 			m_rxSpaceDiscarded =
 			  fixedArray<bool, PktNumSpace::N>();
-  LinkState::T		m_linkState = LinkState::Starting;
+  LinkState::T		m_linkState = LinkState::Closed;
   unsigned		m_drainPTOs = 0;
   uint64_t		m_peerRetirePriorTo = 0;
   unsigned		m_suspiciousStreamFrames = 0;

@@ -36,8 +36,16 @@ public:
   template <typename, typename, typename> friend class Zquic::Stream;
 
   CliLink(App *app) : Base{app, false} { Base::initCryptoDelivery_(); }
+  CliLink(App *app, ZuID id) : Base{app, false, ZuMv(id)} {
+    Base::initCryptoDelivery_();
+  }
   CliLink(App *app, Host server, uint16_t port) :
     Base{app, false}, m_server{ZuMv(server)}, m_port{port} {
+    Base::initCryptoDelivery_();
+  }
+  CliLink(App *app, ZuID id, Host server, uint16_t port) :
+    Base{app, false, ZuMv(id)},
+    m_server{ZuMv(server)}, m_port{port} {
     Base::initCryptoDelivery_();
   }
   ~CliLink() = default;

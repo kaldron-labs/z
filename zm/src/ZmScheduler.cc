@@ -35,7 +35,8 @@ ZmScheduler::ZmScheduler(ZmSchedParams params) : m_params{ZuMv(params)}
   for (unsigned i = 0; i < n; i++) {
     unsigned sid = i + 1;
     Thread &thread = m_threads[i];
-    thread.id << m_params.id() << '.' << m_params.thread(sid).name();
+    thread.owner = this;
+    thread.id = m_params.thread(sid).name();
     Ring &ring = thread.ring;
     ring.init(ZmRingParams{m_params.queueSize()}.
 	ll(m_params.ll()).
@@ -72,13 +73,15 @@ ZmScheduler::~ZmScheduler()
   delete [] m_threads;
 }
 
-ZuTuple<ZuID, Ztc::QueueType::T> ZmScheduler::Thread::telKey() const
+ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>
+ZmScheduler::Thread::telKey() const
 {
-  return {id, Ztc::QueueType::Thread};
+  return {owner->id(), id, Ztc::QueueType::Thread};
 }
 
 void ZmScheduler::Thread::telemetry(Ztc::QueueTelemetry &data) const
 {
+  data.ownerID = owner->id();
   data.id = id;
   ring.stats(data.inCount, data.inBytes, data.outCount, data.outBytes);
   data.count = ring.count_();

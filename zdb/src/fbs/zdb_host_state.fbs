@@ -1,9 +1,0 @@
-namespace Zdb_.fbs;
-enum HostState:int8 {
-  Instantiated = 0,	// instantiated, init() not yet called
-  Initialized,		// init() or close() completed
-  Electing,		// start() called, determining active/inactive
-  Active,		// active (leader)
-  Inactive,		// inactive (client)
-  Stopping		// stop() in process
-}

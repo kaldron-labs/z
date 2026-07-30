@@ -50,7 +50,8 @@ struct LinkTelemetry {
 };
 
 struct Link : public QueueMgr {
-  virtual ZuTuple<ZuID, ZuID> telKey() const = 0;	// { hubID, id }
+  virtual ZuTuple<const ZuID &, const ZuID &>
+    telKey() const = 0;	// { hubID, id }
   virtual void telemetry(LinkTelemetry &data) const = 0;
   virtual void up() = 0;
   virtual void down() = 0;

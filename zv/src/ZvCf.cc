@@ -10,13 +10,11 @@
 
 namespace ZvCf {
 
-namespace {
-
 enum { MaxFileSize = 1<<20 }; // 1Mb
 
 ZuDerive(Paths, (ZtArray<Zi::Path, ZtArrayHeapID<"ZvCf.Paths">>));
 
-void setDefine(Defines *defines, ZuCSpan key, ZuCSpan value)
+static void setDefine(Defines *defines, ZuCSpan key, ZuCSpan value)
 {
   if (auto node = defines->findPtr(key)) {
     node->val() = value;
@@ -169,8 +167,6 @@ private:
   Zi::Path	m_topDir;
   Zi::Path	m_errorPath;
 };
-
-} // namespace
 
 ZuTuple<int, ZuPtr<const AnyNode>> load(
     const Zi::Path &path, PctFn pctFn, ZmRef<Defines> defines)

@@ -551,6 +551,7 @@ struct LoopResult {
 struct MxCheck {
   Ztc::Mx	*target;
   bool		found = false;
+  unsigned	visited = 0;
 };
 
 LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
@@ -566,12 +567,14 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
   Ztc::MxTelemetry telemetry{};
   mx.telemetry(telemetry);
   MxCheck check{&mx};
-  Ztc::MxMgr::all(Ztc::MxMgr::AllFn{
+  unsigned allMxs = Ztc::MxMgr::all(Ztc::MxMgr::AllFn{
     &check, [](MxCheck *check, Ztc::Mx *mx) {
+      ++check->visited;
       if (mx == check->target) check->found = true;
     }});
   result.telemetry =
-    telemetry.nThreads >= 1 && mx.telKey() == telemetry.id && check.found;
+    telemetry.nThreads >= 1 && mx.telKey() == telemetry.id && check.found &&
+    allMxs == check.visited;
 
   mx.startLoopback();
 
@@ -648,6 +651,41 @@ void testUdpTOSIPv4()
   ZuCheck(mx.tos_() == 0x2e);
 }
 
+struct MxWatchState {
+  ZiMultiplex	*mx = nullptr;
+  unsigned	rootAdds = 0;
+  unsigned	rootDels = 0;
+  unsigned	queueSeeds = 0;
+};
+
+void testMxWatch()
+{
+  ZuTestScope(testMxWatch);
+  MxWatchState state;
+  Ztc::MxMgr::watch(
+    {[&state](Ztc::Mx *mx_) {
+      state.mx = static_cast<ZiMultiplex *>(mx_);
+      ++state.rootAdds;
+      state.queueSeeds = mx_->allQueues(
+	{[](Ztc::Queue *) { }});
+    }},
+    {[&state](Ztc::Mx *mx_) {
+      ZuCheck(mx_ == state.mx);
+      ++state.rootDels;
+    }});
+  {
+    LoopMx mx{ZiIP{"127.0.0.1"}};
+    ZuCheck(state.mx == &mx);
+    ZuCheck(mx.start());
+    ZuCheck(state.rootAdds == 1);
+    ZuCheck(state.queueSeeds == mx.params().nThreads());
+    ZuCheck(mx.stop());
+    mx.unwatch();
+  }
+  Ztc::MxMgr::unwatch();
+  ZuCheck(state.rootDels == 1);
+}
+
 #undef CheckTcpLoopback
 
 } // namespace
@@ -660,5 +698,6 @@ int main(int argc, char **argv)
   ZuTestCall(testTcpLoopbackIPv4);
   ZuTestCall(testTcpLoopbackIPv6);
   ZuTestCall(testUdpTOSIPv4);
+  ZuTestCall(testMxWatch);
   return 0;
 }

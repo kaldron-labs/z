@@ -42,8 +42,6 @@
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZtcMx.hh>
 
-namespace Ztc { struct Link; }
-
 #if defined(ZDEBUG) && !defined(ZiMultiplex_DEBUG)
 #define ZiMultiplex_DEBUG	// enable testing / debugging
 #if !defined(ZiMultiplex_FILTER)
@@ -592,7 +590,6 @@ public:
   // low-frequency - vtbl dispatch overhead is fine
   virtual void connected(ZiIOContext &rxContext) = 0;
   virtual void disconnected(bool peer) = 0;
-  virtual Ztc::Link *telLink(const void *) const { return nullptr; }
 
   bool up() const {
     return m_rxUp.load_() && m_txUp.load_();
@@ -938,6 +935,13 @@ public:
 
   unsigned allCxns(Ztc::Mx::AllCxnsFn fn) const override;
   unsigned allCxns_(Ztc::Mx::AllCxnsFn fn) const;
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
+    return ZmScheduler::allQueues(ZuMv(fn));
+  }
+  void watch(
+    Ztc::Mx::AddCxnFn, Ztc::Mx::DelCxnFn,
+    Ztc::Mx::AddQueueFn, Ztc::Mx::DelQueueFn) override;
+  void unwatch() override;
 
   void listen(
       ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,
@@ -1012,7 +1016,7 @@ public:
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
 
-  ZuID telKey() const override { return id(); }
+  const ZuID &telKey() const override { return id(); }
   void telemetry(Ztc::MxTelemetry &data) const override;
 
 private:

@@ -21,6 +21,9 @@
 #include <zlib/ZmFn_.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmPLock.hh>
+#include <zlib/ZmRWLock.hh>
+
+#include <zlib/ZtcTypes.hh>
 
 namespace Ztc {
 
@@ -51,9 +54,24 @@ struct Thread {
 };
 
 struct ThreadMgr {
-  using AllFn = ZmFn<void(Thread *), ZmFnHeapID<"Ztc.Thread.AllFn">>;
+private:
+  using WatchLock = ZmRWLock;
+  using WatchGuard = ZmGuard<WatchLock>;
 
-  static void all(AllFn);
+  static WatchLock &watchLock_();
+
+public:
+  using AllFn = ZmFn<void(Thread *), AllFnHeapID>;
+  using AddFn = ZmFn<void(Thread *), WatchFnHeapID>;
+  using DelFn = ZmFn<void(Thread *), WatchFnHeapID>;
+
+  static unsigned all(AllFn);
+  template <typename L> static void guard(L &&l) {
+    WatchGuard guard(watchLock_());
+    ZuFwd<L>(l)();
+  }
+  static void watch(AddFn, DelFn);
+  static void unwatch();
 };
 
 // Thread CSV

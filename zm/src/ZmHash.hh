@@ -302,7 +302,6 @@ struct ZmHash_IsStaticEquals<T, Cmp, decltype(
 template <typename T_, typename NTP = ZmHash_Defaults>
 class ZmHash :
     public ZmAnyHash,
-    public Ztc::Hash,
     public ZmHash_LockMgr<typename NTP::Lock>,
     public ZmNodeFn<NTP::Shadow, typename NTP::Node> {
 public:
@@ -1146,11 +1145,9 @@ public:
     return lockCode(HashFn::hash(ZuFwd<P>(key)));
   }
 
-  ZuTuple<ZuID, uintptr_t> telKey() const override {
+  ZuTuple<const ZuID &, uintptr_t> telKey() const override {
     return {m_id, reinterpret_cast<uintptr_t>(this)};
   }
-
-  Ztc::Hash *ztcHash() override { return this; }
 
   void telemetry(Ztc::HashTelemetry &data) const override {
     data.id = m_id;

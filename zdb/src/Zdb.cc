@@ -151,6 +151,7 @@ void DB::init(
     return true;
   }))
     throw ZeEXCEPT(Fatal, "Zdb", "Zdb::init called out of order");
+  Ztc::DBMgr::add(this);
 }
 
 ZmRef<AnyTable> DB::initTable_(
@@ -169,6 +170,7 @@ ZmRef<AnyTable> DB::initTable_(
     if (!cf) m_cf.tableCfs.addNode(cf = new TableCfs::Node{id});
     table = fn(this, &(cf->val()));
     m_tables.add(table);
+    tableAdded_(table);
     return true;
   }))
     throw ZeEXCEPT(Fatal, "Zdb", "Zdb::initTable called out of order");
@@ -187,8 +189,15 @@ void DB::final()
     m_recovering = 0; m_recover.reset(); m_recoverEnd.reset();
     // reset replication (clearing m_self also sets state to Instantiated)
     m_self = m_leader = m_prev = m_next = nullptr;
-    m_selfID = m_leaderID = m_prevID = m_nextID = {};
     m_nPeers = 0; m_standalone = false;
+    {
+      auto i = m_tables.citer<ZmRBTreeLess>();
+      while (auto table = i.val()) tableDeleted_(table);
+    }
+    {
+      auto i = m_hosts->citer();
+      while (auto host = i()) hostDeleted_(host);
+    }
     m_cxns.clean(); m_hostIndex.clean(); m_hosts->clean(); m_hosts = {};
     // reset tables
     m_nextSN = 0;
@@ -203,6 +212,31 @@ void DB::final()
     return true;
   }))
     throw ZeEXCEPT(Fatal, "Zdb", "Zdb::final called out of order");
+  Ztc::DBMgr::del(this);
+}
+
+unsigned DB::allDBHosts(Ztc::DB::AllDBHostsFn fn) const
+{
+  ZmRef<Hosts> hosts = m_hosts;
+  if (!hosts) return 0;
+  unsigned n = 0;
+  auto i = hosts->citer();
+  while (auto host = i()) {
+    ++n;
+    fn(host);
+  }
+  return n;
+}
+
+unsigned DB::allDBTables(Ztc::DB::AllDBTablesFn fn) const
+{
+  unsigned n = 0;
+  auto i = m_tables.citer();
+  while (auto table = i.val()) {
+    ++n;
+    fn(table);
+  }
+  return n;
 }
 
 void DB::wake()
@@ -618,64 +652,41 @@ void DB::allDone(bool ok)
   }
 }
 
-struct DBTelemetry : public ZuStructShim<DBTelemetry, ZuFields<Tel::DB>> {
-  const DB &db;
-  int state_;
-  DBTelemetry(const DB &db_) : db{db_}, state_{db.state()} { }
-
-  auto self() const { return db.m_self->id(); }
-  auto leader() const { return db.m_leader ? db.m_leader->id() : ZuCSpan{}; }
-  auto prev() const { return db.m_prev ? db.m_prev->id() : ZuCSpan{}; }
-  auto next() const { return db.m_next ? db.m_next->id() : ZuCSpan{}; }
-  auto state() const { return state_; }
-  auto active() const { return state_ == HostState::Active; }
-  auto recovering() const { return db.m_recovering; }
-  auto replicating() const { return Host::replicating(db.m_next); }
-  auto nTables() const { return db.m_tables.count_(); }
-  auto nHosts() const { return db.m_hosts->count_(); }
-  auto nPeers() const { return db.m_nPeers; }
-  auto nCxns() const { return db.m_cxns.count_(); }
-  const auto &thread() const { return db.m_cf.thread; }
-  auto heartbeatFreq() const { return db.m_cf.heartbeatFreq; }
-  auto heartbeatTimeout() const { return db.m_cf.heartbeatTimeout; }
-  auto reconnectFreq() const { return db.m_cf.reconnectFreq; }
-  auto electionTimeout() const { return db.m_cf.electionTimeout; }
-};
-ZfbEnableShimNS(DBTelemetry, Tel, DB);
-
-Zfb::Offset<void>
-DB::telemetry(Zfb::Builder &fbb, bool update) const
+void DB::telemetry(Ztc::DBTelemetry &data) const
 {
-  DBTelemetry tel(*this);
-  if (ZuLikely(update))
-    return ZfbStruct::saveUpd(fbb, tel).Union();
-  else
-    return ZfbStruct::save(fbb, tel).Union();
+  data.thread = m_cf.thread;
+  data.self = telKey();
+  data.leader = m_leader ? m_leader->id() : ZuCSpan{};
+  data.prev = m_prev ? m_prev->id() : ZuCSpan{};
+  data.next = m_next ? m_next->id() : ZuCSpan{};
+  data.nCxns = m_cxns.count_();
+  data.heartbeatFreq = m_cf.heartbeatFreq;
+  data.heartbeatTimeout = m_cf.heartbeatTimeout;
+  data.reconnectFreq = m_cf.reconnectFreq;
+  data.electionTimeout = m_cf.electionTimeout;
+  data.nTables = m_tables.count_();
+  data.nHosts = m_hosts ? m_hosts->count_() : 0;
+  data.nPeers = m_nPeers;
+  data.state = state();
+  data.active = state() == HostState::Active;
+  data.recovering = m_recovering;
+  data.replicating = Host::replicating(m_next);
 }
 
-struct HostTelemetry :
-  public ZuStructShim<HostTelemetry, ZuFields<Tel::DBHost>>
+Ztc::DBHostKey Host::telKey() const
 {
-  const Host &host;
-  HostTelemetry(const Host &host_) : host{host_} { }
+  return {m_db->telKey(), m_cf->id};
+}
 
-  auto id() const { return host.config().id; }
-  auto priority() const { return host.config().priority; }
-  auto state() const { return host.state(); }
-  auto voted() const { return host.voted(); }
-  auto ip() const { return host.config().ip; }
-  auto port() const { return host.config().port; }
-};
-ZfbEnableShimNS(HostTelemetry, Tel, DBHost);
-
-Zfb::Offset<void>
-Host::telemetry(Zfb::Builder &fbb, bool update) const
+void Host::telemetry(Ztc::DBHostTelemetry &data) const
 {
-  HostTelemetry tel(*this);
-  if (ZuLikely(update))
-    return ZfbStruct::saveUpd(fbb, tel).Union();
-  else
-    return ZfbStruct::save(fbb, tel).Union();
+  data.ip = m_cf->ip;
+  data.dbID = m_db->telKey();
+  data.id = m_cf->id;
+  data.priority = m_cf->priority;
+  data.port = m_cf->port;
+  data.state = m_state;
+  data.voted = m_voted;
 }
 
 Host::Host(DB *db, const HostCf *cf, unsigned tblCount) :
@@ -1534,45 +1545,31 @@ AnyTable::~AnyTable() noexcept
   // close(); // must be called while running
 }
 
-// telemetry
-
-struct TableTelemetry :
-  public ZuStructShim<TableTelemetry, ZuFields<Tel::DBTable>>
+Ztc::DBTableKey AnyTable::telKey() const
 {
-  const AnyTable &tbl;
-  unsigned cacheSize_ = 0;
-  uint64_t cacheLoads_= 0, cacheMisses_ = 0, cacheEvictions_ = 0;
-  TableTelemetry(const AnyTable &tbl_) : tbl{tbl_} {
-    for (unsigned i = 0, n = tbl.config().nShards; i < n; i++) {
-      ZmCacheStats stats;
-      tbl.cacheStats(i, stats);
-      cacheSize_ += stats.size;
-      cacheLoads_ += stats.loads;
-      cacheMisses_ += stats.misses;
-      cacheEvictions_ += stats.evictions;
-    }
+  return {m_db->telKey(), m_cf->id};
+}
+
+void AnyTable::telemetry(Ztc::DBTableTelemetry &data) const
+{
+  data.dbID = m_db->telKey();
+  data.id = m_cf->id;
+  data.threads = m_cf->threads;
+  data.count = count();
+  data.cacheLoads = 0;
+  data.cacheMisses = 0;
+  data.cacheEvictions = 0;
+  data.cacheSize = 0;
+  for (unsigned i = 0, n = m_cf->nShards; i < n; ++i) {
+    ZmCacheStats stats;
+    cacheStats(i, stats);
+    data.cacheSize += stats.size;
+    data.cacheLoads += stats.loads;
+    data.cacheMisses += stats.misses;
+    data.cacheEvictions += stats.evictions;
   }
-
-  const IDString &name() const { return tbl.config().id; }
-  auto cacheMode() const { return tbl.config().cacheMode; }
-  auto count() const { return tbl.count(); }
-  auto cacheSize() const { return cacheSize_; }
-  auto cacheLoads() const { return cacheLoads_; }
-  auto cacheMisses() const { return cacheMisses_; }
-  auto cacheEvictions() const { return cacheEvictions_; }
-  auto nShards() const { return tbl.config().nShards; }
-  const ZtArray<ZtString<>> &threads() const { return tbl.config().threads; }
-};
-ZfbEnableShimNS(TableTelemetry, Tel, DBTable);
-
-Zfb::Offset<void>
-AnyTable::telemetry(Zfb::Builder &fbb, bool update) const
-{
-  TableTelemetry tel(*this);
-  if (ZuLikely(update))
-    return ZfbStruct::saveUpd(fbb, tel).Union();
-  else
-    return ZfbStruct::save(fbb, tel).Union();
+  data.nShards = m_cf->nShards;
+  data.cacheMode = m_cf->cacheMode;
 }
 
 // process inbound replication - record

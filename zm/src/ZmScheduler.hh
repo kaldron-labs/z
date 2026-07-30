@@ -166,7 +166,7 @@ struct ZmAPI ZmSchedParams {
   }
   Thread &thread(unsigned sid) { return m_threads[sid]; }
 
-  ZuCSpan id() const { return m_id; }
+  const ZuID &id() const { return m_id; }
   unsigned nThreads() const { return m_nThreads; }
   unsigned stackSize() const { return m_stackSize; }
   int priority() const { return m_priority; }
@@ -293,7 +293,7 @@ protected:
   ZmSchedParams &params_() { return m_params; }
 
 public:
-  ZuCSpan id() const { return m_params.id(); }
+  const ZuID &id() const { return m_params.id(); }
 
   unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
 
@@ -549,9 +549,11 @@ private:
   using SpawnReadGuard = ZmReadGuard<SpawnLock>;
 
   struct Thread final : public Ztc::Queue {
-    ZuTuple<ZuID, Ztc::QueueType::T> telKey() const override;
+    ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>
+      telKey() const override;
     void telemetry(Ztc::QueueTelemetry &) const override;
 
+    ZmScheduler		*owner = nullptr;
     ZuID		id;
     Ring		ring;
     WakeFn		wakeFn;

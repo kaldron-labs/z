@@ -15,9 +15,11 @@
 #include <zlib/ZuSpan.hh>
 
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmHash.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmEngine.hh>
+#include <zlib/ZmPLock.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
@@ -106,11 +108,6 @@ public:
     if (Link *link = link_)
       link->disconnected_0(this, ZuMvPtr(link_), peer);
   }
-  Ztc::Link *telLink(const void *owner) const override {
-    Link *link = m_link;
-    return link && link->app() == owner ? link : nullptr;
-  }
-
 private:
   // immutable
   LinkRef	m_link = nullptr;
@@ -146,10 +143,13 @@ class Link :
 
   class TelQueue final : public Ztc::Queue {
   public:
-    TelQueue(const Link *link) : m_link{link} { }
+    TelQueue(const Link *link, Ztc::QueueType::T type) :
+      m_link{link}, m_type{type} { }
 
-    ZuTuple<ZuID, Ztc::QueueType::T> telKey() const override {
-      return {m_link->telID(), m_type};
+    ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>
+      telKey() const override {
+      auto linkKey = m_link->telKey();
+      return {linkKey.template p<0>(), linkKey.template p<1>(), m_type};
     }
     void telemetry(Ztc::QueueTelemetry &data) const override {
       if (m_type == Ztc::QueueType::Rx)
@@ -158,11 +158,9 @@ class Link :
 	m_link->txQueueTelemetry_(data);
     }
 
-    void type(Ztc::QueueType::T type) { m_type = type; }
-
   private:
     const Link			*m_link;
-    Ztc::QueueType::T		m_type = Ztc::QueueType::Rx;
+    const Ztc::QueueType::T	m_type;
   };
 
 public:
@@ -179,23 +177,26 @@ friend Cxn;
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  Link(App *app) : m_app{app} {
-    app->telLinkAdd_(Ztc::LinkState::Down);
+  Link(App *app) : Link{app, ZuID{} << "tcp:" <<
+    ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
+  Link(App *app, ZuID id) : m_app{app}, m_id{ZuMv(id)} {
+    app->linkAdded_(this);
   }
   ~Link() {
-    app()->telLinkDel_(Ztc::LinkState::T(m_telState.load_()));
+    app()->linkDeleted_(
+      this, Ztc::LinkState::T(m_telState.load_()));
   }
 
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
   StreamRef stream() { return impl(); }
 
-  ZuTuple<ZuID, ZuID> telKey() const override {
-    return {app()->telID(), telID()};
+  ZuTuple<const ZuID &, const ZuID &> telKey() const override {
+    return {app()->telKey().template p<1>(), m_id};
   }
   void telemetry(Ztc::LinkTelemetry &data) const override {
-    data.hubID = app()->telID();
-    data.id = telID();
+    data.hubID = app()->telKey().template p<1>();
+    data.id = m_id;
     data.rxCalls = 0;
     data.txCalls = 0;
     data.rxBytes = 0;
@@ -211,10 +212,10 @@ friend Cxn;
     data.state = Ztc::LinkState::T(m_telState.load_());
   }
   unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    TelQueue queue{this};
-    fn(&queue);
-    queue.type(Ztc::QueueType::Tx);
-    fn(&queue);
+    TelQueue rxQueue{this, Ztc::QueueType::Rx};
+    fn(&rxQueue);
+    TelQueue txQueue{this, Ztc::QueueType::Tx};
+    fn(&txQueue);
     return 2;
   }
   void up() override { impl()->telUp_(); }
@@ -433,12 +434,13 @@ private:
   void telState_(Ztc::LinkState::T state) {
     auto oldState = Ztc::LinkState::T(m_telState.xch(int(state)));
     if (oldState != state)
-      app()->telLinkState_(oldState, state);
+      app()->linkState_(oldState, state);
   }
 
   void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
     Cxn *cxn = m_cxn;
-    data.id = telID();
+    data.ownerID = app()->telKey().template p<1>();
+    data.id = m_id;
     data.inBytes = cxn ? cxn->rxBytes() : 0;
     data.outBytes = 0;
     data.inCount = cxn ? cxn->rxCalls() : 0;
@@ -451,7 +453,8 @@ private:
 
   void txQueueTelemetry_(Ztc::QueueTelemetry &data) const {
     Cxn *cxn = m_cxn;
-    data.id = telID();
+    data.ownerID = app()->telKey().template p<1>();
+    data.id = m_id;
     data.inCount = m_txInCount.load_();
     data.inBytes = m_txInBytes.load_();
     data.outBytes = cxn ? cxn->txBytes() : 0;
@@ -462,13 +465,9 @@ private:
     data.type = Ztc::QueueType::Tx;
   }
 
-  ZuID telID() const {
-    return ZuID{} << "tcp:" <<
-      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
-  }
-
   // immutable
   App			*m_app = nullptr;
+  const ZuID		m_id;
 
   // shared
   ZmAtomic<unsigned>	m_disconnecting = 0;
@@ -517,8 +516,11 @@ friend Base;
 template <typename> friend class Client;
 
   CliLink(App *app) : Base{app} { }
+  CliLink(App *app, ZuID id) : Base{app, ZuMv(id)} { }
   CliLink(App *app, Host server, uint16_t port) :
       Base{app}, m_server{ZuMv(server)}, m_port{port} { }
+  CliLink(App *app, ZuID id, Host server, uint16_t port) :
+      Base{app, ZuMv(id)}, m_server{ZuMv(server)}, m_port{port} { }
 
   void connect() { app()->rxInvoke([this]() mutable { connect_(); }); }
   void connect(Host server, uint16_t port) {
@@ -608,6 +610,9 @@ template <typename, typename, typename, typename> friend class SrvLink;
 public:
   using App = App_;
   using HubCtl = ZmEngine<App>;
+  using Links = ZmHash<Ztc::Link *,
+    ZmHashLock<ZmPLock,
+      ZmHashHeapID<"Ztcp.Hub.Links">>>;
 
   using HubCtl::start;
   using HubCtl::stop;
@@ -616,29 +621,28 @@ public:
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
 
+  Hub() : m_id{ZuID{} << "tcp:" <<
+    ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
+
   bool init(HubParams params) {
     return init_(ZuMv(params), [](const HubParams &) { return true; });
   }
   bool start() override { return HubCtl::start(); }
   bool stop() override { return HubCtl::stop(); }
 
-  ZuID telID() const {
-    return ZuID{} << "tcp:" <<
-      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>();
-  }
-  ZuTuple<Ztc::LinkType::T, ZuID> telKey() const override {
-    return {Ztc::LinkType::TCP, telID()};
+  ZuTuple<Ztc::LinkType::T, const ZuID &> telKey() const override {
+    return {Ztc::LinkType::TCP, m_id};
   }
   void telemetry(Ztc::HubTelemetry &data) const override {
-    data.id = telID();
+    data.id = m_id;
     if (m_mx) data.mxID = m_mx->id();
-    data.down = m_telDown.load_();
+    data.down = m_down.load_();
     data.disabled = 0;
-    data.transient = m_telTransient.load_();
-    data.up = m_telUp.load_();
+    data.transient = m_transient.load_();
+    data.up = m_up.load_();
     data.reconn = 0;
     data.failed = 0;
-    data.nLinks = m_telLinks.load_();
+    data.nLinks = m_nLinks.load_();
     data.rxThread = m_rxThread;
     data.txThread = m_txThread;
     data.linkType = Ztc::LinkType::TCP;
@@ -740,22 +744,56 @@ public:
 
   void linkDisconnected_() { }
 
-  void telLinkAdd_(Ztc::LinkState::T state) {
-    ++m_telLinks;
-    telLinkInc_(state);
+private:
+  void linkAdded_(Ztc::Link *link) {
+    m_links.add(link);
+    Ztc::Hub::linkAdded_(link);
   }
-  void telLinkDel_(Ztc::LinkState::T state) {
-    telLinkDec_(state);
-    --m_telLinks;
+  void linkDeleted_(Ztc::Link *link, Ztc::LinkState::T state) {
+    if (m_links.del(link)) {
+      switch (state) {
+	case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
+	case Ztc::LinkState::Up: Ztc::Hub::linkUpDec_(); break;
+	default: Ztc::Hub::linkTransientDec_(); break;
+      }
+      Ztc::Hub::linkDeleted_(link);
+    }
   }
-  void telLinkState_(
+
+public:
+  void linkState_(
       Ztc::LinkState::T oldState, Ztc::LinkState::T newState) {
-    telLinkDec_(oldState);
-    telLinkInc_(newState);
+    switch (oldState) {
+      case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
+      case Ztc::LinkState::Up: Ztc::Hub::linkUpDec_(); break;
+      default: Ztc::Hub::linkTransientDec_(); break;
+    }
+    switch (newState) {
+      case Ztc::LinkState::Down: Ztc::Hub::linkDownInc_(); break;
+      case Ztc::LinkState::Up: Ztc::Hub::linkUpInc_(); break;
+      default: Ztc::Hub::linkTransientInc_(); break;
+    }
   }
 
 protected:
-  unsigned allLinks_(Ztc::Hub::AllLinksFn) const { return 0; }
+  unsigned allLinks_(Ztc::Hub::AllLinksFn fn) const {
+    unsigned n = 0;
+    auto i = m_links.citer();
+    while (Ztc::Link *link = i.key()) {
+      ++n;
+      fn(link);
+    }
+    return n;
+  }
+  unsigned downLinks_() {
+    unsigned n = 0;
+    auto i = m_links.citer();
+    while (Ztc::Link *link = i.key()) {
+      ++n;
+      link->down();
+    }
+    return n;
+  }
   unsigned allPools_(Ztc::Hub::AllPoolsFn) const { return 0; }
 
   void start_() {
@@ -796,33 +834,16 @@ protected:
   }
 
 private:
-  void telLinkInc_(Ztc::LinkState::T state) {
-    switch (state) {
-      case Ztc::LinkState::Down:	++m_telDown; break;
-      case Ztc::LinkState::Up:		++m_telUp; break;
-      default:				++m_telTransient; break;
-    }
-  }
-  void telLinkDec_(Ztc::LinkState::T state) {
-    switch (state) {
-      case Ztc::LinkState::Down:	--m_telDown; break;
-      case Ztc::LinkState::Up:		--m_telUp; break;
-      default:				--m_telTransient; break;
-    }
-  }
-
   void final_() { m_errorFn = ErrorFn{}; } // direct call from within rx thread
 
   // immutable after init()
+  const ZuID		m_id;
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
 
   // shared
-  ZmAtomic<unsigned>	m_telDown = 0;
-  ZmAtomic<unsigned>	m_telTransient = 0;
-  ZmAtomic<unsigned>	m_telUp = 0;
-  ZmAtomic<unsigned>	m_telLinks = 0;
+  Links			m_links;
 
   // Rx thread exclusive after init()
   alignas(Zm::CacheLineSize)
@@ -856,8 +877,6 @@ friend ZmEngine<App_>;
 public:
   using App = App_;
   using Base = Hub<App>;
-  using StopCxns =
-    ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Ztc.Server.StopCxns">>;
 friend Base;
 
   using Base::mx;
@@ -872,19 +891,6 @@ friend Base;
   }
 
   void final() { Base::final(); }
-
-  unsigned allLinks_(Ztc::Hub::AllLinksFn fn) const {
-    unsigned n = 0;
-    mx()->allCxns(Ztc::Mx::AllCxnsFn{
-      [app = app(), &fn, &n](Ztc::Connection *cxn_) {
-	auto cxn = static_cast<ZiConnection *>(cxn_);
-	if (auto link = cxn->telLink(app)) {
-	  ++n;
-	  fn(link);
-	}
-      }});
-    return n;
-  }
 
   void listen() {
     mx()->listen(
@@ -948,24 +954,7 @@ protected:
   }
 
   void stop_0() {
-    mx()->run([this]() {
-      StopCxns cxns;
-      mx()->allCxns_({&cxns, [](StopCxns *cxns, Ztc::Connection *cxn) {
-	cxns->push(ZmRef<ZiConnection>{
-	  static_cast<ZiConnection *>(cxn)});
-      }});
-      this->rxRun([this, cxns = ZuMv(cxns)]() mutable {
-	stop_1(ZuMv(cxns));
-      });
-    }, mx()->rxThread());
-  }
-
-  void stop_1(StopCxns cxns) {
-    for (unsigned i = 0; i < cxns.length(); ++i)
-      if (auto link = cxns[i]->telLink(app())) {
-	++m_stopCount;
-	link->down();
-      }
+    m_stopCount = this->downLinks_();
     this->rxRun([this]() { stop_2(); });
   }
 

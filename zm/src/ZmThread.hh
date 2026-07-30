@@ -58,6 +58,7 @@ namespace ZmThreadPriority {
 }
 
 class ZmThreadContext;
+class ZmThreadMgr_;
 
 #ifndef _WIN32
 extern "C" { ZmExtern void *ZmThread_start(void *); }
@@ -196,6 +197,7 @@ class ZmThread;
 
 class ZmAPI ZmThreadContext final :
     public ZmObject, public ZmThreadContext_, public Ztc::Thread {
+  friend ZmThreadMgr_;
   friend ZmThreadContext *ZmThreadContext_new();
 #ifndef _WIN32
   friend ZmAPI void *ZmThread_start(void *);
@@ -351,10 +353,13 @@ class ZmAPI ZmThreadContext final :
 
 public:
   ~ZmThreadContext() noexcept {
+    final();
     if (m_dtorFn) (*m_dtorFn)(m_lambda);
   }
 
   void init();
+  void publish();
+  void final();
 
   void prioritize(int priority);
   void bind(unsigned partition, const ZmBitmap &cpuset);
@@ -418,6 +423,7 @@ private:
   void			*m_result = nullptr;
 
   bool			m_detached = false;
+  bool			m_published = false;
 };
 
 // Note: self() depends on ZmSpecific and should not be called during exit
@@ -511,7 +517,9 @@ ZuDerive(ZmThreadContextTLS,
       ZmSpecificCleanup<ZmCleanup::Thread>>>));
 
 inline ZmThreadContext *ZmThreadContext::self() {
-  return ZmThreadContextTLS::instance();
+  auto context = ZmThreadContextTLS::instance();
+  context->publish();
+  return context;
 }
 inline ZmThreadContext *ZmThreadContext::self(ZmThreadContext *c) {
   return ZmThreadContextTLS::instance(c);

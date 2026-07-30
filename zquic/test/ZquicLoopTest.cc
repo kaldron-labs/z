@@ -68,7 +68,8 @@ struct TestLink :
 {
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
-  TestLink(App *app, bool isServer = false) : Base{app, isServer} { }
+  TestLink(App *app) : Base{app, false, ZuID{"client"}} { }
+  TestLink(App *app, bool isServer) : Base{app, isServer} { }
   void flushTx_() { }
   void queueTxFlush_() { }
   void pto_() { }
@@ -130,30 +131,38 @@ void queueTelemetry(
   Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
 {
   auto linkKey = link.telKey();
-  Ztc::Queue *scratch = nullptr;
+  Ztc::Queue *rxQueue = nullptr;
+  Ztc::Queue *txQueue = nullptr;
   unsigned count = 0;
   unsigned allQueues = link.allQueues([&](Ztc::Queue *queue) {
-    if (!scratch)
-      scratch = queue;
-    else
-      ZQUIC_CHECK_RT(queue == scratch,
-	"allQueues did not reuse its scratch queue");
+    if (!count)
+      rxQueue = queue;
+    else {
+      txQueue = queue;
+      ZQUIC_CHECK_RT(txQueue != rxQueue,
+	"allQueues did not publish distinct queues");
+    }
     auto key = queue->telKey();
-    ZQUIC_CHECK_RT(key.template p<0>() == linkKey.template p<1>(),
+    ZQUIC_CHECK_RT(key.template p<0>() == linkKey.template p<0>(),
+      "telemetry queue owner ID mismatch");
+    ZQUIC_CHECK_RT(key.template p<1>() == linkKey.template p<1>(),
       "telemetry queue ID mismatch");
-    ZQUIC_CHECK_RT(key.template p<1>() ==
+    ZQUIC_CHECK_RT(key.template p<2>() ==
 	(count ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
       "telemetry queue iteration order mismatch");
 
     Ztc::QueueTelemetry data;
+    data.ownerID = ZuID{} << "dirtyOwner";
     data.id = ZuID{} << "dirty";
     data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
     data.count = data.size = data.full = 1;
     data.type = Ztc::QueueType::Thread;
     queue->telemetry(data);
-    ZQUIC_CHECK_RT(data.id == key.template p<0>(),
+    ZQUIC_CHECK_RT(data.ownerID == key.template p<0>(),
+      "queue telemetry owner ID mismatch");
+    ZQUIC_CHECK_RT(data.id == key.template p<1>(),
       "queue telemetry ID mismatch");
-    ZQUIC_CHECK_RT(data.type == key.template p<1>(),
+    ZQUIC_CHECK_RT(data.type == key.template p<2>(),
       "queue telemetry type mismatch");
     ZQUIC_CHECK_RT(!data.size && !data.full,
       "queue telemetry fields were not overwritten");
@@ -171,6 +180,19 @@ void queueTelemetry(
   ZQUIC_CHECK_RT(allQueues == 2, "allQueues returned incorrect count");
   ZQUIC_CHECK_RT(count == allQueues,
     "allQueues did not enumerate returned count");
+  unsigned repeat = 0;
+  link.allQueues([&](Ztc::Queue *queue) {
+    ZQUIC_CHECK_RT(queue == (repeat++ ? txQueue : rxQueue),
+      "allQueues queue pointer is not stable");
+  });
+  ZQUIC_CHECK_RT(rx.ownerID == linkKey.template p<0>() &&
+      tx.ownerID == linkKey.template p<0>(),
+    "queue owner ID mismatch");
+  ZQUIC_CHECK_RT(rx.id == linkKey.template p<1>() &&
+      tx.id == linkKey.template p<1>(),
+    "queue ID mismatch");
+  ZQUIC_CHECK_RT(rx.type != tx.type,
+    "Rx and Tx queue types do not discriminate the keys");
 }
 
 template <typename Link>

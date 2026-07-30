@@ -16,10 +16,8 @@
 #include <zlib/ZuInt.hh>
 #include <zlib/ZuCmp.hh>
 
-#include <zlib/Zfb.hh>
-
-#include <zlib/zdb_cache_mode_fbs.h>
-#include <zlib/zdb_host_state_fbs.h>
+#include <zlib/ZtEnum.hh>
+#include <zlib/ZtString.hh>
 
 namespace Zdb_ {
 
@@ -53,22 +51,6 @@ constexpr unsigned IDSize_ = IDSize - 16; // Zdb requires 16 bytes of suffix
 ZuDerive(IDString,
   (ZtString<ZtStringBuiltin<IDSize, ZtStringHeapID<"Zdb.ID">>>));
 
-namespace CacheMode {
-  ZfbEnumValues(CacheMode,
-    Normal,
-    All)
-}
-
-namespace HostState {
-  ZfbEnumValues(HostState,
-    Instantiated,
-    Initialized,
-    Electing,
-    Active,
-    Inactive,
-    Stopping)
-}
-
 ZtEnumNS(ObjState, int8_t,
   Undefined,
   Insert,
@@ -89,8 +71,6 @@ using ZdbVN = Zdb_::VN;
 #define ZdbNullSN Zdb_::nullSN
 #define ZdbMaxSN Zdb_::maxSN
 
-namespace ZdbCacheMode = Zdb_::CacheMode;
-namespace ZdbHostState = Zdb_::HostState;
 namespace ZdbObjState = Zdb_::ObjState;
 
 #endif /* ZdbTypes_HH */

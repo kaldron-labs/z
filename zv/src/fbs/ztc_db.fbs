@@ -1,29 +1,47 @@
 include "zfb_types.fbs";
-include "zdb_cache_mode.fbs";
-include "zdb_host_state.fbs";
-namespace Zdb_.Tel.fbs;
-table DBTable {
-  name:string;
-  n_shards:uint16;
+
+namespace Ztc.fbs;
+
+enum DBCacheMode:int8 {
+  Normal = 0,
+  All
+}
+
+enum DBHostState:int8 {
+  Instantiated = 0,
+  Initialized,
+  Electing,
+  Active,
+  Inactive,
+  Stopping
+}
+
+table DBTableTelemetry {
+  db_i_d:string;
+  id:string;
+  n_shards:uint32;
   threads:[string];
   count:uint64;
   cache_loads:uint64;
   cache_misses:uint64;
   cache_evictions:uint64;
   cache_size:uint32;
-  cache_mode:Zdb_.fbs.CacheMode;
+  cache_mode:DBCacheMode;
   rag:int8;
 }
-table DBHost {
+
+table DBHostTelemetry {
   ip:Zfb.IP;
+  db_i_d:string;
   id:string;
   priority:uint32;
   port:uint16;
-  state:Zdb_.fbs.HostState;
+  state:DBHostState;
   voted:uint8;
   rag:int8;
 }
-table DB {
+
+table DBTelemetry {
   thread:string;
   self:string;
   leader:string;
@@ -37,7 +55,7 @@ table DB {
   n_tables:uint16;
   n_hosts:uint8;
   n_peers:uint8;
-  state:int8;		// same as hosts[hostID].state
+  state:DBHostState;
   active:uint8;
   recovering:uint8;
   replicating:uint8;

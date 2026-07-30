@@ -18,6 +18,10 @@
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmFn_.hh>
+#include <zlib/ZmGuard.hh>
+#include <zlib/ZmPLock.hh>
+
+#include <zlib/ZtcTypes.hh>
 
 namespace Ztc {
 
@@ -44,14 +48,29 @@ struct HashTelemetry {
 // Note: ZtStruct metadata declaration is deferred
 
 struct Hash {
-  virtual ZuTuple<ZuID, uintptr_t> telKey() const = 0;
+  virtual ZuTuple<const ZuID &, uintptr_t> telKey() const = 0;
   virtual void telemetry(HashTelemetry &) const = 0;
 };
 
 struct HashMgr {
-  using AllFn = ZmFn<void(Hash *), ZmFnHeapID<"Ztc.Hash.AllFn">>;
+private:
+  using WatchLock = ZmPLock;
+  using WatchGuard = ZmGuard<WatchLock>;
 
-  static void all(AllFn);
+  static WatchLock &watchLock_();
+
+public:
+  using AllFn = ZmFn<void(Hash *), AllFnHeapID>;
+  using AddFn = ZmFn<void(Hash *), WatchFnHeapID>;
+  using DelFn = ZmFn<void(Hash *), WatchFnHeapID>;
+
+  static unsigned all(AllFn);
+  template <typename L> static void guard(L &&l) {
+    WatchGuard guard(watchLock_());
+    ZuFwd<L>(l)();
+  }
+  static void watch(AddFn, DelFn);
+  static void unwatch();
 };
 
 // Hash CSV
