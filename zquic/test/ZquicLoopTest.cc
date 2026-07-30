@@ -132,9 +132,7 @@ void queueTelemetry(
   auto linkKey = link.telKey();
   Ztc::Queue *scratch = nullptr;
   unsigned count = 0;
-  link.allQueues([&](Ztc::Queue *queue) {
-    ZQUIC_CHECK_RT(queue, "telemetry queue is null");
-    if (!queue) return;
+  unsigned allQueues = link.allQueues([&](Ztc::Queue *queue) {
     if (!scratch)
       scratch = queue;
     else
@@ -170,7 +168,9 @@ void queueTelemetry(
     }
     ++count;
   });
-  ZQUIC_CHECK_RT(count == 2, "allQueues did not enumerate Rx and Tx");
+  ZQUIC_CHECK_RT(allQueues == 2, "allQueues returned incorrect count");
+  ZQUIC_CHECK_RT(count == allQueues,
+    "allQueues did not enumerate returned count");
 }
 
 template <typename Link>

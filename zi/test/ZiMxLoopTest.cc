@@ -535,6 +535,7 @@ void testMulticastOptions()
 struct LoopResult {
   bool		started = false;
   bool		telemetry = false;
+  bool		emptyCxns = false;
   bool		done = false;
   bool		failed = false;
   unsigned	failKind = 0;
@@ -556,6 +557,10 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
 {
   LoopResult result;
   LoopMx mx{loopIP};
+  unsigned cxns = 0;
+  result.emptyCxns =
+    !static_cast<const LoopMx &>(mx).allCxns(
+      [&cxns](Ztc::Connection *) { ++cxns; }) && !cxns;
   result.started = mx.start();
 
   Ztc::MxTelemetry telemetry{};
@@ -596,6 +601,7 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
 #define CheckTcpLoopback(result) do { \
   ZuCheck((result).started); \
   ZuCheck((result).telemetry); \
+  ZuCheck((result).emptyCxns); \
   ZuCheck((result).done); \
   if ((result).failed) { \
     ZuCheck((result).failKind == 1); \

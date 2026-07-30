@@ -109,10 +109,12 @@ public:
 	});
       });
     }
+    app->telLinkAdd_(telState_(m_linkState));
   }
   ~Link() {
     clearCallbacks_();
     assert(!timersActive_());
+    app()->telLinkDel_(telState_(m_linkState));
   }
 
   void initCryptoDelivery_() {
@@ -154,28 +156,14 @@ public:
     data.txBytes = m_txDiag.bytesTx.load_();
     data.reconnects = 0;
     data.type = Ztc::LinkType::QUIC;
-    switch (m_linkState) {
-      case LinkState::Starting:
-      case LinkState::Handshaking:
-	data.state = Ztc::LinkState::Connecting;
-	break;
-      case LinkState::Established:
-	data.state = Ztc::LinkState::Up;
-	break;
-      case LinkState::Closing:
-      case LinkState::Draining:
-	data.state = Ztc::LinkState::Disconnecting;
-	break;
-      default:
-	data.state = Ztc::LinkState::Down;
-	break;
-    }
+    data.state = telState_(m_linkState);
   }
-  void allQueues(Ztc::QueueMgr::AllFn fn) const override {
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
     TelQueue queue{this};
     fn(&queue);
     queue.type(Ztc::QueueType::Tx);
     fn(&queue);
+    return 2;
   }
   void up() override { impl()->telUp_(); }
   void down() override { (void)impl()->disconnect(); }
@@ -2419,7 +2407,7 @@ protected:
   bool installAppDataKeys_(
     const TrafficSecret &rx, const TrafficSecret &tx, const CxnID &localCID) {
     m_localSCID = localCID;
-    m_linkState = LinkState::Established;
+    linkState_(LinkState::Established);
     clearPeerKeyState_();
     return m_crypto.rxSecret(PktNumSpace::AppData, rx) &&
       txInstallSecret_(PktNumSpace::AppData, tx);
@@ -3835,7 +3823,7 @@ protected:
       event.reason = SecReason::TokenMatch;
       o.logSecEvt(EvtName::StatelessReset, event, time);
     }));
-    m_linkState = LinkState::Draining;
+    linkState_(LinkState::Draining);
     m_streamQueue.clean();
     for (auto &p : m_txPkts) p.clear();
     m_rxAcks.clear();
@@ -9043,8 +9031,31 @@ private:
     return ZuTime(0, PTOFallbackProbeDelayNS);
   }
 
+  static Ztc::LinkState::T telState_(LinkState::T state) {
+    switch (state) {
+      case LinkState::Starting:
+      case LinkState::Handshaking:
+	return Ztc::LinkState::Connecting;
+      case LinkState::Established:
+	return Ztc::LinkState::Up;
+      case LinkState::Closing:
+      case LinkState::Draining:
+	return Ztc::LinkState::Disconnecting;
+      default:
+	return Ztc::LinkState::Down;
+    }
+  }
+
+  void linkState_(LinkState::T state) {
+    auto oldState = telState_(m_linkState);
+    auto newState = telState_(state);
+    if (oldState != newState)
+      app()->telLinkState_(oldState, newState);
+    m_linkState = state;
+  }
+
   void resetLinkState_() {
-    m_linkState = LinkState::Starting;
+    linkState_(LinkState::Starting);
     m_drainPTOs = 0;
     m_suspiciousStreamFrames = 0;
     m_suspiciousStreamClosed = false;
@@ -9064,7 +9075,7 @@ protected:
 	.newState = LinkState::Handshaking};
       o.logCxnStateUpd(event, time);
     }));
-    m_linkState = LinkState::Handshaking;
+    linkState_(LinkState::Handshaking);
     return true;
   }
 
@@ -9082,7 +9093,7 @@ private:
 	.newState = LinkState::Established};
       o.logCxnStateUpd(event, time);
     }));
-    m_linkState = LinkState::Established;
+    linkState_(LinkState::Established);
     return true;
   }
 
@@ -9099,7 +9110,7 @@ private:
 	.newState = LinkState::Closing};
       o.logCxnStateUpd(event, time);
     }));
-    m_linkState = LinkState::Closing;
+    linkState_(LinkState::Closing);
     m_drainPTOs = 0;
     return true;
   }
@@ -9116,7 +9127,7 @@ private:
 	.newState = LinkState::Draining};
       o.logCxnStateUpd(event, time);
     }));
-    m_linkState = LinkState::Draining;
+    linkState_(LinkState::Draining);
     m_drainPTOs = 0;
     return true;
   }
@@ -9132,7 +9143,7 @@ private:
 	.newState = LinkState::Closed};
       o.logCxnStateUpd(event, time);
     }));
-    m_linkState = LinkState::Closed;
+    linkState_(LinkState::Closed);
     m_drainPTOs = 0;
   }
 

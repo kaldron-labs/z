@@ -52,57 +52,57 @@ struct State {
 };
 
 template <typename Link>
+void queueTelemetry(
+  Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
+{
+  auto linkKey = link.telKey();
+  Ztc::Queue *scratch = nullptr;
+  unsigned count = 0;
+  unsigned allQueues = link.allQueues([&](Ztc::Queue *queue) {
+    if (!scratch)
+      scratch = queue;
+    else
+      ZTCP_CHECK_RT(queue == scratch,
+	"allQueues did not reuse its scratch queue");
+    auto key = queue->telKey();
+    ZTCP_CHECK_RT(key.template p<0>() == linkKey.template p<1>(),
+      "telemetry queue ID mismatch");
+    ZTCP_CHECK_RT(key.template p<1>() ==
+	(count ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
+      "telemetry queue iteration order mismatch");
+
+    Ztc::QueueTelemetry data;
+    data.id = ZuID{} << "dirty";
+    data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
+    data.count = data.size = data.full = 1;
+    data.type = Ztc::QueueType::Thread;
+    queue->telemetry(data);
+    ZTCP_CHECK_RT(data.id == key.template p<0>(),
+      "queue telemetry ID mismatch");
+    ZTCP_CHECK_RT(data.type == key.template p<1>(),
+      "queue telemetry type mismatch");
+    ZTCP_CHECK_RT(!data.size && !data.full,
+      "queue telemetry fields were not overwritten");
+    if (data.type == Ztc::QueueType::Rx) {
+      ZTCP_CHECK_RT(!data.outBytes && !data.outCount,
+	"Rx telemetry output fields were not overwritten");
+      rx = data;
+    } else {
+      tx = data;
+    }
+    ++count;
+  });
+  ZTCP_CHECK_RT(allQueues == 2, "allQueues returned incorrect count");
+  ZTCP_CHECK_RT(count == allQueues,
+    "allQueues did not enumerate returned count");
+}
+
+template <typename Link>
 void checkQueues(Link &link)
 {
-  auto rx = link.rxQueue();
-  auto tx = link.txQueue();
-  ZTCP_CHECK_RT(rx, "Rx telemetry queue is null");
-  ZTCP_CHECK_RT(tx, "Tx telemetry queue is null");
-  if (!rx || !tx) return;
-  ZTCP_CHECK_RT(link.rxQueue() == rx, "Rx telemetry queue is unstable");
-  ZTCP_CHECK_RT(link.txQueue() == tx, "Tx telemetry queue is unstable");
-  ZTCP_CHECK_RT(rx != tx, "Rx and Tx telemetry queues alias");
-
-  auto linkKey = link.telKey();
-  auto rxKey = rx->telKey();
-  auto txKey = tx->telKey();
-  ZTCP_CHECK_RT(
-    rxKey.template p<0>() == linkKey.template p<1>(),
-    "Rx telemetry queue ID mismatch");
-  ZTCP_CHECK_RT(
-    txKey.template p<0>() == linkKey.template p<1>(),
-    "Tx telemetry queue ID mismatch");
-  ZTCP_CHECK_RT(
-    rxKey.template p<1>() == Ztc::QueueType::Rx,
-    "Rx telemetry queue type mismatch");
-  ZTCP_CHECK_RT(
-    txKey.template p<1>() == Ztc::QueueType::Tx,
-    "Tx telemetry queue type mismatch");
-
-  Ztc::QueueTelemetry data;
-  data.id = ZuID{} << "dirty";
-  data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
-  data.count = data.size = data.full = 1;
-  data.type = Ztc::QueueType::Thread;
-  rx->telemetry(data);
-  ZTCP_CHECK_RT(data.id == rxKey.template p<0>(),
-    "Rx telemetry ID mismatch");
-  ZTCP_CHECK_RT(data.type == rxKey.template p<1>(),
-    "Rx telemetry type mismatch");
-  ZTCP_CHECK_RT(!data.outBytes && !data.outCount && !data.count &&
-    !data.size && !data.full, "Rx telemetry was not reset");
-
-  data.id = ZuID{} << "dirty";
-  data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
-  data.count = data.size = data.full = 1;
-  data.type = Ztc::QueueType::Thread;
-  tx->telemetry(data);
-  ZTCP_CHECK_RT(data.id == txKey.template p<0>(),
-    "Tx telemetry ID mismatch");
-  ZTCP_CHECK_RT(data.type == txKey.template p<1>(),
-    "Tx telemetry type mismatch");
-  ZTCP_CHECK_RT(!data.size && !data.full,
-    "Tx telemetry was not reset");
+  Ztc::QueueTelemetry rx;
+  Ztc::QueueTelemetry tx;
+  queueTelemetry(link, rx, tx);
 }
 
 ZiMxParams mxParams()
@@ -194,8 +194,8 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
 
   int process(Ztcp::RxStream &rx) {
     if (!consume(rx, Pong)) return 0;
-    rxQueue()->telemetry(app()->state->clientRx);
-    txQueue()->telemetry(app()->state->clientTx);
+    queueTelemetry(
+      *this, app()->state->clientRx, app()->state->clientTx);
     app()->state->doneOne();
     disconnect();
     return 1;
