@@ -3,7 +3,7 @@ include "ztel_thread_priority.fbs";
 include "ztel_engine_state.fbs";
 include "ztel_link_state.fbs";
 include "ztel_queue_type.fbs";
-include "zdb_telemetry.fbs";
+include "ztc_db.fbs";
 namespace Ztel.fbs;
 enum RAG:int8 {
   Off = 0,
@@ -170,9 +170,9 @@ union TelData {
   Queue:Queue,
   Engine:Engine,
   Link:Link,
-  DBTable:Zdb_.Tel.fbs.DBTable,
-  DBHost:Zdb_.Tel.fbs.DBHost,
-  DB:Zdb_.Tel.fbs.DB,
+  DBTable:Ztc.fbs.DBTableTelemetry,
+  DBHost:Ztc.fbs.DBHostTelemetry,
+  DB:Ztc.fbs.DBTelemetry,
   App:App,
   Alert:Alert
 }
