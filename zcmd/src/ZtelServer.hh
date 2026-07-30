@@ -909,19 +909,31 @@ private:
       db = m_db, link = ZmMkRef(watch->link), update
     ]() mutable {
       Zfb::IOBuilder fbb;
-      auto offset = db->telemetry(fbb, update);
+      Ztc::DBTelemetry data;
+      db->telemetry(data);
+      auto offset = update ?
+	ZfbStruct::saveUpd(fbb, data).Union() :
+	ZfbStruct::save(fbb, data).Union();
       fbb.Finish(fbs::CreateTelemetry(fbb, fbs::TelData::DB, offset));
       link->sendTelemetry(fbb.buf());
       db->allHosts([link, update](const ZdbHost *host) {
 	Zfb::IOBuilder fbb;
-	auto offset = host->telemetry(fbb, update);
+	Ztc::DBHostTelemetry data;
+	host->telemetry(data);
+	auto offset = update ?
+	  ZfbStruct::saveUpd(fbb, data).Union() :
+	  ZfbStruct::save(fbb, data).Union();
 	fbb.Finish(fbs::CreateTelemetry(fbb, fbs::TelData::DBHost, offset));
 	link->sendTelemetry(fbb.buf());
       });
       db->all([link, update](
 	  const ZdbAnyTable *table, Zdb::DB::AllTableFn done) {
 	Zfb::IOBuilder fbb;
-	auto offset = table->telemetry(fbb, update);
+	Ztc::DBTableTelemetry data;
+	table->telemetry(data);
+	auto offset = update ?
+	  ZfbStruct::saveUpd(fbb, data).Union() :
+	  ZfbStruct::save(fbb, data).Union();
 	fbb.Finish(fbs::CreateTelemetry(fbb, fbs::TelData::DBTable, offset));
 	link->sendTelemetry(fbb.buf());
 	done(true);

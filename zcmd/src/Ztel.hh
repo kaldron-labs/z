@@ -24,7 +24,7 @@
 #include <zlib/ZvThreadParams.hh>
 #include <zlib/ZvEngine.hh>
 
-#include <zlib/ZdbTelemetry.hh>
+#include <zlib/ZtcDB.hh>
 
 #include <zlib/ztel_request_fbs.h>
 #include <zlib/ztel_reqack_fbs.h>
@@ -36,14 +36,10 @@
 
 namespace Ztel {
 
-namespace RAG {
-  ZfbEnumMatch(RAG, ZvRAG, Off, Red, Amber, Green);
-}
+ZfbEnumMatchNS(RAG, ZvRAG, Off, Red, Amber, Green)
 
-namespace ThreadPriority {
-  ZfbEnumMatch(ThreadPriority, ZmThreadPriority,
-      RealTime, High, Normal, Low);
-}
+ZfbEnumMatchNS(ThreadPriority, ZmThreadPriority,
+    RealTime, High, Normal, Low)
 
 namespace EngineState {
   using namespace ZvEngineState;
@@ -68,44 +64,36 @@ namespace LinkState {
   }
 }
 
-namespace SocketType {
-  ZfbEnumMatch(SocketType, ZiCxnType, TCPIn, TCPOut, UDP);
-}
+ZfbEnumMatchNS(SocketType, ZiCxnType, TCPIn, TCPOut, UDP)
 
-namespace EngineState {
-  ZfbEnumMatch(EngineState, ZmEngineState,
-      Stopped, Starting, Running, Stopping, StartPending, StopPending);
-}
+ZfbEnumMatchNS(EngineState, ZmEngineState,
+    Stopped, Starting, Running, Stopping, StartPending, StopPending)
 
-namespace LinkState {
-  ZfbEnumMatch(LinkState, ZvLinkState,
-    Down,
-    Disabled,
-    Deleted,
-    Connecting,
-    Up,
-    ReconnectPending,
-    Reconnecting,
-    Failed,
-    Disconnecting,
-    ConnectPending,
-    DisconnectPending)
-}
+ZfbEnumMatchNS(LinkState, ZvLinkState,
+  Down,
+  Disabled,
+  Deleted,
+  Connecting,
+  Up,
+  ReconnectPending,
+  Reconnecting,
+  Failed,
+  Disconnecting,
+  ConnectPending,
+  DisconnectPending)
 
-namespace QueueType {
-  ZfbEnumMatch(QueueType, ZvQueueType, Thread, IPC, Rx, Tx);
-}
+ZfbEnumMatchNS(QueueType, ZvQueueType, Thread, IPC, Rx, Tx)
 
 namespace CacheMode {
-  using namespace ZdbCacheMode;
+  using namespace Ztc::DBCacheMode;
 }
 
 namespace DBHostState {
-  using namespace ZdbHostState;
+  using namespace Ztc::DBHostState;
 
   int rag(int i) {
     using namespace ZvRAG;
-    enum { N = ZdbHostState::N };
+    enum { N = Ztc::DBHostState::N };
     if (i < 0 || i >= N) return Off;
     static const int values[N] = {
       Off, Amber, Amber, Green, Amber, Amber
@@ -114,13 +102,9 @@ namespace DBHostState {
   }
 }
 
-namespace AppRole {
-  ZfbEnumValues(AppRole, Dev, Test, Prod)
-}
+ZfbEnumNS(AppRole, Dev, Test, Prod)
 
-namespace Severity {
-  ZfbEnumValues(Severity, Debug, Info, Warning, Error, Fatal)
-}
+ZfbEnumNS(Severity, Debug, Info, Warning, Error, Fatal)
 
 using Heap_ = Ztc::HeapTelemetry;
 struct Heap : public Heap_ {
@@ -353,9 +337,9 @@ ZfbStruct(Engine,
     (((txThread),	(Ctor<11>)),				(UInt16)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-using DBTable = Zdb_::Tel::DBTable;
-using DBHost = Zdb_::Tel::DBHost;
-using DB = Zdb_::Tel::DB;
+using DBTable = Ztc::DBTableTelemetry;
+using DBHost = Ztc::DBHostTelemetry;
+using DB = Ztc::DBTelemetry;
 
 // display sequence:
 //   id, role, RAG, uptime, version
@@ -394,16 +378,11 @@ ZfbStruct(Alert,
     (((severity),	(Ctor<3>, Enum<Severity::Map>)),	(Int8)),
     (((message),	(Ctor<4>)),				(String)));
 
-namespace ReqType {
-  ZfbEnumValues(ReqType,
-      Heap, HashTbl, Thread, Mx, Queue, Engine, DB, App, Alert);
-}
+ZfbEnumNS(ReqType, Heap, HashTbl, Thread, Mx, Queue, Engine, DB, App, Alert)
 
-namespace TelData {
-  ZfbEnumUnion(TelData,
-      Heap, HashTbl, Thread, Mx, Socket, Queue, Engine, Link,
-      DBTable, DBHost, DB, App, Alert);
-}
+ZfbEnumUnionNS(TelData,
+    Heap, HashTbl, Thread, Mx, Socket, Queue, Engine, Link,
+    DBTable, DBHost, DB, App, Alert);
 
 using TypeList = ZuTypeList<
   Heap, HashTbl, Thread, Mx, Socket, Queue, Engine, Link,
