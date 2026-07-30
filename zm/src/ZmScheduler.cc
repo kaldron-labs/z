@@ -87,11 +87,13 @@ void ZmScheduler::Thread::telemetry(Ztc::QueueTelemetry &data) const
   data.type = Ztc::QueueType::Thread;
 }
 
-void ZmScheduler::allQueues(Ztc::QueueMgr::AllFn fn) const
+unsigned ZmScheduler::allQueues(Ztc::QueueMgr::AllFn fn) const
 {
   SpawnReadGuard spawnGuard(m_spawnLock);
-  for (unsigned i = 0, n = m_params.nThreads(); i < n; i++)
+  unsigned i = 0;
+  for (unsigned n = m_params.nThreads(); i < n; i++)
     fn(&m_threads[i]);
+  return i;
 }
 
 void ZmScheduler::start_()

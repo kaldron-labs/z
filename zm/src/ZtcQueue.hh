@@ -45,7 +45,7 @@ struct Queue {
 struct QueueMgr {
   using AllFn = ZmFn<void(Queue *), ZmFnHeapID<"Ztc.Queue.AllFn">>;
 
-  virtual void allQueues(AllFn) const = 0;
+  virtual unsigned allQueues(AllFn) const = 0;
 };
 
 } // Ztc

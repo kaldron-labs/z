@@ -111,11 +111,13 @@ void testFifoAndPartialSendContinuation()
   ZuCheck(tx.sentCount == 1);
   ZuCheck(tx.sentOrder[0] == 'A');
   ZuCheck(tx.sentOK[0]);
+  ZuCheck(tx.io.size == 3);
 
   tx.step(int(tx.io.size - tx.io.offset));
   ZuCheck(tx.sentCount == 2);
   ZuCheck(tx.sentOrder[1] == 'B');
   ZuCheck(tx.sentOK[1]);
+  ZuCheck(tx.io.size == 3);
 
   tx.step(int(tx.io.size - tx.io.offset));
   ZuCheck(tx.sentCount == 3);

@@ -49,43 +49,11 @@ struct LinkTelemetry {
   LinkState::T	state = -1;
 };
 
-struct Link {
+struct Link : public QueueMgr {
   virtual ZuTuple<ZuID, ZuID> telKey() const = 0;	// { hubID, id }
   virtual void telemetry(LinkTelemetry &data) const = 0;
-  virtual Queue *rxQueue() const = 0;
-  virtual Queue *txQueue() const = 0;
   virtual void up() = 0;
   virtual void down() = 0;
-};
-
-template <typename Owner_, QueueType::T Type_>
-class LinkQueue final : public Queue {
-  static_assert(Type_ == QueueType::Rx || Type_ == QueueType::Tx);
-
-public:
-  using Owner = Owner_;
-  enum { Type = Type_ };
-
-  LinkQueue(Owner *owner) : m_owner{owner} { }
-
-  ZuTuple<ZuID, QueueType::T> telKey() const override {
-    auto key = m_owner->telKey();
-    return {key.template p<1>(), Type};
-  }
-
-  void telemetry(QueueTelemetry &data) const override {
-    auto key = m_owner->telKey();
-    data = {};
-    data.id = key.template p<1>();
-    data.type = Type;
-    if constexpr (Type == QueueType::Rx)
-      m_owner->rxQueueTelemetry_(data);
-    else
-      m_owner->txQueueTelemetry_(data);
-  }
-
-private:
-  Owner *const	m_owner;
 };
 
 } // Ztc

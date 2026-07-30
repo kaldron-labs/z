@@ -295,7 +295,7 @@ protected:
 public:
   ZuCSpan id() const { return m_params.id(); }
 
-  void allQueues(Ztc::QueueMgr::AllFn) const override;
+  unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
 
   bool stop();
 

@@ -85,7 +85,7 @@ public:
 		buf = queue.headPtr();
 		io.fn.object(buf);
 		io.ptr = buf->data();
-		io.size = buf->size;
+		io.size = buf->length;
 		io.offset = 0;
 	      } else {
 		io.complete();

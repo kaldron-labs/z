@@ -936,8 +936,8 @@ public:
   ZiMultiplex(const ZiMultiplex &) = delete;
   ZiMultiplex &operator =(const ZiMultiplex &) = delete;
 
-  void allCxns(Ztc::Mx::AllCxnsFn fn) override;
-  void allCxns_(Ztc::Mx::AllCxnsFn fn);
+  unsigned allCxns(Ztc::Mx::AllCxnsFn fn) const override;
+  unsigned allCxns_(Ztc::Mx::AllCxnsFn fn) const;
 
   void listen(
       ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,

@@ -58,8 +58,8 @@ struct Hub {
   virtual void telemetry(HubTelemetry &data) const = 0;
   virtual bool start() = 0;
   virtual bool stop() = 0;
-  virtual void allLinks(AllLinksFn fn) = 0;
-  virtual void allPools(AllPoolsFn fn) = 0;
+  virtual unsigned allLinks(AllLinksFn fn) const = 0;
+  virtual unsigned allPools(AllPoolsFn fn) const = 0;
 };
 
 struct HubMgr {

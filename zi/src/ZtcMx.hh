@@ -87,7 +87,7 @@ struct Mx {
 
   virtual ZuID telKey() const = 0;
   virtual void telemetry(MxTelemetry &data) const = 0;
-  virtual void allCxns(AllCxnsFn fn) = 0;
+  virtual unsigned allCxns(AllCxnsFn fn) const = 0;
 };
 
 struct MxMgr {

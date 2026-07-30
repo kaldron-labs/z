@@ -690,38 +690,23 @@ public:
   void telemetry(Ztc::HubTelemetry &data) const override {
     data.id = telID();
     if (m_mx) data.mxID = m_mx->id();
-    data.down = 0;
+    data.down = m_telDown.load_();
     data.disabled = 0;
-    data.transient = 0;
-    data.up = 0;
+    data.transient = m_telTransient.load_();
+    data.up = m_telUp.load_();
     data.reconn = 0;
     data.failed = 0;
-    data.nLinks = 0;
+    data.nLinks = m_telLinks.load_();
     data.rxThread = m_rxThread;
     data.txThread = m_txThread;
     data.linkType = Ztc::LinkType::QUIC;
     data.state = state();
-    const_cast<Hub *>(this)->allLinks({
-      &data, [](Ztc::HubTelemetry *data, Ztc::Link *link) {
-	Ztc::LinkTelemetry linkData;
-	link->telemetry(linkData);
-	++data->nLinks;
-	switch (linkData.state) {
-	  case Ztc::LinkState::Down:		  ++data->down; break;
-	  case Ztc::LinkState::Disabled:	  ++data->disabled; break;
-	  case Ztc::LinkState::ReconnectPending:
-	  case Ztc::LinkState::Reconnecting:	  ++data->reconn; break;
-	  case Ztc::LinkState::Up:		  ++data->up; break;
-	  case Ztc::LinkState::Failed:		  ++data->failed; break;
-	  default:				  ++data->transient; break;
-	}
-      }});
   }
-  void allLinks(Ztc::Hub::AllLinksFn fn) override {
-    app()->allLinks_(ZuMv(fn));
+  unsigned allLinks(Ztc::Hub::AllLinksFn fn) const override {
+    return app()->allLinks_(ZuMv(fn));
   }
-  void allPools(Ztc::Hub::AllPoolsFn fn) override {
-    app()->allPools_(ZuMv(fn));
+  unsigned allPools(Ztc::Hub::AllPoolsFn fn) const override {
+    return app()->allPools_(ZuMv(fn));
   }
 
   void final() {
@@ -823,6 +808,20 @@ public:
   }
   bool txInvoked() { return m_mx && m_txThread && m_mx->invoked(m_txThread); }
 
+  void telLinkAdd_(Ztc::LinkState::T state) {
+    ++m_telLinks;
+    telLinkInc_(state);
+  }
+  void telLinkDel_(Ztc::LinkState::T state) {
+    telLinkDec_(state);
+    --m_telLinks;
+  }
+  void telLinkState_(
+      Ztc::LinkState::T oldState, Ztc::LinkState::T newState) {
+    telLinkDec_(oldState);
+    telLinkInc_(newState);
+  }
+
 protected:
   template <typename Params, typename L>
   bool init_(Params params, Zquic::Vantage::T vantage, L &&l) {
@@ -875,8 +874,8 @@ protected:
     return ok;
   }
 
-  void allLinks_(Ztc::Hub::AllLinksFn) { }
-  void allPools_(Ztc::Hub::AllPoolsFn) { }
+  unsigned allLinks_(Ztc::Hub::AllLinksFn) const { return 0; }
+  unsigned allPools_(Ztc::Hub::AllPoolsFn) const { return 0; }
 
   void error_(ZeException e) {
     if (m_errorFn)
@@ -1066,6 +1065,21 @@ private:
     return true;
   }
 
+  void telLinkInc_(Ztc::LinkState::T state) {
+    switch (state) {
+      case Ztc::LinkState::Down:	++m_telDown; break;
+      case Ztc::LinkState::Up:		++m_telUp; break;
+      default:				++m_telTransient; break;
+    }
+  }
+  void telLinkDec_(Ztc::LinkState::T state) {
+    switch (state) {
+      case Ztc::LinkState::Down:	--m_telDown; break;
+      case Ztc::LinkState::Up:		--m_telUp; break;
+      default:				--m_telTransient; break;
+    }
+  }
+
   // immutable after init()
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_rxThread = 0;
@@ -1096,6 +1110,12 @@ private:
   bool			m_retryAddrValidate = false;
   bool			m_newTokenAddrValidate = false;
   bool			m_addrValidatePeerPort = false;
+
+  // shared
+  ZmAtomic<unsigned>	m_telDown = 0;
+  ZmAtomic<unsigned>	m_telTransient = 0;
+  ZmAtomic<unsigned>	m_telUp = 0;
+  ZmAtomic<unsigned>	m_telLinks = 0;
 };
 
 // CRTP - aligned client implementation should conform to this interface:
@@ -1267,8 +1287,13 @@ friend ZmEngine<App>;
     });
   }
 
-  void allLinks_(Ztc::Hub::AllLinksFn fn) {
-    allLinks_0([&fn](LinkRef &ref) { fn(ref.ptr()); });
+  unsigned allLinks_(Ztc::Hub::AllLinksFn fn) const {
+    unsigned n = 0;
+    allLinks_0([&fn, &n](LinkRef &ref) {
+      ++n;
+      fn(ref.ptr());
+    });
+    return n;
   }
 
   ZiIP localIP() const { return ZiIP{}; }
@@ -1342,7 +1367,7 @@ public:
 
 private:
   template <typename L>
-  void allLinks_0(L &&l) {
+  void allLinks_0(L &&l) const {
     ZmRef<LinkTable> table = m_links;
     if (!table) return;
     unsigned n = table->count_();

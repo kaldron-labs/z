@@ -165,7 +165,7 @@ int main(int argc, char **argv)
   unsigned nQueues = params.nThreads();
   QueueCheck queues{params.queueSize()};
   ZmScheduler s{ZuMv(params)};
-  s.allQueues(Ztc::QueueMgr::AllFn{
+  unsigned allQueues = s.allQueues(Ztc::QueueMgr::AllFn{
     &queues, [](QueueCheck *queues, Ztc::Queue *queue) {
       auto key = queue->telKey();
       Ztc::QueueTelemetry data;
@@ -279,5 +279,6 @@ int main(int argc, char **argv)
   log(Ztc::threadCSV());
   s.stop();
 
-  ZuCheck(queues.valid && queues.count == nQueues);
+  ZuCheck(queues.valid &&
+    allQueues == nQueues && queues.count == allQueues);
 }

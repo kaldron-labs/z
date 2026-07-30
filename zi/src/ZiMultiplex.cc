@@ -1212,12 +1212,12 @@ void ZiConnection::telemetry(Ztc::CxnTelemetry &data) const
   data.type = m_info.type;
 }
 
-void ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn)
+unsigned ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn) const
 {
   ZmRef<CxnHash> cxns = m_cxns;
-  if (!cxns) return;
+  if (!cxns) return 0;
   unsigned n = cxns->count_();
-  if (!n) return;
+  if (!n) return 0;
   using CxnRefs =
     ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Zi.CxnRefs">>;
   auto refs = ZtLocalArray(CxnRefs, n);
@@ -1227,11 +1227,12 @@ void ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn)
       refs.push(ZuMv(cxn));
   }
   refs.all([&fn](ZmRef<ZiConnection> &cxn) { fn(cxn.ptr()); });
+  return refs.length();
 }
 
-void ZiMultiplex::allCxns_(Ztc::Mx::AllCxnsFn fn)
+unsigned ZiMultiplex::allCxns_(Ztc::Mx::AllCxnsFn fn) const
 {
-  allCxns(ZuMv(fn));
+  return allCxns(ZuMv(fn));
 }
 
 void ZiMultiplex::listen(
