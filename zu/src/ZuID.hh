@@ -17,7 +17,7 @@
 
 #include <zlib/ZuArray.hh>
 
-#define ZuIDSize 28
+#define ZuIDSize 60
 using ZuID = ZuCArray<ZuIDSize>;
 
 #endif /* ZuID_HH */
