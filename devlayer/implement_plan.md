@@ -10,7 +10,7 @@ IMPORTANT
   - execute the plan phase by phase
 - Think deeply when executing the plan
 - Read `AGENTS.md`, `GUIDELINES.md` and `CODEBASE.md` to understand the existing codebase
-- Conform to `AGENTS.md` and `GUIDELINES.md`
+- Align with `AGENTS.md` and `GUIDELINES.md`
 - Dependent compatibility is a non-goal unless otherwise directed
   - propagate API changes to dependent code
 - Re-use existing utilities, implementations, libraries and code modules as needed

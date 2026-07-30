@@ -4,14 +4,13 @@
 
 Task Steps:
 1. Read `plan.md` in full, particularly the answers to open questions at the end
-2. Use online web search as needed to refine understanding of requirements and their implications
-3. Improve `plan.md`, writing a new version saved as `plan.new.md`:
+2. Improve `plan.md`, writing a new version saved as `plan.new.md`:
   - Read `plan.feedback.md` if it exists, incorporating this feedback into the revised plan
   - Review and SCRUTINIZE the planned use of all newly depended APIs
     - Review the detailed behavior of each newly depended API and ensure that the actual behavior of the API aligns with the intended uses
   - Review `plan.md` phase by phase, one phase at a time, improving each phase and appending it to `plan.new.md`
   - Carefully evaluate the dependencies of each phase on preceding phases
-    - When sequencing phases, do not rigidly align phases with architectural layers and work exclusively bottoms-up - prefer vertically-sliced feature-by-feature sequencing:
+    - When sequencing phases, do not rigidly align phases with architectural layers bottoms-up - prefer vertically-sliced feature-by-feature sequencing:
       - Decompose features into sub-features
       - Incrementally build the implementation by sequencing sub-features according to their inter-dependencies, from most internal dependents to least internal dependents
         - The least interally-dependent features are those that are used directly by external applications
@@ -27,15 +26,18 @@ IMPORTANT
 - DO NOT RELY ON MEMORY - `plan.md` may have been edited outside this session
 - RETAIN ALL IMPORTANT DETAIL from `plan.md`
 - `plan.new.md` must be an improved and clarified version of `plan.md`, with no legacy open questions remaining and all details retained
-- Read `AGENTS.md`, `GUIDELINES.md` and `CODEBASE.md` to understand the existing codebase
+- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
+- Read and align with `GUIDELINES.md`
+- Be prescriptive and specific about the implementation
+- Each intermediate phase/slice should include handoff acceptance criteria to the next:
+  - Acceptance for each slice should audit against `GUIDELINES.md`, checking all audit flags and repairing all findings before proceeding to the next
 - For each requirement, evaluate its complexity and feasibility, specifically:
-  - Use web search to research how comparable features were designed and implemented in comparable open source software
   - Evaluate how the requirement depends on the capabilities of the underlying technology stack
   - Comprehensively research the implications of the requirement for the codebase
   - Evaluate the complexity of implementing the requirement with the codebase
   - If a requirement is highly complex or infeasible, ask for a resolution as an open question, including a description of the challenge
 - Re-formulate the design and implementation plan
-  - Think deeply to formulate the plan
+  - Think deeply to re-formulate the plan
   - Identify overlapping requirements and factor out common code
   - Break down the plan into a series of phases
 - Conform to existing naming conventions
@@ -81,6 +83,7 @@ IMPORTANT
     - Description of what will be added or modified
     - How it connects to other components
     - Design and implementation details
+    - Acceptance criteria for handoff to next phase
 
     ### [Phase 2]
     ...
@@ -102,5 +105,5 @@ IMPORTANT
     [Major options]
     [Ambiguities]
     [Requirements that are insurmountably complex]
-    [Requirements that are probably infeasible with the current technology stack]
+    [Requirements that may be infeasible with the current technology stack]
     ```
