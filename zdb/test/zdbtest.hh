@@ -21,9 +21,7 @@
 
 namespace zdbtest {
 
-namespace Side {
-  ZfbEnumValues(Side, Buy, Sell);
-};
+ZfbEnumNS(Side, Buy, Sell)
 
 struct Order {
   ZuCArray<32>		symbol;

@@ -23,7 +23,7 @@ pkginclude_HEADERS = \
 	ZmPolyHash.hh ZmPolyCache.hh ZmCodec.hh \
 	ZmLocal.hh ZmStack.hh ZmStackAvail.hh \
 	\
-	ZtcHash.hh ZtcHeap.hh ZtcQueue.hh ZtcThread.hh
+	ZtcTypes.hh ZtcHash.hh ZtcHeap.hh ZtcQueue.hh ZtcThread.hh
 lib_LTLIBRARIES = libZm.la
 libZm_la_SOURCES = \
 	ZmAssert.cc ZmBackTrace.cc ZmGlobal.cc ZmHashMgr.cc ZmHeap.cc \

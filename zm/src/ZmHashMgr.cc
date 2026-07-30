@@ -18,6 +18,9 @@ class ZmHashMgr_ : public ZmObject {
 friend ZmHashMgr;
 friend Ztc::HashMgr;
 
+  using Lock = ZmPLock;
+  using Guard = ZmGuard<Lock>;
+
   ZuDerive(ID2Params,
     (ZmRBTreeKV<ZuID, ZmHashParams,
       ZmRBTreeUnique<true,
@@ -28,7 +31,9 @@ public:
   ZmHashMgr_() { }
   ~ZmHashMgr_() {
     // ZmAssert(!m_tables.count_(), return);
-    ZmGuard<ZmPLock> guard(m_lock);
+    m_addFn = {};
+    m_delFn = {};
+    Guard guard(m_lock);
     auto i = m_tables.iter();
     if (ZuLikely(!i.count())) return;
     ZuCArray<80> buf;
@@ -37,7 +42,7 @@ public:
     while (auto tbl = i()) {
       if (tbl->refCount()) {
 	Ztc::HashTelemetry data;
-	tbl->ztcHash()->telemetry(data);
+	tbl->telemetry(data);
 	buf.length(0);
 	buf << ZuBoxPtr(tbl).hex() << ' ' << data.id << '\n';
 	std::cerr << buf << std::flush;
@@ -55,7 +60,7 @@ private:
 
   void init(ZuCSpan id, const ZmHashParams &params) {
     ZmAssert(id.length() + 1 < ZuIDSize);
-    ZmGuard<ZmPLock> guard(m_lock);
+    Guard guard(m_lock);
     if (ID2Params::Node *node = m_params.find(id))
       node->val() = params;
     else
@@ -64,7 +69,7 @@ private:
   ZmHashParams &params(ZuCSpan id, ZmHashParams &in) {
     ZmAssert(id.length() + 1 < ZuIDSize);
     {
-      ZmGuard<ZmPLock> guard(m_lock);
+      Guard guard(m_lock);
       if (ID2Params::Node *node = m_params.find(id))
 	in = node->val();
     }
@@ -72,21 +77,24 @@ private:
   }
 
   void add(ZmAnyHash *tbl) {
-    ZmGuard<ZmPLock> guard(m_lock);
+    Guard guard(m_lock);
     m_tables.addNode(tbl);
+    if (m_addFn) m_addFn(tbl);
   }
 
   void del(ZmAnyHash *tbl) {
-    ZmGuard<ZmPLock> guard(m_lock);
+    Guard guard(m_lock);
+    if (m_delFn) m_delFn(tbl);
     m_tables.delNode(tbl);
   }
 
   using Tables = ZmHashMgr_Tables;
 
-  void all(Ztc::HashMgr::AllFn fn) {
+  unsigned all(Ztc::HashMgr::AllFn fn) {
+    unsigned n = 0;
     ZmRef<ZmAnyHash> tbl;
     {
-      ZmGuard<ZmPLock> guard(m_lock);
+      Guard guard(m_lock);
       auto next = m_tables.minimum();
       while (next && !next->refCount())
 	next = m_tables.citer<ZmRBTreeGreater>(
@@ -94,9 +102,10 @@ private:
       tbl = next;
     }
     while (tbl) {
-      fn(tbl->ztcHash());
+      ++n;
+      fn(tbl);
       {
-	ZmGuard<ZmPLock> guard(m_lock);
+	Guard guard(m_lock);
 	auto next = tbl.ptr();
 	do {
 	  next = m_tables.citer<ZmRBTreeGreater>(
@@ -105,11 +114,33 @@ private:
 	tbl = next;
       }
     }
+    return n;
   }
 
-  ZmPLock	m_lock;
+  template <typename L> void guard(L &&l) {
+    Guard guard(m_lock);
+    ZuFwd<L>(l)();
+  }
+
+  void watch(Ztc::HashMgr::AddFn addFn, Ztc::HashMgr::DelFn delFn) {
+    Guard guard(m_lock);
+    m_addFn = ZuMv(addFn);
+    m_delFn = ZuMv(delFn);
+  }
+
+  void unwatch() {
+    Guard guard(m_lock);
+    m_addFn = {};
+    m_delFn = {};
+  }
+
+  Lock &watchLock() { return m_lock; }
+
+  Lock		m_lock;
   ID2Params	m_params;
   Tables	m_tables;
+  Ztc::HashMgr::AddFn	m_addFn;
+  Ztc::HashMgr::DelFn	m_delFn;
 };
 
 void ZmHashMgr::init(ZuCSpan id, const ZmHashParams &params)
@@ -117,9 +148,24 @@ void ZmHashMgr::init(ZuCSpan id, const ZmHashParams &params)
   ZmHashMgr_::instance()->init(id, params);
 }
 
-void Ztc::HashMgr::all(AllFn fn)
+unsigned Ztc::HashMgr::all(AllFn fn)
 {
-  ZmHashMgr_::instance()->all(ZuMv(fn));
+  return ZmHashMgr_::instance()->all(ZuMv(fn));
+}
+
+ZmPLock &Ztc::HashMgr::watchLock_()
+{
+  return ZmHashMgr_::instance()->watchLock();
+}
+
+void Ztc::HashMgr::watch(AddFn addFn, DelFn delFn)
+{
+  ZmHashMgr_::instance()->watch(ZuMv(addFn), ZuMv(delFn));
+}
+
+void Ztc::HashMgr::unwatch()
+{
+  ZmHashMgr_::instance()->unwatch();
 }
 
 ZmHashParams &ZmHashMgr::params(ZuCSpan id, ZmHashParams &in)

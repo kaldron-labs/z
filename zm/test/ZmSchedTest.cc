@@ -173,8 +173,9 @@ int main(int argc, char **argv)
       ++queues->count;
       queues->valid =
 	queues->valid &&
-	key.p<0>() == data.id &&
-	key.p<1>() == data.type &&
+	key.p<0>() == data.ownerID &&
+	key.p<1>() == data.id &&
+	key.p<2>() == data.type &&
 	data.type == Ztc::QueueType::Thread &&
 	data.size == queues->size &&
 	!data.count &&

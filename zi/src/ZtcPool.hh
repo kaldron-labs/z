@@ -42,9 +42,10 @@ struct PoolTelemetry {
 };
 
 struct Pool {
-  virtual ZuTuple<ZuID, ZuID> telKey() const = 0;	// { hubID, id }
+  virtual ZuTuple<const ZuID &, const ZuID &>
+    telKey() const = 0;	// { hubID, id }
   virtual void telemetry(PoolTelemetry &data) const = 0;
-  virtual Queue *txQueue() const = 0;
+  virtual unsigned allQueues(QueueMgr::AllFn fn) const = 0;
 };
 
 } // Ztc

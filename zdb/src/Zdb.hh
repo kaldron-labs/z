@@ -98,7 +98,7 @@
 #include <zlib/ZfCf.hh>
 
 #include <zlib/ZdbTypes.hh>
-#include <zlib/ZdbTelemetry.hh>
+#include <zlib/ZtcDB.hh>
 #include <zlib/ZdbBuf.hh>
 #include <zlib/ZdbMsg.hh>
 #include <zlib/ZdbStore.hh>
@@ -141,6 +141,13 @@ template <typename U>
 using Zdb_EvictHook = typename Zdb_EvictHook_<ZuDecay<U>>::T;
 
 namespace Zdb_ {
+
+namespace HostState {
+  using namespace Ztc::DBHostState;
+}
+namespace CacheMode {
+  using namespace Ztc::DBCacheMode;
+}
 
 // --- pre-declarations
 
@@ -567,7 +574,7 @@ ZfStruct((TableCf, Cf),
   (((nShards),	(Ctor<0>, Cf::ID<"shards">, (Range<1U, 64U>))),
     (UInt32, 1)),
   (((threads),	(Ctor<1>)),				(StringVec)),
-  (((cacheMode), (Ctor<2>, Enum<CacheMode::Map>)),	(Int32,
+  (((cacheMode), (Ctor<2>, Enum<CacheMode::Map>)), (Int32,
       CacheMode::Normal)));
 
 inline TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
@@ -585,9 +592,7 @@ ZuDerive(TableCfs,
 
 // --- generic table
 
-struct TableTelemetry;
-
-class ZdbAPI AnyTable : public ZmPolymorph {
+class ZdbAPI AnyTable : public ZmPolymorph, public Ztc::DBTable {
 friend DB;
 friend Cxn_;
 friend AnyObject;
@@ -615,6 +620,8 @@ public:
   static const auto &IDAxor(AnyTable *table) { return table->config().id; }
 
   const auto &id() const { return config().id; }
+  Ztc::DBTableKey telKey() const override;
+  void telemetry(Ztc::DBTableTelemetry &) const override;
   auto sid(Shard shard) const {
     const auto &config = this->config();
     return config.sids[shard & (config.sids.length() - 1)];
@@ -691,10 +698,6 @@ protected:
   virtual void cacheStats(Shard shard, ZmCacheStats &stats) const = 0;
 
 public:
-  friend TableTelemetry;
-
-  Zfb::Offset<void> telemetry(Zfb::Builder &fbb, bool update) const;
-
 protected:
   bool writeCache() const { return m_writeCache; }
 
@@ -1508,9 +1511,7 @@ ZuDerive(HostCfs,
 
 // --- DB host
 
-struct HostTelemetry;
-
-class ZdbAPI Host {
+class ZdbAPI Host : public Ztc::DBHost {
 friend Cxn_;
 friend DB;
 
@@ -1525,6 +1526,9 @@ public:
   bool standalone() const { return m_cf->standalone; }
   ZiIP ip() const { return m_cf->ip; }
   uint16_t port() const { return m_cf->port; }
+
+  Ztc::DBHostKey telKey() const override;
+  void telemetry(Ztc::DBHostTelemetry &) const override;
 
   bool voted() const { return m_voted; }
   int state() const { return m_state; }
@@ -1544,13 +1548,9 @@ public:
   friend ZuPrintFn ZuPrintType(Host *);
 
   static ZuCSpan IDAxor(const Host &h) { return h.id(); }
-  static ZuTuple<int, ZuID> IndexAxor(const Host &h) {
-    return ZuFwdTuple(h.priority(), h.id());
+  static ZuTuple<int, const ZuID &> IndexAxor(const Host &h) {
+    return {h.priority(), h.config().id};
   }
-
-  friend HostTelemetry;
-
-  Zfb::Offset<void> telemetry(Zfb::Builder &fbb, bool update) const;
 
 private:
   ZmRef<Cxn> cxn() const { return m_cxn; }
@@ -1735,14 +1735,15 @@ inline DBCf::DBCf(const ZfCf::AnyNode *cf) :
 
 // --- DB
 
-struct DBTelemetry;
-
-class ZdbAPI DB : public ZmPolymorph, public ZmEngine<DB> {
+class ZdbAPI DB :
+    public ZmPolymorph, public ZmEngine<DB>, public Ztc::DB {
 public:
   using Engine = ZmEngine<DB>;
-
   using Engine::start;
   using Engine::stop;
+
+  bool start() override { return Engine::start(); }
+  bool stop() override { return Engine::stop(); }
 
 friend Engine;
 friend Cxn_;
@@ -1804,7 +1805,8 @@ public:
   auto sid() const { return config().sid; }
 
   int state() const {
-    return ZuLikely(m_self) ? m_self->state() : HostState::Instantiated;
+    return ZuLikely(m_self) ?
+      m_self->state() : HostState::Instantiated;
   }
 private:
   void state(int n) {
@@ -1819,6 +1821,11 @@ private:
   }
 public:
   bool active() const { return state() == HostState::Active; }
+
+  Ztc::DBKey telKey() const override { return m_cf.hostID; }
+  void telemetry(Ztc::DBTelemetry &) const override;
+  unsigned allDBHosts(Ztc::DB::AllDBHostsFn) const override;
+  unsigned allDBTables(Ztc::DB::AllDBTablesFn) const override;
 
   Host *self() const { return m_self; }
   template <typename L> void allHosts(L &&l) const {
@@ -1845,10 +1852,6 @@ public:
   using AllDoneFn = ZmFn<void(DB *, bool), ZmFnHeapID<"Zdb.AllDoneFn">>;
 
   void all(AllFn fn, AllDoneFn doneFn = AllDoneFn{});
-
-  friend DBTelemetry;
-
-  Zfb::Offset<void> telemetry(Zfb::Builder &fbb, bool update) const;
 
 private:
   void storeFailed(ZeException e) {
@@ -1984,8 +1987,6 @@ private:
   ZmScheduler::Timer	m_hbSendTimer;
   ZmScheduler::Timer	m_electTimer;
 
-  // telemetry
-  ZuID			m_selfID, m_leaderID, m_prevID, m_nextID;
 };
 
 template <typename S>

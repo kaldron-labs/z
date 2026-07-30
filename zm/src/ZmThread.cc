@@ -23,6 +23,8 @@
 
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSpecific.hh>
+#include <zlib/ZmRBTree.hh>
+#include <zlib/ZmRWLock.hh>
 #include <zlib/ZmTopology.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmTime.hh>
@@ -81,6 +83,90 @@ struct ZmThread_Main {
   bool is() { return is_(); }
 };
 static ZmThread_Main ZmThread_main;
+
+class ZmThreadMgr_ {
+friend Ztc::ThreadMgr;
+
+  using Lock = ZmRWLock;
+  using Guard = ZmGuard<Lock>;
+  using ReadGuard = ZmReadGuard<Lock>;
+
+  ZuDerive(Map,
+    (ZmRBTree<ZmThreadContext *,
+      ZmRBTreeUnique<true,
+	ZmRBTreeLock<ZmNoLock,
+	  ZmRBTreeHeapID<"Ztc.ThreadMgr">>>>));
+
+public:
+  static ZmThreadMgr_ *instance() {
+    return
+      ZmSingleton<ZmThreadMgr_,
+	ZmSingletonCleanup<ZmCleanup::Library>>::instance();
+  }
+
+  static bool active() { return m_active.load_(); }
+
+  void watch(
+      Ztc::ThreadMgr::AddFn addFn, Ztc::ThreadMgr::DelFn delFn) {
+    Guard guard(m_watchLock);
+    m_addFn = ZuMv(addFn);
+    m_delFn = ZuMv(delFn);
+  }
+
+  void unwatch() {
+    Guard guard(m_watchLock);
+    m_addFn = {};
+    m_delFn = {};
+  }
+
+  void final() {
+    Guard guard(m_watchLock);
+    m_active = false;
+    m_addFn = {};
+    m_delFn = {};
+    m_map.clean();
+  }
+
+  void add(ZmThreadContext *thread) {
+    Guard guard(m_watchLock);
+    m_map.add(thread);
+    if (m_addFn) m_addFn(thread);
+  }
+
+  void del(ZmThreadContext *thread) {
+    Guard guard(m_watchLock);
+    if (m_delFn) m_delFn(thread);
+    m_map.del(thread);
+  }
+
+  unsigned all(Ztc::ThreadMgr::AllFn fn) const {
+    ReadGuard guard(m_watchLock);
+    unsigned n = 0;
+    auto i = m_map.citer();
+    while (auto thread = i.key()) {
+      ++n;
+      fn(thread);
+    }
+    return n;
+  }
+
+  template <typename L> void guard(L &&l) {
+    Guard guard(m_watchLock);
+    ZuFwd<L>(l)();
+  }
+
+private:
+  Lock &watchLock() { return m_watchLock; }
+
+  Map			m_map;
+  mutable Lock		m_watchLock;
+  Ztc::ThreadMgr::AddFn	m_addFn;
+  Ztc::ThreadMgr::DelFn	m_delFn;
+
+  static ZmAtomic<uint32_t> m_active;
+};
+
+ZmAtomic<uint32_t> ZmThreadMgr_::m_active{1};
 
 void ZmThreadContext_::init()
 {
@@ -153,6 +239,21 @@ void ZmThreadContext::init()
   if (m_partition < 0) m_partition = 0;
 }
 
+void ZmThreadContext::publish()
+{
+  if (!m_published && ZmThreadMgr_::active()) {
+    m_published = true;
+    ZmThreadMgr_::instance()->add(this);
+  }
+}
+
+void ZmThreadContext::final()
+{
+  if (!m_published) return;
+  if (ZmThreadMgr_::active()) ZmThreadMgr_::instance()->del(this);
+  m_published = false;
+}
+
 void ZmThreadContext::telemetry(Ztc::ThreadTelemetry &data) const {
   data.name = m_name;
   data.tid = tid();
@@ -169,10 +270,24 @@ void ZmThreadContext::telemetry(Ztc::ThreadTelemetry &data) const {
   data.detached = m_detached;
 }
 
-void Ztc::ThreadMgr::all(AllFn fn)
+unsigned Ztc::ThreadMgr::all(AllFn fn)
 {
-  ZmThreadContextTLS::all(
-    [&fn](ZmThreadContext *tc) { fn(tc); });
+  return ZmThreadMgr_::instance()->all(ZuMv(fn));
+}
+
+ZmRWLock &Ztc::ThreadMgr::watchLock_()
+{
+  return ZmThreadMgr_::instance()->watchLock();
+}
+
+void Ztc::ThreadMgr::watch(AddFn addFn, DelFn delFn)
+{
+  ZmThreadMgr_::instance()->watch(ZuMv(addFn), ZuMv(delFn));
+}
+
+void Ztc::ThreadMgr::unwatch()
+{
+  ZmThreadMgr_::instance()->unwatch();
 }
 
 void ZmThreadContext::prioritize(int priority)
@@ -252,6 +367,7 @@ ZmAPI unsigned __stdcall ZmThread_start(void *c_)
   ZmThreadContext *c = ZmThreadContext::self((ZmThreadContext *)c_);
   c->deref();
   c->init();
+  c->publish();
 #ifndef _WIN32
 #ifdef linux
   pthread_setname_np(c->m_pthread, c->name_());

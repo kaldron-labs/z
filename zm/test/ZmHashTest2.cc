@@ -72,12 +72,15 @@ int main(int argc, char **argv)
   ZuCheck(orders->count_() == 98);
 
   bool found = false;
-  Ztc::HashMgr::all(Ztc::HashMgr::AllFn{
-    &found, [](bool *found, Ztc::Hash *hash) {
+  unsigned visited = 0;
+  unsigned allHashes = Ztc::HashMgr::all(Ztc::HashMgr::AllFn{
+    [&found, &visited](Ztc::Hash *hash) {
+      ++visited;
       Ztc::HashTelemetry data;
       hash->telemetry(data);
-      if (data.id == "Orders") *found = true;
+      if (data.id == "Orders") found = true;
     }});
+  ZuCheck(allHashes == visited);
   ZuCheck(found);
   log(Ztc::hashCSV());
 }

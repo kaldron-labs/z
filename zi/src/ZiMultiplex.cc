@@ -10,6 +10,7 @@
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmRBTree.hh>
+#include <zlib/ZmRWLock.hh>
 #include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtHexDump.hh>
@@ -18,29 +19,112 @@
 #include <zlib/ZiLog.hh>
 
 class ZiMxMgr_ {
+friend Ztc::MxMgr;
+
+  using Lock = ZmRWLock;
+  using Guard = ZmGuard<Lock>;
+  using ReadGuard = ZmReadGuard<Lock>;
+
   ZuDerive(Map,
-    (ZmRBTreeKV<ZuID, ZiMultiplex *,
+    (ZmRBTree<ZiMultiplex *,
       ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmPLock,
+	ZmRBTreeLock<ZmNoLock,
 	  ZmRBTreeHeapID<"Ztc.MxMgr">>>>));
 
 public:
+  ~ZiMxMgr_() {
+    m_addFn = {};
+    m_delFn = {};
+    m_addCxnFn = {};
+    m_delCxnFn = {};
+    m_addQueueFn = {};
+    m_delQueueFn = {};
+  }
+
   static ZiMxMgr_ *instance() {
     return
       ZmSingleton<ZiMxMgr_,
 	ZmSingletonCleanup<ZmCleanup::Library>>::instance();
   }
 
-  void add(ZiMultiplex *mx) { m_map.add(mx->id(), mx); }
-  void del(ZiMultiplex *mx) { m_map.del(mx->id()); }
+  void add(ZiMultiplex *mx) {
+    Guard guard(m_watchLock);
+    m_map.add(mx);
+    if (m_addFn) m_addFn(mx);
+  }
+  void del(ZiMultiplex *mx) {
+    Guard guard(m_watchLock);
+    if (m_delFn) m_delFn(mx);
+    m_map.del(mx);
+  }
 
-  void all(Ztc::MxMgr::AllFn fn) const {
+  unsigned all(Ztc::MxMgr::AllFn fn) const {
+    ReadGuard guard(m_watchLock);
+    unsigned n = 0;
     auto i = m_map.citer();
-    while (auto mx = i.val()) fn(mx);
+    while (auto mx = i.key()) {
+      ++n;
+      fn(mx);
+    }
+    return n;
+  }
+
+  template <typename L> void guard(L &&l) {
+    Guard guard(m_watchLock);
+    ZuFwd<L>(l)();
+  }
+
+  void watch(Ztc::MxMgr::AddFn addFn, Ztc::MxMgr::DelFn delFn) {
+    Guard guard(m_watchLock);
+    m_addFn = ZuMv(addFn);
+    m_delFn = ZuMv(delFn);
+  }
+
+  void unwatch() {
+    Guard guard(m_watchLock);
+    m_addFn = {};
+    m_delFn = {};
+  }
+
+  void watch(
+      Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn,
+      Ztc::Mx::AddQueueFn addQueueFn, Ztc::Mx::DelQueueFn delQueueFn) {
+    Guard guard(m_watchLock);
+    m_addCxnFn = ZuMv(addCxnFn);
+    m_delCxnFn = ZuMv(delCxnFn);
+    m_addQueueFn = ZuMv(addQueueFn);
+    m_delQueueFn = ZuMv(delQueueFn);
+  }
+
+  void unwatchMx() {
+    Guard guard(m_watchLock);
+    m_addCxnFn = {};
+    m_delCxnFn = {};
+    m_addQueueFn = {};
+    m_delQueueFn = {};
+  }
+
+  void cxnAdded_(ZiConnection *cxn) {
+    Guard guard(m_watchLock);
+    if (m_addCxnFn) m_addCxnFn(cxn);
+  }
+
+  void cxnDeleted_(ZiConnection *cxn) {
+    Guard guard(m_watchLock);
+    if (m_delCxnFn) m_delCxnFn(cxn);
   }
 
 private:
-  Map	m_map;
+  Lock &watchLock() { return m_watchLock; }
+
+  Map				m_map;
+  mutable Lock			m_watchLock;
+  Ztc::MxMgr::AddFn		m_addFn;
+  Ztc::MxMgr::DelFn		m_delFn;
+  Ztc::Mx::AddCxnFn		m_addCxnFn;
+  Ztc::Mx::DelCxnFn		m_delCxnFn;
+  Ztc::Mx::AddQueueFn		m_addQueueFn;
+  Ztc::Mx::DelQueueFn		m_delQueueFn;
 };
 
 #ifndef _WIN32
@@ -2344,6 +2428,7 @@ bool ZiMultiplex::cxnAdd(ZiConnection *cxn, Socket s)
   }
 #endif
 
+  ZiMxMgr_::instance()->cxnAdded_(cxn);
   return true;
 }
 
@@ -2353,7 +2438,22 @@ void ZiMultiplex::cxnDel(Socket s)
   epoll_ctl(m_epollFD, EPOLL_CTL_DEL, s, 0);
 #endif
 
-  m_cxns->del(s);
+  if (ZmRef<ZiConnection> cxn = m_cxns->valMv(m_cxns->del(s)))
+    ZiMxMgr_::instance()->cxnDeleted_(cxn);
+}
+
+void ZiMultiplex::watch(
+    Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn,
+    Ztc::Mx::AddQueueFn addQueueFn, Ztc::Mx::DelQueueFn delQueueFn)
+{
+  ZiMxMgr_::instance()->watch(
+    ZuMv(addCxnFn), ZuMv(delCxnFn),
+    ZuMv(addQueueFn), ZuMv(delQueueFn));
+}
+
+void ZiMultiplex::unwatch()
+{
+  ZiMxMgr_::instance()->unwatchMx();
 }
 
 bool ZiMultiplex::listenerAdd(Listener *listener, Socket s)
@@ -2624,8 +2724,6 @@ ZiMultiplex::ZiMultiplex(ZiMxParams mxParams) :
   if (!params().thread(m_txThread).name())
     params_().thread(m_txThread).name("ioTx");
 
-  ZiMxMgr_::instance()->add(this);
-
 #ifdef ZiMultiplex_EPoll
   ZmScheduler::threadInit([]() {
     sigset_t s;
@@ -2635,6 +2733,7 @@ ZiMultiplex::ZiMultiplex(ZiMxParams mxParams) :
     pthread_sigmask(SIG_BLOCK, &s, 0);
   });
 #endif
+  ZiMxMgr_::instance()->add(this);
 }
 
 ZiMultiplex::~ZiMultiplex()
@@ -3038,7 +3137,22 @@ void ZiMultiplex::telemetry(Ztc::MxTelemetry &data) const
   data.nThreads = params().nThreads();
 }
 
-void Ztc::MxMgr::all(AllFn fn)
+unsigned Ztc::MxMgr::all(AllFn fn)
 {
-  ZiMxMgr_::instance()->all(ZuMv(fn));
+  return ZiMxMgr_::instance()->all(ZuMv(fn));
+}
+
+ZmRWLock &Ztc::MxMgr::watchLock_()
+{
+  return ZiMxMgr_::instance()->watchLock();
+}
+
+void Ztc::MxMgr::watch(AddFn addFn, DelFn delFn)
+{
+  ZiMxMgr_::instance()->watch(ZuMv(addFn), ZuMv(delFn));
+}
+
+void Ztc::MxMgr::unwatch()
+{
+  ZiMxMgr_::instance()->unwatch();
 }

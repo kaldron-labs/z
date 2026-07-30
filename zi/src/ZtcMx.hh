@@ -18,8 +18,12 @@
 
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn_.hh>
+#include <zlib/ZmGuard.hh>
+#include <zlib/ZmRWLock.hh>
 
 #include <zlib/ZiIP.hh>
+#include <zlib/ZtcQueue.hh>
+#include <zlib/ZtcTypes.hh>
 
 namespace Ztc {
 
@@ -83,17 +87,44 @@ struct MxTelemetry { // not graphable
 
 struct Mx {
   using AllCxnsFn =
-    ZmFn<void(Connection *), ZmFnHeapID<"Ztc.Mx.AllCxnsFn">>;
+    ZmFn<void(Connection *), AllFnHeapID>;
+  using AddCxnFn =
+    ZmFn<void(Connection *), WatchFnHeapID>;
+  using DelCxnFn =
+    ZmFn<void(Connection *), WatchFnHeapID>;
+  using AddQueueFn =
+    ZmFn<void(Queue *), WatchFnHeapID>;
+  using DelQueueFn =
+    ZmFn<void(Queue *), WatchFnHeapID>;
 
-  virtual ZuID telKey() const = 0;
+  virtual const ZuID &telKey() const = 0;
   virtual void telemetry(MxTelemetry &data) const = 0;
   virtual unsigned allCxns(AllCxnsFn fn) const = 0;
+  virtual unsigned allQueues(QueueMgr::AllFn fn) const = 0;
+  virtual void watch(
+    AddCxnFn, DelCxnFn, AddQueueFn, DelQueueFn) = 0;
+  virtual void unwatch() = 0;
 };
 
 struct MxMgr {
-  using AllFn = ZmFn<void(Mx *), ZmFnHeapID<"Ztc.Mx.AllFn">>;
+private:
+  using WatchLock = ZmRWLock;
+  using WatchGuard = ZmGuard<WatchLock>;
 
-  static void all(AllFn);
+  static WatchLock &watchLock_();
+
+public:
+  using AllFn = ZmFn<void(Mx *), AllFnHeapID>;
+  using AddFn = ZmFn<void(Mx *), WatchFnHeapID>;
+  using DelFn = ZmFn<void(Mx *), WatchFnHeapID>;
+
+  static unsigned all(AllFn);
+  template <typename L> static void guard(L &&l) {
+    WatchGuard guard(watchLock_());
+    ZuFwd<L>(l)();
+  }
+  static void watch(AddFn, DelFn);
+  static void unwatch();
 };
 
 } // Ztc

@@ -18,6 +18,8 @@
 
 #include <zlib/ZmFn_.hh>
 
+#include <zlib/ZtcTypes.hh>
+
 namespace Ztc {
 
 namespace QueueType {
@@ -26,6 +28,7 @@ namespace QueueType {
 }
 
 struct QueueTelemetry {
+  ZuID		ownerID;	// primary key
   ZuID		id;		// primary key
   uint64_t	inBytes = 0;	// dynamic
   uint64_t	outBytes = 0;	// dynamic
@@ -38,12 +41,13 @@ struct QueueTelemetry {
 };
 
 struct Queue {
-  virtual ZuTuple<ZuID, QueueType::T> telKey() const = 0;
+  virtual ZuTuple<const ZuID &, const ZuID &, QueueType::T>
+    telKey() const = 0;
   virtual void telemetry(QueueTelemetry &data) const = 0;
 };
 
 struct QueueMgr {
-  using AllFn = ZmFn<void(Queue *), ZmFnHeapID<"Ztc.Queue.AllFn">>;
+  using AllFn = ZmFn<void(Queue *), AllFnHeapID>;
 
   virtual unsigned allQueues(AllFn) const = 0;
 };

@@ -165,30 +165,38 @@ void queue_telemetry(
   Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
 {
   auto linkKey = link.telKey();
-  Ztc::Queue *scratch = nullptr;
+  Ztc::Queue *rxQueue = nullptr;
+  Ztc::Queue *txQueue = nullptr;
   unsigned count = 0;
   unsigned allQueues = link.allQueues([&](Ztc::Queue *queue) {
-    if (!scratch)
-      scratch = queue;
-    else
-      ZTLS_CHECK_RT(queue == scratch,
-	"allQueues did not reuse its scratch queue");
+    if (!count)
+      rxQueue = queue;
+    else {
+      txQueue = queue;
+      ZTLS_CHECK_RT(txQueue != rxQueue,
+	"allQueues did not publish distinct queues");
+    }
     auto key = queue->telKey();
-    ZTLS_CHECK_RT(key.template p<0>() == linkKey.template p<1>(),
+    ZTLS_CHECK_RT(key.template p<0>() == linkKey.template p<0>(),
+      "telemetry queue owner ID mismatch");
+    ZTLS_CHECK_RT(key.template p<1>() == linkKey.template p<1>(),
       "telemetry queue ID mismatch");
-    ZTLS_CHECK_RT(key.template p<1>() ==
+    ZTLS_CHECK_RT(key.template p<2>() ==
 	(count ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
       "telemetry queue iteration order mismatch");
 
     Ztc::QueueTelemetry data;
+    data.ownerID = ZuID{} << "dirtyOwner";
     data.id = ZuID{} << "dirty";
     data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
     data.count = data.size = data.full = 1;
     data.type = Ztc::QueueType::Thread;
     queue->telemetry(data);
-    ZTLS_CHECK_RT(data.id == key.template p<0>(),
+    ZTLS_CHECK_RT(data.ownerID == key.template p<0>(),
+      "queue telemetry owner ID mismatch");
+    ZTLS_CHECK_RT(data.id == key.template p<1>(),
       "queue telemetry ID mismatch");
-    ZTLS_CHECK_RT(data.type == key.template p<1>(),
+    ZTLS_CHECK_RT(data.type == key.template p<2>(),
       "queue telemetry type mismatch");
     ZTLS_CHECK_RT(!data.size && !data.full,
       "queue telemetry fields were not overwritten");
@@ -204,6 +212,19 @@ void queue_telemetry(
   ZTLS_CHECK_RT(allQueues == 2, "allQueues returned incorrect count");
   ZTLS_CHECK_RT(count == allQueues,
     "allQueues did not enumerate returned count");
+  unsigned repeat = 0;
+  link.allQueues([&](Ztc::Queue *queue) {
+    ZTLS_CHECK_RT(queue == (repeat++ ? txQueue : rxQueue),
+      "allQueues queue pointer is not stable");
+  });
+  ZTLS_CHECK_RT(rx.ownerID == linkKey.template p<0>() &&
+      tx.ownerID == linkKey.template p<0>(),
+    "queue owner ID mismatch");
+  ZTLS_CHECK_RT(rx.id == linkKey.template p<1>() &&
+      tx.id == linkKey.template p<1>(),
+    "queue ID mismatch");
+  ZTLS_CHECK_RT(rx.type != tx.type,
+    "Rx and Tx queue types do not discriminate the keys");
 }
 
 template <typename Link>
@@ -368,7 +389,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 
   struct Link : public Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc> {
     using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc>;
-    Link(BaseClient *app) : BaseLink{app} { }
+    Link(BaseClient *app) : BaseLink{app, ZuID{"client"}} { }
 
     void connected(Ztls::Connected info) {
       auto &state = this->app()->state;

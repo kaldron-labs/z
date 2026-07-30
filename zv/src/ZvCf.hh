@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// mmap-backed configuration file loading
+// configuration file I/O
 
 #ifndef ZvCf_HH
 #define ZvCf_HH
