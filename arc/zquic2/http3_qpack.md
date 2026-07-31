@@ -302,7 +302,7 @@ The builder currently does a count pass followed by a write pass. Dynamic insert
 - `Count`: computes bytes and records planned dynamic insertions without mutating the table;
 - `Write`: emits the same bytes and commits the planned insertions/instructions.
 
-Alternatively, build only a small on-stack plan for the header block using `ZtLocalArray` and write once. Avoid heap-backed scratch except when field size exceeds the local array capacity.
+Alternatively, build only a small on-stack plan for the header block using `ZtScratch` and write once. Avoid heap-backed scratch except when field size exceeds the local array capacity.
 
 ## Emitting Encoder Instructions
 

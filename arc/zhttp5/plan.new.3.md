@@ -538,7 +538,7 @@ Modify:
 Implementation details:
 
 - Replace `str()` conversion hotspots with `ZuCSpan`/`ZtString<>` flows.
-- Convert path normalization to decode into `ZtString<>` or `ZtLocalArray`
+- Convert path normalization to decode into `ZtString<>` or `ZtScratch`
   scratch and track components as spans or offsets.
 - Replace `std::vector<std::string>` component storage with `ZtArray` or a
   scratch component table.

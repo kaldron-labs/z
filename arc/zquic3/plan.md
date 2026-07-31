@@ -93,7 +93,7 @@ Goal: address every item in `zquic.md` while preserving the current public trans
    - If capped, add a named constant such as `LocalActiveConnectionIDLimit` and make transport parameter validation reject incompatible peer usage with diagnostics.
 
 2. Replace raw arrays if runtime-sized support is chosen:
-   - Use `ZtArray`/`ZtLocalArray` for small-vector style storage or `ZmHash` keyed by sequence/CID.
+   - Use `ZtArray`/`ZtScratch` for small-vector style storage or `ZmHash` keyed by sequence/CID.
    - Use named heaps such as `"Zquic.Link.LocalCID"` and `"Zquic.Link.PeerCID"`.
    - Keep current lookup paths by sequence and by CID efficient.
 

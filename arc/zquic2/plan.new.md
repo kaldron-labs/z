@@ -101,7 +101,7 @@ using CryptoRxBufAlloc =
 
 The target should not default new Zquic buffers to `ZiIOBuf_HeapID` or a generic
 `"ZtArray"` heap.  Temporary local arrays such as `RxSpans` should remain
-`ZtLocalArray` where bounded by queue count; persistent arrays keep named
+`ZtScratch` where bounded by queue count; persistent arrays keep named
 `ZtArrayHeapID<"Zquic.*">`.
 
 ### Retained Slice Buffers
@@ -525,7 +525,7 @@ Implementation notes:
 - If a CRYPTO frame arrives at the current offset as one contiguous slice, pass
   its `ZuCSpan` directly to `Crypto::handleTLSMessage()`.
 - If multiple queued slices are needed for a TLS message, merge into
-  `ZtLocalArray`/`ZmLocal` scratch up to a bounded threshold.
+  `ZtScratch`/`ZmLocal` scratch up to a bounded threshold.
 - If the message exceeds local scratch, use a named heap buffer such as
   `Zquic.Crypto.MergeBuf`; this is a handshake/fragmentation fallback, not the
   steady-state packet path.
