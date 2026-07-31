@@ -476,6 +476,9 @@ void testSpanFindMatch()
     ZuCheck(!s.match("world"));
     ZuCheck(!s.match("hello world!"));
     ZuCheck(s.match(""));
+    ZuCheck(s.exact("hello world"));
+    ZuCheck(!s.exact("hello"));
+    ZuCheck(!s.exact("hello world!"));
   }
 
   {
