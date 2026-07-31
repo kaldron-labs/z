@@ -106,6 +106,50 @@ void build(IOBuilder &fbb, unsigned n)
   }
 }
 
+void frontReserve()
+{
+  using namespace Zfb;
+  ZmRef<ZiIOBuf> buf_ = new ZiIOBufAlloc<>;
+  buf_->skip = IOBuilder::Align;
+  IOBuilder fbb{ZuMv(buf_)};
+  zfbtest::Test test{42, "front", {"reserve"}};
+  fbb.Finish(ZfbStruct::save(fbb, test));
+  auto body = fbb.GetBufferPointer();
+  auto length = fbb.GetSize();
+  auto buf = fbb.buf();
+  CHECK(buf->data() == body);
+  CHECK(buf->length == length);
+  CHECK(buf->skip >= 4);
+  auto hdr = buf->prepend(4);
+  CHECK(hdr != nullptr);
+  CHECK(buf->data() + 4 == body);
+  flatbuffers::Verifier verifier{body, length};
+  CHECK(zfbtest::fbs::VerifyTestBuffer(verifier));
+
+  enum { GrowthSize = 4096 };
+  ZtString<> large;
+  large.length(GrowthSize);
+  memset(large.data(), 'x', GrowthSize);
+  ZmRef<ZiIOBuf> storage =
+    new ZiIOBufAlloc<64, 1U<<20, "Zfb.Test.FrontGrow">;
+  auto identity = storage.ptr();
+  storage->skip = IOBuilder::Align;
+  IOBuilder growing{storage};
+  zfbtest::Test largeTest{42, large, {}};
+  growing.Finish(ZfbStruct::save(growing, largeTest));
+  body = growing.GetBufferPointer();
+  length = growing.GetSize();
+  auto grown = growing.buf();
+  CHECK(grown.ptr() == identity);
+  CHECK(grown->data() == body);
+  CHECK(grown->skip >= 4);
+  hdr = grown->prepend(4);
+  CHECK(hdr != nullptr);
+  CHECK(grown->data() + 4 == body);
+  flatbuffers::Verifier grownVerifier{body, length};
+  CHECK(zfbtest::fbs::VerifyTestBuffer(grownVerifier));
+}
+
 int main(int argc, char **argv)
 {
   if (argc != 2) { std::cerr << "usage N\n" << std::flush; exit(1); }
@@ -117,4 +161,5 @@ int main(int argc, char **argv)
   build<false>(fbb, n);
   build<true>(fbb, n);
   build<true>(fbb, n);
+  frontReserve();
 }

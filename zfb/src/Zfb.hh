@@ -52,16 +52,24 @@ public:
   enum { Align = 8 };
 
   IOBuilder(ZmRef<ZiIOBuf> buf) :
-    Builder{buf->size & ~(Align - 1), this, false, Align},
-    m_buf{ZuMv(buf)} { }
+    Builder{(buf->size & ~(Align - 1)) - buf->skip,
+      this, false, Align},
+    m_buf{ZuMv(buf)} {
+    ZmAssert(!(m_buf->skip & (Align - 1)));
+    m_buf->length = 0;
+    m_buf->size &= ~(Align - 1);
+  }
 
   IOBuilder(IOBuilder &&) = delete;
   IOBuilder &operator =(IOBuilder &&) = delete;
 
   // attach buffer to builder
   void buf(ZmRef<ZiIOBuf> buf) {
-    buf->clear();
-    Builder::operator =(Builder{buf->size & ~(Align - 1), this, false, Align});
+    ZmAssert(!(buf->skip & (Align - 1)));
+    buf->length = 0;
+    buf->size &= ~(Align - 1);
+    Builder::operator =(
+      Builder{buf->size - buf->skip, this, false, Align});
     m_buf = ZuMv(buf);
   }
 
@@ -71,7 +79,7 @@ public:
     auto buf = ZuMv(m_buf);
     size_t size, skip;
     ReleaseRaw(size, skip);
-    buf->skip = skip;
+    buf->skip += skip;
     buf->length = size - skip;
     Clear();
     return buf;
@@ -83,11 +91,12 @@ public:
 protected:
   uint8_t *allocate(size_t size) {
     ZmAssert(m_buf);
-    return m_buf->alloc(size);
+    if (ZuUnlikely(!m_buf->alloc(size + m_buf->skip))) return nullptr;
+    return m_buf->data();
   }
 
   void deallocate(uint8_t *ptr, size_t size) {
-    if (m_buf) m_buf->free(ptr);
+    if (m_buf) m_buf->free(ptr - m_buf->skip);
   }
 
   // override ZiIOBuf's default grow() with a pass-through because flatbuffers

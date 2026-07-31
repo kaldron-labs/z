@@ -168,24 +168,25 @@ public:
   uint8_t *realloc(
       unsigned oldSize, unsigned newSize,
       unsigned head, unsigned tail) {
-    ZmAssert(!skip);
-    auto old = data_();
-    if (ZuLikely(newSize <= size)) {
+    auto old = data();
+    unsigned newSize_ = newSize + skip;
+    if (ZuLikely(newSize_ <= size)) {
       if (tail) memmove(old + newSize - tail, old + oldSize - tail, tail);
-      size = newSize;
+      size = newSize_;
       return old;
     }
-    newSize = Grow(size, newSize);
-    auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
+    newSize_ = Grow(size, newSize_);
+    auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize_));
     if (ZuLikely(jumbo)) {
-      if (head) memcpy(jumbo, old, head);
-      if (tail) memcpy(jumbo + newSize - tail, old + oldSize - tail, tail);
-      size = newSize;
+      if (head) memcpy(jumbo + skip, old, head);
+      if (tail)
+	memcpy(jumbo + newSize_ - tail, old + oldSize - tail, tail);
+      size = newSize_;
     } else
-      length = size = 0;
-    if (ZuUnlikely(data__ & Jumbo)) vfree(old);
+      skip = length = size = 0;
+    if (ZuUnlikely(data__ & Jumbo)) vfree(data_());
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
-    return jumbo;
+    return jumbo ? jumbo + skip : nullptr;
   }
 
   // ensure at least newSize bytes in buffer, preserving any existing data
