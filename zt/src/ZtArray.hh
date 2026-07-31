@@ -351,11 +351,11 @@ public:
   // only happen among identically-typed strings; this is both intentional
   // and important for heap instrumentation and tuning
   ZtArray(ZtArray &&a) noexcept(ZuNXMove<T>{}) {
-    if (!a.owned())
+    if (!a.mutable_())
       shadow_(a.m_data, a.length());
     else {
       own_(a.m_data, a.length(), a.size(), a.vallocd());
-      a.owned(false);
+      a.mutable_(false);
     }
   }
   ZtArray(std::initializer_list<T> a) {
@@ -381,12 +381,12 @@ private:
       this_->copy__(a.m_data, a.length());
     }
     static void ctor_(ZtArray *this_, A &&a) {
-      if (!a.owned())
+      if (!a.mutable_())
 	this_->shadow_(reinterpret_cast<T *>(a.m_data), a.length());
       else {
 	this_->own_(
 	    reinterpret_cast<T *>(a.m_data), a.length(), a.size(), a.vallocd());
-	a.owned(false);
+	a.mutable_(false);
       }
     }
 
@@ -398,12 +398,12 @@ private:
     }
     static void assign_(ZtArray *this_, A &&a) {
       this_->free_();
-      if (!a.owned())
+      if (!a.mutable_())
 	this_->shadow_(reinterpret_cast<T *>(a.m_data), a.length());
       else {
 	this_->own_(
 	    reinterpret_cast<T *>(a.m_data), a.length(), a.size(), a.vallocd());
-	a.owned(false);
+	a.mutable_(false);
       }
     }
 
@@ -585,7 +585,7 @@ private:
     uint64_t z = grow_(0, 1);
     m_data = alloc__(z);
     if (!m_data) throw std::bad_alloc{};
-    size_owned(z, 1);
+    size_mutable(z, 1);
     length_vallocd(1, 1);
     initElem(m_data, ZuFwd<R>(r));
   }
@@ -671,14 +671,14 @@ protected:
     ZuSpan<const AltChar> s(s_);
     uint64_t o = ZuUTF<Char, AltChar>::len(s);
     if (!o) { null(); return; }
-    if (!owned() || size() < o) size(o);
+    if (!mutable_() || size() < o) size(o);
     length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
   }
   template <typename C> MatchAltChar<C> assign(C c) {
     ZuSpan<const AltChar> s(&c, 1);
     uint64_t o = ZuUTF<Char, AltChar>::len(s);
     if (!o) { null(); return; }
-    if (!owned() || size() < o) size(o);
+    if (!mutable_() || size() < o) size(o);
     length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
   }
 
@@ -764,7 +764,7 @@ public:
   }
   explicit ZtArray(
       const T *data, uint64_t length, uint64_t size, bool vallocd) {
-    if (!size) { null_(); return; }
+    if (!data) { null_(); return; }
     own_(data, length, size, vallocd);
   }
 
@@ -824,7 +824,7 @@ public:
   }
   void init_(
       const T *data, uint64_t length, uint64_t size, bool vallocd) {
-    if (!size) { null_(); return; }
+    if (!data) { null_(); return; }
     own_(data, length, size, vallocd);
   }
 
@@ -832,7 +832,7 @@ public:
 
 protected:
   void null_() {
-    m_size_owned = 0;
+    m_size_mutable = 0;
     m_length_vallocd = 0;
     m_data = nullptr;
   }
@@ -847,7 +847,7 @@ protected:
     own__(data, length, size, vallocd);
   }
   void own__(const T *data, uint64_t length, uint64_t size, bool vallocd) {
-    size_owned(size, 1);
+    size_mutable(size, 1);
     length_vallocd(length, vallocd);
     m_data = const_cast<T *>(data);
   }
@@ -857,7 +857,7 @@ protected:
     shadow__(data, length);
   }
   void shadow__(const T *data, uint64_t length) {
-    size_owned(length, 0);
+    size_mutable(length, 0);
     length_vallocd(length, 0);
     m_data = const_cast<T *>(data);
   }
@@ -866,7 +866,7 @@ protected:
     if (!size) { null_(); return; }
     m_data = alloc__(size);
     if (!m_data) throw std::bad_alloc{};
-    size_owned(size, 1);
+    size_mutable(size, 1);
     length_vallocd(length, 1);
   }
 
@@ -884,7 +884,7 @@ protected:
   }
   template <typename U> void copy___(const U *data, uint64_t length) {
     copyElems(m_data, data, length);
-    size_owned(length, 1);
+    size_mutable(length, 1);
     length_vallocd(length, 1);
   }
 
@@ -896,20 +896,20 @@ protected:
   }
   template <typename U> void move___(U *data, uint64_t length) {
     this->template moveElems<false>(m_data, data, length);
-    size_owned(length, 1);
+    size_mutable(length, 1);
     length_vallocd(length, 1);
   }
 
   template <typename S> void convert_(const S &s, ZtIconv *iconv);
 
   void free_() {
-    if (m_data && owned()) {
+    if (m_data && mutable_()) {
       destroyElems(m_data, length());
       if (vallocd()) vfree(m_data);
     }
   }
   T *free_1(uint64_t &length_vallocd) {
-    if (!m_data || !owned()) return 0;
+    if (!m_data || !mutable_()) return 0;
     length_vallocd = m_length_vallocd;
     return m_data;
   }
@@ -933,7 +933,7 @@ public:
     free_();
     m_data = newData;
     vallocd(1);
-    size_owned(length(), 1);
+    size_mutable(length(), 1);
   }
 
 // array / ptr operators
@@ -945,10 +945,10 @@ public:
   const T *data() const { return m_data; }
 
   uint64_t length() const { return m_length_vallocd & ~(uint64_t(1)<<63); }
-  uint64_t size() const { return m_size_owned & ~(uint64_t(1)<<63); }
+  uint64_t size() const { return m_size_mutable & ~(uint64_t(1)<<63); }
 
   bool vallocd() const { return m_length_vallocd>>63; }
-  bool owned() const { return m_size_owned>>63; }
+  bool mutable_() const { return m_size_mutable>>63; }
 
 // direct buffer access
   auto span() { return ZuSpan(m_data, length()); }
@@ -995,19 +995,20 @@ protected:
     m_length_vallocd = l | ((uint64_t(m))<<63);
   }
   void size_(uint64_t v) {
-    m_size_owned = (m_size_owned & (uint64_t(1)<<63)) | uint64_t(v);
+    m_size_mutable = (m_size_mutable & (uint64_t(1)<<63)) | uint64_t(v);
   }
-  void owned(bool v) {
-    m_size_owned = (m_size_owned & ~(uint64_t(1)<<63)) | (uint64_t(v)<<63);
+  void mutable_(bool v) {
+    m_size_mutable =
+      (m_size_mutable & ~(uint64_t(1)<<63)) | (uint64_t(v)<<63);
   }
-  void size_owned(uint64_t z, bool o) {
-    m_size_owned = z | (uint64_t(o)<<63);
+  void size_mutable(uint64_t z, bool o) {
+    m_size_mutable = z | (uint64_t(o)<<63);
   }
 
 public:
 // release / free
   T *release() && {
-    owned(0);
+    mutable_(0);
     return m_data;
   }
   static void free(const T *ptr) { vfree(ptr); }
@@ -1020,7 +1021,7 @@ public:
 
 // reset without freeing
   void clear() {
-    if (!owned()) { null_(); return; }
+    if (!mutable_()) { null_(); return; }
     if constexpr (!ZuTraits<T>::IsPrimitive)
       if (uint64_t n = this->length())
 	destroyElems(m_data, n);
@@ -1029,7 +1030,7 @@ public:
 
 // set length
   void length(uint64_t length) {
-    if (!owned() || length > size()) size(length);
+    if (!mutable_() || length > size()) size(length);
     if constexpr (!ZuTraits<T>::IsPrimitive) {
       uint64_t n = this->length();
       if (length > n) {
@@ -1041,7 +1042,7 @@ public:
     length_(length);
   }
   void length(uint64_t length, bool initElems_) {
-    if (!owned() || length > size()) size(length);
+    if (!mutable_() || length > size()) size(length);
     if (initElems_) {
       uint64_t n = this->length();
       if (length > n) {
@@ -1056,14 +1057,14 @@ public:
 // ensure size
   T *ensure(uint64_t o) {
     uint64_t z = size();
-    if (ZuLikely(owned() && o <= z)) return m_data;
+    if (ZuLikely(mutable_() && o <= z)) return m_data;
     return size(grow_(z, o));
   }
 
 // set size
   T *size(uint64_t z) {
     if (!z) { null(); return 0; }
-    if (owned() && z == size()) return m_data;
+    if (mutable_() && z == size()) return m_data;
     T *newData = alloc__(z);
     if (!newData) throw std::bad_alloc{};
     uint64_t n = z;
@@ -1073,7 +1074,7 @@ public:
       free_();
     }
     m_data = newData;
-    size_owned(z, 1);
+    size_mutable(z, 1);
     length_vallocd(n, 1);
     return newData;
   }
@@ -1086,14 +1087,14 @@ public:
       return m_data + i;
     }
     uint64_t z = size();
-    if (!owned() || i + 1 > z) {
+    if (!mutable_() || i + 1 > z) {
       z = grow_(z, i + 1);
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
       this->template moveElems<false>(newData, m_data, n);
       free_();
       m_data = newData;
-      size_owned(z, 1);
+      size_mutable(z, 1);
       if (i > n) initElems(m_data + n, i - n);
       length_vallocd(i + 1, 1);
     } else {
@@ -1364,14 +1365,14 @@ public:
   T *push() {
     uint64_t n = length();
     uint64_t z = size();
-    if (!owned() || n + 1 > z) {
+    if (!mutable_() || n + 1 > z) {
       z = grow_(z, n + 1);
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
       this->template moveElems<false>(newData, m_data, n);
       free_();
       m_data = newData;
-      size_owned(z, 1);
+      size_mutable(z, 1);
       length_vallocd(n + 1, 1);
     } else
       length_(n + 1);
@@ -1386,7 +1387,7 @@ public:
     uint64_t n = length();
     if (!n) return ZuNullRef<T, Cmp>();
     T v;
-    if (ZuUnlikely(!owned())) {
+    if (ZuUnlikely(!mutable_())) {
       v = m_data[--n];
     } else {
       v = ZuMv(m_data[--n]);
@@ -1399,7 +1400,7 @@ public:
     uint64_t n = length();
     if (!n) return ZuNullRef<T, Cmp>();
     T v;
-    if (ZuUnlikely(!owned())) {
+    if (ZuUnlikely(!mutable_())) {
       v = m_data[0];
       ++m_data;
       --n;
@@ -1424,14 +1425,14 @@ public:
   T *unshift() {
     uint64_t n = length();
     uint64_t z = size();
-    if (!owned() || n + 1 > z) {
+    if (!mutable_() || n + 1 > z) {
       z = grow_(z, n + 1);
       T *newData = alloc__(z);
       if (!newData) throw std::bad_alloc{};
       this->template moveElems<false>(newData + 1, m_data, n);
       free_();
       m_data = newData;
-      size_owned(z, 1);
+      size_mutable(z, 1);
       length_vallocd(n + 1, 1);
     } else {
       moveElems(m_data + 1, m_data, n);
@@ -1476,7 +1477,7 @@ public:
 	removed(ZuSpan<T>());
       else
 	removed = {};
-      if (!owned() || offset + int64_t(rlength) > int64_t(z)) {
+      if (!mutable_() || offset + int64_t(rlength) > int64_t(z)) {
 	z = grow_(z, offset + rlength);
 	size(z);
       }
@@ -1492,7 +1493,7 @@ public:
 
     int64_t l = n + rlength - length;
 
-    if (!owned() || l > int64_t(z)) {
+    if (!mutable_() || l > int64_t(z)) {
       z = l > 0 ? grow_(z, l) : 0;
       if constexpr (IsCallable<Removed>{})
 	removed(ZuSpan(m_data + offset, length));
@@ -1512,7 +1513,7 @@ public:
 	    n - (offset + length));
       free_();
       m_data = newData;
-      size_owned(z, 1);
+      size_mutable(z, 1);
       length_vallocd(l, 1);
       return;
     }
@@ -1708,7 +1709,7 @@ public:
   ZuInline T *end() { return &m_data[length()]; }
 
 private:
-  uint64_t		m_size_owned;	// allocated size and owned flag
+  uint64_t		m_size_mutable;	// allocated size and mutable flag
   uint64_t		m_length_vallocd;// initialized length and valloc'd flag
   T			*m_data;	// data buffer
 };

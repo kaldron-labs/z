@@ -65,11 +65,11 @@ public:
       own__(builtinData_(), length, BuiltinSize, false);
       a.null();
     } else {
-      if (!a.owned())
+      if (!a.mutable_())
 	shadow__(a.data(), length);
       else {
 	own__(a.data(), length, a.size(), a.vallocd());
-	a.owned(false);
+	a.mutable_(false);
       }
     }
   }

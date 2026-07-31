@@ -53,9 +53,9 @@ void testSpliceCoverage()
   }
   {
     ZtString<> s = "abc"; // shadow literal
-    ZuCheck(!s.owned());
+    ZuCheck(!s.mutable_());
     s.splice(1, 1, "Z");
-    ZuCheck(s.owned());
+    ZuCheck(s.mutable_());
     ZuCheck(s.builtin());
     ZuCheck(s == "aZc");
   }
@@ -226,7 +226,7 @@ void testSpliceCoverage()
 	replaced = true;
 	return 0;
       }, 0);
-    ZuCheck(s.owned());
+    ZuCheck(s.mutable_());
     ZuCheck(!replaced); // l <= 0 path skips replace()
     ZuCheck(!s);
   }
@@ -270,10 +270,10 @@ void testSpliceCoverage()
   // growth/reallocation paths
   {
     ZtString<> s = "abc";
-    ZuCheck(!s.owned());
+    ZuCheck(!s.mutable_());
     s.splice(1, 1, "123");
     ZuCheck(s == "a123c");
-    ZuCheck(s.owned());
+    ZuCheck(s.mutable_());
   }
   {
     ZtString<> s(64);

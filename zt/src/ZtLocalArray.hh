@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// extends ZtArray<> with an initial stack-allocated buffer (see ZmAlloc)
+// extends ZtArray<> with initial stack-allocated backing storage (see ZmVAlloc)
 // - falls back to heap allocation if stack space is insufficient
 // - auto var = ZtLocalArray(T, size);		// initialized empty
 // - auto var = ZtLocalArray(T, length, size);	// initialized with length
@@ -24,39 +24,41 @@
 #include <zlib/ZmVAlloc.hh>
 
 template <typename Array>
-struct ZtLocalArray_ : private ZmAlloc_<typename Array::T>, public Array {
+struct ZtLocalArray_ :
+  private ZmVAlloc_<typename Array::VHeap, typename Array::T>,
+  public Array
+{
   using T = typename Array::T;
+private:
+  using VHeap = typename Array::VHeap;
+  using VAlloc = ZmVAlloc_<VHeap, T>;
+  using VAlloc::ptr;
+public:
   using Array::data;
   using Array::operator [];
   using Array::operator !;
   ZuOpBool
 
-  ZtLocalArray_(ZmAlloc_<T> buf, unsigned size) :
-    ZmAlloc_<T>(ZuMv(buf)),
-    Array(ZmAlloc_<T>::ptr, 0, size, false)
-  {
-    auto ptr = ZmAlloc_<T>::ptr;
-    if (ZuUnlikely(!ptr))
-      Array::null_();
-  }
+  ZtLocalArray_(VAlloc buf, unsigned size) :
+    VAlloc(ZuMv(buf)),
+    Array(ptr, 0, size, false) { }
   ZtLocalArray_(
-    ZmAlloc_<T> buf, unsigned length, unsigned size,
+    VAlloc buf, unsigned length, unsigned size,
     bool initElems = !ZuTraits<T>::IsPrimitive) :
-    ZmAlloc_<T>(ZuMv(buf)),
-    Array(ZmAlloc_<T>::ptr, length, size, false)
+    VAlloc(ZuMv(buf)),
+    Array(ptr, length, size, false)
   {
-    auto ptr = ZmAlloc_<T>::ptr;
-    if (ZuUnlikely(!ptr))
-      Array::null_();
-    else if (length && initElems)
+    if (ptr && length && initElems)
       Array::initElems(ptr, length);
   }
 };
 
 #define ZtLocalArray_1(A, size) \
-  ZtLocalArray_<A>(ZmVAlloc(A, typename A::T, size), size)
+  ZtLocalArray_<A>( \
+    ZmVAlloc(typename A::VHeap, typename A::T, size), size)
 #define ZtLocalArray_2(A, length, size) \
-  ZtLocalArray_<A>(ZmVAlloc(A, typename A::T, size), length, size)
+  ZtLocalArray_<A>( \
+    ZmVAlloc(typename A::VHeap, typename A::T, size), length, size)
 #define ZtLocalArray_N(_0, _1, Fn, ...) Fn
 #define ZtLocalArray__(A, ...) \
   ZtLocalArray_N(__VA_ARGS__, \

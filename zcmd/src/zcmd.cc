@@ -203,7 +203,7 @@ friend Link;
 	.error = [this](ZuCSpan s) { std::cerr << s << '\n'; done(); },
 	.prompt = [this](Zrl::Prompt &s) {
 	  ZmGuard guard(m_promptLock);
-	  if (m_prompt.owned()) s = ZuMv(m_prompt);
+	  if (m_prompt.mutable_()) s = ZuMv(m_prompt);
 	},
 	.enter = [this](ZuCSpan s) -> bool {
 	  exec(ZuSpan<char>(const_cast<char *>(&s[0]), s.length()));

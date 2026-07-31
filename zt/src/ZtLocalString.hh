@@ -4,12 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// extends ZtString with an initial stack-allocated buffer (see ZmAlloc)
+// extends ZtString with initial stack-allocated backing storage (see ZmVAlloc)
 // - falls back to heap allocation if stack space is insufficient
 // - auto var = ZtLocalString(ZtString<>, size); // length initialized to 0
 // - auto var = ZtLocalString(ZtString<>, length, size);
-// 
-// ZtWString is the same, but for ZtWString
 
 #ifndef ZtLocalString_HH
 #define ZtLocalString_HH
@@ -26,29 +24,35 @@
 #include <zlib/ZmVAlloc.hh>
 
 template <typename String>
-struct ZtLocalString_ : private ZmAlloc_<typename String::Char>, public String {
+struct ZtLocalString_ :
+  private ZmVAlloc_<typename String::VHeap, typename String::Char>,
+  public String
+{
   using Char = typename String::Char;
+private:
+  using VHeap = typename String::VHeap;
+  using VAlloc = ZmVAlloc_<VHeap, Char>;
+  using VAlloc::ptr;
+public:
   using String::data;
   using String::operator [];
   using String::operator !;
   ZuOpBool
 
-  ZtLocalString_(ZmAlloc_<Char> buf, unsigned size) :
-    ZmAlloc_<Char>(ZuMv(buf)),
-    String(ZmAlloc_<Char>::ptr, 0, size, false) { }
-  ZtLocalString_(ZmAlloc_<Char> buf, unsigned length, unsigned size) :
-    ZmAlloc_<Char>(ZuMv(buf)),
-    String(ZmAlloc_<Char>::ptr, length, size, false)
-  {
-    auto ptr = ZmAlloc_<Char>::ptr;
-    if (ZuUnlikely(!ptr)) String::null_();
-  }
+  ZtLocalString_(VAlloc buf, unsigned size) :
+    VAlloc(ZuMv(buf)),
+    String(ptr, 0, size, false) { }
+  ZtLocalString_(VAlloc buf, unsigned length, unsigned size) :
+    VAlloc(ZuMv(buf)),
+    String(ptr, length, size, false) { }
 };
 
 #define ZtLocalString_1(T, size) \
-  ZtLocalString_<T>(ZmVAlloc(T, typename T::Char, size), size)
+  ZtLocalString_<T>( \
+    ZmVAlloc(typename T::VHeap, typename T::Char, size), size)
 #define ZtLocalString_2(T, length, size) \
-  ZtLocalString_<T>(ZmVAlloc(T, typename T::Char, size), length, size)
+  ZtLocalString_<T>( \
+    ZmVAlloc(typename T::VHeap, typename T::Char, size), length, size)
 #define ZtLocalString_N(_0, _1, Fn, ...) Fn
 #define ZtLocalString__(T, ...) \
   ZtLocalString_N(__VA_ARGS__, \
