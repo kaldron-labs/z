@@ -13,7 +13,7 @@
 #include <zlib/ZmAlloc.hh>
 
 #include <zlib/ZtRegex.hh>
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiFile.hh>
 
@@ -682,7 +682,8 @@ void Map_printMode(unsigned i, const Mode &mode, ZuVStream &s)
   if (mode.bindings) {
     unsigned n = 0;
     for (auto i = mode.bindings->citer(); i.val(); ) ++n;
-    auto bindings = ZtScratch(BindingPtrs, n);
+    auto bindings = ZmScratch(
+      const Binding *, n, BindingPtrs::VHeap);
     if (bindings) {
       for (auto i = mode.bindings->citer(); auto binding = i.val(); )
 	bindings.push(binding);

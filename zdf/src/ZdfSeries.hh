@@ -29,7 +29,7 @@
 #include <zlib/ZmPQueue.hh>
 
 #include <zlib/ZtEnum.hh>
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZdfTypes.hh>
 #include <zlib/ZdfSchema.hh>
@@ -741,7 +741,7 @@ public:
     if (!n) return;
     using RdrRef = ZmRef<RdrNode>;
     using RdrRefs = ZtArray<RdrRef, ZtArrayHeapID<"Zdf.RdrRefs">>;
-    auto readers = ZtScratch(RdrRefs, n);
+    auto readers = ZmScratch(RdrRef, n, typename RdrRefs::VHeap);
     {
       auto i = m_histReaders.citer();
       while (RdrNode *reader = i()) {

@@ -225,9 +225,8 @@ int putString(
   return 0;
 }
 
-template <typename Bytes>
-int decodeString(
-  Bytes &storage, ZuCSpan in, unsigned &offset, unsigned prefixBits,
+inline int decodeString(
+  ZuSpan<uint8_t> storage, ZuCSpan in, unsigned &offset, unsigned prefixBits,
   uint8_t huffmanMask, ZuCSpan &out) {
   uint64_t length = 0;
   uint8_t first = 0;
@@ -240,11 +239,12 @@ int decodeString(
     out = raw;
     return int(raw.length());
   }
-  storage.length(Huffman::declen(raw.length()));
-  int64_t decoded = Huffman::decode(storage.span(), raw);
+  unsigned decodedMax = Huffman::declen(raw.length());
+  if (decodedMax > storage.length()) return -2;
+  storage.trunc(decodedMax);
+  int64_t decoded = Huffman::decode(storage, raw);
   if (decoded < 0) return -1;
-  storage.length(uint64_t(decoded));
-  out = storage;
+  out = ZuCSpan{storage.data(), unsigned(decoded)};
   return int(out.length());
 }
 

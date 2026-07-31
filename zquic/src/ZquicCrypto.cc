@@ -10,7 +10,7 @@
 
 #include <zlib/ZtlsBackend.hh>
 
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiFile.hh>
 
@@ -250,7 +250,8 @@ int CryptoStream::receive(
     return 0;
   }
 
-  auto spans = ZtScratch(RxSpans, m_rxQueue.count_() + 1);
+  auto spans = ZmScratch(
+    RxSpan, m_rxQueue.count_() + 1, RxSpans::VHeap);
   if (!rxNovelSpans(m_rxQueue, first, end, spans)) return -1;
   uint64_t bytes = rxSpanBytes(spans);
   if (!queueRxSpans(spans, offset, payload,
@@ -791,7 +792,8 @@ static int unprotect_(
   if constexpr (PreserveCiphertext) {
     using Plain = ZtArray<
       uint8_t, ZtArrayHeapID<"Zquic.PktProt.Plain">>;
-    auto plain = ZtScratch(Plain, cipherLen, cipherLen);
+    auto plain = ZmScratch(uint8_t, cipherLen, Plain::VHeap);
+    plain.length(cipherLen);
     if (cipherLen && !plain) return fail();
     n = ptls_aead_decrypt(
       ctx, plain.data(), packet + payloadOffset,

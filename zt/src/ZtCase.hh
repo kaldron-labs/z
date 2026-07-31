@@ -13,10 +13,9 @@
 #include <zlib/ZtLib.hh>
 #endif
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtString.hh>
-#include <zlib/ZtScratch.hh>
 
 namespace ZtCase {
 
@@ -49,7 +48,8 @@ inline void snakeCamel(ZuCSpan s, L &&l) {
   }
   unsigned m = n - o;
   unsigned z = m + 1;
-  auto buf = ZtScratch(Buf, m, z); // FIXME - does not need to be ZtString
+  auto buf = ZmScratch(char, z, Buf::VHeap);
+  buf.length(m);
   underscore = false;
   unsigned j = 0;
   for (unsigned i = 0; i < n; i++) {
@@ -85,7 +85,8 @@ inline void camelSnake(ZuCSpan s, L &&l) {
   }
   unsigned m = n + o;
   unsigned z = m + 1;
-  auto buf = ZtScratch(Buf, m, z); // FIXME - does not need to be ZtString
+  auto buf = ZmScratch(char, z, Buf::VHeap);
+  buf.length(m);
   unsigned j = 0;
   for (unsigned i = 0; i < n; i++) {
     auto c = s[i];

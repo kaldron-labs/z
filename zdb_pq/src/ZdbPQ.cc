@@ -9,7 +9,7 @@
 #include <zlib/ZmDemangle.hh>
 
 #include <zlib/ZtCase.hh>
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -1009,8 +1009,8 @@ int Store::sendQuery(const SQLString &query, const Tuple &params)
     paramTypes[i] = m_oids.oid(type);
     ZuSwitch::dispatch<Value::N>(type,
       [&params, &paramValues, &paramLengths, i](auto I) {
-	paramValues[i] = params[i].data<I>();
-	paramLengths[i] = params[i].length<I>();
+	paramValues[i] = params[i].template data<I>();
+        paramLengths[i] = params[i].template length<I>();
       });
     paramFormats[i] = 1;
   }
@@ -1046,8 +1046,8 @@ int Store::sendPrepare(
   return SendState::Sync;
 }
 
-template <int State>
-int Store::sendPrepared(const IDString &id, const Tuple &params)
+template <int State, typename Params>
+int Store::sendPrepared(const IDString &id, const Params &params)
 {
   auto n = params.length();
 
@@ -1067,8 +1067,8 @@ int Store::sendPrepared(const IDString &id, const Tuple &params)
   for (unsigned i = 0; i < n; i++) {
     ZuSwitch::dispatch<Value::N>(params[i].type(),
       [&params, &paramValues, &paramLengths, i](auto I) {
-	paramValues[i] = params[i].data<I>();
-	paramLengths[i] = params[i].length<I>();
+        paramValues[i] = params[i].template data<I>();
+	paramLengths[i] = params[i].template length<I>();
       });
     paramFormats[i] = 1;
   }
@@ -2081,13 +2081,13 @@ void StoreTbl::select(
   auto &id = *id_
 
 #define ParamAlloc(nParams) \
-  auto params = ZtScratch(Tuple, nParams)
+  auto params = ZmScratch(Value, unsigned(nParams), Tuple::VHeap)
 
 #define VarAlloc(nParams, xfields, fbo) \
   unsigned nVars = 0; \
   for (unsigned i = 0; i < nParams; i++) \
     if (isVar(xfields[i].type)) nVars++; \
-  auto varBufParts = ZtScratch(VarBufParts, nVars); \
+  auto varBufParts = ZmScratch(VarBufPart, nVars, VarBufParts::VHeap); \
   unsigned varBufSize_ = 0; \
   if (nVars > 0) { \
     for (unsigned i = 0; i < nParams; i++) { \
@@ -2099,7 +2099,7 @@ void StoreTbl::select(
       varBufSize_ += size; \
     } \
   } \
-  auto varBuf = ZtScratch(VarBuf, varBufSize_)
+  auto varBuf = ZmScratch(uint8_t, varBufSize_, VarBuf::VHeap)
 
 int StoreTbl::count_send(Work::Count &count)
 {
@@ -2116,7 +2116,7 @@ int StoreTbl::count_send(Work::Count &count)
 
   if (nParams > 0)
     loadTuple(
-      params, varBuf, varBufParts,
+      params, varBuf.span(), varBufParts.cspan(),
       m_store->oids(), nParams, keyFields, xKeyFields, fbo);
   id << m_id_ << "_count_" << ZuBoxed(count.keyID);
   return m_store->sendPrepared<SendState::Flush>(id, params);
@@ -2167,7 +2167,7 @@ int StoreTbl::select_send(Work::Select &select)
 
   if (nParams > 0)
     loadTuple(
-      params, varBuf, varBufParts,
+      params, varBuf.span(), varBufParts.cspan(),
       m_store->oids(), nParams, keyFields, xKeyFields, fbo);
   new (params.push()) Value{UInt64{select.limit}};
   id << m_id_ << "_sel"
@@ -2265,7 +2265,7 @@ int StoreTbl::find_send(Work::Find &find)
   VarAlloc(nParams, xKeyFields, fbo);
 
   loadTuple(
-    params, varBuf, varBufParts,
+    params, varBuf.span(), varBufParts.cspan(),
     m_store->oids(), nParams, keyFields, xKeyFields, fbo);
   id << m_id_ << "_find_" << ZuBoxed(find.keyID);
   return m_store->sendPrepared<SendState::Flush>(id, params);
@@ -2471,7 +2471,7 @@ int StoreTbl::write_send(Work::Write &write)
     new (params.push()) Value{UInt128{sn}};
     new (params.push()) Value{UInt64{record->vn()}};
     loadTuple(
-      params, varBuf, varBufParts,
+      params, varBuf.span(), varBufParts.cspan(),
       m_store->oids(), nParams, m_fields, m_xFields, fbo);
     return m_store->sendPrepared<SendState::Sync>(id, params);
   } else if (record->vn() > 0) { // update
@@ -2485,7 +2485,7 @@ int StoreTbl::write_send(Work::Write &write)
     new (params.push()) Value{UInt128{sn}};
     new (params.push()) Value{UInt64{record->vn()}};
     loadTuple(
-      params, varBuf, varBufParts,
+      params, varBuf.span(), varBufParts.cspan(),
       m_store->oids(), nParams, m_updFields, m_xUpdFields, fbo);
     return m_store->sendPrepared<SendState::Sync>(id, params);
   } else if (!write.mrd) { // delete
@@ -2495,7 +2495,7 @@ int StoreTbl::write_send(Work::Write &write)
     VarAlloc(nParams, m_xKeyFields[0], fbo);
     id << m_id_ << "_del";
     loadTuple(
-      params, varBuf, varBufParts,
+      params, varBuf.span(), varBufParts.cspan(),
       m_store->oids(), nParams, m_keyFields[0], m_xKeyFields[0], fbo);
     return m_store->sendPrepared<SendState::Sync>(id, params);
   } else { // delete - MRD

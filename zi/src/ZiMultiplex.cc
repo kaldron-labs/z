@@ -15,7 +15,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtHexDump.hh>
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -74,7 +74,8 @@ public:
   void capture(Ztc::MxMgr::CaptureFn fn) const {
     ReadGuard guard(m_watchLock);
     unsigned count = m_map.count_();
-    auto captures = ZtScratch(Captures, count);
+    auto captures = ZmScratch(
+      Ztc::MxTelemetry, count, Captures::VHeap);
     auto i = m_map.citer();
     while (auto mx = i.key()) {
       auto data = new (captures.push()) Ztc::MxTelemetry;
@@ -1318,7 +1319,8 @@ unsigned ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn) const
   if (!n) return 0;
   using CxnRefs =
     ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Zi.CxnRefs">>;
-  auto refs = ZtScratch(CxnRefs, n);
+  auto refs = ZmScratch(
+    ZmRef<ZiConnection>, n, CxnRefs::VHeap);
   {
     auto i = cxns->citer();
     while (ZmRef<ZiConnection> cxn = i.val())

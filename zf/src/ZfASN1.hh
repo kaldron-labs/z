@@ -488,13 +488,14 @@ inline void saveTL(S &s, uint64_t l)
 }
 
 // used during first pass to stash lengths and partially-digested values
+template <typename Stash>
 struct SaveContext {
-  SaveArray	&stash;
+  Stash		&stash;
   int		nestID = -1;
   unsigned	offset = 0;
   bool		begun = false;
 
-  SaveContext(SaveArray &stash_) : stash{stash_} { }
+  SaveContext(Stash &stash_) : stash{stash_} { }
 
   template <int NestID>
   void begin() {
@@ -694,8 +695,8 @@ using As = decltype(ZfASN1_Fmt(ZuDeclVal<O *>()));
 template <
   typename Facet,
   unsigned TypeCode, typename Props,
-  typename T>
-inline void saveValue1(SaveArray &stash, const T &);
+  typename Stash, typename T>
+inline void saveValue1(Stash &stash, const T &);
 template <
   typename Facet,
   unsigned TypeCode, typename Props,
@@ -703,8 +704,8 @@ template <
 inline void saveValue2(S &, const T &, SaveSpan stash);
 
 // save individual field
-template <typename Facet, typename Field, typename O>
-void saveField1(SaveArray &stash, const O &);
+template <typename Facet, typename Field, typename Stash, typename O>
+void saveField1(Stash &stash, const O &);
 template <
   typename Facet, typename Field,
   typename S, typename O>
@@ -744,12 +745,13 @@ struct AsObject {
     using CtorFields = ZuTypeSort<CtorIndex, CtorFields_>;
     using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
 
-    static void save1(SaveArray &stash, const O &o) {
+    template <typename Stash>
+    static void save1(Stash &stash, const O &o) {
       using Fmt = ZuFieldProp::ASN1::GetFmt<Props>;
       constexpr bool Optional = ZuFieldProp::ASN1::GetOptional<Props>{};
 
       SaveContext outer{stash};
-      outer.begin<nestID(Fmt::Nesting)>();
+      outer.template begin<nestID(Fmt::Nesting)>();
       SaveContext inner{stash};
       ZuUnroll::all<SaveFields>([&stash, &inner, &o]<typename Field>() mutable {
 	using FieldProps = typename Field::Props;
@@ -757,24 +759,26 @@ struct AsObject {
 	enum { FieldNestID = nestID(FieldFmt::Nesting) };
 	if (!inner.begun) {
 	  if constexpr (FieldNestID >= 0)
-	    inner.begin<unsigned(FieldNestID)>();
+            inner.template begin<unsigned(FieldNestID)>();
 	}
 	saveField1<Facet, Field>(stash, o);
 	if (inner.begun) {
 	  constexpr unsigned Next = ZuTypeIndex<Field, SaveFields>{} + 1;
 	  if constexpr (Next >= SaveFields::N)
-	    inner.end<FieldFmt::Tag, nestType(FieldFmt::Nesting), true>();
+            inner.template end<
+	      FieldFmt::Tag, nestType(FieldFmt::Nesting), true>();
 	  else {
 	    using NextField = ZuType<Next, SaveFields>;
 	    using NextFieldProps = typename NextField::Props;
 	    using NextFieldFmt = ZuFieldProp::ASN1::GetFmt<NextFieldProps>;
 	    enum { NextFieldNestID = nestID(NextFieldFmt::Nesting) };
 	    if constexpr (FieldNestID != NextFieldNestID)
-	      inner.end<FieldFmt::Tag, nestType(FieldFmt::Nesting), true>();
+              inner.template end<
+		FieldFmt::Tag, nestType(FieldFmt::Nesting), true>();
 	  }
 	}
       });
-      outer.end<Fmt::InnerTag, 0, Optional>();
+      outer.template end<Fmt::InnerTag, 0, Optional>();
     }
     template <typename S>
     static void save2(S &s, const O &o, SaveSpan stash) {
@@ -962,12 +966,13 @@ struct AsArray {
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using ElemProps = ZuFieldProp::ASN1::GetElemProps<Props>;
 
-    static void save1(SaveArray &stash, const O &o) {
+    template <typename Stash>
+    static void save1(Stash &stash, const O &o) {
       using Fmt = ZuFieldProp::ASN1::GetFmt<Props>;
       constexpr bool Optional = ZuFieldProp::ASN1::GetOptional<Props>{};
 
       SaveContext outer{stash};
-      outer.begin<nestID(Fmt::Nesting)>();
+      outer.template begin<nestID(Fmt::Nesting)>();
       unsigned n = ZuTraits<O>::length(o);
       if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using ElemHandler =
@@ -978,7 +983,7 @@ struct AsArray {
 	for (unsigned i = 0; i < n; i++)
 	  saveValue1<Facet, ElemCode, ElemProps>(stash, o[i]);
       }
-      outer.end<Fmt::InnerTag, 0, Optional>();
+      outer.template end<Fmt::InnerTag, 0, Optional>();
     }
     template <typename S>
     static void save2(S &s, const O &o, SaveSpan stash) {
@@ -1302,8 +1307,8 @@ inline void saveValue1_(SaveValue &sv, const T &v_)
 template <
   typename Facet,
   unsigned TypeCode, typename Props,
-  typename T_>
-inline void saveValue1(SaveArray &stash, const T_ &v)
+  typename Stash, typename T_>
+inline void saveValue1(Stash &stash, const T_ &v)
 {
   using T = ZuDecay<T_>;
   if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
@@ -1339,16 +1344,16 @@ inline void saveValue1(SaveArray &stash, const T_ &v)
       constexpr bool Optional = ZuFieldProp::ASN1::GetOptional<Props>{};
 
       SaveContext outer{stash};
-      outer.begin<0>();
+      outer.template begin<0>();
       for (unsigned i = 0; i < n; i++)
 	saveValue1_<Facet, ElemCode, ElemProps>(*stash.push(), v[i]);
-      outer.end<Fmt::InnerTag, 0, Optional>();
+      outer.template end<Fmt::InnerTag, 0, Optional>();
     }
   }
 }
 
-template <typename Facet, typename Field, typename O>
-inline void saveField1(SaveArray &stash, const O &o)
+template <typename Facet, typename Field, typename Stash, typename O>
+inline void saveField1(Stash &stash, const O &o)
 {
   enum { TypeCode = Field::Type::Code };
   using Props = typename Field::Props;

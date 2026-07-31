@@ -72,7 +72,7 @@ struct Cxn {
     if (!control || !enc || !dec) return false;
 
     using Scratch = ZtArray<char, ZtArrayHeapID<"Zhttp.H3.Cxn">>;
-    auto payload = ZtScratch(Scratch, 64);
+    auto payload = ZmScratch(char, 64, Scratch::VHeap);
     CountBytes count;
     if (putVar(count, 0x01) < 0 ||
 	putVar(count, params.qpackRxCapacity()) < 0 ||
@@ -95,7 +95,7 @@ struct Cxn {
 	(extendedConnect &&
 	  (putVar(payload, 0x08) < 0 || putVar(payload, 1) < 0)))
       return false;
-    if (!link.send(control, payload, false)) return false;
+    if (!link.send(control, payload.cspan(), false)) return false;
     {
       auto tx = enc->txStream();
       TxBytes out{tx};

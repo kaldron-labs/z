@@ -50,7 +50,7 @@ void CLI::init(App app)
   Editor::init(ZuMv(app));
   m_sched = new ZmScheduler{ZmSchedParams{}.id("ZrlCLI").nThreads(1)};
   if (auto maps = ::getenv("ZRL_MAPS")) {
-    ZtRegexCaptures(c, 2); // more than 2 will fall back to heap
+    ZtRegexSplitCaptures(c, 2); // more than 2 will fall back to heap
     if (ZtREGEX(":").split(maps, c) > 0)
       for (const auto &map : c)
 	try {

@@ -12,7 +12,7 @@
 #include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtArray.hh>
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 class ZtcDBMgr_ {
 friend Ztc::DBMgr;
@@ -71,7 +71,8 @@ public:
   void capture(Ztc::DBMgr::CaptureFn fn) const {
     ReadGuard guard(m_watchLock);
     unsigned count = m_map.count_();
-    auto captures = ZtScratch(Captures, count);
+    auto captures = ZmScratch(
+      Ztc::DBTelemetry, count, Captures::VHeap);
     auto i = m_map.citer();
     while (auto db = i.key()) {
       auto data = new (captures.push()) Ztc::DBTelemetry;
