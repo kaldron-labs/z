@@ -661,6 +661,14 @@ public:
   constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
   match(const V &v) const { return match_(v); }
 
+// exact match
+  template <typename V>
+  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
+  exact(const V &v) const {
+    ZuSpan span{v};
+    return length() == span.length() && match_(span);
+  }
+
 // match compile-time string at start
   template <
     ZuString S, typename U = T,
