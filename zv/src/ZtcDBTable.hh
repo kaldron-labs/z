@@ -25,7 +25,7 @@
 #include <zlib/ZfbStruct.hh>
 
 #include <zlib/ZtcTypes.hh>
-#include <zlib/ZvRAG.hh>
+#include <zlib/ZtcRAGMap.hh>
 
 #include <zlib/ztc_db_fbs.h>
 
@@ -71,7 +71,7 @@ ZfbStruct(DBTableTelemetry,
     (((cacheEvictions),	(Ctor<6>, Mutable, Series, Delta)),	(UInt64)),
     (((nShards),	(Ctor<7>)),				(UInt32)),
     (((threads),	(Ctor<2>)),				(StringVec)),
-    (((rag, RdFn),	(Synthetic, Series, Enum<ZvRAG::Map>)),	(Int8)));
+    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 struct DBTable {
   virtual DBTableKey telKey() const = 0;

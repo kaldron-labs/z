@@ -1,0 +1,87 @@
+namespace Ztc.fbs;
+
+enum RAG:int8 {
+  Off = 0,
+  Red,
+  Amber,
+  Green
+}
+
+enum Group:uint8 {
+  Heap = 0,
+  Hash,
+  Thread,
+  Mx,
+  Queue,
+  Hub,
+  DB,
+  App,
+  Alert
+}
+
+enum AckStatus:int8 {
+  OK = 0,
+  Invalid,
+  Unsupported,
+  Failed
+}
+
+enum ThreadPriority:int8 {
+  Unset = -1,
+  RealTime,
+  High,
+  Normal,
+  Low
+}
+
+enum EngineState:int8 {
+  Stopped = 0,
+  Starting,
+  Running,
+  Stopping,
+  StartPending,
+  StopPending
+}
+
+enum CxnType:int8 {
+  TCPIn = 0,
+  TCPOut,
+  UDP
+}
+
+enum QueueType:int8 {
+  Thread = 0,
+  IPC,
+  Rx,
+  Tx
+}
+
+enum LinkType:int8 {
+  TCP = 0,
+  TLS,
+  QUIC,
+  H1,
+  H3,
+  WS,
+  FIX
+}
+
+enum LinkState:int8 {
+  Down = 0,
+  Disabled,
+  Deleted,
+  Connecting,
+  Up,
+  ReconnectPending,
+  Reconnecting,
+  Failed,
+  Disconnecting,
+  ConnectPending,
+  DisconnectPending
+}
+
+enum PoolState:int8 {
+  Down = 0,
+  Up,
+  Failed
+}

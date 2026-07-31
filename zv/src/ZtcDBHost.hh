@@ -25,7 +25,7 @@
 #include <zlib/ZfbStruct.hh>
 
 #include <zlib/ZtcTypes.hh>
-#include <zlib/ZvRAG.hh>
+#include <zlib/ZtcRAGMap.hh>
 
 #include <zlib/ztc_db_fbs.h>
 
@@ -73,7 +73,7 @@ ZfbStruct(DBHostTelemetry,
     (((state),		(Ctor<5>, Mutable, Enum<DBHostState::Map>)), (Int8)),
     (((voted),		(Ctor<6>, Mutable, Series)),		(Bool)),
     (((port),		(Ctor<4>)),				(UInt16)),
-    (((rag, RdFn),	(Synthetic, Series, Enum<ZvRAG::Map>)),	(Int8)));
+    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 struct DBHost {
   virtual DBHostKey telKey() const = 0;

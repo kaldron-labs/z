@@ -55,9 +55,6 @@ static_assert(ZuIsSame<
 static_assert(ZuIsSame<
   typename Ztc::MxMgr::AddFn::HeapID,
   typename Ztc::WatchFnHeapID::HeapID>{});
-static_assert(ZuIsSame<
-  typename Ztc::Mx::DelQueueFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{});
 
 struct MockDBHost final : public Ztc::DBHost {
   Ztc::DBHostKey telKey() const override { return {dbID, id}; }
@@ -237,12 +234,19 @@ void dbRoot()
   }});
   Ztc::DBMgr::add(&db);
   unsigned seen = 0;
-  unsigned count = Ztc::DBMgr::all({[&](Ztc::DB *db_) {
+  unsigned count = Ztc::DBMgr::all({[&db, &seen](Ztc::DB *db_) {
     ZuCheck(db_ == &db);
     ++seen;
   }});
   ZuCheck(count == 1);
   ZuCheck(seen == 1);
+  Ztc::DBMgr::capture([](const auto &captures) {
+    unsigned guarded = 0;
+    Ztc::DBMgr::guard([&guarded]() { ++guarded; });
+    ZuCheck(guarded == 1);
+    ZuCheck(captures.length() == 1);
+    ZuCheck(captures[0].self == "db");
+  });
   Ztc::DBMgr::del(&db);
   Ztc::DBMgr::unwatch();
   ZuCheck(state.events.length() == 2);
@@ -256,12 +260,21 @@ void hubChildren()
   WatchState state;
   MockHub hub;
   auto &link = hub.link;
+  Ztc::HubMgr::add(&hub);
+  Ztc::HubMgr::capture([](const auto &captures) {
+    unsigned guarded = 0;
+    Ztc::HubMgr::guard([&guarded]() { ++guarded; });
+    ZuCheck(guarded == 1);
+    ZuCheck(captures.length() == 1);
+    ZuCheck(captures[0].id == "hub");
+  });
+  Ztc::HubMgr::del(&hub);
   Ztc::HubMgr::watch(
     {[&state](Ztc::Link *) { state.push(WatchState::LinkAdd); }},
     {[&state](Ztc::Link *) { state.push(WatchState::LinkDel); }},
     {[&state](Ztc::Pool *) { state.push(WatchState::PoolAdd); }},
     {[&state](Ztc::Pool *) { state.push(WatchState::PoolDel); }},
-    {[&](Ztc::Queue *queue) {
+    {[&state, &link](Ztc::Queue *queue) {
       auto key = queue->telKey();
       if (key.p<1>() == link.rx.id &&
 	  key.p<2>() == Ztc::QueueType::Rx)
@@ -271,7 +284,7 @@ void hubChildren()
       else
 	state.push(WatchState::PoolTxAdd);
     }},
-    {[&](Ztc::Queue *queue) {
+    {[&state, &link](Ztc::Queue *queue) {
       auto key = queue->telKey();
       if (key.p<1>() == link.rx.id &&
 	  key.p<2>() == Ztc::QueueType::Rx)
@@ -354,7 +367,7 @@ void deleteBlocksOnConsumer()
   ZmSemaphore removed;
   Ztc::DBMgr::watch(
     {},
-    {[&](Ztc::DB *db_) {
+    {[&db, &entered, &indexLock, &removed](Ztc::DB *db_) {
       ZuCheck(db_ == &db);
       entered.post();
       ZmGuard<ZmPLock> guard(indexLock);
@@ -362,7 +375,7 @@ void deleteBlocksOnConsumer()
     }});
   Ztc::DBMgr::add(&db);
   indexLock.lock();
-  ZmThread deleter{[&]() { Ztc::DBMgr::del(&db); }};
+  ZmThread deleter{[&db]() { Ztc::DBMgr::del(&db); }};
   entered.wait();
   ZuCheck(removed.trywait() != 0);
   indexLock.unlock();

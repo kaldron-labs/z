@@ -1,0 +1,31 @@
+include "ztc_types.fbs";
+
+namespace Ztc.fbs;
+
+table Request {
+  seq_no:uint64;
+  group:Group;
+  filter:string;
+  interval:uint32;
+  subscribe:bool;
+  alert_date:uint32;
+  alert_seq_no:uint64;
+}
+
+table Ack {
+  seq_no:uint64;
+  status:AckStatus;
+  interval:uint32;
+}
+
+table SnapshotComplete {
+  seq_no:uint64;
+  count:uint32;
+}
+
+table Error {
+  seq_no:uint64;
+  has_seq_no:bool;
+  code:int32;
+  message:string;
+}
