@@ -253,9 +253,9 @@ private:
       outCount = m_outCount;
     }
 
-    Lock	m_lock;
-    unsigned	  m_inCount = 0;
-    unsigned	  m_outCount = 0;
+    mutable Lock	m_lock;
+    unsigned		  m_inCount = 0;
+    unsigned		  m_outCount = 0;
   };
   enum { Queue_Increment = 128 };
 
