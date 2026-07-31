@@ -292,9 +292,9 @@ public:
   String(String &&s) noexcept {
     if (ZuUnlikely(s.null__())) { null_(); return; }
     if (ZuLikely(s.builtin())) { copy_(s.data_(), s.length()); return; }
-    if (ZuUnlikely(!s.owned())) { shadow_(s.data_(), s.length()); return; }
+    if (ZuUnlikely(!s.mutable_())) { shadow_(s.data_(), s.length()); return; }
     own_(s.data_(), s.length(), s.size(), s.vallocd());
-    s.owned(s.builtin());
+    s.mutable_(s.builtin());
     s.vallocd(0);
   }
 
@@ -523,7 +523,7 @@ public:
   }
   explicit String(
       Char *data, uint64_t length, uint64_t size, bool vallocd) {
-    if (!size) { null_(); return; }
+    if (!data) { null_(); return; }
     own_(data, length, size, vallocd);
   }
 
@@ -565,7 +565,7 @@ public:
   }
   void init_(
       const Char *data, uint64_t length, uint64_t size, bool vallocd) {
-    if (!size) { null_(); return; }
+    if (!data) { null_(); return; }
     own_(data, length, size, vallocd);
   }
 
@@ -584,38 +584,39 @@ public: // useful if the caller is sure that the length is being reduced
 protected:
   void null_() {
     ptr__(nullptr);
-    size_owned_null(BuiltinSize, 1, 1);
+    size_mutable_null(BuiltinSize, 1, 1);
     length_vallocd_builtin(0, 0, 1);
   }
 
   void own_(const Char *data, uint64_t length, uint64_t size, bool vallocd) {
+    ZmAssert(size >= length);
     if (!size) {
-      ZmAssert(!data);
+      if (data && vallocd) vfree(data);
       null_();
       return;
     }
     ptr__(data);
-    size_owned_null(size, 1, 0);
+    size_mutable_null(size, 1, 0);
     length_vallocd_builtin(length, vallocd, 0);
   }
 
   void shadow_(const Char *data, uint64_t length) {
     if (!length) { null_(); return; }
     ptr__(data);
-    size_owned_null(length + 1, 0, 0);
+    size_mutable_null(length + 1, 0, 0);
     length_vallocd_builtin(length, 0, 0);
   }
 
   Char *alloc_(uint64_t size, uint64_t length) {
     if (ZuLikely(size <= BuiltinSize)) {
-      size_owned_null(size, 1, 0);
+      size_mutable_null(size, 1, 0);
       length_vallocd_builtin(length, 0, 1);
       return data__();
     }
     Char *newData = static_cast<Char *>(valloc(size * sizeof(Char)));
     if (!newData) throw std::bad_alloc{};
     ptr__(newData);
-    size_owned_null(size, 1, 0);
+    size_mutable_null(size, 1, 0);
     length_vallocd_builtin(length, 1, 0);
     return newData;
   }
@@ -625,7 +626,7 @@ protected:
     if (length < BuiltinSize - 1) {
       memcpy(data__(), copyData, length * sizeof(Char));
       (data__())[length] = 0;
-      size_owned_null(BuiltinSize, 1, 0);
+      size_mutable_null(BuiltinSize, 1, 0);
       length_vallocd_builtin(length, 0, 1);
       return;
     }
@@ -634,7 +635,7 @@ protected:
     memcpy(newData, copyData, length * sizeof(Char));
     newData[length] = 0;
     ptr__(newData);
-    size_owned_null(length + 1, 1, 0);
+    size_mutable_null(length + 1, 1, 0);
     length_vallocd_builtin(length, 1, 0);
   }
 
@@ -712,12 +713,12 @@ public:
     return m_length_vallocd_builtin & ~(uint64_t(3)<<62);
   }
   uint64_t size() const {
-    uint64_t u = m_size_owned_null;
+    uint64_t u = m_size_mutable_null;
     return u & ~(uint64_t(3)<<62);
   }
   bool vallocd() const { return (m_length_vallocd_builtin>>62) & 1; }
   bool builtin() const { return m_length_vallocd_builtin>>63; }
-  bool owned() const { return (m_size_owned_null>>62) & 1; }
+  bool mutable_() const { return (m_size_mutable_null>>62) & 1; }
 
 // direct buffer access
   auto span() { return ZuSpan(data_(), length()); }
@@ -753,22 +754,22 @@ private:
     m_length_vallocd_builtin = l | (uint64_t(m)<<62) | (uint64_t(b)<<63);
   }
   uint64_t size_() const {
-    return m_size_owned_null & ~(uint64_t(3)<<62);
+    return m_size_mutable_null & ~(uint64_t(3)<<62);
   }
   void size_(uint64_t v) {
-    m_size_owned_null = (m_size_owned_null & (uint64_t(3)<<62)) | v;
+    m_size_mutable_null = (m_size_mutable_null & (uint64_t(3)<<62)) | v;
   }
-  void owned(bool v) {
-    m_size_owned_null =
-      (m_size_owned_null & ~(uint64_t(1)<<62)) | (uint64_t(v)<<62);
+  void mutable_(bool v) {
+    m_size_mutable_null =
+      (m_size_mutable_null & ~(uint64_t(1)<<62)) | (uint64_t(v)<<62);
   }
-  bool null__() const { return m_size_owned_null>>63; }
+  bool null__() const { return m_size_mutable_null>>63; }
   void null__(bool v) {
-    m_size_owned_null =
-      (m_size_owned_null & ~(uint64_t(1)<<63)) | (uint64_t(v)<<63);
+    m_size_mutable_null =
+      (m_size_mutable_null & ~(uint64_t(1)<<63)) | (uint64_t(v)<<63);
   }
-  void size_owned_null(uint64_t z, bool o, bool n) {
-    m_size_owned_null = z | (uint64_t(o)<<62) | (uint64_t(n)<<63);
+  void size_mutable_null(uint64_t z, bool o, bool n) {
+    m_size_mutable_null = z | (uint64_t(o)<<62) | (uint64_t(n)<<63);
   }
 
 public:
@@ -781,7 +782,7 @@ public:
       memcpy(newData, m_data, (length() + 1) * sizeof(Char));
       return newData;
     } else {
-      owned(0);
+      mutable_(0);
       vallocd(0);
       return ptr__();
     }
@@ -797,14 +798,14 @@ public:
 // clear without freeing
   void clear() {
     if (!null__()) {
-      if (!owned()) { null_(); return; }
+      if (!mutable_()) { null_(); return; }
       length_(0);
     }
   }
 
 // set length
   void length(uint64_t n) {
-    if (!owned() || n >= size_()) size(n + 1);
+    if (!mutable_() || n >= size_()) size(n + 1);
     length_(n);
   }
   void calcLength() {
@@ -820,14 +821,14 @@ public:
 // ensure size
   Char *ensure(uint64_t o) {
     uint64_t z = size_();
-    if (ZuLikely(owned() && o <= z)) return data_();
+    if (ZuLikely(mutable_() && o <= z)) return data_();
     return size(grow_(z, o));
   }
 
 // set size
   Char *size(uint64_t z) {
     if (ZuUnlikely(!z)) { null(); return nullptr; }
-    if (owned() && z == size_()) return data_();
+    if (mutable_() && z == size_()) return data_();
     Char *oldData = data_();
     Char *newData;
     if (z <= BuiltinSize)
@@ -843,12 +844,12 @@ public:
       if (vallocd()) vfree(oldData);
     }
     if (z <= BuiltinSize) {
-      size_owned_null(z, 1, 0);
+      size_mutable_null(z, 1, 0);
       length_vallocd_builtin(n, 0, 1);
       return newData;
     }
     ptr__(newData);
-    size_owned_null(z, 1, 0);
+    size_mutable_null(z, 1, 0);
     length_vallocd_builtin(n, 1, 0);
     return newData;
   }
@@ -1156,7 +1157,7 @@ public:
       else
 	removed = {};
       Char *data;
-      if (!owned() || offset + rlength >= int64_t(z)) {
+      if (!mutable_() || offset + rlength >= int64_t(z)) {
 	z = grow_(z, offset + rlength + 1);
 	data = size(z);
       } else
@@ -1173,7 +1174,7 @@ public:
 
     int64_t l = n + rlength - length;
 
-    if (!owned() || l >= int64_t(z)) {
+    if (!mutable_() || l >= int64_t(z)) {
       z = l > 0 ? grow_(z, l + 1) : 1;
       Char *oldData = data_();
       if constexpr (IsCallable<Removed>{})
@@ -1200,12 +1201,12 @@ public:
       if (oldData != newData && vallocd()) vfree(oldData);
       newData[l] = 0;
       if (z <= BuiltinSize) {
-	size_owned_null(z, 1, 0);
+	size_mutable_null(z, 1, 0);
 	length_vallocd_builtin(l, 0, 1);
 	return;
       }
       ptr__(newData);
-      size_owned_null(z, 1, 0);
+      size_mutable_null(z, 1, 0);
       length_vallocd_builtin(l, 1, 0);
       return;
     }
@@ -1349,7 +1350,7 @@ public:
 
   void shift(uint64_t o) {
     if (ZuUnlikely(!o)) return;
-    if (!owned()) truncate();
+    if (!mutable_()) truncate();
     uint64_t n = length();
     if (o >= n) { null(); return; }
     n -= o;
@@ -1371,7 +1372,7 @@ public:
   // remove trailing characters
   template <typename Match>
   void chomp(Match &&match) {
-    if (!owned()) truncate();
+    if (!mutable_()) truncate();
     int64_t o = length();
     if (!o) return;
     Char *data = data_();
@@ -1383,7 +1384,7 @@ public:
   // remove leading characters
   template <typename Match>
   void trim(Match &&match) {
-    if (!owned()) truncate();
+    if (!mutable_()) truncate();
     uint64_t n = length();
     uint64_t o;
     Char *data = data_();
@@ -1398,7 +1399,7 @@ public:
   // remove leading & trailing characters
   template <typename Match>
   void strip(Match &&match) {
-    if (!owned()) truncate();
+    if (!mutable_()) truncate();
     int64_t o = length();
     if (!o) return;
     Char *data = data_();
@@ -1432,7 +1433,7 @@ public:
 // growth algorithm
 
   void grow(uint64_t length) {
-    uint64_t o = owned() ? size_() : 0;
+    uint64_t o = mutable_() ? size_() : 0;
     if (ZuLikely(length + 1 > o)) size(grow_(o, length + 1));
     o = this->length();
     if (ZuUnlikely(length > o)) length_(length);
@@ -1455,7 +1456,7 @@ public:
     uint64_t n = length();
     uint64_t z = size_();
 
-    if (!owned() || n + 2 >= z)
+    if (!mutable_() || n + 2 >= z)
       z = vsnprintf_grow(z);
 
 retry:
@@ -1500,7 +1501,7 @@ public:
 
 private:
   alignas(void *) uint8_t	m_data[BuiltinSize * sizeof(Char)];
-  uint64_t			m_size_owned_null;
+  uint64_t			m_size_mutable_null;
   uint64_t			m_length_vallocd_builtin;
 };
 

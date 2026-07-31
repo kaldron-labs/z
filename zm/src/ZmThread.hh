@@ -106,6 +106,7 @@ class ZmAPI ZmThreadContext_ {
   friend ZmAPI unsigned __stdcall ZmThread_start(void *);
 #endif
   template <typename> friend struct ZmAlloc_;
+  template <typename, typename> friend struct ZmVAlloc_;
   template <typename> friend struct ZmLocal_;
 
 protected:

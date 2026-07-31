@@ -57,7 +57,7 @@ public:
       .error = [this](ZuCSpan s) { std::cerr << s << '\n'; stop(); },
       .prompt = [this](Zrl::Prompt &s) {
 	Guard guard(lock);
-	if (prompt.owned()) s = ZuMv(prompt);
+	if (prompt.mutable_()) s = ZuMv(prompt);
       },
       .enter = [this](ZuCSpan s) -> bool { return process(s); },
       .end = [this]() { stop(); },
