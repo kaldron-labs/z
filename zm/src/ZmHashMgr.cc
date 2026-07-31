@@ -12,6 +12,7 @@
 #include <zlib/ZuArray.hh>
 
 #include <zlib/ZmAlloc.hh>
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmSingleton.hh>
 
 class ZmHashMgr_ : public ZmObject {
@@ -98,7 +99,7 @@ private:
       auto next = m_tables.minimum();
       while (next && !next->refCount())
 	next = m_tables.citer<ZmRBTreeGreater>(
-	  ZmAnyHash_PtrAxor(*tbl))();
+	  ZmAnyHash_PtrAxor(*next))();
       tbl = next;
     }
     while (tbl) {
@@ -117,13 +118,27 @@ private:
     return n;
   }
 
-  template <typename L> void guard(L &&l) {
+  void capture(
+      Ztc::HashMgr::MatchFn match, Ztc::HashMgr::CaptureFn fn) {
     Guard guard(m_lock);
-    ZuFwd<L>(l)();
+    unsigned count = m_tables.count_();
+    auto storage = ZmAlloc(Ztc::HashTelemetry, count);
+    unsigned length = 0;
+    auto i = m_tables.iter();
+    while (auto table = i()) {
+      if (match && !match(table)) continue;
+      auto data = new (&storage[length++]) Ztc::HashTelemetry;
+      table->telemetry(*data);
+    }
+    guard.unlock();
+    fn(ZuSpan<const Ztc::HashTelemetry>{storage.ptr, length});
+    for (unsigned i = 0; i < length; ++i)
+      storage[i].~HashTelemetry();
   }
 
   void watch(Ztc::HashMgr::AddFn addFn, Ztc::HashMgr::DelFn delFn) {
     Guard guard(m_lock);
+    ZmAssert(!m_addFn && !m_delFn, return);
     m_addFn = ZuMv(addFn);
     m_delFn = ZuMv(delFn);
   }
@@ -156,6 +171,11 @@ unsigned Ztc::HashMgr::all(AllFn fn)
 ZmPLock &Ztc::HashMgr::watchLock_()
 {
   return ZmHashMgr_::instance()->watchLock();
+}
+
+void Ztc::HashMgr::capture(MatchFn match, CaptureFn fn)
+{
+  ZmHashMgr_::instance()->capture(ZuMv(match), ZuMv(fn));
 }
 
 void Ztc::HashMgr::watch(AddFn addFn, DelFn delFn)

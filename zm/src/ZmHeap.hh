@@ -138,7 +138,7 @@ public:
 
   void warmup();
 
-  ZuTuple<const ZuID &, uint32_t, uint8_t, uint16_t, uint8_t>
+  ZuTuple<ZuCSpan, uint32_t, uint8_t, uint16_t, uint8_t>
     telKey() const override;
   void telemetry(Ztc::HeapTelemetry &data) const override;
 

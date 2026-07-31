@@ -13,6 +13,7 @@
 #include <zlib/ZmLib.hh>
 #endif
 
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmBitmap.hh>
@@ -42,12 +43,24 @@ struct HeapTelemetry {
   uint16_t	partition = 0;	// primary key
   uint8_t	sharded = 0;	// primary key
   uint8_t	alignment = 0;	// primary key
+
+  uint64_t allocated() const {
+    return (cacheAllocs + heapAllocs) - frees;
+  }
+  void allocated(uint64_t) { }
+  RAG::T rag() const {
+    if (!cacheSize) return RAG::Off;
+    if (allocated() > cacheSize) return RAG::Red;
+    if (heapAllocs) return RAG::Amber;
+    return RAG::Green;
+  }
+  void rag(RAG::T) { }
 };
 
 // Note: ZtStruct metadata declaration is deferred
 
 struct Heap {
-  virtual ZuTuple<const ZuID &, uint32_t, uint8_t, uint16_t, uint8_t>
+  virtual ZuTuple<ZuCSpan, uint32_t, uint8_t, uint16_t, uint8_t>
     telKey() const = 0;
   virtual void telemetry(HeapTelemetry &data) const = 0;
 };
@@ -57,6 +70,12 @@ private:
   using WatchLock = ZmPLock;
   using WatchGuard = ZmGuard<WatchLock>;
 
+public:
+  using MatchFn = ZmFn<bool(Heap *), AllFnHeapID>;
+  using CaptureFn =
+    ZmFn<void(ZuSpan<const HeapTelemetry>), AllFnHeapID>;
+
+private:
   static WatchLock &watchLock_();
 
 public:
@@ -65,6 +84,7 @@ public:
   using DelFn = ZmFn<void(Heap *), WatchFnHeapID>;
 
   static unsigned all(AllFn);
+  static void capture(MatchFn, CaptureFn);
   template <typename L> static void guard(L &&l) {
     WatchGuard guard(watchLock_());
     ZuFwd<L>(l)();

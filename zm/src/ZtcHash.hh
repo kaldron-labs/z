@@ -15,6 +15,7 @@
 
 #include <zlib/ZuID.hh>
 #include <zlib/ZuPrint.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmFn_.hh>
@@ -43,6 +44,13 @@ struct HashTelemetry {
   uint8_t	cBits = 0;
   uint8_t	linear = 0;
   uint8_t	shadow = 0;
+
+  RAG::T rag() const {
+    if (resized) return RAG::Red;
+    if (effLoadFactor >= loadFactor * 0.8) return RAG::Amber;
+    return RAG::Green;
+  }
+  void rag(RAG::T) { }
 };
 
 // Note: ZtStruct metadata declaration is deferred
@@ -57,6 +65,12 @@ private:
   using WatchLock = ZmPLock;
   using WatchGuard = ZmGuard<WatchLock>;
 
+public:
+  using MatchFn = ZmFn<bool(Hash *), AllFnHeapID>;
+  using CaptureFn =
+    ZmFn<void(ZuSpan<const HashTelemetry>), AllFnHeapID>;
+
+private:
   static WatchLock &watchLock_();
 
 public:
@@ -65,6 +79,7 @@ public:
   using DelFn = ZmFn<void(Hash *), WatchFnHeapID>;
 
   static unsigned all(AllFn);
+  static void capture(MatchFn, CaptureFn);
   template <typename L> static void guard(L &&l) {
     WatchGuard guard(watchLock_());
     ZuFwd<L>(l)();
