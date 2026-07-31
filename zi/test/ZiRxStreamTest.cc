@@ -287,6 +287,96 @@ void testCleanResetsState()
   ZuCheck(consumeExact(stream, 1, "z"));
 }
 
+int64_t extractN(
+    ZiRxStream<RxQueue> &stream, unsigned n,
+    ZmRef<ZiIOBuf> &out, unsigned &allocs)
+{
+  unsigned remaining = n;
+  return stream.extract(
+    [&remaining](ZuBSpan span) -> int64_t {
+      if (remaining > span.length()) {
+	remaining -= span.length();
+	return 0;
+      }
+      return remaining;
+    },
+    [&allocs]() -> ZmRef<RxQueue::Node> {
+      ++allocs;
+      return new RxBufAlloc{};
+    },
+    out);
+}
+
+void testExtractCompleteFrames()
+{
+  ZuTestScope(testExtractCompleteFrames);
+
+  {
+    ZiRxStream<RxQueue> stream;
+    auto input = mkBuf("frame");
+    auto inputPtr = input.ptr();
+    stream.push(ZuMv(input));
+    ZmRef<ZiIOBuf> out;
+    unsigned allocs = 0;
+    ZuCheck(extractN(stream, 5, out, allocs) == 5);
+    ZuCheck(out.ptr() == inputPtr);
+    ZuCheck(spanEq(out->span(), "frame"));
+    ZuCheck(!allocs);
+    ZuCheck(!stream);
+  }
+  {
+    ZiRxStream<RxQueue> stream;
+    auto input = mkBuf("frameNEXT");
+    auto inputPtr = input.ptr();
+    stream.push(ZuMv(input));
+    ZmRef<ZiIOBuf> out;
+    unsigned allocs = 0;
+    ZuCheck(extractN(stream, 5, out, allocs) == 5);
+    ZuCheck(out.ptr() == inputPtr);
+    ZuCheck(spanEq(out->span(), "frame"));
+    ZuCheck(allocs == 1);
+    ZuCheck(spanEq(stream.span(), "NEXT"));
+  }
+  {
+    ZiRxStream<RxQueue> stream;
+    stream.push(mkBuf("abc"));
+    stream.push(mkBuf("deNEXT"));
+    ZmRef<ZiIOBuf> out;
+    unsigned allocs = 0;
+    ZuCheck(extractN(stream, 5, out, allocs) == 5);
+    ZuCheck(spanEq(out->span(), "abcde"));
+    ZuCheck(allocs == 1);
+    ZuCheck(spanEq(stream.span(), "NEXT"));
+  }
+}
+
+void testExtractWaitAndError()
+{
+  ZuTestScope(testExtractWaitAndError);
+
+  ZiRxStream<RxQueue> stream;
+  stream.push(mkBuf("abc"));
+  stream.push(mkBuf("de"));
+  ZmRef<ZiIOBuf> out;
+  unsigned allocs = 0;
+  ZuCheck(!extractN(stream, 6, out, allocs));
+  ZuCheck(!out);
+  ZuCheck(!allocs);
+  ZuCheck(stream.count_() == 2);
+
+  int64_t n = stream.extract(
+    [](ZuBSpan) -> int64_t { return -1; },
+    [&allocs]() -> ZmRef<RxQueue::Node> {
+      ++allocs;
+      return new RxBufAlloc{};
+    },
+    out);
+  ZuCheck(n < 0);
+  ZuCheck(!out);
+  ZuCheck(!allocs);
+  ZuCheck(stream.count_() == 2);
+}
+
 void testBoundedView()
 {
   ZuTestScope(testBoundedView);
@@ -399,6 +489,8 @@ int main(int argc, char **argv)
   ZuTestCall(testConsumeGathersFragmentedFrame);
   ZuTestCall(testConsumePaddingAcrossQueuedBuffers);
   ZuTestCall(testCleanResetsState);
+  ZuTestCall(testExtractCompleteFrames);
+  ZuTestCall(testExtractWaitAndError);
   ZuTestCall(testBoundedView);
   ZuTestCall(testBoundedViewHiddenAndFragmented);
   ZuTestCall(testBoundedViewIncremental);

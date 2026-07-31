@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuID.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmAtomic.hh>
@@ -52,6 +53,23 @@ struct HubTelemetry {
   uint8_t	txThread = 0;
   LinkType::T	linkType = 0;	// primary key
   HubState::T	state = -1;
+
+  RAG::T rag() const {
+    switch (state) {
+      case ZmEngineState::Stopped:
+      case ZmEngineState::Stopping:
+      case ZmEngineState::StopPending:
+	return RAG::Red;
+      case ZmEngineState::Starting:
+      case ZmEngineState::StartPending:
+	return RAG::Amber;
+      case ZmEngineState::Running:
+	return RAG::Green;
+      default:
+	return RAG::Off;
+    }
+  }
+  void rag(RAG::T) { }
 };
 
 struct Hub {
@@ -94,6 +112,8 @@ private:
 
 public:
   using AllFn = ZmFn<void(Hub *), AllFnHeapID>;
+  using CaptureFn =
+    ZmFn<void(ZuSpan<const HubTelemetry>), AllFnHeapID>;
   using AddFn = ZmFn<void(Hub *), WatchFnHeapID>;
   using DelFn = ZmFn<void(Hub *), WatchFnHeapID>;
   using AddLinkFn = ZmFn<void(Link *), WatchFnHeapID>;
@@ -106,6 +126,7 @@ public:
   static void add(Hub *);
   static void del(Hub *);
   static unsigned all(AllFn);
+  static void capture(CaptureFn);
   template <typename L> static void guard(L &&l) {
     WatchGuard guard(watchLock_());
     ZuFwd<L>(l)();
