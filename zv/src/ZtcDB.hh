@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuID.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmFn_.hh>
@@ -26,8 +27,8 @@
 
 #include <zlib/ZtcDBTable.hh>
 #include <zlib/ZtcDBHost.hh>
+#include <zlib/ZtcRAGMap.hh>
 #include <zlib/ZtcTypes.hh>
-#include <zlib/ZvRAG.hh>
 
 #include <zlib/ztc_db_fbs.h>
 
@@ -89,7 +90,7 @@ ZfbStruct(DBTelemetry,
     (((active),		(Ctor<14>, Mutable)),			(UInt8)),
     (((recovering),	(Ctor<15>, Mutable)),			(UInt8)),
     (((replicating),	(Ctor<16>, Mutable)),			(UInt8)),
-    (((rag, RdFn),	(Synthetic, Series, Enum<ZvRAG::Map>)),	(Int8)));
+    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 struct DB {
   using AllDBTablesFn = ZmFn<void(DBTable *), AllFnHeapID>;
@@ -118,6 +119,8 @@ private:
 
 public:
   using AllFn = ZmFn<void(DB *), AllFnHeapID>;
+  using CaptureFn =
+    ZmFn<void(ZuSpan<const DBTelemetry>), AllFnHeapID>;
   using AddFn = ZmFn<void(DB *), WatchFnHeapID>;
   using DelFn = ZmFn<void(DB *), WatchFnHeapID>;
   using AddHostFn = ZmFn<void(DBHost *), WatchFnHeapID>;
@@ -128,6 +131,7 @@ public:
   static void add(DB *);
   static void del(DB *);
   static unsigned all(AllFn);
+  static void capture(CaptureFn);
   template <typename L> static void guard(L &&l) {
     WatchGuard guard(watchLock_());
     ZuFwd<L>(l)();

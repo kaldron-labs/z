@@ -1,0 +1,197 @@
+include "zfb_types.fbs";
+include "ztc_types.fbs";
+include "ztc_db.fbs";
+
+namespace Ztc.fbs;
+
+table AppTelemetry {
+  id:string;
+  version:string;
+  role:string;
+  start_time:int64;
+  state:int8;
+  degraded:bool;
+  rag:RAG;
+}
+
+table AlertTelemetry {
+  message:string;
+  time:Zfb.Time;
+  seq_no:uint64;
+  tid:uint64;
+  date:uint32;
+  severity:int8;
+}
+
+table HeapTelemetry {
+  id:string;
+  cache_size:uint64;
+  cpuset:Zfb.Bitmap;
+  cache_allocs:uint64;
+  heap_allocs:uint64;
+  frees:uint64;
+  cross_frees:uint64;
+  size:uint32;
+  partition:uint16;
+  sharded:uint8;
+  alignment:uint8;
+  allocated:uint64;
+  rag:RAG;
+}
+
+table HashTelemetry {
+  id:string;
+  addr:uint64;
+  load_factor:double;
+  eff_load_factor:double;
+  count:uint64;
+  node_size:uint32;
+  resized:uint32;
+  bits:uint8;
+  c_bits:uint8;
+  linear:uint8;
+  shadow:uint8;
+  rag:RAG;
+}
+
+table ThreadTelemetry {
+  name:string;
+  tid:uint64;
+  stack_size:uint64;
+  cpuset:Zfb.Bitmap;
+  cpu_usage:double;
+  alloc_stack:uint64;
+  alloc_heap:uint64;
+  sys_priority:int32;
+  sid:uint16;
+  partition:uint16;
+  priority:ThreadPriority;
+  main:bool;
+  detached:bool;
+  rag:RAG;
+}
+
+table CxnTelemetry {
+  mx_i_d:string;
+  socket:uint64;
+  rx_calls:uint64;
+  rx_bytes:uint64;
+  tx_calls:uint64;
+  tx_bytes:uint64;
+  rx_buf_size:uint32;
+  rx_buf_len:uint32;
+  tx_buf_size:uint32;
+  tx_buf_len:uint32;
+  mreq_addr:Zfb.IP;
+  mreq_if:Zfb.IP;
+  mreq_if_index:uint32;
+  mif:Zfb.IP;
+  mif_index:uint32;
+  ttl:uint32;
+  local_i_p:Zfb.IP;
+  remote_i_p:Zfb.IP;
+  local_port:uint16;
+  remote_port:uint16;
+  flags:uint8;
+  type:CxnType;
+  rag:RAG;
+}
+
+table MxTelemetry {
+  id:string;
+  stack_size:uint32;
+  queue_size:uint32;
+  spin:uint32;
+  timeout:uint32;
+  rx_buf_size:uint32;
+  tx_buf_size:uint32;
+  rx_thread:uint16;
+  tx_thread:uint16;
+  partition:uint16;
+  state:EngineState;
+  ll:uint8;
+  priority:uint8;
+  n_threads:uint8;
+  rag:RAG;
+}
+
+table QueueTelemetry {
+  owner_i_d:string;
+  id:string;
+  in_bytes:uint64;
+  out_bytes:uint64;
+  in_count:uint64;
+  out_count:uint64;
+  count:uint64;
+  size:uint32;
+  full:uint32;
+  type:QueueType;
+  rag:RAG;
+}
+
+table HubTelemetry {
+  id:string;
+  mx_i_d:string;
+  down:uint16;
+  disabled:uint16;
+  transient:uint16;
+  up:uint16;
+  reconn:uint16;
+  failed:uint16;
+  n_links:uint16;
+  rx_thread:uint8;
+  tx_thread:uint8;
+  link_type:LinkType;
+  state:EngineState;
+  rag:RAG;
+}
+
+table LinkTelemetry {
+  hub_i_d:string;
+  id:string;
+  rx_calls:uint64;
+  tx_calls:uint64;
+  rx_bytes:uint64;
+  tx_bytes:uint64;
+  reconnects:uint32;
+  type:LinkType;
+  state:LinkState;
+  rag:RAG;
+}
+
+table PoolTelemetry {
+  hub_i_d:string;
+  id:string;
+  rx_calls:uint64;
+  rx_bytes:uint64;
+  tx_calls:uint64;
+  tx_bytes:uint64;
+  idle:uint16;
+  busy:uint16;
+  down:uint16;
+  type:LinkType;
+  state:PoolState;
+  rag:RAG;
+}
+
+union TelemetryBody {
+  HeapTelemetry,
+  HashTelemetry,
+  ThreadTelemetry,
+  CxnTelemetry,
+  MxTelemetry,
+  QueueTelemetry,
+  HubTelemetry,
+  LinkTelemetry,
+  PoolTelemetry,
+  DBTelemetry,
+  DBHostTelemetry,
+  DBTableTelemetry,
+  AppTelemetry,
+  AlertTelemetry
+}
+
+table Telemetry {
+  seq_no:uint64;
+  value:TelemetryBody;
+}

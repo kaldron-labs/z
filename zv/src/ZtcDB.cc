@@ -11,6 +11,9 @@
 #include <zlib/ZmRWLock.hh>
 #include <zlib/ZmSingleton.hh>
 
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtLocalArray.hh>
+
 class ZtcDBMgr_ {
 friend Ztc::DBMgr;
 
@@ -23,6 +26,9 @@ friend Ztc::DBMgr;
       ZmRBTreeUnique<true,
 	ZmRBTreeLock<ZmNoLock,
 	  ZmRBTreeHeapID<"Ztc.DBMgr">>>>));
+  using Captures =
+    ZtArray<Ztc::DBTelemetry,
+      ZtArrayHeapID<"Ztc.DBMgr.Capture">>;
 
 public:
   ~ZtcDBMgr_() {
@@ -62,13 +68,22 @@ public:
     return n;
   }
 
-  template <typename L> void guard(L &&l) {
-    Guard guard(m_watchLock);
-    ZuFwd<L>(l)();
+  void capture(Ztc::DBMgr::CaptureFn fn) const {
+    ReadGuard guard(m_watchLock);
+    unsigned count = m_map.count_();
+    auto captures = ZtLocalArray(Captures, count);
+    auto i = m_map.citer();
+    while (auto db = i.key()) {
+      auto data = new (captures.push()) Ztc::DBTelemetry;
+      db->telemetry(*data);
+    }
+    guard.unlock();
+    fn(captures.cspan());
   }
 
   void watch(Ztc::DBMgr::AddFn addFn, Ztc::DBMgr::DelFn delFn) {
     Guard guard(m_watchLock);
+    ZmAssert(!m_addFn && !m_delFn, return);
     m_addFn = ZuMv(addFn);
     m_delFn = ZuMv(delFn);
   }
@@ -166,6 +181,11 @@ unsigned Ztc::DBMgr::all(AllFn fn)
 ZmRWLock &Ztc::DBMgr::watchLock_()
 {
   return ZtcDBMgr_::instance()->watchLock();
+}
+
+void Ztc::DBMgr::capture(CaptureFn fn)
+{
+  ZtcDBMgr_::instance()->capture(ZuMv(fn));
 }
 
 void Ztc::DBMgr::watch(AddFn addFn, DelFn delFn)

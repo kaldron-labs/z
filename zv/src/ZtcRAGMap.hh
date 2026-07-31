@@ -4,10 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// red/amber/green enumeration
+// reflected names for the common telemetry RAG vocabulary
 
-#ifndef ZvRAG_HH
-#define ZvRAG_HH
+#ifndef ZtcRAGMap_HH
+#define ZtcRAGMap_HH
 
 #ifndef ZvLib_HH
 #include <zlib/ZvLib.hh>
@@ -15,6 +15,16 @@
 
 #include <zlib/ZtEnum.hh>
 
-ZtEnumNS(ZvRAG, int8_t, Off, Red, Amber, Green);
+#include <zlib/ZtcTypes.hh>
 
-#endif /* ZvRAG_HH */
+namespace Ztc {
+namespace RAG {
+
+enum { N = Green + 1 };
+ZtEnumNames(RAG, Off, Red, Amber, Green);
+struct Map : public Map_ { };
+
+} // RAG
+} // Ztc
+
+#endif /* ZtcRAGMap_HH */
