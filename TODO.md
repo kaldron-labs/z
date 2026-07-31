@@ -1,8 +1,24 @@
 # TODO
 
-## zhttp
+general inconsistent use of `ZmAlloc` vs `ZtLocalArray`
 
-- read and execute `ws.md`
+## Ztc telemetry
+
+`plan.new.md`:
+- where querying/filtering/subscribing/unsubscribing by key is required to service clients, `Ztc::App` should maintain a secondary index mapping key to object pointer using `ZmRBTreeKV`
+  - in order to maintain these secondary indices, `Ztc::App` will need to register/deregister callbacks with the corresponding `Ztc::*Mgr` and other containing `Ztc` objects
+  - to facilitate this, all `Ztc::*Mgr` classes will need to be improved to add a watcher:
+    - `static void watch(AddFn, DelFn)` and `static void unwatch()`
+    - only one watcher at a time, no need to manage multiple watchers
+    - unwatch simply nulls the callbacks
+    - null callback is a sentinel, no need to maintain watched status in a separate `bool`
+    - the `HubMgr` watch will take 6 callbacks: add/del for links, pools and queues
+      - a link add would cause the `HubMgr` watcher to be called with a "link added" then 2x "queue added" (one rx, one tx); del would be the reverse - 2x "queue deleted", then "link deleted"
+  - `App` will need to `watch`, then `all` to build the initial secondary indices for these objects and maintain them
+  - this will simplify querying and maintaining watch lists of subscribers
+- all `watch` callbacks will synchronously update the secondary indices, which must be locked with `ZmPLock`
+- all watchlist maintenance must be on the `Ztc::App` worker thread
+- all querying/iteration the secondary indices etc. must be as brief as possible to minimize contention: start iterating (lock), get `count_()` (stable while locked), allocate scratch (`ZtLocalArray` of telemetry, sized for count), iterate and call `object->telemetry` on each object directly into the scratch array using `push`, end iterating (unlock); then use the captured snapshot telemetry array
 
 ### deferred
 - cross-origin connection coalescing
