@@ -545,7 +545,7 @@ struct QPackFieldPlan {
 - The write pass must emit the same field bytes and commit inserts exactly
   once.
 - If a local plan requires owning header bytes beyond callback lifetime, use a
-  small `ZtLocalArray` scratch plan first and only allocate heap for unusually
+  small `ZtScratch` scratch plan first and only allocate heap for unusually
   large field sections.
 
 Complexity and feasibility:

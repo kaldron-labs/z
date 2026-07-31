@@ -53,7 +53,7 @@ not treated as source.
    `Params::maxHeaderListSize()` is configurable, but any single Huffman string
    decoded through this path is capped at `DefltMaxHdr` regardless of params.
 
-   Suggested fix: use `ZtLocalArray(HeaderBytes, HPack::declen(ref.raw.length()))`
+   Suggested fix: use `ZtScratch(HeaderBytes, HPack::declen(ref.raw.length()))`
    or another Z array with an explicit heap ID, and validate against
    `h3Params_().maxHeaderListSize()`.
 
@@ -65,7 +65,7 @@ not treated as source.
    manual length handling is exactly the fixed-size-array pattern called out in
    `GUIDELINES.md`.
 
-   Suggested fix: use `ZtLocalArray`/`HeaderBytes` scratch sized from the name
+   Suggested fix: use `ZtScratch`/`HeaderBytes` scratch sized from the name
    length, with a built-in size if 256 is the expected fast path. Make any hard
    maximum a named constant with an explicit rationale.
 
@@ -121,8 +121,8 @@ not treated as source.
 - The core parser/builder design is CRTP-heavy and generally follows the
   repository preference for static polymorphism.
 - The library mostly uses Z Framework containers and facilities (`ZuMatcher`,
-  `ZuSwitch`, `ZuUnroll`, `ZtArray`, `ZtLocalArray`, `ZiIOBuf`) rather than STL.
-- Recent QPACK decode paths already use `ZtLocalArray` scratch storage in
+  `ZuSwitch`, `ZuUnroll`, `ZtArray`, `ZtScratch`, `ZiIOBuf`) rather than STL.
+- Recent QPACK decode paths already use `ZtScratch` scratch storage in
   `zhttp/src/ZhttpQPack.hh:92-98`; the fixed stack buffers above should follow
   that pattern.
 

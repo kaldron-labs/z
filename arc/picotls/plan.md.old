@@ -1,0 +1,249 @@
+# Ztls zero-copy refactor plan (picotls-aware, Option A)
+
+## Goals and scope
+- Eliminate data copies between `ptls_buffer_t` and `ZiIOBuf` for steady-state TX/RX.
+- Prefer in-place encrypt/decrypt (immutability not required).
+- Prefer Option A on RX: deliver plaintext as a buffer chain / cursor instead of flattening.
+- Keep current threading model (I/O thread -> TLS thread -> app thread) and `Ztls::Link` API shape; introduce new internal helpers and a new RX callback signature.
+- Do NOT implement in this task; capture the wiring plan only.
+
+## Picotls facts from headers that drive the design
+- `ptls_buffer_t` is a simple struct: `{base, capacity, off, is_allocated, align_bits}`. `ptls_buffer_init` sets `base`, `capacity`, `off=0`, `is_allocated=0`, `align_bits=0`. `ptls_buffer_reserve` may allocate and change `base` if capacity is insufficient.
+- `ptls_send(tls, sendbuf, input, inlen)` appends records to `sendbuf` and **may emit multiple records** in one call. `sendbuf->off` is output length.
+- `ptls_receive(tls, plaintextbuf, input, &len)` decrypts **one record** from `input` and appends plaintext to `plaintextbuf`. `len` is updated to bytes consumed.
+- `ptls_handshake(tls, sendbuf, input, &inlen, props)` appends handshake output to `sendbuf`. The output should be sent regardless of return value; inlen is updated to bytes consumed.
+- `ptls_get_cipher(tls)` returns the negotiated cipher suite; `ptls_cipher_suite_t::aead` exposes `tag_size`, `tls12.record_iv_size`, and `align_bits`.
+- `ptls_get_record_overhead(tls)` returns per-record overhead (header + AEAD tag + any extra bytes).
+- `ptls_get_protocol_version(tls)` returns TLS version (0x0303 for TLS 1.2, 0x0304 for TLS 1.3). The record header for TLS over TCP is 5 bytes.
+
+## Design overview (zero-copy, Option A)
+The core idea is to:
+1) **Frame TLS records on the I/O thread** so each `ZiIOBuf` contains exactly one TLS record.
+2) **Decrypt in place** into the same `ZiIOBuf` on the TLS thread (input and output alias).
+3) **Deliver plaintext as a chain of `ZiIOBuf`s** using a cursor-style API (Option A), avoiding any memcpy or memmove.
+4) **Encrypt in place** on the TLS thread by reserving headroom/tailroom in `ZiIOBuf` and letting `ptls_send` write directly into that buffer.
+
+This eliminates the current copies in:
+- `send(...)` -> `ptls_send` -> `m_txbuf` -> `txOut` (copy)
+- `ptls_receive` -> `m_rxbuf` -> `process_plaintext_` (memmove)
+
+## Detailed wiring plan
+
+### 1) New data held by `Ztls::Link`
+Add fields in `Ztls::Link` (TLS thread unless noted):
+- `uint16_t m_tlsver = 0;`
+- `ptls_cipher_suite_t *m_cipher = nullptr;`
+- `size_t m_rec_hdr_len = 5;`
+- `size_t m_rec_iv_len = 0;`          // TLS 1.2 explicit IV
+- `size_t m_rec_tag_len = 0;`
+- `size_t m_rec_overhead = 0;`        // from ptls_get_record_overhead
+- `size_t m_tx_headroom = 0;`         // header + explicit IV
+- `size_t m_tx_tailroom = 0;`         // overhead - headroom
+- `size_t m_max_plaintext = 16 * 1024;` // TLS max record payload
+
+I/O thread RX framing state:
+- `unsigned m_rx_need = 5;`           // bytes needed to complete current TLS record
+- `unsigned m_rx_total = 0;`          // total TLS record size once header known
+- `bool m_rx_have_hdr = false;`
+
+Optional (Option A RX delivery):
+- `IOQueue m_rxPlainQueue;`           // queue of decrypted buffers
+
+### 2) RX record framing on I/O thread
+Replace current `Link::rx(ZiIOContext &io)` with a TLS record framer.
+
+Key points:
+- TLS record header is 5 bytes. The length is bytes 3-4 (uint16, network order), and the total record size is `5 + len`.
+- We must **avoid multiple records in a single `ZiIOBuf`** to enable in-place decrypt without leftovers.
+- Use `ZiIOContext` to read exactly one record at a time by adjusting `io.ptr`, `io.size`, and `io.length`.
+
+Pseudo-flow (I/O thread):
+```
+// assumes m_rxBuf holds current partial record
+io.offset += io.length;
+
+if (!m_rx_have_hdr) {
+  if (io.offset < 5) return;              // still reading header
+  parse length from m_rxBuf->data()[3..4];
+  m_rx_total = 5 + record_len;
+  m_rx_need = m_rx_total - io.offset;
+  m_rx_have_hdr = true;
+  m_rxBuf->ensure(m_rx_total);            // may grow buffer
+  io.ptr = m_rxBuf->data();
+  io.size = m_rxBuf->size;
+}
+
+if (io.offset < m_rx_total) {
+  io.length = m_rx_total - io.offset;     // read remainder only
+  return;
+}
+
+// full record
+m_rxBuf->length = m_rx_total;
+queue to TLS thread (recv_) with this buf
+reset state, allocate new m_rxBuf, set io to read next header (5 bytes)
+```
+
+This eliminates leftover ciphertext in a buffer, making in-place decrypt feasible.
+
+### 3) TLS thread RX: in-place decrypt + Option A delivery
+With each `ZiIOBuf` containing exactly one TLS record:
+
+**Handshake stage**
+- Feed record directly into `ptls_handshake`:
+  - `ptls_handshake(tls, sendbuf, buf->data(), &inlen, props)`.
+  - `inlen` should equal full record size; if not, treat as protocol error.
+  - Use zero-copy TX (see TX section) to send handshake output.
+
+**Post-handshake stage**
+- Decrypt **in place** using a `ptls_buffer_t` that aliases the same memory:
+  - `ptls_buffer_t plain; ptls_buffer_init(&plain, buf->data(), buf->length);`
+  - `plain.off = 0; plain.align_bits = m_cipher->aead->align_bits;`
+  - `size_t inlen = buf->length; ret = ptls_receive(tls, &plain, buf->data(), &inlen);`
+  - Expect `inlen == buf->length` because it is a single record.
+  - Set `buf->skip = 0; buf->length = plain.off;` (plaintext length).
+
+**Option A delivery (zero-copy)**
+- Append decrypted `buf` to `m_rxPlainQueue` and call a new app callback:
+  - New callback signature (preferred): `int process(Ztls::RxCursor &rx);`
+  - `RxCursor` exposes:
+    - `ZuSpan<uint8_t> span()` (current buffer)
+    - `bool advance(size_t n)` (consume bytes)
+    - `bool next()` (move to next buffer)
+    - `bool empty()`
+- The TLS thread drives `process` with the cursor, which can walk across buffers without copying.
+- If the cursor cannot complete parsing, `process` returns 0 and leaves unconsumed buffers queued.
+
+**Compatibility fallback (optional)**
+- If `Impl` only provides the old signature `process(ZuSpan<uint8_t>)`, a compatibility adapter may concatenate buffers into a temporary `ZiIOBuf` (copy). This preserves old behavior but forfeits zero-copy.
+
+### 4) TX: in-place encrypt in `ZiIOBuf`
+
+**Handshake completed: compute record geometry**
+At handshake completion:
+- `m_tlsver = ptls_get_protocol_version(m_tls);`
+- `m_cipher = ptls_get_cipher(m_tls);`
+- `m_rec_tag_len = m_cipher->aead->tag_size;`
+- `m_rec_iv_len = (m_tlsver == PTLS_PROTOCOL_VERSION_TLS12) ? m_cipher->aead->tls12.record_iv_size : 0;`
+- `m_rec_overhead = ptls_get_record_overhead(m_tls);`
+- `m_rec_hdr_len = 5;`
+- `m_tx_headroom = m_rec_hdr_len + m_rec_iv_len;`
+- `m_tx_tailroom = (m_rec_overhead > m_tx_headroom) ? (m_rec_overhead - m_tx_headroom) : 0;`
+- `m_max_plaintext = 16*1024;` (TLS max record payload)
+
+**Buffer allocation API**
+Add a helper for apps to avoid copies:
+```
+ZmRef<ZiIOBuf> alloc_txbuf(size_t plaintext_len);
+```
+It should:
+- allocate a `ZiIOBuf` of size `m_tx_headroom + plaintext_len + m_tx_tailroom`
+- set `buf->skip = m_tx_headroom; buf->length = plaintext_len;`
+- return the buffer for the app to fill at `buf->data()`.
+
+**Encrypt in place**
+When sending a buffer:
+- Require `buf->length <= m_max_plaintext`. If larger, fall back to chunked send or copy.
+- Ensure `buf->skip >= m_tx_headroom` and `buf->avail() >= m_tx_tailroom`.
+- Build a `ptls_buffer_t` view over the same memory:
+  - `uint8_t *base = buf->data() - m_tx_headroom;`
+  - `size_t cap = m_tx_headroom + buf->length + m_tx_tailroom;`
+  - `ptls_buffer_t out; ptls_buffer_init(&out, base, cap);`
+  - `out.align_bits = m_cipher->aead->align_bits;`
+- Call `ptls_send(m_tls, &out, buf->data(), buf->length);`
+- On success:
+  - `buf->skip = 0; buf->length = out.off;`
+  - enqueue `buf` directly to `txOut` for I/O send (no memcpy).
+
+**Chunking rule**
+- Because `ptls_send` can emit multiple records in one call, keep input `len <= m_max_plaintext` to guarantee a single record (fits in the allocated buffer). For larger data:
+  - If `send(const uint8_t *, len)` is used, split into multiple `alloc_txbuf` chunks and copy once per chunk.
+  - If `send(ZmRef<ZiIOBuf>)` is used, require callers to respect the max size or introduce a `sendv` that accepts a chain.
+
+**Key update safe zero-copy**
+Picotls prepends a KeyUpdate handshake record in `ptls_send` when `needs_key_update` is set, even if `len <= 16k`. That would make a single `ZiIOBuf` insufficient. To keep zero-copy safe:
+- Track an estimated TX record sequence count (`m_tx_seq_est`) and proactively flush key updates **before** sending app data:
+  - When the app requests a key update, call `ptls_update_key(tls, request)` and then call `ptls_send(tls, &out, nullptr, 0)` into a fresh `ZiIOBuf` sized for **one record**; enqueue it immediately. Then send app data in a separate call.
+  - When `m_tx_seq_est` approaches the picotls threshold (2^24 records for TLS 1.3), proactively perform the same empty-send flush before the next application send.
+- After every `ptls_send`, parse the output to count records (walk TLS headers: 5-byte header + length). Increment `m_tx_seq_est` by that count. If the count is >1 and no pre-flush was done, fall back to a copy-based split for that send (safety valve).
+- Optional optimization: if `m_tx_need_key_update` is true, allocate a buffer sized for **two records** (KeyUpdate + appdata) and allow ptls to emit both in one call without realloc; still parse and update `m_tx_seq_est`.
+
+### 5) Handshake TX zero-copy strategy
+Handshake output may be large (certificate chains) and may exceed a single TLS record; `ptls_handshake` can append multiple records to its `sendbuf` in one call.
+
+Preferred strategy (zero-copy with guardrails):
+- Use a dedicated `ZiIOBuf` for each handshake call sized large enough to cover worst-case output in a single call.
+- If `ptls_buffer_reserve` reallocates (detected by `sendbuf.base` changing), fall back to a copy-only slow path and log once.
+
+Alternative strategy (full zero-copy, more invasive):
+- Add a new `ZiIOBufExternal` (or similar) that can adopt a `malloc`-backed buffer with a custom free callback.
+- If `ptls_handshake` reallocates, wrap the resulting `sendbuf.base` without copying and enqueue directly to I/O.
+- This requires a small extension to `ZiIOBuf` to support external ownership and a custom deleter.
+
+### 6) RX delivery API (Option A)
+Introduce a small cursor type in `Ztls` (TLS thread):
+```
+struct RxCursor {
+  IOQueue &queue;      // queue of ZiIOBuf
+  ZiIOBuf *cur;        // current buffer
+  ZuSpan<uint8_t> span() const;
+  bool advance(size_t n);  // consume n bytes in cur
+  bool next();             // move to next buf if cur exhausted
+  bool empty() const;
+};
+```
+
+`process` callback becomes:
+```
+int process(RxCursor &rx);
+```
+- Returns >0 if it consumed bytes and can continue.
+- Returns 0 if it needs more bytes (leave queue intact).
+- Returns <0 to disconnect.
+
+### 7) Alignment and safety checks
+- If `m_cipher->aead->align_bits` is non-zero, ensure `base` is aligned. `ZiIOBuf` is cache-line aligned, which should satisfy typical alignments, but add a defensive check:
+  - If misaligned, fall back to a copy buffer or adjust allocation size to align.
+- Never call `ptls_buffer_dispose` on a `ptls_buffer_t` that aliases `ZiIOBuf` memory.
+- Treat any case where `ptls_send` or `ptls_receive` mutates `sendbuf.base` as a zero-copy failure and fall back to a copy-only path.
+
+## Migration impact on existing modules
+- `Zhttp`, `Zrest` and tests using `process(ZuSpan<uint8_t>)` need to migrate to `process(RxCursor &)` (Option A). Most parsers already operate incrementally and can be adapted to work with span-by-span input.
+- Provide a short-term compatibility adapter that flattens the queue into a contiguous buffer (copy). This preserves old behavior while migrating.
+
+## Implementation steps (high level)
+1. Add TLS record framing on I/O RX to guarantee one record per buffer.
+2. Add post-handshake cipher/overhead computation using `ptls_get_cipher`, `ptls_get_record_overhead`, and TLS version.
+3. Add `alloc_txbuf` and in-place TX encryption path in `send_`.
+4. Add key-update preflush logic and record-count parsing to keep `ptls_send` one-record-per-buffer.
+5. Add in-place RX decrypt path (`ptls_receive` on alias) and plaintext queue.
+6. Introduce `RxCursor` and update `process` call sites in app modules.
+7. Add fallback and alignment checks.
+
+## Expected dataflow after refactor
+
+**RX**
+```
+I/O thread: read TLS record (exact length) -> ZiIOBuf
+TLS thread: ptls_handshake or ptls_receive (in place) -> ZiIOBuf plaintext
+TLS thread: process via RxCursor (buffer chain)
+```
+
+**TX**
+```
+App thread: alloc_txbuf -> fill plaintext
+TLS thread: ptls_send in place (same ZiIOBuf) -> ciphertext
+I/O thread: send ZiIOBuf (no copy)
+```
+
+## Open questions / risks
+- `ptls_send` prepends a KeyUpdate record when `needs_key_update` is set; the plan avoids mixing records by pre-flushing key updates (empty send) or allocating for two records, with a copy-based fallback if a multi-record output is detected unexpectedly.
+- Handshake output size can be large; the “external buffer adoption” option keeps it zero-copy but requires a new `ZiIOBuf` variant.
+- App-layer parsers must accept segmented input (Option A). If not feasible, keep the compatibility adapter temporarily (at the cost of a copy).
+
+## Acceptance checklist
+- No memcpy between `ptls_buffer_t` and `ZiIOBuf` on steady-state TX/RX.
+- No `memmove` in RX path for plaintext assembly.
+- TLS record framing produces exactly one record per `ZiIOBuf`.
+- `send(ZmRef<ZiIOBuf>)` can be fully zero-copy when buffer is allocated via `alloc_txbuf`.
+- KeyUpdate records are flushed separately or buffers are sized for two records; no mixed-record output is dropped or overwritten.

@@ -292,7 +292,7 @@ Implementation details:
   - Use a small fixed PRNG such as xorshift64* or splitmix64 seeded from
     `--seed`.
   - Write with `ZiFile` in chunks; avoid fixed large stack arrays. A
-    `ZtScratch<uint8_t, 64<<10>` or similar scratch buffer is appropriate.
+    `ZtLocalArray<uint8_t, 64<<10>` or similar scratch buffer is appropriate.
   - Update `Ztls::MD<Ztls::SHA256>` while streaming bytes.
   - Store checksum as lowercase hex in sidecar metadata.
 - Implement file verification:

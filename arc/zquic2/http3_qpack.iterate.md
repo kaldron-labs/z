@@ -57,7 +57,7 @@ Plan:
   per-stream. If it is connection-level, key parser state by stream ID.
 - Keep buffers bounded and explicit; use a QPACK-specific heap ID if the buffer
   remains a `ZtArray`.
-- Use `ZtLocalArray` for rare cross-buffer gather scratch, following the
+- Use `ZtScratch` for rare cross-buffer gather scratch, following the
   `ZiRxStream` and H3 frame-header patterns already in the repo.
 - Add split-instruction tests that interleave encoder and decoder stream
   processing.
@@ -83,7 +83,7 @@ Plan:
   `HeaderBytes encoder`; that shifts the hot path from streaming to heap-backed
   buffering. Count/plan with compact stack scratch, then write prefix and field
   lines directly to `TxBytes`.
-- Use stack/local scratch first (`ZtLocalArray` if available in this codebase);
+- Use stack/local scratch first (`ZtScratch` if available in this codebase);
   fall back to heap-backed `ZtArray` with explicit heap IDs only for large field
   sections.
 - Avoid temporary `HeaderBytes insn` plus append-copy for each insertion.
@@ -227,7 +227,7 @@ Plan:
 - Make instruction decode accept caller-owned scratch storage, or change the
   apply path to receive decoded strings through a functional callback while the
   scratch is still alive.
-- Use `ZtLocalArray(HeaderBytes, expectedLen)` for Huffman decode scratch where
+- Use `ZtScratch(HeaderBytes, expectedLen)` for Huffman decode scratch where
   the decoded size is bounded by the current input span.
 - Keep raw non-Huffman strings as spans into the input buffer and only copy when
   inserting into `QPackRxTable`.
@@ -246,7 +246,7 @@ Plan:
 
 - Move string decode scratch out of the per-field loop and reuse it for the
   whole field section.
-- Prefer caller-owned `ZtLocalArray` scratch with a field-section-size bound.
+- Prefer caller-owned `ZtScratch` scratch with a field-section-size bound.
 - Structure the shared field-line decoder as:
   `decodeFields(input, rxTable, params, scratch, sink)`, where `sink` consumes
   spans synchronously.
@@ -270,7 +270,7 @@ Plan:
   `query`, so `:path` with query does not require concatenation.
 - For encoder-stream instructions, write into a local scratch once per HEADERS
   block or directly to `QPackEncoderTx` during commit.
-- Use `ZtLocalArray` for the field prefix and any bounded temporary byte output;
+- Use `ZtScratch` for the field prefix and any bounded temporary byte output;
   reserve heap-backed `HeaderBytes` for genuinely large or buffered sections.
 
 ### 12. Hashing and equality recompute work and miss obvious cached keys
@@ -435,7 +435,7 @@ Add focused tests before broad interop:
 - `QPackTxTable` does not scan the hash for routine absolute-index operations.
 - QPACK dynamic capacity is never inferred from local params when peer SETTINGS
   have not advertised it.
-- Hot-path temporary storage uses `ZtLocalArray`, `ZuArray`, spans, or direct
+- Hot-path temporary storage uses `ZtScratch`, `ZuArray`, spans, or direct
   callbacks before heap-backed `ZtArray`.
 - Existing zero-capacity static/literal behavior remains valid.
 - Dynamic QPACK tests cover parser, builder, encoder stream, decoder stream,

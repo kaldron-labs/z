@@ -3,11 +3,11 @@
 Add a Linux benchmark harness under `zhttp/bench` for static-file HTTP serving
 comparisons across HTTP/1.1 cleartext, HTTP/1.1 over TLS, and HTTP/3 over QUIC.
 The harness generates one deterministic random response file per benchmark
-series, reuses it for every matrix row, runs bounded-concurrency GET workloads,
-and records elapsed time plus separate client/server CPU usage from cgroup v2
-CPU accounting.
+series, reuses it for every selected matrix row, runs bounded-concurrency GET
+workloads, and records elapsed time plus separate client/server CPU usage from
+cgroup v2 CPU accounting.
 
-The initial product requirement is the 18-row nominal matrix:
+The nominal product matrix is:
 
 | Protocol | Client | Server |
 | --- | --- | --- |
@@ -17,39 +17,46 @@ The initial product requirement is the 18-row nominal matrix:
 
 Rows that cannot run are first-class results with `status=skipped` and a stable
 `skip_reason`. Examples include `darkhttpd` for TLS/H3, missing executables,
-curl builds without HTTP/3, and the current `zhttp` example client until it has
-a native multi-request benchmark mode. Failed rows are distinct from skipped
-rows: if a declared-capable adapter fails to start, probe, or complete, write
+curl builds without HTTP/3, and `zhttp` rows until the example client exposes
+discarded-output stats suitable for benchmarking. Failed rows are distinct:
+if a declared-capable adapter starts but cannot probe or complete, write
 `status=failed` and preserve available logs and counters.
 
-The runner should be a native C++ program, not a shell script. It should use
-local Z Framework facilities where they fit: `ZtCLI` for option parsing,
-`ZiFile` and `ZiDir`/path helpers for filesystem work, `Ztls::MD<SHA256>` for
-file checksums, `ZiCSV`/`ZtCSV` for structured result output, `ZuBox`/`ZuFmt`
-for formatting, and direct POSIX APIs for process groups, `fork`/`exec`,
-signals, `waitpid`, pipes, and cgroup v2 file operations. The benchmark harness
-is intentionally Linux-only at first; the `zhttp/bench` directory may exist on
-all platforms, but `zhttpbench` itself is not built on MinGW.
+The runner is a native C++ program, not a shell script. Use Z Framework where
+it fits: `ZtCLI` for option parsing, `ZiFile`/`ZiDir` for filesystem work,
+`Ztls::MD<Ztls::SHA256>` for file checksums, `ZtCSV::Writer` plus `ZiFile` for
+appendable result CSV, `ZuBox`/`ZuFmt` for formatting, and direct POSIX APIs
+for process groups, `fork`/`exec`, signals, `waitpid`, pipes, and cgroup v2
+file operations. The benchmark is intentionally Linux-only at first; the
+`zhttp/bench` directory may exist on all platforms, but `zhttpbench` is not
+built on MinGW.
 
-Research checks against public documentation affect the design:
+Research and local API review resolve the key requirements:
 
 - curl's `--parallel`/`--parallel-max` options are the right single-process
-  multi-transfer path; `--http3-only` is preferable for H3 because it is defined
-  to avoid fallback to earlier HTTP versions.
-- A curl config file can carry repeated URL/output entries; use per-transfer
-  `output = "/dev/null"` and write-out data when byte/status/protocol
-  validation is needed.
-- Caddy's `file_server` serves static files under `root`; the `encode`
-  directive enables compression and is therefore not a valid way to disable
-  compression. Omit `encode` unless an installed Caddy version has a verified
-  `encode off` behavior.
-- Caddy H3 needs UDP for QUIC and also uses the HTTPS TCP listener for TLS/H1
-  and advertisement/probing behavior; reserve both TCP and UDP on the selected
-  port.
+  multi-transfer path, and `--http3-only` is required for H3 because fallback
+  to earlier HTTP versions would invalidate the row.
+- curl config files can carry repeated URL/output entries; use repeated
+  `url = ...` plus `output = "/dev/null"` for the curl adapter.
+- Do not use curl per-transfer `--write-out` in measured runs. Validate
+  readiness body size before measurement and treat curl exit status as the
+  measured-run correctness signal.
+- Caddy `file_server` serves static files under `root`; Caddy `encode` enables
+  compression and must be omitted, not disabled with an unverified `encode off`.
+- Caddy H3 requires the QUIC UDP listener and still uses HTTPS/TCP behavior for
+  TLS/H1 and advertisement/probing; reserve both TCP and UDP on the selected
+  H3 port.
 - cgroup v2 `cpu.stat` exposes `usage_usec`, `user_usec`, and `system_usec`;
   moving a process into a cgroup is done by writing its PID to `cgroup.procs`.
-- darkhttpd is a simple HTTP/1.1 static file server with `--addr` and `--port`;
-  it has no native TLS or HTTP/3 support.
+- `darkhttpd` is a simple HTTP/1.1 static file server with `--addr`,
+  `--port`, and `--log`; it has no native TLS or HTTP/3 support.
+- Local `zhttp/example/zhttp.cc` already supports multi-request mode via
+  `-n/--requests` and `-j/--jobs`, including H3. It still writes response
+  bodies and lacks machine-readable stats, so only `--discard` and `--stats`
+  need to be added before enabling `zhttp` client rows.
+- Local `ZiCSV::PushFile` appends but always emits a header; `ZiCSV::writeFile`
+  rewrites the file. Implement a small result writer using `ZtCSV::Writer` and
+  `ZiFile` so headers appear only once.
 
 No `plan.feedback.md` was present when this revision was written.
 
@@ -59,40 +66,42 @@ No `plan.feedback.md` was present when this revision was written.
 
 - `zhttp/bench/Makefile.am` builds `zhttpbench` on non-MinGW platforms and
   links against the same Z libraries used by `zhttp/example`.
-- `zhttp/bench/zhttpbench.cc` contains the benchmark runner and the adapter
-  implementations. Keep this as a single translation unit for the first
-  implementation unless it becomes unmanageably large; benchmark code is not a
-  reusable library yet.
-- `zhttp/bench/README.md` or an update to `zhttp/README.md` documents runtime
-  prerequisites: Linux cgroup v2 write access, `curl`, `darkhttpd`, `caddy`,
-  `openssl`, and build-tree locations for `zhttp`/`zhttpd`.
-- `zhttp/example/zhttp.cc` is later extended with native benchmark mode so the
-  matrix can measure the Z HTTP client without one process per request.
+- `zhttp/bench/zhttpbench.cc` contains the benchmark runner and adapter
+  implementations. Keep this as one translation unit initially; benchmark
+  orchestration is not a reusable library yet.
+- `zhttp/bench/README.md` documents runtime prerequisites: Linux cgroup v2
+  write access, `curl`, `darkhttpd`, `caddy`, `openssl`, and build-tree
+  locations for `zhttp`/`zhttpd`.
+- `zhttp/example/zhttp.cc` is enhanced with `--discard` and `--stats PATH` so
+  the existing `-n/-j` multi-request implementation can serve benchmark rows
+  without body-file write amplification.
 
 ### Changed Build Integration
 
-- Update `configure.ac` `AC_CONFIG_FILES` to include `zhttp/bench/Makefile`.
+- Update `configure.ac` `AC_CONFIG_FILES` to include
+  `zhttp/bench/Makefile`.
 - Update `zhttp/Makefile.am` from `SUBDIRS = src test example` to
   `SUBDIRS = src test example bench`. Keeping `bench` after `example` lets the
-  harness prefer build-tree `zhttp/example/zhttp` and `zhttp/example/zhttpd`
-  after those binaries have been built.
-- `zhttp/bench/Makefile.am` should use include paths and `LDADD` consistent
-  with `zhttp/example/Makefile.am`, adding no new third-party dependency for
-  the initial implementation. OpenSSL is already present through `ztls`/QUIC;
-  the harness can call the `openssl` executable for certificate generation.
+  harness prefer build-tree `zhttp/example/zhttp` and `zhttp/example/zhttpd`.
+- `zhttp/bench/Makefile.am` should copy the include and link pattern from
+  `zhttp/example/Makefile.am`, with `noinst_PROGRAMS = zhttpbench`.
+- Add no new linked third-party dependency for the harness. Call the `openssl`
+  executable for certificate generation.
 
 ### Processes and Threads
 
 - The harness process orchestrates the run; it does not create benchmark worker
-  threads in the initial version.
+  threads.
 - Each server is launched as a foreground child in a new process group so the
   full server tree can be terminated.
 - Each client workload is launched as a foreground child process. The measured
   client CPU cgroup includes all client processes for that row.
-- For cgroup placement, the child should pause after fork until the parent has
-  written the child PID to the correct `cgroup.procs`, then the child `exec`s.
-  This avoids charging process startup to the parent and avoids races where the
-  child performs meaningful work before cgroup assignment.
+- For cgroup placement, a child pauses after `fork` until the parent writes the
+  child PID to the target `cgroup.procs`; then the child `exec`s. This avoids
+  charging meaningful child work to the parent and avoids cgroup assignment
+  races.
+- `zhttp` client concurrency remains internal to `zhttp`; the harness still
+  sees one client process per row.
 
 ### Interfaces
 
@@ -111,7 +120,7 @@ Core options:
 | `--file-size N` | `1048576` | Generated response body size in bytes. |
 | `--seed N` | `1` | Deterministic PRNG seed. |
 | `--work-dir PATH` | `zhttp/bench/run` | Owned directory for data, configs, certs, logs, tmp, and results. |
-| `--file-name NAME` | `bench.dat` | Relative URL and filesystem leaf name. Reject names with `/`, `..`, or empty components. |
+| `--file-name NAME` | `bench.dat` | Relative URL and filesystem leaf name. Reject names with `/`, `\`, `.`, `..`, or empty components. |
 | `--out PATH` | `<work-dir>/results.csv` | Append or create result CSV. |
 | `--protocol LIST` | `h1,h1tls,h3` | Comma-separated protocol filter. |
 | `--client LIST` | `curl,zhttp` | Comma-separated client filter. |
@@ -160,7 +169,7 @@ ClientAdapter:
   preflight(tool paths, protocol) -> available/skipped
   prepareWorkload(protocol, url, requests, concurrency, paths)
   command(protocol, workload, certPath) -> argv/env/cwd
-  parseCompletion(logs/write-out) -> completed/failed/bytes/protocol
+  parseCompletion(logs/stats) -> completed/failed/bytes/protocol
 ```
 
 Adapters return structured status. Only `ResultWriter` writes CSV.
@@ -169,7 +178,7 @@ Adapters return structured status. Only `ResultWriter` writes CSV.
 
 1. Parse options with `ZtCLI`.
 2. Resolve tool paths and dynamic capabilities.
-3. Create/verify the benchmark series directory:
+3. Create or verify the benchmark series directory:
 
 ```text
 run/
@@ -183,7 +192,7 @@ run/
     <run-id>.Caddyfile
   workload/
     <run-id>.curl
-    <run-id>.zhttp
+    <run-id>.zhttp.stats
   logs/
     <run-id>.server.log
     <run-id>.client.log
@@ -201,9 +210,9 @@ run/
 
 ### Event and Timer Processing
 
-- Use monotonic time for readiness polling, timeouts, and measured elapsed time.
-- Readiness probes should retry with short sleeps until success or
-  `--startup-timeout`.
+- Use monotonic time for readiness polling, timeouts, and measured elapsed
+  time.
+- Readiness probes retry with short sleeps until success or `--startup-timeout`.
 - Per-run timeout kills the client process group first, then the server group,
   and records a failed row.
 - Optional warmup is excluded from measured request counters and CPU deltas.
@@ -212,7 +221,7 @@ run/
 
 - Port allocation must consider both TCP and UDP for `h3`; use the same port
   number for HTTPS TCP and QUIC UDP when testing Caddy or `zhttpd`.
-- Binding/probing remains loopback-only.
+- Binding and probing remain loopback-only.
 - Do not add cache-busting query strings. The benchmark intentionally measures
   repeated static-file serving of a hot object unless a future storage-focused
   mode is added.
@@ -235,12 +244,13 @@ run/
 
 Create the harness as a buildable C++ program that can enumerate the matrix,
 preflight obvious capabilities, and emit valid CSV rows for skipped entries
-without launching servers or clients yet.
+without launching servers or clients.
 
 Files:
 
 - Add `zhttp/bench/Makefile.am`.
 - Add `zhttp/bench/zhttpbench.cc`.
+- Add `zhttp/bench/README.md`.
 - Update `zhttp/Makefile.am`.
 - Update `configure.ac`.
 
@@ -249,66 +259,78 @@ Implementation details:
 - Define `Options`, `ProtocolSpec`, `ToolSpec`, `Combination`, `RunID`,
   `Paths`, `Result`, `ResultWriter`, and small enum tables for protocols,
   clients, servers, and statuses.
-- Use `ZtCLI` for command-line parsing, matching the existing pattern in
+- Use `ZtCLI` for command-line parsing, matching the pattern in
   `zhttp/example/zhttp.cc` and `zhttp/example/Zhttpd.hh`.
-- Implement comma-list parsing for protocol/client/server filters with
-  `ZuMatcher` or simple Z string scanning; reject unknown IDs up front.
-- Implement `Result` as a `ZtStruct` mapped for CSV and write with
-  `ZiCSV::writeFile` or a small append writer using `ZtCSV` quoting. Prefer
-  `ZiCSV` because local tests already exercise file-backed CSV read/write.
-- Add header management: when the output file does not exist or is empty, write
-  the schema header; otherwise append rows. Do not duplicate headers.
+- Implement comma-list parsing for protocol/client/server filters; reject
+  unknown IDs up front.
+- Implement `Result` as a `ZtStruct` mapped for CSV.
+- Implement `ResultWriter` with `ZtCSV::Writer<Result>` and `ZiFile`:
+  inspect whether the output file exists and has non-zero size, write the
+  header only for a new/empty file, then append rows.
 - Implement static capability skips:
   - `darkhttpd` supports only `h1`.
-  - `caddy` supports `h1`, `h1tls`, and potentially `h3`.
+  - `caddy` supports `h1`, `h1tls`, and expected `h3`.
   - `zhttpd` supports `h1`, `h1tls`, and `h3`.
   - `curl` supports `h1`, `h1tls`, and dynamically detected `h3`.
-  - `zhttp` rows are initially skipped until native benchmark mode is added.
+  - `zhttp` rows are initially skipped unless `zhttp --help` advertises
+    `--discard` and `--stats`.
 - Implement tool path resolution for `PATH` and build-tree defaults. Missing
   executables produce skipped rows for dependent combinations.
-- Implement `--print-commands` as a no-op until command adapters exist, but
-  keep the option parsed for CLI stability.
+- Implement `--print-commands` as a parsed no-op until command adapters exist.
 
 Validation:
 
-- `./z.config -c /opt/z` or the repository's configured autoreconf path after
-  adding the Makefile.
-- `make -C zhttp/bench zhttpbench`.
-- Run `zhttpbench --protocol h3 --server darkhttpd --client curl --requests 1`
-  and verify one skipped CSV row with stable columns.
+- Run the repository configure/autoreconf path after adding the Makefile.
+- Build with `make -C zhttp/bench zhttpbench`.
+- Run:
+
+```sh
+zhttpbench --protocol h3 --server darkhttpd --client curl --requests 1
+```
+
+- Verify one skipped CSV row with stable columns and no duplicate header after
+  a second append.
 
 ### Phase 2: Work Directory, File Generation, Checksum, Certificate, and Cgroup Preflight
 
-Add the shared benchmark-series state needed before any real run executes.
-This phase still does not need a successful HTTP benchmark row.
+Add the shared benchmark-series state needed before real runs execute. This
+phase still does not need a successful HTTP benchmark row.
 
 Implementation details:
 
 - Create `Paths` helpers for `www`, `tls`, `caddy`, `workload`, `logs`, and
-  `tmp` using `ZiFile::append`, `ZiFile::mkdir`, and existence checks.
+  `tmp` using `ZiFile`/`ZiDir` facilities and direct POSIX APIs where local
+  wrappers do not cover the operation.
 - Validate `--file-name` as a relative leaf name. Reject empty names, `/`,
-  backslash on Windows for defensive clarity, `.` and `..`.
+  backslash, `.`, and `..`.
 - Implement deterministic file generation:
-  - Use a small fixed PRNG such as xorshift64* or splitmix64 seeded from
-    `--seed`.
-  - Write with `ZiFile` in chunks; avoid fixed large stack arrays. A
-    `ZtScratch<uint8_t, 64<<10>` or similar scratch buffer is appropriate.
-  - Update `Ztls::MD<Ztls::SHA256>` while streaming bytes.
+  - Use a small fixed PRNG such as splitmix64 seeded from `--seed`.
+  - Write with `ZiFile` in chunks; avoid fixed large stack arrays.
+  - Use `ZtLocalArray<uint8_t, 64<<10>` or comparable scratch storage.
+  - Update `Ztls::MD<>` while streaming bytes.
   - Store checksum as lowercase hex in sidecar metadata.
 - Implement file verification:
-  - Verify size with `ZiFile::size()` or stat.
+  - Verify size with `ZiFile`/`stat`.
   - Recompute SHA-256 and compare with metadata.
   - Fatal on mismatch unless `--regenerate-file` is supplied.
-- Implement certificate generation using `openssl req -x509 -newkey rsa:2048`
-  with `-nodes`, one-day validity, CN `localhost`, SAN
-  `DNS:localhost,IP:127.0.0.1`, and output paths under `tls/`.
-  If certificate generation fails, skip TLS/H3 rows that require the cert with
-  `skip_reason=certificate generation failed` rather than failing cleartext H1.
+- Generate a local CA-style self-signed certificate using the command pattern
+  already documented in `zhttp/README.md`:
+
+```text
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj /CN=localhost \
+  -addext basicConstraints=critical,CA:TRUE \
+  -addext keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign \
+  -addext subjectAltName=DNS:localhost,IP:127.0.0.1 \
+  -keyout <key.pem> -out <cert.pem>
+```
+
+- If certificate generation fails, skip TLS/H3 rows that require the cert with
+  `skip_reason=certificate generation failed`; cleartext H1 rows still run.
 - Implement cgroup v2 preflight:
   - Locate the cgroup v2 mount by parsing `/proc/self/mountinfo`.
-  - Determine the current writable cgroup path from `/proc/self/cgroup`.
-  - Create a benchmark parent cgroup and `client`/`server` probe child
-    cgroups.
+  - Determine the current cgroup path from `/proc/self/cgroup`.
+  - Create a benchmark parent cgroup and `client`/`server` probe cgroups.
   - Fork a short-lived child, move it by writing PID to `cgroup.procs`, wait,
     and read `cpu.stat`.
   - Verify `usage_usec`, `user_usec`, and `system_usec`.
@@ -321,8 +343,7 @@ Validation:
 
 - Run with only unsupported rows and verify the generated file, metadata, cert,
   and skipped CSV remain coherent.
-- Add a small unit-like self-test mode only if useful; otherwise cover through
-  direct harness runs.
+- Verify cgroup preflight failure is reported before any server/client launch.
 
 ### Phase 3: Process Control, Cgroup Accounting, and First Real Row (`h1` + `darkhttpd` + `curl`)
 
@@ -332,10 +353,9 @@ participants: cleartext HTTP/1.1, darkhttpd, and curl.
 Implementation details:
 
 - Add a `Process` helper:
-  - Build argv as `ZtArray<ZtString<>>` and convert to `char *const *` only at
+  - Build argv as Z arrays/strings and convert to `char *const *` only at the
     fork/exec boundary.
-  - Create pipes for child stdout/stderr redirection to log files or open log
-    files directly before exec.
+  - Redirect stdout/stderr to log files opened before `exec`.
   - Call `setpgid(0, 0)` in the child.
   - Use a parent/child pipe handshake so the parent can place the child in the
     selected cgroup before exec.
@@ -356,11 +376,10 @@ Implementation details:
 darkhttpd <www-root> --addr 127.0.0.1 --port <port> --log <server-log>
 ```
 
-  Do not use daemon mode.
+- Do not use daemon mode.
 - Implement curl h1 adapter:
   - Generate a curl config file with the target URL repeated exactly
-    `--requests` times.
-  - Pair each URL with `output = "/dev/null"`.
+    `--requests` times and `output = "/dev/null"` paired with each URL.
   - Run one curl process:
 
 ```text
@@ -369,12 +388,16 @@ curl --http1.1 --fail --silent --show-error --parallel \
 ```
 
   - Capture stderr/stdout to the client log.
-  - Initially treat exit status `0` as all requests completed and non-zero as
-    failed; later phases can add write-out validation.
+  - Treat exit status `0` as all requests completed and non-zero as failed.
 - Implement readiness probe for h1:
-  - Prefer curl if available: one `curl --http1.1 --fail --silent --output
-    /dev/null <url>`.
-  - Verify the downloaded byte count when using `--write-out %{size_download}`.
+  - Use curl when available:
+
+```text
+curl --http1.1 --fail --silent --output /dev/null \
+  --write-out %{size_download} <url>
+```
+
+  - Require downloaded byte count to equal the generated file size.
   - Probe before measured CPU snapshots, so readiness CPU is not counted.
 - Implement run lifecycle exactly:
   1. Create run ID and log paths.
@@ -390,8 +413,6 @@ curl --http1.1 --fail --silent --show-error --parallel \
 
 Validation:
 
-- Run one local benchmark:
-
 ```sh
 zhttpbench --protocol h1 --server darkhttpd --client curl \
   --requests 10 --concurrency 2 --work-dir /tmp/zhttpbench
@@ -400,10 +421,11 @@ zhttpbench --protocol h1 --server darkhttpd --client curl \
 - Verify `status=ok`, `requests_completed=10`, non-empty elapsed and CPU
   fields, and server/client logs are present.
 
-### Phase 4: zhttpd H1 and Shared Server/Client Correctness Checks
+### Phase 4: zhttpd H1, Shared Correctness Checks, and Failure Rows
 
 Extend the real-run slice to the in-tree `zhttpd` cleartext server before TLS
-or H3 complexity is introduced.
+or H3 complexity is introduced. Also harden failure recording while the setup
+is still simple.
 
 Implementation details:
 
@@ -415,29 +437,22 @@ zhttpd <www-root> --http --addr 127.0.0.1 --port <port> \
   --no-server-id --timeout 0 --log <server-log>
 ```
 
-  `--timeout 0` matches existing zhttpd CLI and removes idle-timeout noise.
-- Factor server readiness and termination so darkhttpd and zhttpd use the same
+- Factor server readiness and termination so darkhttpd and zhttpd share the
   lifecycle.
-- Improve curl result validation:
-  - Add `--write-out` per transfer only if it can be written cheaply to a file
-    without flooding stdout for large request counts.
-  - At minimum, verify curl exit status and total expected body bytes by using
-    a curl-supported aggregate strategy or by parsing generated per-transfer
-    write-out lines.
-  - If validation is too expensive for large runs, make it opt-in while still
-    validating readiness body size before measurement.
-- Ensure failed rows preserve `server_log`, `client_log`, `error`, elapsed time
-  if available, and partial CPU deltas if measurement started.
+- Preserve `server_log`, `client_log`, `error`, elapsed time if available, and
+  partial CPU deltas if measurement started.
+- Add explicit startup failure and timeout paths that still clean process
+  groups and cgroups.
 
 Validation:
 
 - Run h1 curl against `darkhttpd` and `zhttpd` with low request counts.
-- Kill a server manually or use a busy port to verify failed rows and cleanup.
+- Use a busy port or broken command path to verify failed rows and cleanup.
 
 ### Phase 5: Caddy H1/H1TLS and TLS Correctness
 
-Add Caddy for cleartext and TLS, then add TLS mode for zhttpd. This phase
-delivers most HTTP/1.1 rows except the native zhttp client.
+Add Caddy for cleartext and TLS, then add TLS mode for zhttpd. This delivers
+the curl HTTP/1.1 rows except unsupported `darkhttpd` TLS.
 
 Implementation details:
 
@@ -467,9 +482,7 @@ https://localhost:<port> {
 }
 ```
 
-- Do not include `encode off`; Caddy documentation describes `encode` as the
-  directive that enables compression. Omit the directive and keep generated data
-  incompressible.
+- Do not include `encode`.
 - Caddy command:
 
 ```text
@@ -492,15 +505,12 @@ curl --http1.1 --fail --silent --show-error --cacert <cert.pem> \
 ```
 
 - TLS/H3 URL host must be `localhost` so certificate verification succeeds.
-- If the generated certificate is a self-signed leaf rather than a CA, verify
-  curl accepts it through `--cacert`; if not, generate a local CA cert and sign
-  the server cert, then pass the CA cert to clients.
+- Do not use `curl -k` in measured or readiness rows.
 
 Validation:
 
 - Run `h1` and `h1tls` with `curl` against Caddy and zhttpd.
-- Verify certificate mismatch failures are not silently ignored; do not use
-  `curl -k` for measured rows.
+- Verify certificate mismatch failures are not silently ignored.
 
 ### Phase 6: HTTP/3 Rows for curl, Caddy, and zhttpd
 
@@ -513,8 +523,7 @@ Implementation details:
   - Run `curl --help all` or a cheap probe to confirm `--http3-only`,
     `--parallel`, and `--parallel-max` are accepted.
   - If `--http3-only` is unavailable but `--http3` is available, keep H3 rows
-    skipped unless write-out validation proves `%{http_version}` is `3` for
-    every transfer. Silent fallback must never count as H3.
+    skipped. Silent fallback must never count as H3.
 - Curl H3 command:
 
 ```text
@@ -534,71 +543,75 @@ zhttpd <www-root> --http3 --addr 127.0.0.1 --port <port> \
   - Use the same TLS Caddyfile shape as Phase 5.
   - Reserve both TCP and UDP for the port.
   - Probe with H3-capable curl using `--http3-only`; if probe fails, mark the
-    row failed because Caddy was considered capable after preflight.
-- Add protocol verification:
-  - For measured H3 rows, capture curl write-out protocol/version lines in a
-    compact file and require every completed transfer to report HTTP/3 when the
-    adapter supports that reporting.
-  - If this creates excessive output for large runs, sample validation during
-    warmup and document that measured validation is exit-status based.
+    row failed because Caddy was considered capable after executable preflight.
 
 Validation:
 
 - Run low-count `h3` rows for `curl+caddy` and `curl+zhttpd`.
 - Verify UDP/TCP port cleanup after failures.
 
-### Phase 7: Native Multi-Request Mode in `zhttp/example/zhttp.cc`
+### Phase 7: zhttp Client Benchmark Stats and Rows
 
-Add zhttp client benchmark capability and then enable `zhttp` client matrix
-rows. Do not use one process per request as a fallback.
+Enable `zhttp` client rows by enhancing the existing multi-request client with
+discard and stats support. Do not replace the existing `-n/-j` implementation
+and do not use one process per request.
 
 Implementation details:
 
 - Extend `Options` in `zhttp/example/zhttp.cc`:
-  - `--requests N`
-  - `--concurrency N`
   - `--discard`
-  - optionally `--pipeline-depth N` for HTTP/1.1 when supported
-  - optionally `--stats PATH` for machine-readable completed/failed/bytes data
-- Preserve the current one-shot URL behavior as the default. Benchmark mode is
-  activated when `--requests` or `--concurrency` is supplied.
-- Reuse existing URL parsing, TLS CA handling, H1/H3 request builders, response
-  parser, and body accounting in `zhttp/example/zhttp.cc`.
-- For HTTP/1.1:
-  - Maintain one or more persistent connections sufficient to honor
-    `--concurrency`.
-  - Reuse keep-alive connections.
-  - Avoid pipelining by default unless the implementation already handles
-    response ordering robustly; expose pipelining as explicit later tuning.
-- For HTTPS:
-  - Reuse TLS connections similarly to H1.
-- For HTTP/3:
-  - Prefer concurrent request streams on one QUIC connection where existing
-    `Zquic`/`Zhttp::H3` APIs support it.
-  - If stream concurrency is not currently supported by the example client,
-    mark H3 zhttp rows skipped with a precise reason rather than faking
-    concurrency through multiple processes.
-- `--discard` consumes response bodies without writing them to disk. It must
-  still count bytes and verify content length when available.
-- Emit exact `requests_completed`, `requests_failed`, and `bytes_received`.
-  Prefer a small CSV or key-value stats file over parsing human console output.
+  - `--stats PATH`
+- Preserve current one-shot behavior and current `-n/--requests` plus
+  `-j/--jobs` behavior.
+- In `ResponseSink::body`, count `bodyBytes` regardless of `--discard`; skip
+  opening/writing `bodyFile` when discard is enabled.
+- At process exit, emit exact machine-readable stats when `--stats` is set:
+  - `requests`
+  - `requests_completed`
+  - `requests_failed`
+  - `bytes_received`
+  - `protocol` or requested mode (`h1`/`h3`)
+  - optionally per-request status counts if cheap to expose
+- Prefer a small CSV or key-value stats file over parsing human logs.
 - Add harness detection:
-  - Run `zhttp --help` and require benchmark options before enabling zhttp
-    rows.
+  - Run `zhttp --help` and require `--requests`, `--jobs`, `--discard`, and
+    `--stats` before enabling zhttp rows.
   - Parse the stats file after completion.
+- zhttp h1 command:
+
+```text
+zhttp -n <requests> -j <concurrency> --discard --stats <stats-path> \
+  -o <tmp-output-base> http://127.0.0.1:<port>/<file-name>
+```
+
+- zhttp h1tls command:
+
+```text
+zhttp -c <cert.pem> -n <requests> -j <concurrency> \
+  --discard --stats <stats-path> -o <tmp-output-base> \
+  https://localhost:<port>/<file-name>
+```
+
+- zhttp h3 command:
+
+```text
+zhttp --http3 -c <cert.pem> -n <requests> -j <concurrency> \
+  --discard --stats <stats-path> -o <tmp-output-base> \
+  https://localhost:<port>/<file-name>
+```
 
 Validation:
 
-- Add focused tests or low-count example runs for:
-  - one request H1 to zhttpd;
-  - many requests with concurrency > 1;
+- Extend `zhttp/test/ZhttpMultiRequestTest.cc` to cover:
   - `--discard` does not create response files;
-  - failure counts when the server exits mid-run.
+  - `--stats` reports exact completed/failed/bytes;
+  - `-n 4 -j 2 --discard --stats` works against zhttpd;
+  - H3 multi-request stats work when local QUIC support is available.
 - Run matrix rows for `zhttp` client only after stats are reliable.
 
 ### Phase 8: Reporting, Polish, and Documentation
 
-Finalize the human-facing output and runtime documentation after the core rows
+Finalize human-facing output and runtime documentation after the core rows
 work.
 
 Implementation details:
@@ -623,8 +636,13 @@ h3       darkhttpd curl   skipped server darkhttpd does not support h3
 
 Validation:
 
-- Run a reduced full matrix with `--requests 5 --concurrency 2` and inspect CSV
-  plus summary.
+- Run a reduced full matrix:
+
+```sh
+zhttpbench --requests 5 --concurrency 2
+```
+
+- Inspect CSV plus summary.
 - Run build/test targets for touched modules.
 
 ## Code References to Impacted Code
@@ -633,18 +651,34 @@ Validation:
 - `zhttp/Makefile.am:2` - add `bench` to `SUBDIRS` after `example`.
 - `zhttp/example/Makefile.am:1` - copy include/link patterns for
   `zhttp/bench/Makefile.am`.
-- `zhttp/example/zhttp.cc:21` - extend `Options` and CLI mapping for native
-  benchmark mode in Phase 7.
-- `zhttp/example/zhttp.cc:883` - route `main()` into one-shot or benchmark mode.
-- `zhttp/example/zhttpd.cc:33` - existing server CLI confirms `--http`,
-  `--https`, `--http3`, `--cert`, `--key`, `--timeout`, and `--no-server-id`.
+- `zhttp/example/zhttp.cc:29` - existing `Options` already include
+  `-n/--requests` and `-j/--jobs`; add `--discard` and `--stats`.
+- `zhttp/example/zhttp.cc:77` - `outputPath()` currently creates per-request
+  body paths for `requests > 1`; discard mode should bypass body file creation.
+- `zhttp/example/zhttp.cc:577` - `ResponseSink::body()` currently opens and
+  writes body files; modify it to count bytes while discarding output.
+- `zhttp/example/zhttp.cc:1422` - `runH1Pool()` already implements multi-request
+  H1/H1TLS client mode.
+- `zhttp/example/zhttp.cc:1471` - `runH3Multi()` already implements multi-stream
+  H3 client mode.
+- `zhttp/example/zhttp.cc:1712` - `main()` dispatches one-shot, H1 pool,
+  H1TLS pool, and H3 multi modes; add final stats emission here.
 - `zhttp/example/Zhttpd.hh:68` - existing `Zhttpd::Options` and `ZtCLI` mapping
-  confirm server option names and types.
-- `zhttp/src/Zhttp.hh:14` - shared H1/H3 parser and builder API used by the
-  example client/server.
+  confirm `--http`, `--https`, `--http3`, `--cert`, `--key`, `--timeout`,
+  `--log`, and `--no-server-id`.
+- `zhttp/README.md:54` - local certificate command already uses SAN and
+  CA-style self-signed options suitable for curl `--cacert`.
+- `zhttp/test/ZhttpMultiRequestTest.cc:51` - existing multi-request CLI tests
+  should be extended for `--discard` and `--stats`.
+- `zhttp/test/ZhttpAppTest.cc:55` - existing zhttp/zhttpd transport integration
+  patterns for H1, TLS, and H3.
+- `zhttp/test/ZhttpDarkhttpdCompatTest.cc:59` - existing darkhttpd/curl
+  availability and compatibility pattern.
 - `zt/src/ZtCLI.hh:40` - CLI parsing framework to use for `zhttpbench`.
-- `zt/src/ZtCSV.hh:14` - CSV formatting and quoting support for result rows.
-- `zi/test/ZiCSVTest.cc:75` - local file-backed CSV write/read examples.
+- `zt/src/ZtCSV.hh:12` - CSV formatting and quoting support for result rows.
+- `zi/src/ZiCSV.hh:43` - `PushFile` appends but writes a header on construction;
+  avoid it for benchmark append semantics.
+- `zi/test/ZiCSVTest.cc:75` - local file-backed CSV read/write examples.
 - `ztls/src/ZtlsMD.hh:27` - SHA-256 digest wrapper for file checksum.
 - `zi/src/ZiFile.hh` and `zi/src/ZiFile.cc` - file/path helpers for work
   directory, generated data, logs, metadata, and cleanup.
@@ -654,7 +688,7 @@ Validation:
 ## Detailed Test Plan
 
 - Build tests:
-  - Re-run autoreconf/configure path after adding `zhttp/bench/Makefile.am`.
+  - Re-run autoreconf/configure after adding `zhttp/bench/Makefile.am`.
   - `make -C zhttp/bench zhttpbench`.
   - `make -C zhttp/example zhttp zhttpd` after modifying `zhttp` client.
 - Parser/config tests:
@@ -663,7 +697,7 @@ Validation:
   - Missing external tools produce skipped rows, not crashes.
   - CSV header appears once when appending.
 - Generated file tests:
-  - Same seed and size produce same SHA-256.
+  - Same seed and size produce the same SHA-256.
   - Existing file with matching metadata is reused.
   - Existing file with mismatched size/checksum fails unless
     `--regenerate-file` is passed.
@@ -685,12 +719,13 @@ Validation:
   - curl without HTTP/3 skips H3 curl rows.
   - curl H3 rows using `--http3-only` fail rather than silently falling back.
 - zhttp client tests:
-  - One-shot behavior remains compatible.
-  - `--requests 1 --concurrency 1 --discard` works for H1.
-  - `--requests N --concurrency M --discard --stats PATH` reports exact
+  - Existing one-shot behavior remains compatible.
+  - Existing `-n/-j` behavior remains compatible.
+  - `--requests 1 --discard --stats PATH` works for H1.
+  - `--requests N --jobs M --discard --stats PATH` reports exact
     completed/failed/bytes.
-  - If H3 stream concurrency is incomplete, H3 zhttp rows remain skipped with a
-    precise reason.
+  - `--discard` does not create response body files.
+  - H3 zhttp stats work with `--http3` when local QUIC support is available.
 - Result format tests:
   - `ok`, `skipped`, and `failed` rows have identical column counts.
   - Raw fields are sufficient to recompute req/s, MiB/s, CPU usec/request, and
@@ -708,15 +743,14 @@ Validation:
 - Supported combinations launch one server process tree and one long-lived
   client process per measured row.
 - The curl adapter uses native parallel transfers, not one process per request.
-- H3 curl rows use `--http3-only` unless strict protocol verification is added
-  for `--http3`.
+- H3 curl rows use `--http3-only`.
 - CPU accounting comes from cgroup v2 `cpu.stat` deltas for separate client and
   server cgroups.
 - Server and client logs are preserved and referenced from CSV rows.
 - Failures clean up child process groups and cgroups before proceeding when
   `--keep-going` is enabled.
-- `zhttp` client rows remain skipped until native multi-request mode exists;
-  once implemented, rows use the native mode and parse exact stats.
+- `zhttp` client rows use existing native `-n/-j` multi-request mode plus new
+  `--discard` and `--stats`; no one-process-per-request fallback is used.
 
 ## Non-goals
 
@@ -733,47 +767,35 @@ Validation:
 
 ## Options and Open Questions
 
-- **Curl measured validation volume:** Per-transfer `--write-out` gives strong
-  status/byte/protocol checks but can create large logs for high request
-  counts. Default to readiness validation plus curl exit status for the first
-  measured slice; add compact write-out validation where it does not distort
-  the workload.
-  - ANSWER: no write-out validation
-- **Caddy H3 capability detection:** Caddy version/build support can vary. The
-  pragmatic approach is to preflight executable presence and then treat H3
-  startup/probe failure as `failed`, not `skipped`, because Caddy is expected to
-  support H3 in current builds.
-  - ANSWER: agreed
-- **Self-signed certificate trust model:** If `curl --cacert cert.pem` rejects a
-  self-signed leaf certificate on tested curl/OpenSSL combinations, switch to
-  generating a local CA cert and signing a localhost server cert. This is an
-  implementation detail, not a product ambiguity.
-  - ANSWER: agreed
-- **zhttp H3 concurrency:** Existing `zhttp/example/zhttp.cc` is a one-shot
-  client. If the current H3 client/session API cannot issue concurrent streams
-  over one QUIC connection without invasive refactoring, keep zhttp H3 rows
-  skipped and implement H1/H1TLS native multi-request first.
-  - ANSWER: `zhttp` has been upgraded with `-n` and `-j`
-- **Installed tool variance:** External tool behavior differs by build. The
-  harness must report skipped/failed rows precisely instead of normalizing away
-  those differences.
-  - ANSWER: agreed
-- **Result append semantics:** Appending to an existing CSV is convenient, but
-  mixed option sets can coexist in one file. Include all option values needed to
-  interpret each row, and rely on `schema` for future column changes.
-  - ANSWER: agreed
+There are no unresolved open questions for the initial implementation plan.
+Resolved decisions:
+
+- Curl measured validation: no per-transfer write-out validation in measured
+  runs; use readiness body-size validation and curl exit status.
+- Caddy H3 capability: if Caddy is present, treat H3 startup/probe failure as
+  `failed`, not `skipped`.
+- Certificate trust: generate a CA-style self-signed localhost certificate as
+  already documented locally and pass it via curl/zhttp CA options.
+- zhttp client: use existing `-n/--requests` and `-j/--jobs`; add only
+  `--discard` and `--stats` before enabling rows.
+- Installed tool variance: report precise skipped/failed rows instead of hiding
+  tool differences.
+- Result append semantics: include option values needed to interpret each row
+  and write the CSV header only once.
 
 ## Research References
 
-- curl man page: `--parallel`, `--parallel-max`, `--config`, and
-  `--http3-only` behavior: https://curl.se/docs/manpage.html
+- curl man page for `--parallel`, `--parallel-max`, `--config`, and
+  `--http3-only`: https://curl.se/docs/manpage.html
 - Linux cgroup v2 CPU accounting and `cpu.stat` fields:
   https://docs.kernel.org/admin-guide/cgroup-v2.html
+- Caddy global HTTP/3/QUIC behavior:
+  https://caddyserver.com/docs/caddyfile/options
 - Caddy `file_server` directive:
   https://caddyserver.com/docs/caddyfile/directives/file_server
-- Caddy `encode` directive enables compression:
+- Caddy `encode` directive:
   https://caddyserver.com/docs/caddyfile/directives/encode
-- Caddy TLS directive:
+- Caddy `tls` directive:
   https://caddyserver.com/docs/caddyfile/directives/tls
 - darkhttpd command-line behavior and HTTP-only scope:
   https://github.com/emikulic/darkhttpd

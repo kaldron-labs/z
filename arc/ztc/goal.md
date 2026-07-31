@@ -1,0 +1,28 @@
+# Implement `Ztc` telemetry server in `zv` layer
+- IMPORTANT: `zcmd` is legacy code
+- migrate `zcmd/src/Ztel.hh` to `zv/src/ZtcFB.hh`
+  - this enriches lower-level `Ztc` declarations with `ZfbStruct` metadata
+    - lower-level structures should be enriched with `rag` member functions as needed
+      - `Ztc::RAG` enum should be declared in `ZtcRAG.hh` in `zm/src` so `Ztc::HeapTelemetry` can implement `Rag::T rag`, (it should also implement `uint64_t allocated` etc.):
+        - `namespace RAG { using T = int8_t; enum { Off = 0, Red, Amber, Green }; };`
+        - this is then enriched in `zv/src/ZtcFB.hh` with `ZtEnumNames` and/or `ZfbEnumMatch` etc.
+    - `ZfbStruct` metadata must live in the `zv` layer, above `zfb`
+  - covers `Ztc*` in lower-level zm, zi, etc.
+  - example pattern for `ZfbStruct` metadata: `zdb/src/ZdbTelemetry.hh`
+- migrate `zcmd/src/fbs` to `zv/src/fbs`
+- migrate `zdb/src/ZdbTelemetry.hh` to `zv/src/ZtcDB.{hh,cc}`, `zv/src/Ztc{DBTable,DBHost}.hh`
+  - `ZtcDB*` should follow the pattern established by `ZtcHub`/`ZtcLink`/`ZtcPool`
+    - i.e. top level mgr tracks `DB` instances using pointer-indexed tree
+    - dependent implementers derive from `Ztc` classes, implementing virtual functions
+      - DB registers itself in `init`, de-registers in destructor
+      - re-platform `Zdb` on `Ztc`
+    - root "manager" class provides `static unsigned allDBs`
+    - DB class provides `virtual unsigned allHosts(...) const` and `virtual unsigned allTables(...) const`
+- migrate `ZtelServer` to `zv/src/ZtcApp`
+  - `App` and `Server` are unified as `App`
+  - `Ztc::App` has its own multiplexer and threads, configurable in the usual way: timer, rx, tx, worker
+    - `Ztc::AppCf` configures it, follow the pattern of `Zdb` `DBCf`
+    - configuration will include the usual multiplexer config, listen port, etc.
+  - `App` provides a `ZiLog` sink that can be used to sink all alerts for persisting/sending
+  - all telemetry sending, query processing, subscription management, etc. is performed by `Ztc::App` worker thread
+- implement test telemetry-serving app and client in `zv/test`

@@ -26,7 +26,7 @@ HTTP/3 QPACK support:
 - while on-the-wire data will remain in `ZiIOBuf`, temporary uncompressed data should be
   predominantly on-stack; see `ZuBase64Test.cc` `enc()` for an example of encoding to
   a temporary on-stack buffer
-- since `Zhttp` is above `Zt`, use `ZtLocalArray` for on-stack arrays to stage
+- since `Zhttp` is above `Zt`, use `ZtScratch` for on-stack arrays to stage
   temporary uncompressed data (either decoded from network buffers, or being encoded
   to network buffers);
 -  the goal is to reduce heap memory allocation to a minimum, and potentially eliminate
@@ -39,7 +39,7 @@ HTTP/3 QPACK parse pseudocode:
 // parse QPACK, obtain QPACK static table id
 if (/* QPACK literal */) {
   // process literal
-  // use ZtLocalArray to decode to stack-allocated strings, then call app with that
+  // use ZtScratch to decode to stack-allocated strings, then call app with that
   // as with HTTP/1.1
 } else /* QPACK static table ID */ {
   ZuSwitch::dispatch<...>(id, [...](auto ID) {
@@ -49,7 +49,7 @@ if (/* QPACK literal */) {
     }
     using Key = ZuType<I, QPackID2Key>;
     if constexpr (!ZuIsSame<Key, void>{}) {
-      // use ZtLocalArray to decode to stack-allocated string, then call app with that
+      // use ZtScratch to decode to stack-allocated string, then call app with that
     }
   }
 }

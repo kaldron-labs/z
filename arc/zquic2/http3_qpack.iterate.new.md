@@ -184,7 +184,7 @@ Tests:
 
 Current state:
 
-- Field-section decode reuses `ZtLocalArray` scratch outside the loop.
+- Field-section decode reuses `ZtScratch` scratch outside the loop.
 - Builder uses local scratch for prefix and encoder instructions.
 - Instruction decode owns Huffman storage in the returned instruction object.
 
