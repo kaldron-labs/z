@@ -165,17 +165,9 @@ void queue_telemetry(
   Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
 {
   auto linkKey = link.telKey();
-  Ztc::Queue *rxQueue = nullptr;
-  Ztc::Queue *txQueue = nullptr;
   unsigned count = 0;
-  unsigned allQueues = link.allQueues([&](Ztc::Queue *queue) {
-    if (!count)
-      rxQueue = queue;
-    else {
-      txQueue = queue;
-      ZTLS_CHECK_RT(txQueue != rxQueue,
-	"allQueues did not publish distinct queues");
-    }
+  unsigned allQueues = link.allQueues(
+      [&linkKey, &rx, &tx, &count](Ztc::Queue *queue) {
     auto key = queue->telKey();
     ZTLS_CHECK_RT(key.template p<0>() == linkKey.template p<0>(),
       "telemetry queue owner ID mismatch");
@@ -213,9 +205,11 @@ void queue_telemetry(
   ZTLS_CHECK_RT(count == allQueues,
     "allQueues did not enumerate returned count");
   unsigned repeat = 0;
-  link.allQueues([&](Ztc::Queue *queue) {
-    ZTLS_CHECK_RT(queue == (repeat++ ? txQueue : rxQueue),
-      "allQueues queue pointer is not stable");
+  link.allQueues([&repeat](Ztc::Queue *queue) {
+    auto key = queue->telKey();
+    ZTLS_CHECK_RT(key.template p<2>() ==
+	(repeat++ ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
+      "allQueues queue order is not stable");
   });
   ZTLS_CHECK_RT(rx.ownerID == linkKey.template p<0>() &&
       tx.ownerID == linkKey.template p<0>(),
@@ -539,12 +533,13 @@ void run_in_process(
   ZTLS_CHECK_RT(state.port, "failed to reserve loopback port");
   if (!state.port) return;
 
+  BaseServer<TestState> server(state, state.ip);
+  BaseClient<TestState> client(state);
   ZiMultiplex mx(mx_params());
   bool mxStarted = mx.start();
   ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
 
-  BaseServer<TestState> server(state, state.ip);
   bool serverOK = server.init(
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data())
@@ -552,7 +547,6 @@ void run_in_process(
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
 
-  BaseClient<TestState> client(state);
   bool clientOK = client.init(
     Ztls::ClientParams(&mx, "3", "4").caPath(temp.certPath.data()));
   ZTLS_CHECK_RT(clientOK, "TLS client init failed");
@@ -576,6 +570,7 @@ void run_in_process(
   bool done = wait_done(state);
   ZTLS_CHECK_RT(done, "TLS disconnect wait timed out");
 
+  link = nullptr;
   client.final();
   server.final();
   mx.stop();
@@ -775,12 +770,12 @@ void run_tls12_handshake_rejected(
   ZTLS_CHECK_RT(state.port, "failed to reserve loopback port");
   if (!state.port) return;
 
+  BaseServer<TestState> server(state, state.ip);
   ZiMultiplex mx(mx_params());
   bool mxStarted = mx.start();
   ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
 
-  BaseServer<TestState> server(state, state.ip);
   bool serverOK = server.init(
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data())

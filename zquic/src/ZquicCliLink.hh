@@ -72,7 +72,7 @@ public:
   }
 
 protected:
-  void telUp_() { connect(); }
+  void up_() { connect(); }
 
 public:
 

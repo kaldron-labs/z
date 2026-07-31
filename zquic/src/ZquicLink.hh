@@ -166,7 +166,7 @@ public:
     fn(&txQueue);
     return 2;
   }
-  void up() override { impl()->telUp_(); }
+  void up() override { impl()->up_(); }
   void down() override { (void)impl()->disconnect(); }
 
   bool isServer() const { return m_isServer; }
@@ -468,7 +468,7 @@ public:
   void newToken_(ZuBSpan) { }
 
 protected:
-  void telUp_() { }
+  void up_() { }
 
   void closeState_(uint64_t errorCode = 0, bool application = false) {
     m_appClose.error = errorCode;

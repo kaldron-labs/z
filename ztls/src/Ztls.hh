@@ -61,6 +61,10 @@ using BufAlloc =
 
 namespace Ztls {
 
+namespace LinkState {
+  using namespace Ztc::LinkState;
+}
+
 struct Connected {
   ZuCSpan	alpn;
   int		version = 0;
@@ -306,8 +310,7 @@ public:
     app->linkAdded_(this);
   }
   ~Link() {
-    app()->linkDeleted_(
-      this, Ztc::LinkState::T(m_telState.load_()));
+    app()->linkDeleted_(this, state_());
     if (m_tls) {
       if (ZuUnlikely(asyncPending_()))
 	app()->error_(ZeEXCEPT(Error, "Ztls",
@@ -338,7 +341,7 @@ public:
       data.txBytes = cxn->txBytes();
     }
     data.type = Ztc::LinkType::TLS;
-    data.state = Ztc::LinkState::T(m_telState.load_());
+    data.state = state_();
   }
   unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
     TelQueue rxQueue{this, Ztc::QueueType::Rx};
@@ -347,7 +350,7 @@ public:
     fn(&txQueue);
     return 2;
   }
-  void up() override { impl()->telUp_(); }
+  void up() override { impl()->up_(); }
   void down() override { disconnect(); }
   TlsInfo tlsInfo() const {
     if (!m_tls || !m_handshook) return {};
@@ -395,8 +398,9 @@ private:
       auto cxn_ = ZuMvPtr(m_cxn);
       cxn_->close();
     }
+    auto oldState = state_();
     m_cxn = ZuMv(cxn);
-    telState_(Ztc::LinkState::Connecting);
+    stateChanged_(oldState);
     impl()->connected_(); // client initiates handshake
   }
 
@@ -505,8 +509,9 @@ private:
     }
     m_txSeqEst = 0;
     m_txControlPending = false;
+    auto oldState = state_();
     m_handshook = true;
-    telState_(Ztc::LinkState::Up);
+    stateChanged_(oldState);
     const char *alpn = ptls_get_negotiated_protocol(m_tls);
     impl()->connected(Connected{
       .alpn = alpn ? ZuCSpan{alpn, unsigned(strlen(alpn))} : ZuCSpan{},
@@ -684,7 +689,9 @@ private:
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnected dispatch outside Rx thread", return false);
     if (m_cxn == cxn) {
+      auto oldState = state_();
       m_cxn = nullptr;
+      stateChanged_(oldState);
       return true;
     }
     return !m_cxn && m_disconnecting.load_();
@@ -1041,15 +1048,17 @@ private:
 
 public:
   void disconnect() { // App thread(s)
+    auto oldState = state_();
     m_disconnecting = 1;
-    telState_(Ztc::LinkState::Disconnecting);
+    stateChanged_(oldState);
     app()->rxInvoke([this]() { disconnect_(); });
   }
   void disconnect_(bool notify = true) { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnect outside Rx thread", return);
+    auto oldState = state_();
     m_disconnecting = 1; // disconnect() might be bypassed
-    telState_(Ztc::LinkState::Disconnecting);
+    stateChanged_(oldState);
     app()->mx()->del(&m_reconnTimer);
     bool asyncPending = asyncPending_();
     if (notify && !asyncPending) {
@@ -1076,7 +1085,7 @@ public:
   }
 
 protected:
-  void telUp_() { }
+  void up_() { }
 
   static int tlsver_(uint16_t v) {
     switch (v) {
@@ -1098,23 +1107,29 @@ protected:
       return;
     }
     *ptls_get_data_ptr(m_tls) = impl();
+    auto oldState = state_();
     m_headroom = 0;
     m_txSeqEst = 0;
     m_txControlPending = false;
     m_handshook = false;
     m_peerClosed = false;
     m_disconnecting = 0;
-    telState_(Ztc::LinkState::Down);
+    stateChanged_(oldState);
     reset_handshake_props_();
 
     m_rxStream.clean();
   }
 
 private:
-  void telState_(Ztc::LinkState::T state) {
-    auto oldState = Ztc::LinkState::T(m_telState.xch(int(state)));
-    if (oldState != state)
-      app()->linkState_(oldState, state);
+  LinkState::T state_() const {
+    if (m_disconnecting.load_()) return LinkState::Disconnecting;
+    if (!m_cxn) return LinkState::Down;
+    return m_handshook ? LinkState::Up : LinkState::Connecting;
+  }
+
+  void stateChanged_(LinkState::T oldState) {
+    auto newState = state_();
+    if (oldState != newState) app()->linkState_(oldState, newState);
   }
 
   void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
@@ -1152,7 +1167,6 @@ private:
   // shared
   ZmAtomic<uint64_t>	m_tlsGen = 0;
   ZmAtomic<unsigned>	m_disconnecting = 0;
-  ZmAtomic<int>		m_telState = Ztc::LinkState::Down;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -1341,7 +1355,7 @@ public:
   }
 
 protected:
-  void telUp_() { connect(); }
+  void up_() { connect(); }
 
 private:
   // Rx thread exclusive
@@ -1641,11 +1655,11 @@ private:
     m_links.add(link);
     Ztc::Hub::linkAdded_(link);
   }
-  void linkDeleted_(Ztc::Link *link, Ztc::LinkState::T state) {
+  void linkDeleted_(Ztc::Link *link, LinkState::T state) {
     if (m_links.del(link)) {
       switch (state) {
-	case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
-	case Ztc::LinkState::Up: Ztc::Hub::linkUpDec_(); break;
+	case LinkState::Down: Ztc::Hub::linkDownDec_(); break;
+	case LinkState::Up: Ztc::Hub::linkUpDec_(); break;
 	default: Ztc::Hub::linkTransientDec_(); break;
       }
       Ztc::Hub::linkDeleted_(link);
@@ -1654,15 +1668,15 @@ private:
 
 public:
   void linkState_(
-      Ztc::LinkState::T oldState, Ztc::LinkState::T newState) {
+      LinkState::T oldState, LinkState::T newState) {
     switch (oldState) {
-      case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
-      case Ztc::LinkState::Up: Ztc::Hub::linkUpDec_(); break;
+      case LinkState::Down: Ztc::Hub::linkDownDec_(); break;
+      case LinkState::Up: Ztc::Hub::linkUpDec_(); break;
       default: Ztc::Hub::linkTransientDec_(); break;
     }
     switch (newState) {
-      case Ztc::LinkState::Down: Ztc::Hub::linkDownInc_(); break;
-      case Ztc::LinkState::Up: Ztc::Hub::linkUpInc_(); break;
+      case LinkState::Down: Ztc::Hub::linkDownInc_(); break;
+      case LinkState::Up: Ztc::Hub::linkUpInc_(); break;
       default: Ztc::Hub::linkTransientInc_(); break;
     }
   }

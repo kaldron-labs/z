@@ -131,17 +131,9 @@ void queueTelemetry(
   Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
 {
   auto linkKey = link.telKey();
-  Ztc::Queue *rxQueue = nullptr;
-  Ztc::Queue *txQueue = nullptr;
   unsigned count = 0;
-  unsigned allQueues = link.allQueues([&](Ztc::Queue *queue) {
-    if (!count)
-      rxQueue = queue;
-    else {
-      txQueue = queue;
-      ZQUIC_CHECK_RT(txQueue != rxQueue,
-	"allQueues did not publish distinct queues");
-    }
+  unsigned allQueues = link.allQueues(
+      [&linkKey, &rx, &tx, &count](Ztc::Queue *queue) {
     auto key = queue->telKey();
     ZQUIC_CHECK_RT(key.template p<0>() == linkKey.template p<0>(),
       "telemetry queue owner ID mismatch");
@@ -181,9 +173,11 @@ void queueTelemetry(
   ZQUIC_CHECK_RT(count == allQueues,
     "allQueues did not enumerate returned count");
   unsigned repeat = 0;
-  link.allQueues([&](Ztc::Queue *queue) {
-    ZQUIC_CHECK_RT(queue == (repeat++ ? txQueue : rxQueue),
-      "allQueues queue pointer is not stable");
+  link.allQueues([&repeat](Ztc::Queue *queue) {
+    auto key = queue->telKey();
+    ZQUIC_CHECK_RT(key.template p<2>() ==
+	(repeat++ ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
+      "allQueues queue order is not stable");
   });
   ZQUIC_CHECK_RT(rx.ownerID == linkKey.template p<0>() &&
       tx.ownerID == linkKey.template p<0>(),
