@@ -22,7 +22,7 @@ TESTPROGS = \
 	ZmFnTest ZmRBTest ZmRandomTest \
 	ZmBitmapTest ZmSchedTest ZmTest ZmHashTest2 \
 	ZmLHTest ZmHashCleanup \
-	ZmTIDTest ZmAllocTest ZmDemangleTest \
+	ZmTIDTest ZmAllocTest ZmScratchTest ZmDemangleTest \
 	ZmPQueueTest ZmPQRxTest ZmPQTxTest \
 	ZmQueueTest ZmRWLockTest ZmRingFnTest \
 	ZmStackTest ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest
@@ -60,6 +60,7 @@ ZmRingTest2_SOURCES = ZmRingTest2.cc
 ZmRingFnTest_SOURCES = ZmRingFnTest.cc
 ZmTIDTest_SOURCES = ZmTIDTest.cc
 ZmAllocTest_SOURCES = ZmAllocTest.cc
+ZmScratchTest_SOURCES = ZmScratchTest.cc
 ZmAllocatorTest_SOURCES = ZmAllocatorTest.cc
 ZmDemangleTest_SOURCES = ZmDemangleTest.cc
 ZmRandomTest_SOURCES = ZmRandomTest.cc

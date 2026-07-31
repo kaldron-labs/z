@@ -72,7 +72,7 @@ struct Cxn {
     if (!control || !enc || !dec) return false;
 
     using Scratch = ZtArray<char, ZtArrayHeapID<"Zhttp.H3.Cxn">>;
-    auto payload = ZtLocalArray(Scratch, 64);
+    auto payload = ZtScratch(Scratch, 64);
     CountBytes count;
     if (putVar(count, 0x01) < 0 ||
 	putVar(count, params.qpackRxCapacity()) < 0 ||

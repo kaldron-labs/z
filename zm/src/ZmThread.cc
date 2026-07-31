@@ -167,7 +167,7 @@ public:
       thread->telemetry(*data);
     }
     guard.unlock();
-    fn(ZuSpan<const Ztc::ThreadTelemetry>{storage.ptr, length});
+    fn(ZuSpan<const Ztc::ThreadTelemetry>{storage.data, length});
     for (unsigned i = 0; i < length; ++i)
       storage[i].~ThreadTelemetry();
   }

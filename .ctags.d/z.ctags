@@ -34,6 +34,9 @@
 --_mtable-regex-C++=root/ZtEnum\s*\(//{tenter=ztenum_arg1}
 --_mtable-regex-C++=root/ZtEnumNS\s*\(//{tenter=ztenumns_arg1}
 --_mtable-regex-C++=root/ZtEnumStruct\s*\(//{tenter=ztenumns_arg1}
+--_mtable-regex-C++=root/ZtFlags\s*\(//{tenter=ztenum_arg1}
+--_mtable-regex-C++=root/ZtFlagsNS\s*\(//{tenter=ztenumns_arg1}
+--_mtable-regex-C++=root/ZtFlagsStruct\s*\(//{tenter=ztenumns_arg1}
 --_mtable-regex-C++=root/ZfbEnum\s*\(//{tenter=ztenum_arg2}
 --_mtable-regex-C++=root/ZfbEnumNS\s*\(//{tenter=zfbenumns_arg1}
 --_mtable-regex-C++=root/ZfbEnumStruct\s*\(//{tenter=zfbenumns_arg1}

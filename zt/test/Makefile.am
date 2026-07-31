@@ -13,7 +13,7 @@ LDADD = $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 noinst_PROGRAMS = \
 	ZtArrayTest ZtBitWindowTest ZtBitmapTest \
 	ZtDateTest ZtDateFixTest ZtDemangleTest ZtEnumTest \
-	ZtFmtTest ZtIconvTest ZtLocalBufferTest ZtPlatformTest \
+	ZtFmtTest ZtIconvTest ZtScratchTest ZtPlatformTest \
 	ZtQuoteTest ZtRegexTest ZtScanBoolTest \
 	ZtStringHash ZtStringTest ZtWindowTest
 .PHONY: test
@@ -28,7 +28,7 @@ ZtDemangleTest_SOURCES = ZtDemangleTest.cc
 ZtEnumTest_SOURCES = ZtEnumTest.cc
 ZtFmtTest_SOURCES = ZtFmtTest.cc
 ZtIconvTest_SOURCES = ZtIconvTest.cc
-ZtLocalBufferTest_SOURCES = ZtLocalBufferTest.cc
+ZtScratchTest_SOURCES = ZtScratchTest.cc
 ZtPlatformTest_SOURCES = ZtPlatformTest.cc
 ZtQuoteTest_SOURCES = ZtQuoteTest.cc
 ZtRegexTest_SOURCES = ZtRegexTest.cc

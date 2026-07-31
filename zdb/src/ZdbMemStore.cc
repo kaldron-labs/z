@@ -6,7 +6,7 @@
 
 // Zdb in-memory data store
 
-#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZdbMemStore.hh>
 
@@ -180,7 +180,7 @@ void StoreTbl::update(
 
     // remember original secondary index key values
     unsigned n = m_keyFields.length();
-    auto origKeys = ZtLocalArray(Tuples, n - 1);
+    auto origKeys = ZtScratch(Tuples, n - 1);
     for (unsigned i = 1; i < n; i++) {
       auto key = extractKey(m_fields, m_keyFields, i, row->data);
       ZmAssert(key.length() == m_keyFields[i].length());

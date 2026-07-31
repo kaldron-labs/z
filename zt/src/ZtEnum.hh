@@ -221,4 +221,10 @@
   ZtEnumNames(ID, __VA_ARGS__) \
   ZtFlagsMap_(ID, Map);
 
+#define ZtFlagsNS(ID, Type, ...) \
+  namespace ID { ZtFlags(ID, Type, __VA_ARGS__); }
+
+#define ZtFlagsStruct(ID, Type, ...) \
+  struct ID { ZtFlags(ID, Type, __VA_ARGS__); }
+
 #endif /* ZtEnum_HH */

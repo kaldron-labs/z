@@ -29,8 +29,8 @@ void testStatelessLambdaPath()
   ZuCheck(n > 0);
 
   auto msg = ZmAlloc(uint8_t, n);
-  fn.push(msg.ptr);
-  unsigned used = RingFn::invoke(msg.ptr);
+  fn.push(msg.data);
+  unsigned used = RingFn::invoke(msg.data);
 
   ZuCheck(used == n);
   ZuCheck(g_statelessCalls > 0);
@@ -51,8 +51,8 @@ void testStatefulMoveAndHeapPromotion()
     ZuCheck(n > sizeof(void *));
 
     auto msg = ZmAlloc(uint8_t, n);
-    fn.push(msg.ptr);
-    ZuCheck(RingFn::invoke(msg.ptr) == n);
+    fn.push(msg.data);
+    ZuCheck(RingFn::invoke(msg.data) == n);
   }
 
   // move-assignment path heap-promotes captured state
@@ -67,8 +67,8 @@ void testStatefulMoveAndHeapPromotion()
   ZuCheck(n2 > sizeof(void *));
 
   auto msg2 = ZmAlloc(uint8_t, n2);
-  moved.push(msg2.ptr);
-  ZuCheck(RingFn::invoke(msg2.ptr) == n2);
+  moved.push(msg2.data);
+  ZuCheck(RingFn::invoke(msg2.data) == n2);
 
   ZuCheck(total == (7 + 9));
 }
@@ -86,10 +86,10 @@ void testExceptionSwallowingAndBacktraceSmoke()
   RingFn fn{throwing};
   unsigned n = fn.pushSize();
   auto msg = ZmAlloc(uint8_t, n);
-  fn.push(msg.ptr);
+  fn.push(msg.data);
 
   // invoke() is expected to swallow exceptions thrown by lambda payloads
-  ZuCheck(RingFn::invoke(msg.ptr) == n);
+  ZuCheck(RingFn::invoke(msg.data) == n);
   ZuCheck(ran == 1);
 
   ZmBackTrace trace;

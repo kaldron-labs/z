@@ -34,7 +34,7 @@ static void transform(void *, ZuSpan<char> &output)
   ZtREGEX("ZuString<(\d+)[uUlL]*>{char \[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
       ZuBox<unsigned> n(c[2]);
-      auto buf = ZtLocalArray(Buf, n.val() + 8);
+      auto buf = ZtScratch(Buf, n.val() + 8);
       buf << '"';
       ZtREGEX("\(char\)(\d+)(?:,\s*)?").mg(
 	c[1], [&buf](const ZtRegex::Captures &c) { quote(buf, c[2]); });
@@ -46,7 +46,7 @@ static void transform(void *, ZuSpan<char> &output)
   ZtREGEX("Zu_::Array<char,\s*(\d+)[uUlL]*>{Zu_::Array_<char>{},\s*ZuArrayFn<char,\s*ZuCmp<char>\s*>{},\s*\d+[uUlL]*,\s*ZuElem<char>\s*\[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
       ZuBox<unsigned> n(c[2]);
-      auto buf = ZtLocalArray(Buf, n.val() + 8);
+      auto buf = ZtScratch(Buf, n.val() + 8);
       buf << '"';
       ZtREGEX("ZuElem<char>{(?:ZuElem<char>::)?{unnamed\s*type#\d+}{\.v=\(\(char\)(\d+)\)}}(?:,\s*)?").mg(
 	c[1], [&buf](const ZtRegex::Captures &c) { quote(buf, c[2]); });
@@ -58,7 +58,7 @@ static void transform(void *, ZuSpan<char> &output)
   ZtREGEX("Zu_::Array<(\w+),\s*(\d+)[uUlL]*>{Zu_::Array_<(?1)>{},\s*ZuArrayFn<(?1),\s*ZuCmp<(?1)>\s*>{},\s*\d+[uUlL]*,\s*ZuElem<(?1)>\s*\[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
       ZuBox<unsigned> n(c[3]);
-      auto buf = ZtLocalArray(Buf, n.val() * 8 + 32); // estimated buffer size
+      auto buf = ZtScratch(Buf, n.val() * 8 + 32); // estimated buffer size
       bool first = true;
       buf << "ZuArray<" << c[2] << ">({";
       ZtREGEX("ZuElem<\w+>{(?:ZuElem<\w+>::)?{unnamed\s*type#\d+}{\.v=\((?:\(\w+\))?([^)]+)\)}}(?:,\s*)?").mg(
@@ -74,7 +74,7 @@ static void transform(void *, ZuSpan<char> &output)
   // ZuStringT<"x">
   ZtREGEX("ZuConstant<ZuString<\d+[uUlL]*>, (\"(?:[^\"\\]|\\[\"\\])*\")>").sg(
     output, []<typename Splice>(const ZtRegex::Captures &c, Splice &&splice) {
-      auto buf = ZtLocalArray(Buf, c[2].length() + 12);
+      auto buf = ZtScratch(Buf, c[2].length() + 12);
       buf << "ZuStringT<" << c[2] << ">";
       splice(buf);
     });
@@ -85,7 +85,7 @@ static void transform(void *, ZuSpan<char> &output)
       auto types = c[2];
       types.offset(1);
       types.trunc(types.length() - 1);
-      auto buf = ZtLocalArray(Buf, types.length() + 12);
+      auto buf = ZtScratch(Buf, types.length() + 12);
       buf << "ZuStringTL<";
       ZtRegexCaptures(d, 3);
       int off = 0;

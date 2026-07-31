@@ -97,7 +97,8 @@ private:
   bool			m_detached = false;
 };
 
-template <typename> struct ZmAlloc_;
+template <typename, typename> struct ZmAlloc_;
+template <typename, typename> class ZmScratch_;
 
 class ZmAPI ZmThreadContext_ {
 #ifndef _WIN32
@@ -105,8 +106,8 @@ class ZmAPI ZmThreadContext_ {
 #else
   friend ZmAPI unsigned __stdcall ZmThread_start(void *);
 #endif
-  template <typename> friend struct ZmAlloc_;
-  template <typename, typename> friend struct ZmVAlloc_;
+  template <typename, typename> friend struct ZmAlloc_;
+  template <typename, typename> friend class ZmScratch_;
   template <typename> friend struct ZmLocal_;
 
 protected:

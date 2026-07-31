@@ -21,12 +21,12 @@ void test()
   unsigned n = ZmStackAvail();
   log("stack available: ", ZuBoxed(n).hex());
   auto ptr = ZmAlloc(uint8_t, n/3);
-  ZuCheck(ptr.ptr);
-  log("ZmAlloc(", ZuBoxed(n/3).hex(), "): ", ZuBoxPtr(ptr.ptr).hex());
+  ZuCheck(ptr.data);
+  log("ZmAlloc(", ZuBoxed(n/3).hex(), "): ", ZuBoxPtr(ptr.data).hex());
   log("stack available: ", ZuBoxed(ZmStackAvail()).hex());
   auto ptr2 = ZmAlloc(uint8_t, n);
-  ZuCheck(ptr2.ptr);
-  log("ZmAlloc(", ZuBoxed(n).hex(), "): ", ZuBoxPtr(ptr2.ptr).hex());
+  ZuCheck(ptr2.data);
+  log("ZmAlloc(", ZuBoxed(n).hex(), "): ", ZuBoxPtr(ptr2.data).hex());
   log("stack available: ", ZuBoxed(ZmStackAvail()).hex());
   // uint8_t *ptr = static_cast<uint8_t *>(ZmAlloc(n/3));
   // uint8_t *ptr2 = static_cast<uint8_t *>(ZmAlloc(n));

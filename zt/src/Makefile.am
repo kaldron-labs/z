@@ -8,9 +8,9 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
-	ZtArray.hh ZtLocalArray.hh ZtBuiltin.hh ZtBitWindow.hh \
+	ZtArray.hh ZtScratch.hh ZtBuiltin.hh ZtBitWindow.hh \
 	ZtEnum.hh ZtIconv.hh ZtLib.hh ZtPlatform.hh \
-	ZtRegex.hh ZtString.hh ZtLocalString.hh ZtHexDump.hh \
+	ZtRegex.hh ZtString.hh ZtHexDump.hh \
 	ZtWindow.hh ZtBitmap.hh ZtFmt.hh \
 	ZtScanBool.hh ZtCase.hh ZtTimeZone.hh \
 	ZtQuote.hh ZtBytesFmt.hh

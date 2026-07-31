@@ -191,7 +191,7 @@ private:
       cache->telemetry(*data);
     }
     guard.unlock();
-    fn(ZuSpan<const Ztc::HeapTelemetry>{storage.ptr, length});
+    fn(ZuSpan<const Ztc::HeapTelemetry>{storage.data, length});
     for (unsigned i = 0; i < length; ++i)
       storage[i].~HeapTelemetry();
   }

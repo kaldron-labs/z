@@ -177,8 +177,8 @@ namespace Save {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmAlloc(Offset<T>, n);
     if (!buf) return {};
-    push_(buf.ptr, ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
-    auto r = fbb.CreateVector(buf.ptr, n);
+    push_(buf.data, ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    auto r = fbb.CreateVector(buf.data, n);
     return r;
   }
   // inline creation of a vector of lambda-transformed offsets
@@ -187,8 +187,8 @@ namespace Save {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmAlloc(Offset<T>, n);
     if (!buf) return {};
-    lpush_(buf.ptr, ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
-    auto r = fbb.CreateVector(buf.ptr, n);
+    lpush_(buf.data, ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    auto r = fbb.CreateVector(buf.data, n);
     return r;
   }
   // iterated creation of a vector of offsets
@@ -196,8 +196,8 @@ namespace Save {
   inline Offset<Vector<Offset<T>>> vectorIter(Builder &fbb, unsigned n, L &&l) {
     auto buf = ZmAlloc(Offset<T>, n);
     if (!buf) return {};
-    for (unsigned i = 0; i < n; i++) buf.ptr[i] = ZuFwd<L>(l)(fbb, i);
-    auto r = fbb.CreateVector(buf.ptr, n);
+    for (unsigned i = 0; i < n; i++) buf.data[i] = ZuFwd<L>(l)(fbb, i);
+    auto r = fbb.CreateVector(buf.data, n);
     return r;
   }
 
@@ -217,8 +217,8 @@ namespace Save {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmAlloc(Offset<T>, n);
     if (!buf) return {};
-    push_(buf.ptr, ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
-    auto r = fbb.CreateVectorOfSortedTables(buf.ptr, n);
+    push_(buf.data, ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    auto r = fbb.CreateVectorOfSortedTables(buf.data, n);
     return r;
   }
   // inline creation of a vector of lambda-transformed keyed offsets
@@ -227,8 +227,8 @@ namespace Save {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmAlloc(Offset<T>, n);
     if (!buf) return {};
-    lpush_(buf.ptr, ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
-    auto r = fbb.CreateVectorOfSortedTables(buf.ptr, n);
+    lpush_(buf.data, ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    auto r = fbb.CreateVectorOfSortedTables(buf.data, n);
     return r;
   }
   // iterated creation of a vector of lambda-transformed keyed offsets
@@ -237,7 +237,7 @@ namespace Save {
     auto buf = ZmAlloc(Offset<T>, n);
     if (!buf) return {};
     for (unsigned i = 0; i < n; i++) buf[i] = ZuFwd<L>(l)(fbb, i);
-    auto r = fbb.CreateVectorOfSortedTables(buf.ptr, n);
+    auto r = fbb.CreateVectorOfSortedTables(buf.data, n);
     return r;
   }
 

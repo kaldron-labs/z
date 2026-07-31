@@ -11,7 +11,7 @@
 #include <zlib/ZiFile.hh>
 
 #include <zlib/ZtArray.hh>
-#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZtRegex.hh>
 
@@ -1765,13 +1765,13 @@ ZiFile::Path ZiFile::canonical(const Path &name)
 #ifndef _WIN32
   using Scratch =
     ZtArray<char, ZtArrayHeapID<"ZiFile.Canonical">>;
-  auto scratch = ZtLocalArray(Scratch, Zi::PathMax + 1);
+  auto scratch = ZtScratch(Scratch, Zi::PathMax + 1);
   if (!realpath(name, scratch.data())) return {};
   Path ret{ZuCSpan{scratch.data()}};
 #else
   using Scratch =
     ZtArray<wchar_t, ZtArrayHeapID<"ZiFile.Canonical">>;
-  auto scratch = ZtLocalArray(Scratch, Zi::PathMax + 1);
+  auto scratch = ZtScratch(Scratch, Zi::PathMax + 1);
   auto n = GetFullPathName(
     name, Zi::PathMax + 1, scratch.data(), nullptr);
   if (!n || n > Zi::PathMax) return {};

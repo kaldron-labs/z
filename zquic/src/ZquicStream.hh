@@ -525,7 +525,7 @@ private:
       return false;
     if (frame.fin && rxPendingBeyond_(end)) return false;
 
-    auto spans = ZtLocalArray(RxSpans, m_rxQueue.count_() + 1);
+    auto spans = ZtScratch(RxSpans, m_rxQueue.count_() + 1);
     if (frame.length && !newRxSpans_(frame, spans)) return false;
     uint64_t newBytes = rxSpanBytes(spans);
     if (flow && !flow->receive(end, newBytes)) return false;
