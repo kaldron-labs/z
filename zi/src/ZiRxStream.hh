@@ -38,7 +38,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiIOBuf.hh>
 
@@ -166,7 +166,10 @@ public:
       } else {
 	// multiple spans - need gathering into contiguous scratch buffer
 	using Scratch = ZtArray<uint8_t, ZtArrayHeapID<HeapID>>;
-	auto scratch = ZtScratch(Scratch, dataLen);
+	if (ZuUnlikely(dataLen > UINT_MAX)) return -1;
+	unsigned dataSize = unsigned(dataLen);
+	auto scratch = ZmScratch(
+	  uint8_t, dataSize, typename Scratch::VHeap);
 	auto i = m_queue.citer();
 	while (dataLen) {
 	  auto node = i();
@@ -175,7 +178,7 @@ public:
 	  scratch << span;
 	  dataLen -= span.length();
 	}
-	data(scratch.span());
+	data(scratch.cspan());
       }
     }
 

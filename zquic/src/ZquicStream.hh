@@ -525,7 +525,8 @@ private:
       return false;
     if (frame.fin && rxPendingBeyond_(end)) return false;
 
-    auto spans = ZtScratch(RxSpans, m_rxQueue.count_() + 1);
+    auto spans = ZmScratch(
+      RxSpan, m_rxQueue.count_() + 1, RxSpans::VHeap);
     if (frame.length && !newRxSpans_(frame, spans)) return false;
     uint64_t newBytes = rxSpanBytes(spans);
     if (flow && !flow->receive(end, newBytes)) return false;
@@ -542,7 +543,8 @@ private:
     return m_rxState.receive(frame.offset, frame.length, frame.fin);
   }
 
-  bool newRxSpans_(const Frame &frame, RxSpans &spans) const {
+  template <typename Spans>
+  bool newRxSpans_(const Frame &frame, Spans &spans) const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx span check outside Rx thread", return false);
     uint64_t end = frame.offset + frame.length;
@@ -553,8 +555,9 @@ private:
     return rxNovelSpans(m_rxQueue, first, end, spans);
   }
 
+  template <typename Spans>
   bool queueRxSlices_(
-    const Frame &frame, const RxSpans &spans,
+    const Frame &frame, const Spans &spans,
     ZmRef<ZiIOBuf> packet, BufDiag *diag) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx queue outside Rx thread", return false);

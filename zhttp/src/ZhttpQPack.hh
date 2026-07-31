@@ -23,7 +23,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiAssert.hh>
@@ -423,8 +423,31 @@ struct QPack {
   static bool staticField(uint64_t, Header &);
   static bool staticName(uint64_t, HeaderName &);
   static bool staticNameIndex(ZuCSpan, uint64_t &);
+  template <typename Bytes>
   static int encodeFieldSectionPrefix(
-    HdrBytes &, const FieldSectionPrefix &, uint64_t = 0);
+    Bytes &out, const FieldSectionPrefix &prefix, uint64_t maxCapacity = 0) {
+    uint64_t encodedInsertCount = 0;
+    uint64_t deltaBase = 0;
+    bool negative = false;
+    if (prefix.requiredInsertCount) {
+      uint64_t maxEntries = maxCapacity>>5;
+      if (!maxEntries) return -1;
+      uint64_t fullRange = maxEntries<<1;
+      encodedInsertCount = (prefix.requiredInsertCount % fullRange) + 1;
+      if (prefix.base >= prefix.requiredInsertCount)
+	deltaBase = prefix.base - prefix.requiredInsertCount;
+      else {
+	negative = true;
+	deltaBase = prefix.requiredInsertCount - prefix.base - 1;
+      }
+    } else if (prefix.base)
+      return -1;
+    if (Compression::putPref(out, 0, 8, encodedInsertCount) < 0 ||
+	Compression::putPref(
+	  out, negative ? 0x80 : 0x00, 7, deltaBase) < 0)
+      return -1;
+    return out.length();
+  }
   static int decodeFieldSectionPrefix(
     ZuCSpan, FieldSectionPrefix &, uint64_t = 0, uint64_t = 0);
   static int decodeFieldSectionPrefix(
@@ -433,19 +456,78 @@ struct QPack {
     const EncodedFieldSectionPrefix &, uint64_t, uint64_t &);
   static bool validateFieldSectionPrefix(
     const FieldSectionPrefix &, uint64_t);
-  static int encodeFieldLine(HdrBytes &, Header, const Params &);
+  template <typename Bytes>
+  static int encodeFieldLine(Bytes &out, Header h, const Params &params) {
+    int staticIndex = QPack::staticIndex(h.name, h.value);
+    if (staticIndex >= 0)
+      return Compression::putPref(
+	out, 0xc0, 6, unsigned(staticIndex)) < 0 ?
+	-1 : int(out.length());
+
+    uint64_t nameIndex = 0;
+    if (staticNameIndex(h.name, nameIndex)) {
+      uint8_t prefix =
+	uint8_t(0x50 | (params.neverIndex(h.name) ? 0x20 : 0));
+      return Compression::putPref(out, prefix, 4, nameIndex) < 0 ||
+	Compression::putString(out, 0x00, 7, h.value) < 0 ?
+	-1 : int(out.length());
+    }
+
+    return Compression::putString(
+      out, uint8_t(0x20 | (params.neverIndex(h.name) ? 0x10 : 0)),
+      3, h.name) < 0 ||
+      Compression::putString(out, 0x00, 7, h.value) < 0 ?
+      -1 : int(out.length());
+  }
+  template <typename Bytes>
   static int encodeLiteral(
-    HdrBytes &, ZuSpan<Header>, const Params &,
-    const FieldSectionPrefix & = {});
-  static int encodeSetCapacity(HdrBytes &, uint64_t);
+      Bytes &out, ZuSpan<Header> headers, const Params &params,
+      const FieldSectionPrefix &prefix = {}) {
+    out.length(0);
+    if (encodeFieldSectionPrefix(out, prefix) < 0) return -1;
+    unsigned headerBytes = 0;
+    for (auto &h : headers) {
+      if (params.neverIndex(h.name) && params.qpackTxCapacity() &&
+	  params.indexAllowed(h.name))
+	return -1;
+      headerBytes += h.name.length() + h.value.length();
+      if (headerBytes > params.maxHeaderListSize()) return -1;
+      if (encodeFieldLine(out, h, params) < 0) return -1;
+    }
+    return out.length();
+  }
+  template <typename Bytes>
+  static int encodeSetCapacity(Bytes &out, uint64_t capacity) {
+    out.length(0);
+    return Compression::putPref(out, 0x20, 5, capacity) < 0 ?
+      -1 : int(out.length());
+  }
+  template <typename Bytes>
   static int encodeInsertWithNameRef(
-    HdrBytes &, uint64_t, bool, ZuCSpan);
-  static int encodeInsertLiteral(HdrBytes &, Header);
-  static int encodeSectionAck(HdrBytes &, uint64_t);
+      Bytes &out, uint64_t index, bool dynamic, ZuCSpan value) {
+    out.length(0);
+    uint8_t prefix = uint8_t(0x80 | (dynamic ? 0x00 : 0x40));
+    return Compression::putPref(out, prefix, 6, index) < 0 ||
+      Compression::putString(out, 0x00, 7, value) < 0 ?
+      -1 : int(out.length());
+  }
+  template <typename Bytes>
+  static int encodeInsertLiteral(Bytes &out, Header h) {
+    out.length(0);
+    return Compression::putString(out, 0x40, 5, h.name) < 0 ||
+      Compression::putString(out, 0x00, 7, h.value) < 0 ?
+      -1 : int(out.length());
+  }
+  template <typename Bytes>
+  static int encodeSectionAck(Bytes &out, uint64_t streamID) {
+    out.length(0);
+    return Compression::putPref(out, 0x80, 7, streamID) < 0 ?
+      -1 : int(out.length());
+  }
   static int decodeEncoderInsn(ZuCSpan, QPackDecodedInsn &);
   static int decodeDecoderInsn(ZuCSpan, QPackDecodedInsn &);
   static int decodeString(
-    HdrBytes &, ZuCSpan, unsigned &, unsigned, uint8_t, ZuCSpan &);
+    ZuSpan<uint8_t>, ZuCSpan, unsigned &, unsigned, uint8_t, ZuCSpan &);
 
   template <typename L>
   static int decodeFieldSection(
@@ -469,10 +551,13 @@ struct QPack {
     // Non-Huffman strings are returned as spans into the input section.
     // Huffman strings use these per-section scratch buffers, reused for each
     // field rather than allocated inside the representation loop.
-    auto nameStorage =
-      ZtScratch(HdrBytes, Compression::Huffman::declen(in.length()));
-    auto valueStorage =
-      ZtScratch(HdrBytes, Compression::Huffman::declen(in.length()));
+    uint64_t storageSize_ = Compression::Huffman::declen(in.length());
+    if (storageSize_ > UINT_MAX) return -1;
+    unsigned storageSize = unsigned(storageSize_);
+    auto nameStorage = ZmScratch(
+      uint8_t, storageSize, HdrBytes::VHeap);
+    auto valueStorage = ZmScratch(
+      uint8_t, storageSize, HdrBytes::VHeap);
 
     auto countHeader = [&headerBytes, &params](ZuCSpan name, ZuCSpan value) {
       if (headerBytes > params.maxHeaderListSize() - name.length())
@@ -484,8 +569,8 @@ struct QPack {
       return true;
     };
     auto readValue = [&valueStorage, &in, &o](ZuCSpan &value) {
-      valueStorage.length(0);
-      return decodeString(valueStorage, in, o, 7, 0x80, value) >= 0;
+      return decodeString(
+	valueStorage.span(), in, o, 7, 0x80, value) >= 0;
     };
 
     while (o < in.length()) {
@@ -550,10 +635,8 @@ struct QPack {
 	name = indexed.name;
 	if (!readValue(value)) return -1;
       } else if ((first & 0xe0) == 0x20) {
-	nameStorage.length(0);
-	valueStorage.length(0);
-	if (decodeString(nameStorage, in, o, 3, 0x08, name) < 0 ||
-	    decodeString(valueStorage, in, o, 7, 0x80, value) < 0)
+	if (decodeString(nameStorage.span(), in, o, 3, 0x08, name) < 0 ||
+	    decodeString(valueStorage.span(), in, o, 7, 0x80, value) < 0)
 	  return -1;
 	flags.neverIndex = first & 0x10;
       } else

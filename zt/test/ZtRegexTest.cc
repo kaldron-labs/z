@@ -22,7 +22,7 @@ int main(int argc, char **argv)
     ZtString<> x = "/foo/bar/bah/leaf";
     const auto &leafName = ZtREGEX("[^/]+$");
     const auto &separator = ZtREGEX("/");
-    ZtRegexCaptures(c, 1);
+    ZtRegexSplitCaptures(c, 1);
 
     int i = leafName.m(x, c);
     ZuCheck(i > 0);
@@ -50,7 +50,7 @@ int main(int argc, char **argv)
   // named captures
   {
     const auto &r = ZtREGEX("([^ ]+) (?<who>[^ ]+) (?<age>[0-9]+)");
-    ZtRegexCaptures(d, 4); // $&, $1, $2, $3
+    ZtRegexCaptures(d, 3);
     int who = r.index("who");
     int age = r.index("age");
     int i = r.m("foo Joe 42", d);

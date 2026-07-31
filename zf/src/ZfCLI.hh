@@ -57,7 +57,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZePlatform.hh>
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfJSON.hh>
@@ -2021,7 +2021,7 @@ void initOptions(Hash &hash, ZuCSpan prefix = {}) {
     if (n) ++n;
     ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
     n += longOpt.length() + 1; // +1 for null terminator
-    auto expansion = ZtScratch(Expansion, n);
+    auto expansion = ZmScratch(char, n, Expansion::VHeap);
     if (prefix) expansion << prefix << '.';
     expansion << longOpt;
     if constexpr (
@@ -2076,7 +2076,7 @@ private:
 	unsigned n = prefix.length();
 	if (n) ++n;
 	n += longOpt.length();
-	auto expansion = ZtScratch(Expansion, n);
+	auto expansion = ZmScratch(char, n, Expansion::VHeap);
 	if (prefix) expansion << prefix << '.';
 	expansion << longOpt;
 	if constexpr (

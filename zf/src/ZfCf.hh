@@ -39,7 +39,6 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
-#include <zlib/ZtScratch.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZtBytesFmt.hh>

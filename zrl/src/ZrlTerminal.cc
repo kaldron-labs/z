@@ -21,7 +21,7 @@
 
 #include <zlib/ZmAlloc.hh>
 
-#include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZrlTerminal.hh>
 
@@ -1806,7 +1806,7 @@ void Terminal::splice(
 	trailRows = (bol(oldWidth) - bolPos) / m_width + 1;
     }
   }
-  auto glyphMarks = ZtScratch(GlyphMarks, trailRows);
+  auto glyphMarks = ZmScratch(GlyphMark, trailRows, GlyphMarks::VHeap);
   if (glyphMarks.size()) {
     unsigned endPos = m_pos + span.inLen();
     unsigned shiftOff;

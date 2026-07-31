@@ -906,13 +906,13 @@ loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
 template <unsigned Type>
 inline ZuIfT<!isVar(Type)> // unused
 loadValue(
-  void *, VarBuf &, const VarBufPart &,
+  void *, ZuSpan<uint8_t>, const VarBufPart &,
   const OIDs &, const reflection::Field *, const Zfb::Table *) { }
 
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<Bitmap>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -932,7 +932,7 @@ loadValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<StringVec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -951,7 +951,7 @@ loadValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<BytesVec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -971,7 +971,7 @@ loadValue(
 template <unsigned Type> \
 inline ZuIfT<Type == Value::Index<Int##width##Vec>{}> \
 loadValue( \
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart, \
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart, \
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo) \
 { \
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>()); \
@@ -989,7 +989,7 @@ loadValue( \
 template <unsigned Type> \
 inline ZuIfT<Type == Value::Index<UInt##width##Vec>{}> \
 loadValue( \
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart, \
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart, \
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo) \
 { \
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>()); \
@@ -1013,7 +1013,7 @@ ZdbPQ_LoadIntVec(64)
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<Int128Vec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -1032,7 +1032,7 @@ loadValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<UInt128Vec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -1051,7 +1051,7 @@ loadValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<FloatVec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -1070,7 +1070,7 @@ loadValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<FixedVec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -1089,7 +1089,7 @@ loadValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<DecimalVec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -1108,7 +1108,7 @@ loadValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<TimeVec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -1127,7 +1127,7 @@ loadValue(
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<DateTimeVec>{}>
 loadValue(
-  void *ptr, VarBuf &varBuf_, const VarBufPart &varBufPart,
+  void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart,
   const OIDs &oids, const reflection::Field *field, const Zfb::Table *fbo)
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -1539,10 +1539,11 @@ ZuDerive(Tuple, (ZtArray<Value, ZtArrayHeapID<"ZdbPQ.Tuple">>));
 
 // load tuple from flatbuffer
 // - when called from select_send(), nParams is < fields.length()
+template <typename Tuple_>
 void loadTuple(
-  Tuple &tuple,
-  VarBuf &varBuf,
-  VarBufParts &varBufParts,
+  Tuple_ &tuple,
+  ZuSpan<uint8_t> varBuf,
+  ZuSpan<const VarBufPart> varBufParts,
   const OIDs &oids,
   unsigned nParams,
   const ZfVFieldArray &fields,
@@ -2010,8 +2011,8 @@ public:
   int sendQuery(const SQLString &query, const Tuple &params);
   int sendPrepare(
     const IDString &id, const SQLString &query, ZuSpan<unsigned> oids);
-  template <int State>
-  int sendPrepared(const IDString &id, const Tuple &params);
+  template <int State, typename Params>
+  int sendPrepared(const IDString &id, const Params &params);
 
   void disconnect(); // simulate connection failure
 

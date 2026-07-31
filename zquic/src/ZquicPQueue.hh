@@ -397,9 +397,9 @@ struct RxSpan {
 
 ZuDerive(RxSpans, (ZtArray<RxSpan, ZtArrayHeapID<"Zquic.RxSpans">>));
 
-template <typename Queue>
+template <typename Queue, typename Spans>
 inline bool rxNovelSpans(
-  const Queue &queue, uint64_t first, uint64_t end, RxSpans &spans)
+  const Queue &queue, uint64_t first, uint64_t end, Spans &spans)
 {
   if (end < first) return false;
   return queue.gaps(first, end - first, [&spans](const auto &span) {
@@ -408,16 +408,17 @@ inline bool rxNovelSpans(
   });
 }
 
-inline uint64_t rxSpanBytes(const RxSpans &spans)
+template <typename Spans>
+inline uint64_t rxSpanBytes(const Spans &spans)
 {
   uint64_t bytes = 0;
   for (unsigned i = 0; i < spans.length(); ++i) bytes += spans[i].length();
   return bytes;
 }
 
-template <typename Alloc, typename Enqueue>
+template <typename Spans, typename Alloc, typename Enqueue>
 inline bool queueRxSpans(
-  const RxSpans &spans, uint64_t srcOffset, ZuBSpan payload,
+  const Spans &spans, uint64_t srcOffset, ZuBSpan payload,
   Alloc alloc, Enqueue enqueue)
 {
   for (unsigned i = 0; i < spans.length(); ++i) {

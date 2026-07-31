@@ -654,15 +654,17 @@ private:
 	return ref.raw.length() <= impl()->h3Params().maxHeaderListSize() &&
 	  l(ref.raw);
     uint64_t decodedMax = Compression::Huffman::declen(ref.raw.length());
-    if (ZuUnlikely(decodedMax > impl()->h3Params().maxHeaderListSize()))
+    if (ZuUnlikely(decodedMax > UINT_MAX ||
+	decodedMax > impl()->h3Params().maxHeaderListSize()))
 	return false;
-    auto storage = ZtScratch(HdrBytes, decodedMax);
+    unsigned storageSize = unsigned(decodedMax);
+    auto storage = ZmScratch(uint8_t, storageSize, HdrBytes::VHeap);
     int64_t n = Compression::Huffman::decode(
-	ZuSpan<uint8_t>{storage.data(), unsigned(decodedMax)},
+	storage.span(),
 	ref.raw);
     if (n < 0) return false;
     storage.length(unsigned(n));
-    return l(storage);
+    return l(storage.cspan());
   }
 
   using FieldState = Fields::Semantics<Request>;
@@ -1314,7 +1316,8 @@ struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
     enum { FramePrefixSize = 16 }; // two maximum-width QUIC varints
     using FrameHdr = ZtArray<uint8_t,
 	ZtArrayHeapID<"Zhttp.H3.FrameHdr">>;
-    auto frameHdr = ZtScratch(FrameHdr, FramePrefixSize);
+    auto frameHdr = ZmScratch(
+      uint8_t, FramePrefixSize, FrameHdr::VHeap);
     putVar(frameHdr, 0);
     putVar(frameHdr, buf->length);
     ZiAssert(buf->skip >= frameHdr.length(),
@@ -1623,7 +1626,7 @@ private:
 	  }
 	}
     }
-    auto prefix = ZtScratch(HdrBytes, PrefixBuiltin);
+    auto prefix = ZmScratch(uint8_t, PrefixBuiltin, HdrBytes::VHeap);
     FieldSectionPrefix p;
     p.requiredInsertCount = plan.required;
     p.base = plan.required ? plan.base : 0;

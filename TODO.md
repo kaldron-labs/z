@@ -1,37 +1,24 @@
 # TODO
 
-general inconsistent use of `ZmAlloc` vs `ZtLocalArray`
+many `ZmAlloc` uses will now benefit from adopting `ZmScratch`:
+- no need to separately track length in an additional local variable
+- no need to explicitly destruct elements
 
-## Ztc telemetry
+however `Zdb` has many cases where `ZmAlloc` should be retained:
+- the array is always fully populated, so tracking a separate length is not needed
+- element destruction can be completely elided because the type is POD
+- element destruction is explicitly controlled (example: `Zdb.hh:1233`)
 
-`plan.new.md`:
-- where querying/filtering/subscribing/unsubscribing by key is required to service clients, `Ztc::App` should maintain a secondary index mapping key to object pointer using `ZmRBTreeKV`
-  - in order to maintain these secondary indices, `Ztc::App` will need to register/deregister callbacks with the corresponding `Ztc::*Mgr` and other containing `Ztc` objects
-  - to facilitate this, all `Ztc::*Mgr` classes will need to be improved to add a watcher:
-    - `static void watch(AddFn, DelFn)` and `static void unwatch()`
-    - only one watcher at a time, no need to manage multiple watchers
-    - unwatch simply nulls the callbacks
-    - null callback is a sentinel, no need to maintain watched status in a separate `bool`
-    - the `HubMgr` watch will take 6 callbacks: add/del for links, pools and queues
-      - a link add would cause the `HubMgr` watcher to be called with a "link added" then 2x "queue added" (one rx, one tx); del would be the reverse - 2x "queue deleted", then "link deleted"
-  - `App` will need to `watch`, then `all` to build the initial secondary indices for these objects and maintain them
-  - this will simplify querying and maintaining watch lists of subscribers
-- all `watch` callbacks will synchronously update the secondary indices, which must be locked with `ZmPLock`
-- all watchlist maintenance must be on the `Ztc::App` worker thread
-- all querying/iteration the secondary indices etc. must be as brief as possible to minimize contention: start iterating (lock), get `count_()` (stable while locked), allocate scratch (`ZtLocalArray` of telemetry, sized for count), iterate and call `object->telemetry` on each object directly into the scratch array using `push`, end iterating (unlock); then use the captured snapshot telemetry array
+write a plan to `scratch.md` to migrate dependents from `ZmAlloc` to `ZmScratch`
+- audit the codebase and scrutinize all uses of `ZmAlloc`
+- the plan should include all the `ZmAlloc` uses that are candidates for migration
 
-### deferred
-- cross-origin connection coalescing
+---
+
+why is `zhttp` consuming so much memory in the build?
+- investigate which specific Z framework templates are driving compiler memory usage
 
 ## zrest
-
-remaining telemetry hierarchy:
-```
-DB : public Ztc::DB
-  DBTable ; public Ztc::Table
-  DBHost : public Ztc::Host
-App : public Ztc::App (singleton)
-```
 
 ## ZvEngine value
 

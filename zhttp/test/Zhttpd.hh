@@ -24,6 +24,7 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtScratch.hh>
@@ -49,7 +50,6 @@ constexpr unsigned FileChunk = 16<<10;
 constexpr unsigned MimeFileMax = 16<<20;
 constexpr unsigned DateBufSize = 32;
 constexpr unsigned DirEntriesBuiltin = 64;
-constexpr unsigned DirNameBuiltin = 256;
 
 ZuDerive(HdrString, ZtString<ZtStringHeapID<"zhttpd.HdrString">>);
 ZuDerive(PathOffsets,
@@ -313,8 +313,8 @@ struct MimeMap {
       return;
     auto size = f.size();
     if (size <= 0 || size > MimeFileMax) return;
-    auto text = ZtScratch(
-      HdrString, unsigned(size), unsigned(size) + 1);
+    auto text = ZmScratch(char, unsigned(size) + 1, HdrString::VHeap);
+    text.length(unsigned(size));
     int n = f.read(text.data(), text.length());
     if (n <= 0) return;
     text.length(unsigned(n));
@@ -351,8 +351,8 @@ struct MimeMap {
     }
     if (dot < 0 || (slash >= 0 && dot < slash))
       return options.defaultMimetype;
-    auto ext = ZtScratch(
-      String, path.length() - unsigned(dot));
+    auto ext = ZmScratch(char,
+      unsigned(path.length()) - unsigned(dot), String::VHeap);
     lower(ext, ZuCSpan{path.data() + dot + 1,
       path.length() - unsigned(dot) - 1});
     if (auto node = map->find(ext)) return node->val();
@@ -392,7 +392,7 @@ struct LogSink {
     return out;
   }
   static ZeString logDate() {
-    auto buf = ZtScratch(HdrString, DateBufSize);
+    auto buf = ZmScratch(char, DateBufSize, HdrString::VHeap);
     time_t now = time(nullptr);
     struct tm tm_;
 #ifdef _WIN32
@@ -420,7 +420,7 @@ struct State {
 
 template <typename S>
 inline void httpDate(S &s, time_t t) {
-  auto buf = ZtScratch(HdrString, DateBufSize);
+  auto buf = ZmScratch(char, DateBufSize, HdrString::VHeap);
   struct tm tm_;
 #ifdef _WIN32
   gmtime_s(&tm_, &t);
@@ -435,11 +435,11 @@ inline void httpDate(S &s, time_t t) {
 }
 
 inline bool parseHTTPDate(ZuCSpan s, time_t &out) {
-  auto in = ZtScratch(HdrString, s.length() + 1);
+  auto in = ZmScratch(char, unsigned(s.length()) + 1, HdrString::VHeap);
   in << s;
   struct tm tm_;
   memset(&tm_, 0, sizeof(tm_));
-  char *p = strptime(in.ndata(), "%a, %d %b %Y %H:%M:%S GMT", &tm_);
+  char *p = strptime(in.terminate(), "%a, %d %b %Y %H:%M:%S GMT", &tm_);
   if (!p || *p) return false;
 #ifdef _WIN32
   out = _mkgmtime(&tm_);
@@ -471,10 +471,11 @@ inline bool decodeNormalizePath(
   ZuCSpan path_, bool hideDotfiles, auto &path, ZuCSpan &err)
 {
   unsigned decodedSize = path_.length() + 2;
-  auto decoded = ZtScratch(HdrString, decodedSize);
+  auto decoded = ZmScratch(char, decodedSize, HdrString::VHeap);
   if (!path_ || path_[0] != '/') decoded << '/';
   decoded << path_;
-  auto offsets = ZtScratch(PathOffsets, (decoded.length() + 1)>>1);
+  auto offsets = ZmScratch(unsigned,
+    (unsigned(decoded.length()) + 1)>>1, PathOffsets::VHeap);
   path.length(0);
   path << '/';
   auto append = [&path, &offsets, hideDotfiles, &err](ZuCSpan part) {
@@ -561,8 +562,9 @@ inline bool constTimeEqual(ZuCSpan a, ZuCSpan b) {
 
 template <typename S>
 inline void basicAuthValue(S &out, const Options &options) {
-  auto raw = ZtScratch(
-    HdrString, options.authUser.length() + options.authPass.length() + 2);
+  auto raw = ZmScratch(char,
+    unsigned(options.authUser.length() + options.authPass.length()) + 2,
+    HdrString::VHeap);
   raw << options.authUser << ':' << options.authPass;
   out << "Basic ";
   unsigned offset = out.length();
@@ -586,22 +588,24 @@ struct StaticPlanner {
 
     if (state->options.forwardAll)
       return redirect(req, state->options.forwardAll, resp);
-    auto host = ZtScratch(HdrString, req.host.length() + 1);
+    auto host = ZmScratch(
+      char, unsigned(req.host.length()) + 1, HdrString::VHeap);
     if (state->options.forwards.length()) hostName(host, req.host);
     for (unsigned i = 0; i < state->options.forwards.length(); ++i)
       if (host == state->options.forwards[i].host)
 	return redirect(req, state->options.forwards[i].url, resp);
     if (state->options.forwardHttps && !req.secure) {
-      auto url = ZtScratch(
-        HdrString, req.host.length() + req.target.length() + 9);
+      auto url = ZmScratch(char,
+        unsigned(req.host.length() + req.target.length()) + 9,
+        HdrString::VHeap);
       url << "https://" << req.host << req.target;
       return redirect(req, url, resp, false);
     }
 
     if (state->options.authUser) {
-      auto expect = ZtScratch(HdrString,
-        ZuBase64::enclen(state->options.authUser.length() +
-	  state->options.authPass.length() + 1) + 7);
+      auto expect = ZmScratch(char,
+        unsigned(ZuBase64::enclen(state->options.authUser.length() +
+	  state->options.authPass.length() + 1) + 7), HdrString::VHeap);
       basicAuthValue(expect, state->options);
       if (!constTimeEqual(req.authorization, expect)) {
 	resp.status = 401;
@@ -630,7 +634,8 @@ struct StaticPlanner {
 
     ZuCSpan path, query;
     splitTarget(req.target, path, query);
-    auto clean = ZtScratch(HdrString, path.length() + 2);
+    auto clean = ZmScratch(
+      char, unsigned(path.length()) + 2, HdrString::VHeap);
     ZuCSpan err;
     if (!decodeNormalizePath(path, state->options.hideDotfiles, clean, err))
       return error(resp, 400, "Bad Request", err, req.method);
@@ -672,7 +677,8 @@ struct StaticPlanner {
 
   ResponsePlan singleFile(
     const RequestData &req, ZuCSpan clean, ResponsePlan resp) const {
-    auto leaf = ZtScratch(HdrString, state->options.root.length() + 2);
+    auto leaf = ZmScratch(char,
+      unsigned(state->options.root.length()) + 2, HdrString::VHeap);
     leaf << '/' << ZiFile::leafname(state->options.root);
     if (clean != "/" && clean != leaf) return notFound(resp, req.method);
     ZiFile file;
@@ -707,9 +713,9 @@ struct StaticPlanner {
 	  ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK) {
 	ZiFile::Stat stat;
 	if (index.fstat(stat) == Zi::OK && stat.regular) {
-	  auto indexPath = ZtScratch(Zi::Path,
-	    state->options.root.length() + clean.length() +
-	      state->options.index.length() + 2);
+	  auto indexPath = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
+	    unsigned(state->options.root.length() + clean.length() +
+	      state->options.index.length()) + 2, Zi::Path::VHeap);
 	  staticPath(indexPath, state->options, clean);
 	  if (indexPath && indexPath[indexPath.length() - 1] != '/' &&
 	      state->options.index)
@@ -720,8 +726,9 @@ struct StaticPlanner {
       }
       if (state->options.noListing)
 	return error(resp, 403, "Forbidden", "Forbidden", req.method);
-      auto path = ZtScratch(
-	Zi::Path, state->options.root.length() + clean.length() + 1);
+      auto path = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
+	unsigned(state->options.root.length() + clean.length()) + 1,
+	Zi::Path::VHeap);
       staticPath(path, state->options, clean);
       return listing(req, path, clean, resp);
     }
@@ -732,8 +739,9 @@ struct StaticPlanner {
     if (rc != Zi::OK) return notFound(resp, req.method);
     if (!stat.regular)
       return error(resp, 403, "Forbidden", "Forbidden", req.method);
-    auto path = ZtScratch(
-      Zi::Path, state->options.root.length() + clean.length() + 1);
+    auto path = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
+      unsigned(state->options.root.length() + clean.length()) + 1,
+      Zi::Path::VHeap);
     staticPath(path, state->options, clean);
     return regularFile(req, ZuMv(file), stat, path, resp);
   }
@@ -896,7 +904,7 @@ struct StaticPlanner {
       ZtArrayHeapID<"zhttpd.DirEntries">>;
     auto entries = ZtScratch(Entries, DirEntriesBuiltin);
     ZiDir dir;
-    auto name = ZtScratch(Zi::Path, DirNameBuiltin);
+    Zi::Path name;
     if (dir.open(path) == Zi::OK) {
       while (dir.read(name) == Zi::OK) {
       if (name == "." || name == "..") continue;
@@ -904,8 +912,8 @@ struct StaticPlanner {
 	continue;
       auto *entry = new (entries.push()) Entry();
       entry->name = name;
-      auto child = ZtScratch(
-	Zi::Path, path.length() + name.length() + 2);
+      auto child = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
+	unsigned(path.length() + name.length()) + 2, Zi::Path::VHeap);
       child << path;
 #ifndef _WIN32
       child << '/';
@@ -953,7 +961,7 @@ struct StaticPlanner {
       html += "</a>";
       if (!e.dir) html << ' ' << e.size;
       if (e.mtime) {
-	auto date = ZtScratch(HdrString, DateBufSize);
+	auto date = ZmScratch(char, DateBufSize, HdrString::VHeap);
 	httpDate(date, e.mtime);
 	html << ' ' << date;
       }

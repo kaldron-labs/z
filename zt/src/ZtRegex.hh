@@ -27,6 +27,7 @@
 
 #include <zlib/ZtString.hh>
 #include <zlib/ZtScratch.hh>
+#include <zlib/ZmScratch.hh>
 
 struct ZtAPI ZtRegexError {
   const char	*message = 0;
@@ -49,10 +50,17 @@ struct ZtAPI ZtRegexError {
 // n should be the captureCount() (includes $& but not $` and $')
 #define ZtRegexOVector(o, n) \
   auto o##_size = unsigned(n) * 3; \
-  auto o = ZtScratch(ZtRegex::OVector, o##_size)
+  auto o = ZmScratch( \
+    unsigned, o##_size, ZtRegex::OVector::VHeap)
 
-// n should be the captureCount() (includes $& but not $` and $')
+// n is the number of explicit capture groups (excludes $&, $` and $')
 #define ZtRegexCaptures(c, n) \
+  auto c##_size = unsigned(n) + 3; \
+  auto c = ZmScratch( \
+    ZtRegex::Capture, c##_size, ZtRegex::Captures::VHeap)
+
+// split() output is not bounded by the regular expression capture count
+#define ZtRegexSplitCaptures(c, n) \
   auto c##_size = unsigned(n) + 2; \
   auto c = ZtScratch(ZtRegex::Captures, c##_size)
 
@@ -64,6 +72,7 @@ class ZtAPI ZtRegex {
 
 public:
   using Capture = ZuCSpan;
+  using CaptureSpan = ZuSpan<const Capture>;
   ZuDerive(Captures, (ZtArray<Capture, ZtArrayHeapID<"ZtRegex.Captures">>));
   ZuDerive(OVector, (ZtArray<unsigned, ZtArrayHeapID<"ZtRegex.OVector">>));
 
@@ -117,8 +126,9 @@ public:
     ZtRegexOVector(ovector, m_captureCount);
     return exec(s, offset, options, ovector);
   }
+  template <typename Captures_>
   unsigned m(ZuCSpan s,
-      Captures &captures, unsigned offset = 0, int options = 0) const {
+      Captures_ &captures, unsigned offset = 0, int options = 0) const {
     ZtRegexOVector(ovector, m_captureCount);
     unsigned i = exec(s, offset, options, ovector);
     if (i) capture(s, ovector, captures);
@@ -127,13 +137,13 @@ public:
   template <typename R>
   unsigned mg(ZuCSpan s, R &&r, unsigned offset = 0, int options = 0) const {
     ZtRegexOVector(ovector, m_captureCount);
-    ZtRegexCaptures(captures, m_captureCount);
+    ZtRegexCaptures(captures, m_captureCount - 1);
     unsigned n = 0;
     unsigned slength = s.length();
 
     while (offset < slength && exec(s, offset, options, ovector)) {
       capture(s, ovector, captures);
-      r(captures);
+      r(captures.cspan());
       offset = ovector[1];
       if (!captures[1]) ++offset;
       options |= PCRE_NO_UTF8_CHECK;
@@ -147,7 +157,7 @@ public:
   struct IsCallable : public ZuFalse { };
   template <typename L>
   struct IsCallable<L, decltype(ZuDeclVal<L &>()(
-      ZuDeclVal<const Captures &>(), [](ZuCSpan) { }))> :
+      ZuDeclVal<CaptureSpan>(), [](ZuCSpan) { }))> :
     public ZuTrue { };
   template <typename L, typename R = void>
   using MatchCallable = ZuIfT<IsCallable<L>{}, R>;
@@ -157,11 +167,11 @@ public:
   template <typename S, typename R>
   MatchCallable<R, unsigned> s(S &s, R &&r, unsigned offset = 0, int options = 0) const {
     ZtRegexOVector(ovector, m_captureCount);
-    ZtRegexCaptures(captures, m_captureCount);
+    ZtRegexCaptures(captures, m_captureCount - 1);
     unsigned i = exec(s, offset, options, ovector);
     if (i) {
       capture(s, ovector, captures);
-      ZuFwd<R>(r)(captures, [&s, &ovector](ZuCSpan r) {
+      ZuFwd<R>(r)(captures.cspan(), [&s, &ovector](ZuCSpan r) {
 	s.splice(ovector[0], ovector[1] - ovector[0], r);
       });
     }
@@ -169,7 +179,8 @@ public:
   }
   template <typename S, typename R>
   MatchNotCallable<R, unsigned> s(S &s, R &&r, unsigned offset = 0, int options = 0) const {
-    return this->s(s, [r = ZuCSpan(r)]<typename Splice>(const Captures &, Splice &&splice) {
+    return this->s(s, [r = ZuCSpan(r)]<typename Splice>(
+	CaptureSpan, Splice &&splice) {
       splice(r);
     });
   }
@@ -177,13 +188,13 @@ public:
   template <typename S, typename R>
   MatchCallable<R, unsigned> sg(S &s, R &&r, unsigned offset = 0, int options = 0) const {
     ZtRegexOVector(ovector, m_captureCount);
-    ZtRegexCaptures(captures, m_captureCount);
+    ZtRegexCaptures(captures, m_captureCount - 1);
     unsigned n = 0;
     unsigned slength = s.length(), rlength;
 
     while (offset < slength && exec(s, offset, options, ovector)) {
       capture(s, ovector, captures);
-      r(captures, [&s, &ovector, &rlength](ZuCSpan r) {
+      r(captures.cspan(), [&s, &ovector, &rlength](ZuCSpan r) {
 	rlength = r.length();
 	s.splice(
 	  [](auto span) { }, ovector[0], ovector[1] - ovector[0], [r](auto span) {
@@ -201,20 +212,71 @@ public:
   }
   template <typename S, typename R>
   MatchNotCallable<R, unsigned> sg(S &s, R &&r, unsigned offset = 0, int options = 0) const {
-    return sg(s, [r = ZuCSpan(r)]<typename Splice>(const Captures &, Splice &&splice) {
+    return sg(s, [r = ZuCSpan(r)]<typename Splice>(
+	CaptureSpan, Splice &&splice) {
       splice(r);
     });
   }
 
-  unsigned split(ZuCSpan s, Captures &a, int options = 0) const;
+  template <typename Captures_>
+  unsigned split(ZuCSpan s, Captures_ &a, int options = 0) const {
+    unsigned offset = 0, last = 0;
+    ZtRegexOVector(ovector, m_captureCount);
+    unsigned slength = s.length();
+
+    while (offset < slength && exec(s, offset, options, ovector)) {
+      if (offset || ovector[1] > ovector[0])
+	new (a.push()) Capture(s.data() + last, ovector[0] - last);
+      last = offset = ovector[1];
+      if (ovector[1] == ovector[0]) offset++;
+      options |= PCRE_NO_UTF8_CHECK;
+    }
+    if (last < slength)
+      new (a.push()) Capture(s.data() + last, slength - last);
+
+    return a.length();
+  }
 
   int index(const char *name) const; // pcre_get_stringnumber()
 
 private:
-  unsigned exec(ZuCSpan s,
-      unsigned offset, int options, OVector &ovector) const;
-  void capture(ZuCSpan s,
-      const OVector &ovector, Captures &captures) const;
+  template <typename OVector_>
+  unsigned exec(
+      ZuCSpan s, unsigned offset, int options, OVector_ &ovector) const {
+    unsigned slength = s.length();
+
+    if (slength <= offset) return 0;
+
+    ovector.length(m_captureCount * 3);
+
+    int c = pcre_exec(
+	m_regex, m_extra, s.data(), slength,
+	offset, options,
+	reinterpret_cast<int *>(ovector.data()), ovector.length());
+
+    if (c >= 0) return c;
+    if (c == PCRE_ERROR_NOMATCH) return 0;
+    throw ZtRegexError{nullptr, c, -1};
+  }
+  template <typename OVector_, typename Captures_>
+  void capture(
+      ZuCSpan s, const OVector_ &ovector, Captures_ &captures) const {
+    unsigned slength = s.length();
+    unsigned n = m_captureCount;
+
+    captures.length(0);
+    new (captures.push()) Capture(s.data(), ovector[0]); // $`
+    for (unsigned i = 0; i < n; i++) {
+      int offset = int(ovector[i<<1]);
+      if (offset < 0)
+	new (captures.push()) Capture();
+      else
+	new (captures.push()) Capture(
+	  s.data() + offset, ovector[(i<<1) + 1] - offset);
+    }
+    new (captures.push())
+      Capture(s.data() + ovector[1], slength - ovector[1]); // $'
+  }
 
   pcre		*m_regex;
   pcre_extra	*m_extra;
