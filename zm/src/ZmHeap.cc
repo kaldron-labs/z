@@ -13,6 +13,8 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTuple.hh>
 
+#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmTopology.hh>
@@ -81,7 +83,6 @@ friend Ztc::HeapMgr;
 
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
-  using ReadGuard = ZmReadGuard<Lock>;
 
   using IDPart = ZuTuple<ZuID, unsigned>;
   using IDSize = ZuTuple<ZuCSpan, unsigned>;
@@ -162,14 +163,14 @@ private:
     unsigned n = 0;
     ZmRef<ZmHeapCache> c;
     {
-      ReadGuard guard(m_lock);
+      Guard guard(m_lock);
       c = m_key2Cache.minimumVal();
     }
     while (c) {
       ++n;
       fn(c.ptr());
       {
-	ReadGuard guard(m_lock);
+	Guard guard(m_lock);
 	c = m_key2Cache.citer<ZmRBTreeGreater>(
 	    ZmHeapCache::KeyAxor(c)).val();
       }
@@ -177,13 +178,27 @@ private:
     return n;
   }
 
-  template <typename L> void guard(L &&l) {
+  void capture(
+      Ztc::HeapMgr::MatchFn match, Ztc::HeapMgr::CaptureFn fn) {
     Guard guard(m_lock);
-    ZuFwd<L>(l)();
+    unsigned count = m_key2Cache.count_();
+    auto storage = ZmAlloc(Ztc::HeapTelemetry, count);
+    unsigned length = 0;
+    auto i = m_key2Cache.citer();
+    while (ZmHeapCache *cache = i.val()) {
+      if (match && !match(cache)) continue;
+      auto data = new (&storage[length++]) Ztc::HeapTelemetry;
+      cache->telemetry(*data);
+    }
+    guard.unlock();
+    fn(ZuSpan<const Ztc::HeapTelemetry>{storage.ptr, length});
+    for (unsigned i = 0; i < length; ++i)
+      storage[i].~HeapTelemetry();
   }
 
   void watch(Ztc::HeapMgr::AddFn addFn, Ztc::HeapMgr::DelFn delFn) {
     Guard guard(m_lock);
+    ZmAssert(!m_addFn && !m_delFn, return);
     m_addFn = ZuMv(addFn);
     m_delFn = ZuMv(delFn);
   }
@@ -200,7 +215,7 @@ private:
     ZmRef<ZmHeapCache> c;
     for (;;) {
       {
-	ReadGuard guard(m_lock);
+	Guard guard(m_lock);
 	c = m_key2Cache.citer<ZmRBTreeGreater>(key).val();
       }
       if (!c) return;
@@ -446,6 +461,11 @@ ZmPLock &Ztc::HeapMgr::watchLock_()
   return ZmHeapMgr_::instance()->watchLock();
 }
 
+void Ztc::HeapMgr::capture(MatchFn match, CaptureFn fn)
+{
+  ZmHeapMgr_::instance()->capture(ZuMv(match), ZuMv(fn));
+}
+
 void Ztc::HeapMgr::watch(AddFn addFn, DelFn delFn)
 {
   ZmHeapMgr_::instance()->watch(ZuMv(addFn), ZuMv(delFn));
@@ -456,7 +476,7 @@ void Ztc::HeapMgr::unwatch()
   ZmHeapMgr_::instance()->unwatch();
 }
 
-ZuTuple<const ZuID &, uint32_t, uint8_t, uint16_t, uint8_t>
+ZuTuple<ZuCSpan, uint32_t, uint8_t, uint16_t, uint8_t>
 ZmHeapCache::telKey() const
 {
   return {

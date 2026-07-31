@@ -61,6 +61,45 @@ void managerGuards()
   ZuCheck(guarded == 3);
 }
 
+void mgrCapture()
+{
+  ZuTestScope(mgrCapture);
+
+  auto alloc = new WatchAlloc{};
+  Ztc::HeapMgr::capture(
+    [](Ztc::Heap *heap) {
+      return heap->telKey().p<0>() == "Ztc.Watch.TestHeap";
+    },
+    [](const auto &captures) {
+      unsigned guarded = 0;
+      Ztc::HeapMgr::guard([&guarded]() { ++guarded; });
+      ZuCheck(guarded == 1);
+      ZuCheck(captures.length() == 1);
+      ZuCheck(captures[0].id == "Ztc.Watch.TestHeap");
+    });
+  delete alloc;
+
+  WatchHash hash{ZmHashParams{"Ztc.Watch.TestHash"}};
+  Ztc::HashMgr::capture(
+    [](Ztc::Hash *hash_) {
+      return hash_->telKey().p<0>() == "Ztc.Watch.TestHash";
+    },
+    [](const auto &captures) {
+      unsigned guarded = 0;
+      Ztc::HashMgr::guard([&guarded]() { ++guarded; });
+      ZuCheck(guarded == 1);
+      ZuCheck(captures.length() == 1);
+      ZuCheck(captures[0].id == "Ztc.Watch.TestHash");
+    });
+
+  Ztc::ThreadMgr::capture({}, [](const auto &captures) {
+    unsigned guarded = 0;
+    Ztc::ThreadMgr::guard([&guarded]() { ++guarded; });
+    ZuCheck(guarded == 1);
+    ZuCheck(captures.length() >= 1);
+  });
+}
+
 void heapWatch()
 {
   ZuTestScope(heapWatch);
@@ -86,7 +125,7 @@ void hashWatch()
   Ztc::Hash *added = nullptr;
   Ztc::Hash *deleted = nullptr;
   Ztc::HashMgr::watch(
-    {[&](Ztc::Hash *hash) {
+    {[&added, &adds](Ztc::Hash *hash) {
       Ztc::HashTelemetry data;
       hash->telemetry(data);
       if (data.id == "Ztc.Watch.TestHash") {
@@ -94,7 +133,7 @@ void hashWatch()
 	++adds;
       }
     }},
-    {[&](Ztc::Hash *hash) {
+    {[&deleted, &dels](Ztc::Hash *hash) {
       Ztc::HashTelemetry data;
       hash->telemetry(data);
       if (data.id == "Ztc.Watch.TestHash") {
@@ -120,12 +159,12 @@ void threadWatch()
   unsigned dels = 0;
   ZmSemaphore ran;
   Ztc::ThreadMgr::watch(
-    {[&](Ztc::Thread *thread) {
+    {[&adds](Ztc::Thread *thread) {
       Ztc::ThreadTelemetry data;
       thread->telemetry(data);
       if (data.name == "ztcWatch") ++adds;
     }},
-    {[&](Ztc::Thread *thread) {
+    {[&dels](Ztc::Thread *thread) {
       Ztc::ThreadTelemetry data;
       thread->telemetry(data);
       if (data.name == "ztcWatch") ++dels;
@@ -148,7 +187,7 @@ void unwatchDrain()
   ZmSemaphore unwatchStarted;
   ZmSemaphore unwatchDone;
   Ztc::HashMgr::watch(
-    {[&](Ztc::Hash *hash) {
+    {[&entered, &release](Ztc::Hash *hash) {
       Ztc::HashTelemetry data;
       hash->telemetry(data);
       if (data.id != "Ztc.Watch.Drain") return;
@@ -156,11 +195,11 @@ void unwatchDrain()
       release.wait();
     }},
     {});
-  ZmThread producer{[&]() {
+  ZmThread producer{[]() {
     WatchDrainHash hash{ZmHashParams{"Ztc.Watch.Drain"}};
   }};
   entered.wait();
-  ZmThread drainer{[&]() {
+  ZmThread drainer{[&unwatchStarted, &unwatchDone]() {
     unwatchStarted.post();
     Ztc::HashMgr::unwatch();
     unwatchDone.post();
@@ -173,12 +212,29 @@ void unwatchDrain()
   drainer.join();
 }
 
+void allRefs()
+{
+  ZuTestScope(allRefs);
+  ZmRef<WatchHash> hash =
+    new WatchHash{ZmHashParams{"Ztc.Watch.TestHash"}};
+  bool seen = false;
+  Ztc::HashMgr::all({[&hash, &seen](Ztc::Hash *table) {
+    if (table->telKey().p<0>() != "Ztc.Watch.TestHash") return;
+    ZuCheck(table == hash.ptr());
+    ZuCheck(hash->refCount() >= 2);
+    seen = true;
+  }});
+  ZuCheck(seen);
+}
+
 int main()
 {
   ZuTestMain();
   ZuTestCall(managerGuards);
   ZuTestCall(heapWatch);
+  ZuTestCall(mgrCapture);
   ZuTestCall(hashWatch);
   ZuTestCall(threadWatch);
   ZuTestCall(unwatchDrain);
+  ZuTestCall(allRefs);
 }

@@ -21,6 +21,8 @@
 
 #include <iostream>
 
+#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSpecific.hh>
 #include <zlib/ZmRBTree.hh>
@@ -109,6 +111,7 @@ public:
   void watch(
       Ztc::ThreadMgr::AddFn addFn, Ztc::ThreadMgr::DelFn delFn) {
     Guard guard(m_watchLock);
+    ZmAssert(!m_addFn && !m_delFn, return);
     m_addFn = ZuMv(addFn);
     m_delFn = ZuMv(delFn);
   }
@@ -150,9 +153,23 @@ public:
     return n;
   }
 
-  template <typename L> void guard(L &&l) {
-    Guard guard(m_watchLock);
-    ZuFwd<L>(l)();
+  void capture(
+      Ztc::ThreadMgr::MatchFn match,
+      Ztc::ThreadMgr::CaptureFn fn) const {
+    ReadGuard guard(m_watchLock);
+    unsigned count = m_map.count_();
+    auto storage = ZmAlloc(Ztc::ThreadTelemetry, count);
+    unsigned length = 0;
+    auto i = m_map.citer();
+    while (auto thread = i.key()) {
+      if (match && !match(thread)) continue;
+      auto data = new (&storage[length++]) Ztc::ThreadTelemetry;
+      thread->telemetry(*data);
+    }
+    guard.unlock();
+    fn(ZuSpan<const Ztc::ThreadTelemetry>{storage.ptr, length});
+    for (unsigned i = 0; i < length; ++i)
+      storage[i].~ThreadTelemetry();
   }
 
 private:
@@ -278,6 +295,11 @@ unsigned Ztc::ThreadMgr::all(AllFn fn)
 ZmRWLock &Ztc::ThreadMgr::watchLock_()
 {
   return ZmThreadMgr_::instance()->watchLock();
+}
+
+void Ztc::ThreadMgr::capture(MatchFn match, CaptureFn fn)
+{
+  ZmThreadMgr_::instance()->capture(ZuMv(match), ZuMv(fn));
 }
 
 void Ztc::ThreadMgr::watch(AddFn addFn, DelFn delFn)

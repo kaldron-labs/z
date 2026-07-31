@@ -229,7 +229,7 @@ private:
   struct Queue : public Queue_ {
     using Lock = ZmPLock;
     using Guard = ZmGuard<Lock>;
-    using ReadGuard = ZmReadGuard<Lock>;
+    using ReadGuard = Guard;
 
     ZuInline void push(Fn fn) {
       Guard guard(m_lock);
@@ -546,7 +546,7 @@ private:
 
   using SpawnLock = ZmPLock;
   using SpawnGuard = ZmGuard<SpawnLock>;
-  using SpawnReadGuard = ZmReadGuard<SpawnLock>;
+  using SpawnReadGuard = SpawnGuard;
 
   struct Thread final : public Ztc::Queue {
     ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>

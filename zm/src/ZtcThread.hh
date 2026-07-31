@@ -16,6 +16,7 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuPrint.hh>
+#include <zlib/ZuSpan.hh>
 
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmFn_.hh>
@@ -44,6 +45,13 @@ struct ThreadTelemetry {
   int8_t	priority = -1;
   bool		main = 0;
   bool		detached = 0;
+
+  RAG::T rag() const {
+    if (cpuUsage >= 0.8) return RAG::Red;
+    if (cpuUsage >= 0.5) return RAG::Amber;
+    return RAG::Green;
+  }
+  void rag(RAG::T) { }
 };
 
 // Note: ZtStruct metadata declaration is deferred
@@ -58,6 +66,12 @@ private:
   using WatchLock = ZmRWLock;
   using WatchGuard = ZmGuard<WatchLock>;
 
+public:
+  using MatchFn = ZmFn<bool(Thread *), AllFnHeapID>;
+  using CaptureFn =
+    ZmFn<void(ZuSpan<const ThreadTelemetry>), AllFnHeapID>;
+
+private:
   static WatchLock &watchLock_();
 
 public:
@@ -66,6 +80,7 @@ public:
   using DelFn = ZmFn<void(Thread *), WatchFnHeapID>;
 
   static unsigned all(AllFn);
+  static void capture(MatchFn, CaptureFn);
   template <typename L> static void guard(L &&l) {
     WatchGuard guard(watchLock_());
     ZuFwd<L>(l)();
