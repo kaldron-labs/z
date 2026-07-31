@@ -13,6 +13,10 @@
 //   - consume(frame, data) returns the total number of bytes consumed across all spans
 //     - int64_t frame(span) returns the number of bytes to be consumed in span
 //     - data(span) delivers contiguous frame data to the app
+//   - extract(frame, alloc, out) detaches one complete frame into out
+//     - frame(span) has the same boundary contract as consume()
+//     - alloc() returns a queue-compatible pooled buffer when gathering or
+//       preserving a coalesced trailing remainder is required
 //   - empty()   - true when no readable bytes remain
 // - queue operations:
 //   - push(node)
@@ -25,6 +29,8 @@
 #ifndef ZiLib_HH
 #include <zlib/ZiLib.hh>
 #endif
+
+#include <stdint.h>
 
 #include <zlib/ZuSpan.hh>
 
@@ -180,6 +186,75 @@ public:
     else
       m_queue.shift();
     return total;
+  }
+
+  // Detach one complete frame.  A frame wholly occupying the head buffer is
+  // returned unchanged.  A coalesced trailing remainder is copied into one
+  // successor buffer so the original frame allocation can still be detached.
+  // A fragmented frame is copied directly into one final pooled buffer.
+  template <typename Frame, typename Alloc>
+  int64_t extract(Frame &&frame, Alloc &&alloc, ZmRef<ZiIOBuf> &out) {
+    out = nullptr;
+    unsigned consumed = 0;
+    unsigned count = 0;
+    uint64_t total = 0;
+    {
+      auto i = m_queue.citer();
+      while (auto node = i()) {
+	int64_t n = frame(node->span());
+	if (ZuUnlikely(n < 0)) return n;
+	if (n) {
+	  if (ZuUnlikely(n > int64_t(node->length))) return -1;
+	  consumed = unsigned(n);
+	  total += consumed;
+	  goto framed;
+	}
+	++count;
+	total += node->length;
+      }
+      return 0;
+    }
+  framed:
+    if (ZuUnlikely(total > UINT32_MAX)) return -1;
+    unsigned length = unsigned(total);
+    if (!count) {
+      NodeRef node = head();
+      if (ZuUnlikely(consumed < node->length)) {
+	auto next = alloc();
+	if (ZuUnlikely(!next || !next->alloc(node->length - consumed)))
+	  return -1;
+	next->append(
+	  node->span().data() + consumed, node->length - consumed);
+	node->length = consumed;
+	out = m_queue.shift();
+	m_queue.unshiftNode(ZuMv(next));
+      } else {
+	out = m_queue.shift();
+      }
+      return length;
+    }
+
+    auto buf = alloc();
+    if (ZuUnlikely(!buf || !buf->alloc(length))) return -1;
+    {
+      unsigned remaining = length;
+      auto i = m_queue.citer();
+      while (remaining) {
+	auto node = i();
+	auto span = node->span();
+	if (span.length() > remaining) span.trunc(remaining);
+	buf->append(span);
+	remaining -= span.length();
+      }
+    }
+    while (count--) m_queue.shift();
+    NodeRef node = head();
+    if (consumed < node->length)
+      node->advance(consumed);
+    else
+      m_queue.shift();
+    out = ZuMv(buf);
+    return length;
   }
 
   bool empty() const { return !head(); }

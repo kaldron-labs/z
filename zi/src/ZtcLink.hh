@@ -47,6 +47,22 @@ struct LinkTelemetry {
   uint32_t	reconnects = 0;
   LinkType::T	type = -1;
   LinkState::T	state = -1;
+
+  RAG::T rag() const {
+    switch (state) {
+      case LinkState::Down:
+      case LinkState::Failed:
+	return RAG::Red;
+      case LinkState::Disabled:
+      case LinkState::Deleted:
+	return RAG::Off;
+      case LinkState::Up:
+	return RAG::Green;
+      default:
+	return RAG::Amber;
+    }
+  }
+  void rag(RAG::T) { }
 };
 
 struct Link : public QueueMgr {

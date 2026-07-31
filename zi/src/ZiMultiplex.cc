@@ -13,6 +13,7 @@
 #include <zlib/ZmRWLock.hh>
 #include <zlib/ZmSingleton.hh>
 
+#include <zlib/ZtArray.hh>
 #include <zlib/ZtHexDump.hh>
 #include <zlib/ZtLocalArray.hh>
 
@@ -30,6 +31,9 @@ friend Ztc::MxMgr;
       ZmRBTreeUnique<true,
 	ZmRBTreeLock<ZmNoLock,
 	  ZmRBTreeHeapID<"Ztc.MxMgr">>>>));
+  using Captures =
+    ZtArray<Ztc::MxTelemetry,
+      ZtArrayHeapID<"Ztc.MxMgr.Capture">>;
 
 public:
   ~ZiMxMgr_() {
@@ -37,8 +41,6 @@ public:
     m_delFn = {};
     m_addCxnFn = {};
     m_delCxnFn = {};
-    m_addQueueFn = {};
-    m_delQueueFn = {};
   }
 
   static ZiMxMgr_ *instance() {
@@ -69,13 +71,22 @@ public:
     return n;
   }
 
-  template <typename L> void guard(L &&l) {
-    Guard guard(m_watchLock);
-    ZuFwd<L>(l)();
+  void capture(Ztc::MxMgr::CaptureFn fn) const {
+    ReadGuard guard(m_watchLock);
+    unsigned count = m_map.count_();
+    auto captures = ZtLocalArray(Captures, count);
+    auto i = m_map.citer();
+    while (auto mx = i.key()) {
+      auto data = new (captures.push()) Ztc::MxTelemetry;
+      mx->telemetry(*data);
+    }
+    guard.unlock();
+    fn(captures.cspan());
   }
 
   void watch(Ztc::MxMgr::AddFn addFn, Ztc::MxMgr::DelFn delFn) {
     Guard guard(m_watchLock);
+    ZmAssert(!m_addFn && !m_delFn, return);
     m_addFn = ZuMv(addFn);
     m_delFn = ZuMv(delFn);
   }
@@ -87,21 +98,17 @@ public:
   }
 
   void watch(
-      Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn,
-      Ztc::Mx::AddQueueFn addQueueFn, Ztc::Mx::DelQueueFn delQueueFn) {
+      Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn) {
     Guard guard(m_watchLock);
+    ZmAssert(!m_addCxnFn && !m_delCxnFn, return);
     m_addCxnFn = ZuMv(addCxnFn);
     m_delCxnFn = ZuMv(delCxnFn);
-    m_addQueueFn = ZuMv(addQueueFn);
-    m_delQueueFn = ZuMv(delQueueFn);
   }
 
   void unwatchMx() {
     Guard guard(m_watchLock);
     m_addCxnFn = {};
     m_delCxnFn = {};
-    m_addQueueFn = {};
-    m_delQueueFn = {};
   }
 
   void cxnAdded_(ZiConnection *cxn) {
@@ -123,8 +130,6 @@ private:
   Ztc::MxMgr::DelFn		m_delFn;
   Ztc::Mx::AddCxnFn		m_addCxnFn;
   Ztc::Mx::DelCxnFn		m_delCxnFn;
-  Ztc::Mx::AddQueueFn		m_addQueueFn;
-  Ztc::Mx::DelQueueFn		m_delQueueFn;
 };
 
 #ifndef _WIN32
@@ -1236,6 +1241,15 @@ void ZiMultiplex::executedConnect(ZiConnectFn fn, const ZiCxnInfo &ci)
   }));
 }
 
+Ztc::Connection::Key ZiConnection::telKey() const
+{
+  return {
+    m_mx->id(),
+    m_info.remoteIP, m_info.remotePort,
+    m_info.localIP, m_info.localPort
+  };
+}
+
 void ZiConnection::telemetry(Ztc::CxnTelemetry &data) const
 {
   unsigned rxBufSize = 0;
@@ -1312,11 +1326,6 @@ unsigned ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn) const
   }
   refs.all([&fn](ZmRef<ZiConnection> &cxn) { fn(cxn.ptr()); });
   return refs.length();
-}
-
-unsigned ZiMultiplex::allCxns_(Ztc::Mx::AllCxnsFn fn) const
-{
-  return allCxns(ZuMv(fn));
 }
 
 void ZiMultiplex::listen(
@@ -1452,6 +1461,28 @@ void ZiMultiplex::listen_(
   }
 
 #endif /* !_WIN32 */
+
+  if (!localPort) {
+    ZiSockAddr local;
+    local.init(ipType);
+#ifdef _WIN32
+    int len = local.len();
+    if (getsockname(lsocket, local.sa(), &len)) {
+      ZeError e(WSAGetLastError());
+      ::closesocket(lsocket);
+#else
+    socklen_t len = local.len();
+    if (getsockname(lsocket, local.sa(), &len) < 0) {
+      ZeError e{errno};
+      ::close(lsocket);
+#endif
+      Error("getsockname", Zi::IOError, e);
+      failFn(false);
+      return;
+    }
+    local.sync();
+    localPort = local.port();
+  }
 
   ZmRef<Listener> listener = new Listener(
       this, acceptFn, lsocket, nAccepts, localIP, localPort, options);
@@ -2438,17 +2469,14 @@ void ZiMultiplex::cxnDel(Socket s)
   epoll_ctl(m_epollFD, EPOLL_CTL_DEL, s, 0);
 #endif
 
-  if (ZmRef<ZiConnection> cxn = m_cxns->valMv(m_cxns->del(s)))
+  if (ZmRef<ZiConnection> cxn = m_cxns->delVal(s))
     ZiMxMgr_::instance()->cxnDeleted_(cxn);
 }
 
 void ZiMultiplex::watch(
-    Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn,
-    Ztc::Mx::AddQueueFn addQueueFn, Ztc::Mx::DelQueueFn delQueueFn)
+    Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn)
 {
-  ZiMxMgr_::instance()->watch(
-    ZuMv(addCxnFn), ZuMv(delCxnFn),
-    ZuMv(addQueueFn), ZuMv(delQueueFn));
+  ZiMxMgr_::instance()->watch(ZuMv(addCxnFn), ZuMv(delCxnFn));
 }
 
 void ZiMultiplex::unwatch()
@@ -3145,6 +3173,11 @@ unsigned Ztc::MxMgr::all(AllFn fn)
 ZmRWLock &Ztc::MxMgr::watchLock_()
 {
   return ZiMxMgr_::instance()->watchLock();
+}
+
+void Ztc::MxMgr::capture(CaptureFn fn)
+{
+  ZiMxMgr_::instance()->capture(ZuMv(fn));
 }
 
 void Ztc::MxMgr::watch(AddFn addFn, DelFn delFn)

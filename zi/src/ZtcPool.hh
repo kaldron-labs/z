@@ -39,6 +39,19 @@ struct PoolTelemetry {
   uint16_t	down = 0;	// #links unavailable
   LinkType::T	type = -1;
   PoolState::T	state = -1;
+
+  RAG::T rag() const {
+    switch (state) {
+      case PoolState::Down:
+      case PoolState::Failed:
+	return RAG::Red;
+      case PoolState::Up:
+	return RAG::Green;
+      default:
+	return RAG::Off;
+    }
+  }
+  void rag(RAG::T) { }
 };
 
 struct Pool {

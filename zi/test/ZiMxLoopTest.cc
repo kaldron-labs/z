@@ -579,7 +579,6 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
   mx.startLoopback();
 
   result.done = mx.waitDone(5);
-  mx.stop();
 
   // Some constrained sandboxes deny loopback socket setup; gate integration
   // assertions to keep the suite deterministic across environments.
@@ -598,6 +597,7 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
   result.disconnects = mx.disconnects_();
   result.peerDisconnects = mx.peerDisconnects_();
   result.localDisconnects = mx.localDisconnects_();
+  mx.stop();
   return result;
 }
 

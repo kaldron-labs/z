@@ -603,12 +603,7 @@ public:
   uint64_t txCalls() const { return m_txCalls; }
   uint64_t txBytes() const { return m_txBytes; }
 
-  Ztc::Connection::Key telKey() const override {
-    return {
-      m_info.remoteIP, m_info.remotePort,
-      m_info.localIP, m_info.localPort
-    };
-  }
+  Ztc::Connection::Key telKey() const override;
   void telemetry(Ztc::CxnTelemetry &data) const override;
 
 private:
@@ -934,13 +929,10 @@ public:
   ZiMultiplex &operator =(const ZiMultiplex &) = delete;
 
   unsigned allCxns(Ztc::Mx::AllCxnsFn fn) const override;
-  unsigned allCxns_(Ztc::Mx::AllCxnsFn fn) const;
   unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
     return ZmScheduler::allQueues(ZuMv(fn));
   }
-  void watch(
-    Ztc::Mx::AddCxnFn, Ztc::Mx::DelCxnFn,
-    Ztc::Mx::AddQueueFn, Ztc::Mx::DelQueueFn) override;
+  void watch(Ztc::Mx::AddCxnFn, Ztc::Mx::DelCxnFn) override;
   void unwatch() override;
 
   void listen(

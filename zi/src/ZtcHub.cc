@@ -11,6 +11,9 @@
 #include <zlib/ZmRWLock.hh>
 #include <zlib/ZmSingleton.hh>
 
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtLocalArray.hh>
+
 class ZtcHubMgr_ {
 friend Ztc::HubMgr;
 
@@ -24,6 +27,9 @@ friend Ztc::HubMgr;
       ZmRBTreeUnique<true,
 	ZmRBTreeLock<ZmNoLock,
 	  ZmRBTreeHeapID<"Ztc.HubMgr">>>>));
+  using Captures =
+    ZtArray<Ztc::HubTelemetry,
+      ZtArrayHeapID<"Ztc.HubMgr.Capture">>;
 
 public:
   ~ZtcHubMgr_() {
@@ -97,13 +103,22 @@ public:
     return n;
   }
 
-  template <typename L> void guard(L &&l) {
-    Guard guard(m_watchLock);
-    ZuFwd<L>(l)();
+  void capture(Ztc::HubMgr::CaptureFn fn) const {
+    ReadGuard guard(m_watchLock);
+    unsigned count = m_map.count_();
+    auto captures = ZtLocalArray(Captures, count);
+    auto i = m_map.citer();
+    while (auto hub = i.val()) {
+      auto data = new (captures.push()) Ztc::HubTelemetry;
+      hub->telemetry(*data);
+    }
+    guard.unlock();
+    fn(captures.cspan());
   }
 
   void watch(Ztc::HubMgr::AddFn addFn, Ztc::HubMgr::DelFn delFn) {
     Guard guard(m_watchLock);
+    ZmAssert(!m_addFn && !m_delFn, return);
     m_addFn = ZuMv(addFn);
     m_delFn = ZuMv(delFn);
   }
@@ -116,6 +131,10 @@ public:
       Ztc::HubMgr::AddQueueFn addQueueFn,
       Ztc::HubMgr::DelQueueFn delQueueFn) {
     Guard guard(m_watchLock);
+    ZmAssert(
+      !m_addLinkFn && !m_delLinkFn &&
+      !m_addPoolFn && !m_delPoolFn &&
+      !m_addQueueFn && !m_delQueueFn, return);
     m_addLinkFn = ZuMv(addLinkFn);
     m_delLinkFn = ZuMv(delLinkFn);
     m_addPoolFn = ZuMv(addPoolFn);
@@ -212,6 +231,11 @@ unsigned Ztc::HubMgr::all(AllFn fn)
 ZmRWLock &Ztc::HubMgr::watchLock_()
 {
   return ZtcHubMgr_::instance()->watchLock();
+}
+
+void Ztc::HubMgr::capture(CaptureFn fn)
+{
+  ZtcHubMgr_::instance()->capture(ZuMv(fn));
 }
 
 void Ztc::HubMgr::watch(AddFn addFn, DelFn delFn)

@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuID.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmEngine.hh>
@@ -55,10 +56,20 @@ struct CxnTelemetry {
   uint16_t	remotePort = 0;	// primary key
   uint8_t	flags = 0;	// ZiCxnFlags
   int8_t	type = -1;	// ZiCxnType
+
+  RAG::T rag() const {
+    if (rxBufLen * 10 >= (uint64_t(rxBufSize)<<3) ||
+	txBufLen * 10 >= (uint64_t(txBufSize)<<3)) return RAG::Red;
+    if ((uint64_t(rxBufLen)<<1) >= rxBufSize ||
+	(uint64_t(txBufLen)<<1) >= txBufSize) return RAG::Amber;
+    return RAG::Green;
+  }
+  void rag(RAG::T) { }
 };
 
 struct Connection {
-  using Key = ZuTuple<ZiIP, uint16_t, ZiIP, uint16_t>;
+  using Key =
+    ZuTuple<const ZuID &, ZiIP, uint16_t, ZiIP, uint16_t>;
 
   virtual Key telKey() const = 0;
   virtual void telemetry(CxnTelemetry &data) const = 0;
@@ -83,6 +94,23 @@ struct MxTelemetry { // not graphable
   uint8_t	ll = 0;
   uint8_t	priority = 0;
   uint8_t	nThreads = 0;
+
+  RAG::T rag() const {
+    switch (state) {
+      case ZmEngineState::Stopped:
+      case ZmEngineState::Stopping:
+      case ZmEngineState::StopPending:
+	return RAG::Red;
+      case ZmEngineState::Starting:
+      case ZmEngineState::StartPending:
+	return RAG::Amber;
+      case ZmEngineState::Running:
+	return RAG::Green;
+      default:
+	return RAG::Off;
+    }
+  }
+  void rag(RAG::T) { }
 };
 
 struct Mx {
@@ -92,17 +120,12 @@ struct Mx {
     ZmFn<void(Connection *), WatchFnHeapID>;
   using DelCxnFn =
     ZmFn<void(Connection *), WatchFnHeapID>;
-  using AddQueueFn =
-    ZmFn<void(Queue *), WatchFnHeapID>;
-  using DelQueueFn =
-    ZmFn<void(Queue *), WatchFnHeapID>;
 
   virtual const ZuID &telKey() const = 0;
   virtual void telemetry(MxTelemetry &data) const = 0;
   virtual unsigned allCxns(AllCxnsFn fn) const = 0;
   virtual unsigned allQueues(QueueMgr::AllFn fn) const = 0;
-  virtual void watch(
-    AddCxnFn, DelCxnFn, AddQueueFn, DelQueueFn) = 0;
+  virtual void watch(AddCxnFn, DelCxnFn) = 0;
   virtual void unwatch() = 0;
 };
 
@@ -115,10 +138,13 @@ private:
 
 public:
   using AllFn = ZmFn<void(Mx *), AllFnHeapID>;
+  using CaptureFn =
+    ZmFn<void(ZuSpan<const MxTelemetry>), AllFnHeapID>;
   using AddFn = ZmFn<void(Mx *), WatchFnHeapID>;
   using DelFn = ZmFn<void(Mx *), WatchFnHeapID>;
 
   static unsigned all(AllFn);
+  static void capture(CaptureFn);
   template <typename L> static void guard(L &&l) {
     WatchGuard guard(watchLock_());
     ZuFwd<L>(l)();
