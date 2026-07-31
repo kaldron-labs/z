@@ -348,7 +348,7 @@ public:
   ZtArray(const ZtArray &a) noexcept(ZuNXCopy<T>{}) { ctor(a); }
 
   // note that the heap parameters form part of the type, so moving will
-  // only happen among identically-typed strings; this is both intentional
+  // only happen among identically-typed arrays; this is both intentional
   // and important for heap instrumentation and tuning
   ZtArray(ZtArray &&a) noexcept(ZuNXMove<T>{}) {
     if (!a.mutable_())

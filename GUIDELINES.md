@@ -154,13 +154,13 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   Fix: begin thread-exclusive groups of data members with `alignas(Zm::CacheLineSize)`
 - Amber Flag: fixed-size arrays, especially with separately maintained lengths.
   Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
-  Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, etc.; enforce any required hard upper limit in code.
+  Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtScratch`, etc.; enforce any required hard upper limit in code.
 - Amber Flag: fixed-size lookup tables.
   Problem: static sizing prevents run-time tuning and often misses required locking/hash-ID integration.
   Fix: use `ZmHash`/`ZmLHash` with appropriate locking and hash IDs.
 - Amber Flag: arrays on hot or cold paths without workload-aware storage.
   Problem: the wrong storage choice adds allocation latency, stack pressure, or unused capacity.
-  Fix: use `ZtBuiltin` sized for 95-99% of hot-path usage, plain `ZtArray` for cold paths, and `ZtLocalArray` for scratch hot-path storage with heap fallback.
+  Fix: use `ZtBuiltin` sized for 95-99% of hot-path usage, plain `ZtArray` for cold paths, and `ZtScratch` for scratch hot-path storage with heap fallback.
 
 ### Heap allocation
 - Red Flag: buffer or queue-node management bypassing optimized Z heap paths.
@@ -168,7 +168,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   Fix: use `ZmHeap`-optimized buffer and queue-node management.
 - Amber Flag: heap allocation in hot paths or for scratch state.
   Problem: allocator latency and contention directly hurt tail latency and throughput.
-  Fix: use stack scratch such as `ZtLocalArray` and pass it through callbacks; I/O buffers are the exception, see the I/O guidance below.
+  Fix: use stack scratch such as `ZtScratch` and pass it through callbacks; I/O buffers are the exception, see the I/O guidance below.
 - Red Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
   Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
   Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`.
@@ -310,8 +310,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
     - fixed-width: `ZuArray<uint8_t, N>` aka `ZuBArray<N>`
     - heap-allocated: `ZtArray<uint8_t>` aka `ZtBArray`
   - scratch strings/buffers:
-    - `ZtLocalString` (macro) - scratch on-stack null-terminated `ZtString` with heap fallback
-    - `ZtLocalArray` (macro) - scratch on-stack null-terminated `ZtArray` with heap fallback
+    - `ZtScratch` (macro) - scratch on-stack `ZtArray`/`ZtString` with heap fallback
   - specific-purpose strings:
     - `ZtString` and `ZtArray` can be tagged with a compile-time `ZmHeapID`
     - certain types with specific heap IDs are re-used throughout the framework:
@@ -331,7 +330,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Use `ZuMatcher` for token matching among multiple possibilities; use `==` for a single possibility.
 
 ### Storage and lifetime
-- Use `ZtLocalArray` for stack scratch with heap fallback; ensure the underlying array has appropriate heap identification.
+- Use `ZtScratch` for stack scratch with heap fallback; ensure the underlying array has appropriate heap identification.
 - Use `ZtBuiltin` for builtin arrays with heap-allocation fallback.
 - Use `ZmAlloc` for large single-object stack allocations with heap fallback.
 - Use `ZmSpecific` instead of `thread_local`.

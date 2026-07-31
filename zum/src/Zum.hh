@@ -95,9 +95,7 @@ ZfbStruct(Perm,
 
 ZfbRoot(Perm);
 
-namespace RoleFlags {
-  ZtFlags(RoleFlags, uint8_t, Immutable);
-}
+ZtFlagsNS(RoleFlags, uint8_t, Immutable);
 
 // role (i.e. a combination of permitted actions)
 struct Role {
@@ -116,13 +114,11 @@ ZfbStruct(Role,
 
 ZfbRoot(Role);
 
-namespace UserFlags {
-  ZtFlags(UserFlags, uint8_t,
-    Immutable,
-    Enabled,
-    SuperUser,
-    ChPass);		// user must change password
-}
+ZtFlagsNS(UserFlags, uint8_t,
+  Immutable,
+  Enabled,
+  SuperUser,
+  ChPass);		// user must change password
 
 struct User {
   UserID		id;

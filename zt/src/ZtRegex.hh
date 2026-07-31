@@ -26,7 +26,7 @@
 #include <zlib/ZmAlloc.hh>
 
 #include <zlib/ZtString.hh>
-#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtScratch.hh>
 
 struct ZtAPI ZtRegexError {
   const char	*message = 0;
@@ -49,12 +49,12 @@ struct ZtAPI ZtRegexError {
 // n should be the captureCount() (includes $& but not $` and $')
 #define ZtRegexOVector(o, n) \
   auto o##_size = unsigned(n) * 3; \
-  auto o = ZtLocalArray(ZtRegex::OVector, o##_size)
+  auto o = ZtScratch(ZtRegex::OVector, o##_size)
 
 // n should be the captureCount() (includes $& but not $` and $')
 #define ZtRegexCaptures(c, n) \
   auto c##_size = unsigned(n) + 2; \
-  auto c = ZtLocalArray(ZtRegex::Captures, c##_size)
+  auto c = ZtScratch(ZtRegex::Captures, c##_size)
 
 class ZtAPI ZtRegex {
   ZtRegex(const ZtRegex &) = delete;

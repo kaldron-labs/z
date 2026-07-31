@@ -656,7 +656,7 @@ private:
     uint64_t decodedMax = Compression::Huffman::declen(ref.raw.length());
     if (ZuUnlikely(decodedMax > impl()->h3Params().maxHeaderListSize()))
 	return false;
-    auto storage = ZtLocalArray(HdrBytes, decodedMax);
+    auto storage = ZtScratch(HdrBytes, decodedMax);
     int64_t n = Compression::Huffman::decode(
 	ZuSpan<uint8_t>{storage.data(), unsigned(decodedMax)},
 	ref.raw);
@@ -1314,7 +1314,7 @@ struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
     enum { FramePrefixSize = 16 }; // two maximum-width QUIC varints
     using FrameHdr = ZtArray<uint8_t,
 	ZtArrayHeapID<"Zhttp.H3.FrameHdr">>;
-    auto frameHdr = ZtLocalArray(FrameHdr, FramePrefixSize);
+    auto frameHdr = ZtScratch(FrameHdr, FramePrefixSize);
     putVar(frameHdr, 0);
     putVar(frameHdr, buf->length);
     ZiAssert(buf->skip >= frameHdr.length(),
@@ -1623,7 +1623,7 @@ private:
 	  }
 	}
     }
-    auto prefix = ZtLocalArray(HdrBytes, PrefixBuiltin);
+    auto prefix = ZtScratch(HdrBytes, PrefixBuiltin);
     FieldSectionPrefix p;
     p.requiredInsertCount = plan.required;
     p.base = plan.required ? plan.base : 0;
@@ -1635,7 +1635,7 @@ private:
     }
     bool encoderEmitted = false;
     if (plan.sendCapacity || plan.inserts.length()) {
-	auto scratch = ZtLocalArray(HdrBytes, EncoderScratchBuiltin);
+	auto scratch = ZtScratch(HdrBytes, EncoderScratchBuiltin);
 	if (plan.sendCapacity) {
 	  if (QPack::encodeSetCapacity(scratch, plan.plannedCapacity) < 0) {
 	    impl()->qpackFailure(QPackBuildFailure::CapacityPolicy);

@@ -24,7 +24,7 @@
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuUnroll.hh>
 
-#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiLog.hh>

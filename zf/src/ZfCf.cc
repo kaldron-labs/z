@@ -9,7 +9,7 @@
 
 #include <zlib/ZfCf.hh>
 
-#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtScratch.hh>
 
 namespace ZfCf {
 
@@ -222,7 +222,7 @@ slow:
 	}
 	ZuCSpan name{span.data() + begin, end - begin};
 	if (!appendDefine(name, out)) {
-	  auto env = ZtLocalString(ZtString<>, name.length() + 1);
+	  auto env = ZtScratch(ZtString<>, name.length() + 1);
 	  env << name;
 	  if (auto value = ::getenv(env)) out.append(value, strlen(value));
 	}
@@ -376,7 +376,7 @@ int Scan::eod(ZuCSpan span, AnyNode *node)
     return -1;
   }
 
-  auto args = ZtLocalArray(Args, 4);
+  auto args = ZtScratch(Args, 4);
   bool afterComma = false;
   for (;;) {
     while (i < n && isspace__(span[i])) ++i;
@@ -435,7 +435,7 @@ int Scan::eod(ZuCSpan span, AnyNode *node)
     return -1;
   }
 
-  auto argSpans = ZtLocalArray(
+  auto argSpans = ZtScratch(
     ArgSpans, args.length(), args.length());
   for (unsigned j = 0; j < args.length(); j++) argSpans[j] = args[j];
   ZuSpan<const ZuCSpan> argSpan{argSpans.data(), argSpans.length()};

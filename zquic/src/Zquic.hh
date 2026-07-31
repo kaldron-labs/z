@@ -39,7 +39,7 @@
 #include <zlib/ZmQueue.hh>
 
 #include <zlib/ZtArray.hh>
-#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiLog.hh>
@@ -402,7 +402,7 @@ inline bool sendCryptoFlights_(
     while (remaining) {
       unsigned chunk = remaining > chunkMax ? chunkMax : remaining;
       using Frame = ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Runtime.Frame">>;
-      auto frame = ZtLocalArray(Frame, BufSize);
+      auto frame = ZtScratch(Frame, BufSize);
       uint64_t cryptoOffset = txCrypto[space].txOffset();
       int n = txCrypto[space].writeFramePrefix(frame.data(), BufSize, chunk);
       if (n < 0) {
@@ -1366,7 +1366,7 @@ private:
     if (!table) return;
     unsigned n = table->count_();
     if (!n) return;
-    auto links = ZtLocalArray(LinkRefs, n);
+    auto links = ZtScratch(LinkRefs, n);
     {
       auto i = table->citer();
       while (LinkRef ref = i.val())

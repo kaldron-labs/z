@@ -514,7 +514,6 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zt/src/ZtBuiltin.hh:13` - Top-level symbols: define ZtBuiltin_HH, class ZtBuiltin, using T
 - `zt/src/ZtHexDump.cc:1` - Top-level contents (no regex-matched symbols)
 - `zt/src/ZtStack.hh:16` - Top-level symbols: define ZtStack_HH, define ZtStackMaxFrag, struct ZtStackParams, function initial, function maxFrag, struct ZtStack_Defaults
-- `zt/src/ZtLocalString.hh:15` - Top-level symbols: define ZtLocalString_HH, struct ZtLocalString_, using Char, define ZtLocalString_1, define ZtLocalString_2, define ZtLocalString_N
 - `zt/src/ZtIconv.hh:10` - Top-level symbols: define ZtIconv_HH, function length, function data, class ZtIconv, function factor, class IconvTraits
 - `zt/src/ZtFmt.hh:11` - Top-level symbols: define ZtFmt_HH, struct Default, function DateScan_, function DatePrint_, function FlagsDelim, function VecPrefix
 - `zf/src/ZfStruct.hh:116` - Top-level symbols: define ZfStruct_HH, struct IsVec, struct Synthetic, struct Mutable, struct Hidden, struct Hex
@@ -529,7 +528,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zf/src/ZfJSON.cc:11` - Top-level symbols: function bos, using Fmt, function is, function bok, function eok, function boc
 - `zt/src/ZtCase.hh:10` - Top-level symbols: define ZtCase_HH, function isupper__, function toupper__, function islower__, function tolower__, function snakeCamel
 - `zt/src/ZtEnum.hh:10` - Top-level symbols: define ZtEnum_HH, define ZtEnumMap_, struct Map, using Names, function id, function s2v
-- `zt/src/ZtLocalArray.hh:13` - Top-level symbols: define ZtLocalArray_HH, struct ZtLocalArray_, using T, define ZtLocalArray_1, define ZtLocalArray_2, define ZtLocalArray_N
+- `zt/src/ZtScratch.hh:13` - Top-level symbols: define ZtScratch_HH, struct ZtScratch_, using T, define ZtScratch_1, define ZtScratch_2, define ZtScratch_N
 - `zt/src/ZtString.hh:20` - Top-level symbols: define ZtString_HH, define ZtString_Builtin, struct ZtString_Defaults, struct HeapID, struct ZtStringBuiltin, struct ZtStringHeapID_
 - `zt/src/ZtTimeZone.cc:19` - Top-level symbols: struct Zt_TzLock, function instance, class Zt_TzGuard, struct tm
 - `zt/src/ZtRegex.cc:9` - Top-level symbols: define ZtRegex_CC

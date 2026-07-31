@@ -57,10 +57,10 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZePlatform.hh>
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfJSON.hh>
-#include <zlib/ZtLocalString.hh>
 
 #ifndef ZfCLI_MutableArgv 
 // the argv parameter to main() is mutable on modern operating systems and
@@ -2021,7 +2021,7 @@ void initOptions(Hash &hash, ZuCSpan prefix = {}) {
     if (n) ++n;
     ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
     n += longOpt.length() + 1; // +1 for null terminator
-    auto expansion = ZtLocalString(Expansion, n);
+    auto expansion = ZtScratch(Expansion, n);
     if (prefix) expansion << prefix << '.';
     expansion << longOpt;
     if constexpr (
@@ -2076,7 +2076,7 @@ private:
 	unsigned n = prefix.length();
 	if (n) ++n;
 	n += longOpt.length();
-	auto expansion = ZtLocalString(Expansion, n);
+	auto expansion = ZtScratch(Expansion, n);
 	if (prefix) expansion << prefix << '.';
 	expansion << longOpt;
 	if constexpr (

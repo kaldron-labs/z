@@ -41,7 +41,7 @@ The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`
 
 ## Performance and Amber Flags
 - Treat heap allocation, hidden copies, temporary contiguous conversions, default initialization before overwrite, and allocation without `ZmHeap`/`ZmVHeap`/`ZmHeapID` as review issues unless justified.
-- Avoid fixed-size arrays, fixed-size lookup tables, unexplained hard-coded capacities, and arrays whose storage choice is not workload-aware. Prefer `ZuArray`, `ZtArray`, `ZtString`, `ZtLocalArray`, `ZtBuiltin`, `ZmHash`, or related framework containers as appropriate.
+- Avoid fixed-size arrays, fixed-size lookup tables, unexplained hard-coded capacities, and arrays whose storage choice is not workload-aware. Prefer `ZuArray`, `ZtArray`, `ZtString`, `ZtScratch`, `ZtBuiltin`, `ZmHash`, or related framework containers as appropriate.
 - Operate in place on mutable buffers or write directly into uninitialized destination storage when it avoids copies; Z array containers are intentionally uninitialized until filled.
 - Prefer `switch` for branching on one discrete value, flatten nested control flow, and factor repeated blocks with templates, CRTP, or local helpers that preserve performance.
 - Delete dead or historical compatibility code unless compatibility is explicitly required.

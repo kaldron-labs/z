@@ -66,7 +66,7 @@ bool load(Options &options, std::initializer_list<const char *> args)
 void testPathNormalize()
 {
   ZuTestScope(testPathNormalize);
-  auto out = ZtLocalString(HdrString, 64);
+  auto out = ZtScratch(HdrString, 64);
   ZuCSpan err;
   ZuCHECK(decodeNormalizePath("/a//b/./c", false, out, err) &&
       out == "/a/b/c", "path normalization failed");

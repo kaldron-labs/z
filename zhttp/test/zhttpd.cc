@@ -180,7 +180,7 @@ void sendBody(Tx &tx, Builder &builder, const ResponsePlan &resp) {
   ZiFile file;
   if (file.dup(resp.fileHandle, ZiFile::GC) != Zi::OK)
     return;
-  auto buf = ZtLocalArray(ZtArray<char>, FileChunk, FileChunk);
+  auto buf = ZtScratch(ZtArray<char>, FileChunk, FileChunk);
   if (!buf) return;
   uint64_t offset = resp.fileOffset;
   uint64_t left = resp.fileLength;

@@ -9,7 +9,7 @@
 #include <zlib/ZmDemangle.hh>
 
 #include <zlib/ZtCase.hh>
-#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -2081,13 +2081,13 @@ void StoreTbl::select(
   auto &id = *id_
 
 #define ParamAlloc(nParams) \
-  auto params = ZtLocalArray(Tuple, nParams)
+  auto params = ZtScratch(Tuple, nParams)
 
 #define VarAlloc(nParams, xfields, fbo) \
   unsigned nVars = 0; \
   for (unsigned i = 0; i < nParams; i++) \
     if (isVar(xfields[i].type)) nVars++; \
-  auto varBufParts = ZtLocalArray(VarBufParts, nVars); \
+  auto varBufParts = ZtScratch(VarBufParts, nVars); \
   unsigned varBufSize_ = 0; \
   if (nVars > 0) { \
     for (unsigned i = 0; i < nParams; i++) { \
@@ -2099,7 +2099,7 @@ void StoreTbl::select(
       varBufSize_ += size; \
     } \
   } \
-  auto varBuf = ZtLocalArray(VarBuf, varBufSize_)
+  auto varBuf = ZtScratch(VarBuf, varBufSize_)
 
 int StoreTbl::count_send(Work::Count &count)
 {

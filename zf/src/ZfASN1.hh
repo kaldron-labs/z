@@ -1900,7 +1900,7 @@ template <
   typename S, typename O>
 inline S &save(S &s, const O &v)
 {
-  auto stash = ZtLocalArray(SaveArray, StashSize);
+  auto stash = ZtScratch(SaveArray, StashSize);
   using Handler = typename As<O>::template Handler<O, Facet>;
   Handler::save1(stash, v);
   Handler::save2(s, v, stash);

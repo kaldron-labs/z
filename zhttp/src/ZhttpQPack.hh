@@ -23,7 +23,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
-#include <zlib/ZtLocalArray.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiAssert.hh>
@@ -470,9 +470,9 @@ struct QPack {
     // Huffman strings use these per-section scratch buffers, reused for each
     // field rather than allocated inside the representation loop.
     auto nameStorage =
-      ZtLocalArray(HdrBytes, Compression::Huffman::declen(in.length()));
+      ZtScratch(HdrBytes, Compression::Huffman::declen(in.length()));
     auto valueStorage =
-      ZtLocalArray(HdrBytes, Compression::Huffman::declen(in.length()));
+      ZtScratch(HdrBytes, Compression::Huffman::declen(in.length()));
 
     auto countHeader = [&headerBytes, &params](ZuCSpan name, ZuCSpan value) {
       if (headerBytes > params.maxHeaderListSize() - name.length())

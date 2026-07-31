@@ -10,35 +10,47 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZtBuiltin.hh>
-#include <zlib/ZtLocalArray.hh>
-#include <zlib/ZtLocalString.hh>
+#include <zlib/ZtScratch.hh>
 
 using namespace ZuTestUtil;
 
-using IntArray = ZtArray<int, ZtArrayHeapID<"ZtLocalBuffer.IntArray">>;
-using CharArray = ZtArray<char, ZtArrayHeapID<"ZtLocalBuffer.CharArray">>;
+using IntArray = ZtArray<int, ZtArrayHeapID<"ZtScratch.IntArray">>;
+using CharArray = ZtArray<char, ZtArrayHeapID<"ZtScratch.CharArray">>;
+
+struct NoInitArray : public IntArray {
+  using IntArray::IntArray;
+private:
+  using IntArray::initElems;
+};
 
 ZuDerive(BuiltinBuf, (ZtBuiltin<CharArray, 8>));
 
-void testLocalArrayAndLocalString()
+void testScratch()
 {
-  ZuTestScope(testLocalArrayAndLocalString);
+  ZuTestScope(testScratch);
 
-  auto ints = ZtLocalArray(IntArray, 6);
+  auto ints = ZtScratch(IntArray, 6);
   ints.push(1);
   ints.push(2);
   ZuCheck(ints.length() == 2);
   ZuCheck(ints[0] == 1);
   ZuCheck(ints[1] == 2);
 
-  auto ints2 = ZtLocalArray(IntArray, 3, 6);
+  auto ints2 = ZtScratch(IntArray, 3, 6);
   ZuCheck(ints2.length() == 3);
   ints2[0] = 7;
   ints2[1] = 8;
   ints2[2] = 9;
   ZuCheck(ints2[2] == 9);
 
-  auto s = ZtLocalString(ZtString<>, 16);
+  auto ints3 = ZtScratch(NoInitArray, 3, 6);
+  ZuCheck(ints3.length() == 3);
+  ints3[0] = 10;
+  ints3[1] = 11;
+  ints3[2] = 12;
+  ZuCheck(ints3[2] == 12);
+
+  auto s = ZtScratch(ZtString<>, 16);
   s << "abc";
   ZuCheck(s == "abc");
 
@@ -72,7 +84,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testLocalArrayAndLocalString);
+  ZuTestCall(testScratch);
   ZuTestCall(testBuiltinBufferCopyMoveAndGrowth);
   return 0;
 }

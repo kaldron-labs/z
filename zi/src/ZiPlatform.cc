@@ -24,7 +24,7 @@ Zi::Username Zi::username(ZeError *e)
   auto pwdBuf = ZmAlloc(char, bufSize);
   if (!pwdBuf) return name;
 
-  int s = getpwuid_r(geteuid(), &pwd, pwdBuf.ptr, bufSize, &result);
+  int s = getpwuid_r(geteuid(), &pwd, pwdBuf.data, bufSize, &result);
   if (!result && s != 0) {
     if (e) *e = ZeError(s);
   } else if (result) {
