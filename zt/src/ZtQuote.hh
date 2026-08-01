@@ -64,8 +64,9 @@ struct Base32 {
     const auto &v = print.v;
     unsigned n = ZuBase32::enclen(v.length());
     auto buf = ZmScratch(uint8_t, n);
-    buf.length(ZuBase32::encode(buf.span(), v));
-    return s << ZuCSpan(buf.cspan());
+    buf.length(n);
+    buf.length(ZuBase32::encode(buf, v));
+    return s << ZuCSpan(buf);
   }
 };
 
@@ -77,8 +78,9 @@ struct Base64 {
     const auto &v = print.v;
     unsigned n = ZuBase64::enclen(v.length());
     auto buf = ZmScratch(uint8_t, n);
-    buf.length(ZuBase64::encode(buf.span(), v));
-    return s << ZuCSpan(buf.cspan());
+    buf.length(n);
+    buf.length(ZuBase64::encode(buf, v));
+    return s << ZuCSpan(buf);
   }
 };
 
@@ -90,8 +92,9 @@ struct Hex {
     const auto &v = print.v;
     unsigned n = ZuHex::enclen(v.length());
     auto buf = ZmScratch(uint8_t, n);
-    buf.length(ZuHex::encode(buf.span(), v));
-    return s << ZuCSpan(buf.cspan());
+    buf.length(n);
+    buf.length(ZuHex::encode(buf, v));
+    return s << ZuCSpan(buf);
   }
 };
 

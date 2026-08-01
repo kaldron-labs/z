@@ -26,7 +26,7 @@
 #include <zlib/ZuDateTime.hh>
 
 #include <zlib/ZmBitmap.hh>
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtBitmap.hh>
 
@@ -175,29 +175,29 @@ namespace Save {
   template <typename T, typename Builder, typename ...Args>
   inline Offset<Vector<Offset<T>>> vector(Builder &fbb, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
-    auto buf = ZmAlloc(Offset<T>, n);
-    if (!buf) return {};
-    push_(buf.data, ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
-    auto r = fbb.CreateVector(buf.data, n);
+    auto buf = ZmScratch(Offset<T>, n);
+    if (!buf.data()) return {};
+    push_(buf.data(), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    auto r = fbb.CreateVector(buf.data(), n);
     return r;
   }
   // inline creation of a vector of lambda-transformed offsets
   template <typename T, typename Builder, typename L, typename ...Args>
   inline Offset<Vector<Offset<T>>> lvector(Builder &fbb, L &&l, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
-    auto buf = ZmAlloc(Offset<T>, n);
-    if (!buf) return {};
-    lpush_(buf.data, ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
-    auto r = fbb.CreateVector(buf.data, n);
+    auto buf = ZmScratch(Offset<T>, n);
+    if (!buf.data()) return {};
+    lpush_(buf.data(), ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    auto r = fbb.CreateVector(buf.data(), n);
     return r;
   }
   // iterated creation of a vector of offsets
   template <typename T, typename Builder, typename L>
   inline Offset<Vector<Offset<T>>> vectorIter(Builder &fbb, unsigned n, L &&l) {
-    auto buf = ZmAlloc(Offset<T>, n);
-    if (!buf) return {};
-    for (unsigned i = 0; i < n; i++) buf.data[i] = ZuFwd<L>(l)(fbb, i);
-    auto r = fbb.CreateVector(buf.data, n);
+    auto buf = ZmScratch(Offset<T>, n);
+    if (!buf.data()) return {};
+    for (unsigned i = 0; i < n; i++) buf[i] = ZuFwd<L>(l)(fbb, i);
+    auto r = fbb.CreateVector(buf.data(), n);
     return r;
   }
 
@@ -215,29 +215,29 @@ namespace Save {
   template <typename T, typename Builder, typename ...Args>
   inline Offset<Vector<Offset<T>>> keyVec(Builder &fbb, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
-    auto buf = ZmAlloc(Offset<T>, n);
-    if (!buf) return {};
-    push_(buf.data, ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
-    auto r = fbb.CreateVectorOfSortedTables(buf.data, n);
+    auto buf = ZmScratch(Offset<T>, n);
+    if (!buf.data()) return {};
+    push_(buf.data(), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    auto r = fbb.CreateVectorOfSortedTables(buf.data(), n);
     return r;
   }
   // inline creation of a vector of lambda-transformed keyed offsets
   template <typename T, typename Builder, typename L, typename ...Args>
   inline Offset<Vector<Offset<T>>> lkeyVec(Builder &fbb, L &&l, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
-    auto buf = ZmAlloc(Offset<T>, n);
-    if (!buf) return {};
-    lpush_(buf.data, ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
-    auto r = fbb.CreateVectorOfSortedTables(buf.data, n);
+    auto buf = ZmScratch(Offset<T>, n);
+    if (!buf.data()) return {};
+    lpush_(buf.data(), ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
+    auto r = fbb.CreateVectorOfSortedTables(buf.data(), n);
     return r;
   }
   // iterated creation of a vector of lambda-transformed keyed offsets
   template <typename T, typename Builder, typename L>
   inline Offset<Vector<Offset<T>>> keyVecIter(Builder &fbb, unsigned n, L &&l) {
-    auto buf = ZmAlloc(Offset<T>, n);
-    if (!buf) return {};
+    auto buf = ZmScratch(Offset<T>, n);
+    if (!buf.data()) return {};
     for (unsigned i = 0; i < n; i++) buf[i] = ZuFwd<L>(l)(fbb, i);
-    auto r = fbb.CreateVectorOfSortedTables(buf.data, n);
+    auto r = fbb.CreateVectorOfSortedTables(buf.data(), n);
     return r;
   }
 

@@ -22,7 +22,6 @@
 
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuMArray.hh>
-#include <zlib/ZuStream.hh>
 #include <zlib/ZuUTF.hh>
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuPtr.hh>

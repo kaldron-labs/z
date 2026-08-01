@@ -213,26 +213,30 @@ inline void saveValue_(S &s, const T_ &v_)
       ZuBSpan v{v_};
       unsigned n = ZuBase64::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuBase64::encode(buf, v));
+      s << ZuCSpan(buf);
     } else if constexpr (Fmt == ZfCSV::Base64URL) {
       ZuBSpan v{v_};
       unsigned n = ZuBase64URL::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64URL::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuBase64URL::encode(buf, v));
+      s << ZuCSpan(buf);
     } else if constexpr (Fmt == ZfCSV::Base32) {
       ZuBSpan v{v_};
       unsigned n = ZuBase32::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase32::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuBase32::encode(buf, v));
+      s << ZuCSpan(buf);
     } else if constexpr (Fmt == ZfCSV::Hex) {
       ZuBSpan v{v_};
       unsigned n = ZuHex::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuHex::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuHex::encode(buf, v));
+      s << ZuCSpan(buf);
     } else if constexpr (Fmt == ZfCSV::Raw) {
       s << Quote::String{v_};
     }
@@ -657,14 +661,14 @@ struct Push : public Writer<O, Facet> {
 private:
   void writeHeader() {
     auto data = ZmScratch(char, MaxRowLen);
-    ZuStream buf{data.span()};
+    ZuStream buf{ZuSpan(data.data(), data.size())};
     this->saveHdr(buf);
     if (ZuUnlikely(buf.overflow())) {
       overflow = true;
       return;
     }
     buf.finish(data);
-    out << data.cspan();
+    out << data;
   }
 
 public:
@@ -678,14 +682,14 @@ public:
   bool operator ()(const O &o) {
     if (ZuUnlikely(overflow)) return false;
     auto data = ZmScratch(char, MaxRowLen);
-    ZuStream buf{data.span()};
+    ZuStream buf{ZuSpan(data.data(), data.size())};
     this->save(buf, o);
     if (ZuUnlikely(buf.overflow())) {
       overflow = true;
       return false;
     }
     buf.finish(data);
-    out << data.cspan();
+    out << data;
     return true;
   }
 
@@ -724,19 +728,19 @@ private:
   void write(Out &out, L l) {
     auto data = ZmScratch(char, MaxRowLen);
     {
-      ZuStream buf{data.span()};
+      ZuStream buf{ZuSpan(data.data(), data.size())};
       this->saveHdr(buf);
       if (ZuUnlikely(buf.overflow())) { overflow = true; return; }
       buf.finish(data);
-      out << data.cspan();
+      out << data;
       data.null();
     }
     for (;;) {
-      ZuStream buf{data.span()};
+      ZuStream buf{ZuSpan(data.data(), data.size())};
       if (!l([this, &buf](const O &o) { this->save(buf, o); })) return;
       if (ZuUnlikely(buf.overflow())) { overflow = true; return; }
       buf.finish(data);
-      out << data.cspan();
+      out << data;
       data.null();
     }
   }
@@ -818,7 +822,7 @@ struct Reader {
       const auto &lookup_ = lookup.template p<Lookup>();
       auto row_ = ZmScratch(Cell, lookup_.ncols);
       unsigned length;
-      auto n = split(data, row_.span(), length);
+      auto n = split(data, ZuSpan(row_.data(), row_.size()), length);
       row_.template length<false>(length);
       row = ZuSpan<Cell>(row_.data(), row_.length());
       if (n >= 0) ZuFwd<L>(l)(*this);

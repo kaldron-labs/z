@@ -27,15 +27,17 @@ template <typename L> \
 static inline decltype(auto) enc(ZuBSpan src, L &&l) { \
   unsigned n = enclen(src.length()); \
   auto buf = ZmScratch(uint8_t, n); \
-  buf.length(encode(buf.span(), src)); \
-  ZuFwd<L>(l)(buf.cspan()); \
+  buf.length(n); \
+  buf.length(encode(buf, src)); \
+  ZuFwd<L>(l)(buf); \
 } \
 template <typename L> \
 static inline decltype(auto) dec(ZuBSpan src, L &&l) { \
   unsigned n = declen(src.length()); \
   auto buf = ZmScratch(uint8_t, n); \
-  buf.length(decode(buf.span(), src)); \
-  ZuFwd<L>(l)(buf.cspan()); \
+  buf.length(n); \
+  buf.length(decode(buf, src)); \
+  ZuFwd<L>(l)(buf); \
 }
 
 struct ZmBase64 : public ZuBase64 { ZmCodec_Fn };

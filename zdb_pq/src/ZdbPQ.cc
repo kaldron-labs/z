@@ -1001,11 +1001,11 @@ void StoreTbl::open(OpenFn openFn)
 template <int State>
 int Store::sendQuery(const SQLString &query, const Tuple &params)
 {
-  auto n = params.length();
-  auto paramTypes = ZmAlloc(Oid, n);
-  auto paramValues = ZmAlloc(const char *, n);
-  auto paramLengths = ZmAlloc(int, n);
-  auto paramFormats = ZmAlloc(int, n);
+  unsigned n = params.length();
+  auto paramTypes = ZmScratch(Oid, n);
+  auto paramValues = ZmScratch(const char *, n);
+  auto paramLengths = ZmScratch(int, n);
+  auto paramFormats = ZmScratch(int, n);
   for (unsigned i = 0; i < n; i++) {
     int type = params[i].type();
     paramTypes[i] = m_oids.oid(type);
@@ -1022,7 +1022,8 @@ int Store::sendQuery(const SQLString &query, const Tuple &params)
 
   int r = PQsendQueryParams(
     m_conn, query.data(),
-    n, &paramTypes[0], &paramValues[0], &paramLengths[0], &paramFormats[0], 1);
+    n, paramTypes.data(), paramValues.data(), paramLengths.data(),
+    paramFormats.data(), 1);
   if (r != 1) return SendState::Again;
   return State;
 }
@@ -1051,7 +1052,7 @@ int Store::sendPrepare(
 template <int State, typename Params>
 int Store::sendPrepared(const IDString &id, const Params &params)
 {
-  auto n = params.length();
+  unsigned n = params.length();
 
   /* ZiLOG(Debug, "ZdbPQ", ([id = ZeString{id}, params = params](auto &s) {
     s << '"' << id << "\" params=[";
@@ -1063,9 +1064,9 @@ int Store::sendPrepared(const IDString &id, const Params &params)
     s << ']';
   })); */
 
-  auto paramValues = ZmAlloc(const char *, n);
-  auto paramLengths = ZmAlloc(int, n);
-  auto paramFormats = ZmAlloc(int, n);
+  auto paramValues = ZmScratch(const char *, n);
+  auto paramLengths = ZmScratch(int, n);
+  auto paramFormats = ZmScratch(int, n);
   for (unsigned i = 0; i < n; i++) {
     ZuSwitch::dispatch<Value::N>(params[i].type(),
       [&params, &paramValues, &paramLengths, i](auto I) {
@@ -1077,7 +1078,7 @@ int Store::sendPrepared(const IDString &id, const Params &params)
 
   int r = PQsendQueryPrepared(
     m_conn, id.data(),
-    n, &paramValues[0], &paramLengths[0], &paramFormats[0], 1);
+    n, paramValues.data(), paramLengths.data(), paramFormats.data(), 1);
   if (r != 1) return SendState::Again;
   return State;
 }
@@ -2118,7 +2119,7 @@ int StoreTbl::count_send(Work::Count &count)
 
   if (nParams > 0)
     loadTuple(
-      params, varBuf.span(), varBufParts.cspan(),
+      params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, keyFields, xKeyFields, fbo);
   id << m_id_ << "_count_" << ZuBoxed(count.keyID);
   return m_store->sendPrepared<SendState::Flush>(id, params);
@@ -2169,7 +2170,7 @@ int StoreTbl::select_send(Work::Select &select)
 
   if (nParams > 0)
     loadTuple(
-      params, varBuf.span(), varBufParts.cspan(),
+      params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, keyFields, xKeyFields, fbo);
   new (params.push()) Value{UInt64{select.limit}};
   id << m_id_ << "_sel"
@@ -2198,8 +2199,8 @@ void StoreTbl::select_rcvd(Work::Select &select, PGresult *res)
 
   // Value is not strictly POD but does not own referenced data,
   // so its destructor can be elided
-  auto tuple_ = ZmAlloc(Value, nc);
-  auto tuple = ZuSpan<const Value>(&tuple_[0], nc);
+  auto tuple_ = ZmScratch(Value, nc);
+  auto tuple = ZuSpan<const Value>(tuple_.data(), nc);
 
   if (PQnfields(res) != nc) goto inconsistent;
   for (unsigned i = 0; i < nr; i++) {
@@ -2267,7 +2268,7 @@ int StoreTbl::find_send(Work::Find &find)
   VarAlloc(nParams, xKeyFields, fbo);
 
   loadTuple(
-    params, varBuf.span(), varBufParts.cspan(),
+    params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
     m_store->oids(), nParams, keyFields, xKeyFields, fbo);
   id << m_id_ << "_find_" << ZuBoxed(find.keyID);
   return m_store->sendPrepared<SendState::Flush>(id, params);
@@ -2293,8 +2294,8 @@ void StoreTbl::find_rcvd_(RowFn &rowFn, bool &found, PGresult *res)
 
   // Value is not strictly POD but does not own referenced data,
   // so its destructor can be elided
-  auto tuple_ = ZmAlloc(Value, nc);
-  auto tuple = ZuSpan<const Value>(&tuple_[0], nc);
+  auto tuple_ = ZmScratch(Value, nc);
+  auto tuple = ZuSpan<const Value>(tuple_.data(), nc);
 
   if (PQnfields(res) != nc) goto inconsistent;
   for (unsigned i = 0; i < nr; i++) {
@@ -2473,7 +2474,7 @@ int StoreTbl::write_send(Work::Write &write)
     new (params.push()) Value{UInt128{sn}};
     new (params.push()) Value{UInt64{record->vn()}};
     loadTuple(
-      params, varBuf.span(), varBufParts.cspan(),
+      params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, m_fields, m_xFields, fbo);
     return m_store->sendPrepared<SendState::Sync>(id, params);
   } else if (record->vn() > 0) { // update
@@ -2487,7 +2488,7 @@ int StoreTbl::write_send(Work::Write &write)
     new (params.push()) Value{UInt128{sn}};
     new (params.push()) Value{UInt64{record->vn()}};
     loadTuple(
-      params, varBuf.span(), varBufParts.cspan(),
+      params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, m_updFields, m_xUpdFields, fbo);
     return m_store->sendPrepared<SendState::Sync>(id, params);
   } else if (!write.mrd) { // delete
@@ -2497,7 +2498,7 @@ int StoreTbl::write_send(Work::Write &write)
     VarAlloc(nParams, m_xKeyFields[0], fbo);
     id << m_id_ << "_del";
     loadTuple(
-      params, varBuf.span(), varBufParts.cspan(),
+      params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, m_keyFields[0], m_xKeyFields[0], fbo);
     return m_store->sendPrepared<SendState::Sync>(id, params);
   } else { // delete - MRD

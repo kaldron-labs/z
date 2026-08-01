@@ -45,7 +45,6 @@
 
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuMArray.hh>
-#include <zlib/ZuStream.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuBase32.hh>
@@ -54,7 +53,6 @@
 
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmLHash.hh>
-#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtArray.hh>
@@ -1105,14 +1103,6 @@ struct AsArray {
     static void save(S &s, const O &o, ZuCSpan prefix) {
       unsigned n = ZuTraits<O>::length(o);
       if constexpr (Config::ArrayFmt == Bare) {
-	// append array indices to prefix
-	unsigned nestedSize = prefix.length();
-	auto nested_ = ZmAlloc(char, nestedSize);
-	ZuStream nested(ZuSpan<char>(&nested_[0], nestedSize));
-	nested << prefix;
-	auto nestedLen =
-	  nested ? unsigned(&nested[0] - &nested_[0]) : nestedSize;
-	prefix = ZuCSpan(&nested_[0], nestedLen);
 	for (unsigned i = 0; i < n; i++)
 	  saveValue<Facet, Filter, Quote, ElemCode, ElemProps>(s, o[i], prefix);
       } else { // Delimited - no nesting is possible, use AsString
@@ -1293,26 +1283,30 @@ inline void saveValue_(S &s, const T &v_, L &&l)
       ZuBSpan v{v_};
       unsigned n = ZuBase64::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64::encode(buf.span(), v));
-      Quote::quote(s, ZuCSpan(buf.cspan())); // base64 needs quoting
+      buf.length(n);
+      buf.length(ZuBase64::encode(buf, v));
+      Quote::quote(s, ZuCSpan(buf)); // base64 needs quoting
     } else if constexpr (Fmt == ZfCLI::Base64URL) {
       ZuBSpan v{v_};
       unsigned n = ZuBase64URL::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64URL::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuBase64URL::encode(buf, v));
+      s << ZuCSpan(buf);
     } else if constexpr (Fmt == ZfCLI::Base32) {
       ZuBSpan v{v_};
       unsigned n = ZuBase32::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase32::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuBase32::encode(buf, v));
+      s << ZuCSpan(buf);
     } else if constexpr (Fmt == ZfCLI::Hex) {
       ZuBSpan v{v_};
       unsigned n = ZuHex::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuHex::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuHex::encode(buf, v));
+      s << ZuCSpan(buf);
     } else // if constexpr (Fmt == ZfCLI::Escaped)
       Quote::quote(s, v_);
   } else if constexpr (TypeCode == ZfFieldTC::Bool) {
@@ -1508,15 +1502,12 @@ inline void saveField(S &s, const O &o, ZuCSpan prefix)
     nestedSize = longOpt.length();
   else
     nestedSize = prefix.length() + longOpt.length() + 1;
-  auto nested_ = ZmAlloc(char, nestedSize);
-  ZuStream nested(ZuSpan<char>(&nested_[0], nestedSize));
+  auto nested = ZmScratch(char, nestedSize);
   if (prefix) nested << prefix << '.';
   nested << longOpt;
-  auto nestedLen = nested ? unsigned(&nested[0] - &nested_[0]) : nestedSize;
-  prefix = ZuCSpan(&nested_[0], nestedLen);
 
   saveValue<Facet, Filter, Quote, Type::Code, Props>(
-    s, Field::get(o), prefix);
+    s, Field::get(o), nested);
 }
 
 template <
@@ -2024,7 +2015,7 @@ void initOptions(Hash &hash, ZuCSpan prefix = {}) {
     if constexpr (
 	Field::Type::Code == ZfFieldTC::UDT &&
 	ZuIsSame<Format<typename Field::T, Facet>, AsObject>{})
-      initOptions<typename Field::T, Facet>(hash, expansion.cspan());
+      initOptions<typename Field::T, Facet>(hash, expansion);
     else if constexpr (Arg >= 0) {
       ZuAssert(Args < 0 && Opt < 0 && Flag < 0);
       hash.add(Arg, Option{OptType::Arg, expansion});
@@ -2079,7 +2070,7 @@ private:
 	if constexpr (
 	    TypeCode == ZfFieldTC::UDT &&
 	    ZuIsSame<Format<typename Field::T, Facet>, AsObject>{}) {
-	  type = longOptType_<typename Field::T>(key_, expansion.cspan());
+	  type = longOptType_<typename Field::T>(key_, expansion);
 	} else if (key_ == expansion) {
 	  if constexpr (TypeCode == ZfFieldTC::Bool ||
 	      ZuIsSame<ZuDecay<typename Field::T>, bool>{})

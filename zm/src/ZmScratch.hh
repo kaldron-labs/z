@@ -228,7 +228,7 @@ public:
   ZuInline T *data() { return m_data; }
   ZuInline const T *data() const { return m_data; }
 
-  ZuInline auto span() { return ZuSpan(m_data, m_size); }
+  ZuInline auto span() { return ZuSpan(m_data, m_length); }
   ZuInline auto cspan() const { return ZuSpan(m_data, m_length); }
 
   const T *terminate() {

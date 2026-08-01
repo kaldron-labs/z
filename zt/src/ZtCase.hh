@@ -71,7 +71,7 @@ inline void snakeCamel(ZuCSpan s, L &&l) {
   }
   if (underscore) buf[j++] = '_';
   ZmAssert(j == m);
-  ZuFwd<L>(l)(buf.cspan()); // FIXME - can be mutable span
+  ZuFwd<L>(l)(buf);
 }
 
 // lambda(const ZuCSpan &s)
@@ -97,7 +97,7 @@ inline void camelSnake(ZuCSpan s, L &&l) {
       buf[j++] = c;
   }
   ZmAssert(j == m);
-  ZuFwd<L>(l)(buf.cspan()); // FIXME - can be mutable span
+  ZuFwd<L>(l)(buf);
 }
 
 }

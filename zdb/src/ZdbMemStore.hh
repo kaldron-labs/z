@@ -18,6 +18,7 @@
 #include <zlib/ZuPrint.hh>
 
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtCase.hh>
 
@@ -646,11 +647,11 @@ loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
 using Offset = Zfb::Offset<void>;
 
 struct Offsets {
-  ZmAlloc_<Offset>	data;
+  Offset		*data;
   unsigned		in = 0;
   mutable unsigned	out = 0;
 
-  Offsets(ZmAlloc_<Offset> data_) : data{ZuMv(data_)} { }
+  Offsets(Offset *data_) : data{data_} { }
 
   bool operator !() const { return !data; }
 
@@ -1032,7 +1033,8 @@ Offset saveTuple(
 {
   unsigned n = xFields.length();
   ZmAssert(tuple.length() == n);
-  Offsets offsets(ZmAlloc(Offset, n));
+  auto offsets_ = ZmScratch(Offset, n);
+  Offsets offsets(offsets_.data());
   if (!offsets) return {};
   for (unsigned i = 0; i < n; i++) {
     auto type = xFields[i].type;

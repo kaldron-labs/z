@@ -6,7 +6,7 @@
 
 #include <zlib/ZiPlatform.hh>
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #ifndef _WIN32
 
@@ -16,15 +16,15 @@ Zi::Username Zi::username(ZeError *e)
 {
   struct passwd pwd;
   struct passwd *result = 0;
-  ssize_t bufSize = 0;
   Zi::Username name;
 
-  bufSize = sysconf(_SC_GETPW_R_SIZE_MAX);
-  if (bufSize < 0) bufSize = (1<<14);
-  auto pwdBuf = ZmAlloc(char, bufSize);
-  if (!pwdBuf) return name;
+  ssize_t size = sysconf(_SC_GETPW_R_SIZE_MAX);
+  if (size > UINT_MAX) return name;
+  unsigned bufSize = size < 0 ? (1<<14) : unsigned(size);
+  auto pwdBuf = ZmScratch(char, bufSize);
+  if (!pwdBuf.data()) return name;
 
-  int s = getpwuid_r(geteuid(), &pwd, pwdBuf.data, bufSize, &result);
+  int s = getpwuid_r(geteuid(), &pwd, pwdBuf.data(), bufSize, &result);
   if (!result && s != 0) {
     if (e) *e = ZeError(s);
   } else if (result) {

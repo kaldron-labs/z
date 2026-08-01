@@ -120,7 +120,6 @@
 
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuMArray.hh>
-#include <zlib/ZuStream.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuPercent.hh>
@@ -129,7 +128,6 @@
 #include <zlib/ZuBase64URL.hh>
 
 #include <zlib/ZmRBTree.hh>
-#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZfStruct.hh>
@@ -890,14 +888,13 @@ struct AsArray {
 	  Config::ArrayFmt == List || Config::ArrayFmt == Bare) {
 	// append array indices to prefix
 	unsigned nestedSize = prefix.length();
-	if constexpr (Config::ArrayFmt == Member) // .I
-	  nestedSize += 1 + Zu_ntoa::Log10_MaxLog<sizeof(nestedSize)>::N;
+	if constexpr (Config::ArrayFmt == Member) // .I + formatter spare
+	  nestedSize += 2 + Zu_ntoa::Log10_MaxLog<sizeof(nestedSize)>::N;
 	else if constexpr (Config::ArrayFmt == Array) // [I]
 	  nestedSize += 2 + Zu_ntoa::Log10_MaxLog<sizeof(nestedSize)>::N;
 	else if constexpr (Config::ArrayFmt == List) // []
 	  nestedSize += 2;
-	auto nested_ = ZmScratch(char, nestedSize);
-	ZuStream nested(nested_.span());
+	auto nested = ZmScratch(char, nestedSize);
 	nested << prefix;
 	if constexpr (Config::ArrayFmt == Member)
 	  nested << '.';
@@ -906,22 +903,18 @@ struct AsArray {
 	else if constexpr (Config::ArrayFmt == List)
 	  nested << "[]";
 	if constexpr (Config::ArrayFmt == Member || Config::ArrayFmt == Array) {
+	  unsigned nestedLen = nested.length();
 	  for (unsigned i = 0; i < n; i++) {
-	    auto orig = nested;
+	    nested.length(nestedLen);
 	    nested << ZuBoxed(i);
 	    if constexpr (Config::ArrayFmt == Array) nested << ']';
-	    nested_.length(nestedSize - nested.length());
-	    prefix = nested_.cspan();
 	    saveValue<Facet, Filter, Quote, ElemCode, ElemProps>(
-	      s, o[i], prefix);
-	    nested = orig;
+	      s, o[i], nested);
 	  }
 	} else {
-	  nested_.length(nestedSize - nested.length());
-	  prefix = nested_.cspan();
 	  for (unsigned i = 0; i < n; i++)
 	    saveValue<Facet, Filter, Quote, ElemCode, ElemProps>(
-	      s, o[i], prefix);
+	      s, o[i], nested);
 	}
       } else { // Delimited - no nesting is possible, use AsString
 	using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
@@ -1084,26 +1077,30 @@ inline void saveValue_(S &s, const T &v_, L &&l)
       ZuBSpan v{v_};
       unsigned n = ZuBase64::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64::encode(buf.span(), v));
-      Quote::quote(s, ZuCSpan(buf.cspan())); // base64 needs quoting
+      buf.length(n);
+      buf.length(ZuBase64::encode(buf, v));
+      Quote::quote(s, ZuCSpan(buf)); // base64 needs quoting
     } else if constexpr (Fmt == ZfURI::Base64URL) {
       ZuBSpan v{v_};
       unsigned n = ZuBase64URL::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64URL::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuBase64URL::encode(buf, v));
+      s << ZuCSpan(buf);
     } else if constexpr (Fmt == ZfURI::Base32) {
       ZuBSpan v{v_};
       unsigned n = ZuBase32::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase32::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuBase32::encode(buf, v));
+      s << ZuCSpan(buf);
     } else if constexpr (Fmt == ZfURI::Hex) {
       ZuBSpan v{v_};
       unsigned n = ZuHex::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuHex::encode(buf.span(), v));
-      s << ZuCSpan(buf.cspan());
+      buf.length(n);
+      buf.length(ZuHex::encode(buf, v));
+      s << ZuCSpan(buf);
     } else // if constexpr (Fmt == ZfURI::Escaped)
       Quote::quote(s, v_);
   } else if constexpr (TypeCode == ZfFieldTC::Bool) {
@@ -1325,8 +1322,7 @@ inline void saveField(S &s, const O &o, ZuCSpan prefix)
   else
     nestedSize =
       prefix.length() + fieldID.length() + 1 + (Config::ObjectFmt == Array);
-  auto nested_ = ZmAlloc(char, nestedSize);
-  ZuStream nested(ZuSpan<char>(&nested_[0], nestedSize));
+  auto nested = ZmScratch(char, nestedSize);
   if constexpr (Config::ObjectFmt == Member) {
     if (prefix) nested << prefix << '.';
     nested << fieldID;
@@ -1336,10 +1332,8 @@ inline void saveField(S &s, const O &o, ZuCSpan prefix)
     else
       nested << fieldID;
   }
-  auto nestedLen = nested ? unsigned(&nested[0] - &nested_[0]) : nestedSize;
-  prefix = ZuCSpan(&nested_[0], nestedLen);
-
-  saveValue<Facet, Filter, Quote, Type::Code, Props>(s, Field::get(o), prefix);
+  saveValue<Facet, Filter, Quote, Type::Code, Props>(
+    s, Field::get(o), nested);
 }
 
 template <

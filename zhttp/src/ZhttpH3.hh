@@ -660,11 +660,11 @@ private:
     unsigned storageSize = unsigned(decodedMax);
     auto storage = ZmScratch(uint8_t, storageSize, HdrBytes::VHeap);
     int64_t n = Compression::Huffman::decode(
-	storage.span(),
+	ZuSpan(storage.data(), storage.size()),
 	ref.raw);
     if (n < 0) return false;
     storage.length(unsigned(n));
-    return l(storage.cspan());
+    return l(storage);
   }
 
   using FieldState = Fields::Semantics<Request>;

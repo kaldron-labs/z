@@ -950,8 +950,9 @@ VGet::print(
   ZuBSpan v = get_.bytes(o);
   unsigned n = ZuBase64::enclen(v.length());
   auto buf = ZmScratch(uint8_t, n);
-  buf.length(ZuBase64::encode(buf.span(), v));
-  s << ZuCSpan(buf.cspan());
+  buf.length(n);
+  buf.length(ZuBase64::encode(buf, v));
+  s << ZuCSpan(buf);
 }
 template <unsigned Code, typename S>
 inline ZuIfT<Code == ZfFieldTC::Bool>
@@ -1249,7 +1250,8 @@ VSet::scan(
   }
   unsigned n = s.length() + 1;
   auto buf = ZmScratch(char, n);
-  buf.length(Scan::string(buf.span(), s));
+  buf.length(n);
+  buf.length(Scan::string(buf, s));
   buf.push('\0');
   set_.cstring(o, buf.data());
 }
@@ -1264,8 +1266,9 @@ VSet::scan(
   }
   unsigned n = s.length();
   auto buf = ZmScratch(char, n);
-  buf.length(Scan::string(buf.span(), s));
-  set_.string(o, buf.cspan());
+  buf.length(n);
+  buf.length(Scan::string(buf, s));
+  set_.string(o, buf);
 }
 template <unsigned Code>
 inline ZuIfT<Code == ZfFieldTC::Bytes>
@@ -1274,8 +1277,9 @@ VSet::scan(
 ) const {
   unsigned n = ZuBase64::declen(s.length());
   auto buf = ZmScratch(uint8_t, n);
-  buf.length(ZuBase64::decode(buf.span(), ZuBSpan{s}));
-  set_.bytes(o, buf.cspan());
+  buf.length(n);
+  buf.length(ZuBase64::decode(buf, ZuBSpan{s}));
+  set_.bytes(o, buf);
 }
 template <unsigned Code>
 inline ZuIfT<Code == ZfFieldTC::Bool>
@@ -1406,7 +1410,8 @@ VSet::scan(
   VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
     unsigned m = s.length();
     auto buf = ZmScratch(char, m + 1);
-    unsigned n = Scan::strElem(buf.span(), s, fmt.vecDelim, fmt.vecSuffix);
+    buf.length(m + 1);
+    unsigned n = Scan::strElem(buf, s, fmt.vecDelim, fmt.vecSuffix);
     if (n) {
       buf.length(n);
       buf.push('\0');
@@ -1424,10 +1429,11 @@ VSet::scan(
   VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
     unsigned m = s.length();
     auto buf = ZmScratch(char, m);
-    unsigned n = Scan::strElem(buf.span(), s, fmt.vecDelim, fmt.vecSuffix);
+    buf.length(m);
+    unsigned n = Scan::strElem(buf, s, fmt.vecDelim, fmt.vecSuffix);
     if (n) {
       buf.length(n);
-      set_.string(o, buf.cspan());
+      set_.string(o, buf);
       return true;
     }
     return false;
@@ -1445,8 +1451,9 @@ VSet::scan(
     n = ZuBase64::declen(m = n);
     if (n) {
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64::decode(buf.span(), ZuBSpan{s}));
-      set_.bytes(o, ZuBSpan{buf.cspan()});
+      buf.length(n);
+      buf.length(ZuBase64::decode(buf, ZuBSpan{s}));
+      set_.bytes(o, ZuBSpan{buf});
       s.offset(m);
       return true;
     }

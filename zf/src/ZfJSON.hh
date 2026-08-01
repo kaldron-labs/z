@@ -783,26 +783,30 @@ inline void saveValue_(S &s, const T_ &v_)
       ZuBSpan v{v_};
       unsigned n = ZuBase64::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64::encode(buf.span(), v));
-      s << '"' << ZuCSpan(buf.cspan()) << '"';
+      buf.length(n);
+      buf.length(ZuBase64::encode(buf, v));
+      s << '"' << ZuCSpan(buf) << '"';
     } else if constexpr (Fmt == ZfJSON::Base64URL) {
       ZuBSpan v{v_};
       unsigned n = ZuBase64URL::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase64URL::encode(buf.span(), v));
-      s << '"' << ZuCSpan(buf.cspan()) << '"';
+      buf.length(n);
+      buf.length(ZuBase64URL::encode(buf, v));
+      s << '"' << ZuCSpan(buf) << '"';
     } else if constexpr (Fmt == ZfJSON::Base32) {
       ZuBSpan v{v_};
       unsigned n = ZuBase32::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuBase32::encode(buf.span(), v));
-      s << '"' << ZuCSpan(buf.cspan()) << '"';
+      buf.length(n);
+      buf.length(ZuBase32::encode(buf, v));
+      s << '"' << ZuCSpan(buf) << '"';
     } else if constexpr (Fmt == ZfJSON::Hex) {
       ZuBSpan v{v_};
       unsigned n = ZuHex::enclen(v.length());
       auto buf = ZmScratch(uint8_t, n);
-      buf.length(ZuHex::encode(buf.span(), v));
-      s << '"' << ZuCSpan(buf.cspan()) << '"';
+      buf.length(n);
+      buf.length(ZuHex::encode(buf, v));
+      s << '"' << ZuCSpan(buf) << '"';
     } else if constexpr (Fmt == ZfJSON::Raw) {
       quote(s, v_);
     }

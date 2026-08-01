@@ -101,7 +101,7 @@ ZtString<> readFile(const Zi::Path &path)
 
   buf.length(r);
   ZtString<> out;
-  out << buf.cspan();
+  out << buf;
   return out;
 }
 

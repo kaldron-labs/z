@@ -79,6 +79,7 @@
 #include <zlib/ZmPolyCache.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmLHash.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtString.hh>
 #include <zlib/ZtEnum.hh>
@@ -1224,22 +1225,21 @@ public:
       l(nullptr);
       return;
     }
-    auto bufs = ZmAlloc(ZmRef<RepBuf<T>>, KeyIDs::N);	// undo buffer
-    auto nBufs = 0U;
-    auto abort = [&object, &bufs, &nBufs]() {
-      if (!object->abort()) return;
-      for (unsigned i = 0; i < nBufs; i++) {
-	bufs[i]->stale = false;
-	bufs[i].~ZmRef<RepBuf<T>>();
-      }
+    // keep stale buffers alive until commit or rollback is complete
+    auto bufs = ZmScratch(ZmRef<RepBuf<T>>, KeyIDs::N);	// undo buffer
+    auto abort = [&object, &bufs]() {
+      if (object->abort())
+	for (unsigned i = 0, n = bufs.length(); i < n; i++)
+	  bufs[i]->stale = false;
+      bufs.null();
     };
-    ZuUnroll::all<KeyIDs>([this, shard, &object, &bufs, &nBufs](auto KeyID) {
+    ZuUnroll::all<KeyIDs>([this, shard, &object, &bufs](auto KeyID) {
       auto key = ZuStructKey<KeyID>(object->data());
       auto i = m_bufCache[shard].template iter<KeyID>(ZuMv(key));
       while (auto repBuf = i()) {
 	if (!repBuf->stale) {
 	  repBuf->stale = true;
-	  new (&bufs[nBufs++]) ZmRef<RepBuf<T>>{ZuMv(repBuf)};
+	  new (bufs.push()) ZmRef<RepBuf<T>>{ZuMv(repBuf)};
 	  // at most one buffer per key can be fresh
 	  break;
 	}
@@ -1308,22 +1308,21 @@ public:
     // - revert above actions on abort
     // - note that a new buffer is written by commit(), which
     //   causes a future find() to return null
-    auto bufs = ZmAlloc(ZmRef<RepBuf<T>>, KeyIDs::N);	// "undo" buffer
-    auto nBufs = 0U;
-    auto abort = [&object, &bufs, &nBufs]() {
-      if (!object->abort()) return;
-      for (unsigned i = 0; i < nBufs; i++) {
-	bufs[i]->stale = false;
-	bufs[i].~ZmRef<RepBuf<T>>();
-      }
+    // keep stale buffers alive until commit or rollback is complete
+    auto bufs = ZmScratch(ZmRef<RepBuf<T>>, KeyIDs::N);	// undo buffer
+    auto abort = [&object, &bufs]() {
+      if (object->abort())
+	for (unsigned i = 0, n = bufs.length(); i < n; i++)
+	  bufs[i]->stale = false;
+      bufs.null();
     };
-    ZuUnroll::all<KeyIDs>([this, shard, &object, &bufs, &nBufs](auto KeyID) {
+    ZuUnroll::all<KeyIDs>([this, shard, &object, &bufs](auto KeyID) {
       auto key = ZuStructKey<KeyID>(object->data());
       auto i = m_bufCache[shard].template iter<KeyID>(ZuMv(key));
       while (auto repBuf = i()) {
 	if (!repBuf->stale) {
 	  repBuf->stale = true;
-	  new (&bufs[nBufs++]) ZmRef<RepBuf<T>>{ZuMv(repBuf)};
+	  new (bufs.push()) ZmRef<RepBuf<T>>{ZuMv(repBuf)};
 	  break;
 	}
       }
