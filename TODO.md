@@ -21,10 +21,6 @@
 
 - `zhttp` implements something like the above, reconcile
 
-- `ZiEngine` - complete command/control + telemetry
-
-- migrate ztcp, ztls, zquic, zhttp, zrest to ZiEngine
-
 ## devlayer
 
 L-sized work:
