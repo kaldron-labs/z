@@ -153,6 +153,13 @@ struct ArrayOpt {
 ZfStruct((ArrayOpt, Bah),
   (((values), (Ctor<0>)), (UDT)));
 
+struct BareArrayOpt {
+  IntArray values;
+};
+
+ZfStruct((BareArrayOpt, CLI),
+  (((values), (Ctor<0>)), (UDT)));
+
 struct Positional {
   int value = 0;
 };
@@ -258,6 +265,18 @@ void fieldlessUDT()
   auto loaded =
     ZfCLI::handler<ScalarArgs, ZuFacet::Bah>(parser.root).ctor();
   ZuCheck(loaded.scalar.value == "hello world");
+}
+
+void bareArraySave()
+{
+  ZuTestScope(bareArraySave);
+
+  BareArrayOpt value;
+  value.values.push(1);
+  value.values.push(2);
+  ZtString<> cli;
+  ZfCLI::save(cli, value);
+  ZuCheck(cli == "--values=1 --values=2");
 }
 
 void cmdQuote()
@@ -535,6 +554,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(roundTrip);
   ZuTestCall(fieldlessUDT);
+  ZuTestCall(bareArraySave);
   ZuTestCall(cmdQuote);
   ZuTestCall(parseCLI);
   ZuTestCall(parseCLIEscapedAndEmpty);

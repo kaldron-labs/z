@@ -337,7 +337,7 @@ private:
     } else {
       auto buf = ZmScratch(char, o);
       buf.length(ZuPrint<P>::print(buf.data(), o, p));
-      ZuCSpan s{buf.cspan()};
+      ZuCSpan s{buf};
       o = ZuUTF<Char, AltChar>::len(s);
       if (!o) { null_(); return; }
       length_(ZuUTF<Char, AltChar>::cvt({alloc_(o + 1, 0), o}, s));
@@ -459,7 +459,7 @@ private:
     } else {
       auto buf = ZmScratch(char, o);
       buf.length(ZuPrint<P>::print(buf.data(), o, p));
-      ZuCSpan s{buf.cspan()};
+      ZuCSpan s{buf};
       o = ZuUTF<Char, AltChar>::len(s);
       if (!o) { null_(); return; }
       length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
@@ -1001,7 +1001,7 @@ private:
     } else {
       auto buf = ZmScratch(char, o);
       buf.length(ZuPrint<P>::print(buf.data(), o, p));
-      ZuCSpan s{buf.cspan()};
+      ZuCSpan s{buf};
       return add_([s](Char *ptr, uint64_t length) -> uint64_t {
 	if (!length) return 0;
 	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
@@ -1107,7 +1107,7 @@ private:
       unsigned size = o;
       auto buf = ZmScratch(char, size);
       buf.length(ZuPrint<P>::print(buf.data(), size, p));
-      ZuCSpan s{buf.cspan()};
+      ZuCSpan s{buf};
       append__([s](Char *ptr, uint64_t length) {
 	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
       }, ZuUTF<Char, AltChar>::len(s));

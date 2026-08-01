@@ -75,7 +75,7 @@ private:
   }
   bool writeHeader() {
     auto data = ZmScratch(char, MaxRowLen);
-    ZuStream buf{data.span()};
+    ZuStream buf{ZuSpan(data.data(), data.size())};
     this->saveHdr(buf);
     if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
     buf.finish(data);
@@ -154,7 +154,7 @@ public:
   bool operator ()(const O &o) {
     if (ZuUnlikely(error)) return false;
     auto data = ZmScratch(char, MaxRowLen);
-    ZuStream buf{data.span()};
+    ZuStream buf{ZuSpan(data.data(), data.size())};
     this->save(buf, o);
     if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
     buf.finish(data);
@@ -200,7 +200,7 @@ private:
   }
   bool writeHeader(const Path &path, ZiFile &file) {
     auto data = ZmScratch(char, MaxRowLen);
-    ZuStream buf{data.span()};
+    ZuStream buf{ZuSpan(data.data(), data.size())};
     this->saveHdr(buf);
     if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
     buf.finish(data);
@@ -268,7 +268,7 @@ private:
     if (!open(file, path, mode)) return false;
     auto data = ZmScratch(char, MaxRowLen);
     for (;;) {
-      ZuStream buf{data.span()};
+      ZuStream buf{ZuSpan(data.data(), data.size())};
       if (!l([this, &buf](const O &o) { this->save(buf, o); })) return true;
       if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
       buf.finish(data);

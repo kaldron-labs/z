@@ -565,7 +565,8 @@ struct QPack {
     };
     auto readValue = [&valueStorage, &in, &o](ZuCSpan &value) {
       return decodeString(
-	valueStorage.span(), in, o, 7, 0x80, value) >= 0;
+	ZuSpan(valueStorage.data(), valueStorage.size()),
+	in, o, 7, 0x80, value) >= 0;
     };
 
     while (o < in.length()) {
@@ -630,8 +631,12 @@ struct QPack {
 	name = indexed.name;
 	if (!readValue(value)) return -1;
       } else if ((first & 0xe0) == 0x20) {
-	if (decodeString(nameStorage.span(), in, o, 3, 0x08, name) < 0 ||
-	    decodeString(valueStorage.span(), in, o, 7, 0x80, value) < 0)
+	if (decodeString(
+	      ZuSpan(nameStorage.data(), nameStorage.size()),
+	      in, o, 3, 0x08, name) < 0 ||
+	    decodeString(
+	      ZuSpan(valueStorage.data(), valueStorage.size()),
+	      in, o, 7, 0x80, value) < 0)
 	  return -1;
 	flags.neverIndex = first & 0x10;
       } else

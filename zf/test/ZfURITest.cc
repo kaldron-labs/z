@@ -82,6 +82,18 @@ struct Blur : public ZtArray<ZtArray<uint8_t>> {
   }
 };
 
+struct IntArray : public ZtArray<int> {
+  ZuDerive_(IntArray, ZtArray<int>);
+  friend ZfURI::AsArray<ZfFieldTC::Int32> ZfURI_Fmt(IntArray *);
+};
+
+struct ArrayOpt {
+  IntArray values;
+};
+
+ZfStruct((ArrayOpt, URI),
+  (((values), (Ctor<0>)), (UDT)));
+
 struct Foo {
   const char *string = nullptr;
   ZtArray<uint8_t> bytes;
@@ -199,6 +211,18 @@ void fieldlessUDT()
   auto loaded =
     ZfURI::handler<ScalarArgs, ZuFacet::Bah>(scan.p<1>()).ctor();
   ZuCheck(loaded.scalar.value == "hello world");
+}
+
+void arraySave()
+{
+  ZuTestScope(arraySave);
+
+  ArrayOpt value;
+  value.values.push(1);
+  value.values.push(2);
+  ZtString<> uri;
+  ZfURI::save(uri, value);
+  ZuCheck(uri == "?values[0]=1&values[1]=2");
 }
 
 void malformedURINegatives()
@@ -374,6 +398,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(roundTrip);
   ZuTestCall(fieldlessUDT);
+  ZuTestCall(arraySave);
   ZuTestCall(malformedURINegatives);
   ZuTestCall(integerRange);
   ZuTestCall(realRange);

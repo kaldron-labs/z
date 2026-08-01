@@ -64,6 +64,8 @@
 #include <zlib/ZuFixed.hh>
 #include <zlib/ZuMArray.hh>
 
+#include <zlib/ZmScratch.hh>
+
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZtHexDump.hh>
@@ -1378,8 +1380,9 @@ inline void saveValue2_(S &s, const T &v_, const SaveValue &sv)
     ZuCSpan v(v_);
     if constexpr (ASNType{} == UniversalString) {	// UTF32
       unsigned n = sv.string.n;
-      auto buf = ZmAlloc(uint32_t, n);
-      ZuUTF<uint32_t, uint8_t>::cvt({&buf[0], n}, v);
+      auto buf = ZmScratch(uint32_t, n);
+      buf.length(n);
+      ZuUTF<uint32_t, uint8_t>::cvt(buf, v);
       saveTL<Tag, UniversalString>(s, n<<2);
       for (unsigned i = 0; i < n; i++) {
 	uint32_t w = buf[i];
@@ -1388,8 +1391,9 @@ inline void saveValue2_(S &s, const T &v_, const SaveValue &sv)
       }
     } else if constexpr (ASNType{} == BmpString) {	// UTF16
       unsigned n = sv.string.n;
-      auto buf = ZmAlloc(uint16_t, n);
-      ZuUTF<uint16_t, uint8_t>::cvt({&buf[0], n}, v);
+      auto buf = ZmScratch(uint16_t, n);
+      buf.length(n);
+      ZuUTF<uint16_t, uint8_t>::cvt(buf, v);
       saveTL<Tag, BmpString>(s, n<<1);
       for (unsigned i = 0; i < n; i++) {
 	uint16_t w = buf[i];
@@ -1718,22 +1722,24 @@ inline T loadValue_(ZuSpan<char> span)
     if constexpr (ASNType{} == UniversalString) {	// UTF32
       n &= ~3;
       if (ZuUnlikely(!n)) return T{};
-      auto buf = ZmAlloc(uint32_t, n>>2);
+      auto buf = ZmScratch(uint32_t, n>>2);
+      buf.length(n>>2);
       auto bytes = ZuBSpan{span};
       for (unsigned i = 0; i < n; i += 4)
 	buf[i>>2] =
 	  (uint32_t(bytes[i])<<24) | (uint32_t(bytes[i + 1])<<16) |
 	  (uint32_t(bytes[i + 2])<<8) | uint32_t(bytes[i + 3]);
-      auto l = ZuUTF<uint8_t, uint32_t>::cvt(span, {&buf[0], n>>2});
+      auto l = ZuUTF<uint8_t, uint32_t>::cvt(span, buf);
       return ZuCSpan(&span[0], l);
     } else if constexpr (ASNType{} == BmpString) {	// UTF16
       n &= ~1;
       if (ZuUnlikely(!n)) return T{};
-      auto buf = ZmAlloc(uint16_t, n>>1);
+      auto buf = ZmScratch(uint16_t, n>>1);
+      buf.length(n>>1);
       auto bytes = ZuBSpan{span};
       for (unsigned i = 0; i < n; i += 2)
 	buf[i>>1] = (uint16_t(bytes[i])<<8) | uint16_t(bytes[i + 1]);
-      auto l = ZuUTF<uint8_t, uint16_t>::cvt(span, {&buf[0], n>>1});
+      auto l = ZuUTF<uint8_t, uint16_t>::cvt(span, buf);
       return ZuCSpan(&span[0], l);
     } else if constexpr (
 	ASNType{} == OctetString ||

@@ -95,7 +95,7 @@ struct Cxn {
 	(extendedConnect &&
 	  (putVar(payload, 0x08) < 0 || putVar(payload, 1) < 0)))
       return false;
-    if (!link.send(control, payload.cspan(), false)) return false;
+    if (!link.send(control, payload, false)) return false;
     {
       auto tx = enc->txStream();
       TxBytes out{tx};

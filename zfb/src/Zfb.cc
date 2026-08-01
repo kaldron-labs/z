@@ -45,21 +45,22 @@ ZfbExtern int Zfb::Load::load(
     return i;
   }
   ZiFile::Offset len = f.size();
-  if (!len || len >= maxSize) {
+  if (!len || len >= maxSize || len > UINT_MAX) {
     if (e) *e = ZiENOMEM;
     return Zi::IOError;
   }
-  auto data = ZmAlloc(uint8_t, len);
-  if (!data) {
+  auto data = ZmScratch(uint8_t, unsigned(len));
+  if (!data.data()) {
     if (e) *e = ZiENOMEM;
     return Zi::IOError;
   }
-  if ((i = f.read(&data[0], len)) < len) {
+  if ((i = f.read(data.data(), len)) < len) {
     if (e) *e = f.error();
     return Zi::IOError;
   }
   f.close();
-  if (!fn(ZuBSpan{&data[0], unsigned(len)})) {
+  data.length(unsigned(len));
+  if (!fn(data)) {
     if (e) *e = ZiEINVAL;
     return Zi::IOError;
   }

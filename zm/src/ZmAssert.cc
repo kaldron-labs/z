@@ -10,13 +10,12 @@
 #include <assert.h>
 
 #include <zlib/ZuBox.hh>
-#include <zlib/ZuArray.hh>
+#include <zlib/ZuTime.hh>
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmPlatform.hh>
-#include <zlib/ZuTime.hh>
 #include <zlib/ZmTrap.hh>
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #ifdef _WIN32
 #define snprintf _snprintf
@@ -30,10 +29,7 @@
 void ZmAssert_fail(
     const char *expr, const char *file, unsigned line, const char *fn)
 {
-  using Buf = ZuCArray<16384>;
-  auto buf_ = ZmAlloc(Buf, 1);
-  new (&buf_[0]) Buf{};
-  auto &buf = buf_[0];
+  auto buf = ZmScratch(char, 16384);
 
   if (fn)
     buf << '"' << file << "\":" << line <<

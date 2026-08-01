@@ -43,10 +43,16 @@ void testArray()
   auto a = ZmScratch(int, 6);
   ZuCheck(a.size() == 6);
   ZuCheck(a.length() == 0);
-  ZuCheck(a.span().length() == 6);
+  ZuCheck(a.span().length() == 0);
   ZuCheck(a.cspan().length() == 0);
 
   a << 1 << 2;
+  ZuCheck(a.span().length() == 2);
+  ZuCheck(a.cspan().length() == 2);
+  auto span = a.span();
+  span[1] = 3;
+  ZuCheck(a[1] == 3);
+  a[1] = 2;
   ZuCheck((a == ZuArray<int, 2>{1, 2}));
   ZuCheck(a.hash() == a.cspan().hash());
 
@@ -98,6 +104,8 @@ void testString()
   auto s = ZmScratch(char, 16);
   s << "abc" << 42;
   ZuCheck(s == "abc42");
+  ZuCSpan span = s;
+  ZuCheck(span == "abc42");
   ZuCheck(s.terminate());
   ZuCheck(!strcmp(s.data(), "abc42"));
 }

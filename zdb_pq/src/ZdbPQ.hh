@@ -23,6 +23,7 @@
 #include <zlib/ZuDateTime.hh>
 
 #include <zlib/ZmLHash.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiEventLoop.hh>
@@ -1149,11 +1150,11 @@ loadValue(
 using Offset = Zfb::Offset<void>;
 
 struct Offsets {
-  ZmAlloc_<Offset>	data;
+  Offset		*data;
   unsigned		in = 0;
   mutable unsigned	out = 0;
 
-  Offsets(ZmAlloc_<Offset> data_) : data{ZuMv(data_)} { }
+  Offsets(Offset *data_) : data{data_} { }
 
   void push(Offset o) { data[in++] = o; }
   Offset shift() const { return data[out++]; }
@@ -1580,7 +1581,8 @@ Offset saveTuple(
 {
   unsigned n = xFields.length();
   ZmAssert(tuple.length() == n);
-  Offsets offsets(ZmAlloc(Offset, n));
+  auto offsets_ = ZmScratch(Offset, n);
+  Offsets offsets(offsets_.data());
   for (unsigned i = 0; i < n; i++) {
     auto type = xFields[i].type;
     const auto &value = tuple[i];

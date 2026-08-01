@@ -24,7 +24,6 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuSpan.hh>
 
-#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmCodec.hh>
 #include <zlib/ZmScratch.hh>
 
@@ -74,11 +73,10 @@ save_PK_RSA(S &s, const Backend::PKey *key) {
   using namespace Save_;
 
   unsigned n = Backend::pkey_rsa_size(key);
-  auto modulus_ = ZmAlloc(uint8_t, n);
-  auto pubExp_ = ZmAlloc(uint8_t, 8);
-
-  ZuSpan<uint8_t> modulus(&modulus_[0], n);
-  ZuSpan<uint8_t> pubExp(&pubExp_[0], 8);
+  auto modulus = ZmScratch(uint8_t, n);
+  auto pubExp = ZmScratch(uint8_t, 8);
+  modulus.length(n);
+  pubExp.length(8);
 
   if (!Backend::pkey_rsa_export_public(key, modulus, pubExp))
     return ZeEXCEPT(Error, "ZtlsPK", "RSA export failed");
@@ -103,20 +101,20 @@ save_PK_EC(S &s, const Backend::PKey *key) {
   using namespace Save_;
 
   unsigned oidLen = Backend::pkey_ec_oid_size(key);
-  auto oid_ = ZmAlloc(uint8_t, oidLen);
-  ZuSpan<uint8_t> oid(&oid_[0], oidLen);
+  auto oid = ZmScratch(uint8_t, oidLen);
+  oid.length(oidLen);
   if (!Backend::pkey_ec_export_oid(key, oid))
     return ZeEXCEPT(Error, "ZtlsPK", "EC OID export failed");
 
   unsigned pubLen = Backend::pkey_ec_public_size(key);
-  auto pubKey_ = ZmAlloc(uint8_t, pubLen);
-  ZuSpan<uint8_t> pubKey(&pubKey_[0], pubLen);
+  auto pubKey = ZmScratch(uint8_t, pubLen);
+  pubKey.length(pubLen);
   if (!Backend::pkey_ec_export_public(key, pubKey))
     return ZeEXCEPT(Error, "ZtlsPK", "EC public key export failed");
 
   Data::PK_X509_EC data{
     .id = OIDs::EC_ALG_UNRESTRICTED,
-    .id2 = {oid.data(), oid.length()},
+    .id2 = oid,
     .pubKey = pubKey,
   };
 
@@ -200,23 +198,23 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
 
     unsigned n = Backend::pkey_rsa_size(key);
 
-    auto modulus_ = ZmAlloc(uint8_t, n);
-    auto pubExp_ = ZmAlloc(uint8_t, 8);
-    auto prvExp_ = ZmAlloc(uint8_t, n);
-    auto prime1_ = ZmAlloc(uint8_t, (n>>1));
-    auto prime2_ = ZmAlloc(uint8_t, (n>>1));
-    auto exp1_ = ZmAlloc(uint8_t, (n>>1));
-    auto exp2_ = ZmAlloc(uint8_t, (n>>1));
-    auto coeff_ = ZmAlloc(uint8_t, (n>>1));
-
-    ZuSpan<uint8_t> modulus(&modulus_[0], n);
-    ZuSpan<uint8_t> pubExp(&pubExp_[0], 8);
-    ZuSpan<uint8_t> prvExp(&prvExp_[0], n);
-    ZuSpan<uint8_t> prime1(&prime1_[0], (n>>1));
-    ZuSpan<uint8_t> prime2(&prime2_[0], (n>>1));
-    ZuSpan<uint8_t> exp1(&exp1_[0], (n>>1));
-    ZuSpan<uint8_t> exp2(&exp2_[0], (n>>1));
-    ZuSpan<uint8_t> coeff(&coeff_[0], (n>>1));
+    auto modulus = ZmScratch(uint8_t, n);
+    auto pubExp = ZmScratch(uint8_t, 8);
+    auto prvExp = ZmScratch(uint8_t, n);
+    unsigned p = n>>1;
+    auto prime1 = ZmScratch(uint8_t, p);
+    auto prime2 = ZmScratch(uint8_t, p);
+    auto exp1 = ZmScratch(uint8_t, p);
+    auto exp2 = ZmScratch(uint8_t, p);
+    auto coeff = ZmScratch(uint8_t, p);
+    modulus.length(n);
+    pubExp.length(8);
+    prvExp.length(n);
+    prime1.length(p);
+    prime2.length(p);
+    exp1.length(p);
+    exp2.length(p);
+    coeff.length(p);
 
     if (!Backend::pkey_rsa_export_private(
 	key, modulus, pubExp, prvExp,
@@ -252,7 +250,7 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
     auto buf = ZmScratch(char, DERBufSize);
     auto r = savePK(buf);
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
-    auto data = ZfASN1::handler<PK_X509_RSA>(buf.cspan()).ctor();
+    auto data = ZfASN1::handler<PK_X509_RSA>(buf).ctor();
     try {
       return ZmMkRef(new PK{data.rsa});
     } catch (const ZeException &e) {
@@ -266,13 +264,13 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
     (void)rng;
     unsigned n = Backend::pkey_rsa_size(key);
     auto signature = ZmScratch(uint8_t, n);
+    signature.length(n);
     size_t k = 0;
     ZmAssert(data.length() == Ztls::MD<MDType>::Size);
-    if (!Backend::pkey_sign(
-	key, MDType, data, signature.span(), &k))
+    if (!Backend::pkey_sign(key, MDType, data, signature, &k))
       return ZeEXCEPT(Error, "ZtlsPK", "RSA sign failed");
     signature.length(k);
-    ZuFwd<L>(l)(signature.cspan());
+    ZuFwd<L>(l)(signature);
     return {};
   }
 };
@@ -339,27 +337,27 @@ struct SK_EC_ : public PK_EC_<Heap> {
     using namespace Save_;
 
     unsigned oidLen = Backend::pkey_ec_oid_size(key);
-    auto oid_ = ZmAlloc(uint8_t, oidLen);
-    ZuSpan<uint8_t> oid(&oid_[0], oidLen);
+    auto oid = ZmScratch(uint8_t, oidLen);
+    oid.length(oidLen);
     if (!Backend::pkey_ec_export_oid(key, oid))
       return ZeEXCEPT(Error, "ZtlsPK", "EC OID export failed");
 
     unsigned n = Backend::pkey_ec_key_size(key);
-    auto key_ = ZmAlloc(uint8_t, n);
-    ZuSpan<uint8_t> prvKey(&key_[0], n);
+    auto prvKey = ZmScratch(uint8_t, n);
+    prvKey.length(n);
     if (!Backend::pkey_ec_export_private(this->key, prvKey))
       return ZeEXCEPT(Error, "ZtlsPK", "EC private key export failed");
 
     unsigned pubLen = Backend::pkey_ec_public_size(this->key);
-    auto pubKey_ = ZmAlloc(uint8_t, pubLen);
-    ZuSpan<uint8_t> pubKey(&pubKey_[0], pubLen);
+    auto pubKey = ZmScratch(uint8_t, pubLen);
+    pubKey.length(pubLen);
     if (!Backend::pkey_ec_export_public(this->key, pubKey))
       return ZeEXCEPT(Error, "ZtlsPK", "EC public key export failed");
 
     Data::SK_PKCS8_EC data{
       .version = 0,
       .id = OIDs::EC_ALG_UNRESTRICTED,
-      .id2 = {oid.data(), oid.length()},
+      .id2 = oid,
       .ec = {	// SEC1
 	.version = 1,
 	.key = prvKey,
@@ -384,7 +382,7 @@ struct SK_EC_ : public PK_EC_<Heap> {
     auto buf = ZmScratch(char, DERBufSize);
     auto r = savePK(buf);
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
-    auto data = ZfASN1::handler<PK_X509_EC>(buf.cspan()).ctor();
+    auto data = ZfASN1::handler<PK_X509_EC>(buf).ctor();
     try {
       return ZmMkRef(new PK{data.id2, data.pubKey});
     } catch (const ZeException &e) {
@@ -401,13 +399,13 @@ struct SK_EC_ : public PK_EC_<Heap> {
     n = (n<<1);				// x2
     n += ZfASN1::len_uint(n) + 1;	// ASN.1 Sequence
     auto signature = ZmScratch(uint8_t, n);
+    signature.length(n);
     size_t k = 0;
     ZmAssert(data.length() == Ztls::MD<MDType>::Size);
-    if (!Backend::pkey_sign(
-	key, MDType, data, signature.span(), &k))
+    if (!Backend::pkey_sign(key, MDType, data, signature, &k))
       return ZeEXCEPT(Error, "ZtlsPK", "EC sign failed");
     signature.length(k);
-    ZuFwd<L>(l)(signature.cspan());
+    ZuFwd<L>(l)(signature);
     return {};
   }
 };
@@ -508,7 +506,7 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
     auto buf = ZmScratch(char, DERBufSize);
     auto r = savePK(buf);
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
-    auto data = ZfASN1::handler<PK_X509_ED25519>(buf.cspan()).ctor();
+    auto data = ZfASN1::handler<PK_X509_ED25519>(buf).ctor();
     try {
       return ZmMkRef(new PK{data.pubKey});
     } catch (const ZeException &e) {
@@ -596,13 +594,13 @@ struct Load {
       return ZeEXCEPT(Error, "ZtlsPK", ([path, e = file.error()](auto &s) {
 	s << "\"" << path << "\" read failed: file too large";
       }));
-    auto buf_ = ZmAlloc(char, size);
-    ZuSpan<char> buf(&buf_[0], unsigned(size));
-    if (file.read(&buf[0], size) < size)
+    auto buf = ZmScratch(char, unsigned(size));
+    if (file.read(buf.data(), size) < size)
       return ZeEXCEPT(Error, "ZtlsPK", ([path, e = file.error()](auto &s) {
 	s << "\"" << path << "\" read failed: " << e;
       }));
     file.close();
+    buf.length(unsigned(size));
     return loadPEM(buf);
   }
 };
@@ -776,7 +774,7 @@ ZuUnion<void, ZeException> saveB64(S &s, Key *key) {
   auto buf = ZmScratch(char, DERBufSize);
   auto r = key->save(buf);
   if (ZuUnlikely(r.template is<ZeException>())) return r;
-  ZmBase64::enc(buf.cspan(), [&s](ZuCSpan b64) { s << b64; });
+  ZmBase64::enc(buf, [&s](ZuCSpan b64) { s << b64; });
   return {};
 }
 
@@ -787,7 +785,7 @@ ZuUnion<void, ZeException> savePEM(S &s, const Key *key) {
   auto buf = ZmScratch(char, BufSize);
   auto r = key->save(buf);
   if (ZuUnlikely(r.template is<ZeException>())) return r;
-  ZmBase64::enc(buf.cspan(), [&s](ZuCSpan b64) {
+  ZmBase64::enc(buf, [&s](ZuCSpan b64) {
     if constexpr (Key::Secret)
       s << "-----BEGIN PRIVATE KEY-----\n";
     else

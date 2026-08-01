@@ -77,7 +77,8 @@ void testRowSplitArrayFormsAndMalformed()
   auto row = ZmScratch(ZfCSV::Cell, 4);
   unsigned length;
   int n = ZfCSV::split(
-    ZuSpan<char>(rowLine, sizeof(rowLine) - 1), row.span(), length);
+    ZuSpan<char>(rowLine, sizeof(rowLine) - 1),
+    ZuSpan(row.data(), row.size()), length);
   row.template length<false>(length);
 
   ZuCheck(n > 0);
@@ -110,7 +111,8 @@ void testRowSplitArrayFormsAndMalformed()
   char bad[] = "\"unterminated\n";
   auto malformed = ZmScratch(ZfCSV::Cell, 1);
   ZuCheck(ZfCSV::split(
-    ZuSpan<char>(bad, sizeof(bad) - 1), malformed.span(), length) == -1);
+    ZuSpan<char>(bad, sizeof(bad) - 1),
+    ZuSpan(malformed.data(), malformed.size()), length) == -1);
   malformed.template length<false>(length);
 }
 
