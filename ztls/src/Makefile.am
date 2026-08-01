@@ -12,7 +12,7 @@ pkginclude_HEADERS = ZtlsLib.hh Ztls.hh \
 lib_LTLIBRARIES = libZtls.la
 libZtls_la_CPPFLAGS = $(AM_CPPFLAGS) @PTLS_CFLAGS@ -DZTLS_EXPORTS
 libZtls_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@
-libZtls_la_SOURCES = ZtlsLib.cc ZtlsBackend.cc ZtlsPico.cc ZtlsOpenSSL.cc ZtlsTOTP.cc
+libZtls_la_SOURCES = ZtlsLib.cc ZtlsBackend.cc ZtlsPico.cc ZtlsOpenSSL.cc ZtlsPK.cc ZtlsTOTP.cc
 libZtls_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \

@@ -401,10 +401,14 @@ struct ClientSession :
   }
   void disconnected(bool peer) { closePeer = peer; }
   void migrationPromoted(const Zquic::MigrationResult &) {
-    migrationComplete_();
+    this->app()->rxRun([session = ZmMkRef(this)]() mutable {
+      session->migrationComplete_();
+    });
   }
   void migrationFailed(const Zquic::MigrationResult &) {
-    migrationComplete_();
+    this->app()->rxRun([session = ZmMkRef(this)]() mutable {
+      session->migrationComplete_();
+    });
   }
   void endpointDown() {
     this->app()->rxRun([session = ZmMkRef(this)]() mutable {
@@ -577,6 +581,8 @@ private:
   }
 
   void migrationComplete_() {
+    ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
+      "H3 migration completion outside Rx thread", return);
     migrationDone = true;
     Pending logical;
     for (unsigned i = 0; i < streams.length(); ++i)

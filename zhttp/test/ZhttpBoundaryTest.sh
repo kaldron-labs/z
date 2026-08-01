@@ -5,7 +5,7 @@ set -eu
 echo 'TAP version 14'
 echo '1..8'
 
-files='zhttp.cc zhttpd.cc Zhttpd.hh ZhttpPut.hh'
+files='zhttp.cc zhttpd.cc ZhttpdUtil.cc Zhttpd.hh ZhttpPut.hh'
 bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|HPack|H2::(Frame|Session|Wire)|H2_(Client|Server|Logical)|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Engines|Ztls::|\.alpn[[:space:]]*\(|ZmBlock|ZmSemaphore'
 
 if grep -En "$bad" $files >/dev/null; then
@@ -70,7 +70,7 @@ headers=$(
 )
 expected_headers='ZhttpPut.hh
 Zhttpd.hh'
-if test "$sources" = 'zhttp.cc zhttpd.cc' &&
+if test "$sources" = 'zhttp.cc zhttpd.cc ZhttpdUtil.cc' &&
     test "$headers" = "$expected_headers"; then
   echo 'ok 7 - reviewed manifest covers the complete program-only closure'
 else

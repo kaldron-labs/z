@@ -14,7 +14,7 @@
 #endif
 
 #include <zlib/ZuID.hh>
-#include <zlib/ZuMatcher.hh>
+#include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTuple.hh>
 
@@ -28,10 +28,7 @@ namespace QueueType {
   using T = int8_t;
   enum { Thread, IPC, Rx, Tx, N };
   using Names = ZuStringTL<"Thread", "IPC", "Rx", "Tx">;
-  inline constexpr T lookup(ZuCSpan name) {
-    static constexpr auto matcher = ZuMatcher<Names>();
-    return matcher.exact(name);
-  }
+  ZmAPI T lookup(ZuCSpan name);
   inline constexpr ZuCSpan name(int value) {
     return ZuSwitch::dispatch<Names::N>(value, [](auto I) -> ZuCSpan {
       return ZuType<I, Names>{};

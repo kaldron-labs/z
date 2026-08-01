@@ -17,7 +17,6 @@
 #endif
 
 #include <zlib/ZuSpan.hh>
-#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuString.hh>
 
 #include <zlib/ZfStruct.hh>
@@ -183,20 +182,8 @@ namespace Type {
   };
 };
 
-constexpr auto headMatcher =
-  ZuMatcher<
-    "-----BEGIN PRIVATE KEY-----",	// must line up with Type above
-    "-----BEGIN EC PRIVATE KEY-----",
-    "-----BEGIN RSA PRIVATE KEY-----",
-    "-----BEGIN PUBLIC KEY-----",
-    "-----BEGIN RSA PUBLIC KEY-----">();
-constexpr auto tailMatcher =
-  ZuMatcher<
-    "-----END PRIVATE KEY-----",
-    "-----END EC PRIVATE KEY-----",
-    "-----END RSA PRIVATE KEY-----",
-    "-----END PUBLIC KEY-----",
-    "-----END RSA PUBLIC KEY-----">();
+ZtlsAPI int pemHead(ZuCSpan, unsigned &offset, unsigned &length);
+ZtlsAPI int pemTail(ZuCSpan, int type);
 
 } // Data
 

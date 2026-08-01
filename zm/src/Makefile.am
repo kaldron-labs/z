@@ -30,5 +30,5 @@ libZm_la_SOURCES = \
 	ZmLib.cc ZmLock.cc ZmObjectDebug.cc ZmRandom.cc \
 	ZmRing.cc ZmScheduler.cc \
 	ZmSingleton.cc ZmSpecific.cc \
-	ZmTime.cc ZmThread.cc ZmTrap.cc
+	ZmTime.cc ZmThread.cc ZmTrap.cc ZtcQueue.cc
 libZm_la_LIBADD = $(top_builddir)/zu/src/libZu.la @Z_MT_LIBS@ -lbfd -liberty @Z_LIBS@

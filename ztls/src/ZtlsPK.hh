@@ -23,7 +23,6 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuSpan.hh>
-#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZmAlloc.hh>
 #include <zlib/ZmCodec.hh>
@@ -57,11 +56,7 @@ inline auto mwb_error_(int e) {
 
 namespace Load_ {
 
-constexpr auto matcher = ZuMatcher<
-  OIDs::PKCS1_RSA,			// RSA
-  OIDs::EC_ALG_UNRESTRICTED,		// EC
-  OIDs::ED25519				// ED25519
->();
+ZtlsAPI int keyType(ZuCSpan);
 
 inline auto mrb_error_(int e) {
   return [e](auto &s) {
@@ -560,20 +555,16 @@ struct Load {
     {
       // there can be leading and trailing junk in a PEM file...
       // find the header and offset the span
-      auto [offset, type] = headMatcher.find(span);
-      if (offset < 0) goto bad;
-      // get the length of the matched header
-      using HeadKeys = ZuDecay<decltype(headMatcher.keys())>;
-      unsigned n = ZuSwitch::dispatch<HeadKeys::N>(type, [](auto I) {
-	return ZuType<I, HeadKeys>{}().length();
-      });
+      unsigned offset, n;
+      int type = pemHead(span, offset, n);
+      if (type < 0) goto bad;
       // ensure the span has enough space for a header and trailer
       if (span.length() < offset + ((n<<1) - 2)) goto bad;
       span.offset(offset + n);
       // find the trailer and truncate the span
       {
-	auto [offset_, type_] = tailMatcher.find(span);
-	if (offset_ < 0 || type != type_) goto bad;
+	int offset_ = pemTail(span, type);
+	if (offset_ < 0) goto bad;
 	span.trunc(offset_);
       }
       // remove all white space (in-place mutation)
@@ -656,7 +647,7 @@ public:
       switch (type) {
 	case Type::PK_X509: {
 	  auto hdr = ZfASN1::handler<PK_X509_HDR>(span).ctor();
-	  auto id = Load_::matcher.exact(hdr.id);
+	  auto id = Load_::keyType(hdr.id);
 	  if (id < 0) return ZeEXCEPT(Error, "ZtlsPK", ([id = ZtBArray(hdr.id)](auto &s) {
 	    ZmHex::enc(id, [&s](ZuCSpan id) {
 	      s << "unknown X509 OID " << id;
@@ -737,7 +728,7 @@ public:
       switch (type) {
 	case Type::SK_PKCS8: {
 	  auto hdr = ZfASN1::handler<SK_PKCS8_HDR>(span).ctor();
-	  auto id = Load_::matcher.exact(hdr.id);
+	  auto id = Load_::keyType(hdr.id);
 	  if (id < 0) return ZeEXCEPT(Error, "ZtlsPK", ([id = ZtBArray(hdr.id)](auto &s) {
 	    ZmHex::enc(id, [&s](ZuCSpan id) {
 	      s << "unknown PKCS#8 OID " << id;
