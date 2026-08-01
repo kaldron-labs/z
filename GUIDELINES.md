@@ -90,7 +90,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - where 64bits is required, use `int64_t` and `uint64_t`
 - for types that might be stored in high volumes, i.e. where memory pressure may be significant, use the smallest type that spans the required range of values:
   - enums are often `int8_t` (they must be signed)
-- do NOT unnecessarily assert, for example checking that a `uint32_t` is `<= UINT_MAX` - that is redundant
+- do NOT unnecessarily assert, for example checking that a `uint32_t` is `<= UINT_MAX`
 
 ### Static polymorphism and constraints
 - Prefer CRTP, templates, and compile-time dispatch over virtual polymorphism.
