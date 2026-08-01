@@ -37,7 +37,7 @@ lib_LTLIBRARIES = libZcmd.la
 libZcmd_la_CPPFLAGS = $(AM_CPPFLAGS) -DZCMD_EXPORTS
 libZcmd_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZcmd_la_SOURCES = ZcmdLib.cc \
-	ZcmdDispatcher.cc ZcmdHost.cc
+	ZcmdDispatcher.cc ZcmdHost.cc Ztel.cc
 # no need to include libZrl, the dependency is limited to ZrlTypes.hh
 libZcmd_la_LIBADD = \
 	$(top_builddir)/zum/src/libZum.la $(top_builddir)/zdb/src/libZdb.la \

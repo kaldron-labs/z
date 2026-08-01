@@ -27,7 +27,9 @@ lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
 libZhttp_la_SOURCES = ZhttpLib.cc ZhttpURL.cc ZhttpDiscovery.cc \
 	ZhttpRuntime.cc \
-	ZhttpCompression.cc ZhttpH2.cc ZhttpHPack.cc ZhttpQPack.cc
+	ZhttpCompression.cc ZhttpFields.cc ZhttpH1.cc ZhttpH2.cc ZhttpH2Message.cc \
+	ZhttpH2Session.cc ZhttpH3.cc ZhttpHPack.cc ZhttpQPack.cc \
+	ZhttpTLSEngine.cc ZhttpTypes.cc
 libZhttp_la_LIBADD = \
 	$(top_builddir)/ztcp/src/libZtcp.la \
 	$(top_builddir)/ztls/src/libZtls.la \

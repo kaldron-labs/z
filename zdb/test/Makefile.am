@@ -29,7 +29,7 @@ LDADD = $(top_builddir)/zdb/src/libZdbMem.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zdbsmoketest zdbreptest zdbreptest2 ZdbTelTest
-zdbsmoketest_SOURCES = zdbsmoketest.cc
-zdbreptest_SOURCES = zdbreptest.cc
-zdbreptest2_SOURCES = zdbreptest2.cc
-ZdbTelTest_SOURCES = ZdbTelTest.cc
+zdbsmoketest_SOURCES = zdbsmoketest.cc zdbtest.cc
+zdbreptest_SOURCES = zdbreptest.cc zdbtest.cc
+zdbreptest2_SOURCES = zdbreptest2.cc zdbtest.cc
+ZdbTelTest_SOURCES = ZdbTelTest.cc zdbtest.cc

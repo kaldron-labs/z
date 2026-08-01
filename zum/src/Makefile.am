@@ -32,7 +32,7 @@ lib_LTLIBRARIES = libZum.la
 bin_PROGRAMS = zuserdb
 libZum_la_CPPFLAGS = $(AM_CPPFLAGS) -DZV_EXPORTS 
 libZum_la_LDFLAGS = @Z_SO_LDFLAGS@
-libZum_la_SOURCES = ZumLib.cc ZumServer.cc
+libZum_la_SOURCES = ZumLib.cc Zum.cc ZumServer.cc
 libZum_la_LIBADD = \
 	$(top_builddir)/zdb/src/libZdb.la $(top_builddir)/zv/src/libZv.la \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/ztls/src/libZtls.la \
