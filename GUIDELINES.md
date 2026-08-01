@@ -80,6 +80,18 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
       - Example: `#include <string.h>`, not `<cstring>`.
       - Where C99 conflicts with C++, use the GNU C++2b form.
 
+### Primitive integer types
+- use `int` and plain unadorned `unsigned` as the primary local variable integers
+  - the following are static asserted in the foundational Z header `ZuLib.hh`:
+    - `sizeof(int) == sizeof(unsigned)`
+    - `sizeof(int) >= sizeof(int32_t)`
+    - `sizeof(unsigned) >= sizeof(uint32_t)`
+- the principle is that `int` and `unsigned` will naturally match the CPU's registers
+- where 64bits is required, use `int64_t` and `uint64_t`
+- for types that might be stored in high volumes, i.e. where memory pressure may be significant, use the smallest type that spans the required range of values:
+  - enums are often `int8_t` (they must be signed)
+- do NOT unnecessarily assert, for example checking that a `uint32_t` is `<= UINT_MAX` - that is redundant
+
 ### Static polymorphism and constraints
 - Prefer CRTP, templates, and compile-time dispatch over virtual polymorphism.
 - Use templates and CRTP to factor common code; keep logic DRY without adding weak abstractions.

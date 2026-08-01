@@ -114,6 +114,10 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+static_assert(sizeof(int) == sizeof(unsigned));
+static_assert(sizeof(int) >= sizeof(int32_t));
+static_assert(sizeof(unsigned) >= sizeof(uint32_t));
+
 #ifdef __GNUC__
 
 #define ZuLikely(x) __builtin_expect(!!(x), 1)
