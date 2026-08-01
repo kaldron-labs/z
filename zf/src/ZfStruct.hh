@@ -143,7 +143,7 @@
 #include <zlib/ZuVStream.hh>
 #include <zlib/ZuMatcher.hh>
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtQuote.hh>
@@ -948,11 +948,10 @@ VGet::print(
   S &s, const void *o, const ZfVField *, const ZtVFmt &
 ) const {
   ZuBSpan v = get_.bytes(o);
-  auto n = ZuBase64::enclen(v.length());
-  auto buf_ = ZmAlloc(uint8_t, n);
-  ZuSpan<uint8_t> buf(&buf_[0], n);
-  buf.trunc(ZuBase64::encode(buf, v));
-  s << ZuCSpan(buf);
+  unsigned n = ZuBase64::enclen(v.length());
+  auto buf = ZmScratch(uint8_t, n);
+  buf.length(ZuBase64::encode(buf.span(), v));
+  s << ZuCSpan(buf.cspan());
 }
 template <unsigned Code, typename S>
 inline ZuIfT<Code == ZfFieldTC::Bool>
@@ -1249,10 +1248,10 @@ VSet::scan(
     return;
   }
   unsigned n = s.length() + 1;
-  auto buf_ = ZmAlloc(char, n);
-  ZuSpan<char> buf(&buf_[0], n);
-  buf[Scan::string(buf, s)] = 0;
-  set_.cstring(o, &buf[0]);
+  auto buf = ZmScratch(char, n);
+  buf.length(Scan::string(buf.span(), s));
+  buf.push('\0');
+  set_.cstring(o, buf.data());
 }
 template <unsigned Code>
 inline ZuIfT<Code == ZfFieldTC::String>
@@ -1264,21 +1263,19 @@ VSet::scan(
     return;
   }
   unsigned n = s.length();
-  auto buf_ = ZmAlloc(char, n);
-  ZuSpan<char> buf(&buf_[0], n);
-  buf.trunc(Scan::string(buf, s));
-  set_.string(o, buf);
+  auto buf = ZmScratch(char, n);
+  buf.length(Scan::string(buf.span(), s));
+  set_.string(o, buf.cspan());
 }
 template <unsigned Code>
 inline ZuIfT<Code == ZfFieldTC::Bytes>
 VSet::scan(
   void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &
 ) const {
-  auto n = ZuBase64::declen(s.length());
-  auto buf_ = ZmAlloc(uint8_t, n);
-  ZuSpan<uint8_t> buf(&buf_[0], n);
-  buf.trunc(ZuBase64::decode(buf, ZuBSpan{s}));
-  set_.bytes(o, buf);
+  unsigned n = ZuBase64::declen(s.length());
+  auto buf = ZmScratch(uint8_t, n);
+  buf.length(ZuBase64::decode(buf.span(), ZuBSpan{s}));
+  set_.bytes(o, buf.cspan());
 }
 template <unsigned Code>
 inline ZuIfT<Code == ZfFieldTC::Bool>
@@ -1407,13 +1404,13 @@ VSet::scan(
   void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
 ) const {
   VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
-    auto m = s.length();
-    auto buf_ = ZmAlloc(char, m + 1);
-    ZuSpan<char> buf(&buf_[0], m + 1);
-    unsigned n = Scan::strElem(buf, s, fmt.vecDelim, fmt.vecSuffix);
+    unsigned m = s.length();
+    auto buf = ZmScratch(char, m + 1);
+    unsigned n = Scan::strElem(buf.span(), s, fmt.vecDelim, fmt.vecSuffix);
     if (n) {
-      buf[n] = 0;
-      set_.cstring(o, &buf[0]);
+      buf.length(n);
+      buf.push('\0');
+      set_.cstring(o, buf.data());
       return true;
     }
     return false;
@@ -1425,13 +1422,12 @@ VSet::scan(
   void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
 ) const {
   VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
-    auto m = s.length();
-    auto buf_ = ZmAlloc(char, m);
-    ZuSpan<char> buf(&buf_[0], m);
-    unsigned n = Scan::strElem(buf, s, fmt.vecDelim, fmt.vecSuffix);
+    unsigned m = s.length();
+    auto buf = ZmScratch(char, m);
+    unsigned n = Scan::strElem(buf.span(), s, fmt.vecDelim, fmt.vecSuffix);
     if (n) {
-      buf.trunc(n);
-      set_.string(o, ZuCSpan(&buf[0], buf.length()));
+      buf.length(n);
+      set_.string(o, buf.cspan());
       return true;
     }
     return false;
@@ -1448,10 +1444,9 @@ VSet::scan(
     while (n < m && ZuBase64::is(s[n])) n++;
     n = ZuBase64::declen(m = n);
     if (n) {
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase64::decode(buf, ZuBSpan{s}));
-      set_.bytes(o, ZuBSpan{&buf[0], buf.length()});
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase64::decode(buf.span(), ZuBSpan{s}));
+      set_.bytes(o, ZuBSpan{buf.cspan()});
       s.offset(m);
       return true;
     }

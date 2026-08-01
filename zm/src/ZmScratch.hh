@@ -4,8 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// safe alloca() array that stack allocates if requested size
-// is less than 50% of the remaining stack space, falling back to RAII heap
+// safe alloca() array:
+// - stack allocates if requested size is less than 50% of the remaining stack space
+// - falls back to RAII heap
+// - run-time fixed-size: cannot grow
 //
 // WARNING: ZmScratch(T, N, VHEAP) is a macro that evaluates N multiple times
 
@@ -51,7 +53,7 @@ public:
   using Cmp = ZuCmp<T>;
   using Fn = ZuArrayFn<T>;
 
-  ZmScratch_(T *data, uint32_t size) noexcept :
+  ZmScratch_(T *data, unsigned size) noexcept :
     m_size(size), m_data(data) { }
   ~ZmScratch_() noexcept(ZuNXDestroy<T>{}) {
     if (ZuUnlikely(!m_data)) return;
@@ -209,8 +211,8 @@ public:
 
 // accessors
 
-  ZuInline uint32_t size() const { return m_size; }
-  ZuInline uint32_t length() const { return m_length; }
+  ZuInline unsigned size() const { return m_size; }
+  ZuInline unsigned length() const { return m_length; }
 
 // array/ptr operators
 
@@ -450,6 +452,7 @@ public:
   }
 
 // splice operations
+// - see comments in `ZuArray.hh` for description of functionality
 
   template <typename L, typename = void>
   struct IsCallable : public ZuFalse { };
@@ -541,7 +544,7 @@ public:
     ZuInline static const Elem *data(const ZmScratch_ &a) {
       return a.data();
     }
-    ZuInline static uint32_t length(const ZmScratch_ &a) {
+    ZuInline static unsigned length(const ZmScratch_ &a) {
       return a.length();
     }
   };
@@ -560,8 +563,8 @@ public:
   ZuInline T *end() { return m_data + m_length; }
 
 private:
-  uint32_t	m_size;
-  uint32_t	m_length = 0;
+  unsigned	m_size;
+  unsigned	m_length = 0;
   T		*m_data = nullptr;
 };
 

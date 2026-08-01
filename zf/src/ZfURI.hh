@@ -129,6 +129,8 @@
 #include <zlib/ZuBase64URL.hh>
 
 #include <zlib/ZmRBTree.hh>
+#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfJSON.hh>
@@ -894,8 +896,8 @@ struct AsArray {
 	  nestedSize += 2 + Zu_ntoa::Log10_MaxLog<sizeof(nestedSize)>::N;
 	else if constexpr (Config::ArrayFmt == List) // []
 	  nestedSize += 2;
-	auto nested_ = ZmAlloc(char, nestedSize);
-	ZuStream nested(ZuSpan<char>(&nested_[0], nestedSize));
+	auto nested_ = ZmScratch(char, nestedSize);
+	ZuStream nested(nested_.span());
 	nested << prefix;
 	if constexpr (Config::ArrayFmt == Member)
 	  nested << '.';
@@ -908,17 +910,15 @@ struct AsArray {
 	    auto orig = nested;
 	    nested << ZuBoxed(i);
 	    if constexpr (Config::ArrayFmt == Array) nested << ']';
-	    auto nestedLen =
-	      nested ? unsigned(&nested[0] - &nested_[0]) : nestedSize;
-	    prefix = ZuCSpan(&nested_[0], nestedLen);
+	    nested_.length(nestedSize - nested.length());
+	    prefix = nested_.cspan();
 	    saveValue<Facet, Filter, Quote, ElemCode, ElemProps>(
 	      s, o[i], prefix);
 	    nested = orig;
 	  }
 	} else {
-	  auto nestedLen =
-	    nested ? unsigned(&nested[0] - &nested_[0]) : nestedSize;
-	  prefix = ZuCSpan(&nested_[0], nestedLen);
+	  nested_.length(nestedSize - nested.length());
+	  prefix = nested_.cspan();
 	  for (unsigned i = 0; i < n; i++)
 	    saveValue<Facet, Filter, Quote, ElemCode, ElemProps>(
 	      s, o[i], prefix);
@@ -1082,32 +1082,28 @@ inline void saveValue_(S &s, const T &v_, L &&l)
     constexpr unsigned Fmt = ZuFieldProp::URI::GetBytesFmt<Props>{};
     if constexpr (Fmt == ZfURI::Base64) {
       ZuBSpan v{v_};
-      auto n = ZuBase64::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase64::encode(buf, v));
-      Quote::quote(s, ZuCSpan(buf)); // base64 needs quoting
+      unsigned n = ZuBase64::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase64::encode(buf.span(), v));
+      Quote::quote(s, ZuCSpan(buf.cspan())); // base64 needs quoting
     } else if constexpr (Fmt == ZfURI::Base64URL) {
       ZuBSpan v{v_};
-      auto n = ZuBase64URL::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase64URL::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuBase64URL::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase64URL::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else if constexpr (Fmt == ZfURI::Base32) {
       ZuBSpan v{v_};
-      auto n = ZuBase32::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase32::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuBase32::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase32::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else if constexpr (Fmt == ZfURI::Hex) {
       ZuBSpan v{v_};
-      auto n = ZuHex::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuHex::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuHex::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuHex::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else // if constexpr (Fmt == ZfURI::Escaped)
       Quote::quote(s, v_);
   } else if constexpr (TypeCode == ZfFieldTC::Bool) {

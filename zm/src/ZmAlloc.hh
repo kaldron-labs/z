@@ -4,8 +4,9 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// safe alloca() backing storage that stack allocates if requested size
-// is less than 50% of the remaining stack space, falling back to RAII heap
+// safe alloca() backing storage:
+// - stack allocates if requested size is less than 50% of the remaining stack space
+// - falls back to RAII heap
 //
 // WARNING: ZmAlloc(T, N) is a macro that evaluates N multiple times
 //

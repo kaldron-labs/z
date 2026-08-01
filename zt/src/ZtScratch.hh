@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// extends ZtArray/ZtString with initial stack-allocated backing storage (see ZmAlloc)
+// extends ZtArray/ZtString with stack-allocated backing storage (see ZmAlloc)
 // - falls back to heap allocation if stack space is insufficient
 // - auto var = ZtScratch(T, size);		// initialized empty
 // - auto var = ZtScratch(T, length, size);	// initialized with length

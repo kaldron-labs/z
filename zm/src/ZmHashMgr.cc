@@ -11,7 +11,7 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuArray.hh>
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSingleton.hh>
 
@@ -122,18 +122,15 @@ private:
       Ztc::HashMgr::MatchFn match, Ztc::HashMgr::CaptureFn fn) {
     Guard guard(m_lock);
     unsigned count = m_tables.count_();
-    auto storage = ZmAlloc(Ztc::HashTelemetry, count);
-    unsigned length = 0;
+    auto storage = ZmScratch(Ztc::HashTelemetry, count);
     auto i = m_tables.iter();
     while (auto table = i()) {
       if (match && !match(table)) continue;
-      auto data = new (&storage[length++]) Ztc::HashTelemetry;
+      auto data = new (storage.push()) Ztc::HashTelemetry;
       table->telemetry(*data);
     }
     guard.unlock();
-    fn(ZuSpan<const Ztc::HashTelemetry>{storage.data, length});
-    for (unsigned i = 0; i < length; ++i)
-      storage[i].~HashTelemetry();
+    fn(storage.cspan());
   }
 
   void watch(Ztc::HashMgr::AddFn addFn, Ztc::HashMgr::DelFn delFn) {

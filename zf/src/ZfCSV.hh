@@ -26,6 +26,8 @@
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
 
+#include <zlib/ZmScratch.hh>
+
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZfStruct.hh>
@@ -209,32 +211,28 @@ inline void saveValue_(S &s, const T_ &v_)
     constexpr unsigned Fmt = ZuFieldProp::CSV::GetBytesFmt<Props>{};
     if constexpr (Fmt == ZfCSV::Base64) {
       ZuBSpan v{v_};
-      auto n = ZuBase64::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase64::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuBase64::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase64::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else if constexpr (Fmt == ZfCSV::Base64URL) {
       ZuBSpan v{v_};
-      auto n = ZuBase64URL::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase64URL::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuBase64URL::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase64URL::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else if constexpr (Fmt == ZfCSV::Base32) {
       ZuBSpan v{v_};
-      auto n = ZuBase32::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase32::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuBase32::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase32::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else if constexpr (Fmt == ZfCSV::Hex) {
       ZuBSpan v{v_};
-      auto n = ZuHex::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuHex::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuHex::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuHex::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else if constexpr (Fmt == ZfCSV::Raw) {
       s << Quote::String{v_};
     }
@@ -389,11 +387,11 @@ struct Lookup : ZuArray<int, Fields::N> {
 // - returns -1 if the line is incomplete
 ZfExtern int split(ZuSpan<char> span, Header &header);
 // splits a body line into comma-separated spans
-// - fills row with scanned spans
+// - placement-constructs row cells in the supplied storage and sets length
 // - splits array cells into elements
 // - returns +ve offset to the next row if a full line was scanned
 // - returns -1 if the line is incomplete
-ZfExtern int split(ZuSpan<char> span, Row &row);
+ZfExtern int split(ZuSpan<char> span, ZuSpan<Cell> row, unsigned &length);
 // idempotently unquote a span
 // - un-quotes strings in-place, mutating the span
 // - uses the byte following the span (the , or \n delimiter) as
@@ -658,17 +656,18 @@ struct Push : public Writer<O, Facet> {
 
 private:
   void writeHeader() {
-    auto buf_ = ZmAlloc(char, MaxRowLen);
-    ZuStream buf{&buf_[0], MaxRowLen};
+    auto data = ZmScratch(char, MaxRowLen);
+    ZuStream buf{data.span()};
     this->saveHdr(buf);
     if (ZuUnlikely(buf.overflow())) {
       overflow = true;
       return;
     }
-    auto n = &buf[0] - &buf_[0];
-    out << ZuCSpan(&buf[0], n);
+    buf.finish(data);
+    out << data.cspan();
   }
 
+public:
   Push(Out &out_) : out{out_} { writeHeader(); }
   Push(Columns columns, Out &out_) : Base{columns}, out{out_} {
     writeHeader();
@@ -678,15 +677,15 @@ private:
 
   bool operator ()(const O &o) {
     if (ZuUnlikely(overflow)) return false;
-    auto buf_ = ZmAlloc(char, MaxRowLen);
-    ZuStream buf{&buf_[0], MaxRowLen};
+    auto data = ZmScratch(char, MaxRowLen);
+    ZuStream buf{data.span()};
     this->save(buf, o);
     if (ZuUnlikely(buf.overflow())) {
       overflow = true;
       return false;
     }
-    auto n = &buf[0] - &buf_[0];
-    out << ZuCSpan(&buf[0], n);
+    buf.finish(data);
+    out << data.cspan();
     return true;
   }
 
@@ -722,27 +721,32 @@ struct Pull : public Writer<O, Facet> {
 
 private:
   template <typename Out, typename L>
-  void write(Out &out, char *buf_, L l) {
+  void write(Out &out, L l) {
+    auto data = ZmScratch(char, MaxRowLen);
     {
-      ZuStream buf{&buf_[0], MaxRowLen};
+      ZuStream buf{data.span()};
       this->saveHdr(buf);
       if (ZuUnlikely(buf.overflow())) { overflow = true; return; }
-      out << ZuCSpan(&buf[0], &buf[0] - buf_);
+      buf.finish(data);
+      out << data.cspan();
+      data.null();
     }
     for (;;) {
-      ZuStream buf{&buf_[0], MaxRowLen};
+      ZuStream buf{data.span()};
       if (!l([this, &buf](const O &o) { this->save(buf, o); })) return;
       if (ZuUnlikely(buf.overflow())) { overflow = true; return; }
-      out << ZuCSpan(&buf[0], &buf[0] - buf_);
+      buf.finish(data);
+      out << data.cspan();
+      data.null();
     }
   }
 
 public:
   template <typename Out, typename L>
-  Pull(Out &out, char *buf_, L l) { write(out, buf_, ZuMv(l)); }
+  Pull(Out &out, L l) { write(out, ZuMv(l)); }
   template <typename Out, typename L>
-  Pull(Columns columns, Out &out, char *buf_, L l) : Base{columns} {
-    write(out, buf_, ZuMv(l));
+  Pull(Columns columns, Out &out, L l) : Base{columns} {
+    write(out, ZuMv(l));
   }
 
   bool operator !() { return overflow; }
@@ -761,8 +765,7 @@ template <
   unsigned MaxRowLen = 4096,
   typename Out, typename L>
 inline ZuUnion<void, bool> write(Out &out, L l) {
-  auto buf_ = ZmAlloc(char, MaxRowLen);
-  Pull pull(out, &buf_[0], ZuMv(l));
+  Pull pull(out, ZuMv(l));
   if (pull) return {};
   return pull.overflow;
 }
@@ -773,8 +776,7 @@ template <
   unsigned MaxRowLen = 4096,
   typename Out, typename L>
 inline ZuUnion<void, bool> write(Columns columns, Out &out, L l) {
-  auto buf_ = ZmAlloc(char, MaxRowLen);
-  Pull pull(columns, out, &buf_[0], ZuMv(l));
+  Pull pull(columns, out, ZuMv(l));
   if (pull) return {};
   return pull.overflow;
 }
@@ -798,7 +800,7 @@ struct Reader {
   using Lookup = ZfCSV::Lookup<SaveFields>;
 
   ZuUnion<void, Lookup>	lookup;
-  mutable Row		row;
+  mutable ZuSpan<Cell>	row;
 
   Reader() = default;
 
@@ -814,9 +816,11 @@ struct Reader {
       return n < 0 ? 0 : n;
     } else { // reading body line
       const auto &lookup_ = lookup.template p<Lookup>();
-      auto row_ = ZmAlloc(Cell, lookup_.ncols);
-      row = Row(&row_[0], 0, lookup_.ncols, false);
-      auto n = split(data, row);
+      auto row_ = ZmScratch(Cell, lookup_.ncols);
+      unsigned length;
+      auto n = split(data, row_.span(), length);
+      row_.template length<false>(length);
+      row = ZuSpan<Cell>(row_.data(), row_.length());
       if (n >= 0) ZuFwd<L>(l)(*this);
       row = {};
       return n < 0 ? 0 : n;

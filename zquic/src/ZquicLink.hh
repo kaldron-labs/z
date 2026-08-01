@@ -8195,10 +8195,8 @@ nextSpace:
     ZquicLog_::PktEvt *qlog, EmitTLS emitTLS,
     HandleControl handleControl, bool earlyData = false) {
     unsigned offset = 0;
-    auto frame_ = ZmAlloc(Frame, 1);
-    new (&frame_[0]) Frame{};
-    auto &frame = frame_[0];
-    ZuGuard frameGuard{[&frame]() { frame.~Frame(); }};
+    auto frame_ = ZmScratch(Frame, 1);
+    auto &frame = *new (frame_.push()) Frame{};
     bool ackEliciting = false;
     bool immediateAck = false;
 

@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZmCache.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmRBTree.hh>
 
@@ -76,7 +77,7 @@ int main(int argc, char **argv)
   if (argc > 3) nThreads = atoi(argv[3]);
   if (argc > 4) nLoops = atoi(argv[4]);
 
-  auto threads = ZmAlloc(ZmThread, nThreads);
+  auto threads = ZmScratch(ZmThread, nThreads);
 
   std::cout << "spawning " << nThreads << " threads..." << '\n';
   overallStart = Zm::now();
@@ -95,13 +96,13 @@ int main(int argc, char **argv)
 
   for (unsigned l = 0; l < nLoops; l++) {
     for (unsigned i = 0, j = 0; i < nThreads; i++, j += increment)
-      new (&threads[i]) ZmThread{[&cache, &tree, j, batchSize]() {
+      new (threads.push()) ZmThread{[&cache, &tree, j, batchSize]() {
 	find(cache, tree, j, batchSize);
       }};
     for (unsigned i = 0; i < nThreads; i++) {
       threads[i].join();
-      threads[i].~ZmThread();
     }
+    threads.null();
   }
 
   stats(cache);

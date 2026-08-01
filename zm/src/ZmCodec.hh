@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // inline on-stack Base64 / Base32 / Hex encoding
-// - uses ZmAlloc to allocate a buffer on stack, e.g.
+// - uses ZmScratch to allocate a fixed-capacity buffer on stack, e.g.
 // - ZmBase64::encode(data, [](ZuCSpan s) { ... });
 
 #ifndef ZmCodec_HH
@@ -20,24 +20,22 @@
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuHex.hh>
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #define ZmCodec_Fn \
 template <typename L> \
 static inline decltype(auto) enc(ZuBSpan src, L &&l) { \
-  auto n = enclen(src.length()); \
-  auto buf_ = ZmAlloc(uint8_t, n); \
-  ZuSpan<uint8_t> buf(&buf_[0], n); \
-  buf.trunc(encode(buf, src)); \
-  ZuFwd<L>(l)(buf); \
+  unsigned n = enclen(src.length()); \
+  auto buf = ZmScratch(uint8_t, n); \
+  buf.length(encode(buf.span(), src)); \
+  ZuFwd<L>(l)(buf.cspan()); \
 } \
 template <typename L> \
 static inline decltype(auto) dec(ZuBSpan src, L &&l) { \
-  auto n = declen(src.length()); \
-  auto buf_ = ZmAlloc(uint8_t, n); \
-  ZuSpan<uint8_t> buf(&buf_[0], n); \
-  buf.trunc(decode(buf, src)); \
-  ZuFwd<L>(l)(buf); \
+  unsigned n = declen(src.length()); \
+  auto buf = ZmScratch(uint8_t, n); \
+  buf.length(decode(buf.span(), src)); \
+  ZuFwd<L>(l)(buf.cspan()); \
 }
 
 struct ZmBase64 : public ZuBase64 { ZmCodec_Fn };

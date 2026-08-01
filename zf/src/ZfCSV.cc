@@ -68,11 +68,14 @@ quoted:
 }
 
 // split a line - row version
-int split(ZuSpan<char> span, Row &row)
+int split(ZuSpan<char> span, ZuSpan<Cell> row, unsigned &length)
 {
   unsigned n = span.length();
+  unsigned rowN = row.length();
   unsigned b = 0, i = 0 /* , o = 0 */;
   char c;
+
+  length = 0;
 
   // the implicit intersection operator "@" was introduced in Excel 365/2021
   // as part of the Dynamic Arrays update; this update fundamentally
@@ -105,7 +108,8 @@ cell:
 unquoted:
     if (ZuUnlikely(c == ',' || c == '\r' || c == '\n')) {
       // if (i > o) memset(&span[o], 0, i - o);
-      row.push(Cell{ZuSpan<char>(&span[b], i - b /* o - b */)});
+      if (ZuUnlikely(length >= rowN)) return -1;
+      new (&row[length++]) Cell{ZuSpan<char>(&span[b], i - b /* o - b */)};
       if (c == '\r' || c == '\n') {
 	if (c == '\r' && i < n) c = span[++i];
 	if (c != '\n') return -1;
@@ -151,7 +155,8 @@ array_unquoted:
       // if (i > o) memset(&span[o], 0, i - o);
       array.push(ZuSpan<char>(&span[b], i - b /* o - b */));
       if (c == '}') {
-	row.push(Cell{ZuMv(array)});
+	if (ZuUnlikely(length >= rowN)) return -1;
+	new (&row[length++]) Cell{ZuMv(array)};
 	c = span[++i];
 	if (c == ',') { b = ++i; goto cell; }
 	if (c == '\r' && i < n) c = span[++i];

@@ -54,10 +54,11 @@
 
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmLHash.hh>
+#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
-#include <zlib/ZmScratch.hh>
 #include <zlib/ZePlatform.hh>
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfJSON.hh>
@@ -1290,32 +1291,28 @@ inline void saveValue_(S &s, const T &v_, L &&l)
     constexpr unsigned Fmt = ZuFieldProp::CLI::GetBytesFmt<Props>{};
     if constexpr (Fmt == ZfCLI::Base64) {
       ZuBSpan v{v_};
-      auto n = ZuBase64::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase64::encode(buf, v));
-      Quote::quote(s, ZuCSpan(buf)); // base64 needs quoting
+      unsigned n = ZuBase64::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase64::encode(buf.span(), v));
+      Quote::quote(s, ZuCSpan(buf.cspan())); // base64 needs quoting
     } else if constexpr (Fmt == ZfCLI::Base64URL) {
       ZuBSpan v{v_};
-      auto n = ZuBase64URL::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase64URL::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuBase64URL::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase64URL::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else if constexpr (Fmt == ZfCLI::Base32) {
       ZuBSpan v{v_};
-      auto n = ZuBase32::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuBase32::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuBase32::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuBase32::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else if constexpr (Fmt == ZfCLI::Hex) {
       ZuBSpan v{v_};
-      auto n = ZuHex::enclen(v.length());
-      auto buf_ = ZmAlloc(uint8_t, n);
-      ZuSpan<uint8_t> buf(&buf_[0], n);
-      buf.trunc(ZuHex::encode(buf, v));
-      s << ZuCSpan(buf);
+      unsigned n = ZuHex::enclen(v.length());
+      auto buf = ZmScratch(uint8_t, n);
+      buf.length(ZuHex::encode(buf.span(), v));
+      s << ZuCSpan(buf.cspan());
     } else // if constexpr (Fmt == ZfCLI::Escaped)
       Quote::quote(s, v_);
   } else if constexpr (TypeCode == ZfFieldTC::Bool) {

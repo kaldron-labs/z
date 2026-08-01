@@ -18,7 +18,7 @@
 #include <zlib/ZmLockTraits.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmGuard.hh>
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmBlock.hh>
@@ -361,30 +361,26 @@ private:
   template <bool Delete, bool Sync, typename L>
   bool all_(L &&l) {
     unsigned n = m_hash->count_();
-    auto buf = ZmAlloc(NodeRef, n);
-    if (!buf) return false;
-    using Fn = NodeRefFn<NodeRef>;
+    auto buf = ZmScratch(NodeRef, n);
+    if (!buf.data()) return false;
     {
       auto i = allIter<Delete>();
-      unsigned j = 0;
-      for (j = 0; j < n; j++) {
-	Fn::ctor(&buf[j], i());
-	if (ZuUnlikely(!buf[j])) { Fn::dtor(buf[j]); break; }
+      for (unsigned j = 0; j < n; j++) {
+	auto ref = i();
+	if (ZuUnlikely(!ref)) break;
+	buf.push(ZuMv(ref));
 	if constexpr (Delete) i.del();
       }
-      n = j;
     }
     m_lock.unlock();
+    n = buf.length();
     if constexpr (Sync)
       ZmBlock<>{}(n, [&l, &buf](unsigned j, auto wake) {
 	l(ZuMv(buf[j]), ZuMv(wake));
-	Fn::dtor(buf[j]);
       });
     else
-      for (unsigned j = 0; j < n; j++) {
+      for (unsigned j = 0; j < n; j++)
 	l(ZuMv(buf[j]));
-	Fn::dtor(buf[j]);
-      }
     return true;
   }
   template <bool Delete>
@@ -397,20 +393,6 @@ private:
   allIter() {
     return m_hash->citer();
   }
-  template <typename NodeRef>
-  struct NodeRefFn {
-    static void ctor(NodeRef *ptr, NodeRef ref) {
-      new (ptr) NodeRef{ZuMv(ref)};
-    }
-    static void dtor(NodeRef &ref) { ref.~NodeRef(); }
-  };
-  template <typename Node>
-  struct NodeRefFn<Node *> {
-    using NodeRef = Node *;
-    static void ctor(NodeRef *ptr, NodeRef ref) { *ptr = ref; }
-    static constexpr void dtor(NodeRef &) { }
-  };
-
 private:
   unsigned		m_size;
  
