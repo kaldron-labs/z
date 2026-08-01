@@ -17,7 +17,7 @@
 
 namespace Zhttp {
 
-ZtEnumNS(Method, int8_t,
+ZtEnumNS(ZhttpAPI, Method, int8_t,
   GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
 
 inline bool earlyDataSafeMethod(Method::T method)
@@ -38,7 +38,7 @@ inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
 }
 
 // deprecated transfer-encoding compression
-ZtEnumNS(XferCompression, int8_t, compress, deflate, gzip);
+ZtEnumNS(ZhttpAPI, XferCompression, int8_t, compress, deflate, gzip);
 
 } // namespace Zhttp
 

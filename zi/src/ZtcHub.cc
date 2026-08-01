@@ -6,6 +6,10 @@
 
 #include <zlib/ZtcHub.hh>
 
+namespace Ztc {
+ZtEnumImplNS(HubState);
+}
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmRWLock.hh>

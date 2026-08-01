@@ -31,7 +31,7 @@ enum {
   FixedPayloadSize = 8		// largest incrementally parsed fixed payload
 };
 
-ZtEnumNS(FrameType, uint8_t,
+ZtEnumNS(ZhttpAPI, FrameType, uint8_t,
   Data, Headers, Priority, RSTStream, Settings, PushPromise, Ping, Goaway,
   WindowUpdate, Continuation);
 
@@ -45,7 +45,7 @@ namespace Flag {
   };
 }
 
-ZtEnumNS(Error, uint32_t,
+ZtEnumNS(ZhttpAPI, Error, uint32_t,
   NoError, ProtocolError, InternalError, FlowControlError, SettingsTimeout,
   StreamClosed, FrameSizeError, RefusedStream, Cancel, CompressionError,
   ConnectError, EnhanceYourCalm, InadequateSecurity, HTTP11Required);

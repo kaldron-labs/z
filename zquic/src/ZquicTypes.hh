@@ -29,7 +29,7 @@ inline ZuArray<T, N> fixedArray(const T &value = T{}) {
   return array;
 }
 
-ZtEnumStruct(StreamType, int8_t, Duplex, Simplex);
+ZtEnumStruct(ZquicAPI, StreamType, int8_t, Duplex, Simplex);
 
 struct Connected {
   ZuCSpan	alpn;
@@ -107,34 +107,34 @@ inline constexpr unsigned MinUDPPayload = 1200;
 inline constexpr unsigned BufSize = 1472;
 inline constexpr unsigned MinCIDLength = 8;
 
-ZtEnumStruct(StreamError, int8_t, None, Reset, Stop);
+ZtEnumStruct(ZquicAPI, StreamError, int8_t, None, Reset, Stop);
 
 struct PathRole {
-  ZtEnum(PathRole, int8_t, Active, Candidate, Previous);
-  ZtEnumMap(PathRole, JSON,
+  ZtEnum(ZquicAPI, PathRole, int8_t, Active, Candidate, Previous);
+  ZtEnumMap(ZquicAPI, PathRole, JSON,
     "active", "candidate", "previous", "unknown");
 };
 
 struct MigrationState {
-  ZtEnum(MigrationState, int8_t,
+  ZtEnum(ZquicAPI, MigrationState, int8_t,
     Idle, Requested, Validating, Promoted, Failed);
-  ZtEnumMap(MigrationState, JSON,
+  ZtEnumMap(ZquicAPI, MigrationState, JSON,
     "idle", "requested", "validating", "promoted", "failed", "unknown");
 };
 
 struct MigrationReason {
-  ZtEnum(MigrationReason, int8_t,
+  ZtEnum(ZquicAPI, MigrationReason, int8_t,
     None, Passive, NATRebind, Active, Disabled, PeerDisabled, NoPeerCID,
     Endpoint, Validation, Timeout, Abandoned, Closed);
-  ZtEnumMap(MigrationReason, JSON,
+  ZtEnumMap(ZquicAPI, MigrationReason, JSON,
     "none", "passive", "nat_rebind", "active", "disabled",
     "peer_disabled", "no_peer_cid", "endpoint", "validation", "timeout",
     "abandoned", "closed", "unknown");
 };
 
 struct MigrationMode {
-  ZtEnum(MigrationMode, int8_t, Disabled, Passive, Active);
-  ZtEnumMap(MigrationMode, JSON,
+  ZtEnum(ZquicAPI, MigrationMode, int8_t, Disabled, Passive, Active);
+  ZtEnumMap(ZquicAPI, MigrationMode, JSON,
     "disabled", "passive", "active", "unknown");
 };
 
@@ -192,29 +192,29 @@ struct MigrationResult {
 };
 
 struct PktNumSpace {
-  ZtEnum(PktNumSpace, int8_t, Initial, Handshake, AppData);
-  ZtEnumMap(PktNumSpace, JSON,
+  ZtEnum(ZquicAPI, PktNumSpace, int8_t, Initial, Handshake, AppData);
+  ZtEnumMap(ZquicAPI, PktNumSpace, JSON,
     "initial", "handshake", "application_data", "unknown");
 };
 
 struct PktType {
-  ZtEnum(PktType, int8_t, Initial, ZeroRTT, Handshake, Retry, Short);
-  ZtEnumMap(PktType, JSON,
+  ZtEnum(ZquicAPI, PktType, int8_t, Initial, ZeroRTT, Handshake, Retry, Short);
+  ZtEnumMap(ZquicAPI, PktType, JSON,
     "initial", "0RTT", "handshake", "retry", "1RTT", "unknown");
 };
 
 struct PktKeyLevel {
-  ZtEnum(PktKeyLevel, int8_t, Initial, Handshake, ZeroRTT, OneRTT);
-  ZtEnumMap(PktKeyLevel, JSON,
+  ZtEnum(ZquicAPI, PktKeyLevel, int8_t, Initial, Handshake, ZeroRTT, OneRTT);
+  ZtEnumMap(ZquicAPI, PktKeyLevel, JSON,
     "initial", "handshake", "0RTT", "1RTT", "unknown");
 };
 
 struct ZeroRTTReason {
-  ZtEnum(ZeroRTTReason, int8_t,
+  ZtEnum(ZquicAPI, ZeroRTTReason, int8_t,
     None, Disabled, MissingTicket, TLSRejected, AppParams,
     TransportParams, FlowLimit, StreamLimit, ActiveCIDLimit,
     FramePolicy, MissingKeys, AfterOneRTT);
-  ZtEnumMap(ZeroRTTReason, JSON,
+  ZtEnumMap(ZquicAPI, ZeroRTTReason, JSON,
     "none", "disabled", "missing_ticket", "tls_rejected", "app_params",
     "transport_params", "flow_limit", "stream_limit",
     "active_connection_id_limit", "frame_policy", "missing_keys",
@@ -222,16 +222,16 @@ struct ZeroRTTReason {
 };
 
 struct EarlyDataState {
-  ZtEnum(EarlyDataState, int8_t,
+  ZtEnum(ZquicAPI, EarlyDataState, int8_t,
     Disabled, Enabled, Offered, Accepted, Rejected, Done);
-  ZtEnumMap(EarlyDataState, JSON,
+  ZtEnumMap(ZquicAPI, EarlyDataState, JSON,
     "disabled", "enabled", "offered", "accepted", "rejected", "done",
     "unknown");
 };
 
 struct LinkEarlyState {
-  ZtEnum(LinkEarlyState, int8_t, None, Offered, Recv, Accepted, Rejected, Done);
-  ZtEnumMap(LinkEarlyState, JSON,
+  ZtEnum(ZquicAPI, LinkEarlyState, int8_t, None, Offered, Recv, Accepted, Rejected, Done);
+  ZtEnumMap(ZquicAPI, LinkEarlyState, JSON,
     "none", "offered", "received", "accepted", "rejected", "done", "unknown");
 };
 
@@ -351,26 +351,26 @@ inline PktType::T pktTypeFromKeyLevel(PktKeyLevel::T level)
 }
 
 struct LinkState {
-  ZtEnum(LinkState, int8_t,
+  ZtEnum(ZquicAPI, LinkState, int8_t,
     Starting, Handshaking, Established, Closing, Draining, Closed);
-  ZtEnumMap(LinkState, JSON,
+  ZtEnumMap(ZquicAPI, LinkState, JSON,
     "attempted", "handshake_started", "handshake_complete",
     "closing", "draining", "closed");
 };
 
-ZtEnumStruct(TransportError, uint16_t,
+ZtEnumStruct(ZquicAPI, TransportError, uint16_t,
   NoError, InternalError, CxnRefused, FlowControl,
   StreamLimit, StreamState, FinalSize, FrameEncoding,
   TransportParam, CxnIDLimit, ProtViolation);
 
 struct FrameType {
-  ZtEnum(FrameType, int8_t,
+  ZtEnum(ZquicAPI, FrameType, int8_t,
     Padding, Ping, Ack, Crypto, Stream, MaxData, MaxStreamData,
     MaxStreams, DataBlocked, StreamDataBlocked, StreamsBlocked,
     ResetStream, StopSending, NewToken, NewCxnID, RetireCxnID,
     PathChallenge, PathResponse, ConnectionClose, ApplicationClose,
     HandshakeDone, Unknown);
-  ZtEnumMap(FrameType, JSON,
+  ZtEnumMap(ZquicAPI, FrameType, JSON,
     "padding", "ping", "ack", "crypto", "stream", "max_data",
     "max_stream_data", "max_streams", "data_blocked",
     "stream_data_blocked", "streams_blocked", "reset_stream",
@@ -379,27 +379,27 @@ struct FrameType {
     "connection_close", "application_close", "handshake_done", "unknown");
 };
 
-ZtEnumStruct(CxnState, int8_t, Active, Retired, Tombstone);
+ZtEnumStruct(ZquicAPI, CxnState, int8_t, Active, Retired, Tombstone);
 
-ZtEnumStruct(PathMode, int8_t, ClientConnected, ServerUnconnected);
+ZtEnumStruct(ZquicAPI, PathMode, int8_t, ClientConnected, ServerUnconnected);
 
-ZtEnumStruct(IPFamily, int8_t, IPv4, IPv6);
+ZtEnumStruct(ZquicAPI, IPFamily, int8_t, IPv4, IPv6);
 
-ZtEnumStruct(PMTUDState, int8_t, Base, Searching, SearchComplete, Error);
+ZtEnumStruct(ZquicAPI, PMTUDState, int8_t, Base, Searching, SearchComplete, Error);
 
-ZtEnumStruct(PathECNState, int8_t, Disabled, Testing, Capable, Failed);
+ZtEnumStruct(ZquicAPI, PathECNState, int8_t, Disabled, Testing, Capable, Failed);
 
-ZtEnumStruct(PathHintKind, int8_t, None, KernelMTU, PktTooBig, SendTooBig);
+ZtEnumStruct(ZquicAPI, PathHintKind, int8_t, None, KernelMTU, PktTooBig, SendTooBig);
 
 struct EcnMark {
-  ZtEnum(EcnMark, int8_t, NotECT, ECT0, ECT1, CE);
-  ZtEnumMap(EcnMark, JSON, "Not-ECT", "ECT0", "ECT1", "CE", "unknown");
+  ZtEnum(ZquicAPI, EcnMark, int8_t, NotECT, ECT0, ECT1, CE);
+  ZtEnumMap(ZquicAPI, EcnMark, JSON, "Not-ECT", "ECT0", "ECT1", "CE", "unknown");
 };
 
-ZtEnumStruct(ServerPktAction, int8_t, Drop, AcceptInitial, VersionNeg);
+ZtEnumStruct(ZquicAPI, ServerPktAction, int8_t, Drop, AcceptInitial, VersionNeg);
 
-ZtEnumStruct(RecEvt, int8_t, Ackd, Lost, PTO, PersistCong);
+ZtEnumStruct(ZquicAPI, RecEvt, int8_t, Ackd, Lost, PTO, PersistCong);
 
-ZtEnumStruct(SentFrameKind, int8_t, None, Stream, Crypto, Control);
+ZtEnumStruct(ZquicAPI, SentFrameKind, int8_t, None, Stream, Crypto, Control);
 
 } // namespace Zquic

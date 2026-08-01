@@ -59,7 +59,7 @@ inline bool interactive() {
 
 // a virtual key is UTF32 if positive, otherwise -ve the VKey enum value
 namespace VKey {
-  ZtEnum(Zrl.VKey, int32_t,
+  ZtEnum(ZrlAPI, Zrl.VKey, int32_t,
     // terminal driver events and control keys (from termios)
     _,			// unused - overlaps with ^@ when negated
 

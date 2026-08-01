@@ -66,9 +66,7 @@ using HPackTbl = ZhttpHPackTbl(
   ("transfer-encoding", ""), ("user-agent", ""), ("vary", ""),
   ("via", ""), ("www-authenticate", ""));
 
-using HPackStatic = StaticTable<HPackTbl>;
-
-ZtEnumStruct(HPackFailure, uint8_t,
+ZtEnumStruct(ZhttpAPI, HPackFailure, uint8_t,
   None, Truncated, Integer, String, Index, Capacity, HeaderList);
 
 using HPackString =
@@ -191,7 +189,7 @@ public:
   static int staticNameIndex(ZuCSpan);
 };
 
-ZtEnumStruct(HPackRep, uint8_t,
+ZtEnumStruct(ZhttpAPI, HPackRep, uint8_t,
   Indexed, Incremental, NonIndexed, NeverIndexed);
 
 struct HPackPlan {

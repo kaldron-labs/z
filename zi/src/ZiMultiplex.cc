@@ -8,6 +8,9 @@
 
 #include <zlib/ZiMultiplex.hh>
 
+ZtEnumImplNS(ZiCxnFlags);
+ZtEnumImplNS(ZiCxnType);
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmRWLock.hh>

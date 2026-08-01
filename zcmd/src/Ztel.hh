@@ -36,9 +36,9 @@
 
 namespace Ztel {
 
-ZfbEnumMatchNS(RAG, ZvRAG, Off, Red, Amber, Green)
+ZfbEnumMatchNS(ZcmdAPI, RAG, ZvRAG, Off, Red, Amber, Green)
 
-ZfbEnumMatchNS(ThreadPriority, ZmThreadPriority,
+ZfbEnumMatchNS(ZcmdAPI, ThreadPriority, ZmThreadPriority,
     RealTime, High, Normal, Low)
 
 namespace EngineState {
@@ -64,12 +64,12 @@ namespace LinkState {
   }
 }
 
-ZfbEnumMatchNS(SocketType, ZiCxnType, TCPIn, TCPOut, UDP)
+ZfbEnumMatchNS(ZcmdAPI, SocketType, ZiCxnType, TCPIn, TCPOut, UDP)
 
-ZfbEnumMatchNS(EngineState, ZmEngineState,
+ZfbEnumMatchNS(ZcmdAPI, EngineState, ZmEngineState,
     Stopped, Starting, Running, Stopping, StartPending, StopPending)
 
-ZfbEnumMatchNS(LinkState, ZvLinkState,
+ZfbEnumMatchNS(ZcmdAPI, LinkState, ZvLinkState,
   Down,
   Disabled,
   Deleted,
@@ -82,7 +82,7 @@ ZfbEnumMatchNS(LinkState, ZvLinkState,
   ConnectPending,
   DisconnectPending)
 
-ZfbEnumMatchNS(QueueType, ZvQueueType, Thread, IPC, Rx, Tx)
+ZfbEnumMatchNS(ZcmdAPI, QueueType, ZvQueueType, Thread, IPC, Rx, Tx)
 
 namespace CacheMode {
   using namespace Ztc::DBCacheMode;
@@ -102,9 +102,9 @@ namespace DBHostState {
   }
 }
 
-ZfbEnumNS(AppRole, Dev, Test, Prod)
+ZfbEnumNS(ZcmdAPI, AppRole, Dev, Test, Prod)
 
-ZfbEnumNS(Severity, Debug, Info, Warning, Error, Fatal)
+ZfbEnumNS(ZcmdAPI, Severity, Debug, Info, Warning, Error, Fatal)
 
 using Heap_ = Ztc::HeapTelemetry;
 struct Heap : public Heap_ {
@@ -378,9 +378,9 @@ ZfbStruct(Alert,
     (((severity),	(Ctor<3>, Enum<Severity::Map>)),	(Int8)),
     (((message),	(Ctor<4>)),				(String)));
 
-ZfbEnumNS(ReqType, Heap, HashTbl, Thread, Mx, Queue, Engine, DB, App, Alert)
+ZfbEnumNS(ZcmdAPI, ReqType, Heap, HashTbl, Thread, Mx, Queue, Engine, DB, App, Alert)
 
-ZfbEnumUnionNS(TelData,
+ZfbEnumUnionNS(ZcmdAPI, TelData,
     Heap, HashTbl, Thread, Mx, Socket, Queue, Engine, Link,
     DBTable, DBHost, DB, App, Alert);
 

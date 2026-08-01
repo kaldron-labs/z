@@ -9,6 +9,8 @@
 #include <zlib/ZiIP.hh>
 #include <zlib/ZiResolver.hh>
 
+ZtEnumImplNS(ZiIPType);
+
 static bool pton4(const Zi::Hostname &host, in_addr &addr)
 {
 #ifndef _WIN32

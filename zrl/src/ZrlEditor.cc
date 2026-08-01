@@ -19,6 +19,9 @@
 
 namespace Zrl {
 
+ZtEnumImplNS(Op);
+ZtEnumImplNS(ModeType);
+
 namespace Op {
 ZrlExtern void print_(uint32_t op, ZuVStream &s)
 {

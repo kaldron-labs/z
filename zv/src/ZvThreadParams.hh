@@ -21,7 +21,7 @@
 
 namespace ZmThreadPriority {
   using T = int8_t;
-  ZtEnumMap(ZmThreadPriority, Map, "RealTime", "High", "Normal", "Low");
+  ZtEnumMap(ZvAPI, ZmThreadPriority, Map, "RealTime", "High", "Normal", "Low");
 }
 
 struct ZvThreadCf {

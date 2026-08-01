@@ -51,7 +51,7 @@ constexpr unsigned IDSize_ = IDSize - 16; // Zdb requires 16 bytes of suffix
 ZuDerive(IDString,
   (ZtString<ZtStringBuiltin<IDSize, ZtStringHeapID<"Zdb.ID">>>));
 
-ZtEnumNS(ObjState, int8_t,
+ZtEnumNS(ZdbAPI, ObjState, int8_t,
   Undefined,
   Insert,
   Update,

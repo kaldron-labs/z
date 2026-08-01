@@ -22,9 +22,9 @@
 
 namespace Ztc {
 
-ZtEnumNS(LinkType, int8_t, TCP, TLS, QUIC, H1, H3, WS, FIX);
+ZtEnumNS(ZiAPI, LinkType, int8_t, TCP, TLS, QUIC, H1, H3, WS, FIX);
 
-ZtEnumNS(LinkState, int8_t,
+ZtEnumNS(ZiAPI, LinkState, int8_t,
   Down,
   Disabled,
   Deleted,

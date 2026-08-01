@@ -13,9 +13,7 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
-#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuString.hh>
-#include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
 
 namespace Zhttp {
@@ -73,42 +71,6 @@ struct StaticTable {
   using Entries = typename Entries_<Key>::T;
   template <typename Key>
   using Values = ZuTypeMap<StaticMatchValue, Entries<Key>>;
-
-  static int name(ZuCSpan value) {
-    static constexpr auto matcher = ZuMatcher<Names>();
-    return matcher.exact(value);
-  }
-
-  static int nameIndex(ZuCSpan value) {
-    int i = name(value);
-    if (i < 0) return -1;
-    int index = -1;
-    ZuSwitch::dispatch<Names::N>(unsigned(i), [&index](auto i) {
-      using Key = ZuType<i, Names>;
-      index = ZuTypeIndex<Key, Keys>{};
-    });
-    return index;
-  }
-
-  static int index(ZuCSpan name_, ZuCSpan value) {
-    int i = name(name_);
-    if (i < 0) return -1;
-    int index = -1;
-    ZuSwitch::dispatch<Names::N>(
-      unsigned(i), [&index, &value](auto i) {
-	using Key = ZuType<i, Names>;
-	using KeyEntries = Entries<Key>;
-	using KeyValues = Values<Key>;
-	static constexpr auto matcher = ZuMatcher<KeyValues>();
-	int j = matcher.exact(value);
-	if (j < 0) return;
-	ZuSwitch::dispatch<KeyEntries::N>(unsigned(j), [&index](auto j) {
-	  using KV = ZuType<j, KeyEntries>;
-	  index = ZuTypeIndex<KV, Tbl>{};
-	});
-      });
-    return index;
-  }
 };
 
 } // namespace Zhttp

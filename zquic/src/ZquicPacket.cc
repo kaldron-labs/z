@@ -13,6 +13,9 @@
 
 namespace Zquic {
 
+ZtEnumImplStruct(Vantage);
+ZtEnumImplStruct(Vantage, JSON);
+
 unsigned VarInt::length(uint64_t v)
 {
   if (v < (1ULL<<6)) return 1;

@@ -20,11 +20,14 @@ namespace ZfURI {
   ZuTuple<int, int, char> eoc(ZuSpan<char>);
 }
 
-ZtEnumNS(Values, int8_t, High, Low, Normal);
+ZtEnumNS(, Values, int8_t, High, Low, Normal);
 
 namespace Flags {
-  ZtFlags(Flags, uint8_t, Bit0, Bit1, Bit2);
+  ZtFlags(, Flags, uint8_t, Bit0, Bit1, Bit2);
 }
+
+ZtEnumImplNS(Values);
+ZtEnumImplNS(Flags);
 
 struct Nested {
   int i1 = 0, i2 = 1;

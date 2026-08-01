@@ -20,6 +20,8 @@
 
 #include <zlib/ZiLog.hh>
 
+ZtEnumImplNS(ZiSinkType);
+
 ZiLog::ZiLog() : m_level{1}
 {
   init_();

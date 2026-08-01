@@ -22,7 +22,7 @@ enum {
   UInt64BufSize = 20		// maximum decimal width of uint64_t
 };
 
-ZtEnumStruct(ParserState, int8_t,
+ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
   Initial, Body, Stream, RemoteClosed, Trailers, Complete, Error);
 
 template <

@@ -44,7 +44,7 @@ enum : uint64_t {
 };
 
 // HTTP/3 connection state
-ZtEnumStruct(CxnState, int8_t,
+ZtEnumStruct(ZhttpAPI, CxnState, int8_t,
   Init,
   LocalControlOpen,
   LocalQPackOpen,
@@ -55,7 +55,7 @@ ZtEnumStruct(CxnState, int8_t,
   Draining,
   Error);
 
-ZtEnumStruct(ParserState, int8_t,
+ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
   Initial,		// expecting first HEADERS frame
   Body,		// after initial HEADERS; accepting DATA or trailers
   Trailers,		// trailing HEADERS received; no more frames allowed
@@ -65,14 +65,14 @@ ZtEnumStruct(ParserState, int8_t,
   Cancelled,	// RESET_STREAM / STOP_SENDING / app cancellation
   Error);		// invalid frame sequence or decode failure
 
-ZtEnumNS(FrameState, int8_t,
+ZtEnumNS(ZhttpAPI, FrameState, int8_t,
   Type = 0,		// expecting frame type prefix
   TypeCont,		// reading remaining frame type bytes
   Length,		// expecting frame length prefix
   LengthCont,	// reading remaining frame length bytes
   Payload);		// reading frame payload bytes
 
-ZtEnumStruct(CxnStreamState, int8_t,
+ZtEnumStruct(ZhttpAPI, CxnStreamState, int8_t,
   Type,		// reading stream type
   Control,		// HTTP/3 control stream frames
   Push,		// reading a push stream ID

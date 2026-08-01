@@ -1964,7 +1964,7 @@ auto handler(const AnyNode *root) {
   return typename As<O>::template Handler<O, Facet>{root};
 }
 
-ZtEnumNS(OptType, int8_t,
+ZtEnumNS(ZfAPI, OptType, int8_t,
   Arg = 0,	// value
   Args,		// value...
   Option,	// -x value

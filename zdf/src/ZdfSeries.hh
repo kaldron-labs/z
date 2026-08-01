@@ -20,6 +20,7 @@
 #endif
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuAssert.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuFixed.hh>
 #include <zlib/ZuSort.hh>
@@ -40,7 +41,7 @@ namespace Zdf {
 template <typename> class Series;
 
 namespace RdrState {
-  ZtEnum(RdrState, int8_t,
+  ZtEnum(ZdfAPI, RdrState, int8_t,
     Stopped,	// seek / find completed
     Loading,	// read called, loading block data
     Reading,	// reading historical data

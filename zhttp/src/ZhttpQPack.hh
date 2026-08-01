@@ -37,7 +37,7 @@ namespace H3 {
 
 using HdrBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HdrBytes">>;
 
-ZtEnumStruct(QPackInsn, int8_t,
+ZtEnumStruct(ZhttpAPI, QPackInsn, int8_t,
   InsertWithNameRef, InsertWithoutNameRef, Duplicate, SetCapacity,
   SectionAck, StreamCancellation, InsertCountIncrement);
 
@@ -53,7 +53,7 @@ struct QPackFieldFlags {
   bool	neverIndex = false;
 };
 
-ZtEnumStruct(QPackBuildFailure, uint8_t,
+ZtEnumStruct(ZhttpAPI, QPackBuildFailure, uint8_t,
   None, Plan, PrefixEncode, CapacityPolicy, EncoderCapacityWrite,
   EncoderInsertWrite, HeadersFrameHeaderWrite, HeadersPayloadEmit,
   Flush, CapacityCommit, InsertCommit);
@@ -145,12 +145,7 @@ public:
   bool indexAllowed(ZuCSpan name) const {
     return !neverIndex_->find(name) && index_->find(name);
   }
-  bool neverIndex(ZuCSpan name) const {
-    if (neverIndex_->find(name)) return true;
-    static constexpr auto matcher =
-      ZuMatcher<"authorization", "cookie", "set-cookie">();
-    return matcher.exact(name) >= 0;
-  }
+  ZhttpAPI bool neverIndex(ZuCSpan name) const;
 
   unsigned maxHeaderListSize() const { return maxHeaderListSize_; }
   unsigned qpackRxCapacity() const { return qpackRxCapacity_; }
@@ -841,8 +836,6 @@ using QPackTbl = ZhttpQPackTbl(
   ("x-forwarded-for"),
   ("x-frame-options", "deny"),
   ("x-frame-options", "sameorigin"));
-
-using QPackStatic = StaticTable<QPackTbl>;
 
 // evaluates QPACK static table index I given <Key, Value>
 // - use <Key, void> for entries which are Key only

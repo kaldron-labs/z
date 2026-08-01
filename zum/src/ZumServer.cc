@@ -20,6 +20,9 @@
 
 namespace Zum::Server {
 
+ZtEnumImplNS(SessionFlags);
+ZtEnumImplNS(UserDBState);
+
 UserDB::UserDB(Ztls::Random *rng) : m_rng{rng}
 {
   for (unsigned i = 0; i < nPerms(); i++)

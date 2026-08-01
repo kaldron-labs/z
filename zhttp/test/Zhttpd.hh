@@ -44,7 +44,7 @@ ZfCLIConfig(CLI,
 
 namespace Zhttpd {
 
-ZtEnumNS(Http2Mode, int8_t, force, prefer, disable);
+ZtEnumNS(, Http2Mode, int8_t, force, prefer, disable);
 
 constexpr unsigned FileChunk = 16<<10;
 constexpr unsigned MimeFileMax = 16<<20;

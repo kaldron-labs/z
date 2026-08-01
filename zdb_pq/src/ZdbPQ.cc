@@ -15,6 +15,8 @@
 
 namespace ZdbPQ {
 
+ZtEnumImplNS(SendState);
+
 OIDs::OIDs()
 {
   static const char *names[Value::N - 1] = {

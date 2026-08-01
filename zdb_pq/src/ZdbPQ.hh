@@ -1602,7 +1602,7 @@ Offset saveTuple(
   return Offset{end};
 }
 
-ZtEnumNS(SendState, int8_t,
+ZtEnumNS(ZdbPQAPI, SendState, int8_t,
   Unsent,	// unsent
   Again,	// send attempted, need to retry
   Sent,	// sent, no server-side flush or sync needed

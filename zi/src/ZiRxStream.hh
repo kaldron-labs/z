@@ -45,14 +45,14 @@
 namespace Zi {
 
 struct RxRefill {
-  ZtEnum(RxRefill, int8_t, Wait, Input, Final, Error);
+  ZtEnum(ZiAPI, RxRefill, int8_t, Wait, Input, Final, Error);
 
   uint32_t	length = 0;
   T		state = Wait;
 };
 
 namespace RxEvent {
-  ZtFlags(RxEvent, uint8_t, Start, Input, Final, Error);
+  ZtFlags(ZiAPI, RxEvent, uint8_t, Start, Input, Final, Error);
 }
 
 template <typename Queue>

@@ -351,43 +351,43 @@ namespace Load {
 } // Zfb
 
 #define ZfbEnum_(ID, Value) ZuAssert(int(Value) == int(fbs::ID::Value));
-#define ZfbEnum(ID, ...) \
-  ZtEnum(ID, ZuUnder<fbs::ID>, __VA_ARGS__); \
+#define ZfbEnum(API, ID, ...) \
+  ZtEnum(API, ID, ZuUnder<fbs::ID>, __VA_ARGS__); \
   enum { MIN = int(fbs::ID::MIN), MAX = int(fbs::ID::MAX) }; \
   ZuPP_Eval(ZuPP_MapArg(ZfbEnum_, ID, __VA_ARGS__))
 
-#define ZfbEnumNS(ID, ...) \
-  namespace ID { ZfbEnum(ID, __VA_ARGS__); }
+#define ZfbEnumNS(API, ID, ...) \
+  namespace ID { ZfbEnum(API, ID, __VA_ARGS__); }
 
-#define ZfbEnumStruct(ID, ...) \
-  struct ID { ZfbEnum(ID, __VA_ARGS__); }
+#define ZfbEnumStruct(API, ID, ...) \
+  struct ID { ZfbEnum(API, ID, __VA_ARGS__); }
 
 #define ZfbEnumMatch_Assert(Namespace, Value) \
   ZuAssert(Value == Namespace::Value);
-#define ZfbEnumMatch(ID, Namespace, ...) \
-  ZfbEnum(ID, __VA_ARGS__) \
+#define ZfbEnumMatch(API, ID, Namespace, ...) \
+  ZfbEnum(API, ID, __VA_ARGS__) \
   ZuPP_Eval(ZuPP_MapArg(ZfbEnumMatch_Assert, Namespace, __VA_ARGS__))
 
-#define ZfbEnumMatchNS(ID, Namespace, ...) \
-  namespace ID { ZfbEnumMatch(ID, Namespace, __VA_ARGS__); }
+#define ZfbEnumMatchNS(API, ID, Namespace, ...) \
+  namespace ID { ZfbEnumMatch(API, ID, Namespace, __VA_ARGS__); }
 
-#define ZfbEnumMatchStruct(ID, Namespace, ...) \
-  struct ID { ZfbEnumMatch(ID, Namespace, __VA_ARGS__); }
+#define ZfbEnumMatchStruct(API, ID, Namespace, ...) \
+  struct ID { ZfbEnumMatch(API, ID, Namespace, __VA_ARGS__); }
 
 #define ZfbEnum_Type(T) fbs::T
 #define ZfbEnum_Assert(T) ZuAssert(int(T) == int(TypeIndex<fbs::T>{}));
-#define ZfbEnumUnion(ID, ...) \
-  ZfbEnum(ID, NONE, __VA_ARGS__) \
+#define ZfbEnumUnion(API, ID, ...) \
+  ZfbEnum(API, ID, NONE, __VA_ARGS__) \
   using Types = \
     ZuTypeList<void, ZuPP_Eval(ZuPP_MapComma(ZfbEnum_Type, __VA_ARGS__))>; \
   template <unsigned I> using Type = ZuType<I, Types>; \
   template <typename T> using TypeIndex = ZuTypeIndex<T, Types>; \
   ZuPP_Eval(ZuPP_Map(ZfbEnum_Assert, __VA_ARGS__))
 
-#define ZfbEnumUnionNS(ID, ...) \
-  namespace ID { ZfbEnumUnion(ID, __VA_ARGS__); }
+#define ZfbEnumUnionNS(API, ID, ...) \
+  namespace ID { ZfbEnumUnion(API, ID, __VA_ARGS__); }
 
-#define ZfbEnumUnionStruct(ID, ...) \
-  struct ID { ZfbEnumUnion(ID, __VA_ARGS__); }
+#define ZfbEnumUnionStruct(API, ID, ...) \
+  struct ID { ZfbEnumUnion(API, ID, __VA_ARGS__); }
 
 #endif /* Zfb_HH */

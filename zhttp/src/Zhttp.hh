@@ -18,7 +18,6 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
-#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
