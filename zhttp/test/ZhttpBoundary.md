@@ -2,7 +2,7 @@
 
 This manifest covers the complete program-only source closure:
 `zhttp.cc` plus `ZhttpPut.hh` for `zhttp`, and `zhttpd.cc` plus
-`Zhttpd.hh` and `ZhttpPut.hh` for `zhttpd`.
+`ZhttpdUtil.cc`, `Zhttpd.hh`, and `ZhttpPut.hh` for `zhttpd`.
 All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 
 ## `zhttp.cc`
@@ -42,6 +42,12 @@ builder, pool, redirect, fallback, or lifecycle mechanism.
 `Workload::listening`, `Workload::listenFailed`, `Workload::connected`, and
 `Workload::disconnected` are reporting callbacks; the `Workload` type does
 not own listener state or lifecycle decisions.
+
+## `ZhttpdUtil.cc`
+
+| Category | Top-level declarations | Application responsibility |
+| --- | --- | --- |
+| Protocol-specific configuration | `ZtEnumImplNS(Http2Mode)` | Materialize the static server's CLI HTTP/2 mode mapping out of line. |
 
 ## `Zhttpd.hh`
 

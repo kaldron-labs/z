@@ -29,7 +29,6 @@
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuDateTime.hh>
-#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>

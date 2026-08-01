@@ -8,6 +8,8 @@
 // - high-speed fixed multi-string matching
 // - simpler and faster than compile-time regex matching
 // - typical use cases: parsing JSON fields, HTTP headers, ASN OIDs, etc.
+// - IMPORTANT:
+//   - instantiating `ZuMatcher` in headers WILL cause slow, memory-consuming builds
 
 // Historical note - Aho-Corasick is from 1975, yet remains state of the art
 // - https://en.wikipedia.org/wiki/Aho%E2%80%93Corasick_algorithm

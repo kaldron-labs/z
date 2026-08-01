@@ -21,9 +21,9 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zhttpqir ZhttpQIRTest ZhttpQIRSmokeTest
-zhttpqir_SOURCES = zhttpqir.cc ZhttpQIR.cc ZhttpdRun.cc ../test/Zhttpd.cc
-ZhttpQIRTest_SOURCES = ZhttpQIRTest.cc ZhttpQIR.cc ZhttpdRun.cc ../test/Zhttpd.cc
-ZhttpQIRSmokeTest_SOURCES = ZhttpQIRSmokeTest.cc ZhttpQIR.cc ZhttpdRun.cc ../test/Zhttpd.cc
+zhttpqir_SOURCES = zhttpqir.cc ZhttpQIR.cc ZhttpdRun.cc ../test/ZhttpdUtil.cc
+ZhttpQIRTest_SOURCES = ZhttpQIRTest.cc ZhttpQIR.cc ZhttpdRun.cc ../test/ZhttpdUtil.cc
+ZhttpQIRSmokeTest_SOURCES = ZhttpQIRSmokeTest.cc ZhttpQIR.cc ZhttpdRun.cc ../test/ZhttpdUtil.cc
 noinst_HEADERS = ZhttpQIR.hh
 dist_noinst_SCRIPTS = qir_endpoint.sh
 EXTRA_DIST = Dockerfile.interop README.md qir-script-test.sh \

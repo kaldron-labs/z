@@ -770,9 +770,14 @@ void testAlignedSurfaceShape()
     "server peer address was not updated after path promotion");
 #endif
 
+  // Drain path-promotion work while its app and links remain valid.
+  mx.stop();
+  s0 = nullptr;
+  server = nullptr;
+  c0 = nullptr;
+  client = nullptr;
   serverApp.final();
   clientApp.final();
-  mx.stop();
 }
 
 void testStatelessResetDetection()
