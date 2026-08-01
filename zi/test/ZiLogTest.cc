@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZiLog.hh>
@@ -90,16 +91,17 @@ ZtString<> readFile(const Zi::Path &path)
     Zm::exit(1);
   }
 
-  auto n = f.size();
-  auto buf = ZmAlloc(char, static_cast<unsigned>(n) + 1U);
-  int r = f.read(&buf[0], static_cast<unsigned>(n));
+  unsigned n = f.size();
+  auto buf = ZmScratch(char, n + 1);
+  int r = f.read(buf.data(), n);
   if (r < 0) {
     log_("read(", path, ") failed: ", f.error());
     Zm::exit(1);
   }
 
+  buf.length(r);
   ZtString<> out;
-  out << ZuCSpan(&buf[0], static_cast<unsigned>(r));
+  out << buf.cspan();
   return out;
 }
 

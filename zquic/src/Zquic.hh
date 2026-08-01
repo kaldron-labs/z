@@ -26,7 +26,6 @@
 #include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmAtomic.hh>
-#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmGuard.hh>

@@ -19,8 +19,6 @@
 
 #include <zlib/ZiLib.hh>
 
-#include <zlib/ZmAlloc.hh>
-
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZrlTerminal.hh>

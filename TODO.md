@@ -1,20 +1,5 @@
 # TODO
 
-many `ZmAlloc` uses will now benefit from adopting `ZmScratch`:
-- no need to separately track length in an additional local variable
-- no need to explicitly destruct elements
-
-however `Zdb` has many cases where `ZmAlloc` should be retained:
-- the array is always fully populated, so tracking a separate length is not needed
-- element destruction can be completely elided because the type is POD
-- element destruction is explicitly controlled (example: `Zdb.hh:1233`)
-
-write a plan to `scratch.md` to migrate dependents from `ZmAlloc` to `ZmScratch`
-- audit the codebase and scrutinize all uses of `ZmAlloc`
-- the plan should include all the `ZmAlloc` uses that are candidates for migration
-
----
-
 why is `zhttp` consuming so much memory in the build?
 - investigate which specific Z framework templates are driving compiler memory usage
 

@@ -41,7 +41,7 @@
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmVHeap.hh>
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtPlatform.hh>
 #include <zlib/ZtIconv.hh>
@@ -425,15 +425,15 @@ private:
       }
       if constexpr (ZuIsSame<A, ZtArray>{})
 	if (ZuUnlikely(this_ == &a)) {
-	  auto buf = ZmAlloc(T, n);
-	  copyElems(&buf[0], a.m_data, n);
+	  unsigned size = n;
+	  auto buf = ZmScratch(T, size);
+	  buf.append(a);
 	  this_->splice(ZuFwd<Removed>(removed), offset, length,
-	    [data = &buf[0]](ZuSpan<T> span) -> uint64_t {
+	    [data = buf.data()](ZuSpan<T> span) -> uint64_t {
 	      auto n = span.length();
 	      if (n) moveElems(span.data(), data, n);
 	      return n;
 	    }, n);
-	  destroyElems(&buf[0], n);
 	  return;
 	}
       this_->splice(ZuFwd<Removed>(removed), offset, length,
@@ -567,8 +567,9 @@ private:
       alloc_(o, 0);
       length_(ZuPrint<P>::print(reinterpret_cast<char *>(m_data), o, p));
     } else {
-      auto buf = ZmAlloc(char, o);
-      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      auto buf = ZmScratch(char, o);
+      buf.length(ZuPrint<P>::print(buf.data(), o, p));
+      ZuCSpan s{buf.cspan()};
       o = ZuUTF<Char, AltChar>::len(s);
       if (!o) { null_(); return; }
       alloc_(o, 0);
@@ -693,8 +694,10 @@ protected:
       ensure(o);
       length_(ZuPrint<P>::print(reinterpret_cast<char *>(m_data), o, p));
     } else {
-      auto buf = ZmAlloc(char, o);
-      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      unsigned size = o;
+      auto buf = ZmScratch(char, size);
+      buf.length(ZuPrint<P>::print(buf.data(), size, p));
+      ZuCSpan s{buf.cspan()};
       o = ZuUTF<Char, AltChar>::len(s);
       if (!o) { null_(); return; }
       ensure(o);
@@ -1193,8 +1196,10 @@ private:
 	return ZuPrint<P>::print(ptr, length, p);
       }, ZuPrint<P>::length(p));
     } else {
-      auto buf = ZmAlloc(char, o);
-      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      unsigned size = o;
+      auto buf = ZmScratch(char, size);
+      buf.length(ZuPrint<P>::print(buf.data(), size, p));
+      ZuCSpan s{buf.cspan()};
       return add_([s](Char *ptr, uint64_t length) -> uint64_t {
 	if (!length) return 0;
 	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
@@ -1273,13 +1278,13 @@ private:
     if constexpr (ZuIsSame<ZuDecay<S>, ZtArray>{})
       if (this == &s_) {
 	auto rlength = s.length();
-	auto buf = ZmAlloc(Char, rlength);
-	copyElems(&buf[0], s.data(), rlength);
-	append__([data = &buf[0]](Char *ptr, uint64_t rlength) {
+	unsigned size = rlength;
+	auto buf = ZmScratch(Char, size);
+	buf.append(s);
+	append__([data = buf.data()](Char *ptr, uint64_t rlength) {
 	  moveElems(ptr, data, rlength);
 	  return rlength;
 	}, rlength);
-	destroyElems(&buf[0], rlength); // will be optimized out
  	return;
       }
     append__([data = s.data()](Char *ptr, uint64_t rlength) {
@@ -1315,8 +1320,10 @@ private:
 	return ZuPrint<P>::print(ptr, length, p);
       }, o);
     } else {
-      auto buf = ZmAlloc(char, o);
-      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      unsigned size = o;
+      auto buf = ZmScratch(char, size);
+      buf.length(ZuPrint<P>::print(buf.data(), size, p));
+      ZuCSpan s{buf.cspan()};
       append__([s](Char *ptr, uint64_t length) {
 	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
       }, ZuUTF<Char, AltChar>::len(s));

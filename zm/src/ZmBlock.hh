@@ -18,7 +18,7 @@
 
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmSpecific.hh>
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 namespace ZmBlock_ {
   inline ZmSemaphore &sem() { return ZmTLS<ZmSemaphore, sem>(); }
@@ -39,14 +39,16 @@ template <typename ...Args> struct ZmBlock {
   }
   template <typename L, typename Reduce>
   R operator ()(unsigned n, L l, Reduce reduce) const {
-    auto r = ZmAlloc(R, n);
-    if (!r) throw std::bad_alloc{};
+    auto r = ZmScratch(R, n);
+    if (n && !r.data()) throw std::bad_alloc{};
     auto &sem = ZmBlock_::sem();
-    for (unsigned i = 0; i < n; i++)
-      l(i, [&sem, &r = r[i]](Args... args) mutable {
-	r = ZuMvTuple(ZuMv(args)...);
+    for (unsigned i = 0; i < n; i++) {
+      auto ptr = r.push();
+      l(i, [&sem, ptr](Args... args) mutable {
+	new (ptr) R{ZuMvTuple(ZuMv(args)...)};
 	sem.post();
       });
+    }
     for (unsigned i = 0; i < n; i++) sem.wait();
     for (unsigned i = 1; i < n; i++) reduce(r[0], r[i]);
     return r[0];
@@ -67,14 +69,16 @@ template <typename Arg> struct ZmBlock<Arg> {
   }
   template <typename L, typename Reduce>
   R operator ()(unsigned n, L l, Reduce reduce) const {
-    auto r = ZmAlloc(R, n);
-    if (!r) throw std::bad_alloc{};
+    auto r = ZmScratch(R, n);
+    if (n && !r.data()) throw std::bad_alloc{};
     auto &sem = ZmBlock_::sem();
-    for (unsigned i = 0; i < n; i++)
-      l(i, [&sem, &r = r[i]](Arg arg) mutable {
-	r = ZuMv(arg);
+    for (unsigned i = 0; i < n; i++) {
+      auto ptr = r.push();
+      l(i, [&sem, ptr](Arg arg) mutable {
+	new (ptr) R{ZuMv(arg)};
 	sem.post();
       });
+    }
     for (unsigned i = 0; i < n; i++) sem.wait();
     for (unsigned i = 1; i < n; i++) reduce(r[0], r[i]);
     return r[0];

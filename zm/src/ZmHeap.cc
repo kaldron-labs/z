@@ -13,7 +13,7 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTuple.hh>
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmThread.hh>
@@ -182,18 +182,15 @@ private:
       Ztc::HeapMgr::MatchFn match, Ztc::HeapMgr::CaptureFn fn) {
     Guard guard(m_lock);
     unsigned count = m_key2Cache.count_();
-    auto storage = ZmAlloc(Ztc::HeapTelemetry, count);
-    unsigned length = 0;
+    auto storage = ZmScratch(Ztc::HeapTelemetry, count);
     auto i = m_key2Cache.citer();
     while (ZmHeapCache *cache = i.val()) {
       if (match && !match(cache)) continue;
-      auto data = new (&storage[length++]) Ztc::HeapTelemetry;
+      auto data = new (storage.push()) Ztc::HeapTelemetry;
       cache->telemetry(*data);
     }
     guard.unlock();
-    fn(ZuSpan<const Ztc::HeapTelemetry>{storage.data, length});
-    for (unsigned i = 0; i < length; ++i)
-      storage[i].~HeapTelemetry();
+    fn(storage.cspan());
   }
 
   void watch(Ztc::HeapMgr::AddFn addFn, Ztc::HeapMgr::DelFn delFn) {

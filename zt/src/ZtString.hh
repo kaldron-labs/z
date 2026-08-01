@@ -45,6 +45,7 @@
 #include <zlib/ZuVStream.hh>
 #include <zlib/ZmVHeap.hh>
 #include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtPlatform.hh>
 #include <zlib/ZtArray.hh>
@@ -334,8 +335,9 @@ private:
     if constexpr (ZuEquiv<Char, char>{}) {
       length_(ZuPrint<P>::print(alloc_(o + 1, 0), o, p));
     } else {
-      auto buf = ZmAlloc(char, o);
-      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      auto buf = ZmScratch(char, o);
+      buf.length(ZuPrint<P>::print(buf.data(), o, p));
+      ZuCSpan s{buf.cspan()};
       o = ZuUTF<Char, AltChar>::len(s);
       if (!o) { null_(); return; }
       length_(ZuUTF<Char, AltChar>::cvt({alloc_(o + 1, 0), o}, s));
@@ -455,8 +457,9 @@ private:
     if constexpr (ZuEquiv<Char, char>{}) {
       length_(ZuPrint<P>::print(ensure(o + 1), o, p));
     } else {
-      auto buf = ZmAlloc(char, o);
-      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      auto buf = ZmScratch(char, o);
+      buf.length(ZuPrint<P>::print(buf.data(), o, p));
+      ZuCSpan s{buf.cspan()};
       o = ZuUTF<Char, AltChar>::len(s);
       if (!o) { null_(); return; }
       length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
@@ -996,8 +999,9 @@ private:
 	return ZuPrint<P>::print(ptr, length, p);
       }, ZuPrint<P>::length(p));
     } else {
-      auto buf = ZmAlloc(char, o);
-      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      auto buf = ZmScratch(char, o);
+      buf.length(ZuPrint<P>::print(buf.data(), o, p));
+      ZuCSpan s{buf.cspan()};
       return add_([s](Char *ptr, uint64_t length) -> uint64_t {
 	if (!length) return 0;
 	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
@@ -1100,8 +1104,10 @@ private:
 	return ZuPrint<P>::print(ptr, length, p);
       }, o);
     } else {
-      auto buf = ZmAlloc(char, o);
-      ZuCSpan s(&buf[0], ZuPrint<P>::print(&buf[0], o, p));
+      unsigned size = o;
+      auto buf = ZmScratch(char, size);
+      buf.length(ZuPrint<P>::print(buf.data(), size, p));
+      ZuCSpan s{buf.cspan()};
       append__([s](Char *ptr, uint64_t length) {
 	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
       }, ZuUTF<Char, AltChar>::len(s));

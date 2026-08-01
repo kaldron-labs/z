@@ -41,6 +41,13 @@ ZfStruct((RealRangeData, CSV),
   (((decimal), (Ctor<2>,
       (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Decimal)));
 
+struct CSVText {
+  ZuCArray<8> text;
+};
+
+ZfStruct((CSVText, CSV),
+  (((text), (Ctor<0>)), (String)));
+
 void testHeaderSplitAndUnquote()
 {
   ZuTestScope(testHeaderSplitAndUnquote);
@@ -67,8 +74,11 @@ void testRowSplitArrayFormsAndMalformed()
   ZuTestScope(testRowSplitArrayFormsAndMalformed);
 
   char rowLine[] = "a,={1;\"two\";3},=@{\"x\";\"y\"},\"z,z\"\n";
-  ZfCSV::Row row;
-  int n = ZfCSV::split(ZuSpan<char>(rowLine, sizeof(rowLine) - 1), row);
+  auto row = ZmScratch(ZfCSV::Cell, 4);
+  unsigned length;
+  int n = ZfCSV::split(
+    ZuSpan<char>(rowLine, sizeof(rowLine) - 1), row.span(), length);
+  row.template length<false>(length);
 
   ZuCheck(n > 0);
   ZuCheck(row.length() == 4);
@@ -98,8 +108,10 @@ void testRowSplitArrayFormsAndMalformed()
   ZuCheck(c3 == "z,z");
 
   char bad[] = "\"unterminated\n";
-  ZfCSV::Row malformed;
-  ZuCheck(ZfCSV::split(ZuSpan<char>(bad, sizeof(bad) - 1), malformed) == -1);
+  auto malformed = ZmScratch(ZfCSV::Cell, 1);
+  ZuCheck(ZfCSV::split(
+    ZuSpan<char>(bad, sizeof(bad) - 1), malformed.span(), length) == -1);
+  malformed.template length<false>(length);
 }
 
 void testQuoteAndCodecWrappers()
@@ -168,6 +180,36 @@ void testScanBoolAndBytesFmt()
   ZuCheck(ZtBytesFmt::Raw == ZfCSV::Raw);
 }
 
+void testWriterBoundaries()
+{
+  ZuTestScope(testWriterBoundaries);
+
+  {
+    ZtString<> out;
+    auto writer = ZfCSV::write<CSVText, ZuFacet::CSV, 8>(out);
+    CSVText row{"1234"};
+    ZuCheck(writer(row));
+    ZuCheck(!writer.overflow);
+    ZuCheck(out == "text\n\"1234\"\n");
+  }
+  {
+    ZtString<> out;
+    auto writer = ZfCSV::write<CSVText, ZuFacet::CSV, 8>(out);
+    CSVText row{"12345"};
+    ZuCheck(writer(row));
+    ZuCheck(!writer.overflow);
+    ZuCheck(out == "text\n\"12345\"\n");
+  }
+  {
+    ZtString<> out;
+    auto writer = ZfCSV::write<CSVText, ZuFacet::CSV, 8>(out);
+    CSVText row{"123456"};
+    ZuCheck(!writer(row));
+    ZuCheck(writer.overflow);
+    ZuCheck(out == "text\n");
+  }
+}
+
 void testIntegerRange()
 {
   ZuTestScope(testIntegerRange);
@@ -222,6 +264,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRowSplitArrayFormsAndMalformed);
   ZuTestCall(testQuoteAndCodecWrappers);
   ZuTestCall(testScanBoolAndBytesFmt);
+  ZuTestCall(testWriterBoundaries);
   ZuTestCall(testIntegerRange);
   ZuTestCall(testRealRange);
   return 0;

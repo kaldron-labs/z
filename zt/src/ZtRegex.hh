@@ -23,8 +23,6 @@
 
 #include <zlib/ZmCleanup.hh>
 #include <zlib/ZmSingleton.hh>
-#include <zlib/ZmAlloc.hh>
-
 #include <zlib/ZtString.hh>
 #include <zlib/ZtScratch.hh>
 #include <zlib/ZmScratch.hh>

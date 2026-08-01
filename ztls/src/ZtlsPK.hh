@@ -25,7 +25,9 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuMatcher.hh>
 
+#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmCodec.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZfASN1.hh>
 
@@ -252,11 +254,10 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
   ZuUnion<ZmRef<PK>, ZeException> mkPK() {
     using namespace Data;
 
-    auto buf_ = ZmAlloc(char, DERBufSize);
-    ZtArray<char> buf(&buf_[0], 0, DERBufSize, false);
+    auto buf = ZmScratch(char, DERBufSize);
     auto r = savePK(buf);
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
-    auto data = ZfASN1::handler<PK_X509_RSA>(buf).ctor();
+    auto data = ZfASN1::handler<PK_X509_RSA>(buf.cspan()).ctor();
     try {
       return ZmMkRef(new PK{data.rsa});
     } catch (const ZeException &e) {
@@ -269,13 +270,14 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
   ZuUnion<void, ZeException> sign(Random &rng, ZuBSpan data, L &&l) {
     (void)rng;
     unsigned n = Backend::pkey_rsa_size(key);
-    auto signature = ZmAlloc(uint8_t, n);
+    auto signature = ZmScratch(uint8_t, n);
     size_t k = 0;
     ZmAssert(data.length() == Ztls::MD<MDType>::Size);
     if (!Backend::pkey_sign(
-	key, MDType, data, {&signature[0], n}, &k))
+	key, MDType, data, signature.span(), &k))
       return ZeEXCEPT(Error, "ZtlsPK", "RSA sign failed");
-    ZuFwd<L>(l)(ZuBSpan{&signature[0], unsigned(k)});
+    signature.length(k);
+    ZuFwd<L>(l)(signature.cspan());
     return {};
   }
 };
@@ -384,11 +386,10 @@ struct SK_EC_ : public PK_EC_<Heap> {
   ZuUnion<ZmRef<PK>, ZeException> mkPK() {
     using namespace Data;
 
-    auto buf_ = ZmAlloc(char, DERBufSize);
-    ZtArray<char> buf(&buf_[0], 0, DERBufSize, false);
+    auto buf = ZmScratch(char, DERBufSize);
     auto r = savePK(buf);
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
-    auto data = ZfASN1::handler<PK_X509_EC>(buf).ctor();
+    auto data = ZfASN1::handler<PK_X509_EC>(buf.cspan()).ctor();
     try {
       return ZmMkRef(new PK{data.id2, data.pubKey});
     } catch (const ZeException &e) {
@@ -404,13 +405,14 @@ struct SK_EC_ : public PK_EC_<Heap> {
     n += ZfASN1::len_uint(n) + 2;	// ASN.1 Integer
     n = (n<<1);				// x2
     n += ZfASN1::len_uint(n) + 1;	// ASN.1 Sequence
-    auto signature = ZmAlloc(uint8_t, n);
+    auto signature = ZmScratch(uint8_t, n);
     size_t k = 0;
     ZmAssert(data.length() == Ztls::MD<MDType>::Size);
     if (!Backend::pkey_sign(
-	key, MDType, data, {&signature[0], n}, &k))
+	key, MDType, data, signature.span(), &k))
       return ZeEXCEPT(Error, "ZtlsPK", "EC sign failed");
-    ZuFwd<L>(l)(ZuBSpan{&signature[0], unsigned(k)});
+    signature.length(k);
+    ZuFwd<L>(l)(signature.cspan());
     return {};
   }
 };
@@ -508,11 +510,10 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
   ZuUnion<ZmRef<PK>, ZeException> mkPK() {
     using namespace Data;
 
-    auto buf_ = ZmAlloc(char, DERBufSize);
-    ZtArray<char> buf(&buf_[0], 0, DERBufSize, false);
+    auto buf = ZmScratch(char, DERBufSize);
     auto r = savePK(buf);
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
-    auto data = ZfASN1::handler<PK_X509_ED25519>(buf).ctor();
+    auto data = ZfASN1::handler<PK_X509_ED25519>(buf.cspan()).ctor();
     try {
       return ZmMkRef(new PK{data.pubKey});
     } catch (const ZeException &e) {
@@ -781,11 +782,10 @@ template <typename S, typename Key>
 ZuUnion<void, ZeException> saveB64(S &s, Key *key) {
   using namespace Data;
 
-  auto buf_ = ZmAlloc(char, DERBufSize);
-  ZtArray<char> buf(&buf_[0], 0, DERBufSize, false);
+  auto buf = ZmScratch(char, DERBufSize);
   auto r = key->save(buf);
   if (ZuUnlikely(r.template is<ZeException>())) return r;
-  ZmBase64::enc(buf.span(), [&s](ZuCSpan b64) { s << b64; });
+  ZmBase64::enc(buf.cspan(), [&s](ZuCSpan b64) { s << b64; });
   return {};
 }
 
@@ -793,11 +793,10 @@ template <typename S, typename Key>
 ZuUnion<void, ZeException> savePEM(S &s, const Key *key) {
   using namespace Data;
 
-  auto buf_ = ZmAlloc(char, BufSize);
-  ZtArray<char> buf(&buf_[0], 0, BufSize, false);
+  auto buf = ZmScratch(char, BufSize);
   auto r = key->save(buf);
   if (ZuUnlikely(r.template is<ZeException>())) return r;
-  ZmBase64::enc(buf.span(), [&s](ZuCSpan b64) {
+  ZmBase64::enc(buf.cspan(), [&s](ZuCSpan b64) {
     if constexpr (Key::Secret)
       s << "-----BEGIN PRIVATE KEY-----\n";
     else
@@ -826,11 +825,10 @@ ZuUnion<void, ZeException> saveFile(const Path &path, const Key *key) {
     return ZeEXCEPT(Error, "ZtlsPK", ([path, e = file.error()](auto &s) {
       s << "\"" << path << "\" - open failed: " << e;
     }));
-  auto buf_ = ZmAlloc(char, BufSize);
-  ZtArray<char> buf(&buf_[0], 0, BufSize, false);
+  auto buf = ZmScratch(char, BufSize);
   auto r = savePEM(buf, key);
   if (ZuUnlikely(r.template is<ZeException>())) return r;
-  if (file.write(&buf[0], buf.length()) < buf.length())
+  if (file.write(buf.data(), buf.length()) < buf.length())
     return ZeEXCEPT(Error, "ZtlsPK", ([path, e = file.error()](auto &s) {
       s << "\"" << path << "\" - write failed: " << e;
     }));

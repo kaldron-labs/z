@@ -23,7 +23,7 @@
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmFn.hh>
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 template <typename... Ts>
 void out(const Ts &...values) {
@@ -97,17 +97,16 @@ int main(int argc, char **argv)
     ZmHeapMgr::init("S_vector", i, ZmHeapConfig{uint64_t(size)});
     ZmHeapMgr::init("S_list", i, ZmHeapConfig{uint64_t(size)});
   }
-  auto threads = ZmAlloc(ZmThread, nthr);
-  if (!threads) {
-    std::cout << "ZmAlloc() failed" << '\n';
+  auto threads = ZmScratch(ZmThread, nthr);
+  if (nthr && !threads.data()) {
+    std::cout << "ZmScratch() failed" << '\n';
     Zm::exit(1);
   }
   ZuTime start = Zm::now();
   for (int i = 0; i < nthr; i++)
-    new (&threads[i]) ZmThread{doit, ZmThreadParams{}.partition(i), i};
+    new (threads.push()) ZmThread{doit, ZmThreadParams{}.partition(i), i};
   for (int i = 0; i < nthr; i++) {
     threads[i].join();
-    threads[i].~ZmThread();
   }
   ZuTime end = Zm::now();
   end -= start;

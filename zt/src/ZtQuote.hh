@@ -18,7 +18,7 @@
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuHex.hh>
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 namespace ZtQuote {
 
@@ -62,11 +62,10 @@ struct Base32 {
   template <typename S>
   friend inline decltype(auto) operator <<(S &s, const Base32 &print) {
     const auto &v = print.v;
-    auto n = ZuBase32::enclen(v.length());
-    auto buf_ = ZmAlloc(uint8_t, n);
-    ZuSpan<uint8_t> buf(&buf_[0], n);
-    buf.trunc(ZuBase32::encode(buf, v));
-    return s << ZuCSpan(buf);
+    unsigned n = ZuBase32::enclen(v.length());
+    auto buf = ZmScratch(uint8_t, n);
+    buf.length(ZuBase32::encode(buf.span(), v));
+    return s << ZuCSpan(buf.cspan());
   }
 };
 
@@ -76,11 +75,10 @@ struct Base64 {
   template <typename S>
   friend inline decltype(auto) operator <<(S &s, const Base64 &print) {
     const auto &v = print.v;
-    auto n = ZuBase64::enclen(v.length());
-    auto buf_ = ZmAlloc(uint8_t, n);
-    ZuSpan<uint8_t> buf(&buf_[0], n);
-    buf.trunc(ZuBase64::encode(buf, v));
-    return s << ZuCSpan(buf);
+    unsigned n = ZuBase64::enclen(v.length());
+    auto buf = ZmScratch(uint8_t, n);
+    buf.length(ZuBase64::encode(buf.span(), v));
+    return s << ZuCSpan(buf.cspan());
   }
 };
 
@@ -90,11 +88,10 @@ struct Hex {
   template <typename S>
   friend inline decltype(auto) operator <<(S &s, const Hex &print) {
     const auto &v = print.v;
-    auto n = ZuHex::enclen(v.length());
-    auto buf_ = ZmAlloc(uint8_t, n);
-    ZuSpan<uint8_t> buf(&buf_[0], n);
-    buf.trunc(ZuHex::encode(buf, v));
-    return s << ZuCSpan(buf);
+    unsigned n = ZuHex::enclen(v.length());
+    auto buf = ZmScratch(uint8_t, n);
+    buf.length(ZuHex::encode(buf.span(), v));
+    return s << ZuCSpan(buf.cspan());
   }
 };
 

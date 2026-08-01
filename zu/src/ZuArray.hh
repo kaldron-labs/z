@@ -802,7 +802,7 @@ public:
 // splice operations
 
 // splice():
-//   - an array A is a data span D followed by an uninitialized span U:
+//   - array A is an initialized span of data D followed by uninitialized span U:
 //     | ....................................... A ....................................... |
 //     | ........................ D ........................ | ............ U ............ |
 //
@@ -815,7 +815,7 @@ public:
 //
 // 3 cases need to be handled:
 //
-//   1. N > D - N is beyond the end of the current data
+//   1. N > D: N is beyond the end of the current data
 //     - the gap is default-initialized (I)
 //     - N is placement new'd
 //
@@ -823,7 +823,7 @@ public:
 //     | ........................ D ........................ | -- I -- | ....... U ....... |
 //     | ........................ D ........................ | .. I .. | -- N -- | .. U .. |
 //
-//   2. |N| > |O| - this is a shift up of T, and creates a temporary uninitialized gap
+//   2. |N| > |O|: this is a shift up of T, and creates a temporary uninitialized gap
 //     - first O is destroyed (~) then T is moved up
 //     - N is placement new'd where O used to be
 //
@@ -833,7 +833,7 @@ public:
 //     | .. H .. | ............ U ............ | --------- T --------- | ....... U ....... |
 //     | .. H .. | ------------ N ------------ | ......... T ......... | ....... U ....... |
 //
-//   3. |N| <= |O| - this is a shift down of T, and destroys the tail of O
+//   3. |N| <= |O|: this is a shift down of T, and destroys the tail of O
 //     - O is destroyed
 //     - N is placement new'd where O used to be
 //     - T is moved down

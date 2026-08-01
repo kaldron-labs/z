@@ -18,14 +18,14 @@
 // Principal features:
 // - Statically configured tables (intentional design limitation)
 // - Plug-in backing data store (mocked for unit-testing)
-//   - Currently Postgres, in-memory
+//   - Currently two stores: Postgres, in-memory
 // - In-memory write-through object cache
 //   - Deferred async writes
 //   - In-memory write queue of I/O buffers
 // - Async replication independent of backing store
 //   (can be disabled for replicated backing stores)
 // - Primary and multiple-secondary unique in-memory and on-disk indices
-// - Find, insert, update, delete operations (Find and CRUD)
+// - Find, insert, update, delete operations (i.e. find and CRUD)
 // - Batched select and count queries (index-based, optionally grouped)
 // - Front-end shares threads with the application
 // - Optional data sharding for multi-threaded concurrency

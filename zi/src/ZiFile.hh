@@ -18,7 +18,7 @@
 
 #include <zlib/ZuSpan.hh>
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -267,9 +267,10 @@ private:
   }
   template <typename P> MatchPBuffer<P> append_(const P &p) {
     unsigned len = ZuPrint<P>::length(p);
-    auto buf = ZmAlloc(char, len);
+    auto buf = ZmScratch(char, len);
     if (!buf) throw ZeError{ZiENOMEM};
-    if (ZuUnlikely(write(buf, ZuPrint<P>::print(buf, len, p)) != Zi::OK))
+    buf.length(ZuPrint<P>::print(buf.data(), len, p));
+    if (ZuUnlikely(write(buf.data(), buf.length()) != Zi::OK))
       throw m_error;
   }
 

@@ -25,6 +25,17 @@ struct TestHeap {
   }
 };
 
+struct Object {
+  static inline unsigned constructed;
+  static inline unsigned destroyed;
+
+  unsigned v;
+
+  Object() : v{0} { ++constructed; }
+  Object(unsigned v_) : v{v_} { ++constructed; }
+  ~Object() { ++destroyed; }
+};
+
 void testArray()
 {
   ZuTestScope(testArray);
@@ -52,6 +63,32 @@ void testArray()
 
   a.splice(1, 2);
   ZuCheck((a == ZuArray<int, 4>{1, 4, 5, 6}));
+
+  a.null();
+  a.length(3);
+  for (unsigned n = a.length(), i = 0; i < n; i++) a[i] = i + 1;
+  ZuCheck((a == ZuArray<int, 3>{1, 2, 3}));
+}
+
+void testLifetime()
+{
+  ZuTestScope(testLifetime);
+
+  Object::constructed = Object::destroyed = 0;
+  {
+    auto a = ZmScratch(Object, 3);
+    new (a.push()) Object{1};
+    new (a.push()) Object{2};
+    ZuCheck(a.length() == 2);
+    ZuCheck(Object::constructed == 2);
+    ZuCheck(Object::destroyed == 0);
+
+    a.length(1);
+    ZuCheck(Object::destroyed == 1);
+    ZuCheck(a[0].v == 1);
+  }
+  ZuCheck(Object::constructed == 2);
+  ZuCheck(Object::destroyed == 2);
 }
 
 void testString()
@@ -86,6 +123,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testArray);
+  ZuTestCall(testLifetime);
   ZuTestCall(testString);
   ZuTestCall(testVHeap);
   return 0;

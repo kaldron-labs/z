@@ -21,7 +21,7 @@
 
 #include <iostream>
 
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSpecific.hh>
@@ -158,18 +158,15 @@ public:
       Ztc::ThreadMgr::CaptureFn fn) const {
     ReadGuard guard(m_watchLock);
     unsigned count = m_map.count_();
-    auto storage = ZmAlloc(Ztc::ThreadTelemetry, count);
-    unsigned length = 0;
+    auto storage = ZmScratch(Ztc::ThreadTelemetry, count);
     auto i = m_map.citer();
     while (auto thread = i.key()) {
       if (match && !match(thread)) continue;
-      auto data = new (&storage[length++]) Ztc::ThreadTelemetry;
+      auto data = new (storage.push()) Ztc::ThreadTelemetry;
       thread->telemetry(*data);
     }
     guard.unlock();
-    fn(ZuSpan<const Ztc::ThreadTelemetry>{storage.data, length});
-    for (unsigned i = 0; i < length; ++i)
-      storage[i].~ThreadTelemetry();
+    fn(storage.cspan());
   }
 
 private:

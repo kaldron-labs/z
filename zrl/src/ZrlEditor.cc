@@ -10,8 +10,6 @@
 
 #include <zlib/ZuSort.hh>
 
-#include <zlib/ZmAlloc.hh>
-
 #include <zlib/ZtRegex.hh>
 #include <zlib/ZmScratch.hh>
 

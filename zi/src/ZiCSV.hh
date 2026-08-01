@@ -73,40 +73,42 @@ private:
     }
     return true;
   }
-  bool writeHeader(char *buf_) {
-    ZuStream buf{buf_, MaxRowLen};
+  bool writeHeader() {
+    auto data = ZmScratch(char, MaxRowLen);
+    ZuStream buf{data.span()};
     this->saveHdr(buf);
     if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
-    return write(buf_, &buf[0] - buf_);
+    buf.finish(data);
+    return write(data.data(), data.length());
   }
-  bool matchHeader(char *buf_) {
-    unsigned offset = 0;
+  bool matchHeader() {
+    auto data = ZmScratch(char, MaxRowLen);
     do {
-      auto r = file.read(&buf_[offset], MaxRowLen - offset);
+      unsigned length = data.length();
+      auto r = file.read(data.data() + length, MaxRowLen - length);
       if (r == Zi::IOError) { error = ioError(path, file); return false; }
       if (r <= 0) { error = headerError(path); return false; }
-      offset += r;
+      data.length(length + r);
       ZuSpan<char> header_[Base::AllFields::N];
       Header header(&header_[0], 0, Base::AllFields::N, false);
-      auto n = split(ZuSpan<char>(&buf_[0], offset), header);
+      auto n = split(ZuSpan<char>(data.data(), data.length()), header);
       if (n >= 0) {
 	if (this->matchHdr(header)) return true;
 	error = headerError(path);
 	return false;
       }
-    } while (offset < MaxRowLen);
+    } while (data.length() < MaxRowLen);
     error = overflow();
     return false;
   }
   void open(WriteMode mode) {
-    auto buf_ = ZmAlloc(char, MaxRowLen);
     switch (mode) {
       case Replace:
 	if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
 	  error = ioError(path, file);
 	  return;
 	}
-	writeHeader(&buf_[0]);
+	writeHeader();
 	return;
       case Create:
 	if (file.open(
@@ -115,7 +117,7 @@ private:
 	  return;
 	}
 	if (file.size() > 0) { error = existsError(path); return; }
-	writeHeader(&buf_[0]);
+	writeHeader();
 	return;
       case Append:
 	if (file.open(path, ZiFile::Create | ZiFile::Append_ | ZiFile::GC) !=
@@ -127,10 +129,10 @@ private:
 	  auto size = file.size();
 	  if (size > 0) {
 	    if (file.seek(0) != Zi::OK) { error = ioError(path, file); return; }
-	    if (!matchHeader(&buf_[0])) return;
+	    if (!matchHeader()) return;
 	    if (file.seek(size) != Zi::OK) { error = ioError(path, file); return; }
 	  } else
-	    writeHeader(&buf_[0]);
+	    writeHeader();
 	}
 	return;
     }
@@ -151,11 +153,12 @@ public:
 
   bool operator ()(const O &o) {
     if (ZuUnlikely(error)) return false;
-    auto buf_ = ZmAlloc(char, MaxRowLen);
-    ZuStream buf{&buf_[0], MaxRowLen};
+    auto data = ZmScratch(char, MaxRowLen);
+    ZuStream buf{data.span()};
     this->save(buf, o);
     if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
-    return write(&buf_[0], &buf[0] - &buf_[0]);
+    buf.finish(data);
+    return write(data.data(), data.length());
   }
 
   bool operator !() { return error; }
@@ -195,39 +198,42 @@ private:
     }
     return true;
   }
-  bool writeHeader(const Path &path, ZiFile &file, char *buf_) {
-    ZuStream buf{buf_, MaxRowLen};
+  bool writeHeader(const Path &path, ZiFile &file) {
+    auto data = ZmScratch(char, MaxRowLen);
+    ZuStream buf{data.span()};
     this->saveHdr(buf);
     if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
-    return write_(path, file, buf_, &buf[0] - buf_);
+    buf.finish(data);
+    return write_(path, file, data.data(), data.length());
   }
-  bool matchHeader(const Path &path, ZiFile &file, char *buf_) {
-    unsigned offset = 0;
+  bool matchHeader(const Path &path, ZiFile &file) {
+    auto data = ZmScratch(char, MaxRowLen);
     do {
-      auto r = file.read(&buf_[offset], MaxRowLen - offset);
+      unsigned length = data.length();
+      auto r = file.read(data.data() + length, MaxRowLen - length);
       if (r == Zi::IOError) { error = ioError(path, file); return false; }
       if (r <= 0) { error = headerError(path); return false; }
-      offset += r;
+      data.length(length + r);
       ZuSpan<char> header_[Base::AllFields::N];
       Header header(&header_[0], 0, Base::AllFields::N, false);
-      auto n = split(ZuSpan<char>(&buf_[0], offset), header);
+      auto n = split(ZuSpan<char>(data.data(), data.length()), header);
       if (n >= 0) {
 	if (this->matchHdr(header)) return true;
 	error = headerError(path);
 	return false;
       }
-    } while (offset < MaxRowLen);
+    } while (data.length() < MaxRowLen);
     error = overflow();
     return false;
   }
-  bool open(ZiFile &file, const Path &path, WriteMode mode, char *buf_) {
+  bool open(ZiFile &file, const Path &path, WriteMode mode) {
     switch (mode) {
       case Replace:
 	if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
 	  error = ioError(path, file);
 	  return false;
 	}
-	return writeHeader(path, file, buf_);
+	return writeHeader(path, file);
       case Create:
 	if (file.open(
 	    path, ZiFile::Create | ZiFile::WriteOnly | ZiFile::GC) != Zi::OK) {
@@ -235,7 +241,7 @@ private:
 	  return false;
 	}
 	if (file.size() > 0) { error = existsError(path); return false; }
-	return writeHeader(path, file, buf_);
+	return writeHeader(path, file);
       case Append:
 	if (file.open(path, ZiFile::Create | ZiFile::Append_ | ZiFile::GC) !=
 	    Zi::OK) {
@@ -246,9 +252,9 @@ private:
 	  auto size = file.size();
 	  if (size > 0) {
 	    if (file.seek(0) != Zi::OK) { error = ioError(path, file); return false; }
-	    if (!matchHeader(path, file, buf_)) return false;
+	    if (!matchHeader(path, file)) return false;
 	    if (file.seek(size) != Zi::OK) { error = ioError(path, file); return false; }
-	  } else if (!writeHeader(path, file, buf_))
+	  } else if (!writeHeader(path, file))
 	    return false;
 	}
 	return true;
@@ -257,27 +263,30 @@ private:
   }
 
   template <typename L>
-  bool write(const Path &path, WriteMode mode, char *buf_, L l) {
+  bool write(const Path &path, WriteMode mode, L l) {
     ZiFile file;
-    if (!open(file, path, mode, buf_)) return false;
+    if (!open(file, path, mode)) return false;
+    auto data = ZmScratch(char, MaxRowLen);
     for (;;) {
-      ZuStream buf{buf_, MaxRowLen};
+      ZuStream buf{data.span()};
       if (!l([this, &buf](const O &o) { this->save(buf, o); })) return true;
       if (ZuUnlikely(buf.overflow())) { error = overflow(); return false; }
-      if (!write_(path, file, buf_, &buf[0] - buf_)) return false;
+      buf.finish(data);
+      if (!write_(path, file, data.data(), data.length())) return false;
+      data.null();
     }
     ZuUnreachable(); // unreachable
   }
 
 public:
   template <typename L>
-  PullFile(const Path &path, WriteMode mode, char *buf_, L l) {
-    write(path, mode, buf_, ZuMv(l));
+  PullFile(const Path &path, WriteMode mode, L l) {
+    write(path, mode, ZuMv(l));
   }
   template <typename L>
-  PullFile(Columns columns, const Path &path, WriteMode mode, char *buf_, L l) :
+  PullFile(Columns columns, const Path &path, WriteMode mode, L l) :
       Base{columns} {
-    write(path, mode, buf_, ZuMv(l));
+    write(path, mode, ZuMv(l));
   }
 
   bool operator !() const { return error; }
@@ -296,8 +305,7 @@ template <
   unsigned MaxRowLen = 4096,
   typename L>
 ZuUnion<void, ZeException> writeFile(Path path, WriteMode mode, L l) {
-  auto buf_ = ZmAlloc(char, MaxRowLen);
-  PullFile<O, Facet, MaxRowLen> pull(ZuMv(path), mode, &buf_[0], ZuMv(l));
+  PullFile<O, Facet, MaxRowLen> pull(ZuMv(path), mode, ZuMv(l));
   if (pull) return {};
   return ZuMv(pull.error);
 }
@@ -309,9 +317,8 @@ template <
   typename L>
 ZuUnion<void, ZeException> writeFile(
     Columns columns, Path path, WriteMode mode, L l) {
-  auto buf_ = ZmAlloc(char, MaxRowLen);
   PullFile<O, Facet, MaxRowLen> pull(
-    columns, ZuMv(path), mode, &buf_[0], ZuMv(l));
+    columns, ZuMv(path), mode, ZuMv(l));
   if (pull) return {};
   return ZuMv(pull.error);
 }
@@ -329,18 +336,21 @@ struct Reader : public ZfCSV::Reader<O_, Facet> {
     ZiFile file;
     if (file.open(path, ZiFile::ReadOnly | ZiFile::GC) != Zi::OK) goto error;
     {
-      auto buf = ZmAlloc(char, MaxRowLen);
-      unsigned offset = 0;
+      auto buf = ZmScratch(char, MaxRowLen);
       do {
-	auto r = file.read(&buf[offset], MaxRowLen - offset);
+	unsigned length = buf.length();
+	auto r = file.read(buf.data() + length, MaxRowLen - length);
 	if (r == Zi::IOError) goto error;
 	if (r <= 0) return {};
-	offset += r;
-	auto n = this->process(ZuSpan<char>(&buf[0], offset), l);
-	if (n > 0 && n <= offset) {
-	  if (offset -= n) memmove(&buf[0], &buf[n], offset);
+	buf.length(length + r);
+	auto n = this->process(ZuSpan<char>(buf.data(), buf.length()), l);
+	unsigned consumed = n > 0 ? n : 0;
+	if (consumed && consumed <= buf.length()) {
+	  unsigned length = buf.length() - consumed;
+	  if (length) memmove(buf.data(), buf.data() + consumed, length);
+	  buf.length(length);
 	}
-      } while (offset < MaxRowLen);
+      } while (buf.length() < MaxRowLen);
 
       return ZeEXCEPT(Error, "ZiCSV", ([path, e = file.error()](auto &s) {
 	s << '"' << path << "\" " << "maximum row length exceeded";

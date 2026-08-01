@@ -7,7 +7,7 @@
 #include <zlib/ZuArray.hh>
 
 #include <zlib/ZmRing.hh>
-#include <zlib/ZmAlloc.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmSpinLock.hh>
 #include <zlib/ZmTime.hh>
@@ -164,13 +164,13 @@ void App<Ring>::run()
     "  msgSize: " << ZuBoxed(sizeof(Msg)) << '\n';
 
   {
-    auto r = ZmAlloc(ZmThread, readers);
-    auto w = ZmAlloc(ZmThread, writers);
+    auto r = ZmScratch(ZmThread, readers);
+    auto w = ZmScratch(ZmThread, writers);
 
     for (unsigned i = 0; i < readers; i++)
-      new (&r[i]) ZmThread{[this, i]() { reader(i); }};
+      new (r.push()) ZmThread{[this, i]() { reader(i); }};
     for (unsigned i = 0; i < writers; i++)
-      new (&w[i]) ZmThread{[this, i]() { writer(i); }};
+      new (w.push()) ZmThread{[this, i]() { writer(i); }};
     for (unsigned i = 0; i < writers; i++)
       if (w[i]) w[i].join();
     {
@@ -181,10 +181,7 @@ void App<Ring>::run()
     }
     for (unsigned i = 0; i < readers; i++) {
       if (r[i]) r[i].join();
-      r[i].~ZmThread();
     }
-    for (unsigned i = 0; i < writers; i++)
-      w[i].~ZmThread();
   }
 
   start = end - start;
