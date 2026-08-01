@@ -30,7 +30,7 @@ pkginclude_HEADERS = ZdfLib.hh \
 #dist_fbs_DATA = fbs/telemetry.fbs
 lib_LTLIBRARIES = libZdf.la
 libZdf_la_LDFLAGS = @Z_SO_LDFLAGS@
-libZdf_la_SOURCES = ZdfLib.cc ZdfStore.cc
+libZdf_la_SOURCES = ZdfLib.cc ZdfSeries.cc ZdfStore.cc
 libZdf_la_LIBADD = \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/zv/src/libZv.la \

@@ -16,7 +16,7 @@ noinst_HEADERS = ZquicOpenSSL.hh
 lib_LTLIBRARIES = libZquic.la
 libZquic_la_CPPFLAGS = $(AM_CPPFLAGS) @PTLS_CFLAGS@ -DZQUIC_EXPORTS
 libZquic_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@
-libZquic_la_SOURCES = ZquicLib.cc ZquicPath.cc \
+libZquic_la_SOURCES = ZquicLib.cc ZquicTypes.cc ZquicLink.cc ZquicPath.cc \
 	ZquicSock.cc ZquicPacket.cc ZquicFrame.cc \
 	ZquicTransport.cc ZquicCrypto.cc Zquic.cc ZquicStream.cc \
 	ZquicSched.cc ZquicRecovery.cc ZquicDiag.cc ZquicLog.cc
