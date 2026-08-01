@@ -9,6 +9,9 @@
 
 #include <zlib/ZfStruct.hh>
 
+ZtEnumImplNS(ZfFieldTC);
+ZtEnumImplNS(ZfVFieldProp);
+
 namespace ZfStruct_::Scan {
 
 unsigned string(ZuSpan<char> dst, ZuCSpan &src)

@@ -19,7 +19,7 @@
 
 #include <zlib/ZtEnum.hh>
 
-ZtEnumNS(ZvQueueType, int8_t, Thread, IPC, Rx, Tx);
+ZtEnumNS(ZvAPI, ZvQueueType, int8_t, Thread, IPC, Rx, Tx);
 
 struct ZvQueueTelemetry {
   ZuID		id;		// primary key

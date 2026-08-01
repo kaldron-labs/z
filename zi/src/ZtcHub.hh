@@ -35,7 +35,7 @@ struct HubMgr;
 
 namespace HubState {
   using namespace ZmEngineState;
-  ZtEnumNames(HubState,
+  ZtEnumNames(ZiAPI, HubState,
     Stopped, Starting, Running, Stopping, StartPending, StopPending);
 }
 

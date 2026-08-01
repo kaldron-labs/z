@@ -17,7 +17,7 @@ namespace Zhttp {
 
 namespace H1 {
 
-ZtEnumStruct(ParserState, int8_t,
+ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
   Initial,		// first line - request operation or response status
   Headers,		// reading headers
   Body,		// reading body data (not chunked)

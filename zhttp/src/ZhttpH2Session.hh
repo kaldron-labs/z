@@ -28,7 +28,7 @@ namespace Zhttp {
 
 namespace H2 {
 
-ZtEnumNS(StreamState, int8_t,
+ZtEnumNS(ZhttpAPI, StreamState, int8_t,
   Idle, Open, HalfClosedLocal, HalfClosedRemote, Closed,
   ReservedLocal, ReservedRemote);
 

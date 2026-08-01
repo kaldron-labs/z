@@ -83,7 +83,7 @@ template <typename Link, typename Consumer, typename NativeRx>
 class StreamBinding {
 public:
   struct State {
-    ZtEnum(State, int8_t, HTTP, Stream, Terminal);
+    ZtEnumValues(int8_t, HTTP, Stream, Terminal);
   };
   struct Term {
     enum { None, End, Reset };

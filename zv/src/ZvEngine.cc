@@ -8,6 +8,9 @@
 
 #include <zlib/ZvEngine.hh>
 
+ZtEnumImplNS(ZvEngineState);
+ZtEnumImplNS(ZvLinkState);
+
 void ZvEngine::start_()
 {
   mgrAddEngine();

@@ -95,7 +95,7 @@ ZfbStruct(Perm,
 
 ZfbRoot(Perm);
 
-ZtFlagsNS(RoleFlags, uint8_t, Immutable);
+ZtFlagsNS(ZumAPI, RoleFlags, uint8_t, Immutable);
 
 // role (i.e. a combination of permitted actions)
 struct Role {
@@ -114,7 +114,7 @@ ZfbStruct(Role,
 
 ZfbRoot(Role);
 
-ZtFlagsNS(UserFlags, uint8_t,
+ZtFlagsNS(ZumAPI, UserFlags, uint8_t,
   Immutable,
   Enabled,
   SuperUser,

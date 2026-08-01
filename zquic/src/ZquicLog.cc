@@ -15,6 +15,51 @@
 
 #ifdef Zquic_DEBUG
 
+namespace ZquicLog_ {
+
+#define ZquicLogEnumImpl(ID) \
+  ZtEnumImplStruct(ID); \
+  ZtEnumImplStruct(ID, JSON)
+
+ZquicLogEnumImpl(StreamType);
+ZquicLogEnumImpl(RecKind);
+ZquicLogEnumImpl(RecReason);
+ZquicLogEnumImpl(ECNState);
+ZquicLogEnumImpl(ECNReason);
+ZquicLogEnumImpl(SecKind);
+ZquicLogEnumImpl(SecKeyType);
+ZquicLogEnumImpl(KeyType);
+ZquicLogEnumImpl(SecTrigger);
+ZquicLogEnumImpl(KeyTrigger);
+ZquicLogEnumImpl(Initiator);
+ZquicLogEnumImpl(SecReason);
+ZquicLogEnumImpl(PathKind);
+ZquicLogEnumImpl(PathAction);
+ZquicLogEnumImpl(PathReason);
+ZquicLogEnumImpl(CIDKind);
+ZquicLogEnumImpl(CIDAction);
+ZquicLogEnumImpl(CIDReason);
+ZquicLogEnumImpl(MigrationAction);
+ZquicLogEnumImpl(StreamState);
+ZquicLogEnumImpl(StreamSide);
+ZquicLogEnumImpl(StreamReason);
+ZquicLogEnumImpl(StreamDataLoc);
+ZquicLogEnumImpl(StreamDataInfo);
+ZquicLogEnumImpl(BlockedState);
+ZquicLogEnumImpl(BlockedReason);
+ZquicLogEnumImpl(CloseInitiator);
+ZquicLogEnumImpl(CloseTrigger);
+ZquicLogEnumImpl(CloseReason);
+ZquicLogEnumImpl(CloseError);
+ZquicLogEnumImpl(EvtName);
+
+#undef ZquicLogEnumImpl
+
+ZtEnumImplStruct(Reason);
+ZtEnumImplStruct(Reason, JSON);
+
+} // namespace ZquicLog_
+
 using namespace ZquicLog_;
 
 template <
@@ -300,11 +345,11 @@ ZfStruct((QLogPacketHeader, JSON),
   (((packetNumber), (JSON::ID<"packet_number">)), (UInt64)));
 
 struct PktTrigger {
-  ZtEnum(PktTrigger, int8_t,
+  ZtEnum(ZquicAPI, PktTrigger, int8_t,
     None, Backpressure, KeysUnavailable, InternalError, Rejected, Unsupported,
     Invalid, Duplicate, ConnectionUnknown, DecryptionFailure, KeyUnavailable,
     General);
-  ZtEnumMap(PktTrigger, JSON,
+  ZtEnumMap(ZquicAPI, PktTrigger, JSON,
     "", "backpressure", "keys_unavailable", "internal_error", "rejected",
     "unsupported", "invalid", "duplicate", "connection_unknown",
     "decryption_failure", "key_unavailable", "general");
@@ -361,9 +406,9 @@ struct QLogAckEvt {
 QLogEvtFmt(QLogAckEvt);
 
 struct PktLostTrigger {
-  ZtEnum(PktLostTrigger, int8_t,
+  ZtEnum(ZquicAPI, PktLostTrigger, int8_t,
     ReorderThresh, TimeThreshold, PTOExpired);
-  ZtEnumMap(PktLostTrigger, JSON,
+  ZtEnumMap(ZquicAPI, PktLostTrigger, JSON,
     "reordering_threshold", "time_threshold", "pto_expired");
 };
 
@@ -431,17 +476,17 @@ struct QLogRecMetricsEvt {
 QLogEvtFmt(QLogRecMetricsEvt);
 
 struct CongState {
-  ZtEnum(CongState, int8_t,
+  ZtEnum(ZquicAPI, CongState, int8_t,
     SlowStart, CongAvoid, AppLimited, Recovery);
-  ZtEnumMap(CongState, JSON,
+  ZtEnumMap(ZquicAPI, CongState, JSON,
     "slow_start", "congestion_avoidance", "application_limited",
     "recovery");
 };
 
 struct CongTrigger {
-  ZtEnum(CongTrigger, int8_t,
+  ZtEnum(ZquicAPI, CongTrigger, int8_t,
     Ack, PMTUDAck, Loss, PMTUDLoss);
-  ZtEnumMap(CongTrigger, JSON,
+  ZtEnumMap(ZquicAPI, CongTrigger, JSON,
     "ack", "pmtud_ack", "loss", "pmtud_loss");
 };
 
@@ -466,18 +511,31 @@ struct QLogCongStateEvt {
 QLogEvtFmt(QLogCongStateEvt);
 
 struct TimerType {
-  ZtEnum(TimerType, int8_t,
+  ZtEnum(ZquicAPI, TimerType, int8_t,
     Loss, PTO);
-  ZtEnumMap(TimerType, JSON,
+  ZtEnumMap(ZquicAPI, TimerType, JSON,
     "loss_timeout", "pto");
 };
 
 struct TimerEvt {
-  ZtEnum(TimerEvt, int8_t,
+  ZtEnum(ZquicAPI, TimerEvt, int8_t,
     Set, Expired, Cancelled);
-  ZtEnumMap(TimerEvt, JSON,
+  ZtEnumMap(ZquicAPI, TimerEvt, JSON,
     "set", "expired", "cancelled");
 };
+
+#define ZquicLogLocalEnumImpl(ID) \
+  ZtEnumImplStruct(ID); \
+  ZtEnumImplStruct(ID, JSON)
+
+ZquicLogLocalEnumImpl(PktTrigger);
+ZquicLogLocalEnumImpl(PktLostTrigger);
+ZquicLogLocalEnumImpl(CongState);
+ZquicLogLocalEnumImpl(CongTrigger);
+ZquicLogLocalEnumImpl(TimerType);
+ZquicLogLocalEnumImpl(TimerEvt);
+
+#undef ZquicLogLocalEnumImpl
 
 struct QLogTimerData {
   TimerType::T timerType = TimerType::Loss;
@@ -2138,39 +2196,39 @@ static QLogFrameArray qlogFrames_(
 }
 
 static PktTrigger::T qlogPktTrigger_(
-  EvtName::T name, PktEvt::Reason::T reason)
+  EvtName::T name, Reason::T reason)
 {
   switch (name) {
     case EvtName::PktBuf:
       switch (reason) {
-	case PktEvt::Reason::MissingKeys:
+	case Reason::MissingKeys:
 	  return PktTrigger::KeysUnavailable;
 	default:
 	  return PktTrigger::None;
       }
     case EvtName::PktDrop:
       switch (reason) {
-	case PktEvt::Reason::PrepareLong:
-	case PktEvt::Reason::UnsupportedLongType:
-	case PktEvt::Reason::DiscardedSpace:
+	case Reason::PrepareLong:
+	case Reason::UnsupportedLongType:
+	case Reason::DiscardedSpace:
 	  return PktTrigger::Unsupported;
-	case PktEvt::Reason::ParseLong:
-	case PktEvt::Reason::PacketLength:
-	case PktEvt::Reason::ParseShort:
-	case PktEvt::Reason::BadKeyPhase:
+	case Reason::ParseLong:
+	case Reason::PacketLength:
+	case Reason::ParseShort:
+	case Reason::BadKeyPhase:
 	  return PktTrigger::Invalid;
-	case PktEvt::Reason::MissingKeys:
+	case Reason::MissingKeys:
 	  return PktTrigger::KeyUnavailable;
-		case PktEvt::Reason::Protection:
+		case Reason::Protection:
 		  return PktTrigger::DecryptionFailure;
-		case PktEvt::Reason::Duplicate:
+		case Reason::Duplicate:
 		  return PktTrigger::Duplicate;
-		case PktEvt::Reason::AfterOneRTT:
-		case PktEvt::Reason::FramePolicy:
+		case Reason::AfterOneRTT:
+		case Reason::FramePolicy:
 		  return PktTrigger::Invalid;
-		case PktEvt::Reason::AntiAmp:
-	case PktEvt::Reason::ProbeAdmit:
-	case PktEvt::Reason::AppSend:
+		case Reason::AntiAmp:
+	case Reason::ProbeAdmit:
+	case Reason::AppSend:
 	  return PktTrigger::Rejected;
 	default:
 	  return PktTrigger::General;

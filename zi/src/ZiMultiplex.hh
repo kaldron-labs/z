@@ -272,7 +272,7 @@ namespace ZiCxnFlags {
 
   ZtFlags_(ZiCxnFlags, uint8_t,
     UDP, Multicast, LoopBack, KeepAlive, Nagle, NetLink);
-  ZtFlagsMap(ZiCxnFlags, Map, "U", "M", "L", "K", "D", "N");
+  ZtFlagsMap(ZiAPI, ZiCxnFlags, Map, "U", "M", "L", "K", "D", "N");
 }
 
 class ZiCxnOptions {
@@ -479,7 +479,7 @@ struct ZiListenInfo {
 };
 
 // cxn information (direction, socket, local & remote IP/port, options)
-ZtEnumNS(ZiCxnType, int8_t, TCPIn, TCPOut, UDP);
+ZtEnumNS(ZiAPI, ZiCxnType, int8_t, TCPIn, TCPOut, UDP);
 
 struct ZiCxnInfo { // pure aggregate, no ctor
   int			type = -1;	// ZiCxnType

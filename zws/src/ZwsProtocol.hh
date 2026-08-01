@@ -27,7 +27,7 @@ template <typename App>
 struct AppLinkState<App, decltype(
   (typename App::LinkState *)nullptr, void())> : public App::LinkState { };
 
-ZtEnumStruct(Opcode, uint8_t,
+ZtEnumStruct(ZwsAPI, Opcode, uint8_t,
   Continuation = 0x0,
   Text = 0x1,
   Binary = 0x2,
@@ -35,7 +35,7 @@ ZtEnumStruct(Opcode, uint8_t,
   Ping = 0x9,
   Pong = 0xa);
 
-ZtEnumStruct(CloseCode, uint16_t,
+ZtEnumStruct(ZwsAPI, CloseCode, uint16_t,
   Normal = 1000,
   GoingAway = 1001,
   Protocol = 1002,
@@ -50,7 +50,7 @@ ZtEnumStruct(CloseCode, uint16_t,
   TryAgain = 1013,
   BadGateway = 1014);
 
-ZtEnumStruct(Failure, uint8_t,
+ZtEnumStruct(ZwsAPI, Failure, uint8_t,
   None,
   InvalidHeader,
   ReservedBits,

@@ -753,14 +753,14 @@ void testQLogTypedTransportEvents()
   buffered.packetType = PktType::Initial;
   buffered.packetSpace = PktNumSpace::Initial;
   buffered.packetSize = 1200;
-  buffered.reason = PktEvt::Reason::Coalescing;
+  buffered.reason = Reason::Coalescing;
   ZquicLogger::pktBuf(trace, ZuMv(buffered));
 
   PktEvt drop;
   drop.packetType = PktType::Initial;
   drop.packetSpace = PktNumSpace::Initial;
   drop.packetSize = 50;
-  drop.reason = PktEvt::Reason::ParseLong;
+  drop.reason = Reason::ParseLong;
   ZquicLogger::pktDrop(trace, ZuMv(drop));
 
   closeQLog_(trace);

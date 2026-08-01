@@ -480,9 +480,12 @@ void parseAddr(const S &s, ZiIP &ip, uint16_t &port) {
 #pragma warning(disable:4800)
 #endif
 
-ZtEnumNS(Side, int8_t, In, Out, Both);
+ZtEnumNS(, Side, int8_t, In, Out, Both);
 
-ZtEnumNS(IOOp, int8_t, Send, Recv, Both);
+ZtEnumNS(, IOOp, int8_t, Send, Recv, Both);
+
+ZtEnumImplNS(Side);
+ZtEnumImplNS(IOOp);
 
 struct ProxyArgs {
   ZuCSpan	local;

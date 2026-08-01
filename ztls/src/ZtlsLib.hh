@@ -30,6 +30,12 @@
 
 #endif
 
+namespace Ztls {
+namespace Backend {
+size_t format_error(int err, char *buf, size_t len);
+}
+}
+
 #include <zlib/ZtlsBackend.hh>
 
 #include <zlib/ZmSpecific.hh>

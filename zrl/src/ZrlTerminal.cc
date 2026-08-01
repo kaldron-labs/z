@@ -25,6 +25,8 @@
 
 namespace Zrl {
 
+ZtEnumImplNS(VKey);
+
 using ErrorStr = ZuCArray<120>;
 
 #define ZrlError(op, result, error) \

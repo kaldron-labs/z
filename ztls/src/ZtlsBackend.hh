@@ -11,6 +11,10 @@
 #ifndef ZtlsBackend_HH
 #define ZtlsBackend_HH
 
+#ifndef ZtlsLib_HH
+#include <zlib/ZtlsLib.hh>
+#endif
+
 #ifndef Ztls_OpenSSL
 #define Ztls_OpenSSL 1
 #endif
@@ -45,7 +49,7 @@ struct ZuTraits<ptls_iovec_t> : public ZuBaseTraits<ptls_iovec_t> {
 
 namespace Ztls {
 
-ZtEnumNS(MDAlg, int8_t,
+ZtEnumNS(ZtlsAPI, MDAlg, int8_t,
   SHA1,
   SHA256,
   SHA384,

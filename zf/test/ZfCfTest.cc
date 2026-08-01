@@ -12,11 +12,14 @@
 
 using namespace ZuTestUtil;
 
-ZtEnumNS(CfValues, int8_t, High, Low, Normal);
+ZtEnumNS(, CfValues, int8_t, High, Low, Normal);
 
 namespace CfFlags {
-  ZtFlags(Flags, uint8_t, Bit0, Bit1, Bit2);
+  ZtFlags(, Flags, uint8_t, Bit0, Bit1, Bit2);
 }
+
+ZtEnumImplNS(CfValues);
+ZtEnumImplNS(CfFlags);
 
 namespace ZuFieldProp::Cf {
   using Unix9 = Unix<ZfCf::Sec, 9>;

@@ -49,9 +49,9 @@ ZuAssert(int(ZmThreadPriority::Normal) ==
   int(fbs::ThreadPriority::Normal));
 ZuAssert(int(ZmThreadPriority::Low) ==
   int(fbs::ThreadPriority::Low));
-ZfbEnumMatchNS(EngineState, ZmEngineState,
+ZfbEnumMatchNS(ZvAPI, EngineState, ZmEngineState,
   Stopped, Starting, Running, Stopping, StartPending, StopPending);
-ZfbEnumMatchNS(CxnType, ZiCxnType, TCPIn, TCPOut, UDP);
+ZfbEnumMatchNS(ZvAPI, CxnType, ZiCxnType, TCPIn, TCPOut, UDP);
 
 ZuAssert(int(QueueType::Thread) == int(fbs::QueueType::Thread));
 ZuAssert(int(QueueType::IPC) == int(fbs::QueueType::IPC));
@@ -171,7 +171,7 @@ ZfbStruct(MxTelemetry,
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 namespace QueueType {
-  ZtEnumMap(QueueType, Map, "Thread", "IPC", "Rx", "Tx");
+  ZtEnumMap(ZvAPI, QueueType, Map, "Thread", "IPC", "Rx", "Tx");
 }
 
 ZfbStruct(QueueTelemetry,

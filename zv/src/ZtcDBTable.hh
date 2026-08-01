@@ -31,7 +31,7 @@
 
 namespace Ztc {
 
-ZfbEnumNS(DBCacheMode, Normal, All);
+ZfbEnumNS(ZvAPI, DBCacheMode, Normal, All);
 
 using DBTableID =
   ZtString<ZtStringHeapID<"Ztc.DBTableID">>;

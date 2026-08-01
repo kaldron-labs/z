@@ -26,7 +26,7 @@
 namespace Zdf {
 
 // data store state
-ZtEnumNS(StoreState, int8_t,
+ZtEnumNS(ZdfAPI, StoreState, int8_t,
   Uninitialized, Initialized, Opening, Opened, OpenFailed);
 
 using OpenFn = ZmFn<void(bool), ZmFnHeapID<"Zdf.Store.OpenFn">>;

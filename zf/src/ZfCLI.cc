@@ -8,6 +8,8 @@
 
 namespace ZfCLI {
 
+ZtEnumImplNS(OptType);
+
 // find end of string, un-quoting in-place
 
 ZuTuple<int, int, char> eos(ZuSpan<char> span, unsigned position)

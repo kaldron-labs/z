@@ -12,7 +12,7 @@
 
 namespace Zquic {
 
-ZtEnumStruct(CxnTimer, int8_t,
+ZtEnumStruct(ZquicAPI, CxnTimer, int8_t,
   AckDelay,
   Loss,
   PTO,
@@ -2467,7 +2467,7 @@ protected:
 	    .linkInfo = linkInfo
 	  ,
 	    .packetSize = bytes,
-	    .reason = PktEvt::Reason::AntiAmp},
+	    .reason = Reason::AntiAmp},
 	  time);
       }));
       return false;
@@ -2517,7 +2517,7 @@ protected:
 	    .linkInfo = linkInfo
 	  ,
 	    .packetSize = bytes,
-	    .reason = PktEvt::Reason::ProbeAdmit},
+	    .reason = Reason::ProbeAdmit},
 	  time);
       }));
       return false;
@@ -2568,7 +2568,7 @@ protected:
 	    .linkInfo = linkInfo
 	  ,
 	    .packetSize = bytes,
-	    .reason = PktEvt::Reason::AntiAmp},
+	    .reason = Reason::AntiAmp},
 	  time);
       }));
       return false;
@@ -2582,7 +2582,7 @@ protected:
 	    .linkInfo = linkInfo
 	  ,
 	    .packetSize = bytes,
-	    .reason = PktEvt::Reason::AppSend},
+	    .reason = Reason::AppSend},
 	  time);
       }));
       return true;
@@ -2637,7 +2637,7 @@ protected:
 	  PktEvt{
 	    .linkInfo = linkInfo,
 	    .packetSize = bytes,
-	    .reason = PktEvt::Reason::AntiAmp},
+	    .reason = Reason::AntiAmp},
 	  time);
       }));
       return false;
@@ -2650,7 +2650,7 @@ protected:
 	  PktEvt{
 	    .linkInfo = linkInfo,
 	    .packetSize = bytes,
-	    .reason = PktEvt::Reason::AppSend},
+	    .reason = Reason::AppSend},
 	  time);
       }));
       return false;
@@ -2699,7 +2699,7 @@ protected:
 	    .linkInfo = linkInfo
 	  ,
 	    .packetSize = bytes,
-	    .reason = PktEvt::Reason::ProbeAdmit},
+	    .reason = Reason::ProbeAdmit},
 	  time);
       }));
       return false;
@@ -2713,7 +2713,7 @@ protected:
 	    .linkInfo = linkInfo
 	  ,
 	    .packetSize = bytes,
-	    .reason = PktEvt::Reason::AppSend},
+	    .reason = Reason::AppSend},
 	  time);
       }));
       return true;
@@ -6838,7 +6838,7 @@ nextSpace:
       return sendPkt(ZuMv(buf), ZuMv(addr));
     ZquicLOG(app()->qlogTrace(), ([
       packetBytes = buf->length,
-      reason = PktEvt::Reason::Coalescing,
+      reason = Reason::Coalescing,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       PktEvt event{
@@ -7650,7 +7650,7 @@ nextSpace:
 	    event.packetType = PktType::N;
 	    event.packetSpace = level;
 	    event.ecn = EcnMark::N;
-	    event.reason = PktEvt::Reason::ParseLong;
+	    event.reason = Reason::ParseLong;
 	    event.linkInfo = linkInfo;
 	    o.logPktDrop(event, time);
 	  }));
@@ -7670,7 +7670,7 @@ nextSpace:
 	    event.packetType = packetType;
 	    event.packetSpace = level;
 	    event.ecn = EcnMark::N;
-	    event.reason = PktEvt::Reason::PacketLength;
+	    event.reason = Reason::PacketLength;
 	    event.linkInfo = linkInfo;
 	    o.logPktDrop(event, time);
 	  }));
@@ -7714,7 +7714,7 @@ nextSpace:
 		event.packetType = PktType::N;
 		event.packetSpace = level;
 		event.ecn = EcnMark::N;
-		event.reason = PktEvt::Reason::ParseLong;
+		event.reason = Reason::ParseLong;
 		event.linkInfo = linkInfo;
 		o.logPktDrop(event, time);
       }));
@@ -7731,7 +7731,7 @@ nextSpace:
 		event.packetType = packetType;
 		event.packetSpace = level;
 		event.ecn = EcnMark::N;
-		event.reason = PktEvt::Reason::PrepareLong;
+		event.reason = Reason::PrepareLong;
 		event.linkInfo = linkInfo;
 		o.logPktDrop(event, time);
       }));
@@ -7754,7 +7754,7 @@ nextSpace:
 	event.packetType = packetType;
 	event.packetSpace = PktNumSpace::N;
 	event.ecn = EcnMark::N;
-	event.reason = PktEvt::Reason::UnsupportedLongType;
+	event.reason = Reason::UnsupportedLongType;
 	event.linkInfo = linkInfo;
 	o.logPktDrop(event, time);
       }));
@@ -7767,8 +7767,8 @@ nextSpace:
       ZquicLOG(app()->qlogTrace(), ([
 	packetType = h.type, level, packetBytes = packetLen,
 	reason = m_rxEarlyData.oneRTTSeen ?
-	  PktEvt::Reason::AfterOneRTT :
-	  PktEvt::Reason::FramePolicy,
+	  Reason::AfterOneRTT :
+	  Reason::FramePolicy,
 	linkInfo = linkInfo_()
       ](auto &o, ZuTime time) {
 	PktEvt event{.packetSize = packetBytes};
@@ -7790,7 +7790,7 @@ nextSpace:
 	event.packetType = packetType;
 	event.packetSpace = level;
 	event.ecn = EcnMark::N;
-	event.reason = PktEvt::Reason::DiscardedSpace;
+	event.reason = Reason::DiscardedSpace;
 	event.linkInfo = linkInfo;
 	o.logPktDrop(event, time);
       }));
@@ -7813,7 +7813,7 @@ nextSpace:
 	  event.packetType = packetType;
 	  event.packetSpace = level;
 	  event.ecn = EcnMark::N;
-	  event.reason = PktEvt::Reason::MissingKeys;
+	  event.reason = Reason::MissingKeys;
 	  event.linkInfo = linkInfo;
 	  o.logPktDrop(event, time);
 	  SecEvt security{
@@ -7844,7 +7844,7 @@ nextSpace:
 	event.packetType = packetType;
 	event.packetSpace = level;
 	event.ecn = EcnMark::N;
-	event.reason = PktEvt::Reason::Protection;
+	event.reason = Reason::Protection;
 	event.linkInfo = linkInfo;
 	o.logPktDrop(event, time);
 	SecEvt security{
@@ -7870,7 +7870,7 @@ nextSpace:
 	event.packetType = packetType;
 	event.packetSpace = level;
 	event.ecn = EcnMark::N;
-	event.reason = PktEvt::Reason::Duplicate;
+	event.reason = Reason::Duplicate;
 	event.linkInfo = linkInfo;
 	o.logPktDrop(event, time);
       }));
@@ -7946,7 +7946,7 @@ nextSpace:
 		event.packetType = pktTypeFromSpace(level);
 		event.packetSpace = level;
 		event.ecn = EcnMark::N;
-		event.reason = PktEvt::Reason::MissingKeys;
+		event.reason = Reason::MissingKeys;
 		event.linkInfo = linkInfo;
 		o.logPktDrop(event, time);
 		SecEvt security{
@@ -7978,7 +7978,7 @@ nextSpace:
 		event.packetType = pktTypeFromSpace(level);
 		event.packetSpace = level;
 		event.ecn = EcnMark::N;
-		event.reason = PktEvt::Reason::ParseShort;
+		event.reason = Reason::ParseShort;
 		event.linkInfo = linkInfo;
 		o.logPktDrop(event, time);
       }));
@@ -8009,7 +8009,7 @@ nextSpace:
 	      event.packetType = pktTypeFromSpace(level);
 	      event.packetSpace = level;
 	      event.ecn = EcnMark::N;
-	      event.reason = PktEvt::Reason::BadKeyPhase;
+	      event.reason = Reason::BadKeyPhase;
 	      event.linkInfo = linkInfo;
 	      o.logPktDrop(event, time);
 	      SecEvt security{
@@ -8048,7 +8048,7 @@ nextSpace:
 	      event.packetType = pktTypeFromSpace(level);
 	      event.packetSpace = level;
 	      event.ecn = EcnMark::N;
-	      event.reason = PktEvt::Reason::BadKeyPhase;
+	      event.reason = Reason::BadKeyPhase;
 	      event.linkInfo = linkInfo;
 	      o.logPktDrop(event, time);
 	      SecEvt security{
@@ -8080,7 +8080,7 @@ nextSpace:
 	  event.packetType = pktTypeFromSpace(level);
 	  event.packetSpace = level;
 	  event.ecn = EcnMark::N;
-	  event.reason = PktEvt::Reason::Protection;
+	  event.reason = Reason::Protection;
 	  event.linkInfo = linkInfo;
 	  o.logPktDrop(event, time);
 	  SecEvt security{
@@ -8107,7 +8107,7 @@ nextSpace:
 		event.packetType = pktTypeFromSpace(level);
 		event.packetSpace = level;
 		event.ecn = EcnMark::N;
-		event.reason = PktEvt::Reason::BadKeyPhase;
+		event.reason = Reason::BadKeyPhase;
 		event.linkInfo = linkInfo;
 		o.logPktDrop(event, time);
 		SecEvt security{
@@ -8135,7 +8135,7 @@ nextSpace:
 		event.packetType = pktTypeFromSpace(level);
 		event.packetSpace = level;
 		event.ecn = EcnMark::N;
-		event.reason = PktEvt::Reason::Duplicate;
+		event.reason = Reason::Duplicate;
 		event.linkInfo = linkInfo;
 		o.logPktDrop(event, time);
       }));

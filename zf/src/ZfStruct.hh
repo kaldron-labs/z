@@ -155,7 +155,7 @@
 
 namespace ZfFieldTC {
 
-ZtEnum(ZfFieldTC, int8_t,
+ZtEnum(ZfAPI, ZfFieldTC, int8_t,
   CString,	// C UTF-8 string (raw pointer), heap-allocated
   String,	// C++ contiguous UTF-8 string
   Bytes,	// byte array
@@ -348,7 +348,7 @@ struct ZfFieldType_Props<ZuFieldProp::NDP<I>> : public ZuTrue { };
 
 // ZfVFieldProp bitfield encapsulates introspected ZfField properties
 namespace ZfVFieldProp {
-  ZtFlags(ZfVFieldProp, uint16_t,
+  ZtFlags(ZfAPI, ZfVFieldProp, uint16_t,
     Ctor,
     Synthetic,
     Mutable,

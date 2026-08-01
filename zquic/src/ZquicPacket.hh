@@ -97,8 +97,8 @@ inline constexpr unsigned CxnIDMax = 20;
 using CxnID = ZuBArray<CxnIDMax>;
 
 struct Vantage {
-  ZtEnum(Vantage, int8_t, Unknown, Client, Server);
-  ZtEnumMap(Vantage, JSON, "unknown", "client", "server");
+  ZtEnum(ZquicAPI, Vantage, int8_t, Unknown, Client, Server);
+  ZtEnumMap(ZquicAPI, Vantage, JSON, "unknown", "client", "server");
 };
 
 struct LinkInfo {

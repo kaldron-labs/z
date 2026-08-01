@@ -13,6 +13,9 @@
 
 namespace Zquic {
 
+ZtEnumImplStruct(TokenKind);
+ZtEnumImplStruct(TokenStatus);
+
 static uint64_t tokenNowSec_()
 {
   return uint64_t(Zm::now().sec());

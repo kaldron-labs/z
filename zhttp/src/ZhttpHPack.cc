@@ -4,11 +4,59 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZhttpHPack.hh>
+#include <zlib/ZuMatcher.hh>
+#include <zlib/ZuSwitch.hh>
 
 #include <zlib/ZmAssert.hh>
 
+#include <zlib/ZhttpHPack.hh>
+
 namespace Zhttp { namespace H2 {
+
+ZtEnumImplStruct(HPackFailure);
+ZtEnumImplStruct(HPackRep);
+
+using HPackStatic_ = StaticTable<HPackTbl>;
+
+static int hpackStaticName_(ZuCSpan value)
+{
+  static constexpr auto matcher = ZuMatcher<HPackStatic_::Names>();
+  return matcher.exact(value);
+}
+
+static int hpackStaticNameIndex_(ZuCSpan value)
+{
+  int i = hpackStaticName_(value);
+  if (i < 0) return -1;
+  int index = -1;
+  ZuSwitch::dispatch<HPackStatic_::Names::N>(
+    unsigned(i), [&index](auto i) {
+      using Key = ZuType<i, HPackStatic_::Names>;
+      index = ZuTypeIndex<Key, HPackStatic_::Keys>{};
+    });
+  return index;
+}
+
+static int hpackStaticIndex_(ZuCSpan name, ZuCSpan value)
+{
+  int i = hpackStaticName_(name);
+  if (i < 0) return -1;
+  int index = -1;
+  ZuSwitch::dispatch<HPackStatic_::Names::N>(
+    unsigned(i), [&index, &value](auto i) {
+      using Key = ZuType<i, HPackStatic_::Names>;
+      using KeyEntries = HPackStatic_::Entries<Key>;
+      using KeyValues = HPackStatic_::Values<Key>;
+      static constexpr auto matcher = ZuMatcher<KeyValues>();
+      int j = matcher.exact(value);
+      if (j < 0) return;
+      ZuSwitch::dispatch<KeyEntries::N>(unsigned(j), [&index](auto j) {
+	using KV = ZuType<j, KeyEntries>;
+	index = ZuTypeIndex<KV, HPackTbl>{};
+      });
+    });
+  return index;
+}
 
 static_assert(HPackTbl::N == 61);
 
@@ -260,13 +308,13 @@ bool HPack::staticField(uint64_t index, Field &field)
 
 int HPack::staticIndex(ZuCSpan name, ZuCSpan value)
 {
-  int index = HPackStatic::index(name, value);
+  int index = hpackStaticIndex_(name, value);
   return index < 0 ? -1 : index + 1;
 }
 
 int HPack::staticNameIndex(ZuCSpan name)
 {
-  int index = HPackStatic::nameIndex(name);
+  int index = hpackStaticNameIndex_(name);
   return index < 0 ? -1 : index + 1;
 }
 

@@ -31,7 +31,7 @@
 
 namespace Ztc {
 
-ZtEnumNS(DBHostState, int8_t,
+ZtEnumNS(ZvAPI, DBHostState, int8_t,
   Instantiated,
   Initialized,
   Electing,

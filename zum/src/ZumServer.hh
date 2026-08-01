@@ -60,7 +60,7 @@ using ResponseFn = ZmFn<void(ZmRef<ZiIOBuf>),
 
 // live session
 namespace SessionFlags {
-  ZtFlags(SessionFlags, uint8_t, Interactive);
+  ZtFlags(ZumAPI, SessionFlags, uint8_t, Interactive);
 }
 struct Session_ {
   UserDB		*userDB = nullptr;
@@ -94,7 +94,7 @@ using LoginFn = ZmFn<void(ZmRef<Session>, ZmRef<ZiIOBuf>),
   ZmFnHeapID<"Zum.Server.LoginFn">>;
 
 // user DB state
-ZtEnumNS(UserDBState, int8_t,
+ZtEnumNS(ZumAPI, UserDBState, int8_t,
   Uninitialized, Initialized, Opening, Opened, OpenFailed, Bootstrap);
 
 // main server-side user DB class

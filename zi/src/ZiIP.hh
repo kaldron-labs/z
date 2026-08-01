@@ -29,7 +29,7 @@
 
 class ZiIP;
 
-ZtEnumNS(ZiIPType, int8_t, Null, V4, V6);
+ZtEnumNS(ZiAPI, ZiIPType, int8_t, Null, V4, V6);
 
 class ZiAPI ZiIP {
 public:

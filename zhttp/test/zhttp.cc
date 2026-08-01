@@ -27,8 +27,11 @@
 
 #include "ZhttpPut.hh"
 
-ZtEnumNS(Http3Mode, int8_t, force, prefer, disable);
-ZtEnumNS(Http2Mode, int8_t, force, prefer, disable);
+ZtEnumNS(, Http3Mode, int8_t, force, prefer, disable);
+ZtEnumNS(, Http2Mode, int8_t, force, prefer, disable);
+
+ZtEnumImplNS(Http3Mode);
+ZtEnumImplNS(Http2Mode);
 
 constexpr unsigned ClientTimeout = 15;
 constexpr unsigned H3StallTimeout = 15;

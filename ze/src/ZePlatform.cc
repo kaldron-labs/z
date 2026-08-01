@@ -19,6 +19,8 @@
 
 #include <zlib/ZePlatform.hh>
 
+ZtEnumImplNS(Ze);
+
 ZuCSpan Ze::severity(unsigned i)
 {
   using TL = ZuStringTL<"DEBUG", "INFO", "WARNING", "ERROR", "FATAL">;

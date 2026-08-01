@@ -24,7 +24,9 @@
 
 namespace zfbtest3 {
 
-ZfbEnumNS(Side, Buy, Sell)
+ZfbEnumNS(, Side, Buy, Sell)
+
+ZtEnumImplNS(Side);
 
 struct Order {
   ZuCArray<32>		symbol;

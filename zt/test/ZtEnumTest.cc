@@ -11,11 +11,21 @@
 
 using namespace ZuTestUtil;
 
-ZtEnumNS(Color, int8_t, Red, Green, Blue);
+ZtEnumNS(, Color, int8_t, Red, Green, Blue);
 
 namespace Perm {
-  ZtFlags(Perm, uint8_t, Read, Write, Exec);
+  ZtFlags(, Perm, uint8_t, Read, Write, Exec);
 }
+
+struct Shape {
+  ZtEnum(, Shape, int8_t, Circle, Square);
+  ZtEnumMap(, Shape, JSON, "circle", "square");
+};
+
+ZtEnumImplNS(Color);
+ZtEnumImplNS(Perm);
+ZtEnumImplStruct(Shape);
+ZtEnumImplStruct(Shape, JSON);
 
 void testEnumLookupAndName()
 {
@@ -28,6 +38,10 @@ void testEnumLookupAndName()
   ZuCheck(Color::Map::match("GreenJunk") == Color::Green);
   ZuCheck(Color::lookup("missing") < 0);
   ZuCheck(Color::name(99) == "Unknown");
+
+  ZuCheck(Shape::Map::s2v("Square") == Shape::Square);
+  ZuCheck(Shape::JSON::s2v("circle") == Shape::Circle);
+  ZuCheck(Shape::JSON::match("square brackets") == Shape::Square);
 
   unsigned count = 0;
   Color::Map::all([&count](ZuCSpan, unsigned) { ++count; });

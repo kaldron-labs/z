@@ -22,7 +22,7 @@
 
 namespace Ztc {
 
-ZtEnumNS(PoolState, int8_t,
+ZtEnumNS(ZiAPI, PoolState, int8_t,
   Down,
   Up,
   Failed);

@@ -108,9 +108,9 @@ inline constexpr uint64_t DefaultTokenLifetime = 600;
 inline constexpr unsigned LocalCIDLimit = 8;
 inline constexpr unsigned DefaultMigCIDRes = 1;
 
-ZtEnumStruct(TokenKind, int8_t, Retry = 1, NewToken = 2);
+ZtEnumStruct(ZquicAPI, TokenKind, int8_t, Retry = 1, NewToken = 2);
 
-ZtEnumStruct(TokenStatus, int8_t,
+ZtEnumStruct(ZquicAPI, TokenStatus, int8_t,
   OK, Malformed, Expired, Kind, Address, ODCID, Auth);
 
 struct TokenInfo {

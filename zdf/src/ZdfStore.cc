@@ -8,6 +8,10 @@
 
 #include <zlib/ZdfStore.hh>
 
+namespace Zdf {
+ZtEnumImplNS(StoreState);
+}
+
 using namespace Zdf;
 
 struct StoreCf {

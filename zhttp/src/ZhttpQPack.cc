@@ -4,9 +4,65 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuMatcher.hh>
+#include <zlib/ZuSwitch.hh>
+
 #include <zlib/ZhttpQPack.hh>
 
 namespace Zhttp { namespace H3 {
+
+ZtEnumImplStruct(QPackInsn);
+ZtEnumImplStruct(QPackBuildFailure);
+
+using QPackStatic_ = StaticTable<QPackTbl>;
+
+static int qpackStaticName_(ZuCSpan value)
+{
+  static constexpr auto matcher = ZuMatcher<QPackStatic_::Names>();
+  return matcher.exact(value);
+}
+
+static int qpackStaticNameIndex_(ZuCSpan value)
+{
+  int i = qpackStaticName_(value);
+  if (i < 0) return -1;
+  int index = -1;
+  ZuSwitch::dispatch<QPackStatic_::Names::N>(
+    unsigned(i), [&index](auto i) {
+      using Key = ZuType<i, QPackStatic_::Names>;
+      index = ZuTypeIndex<Key, QPackStatic_::Keys>{};
+    });
+  return index;
+}
+
+static int qpackStaticIndex_(ZuCSpan name, ZuCSpan value)
+{
+  int i = qpackStaticName_(name);
+  if (i < 0) return -1;
+  int index = -1;
+  ZuSwitch::dispatch<QPackStatic_::Names::N>(
+    unsigned(i), [&index, &value](auto i) {
+      using Key = ZuType<i, QPackStatic_::Names>;
+      using KeyEntries = QPackStatic_::Entries<Key>;
+      using KeyValues = QPackStatic_::Values<Key>;
+      static constexpr auto matcher = ZuMatcher<KeyValues>();
+      int j = matcher.exact(value);
+      if (j < 0) return;
+      ZuSwitch::dispatch<KeyEntries::N>(unsigned(j), [&index](auto j) {
+	using KV = ZuType<j, KeyEntries>;
+	index = ZuTypeIndex<KV, QPackTbl>{};
+      });
+    });
+  return index;
+}
+
+bool Params::neverIndex(ZuCSpan name) const
+{
+  if (neverIndex_->find(name)) return true;
+  static constexpr auto matcher =
+    ZuMatcher<"authorization", "cookie", "set-cookie">();
+  return matcher.exact(name) >= 0;
+}
 
 static uint32_t qpackEntrySize_(ZuCSpan name, ZuCSpan value)
 {
@@ -494,7 +550,7 @@ int QPack::decodeString(
 
 bool QPack::staticNameIndex(ZuCSpan name, uint64_t &index)
 {
-  int i = QPackStatic::nameIndex(name);
+  int i = qpackStaticNameIndex_(name);
   if (i < 0) return false;
   index = unsigned(i);
   return true;
@@ -502,7 +558,7 @@ bool QPack::staticNameIndex(ZuCSpan name, uint64_t &index)
 
 int QPack::staticIndex(ZuCSpan name, ZuCSpan value)
 {
-  return QPackStatic::index(name, value);
+  return qpackStaticIndex_(name, value);
 }
 
 bool QPack::staticField(uint64_t index, Header &field)

@@ -34,11 +34,11 @@ class ZvEngine;
 namespace ZvEngineState {
   using namespace ZmEngineState;
   using T = int8_t;
-  ZtEnumNames(ZvEngineState,
+  ZtEnumNames(ZvAPI, ZvEngineState,
     Stopped, Starting, Running, Stopping, StartPending, StopPending);
 }
 
-ZtEnumNS(ZvLinkState, int8_t,
+ZtEnumNS(ZvAPI, ZvLinkState, int8_t,
   Down,
   Disabled,
   Deleted,

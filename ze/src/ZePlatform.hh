@@ -58,7 +58,7 @@
 #define ZeLog_BUFSIZ (8<<10)	// 8k built-in size
 
 // normalized severity levels
-ZtEnumNS(Ze, int8_t, Debug, Info, Warning, Error, Fatal);
+ZtEnumNS(ZeAPI, Ze, int8_t, Debug, Info, Warning, Error, Fatal);
 
 // normalized OS error number
 namespace Ze {

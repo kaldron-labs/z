@@ -21,7 +21,7 @@ namespace Ztc {
 namespace RAG {
 
 enum { N = Green + 1 };
-ZtEnumNames(RAG, Off, Red, Amber, Green);
+ZtEnumNames(ZvAPI, RAG, Off, Red, Amber, Green);
 struct Map : public Map_ { };
 
 } // RAG

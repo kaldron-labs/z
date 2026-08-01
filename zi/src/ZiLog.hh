@@ -51,7 +51,7 @@
 
 class ZiLog;
 
-ZtEnumNS(ZiSinkType, int8_t, File, Debug, CSV, System, Lambda);
+ZtEnumNS(ZiAPI, ZiSinkType, int8_t, File, Debug, CSV, System, Lambda);
 struct ZiSink : public ZmPolymorph {
   int	type;	// ZiSinkType
 
