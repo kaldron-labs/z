@@ -1,8 +1,5 @@
 # TODO
 
-why is `zhttp` consuming so much memory in the build?
-- investigate which specific Z framework templates are driving compiler memory usage
-
 ## zrest
 
 ## ZvEngine value
