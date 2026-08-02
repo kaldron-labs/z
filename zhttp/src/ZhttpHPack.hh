@@ -33,6 +33,21 @@ namespace H2 {
 struct Field {
   ZuCSpan	name;
   ZuCSpan	value;
+
+  bool equals(const Field &field) const {
+    return name == field.name && value == field.value;
+  }
+  int cmp(const Field &field) const {
+    if (int i = name.cmp(field.name)) return i;
+    return value.cmp(field.value);
+  }
+  friend bool operator ==(const Field &l, const Field &r) {
+    return l.equals(r);
+  }
+  friend int operator <=>(const Field &l, const Field &r) {
+    return l.cmp(r);
+  }
+  uint32_t hash() const { return name.hash() ^ value.hash(); }
 };
 
 #define Zhttp_HPack_(Key, Value) \
@@ -116,11 +131,10 @@ struct HPackTxEntry {
 };
 
 struct HPackTxExactEntry {
-  uint64_t		abs = 0;
-  Compression::FieldView key;
+  uint64_t	abs = 0;
+  Field		key;
 
-  static Compression::FieldView KeyAxor(
-      const HPackTxExactEntry &entry) {
+  static Field KeyAxor(const HPackTxExactEntry &entry) {
     return entry.key;
   }
 };
@@ -147,9 +161,9 @@ public:
   bool init(uint32_t);
   void final();
   bool capacity(uint32_t);
-  const HPackTxEntry *find(Compression::FieldView) const;
+  const HPackTxEntry *find(Field) const;
   const HPackTxEntry *findName(ZuCSpan) const;
-  bool insert(Compression::FieldView);
+  bool insert(Field);
 
   uint32_t capacity() const { return m_capacity; }
   uint32_t localCapacity() const { return m_localCapacity; }
@@ -193,9 +207,9 @@ ZtEnumStruct(ZhttpAPI, HPackRep, uint8_t,
   Indexed, Incremental, NonIndexed, NeverIndexed);
 
 struct HPackPlan {
-  Compression::FieldView	field;
-  uint64_t			index = 0;
-  HPackRep::T			rep = HPackRep::NonIndexed;
+  Field		field;
+  uint64_t	index = 0;
+  HPackRep::T	rep = HPackRep::NonIndexed;
 };
 
 struct HPackUpdates {
@@ -286,7 +300,7 @@ public:
   bool peerCapacity(uint32_t);
   void neverIndex(ZuCSpan);
   bool neverIndexed(ZuCSpan) const;
-  HPackPlan plan(Compression::FieldView) const;
+  HPackPlan plan(Field) const;
   HPackUpdates updates() const;
   void commit(const HPackPlan &);
   void commit(const HPackUpdates &);
@@ -311,11 +325,7 @@ public:
     if (!plan.index &&
 	Compression::putString(out, 0, 7, plan.field.name) < 0)
       return -1;
-    int n = plan.field.split ?
-      Compression::putString(
-	out, 0, 7, plan.field.value1, plan.field.separator,
-	plan.field.value2) :
-      Compression::putString(out, 0, 7, plan.field.value1);
+    int n = Compression::putString(out, 0, 7, plan.field.value);
     return n < 0 ? -1 : int(out.length());
   }
 
@@ -331,16 +341,6 @@ public:
   template <typename Bytes>
   int field(Bytes &out, Field field) {
     auto plan_ = plan({field.name, field.value});
-    if (emit(out, plan_) < 0) return -1;
-    commit(plan_);
-    return int(out.length());
-  }
-  template <typename Bytes>
-  int field(
-    Bytes &out, ZuCSpan name,
-    ZuCSpan value1, char separator, ZuCSpan value2) {
-    auto plan_ =
-      plan({name, value1, separator, value2});
     if (emit(out, plan_) < 0) return -1;
     commit(plan_);
     return int(out.length());

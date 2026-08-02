@@ -310,7 +310,7 @@ void testDynamicEncoder()
   encoder.commit(initial);
 
   auto emit = [&encoder, &decoder, &fields, &encoded](
-      Zhttp::Compression::FieldView field_) {
+      Zhttp::H2::Field field_) {
     encoded.length(0);
     auto plan = encoder.plan(field_);
     unsigned before = encoder.table().count();
@@ -344,9 +344,9 @@ void testDynamicEncoder()
       staticName.index == 24,
     "HPACK dynamic lookup displaced static exact/name precedence");
   ZuCHECK(emit({"x-split", "a?b"}) &&
-      emit({"x-split", "a", '?', "b"}) &&
+      emit({"x-split", "a?b"}) &&
       (encoded[0] & 0x80) && field(fields, 0, "x-split", "a?b"),
-    "segmented HPACK value matched a contiguous dynamic entry");
+    "contiguous HPACK value matched a dynamic entry");
 
   unsigned before = encoder.table().count();
   ZuCHECK(emit({"authorization", "secret"}) &&
@@ -418,22 +418,6 @@ void testTxStorageAndUpdates()
     "HPACK capacity update remained pending after commit");
 }
 
-void testFieldView()
-{
-  ZuTestScope(testFieldView);
-
-  Zhttp::Compression::FieldView contiguous{"x", "a?b"};
-  Zhttp::Compression::FieldView segmented{"x", "a", '?', "b"};
-  Zhttp::Compression::FieldView empty1{"x", ""};
-  Zhttp::Compression::FieldView empty2{"x", "", '\0', ""};
-  ZuCHECK(contiguous == segmented &&
-      contiguous.valueLength() == 3,
-    "contiguous and segmented fields diverged");
-  ZuCHECK(!(empty1 == empty2) && empty1.valueLength() == 0 &&
-      empty2.valueLength() == 1,
-    "empty segmented field boundaries were conflated");
-}
-
 } // namespace
 
 int main(int argc, char **argv)
@@ -449,5 +433,4 @@ int main(int argc, char **argv)
   ZuTestCall(testEncoder);
   ZuTestCall(testDynamicEncoder);
   ZuTestCall(testTxStorageAndUpdates);
-  ZuTestCall(testFieldView);
 }

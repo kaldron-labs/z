@@ -299,11 +299,8 @@ bool OriginView::equals(const OriginView &o) const
 
 uint32_t OriginView::hash() const
 {
-  uint32_t h = ZuHash<Scheme::T>::hash(scheme);
-  h ^= ZuHash<ZuCSpan>::hash(ZuCSpan{host}) +
-    0x9e3779b9U + (h<<6) + (h>>2);
-  h ^= ZuHash<uint16_t>::hash(port) + 0x9e3779b9U + (h<<6) + (h>>2);
-  return h;
+  return ZuHash<Scheme::T>::hash(scheme) ^ host.hash() ^
+    ZuHash<uint16_t>::hash(port);
 }
 
 Origin::Origin(const OriginView &v) :
@@ -313,10 +310,8 @@ Origin::Origin(const OriginView &v) :
 
 uint32_t Origin::hash() const
 {
-  uint32_t h = ZuHash<Scheme::T>::hash(scheme);
-  h ^= ZuHash<URLString>::hash(host) + 0x9e3779b9U + (h<<6) + (h>>2);
-  h ^= ZuHash<uint16_t>::hash(port) + 0x9e3779b9U + (h<<6) + (h>>2);
-  return h;
+  return ZuHash<Scheme::T>::hash(scheme) ^ host.cspan().hash() ^
+    ZuHash<uint16_t>::hash(port);
 }
 
 URL::URL(ZuSpan<uint8_t> input) : raw{input}

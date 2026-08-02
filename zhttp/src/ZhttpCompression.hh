@@ -107,67 +107,6 @@ uint64_t printLength(const P &v) {
   return count.length();
 }
 
-struct FieldView {
-  FieldView() = default;
-  FieldView(ZuCSpan name_, ZuCSpan value_) :
-    name{name_}, value1{value_} { }
-  FieldView(
-    ZuCSpan name_, ZuCSpan value1_, char separator_, ZuCSpan value2_) :
-    name{name_}, value1{value1_}, value2{value2_},
-    separator{separator_}, split{true} { }
-
-  unsigned valueLength() const {
-    return value1.length() + unsigned(split) + value2.length();
-  }
-  char value(unsigned i) const {
-    if (!split || i < value1.length()) return value1[i];
-    i -= value1.length();
-    if (!i) return separator;
-    return value2[i - 1];
-  }
-  bool valueEquals(const FieldView &v) const {
-    unsigned n = valueLength();
-    if (n != v.valueLength()) return false;
-    for (unsigned i = 0; i < n; ++i)
-      if (value(i) != v.value(i)) return false;
-    return true;
-  }
-  int valueCmp(const FieldView &v) const {
-    unsigned ln = valueLength(), rn = v.valueLength();
-    unsigned n = ln < rn ? ln : rn;
-    for (unsigned i = 0; i < n; ++i)
-      if (int j = int(uint8_t(value(i))) - int(uint8_t(v.value(i)))) return j;
-    return ln < rn ? -1 : ln > rn;
-  }
-  uint32_t valueHash() const {
-    return value1.hash() ^ value2.hash() ^
-      (split ? uint32_t(uint8_t(separator)) : 0);
-  }
-  bool equals(const FieldView &v) const {
-    return name == v.name && valueEquals(v);
-  }
-  int cmp(const FieldView &v) const {
-    if (int i = name.cmp(v.name)) return i;
-    return valueCmp(v);
-  }
-  uint32_t hash() const {
-    return name.hash() ^ valueHash();
-  }
-
-  ZuCSpan	name;
-  ZuCSpan	value1;
-  ZuCSpan	value2;
-  char		separator = 0;
-  bool		split = false;
-};
-
-inline bool operator ==(const FieldView &l, const FieldView &r) {
-  return l.equals(r);
-}
-inline int operator <=>(const FieldView &l, const FieldView &r) {
-  return l.cmp(r);
-}
-
 struct NameView {
   NameView() = default;
   NameView(ZuCSpan name_) : name{name_} { }
@@ -299,21 +238,6 @@ int putPrint(
     bytes << value;
     return bytes.ok() ? 0 : -1;
   }
-}
-
-template <typename Bytes>
-int putString(
-  Bytes &out, uint8_t prefix, unsigned bits,
-  ZuCSpan value1, char separator, ZuCSpan value2) {
-  if (putPref(
-      out, prefix, bits, value1.length() + 1 + value2.length()) < 0)
-    return -1;
-  for (unsigned i = 0; i < value1.length(); ++i)
-    out.push(uint8_t(value1[i]));
-  out.push(uint8_t(separator));
-  for (unsigned i = 0; i < value2.length(); ++i)
-    out.push(uint8_t(value2[i]));
-  return 0;
 }
 
 template <unsigned PrefixBits, uint8_t HuffmanMask>

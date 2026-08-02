@@ -13,7 +13,6 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
-#include <zlib/ZuHash.hh>
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuString.hh>
 
@@ -254,9 +253,7 @@ struct QPackFieldKey {
     return l.cmp(r);
   }
   uint32_t hash() const {
-    uint32_t h = ZuHash<ZuCSpan>::hash(name);
-    return h ^ (ZuHash<ZuCSpan>::hash(value) + 0x9e3779b9U +
-      (h<<6) + (h>>2));
+    return name.hash() ^ value.hash();
   }
 };
 
