@@ -198,6 +198,40 @@ void testParseResolveAndPrint()
   ZiResolver::final();
 }
 
+void testSpanParse()
+{
+  ZuTestScope(testSpanParse);
+
+  static const ZuCSpan valid[] = {
+    "127.0.0.1", "::", "::1", "1::", "2001:db8::1",
+    "1:2:3:4:5:6:7:8", "::ffff:192.0.2.1",
+    "1:2:3:4:5:6:192.0.2.1"
+  };
+  for (auto value : valid) {
+    ZiIP ip;
+    ZuCHECK(ZiIP::parse(ip, value), value);
+  }
+
+  static const ZuCSpan invalid[] = {
+    "", "127.0.0", "01.2.3.4", "256.0.0.1", ":", "1:", ":::1",
+    "1::2::3", "1:2:3:4:5:6:7", "1:2:3:4:5:6:7:8:9",
+    "0x1::", "0X1::", "12345::",
+    "1:2:3:4:5:6:7:192.0.2.1", "::ffff:999.0.0.1",
+    "::ffff:01.2.3.4", "::ffff:1a.2.3.4", "::ffff:1234.2.3.4",
+    "fe80::1%1"
+  };
+  for (auto value : invalid) {
+    ZiIP ip;
+    ZuCHECK(!ZiIP::parse(ip, value), value);
+  }
+
+  const char framed[] = "x2001:db8::1y";
+  ZiIP ip;
+  ZuCHECK(ZiIP::parse(ip, ZuCSpan{framed + 1, sizeof(framed) - 3}),
+    "non-NUL-terminated subspan");
+  ZuCHECK(ip.v6(), "subspan is IPv6");
+}
+
 void testMulticastBoundaries()
 {
   ZuTestScope(testMulticastBoundaries);
@@ -273,6 +307,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testParseResolveAndPrint);
+  ZuTestCall(testSpanParse);
   ZuTestCall(testMulticastBoundaries);
   ZuTestCall(testSockAddrHelpers);
   ZuTestCall(testNullWildcardCompareHash);

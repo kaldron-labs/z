@@ -258,6 +258,9 @@ public:
   friend ZuPrintFn ZuPrintType(ZiIP *);
 
 public:
+  // non-blocking numeric parse over a non-NUL-terminated span
+  static bool parse(ZiIP &, ZuCSpan);
+
   template <typename S>
   ZuMatchString<S &&, int> resolve(S &&s, ZeError *e = 0) {
     // blocks after numeric parsing; do not call from ZiResolver callbacks

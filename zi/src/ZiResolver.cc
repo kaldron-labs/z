@@ -48,44 +48,6 @@ static Zi::Name hostName(const Host &host)
 #endif
 }
 
-static bool pton4(const Host &host, in_addr &addr)
-{
-#ifndef _WIN32
-  return ::inet_pton(AF_INET, host.data(), &addr) == 1;
-#else
-  if (::InetPtonW(AF_INET, host.data(), &addr) == 1) return true;
-  sockaddr_in sa;
-  int len = sizeof(sa);
-  memset(&sa, 0, sizeof(sa));
-  sa.sin_family = AF_INET;
-  if (::WSAStringToAddressW(
-	const_cast<wchar_t *>(host.data()), AF_INET, 0,
-	reinterpret_cast<sockaddr *>(&sa), &len))
-    return false;
-  addr = sa.sin_addr;
-  return true;
-#endif
-}
-
-static bool pton6(const Host &host, in6_addr &addr)
-{
-#ifndef _WIN32
-  return ::inet_pton(AF_INET6, host.data(), &addr) == 1;
-#else
-  if (::InetPtonW(AF_INET6, host.data(), &addr) == 1) return true;
-  sockaddr_in6 sa;
-  int len = sizeof(sa);
-  memset(&sa, 0, sizeof(sa));
-  sa.sin6_family = AF_INET6;
-  if (::WSAStringToAddressW(
-	const_cast<wchar_t *>(host.data()), AF_INET6, 0,
-	reinterpret_cast<sockaddr *>(&sa), &len))
-    return false;
-  addr = sa.sin6_addr;
-  return true;
-#endif
-}
-
 static void setHost(Host &host, ZuCSpan s)
 {
 #ifndef _WIN32
@@ -612,18 +574,24 @@ void Main::final__()
 ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
 {
   start({});
-  in_addr v4;
-  if (m_params.ipv4() && pton4(host, v4)) {
-    if (fn(ResolveResult{ZiIP{v4}})) fn(ResolveResult{});
-    return {};
-  }
-  in6_addr v6;
-  if (m_params.ipv6() && pton6(host, v6)) {
-    if (fn(ResolveResult{ZiIP{v6}})) fn(ResolveResult{});
+#ifndef _WIN32
+  ZuCSpan text{host};
+#else
+  Zi::Name name = hostName(host);
+  ZuCSpan text{name};
+#endif
+  ZiIP ip;
+  if (ZiIP::parse(ip, text) &&
+      ((m_params.ipv4() && ip.v4()) || (m_params.ipv6() && ip.v6()))) {
+    if (fn(ResolveResult{ip})) fn(ResolveResult{});
     return {};
   }
   ZmRef<Query> query = new Query;
+#ifndef _WIN32
   query->name = hostName(host);
+#else
+  query->name = ZuMv(name);
+#endif
   query->resolveFn = ZuMv(fn);
   m_loop.invoke([this, query]() mutable {
     if (query->cancelled()) return;
