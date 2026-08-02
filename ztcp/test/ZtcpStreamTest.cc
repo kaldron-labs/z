@@ -50,10 +50,15 @@ void pushPayload(Ztcp::RxStream &rx, const ZtArray<uint8_t> &p)
 
 bool consumeExact(Ztcp::RxStream &rx, ZuBSpan expected)
 {
+  unsigned remaining = expected.length();
   bool ok = false;
   rx.consume(
-    [expected](ZuBSpan span) -> int64_t {
-      return span.length() >= expected.length() ? expected.length() : 0;
+    [&remaining](ZuBSpan span) -> int64_t {
+      if (remaining > span.length()) {
+	remaining -= span.length();
+	return 0;
+      }
+      return remaining;
     },
     [&ok, expected](ZuBSpan span) {
       ok = span.length() == expected.length() &&
@@ -91,8 +96,8 @@ void testPartial()
   ZuTestScopeRT(testPartial);
 
   Ztcp::RxStream rx;
-  rx.push(buf("hello"));
-  rx.push(buf("world"));
+  rx.push(buf("he"));
+  rx.push(buf("lloworld"));
 
   ZTCP_CHECK_RT(consumeExact(rx, "hello"), "partial first consume failed");
   ZTCP_CHECK_RT(!!rx, "partial consume should leave unread data");
