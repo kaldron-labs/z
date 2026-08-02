@@ -1049,6 +1049,14 @@ struct CountBytes {
   uint64_t length() const { return n; }
 };
 
+struct SpanBytes {
+  ZuSpan<uint8_t>	data;
+  unsigned		offset = 0;
+
+  void push(uint8_t c) { data[offset++] = c; }
+  unsigned length() const { return offset; }
+};
+
 template <typename Stream>
 struct TxBytes {
   Stream	&stream;
@@ -1093,26 +1101,6 @@ inline int qpackEncodeFieldLine(Bytes &out, Header h, const Params &params) {
 }
 
 template <typename Bytes>
-inline int qpackEncodeFieldLine(
-  Bytes &out, ZuCSpan name, ZuCSpan value1, char sep, ZuCSpan value2,
-  const Params &params) {
-  uint64_t nameIndex = 0;
-  if (QPack::staticNameIndex(name, nameIndex)) {
-    uint8_t prefix = uint8_t(
-	0x50 | (params.neverIndex(name) ? 0x20 : 0));
-    return putPref(out, prefix, 4, nameIndex) < 0 ||
-	putString(out, 0x00, 7, value1, sep, value2) < 0 ?
-	-1 : int(out.length());
-  }
-
-  return putString(
-    out, uint8_t(0x20 | (params.neverIndex(name) ? 0x10 : 0)),
-    3, name) < 0 ||
-    putString(out, 0x00, 7, value1, sep, value2) < 0 ?
-    -1 : int(out.length());
-}
-
-template <typename Bytes>
 inline int qpackEncodeDynamicIndexed(Bytes &out, uint64_t relativeIndex) {
   return putPref(out, 0x80, 6, relativeIndex) < 0 ?
     -1 : int(out.length());
@@ -1124,16 +1112,6 @@ inline int qpackEncodeDynamicName(
   return putPref(out, uint8_t(0x40 | (never ? 0x20 : 0)), 4,
       relativeIndex) < 0 ||
     putString(out, 0, 7, value) < 0 ? -1 : int(out.length());
-}
-
-template <typename Bytes>
-inline int qpackEncodeDynamicName(
-  Bytes &out, uint64_t relativeIndex,
-  ZuCSpan value1, char sep, ZuCSpan value2, bool never) {
-  return putPref(out, uint8_t(0x40 | (never ? 0x20 : 0)), 4,
-      relativeIndex) < 0 ||
-    putString(out, 0, 7, value1, sep, value2) < 0 ?
-    -1 : int(out.length());
 }
 
 namespace DataStream_ {
@@ -1171,17 +1149,18 @@ struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
       m_remaining -= buf->length;
     }
     m_produced += buf->length;
-    enum { FramePrefixSize = 16 }; // two maximum-width QUIC varints
-    using FrameHdr = ZtArray<uint8_t,
-	ZtArrayHeapID<"Zhttp.H3.FrameHdr">>;
-    auto frameHdr = ZmScratch(
-      uint8_t, FramePrefixSize, FrameHdr::VHeap);
-    putVar(frameHdr, 0);
-    putVar(frameHdr, buf->length);
-    ZiAssert(buf->skip >= frameHdr.length(),
+
+    uint32_t length = buf->length;
+    CountBytes count;
+    putVar(count, 0);
+    putVar(count, length);
+    unsigned frameHdrLength = unsigned(count.length());
+    ZiAssert(buf->skip >= frameHdrLength,
 	"Zhttp", (), "H3 DataStream headroom error", return);
-    buf->rewind(frameHdr.length());
-    memcpy(buf->data(), frameHdr.data(), frameHdr.length());
+    buf->rewind(frameHdrLength);
+    SpanBytes frameHdr{{buf->data(), frameHdrLength}};
+    putVar(frameHdr, 0);
+    putVar(frameHdr, length);
   }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return m_valid; }
@@ -1396,17 +1375,10 @@ private:
     }
     void field(ZuCSpan name, ZuCSpan value1, char sep, ZuCSpan value2) {
 	if (!ok) return;
-	uint64_t staticName = 0;
-	if (tx && dynamic && !QPack::staticNameIndex(name, staticName))
-	  if (auto e = tx->findName(name, base)) {
-	    ok = qpackEncodeDynamicName(
-	      out, base - e->abs - 1, value1, sep, value2,
-	      params.neverIndex(name)) >= 0;
-	    if (required < e->abs + 1) required = e->abs + 1;
-	    if constexpr (Plan) refs.push(e->abs);
-	    return;
-	  }
-	ok = qpackEncodeFieldLine(out, name, value1, sep, value2, params) >= 0;
+	uint64_t length = uint64_t(value1.length()) + 1 + value2.length();
+	QPackTxString value{0, length + 1};
+	value << value1 << sep << value2;
+	field(name, value);
     }
   };
 

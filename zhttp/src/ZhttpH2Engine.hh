@@ -15,6 +15,8 @@
 #undef Zhttp_CORE_ONLY
 #endif
 
+#include <string.h>
+
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmContext.hh>
 #include <zlib/ZmHash.hh>
@@ -199,24 +201,17 @@ private:
 struct HPackStagedPlan {
   HPackStagedPlan() = default;
   HPackStagedPlan(const HPackPlan &plan) :
-    name{plan.field.name}, value1{plan.field.value1},
-    value2{plan.field.value2}, index{plan.index}, rep{plan.rep},
-    separator{plan.field.separator}, split{plan.field.split} { }
+    name{plan.field.name}, value{plan.field.value},
+    index{plan.index}, rep{plan.rep} { }
 
   HPackPlan plan() const {
-    Compression::FieldView field = split ?
-      Compression::FieldView{name, value1, separator, value2} :
-      Compression::FieldView{name, value1};
-    return {.field = field, .index = index, .rep = rep};
+    return {.field = {name, value}, .index = index, .rep = rep};
   }
 
   HPackString	name;
-  HPackString	value1;
-  HPackString	value2;
+  HPackString	value;
   uint64_t	index = 0;
   HPackRep::T	rep = HPackRep::NonIndexed;
-  char		separator = 0;
-  bool		split = false;
 };
 
 using HPackStagedPlans =
@@ -308,7 +303,7 @@ public:
     m_endStream = endStream;
   }
   void field(ZuCSpan name, ZuCSpan value) {
-    field_(Compression::FieldView{name, value});
+    field_({name, value});
   }
   template <typename P>
   ZuIfT<!Compression::IsPrintString<P>{}>
@@ -317,7 +312,14 @@ public:
   }
   void field(
     ZuCSpan name, ZuCSpan value1, char separator, ZuCSpan value2) {
-    field_(Compression::FieldView{name, value1, separator, value2});
+    HPackString value;
+    unsigned n1 = value1.length(), n2 = value2.length();
+    value.length(uint64_t(n1) + 1 + n2);
+    auto data = value.data();
+    if (n1) memcpy(data, value1.data(), n1);
+    data[n1] = separator;
+    if (n2) memcpy(data + n1 + 1, value2.data(), n2);
+    field_({name, value});
   }
   void endHeaders(bool) {
     if (!m_open) return;
@@ -475,7 +477,7 @@ private:
     m_first = false;
   }
 
-  void field_(Compression::FieldView field) {
+  void field_(Field field) {
     auto plan = m_encoder.plan(field);
     CountBytes count;
     if ((m_first && m_encoder.emit(count, m_updates) < 0) ||

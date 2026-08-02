@@ -175,16 +175,14 @@ const HPackTxEntry *HPackTxTable::findAbs_(uint64_t abs) const
   return entry.abs == abs ? &entry : nullptr;
 }
 
-const HPackTxEntry *HPackTxTable::find(
-  Compression::FieldView field) const
+const HPackTxEntry *HPackTxTable::find(Field field) const
 {
   if (!m_exact) return nullptr;
   auto indexed = m_exact->find(field);
   if (!indexed) return nullptr;
   auto entry = findAbs_(indexed->abs);
   if (!entry) return nullptr;
-  return Compression::FieldView{entry->name, entry->value} == field ?
-    entry : nullptr;
+  return Field{entry->name, entry->value} == field ? entry : nullptr;
 }
 
 const HPackTxEntry *HPackTxTable::findName(ZuCSpan name) const
@@ -196,10 +194,10 @@ const HPackTxEntry *HPackTxTable::findName(ZuCSpan name) const
   return entry && entry->name == name ? entry : nullptr;
 }
 
-bool HPackTxTable::insert(Compression::FieldView field)
+bool HPackTxTable::insert(Field field)
 {
   uint64_t n_ =
-    uint64_t(field.name.length()) + field.valueLength() + 32;
+    uint64_t(field.name.length()) + field.value.length() + 32;
   if (n_ > m_capacity) return false;
   uint32_t n = uint32_t(n_);
   while (m_head < m_entries.length() && m_used + n > m_capacity)
@@ -213,11 +211,9 @@ bool HPackTxTable::insert(Compression::FieldView field)
   entry->abs = abs;
   entry->size = n;
   entry->name = field.name;
-  entry->value.length(field.valueLength());
-  for (unsigned i = 0; i < entry->value.length(); ++i)
-    entry->value[i] = field.value(i);
+  entry->value = field.value;
 
-  Compression::FieldView key{entry->name, entry->value};
+  Field key{entry->name, entry->value};
   if (!m_exact->add(HPackTxExactEntry{abs, key})) {
     m_entries.length(m_entries.length() - 1);
     return false;
@@ -246,7 +242,7 @@ bool HPackTxTable::dropOldest_()
   if (m_head >= m_entries.length()) return false;
   const auto &entry = m_entries[m_head];
   m_used -= entry.size;
-  m_exact->del(Compression::FieldView{entry.name, entry.value});
+  m_exact->del(Field{entry.name, entry.value});
   auto name = m_names->find(Compression::NameView{entry.name});
   if (name && name->abs == entry.abs)
     m_names->del(Compression::NameView{entry.name});
@@ -517,12 +513,12 @@ bool HPackEncoder::peerCapacity(uint32_t capacity)
   return true;
 }
 
-HPackPlan HPackEncoder::plan(Compression::FieldView field) const
+HPackPlan HPackEncoder::plan(Field field) const
 {
   HPackPlan plan_{.field = field};
   bool never = neverIndexed(field.name);
-  if (!never && !field.split) {
-    int index = HPack::staticIndex(field.name, field.value1);
+  if (!never) {
+    int index = HPack::staticIndex(field.name, field.value);
     if (index > 0) {
       plan_.index = unsigned(index);
       plan_.rep = HPackRep::Indexed;
@@ -548,7 +544,7 @@ HPackPlan HPackEncoder::plan(Compression::FieldView field) const
     return plan_;
   }
   uint64_t size =
-    uint64_t(field.name.length()) + field.valueLength() + 32;
+    uint64_t(field.name.length()) + field.value.length() + 32;
   plan_.rep = m_table.capacity() && size <= m_table.capacity() ?
     HPackRep::Incremental : HPackRep::NonIndexed;
   return plan_;
